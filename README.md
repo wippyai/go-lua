@@ -1,2 +1,1 @@
-# go-lua
-Gopher Lua fork
+- Docs are here: https://github.com/yuin/gopher-lua
