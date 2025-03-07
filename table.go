@@ -208,9 +208,29 @@ func (tb *LTable) RawSetString(key string, value LValue) {
 		tb.k2i = map[LValue]int{}
 	}
 
+	lkey := LString(key)
 	if value == LNil {
-		// TODO tb.keys and tb.k2i should also be removed
-		delete(tb.strdict, key)
+		// Remove from strdict
+		delete(tb.strdict, key) // Use key, not lkey
+
+		// Remove from keys and k2i if key exists
+		if idx, ok := tb.k2i[lkey]; ok {
+			// Get the last key in the keys slice
+			lastIdx := len(tb.keys) - 1
+			lastKey := tb.keys[lastIdx]
+
+			if idx < lastIdx {
+				// Move the last key to the position of the removed key
+				tb.keys[idx] = lastKey
+				// Update the index of the moved key
+				tb.k2i[lastKey] = idx
+			}
+
+			// Remove the last element
+			tb.keys = tb.keys[:lastIdx]
+			// Delete the key from k2i
+			delete(tb.k2i, lkey)
+		}
 	} else {
 		tb.strdict[key] = value
 		lkey := LString(key)
@@ -236,8 +256,27 @@ func (tb *LTable) RawSetH(key LValue, value LValue) {
 	}
 
 	if value == LNil {
-		// TODO tb.keys and tb.k2i should also be removed
+		// Remove from dict
 		delete(tb.dict, key)
+
+		// Remove from keys and k2i if key exists
+		if idx, ok := tb.k2i[key]; ok {
+			// Get the last key in the keys slice
+			lastIdx := len(tb.keys) - 1
+			lastKey := tb.keys[lastIdx]
+
+			if idx < lastIdx {
+				// Move the last key to the position of the removed key
+				tb.keys[idx] = lastKey
+				// Update the index of the moved key
+				tb.k2i[lastKey] = idx
+			}
+
+			// Remove the last element (now duplicated or the removed key)
+			tb.keys = tb.keys[:lastIdx]
+			// Delete the key from k2i
+			delete(tb.k2i, key)
+		}
 	} else {
 		tb.dict[key] = value
 		if _, ok := tb.k2i[key]; !ok {
