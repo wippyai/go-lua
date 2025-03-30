@@ -7,6 +7,7 @@ package lua
 import (
 	"context"
 	"fmt"
+	"github.com/ponyruntime/go-lua/parse"
 	"io"
 	"math"
 	"os"
@@ -15,8 +16,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/ponyruntime/go-lua/parse"
 )
 
 const MultRet = -1
@@ -661,6 +660,7 @@ func panicWithoutTraceback(L *LState) {
 	panic(err)
 }
 
+// todo: since we use coroutines we create this threads quite often, we would want to pool them
 func newLState(options Options) *LState {
 	al := newAllocator(32)
 	ls := &LState{
@@ -686,6 +686,34 @@ func newLState(options Options) *LState {
 	}
 	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, al)
 	ls.Env = ls.G.Global
+	return ls
+}
+
+func newLStateWithG(options Options, G *Global, env *LTable) *LState {
+	al := newAllocator(32) // from pool
+	ls := &LState{
+		G:       G,
+		Parent:  nil,
+		Panic:   panicWithTraceback,
+		Dead:    false,
+		Options: options,
+
+		stop:         0,
+		alloc:        al,
+		currentFrame: nil,
+		wrapped:      false,
+		uvcache:      nil,
+		hasErrorFunc: false,
+		mainLoop:     mainLoop,
+		ctx:          nil,
+	}
+	if options.MinimizeStackMemory {
+		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize) // from pool
+	} else {
+		ls.stack = newFixedCallFrameStack(options.CallStackSize) // from pool
+	}
+	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, al)
+	ls.Env = env
 	return ls
 }
 
@@ -1445,6 +1473,7 @@ func (ls *LState) Close() {
 		file.Close()
 		os.Remove(file.Name())
 	}
+	ls.alloc.Release()
 	ls.stack.FreeAll()
 	ls.stack = nil
 }
@@ -1612,13 +1641,11 @@ func (ls *LState) CreateTable(acap, hcap int) *LTable {
 // NewThread returns a new LState that shares with the original state all global objects.
 // If the original state has context.Context, the new state has a new child context of the original state and this function returns its cancel function.
 func (ls *LState) NewThread() (*LState, context.CancelFunc) {
-	thread := newLState(ls.Options)
-	thread.G = ls.G
-	thread.Env = ls.Env
+	thread := newLStateWithG(ls.Options, ls.G, ls.Env)
 	var f context.CancelFunc = nil
 	if ls.ctx != nil {
 		thread.mainLoop = mainLoopWithContext
-		thread.ctx, f = context.WithCancel(ls.ctx)
+		thread.ctx, f = context.WithCancel(ls.ctx) // todo we dont really need this in our setup
 		thread.ctxCancelFn = f
 	}
 	return thread, f

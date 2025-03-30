@@ -25,14 +25,14 @@ func OpenBase(L *LState) int {
 
 var baseFuncs = map[string]LGFunction{
 	"assert":         baseAssert,
-	"collectgarbage": baseCollectGarbage,
-	"dofile":         baseDoFile,
+	"collectgarbage": baseCollectGarbage, // todo: forbid or change or use release
+	"dofile":         baseDoFile,         // todo: forbid
 	"error":          baseError,
 	"getfenv":        baseGetFEnv,
 	"getmetatable":   baseGetMetatable,
 	"load":           baseLoad,
-	"loadfile":       baseLoadFile,
-	"loadstring":     baseLoadString,
+	"loadfile":       baseLoadFile,   // todo: forbid
+	"loadstring":     baseLoadString, // todo: forbid
 	"next":           baseNext,
 	"pcall":          basePCall,
 	"print":          basePrint,
