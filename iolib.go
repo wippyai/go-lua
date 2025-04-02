@@ -709,7 +709,6 @@ func ioTmpFile(L *LState) int {
 		L.Push(LString(err.Error()))
 		return 2
 	}
-	L.G.tempFiles = append(L.G.tempFiles, file)
 	ud, _ := newFile(L, file, "", 0, os.FileMode(0), true, true)
 	L.Push(ud)
 	return 1
