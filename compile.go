@@ -2,7 +2,6 @@ package lua
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"reflect"
 
@@ -413,8 +412,6 @@ type funcContext struct {
 }
 
 func newFuncContext(sourcename string, parent *funcContext) *funcContext {
-	log.Printf("YES WE ALLOCATED A SHIT LOT OF MEMORY %s", sourcename)
-
 	fc := &funcContext{
 		Proto:           newFunctionProto(sourcename),
 		Code:            &codeStore{make([]uint32, 0, 1024), make([]int, 0, 1024), 0},
