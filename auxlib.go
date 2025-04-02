@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 )
@@ -390,6 +391,7 @@ func (ls *LState) LoadFile(path string) (*LFunction, error) {
 }
 
 func (ls *LState) LoadString(source string) (*LFunction, error) {
+	log.Printf("LOAD STRING")
 	return ls.Load(strings.NewReader(source), "<string>")
 }
 

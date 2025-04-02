@@ -2036,10 +2036,12 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 	if err != nil {
 		return nil, newApiErrorE(ApiErrorSyntax, err)
 	}
+
 	proto, err := Compile(chunk, name)
 	if err != nil {
 		return nil, newApiErrorE(ApiErrorSyntax, err)
 	}
+
 	return newLFunctionL(proto, ls.currentEnv(), 0), nil
 }
 
