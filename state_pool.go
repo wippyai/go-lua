@@ -53,8 +53,7 @@ func (ls *LState) Close() {
 	atomic.AddInt32(&ls.stop, 1)
 
 	// Don't pool if registry has grown beyond initial size
-	shouldPool := ls.reg != nil &&
-		cap(ls.reg.array) <= ls.Options.RegistrySize+ls.Options.RegistryGrowStep
+	shouldPool := ls.reg != nil && cap(ls.reg.array) <= ls.Options.RegistrySize+ls.Options.RegistryGrowStep
 
 	if shouldPool {
 		resetLState(ls)

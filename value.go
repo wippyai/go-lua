@@ -200,8 +200,7 @@ func (ls *LState) Type() LValueType { return LTThread }
 
 type LUserData struct {
 	Value     interface{}
-	Env       *LTable
-	Metatable LValue
+	Metatable LValue // todo: change to carry as type ref to global tables
 }
 
 func (ud *LUserData) String() string   { return fmt.Sprintf("userdata: %p", ud) }
