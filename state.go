@@ -7,6 +7,7 @@ package lua
 import (
 	"context"
 	"fmt"
+	"github.com/ponyruntime/go-lua/parse"
 	"io"
 	"math"
 	"os"
@@ -15,8 +16,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/ponyruntime/go-lua/parse"
 )
 
 const MultRet = -1
@@ -642,7 +641,6 @@ func newGlobal() *Global {
 		Registry:   newLTable(0, 32),
 		Global:     newLTable(0, 64),
 		builtinMts: make(map[int]LValue),
-		tempFiles:  make([]*os.File, 0, 10),
 	}
 }
 
@@ -688,6 +686,34 @@ func newLState(options Options) *LState {
 	ls.Env = ls.G.Global
 	return ls
 }
+
+//func newLStateWithG(options Options, G *Global, env *LTable) *LState {
+//	al := newAllocator(32) // from pool
+//	ls := &LState{
+//		G:       G,
+//		Parent:  nil,
+//		Panic:   panicWithTraceback,
+//		Dead:    false,
+//		Options: options,
+//
+//		stop:         0,
+//		alloc:        al,
+//		currentFrame: nil,
+//		wrapped:      false,
+//		uvcache:      nil,
+//		hasErrorFunc: false,
+//		mainLoop:     mainLoop,
+//		ctx:          nil,
+//	}
+//	if options.MinimizeStackMemory {
+//		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize) // from pool
+//	} else {
+//		ls.stack = newFixedCallFrameStack(options.CallStackSize) // from pool
+//	}
+//	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, al)
+//	ls.Env = env
+//	return ls
+//}
 
 func (ls *LState) printReg() {
 	println("-------------------------")
@@ -1438,16 +1464,12 @@ func (ls *LState) IsClosed() bool {
 	return ls.stack == nil
 }
 
-func (ls *LState) Close() {
-	atomic.AddInt32(&ls.stop, 1)
-	for _, file := range ls.G.tempFiles {
-		// ignore errors in these operations
-		file.Close()
-		os.Remove(file.Name())
-	}
-	ls.stack.FreeAll()
-	ls.stack = nil
-}
+//func (ls *LState) Close() {
+//	atomic.AddInt32(&ls.stop, 1)
+//	ls.alloc.Release()
+//	ls.stack.FreeAll()
+//	ls.stack = nil
+//}
 
 /* registry operations {{{ */
 
@@ -1612,13 +1634,11 @@ func (ls *LState) CreateTable(acap, hcap int) *LTable {
 // NewThread returns a new LState that shares with the original state all global objects.
 // If the original state has context.Context, the new state has a new child context of the original state and this function returns its cancel function.
 func (ls *LState) NewThread() (*LState, context.CancelFunc) {
-	thread := newLState(ls.Options)
-	thread.G = ls.G
-	thread.Env = ls.Env
+	thread := newLStateWithG(ls.Options, ls.G, ls.Env)
 	var f context.CancelFunc = nil
 	if ls.ctx != nil {
 		thread.mainLoop = mainLoopWithContext
-		thread.ctx, f = context.WithCancel(ls.ctx)
+		thread.ctx, f = context.WithCancel(ls.ctx) // todo we dont really need this in our setup
 		thread.ctxCancelFn = f
 	}
 	return thread, f
@@ -1630,7 +1650,6 @@ func (ls *LState) NewFunctionFromProto(proto *FunctionProto) *LFunction {
 
 func (ls *LState) NewUserData() *LUserData {
 	return &LUserData{
-		Env:       ls.currentEnv(),
 		Metatable: LNil,
 	}
 }
@@ -1867,8 +1886,6 @@ func (ls *LState) GetFEnv(obj LValue) LValue {
 	switch lv := obj.(type) {
 	case *LFunction:
 		return lv.Env
-	case *LUserData:
-		return lv.Env
 	case *LState:
 		return lv.Env
 	}
@@ -1883,8 +1900,6 @@ func (ls *LState) SetFEnv(obj LValue, env LValue) {
 
 	switch lv := obj.(type) {
 	case *LFunction:
-		lv.Env = tb
-	case *LUserData:
 		lv.Env = tb
 	case *LState:
 		lv.Env = tb
@@ -2015,10 +2030,12 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 	if err != nil {
 		return nil, newApiErrorE(ApiErrorSyntax, err)
 	}
+
 	proto, err := Compile(chunk, name)
 	if err != nil {
 		return nil, newApiErrorE(ApiErrorSyntax, err)
 	}
+
 	return newLFunctionL(proto, ls.currentEnv(), 0), nil
 }
 

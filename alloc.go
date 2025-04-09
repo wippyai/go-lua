@@ -2,6 +2,7 @@ package lua
 
 import (
 	"reflect"
+	"sync"
 	"unsafe"
 )
 
@@ -32,13 +33,21 @@ type allocator struct {
 
 	scratchValue  LValue
 	scratchValueP *iface
+
+	// sync.Pool for reusing float64 slices
+	slicePool sync.Pool
 }
 
 func newAllocator(size int) *allocator {
 	al := &allocator{
-		size:    size,
-		fptrs:   make([]float64, 0, size),
-		fheader: nil,
+		size:  size,
+		fptrs: make([]float64, 0, size),
+		slicePool: sync.Pool{
+			New: func() interface{} {
+				slice := make([]float64, 0, size)
+				return &slice
+			},
+		},
 	}
 	al.fheader = (*reflect.SliceHeader)(unsafe.Pointer(&al.fptrs))
 	al.scratchValue = LNumber(0)
@@ -62,8 +71,15 @@ func (al *allocator) LNumber2I(v LNumber) LValue {
 
 	// check if we need a new alloc page
 	if cap(al.fptrs) == len(al.fptrs) {
-		al.fptrs = make([]float64, 0, al.size)
+		// Put the current slice back in the pool
+		oldSlice := al.fptrs
+		ptrToOldSlice := &oldSlice
+		// Get a fresh slice from the pool
+		ptrToNewSlice := al.slicePool.Get().(*[]float64)
+		al.fptrs = (*ptrToNewSlice)[:0] // Reset length but keep capacity
 		al.fheader = (*reflect.SliceHeader)(unsafe.Pointer(&al.fptrs))
+		// Return the old slice to the pool
+		al.slicePool.Put(ptrToOldSlice)
 	}
 
 	// alloc a new float, and store our value into it
@@ -76,4 +92,17 @@ func (al *allocator) LNumber2I(v LNumber) LValue {
 	al.scratchValueP.word = unsafe.Pointer(fptr)
 
 	return al.scratchValue
+}
+
+// Release returns all slices to the pool for reuse
+// This should be called when you know the allocator won't be used again
+// or to periodically recycle memory
+func (al *allocator) Release() {
+	if len(al.fptrs) > 0 {
+		slice := al.fptrs
+		ptrToSlice := &slice
+		al.slicePool.Put(ptrToSlice)
+		al.fptrs = make([]float64, 0, al.size)
+		al.fheader = (*reflect.SliceHeader)(unsafe.Pointer(&al.fptrs))
+	}
 }

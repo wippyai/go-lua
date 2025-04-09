@@ -3,7 +3,6 @@ package lua
 import (
 	"context"
 	"fmt"
-	"os"
 )
 
 type LValueType int
@@ -172,7 +171,6 @@ type Global struct {
 	Global        *LTable
 
 	builtinMts map[int]LValue
-	tempFiles  []*os.File
 	gccount    int32
 }
 
@@ -202,8 +200,7 @@ func (ls *LState) Type() LValueType { return LTThread }
 
 type LUserData struct {
 	Value     interface{}
-	Env       *LTable
-	Metatable LValue
+	Metatable LValue // todo: change to carry as type ref to global tables
 }
 
 func (ud *LUserData) String() string   { return fmt.Sprintf("userdata: %p", ud) }

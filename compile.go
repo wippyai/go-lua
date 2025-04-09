@@ -1862,6 +1862,7 @@ func Compile(chunk []ast.Stmt, name string) (proto *FunctionProto, err error) { 
 		funcexpr.SetLastLine(sline(chunk[0]))
 		funcexpr.SetLastLine(eline(chunk[len(chunk)-1]) + 1)
 	}
+
 	context := newFuncContext(name, nil)
 	compileFunctionExpr(context, funcexpr, ecnone(0))
 	proto = context.Proto

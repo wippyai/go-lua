@@ -33,7 +33,6 @@ var luaLibs = []luaLib{
 	{BaseLibName, OpenBase},
 	{TabLibName, OpenTable},
 	{IoLibName, OpenIo},
-	{OsLibName, OpenOs},
 	{StringLibName, OpenString},
 	{MathLibName, OpenMath},
 	{DebugLibName, OpenDebug},
