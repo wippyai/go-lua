@@ -68,59 +68,59 @@ func (ls *LState) Close() {
 }
 
 // Replacement for newLStateWithG that uses pooled states when available
-func newLStateWithG(options Options, G *Global, env *LTable) *LState {
-	// Try to get a state from the pool
-	pooledState := statePool.Get()
-
-	if ls, ok := pooledState.(*LState); ok && ls != nil {
-		// We got a pooled state, configure it for reuse
-		ls.G = G
-		ls.Env = env
-		ls.Panic = panicWithTraceback
-		ls.Options = options
-		ls.mainLoop = mainLoop
-
-		// Registry was preserved but might need resetting if options changed
-		if ls.reg != nil && cap(ls.reg.array) != options.RegistrySize {
-			// Registry size mismatch, create a new one
-			ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, ls.alloc)
-		} else if ls.reg != nil {
-			// Registry size is ok, just reset the handler
-			ls.reg.handler = ls
-		}
-
-		// Return the recycled state
-		return ls
-	}
-
-	// No suitable pooled state available, create a new one
-	al := newAllocator(32)
-	ls := &LState{
-		G:            G,
-		Parent:       nil,
-		Panic:        panicWithTraceback,
-		Dead:         false,
-		Options:      options,
-		stop:         0,
-		alloc:        al,
-		currentFrame: nil,
-		wrapped:      false,
-		uvcache:      nil,
-		hasErrorFunc: false,
-		mainLoop:     mainLoop,
-		ctx:          nil,
-	}
-
-	// Create stack based on options
-	if options.MinimizeStackMemory {
-		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize)
-	} else {
-		ls.stack = newFixedCallFrameStack(options.CallStackSize)
-	}
-
-	// Create registry
-	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, al)
-	ls.Env = env
-
-	return ls
-}
+//func newLStateWithG(options Options, G *Global, env *LTable) *LState {
+//	// Try to get a state from the pool
+//	pooledState := statePool.Get()
+//
+//	if ls, ok := pooledState.(*LState); ok && ls != nil {
+//		// We got a pooled state, configure it for reuse
+//		ls.G = G
+//		ls.Env = env
+//		ls.Panic = panicWithTraceback
+//		ls.Options = options
+//		ls.mainLoop = mainLoop
+//
+//		// Registry was preserved but might need resetting if options changed
+//		if ls.reg != nil && cap(ls.reg.array) != options.RegistrySize {
+//			// Registry size mismatch, create a new one
+//			ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, ls.alloc)
+//		} else if ls.reg != nil {
+//			// Registry size is ok, just reset the handler
+//			ls.reg.handler = ls
+//		}
+//
+//		// Return the recycled state
+//		return ls
+//	}
+//
+//	// No suitable pooled state available, create a new one
+//	al := newAllocator(32)
+//	ls := &LState{
+//		G:            G,
+//		Parent:       nil,
+//		Panic:        panicWithTraceback,
+//		Dead:         false,
+//		Options:      options,
+//		stop:         0,
+//		alloc:        al,
+//		currentFrame: nil,
+//		wrapped:      false,
+//		uvcache:      nil,
+//		hasErrorFunc: false,
+//		mainLoop:     mainLoop,
+//		ctx:          nil,
+//	}
+//
+//	// Create stack based on options
+//	if options.MinimizeStackMemory {
+//		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize)
+//	} else {
+//		ls.stack = newFixedCallFrameStack(options.CallStackSize)
+//	}
+//
+//	// Create registry
+//	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, al)
+//	ls.Env = env
+//
+//	return ls
+//}
