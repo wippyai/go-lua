@@ -51,17 +51,6 @@ func CreateTable(acap, hcap int) *LTable {
 	return newLTable(acap, hcap)
 }
 
-type TableInternals struct {
-	Array    []LValue
-	Strdict  map[string]LValue
-	Dict     map[LValue]LValue
-	Keys     []LValue
-	ArrayLen int
-	ArrayCap int
-	HashLen  int
-	IsEmpty  bool
-}
-
 // Len returns length of this LTable without using __len.
 func (tb *LTable) Len() int {
 	if tb.Array == nil {

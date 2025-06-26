@@ -24,7 +24,7 @@ var tableFuncs = map[string]LGFunction{
 
 func tableSort(L *LState) int {
 	tbl := L.CheckTable(1)
-	if tbl.IsImmutable() {
+	if tbl.Immutable {
 		L.RaiseError("attempt to sort Immutable table")
 		return 0
 	}
@@ -46,14 +46,14 @@ func tableCreate(L *LState) int {
 
 func tableMakeImmutable(L *LState) int {
 	tbl := L.CheckTable(1)
-	tbl.MakeImmutable()
+	tbl.Immutable = true
 	L.Push(tbl)
 	return 1
 }
 
 func tableIsImmutable(L *LState) int {
 	tbl := L.CheckTable(1)
-	L.Push(LBool(tbl.IsImmutable()))
+	L.Push(LBool(tbl.Immutable))
 	return 1
 }
 

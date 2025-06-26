@@ -687,33 +687,33 @@ func newLState(options Options) *LState {
 	return ls
 }
 
-func newLStateWithG(options Options, G *Global, env *LTable) *LState {
-	al := newAllocator(32) // from pool
-	ls := &LState{
-		G:       G,
-		Parent:  nil,
-		Panic:   panicWithTraceback,
-		Dead:    false,
-		Options: options,
-
-		stop:         0,
-		alloc:        al,
-		currentFrame: nil,
-		wrapped:      false,
-		uvcache:      nil,
-		hasErrorFunc: false,
-		mainLoop:     mainLoop,
-		ctx:          nil,
-	}
-	if options.MinimizeStackMemory {
-		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize) // from pool
-	} else {
-		ls.stack = newFixedCallFrameStack(options.CallStackSize) // from pool
-	}
-	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, al)
-	ls.Env = env
-	return ls
-}
+//func newLStateWithG(options Options, G *Global, env *LTable) *LState {
+//	al := newAllocator(32) // from pool
+//	ls := &LState{
+//		G:       G,
+//		Parent:  nil,
+//		Panic:   panicWithTraceback,
+//		Dead:    false,
+//		Options: options,
+//
+//		stop:         0,
+//		alloc:        al,
+//		currentFrame: nil,
+//		wrapped:      false,
+//		uvcache:      nil,
+//		hasErrorFunc: false,
+//		mainLoop:     mainLoop,
+//		ctx:          nil,
+//	}
+//	if options.MinimizeStackMemory {
+//		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize) // from pool
+//	} else {
+//		ls.stack = newFixedCallFrameStack(options.CallStackSize) // from pool
+//	}
+//	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, al)
+//	ls.Env = env
+//	return ls
+//}
 
 func (ls *LState) printReg() {
 	println("-------------------------")
@@ -2159,7 +2159,7 @@ func (ls *LState) SetMetatable(obj LValue, mt LValue) {
 
 	switch v := obj.(type) {
 	case *LTable:
-		if v.IsImmutable() {
+		if v.Immutable {
 			ls.RaiseError("attempt to modify Immutable table")
 		}
 		v.Metatable = mt
