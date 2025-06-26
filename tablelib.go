@@ -11,22 +11,50 @@ func OpenTable(L *LState) int {
 }
 
 var tableFuncs = map[string]LGFunction{
-	"getn":   tableGetN,
-	"concat": tableConcat,
-	"insert": tableInsert,
-	"maxn":   tableMaxN,
-	"remove": tableRemove,
-	"sort":   tableSort,
+	"getn":           tableGetN,
+	"concat":         tableConcat,
+	"insert":         tableInsert,
+	"maxn":           tableMaxN,
+	"remove":         tableRemove,
+	"sort":           tableSort,
+	"create":         tableCreate,
+	"make_immutable": tableMakeImmutable,
+	"is_immutable":   tableIsImmutable,
 }
 
 func tableSort(L *LState) int {
 	tbl := L.CheckTable(1)
+	if tbl.IsImmutable() {
+		L.RaiseError("attempt to sort immutable table")
+		return 0
+	}
 	sorter := lValueArraySorter{L, nil, tbl.array}
 	if L.GetTop() != 1 {
 		sorter.Fn = L.CheckFunction(2)
 	}
 	sort.Sort(sorter)
 	return 0
+}
+
+func tableCreate(L *LState) int {
+	acap := L.CheckInt(1)
+	hcap := L.CheckInt(2)
+	tbl := CreateTable(int(acap), int(hcap))
+	L.Push(tbl)
+	return 1
+}
+
+func tableMakeImmutable(L *LState) int {
+	tbl := L.CheckTable(1)
+	tbl.MakeImmutable()
+	L.Push(tbl)
+	return 1
+}
+
+func tableIsImmutable(L *LState) int {
+	tbl := L.CheckTable(1)
+	L.Push(LBool(tbl.IsImmutable()))
+	return 1
 }
 
 func tableGetN(L *LState) int {
@@ -41,11 +69,18 @@ func tableMaxN(L *LState) int {
 
 func tableRemove(L *LState) int {
 	tbl := L.CheckTable(1)
+	var removed LValue
+	var success bool
 	if L.GetTop() == 1 {
-		L.Push(tbl.Remove(-1))
+		removed, success = tbl.Remove(-1)
 	} else {
-		L.Push(tbl.Remove(L.CheckInt(2)))
+		removed, success = tbl.Remove(L.CheckInt(2))
 	}
+	if !success {
+		L.RaiseError("attempt to remove from immutable table")
+		return 0
+	}
+	L.Push(removed)
 	return 1
 }
 
@@ -66,7 +101,6 @@ func tableConcat(L *LState) int {
 		L.Push(emptyLString)
 		return 1
 	}
-	//TODO should flushing?
 	retbottom := L.GetTop()
 	for ; i <= j; i++ {
 		v := tbl.RawGetInt(i)
@@ -89,12 +123,14 @@ func tableInsert(L *LState) int {
 		L.RaiseError("wrong number of arguments")
 	}
 
+	var success bool
 	if L.GetTop() == 2 {
-		tbl.Append(L.Get(2))
-		return 0
+		success = tbl.Append(L.Get(2))
+	} else {
+		success = tbl.Insert(int(L.CheckInt(2)), L.CheckAny(3))
 	}
-	tbl.Insert(int(L.CheckInt(2)), L.CheckAny(3))
+	if !success {
+		L.RaiseError("attempt to insert into immutable table")
+	}
 	return 0
 }
-
-//

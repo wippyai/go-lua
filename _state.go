@@ -1159,7 +1159,9 @@ func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
 		tb, istable := curobj.(*LTable)
 		if istable {
 			if tb.RawGetString(key) != LNil {
-				tb.RawSetString(key, value)
+				if !tb.RawSetString(key, value) {
+					ls.RaiseError("attempt to modify immutable table")
+				}
 				return
 			}
 		}
@@ -1168,7 +1170,9 @@ func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
 			if !istable {
 				ls.RaiseError("attempt to index a non-table object(%v) with key '%s'", curobj.Type().String(), key)
 			}
-			tb.RawSetString(key, value)
+			if !tb.RawSetString(key, value) {
+				ls.RaiseError("attempt to modify immutable table")
+			}
 			return
 		}
 		if metaindex.Type() == LTFunction {
@@ -1694,11 +1698,15 @@ func (ls *LState) RawSet(tb *LTable, key LValue, value LValue) {
 	} else if key == LNil {
 		ls.RaiseError("table index is nil")
 	}
-	tb.RawSet(key, value)
+	if !tb.RawSet(key, value) {
+		ls.RaiseError("attempt to modify immutable table")
+	}
 }
 
 func (ls *LState) RawSetInt(tb *LTable, key int, value LValue) {
-	tb.RawSetInt(key, value)
+	if !tb.RawSetInt(key, value) {
+		ls.RaiseError("attempt to modify immutable table")
+	}
 }
 
 func (ls *LState) SetField(obj LValue, key string, value LValue) {

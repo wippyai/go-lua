@@ -37,12 +37,68 @@ func newLTable(acap int, hcap int) *LTable {
 	}
 	tb := &LTable{}
 	tb.Metatable = LNil
+	tb.immutable = false
 	if acap != 0 {
 		tb.array = make([]LValue, 0, acap)
 	}
 	if hcap != 0 {
 		tb.strdict = make(map[string]LValue, hcap)
 	}
+	return tb
+}
+
+func CreateTable(acap, hcap int) *LTable {
+	return newLTable(acap, hcap)
+}
+
+type TableInternals struct {
+	Array    []LValue
+	Strdict  map[string]LValue
+	Dict     map[LValue]LValue
+	Keys     []LValue
+	ArrayLen int
+	ArrayCap int
+	HashLen  int
+	IsEmpty  bool
+}
+
+func (tb *LTable) GetInternals() *TableInternals {
+	arrayLen := 0
+	if tb.array != nil {
+		arrayLen = len(tb.array)
+	}
+
+	strdictLen := 0
+	if tb.strdict != nil {
+		strdictLen = len(tb.strdict)
+	}
+
+	dictLen := 0
+	if tb.dict != nil {
+		dictLen = len(tb.dict)
+	}
+
+	hashLen := strdictLen + dictLen
+	isEmpty := arrayLen == 0 && hashLen == 0
+
+	return &TableInternals{
+		Array:    tb.array,
+		Strdict:  tb.strdict,
+		Dict:     tb.dict,
+		Keys:     tb.keys,
+		ArrayLen: arrayLen,
+		ArrayCap: cap(tb.array),
+		HashLen:  hashLen,
+		IsEmpty:  isEmpty,
+	}
+}
+
+func (tb *LTable) IsImmutable() bool {
+	return tb.immutable
+}
+
+func (tb *LTable) MakeImmutable() *LTable {
+	tb.immutable = true
 	return tb
 }
 
@@ -63,9 +119,12 @@ func (tb *LTable) Len() int {
 }
 
 // Append appends a given LValue to this LTable.
-func (tb *LTable) Append(value LValue) {
+func (tb *LTable) Append(value LValue) bool {
+	if tb.immutable {
+		return false
+	}
 	if value == LNil {
-		return
+		return true
 	}
 	if tb.array == nil {
 		tb.array = make([]LValue, 0, defaultArrayCap)
@@ -81,25 +140,28 @@ func (tb *LTable) Append(value LValue) {
 		}
 		tb.array[i+1] = value
 	}
+	return true
 }
 
 // Insert inserts a given LValue at position `i` in this table.
-func (tb *LTable) Insert(i int, value LValue) {
+func (tb *LTable) Insert(i int, value LValue) bool {
+	if tb.immutable {
+		return false
+	}
 	if tb.array == nil {
 		tb.array = make([]LValue, 0, defaultArrayCap)
 	}
 	if i > len(tb.array) {
-		tb.RawSetInt(i, value)
-		return
+		return tb.RawSetInt(i, value)
 	}
 	if i <= 0 {
-		tb.RawSet(LNumber(i), value)
-		return
+		return tb.RawSet(LNumber(i), value)
 	}
 	i -= 1
 	tb.array = append(tb.array, LNil)
 	copy(tb.array[i+1:], tb.array[i:])
 	tb.array[i] = value
+	return true
 }
 
 // MaxN returns a maximum number key that nil value does not exist before it.
@@ -116,13 +178,16 @@ func (tb *LTable) MaxN() int {
 }
 
 // Remove removes from this table the element at a given position.
-func (tb *LTable) Remove(pos int) LValue {
+func (tb *LTable) Remove(pos int) (LValue, bool) {
+	if tb.immutable {
+		return LNil, false
+	}
 	if tb.array == nil {
-		return LNil
+		return LNil, true
 	}
 	larray := len(tb.array)
 	if larray == 0 {
-		return LNil
+		return LNil, true
 	}
 	i := pos - 1
 	oldval := LNil
@@ -138,13 +203,16 @@ func (tb *LTable) Remove(pos int) LValue {
 		tb.array[larray-1] = nil
 		tb.array = tb.array[:larray-1]
 	}
-	return oldval
+	return oldval, true
 }
 
 // RawSet sets a given LValue to a given index without the __newindex metamethod.
 // It is recommended to use `RawSetString` or `RawSetInt` for performance
 // if you already know the given LValue is a string or number.
-func (tb *LTable) RawSet(key LValue, value LValue) {
+func (tb *LTable) RawSet(key LValue, value LValue) bool {
+	if tb.immutable {
+		return false
+	}
 	switch v := key.(type) {
 	case LNumber:
 		if isArrayKey(v) {
@@ -164,21 +232,22 @@ func (tb *LTable) RawSet(key LValue, value LValue) {
 			case index < alen:
 				tb.array[index] = value
 			}
-			return
+			return true
 		}
 	case LString:
-		tb.RawSetString(string(v), value)
-		return
+		return tb.RawSetString(string(v), value)
 	}
 
-	tb.RawSetH(key, value)
+	return tb.RawSetH(key, value)
 }
 
 // RawSetInt sets a given LValue at a position `key` without the __newindex metamethod.
-func (tb *LTable) RawSetInt(key int, value LValue) {
+func (tb *LTable) RawSetInt(key int, value LValue) bool {
+	if tb.immutable {
+		return false
+	}
 	if key < 1 || key >= MaxArrayIndex {
-		tb.RawSetH(LNumber(key), value)
-		return
+		return tb.RawSetH(LNumber(key), value)
 	}
 	if tb.array == nil {
 		tb.array = make([]LValue, 0, 32)
@@ -196,10 +265,14 @@ func (tb *LTable) RawSetInt(key int, value LValue) {
 	case index < alen:
 		tb.array[index] = value
 	}
+	return true
 }
 
 // RawSetString sets a given LValue to a given string index without the __newindex metamethod.
-func (tb *LTable) RawSetString(key string, value LValue) {
+func (tb *LTable) RawSetString(key string, value LValue) bool {
+	if tb.immutable {
+		return false
+	}
 	if tb.strdict == nil {
 		tb.strdict = make(map[string]LValue, defaultHashCap)
 	}
@@ -210,25 +283,17 @@ func (tb *LTable) RawSetString(key string, value LValue) {
 
 	lkey := LString(key)
 	if value == LNil {
-		// Remove from strdict
-		delete(tb.strdict, key) // Use key, not lkey
-
-		// Remove from keys and k2i if key exists
+		delete(tb.strdict, key)
 		if idx, ok := tb.k2i[lkey]; ok {
-			// Get the last key in the keys slice
 			lastIdx := len(tb.keys) - 1
 			lastKey := tb.keys[lastIdx]
 
 			if idx < lastIdx {
-				// Move the last key to the position of the removed key
 				tb.keys[idx] = lastKey
-				// Update the index of the moved key
 				tb.k2i[lastKey] = idx
 			}
 
-			// Remove the last element
 			tb.keys = tb.keys[:lastIdx]
-			// Delete the key from k2i
 			delete(tb.k2i, lkey)
 		}
 	} else {
@@ -239,13 +304,16 @@ func (tb *LTable) RawSetString(key string, value LValue) {
 			tb.keys = append(tb.keys, lkey)
 		}
 	}
+	return true
 }
 
 // RawSetH sets a given LValue to a given index without the __newindex metamethod.
-func (tb *LTable) RawSetH(key LValue, value LValue) {
+func (tb *LTable) RawSetH(key LValue, value LValue) bool {
+	if tb.immutable {
+		return false
+	}
 	if s, ok := key.(LString); ok {
-		tb.RawSetString(string(s), value)
-		return
+		return tb.RawSetString(string(s), value)
 	}
 	if tb.dict == nil {
 		tb.dict = make(map[LValue]LValue, len(tb.strdict))
@@ -256,25 +324,17 @@ func (tb *LTable) RawSetH(key LValue, value LValue) {
 	}
 
 	if value == LNil {
-		// Remove from dict
 		delete(tb.dict, key)
-
-		// Remove from keys and k2i if key exists
 		if idx, ok := tb.k2i[key]; ok {
-			// Get the last key in the keys slice
 			lastIdx := len(tb.keys) - 1
 			lastKey := tb.keys[lastIdx]
 
 			if idx < lastIdx {
-				// Move the last key to the position of the removed key
 				tb.keys[idx] = lastKey
-				// Update the index of the moved key
 				tb.k2i[lastKey] = idx
 			}
 
-			// Remove the last element (now duplicated or the removed key)
 			tb.keys = tb.keys[:lastIdx]
-			// Delete the key from k2i
 			delete(tb.k2i, key)
 		}
 	} else {
@@ -284,6 +344,7 @@ func (tb *LTable) RawSetH(key LValue, value LValue) {
 			tb.keys = append(tb.keys, key)
 		}
 	}
+	return true
 }
 
 // RawGet returns an LValue associated with a given key without __index metamethod.
