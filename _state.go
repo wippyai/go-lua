@@ -415,7 +415,7 @@ func (rg *registry) SetTop(topi int) { // +inline-start
 		}
 	}
 	//for i := rg.top; i < oldtop; i++ {
-	//	rg.array[i] = LNil
+	//	rg.Array[i] = LNil
 	//}
 } // +inline-end
 
@@ -1160,7 +1160,7 @@ func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
 		if istable {
 			if tb.RawGetString(key) != LNil {
 				if !tb.RawSetString(key, value) {
-					ls.RaiseError("attempt to modify immutable table")
+					ls.RaiseError("attempt to modify Immutable table")
 				}
 				return
 			}
@@ -1171,7 +1171,7 @@ func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
 				ls.RaiseError("attempt to index a non-table object(%v) with key '%s'", curobj.Type().String(), key)
 			}
 			if !tb.RawSetString(key, value) {
-				ls.RaiseError("attempt to modify immutable table")
+				ls.RaiseError("attempt to modify Immutable table")
 			}
 			return
 		}
@@ -1699,13 +1699,13 @@ func (ls *LState) RawSet(tb *LTable, key LValue, value LValue) {
 		ls.RaiseError("table index is nil")
 	}
 	if !tb.RawSet(key, value) {
-		ls.RaiseError("attempt to modify immutable table")
+		ls.RaiseError("attempt to modify Immutable table")
 	}
 }
 
 func (ls *LState) RawSetInt(tb *LTable, key int, value LValue) {
 	if !tb.RawSetInt(key, value) {
-		ls.RaiseError("attempt to modify immutable table")
+		ls.RaiseError("attempt to modify Immutable table")
 	}
 }
 

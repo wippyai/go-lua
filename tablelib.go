@@ -25,10 +25,10 @@ var tableFuncs = map[string]LGFunction{
 func tableSort(L *LState) int {
 	tbl := L.CheckTable(1)
 	if tbl.IsImmutable() {
-		L.RaiseError("attempt to sort immutable table")
+		L.RaiseError("attempt to sort Immutable table")
 		return 0
 	}
-	sorter := lValueArraySorter{L, nil, tbl.array}
+	sorter := lValueArraySorter{L, nil, tbl.Array}
 	if L.GetTop() != 1 {
 		sorter.Fn = L.CheckFunction(2)
 	}
@@ -77,7 +77,7 @@ func tableRemove(L *LState) int {
 		removed, success = tbl.Remove(L.CheckInt(2))
 	}
 	if !success {
-		L.RaiseError("attempt to remove from immutable table")
+		L.RaiseError("attempt to remove from Immutable table")
 		return 0
 	}
 	L.Push(removed)
@@ -130,7 +130,7 @@ func tableInsert(L *LState) int {
 		success = tbl.Insert(int(L.CheckInt(2)), L.CheckAny(3))
 	}
 	if !success {
-		L.RaiseError("attempt to insert into immutable table")
+		L.RaiseError("attempt to insert into Immutable table")
 	}
 	return 0
 }

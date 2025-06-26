@@ -14,7 +14,7 @@ var statePool = sync.Pool{
 
 // resetLState prepares a state for reuse by clearing its values but keeping the allocated structures
 func resetLState(ls *LState) {
-	// Clear registry but keep the underlying array
+	// Clear registry but keep the underlying Array
 	if ls.reg != nil {
 		ls.reg.top = 0
 		// Explicitly nil out values to help with GC
@@ -81,7 +81,7 @@ func (ls *LState) Close() {
 //		ls.mainLoop = mainLoop
 //
 //		// Registry was preserved but might need resetting if options changed
-//		if ls.reg != nil && cap(ls.reg.array) != options.RegistrySize {
+//		if ls.reg != nil && cap(ls.reg.Array) != options.RegistrySize {
 //			// Registry size mismatch, create a new one
 //			ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, ls.alloc)
 //		} else if ls.reg != nil {

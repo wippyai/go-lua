@@ -1871,7 +1871,7 @@ func init() {
 									}
 								}
 								//for i := rg.top; i < oldtop; i++ {
-								//	rg.array[i] = LNil
+								//	rg.Array[i] = LNil
 								//}
 							}
 						}
@@ -1959,7 +1959,7 @@ func init() {
 					}
 				}
 				//for i := rg.top; i < oldtop; i++ {
-				//	rg.array[i] = LNil
+				//	rg.Array[i] = LNil
 				//}
 			}
 			// this section is inlined by go-inline
