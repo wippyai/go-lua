@@ -7,52 +7,99 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
-/* basic functions {{{ */
-
-func OpenBase(L *LState) int {
-	global := L.Get(GlobalsIndex).(*LTable)
-	L.SetGlobal("_G", global)
-	L.SetGlobal("_VERSION", LString(LuaVersion))
-	L.SetGlobal("_GOPHER_LUA_VERSION", LString(PackageName+" "+PackageVersion))
-	basemod := L.RegisterModule("_G", baseFuncs)
-	global.RawSetString("ipairs", L.NewClosure(baseIpairs, L.NewFunction(ipairsaux)))
-	global.RawSetString("pairs", L.NewClosure(basePairs, L.NewFunction(pairsaux)))
-	L.Push(basemod)
-	return 1
-}
-
 var baseFuncs = map[string]LGFunction{
-	"assert":         baseAssert,
-	"collectgarbage": baseCollectGarbage, // todo: forbid or change or use release
-	"dofile":         baseDoFile,         // todo: forbid
-	"error":          baseError,
-	"getfenv":        baseGetFEnv,
-	"getmetatable":   baseGetMetatable,
-	"load":           baseLoad,
-	"loadfile":       baseLoadFile,   // todo: forbid
-	"loadstring":     baseLoadString, // todo: forbid
-	"next":           baseNext,
-	"pcall":          basePCall,
-	"print":          basePrint,
-	"rawequal":       baseRawEqual,
-	"rawget":         baseRawGet,
-	"rawset":         baseRawSet,
-	"select":         baseSelect,
-	"_printregs":     base_PrintRegs,
-	"setfenv":        baseSetFEnv,
-	"setmetatable":   baseSetMetatable,
-	"tonumber":       baseToNumber,
-	"tostring":       baseToString,
-	"type":           baseType,
-	"unpack":         baseUnpack,
-	"xpcall":         baseXPCall,
+	"assert": baseAssert,
+	//"collectgarbage": baseCollectGarbage, // todo: forbid or change or use release
+	//"dofile":         baseDoFile,         // todo: forbid
+	"error":        baseError,
+	"getfenv":      baseGetFEnv,
+	"getmetatable": baseGetMetatable,
+	"load":         baseLoad,
+	//"loadfile":       baseLoadFile,   // todo: forbid
+	//"loadstring":     baseLoadString, // todo: forbid
+	"next":         baseNext,
+	"pcall":        basePCall,
+	"print":        basePrint,
+	"rawequal":     baseRawEqual,
+	"rawget":       baseRawGet,
+	"rawset":       baseRawSet,
+	"select":       baseSelect,
+	"_printregs":   base_PrintRegs,
+	"setfenv":      baseSetFEnv,
+	"setmetatable": baseSetMetatable,
+	"tonumber":     baseToNumber,
+	"tostring":     baseToString,
+	"type":         baseType,
+	"unpack":       baseUnpack,
+	"xpcall":       baseXPCall,
 	// loadlib
 	"module":  loModule,
 	"require": loRequire,
 	// hidden features
 	"newproxy": baseNewProxy,
+}
+
+var (
+	prePinnedBaseFuncs map[string]*LFunction
+	prePinnedIpairs    *LFunction
+	prePinnedPairs     *LFunction
+	immutableBaseMod   *LTable
+	initBaseOnce       sync.Once
+)
+
+func initBaseModule() {
+	initBaseOnce.Do(func() {
+		pinningState := getSharedPinningState()
+
+		// Pre-pin all base functions
+		prePinnedBaseFuncs = make(map[string]*LFunction, len(baseFuncs)+2)
+		for name, fn := range baseFuncs {
+			prePinnedBaseFuncs[name] = pinningState.NewFunction(fn)
+		}
+
+		// Special handling for ipairs/pairs closures
+		prePinnedIpairs = pinningState.NewClosure(baseIpairs, pinningState.NewFunction(ipairsaux))
+		prePinnedPairs = pinningState.NewClosure(basePairs, pinningState.NewFunction(pairsaux))
+
+		// Create immutable base module
+		immutableBaseMod = pinningState.CreateTable(0, len(prePinnedBaseFuncs))
+
+		// Add all pre-pinned functions
+		for name, fn := range prePinnedBaseFuncs {
+			immutableBaseMod.RawSetString(name, fn)
+		}
+
+		immutableBaseMod.Immutable = true
+	})
+}
+
+func OpenBase(L *LState) int {
+	initBaseModule()
+
+	global := L.Get(GlobalsIndex).(*LTable)
+	L.SetGlobal("_G", global)
+	L.SetGlobal("_VERSION", LString(LuaVersion))
+	L.SetGlobal("_GOPHER_LUA_VERSION", LString(PackageName+" "+PackageVersion))
+
+	// Register the immutable base module
+	L.RegisterImmutableModule("_G", immutableBaseMod)
+
+	// Copy functions to global table from immutable module
+	immutableBaseMod.ForEach(func(key LValue, value LValue) {
+		if str, ok := key.(LString); ok {
+			global.RawSetString(string(str), value)
+		}
+	})
+
+	// Set special ipairs/pairs functions
+	global.RawSetString("ipairs", prePinnedIpairs)
+	global.RawSetString("pairs", prePinnedPairs)
+
+	L.Push(immutableBaseMod)
+	return 1
 }
 
 func baseAssert(L *LState) int {
