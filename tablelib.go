@@ -2,13 +2,8 @@ package lua
 
 import (
 	"sort"
+	"sync"
 )
-
-func OpenTable(L *LState) int {
-	tabmod := L.RegisterModule(TabLibName, tableFuncs)
-	L.Push(tabmod)
-	return 1
-}
 
 var tableFuncs = map[string]LGFunction{
 	"getn":           tableGetN,
@@ -20,6 +15,36 @@ var tableFuncs = map[string]LGFunction{
 	"create":         tableCreate,
 	"make_immutable": tableMakeImmutable,
 	"is_immutable":   tableIsImmutable,
+}
+
+var (
+	prePinnedTableFuncs map[string]*LFunction
+	immutableTableMod   *LTable
+	initTableOnce       sync.Once
+)
+
+func initTableModule() {
+	initTableOnce.Do(func() {
+		pinningState := getSharedPinningState()
+
+		prePinnedTableFuncs = make(map[string]*LFunction, len(tableFuncs))
+		for name, fn := range tableFuncs {
+			prePinnedTableFuncs[name] = pinningState.NewFunction(fn)
+		}
+
+		immutableTableMod = pinningState.CreateTable(0, len(tableFuncs))
+		for name, fn := range prePinnedTableFuncs {
+			immutableTableMod.RawSetString(name, fn)
+		}
+		immutableTableMod.Immutable = true
+	})
+}
+
+func OpenTable(L *LState) int {
+	initTableModule()
+	L.RegisterImmutableModule(TabLibName, immutableTableMod)
+	L.Push(immutableTableMod)
+	return 1
 }
 
 func tableSort(L *LState) int {

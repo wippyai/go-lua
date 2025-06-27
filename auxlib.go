@@ -304,6 +304,57 @@ func (ls *LState) RegisterModule(name string, funcs map[string]LGFunction) LValu
 	return mod
 }
 
+// RegisterImmutableModule registers a module using a pre-built immutable table with pinned functions.
+// This is much faster than RegisterModule since functions are pre-created and the table is immutable.
+// The immutableModule should be created once with pre-pinned LFunctions and marked as immutable.
+func (ls *LState) RegisterImmutableModule(name string, immutableModule *LTable) LValue {
+	// Fast path: Get _LOADED table directly from registry
+	registry := ls.Get(RegistryIndex).(*LTable)
+	loadedTable := registry.RawGetString("_LOADED")
+
+	var loaded *LTable
+	if loadedTable == LNil {
+		// Create _LOADED table if it doesn't exist
+		loaded = ls.CreateTable(0, 8)
+		registry.RawSetString("_LOADED", loaded)
+	} else {
+		loaded = loadedTable.(*LTable)
+	}
+
+	// Check if module already exists
+	existingMod := loaded.RawGetString(name)
+	if existingMod != LNil {
+		return existingMod
+	}
+
+	// Set module in globals directly (fastest path)
+	globals := ls.Get(GlobalsIndex).(*LTable)
+	globals.RawSetString(name, immutableModule)
+
+	// Register in _LOADED
+	loaded.RawSetString(name, immutableModule)
+
+	return immutableModule
+}
+
+// CreateImmutableModule creates an immutable module table with pre-pinned functions.
+// This should be called once during initialization to create reusable module tables.
+// The functions map should contain pre-created LFunction instances.
+func (ls *LState) CreateImmutableModule(prePinnedFuncs map[string]*LFunction) *LTable {
+	// Create table with exact capacity
+	mod := ls.CreateTable(0, len(prePinnedFuncs))
+
+	// Add all pre-pinned functions directly
+	for name, fn := range prePinnedFuncs {
+		mod.RawSetString(name, fn)
+	}
+
+	// Make it immutable for safe reuse
+	mod.Immutable = true
+
+	return mod
+}
+
 func (ls *LState) SetFuncs(tb *LTable, funcs map[string]LGFunction, upvalues ...LValue) *LTable {
 	for fname, fn := range funcs {
 		tb.RawSetString(fname, ls.NewClosure(fn, upvalues...))
