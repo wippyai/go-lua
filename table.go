@@ -233,7 +233,7 @@ func (tb *LTable) RawSetInt(key int, value LValue) bool {
 		return tb.RawSetH(LNumber(key), value)
 	}
 	if tb.Array == nil {
-		tb.Array = make([]LValue, 0, 32)
+		tb.Array = make([]LValue, 0, defaultArrayCap)
 	}
 	index := key - 1
 	alen := len(tb.Array)
@@ -415,7 +415,6 @@ func (tb *LTable) RawGetString(key string) LValue {
 }
 
 // ForEach iterates over this table of elements, yielding each in turn to a given function.
-// OPTIMIZED: Still uses direct map iteration - no Keys/K2i needed, no eager Dict creation
 func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 	if tb.Array != nil {
 		for i, v := range tb.Array {
