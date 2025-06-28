@@ -77,9 +77,9 @@ func OpenBase(L *LState) int {
 	initBaseModule()
 
 	global := L.Get(GlobalsIndex).(*LTable)
-	L.SetGlobal("_G", global)
-	L.SetGlobal("_VERSION", LString(LuaVersion))
-	L.SetGlobal("_GOPHER_LUA_VERSION", LString(PackageName+" "+PackageVersion))
+	global.RawSetString("_G", global)
+	global.RawSetString("_VERSION", LString(LuaVersion))
+	global.RawSetString("_GOPHER_LUA_VERSION", LString(PackageName+" "+PackageVersion))
 
 	// Register all pre-pinned base functions efficiently
 	for name, fn := range prePinnedBaseFuncs {
@@ -90,9 +90,6 @@ func OpenBase(L *LState) int {
 	global.RawSetString("ipairs", prePinnedIpairs)
 	global.RawSetString("pairs", prePinnedPairs)
 
-	// Create and register the _G module (still needed for some internal operations)
-	basemod := L.RegisterModule("_G", baseFuncs)
-	L.Push(basemod)
 	return 1
 }
 
