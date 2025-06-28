@@ -44,11 +44,45 @@ func newLTable(acap int, hcap int) *LTable {
 	if hcap != 0 {
 		tb.Strdict = make(map[string]LValue, hcap)
 	}
+	// LAZY OPTIMIZATION: Keys, K2i, and Dict are nil until actually needed
+	// Keys/K2i only created when Next() is called
+	// Dict only created when non-string keys are used
 	return tb
 }
 
 func CreateTable(acap, hcap int) *LTable {
 	return newLTable(acap, hcap)
+}
+
+// ensureIterationOrder creates Keys/K2i only when needed (Next() called)
+func (tb *LTable) ensureIterationOrder() {
+	if tb.Keys != nil {
+		return // Already initialized
+	}
+
+	// Initialize iteration order tracking
+	totalKeys := len(tb.Strdict)
+	if tb.Dict != nil {
+		totalKeys += len(tb.Dict)
+	}
+
+	tb.Keys = make([]LValue, 0, totalKeys)
+	tb.K2i = make(map[LValue]int)
+
+	// Add all existing string keys in arbitrary order (Lua compliant)
+	for k := range tb.Strdict {
+		lkey := LString(k)
+		tb.K2i[lkey] = len(tb.Keys)
+		tb.Keys = append(tb.Keys, lkey)
+	}
+
+	// Add all existing non-string keys (if Dict exists)
+	if tb.Dict != nil {
+		for k := range tb.Dict {
+			tb.K2i[k] = len(tb.Keys)
+			tb.Keys = append(tb.Keys, k)
+		}
+	}
 }
 
 // Len returns length of this LTable without using __len.
@@ -218,6 +252,7 @@ func (tb *LTable) RawSetInt(key int, value LValue) bool {
 }
 
 // RawSetString sets a given LValue to a given string index without the __newindex metamethod.
+// OPTIMIZED: No longer creates Keys/K2i until Next() is called
 func (tb *LTable) RawSetString(key string, value LValue) bool {
 	if tb.Immutable {
 		return false
@@ -225,38 +260,40 @@ func (tb *LTable) RawSetString(key string, value LValue) bool {
 	if tb.Strdict == nil {
 		tb.Strdict = make(map[string]LValue, defaultHashCap)
 	}
-	if tb.Keys == nil {
-		tb.Keys = []LValue{}
-		tb.K2i = map[LValue]int{}
-	}
 
 	lkey := LString(key)
 	if value == LNil {
 		delete(tb.Strdict, key)
-		if idx, ok := tb.K2i[lkey]; ok {
-			lastIdx := len(tb.Keys) - 1
-			lastKey := tb.Keys[lastIdx]
+		// Only update Keys/K2i if they exist (lazy)
+		if tb.Keys != nil {
+			if idx, ok := tb.K2i[lkey]; ok {
+				lastIdx := len(tb.Keys) - 1
+				lastKey := tb.Keys[lastIdx]
 
-			if idx < lastIdx {
-				tb.Keys[idx] = lastKey
-				tb.K2i[lastKey] = idx
+				if idx < lastIdx {
+					tb.Keys[idx] = lastKey
+					tb.K2i[lastKey] = idx
+				}
+
+				tb.Keys = tb.Keys[:lastIdx]
+				delete(tb.K2i, lkey)
 			}
-
-			tb.Keys = tb.Keys[:lastIdx]
-			delete(tb.K2i, lkey)
 		}
 	} else {
 		tb.Strdict[key] = value
-		lkey := LString(key)
-		if _, ok := tb.K2i[lkey]; !ok {
-			tb.K2i[lkey] = len(tb.Keys)
-			tb.Keys = append(tb.Keys, lkey)
+		// Only update Keys/K2i if they exist (lazy)
+		if tb.Keys != nil {
+			if _, ok := tb.K2i[lkey]; !ok {
+				tb.K2i[lkey] = len(tb.Keys)
+				tb.Keys = append(tb.Keys, lkey)
+			}
 		}
 	}
 	return true
 }
 
 // RawSetH sets a given LValue to a given index without the __newindex metamethod.
+// OPTIMIZED: No longer creates Keys/K2i or Dict until actually needed
 func (tb *LTable) RawSetH(key LValue, value LValue) bool {
 	if tb.Immutable {
 		return false
@@ -264,33 +301,39 @@ func (tb *LTable) RawSetH(key LValue, value LValue) bool {
 	if s, ok := key.(LString); ok {
 		return tb.RawSetString(string(s), value)
 	}
-	if tb.Dict == nil {
-		tb.Dict = make(map[LValue]LValue, len(tb.Strdict))
-	}
-	if tb.Keys == nil {
-		tb.Keys = []LValue{}
-		tb.K2i = map[LValue]int{}
-	}
 
 	if value == LNil {
-		delete(tb.Dict, key)
-		if idx, ok := tb.K2i[key]; ok {
-			lastIdx := len(tb.Keys) - 1
-			lastKey := tb.Keys[lastIdx]
+		// LAZY: Only delete if Dict exists
+		if tb.Dict != nil {
+			delete(tb.Dict, key)
+		}
+		// Only update Keys/K2i if they exist (lazy)
+		if tb.Keys != nil {
+			if idx, ok := tb.K2i[key]; ok {
+				lastIdx := len(tb.Keys) - 1
+				lastKey := tb.Keys[lastIdx]
 
-			if idx < lastIdx {
-				tb.Keys[idx] = lastKey
-				tb.K2i[lastKey] = idx
+				if idx < lastIdx {
+					tb.Keys[idx] = lastKey
+					tb.K2i[lastKey] = idx
+				}
+
+				tb.Keys = tb.Keys[:lastIdx]
+				delete(tb.K2i, key)
 			}
-
-			tb.Keys = tb.Keys[:lastIdx]
-			delete(tb.K2i, key)
 		}
 	} else {
+		// LAZY: Only create Dict when storing non-string, non-int key
+		if tb.Dict == nil {
+			tb.Dict = make(map[LValue]LValue, 8) // Start small for rare use case
+		}
 		tb.Dict[key] = value
-		if _, ok := tb.K2i[key]; !ok {
-			tb.K2i[key] = len(tb.Keys)
-			tb.Keys = append(tb.Keys, key)
+		// Only update Keys/K2i if they exist (lazy)
+		if tb.Keys != nil {
+			if _, ok := tb.K2i[key]; !ok {
+				tb.K2i[key] = len(tb.Keys)
+				tb.Keys = append(tb.Keys, key)
+			}
 		}
 	}
 	return true
@@ -372,6 +415,7 @@ func (tb *LTable) RawGetString(key string) LValue {
 }
 
 // ForEach iterates over this table of elements, yielding each in turn to a given function.
+// OPTIMIZED: Still uses direct map iteration - no Keys/K2i needed, no eager Dict creation
 func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 	if tb.Array != nil {
 		for i, v := range tb.Array {
@@ -387,6 +431,7 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 			}
 		}
 	}
+	// LAZY: Only iterate Dict if it was actually created
 	if tb.Dict != nil {
 		for k, v := range tb.Dict {
 			if v != LNil {
@@ -398,6 +443,9 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 
 // This function is equivalent to lua_next ( http://www.lua.org/manual/5.1/manual.html#lua_next ).
 func (tb *LTable) Next(key LValue) (LValue, LValue) {
+	// Lazy initialization - only create ordering when Next() is actually used
+	tb.ensureIterationOrder()
+
 	init := false
 	if key == LNil {
 		key = LNumber(0)
