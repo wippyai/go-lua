@@ -3,13 +3,8 @@ package lua
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
-
-func OpenDebug(L *LState) int {
-	dbgmod := L.RegisterModule(DebugLibName, debugFuncs)
-	L.Push(dbgmod)
-	return 1
-}
 
 var debugFuncs = map[string]LGFunction{
 	"getfenv":      debugGetFEnv,
@@ -22,6 +17,36 @@ var debugFuncs = map[string]LGFunction{
 	"setmetatable": debugSetMetatable,
 	"setupvalue":   debugSetUpvalue,
 	"traceback":    debugTraceback,
+}
+
+var (
+	prePinnedDebugFuncs map[string]*LFunction
+	immutableDebugMod   *LTable
+	initDebugOnce       sync.Once
+)
+
+func initDebugModule() {
+	initDebugOnce.Do(func() {
+		pinningState := getSharedPinningState()
+
+		prePinnedDebugFuncs = make(map[string]*LFunction, len(debugFuncs))
+		for name, fn := range debugFuncs {
+			prePinnedDebugFuncs[name] = pinningState.NewFunction(fn)
+		}
+
+		immutableDebugMod = pinningState.CreateTable(0, len(debugFuncs))
+		for name, fn := range prePinnedDebugFuncs {
+			immutableDebugMod.RawSetString(name, fn)
+		}
+		immutableDebugMod.Immutable = true
+	})
+}
+
+func OpenDebug(L *LState) int {
+	initDebugModule()
+	L.RegisterImmutableModule(DebugLibName, immutableDebugMod)
+	L.Push(immutableDebugMod)
+	return 1
 }
 
 func debugGetFEnv(L *LState) int {

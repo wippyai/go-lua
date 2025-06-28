@@ -3,13 +3,57 @@ package lua
 import (
 	"math"
 	"math/rand"
+	"sync"
 )
 
+var (
+	// Pre-pinned math functions and immutable module
+	prePinnedMathFuncs map[string]*LFunction
+	immutableMathMod   *LTable
+	mathConstants      struct {
+		pi   LNumber
+		huge LNumber
+	}
+	initMathOnce sync.Once
+)
+
+// initMathModule creates the immutable math module with pre-pinned functions
+func initMathModule() {
+	initMathOnce.Do(func() {
+		pinningState := getSharedPinningState()
+
+		// Pre-pin all math functions
+		prePinnedMathFuncs = make(map[string]*LFunction, len(mathFuncs))
+		for name, fn := range mathFuncs {
+			prePinnedMathFuncs[name] = pinningState.NewFunction(fn)
+		}
+
+		// Create immutable math module with exact capacity (functions + constants)
+		immutableMathMod = pinningState.CreateTable(0, len(mathFuncs)+2)
+
+		// Add all pre-pinned functions
+		for name, fn := range prePinnedMathFuncs {
+			immutableMathMod.RawSetString(name, fn)
+		}
+
+		// Add constants (these are safe to share since LNumbers are immutable)
+		mathConstants.pi = LNumber(math.Pi)
+		mathConstants.huge = LNumber(math.MaxFloat64)
+		immutableMathMod.RawSetString("pi", mathConstants.pi)
+		immutableMathMod.RawSetString("huge", mathConstants.huge)
+
+		// Make the module immutable for safe reuse
+		immutableMathMod.Immutable = true
+	})
+}
+
+// OpenMath - optimized version using immutable pre-pinned module
 func OpenMath(L *LState) int {
-	mod := L.RegisterModule(MathLibName, mathFuncs).(*LTable)
-	mod.RawSetString("pi", LNumber(math.Pi))
-	mod.RawSetString("huge", LNumber(math.MaxFloat64))
-	L.Push(mod)
+	initMathModule()
+
+	// Register the immutable math module (ultra-fast)
+	L.RegisterImmutableModule(MathLibName, immutableMathMod)
+	L.Push(immutableMathMod)
 	return 1
 }
 

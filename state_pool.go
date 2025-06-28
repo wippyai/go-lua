@@ -14,7 +14,7 @@ var statePool = sync.Pool{
 
 // resetLState prepares a state for reuse by clearing its values but keeping the allocated structures
 func resetLState(ls *LState) {
-	// Clear registry but keep the underlying array
+	// Clear registry but keep the underlying Array
 	if ls.reg != nil {
 		ls.reg.top = 0
 		// Explicitly nil out values to help with GC

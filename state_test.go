@@ -549,7 +549,7 @@ func TestRegistryAutoGrow(t *testing.T) {
 
 // This test exposed a panic caused by accessing an unassigned var in the lua registry.
 // The panic was caused by initCallFrame. It was calling resize() on the registry after it had written some values
-// directly to the reg's array, but crucially, before it had updated "top". This meant when the resize occurred, the
+// directly to the reg's Array, but crucially, before it had updated "top". This meant when the resize occurred, the
 // values beyond top where not copied, and were lost, leading to a later uninitialised value being found in the registry.
 func TestUninitializedVarAccess(t *testing.T) {
 	L := NewState(Options{

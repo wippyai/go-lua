@@ -7,32 +7,19 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
-
-/* basic functions {{{ */
-
-func OpenBase(L *LState) int {
-	global := L.Get(GlobalsIndex).(*LTable)
-	L.SetGlobal("_G", global)
-	L.SetGlobal("_VERSION", LString(LuaVersion))
-	L.SetGlobal("_GOPHER_LUA_VERSION", LString(PackageName+" "+PackageVersion))
-	basemod := L.RegisterModule("_G", baseFuncs)
-	global.RawSetString("ipairs", L.NewClosure(baseIpairs, L.NewFunction(ipairsaux)))
-	global.RawSetString("pairs", L.NewClosure(basePairs, L.NewFunction(pairsaux)))
-	L.Push(basemod)
-	return 1
-}
 
 var baseFuncs = map[string]LGFunction{
 	"assert":         baseAssert,
-	"collectgarbage": baseCollectGarbage, // todo: forbid or change or use release
-	"dofile":         baseDoFile,         // todo: forbid
+	"collectgarbage": baseCollectGarbage,
+	"dofile":         baseDoFile,
 	"error":          baseError,
 	"getfenv":        baseGetFEnv,
 	"getmetatable":   baseGetMetatable,
 	"load":           baseLoad,
-	"loadfile":       baseLoadFile,   // todo: forbid
-	"loadstring":     baseLoadString, // todo: forbid
+	"loadfile":       baseLoadFile,
+	"loadstring":     baseLoadString,
 	"next":           baseNext,
 	"pcall":          basePCall,
 	"print":          basePrint,
@@ -53,6 +40,57 @@ var baseFuncs = map[string]LGFunction{
 	"require": loRequire,
 	// hidden features
 	"newproxy": baseNewProxy,
+}
+
+var (
+	prePinnedBaseFuncs map[string]*LFunction
+	prePinnedIpairs    *LFunction
+	prePinnedPairs     *LFunction
+	prePinnedIpairsAux *LFunction
+	prePinnedPairsAux  *LFunction
+	initBaseOnce       sync.Once
+)
+
+func initBaseModule() {
+	initBaseOnce.Do(func() {
+		pinningState := getSharedPinningState()
+
+		// Pre-pin all base functions
+		prePinnedBaseFuncs = make(map[string]*LFunction, len(baseFuncs))
+		for name, fn := range baseFuncs {
+			prePinnedBaseFuncs[name] = pinningState.NewFunction(fn)
+		}
+
+		// Pre-pin auxiliary functions for ipairs and pairs
+		prePinnedIpairsAux = pinningState.NewFunction(ipairsaux)
+		prePinnedPairsAux = pinningState.NewFunction(pairsaux)
+
+		// Pre-pin the closure functions
+		prePinnedIpairs = pinningState.NewClosure(baseIpairs, prePinnedIpairsAux)
+		prePinnedPairs = pinningState.NewClosure(basePairs, prePinnedPairsAux)
+	})
+}
+
+/* basic functions {{{ */
+
+func OpenBase(L *LState) int {
+	initBaseModule()
+
+	global := L.Get(GlobalsIndex).(*LTable)
+	global.RawSetString("_G", global)
+	global.RawSetString("_VERSION", LString(LuaVersion))
+	global.RawSetString("_GOPHER_LUA_VERSION", LString(PackageName+" "+PackageVersion))
+
+	// Register all pre-pinned base functions efficiently
+	for name, fn := range prePinnedBaseFuncs {
+		global.RawSetString(name, fn)
+	}
+
+	// Set the special closure functions
+	global.RawSetString("ipairs", prePinnedIpairs)
+	global.RawSetString("pairs", prePinnedPairs)
+
+	return 1
 }
 
 func baseAssert(L *LState) int {

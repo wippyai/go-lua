@@ -6,10 +6,10 @@ import (
 
 func TestTableNewLTable(t *testing.T) {
 	tbl := newLTable(-1, -2)
-	errorIfNotEqual(t, 0, cap(tbl.array))
+	errorIfNotEqual(t, 0, cap(tbl.Array))
 
 	tbl = newLTable(10, 9)
-	errorIfNotEqual(t, 10, cap(tbl.array))
+	errorIfNotEqual(t, 10, cap(tbl.Array))
 }
 
 func TestTableLen(t *testing.T) {
@@ -156,12 +156,12 @@ func TestTableRawSetH(t *testing.T) {
 	tbl := newLTable(0, 0)
 	tbl.RawSetH(LString("key"), LTrue)
 	tbl.RawSetH(LString("key"), LNil)
-	_, found := tbl.dict[LString("key")]
+	_, found := tbl.Dict[LString("key")]
 	errorIfNotEqual(t, false, found)
 
 	tbl.RawSetH(LTrue, LTrue)
 	tbl.RawSetH(LTrue, LNil)
-	_, foundb := tbl.dict[LTrue]
+	_, foundb := tbl.Dict[LTrue]
 	errorIfNotEqual(t, false, foundb)
 }
 

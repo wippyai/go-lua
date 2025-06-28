@@ -2,27 +2,12 @@ package lua
 
 import (
 	"fmt"
-	"strings"
-
 	"github.com/ponyruntime/go-lua/pm"
+	"strings"
+	"sync"
 )
 
 const emptyLString LString = LString("")
-
-func OpenString(L *LState) int {
-	var mod *LTable
-	//_, ok := L.G.builtinMts[int(LTString)]
-	//if !ok {
-	mod = L.RegisterModule(StringLibName, strFuncs).(*LTable)
-	gmatch := L.NewClosure(strGmatch, L.NewFunction(strGmatchIter))
-	mod.RawSetString("gmatch", gmatch)
-	mod.RawSetString("gfind", gmatch)
-	mod.RawSetString("__index", mod)
-	L.G.builtinMts[int(LTString)] = mod
-	//}
-	L.Push(mod)
-	return 1
-}
 
 var strFuncs = map[string]LGFunction{
 	"byte":    strByte,
@@ -38,6 +23,51 @@ var strFuncs = map[string]LGFunction{
 	"reverse": strReverse,
 	"sub":     strSub,
 	"upper":   strUpper,
+}
+
+var (
+	prePinnedStringFuncs map[string]*LFunction
+	immutableStringMod   *LTable
+	initStringOnce       sync.Once
+)
+
+func initStringModule() {
+	initStringOnce.Do(func() {
+		pinningState := getSharedPinningState()
+
+		// Pre-pin all string functions
+		prePinnedStringFuncs = make(map[string]*LFunction, len(strFuncs)+2)
+		for name, fn := range strFuncs {
+			prePinnedStringFuncs[name] = pinningState.NewFunction(fn)
+		}
+
+		// Special handling for gmatch/gfind closures
+		gmatch := pinningState.NewClosure(strGmatch, pinningState.NewFunction(strGmatchIter))
+		prePinnedStringFuncs["gmatch"] = gmatch
+		prePinnedStringFuncs["gfind"] = gmatch
+
+		// Create immutable string module
+		immutableStringMod = pinningState.CreateTable(0, len(prePinnedStringFuncs)+1)
+
+		// Add all pre-pinned functions
+		for name, fn := range prePinnedStringFuncs {
+			immutableStringMod.RawSetString(name, fn)
+		}
+
+		// Self-reference for __index
+		immutableStringMod.RawSetString("__index", immutableStringMod)
+		immutableStringMod.Immutable = true
+	})
+}
+
+func OpenString(L *LState) int {
+	initStringModule()
+
+	// Set as string metatable and register module
+	L.G.builtinMts[int(LTString)] = immutableStringMod
+	L.RegisterImmutableModule(StringLibName, immutableStringMod)
+	L.Push(immutableStringMod)
+	return 1
 }
 
 func strByte(L *LState) int {
