@@ -2553,7 +2553,7 @@ func stringConcat(L *LState, total, last int) LValue {
 		} else {
 			// Get builder from pool
 			builder := stringBuilderPool.Get().(*strings.Builder)
-			builder.Reset() // Clear any existing content
+			builder.Reset()
 
 			// Collect strings backwards, estimate total size
 			parts := make([]string, 0, total+1)
