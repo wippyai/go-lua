@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 )
 
 func mainLoop(L *LState, baseframe *callFrame) {
@@ -2523,6 +2524,13 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 	return LNil
 }
 
+// Add this at package level
+var stringBuilderPool = sync.Pool{
+	New: func() interface{} {
+		return &strings.Builder{}
+	},
+}
+
 func stringConcat(L *LState, total, last int) LValue {
 	rhs := L.reg.Get(last)
 	total--
@@ -2543,18 +2551,42 @@ func stringConcat(L *LState, total, last int) LValue {
 				return LNil
 			}
 		} else {
-			buf := make([]string, total+1)
-			buf[total] = LVAsString(rhs)
+			// Get builder from pool
+			builder := stringBuilderPool.Get().(*strings.Builder)
+			builder.Reset() // Clear any existing content
+
+			// Collect strings backwards, estimate total size
+			parts := make([]string, 0, total+1)
+			rhsStr := LVAsString(rhs)
+			parts = append(parts, rhsStr)
+			estimatedSize := len(rhsStr)
+
 			for total > 0 {
 				lhs = L.reg.Get(i)
 				if !LVCanConvToString(lhs) {
 					break
 				}
-				buf[total-1] = LVAsString(lhs)
+				lhsStr := LVAsString(lhs)
+				parts = append(parts, lhsStr)
+				estimatedSize += len(lhsStr)
 				i--
 				total--
 			}
-			rhs = LString(strings.Join(buf, ""))
+
+			// Pre-allocate builder capacity
+			builder.Grow(estimatedSize)
+
+			// Write strings in reverse order (left to right in final result)
+			for j := len(parts) - 1; j >= 0; j-- {
+				builder.WriteString(parts[j])
+			}
+
+			result := LString(builder.String())
+
+			// Return builder to pool
+			stringBuilderPool.Put(builder)
+
+			rhs = result
 		}
 	}
 	return rhs
