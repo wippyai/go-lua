@@ -15,6 +15,7 @@ var tableFuncs = map[string]LGFunction{
 	"create":   tableCreate,
 	"freeze":   tableMakeImmutable,
 	"isfrozen": tableIsImmutable,
+	"unpack":   baseUnpack,
 }
 
 var (
