@@ -6,15 +6,16 @@ import (
 )
 
 var tableFuncs = map[string]LGFunction{
-	"getn":           tableGetN,
-	"concat":         tableConcat,
-	"insert":         tableInsert,
-	"maxn":           tableMaxN,
-	"remove":         tableRemove,
-	"sort":           tableSort,
-	"create":         tableCreate,
-	"make_immutable": tableMakeImmutable,
-	"is_immutable":   tableIsImmutable,
+	"getn":     tableGetN,
+	"concat":   tableConcat,
+	"insert":   tableInsert,
+	"maxn":     tableMaxN,
+	"remove":   tableRemove,
+	"sort":     tableSort,
+	"create":   tableCreate,
+	"freeze":   tableMakeImmutable,
+	"isfrozen": tableIsImmutable,
+	"unpack":   baseUnpack,
 }
 
 var (
