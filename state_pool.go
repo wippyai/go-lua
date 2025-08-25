@@ -41,11 +41,6 @@ func resetLState(ls *LState) {
 	ls.G = nil
 	ls.hasErrorFunc = false
 	ls.wrapped = false
-
-	// Keep allocator but release its current slices
-	if ls.alloc != nil {
-		ls.alloc.Release()
-	}
 }
 
 // Modified Close to return state to pool if appropriate
@@ -59,8 +54,6 @@ func (ls *LState) Close() {
 		resetLState(ls)
 		statePool.Put(ls)
 	} else {
-		// Original close behavior for states we don't want to reuse
-		ls.alloc.Release()
 		ls.stack.FreeAll()
 		ls.stack = nil
 		ls.reg = nil
