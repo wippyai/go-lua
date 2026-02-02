@@ -120,16 +120,23 @@ func TestTableMaxN(t *testing.T) {
 
 func TestTableRemove(t *testing.T) {
 	tbl := newLTable(0, 0)
-	errorIfNotEqual(t, LNil, tbl.Remove(10))
+	err, _ := tbl.Remove(10)
+	errorIfNotEqual(t, LNil, err)
 	tbl.Append(LTrue)
-	errorIfNotEqual(t, LNil, tbl.Remove(10))
+	err, _ = tbl.Remove(10)
+
+	errorIfNotEqual(t, LNil, err)
 
 	tbl.Append(LFalse)
 	tbl.Append(LTrue)
-	errorIfNotEqual(t, LFalse, tbl.Remove(2))
+	err, _ = tbl.Remove(2)
+
+	errorIfNotEqual(t, LFalse, err)
 	errorIfNotEqual(t, 2, tbl.MaxN())
 	tbl.Append(LFalse)
-	errorIfNotEqual(t, LFalse, tbl.Remove(-1))
+	err, _ = tbl.Remove(-1)
+
+	errorIfNotEqual(t, LFalse, err)
 	errorIfNotEqual(t, 2, tbl.MaxN())
 
 }

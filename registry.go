@@ -18,22 +18,17 @@ func newRegistry(handler registryHandler, initialSize int, growBy int, maxSize i
 	return &registry{make([]LValue, initialSize), 0, growBy, maxSize, alloc, handler}
 }
 
-func (rg *registry) checkSize(requiredSize int) { // +inline-start
-	if requiredSize > cap(rg.array) {
-		rg.resize(requiredSize)
-	}
-} // +inline-end
-
-func (rg *registry) resize(requiredSize int) { // +inline-start
+func (rg *registry) resize(requiredSize int) bool { // +inline-start
 	newSize := requiredSize + rg.growBy // give some padding
 	if newSize > rg.maxSize {
 		newSize = rg.maxSize
 	}
 	if newSize < requiredSize {
 		rg.handler.registryOverflow()
-		return
+		return false
 	}
 	rg.forceResize(newSize)
+	return true
 } // +inline-end
 
 func (rg *registry) forceResize(newSize int) {
@@ -91,11 +86,18 @@ func (rg *registry) Pop() LValue {
 	v := rg.array[rg.top-1]
 	rg.array[rg.top-1] = LNil
 	rg.top--
+	if v == nil {
+		return LNil
+	}
 	return v
 }
 
 func (rg *registry) Get(reg int) LValue {
-	return rg.array[reg]
+	v := rg.array[reg]
+	if v == nil {
+		return LNil
+	}
+	return v
 }
 
 // CopyRange will move a section of values from index `start` to index `regv`
@@ -125,7 +127,11 @@ func (rg *registry) CopyRange(regv, start, limit, n int) { // +inline-start
 		if srcIdx >= limit || srcIdx < 0 {
 			rg.array[regv+i] = LNil
 		} else {
-			rg.array[regv+i] = rg.array[srcIdx]
+			v := rg.array[srcIdx]
+			if v == nil {
+				v = LNil
+			}
+			rg.array[regv+i] = v
 		}
 	}
 
@@ -193,7 +199,6 @@ func (rg *registry) Insert(value LValue, reg int) {
 	}
 	top--
 	for ; top >= reg; top-- {
-		// FIXME consider using copy() here if Insert() is called enough
 		// this section is inlined by go-inline
 		// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 		{

@@ -90,7 +90,7 @@ func (tb *LTable) Len() int {
 	if tb.Array == nil {
 		return 0
 	}
-	var prev LValue = LNil
+	var prev = LNil
 	for i := len(tb.Array) - 1; i >= 0; i-- {
 		v := tb.Array[i]
 		if prev == LNil && v != LNil {
@@ -217,6 +217,27 @@ func (tb *LTable) RawSet(key LValue, value LValue) bool {
 			}
 			return true
 		}
+	case LInteger:
+		iv := int(v)
+		if iv > 0 && iv < MaxArrayIndex {
+			if tb.Array == nil {
+				tb.Array = make([]LValue, 0, defaultArrayCap)
+			}
+			index := iv - 1
+			alen := len(tb.Array)
+			switch {
+			case index == alen:
+				tb.Array = append(tb.Array, value)
+			case index > alen:
+				for i := 0; i < (index - alen); i++ {
+					tb.Array = append(tb.Array, LNil)
+				}
+				tb.Array = append(tb.Array, value)
+			case index < alen:
+				tb.Array[index] = value
+			}
+			return true
+		}
 	case LString:
 		return tb.RawSetString(string(v), value)
 	}
@@ -252,11 +273,11 @@ func (tb *LTable) RawSetInt(key int, value LValue) bool {
 }
 
 // RawSetString sets a given LValue to a given string index without the __newindex metamethod.
-// OPTIMIZED: No longer creates Keys/K2i until Next() is called
 func (tb *LTable) RawSetString(key string, value LValue) bool {
 	if tb.Immutable {
 		return false
 	}
+
 	if tb.Strdict == nil {
 		tb.Strdict = make(map[string]LValue, defaultHashCap)
 	}
@@ -353,6 +374,18 @@ func (tb *LTable) RawGet(key LValue) LValue {
 			}
 			return tb.Array[index]
 		}
+	case LInteger:
+		iv := int(v)
+		if iv > 0 && iv < MaxArrayIndex {
+			if tb.Array == nil {
+				return LNil
+			}
+			index := iv - 1
+			if index >= len(tb.Array) {
+				return LNil
+			}
+			return tb.Array[index]
+		}
 	case LString:
 		if tb.Strdict == nil {
 			return LNil
@@ -383,7 +416,7 @@ func (tb *LTable) RawGetInt(key int) LValue {
 	return tb.Array[index]
 }
 
-// RawGet returns an LValue associated with a given key without __index metamethod.
+// RawGetH returns an LValue associated with a given key without __index metamethod.
 func (tb *LTable) RawGetH(key LValue) LValue {
 	if s, sok := key.(LString); sok {
 		if tb.Strdict == nil {
@@ -408,7 +441,7 @@ func (tb *LTable) RawGetString(key string) LValue {
 	if tb.Strdict == nil {
 		return LNil
 	}
-	if v, vok := tb.Strdict[string(key)]; vok {
+	if v, vok := tb.Strdict[key]; vok {
 		return v
 	}
 	return LNil
@@ -430,7 +463,6 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 			}
 		}
 	}
-	// LAZY: Only iterate Dict if it was actually created
 	if tb.Dict != nil {
 		for k, v := range tb.Dict {
 			if v != LNil {
@@ -440,7 +472,7 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 	}
 }
 
-// This function is equivalent to lua_next ( http://www.lua.org/manual/5.1/manual.html#lua_next ).
+// Next is equivalent to lua_next ( http://www.lua.org/manual/5.1/manual.html#lua_next ).
 func (tb *LTable) Next(key LValue) (LValue, LValue) {
 	// Lazy initialization - only create ordering when Next() is actually used
 	tb.ensureIterationOrder()
@@ -452,7 +484,7 @@ func (tb *LTable) Next(key LValue) (LValue, LValue) {
 	}
 
 	if init || key != LNumber(0) {
-		if kv, ok := key.(LNumber); ok && isInteger(kv) && int(kv) >= 0 && kv < LNumber(MaxArrayIndex) {
+		if kv, ok := key.(LNumber); ok && IsIntegerValue(kv) && int(kv) >= 0 && kv < LNumber(MaxArrayIndex) {
 			index := int(kv)
 			if tb.Array != nil {
 				for ; index < len(tb.Array); index++ {
@@ -462,7 +494,7 @@ func (tb *LTable) Next(key LValue) (LValue, LValue) {
 				}
 			}
 			if tb.Array == nil || index == len(tb.Array) {
-				if (tb.Dict == nil || len(tb.Dict) == 0) && (tb.Strdict == nil || len(tb.Strdict) == 0) {
+				if len(tb.Keys) == 0 {
 					return LNil, LNil
 				}
 				key = tb.Keys[0]

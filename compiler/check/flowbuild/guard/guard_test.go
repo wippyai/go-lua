@@ -1,0 +1,163 @@
+package guard_test
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
+	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/guard"
+	"github.com/wippyai/go-lua/types/typ"
+)
+
+func TestTruthyPathKey_Equality(t *testing.T) {
+	key1 := guard.TruthyPathKey{Symbol: 1, Field: "foo"}
+	key2 := guard.TruthyPathKey{Symbol: 1, Field: "foo"}
+	key3 := guard.TruthyPathKey{Symbol: 2, Field: "foo"}
+	key4 := guard.TruthyPathKey{Symbol: 1, Field: "bar"}
+
+	if key1 != key2 {
+		t.Error("expected identical keys to be equal")
+	}
+	if key1 == key3 {
+		t.Error("expected different symbols to produce different keys")
+	}
+	if key1 == key4 {
+		t.Error("expected different fields to produce different keys")
+	}
+}
+
+func TestCollectTruthyGuards_NilGraph(t *testing.T) {
+	result := guard.CollectTruthyGuards(nil, nil)
+	if result != nil {
+		t.Error("expected nil for nil graph")
+	}
+}
+
+func TestCollectTruthyGuards_NilBindings(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{Exprs: []ast.Expr{&ast.NilExpr{}}},
+		},
+	}
+	graph := cfg.Build(fn)
+	result := guard.CollectTruthyGuards(graph, nil)
+	if result != nil {
+		t.Error("expected nil for nil bindings")
+	}
+}
+
+func TestExtractTruthyPathKeys_NilExpr(t *testing.T) {
+	result := guard.ExtractTruthyPathKeys(nil, nil)
+	if result != nil {
+		t.Error("expected nil for nil expr")
+	}
+}
+
+func TestExtractTruthyPathKeys_NilBindings(t *testing.T) {
+	result := guard.ExtractTruthyPathKeys(&ast.IdentExpr{Value: "x"}, nil)
+	if result != nil {
+		t.Error("expected nil for nil bindings")
+	}
+}
+
+func TestExtractTruthyPathKeys_IdentExpr(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"x"}},
+		Stmts: []ast.Stmt{
+			&ast.IfStmt{
+				Condition: &ast.IdentExpr{Value: "x"},
+				Then:      []ast.Stmt{&ast.ReturnStmt{}},
+			},
+		},
+	}
+	bindings := bind.Bind(fn, nil)
+
+	ifStmt := fn.Stmts[0].(*ast.IfStmt)
+	condIdent := ifStmt.Condition.(*ast.IdentExpr)
+
+	result := guard.ExtractTruthyPathKeys(condIdent, bindings)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(result))
+	}
+	if result[0].Field != "" {
+		t.Errorf("expected empty field for simple ident, got %q", result[0].Field)
+	}
+}
+
+func TestAttrFieldName_NilInput(t *testing.T) {
+	result := guard.AttrFieldName(nil)
+	if result != "" {
+		t.Errorf("expected empty string for nil input, got %q", result)
+	}
+}
+
+func TestAttrFieldName_NilKey(t *testing.T) {
+	attr := &ast.AttrGetExpr{Key: nil}
+	result := guard.AttrFieldName(attr)
+	if result != "" {
+		t.Errorf("expected empty string for nil key, got %q", result)
+	}
+}
+
+func TestAttrFieldName_StringKey(t *testing.T) {
+	attr := &ast.AttrGetExpr{Key: &ast.StringExpr{Value: "myField"}}
+	result := guard.AttrFieldName(attr)
+	if result != "myField" {
+		t.Errorf("expected 'myField', got %q", result)
+	}
+}
+
+func TestAttrFieldName_IdentKey(t *testing.T) {
+	attr := &ast.AttrGetExpr{Key: &ast.IdentExpr{Value: "myField"}}
+	result := guard.AttrFieldName(attr)
+	if result != "myField" {
+		t.Errorf("expected 'myField', got %q", result)
+	}
+}
+
+func TestAttrFieldName_NumberKey(t *testing.T) {
+	attr := &ast.AttrGetExpr{Key: &ast.NumberExpr{Value: "42"}}
+	result := guard.AttrFieldName(attr)
+	if result != "" {
+		t.Errorf("expected empty string for number key, got %q", result)
+	}
+}
+
+func TestNarrowTableFieldsByGuard_NonRecord(t *testing.T) {
+	result := guard.NarrowTableFieldsByGuard(typ.String, nil, 0, nil, nil)
+	if result != typ.String {
+		t.Error("expected string type returned unchanged")
+	}
+}
+
+func TestNarrowTableFieldsByGuard_NilRecord(t *testing.T) {
+	result := guard.NarrowTableFieldsByGuard(nil, nil, 0, nil, nil)
+	if result != nil {
+		t.Error("expected nil returned")
+	}
+}
+
+func TestNarrowTableFieldsByGuard_EmptyGuards(t *testing.T) {
+	rec := typ.NewRecord().Field("x", typ.String).Build()
+	result := guard.NarrowTableFieldsByGuard(rec, &ast.TableExpr{}, 1, nil, nil)
+	if result != rec {
+		t.Error("expected original record when no guards")
+	}
+}
+
+func TestNarrowTableFieldsByGuard_NoMatchingGuards(t *testing.T) {
+	rec := typ.NewRecord().Field("x", typ.NewOptional(typ.String)).Build()
+	tbl := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{Key: &ast.StringExpr{Value: "x"}, Value: &ast.StringExpr{Value: "val"}},
+		},
+	}
+	guards := map[cfg.Point]map[guard.TruthyPathKey]bool{
+		1: {},
+	}
+	result := guard.NarrowTableFieldsByGuard(rec, tbl, 1, nil, guards)
+	if result != rec {
+		t.Error("expected original record when no matching guards")
+	}
+}

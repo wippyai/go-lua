@@ -7,7 +7,7 @@ import (
 
 // statePool holds reusable LState objects for better performance
 var statePool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return nil // We'll create states with specific options when needed
 	},
 }
@@ -16,9 +16,10 @@ var statePool = sync.Pool{
 func resetLState(ls *LState) {
 	// Clear registry but keep the underlying Array
 	if ls.reg != nil {
+		// Only clear up to top, not the entire array
+		top := ls.reg.top
 		ls.reg.top = 0
-		// Explicitly nil out values to help with GC
-		for i := range ls.reg.array {
+		for i := 0; i < top; i++ {
 			ls.reg.array[i] = LNil
 		}
 	}
@@ -36,14 +37,18 @@ func resetLState(ls *LState) {
 	ls.currentFrame = nil
 	ls.Parent = nil
 	ls.Dead = false
-	ls.stop = 0
+	// Note: stop is NOT reset here - it stays set so IsClosed() returns true
+	// stop is reset when the state is retrieved from the pool for reuse
 	ls.Env = nil
 	ls.G = nil
 	ls.hasErrorFunc = false
 	ls.wrapped = false
+
+	// Clear frame extensions to prevent stale continuations from being invoked
+	ls.frameExt = nil
 }
 
-// Modified Close to return state to pool if appropriate
+// Close returns the state to pool if appropriate.
 func (ls *LState) Close() {
 	atomic.AddInt32(&ls.stop, 1)
 
@@ -60,8 +65,8 @@ func (ls *LState) Close() {
 	}
 }
 
-// Replacement for newLStateWithG that uses pooled states when available
-func newLStateWithG(options Options, G *Global, env *LTable) *LState {
+// newLStateWithGAndAlloc creates a thread that shares the parent's allocator
+func newLStateWithGAndAlloc(options Options, G *Global, env *LTable, parentAlloc *allocator) *LState {
 	// Try to get a state from the pool
 	pooledState := statePool.Get()
 
@@ -72,22 +77,23 @@ func newLStateWithG(options Options, G *Global, env *LTable) *LState {
 		ls.Panic = panicWithTraceback
 		ls.Options = options
 		ls.mainLoop = mainLoop
+		ls.alloc = parentAlloc
+		ls.stop = 0
+		ls.ctx = nil
+		ls.ctxDone = nil
 
 		// Registry was preserved but might need resetting if options changed
 		if ls.reg != nil && cap(ls.reg.array) != options.RegistrySize {
-			// Registry size mismatch, create a new one
-			ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, ls.alloc)
+			ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, parentAlloc)
 		} else if ls.reg != nil {
-			// Registry size is ok, just reset the handler
 			ls.reg.handler = ls
+			ls.reg.alloc = parentAlloc
 		}
 
-		// Return the recycled state
 		return ls
 	}
 
 	// No suitable pooled state available, create a new one
-	al := newAllocator(32)
 	ls := &LState{
 		G:            G,
 		Parent:       nil,
@@ -95,7 +101,7 @@ func newLStateWithG(options Options, G *Global, env *LTable) *LState {
 		Dead:         false,
 		Options:      options,
 		stop:         0,
-		alloc:        al,
+		alloc:        parentAlloc,
 		currentFrame: nil,
 		wrapped:      false,
 		uvcache:      nil,
@@ -104,15 +110,13 @@ func newLStateWithG(options Options, G *Global, env *LTable) *LState {
 		ctx:          nil,
 	}
 
-	// Create stack based on options
 	if options.MinimizeStackMemory {
 		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize)
 	} else {
 		ls.stack = newFixedCallFrameStack(options.CallStackSize)
 	}
 
-	// Create registry
-	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, al)
+	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, parentAlloc)
 	ls.Env = env
 
 	return ls

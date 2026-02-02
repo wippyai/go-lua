@@ -1,638 +1,989 @@
-// Lua pattern match functions for Go
+// Package pm provides Lua pattern matching functions for Go.
 package pm
 
 import (
+	"bytes"
+	"container/list"
 	"fmt"
+	"sync"
 )
 
-const EOS = -1
-const _UNKNOWN = -2
+const (
+	eos         = -1
+	unknownPos  = -2
+	beforeStart = -3
+)
 
-/* Error {{{ */
+const (
+	// inlineCaptureCap is the threshold for inline vs heap capture storage.
+	// 16 covers most patterns (up to 8 capture groups with start/end pairs).
+	inlineCaptureCap = 16
 
+	// maxPooledCapacity limits pooled slice sizes to prevent memory bloat.
+	maxPooledCapacity = 128
+
+	// initialStackCap is the initial capacity for the VM backtrack stack.
+	initialStackCap = 8
+
+	// maxPatternDepth limits recursion depth during parsing to prevent stack overflow.
+	maxPatternDepth = 200
+)
+
+// Error represents a pattern matching error.
 type Error struct {
 	Pos     int
 	Message string
 }
 
-func newError(pos int, message string, args ...interface{}) *Error {
-	if len(args) == 0 {
-		return &Error{pos, message}
+func newError(pos int, message string, args ...any) *Error {
+	if len(args) > 0 {
+		message = fmt.Sprintf(message, args...)
 	}
-	return &Error{pos, fmt.Sprintf(message, args...)}
+	return &Error{Pos: pos, Message: message}
 }
 
 func (e *Error) Error() string {
 	switch e.Pos {
-	case EOS:
+	case eos:
 		return fmt.Sprintf("%s at EOS", e.Message)
-	case _UNKNOWN:
-		return fmt.Sprintf("%s", e.Message)
+	case unknownPos:
+		return e.Message
 	default:
 		return fmt.Sprintf("%s at %d", e.Message, e.Pos)
 	}
 }
 
-/* }}} */
+func (e *Error) String() string {
+	return e.Message
+}
 
-/* MatchData {{{ */
-
+// MatchData holds captured positions from a match.
+// Layout: bit 0 indicates position capture, bits 1+ hold the position value.
 type MatchData struct {
-	// captured positions
-	// layout
-	// xxxx xxxx xxxx xxx0 : caputured positions
-	// xxxx xxxx xxxx xxx1 : position captured positions
 	captures []uint32
 }
 
-func newMatchState() *MatchData { return &MatchData{[]uint32{}} }
+var matchDataPool = sync.Pool{
+	New: func() any {
+		return &MatchData{captures: make([]uint32, 0, inlineCaptureCap)}
+	},
+}
 
-func (st *MatchData) addPosCapture(s, pos int) {
-	for s+1 >= len(st.captures) {
-		st.captures = append(st.captures, 0)
+func newMatchData(size int) *MatchData {
+	md := matchDataPool.Get().(*MatchData)
+	if cap(md.captures) < size {
+		md.captures = make([]uint32, 0, size)
+	} else {
+		md.captures = md.captures[:0]
 	}
-	st.captures[s] = (uint32(pos) << 1) | 1
-	st.captures[s+1] = (uint32(pos) << 1) | 1
+	return md
 }
 
-func (st *MatchData) setCapture(s, pos int) uint32 {
-	for s >= len(st.captures) {
-		st.captures = append(st.captures, 0)
+func (md *MatchData) release() {
+	if cap(md.captures) <= maxPooledCapacity {
+		matchDataPool.Put(md)
 	}
-	v := st.captures[s]
-	st.captures[s] = (uint32(pos) << 1)
-	return v
 }
 
-func (st *MatchData) restoreCapture(s int, pos uint32) { st.captures[s] = pos }
-
-func (st *MatchData) CaptureLength() int { return len(st.captures) }
-
-func (st *MatchData) IsPosCapture(idx int) bool { return (st.captures[idx] & 1) == 1 }
-
-func (st *MatchData) Capture(idx int) int { return int(st.captures[idx] >> 1) }
-
-/* }}} */
-
-/* scanner {{{ */
-
-type scannerState struct {
-	Pos     int
-	started bool
+func (md *MatchData) addPosCapture(slot, pos int) {
+	md.ensureSlot(slot + 1)
+	md.captures[slot] = uint32(pos)<<1 | 1
+	md.captures[slot+1] = uint32(pos)<<1 | 1
 }
 
+func (md *MatchData) setCapture(slot, pos int) {
+	md.ensureSlot(slot)
+	md.captures[slot] = uint32(pos) << 1
+}
+
+func (md *MatchData) ensureSlot(slot int) {
+	for slot >= len(md.captures) {
+		md.captures = append(md.captures, 0)
+	}
+}
+
+func (md *MatchData) restoreFrom(t *vmThread) {
+	if cap(md.captures) < t.captureLen {
+		md.captures = make([]uint32, t.captureLen)
+	} else {
+		md.captures = md.captures[:t.captureLen]
+	}
+	if t.useInline {
+		copy(md.captures, t.inlineCaptures[:t.captureLen])
+	} else {
+		copy(md.captures, t.heapCaptures[:t.captureLen])
+	}
+}
+
+// CaptureLength returns the number of capture slots.
+func (md *MatchData) CaptureLength() int { return len(md.captures) }
+
+// IsPosCapture returns true if the capture at idx is a position capture.
+func (md *MatchData) IsPosCapture(idx int) bool {
+	if idx < 0 || idx >= len(md.captures) {
+		return false
+	}
+	return (md.captures[idx] & 1) == 1
+}
+
+// Capture returns the captured position at idx.
+func (md *MatchData) Capture(idx int) int {
+	if idx < 0 || idx >= len(md.captures) {
+		return 0
+	}
+	return int(md.captures[idx] >> 1)
+}
+
+// scanner tokenizes pattern input.
 type scanner struct {
-	src   []byte
-	State scannerState
-	saved scannerState
+	src      []byte
+	pos      int
+	savedPos int
 }
 
 func newScanner(src []byte) *scanner {
-	return &scanner{
-		src: src,
-		State: scannerState{
-			Pos:     0,
-			started: false,
-		},
-		saved: scannerState{},
-	}
+	return &scanner{src: src, pos: beforeStart, savedPos: beforeStart}
 }
 
-func (sc *scanner) Length() int { return len(sc.src) }
+func (sc *scanner) length() int { return len(sc.src) }
 
-func (sc *scanner) Next() int {
-	if !sc.State.started {
-		sc.State.started = true
-		if len(sc.src) == 0 {
-			sc.State.Pos = EOS
-		}
+func (sc *scanner) next() int {
+	switch sc.pos {
+	case beforeStart:
+		sc.pos = 0
+	case eos:
+		return eos
+	default:
+		sc.pos++
+	}
+	if sc.pos >= len(sc.src) {
+		sc.pos = eos
+		return eos
+	}
+	return int(sc.src[sc.pos])
+}
+
+func (sc *scanner) currentPos() int {
+	return sc.pos
+}
+
+func (sc *scanner) peek() int {
+	if sc.pos == eos {
+		return eos
+	}
+	var next int
+	if sc.pos == beforeStart {
+		next = 0
 	} else {
-		sc.State.Pos = sc.NextPos()
+		next = sc.pos + 1
 	}
-	if sc.State.Pos == EOS {
-		return EOS
+	if next >= len(sc.src) {
+		return eos
 	}
-	return int(sc.src[sc.State.Pos])
+	return int(sc.src[next])
 }
 
-func (sc *scanner) CurrentPos() int {
-	return sc.State.Pos
+func (sc *scanner) atEnd() bool {
+	if sc.pos == eos {
+		return true
+	}
+	if sc.pos == beforeStart {
+		return len(sc.src) == 0
+	}
+	return sc.pos+1 >= len(sc.src)
 }
 
-func (sc *scanner) NextPos() int {
-	if sc.State.Pos == EOS || sc.State.Pos >= len(sc.src)-1 {
-		return EOS
-	}
-	if !sc.State.started {
-		return 0
-	} else {
-		return sc.State.Pos + 1
-	}
+func (sc *scanner) save() {
+	sc.savedPos = sc.pos
 }
 
-func (sc *scanner) Peek() int {
-	cureof := sc.State.Pos == EOS
-	ch := sc.Next()
-	if !cureof {
-		if sc.State.Pos == EOS {
-			sc.State.Pos = len(sc.src) - 1
-		} else {
-			sc.State.Pos--
-			if sc.State.Pos < 0 {
-				sc.State.Pos = 0
-				sc.State.started = false
-			}
-		}
-	}
-	return ch
+func (sc *scanner) restore() {
+	sc.pos = sc.savedPos
 }
 
-func (sc *scanner) Save() { sc.saved = sc.State }
-
-func (sc *scanner) Restore() { sc.State = sc.saved }
-
-/* }}} */
-
-/* bytecode {{{ */
-
+// opCode represents a VM instruction type.
 type opCode int
 
 const (
-	opChar opCode = iota
-	opMatch
-	opTailMatch
-	opJmp
-	opSplit
-	opSave
-	opPSave
-	opBrace
-	opNumber
+	opChar      opCode = iota // match character against class
+	opMatch                   // successful match
+	opTailMatch               // match only if at end of input
+	opJmp                     // unconditional jump
+	opSplit                   // fork execution (backtrack point)
+	opSave                    // save position to capture slot
+	opPSave                   // save position capture (1-indexed)
+	opBrace                   // balanced brace matching
+	opNumber                  // backreference to capture group
 )
 
-type inst struct {
-	OpCode   opCode
-	Class    class
-	Operand1 int
-	Operand2 int
+type instruction struct {
+	op       opCode
+	class    charClass
+	operand1 int
+	operand2 int
 }
 
-/* }}} */
-
-/* classes {{{ */
-
-type class interface {
-	Matches(ch int) bool
+// charClass matches a character against a pattern class.
+type charClass interface {
+	matches(ch int) bool
 }
+
+// dotClass matches any character (singleton).
+var theDotClass = &dotClass{}
 
 type dotClass struct{}
 
-func (pn *dotClass) Matches(ch int) bool { return true }
+func (dc *dotClass) matches(_ int) bool { return true }
 
-type charClass struct {
-	Ch int
+type literalClass struct {
+	char int
 }
 
-func (pn *charClass) Matches(ch int) bool { return pn.Ch == ch }
+func (lc *literalClass) matches(ch int) bool { return lc.char == ch }
 
 type singleClass struct {
-	Class int
+	code int
 }
 
-func (pn *singleClass) Matches(ch int) bool {
-	ret := false
-	switch pn.Class {
+func (sc *singleClass) matches(ch int) bool {
+	return matchCharClass(sc.code, ch)
+}
+
+// matchCharClass matches Lua character classes.
+func matchCharClass(code, ch int) bool {
+	var matched bool
+	switch code {
 	case 'a', 'A':
-		ret = 'A' <= ch && ch <= 'Z' || 'a' <= ch && ch <= 'z'
+		matched = ('A' <= ch && ch <= 'Z') || ('a' <= ch && ch <= 'z')
 	case 'c', 'C':
-		ret = (0x00 <= ch && ch <= 0x1F) || ch == 0x7F
+		matched = (0x00 <= ch && ch <= 0x1F) || ch == 0x7F
 	case 'd', 'D':
-		ret = '0' <= ch && ch <= '9'
+		matched = '0' <= ch && ch <= '9'
 	case 'l', 'L':
-		ret = 'a' <= ch && ch <= 'z'
+		matched = 'a' <= ch && ch <= 'z'
 	case 'p', 'P':
-		ret = (0x21 <= ch && ch <= 0x2f) || (0x3a <= ch && ch <= 0x40) || (0x5b <= ch && ch <= 0x60) || (0x7b <= ch && ch <= 0x7e)
+		matched = (0x21 <= ch && ch <= 0x2f) || (0x3a <= ch && ch <= 0x40) ||
+			(0x5b <= ch && ch <= 0x60) || (0x7b <= ch && ch <= 0x7e)
 	case 's', 'S':
 		switch ch {
 		case ' ', '\f', '\n', '\r', '\t', '\v':
-			ret = true
+			matched = true
 		}
 	case 'u', 'U':
-		ret = 'A' <= ch && ch <= 'Z'
+		matched = 'A' <= ch && ch <= 'Z'
 	case 'w', 'W':
-		ret = '0' <= ch && ch <= '9' || 'A' <= ch && ch <= 'Z' || 'a' <= ch && ch <= 'z'
+		matched = ('0' <= ch && ch <= '9') || ('A' <= ch && ch <= 'Z') || ('a' <= ch && ch <= 'z')
 	case 'x', 'X':
-		ret = '0' <= ch && ch <= '9' || 'a' <= ch && ch <= 'f' || 'A' <= ch && ch <= 'F'
+		matched = ('0' <= ch && ch <= '9') || ('a' <= ch && ch <= 'f') || ('A' <= ch && ch <= 'F')
 	case 'z', 'Z':
-		ret = ch == 0
+		matched = ch == 0
 	default:
-		return ch == pn.Class
+		return ch == code
 	}
-	if 'A' <= pn.Class && pn.Class <= 'Z' {
-		return !ret
+	if 'A' <= code && code <= 'Z' {
+		return !matched
 	}
-	return ret
+	return matched
 }
 
 type setClass struct {
-	IsNot   bool
-	Classes []class
+	negated bool
+	classes []charClass
 }
 
-func (pn *setClass) Matches(ch int) bool {
-	for _, class := range pn.Classes {
-		if class.Matches(ch) {
-			return !pn.IsNot
+func (sc *setClass) matches(ch int) bool {
+	for _, cls := range sc.classes {
+		if cls.matches(ch) {
+			return !sc.negated
 		}
 	}
-	return pn.IsNot
+	return sc.negated
 }
 
 type rangeClass struct {
-	Begin class
-	End   class
+	begin int
+	end   int
 }
 
-func (pn *rangeClass) Matches(ch int) bool {
-	switch begin := pn.Begin.(type) {
-	case *charClass:
-		end, ok := pn.End.(*charClass)
-		if !ok {
-			return false
-		}
-		return begin.Ch <= ch && ch <= end.Ch
-	}
-	return false
+func (rc *rangeClass) matches(ch int) bool {
+	return rc.begin <= ch && ch <= rc.end
 }
 
-// }}}
-
-// patterns {{{
-
-type pattern interface{}
+// pattern is a parsed pattern node.
+type pattern interface {
+	patternNode()
+}
 
 type singlePattern struct {
-	Class class
+	class charClass
 }
+
+func (*singlePattern) patternNode() {}
 
 type seqPattern struct {
-	MustHead bool
-	MustTail bool
-	Patterns []pattern
+	mustHead bool
+	mustTail bool
+	patterns []pattern
 }
 
+func (*seqPattern) patternNode() {}
+
 type repeatPattern struct {
-	Type  int
-	Class class
+	repeatType int
+	class      charClass
 }
+
+func (*repeatPattern) patternNode() {}
 
 type posCapPattern struct{}
 
+func (*posCapPattern) patternNode() {}
+
 type capPattern struct {
-	Pattern pattern
+	inner pattern
 }
+
+func (*capPattern) patternNode() {}
 
 type numberPattern struct {
-	N int
+	index int
 }
+
+func (*numberPattern) patternNode() {}
 
 type bracePattern struct {
-	Begin int
-	End   int
+	begin int
+	end   int
 }
 
-// }}}
+func (*bracePattern) patternNode() {}
 
-/* parse {{{ */
-
-func parseClass(sc *scanner, allowset bool) class {
-	ch := sc.Next()
+func parseClass(sc *scanner, allowSet bool) (charClass, error) {
+	ch := sc.next()
 	switch ch {
 	case '%':
-		return &singleClass{sc.Next()}
+		return &singleClass{sc.next()}, nil
 	case '.':
-		if allowset {
-			return &dotClass{}
+		if allowSet {
+			return theDotClass, nil
 		}
-		return &charClass{ch}
+		return &literalClass{ch}, nil
 	case '[':
-		if allowset {
+		if allowSet {
 			return parseClassSet(sc)
 		}
-		return &charClass{ch}
-	//case '^' '$', '(', ')', ']', '*', '+', '-', '?':
-	//	panic(newError(sc.CurrentPos(), "invalid %c", ch))
-	case EOS:
-		panic(newError(sc.CurrentPos(), "unexpected EOS"))
+		return &literalClass{ch}, nil
+	case eos:
+		return nil, newError(sc.currentPos(), "unexpected EOS")
 	default:
-		return &charClass{ch}
+		return &literalClass{ch}, nil
 	}
 }
 
-func parseClassSet(sc *scanner) class {
-	set := &setClass{false, []class{}}
-	if sc.Peek() == '^' {
-		set.IsNot = true
-		sc.Next()
+func parseClassSet(sc *scanner) (charClass, error) {
+	set := &setClass{}
+	if sc.peek() == '^' {
+		set.negated = true
+		sc.next()
 	}
-	isrange := false
+
+	pendingRange := false
 	for {
-		ch := sc.Peek()
-		switch ch {
-		// case '[':
-		// 	panic(newError(sc.CurrentPos(), "'[' can not be nested"))
-		case EOS:
-			panic(newError(sc.CurrentPos(), "unexpected EOS"))
-		case ']':
-			if len(set.Classes) > 0 {
-				sc.Next()
-				goto exit
-			}
-			fallthrough
-		case '-':
-			if len(set.Classes) > 0 {
-				sc.Next()
-				isrange = true
-				continue
-			}
-			fallthrough
-		default:
-			set.Classes = append(set.Classes, parseClass(sc, false))
-		}
-		if isrange {
-			begin := set.Classes[len(set.Classes)-2]
-			end := set.Classes[len(set.Classes)-1]
-			set.Classes = set.Classes[0 : len(set.Classes)-2]
-			set.Classes = append(set.Classes, &rangeClass{begin, end})
-			isrange = false
-		}
-	}
-exit:
-	if isrange {
-		set.Classes = append(set.Classes, &charClass{'-'})
-	}
+		ch := sc.peek()
 
-	return set
+		// End of set
+		if ch == ']' && len(set.classes) > 0 {
+			sc.next()
+			if pendingRange {
+				set.classes = append(set.classes, &literalClass{'-'})
+			}
+			return set, nil
+		}
+
+		// EOS without closing bracket
+		if ch == eos {
+			return nil, newError(sc.currentPos(), "unexpected EOS")
+		}
+
+		// Range operator
+		if ch == '-' && len(set.classes) > 0 && !pendingRange {
+			sc.next()
+			pendingRange = true
+			continue
+		}
+
+		cls, err := parseClass(sc, false)
+		if err != nil {
+			return nil, err
+		}
+
+		if pendingRange {
+			prev := set.classes[len(set.classes)-1]
+			set.classes = set.classes[:len(set.classes)-1]
+			begin, end := extractRangeBounds(prev, cls)
+			set.classes = append(set.classes, &rangeClass{begin, end})
+			pendingRange = false
+		} else {
+			set.classes = append(set.classes, cls)
+		}
+	}
 }
 
-func parsePattern(sc *scanner, toplevel bool) *seqPattern {
+func extractRangeBounds(begin, end charClass) (int, int) {
+	b, e := 0, 0
+	if lit, ok := begin.(*literalClass); ok {
+		b = lit.char
+	}
+	if lit, ok := end.(*literalClass); ok {
+		e = lit.char
+	}
+	return b, e
+}
+
+func parsePattern(sc *scanner, topLevel bool) (*seqPattern, error) {
+	return parsePatternDepth(sc, topLevel, 0)
+}
+
+func parsePatternDepth(sc *scanner, topLevel bool, depth int) (*seqPattern, error) {
+	if depth > maxPatternDepth {
+		return nil, newError(sc.currentPos(), "pattern too complex")
+	}
 	pat := &seqPattern{}
-	if toplevel {
-		if sc.Peek() == '^' {
-			sc.Next()
-			pat.MustHead = true
-		}
+	if topLevel && sc.peek() == '^' {
+		sc.next()
+		pat.mustHead = true
 	}
 	for {
-		ch := sc.Peek()
+		ch := sc.peek()
 		switch ch {
 		case '%':
-			sc.Save()
-			sc.Next()
-			switch sc.Peek() {
-			case '0':
-				panic(newError(sc.CurrentPos(), "invalid capture index"))
-			case '1', '2', '3', '4', '5', '6', '7', '8', '9':
-				pat.Patterns = append(pat.Patterns, &numberPattern{sc.Next() - 48})
-			case 'b':
-				sc.Next()
-				pat.Patterns = append(pat.Patterns, &bracePattern{sc.Next(), sc.Next()})
-			default:
-				sc.Restore()
-				pat.Patterns = append(pat.Patterns, &singlePattern{parseClass(sc, true)})
+			if err := parseEscape(sc, pat); err != nil {
+				return nil, err
 			}
 		case '.', '[', ']':
-			pat.Patterns = append(pat.Patterns, &singlePattern{parseClass(sc, true)})
-		//case ']':
-		//	panic(newError(sc.CurrentPos(), "invalid ']'"))
-		case ')':
-			if toplevel {
-				panic(newError(sc.CurrentPos(), "invalid ')'"))
+			cls, err := parseClass(sc, true)
+			if err != nil {
+				return nil, err
 			}
-			return pat
+			pat.patterns = append(pat.patterns, &singlePattern{cls})
+		case ')':
+			if topLevel {
+				return nil, newError(sc.currentPos(), "invalid ')'")
+			}
+			return pat, nil
 		case '(':
-			sc.Next()
-			if sc.Peek() == ')' {
-				sc.Next()
-				pat.Patterns = append(pat.Patterns, &posCapPattern{})
-			} else {
-				ret := &capPattern{parsePattern(sc, false)}
-				if sc.Peek() != ')' {
-					panic(newError(sc.CurrentPos(), "unfinished capture"))
-				}
-				sc.Next()
-				pat.Patterns = append(pat.Patterns, ret)
+			if err := parseCaptureDepth(sc, pat, depth+1); err != nil {
+				return nil, err
 			}
 		case '*', '+', '-', '?':
-			sc.Next()
-			if len(pat.Patterns) > 0 {
-				spat, ok := pat.Patterns[len(pat.Patterns)-1].(*singlePattern)
-				if ok {
-					pat.Patterns = pat.Patterns[0 : len(pat.Patterns)-1]
-					pat.Patterns = append(pat.Patterns, &repeatPattern{ch, spat.Class})
-					continue
-				}
-			}
-			pat.Patterns = append(pat.Patterns, &singlePattern{&charClass{ch}})
+			parseRepeat(sc, pat, ch)
 		case '$':
-			if toplevel && (sc.NextPos() == sc.Length()-1 || sc.NextPos() == EOS) {
-				pat.MustTail = true
+			sc.next()
+			if topLevel && sc.atEnd() {
+				pat.mustTail = true
 			} else {
-				pat.Patterns = append(pat.Patterns, &singlePattern{&charClass{ch}})
+				pat.patterns = append(pat.patterns, &singlePattern{&literalClass{ch}})
 			}
-			sc.Next()
-		case EOS:
-			sc.Next()
-			goto exit
+		case eos:
+			return pat, nil
 		default:
-			sc.Next()
-			pat.Patterns = append(pat.Patterns, &singlePattern{&charClass{ch}})
+			sc.next()
+			pat.patterns = append(pat.patterns, &singlePattern{&literalClass{ch}})
 		}
 	}
-exit:
-	return pat
 }
 
-type iptr struct {
-	insts   []inst
-	capture int
-}
-
-func compilePattern(p pattern, ps ...*iptr) []inst {
-	var ptr *iptr
-	toplevel := false
-	if len(ps) == 0 {
-		toplevel = true
-		ptr = &iptr{[]inst{inst{opSave, nil, 0, -1}}, 2}
-	} else {
-		ptr = ps[0]
+func parseEscape(sc *scanner, pat *seqPattern) error {
+	sc.save()
+	sc.next()
+	switch sc.peek() {
+	case '0':
+		return newError(sc.currentPos(), "invalid capture index")
+	case '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		pat.patterns = append(pat.patterns, &numberPattern{sc.next() - '0'})
+	case 'b':
+		sc.next()
+		pat.patterns = append(pat.patterns, &bracePattern{sc.next(), sc.next()})
+	default:
+		sc.restore()
+		cls, err := parseClass(sc, true)
+		if err != nil {
+			return err
+		}
+		pat.patterns = append(pat.patterns, &singlePattern{cls})
 	}
+	return nil
+}
+
+func parseCaptureDepth(sc *scanner, pat *seqPattern, depth int) error {
+	sc.next()
+	if sc.peek() == ')' {
+		sc.next()
+		pat.patterns = append(pat.patterns, &posCapPattern{})
+		return nil
+	}
+	inner, err := parsePatternDepth(sc, false, depth)
+	if err != nil {
+		return err
+	}
+	if sc.peek() != ')' {
+		return newError(sc.currentPos(), "unfinished capture")
+	}
+	sc.next()
+	pat.patterns = append(pat.patterns, &capPattern{inner})
+	return nil
+}
+
+func parseRepeat(sc *scanner, pat *seqPattern, ch int) {
+	sc.next()
+	if len(pat.patterns) > 0 {
+		if single, ok := pat.patterns[len(pat.patterns)-1].(*singlePattern); ok {
+			pat.patterns[len(pat.patterns)-1] = &repeatPattern{ch, single.class}
+			return
+		}
+	}
+	pat.patterns = append(pat.patterns, &singlePattern{&literalClass{ch}})
+}
+
+type instructionBuilder struct {
+	instructions []instruction
+	captureSlot  int
+}
+
+func compilePattern(p pattern, builder *instructionBuilder) []instruction {
+	topLevel := builder == nil
+	if topLevel {
+		builder = &instructionBuilder{
+			instructions: []instruction{{opSave, nil, 0, -1}},
+			captureSlot:  2,
+		}
+	}
+
 	switch pat := p.(type) {
 	case *singlePattern:
-		ptr.insts = append(ptr.insts, inst{opChar, pat.Class, -1, -1})
+		builder.instructions = append(builder.instructions, instruction{opChar, pat.class, -1, -1})
+
 	case *seqPattern:
-		for _, cp := range pat.Patterns {
-			compilePattern(cp, ptr)
+		for _, child := range pat.patterns {
+			compilePattern(child, builder)
 		}
-	case *repeatPattern:
-		idx := len(ptr.insts)
-		switch pat.Type {
-		case '*':
-			ptr.insts = append(ptr.insts,
-				inst{opSplit, nil, idx + 1, idx + 3},
-				inst{opChar, pat.Class, -1, -1},
-				inst{opJmp, nil, idx, -1})
-		case '+':
-			ptr.insts = append(ptr.insts,
-				inst{opChar, pat.Class, -1, -1},
-				inst{opSplit, nil, idx, idx + 2})
-		case '-':
-			ptr.insts = append(ptr.insts,
-				inst{opSplit, nil, idx + 3, idx + 1},
-				inst{opChar, pat.Class, -1, -1},
-				inst{opJmp, nil, idx, -1})
-		case '?':
-			ptr.insts = append(ptr.insts,
-				inst{opSplit, nil, idx + 1, idx + 2},
-				inst{opChar, pat.Class, -1, -1})
-		}
-	case *posCapPattern:
-		ptr.insts = append(ptr.insts, inst{opPSave, nil, ptr.capture, -1})
-		ptr.capture += 2
-	case *capPattern:
-		c0, c1 := ptr.capture, ptr.capture+1
-		ptr.capture += 2
-		ptr.insts = append(ptr.insts, inst{opSave, nil, c0, -1})
-		compilePattern(pat.Pattern, ptr)
-		ptr.insts = append(ptr.insts, inst{opSave, nil, c1, -1})
-	case *bracePattern:
-		ptr.insts = append(ptr.insts, inst{opBrace, nil, pat.Begin, pat.End})
-	case *numberPattern:
-		ptr.insts = append(ptr.insts, inst{opNumber, nil, pat.N, -1})
-	}
-	if toplevel {
-		if p.(*seqPattern).MustTail {
-			ptr.insts = append(ptr.insts, inst{opSave, nil, 1, -1}, inst{opTailMatch, nil, -1, -1})
-		}
-		ptr.insts = append(ptr.insts, inst{opSave, nil, 1, -1}, inst{opMatch, nil, -1, -1})
-	}
-	return ptr.insts
-}
-
-/* }}} parse */
-
-/* VM {{{ */
-
-// Simple recursive virtual machine based on the
-// "Regular Expression Matching: the Virtual Machine Approach" (https://swtch.com/~rsc/regexp/regexp2.html)
-func recursiveVM(src []byte, insts []inst, pc, sp int, ms ...*MatchData) (bool, int, *MatchData) {
-	var m *MatchData
-	if len(ms) == 0 {
-		m = newMatchState()
-	} else {
-		m = ms[0]
-	}
-redo:
-	inst := insts[pc]
-	switch inst.OpCode {
-	case opChar:
-		if sp >= len(src) || !inst.Class.Matches(int(src[sp])) {
-			return false, sp, m
-		}
-		pc++
-		sp++
-		goto redo
-	case opMatch:
-		return true, sp, m
-	case opTailMatch:
-		return sp >= len(src), sp, m
-	case opJmp:
-		pc = inst.Operand1
-		goto redo
-	case opSplit:
-		if ok, nsp, _ := recursiveVM(src, insts, inst.Operand1, sp, m); ok {
-			return true, nsp, m
-		}
-		pc = inst.Operand2
-		goto redo
-	case opSave:
-		s := m.setCapture(inst.Operand1, sp)
-		if ok, nsp, _ := recursiveVM(src, insts, pc+1, sp, m); ok {
-			return true, nsp, m
-		}
-		m.restoreCapture(inst.Operand1, s)
-		return false, sp, m
-	case opPSave:
-		m.addPosCapture(inst.Operand1, sp+1)
-		pc++
-		goto redo
-	case opBrace:
-		if sp >= len(src) || int(src[sp]) != inst.Operand1 {
-			return false, sp, m
-		}
-		count := 1
-		for sp = sp + 1; sp < len(src); sp++ {
-			if int(src[sp]) == inst.Operand2 {
-				count--
-			}
-			if count == 0 {
-				pc++
-				sp++
-				goto redo
-			}
-			if int(src[sp]) == inst.Operand1 {
-				count++
-			}
-		}
-		return false, sp, m
-	case opNumber:
-		idx := inst.Operand1 * 2
-		if idx >= m.CaptureLength()-1 {
-			panic(newError(_UNKNOWN, "invalid capture index"))
-		}
-		capture := src[m.Capture(idx):m.Capture(idx+1)]
-		for i := 0; i < len(capture); i++ {
-			if i+sp >= len(src) || capture[i] != src[i+sp] {
-				return false, sp, m
-			}
-		}
-		pc++
-		sp += len(capture)
-		goto redo
-	}
-	panic("should not reach here")
-}
-
-/* }}} */
-
-/* API {{{ */
-
-func Find(p string, src []byte, offset, limit int) (matches []*MatchData, err error) {
-	defer func() {
-		if v := recover(); v != nil {
-			if perr, ok := v.(*Error); ok {
-				err = perr
+		if topLevel {
+			if pat.mustTail {
+				builder.instructions = append(builder.instructions,
+					instruction{opSave, nil, 1, -1},
+					instruction{opTailMatch, nil, -1, -1})
 			} else {
-				panic(v)
+				builder.instructions = append(builder.instructions,
+					instruction{opSave, nil, 1, -1},
+					instruction{opMatch, nil, -1, -1})
 			}
 		}
-	}()
-	pat := parsePattern(newScanner([]byte(p)), true)
-	insts := compilePattern(pat)
-	matches = []*MatchData{}
-	for sp := offset; sp <= len(src); {
-		ok, nsp, ms := recursiveVM(src, insts, 0, sp)
-		sp++
+
+	case *repeatPattern:
+		compileRepeat(builder, pat)
+
+	case *posCapPattern:
+		builder.instructions = append(builder.instructions, instruction{opPSave, nil, builder.captureSlot, -1})
+		builder.captureSlot += 2
+
+	case *capPattern:
+		startSlot := builder.captureSlot
+		endSlot := builder.captureSlot + 1
+		builder.captureSlot += 2
+		builder.instructions = append(builder.instructions, instruction{opSave, nil, startSlot, -1})
+		compilePattern(pat.inner, builder)
+		builder.instructions = append(builder.instructions, instruction{opSave, nil, endSlot, -1})
+
+	case *bracePattern:
+		builder.instructions = append(builder.instructions, instruction{opBrace, nil, pat.begin, pat.end})
+
+	case *numberPattern:
+		builder.instructions = append(builder.instructions, instruction{opNumber, nil, pat.index, -1})
+	}
+
+	return builder.instructions
+}
+
+func compileRepeat(builder *instructionBuilder, pat *repeatPattern) {
+	idx := len(builder.instructions)
+	switch pat.repeatType {
+	case '*':
+		builder.instructions = append(builder.instructions,
+			instruction{opSplit, nil, idx + 1, idx + 3},
+			instruction{opChar, pat.class, -1, -1},
+			instruction{opJmp, nil, idx, -1})
+	case '+':
+		builder.instructions = append(builder.instructions,
+			instruction{opChar, pat.class, -1, -1},
+			instruction{opSplit, nil, idx, idx + 2})
+	case '-':
+		builder.instructions = append(builder.instructions,
+			instruction{opSplit, nil, idx + 3, idx + 1},
+			instruction{opChar, pat.class, -1, -1},
+			instruction{opJmp, nil, idx, -1})
+	case '?':
+		builder.instructions = append(builder.instructions,
+			instruction{opSplit, nil, idx + 1, idx + 2},
+			instruction{opChar, pat.class, -1, -1})
+	}
+}
+
+// LRU pattern cache with bounded size.
+type patternCache struct {
+	mu       sync.Mutex
+	capacity int
+	items    map[string]*list.Element
+	order    *list.List
+}
+
+type cacheEntry struct {
+	key   string
+	insts []instruction
+	pat   *seqPattern
+}
+
+func newPatternCache(capacity int) *patternCache {
+	return &patternCache{
+		capacity: capacity,
+		items:    make(map[string]*list.Element),
+		order:    list.New(),
+	}
+}
+
+func (pc *patternCache) get(pattern string) ([]instruction, *seqPattern, bool) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	elem, ok := pc.items[pattern]
+	if !ok {
+		return nil, nil, false
+	}
+	pc.order.MoveToFront(elem)
+	entry := elem.Value.(*cacheEntry)
+	return entry.insts, entry.pat, true
+}
+
+func (pc *patternCache) put(pattern string, insts []instruction, pat *seqPattern) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+
+	if elem, ok := pc.items[pattern]; ok {
+		pc.order.MoveToFront(elem)
+		return
+	}
+
+	if pc.order.Len() >= pc.capacity {
+		oldest := pc.order.Back()
+		if oldest != nil {
+			entry := oldest.Value.(*cacheEntry)
+			delete(pc.items, entry.key)
+			pc.order.Remove(oldest)
+		}
+	}
+
+	entry := &cacheEntry{key: pattern, insts: insts, pat: pat}
+	elem := pc.order.PushFront(entry)
+	pc.items[pattern] = elem
+}
+
+const maxCachedPatterns = 256
+
+var globalPatternCache = newPatternCache(maxCachedPatterns)
+
+func getCompiledPattern(pattern string) ([]instruction, *seqPattern, error) {
+	if insts, pat, ok := globalPatternCache.get(pattern); ok {
+		return insts, pat, nil
+	}
+
+	pat, err := parsePattern(newScanner([]byte(pattern)), true)
+	if err != nil {
+		return nil, nil, err
+	}
+	insts := compilePattern(pat, nil)
+	globalPatternCache.put(pattern, insts, pat)
+	return insts, pat, nil
+}
+
+func calcMaxCaptureSlot(insts []instruction) int {
+	maxSlot := 0
+	for _, inst := range insts {
+		if inst.op == opSave || inst.op == opPSave {
+			if inst.operand1 > maxSlot {
+				maxSlot = inst.operand1
+			}
+		}
+	}
+	return maxSlot + 2
+}
+
+// vmThread represents a backtrack point in the VM.
+type vmThread struct {
+	programCounter int
+	sourcePos      int
+	inlineCaptures [inlineCaptureCap]uint32
+	heapCaptures   []uint32
+	captureLen     int
+	useInline      bool
+}
+
+var threadPool = sync.Pool{
+	New: func() any {
+		return &vmThread{}
+	},
+}
+
+func newVMThread(programCounter, sourcePos int, captures []uint32) *vmThread {
+	t := threadPool.Get().(*vmThread)
+	t.programCounter = programCounter
+	t.sourcePos = sourcePos
+	t.captureLen = len(captures)
+
+	if len(captures) <= inlineCaptureCap {
+		t.useInline = true
+		copy(t.inlineCaptures[:], captures)
+	} else {
+		t.useInline = false
+		if cap(t.heapCaptures) < len(captures) {
+			t.heapCaptures = make([]uint32, len(captures))
+		} else {
+			t.heapCaptures = t.heapCaptures[:len(captures)]
+		}
+		copy(t.heapCaptures, captures)
+	}
+	return t
+}
+
+func (t *vmThread) release() {
+	if !t.useInline && cap(t.heapCaptures) > maxPooledCapacity {
+		t.heapCaptures = nil
+	}
+	threadPool.Put(t)
+}
+
+// matchClass dispatches to the appropriate matcher with inlined hot paths.
+func matchClass(cls charClass, ch int) bool {
+	switch c := cls.(type) {
+	case *literalClass:
+		return c.char == ch
+	case *singleClass:
+		return matchCharClass(c.code, ch)
+	case *dotClass:
+		return true
+	case *setClass:
+		return c.matches(ch)
+	case *rangeClass:
+		return c.matches(ch)
+	default:
+		return cls.matches(ch)
+	}
+}
+
+// MaxBacktracks limits backtracking to prevent ReDoS attacks.
+const MaxBacktracks = 100000
+
+type vm struct {
+	src       []byte
+	insts     []instruction
+	matchData *MatchData
+	stack     []*vmThread
+}
+
+var vmPool = sync.Pool{
+	New: func() any {
+		return &vm{stack: make([]*vmThread, 0, initialStackCap)}
+	},
+}
+
+func newVM(src []byte, insts []instruction) *vm {
+	v := vmPool.Get().(*vm)
+	v.src = src
+	v.insts = insts
+	v.matchData = nil
+	v.stack = v.stack[:0]
+	return v
+}
+
+func (v *vm) release() {
+	v.src = nil
+	v.insts = nil
+	v.matchData = nil
+	if cap(v.stack) <= maxPooledCapacity {
+		vmPool.Put(v)
+	}
+}
+
+func (v *vm) releaseStack() {
+	for i := len(v.stack) - 1; i >= 0; i-- {
+		v.stack[i].release()
+	}
+	v.stack = v.stack[:0]
+}
+
+func (v *vm) run(programCounter, sourcePos int) (bool, int) {
+	backtracks := 0
+
+	for {
+		inst := v.insts[programCounter]
+		switch inst.op {
+		case opChar:
+			if sourcePos >= len(v.src) || !matchClass(inst.class, int(v.src[sourcePos])) {
+				if !v.backtrack(&programCounter, &sourcePos, &backtracks) {
+					return false, sourcePos
+				}
+				continue
+			}
+			programCounter++
+			sourcePos++
+
+		case opMatch:
+			v.releaseStack()
+			return true, sourcePos
+
+		case opTailMatch:
+			if sourcePos >= len(v.src) {
+				v.releaseStack()
+				return true, sourcePos
+			}
+			if !v.backtrack(&programCounter, &sourcePos, &backtracks) {
+				return false, sourcePos
+			}
+
+		case opJmp:
+			programCounter = inst.operand1
+
+		case opSplit:
+			t := newVMThread(inst.operand2, sourcePos, v.matchData.captures)
+			v.stack = append(v.stack, t)
+			programCounter = inst.operand1
+
+		case opSave:
+			v.matchData.setCapture(inst.operand1, sourcePos)
+			programCounter++
+
+		case opPSave:
+			v.matchData.addPosCapture(inst.operand1, sourcePos+1)
+			programCounter++
+
+		case opBrace:
+			ok, newPos := v.matchBrace(inst.operand1, inst.operand2, sourcePos)
+			if !ok {
+				if !v.backtrack(&programCounter, &sourcePos, &backtracks) {
+					return false, sourcePos
+				}
+				continue
+			}
+			sourcePos = newPos
+			programCounter++
+
+		case opNumber:
+			ok, newPos := v.matchBackref(inst.operand1, sourcePos)
+			if !ok {
+				if !v.backtrack(&programCounter, &sourcePos, &backtracks) {
+					return false, sourcePos
+				}
+				continue
+			}
+			programCounter++
+			sourcePos = newPos
+
+		default:
+			v.releaseStack()
+			return false, sourcePos
+		}
+	}
+}
+
+func (v *vm) backtrack(pc, sp, backtracks *int) bool {
+	(*backtracks)++
+	if *backtracks > MaxBacktracks || len(v.stack) == 0 {
+		v.releaseStack()
+		return false
+	}
+	t := v.stack[len(v.stack)-1]
+	v.stack = v.stack[:len(v.stack)-1]
+	*pc = t.programCounter
+	*sp = t.sourcePos
+	v.matchData.restoreFrom(t)
+	t.release()
+	return true
+}
+
+func (v *vm) matchBrace(open, close, sourcePos int) (bool, int) {
+	if sourcePos >= len(v.src) || int(v.src[sourcePos]) != open {
+		return false, sourcePos
+	}
+	count := 1
+	sourcePos++
+	for ; sourcePos < len(v.src); sourcePos++ {
+		ch := int(v.src[sourcePos])
+		if ch == close {
+			count--
+			if count == 0 {
+				return true, sourcePos + 1
+			}
+		} else if ch == open {
+			count++
+		}
+	}
+	return false, sourcePos
+}
+
+func (v *vm) matchBackref(index, sourcePos int) (bool, int) {
+	slot := index * 2
+	capLen := v.matchData.CaptureLength()
+	if slot+1 >= capLen {
+		return false, sourcePos
+	}
+	start := v.matchData.Capture(slot)
+	end := v.matchData.Capture(slot + 1)
+	if start > end || end > len(v.src) {
+		return false, sourcePos
+	}
+	capture := v.src[start:end]
+	if sourcePos+len(capture) > len(v.src) {
+		return false, sourcePos
+	}
+	if !bytes.Equal(capture, v.src[sourcePos:sourcePos+len(capture)]) {
+		return false, sourcePos
+	}
+	return true, sourcePos + len(capture)
+}
+
+// Find searches for pattern matches in src starting at offset.
+// Returns up to limit matches (-1 for unlimited).
+func Find(pattern string, src []byte, offset, limit int) ([]*MatchData, error) {
+	insts, pat, err := getCompiledPattern(pattern)
+	if err != nil {
+		return nil, err
+	}
+	capSize := calcMaxCaptureSlot(insts)
+
+	var matches []*MatchData
+	if limit > 0 {
+		matches = make([]*MatchData, 0, limit)
+	}
+
+	v := newVM(src, insts)
+	defer v.release()
+
+	for sourcePos := offset; sourcePos <= len(src); {
+		md := newMatchData(capSize)
+		v.matchData = md
+		ok, newPos := v.run(0, sourcePos)
+		sourcePos++
 		if ok {
-			if sp < nsp {
-				sp = nsp
+			if sourcePos < newPos {
+				sourcePos = newPos
 			}
-			matches = append(matches, ms)
+			matches = append(matches, md)
+			if len(matches) == limit {
+				break
+			}
+		} else {
+			md.release()
 		}
-		if len(matches) == limit || pat.MustHead {
+		if pat.mustHead {
 			break
 		}
 	}
-	return
+	return matches, nil
 }
-
-/* }}} */

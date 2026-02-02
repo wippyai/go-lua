@@ -2,62 +2,20 @@ package lua
 
 import (
 	"math"
-	"math/rand"
-	"sync"
+	"math/rand/v2"
 )
 
-var (
-	// Pre-pinned math functions and immutable module
-	prePinnedMathFuncs map[string]*LFunction
-	immutableMathMod   *LTable
-	mathConstants      struct {
-		pi   LNumber
-		huge LNumber
-	}
-	initMathOnce sync.Once
-)
-
-// initMathModule creates the immutable math module with pre-pinned functions
-func initMathModule() {
-	initMathOnce.Do(func() {
-		pinningState := getSharedPinningState()
-
-		// Pre-pin all math functions
-		prePinnedMathFuncs = make(map[string]*LFunction, len(mathFuncs))
-		for name, fn := range mathFuncs {
-			prePinnedMathFuncs[name] = pinningState.NewFunction(fn)
-		}
-
-		// Create immutable math module with exact capacity (functions + constants)
-		immutableMathMod = pinningState.CreateTable(0, len(mathFuncs)+2)
-
-		// Add all pre-pinned functions
-		for name, fn := range prePinnedMathFuncs {
-			immutableMathMod.RawSetString(name, fn)
-		}
-
-		// Add constants (these are safe to share since LNumbers are immutable)
-		mathConstants.pi = LNumber(math.Pi)
-		mathConstants.huge = LNumber(math.MaxFloat64)
-		immutableMathMod.RawSetString("pi", mathConstants.pi)
-		immutableMathMod.RawSetString("huge", mathConstants.huge)
-
-		// Make the module immutable for safe reuse
-		immutableMathMod.Immutable = true
-	})
-}
-
-// OpenMath - optimized version using immutable pre-pinned module
 func OpenMath(L *LState) int {
-	initMathModule()
-
-	// Register the immutable math module (ultra-fast)
-	L.RegisterImmutableModule(MathLibName, immutableMathMod)
-	L.Push(immutableMathMod)
+	mod := L.RegisterGoModule(MathLibName, mathFuncs).(*LTable)
+	mod.RawSetString("pi", LNumber(math.Pi))
+	mod.RawSetString("huge", LNumber(math.MaxFloat64))
+	mod.RawSetString("maxinteger", LInteger(math.MaxInt64))
+	mod.RawSetString("mininteger", LInteger(math.MinInt64))
+	L.Push(mod)
 	return 1
 }
 
-var mathFuncs = map[string]LGFunction{
+var mathFuncs = map[string]LGoFunc{
 	"abs":        mathAbs,
 	"acos":       mathAcos,
 	"asin":       mathAsin,
@@ -81,12 +39,15 @@ var mathFuncs = map[string]LGFunction{
 	"pow":        mathPow,
 	"rad":        mathRad,
 	"random":     mathRandom,
-	"randomseed": mathRandomseed,
+	"randomseed": mathRandomSeed,
 	"sin":        mathSin,
 	"sinh":       mathSinh,
 	"sqrt":       mathSqrt,
 	"tan":        mathTan,
 	"tanh":       mathTanh,
+	"tointeger":  mathToInteger,
+	"type":       mathType,
+	"ult":        mathUlt,
 }
 
 func mathAbs(L *LState) int {
@@ -175,15 +136,15 @@ func mathMax(L *LState) int {
 	if L.GetTop() == 0 {
 		L.RaiseError("wrong number of arguments")
 	}
-	max := L.CheckNumber(1)
+	maxVal := L.CheckNumber(1)
 	top := L.GetTop()
 	for i := 2; i <= top; i++ {
 		v := L.CheckNumber(i)
-		if v > max {
-			max = v
+		if v > maxVal {
+			maxVal = v
 		}
 	}
-	L.Push(max)
+	L.Push(maxVal)
 	return 1
 }
 
@@ -191,15 +152,15 @@ func mathMin(L *LState) int {
 	if L.GetTop() == 0 {
 		L.RaiseError("wrong number of arguments")
 	}
-	min := L.CheckNumber(1)
+	minVal := L.CheckNumber(1)
 	top := L.GetTop()
 	for i := 2; i <= top; i++ {
 		v := L.CheckNumber(i)
-		if v < min {
-			min = v
+		if v < minVal {
+			minVal = v
 		}
 	}
-	L.Push(min)
+	L.Push(minVal)
 	return 1
 }
 
@@ -232,18 +193,26 @@ func mathRandom(L *LState) int {
 	case 0:
 		L.Push(LNumber(rand.Float64()))
 	case 1:
-		n := L.CheckInt(1)
-		L.Push(LNumber(rand.Intn(n) + 1))
+		m := L.CheckInt(1)
+		if m < 1 {
+			L.RaiseError("interval is empty")
+		}
+		L.Push(LNumber(rand.IntN(m) + 1))
 	default:
-		min := L.CheckInt(1)
-		max := L.CheckInt(2) + 1
-		L.Push(LNumber(rand.Intn(max-min) + min))
+		m := L.CheckInt(1)
+		n := L.CheckInt(2)
+		if m > n {
+			L.RaiseError("interval is empty")
+		}
+		L.Push(LNumber(rand.IntN(n-m+1) + m))
 	}
 	return 1
 }
 
-func mathRandomseed(L *LState) int {
-	rand.Seed(L.CheckInt64(1))
+func mathRandomSeed(L *LState) int {
+	// rand/v2 doesn't require explicit seeding - it auto-seeds from crypto/rand
+	// This function is kept for Lua compatibility but is effectively a no-op
+	// If explicit seeding is needed, use a custom rand.Source
 	return 0
 }
 
@@ -269,6 +238,49 @@ func mathTan(L *LState) int {
 
 func mathTanh(L *LState) int {
 	L.Push(LNumber(math.Tanh(float64(L.CheckNumber(1)))))
+	return 1
+}
+
+func mathToInteger(L *LState) int {
+	v := L.Get(1)
+	switch n := v.(type) {
+	case LInteger:
+		L.Push(n)
+		return 1
+	case LNumber:
+		if float64(n) == math.Trunc(float64(n)) && !math.IsInf(float64(n), 0) && !math.IsNaN(float64(n)) {
+			L.Push(LInteger(n))
+			return 1
+		}
+	case LString:
+		if num, err := parseNumber(string(n)); err == nil {
+			if float64(num) == math.Trunc(float64(num)) && !math.IsInf(float64(num), 0) {
+				L.Push(LInteger(num))
+				return 1
+			}
+		}
+	}
+	L.Push(LNil)
+	return 1
+}
+
+func mathType(L *LState) int {
+	v := L.Get(1)
+	switch v.(type) {
+	case LInteger:
+		L.Push(LString("integer"))
+	case LNumber:
+		L.Push(LString("float"))
+	default:
+		L.Push(LNil)
+	}
+	return 1
+}
+
+func mathUlt(L *LState) int {
+	m := uint64(L.CheckInt64(1))
+	n := uint64(L.CheckInt64(2))
+	L.Push(LBool(m < n))
 	return 1
 }
 

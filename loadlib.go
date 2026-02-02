@@ -9,7 +9,7 @@ import (
 
 /* load lib {{{ */
 
-var loLoaders = []LGFunction{loLoaderPreload, loLoaderLua}
+var loLoaders = []LGoFunc{loLoaderPreload, loLoaderLua}
 
 func loGetPath(env string, defpath string) string {
 	path := os.Getenv(env)
@@ -19,10 +19,10 @@ func loGetPath(env string, defpath string) string {
 	path = strings.Replace(path, ";;", ";"+defpath+";", -1)
 	if os.PathSeparator != '/' {
 		dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
-		if err != nil {
-			panic(err)
+		if err == nil {
+			path = strings.Replace(path, "!", dir, -1)
 		}
-		path = strings.Replace(path, "!", dir, -1)
+		// If Abs fails, leave "!" unsubstituted (paths with "!" won't match)
 	}
 	return path
 }
@@ -34,26 +34,26 @@ func loFindFile(L *LState, name, pname string) (string, string) {
 	if !ok {
 		L.RaiseError("package.%s must be a string", pname)
 	}
-	messages := []string{}
+	var messages []string
 	for _, pattern := range strings.Split(string(path), ";") {
 		luapath := strings.Replace(pattern, "?", name, -1)
-		if _, err := os.Stat(luapath); err == nil {
+		_, err := os.Stat(luapath)
+		if err == nil {
 			return luapath, ""
-		} else {
-			messages = append(messages, err.Error())
 		}
+		messages = append(messages, err.Error())
 	}
 	return "", strings.Join(messages, "\n\t")
 }
 
 func OpenPackage(L *LState) int {
-	packagemod := L.RegisterModule(LoadLibName, loFuncs)
+	packagemod := L.RegisterGoModule(LoadLibName, loFuncs)
 
 	L.SetField(packagemod, "preload", L.NewTable())
 
 	loaders := L.CreateTable(len(loLoaders), 0)
 	for i, loader := range loLoaders {
-		L.RawSetInt(loaders, i+1, L.NewFunction(loader))
+		L.RawSetInt(loaders, i+1, loader)
 	}
 	L.SetField(packagemod, "loaders", loaders)
 	L.SetField(L.Get(RegistryIndex), "_LOADERS", loaders)
@@ -62,17 +62,17 @@ func OpenPackage(L *LState) int {
 	L.SetField(packagemod, "loaded", loaded)
 	L.SetField(L.Get(RegistryIndex), "_LOADED", loaded)
 
-	L.SetField(packagemod, "path", LString(loGetPath(LuaPath, LuaPathDefault)))
+	L.SetField(packagemod, "path", LString(loGetPath(PathEnvVar, PathDefault)))
 	L.SetField(packagemod, "cpath", emptyLString)
 
-	L.SetField(packagemod, "config", LString(LuaDirSep+"\n"+LuaPathSep+
-		"\n"+LuaPathMark+"\n"+LuaExecDir+"\n"+LuaIgMark+"\n"))
+	L.SetField(packagemod, "config", LString(DirSep+"\n"+PathSep+
+		"\n"+PathMark+"\n"+ExecDir+"\n"+IgMark+"\n"))
 
 	L.Push(packagemod)
 	return 1
 }
 
-var loFuncs = map[string]LGFunction{
+var loFuncs = map[string]LGoFunc{
 	"loadlib": loLoadLib,
 	"seeall":  loSeeAll,
 }

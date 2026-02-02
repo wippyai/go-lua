@@ -2,93 +2,53 @@ package lua
 
 import (
 	"fmt"
-	"io"
-	"os"
-	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 )
 
-var baseFuncs = map[string]LGFunction{
-	"assert":         baseAssert,
-	"collectgarbage": baseCollectGarbage,
-	"dofile":         baseDoFile,
-	"error":          baseError,
-	"getfenv":        baseGetFEnv,
-	"getmetatable":   baseGetMetatable,
-	"load":           baseLoad,
-	"loadfile":       baseLoadFile,
-	"loadstring":     baseLoadString,
-	"next":           baseNext,
-	"pcall":          basePCall,
-	"print":          basePrint,
-	"rawequal":       baseRawEqual,
-	"rawget":         baseRawGet,
-	"rawset":         baseRawSet,
-	"select":         baseSelect,
-	"_printregs":     base_PrintRegs,
-	"setfenv":        baseSetFEnv,
-	"setmetatable":   baseSetMetatable,
-	"tonumber":       baseToNumber,
-	"tostring":       baseToString,
-	"type":           baseType,
-	"unpack":         baseUnpack,
-	"xpcall":         baseXPCall,
-	// loadlib
-	"module":  loModule,
-	"require": loRequire,
-	// hidden features
-	"newproxy": baseNewProxy,
+// baseFuncs contains stateless Go functions for base library.
+// Minimal sandbox set for AI agent environments.
+var baseFuncs = map[string]LGoFunc{
+	"assert":       baseAssert,
+	"error":        baseError,
+	"getmetatable": baseGetMetatable,
+	"next":         baseNext,
+	"pcall":        basePCall,
+	"print":        basePrint,
+	"rawequal":     baseRawEqual,
+	"rawget":       baseRawGet,
+	"rawset":       baseRawSet,
+	"select":       baseSelect,
+	"setmetatable": baseSetMetatable,
+	"tonumber":     baseToNumber,
+	"tostring":     baseToString,
+	"type":         baseType,
+	"unpack":       baseUnpack,
+	"xpcall":       baseXPCall,
 }
 
+// Stateless auxiliary functions for ipairs/pairs
 var (
-	prePinnedBaseFuncs map[string]*LFunction
-	prePinnedIpairs    *LFunction
-	prePinnedPairs     *LFunction
-	prePinnedIpairsAux *LFunction
-	prePinnedPairsAux  *LFunction
-	initBaseOnce       sync.Once
+	gofuncIpairsAux = LGoFunc(ipairsaux)
+	gofuncPairsAux  = LGoFunc(pairsaux)
 )
-
-func initBaseModule() {
-	initBaseOnce.Do(func() {
-		pinningState := getSharedPinningState()
-
-		// Pre-pin all base functions
-		prePinnedBaseFuncs = make(map[string]*LFunction, len(baseFuncs))
-		for name, fn := range baseFuncs {
-			prePinnedBaseFuncs[name] = pinningState.NewFunction(fn)
-		}
-
-		// Pre-pin auxiliary functions for ipairs and pairs
-		prePinnedIpairsAux = pinningState.NewFunction(ipairsaux)
-		prePinnedPairsAux = pinningState.NewFunction(pairsaux)
-
-		// Pre-pin the closure functions
-		prePinnedIpairs = pinningState.NewClosure(baseIpairs, prePinnedIpairsAux)
-		prePinnedPairs = pinningState.NewClosure(basePairs, prePinnedPairsAux)
-	})
-}
 
 /* basic functions {{{ */
 
 func OpenBase(L *LState) int {
-	initBaseModule()
-
 	global := L.Get(GlobalsIndex).(*LTable)
 	global.RawSetString("_G", global)
-	global.RawSetString("_VERSION", LString(LuaVersion))
+	global.RawSetString("_VERSION", LString(Version))
 	global.RawSetString("_GOPHER_LUA_VERSION", LString(PackageName+" "+PackageVersion))
 
-	// Register all pre-pinned base functions efficiently
-	for name, fn := range prePinnedBaseFuncs {
+	// Register all base functions as LGoFunc (zero allocation)
+	for name, fn := range baseFuncs {
 		global.RawSetString(name, fn)
 	}
 
-	// Set the special closure functions
-	global.RawSetString("ipairs", prePinnedIpairs)
-	global.RawSetString("pairs", prePinnedPairs)
+	// ipairs and pairs push aux functions directly
+	global.RawSetString("ipairs", LGoFunc(baseIpairs))
+	global.RawSetString("pairs", LGoFunc(basePairs))
 
 	return 1
 }
@@ -101,68 +61,11 @@ func baseAssert(L *LState) int {
 	return L.GetTop()
 }
 
-func baseCollectGarbage(L *LState) int {
-	runtime.GC()
-	return 0
-}
-
-func baseDoFile(L *LState) int {
-	src := L.ToString(1)
-	top := L.GetTop()
-	fn, err := L.LoadFile(src)
-	if err != nil {
-		L.Push(LString(err.Error()))
-		L.Panic(L)
-	}
-	L.Push(fn)
-	L.Call(0, MultRet)
-	return L.GetTop() - top
-}
-
 func baseError(L *LState) int {
 	obj := L.CheckAny(1)
 	level := L.OptInt(2, 1)
 	L.Error(obj, level)
 	return 0
-}
-
-func baseGetFEnv(L *LState) int {
-	var value LValue
-	if L.GetTop() == 0 {
-		value = LNumber(1)
-	} else {
-		value = L.Get(1)
-	}
-
-	if fn, ok := value.(*LFunction); ok {
-		if !fn.IsG {
-			L.Push(fn.Env)
-		} else {
-			L.Push(L.G.Global)
-		}
-		return 1
-	}
-
-	if number, ok := value.(LNumber); ok {
-		level := int(float64(number))
-		if level <= 0 {
-			L.Push(L.Env)
-		} else {
-			cf := L.currentFrame
-			for i := 0; i < level && cf != nil; i++ {
-				cf = cf.Parent
-			}
-			if cf == nil || cf.Fn.IsG {
-				L.Push(L.G.Global)
-			} else {
-				L.Push(cf.Fn.Env)
-			}
-		}
-		return 1
-	}
-
-	L.Push(L.G.Global)
-	return 1
 }
 
 func baseGetMetatable(L *LState) int {
@@ -177,84 +80,18 @@ func ipairsaux(L *LState) int {
 	v := tb.RawGetInt(i)
 	if v == LNil {
 		return 0
-	} else {
-		L.Pop(1)
-		L.Push(LNumber(i))
-		L.Push(LNumber(i))
-		L.Push(v)
-		return 2
 	}
+	L.Push(LInteger(i))
+	L.Push(v)
+	return 2
 }
 
 func baseIpairs(L *LState) int {
 	tb := L.CheckTable(1)
-	L.Push(L.Get(UpvalueIndex(1)))
+	L.Push(gofuncIpairsAux)
 	L.Push(tb)
-	L.Push(LNumber(0))
+	L.Push(LInteger(0))
 	return 3
-}
-
-func loadaux(L *LState, reader io.Reader, chunkname string) int {
-	if fn, err := L.Load(reader, chunkname); err != nil {
-		L.Push(LNil)
-		L.Push(LString(err.Error()))
-		return 2
-	} else {
-		L.Push(fn)
-		return 1
-	}
-}
-
-func baseLoad(L *LState) int {
-	fn := L.CheckFunction(1)
-	chunkname := L.OptString(2, "?")
-	top := L.GetTop()
-	buf := []string{}
-	for {
-		L.SetTop(top)
-		L.Push(fn)
-		L.Call(0, 1)
-		ret := L.reg.Pop()
-		if ret == LNil {
-			break
-		} else if LVCanConvToString(ret) {
-			str := ret.String()
-			if len(str) > 0 {
-				buf = append(buf, string(str))
-			} else {
-				break
-			}
-		} else {
-			L.Push(LNil)
-			L.Push(LString("reader function must return a string"))
-			return 2
-		}
-	}
-	return loadaux(L, strings.NewReader(strings.Join(buf, "")), chunkname)
-}
-
-func baseLoadFile(L *LState) int {
-	var reader io.Reader
-	var chunkname string
-	var err error
-	if L.GetTop() < 1 {
-		reader = os.Stdin
-		chunkname = "<stdin>"
-	} else {
-		chunkname = L.CheckString(1)
-		reader, err = os.Open(chunkname)
-		if err != nil {
-			L.Push(LNil)
-			L.Push(LString(fmt.Sprintf("can not open file: %v", chunkname)))
-			return 2
-		}
-		defer reader.(*os.File).Close()
-	}
-	return loadaux(L, reader, chunkname)
-}
-
-func baseLoadString(L *LState) int {
-	return loadaux(L, strings.NewReader(L.CheckString(1)), L.OptString(2, "<string>"))
 }
 
 func baseNext(L *LState) int {
@@ -278,21 +115,28 @@ func pairsaux(L *LState) int {
 	key, value := tb.Next(L.Get(2))
 	if key == LNil {
 		return 0
-	} else {
-		L.Pop(1)
-		L.Push(key)
-		L.Push(key)
-		L.Push(value)
-		return 2
 	}
+	L.Pop(1)
+	L.Push(key)
+	L.Push(key)
+	L.Push(value)
+	return 2
 }
 
 func basePairs(L *LState) int {
 	tb := L.CheckTable(1)
-	L.Push(L.Get(UpvalueIndex(1)))
+	L.Push(gofuncPairsAux)
 	L.Push(tb)
 	L.Push(LNil)
 	return 3
+}
+
+// pcallContinuation is called after yield resumes inside pcall.
+// At this point, the called function has returned its results on the stack.
+func pcallContinuation(L *LState, _ interface{}, _ ResumeState) int {
+	// Results are on stack. Just prepend true.
+	L.Insert(LTrue, 1)
+	return L.GetTop()
 }
 
 func basePCall(L *LState) int {
@@ -303,19 +147,88 @@ func basePCall(L *LState) int {
 		L.Push(LString("attempt to call a " + v.Type().String() + " value"))
 		return 2
 	}
+
+	L.currentFrame.Protected = true
 	nargs := L.GetTop() - 1
-	if err := L.PCall(nargs, MultRet, nil); err != nil {
-		L.Push(LFalse)
-		if aerr, ok := err.(*ApiError); ok {
-			L.Push(aerr.Object)
-		} else {
-			L.Push(LString(err.Error()))
+
+	if L.Parent == nil {
+		// Direct call (not in coroutine) - use defer/recover
+		sp := L.stack.Sp()
+		base := L.reg.Top() - nargs - 1
+
+		var err error
+		func() {
+			defer func() {
+				if rcv := recover(); rcv != nil {
+					if aerr, ok := rcv.(*ApiError); ok {
+						err = aerr
+					} else {
+						err = &ApiError{Object: LString(fmt.Sprint(rcv))}
+					}
+				}
+			}()
+			L.CallK(nargs, MultRet, pcallContinuation, nil)
+		}()
+
+		if err != nil {
+			L.stack.SetSp(sp)
+			L.currentFrame = L.stack.Last()
+			L.reg.SetTop(base)
+			L.currentFrame.Protected = false
+			// Clear continuation info after error
+			if ext := L.getFrameExt(L.currentFrame); ext != nil {
+				ext.Continuation = nil
+				ext.ContinuationCtx = nil
+			}
+			L.Push(LFalse)
+			L.Push(err.(*ApiError).Object)
+			return 2
 		}
-		return 2
+		L.currentFrame.Protected = false
 	} else {
-		L.Insert(LTrue, 1)
-		return L.GetTop()
+		// In coroutine - use continuation for yield-transparency
+		// Still need defer/recover for error handling
+		sp := L.stack.Sp()
+		base := L.reg.Top() - nargs - 1
+
+		var err error
+		func() {
+			defer func() {
+				if rcv := recover(); rcv != nil {
+					if aerr, ok := rcv.(*ApiError); ok {
+						err = aerr
+					} else {
+						err = &ApiError{Object: LString(fmt.Sprint(rcv))}
+					}
+				}
+			}()
+			L.CallK(nargs, MultRet, pcallContinuation, nil)
+		}()
+
+		// Check for yield before any cleanup
+		if L.yielded {
+			return -1
+		}
+
+		if err != nil {
+			L.stack.SetSp(sp)
+			L.currentFrame = L.stack.Last()
+			L.reg.SetTop(base)
+			L.currentFrame.Protected = false
+			// Clear continuation info after error
+			if ext := L.getFrameExt(L.currentFrame); ext != nil {
+				ext.Continuation = nil
+				ext.ContinuationCtx = nil
+			}
+			L.Push(LFalse)
+			L.Push(err.(*ApiError).Object)
+			return 2
+		}
+		L.currentFrame.Protected = false
 	}
+
+	L.Insert(LTrue, 1)
+	return L.GetTop()
 }
 
 func basePrint(L *LState) int {
@@ -330,13 +243,26 @@ func basePrint(L *LState) int {
 	return 0
 }
 
-func base_PrintRegs(L *LState) int {
-	L.printReg()
-	return 0
-}
-
 func baseRawEqual(L *LState) int {
-	if L.CheckAny(1) == L.CheckAny(2) {
+	lhs := L.CheckAny(1)
+	rhs := L.CheckAny(2)
+
+	// Handle LGoFunc specially since function types are not comparable with ==
+	if lhs.Type() == LTFunction && rhs.Type() == LTFunction {
+		l, lok := lhs.(LGoFunc)
+		r, rok := rhs.(LGoFunc)
+		if lok && rok {
+			// Compare function pointers via their string representation
+			if fmt.Sprintf("%p", l) == fmt.Sprintf("%p", r) {
+				L.Push(LTrue)
+			} else {
+				L.Push(LFalse)
+			}
+			return 1
+		}
+	}
+
+	if lhs == rhs {
 		L.Push(LTrue)
 	} else {
 		L.Push(LFalse)
@@ -355,9 +281,21 @@ func baseRawSet(L *LState) int {
 }
 
 func baseSelect(L *LState) int {
-	L.CheckTypes(1, LTNumber, LTString)
+	L.CheckTypes(1, LTNumber, LTInteger, LTString)
 	switch lv := L.Get(1).(type) {
 	case LNumber:
+		idx := int(lv)
+		num := L.GetTop()
+		if idx < 0 {
+			idx = num + idx
+		} else if idx > num {
+			idx = num
+		}
+		if 1 > idx {
+			L.ArgError(1, "index out of range")
+		}
+		return num - idx
+	case LInteger:
 		idx := int(lv)
 		num := L.GetTop()
 		if idx < 0 {
@@ -376,49 +314,6 @@ func baseSelect(L *LState) int {
 		L.Push(LNumber(L.GetTop() - 1))
 		return 1
 	}
-	return 0
-}
-
-func baseSetFEnv(L *LState) int {
-	var value LValue
-	if L.GetTop() == 0 {
-		value = LNumber(1)
-	} else {
-		value = L.Get(1)
-	}
-	env := L.CheckTable(2)
-
-	if fn, ok := value.(*LFunction); ok {
-		if fn.IsG {
-			L.RaiseError("cannot change the environment of given object")
-		} else {
-			fn.Env = env
-			L.Push(fn)
-			return 1
-		}
-	}
-
-	if number, ok := value.(LNumber); ok {
-		level := int(float64(number))
-		if level <= 0 {
-			L.Env = env
-			return 0
-		}
-
-		cf := L.currentFrame
-		for i := 0; i < level && cf != nil; i++ {
-			cf = cf.Parent
-		}
-		if cf == nil || cf.Fn.IsG {
-			L.RaiseError("cannot change the environment of given object")
-		} else {
-			cf.Fn.Env = env
-			L.Push(cf.Fn)
-			return 1
-		}
-	}
-
-	L.RaiseError("cannot change the environment of given object")
 	return 0
 }
 
@@ -446,9 +341,11 @@ func baseToNumber(L *LState) int {
 	switch lv := L.CheckAny(1).(type) {
 	case LNumber:
 		L.Push(lv)
+	case LInteger:
+		L.Push(LNumber(lv))
 	case LString:
 		str := strings.Trim(string(lv), " \n\t")
-		if strings.Index(str, ".") > -1 {
+		if strings.Contains(str, ".") {
 			if v, err := strconv.ParseFloat(str, LNumberBit); err != nil {
 				L.Push(LNil)
 			} else {
@@ -495,141 +392,40 @@ func baseUnpack(L *LState) int {
 	return ret
 }
 
+// xpcallContinuation is called after yield resumes inside xpcall.
+func xpcallContinuation(L *LState, ctx interface{}, _ ResumeState) int {
+	// ctx contains the top value before the call
+	top := ctx.(int)
+	// Results are on stack. Just prepend true.
+	L.Insert(LTrue, top+1)
+	return L.GetTop() - top
+}
+
 func baseXPCall(L *LState) int {
 	fn := L.CheckFunction(1)
 	errfunc := L.CheckFunction(2)
 
+	// Mark the xpcall frame as protected for error handling
+	L.currentFrame.Protected = true
+	L.setFrameExt(L.currentFrame).ErrFunc = errfunc
+
 	top := L.GetTop()
 	L.Push(fn)
-	if err := L.PCall(0, MultRet, errfunc); err != nil {
-		L.Push(LFalse)
-		if aerr, ok := err.(*ApiError); ok {
-			L.Push(aerr.Object)
-		} else {
-			L.Push(LString(err.Error()))
-		}
-		return 2
-	} else {
-		L.Insert(LTrue, top+1)
-		return L.GetTop() - top
+
+	// Use CallK with continuation for yield-transparent xpcall
+	L.CallK(0, MultRet, xpcallContinuation, top)
+
+	// Check for yield before any cleanup
+	if L.yielded {
+		return -1
 	}
+
+	L.currentFrame.Protected = false
+	if ext := L.getFrameExt(L.currentFrame); ext != nil {
+		ext.ErrFunc = nil
+	}
+	L.Insert(LTrue, top+1)
+	return L.GetTop() - top
 }
 
 /* }}} */
-
-/* load lib {{{ */
-
-func loModule(L *LState) int {
-	name := L.CheckString(1)
-	loaded := L.GetField(L.Get(RegistryIndex), "_LOADED")
-	tb := L.GetField(loaded, name)
-	if _, ok := tb.(*LTable); !ok {
-		tb = L.FindTable(L.Get(GlobalsIndex).(*LTable), name, 1)
-		if tb == LNil {
-			L.RaiseError("name conflict for module: %v", name)
-		}
-		L.SetField(loaded, name, tb)
-	}
-	if L.GetField(tb, "_NAME") == LNil {
-		L.SetField(tb, "_M", tb)
-		L.SetField(tb, "_NAME", LString(name))
-		names := strings.Split(name, ".")
-		pname := ""
-		if len(names) > 1 {
-			pname = strings.Join(names[:len(names)-1], ".") + "."
-		}
-		L.SetField(tb, "_PACKAGE", LString(pname))
-	}
-
-	caller := L.currentFrame.Parent
-	if caller == nil {
-		L.RaiseError("no calling stack.")
-	} else if caller.Fn.IsG {
-		L.RaiseError("module() can not be called from GFunctions.")
-	}
-	L.SetFEnv(caller.Fn, tb)
-
-	top := L.GetTop()
-	for i := 2; i <= top; i++ {
-		L.Push(L.Get(i))
-		L.Push(tb)
-		L.Call(1, 0)
-	}
-	L.Push(tb)
-	return 1
-}
-
-var loopdetection = &LUserData{}
-
-func loRequire(L *LState) int {
-	name := L.CheckString(1)
-	loaded := L.GetField(L.Get(RegistryIndex), "_LOADED")
-	lv := L.GetField(loaded, name)
-	if LVAsBool(lv) {
-		if lv == loopdetection {
-			L.RaiseError("loop or previous error loading module: %s", name)
-		}
-		L.Push(lv)
-		return 1
-	}
-	loaders, ok := L.GetField(L.Get(RegistryIndex), "_LOADERS").(*LTable)
-	if !ok {
-		L.RaiseError("package.loaders must be a table")
-	}
-	messages := []string{}
-	var modasfunc LValue
-	for i := 1; ; i++ {
-		loader := L.RawGetInt(loaders, i)
-		if loader == LNil {
-			L.RaiseError("module %s not found:\n\t%s, ", name, strings.Join(messages, "\n\t"))
-		}
-		L.Push(loader)
-		L.Push(LString(name))
-		L.Call(1, 1)
-		ret := L.reg.Pop()
-		switch retv := ret.(type) {
-		case *LFunction:
-			modasfunc = retv
-			goto loopbreak
-		case LString:
-			messages = append(messages, string(retv))
-		}
-	}
-loopbreak:
-	L.SetField(loaded, name, loopdetection)
-	L.Push(modasfunc)
-	L.Push(LString(name))
-	L.Call(1, 1)
-	ret := L.reg.Pop()
-	modv := L.GetField(loaded, name)
-	if ret != LNil && modv == loopdetection {
-		L.SetField(loaded, name, ret)
-		L.Push(ret)
-	} else if modv == loopdetection {
-		L.SetField(loaded, name, LTrue)
-		L.Push(LTrue)
-	} else {
-		L.Push(modv)
-	}
-	return 1
-}
-
-/* }}} */
-
-/* hidden features {{{ */
-
-func baseNewProxy(L *LState) int {
-	ud := L.NewUserData()
-	L.SetTop(1)
-	if L.Get(1) == LTrue {
-		L.SetMetatable(ud, L.NewTable())
-	} else if d, ok := L.Get(1).(*LUserData); ok {
-		L.SetMetatable(ud, L.GetMetatable(d))
-	}
-	L.Push(ud)
-	return 1
-}
-
-/* }}} */
-
-//

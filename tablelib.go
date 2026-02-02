@@ -1,11 +1,8 @@
 package lua
 
-import (
-	"sort"
-	"sync"
-)
+import "sort"
 
-var tableFuncs = map[string]LGFunction{
+var tableFuncs = map[string]LGoFunc{
 	"getn":     tableGetN,
 	"concat":   tableConcat,
 	"insert":   tableInsert,
@@ -18,33 +15,9 @@ var tableFuncs = map[string]LGFunction{
 	"unpack":   baseUnpack,
 }
 
-var (
-	prePinnedTableFuncs map[string]*LFunction
-	immutableTableMod   *LTable
-	initTableOnce       sync.Once
-)
-
-func initTableModule() {
-	initTableOnce.Do(func() {
-		pinningState := getSharedPinningState()
-
-		prePinnedTableFuncs = make(map[string]*LFunction, len(tableFuncs))
-		for name, fn := range tableFuncs {
-			prePinnedTableFuncs[name] = pinningState.NewFunction(fn)
-		}
-
-		immutableTableMod = pinningState.CreateTable(0, len(tableFuncs))
-		for name, fn := range prePinnedTableFuncs {
-			immutableTableMod.RawSetString(name, fn)
-		}
-		immutableTableMod.Immutable = true
-	})
-}
-
 func OpenTable(L *LState) int {
-	initTableModule()
-	L.RegisterImmutableModule(TabLibName, immutableTableMod)
-	L.Push(immutableTableMod)
+	mod := L.RegisterGoModule(TabLibName, tableFuncs).(*LTable)
+	L.Push(mod)
 	return 1
 }
 
@@ -65,7 +38,7 @@ func tableSort(L *LState) int {
 func tableCreate(L *LState) int {
 	acap := L.CheckInt(1)
 	hcap := L.CheckInt(2)
-	tbl := CreateTable(int(acap), int(hcap))
+	tbl := CreateTable(acap, hcap)
 	L.Push(tbl)
 	return 1
 }
@@ -153,7 +126,7 @@ func tableInsert(L *LState) int {
 	if L.GetTop() == 2 {
 		success = tbl.Append(L.Get(2))
 	} else {
-		success = tbl.Insert(int(L.CheckInt(2)), L.CheckAny(3))
+		success = tbl.Insert(L.CheckInt(2), L.CheckAny(3))
 	}
 	if !success {
 		L.RaiseError("attempt to insert into Immutable table")

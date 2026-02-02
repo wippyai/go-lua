@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ponyruntime/go-lua/parse"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func TestLStateIsClosed(t *testing.T) {
@@ -34,7 +34,6 @@ func TestCallStackOverflowWhenFixed(t *testing.T) {
       end
     end
     local function c()
-      print(_printregs())
       recurse(9)
     end
     c()
@@ -61,7 +60,6 @@ func TestCallStackOverflowWhenAutoGrow(t *testing.T) {
       end
     end
     local function c()
-      print(_printregs())
       recurse(9)
     end
     c()
@@ -241,18 +239,6 @@ func TestToUserData(t *testing.T) {
 	errorIfNotEqual(t, L.Get(3), L.ToUserData(3))
 }
 
-func TestToChannel(t *testing.T) {
-	L := NewState()
-	defer L.Close()
-	L.Push(LNumber(10))
-	L.Push(LString("99.9"))
-	var ch chan LValue
-	L.Push(LChannel(ch))
-	errorIfFalse(t, L.ToChannel(1) == nil, "index 1 must be nil")
-	errorIfFalse(t, L.ToChannel(2) == nil, "index 2 must be nil")
-	errorIfNotEqual(t, ch, L.ToChannel(3))
-}
-
 func TestObjLen(t *testing.T) {
 	L := NewState()
 	defer L.Close()
@@ -290,6 +276,9 @@ func TestPCall(t *testing.T) {
 		L.Push(LString("by handler"))
 		return 1
 	}))
+	if err == nil {
+		t.Fatal("expected error")
+	}
 	errorIfFalse(t, strings.Contains(err.Error(), "by handler"), "")
 
 	L.Push(L.GetGlobal("f1"))
@@ -297,12 +286,18 @@ func TestPCall(t *testing.T) {
 		L.RaiseError("error!")
 		return 1
 	}))
+	if err == nil {
+		t.Fatal("expected error")
+	}
 	errorIfFalse(t, strings.Contains(err.Error(), "error!"), "")
 
 	L.Push(L.GetGlobal("f1"))
 	err = L.PCall(0, 0, L.NewFunction(func(L *LState) int {
 		panic("panicc!")
 	}))
+	if err == nil {
+		t.Fatal("expected error")
+	}
 	errorIfFalse(t, strings.Contains(err.Error(), "panicc!"), "")
 
 	// Issue #452, expected to be revert back to previous call stack after any error.
@@ -329,7 +324,7 @@ func TestPCall(t *testing.T) {
 func TestCoroutineApi1(t *testing.T) {
 	L := NewState()
 	defer L.Close()
-	co, _ := L.NewThread()
+	co := L.NewThreadWithContext(nil)
 	errorIfScriptFail(t, L, `
       function coro(v)
         assert(v == 10)
@@ -345,21 +340,21 @@ func TestCoroutineApi1(t *testing.T) {
 	errorIfNotEqual(t, ResumeYield, st)
 	errorIfNotNil(t, err)
 	errorIfNotEqual(t, 3, len(values))
-	errorIfNotEqual(t, LNumber(1), values[0].(LNumber))
-	errorIfNotEqual(t, LNumber(2), values[1].(LNumber))
-	errorIfNotEqual(t, LNumber(3), values[2].(LNumber))
+	errorIfNotEqual(t, LNumber(1), LVAsNumber(values[0]))
+	errorIfNotEqual(t, LNumber(2), LVAsNumber(values[1]))
+	errorIfNotEqual(t, LNumber(3), LVAsNumber(values[2]))
 
 	st, err, values = L.Resume(co, fn, LNumber(11), LNumber(12))
 	errorIfNotEqual(t, ResumeYield, st)
 	errorIfNotNil(t, err)
 	errorIfNotEqual(t, 1, len(values))
-	errorIfNotEqual(t, LNumber(4), values[0].(LNumber))
+	errorIfNotEqual(t, LNumber(4), LVAsNumber(values[0]))
 
 	st, err, values = L.Resume(co, fn)
 	errorIfNotEqual(t, ResumeOK, st)
 	errorIfNotNil(t, err)
 	errorIfNotEqual(t, 1, len(values))
-	errorIfNotEqual(t, LNumber(5), values[0].(LNumber))
+	errorIfNotEqual(t, LNumber(5), LVAsNumber(values[0]))
 
 	L.Register("myyield", func(L *LState) int {
 		return L.Yield(L.ToNumber(1))
@@ -372,20 +367,20 @@ func TestCoroutineApi1(t *testing.T) {
       end
     `)
 	fn = L.GetGlobal("coro_error").(*LFunction)
-	co, _ = L.NewThread()
+	co = L.NewThreadWithContext(nil)
 	st, err, values = L.Resume(co, fn)
 	errorIfNotEqual(t, ResumeYield, st)
 	errorIfNotNil(t, err)
 	errorIfNotEqual(t, 3, len(values))
-	errorIfNotEqual(t, LNumber(1), values[0].(LNumber))
-	errorIfNotEqual(t, LNumber(2), values[1].(LNumber))
-	errorIfNotEqual(t, LNumber(3), values[2].(LNumber))
+	errorIfNotEqual(t, LNumber(1), LVAsNumber(values[0]))
+	errorIfNotEqual(t, LNumber(2), LVAsNumber(values[1]))
+	errorIfNotEqual(t, LNumber(3), LVAsNumber(values[2]))
 
 	st, err, values = L.Resume(co, fn)
 	errorIfNotEqual(t, ResumeYield, st)
 	errorIfNotNil(t, err)
 	errorIfNotEqual(t, 1, len(values))
-	errorIfNotEqual(t, LNumber(4), values[0].(LNumber))
+	errorIfNotEqual(t, LNumber(4), LVAsNumber(values[0]))
 
 	st, err, _ = L.Resume(co, fn)
 	errorIfNotEqual(t, ResumeError, st)
@@ -405,9 +400,15 @@ func TestContextTimeout(t *testing.T) {
 	defer cancel()
 	L.SetContext(ctx)
 	errorIfNotEqual(t, ctx, L.Context())
+
+	start := time.Now()
+	L.SetGlobal("clock", L.NewFunction(func(L *LState) int {
+		L.Push(LNumber(time.Since(start).Seconds()))
+		return 1
+	}))
+
 	err := L.DoString(`
-	  local clock = os.clock
-      function sleep(n)  -- seconds
+      function sleep(n)
         local t0 = clock()
         while clock() - t0 <= n do end
       end
@@ -427,10 +428,16 @@ func TestContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errch := make(chan error, 1)
 	L.SetContext(ctx)
+
+	start := time.Now()
+	L.SetGlobal("clock", L.NewFunction(func(L *LState) int {
+		L.Push(LNumber(time.Since(start).Seconds()))
+		return 1
+	}))
+
 	go func() {
 		errch <- L.DoString(`
-	    local clock = os.clock
-        function sleep(n)  -- seconds
+        function sleep(n)
           local t0 = clock()
           while clock() - t0 <= n do end
         end
@@ -450,7 +457,7 @@ func TestContextWithCroutine(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	L.SetContext(ctx)
 	defer cancel()
-	L.DoString(`
+	_ = L.DoString(`
 	    function coro()
 		  local i = 0
 		  while true do
@@ -460,15 +467,14 @@ func TestContextWithCroutine(t *testing.T) {
 		  return i
 	    end
 	`)
-	co, cocancel := L.NewThread()
-	defer cocancel()
+	co := L.NewThreadWithContext(ctx)
 	fn := L.GetGlobal("coro").(*LFunction)
 	_, err, values := L.Resume(co, fn)
 	errorIfNotNil(t, err)
-	errorIfNotEqual(t, LNumber(0), values[0])
+	errorIfNotEqual(t, LNumber(0), LVAsNumber(values[0]))
 	// cancel the parent context
 	cancel()
-	_, err, values = L.Resume(co, fn)
+	_, err, _ = L.Resume(co, fn)
 	errorIfNil(t, err)
 	errorIfFalse(t, strings.Contains(err.Error(), "context canceled"), "coroutine execution must be canceled when the parent context is canceled")
 
@@ -491,16 +497,19 @@ func TestPCallAfterFail(t *testing.T) {
 	})
 	L.Push(changeError)
 	err := L.PCall(0, 0, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
 	errorIfFalse(t, strings.Contains(err.Error(), "A New Error"), "error not propogated correctly")
 }
 
 func TestRegistryFixedOverflow(t *testing.T) {
-	state := NewState()
+	state := NewState(Options{RegistrySize: 256, RegistryMaxSize: 256})
 	defer state.Close()
 	reg := state.reg
 	expectedPanic := false
-	// should be non auto grow by default
-	errorIfFalse(t, reg.maxSize == 0, "state should default to non-auto growing implementation")
+	// explicitly disable growth for this test
+	errorIfFalse(t, reg.maxSize == 256, "state should have fixed max size")
 	// fill the stack and check we get a panic
 	test := LString("test")
 	for i := 0; i < len(reg.array); i++ {
@@ -579,6 +588,30 @@ func TestUninitializedVarAccess(t *testing.T) {
 		end
 
 		test(1,2)
+	`)
+}
+
+// TestCoroutineReturnNilType tests that coroutine return values are properly
+// handled when returning uninitialized variables. The type() function must
+// not crash when called on these values.
+func TestCoroutineReturnNilType(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	L.SetContext(ctx)
+	defer cancel()
+	errorIfScriptFail(t, L, `
+		local r1, r2
+		local co = coroutine.create(function()
+			r1, r2 = coroutine.yield()
+			return r1, r2
+		end)
+		coroutine.resume(co)
+		local ok, ret1, ret2 = coroutine.resume(co)
+		local t1 = type(ret1)
+		local t2 = type(ret2)
+		assert(t1 == "nil", "expected nil, got " .. t1)
+		assert(t2 == "nil", "expected nil, got " .. t2)
 	`)
 }
 
@@ -829,5 +862,240 @@ func TestMergingLoadNil(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected 1 LOADNIL instruction, found %d", count)
+	}
+}
+
+func BenchmarkNewStateNoLibs(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		L := NewState(Options{SkipOpenLibs: true})
+		L.Close()
+	}
+}
+
+func BenchmarkNewStateWithLibs(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		L := NewState()
+		L.Close()
+	}
+}
+
+func BenchmarkNewStateCoreOnly(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		L := NewState(Options{SkipOpenLibs: true})
+		L.Push(L.NewFunction(OpenBase))
+		L.Push(LString(BaseLibName))
+		L.Call(1, 0)
+		L.Push(L.NewFunction(OpenTable))
+		L.Push(LString(TabLibName))
+		L.Call(1, 0)
+		L.Push(L.NewFunction(OpenString))
+		L.Push(LString(StringLibName))
+		L.Call(1, 0)
+		L.Push(L.NewFunction(OpenMath))
+		L.Push(LString(MathLibName))
+		L.Call(1, 0)
+		L.Push(L.NewFunction(OpenCoroutine))
+		L.Push(LString(CoroutineLibName))
+		L.Call(1, 0)
+		L.Close()
+	}
+}
+
+func BenchmarkNewThread(b *testing.B) {
+	L := NewState(Options{SkipOpenLibs: true})
+	defer L.Close()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		t := L.NewThreadWithContext(nil)
+		_ = t
+	}
+}
+
+func BenchmarkNewThreadEngine2Options(b *testing.B) {
+	opts := Options{
+		RegistrySize:        128,
+		RegistryMaxSize:     256 * 256,
+		RegistryGrowStep:    16,
+		SkipOpenLibs:        true,
+		CallStackSize:       128,
+		MinimizeStackMemory: true,
+	}
+	L := NewState(opts)
+	defer L.Close()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		t := L.NewThreadWithContext(nil)
+		_ = t
+	}
+}
+
+func BenchmarkNewStateEngine2Options(b *testing.B) {
+	opts := Options{
+		RegistrySize:        128,
+		RegistryMaxSize:     256 * 256,
+		RegistryGrowStep:    16,
+		SkipOpenLibs:        true,
+		CallStackSize:       128,
+		MinimizeStackMemory: true,
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		L := NewState(opts)
+		L.Push(L.NewFunction(OpenBase))
+		L.Push(LString(BaseLibName))
+		L.Call(1, 0)
+		L.Push(L.NewFunction(OpenTable))
+		L.Push(LString(TabLibName))
+		L.Call(1, 0)
+		L.Push(L.NewFunction(OpenString))
+		L.Push(LString(StringLibName))
+		L.Call(1, 0)
+		L.Push(L.NewFunction(OpenMath))
+		L.Push(LString(MathLibName))
+		L.Call(1, 0)
+		L.Push(L.NewFunction(OpenCoroutine))
+		L.Push(LString(CoroutineLibName))
+		L.Call(1, 0)
+		L.Close()
+	}
+}
+
+func BenchmarkNewStateEngine2NoLibs(b *testing.B) {
+	opts := Options{
+		RegistrySize:        128,
+		RegistryMaxSize:     256 * 256,
+		RegistryGrowStep:    16,
+		SkipOpenLibs:        true,
+		CallStackSize:       128,
+		MinimizeStackMemory: true,
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		L := NewState(opts)
+		L.Close()
+	}
+}
+
+func BenchmarkLibBaseOnly(b *testing.B) {
+	opts := Options{
+		RegistrySize:        128,
+		RegistryMaxSize:     256 * 256,
+		RegistryGrowStep:    16,
+		SkipOpenLibs:        true,
+		CallStackSize:       128,
+		MinimizeStackMemory: true,
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		L := NewState(opts)
+		L.Push(L.NewFunction(OpenBase))
+		L.Push(LString(BaseLibName))
+		L.Call(1, 0)
+		L.Close()
+	}
+}
+
+func BenchmarkLibCoroutineOnly(b *testing.B) {
+	opts := Options{
+		RegistrySize:        128,
+		RegistryMaxSize:     256 * 256,
+		RegistryGrowStep:    16,
+		SkipOpenLibs:        true,
+		CallStackSize:       128,
+		MinimizeStackMemory: true,
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		L := NewState(opts)
+		L.Push(L.NewFunction(OpenCoroutine))
+		L.Push(LString(CoroutineLibName))
+		L.Call(1, 0)
+		L.Close()
+	}
+}
+
+func BenchmarkLibImmutableOnly(b *testing.B) {
+	opts := Options{
+		RegistrySize:        128,
+		RegistryMaxSize:     256 * 256,
+		RegistryGrowStep:    16,
+		SkipOpenLibs:        true,
+		CallStackSize:       128,
+		MinimizeStackMemory: true,
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		L := NewState(opts)
+		L.Push(L.NewFunction(OpenTable))
+		L.Push(LString(TabLibName))
+		L.Call(1, 0)
+		L.Push(L.NewFunction(OpenString))
+		L.Push(LString(StringLibName))
+		L.Call(1, 0)
+		L.Push(L.NewFunction(OpenMath))
+		L.Push(LString(MathLibName))
+		L.Call(1, 0)
+		L.Close()
+	}
+}
+
+func BenchmarkPooledStateReuse(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		L := NewState(Options{SkipOpenLibs: true})
+		L.Close()
+	}
+}
+
+func BenchmarkPooledThreadReuse(b *testing.B) {
+	L := NewState(Options{SkipOpenLibs: true})
+	defer L.Close()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		t := L.NewThreadWithContext(nil)
+		t.Close()
+	}
+}
+
+func BenchmarkDefaultOptions(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		L := NewState()
+		L.Close()
+	}
+}
+
+func BenchmarkDoString(b *testing.B) {
+	L := NewState(Options{SkipOpenLibs: true})
+	defer L.Close()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = L.DoString("local x = 1 + 2")
+	}
+}
+
+func BenchmarkFunctionCall(b *testing.B) {
+	L := NewState(Options{SkipOpenLibs: true})
+	defer L.Close()
+
+	fn := L.NewFunction(func(L *LState) int {
+		L.Push(LNumber(42))
+		return 1
+	})
+	L.SetGlobal("testfn", fn)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = L.DoString("testfn()")
 	}
 }

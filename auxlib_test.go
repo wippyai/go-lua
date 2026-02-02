@@ -112,26 +112,13 @@ func TestCheckThread(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 	errorIfGFuncNotFail(t, L, func(L *LState) int {
-		th, _ := L.NewThread()
+		th := L.NewThreadWithContext(nil)
 		L.Push(th)
 		errorIfNotEqual(t, th, L.CheckThread(2))
 		L.Push(LNumber(10))
 		L.CheckThread(3)
 		return 0
 	}, "thread expected, got number")
-}
-
-func TestCheckChannel(t *testing.T) {
-	L := NewState()
-	defer L.Close()
-	errorIfGFuncNotFail(t, L, func(L *LState) int {
-		ch := make(chan LValue)
-		L.Push(LChannel(ch))
-		errorIfNotEqual(t, ch, L.CheckChannel(2))
-		L.Push(LString("aaa"))
-		L.CheckChannel(3)
-		return 0
-	}, "channel expected, got string")
 }
 
 func TestCheckType(t *testing.T) {
@@ -283,21 +270,6 @@ func TestOptUserData(t *testing.T) {
 	}, "userdata expected, got number")
 }
 
-func TestOptChannel(t *testing.T) {
-	L := NewState()
-	defer L.Close()
-	errorIfGFuncNotFail(t, L, func(L *LState) int {
-		defch := make(chan LValue)
-		errorIfNotEqual(t, defch, L.OptChannel(1, defch))
-		ch := make(chan LValue)
-		L.Push(LChannel(ch))
-		errorIfNotEqual(t, ch, L.OptChannel(2, defch))
-		L.Push(LString("aaa"))
-		L.OptChannel(3, defch)
-		return 0
-	}, "channel expected, got string")
-}
-
 func TestLoadFileForShebang(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "")
 	errorIfNotNil(t, err)
@@ -308,8 +280,8 @@ print("hello")
 	errorIfNotNil(t, err)
 
 	defer func() {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
 	}()
 
 	L := NewState()
@@ -324,8 +296,8 @@ func TestLoadFileForEmptyFile(t *testing.T) {
 	errorIfNotNil(t, err)
 
 	defer func() {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
 	}()
 
 	L := NewState()

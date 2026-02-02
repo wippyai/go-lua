@@ -3,59 +3,27 @@ package lua
 import (
 	"fmt"
 	"strings"
-	"sync"
 )
 
-var debugFuncs = map[string]LGFunction{
-	"getfenv":      debugGetFEnv,
+var debugFuncs = map[string]LGoFunc{
 	"getinfo":      debugGetInfo,
 	"getlocal":     debugGetLocal,
 	"getmetatable": debugGetMetatable,
 	"getupvalue":   debugGetUpvalue,
-	"setfenv":      debugSetFEnv,
 	"setlocal":     debugSetLocal,
 	"setmetatable": debugSetMetatable,
 	"setupvalue":   debugSetUpvalue,
 	"traceback":    debugTraceback,
 }
 
-var (
-	prePinnedDebugFuncs map[string]*LFunction
-	immutableDebugMod   *LTable
-	initDebugOnce       sync.Once
-)
-
-func initDebugModule() {
-	initDebugOnce.Do(func() {
-		pinningState := getSharedPinningState()
-
-		prePinnedDebugFuncs = make(map[string]*LFunction, len(debugFuncs))
-		for name, fn := range debugFuncs {
-			prePinnedDebugFuncs[name] = pinningState.NewFunction(fn)
-		}
-
-		immutableDebugMod = pinningState.CreateTable(0, len(debugFuncs))
-		for name, fn := range prePinnedDebugFuncs {
-			immutableDebugMod.RawSetString(name, fn)
-		}
-		immutableDebugMod.Immutable = true
-	})
-}
-
 func OpenDebug(L *LState) int {
-	initDebugModule()
-	L.RegisterImmutableModule(DebugLibName, immutableDebugMod)
-	L.Push(immutableDebugMod)
-	return 1
-}
-
-func debugGetFEnv(L *LState) int {
-	L.Push(L.GetFEnv(L.CheckAny(1)))
+	mod := L.RegisterGoModule(DebugLibName, debugFuncs).(*LTable)
+	L.Push(mod)
 	return 1
 }
 
 func debugGetInfo(L *LState) int {
-	L.CheckTypes(1, LTFunction, LTNumber)
+	L.CheckTypes(1, LTFunction, LTNumber, LTInteger)
 	arg1 := L.Get(1)
 	what := L.OptString(2, "Slunf")
 	var dbg *Debug
@@ -67,6 +35,13 @@ func debugGetInfo(L *LState) int {
 		dbg = &Debug{}
 		fn, err = L.GetInfo(">"+what, dbg, lv)
 	case LNumber:
+		dbg, ok = L.GetStack(int(lv))
+		if !ok {
+			L.Push(LNil)
+			return 1
+		}
+		fn, err = L.GetInfo(what, dbg, LNil)
+	case LInteger:
 		dbg, ok = L.GetStack(int(lv))
 		if !ok {
 			L.Push(LNil)
@@ -129,11 +104,6 @@ func debugGetUpvalue(L *LState) int {
 	}
 	L.Push(LNil)
 	return 1
-}
-
-func debugSetFEnv(L *LState) int {
-	L.SetFEnv(L.CheckAny(1), L.CheckAny(2))
-	return 0
 }
 
 func debugSetLocal(L *LState) int {

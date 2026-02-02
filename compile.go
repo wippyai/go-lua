@@ -4,13 +4,34 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sync"
 
-	"github.com/ponyruntime/go-lua/ast"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 /* internal constants & structs  {{{ */
 
-const maxRegisters = 200
+const (
+	maxRegisters        = 200
+	defaultCodeCapacity = 1024
+)
+
+// Pools for reusing slices during compilation
+var (
+	codeSlicePool = sync.Pool{
+		New: func() any {
+			codes := make([]uint32, 0, defaultCodeCapacity)
+			return &codes
+		},
+	}
+
+	lineSlicePool = sync.Pool{
+		New: func() any {
+			lines := make([]int, 0, defaultCodeCapacity)
+			return &lines
+		},
+	}
+)
 
 type expContextType int
 
@@ -109,7 +130,7 @@ func savereg(ec *expcontext, reg int) int {
 	return ec.reg
 }
 
-func raiseCompileError(context *funcContext, line int, format string, args ...interface{}) {
+func raiseCompileError(context *funcContext, line int, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	panic(&CompileError{context: context, Line: line, Message: msg})
 }
@@ -126,13 +147,23 @@ func isVarArgReturnExpr(expr ast.Expr) bool {
 
 func lnumberValue(expr ast.Expr) (LNumber, bool) {
 	if ex, ok := expr.(*ast.NumberExpr); ok {
-		lv, err := parseNumber(ex.Value)
+		lv, err := parseNumberValue(ex.Value)
 		if err != nil {
-			lv = LNumber(math.NaN())
+			return LNumber(math.NaN()), true
 		}
-		return lv, true
+		switch v := lv.(type) {
+		case LNumber:
+			return v, true
+		case LInteger:
+			return LNumber(v), true
+		}
 	} else if ex, ok := expr.(*constLValueExpr); ok {
-		return ex.Value.(LNumber), true
+		switch v := ex.Value.(type) {
+		case LNumber:
+			return v, true
+		case LInteger:
+			return LNumber(v), true
+		}
 	}
 	return 0, false
 }
@@ -169,21 +200,50 @@ type CompileError struct { // {{{
 
 func (e *CompileError) Error() string {
 	return fmt.Sprintf("compile error near line(%v) %v: %v", e.Line, e.context.Proto.SourceName, e.Message)
+}
+
+func (e *CompileError) String() string {
+	return e.Message
 } // }}}
 
 type codeStore struct { // {{{
-	codes []uint32
-	lines []int
+	codes *[]uint32
+	lines *[]int
 	pc    int
 }
 
+func newCodeStore() *codeStore {
+	codes := codeSlicePool.Get().(*[]uint32)
+	lines := lineSlicePool.Get().(*[]int)
+	*codes = (*codes)[:0]
+	*lines = (*lines)[:0]
+	return &codeStore{
+		codes: codes,
+		lines: lines,
+		pc:    0,
+	}
+}
+
+func (cd *codeStore) Release() {
+	if cd.codes != nil {
+		codeSlicePool.Put(cd.codes)
+		cd.codes = nil
+	}
+	if cd.lines != nil {
+		lineSlicePool.Put(cd.lines)
+		cd.lines = nil
+	}
+}
+
 func (cd *codeStore) Add(inst uint32, line int) {
-	if l := len(cd.codes); l <= 0 || cd.pc == l {
-		cd.codes = append(cd.codes, inst)
-		cd.lines = append(cd.lines, line)
+	codes := *cd.codes
+	lines := *cd.lines
+	if l := len(codes); l <= 0 || cd.pc == l {
+		*cd.codes = append(codes, inst)
+		*cd.lines = append(lines, line)
 	} else {
-		cd.codes[cd.pc] = inst
-		cd.lines[cd.pc] = line
+		(*cd.codes)[cd.pc] = inst
+		(*cd.lines)[cd.pc] = line
 	}
 	cd.pc++
 }
@@ -215,6 +275,7 @@ func (cd *codeStore) PropagateKMV(top int, save *int, reg *int, inc int) {
 			cd.Pop()
 			*save = opGetArgB(lastinst)
 			return
+		default:
 		}
 	}
 	*save = *reg
@@ -229,6 +290,7 @@ func (cd *codeStore) PropagateMV(top int, save *int, reg *int, inc int) {
 			cd.Pop()
 			*save = opGetArgB(lastinst)
 			return
+		default:
 		}
 	}
 	*save = *reg
@@ -245,39 +307,45 @@ func (cd *codeStore) AddLoadNil(a, b, line int) {
 }
 
 func (cd *codeStore) SetOpCode(pc int, v int) {
-	opSetOpCode(&cd.codes[pc], v)
+	opSetOpCode(&(*cd.codes)[pc], v)
 }
 
 func (cd *codeStore) SetA(pc int, v int) {
-	opSetArgA(&cd.codes[pc], v)
+	opSetArgA(&(*cd.codes)[pc], v)
 }
 
 func (cd *codeStore) SetB(pc int, v int) {
-	opSetArgB(&cd.codes[pc], v)
+	opSetArgB(&(*cd.codes)[pc], v)
 }
 
 func (cd *codeStore) SetC(pc int, v int) {
-	opSetArgC(&cd.codes[pc], v)
+	opSetArgC(&(*cd.codes)[pc], v)
 }
 
 func (cd *codeStore) SetBx(pc int, v int) {
-	opSetArgBx(&cd.codes[pc], v)
+	opSetArgBx(&(*cd.codes)[pc], v)
 }
 
 func (cd *codeStore) SetSbx(pc int, v int) {
-	opSetArgSbx(&cd.codes[pc], v)
+	opSetArgSbx(&(*cd.codes)[pc], v)
 }
 
 func (cd *codeStore) At(pc int) uint32 {
-	return cd.codes[pc]
+	return (*cd.codes)[pc]
 }
 
 func (cd *codeStore) List() []uint32 {
-	return cd.codes[:cd.pc]
+	codes := *cd.codes
+	result := make([]uint32, cd.pc)
+	copy(result, codes[:cd.pc])
+	return result
 }
 
 func (cd *codeStore) PosList() []int {
-	return cd.lines[:cd.pc]
+	lines := *cd.lines
+	result := make([]int, cd.pc)
+	copy(result, lines[:cd.pc])
+	return result
 }
 
 func (cd *codeStore) LastPC() int {
@@ -288,7 +356,7 @@ func (cd *codeStore) Last() uint32 {
 	if cd.pc == 0 {
 		return opInvalidInstruction
 	}
-	return cd.codes[cd.pc-1]
+	return (*cd.codes)[cd.pc-1]
 }
 
 func (cd *codeStore) Pop() {
@@ -316,7 +384,7 @@ func (vp *varNamePool) Names() []string {
 }
 
 func (vp *varNamePool) List() []varNamePoolValue {
-	result := make([]varNamePoolValue, len(vp.names), len(vp.names))
+	result := make([]varNamePoolValue, len(vp.names))
 	for i, name := range vp.names {
 		result[i].Index = i + vp.offset
 		result[i].Name = name
@@ -414,7 +482,7 @@ type funcContext struct {
 func newFuncContext(sourcename string, parent *funcContext) *funcContext {
 	fc := &funcContext{
 		Proto:           newFunctionProto(sourcename),
-		Code:            &codeStore{make([]uint32, 0, 1024), make([]int, 0, 1024), 0},
+		Code:            newCodeStore(),
 		Parent:          parent,
 		Upvalues:        newVarNamePool(0),
 		Block:           newCodeBlock(newVarNamePool(0), labelNoJump, nil, nil, 0),
@@ -700,6 +768,7 @@ func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*
 				context.Upvalues.RegisterUnique(st.Value)
 			case ecLocal:
 				ec.reg = context.FindLocalVar(st.Value)
+			default:
 			}
 			acs = append(acs, &assigncontext{ec, 0, 0, false, false})
 		case *ast.AttrGetExpr:
@@ -737,7 +806,7 @@ func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int,
 			regstart := reg
 			reginc := compileExpr(context, reg, stmt.Rhs[namesassigned], ecnone(varargopt))
 			reg += reginc
-			for i := namesassigned; i < namesassigned+int(reginc); i++ {
+			for i := namesassigned; i < namesassigned+reginc; i++ {
 				acs[i].needmove = true
 				if acs[i].ec.ctype == ecTable {
 					acs[i].valuerk = regstart + (i - namesassigned)
@@ -808,6 +877,7 @@ func compileAssignStmt(context *funcContext, stmt *ast.AssignStmt) { // {{{
 			if !opIsK(acs[i].valuerk) {
 				reg -= 1
 			}
+		default:
 		}
 	}
 } // }}}
@@ -884,9 +954,9 @@ func compileReturnStmt(context *funcContext, stmt *ast.ReturnStmt) { // {{{
 			}
 		case *ast.FuncCallExpr:
 			if ex.AdjustRet { // return (func())
-				reg += compileExpr(context, reg, ex, ecnone(0))
+				compileExpr(context, reg, ex, ecnone(0))
 			} else {
-				reg += compileExpr(context, reg, ex, ecnone(-2))
+				compileExpr(context, reg, ex, ecnone(-2))
 				code.SetOpCode(code.LastPC(), OP_TAILCALL)
 			}
 			code.AddABC(OP_RETURN, a, 0, 0, sline(stmt))
@@ -929,7 +999,6 @@ func compileIfStmt(context *funcContext, stmt *ast.IfStmt) { // {{{
 } // }}}
 
 func compileBranchCondition(context *funcContext, reg int, expr ast.Expr, thenlabel, elselabel int, hasnextcond bool) { // {{{
-	// TODO folding constants?
 	code := context.Code
 	flip := 0
 	jumplabel := elselabel
@@ -1151,7 +1220,7 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 		code.AddABx(OP_LOADK, sreg, context.ConstIndex(LString(ex.Value)), sline(ex))
 		return sused
 	case *ast.NumberExpr:
-		num, err := parseNumber(ex.Value)
+		num, err := parseNumberValue(ex.Value)
 		if err != nil {
 			num = LNumber(math.NaN())
 		}
@@ -1178,13 +1247,13 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 		case ecLocal:
 			b := context.FindLocalVar(ex.Value)
 			code.AddABC(OP_MOVE, sreg, b, 0, sline(ex))
+		default:
 		}
 		return sused
 	case *ast.Comma3Expr:
 		if context.Proto.IsVarArg == 0 {
 			raiseCompileError(context, sline(ex), "cannot use '...' outside a vararg function")
 		}
-		context.Proto.IsVarArg &= ^VarArgNeedsArg
 		code.AddABC(OP_VARARG, sreg, 2+ec.varargopt, 0, sline(ex))
 		if context.RegTop() > (sreg+2+ec.varargopt) || ec.varargopt < -1 {
 			return 0
@@ -1211,7 +1280,7 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 	case *ast.StringConcatOpExpr:
 		compileStringConcatOpExpr(context, reg, ex, ec)
 		return sused
-	case *ast.UnaryMinusOpExpr, *ast.UnaryNotOpExpr, *ast.UnaryLenOpExpr:
+	case *ast.UnaryMinusOpExpr, *ast.UnaryNotOpExpr, *ast.UnaryLenOpExpr, *ast.UnaryBNotOpExpr:
 		compileUnaryOpExpr(context, reg, ex, ec)
 		return sused
 	case *ast.RelationalOpExpr:
@@ -1242,6 +1311,10 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 			}
 		}
 		return sused
+	case *ast.CastExpr:
+		return compileExpr(context, reg, ex.Expr, ec)
+	case *ast.NonNilAssertExpr:
+		return compileExpr(context, reg, ex.Expr, ec)
 	default:
 		panic(fmt.Sprintf("expr %v not implemented.", reflect.TypeOf(ex).Elem().Name()))
 	}
@@ -1285,6 +1358,18 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 				return &constLValueExpr{Value: luaModulo(lvalue, rvalue)}
 			case "^":
 				return &constLValueExpr{Value: LNumber(math.Pow(float64(lvalue), float64(rvalue)))}
+			case "//":
+				return &constLValueExpr{Value: LNumber(math.Floor(float64(lvalue) / float64(rvalue)))}
+			case "&":
+				return &constLValueExpr{Value: LNumber(int64(lvalue) & int64(rvalue))}
+			case "|":
+				return &constLValueExpr{Value: LNumber(int64(lvalue) | int64(rvalue))}
+			case "~":
+				return &constLValueExpr{Value: LNumber(int64(lvalue) ^ int64(rvalue))}
+			case "<<":
+				return &constLValueExpr{Value: LNumber(int64(lvalue) << uint64(rvalue))}
+			case ">>":
+				return &constLValueExpr{Value: LNumber(int64(lvalue) >> uint64(rvalue))}
 			default:
 				panic(fmt.Sprintf("unknown binop: %v", expr.Operator))
 			}
@@ -1294,7 +1379,7 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 	case *ast.UnaryMinusOpExpr:
 		expr.Expr = constFold(expr.Expr)
 		if value, ok := lnumberValue(expr.Expr); ok {
-			return &constLValueExpr{Value: LNumber(-value)}
+			return &constLValueExpr{Value: -value}
 		}
 		return expr
 	default:
@@ -1318,13 +1403,7 @@ func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *e
 		context.RegisterLocalVar(name)
 	}
 	if funcexpr.ParList.HasVargs {
-		if CompatVarArg {
-			context.Proto.IsVarArg = VarArgHasArg | VarArgNeedsArg
-			if context.Parent != nil {
-				context.RegisterLocalVar("arg")
-			}
-		}
-		context.Proto.IsVarArg |= VarArgIsVarArg
+		context.Proto.IsVarArg = VarArgIsVarArg
 	}
 
 	compileChunk(context, funcexpr.Stmts, false)
@@ -1332,8 +1411,17 @@ func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *e
 	context.Code.AddABC(OP_RETURN, 0, 1, 0, eline(funcexpr))
 	context.EndScope()
 	context.CheckUnresolvedGoto()
+
+	// Patch code first (needs to modify the codeStore)
+	patchCode(context)
+
+	// Then copy data to Proto (List() and PosList() return copies)
 	context.Proto.Code = context.Code.List()
 	context.Proto.DbgSourcePositions = context.Code.PosList()
+
+	// Now safe to release the pooled slices
+	context.Code.Release()
+
 	context.Proto.DbgUpvalues = context.Upvalues.Names()
 	context.Proto.NumUpvalues = uint8(len(context.Proto.DbgUpvalues))
 	for _, clv := range context.Proto.Constants {
@@ -1343,7 +1431,6 @@ func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *e
 		}
 		context.Proto.stringConstants = append(context.Proto.stringConstants, sv)
 	}
-	patchCode(context)
 } // }}}
 
 func compileTableExpr(context *funcContext, reg int, ex *ast.TableExpr, ec *expcontext) { // {{{
@@ -1401,7 +1488,7 @@ func compileTableExpr(context *funcContext, reg int, ex *ast.TableExpr, ec *expc
 			if field.Key != nil {
 				line = field.Key
 			}
-			if c > 511 {
+			if c > opMaxArgsC {
 				c = 0
 			}
 			code.AddABC(OP_SETLIST, tablereg, b, c, sline(line))
@@ -1445,6 +1532,18 @@ func compileArithmeticOpExpr(context *funcContext, reg int, expr *ast.Arithmetic
 		op = OP_MOD
 	case "^":
 		op = OP_POW
+	case "//":
+		op = OP_IDIV
+	case "&":
+		op = OP_BAND
+	case "|":
+		op = OP_BOR
+	case "~":
+		op = OP_BXOR
+	case "<<":
+		op = OP_SHL
+	case ">>":
+		op = OP_SHR
 	}
 	context.Code.AddABC(op, a, b, c, sline(expr))
 } // }}}
@@ -1463,7 +1562,7 @@ func compileStringConcatOpExpr(context *funcContext, reg int, expr *ast.StringCo
 	a := savereg(ec, reg)
 	basereg := reg
 	reg += compileExpr(context, reg, expr.Lhs, ecnone(0))
-	reg += compileExpr(context, reg, expr.Rhs, ecnone(0))
+	compileExpr(context, reg, expr.Rhs, ecnone(0))
 	for pc := code.LastPC(); pc != 0 && opGetOpCode(code.At(pc)) == OP_CONCAT; pc-- {
 		code.Pop()
 	}
@@ -1499,6 +1598,9 @@ func compileUnaryOpExpr(context *funcContext, reg int, expr ast.Expr, ec *expcon
 		}
 	case *ast.UnaryLenOpExpr:
 		opcode = OP_LEN
+		operandexpr = ex.Expr
+	case *ast.UnaryBNotOpExpr:
+		opcode = OP_BNOT
 		operandexpr = ex.Expr
 	}
 
@@ -1573,7 +1675,6 @@ func compileLogicalOpExpr(context *funcContext, reg int, expr *ast.LogicalOpExpr
 } // }}}
 
 func compileLogicalOpExprAux(context *funcContext, reg int, expr ast.Expr, ec *expcontext, thenlabel, elselabel int, hasnextcond bool, lb *lblabels) { // {{{
-	// TODO folding constants?
 	code := context.Code
 	flip := 0
 	jumplabel := elselabel
@@ -1658,7 +1759,7 @@ func compileLogicalOpExprAux(context *funcContext, reg int, expr ast.Expr, ec *e
 		}
 		code.AddABC(op, sreg, b, 0^flip, sline(expr))
 	} else if !hasnextcond && thenlabel == elselabel {
-		reg += compileExpr(context, reg, expr, &expcontext{ec.ctype, intMax(a, sreg), ec.varargopt})
+		compileExpr(context, reg, expr, &expcontext{ec.ctype, intMax(a, sreg), ec.varargopt})
 		last := context.Code.Last()
 		if opGetOpCode(last) == OP_MOVE && opGetArgA(last) == a {
 			context.Code.SetA(context.Code.LastPC(), sreg)
@@ -1666,7 +1767,7 @@ func compileLogicalOpExprAux(context *funcContext, reg int, expr ast.Expr, ec *e
 			context.Code.AddABC(OP_MOVE, sreg, a, 0, sline(expr))
 		}
 	} else {
-		reg += compileExpr(context, reg, expr, ecnone(0))
+		compileExpr(context, reg, expr, ecnone(0))
 		if !hasnextcond {
 			code.AddABC(OP_TEST, a, 0, 0^flip, sline(expr))
 		} else {
@@ -1684,7 +1785,7 @@ func compileFuncCallExpr(context *funcContext, reg int, expr *ast.FuncCallExpr, 
 	}
 	argc := len(expr.Args)
 	islastvararg := false
-	name := "(anonymous)"
+	var name string
 
 	if expr.Func != nil { // hoge.func()
 		reg += compileExpr(context, reg, expr.Func, ecnone(0))
@@ -1701,7 +1802,7 @@ func compileFuncCallExpr(context *funcContext, reg int, expr *ast.FuncCallExpr, 
 			reg = reg2
 		}
 		argc += 1
-		name = string(expr.Method)
+		name = expr.Method
 	}
 
 	for i, ar := range expr.Args {
@@ -1733,18 +1834,18 @@ func loadRk(context *funcContext, reg *int, expr ast.Expr, cnst LValue) int { //
 	cindex := context.ConstIndex(cnst)
 	if cindex <= opMaxIndexRk {
 		return opRkAsk(cindex)
-	} else {
-		ret := *reg
-		*reg++
-		context.Code.AddABx(OP_LOADK, ret, cindex, sline(expr))
-		return ret
 	}
+	ret := *reg
+	*reg++
+	context.Code.AddABx(OP_LOADK, ret, cindex, sline(expr))
+	return ret
 } // }}}
 
 func getIdentRefType(context *funcContext, current *funcContext, expr *ast.IdentExpr) expContextType { // {{{
 	if current == nil {
 		return ecGlobal
-	} else if current.FindLocalVar(expr.Value) > -1 {
+	}
+	if current.FindLocalVar(expr.Value) > -1 {
 		if current == context {
 			return ecLocal
 		}
@@ -1753,7 +1854,7 @@ func getIdentRefType(context *funcContext, current *funcContext, expr *ast.Ident
 	return getIdentRefType(context, current.Parent, expr)
 } // }}}
 
-func getExprName(context *funcContext, expr ast.Expr) string { // {{{
+func getExprName(_ *funcContext, expr ast.Expr) string { // {{{
 	switch ex := expr.(type) {
 	case *ast.IdentExpr:
 		return ex.Value
@@ -1866,5 +1967,6 @@ func Compile(chunk []ast.Stmt, name string) (proto *FunctionProto, err error) { 
 	context := newFuncContext(name, nil)
 	compileFunctionExpr(context, funcexpr, ecnone(0))
 	proto = context.Proto
+
 	return
 } // }}}
