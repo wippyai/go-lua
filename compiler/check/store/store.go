@@ -850,6 +850,15 @@ func (s *SessionStore) GetCapturedFieldAssignsSnapshot(
 	return s.GetInterprocFactsSnapshot(graph, parent).CapturedFields
 }
 
+// GetCapturedContainerMutationsSnapshot returns captured container mutations from the stable interproc snapshot.
+func (s *SessionStore) GetCapturedContainerMutationsSnapshot(
+	graph *cfg.Graph,
+	parent *scope.State,
+) api.CapturedContainerMutations {
+	s.requirePhase(api.PhaseScopeCompute, api.PhaseNarrowing)
+	return s.GetInterprocFactsSnapshot(graph, parent).CapturedContainers
+}
+
 // snapshotEffectStore implements api.EffectStore using the stable snapshot.
 type snapshotEffectStore struct {
 	effects map[cfg.SymbolID]*constraint.FunctionEffect

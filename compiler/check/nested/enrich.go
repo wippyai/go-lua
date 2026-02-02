@@ -3,7 +3,12 @@ package nested
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
+	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -96,6 +101,83 @@ func CollectCapturedFieldAssignments(
 		return make(map[cfg.SymbolID]map[string]typ.Type)
 	}
 	return assign.CollectFieldAssignments(graph, synth, capturedSyms)
+}
+
+// CollectCapturedContainerMutations scans a nested function's graph for container mutations
+// (e.g., channel.send) that target captured variables.
+func CollectCapturedContainerMutations(
+	graph *cfg.Graph,
+	capturedSyms map[cfg.SymbolID]bool,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+) map[cfg.SymbolID][]api.ContainerMutation {
+	result := make(map[cfg.SymbolID][]api.ContainerMutation)
+	if graph == nil || len(capturedSyms) == 0 {
+		return result
+	}
+
+	bindings := graph.Bindings()
+	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil {
+			return
+		}
+
+		ceu := mutator.ContainerMutatorFromCall(info, p, synth, nil, nil)
+		if ceu == nil {
+			return
+		}
+
+		targetExpr := argAtMethod(info, ceu.Container.Index)
+		valueExpr := argAtMethod(info, ceu.Value.Index)
+		if targetExpr == nil || valueExpr == nil {
+			return
+		}
+
+		targetPath := flowpath.FromExprWithBindings(targetExpr, nil, bindings)
+		if targetPath.IsEmpty() || targetPath.Symbol == 0 {
+			return
+		}
+		if !capturedSyms[targetPath.Symbol] {
+			return
+		}
+
+		var valueType typ.Type
+		if synth != nil {
+			valueType = synth(valueExpr, p)
+		}
+		if valueType == nil {
+			valueType = typ.Unknown
+		}
+		valueType = subtype.WidenForInference(valueType)
+
+		segs := make([]constraint.Segment, len(targetPath.Segments))
+		copy(segs, targetPath.Segments)
+		result[targetPath.Symbol] = append(result[targetPath.Symbol], api.ContainerMutation{
+			Segments:  segs,
+			ValueType: valueType,
+		})
+	})
+
+	return result
+}
+
+func argAtMethod(info *cfg.CallInfo, paramIdx int) ast.Expr {
+	if info == nil {
+		return nil
+	}
+	if info.Method != "" && info.Receiver != nil {
+		if paramIdx == 0 {
+			return info.Receiver
+		}
+		if paramIdx < 0 {
+			adj := len(info.Args) + 1 + paramIdx
+			if adj == 0 {
+				return info.Receiver
+			}
+			return mutator.ArgAtCall(info.Args, adj-1)
+		}
+		return mutator.ArgAtCall(info.Args, paramIdx-1)
+	}
+	return mutator.ArgAtCall(info.Args, paramIdx)
 }
 
 // EnrichSelfTypeWithConstructorFields merges constructor instance fields into a self-type.

@@ -78,7 +78,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	specNarrowed := CollectSpecNarrowedTypes(fc.Graph, fc.Scopes, synth, symResolver, fc.API)
 	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, specNarrowed, inputs.AnnotatedVars, inputs, fc.CallCtx, fc.TypeOps, fc.Services)
 	// Promote inferred parameter types into DeclaredTypes for unannotated params.
-	// This enables bidirectional inference at call sites (e.g., assert.eq).
+	// This enables bidirectional inference at call sites (e.g., custom assert helpers).
 	if inputs != nil && inputs.DeclaredTypes != nil {
 		for _, sym := range fc.Graph.ParamSymbols() {
 			if sym == 0 {
@@ -546,6 +546,9 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 				// For non-const keys, emit an IndexerAssignment to widen the table
 				if fieldName == "" {
+					if keyType == nil && target.Key != nil && wrappedSynth != nil {
+						keyType = wrappedSynth(target.Key, p)
+					}
 					// Apply truthy guards to narrow optional fields in table literals.
 					valType := assignedType
 					if i < len(info.Sources) && bindings != nil && truthyGuards != nil {

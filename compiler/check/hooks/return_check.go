@@ -82,7 +82,31 @@ func CheckReturns(
 	var diags []diag.Diagnostic
 
 	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
-		if info == nil || len(info.Exprs) == 0 {
+		if info == nil {
+			return
+		}
+		if len(info.Exprs) == 0 {
+			var posNode ast.PositionHolder
+			if fn != nil {
+				posNode = fn
+			}
+			if info.Stmt != nil {
+				posNode = info.Stmt
+			}
+			if posNode != nil {
+				pos := diag.Position{File: sourceName, Line: posNode.Line(), Column: posNode.Column()}
+				span := ast.SpanOf(posNode)
+				msg := "missing return"
+				_, help := diag.ContextualHelp(diag.ErrMissingReturn, msg, "")
+				diags = append(diags, diag.Diagnostic{
+					Severity: diag.SeverityError,
+					Code:     diag.ErrMissingReturn,
+					Position: pos,
+					Span:     span,
+					Message:  msg,
+					Help:     help,
+				})
+			}
 			return
 		}
 

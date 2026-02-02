@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -29,6 +30,9 @@ func TestFacts_Zero(t *testing.T) {
 	}
 	if f.CapturedFields != nil {
 		t.Error("zero Facts should have nil CapturedFields")
+	}
+	if f.CapturedContainers != nil {
+		t.Error("zero Facts should have nil CapturedContainers")
 	}
 }
 
@@ -114,6 +118,36 @@ func TestCapturedFieldAssigns_Basic(t *testing.T) {
 	}
 	if fields["foo"] != typ.String {
 		t.Error("expected foo to be string")
+	}
+}
+
+func TestCapturedContainerMutations_Basic(t *testing.T) {
+	mutations := make(CapturedContainerMutations)
+	nestedSym := cfg.SymbolID(1)
+	capturedSym := cfg.SymbolID(2)
+
+	mutations[nestedSym] = map[cfg.SymbolID][]ContainerMutation{
+		capturedSym: {
+			{
+				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "ch"}},
+				ValueType: typ.Number,
+			},
+		},
+	}
+
+	nestedMutations, ok := mutations[nestedSym]
+	if !ok {
+		t.Fatal("expected nested symbol in mutations")
+	}
+	list, ok := nestedMutations[capturedSym]
+	if !ok {
+		t.Fatal("expected captured symbol in nested mutations")
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 mutation, got %d", len(list))
+	}
+	if list[0].ValueType != typ.Number {
+		t.Error("expected value type to be number")
 	}
 }
 

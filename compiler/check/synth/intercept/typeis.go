@@ -21,7 +21,7 @@ import (
 // TypeValueMethod effect, indicating it's a type checking method rather
 // than a regular method.
 //
-// Always returns boolean since :is performs a type check.
+// Returns (value, err) where value is the checked instance or nil.
 type TypeIsIntercept struct{}
 
 func (t *TypeIsIntercept) InterceptMethodCall(ex *ast.FuncCallExpr, ctx CallEnv) Result {
@@ -48,8 +48,9 @@ func (t *TypeIsIntercept) InterceptMethodCall(ex *ast.FuncCallExpr, ctx CallEnv)
 				fn := unwrap.Function(methodType)
 				if fn != nil {
 					if row, ok := fn.Effects.(effect.Row); ok && row.HasTypeValueMethod() {
+						ret := typ.NewOptional(meta.Of)
 						return Result{
-							Types: []typ.Type{typ.Boolean},
+							Types: []typ.Type{ret, typ.NewOptional(typ.LuaError)},
 							Skip:  true,
 						}
 					}

@@ -8,6 +8,7 @@ package api
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -51,6 +52,19 @@ type CapturedTypes = map[cfg.SymbolID]typ.Type
 // to its captured variables, supporting constructor inference patterns.
 type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type
 
+// ContainerMutation records a container element mutation on a captured variable.
+// Segments capture the path from the base symbol (e.g., .ch, ["queue"]).
+type ContainerMutation struct {
+	Segments  []constraint.Segment
+	ValueType typ.Type
+}
+
+// CapturedContainerMutations maps nested function symbols to container mutations
+// they make to captured variables from parent scopes.
+//
+// Structure: nestedFuncSymbol -> capturedVarSymbol -> []ContainerMutation
+type CapturedContainerMutations = map[cfg.SymbolID]map[cfg.SymbolID][]ContainerMutation
+
 // ConstructorFields maps class symbols to field assignments captured in constructors.
 // Structure: classSymbol -> fieldName -> fieldType.
 type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
@@ -65,5 +79,6 @@ type Facts struct {
 	LiteralSigs       LiteralSigs
 	CapturedTypes     CapturedTypes
 	CapturedFields    CapturedFieldAssigns
+	CapturedContainers CapturedContainerMutations
 	ConstructorFields ConstructorFields
 }

@@ -21,6 +21,11 @@ func (m mockTypeQuerier) Field(_ *db.QueryContext, t typ.Type, name string) (typ
 			return f.Type, true
 		}
 	}
+	if mp, ok := t.(*typ.Map); ok {
+		if mp.Value != nil {
+			return typ.NewOptional(mp.Value), true
+		}
+	}
 	return nil, false
 }
 

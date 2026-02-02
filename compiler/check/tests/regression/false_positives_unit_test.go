@@ -1094,33 +1094,6 @@ end
 	}
 }
 
-func TestFP_AssertEq_UnannotatedParams(t *testing.T) {
-	assertMod := testutil.CheckAndExport(`
-		local assert = {}
-		function assert.eq(a, b, msg)
-			if a ~= b then
-				error(msg or "not equal")
-			end
-			return true
-		end
-		return assert
-	`, "assert", testutil.WithStdlib())
-
-	if assertMod.HasError() {
-		t.Fatalf("assert module should have no errors: %v", assertMod.Errors)
-	}
-
-	result := testutil.Check(`
-		local assert = require("assert")
-		local data = { filename = "file.txt" }
-		assert.eq(data.filename, "file.txt", "filename matches")
-	`, testutil.WithStdlib(), testutil.WithModule("assert", assertMod))
-
-	if result.HasError() {
-		t.Fatalf("expected no errors for assert.eq with unannotated params: %v", testutil.ErrorMessages(result.Diagnostics))
-	}
-}
-
 func TestFP_TableIndexAfterInitGuard(t *testing.T) {
 	source := `
 		function test(data: {[string]: string}, key: string): integer

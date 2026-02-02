@@ -248,6 +248,7 @@ func (b *Builder) ReturnStmt(s *ast.ReturnStmt) {
 	b.ScopeTracker.SnapshotVisibility(p)
 
 	info := &ReturnInfo{
+		Stmt:        s,
 		Exprs:       s.Exprs,
 		Names:       b.ProcessExprs(p, s.Exprs),
 		SourceCalls: ExtractSourceCalls(s.Exprs),

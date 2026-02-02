@@ -443,8 +443,8 @@ func TestTypeIsNarrowing(t *testing.T) {
 			Code: `
 				type Point = {x: number, y: number}
 				function validate(data: any)
-					local val, err = Point:is(data)
-					if val ~= nil then
+					local p = Point:is(data)
+					if p then
 						local p: {x: number, y: number} = data
 					end
 				end
@@ -477,8 +477,8 @@ func TestTypeIsNarrowing(t *testing.T) {
 					return Point:is(x)
 				end
 				function validate(data: any)
-					local ok = isPoint(data)
-					if not ok then
+					local p = isPoint(data)
+					if not p then
 						local p: {x: number, y: number} = data
 					end
 				end

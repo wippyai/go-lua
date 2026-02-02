@@ -190,11 +190,11 @@ func TestNeverType_MethodCallAfterErrorCheck(t *testing.T) {
 		local exec = funcs.new()
 
 		local result, err = exec:call("test:echo", "hello")
-		assert.is_nil(err, "first call no error")
-		assert.not_nil(result, "first call has result")
+		if err ~= nil then error("first call no error") end
+		if result == nil then error("first call has result") end
 
 		local result2, err2 = exec:call("test:echo", "world")
-		assert.is_nil(err2, "second call no error")
+		if err2 ~= nil then error("second call no error") end
 	`
 	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("funcs", funcsManifest))
 	if result.HasError() {
@@ -221,7 +221,7 @@ func TestNeverType_LoopWithConditionalReturn(t *testing.T) {
 
 	source := `
 		local versions, err = registry.versions()
-		assert.is_nil(err, "versions no error")
+		if err ~= nil then error("versions no error") end
 
 		local test_version = nil
 		for _, v in ipairs(versions) do
@@ -234,7 +234,7 @@ func TestNeverType_LoopWithConditionalReturn(t *testing.T) {
 		if test_version then
 			local test_id = test_version:id()
 			local snap, snap_err = registry.snapshot_at(test_id)
-			assert.is_nil(snap_err, "snapshot_at no error")
+			if snap_err ~= nil then error("snapshot_at no error") end
 		end
 	`
 	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("registry", registryManifest))

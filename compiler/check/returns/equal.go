@@ -3,6 +3,7 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -27,6 +28,9 @@ func FactsEqual(a, b api.Facts) bool {
 		return false
 	}
 	if !CapturedFieldAssignsEqual(a.CapturedFields, b.CapturedFields) {
+		return false
+	}
+	if !CapturedContainerMutationsEqual(a.CapturedContainers, b.CapturedContainers) {
 		return false
 	}
 	if !ConstructorFieldsEqual(a.ConstructorFields, b.ConstructorFields) {
@@ -140,6 +144,53 @@ func CapturedFieldAssignsEqual(a, b api.CapturedFieldAssigns) bool {
 		}
 	}
 	return true
+}
+
+// CapturedContainerMutationsEqual checks if two captured container mutation maps are equal.
+func CapturedContainerMutationsEqual(a, b api.CapturedContainerMutations) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, callee := range cfg.SortedSymbolIDs(a) {
+		baseMap := a[callee]
+		otherBase := b[callee]
+		if len(baseMap) != len(otherBase) {
+			return false
+		}
+		for _, sym := range cfg.SortedSymbolIDs(baseMap) {
+			muts := baseMap[sym]
+			otherMuts := otherBase[sym]
+			if !containerMutationSlicesEqual(muts, otherMuts) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func containerMutationSlicesEqual(a, b []api.ContainerMutation) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 {
+		return true
+	}
+	index := make(map[string]api.ContainerMutation, len(a))
+	for _, m := range a {
+		index[mutationKeyForEqual(m)] = m
+	}
+	for _, m := range b {
+		key := mutationKeyForEqual(m)
+		other, ok := index[key]
+		if !ok || !typ.TypeEquals(other.ValueType, m.ValueType) {
+			return false
+		}
+	}
+	return true
+}
+
+func mutationKeyForEqual(m api.ContainerMutation) string {
+	return constraint.FormatSegments(m.Segments)
 }
 
 // ConstructorFieldsEqual checks if two constructor field maps are equal.

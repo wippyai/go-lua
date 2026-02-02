@@ -176,6 +176,7 @@ func (*CallInfo) Kind() basecfg.NodeKind { return basecfg.NodeCall }
 
 // ReturnInfo captures pre-extracted data for return nodes.
 type ReturnInfo struct {
+	Stmt        *ast.ReturnStmt
 	Exprs       []ast.Expr
 	Names       []string           // Pre-extracted: identifier name or "" if not ident
 	Symbols     []basecfg.SymbolID // Symbol IDs for returned identifiers (0 if not ident or unresolved)

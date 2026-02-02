@@ -91,8 +91,14 @@ func TestTypeIsIntercept_TypeWithIsMethod(t *testing.T) {
 	if !result.Skip {
 		t.Fatal("expected skip=true for type with :is method")
 	}
-	if len(result.Types) != 1 || result.Types[0] != typ.Boolean {
-		t.Fatal("expected boolean return type")
+	if len(result.Types) != 2 {
+		t.Fatalf("expected two return types, got %d", len(result.Types))
+	}
+	if result.Types[0] == nil || !result.Types[0].Equals(typ.NewOptional(typ.Integer)) {
+		t.Fatal("expected optional value return type")
+	}
+	if result.Types[1] == nil || !result.Types[1].Equals(typ.NewOptional(typ.LuaError)) {
+		t.Fatal("expected optional error return type")
 	}
 }
 
@@ -129,7 +135,13 @@ func TestTypeIsIntercept_MultipleArgs(t *testing.T) {
 	if !result.Skip {
 		t.Fatal("expected skip=true for meta type with :is method")
 	}
-	if result.Types[0] != typ.Boolean {
-		t.Fatal("expected boolean return type")
+	if len(result.Types) != 2 {
+		t.Fatalf("expected two return types, got %d", len(result.Types))
+	}
+	if result.Types[0] == nil || !result.Types[0].Equals(typ.NewOptional(typ.Integer)) {
+		t.Fatal("expected optional value return type")
+	}
+	if result.Types[1] == nil || !result.Types[1].Equals(typ.NewOptional(typ.LuaError)) {
+		t.Fatal("expected optional error return type")
 	}
 }

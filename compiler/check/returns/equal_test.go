@@ -128,3 +128,23 @@ func TestCapturedFieldAssignsEqual_DifferentCallee(t *testing.T) {
 		t.Error("different callee symbols should not be equal")
 	}
 }
+
+func TestCapturedContainerMutationsEqual_Basic(t *testing.T) {
+	a := api.CapturedContainerMutations{
+		cfg.SymbolID(1): {
+			cfg.SymbolID(2): {
+				{Segments: nil, ValueType: typ.Number},
+			},
+		},
+	}
+	b := api.CapturedContainerMutations{
+		cfg.SymbolID(1): {
+			cfg.SymbolID(2): {
+				{Segments: nil, ValueType: typ.Number},
+			},
+		},
+	}
+	if !CapturedContainerMutationsEqual(a, b) {
+		t.Error("same container mutations should be equal")
+	}
+}

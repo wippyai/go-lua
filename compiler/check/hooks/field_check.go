@@ -25,8 +25,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // CheckFields validates field accesses on narrowed types.
@@ -318,6 +321,11 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 
 	objType := narrowView.TypeOf(e.Object, p)
 
+	if !isStringKeyExpr(e.Key) {
+		diags = append(diags, checkIndexAccess(e, p, narrowView, resolver, objType, sourceName)...)
+		return diags
+	}
+
 	fieldName := ast.KeyName(e.Key)
 	result := checksynth.ResolveFieldAccess(resolver, e, objType, fieldName, p)
 
@@ -367,6 +375,82 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 	}
 
 	return diags
+}
+
+func isStringKeyExpr(key ast.Expr) bool {
+	if key == nil {
+		return false
+	}
+	_, ok := key.(*ast.StringExpr)
+	return ok
+}
+
+func isLiteralStringKeyType(t typ.Type) bool {
+	switch v := t.(type) {
+	case *typ.Literal:
+		return v.Base == kind.String
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return false
+		}
+		for _, m := range v.Members {
+			lit, ok := m.(*typ.Literal)
+			if !ok || lit.Base != kind.String {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, resolver fieldResolverImpl, objType typ.Type, sourceName string) []diag.Diagnostic {
+	if e == nil || narrowView == nil {
+		return nil
+	}
+	if objType == nil || objType.Kind().IsPlaceholder() {
+		return nil
+	}
+	keyType := narrowView.TypeOf(e.Key, p)
+
+	if rec, ok := unwrap.Alias(objType).(*typ.Record); ok && !rec.HasMapComponent() && !rec.Open {
+		if !isLiteralStringKeyType(keyType) {
+			return []diag.Diagnostic{indexError(objType, e, sourceName)}
+		}
+	}
+
+	var ok bool
+	if resolver.synth != nil {
+		_, ok = resolver.synth.CallQuery().Index(resolver.synth.Context(), objType, keyType)
+	} else {
+		_, ok = querycore.Index(objType, keyType)
+	}
+	if ok {
+		return nil
+	}
+
+	return []diag.Diagnostic{indexError(objType, e, sourceName)}
+}
+
+func indexError(objType typ.Type, e *ast.AttrGetExpr, sourceName string) diag.Diagnostic {
+	pos := diag.Position{File: sourceName, Line: e.Line(), Column: e.Column()}
+	span := ast.SpanOf(e)
+	if e.Object != nil && e.Object.Line() > 0 {
+		pos.Line = e.Object.Line()
+		pos.Column = e.Object.Column()
+		span = ast.SpanOf(e.Object)
+	}
+	msg := "cannot index type " + typ.FormatShort(objType)
+	_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
+	return diag.Diagnostic{
+		Severity: diag.SeverityError,
+		Code:     diag.ErrTypeMismatch,
+		Position: pos,
+		Span:     span,
+		Message:  msg,
+		Help:     help,
+	}
 }
 
 func formatMissingField(field string, objType typ.Type) string {

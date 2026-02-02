@@ -40,6 +40,8 @@ var ansiColors = colorScheme{
 	gutter:  "\033[1;34m",
 }
 
+const tabWidth = 8
+
 // Render formats the diagnostic in Rust-style without colors.
 //
 // The output format includes:
@@ -91,7 +93,8 @@ func (d Diagnostic) render(source SourceLines, c colorScheme) string {
 	b.WriteString(c.reset)
 	b.WriteString("\n")
 
-	line := source.GetLine(d.Position.Line)
+	lineRaw := source.GetLine(d.Position.Line)
+	line := expandTabs(lineRaw)
 	lineNumStr := strconv.Itoa(d.Position.Line)
 	gutterWidth := len(lineNumStr) + 1
 	gutter := strings.Repeat(" ", gutterWidth)
@@ -129,7 +132,7 @@ func (d Diagnostic) render(source SourceLines, c colorScheme) string {
 		b.WriteString("| ")
 		b.WriteString(c.reset)
 
-		col := d.Position.Column
+		col := displayColumn(lineRaw, d.Position.Column)
 		if col < 1 {
 			col = 1
 		}
@@ -139,8 +142,10 @@ func (d Diagnostic) render(source SourceLines, c colorScheme) string {
 		underlineLen := 1
 
 		if d.Span.Valid() && d.Span.SingleLine() {
-			if d.Span.EndCol >= d.Span.StartCol {
-				underlineLen = d.Span.EndCol - d.Span.StartCol + 1
+			startCol := displayColumn(lineRaw, d.Span.StartCol)
+			endCol := displayColumn(lineRaw, d.Span.EndCol)
+			if endCol >= startCol {
+				underlineLen = endCol - startCol + 1
 			} else if col <= len(line) {
 				underlineLen = len(line) - col + 1
 			}
@@ -159,7 +164,8 @@ func (d Diagnostic) render(source SourceLines, c colorScheme) string {
 
 	for _, label := range d.Labels {
 		if label.Span.StartLine > 0 {
-			labelLine := source.GetLine(label.Span.StartLine)
+			labelLineRaw := source.GetLine(label.Span.StartLine)
+			labelLine := expandTabs(labelLineRaw)
 			if labelLine != "" {
 				b.WriteString(c.gutter)
 				b.WriteString(fmt.Sprintf("%*d | ", gutterWidth-1, label.Span.StartLine))
@@ -172,7 +178,11 @@ func (d Diagnostic) render(source SourceLines, c colorScheme) string {
 				b.WriteString(c.reset)
 
 				if label.Span.StartCol > 0 {
-					b.WriteString(strings.Repeat(" ", label.Span.StartCol-1))
+					labelCol := displayColumn(labelLineRaw, label.Span.StartCol)
+					if labelCol < 1 {
+						labelCol = 1
+					}
+					b.WriteString(strings.Repeat(" ", labelCol-1))
 				}
 
 				b.WriteString(c.hint)
@@ -203,6 +213,48 @@ func (d Diagnostic) render(source SourceLines, c colorScheme) string {
 	}
 
 	return b.String()
+}
+
+func expandTabs(line string) string {
+	if !strings.Contains(line, "\t") {
+		return line
+	}
+	var b strings.Builder
+	col := 1
+	for _, r := range line {
+		if r == '\t' {
+			spaces := tabWidth - ((col - 1) % tabWidth)
+			b.WriteString(strings.Repeat(" ", spaces))
+			col += spaces
+			continue
+		}
+		b.WriteRune(r)
+		col++
+	}
+	return b.String()
+}
+
+func displayColumn(line string, col int) int {
+	if col < 1 {
+		return 1
+	}
+	if !strings.Contains(line, "\t") {
+		return col
+	}
+	display := 1
+	current := 1
+	for _, r := range line {
+		if current == col {
+			return display
+		}
+		if r == '\t' {
+			display += tabWidth - ((display - 1) % tabWidth)
+		} else {
+			display++
+		}
+		current++
+	}
+	return display
 }
 
 // RenderAll formats all diagnostics without colors.

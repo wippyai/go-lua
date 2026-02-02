@@ -163,24 +163,29 @@ func (d *TypeDomain) applyNotHasType(atom constraint.Atom) bool {
 func (d *TypeDomain) applyTruthy(atom constraint.Atom) bool {
 	key := atom.Left.Path
 	base := d.TypeAt(key)
-	if base == nil {
-		return true
+	if base != nil {
+		narrowed := narrow.ToTruthy(base)
+		if narrowed == nil || narrowed.Kind().IsNever() {
+			d.Unsat = true
+			return false
+		}
+		d.Narrowed[key] = narrowed
 	}
-	narrowed := narrow.ToTruthy(base)
-	if narrowed == nil || narrowed.Kind().IsNever() {
-		d.Unsat = true
-		return false
-	}
-	d.Narrowed[key] = narrowed
 
 	// Parent narrowing: if this is a field path (r.ok), narrow the parent (r)
-	// by the boolean discriminant if applicable
+	// by the boolean discriminant if applicable.
 	if parent, field, ok := SplitPathKey(key); ok {
 		if parentType := d.TypeAt(parent); parentType != nil {
 			if d.Env.HasResolver() && constraint.IsBooleanDiscriminantField(parentType, field, &d.Env) {
 				parentNarrowed := narrow.ByFieldLiteral(parentType, field, typ.True, &d.Env)
 				if parentNarrowed != nil && !parentNarrowed.Kind().IsNever() {
 					d.Narrowed[parent] = parentNarrowed
+				}
+			} else if d.Env.HasResolver() {
+				if parentNarrowed := narrow.ByFieldTruthy(parentType, field, &d.Env); parentNarrowed != nil && !parentNarrowed.Kind().IsNever() {
+					if !typ.TypeEquals(parentNarrowed, parentType) {
+						d.Narrowed[parent] = parentNarrowed
+					}
 				}
 			}
 		}
@@ -191,24 +196,29 @@ func (d *TypeDomain) applyTruthy(atom constraint.Atom) bool {
 func (d *TypeDomain) applyFalsy(atom constraint.Atom) bool {
 	key := atom.Left.Path
 	base := d.TypeAt(key)
-	if base == nil {
-		return true
+	if base != nil {
+		narrowed := narrow.ToFalsy(base)
+		if narrowed == nil || narrowed.Kind().IsNever() {
+			d.Unsat = true
+			return false
+		}
+		d.Narrowed[key] = narrowed
 	}
-	narrowed := narrow.ToFalsy(base)
-	if narrowed == nil || narrowed.Kind().IsNever() {
-		d.Unsat = true
-		return false
-	}
-	d.Narrowed[key] = narrowed
 
 	// Parent narrowing: if this is a field path (r.ok), narrow the parent (r)
-	// by the boolean discriminant if applicable
+	// by the boolean discriminant if applicable.
 	if parent, field, ok := SplitPathKey(key); ok {
 		if parentType := d.TypeAt(parent); parentType != nil {
 			if d.Env.HasResolver() && constraint.IsBooleanDiscriminantField(parentType, field, &d.Env) {
 				parentNarrowed := narrow.ByFieldLiteral(parentType, field, typ.False, &d.Env)
 				if parentNarrowed != nil && !parentNarrowed.Kind().IsNever() {
 					d.Narrowed[parent] = parentNarrowed
+				}
+			} else if d.Env.HasResolver() {
+				if parentNarrowed := narrow.ByFieldFalsy(parentType, field, &d.Env); parentNarrowed != nil && !parentNarrowed.Kind().IsNever() {
+					if !typ.TypeEquals(parentNarrowed, parentType) {
+						d.Narrowed[parent] = parentNarrowed
+					}
 				}
 			}
 		}

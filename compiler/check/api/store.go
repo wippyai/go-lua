@@ -78,6 +78,7 @@ type SnapshotStore interface {
 	GetNarrowReturnSummariesSnapshot(graph *cfg.Graph, parent *scope.State) NarrowReturnSummaries
 	GetCapturedTypesSnapshot(graph *cfg.Graph, parent *scope.State) CapturedTypes
 	GetCapturedFieldAssignsSnapshot(graph *cfg.Graph, parent *scope.State) CapturedFieldAssigns
+	GetCapturedContainerMutationsSnapshot(graph *cfg.Graph, parent *scope.State) CapturedContainerMutations
 	GetLocalFuncTypesSnapshot(graph *cfg.Graph, parent *scope.State) FuncTypes
 	GetLiteralSigsSnapshot(graph *cfg.Graph, parent *scope.State) LiteralSigs
 }

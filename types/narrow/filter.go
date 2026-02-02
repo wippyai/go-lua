@@ -28,6 +28,26 @@ import (
 //	result := FilterByMatch(union, matcher, true)   // exclude numbers
 type TypeMatcher func(t typ.Type) bool
 
+// ByFieldTruthy narrows a type to members where a field can be truthy.
+func ByFieldTruthy(t typ.Type, field string, resolver Resolver) typ.Type {
+	if t == nil || field == "" || resolver == nil {
+		return t
+	}
+	return FilterByMatch(t, func(m typ.Type) bool {
+		return fieldCanBeTruthy(m, field, resolver)
+	}, false)
+}
+
+// ByFieldFalsy narrows a type to members where a field can be falsy.
+func ByFieldFalsy(t typ.Type, field string, resolver Resolver) typ.Type {
+	if t == nil || field == "" || resolver == nil {
+		return t
+	}
+	return FilterByMatch(t, func(m typ.Type) bool {
+		return fieldCanBeFalsy(m, field, resolver)
+	}, false)
+}
+
 // FilterByMatch filters a type by applying a matcher predicate with configurable
 // polarity (narrow vs exclude).
 //
@@ -92,6 +112,65 @@ func FilterByMatch(t typ.Type, matches TypeMatcher, exclude bool) typ.Type {
 	}
 
 	return filterNarrow(t, matches)
+}
+
+func fieldCanBeTruthy(t typ.Type, field string, resolver Resolver) bool {
+	if t == nil {
+		return false
+	}
+	if t.Kind().IsPlaceholder() {
+		return true
+	}
+	if rec, ok := t.(*typ.Record); ok {
+		if f := rec.GetField(field); f != nil {
+			if f.Type == nil {
+				return true
+			}
+			return !ToTruthy(f.Type).Kind().IsNever()
+		}
+		if rec.Open || rec.HasMapComponent() {
+			return true
+		}
+		return false
+	}
+	if m, ok := t.(*typ.Map); ok {
+		if m.Value == nil {
+			return true
+		}
+		return !ToTruthy(m.Value).Kind().IsNever()
+	}
+	if ft, ok := resolver.Field(t, field); ok && ft != nil {
+		return !ToTruthy(ft).Kind().IsNever()
+	}
+	return true
+}
+
+func fieldCanBeFalsy(t typ.Type, field string, resolver Resolver) bool {
+	if t == nil {
+		return false
+	}
+	if t.Kind().IsPlaceholder() {
+		return true
+	}
+	if rec, ok := t.(*typ.Record); ok {
+		if f := rec.GetField(field); f != nil {
+			if f.Type == nil {
+				return true
+			}
+			return !ToFalsy(f.Type).Kind().IsNever()
+		}
+		return true
+	}
+	if m, ok := t.(*typ.Map); ok {
+		if m.Value == nil {
+			return true
+		}
+		return !ToFalsy(m.Value).Kind().IsNever()
+	}
+	if ft, ok := resolver.Field(t, field); ok && ft != nil {
+		return !ToFalsy(ft).Kind().IsNever()
+	}
+	return true
 }
 
 // filterNarrow implements narrowing mode filtering, keeping only matching members.

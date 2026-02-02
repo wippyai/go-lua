@@ -304,7 +304,11 @@ func (ce *ConditionExtractor) ConditionFromExpr(expr ast.Expr) constraint.Condit
 			return constraint.FalseCondition()
 		}
 		if link := predicate.LookupPredicateLink(e.Value, ce.Inputs); link != nil && link.OnTruthy.HasConstraints() {
-			return link.OnTruthy
+			path := ce.pathFromExpr(e)
+			if path.IsEmpty() {
+				return link.OnTruthy
+			}
+			return constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.Truthy{Path: path}))
 		}
 		path := ce.pathFromExpr(e)
 		if path.IsEmpty() {
@@ -429,7 +433,11 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 	if literal.IsNilExpr(lhs) {
 		if ident, ok := rhs.(*ast.IdentExpr); ok {
 			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnFalsy.HasConstraints() {
-				return link.OnFalsy
+				path := ce.pathFromExpr(rhs)
+				if path.IsEmpty() {
+					return link.OnFalsy
+				}
+				return constraint.And(link.OnFalsy, constraint.FromConstraints(constraint.IsNil{Path: path}))
 			}
 			path := ce.pathFromExpr(rhs)
 			if !path.IsEmpty() {
@@ -445,7 +453,11 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 	if literal.IsNilExpr(rhs) {
 		if ident, ok := lhs.(*ast.IdentExpr); ok {
 			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnFalsy.HasConstraints() {
-				return link.OnFalsy
+				path := ce.pathFromExpr(lhs)
+				if path.IsEmpty() {
+					return link.OnFalsy
+				}
+				return constraint.And(link.OnFalsy, constraint.FromConstraints(constraint.IsNil{Path: path}))
 			}
 			path := ce.pathFromExpr(lhs)
 			if !path.IsEmpty() {
@@ -617,7 +629,11 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 	if literal.IsNilExpr(lhs) {
 		if ident, ok := rhs.(*ast.IdentExpr); ok {
 			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnTruthy.HasConstraints() {
-				return link.OnTruthy
+				path := ce.pathFromExpr(rhs)
+				if path.IsEmpty() {
+					return link.OnTruthy
+				}
+				return constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.NotNil{Path: path}))
 			}
 			path := ce.pathFromExpr(rhs)
 			if !path.IsEmpty() {
@@ -633,7 +649,11 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 	if literal.IsNilExpr(rhs) {
 		if ident, ok := lhs.(*ast.IdentExpr); ok {
 			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnTruthy.HasConstraints() {
-				return link.OnTruthy
+				path := ce.pathFromExpr(lhs)
+				if path.IsEmpty() {
+					return link.OnTruthy
+				}
+				return constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.NotNil{Path: path}))
 			}
 			path := ce.pathFromExpr(lhs)
 			if !path.IsEmpty() {

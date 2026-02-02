@@ -104,7 +104,7 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 		Meta: func(m *typ.Meta) fieldResult {
 			// Meta types have a built-in :is method for type guards
 			if name == "is" {
-				return fieldResult{t: metaIsMethod(), ok: true}
+				return fieldResult{t: metaIsMethod(m.Of), ok: true}
 			}
 			return fieldResult{}
 		},
@@ -411,12 +411,15 @@ func HasMetamethod(t typ.Type, name string) bool {
 // metaIsMethod returns the built-in :is method signature for Meta types.
 //
 // Meta types (reified type values) have a built-in :is method for runtime
-// type guards: value:is(Type) returns true if value is an instance of Type.
-// Signature: (value: any) -> boolean
-func metaIsMethod() *typ.Function {
+// type guards: value:is(Type) returns (value|nil, err?).
+// Signature: (value: any) -> (T?, LuaError?)
+func metaIsMethod(of typ.Type) *typ.Function {
+	if of == nil {
+		of = typ.Any
+	}
 	return typ.Func().
 		Param("value", typ.Any).
-		Returns(typ.Boolean).
+		Returns(typ.NewOptional(of), typ.NewOptional(typ.LuaError)).
 		Effects(effect.WithTypeValueMethod()).
 		Build()
 }

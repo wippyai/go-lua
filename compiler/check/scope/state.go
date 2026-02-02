@@ -417,6 +417,11 @@ func (s *State) MetaForName(name string) *typ.Meta {
 	if s == nil {
 		return nil
 	}
+	for sc := s; sc != nil; sc = sc.parent {
+		if sc.IsLocal(name) {
+			return nil
+		}
+	}
 	if t, ok := s.LookupType(name); ok {
 		return typ.NewMeta(t)
 	}
