@@ -570,6 +570,16 @@ func (ls *LState) typeGetField(lt *LType, key string) LValue {
 		return ls.createTypeMethod(lt, typeMethodTparams)
 	}
 
+	// Primitive type library methods: string.upper, string.format, etc.
+	// Delegate to the builtin metatable for the corresponding Lua type.
+	if lt == LTypeString {
+		if mt := ls.G.builtinMts[int(LTString)]; mt != nil {
+			if tbl, ok := mt.(*LTable); ok {
+				return tbl.RawGetString(key)
+			}
+		}
+	}
+
 	return LNil
 }
 
