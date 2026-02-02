@@ -1171,3 +1171,65 @@ func TestTypeMethodIs_FlowNarrowingPattern(t *testing.T) {
 		t.Errorf("flow narrowing pattern test failed: %v", err)
 	}
 }
+
+// TestLTypeStringLibraryMethods tests that LTypeString supports string library methods.
+// When registered as "string", it should support both string(x) typecast and string.upper().
+func TestLTypeStringLibraryMethods(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	OpenBase(L)
+	OpenString(L)
+
+	// Register LTypeString as "string" - replacing the library table
+	L.SetGlobal("string", LTypeString)
+
+	// Test typecast: string(x) should validate and return the value
+	err := L.DoString(`
+		local s = string("hello")
+		assert(s == "hello", "string typecast should return the value")
+	`)
+	if err != nil {
+		t.Errorf("string typecast failed: %v", err)
+	}
+
+	// Test library methods: string.upper, string.lower, etc.
+	err = L.DoString(`
+		local upper = string.upper("hello")
+		assert(upper == "HELLO", "string.upper should work")
+
+		local lower = string.lower("WORLD")
+		assert(lower == "world", "string.lower should work")
+
+		local len = string.len("test")
+		assert(len == 4, "string.len should work")
+	`)
+	if err != nil {
+		t.Errorf("string library methods failed: %v", err)
+	}
+
+	// Test both together
+	err = L.DoString(`
+		local x = string("hello")
+		local result = string.upper(x)
+		assert(result == "HELLO", "combined typecast and method should work")
+	`)
+	if err != nil {
+		t.Errorf("combined typecast and method failed: %v", err)
+	}
+}
+
+// TestLTypeStringTypecastError tests that string(x) raises error for non-strings.
+func TestLTypeStringTypecastError(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	OpenBase(L)
+	OpenString(L)
+
+	L.SetGlobal("string", LTypeString)
+
+	// Calling string(123) should fail
+	err := L.DoString(`string(123)`)
+	if err == nil {
+		t.Error("expected error when typecasting number to string")
+	}
+}
