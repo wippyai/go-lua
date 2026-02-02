@@ -1,0 +1,109 @@
+// Package join provides type join operations for control flow merging.
+//
+// Join computes the least upper bound (union) of types at merge points
+// where multiple control flow paths converge.
+package join
+
+import (
+	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/typ"
+)
+
+// Two computes the least upper bound (union) of two types at join points.
+//
+// Used in control flow analysis when two branches merge. The result type
+// must accept values from both branches. nil and Unknown are treated as
+// absent (no information) and don't contribute to the join.
+func Two(a, b typ.Type) typ.Type {
+	if a == nil || a.Kind() == kind.Unknown {
+		return b
+	}
+	if b == nil || b.Kind() == kind.Unknown {
+		return a
+	}
+	if typ.TypeEquals(a, b) {
+		return a
+	}
+	return typ.NewUnion(a, b)
+}
+
+// ReturnVectors merges two multi-return type vectors at join points.
+//
+// Each position is joined independently using Two. Shorter vectors
+// are padded with Nil since Lua returns nil for missing values.
+func ReturnVectors(a, b []typ.Type) []typ.Type {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+
+	maxLen := len(a)
+	if len(b) > maxLen {
+		maxLen = len(b)
+	}
+
+	result := make([]typ.Type, maxLen)
+	for i := 0; i < maxLen; i++ {
+		var ai, bi typ.Type
+		if i < len(a) {
+			ai = a[i]
+		} else {
+			ai = typ.Nil
+		}
+		if i < len(b) {
+			bi = b[i]
+		} else {
+			bi = typ.Nil
+		}
+		result[i] = Two(ai, bi)
+	}
+	return result
+}
+
+// IsUnknownOrNil returns true if t is nil, unknown, or the nil type.
+func IsUnknownOrNil(t typ.Type) bool {
+	return t == nil || t.Kind() == kind.Unknown || t.Kind() == kind.Nil
+}
+
+// WithReturns returns a copy of sig with the given return types grafted on.
+// nil entries in returns are normalized to Unknown.
+// If sig is nil, returns nil.
+func WithReturns(sig *typ.Function, returns []typ.Type) *typ.Function {
+	if sig == nil {
+		return nil
+	}
+
+	builder := typ.Func()
+	for _, tp := range sig.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, p := range sig.Params {
+		if p.Optional {
+			builder = builder.OptParam(p.Name, p.Type)
+		} else {
+			builder = builder.Param(p.Name, p.Type)
+		}
+	}
+	if sig.Variadic != nil {
+		builder = builder.Variadic(sig.Variadic)
+	}
+
+	normalized := make([]typ.Type, len(returns))
+	copy(normalized, returns)
+	for i, t := range normalized {
+		if t == nil {
+			normalized[i] = typ.Unknown
+		}
+	}
+	builder = builder.Returns(normalized...)
+
+	if sig.Effects != nil {
+		builder = builder.Effects(sig.Effects)
+	}
+	if sig.Refinement != nil {
+		builder = builder.WithRefinement(sig.Refinement)
+	}
+	return builder.Build()
+}

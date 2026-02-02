@@ -7,15 +7,14 @@ package lua
 import (
 	"context"
 	"fmt"
-	"github.com/ponyruntime/go-lua/parse"
 	"io"
 	"math"
-	"os"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
+
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 const MultRet = -1
@@ -49,6 +48,10 @@ func (e *ApiError) Error() string {
 	if len(e.StackTrace) > 0 {
 		return fmt.Sprintf("%s\n%s", e.Object.String(), e.StackTrace)
 	}
+	return e.Object.String()
+}
+
+func (e *ApiError) String() string {
 	return e.Object.String()
 }
 
@@ -129,17 +132,59 @@ type Debug struct {
 
 /* callFrame {{{ */
 
+// LGContinuation is the type for Go function continuations after yield.
+// ctx is user-defined context passed through yield, status is the resume result.
+type LGContinuation func(L *LState, ctx any, status ResumeState) int
+
+// callFrameExt holds rarely-used fields for protected calls and continuations.
+// Allocated lazily only when needed.
+type callFrameExt struct {
+	ErrFunc         *LFunction     // error handler for xpcall (nil for pcall)
+	Continuation    LGContinuation // function to call on resume after yield
+	ContinuationCtx any            // user context for continuation
+}
+
+// getFrameExt returns the extension for a frame, or nil if none exists
+func (ls *LState) getFrameExt(cf *callFrame) *callFrameExt {
+	if ls.frameExt == nil {
+		return nil
+	}
+	return ls.frameExt[cf.Idx]
+}
+
+// setFrameExt sets or creates the extension for a frame
+func (ls *LState) setFrameExt(cf *callFrame) *callFrameExt {
+	if ls.frameExt == nil {
+		ls.frameExt = make(map[int16]*callFrameExt)
+	}
+	ext := ls.frameExt[cf.Idx]
+	if ext == nil {
+		ext = &callFrameExt{}
+		ls.frameExt[cf.Idx] = ext
+	}
+	return ext
+}
+
+// clearFrameExt removes the extension for a frame
+func (ls *LState) clearFrameExt(cf *callFrame) {
+	if ls.frameExt != nil {
+		delete(ls.frameExt, cf.Idx)
+	}
+}
+
 type callFrame struct {
-	Idx        int
-	Fn         *LFunction
-	Parent     *callFrame
-	Pc         int
-	Base       int
-	LocalBase  int
-	ReturnBase int
-	NArgs      int
-	NRet       int
-	TailCall   int
+	Fn     *LFunction
+	GoFunc LGoFunc // stateless Go function (used when Fn is nil)
+
+	Pc         int32
+	Base       int32
+	LocalBase  int32
+	ReturnBase int32
+	NArgs      int16
+	NRet       int16
+	Idx        int16
+	TailCall   int8
+	Protected  bool
 }
 
 type callFrameStack interface {
@@ -150,6 +195,7 @@ type callFrameStack interface {
 	SetSp(sp int)
 	Sp() int
 	At(sp int) *callFrame
+	ParentOf(cf *callFrame) *callFrame
 
 	IsFull() bool
 	IsEmpty() bool
@@ -179,7 +225,7 @@ func (cs *fixedCallFrameStack) Clear() {
 
 func (cs *fixedCallFrameStack) Push(v callFrame) {
 	cs.array[cs.sp] = v
-	cs.array[cs.sp].Idx = cs.sp
+	cs.array[cs.sp].Idx = int16(cs.sp)
 	cs.sp++
 }
 
@@ -200,6 +246,13 @@ func (cs *fixedCallFrameStack) Last() *callFrame {
 
 func (cs *fixedCallFrameStack) At(sp int) *callFrame {
 	return &cs.array[sp]
+}
+
+func (cs *fixedCallFrameStack) ParentOf(cf *callFrame) *callFrame {
+	if cf.Idx == 0 {
+		return nil
+	}
+	return &cs.array[cf.Idx-1]
 }
 
 func (cs *fixedCallFrameStack) Pop() *callFrame {
@@ -280,8 +333,7 @@ func (cs *autoGrowingCallFrameStack) FreeAll() {
 	}
 }
 
-// Push pushes the passed callFrame onto the stack. it panics if the stack is full, caller should call IsFull() before
-// invoking this to avoid this.
+// Push pushes the passed callFrame onto the stack. It panics with *ApiError if the stack is full.
 func (cs *autoGrowingCallFrameStack) Push(v callFrame) {
 	curSeg := cs.segments[cs.segIdx]
 	if cs.segSp >= FramesPerSegment {
@@ -292,11 +344,11 @@ func (cs *autoGrowingCallFrameStack) Push(v callFrame) {
 			cs.segments[cs.segIdx] = curSeg
 			cs.segSp = 0
 		} else {
-			panic("lua callstack overflow")
+			panic(newApiErrorS(ApiErrorRun, "stack overflow"))
 		}
 	}
 	curSeg.array[cs.segSp] = v
-	curSeg.array[cs.segSp].Idx = int(cs.segSp) + FramesPerSegment*int(cs.segIdx)
+	curSeg.array[cs.segSp].Idx = int16(cs.segSp) + int16(FramesPerSegment)*int16(cs.segIdx)
 	cs.segSp++
 }
 
@@ -340,6 +392,13 @@ func (cs *autoGrowingCallFrameStack) At(sp int) *callFrame {
 	return &cs.segments[segIdx].array[frameIdx]
 }
 
+func (cs *autoGrowingCallFrameStack) ParentOf(cf *callFrame) *callFrame {
+	if cf.Idx == 0 {
+		return nil
+	}
+	return cs.At(int(cf.Idx) - 1)
+}
+
 // Pop pops off the most recent stack frame and returns it
 func (cs *autoGrowingCallFrameStack) Pop() *callFrame {
 	curSeg := cs.segments[cs.segIdx]
@@ -365,9 +424,9 @@ func (cs *autoGrowingCallFrameStack) Pop() *callFrame {
 func newGlobal() *Global {
 	return &Global{
 		MainThread: nil,
-		Registry:   newLTable(0, 32),
-		Global:     newLTable(0, 64),
-		builtinMts: make(map[int]LValue),
+		Registry:   newLTable(0, 16), // _LOADED, _PRELOAD, etc
+		Global:     newLTable(0, 48), // base functions + libs
+		builtinMts: make(map[int]LValue, 4),
 	}
 }
 
@@ -387,7 +446,58 @@ func panicWithoutTraceback(L *LState) {
 }
 
 func newLState(options Options) *LState {
-	al := newAllocator(32)
+	// Try to get a state from the pool
+	if pooled := statePool.Get(); pooled != nil {
+		if ls, ok := pooled.(*LState); ok && ls != nil && ls.alloc != nil {
+			// Reuse pooled state with its allocator
+			ls.G = newGlobal()
+			ls.Parent = nil
+			ls.Panic = panicWithTraceback
+			ls.Dead = false
+			ls.Options = options
+			ls.stop = 0
+			ls.currentFrame = nil
+			ls.wrapped = false
+			ls.uvcache = nil
+			ls.hasErrorFunc = false
+			ls.mainLoop = mainLoop
+			ls.ctx = nil
+			ls.ctxDone = nil
+
+			// Reset allocator slice but keep capacity
+			if ls.alloc.ptrs != nil {
+				ls.alloc.ptrs = ls.alloc.ptrs[:0]
+			}
+
+			// Reuse or recreate registry
+			if ls.reg != nil && cap(ls.reg.array) >= options.RegistrySize {
+				ls.reg.handler = ls
+				ls.reg.top = 0
+				ls.reg.maxSize = options.RegistryMaxSize
+				ls.reg.growBy = options.RegistryGrowStep
+			} else {
+				ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, ls.alloc)
+			}
+
+			// Reuse auto-growing stack (can handle any size), recreate fixed stacks
+			if options.MinimizeStackMemory {
+				if _, isAuto := ls.stack.(*autoGrowingCallFrameStack); isAuto {
+					ls.stack.SetSp(0)
+				} else {
+					ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize)
+				}
+			} else {
+				// Fixed stacks need exact size match - just recreate
+				ls.stack = newFixedCallFrameStack(options.CallStackSize)
+			}
+
+			ls.Env = ls.G.Global
+			return ls
+		}
+	}
+
+	// Create fresh state
+	al := newAllocator(64)
 	ls := &LState{
 		G:       newGlobal(),
 		Parent:  nil,
@@ -414,78 +524,15 @@ func newLState(options Options) *LState {
 	return ls
 }
 
-//func newLStateWithG(options Options, G *Global, env *LTable) *LState {
-//	al := newAllocator(32) // from pool
-//	ls := &LState{
-//		G:       G,
-//		Parent:  nil,
-//		Panic:   panicWithTraceback,
-//		Dead:    false,
-//		Options: options,
-//
-//		stop:         0,
-//		alloc:        al,
-//		currentFrame: nil,
-//		wrapped:      false,
-//		uvcache:      nil,
-//		hasErrorFunc: false,
-//		mainLoop:     mainLoop,
-//		ctx:          nil,
-//	}
-//	if options.MinimizeStackMemory {
-//		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize) // from pool
-//	} else {
-//		ls.stack = newFixedCallFrameStack(options.CallStackSize) // from pool
-//	}
-//	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, al)
-//	ls.Env = env
-//	return ls
-//}
-
-func (ls *LState) printReg() {
-	println("-------------------------")
-	println("thread:", ls)
-	println("top:", ls.reg.Top())
-	if ls.currentFrame != nil {
-		println("function base:", ls.currentFrame.Base)
-		println("return base:", ls.currentFrame.ReturnBase)
-	} else {
-		println("(vm not started)")
-	}
-	println("local base:", ls.currentLocalBase())
-	for i := 0; i < ls.reg.Top(); i++ {
-		println(i, ls.reg.Get(i).String())
-	}
-	println("-------------------------")
-}
-
-func (ls *LState) printCallStack() {
-	println("-------------------------")
-	for i := 0; i < ls.stack.Sp(); i++ {
-		print(i)
-		print(" ")
-		frame := ls.stack.At(i)
-		if frame == nil {
-			break
-		}
-		if frame.Fn.IsG {
-			println("IsG:", true, "Frame:", frame, "Fn:", frame.Fn)
-		} else {
-			println("IsG:", false, "Frame:", frame, "Fn:", frame.Fn, "pc:", frame.Pc)
-		}
-	}
-	println("-------------------------")
-}
-
 func (ls *LState) closeAllUpvalues() { // +inline-start
-	for cf := ls.currentFrame; cf != nil; cf = cf.Parent {
-		if !cf.Fn.IsG {
-			ls.closeUpvalues(cf.LocalBase)
+	for cf := ls.currentFrame; cf != nil; cf = ls.stack.ParentOf(cf) {
+		if cf.Fn != nil && !cf.Fn.IsG {
+			ls.closeUpvalues(int(cf.LocalBase))
 		}
 	}
 } // +inline-end
 
-func (ls *LState) raiseError(level int, format string, args ...interface{}) {
+func (ls *LState) raiseError(level int, format string, args ...any) {
 	if !ls.hasErrorFunc {
 		ls.closeAllUpvalues()
 	}
@@ -507,19 +554,19 @@ func (ls *LState) raiseError(level int, format string, args ...interface{}) {
 func (ls *LState) findLocal(frame *callFrame, no int) string {
 	fn := frame.Fn
 	if !fn.IsG {
-		if name, ok := fn.LocalName(no, frame.Pc-1); ok {
+		if name, ok := fn.LocalName(no, int(frame.Pc)-1); ok {
 			return name
 		}
 	}
 	var top int
 	if ls.currentFrame == frame {
 		top = ls.reg.Top()
-	} else if frame.Idx+1 < ls.stack.Sp() {
-		top = ls.stack.At(frame.Idx + 1).Base
+	} else if int(frame.Idx)+1 < ls.stack.Sp() {
+		top = int(ls.stack.At(int(frame.Idx) + 1).Base)
 	} else {
 		return ""
 	}
-	if top-frame.LocalBase >= no {
+	if top-int(frame.LocalBase) >= no {
 		return "(*temporary)"
 	}
 	return ""
@@ -531,7 +578,10 @@ func (ls *LState) where(level int, skipg bool) string {
 		return ""
 	}
 	cf := dbg.frame
-	proto := cf.Fn.Proto
+	var proto *FunctionProto
+	if cf.Fn != nil {
+		proto = cf.Fn.Proto
+	}
 	sourcename := "[G]"
 	if proto != nil {
 		sourcename = proto.SourceName
@@ -546,14 +596,14 @@ func (ls *LState) where(level int, skipg bool) string {
 }
 
 func (ls *LState) stackTrace(level int) string {
-	buf := []string{}
+	var buf []string
 	header := "stack traceback:"
 	if ls.currentFrame != nil {
 		i := 0
 		for dbg, ok := ls.GetStack(i); ok; dbg, ok = ls.GetStack(i) {
 			cf := dbg.frame
 			buf = append(buf, fmt.Sprintf("\t%v in %v", ls.Where(i), ls.formattedFrameFuncName(cf)))
-			if !cf.Fn.IsG && cf.TailCall > 0 {
+			if cf.Fn != nil && !cf.Fn.IsG && cf.TailCall > 0 {
 				for tc := cf.TailCall; tc > 0; tc-- {
 					buf = append(buf, "\t(tailcall): ?")
 					i++
@@ -563,12 +613,12 @@ func (ls *LState) stackTrace(level int) string {
 		}
 	}
 	buf = append(buf, fmt.Sprintf("\t%v: %v", "[G]", "?"))
-	buf = buf[intMax(0, intMin(level, len(buf))):len(buf)]
+	buf = buf[intMax(0, intMin(level, len(buf))):]
 	if len(buf) > 20 {
 		newbuf := make([]string, 0, 20)
 		newbuf = append(newbuf, buf[0:7]...)
 		newbuf = append(newbuf, "\t...")
-		newbuf = append(newbuf, buf[len(buf)-7:len(buf)]...)
+		newbuf = append(newbuf, buf[len(buf)-7:]...)
 		buf = newbuf
 	}
 	return fmt.Sprintf("%s\n%s", header, strings.Join(buf, "\n"))
@@ -591,27 +641,26 @@ func (ls *LState) rawFrameFuncName(fr *callFrame) string {
 }
 
 func (ls *LState) frameFuncName(fr *callFrame) (string, bool) {
-	frame := fr.Parent
+	frame := ls.stack.ParentOf(fr)
 	if frame == nil {
 		if ls.Parent == nil {
 			return "main chunk", true
-		} else {
-			return "corountine", true
 		}
+		return "corountine", true
 	}
-	if !frame.Fn.IsG {
-		pc := frame.Pc - 1
+	if frame.Fn != nil && !frame.Fn.IsG {
+		pc := int(frame.Pc) - 1
 		for _, call := range frame.Fn.Proto.DbgCalls {
 			if call.Pc == pc {
 				name := call.Name
-				if (name == "?" || fr.TailCall > 0) && !fr.Fn.IsG {
+				if (name == "?" || fr.TailCall > 0) && fr.Fn != nil && !fr.Fn.IsG {
 					name = fmt.Sprintf("<%v:%v>", fr.Fn.Proto.SourceName, fr.Fn.Proto.LineDefined)
 				}
 				return name, false
 			}
 		}
 	}
-	if !fr.Fn.IsG {
+	if fr.Fn != nil && !fr.Fn.IsG {
 		return fmt.Sprintf("<%v:%v>", fr.Fn.Proto.SourceName, fr.Fn.Proto.LineDefined), false
 	}
 	return "(anonymous)", false
@@ -632,23 +681,22 @@ func (ls *LState) indexToReg(idx int) int {
 	base := ls.currentLocalBase()
 	if idx > 0 {
 		return base + idx - 1
-	} else if idx == 0 {
-		return -1
-	} else {
-		tidx := ls.reg.Top() + idx
-		if tidx < base {
-			return -1
-		}
-		return tidx
 	}
+	if idx == 0 {
+		return -1
+	}
+	tidx := ls.reg.Top() + idx
+	if tidx < base {
+		return -1
+	}
+	return tidx
 }
 
 func (ls *LState) currentLocalBase() int {
-	base := 0
 	if ls.currentFrame != nil {
-		base = ls.currentFrame.LocalBase
+		return int(ls.currentFrame.LocalBase)
 	}
-	return base
+	return 0
 }
 
 func (ls *LState) currentEnv() *LTable {
@@ -671,14 +719,14 @@ func (ls *LState) rkValue(idx int) LValue {
 	if (idx & opBitRk) != 0 {
 		return ls.currentFrame.Fn.Proto.Constants[idx & ^opBitRk]
 	}
-	return ls.reg.array[ls.currentFrame.LocalBase+idx]
+	return ls.reg.array[int(ls.currentFrame.LocalBase)+idx]
 }
 
 func (ls *LState) rkString(idx int) string {
 	if (idx & opBitRk) != 0 {
 		return ls.currentFrame.Fn.Proto.stringConstants[idx & ^opBitRk]
 	}
-	return string(ls.reg.array[ls.currentFrame.LocalBase+idx].(LString))
+	return string(ls.reg.array[int(ls.currentFrame.LocalBase)+idx].(LString))
 }
 
 func (ls *LState) closeUpvalues(idx int) { // +inline-start
@@ -726,7 +774,7 @@ func (ls *LState) findUpvalue(idx int) *Upvalue {
 }
 
 func (ls *LState) metatable(lvalue LValue, rawget bool) LValue {
-	var metatable LValue = LNil
+	var metatable = LNil
 	switch obj := lvalue.(type) {
 	case *LTable:
 		metatable = obj.Metatable
@@ -787,15 +835,15 @@ func (ls *LState) metaCall(lvalue LValue) (*LFunction, bool) {
 }
 
 func (ls *LState) initCallFrame(cf *callFrame) { // +inline-start
-	if cf.Fn.IsG {
-		ls.reg.SetTop(cf.LocalBase + cf.NArgs)
+	if cf.GoFunc != nil || (cf.Fn != nil && cf.Fn.IsG) {
+		ls.reg.SetTop(int(cf.LocalBase) + int(cf.NArgs))
 	} else {
 		proto := cf.Fn.Proto
 		nargs := cf.NArgs
 		np := int(proto.NumParameters)
-		if nargs < np {
+		if int(nargs) < np {
 			// default any missing arguments to nil
-			newSize := cf.LocalBase + np
+			newSize := int(cf.LocalBase) + np
 			// this section is inlined by go-inline
 			// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
 			{
@@ -805,18 +853,18 @@ func (ls *LState) initCallFrame(cf *callFrame) { // +inline-start
 					rg.resize(requiredSize)
 				}
 			}
-			for i := nargs; i < np; i++ {
-				ls.reg.array[cf.LocalBase+i] = LNil
+			for i := int(nargs); i < np; i++ {
+				ls.reg.array[int(cf.LocalBase)+i] = LNil
 			}
-			nargs = np
+			nargs = int16(np)
 			ls.reg.top = newSize
 		}
 
 		if (proto.IsVarArg & VarArgIsVarArg) == 0 {
-			if nargs < int(proto.NumUsedRegisters) {
-				nargs = int(proto.NumUsedRegisters)
+			if int(nargs) < int(proto.NumUsedRegisters) {
+				nargs = int16(proto.NumUsedRegisters)
 			}
-			newSize := cf.LocalBase + nargs
+			newSize := int(cf.LocalBase) + int(nargs)
 			// this section is inlined by go-inline
 			// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
 			{
@@ -826,10 +874,10 @@ func (ls *LState) initCallFrame(cf *callFrame) { // +inline-start
 					rg.resize(requiredSize)
 				}
 			}
-			for i := np; i < nargs; i++ {
-				ls.reg.array[cf.LocalBase+i] = LNil
+			for i := np; i < int(nargs); i++ {
+				ls.reg.array[int(cf.LocalBase)+i] = LNil
 			}
-			ls.reg.top = cf.LocalBase + int(proto.NumUsedRegisters)
+			ls.reg.top = int(cf.LocalBase) + int(proto.NumUsedRegisters)
 		} else {
 			/* swap vararg positions:
 					   closure
@@ -848,35 +896,21 @@ func (ls *LState) initCallFrame(cf *callFrame) { // +inline-start
 					   namedparam1 <- lbase
 					   namedparam2
 			*/
-			nvarargs := nargs - np
+			nvarargs := int(nargs) - np
 			if nvarargs < 0 {
 				nvarargs = 0
 			}
 
-			ls.reg.SetTop(cf.LocalBase + nargs + np)
+			ls.reg.SetTop(int(cf.LocalBase) + int(nargs) + np)
 			for i := 0; i < np; i++ {
 				//ls.reg.Set(cf.LocalBase+nargs+i, ls.reg.Get(cf.LocalBase+i))
-				ls.reg.array[cf.LocalBase+nargs+i] = ls.reg.array[cf.LocalBase+i]
+				ls.reg.array[int(cf.LocalBase)+int(nargs)+i] = ls.reg.array[int(cf.LocalBase)+i]
 				//ls.reg.Set(cf.LocalBase+i, LNil)
-				ls.reg.array[cf.LocalBase+i] = LNil
+				ls.reg.array[int(cf.LocalBase)+i] = LNil
 			}
 
-			if CompatVarArg {
-				ls.reg.SetTop(cf.LocalBase + nargs + np + 1)
-				if (proto.IsVarArg & VarArgNeedsArg) != 0 {
-					argtb := newLTable(nvarargs, 0)
-					for i := 0; i < nvarargs; i++ {
-						argtb.RawSetInt(i+1, ls.reg.Get(cf.LocalBase+np+i))
-					}
-					argtb.RawSetString("n", LNumber(nvarargs))
-					//ls.reg.Set(cf.LocalBase+nargs+np, argtb)
-					ls.reg.array[cf.LocalBase+nargs+np] = argtb
-				} else {
-					ls.reg.array[cf.LocalBase+nargs+np] = LNil
-				}
-			}
-			cf.LocalBase += nargs
-			maxreg := cf.LocalBase + int(proto.NumUsedRegisters)
+			cf.LocalBase += int32(nargs)
+			maxreg := int(cf.LocalBase) + int(proto.NumUsedRegisters)
 			ls.reg.SetTop(maxreg)
 		}
 	}
@@ -885,9 +919,9 @@ func (ls *LState) initCallFrame(cf *callFrame) { // +inline-start
 func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline-start
 	if meta {
 		cf.NArgs++
-		ls.reg.Insert(fn, cf.LocalBase)
+		ls.reg.Insert(fn, int(cf.LocalBase))
 	}
-	if cf.Fn == nil {
+	if cf.Fn == nil && cf.GoFunc == nil {
 		ls.RaiseError("attempt to call a non-function object")
 	}
 	if ls.stack.IsFull() {
@@ -899,15 +933,15 @@ func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline
 	// source function is 'func (ls *LState) initCallFrame(cf *callFrame) ' in '_state.go'
 	{
 		cf := newcf
-		if cf.Fn.IsG {
-			ls.reg.SetTop(cf.LocalBase + cf.NArgs)
+		if cf.GoFunc != nil || (cf.Fn != nil && cf.Fn.IsG) {
+			ls.reg.SetTop(int(cf.LocalBase) + int(cf.NArgs))
 		} else {
 			proto := cf.Fn.Proto
 			nargs := cf.NArgs
 			np := int(proto.NumParameters)
-			if nargs < np {
+			if int(nargs) < np {
 				// default any missing arguments to nil
-				newSize := cf.LocalBase + np
+				newSize := int(cf.LocalBase) + np
 				// this section is inlined by go-inline
 				// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
 				{
@@ -917,18 +951,18 @@ func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline
 						rg.resize(requiredSize)
 					}
 				}
-				for i := nargs; i < np; i++ {
-					ls.reg.array[cf.LocalBase+i] = LNil
+				for i := int(nargs); i < np; i++ {
+					ls.reg.array[int(cf.LocalBase)+i] = LNil
 				}
-				nargs = np
+				nargs = int16(np)
 				ls.reg.top = newSize
 			}
 
 			if (proto.IsVarArg & VarArgIsVarArg) == 0 {
-				if nargs < int(proto.NumUsedRegisters) {
-					nargs = int(proto.NumUsedRegisters)
+				if int(nargs) < int(proto.NumUsedRegisters) {
+					nargs = int16(proto.NumUsedRegisters)
 				}
-				newSize := cf.LocalBase + nargs
+				newSize := int(cf.LocalBase) + int(nargs)
 				// this section is inlined by go-inline
 				// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
 				{
@@ -938,10 +972,10 @@ func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline
 						rg.resize(requiredSize)
 					}
 				}
-				for i := np; i < nargs; i++ {
-					ls.reg.array[cf.LocalBase+i] = LNil
+				for i := np; i < int(nargs); i++ {
+					ls.reg.array[int(cf.LocalBase)+i] = LNil
 				}
-				ls.reg.top = cf.LocalBase + int(proto.NumUsedRegisters)
+				ls.reg.top = int(cf.LocalBase) + int(proto.NumUsedRegisters)
 			} else {
 				/* swap vararg positions:
 						   closure
@@ -960,35 +994,21 @@ func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline
 						   namedparam1 <- lbase
 						   namedparam2
 				*/
-				nvarargs := nargs - np
+				nvarargs := int(nargs) - np
 				if nvarargs < 0 {
 					nvarargs = 0
 				}
 
-				ls.reg.SetTop(cf.LocalBase + nargs + np)
+				ls.reg.SetTop(int(cf.LocalBase) + int(nargs) + np)
 				for i := 0; i < np; i++ {
 					//ls.reg.Set(cf.LocalBase+nargs+i, ls.reg.Get(cf.LocalBase+i))
-					ls.reg.array[cf.LocalBase+nargs+i] = ls.reg.array[cf.LocalBase+i]
+					ls.reg.array[int(cf.LocalBase)+int(nargs)+i] = ls.reg.array[int(cf.LocalBase)+i]
 					//ls.reg.Set(cf.LocalBase+i, LNil)
-					ls.reg.array[cf.LocalBase+i] = LNil
+					ls.reg.array[int(cf.LocalBase)+i] = LNil
 				}
 
-				if CompatVarArg {
-					ls.reg.SetTop(cf.LocalBase + nargs + np + 1)
-					if (proto.IsVarArg & VarArgNeedsArg) != 0 {
-						argtb := newLTable(nvarargs, 0)
-						for i := 0; i < nvarargs; i++ {
-							argtb.RawSetInt(i+1, ls.reg.Get(cf.LocalBase+np+i))
-						}
-						argtb.RawSetString("n", LNumber(nvarargs))
-						//ls.reg.Set(cf.LocalBase+nargs+np, argtb)
-						ls.reg.array[cf.LocalBase+nargs+np] = argtb
-					} else {
-						ls.reg.array[cf.LocalBase+nargs+np] = LNil
-					}
-				}
-				cf.LocalBase += nargs
-				maxreg := cf.LocalBase + int(proto.NumUsedRegisters)
+				cf.LocalBase += int32(nargs)
+				maxreg := int(cf.LocalBase) + int(proto.NumUsedRegisters)
 				ls.reg.SetTop(maxreg)
 			}
 		}
@@ -1002,16 +1022,28 @@ func (ls *LState) callR(nargs, nret, rbase int) {
 		rbase = base
 	}
 	lv := ls.reg.Get(base)
-	fn, meta := ls.metaCall(lv)
+
+	var fn *LFunction
+	var goFunc LGoFunc
+	var meta bool
+	switch f := lv.(type) {
+	case *LFunction:
+		fn = f
+	case LGoFunc:
+		goFunc = f
+	default:
+		fn, meta = ls.metaCall(lv)
+	}
+
 	ls.pushCallFrame(callFrame{
 		Fn:         fn,
+		GoFunc:     goFunc,
 		Pc:         0,
-		Base:       base,
-		LocalBase:  base + 1,
-		ReturnBase: rbase,
-		NArgs:      nargs,
-		NRet:       nret,
-		Parent:     ls.currentFrame,
+		Base:       int32(base),
+		LocalBase:  int32(base + 1),
+		ReturnBase: int32(rbase),
+		NArgs:      int16(nargs),
+		NRet:       int16(nret),
 		TailCall:   0,
 	}, lv, meta)
 	if ls.G.MainThread == nil {
@@ -1021,12 +1053,29 @@ func (ls *LState) callR(nargs, nret, rbase int) {
 	} else {
 		ls.mainLoop(ls, ls.currentFrame)
 	}
+	// Skip register adjustment if yield happened (state is already set by switchToParentThread)
+	if ls.yielded {
+		return
+	}
 	if nret != MultRet {
 		ls.reg.SetTop(rbase + nret)
 	}
 }
 
 func (ls *LState) getField(obj LValue, key LValue) LValue {
+	// Fast path: LType - native dispatch, no metatable
+	if lt, ok := obj.(*LType); ok {
+		if str, ok := key.(LString); ok {
+			return ls.typeGetField(lt, string(str))
+		}
+		return LNil
+	}
+
+	// Fast path: table without metatable - skip __index check
+	if tb, ok := obj.(*LTable); ok && tb.Metatable == LNil {
+		return tb.RawGet(key)
+	}
+
 	curobj := obj
 	for i := 0; i < MaxTableGetLoop; i++ {
 		tb, istable := curobj.(*LTable)
@@ -1049,15 +1098,24 @@ func (ls *LState) getField(obj LValue, key LValue) LValue {
 			ls.reg.Push(key)
 			ls.Call(2, 1)
 			return ls.reg.Pop()
-		} else {
-			curobj = metaindex
 		}
+		curobj = metaindex
 	}
 	ls.RaiseError("too many recursions in gettable")
 	return nil
 }
 
 func (ls *LState) getFieldString(obj LValue, key string) LValue {
+	// Fast path: LType - native dispatch, no metatable
+	if lt, ok := obj.(*LType); ok {
+		return ls.typeGetField(lt, key)
+	}
+
+	// Fast path: table without metatable - skip __index check
+	if tb, ok := obj.(*LTable); ok && tb.Metatable == LNil {
+		return tb.RawGetString(key)
+	}
+
 	curobj := obj
 	for i := 0; i < MaxTableGetLoop; i++ {
 		tb, istable := curobj.(*LTable)
@@ -1080,15 +1138,22 @@ func (ls *LState) getFieldString(obj LValue, key string) LValue {
 			ls.reg.Push(LString(key))
 			ls.Call(2, 1)
 			return ls.reg.Pop()
-		} else {
-			curobj = metaindex
 		}
+		curobj = metaindex
 	}
 	ls.RaiseError("too many recursions in gettable")
 	return nil
 }
 
 func (ls *LState) setField(obj LValue, key LValue, value LValue) {
+	// Fast path: table without metatable - skip __newindex check
+	if tb, ok := obj.(*LTable); ok && tb.Metatable == LNil {
+		if !tb.RawSet(key, value) {
+			ls.RaiseError("attempt to modify Immutable table")
+		}
+		return
+	}
+
 	curobj := obj
 	for i := 0; i < MaxTableGetLoop; i++ {
 		tb, istable := curobj.(*LTable)
@@ -1117,14 +1182,21 @@ func (ls *LState) setField(obj LValue, key LValue, value LValue) {
 			ls.reg.Push(value)
 			ls.Call(3, 0)
 			return
-		} else {
-			curobj = metaindex
 		}
+		curobj = metaindex
 	}
 	ls.RaiseError("too many recursions in settable")
 }
 
 func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
+	// Fast path: table without metatable - skip __newindex check
+	if tb, ok := obj.(*LTable); ok && tb.Metatable == LNil {
+		if !tb.RawSetString(key, value) {
+			ls.RaiseError("attempt to modify Immutable table")
+		}
+		return
+	}
+
 	curobj := obj
 	for i := 0; i < MaxTableGetLoop; i++ {
 		tb, istable := curobj.(*LTable)
@@ -1153,9 +1225,8 @@ func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
 			ls.reg.Push(value)
 			ls.Call(3, 0)
 			return
-		} else {
-			curobj = metaindex
 		}
+		curobj = metaindex
 	}
 	ls.RaiseError("too many recursions in settable")
 }
@@ -1168,8 +1239,10 @@ func NewState(opts ...Options) *LState {
 	var ls *LState
 	if len(opts) == 0 {
 		ls = newLState(Options{
-			CallStackSize: CallStackSize,
-			RegistrySize:  RegistrySize,
+			CallStackSize:    CallStackSize,
+			RegistrySize:     RegistrySize,
+			RegistryMaxSize:  RegistryMaxSize,
+			RegistryGrowStep: RegistryGrowStep,
 		})
 		ls.OpenLibs()
 	} else {
@@ -1179,13 +1252,14 @@ func NewState(opts ...Options) *LState {
 		if opts[0].RegistrySize < 128 {
 			opts[0].RegistrySize = RegistrySize
 		}
+		if opts[0].RegistryMaxSize == 0 {
+			opts[0].RegistryMaxSize = RegistryMaxSize
+		}
 		if opts[0].RegistryMaxSize < opts[0].RegistrySize {
-			opts[0].RegistryMaxSize = 0 // disable growth if max size is smaller than initial size
-		} else {
-			// if growth enabled, grow step is set
-			if opts[0].RegistryGrowStep < 1 {
-				opts[0].RegistryGrowStep = RegistryGrowStep
-			}
+			opts[0].RegistryMaxSize = opts[0].RegistrySize
+		}
+		if opts[0].RegistryGrowStep < 1 {
+			opts[0].RegistryGrowStep = RegistryGrowStep
 		}
 		ls = newLState(opts[0])
 		if !opts[0].SkipOpenLibs {
@@ -1196,15 +1270,8 @@ func NewState(opts ...Options) *LState {
 }
 
 func (ls *LState) IsClosed() bool {
-	return ls.stack == nil
+	return ls.stack == nil || atomic.LoadInt32(&ls.stop) > 0
 }
-
-//func (ls *LState) Close() {
-//	atomic.AddInt32(&ls.stop, 1)
-//	ls.alloc.Release()
-//	ls.stack.FreeAll()
-//	ls.stack = nil
-//}
 
 /* registry operations {{{ */
 
@@ -1275,35 +1342,35 @@ func (ls *LState) Get(idx int) LValue {
 			return ls.reg.Get(reg)
 		}
 		return LNil
-	} else if idx == 0 {
+	}
+	if idx == 0 {
 		return LNil
-	} else if idx > RegistryIndex {
+	}
+	if idx > RegistryIndex {
 		tidx := ls.reg.Top() + idx
 		if tidx < base {
 			return LNil
 		}
 		return ls.reg.Get(tidx)
-	} else {
-		switch idx {
-		case RegistryIndex:
-			return ls.G.Registry
-		case EnvironIndex:
-			if ls.currentFrame == nil {
-				return ls.Env
-			}
-			return ls.currentFrame.Fn.Env
-		case GlobalsIndex:
-			return ls.G.Global
-		default:
-			fn := ls.currentFrame.Fn
-			index := GlobalsIndex - idx - 1
-			if index < len(fn.Upvalues) {
-				return fn.Upvalues[index].Value()
-			}
-			return LNil
-		}
 	}
-	return LNil
+	switch idx {
+	case RegistryIndex:
+		return ls.G.Registry
+	case EnvironIndex:
+		if ls.currentFrame == nil {
+			return ls.Env
+		}
+		return ls.currentFrame.Fn.Env
+	case GlobalsIndex:
+		return ls.G.Global
+	default:
+		fn := ls.currentFrame.Fn
+		index := GlobalsIndex - idx - 1
+		if index < len(fn.Upvalues) {
+			return fn.Upvalues[index].Value()
+		}
+		return LNil
+	}
 }
 
 func (ls *LState) Push(value LValue) {
@@ -1366,17 +1433,24 @@ func (ls *LState) CreateTable(acap, hcap int) *LTable {
 	return newLTable(acap, hcap)
 }
 
-// NewThread returns a new LState that shares with the original state all global objects.
-// If the original state has context.Context, the new state has a new child context of the original state and this function returns its cancel function.
-func (ls *LState) NewThread() (*LState, context.CancelFunc) {
-	thread := newLStateWithG(ls.Options, ls.G, ls.Env)
-	var f context.CancelFunc = nil
-	if ls.ctx != nil {
+// NewThreadWithContext returns a new LState with the given context.
+// Pass nil for no context (faster execution without cancellation checks).
+func (ls *LState) NewThreadWithContext(ctx context.Context) *LState {
+	thread := newLStateWithGAndAlloc(ls.Options, ls.G, ls.Env, ls.alloc)
+	if ctx != nil {
 		thread.mainLoop = mainLoopWithContext
-		thread.ctx, f = context.WithCancel(ls.ctx) // todo we dont really need this in our setup
-		thread.ctxCancelFn = f
+		thread.ctx = ctx
+		thread.ctxDone = ctx.Done()
 	}
-	return thread, f
+	return thread
+}
+
+// NewThread creates a new coroutine thread with a cancellable context.
+// Returns the thread and a cancel function that should be called when done.
+func (ls *LState) NewThread() (*LState, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	thread := ls.NewThreadWithContext(ctx)
+	return thread, cancel
 }
 
 func (ls *LState) NewFunctionFromProto(proto *FunctionProto) *LFunction {
@@ -1412,10 +1486,13 @@ func (ls *LState) ToBool(n int) bool {
 }
 
 func (ls *LState) ToInt(n int) int {
-	if lv, ok := ls.Get(n).(LNumber); ok {
+	v := ls.Get(n)
+	switch lv := v.(type) {
+	case LNumber:
 		return int(lv)
-	}
-	if lv, ok := ls.Get(n).(LString); ok {
+	case LInteger:
+		return int(lv)
+	case LString:
 		if num, err := parseNumber(string(lv)); err == nil {
 			return int(num)
 		}
@@ -1424,10 +1501,13 @@ func (ls *LState) ToInt(n int) int {
 }
 
 func (ls *LState) ToInt64(n int) int64 {
-	if lv, ok := ls.Get(n).(LNumber); ok {
+	v := ls.Get(n)
+	switch lv := v.(type) {
+	case LNumber:
 		return int64(lv)
-	}
-	if lv, ok := ls.Get(n).(LString); ok {
+	case LInteger:
+		return int64(lv)
+	case LString:
 		if num, err := parseNumber(string(lv)); err == nil {
 			return int64(num)
 		}
@@ -1479,12 +1559,12 @@ func (ls *LState) registryOverflow() {
 	ls.RaiseError("registry overflow")
 }
 
-// This function is equivalent to luaL_error( http://www.lua.org/manual/5.1/manual.html#luaL_error ).
-func (ls *LState) RaiseError(format string, args ...interface{}) {
+// RaiseError is equivalent to luaL_error( http://www.lua.org/manual/5.1/manual.html#luaL_error ).
+func (ls *LState) RaiseError(format string, args ...any) {
 	ls.raiseError(1, format, args...)
 }
 
-// This function is equivalent to lua_error( http://www.lua.org/manual/5.1/manual.html#lua_error ).
+// Error is equivalent to lua_error( http://www.lua.org/manual/5.1/manual.html#lua_error ).
 func (ls *LState) Error(lv LValue, level int) {
 	if str, ok := lv.(LString); ok {
 		ls.raiseError(level, string(str))
@@ -1499,7 +1579,11 @@ func (ls *LState) Error(lv LValue, level int) {
 
 func (ls *LState) GetInfo(what string, dbg *Debug, fn LValue) (LValue, error) {
 	if !strings.HasPrefix(what, ">") {
-		fn = dbg.frame.Fn
+		if dbg.frame != nil && dbg.frame.Fn != nil {
+			fn = dbg.frame.Fn
+		} else {
+			return LNil, nil
+		}
 	} else {
 		what = what[1:]
 	}
@@ -1514,7 +1598,7 @@ func (ls *LState) GetInfo(what string, dbg *Debug, fn LValue) (LValue, error) {
 		case 'f':
 			retfn = true
 		case 'S':
-			if dbg.frame != nil && dbg.frame.Parent == nil {
+			if dbg.frame != nil && dbg.frame.Idx == 0 {
 				dbg.What = "main"
 			} else if f.IsG {
 				dbg.What = "G"
@@ -1556,10 +1640,10 @@ func (ls *LState) GetInfo(what string, dbg *Debug, fn LValue) (LValue, error) {
 
 func (ls *LState) GetStack(level int) (*Debug, bool) {
 	frame := ls.currentFrame
-	for ; level > 0 && frame != nil; frame = frame.Parent {
+	for ; level > 0 && frame != nil; frame = ls.stack.ParentOf(frame) {
 		level--
-		if !frame.Fn.IsG {
-			level -= frame.TailCall
+		if frame.Fn != nil && !frame.Fn.IsG {
+			level -= int(frame.TailCall)
 		}
 	}
 
@@ -1574,7 +1658,7 @@ func (ls *LState) GetStack(level int) (*Debug, bool) {
 func (ls *LState) GetLocal(dbg *Debug, no int) (string, LValue) {
 	frame := dbg.frame
 	if name := ls.findLocal(frame, no); len(name) > 0 {
-		return name, ls.reg.Get(frame.LocalBase + no - 1)
+		return name, ls.reg.Get(int(frame.LocalBase) + no - 1)
 	}
 	return "", LNil
 }
@@ -1582,7 +1666,7 @@ func (ls *LState) GetLocal(dbg *Debug, no int) (string, LValue) {
 func (ls *LState) SetLocal(dbg *Debug, no int, lv LValue) string {
 	frame := dbg.frame
 	if name := ls.findLocal(frame, no); len(name) > 0 {
-		ls.reg.Set(frame.LocalBase+no-1, lv)
+		ls.reg.Set(int(frame.LocalBase)+no-1, lv)
 		return name
 	}
 	return ""
@@ -1611,35 +1695,6 @@ func (ls *LState) SetUpvalue(fn *LFunction, no int, lv LValue) string {
 		return fn.Proto.DbgUpvalues[no]
 	}
 	return ""
-}
-
-/* }}} */
-
-/* env operations {{{ */
-
-func (ls *LState) GetFEnv(obj LValue) LValue {
-	switch lv := obj.(type) {
-	case *LFunction:
-		return lv.Env
-	case *LState:
-		return lv.Env
-	}
-	return LNil
-}
-
-func (ls *LState) SetFEnv(obj LValue, env LValue) {
-	tb, ok := env.(*LTable)
-	if !ok {
-		ls.RaiseError("cannot use %v as an environment", env.Type().String())
-	}
-
-	switch lv := obj.(type) {
-	case *LFunction:
-		lv.Env = tb
-	case *LState:
-		lv.Env = tb
-	}
-	/* do nothing */
 }
 
 /* }}} */
@@ -1782,6 +1837,31 @@ func (ls *LState) Call(nargs, nret int) {
 	ls.callR(nargs, nret, -1)
 }
 
+// CallK calls a function with a continuation for yield support.
+// If the called function yields, the continuation will be called on resume
+// instead of returning to the caller.
+// The continuation receives the LState, user context, and resume status.
+func (ls *LState) CallK(nargs, nret int, cont LGContinuation, ctx any) {
+	// Store continuation on current frame before making the call
+	if ls.currentFrame != nil {
+		ext := ls.setFrameExt(ls.currentFrame)
+		ext.Continuation = cont
+		ext.ContinuationCtx = ctx
+	}
+	ls.callR(nargs, nret, -1)
+	// If yield happened, keep continuation for resume
+	if ls.yielded {
+		return
+	}
+	// Call completed without yield - clear continuation
+	if ls.currentFrame != nil {
+		if ext := ls.getFrameExt(ls.currentFrame); ext != nil {
+			ext.Continuation = nil
+			ext.ContinuationCtx = nil
+		}
+	}
+}
+
 func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 	err = nil
 	sp := ls.stack.Sp()
@@ -1794,6 +1874,7 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 	defer func() {
 		ls.Panic = oldpanic
 		ls.hasErrorFunc = false
+
 		rcv := recover()
 		if rcv != nil {
 			if _, ok := rcv.(*ApiError); !ok {
@@ -1838,6 +1919,10 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 			ls.stack.SetSp(sp)
 			ls.currentFrame = ls.stack.Last()
 			ls.reg.SetTop(base)
+		}
+		// Skip stack reset if yield happened
+		if ls.yielded {
+			return
 		}
 		ls.stack.SetSp(sp)
 		if sp == 0 {
@@ -1920,12 +2005,11 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 		th.stack.Push(callFrame{
 			Fn:         fn,
 			Pc:         0,
-			Base:       base,
-			LocalBase:  base + 1,
-			ReturnBase: base,
+			Base:       int32(base),
+			LocalBase:  int32(base + 1),
+			ReturnBase: int32(base),
 			NArgs:      0,
 			NRet:       MultRet,
-			Parent:     nil,
 			TailCall:   0,
 		})
 	}
@@ -1945,7 +2029,7 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 		for _, arg := range args {
 			th.Push(arg)
 		}
-		cf.NArgs = len(args)
+		cf.NArgs = int16(len(args))
 		th.initCallFrame(cf)
 		th.Panic = panicWithoutTraceback
 	} else {
@@ -1953,7 +2037,16 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 			th.Push(arg)
 		}
 	}
+	// Check context before running to catch pre-canceled contexts
+	if th.ctx != nil {
+		select {
+		case <-th.ctx.Done():
+			return ResumeError, newApiErrorS(ApiErrorRun, th.ctx.Err().Error()), nil
+		default:
+		}
+	}
 	top := ls.GetTop()
+	th.yielded = false // Clear yield flag for new resume
 	threadRun(th)
 	haserror := LVIsFalse(ls.Get(top + 1))
 	ret := make([]LValue, 0, ls.GetTop())
@@ -1981,6 +2074,84 @@ func (ls *LState) Yield(values ...LValue) int {
 	return -1
 }
 
+// ResumeInto is like Resume but uses a pre-allocated buffer for return values.
+// This avoids allocations in the hot path.
+func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ...LValue) (ResumeState, error, []LValue) {
+	isstarted := th.isStarted()
+	if !isstarted {
+		base := 0
+		th.stack.Push(callFrame{
+			Fn:         fn,
+			Pc:         0,
+			Base:       int32(base),
+			LocalBase:  int32(base + 1),
+			ReturnBase: int32(base),
+			NArgs:      0,
+			NRet:       MultRet,
+			TailCall:   0,
+		})
+	}
+
+	if ls.G.CurrentThread == th {
+		return ResumeError, newApiErrorS(ApiErrorRun, "can not resume a running thread"), nil
+	}
+	if th.Dead {
+		return ResumeError, newApiErrorS(ApiErrorRun, "can not resume a dead thread"), nil
+	}
+	th.Parent = ls
+	ls.G.CurrentThread = th
+	if !isstarted {
+		cf := th.stack.Last()
+		th.currentFrame = cf
+		th.SetTop(0)
+		for _, arg := range args {
+			th.Push(arg)
+		}
+		cf.NArgs = int16(len(args))
+		th.initCallFrame(cf)
+		th.Panic = panicWithoutTraceback
+	} else {
+		for _, arg := range args {
+			th.Push(arg)
+		}
+	}
+	// Check context before running to catch pre-canceled contexts
+	if th.ctx != nil {
+		select {
+		case <-th.ctx.Done():
+			return ResumeError, newApiErrorS(ApiErrorRun, th.ctx.Err().Error()), nil
+		default:
+		}
+	}
+	top := ls.GetTop()
+	th.yielded = false // Clear yield flag for new resume
+	threadRun(th)
+	haserror := LVIsFalse(ls.Get(top + 1))
+
+	// Reuse provided buffer if possible
+	retCount := ls.GetTop() - top - 1
+	var ret []LValue
+	if retCount <= cap(retBuf) {
+		ret = retBuf[:0]
+	} else {
+		ret = make([]LValue, 0, retCount)
+	}
+	for idx := top + 2; idx <= ls.GetTop(); idx++ {
+		ret = append(ret, ls.Get(idx))
+	}
+	if len(ret) == 0 {
+		ret = append(ret, LNil)
+	}
+	ls.SetTop(top)
+
+	if haserror {
+		return ResumeError, newApiError(ApiErrorRun, ret[0]), nil
+	} else if th.stack.IsEmpty() {
+		return ResumeOK, nil, ret
+	}
+	return ResumeYield, nil, ret
+}
+
 func (ls *LState) XMoveTo(other *LState, n int) {
 	if ls == other {
 		return
@@ -1996,25 +2167,6 @@ func (ls *LState) XMoveTo(other *LState, n int) {
 /* }}} */
 
 /* GopherLua original APIs {{{ */
-
-// Set maximum memory size. This function can only be called from the main thread.
-func (ls *LState) SetMx(mx int) {
-	if ls.Parent != nil {
-		ls.RaiseError("sub threads are not allowed to set a memory limit")
-	}
-	go func() {
-		limit := uint64(mx * 1024 * 1024) //MB
-		var s runtime.MemStats
-		for atomic.LoadInt32(&ls.stop) == 0 {
-			runtime.ReadMemStats(&s)
-			if s.Alloc >= limit {
-				fmt.Println("out of memory")
-				os.Exit(3)
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}()
-}
 
 // SetContext set a context ctx to this LState. The provided ctx must be non-nil.
 func (ls *LState) SetContext(ctx context.Context) {
@@ -2035,25 +2187,15 @@ func (ls *LState) RemoveContext() context.Context {
 	return oldctx
 }
 
-// Converts the Lua value at the given acceptable index to the chan LValue.
-func (ls *LState) ToChannel(n int) chan LValue {
-	if lv, ok := ls.Get(n).(LChannel); ok {
-		return (chan LValue)(lv)
-	}
-	return nil
-}
-
-// RemoveCallerFrame removes the stack frame above the current stack frame. This is useful in tail calls. It returns
-// the new current frame.
-func (ls *LState) RemoveCallerFrame() *callFrame {
+// removeCallerFrame removes the stack frame above the current stack frame.
+// Used in tail calls. Returns the new current frame.
+func (ls *LState) removeCallerFrame() *callFrame {
 	cs := ls.stack
 	sp := cs.Sp()
 	parentFrame := cs.At(sp - 2)
 	currentFrame := cs.At(sp - 1)
-	parentsParentFrame := parentFrame.Parent
 	*parentFrame = *currentFrame
-	parentFrame.Parent = parentsParentFrame
-	parentFrame.Idx = sp - 2
+	parentFrame.Idx = int16(sp - 2)
 	cs.Pop()
 	return parentFrame
 }

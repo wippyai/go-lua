@@ -1,0 +1,142 @@
+package api
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/types/typ"
+)
+
+func TestFacts_Zero(t *testing.T) {
+	f := Facts{}
+	if f.ReturnSummaries != nil {
+		t.Error("zero Facts should have nil ReturnSummaries")
+	}
+	if f.NarrowReturns != nil {
+		t.Error("zero Facts should have nil NarrowReturns")
+	}
+	if f.ParamHints != nil {
+		t.Error("zero Facts should have nil ParamHints")
+	}
+	if f.FuncTypes != nil {
+		t.Error("zero Facts should have nil FuncTypes")
+	}
+	if f.LiteralSigs != nil {
+		t.Error("zero Facts should have nil LiteralSigs")
+	}
+	if f.CapturedTypes != nil {
+		t.Error("zero Facts should have nil CapturedTypes")
+	}
+	if f.CapturedFields != nil {
+		t.Error("zero Facts should have nil CapturedFields")
+	}
+}
+
+func TestReturnSummaries_Basic(t *testing.T) {
+	summaries := make(ReturnSummaries)
+	sym := cfg.SymbolID(1)
+	summaries[sym] = []typ.Type{typ.String, typ.Nil}
+
+	rets, ok := summaries[sym]
+	if !ok {
+		t.Fatal("expected symbol to be in summaries")
+	}
+	if len(rets) != 2 {
+		t.Errorf("expected 2 return types, got %d", len(rets))
+	}
+}
+
+func TestParamHints_Basic(t *testing.T) {
+	hints := make(ParamHints)
+	sym := cfg.SymbolID(1)
+	hints[sym] = []typ.Type{typ.Number, typ.String}
+
+	params, ok := hints[sym]
+	if !ok {
+		t.Fatal("expected symbol to be in hints")
+	}
+	if len(params) != 2 {
+		t.Errorf("expected 2 param hints, got %d", len(params))
+	}
+}
+
+func TestFuncTypes_Basic(t *testing.T) {
+	funcTypes := make(FuncTypes)
+	sym := cfg.SymbolID(1)
+	fn := typ.Func().Param("x", typ.Number).Returns(typ.String).Build()
+	funcTypes[sym] = fn
+
+	retrieved, ok := funcTypes[sym]
+	if !ok {
+		t.Fatal("expected symbol to be in funcTypes")
+	}
+	if retrieved == nil {
+		t.Error("expected non-nil function type")
+	}
+}
+
+func TestCapturedTypes_Basic(t *testing.T) {
+	captured := make(CapturedTypes)
+	sym := cfg.SymbolID(1)
+	captured[sym] = typ.String
+
+	retrieved, ok := captured[sym]
+	if !ok {
+		t.Fatal("expected symbol to be in captured")
+	}
+	if retrieved != typ.String {
+		t.Error("expected string type")
+	}
+}
+
+func TestCapturedFieldAssigns_Basic(t *testing.T) {
+	assigns := make(CapturedFieldAssigns)
+	nestedSym := cfg.SymbolID(1)
+	capturedSym := cfg.SymbolID(2)
+
+	assigns[nestedSym] = map[cfg.SymbolID]map[string]typ.Type{
+		capturedSym: {
+			"foo": typ.String,
+			"bar": typ.Number,
+		},
+	}
+
+	nestedAssigns, ok := assigns[nestedSym]
+	if !ok {
+		t.Fatal("expected nested symbol in assigns")
+	}
+	fields, ok := nestedAssigns[capturedSym]
+	if !ok {
+		t.Fatal("expected captured symbol in nested assigns")
+	}
+	if len(fields) != 2 {
+		t.Errorf("expected 2 fields, got %d", len(fields))
+	}
+	if fields["foo"] != typ.String {
+		t.Error("expected foo to be string")
+	}
+}
+
+func TestFacts_WithData(t *testing.T) {
+	f := Facts{
+		ReturnSummaries: ReturnSummaries{
+			1: []typ.Type{typ.String},
+		},
+		ParamHints: ParamHints{
+			2: []typ.Type{typ.Number},
+		},
+		FuncTypes: FuncTypes{
+			3: typ.Func().Build(),
+		},
+	}
+
+	if len(f.ReturnSummaries) != 1 {
+		t.Error("expected 1 return summary")
+	}
+	if len(f.ParamHints) != 1 {
+		t.Error("expected 1 param hint")
+	}
+	if len(f.FuncTypes) != 1 {
+		t.Error("expected 1 func type")
+	}
+}

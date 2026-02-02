@@ -1,0 +1,94 @@
+package typ
+
+import (
+	"strings"
+
+	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/kind"
+)
+
+// Array represents a homogeneous sequence type: T[].
+//
+// Arrays are Lua tables with integer keys starting at 1. The Element type
+// describes what each element contains. Arrays support ipairs iteration
+// and length operator (#).
+type Array struct {
+	Element Type
+	hash    uint64
+}
+
+// NewArray creates an array type.
+func NewArray(elem Type) *Array {
+	h := internal.HashCombine(uint64(kind.Array), elem.Hash())
+	return &Array{Element: elem, hash: h}
+}
+
+func (a *Array) Kind() kind.Kind { return kind.Array }
+func (a *Array) String() string  { return a.Element.String() + "[]" }
+func (a *Array) Hash() uint64    { return a.hash }
+func (a *Array) Equals(o Type) bool {
+	return TypeEquals(a, o)
+}
+
+// Map represents a homogeneous key-value mapping: {[K]: V}.
+//
+// Maps are Lua tables where all keys have type K and all values have type V.
+// Unlike Records, Maps have uniform types for all entries rather than
+// named fields with potentially different types.
+type Map struct {
+	Key   Type
+	Value Type
+	hash  uint64
+}
+
+// NewMap creates a map type.
+func NewMap(key, value Type) *Map {
+	h := internal.HashCombine(uint64(kind.Map), key.Hash())
+	h = internal.HashCombine(h, value.Hash())
+
+	return &Map{Key: key, Value: value, hash: h}
+}
+
+func (m *Map) Kind() kind.Kind { return kind.Map }
+func (m *Map) String() string  { return "{[" + m.Key.String() + "]: " + m.Value.String() + "}" }
+func (m *Map) Hash() uint64    { return m.hash }
+func (m *Map) Equals(o Type) bool {
+	return TypeEquals(m, o)
+}
+
+// Tuple represents a fixed-length heterogeneous sequence: (T1, T2, ...).
+//
+// Tuples are used for multi-value returns and destructuring assignments.
+// Unlike Arrays, each position can have a different type and the length
+// is fixed at compile time.
+type Tuple struct {
+	Elements []Type
+	hash     uint64
+}
+
+// NewTuple creates a tuple type.
+func NewTuple(elems ...Type) *Tuple {
+	h := uint64(kind.Tuple)
+	for _, e := range elems {
+		h = internal.HashCombine(h, e.Hash())
+	}
+
+	return &Tuple{Elements: elems, hash: h}
+}
+
+func (t *Tuple) Kind() kind.Kind { return kind.Tuple }
+
+func (t *Tuple) String() string {
+	parts := make([]string, len(t.Elements))
+	for i, e := range t.Elements {
+		parts[i] = e.String()
+	}
+
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+func (t *Tuple) Hash() uint64 { return t.hash }
+
+func (t *Tuple) Equals(o Type) bool {
+	return TypeEquals(t, o)
+}

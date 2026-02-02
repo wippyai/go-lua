@@ -4,30 +4,26 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"reflect"
 	"strconv"
 	"strings"
-	"time"
 	"unsafe"
 )
 
 func intMin(a, b int) int {
 	if a < b {
 		return a
-	} else {
-		return b
 	}
+	return b
 }
 
 func intMax(a, b int) int {
 	if a > b {
 		return a
-	} else {
-		return b
 	}
+	return b
 }
 
-func defaultFormat(v interface{}, f fmt.State, c rune) {
+func defaultFormat(v any, f fmt.State, c rune) {
 	buf := make([]string, 0, 10)
 	buf = append(buf, "%")
 	for i := 0; i < 128; i++ {
@@ -44,7 +40,7 @@ func defaultFormat(v interface{}, f fmt.State, c rune) {
 	}
 	buf = append(buf, string(c))
 	format := strings.Join(buf, "")
-	fmt.Fprintf(f, format, v)
+	_, _ = fmt.Fprintf(f, format, v)
 }
 
 type flagScanner struct {
@@ -77,133 +73,113 @@ func (fs *flagScanner) Next() (byte, bool) {
 			fs.AppendString(fs.end)
 		}
 		return c, true
-	} else {
-		c = fs.str[fs.Pos]
-		if c == fs.flag {
-			if fs.Pos < (fs.Length-1) && fs.str[fs.Pos+1] == fs.flag {
-				fs.HasFlag = false
-				fs.AppendChar(fs.flag)
-				fs.Pos += 2
-				return fs.Next()
-			} else if fs.Pos != fs.Length-1 {
-				if fs.HasFlag {
-					fs.AppendString(fs.end)
-				}
-				fs.AppendString(fs.start)
-				fs.ChangeFlag = true
-				fs.HasFlag = true
+	}
+	c = fs.str[fs.Pos]
+	if c == fs.flag {
+		if fs.Pos < (fs.Length-1) && fs.str[fs.Pos+1] == fs.flag {
+			fs.HasFlag = false
+			fs.AppendChar(fs.flag)
+			fs.Pos += 2
+			return fs.Next()
+		}
+		if fs.Pos != fs.Length-1 {
+			if fs.HasFlag {
+				fs.AppendString(fs.end)
 			}
+			fs.AppendString(fs.start)
+			fs.ChangeFlag = true
+			fs.HasFlag = true
 		}
 	}
 	fs.Pos++
 	return c, false
 }
 
-var cDateFlagToGo = map[byte]string{
-	'a': "mon", 'A': "Monday", 'b': "Jan", 'B': "January", 'c': "02 Jan 06 15:04 MST", 'd': "02",
-	'F': "2006-01-02", 'H': "15", 'I': "03", 'm': "01", 'M': "04", 'p': "PM", 'P': "pm", 'S': "05",
-	'x': "15/04/05", 'X': "15:04:05", 'y': "06", 'Y': "2006", 'z': "-0700", 'Z': "MST"}
+// IsIntegerValue checks if the runtime LNumber value has no fractional part.
+func IsIntegerValue(v LNumber) bool {
+	iv := int64(v)
+	return LNumber(iv) == v
+}
 
-func strftime(t time.Time, cfmt string) string {
-	sc := newFlagScanner('%', "", "", cfmt)
-	for c, eos := sc.Next(); !eos; c, eos = sc.Next() {
-		if !sc.ChangeFlag {
-			if sc.HasFlag {
-				if v, ok := cDateFlagToGo[c]; ok {
-					sc.AppendString(t.Format(v))
-				} else {
-					switch c {
-					case 'w':
-						sc.AppendString(fmt.Sprint(int(t.Weekday())))
-					default:
-						sc.AppendChar('%')
-						sc.AppendChar(c)
-					}
-				}
-				sc.HasFlag = false
-			} else {
-				sc.AppendChar(c)
+func isArrayKey(v LNumber) bool {
+	iv := int(v)
+	return iv > 0 && iv < MaxArrayIndex && LNumber(iv) == v
+}
+
+// parseNumber parses a Lua number literal. In Lua 5.3:
+// - Integers: no decimal point, no exponent (123, 0xff)
+// - Floats: has decimal point or exponent (123.0, 1e10, 0x1p10)
+func parseNumber(number string) (LNumber, error) {
+	number = strings.Trim(number, " \t\n")
+	if v, err := strconv.ParseInt(number, 0, LNumberBit); err == nil {
+		return LNumber(v), nil
+	}
+	v2, err2 := strconv.ParseFloat(number, LNumberBit)
+	if err2 != nil {
+		return LNumber(0), err2
+	}
+	return LNumber(v2), nil
+}
+
+// parseNumberValue parses a Lua number literal and returns LInteger or LNumber.
+// Lua 5.3 rules: integers have no decimal point or exponent.
+func parseNumberValue(number string) (LValue, error) {
+	number = strings.Trim(number, " \t\n")
+	if number == "" {
+		return LNil, fmt.Errorf("empty number string")
+	}
+
+	isHex := len(number) > 2 && number[0] == '0' && (number[1] == 'x' || number[1] == 'X')
+
+	// Check for float indicators
+	hasFloat := false
+	for i := 0; i < len(number); i++ {
+		c := number[i]
+		if c == '.' {
+			hasFloat = true
+			break
+		}
+		if isHex {
+			// Hex floats use 'p' or 'P' for exponent
+			if c == 'p' || c == 'P' {
+				hasFloat = true
+				break
+			}
+		} else {
+			// Decimal floats use 'e' or 'E' for exponent
+			if c == 'e' || c == 'E' {
+				hasFloat = true
+				break
 			}
 		}
 	}
 
-	return sc.String()
-}
-
-func isInteger(v LNumber) bool {
-	return float64(v) == float64(int64(v))
-	//_, frac := math.Modf(float64(v))
-	//return frac == 0.0
-}
-
-func isArrayKey(v LNumber) bool {
-	return isInteger(v) && v < LNumber(int((^uint(0))>>1)) && v > LNumber(0) && v < LNumber(MaxArrayIndex)
-}
-
-func parseNumber(number string) (LNumber, error) {
-	var value LNumber
-	number = strings.Trim(number, " \t\n")
-	if v, err := strconv.ParseInt(number, 0, LNumberBit); err != nil {
-		if v2, err2 := strconv.ParseFloat(number, LNumberBit); err2 != nil {
-			return LNumber(0), err2
-		} else {
-			value = LNumber(v2)
-		}
-	} else {
-		value = LNumber(v)
-	}
-	return value, nil
-}
-
-func popenArgs(arg string) (string, []string) {
-	cmd := "/bin/sh"
-	args := []string{"-c"}
-	if LuaOS == "windows" {
-		cmd = "C:\\Windows\\system32\\cmd.exe"
-		args = []string{"/c"}
-	}
-	args = append(args, arg)
-	return cmd, args
-}
-
-func isGoroutineSafe(lv LValue) bool {
-	switch v := lv.(type) {
-	case *LFunction, *LUserData, *LState:
-		return false
-	case *LTable:
-		return v.Metatable == LNil
-	default:
-		return true
-	}
-}
-
-func readBufioSize(reader *bufio.Reader, size int64) ([]byte, error, bool) {
-	result := []byte{}
-	read := int64(0)
-	var err error
-	var n int
-	for read != size {
-		buf := make([]byte, size-read)
-		n, err = reader.Read(buf)
+	if hasFloat {
+		v, err := strconv.ParseFloat(number, 64)
 		if err != nil {
-			break
+			return LNil, err
 		}
-		read += int64(n)
-		result = append(result, buf[:n]...)
-	}
-	e := err
-	if e != nil && e == io.EOF {
-		e = nil
+		return LNumber(v), nil
 	}
 
-	return result, e, len(result) == 0 && err == io.EOF
+	// Integer
+	v, err := strconv.ParseInt(number, 0, 64)
+	if err != nil {
+		// Fallback to float if integer parsing fails (e.g., too large)
+		v2, err2 := strconv.ParseFloat(number, 64)
+		if err2 != nil {
+			return LNil, err2
+		}
+		return LNumber(v2), nil
+	}
+	return LInteger(v), nil
 }
 
 func readBufioLine(reader *bufio.Reader) ([]byte, error, bool) {
-	result := []byte{}
+	var result []byte
 	var buf []byte
 	var err error
-	var isprefix bool = true
+	var isprefix = true
 	for isprefix {
 		buf, isprefix, err = reader.ReadLine()
 		if err != nil {
@@ -241,7 +217,7 @@ func strCmp(s1, s2 string) int {
 			c1 = int(s1[i])
 		}
 		c2 := -1
-		if i != len2 {
+		if i < len2 {
 			c2 = int(s2[i])
 		}
 		switch {
@@ -255,11 +231,6 @@ func strCmp(s1, s2 string) int {
 	}
 }
 
-func unsafeFastStringToReadOnlyBytes(s string) (bs []byte) {
-	sh := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	bh := (*reflect.SliceHeader)(unsafe.Pointer(&bs))
-	bh.Data = sh.Data
-	bh.Cap = sh.Len
-	bh.Len = sh.Len
-	return
+func unsafeFastStringToReadOnlyBytes(s string) []byte {
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }

@@ -4,40 +4,37 @@ import (
 	"os"
 )
 
-var CompatVarArg = true
 var FieldsPerFlush = 50
-var RegistrySize = 256 * 20
+var RegistrySize = 256
 var RegistryGrowStep = 32
-var CallStackSize = 256
+var RegistryMaxSize = 256 * 256
+var CallStackSize = 128
 var MaxTableGetLoop = 100
 var MaxArrayIndex = 67108864
 
 type LNumber float64
+type LInteger int64
 
 const LNumberBit = 64
-const LNumberScanFormat = "%f"
-const LuaVersion = "Lua 5.1"
+const Version = "Lua 5.3 - Wippy Modification"
 
-var LuaPath = "LUA_PATH"
-var LuaLDir string
-var LuaPathDefault string
-var LuaOS string
-var LuaDirSep string
-var LuaPathSep = ";"
-var LuaPathMark = "?"
-var LuaExecDir = "!"
-var LuaIgMark = "-"
+var PathEnvVar = "LUA_PATH"
+var LDir string // todo: drop it
+var PathDefault string
+var DirSep string
+var PathSep = ";"
+var PathMark = "?"
+var ExecDir = "!"
+var IgMark = "-"
 
 func init() {
 	if os.PathSeparator == '/' { // unix-like
-		LuaOS = "unix"
-		LuaLDir = "/usr/local/share/lua/5.1"
-		LuaDirSep = "/"
-		LuaPathDefault = "./?.lua;" + LuaLDir + "/?.lua;" + LuaLDir + "/?/init.lua"
+		LDir = "/usr/local/share/lua/5.1"
+		DirSep = "/"
+		PathDefault = "./?.lua;" + LDir + "/?.lua;" + LDir + "/?/init.lua"
 	} else { // windows
-		LuaOS = "windows"
-		LuaLDir = "!\\lua"
-		LuaDirSep = "\\"
-		LuaPathDefault = ".\\?.lua;" + LuaLDir + "\\?.lua;" + LuaLDir + "\\?\\init.lua"
+		LDir = "!\\lua"
+		DirSep = "\\"
+		PathDefault = ".\\?.lua;" + LDir + "\\?.lua;" + LDir + "\\?\\init.lua"
 	}
 }

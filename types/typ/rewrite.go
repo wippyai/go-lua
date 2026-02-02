@@ -1,0 +1,324 @@
+package typ
+
+import "github.com/wippyai/go-lua/internal"
+
+// Rewrite traverses a type tree and applies fn at each node (bottom-up transformation).
+//
+// The function fn is called on each type node before recursing into children.
+// If fn returns (replacement, true), the replacement is used and children are
+// not visited (early termination). If fn returns (_, false), children are
+// recursively rewritten first, then the result is reassembled.
+//
+// Returns the original pointer when nothing changed (structural sharing).
+// This is the foundation for type substitution, expansion, and other transforms.
+func Rewrite(t Type, fn func(Type) (Type, bool)) Type {
+	return rewriteWithDepth(t, fn, DefaultRecursionDepth)
+}
+
+func rewriteWithDepth(t Type, fn func(Type) (Type, bool), maxDepth int) Type {
+	memo := make(map[rewriteKey]Type)
+	guard := GuardForDepth(maxDepth)
+	return rewriteDepth(t, fn, guard, memo)
+}
+
+type rewriteKey struct {
+	t     Type
+	depth int
+}
+
+func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGuard, memo map[rewriteKey]Type) Type {
+	if t == nil {
+		return t
+	}
+	depth := guard.Depth()
+	if memo != nil {
+		key := rewriteKey{t: t, depth: depth}
+		if cached, ok := memo[key]; ok {
+			return cached
+		}
+	}
+
+	return WithGuard(t, guard, t, func(next internal.RecursionGuard) Type {
+		if replacement, ok := fn(t); ok {
+			if memo != nil {
+				memo[rewriteKey{t: t, depth: depth}] = replacement
+			}
+			return replacement
+		}
+
+		out := Visit(t, Visitor[Type]{
+			Optional: func(o *Optional) Type {
+				if o.Inner == nil {
+					return t
+				}
+				inner := rewriteDepth(o.Inner, fn, next, memo)
+				if inner == o.Inner {
+					return t
+				}
+				return NewOptional(inner)
+			},
+			Union: func(u *Union) Type {
+				changed := false
+				members := make([]Type, len(u.Members))
+				for i, m := range u.Members {
+					members[i] = rewriteDepth(m, fn, next, memo)
+					if members[i] != m {
+						changed = true
+					}
+				}
+				if !changed {
+					return t
+				}
+				return NewUnion(members...)
+			},
+			Intersection: func(u *Intersection) Type {
+				changed := false
+				members := make([]Type, len(u.Members))
+				for i, m := range u.Members {
+					members[i] = rewriteDepth(m, fn, next, memo)
+					if members[i] != m {
+						changed = true
+					}
+				}
+				if !changed {
+					return t
+				}
+				return NewIntersection(members...)
+			},
+			Array: func(a *Array) Type {
+				elem := rewriteDepth(a.Element, fn, next, memo)
+				if elem == a.Element {
+					return t
+				}
+				return NewArray(elem)
+			},
+			Map: func(m *Map) Type {
+				key := rewriteDepth(m.Key, fn, next, memo)
+				value := rewriteDepth(m.Value, fn, next, memo)
+				if key == m.Key && value == m.Value {
+					return t
+				}
+				return NewMap(key, value)
+			},
+			Tuple: func(tu *Tuple) Type {
+				changed := false
+				elems := make([]Type, len(tu.Elements))
+				for i, e := range tu.Elements {
+					elems[i] = rewriteDepth(e, fn, next, memo)
+					if elems[i] != e {
+						changed = true
+					}
+				}
+				if !changed {
+					return t
+				}
+				return NewTuple(elems...)
+			},
+			Function: func(f *Function) Type {
+				return rewriteFunction(f, t, fn, next, memo)
+			},
+			Record: func(r *Record) Type {
+				return rewriteRecord(r, t, fn, next, memo)
+			},
+			Alias: func(a *Alias) Type {
+				target := rewriteDepth(a.Target, fn, next, memo)
+				if target == a.Target {
+					return t
+				}
+				return NewAlias(a.Name, target)
+			},
+			Instantiated: func(i *Instantiated) Type {
+				changed := false
+				args := make([]Type, len(i.TypeArgs))
+				for idx, a := range i.TypeArgs {
+					args[idx] = rewriteDepth(a, fn, next, memo)
+					if args[idx] != a {
+						changed = true
+					}
+				}
+				if !changed {
+					return t
+				}
+				return Instantiate(i.Generic, args...)
+			},
+			Interface: func(i *Interface) Type {
+				changed := false
+				methods := make([]Method, len(i.Methods))
+				for idx, m := range i.Methods {
+					newType := rewriteDepth(m.Type, fn, next, memo)
+					if newType != m.Type {
+						changed = true
+					}
+					if fnType, ok := newType.(*Function); ok {
+						methods[idx] = Method{Name: m.Name, Type: fnType}
+					} else {
+						methods[idx] = m
+					}
+				}
+				if !changed {
+					return t
+				}
+				return NewInterface(i.Name, methods)
+			},
+			Default: func(_ Type) Type {
+				return t
+			},
+		})
+
+		if memo != nil {
+			memo[rewriteKey{t: t, depth: depth}] = out
+		}
+		return out
+	})
+}
+
+func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard internal.RecursionGuard, memo map[rewriteKey]Type) Type {
+	changed := false
+
+	var params []Param
+	for i, p := range v.Params {
+		newType := rewriteDepth(p.Type, fn, guard, memo)
+		if newType != p.Type {
+			if params == nil {
+				params = make([]Param, len(v.Params))
+				copy(params, v.Params)
+			}
+			changed = true
+			params[i] = Param{Name: p.Name, Type: newType, Optional: p.Optional}
+		} else if params != nil {
+			params[i] = p
+		}
+	}
+
+	var returns []Type
+	for i, r := range v.Returns {
+		newRet := rewriteDepth(r, fn, guard, memo)
+		if newRet != r {
+			if returns == nil {
+				returns = make([]Type, len(v.Returns))
+				copy(returns, v.Returns)
+			}
+			changed = true
+			returns[i] = newRet
+		} else if returns != nil {
+			returns[i] = r
+		}
+	}
+
+	var variadic Type
+	if v.Variadic != nil {
+		variadic = rewriteDepth(v.Variadic, fn, guard, memo)
+		if variadic != v.Variadic {
+			changed = true
+		}
+	}
+
+	if !changed {
+		return orig
+	}
+
+	builder := Func()
+	paramSrc := v.Params
+	if params != nil {
+		paramSrc = params
+	}
+	for _, p := range paramSrc {
+		if p.Optional {
+			builder = builder.OptParam(p.Name, p.Type)
+		} else {
+			builder = builder.Param(p.Name, p.Type)
+		}
+	}
+	if variadic != nil {
+		builder = builder.Variadic(variadic)
+	}
+	returnsSrc := v.Returns
+	if returns != nil {
+		returnsSrc = returns
+	}
+	if len(returnsSrc) > 0 {
+		builder = builder.Returns(returnsSrc...)
+	}
+	if v.Effects != nil {
+		builder = builder.Effects(v.Effects)
+	}
+	if v.Spec != nil {
+		builder = builder.Spec(v.Spec)
+	}
+	if v.Refinement != nil {
+		builder = builder.WithRefinement(v.Refinement)
+	}
+	return builder.Build()
+}
+
+func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard internal.RecursionGuard, memo map[rewriteKey]Type) Type {
+	changed := false
+
+	var fields []Field
+	for i, f := range v.Fields {
+		newType := rewriteDepth(f.Type, fn, guard, memo)
+		if newType != f.Type {
+			if fields == nil {
+				fields = make([]Field, len(v.Fields))
+				copy(fields, v.Fields)
+			}
+			changed = true
+			fields[i] = Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+		} else if fields != nil {
+			fields[i] = f
+		}
+	}
+
+	var metatable Type
+	if v.Metatable != nil {
+		metatable = rewriteDepth(v.Metatable, fn, guard, memo)
+		if metatable != v.Metatable {
+			changed = true
+		}
+	}
+
+	mapKey := v.MapKey
+	mapValue := v.MapValue
+	if v.HasMapComponent() {
+		mapKey = rewriteDepth(v.MapKey, fn, guard, memo)
+		if mapKey != v.MapKey {
+			changed = true
+		}
+		mapValue = rewriteDepth(v.MapValue, fn, guard, memo)
+		if mapValue != v.MapValue {
+			changed = true
+		}
+	}
+
+	if !changed {
+		return orig
+	}
+
+	builder := NewRecord()
+	if v.Open {
+		builder.SetOpen(true)
+	}
+	fieldsSrc := v.Fields
+	if fields != nil {
+		fieldsSrc = fields
+	}
+	for _, f := range fieldsSrc {
+		switch {
+		case f.Optional && f.Readonly:
+			builder = builder.OptReadonlyField(f.Name, f.Type)
+		case f.Optional:
+			builder = builder.OptField(f.Name, f.Type)
+		case f.Readonly:
+			builder = builder.ReadonlyField(f.Name, f.Type)
+		default:
+			builder = builder.Field(f.Name, f.Type)
+		}
+	}
+	if metatable != nil {
+		builder = builder.Metatable(metatable)
+	}
+	if mapKey != nil && mapValue != nil {
+		builder = builder.MapComponent(mapKey, mapValue)
+	}
+	return builder.Build()
+}

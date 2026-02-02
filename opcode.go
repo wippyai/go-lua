@@ -23,15 +23,12 @@ import (
 
 const opInvalidInstruction = ^uint32(0)
 
-const opSizeCode = 6
 const opSizeA = 8
 const opSizeB = 9
 const opSizeC = 9
 const opSizeBx = 18
-const opSizesBx = 18
 
 const opMaxArgsA = (1 << opSizeA) - 1
-const opMaxArgsB = (1 << opSizeB) - 1
 const opMaxArgsC = (1 << opSizeC) - 1
 const opMaxArgBx = (1 << opSizeBx) - 1
 const opMaxArgSbx = opMaxArgBx >> 1
@@ -57,15 +54,22 @@ const (
 
 	OP_SELF /*      A B C   R(A+1) := R(B); R(A) := R(B)[RK(C)]             */
 
-	OP_ADD /*       A B C   R(A) := RK(B) + RK(C)                           */
-	OP_SUB /*       A B C   R(A) := RK(B) - RK(C)                           */
-	OP_MUL /*       A B C   R(A) := RK(B) * RK(C)                           */
-	OP_DIV /*       A B C   R(A) := RK(B) / RK(C)                           */
-	OP_MOD /*       A B C   R(A) := RK(B) % RK(C)                           */
-	OP_POW /*       A B C   R(A) := RK(B) ^ RK(C)                           */
-	OP_UNM /*       A B     R(A) := -R(B)                                   */
-	OP_NOT /*       A B     R(A) := not R(B)                                */
-	OP_LEN /*       A B     R(A) := length of R(B)                          */
+	OP_ADD  /*       A B C   R(A) := RK(B) + RK(C)                           */
+	OP_SUB  /*       A B C   R(A) := RK(B) - RK(C)                           */
+	OP_MUL  /*       A B C   R(A) := RK(B) * RK(C)                           */
+	OP_DIV  /*       A B C   R(A) := RK(B) / RK(C)                           */
+	OP_MOD  /*       A B C   R(A) := RK(B) % RK(C)                           */
+	OP_POW  /*       A B C   R(A) := RK(B) ^ RK(C)                           */
+	OP_IDIV /*       A B C   R(A) := RK(B) // RK(C)                          */
+	OP_BAND /*       A B C   R(A) := RK(B) & RK(C)                           */
+	OP_BOR  /*       A B C   R(A) := RK(B) | RK(C)                           */
+	OP_BXOR /*       A B C   R(A) := RK(B) ~ RK(C)                           */
+	OP_SHL  /*       A B C   R(A) := RK(B) << RK(C)                          */
+	OP_SHR  /*       A B C   R(A) := RK(B) >> RK(C)                          */
+	OP_UNM  /*       A B     R(A) := -R(B)                                   */
+	OP_BNOT /*       A B     R(A) := ~R(B)                                   */
+	OP_NOT  /*       A B     R(A) := not R(B)                                */
+	OP_LEN  /*       A B     R(A) := length of R(B)                          */
 
 	OP_CONCAT /*    A B C   R(A) := R(B).. ... ..R(C)                       */
 
@@ -147,7 +151,14 @@ var opProps = []opProp{
 	{"DIV", false, true, opArgModeK, opArgModeK, opTypeABC},
 	{"MOD", false, true, opArgModeK, opArgModeK, opTypeABC},
 	{"POW", false, true, opArgModeK, opArgModeK, opTypeABC},
+	{"IDIV", false, true, opArgModeK, opArgModeK, opTypeABC},
+	{"BAND", false, true, opArgModeK, opArgModeK, opTypeABC},
+	{"BOR", false, true, opArgModeK, opArgModeK, opTypeABC},
+	{"BXOR", false, true, opArgModeK, opArgModeK, opTypeABC},
+	{"SHL", false, true, opArgModeK, opArgModeK, opTypeABC},
+	{"SHR", false, true, opArgModeK, opArgModeK, opTypeABC},
 	{"UNM", false, true, opArgModeR, opArgModeN, opTypeABC},
+	{"BNOT", false, true, opArgModeR, opArgModeN, opTypeABC},
 	{"NOT", false, true, opArgModeR, opArgModeN, opTypeABC},
 	{"LEN", false, true, opArgModeR, opArgModeN, opTypeABC},
 	{"CONCAT", false, true, opArgModeR, opArgModeR, opTypeABC},
@@ -247,11 +258,7 @@ const opBitRk = 1 << (opSizeB - 1)
 const opMaxIndexRk = opBitRk - 1
 
 func opIsK(value int) bool {
-	return bool((value & opBitRk) != 0)
-}
-
-func opIndexK(value int) int {
-	return value & ^opBitRk
+	return (value & opBitRk) != 0
 }
 
 func opRkAsk(value int) int {
@@ -324,8 +331,22 @@ func opToString(inst uint32) string {
 		buf += fmt.Sprintf("; R(%v) := RK(%v) %% RK(%v)", arga, argb, argc)
 	case OP_POW:
 		buf += fmt.Sprintf("; R(%v) := RK(%v) ^ RK(%v)", arga, argb, argc)
+	case OP_IDIV:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) // RK(%v)", arga, argb, argc)
+	case OP_BAND:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) & RK(%v)", arga, argb, argc)
+	case OP_BOR:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) | RK(%v)", arga, argb, argc)
+	case OP_BXOR:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) ~ RK(%v)", arga, argb, argc)
+	case OP_SHL:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) << RK(%v)", arga, argb, argc)
+	case OP_SHR:
+		buf += fmt.Sprintf("; R(%v) := RK(%v) >> RK(%v)", arga, argb, argc)
 	case OP_UNM:
 		buf += fmt.Sprintf("; R(%v) := -R(%v)", arga, argb)
+	case OP_BNOT:
+		buf += fmt.Sprintf("; R(%v) := ~R(%v)", arga, argb)
 	case OP_NOT:
 		buf += fmt.Sprintf("; R(%v) := not R(%v)", arga, argb)
 	case OP_LEN:

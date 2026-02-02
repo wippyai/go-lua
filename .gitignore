@@ -14,6 +14,8 @@
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
+.*
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
@@ -23,3 +25,7 @@ go.work.sum
 
 # env file
 .env
+
+# IDE and tool output
+.idea/
+qodana-report/

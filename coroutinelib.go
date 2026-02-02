@@ -1,41 +1,69 @@
 package lua
 
+import "sync"
+
+// SpawnRequest is yielded by coroutine.spawn to signal the scheduler
+type SpawnRequest struct {
+	Fn *LFunction
+}
+
+func (s *SpawnRequest) String() string   { return "spawn-request" }
+func (s *SpawnRequest) Type() LValueType { return LTUserData }
+
+var spawnRequestPool = sync.Pool{
+	New: func() any {
+		return &SpawnRequest{}
+	},
+}
+
+// ReleaseSpawnRequest returns a SpawnRequest to the pool.
+func ReleaseSpawnRequest(sr *SpawnRequest) {
+	sr.Fn = nil
+	spawnRequestPool.Put(sr)
+}
+
 func OpenCoroutine(L *LState) int {
-	// TODO: Tie module name to contents of linit.go?
-	mod := L.RegisterModule(CoroutineLibName, coFuncs)
+	mod := L.RegisterGoModule(CoroutineLibName, coFuncs).(*LTable)
 	L.Push(mod)
 	return 1
 }
 
-var coFuncs = map[string]LGFunction{
+var coFuncs = map[string]LGoFunc{
 	"create":  coCreate,
 	"yield":   coYield,
 	"resume":  coResume,
 	"running": coRunning,
 	"status":  coStatus,
 	"wrap":    coWrap,
+	"spawn":   coSpawn,
+}
+
+func coSpawn(L *LState) int {
+	fn := L.CheckFunction(1)
+	req := spawnRequestPool.Get().(*SpawnRequest)
+	req.Fn = fn
+	L.Push(req)
+	return -1 // yield with the SpawnRequest
 }
 
 func coCreate(L *LState) int {
 	fn := L.CheckFunction(1)
-	newthread, _ := L.NewThread()
-	base := 0
+	newthread := L.NewThreadWithContext(L.ctx)
 	newthread.stack.Push(callFrame{
 		Fn:         fn,
 		Pc:         0,
-		Base:       base,
-		LocalBase:  base + 1,
-		ReturnBase: base,
+		Base:       0,
+		LocalBase:  1,
+		ReturnBase: 0,
 		NArgs:      0,
 		NRet:       MultRet,
-		Parent:     nil,
 		TailCall:   0,
 	})
 	L.Push(newthread)
 	return 1
 }
 
-func coYield(L *LState) int {
+func coYield(_ *LState) int {
 	return -1
 }
 
@@ -69,7 +97,7 @@ func coResume(L *LState) int {
 		th.SetTop(0)
 		nargs := L.GetTop() - 1
 		L.XMoveTo(th, nargs)
-		cf.NArgs = nargs
+		cf.NArgs = int16(nargs)
 		th.initCallFrame(cf)
 		th.Panic = panicWithoutTraceback
 	} else {
@@ -108,5 +136,3 @@ func coWrap(L *LState) int {
 	L.Push(L.NewClosure(wrapaux, v))
 	return 1
 }
-
-//

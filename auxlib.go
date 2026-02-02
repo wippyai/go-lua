@@ -2,6 +2,7 @@ package lua
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,8 +20,11 @@ func (ls *LState) CheckAny(n int) LValue {
 
 func (ls *LState) CheckInt(n int) int {
 	v := ls.Get(n)
-	if intv, ok := v.(LNumber); ok {
-		return int(intv)
+	switch iv := v.(type) {
+	case LNumber:
+		return int(iv)
+	case LInteger:
+		return int(iv)
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -28,8 +32,11 @@ func (ls *LState) CheckInt(n int) int {
 
 func (ls *LState) CheckInt64(n int) int64 {
 	v := ls.Get(n)
-	if intv, ok := v.(LNumber); ok {
-		return int64(intv)
+	switch iv := v.(type) {
+	case LNumber:
+		return int64(iv)
+	case LInteger:
+		return int64(iv)
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -37,10 +44,12 @@ func (ls *LState) CheckInt64(n int) int64 {
 
 func (ls *LState) CheckNumber(n int) LNumber {
 	v := ls.Get(n)
-	if lv, ok := v.(LNumber); ok {
+	switch lv := v.(type) {
+	case LNumber:
 		return lv
-	}
-	if lv, ok := v.(LString); ok {
+	case LInteger:
+		return LNumber(lv)
+	case LString:
 		if num, err := parseNumber(string(lv)); err == nil {
 			return num
 		}
@@ -119,7 +128,7 @@ func (ls *LState) CheckTypes(n int, typs ...LValueType) {
 			return
 		}
 	}
-	buf := []string{}
+	var buf []string
 	for _, typ := range typs {
 		buf = append(buf, typ.String())
 	}
@@ -146,8 +155,11 @@ func (ls *LState) OptInt(n int, d int) int {
 	if v == LNil {
 		return d
 	}
-	if intv, ok := v.(LNumber); ok {
-		return int(intv)
+	switch iv := v.(type) {
+	case LNumber:
+		return int(iv)
+	case LInteger:
+		return int(iv)
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -158,8 +170,11 @@ func (ls *LState) OptInt64(n int, d int64) int64 {
 	if v == LNil {
 		return d
 	}
-	if intv, ok := v.(LNumber); ok {
-		return int64(intv)
+	switch iv := v.(type) {
+	case LNumber:
+		return int64(iv)
+	case LInteger:
+		return int64(iv)
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -170,8 +185,11 @@ func (ls *LState) OptNumber(n int, d LNumber) LNumber {
 	if v == LNil {
 		return d
 	}
-	if lv, ok := v.(LNumber); ok {
+	switch lv := v.(type) {
+	case LNumber:
 		return lv
+	case LInteger:
+		return LNumber(lv)
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -273,11 +291,12 @@ func (ls *LState) FindTable(obj *LTable, n string, size int) LValue {
 			tb := ls.CreateTable(0, size)
 			ls.RawSet(curobj, LString(name), tb)
 			curobj = tb
-		} else if nextobj.Type() != LTTable {
-			return LNil
-		} else {
-			curobj = nextobj.(*LTable)
+			continue
 		}
+		if nextobj.Type() != LTTable {
+			return LNil
+		}
+		curobj = nextobj.(*LTable)
 	}
 	return curobj
 }
@@ -291,11 +310,38 @@ func (ls *LState) RegisterModule(name string, funcs map[string]LGFunction) LValu
 	mod := ls.GetField(tb, name)
 	if mod.Type() != LTTable {
 		newmod := ls.FindTable(ls.Get(GlobalsIndex).(*LTable), name, len(funcs))
+		newmodtb, ok := newmod.(*LTable)
+		if !ok {
+			ls.RaiseError("name conflict for module(%v)", name)
+		}
+		for fname, fn := range funcs {
+			newmodtb.RawSetString(fname, ls.NewFunction(fn))
+		}
+		ls.SetField(tb, name, newmodtb)
+		return newmodtb
+	}
+	return mod
+}
+
+func (ls *LState) SetFuncs(tb *LTable, funcs map[string]LGFunction, upvalues ...LValue) *LTable {
+	for fname, fn := range funcs {
+		tb.RawSetString(fname, ls.NewClosure(fn, upvalues...))
+	}
+	return tb
+}
+
+// RegisterGoModule registers a module using LGoFunc functions.
+// LGoFunc values are stored directly without wrapping.
+func (ls *LState) RegisterGoModule(name string, funcs map[string]LGoFunc) LValue {
+	tb := ls.FindTable(ls.Get(RegistryIndex).(*LTable), "_LOADED", 1)
+	mod := ls.GetField(tb, name)
+	if mod.Type() != LTTable {
+		newmod := ls.FindTable(ls.Get(GlobalsIndex).(*LTable), name, len(funcs))
 		if newmodtb, ok := newmod.(*LTable); !ok {
 			ls.RaiseError("name conflict for module(%v)", name)
 		} else {
 			for fname, fn := range funcs {
-				newmodtb.RawSetString(fname, ls.NewFunction(fn))
+				newmodtb.RawSetString(fname, fn)
 			}
 			ls.SetField(tb, name, newmodtb)
 			return newmodtb
@@ -304,60 +350,10 @@ func (ls *LState) RegisterModule(name string, funcs map[string]LGFunction) LValu
 	return mod
 }
 
-// RegisterImmutableModule registers a module using a pre-built immutable table with pinned functions.
-// This is much faster than RegisterModule since functions are pre-created and the table is immutable.
-// The immutableModule should be created once with pre-pinned LFunctions and marked as immutable.
-func (ls *LState) RegisterImmutableModule(name string, immutableModule *LTable) LValue {
-	// Fast path: Get _LOADED table directly from registry
-	registry := ls.Get(RegistryIndex).(*LTable)
-	loadedTable := registry.RawGetString("_LOADED")
-
-	var loaded *LTable
-	if loadedTable == LNil {
-		// Create _LOADED table if it doesn't exist
-		loaded = ls.CreateTable(0, 8)
-		registry.RawSetString("_LOADED", loaded)
-	} else {
-		loaded = loadedTable.(*LTable)
-	}
-
-	// Check if module already exists
-	existingMod := loaded.RawGetString(name)
-	if existingMod != LNil {
-		return existingMod
-	}
-
-	// Set module in globals directly (fastest path)
-	globals := ls.Get(GlobalsIndex).(*LTable)
-	globals.RawSetString(name, immutableModule)
-
-	// Register in _LOADED
-	loaded.RawSetString(name, immutableModule)
-
-	return immutableModule
-}
-
-// CreateImmutableModule creates an immutable module table with pre-pinned functions.
-// This should be called once during initialization to create reusable module tables.
-// The functions map should contain pre-created LFunction instances.
-func (ls *LState) CreateImmutableModule(prePinnedFuncs map[string]*LFunction) *LTable {
-	// Create table with exact capacity
-	mod := ls.CreateTable(0, len(prePinnedFuncs))
-
-	// Add all pre-pinned functions directly
-	for name, fn := range prePinnedFuncs {
-		mod.RawSetString(name, fn)
-	}
-
-	// Make it immutable for safe reuse
-	mod.Immutable = true
-
-	return mod
-}
-
-func (ls *LState) SetFuncs(tb *LTable, funcs map[string]LGFunction, upvalues ...LValue) *LTable {
+// SetGoFuncs sets LGoFunc values directly on the table.
+func (ls *LState) SetGoFuncs(tb *LTable, funcs map[string]LGoFunc) *LTable {
 	for fname, fn := range funcs {
-		tb.RawSetString(fname, ls.NewClosure(fn, upvalues...))
+		tb.RawSetString(fname, fn)
 	}
 	return tb
 }
@@ -407,16 +403,16 @@ func (ls *LState) LoadFile(path string) (*LFunction, error) {
 		file = os.Stdin
 	} else {
 		file, err = os.Open(path)
-		defer file.Close()
 		if err != nil {
 			return nil, newApiErrorE(ApiErrorFile, err)
 		}
+		defer func() { _ = file.Close() }()
 	}
 
 	reader := bufio.NewReader(file)
 	// get the first character.
 	c, err := reader.ReadByte()
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, newApiErrorE(ApiErrorFile, err)
 	}
 	if c == byte('#') {
@@ -428,7 +424,7 @@ func (ls *LState) LoadFile(path string) (*LFunction, error) {
 		}
 	}
 
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		// if the file is not empty,
 		// unread the first character of the file or newline character(readBufioLine's last byte).
 		err = reader.UnreadByte()
@@ -445,21 +441,21 @@ func (ls *LState) LoadString(source string) (*LFunction, error) {
 }
 
 func (ls *LState) DoFile(path string) error {
-	if fn, err := ls.LoadFile(path); err != nil {
+	fn, err := ls.LoadFile(path)
+	if err != nil {
 		return err
-	} else {
-		ls.Push(fn)
-		return ls.PCall(0, MultRet, nil)
 	}
+	ls.Push(fn)
+	return ls.PCall(0, MultRet, nil)
 }
 
 func (ls *LState) DoString(source string) error {
-	if fn, err := ls.LoadString(source); err != nil {
+	fn, err := ls.LoadString(source)
+	if err != nil {
 		return err
-	} else {
-		ls.Push(fn)
-		return ls.PCall(0, MultRet, nil)
 	}
+	ls.Push(fn)
+	return ls.PCall(0, MultRet, nil)
 }
 
 /* }}} */
@@ -469,46 +465,25 @@ func (ls *LState) DoString(source string) error {
 // ToStringMeta returns string representation of given LValue.
 // This method calls the `__tostring` meta method if defined.
 func (ls *LState) ToStringMeta(lv LValue) LValue {
-	if fn, ok := ls.metaOp1(lv, "__tostring").(*LFunction); ok {
-		ls.Push(fn)
+	meta := ls.metaOp1(lv, "__tostring")
+	switch meta.(type) {
+	case *LFunction, LGoFunc:
+		ls.Push(meta)
 		ls.Push(lv)
 		ls.Call(1, 1)
 		return ls.reg.Pop()
-	} else {
+	default:
 		return LString(lv.String())
 	}
 }
 
-// Set a module loader to the package.preload table.
+// PreloadModule sets a module loader to the package.preload table.
 func (ls *LState) PreloadModule(name string, loader LGFunction) {
 	preload := ls.GetField(ls.GetField(ls.Get(EnvironIndex), "package"), "preload")
 	if _, ok := preload.(*LTable); !ok {
 		ls.RaiseError("package.preload must be a table")
 	}
 	ls.SetField(preload, name, ls.NewFunction(loader))
-}
-
-// Checks whether the given index is an LChannel and returns this channel.
-func (ls *LState) CheckChannel(n int) chan LValue {
-	v := ls.Get(n)
-	if ch, ok := v.(LChannel); ok {
-		return (chan LValue)(ch)
-	}
-	ls.TypeError(n, LTChannel)
-	return nil
-}
-
-// If the given index is a LChannel, returns this channel. If this argument is absent or is nil, returns ch. Otherwise, raises an error.
-func (ls *LState) OptChannel(n int, ch chan LValue) chan LValue {
-	v := ls.Get(n)
-	if v == LNil {
-		return ch
-	}
-	if ch, ok := v.(LChannel); ok {
-		return (chan LValue)(ch)
-	}
-	ls.TypeError(n, LTChannel)
-	return nil
 }
 
 /* }}} */

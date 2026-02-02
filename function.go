@@ -5,11 +5,7 @@ import (
 	"strings"
 )
 
-const (
-	VarArgHasArg   uint8 = 1
-	VarArgIsVarArg uint8 = 2
-	VarArgNeedsArg uint8 = 4
-)
+const VarArgIsVarArg uint8 = 2
 
 type DbgLocalInfo struct {
 	Name    string
@@ -39,6 +35,11 @@ type FunctionProto struct {
 	DbgCalls           []DbgCall
 	DbgUpvalues        []string
 
+	// TypeInfo holds encoded type manifest for this module.
+	// Use types/io.EncodeManifest/DecodeManifest to work with this data.
+	// Only set on root FunctionProto, not nested functions.
+	TypeInfo []byte
+
 	stringConstants []string
 }
 
@@ -53,11 +54,9 @@ type Upvalue struct {
 }
 
 func (uv *Upvalue) Value() LValue {
-	//if uv.IsClosed() {
 	if uv.closed || uv.reg == nil {
 		return uv.value
 	}
-	//return uv.reg.Get(uv.index)
 	return uv.reg.array[uv.index]
 }
 
@@ -109,13 +108,36 @@ func newFunctionProto(name string) *FunctionProto {
 	}
 }
 
+// RebuildStringConstants rebuilds the stringConstants cache from Constants.
+// This is needed after deserializing bytecode since stringConstants is not serialized.
+// The stringConstants slice has the same length as Constants - each entry is either
+// the string value (if Constants[i] is LString) or empty string (otherwise).
+func (fp *FunctionProto) RebuildStringConstants() {
+	fp.stringConstants = make([]string, len(fp.Constants))
+	for i, c := range fp.Constants {
+		if s, ok := c.(LString); ok {
+			fp.stringConstants[i] = string(s)
+		}
+	}
+}
+
+// GetTypeInfo returns the encoded type manifest bytes.
+func (fp *FunctionProto) GetTypeInfo() []byte {
+	return fp.TypeInfo
+}
+
+// SetTypeInfo sets the encoded type manifest bytes.
+func (fp *FunctionProto) SetTypeInfo(data []byte) {
+	fp.TypeInfo = data
+}
+
 func (fp *FunctionProto) String() string {
 	return fp.str(1, 0)
 }
 
 func (fp *FunctionProto) str(level int, count int) string {
 	indent := strings.Repeat("  ", level-1)
-	buf := []string{}
+	var buf []string
 	buf = append(buf, fmt.Sprintf("%v; function [%v] definition (level %v)\n",
 		indent, count, level))
 	buf = append(buf, fmt.Sprintf("%v; %v upvalues, %v params, %v stacks\n",

@@ -1,0 +1,230 @@
+package phase
+
+import (
+	"sort"
+
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/keyscoll"
+	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/io"
+	"github.com/wippyai/go-lua/types/typ"
+)
+
+// RunExtract executes the flow extraction phase.
+func RunExtract(input FlowExtractInput) FlowExtractOutput {
+	moduleAliases := input.ModuleAliases
+	var typeResolverFn func(ast.TypeExpr, *scope.State) typ.Type
+	if input.Resolve.TypeResolver != nil {
+		typeResolverFn = input.Resolve.TypeResolver.ResolveType
+	}
+	var fnSigResolverFn func(*ast.FunctionExpr, *scope.State) *typ.Function
+	if input.Scope.FunctionSignatureResolver != nil {
+		fnSigResolverFn = input.Scope.FunctionSignatureResolver.ResolveFunctionSignature
+	}
+
+	extractionCtx := NewContextBuilder(input.PhaseEnv).
+		WithScope(input.Scope).
+		WithSiblingTypes(input.SiblingTypes).
+		WithLiteralTypes(input.LiteralTypes).
+		WithReturnSummaries(input.ReturnSummaries).
+		BuildDeclared()
+
+	engine := synth.New(synth.Config{
+		Ctx:            input.Ctx,
+		Types:          input.Types,
+		Scopes:         input.Scope.Scopes,
+		Manifests:      input.Manifests,
+		Env:            extractionCtx,
+		Phase:          api.PhaseScopeCompute,
+		ModuleBindings: input.ModuleBindings,
+		ModuleAliases:  moduleAliases,
+	})
+
+	inputs := flowbuild.Run(&core.FlowContext{
+		Graph:    input.Graph,
+		Scopes:   input.Scope.Scopes,
+		CheckCtx: extractionCtx,
+		CallCtx:  input.Ctx,
+		TypeOps:  input.Types,
+		Base:     input.Scope.BaseScope,
+		Globals:  input.GlobalTypes,
+		API:      engine,
+		Services: core.FlowServicesFuncs{
+			FnSigResolver:    fnSigResolverFn,
+			TypeExprResolver: typeResolverFn,
+		},
+		InitialDeclaredTypes: input.Scope.DeclaredTypes,
+		SiblingTypes:         input.SiblingTypes,
+		LiteralTypes:         input.LiteralTypes,
+		ModuleAliases:        moduleAliases,
+		ModuleBindings:       input.ModuleBindings,
+	})
+
+	applyModuleAliasTypes(inputs, input.Manifests)
+
+	params := ExtractParams(input.Fn, input.Scope.DeclaredTypes, input.Graph)
+	// Return inference is performed in the return inference pass; flow uses Unknown here.
+	returnType := typ.Unknown
+
+	return FlowExtractOutput{
+		Inputs:     inputs,
+		Params:     params,
+		ReturnType: returnType,
+	}
+}
+
+func applyModuleAliasTypes(inputs *flow.Inputs, manifests io.ManifestQuerier) {
+	if inputs == nil || manifests == nil || len(inputs.ModuleAliases) == 0 {
+		return
+	}
+	if inputs.DeclaredTypes == nil {
+		inputs.DeclaredTypes = make(map[cfg.SymbolID]typ.Type, len(inputs.ModuleAliases))
+	}
+	syms := make([]cfg.SymbolID, 0, len(inputs.ModuleAliases))
+	for sym := range inputs.ModuleAliases {
+		syms = append(syms, sym)
+	}
+	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
+	for _, sym := range syms {
+		path := inputs.ModuleAliases[sym]
+		if sym == 0 || path == "" {
+			continue
+		}
+		manifest := manifests.Manifest(path)
+		if manifest == nil {
+			if imports := manifests.Imports(); imports != nil {
+				manifest = imports[path]
+			}
+		}
+		if manifest == nil {
+			continue
+		}
+		if export := manifest.EnrichedExport(); export != nil {
+			inputs.DeclaredTypes[sym] = export
+		}
+	}
+}
+
+// RunLiteral executes the function literal synthesis phase.
+func RunLiteral(input LiteralInput) LiteralOutput {
+	initialCtx := NewContextBuilder(input.PhaseEnv).
+		WithScope(input.Scope).
+		WithReturnSummaries(input.ReturnSummaries).
+		BuildDeclared()
+
+	engine := synth.New(synth.Config{
+		Ctx:            input.Ctx,
+		Types:          input.Types,
+		Scopes:         input.Scope.Scopes,
+		Manifests:      input.Manifests,
+		Env:            initialCtx,
+		Phase:          api.PhaseScopeCompute,
+		ModuleBindings: input.ModuleBindings,
+		ModuleAliases:  input.ModuleAliases,
+	})
+
+	fnLiteralTypes := synth.FunctionLiteralTypes(input.Graph, func(expr ast.Expr, p cfg.Point) typ.Type {
+		return engine.TypeOf(expr, p)
+	})
+
+	var declaredReturns []typ.Type
+	if input.Fn != nil && len(input.Fn.ReturnTypes) > 0 {
+		declaredReturns = make([]typ.Type, len(input.Fn.ReturnTypes))
+		for i, rt := range input.Fn.ReturnTypes {
+			if rt != nil {
+				declaredReturns[i] = engine.ResolveType(rt, input.Scope.BaseScope)
+			}
+		}
+	}
+
+	signatures := synth.FunctionLiteralSignatures(input.Graph, engine, declaredReturns)
+
+	return LiteralOutput{
+		LiteralTypes: fnLiteralTypes,
+		Signatures:   signatures,
+	}
+}
+
+// InferEffect computes a FunctionEffect from solved flow analysis.
+// Examines return points to determine OnTrue/OnFalse/OnReturn constraints.
+func InferEffect(
+	graph *cfg.Graph,
+	solution *flow.Solution,
+	params []flow.ParamInfo,
+	returnType typ.Type,
+) *constraint.FunctionEffect {
+	if graph == nil || solution == nil {
+		return nil
+	}
+
+	return flow.InferFunctionEffect(solution, graph.CFG(), params, returnType)
+}
+
+// ExtractParams extracts parameter info from a function expression.
+// Uses the CFG graph's precomputed param symbols for Symbol IDs.
+// paramTypes provides the types keyed by SymbolID.
+func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, graph *cfg.Graph) []flow.ParamInfo {
+	if fn.ParList == nil {
+		return nil
+	}
+
+	// Get precomputed parameter symbols from graph
+	var paramSymbols []cfg.SymbolID
+	if graph != nil {
+		paramSymbols = graph.ParamSymbols()
+	}
+
+	params := make([]flow.ParamInfo, 0, len(fn.ParList.Names))
+	for i, name := range fn.ParList.Names {
+		t := typ.Unknown
+		var sym cfg.SymbolID
+		if i < len(paramSymbols) {
+			sym = paramSymbols[i]
+			if pt, ok := paramTypes[sym]; ok && pt != nil {
+				t = pt
+			}
+		}
+		params = append(params, flow.ParamInfo{Name: name, Symbol: sym, Type: t})
+	}
+	return params
+}
+
+// EnrichWithKeysCollector detects if a function is a "keys collector"
+// (returns keys of a parameter) and adds KeyOf constraint to OnReturn.
+// This enables cross-module key-provenance tracking.
+func EnrichWithKeysCollector(eff *constraint.FunctionEffect, fn *ast.FunctionExpr) *constraint.FunctionEffect {
+	if fn == nil {
+		return eff
+	}
+
+	info := keyscoll.DetectKeysCollector(fn)
+	if info == nil {
+		return eff
+	}
+
+	keyOf := constraint.KeyOf{
+		Table: constraint.ParamPath(info.ParamIndex),
+		Key:   constraint.RetPath(0),
+	}
+
+	if eff == nil {
+		return &constraint.FunctionEffect{
+			OnReturn: constraint.FromConstraints(keyOf),
+		}
+	}
+
+	return &constraint.FunctionEffect{
+		Row:        eff.Row,
+		OnReturn:   constraint.And(eff.OnReturn, constraint.FromConstraints(keyOf)),
+		OnTrue:     eff.OnTrue,
+		OnFalse:    eff.OnFalse,
+		Terminates: eff.Terminates,
+	}
+}
