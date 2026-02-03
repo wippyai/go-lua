@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -174,6 +175,40 @@ func TestEncodeDecode_Function(t *testing.T) {
 		}
 		if fn.Variadic == nil {
 			t.Error("expected variadic")
+		}
+	})
+
+	t.Run("typeparams", func(t *testing.T) {
+		paramT := typ.NewTypeParam("T", typ.Number)
+		original := typ.Func().
+			TypeParam("T", typ.Number).
+			Param("value", paramT).
+			Returns(paramT).
+			Build()
+
+		data, err := Encode(original)
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+
+		decoded, err := Decode(data)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+
+		fn, ok := decoded.(*typ.Function)
+		if !ok {
+			t.Fatalf("expected Function, got %T", decoded)
+		}
+
+		if len(fn.TypeParams) != 1 {
+			t.Fatalf("expected 1 type param, got %d", len(fn.TypeParams))
+		}
+		if fn.TypeParams[0].Name != "T" {
+			t.Errorf("expected type param name T, got %s", fn.TypeParams[0].Name)
+		}
+		if fn.TypeParams[0].Constraint == nil || !fn.TypeParams[0].Constraint.Equals(typ.Number) {
+			t.Errorf("expected type param constraint number, got %v", fn.TypeParams[0].Constraint)
 		}
 	})
 
@@ -367,6 +402,41 @@ func TestEncodeDecode_Record(t *testing.T) {
 		rec := decoded.(*typ.Record)
 		if rec.Metatable == nil {
 			t.Error("metatable should not be nil")
+		}
+	})
+
+	t.Run("open-and-map", func(t *testing.T) {
+		original := typ.NewRecord().
+			Field("id", typ.Integer).
+			SetOpen(true).
+			MapComponent(typ.String, typ.Number).
+			Build()
+
+		data, err := Encode(original)
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+
+		decoded, err := Decode(data)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+
+		rec := decoded.(*typ.Record)
+		if !rec.Open {
+			t.Error("expected Open to be true")
+		}
+		if !rec.HasMapComponent() {
+			t.Fatal("expected map component")
+		}
+		if rec.MapKey == nil || rec.MapValue == nil {
+			t.Fatal("expected map key/value types")
+		}
+		if !rec.MapKey.Equals(typ.String) {
+			t.Errorf("expected map key string, got %s", rec.MapKey.String())
+		}
+		if !rec.MapValue.Equals(typ.Number) {
+			t.Errorf("expected map value number, got %s", rec.MapValue.String())
 		}
 	})
 }
@@ -1283,17 +1353,25 @@ func (e *errorWriter) Write(_ []byte) (n int, err error) {
 	return 0, ErrCorruptedData
 }
 
+type bogusType struct{}
+
+func (bogusType) Kind() kind.Kind { return kind.Kind(255) }
+func (bogusType) String() string  { return "bogus" }
+func (bogusType) Hash() uint64    { return 0 }
+func (bogusType) Equals(other typ.Type) bool {
+	_, ok := other.(bogusType)
+	return ok
+}
+
 func TestEncode_UnknownType(t *testing.T) {
-	// Test that encoding an interface type writes an error
-	// We can test this via the Interface type which may not be fully supported
-	iface := typ.NewInterface("Test", nil)
+	bogus := bogusType{}
 
 	var buf bytes.Buffer
 	tw := &typeWriter{w: &buf}
-	tw.writeTypeData(iface)
+	tw.writeType(bogus)
 
 	if !errors.Is(tw.err, ErrUnknownType) {
-		t.Errorf("expected ErrUnknownType for interface, got %v", tw.err)
+		t.Errorf("expected ErrUnknownType for bogus kind, got %v", tw.err)
 	}
 }
 
@@ -1369,6 +1447,67 @@ func TestEncodeDecode_EffectWithTail(t *testing.T) {
 
 	if eff.Tail.Name != "E" {
 		t.Errorf("expected tail name E, got %s", eff.Tail.Name)
+	}
+}
+
+func TestEncodeDecode_ExtendedKinds(t *testing.T) {
+	sum := typ.NewSum("Option", []typ.Variant{
+		{Tag: "Some", Types: []typ.Type{typ.String}},
+		{Tag: "None"},
+	})
+
+	iface := typ.NewInterface("Validator", []typ.Method{
+		{
+			Name: "validate",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("value", typ.Any).
+				Returns(typ.Boolean).
+				Build(),
+		},
+	})
+
+	typeParam := typ.NewTypeParam("T", nil)
+	fieldAccess := typ.NewFieldAccess(typeParam, "name")
+	indexAccess := typ.NewIndexAccess(typ.NewArray(typeParam), typ.Integer)
+
+	recursive := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("next", typ.NewOptional(self)).Build()
+	})
+
+	annotated := typ.NewAnnotated(typ.Number, []typ.Annotation{
+		{Name: "min", Arg: int64(1)},
+		{Name: "max", Arg: float64(10.5)},
+	})
+
+	cases := []struct {
+		name string
+		typ  typ.Type
+	}{
+		{"Sum", sum},
+		{"Interface", iface},
+		{"FieldAccess", fieldAccess},
+		{"IndexAccess", indexAccess},
+		{"Recursive", recursive},
+		{"Annotated", annotated},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := Encode(tc.typ)
+			if err != nil {
+				t.Fatalf("Encode: %v", err)
+			}
+
+			decoded, err := Decode(data)
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+
+			if !typ.TypeEquals(tc.typ, decoded) {
+				t.Errorf("got %s, want %s", decoded, tc.typ)
+			}
+		})
 	}
 }
 

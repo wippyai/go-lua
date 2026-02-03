@@ -44,6 +44,14 @@ var (
 
 const maxSliceLen = 1 << 20
 
+const (
+	annotationArgNil byte = iota
+	annotationArgString
+	annotationArgInt
+	annotationArgFloat
+	annotationArgBool
+)
+
 func Encode(t typ.Type) ([]byte, error) {
 	var buf bytes.Buffer
 	w := &typeWriter{w: &buf}

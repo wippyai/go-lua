@@ -13,7 +13,7 @@ import (
 // Manifest file format constants.
 const (
 	manifestMagic   = 0x4D414E49 // "MANI" - identifies valid manifest files
-	manifestVersion = 7          // v7: added callback EnvOverlay support
+	manifestVersion = 8          // v8: encode function type params + record open/map components
 )
 
 // Manifest decoding errors.
