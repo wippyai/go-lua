@@ -49,11 +49,15 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // ExtractAssignments extracts assignment info from graph.
 func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollector KeysCollectorFunc) {
-	if fc == nil || fc.Graph == nil || inputs == nil {
+	if fc == nil || fc.Graph == nil {
+		return
+	}
+	if inputs == nil {
 		return
 	}
 	derived := fc.Derived
@@ -78,8 +82,8 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	specNarrowed := CollectSpecNarrowedTypes(fc.Graph, fc.Scopes, synth, symResolver, fc.API)
 	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, specNarrowed, inputs.AnnotatedVars, inputs, fc.CallCtx, fc.TypeOps, fc.Services)
 	// Promote inferred parameter types into DeclaredTypes for unannotated params.
-	// This enables bidirectional inference at call sites (e.g., assert.eq).
-	if inputs != nil && inputs.DeclaredTypes != nil {
+	// This enables bidirectional inference at call sites (e.g., custom assert helpers).
+	if inputs.DeclaredTypes != nil {
 		for _, sym := range fc.Graph.ParamSymbols() {
 			if sym == 0 {
 				continue
@@ -318,9 +322,52 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 				}
 
-				// Extract predicate link if RHS is a predicate call
-				if i < len(info.SourceCalls) && info.SourceCalls[i] != nil {
-					if link := cond.ExtractPredicateLinkFromCallInfo(info.SourceCalls[i], p, sc, inputs, derived.TypeKeyRes, wrappedSynth, derived.EffectBySym, symResolver, fc.Graph); link != nil {
+				// Extract predicate link if RHS is a predicate call.
+				callIndex := -1
+				if i < len(info.SourceCalls) {
+					callIndex = i
+				} else if len(info.SourceCalls) > 0 {
+					last := len(info.SourceCalls) - 1
+					if info.SourceCalls[last] != nil && i >= last {
+						callIndex = last
+					}
+				}
+				if callIndex >= 0 && info.SourceCalls[callIndex] != nil {
+					callInfo := info.SourceCalls[callIndex]
+					retIndex := i - callIndex
+					if link := cond.ExtractPredicateLinkFromCallInfo(callInfo, retIndex, p, sc, inputs, derived.TypeKeyRes, wrappedSynth, derived.EffectBySym, symResolver, fc.Graph); link != nil {
+						if retIndex == 1 && callInfo.IsTypeCheck && callInfo.Method == "is" && callInfo.Receiver != nil && derived.TypeKeyRes != nil {
+							if typeKey, ok := derived.TypeKeyRes(callInfo.TypeCheckName, sc); ok && !typeKey.IsZero() {
+								valuePath := constraint.Path{}
+								valIndex := callIndex
+								if valIndex >= 0 && valIndex < len(info.Targets) {
+									valTarget := info.Targets[valIndex]
+									if valTarget.Kind == cfg.TargetIdent && valTarget.Name != "" && valTarget.Symbol != 0 {
+										valuePath = constraint.Path{
+											Root:   resolve.RootName(fc.Graph, valTarget.Symbol, valTarget.Name),
+											Symbol: valTarget.Symbol,
+										}
+									}
+								}
+								if !valuePath.IsEmpty() {
+									link.OnFalsy = constraint.And(link.OnFalsy, constraint.FromConstraints(constraint.HasType{Path: valuePath, Type: typeKey}))
+									link.OnTruthy = constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.NotHasType{Path: valuePath, Type: typeKey}))
+									link.OnTruthy = constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.IsNil{Path: valuePath}))
+									var checkType typ.Type
+									if sc != nil {
+										if resolved, ok := sc.LookupType(callInfo.TypeCheckName); ok && resolved != nil {
+											checkType = resolve.Ref(resolved, sc)
+										}
+									}
+									if checkType != nil {
+										baseType := unwrap.Alias(checkType)
+										if baseType != nil && baseType.Kind() != kind.Any && baseType.Kind() != kind.Unknown && !unwrap.IsOptionalLike(baseType) {
+											link.OnFalsy = constraint.And(link.OnFalsy, constraint.FromConstraints(constraint.NotNil{Path: valuePath}))
+										}
+									}
+								}
+							}
+						}
 						varKey := predicate.LinkKey(name, p)
 						inputs.PredicateLinks[varKey] = *link
 					}
@@ -525,20 +572,22 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				case *ast.IdentExpr:
 					// Variable key - try const resolution
 					if val := constResolver(k.Value); val != nil {
-						if val.Kind == flow.ConstString {
+						switch val.Kind {
+						case flow.ConstString:
 							fieldName = val.Str
-						} else if val.Kind == flow.ConstInt {
+						case flow.ConstInt:
 							keyType = typ.Integer
-						} else if val.Kind == flow.ConstFloat {
+						case flow.ConstFloat:
 							keyType = typ.Number
 						}
 					}
 				case *ast.NumberExpr:
 					// Number literal key - try const resolution
 					if val := constprop.ConstValueFromExpr(target.Key); val != nil {
-						if val.Kind == flow.ConstInt {
+						switch val.Kind {
+						case flow.ConstInt:
 							keyType = typ.Integer
-						} else if val.Kind == flow.ConstFloat {
+						case flow.ConstFloat:
 							keyType = typ.Number
 						}
 					}
@@ -546,6 +595,9 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 				// For non-const keys, emit an IndexerAssignment to widen the table
 				if fieldName == "" {
+					if keyType == nil && target.Key != nil && wrappedSynth != nil {
+						keyType = wrappedSynth(target.Key, p)
+					}
 					// Apply truthy guards to narrow optional fields in table literals.
 					valType := assignedType
 					if i < len(info.Sources) && bindings != nil && truthyGuards != nil {

@@ -73,6 +73,9 @@ func extractTableFields(table *ast.TableExpr, expected typ.Type, synth api.Synth
 	for _, field := range table.Fields {
 		if field.Key == nil {
 			elemType := synth.SynthWithExpected(field.Value, p, mapValueType)
+			if elemType == nil {
+				elemType = typ.Unknown
+			}
 			arrayElems = append(arrayElems, elemType)
 			continue
 		}
@@ -103,6 +106,9 @@ func extractTableFields(table *ast.TableExpr, expected typ.Type, synth api.Synth
 			expectedFieldType = expectedFields[name]
 		}
 		ft := synth.SynthWithExpected(field.Value, p, expectedFieldType)
+		if ft == nil {
+			ft = typ.Unknown
+		}
 		fields = append(fields, ops.FieldDef{Name: name, Type: ft})
 	}
 

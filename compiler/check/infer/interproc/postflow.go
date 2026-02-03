@@ -1,6 +1,8 @@
 package interproc
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
@@ -8,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -81,6 +84,21 @@ func StoreFactsFromResult(
 									}
 									existing := facts.CapturedFields[sym]
 									facts.CapturedFields[sym] = mergeCapturedFieldAssigns(existing, fields)
+								})
+							}
+						}
+					}
+
+					mutations := nested.CollectCapturedContainerMutations(result.Graph, capturedSet, result.NarrowSynth.TypeOf)
+					if len(mutations) > 0 {
+						if sym, ok := store.SymbolForFunc(fn); ok && sym != 0 {
+							if parentKey, ok := store.ParentGraphKeyForSymbol(sym); ok {
+								store.UpdateInterprocFactsNext(parentKey, func(facts *api.Facts) {
+									if facts.CapturedContainers == nil {
+										facts.CapturedContainers = make(api.CapturedContainerMutations)
+									}
+									existing := facts.CapturedContainers[sym]
+									facts.CapturedContainers[sym] = mergeCapturedContainerMutations(existing, mutations)
 								})
 							}
 						}
@@ -237,4 +255,61 @@ func mergeCapturedFieldAssigns(
 		merged[sym] = out
 	}
 	return merged
+}
+
+func mergeCapturedContainerMutations(
+	existing map[cfg.SymbolID][]api.ContainerMutation,
+	next map[cfg.SymbolID][]api.ContainerMutation,
+) map[cfg.SymbolID][]api.ContainerMutation {
+	if existing == nil {
+		return next
+	}
+	if next == nil {
+		return existing
+	}
+	merged := make(map[cfg.SymbolID][]api.ContainerMutation, len(existing)+len(next))
+	for _, sym := range cfg.SortedSymbolIDs(existing) {
+		merged[sym] = existing[sym]
+	}
+	for _, sym := range cfg.SortedSymbolIDs(next) {
+		merged[sym] = mergeContainerMutationSlice(merged[sym], next[sym])
+	}
+	return merged
+}
+
+func mergeContainerMutationSlice(
+	existing []api.ContainerMutation,
+	next []api.ContainerMutation,
+) []api.ContainerMutation {
+	if len(existing) == 0 {
+		return next
+	}
+	if len(next) == 0 {
+		return existing
+	}
+	byKey := make(map[string]api.ContainerMutation, len(existing)+len(next))
+	for _, m := range existing {
+		byKey[containerMutationKey(m)] = m
+	}
+	for _, m := range next {
+		key := containerMutationKey(m)
+		if prev, ok := byKey[key]; ok {
+			m.ValueType = typ.JoinPreferNonSoft(prev.ValueType, m.ValueType)
+		}
+		byKey[key] = m
+	}
+	keys := make([]string, 0, len(byKey))
+	for k := range byKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]api.ContainerMutation, 0, len(byKey))
+	for _, key := range keys {
+		out = append(out, byKey[key])
+	}
+	return out
+}
+
+func containerMutationKey(m api.ContainerMutation) string {
+	return constraint.FormatSegments(m.Segments)
 }

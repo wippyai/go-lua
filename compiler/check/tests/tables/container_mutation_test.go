@@ -169,6 +169,61 @@ func TestChannelSendDoesNotAffectAnnotatedVar(t *testing.T) {
 	}
 }
 
+// TestChannelSendInNestedFunction tests that sends inside a called nested function
+// widen the captured channel element type in the parent.
+func TestChannelSendInNestedFunction(t *testing.T) {
+	chManifest := ChannelManifestWithMutation()
+
+	source := `
+		local ch = channel.new()
+		local function send()
+			ch:send(42)
+		end
+		send()
+		local v, ok = ch:receive()
+		local n: number = v
+	`
+
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("channel", chManifest))
+
+	for _, d := range result.Diagnostics {
+		if d.Severity == diag.SeverityError {
+			t.Logf("error at line %d: %s", d.Position.Line, d.Message)
+		}
+	}
+
+	if result.HasError() {
+		t.Errorf("expected no errors after nested send widening")
+	}
+}
+
+// TestChannelSendInSpawnCallback tests that sends inside spawn callbacks
+// widen the captured channel element type in the parent.
+func TestChannelSendInSpawnCallback(t *testing.T) {
+	chManifest := ChannelManifestWithMutation()
+
+	source := `
+		local ch = channel.new()
+		coroutine.spawn(function()
+			ch:send({name = "test"})
+		end)
+		local v, ok = ch:receive()
+		local name: string = v.name
+	`
+
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("channel", chManifest))
+
+	for _, d := range result.Diagnostics {
+		if d.Severity == diag.SeverityError {
+			t.Logf("error at line %d: %s", d.Position.Line, d.Message)
+		}
+	}
+
+	if result.HasError() {
+		t.Errorf("expected no errors after spawn callback send widening")
+	}
+}
+
 // TestChannelSendWrongType tests that sending wrong type to annotated channel fails.
 func TestChannelSendWrongType(t *testing.T) {
 	chManifest := ChannelManifestWithMutation()

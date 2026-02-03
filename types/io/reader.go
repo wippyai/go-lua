@@ -16,6 +16,8 @@ import (
 type typeReader struct {
 	r   *bytes.Reader
 	err error
+
+	recursive map[uint64]*typ.Recursive
 }
 
 func (r *typeReader) readByte() byte {
@@ -116,7 +118,11 @@ func (r *typeReader) readType() typ.Type {
 		return typ.Self
 
 	case kind.Optional:
-		return typ.NewOptional(r.readType())
+		inner := r.readTypeNonNil()
+		if r.err != nil {
+			return nil
+		}
+		return typ.NewOptional(inner)
 
 	case kind.Union:
 		count := r.readUint32()
@@ -126,7 +132,10 @@ func (r *typeReader) readType() typ.Type {
 
 		members := make([]typ.Type, count)
 		for i := uint32(0); i < count; i++ {
-			members[i] = r.readType()
+			members[i] = r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
 		}
 
 		return typ.NewUnion(members...)
@@ -139,7 +148,10 @@ func (r *typeReader) readType() typ.Type {
 
 		members := make([]typ.Type, count)
 		for i := uint32(0); i < count; i++ {
-			members[i] = r.readType()
+			members[i] = r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
 		}
 
 		return typ.NewIntersection(members...)
@@ -152,22 +164,37 @@ func (r *typeReader) readType() typ.Type {
 
 		elems := make([]typ.Type, count)
 		for i := uint32(0); i < count; i++ {
-			elems[i] = r.readType()
+			elems[i] = r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
 		}
 
 		return typ.NewTuple(elems...)
 
 	case kind.Function:
+		typeParamCount := r.readUint32()
+		if !r.checkSliceLen(typeParamCount) {
+			return nil
+		}
+
+		fb := typ.Func()
+		for i := uint32(0); i < typeParamCount; i++ {
+			tp := r.readTypeParam()
+			if r.err != nil || tp == nil {
+				return nil
+			}
+			fb.TypeParam(tp.Name, tp.Constraint)
+		}
+
 		paramCount := r.readUint32()
 		if !r.checkSliceLen(paramCount) {
 			return nil
 		}
 
-		fb := typ.Func()
-
 		for i := uint32(0); i < paramCount; i++ {
 			name := r.readString()
-			pType := r.readType()
+			pType := r.readTypeNonNil()
 
 			if r.err != nil {
 				return nil
@@ -182,7 +209,11 @@ func (r *typeReader) readType() typ.Type {
 		}
 
 		if r.readBool() {
-			fb.Variadic(r.readType())
+			variadic := r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
+			fb.Variadic(variadic)
 		}
 
 		retCount := r.readUint32()
@@ -192,7 +223,7 @@ func (r *typeReader) readType() typ.Type {
 
 		returns := make([]typ.Type, retCount)
 		for i := uint32(0); i < retCount; i++ {
-			returns[i] = r.readType()
+			returns[i] = r.readTypeNonNil()
 
 			if r.err != nil {
 				return nil
@@ -218,11 +249,19 @@ func (r *typeReader) readType() typ.Type {
 		return fb.Build()
 
 	case kind.Array:
-		return typ.NewArray(r.readType())
+		elem := r.readTypeNonNil()
+		if r.err != nil {
+			return nil
+		}
+		return typ.NewArray(elem)
 
 	case kind.Map:
-		key := r.readType()
-		value := r.readType()
+		key := r.readTypeNonNil()
+		value := r.readTypeNonNil()
+
+		if r.err != nil {
+			return nil
+		}
 
 		return typ.NewMap(key, value)
 
@@ -236,7 +275,7 @@ func (r *typeReader) readType() typ.Type {
 
 		for i := uint32(0); i < fieldCount; i++ {
 			name := r.readString()
-			fType := r.readType()
+			fType := r.readTypeNonNil()
 
 			if r.err != nil {
 				return nil
@@ -255,12 +294,25 @@ func (r *typeReader) readType() typ.Type {
 			}
 		}
 
-		rec := rb.Build()
 		if r.readBool() {
-			rec.Metatable = r.readType()
+			rb.Metatable(r.readTypeNonNil())
+			if r.err != nil {
+				return nil
+			}
+		}
+		open := r.readBool()
+		rb.SetOpen(open)
+		hasMap := r.readBool()
+		if hasMap {
+			key := r.readTypeNonNil()
+			value := r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
+			rb.MapComponent(key, value)
 		}
 
-		return rec
+		return rb.Build()
 
 	case kind.Generic:
 		name := r.readString()
@@ -273,11 +325,17 @@ func (r *typeReader) readType() typ.Type {
 		params := make([]*typ.TypeParam, paramCount)
 		for i := uint32(0); i < paramCount; i++ {
 			params[i] = r.readTypeParam()
+			if r.err != nil || params[i] == nil {
+				return nil
+			}
 		}
 
 		var body typ.Type
 		if r.readBool() {
-			body = r.readType()
+			body = r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
 		}
 
 		return typ.NewGeneric(name, params, body)
@@ -286,11 +344,16 @@ func (r *typeReader) readType() typ.Type {
 		var generic *typ.Generic
 
 		if r.readBool() {
-			if g := r.readType(); g != nil {
-				if gen, ok := g.(*typ.Generic); ok {
-					generic = gen
-				}
+			g := r.readTypeNonNil()
+			if r.err != nil {
+				return nil
 			}
+			gen, ok := g.(*typ.Generic)
+			if !ok {
+				r.err = ErrInvalidType
+				return nil
+			}
+			generic = gen
 		}
 
 		argCount := r.readUint32()
@@ -300,7 +363,10 @@ func (r *typeReader) readType() typ.Type {
 
 		args := make([]typ.Type, argCount)
 		for i := uint32(0); i < argCount; i++ {
-			args[i] = r.readType()
+			args[i] = r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
 		}
 
 		if generic == nil {
@@ -313,7 +379,10 @@ func (r *typeReader) readType() typ.Type {
 
 		var constr typ.Type
 		if r.readBool() {
-			constr = r.readType()
+			constr = r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
 		}
 
 		return typ.NewTypeParam(name, constr)
@@ -332,23 +401,174 @@ func (r *typeReader) readType() typ.Type {
 
 	case kind.Alias:
 		name := r.readString()
-		target := r.readType()
+		target := r.readTypeNonNil()
+		if r.err != nil {
+			return nil
+		}
 
 		return typ.NewAlias(name, target)
 
 	case kind.Meta:
-		return typ.NewMeta(r.readType())
+		target := r.readTypeNonNil()
+		if r.err != nil {
+			return nil
+		}
+		return typ.NewMeta(target)
 
 	case kind.Platform:
 		return typ.NewPlatform(r.readString())
 
-	case kind.Sum, kind.Interface, kind.Refined, kind.FieldAccess, kind.IndexAccess, kind.Recursive:
-		r.err = ErrUnknownType
-		return nil
+	case kind.Refined:
+		inner := r.readTypeNonNil()
+		if r.err != nil {
+			return nil
+		}
+		annCount := r.readUint32()
+		if !r.checkSliceLen(annCount) {
+			return nil
+		}
+		annotations := make([]typ.Annotation, annCount)
+		for i := uint32(0); i < annCount; i++ {
+			name := r.readString()
+			arg := r.readAnnotationArg()
+			if r.err != nil {
+				return nil
+			}
+			annotations[i] = typ.Annotation{Name: name, Arg: arg}
+		}
+		return typ.NewAnnotated(inner, annotations)
+
+	case kind.FieldAccess:
+		base := r.readTypeNonNil()
+		field := r.readString()
+		if r.err != nil {
+			return nil
+		}
+		return typ.NewFieldAccess(base, field)
+
+	case kind.IndexAccess:
+		base := r.readTypeNonNil()
+		index := r.readTypeNonNil()
+		if r.err != nil {
+			return nil
+		}
+		return typ.NewIndexAccess(base, index)
+
+	case kind.Sum:
+		name := r.readString()
+		variantCount := r.readUint32()
+		if !r.checkSliceLen(variantCount) {
+			return nil
+		}
+		variants := make([]typ.Variant, variantCount)
+		for i := uint32(0); i < variantCount; i++ {
+			tag := r.readString()
+			typeCount := r.readUint32()
+			if !r.checkSliceLen(typeCount) {
+				return nil
+			}
+			types := make([]typ.Type, typeCount)
+			for j := uint32(0); j < typeCount; j++ {
+				types[j] = r.readTypeNonNil()
+				if r.err != nil {
+					return nil
+				}
+			}
+			variants[i] = typ.Variant{Tag: tag, Types: types}
+		}
+		return typ.NewSum(name, variants)
+
+	case kind.Interface:
+		name := r.readString()
+		methodCount := r.readUint32()
+		if !r.checkSliceLen(methodCount) {
+			return nil
+		}
+		methods := make([]typ.Method, methodCount)
+		for i := uint32(0); i < methodCount; i++ {
+			methodName := r.readString()
+			methodType := r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
+			fn, ok := methodType.(*typ.Function)
+			if !ok {
+				r.err = ErrInvalidType
+				return nil
+			}
+			methods[i] = typ.Method{Name: methodName, Type: fn}
+		}
+		return typ.NewInterface(name, methods)
+
+	case kind.Recursive:
+		encodedID := r.readUint64()
+		name := r.readString()
+		hasBody := r.readBool()
+		rec := r.getOrCreateRecursive(encodedID, name)
+		if r.err != nil {
+			return nil
+		}
+		if hasBody {
+			if rec.Body != nil {
+				r.err = ErrInvalidType
+				return nil
+			}
+			body := r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
+			rec.Body = body
+		}
+		return rec
 	}
 
 	r.err = ErrUnknownType
 	return nil
+}
+
+func (r *typeReader) readTypeNonNil() typ.Type {
+	t := r.readType()
+	if r.err != nil {
+		return nil
+	}
+	if t == nil {
+		r.err = ErrInvalidType
+	}
+	return t
+}
+
+func (r *typeReader) getOrCreateRecursive(encodedID uint64, name string) *typ.Recursive {
+	if r.recursive == nil {
+		r.recursive = make(map[uint64]*typ.Recursive)
+	}
+	if rec, ok := r.recursive[encodedID]; ok {
+		if rec.Name == "" && name != "" {
+			rec.Name = name
+		}
+		return rec
+	}
+	rec := typ.NewRecursivePlaceholder(name)
+	r.recursive[encodedID] = rec
+	return rec
+}
+
+func (r *typeReader) readAnnotationArg() any {
+	tag := r.readByte()
+	switch tag {
+	case annotationArgNil:
+		return nil
+	case annotationArgString:
+		return r.readString()
+	case annotationArgInt:
+		return int64(r.readUint64())
+	case annotationArgFloat:
+		return math.Float64frombits(r.readUint64())
+	case annotationArgBool:
+		return r.readBool()
+	default:
+		r.err = ErrInvalidType
+		return nil
+	}
 }
 
 func (r *typeReader) readTypeParam() *typ.TypeParam {
@@ -356,7 +576,10 @@ func (r *typeReader) readTypeParam() *typ.TypeParam {
 
 	var constr typ.Type
 	if r.readBool() {
-		constr = r.readType()
+		constr = r.readTypeNonNil()
+		if r.err != nil {
+			return nil
+		}
 	}
 
 	return typ.NewTypeParam(name, constr)
@@ -450,7 +673,10 @@ func (r *typeReader) readCallbackSpec() *contract.CallbackSpec {
 
 		for i := uint32(0); i < envCount; i++ {
 			name := r.readString()
-			cb.EnvOverlay[name] = r.readType()
+			cb.EnvOverlay[name] = r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
 		}
 	}
 
@@ -503,12 +729,18 @@ func (r *typeReader) readReturnSpec() *contract.ReturnSpec {
 	for i := uint32(0); i < count; i++ {
 		rs.Cases[i] = contract.ReturnCase{
 			When: r.readCondition(),
-			Type: r.readType(),
+			Type: r.readTypeNonNil(),
+		}
+		if r.err != nil {
+			return nil
 		}
 	}
 
 	if r.readBool() {
-		rs.Default = r.readType()
+		rs.Default = r.readTypeNonNil()
+		if r.err != nil {
+			return nil
+		}
 	}
 
 	return rs

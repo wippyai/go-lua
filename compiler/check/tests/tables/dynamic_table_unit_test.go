@@ -28,7 +28,7 @@ func TestDynamicTable_BracketAssignmentRead(t *testing.T) {
 	source := `
 		local t = {}
 		t["greet"] = true
-		assert.eq(t["greet"], true)
+		if t["greet"] ~= true then error("expected greet") end
 	`
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
@@ -58,7 +58,7 @@ func TestDynamicTable_LoopInsertionAssert(t *testing.T) {
 		for _, s in ipairs({"A","B"}) do
 			names[s] = true
 		end
-		assert.eq(names["A"], true)
+		if names["A"] ~= true then error("expected A") end
 	`
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
@@ -181,6 +181,20 @@ func TestDynamicTable_VariableKey(t *testing.T) {
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		t.Errorf("expected no errors for variable key, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestDynamicTable_KeyFromFieldExpr(t *testing.T) {
+	// Key derived from field expression should infer numeric key type
+	source := `
+		local counts = {}
+		local msg = { producer = 1 }
+		counts[msg.producer] = 1
+		local v: integer? = counts[1]
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Errorf("expected no errors for key from field expression, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 

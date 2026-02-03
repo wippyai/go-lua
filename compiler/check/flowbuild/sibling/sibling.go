@@ -72,9 +72,10 @@ func correlatedSiblingConstraints(sibling *flow.SiblingAssignment, pos int, want
 	var result []constraint.Constraint
 	for _, cor := range sibling.Correlations {
 		partnerIdx := -1
-		if pos == cor.ErrorIndex {
+		switch pos {
+		case cor.ErrorIndex:
 			partnerIdx = cor.ValueIndex
-		} else if pos == cor.ValueIndex {
+		case cor.ValueIndex:
 			partnerIdx = cor.ErrorIndex
 		}
 		if partnerIdx < 0 || partnerIdx >= len(sibling.Names) {
@@ -112,9 +113,10 @@ func coCorrelatedSiblingConstraints(sibling *flow.SiblingAssignment, pos int, wa
 	var result []constraint.Constraint
 	for _, cor := range sibling.CoCorrelations {
 		partnerIdx := -1
-		if pos == cor.ValueIndex {
+		switch pos {
+		case cor.ValueIndex:
 			partnerIdx = cor.ErrorIndex
-		} else if pos == cor.ErrorIndex {
+		case cor.ErrorIndex:
 			partnerIdx = cor.ValueIndex
 		}
 		if partnerIdx < 0 || partnerIdx >= len(sibling.Names) {

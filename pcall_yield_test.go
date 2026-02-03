@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -26,11 +27,11 @@ func TestPCallYield(t *testing.T) {
 	}
 
 	// Create coroutine
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("test_pcall_yield").(*LFunction)
 
 	// First resume - should yield "yielded"
-	state, err, results := L.Resume(co, fn)
+	state, results, err := L.Resume(co, fn)
 	if err != nil {
 		t.Fatalf("First resume failed: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestPCallYield(t *testing.T) {
 	}
 
 	// Second resume - should complete with (true, "returned")
-	state, err, results = L.Resume(co, fn)
+	state, results, err = L.Resume(co, fn)
 	if err != nil {
 		t.Fatalf("Second resume failed: %v", err)
 	}
@@ -78,23 +79,23 @@ func TestPCallYieldMultiple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("test_multi_yield").(*LFunction)
 
 	// First yield
-	state, _, results := L.Resume(co, fn)
+	state, results, _ := L.Resume(co, fn)
 	if state != ResumeYield || LVAsNumber(results[0]) != 1 {
 		t.Fatalf("First yield: expected (yield, 1), got (%v, %v)", state, results)
 	}
 
 	// Second yield, send 10
-	state, _, results = L.Resume(co, fn, LNumber(10))
+	state, results, _ = L.Resume(co, fn, LNumber(10))
 	if state != ResumeYield || LVAsNumber(results[0]) != 2 {
 		t.Fatalf("Second yield: expected (yield, 2), got (%v, %v)", state, results)
 	}
 
 	// Complete, send 20 - should return (true, 30)
-	state, _, results = L.Resume(co, fn, LNumber(20))
+	state, results, _ = L.Resume(co, fn, LNumber(20))
 	if state != ResumeOK {
 		t.Fatalf("Expected ResumeOK, got %v", state)
 	}
@@ -123,11 +124,11 @@ func TestPCallYieldThenError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("test_yield_error").(*LFunction)
 
 	// First resume - yields
-	state, _, results := L.Resume(co, fn)
+	state, results, _ := L.Resume(co, fn)
 	if state != ResumeYield {
 		t.Fatalf("Expected yield, got %v", state)
 	}
@@ -136,7 +137,7 @@ func TestPCallYieldThenError(t *testing.T) {
 	}
 
 	// Second resume - should return (false, error message)
-	state, _, results = L.Resume(co, fn)
+	state, results, _ = L.Resume(co, fn)
 	if state != ResumeOK {
 		t.Fatalf("Expected ResumeOK (pcall caught error), got %v", state)
 	}
@@ -164,11 +165,11 @@ func TestPCallYieldResumeValueCausesError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("test_resume_error").(*LFunction)
 
 	// First resume - yields
-	state, _, results := L.Resume(co, fn)
+	state, results, _ := L.Resume(co, fn)
 	if state != ResumeYield {
 		t.Fatalf("Expected yield, got %v", state)
 	}
@@ -177,7 +178,7 @@ func TestPCallYieldResumeValueCausesError(t *testing.T) {
 	}
 
 	// Second resume with nil - using nil as function should error
-	state, _, results = L.Resume(co, fn) // no value sent, x will be nil
+	state, results, _ = L.Resume(co, fn) // no value sent, x will be nil
 	if state != ResumeOK {
 		t.Fatalf("Expected ResumeOK (pcall caught error), got %v", state)
 	}
@@ -207,11 +208,11 @@ func TestPCallYieldErrorAsSecondValue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("test_yield_err").(*LFunction)
 
 	// First resume - yields "request"
-	state, _, results := L.Resume(co, fn)
+	state, results, _ := L.Resume(co, fn)
 	if state != ResumeYield {
 		t.Fatalf("Expected yield, got %v", state)
 	}
@@ -220,7 +221,7 @@ func TestPCallYieldErrorAsSecondValue(t *testing.T) {
 	}
 
 	// Resume with (nil, "connection failed") - error as second value
-	state, _, results = L.Resume(co, fn, LNil, LString("connection failed"))
+	state, results, _ = L.Resume(co, fn, LNil, LString("connection failed"))
 	if state != ResumeOK {
 		t.Fatalf("Expected ResumeOK, got %v", state)
 	}
@@ -234,14 +235,14 @@ func TestPCallYieldErrorAsSecondValue(t *testing.T) {
 	}
 
 	// Test success path
-	co2 := L.NewThreadWithContext(nil)
+	co2 := L.NewThreadWithContext(context.TODO())
 	state, _, _ = L.Resume(co2, fn)
 	if state != ResumeYield {
 		t.Fatalf("Expected yield, got %v", state)
 	}
 
 	// Resume with (123, nil) - success
-	state, _, results = L.Resume(co2, fn, LNumber(123), LNil)
+	state, results, _ = L.Resume(co2, fn, LNumber(123), LNil)
 	if state != ResumeOK {
 		t.Fatalf("Expected ResumeOK, got %v", state)
 	}
@@ -274,7 +275,7 @@ func TestPCallYieldErrorInResumedComputation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("test_compute_error").(*LFunction)
 
 	// First resume - yields
@@ -284,7 +285,7 @@ func TestPCallYieldErrorInResumedComputation(t *testing.T) {
 	}
 
 	// Resume with "fail" - should trigger error inside pcall
-	state, _, results := L.Resume(co, fn, LString("fail"))
+	state, results, _ := L.Resume(co, fn, LString("fail"))
 	if state != ResumeOK {
 		t.Fatalf("Expected ResumeOK, got %v", state)
 	}
@@ -296,14 +297,14 @@ func TestPCallYieldErrorInResumedComputation(t *testing.T) {
 	}
 
 	// Now test success path
-	co2 := L.NewThreadWithContext(nil)
+	co2 := L.NewThreadWithContext(context.TODO())
 	state, _, _ = L.Resume(co2, fn)
 	if state != ResumeYield {
 		t.Fatalf("Expected yield, got %v", state)
 	}
 
 	// Resume with "hello" - should succeed
-	state, _, results = L.Resume(co2, fn, LString("hello"))
+	state, results, _ = L.Resume(co2, fn, LString("hello"))
 	if state != ResumeOK {
 		t.Fatalf("Expected ResumeOK, got %v", state)
 	}
@@ -334,11 +335,11 @@ func TestGoFunctionYieldNoPcall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("run_test").(*LFunction)
 
 	// First resume - yields
-	state, err, results := L.Resume(co, fn)
+	state, results, err := L.Resume(co, fn)
 	if err != nil {
 		t.Fatalf("First resume failed: %v", err)
 	}
@@ -350,7 +351,7 @@ func TestGoFunctionYieldNoPcall(t *testing.T) {
 	}
 
 	// Resume with value - should complete
-	state, err, results = L.Resume(co, fn, LString("hello"))
+	state, results, err = L.Resume(co, fn, LString("hello"))
 	if err != nil {
 		t.Fatalf("Second resume failed: %v", err)
 	}
@@ -385,11 +386,11 @@ func TestPCallYieldGoFunction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("run_test").(*LFunction)
 
 	// First resume - should yield from yielding_call
-	state, err, results := L.Resume(co, fn)
+	state, results, err := L.Resume(co, fn)
 	if err != nil {
 		t.Fatalf("First resume failed: %v", err)
 	}
@@ -405,7 +406,7 @@ func TestPCallYieldGoFunction(t *testing.T) {
 	}
 
 	// Resume with success result - should complete with (true, "success_result", nil)
-	state, err, results = L.Resume(co, fn, LString("success_result"))
+	state, results, err = L.Resume(co, fn, LString("success_result"))
 	t.Logf("Second resume: state=%v, err=%v (type=%T), results=%v", state, err, err, results)
 	t.Logf("co.Dead=%v, co.stack.IsEmpty=%v", co.Dead, co.stack.IsEmpty())
 	if apiErr, ok := err.(*ApiError); ok {
@@ -449,7 +450,7 @@ func TestPCallYieldGoFunctionMultiReturn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("run_test").(*LFunction)
 
 	// First resume - yields
@@ -459,7 +460,7 @@ func TestPCallYieldGoFunctionMultiReturn(t *testing.T) {
 	}
 
 	// Resume with (result, error) pattern
-	state, err, results := L.Resume(co, fn, LString("the_result"), LString("the_error"))
+	state, results, err := L.Resume(co, fn, LString("the_result"), LString("the_error"))
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}
@@ -498,11 +499,11 @@ func TestPCallNestedYield(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("test_nested").(*LFunction)
 
 	// First resume - yields from inner pcall
-	state, _, results := L.Resume(co, fn)
+	state, results, _ := L.Resume(co, fn)
 	if state != ResumeYield {
 		t.Fatalf("Expected yield, got %v", state)
 	}
@@ -511,7 +512,7 @@ func TestPCallNestedYield(t *testing.T) {
 	}
 
 	// Second resume - completes both pcalls
-	state, _, results = L.Resume(co, fn)
+	state, results, _ = L.Resume(co, fn)
 	if state != ResumeOK {
 		t.Fatalf("Expected ResumeOK, got %v", state)
 	}
@@ -548,18 +549,18 @@ func TestXPCallYield(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("test_xpcall_yield").(*LFunction)
 
 	// First resume - yields
-	state, _, results := L.Resume(co, fn)
+	state, results, _ := L.Resume(co, fn)
 	t.Logf("First resume: state=%v results=%v", state, results)
 	if state != ResumeYield {
 		t.Fatalf("Expected yield, got %v", state)
 	}
 
 	// Second resume - error should be caught by handler
-	state, _, results = L.Resume(co, fn)
+	state, results, _ = L.Resume(co, fn)
 	t.Logf("Second resume: state=%v results=%v", state, results)
 	if state != ResumeOK {
 		t.Fatalf("Expected ResumeOK, got %v", state)
@@ -592,11 +593,11 @@ func TestGoFunctionYieldThroughPCall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("test_go_yield").(*LFunction)
 
 	// First resume - yields via Go function
-	state, _, results := L.Resume(co, fn)
+	state, results, _ := L.Resume(co, fn)
 	if state != ResumeYield {
 		t.Fatalf("Expected yield, got %v", state)
 	}
@@ -605,7 +606,7 @@ func TestGoFunctionYieldThroughPCall(t *testing.T) {
 	}
 
 	// Second resume - completes
-	state, _, results = L.Resume(co, fn)
+	state, results, _ = L.Resume(co, fn)
 	if state != ResumeOK {
 		t.Fatalf("Expected ResumeOK, got %v", state)
 	}
@@ -648,10 +649,10 @@ func TestPCallMultipleErrorsInCoroutine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("run_tests").(*LFunction)
 
-	state, err, results := L.Resume(co, fn)
+	state, results, err := L.Resume(co, fn)
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}
@@ -721,7 +722,7 @@ func TestPCallErrorInCoroutine(t *testing.T) {
 	defer cancel()
 	fn := L.GetGlobal("test_func").(*LFunction)
 
-	state, err, results := L.Resume(co, fn)
+	state, results, err := L.Resume(co, fn)
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}
@@ -772,7 +773,7 @@ func TestPCallErrorReturnValuesInCoroutine(t *testing.T) {
 	defer cancel()
 	fn := L.GetGlobal("test_func").(*LFunction)
 
-	state, err, results := L.Resume(co, fn)
+	state, results, err := L.Resume(co, fn)
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}
@@ -819,7 +820,7 @@ func TestPCallErrorNotIfCondition(t *testing.T) {
 	defer cancel()
 	fn := L.GetGlobal("test_func").(*LFunction)
 
-	state, err, results := L.Resume(co, fn)
+	state, results, err := L.Resume(co, fn)
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}

@@ -431,10 +431,7 @@ func walkType(t typ.Type, depth int, pred func(typ.Type) bool) bool {
 				}
 			}
 
-			if walkType(fn.Variadic, depth+1, pred) {
-				return true
-			}
-			return false
+			return walkType(fn.Variadic, depth+1, pred)
 		},
 		Record: func(r *typ.Record) bool {
 			for _, f := range r.Fields {

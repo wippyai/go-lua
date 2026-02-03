@@ -188,8 +188,8 @@ func TestSynthFieldValueCore_NumberStaysLiteral(t *testing.T) {
 
 func TestUnionTypes_Empty(t *testing.T) {
 	result := typ.NewUnion()
-	if result.Kind() != kind.Union {
-		// Empty union or special handling
+	if result != typ.Never {
+		t.Fatalf("got %v, want never", result)
 	}
 }
 

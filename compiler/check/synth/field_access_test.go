@@ -92,8 +92,15 @@ func TestResolveFieldAccess_MapWithFieldName(t *testing.T) {
 	e := newTestEngine()
 	m := typ.NewMap(typ.String, typ.Integer)
 	result := e.ResolveFieldAccess(nil, m, "key", cfg.Point(0))
-	if !result.SkipCheck {
-		t.Fatal("expected SkipCheck for map")
+	if result.SkipCheck {
+		t.Fatal("expected map field lookup to be checked")
+	}
+	if !result.Found {
+		t.Fatal("expected field to be found on map")
+	}
+	opt, ok := result.Type.(*typ.Optional)
+	if !ok || opt.Inner != typ.Integer {
+		t.Fatal("expected optional integer type for map field")
 	}
 }
 
@@ -101,8 +108,11 @@ func TestResolveFieldAccess_ArrayWithFieldName(t *testing.T) {
 	e := newTestEngine()
 	arr := typ.NewArray(typ.String)
 	result := e.ResolveFieldAccess(nil, arr, "index", cfg.Point(0))
-	if !result.SkipCheck {
-		t.Fatal("expected SkipCheck for array")
+	if result.SkipCheck {
+		t.Fatal("expected array field lookup to be checked")
+	}
+	if result.Found {
+		t.Fatal("expected field not found on array")
 	}
 }
 

@@ -102,7 +102,7 @@ func (s *Solution) conditionAtFallback(p cfg.Point, depth int) constraint.Condit
 		return constraint.TrueCondition()
 	}
 	pred := preds[0]
-	predCond := constraint.TrueCondition()
+	var predCond constraint.Condition
 	if s.pointConditions != nil {
 		if c, ok := s.pointConditions[pred]; ok {
 			predCond = c

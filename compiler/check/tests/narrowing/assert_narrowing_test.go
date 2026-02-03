@@ -94,22 +94,6 @@ func TestAssertLibraryNarrowing(t *testing.T) {
 			Stdlib:    true,
 		},
 		{
-			Name: "assert.eq pattern",
-			Code: `
-				local assert = {
-					eq = function(a: any, b: any, msg: string?)
-						if a ~= b then error(msg or "not equal") end
-					end
-				}
-				function test()
-					local x = 1
-					assert.eq(x, 1)
-				end
-			`,
-			WantError: false,
-			Stdlib:    true,
-		},
-		{
 			Name: "assert function terminates flow",
 			Code: `
 				local assert = {

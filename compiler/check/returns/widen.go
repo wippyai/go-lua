@@ -1,8 +1,11 @@
 package returns
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/join"
@@ -21,6 +24,7 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 		LiteralSigs:       WidenLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:     WidenCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
 		CapturedFields:    WidenCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
+		CapturedContainers: WidenCapturedContainerMutations(prev.CapturedContainers, next.CapturedContainers),
 		ConstructorFields: WidenConstructorFields(prev.ConstructorFields, next.ConstructorFields),
 	}
 }
@@ -322,6 +326,87 @@ func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.Captured
 		merged[callee] = out
 	}
 	return merged
+}
+
+// WidenCapturedContainerMutations merges captured container mutation maps using monotone union.
+func WidenCapturedContainerMutations(prev, next api.CapturedContainerMutations) api.CapturedContainerMutations {
+	if prev == nil && next == nil {
+		return nil
+	}
+	if prev == nil {
+		return next
+	}
+	if next == nil {
+		return prev
+	}
+	merged := make(api.CapturedContainerMutations, len(prev)+len(next))
+	for _, sym := range cfg.SortedSymbolIDs(prev) {
+		merged[sym] = prev[sym]
+	}
+	for _, sym := range cfg.SortedSymbolIDs(next) {
+		muts := next[sym]
+		existing := merged[sym]
+		merged[sym] = mergeCapturedContainerMutations(existing, muts)
+	}
+	return merged
+}
+
+func mergeCapturedContainerMutations(
+	existing map[cfg.SymbolID][]api.ContainerMutation,
+	next map[cfg.SymbolID][]api.ContainerMutation,
+) map[cfg.SymbolID][]api.ContainerMutation {
+	if existing == nil {
+		return next
+	}
+	if next == nil {
+		return existing
+	}
+	merged := make(map[cfg.SymbolID][]api.ContainerMutation, len(existing)+len(next))
+	for _, sym := range cfg.SortedSymbolIDs(existing) {
+		merged[sym] = existing[sym]
+	}
+	for _, sym := range cfg.SortedSymbolIDs(next) {
+		merged[sym] = mergeContainerMutationSlice(merged[sym], next[sym])
+	}
+	return merged
+}
+
+func mergeContainerMutationSlice(
+	existing []api.ContainerMutation,
+	next []api.ContainerMutation,
+) []api.ContainerMutation {
+	if len(existing) == 0 {
+		return next
+	}
+	if len(next) == 0 {
+		return existing
+	}
+	byKey := make(map[string]api.ContainerMutation, len(existing)+len(next))
+	for _, m := range existing {
+		key := mutationKey(m)
+		byKey[key] = m
+	}
+	for _, m := range next {
+		key := mutationKey(m)
+		if prev, ok := byKey[key]; ok {
+			m.ValueType = join.Two(prev.ValueType, m.ValueType)
+		}
+		byKey[key] = m
+	}
+	keys := make([]string, 0, len(byKey))
+	for k := range byKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]api.ContainerMutation, 0, len(byKey))
+	for _, key := range keys {
+		out = append(out, byKey[key])
+	}
+	return out
+}
+
+func mutationKey(m api.ContainerMutation) string {
+	return constraint.FormatSegments(m.Segments)
 }
 
 // WidenConstructorFields merges constructor field maps using monotone join.

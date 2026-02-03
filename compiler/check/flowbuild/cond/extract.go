@@ -852,8 +852,10 @@ func ConstraintsFromAssignOnReturn(
 }
 
 // ExtractPredicateLinkFromCallInfo extracts predicate constraints from pre-extracted CallInfo.
+// returnIndex selects which return value carries predicate semantics.
 func ExtractPredicateLinkFromCallInfo(
 	callInfo *cfg.CallInfo,
+	returnIndex int,
 	p cfg.Point,
 	sc *scope.State,
 	inputs *flow.Inputs,
@@ -866,22 +868,36 @@ func ExtractPredicateLinkFromCallInfo(
 	if callInfo == nil {
 		return nil
 	}
+	if returnIndex < 0 {
+		return nil
+	}
 
 	if callInfo.IsTypeCheck && typeKeyResolver != nil {
 		typeKey, ok := typeKeyResolver(callInfo.TypeCheckName, sc)
 		if ok && !typeKey.IsZero() {
 			checkPath := callInfo.TypeCheckPath
 			if !checkPath.IsEmpty() {
-				onTruthy := constraint.FromConstraints(constraint.HasType{Path: checkPath, Type: typeKey})
-				onFalsy := constraint.FromConstraints(constraint.NotHasType{Path: checkPath, Type: typeKey})
-				return &flow.PredicateLink{
-					OnTruthy: onTruthy,
-					OnFalsy:  onFalsy,
+				// Type:is returns (value, err). Predicate semantics are on err == nil.
+				if callInfo.Method == "is" && callInfo.Receiver != nil {
+					if returnIndex == 1 {
+						onTruthy := constraint.FromConstraints(constraint.NotHasType{Path: checkPath, Type: typeKey})
+						onFalsy := constraint.FromConstraints(constraint.HasType{Path: checkPath, Type: typeKey})
+						return &flow.PredicateLink{
+							OnTruthy: onTruthy,
+							OnFalsy:  onFalsy,
+						}
+					}
+					return nil
 				}
+				// TypeName(x) is a cast, not a predicate (truthiness is unsafe).
+				return nil
 			}
 		}
 	}
 
+	if returnIndex != 0 {
+		return nil
+	}
 	if len(callInfo.Args) == 0 {
 		return nil
 	}

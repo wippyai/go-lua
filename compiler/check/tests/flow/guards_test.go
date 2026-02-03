@@ -14,7 +14,8 @@ func TestGuards_TypeIsNarrowing(t *testing.T) {
 			Code: `
 				type Point = {x: number, y: number}
 				function validate(obj: any)
-					if Point:is(obj) then
+					local _, err = Point:is(obj)
+					if err == nil then
 						local p: {x: number, y: number} = obj
 					end
 				end
@@ -27,8 +28,8 @@ func TestGuards_TypeIsNarrowing(t *testing.T) {
 			Code: `
 				type Point = {x: number, y: number}
 				function validate(obj: {p: any})
-					local ok = Point:is(obj.p)
-					if ok then
+					local _, err = Point:is(obj.p)
+					if err == nil then
 						local p: {x: number, y: number} = obj.p
 					end
 				end
@@ -100,8 +101,8 @@ func TestGuards_TypeIsInGenericFor(t *testing.T) {
 				type Point = {x: number, y: number}
 				function validate(xs: {[integer]: any})
 					for i, v in ipairs(xs) do
-						local ok = Point:is(v)
-						if ok then
+						local _, err = Point:is(v)
+						if err == nil then
 							local p: {x: number, y: number} = v
 						end
 					end
@@ -164,6 +165,33 @@ func TestGuards_RelationalBranchNarrowing(t *testing.T) {
 					if result.channel == ch1 then
 						local e: string = result.value.error
 					end
+				end
+			`,
+			WantError: false,
+			Stdlib:    true,
+		},
+	}
+	testutil.RunCases(t, tests)
+}
+
+func TestGuards_FieldTruthyNarrowsUnion(t *testing.T) {
+	tests := []testutil.Case{
+		{
+			Name: "field truthy narrows union with missing field",
+			Code: `
+				type Result = {error: string} | {name: string}
+				function f(flag: boolean): string
+					local res: Result
+					if flag then
+						res = { error = "bad" }
+					else
+						res = { name = "ok" }
+					end
+					if res.error then
+						return "err"
+					end
+					local name: string = res.name
+					return name
 				end
 			`,
 			WantError: false,

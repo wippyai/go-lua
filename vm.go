@@ -323,6 +323,38 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			}
 
+		case OP_LOADTYPE:
+			reg := L.reg
+			lbase := cf.LocalBase
+			A := int(inst>>18) & 0xff //GETA
+			RA := int(lbase) + A
+			Bx := int(inst & 0x3ffff) //GETBX
+			name := cf.Fn.Proto.stringConstants[Bx]
+			v := cf.Fn.Proto.runtimeTypeValueByName(name)
+			if v == nil {
+				L.RaiseError("unknown type %s", name)
+			}
+			// this section is inlined by go-inline
+			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
+			{
+				rg := reg
+				regi := RA
+				vali := v
+				newSize := regi + 1
+				// this section is inlined by go-inline
+				// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
+				{
+					requiredSize := newSize
+					if requiredSize > cap(rg.array) {
+						rg.resize(requiredSize)
+					}
+				}
+				rg.array[regi] = vali
+				if regi >= rg.top {
+					rg.top = regi + 1
+				}
+			}
+
 		case OP_GETTABLE:
 			reg := L.reg
 			lbase := cf.LocalBase
@@ -1708,11 +1740,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 									   namedparam1 <- lbase
 									   namedparam2
 							*/
-							nvarargs := int(nargs) - np
-							if nvarargs < 0 {
-								nvarargs = 0
-							}
-
 							ls.reg.SetTop(int(cf.LocalBase) + int(nargs) + np)
 							for i := 0; i < np; i++ {
 								//ls.reg.Set(cf.LocalBase+nargs+i, ls.reg.Get(cf.LocalBase+i))
@@ -1747,6 +1774,17 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				nargs = reg.Top() - (RA + 1)
 			}
 			lv := reg.Get(RA)
+			if lt, ok := lv.(*LType); ok {
+				L.typeCall(lt, RA, nargs, int(cf.NRet))
+				b := int(cf.NRet) + 1
+				if cf.NRet == MultRet {
+					b = 0
+				}
+				if returnFromTailcall(L, baseframe, cf, RA, b) {
+					return
+				}
+				continue
+			}
 			var callable *LFunction
 			var goFunc LGoFunc
 			var meta bool
@@ -1878,11 +1916,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 									   namedparam1 <- lbase
 									   namedparam2
 							*/
-							nvarargs := int(nargs) - np
-							if nvarargs < 0 {
-								nvarargs = 0
-							}
-
 							ls.reg.SetTop(int(cf.LocalBase) + int(nargs) + np)
 							for i := 0; i < np; i++ {
 								//ls.reg.Set(cf.LocalBase+nargs+i, ls.reg.Get(cf.LocalBase+i))
@@ -2685,6 +2718,66 @@ func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
 	}
 }
 
+func returnFromTailcall(L *LState, baseframe *callFrame, cf *callFrame, RA int, B int) bool {
+	if L == nil || cf == nil {
+		return true
+	}
+	reg := L.reg
+	lbase := int(cf.LocalBase)
+	L.closeUpvalues(lbase)
+
+	nret := B - 1
+	if B == 0 {
+		nret = reg.Top() - RA
+	}
+	n := cf.NRet
+	if cf.NRet == MultRet {
+		n = int16(nret)
+	}
+
+	if L.Parent != nil && L.stack.Sp() == 1 {
+		regv := reg.Top()
+		if B == 1 {
+			reg.FillNil(regv, int(n))
+		} else {
+			reg.CopyRange(regv, RA, -1, int(n))
+			if B > 1 && int(n) > (B-1) {
+				reg.FillNil(regv+B-1, int(n)-(B-1))
+			}
+		}
+		switchToParentThread(L, int(n), false, true)
+		return true
+	}
+
+	islast := baseframe == L.stack.Pop() || L.stack.IsEmpty()
+	regv := int(cf.ReturnBase)
+	if B == 1 {
+		reg.FillNil(regv, int(n))
+	} else {
+		reg.CopyRange(regv, RA, -1, int(n))
+		if B > 1 && int(n) > (B-1) {
+			reg.FillNil(regv+B-1, int(n)-(B-1))
+		}
+	}
+
+	L.currentFrame = L.stack.Last()
+	if islast || L.currentFrame == nil {
+		return true
+	}
+	if L.currentFrame.GoFunc != nil || (L.currentFrame.Fn != nil && L.currentFrame.Fn.IsG) {
+		ext := L.getFrameExt(L.currentFrame)
+		if ext != nil && ext.Continuation != nil {
+			if callGFunction(L, false) {
+				return true
+			}
+		} else {
+			return true
+		}
+	}
+
+	return false
+}
+
 func callGFunction(L *LState, tailcall bool) bool {
 	frame := L.currentFrame
 	var gfnret int
@@ -2970,7 +3063,7 @@ func stringConcat(L *LState, total, last int) LValue {
 	total--
 	for i := last - 1; total > 0; {
 		lhs := L.reg.Get(i)
-		if !(LVCanConvToString(lhs) && LVCanConvToString(rhs)) {
+		if !LVCanConvToString(lhs) || !LVCanConvToString(rhs) {
 			op := L.metaOp2(lhs, rhs, "__concat")
 			if op.Type() == LTFunction {
 				L.reg.Push(op)

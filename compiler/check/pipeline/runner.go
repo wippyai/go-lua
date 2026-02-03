@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/modules"
@@ -120,10 +121,8 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 				})
 				if sig := engine.ResolveFunctionSignature(fn, parent); sig != nil {
 					synthSig = sig
-				} else if seed := returns.BuildSeedFunctionType(fn, engine, parent); seed != nil {
-					if seedFn, ok := seed.(*typ.Function); ok {
-						synthSig = seedFn
-					}
+				} else if seedFn, ok := returns.BuildSeedFunctionType(fn, engine, parent).(*typ.Function); ok {
+					synthSig = seedFn
 				}
 			}
 			if synthSig != nil {
@@ -216,6 +215,45 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		LiteralTypes:    literalOut.LiteralTypes,
 		ReturnSummaries: returnSummaries,
 	})
+
+	if extractOut.Inputs != nil {
+		capturedContainers := store.GetCapturedContainerMutationsSnapshot(graph, parent)
+		if len(capturedContainers) > 0 {
+			bindings := graph.Bindings()
+			if bindings == nil {
+				bindings = store.ModuleBindings()
+			}
+
+			declaredEnv := phase.NewContextBuilder(env).
+				WithScope(scopeOut).
+				WithSiblingTypes(scopeOut.SiblingTypes).
+				WithLiteralTypes(literalOut.LiteralTypes).
+				WithReturnSummaries(returnSummaries).
+				BuildDeclared()
+
+			synthEngine := synth.New(synth.Config{
+				Ctx:            env.Ctx,
+				Types:          env.Types,
+				Scopes:         scopeOut.Scopes,
+				Manifests:      env.Manifests,
+				Env:            declaredEnv,
+				Phase:          api.PhaseScopeCompute,
+				ModuleBindings: env.ModuleBindings,
+				ModuleAliases:  env.ModuleAliases,
+			})
+
+			symResolver := resolve.BuildInputSymbolResolver(declaredEnv, extractOut.Inputs)
+			assignmentTypes := resolve.BuildAssignmentTypeResolver(extractOut.Inputs)
+			calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
+				return resolve.CalleeType(info, p, synthEngine.TypeOf, symResolver, assignmentTypes)
+			}
+
+			extra := returns.CollectCalledNestedContainerMutatorAssignments(graph, bindings, capturedContainers, calleeTypeResolver)
+			if len(extra) > 0 {
+				extractOut.Inputs.ContainerMutatorAssignments = append(extractOut.Inputs.ContainerMutatorAssignments, extra...)
+			}
+		}
+	}
 
 	// Phase C: Solve flow system.
 	solveOut := phase.RunSolve(phase.FlowSolveInput{

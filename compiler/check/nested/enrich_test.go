@@ -7,10 +7,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-type stubStore struct{}
-
-func (s stubStore) LookupConstructorFields(cfg.SymbolID) map[string]typ.Type { return nil }
-
 func TestEnrichTableTypeWithFuncTypes_NilInputs(t *testing.T) {
 	result := EnrichTableTypeWithFuncTypes(nil, nil, nil, nil)
 	if rec, ok := result.(*typ.Record); !ok || rec != nil {

@@ -1,10 +1,6 @@
 package captured
 
-import (
-	"testing"
-
-	"github.com/wippyai/go-lua/compiler/cfg"
-)
+import "testing"
 
 func TestFromParentFacts_NilParentFacts(t *testing.T) {
 	result := FromParentFacts(nil, nil, 0, nil)
@@ -25,10 +21,4 @@ func TestFromParentFacts_ZeroDefPoint(t *testing.T) {
 	if result != nil {
 		t.Errorf("expected nil for zero def point, got %v", result)
 	}
-}
-
-type mockTypeFacts struct{}
-
-func (m mockTypeFacts) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) interface{} {
-	return nil
 }

@@ -19,6 +19,9 @@ type Array struct {
 
 // NewArray creates an array type.
 func NewArray(elem Type) *Array {
+	if elem == nil {
+		elem = Unknown
+	}
 	h := internal.HashCombine(uint64(kind.Array), elem.Hash())
 	return &Array{Element: elem, hash: h}
 }
@@ -43,6 +46,12 @@ type Map struct {
 
 // NewMap creates a map type.
 func NewMap(key, value Type) *Map {
+	if key == nil {
+		key = Unknown
+	}
+	if value == nil {
+		value = Unknown
+	}
 	h := internal.HashCombine(uint64(kind.Map), key.Hash())
 	h = internal.HashCombine(h, value.Hash())
 
@@ -69,11 +78,16 @@ type Tuple struct {
 // NewTuple creates a tuple type.
 func NewTuple(elems ...Type) *Tuple {
 	h := uint64(kind.Tuple)
-	for _, e := range elems {
+	cleaned := make([]Type, len(elems))
+	for i, e := range elems {
+		if e == nil {
+			e = Unknown
+		}
+		cleaned[i] = e
 		h = internal.HashCombine(h, e.Hash())
 	}
 
-	return &Tuple{Elements: elems, hash: h}
+	return &Tuple{Elements: cleaned, hash: h}
 }
 
 func (t *Tuple) Kind() kind.Kind { return kind.Tuple }

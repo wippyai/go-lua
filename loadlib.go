@@ -16,11 +16,11 @@ func loGetPath(env string, defpath string) string {
 	if len(path) == 0 {
 		path = defpath
 	}
-	path = strings.Replace(path, ";;", ";"+defpath+";", -1)
+	path = strings.ReplaceAll(path, ";;", ";"+defpath+";")
 	if os.PathSeparator != '/' {
 		dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
 		if err == nil {
-			path = strings.Replace(path, "!", dir, -1)
+			path = strings.ReplaceAll(path, "!", dir)
 		}
 		// If Abs fails, leave "!" unsubstituted (paths with "!" won't match)
 	}
@@ -28,7 +28,7 @@ func loGetPath(env string, defpath string) string {
 }
 
 func loFindFile(L *LState, name, pname string) (string, string) {
-	name = strings.Replace(name, ".", string(os.PathSeparator), -1)
+	name = strings.ReplaceAll(name, ".", string(os.PathSeparator))
 	lv := L.GetField(L.GetField(L.Get(EnvironIndex), "package"), pname)
 	path, ok := lv.(LString)
 	if !ok {
@@ -36,7 +36,7 @@ func loFindFile(L *LState, name, pname string) (string, string) {
 	}
 	var messages []string
 	for _, pattern := range strings.Split(string(path), ";") {
-		luapath := strings.Replace(pattern, "?", name, -1)
+		luapath := strings.ReplaceAll(pattern, "?", name)
 		_, err := os.Stat(luapath)
 		if err == nil {
 			return luapath, ""

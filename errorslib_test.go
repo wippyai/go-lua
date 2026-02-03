@@ -583,7 +583,7 @@ func TestErrorMetatableInCoroutinePcall(t *testing.T) {
 	defer cancel()
 	fn := L.GetGlobal("test_pcall_in_coroutine").(*LFunction)
 
-	state, err, results := L.Resume(co, fn)
+	state, results, err := L.Resume(co, fn)
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}
@@ -650,7 +650,7 @@ func TestErrorMetatableMultiplePcallsInCoroutine(t *testing.T) {
 	defer cancel()
 	fn := L.GetGlobal("test_multiple_pcalls").(*LFunction)
 
-	state, err, results := L.Resume(co, fn)
+	state, results, err := L.Resume(co, fn)
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}

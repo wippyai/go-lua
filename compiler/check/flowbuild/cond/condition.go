@@ -181,7 +181,7 @@ func (ce *ConditionExtractor) pathFromExpr(expr ast.Expr) constraint.Path {
 
 // constraintsFromConditionExpr extracts predicate conditions from a full condition expression.
 func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) BranchConditions {
-	// Special-case error-return patterns with explicit nil comparisons.
+	// Special-case nil comparisons for error-return and predicate-link patterns.
 	if rel, ok := expr.(*ast.RelationalOpExpr); ok && (rel.Operator == "==" || rel.Operator == "~=") {
 		var ident *ast.IdentExpr
 		if literal.IsNilExpr(rel.Lhs) {
@@ -190,18 +190,36 @@ func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) Branch
 			ident, _ = rel.Lhs.(*ast.IdentExpr)
 		}
 		if ident != nil {
-			sibNil := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)
-			if len(sibNil) > 0 {
-				path := ce.pathFromExpr(ident)
-				if !path.IsEmpty() {
-					sibNotNil := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)
+			path := ce.pathFromExpr(ident)
+			if !path.IsEmpty() {
+				sibNil := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)
+				sibNotNil := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)
+				link := predicate.LookupPredicateLink(ident.Value, ce.Inputs)
+				hasLink := link != nil && (link.OnTruthy.HasConstraints() || link.OnFalsy.HasConstraints())
+				if hasLink || len(sibNil) > 0 || len(sibNotNil) > 0 {
 					var onTrue, onFalse constraint.Condition
 					if rel.Operator == "==" {
 						onTrue = constraint.FromConstraints(append([]constraint.Constraint{constraint.IsNil{Path: path}}, sibNotNil...)...)
 						onFalse = constraint.FromConstraints(append([]constraint.Constraint{constraint.NotNil{Path: path}}, sibNil...)...)
+						if hasLink {
+							if link.OnFalsy.HasConstraints() {
+								onTrue = constraint.And(onTrue, link.OnFalsy)
+							}
+							if link.OnTruthy.HasConstraints() {
+								onFalse = constraint.And(onFalse, link.OnTruthy)
+							}
+						}
 					} else {
 						onTrue = constraint.FromConstraints(append([]constraint.Constraint{constraint.NotNil{Path: path}}, sibNil...)...)
 						onFalse = constraint.FromConstraints(append([]constraint.Constraint{constraint.IsNil{Path: path}}, sibNotNil...)...)
+						if hasLink {
+							if link.OnTruthy.HasConstraints() {
+								onTrue = constraint.And(onTrue, link.OnTruthy)
+							}
+							if link.OnFalsy.HasConstraints() {
+								onFalse = constraint.And(onFalse, link.OnFalsy)
+							}
+						}
 					}
 					return BranchConditions{OnTrue: onTrue, OnFalse: onFalse}
 				}
@@ -304,7 +322,11 @@ func (ce *ConditionExtractor) ConditionFromExpr(expr ast.Expr) constraint.Condit
 			return constraint.FalseCondition()
 		}
 		if link := predicate.LookupPredicateLink(e.Value, ce.Inputs); link != nil && link.OnTruthy.HasConstraints() {
-			return link.OnTruthy
+			path := ce.pathFromExpr(e)
+			if path.IsEmpty() {
+				return link.OnTruthy
+			}
+			return constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.Truthy{Path: path}))
 		}
 		path := ce.pathFromExpr(e)
 		if path.IsEmpty() {
@@ -429,7 +451,11 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 	if literal.IsNilExpr(lhs) {
 		if ident, ok := rhs.(*ast.IdentExpr); ok {
 			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnFalsy.HasConstraints() {
-				return link.OnFalsy
+				path := ce.pathFromExpr(rhs)
+				if path.IsEmpty() {
+					return link.OnFalsy
+				}
+				return constraint.And(link.OnFalsy, constraint.FromConstraints(constraint.IsNil{Path: path}))
 			}
 			path := ce.pathFromExpr(rhs)
 			if !path.IsEmpty() {
@@ -445,7 +471,11 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 	if literal.IsNilExpr(rhs) {
 		if ident, ok := lhs.(*ast.IdentExpr); ok {
 			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnFalsy.HasConstraints() {
-				return link.OnFalsy
+				path := ce.pathFromExpr(lhs)
+				if path.IsEmpty() {
+					return link.OnFalsy
+				}
+				return constraint.And(link.OnFalsy, constraint.FromConstraints(constraint.IsNil{Path: path}))
 			}
 			path := ce.pathFromExpr(lhs)
 			if !path.IsEmpty() {
@@ -541,36 +571,6 @@ func (ce *ConditionExtractor) calleeHasEffect(call *ast.FuncCallExpr, want func(
 	return false
 }
 
-func (ce *ConditionExtractor) methodHasEffect(receiver ast.Expr, method string, want func(effect.Row) bool) bool {
-	if receiver == nil || method == "" {
-		return false
-	}
-	if ident, ok := receiver.(*ast.IdentExpr); ok && ce.SC != nil {
-		if meta := ce.SC.MetaForName(ident.Value); meta != nil {
-			if mt, ok := core.Method(meta, method); ok {
-				if row, ok := effectRowFromType(mt); ok {
-					return want(row)
-				}
-			}
-		}
-	}
-	if ce.Synth == nil {
-		return false
-	}
-	recvType := ce.Synth(receiver, ce.P)
-	if recvType == nil {
-		return false
-	}
-	mt, ok := core.Method(recvType, method)
-	if !ok {
-		return false
-	}
-	if row, ok := effectRowFromType(mt); ok {
-		return want(row)
-	}
-	return false
-}
-
 func effectRowFromType(t typ.Type) (effect.Row, bool) {
 	if t == nil {
 		return effect.Row{}, false
@@ -617,7 +617,11 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 	if literal.IsNilExpr(lhs) {
 		if ident, ok := rhs.(*ast.IdentExpr); ok {
 			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnTruthy.HasConstraints() {
-				return link.OnTruthy
+				path := ce.pathFromExpr(rhs)
+				if path.IsEmpty() {
+					return link.OnTruthy
+				}
+				return constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.NotNil{Path: path}))
 			}
 			path := ce.pathFromExpr(rhs)
 			if !path.IsEmpty() {
@@ -633,7 +637,11 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 	if literal.IsNilExpr(rhs) {
 		if ident, ok := lhs.(*ast.IdentExpr); ok {
 			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnTruthy.HasConstraints() {
-				return link.OnTruthy
+				path := ce.pathFromExpr(lhs)
+				if path.IsEmpty() {
+					return link.OnTruthy
+				}
+				return constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.NotNil{Path: path}))
 			}
 			path := ce.pathFromExpr(lhs)
 			if !path.IsEmpty() {
@@ -697,20 +705,6 @@ func (ce *ConditionExtractor) constraintsFromPathLiteral(expr ast.Expr, lit *typ
 func (ce *ConditionExtractor) constraintsFromCallExpr(expr *ast.FuncCallExpr) []constraint.Constraint {
 	if expr == nil {
 		return nil
-	}
-
-	// Type:is(x) pattern
-	if expr.Method != "" && expr.Receiver != nil && len(expr.Args) > 0 {
-		if ce.methodHasEffect(expr.Receiver, expr.Method, effect.Row.HasTypeValueMethod) {
-			if recvIdent, ok := expr.Receiver.(*ast.IdentExpr); ok && ce.TypeKeyRes != nil {
-				if typeKey, ok := ce.TypeKeyRes(recvIdent.Value, ce.SC); ok && !typeKey.IsZero() {
-					path := ce.pathFromExpr(expr.Args[0])
-					if !path.IsEmpty() {
-						return []constraint.Constraint{constraint.HasType{Path: path, Type: typeKey}}
-					}
-				}
-			}
-		}
 	}
 
 	if expr.Method != "" || expr.Receiver != nil {
@@ -829,12 +823,6 @@ func ExtractReturnExprConstraints(expr ast.Expr, p cfg.Point, sc *scope.State, i
 
 // isPredicateExpr checks if an expression is a predicate.
 func isPredicateExpr(expr ast.Expr, p cfg.Point, synthFunc func(ast.Expr, cfg.Point) typ.Type) bool {
-	if call, ok := expr.(*ast.FuncCallExpr); ok {
-		if call.Method == "is" && call.Receiver != nil {
-			return true
-		}
-	}
-
 	if synthFunc != nil {
 		exprType := synthFunc(expr, p)
 		if exprType != nil {

@@ -21,6 +21,11 @@ func (m mockTypeQuerier) Field(_ *db.QueryContext, t typ.Type, name string) (typ
 			return f.Type, true
 		}
 	}
+	if mp, ok := t.(*typ.Map); ok {
+		if mp.Value != nil {
+			return typ.NewOptional(mp.Value), true
+		}
+	}
 	return nil, false
 }
 
@@ -153,10 +158,10 @@ func TestEngine_ImplementsSynth(t *testing.T) {
 		Scopes: make(api.ScopeMap),
 	})
 
-	var s Synth = engine
-	if s == nil {
-		t.Fatal("Engine should implement Synth interface")
+	if engine == nil {
+		t.Fatal("expected non-nil engine")
 	}
+	var _ Synth = engine
 }
 
 func TestEngine_Narrow_NilWithoutFlow(t *testing.T) {

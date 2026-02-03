@@ -28,3 +28,12 @@ func TestCollectCalledNestedFieldAssignments(t *testing.T) {
 		}
 	})
 }
+
+func TestCollectCalledNestedContainerMutatorAssignments(t *testing.T) {
+	t.Run("nil graph returns empty slice", func(t *testing.T) {
+		result := CollectCalledNestedContainerMutatorAssignments(nil, nil, nil, nil)
+		if len(result) != 0 {
+			t.Error("expected empty result")
+		}
+	})
+}

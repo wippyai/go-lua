@@ -31,7 +31,7 @@ func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Input
 			return
 		}
 
-		cm := containerMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, assignmentTypes)
+		cm := ContainerMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, assignmentTypes)
 		if cm == nil {
 			return
 		}
@@ -39,10 +39,10 @@ func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Input
 		// For method calls, index 0 is self (receiver)
 		var targetExpr, valueExpr ast.Expr
 		if info.Method != "" && info.Receiver != nil {
-			targetExpr = containerArgAtMethod(info.Receiver, info.Args, cm.Target.Index)
+			targetExpr = containerArgAtMethod(info.Receiver, info.Args, cm.Container.Index)
 			valueExpr = containerArgAtMethod(info.Receiver, info.Args, cm.Value.Index)
 		} else {
-			targetExpr = ArgAtCall(info.Args, cm.Target.Index)
+			targetExpr = ArgAtCall(info.Args, cm.Container.Index)
 			valueExpr = ArgAtCall(info.Args, cm.Value.Index)
 		}
 
@@ -127,13 +127,8 @@ func ContainerElementReturnFromCall(info *cfg.CallInfo, p cfg.Point, synth func(
 	return nil
 }
 
-// containerMutatorInfo holds the extracted mutation info.
-type containerMutatorInfo struct {
-	Target effect.ParamRef
-	Value  effect.ParamRef
-}
-
-func containerMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool), assignmentTypes func(cfg.SymbolID) typ.Type) *containerMutatorInfo {
+// ContainerMutatorFromCall extracts the container mutation spec from a call site.
+func ContainerMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool), assignmentTypes func(cfg.SymbolID) typ.Type) *effect.ContainerElementUnion {
 	if info == nil {
 		return nil
 	}
@@ -157,10 +152,8 @@ func containerMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Ex
 		if !ok {
 			continue
 		}
-		return &containerMutatorInfo{
-			Target: ceu.Container,
-			Value:  ceu.Value,
-		}
+		ce := ceu
+		return &ce
 	}
 
 	return nil

@@ -50,9 +50,9 @@ func TestFieldAccessResult_WithValues(t *testing.T) {
 }
 
 func TestExprSynthType(t *testing.T) {
-	var synth api.ExprSynth = func(e ast.Expr, p cfg.Point) typ.Type {
+	synth := api.ExprSynth(func(e ast.Expr, p cfg.Point) typ.Type {
 		return typ.Integer
-	}
+	})
 	result := synth(&ast.NumberExpr{Value: "42"}, 0)
 	if result != typ.Integer {
 		t.Fatal("expected integer type")
@@ -60,12 +60,12 @@ func TestExprSynthType(t *testing.T) {
 }
 
 func TestExprSynthType_NilExpr(t *testing.T) {
-	var synth api.ExprSynth = func(e ast.Expr, p cfg.Point) typ.Type {
+	synth := api.ExprSynth(func(e ast.Expr, p cfg.Point) typ.Type {
 		if e == nil {
 			return typ.Nil
 		}
 		return typ.Unknown
-	}
+	})
 	result := synth(nil, 0)
 	if result != typ.Nil {
 		t.Fatal("expected nil type for nil expr")

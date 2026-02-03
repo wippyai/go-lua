@@ -226,7 +226,7 @@ func TestConstraintsFromAssignOnReturn_NoSourceCalls(t *testing.T) {
 }
 
 func TestExtractPredicateLinkFromCallInfo_NilInfo(t *testing.T) {
-	result := cond.ExtractPredicateLinkFromCallInfo(nil, 0, nil, nil, nil, nil, nil, nil, nil)
+	result := cond.ExtractPredicateLinkFromCallInfo(nil, 0, 0, nil, nil, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil info")
 	}
@@ -236,7 +236,7 @@ func TestExtractPredicateLinkFromCallInfo_NoArgs(t *testing.T) {
 	info := &cfg.CallInfo{
 		Args: nil,
 	}
-	result := cond.ExtractPredicateLinkFromCallInfo(info, 0, nil, nil, nil, nil, nil, nil, nil)
+	result := cond.ExtractPredicateLinkFromCallInfo(info, 0, 0, nil, nil, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for call without args")
 	}

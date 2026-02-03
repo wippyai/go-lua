@@ -459,8 +459,9 @@ func TestTypeCast_TypeIsMethod(t *testing.T) {
 				type Point = {x: number, y: number}
 				local function validate(data: any)
 					local val, err = Point:is(data)
-					if val ~= nil then
-						local p: {x: number, y: number} = data
+					if err == nil then
+						local p: {x: number, y: number} = val
+						local sum = p.x + p.y
 					end
 				end
 			`,
@@ -472,8 +473,8 @@ func TestTypeCast_TypeIsMethod(t *testing.T) {
 			Code: `
 				type Point = {x: number, y: number}
 				local function validate(data: any)
-					local val = Point:is(data)
-					if val then
+					local val, err = Point:is(data)
+					if err == nil then
 						local sum = val.x + val.y
 					end
 				end
@@ -486,7 +487,8 @@ func TestTypeCast_TypeIsMethod(t *testing.T) {
 			Code: `
 				type Point = {x: number, y: number}
 				local function validate(data: any)
-					if Point:is(data) then
+					local _, err = Point:is(data)
+					if err == nil then
 						local p: {x: number, y: number} = data
 					end
 				end
@@ -500,7 +502,7 @@ func TestTypeCast_TypeIsMethod(t *testing.T) {
 				type Point = {x: number, y: number}
 				local v: any = {x = 1, y = 2}
 				local p, err = Point:is(v)
-				if p then
+				if err == nil then
 					local sum = p.x + p.y
 				end
 			`,
@@ -512,8 +514,8 @@ func TestTypeCast_TypeIsMethod(t *testing.T) {
 			Code: `
 				type Point = {x: number, y: number}
 				local function validate(data: any)
-					local ok = Point:is(data)
-					if not ok then
+					local val = Point:is(data)
+					if not val then
 						local p: {x: number, y: number} = data
 					end
 				end

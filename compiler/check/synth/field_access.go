@@ -3,6 +3,7 @@ package synth
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -81,19 +82,26 @@ func ResolveFieldAccess(
 		}
 	}
 
-	switch unwrapped.(type) {
+	switch unwrapped := unwrapped.(type) {
 	case *typ.Record, *typ.Interface, *typ.Union, *typ.Intersection, *typ.Optional:
 	case *typ.Map, *typ.Array, *typ.Tuple:
-		return FieldAccessResult{SkipCheck: true}
 	case *typ.TypeParam, *typ.Instantiated:
 		return FieldAccessResult{SkipCheck: true}
-	case *typ.Function, *typ.Literal:
-		return FieldAccessResult{SkipCheck: true}
+	case *typ.Function:
+		return FieldAccessResult{NotIndexable: true}
+	case *typ.Literal:
+		if unwrapped.Base == kind.String {
+			break
+		}
+		return FieldAccessResult{NotIndexable: true}
 	default:
 		if unwrapped == typ.Nil {
 			return FieldAccessResult{NotIndexable: true}
 		}
-		return FieldAccessResult{SkipCheck: true}
+		if unwrapped.Kind() == kind.String {
+			break
+		}
+		return FieldAccessResult{NotIndexable: true}
 	}
 
 	if resolver != nil {

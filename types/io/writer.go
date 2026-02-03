@@ -16,6 +16,9 @@ import (
 type typeWriter struct {
 	w   io.Writer
 	err error
+
+	recursiveIDs    map[*typ.Recursive]uint64
+	nextRecursiveID uint64
 }
 
 func (w *typeWriter) writeByte(b byte) {
@@ -73,6 +76,12 @@ func (w *typeWriter) writeType(t typ.Type) {
 		return
 	}
 
+	if ann, ok := t.(*typ.Annotated); ok {
+		w.writeByte(kindToByte(kind.Refined))
+		w.writeAnnotated(ann)
+		return
+	}
+
 	w.writeByte(kindToByte(t.Kind()))
 
 	switch t.Kind() {
@@ -81,10 +90,11 @@ func (w *typeWriter) writeType(t typ.Type) {
 		// Singletons - kind is enough
 	case kind.Optional, kind.Union, kind.Intersection, kind.Tuple, kind.Function,
 		kind.Array, kind.Map, kind.Record, kind.Alias, kind.Generic, kind.Instantiated,
-		kind.Platform, kind.Literal, kind.Ref, kind.Meta, kind.TypeParam, kind.TypeVar:
+		kind.Platform, kind.Literal, kind.Ref, kind.Meta, kind.TypeParam, kind.TypeVar,
+		kind.Sum, kind.Interface, kind.FieldAccess, kind.IndexAccess, kind.Recursive:
 		w.writeTypeData(t)
-	case kind.Sum, kind.Interface, kind.Refined, kind.FieldAccess, kind.IndexAccess, kind.Recursive:
-		// Not serializable
+	default:
+		w.err = ErrUnknownType
 	}
 }
 
@@ -116,9 +126,21 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 			return struct{}{}
 		},
 		Function: func(v *typ.Function) struct{} {
+			w.writeUint32(uint32(len(v.TypeParams)))
+			for _, tp := range v.TypeParams {
+				if tp == nil {
+					w.err = ErrInvalidType
+					return struct{}{}
+				}
+				w.writeTypeParam(tp)
+			}
 			w.writeUint32(uint32(len(v.Params)))
 			for _, p := range v.Params {
 				w.writeString(p.Name)
+				if p.Type == nil {
+					w.err = ErrInvalidType
+					return struct{}{}
+				}
 				w.writeType(p.Type)
 				w.writeBool(p.Optional)
 			}
@@ -130,6 +152,10 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 
 			w.writeUint32(uint32(len(v.Returns)))
 			for _, r := range v.Returns {
+				if r == nil {
+					w.err = ErrInvalidType
+					return struct{}{}
+				}
 				w.writeType(r)
 			}
 
@@ -154,10 +180,18 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 			return struct{}{}
 		},
 		Array: func(v *typ.Array) struct{} {
+			if v.Element == nil {
+				w.err = ErrInvalidType
+				return struct{}{}
+			}
 			w.writeType(v.Element)
 			return struct{}{}
 		},
 		Map: func(v *typ.Map) struct{} {
+			if v.Key == nil || v.Value == nil {
+				w.err = ErrInvalidType
+				return struct{}{}
+			}
 			w.writeType(v.Key)
 			w.writeType(v.Value)
 			return struct{}{}
@@ -166,6 +200,10 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 			w.writeUint32(uint32(len(v.Fields)))
 			for _, f := range v.Fields {
 				w.writeString(f.Name)
+				if f.Type == nil {
+					w.err = ErrInvalidType
+					return struct{}{}
+				}
 				w.writeType(f.Type)
 				w.writeBool(f.Optional)
 				w.writeBool(f.Readonly)
@@ -174,6 +212,17 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 			w.writeBool(v.Metatable != nil)
 			if v.Metatable != nil {
 				w.writeType(v.Metatable)
+			}
+			w.writeBool(v.Open)
+			hasMap := v.HasMapComponent()
+			w.writeBool(hasMap)
+			if hasMap {
+				if v.MapKey == nil || v.MapValue == nil {
+					w.err = ErrInvalidType
+					return struct{}{}
+				}
+				w.writeType(v.MapKey)
+				w.writeType(v.MapValue)
 			}
 			return struct{}{}
 		},
@@ -234,11 +283,139 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 			w.writeString(v.Name)
 			return struct{}{}
 		},
+		FieldAccess: func(v *typ.FieldAccess) struct{} {
+			if v.Base == nil {
+				w.err = ErrInvalidType
+				return struct{}{}
+			}
+			w.writeType(v.Base)
+			w.writeString(v.Field)
+			return struct{}{}
+		},
+		IndexAccess: func(v *typ.IndexAccess) struct{} {
+			if v.Base == nil || v.Index == nil {
+				w.err = ErrInvalidType
+				return struct{}{}
+			}
+			w.writeType(v.Base)
+			w.writeType(v.Index)
+			return struct{}{}
+		},
+		Sum: func(v *typ.Sum) struct{} {
+			w.writeString(v.Name)
+			w.writeUint32(uint32(len(v.Variants)))
+			for _, variant := range v.Variants {
+				w.writeString(variant.Tag)
+				w.writeUint32(uint32(len(variant.Types)))
+				for _, vt := range variant.Types {
+					if vt == nil {
+						w.err = ErrInvalidType
+						return struct{}{}
+					}
+					w.writeType(vt)
+				}
+			}
+			return struct{}{}
+		},
+		Interface: func(v *typ.Interface) struct{} {
+			w.writeString(v.Name)
+			w.writeUint32(uint32(len(v.Methods)))
+			for _, method := range v.Methods {
+				w.writeString(method.Name)
+				if method.Type == nil {
+					w.err = ErrInvalidType
+					return struct{}{}
+				}
+				w.writeType(method.Type)
+			}
+			return struct{}{}
+		},
+		Recursive: func(v *typ.Recursive) struct{} {
+			if v == nil {
+				w.err = ErrInvalidType
+				return struct{}{}
+			}
+			id, isNew := w.recursiveID(v)
+			w.writeUint64(id)
+			w.writeString(v.Name)
+			if !isNew {
+				w.writeBool(false)
+				return struct{}{}
+			}
+			w.writeBool(true)
+			if v.Body == nil {
+				w.err = ErrInvalidType
+				return struct{}{}
+			}
+			w.writeType(v.Body)
+			return struct{}{}
+		},
 		Default: func(typ.Type) struct{} {
 			w.err = ErrUnknownType
 			return struct{}{}
 		},
 	})
+}
+
+func (w *typeWriter) recursiveID(rec *typ.Recursive) (uint64, bool) {
+	if w.recursiveIDs == nil {
+		w.recursiveIDs = make(map[*typ.Recursive]uint64)
+		w.nextRecursiveID = 1
+	}
+	if id, ok := w.recursiveIDs[rec]; ok {
+		return id, false
+	}
+	id := w.nextRecursiveID
+	w.nextRecursiveID++
+	w.recursiveIDs[rec] = id
+	return id, true
+}
+
+func (w *typeWriter) writeAnnotated(ann *typ.Annotated) {
+	if ann == nil {
+		w.err = ErrInvalidType
+		return
+	}
+	if ann.Inner == nil {
+		w.err = ErrInvalidType
+		return
+	}
+	w.writeType(ann.Inner)
+	w.writeUint32(uint32(len(ann.Annotations)))
+	for _, a := range ann.Annotations {
+		w.writeString(a.Name)
+		w.writeAnnotationArg(a.Arg)
+		if w.err != nil {
+			return
+		}
+	}
+}
+
+func (w *typeWriter) writeAnnotationArg(arg any) {
+	switch v := arg.(type) {
+	case nil:
+		w.writeByte(annotationArgNil)
+	case string:
+		w.writeByte(annotationArgString)
+		w.writeString(v)
+	case int:
+		w.writeByte(annotationArgInt)
+		w.writeUint64(uint64(int64(v)))
+	case int64:
+		w.writeByte(annotationArgInt)
+		w.writeUint64(uint64(v))
+	case float32:
+		w.writeByte(annotationArgFloat)
+		w.writeUint64(math.Float64bits(float64(v)))
+	case float64:
+		w.writeByte(annotationArgFloat)
+		w.writeUint64(math.Float64bits(v))
+	case bool:
+		w.writeByte(annotationArgBool)
+		w.writeBool(v)
+	default:
+		w.err = ErrInvalidType
+	}
 }
 
 func (w *typeWriter) writeTypeParam(p *typ.TypeParam) {

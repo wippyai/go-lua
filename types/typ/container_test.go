@@ -22,6 +22,14 @@ func TestArray(t *testing.T) {
 	}
 }
 
+func TestArrayNilElementDefaultsToUnknown(t *testing.T) {
+	arr := NewArray(nil)
+
+	if arr.Element != Unknown {
+		t.Errorf("Element: got %v, want Unknown", arr.Element)
+	}
+}
+
 func TestArrayEquality(t *testing.T) {
 	arr1 := NewArray(Number)
 	arr2 := NewArray(Number)
@@ -70,6 +78,17 @@ func TestMap(t *testing.T) {
 
 	if m.String() != "{[string]: number}" {
 		t.Errorf("String: got %q, want %q", m.String(), "{[string]: number}")
+	}
+}
+
+func TestMapNilKeyValueDefaultsToUnknown(t *testing.T) {
+	m := NewMap(nil, nil)
+
+	if m.Key != Unknown {
+		t.Errorf("Key: got %v, want Unknown", m.Key)
+	}
+	if m.Value != Unknown {
+		t.Errorf("Value: got %v, want Unknown", m.Value)
 	}
 }
 
@@ -133,6 +152,17 @@ func TestTupleMultiple(t *testing.T) {
 
 	if tup.String() != "(number, string, boolean)" {
 		t.Errorf("String: got %q, want %q", tup.String(), "(number, string, boolean)")
+	}
+}
+
+func TestTupleNilElementDefaultsToUnknown(t *testing.T) {
+	tup := NewTuple(nil, Number)
+
+	if len(tup.Elements) != 2 {
+		t.Fatalf("Elements: got %d, want 2", len(tup.Elements))
+	}
+	if tup.Elements[0] != Unknown {
+		t.Errorf("Element[0]: got %v, want Unknown", tup.Elements[0])
 	}
 }
 

@@ -170,6 +170,21 @@ func TestCheckTable_ExpectedOptional(t *testing.T) {
 	}
 }
 
+func TestCheckTable_NilFieldTypeDoesNotPanic(t *testing.T) {
+	fields := []FieldDef{{Name: "x", Type: nil}}
+	result := CheckTable(fields, nil, nil)
+	if result.Type == nil {
+		t.Error("expected synthesized type for nil field type")
+	}
+}
+
+func TestCheckTable_NilArrayElementDoesNotPanic(t *testing.T) {
+	result := CheckTable(nil, []typ.Type{nil}, nil)
+	if result.Type == nil {
+		t.Error("expected synthesized type for nil array element")
+	}
+}
+
 func TestCheckError_Fields(t *testing.T) {
 	err := CheckError{
 		Message:  "test error",

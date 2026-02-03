@@ -472,6 +472,7 @@ type funcContext struct {
 	Upvalues        *varNamePool
 	Block           *codeBlock
 	Blocks          []*codeBlock
+	typeNames       map[string]struct{}
 	regTop          int
 	labelId         int
 	labelPc         map[int]int
@@ -479,13 +480,14 @@ type funcContext struct {
 	unresolvedGotos map[int]*gotoLabelDesc
 }
 
-func newFuncContext(sourcename string, parent *funcContext) *funcContext {
+func newFuncContext(sourcename string, parent *funcContext, typeNames map[string]struct{}) *funcContext {
 	fc := &funcContext{
 		Proto:           newFunctionProto(sourcename),
 		Code:            newCodeStore(),
 		Parent:          parent,
 		Upvalues:        newVarNamePool(0),
 		Block:           newCodeBlock(newVarNamePool(0), labelNoJump, nil, nil, 0),
+		typeNames:       typeNames,
 		regTop:          0,
 		labelId:         1,
 		labelPc:         map[int]int{},
@@ -494,6 +496,16 @@ func newFuncContext(sourcename string, parent *funcContext) *funcContext {
 	}
 	fc.Blocks = []*codeBlock{fc.Block}
 	return fc
+}
+
+func (fc *funcContext) isGlobalTypeIdent(ident *ast.IdentExpr) bool {
+	if fc == nil || ident == nil || fc.typeNames == nil {
+		return false
+	}
+	if _, ok := fc.typeNames[ident.Value]; !ok {
+		return false
+	}
+	return getIdentRefType(fc, fc, ident) == ecGlobal
 }
 
 func (fc *funcContext) CheckUnresolvedGoto() {
@@ -1292,7 +1304,7 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 	case *ast.FuncCallExpr:
 		return compileFuncCallExpr(context, reg, ex, ec)
 	case *ast.FunctionExpr:
-		childcontext := newFuncContext(context.Proto.SourceName, context)
+		childcontext := newFuncContext(context.Proto.SourceName, context, context.typeNames)
 		compileFunctionExpr(childcontext, ex, ec)
 		protono := len(context.Proto.FunctionPrototypes)
 		context.Proto.FunctionPrototypes = append(context.Proto.FunctionPrototypes, childcontext.Proto)
@@ -1788,21 +1800,60 @@ func compileFuncCallExpr(context *funcContext, reg int, expr *ast.FuncCallExpr, 
 	var name string
 
 	if expr.Func != nil { // hoge.func()
-		reg += compileExpr(context, reg, expr.Func, ecnone(0))
-		name = getExprName(context, expr.Func)
-	} else { // hoge:method()
-		b := reg
-		compileExprWithMVPropagation(context, expr.Receiver, &reg, &b)
-		c := loadRk(context, &reg, expr, LString(expr.Method))
-		context.Code.AddABC(OP_SELF, funcreg, b, c, sline(expr))
-		// increments a register for an implicit "self"
-		reg = b + 1
-		reg2 := funcreg + 2
-		if reg2 > reg {
-			reg = reg2
+		switch fn := expr.Func.(type) {
+		case *ast.IdentExpr:
+			if context.isGlobalTypeIdent(fn) {
+				reg += compileTypeIdent(context, reg, fn)
+				name = fn.Value
+				break
+			}
+			reg += compileExpr(context, reg, expr.Func, ecnone(0))
+			name = getExprName(context, expr.Func)
+		case *ast.AttrGetExpr:
+			if used, ok := compileTypeDotMethod(context, reg, fn); ok {
+				reg += used
+				name = getExprName(context, expr.Func)
+				break
+			}
+			reg += compileExpr(context, reg, expr.Func, ecnone(0))
+			name = getExprName(context, expr.Func)
+		default:
+			reg += compileExpr(context, reg, expr.Func, ecnone(0))
+			name = getExprName(context, expr.Func)
 		}
-		argc += 1
-		name = expr.Method
+	} else { // hoge:method()
+		handled := false
+		if expr.Receiver != nil && isTypeMethodName(expr.Method) {
+			if recvIdent, ok := expr.Receiver.(*ast.IdentExpr); ok && context.isGlobalTypeIdent(recvIdent) {
+				b := reg
+				context.Code.AddABx(OP_LOADTYPE, b, context.ConstIndex(LString(recvIdent.Value)), sline(recvIdent))
+				c := loadRk(context, &reg, expr, LString(expr.Method))
+				context.Code.AddABC(OP_SELF, funcreg, b, c, sline(expr))
+				// increments a register for an implicit "self"
+				reg = b + 1
+				reg2 := funcreg + 2
+				if reg2 > reg {
+					reg = reg2
+				}
+				argc += 1
+				name = expr.Method
+				handled = true
+			}
+		}
+		if !handled {
+			b := reg
+			compileExprWithMVPropagation(context, expr.Receiver, &reg, &b)
+			c := loadRk(context, &reg, expr, LString(expr.Method))
+			context.Code.AddABC(OP_SELF, funcreg, b, c, sline(expr))
+			// increments a register for an implicit "self"
+			reg = b + 1
+			reg2 := funcreg + 2
+			if reg2 > reg {
+				reg = reg2
+			}
+			argc += 1
+			name = expr.Method
+		}
 	}
 
 	for i, ar := range expr.Args {
@@ -1829,6 +1880,45 @@ func compileFuncCallExpr(context *funcContext, reg int, expr *ast.FuncCallExpr, 
 	}
 	return ec.varargopt + 1
 } // }}}
+
+func compileTypeIdent(context *funcContext, reg int, ident *ast.IdentExpr) int {
+	if context == nil || ident == nil {
+		return 0
+	}
+	context.Code.AddABx(OP_LOADTYPE, reg, context.ConstIndex(LString(ident.Value)), sline(ident))
+	return 1
+}
+
+func compileTypeDotMethod(context *funcContext, reg int, expr *ast.AttrGetExpr) (int, bool) {
+	if context == nil || expr == nil || expr.Object == nil || expr.Key == nil {
+		return 0, false
+	}
+	key, ok := expr.Key.(*ast.StringExpr)
+	if !ok || !isTypeMethodName(key.Value) {
+		return 0, false
+	}
+	obj, ok := expr.Object.(*ast.IdentExpr)
+	if !ok || !context.isGlobalTypeIdent(obj) {
+		return 0, false
+	}
+	start := reg
+	context.Code.AddABx(OP_LOADTYPE, start, context.ConstIndex(LString(obj.Value)), sline(obj))
+	c := loadRk(context, &reg, expr, LString(key.Value))
+	context.Code.AddABC(OP_GETTABLEKS, start, start, c, sline(expr))
+	if reg <= start {
+		reg = start + 1
+	}
+	used := reg - start
+	if used < 1 {
+		used = 1
+	}
+	return used, true
+}
+
+func isTypeMethodName(name string) bool {
+	_, ok := typeMethodNames[name]
+	return ok
+}
 
 func loadRk(context *funcContext, reg *int, expr ast.Expr, cnst LValue) int { // {{{
 	cindex := context.ConstIndex(cnst)
@@ -1947,26 +2037,5 @@ func patchCode(context *funcContext) { // {{{
 } // }}}
 
 func Compile(chunk []ast.Stmt, name string) (proto *FunctionProto, err error) { // {{{
-	defer func() {
-		if rcv := recover(); rcv != nil {
-			if _, ok := rcv.(*CompileError); ok {
-				err = rcv.(error)
-			} else {
-				panic(rcv)
-			}
-		}
-	}()
-	err = nil
-	parlist := &ast.ParList{HasVargs: true, Names: []string{}}
-	funcexpr := &ast.FunctionExpr{ParList: parlist, Stmts: chunk}
-	if len(chunk) > 0 {
-		funcexpr.SetLastLine(sline(chunk[0]))
-		funcexpr.SetLastLine(eline(chunk[len(chunk)-1]) + 1)
-	}
-
-	context := newFuncContext(name, nil)
-	compileFunctionExpr(context, funcexpr, ecnone(0))
-	proto = context.Proto
-
-	return
+	return CompileWithOptions(chunk, name, CompileOptions{})
 } // }}}

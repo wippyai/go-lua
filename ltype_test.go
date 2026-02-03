@@ -19,6 +19,32 @@ func TestLTypeBasic(t *testing.T) {
 	}
 }
 
+func TestLTypeNilInner(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	lt := NewLType(nil)
+	if lt.String() != "unknown" {
+		t.Errorf("nil inner String() = %q, want %q", lt.String(), "unknown")
+	}
+	if lt.KindString() != "unknown" {
+		t.Errorf("nil inner KindString() = %q, want %q", lt.KindString(), "unknown")
+	}
+	if lt.Validate(L, LNumber(42)) {
+		t.Error("nil inner Validate() should return false")
+	}
+
+	L.SetGlobal("NilType", lt)
+	err := L.DoString(`
+		local val, err = NilType:is(42)
+		assert(val == nil, "nil type should not validate")
+		assert(err ~= nil, "nil type should return error")
+	`)
+	if err != nil {
+		t.Fatalf("nil inner Type:is failed: %v", err)
+	}
+}
+
 func TestLTypeValidation(t *testing.T) {
 	L := NewState()
 	defer L.Close()
@@ -670,6 +696,39 @@ func TestLTypeVMCall(t *testing.T) {
 	}
 }
 
+func TestLTypeVMCall_ArityAndMixedArgs(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	pointType := &LType{
+		inner: typ.NewRecord().
+			Field("x", typ.Number).
+			Field("y", typ.Number).
+			Build(),
+		name: "Point",
+	}
+	L.SetGlobal("Point", pointType)
+	L.SetGlobal("Number", LTypeNumber)
+
+	// Mixed type/value args should error.
+	err := L.DoString(`local _ = Point(Number, {x = 1, y = 2})`)
+	if err == nil {
+		t.Error("mixed type/value args should have failed")
+	}
+
+	// Multiple value args should error.
+	err = L.DoString(`local _ = Point({x = 1, y = 2}, {x = 3, y = 4})`)
+	if err == nil {
+		t.Error("multiple value args should have failed")
+	}
+
+	// Non-generic type with type args should error.
+	err = L.DoString(`local _ = Point(Number)`)
+	if err == nil {
+		t.Error("non-generic type with type args should have failed")
+	}
+}
+
 func TestLTypeVMFieldAccess(t *testing.T) {
 	L := NewState()
 	defer L.Close()
@@ -715,6 +774,35 @@ func TestLTypeVMFieldAccess(t *testing.T) {
 	`)
 	if err != nil {
 		t.Errorf(":is() method failed: %v", err)
+	}
+}
+
+func TestLTypeVMFieldAccess_MethodPrecedence(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	// Record field named "is" should not shadow the Type:is method.
+	pointType := &LType{
+		inner: typ.NewRecord().
+			Field("is", typ.Number).
+			Build(),
+		name: "Point",
+	}
+	L.SetGlobal("Point", pointType)
+
+	err := L.DoString(`
+		assert(type(Point.is) == "function", "Point.is should resolve to method")
+		local val, err = Point:is({is = 1})
+		assert(val ~= nil, "Point:is should succeed even with field named is")
+		assert(err == nil, "Point:is should return nil error on success")
+
+		local iter = Point:fields()
+		local name, t = iter()
+		assert(name == "is", "Point:fields should expose field name")
+		assert(t:kind() == "number", "Point:fields should expose field type")
+	`)
+	if err != nil {
+		t.Fatalf("method precedence failed: %v", err)
 	}
 }
 

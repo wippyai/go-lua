@@ -848,6 +848,8 @@ func TestParseInvalidSyntax(t *testing.T) {
 		{"interface end", "interface without name"},
 		{"local x: ->", "arrow without params"},
 		{"local x: {: number}", "record without field name"},
+		{"local x: number |", "dangling union in type annotation"},
+		{"local x: number &", "dangling intersection in type annotation"},
 	}
 
 	for _, tt := range tests {

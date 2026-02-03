@@ -1052,7 +1052,7 @@ func TestSingleMemberIntersection(t *testing.T) {
 
 func TestDeeplyNestedRecordSubtype(t *testing.T) {
 	// Create deeply nested record type
-	var inner typ.Type = typ.Number
+	inner := typ.Number
 	for i := 0; i < 50; i++ {
 		inner = typ.NewRecord().Field("nested", inner).Build()
 	}
@@ -1065,7 +1065,7 @@ func TestDeeplyNestedRecordSubtype(t *testing.T) {
 
 func TestDeeplyNestedOptional(t *testing.T) {
 	// Create deeply nested optional
-	var inner typ.Type = typ.String
+	inner := typ.String
 	for i := 0; i < 20; i++ {
 		inner = typ.NewOptional(inner)
 	}
@@ -1900,7 +1900,7 @@ func TestInstantiatedCrossKind(t *testing.T) {
 
 func TestDeepRecursionDepthLimit(t *testing.T) {
 	// Create extremely deep nesting to test depth limit
-	var inner typ.Type = typ.Number
+	inner := typ.Number
 	for i := 0; i < 200; i++ {
 		inner = typ.NewOptional(inner)
 	}

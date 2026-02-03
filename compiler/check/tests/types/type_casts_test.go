@@ -228,8 +228,9 @@ func TestTypeIsMethod(t *testing.T) {
 				type Point = {x: number, y: number}
 				local v: any = {x = 1, y = 2}
 				local p, err = Point:is(v)
-				if p then
-					local sum = p.x + p.y
+				if err == nil then
+					local q: {x: number, y: number} = v
+					local sum = q.x + q.y
 				end
 			`,
 			WantError: false,
@@ -241,11 +242,9 @@ func TestTypeIsMethod(t *testing.T) {
 				type Point = {x: number, y: number}
 				local v: any = "not a point"
 				local p, err = Point:is(v)
-				if err then
-					return nil, err
-				end
-				if p then
-					local sum = p.x + p.y
+				if err == nil then
+					local q: {x: number, y: number} = p
+					local sum = q.x + q.y
 				end
 			`,
 			WantError: false,

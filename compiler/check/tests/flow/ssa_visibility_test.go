@@ -378,8 +378,7 @@ func TestSSAVisibility_EnrichmentOnlyAtVisiblePoints(t *testing.T) {
 			path := constraint.Path{Root: "y", Symbol: sym}
 			yType := solution.TypeAt(p, path)
 			if yType != nil && yType.Kind() != kind.Unknown && yType.Kind() != kind.Any {
-				// y was assigned from x before x had a type, so y should be unknown
-				// This is acceptable - the test verifies the basic flow works
+				t.Fatalf("expected y to be unknown or any, got %v", yType)
 			}
 			break
 		}

@@ -16,11 +16,16 @@ import (
 type LType struct {
 	inner typ.Type
 	name  string // optional name for named types
+	// resolver provides local type resolution for refs within manifest-defined types.
+	resolver *typeResolver
 }
 
 func (lt *LType) String() string {
 	if lt.name != "" {
 		return lt.name
+	}
+	if lt.inner == nil {
+		return "unknown"
 	}
 	return lt.inner.String()
 }
@@ -57,6 +62,9 @@ var (
 
 // KindString returns a string representation of the type's kind.
 func (lt *LType) KindString() string {
+	if lt.inner == nil {
+		return "unknown"
+	}
 	switch lt.inner.Kind() {
 	case kind.Nil:
 		return "nil"
@@ -102,11 +110,49 @@ func (lt *LType) KindString() string {
 // Validate checks if a value matches this type.
 // Returns true if valid, false otherwise.
 func (lt *LType) Validate(L *LState, val LValue) bool {
-	return validateValue(val, lt.inner)
+	return validateValue(val, lt.inner, lt.resolver)
+}
+
+func resolveRuntimeType(t typ.Type, resolver *typeResolver, depth int) typ.Type {
+	if t == nil {
+		return nil
+	}
+	for t != nil && depth < 32 {
+		switch tt := t.(type) {
+		case *typ.Alias:
+			if tt.Target == nil {
+				return t
+			}
+			t = tt.Target
+		case *typ.Ref:
+			if resolver == nil {
+				return t
+			}
+			if tt.Module != "" && tt.Module != resolver.path {
+				return t
+			}
+			if target, ok := resolver.types[tt.Name]; ok && target != nil {
+				t = target
+			} else {
+				return t
+			}
+		default:
+			return t
+		}
+		depth++
+	}
+	return t
 }
 
 // validateValue recursively checks if a Lua value matches a type.
-func validateValue(val LValue, t typ.Type) bool {
+func validateValue(val LValue, t typ.Type, resolver *typeResolver) bool {
+	if t == nil {
+		return false
+	}
+	t = resolveRuntimeType(t, resolver, 0)
+	if t == nil {
+		return false
+	}
 	// Handle primitives by Kind (they're value types, not pointers)
 	switch t.Kind() {
 	case kind.Nil:
@@ -154,11 +200,11 @@ func validateValue(val LValue, t typ.Type) bool {
 		if val == LNil {
 			return true
 		}
-		return validateValue(val, tt.Inner)
+		return validateValue(val, tt.Inner, resolver)
 
 	case *typ.Union:
 		for _, ut := range tt.Members {
-			if validateValue(val, ut) {
+			if validateValue(val, ut, resolver) {
 				return true
 			}
 		}
@@ -171,7 +217,7 @@ func validateValue(val LValue, t typ.Type) bool {
 		}
 		// Check array part
 		for _, v := range tbl.Array {
-			if v != LNil && !validateValue(v, tt.Element) {
+			if v != LNil && !validateValue(v, tt.Element, resolver) {
 				return false
 			}
 		}
@@ -184,17 +230,17 @@ func validateValue(val LValue, t typ.Type) bool {
 		}
 		// Check dict part
 		for k, v := range tbl.Dict {
-			if !validateValue(k, tt.Key) {
+			if !validateValue(k, tt.Key, resolver) {
 				return false
 			}
-			if !validateValue(v, tt.Value) {
+			if !validateValue(v, tt.Value, resolver) {
 				return false
 			}
 		}
 		// Check strdict part
 		if tt.Key.Kind() == kind.String {
 			for _, v := range tbl.Strdict {
-				if !validateValue(v, tt.Value) {
+				if !validateValue(v, tt.Value, resolver) {
 					return false
 				}
 			}
@@ -214,7 +260,7 @@ func validateValue(val LValue, t typ.Type) bool {
 			if fieldVal == nil {
 				fieldVal = LNil
 			}
-			if !validateValue(fieldVal, field.Type) {
+			if !validateValue(fieldVal, field.Type, resolver) {
 				return false
 			}
 		}
@@ -240,7 +286,7 @@ func validateValue(val LValue, t typ.Type) bool {
 			} else {
 				elemVal = LNil
 			}
-			if !validateValue(elemVal, elemType) {
+			if !validateValue(elemVal, elemType, resolver) {
 				return false
 			}
 		}
@@ -278,7 +324,7 @@ func validateValue(val LValue, t typ.Type) bool {
 		// Expand and validate
 		expanded := typ.Instantiate(tt.Generic, tt.TypeArgs...)
 		if expanded != nil {
-			return validateValue(val, expanded)
+			return validateValue(val, expanded, resolver)
 		}
 		return false
 	}
@@ -286,11 +332,15 @@ func validateValue(val LValue, t typ.Type) bool {
 	return false
 }
 
-// validateWithError recursively checks if a Lua value matches a type and returns an error message on failure.
-// The path parameter tracks the location in nested structures for error messages.
-func validateWithError(val LValue, t typ.Type, path string) (bool, string) {
+func validateWithErrorResolver(val LValue, t typ.Type, resolver *typeResolver, path string) (bool, string) {
+	if t == nil {
+		return false, formatValidationError(path, "unknown", luaTypeName(val))
+	}
+	t = resolveRuntimeType(t, resolver, 0)
+	if t == nil {
+		return false, formatValidationError(path, "unknown", luaTypeName(val))
+	}
 	typeName := t.String()
-
 	switch t.Kind() {
 	case kind.Nil:
 		if val == LNil {
@@ -338,11 +388,11 @@ func validateWithError(val LValue, t typ.Type, path string) (bool, string) {
 		if val == LNil {
 			return true, ""
 		}
-		return validateWithError(val, tt.Inner, path)
+		return validateWithErrorResolver(val, tt.Inner, resolver, path)
 
 	case *typ.Union:
 		for _, ut := range tt.Members {
-			if ok, _ := validateWithError(val, ut, path); ok {
+			if ok, _ := validateWithErrorResolver(val, ut, resolver, path); ok {
 				return true, ""
 			}
 		}
@@ -356,7 +406,7 @@ func validateWithError(val LValue, t typ.Type, path string) (bool, string) {
 		for i, v := range tbl.Array {
 			if v != LNil {
 				elemPath := formatPath(path, i+1)
-				if ok, err := validateWithError(v, tt.Element, elemPath); !ok {
+				if ok, err := validateWithErrorResolver(v, tt.Element, resolver, elemPath); !ok {
 					return false, err
 				}
 			}
@@ -369,18 +419,18 @@ func validateWithError(val LValue, t typ.Type, path string) (bool, string) {
 			return false, formatValidationError(path, "table", luaTypeName(val))
 		}
 		for k, v := range tbl.Dict {
-			if ok, _ := validateWithError(k, tt.Key, path+"[key]"); !ok {
+			if ok, _ := validateWithErrorResolver(k, tt.Key, resolver, path+"[key]"); !ok {
 				return false, formatValidationError(path+"[key]", tt.Key.String(), luaTypeName(k))
 			}
 			keyPath := formatPath(path, k)
-			if ok, err := validateWithError(v, tt.Value, keyPath); !ok {
+			if ok, err := validateWithErrorResolver(v, tt.Value, resolver, keyPath); !ok {
 				return false, err
 			}
 		}
 		if tt.Key.Kind() == kind.String {
 			for k, v := range tbl.Strdict {
 				keyPath := path + "." + k
-				if ok, err := validateWithError(v, tt.Value, keyPath); !ok {
+				if ok, err := validateWithErrorResolver(v, tt.Value, resolver, keyPath); !ok {
 					return false, err
 				}
 			}
@@ -404,7 +454,7 @@ func validateWithError(val LValue, t typ.Type, path string) (bool, string) {
 			if path == "" {
 				fieldPath = field.Name
 			}
-			if ok, err := validateWithError(fieldVal, field.Type, fieldPath); !ok {
+			if ok, err := validateWithErrorResolver(fieldVal, field.Type, resolver, fieldPath); !ok {
 				return false, err
 			}
 		}
@@ -430,7 +480,7 @@ func validateWithError(val LValue, t typ.Type, path string) (bool, string) {
 				elemVal = LNil
 			}
 			elemPath := formatPath(path, i+1)
-			if ok, err := validateWithError(elemVal, elemType, elemPath); !ok {
+			if ok, err := validateWithErrorResolver(elemVal, elemType, resolver, elemPath); !ok {
 				return false, err
 			}
 		}
@@ -463,7 +513,7 @@ func validateWithError(val LValue, t typ.Type, path string) (bool, string) {
 	case *typ.Instantiated:
 		expanded := typ.Instantiate(tt.Generic, tt.TypeArgs...)
 		if expanded != nil {
-			return validateWithError(val, expanded, path)
+			return validateWithErrorResolver(val, expanded, resolver, path)
 		}
 		return false, formatValidationError(path, typeName, luaTypeName(val))
 	}
@@ -529,19 +579,8 @@ func luaTypeName(val LValue) string {
 
 // typeGetField handles field/method access on types.
 // This is called from the VM for OP_GETTABLE on LType values.
-// For Record, field access takes precedence over methods to allow
-// accessing field types via Point.x syntax as documented.
+// Methods take precedence to keep Type:is and related helpers reachable.
 func (ls *LState) typeGetField(lt *LType, key string) LValue {
-	// Record field access first: Point.x returns type of field x
-	// This takes precedence over methods for Record
-	if rec, ok := lt.inner.(*typ.Record); ok {
-		for _, f := range rec.Fields {
-			if f.Name == key {
-				return &LType{inner: f.Type}
-			}
-		}
-	}
-
 	// Methods
 	switch key {
 	case "is":
@@ -568,6 +607,15 @@ func (ls *LState) typeGetField(lt *LType, key string) LValue {
 		return ls.createTypeMethod(lt, typeMethodParams)
 	case "tparams":
 		return ls.createTypeMethod(lt, typeMethodTparams)
+	}
+
+	// Record field access: Point.x returns type of field x
+	if rec, ok := lt.inner.(*typ.Record); ok {
+		for _, f := range rec.Fields {
+			if f.Name == key {
+				return &LType{inner: f.Type}
+			}
+		}
 	}
 
 	// Primitive type library methods: string.upper, string.format, etc.
@@ -601,7 +649,7 @@ func typeMethodIs(L *LState, lt *LType) int {
 		idx = 2
 	}
 	val := L.Get(idx)
-	if ok, errMsg := validateWithError(val, lt.inner, ""); ok {
+	if ok, errMsg := validateWithErrorResolver(val, lt.inner, lt.resolver, ""); ok {
 		// Success: return (value, nil)
 		L.Push(val)
 		L.Push(LNil)
@@ -785,16 +833,17 @@ func (ls *LState) typeCall(lt *LType, base, nargs, nret int) {
 		return
 	}
 
-	// Check if all arguments are types -> generic instantiation
-	allTypes := true
+	// Count type arguments to distinguish generic instantiation vs validation.
+	typeArgCount := 0
 	for i := 1; i <= nargs; i++ {
 		if _, ok := ls.reg.Get(base + i).(*LType); !ok {
-			allTypes = false
-			break
+			continue
 		}
+		typeArgCount++
 	}
 
-	if allTypes {
+	switch typeArgCount {
+	case nargs:
 		// Generic instantiation
 		gen, ok := lt.inner.(*typ.Generic)
 		if !ok {
@@ -824,7 +873,11 @@ func (ls *LState) typeCall(lt *LType, base, nargs, nret int) {
 				}
 			}
 		}
-	} else {
+	case 0:
+		if nargs != 1 {
+			ls.RaiseError("type %s validation expects 1 value, got %d", lt.String(), nargs)
+			return
+		}
 		// Validation
 		val := ls.reg.Get(base + 1)
 		if !lt.Validate(ls, val) {
@@ -840,6 +893,9 @@ func (ls *LState) typeCall(lt *LType, base, nargs, nret int) {
 				}
 			}
 		}
+	default:
+		ls.RaiseError("type %s does not accept mixed type/value arguments", lt.String())
+		return
 	}
 }
 

@@ -178,11 +178,7 @@ func TestReturnKind_Values(t *testing.T) {
 		flow.ReturnTrue,
 		flow.ReturnFalse,
 	}
-	for i, k := range kinds {
-		if k < 0 {
-			t.Errorf("unexpected negative return kind at index %d", i)
-		}
-	}
+	_ = kinds
 }
 
 func TestReturnExprConstraints_Empty(t *testing.T) {

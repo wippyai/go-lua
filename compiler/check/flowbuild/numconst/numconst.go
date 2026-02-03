@@ -84,13 +84,13 @@ func NegateNumericConstraint(c constraint.NumericConstraint) constraint.NumericC
 	}
 	switch v := c.(type) {
 	case constraint.Lt:
-		return constraint.Ge{X: v.X, Y: v.Y}
+		return constraint.Ge(v)
 	case constraint.Gt:
 		return constraint.Le{X: v.X, Y: v.Y, C: 0}
 	case constraint.Le:
 		return constraint.Gt{X: v.X, Y: v.Y}
 	case constraint.Ge:
-		return constraint.Lt{X: v.X, Y: v.Y}
+		return constraint.Lt(v)
 	case constraint.LeConst:
 		return constraint.GeConst{X: v.X, C: v.C + 1}
 	case constraint.GeConst:

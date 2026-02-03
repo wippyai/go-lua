@@ -233,7 +233,7 @@ type Inputs struct {
 
 	// PredicateLinks tracks variables assigned from predicate calls.
 	// Key is "varname@defpoint", value contains constraints to apply when var is truthy/falsy.
-	// Example: local ok = Point:is(data) -> ok truthy implies HasType{data, Point}
+	// Example: local _, err = Point:is(data) -> err nil implies HasType{data, Point}
 	PredicateLinks map[string]PredicateLink
 
 	// SiblingAssignments tracks variables assigned from the same multi-return call.

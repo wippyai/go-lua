@@ -3,6 +3,7 @@ package lua
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
 const VarArgIsVarArg uint8 = 2
@@ -41,6 +42,10 @@ type FunctionProto struct {
 	TypeInfo []byte
 
 	stringConstants []string
+
+	typeInfoOnce       sync.Once
+	typeBindings       []typeBinding
+	typeBindingsByName map[string]*LType
 }
 
 /* Upvalue {{{ */

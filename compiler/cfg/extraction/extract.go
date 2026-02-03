@@ -63,9 +63,10 @@ func ExtractCondition(expr ast.Expr) (varName string, check basecfg.CondCheck) {
 
 		if lhs := PathFromExpr(e.Lhs); lhs != "" {
 			if _, ok := e.Rhs.(*ast.NilExpr); ok {
-				if e.Operator == "==" {
+				switch e.Operator {
+				case "==":
 					return lhs, basecfg.CondCheck{Kind: basecfg.CheckNil}
-				} else if e.Operator == "~=" {
+				case "~=":
 					return lhs, basecfg.CondCheck{Kind: basecfg.CheckNotNil}
 				}
 			}
@@ -73,9 +74,10 @@ func ExtractCondition(expr ast.Expr) (varName string, check basecfg.CondCheck) {
 
 		if _, ok := e.Lhs.(*ast.NilExpr); ok {
 			if rhs := PathFromExpr(e.Rhs); rhs != "" {
-				if e.Operator == "==" {
+				switch e.Operator {
+				case "==":
 					return rhs, basecfg.CondCheck{Kind: basecfg.CheckNil}
-				} else if e.Operator == "~=" {
+				case "~=":
 					return rhs, basecfg.CondCheck{Kind: basecfg.CheckNotNil}
 				}
 			}
