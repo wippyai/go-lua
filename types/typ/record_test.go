@@ -33,6 +33,20 @@ func TestRecordWithFields(t *testing.T) {
 	}
 }
 
+func TestRecordNilFieldDefaultsToUnknown(t *testing.T) {
+	r := NewRecord().
+		Field("x", nil).
+		Build()
+
+	f := r.GetField("x")
+	if f == nil {
+		t.Fatal("expected field x")
+	}
+	if f.Type != Unknown {
+		t.Errorf("Field type: got %v, want Unknown", f.Type)
+	}
+}
+
 func TestRecordFieldsSorted(t *testing.T) {
 	r := NewRecord().
 		Field("z", Number).
