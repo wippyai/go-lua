@@ -259,60 +259,6 @@ func TestResolveRef_ResolvedRef(t *testing.T) {
 	}
 }
 
-func TestFunctionHasAnnotations_NoAnnotations(t *testing.T) {
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{
-			Names: []string{"a", "b"},
-		},
-	}
-	if tblutil.FunctionHasAnnotations(fn) {
-		t.Error("expected false for function without annotations")
-	}
-}
-
-func TestFunctionHasAnnotations_WithReturnTypes(t *testing.T) {
-	fn := &ast.FunctionExpr{
-		ReturnTypes: []ast.TypeExpr{
-			&ast.PrimitiveTypeExpr{Name: "number"},
-		},
-	}
-	if !tblutil.FunctionHasAnnotations(fn) {
-		t.Error("expected true for function with return types")
-	}
-}
-
-func TestFunctionHasAnnotations_WithParamTypes(t *testing.T) {
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{
-			Names: []string{"a"},
-			Types: []ast.TypeExpr{
-				&ast.PrimitiveTypeExpr{Name: "string"},
-			},
-		},
-	}
-	if !tblutil.FunctionHasAnnotations(fn) {
-		t.Error("expected true for function with param types")
-	}
-}
-
-func TestFunctionHasAnnotations_WithVarargType(t *testing.T) {
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{
-			HasVargs:   true,
-			VarargType: &ast.PrimitiveTypeExpr{Name: "string"},
-		},
-	}
-	if !tblutil.FunctionHasAnnotations(fn) {
-		t.Error("expected true for function with vararg type")
-	}
-}
-
-func TestFunctionHasAnnotations_NilFn(t *testing.T) {
-	if tblutil.FunctionHasAnnotations(nil) {
-		t.Error("expected false for nil function")
-	}
-}
-
 func TestMergeCallConstraintsIntoEdges_Empty(t *testing.T) {
 	inputs := &flow.Inputs{}
 	flowbuild.MergeCallConstraintsIntoEdges(inputs, nil)
@@ -535,41 +481,6 @@ func TestExtractTypeKeys_WithTypes(t *testing.T) {
 	decl.ExtractTypeKeys(&core.FlowContext{Base: sc}, inputs)
 	if len(inputs.TypeKeys) == 0 {
 		t.Error("expected type keys to be extracted")
-	}
-}
-
-func TestTableHasFunctionField_Empty(t *testing.T) {
-	tbl := &ast.TableExpr{}
-	if tblutil.TableHasFunctionField(tbl) {
-		t.Error("expected false for empty table")
-	}
-}
-
-func TestTableHasFunctionField_NoFunction(t *testing.T) {
-	tbl := &ast.TableExpr{
-		Fields: []*ast.Field{
-			{Key: &ast.StringExpr{Value: "a"}, Value: &ast.NumberExpr{Value: "1"}},
-		},
-	}
-	if tblutil.TableHasFunctionField(tbl) {
-		t.Error("expected false for table without function fields")
-	}
-}
-
-func TestTableHasFunctionField_WithFunction(t *testing.T) {
-	tbl := &ast.TableExpr{
-		Fields: []*ast.Field{
-			{Key: &ast.StringExpr{Value: "fn"}, Value: &ast.FunctionExpr{}},
-		},
-	}
-	if !tblutil.TableHasFunctionField(tbl) {
-		t.Error("expected true for table with function field")
-	}
-}
-
-func TestTableHasFunctionField_Nil(t *testing.T) {
-	if tblutil.TableHasFunctionField(nil) {
-		t.Error("expected false for nil table")
 	}
 }
 
