@@ -323,6 +323,38 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			}
 
+		case OP_LOADTYPE:
+			reg := L.reg
+			lbase := cf.LocalBase
+			A := int(inst>>18) & 0xff //GETA
+			RA := int(lbase) + A
+			Bx := int(inst & 0x3ffff) //GETBX
+			name := cf.Fn.Proto.stringConstants[Bx]
+			v := cf.Fn.Proto.runtimeTypeValueByName(name)
+			if v == nil {
+				L.RaiseError("unknown type %s", name)
+			}
+			// this section is inlined by go-inline
+			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
+			{
+				rg := reg
+				regi := RA
+				vali := v
+				newSize := regi + 1
+				// this section is inlined by go-inline
+				// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
+				{
+					requiredSize := newSize
+					if requiredSize > cap(rg.array) {
+						rg.resize(requiredSize)
+					}
+				}
+				rg.array[regi] = vali
+				if regi >= rg.top {
+					rg.top = regi + 1
+				}
+			}
+
 		case OP_GETTABLE:
 			reg := L.reg
 			lbase := cf.LocalBase

@@ -26,18 +26,33 @@ func (fp *FunctionProto) runtimeTypeBindings() []typeBinding {
 		}
 		resolver := &typeResolver{path: manifest.Path, types: manifest.Types}
 		bindings := make([]typeBinding, 0, len(manifest.Types))
+		bindingsByName := make(map[string]*LType, len(manifest.Types))
 		for name, t := range manifest.Types {
 			if name == "" || t == nil {
 				continue
 			}
-			bindings = append(bindings, typeBinding{
-				name:  name,
-				value: newRuntimeTypeValue(t, name, resolver),
-			})
+			lt := newRuntimeTypeValue(t, name, resolver)
+			bindings = append(bindings, typeBinding{name: name, value: lt})
+			bindingsByName[name] = lt
 		}
 		fp.typeBindings = bindings
+		fp.typeBindingsByName = bindingsByName
 	})
 	return fp.typeBindings
+}
+
+func (fp *FunctionProto) runtimeTypeValueByName(name string) *LType {
+	if name == "" {
+		return nil
+	}
+	if builtin := runtimeBuiltinTypeByName(name); builtin != nil {
+		return builtin
+	}
+	fp.runtimeTypeBindings()
+	if fp.typeBindingsByName == nil {
+		return nil
+	}
+	return fp.typeBindingsByName[name]
 }
 
 func safeDecodeManifest(data []byte) (manifest *typeio.Manifest) {
@@ -90,8 +105,53 @@ func (ls *LState) injectProtoTypes(proto *FunctionProto) {
 		if binding.name == "" {
 			continue
 		}
+		if isPrimitiveTypeName(binding.name) {
+			continue
+		}
 		if env.RawGetString(binding.name) == LNil {
 			env.RawSetString(binding.name, binding.value)
 		}
 	}
+}
+
+func runtimeBuiltinTypeByName(name string) *LType {
+	switch name {
+	case "nil":
+		return LTypeNil
+	case "boolean":
+		return LTypeBoolean
+	case "number":
+		return LTypeNumber
+	case "integer":
+		return LTypeInteger
+	case "string":
+		return LTypeString
+	case "any":
+		return LTypeAny
+	case "unknown":
+		return LTypeUnknown
+	case "never":
+		return LTypeNever
+	default:
+		return nil
+	}
+}
+
+func isPrimitiveTypeName(name string) bool {
+	return runtimeBuiltinTypeByName(name) != nil
+}
+
+var typeMethodNames = map[string]struct{}{
+	"is":       {},
+	"kind":     {},
+	"name":     {},
+	"elem":     {},
+	"key":      {},
+	"val":      {},
+	"inner":    {},
+	"ret":      {},
+	"fields":   {},
+	"variants": {},
+	"params":   {},
+	"tparams":  {},
 }

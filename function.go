@@ -43,8 +43,9 @@ type FunctionProto struct {
 
 	stringConstants []string
 
-	typeInfoOnce sync.Once
-	typeBindings []typeBinding
+	typeInfoOnce       sync.Once
+	typeBindings       []typeBinding
+	typeBindingsByName map[string]*LType
 }
 
 /* Upvalue {{{ */
