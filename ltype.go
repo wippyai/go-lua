@@ -24,6 +24,9 @@ func (lt *LType) String() string {
 	if lt.name != "" {
 		return lt.name
 	}
+	if lt.inner == nil {
+		return "unknown"
+	}
 	return lt.inner.String()
 }
 
@@ -59,6 +62,9 @@ var (
 
 // KindString returns a string representation of the type's kind.
 func (lt *LType) KindString() string {
+	if lt.inner == nil {
+		return "unknown"
+	}
 	switch lt.inner.Kind() {
 	case kind.Nil:
 		return "nil"
@@ -108,6 +114,9 @@ func (lt *LType) Validate(L *LState, val LValue) bool {
 }
 
 func resolveRuntimeType(t typ.Type, resolver *typeResolver, depth int) typ.Type {
+	if t == nil {
+		return nil
+	}
 	for t != nil && depth < 32 {
 		switch tt := t.(type) {
 		case *typ.Alias:
@@ -137,7 +146,13 @@ func resolveRuntimeType(t typ.Type, resolver *typeResolver, depth int) typ.Type 
 
 // validateValue recursively checks if a Lua value matches a type.
 func validateValue(val LValue, t typ.Type, resolver *typeResolver) bool {
+	if t == nil {
+		return false
+	}
 	t = resolveRuntimeType(t, resolver, 0)
+	if t == nil {
+		return false
+	}
 	// Handle primitives by Kind (they're value types, not pointers)
 	switch t.Kind() {
 	case kind.Nil:
@@ -324,9 +339,14 @@ func validateWithError(val LValue, t typ.Type, path string) (bool, string) {
 }
 
 func validateWithErrorResolver(val LValue, t typ.Type, resolver *typeResolver, path string) (bool, string) {
-	typeName := t.String()
-
+	if t == nil {
+		return false, formatValidationError(path, "unknown", luaTypeName(val))
+	}
 	t = resolveRuntimeType(t, resolver, 0)
+	if t == nil {
+		return false, formatValidationError(path, "unknown", luaTypeName(val))
+	}
+	typeName := t.String()
 	switch t.Kind() {
 	case kind.Nil:
 		if val == LNil {
@@ -565,19 +585,8 @@ func luaTypeName(val LValue) string {
 
 // typeGetField handles field/method access on types.
 // This is called from the VM for OP_GETTABLE on LType values.
-// For Record, field access takes precedence over methods to allow
-// accessing field types via Point.x syntax as documented.
+// Methods take precedence to keep Type:is and related helpers reachable.
 func (ls *LState) typeGetField(lt *LType, key string) LValue {
-	// Record field access first: Point.x returns type of field x
-	// This takes precedence over methods for Record
-	if rec, ok := lt.inner.(*typ.Record); ok {
-		for _, f := range rec.Fields {
-			if f.Name == key {
-				return &LType{inner: f.Type}
-			}
-		}
-	}
-
 	// Methods
 	switch key {
 	case "is":
@@ -604,6 +613,15 @@ func (ls *LState) typeGetField(lt *LType, key string) LValue {
 		return ls.createTypeMethod(lt, typeMethodParams)
 	case "tparams":
 		return ls.createTypeMethod(lt, typeMethodTparams)
+	}
+
+	// Record field access: Point.x returns type of field x
+	if rec, ok := lt.inner.(*typ.Record); ok {
+		for _, f := range rec.Fields {
+			if f.Name == key {
+				return &LType{inner: f.Type}
+			}
+		}
 	}
 
 	// Primitive type library methods: string.upper, string.format, etc.
@@ -821,16 +839,17 @@ func (ls *LState) typeCall(lt *LType, base, nargs, nret int) {
 		return
 	}
 
-	// Check if all arguments are types -> generic instantiation
-	allTypes := true
+	// Count type arguments to distinguish generic instantiation vs validation.
+	typeArgCount := 0
 	for i := 1; i <= nargs; i++ {
 		if _, ok := ls.reg.Get(base + i).(*LType); !ok {
-			allTypes = false
-			break
+			continue
 		}
+		typeArgCount++
 	}
 
-	if allTypes {
+	switch {
+	case typeArgCount == nargs:
 		// Generic instantiation
 		gen, ok := lt.inner.(*typ.Generic)
 		if !ok {
@@ -860,7 +879,11 @@ func (ls *LState) typeCall(lt *LType, base, nargs, nret int) {
 				}
 			}
 		}
-	} else {
+	case typeArgCount == 0:
+		if nargs != 1 {
+			ls.RaiseError("type %s validation expects 1 value, got %d", lt.String(), nargs)
+			return
+		}
 		// Validation
 		val := ls.reg.Get(base + 1)
 		if !lt.Validate(ls, val) {
@@ -876,6 +899,9 @@ func (ls *LState) typeCall(lt *LType, base, nargs, nret int) {
 				}
 			}
 		}
+	default:
+		ls.RaiseError("type %s does not accept mixed type/value arguments", lt.String())
+		return
 	}
 }
 
