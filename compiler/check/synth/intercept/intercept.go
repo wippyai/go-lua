@@ -22,10 +22,10 @@ package intercept
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // Result contains the outcome of attempting to intercept a function call.
@@ -91,7 +91,7 @@ func calleeHasEffect(ex *ast.FuncCallExpr, ctx CallEnv, check func(effect.Row) b
 	}
 	if ident, ok := ex.Func.(*ast.IdentExpr); ok && ctx.TypeLookup != nil {
 		if t := ctx.TypeLookup(ident.Value); t != nil {
-			if hasEffectInType(t, check) {
+			if effects.HasEffectInType(t, check) {
 				return true
 			}
 		}
@@ -111,34 +111,7 @@ func calleeHasEffect(ex *ast.FuncCallExpr, ctx CallEnv, check func(effect.Row) b
 	}
 	if ctx.Recurse != nil && ex.Func != nil {
 		if t := ctx.Recurse(ex.Func); t != nil {
-			if hasEffectInType(t, check) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func hasEffectInType(t typ.Type, check func(effect.Row) bool) bool {
-	if t == nil {
-		return false
-	}
-	switch v := unwrap.Alias(t).(type) {
-	case *typ.Function:
-		if row, ok := v.Effects.(effect.Row); ok {
-			return check(row)
-		}
-	case *typ.Optional:
-		return hasEffectInType(v.Inner, check)
-	case *typ.Union:
-		for _, m := range v.Members {
-			if hasEffectInType(m, check) {
-				return true
-			}
-		}
-	case *typ.Intersection:
-		for _, m := range v.Members {
-			if hasEffectInType(m, check) {
+			if effects.HasEffectInType(t, check) {
 				return true
 			}
 		}

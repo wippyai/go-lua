@@ -43,6 +43,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/literal"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/numconst"
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -56,9 +57,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
-	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // BranchConditions holds predicate conditions for true and false branches.
@@ -563,52 +562,10 @@ func (ce *ConditionExtractor) calleeHasEffect(call *ast.FuncCallExpr, want func(
 	// Fall back to extracting effect from synthesized type.
 	if ce.Synth != nil {
 		if t := ce.Synth(call.Func, ce.P); t != nil {
-			if row, ok := effectRowFromType(t); ok {
-				return want(row)
-			}
+			return effects.HasEffectInType(t, want)
 		}
 	}
 	return false
-}
-
-func effectRowFromType(t typ.Type) (effect.Row, bool) {
-	if t == nil {
-		return effect.Row{}, false
-	}
-	switch v := unwrap.Alias(t).(type) {
-	case *typ.Function:
-		row, ok := v.Effects.(effect.Row)
-		return row, ok
-	case *typ.Optional:
-		return effectRowFromType(v.Inner)
-	case *typ.Union:
-		var merged effect.Row
-		for _, m := range v.Members {
-			if row, ok := effectRowFromType(m); ok {
-				merged = merged.With(row.Labels...)
-			}
-		}
-		if len(merged.Labels) > 0 {
-			return merged, true
-		}
-		return effect.Row{}, false
-	case *typ.Intersection:
-		var merged effect.Row
-		for _, m := range v.Members {
-			if row, ok := effectRowFromType(m); ok {
-				merged = merged.With(row.Labels...)
-			}
-		}
-		if len(merged.Labels) > 0 {
-			return merged, true
-		}
-		return effect.Row{}, false
-	case *typ.Instantiated:
-		if resolved, err := core.ResolveInstantiated(v); err == nil {
-			return effectRowFromType(resolved)
-		}
-	}
-	return effect.Row{}, false
 }
 
 // conditionFromInequality handles ~= comparisons.
