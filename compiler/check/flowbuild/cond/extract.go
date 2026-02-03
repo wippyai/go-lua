@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/numconst"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -26,11 +27,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/sibling"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // ExtractEdgeConstraints extracts type constraints from branch conditions.
@@ -324,7 +323,7 @@ func ExtractCallOnReturnConstraints(
 		sc := fc.Scopes[p]
 		constResolver := predicate.BuildConstResolver(inputs, p)
 
-		if terminates := CallTerminates(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.Graph); terminates {
+		if terminates := effects.CallTerminates(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.Graph); terminates {
 			for _, succ := range fc.Graph.Successors(p) {
 				preds := fc.Graph.Predecessors(succ)
 				if len(preds) != 1 {
@@ -405,7 +404,7 @@ func ConstraintsFromCallOnReturn(
 		}
 	}
 
-	eff := ExtractFunctionEffect(info, p, synthFn, effectLookupSym, symResolver, graph)
+	eff := effects.ResolveCallEffect(info, p, synthFn, symResolver, effectLookupSym, graph)
 	if eff == nil || !eff.OnReturn.HasConstraints() {
 		return constraint.Condition{}
 	}
@@ -566,65 +565,6 @@ func normalizePathConstraint(c constraint.Constraint) constraint.Constraint {
 	return c
 }
 
-// ExtractFunctionEffect extracts the function effect from a call using symbol-based lookup.
-// All functions in CFG have symbols, so this is the canonical effect resolution path.
-func ExtractFunctionEffect(
-	info *cfg.CallInfo,
-	p cfg.Point,
-	synthFn func(ast.Expr, cfg.Point) typ.Type,
-	effectLookupSym constraint.EffectLookupBySym,
-	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	graph *cfg.Graph,
-) *constraint.FunctionEffect {
-	// Primary lookup: by symbol (all functions have symbols)
-	if effectLookupSym != nil && info.CalleeSymbol != 0 {
-		if eff := effectLookupSym(info.CalleeSymbol); eff != nil {
-			return eff
-		}
-	}
-	// Direct alias resolution (local f = B; f()).
-	if effectLookupSym != nil && info.CalleeSymbol != 0 && graph != nil {
-		if aliasSym := graph.DirectAliasSymbol(info.CalleeSymbol); aliasSym != 0 {
-			if eff := effectLookupSym(aliasSym); eff != nil {
-				return eff
-			}
-		}
-	}
-
-	// Fallback: extract effect from synthesized type
-	if synthFn != nil && info.Callee != nil {
-		if fnType := synthFn(info.Callee, p); fnType != nil {
-			if eff := ExtractEffectFromType(fnType); eff != nil {
-				return eff
-			}
-		}
-	}
-
-	// Fallback: extract effect from resolved type
-	if info.CalleeSymbol != 0 && symResolver != nil {
-		if looked, ok := symResolver(p, info.CalleeSymbol); ok {
-			if eff := ExtractEffectFromType(looked); eff != nil {
-				return eff
-			}
-		}
-	}
-
-	return nil
-}
-
-func ExtractEffectFromType(t typ.Type) *constraint.FunctionEffect {
-	if t == nil {
-		return nil
-	}
-	unwrapped := unwrap.Alias(t)
-	if fn, ok := unwrapped.(*typ.Function); ok && fn != nil && fn.Refinement != nil {
-		if e, ok := fn.Refinement.(*constraint.FunctionEffect); ok {
-			return e
-		}
-	}
-	return nil
-}
-
 func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.FunctionExpr {
 	if callee == nil {
 		return nil
@@ -757,68 +697,6 @@ func ResolveExprToTableLiteral(expr ast.Expr, graph *cfg.Graph) *ast.TableExpr {
 	return tableLit
 }
 
-// CallTerminates checks if a call is to a function that never returns.
-// Uses symbol-based effect lookup - all functions have symbols.
-func CallTerminates(
-	info *cfg.CallInfo,
-	p cfg.Point,
-	synthFn func(ast.Expr, cfg.Point) typ.Type,
-	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	effectLookupSym constraint.EffectLookupBySym,
-	graph *cfg.Graph,
-) bool {
-	if info == nil {
-		return false
-	}
-
-	// Primary check: symbol-based effect lookup
-	if effectLookupSym != nil && info.CalleeSymbol != 0 {
-		if eff := effectLookupSym(info.CalleeSymbol); eff != nil && eff.Terminates {
-			return true
-		}
-	}
-	// Direct alias resolution (local f = B; f()).
-	if effectLookupSym != nil && info.CalleeSymbol != 0 && graph != nil {
-		if aliasSym := graph.DirectAliasSymbol(info.CalleeSymbol); aliasSym != 0 {
-			if eff := effectLookupSym(aliasSym); eff != nil && eff.Terminates {
-				return true
-			}
-		}
-	}
-
-	// Check synthesized type for termination indicators
-	var fnType typ.Type
-	if synthFn != nil && info.Callee != nil {
-		fnType = synthFn(info.Callee, p)
-	}
-	if fnType == nil && symResolver != nil && info.CalleeSymbol != 0 {
-		if looked, ok := symResolver(p, info.CalleeSymbol); ok {
-			fnType = looked
-		}
-	}
-	if fn, ok := fnType.(*typ.Function); ok && fn != nil {
-		if len(fn.Returns) == 1 && fn.Returns[0] != nil && fn.Returns[0].Kind().IsNever() {
-			return true
-		}
-		if fn.Refinement != nil {
-			if eff, ok := fn.Refinement.(*constraint.FunctionEffect); ok && eff.Terminates {
-				return true
-			}
-		}
-		if fn.Effects != nil {
-			if row, ok := fn.Effects.(effect.Row); ok {
-				// Only Diverge marks definite non-return.
-				// Throw means MAY throw, not always throws.
-				if row.HasDiverge() {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
 // ConstraintsFromAssignOnReturn extracts OnReturn constraints from assignment RHS calls.
 func ConstraintsFromAssignOnReturn(
 	info *cfg.AssignInfo,
@@ -902,7 +780,7 @@ func ExtractPredicateLinkFromCallInfo(
 		return nil
 	}
 
-	eff := ExtractFunctionEffect(callInfo, p, synthFn, effectLookupSym, symResolver, graph)
+	eff := effects.ResolveCallEffect(callInfo, p, synthFn, symResolver, effectLookupSym, graph)
 	if eff == nil || !eff.HasPredicateSemantics() {
 		return nil
 	}
@@ -936,7 +814,7 @@ func ComputeDeadPoints(
 ) map[cfg.Point]bool {
 	dead := make(map[cfg.Point]bool)
 	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
-		if CallTerminates(info, p, synthFn, symResolver, effectLookupSym, graph) {
+		if effects.CallTerminates(info, p, synthFn, symResolver, effectLookupSym, graph) {
 			for _, succ := range graph.Successors(p) {
 				preds := graph.Predecessors(succ)
 				if len(preds) == 1 {

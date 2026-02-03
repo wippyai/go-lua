@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestGetBindings_NilInputs(t *testing.T) {
@@ -81,37 +80,6 @@ func TestExtractCallOnReturnConstraints_EmptyGraph(t *testing.T) {
 	}
 }
 
-func TestExtractEffectFromType_Nil(t *testing.T) {
-	result := cond.ExtractEffectFromType(nil)
-	if result != nil {
-		t.Error("expected nil for nil type")
-	}
-}
-
-func TestExtractEffectFromType_NonFunction(t *testing.T) {
-	result := cond.ExtractEffectFromType(typ.String)
-	if result != nil {
-		t.Error("expected nil for non-function type")
-	}
-}
-
-func TestExtractEffectFromType_FunctionWithoutRefinement(t *testing.T) {
-	fn := &typ.Function{}
-	result := cond.ExtractEffectFromType(fn)
-	if result != nil {
-		t.Error("expected nil for function without refinement")
-	}
-}
-
-func TestExtractEffectFromType_AliasedFunction(t *testing.T) {
-	fn := &typ.Function{}
-	alias := &typ.Alias{Name: "MyFunc", Target: fn}
-	result := cond.ExtractEffectFromType(alias)
-	if result != nil {
-		t.Error("expected nil for function without refinement")
-	}
-}
-
 func TestResolveCalleeToFunctionLiteral_NilCallee(t *testing.T) {
 	result := cond.ResolveCalleeToFunctionLiteral(nil, nil)
 	if result != nil {
@@ -156,26 +124,6 @@ func TestResolveExprToTableLiteral_IdentWithoutGraph(t *testing.T) {
 	result := cond.ResolveExprToTableLiteral(ident, nil)
 	if result != nil {
 		t.Error("expected nil without graph")
-	}
-}
-
-func TestCallTerminates_NilInfo(t *testing.T) {
-	result := cond.CallTerminates(nil, 0, nil, nil, nil, nil)
-	if result {
-		t.Error("expected false for nil info")
-	}
-}
-
-func TestCallTerminates_NormalFunction(t *testing.T) {
-	info := &cfg.CallInfo{
-		Callee: &ast.IdentExpr{Value: "print"},
-	}
-	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
-		return &typ.Function{}
-	}
-	result := cond.CallTerminates(info, 0, synth, nil, nil, nil)
-	if result {
-		t.Error("expected false for normal function")
 	}
 }
 
@@ -340,28 +288,6 @@ func TestFindBranchEdges_WithEdges(t *testing.T) {
 		if trueEdge == 0 && falseEdge == 0 && len(succs) >= 2 {
 			t.Error("expected at least one edge for if branch")
 		}
-	}
-}
-
-func TestExtractFunctionEffect_EmptyInfo(t *testing.T) {
-	info := &cfg.CallInfo{}
-	result := cond.ExtractFunctionEffect(info, 0, nil, nil, nil, nil)
-	if result != nil {
-		t.Error("expected nil for empty info")
-	}
-}
-
-func TestExtractFunctionEffect_WithCallee(t *testing.T) {
-	info := &cfg.CallInfo{
-		Callee: &ast.IdentExpr{Value: "fn"},
-	}
-	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
-		return &typ.Function{}
-	}
-	result := cond.ExtractFunctionEffect(info, 0, synth, nil, nil, nil)
-	// No refinement, so nil expected
-	if result != nil {
-		t.Error("expected nil for function without refinement")
 	}
 }
 

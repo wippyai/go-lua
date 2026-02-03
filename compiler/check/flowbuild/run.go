@@ -45,6 +45,7 @@ import (
 	"slices"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/constprop"
@@ -130,7 +131,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 		if fc.Derived == nil {
 			return
 		}
-		if !cond.CallTerminates(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.Graph) {
+		if !effects.CallTerminates(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.Graph) {
 			return
 		}
 		for _, succ := range fc.Graph.Successors(p) {

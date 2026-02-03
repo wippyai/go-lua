@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestExtractEdgeConstraints_NilGraph(t *testing.T) {
@@ -79,28 +78,6 @@ func TestConstraintsFromAssignOnReturn_NilInfo(t *testing.T) {
 	}
 }
 
-func TestExtractEffectFromType_NilType(t *testing.T) {
-	result := ExtractEffectFromType(nil)
-	if result != nil {
-		t.Error("nil type should return nil effect")
-	}
-}
-
-func TestExtractEffectFromType_NonFunction(t *testing.T) {
-	result := ExtractEffectFromType(typ.String)
-	if result != nil {
-		t.Error("non-function type should return nil effect")
-	}
-}
-
-func TestExtractEffectFromType_FunctionNoRefinement(t *testing.T) {
-	fn := typ.Func().Returns(typ.String).Build()
-	result := ExtractEffectFromType(fn)
-	if result != nil {
-		t.Error("function without refinement should return nil effect")
-	}
-}
-
 func TestResolveCalleeToFunctionLiteral_NilCallee(t *testing.T) {
 	result := ResolveCalleeToFunctionLiteral(nil, nil)
 	if result != nil {
@@ -142,13 +119,6 @@ func TestResolveExprToTableLiteral_NilGraph(t *testing.T) {
 	result := ResolveExprToTableLiteral(tbl, nil)
 	if result != nil {
 		t.Error("nil graph should return nil")
-	}
-}
-
-func TestCallTerminates_NilInfo(t *testing.T) {
-	result := CallTerminates(nil, 0, nil, nil, nil, nil)
-	if result {
-		t.Error("nil info should return false")
 	}
 }
 
