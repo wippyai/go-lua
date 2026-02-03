@@ -345,9 +345,6 @@ func TestEGraph_UnionWithUnknownPaths(t *testing.T) {
 	// Don't register, try to union
 	eg.Union(x.Key(), y.Key())
 
-	// Should not crash, paths should be auto-registered
-	if eg.AreEqual(x.Key(), y.Key()) {
-		// Implementation may or may not auto-register
-		// Just verify no crash
-	}
+	// Should not crash; implementation may or may not auto-register.
+	_ = eg.AreEqual(x.Key(), y.Key())
 }

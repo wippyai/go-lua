@@ -40,20 +40,20 @@ func (fp *FunctionProto) runtimeTypeBindings() []typeBinding {
 	return fp.typeBindings
 }
 
-func safeDecodeManifest(data []byte) *typeio.Manifest {
+func safeDecodeManifest(data []byte) (manifest *typeio.Manifest) {
 	if len(data) == 0 {
 		return nil
 	}
 	defer func() {
 		if recover() != nil {
-			// Ignore malformed or non-manifest TypeInfo blobs.
+			manifest = nil
 		}
 	}()
-	manifest, err := typeio.DecodeManifest(data)
+	decoded, err := typeio.DecodeManifest(data)
 	if err != nil {
 		return nil
 	}
-	return manifest
+	return decoded
 }
 
 func newRuntimeTypeValue(t typ.Type, name string, resolver *typeResolver) *LType {

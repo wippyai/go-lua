@@ -525,7 +525,7 @@ func BenchmarkThreadCreation(b *testing.B) {
 	defer L.Close()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		th := L.NewThreadWithContext(nil)
+		th := L.NewThreadWithContext(context.TODO())
 		_ = th
 	}
 }
@@ -542,7 +542,7 @@ func BenchmarkThreadCreationMinimal(b *testing.B) {
 	defer L.Close()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		th := L.NewThreadWithContext(nil)
+		th := L.NewThreadWithContext(context.TODO())
 		_ = th
 	}
 }
@@ -556,7 +556,7 @@ func BenchmarkThreadWithExecution(b *testing.B) {
 	fn := L.GetGlobal("worker").(*LFunction)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		th := L.NewThreadWithContext(nil)
+		th := L.NewThreadWithContext(context.TODO())
 		_, _, _ = L.Resume(th, fn)
 		th.Close()
 	}
@@ -1407,9 +1407,10 @@ func TestNewThreadWithContext(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	th1 := L.NewThreadWithContext(nil)
+	var nilCtx context.Context
+	th1 := L.NewThreadWithContext(nilCtx)
 	if th1 == nil {
-		t.Fatal("NewThreadWithContext(nil) should return a valid thread")
+		t.Fatal("NewThreadWithContext(context.TODO()) should return a valid thread")
 	}
 	if th1.ctx != nil {
 		t.Error("context should be nil when created with nil")
@@ -1434,7 +1435,7 @@ func TestNewThreadWithContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	fn := L.GetGlobal("test").(*LFunction)
-	status, err, results := L.Resume(th2, fn)
+	status, results, err := L.Resume(th2, fn)
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
 	}
@@ -1471,7 +1472,7 @@ func TestThreadMemorySize(t *testing.T) {
 	var m1 runtime.MemStats
 	runtime.ReadMemStats(&m1)
 	for i := 0; i < numCoroutines; i++ {
-		threads[i] = L.NewThreadWithContext(nil)
+		threads[i] = L.NewThreadWithContext(context.TODO())
 	}
 	runtime.GC()
 	var m2 runtime.MemStats
@@ -1505,7 +1506,7 @@ func TestMinimalThreadMemory(t *testing.T) {
 	var m1 runtime.MemStats
 	runtime.ReadMemStats(&m1)
 	for i := 0; i < numCoroutines; i++ {
-		threads[i] = L.NewThreadWithContext(nil)
+		threads[i] = L.NewThreadWithContext(context.TODO())
 	}
 	runtime.GC()
 	var m2 runtime.MemStats
@@ -1546,7 +1547,7 @@ func TestScaleThreads(t *testing.T) {
 	before := measureMemory()
 	threads := make([]*LState, targetThreads)
 	for i := 0; i < targetThreads; i++ {
-		threads[i] = L.NewThreadWithContext(nil)
+		threads[i] = L.NewThreadWithContext(context.TODO())
 	}
 	after := measureMemory()
 	totalMem := after - before

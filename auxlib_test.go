@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"context"
 	"os"
 	"testing"
 )
@@ -112,7 +113,7 @@ func TestCheckThread(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 	errorIfGFuncNotFail(t, L, func(L *LState) int {
-		th := L.NewThreadWithContext(nil)
+		th := L.NewThreadWithContext(context.TODO())
 		L.Push(th)
 		errorIfNotEqual(t, th, L.CheckThread(2))
 		L.Push(LNumber(10))

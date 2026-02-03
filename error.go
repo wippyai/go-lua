@@ -259,10 +259,11 @@ func extractErrorMetadata(err error, target *Error) {
 						case int64:
 							intVal = iv
 						}
-						if intVal == 1 {
+						switch intVal {
+						case 1:
 							b := true
 							target.retryable = &b
-						} else if intVal == 2 {
+						case 2:
 							b := false
 							target.retryable = &b
 						}

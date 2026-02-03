@@ -388,7 +388,6 @@ func (p *Processor) resolveSelfTypeForImplicitSelf(
 		baseSym, baseTbl, baseTblPoint := nested.FindFieldAssignmentBase(graph, fn, info.NF.Point)
 		if baseSym != 0 {
 			tblSym = baseSym
-			tbl = baseTbl
 			selfType = siblingTypes[baseSym]
 			// Use captured types from the parent scope (flow-derived).
 			if selfType == nil && len(capturedTypes) > 0 {

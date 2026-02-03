@@ -427,7 +427,7 @@ func buildDeclaredTypes(
 					if _, exists := out[target.Symbol]; exists {
 						continue
 					}
-					var varType typ.Type = typ.Unknown
+					varType := typ.Unknown
 					if i < len(varTypes) && varTypes[i] != nil {
 						varType = varTypes[i]
 					}
@@ -736,7 +736,7 @@ func BuildFunctionScope(fn *ast.FunctionExpr, parent *scope.State, resolve TypeR
 	}
 
 	if fn.ParList.HasVargs {
-		var variadicType typ.Type = typ.Any
+		variadicType := typ.Any
 		if resolve != nil && fn.ParList.VarargType != nil {
 			if t := resolve.ResolveType(fn.ParList.VarargType, s); t != nil {
 				variadicType = t

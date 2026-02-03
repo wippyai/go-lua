@@ -334,7 +334,7 @@ func TestRewrite_NoOpReturnsSamePointer(t *testing.T) {
 }
 
 func TestRewrite_DepthLimit(t *testing.T) {
-	var deep Type = Number
+	deep := Number
 	for i := 0; i < 100; i++ {
 		deep = NewOptional(deep)
 	}

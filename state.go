@@ -362,10 +362,7 @@ func (cs *autoGrowingCallFrameStack) Sp() int {
 func (cs *autoGrowingCallFrameStack) SetSp(sp int) {
 	desiredSegIdx := segIdx(sp / FramesPerSegment)
 	desiredFramesInLastSeg := uint8(sp % FramesPerSegment)
-	for {
-		if cs.segIdx <= desiredSegIdx {
-			break
-		}
+	for cs.segIdx > desiredSegIdx {
 		freeCallFrameStackSegment(cs.segments[cs.segIdx])
 		cs.segments[cs.segIdx] = nil
 		cs.segIdx--
@@ -896,11 +893,6 @@ func (ls *LState) initCallFrame(cf *callFrame) { // +inline-start
 					   namedparam1 <- lbase
 					   namedparam2
 			*/
-			nvarargs := int(nargs) - np
-			if nvarargs < 0 {
-				nvarargs = 0
-			}
-
 			ls.reg.SetTop(int(cf.LocalBase) + int(nargs) + np)
 			for i := 0; i < np; i++ {
 				//ls.reg.Set(cf.LocalBase+nargs+i, ls.reg.Get(cf.LocalBase+i))
@@ -994,11 +986,6 @@ func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline
 						   namedparam1 <- lbase
 						   namedparam2
 				*/
-				nvarargs := int(nargs) - np
-				if nvarargs < 0 {
-					nvarargs = 0
-				}
-
 				ls.reg.SetTop(int(cf.LocalBase) + int(nargs) + np)
 				for i := 0; i < np; i++ {
 					//ls.reg.Set(cf.LocalBase+nargs+i, ls.reg.Get(cf.LocalBase+i))
@@ -2000,7 +1987,7 @@ func (ls *LState) Status(th *LState) string {
 	return status
 }
 
-func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState, error, []LValue) {
+func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState, []LValue, error) {
 	isstarted := th.isStarted()
 	if !isstarted {
 		base := 0
@@ -2017,10 +2004,10 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 	}
 
 	if ls.G.CurrentThread == th {
-		return ResumeError, newApiErrorS(ApiErrorRun, "can not resume a running thread"), nil
+		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a running thread")
 	}
 	if th.Dead {
-		return ResumeError, newApiErrorS(ApiErrorRun, "can not resume a dead thread"), nil
+		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a dead thread")
 	}
 	th.Parent = ls
 	ls.G.CurrentThread = th
@@ -2043,7 +2030,7 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 	if th.ctx != nil {
 		select {
 		case <-th.ctx.Done():
-			return ResumeError, newApiErrorS(ApiErrorRun, th.ctx.Err().Error()), nil
+			return ResumeError, nil, newApiErrorS(ApiErrorRun, th.ctx.Err().Error())
 		default:
 		}
 	}
@@ -2061,11 +2048,11 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 	ls.SetTop(top)
 
 	if haserror {
-		return ResumeError, newApiError(ApiErrorRun, ret[0]), nil
+		return ResumeError, nil, newApiError(ApiErrorRun, ret[0])
 	} else if th.stack.IsEmpty() {
-		return ResumeOK, nil, ret
+		return ResumeOK, ret, nil
 	}
-	return ResumeYield, nil, ret
+	return ResumeYield, ret, nil
 }
 
 func (ls *LState) Yield(values ...LValue) int {
@@ -2078,7 +2065,7 @@ func (ls *LState) Yield(values ...LValue) int {
 
 // ResumeInto is like Resume but uses a pre-allocated buffer for return values.
 // This avoids allocations in the hot path.
-func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ...LValue) (ResumeState, error, []LValue) {
+func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ...LValue) (ResumeState, []LValue, error) {
 	isstarted := th.isStarted()
 	if !isstarted {
 		base := 0
@@ -2095,10 +2082,10 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 	}
 
 	if ls.G.CurrentThread == th {
-		return ResumeError, newApiErrorS(ApiErrorRun, "can not resume a running thread"), nil
+		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a running thread")
 	}
 	if th.Dead {
-		return ResumeError, newApiErrorS(ApiErrorRun, "can not resume a dead thread"), nil
+		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a dead thread")
 	}
 	th.Parent = ls
 	ls.G.CurrentThread = th
@@ -2121,7 +2108,7 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 	if th.ctx != nil {
 		select {
 		case <-th.ctx.Done():
-			return ResumeError, newApiErrorS(ApiErrorRun, th.ctx.Err().Error()), nil
+			return ResumeError, nil, newApiErrorS(ApiErrorRun, th.ctx.Err().Error())
 		default:
 		}
 	}
@@ -2147,11 +2134,11 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 	ls.SetTop(top)
 
 	if haserror {
-		return ResumeError, newApiError(ApiErrorRun, ret[0]), nil
+		return ResumeError, nil, newApiError(ApiErrorRun, ret[0])
 	} else if th.stack.IsEmpty() {
-		return ResumeOK, nil, ret
+		return ResumeOK, ret, nil
 	}
-	return ResumeYield, nil, ret
+	return ResumeYield, ret, nil
 }
 
 func (ls *LState) XMoveTo(other *LState, n int) {

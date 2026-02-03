@@ -82,7 +82,7 @@ func ResolveFieldAccess(
 		}
 	}
 
-	switch unwrapped.(type) {
+	switch unwrapped := unwrapped.(type) {
 	case *typ.Record, *typ.Interface, *typ.Union, *typ.Intersection, *typ.Optional:
 	case *typ.Map, *typ.Array, *typ.Tuple:
 	case *typ.TypeParam, *typ.Instantiated:
@@ -90,8 +90,7 @@ func ResolveFieldAccess(
 	case *typ.Function:
 		return FieldAccessResult{NotIndexable: true}
 	case *typ.Literal:
-		lit := unwrapped.(*typ.Literal)
-		if lit.Base == kind.String {
+		if unwrapped.Base == kind.String {
 			break
 		}
 		return FieldAccessResult{NotIndexable: true}

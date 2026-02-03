@@ -349,12 +349,13 @@ func TestService_ReferencesAt(t *testing.T) {
 				defCount := 0
 				readCount := 0
 				for _, ref := range refs {
-					if ref.Kind == RefDefinition {
+					switch ref.Kind {
+					case RefDefinition:
 						defCount++
 						if ref.Span.StartLine != 2 {
 							t.Errorf("expected definition at line 2, got %d", ref.Span.StartLine)
 						}
-					} else if ref.Kind == RefRead {
+					case RefRead:
 						readCount++
 					}
 				}

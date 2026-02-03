@@ -37,7 +37,7 @@ func TestChecker_WithPass(t *testing.T) {
 	}
 	c := NewChecker(db.New(), Deps{Types: core.NewEngine()}, WithPass(pass))
 	if c == nil {
-		t.Error("NewChecker with WithPass returned nil")
+		t.Fatal("NewChecker with WithPass returned nil")
 	}
 	if len(c.passes) != 1 {
 		t.Error("pass not registered")

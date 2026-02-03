@@ -369,7 +369,7 @@ func (sc *Scanner) tryLabelLookahead() (string, bool) {
 		return "", false
 	}
 	ch := data[i]
-	if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_') {
+	if !isIdent(int(ch), 0) {
 		return "", false
 	}
 
@@ -419,10 +419,7 @@ func (sc *Scanner) skipComments(ch int) error {
 			return nil
 		}
 	}
-	for {
-		if ch == '\n' || ch == '\r' || ch < 0 {
-			break
-		}
+	for ch != '\n' && ch != '\r' && ch >= 0 {
 		ch = sc.Next()
 	}
 	return nil

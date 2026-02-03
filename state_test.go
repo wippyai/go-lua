@@ -324,7 +324,7 @@ func TestPCall(t *testing.T) {
 func TestCoroutineApi1(t *testing.T) {
 	L := NewState()
 	defer L.Close()
-	co := L.NewThreadWithContext(nil)
+	co := L.NewThreadWithContext(context.TODO())
 	errorIfScriptFail(t, L, `
       function coro(v)
         assert(v == 10)
@@ -336,7 +336,7 @@ func TestCoroutineApi1(t *testing.T) {
       end
     `)
 	fn := L.GetGlobal("coro").(*LFunction)
-	st, err, values := L.Resume(co, fn, LNumber(10))
+	st, values, err := L.Resume(co, fn, LNumber(10))
 	errorIfNotEqual(t, ResumeYield, st)
 	errorIfNotNil(t, err)
 	errorIfNotEqual(t, 3, len(values))
@@ -344,13 +344,13 @@ func TestCoroutineApi1(t *testing.T) {
 	errorIfNotEqual(t, LNumber(2), LVAsNumber(values[1]))
 	errorIfNotEqual(t, LNumber(3), LVAsNumber(values[2]))
 
-	st, err, values = L.Resume(co, fn, LNumber(11), LNumber(12))
+	st, values, err = L.Resume(co, fn, LNumber(11), LNumber(12))
 	errorIfNotEqual(t, ResumeYield, st)
 	errorIfNotNil(t, err)
 	errorIfNotEqual(t, 1, len(values))
 	errorIfNotEqual(t, LNumber(4), LVAsNumber(values[0]))
 
-	st, err, values = L.Resume(co, fn)
+	st, values, err = L.Resume(co, fn)
 	errorIfNotEqual(t, ResumeOK, st)
 	errorIfNotNil(t, err)
 	errorIfNotEqual(t, 1, len(values))
@@ -367,8 +367,8 @@ func TestCoroutineApi1(t *testing.T) {
       end
     `)
 	fn = L.GetGlobal("coro_error").(*LFunction)
-	co = L.NewThreadWithContext(nil)
-	st, err, values = L.Resume(co, fn)
+	co = L.NewThreadWithContext(context.TODO())
+	st, values, err = L.Resume(co, fn)
 	errorIfNotEqual(t, ResumeYield, st)
 	errorIfNotNil(t, err)
 	errorIfNotEqual(t, 3, len(values))
@@ -376,17 +376,17 @@ func TestCoroutineApi1(t *testing.T) {
 	errorIfNotEqual(t, LNumber(2), LVAsNumber(values[1]))
 	errorIfNotEqual(t, LNumber(3), LVAsNumber(values[2]))
 
-	st, err, values = L.Resume(co, fn)
+	st, values, err = L.Resume(co, fn)
 	errorIfNotEqual(t, ResumeYield, st)
 	errorIfNotNil(t, err)
 	errorIfNotEqual(t, 1, len(values))
 	errorIfNotEqual(t, LNumber(4), LVAsNumber(values[0]))
 
-	st, err, _ = L.Resume(co, fn)
+	st, _, err = L.Resume(co, fn)
 	errorIfNotEqual(t, ResumeError, st)
 	errorIfNil(t, err)
 	errorIfFalse(t, strings.Contains(err.Error(), "--failed--"), "error message must be '--failed--'")
-	st, err, _ = L.Resume(co, fn)
+	st, _, err = L.Resume(co, fn)
 	errorIfNotEqual(t, ResumeError, st)
 	errorIfNil(t, err)
 	errorIfFalse(t, strings.Contains(err.Error(), "can not resume a dead thread"), "can not resume a dead thread")
@@ -469,12 +469,12 @@ func TestContextWithCroutine(t *testing.T) {
 	`)
 	co := L.NewThreadWithContext(ctx)
 	fn := L.GetGlobal("coro").(*LFunction)
-	_, err, values := L.Resume(co, fn)
+	_, values, err := L.Resume(co, fn)
 	errorIfNotNil(t, err)
 	errorIfNotEqual(t, LNumber(0), LVAsNumber(values[0]))
 	// cancel the parent context
 	cancel()
-	_, err, _ = L.Resume(co, fn)
+	_, _, err = L.Resume(co, fn)
 	errorIfNil(t, err)
 	errorIfFalse(t, strings.Contains(err.Error(), "context canceled"), "coroutine execution must be canceled when the parent context is canceled")
 
@@ -910,7 +910,7 @@ func BenchmarkNewThread(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		t := L.NewThreadWithContext(nil)
+		t := L.NewThreadWithContext(context.TODO())
 		_ = t
 	}
 }
@@ -929,7 +929,7 @@ func BenchmarkNewThreadEngine2Options(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		t := L.NewThreadWithContext(nil)
+		t := L.NewThreadWithContext(context.TODO())
 		_ = t
 	}
 }
@@ -1059,7 +1059,7 @@ func BenchmarkPooledThreadReuse(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		t := L.NewThreadWithContext(nil)
+		t := L.NewThreadWithContext(context.TODO())
 		t.Close()
 	}
 }

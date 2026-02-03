@@ -332,12 +332,6 @@ func validateValue(val LValue, t typ.Type, resolver *typeResolver) bool {
 	return false
 }
 
-// validateWithError recursively checks if a Lua value matches a type and returns an error message on failure.
-// The path parameter tracks the location in nested structures for error messages.
-func validateWithError(val LValue, t typ.Type, path string) (bool, string) {
-	return validateWithErrorResolver(val, t, nil, path)
-}
-
 func validateWithErrorResolver(val LValue, t typ.Type, resolver *typeResolver, path string) (bool, string) {
 	if t == nil {
 		return false, formatValidationError(path, "unknown", luaTypeName(val))
@@ -848,8 +842,8 @@ func (ls *LState) typeCall(lt *LType, base, nargs, nret int) {
 		typeArgCount++
 	}
 
-	switch {
-	case typeArgCount == nargs:
+	switch typeArgCount {
+	case nargs:
 		// Generic instantiation
 		gen, ok := lt.inner.(*typ.Generic)
 		if !ok {
@@ -879,7 +873,7 @@ func (ls *LState) typeCall(lt *LType, base, nargs, nret int) {
 				}
 			}
 		}
-	case typeArgCount == 0:
+	case 0:
 		if nargs != 1 {
 			ls.RaiseError("type %s validation expects 1 value, got %d", lt.String(), nargs)
 			return

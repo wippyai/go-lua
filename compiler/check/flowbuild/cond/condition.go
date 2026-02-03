@@ -571,36 +571,6 @@ func (ce *ConditionExtractor) calleeHasEffect(call *ast.FuncCallExpr, want func(
 	return false
 }
 
-func (ce *ConditionExtractor) methodHasEffect(receiver ast.Expr, method string, want func(effect.Row) bool) bool {
-	if receiver == nil || method == "" {
-		return false
-	}
-	if ident, ok := receiver.(*ast.IdentExpr); ok && ce.SC != nil {
-		if meta := ce.SC.MetaForName(ident.Value); meta != nil {
-			if mt, ok := core.Method(meta, method); ok {
-				if row, ok := effectRowFromType(mt); ok {
-					return want(row)
-				}
-			}
-		}
-	}
-	if ce.Synth == nil {
-		return false
-	}
-	recvType := ce.Synth(receiver, ce.P)
-	if recvType == nil {
-		return false
-	}
-	mt, ok := core.Method(recvType, method)
-	if !ok {
-		return false
-	}
-	if row, ok := effectRowFromType(mt); ok {
-		return want(row)
-	}
-	return false
-}
-
 func effectRowFromType(t typ.Type) (effect.Row, bool) {
 	if t == nil {
 		return effect.Row{}, false

@@ -121,10 +121,8 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 				})
 				if sig := engine.ResolveFunctionSignature(fn, parent); sig != nil {
 					synthSig = sig
-				} else if seed := returns.BuildSeedFunctionType(fn, engine, parent); seed != nil {
-					if seedFn, ok := seed.(*typ.Function); ok {
-						synthSig = seedFn
-					}
+				} else if seedFn, ok := returns.BuildSeedFunctionType(fn, engine, parent).(*typ.Function); ok {
+					synthSig = seedFn
 				}
 			}
 			if synthSig != nil {

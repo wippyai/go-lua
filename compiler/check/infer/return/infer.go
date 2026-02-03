@@ -177,37 +177,6 @@ func (i *Inferencer) collectLocalFunctions(
 	return localFuncs
 }
 
-// callEntry represents a call site for param hint collection.
-type callEntry struct {
-	p     cfg.Point
-	info  *cfg.CallInfo
-	synth interface {
-		TypeOf(ast.Expr, cfg.Point) typ.Type
-	}
-}
-
-type synthAdapter struct {
-	fn func(ast.Expr, cfg.Point) typ.Type
-}
-
-func (s synthAdapter) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
-	return s.fn(expr, p)
-}
-
-// collectCallsFromGraph gathers all call entries from a graph's call sites.
-func collectCallsFromGraph(g *cfg.Graph, s interface {
-	TypeOf(ast.Expr, cfg.Point) typ.Type
-}) []callEntry {
-	var calls []callEntry
-	g.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		if info == nil {
-			return
-		}
-		calls = append(calls, callEntry{p: p, info: info, synth: s})
-	})
-	return calls
-}
-
 // newReturnInferenceEngine creates a synthesis engine configured for return type
 // inference within the pre-flow return summary computation phase.
 //
@@ -448,7 +417,7 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 		if sym == 0 {
 			continue
 		}
-		var paramType typ.Type = typ.Unknown
+		paramType := typ.Unknown
 		if i == 0 && fn.ParList != nil && len(fn.ParList.Names) > 0 && fn.ParList.Names[0] == "self" {
 			if selfType := ctx.resolveScope.SelfType(); selfType != nil {
 				paramType = selfType
@@ -787,7 +756,7 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 				if _, exists := overlay[target.Symbol]; exists {
 					continue
 				}
-				var varType typ.Type = typ.Unknown
+				varType := typ.Unknown
 				if idx < len(varTypes) && varTypes[idx] != nil {
 					varType = varTypes[idx]
 				}

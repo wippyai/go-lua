@@ -203,7 +203,8 @@ func TestComputeSCCs_ComplexTopologicalOrder(t *testing.T) {
 
 	// B and C must be in the middle (order between them is deterministic)
 	middle := []uint64{sccs[1][0], sccs[2][0]}
-	if !((middle[0] == 2 && middle[1] == 3) || (middle[0] == 3 && middle[1] == 2)) {
+	valid := (middle[0] == 2 && middle[1] == 3) || (middle[0] == 3 && middle[1] == 2)
+	if !valid {
 		t.Errorf("expected middle SCCs to be [2] and [3], got %v", middle)
 	}
 }

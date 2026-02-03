@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -144,11 +143,4 @@ func TestEnrichExportWithEffects_NonRecordNonInterface(t *testing.T) {
 	if result != typ.String {
 		t.Error("expected original type returned for non-record/non-interface")
 	}
-}
-
-func kindOf(t typ.Type) kind.Kind {
-	if t == nil {
-		return kind.Unknown
-	}
-	return t.Kind()
 }

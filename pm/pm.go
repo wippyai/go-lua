@@ -145,8 +145,6 @@ func newScanner(src []byte) *scanner {
 	return &scanner{src: src, pos: beforeStart, savedPos: beforeStart}
 }
 
-func (sc *scanner) length() int { return len(sc.src) }
-
 func (sc *scanner) next() int {
 	switch sc.pos {
 	case beforeStart:
@@ -915,12 +913,13 @@ func (v *vm) matchBrace(open, close, sourcePos int) (bool, int) {
 	sourcePos++
 	for ; sourcePos < len(v.src); sourcePos++ {
 		ch := int(v.src[sourcePos])
-		if ch == close {
+		switch ch {
+		case close:
 			count--
 			if count == 0 {
 				return true, sourcePos + 1
 			}
-		} else if ch == open {
+		case open:
 			count++
 		}
 	}

@@ -247,9 +247,10 @@ func TestComputeDominators_SimpleLoop(t *testing.T) {
 
 	for _, p := range rpo {
 		node := g.Node(p)
-		if node.Kind == basecfg.NodeBranch {
+		switch node.Kind {
+		case basecfg.NodeBranch:
 			header = p
-		} else if node.Kind == basecfg.NodeAssign {
+		case basecfg.NodeAssign:
 			body = p
 		}
 	}
@@ -282,9 +283,10 @@ func TestComputeDominanceFrontier_SimpleLoop(t *testing.T) {
 
 	for _, p := range rpo {
 		node := g.Node(p)
-		if node.Kind == basecfg.NodeBranch {
+		switch node.Kind {
+		case basecfg.NodeBranch:
 			header = p
-		} else if node.Kind == basecfg.NodeAssign {
+		case basecfg.NodeAssign:
 			body = p
 		}
 	}
@@ -316,13 +318,14 @@ func TestComputeDominators_NestedIf(t *testing.T) {
 
 	for _, p := range rpo {
 		node := g.Node(p)
-		if node.Kind == basecfg.NodeBranch {
+		switch node.Kind {
+		case basecfg.NodeBranch:
 			if branch1 == 0 {
 				branch1 = p
 			} else {
 				branch2 = p
 			}
-		} else if node.Kind == basecfg.NodeJoin {
+		case basecfg.NodeJoin:
 			joins = append(joins, p)
 		}
 	}
@@ -421,9 +424,10 @@ func TestDominates(t *testing.T) {
 
 	for _, p := range rpo {
 		node := g.Node(p)
-		if node.Kind == basecfg.NodeBranch {
+		switch node.Kind {
+		case basecfg.NodeBranch:
 			branch = p
-		} else if node.Kind == basecfg.NodeJoin {
+		case basecfg.NodeJoin:
 			join = p
 		}
 	}

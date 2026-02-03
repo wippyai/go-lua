@@ -1708,11 +1708,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 									   namedparam1 <- lbase
 									   namedparam2
 							*/
-							nvarargs := int(nargs) - np
-							if nvarargs < 0 {
-								nvarargs = 0
-							}
-
 							ls.reg.SetTop(int(cf.LocalBase) + int(nargs) + np)
 							for i := 0; i < np; i++ {
 								//ls.reg.Set(cf.LocalBase+nargs+i, ls.reg.Get(cf.LocalBase+i))
@@ -1878,11 +1873,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 									   namedparam1 <- lbase
 									   namedparam2
 							*/
-							nvarargs := int(nargs) - np
-							if nvarargs < 0 {
-								nvarargs = 0
-							}
-
 							ls.reg.SetTop(int(cf.LocalBase) + int(nargs) + np)
 							for i := 0; i < np; i++ {
 								//ls.reg.Set(cf.LocalBase+nargs+i, ls.reg.Get(cf.LocalBase+i))
@@ -2970,7 +2960,7 @@ func stringConcat(L *LState, total, last int) LValue {
 	total--
 	for i := last - 1; total > 0; {
 		lhs := L.reg.Get(i)
-		if !(LVCanConvToString(lhs) && LVCanConvToString(rhs)) {
+		if !LVCanConvToString(lhs) || !LVCanConvToString(rhs) {
 			op := L.metaOp2(lhs, rhs, "__concat")
 			if op.Type() == LTFunction {
 				L.reg.Push(op)

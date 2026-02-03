@@ -54,7 +54,10 @@ import (
 
 // ExtractAssignments extracts assignment info from graph.
 func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollector KeysCollectorFunc) {
-	if fc == nil || fc.Graph == nil || inputs == nil {
+	if fc == nil || fc.Graph == nil {
+		return
+	}
+	if inputs == nil {
 		return
 	}
 	derived := fc.Derived
@@ -80,7 +83,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, specNarrowed, inputs.AnnotatedVars, inputs, fc.CallCtx, fc.TypeOps, fc.Services)
 	// Promote inferred parameter types into DeclaredTypes for unannotated params.
 	// This enables bidirectional inference at call sites (e.g., custom assert helpers).
-	if inputs != nil && inputs.DeclaredTypes != nil {
+	if inputs.DeclaredTypes != nil {
 		for _, sym := range fc.Graph.ParamSymbols() {
 			if sym == 0 {
 				continue
@@ -569,20 +572,22 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				case *ast.IdentExpr:
 					// Variable key - try const resolution
 					if val := constResolver(k.Value); val != nil {
-						if val.Kind == flow.ConstString {
+						switch val.Kind {
+						case flow.ConstString:
 							fieldName = val.Str
-						} else if val.Kind == flow.ConstInt {
+						case flow.ConstInt:
 							keyType = typ.Integer
-						} else if val.Kind == flow.ConstFloat {
+						case flow.ConstFloat:
 							keyType = typ.Number
 						}
 					}
 				case *ast.NumberExpr:
 					// Number literal key - try const resolution
 					if val := constprop.ConstValueFromExpr(target.Key); val != nil {
-						if val.Kind == flow.ConstInt {
+						switch val.Kind {
+						case flow.ConstInt:
 							keyType = typ.Integer
-						} else if val.Kind == flow.ConstFloat {
+						case flow.ConstFloat:
 							keyType = typ.Number
 						}
 					}

@@ -175,7 +175,8 @@ func (b *Builder) Assign(s *ast.AssignStmt) {
 	targets := make([]AssignTarget, 0, len(s.Lhs))
 	for i, lhs := range s.Lhs {
 		target := ExtractAssignTarget(lhs)
-		if target.Kind == TargetIdent {
+		switch target.Kind {
+		case TargetIdent:
 			if ident, ok := lhs.(*ast.IdentExpr); ok {
 				target.Symbol, _ = b.symbolFromIdent(ident)
 				if target.Symbol != 0 && i < len(s.Rhs) {
@@ -184,7 +185,7 @@ func (b *Builder) Assign(s *ast.AssignStmt) {
 					}
 				}
 			}
-		} else if target.Kind == TargetField {
+		case TargetField:
 			baseSym := b.resolveFieldBaseSymbol(lhs)
 			target.BaseSymbol = baseSym
 
@@ -197,7 +198,7 @@ func (b *Builder) Assign(s *ast.AssignStmt) {
 					}
 				}
 			}
-		} else if target.Kind == TargetIndex {
+		case TargetIndex:
 			if baseIdent, ok := target.Base.(*ast.IdentExpr); ok && baseIdent != nil {
 				target.BaseName = baseIdent.Value
 				target.BaseSymbol, _ = b.symbolFromIdent(baseIdent)
