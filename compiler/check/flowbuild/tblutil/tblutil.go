@@ -67,27 +67,3 @@ func SynthTableLiteralWithWrapper(ex *ast.TableExpr, p cfg.Point, recurse func(a
 
 	return builder.Build()
 }
-
-// FunctionHasAnnotations returns true if the function expression has explicit type annotations
-// (parameter types or return types).
-func FunctionHasAnnotations(fn *ast.FunctionExpr) bool {
-	if fn == nil {
-		return false
-	}
-	for _, rt := range fn.ReturnTypes {
-		if rt != nil {
-			return true
-		}
-	}
-	if fn.ParList != nil {
-		for _, pt := range fn.ParList.Types {
-			if pt != nil {
-				return true
-			}
-		}
-		if fn.ParList.VarargType != nil {
-			return true
-		}
-	}
-	return false
-}
