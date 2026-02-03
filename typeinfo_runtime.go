@@ -5,19 +5,14 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-type typeBinding struct {
-	name  string
-	value LValue
-}
-
 type typeResolver struct {
 	path  string
 	types map[string]typ.Type
 }
 
-func (fp *FunctionProto) runtimeTypeBindings() []typeBinding {
+func (fp *FunctionProto) ensureRuntimeTypeBindings() {
 	if fp == nil || len(fp.TypeInfo) == 0 {
-		return nil
+		return
 	}
 	fp.typeInfoOnce.Do(func() {
 		manifest := safeDecodeManifest(fp.TypeInfo)
@@ -25,20 +20,16 @@ func (fp *FunctionProto) runtimeTypeBindings() []typeBinding {
 			return
 		}
 		resolver := &typeResolver{path: manifest.Path, types: manifest.Types}
-		bindings := make([]typeBinding, 0, len(manifest.Types))
 		bindingsByName := make(map[string]*LType, len(manifest.Types))
 		for name, t := range manifest.Types {
 			if name == "" || t == nil {
 				continue
 			}
 			lt := newRuntimeTypeValue(t, name, resolver)
-			bindings = append(bindings, typeBinding{name: name, value: lt})
 			bindingsByName[name] = lt
 		}
-		fp.typeBindings = bindings
 		fp.typeBindingsByName = bindingsByName
 	})
-	return fp.typeBindings
 }
 
 func (fp *FunctionProto) runtimeTypeValueByName(name string) *LType {
@@ -48,7 +39,7 @@ func (fp *FunctionProto) runtimeTypeValueByName(name string) *LType {
 	if builtin := runtimeBuiltinTypeByName(name); builtin != nil {
 		return builtin
 	}
-	fp.runtimeTypeBindings()
+	fp.ensureRuntimeTypeBindings()
 	if fp.typeBindingsByName == nil {
 		return nil
 	}
@@ -86,31 +77,6 @@ func unwrapRuntimeAlias(t typ.Type) typ.Type {
 			continue
 		}
 		return t
-	}
-}
-
-func (ls *LState) injectProtoTypes(proto *FunctionProto) {
-	if ls == nil || proto == nil {
-		return
-	}
-	bindings := proto.runtimeTypeBindings()
-	if len(bindings) == 0 {
-		return
-	}
-	env := ls.Env
-	if env == nil {
-		return
-	}
-	for _, binding := range bindings {
-		if binding.name == "" {
-			continue
-		}
-		if isPrimitiveTypeName(binding.name) {
-			continue
-		}
-		if env.RawGetString(binding.name) == LNil {
-			env.RawSetString(binding.name, binding.value)
-		}
 	}
 }
 

@@ -3,6 +3,7 @@ package lua
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/parse"
 	typeio "github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -17,11 +18,6 @@ func TestTypeInfoInjection_TypeIs(t *testing.T) {
 		local ok2 = (User:is({id = "abc"})) ~= nil
 		return ok1 and ok2, nil
 	`
-	proto, err := CompileString(source, "typeinfo.lua")
-	if err != nil {
-		t.Fatalf("compile failed: %v", err)
-	}
-
 	manifest := typeio.NewManifest("typeinfo")
 	pointType := typ.NewRecord().
 		Field("x", typ.Number).
@@ -38,7 +34,14 @@ func TestTypeInfoInjection_TypeIs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode manifest failed: %v", err)
 	}
-	proto.SetTypeInfo(data)
+	chunk, err := parse.ParseString(source, "typeinfo.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	proto, err := CompileWithOptions(chunk, "typeinfo.lua", CompileOptions{TypeInfo: data})
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
 
 	fn := L.LoadProto(proto)
 	L.Push(fn)
@@ -66,18 +69,20 @@ func TestTypeInfoRuntime_StringCastAndLib(t *testing.T) {
 		local s2 = string("y")
 		return s1, s2
 	`
-	proto, err := CompileString(source, "string_cast.lua")
-	if err != nil {
-		t.Fatalf("compile failed: %v", err)
-	}
-
 	manifest := typeio.NewManifest("string_cast")
 	manifest.DefineType("string", typ.String)
 	data, err := typeio.EncodeManifest(manifest)
 	if err != nil {
 		t.Fatalf("encode manifest failed: %v", err)
 	}
-	proto.SetTypeInfo(data)
+	chunk, err := parse.ParseString(source, "string_cast.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	proto, err := CompileWithOptions(chunk, "string_cast.lua", CompileOptions{TypeInfo: data})
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
 
 	fn := L.LoadProto(proto)
 	L.Push(fn)
@@ -104,11 +109,6 @@ func TestTypeInfoRuntime_TypeIsDotSyntax(t *testing.T) {
 		local val, err = Point.is({x = 1, y = 2})
 		return val ~= nil, err
 	`
-	proto, err := CompileString(source, "typeinfo_dot.lua")
-	if err != nil {
-		t.Fatalf("compile failed: %v", err)
-	}
-
 	manifest := typeio.NewManifest("typeinfo_dot")
 	pointType := typ.NewRecord().
 		Field("x", typ.Number).
@@ -120,7 +120,14 @@ func TestTypeInfoRuntime_TypeIsDotSyntax(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode manifest failed: %v", err)
 	}
-	proto.SetTypeInfo(data)
+	chunk, err := parse.ParseString(source, "typeinfo_dot.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	proto, err := CompileWithOptions(chunk, "typeinfo_dot.lua", CompileOptions{TypeInfo: data})
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
 
 	fn := L.LoadProto(proto)
 	L.Push(fn)

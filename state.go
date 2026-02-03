@@ -1441,7 +1441,6 @@ func (ls *LState) NewThread() (*LState, context.CancelFunc) {
 }
 
 func (ls *LState) NewFunctionFromProto(proto *FunctionProto) *LFunction {
-	ls.injectProtoTypes(proto)
 	return newLFunctionL(proto, ls.Env, int(proto.NumUpvalues))
 }
 
@@ -1817,7 +1816,6 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 	if err != nil {
 		return nil, newApiErrorE(ApiErrorSyntax, err)
 	}
-	ls.injectProtoTypes(proto)
 
 	return newLFunctionL(proto, ls.currentEnv(), 0), nil
 }

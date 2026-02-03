@@ -153,6 +153,46 @@ func TestCompileWithOptions_TailcallTypeCast(t *testing.T) {
 	}
 }
 
+func TestCompileWithOptions_TypeValueUsage(t *testing.T) {
+	source := `
+		local T = Point
+		local ok = (T:is({x = 1})) ~= nil
+		return ok
+	`
+	chunk, err := parse.ParseString(source, "type_value.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	manifest := typeio.NewManifest("type_value")
+	pointType := typ.NewRecord().Field("x", typ.Number).Build()
+	manifest.DefineType("Point", pointType)
+	data, err := typeio.EncodeManifest(manifest)
+	if err != nil {
+		t.Fatalf("encode manifest failed: %v", err)
+	}
+	proto, err := CompileWithOptions(chunk, "type_value.lua", CompileOptions{TypeInfo: data})
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+	if !protoHasOp(proto, OP_LOADTYPE) {
+		t.Fatalf("expected OP_LOADTYPE in bytecode")
+	}
+
+	L := NewState()
+	defer L.Close()
+	OpenBase(L)
+	fn := L.LoadProto(proto)
+	L.Push(fn)
+	if err := L.PCall(0, 1, nil); err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	result := L.Get(-1)
+	L.Pop(1)
+	if result != LTrue {
+		t.Errorf("expected true, got %v", result)
+	}
+}
+
 func TestCompileWithOptions_TopLevelTypeDefAddsTypeName(t *testing.T) {
 	source := `
 		type User = {name: string}

@@ -1251,6 +1251,10 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 		code.AddABC(OP_LOADBOOL, sreg, 1, 0, sline(ex))
 		return sused
 	case *ast.IdentExpr:
+		if context.isGlobalTypeIdent(ex) {
+			code.AddABx(OP_LOADTYPE, sreg, context.ConstIndex(LString(ex.Value)), sline(ex))
+			return sused
+		}
 		switch getIdentRefType(context, context, ex) {
 		case ecGlobal:
 			code.AddABx(OP_GETGLOBAL, sreg, context.ConstIndex(LString(ex.Value)), sline(ex))
