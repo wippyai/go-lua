@@ -14,7 +14,8 @@ func TestGuards_TypeIsNarrowing(t *testing.T) {
 			Code: `
 				type Point = {x: number, y: number}
 				function validate(obj: any)
-					if Point:is(obj) then
+					local _, err = Point:is(obj)
+					if err == nil then
 						local p: {x: number, y: number} = obj
 					end
 				end
@@ -27,8 +28,8 @@ func TestGuards_TypeIsNarrowing(t *testing.T) {
 			Code: `
 				type Point = {x: number, y: number}
 				function validate(obj: {p: any})
-					local p = Point:is(obj.p)
-					if p then
+					local _, err = Point:is(obj.p)
+					if err == nil then
 						local p: {x: number, y: number} = obj.p
 					end
 				end
@@ -100,8 +101,8 @@ func TestGuards_TypeIsInGenericFor(t *testing.T) {
 				type Point = {x: number, y: number}
 				function validate(xs: {[integer]: any})
 					for i, v in ipairs(xs) do
-						local p = Point:is(v)
-						if p then
+						local _, err = Point:is(v)
+						if err == nil then
 							local p: {x: number, y: number} = v
 						end
 					end

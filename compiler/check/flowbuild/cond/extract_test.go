@@ -153,7 +153,7 @@ func TestCallTerminates_NilInfo(t *testing.T) {
 }
 
 func TestExtractPredicateLinkFromCallInfo_NilInfo(t *testing.T) {
-	result := ExtractPredicateLinkFromCallInfo(nil, 0, nil, nil, nil, nil, nil, nil, nil)
+	result := ExtractPredicateLinkFromCallInfo(nil, 0, 0, nil, nil, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("nil info should return nil")
 	}

@@ -49,6 +49,7 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // ExtractAssignments extracts assignment info from graph.
@@ -318,9 +319,52 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 				}
 
-				// Extract predicate link if RHS is a predicate call
-				if i < len(info.SourceCalls) && info.SourceCalls[i] != nil {
-					if link := cond.ExtractPredicateLinkFromCallInfo(info.SourceCalls[i], p, sc, inputs, derived.TypeKeyRes, wrappedSynth, derived.EffectBySym, symResolver, fc.Graph); link != nil {
+				// Extract predicate link if RHS is a predicate call.
+				callIndex := -1
+				if i < len(info.SourceCalls) {
+					callIndex = i
+				} else if len(info.SourceCalls) > 0 {
+					last := len(info.SourceCalls) - 1
+					if info.SourceCalls[last] != nil && i >= last {
+						callIndex = last
+					}
+				}
+				if callIndex >= 0 && info.SourceCalls[callIndex] != nil {
+					callInfo := info.SourceCalls[callIndex]
+					retIndex := i - callIndex
+					if link := cond.ExtractPredicateLinkFromCallInfo(callInfo, retIndex, p, sc, inputs, derived.TypeKeyRes, wrappedSynth, derived.EffectBySym, symResolver, fc.Graph); link != nil {
+						if retIndex == 1 && callInfo.IsTypeCheck && callInfo.Method == "is" && callInfo.Receiver != nil && derived.TypeKeyRes != nil {
+							if typeKey, ok := derived.TypeKeyRes(callInfo.TypeCheckName, sc); ok && !typeKey.IsZero() {
+								valuePath := constraint.Path{}
+								valIndex := callIndex
+								if valIndex >= 0 && valIndex < len(info.Targets) {
+									valTarget := info.Targets[valIndex]
+									if valTarget.Kind == cfg.TargetIdent && valTarget.Name != "" && valTarget.Symbol != 0 {
+										valuePath = constraint.Path{
+											Root:   resolve.RootName(fc.Graph, valTarget.Symbol, valTarget.Name),
+											Symbol: valTarget.Symbol,
+										}
+									}
+								}
+								if !valuePath.IsEmpty() {
+									link.OnFalsy = constraint.And(link.OnFalsy, constraint.FromConstraints(constraint.HasType{Path: valuePath, Type: typeKey}))
+									link.OnTruthy = constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.NotHasType{Path: valuePath, Type: typeKey}))
+									link.OnTruthy = constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.IsNil{Path: valuePath}))
+									var checkType typ.Type
+									if sc != nil {
+										if resolved, ok := sc.LookupType(callInfo.TypeCheckName); ok && resolved != nil {
+											checkType = resolve.Ref(resolved, sc)
+										}
+									}
+									if checkType != nil {
+										baseType := unwrap.Alias(checkType)
+										if baseType != nil && baseType.Kind() != kind.Any && baseType.Kind() != kind.Unknown && !unwrap.IsOptionalLike(baseType) {
+											link.OnFalsy = constraint.And(link.OnFalsy, constraint.FromConstraints(constraint.NotNil{Path: valuePath}))
+										}
+									}
+								}
+							}
+						}
 						varKey := predicate.LinkKey(name, p)
 						inputs.PredicateLinks[varKey] = *link
 					}

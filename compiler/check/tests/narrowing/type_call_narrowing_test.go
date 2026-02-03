@@ -25,16 +25,14 @@ func TestTypeCallNarrowing(t *testing.T) {
 			Stdlib:    true,
 		},
 		{
-			Name: "Type:is assert wrapper narrows argument",
+			Name: "Type:is assert guard narrows argument",
 			Code: `
 				type Point = {x: number, y: number}
-				local function assertPoint(x)
-					if not Point:is(x) then
+				function validate(data: any)
+					local _, err = Point:is(data)
+					if err ~= nil then
 						error("no")
 					end
-				end
-				function validate(data: any)
-					assertPoint(data)
 					local p: {x: number, y: number} = data
 				end
 			`,
