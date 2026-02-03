@@ -49,7 +49,7 @@ import (
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/modules"
-	"github.com/wippyai/go-lua/compiler/check/phase"
+	"github.com/wippyai/go-lua/compiler/check/resolveutil"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/siblings"
@@ -223,7 +223,7 @@ func (i *Inferencer) ComputeForGraph(
 		}
 	}
 
-	engine := phase.CreateTypeResolutionEngine(run.Ctx, graph, i.globalTypes, nil, parentScope, i.types, i.manifests)
+	engine := resolveutil.CreateTypeResolutionEngine(run.Ctx, graph, i.globalTypes, nil, parentScope, i.types, i.manifests)
 	pointScopes := scope.BuildTypeDefScopes(graph, parentScope, engine.ResolveTypeDef)
 	localFuncs := i.collectLocalFunctions(graph, pointScopes, graph.Func())
 	if len(localFuncs) == 0 {
@@ -1172,7 +1172,7 @@ func (i *Inferencer) inferReturnWithSummary(
 	parentScope := info.DefScope
 	moduleAliases := modules.MergeAliases(i.store.ModuleAliases(), modules.CollectAliases(fnGraph))
 
-	engine := phase.CreateTypeResolutionEngine(run.Ctx, fnGraph, i.globalTypes, nil, parentScope, i.types, i.manifests)
+	engine := resolveutil.CreateTypeResolutionEngine(run.Ctx, fnGraph, i.globalTypes, nil, parentScope, i.types, i.manifests)
 
 	resolveScope := parentScope
 	if len(fn.TypeParams) > 0 {
