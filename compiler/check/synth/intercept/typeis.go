@@ -2,10 +2,9 @@ package intercept
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/types/effect"
-	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // TypeIsIntercept handles runtime type checking via the Type:is(x) pattern.
@@ -43,17 +42,11 @@ func (t *TypeIsIntercept) InterceptMethodCall(ex *ast.FuncCallExpr, ctx CallEnv)
 		meta := ctx.Scope.MetaForName(ident.Value)
 		if meta != nil {
 			// Meta types have :is with TypeValueMethod effect
-			methodType, found := core.Method(meta, "is")
-			if found {
-				fn := unwrap.Function(methodType)
-				if fn != nil {
-					if row, ok := fn.Effects.(effect.Row); ok && row.HasTypeValueMethod() {
-						ret := typ.NewOptional(meta.Of)
-						return Result{
-							Types: []typ.Type{ret, typ.NewOptional(typ.LuaError)},
-							Skip:  true,
-						}
-					}
+			if effects.HasMethodEffect(meta, "is", effect.Row.HasTypeValueMethod) {
+				ret := typ.NewOptional(meta.Of)
+				return Result{
+					Types: []typ.Type{ret, typ.NewOptional(typ.LuaError)},
+					Skip:  true,
 				}
 			}
 		}
