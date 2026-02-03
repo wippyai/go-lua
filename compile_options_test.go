@@ -122,6 +122,37 @@ func TestCompileWithOptions_LocalShadowDoesNotLoadType(t *testing.T) {
 	}
 }
 
+func TestCompileWithOptions_TailcallTypeCast(t *testing.T) {
+	source := `
+		return string("ok")
+	`
+	chunk, err := parse.ParseString(source, "tailcall.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	proto, err := CompileWithOptions(chunk, "tailcall.lua", CompileOptions{})
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+	if !protoHasOp(proto, OP_LOADTYPE) {
+		t.Fatalf("expected OP_LOADTYPE in bytecode")
+	}
+
+	L := NewState()
+	defer L.Close()
+	L.OpenLibs()
+	fn := L.LoadProto(proto)
+	L.Push(fn)
+	if err := L.PCall(0, 1, nil); err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	result := L.Get(-1)
+	L.Pop(1)
+	if result != LString("ok") {
+		t.Errorf("expected %q, got %v", "ok", result)
+	}
+}
+
 func TestCompileWithOptions_TopLevelTypeDefAddsTypeName(t *testing.T) {
 	source := `
 		type User = {name: string}

@@ -1774,6 +1774,17 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				nargs = reg.Top() - (RA + 1)
 			}
 			lv := reg.Get(RA)
+			if lt, ok := lv.(*LType); ok {
+				L.typeCall(lt, RA, nargs, int(cf.NRet))
+				b := int(cf.NRet) + 1
+				if cf.NRet == MultRet {
+					b = 0
+				}
+				if returnFromTailcall(L, baseframe, cf, RA, b) {
+					return
+				}
+				continue
+			}
 			var callable *LFunction
 			var goFunc LGoFunc
 			var meta bool
@@ -2705,6 +2716,66 @@ func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
 	if !haserror && !kill {
 		L.yielded = true
 	}
+}
+
+func returnFromTailcall(L *LState, baseframe *callFrame, cf *callFrame, RA int, B int) bool {
+	if L == nil || cf == nil {
+		return true
+	}
+	reg := L.reg
+	lbase := int(cf.LocalBase)
+	L.closeUpvalues(lbase)
+
+	nret := B - 1
+	if B == 0 {
+		nret = reg.Top() - RA
+	}
+	n := cf.NRet
+	if cf.NRet == MultRet {
+		n = int16(nret)
+	}
+
+	if L.Parent != nil && L.stack.Sp() == 1 {
+		regv := reg.Top()
+		if B == 1 {
+			reg.FillNil(regv, int(n))
+		} else {
+			reg.CopyRange(regv, RA, -1, int(n))
+			if B > 1 && int(n) > (B-1) {
+				reg.FillNil(regv+B-1, int(n)-(B-1))
+			}
+		}
+		switchToParentThread(L, int(n), false, true)
+		return true
+	}
+
+	islast := baseframe == L.stack.Pop() || L.stack.IsEmpty()
+	regv := int(cf.ReturnBase)
+	if B == 1 {
+		reg.FillNil(regv, int(n))
+	} else {
+		reg.CopyRange(regv, RA, -1, int(n))
+		if B > 1 && int(n) > (B-1) {
+			reg.FillNil(regv+B-1, int(n)-(B-1))
+		}
+	}
+
+	L.currentFrame = L.stack.Last()
+	if islast || L.currentFrame == nil {
+		return true
+	}
+	if L.currentFrame.GoFunc != nil || (L.currentFrame.Fn != nil && L.currentFrame.Fn.IsG) {
+		ext := L.getFrameExt(L.currentFrame)
+		if ext != nil && ext.Continuation != nil {
+			if callGFunction(L, false) {
+				return true
+			}
+		} else {
+			return true
+		}
+	}
+
+	return false
 }
 
 func callGFunction(L *LState, tailcall bool) bool {
