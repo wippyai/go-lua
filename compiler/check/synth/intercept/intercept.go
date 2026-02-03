@@ -99,13 +99,10 @@ func calleeHasEffect(ex *ast.FuncCallExpr, ctx CallEnv, check func(effect.Row) b
 	if ident, ok := ex.Func.(*ast.IdentExpr); ok && ctx.Scope != nil {
 		if meta := ctx.Scope.MetaForName(ident.Value); meta != nil {
 			// Treat type names as callable types for effect-based dispatch.
-			fn := typ.Func().
-				Param("value", typ.Any).
-				Returns(meta.Of).
-				Effects(effect.WithCallableType()).
-				Build()
-			if row, ok := fn.Effects.(effect.Row); ok && check(row) {
-				return true
+			if fn := effects.CallableTypeForMeta(meta); fn != nil {
+				if row, ok := fn.Effects.(effect.Row); ok && check(row) {
+					return true
+				}
 			}
 		}
 	}

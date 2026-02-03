@@ -39,3 +39,15 @@ func HasEffectInType(t typ.Type, check func(effect.Row) bool) bool {
 	}
 	return false
 }
+
+// CallableTypeForMeta builds the synthetic callable function type for a meta type name.
+func CallableTypeForMeta(meta *typ.Meta) *typ.Function {
+	if meta == nil {
+		return nil
+	}
+	return typ.Func().
+		Param("value", typ.Any).
+		Returns(meta.Of).
+		Effects(effect.WithCallableType()).
+		Build()
+}

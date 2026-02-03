@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
@@ -68,18 +69,13 @@ func checkSingleCall(
 	sourceName string,
 ) []diag.Diagnostic {
 	if info.Method == "" && info.Callee != nil {
-		if t := narrowView.TypeOf(info.Callee, p); hasCallableTypeEffect(t) {
+		if t := narrowView.TypeOf(info.Callee, p); effects.HasEffectInType(t, effect.Row.HasCallableType) {
 			return nil
 		}
 		if ident, ok := info.Callee.(*ast.IdentExpr); ok {
 			if sc := scopes[p]; sc != nil {
 				if meta := sc.MetaForName(ident.Value); meta != nil {
-					fn := typ.Func().
-						Param("value", typ.Any).
-						Returns(meta.Of).
-						Effects(effect.WithCallableType()).
-						Build()
-					if hasCallableTypeEffect(fn) {
+					if fn := effects.CallableTypeForMeta(meta); fn != nil && effects.HasEffectInType(fn, effect.Row.HasCallableType) {
 						return nil
 					}
 				}
@@ -127,15 +123,6 @@ func checkSingleCall(
 		))
 	result := pipeline.Run()
 	return callErrorsToDiags(result.Errors, info, sourceName)
-}
-
-func hasCallableTypeEffect(t typ.Type) bool {
-	fn := unwrap.Function(t)
-	if fn == nil {
-		return false
-	}
-	row, ok := fn.Effects.(effect.Row)
-	return ok && row.HasCallableType()
 }
 
 func hasTypeValueMethodEffect(receiver typ.Type, method string) bool {

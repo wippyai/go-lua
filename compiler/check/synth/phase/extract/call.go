@@ -3,6 +3,7 @@ package extract
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
@@ -10,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -258,11 +258,7 @@ func (s *Synthesizer) declaredTypeLookup(sc *scope.State) func(string) typ.Type 
 		// Check scope metadata for type names (Number, Point, etc.)
 		if sc != nil {
 			if meta := sc.MetaForName(name); meta != nil {
-				return typ.Func().
-					Param("value", typ.Any).
-					Returns(meta.Of).
-					Effects(effect.WithCallableType()).
-					Build()
+				return effects.CallableTypeForMeta(meta)
 			}
 		}
 		return nil

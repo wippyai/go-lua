@@ -549,13 +549,10 @@ func (ce *ConditionExtractor) calleeHasEffect(call *ast.FuncCallExpr, want func(
 	// Check for metatype callable.
 	if ident, ok := call.Func.(*ast.IdentExpr); ok && ce.SC != nil {
 		if meta := ce.SC.MetaForName(ident.Value); meta != nil {
-			fn := typ.Func().
-				Param("value", typ.Any).
-				Returns(meta.Of).
-				Effects(effect.WithCallableType()).
-				Build()
-			if row, ok := fn.Effects.(effect.Row); ok && want(row) {
-				return true
+			if fn := effects.CallableTypeForMeta(meta); fn != nil {
+				if row, ok := fn.Effects.(effect.Row); ok && want(row) {
+					return true
+				}
 			}
 		}
 	}

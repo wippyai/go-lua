@@ -35,3 +35,17 @@ func TestHasEffectInType_NoEffect(t *testing.T) {
 		t.Error("expected no effect for non-function type")
 	}
 }
+
+func TestCallableTypeForMeta(t *testing.T) {
+	meta := typ.NewMeta(typ.String)
+	fn := CallableTypeForMeta(meta)
+	if fn == nil {
+		t.Fatal("expected callable type for meta")
+	}
+	if len(fn.Returns) != 1 || fn.Returns[0] != typ.String {
+		t.Error("expected callable type to return meta.Of")
+	}
+	if !HasEffectInType(fn, effect.Row.HasCallableType) {
+		t.Error("expected callable type effect on meta function")
+	}
+}
