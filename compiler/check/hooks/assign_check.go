@@ -49,31 +49,48 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 	}
 
 	annotated := make(map[cfg.SymbolID]typ.Type)
+	assigned := make(map[cfg.SymbolID]bool)
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if !info.IsLocal {
+		if info == nil {
 			return
 		}
 		sc := scopes[p]
-		for i, ann := range info.TypeAnnotations {
-			if ann == nil {
-				continue
-			}
-			if i >= len(info.Targets) {
-				continue
-			}
-			target := info.Targets[i]
-			if target.Kind != cfg.TargetIdent || target.Name == "" {
-				continue
-			}
-			sym := target.Symbol
-			if sym == 0 {
-				continue
-			}
-			declaredType := narrowSynth.ResolveType(ann, sc)
-			if declaredType != nil && declaredType.Kind() != typ.Unknown.Kind() {
-				annotated[sym] = declaredType
+		if info.IsLocal {
+			for i, ann := range info.TypeAnnotations {
+				if ann == nil {
+					continue
+				}
+				if i >= len(info.Targets) {
+					continue
+				}
+				target := info.Targets[i]
+				if target.Kind != cfg.TargetIdent || target.Name == "" {
+					continue
+				}
+				sym := target.Symbol
+				if sym == 0 {
+					continue
+				}
+				declaredType := narrowSynth.ResolveType(ann, sc)
+				if declaredType != nil && declaredType.Kind() != typ.Unknown.Kind() {
+					annotated[sym] = declaredType
+				}
 			}
 		}
+		for i, target := range info.Targets {
+			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+				continue
+			}
+			if i < len(info.Sources) && info.Sources[i] != nil {
+				assigned[target.Symbol] = true
+			}
+		}
+	})
+	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
+		if info == nil || info.Symbol == 0 {
+			return
+		}
+		assigned[info.Symbol] = true
 	})
 
 	var diags []diag.Diagnostic
@@ -96,6 +113,38 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 			}
 
 			if declaredType == nil || declaredType.Kind() == typ.Unknown.Kind() {
+				continue
+			}
+
+			if info.IsLocal && i < len(info.TypeAnnotations) && info.TypeAnnotations[i] != nil && i >= len(info.Sources) {
+				if len(info.Sources) > 0 && isVarArgReturnExpr(info.Sources[len(info.Sources)-1]) {
+					continue
+				}
+				if sym != 0 && assigned[sym] {
+					continue
+				}
+				if !subtype.IsSubtype(typ.Nil, declaredType) {
+					var posNode ast.PositionHolder
+					if target.Expr != nil {
+						posNode = target.Expr
+					} else if info.Stmt != nil {
+						posNode = info.Stmt
+					}
+					if posNode != nil {
+						pos := diag.Position{File: sourceName, Line: posNode.Line(), Column: posNode.Column()}
+						span := ast.SpanOf(posNode)
+						msg := formatAssignMismatch(typ.Nil, declaredType)
+						_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
+						diags = append(diags, diag.Diagnostic{
+							Severity: diag.SeverityError,
+							Code:     diag.ErrTypeMismatch,
+							Position: pos,
+							Span:     span,
+							Message:  msg,
+							Help:     help,
+						})
+					}
+				}
 				continue
 			}
 
@@ -198,6 +247,16 @@ func extractSourcePath(source ast.Expr, graph *cfg.Graph, _ cfg.Point) constrain
 		return constraint.Path{}
 	}
 	return path.FromExprWithBindings(source, nil, graph.Bindings())
+}
+
+func isVarArgReturnExpr(expr ast.Expr) bool {
+	switch ex := expr.(type) {
+	case *ast.FuncCallExpr:
+		return !ex.AdjustRet
+	case *ast.Comma3Expr:
+		return !ex.AdjustRet
+	}
+	return false
 }
 
 func formatExcluded(value, declared typ.Type) string {

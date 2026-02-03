@@ -80,32 +80,61 @@ func CheckReturns(
 	}
 
 	var diags []diag.Diagnostic
+	missingRequired := func(start int) (int, typ.Type) {
+		if start < 0 {
+			start = 0
+		}
+		for i := start; i < len(declaredReturns); i++ {
+			declaredType := declaredReturns[i]
+			if declaredType == nil {
+				continue
+			}
+			if !subtype.IsSubtype(typ.Nil, declaredType) {
+				return i, declaredType
+			}
+		}
+		return -1, nil
+	}
+	missingReturnDiag := func(posNode ast.PositionHolder, index int, declaredType typ.Type) {
+		if posNode == nil {
+			return
+		}
+		pos := diag.Position{File: sourceName, Line: posNode.Line(), Column: posNode.Column()}
+		span := ast.SpanOf(posNode)
+		msg := "missing return"
+		if index > 0 {
+			msg = "missing return value at position " + strconv.Itoa(index+1)
+			if declaredType != nil {
+				msg += " (expected " + typ.FormatShort(declaredType) + ")"
+			}
+		}
+		_, help := diag.ContextualHelp(diag.ErrMissingReturn, msg, "")
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.SeverityError,
+			Code:     diag.ErrMissingReturn,
+			Position: pos,
+			Span:     span,
+			Message:  msg,
+			Help:     help,
+		})
+	}
+	returnPosNode := func(info *cfg.ReturnInfo) ast.PositionHolder {
+		if info != nil && info.Stmt != nil {
+			return info.Stmt
+		}
+		if fn != nil {
+			return fn
+		}
+		return nil
+	}
 
 	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
 		if info == nil {
 			return
 		}
 		if len(info.Exprs) == 0 {
-			var posNode ast.PositionHolder
-			if fn != nil {
-				posNode = fn
-			}
-			if info.Stmt != nil {
-				posNode = info.Stmt
-			}
-			if posNode != nil {
-				pos := diag.Position{File: sourceName, Line: posNode.Line(), Column: posNode.Column()}
-				span := ast.SpanOf(posNode)
-				msg := "missing return"
-				_, help := diag.ContextualHelp(diag.ErrMissingReturn, msg, "")
-				diags = append(diags, diag.Diagnostic{
-					Severity: diag.SeverityError,
-					Code:     diag.ErrMissingReturn,
-					Position: pos,
-					Span:     span,
-					Message:  msg,
-					Help:     help,
-				})
+			if idx, decl := missingRequired(0); idx >= 0 {
+				missingReturnDiag(returnPosNode(info), idx, decl)
 			}
 			return
 		}
@@ -138,6 +167,12 @@ func CheckReturns(
 					Message:  msg,
 					Help:     help,
 				})
+			}
+		}
+
+		if len(info.Exprs) < len(declaredReturns) {
+			if idx, decl := missingRequired(len(info.Exprs)); idx >= 0 {
+				missingReturnDiag(returnPosNode(info), idx, decl)
 			}
 		}
 	})

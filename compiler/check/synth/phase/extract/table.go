@@ -81,6 +81,9 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 				hasVararg = true
 			}
 			elemType := recurse(field.Value)
+			if elemType == nil {
+				elemType = typ.Unknown
+			}
 			arrayElements = append(arrayElements, elemType)
 			continue
 		}
@@ -88,14 +91,23 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 		switch k := field.Key.(type) {
 		case *ast.StringExpr:
 			ft := s.synthFieldValueWithExpected(field.Value, sc, recurse, expectedFields[k.Value], selfType)
+			if ft == nil {
+				ft = typ.Unknown
+			}
 			builder.Field(k.Value, ft)
 			fieldCount++
 		case *ast.IdentExpr:
 			ft := s.synthFieldValueWithExpected(field.Value, sc, recurse, expectedFields[k.Value], selfType)
+			if ft == nil {
+				ft = typ.Unknown
+			}
 			builder.Field(k.Value, ft)
 			fieldCount++
 		case *ast.NumberExpr:
 			elemType := recurse(field.Value)
+			if elemType == nil {
+				elemType = typ.Unknown
+			}
 			arrayElements = append(arrayElements, elemType)
 		}
 	}

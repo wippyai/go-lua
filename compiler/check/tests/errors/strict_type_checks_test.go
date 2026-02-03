@@ -88,6 +88,23 @@ end
 			wantCode: diag.ErrMissingReturn,
 			contains: "",
 		},
+		{
+			name: "missing return without statement",
+			code: `
+local function f(): number
+end
+`,
+			wantCode: diag.ErrMissingReturn,
+			contains: "",
+		},
+		{
+			name: "typed local without initializer requires nilable",
+			code: `
+local x: number
+`,
+			wantCode: diag.ErrTypeMismatch,
+			contains: "nil",
+		},
 	}
 
 	for _, tt := range tests {

@@ -295,6 +295,55 @@ func TestE2E_RuntimeTypeCall(t *testing.T) {
 	}
 }
 
+// TestE2E_RuntimeTypeCall_Record tests Type(value) validation for record types.
+func TestE2E_RuntimeTypeCall_Record(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	OpenBase(L)
+
+	pointType := NewLType(typ.NewRecord().
+		Field("x", typ.Number).
+		Field("y", typ.Number).
+		Build())
+	L.SetGlobal("PointType", pointType)
+
+	// Valid call should pass through and return the table
+	err := L.DoString(`local p = PointType({x = 1, y = 2}); return p`)
+	if err != nil {
+		t.Fatalf("valid record type call failed: %v", err)
+	}
+	result := L.Get(-1)
+	L.Pop(1)
+	if result.Type() != LTTable {
+		t.Fatalf("expected table result, got %v", result.Type())
+	}
+	if tbl, ok := result.(*LTable); ok {
+		if xv := tbl.RawGetString("x"); !numberEquals(xv, 1) {
+			t.Errorf("expected x=1, got %v", xv)
+		}
+		if yv := tbl.RawGetString("y"); !numberEquals(yv, 2) {
+			t.Errorf("expected y=2, got %v", yv)
+		}
+	}
+
+	// Invalid call should raise error
+	err = L.DoString(`PointType({x = "bad"})`)
+	if err == nil {
+		t.Fatal("expected record type validation error")
+	}
+}
+
+func numberEquals(v LValue, want LNumber) bool {
+	switch n := v.(type) {
+	case LNumber:
+		return n == want
+	case LInteger:
+		return LNumber(n) == want
+	default:
+		return false
+	}
+}
+
 // TestE2E_RecordTypeValidation tests record type validation at runtime.
 func TestE2E_RecordTypeValidation(t *testing.T) {
 	L := NewState()
