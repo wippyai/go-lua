@@ -51,3 +51,16 @@ func CallableTypeForMeta(meta *typ.Meta) *typ.Function {
 		Effects(effect.WithCallableType()).
 		Build()
 }
+
+// HasMethodEffect checks whether the resolved method type carries an effect row
+// that satisfies the predicate.
+func HasMethodEffect(receiver typ.Type, method string, check func(effect.Row) bool) bool {
+	if receiver == nil || method == "" {
+		return false
+	}
+	mt, ok := querycore.Method(receiver, method)
+	if !ok || mt == nil {
+		return false
+	}
+	return HasEffectInType(mt, check)
+}

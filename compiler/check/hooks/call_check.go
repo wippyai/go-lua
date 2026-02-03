@@ -30,7 +30,6 @@ import (
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // CheckCalls validates function call arguments against parameter types.
@@ -85,7 +84,7 @@ func checkSingleCall(
 
 	if info.Method != "" && info.Receiver != nil {
 		if recvType := narrowView.TypeOf(info.Receiver, p); recvType != nil {
-			if hasTypeValueMethodEffect(recvType, info.Method) {
+			if effects.HasMethodEffect(recvType, info.Method, effect.Row.HasTypeValueMethod) {
 				return nil
 			}
 		}
@@ -123,22 +122,6 @@ func checkSingleCall(
 		))
 	result := pipeline.Run()
 	return callErrorsToDiags(result.Errors, info, sourceName)
-}
-
-func hasTypeValueMethodEffect(receiver typ.Type, method string) bool {
-	if receiver == nil || method == "" {
-		return false
-	}
-	mt, ok := core.Method(receiver, method)
-	if !ok {
-		return false
-	}
-	fn := unwrap.Function(mt)
-	if fn == nil {
-		return false
-	}
-	row, ok := fn.Effects.(effect.Row)
-	return ok && row.HasTypeValueMethod()
 }
 
 func getCallPosition(info *cfg.CallInfo, sourceName string) diag.Position {
