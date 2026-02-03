@@ -58,10 +58,18 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			}
 			switch k := field.Key.(type) {
 			case *ast.StringExpr:
-				selfBuilder.Field(k.Value, recurse(field.Value))
+				ft := recurse(field.Value)
+				if ft == nil {
+					ft = typ.Unknown
+				}
+				selfBuilder.Field(k.Value, ft)
 				fieldCount++
 			case *ast.IdentExpr:
-				selfBuilder.Field(k.Value, recurse(field.Value))
+				ft := recurse(field.Value)
+				if ft == nil {
+					ft = typ.Unknown
+				}
+				selfBuilder.Field(k.Value, ft)
 				fieldCount++
 			}
 		}
