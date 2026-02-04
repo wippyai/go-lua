@@ -181,7 +181,14 @@ func (r *Resolver) resolveTypeDepth(expr ast.TypeExpr, sc *scope.State, depth in
 
 	case *ast.ArrayTypeExpr:
 		elem := r.resolveTypeDepth(te.Element, sc, depth+1)
-		return typ.NewArray(elem)
+		if len(te.ElementAnnotations) > 0 {
+			elem = r.wrapWithAnnotations(elem, te.ElementAnnotations)
+		}
+		arr := typ.NewArray(elem)
+		if len(te.ArrayAnnotations) > 0 {
+			return r.wrapWithAnnotations(arr, te.ArrayAnnotations)
+		}
+		return arr
 
 	case *ast.MapTypeExpr:
 		key := r.resolveTypeDepth(te.Key, sc, depth+1)

@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/subst"
+	"github.com/wippyai/go-lua/validate"
 )
 
 // LType is a runtime type value that can be used in Lua code.
@@ -153,6 +155,12 @@ func validateValue(val LValue, t typ.Type, resolver *typeResolver) bool {
 	if t == nil {
 		return false
 	}
+	if ann, ok := t.(*typ.Annotated); ok {
+		if !validateValue(val, ann.Inner, resolver) {
+			return false
+		}
+		return validateAnnotations(val, ann.Annotations, "") == nil
+	}
 	// Handle primitives by Kind (they're value types, not pointers)
 	switch t.Kind() {
 	case kind.Nil:
@@ -260,6 +268,9 @@ func validateValue(val LValue, t typ.Type, resolver *typeResolver) bool {
 			if fieldVal == nil {
 				fieldVal = LNil
 			}
+			if fieldVal == LNil && field.Optional {
+				continue
+			}
 			if !validateValue(fieldVal, field.Type, resolver) {
 				return false
 			}
@@ -322,8 +333,8 @@ func validateValue(val LValue, t typ.Type, resolver *typeResolver) bool {
 
 	case *typ.Instantiated:
 		// Expand and validate
-		expanded := typ.Instantiate(tt.Generic, tt.TypeArgs...)
-		if expanded != nil {
+		expanded := subst.ExpandInstantiated(tt)
+		if expanded != nil && expanded != tt {
 			return validateValue(val, expanded, resolver)
 		}
 		return false
@@ -339,6 +350,18 @@ func validateWithErrorResolver(val LValue, t typ.Type, resolver *typeResolver, p
 	t = resolveRuntimeType(t, resolver, 0)
 	if t == nil {
 		return false, formatValidationError(path, "unknown", luaTypeName(val))
+	}
+	if ann, ok := t.(*typ.Annotated); ok {
+		if ok, err := validateWithErrorResolver(val, ann.Inner, resolver, path); !ok {
+			return false, err
+		}
+		if annErr := validateAnnotations(val, ann.Annotations, path); annErr != nil {
+			if annErr.Field != "" {
+				return false, annErr.Error()
+			}
+			return false, annErr.Message
+		}
+		return true, ""
 	}
 	typeName := t.String()
 	switch t.Kind() {
@@ -450,6 +473,9 @@ func validateWithErrorResolver(val LValue, t typ.Type, resolver *typeResolver, p
 			if fieldVal == nil {
 				fieldVal = LNil
 			}
+			if fieldVal == LNil && field.Optional {
+				continue
+			}
 			fieldPath := path + "." + field.Name
 			if path == "" {
 				fieldPath = field.Name
@@ -511,14 +537,31 @@ func validateWithErrorResolver(val LValue, t typ.Type, resolver *typeResolver, p
 		return false, formatValidationError(path, typeName, luaTypeName(val))
 
 	case *typ.Instantiated:
-		expanded := typ.Instantiate(tt.Generic, tt.TypeArgs...)
-		if expanded != nil {
+		expanded := subst.ExpandInstantiated(tt)
+		if expanded != nil && expanded != tt {
 			return validateWithErrorResolver(val, expanded, resolver, path)
 		}
 		return false, formatValidationError(path, typeName, luaTypeName(val))
 	}
 
 	return false, formatValidationError(path, typeName, luaTypeName(val))
+}
+
+func validateAnnotations(val LValue, annotations []typ.Annotation, path string) *validate.Error {
+	if len(annotations) == 0 {
+		return nil
+	}
+	for _, ann := range annotations {
+		if fn := validate.Default.Get(ann.Name); fn != nil {
+			if err := fn(val, ann.Arg); err != nil {
+				if path != "" && err.Field == "" {
+					err.Field = path
+				}
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func formatValidationError(path, expected, got string) string {

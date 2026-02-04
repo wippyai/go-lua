@@ -104,7 +104,11 @@ func (vc *ValidationContext) validateValue(val LValue, t typ.Type, path *pathBui
 				}
 			}
 			path.push(field.Name)
-			if fv != LNil {
+			if fv == LNil {
+				if !field.Optional && !validateBasic(LNil, field.Type) {
+					*errors = append(*errors, &validate.Error{Field: path.String(), Message: "missing required field"})
+				}
+			} else {
 				vc.validateValue(fv, field.Type, path, errors)
 			}
 			path.pop()

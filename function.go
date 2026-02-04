@@ -38,7 +38,7 @@ type FunctionProto struct {
 
 	// TypeInfo holds encoded type manifest for this module.
 	// Use types/io.EncodeManifest/DecodeManifest to work with this data.
-	// Only set on root FunctionProto, not nested functions.
+	// Stored on the root FunctionProto and propagated to nested functions.
 	TypeInfo []byte
 
 	stringConstants []string
@@ -134,6 +134,13 @@ func (fp *FunctionProto) GetTypeInfo() []byte {
 // SetTypeInfo sets the encoded type manifest bytes.
 func (fp *FunctionProto) SetTypeInfo(data []byte) {
 	fp.TypeInfo = data
+	// Propagate to nested prototypes so type values are available
+	// inside nested functions at runtime.
+	for _, child := range fp.FunctionPrototypes {
+		if child != nil {
+			child.SetTypeInfo(data)
+		}
+	}
 }
 
 func (fp *FunctionProto) String() string {
