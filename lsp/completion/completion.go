@@ -86,6 +86,9 @@ type Context struct {
 	Kind        ContextKind // detected context kind
 	// ReceiverType is the resolved type of the receiver for member access (after ".").
 	ReceiverType typ.Type
+	// LocalSymbols holds in-scope locals at the completion site.
+	// When provided, identifier completions will prefer these symbols.
+	LocalSymbols []*index.Symbol
 }
 
 // TypeFormatter formats a type for display.
@@ -139,11 +142,36 @@ func (p *Provider) Complete(ctx *Context) []Item {
 func (p *Provider) identifierCompletions(ctx *Context) []Item {
 	var items []Item
 	prefix := strings.ToLower(ctx.Prefix)
+	seen := make(map[string]bool)
+
+	addLocal := func(sym *index.Symbol) {
+		if sym == nil || sym.Name == "" {
+			return
+		}
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(sym.Name), prefix) {
+			return
+		}
+		item := p.symbolToItem(sym)
+		item.SortText = "0" + sym.Name // locals first
+		items = append(items, item)
+		seen[sym.Name] = true
+	}
+
+	// Add locals first (scope-aware, type-checked by LSP).
+	for _, sym := range ctx.LocalSymbols {
+		if seen[sym.Name] {
+			continue
+		}
+		addLocal(sym)
+	}
 
 	// Get all symbols in the file
 	if p.symbols != nil {
 		syms := p.symbols.SymbolsInFile(ctx.File)
 		for _, sym := range syms {
+			if seen[sym.Name] {
+				continue
+			}
 			if prefix != "" && !strings.HasPrefix(strings.ToLower(sym.Name), prefix) {
 				continue
 			}
@@ -151,6 +179,7 @@ func (p *Provider) identifierCompletions(ctx *Context) []Item {
 			item := p.symbolToItem(sym)
 			item.SortText = "a" + sym.Name // sort symbols first
 			items = append(items, item)
+			seen[sym.Name] = true
 		}
 	}
 

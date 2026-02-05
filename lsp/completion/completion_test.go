@@ -208,6 +208,49 @@ func TestProvider_Complete_MemberReceiverType(t *testing.T) {
 	}
 }
 
+func TestProvider_Complete_LocalsPreferred(t *testing.T) {
+	symbols := index.NewSymbolIndex()
+	symbols.AddDefinition("test.lua", "dup", index.SymbolVariable, typ.Number,
+		diag.Span{StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 3}, "")
+	symbols.AddDefinition("test.lua", "globalOnly", index.SymbolVariable, typ.Number,
+		diag.Span{StartLine: 2, StartCol: 1, EndLine: 2, EndCol: 10}, "")
+
+	localSym := &index.Symbol{
+		Name: "dup",
+		Kind: index.SymbolVariable,
+		Type: typ.String,
+	}
+	localOnly := &index.Symbol{
+		Name: "localOnly",
+		Kind: index.SymbolVariable,
+		Type: typ.Boolean,
+	}
+
+	provider := NewProvider(symbols)
+	ctx := &Context{
+		File:         "test.lua",
+		Kind:         ContextIdentifier,
+		Prefix:       "",
+		LocalSymbols: []*index.Symbol{localSym, localOnly},
+	}
+
+	items := provider.Complete(ctx)
+	found := make(map[string]Item)
+	for _, item := range items {
+		found[item.Label] = item
+	}
+	if _, ok := found["localOnly"]; !ok {
+		t.Fatalf("expected localOnly in results")
+	}
+	if item, ok := found["dup"]; ok {
+		if item.Detail != typ.String.String() {
+			t.Fatalf("expected local dup to win (string), got %q", item.Detail)
+		}
+	} else {
+		t.Fatalf("expected dup in results")
+	}
+}
+
 func TestResolveMemberType(t *testing.T) {
 	rec := typ.NewRecord().
 		Field("x", typ.Number).
