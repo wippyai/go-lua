@@ -141,6 +141,9 @@ func (idx *LSPIndexer) extractLocals(file string, graph *cfg.Graph, result *api.
 
 			span := targetSpan(target)
 			if !span.Valid() {
+				span = localNameSpan(info, i)
+			}
+			if !span.Valid() {
 				continue
 			}
 
@@ -232,20 +235,25 @@ func (idx *LSPIndexer) extractReferencesAndCalls(file string, graph *cfg.Graph, 
 		}
 	})
 
-	// Extract call references and edges
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	// Extract call references and edges.
+	// Use call sites so calls in assignment/return sources are included.
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
 
-		// Extract reference to callee
-		if info.Callee != nil {
-			idx.extractExprRefs(file, info.Callee, p, graph, bindings)
-		}
+		// Avoid duplicate refs for calls that are already covered by
+		// assignment/return source traversal.
+		if info.IsStmt {
+			// Extract reference to callee
+			if info.Callee != nil {
+				idx.extractExprRefs(file, info.Callee, p, graph, bindings)
+			}
 
-		// Extract argument references
-		for _, arg := range info.Args {
-			idx.extractExprRefs(file, arg, p, graph, bindings)
+			// Extract argument references
+			for _, arg := range info.Args {
+				idx.extractExprRefs(file, arg, p, graph, bindings)
+			}
 		}
 
 		// Add call edge
@@ -406,6 +414,40 @@ func astSpan(node ast.PositionHolder) diag.Span {
 	}
 }
 
+func positionSpan(pos ast.Position) diag.Span {
+	if pos.Line == 0 {
+		return diag.Span{}
+	}
+	endLine := pos.EndLine
+	endCol := pos.EndColumn
+	if endLine == 0 {
+		endLine = pos.Line
+	}
+	if endCol == 0 {
+		endCol = pos.Column
+	}
+	return diag.Span{
+		StartLine: pos.Line,
+		StartCol:  pos.Column,
+		EndLine:   endLine,
+		EndCol:    endCol,
+	}
+}
+
+func localNameSpan(info *cfg.AssignInfo, idx int) diag.Span {
+	if info == nil || idx < 0 || info.Stmt == nil {
+		return diag.Span{}
+	}
+	stmt, ok := info.Stmt.(*ast.LocalAssignStmt)
+	if !ok {
+		return diag.Span{}
+	}
+	if idx >= len(stmt.NamePositions) {
+		return diag.Span{}
+	}
+	return positionSpan(stmt.NamePositions[idx])
+}
+
 func targetSpan(target cfg.AssignTarget) diag.Span {
 	if target.Expr != nil {
 		return astSpan(target.Expr)
@@ -438,6 +480,9 @@ func typeDefSpan(info *cfg.TypeDefInfo) diag.Span {
 func callSpan(info *cfg.CallInfo) diag.Span {
 	if info == nil || info.Callee == nil {
 		return diag.Span{}
+	}
+	if info.Call != nil {
+		return astSpan(info.Call)
 	}
 	return astSpan(info.Callee)
 }

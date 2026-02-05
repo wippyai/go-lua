@@ -33,6 +33,7 @@ func BuildCallInfo(call *ast.FuncCallExpr, isStmt bool) *CallInfo {
 		return nil
 	}
 	info := &CallInfo{
+		Call:         call,
 		Callee:       call.Func,
 		Args:         call.Args,
 		Method:       call.Method,
@@ -40,6 +41,9 @@ func BuildCallInfo(call *ast.FuncCallExpr, isStmt bool) *CallInfo {
 		IsStmt:       isStmt,
 		CalleeName:   extraction.IdentName(call.Func),
 		ReceiverName: extraction.IdentName(call.Receiver),
+	}
+	if info.CalleeName == "" && info.Method != "" {
+		info.CalleeName = info.Method
 	}
 	info.ArgNames = make([]string, len(call.Args))
 

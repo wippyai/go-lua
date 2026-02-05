@@ -82,19 +82,43 @@ func (p *Provider) findFunctionSymbol(file, name string) *index.Symbol {
 	}
 
 	// Try exact file match first
+	var fileVarCandidate *index.Symbol
 	if file != "" {
 		sym := p.symbols.LookupByName(file, name)
-		if sym != nil && (sym.Kind == index.SymbolFunction || sym.Kind == index.SymbolMethod) {
-			return sym
+		if sym != nil {
+			if sym.Kind == index.SymbolFunction || sym.Kind == index.SymbolMethod {
+				return sym
+			}
+			if sym.Kind == index.SymbolVariable {
+				if _, ok := sym.Type.(*typ.Function); ok {
+					fileVarCandidate = sym
+				}
+			}
 		}
 	}
 
 	// Fall back to global search
+	var varCandidate *index.Symbol
 	results := p.symbols.Search(name)
 	for _, result := range results {
 		if (result.Kind == index.SymbolFunction || result.Kind == index.SymbolMethod) && result.Name == name {
 			return p.symbols.LookupByName(result.File, name)
 		}
+		if result.Kind == index.SymbolVariable && result.Name == name {
+			sym := p.symbols.LookupByName(result.File, name)
+			if sym != nil {
+				if _, ok := sym.Type.(*typ.Function); ok {
+					varCandidate = sym
+				}
+			}
+		}
+	}
+
+	if fileVarCandidate != nil {
+		return fileVarCandidate
+	}
+	if varCandidate != nil {
+		return varCandidate
 	}
 
 	return nil

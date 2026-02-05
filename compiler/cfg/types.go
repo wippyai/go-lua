@@ -139,11 +139,12 @@ type NumericForInfo struct {
 
 // CallInfo captures pre-extracted data for call nodes.
 type CallInfo struct {
-	Callee   ast.Expr   // Function expression (for non-method calls)
-	Args     []ast.Expr // Call arguments
-	Method   string     // "foo" if x:foo()
-	Receiver ast.Expr   // x if x:foo()
-	IsStmt   bool       // Statement vs expression
+	Call     *ast.FuncCallExpr // Full call expression (for span lookup)
+	Callee   ast.Expr          // Function expression (for non-method calls)
+	Args     []ast.Expr        // Call arguments
+	Method   string            // "foo" if x:foo()
+	Receiver ast.Expr          // x if x:foo()
+	IsStmt   bool              // Statement vs expression
 
 	// Pre-extracted for quick checks
 	CalleeName     string             // "error", "assert", "setmetatable" etc
