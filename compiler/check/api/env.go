@@ -485,9 +485,19 @@ func (f *unifiedTypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedV
 	if sym == 0 {
 		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 	}
+	// For explicitly annotated symbols, prefer the declared type over literal overlays.
+	if f.annotatedVars != nil && f.annotatedVars[sym] {
+		if f.declaredTypes != nil {
+			if t, ok := f.declaredTypes[sym]; ok && t != nil {
+				return f.toTypedValue(t)
+			}
+		}
+	}
 	if f.literalTypes != nil {
-		if t, ok := f.literalTypes[sym]; ok && t != nil {
-			return f.toTypedValue(t)
+		if f.annotatedVars == nil || !f.annotatedVars[sym] {
+			if t, ok := f.literalTypes[sym]; ok && t != nil {
+				return f.toTypedValue(t)
+			}
 		}
 	}
 	if f.siblingTypes != nil {

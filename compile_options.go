@@ -51,7 +51,7 @@ func CompileWithOptions(chunk []ast.Stmt, name string, opts CompileOptions) (pro
 	compileFunctionExpr(context, funcexpr, ecnone(0))
 	proto = context.Proto
 	if len(opts.TypeInfo) > 0 {
-		proto.TypeInfo = opts.TypeInfo
+		proto.SetTypeInfo(opts.TypeInfo)
 	}
 	return
 }

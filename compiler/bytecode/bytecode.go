@@ -61,6 +61,10 @@ func Undump(data []byte) (*lua.FunctionProto, error) {
 
 	// Rebuild stringConstants cache from Constants for all protos
 	rebuildStringConstants(proto)
+	// Propagate root type info to nested protos for runtime type usage.
+	if len(proto.TypeInfo) > 0 {
+		proto.SetTypeInfo(proto.TypeInfo)
+	}
 
 	return proto, nil
 }

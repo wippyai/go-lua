@@ -32,6 +32,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
+	"github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/io"
@@ -316,6 +317,20 @@ func (e *Engine) ResolveFunctionSignature(fn *ast.FunctionExpr, sc *scope.State)
 // with type arguments. For non-generic types, directly resolves the type.
 func (e *Engine) ResolveTypeDef(name string, typeExpr ast.TypeExpr, typeParams []ast.TypeParamExpr, sc *scope.State) typ.Type {
 	return e.extract.ResolveTypeDef(name, typeExpr, typeParams, sc)
+}
+
+// ResolveTypeDefAt resolves a type definition at a specific CFG point.
+//
+// This is used during scope computation to ensure typeof(expr) can see
+// local annotated types that are in scope at the point of the typedef.
+func (e *Engine) ResolveTypeDefAt(name string, typeExpr ast.TypeExpr, typeParams []ast.TypeParamExpr, sc *scope.State, p cfg.Point) typ.Type {
+	resolver := resolve.New(resolve.Config{
+		Manifests: e.deps.Manifests,
+		ExprSynth: func(expr ast.Expr, _ cfg.Point) typ.Type {
+			return e.extract.SynthExprAt(expr, p, sc)
+		},
+	})
+	return resolver.ResolveTypeDef(name, typeExpr, typeParams, sc)
 }
 
 // Method looks up a method by name on a type.

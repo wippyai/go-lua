@@ -106,6 +106,38 @@ func TestProvider_Help_Success(t *testing.T) {
 	}
 }
 
+func TestProvider_Help_FunctionVariable(t *testing.T) {
+	symbols := index.NewSymbolIndex()
+	callGraph := index.NewCallGraph()
+
+	funcType := typ.Func().
+		Param("x", typ.Number).
+		Returns(typ.Number).
+		Build()
+
+	symbols.AddDefinition("test.lua", "f", index.SymbolVariable, funcType,
+		diag.Span{StartLine: 2, StartCol: 1, EndLine: 2, EndCol: 1}, "")
+
+	callGraph.AddCall("test.lua", "main", diag.Span{StartLine: 1, EndLine: 1},
+		"test.lua", "f", diag.Span{StartLine: 2, EndLine: 2}, diag.Span{StartLine: 5, StartCol: 1, EndLine: 5, EndCol: 5})
+
+	provider := NewProvider(symbols, callGraph)
+	result := provider.Help("test.lua", 5, 3)
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if len(result.Signatures) != 1 {
+		t.Fatalf("expected 1 signature, got %d", len(result.Signatures))
+	}
+	if len(result.Signatures[0].Parameters) != 1 {
+		t.Errorf("expected 1 parameter, got %d", len(result.Signatures[0].Parameters))
+	}
+	if result.Signatures[0].Parameters[0].Label != "x: number" {
+		t.Errorf("unexpected param label: %s", result.Signatures[0].Parameters[0].Label)
+	}
+}
+
 func TestProvider_Help_VariadicFunction(t *testing.T) {
 	symbols := index.NewSymbolIndex()
 	callGraph := index.NewCallGraph()

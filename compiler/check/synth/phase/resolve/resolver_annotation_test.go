@@ -227,6 +227,77 @@ func TestParseAndResolve_AnnotatedType(t *testing.T) {
 	}
 }
 
+func TestParseAndResolve_ArrayTypeAnnotation(t *testing.T) {
+	input := `type Tags = {string} @min_len(1)`
+	stmts, err := parse.Parse(strings.NewReader(input), "test")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(stmts) != 1 {
+		t.Fatalf("got %d stmts, want 1", len(stmts))
+	}
+	typedef, ok := stmts[0].(*ast.TypeDefStmt)
+	if !ok {
+		t.Fatalf("expected TypeDefStmt, got %T", stmts[0])
+	}
+
+	resolver := New(Config{})
+	sc := scope.New()
+	result := resolver.ResolveType(typedef.Type, sc)
+
+	annotated, ok := result.(*typ.Annotated)
+	if !ok {
+		t.Fatalf("expected *typ.Annotated, got %T", result)
+	}
+	if _, ok := annotated.Inner.(*typ.Array); !ok {
+		t.Fatalf("expected annotated array, got %T", annotated.Inner)
+	}
+	if len(annotated.Annotations) != 1 {
+		t.Fatalf("expected 1 annotation, got %d", len(annotated.Annotations))
+	}
+	if annotated.Annotations[0].Name != "min_len" {
+		t.Errorf("annotation name = %q, want 'min_len'", annotated.Annotations[0].Name)
+	}
+}
+
+func TestParseAndResolve_RecordFieldArrayAnnotation(t *testing.T) {
+	input := `type Holder = {items: {number} @min_len(1)}`
+	stmts, err := parse.Parse(strings.NewReader(input), "test")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(stmts) != 1 {
+		t.Fatalf("got %d stmts, want 1", len(stmts))
+	}
+	typedef, ok := stmts[0].(*ast.TypeDefStmt)
+	if !ok {
+		t.Fatalf("expected TypeDefStmt, got %T", stmts[0])
+	}
+
+	resolver := New(Config{})
+	sc := scope.New()
+	result := resolver.ResolveType(typedef.Type, sc)
+
+	record, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected *typ.Record, got %T", result)
+	}
+	field := record.GetField("items")
+	if field == nil {
+		t.Fatal("missing 'items' field")
+	}
+	annotated, ok := field.Type.(*typ.Annotated)
+	if !ok {
+		t.Fatalf("items field expected annotated type, got %T", field.Type)
+	}
+	if len(annotated.Annotations) != 1 {
+		t.Fatalf("expected 1 annotation, got %d", len(annotated.Annotations))
+	}
+	if annotated.Annotations[0].Name != "min_len" {
+		t.Errorf("annotation name = %q, want 'min_len'", annotated.Annotations[0].Name)
+	}
+}
+
 func TestParseAndResolve_RecordFieldAnnotations(t *testing.T) {
 	input := `type User = {
 		age: number @min(0) @max(150),

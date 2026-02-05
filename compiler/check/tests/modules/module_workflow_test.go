@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // =============================================================================
@@ -124,6 +125,53 @@ func TestE2E_TypeDefinitionExport(t *testing.T) {
 			t.Logf("error: %s", e.Message)
 		}
 		t.Error("expected no errors")
+	}
+}
+
+// TestE2E_TypeOfDefinitionExport ensures typeof(...) captures annotated local shapes.
+func TestE2E_TypeOfDefinitionExport(t *testing.T) {
+	mod := testutil.CheckAndExport(`
+		local sample: {name: string, age: number} = {name = "Ada", age = 33}
+		type Sample = typeof(sample)
+
+		local M = {}
+		function M.accept(s: Sample): Sample
+			return s
+		end
+		return M
+	`, "sample", testutil.WithStdlib())
+
+	if mod.HasError() {
+		for _, e := range mod.Errors {
+			t.Logf("provider error: %s", e.Message)
+		}
+		t.Fatal("provider has errors")
+	}
+
+	sampleType := mod.Manifest.Types["Sample"]
+	if sampleType == nil {
+		t.Fatal("expected Sample type in manifest")
+	}
+
+	rec, ok := unwrap.Alias(sampleType).(*typ.Record)
+	if !ok {
+		t.Fatalf("expected Sample to resolve to record, got %T", sampleType)
+	}
+
+	nameField := rec.GetField("name")
+	if nameField == nil {
+		t.Fatal("expected Sample.name field")
+	}
+	if !typ.TypeEquals(nameField.Type, typ.String) {
+		t.Errorf("expected Sample.name to be string, got %v", nameField.Type)
+	}
+
+	ageField := rec.GetField("age")
+	if ageField == nil {
+		t.Fatal("expected Sample.age field")
+	}
+	if !typ.TypeEquals(ageField.Type, typ.Number) {
+		t.Errorf("expected Sample.age to be number, got %v", ageField.Type)
 	}
 }
 

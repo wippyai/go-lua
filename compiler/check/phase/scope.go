@@ -50,8 +50,8 @@ type ScopeGraph interface {
 	TypeDef(p cfg.Point) *cfg.TypeDefInfo
 }
 
-// scopeTypeResolver resolves a type definition to a concrete type.
-type scopeTypeResolver func(info *cfg.TypeDefInfo, sc *scope.State) typ.Type
+// scopeTypeResolver resolves a type definition to a concrete type at a CFG point.
+type scopeTypeResolver func(info *cfg.TypeDefInfo, p cfg.Point, sc *scope.State) typ.Type
 
 // scopeExprSynthesizer synthesizes the type of an expression at a CFG point.
 type scopeExprSynthesizer func(expr ast.Expr, p cfg.Point, sc *scope.State) typ.Type
@@ -63,7 +63,7 @@ type scopeCallMutator func(info *cfg.CallInfo, p cfg.Point, sc *scope.State) *sc
 // This replaces the callback-heavy config with a single cohesive interface.
 type ScopeServices interface {
 	// ResolveTypeDef resolves type definition nodes to concrete types.
-	ResolveTypeDef(info *cfg.TypeDefInfo, sc *scope.State) typ.Type
+	ResolveTypeDef(info *cfg.TypeDefInfo, p cfg.Point, sc *scope.State) typ.Type
 	// MutateCall applies call effects to scope state at a CFG point.
 	MutateCall(info *cfg.CallInfo, p cfg.Point, sc *scope.State) *scope.State
 }
@@ -75,11 +75,11 @@ type ScopeServicesFuncs struct {
 	CallMutator  scopeCallMutator
 }
 
-func (s ScopeServicesFuncs) ResolveTypeDef(info *cfg.TypeDefInfo, sc *scope.State) typ.Type {
+func (s ScopeServicesFuncs) ResolveTypeDef(info *cfg.TypeDefInfo, p cfg.Point, sc *scope.State) typ.Type {
 	if s.TypeResolver == nil {
 		return nil
 	}
-	return s.TypeResolver(info, sc)
+	return s.TypeResolver(info, p, sc)
 }
 
 func (s ScopeServicesFuncs) MutateCall(info *cfg.CallInfo, p cfg.Point, sc *scope.State) *scope.State {
@@ -150,8 +150,42 @@ func RunScope(input ScopeInput) ScopeOutput {
 		input.Manifests,
 	)
 
-	typeResolver := func(info *cfg.TypeDefInfo, sc *scope.State) typ.Type {
-		return typeResolutionEngine.ResolveTypeDef(info.Name, info.TypeExpr, toAstTypeParams(info.TypeParams), sc)
+	localTypeAnnotations := make(map[cfg.SymbolID]ast.TypeExpr)
+	for _, p := range input.Graph.RPO() {
+		if info := input.Graph.Assign(p); info != nil && info.IsLocal && len(info.TypeAnnotations) > 0 {
+			for i, target := range info.Targets {
+				if target.Kind != cfg.TargetIdent || target.Name == "" {
+					continue
+				}
+				if i >= len(info.TypeAnnotations) || info.TypeAnnotations[i] == nil {
+					continue
+				}
+				sym, ok := input.Graph.SymbolAt(p, target.Name)
+				if !ok || sym == 0 {
+					continue
+				}
+				if _, exists := localTypeAnnotations[sym]; !exists {
+					localTypeAnnotations[sym] = info.TypeAnnotations[i]
+				}
+			}
+		}
+	}
+
+	typeResolver := func(info *cfg.TypeDefInfo, p cfg.Point, sc *scope.State) typ.Type {
+		if info != nil && info.TypeExpr != nil {
+			if typeOf, ok := info.TypeExpr.(*ast.TypeOfExpr); ok {
+				if ident, ok := typeOf.Expr.(*ast.IdentExpr); ok && typeExprResolver != nil {
+					if sym, ok := input.Graph.SymbolAt(p, ident.Value); ok && sym != 0 {
+						if ann, ok := localTypeAnnotations[sym]; ok && ann != nil {
+							if resolved := typeExprResolver.ResolveType(ann, sc); resolved != nil {
+								return resolved
+							}
+						}
+					}
+				}
+			}
+		}
+		return typeResolutionEngine.ResolveTypeDefAt(info.Name, info.TypeExpr, toAstTypeParams(info.TypeParams), sc, p)
 	}
 	exprSynth := func(expr ast.Expr, p cfg.Point, sc *scope.State) typ.Type {
 		return typeResolutionEngine.SynthExprAt(expr, p, sc)
@@ -675,7 +709,7 @@ func applyTypeDef(graph ScopeGraph, p cfg.Point, current *scope.State, services 
 	}
 	var resolved typ.Type
 	if services != nil {
-		resolved = services.ResolveTypeDef(info, current)
+		resolved = services.ResolveTypeDef(info, p, current)
 	}
 	if resolved == nil {
 		resolved = typ.Unknown

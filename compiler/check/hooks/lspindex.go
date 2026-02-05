@@ -141,6 +141,9 @@ func (idx *LSPIndexer) extractLocals(file string, graph *cfg.Graph, result *api.
 
 			span := targetSpan(target)
 			if !span.Valid() {
+				span = localNameSpan(info, i)
+			}
+			if !span.Valid() {
 				continue
 			}
 
@@ -221,7 +224,7 @@ func (idx *LSPIndexer) extractReferencesAndCalls(file string, graph *cfg.Graph, 
 		return
 	}
 
-	// Extract references from assignment sources
+	// Extract references and calls from assignment sources
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		if info == nil {
 			return
@@ -229,45 +232,54 @@ func (idx *LSPIndexer) extractReferencesAndCalls(file string, graph *cfg.Graph, 
 
 		for _, src := range info.Sources {
 			idx.extractExprRefs(file, src, p, graph, bindings)
+			idx.extractExprCalls(file, callerName, src, p, graph)
 		}
 	})
 
-	// Extract call references and edges
+	// Extract references and calls from call statements.
 	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
 
-		// Extract reference to callee
-		if info.Callee != nil {
-			idx.extractExprRefs(file, info.Callee, p, graph, bindings)
+		callExpr := info.Call
+		if callExpr == nil {
+			return
 		}
 
-		// Extract argument references
-		for _, arg := range info.Args {
-			idx.extractExprRefs(file, arg, p, graph, bindings)
-		}
-
-		// Add call edge
+		idx.extractExprRefs(file, callExpr, p, graph, bindings)
 		idx.addCallEdge(file, callerName, info, p, graph)
+
+		// Extract nested calls inside callee/receiver/args (avoid re-adding the call itself).
+		if info.Callee != nil {
+			idx.extractExprCalls(file, callerName, info.Callee, p, graph)
+		}
+		if info.Receiver != nil {
+			idx.extractExprCalls(file, callerName, info.Receiver, p, graph)
+		}
+		for _, arg := range info.Args {
+			idx.extractExprCalls(file, callerName, arg, p, graph)
+		}
 	})
 
-	// Extract return expression references
+	// Extract references and calls from return expressions
 	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
 		if info == nil {
 			return
 		}
 		for _, expr := range info.Exprs {
 			idx.extractExprRefs(file, expr, p, graph, bindings)
+			idx.extractExprCalls(file, callerName, expr, p, graph)
 		}
 	})
 
-	// Extract branch condition references
+	// Extract references and calls from branch conditions
 	graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
 		if info == nil || info.Condition == nil {
 			return
 		}
 		idx.extractExprRefs(file, info.Condition, p, graph, bindings)
+		idx.extractExprCalls(file, callerName, info.Condition, p, graph)
 	})
 }
 
@@ -320,6 +332,65 @@ func (idx *LSPIndexer) extractExprRefs(file string, expr ast.Expr, p cfg.Point, 
 		idx.extractExprRefs(file, e.Expr, p, graph, bindings)
 	case *ast.UnaryBNotOpExpr:
 		idx.extractExprRefs(file, e.Expr, p, graph, bindings)
+	}
+}
+
+// extractExprCalls extracts call edges from an expression tree.
+func (idx *LSPIndexer) extractExprCalls(file, callerName string, expr ast.Expr, p cfg.Point, graph *cfg.Graph) {
+	if idx.CallGraph == nil || expr == nil {
+		return
+	}
+
+	switch e := expr.(type) {
+	case *ast.FuncCallExpr:
+		info := cfg.BuildCallInfo(e, false)
+		idx.addCallEdge(file, callerName, info, p, graph)
+		idx.extractExprCalls(file, callerName, e.Func, p, graph)
+		idx.extractExprCalls(file, callerName, e.Receiver, p, graph)
+		for _, arg := range e.Args {
+			idx.extractExprCalls(file, callerName, arg, p, graph)
+		}
+
+	case *ast.AttrGetExpr:
+		idx.extractExprCalls(file, callerName, e.Object, p, graph)
+		idx.extractExprCalls(file, callerName, e.Key, p, graph)
+
+	case *ast.TableExpr:
+		for _, field := range e.Fields {
+			if field.Value != nil {
+				idx.extractExprCalls(file, callerName, field.Value, p, graph)
+			}
+		}
+
+	case *ast.ArithmeticOpExpr:
+		idx.extractExprCalls(file, callerName, e.Lhs, p, graph)
+		idx.extractExprCalls(file, callerName, e.Rhs, p, graph)
+
+	case *ast.RelationalOpExpr:
+		idx.extractExprCalls(file, callerName, e.Lhs, p, graph)
+		idx.extractExprCalls(file, callerName, e.Rhs, p, graph)
+
+	case *ast.LogicalOpExpr:
+		idx.extractExprCalls(file, callerName, e.Lhs, p, graph)
+		idx.extractExprCalls(file, callerName, e.Rhs, p, graph)
+
+	case *ast.StringConcatOpExpr:
+		idx.extractExprCalls(file, callerName, e.Lhs, p, graph)
+		idx.extractExprCalls(file, callerName, e.Rhs, p, graph)
+
+	case *ast.UnaryMinusOpExpr:
+		idx.extractExprCalls(file, callerName, e.Expr, p, graph)
+	case *ast.UnaryNotOpExpr:
+		idx.extractExprCalls(file, callerName, e.Expr, p, graph)
+	case *ast.UnaryLenOpExpr:
+		idx.extractExprCalls(file, callerName, e.Expr, p, graph)
+	case *ast.UnaryBNotOpExpr:
+		idx.extractExprCalls(file, callerName, e.Expr, p, graph)
+
+	case *ast.CastExpr:
+		idx.extractExprCalls(file, callerName, e.Expr, p, graph)
+	case *ast.NonNilAssertExpr:
+		idx.extractExprCalls(file, callerName, e.Expr, p, graph)
 	}
 }
 
@@ -406,6 +477,40 @@ func astSpan(node ast.PositionHolder) diag.Span {
 	}
 }
 
+func positionSpan(pos ast.Position) diag.Span {
+	if pos.Line == 0 {
+		return diag.Span{}
+	}
+	endLine := pos.EndLine
+	endCol := pos.EndColumn
+	if endLine == 0 {
+		endLine = pos.Line
+	}
+	if endCol == 0 {
+		endCol = pos.Column
+	}
+	return diag.Span{
+		StartLine: pos.Line,
+		StartCol:  pos.Column,
+		EndLine:   endLine,
+		EndCol:    endCol,
+	}
+}
+
+func localNameSpan(info *cfg.AssignInfo, idx int) diag.Span {
+	if info == nil || idx < 0 || info.Stmt == nil {
+		return diag.Span{}
+	}
+	stmt, ok := info.Stmt.(*ast.LocalAssignStmt)
+	if !ok {
+		return diag.Span{}
+	}
+	if idx >= len(stmt.NamePositions) {
+		return diag.Span{}
+	}
+	return positionSpan(stmt.NamePositions[idx])
+}
+
 func targetSpan(target cfg.AssignTarget) diag.Span {
 	if target.Expr != nil {
 		return astSpan(target.Expr)
@@ -436,7 +541,13 @@ func typeDefSpan(info *cfg.TypeDefInfo) diag.Span {
 }
 
 func callSpan(info *cfg.CallInfo) diag.Span {
-	if info == nil || info.Callee == nil {
+	if info == nil {
+		return diag.Span{}
+	}
+	if info.Call != nil {
+		return astSpan(info.Call)
+	}
+	if info.Callee == nil {
 		return diag.Span{}
 	}
 	return astSpan(info.Callee)

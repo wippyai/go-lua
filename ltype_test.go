@@ -1015,6 +1015,135 @@ func TestTypeMethodIs_ReturnsErrorOnFailure(t *testing.T) {
 	}
 }
 
+func TestTypeMethodIs_OptionalFieldMissing(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	personType := &LType{
+		inner: typ.NewRecord().
+			Field("name", typ.String).
+			OptField("age", typ.Number).
+			Build(),
+		name: "Person",
+	}
+
+	isMethod := L.typeGetField(personType, "is")
+	if isMethod == LNil {
+		t.Fatal(":is method should not be nil")
+	}
+
+	valTable := L.NewTable()
+	valTable.RawSetString("name", LString("Ada"))
+
+	L.Push(isMethod)
+	L.Push(valTable)
+	L.Call(1, 2)
+
+	val := L.Get(-2)
+	errVal := L.Get(-1)
+	L.Pop(2)
+
+	if val == LNil {
+		t.Error("Type:is should succeed when optional field is missing")
+	}
+	if errVal != LNil {
+		t.Errorf("Type:is should return nil error when optional field is missing, got %v", errVal)
+	}
+}
+
+func TestTypeMethodIs_AnnotatedType(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	annotated := &LType{
+		inner: typ.NewAnnotated(typ.Number, []typ.Annotation{
+			{Name: "min", Arg: float64(0)},
+		}),
+		name: "NonNegative",
+	}
+
+	isMethod := L.typeGetField(annotated, "is")
+	if isMethod == LNil {
+		t.Fatal(":is method should not be nil")
+	}
+
+	L.Push(isMethod)
+	L.Push(LNumber(5))
+	L.Call(1, 2)
+	val := L.Get(-2)
+	errVal := L.Get(-1)
+	L.Pop(2)
+
+	if val == LNil {
+		t.Error("Type:is should succeed for valid annotated value")
+	}
+	if errVal != LNil {
+		t.Errorf("Type:is should return nil error for valid annotated value, got %v", errVal)
+	}
+
+	L.Push(isMethod)
+	L.Push(LNumber(-1))
+	L.Call(1, 2)
+	val = L.Get(-2)
+	errVal = L.Get(-1)
+	L.Pop(2)
+
+	if val != LNil {
+		t.Errorf("Type:is should return nil value for invalid annotated value, got %v", val)
+	}
+	if errVal == LNil {
+		t.Error("Type:is should return error for invalid annotated value")
+	}
+}
+
+func TestTypeMethodIs_AnnotatedArrayMinLen(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	annotated := &LType{
+		inner: typ.NewAnnotated(typ.NewArray(typ.Number), []typ.Annotation{
+			{Name: "min_len", Arg: float64(1)},
+		}),
+		name: "NumList",
+	}
+
+	isMethod := L.typeGetField(annotated, "is")
+	if isMethod == LNil {
+		t.Fatal(":is method should not be nil")
+	}
+
+	empty := L.NewTable()
+	L.Push(isMethod)
+	L.Push(empty)
+	L.Call(1, 2)
+	val := L.Get(-2)
+	errVal := L.Get(-1)
+	L.Pop(2)
+
+	if val != LNil {
+		t.Errorf("Type:is should fail for empty array, got %v", val)
+	}
+	if errVal == LNil {
+		t.Error("Type:is should return error for empty array")
+	}
+
+	nonEmpty := L.NewTable()
+	nonEmpty.Append(LNumber(1))
+	L.Push(isMethod)
+	L.Push(nonEmpty)
+	L.Call(1, 2)
+	val = L.Get(-2)
+	errVal = L.Get(-1)
+	L.Pop(2)
+
+	if val == LNil {
+		t.Error("Type:is should pass for non-empty array")
+	}
+	if errVal != LNil {
+		t.Errorf("Type:is should return nil error for non-empty array, got %v", errVal)
+	}
+}
+
 // TestTypeMethodIs_PrimitiveTypes tests Type:is with primitive types.
 func TestTypeMethodIs_PrimitiveTypes(t *testing.T) {
 	L := NewState()

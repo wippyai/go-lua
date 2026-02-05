@@ -4,7 +4,7 @@ package parse
 import (
   "strconv"
   "strings"
-  "github.com/yuin/gopher-lua/compiler/ast"
+  "github.com/wippyai/go-lua/compiler/ast"
 )
 
 func parseNumber(s string) (interface{}, error) {
@@ -934,6 +934,9 @@ simpletypeexpr:
             if prim, ok := $1.(*ast.PrimitiveTypeExpr); ok {
                 prim.Annotations = $2
                 $$ = prim
+            } else if arr, ok := $1.(*ast.ArrayTypeExpr); ok {
+                arr.ArrayAnnotations = $2
+                $$ = arr
             } else {
                 $$ = $1
             }
