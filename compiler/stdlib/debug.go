@@ -13,7 +13,15 @@ var debugMethods = typ.NewRecord().
 	Field("getuservalue", typ.Func().Param("u", typ.Any).Param("n", typ.Integer).Returns(typ.Any, typ.Boolean).Build()).
 	Field("sethook", typ.Func().Param("hook", typ.Any).Param("mask", typ.String).OptParam("count", typ.Integer).Build()).
 	Field("setlocal", typ.Func().Param("level", typ.Integer).Param("local", typ.Integer).Param("value", typ.Any).Returns(typ.NewOptional(typ.String)).Build()).
-	Field("setmetatable", typ.Func().Param("value", typ.Any).Param("table", typ.NewOptional(typ.Any)).Returns(typ.Any).Build()).
+	Field("setmetatable", func() typ.Type {
+		tp := typ.NewTypeParam("T", nil)
+		return typ.Func().
+			TypeParam("T", nil).
+			Param("value", tp).
+			Param("table", typ.NewOptional(typ.Any)).
+			Returns(tp).
+			Build()
+	}()).
 	Field("setupvalue", typ.Func().Param("f", typ.Any).Param("up", typ.Integer).Param("value", typ.Any).Returns(typ.NewOptional(typ.String)).Build()).
 	Field("setuservalue", typ.Func().Param("udata", typ.Any).Param("value", typ.Any).Param("n", typ.Integer).Returns(typ.Any).Build()).
 	Field("traceback", typ.Func().OptParam("thread", typ.Any).OptParam("message", typ.Any).OptParam("level", typ.Integer).Returns(typ.String).Build()).

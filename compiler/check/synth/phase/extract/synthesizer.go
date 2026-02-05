@@ -33,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -315,10 +316,29 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 	if s.IsNarrowing() && narrower != nil {
 		path := constraint.Path{Root: ex.Value, Symbol: sym}
 		if narrowed := narrower.NarrowedTypeAt(p, path); narrowed != nil {
+			// Guard against unsound narrowing for annotated symbols by ensuring
+			// the narrowed type remains a subtype of the declared type.
+			if types := ctx.Types(); types != nil && types.IsAnnotated(sym) {
+				declared := types.DeclaredAt(p, sym)
+				if declared.Type != nil && declared.State == flow.StateResolved {
+					if !subtype.IsSubtype(narrowed, declared.Type) {
+						goto fallback
+					}
+					declaredBase := unwrap.Alias(declared.Type)
+					if _, ok := declaredBase.(*typ.Optional); !ok {
+						if _, ok := declaredBase.(*typ.Union); !ok {
+							if narrowed.Kind() != declaredBase.Kind() {
+								goto fallback
+							}
+						}
+					}
+				}
+			}
 			return narrowed
 		}
 	}
 
+fallback:
 	if types := ctx.Types(); types != nil {
 		tv := types.EffectiveTypeAt(p, sym)
 		if tv.State == flow.StateResolved && tv.Type != nil {

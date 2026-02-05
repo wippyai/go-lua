@@ -14,7 +14,9 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // TypeFacts provides phase-safe type access by separating declared types from refined types.
@@ -67,9 +69,18 @@ func (s *Solution) DeclaredAt(p cfg.Point, sym cfg.SymbolID) TypedValue {
 	if s == nil || s.inputs == nil || sym == 0 {
 		return TypedValue{Type: typ.Unknown, State: StateUnknown}
 	}
-	// Check literal types first (function literals synthesized in current scope)
-	if t := s.inputs.LiteralTypes[sym]; t != nil {
-		return TypedValue{Type: t, State: StateResolved}
+	// For explicitly annotated symbols, prefer the declared type over literal overlays.
+	if s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[sym] {
+		if t := s.inputs.DeclaredTypes[sym]; t != nil {
+			return TypedValue{Type: t, State: StateResolved}
+		}
+	}
+	// Check literal types first (function literals synthesized in current scope),
+	// but do not override explicit annotations.
+	if s.inputs.AnnotatedVars == nil || !s.inputs.AnnotatedVars[sym] {
+		if t := s.inputs.LiteralTypes[sym]; t != nil {
+			return TypedValue{Type: t, State: StateResolved}
+		}
 	}
 	// Check sibling types (captured variables from parent scope)
 	if t := s.inputs.SiblingTypes[sym]; t != nil {
@@ -111,6 +122,25 @@ func (s *Solution) RefinedAt(p cfg.Point, sym cfg.SymbolID) TypedValue {
 func (s *Solution) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) TypedValue {
 	refined := s.RefinedAt(p, sym)
 	if refined.Type != nil {
+		// For annotated symbols, only accept refinements that are subtypes of the declared type.
+		// This prevents unsound narrowing that drops required fields from annotated records.
+		if s != nil && s.inputs != nil && s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[sym] {
+			declared := s.DeclaredAt(p, sym)
+			if declared.Type != nil && declared.State == StateResolved {
+				if !subtype.IsSubtype(refined.Type, declared.Type) {
+					return declared
+				}
+				// If the declared type is not optional/union, keep its structural kind authoritative.
+				declaredBase := unwrap.Alias(declared.Type)
+				if _, ok := declaredBase.(*typ.Optional); !ok {
+					if _, ok := declaredBase.(*typ.Union); !ok {
+						if refined.Type.Kind() != declaredBase.Kind() {
+							return declared
+						}
+					}
+				}
+			}
+		}
 		return refined
 	}
 	return s.DeclaredAt(p, sym)

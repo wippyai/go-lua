@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow/join"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -56,6 +57,15 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		baseType := full
 		if baseType == nil {
 			baseType = base
+		}
+		// For annotated symbols, prefer the declared type as the base.
+		// This keeps annotations authoritative while still allowing field overlays.
+		if s.inputs != nil && s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[path.Symbol] {
+			if declared := s.lookupDeclaredType(path); declared != nil {
+				if baseType == nil || !subtype.IsSubtype(baseType, declared) {
+					baseType = declared
+				}
+			}
 		}
 		return s.mergeFieldAssignments(baseType, string(baseKey))
 	}
@@ -278,6 +288,17 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	baseType := s.baseTypeAt(p, path)
 	if baseType == nil {
 		return nil
+	}
+	// For annotated symbols, ensure base type does not drop required structure.
+	// If the base type is not a subtype of the declared type, fall back to declared.
+	if s.inputs != nil && len(path.Segments) == 0 && path.Symbol != 0 {
+		if s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[path.Symbol] {
+			if declared := s.lookupDeclaredType(path); declared != nil {
+				if !subtype.IsSubtype(baseType, declared) {
+					baseType = declared
+				}
+			}
+		}
 	}
 
 	condition := s.ConditionAt(p)

@@ -178,6 +178,49 @@ func TestProvider_Complete_Member(t *testing.T) {
 	}
 }
 
+func TestProvider_Complete_MemberReceiverType(t *testing.T) {
+	symbols := index.NewSymbolIndex()
+	symbols.AddDefinition("test.lua", "helper", index.SymbolField, typ.String,
+		diag.Span{StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 7}, "")
+
+	rec := typ.NewRecord().
+		Field("id", typ.String).
+		Field("count", typ.Number).
+		Build()
+
+	provider := NewProvider(symbols)
+	ctx := &Context{
+		File:         "test.lua",
+		Kind:         ContextMember,
+		Prefix:       "c",
+		ReceiverType: rec,
+	}
+
+	items := provider.Complete(ctx)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item for receiver type prefix 'c', got %d", len(items))
+	}
+	if items[0].Label != "count" {
+		t.Errorf("expected 'count', got '%s'", items[0].Label)
+	}
+	if items[0].Kind != KindField {
+		t.Errorf("expected KindField, got %d", items[0].Kind)
+	}
+}
+
+func TestResolveMemberType(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("x", typ.Number).
+		Field("y", typ.String).
+		Build()
+	if got := ResolveMemberType(rec, "x"); got != typ.Number {
+		t.Errorf("ResolveMemberType(record, \"x\") = %v, want %v", got, typ.Number)
+	}
+	if got := ResolveMemberType(rec, "missing"); got != nil {
+		t.Errorf("ResolveMemberType(record, \"missing\") = %v, want nil", got)
+	}
+}
+
 func TestProvider_Complete_MemberNoPrefix(t *testing.T) {
 	symbols := index.NewSymbolIndex()
 	symbols.AddDefinition("test.lua", "x", index.SymbolField, nil,

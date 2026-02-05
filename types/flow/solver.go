@@ -426,9 +426,18 @@ func (s *Solution) lookupDeclaredType(path constraint.Path) typ.Type {
 	if s.inputs == nil || path.Symbol == 0 {
 		return nil
 	}
-	// Check literal types first (function literals defined in current scope)
-	if t := s.inputs.LiteralTypes[path.Symbol]; t != nil {
-		return t
+	annotated := s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[path.Symbol]
+	if annotated {
+		if t := s.inputs.DeclaredTypes[path.Symbol]; t != nil {
+			return t
+		}
+	}
+	// Check literal types first (function literals defined in current scope),
+	// but do not override explicit annotations.
+	if !annotated {
+		if t := s.inputs.LiteralTypes[path.Symbol]; t != nil {
+			return t
+		}
 	}
 	// Check sibling types (captured variables from parent scope)
 	if t := s.inputs.SiblingTypes[path.Symbol]; t != nil {

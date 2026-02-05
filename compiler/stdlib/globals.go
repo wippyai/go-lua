@@ -48,12 +48,16 @@ var (
 			Build()
 
 	// setmetatable(table, metatable) -> table
-	SetMetatable = typ.Func().
-			Param("table", typ.Any).
+	SetMetatable = func() typ.Type {
+		tp := typ.NewTypeParam("T", nil)
+		return typ.Func().
+			TypeParam("T", nil).
+			Param("table", tp).
 			Param("metatable", typ.NewOptional(typ.Any)).
-			Returns(typ.Any).
+			Returns(tp).
 			Effects(effect.StoresParam(1, 0)).
 			Build()
+	}()
 
 	// ipairs(t) -> iterator, t, 0
 	Ipairs = typ.Func().

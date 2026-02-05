@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/lsp"
 	"github.com/wippyai/go-lua/lsp/index"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/subst"
 )
 
 // Kind represents completion item kind (matches LSP CompletionItemKind).
@@ -83,6 +84,8 @@ type Context struct {
 	TriggerChar string
 	Prefix      string      // text before cursor on current "word"
 	Kind        ContextKind // detected context kind
+	// ReceiverType is the resolved type of the receiver for member access (after ".").
+	ReceiverType typ.Type
 }
 
 // TypeFormatter formats a type for display.
@@ -167,15 +170,17 @@ func (p *Provider) identifierCompletions(ctx *Context) []Item {
 
 // memberCompletions returns completions for member access (after ".").
 func (p *Provider) memberCompletions(ctx *Context) []Item {
-	// Without AST access, we can't determine the type before the dot
-	// Return field symbols as a fallback
+	prefix := strings.ToLower(ctx.Prefix)
+	if ctx.ReceiverType != nil {
+		return p.memberItemsFromType(ctx.ReceiverType, prefix)
+	}
+
+	// Without receiver type, fall back to field symbols from the file.
 	if p.symbols == nil {
 		return nil
 	}
 
 	var items []Item
-	prefix := strings.ToLower(ctx.Prefix)
-
 	syms := p.symbols.SymbolsInFile(ctx.File)
 	for _, sym := range syms {
 		if sym.Kind != index.SymbolField {
@@ -188,6 +193,190 @@ func (p *Provider) memberCompletions(ctx *Context) []Item {
 	}
 
 	return items
+}
+
+func (p *Provider) memberItemsFromType(t typ.Type, prefix string) []Item {
+	if t == nil {
+		return nil
+	}
+
+	itemsByName := make(map[string]Item)
+	visited := make(map[typ.Type]bool)
+	lowerPrefix := strings.ToLower(prefix)
+
+	addItem := func(name string, kind Kind, t typ.Type) {
+		if name == "" {
+			return
+		}
+		if lowerPrefix != "" && !strings.HasPrefix(strings.ToLower(name), lowerPrefix) {
+			return
+		}
+		item := Item{
+			Label:      name,
+			Kind:       kind,
+			FilterText: name,
+		}
+		if t != nil {
+			item.Type = t
+			if p.formatType != nil {
+				item.Detail = p.formatType(t)
+			} else {
+				item.Detail = t.String()
+			}
+		}
+		if existing, ok := itemsByName[name]; ok {
+			if existing.Kind == KindField && kind == KindMethod {
+				itemsByName[name] = item
+			} else if existing.Detail == "" && item.Detail != "" {
+				itemsByName[name] = item
+			}
+			return
+		}
+		itemsByName[name] = item
+	}
+
+	var visit func(typ.Type)
+	visit = func(t typ.Type) {
+		if t == nil {
+			return
+		}
+		if visited[t] {
+			return
+		}
+		visited[t] = true
+		switch tt := t.(type) {
+		case *typ.Alias:
+			visit(tt.Target)
+		case *typ.Optional:
+			visit(tt.Inner)
+		case *typ.Record:
+			for _, field := range tt.Fields {
+				kind := KindField
+				if _, ok := field.Type.(*typ.Function); ok {
+					kind = KindMethod
+				}
+				addItem(field.Name, kind, field.Type)
+			}
+		case *typ.Interface:
+			for _, method := range tt.Methods {
+				addItem(method.Name, KindMethod, method.Type)
+			}
+		case *typ.Union:
+			for _, member := range tt.Members {
+				visit(member)
+			}
+		case *typ.Intersection:
+			for _, member := range tt.Members {
+				visit(member)
+			}
+		case *typ.Instantiated:
+			if expanded := subst.ExpandInstantiated(tt); expanded != nil && expanded != t {
+				visit(expanded)
+			}
+		case *typ.Recursive:
+			visit(tt.Body)
+		case *typ.Generic:
+			visit(tt.Body)
+		case *typ.Meta:
+			visit(tt.Of)
+		case *typ.FieldAccess:
+			visit(tt.Base)
+		case *typ.IndexAccess:
+			visit(tt.Base)
+		}
+	}
+
+	visit(t)
+
+	if len(itemsByName) == 0 {
+		return nil
+	}
+
+	items := make([]Item, 0, len(itemsByName))
+	for _, item := range itemsByName {
+		items = append(items, item)
+	}
+
+	return items
+}
+
+// ResolveMemberType resolves the type of a named member on the given receiver type.
+// It returns nil if the member cannot be resolved.
+func ResolveMemberType(t typ.Type, name string) typ.Type {
+	if t == nil || name == "" {
+		return nil
+	}
+	visited := make(map[typ.Type]bool)
+	return resolveMemberType(t, name, visited)
+}
+
+func resolveMemberType(t typ.Type, name string, visited map[typ.Type]bool) typ.Type {
+	if t == nil {
+		return nil
+	}
+	if visited[t] {
+		return nil
+	}
+	visited[t] = true
+
+	switch tt := t.(type) {
+	case *typ.Alias:
+		return resolveMemberType(tt.Target, name, visited)
+	case *typ.Optional:
+		return resolveMemberType(tt.Inner, name, visited)
+	case *typ.Record:
+		for _, field := range tt.Fields {
+			if field.Name == name {
+				return field.Type
+			}
+		}
+		return nil
+	case *typ.Interface:
+		for _, method := range tt.Methods {
+			if method.Name == name {
+				return method.Type
+			}
+		}
+		return nil
+	case *typ.Union:
+		var members []typ.Type
+		for _, member := range tt.Members {
+			if mt := resolveMemberType(member, name, visited); mt != nil {
+				members = append(members, mt)
+			}
+		}
+		if len(members) == 0 {
+			return nil
+		}
+		return typ.NewUnion(members...)
+	case *typ.Intersection:
+		var members []typ.Type
+		for _, member := range tt.Members {
+			if mt := resolveMemberType(member, name, visited); mt != nil {
+				members = append(members, mt)
+			}
+		}
+		if len(members) == 0 {
+			return nil
+		}
+		return typ.NewUnion(members...)
+	case *typ.Instantiated:
+		if expanded := subst.ExpandInstantiated(tt); expanded != nil && expanded != t {
+			return resolveMemberType(expanded, name, visited)
+		}
+	case *typ.Recursive:
+		return resolveMemberType(tt.Body, name, visited)
+	case *typ.Generic:
+		return resolveMemberType(tt.Body, name, visited)
+	case *typ.Meta:
+		return resolveMemberType(tt.Of, name, visited)
+	case *typ.FieldAccess:
+		return resolveMemberType(tt.Base, name, visited)
+	case *typ.IndexAccess:
+		return resolveMemberType(tt.Base, name, visited)
+	}
+
+	return nil
 }
 
 // keywordCompletions returns Lua keyword completions.
