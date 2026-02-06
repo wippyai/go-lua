@@ -577,7 +577,7 @@ func TestStackTrace_String(t *testing.T) {
 }
 
 // externalError simulates an error from another package (like apierror.Error)
-// that implements Kind(), Retryable(), and Details() methods.
+// that implements the metadata bridge contracts.
 type externalError struct {
 	message   string
 	kind      string
@@ -586,18 +586,51 @@ type externalError struct {
 }
 
 func (e *externalError) Error() string { return e.message }
-func (e *externalError) Kind() interface{} {
+func (e *externalError) ErrorKind() string {
 	return e.kind
 }
-func (e *externalError) Retryable() interface{} {
-	return e.retryable
+func (e *externalError) ErrorRetryable() (bool, bool) {
+	switch e.retryable {
+	case 1:
+		return true, true
+	case 2:
+		return false, true
+	default:
+		return false, false
+	}
 }
-func (e *externalError) Details() interface{} {
+func (e *externalError) ErrorDetails() map[string]any {
 	return e.details
 }
 
+func testMetadataExtractor(err error) *ErrorMetadata {
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		meta := &ErrorMetadata{}
+		if k, ok := e.(interface{ ErrorKind() string }); ok {
+			if kind := k.ErrorKind(); kind != "" {
+				meta.Kind = Kind(kind)
+			}
+		}
+		if r, ok := e.(interface{ ErrorRetryable() (bool, bool) }); ok {
+			if b, known := r.ErrorRetryable(); known {
+				v := b
+				meta.Retryable = &v
+			}
+		}
+		if d, ok := e.(interface{ ErrorDetails() map[string]any }); ok {
+			if details := d.ErrorDetails(); details != nil {
+				meta.Details = details
+			}
+		}
+		if meta.Kind != "" || meta.Retryable != nil || meta.Details != nil {
+			return meta
+		}
+	}
+	return nil
+}
+
 // TestWrapError_CrossPackageMetadata tests that WrapError extracts metadata
-// from errors implementing Kind/Retryable/Details methods (like apierror.Error).
+// from errors implementing metadata provider contracts.
 func TestWrapError_CrossPackageMetadata(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -653,7 +686,7 @@ func TestWrapError_CrossPackageMetadata(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wrapped := WrapError(tt.err, "context")
+			wrapped := WrapErrorWithMetadata(tt.err, "context", testMetadataExtractor)
 
 			if wrapped.Kind() != tt.expectedKind {
 				t.Errorf("kind = %v, want %v", wrapped.Kind(), tt.expectedKind)
@@ -672,7 +705,6 @@ func TestWrapError_CrossPackageMetadata(t *testing.T) {
 	}
 }
 
-// externalErrorWithStringer simulates an error with Kind returning fmt.Stringer
 type kindStringer string
 
 func (k kindStringer) String() string { return string(k) }
@@ -682,19 +714,109 @@ type externalErrorWithStringer struct {
 	kind    kindStringer
 }
 
-func (e *externalErrorWithStringer) Error() string     { return e.message }
-func (e *externalErrorWithStringer) Kind() interface{} { return e.kind }
+func (e *externalErrorWithStringer) Error() string { return e.message }
+func (e *externalErrorWithStringer) ErrorKind() string {
+	return e.kind.String()
+}
 
-// TestWrapError_KindAsStringer tests Kind extraction from fmt.Stringer
+// TestWrapError_KindAsStringer tests kind extraction via metadata contract.
 func TestWrapError_KindAsStringer(t *testing.T) {
 	err := &externalErrorWithStringer{
 		message: "timeout error",
 		kind:    kindStringer("Timeout"),
 	}
 
-	wrapped := WrapError(err, "")
+	wrapped := WrapErrorWithMetadata(err, "", testMetadataExtractor)
 	if wrapped.Kind() != Timeout {
 		t.Errorf("kind = %v, want %v", wrapped.Kind(), Timeout)
+	}
+}
+
+type externalTernary int
+
+const (
+	externalTernaryUnknown externalTernary = 0
+	externalTernaryTrue    externalTernary = 1
+	externalTernaryFalse   externalTernary = 2
+)
+
+func (t externalTernary) Bool() bool {
+	return t == externalTernaryTrue
+}
+
+func (t externalTernary) String() string {
+	switch t {
+	case externalTernaryTrue:
+		return "True"
+	case externalTernaryFalse:
+		return "False"
+	default:
+		return "Unspecified"
+	}
+}
+
+type externalAttrs map[string]any
+
+func (a externalAttrs) AsMap() map[string]any {
+	return map[string]any(a)
+}
+
+type externalTypedError struct {
+	message   string
+	kind      kindStringer
+	retryable externalTernary
+	details   externalAttrs
+}
+
+func (e *externalTypedError) Error() string {
+	return e.message
+}
+
+func (e *externalTypedError) ErrorKind() string {
+	return e.kind.String()
+}
+
+func (e *externalTypedError) ErrorRetryable() (bool, bool) {
+	switch e.retryable {
+	case externalTernaryTrue:
+		return true, true
+	case externalTernaryFalse:
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func (e *externalTypedError) ErrorDetails() map[string]any {
+	return map[string]any(e.details)
+}
+
+func TestWrapError_CrossPackageTypedMetadata(t *testing.T) {
+	errWithFalse := &externalTypedError{
+		message:   "typed metadata",
+		kind:      kindStringer("Invalid"),
+		retryable: externalTernaryFalse,
+		details:   externalAttrs{"source": "typed"},
+	}
+	wrapped := WrapErrorWithMetadata(errWithFalse, "ctx", testMetadataExtractor)
+	if wrapped.Kind() != Invalid {
+		t.Fatalf("kind = %v, want %v", wrapped.Kind(), Invalid)
+	}
+	if wrapped.Retryable() != TernaryFalse {
+		t.Fatalf("retryable = %v, want %v", wrapped.Retryable(), TernaryFalse)
+	}
+	if wrapped.Details()["source"] != "typed" {
+		t.Fatalf("details = %v, want source=typed", wrapped.Details())
+	}
+
+	errUnknown := &externalTypedError{
+		message:   "typed unknown retryable",
+		kind:      kindStringer("Internal"),
+		retryable: externalTernaryUnknown,
+	}
+	wrapped = WrapErrorWithMetadata(errUnknown, "", testMetadataExtractor)
+	if wrapped.Retryable() != TernaryUnknown {
+		t.Fatalf("retryable = %v, want %v", wrapped.Retryable(), TernaryUnknown)
 	}
 }
 

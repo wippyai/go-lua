@@ -81,6 +81,51 @@ if err := L.DoString(`print("hello")`); err != nil {
 }
 ```
 
+## Error Metadata
+
+`WrapError` and `WrapErrorWithLua` preserve metadata from wrapped `*lua.Error` values.
+For non-`*lua.Error` chains (for example errors from another package), register a process-wide metadata extractor once:
+
+```go
+import (
+    "errors"
+
+    lua "github.com/wippyai/go-lua"
+)
+
+func init() {
+    lua.ConfigureErrorMetadataExtractor(func(err error) *lua.ErrorMetadata {
+        for e := err; e != nil; e = errors.Unwrap(e) {
+            kindProvider, hasKind := e.(interface{ ErrorKind() string })
+            retryProvider, hasRetry := e.(interface{ ErrorRetryable() (bool, bool) })
+            detailsProvider, hasDetails := e.(interface{ ErrorDetails() map[string]any })
+            if !hasKind && !hasRetry && !hasDetails {
+                continue
+            }
+
+            meta := &lua.ErrorMetadata{}
+            if hasKind {
+                meta.Kind = lua.Kind(kindProvider.ErrorKind())
+            }
+            if hasRetry {
+                if b, ok := retryProvider.ErrorRetryable(); ok {
+                    v := b
+                    meta.Retryable = &v
+                }
+            }
+            if hasDetails {
+                meta.Details = detailsProvider.ErrorDetails()
+            }
+            return meta
+        }
+        return nil
+    })
+}
+```
+
+`ConfigureErrorMetadataExtractor` is one-time (subsequent calls are ignored).
+For one-off calls, use `WrapErrorWithMetadata(err, context, extractor)` instead of changing global process state.
+
 ## Type Checking
 
 ```go

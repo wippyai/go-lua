@@ -3,9 +3,9 @@ package lua
 import (
 	"errors"
 	"fmt"
-	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // StackFrame represents a single frame in the Lua stack (for error reporting).
@@ -104,6 +104,48 @@ type Error struct {
 	details   map[string]any // Structured metadata
 }
 
+// ErrorMetadata is portable metadata extracted from a Go error chain.
+type ErrorMetadata struct {
+	Kind      Kind
+	Retryable *bool
+	Details   map[string]any
+}
+
+// ErrorMetadataExtractor extracts metadata from an error chain.
+type ErrorMetadataExtractor func(err error) *ErrorMetadata
+
+var (
+	errorMetadataExtractorMu   sync.RWMutex
+	errorMetadataExtractor     ErrorMetadataExtractor
+	errorMetadataExtractorOnce sync.Once
+)
+
+// ConfigureErrorMetadataExtractor sets the process-wide error metadata extractor once.
+// Subsequent calls are ignored.
+func ConfigureErrorMetadataExtractor(extractor ErrorMetadataExtractor) {
+	if extractor == nil {
+		return
+	}
+	errorMetadataExtractorOnce.Do(func() {
+		SetErrorMetadataExtractor(extractor)
+	})
+}
+
+// SetErrorMetadataExtractor overrides the process-wide extractor.
+// This is primarily intended for tests.
+func SetErrorMetadataExtractor(extractor ErrorMetadataExtractor) {
+	errorMetadataExtractorMu.Lock()
+	errorMetadataExtractor = extractor
+	errorMetadataExtractorMu.Unlock()
+}
+
+func currentErrorMetadataExtractor() ErrorMetadataExtractor {
+	errorMetadataExtractorMu.RLock()
+	extractor := errorMetadataExtractor
+	errorMetadataExtractorMu.RUnlock()
+	return extractor
+}
+
 // NewError creates a new error with the given message.
 func NewError(message string) *Error {
 	e := &Error{
@@ -120,6 +162,15 @@ func NewErrorf(format string, args ...any) *Error {
 
 // WrapError wraps an existing Go error with context.
 func WrapError(err error, context string) *Error {
+	return wrapError(err, context, currentErrorMetadataExtractor())
+}
+
+// WrapErrorWithMetadata wraps an error with an explicit metadata extractor.
+func WrapErrorWithMetadata(err error, context string, extractor ErrorMetadataExtractor) *Error {
+	return wrapError(err, context, extractor)
+}
+
+func wrapError(err error, context string, extractor ErrorMetadataExtractor) *Error {
 	if err == nil {
 		return nil
 	}
@@ -137,165 +188,46 @@ func WrapError(err error, context string) *Error {
 			e.kind = we.kind
 		}
 		if we.retryable != nil {
-			e.retryable = we.retryable
+			b := *we.retryable
+			e.retryable = &b
 		}
-		if len(we.details) > 0 {
-			e.details = we.details
+		if we.details != nil {
+			e.details = cloneDetails(we.details)
 		}
 	}
 
-	// Extract metadata from errors implementing Kind/Retryable/Details methods.
-	// This handles apierror.Error and similar interfaces across package boundaries.
-	// Only extract if not already set from wrapped *Error
-	if e.kind == "" || e.retryable == nil {
-		extractErrorMetadata(err, e)
+	if extractor != nil && (e.kind == "" || e.retryable == nil || e.details == nil) {
+		if meta := extractor(err); meta != nil {
+			if e.kind == "" && meta.Kind != "" {
+				e.kind = meta.Kind
+			}
+			if e.retryable == nil && meta.Retryable != nil {
+				b := *meta.Retryable
+				e.retryable = &b
+			}
+			if e.details == nil && meta.Details != nil {
+				e.details = cloneDetails(meta.Details)
+			}
+		}
 	}
 
 	return e
 }
 
-// extractKind uses reflection to call Kind() method on an error and convert
-// the result to Kind. This handles the case where different packages define
-// their own Kind type but all have String() method.
-func extractKind(err error) Kind {
-	v := reflect.ValueOf(err)
-	if !v.IsValid() {
-		return ""
+func cloneDetails(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
 	}
-
-	// Look for Kind() method
-	m := v.MethodByName("Kind")
-	if !m.IsValid() {
-		return ""
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
 	}
-
-	// Call the method (should take no args)
-	if m.Type().NumIn() != 0 {
-		return ""
-	}
-
-	results := m.Call(nil)
-	if len(results) != 1 {
-		return ""
-	}
-
-	result := results[0]
-	if !result.IsValid() {
-		return ""
-	}
-
-	// Unwrap interface{} if needed
-	if result.Kind() == reflect.Interface && !result.IsNil() {
-		result = result.Elem()
-	}
-
-	if !result.IsValid() {
-		return ""
-	}
-
-	// Try to get string value
-	// First check if it's directly a string
-	if result.Kind() == reflect.String {
-		if s := result.String(); s != "" {
-			return Kind(s)
-		}
-		return ""
-	}
-
-	// Check if it has a String() method
-	if sm := result.MethodByName("String"); sm.IsValid() && sm.Type().NumIn() == 0 {
-		strResults := sm.Call(nil)
-		if len(strResults) == 1 && strResults[0].Kind() == reflect.String {
-			if s := strResults[0].String(); s != "" {
-				return Kind(s)
-			}
-		}
-	}
-
-	return ""
-}
-
-// extractErrorMetadata extracts kind, retryable, and details from errors
-// that implement the corresponding methods. This enables cross-package
-// error metadata preservation (e.g., apierror.Error -> lua.Error).
-// Walks the error chain to find the first error with each piece of metadata.
-func extractErrorMetadata(err error, target *Error) {
-	// Walk the error chain to find metadata
-	for e := err; e != nil; e = errors.Unwrap(e) {
-		// Extract Kind if not already set
-		if target.kind == "" {
-			target.kind = extractKind(e)
-		}
-
-		// Extract Retryable if not already set
-		if target.retryable == nil {
-			if re, ok := e.(interface {
-				Retryable() interface{ Bool() bool }
-			}); ok {
-				b := re.Retryable().Bool()
-				target.retryable = &b
-			} else if re, ok := e.(interface{ Retryable() bool }); ok {
-				b := re.Retryable()
-				target.retryable = &b
-			} else if re, ok := e.(interface{ Retryable() interface{} }); ok {
-				if r := re.Retryable(); r != nil {
-					switch v := r.(type) {
-					case bool:
-						target.retryable = &v
-					case interface{ Bool() bool }:
-						b := v.Bool()
-						target.retryable = &b
-					case int, int8, int16, int32, int64:
-						var intVal int64
-						switch iv := v.(type) {
-						case int:
-							intVal = int64(iv)
-						case int8:
-							intVal = int64(iv)
-						case int16:
-							intVal = int64(iv)
-						case int32:
-							intVal = int64(iv)
-						case int64:
-							intVal = iv
-						}
-						switch intVal {
-						case 1:
-							b := true
-							target.retryable = &b
-						case 2:
-							b := false
-							target.retryable = &b
-						}
-					}
-				}
-			}
-		}
-
-		// Extract Details if not already set
-		if len(target.details) == 0 {
-			if de, ok := e.(interface{ Details() interface{} }); ok {
-				if d := de.Details(); d != nil {
-					switch v := d.(type) {
-					case map[string]any:
-						target.details = v
-					case interface{ AsMap() map[string]any }:
-						target.details = v.AsMap()
-					}
-				}
-			}
-		}
-
-		// Stop if we've found all metadata
-		if target.kind != "" && target.retryable != nil && len(target.details) > 0 {
-			break
-		}
-	}
+	return out
 }
 
 // WrapErrorWithLua wraps an error, captures Lua stack trace, and sets the error metatable.
 func WrapErrorWithLua(l *LState, err error, context string) *Error {
-	e := WrapError(err, context)
+	e := wrapError(err, context, currentErrorMetadataExtractor())
 	if e != nil && l != nil {
 		e.LuaStack = captureStackTrace(l)
 		SetErrorMetatable(l, e)
