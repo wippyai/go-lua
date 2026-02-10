@@ -192,6 +192,84 @@ func widenForInferenceDepth(t typ.Type, depth int) typ.Type {
 
 			return builder.Build()
 		},
+		Function: func(fn *typ.Function) typ.Type {
+			// Preserve generic signatures as-is to avoid detaching type-param
+			// references from their declaration list.
+			if len(fn.TypeParams) > 0 {
+				return t
+			}
+
+			params := make([]typ.Param, len(fn.Params))
+			changed := false
+			for i, p := range fn.Params {
+				pt := widenForInferenceDepth(p.Type, depth+1)
+				params[i] = typ.Param{
+					Name:     p.Name,
+					Type:     pt,
+					Optional: p.Optional,
+				}
+				if pt != p.Type {
+					changed = true
+				}
+			}
+
+			var variadic typ.Type
+			if fn.Variadic != nil {
+				variadic = widenForInferenceDepth(fn.Variadic, depth+1)
+				if variadic != fn.Variadic {
+					changed = true
+				}
+			}
+
+			rets := make([]typ.Type, len(fn.Returns))
+			for i, ret := range fn.Returns {
+				rt := widenForInferenceDepth(ret, depth+1)
+				rets[i] = rt
+				if rt != ret {
+					changed = true
+				}
+			}
+
+			if !changed {
+				return t
+			}
+
+			builder := typ.Func().
+				Effects(fn.Effects).
+				Spec(fn.Spec).
+				WithRefinement(fn.Refinement)
+			for _, p := range params {
+				if p.Optional {
+					builder = builder.OptParam(p.Name, p.Type)
+				} else {
+					builder = builder.Param(p.Name, p.Type)
+				}
+			}
+			if variadic != nil {
+				builder = builder.Variadic(variadic)
+			}
+			builder = builder.Returns(rets...)
+			return builder.Build()
+		},
+		Interface: func(in *typ.Interface) typ.Type {
+			changed := false
+			methods := make([]typ.Method, len(in.Methods))
+			for i, m := range in.Methods {
+				mt := widenForInferenceDepth(m.Type, depth+1)
+				methodFn, ok := mt.(*typ.Function)
+				if !ok {
+					methodFn = m.Type
+				}
+				methods[i] = typ.Method{Name: m.Name, Type: methodFn}
+				if methodFn != m.Type {
+					changed = true
+				}
+			}
+			if !changed {
+				return t
+			}
+			return typ.NewInterface(in.Name, methods)
+		},
 		Default: func(t typ.Type) typ.Type {
 			return t
 		},

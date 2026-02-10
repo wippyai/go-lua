@@ -6,8 +6,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 )
 
 // PropagateParamHintsFromCallGraph propagates parameter type hints through
@@ -24,7 +24,7 @@ import (
 // This ensures that chains like f(x) -> g(x) -> h(x) are fully resolved even
 // if functions are processed in arbitrary order.
 //
-// Hints are accumulated using join.Two, producing union types when a parameter
+// Hints are accumulated using JoinInterprocTypes, producing union types when a parameter
 // is called with multiple different types across call sites.
 func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo) {
 	if len(localFuncs) == 0 {
@@ -42,10 +42,11 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 		if info.Graph == nil {
 			continue
 		}
-		for i, ps := range info.Graph.ParamSymbols() {
-			if ps != 0 {
-				paramOwner[ps] = paramRef{owner: info, index: i}
+		for _, slot := range info.Graph.ParamSlots() {
+			if slot.SourceIndex < 0 || slot.Symbol == 0 {
+				continue
 			}
+			paramOwner[slot.Symbol] = paramRef{owner: info, index: slot.SourceIndex}
 		}
 	}
 
@@ -112,7 +113,8 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 						}
 					}
 
-					if argType == nil || argType.Kind() == typ.Unknown.Kind() {
+					argType = typ.PruneSoftUnionMembers(argType)
+					if !paramhints.IsInformativeHintType(argType) {
 						continue
 					}
 
@@ -125,7 +127,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 					}
 
 					prev := callee.ParamHints[i]
-					joined := join.Two(prev, argType)
+					joined := JoinInterprocTypes(prev, argType)
 					if !typ.TypeEquals(prev, joined) {
 						callee.ParamHints[i] = joined
 						changed = true

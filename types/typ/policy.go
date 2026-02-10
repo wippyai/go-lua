@@ -31,3 +31,21 @@ func JoinPreferNonSoft(a, b Type) Type {
 	}
 	return PruneSoftUnionMembers(NewUnion(a, b))
 }
+
+// IsRefinableAnnotation reports whether an explicit annotation should be
+// treated as a soft placeholder that call-site/contextual hints may refine.
+//
+// Canonical rule: explicit top types (`any`, `unknown`) are authoritative and
+// must not be rewritten by hints. Structural soft placeholders like `{any}` or
+// `any[]` remain refinable.
+func IsRefinableAnnotation(t Type) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind() {
+	case kind.Any, kind.Unknown:
+		return false
+	default:
+		return IsSoft(t, SoftAnnotationPolicy)
+	}
+}

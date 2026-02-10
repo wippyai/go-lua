@@ -351,6 +351,17 @@ func TestStringMethods(t *testing.T) {
 			Stdlib:    true,
 		},
 		{
+			Name: "string_literal_receiver_sub_method",
+			Code: `
+				local function first_char_literal(): string
+					local s = "hello"
+					return s:sub(1, 1)
+				end
+			`,
+			WantError: false,
+			Stdlib:    true,
+		},
+		{
 			Name: "string_gsub_method",
 			Code: `
 				local function normalize(s: string): string

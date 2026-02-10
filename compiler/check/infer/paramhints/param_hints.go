@@ -47,6 +47,31 @@ func WidenParamHintType(t typ.Type) typ.Type {
 	return t
 }
 
+// IsInformativeHintType reports whether a type carries useful call-site
+// information for parameter hint propagation.
+//
+// It intentionally rejects top-like and empty placeholder shapes that tend to
+// poison hints, while preserving structured hints such as maps/arrays with
+// partial information (for example `{[string]: any[]}`).
+func IsInformativeHintType(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+
+	switch t.Kind() {
+	case kind.Any, kind.Unknown, kind.Nil, kind.Never:
+		return false
+	}
+
+	if r, ok := t.(*typ.Record); ok {
+		if len(r.Fields) == 0 && !r.HasMapComponent() && !r.Open {
+			return false
+		}
+	}
+
+	return true
+}
+
 // BuildParamHintSigView builds a function-expression keyed hint map for this graph.
 // It merges per-iteration scratch hints with symbol-based hints from the store.
 // Scratch hints take precedence over symbol-derived hints.

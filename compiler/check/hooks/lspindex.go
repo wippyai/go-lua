@@ -86,20 +86,18 @@ func (idx *LSPIndexer) extractParameters(file string, graph *cfg.Graph, result *
 		return
 	}
 
-	paramSymbols := graph.ParamSymbols()
-	paramNames := graph.ParamNames()
+	paramSlots := graph.ParamSlots()
 	fn := graph.Func()
 
-	if fn == nil || len(paramSymbols) == 0 {
+	if fn == nil || len(paramSlots) == 0 {
 		return
 	}
 
-	for i, sym := range paramSymbols {
-		if sym == 0 || i >= len(paramNames) {
+	for _, slot := range paramSlots {
+		if slot.SourceIndex < 0 || slot.Symbol == 0 {
 			continue
 		}
-
-		name := paramNames[i]
+		name := slot.Name
 		if name == "" {
 			continue
 		}
@@ -113,7 +111,7 @@ func (idx *LSPIndexer) extractParameters(file string, graph *cfg.Graph, result *
 		// Get type from declared facts
 		var paramType typ.Type
 		if result.Facts != nil {
-			tv := result.Facts.DeclaredAt(graph.Entry(), sym)
+			tv := result.Facts.DeclaredAt(graph.Entry(), slot.Symbol)
 			if tv.Type != nil {
 				paramType = tv.Type
 			}

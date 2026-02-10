@@ -312,24 +312,22 @@ func ExtractParamTypes(
 	types = make(map[cfg.SymbolID]typ.Type)
 	annotated = make(map[cfg.SymbolID]bool)
 
-	// Use ParamSymbols from graph which are computed during CFG build.
-	// SymbolAt(entry, name) doesn't work because params are only visible
-	// after their declaration points, not at entry.
-	paramSyms := graph.ParamSymbols()
-
-	for i, name := range fn.ParList.Names {
-		if name == "" {
+	slots := graph.ParamSlots()
+	for _, slot := range slots {
+		if slot.Symbol == 0 || slot.Name == "" {
 			continue
 		}
 
-		// Get symbol from precomputed param symbols
-		var sym cfg.SymbolID
-		if i < len(paramSyms) {
-			sym = paramSyms[i]
-		}
-		if sym == 0 {
+		// Binder/CFG-injected implicit self parameter has no source annotation.
+		if slot.SourceIndex < 0 {
+			if base != nil && base.SelfType() != nil {
+				types[slot.Symbol] = base.SelfType()
+			} else {
+				types[slot.Symbol] = typ.Unknown
+			}
 			continue
 		}
+		i := slot.SourceIndex
 
 		var paramType typ.Type
 		var hint typ.Type
@@ -338,13 +336,13 @@ func ExtractParamTypes(
 		}
 		var isAnnotated bool
 		var hasExplicitAnnotation bool
-		if fn.ParList.Types != nil && i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil {
+		if slot.TypeAnnotation != nil {
 			if typeExprResolver != nil {
-				paramType = typeExprResolver.ResolveType(fn.ParList.Types[i], base)
+				paramType = typeExprResolver.ResolveType(slot.TypeAnnotation, base)
 			} else {
 				paramType = typ.Unknown
 			}
-			if typ.IsSoft(paramType, typ.SoftAnnotationPolicy) {
+			if typ.IsRefinableAnnotation(paramType) {
 				if hint != nil {
 					paramType = hint
 				} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
@@ -359,7 +357,7 @@ func ExtractParamTypes(
 		} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
 			paramType = synthSig.Params[i].Type
 			isAnnotated = true
-		} else if name == "self" && base != nil && base.SelfType() != nil {
+		} else if slot.Name == "self" && base != nil && base.SelfType() != nil {
 			paramType = base.SelfType()
 		} else {
 			paramType = typ.Any
@@ -367,16 +365,16 @@ func ExtractParamTypes(
 
 		// Prefer scope self type over synthesized Any/Unknown for unannotated self.
 		// This allows table-field method analysis to override placeholder literal signatures.
-		if name == "self" && !hasExplicitAnnotation && base != nil && base.SelfType() != nil && paramType != nil {
+		if slot.Name == "self" && !hasExplicitAnnotation && base != nil && base.SelfType() != nil && paramType != nil {
 			switch paramType.Kind() {
 			case kind.Any, kind.Unknown:
 				paramType = base.SelfType()
 			}
 		}
 
-		types[sym] = paramType
+		types[slot.Symbol] = paramType
 		if isAnnotated {
-			annotated[sym] = true
+			annotated[slot.Symbol] = true
 		}
 	}
 

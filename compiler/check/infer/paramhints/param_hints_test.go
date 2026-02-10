@@ -84,3 +84,28 @@ func TestBuildParamHintSigView_NilInputs(t *testing.T) {
 		t.Errorf("expected nil for nil inputs, got %v", result)
 	}
 }
+
+func TestIsInformativeHintType(t *testing.T) {
+	tests := []struct {
+		name string
+		in   typ.Type
+		want bool
+	}{
+		{name: "nil", in: nil, want: false},
+		{name: "any", in: typ.Any, want: false},
+		{name: "unknown", in: typ.Unknown, want: false},
+		{name: "never", in: typ.Never, want: false},
+		{name: "nil type", in: typ.Nil, want: false},
+		{name: "empty record", in: typ.NewRecord().Build(), want: false},
+		{name: "map with string key", in: typ.NewMap(typ.String, typ.NewArray(typ.Any)), want: true},
+		{name: "record map component", in: typ.NewRecord().MapComponent(typ.String, typ.Any).Build(), want: true},
+		{name: "string", in: typ.String, want: true},
+		{name: "literal", in: typ.LiteralString("x"), want: true},
+	}
+
+	for _, tt := range tests {
+		if got := IsInformativeHintType(tt.in); got != tt.want {
+			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

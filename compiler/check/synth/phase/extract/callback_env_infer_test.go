@@ -50,7 +50,7 @@ func TestInferCallbackEnvOverlays_NilGraph(t *testing.T) {
 }
 
 func TestInferCallbackEnvOverlays_EmptyParams(t *testing.T) {
-	result := inferCallbackEnvOverlays(nil, []cfg.SymbolID{}, nil)
+	result := inferCallbackEnvOverlays(nil, []cfg.ParamSlot{}, nil)
 	if result != nil {
 		t.Error("expected nil result for empty params")
 	}
@@ -60,7 +60,12 @@ func TestInferCallbackEnvOverlays_NilSynthExpr(t *testing.T) {
 	synthExpr := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return nil
 	}
-	result := inferCallbackEnvOverlays(nil, []cfg.SymbolID{1}, synthExpr)
+	result := inferCallbackEnvOverlays(nil, []cfg.ParamSlot{
+		{
+			Symbol:      cfg.SymbolID(1),
+			SourceIndex: 0,
+		},
+	}, synthExpr)
 	if result != nil {
 		t.Error("expected nil result for nil graph with params")
 	}

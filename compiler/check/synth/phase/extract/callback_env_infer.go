@@ -31,17 +31,17 @@ type paramCall struct {
 // Returns map[paramIndex]map[globalName]typ.Type, or nil if no pattern detected.
 func inferCallbackEnvOverlays(
 	graph *cfg.Graph,
-	paramSymbols []cfg.SymbolID,
+	paramSlots []cfg.ParamSlot,
 	synthExpr func(ast.Expr, cfg.Point) typ.Type,
 ) map[int]map[string]typ.Type {
-	if graph == nil || len(paramSymbols) == 0 {
+	if graph == nil || len(paramSlots) == 0 {
 		return nil
 	}
 
-	paramSet := make(map[cfg.SymbolID]int, len(paramSymbols))
-	for i, sym := range paramSymbols {
-		if sym != 0 {
-			paramSet[sym] = i
+	paramSet := make(map[cfg.SymbolID]int, len(paramSlots))
+	for _, slot := range paramSlots {
+		if slot.SourceIndex >= 0 && slot.Symbol != 0 {
+			paramSet[slot.Symbol] = slot.SourceIndex
 		}
 	}
 

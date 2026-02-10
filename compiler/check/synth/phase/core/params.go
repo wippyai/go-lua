@@ -35,7 +35,7 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 					if t := cfg.ResolveType(typeExpr, cfg.ResolveScope); t != nil {
 						paramType = t
 						// Soft annotations allow expected types to refine the parameter.
-						if cfg.Expected != nil && i < len(cfg.Expected.Params) && typ.IsSoft(t, typ.SoftAnnotationPolicy) {
+						if cfg.Expected != nil && i < len(cfg.Expected.Params) && typ.IsRefinableAnnotation(t) {
 							paramType = cfg.Expected.Params[i].Type
 							isOptional = cfg.Expected.Params[i].Optional
 						}

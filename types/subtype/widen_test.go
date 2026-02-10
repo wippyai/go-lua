@@ -321,6 +321,58 @@ func TestWidenForInference_OtherTypes(t *testing.T) {
 	}
 }
 
+func TestWidenForInference_FunctionNestedLiterals(t *testing.T) {
+	fn := typ.Func().
+		Param("x", typ.LiteralInt(7)).
+		Returns(
+			typ.NewRecord().
+				Field("label", typ.LiteralString("ok")).
+				Build(),
+		).
+		Build()
+
+	result := WidenForInference(fn)
+	resultFn, ok := result.(*typ.Function)
+	if !ok {
+		t.Fatalf("expected Function, got %T", result)
+	}
+
+	if resultFn.Params[0].Type != typ.Integer {
+		t.Fatalf("expected widened param type Integer, got %v", resultFn.Params[0].Type)
+	}
+
+	retRec, ok := resultFn.Returns[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record return, got %T", resultFn.Returns[0])
+	}
+	field := retRec.GetField("label")
+	if field == nil || field.Type != typ.String {
+		t.Fatalf("expected widened record field type String, got %v", field)
+	}
+}
+
+func TestWidenForInference_InterfaceMethodNestedLiterals(t *testing.T) {
+	method := typ.Func().
+		Param("self", typ.Any).
+		Returns(typ.LiteralString("ok")).
+		Build()
+	iface := typ.NewInterface("", []typ.Method{
+		{Name: "status", Type: method},
+	})
+
+	result := WidenForInference(iface)
+	resultIface, ok := result.(*typ.Interface)
+	if !ok {
+		t.Fatalf("expected Interface, got %T", result)
+	}
+	if len(resultIface.Methods) != 1 {
+		t.Fatalf("expected 1 method, got %d", len(resultIface.Methods))
+	}
+	if resultIface.Methods[0].Type.Returns[0] != typ.String {
+		t.Fatalf("expected widened method return String, got %v", resultIface.Methods[0].Type.Returns[0])
+	}
+}
+
 func TestWiden_UnchangedUnion(t *testing.T) {
 	union := typ.NewUnion(typ.Number, typ.String)
 	result := Widen(union)
