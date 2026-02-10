@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOCACHE: ${{ runner.temp }}/go-build
+      GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9.2.0
+        with:
+          version: v2.8.0
+          only-new-issues: false
+          args: --timeout=10m --enable=errcheck,govet,staticcheck,unused,ineffassign ./...
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      GOCACHE: ${{ runner.temp }}/go-build
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Run tests
+        run: go test ./...
+
+  race:
+    name: Race Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GOCACHE: ${{ runner.temp }}/go-build
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Run race tests
+        env:
+          GORACE: "halt_on_error=1"
+        run: go test -race ./...

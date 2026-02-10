@@ -1334,6 +1334,28 @@ func TestEmptyRecordToArray(t *testing.T) {
 	}
 }
 
+func TestEmptyRecordToOptionalOnlyRecord(t *testing.T) {
+	rec := typ.NewRecord().Build()
+	super := typ.NewRecord().
+		OptField("tags", typ.NewArray(typ.String)).
+		OptField("allowed_ids", typ.NewArray(typ.String)).
+		OptField("count", typ.Number).
+		Build()
+
+	if !IsSubtype(rec, super) {
+		t.Error("empty record should be subtype of record with only optional fields")
+	}
+}
+
+func TestEmptyRecordNotSubtypeOfRequiredRecord(t *testing.T) {
+	rec := typ.NewRecord().Build()
+	super := typ.NewRecord().Field("id", typ.String).Build()
+
+	if IsSubtype(rec, super) {
+		t.Error("empty record should not be subtype of record with required fields")
+	}
+}
+
 // Array to Map subtyping tests
 
 func TestArrayToMap(t *testing.T) {

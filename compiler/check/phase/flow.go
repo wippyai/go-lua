@@ -175,23 +175,30 @@ func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, g
 		return nil
 	}
 
-	// Get precomputed parameter symbols from graph
-	var paramSymbols []cfg.SymbolID
+	var slots []cfg.ParamSlot
 	if graph != nil {
-		paramSymbols = graph.ParamSymbols()
+		slots = graph.ParamSlots()
+	}
+	if len(slots) == 0 {
+		params := make([]flow.ParamInfo, 0, len(fn.ParList.Names))
+		for _, name := range fn.ParList.Names {
+			params = append(params, flow.ParamInfo{Name: name, Type: typ.Unknown})
+		}
+		return params
 	}
 
 	params := make([]flow.ParamInfo, 0, len(fn.ParList.Names))
-	for i, name := range fn.ParList.Names {
+	for _, slot := range slots {
+		if slot.SourceIndex < 0 {
+			continue
+		}
 		t := typ.Unknown
-		var sym cfg.SymbolID
-		if i < len(paramSymbols) {
-			sym = paramSymbols[i]
-			if pt, ok := paramTypes[sym]; ok && pt != nil {
+		if slot.Symbol != 0 {
+			if pt, ok := paramTypes[slot.Symbol]; ok && pt != nil {
 				t = pt
 			}
 		}
-		params = append(params, flow.ParamInfo{Name: name, Symbol: sym, Type: t})
+		params = append(params, flow.ParamInfo{Name: slot.Name, Symbol: slot.Symbol, Type: t})
 	}
 	return params
 }

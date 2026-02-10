@@ -409,16 +409,25 @@ type returnInferenceContext struct {
 // Parameters are typed from annotations, hints, or default to unknown.
 func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.SymbolID]typ.Type {
 	overlay := make(map[cfg.SymbolID]typ.Type)
-	fn := ctx.info.Fn
 	fnGraph := ctx.info.Graph
-	paramSymbols := fnGraph.ParamSymbols()
-
-	for i, sym := range paramSymbols {
-		if sym == 0 {
+	for _, slot := range fnGraph.ParamSlots() {
+		if slot.Symbol == 0 {
 			continue
 		}
+
+		// Binder/CFG-injected implicit self parameter.
+		if slot.SourceIndex < 0 {
+			if selfType := ctx.resolveScope.SelfType(); selfType != nil {
+				overlay[slot.Symbol] = selfType
+			} else {
+				overlay[slot.Symbol] = typ.Unknown
+			}
+			continue
+		}
+
+		i := slot.SourceIndex
 		paramType := typ.Unknown
-		if i == 0 && fn.ParList != nil && len(fn.ParList.Names) > 0 && fn.ParList.Names[0] == "self" {
+		if slot.Name == "self" {
 			if selfType := ctx.resolveScope.SelfType(); selfType != nil {
 				paramType = selfType
 			}
@@ -428,10 +437,10 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 				paramType = ctx.info.ParamHints[i]
 			}
 		}
-		if fn.ParList != nil && i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil {
-			resolved := ctx.engine.ResolveType(fn.ParList.Types[i], ctx.resolveScope)
+		if slot.TypeAnnotation != nil {
+			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
 			if resolved != nil {
-				if typ.IsSoft(resolved, typ.SoftAnnotationPolicy) {
+				if typ.IsRefinableAnnotation(resolved) {
 					if paramType == nil || paramType.Kind() == typ.Unknown.Kind() {
 						paramType = resolved
 					}
@@ -440,7 +449,7 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 				}
 			}
 		}
-		overlay[sym] = paramType
+		overlay[slot.Symbol] = paramType
 	}
 	return overlay
 }

@@ -820,22 +820,27 @@ func hasExplicitSelf(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function,
 	if firstParam == nil {
 		return false
 	}
+	receiverMatch := normalizeReceiverForSelfCheck(ctx, query, receiver)
 	// Check for Self type or matching receiver type
 	if firstParam.Kind() == kind.Self {
 		return true
 	}
 	if tp, ok := firstParam.(*typ.TypeParam); ok {
-		if tp.Constraint != nil && receiver != nil && isExplicitSelfSubtypeCandidate(tp.Constraint) &&
-			(isSubtypeCheck(ctx, query, receiver, tp.Constraint) || isSubtypeCheck(ctx, query, tp.Constraint, receiver)) {
+		if tp.Constraint != nil && receiverMatch != nil &&
+			isExplicitSelfSubtypeCandidate(receiverMatch) &&
+			isExplicitSelfSubtypeCandidate(tp.Constraint) &&
+			(isSubtypeCheck(ctx, query, receiverMatch, tp.Constraint) && isSubtypeCheck(ctx, query, tp.Constraint, receiverMatch)) {
 			return true
 		}
 		return false
 	}
-	// Check if first param is structurally related to the receiver in either direction.
-	// Both receiver <: firstParam (narrower receiver) and firstParam <: receiver (broader
-	// receiver) indicate an explicit self parameter.
-	if receiver != nil && isExplicitSelfSubtypeCandidate(firstParam) &&
-		(isSubtypeCheck(ctx, query, receiver, firstParam) || isSubtypeCheck(ctx, query, firstParam, receiver)) {
+	// Check if first param is structurally equivalent to the receiver.
+	// One-way subtyping is too permissive for structural record types where
+	// optional fields can make unrelated shapes look compatible.
+	if receiverMatch != nil &&
+		isExplicitSelfSubtypeCandidate(receiverMatch) &&
+		isExplicitSelfSubtypeCandidate(firstParam) &&
+		(isSubtypeCheck(ctx, query, receiverMatch, firstParam) && isSubtypeCheck(ctx, query, firstParam, receiverMatch)) {
 		return true
 	}
 
@@ -893,18 +898,23 @@ func hasExplicitSelfSimple(fn *typ.Function, receiver typ.Type) bool {
 	if firstParam == nil {
 		return false
 	}
+	receiverMatch := normalizeReceiverForSelfCheck(nil, nil, receiver)
 	if firstParam.Kind() == kind.Self {
 		return true
 	}
 	if tp, ok := firstParam.(*typ.TypeParam); ok {
-		if tp.Constraint != nil && receiver != nil && isExplicitSelfSubtypeCandidate(tp.Constraint) &&
-			(subtype.IsSubtype(receiver, tp.Constraint) || subtype.IsSubtype(tp.Constraint, receiver)) {
+		if tp.Constraint != nil && receiverMatch != nil &&
+			isExplicitSelfSubtypeCandidate(receiverMatch) &&
+			isExplicitSelfSubtypeCandidate(tp.Constraint) &&
+			(subtype.IsSubtype(receiverMatch, tp.Constraint) && subtype.IsSubtype(tp.Constraint, receiverMatch)) {
 			return true
 		}
 		return false
 	}
-	if receiver != nil && isExplicitSelfSubtypeCandidate(firstParam) &&
-		(subtype.IsSubtype(receiver, firstParam) || subtype.IsSubtype(firstParam, receiver)) {
+	if receiverMatch != nil &&
+		isExplicitSelfSubtypeCandidate(receiverMatch) &&
+		isExplicitSelfSubtypeCandidate(firstParam) &&
+		(subtype.IsSubtype(receiverMatch, firstParam) && subtype.IsSubtype(firstParam, receiverMatch)) {
 		return true
 	}
 
@@ -913,6 +923,18 @@ func hasExplicitSelfSimple(fn *typ.Function, receiver typ.Type) bool {
 	}
 
 	return false
+}
+
+func normalizeReceiverForSelfCheck(ctx *db.QueryContext, query core.TypeOps, receiver typ.Type) typ.Type {
+	if receiver == nil {
+		return nil
+	}
+	if query != nil {
+		if widened := query.Widen(ctx, receiver); widened != nil {
+			return widened
+		}
+	}
+	return subtype.Widen(receiver)
 }
 
 // isExplicitSelfSubtypeCandidate filters out broad/placeholder shapes that are

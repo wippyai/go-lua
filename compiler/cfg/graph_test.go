@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 )
 
@@ -667,6 +668,51 @@ func TestGraph_ParamSymbols_NoParams(t *testing.T) {
 	}
 	if declPoints := g.ParamDeclPoints(); declPoints != nil {
 		t.Errorf("ParamDeclPoints() = %v, want nil", declPoints)
+	}
+}
+
+func TestGraph_ParamSlots_ImplicitSelfMethod(t *testing.T) {
+	t.Parallel()
+
+	source := `
+local Runner = {}
+function Runner:run(options: number?)
+	return nil
+end
+`
+	stmts, err := parse.ParseString(source, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	root := BuildBlock(stmts)
+	if root == nil {
+		t.Fatal("BuildBlock should return graph")
+	}
+
+	var methodGraph *Graph
+	root.EachFuncDef(func(_ Point, info *FuncDefInfo) {
+		if methodGraph != nil || info == nil || !info.IsMethod || info.FuncExpr == nil {
+			return
+		}
+		methodGraph = BuildWithBindings(info.FuncExpr, root.Bindings())
+	})
+	if methodGraph == nil {
+		t.Fatal("expected to find method graph")
+	}
+
+	slots := methodGraph.ParamSlots()
+	if len(slots) != 2 {
+		t.Fatalf("expected 2 param slots, got %d", len(slots))
+	}
+	if !slots[0].IsImplicitSelf || slots[0].SourceIndex != -1 || slots[0].Name != "self" {
+		t.Fatalf("slot[0] should be implicit self, got %+v", slots[0])
+	}
+	if slots[1].IsImplicitSelf || slots[1].SourceIndex != 0 || slots[1].Name != "options" {
+		t.Fatalf("slot[1] should map to explicit options param, got %+v", slots[1])
+	}
+	if slots[1].TypeAnnotation == nil {
+		t.Fatal("slot[1] should carry source type annotation")
 	}
 }
 

@@ -388,3 +388,121 @@ end
 		t.Fatal("expected no errors - keys provenance should derive type from original table")
 	}
 }
+
+// TestLinterFalsePositive_WippyRunner_RunTestParamFlow reproduces the app runner
+// pattern where run_suite iterates tests and forwards each entry into run_test,
+// which calls funcs.call(entry.id) inside pcall.
+func TestLinterFalsePositive_WippyRunner_RunTestParamFlow(t *testing.T) {
+	registryManifest := io.NewManifest("registry")
+	entryType := typ.NewRecord().
+		Field("id", typ.String).
+		Field("name", typ.String).
+		Field("meta", typ.NewOptional(typ.NewMap(typ.String, typ.Any))).
+		Build()
+	registryManifest.SetExport(typ.NewRecord().
+		Field("find", typ.Func().
+			Param("query", typ.Any).
+			Returns(typ.NewArray(entryType)).
+			Build()).
+		Build())
+	registryManifest.DefineType("Entry", entryType)
+
+	funcsManifest := io.NewManifest("funcs")
+	funcsManifest.SetExport(typ.NewRecord().
+		Field("call", typ.Func().
+			Param("name", typ.String).
+			Variadic(typ.Any).
+			Returns(typ.Any, typ.NewOptional(typ.LuaError)).
+			Build()).
+		Build())
+
+	source := `
+local registry = require("registry")
+local funcs = require("funcs")
+
+local function sorted_keys(t)
+    local keys = {}
+    for k in pairs(t) do
+        table.insert(keys, k)
+    end
+    table.sort(keys)
+    return keys
+end
+
+local function sort_tests(tests)
+    table.sort(tests, function(a, b)
+        local order_a = (a.meta and a.meta.order) or 0
+        local order_b = (b.meta and b.meta.order) or 0
+        if order_a ~= order_b then
+            return order_a < order_b
+        end
+        return a.id < b.id
+    end)
+    return tests
+end
+
+local function group_by_suite(entries)
+    local suites: {[string]: any[]} = {}
+    local no_suite: any[] = {}
+
+    for _, entry in ipairs(entries) do
+        local suite = entry.meta and entry.meta.suite
+        if suite then
+            suites[suite] = suites[suite] or {}
+            table.insert(suites[suite], entry)
+        else
+            table.insert(no_suite, entry)
+        end
+    end
+
+    for _, tests in pairs(suites) do
+        sort_tests(tests)
+    end
+    sort_tests(no_suite)
+
+    return suites, no_suite
+end
+
+local function run_test(entry)
+    local ok, result, err = pcall(function()
+        return funcs.call(entry.id)
+    end)
+    if not ok then
+        return false, result
+    end
+    if err then
+        return false, err
+    end
+    return true, nil
+end
+
+local function run_suite(name: string, tests: {any})
+    for _, entry in ipairs(tests) do
+        local ok, err = run_test(entry)
+    end
+    return #tests
+end
+
+local entries = registry.find({["meta.type"] = "test"})
+local suites, no_suite = group_by_suite(entries)
+local suite_names = sorted_keys(suites)
+
+for _, name in ipairs(suite_names) do
+    local count = run_suite(name, suites[name])
+end
+
+if #no_suite > 0 then
+    local count = run_suite("other", no_suite)
+end
+`
+
+	result := testutil.Check(source, testutil.WithStdlib(),
+		testutil.WithManifest("registry", registryManifest),
+		testutil.WithManifest("funcs", funcsManifest))
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatal("expected no errors in run_suite -> run_test entry flow")
+	}
+}

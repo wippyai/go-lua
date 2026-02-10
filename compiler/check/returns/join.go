@@ -6,6 +6,19 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+// JoinInterprocTypes centralizes the join policy used by interproc fact channels.
+// Keep all interproc call sites routed through this helper to avoid scattered
+// merge behavior and accidental divergence across channels.
+func JoinInterprocTypes(a, b typ.Type) typ.Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	return typ.JoinPreferNonSoft(a, b)
+}
+
 // JoinReturnVectorsPreferNonSoft joins two return vectors element-wise, preferring non-soft types.
 func JoinReturnVectorsPreferNonSoft(a, b []typ.Type) []typ.Type {
 	if len(a) == 0 {

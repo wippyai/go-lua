@@ -300,3 +300,24 @@ func TestUnionDropsUnknownWithConcrete(t *testing.T) {
 		t.Errorf("unknown | string should collapse to string, got %v", u)
 	}
 }
+
+func TestUnionNestedOptionalAndUnionNilDedups(t *testing.T) {
+	inner := NewUnion(Nil, Number, String)
+	outer := NewUnion(NewOptional(Boolean), inner)
+
+	u, ok := outer.(*Union)
+	if !ok {
+		t.Fatalf("expected union, got %T (%v)", outer, outer)
+	}
+
+	nilCount := 0
+	for _, m := range u.Members {
+		if m.Kind() == kind.Nil {
+			nilCount++
+		}
+	}
+
+	if nilCount != 1 {
+		t.Fatalf("expected exactly one nil in union, got %d in %v", nilCount, u)
+	}
+}

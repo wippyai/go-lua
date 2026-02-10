@@ -246,19 +246,30 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 	}
 
 	overlay := make(map[cfg.SymbolID]typ.Type)
-	paramSymbols := fnGraph.ParamSymbols()
-
-	for i, sym := range paramSymbols {
-		if sym == 0 {
+	for _, slot := range fnGraph.ParamSlots() {
+		if slot.Symbol == 0 {
 			continue
 		}
+
+		if slot.SourceIndex < 0 {
+			if selfType := parentScope.SelfType(); selfType != nil {
+				overlay[slot.Symbol] = selfType
+			} else {
+				overlay[slot.Symbol] = typ.Unknown
+			}
+			continue
+		}
+
+		i := slot.SourceIndex
 		paramType := typ.Unknown
-		if fn.ParList != nil && i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil {
-			paramType = s.ResolveType(fn.ParList.Types[i], resolveScope)
+		if slot.TypeAnnotation != nil {
+			paramType = s.ResolveType(slot.TypeAnnotation, resolveScope)
 		} else if expected != nil && i < len(expected.Params) {
 			paramType = expected.Params[i].Type
+		} else if slot.Name == "self" && resolveScope != nil && resolveScope.SelfType() != nil {
+			paramType = resolveScope.SelfType()
 		}
-		overlay[sym] = paramType
+		overlay[slot.Symbol] = paramType
 	}
 
 	// Collect local function types from assignments using return summaries.
@@ -582,24 +593,37 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		return nil
 	}
 
-	paramSymbols := fnGraph.ParamSymbols()
-	if len(paramSymbols) == 0 {
+	paramSlots := fnGraph.ParamSlots()
+	if len(paramSlots) == 0 {
 		return nil
 	}
 
 	// Build parameter type overlay (same logic as inferReturnTypesFromBody).
 	overlay := make(map[cfg.SymbolID]typ.Type)
-	for i, sym := range paramSymbols {
-		if sym == 0 {
+	for _, slot := range fnGraph.ParamSlots() {
+		if slot.Symbol == 0 {
 			continue
 		}
+
+		if slot.SourceIndex < 0 {
+			if selfType := sc.SelfType(); selfType != nil {
+				overlay[slot.Symbol] = selfType
+			} else {
+				overlay[slot.Symbol] = typ.Unknown
+			}
+			continue
+		}
+
+		i := slot.SourceIndex
 		paramType := typ.Unknown
-		if fn.ParList != nil && i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil {
-			paramType = s.ResolveType(fn.ParList.Types[i], sc)
+		if slot.TypeAnnotation != nil {
+			paramType = s.ResolveType(slot.TypeAnnotation, sc)
 		} else if expected != nil && i < len(expected.Params) {
 			paramType = expected.Params[i].Type
+		} else if slot.Name == "self" && sc != nil && sc.SelfType() != nil {
+			paramType = sc.SelfType()
 		}
-		overlay[sym] = paramType
+		overlay[slot.Symbol] = paramType
 	}
 
 	// Build pre-flow synthesizer for expression type synthesis.
@@ -643,7 +667,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		return tempSynth.SynthExpr(expr, p, nil)
 	}
 
-	overlays := inferCallbackEnvOverlays(fnGraph, paramSymbols, synthExpr)
+	overlays := inferCallbackEnvOverlays(fnGraph, paramSlots, synthExpr)
 	if len(overlays) == 0 {
 		return nil
 	}

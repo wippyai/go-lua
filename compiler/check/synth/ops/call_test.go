@@ -370,3 +370,67 @@ func TestHasExplicitSelfSimple_StillAcceptsExplicitPatterns(t *testing.T) {
 		t.Fatal("receiver-compatible first param should be treated as explicit self")
 	}
 }
+
+func TestHasExplicitSelfSimple_RejectsTopLikeReceiver(t *testing.T) {
+	receiver := typ.Any
+	optionsType := typ.NewRecord().
+		Field("count", typ.NewOptional(typ.Number)).
+		Build()
+
+	optionsFirst := typ.Func().
+		Param("options", typ.NewOptional(optionsType)).
+		Returns(typ.Boolean).
+		Build()
+	if hasExplicitSelfSimple(optionsFirst, receiver) {
+		t.Fatal("top-like receiver should not trigger explicit self inference")
+	}
+
+	tpOptions := &typ.TypeParam{Name: "T", Constraint: typ.NewOptional(optionsType)}
+	genericFirst := typ.Func().
+		Param("options", tpOptions).
+		Returns(typ.Boolean).
+		Build()
+	if hasExplicitSelfSimple(genericFirst, receiver) {
+		t.Fatal("top-like receiver should not trigger explicit self inference for constrained type params")
+	}
+}
+
+func TestHasExplicitSelfSimple_AcceptsLiteralReceiverAgainstPrimitiveParam(t *testing.T) {
+	receiver := typ.LiteralString("hello")
+	fn := typ.Func().
+		Param("s", typ.String).
+		Param("start", typ.Integer).
+		Returns(typ.String).
+		Build()
+
+	if !hasExplicitSelfSimple(fn, receiver) {
+		t.Fatal("literal string receiver should match explicit primitive self param")
+	}
+}
+
+func TestCallFunction_MethodOnLiteralReceiverConsumesSelf(t *testing.T) {
+	fn := typ.Func().
+		Param("s", typ.String).
+		Param("start", typ.Integer).
+		Param("finish", typ.Integer).
+		Returns(typ.String).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	result := callFunction(
+		ctx,
+		nil,
+		fn,
+		[]typ.Type{typ.Integer, typ.Integer},
+		typ.LiteralString("abc"),
+		true,
+		nil,
+	)
+
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no call errors, got: %v", result.Errors)
+	}
+	if result.Type != typ.String {
+		t.Fatalf("expected string return type, got: %v", result.Type)
+	}
+}

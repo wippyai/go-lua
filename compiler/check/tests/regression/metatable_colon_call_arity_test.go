@@ -100,6 +100,54 @@ return { main = main }
 `,
 		},
 		{
+			name: "typed options with top-like setup receiver",
+			source: `
+type RunnerOptions = {
+	tags: {string}?,
+	allowed_ids: {string}?,
+	count: number?,
+}
+
+local Runner = {}
+Runner.__index = Runner
+
+function Runner:find_migrations(options: RunnerOptions?): ({any}?, string?)
+	options = options or {}
+	return {}, nil
+end
+
+function Runner:run(options: RunnerOptions?): any
+	options = options or {}
+	local migrations, err = self:find_migrations(options)
+	if err then
+		return nil
+	end
+	return migrations
+end
+
+function Runner:status(options: RunnerOptions?): any
+	local migrations, err = self:find_migrations(options)
+	if err then
+		return nil
+	end
+	return migrations
+end
+
+local function setup(id: string): any
+	local self = setmetatable({}, Runner)
+	self.id = id
+	return self
+end
+
+local function main(): boolean
+	local r = setup("db-main")
+	return r ~= nil
+end
+
+return { main = main }
+`,
+		},
+		{
 			name: "repository flow with options bag",
 			source: `
 local UserRepo = {}

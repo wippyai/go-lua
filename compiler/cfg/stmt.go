@@ -9,24 +9,63 @@ import (
 
 // ParamDefs processes function parameters.
 func (b *Builder) ParamDefs(fn *ast.FunctionExpr) {
-	if fn == nil || fn.ParList == nil || len(fn.ParList.Names) == 0 {
+	if fn == nil || fn.ParList == nil {
 		return
 	}
 
 	paramSyms := b.Bindings.ParamSymbols(fn)
+	if len(paramSyms) == 0 && len(fn.ParList.Names) == 0 {
+		return
+	}
+	if len(paramSyms) == 0 {
+		// Degrade gracefully when bindings are unavailable instead of dropping
+		// parameter declarations entirely.
+		paramSyms = make([]basecfg.SymbolID, len(fn.ParList.Names))
+	}
 
-	b.ParamNames = make([]string, 0, len(fn.ParList.Names))
-	b.ParamSymbols = make([]basecfg.SymbolID, 0, len(fn.ParList.Names))
-	b.ParamDeclPoints = make([]basecfg.Point, 0, len(fn.ParList.Names))
+	slotCount := len(paramSyms)
+	if len(fn.ParList.Names) > slotCount {
+		slotCount = len(fn.ParList.Names)
+	}
 
-	for i, name := range fn.ParList.Names {
-		if name == "" {
-			continue
+	hasImplicitSelf := false
+	if len(paramSyms) == len(fn.ParList.Names)+1 && len(paramSyms) > 0 {
+		first := paramSyms[0]
+		if first != 0 && b.Bindings.Name(first) == "self" && (len(fn.ParList.Names) == 0 || fn.ParList.Names[0] != "self") {
+			hasImplicitSelf = true
 		}
+	}
 
+	b.ParamNames = make([]string, 0, slotCount)
+	b.ParamSymbols = make([]basecfg.SymbolID, 0, slotCount)
+	b.ParamDeclPoints = make([]basecfg.Point, 0, slotCount)
+
+	for i := 0; i < slotCount; i++ {
 		var sym basecfg.SymbolID
 		if i < len(paramSyms) {
 			sym = paramSyms[i]
+		}
+		var name string
+		var typeAnnotation ast.TypeExpr
+		if hasImplicitSelf && i == 0 {
+			name = "self"
+		} else {
+			parIdx := i
+			if hasImplicitSelf {
+				parIdx--
+			}
+			if parIdx >= 0 && parIdx < len(fn.ParList.Names) {
+				name = fn.ParList.Names[parIdx]
+			}
+			if parIdx >= 0 && fn.ParList.Types != nil && parIdx < len(fn.ParList.Types) {
+				typeAnnotation = fn.ParList.Types[parIdx]
+			}
+		}
+		if name == "" && sym != 0 {
+			name = b.Bindings.Name(sym)
+		}
+		if name == "" {
+			continue
 		}
 
 		p := b.Cfg.AddNode(basecfg.NodeAssign, sym, "")
@@ -41,11 +80,6 @@ func (b *Builder) ParamDefs(fn *ast.FunctionExpr) {
 		b.ParamNames = append(b.ParamNames, name)
 		b.ParamSymbols = append(b.ParamSymbols, sym)
 		b.ParamDeclPoints = append(b.ParamDeclPoints, p)
-
-		var typeAnnotation ast.TypeExpr
-		if fn.ParList.Types != nil && i < len(fn.ParList.Types) {
-			typeAnnotation = fn.ParList.Types[i]
-		}
 
 		b.Info[p] = &AssignInfo{
 			IsLocal:         true,

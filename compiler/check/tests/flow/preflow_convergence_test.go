@@ -313,6 +313,56 @@ e = function() return a() end
 	}
 }
 
+// TestPreflowConvergence_MapEntryFallbackCounters_NoWarnings reproduces
+// a real-world pattern where a map entry is read, defaulted, then mutated.
+// This should converge without non-convergence warnings.
+func TestPreflowConvergence_MapEntryFallbackCounters_NoWarnings(t *testing.T) {
+	source := `
+type CaseStats = {
+	passed: number,
+	failed: number,
+	skipped: number,
+}
+
+local case_stats: {[string]: CaseStats} = {}
+
+local function mark_failed(id: string)
+	local cs = case_stats[id]
+	if not cs then
+		cs = { passed = 0, failed = 0, skipped = 0 }
+		case_stats[id] = cs
+	end
+	cs.failed = cs.failed + 1
+end
+
+local function mark_passed(id: string)
+	local pcs = case_stats[id]
+	if not pcs then
+		pcs = { passed = 0, failed = 0, skipped = 0 }
+		case_stats[id] = pcs
+	end
+	pcs.passed = pcs.passed + 1
+end
+
+mark_failed("suite:a")
+mark_passed("suite:a")
+`
+
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+
+	for _, d := range result.Diagnostics {
+		if d.Severity != diag.SeverityWarning {
+			continue
+		}
+		if contains(d.Message, "type inference did not converge") || d.Message == "inter-function fixpoint did not converge" {
+			t.Fatalf("unexpected convergence warning: %q", d.Message)
+		}
+	}
+}
+
 // contains is a simple substring check helper.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||

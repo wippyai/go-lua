@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -203,11 +202,12 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 				}
 				argType := result.NarrowSynth.TypeOf(arg, p)
 				argType = paramhints.WidenParamHintType(argType)
-				if argType == nil || argType.Kind() == typ.Unknown.Kind() || argType.Kind() == kind.Nil {
+				argType = typ.PruneSoftUnionMembers(argType)
+				if !paramhints.IsInformativeHintType(argType) {
 					continue
 				}
 				prev := hints[i]
-				joined := typ.JoinPreferNonSoft(prev, argType)
+				joined := returns.JoinInterprocTypes(prev, argType)
 				if !typ.TypeEquals(prev, joined) {
 					hints[i] = joined
 				}
@@ -247,7 +247,7 @@ func mergeCapturedFieldAssigns(
 		for _, name := range cfg.SortedFieldNames(fields) {
 			t := fields[name]
 			if prev := out[name]; prev != nil {
-				out[name] = typ.JoinPreferNonSoft(prev, t)
+				out[name] = returns.JoinInterprocTypes(prev, t)
 			} else {
 				out[name] = t
 			}
@@ -294,7 +294,7 @@ func mergeContainerMutationSlice(
 	for _, m := range next {
 		key := containerMutationKey(m)
 		if prev, ok := byKey[key]; ok {
-			m.ValueType = typ.JoinPreferNonSoft(prev.ValueType, m.ValueType)
+			m.ValueType = returns.JoinInterprocTypes(prev.ValueType, m.ValueType)
 		}
 		byKey[key] = m
 	}

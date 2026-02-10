@@ -54,6 +54,12 @@ import (
 
 // isSubtype is the internal implementation of IsSubtype.
 func isSubtype(sub, super typ.Type) bool {
+	if sub != nil {
+		sub = typ.PruneSoftUnionMembers(sub)
+	}
+	if super != nil {
+		super = typ.PruneSoftUnionMembers(super)
+	}
 	c := &checker{}
 	return c.check(sub, super, 0)
 }
@@ -266,19 +272,12 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 		return c.checkNil(super, depth+1) && c.check(o.Inner, super, depth+1)
 	}
 
-	// Empty record can satisfy array/map shapes.
+	// Empty record can satisfy array/map shapes, but should still flow through
+	// regular record subtyping for record supers (e.g. all-optional records).
 	if r, ok := sub.(*typ.Record); ok && len(r.Fields) == 0 {
-		return typ.Visit(super, typ.Visitor[bool]{
-			Array: func(a *typ.Array) bool {
-				return true
-			},
-			Map: func(m *typ.Map) bool {
-				return true
-			},
-			Default: func(t typ.Type) bool {
-				return false
-			},
-		})
+		if super.Kind() == kind.Array || super.Kind() == kind.Map {
+			return true
+		}
 	}
 
 	if r, ok := sub.(*typ.Record); ok {

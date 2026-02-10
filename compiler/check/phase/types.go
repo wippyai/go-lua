@@ -422,7 +422,7 @@ func MergeParamHintsIntoSig(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Fun
 			continue
 		}
 		if i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil {
-			if !typ.IsSoft(p.Type, typ.SoftAnnotationPolicy) {
+			if !typ.IsRefinableAnnotation(p.Type) {
 				continue
 			}
 		}
@@ -439,7 +439,7 @@ func MergeParamHintsIntoSig(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Fun
 		paramType := p.Type
 		if i < len(hints) && hints[i] != nil {
 			annotated := i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil
-			if !annotated || typ.IsSoft(paramType, typ.SoftAnnotationPolicy) {
+			if !annotated || typ.IsRefinableAnnotation(paramType) {
 				paramType = hints[i]
 			}
 		}

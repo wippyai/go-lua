@@ -266,7 +266,7 @@ func (p *Processor) processNestedFunction(
 						continue
 					}
 					if prev := facts.CapturedTypes[sym]; prev != nil {
-						facts.CapturedTypes[sym] = typ.JoinPreferNonSoft(prev, t)
+						facts.CapturedTypes[sym] = returns.JoinInterprocTypes(prev, t)
 					} else {
 						facts.CapturedTypes[sym] = t
 					}

@@ -42,30 +42,36 @@ func NewUnion(members ...Type) Type {
 	hasAny := false
 	hasUnknown := false
 
-	for _, m := range members {
+	var addMember func(Type)
+	addMember = func(m Type) {
 		if m == nil {
-			continue
+			return
 		}
 
 		switch m.Kind() {
 		case kind.Never:
-			continue // Never is identity for union
+			return // Never is identity for union
 		case kind.Unknown:
 			hasUnknown = true
-			continue // Unknown doesn't contribute information to union
+			return // Unknown doesn't contribute information to union
 		case kind.Any:
 			hasAny = true
 		case kind.Nil:
 			hasNil = true
 		case kind.Union:
-			flat = append(flat, m.(*Union).Members...)
+			for _, member := range m.(*Union).Members {
+				addMember(member)
+			}
 		case kind.Optional:
 			hasNil = true
-
-			flat = append(flat, m.(*Optional).Inner)
+			addMember(m.(*Optional).Inner)
 		default:
 			flat = append(flat, m)
 		}
+	}
+
+	for _, m := range members {
+		addMember(m)
 	}
 
 	if hasAny {
