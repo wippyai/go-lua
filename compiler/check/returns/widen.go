@@ -68,6 +68,10 @@ func WidenReturnSummaries(prev, next api.ReturnSummaries) api.ReturnSummaries {
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		rets := next[sym]
 		if existing := merged[sym]; existing != nil {
+			if shouldUseMonotoneReturnJoin(existing, rets) {
+				merged[sym] = widenReturnVectorForConvergence(joinReturnVectorsMonotone(existing, rets))
+				continue
+			}
 			if ReturnTypesRefine(rets, existing) ||
 				ReturnTypesExtendRecord(rets, existing) ||
 				ReturnTypesElideOptional(rets, existing) {
@@ -84,6 +88,113 @@ func WidenReturnSummaries(prev, next api.ReturnSummaries) api.ReturnSummaries {
 		}
 	}
 	return merged
+}
+
+func shouldUseMonotoneReturnJoin(a, b []typ.Type) bool {
+	for _, t := range a {
+		if hasHigherOrderGrowthRisk(t) {
+			return true
+		}
+	}
+	for _, t := range b {
+		if hasHigherOrderGrowthRisk(t) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasHigherOrderGrowthRisk(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	hasFunction := false
+	hasRecord := false
+	functionCount := 0
+	wideUnionWithFunctions := false
+	functionReturnsFunction := false
+
+	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		switch n := node.(type) {
+		case *typ.Function:
+			hasFunction = true
+			functionCount++
+			for _, ret := range n.Returns {
+				if typeContainsFunction(ret) {
+					functionReturnsFunction = true
+					break
+				}
+			}
+		case *typ.Record:
+			hasRecord = true
+		case *typ.Union:
+			if len(n.Members) > 2 {
+				wideUnionWithFunctions = true
+			}
+		}
+		return node, false
+	})
+
+	return functionReturnsFunction || (hasRecord && functionCount >= 4) || (hasFunction && wideUnionWithFunctions)
+}
+
+func typeContainsFunction(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	hasFn := false
+	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		if _, ok := node.(*typ.Function); ok {
+			hasFn = true
+		}
+		return node, false
+	})
+	return hasFn
+}
+
+func joinReturnVectorsMonotone(a, b []typ.Type) []typ.Type {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	maxLen := len(a)
+	if len(b) > maxLen {
+		maxLen = len(b)
+	}
+	out := make([]typ.Type, maxLen)
+	for i := 0; i < maxLen; i++ {
+		var ai, bi typ.Type
+		if i < len(a) {
+			ai = a[i]
+		}
+		if i < len(b) {
+			bi = b[i]
+		}
+		out[i] = joinReturnTypeMonotone(ai, bi)
+	}
+	return out
+}
+
+func joinReturnTypeMonotone(a, b typ.Type) typ.Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if typ.TypeEquals(a, b) {
+		return a
+	}
+	// Keep widening monotone: if one side is already an upper bound, keep it.
+	if subtype.IsSubtype(a, b) || TypeExtendsRecord(a, b) || typeElidesOptional(a, b) {
+		return b
+	}
+	if subtype.IsSubtype(b, a) || TypeExtendsRecord(b, a) || typeElidesOptional(b, a) {
+		return a
+	}
+	return JoinInterprocTypes(a, b)
 }
 
 // WidenParamHints merges two param hint maps using monotone union.
