@@ -330,3 +330,43 @@ func TestReInfer_NonGeneric(t *testing.T) {
 		t.Error("non-generic should return same result")
 	}
 }
+
+func TestHasExplicitSelfSimple_RejectsTopLikeFirstParam(t *testing.T) {
+	receiver := typ.NewRecord().Field("id", typ.String).Build()
+
+	anyFirst := typ.Func().
+		Param("options", typ.Any).
+		Returns(typ.Boolean).
+		Build()
+	if hasExplicitSelfSimple(anyFirst, receiver) {
+		t.Fatal("any first param should not be treated as explicit self")
+	}
+
+	unknownFirst := typ.Func().
+		Param("value", typ.Unknown).
+		Returns(typ.Boolean).
+		Build()
+	if hasExplicitSelfSimple(unknownFirst, receiver) {
+		t.Fatal("unknown first param should not be treated as explicit self")
+	}
+}
+
+func TestHasExplicitSelfSimple_StillAcceptsExplicitPatterns(t *testing.T) {
+	receiver := typ.NewRecord().Field("id", typ.String).Build()
+
+	namedSelf := typ.Func().
+		Param("self", typ.Any).
+		Returns(typ.Boolean).
+		Build()
+	if !hasExplicitSelfSimple(namedSelf, receiver) {
+		t.Fatal("parameter named self should be treated as explicit self")
+	}
+
+	matchingType := typ.Func().
+		Param("receiver", receiver).
+		Returns(typ.Boolean).
+		Build()
+	if !hasExplicitSelfSimple(matchingType, receiver) {
+		t.Fatal("receiver-compatible first param should be treated as explicit self")
+	}
+}

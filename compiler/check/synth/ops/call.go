@@ -825,7 +825,7 @@ func hasExplicitSelf(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function,
 		return true
 	}
 	if tp, ok := firstParam.(*typ.TypeParam); ok {
-		if tp.Constraint != nil && receiver != nil &&
+		if tp.Constraint != nil && receiver != nil && isExplicitSelfSubtypeCandidate(tp.Constraint) &&
 			(isSubtypeCheck(ctx, query, receiver, tp.Constraint) || isSubtypeCheck(ctx, query, tp.Constraint, receiver)) {
 			return true
 		}
@@ -834,7 +834,8 @@ func hasExplicitSelf(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function,
 	// Check if first param is structurally related to the receiver in either direction.
 	// Both receiver <: firstParam (narrower receiver) and firstParam <: receiver (broader
 	// receiver) indicate an explicit self parameter.
-	if receiver != nil && (isSubtypeCheck(ctx, query, receiver, firstParam) || isSubtypeCheck(ctx, query, firstParam, receiver)) {
+	if receiver != nil && isExplicitSelfSubtypeCandidate(firstParam) &&
+		(isSubtypeCheck(ctx, query, receiver, firstParam) || isSubtypeCheck(ctx, query, firstParam, receiver)) {
 		return true
 	}
 
@@ -896,13 +897,14 @@ func hasExplicitSelfSimple(fn *typ.Function, receiver typ.Type) bool {
 		return true
 	}
 	if tp, ok := firstParam.(*typ.TypeParam); ok {
-		if tp.Constraint != nil && receiver != nil &&
+		if tp.Constraint != nil && receiver != nil && isExplicitSelfSubtypeCandidate(tp.Constraint) &&
 			(subtype.IsSubtype(receiver, tp.Constraint) || subtype.IsSubtype(tp.Constraint, receiver)) {
 			return true
 		}
 		return false
 	}
-	if receiver != nil && (subtype.IsSubtype(receiver, firstParam) || subtype.IsSubtype(firstParam, receiver)) {
+	if receiver != nil && isExplicitSelfSubtypeCandidate(firstParam) &&
+		(subtype.IsSubtype(receiver, firstParam) || subtype.IsSubtype(firstParam, receiver)) {
 		return true
 	}
 
@@ -911,6 +913,17 @@ func hasExplicitSelfSimple(fn *typ.Function, receiver typ.Type) bool {
 	}
 
 	return false
+}
+
+// isExplicitSelfSubtypeCandidate filters out broad/placeholder shapes that are
+// too permissive for implicit self inference (for example `any` and `unknown`).
+func isExplicitSelfSubtypeCandidate(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	// Soft placeholder types are intentionally broad and should not imply
+	// implicit receiver consumption in method arity checks.
+	return !typ.IsSoft(t, typ.SoftAnnotationPolicy)
 }
 
 // countRequiredParams counts non-optional parameters.
