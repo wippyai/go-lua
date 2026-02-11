@@ -97,13 +97,7 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 			if targetKey != "" {
 				old := s.values[string(targetKey)]
 				if len(assign.TargetPath.Segments) > 0 && assignedType.Kind() == kind.Nil {
-					// Treat nil-only field assignments as "optional unknown" to avoid
-					// collapsing dynamic table fields to nil when they are later narrowed.
-					if !typ.IsAbsentOrUnknown(old) {
-						assignedType = typ.NewUnion(old, typ.Nil)
-					} else {
-						assignedType = typ.NewOptional(typ.Unknown)
-					}
+					assignedType = s.normalizeNilFieldAssignmentType(p, assign.TargetPath, old)
 				}
 				if !typ.TypeEquals(old, assignedType) {
 					s.values[string(targetKey)] = assignedType
@@ -144,6 +138,30 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 	}
 
 	return changedKeys
+}
+
+func (s *Solution) normalizeNilFieldAssignmentType(p cfg.Point, targetPath constraint.Path, old typ.Type) typ.Type {
+	if !typ.IsAbsentOrUnknown(old) {
+		return typ.JoinPreferNonSoft(old, typ.Nil)
+	}
+	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
+		return typ.Nil
+	}
+
+	rootPath := constraint.Path{
+		Root:    targetPath.Root,
+		Symbol:  targetPath.Symbol,
+		Version: targetPath.Version,
+	}
+	rootType := s.TypeAt(p, rootPath)
+	if rootType == nil {
+		return typ.Nil
+	}
+	derived, ok := s.deriveTypeFrom(rootType, targetPath.Segments)
+	if !ok || typ.IsAbsentOrUnknown(derived) {
+		return typ.Nil
+	}
+	return typ.JoinPreferNonSoft(derived, typ.Nil)
 }
 
 // iterVarTypeAt derives iterator variable type from the iterator source at point p.

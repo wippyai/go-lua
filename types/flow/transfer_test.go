@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
@@ -45,6 +46,46 @@ func TestProcessAssignmentReturnChangedKeys_SingleAssignment(t *testing.T) {
 	result := s.TypeAt(c.Entry(), path)
 	if result != typ.String {
 		t.Errorf("TypeAt after assignment = %v, want string", result)
+	}
+}
+
+func TestProcessAssignmentReturnChangedKeys_FieldNilUsesDeclaredFieldType(t *testing.T) {
+	c := cfg.New()
+	g := newMockSSAGraph(c)
+
+	symResult := setupSymbol(g, "result", []cfg.Point{c.Entry()})
+	ver := cfg.Version{Root: "result", Symbol: symResult, ID: 1}
+	setVersion(g, c.Entry(), symResult, ver)
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symResult] = typ.NewRecord().Field("err", typ.String).Build()
+	inputs.Assignments = []UnifiedAssignment{
+		{
+			Point: c.Entry(),
+			TargetPath: constraint.Path{
+				Root:     "result",
+				Symbol:   symResult,
+				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "err"}},
+			},
+			Type: typ.Nil,
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+	path := constraint.Path{
+		Root:     "result",
+		Symbol:   symResult,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "err"}},
+	}
+	got := s.TypeAt(c.Entry(), path)
+	if got == nil {
+		t.Fatal("expected field type after nil assignment")
+	}
+	if !subtype.IsSubtype(typ.String, got) || !subtype.IsSubtype(typ.Nil, got) {
+		t.Fatalf("expected string|nil from declared field + nil assignment, got %v", got)
+	}
+	if typ.IsAbsentOrUnknown(got) || typ.TypeEquals(got, typ.NewOptional(typ.Unknown)) {
+		t.Fatalf("expected concrete typed optional, got %v", got)
 	}
 }
 
