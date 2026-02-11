@@ -88,3 +88,100 @@ func TestWidenReturnSummaries_UsesMonotoneJoinForHigherOrderReturns(t *testing.T
 		t.Fatalf("expected stable upper bound for higher-order return, got %v", got)
 	}
 }
+
+func TestMergeFunctionReturnsIfSameShape_GenericFunctions(t *testing.T) {
+	prev := typ.Func().
+		TypeParam("T", nil).
+		Returns(typ.String).
+		Build()
+	next := typ.Func().
+		TypeParam("T", nil).
+		Returns(typ.Integer).
+		Build()
+
+	mergedType, ok := mergeFunctionReturnsIfSameShape(prev, next)
+	if !ok {
+		t.Fatal("expected generic same-shape functions to merge")
+	}
+	merged, ok := mergedType.(*typ.Function)
+	if !ok {
+		t.Fatalf("expected merged function type, got %T", mergedType)
+	}
+	if len(merged.TypeParams) != 1 || merged.TypeParams[0] == nil || merged.TypeParams[0].Name != "T" {
+		t.Fatalf("expected merged generic type parameter T, got %+v", merged.TypeParams)
+	}
+	if len(merged.Returns) != 1 {
+		t.Fatalf("expected one return, got %d", len(merged.Returns))
+	}
+	want := typ.NewUnion(typ.String, typ.Integer)
+	if !typ.TypeEquals(merged.Returns[0], want) {
+		t.Fatalf("expected merged return %v, got %v", want, merged.Returns[0])
+	}
+}
+
+func TestMergeFunctionReturnsIfSameShape_GenericTypeParamsMustMatch(t *testing.T) {
+	prev := typ.Func().
+		TypeParam("T", nil).
+		Returns(typ.String).
+		Build()
+	next := typ.Func().
+		TypeParam("U", nil).
+		Returns(typ.Integer).
+		Build()
+
+	_, ok := mergeFunctionReturnsIfSameShape(prev, next)
+	if ok {
+		t.Fatal("expected mismatched generic params not to merge")
+	}
+}
+
+func TestMergeFuncTypes_DoesNotRegressToNarrowerNilReturn(t *testing.T) {
+	prev := typ.Func().
+		Returns(typ.NewOptional(typ.Integer)).
+		Build()
+	next := typ.Func().
+		Returns(typ.Nil).
+		Build()
+
+	merged := mergeFuncTypes(prev, next)
+	fn, ok := merged.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 {
+		t.Fatalf("expected merged function return, got %T", merged)
+	}
+	if !typ.TypeEquals(fn.Returns[0], typ.NewOptional(typ.Integer)) {
+		t.Fatalf("expected integer? return after merge, got %v", fn.Returns[0])
+	}
+}
+
+func TestMergeFunctionReturnsIfSameShape_NormalizesLeakedTypeParams(t *testing.T) {
+	prev := typ.Func().
+		Returns(typ.NewTypeParam("T", nil)).
+		Build()
+	next := typ.Func().
+		Returns(typ.Integer).
+		Build()
+
+	mergedType, ok := mergeFunctionReturnsIfSameShape(prev, next)
+	if !ok {
+		t.Fatal("expected same-shape functions to merge")
+	}
+	merged, ok := mergedType.(*typ.Function)
+	if !ok || len(merged.Returns) != 1 {
+		t.Fatalf("expected merged function return, got %T", mergedType)
+	}
+	if !typ.TypeEquals(merged.Returns[0], typ.Integer) {
+		t.Fatalf("expected leaked type param to normalize to integer, got %v", merged.Returns[0])
+	}
+}
+
+func TestMergeFuncTypes_PrefersWiderSupertypeOnSubtypeRelation(t *testing.T) {
+	merged := mergeFuncTypes(typ.Integer, typ.Number)
+	if !typ.TypeEquals(merged, typ.Number) {
+		t.Fatalf("expected wider supertype number, got %v", merged)
+	}
+
+	merged = mergeFuncTypes(typ.Number, typ.Integer)
+	if !typ.TypeEquals(merged, typ.Number) {
+		t.Fatalf("expected wider supertype number, got %v", merged)
+	}
+}

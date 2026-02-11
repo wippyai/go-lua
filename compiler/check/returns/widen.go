@@ -108,34 +108,27 @@ func hasHigherOrderGrowthRisk(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	hasFunction := false
-	hasRecord := false
-	functionCount := 0
-	wideUnionWithFunctions := false
-	functionReturnsFunction := false
-
+	risk := false
 	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		if risk {
+			return node, false
+		}
 		switch n := node.(type) {
 		case *typ.Function:
-			hasFunction = true
-			functionCount++
 			for _, ret := range n.Returns {
 				if typeContainsFunction(ret) {
-					functionReturnsFunction = true
+					risk = true
 					break
 				}
 			}
 		case *typ.Record:
-			hasRecord = true
-		case *typ.Union:
-			if len(n.Members) > 2 {
-				wideUnionWithFunctions = true
+			if recordHasSelfRecursiveMethod(n) {
+				risk = true
 			}
 		}
 		return node, false
 	})
-
-	return functionReturnsFunction || (hasRecord && functionCount >= 4) || (hasFunction && wideUnionWithFunctions)
+	return risk
 }
 
 func typeContainsFunction(t typ.Type) bool {
@@ -150,6 +143,49 @@ func typeContainsFunction(t typ.Type) bool {
 		return node, false
 	})
 	return hasFn
+}
+
+func recordHasSelfRecursiveMethod(r *typ.Record) bool {
+	if r == nil {
+		return false
+	}
+	for _, f := range r.Fields {
+		if methodTypeHasSelfRecursiveReturn(f.Type, r) {
+			return true
+		}
+	}
+	if r.HasMapComponent() && methodTypeHasSelfRecursiveReturn(r.MapValue, r) {
+		return true
+	}
+	return false
+}
+
+func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
+	if t == nil || owner == nil {
+		return false
+	}
+	found := false
+	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		if found {
+			return node, false
+		}
+		fn, ok := node.(*typ.Function)
+		if !ok {
+			return node, false
+		}
+		for _, ret := range fn.Returns {
+			if ret == nil {
+				continue
+			}
+			if subtype.IsSubtype(ret, owner) || subtype.IsSubtype(owner, ret) ||
+				TypeExtendsRecord(ret, owner) || TypeExtendsRecord(owner, ret) {
+				found = true
+				break
+			}
+		}
+		return node, false
+	})
+	return found
 }
 
 func joinReturnVectorsMonotone(a, b []typ.Type) []typ.Type {
@@ -568,18 +604,22 @@ func mergeFuncTypes(prev, next typ.Type) typ.Type {
 	if next == nil {
 		return prev
 	}
-	if subtype.IsSubtype(prev, next) {
-		return prev
-	}
-	if subtype.IsSubtype(next, prev) {
-		return next
-	}
 	prevFn, okPrev := prev.(*typ.Function)
 	nextFn, okNext := next.(*typ.Function)
 	if okPrev && okNext {
+		// For same-shape functions, merge returns before subtype short-circuiting.
+		// This avoids regressing to narrower context artifacts (e.g. nil-only returns).
 		if merged, ok := mergeFunctionReturnsIfSameShape(prevFn, nextFn); ok {
 			return merged
 		}
+	}
+	if subtype.IsSubtype(prev, next) {
+		return next
+	}
+	if subtype.IsSubtype(next, prev) {
+		return prev
+	}
+	if okPrev && okNext {
 		if len(prevFn.Returns) > 0 && len(nextFn.Returns) > 0 {
 			if ReturnTypesRefine(prevFn.Returns, nextFn.Returns) {
 				return prev
@@ -605,8 +645,7 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 	if len(prevFn.TypeParams) != len(nextFn.TypeParams) {
 		return nil, false
 	}
-	if len(prevFn.TypeParams) > 0 {
-		// Keep generic function merging conservative for now.
+	if !typeParamsEqual(prevFn.TypeParams, nextFn.TypeParams) {
 		return nil, false
 	}
 	if len(prevFn.Params) != len(nextFn.Params) {
@@ -633,7 +672,36 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 		return nil, false
 	}
 
-	mergedReturns := JoinReturnVectorsPreferNonSoft(prevFn.Returns, nextFn.Returns)
+	allowedTypeParams := make(map[string]bool, len(prevFn.TypeParams))
+	for _, tp := range prevFn.TypeParams {
+		if tp != nil && tp.Name != "" {
+			allowedTypeParams[tp.Name] = true
+		}
+	}
+	normalizeReturn := func(t typ.Type) typ.Type {
+		if t == nil {
+			return nil
+		}
+		return typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+			tp, ok := node.(*typ.TypeParam)
+			if !ok {
+				return node, false
+			}
+			if allowedTypeParams[tp.Name] {
+				return node, false
+			}
+			// Free type params in non-generic function returns are unstable placeholders.
+			return typ.Unknown, true
+		})
+	}
+	normalizedPrev := make([]typ.Type, len(prevFn.Returns))
+	normalizedNext := make([]typ.Type, len(nextFn.Returns))
+	for i := range prevFn.Returns {
+		normalizedPrev[i] = normalizeReturn(prevFn.Returns[i])
+		normalizedNext[i] = normalizeReturn(nextFn.Returns[i])
+	}
+
+	mergedReturns := JoinReturnVectorsPreferNonSoft(normalizedPrev, normalizedNext)
 	if ReturnTypesEqual(prevFn.Returns, mergedReturns) {
 		return prevFn, true
 	}
@@ -658,6 +726,9 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 		Effects(effects).
 		Spec(spec).
 		WithRefinement(refinement)
+	for _, tp := range prevFn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
 	for _, p := range prevFn.Params {
 		if p.Optional {
 			builder = builder.OptParam(p.Name, p.Type)
@@ -670,6 +741,24 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 	}
 	builder = builder.Returns(mergedReturns...)
 	return builder.Build(), true
+}
+
+func typeParamsEqual(a, b []*typ.TypeParam) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] == nil || b[i] == nil {
+			if a[i] != b[i] {
+				return false
+			}
+			continue
+		}
+		if !a[i].Equals(b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func widenReturnVectorForConvergence(rets []typ.Type) []typ.Type {
