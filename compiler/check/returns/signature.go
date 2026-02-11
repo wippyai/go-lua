@@ -23,15 +23,6 @@ func BuildFunctionSignatureWithSummary(sig *typ.Function, returnTypes []typ.Type
 	return join.WithReturnsOrUnknown(sig, returnTypes)
 }
 
-// BuildFunctionTypeFromSummary builds a function type using only a return summary vector.
-//
-// This is used when we have inferred return types but no signature information.
-// Creates a function type with unknown parameters and the given return types.
-// If the return vector is empty, returns a function with Unknown return.
-func BuildFunctionTypeFromSummary(returnTypes []typ.Type) typ.Type {
-	return join.WithReturnsOrUnknown(typ.Func().Build(), returnTypes)
-}
-
 // BuildSeedFunctionTypeWithBindings builds a placeholder function type for an
 // SCC sibling that has no return summary yet.
 //
