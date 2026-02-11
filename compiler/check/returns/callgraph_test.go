@@ -314,14 +314,6 @@ func TestPropagateParamHintsFromCallGraph_MethodRuntimeIndexing(t *testing.T) {
 		t.Fatalf("expected symbols for callee/caller, got callee=%d caller=%d", calleeSym, callerSym)
 	}
 
-	// Ensure the method call resolves to the local callee symbol for this unit test.
-	callerGraph := localFuncs[callerSym].Graph
-	callerGraph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
-		if info != nil && info.Method == "callee" {
-			info.CalleeSymbol = calleeSym
-		}
-	})
-
 	PropagateParamHintsFromCallGraph(localFuncs)
 
 	hints := localFuncs[calleeSym].ParamHints
