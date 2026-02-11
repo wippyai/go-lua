@@ -24,6 +24,12 @@ func MergeSiblingType(prev, next typ.Type) typ.Type {
 	pfn, _ := unwrap.Alias(prev).(*typ.Function)
 	nfn, _ := unwrap.Alias(next).(*typ.Function)
 	if pfn != nil && nfn != nil {
+		if len(pfn.Returns) > 0 && len(nfn.Returns) == 0 {
+			return prev
+		}
+		if len(nfn.Returns) > 0 && len(pfn.Returns) == 0 {
+			return next
+		}
 		if returns.ReturnTypesRefine(pfn.Returns, nfn.Returns) {
 			return prev
 		}

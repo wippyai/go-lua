@@ -85,6 +85,15 @@ func TestMergeType_Functions(t *testing.T) {
 	}
 }
 
+func TestMergeType_FunctionAliases(t *testing.T) {
+	prevFn := typ.NewAlias("Prev", typ.Func().Build())
+	nextFn := typ.NewAlias("Next", typ.Func().Returns(typ.String).Build())
+	result := MergeType(prevFn, nextFn)
+	if !typ.TypeEquals(result, nextFn) {
+		t.Fatalf("expected function alias with returns to be preferred, got %v", result)
+	}
+}
+
 func TestCompute_Nil(t *testing.T) {
 	result := Compute(nil, 0)
 	if result != nil {
