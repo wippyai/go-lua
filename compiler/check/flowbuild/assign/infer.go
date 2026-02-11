@@ -240,13 +240,6 @@ func collectInferredTypes(
 			}
 		})
 	}
-	// Ensure parameter symbols participate in inference SCCs.
-	for sym := range paramSet {
-		if deps[uint64(sym)] == nil {
-			deps[uint64(sym)] = nil
-		}
-	}
-
 	// Process table mutator calls
 	for _, entry := range calls {
 		info := entry.info
@@ -294,14 +287,6 @@ func collectInferredTypes(
 
 	// Compute SCCs in topological order (dependencies first)
 	sccs := internal.ComputeSCCs(deps)
-
-	// Build set of symbols in each SCC for fast lookup
-	sccMembers := make(map[cfg.SymbolID]int) // symbol -> SCC index
-	for i, scc := range sccs {
-		for _, sym := range scc {
-			sccMembers[cfg.SymbolID(sym)] = i
-		}
-	}
 
 	// Process each SCC in topological order
 	for sccIdx, scc := range sccs {
