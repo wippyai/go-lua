@@ -107,11 +107,7 @@ func BuildInitialSymbolTypes(graph *cfg.Graph, globalTypes map[string]typ.Type, 
 		return nil
 	}
 
-	names := make([]string, 0, len(namesToCheck))
-	for name := range namesToCheck {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := cfg.SortedFieldNames(namesToCheck)
 
 	bindings := graph.Bindings()
 	out := make(flow.SymbolTypes)

@@ -22,7 +22,6 @@
 package modules
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
@@ -46,12 +45,7 @@ func Connect(database *db.DB, name string, exportType typ.Type, exportTypes map[
 	manifest.SetExport(exportType)
 
 	if len(exportTypes) > 0 {
-		names := make([]string, 0, len(exportTypes))
-		for name := range exportTypes {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, typeName := range names {
+		for _, typeName := range cfg.SortedFieldNames(exportTypes) {
 			manifest.DefineType(typeName, exportTypes[typeName])
 		}
 	}

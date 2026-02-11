@@ -1,8 +1,6 @@
 package decl
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
@@ -78,12 +76,7 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 	if fc.CheckCtx != nil && fc.CheckCtx.Bindings() != nil {
 		bindings = fc.CheckCtx.Bindings()
 	}
-	globalNames := make([]string, 0, len(fc.Globals))
-	for name := range fc.Globals {
-		globalNames = append(globalNames, name)
-	}
-	sort.Strings(globalNames)
-	for _, name := range globalNames {
+	for _, name := range cfg.SortedFieldNames(fc.Globals) {
 		t := fc.Globals[name]
 		if t == nil {
 			continue

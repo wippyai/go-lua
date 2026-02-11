@@ -23,8 +23,6 @@
 package phase
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
@@ -387,12 +385,7 @@ func buildDeclaredTypes(
 
 	// Apply global types once using the graph's global symbol map.
 	if len(globalTypes) > 0 {
-		names := make([]string, 0, len(globalTypes))
-		for name := range globalTypes {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
+		for _, name := range cfg.SortedFieldNames(globalTypes) {
 			t := globalTypes[name]
 			if t == nil {
 				continue
