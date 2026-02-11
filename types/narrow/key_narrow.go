@@ -1,7 +1,6 @@
 package narrow
 
 import (
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -55,8 +54,8 @@ func ByTypeKey(t typ.Type, key TypeKey, resolve TypeResolver) typ.Type {
 		return t
 	}
 	if key.Kind == TypeKeyBuiltin {
-		targetKind := kind.FromString(key.Name)
-		if targetKind == kind.Unknown {
+		targetKind, ok := key.BuiltinKind()
+		if !ok {
 			return t
 		}
 		return FilterByKind(t, targetKind)
@@ -125,8 +124,8 @@ func ExcludeByTypeKey(t typ.Type, key TypeKey, resolve TypeResolver) typ.Type {
 		return t
 	}
 	if key.Kind == TypeKeyBuiltin {
-		targetKind := kind.FromString(key.Name)
-		if targetKind == kind.Unknown {
+		targetKind, ok := key.BuiltinKind()
+		if !ok {
 			return t
 		}
 		narrowed := ExcludeKind(t, targetKind)

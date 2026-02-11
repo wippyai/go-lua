@@ -227,3 +227,11 @@ func TestTypeKeyFromStringExpr_NonString(t *testing.T) {
 		t.Error("number expr should return ok=false")
 	}
 }
+
+func TestTypeKeyFromStringExpr_UnknownBuiltin(t *testing.T) {
+	expr := &ast.StringExpr{Value: "entry"}
+	_, ok := typeKeyFromStringExpr(expr)
+	if ok {
+		t.Error("unknown type() string should return ok=false")
+	}
+}

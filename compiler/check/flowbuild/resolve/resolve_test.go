@@ -269,7 +269,7 @@ func TestBuildInputSymbolResolver_NilInputs(t *testing.T) {
 }
 
 func TestBuildContextTypeKeyResolver_BuiltinType(t *testing.T) {
-	resolver := resolve.BuildContextTypeKeyResolver(nil, nil)
+	resolver := resolve.BuildContextTypeKeyResolver(nil)
 	if resolver == nil {
 		t.Fatal("expected non-nil resolver")
 	}
@@ -284,7 +284,7 @@ func TestBuildContextTypeKeyResolver_BuiltinType(t *testing.T) {
 }
 
 func TestBuildContextTypeKeyResolver_UnknownType(t *testing.T) {
-	resolver := resolve.BuildContextTypeKeyResolver(nil, nil)
+	resolver := resolve.BuildContextTypeKeyResolver(nil)
 	_, ok := resolver("UnknownType", nil)
 	if ok {
 		t.Error("expected ok=false for unknown type")

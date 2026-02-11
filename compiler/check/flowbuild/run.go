@@ -91,7 +91,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	// Compute derived resolvers and store in a separate derived bundle.
 	derived := &fbcore.Derived{
 		SymResolver: resolve.BuildInputSymbolResolver(fc.CheckCtx, inputs),
-		TypeKeyRes:  resolve.BuildContextTypeKeyResolver(fc.CheckCtx, fc.Scopes),
+		TypeKeyRes:  resolve.BuildContextTypeKeyResolver(fc.CheckCtx),
 		EffectBySym: resolve.BuildEffectLookup(fc.CheckCtx),
 	}
 	if fc.API != nil {

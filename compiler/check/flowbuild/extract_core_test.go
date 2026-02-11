@@ -158,7 +158,7 @@ func TestBuildContextSymbolResolver_NilCtx(t *testing.T) {
 }
 
 func TestBuildContextTypeKeyResolver_NilCtx(t *testing.T) {
-	resolver := resolve.BuildContextTypeKeyResolver(nil, nil)
+	resolver := resolve.BuildContextTypeKeyResolver(nil)
 	if resolver == nil {
 		t.Fatal("expected non-nil resolver")
 	}
@@ -173,7 +173,7 @@ func TestBuildContextTypeKeyResolver_NilCtx(t *testing.T) {
 }
 
 func TestBuildContextTypeKeyResolver_UnknownType(t *testing.T) {
-	resolver := resolve.BuildContextTypeKeyResolver(nil, nil)
+	resolver := resolve.BuildContextTypeKeyResolver(nil)
 	key, ok := resolver("NonExistentType", nil)
 	if ok {
 		t.Error("expected false for unknown type")
@@ -635,7 +635,7 @@ func TestSynthTableLiteralWithWrapper_ArrayElements(t *testing.T) {
 }
 
 func TestBuildContextTypeKeyResolver_BuiltinTypes(t *testing.T) {
-	resolver := resolve.BuildContextTypeKeyResolver(nil, nil)
+	resolver := resolve.BuildContextTypeKeyResolver(nil)
 
 	builtins := []string{"number", "string", "boolean", "nil", "function", "table", "thread", "userdata"}
 	for _, name := range builtins {

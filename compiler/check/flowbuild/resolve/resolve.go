@@ -41,7 +41,6 @@ import (
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -267,10 +266,10 @@ func BuildInputSymbolResolver(ctx api.BaseEnv, inputs *flow.Inputs) func(cfg.Poi
 }
 
 // BuildContextTypeKeyResolver creates a type key resolver from Env.
-func BuildContextTypeKeyResolver(ctx api.BaseEnv, scopes map[cfg.Point]*scope.State) func(string, *scope.State) (narrow.TypeKey, bool) {
+func BuildContextTypeKeyResolver(ctx api.BaseEnv) func(string, *scope.State) (narrow.TypeKey, bool) {
 	return func(name string, sc *scope.State) (narrow.TypeKey, bool) {
-		if kind.FromString(name) != kind.Unknown {
-			return narrow.BuiltinTypeKey(name), true
+		if key, ok := narrow.KnownBuiltinTypeKey(name); ok {
+			return key, true
 		}
 		if ctx != nil && ctx.TypeNames() != nil {
 			if t, ok := ctx.TypeNames().LookupType(name); ok && t != nil {

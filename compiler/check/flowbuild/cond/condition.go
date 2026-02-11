@@ -831,7 +831,7 @@ func typeKeyFromStringExpr(expr ast.Expr) (narrow.TypeKey, bool) {
 	if !ok {
 		return narrow.TypeKey{}, false
 	}
-	return narrow.BuiltinTypeKey(s.Value), true
+	return narrow.KnownBuiltinTypeKey(s.Value)
 }
 
 // NumericConstraintsFromExpr extracts numeric constraints from an expression.
