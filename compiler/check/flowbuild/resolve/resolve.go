@@ -186,6 +186,32 @@ func Ref(t typ.Type, sc *scope.State) typ.Type {
 	return t
 }
 
+// selectConcreteOrPlaceholder applies canonical symbol-resolver preference:
+// return concrete types immediately, and keep placeholders as fallback.
+func selectConcreteOrPlaceholder(candidate typ.Type, fallback *typ.Type) (typ.Type, bool) {
+	if candidate == nil {
+		return nil, false
+	}
+	if candidate.Kind().IsPlaceholder() {
+		if fallback != nil {
+			*fallback = candidate
+		}
+		return nil, false
+	}
+	return candidate, true
+}
+
+func selectFromTypeMap(types map[cfg.SymbolID]typ.Type, sym cfg.SymbolID, fallback *typ.Type) (typ.Type, bool) {
+	if types == nil {
+		return nil, false
+	}
+	candidate, ok := types[sym]
+	if !ok {
+		return nil, false
+	}
+	return selectConcreteOrPlaceholder(candidate, fallback)
+}
+
 // BuildContextSymbolResolver creates a symbol type resolver from Env.
 func BuildContextSymbolResolver(ctx api.BaseEnv) func(cfg.Point, cfg.SymbolID) (typ.Type, bool) {
 	if ctx == nil || ctx.Types() == nil {
@@ -196,11 +222,9 @@ func BuildContextSymbolResolver(ctx api.BaseEnv) func(cfg.Point, cfg.SymbolID) (
 	return func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
 		var fallback typ.Type
 		tv := ctx.Types().EffectiveTypeAt(p, sym)
-		if tv.State == flow.StateResolved && tv.Type != nil {
-			if tv.Type.Kind().IsPlaceholder() {
-				fallback = tv.Type
-			} else {
-				return tv.Type, true
+		if tv.State == flow.StateResolved {
+			if selected, ok := selectConcreteOrPlaceholder(tv.Type, &fallback); ok {
+				return selected, true
 			}
 		}
 		if t, ok := ctx.GlobalType(sym); ok && t != nil {
@@ -221,32 +245,14 @@ func BuildInputSymbolResolver(ctx api.BaseEnv, inputs *flow.Inputs) func(cfg.Poi
 	}
 	return func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
 		var fallback typ.Type
-		if inputs.LiteralTypes != nil {
-			if t, ok := inputs.LiteralTypes[sym]; ok && t != nil {
-				if t.Kind().IsPlaceholder() {
-					fallback = t
-				} else {
-					return t, true
-				}
-			}
+		if selected, ok := selectFromTypeMap(inputs.LiteralTypes, sym, &fallback); ok {
+			return selected, true
 		}
-		if inputs.SiblingTypes != nil {
-			if t, ok := inputs.SiblingTypes[sym]; ok && t != nil {
-				if t.Kind().IsPlaceholder() {
-					fallback = t
-				} else {
-					return t, true
-				}
-			}
+		if selected, ok := selectFromTypeMap(inputs.SiblingTypes, sym, &fallback); ok {
+			return selected, true
 		}
-		if inputs.DeclaredTypes != nil {
-			if t, ok := inputs.DeclaredTypes[sym]; ok && t != nil {
-				if t.Kind().IsPlaceholder() {
-					fallback = t
-				} else {
-					return t, true
-				}
-			}
+		if selected, ok := selectFromTypeMap(inputs.DeclaredTypes, sym, &fallback); ok {
+			return selected, true
 		}
 		if ctx != nil {
 			if t, ok := ctx.GlobalType(sym); ok && t != nil {
