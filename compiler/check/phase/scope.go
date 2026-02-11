@@ -289,7 +289,8 @@ func ExtractParamTypes(
 		}
 
 		// Binder/CFG-injected implicit self parameter has no source annotation.
-		if slot.SourceIndex < 0 {
+		srcIdx, hasSource := slot.SourceParamIndex()
+		if !hasSource {
 			if base != nil && base.SelfType() != nil {
 				types[slot.Symbol] = base.SelfType()
 			} else {
@@ -297,7 +298,7 @@ func ExtractParamTypes(
 			}
 			continue
 		}
-		i := slot.SourceIndex
+		i := srcIdx
 
 		var paramType typ.Type
 		var hint typ.Type

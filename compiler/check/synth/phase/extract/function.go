@@ -567,7 +567,8 @@ func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, exp
 			continue
 		}
 
-		if slot.SourceIndex < 0 {
+		srcIdx, hasSource := slot.SourceParamIndex()
+		if !hasSource {
 			if selfType := sc.SelfType(); selfType != nil {
 				overlay[slot.Symbol] = selfType
 			} else {
@@ -576,7 +577,7 @@ func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, exp
 			continue
 		}
 
-		i := slot.SourceIndex
+		i := srcIdx
 		paramType := typ.Unknown
 		if slot.TypeAnnotation != nil {
 			paramType = s.ResolveType(slot.TypeAnnotation, sc)

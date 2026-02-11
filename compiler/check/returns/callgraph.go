@@ -92,10 +92,11 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 			continue
 		}
 		for _, slot := range info.Graph.ParamSlots() {
-			if slot.SourceIndex < 0 || slot.Symbol == 0 {
+			srcIdx, hasSource := slot.SourceParamIndex()
+			if !hasSource || slot.Symbol == 0 {
 				continue
 			}
-			paramOwner[slot.Symbol] = paramRef{owner: info, index: slot.SourceIndex}
+			paramOwner[slot.Symbol] = paramRef{owner: info, index: srcIdx}
 		}
 	}
 

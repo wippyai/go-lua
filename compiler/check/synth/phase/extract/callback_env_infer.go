@@ -40,8 +40,8 @@ func inferCallbackEnvOverlays(
 
 	paramSet := make(map[cfg.SymbolID]int, len(paramSlots))
 	for _, slot := range paramSlots {
-		if slot.SourceIndex >= 0 && slot.Symbol != 0 {
-			paramSet[slot.Symbol] = slot.SourceIndex
+		if srcIdx, ok := slot.SourceParamIndex(); ok && slot.Symbol != 0 {
+			paramSet[slot.Symbol] = srcIdx
 		}
 	}
 

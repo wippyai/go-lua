@@ -162,7 +162,7 @@ func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, g
 
 	params := make([]flow.ParamInfo, 0, len(fn.ParList.Names))
 	for _, slot := range slots {
-		if slot.SourceIndex < 0 {
+		if !slot.HasSourceParam() {
 			continue
 		}
 		t := typ.Unknown

@@ -94,7 +94,7 @@ func (idx *LSPIndexer) extractParameters(file string, graph *cfg.Graph, result *
 	}
 
 	for _, slot := range paramSlots {
-		if slot.SourceIndex < 0 || slot.Symbol == 0 {
+		if !slot.HasSourceParam() || slot.Symbol == 0 {
 			continue
 		}
 		name := slot.Name

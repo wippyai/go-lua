@@ -422,7 +422,8 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 		}
 
 		// Binder/CFG-injected implicit self parameter.
-		if slot.SourceIndex < 0 {
+		srcIdx, hasSource := slot.SourceParamIndex()
+		if !hasSource {
 			if selfType := ctx.resolveScope.SelfType(); selfType != nil {
 				overlay[slot.Symbol] = selfType
 			} else {
@@ -431,7 +432,7 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 			continue
 		}
 
-		i := slot.SourceIndex
+		i := srcIdx
 		paramType := typ.Unknown
 		if slot.Name == "self" {
 			if selfType := ctx.resolveScope.SelfType(); selfType != nil {
