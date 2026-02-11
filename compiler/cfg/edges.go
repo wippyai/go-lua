@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg/extraction"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 )
@@ -268,7 +269,7 @@ func (b *Builder) processTableField(p basecfg.Point, baseSym basecfg.SymbolID, f
 		return
 	}
 
-	fieldSeg, hasStaticField := staticSegmentFromKeyExpr(field.Key)
+	fieldSeg, hasStaticField := pathseg.StaticTableFieldKeySegment(field.Key)
 
 	// If we have a base symbol and static field key, create field symbol for function values
 	if baseSym != 0 && hasStaticField && b.Bindings != nil {

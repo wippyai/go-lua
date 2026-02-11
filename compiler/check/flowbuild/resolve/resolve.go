@@ -37,6 +37,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
@@ -191,7 +192,7 @@ func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.Func
 		return nil
 	}
 
-	calleeSeg, ok := path.StaticKeySegment(attr.Key)
+	calleeSeg, ok := pathseg.StaticAttrKeySegment(attr.Key)
 	if !ok {
 		return nil
 	}
@@ -202,8 +203,8 @@ func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.Func
 	}
 
 	for _, field := range tableLit.Fields {
-		fieldSeg, ok := path.StaticKeySegment(field.Key)
-		if !ok || fieldSeg.Kind != calleeSeg.Kind || fieldSeg.Name != calleeSeg.Name {
+		fieldSeg, ok := pathseg.StaticTableFieldKeySegment(field.Key)
+		if !ok || fieldSeg != calleeSeg {
 			continue
 		}
 		if fn, ok := field.Value.(*ast.FunctionExpr); ok {

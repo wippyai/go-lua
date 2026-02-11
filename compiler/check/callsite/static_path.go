@@ -4,8 +4,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow/pathkey"
 )
 
 // StaticPathWithBaseSymbol resolves an expression to a static segment path rooted at a base symbol.
@@ -31,7 +31,7 @@ func StaticPathWithBaseSymbol(bindings *bind.BindingTable, expr ast.Expr) (cfg.S
 		if !ok || baseSym == 0 {
 			return 0, nil, false
 		}
-		seg, ok := staticSegmentFromExpr(e.Key)
+		seg, ok := pathseg.StaticAttrKeySegment(e.Key)
 		if !ok {
 			return 0, nil, false
 		}
@@ -39,25 +39,5 @@ func StaticPathWithBaseSymbol(bindings *bind.BindingTable, expr ast.Expr) (cfg.S
 		return baseSym, out, true
 	default:
 		return 0, nil, false
-	}
-}
-
-func staticSegmentFromExpr(expr ast.Expr) (constraint.Segment, bool) {
-	switch k := expr.(type) {
-	case *ast.StringExpr:
-		if k.Value == "" {
-			return constraint.Segment{}, false
-		}
-		if pathkey.IsIdentName(k.Value) {
-			return constraint.Segment{Kind: constraint.SegmentField, Name: k.Value}, true
-		}
-		return constraint.Segment{Kind: constraint.SegmentIndexString, Name: k.Value}, true
-	case *ast.NumberExpr:
-		if idx, ok := pathkey.ParseIntLiteral(k.Value); ok {
-			return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx}, true
-		}
-		return constraint.Segment{}, false
-	default:
-		return constraint.Segment{}, false
 	}
 }

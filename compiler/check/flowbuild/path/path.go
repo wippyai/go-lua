@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
@@ -28,26 +29,11 @@ type versionedGraph interface {
 //   - identifier key: foo        -> SegmentField("foo")
 //   - string key: "foo"          -> SegmentField("foo")
 //   - string key: "x-y"          -> SegmentIndexString("x-y")
+//   - number key: 1              -> SegmentIndexInt(1)
 //
 // Returns false for unsupported or empty keys.
 func StaticKeySegment(key ast.Expr) (constraint.Segment, bool) {
-	switch k := key.(type) {
-	case *ast.IdentExpr:
-		if k.Value == "" {
-			return constraint.Segment{}, false
-		}
-		return constraint.Segment{Kind: constraint.SegmentField, Name: k.Value}, true
-	case *ast.StringExpr:
-		if k.Value == "" {
-			return constraint.Segment{}, false
-		}
-		if pathkey.IsIdentName(k.Value) {
-			return constraint.Segment{Kind: constraint.SegmentField, Name: k.Value}, true
-		}
-		return constraint.Segment{Kind: constraint.SegmentIndexString, Name: k.Value}, true
-	default:
-		return constraint.Segment{}, false
-	}
+	return pathseg.StaticTableFieldKeySegment(key)
 }
 
 // WithVersion binds a path to the SSA version visible at point p.

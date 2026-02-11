@@ -3,6 +3,7 @@ package cfg
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg/extraction"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 )
@@ -241,7 +242,7 @@ func (b *Builder) Assign(s *ast.AssignStmt) {
 			}
 
 			if target.BaseSymbol != 0 && target.Key != nil {
-				if keySegment, ok := staticSegmentFromKeyExpr(target.Key); ok {
+				if keySegment, ok := pathseg.StaticAttrKeySegment(target.Key); ok {
 					target.Symbol = b.getOrCreateFieldPathSymbol(target.BaseSymbol, []constraint.Segment{keySegment})
 				}
 

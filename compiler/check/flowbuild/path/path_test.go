@@ -98,9 +98,13 @@ func TestStaticKeySegment_StringNonIdentifier(t *testing.T) {
 	}
 }
 
-func TestStaticKeySegment_Unsupported(t *testing.T) {
-	if _, ok := path.StaticKeySegment(&ast.NumberExpr{Value: "1"}); ok {
-		t.Fatal("expected unsupported key to return ok=false")
+func TestStaticKeySegment_Number(t *testing.T) {
+	seg, ok := path.StaticKeySegment(&ast.NumberExpr{Value: "1"})
+	if !ok {
+		t.Fatal("expected static key segment")
+	}
+	if seg.Kind != constraint.SegmentIndexInt || seg.Index != 1 {
+		t.Fatalf("unexpected segment: kind=%v index=%d", seg.Kind, seg.Index)
 	}
 }
 
