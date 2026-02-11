@@ -140,6 +140,36 @@ func TestPreferredCalleeSymbol_FallsBackToFirstCandidate(t *testing.T) {
 	}
 }
 
+func TestCalleeSymbolCandidatesWithAliases_NilGraphFallsBackToBaseCandidates(t *testing.T) {
+	callee := &ast.IdentExpr{Value: "f"}
+	primary := bind.NewBindingTable()
+	fallback := bind.NewBindingTable()
+	const (
+		rawSym      cfg.SymbolID = 73
+		primarySym  cfg.SymbolID = 74
+		fallbackSym cfg.SymbolID = 75
+	)
+	primary.Bind(callee, primarySym)
+	fallback.Bind(callee, fallbackSym)
+
+	info := &cfg.CallInfo{
+		Callee:       callee,
+		CalleeName:   "f",
+		CalleeSymbol: rawSym,
+	}
+
+	base := CalleeSymbolCandidates(info, primary, fallback)
+	withAliases := CalleeSymbolCandidatesWithAliases(info, nil, primary, fallback)
+	if len(withAliases) != len(base) {
+		t.Fatalf("len(withAliases) = %d, want %d", len(withAliases), len(base))
+	}
+	for i := range base {
+		if withAliases[i] != base[i] {
+			t.Fatalf("withAliases[%d] = %d, want %d (base=%v withAliases=%v)", i, withAliases[i], base[i], base, withAliases)
+		}
+	}
+}
+
 func TestCalleeSymbolCandidatesWithAliases_IncludesDirectAliasSource(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local function B()
@@ -330,10 +360,10 @@ func TestCalleeSymbolCandidatesWithAliases_ResolvesMethodSymbolThroughAliasBase(
 		t.Fatal("expected Alias:run call site")
 	}
 
-	if _, ok := MethodCalleeSymbolWithAliases(bindings, nil, callInfo); ok {
+	if _, ok := methodCalleeSymbolFromCall(bindings, nil, callInfo); ok {
 		t.Fatal("expected non-alias method symbol resolution to miss alias receiver base")
 	}
-	methodSym, ok := MethodCalleeSymbolWithAliases(bindings, graph, callInfo)
+	methodSym, ok := methodCalleeSymbolFromCall(bindings, graph, callInfo)
 	if !ok || methodSym == 0 {
 		t.Fatal("expected alias-aware method symbol resolution")
 	}

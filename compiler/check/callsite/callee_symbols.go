@@ -36,11 +36,11 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 	if fallback != primary {
 		push(SymbolFromExpr(info.Callee, fallback))
 	}
-	if methodSym, ok := MethodCalleeSymbolWithAliases(primary, nil, info); ok {
+	if methodSym, ok := methodCalleeSymbolFromCall(primary, nil, info); ok {
 		push(methodSym)
 	}
 	if fallback != nil && fallback != primary {
-		if methodSym, ok := MethodCalleeSymbolWithAliases(fallback, nil, info); ok {
+		if methodSym, ok := methodCalleeSymbolFromCall(fallback, nil, info); ok {
 			push(methodSym)
 		}
 	}
@@ -114,6 +114,9 @@ func CalleeSymbolCandidatesWithAliases(
 	primary, fallback *bind.BindingTable,
 ) []cfg.SymbolID {
 	base := CalleeSymbolCandidates(info, primary, fallback)
+	if graph == nil {
+		return base
+	}
 	candidates := make([]cfg.SymbolID, 0, len(base)*2+2)
 	seen := make(map[cfg.SymbolID]struct{}, len(base)*2)
 	push := func(sym cfg.SymbolID) {
@@ -136,14 +139,14 @@ func CalleeSymbolCandidatesWithAliases(
 
 	// Method calls may resolve method symbol only through an alias receiver base
 	// (for example, Alias:run() where Alias = T and T.run is defined).
-	if methodSym, ok := MethodCalleeSymbolWithAliases(primary, graph, info); ok {
+	if methodSym, ok := methodCalleeSymbolFromCall(primary, graph, info); ok {
 		graph.EachAliasSymbol(methodSym, func(candidate cfg.SymbolID) bool {
 			push(candidate)
 			return false
 		})
 	}
 	if fallback != nil && fallback != primary {
-		if methodSym, ok := MethodCalleeSymbolWithAliases(fallback, graph, info); ok {
+		if methodSym, ok := methodCalleeSymbolFromCall(fallback, graph, info); ok {
 			graph.EachAliasSymbol(methodSym, func(candidate cfg.SymbolID) bool {
 				push(candidate)
 				return false

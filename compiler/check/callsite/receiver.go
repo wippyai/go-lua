@@ -63,12 +63,6 @@ func ForceMethodReceiverAtPoint(bindings *bind.BindingTable, graph *compcfg.Grap
 	return symbolForcesMethodReceiver(bindings, graph, sym)
 }
 
-// MethodCalleeSymbolWithAliases resolves method symbols and expands receiver
-// base symbol through direct alias chains when graph is provided.
-func MethodCalleeSymbolWithAliases(bindings *bind.BindingTable, graph *compcfg.Graph, info *compcfg.CallInfo) (typecfg.SymbolID, bool) {
-	return methodCalleeSymbolFromCall(bindings, graph, info)
-}
-
 func symbolForcesMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, sym typecfg.SymbolID) bool {
 	if sym == 0 {
 		return false
