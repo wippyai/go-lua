@@ -171,5 +171,10 @@ func FloatToSafeInt(f float64) (int, bool) {
 		return 0, false
 	}
 	i := int64(f)
+	maxInt := int64(int(^uint(0) >> 1))
+	minInt := -maxInt - 1
+	if i > maxInt || i < minInt {
+		return 0, false
+	}
 	return int(i), true
 }

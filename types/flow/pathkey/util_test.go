@@ -239,3 +239,11 @@ func TestFloatToSafeInt_NaNOrInf(t *testing.T) {
 		}
 	}
 }
+
+func TestFloatToSafeInt_IntRange(t *testing.T) {
+	if strconv.IntSize == 32 {
+		if _, ok := FloatToSafeInt(2147483648.0); ok {
+			t.Fatal("FloatToSafeInt should reject values outside int32 range")
+		}
+	}
+}
