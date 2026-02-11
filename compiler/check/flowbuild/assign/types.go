@@ -19,4 +19,4 @@ type PredicateLinkFunc func(
 ) *flow.PredicateLink
 
 // KeysCollectorFunc detects if a call is to a "keys collector" function.
-type KeysCollectorFunc func(callInfo *cfg.CallInfo, p cfg.Point) cfg.SymbolID
+type KeysCollectorFunc func(callInfo *cfg.CallInfo, p cfg.Point, retIndex int) cfg.SymbolID

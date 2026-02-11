@@ -9,7 +9,8 @@ import (
 
 // KeysCollectorInfo tracks that a function returns keys of one of its parameters.
 type KeysCollectorInfo struct {
-	ParamIndex int // Which parameter the keys come from (0-based)
+	ParamIndex  int // Which parameter the keys come from (0-based)
+	ReturnIndex int // Which return slot carries the keys table (0-based)
 }
 
 // DetectKeysCollector analyzes a function body to detect if it follows the
@@ -44,7 +45,7 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 	pairsParamIndex := -1
 	var keyVarSym cfg.SymbolID
 	insertedKeyIntoTable := false
-	returnsKeysTable := false
+	keysReturnIndex := -1
 
 	paramSymbols := graph.ParamSymbols()
 
@@ -165,34 +166,61 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 		return nil
 	}
 
-	// Scan for return keys pattern
+	resolveIdentSym := func(expr ast.Expr) cfg.SymbolID {
+		ident, ok := expr.(*ast.IdentExpr)
+		if !ok {
+			return 0
+		}
+		var sym cfg.SymbolID
+		if bindings != nil {
+			sym, _ = bindings.SymbolOf(ident)
+		}
+		if sym == 0 {
+			if gb := graph.Bindings(); gb != nil {
+				sym, _ = gb.SymbolOf(ident)
+			}
+		}
+		return sym
+	}
+
+	// Scan for return keys pattern with a stable return slot index.
 	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
 		if info == nil || len(info.Exprs) == 0 {
 			return
 		}
-		retIdent, ok := info.Exprs[0].(*ast.IdentExpr)
-		if !ok {
+
+		foundIdx := -1
+		for i, expr := range info.Exprs {
+			if resolveIdentSym(expr) != keysTableSym {
+				continue
+			}
+			if foundIdx >= 0 {
+				// Ambiguous: same return statement exposes keys at multiple slots.
+				keysReturnIndex = -2
+				return
+			}
+			foundIdx = i
+		}
+		if foundIdx < 0 {
+			// Every return statement must carry the keys table for sound provenance.
+			keysReturnIndex = -2
 			return
 		}
-		var retSym cfg.SymbolID
-		if bindings != nil {
-			retSym, _ = bindings.SymbolOf(retIdent)
+		if keysReturnIndex == -1 {
+			keysReturnIndex = foundIdx
+			return
 		}
-		if retSym == 0 {
-			if gb := graph.Bindings(); gb != nil {
-				retSym, _ = gb.SymbolOf(retIdent)
-			}
-		}
-		if retSym == keysTableSym {
-			returnsKeysTable = true
+		if keysReturnIndex != foundIdx {
+			// Ambiguous across return statements.
+			keysReturnIndex = -2
 		}
 	})
 
-	if !returnsKeysTable {
+	if keysReturnIndex < 0 {
 		return nil
 	}
 
-	return &KeysCollectorInfo{ParamIndex: pairsParamIndex}
+	return &KeysCollectorInfo{ParamIndex: pairsParamIndex, ReturnIndex: keysReturnIndex}
 }
 
 func isPairsCall(call *ast.FuncCallExpr) bool {
@@ -227,11 +255,11 @@ func isTableInsertCall(info *cfg.CallInfo) bool {
 
 // BuildKeysCollectorDetector returns a callback that detects if a call is to a
 // keys collector function and returns the symbol of the table argument.
-func BuildKeysCollectorDetector(graph *cfg.Graph) func(*cfg.CallInfo, cfg.Point) cfg.SymbolID {
+func BuildKeysCollectorDetector(graph *cfg.Graph) func(*cfg.CallInfo, cfg.Point, int) cfg.SymbolID {
 	cache := make(map[cfg.SymbolID]*KeysCollectorInfo)
 	bindings := graph.Bindings()
 
-	return func(callInfo *cfg.CallInfo, _ cfg.Point) cfg.SymbolID {
+	return func(callInfo *cfg.CallInfo, _ cfg.Point, retIndex int) cfg.SymbolID {
 		if callInfo == nil || callInfo.Callee == nil {
 			return 0
 		}
@@ -244,6 +272,9 @@ func BuildKeysCollectorDetector(graph *cfg.Graph) func(*cfg.CallInfo, cfg.Point)
 		// Check cache
 		if info, ok := cache[calleeSym]; ok {
 			if info == nil {
+				return 0
+			}
+			if info.ReturnIndex != retIndex {
 				return 0
 			}
 			return callsite.RuntimeArgSymbolAt(callInfo, info.ParamIndex, bindings)
@@ -259,6 +290,9 @@ func BuildKeysCollectorDetector(graph *cfg.Graph) func(*cfg.CallInfo, cfg.Point)
 		info := DetectKeysCollector(fn)
 		cache[calleeSym] = info
 		if info == nil {
+			return 0
+		}
+		if info.ReturnIndex != retIndex {
 			return 0
 		}
 
