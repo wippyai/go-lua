@@ -132,60 +132,43 @@ func TestConstValueFromExpr_Other(t *testing.T) {
 	}
 }
 
-func TestParseIntLiteral(t *testing.T) {
+func TestConstValueFromExpr_NumberFormats(t *testing.T) {
 	tests := []struct {
-		input string
-		want  int64
-		ok    bool
+		input   string
+		wantNil bool
+		kind    flow.ConstKind
+		intVal  int64
+		floatV  float64
 	}{
-		{"42", 42, true},
-		{"08", 8, true},
-		{"0xDEAD", 0xDEAD, true},
-		{"0", 0, true},
-		{"-1", -1, true},
-		{"123456", 123456, true},
-		{"9223372036854775807", 9223372036854775807, true},
-		{"1e3", 0, false},
-		{"0x1p2", 0, false},
-		{"3.14", 0, false},
-		{"abc", 0, false},
-		{"", 0, false},
+		{input: "-1", kind: flow.ConstInt, intVal: -1},
+		{input: "0xDEAD", kind: flow.ConstInt, intVal: 0xDEAD},
+		{input: "1e10", kind: flow.ConstFloat, floatV: 1e10},
+		{input: "3.14", kind: flow.ConstFloat, floatV: 3.14},
+		{input: "abc", wantNil: true},
+		{input: "", wantNil: true},
 	}
 
-	for _, tt := range tests {
-		got, ok := constprop.ParseIntLiteral(tt.input)
-		if ok != tt.ok {
-			t.Errorf("constprop.ParseIntLiteral(%q) ok = %v, want %v", tt.input, ok, tt.ok)
+	for _, tc := range tests {
+		val := constprop.ConstValueFromExpr(&ast.NumberExpr{Value: tc.input})
+		if tc.wantNil {
+			if val != nil {
+				t.Errorf("ConstValueFromExpr(%q) = %v, want nil", tc.input, val)
+			}
+			continue
 		}
-		if ok && got != tt.want {
-			t.Errorf("constprop.ParseIntLiteral(%q) = %d, want %d", tt.input, got, tt.want)
+		if val == nil {
+			t.Errorf("ConstValueFromExpr(%q) returned nil", tc.input)
+			continue
 		}
-	}
-}
-
-func TestParseFloatLiteral(t *testing.T) {
-	tests := []struct {
-		input string
-		want  float64
-		ok    bool
-	}{
-		{"3.14", 3.14, true},
-		{"0.0", 0.0, true},
-		{"-1.5", -1.5, true},
-		{"1e10", 1e10, true},
-		{"0x1p2", 4, true},
-		{"42", 42.0, true},
-		{"abc", 0, false},
-		{"", 0, false},
-	}
-
-	for _, tt := range tests {
-		got, ok := constprop.ParseFloatLiteral(tt.input)
-		if ok != tt.ok {
-			t.Errorf("constprop.ParseFloatLiteral(%q) ok = %v, want %v", tt.input, ok, tt.ok)
+		if val.Kind != tc.kind {
+			t.Errorf("ConstValueFromExpr(%q) kind = %v, want %v", tc.input, val.Kind, tc.kind)
+			continue
 		}
-		if ok && got != tt.want {
-			t.Errorf("constprop.ParseFloatLiteral(%q) = %f, want %f", tt.input, got, tt.want)
+		if tc.kind == flow.ConstInt && val.Int != tc.intVal {
+			t.Errorf("ConstValueFromExpr(%q) int = %d, want %d", tc.input, val.Int, tc.intVal)
+		}
+		if tc.kind == flow.ConstFloat && val.Float != tc.floatV {
+			t.Errorf("ConstValueFromExpr(%q) float = %f, want %f", tc.input, val.Float, tc.floatV)
 		}
 	}
 }

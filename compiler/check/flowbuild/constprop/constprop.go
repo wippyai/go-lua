@@ -59,10 +59,10 @@ func ConstValueFromExpr(expr ast.Expr) *flow.ConstValue {
 	case *ast.StringExpr:
 		return &flow.ConstValue{Kind: flow.ConstString, Str: e.Value}
 	case *ast.NumberExpr:
-		if idx, ok := ParseIntLiteral(e.Value); ok {
+		if idx, ok := numparse.ParseIntegerLiteral(e.Value); ok {
 			return &flow.ConstValue{Kind: flow.ConstInt, Int: idx}
 		}
-		if f, ok := ParseFloatLiteral(e.Value); ok {
+		if f, ok := numparse.ParseFloatLiteral(e.Value); ok {
 			return &flow.ConstValue{Kind: flow.ConstFloat, Float: f}
 		}
 	case *ast.TrueExpr:
@@ -102,16 +102,6 @@ func ConstValueEqual(a, b *flow.ConstValue) bool {
 	default:
 		return false
 	}
-}
-
-// ParseIntLiteral parses an integer literal string (supports decimal and hex).
-func ParseIntLiteral(s string) (int64, bool) {
-	return numparse.ParseIntegerLiteral(s)
-}
-
-// ParseFloatLiteral parses a floating-point literal string.
-func ParseFloatLiteral(s string) (float64, bool) {
-	return numparse.ParseFloatLiteral(s)
 }
 
 // propagateConstValues propagates constant values through the CFG using a worklist algorithm.
