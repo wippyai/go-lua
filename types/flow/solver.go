@@ -3,7 +3,6 @@ package flow
 import (
 	"slices"
 	"sort"
-	"strings"
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -543,27 +542,30 @@ func (s *Solution) resolveTypeKey(key narrow.TypeKey) typ.Type {
 //
 // This enables gradual type construction for tables built incrementally.
 func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.Type {
-	// Collect field assignments for this base key
-	prefix := baseKey + "."
 	var fields []typ.Field
+	baseSym, baseVersion, _, ok := pathkey.ParseKey(constraint.PathKey(baseKey))
+	if !ok {
+		return baseType
+	}
 	keys := make([]string, 0, len(s.values))
 	for key := range s.values {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if len(key) <= len(prefix) {
+		childSym, childVersion, suffix, ok := pathkey.ParseKey(constraint.PathKey(key))
+		if !ok || childSym != baseSym || childVersion != baseVersion || suffix == "" {
 			continue
 		}
-		if key[:len(prefix)] != prefix {
+		segs := pathkey.ParseSuffix(suffix)
+		if len(segs) != 1 {
 			continue
 		}
-		// Extract field name (only direct children, not nested paths)
-		suffix := key[len(prefix):]
-		if idx := strings.IndexAny(suffix, ".["); idx != -1 {
-			continue // Skip nested paths like ".foo.bar" or ".foo[0]"
+		seg := segs[0]
+		switch seg.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			fields = append(fields, typ.Field{Name: seg.Name, Type: s.values[key]})
 		}
-		fields = append(fields, typ.Field{Name: suffix, Type: s.values[key]})
 	}
 
 	if len(fields) == 0 {

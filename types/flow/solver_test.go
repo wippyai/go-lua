@@ -252,6 +252,66 @@ func TestSolutionResolveTypeKey_UnknownBuiltin(t *testing.T) {
 	}
 }
 
+func TestMergeFieldAssignments_IncludesCanonicalStringIndexKeys(t *testing.T) {
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym1@1["meta.type"]`:   typ.String,
+			`sym1@1.name`:           typ.Number,
+			`sym1@1["meta.type"].x`: typ.Boolean,
+			`sym1@2["meta.type"]`:   typ.Integer,
+			`sym2@1["meta.type"]`:   typ.Nil,
+		},
+	}
+
+	base := typ.NewRecord().Field("id", typ.String).Build()
+	got := s.mergeFieldAssignments(base, "sym1@1")
+
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
+	}
+	if f := rec.GetField("meta.type"); f == nil || !typ.TypeEquals(f.Type, typ.String) {
+		t.Fatalf("expected merged field meta.type=string, got %v", f)
+	}
+	if f := rec.GetField("name"); f == nil || !typ.TypeEquals(f.Type, typ.Number) {
+		t.Fatalf("expected merged field name=number, got %v", f)
+	}
+	if f := rec.GetField("id"); f == nil || !typ.TypeEquals(f.Type, typ.String) {
+		t.Fatalf("expected existing field id=string to be preserved, got %v", f)
+	}
+}
+
+func TestMergeFieldAssignments_IncludesEscapedStringIndexKey(t *testing.T) {
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym7@3["a\"b"]`: typ.Boolean,
+		},
+	}
+
+	got := s.mergeFieldAssignments(nil, "sym7@3")
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
+	}
+	if f := rec.GetField(`a"b`); f == nil || !typ.TypeEquals(f.Type, typ.Boolean) {
+		t.Fatalf("expected escaped key field a\\\"b=boolean, got %v", f)
+	}
+}
+
+func TestMergeFieldAssignments_InvalidBaseKey_NoChange(t *testing.T) {
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym1@1["meta.type"]`: typ.String,
+		},
+	}
+
+	base := typ.NewRecord().Field("id", typ.String).Build()
+	got := s.mergeFieldAssignments(base, "not-a-canonical-key")
+	if !typ.TypeEquals(got, base) {
+		t.Fatalf("invalid base key should keep base type unchanged: got %v, want %v", got, base)
+	}
+}
+
 // setupSymbol registers a symbol and sets its visibility at all given points.
 // Returns the SymbolID for use in version creation.
 func setupSymbol(g *mockSSAGraph, name string, points []cfg.Point) cfg.SymbolID {
