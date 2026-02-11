@@ -394,9 +394,10 @@ func ExtractIteratorSource(
 		if iter == nil {
 			return nil
 		}
-		idx = iter.Source.Index
-		if idx < 0 {
-			idx = len(call.Args) + idx
+		var ok bool
+		idx, ok = effect.ResolveParamIndex(iter.Source, len(call.Args))
+		if !ok {
+			return nil
 		}
 		switch iter.Kind {
 		case effect.IterateIndexed:

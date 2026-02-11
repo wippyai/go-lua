@@ -9,6 +9,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -413,6 +415,81 @@ func TestExtractIteratorSource_NonCallExpr(t *testing.T) {
 	result := resolve.ExtractIteratorSource(exprs, 0, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for non-call expr")
+	}
+}
+
+func TestExtractIteratorSource_IteratorNegativeSourceIndex(t *testing.T) {
+	iterIdent := &ast.IdentExpr{Value: "iter"}
+	srcA := &ast.IdentExpr{Value: "a"}
+	srcB := &ast.IdentExpr{Value: "b"}
+	call := &ast.FuncCallExpr{
+		Func: iterIdent,
+		Args: []ast.Expr{srcA, srcB},
+	}
+
+	bindings := bind.NewBindingTable()
+	bindings.Bind(srcA, 1)
+	bindings.Bind(srcB, 2)
+
+	iterFn := typ.Func().
+		Param("prefix", typ.Any).
+		Param("src", typ.Any).
+		Returns(typ.Any).
+		Spec(contract.NewSpec().WithEffects(effect.Iterator{
+			Source: effect.ParamRef{Index: -1},
+			Kind:   effect.IterateKeyed,
+		})).
+		Build()
+
+	synth := func(expr ast.Expr, _ cfg.Point) typ.Type {
+		if expr == iterIdent {
+			return iterFn
+		}
+		return nil
+	}
+
+	got := resolve.ExtractIteratorSource([]ast.Expr{call}, 0, synth, nil, nil, bindings)
+	if got == nil {
+		t.Fatal("expected iterator source info")
+	}
+	if got.Kind != flow.IterateKeyed {
+		t.Fatalf("kind = %v, want IterateKeyed", got.Kind)
+	}
+	if got.Path.Symbol != 2 {
+		t.Fatalf("source symbol = %d, want 2 (last arg)", got.Path.Symbol)
+	}
+}
+
+func TestExtractIteratorSource_IteratorNegativeSourceIndexOutOfRange(t *testing.T) {
+	iterIdent := &ast.IdentExpr{Value: "iter"}
+	srcA := &ast.IdentExpr{Value: "a"}
+	call := &ast.FuncCallExpr{
+		Func: iterIdent,
+		Args: []ast.Expr{srcA},
+	}
+
+	bindings := bind.NewBindingTable()
+	bindings.Bind(srcA, 1)
+
+	iterFn := typ.Func().
+		Param("src", typ.Any).
+		Returns(typ.Any).
+		Spec(contract.NewSpec().WithEffects(effect.Iterator{
+			Source: effect.ParamRef{Index: -2},
+			Kind:   effect.IterateKeyed,
+		})).
+		Build()
+
+	synth := func(expr ast.Expr, _ cfg.Point) typ.Type {
+		if expr == iterIdent {
+			return iterFn
+		}
+		return nil
+	}
+
+	got := resolve.ExtractIteratorSource([]ast.Expr{call}, 0, synth, nil, nil, bindings)
+	if got != nil {
+		t.Fatalf("expected nil for out-of-range negative iterator source, got %+v", got)
 	}
 }
 

@@ -46,8 +46,8 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 
 // buildSelectResultUnion builds a union of result records from SelectCase elements.
 func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCases) typ.Type {
-	casesIdx := transform.Cases.Index
-	if casesIdx < 0 || casesIdx >= len(args) {
+	casesIdx, ok := effect.ResolveParamIndex(transform.Cases, len(args))
+	if !ok {
 		return nil
 	}
 
@@ -61,7 +61,7 @@ func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCase
 		return nil
 	}
 
-	addDefault := transform.Default.Index >= 0
+	addDefault := transform.Default.Index >= 0 && transform.Default.Index < len(args)
 
 	var resultTypes []typ.Type
 	seen := make(map[uint64]bool)

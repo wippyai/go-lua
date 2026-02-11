@@ -69,8 +69,7 @@ type Label interface {
 //
 // Special index values:
 //   - Non-negative: 0-based index into the fixed parameter list
-//   - -1: the last argument in a variadic call (useful for table.insert where
-//     the value position depends on argument count)
+//   - Negative: relative from runtime argument tail (-1 is last argument)
 type ParamRef struct {
 	Index int // 0-based index; -1 means the last variadic argument
 }
