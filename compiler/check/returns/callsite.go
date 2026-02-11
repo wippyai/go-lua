@@ -1,8 +1,6 @@
 package returns
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
@@ -87,12 +85,7 @@ func CollectCalledNestedFieldAssignments(
 	if len(calledSyms) == 0 {
 		return result
 	}
-	syms := make([]cfg.SymbolID, 0, len(calledSyms))
-	for sym := range calledSyms {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
-	for _, sym := range syms {
+	for _, sym := range cfg.SortedSymbolIDs(calledSyms) {
 		nestedFields := capturedByCallee[sym]
 		if len(nestedFields) == 0 {
 			continue

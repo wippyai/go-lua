@@ -39,8 +39,6 @@
 package returns
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -74,15 +72,5 @@ const MaxReturnSummaryIterations = 10
 
 // SortedLocalFuncSymbols returns a deterministic ordering of local function symbols.
 func SortedLocalFuncSymbols(localFuncs map[cfg.SymbolID]*LocalFuncInfo) []cfg.SymbolID {
-	if len(localFuncs) == 0 {
-		return nil
-	}
-	syms := make([]cfg.SymbolID, 0, len(localFuncs))
-	for sym := range localFuncs {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool {
-		return syms[i] < syms[j]
-	})
-	return syms
+	return cfg.SortedSymbolIDs(localFuncs)
 }

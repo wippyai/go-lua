@@ -38,8 +38,6 @@
 package infer
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
@@ -520,17 +518,7 @@ func (i *Inferencer) collectAllReturnSummaries(ctx *returnInferenceContext) map[
 }
 
 func sortedSummarySymbols(summaries map[cfg.SymbolID][]typ.Type) []cfg.SymbolID {
-	if len(summaries) == 0 {
-		return nil
-	}
-	syms := make([]cfg.SymbolID, 0, len(summaries))
-	for sym := range summaries {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool {
-		return syms[i] < syms[j]
-	})
-	return syms
+	return cfg.SortedSymbolIDs(summaries)
 }
 
 // enrichOverlayWithLocalFunctions adds local function types from the function body.
