@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -19,7 +20,7 @@ func buildEmptyGraph() *cfg.Graph {
 }
 
 func TestCollectSpecNarrowedTypes_NilGraph(t *testing.T) {
-	result := CollectSpecNarrowedTypes(nil, nil, nil, nil, nil)
+	result := CollectSpecNarrowedTypes(nil, nil, nil, nil, nil, nil)
 	if result == nil {
 		t.Error("expected non-nil result for nil graph")
 	}
@@ -32,7 +33,7 @@ func TestCollectSpecNarrowedTypes_EmptyGraph(t *testing.T) {
 	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{}}
 	graph := cfg.Build(fn)
 	scopes := make(map[cfg.Point]*scope.State)
-	result := CollectSpecNarrowedTypes(graph, scopes, nil, nil, nil)
+	result := CollectSpecNarrowedTypes(graph, scopes, nil, nil, nil, nil)
 	if result == nil {
 		t.Error("expected non-nil result")
 	}
@@ -58,7 +59,7 @@ func TestBuildReceiverDependencies_EmptyGraph(t *testing.T) {
 }
 
 func TestNarrowReturnTypeBySpec_NilCallInfo(t *testing.T) {
-	result := NarrowReturnTypeBySpec(nil, nil, nil, 0, nil)
+	result := NarrowReturnTypeBySpec(nil, nil, nil, 0, nil, nil, nil)
 	if result != nil {
 		t.Errorf("expected nil for nil callInfo, got %v", result)
 	}
@@ -66,7 +67,7 @@ func TestNarrowReturnTypeBySpec_NilCallInfo(t *testing.T) {
 
 func TestNarrowReturnTypeBySpec_NilSynth(t *testing.T) {
 	callInfo := &cfg.CallInfo{}
-	result := NarrowReturnTypeBySpec(callInfo, nil, nil, 0, nil)
+	result := NarrowReturnTypeBySpec(callInfo, nil, nil, 0, nil, nil, nil)
 	if result != nil {
 		t.Errorf("expected nil for nil synth, got %v", result)
 	}
@@ -79,7 +80,7 @@ func TestNarrowReturnTypeBySpec_WithSynth(t *testing.T) {
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return typ.String
 	}
-	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, nil)
+	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, nil, nil, nil)
 	// String type has no spec, so result should be nil
 	if result != nil {
 		t.Errorf("expected nil for type without spec, got %v", result)
@@ -96,7 +97,7 @@ func TestNarrowReturnTypeBySpec_WithSymResolver(t *testing.T) {
 	symResolver := func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
 		return typ.Integer, true
 	}
-	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, symResolver)
+	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, symResolver, nil, nil)
 	// Integer type has no spec, so result should be nil
 	if result != nil {
 		t.Errorf("expected nil for type without spec, got %v", result)
@@ -116,9 +117,113 @@ func TestNarrowReturnTypeBySpec_PassesPointToSymResolver(t *testing.T) {
 		seenPoint = p
 		return typ.Integer, true
 	}
-	_ = NarrowReturnTypeBySpec(callInfo, nil, synth, wantPoint, symResolver)
+	_ = NarrowReturnTypeBySpec(callInfo, nil, synth, wantPoint, symResolver, nil, nil)
 	if seenPoint != wantPoint {
 		t.Fatalf("symResolver point = %d, want %d", seenPoint, wantPoint)
+	}
+}
+
+func TestNarrowReturnTypeBySpec_UsesCalleeNameCandidateSymbols(t *testing.T) {
+	spec := contract.NewSpec().
+		WithReturnCase(
+			constraint.FromConstraints(constraint.FieldEquals{
+				Target: constraint.Path{Root: "$1"},
+				Field:  "message",
+				Value:  typ.LiteralBool(true),
+			}),
+			typ.String,
+		).
+		WithDefaultReturn(typ.Any)
+	fnType := typ.Func().
+		Param("topic", typ.String).
+		OptParam("opts", typ.NewRecord().OptField("message", typ.Boolean).Build()).
+		Returns(typ.Any).
+		Spec(spec).
+		Build()
+
+	callInfo := &cfg.CallInfo{
+		CalleeName: "listen",
+		Args: []ast.Expr{
+			&ast.StringExpr{Value: "increment"},
+			&ast.TableExpr{
+				Fields: []*ast.Field{{
+					Key:   &ast.IdentExpr{Value: "message"},
+					Value: &ast.TrueExpr{},
+				}},
+			},
+		},
+	}
+
+	const listenSym cfg.SymbolID = 77
+	bindings := bind.NewBindingTable()
+	bindings.SetName(listenSym, "listen")
+
+	synth := func(ast.Expr, cfg.Point) typ.Type { return nil }
+	symResolver := func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+		if sym == listenSym {
+			return fnType, true
+		}
+		return nil, false
+	}
+
+	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, symResolver, bindings, nil)
+	if !typ.TypeEquals(result, typ.String) {
+		t.Fatalf("expected spec-narrowed string via callee-name candidate, got %v", result)
+	}
+}
+
+func TestNarrowReturnTypeBySpec_PrefersResolvableBindingCandidateOverRaw(t *testing.T) {
+	spec := contract.NewSpec().
+		WithReturnCase(
+			constraint.FromConstraints(constraint.FieldEquals{
+				Target: constraint.Path{Root: "$1"},
+				Field:  "message",
+				Value:  typ.LiteralBool(true),
+			}),
+			typ.String,
+		).
+		WithDefaultReturn(typ.Any)
+	fnType := typ.Func().
+		Param("topic", typ.String).
+		OptParam("opts", typ.NewRecord().OptField("message", typ.Boolean).Build()).
+		Returns(typ.Any).
+		Spec(spec).
+		Build()
+
+	callee := &ast.IdentExpr{Value: "listen"}
+	const (
+		rawSym    cfg.SymbolID = 900
+		listenSym cfg.SymbolID = 901
+	)
+	bindings := bind.NewBindingTable()
+	bindings.Bind(callee, listenSym)
+
+	callInfo := &cfg.CallInfo{
+		Callee:       callee,
+		CalleeSymbol: rawSym,
+		CalleeName:   "listen",
+		Args: []ast.Expr{
+			&ast.StringExpr{Value: "increment"},
+			&ast.TableExpr{
+				Fields: []*ast.Field{{
+					Key:   &ast.IdentExpr{Value: "message"},
+					Value: &ast.TrueExpr{},
+				}},
+			},
+		},
+	}
+
+	synth := func(ast.Expr, cfg.Point) typ.Type { return nil }
+	symResolver := func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+		if sym == listenSym {
+			return fnType, true
+		}
+		return nil, false
+	}
+
+	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, symResolver, bindings, nil)
+	if !typ.TypeEquals(result, typ.String) {
+		t.Fatalf("expected spec-narrowed string via binding candidate, got %v", result)
 	}
 }
 
@@ -175,7 +280,7 @@ func TestCollectSpecNarrowedTypes_MultiReturnTrailingTarget(t *testing.T) {
 		msgType: msgType,
 	}
 
-	result := CollectSpecNarrowedTypes(graph, map[cfg.Point]*scope.State{}, synth, nil, synthAPI)
+	result := CollectSpecNarrowedTypes(graph, map[cfg.Point]*scope.State{}, synth, nil, synthAPI, nil)
 	if !typ.TypeEquals(result[symObj], objType) {
 		t.Fatalf("expected obj type to be inferred, got %v", result[symObj])
 	}

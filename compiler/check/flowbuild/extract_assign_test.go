@@ -174,7 +174,7 @@ func TestExtractModuleAliases_EmptyGraph(t *testing.T) {
 }
 
 func TestNarrowReturnTypeBySpec_NilInputs(t *testing.T) {
-	result := assign.NarrowReturnTypeBySpec(nil, nil, nil, 0, nil)
+	result := assign.NarrowReturnTypeBySpec(nil, nil, nil, 0, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil inputs")
 	}
@@ -187,7 +187,7 @@ func TestSpecNarrowedTypes_EmptyGraph(t *testing.T) {
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return nil
 	}
-	result := assign.CollectSpecNarrowedTypes(graph, scopes, synth, nil, nil)
+	result := assign.CollectSpecNarrowedTypes(graph, scopes, synth, nil, nil, nil)
 	if result == nil {
 		t.Error("expected non-nil SpecTypes map")
 	}

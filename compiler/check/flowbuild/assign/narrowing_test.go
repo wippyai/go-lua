@@ -65,7 +65,7 @@ func TestNarrowReturnTypeBySpec(t *testing.T) {
 	}
 
 	// Test narrowing
-	result := assign.NarrowReturnTypeBySpec(callInfo, sc, synth, 0, nil)
+	result := assign.NarrowReturnTypeBySpec(callInfo, sc, synth, 0, nil, nil, nil)
 
 	if result == nil {
 		t.Fatalf("narrowReturnTypeBySpec returned nil, expected narrowed type")
@@ -124,7 +124,7 @@ func TestNarrowReturnTypeBySpec_NoMatch(t *testing.T) {
 		return nil
 	}
 
-	result := assign.NarrowReturnTypeBySpec(callInfo, sc, synth, 0, nil)
+	result := assign.NarrowReturnTypeBySpec(callInfo, sc, synth, 0, nil, nil, nil)
 
 	if result != nil {
 		t.Errorf("expected nil (no match), got %v", result)

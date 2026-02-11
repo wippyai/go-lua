@@ -4,8 +4,10 @@ import (
 	"slices"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/contract"
@@ -28,8 +30,22 @@ import (
 //   - Finite number of symbols bounds iterations
 //
 // Determinism: Guaranteed by sorted point processing and stable queue order.
-func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, synth func(ast.Expr, cfg.Point) typ.Type, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool), synthAPI api.SynthAPI) api.SpecTypes {
+func CollectSpecNarrowedTypes(
+	graph *cfg.Graph,
+	scopes map[cfg.Point]*scope.State,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	synthAPI api.SynthAPI,
+	moduleBindings *bind.BindingTable,
+) api.SpecTypes {
 	bySymbol := make(api.SpecTypes)
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
+	if bindings == nil {
+		bindings = moduleBindings
+	}
 
 	// Build dependency map: symbol -> points where it's used as method receiver
 	deps := BuildReceiverDependencies(graph)
@@ -57,7 +73,7 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 			sym := target.Symbol
 
 			// Try spec narrowing first
-			if narrowed := NarrowReturnTypeBySpec(call, sc, synth, p, symResolver); narrowed != nil {
+			if narrowed := NarrowReturnTypeBySpec(call, sc, synth, p, symResolver, bindings, moduleBindings); narrowed != nil {
 				bySymbol[sym] = narrowed
 				worklist = append(worklist, deps[sym]...)
 				return
@@ -172,7 +188,15 @@ func BuildReceiverDependencies(graph *cfg.Graph) map[cfg.SymbolID][]cfg.Point {
 //
 // This only handles inline table constructor literals like {message = true}.
 // It does NOT handle variable references (e.g., local opts = {...}; f(opts)).
-func NarrowReturnTypeBySpec(callInfo *cfg.CallInfo, sc *scope.State, synth func(ast.Expr, cfg.Point) typ.Type, p cfg.Point, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool)) typ.Type {
+func NarrowReturnTypeBySpec(
+	callInfo *cfg.CallInfo,
+	sc *scope.State,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	p cfg.Point,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
+) typ.Type {
 	if callInfo == nil || synth == nil {
 		return nil
 	}
@@ -182,9 +206,17 @@ func NarrowReturnTypeBySpec(callInfo *cfg.CallInfo, sc *scope.State, synth func(
 	if callInfo.Callee != nil {
 		fnType = synth(callInfo.Callee, p)
 	}
-	// Use SymbolTypeResolver for identity-based lookup when CalleeSymbol is available
-	if fnType == nil && callInfo.CalleeSymbol != 0 && symResolver != nil {
-		fnType, _ = symResolver(p, callInfo.CalleeSymbol)
+	// Use canonical callsite symbol candidates for identity-based lookup.
+	if fnType == nil && symResolver != nil {
+		for _, calleeSym := range callsite.CalleeSymbolCandidates(callInfo, bindings, moduleBindings) {
+			if calleeSym == 0 {
+				continue
+			}
+			if t, ok := symResolver(p, calleeSym); ok && t != nil {
+				fnType = t
+				break
+			}
+		}
 	}
 	if fnType == nil {
 		return nil
