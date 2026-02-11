@@ -24,28 +24,31 @@ func (s *Synthesizer) functionLiteralForIdent(ident *ast.IdentExpr) *ast.Functio
 	if graph != nil && graph.Bindings() != nil {
 		bindings = graph.Bindings()
 	}
+	moduleBindings := s.deps.ModuleBindings
 
-	sym := callsite.SymbolFromExpr(ident, bindings)
-	if sym != 0 {
+	hasFunctionLiteral := func(sym compcfg.SymbolID) bool {
+		if sym == 0 {
+			return false
+		}
 		if fn := callsite.FunctionLiteralForSymbol(graph, bindings, sym); fn != nil {
-			return fn
+			return true
 		}
-		if s.deps.ModuleBindings != nil {
-			if fn := callsite.FunctionLiteralForSymbol(graph, s.deps.ModuleBindings, sym); fn != nil {
-				return fn
-			}
+		if moduleBindings != nil && moduleBindings != bindings {
+			return callsite.FunctionLiteralForSymbol(graph, moduleBindings, sym) != nil
 		}
+		return false
 	}
 
-	if s.deps.ModuleBindings != nil {
-		moduleSym := callsite.SymbolFromExpr(ident, s.deps.ModuleBindings)
-		if moduleSym != 0 {
-			if fn := callsite.FunctionLiteralForSymbol(graph, s.deps.ModuleBindings, moduleSym); fn != nil {
-				return fn
-			}
-			if fn := callsite.FunctionLiteralForSymbol(graph, bindings, moduleSym); fn != nil {
-				return fn
-			}
+	sym := callsite.CanonicalSymbolFromExpr(ident, 0, bindings, moduleBindings, hasFunctionLiteral)
+	if sym == 0 {
+		return nil
+	}
+	if fn := callsite.FunctionLiteralForSymbol(graph, bindings, sym); fn != nil {
+		return fn
+	}
+	if moduleBindings != nil && moduleBindings != bindings {
+		if fn := callsite.FunctionLiteralForSymbol(graph, moduleBindings, sym); fn != nil {
+			return fn
 		}
 	}
 
