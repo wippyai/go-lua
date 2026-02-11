@@ -221,32 +221,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		resolveScope = resolveScope.WithTypeParams(typeParams)
 	}
 
-	overlay := make(map[cfg.SymbolID]typ.Type)
-	for _, slot := range fnGraph.ParamSlots() {
-		if slot.Symbol == 0 {
-			continue
-		}
-
-		if slot.SourceIndex < 0 {
-			if selfType := parentScope.SelfType(); selfType != nil {
-				overlay[slot.Symbol] = selfType
-			} else {
-				overlay[slot.Symbol] = typ.Unknown
-			}
-			continue
-		}
-
-		i := slot.SourceIndex
-		paramType := typ.Unknown
-		if slot.TypeAnnotation != nil {
-			paramType = s.ResolveType(slot.TypeAnnotation, resolveScope)
-		} else if expected != nil && i < len(expected.Params) {
-			paramType = expected.Params[i].Type
-		} else if slot.Name == "self" && resolveScope != nil && resolveScope.SelfType() != nil {
-			paramType = resolveScope.SelfType()
-		}
-		overlay[slot.Symbol] = paramType
-	}
+	overlay := s.buildParamOverlay(fnGraph, resolveScope, expected)
 
 	// Collect local function types from assignments using return summaries.
 	// Uses annotations for params and looks up return types from summaries.
@@ -588,21 +563,7 @@ func (s *Synthesizer) buildFunctionTypeWithSummary(
 	return join.WithReturns(sig, returnTypes)
 }
 
-// inferCallbackOverlaySpec detects the "setup -> param call -> cleanup" pattern
-// and builds a contract.Spec with EnvOverlay for each callback parameter.
-func (s *Synthesizer) inferCallbackOverlaySpec(
-	fn *ast.FunctionExpr, sc *scope.State, expected *typ.Function, fnGraph *cfg.Graph,
-) *contract.Spec {
-	if fnGraph == nil || fn.ParList == nil || len(fn.ParList.Names) == 0 {
-		return nil
-	}
-
-	paramSlots := fnGraph.ParamSlots()
-	if len(paramSlots) == 0 {
-		return nil
-	}
-
-	// Build parameter type overlay (same logic as inferReturnTypesFromBody).
+func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, expected *typ.Function) map[cfg.SymbolID]typ.Type {
 	overlay := make(map[cfg.SymbolID]typ.Type)
 	for _, slot := range fnGraph.ParamSlots() {
 		if slot.Symbol == 0 {
@@ -629,6 +590,24 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		}
 		overlay[slot.Symbol] = paramType
 	}
+	return overlay
+}
+
+// inferCallbackOverlaySpec detects the "setup -> param call -> cleanup" pattern
+// and builds a contract.Spec with EnvOverlay for each callback parameter.
+func (s *Synthesizer) inferCallbackOverlaySpec(
+	fn *ast.FunctionExpr, sc *scope.State, expected *typ.Function, fnGraph *cfg.Graph,
+) *contract.Spec {
+	if fnGraph == nil || fn.ParList == nil || len(fn.ParList.Names) == 0 {
+		return nil
+	}
+
+	paramSlots := fnGraph.ParamSlots()
+	if len(paramSlots) == 0 {
+		return nil
+	}
+
+	overlay := s.buildParamOverlay(fnGraph, sc, expected)
 
 	// Build pre-flow synthesizer for expression type synthesis.
 	var globalTypes map[string]typ.Type
