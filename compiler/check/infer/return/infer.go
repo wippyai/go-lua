@@ -502,7 +502,7 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 // collectAllReturnSummaries gathers return summaries from all scope groups.
 func (i *Inferencer) collectAllReturnSummaries(ctx *returnInferenceContext) map[cfg.SymbolID][]typ.Type {
 	allSummaries := make(map[cfg.SymbolID][]typ.Type)
-	for _, sym := range sortedSummarySymbols(ctx.summaries) {
+	for _, sym := range cfg.SortedSymbolIDs(ctx.summaries) {
 		t := ctx.summaries[sym]
 		if sym == 0 || len(t) == 0 {
 			continue
@@ -514,10 +514,6 @@ func (i *Inferencer) collectAllReturnSummaries(ctx *returnInferenceContext) map[
 		}
 	}
 	return allSummaries
-}
-
-func sortedSummarySymbols(summaries map[cfg.SymbolID][]typ.Type) []cfg.SymbolID {
-	return cfg.SortedSymbolIDs(summaries)
 }
 
 // enrichOverlayWithLocalFunctions adds local function types from the function body.
