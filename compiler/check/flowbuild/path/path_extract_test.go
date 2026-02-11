@@ -94,8 +94,8 @@ func TestPathFromExprWithConst_StringConst(t *testing.T) {
 	if len(p.Segments) != 1 {
 		t.Fatalf("expected 1 segment, got %d", len(p.Segments))
 	}
-	if p.Segments[0].Kind != constraint.SegmentIndexString {
-		t.Errorf("expected SegmentIndexString, got %v", p.Segments[0].Kind)
+	if p.Segments[0].Kind != constraint.SegmentField {
+		t.Errorf("expected SegmentField, got %v", p.Segments[0].Kind)
 	}
 	if p.Segments[0].Name != "myfield" {
 		t.Errorf("expected name 'myfield', got '%s'", p.Segments[0].Name)

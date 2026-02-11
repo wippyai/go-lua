@@ -92,7 +92,10 @@ func FromExprWithBindings(expr ast.Expr, constResolver func(string) *flow.ConstV
 			if val := constResolver(key.Value); val != nil {
 				switch val.Kind {
 				case flow.ConstString:
-					return base.Append(constraint.Segment{Kind: constraint.SegmentIndexString, Name: val.Str})
+					if seg, ok := StaticKeySegment(&ast.StringExpr{Value: val.Str}); ok {
+						return base.Append(seg)
+					}
+					return constraint.Path{}
 				case flow.ConstInt:
 					return base.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(val.Int)})
 				case flow.ConstFloat:

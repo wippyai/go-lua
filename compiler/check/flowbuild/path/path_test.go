@@ -164,11 +164,37 @@ func TestPathFromExprWithConst_StringConstKey(t *testing.T) {
 	if len(p.Segments) != 1 {
 		t.Fatalf("expected 1 segment, got %d", len(p.Segments))
 	}
-	if p.Segments[0].Kind != constraint.SegmentIndexString {
-		t.Error("expected string index segment")
+	if p.Segments[0].Kind != constraint.SegmentField {
+		t.Error("expected field segment for identifier-like const string key")
 	}
 	if p.Segments[0].Name != "myKey" {
 		t.Errorf("expected name 'myKey', got %q", p.Segments[0].Name)
+	}
+}
+
+func TestPathFromExprWithConst_StringConstNonIdentifierKey(t *testing.T) {
+	constResolver := func(name string) *flow.ConstValue {
+		if name == "KEY" {
+			return &flow.ConstValue{Kind: flow.ConstString, Str: "x-y"}
+		}
+		return nil
+	}
+	expr := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "obj"},
+		Key:    &ast.IdentExpr{Value: "KEY"},
+	}
+	p := path.FromExprWithBindings(expr, constResolver, nil)
+	if p.IsEmpty() {
+		t.Fatal("expected non-empty path")
+	}
+	if len(p.Segments) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(p.Segments))
+	}
+	if p.Segments[0].Kind != constraint.SegmentIndexString {
+		t.Error("expected string index segment for non-identifier const string key")
+	}
+	if p.Segments[0].Name != "x-y" {
+		t.Errorf("expected name 'x-y', got %q", p.Segments[0].Name)
 	}
 }
 
