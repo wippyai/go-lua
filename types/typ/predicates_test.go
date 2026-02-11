@@ -45,3 +45,42 @@ func TestIsAbsentOrUnknown(t *testing.T) {
 		})
 	}
 }
+
+func TestHasKnownType(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []Type
+		want bool
+	}{
+		{name: "nil slice", in: nil, want: false},
+		{name: "unknown only", in: []Type{Unknown, nil}, want: false},
+		{name: "includes nil type", in: []Type{Unknown, Nil}, want: true},
+		{name: "includes concrete", in: []Type{Unknown, String}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HasKnownType(tt.in); got != tt.want {
+				t.Fatalf("HasKnownType(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsUnknownOnlyOrEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []Type
+		want bool
+	}{
+		{name: "nil slice", in: nil, want: true},
+		{name: "unknown only", in: []Type{Unknown, nil}, want: true},
+		{name: "has concrete", in: []Type{Unknown, Number}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsUnknownOnlyOrEmpty(tt.in); got != tt.want {
+				t.Fatalf("IsUnknownOnlyOrEmpty(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}

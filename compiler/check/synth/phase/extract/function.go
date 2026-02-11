@@ -138,20 +138,13 @@ func (s *Synthesizer) SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *sc
 		returns := s.ResolveReturnTypes(fn.ReturnTypes, resolveScope)
 		builder = builder.Returns(returns...)
 	} else {
-		if returns := s.inferReturnTypesFromBody(fn, resolveScope, expected, fnGraph); len(returns) > 0 {
+		if bodyReturns := s.inferReturnTypesFromBody(fn, resolveScope, expected, fnGraph); len(bodyReturns) > 0 {
 			if expected != nil && len(expected.Returns) > 0 {
-				allUnknown := true
-				for _, r := range returns {
-					if !typ.IsAbsentOrUnknown(r) {
-						allUnknown = false
-						break
-					}
-				}
-				if allUnknown {
-					returns = expected.Returns
+				if typ.IsUnknownOnlyOrEmpty(bodyReturns) {
+					bodyReturns = expected.Returns
 				}
 			}
-			builder = builder.Returns(returns...)
+			builder = builder.Returns(bodyReturns...)
 		} else if expected != nil && len(expected.Returns) > 0 {
 			builder = builder.Returns(expected.Returns...)
 		}
@@ -191,14 +184,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 	// Narrowing uses post-flow summaries; declared uses pre-flow summaries.
 	if len(returnSummaries) > 0 && fnSym != 0 {
 		if rt := returnSummaries[fnSym]; len(rt) > 0 {
-			hasKnown := false
-			for _, t := range rt {
-				if !typ.IsAbsentOrUnknown(t) {
-					hasKnown = true
-					break
-				}
-			}
-			if hasKnown {
+			if typ.HasKnownType(rt) {
 				return rt
 			}
 		}

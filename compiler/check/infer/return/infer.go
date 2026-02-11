@@ -526,17 +526,6 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 	overlay map[cfg.SymbolID]typ.Type,
 	allSummaries map[cfg.SymbolID][]typ.Type,
 ) {
-	isUnknownSummary := func(s []typ.Type) bool {
-		if len(s) == 0 {
-			return true
-		}
-		for _, t := range s {
-			if t != nil && !typ.TypeEquals(t, typ.Unknown) {
-				return false
-			}
-		}
-		return true
-	}
 	ctx.info.Graph.EachAssign(func(p cfg.Point, assignInfo *cfg.AssignInfo) {
 		if assignInfo == nil || !assignInfo.IsLocal || len(assignInfo.Targets) == 0 || len(assignInfo.Sources) == 0 {
 			return
@@ -561,7 +550,7 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 				}
 			}
 			summary := allSummaries[target.Symbol]
-			if isUnknownSummary(summary) && i.store != nil {
+			if typ.IsUnknownOnlyOrEmpty(summary) && i.store != nil {
 				if ctx.info != nil && ctx.info.Graph != nil && ctx.resolveScope != nil {
 					if snap := i.store.GetReturnSummariesSnapshot(ctx.info.Graph, ctx.resolveScope); len(snap) > 0 {
 						if snapSummary := snap[target.Symbol]; len(snapSummary) > 0 {
@@ -569,7 +558,7 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 						}
 					}
 				}
-				if len(summary) == 0 {
+				if typ.IsUnknownOnlyOrEmpty(summary) {
 					if ref := i.store.FunctionRefBySym(target.Symbol); ref != nil && ref.ParentGraphID != 0 {
 						parentGraph := i.store.Graphs()[ref.ParentGraphID]
 						if parentGraph != nil {

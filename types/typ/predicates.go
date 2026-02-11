@@ -13,3 +13,19 @@ func IsUnknown(t Type) bool {
 func IsAbsentOrUnknown(t Type) bool {
 	return t == nil || IsUnknown(t)
 }
+
+// HasKnownType reports whether the slice contains at least one concrete type.
+// nil entries and unknown entries are treated as unresolved.
+func HasKnownType(types []Type) bool {
+	for _, t := range types {
+		if !IsAbsentOrUnknown(t) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsUnknownOnlyOrEmpty reports whether the slice has no concrete types.
+func IsUnknownOnlyOrEmpty(types []Type) bool {
+	return !HasKnownType(types)
+}
