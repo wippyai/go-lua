@@ -32,13 +32,8 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
 	}
-
-	if t.Kind() == kind.Any {
-		return typ.Any, true
-	}
-
-	if t.Kind() == kind.Unknown {
-		return typ.Unknown, true
+	if top, ok := specialAccessType(t); ok {
+		return top, true
 	}
 
 	res := typ.Visit(t, typ.Visitor[indexResult]{
@@ -207,26 +202,10 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			return indexResult{t: et, ok: ok}
 		},
 		Default: func(t typ.Type) indexResult {
-			et, ok := indexOnSpecial(t, keyType)
-			return indexResult{t: et, ok: ok}
+			return indexResult{}
 		},
 	})
 	return res.t, res.ok
-}
-
-// indexOnSpecial handles index access on special types (any, unknown, never).
-// These types have defined behavior regardless of key type.
-func indexOnSpecial(t, _ typ.Type) (typ.Type, bool) {
-	switch t.Kind() {
-	case kind.Any:
-		return typ.Any, true
-	case kind.Unknown:
-		return typ.Unknown, true
-	case kind.Never:
-		return typ.Never, true
-	default:
-		return nil, false
-	}
 }
 
 // containsNilOrOptional returns true if the type already contains nil or Optional.

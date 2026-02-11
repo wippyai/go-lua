@@ -30,6 +30,7 @@ func TestField(t *testing.T) {
 		{"interface method", iface, "read", true, func(t typ.Type) bool { return t.Kind() == typ.String.Kind() || true }},
 		{"interface missing", iface, "write", false, nil},
 		{"any type", typ.Any, "anything", true, func(t typ.Type) bool { return t == typ.Any }},
+		{"unknown type", typ.Unknown, "anything", true, func(t typ.Type) bool { return t == typ.Unknown }},
 		{"never type", typ.Never, "anything", true, func(t typ.Type) bool { return t == typ.Never }},
 		{"primitive string", typ.String, "x", false, nil},
 	}

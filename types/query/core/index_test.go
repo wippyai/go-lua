@@ -58,6 +58,7 @@ func TestIndex(t *testing.T) {
 		}},
 		{"empty record with string", typ.NewRecord().Build(), typ.String, true, func(t typ.Type) bool { return t == typ.Nil }},
 		{"any type", typ.Any, typ.String, true, func(t typ.Type) bool { return t == typ.Any }},
+		{"unknown type", typ.Unknown, typ.String, true, func(t typ.Type) bool { return t == typ.Unknown }},
 		{"never type", typ.Never, typ.String, true, func(t typ.Type) bool { return t == typ.Never }},
 	}
 

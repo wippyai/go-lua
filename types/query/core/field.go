@@ -36,6 +36,9 @@ func fieldDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
 	}
+	if top, ok := specialAccessType(t); ok {
+		return top, true
+	}
 
 	res := typ.Visit(t, typ.Visitor[fieldResult]{
 		TypeParam: func(tp *typ.TypeParam) fieldResult {
@@ -94,18 +97,6 @@ func fieldDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 			return fieldResult{t: ft, ok: ok}
 		},
 		Default: func(t typ.Type) fieldResult {
-			if t.Kind() == kind.Any {
-				return fieldResult{t: typ.Any, ok: true}
-			}
-
-			if t.Kind() == kind.Unknown {
-				return fieldResult{t: typ.Unknown, ok: true}
-			}
-
-			if t.Kind() == kind.Never {
-				return fieldResult{t: typ.Never, ok: true}
-			}
-
 			ft, ok := fieldOnSpecial(t, name)
 			return fieldResult{t: ft, ok: ok}
 		},
