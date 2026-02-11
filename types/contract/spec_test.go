@@ -236,13 +236,6 @@ func TestSpecWithCallback(t *testing.T) {
 	})
 }
 
-func TestErrorValueSpec(t *testing.T) {
-	spec := ErrorValueSpec()
-	if len(spec.Ensures.AllConstraints()) != 0 {
-		t.Errorf("Expected 0 ensures, got %d", len(spec.Ensures.AllConstraints()))
-	}
-}
-
 func TestPredicateSpec(t *testing.T) {
 	tests := []struct {
 		name       string

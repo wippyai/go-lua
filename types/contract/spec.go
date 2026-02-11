@@ -282,11 +282,6 @@ func (s *Spec) GetReturnDefault() typ.Type {
 	return s.Return.Default
 }
 
-// ErrorValueSpec creates a contract for the Lua (value, error) return pattern.
-func ErrorValueSpec() *Spec {
-	return NewSpec()
-}
-
 // Equals returns true if two Specs are structurally equal.
 // Implements internal.Equaler interface for use in typ.Function.
 func (s *Spec) Equals(other any) bool {
