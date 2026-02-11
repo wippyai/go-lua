@@ -29,12 +29,12 @@ func TestFieldPathWithBaseSymbol_Nested(t *testing.T) {
 	if sym != baseSym {
 		t.Fatalf("base symbol = %d, want %d", sym, baseSym)
 	}
-	if path != "a.b" {
-		t.Fatalf("path = %q, want a.b", path)
+	if path != ".a.b" {
+		t.Fatalf("path = %q, want .a.b", path)
 	}
 }
 
-func TestFieldPathWithBaseSymbol_RejectsDynamicKey(t *testing.T) {
+func TestFieldPathWithBaseSymbol_StaticIntIndex(t *testing.T) {
 	bindings := bind.NewBindingTable()
 	base := &ast.IdentExpr{Value: "obj"}
 	baseSym := cfg.SymbolID(88)
@@ -45,12 +45,19 @@ func TestFieldPathWithBaseSymbol_RejectsDynamicKey(t *testing.T) {
 		Key:    &ast.NumberExpr{Value: "1"},
 	}
 
-	if _, _, ok := FieldPathWithBaseSymbol(bindings, expr); ok {
-		t.Fatal("expected dynamic numeric key to be rejected")
+	sym, path, ok := FieldPathWithBaseSymbol(bindings, expr)
+	if !ok {
+		t.Fatal("expected static numeric key to be accepted")
+	}
+	if sym != baseSym {
+		t.Fatalf("base symbol = %d, want %d", sym, baseSym)
+	}
+	if path != "[1]" {
+		t.Fatalf("path = %q, want [1]", path)
 	}
 }
 
-func TestFieldPathWithBaseSymbol_RejectsAmbiguousStringSegment(t *testing.T) {
+func TestFieldPathWithBaseSymbol_NonIdentifierStringSegment(t *testing.T) {
 	bindings := bind.NewBindingTable()
 	base := &ast.IdentExpr{Value: "obj"}
 	baseSym := cfg.SymbolID(99)
@@ -60,7 +67,14 @@ func TestFieldPathWithBaseSymbol_RejectsAmbiguousStringSegment(t *testing.T) {
 		Object: base,
 		Key:    &ast.StringExpr{Value: "a.b"},
 	}
-	if _, _, ok := FieldPathWithBaseSymbol(bindings, expr); ok {
-		t.Fatal("expected non-identifier string segment to be rejected")
+	sym, path, ok := FieldPathWithBaseSymbol(bindings, expr)
+	if !ok {
+		t.Fatal("expected non-identifier string segment to be accepted as index-string")
+	}
+	if sym != baseSym {
+		t.Fatalf("base symbol = %d, want %d", sym, baseSym)
+	}
+	if path != "[\"a.b\"]" {
+		t.Fatalf("path = %q, want [\"a.b\"]", path)
 	}
 }

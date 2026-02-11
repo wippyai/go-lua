@@ -32,7 +32,8 @@ func SegmentsSuffix(segs []constraint.Segment) string {
 // Supported syntax:
 //   - ".field" -> SegmentField{Name: "field"}
 //   - "[0]" -> SegmentIndexInt{Index: 0}
-//   - "[key]" -> SegmentIndexString{Name: "key"}
+//   - "[\"key\"]" -> SegmentIndexString{Name: "key"}
+//   - "[key]" -> SegmentIndexString{Name: "key"} (legacy form)
 //
 // The parser handles multiple chained segments: ".foo[0].bar" produces
 // [SegmentField{foo}, SegmentIndexInt{0}, SegmentField{bar}].
@@ -55,23 +56,64 @@ func ParseSuffix(suffix string) []constraint.Segment {
 			}
 		case '[':
 			i++
+			if i >= len(suffix) {
+				return nil
+			}
+
+			if suffix[i] == '"' {
+				i++
+				var out []byte
+				for i < len(suffix) {
+					ch := suffix[i]
+					if ch == '\\' {
+						if i+1 >= len(suffix) {
+							return nil
+						}
+						out = append(out, suffix[i+1])
+						i += 2
+						continue
+					}
+					if ch == '"' {
+						break
+					}
+					out = append(out, ch)
+					i++
+				}
+
+				if i >= len(suffix) || suffix[i] != '"' {
+					return nil
+				}
+				i++
+				if i >= len(suffix) || suffix[i] != ']' {
+					return nil
+				}
+				i++
+
+				segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexString, Name: string(out)})
+				continue
+			}
+
 			start := i
 			for i < len(suffix) && suffix[i] != ']' {
 				i++
 			}
-			if start < i {
-				name := suffix[start:i]
-				if idx, ok := ParseIntLiteral(name); ok {
-					segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})
-				} else {
-					segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexString, Name: name})
-				}
+			if start >= i {
+				return nil
 			}
-			if i < len(suffix) && suffix[i] == ']' {
-				i++
+
+			name := suffix[start:i]
+			if i >= len(suffix) || suffix[i] != ']' {
+				return nil
+			}
+			i++
+
+			if idx, ok := ParseIntLiteral(name); ok {
+				segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})
+			} else {
+				segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexString, Name: name})
 			}
 		default:
-			i++
+			return nil
 		}
 	}
 	return segs

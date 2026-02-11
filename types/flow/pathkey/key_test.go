@@ -122,6 +122,44 @@ func TestParseSuffix_IntIndex(t *testing.T) {
 	}
 }
 
+func TestParseSuffix_StringIndexQuoted(t *testing.T) {
+	segs := ParseSuffix("[\"x-y\"]")
+	if len(segs) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(segs))
+	}
+	if segs[0].Kind != constraint.SegmentIndexString || segs[0].Name != "x-y" {
+		t.Fatalf("expected string index x-y, got %+v", segs[0])
+	}
+}
+
+func TestParseSuffix_StringIndexQuotedEscaped(t *testing.T) {
+	segs := ParseSuffix("[\"a\\\"b\"]")
+	if len(segs) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(segs))
+	}
+	if segs[0].Kind != constraint.SegmentIndexString || segs[0].Name != "a\"b" {
+		t.Fatalf("expected string index a\\\"b, got %+v", segs[0])
+	}
+}
+
+func TestParseSuffix_StringIndexVsInt_Disambiguated(t *testing.T) {
+	stringSegs := ParseSuffix("[\"1\"]")
+	if len(stringSegs) != 1 {
+		t.Fatalf("expected 1 segment for string index, got %d", len(stringSegs))
+	}
+	if stringSegs[0].Kind != constraint.SegmentIndexString || stringSegs[0].Name != "1" {
+		t.Fatalf("expected string index \"1\", got %+v", stringSegs[0])
+	}
+
+	intSegs := ParseSuffix("[1]")
+	if len(intSegs) != 1 {
+		t.Fatalf("expected 1 segment for int index, got %d", len(intSegs))
+	}
+	if intSegs[0].Kind != constraint.SegmentIndexInt || intSegs[0].Index != 1 {
+		t.Fatalf("expected int index 1, got %+v", intSegs[0])
+	}
+}
+
 func TestParseSuffix_Mixed(t *testing.T) {
 	segs := ParseSuffix(".a[1].b")
 	if len(segs) != 3 {

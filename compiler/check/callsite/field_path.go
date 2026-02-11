@@ -4,11 +4,15 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/types/constraint"
 )
 
-// FieldPathWithBaseSymbol resolves an expression to (base symbol, dotted field path)
-// for static field access chains like obj.f or obj.f.g.
+// FieldPathWithBaseSymbol resolves an expression to (base symbol, canonical binder key)
+// for static path access chains (for example obj.f, obj["k"], obj[1]).
+//
+// The returned path uses the canonical segment encoding:
+//   - .field
+//   - ["key"]
+//   - [1]
 func FieldPathWithBaseSymbol(bindings *bind.BindingTable, expr ast.Expr) (cfg.SymbolID, string, bool) {
 	baseSym, segs, ok := StaticPathWithBaseSymbol(bindings, expr)
 	if !ok || baseSym == 0 {
@@ -17,21 +21,11 @@ func FieldPathWithBaseSymbol(bindings *bind.BindingTable, expr ast.Expr) (cfg.Sy
 	if len(segs) == 0 {
 		return baseSym, "", true
 	}
-	path := ""
-	for _, seg := range segs {
-		switch seg.Kind {
-		case constraint.SegmentField:
-			if seg.Name == "" {
-				return 0, "", false
-			}
-			if path == "" {
-				path = seg.Name
-			} else {
-				path += "." + seg.Name
-			}
-		default:
-			return 0, "", false
-		}
+
+	path, ok := bind.FieldPathKeyFromSegments(segs)
+	if !ok {
+		return 0, "", false
 	}
+
 	return baseSym, path, true
 }
