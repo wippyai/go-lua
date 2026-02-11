@@ -584,24 +584,24 @@ func unaryOpAny(op string) typ.Type {
 
 // binaryOpTopTypes resolves any/unknown combinations before regular operator flow.
 func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool) {
-	leftKind := left.Kind()
-	rightKind := right.Kind()
+	leftUnknown := typ.IsUnknown(left)
+	rightUnknown := typ.IsUnknown(right)
 
 	// For arithmetic operators, unknown + numeric preserves numeric result shape.
-	if leftKind == kind.Unknown || rightKind == kind.Unknown {
+	if leftUnknown || rightUnknown {
 		switch op {
 		case "+", "-", "*", "/", "%", "^", "//":
-			if leftKind == kind.Unknown && isNumeric(right) {
+			if leftUnknown && isNumeric(right) {
 				return numericResultType(op, right), true
 			}
-			if rightKind == kind.Unknown && isNumeric(left) {
+			if rightUnknown && isNumeric(left) {
 				return numericResultType(op, left), true
 			}
 		}
 		return typ.Unknown, true
 	}
 
-	if leftKind == kind.Any || rightKind == kind.Any {
+	if typ.IsAny(left) || typ.IsAny(right) {
 		return binaryOpAny(op), true
 	}
 
@@ -610,17 +610,16 @@ func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool)
 
 // unaryOpTopType resolves any/unknown for unary operators.
 func unaryOpTopType(op string, operand typ.Type) (typ.Type, bool) {
-	switch operand.Kind() {
-	case kind.Unknown:
+	if typ.IsUnknown(operand) {
 		if op == "#" {
 			return typ.Integer, true
 		}
 		return typ.Unknown, true
-	case kind.Any:
-		return unaryOpAny(op), true
-	default:
-		return nil, false
 	}
+	if typ.IsAny(operand) {
+		return unaryOpAny(op), true
+	}
+	return nil, false
 }
 
 // binaryOpUnion distributes a binary operator over left union members.
