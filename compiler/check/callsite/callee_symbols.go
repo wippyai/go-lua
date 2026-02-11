@@ -104,21 +104,17 @@ func PreferredCalleeSymbolWithAliases(
 	return selected
 }
 
-// CalleeSymbolCandidatesWithAliases expands callee candidates with direct aliases.
+// CalleeSymbolCandidatesWithAliases expands callee candidates through direct-alias
+// chains and includes method symbols resolvable through alias receiver bases.
 //
-// For each canonical candidate, this appends graph.DirectAliasSymbol(candidate)
-// when available, preserving candidate order and deduplicating symbols.
+// Candidate order is preserved and symbols are deduplicated.
 func CalleeSymbolCandidatesWithAliases(
 	info *cfg.CallInfo,
 	graph *cfg.Graph,
 	primary, fallback *bind.BindingTable,
 ) []cfg.SymbolID {
 	base := CalleeSymbolCandidates(info, primary, fallback)
-	if len(base) == 0 || graph == nil {
-		return base
-	}
-
-	candidates := make([]cfg.SymbolID, 0, len(base)*2)
+	candidates := make([]cfg.SymbolID, 0, len(base)*2+2)
 	seen := make(map[cfg.SymbolID]struct{}, len(base)*2)
 	push := func(sym cfg.SymbolID) {
 		if sym == 0 {
@@ -132,11 +128,31 @@ func CalleeSymbolCandidatesWithAliases(
 	}
 
 	for _, sym := range base {
-		push(sym)
-		if aliasSym := graph.DirectAliasSymbol(sym); aliasSym != 0 {
-			push(aliasSym)
+		eachSymbolWithAliases(graph, sym, func(candidate cfg.SymbolID) bool {
+			push(candidate)
+			return false
+		})
+	}
+
+	// Method calls may resolve method symbol only through an alias receiver base
+	// (for example, Alias:run() where Alias = T and T.run is defined).
+	if methodSym, ok := MethodCalleeSymbolWithAliases(primary, graph, info); ok {
+		eachSymbolWithAliases(graph, methodSym, func(candidate cfg.SymbolID) bool {
+			push(candidate)
+			return false
+		})
+	}
+	if fallback != nil && fallback != primary {
+		if methodSym, ok := MethodCalleeSymbolWithAliases(fallback, graph, info); ok {
+			eachSymbolWithAliases(graph, methodSym, func(candidate cfg.SymbolID) bool {
+				push(candidate)
+				return false
+			})
 		}
 	}
 
+	if len(candidates) == 0 {
+		return base
+	}
 	return candidates
 }

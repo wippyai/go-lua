@@ -108,3 +108,55 @@ func TestCanonicalSymbolFromExprWithAliases_PrefersDirectAliasCandidate(t *testi
 		t.Fatalf("CanonicalSymbolFromExprWithAliases(...) = %d, want %d", got, alias)
 	}
 }
+
+func TestCanonicalSymbolFromExprWithAliases_PrefersTransitiveAliasCandidate(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local function Target()
+			return 1
+		end
+		local a = Target
+		local b = a
+		local c = b
+		local x = c()
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+
+	var (
+		callee *ast.IdentExpr
+		root   cfg.SymbolID
+	)
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.CalleeName != "c" {
+			return
+		}
+		if ident, ok := info.Callee.(*ast.IdentExpr); ok {
+			callee = ident
+		}
+		root, _ = graph.SymbolAt(p, "Target")
+	})
+	if callee == nil || root == 0 {
+		t.Fatalf("expected c() callee ident and Target symbol, got callee=%v root=%d", callee, root)
+	}
+
+	raw := SymbolFromExpr(callee, bindings)
+	if raw == 0 {
+		t.Fatal("expected non-zero raw symbol for c")
+	}
+
+	got := CanonicalSymbolFromExprWithAliases(callee, raw, graph, bindings, nil, func(sym cfg.SymbolID) bool {
+		return sym == root
+	})
+	if got != root {
+		t.Fatalf("CanonicalSymbolFromExprWithAliases(...) = %d, want %d", got, root)
+	}
+}

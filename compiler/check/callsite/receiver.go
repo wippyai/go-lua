@@ -20,7 +20,7 @@ func ForceMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, info
 		return false
 	}
 
-	sym := PreferredCalleeSymbol(info, bindings, nil, func(candidate typecfg.SymbolID) bool {
+	sym := PreferredCalleeSymbolWithAliases(info, graph, bindings, nil, func(candidate typecfg.SymbolID) bool {
 		return symbolForcesMethodReceiver(bindings, graph, candidate)
 	})
 
@@ -29,7 +29,7 @@ func ForceMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, info
 	}
 
 	if bindings != nil {
-		if methodSym, ok := methodCalleeSymbolFromCall(bindings, info); ok {
+		if methodSym, ok := methodCalleeSymbolFromCall(bindings, graph, info); ok {
 			sym = methodSym
 		}
 	}
@@ -56,7 +56,7 @@ func ForceMethodReceiverAtPoint(bindings *bind.BindingTable, graph *compcfg.Grap
 	if bindings == nil {
 		return false
 	}
-	sym, ok := methodCalleeSymbolFromExpr(bindings, ex)
+	sym, ok := methodCalleeSymbolFromExpr(bindings, graph, ex)
 	if !ok || sym == 0 {
 		return false
 	}
@@ -66,7 +66,13 @@ func ForceMethodReceiverAtPoint(bindings *bind.BindingTable, graph *compcfg.Grap
 // MethodCalleeSymbol resolves a method call to its field-backed function symbol
 // using static receiver/path information from the callsite.
 func MethodCalleeSymbol(bindings *bind.BindingTable, info *compcfg.CallInfo) (typecfg.SymbolID, bool) {
-	return methodCalleeSymbolFromCall(bindings, info)
+	return methodCalleeSymbolFromCall(bindings, nil, info)
+}
+
+// MethodCalleeSymbolWithAliases resolves method symbols and expands receiver
+// base symbol through direct alias chains when graph is provided.
+func MethodCalleeSymbolWithAliases(bindings *bind.BindingTable, graph *compcfg.Graph, info *compcfg.CallInfo) (typecfg.SymbolID, bool) {
+	return methodCalleeSymbolFromCall(bindings, graph, info)
 }
 
 func symbolForcesMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, sym typecfg.SymbolID) bool {
@@ -96,27 +102,27 @@ func symbolForcesMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Grap
 	return forced
 }
 
-func methodCalleeSymbolFromCall(bindings *bind.BindingTable, info *compcfg.CallInfo) (typecfg.SymbolID, bool) {
+func methodCalleeSymbolFromCall(bindings *bind.BindingTable, graph *compcfg.Graph, info *compcfg.CallInfo) (typecfg.SymbolID, bool) {
 	if bindings == nil || info == nil || info.Method == "" {
 		return 0, false
 	}
-	if sym, ok := methodSymbolFromCalleePath(bindings, info.CalleePath, info.Method); ok {
+	if sym, ok := methodSymbolFromCalleePath(bindings, graph, info.CalleePath, info.Method); ok {
 		return sym, true
 	}
 	if info.Receiver == nil {
 		return 0, false
 	}
-	return methodSymbolFromReceiver(bindings, info.Receiver, info.Method)
+	return methodSymbolFromReceiver(bindings, graph, info.Receiver, info.Method)
 }
 
-func methodCalleeSymbolFromExpr(bindings *bind.BindingTable, ex *ast.FuncCallExpr) (typecfg.SymbolID, bool) {
+func methodCalleeSymbolFromExpr(bindings *bind.BindingTable, graph *compcfg.Graph, ex *ast.FuncCallExpr) (typecfg.SymbolID, bool) {
 	if bindings == nil || ex == nil || ex.Method == "" || ex.Receiver == nil {
 		return 0, false
 	}
-	return methodSymbolFromReceiver(bindings, ex.Receiver, ex.Method)
+	return methodSymbolFromReceiver(bindings, graph, ex.Receiver, ex.Method)
 }
 
-func methodSymbolFromReceiver(bindings *bind.BindingTable, receiver ast.Expr, method string) (typecfg.SymbolID, bool) {
+func methodSymbolFromReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, receiver ast.Expr, method string) (typecfg.SymbolID, bool) {
 	baseSym, receiverSegs, ok := StaticPathWithBaseSymbol(bindings, receiver)
 	if !ok || baseSym == 0 {
 		return 0, false
@@ -131,10 +137,10 @@ func methodSymbolFromReceiver(bindings *bind.BindingTable, receiver ast.Expr, me
 		return 0, false
 	}
 
-	return bindings.FieldSymbol(baseSym, path)
+	return methodSymbolFromBaseWithAliases(bindings, graph, baseSym, path)
 }
 
-func methodSymbolFromCalleePath(bindings *bind.BindingTable, calleePath constraint.Path, method string) (typecfg.SymbolID, bool) {
+func methodSymbolFromCalleePath(bindings *bind.BindingTable, graph *compcfg.Graph, calleePath constraint.Path, method string) (typecfg.SymbolID, bool) {
 	if bindings == nil || method == "" || calleePath.Symbol == 0 {
 		return 0, false
 	}
@@ -156,5 +162,29 @@ func methodSymbolFromCalleePath(bindings *bind.BindingTable, calleePath constrai
 		return 0, false
 	}
 
-	return bindings.FieldSymbol(calleePath.Symbol, path)
+	return methodSymbolFromBaseWithAliases(bindings, graph, calleePath.Symbol, path)
+}
+
+func methodSymbolFromBaseWithAliases(
+	bindings *bind.BindingTable,
+	graph *compcfg.Graph,
+	baseSym typecfg.SymbolID,
+	path string,
+) (typecfg.SymbolID, bool) {
+	if bindings == nil || baseSym == 0 {
+		return 0, false
+	}
+
+	var methodSym typecfg.SymbolID
+	eachSymbolWithAliases(graph, baseSym, func(candidate typecfg.SymbolID) bool {
+		if sym, ok := bindings.FieldSymbol(candidate, path); ok && sym != 0 {
+			methodSym = sym
+			return true
+		}
+		return false
+	})
+	if methodSym == 0 {
+		return 0, false
+	}
+	return methodSym, true
 }

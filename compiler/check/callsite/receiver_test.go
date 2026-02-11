@@ -88,6 +88,25 @@ func TestForceMethodReceiver_PrefersCanonicalCandidateOverStaleRawSymbol(t *test
 	}
 }
 
+func TestForceMethodReceiver_UsesAliasReceiverBase(t *testing.T) {
+	src := `
+		local T = {}
+		function T.foo(x: number): number
+			return x + 1
+		end
+		local Alias = T
+		local n = Alias:foo(1)
+	`
+	graph, bindings, call, point := parseGraphAndMethodCall(t, src)
+
+	if !ForceMethodReceiver(bindings, graph, call) {
+		t.Fatal("expected ForceMethodReceiver to resolve method symbol through alias receiver base")
+	}
+	if !ForceMethodReceiverAtPoint(bindings, graph, point, call.Call) {
+		t.Fatal("expected ForceMethodReceiverAtPoint to resolve method symbol through alias receiver base")
+	}
+}
+
 func parseGraphAndMethodCall(t *testing.T, src string) (*ccfg.Graph, *bind.BindingTable, *ccfg.CallInfo, typecfg.Point) {
 	t.Helper()
 	stmts, err := parse.Parse(strings.NewReader(src), "test")

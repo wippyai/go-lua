@@ -39,7 +39,7 @@ func (s *Synthesizer) functionLiteralForIdent(ident *ast.IdentExpr) *ast.Functio
 		return false
 	}
 
-	sym := callsite.CanonicalSymbolFromExpr(ident, 0, bindings, moduleBindings, hasFunctionLiteral)
+	sym := callsite.CanonicalSymbolFromExprWithAliases(ident, 0, graph, bindings, moduleBindings, hasFunctionLiteral)
 	if sym == 0 {
 		return nil
 	}

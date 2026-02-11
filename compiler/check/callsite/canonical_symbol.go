@@ -64,7 +64,8 @@ func CanonicalSymbolFromExpr(
 }
 
 // CanonicalSymbolFromExprWithAliases chooses a stable symbol identity for an
-// expression and expands candidates with direct aliases when graph is provided.
+// expression and expands candidates through direct-alias chains when graph is
+// provided.
 func CanonicalSymbolFromExprWithAliases(
 	expr ast.Expr,
 	raw cfg.SymbolID,
@@ -78,27 +79,23 @@ func CanonicalSymbolFromExprWithAliases(
 		return 0
 	}
 
-	candidates := base
-	if graph != nil {
-		candidates = make([]cfg.SymbolID, 0, len(base)*2)
-		seen := make(map[cfg.SymbolID]struct{}, len(base)*2)
-		push := func(sym cfg.SymbolID) {
-			if sym == 0 {
-				return
-			}
-			if _, ok := seen[sym]; ok {
-				return
-			}
-			seen[sym] = struct{}{}
-			candidates = append(candidates, sym)
+	candidates := make([]cfg.SymbolID, 0, len(base)*2)
+	seen := make(map[cfg.SymbolID]struct{}, len(base)*2)
+	push := func(sym cfg.SymbolID) {
+		if sym == 0 {
+			return
 		}
-
-		for _, sym := range base {
-			push(sym)
-			if aliasSym := graph.DirectAliasSymbol(sym); aliasSym != 0 {
-				push(aliasSym)
-			}
+		if _, ok := seen[sym]; ok {
+			return
 		}
+		seen[sym] = struct{}{}
+		candidates = append(candidates, sym)
+	}
+	for _, sym := range base {
+		eachSymbolWithAliases(graph, sym, func(candidate cfg.SymbolID) bool {
+			push(candidate)
+			return false
+		})
 	}
 
 	best := cfg.SymbolID(0)

@@ -246,3 +246,109 @@ func TestPreferredCalleeSymbolWithAliases_PrefersAliasCandidate(t *testing.T) {
 		t.Fatalf("preferred symbol = %d, want %d", got, aliasSym)
 	}
 }
+
+func TestCalleeSymbolCandidatesWithAliases_ExpandsTransitiveAliasChain(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local function Target()
+			return 1
+		end
+		local a = Target
+		local b = a
+		local c = b
+		local x = c()
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+
+	var (
+		callInfo *cfg.CallInfo
+		callSym  cfg.SymbolID
+		rootSym  cfg.SymbolID
+	)
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.CalleeName != "c" {
+			return
+		}
+		callInfo = info
+		callSym, _ = graph.SymbolAt(p, "c")
+		rootSym, _ = graph.SymbolAt(p, "Target")
+	})
+	if callInfo == nil {
+		t.Fatal("expected c() call site")
+	}
+	if callSym == 0 || rootSym == 0 {
+		t.Fatalf("expected non-zero symbols for c and Target, got c=%d Target=%d", callSym, rootSym)
+	}
+
+	candidates := CalleeSymbolCandidatesWithAliases(callInfo, graph, bindings, nil)
+	if !containsSymbol(candidates, callSym) {
+		t.Fatalf("candidates = %v, missing call symbol %d", candidates, callSym)
+	}
+	if !containsSymbol(candidates, rootSym) {
+		t.Fatalf("candidates = %v, missing transitive alias root symbol %d", candidates, rootSym)
+	}
+}
+
+func TestCalleeSymbolCandidatesWithAliases_ResolvesMethodSymbolThroughAliasBase(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local T = {}
+		function T.run(x: number): number
+			return x + 1
+		end
+		local Alias = T
+		local y = Alias:run(1)
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+
+	var callInfo *cfg.CallInfo
+	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.Method != "run" {
+			return
+		}
+		callInfo = info
+	})
+	if callInfo == nil {
+		t.Fatal("expected Alias:run call site")
+	}
+
+	if _, ok := MethodCalleeSymbol(bindings, callInfo); ok {
+		t.Fatal("expected non-alias method symbol resolution to miss alias receiver base")
+	}
+	methodSym, ok := MethodCalleeSymbolWithAliases(bindings, graph, callInfo)
+	if !ok || methodSym == 0 {
+		t.Fatal("expected alias-aware method symbol resolution")
+	}
+
+	candidates := CalleeSymbolCandidatesWithAliases(callInfo, graph, bindings, nil)
+	if !containsSymbol(candidates, methodSym) {
+		t.Fatalf("candidates = %v, missing method symbol %d", candidates, methodSym)
+	}
+}
+
+func containsSymbol(symbols []cfg.SymbolID, want cfg.SymbolID) bool {
+	for _, sym := range symbols {
+		if sym == want {
+			return true
+		}
+	}
+	return false
+}
