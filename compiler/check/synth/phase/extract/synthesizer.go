@@ -332,14 +332,6 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 					if !subtype.IsSubtype(narrowed, declared.Type) {
 						goto fallback
 					}
-					declaredBase := unwrap.Alias(declared.Type)
-					if _, ok := declaredBase.(*typ.Optional); !ok {
-						if _, ok := declaredBase.(*typ.Union); !ok {
-							if narrowed.Kind() != declaredBase.Kind() {
-								goto fallback
-							}
-						}
-					}
 				}
 			}
 			return narrowed

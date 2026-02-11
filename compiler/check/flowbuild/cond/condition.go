@@ -706,7 +706,29 @@ func (ce *ConditionExtractor) constraintsFromPathLiteral(expr ast.Expr, lit *typ
 	if target, key, ok := flowpath.SplitIndexPath(path); ok {
 		return []constraint.Constraint{constraint.IndexEquals{Target: target, Key: key, Value: lit}}
 	}
+	if typeKey, ok := ce.literalTypeKey(lit); ok {
+		return []constraint.Constraint{constraint.HasType{Path: path, Type: typeKey}}
+	}
 	return nil
+}
+
+func (ce *ConditionExtractor) literalTypeKey(lit *typ.Literal) (narrow.TypeKey, bool) {
+	if lit == nil {
+		return narrow.TypeKey{}, false
+	}
+	hash := lit.Hash()
+	if hash == 0 {
+		return narrow.TypeKey{}, false
+	}
+	if ce.Inputs != nil {
+		if ce.Inputs.TypeKeys == nil {
+			ce.Inputs.TypeKeys = make(map[uint64]typ.Type)
+		}
+		if _, exists := ce.Inputs.TypeKeys[hash]; !exists {
+			ce.Inputs.TypeKeys[hash] = lit
+		}
+	}
+	return narrow.HashTypeKey(hash), true
 }
 
 // constraintsFromCallExpr handles function call expressions.
