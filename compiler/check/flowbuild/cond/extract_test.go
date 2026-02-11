@@ -108,7 +108,7 @@ func TestExtractEffectFromType_FunctionNoRefinement(t *testing.T) {
 }
 
 func TestResolveCalleeToFunctionLiteral_NilCallee(t *testing.T) {
-	result := ResolveCalleeToFunctionLiteral(nil, nil)
+	result := resolve.ResolveCalleeToFunctionLiteral(nil, nil)
 	if result != nil {
 		t.Error("nil callee should return nil")
 	}
@@ -116,7 +116,7 @@ func TestResolveCalleeToFunctionLiteral_NilCallee(t *testing.T) {
 
 func TestResolveCalleeToFunctionLiteral_FunctionExpr(t *testing.T) {
 	fn := &ast.FunctionExpr{}
-	result := ResolveCalleeToFunctionLiteral(fn, nil)
+	result := resolve.ResolveCalleeToFunctionLiteral(fn, nil)
 	if result != fn {
 		t.Error("FunctionExpr should be returned as-is")
 	}

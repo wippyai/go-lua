@@ -624,59 +624,6 @@ func ExtractEffectFromType(t typ.Type) *constraint.FunctionEffect {
 	return nil
 }
 
-func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.FunctionExpr {
-	if callee == nil {
-		return nil
-	}
-
-	if fn, ok := callee.(*ast.FunctionExpr); ok {
-		return fn
-	}
-
-	attr, ok := callee.(*ast.AttrGetExpr)
-	if !ok || graph == nil {
-		return nil
-	}
-
-	var fieldName string
-	switch k := attr.Key.(type) {
-	case *ast.StringExpr:
-		fieldName = k.Value
-	case *ast.IdentExpr:
-		fieldName = k.Value
-	default:
-		return nil
-	}
-	if fieldName == "" {
-		return nil
-	}
-
-	tableLit := resolve.ResolveExprToTableLiteral(attr.Object, graph)
-	if tableLit == nil {
-		return nil
-	}
-
-	for _, field := range tableLit.Fields {
-		if field.Key == nil {
-			continue
-		}
-		var keyName string
-		switch k := field.Key.(type) {
-		case *ast.StringExpr:
-			keyName = k.Value
-		case *ast.IdentExpr:
-			keyName = k.Value
-		}
-		if keyName == fieldName {
-			if fn, ok := field.Value.(*ast.FunctionExpr); ok {
-				return fn
-			}
-		}
-	}
-
-	return nil
-}
-
 // CallTerminates checks if a call is to a function that never returns.
 // Uses symbol-based effect lookup - all functions have symbols.
 func CallTerminates(

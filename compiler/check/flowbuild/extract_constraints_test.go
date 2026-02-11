@@ -113,7 +113,7 @@ func TestExtractEffectFromType_AliasedFunction(t *testing.T) {
 }
 
 func TestResolveCalleeToFunctionLiteral_NilCallee(t *testing.T) {
-	result := cond.ResolveCalleeToFunctionLiteral(nil, nil)
+	result := resolve.ResolveCalleeToFunctionLiteral(nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil callee")
 	}
@@ -121,7 +121,7 @@ func TestResolveCalleeToFunctionLiteral_NilCallee(t *testing.T) {
 
 func TestResolveCalleeToFunctionLiteral_DirectFunctionLiteral(t *testing.T) {
 	fn := &ast.FunctionExpr{}
-	result := cond.ResolveCalleeToFunctionLiteral(fn, nil)
+	result := resolve.ResolveCalleeToFunctionLiteral(fn, nil)
 	if result != fn {
 		t.Error("expected same function literal")
 	}
@@ -129,7 +129,7 @@ func TestResolveCalleeToFunctionLiteral_DirectFunctionLiteral(t *testing.T) {
 
 func TestResolveCalleeToFunctionLiteral_Ident(t *testing.T) {
 	ident := &ast.IdentExpr{Value: "fn"}
-	result := cond.ResolveCalleeToFunctionLiteral(ident, nil)
+	result := resolve.ResolveCalleeToFunctionLiteral(ident, nil)
 	if result != nil {
 		t.Error("expected nil for ident without graph")
 	}

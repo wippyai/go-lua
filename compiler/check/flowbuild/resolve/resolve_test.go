@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
@@ -213,6 +214,96 @@ func TestResolveExprToTableLiteral_IdentRef(t *testing.T) {
 	got := resolve.ResolveExprToTableLiteral(retIdent, graph)
 	if got != tbl {
 		t.Fatalf("ResolveExprToTableLiteral mismatch: got %p want %p", got, tbl)
+	}
+}
+
+func TestResolveCalleeToFunctionLiteral_TableFieldFunction(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local t = {
+			f = function(x)
+				return x
+			end
+		}
+		t.f(1)
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{
+		ParList: &ast.ParList{},
+		Stmts:   stmts,
+	})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	var (
+		callee ast.Expr
+		want   *ast.FunctionExpr
+	)
+	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if callee != nil || info == nil {
+			return
+		}
+		callee = info.Callee
+	})
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if want != nil || info == nil {
+			return
+		}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			if want != nil || target.Name != "t" {
+				return
+			}
+			tbl, ok := source.(*ast.TableExpr)
+			if !ok || len(tbl.Fields) == 0 {
+				return
+			}
+			if fn, ok := tbl.Fields[0].Value.(*ast.FunctionExpr); ok {
+				want = fn
+			}
+		})
+	})
+	if callee == nil || want == nil {
+		t.Fatal("expected callee and table field function literal")
+	}
+
+	got := resolve.ResolveCalleeToFunctionLiteral(callee, graph)
+	if got != want {
+		t.Fatalf("ResolveCalleeToFunctionLiteral mismatch: got %p want %p", got, want)
+	}
+}
+
+func TestResolveCalleeToFunctionLiteral_TableFieldNotFunction(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local t = { f = 1 }
+		t.f()
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{
+		ParList: &ast.ParList{},
+		Stmts:   stmts,
+	})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	var callee ast.Expr
+	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if callee != nil || info == nil {
+			return
+		}
+		callee = info.Callee
+	})
+	if callee == nil {
+		t.Fatal("expected callee expression")
+	}
+
+	got := resolve.ResolveCalleeToFunctionLiteral(callee, graph)
+	if got != nil {
+		t.Fatalf("expected nil for non-function table field, got %v", got)
 	}
 }
 

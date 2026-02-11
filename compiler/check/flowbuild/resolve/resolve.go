@@ -171,6 +171,60 @@ func ResolveExprToTableLiteral(expr ast.Expr, graph *cfg.Graph) *ast.TableExpr {
 	return tableLit
 }
 
+// ResolveCalleeToFunctionLiteral resolves a callee expression to a function literal.
+//
+// Supported forms:
+//   - direct function literal: function(...) ... end
+//   - table field function via static table literal:
+//     local t = { f = function(...) ... end }; t.f(...)
+func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.FunctionExpr {
+	if callee == nil {
+		return nil
+	}
+
+	if fn, ok := callee.(*ast.FunctionExpr); ok {
+		return fn
+	}
+
+	attr, ok := callee.(*ast.AttrGetExpr)
+	if !ok || graph == nil {
+		return nil
+	}
+
+	fieldName, ok := fieldNameFromExpr(attr.Key)
+	if !ok || fieldName == "" {
+		return nil
+	}
+
+	tableLit := ResolveExprToTableLiteral(attr.Object, graph)
+	if tableLit == nil {
+		return nil
+	}
+
+	for _, field := range tableLit.Fields {
+		keyName, ok := fieldNameFromExpr(field.Key)
+		if !ok || keyName != fieldName {
+			continue
+		}
+		if fn, ok := field.Value.(*ast.FunctionExpr); ok {
+			return fn
+		}
+	}
+
+	return nil
+}
+
+func fieldNameFromExpr(expr ast.Expr) (string, bool) {
+	switch e := expr.(type) {
+	case *ast.StringExpr:
+		return e.Value, e.Value != ""
+	case *ast.IdentExpr:
+		return e.Value, e.Value != ""
+	default:
+		return "", false
+	}
+}
+
 // Ref resolves typ.Ref to its actual type using scope type lookup.
 // This normalizes types before they enter flow inputs to avoid Ref vs Alias mismatches.
 func Ref(t typ.Type, sc *scope.State) typ.Type {
