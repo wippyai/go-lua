@@ -11,7 +11,9 @@ import (
 //  1. raw call callee symbol
 //  2. symbol resolved from primary bindings using call expression
 //  3. symbol resolved from fallback bindings using call expression
-//  4. binding symbols with matching callee name (primary, then fallback)
+//  4. method symbol resolved from primary bindings (receiver + method)
+//  5. method symbol resolved from fallback bindings (receiver + method)
+//  6. binding symbols with matching callee name (primary, then fallback)
 func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingTable) []cfg.SymbolID {
 	if info == nil {
 		return nil
@@ -33,6 +35,14 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 	push(SymbolFromExpr(info.Callee, primary))
 	if fallback != primary {
 		push(SymbolFromExpr(info.Callee, fallback))
+	}
+	if methodSym, ok := MethodCalleeSymbol(primary, info); ok {
+		push(methodSym)
+	}
+	if fallback != nil && fallback != primary {
+		if methodSym, ok := MethodCalleeSymbol(fallback, info); ok {
+			push(methodSym)
+		}
 	}
 	if info.CalleeName != "" {
 		if primary != nil {

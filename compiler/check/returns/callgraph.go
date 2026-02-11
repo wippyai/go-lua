@@ -45,16 +45,6 @@ func canonicalLocalCalleeSymbol(
 		_, ok := localFuncs[sym]
 		return ok
 	})
-	if selected != 0 {
-		if _, ok := localFuncs[selected]; ok {
-			return selected
-		}
-	}
-	if methodSym, ok := checkcallsite.MethodCalleeSymbol(bindings, callInfo); ok {
-		if _, isLocal := localFuncs[methodSym]; isLocal {
-			return methodSym
-		}
-	}
 	return selected
 }
 

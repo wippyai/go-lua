@@ -80,6 +80,29 @@ func TestCalleeSymbolCandidates_IncludesPrimaryNameMatches(t *testing.T) {
 	}
 }
 
+func TestCalleeSymbolCandidates_IncludeMethodSymbolFromReceiver(t *testing.T) {
+	primary := bind.NewBindingTable()
+	receiver := &ast.IdentExpr{Value: "T"}
+	const (
+		receiverSym cfg.SymbolID = 81
+		rawSym      cfg.SymbolID = 82
+	)
+	primary.Bind(receiver, receiverSym)
+	methodSym := primary.GetOrCreateFieldSymbol(receiverSym, "foo")
+
+	candidates := CalleeSymbolCandidates(&cfg.CallInfo{
+		Method:       "foo",
+		Receiver:     receiver,
+		CalleeSymbol: rawSym,
+	}, primary, nil)
+	if len(candidates) < 2 {
+		t.Fatalf("expected at least raw and method candidates, got %v", candidates)
+	}
+	if candidates[0] != rawSym || candidates[1] != methodSym {
+		t.Fatalf("candidates = %v, want prefix [%d %d]", candidates, rawSym, methodSym)
+	}
+}
+
 func TestPreferredCalleeSymbol_PrefersMatchingCandidate(t *testing.T) {
 	callee := &ast.IdentExpr{Value: "f"}
 	primary := bind.NewBindingTable()
