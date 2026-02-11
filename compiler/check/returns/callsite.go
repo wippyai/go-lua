@@ -47,9 +47,15 @@ func CollectCalledNestedFieldAssignments(
 	parentSymbols := parent.AllSymbolIDs()
 
 	// Find which local functions are called in the parent graph.
+	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedByCallee))
+	for calleeSym := range capturedByCallee {
+		trackedCallees[calleeSym] = true
+	}
 	calledSyms := make(map[cfg.SymbolID]bool)
 	parent.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		for sym := range calledSymbolsFromCall(info, p, bindings, resolveCalleeType) {
+		for sym := range calledSymbolsFromCall(info, p, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
+			return trackedCallees[sym]
+		}) {
 			calledSyms[sym] = true
 		}
 	})
@@ -102,6 +108,10 @@ func CollectCalledNestedContainerMutatorAssignments(
 	}
 
 	parentSymbols := parent.AllSymbolIDs()
+	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedByCallee))
+	for calleeSym := range capturedByCallee {
+		trackedCallees[calleeSym] = true
+	}
 	assignments := make([]flow.ContainerMutatorAssignment, 0)
 
 	parent.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
@@ -109,7 +119,9 @@ func CollectCalledNestedContainerMutatorAssignments(
 			return
 		}
 
-		calledSyms := calledSymbolsFromCall(info, p, bindings, resolveCalleeType)
+		calledSyms := calledSymbolsFromCall(info, p, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
+			return trackedCallees[sym]
+		})
 		if len(calledSyms) == 0 {
 			return
 		}
@@ -150,16 +162,14 @@ func calledSymbolsFromCall(
 	p cfg.Point,
 	bindings *bind.BindingTable,
 	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
+	prefer func(cfg.SymbolID) bool,
 ) map[cfg.SymbolID]bool {
 	calledSyms := make(map[cfg.SymbolID]bool)
 	if info == nil {
 		return calledSyms
 	}
 
-	if info.CalleeSymbol != 0 {
-		calledSyms[info.CalleeSymbol] = true
-	}
-	if sym := checkcallsite.SymbolFromExpr(info.Callee, bindings); sym != 0 {
+	if sym := checkcallsite.CanonicalSymbolFromExpr(info.Callee, info.CalleeSymbol, bindings, bindings, prefer); sym != 0 {
 		calledSyms[sym] = true
 	}
 
@@ -173,7 +183,7 @@ func calledSymbolsFromCall(
 				sort.Ints(paramIndexes)
 				for _, paramIdx := range paramIndexes {
 					arg := checkcallsite.RuntimeArgAt(info, paramIdx)
-					if sym := checkcallsite.SymbolFromExpr(arg, bindings); sym != 0 {
+					if sym := checkcallsite.CanonicalSymbolFromExpr(arg, 0, bindings, bindings, prefer); sym != 0 {
 						calledSyms[sym] = true
 					}
 				}

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 )
@@ -58,4 +59,30 @@ func TestRuntimeArgAt(t *testing.T) {
 			t.Fatal("expected receiver from negative runtime index")
 		}
 	})
+}
+
+func TestCalledSymbolsFromCall_PrefersTrackedCanonicalSymbol(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	ident := &ast.IdentExpr{Value: "f"}
+	const (
+		rawSym     cfg.SymbolID = 101
+		trackedSym cfg.SymbolID = 202
+	)
+	bindings.Bind(ident, trackedSym)
+
+	info := &cfg.CallInfo{
+		Callee:       ident,
+		CalleeSymbol: rawSym,
+	}
+
+	got := calledSymbolsFromCall(info, 0, bindings, nil, func(sym cfg.SymbolID) bool {
+		return sym == trackedSym
+	})
+
+	if !got[trackedSym] {
+		t.Fatalf("expected tracked canonical symbol %d to be selected, got %v", trackedSym, got)
+	}
+	if got[rawSym] {
+		t.Fatalf("expected raw symbol %d to be excluded when tracked symbol is preferred, got %v", rawSym, got)
+	}
 }
