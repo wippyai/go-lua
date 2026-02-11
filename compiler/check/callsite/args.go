@@ -25,7 +25,7 @@ func RuntimeArgCount(info *cfg.CallInfo) int {
 	if info == nil {
 		return 0
 	}
-	if info.Method != "" && info.Receiver != nil {
+	if IsMethodCallInfo(info) {
 		return len(info.Args) + 1
 	}
 	return len(info.Args)
@@ -40,7 +40,7 @@ func RuntimeArgAt(info *cfg.CallInfo, paramIdx int) ast.Expr {
 	if info == nil {
 		return nil
 	}
-	if info.Method != "" && info.Receiver != nil {
+	if IsMethodCallInfo(info) {
 		if paramIdx == 0 {
 			return info.Receiver
 		}

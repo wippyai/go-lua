@@ -442,7 +442,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						// Check if this return index matches
 						if elemInfo.ReturnIndex == retIndex {
 							// For method calls, index 0 is self (receiver)
-							if call.Method != "" && call.Receiver != nil && elemInfo.SourceRef.Index == 0 {
+							if callsite.IsMethodCallInfo(call) && elemInfo.SourceRef.Index == 0 {
 								if recvPath := path.FromExprWithBindings(call.Receiver, constResolver, bindings); !recvPath.IsEmpty() && recvPath.Symbol != 0 {
 									containerElemSrc = &flow.ContainerElementSource{
 										ContainerPath: constraint.Path{

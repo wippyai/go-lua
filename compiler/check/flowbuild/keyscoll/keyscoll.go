@@ -196,7 +196,7 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 }
 
 func isPairsCall(call *ast.FuncCallExpr) bool {
-	if call == nil || call.Method != "" || call.Receiver != nil {
+	if call == nil || callsite.IsMethodLikeExpr(call) {
 		return false
 	}
 	ident, ok := call.Func.(*ast.IdentExpr)
@@ -207,7 +207,7 @@ func isPairsCall(call *ast.FuncCallExpr) bool {
 }
 
 func isTableInsertCall(info *cfg.CallInfo) bool {
-	if info == nil || info.Method != "" || info.Receiver != nil {
+	if info == nil || callsite.IsMethodLikeCallInfo(info) {
 		return false
 	}
 	attr, ok := info.Callee.(*ast.AttrGetExpr)

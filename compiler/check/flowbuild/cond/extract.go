@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/numconst"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -390,7 +391,7 @@ func ConstraintsFromCallOnReturn(
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
 ) constraint.Condition {
-	if info == nil || info.Method != "" || info.Receiver != nil {
+	if info == nil || callsite.IsMethodLikeCallInfo(info) {
 		return constraint.Condition{}
 	}
 	if len(info.Args) == 0 {

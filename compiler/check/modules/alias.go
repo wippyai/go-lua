@@ -3,6 +3,7 @@ package modules
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 )
 
 // CollectAliases extracts module alias mappings from require() assignments in a graph.
@@ -40,7 +41,7 @@ func CollectAliases(graph *cfg.Graph) map[cfg.SymbolID]string {
 				return
 			}
 			call, ok := source.(*ast.FuncCallExpr)
-			if !ok || call.Method != "" || call.Receiver != nil {
+			if !ok || callsite.IsMethodLikeExpr(call) {
 				return
 			}
 			ident, ok := call.Func.(*ast.IdentExpr)

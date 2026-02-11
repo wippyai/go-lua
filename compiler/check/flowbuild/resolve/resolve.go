@@ -451,7 +451,7 @@ func CalleeType(
 
 	var fnType typ.Type
 
-	if info.Method != "" && info.Receiver != nil {
+	if callsite.IsMethodCallInfo(info) {
 		var receiverType typ.Type
 
 		// Use CalleePath.Symbol as primary identity for receiver

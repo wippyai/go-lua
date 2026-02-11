@@ -28,6 +28,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
@@ -800,7 +801,7 @@ func ResolveCallFunctionType(
 	}
 
 	// Method call: x:foo()
-	if info.Method != "" || info.Receiver != nil {
+	if callsite.IsMethodLikeCallInfo(info) {
 		recvType := exprSynth(info.Receiver, p, sc)
 		if recvType == nil || types == nil {
 			return nil

@@ -121,7 +121,7 @@ func (s *Synthesizer) SynthCallCore(ex *ast.FuncCallExpr, p cfg.Point, sc *scope
 
 // synthCallCoreWithNarrower synthesizes call with narrower context preserved.
 func (s *Synthesizer) synthCallCoreWithNarrower(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth, expected typ.Type) []typ.Type {
-	if ex.Method != "" || ex.Receiver != nil {
+	if callsite.IsMethodLikeExpr(ex) {
 		return s.synthMethodCallCoreWithExpected(ex, p, sc, recurse, expected)
 	}
 

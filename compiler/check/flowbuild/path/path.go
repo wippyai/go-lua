@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
@@ -128,7 +129,7 @@ func TypeOfCallPathWithBindings(expr ast.Expr, bindings *bind.BindingTable) (con
 	if !ok || call == nil {
 		return constraint.Path{}, false
 	}
-	if call.Method != "" || call.Receiver != nil {
+	if callsite.IsMethodLikeExpr(call) {
 		return constraint.Path{}, false
 	}
 	ident, ok := call.Func.(*ast.IdentExpr)

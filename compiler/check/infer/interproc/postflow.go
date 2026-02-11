@@ -188,7 +188,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 			Args:  argTypes,
 			Query: result.NarrowSynth.CallQuery(),
 		}
-		if info.Method != "" && info.Receiver != nil {
+		if checkcallsite.IsMethodCallInfo(info) {
 			def.IsMethod = true
 			def.MethodName = info.Method
 			def.Receiver = result.NarrowSynth.TypeOf(info.Receiver, p)

@@ -523,7 +523,7 @@ func (ce *ConditionExtractor) typePredicatePath(expr ast.Expr) (constraint.Path,
 	if !ok || call == nil {
 		return constraint.Path{}, false
 	}
-	if call.Method != "" || call.Receiver != nil {
+	if checkcallsite.IsMethodLikeExpr(call) {
 		return constraint.Path{}, false
 	}
 	if len(call.Args) != 1 {
@@ -715,7 +715,7 @@ func (ce *ConditionExtractor) constraintsFromCallExpr(expr *ast.FuncCallExpr) []
 		return nil
 	}
 
-	if expr.Method != "" || expr.Receiver != nil {
+	if checkcallsite.IsMethodLikeExpr(expr) {
 		return nil
 	}
 	if len(expr.Args) == 0 {
@@ -809,7 +809,7 @@ func exprContainsTypeCheck(expr ast.Expr, paramName, kindName string) bool {
 
 func callIsTypeOfParam(expr ast.Expr, paramName string) bool {
 	call, ok := expr.(*ast.FuncCallExpr)
-	if !ok || call == nil || call.Method != "" || call.Receiver != nil || len(call.Args) != 1 {
+	if !ok || call == nil || checkcallsite.IsMethodLikeExpr(call) || len(call.Args) != 1 {
 		return false
 	}
 	fnIdent, ok := call.Func.(*ast.IdentExpr)

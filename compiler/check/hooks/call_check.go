@@ -92,7 +92,7 @@ func checkSingleCall(
 		}
 	}
 
-	if info.Method != "" && info.Receiver != nil {
+	if callsite.IsMethodCallInfo(info) {
 		if recvType := narrowView.TypeOf(info.Receiver, p); recvType != nil {
 			if hasTypeValueMethodEffect(recvType, info.Method) {
 				return nil
@@ -110,7 +110,7 @@ func checkSingleCall(
 		Query: query,
 	}
 
-	if info.Method != "" && info.Receiver != nil {
+	if callsite.IsMethodCallInfo(info) {
 		def.IsMethod = true
 		def.MethodName = info.Method
 		def.Receiver = narrowView.TypeOf(info.Receiver, p)
