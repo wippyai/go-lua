@@ -1,8 +1,6 @@
 package domain
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 )
@@ -23,7 +21,7 @@ import (
 //   - "sym1@1" -> ("", "", false)
 //   - "sym1@1[0]" -> ("", "", false)
 func SplitPathKey(key constraint.PathKey) (constraint.PathKey, string, bool) {
-	root, suffix, ok := splitPathKeyRootAndSuffix(key)
+	root, suffix, ok := pathkey.ParseRootAndSuffix(key)
 	if !ok || suffix == "" {
 		return "", "", false
 	}
@@ -40,50 +38,6 @@ func SplitPathKey(key constraint.PathKey) (constraint.PathKey, string, bool) {
 
 	parent := root + pathkey.SegmentsSuffix(segs[:len(segs)-1])
 	return constraint.PathKey(parent), last.Name, true
-}
-
-func splitPathKeyRootAndSuffix(key constraint.PathKey) (root string, suffix string, ok bool) {
-	if sym, version, suffix, ok := pathkey.ParseKey(key); ok {
-		if version != 0 {
-			return pathkey.SymbolVersionRoot(sym, version), suffix, true
-		}
-		return pathkey.SymbolRoot(sym), suffix, true
-	}
-
-	s := string(key)
-	if s == "" {
-		return "", "", false
-	}
-
-	if s[0] == '$' {
-		end := 1
-		for end < len(s) && s[end] >= '0' && s[end] <= '9' {
-			end++
-		}
-		if end > 1 {
-			return s[:end], s[end:], true
-		}
-	}
-
-	if strings.HasPrefix(s, "ret[") {
-		end := 4
-		for end < len(s) && s[end] >= '0' && s[end] <= '9' {
-			end++
-		}
-		if end > 4 && end < len(s) && s[end] == ']' {
-			end++
-			return s[:end], s[end:], true
-		}
-	}
-
-	end := 0
-	for end < len(s) && s[end] != '.' && s[end] != '[' {
-		end++
-	}
-	if end == 0 {
-		return "", "", false
-	}
-	return s[:end], s[end:], true
 }
 
 // IsChildPath returns true if child is a descendant path of parent.
@@ -103,11 +57,11 @@ func IsChildPath(parent, child string) bool {
 		return false
 	}
 
-	parentRoot, parentSuffix, ok := splitPathKeyRootAndSuffix(constraint.PathKey(parent))
+	parentRoot, parentSuffix, ok := pathkey.ParseRootAndSuffix(constraint.PathKey(parent))
 	if !ok {
 		return false
 	}
-	childRoot, childSuffix, ok := splitPathKeyRootAndSuffix(constraint.PathKey(child))
+	childRoot, childSuffix, ok := pathkey.ParseRootAndSuffix(constraint.PathKey(child))
 	if !ok || parentRoot != childRoot {
 		return false
 	}
