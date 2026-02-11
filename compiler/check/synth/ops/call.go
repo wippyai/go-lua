@@ -517,7 +517,15 @@ func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult
 		return CallResult{Type: typ.Unknown, Errors: infer.Errors}
 
 	case InferKindUnion:
-		return finishUnionCall(ctx, infer.Callee.(*typ.Union), def, infer)
+		return callUnionWithGenericInference(
+			ctx,
+			infer.Callee.(*typ.Union),
+			def,
+			infer.IsMethod,
+			infer.Receiver,
+			infer.ForceMethodReceiver,
+			infer.Errors,
+		)
 
 	case InferKindIntersection:
 		return callIntersection(ctx, def.Query, infer.Callee.(*typ.Intersection), def.Args, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
@@ -534,11 +542,6 @@ func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult
 	}
 
 	return CallResult{Type: typ.Unknown, Errors: infer.Errors}
-}
-
-// finishUnionCall handles FinishCall for union callees.
-func finishUnionCall(ctx *db.QueryContext, u *typ.Union, def CallDef, infer InferResult) CallResult {
-	return callUnionWithGenericInference(ctx, u, def, infer.IsMethod, infer.Receiver, infer.ForceMethodReceiver, infer.Errors)
 }
 
 // ReInfer performs re-inference after arguments have been updated.
