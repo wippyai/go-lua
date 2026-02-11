@@ -191,7 +191,7 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 	}
 	// Unknown acts as a top type for unresolved values.
 	// T <: Unknown is true for all T, including Any.
-	if super.Kind() == kind.Unknown {
+	if typ.IsUnknown(super) {
 		return true
 	}
 	// Any is NOT assignable to specific types; only to Any itself (Unknown handled above).
@@ -201,7 +201,7 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 
 	// Unknown acts as a top type for unresolved values, but not bottom.
 	// Unknown <: T is false (except T = Any/Unknown handled above), while T <: Unknown is true.
-	if sub.Kind() == kind.Unknown {
+	if typ.IsUnknown(sub) {
 		return false
 	}
 
