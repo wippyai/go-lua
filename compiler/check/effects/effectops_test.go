@@ -299,6 +299,43 @@ func TestPropagate_CollectsEffectFromReturnCallSite(t *testing.T) {
 	}
 }
 
+func TestPropagate_UsesCanonicalCandidatesWhenRawSymbolMissing(t *testing.T) {
+	graph := buildGraphForEffects(t, `
+		local x = f()
+		return x
+	`, "f")
+
+	symF, ok := graph.SymbolAt(graph.Entry(), "f")
+	if !ok || symF == 0 {
+		t.Fatal("expected symbol for f")
+	}
+
+	// Simulate missing raw call symbol. Propagation should still resolve
+	// callee via canonical callsite candidates from call expression/bindings.
+	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if info != nil {
+			info.CalleeSymbol = 0
+		}
+	})
+
+	result := Propagate(&api.FuncResult{
+		Graph:    graph,
+		FnEffect: &constraint.FunctionEffect{},
+	}, func(sym cfg.SymbolID) *constraint.FunctionEffect {
+		if sym == symF {
+			return &constraint.FunctionEffect{
+				Row: effect.Row{Labels: []effect.Label{effect.IO{}}},
+			}
+		}
+		return nil
+	})
+
+	row, ok := result.Row.(effect.Row)
+	if !ok || !row.HasIO() {
+		t.Fatalf("expected propagated IO effect via canonical candidate lookup, got %#v", result.Row)
+	}
+}
+
 func buildGraphForEffects(t *testing.T, code string, globals ...string) *cfg.Graph {
 	t.Helper()
 	stmts, err := parse.ParseString(code, "test.lua")

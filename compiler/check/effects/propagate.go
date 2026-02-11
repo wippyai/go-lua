@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
@@ -47,15 +48,22 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionEf
 
 		var calleeEffect *constraint.FunctionEffect
 
-		// Symbol-based lookup (all functions have symbols).
-		if info.CalleeSymbol != 0 && lookup != nil {
-			calleeEffect = lookup(info.CalleeSymbol)
-		}
-
-		// Direct alias resolution (local f = B; f()).
-		if calleeEffect == nil && info.CalleeSymbol != 0 {
-			if aliasSym := result.Graph.DirectAliasSymbol(info.CalleeSymbol); aliasSym != 0 && lookup != nil {
-				calleeEffect = lookup(aliasSym)
+		// Symbol-based lookup via canonical callsite symbol candidates.
+		if lookup != nil {
+			bindings := result.Graph.Bindings()
+			candidates := callsite.CalleeSymbolCandidates(info, bindings, nil)
+			for _, sym := range candidates {
+				calleeEffect = lookup(sym)
+				if calleeEffect != nil {
+					break
+				}
+				// Direct alias resolution (local f = B; f()).
+				if aliasSym := result.Graph.DirectAliasSymbol(sym); aliasSym != 0 {
+					calleeEffect = lookup(aliasSym)
+					if calleeEffect != nil {
+						break
+					}
+				}
 			}
 		}
 
