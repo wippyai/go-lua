@@ -87,13 +87,6 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			return indexResult{}
 		},
 		Record: func(r *typ.Record) indexResult {
-			// Map component takes priority for index access
-			if r.HasMapComponent() && keyType != nil {
-				if keyType.Kind().IsPlaceholder() || subtype.IsSubtype(keyType, r.MapKey) {
-					return indexResult{t: typ.NewOptional(r.MapValue), ok: true}
-				}
-			}
-
 			if len(r.Fields) == 0 && !r.HasMapComponent() {
 				return indexResult{t: typ.Nil, ok: true}
 			}
@@ -136,6 +129,13 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				}
 
 				return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
+			}
+
+			// Map component fallback for non-string-literal keys.
+			if r.HasMapComponent() && keyType != nil {
+				if keyType.Kind().IsPlaceholder() || subtype.IsSubtype(keyType, r.MapKey) {
+					return indexResult{t: typ.NewOptional(r.MapValue), ok: true}
+				}
 			}
 
 			return indexResult{}

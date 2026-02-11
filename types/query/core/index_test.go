@@ -3,6 +3,7 @@ package core
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -73,6 +74,58 @@ func TestIndex(t *testing.T) {
 				t.Errorf("checker failed for result %v", result)
 			}
 		})
+	}
+}
+
+func TestIndex_RecordWithMapComponent_LiteralFieldPrecedence(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("name", typ.String).
+		MapComponent(typ.String, typ.Number).
+		Build()
+
+	got, ok := Index(rec, typ.LiteralString("name"))
+	if !ok {
+		t.Fatal("expected literal string index to resolve")
+	}
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf(`Index(rec, "name") = %v, want string`, got)
+	}
+}
+
+func TestIndex_RecordWithMapComponent_LiteralMissingFallsBackToMap(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("name", typ.String).
+		MapComponent(typ.String, typ.Number).
+		Build()
+
+	got, ok := Index(rec, typ.LiteralString("missing"))
+	if !ok {
+		t.Fatal("expected literal string index to resolve via map fallback")
+	}
+	if !ContainsNil(got) {
+		t.Fatalf("expected optional map value result, got %v", got)
+	}
+	opt, isOpt := got.(*typ.Optional)
+	if !isOpt || !typ.TypeEquals(opt.Inner, typ.Number) {
+		t.Fatalf("expected number?, got %v", got)
+	}
+}
+
+func TestIndex_RecordWithMapComponent_GenericStringIncludesFieldAndMap(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("name", typ.String).
+		MapComponent(typ.String, typ.Number).
+		Build()
+
+	got, ok := Index(rec, typ.String)
+	if !ok {
+		t.Fatal("expected generic string index to resolve")
+	}
+	if !ContainsNil(got) {
+		t.Fatalf("expected optional result, got %v", got)
+	}
+	if !subtype.IsSubtype(typ.String, got) || !subtype.IsSubtype(typ.Number, got) {
+		t.Fatalf("expected optional(string|number), got %v", got)
 	}
 }
 
