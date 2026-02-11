@@ -141,6 +141,27 @@ func (t *BindingTable) Name(sym cfg.SymbolID) string {
 	return t.names[sym]
 }
 
+// SymbolsByName returns all symbols recorded with the given source name.
+//
+// Results are sorted by symbol ID for deterministic iteration.
+func (t *BindingTable) SymbolsByName(name string) []cfg.SymbolID {
+	if t == nil || name == "" {
+		return nil
+	}
+	result := make([]cfg.SymbolID, 0, 2)
+	for sym, n := range t.names {
+		if n == name && sym != 0 {
+			result = append(result, sym)
+		}
+	}
+	if len(result) > 1 {
+		sort.Slice(result, func(i, j int) bool {
+			return result[i] < result[j]
+		})
+	}
+	return result
+}
+
 // SetParamSymbols records the ordered parameter symbols for a function.
 // For methods with implicit self, self is the first symbol in the list.
 func (t *BindingTable) SetParamSymbols(fn *ast.FunctionExpr, syms []cfg.SymbolID) {

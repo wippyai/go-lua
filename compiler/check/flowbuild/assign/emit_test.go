@@ -337,6 +337,73 @@ func TestExtractAssignments_KeysCollectorEffectFallbackRespectsReturnIndex(t *te
 	}
 }
 
+func TestExtractAssignments_KeysCollectorEffectFallback_TriesAllNameCandidates(t *testing.T) {
+	code := `
+		local t = {}
+		local keys = collect_keys(t)
+	`
+	chunk, err := parse.ParseString(code, "emit_keys_provenance_name_candidates.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk}, "emit_keys_provenance_name_candidates")
+	exit := graph.Exit()
+	tSym, ok := graph.SymbolAt(exit, "t")
+	if !ok || tSym == 0 {
+		t.Fatal("expected symbol for t")
+	}
+	keysSym, ok := graph.SymbolAt(exit, "keys")
+	if !ok || keysSym == 0 {
+		t.Fatal("expected symbol for keys")
+	}
+
+	moduleBindings := bind.NewBindingTable()
+	const mismatchSym cfg.SymbolID = 101
+	const matchSym cfg.SymbolID = 102
+	moduleBindings.SetName(mismatchSym, "collect_keys")
+	moduleBindings.SetName(matchSym, "collect_keys")
+
+	inputs := &flow.Inputs{
+		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks:     make(map[string]flow.PredicateLink),
+		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+	}
+	ExtractAssignments(&core.FlowContext{
+		Graph:          graph,
+		ModuleBindings: moduleBindings,
+		Derived: &core.Derived{
+			Synth: func(ast.Expr, cfg.Point) typ.Type {
+				return typ.Unknown
+			},
+			EffectBySym: func(sym cfg.SymbolID) *constraint.FunctionEffect {
+				switch sym {
+				case mismatchSym:
+					return &constraint.FunctionEffect{
+						OnReturn: constraint.FromConstraints(constraint.KeyOf{
+							Table: constraint.ParamPath(0),
+							Key:   constraint.RetPath(1),
+						}),
+					}
+				case matchSym:
+					return &constraint.FunctionEffect{
+						OnReturn: constraint.FromConstraints(constraint.KeyOf{
+							Table: constraint.ParamPath(0),
+							Key:   constraint.RetPath(0),
+						}),
+					}
+				default:
+					return nil
+				}
+			},
+		},
+	}, inputs, nil)
+
+	src, ok := inputs.KeysProvenance[keysSym]
+	if !ok || src != tSym {
+		t.Fatalf("expected keys provenance for target %d -> %d, got %d (present=%v)", keysSym, tSym, src, ok)
+	}
+}
+
 func TestExtractAssignments_IndexAssign_NonIdentifierStringKey_UsesIndexStringSegment(t *testing.T) {
 	code := `
 		local t = {}

@@ -31,6 +31,7 @@ package assign
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
@@ -362,57 +363,37 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Detect keys collector calls: local keys = sorted_keys(table)
 				if call, retIndex := info.CallForTarget(i); call != nil {
 					var tableSym cfg.SymbolID
+					calleeSymbols := moduleCalleeSymbolCandidates(call, bindings, fc.ModuleBindings)
 
 					// Try local function analysis first
 					if keysCollector != nil {
 						tableSym = keysCollector(call, p, retIndex)
 					}
 
-					// Fallback: resolve function literal via module bindings (by symbol or name)
+					// Fallback: resolve function literal via module bindings.
 					if tableSym == 0 && fc.ModuleBindings != nil {
-						if call.CalleeSymbol != 0 {
-							if fn, ok := fc.ModuleBindings.FuncLitBySymbol(call.CalleeSymbol); ok && fn != nil {
-								if info := keyscoll.DetectKeysCollector(fn); info != nil && info.ReturnIndex == retIndex {
-									tableSym = callsite.RuntimeArgSymbolAt(call, info.ParamIndex, bindings)
-								}
+						for _, calleeSym := range calleeSymbols {
+							fn, ok := fc.ModuleBindings.FuncLitBySymbol(calleeSym)
+							if !ok || fn == nil {
+								continue
 							}
-						}
-						if tableSym == 0 && call.CalleeName != "" {
-							for _, sym := range fc.ModuleBindings.AllSymbols() {
-								if fc.ModuleBindings.Name(sym) != call.CalleeName {
-									continue
-								}
-								fn, ok := fc.ModuleBindings.FuncLitBySymbol(sym)
-								if !ok || fn == nil {
-									continue
-								}
-								if info := keyscoll.DetectKeysCollector(fn); info != nil && info.ReturnIndex == retIndex {
-									tableSym = callsite.RuntimeArgSymbolAt(call, info.ParamIndex, bindings)
-									break
-								}
+							if info := keyscoll.DetectKeysCollector(fn); info != nil && info.ReturnIndex == retIndex {
+								tableSym = callsite.RuntimeArgSymbolAt(call, info.ParamIndex, bindings)
+								break
 							}
 						}
 					}
 
 					// Fallback: check function effect for KeyOf-based keys collector
 					if tableSym == 0 && derived.EffectBySym != nil {
-						var eff *constraint.FunctionEffect
-						if call.CalleeSymbol != 0 {
-							eff = derived.EffectBySym(call.CalleeSymbol)
-						}
-						if eff == nil && fc.ModuleBindings != nil && call.CalleeName != "" {
-							for _, sym := range fc.ModuleBindings.AllSymbols() {
-								if fc.ModuleBindings.Name(sym) != call.CalleeName {
-									continue
-								}
-								if eff = derived.EffectBySym(sym); eff != nil {
-									break
-								}
+						for _, calleeSym := range calleeSymbols {
+							eff := derived.EffectBySym(calleeSym)
+							if eff == nil {
+								continue
 							}
-						}
-						if eff != nil {
 							if paramIdx, keyReturnIdx, ok := eff.KeysCollectorInfo(); ok && retIndex == keyReturnIdx {
 								tableSym = callsite.RuntimeArgSymbolAt(call, paramIdx, bindings)
+								break
 							}
 						}
 					}
@@ -664,6 +645,33 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			}
 		}
 	})
+}
+
+func moduleCalleeSymbolCandidates(call *cfg.CallInfo, localBindings, moduleBindings *bind.BindingTable) []cfg.SymbolID {
+	if call == nil {
+		return nil
+	}
+	candidates := make([]cfg.SymbolID, 0, 4)
+	seen := make(map[cfg.SymbolID]struct{}, 4)
+	push := func(sym cfg.SymbolID) {
+		if sym == 0 {
+			return
+		}
+		if _, ok := seen[sym]; ok {
+			return
+		}
+		seen[sym] = struct{}{}
+		candidates = append(candidates, sym)
+	}
+
+	push(call.CalleeSymbol)
+	push(callsite.CanonicalSymbolFromExpr(call.Callee, call.CalleeSymbol, localBindings, moduleBindings, nil))
+	if moduleBindings != nil && call.CalleeName != "" {
+		for _, sym := range moduleBindings.SymbolsByName(call.CalleeName) {
+			push(sym)
+		}
+	}
+	return candidates
 }
 
 // ExtractFuncDefAssignments extracts function definitions as assignments.

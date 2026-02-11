@@ -283,6 +283,35 @@ func TestBindingTable_AllSymbols_NoDuplicates(t *testing.T) {
 	}
 }
 
+func TestBindingTable_SymbolsByName(t *testing.T) {
+	table := NewBindingTable()
+	alpha1 := cfg.NextSymbolID()
+	alpha2 := cfg.NextSymbolID()
+	beta := cfg.NextSymbolID()
+
+	table.SetName(alpha1, "collect")
+	table.SetName(alpha2, "collect")
+	table.SetName(beta, "other")
+
+	got := table.SymbolsByName("collect")
+	if len(got) != 2 {
+		t.Fatalf("SymbolsByName(\"collect\") len = %d, want 2", len(got))
+	}
+	if got[0] != alpha1 || got[1] != alpha2 {
+		t.Fatalf("SymbolsByName(\"collect\") = %v, want [%d %d]", got, alpha1, alpha2)
+	}
+}
+
+func TestBindingTable_SymbolsByName_UnknownOrEmpty(t *testing.T) {
+	table := NewBindingTable()
+	if got := table.SymbolsByName(""); got != nil {
+		t.Fatalf("SymbolsByName(\"\") = %v, want nil", got)
+	}
+	if got := table.SymbolsByName("missing"); len(got) != 0 {
+		t.Fatalf("SymbolsByName(\"missing\") = %v, want empty", got)
+	}
+}
+
 func TestBindingTable_Globals(t *testing.T) {
 	table := NewBindingTable()
 
