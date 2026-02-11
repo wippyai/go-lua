@@ -4,7 +4,11 @@
 // in path syntax, enabling path key parsing and construction.
 package pathkey
 
-import "math"
+import (
+	"math"
+
+	"github.com/wippyai/go-lua/types/numparse"
+)
 
 // ParseIntLiteral parses a string as a non-negative integer literal.
 //
@@ -14,28 +18,7 @@ import "math"
 // This is used to distinguish integer indices ([0], [1]) from string indices
 // ([key]) in path suffix parsing.
 func ParseIntLiteral(s string) (int, bool) {
-	if s == "" {
-		return 0, false
-	}
-
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if ch < '0' || ch > '9' {
-			return 0, false
-		}
-	}
-
-	maxInt := int(^uint(0) >> 1)
-	value := 0
-	for i := 0; i < len(s); i++ {
-		digit := int(s[i] - '0')
-		if value > (maxInt-digit)/10 {
-			return 0, false
-		}
-		value = value*10 + digit
-	}
-
-	return value, true
+	return numparse.ParseNonNegativeDecimalInt(s)
 }
 
 // IsIdentStart reports whether ch can start a Lua identifier.

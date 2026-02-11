@@ -451,6 +451,8 @@ func TestPathIsReturnPath(t *testing.T) {
 		{Root: "ret[1x]"},
 		{Root: "ret[1]]"},
 		{Root: "ret[0]", Symbol: 7},
+		{Root: "ret[0]", Segments: []Segment{{Kind: SegmentField, Name: "k"}}},
+		{Root: "ret[0]", Segments: []Segment{{Kind: SegmentIndexInt, Index: 1}}},
 	}
 	for _, p := range invalid {
 		if IsReturnPath(p) {

@@ -6,6 +6,35 @@ import (
 	"strings"
 )
 
+// ParseNonNegativeDecimalInt parses a base-10 non-negative integer into int.
+//
+// Accepted forms:
+//   - One or more ASCII digits, e.g. "0", "42", "001"
+//
+// Rejected forms:
+//   - Empty strings
+//   - Signs, non-digit characters, and overflow for platform int width
+func ParseNonNegativeDecimalInt(s string) (int, bool) {
+	if s == "" {
+		return 0, false
+	}
+
+	maxInt := int(^uint(0) >> 1)
+	value := 0
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch < '0' || ch > '9' {
+			return 0, false
+		}
+		digit := int(ch - '0')
+		if value > (maxInt-digit)/10 {
+			return 0, false
+		}
+		value = value*10 + digit
+	}
+	return value, true
+}
+
 // ParseIntegerLiteral parses integer-syntax numeric literals.
 //
 // Supported forms:

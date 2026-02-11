@@ -3,6 +3,8 @@ package constraint
 import (
 	"strconv"
 	"strings"
+
+	"github.com/wippyai/go-lua/types/numparse"
 )
 
 // ParamPath returns the path for a parameter value.
@@ -29,25 +31,11 @@ func PlaceholderIndexFromString(s string) int {
 }
 
 func parseNonNegativeDecimal(s string) int {
-	if s == "" {
+	value, ok := numparse.ParseNonNegativeDecimalInt(s)
+	if !ok {
 		return -1
 	}
-
-	maxInt := int(^uint(0) >> 1)
-	idx := 0
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if ch < '0' || ch > '9' {
-			return -1
-		}
-		digit := int(ch - '0')
-		if idx > (maxInt-digit)/10 {
-			return -1
-		}
-		idx = idx*10 + digit
-	}
-
-	return idx
+	return value
 }
 
 // RetPath returns the path for a return value.
@@ -70,5 +58,5 @@ func ReturnIndexFromString(s string) int {
 
 // IsReturnPath checks if the path represents a return value (ret[N] format).
 func IsReturnPath(p Path) bool {
-	return p.Symbol == 0 && ReturnIndexFromString(p.Root) >= 0
+	return p.Symbol == 0 && len(p.Segments) == 0 && ReturnIndexFromString(p.Root) >= 0
 }

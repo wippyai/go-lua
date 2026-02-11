@@ -1,6 +1,40 @@
 package numparse
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
+
+func TestParseNonNegativeDecimalInt(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	overflow := strconv.FormatInt(int64(maxInt), 10) + "0"
+
+	tests := []struct {
+		input string
+		want  int
+		ok    bool
+	}{
+		{"0", 0, true},
+		{"42", 42, true},
+		{"001", 1, true},
+		{"", 0, false},
+		{"-1", 0, false},
+		{"+1", 0, false},
+		{"1e3", 0, false},
+		{"abc", 0, false},
+		{overflow, 0, false},
+	}
+
+	for _, tt := range tests {
+		got, ok := ParseNonNegativeDecimalInt(tt.input)
+		if ok != tt.ok {
+			t.Fatalf("ParseNonNegativeDecimalInt(%q) ok=%v, want %v", tt.input, ok, tt.ok)
+		}
+		if ok && got != tt.want {
+			t.Fatalf("ParseNonNegativeDecimalInt(%q)=%d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
 
 func TestParseIntegerLiteral(t *testing.T) {
 	tests := []struct {
