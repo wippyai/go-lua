@@ -1,6 +1,8 @@
 package pathkey
 
 import (
+	"math"
+	"strconv"
 	"testing"
 )
 
@@ -152,6 +154,8 @@ func TestIsIdentName(t *testing.T) {
 }
 
 func TestIntToString(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	minInt := -maxInt - 1
 	tests := []struct {
 		input int
 		want  string
@@ -162,6 +166,8 @@ func TestIntToString(t *testing.T) {
 		{-1, "-1"},
 		{-42, "-42"},
 		{12345, "12345"},
+		{maxInt, strconv.FormatInt(int64(maxInt), 10)},
+		{minInt, strconv.FormatInt(int64(minInt), 10)},
 	}
 	for _, tc := range tests {
 		got := IntToString(tc.input)
@@ -209,5 +215,14 @@ func TestFloatToSafeInt_BeyondPrecision(t *testing.T) {
 	_, ok := FloatToSafeInt(huge)
 	if ok {
 		t.Error("FloatToSafeInt should return false for values beyond safe precision")
+	}
+}
+
+func TestFloatToSafeInt_NaNOrInf(t *testing.T) {
+	tests := []float64{math.NaN(), math.Inf(1), math.Inf(-1)}
+	for _, f := range tests {
+		if _, ok := FloatToSafeInt(f); ok {
+			t.Errorf("FloatToSafeInt(%v) should return false", f)
+		}
 	}
 }

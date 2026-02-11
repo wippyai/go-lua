@@ -4,6 +4,8 @@
 // in path syntax, enabling path key parsing and construction.
 package pathkey
 
+import "math"
+
 // ParseIntLiteral parses a string as a non-negative integer literal.
 //
 // Returns the integer value and true if the string contains only ASCII digits.
@@ -103,24 +105,32 @@ func IsIdentName(s string) bool {
 
 // IntToString converts an integer to its string representation.
 //
-// This is a simple implementation without using strconv to avoid allocation
-// in hot paths. Handles negative numbers by prepending "-" to the absolute value.
+// This is a simple implementation without strconv for hot paths.
 func IntToString(v int) string {
 	if v == 0 {
 		return "0"
 	}
 
-	if v < 0 {
-		return "-" + IntToString(-v)
+	neg := v < 0
+	var u uint
+	if neg {
+		// Two's-complement absolute value; safe for MinInt.
+		u = uint(^v) + 1
+	} else {
+		u = uint(v)
 	}
 
 	var buf [20]byte
 
 	i := len(buf)
-	for v > 0 {
+	for u > 0 {
 		i--
-		buf[i] = byte('0' + v%10)
-		v /= 10
+		buf[i] = byte('0' + u%10)
+		u /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
 	}
 
 	return string(buf[i:])
@@ -146,14 +156,15 @@ const MaxSafeFloat64Int = (1 << 53) - 1
 // not an exact integer. This is used for array index validation where only
 // exact integers are valid indices.
 func FloatToSafeInt(f float64) (int, bool) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	if f > MaxSafeFloat64Int || f < -MaxSafeFloat64Int {
+		return 0, false
+	}
+	if math.Trunc(f) != f {
+		return 0, false
+	}
 	i := int64(f)
-	if float64(i) != f {
-		return 0, false
-	}
-
-	if i > MaxSafeFloat64Int || i < -MaxSafeFloat64Int {
-		return 0, false
-	}
-
 	return int(i), true
 }
