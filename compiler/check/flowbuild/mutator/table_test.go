@@ -32,7 +32,7 @@ func TestExtractTableMutatorAssignments_NilInputs(t *testing.T) {
 }
 
 func TestTableMutatorFromCall_NilInfo(t *testing.T) {
-	result := TableMutatorFromCall(nil, 0, nil, nil)
+	result := TableMutatorFromCall(nil, 0, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil info")
 	}
@@ -140,6 +140,8 @@ func TestTableMutatorFromCall_MethodCallWithCalleeSymbol(t *testing.T) {
 			}
 			return nil, false
 		},
+		nil,
+		nil,
 	)
 	if got == nil {
 		t.Fatal("expected table mutator for method callee symbol")

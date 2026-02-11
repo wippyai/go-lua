@@ -2,6 +2,7 @@ package mutator
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
@@ -32,7 +33,7 @@ func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Input
 			return
 		}
 
-		cm := ContainerMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, assignmentTypes)
+		cm := ContainerMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, assignmentTypes, bindings, fc.ModuleBindings)
 		if cm == nil {
 			return
 		}
@@ -87,12 +88,20 @@ type ContainerElementReturnInfo struct {
 
 // ContainerElementReturnFromCall detects if a call returns a container's element type.
 // Returns info about the Return effect if found, nil otherwise.
-func ContainerElementReturnFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool), assignmentTypes func(cfg.SymbolID) typ.Type) *ContainerElementReturnInfo {
+func ContainerElementReturnFromCall(
+	info *cfg.CallInfo,
+	p cfg.Point,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	assignmentTypes func(cfg.SymbolID) typ.Type,
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
+) *ContainerElementReturnInfo {
 	if info == nil {
 		return nil
 	}
 
-	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes)
+	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes, bindings, moduleBindings)
 	if fnType == nil {
 		return nil
 	}
@@ -122,12 +131,20 @@ func ContainerElementReturnFromCall(info *cfg.CallInfo, p cfg.Point, synth func(
 }
 
 // ContainerMutatorFromCall extracts the container mutation spec from a call site.
-func ContainerMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool), assignmentTypes func(cfg.SymbolID) typ.Type) *effect.ContainerElementUnion {
+func ContainerMutatorFromCall(
+	info *cfg.CallInfo,
+	p cfg.Point,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	assignmentTypes func(cfg.SymbolID) typ.Type,
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
+) *effect.ContainerElementUnion {
 	if info == nil {
 		return nil
 	}
 
-	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes)
+	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes, bindings, moduleBindings)
 	if fnType == nil {
 		return nil
 	}

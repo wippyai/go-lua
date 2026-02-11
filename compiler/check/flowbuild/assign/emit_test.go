@@ -86,7 +86,7 @@ func TestExtractCallCorrelations_PassesPointToSymResolver(t *testing.T) {
 		seenPoint = p
 		return typ.Integer, true
 	}
-	_, _ = extractCallCorrelations(callInfo, nil, wantPoint, symResolver)
+	_, _ = extractCallCorrelations(callInfo, nil, wantPoint, symResolver, nil, nil)
 	if seenPoint != wantPoint {
 		t.Fatalf("symResolver point = %d, want %d", seenPoint, wantPoint)
 	}
@@ -116,7 +116,7 @@ func TestExtractCallCorrelations_MethodUsesCanonicalCalleeResolution(t *testing.
 		return nil, false
 	}
 
-	inverse, co := extractCallCorrelations(callInfo, nil, 1, symResolver)
+	inverse, co := extractCallCorrelations(callInfo, nil, 1, symResolver, nil, nil)
 	if len(co) != 0 {
 		t.Fatalf("expected no co-correlations, got %v", co)
 	}

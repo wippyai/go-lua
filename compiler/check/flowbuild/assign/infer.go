@@ -558,7 +558,7 @@ func collectInferredTypes(
 			for _, entry := range calls {
 				p := entry.p
 				info := entry.info
-				tm := mutator.TableMutatorFromCall(info, p, wrappedSynth, symResolver)
+				tm := mutator.TableMutatorFromCall(info, p, wrappedSynth, symResolver, bindings, moduleBindings)
 				if tm == nil {
 					continue
 				}

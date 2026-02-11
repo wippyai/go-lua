@@ -1005,7 +1005,7 @@ func (i *Inferencer) collectAndApplyMutations(
 		capturedByCallee = i.store.GetCapturedFieldAssignsSnapshot(fnGraph, capturedParent)
 	}
 	calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
-		return resolve.CalleeType(info, p, enrichedSynthAdapter, nil, nil)
+		return resolve.CalleeType(info, p, enrichedSynthAdapter, nil, nil, nestedBindings, i.store.ModuleBindings())
 	}
 	nestedFieldAssignments := returns.CollectCalledNestedFieldAssignments(fnGraph, nestedBindings, capturedByCallee, calleeTypeResolver)
 	returns.MergeFieldAssignments(fieldAssignments, nestedFieldAssignments)

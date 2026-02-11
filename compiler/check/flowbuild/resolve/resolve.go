@@ -493,13 +493,16 @@ func ExtractIteratorSource(
 // CalleeType resolves the function type for a call site.
 // For method calls, resolves the receiver type (via CalleePath.Symbol, assignmentTypes,
 // symResolver, synth) and looks up the method. For non-method calls, synthesizes the
-// callee directly. Symbol resolver lookup uses canonical callsite candidates.
+// callee directly. Symbol resolver lookup uses canonical callsite candidates with
+// binding-table fallback.
 func CalleeType(
 	info *cfg.CallInfo,
 	p cfg.Point,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	assignmentTypes func(cfg.SymbolID) typ.Type,
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
 ) typ.Type {
 	if info == nil {
 		return nil
@@ -553,7 +556,7 @@ func CalleeType(
 		// Preserve historical preference for CalleePath.Symbol while still
 		// falling back to canonical callsite candidates when it misses.
 		push(info.CalleePath.Symbol)
-		for _, sym := range callsite.CalleeSymbolCandidates(info, nil, nil) {
+		for _, sym := range callsite.CalleeSymbolCandidates(info, bindings, moduleBindings) {
 			push(sym)
 		}
 		for _, sym := range candidates {

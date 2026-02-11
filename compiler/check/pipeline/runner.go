@@ -245,7 +245,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 			symResolver := resolve.BuildInputSymbolResolver(declaredEnv, extractOut.Inputs)
 			assignmentTypes := resolve.BuildAssignmentTypeResolver(extractOut.Inputs)
 			calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
-				return resolve.CalleeType(info, p, synthEngine.TypeOf, symResolver, assignmentTypes)
+				return resolve.CalleeType(info, p, synthEngine.TypeOf, symResolver, assignmentTypes, bindings, env.ModuleBindings)
 			}
 
 			extra := returns.CollectCalledNestedContainerMutatorAssignments(graph, bindings, capturedContainers, calleeTypeResolver)

@@ -31,6 +31,7 @@ package assign
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
@@ -409,7 +410,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				var containerElemSrc *flow.ContainerElementSource
 				if call, retIndex := info.CallForTarget(i); call != nil {
 					assignmentTypesResolver := resolve.BuildAssignmentTypeResolver(inputs)
-					if elemInfo := mutator.ContainerElementReturnFromCall(call, p, wrappedSynth, resolverWithSpec, assignmentTypesResolver); elemInfo != nil {
+					if elemInfo := mutator.ContainerElementReturnFromCall(call, p, wrappedSynth, resolverWithSpec, assignmentTypesResolver, bindings, fc.ModuleBindings); elemInfo != nil {
 						// Check if this return index matches
 						if elemInfo.ReturnIndex == retIndex {
 							// For method calls, index 0 is self (receiver)
@@ -624,7 +625,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					types[i] = value
 				}
 			}
-			correlations, coCorrelations := extractCallCorrelations(sourceCall, wrappedSynth, p, resolverWithSpec)
+			correlations, coCorrelations := extractCallCorrelations(sourceCall, wrappedSynth, p, resolverWithSpec, bindings, fc.ModuleBindings)
 			sibling := &flow.SiblingAssignment{
 				Symbols:        symbols,
 				Names:          names,
@@ -732,11 +733,18 @@ func ExtractFuncDefAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs) {
 // extractCallCorrelations extracts ErrorReturn and CorrelatedReturn correlations from the callee's spec.
 // Callee type resolution is delegated to resolve.CalleeType to keep call semantics
 // canonical across flowbuild passes.
-func extractCallCorrelations(callInfo *cfg.CallInfo, synth func(ast.Expr, cfg.Point) typ.Type, p cfg.Point, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool)) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation) {
+func extractCallCorrelations(
+	callInfo *cfg.CallInfo,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	p cfg.Point,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
+) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation) {
 	if callInfo == nil {
 		return nil, nil
 	}
-	fnType := resolve.CalleeType(callInfo, p, synth, symResolver, nil)
+	fnType := resolve.CalleeType(callInfo, p, synth, symResolver, nil, bindings, moduleBindings)
 	inv, co := correlationsFromFunctionType(fnType)
 	return inv, co
 }

@@ -33,7 +33,7 @@ func CollectTableInsertMutations(
 			return
 		}
 
-		tm := TableMutatorFromCall(info, p, synth, nil)
+		tm := TableMutatorFromCall(info, p, synth, nil, bindings, nil)
 		if tm == nil {
 			return
 		}
@@ -120,7 +120,7 @@ func CollectTableInsertOnDirect(
 			return
 		}
 
-		tm := TableMutatorFromCall(info, p, synth, nil)
+		tm := TableMutatorFromCall(info, p, synth, nil, bindings, nil)
 		if tm == nil {
 			return
 		}

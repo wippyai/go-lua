@@ -122,7 +122,7 @@ func CollectCapturedContainerMutations(
 			return
 		}
 
-		ceu := mutator.ContainerMutatorFromCall(info, p, synth, nil, nil)
+		ceu := mutator.ContainerMutatorFromCall(info, p, synth, nil, nil, bindings, nil)
 		if ceu == nil {
 			return
 		}

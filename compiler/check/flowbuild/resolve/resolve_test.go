@@ -699,7 +699,7 @@ func TestExtractIteratorSource_IteratorNegativeSourceIndexOutOfRange(t *testing.
 }
 
 func TestCalleeType_NilInfo(t *testing.T) {
-	result := resolve.CalleeType(nil, 0, nil, nil, nil)
+	result := resolve.CalleeType(nil, 0, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil info")
 	}
@@ -718,8 +718,50 @@ func TestCalleeType_FallsBackFromUnresolvablePathSymbolToRawSymbol(t *testing.T)
 		return nil, false
 	}
 
-	got := resolve.CalleeType(info, 0, nil, symResolver, nil)
+	got := resolve.CalleeType(info, 0, nil, symResolver, nil, nil, nil)
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("expected resolver fallback via raw symbol, got %v", got)
+	}
+}
+
+func TestCalleeType_UsesBindingNameCandidates(t *testing.T) {
+	const listenSym cfg.SymbolID = 77
+
+	bindings := bind.NewBindingTable()
+	bindings.SetName(listenSym, "listen")
+
+	want := typ.Func().Returns(typ.String).Build()
+	symResolver := func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+		if sym == listenSym {
+			return want, true
+		}
+		return nil, false
+	}
+
+	info := &cfg.CallInfo{CalleeName: "listen"}
+	got := resolve.CalleeType(info, 0, nil, symResolver, nil, bindings, nil)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected resolver fallback via binding name candidate, got %v", got)
+	}
+}
+
+func TestCalleeType_UsesModuleBindingNameCandidates(t *testing.T) {
+	const listenSym cfg.SymbolID = 78
+
+	moduleBindings := bind.NewBindingTable()
+	moduleBindings.SetName(listenSym, "listen")
+
+	want := typ.Func().Returns(typ.Number).Build()
+	symResolver := func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+		if sym == listenSym {
+			return want, true
+		}
+		return nil, false
+	}
+
+	info := &cfg.CallInfo{CalleeName: "listen"}
+	got := resolve.CalleeType(info, 0, nil, symResolver, nil, nil, moduleBindings)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected resolver fallback via module binding name candidate, got %v", got)
 	}
 }

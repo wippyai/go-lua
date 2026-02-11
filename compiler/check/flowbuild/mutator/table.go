@@ -2,6 +2,7 @@ package mutator
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
@@ -29,7 +30,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 		if info == nil {
 			return
 		}
-		tm := TableMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver)
+		tm := TableMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, bindings, fc.ModuleBindings)
 		if tm == nil {
 			return
 		}
@@ -112,12 +113,19 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 	})
 }
 
-func TableMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool)) *effect.TableMutator {
+func TableMutatorFromCall(
+	info *cfg.CallInfo,
+	p cfg.Point,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
+) *effect.TableMutator {
 	if info == nil {
 		return nil
 	}
 
-	fnType := resolve.CalleeType(info, p, synth, symResolver, nil)
+	fnType := resolve.CalleeType(info, p, synth, symResolver, nil, bindings, moduleBindings)
 	if fnType == nil {
 		return nil
 	}
