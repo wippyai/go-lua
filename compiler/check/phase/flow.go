@@ -1,8 +1,6 @@
 package phase
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
@@ -87,12 +85,7 @@ func applyModuleAliasTypes(inputs *flow.Inputs, manifests io.ManifestQuerier) {
 	if inputs.DeclaredTypes == nil {
 		inputs.DeclaredTypes = make(map[cfg.SymbolID]typ.Type, len(inputs.ModuleAliases))
 	}
-	syms := make([]cfg.SymbolID, 0, len(inputs.ModuleAliases))
-	for sym := range inputs.ModuleAliases {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
-	for _, sym := range syms {
+	for _, sym := range cfg.SortedSymbolIDs(inputs.ModuleAliases) {
 		path := inputs.ModuleAliases[sym]
 		if sym == 0 || path == "" {
 			continue

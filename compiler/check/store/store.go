@@ -123,12 +123,7 @@ func effectsMapEqual(a, b map[cfg.SymbolID]*constraint.FunctionEffect) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	syms := make([]cfg.SymbolID, 0, len(a))
-	for sym := range a {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
-	for _, sym := range syms {
+	for _, sym := range cfg.SortedSymbolIDs(a) {
 		if !effectsEqual(a[sym], b[sym]) {
 			return false
 		}

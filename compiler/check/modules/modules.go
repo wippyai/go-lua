@@ -84,12 +84,7 @@ func ExportFunctionSummaries(manifest *io.Manifest, exportType typ.Type, graph *
 	if len(effectsBySym) == 0 {
 		return
 	}
-	syms := make([]cfg.SymbolID, 0, len(effectsBySym))
-	for sym := range effectsBySym {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
-	for _, sym := range syms {
+	for _, sym := range cfg.SortedSymbolIDs(effectsBySym) {
 		eff := effectsBySym[sym]
 		if eff == nil || !eff.OnReturn.HasConstraints() {
 			continue

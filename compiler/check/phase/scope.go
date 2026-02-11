@@ -240,12 +240,7 @@ func applyModuleAliasDeclaredTypes(
 	if declared == nil {
 		declared = make(flow.DeclaredTypes, len(moduleAliases))
 	}
-	syms := make([]cfg.SymbolID, 0, len(moduleAliases))
-	for sym := range moduleAliases {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
-	for _, sym := range syms {
+	for _, sym := range cfg.SortedSymbolIDs(moduleAliases) {
 		path := moduleAliases[sym]
 		if sym == 0 || path == "" {
 			continue

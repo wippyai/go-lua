@@ -14,7 +14,6 @@
 package effects
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
@@ -31,12 +30,7 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 	}
 
 	fieldEffects := make(map[string]*constraint.FunctionEffect)
-	syms := make([]cfg.SymbolID, 0, len(effectsBySym))
-	for sym := range effectsBySym {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
-	for _, sym := range syms {
+	for _, sym := range cfg.SortedSymbolIDs(effectsBySym) {
 		eff := effectsBySym[sym]
 		if eff == nil {
 			continue
