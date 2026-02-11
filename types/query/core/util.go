@@ -449,7 +449,7 @@ func iterableDepth(t typ.Type, depth int) bool {
 			return iterableDepth(a.Target, depth+1)
 		},
 		Default: func(t typ.Type) bool {
-			return t.Kind() == kind.String || t.Kind() == kind.Any
+			return t.Kind() == kind.String || typ.IsAny(t)
 		},
 	})
 }

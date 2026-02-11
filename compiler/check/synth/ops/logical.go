@@ -1,7 +1,6 @@
 package ops
 
 import (
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -100,7 +99,7 @@ func LogicalOrTyped(left, right typ.Type) typ.Type {
 	// Special case: when left is optional any (any?) and right is concrete,
 	// prefer right type. This handles the common `x = x or default` pattern.
 	if opt, ok := left.(*typ.Optional); ok {
-		if opt.Inner != nil && opt.Inner.Kind() == kind.Any {
+		if typ.IsAny(opt.Inner) {
 			if right != nil && right.Kind().IsConcrete() {
 				return right
 			}

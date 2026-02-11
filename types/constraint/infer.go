@@ -500,7 +500,7 @@ func (b *Bounds) Solve() (typ.Type, error) {
 
 	lower = subtype.Widen(lower)
 
-	if lower.Kind() != kind.Never && upper.Kind() != kind.Any {
+	if !typ.IsNever(lower) && !typ.IsAny(upper) {
 		if !containsTypeVar(lower) && !containsTypeVar(upper) {
 			if !subtype.IsSubtype(lower, upper) {
 				return nil, &BoundsError{Lower: lower, Upper: upper}

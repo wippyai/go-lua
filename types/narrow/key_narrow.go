@@ -130,7 +130,7 @@ func ExcludeByTypeKey(t typ.Type, key TypeKey, resolve TypeResolver) typ.Type {
 			return t
 		}
 		narrowed := ExcludeKind(t, targetKind)
-		if narrowed != nil && narrowed.Kind() == kind.Never {
+		if typ.IsNever(narrowed) {
 			return t
 		}
 		return narrowed
@@ -141,7 +141,7 @@ func ExcludeByTypeKey(t typ.Type, key TypeKey, resolve TypeResolver) typ.Type {
 			return t
 		}
 		narrowed := ExcludeType(t, exact)
-		if narrowed != nil && narrowed.Kind() == kind.Never {
+		if typ.IsNever(narrowed) {
 			return t
 		}
 		return narrowed

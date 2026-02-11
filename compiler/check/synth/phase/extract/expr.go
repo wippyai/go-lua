@@ -161,7 +161,7 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 							if keySym, ok := bindings.SymbolOf(key); ok && keySym != 0 {
 								keyPath := constraint.Path{Root: key.Value, Symbol: keySym}
 								if narrower.HasKeyOf(p, tablePath, keyPath) {
-									if refined := narrow.RemoveNil(it); refined != nil && refined.Kind() != kind.Never {
+									if refined := narrow.RemoveNil(it); !typ.IsNever(refined) {
 										it = refined
 									}
 								}
@@ -276,7 +276,7 @@ func (s *Synthesizer) narrowTupleIndex(objType typ.Type, varName string, indexRe
 	tupleLen := int64(len(tuple.Elements))
 	if lower >= 1 && upper <= tupleLen {
 		narrowed := narrow.RemoveNil(indexResult)
-		if narrowed.Kind() != kind.Never {
+		if !typ.IsNever(narrowed) {
 			return narrowed
 		}
 	}
@@ -387,7 +387,7 @@ func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.P
 			narrowedType = narrow.ToFalsy(left)
 		}
 
-		if narrowedType != nil && narrowedType.Kind() != kind.Never {
+		if !typ.IsNever(narrowedType) {
 			wrapped := &localNarrowOps{
 				inner:        narrower,
 				overridePath: lhsPath,

@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -172,7 +171,7 @@ func EffectFromType(t typ.Type) *constraint.FunctionEffect {
 			if r == nil {
 				continue
 			}
-			if unwrap.Alias(r).Kind() == kind.Never {
+			if typ.IsNever(unwrap.Alias(r)) {
 				terminates = true
 				break
 			}
