@@ -27,26 +27,9 @@ func ReturnTypeFromSpec(spec *contract.Spec, args []ast.Expr) typ.Type {
 // returnCaseMatchesArgs checks if the condition matches inline literal arguments.
 // For DNF conditions: returns true if any disjunct has all its constraints match.
 func returnCaseMatchesArgs(when constraint.Condition, args []ast.Expr) bool {
-	if when.IsTrue() {
-		return true
-	}
-	if when.IsFalse() {
-		return false
-	}
-	// Check each disjunct - if any fully matches, the condition matches
-	for i := 0; i < when.NumDisjuncts(); i++ {
-		disjunctMatches := true
-		for _, c := range when.DisjunctConstraints(i) {
-			if !constraintMatchesArgs(c, args) {
-				disjunctMatches = false
-				break
-			}
-		}
-		if disjunctMatches {
-			return true
-		}
-	}
-	return false
+	return conditionAnyDisjunctMatches(when, func(c constraint.Constraint) bool {
+		return constraintMatchesArgs(c, args)
+	})
 }
 
 // constraintMatchesArgs checks if a single constraint matches inline literal arguments.
@@ -60,11 +43,8 @@ func constraintMatchesArgs(c constraint.Constraint, args []ast.Expr) bool {
 
 // fieldEqualsMatchesArgs checks if a FieldEquals constraint matches an inline table literal.
 func fieldEqualsMatchesArgs(fe constraint.FieldEquals, args []ast.Expr) bool {
-	if !fe.Target.IsPlaceholder() {
-		return false
-	}
-	paramIdx := fe.Target.PlaceholderIndex()
-	if paramIdx < 0 || paramIdx >= len(args) {
+	paramIdx, ok := placeholderArgIndex(fe.Target, len(args))
+	if !ok {
 		return false
 	}
 
