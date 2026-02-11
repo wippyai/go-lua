@@ -30,22 +30,6 @@ func InferTypeArgsWithMode(fn *typ.Function, args []typ.Type, isMethod bool, rec
 	return InferTypeArgsWithExpectedAndMode(fn, args, isMethod, receiver, nil, forceMethodReceiver)
 }
 
-// InferTypeArgsWithExpected performs bidirectional type argument inference.
-//
-// In addition to contravariant matching from arguments, uses covariant matching
-// from the expected return type. This enables inference in cases where type
-// parameters appear only in return position.
-//
-// Example: For `function get<T>(): T?`, given expected type `string?`,
-// infers T=string by matching return T? against expected string?.
-//
-// The expectedReturn is matched covariantly: the function's return type
-// should be a subtype of what's expected. For union expected types,
-// matches against each union member.
-func InferTypeArgsWithExpected(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type) ([]typ.Type, error) {
-	return InferTypeArgsWithExpectedAndMode(fn, args, isMethod, receiver, expectedReturn, false)
-}
-
 // InferTypeArgsWithExpectedAndMode performs bidirectional inference with optional
 // forced receiver consumption for method calls.
 func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {
