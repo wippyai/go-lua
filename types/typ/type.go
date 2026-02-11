@@ -103,21 +103,21 @@ type anyType struct{}
 func (anyType) Kind() kind.Kind    { return kind.Any }
 func (anyType) String() string     { return "any" }
 func (anyType) Hash() uint64       { return uint64(kind.Any) }
-func (anyType) Equals(o Type) bool { return o.Kind() == kind.Any }
+func (anyType) Equals(o Type) bool { return IsAny(o) }
 
 type unknownType struct{}
 
 func (unknownType) Kind() kind.Kind    { return kind.Unknown }
 func (unknownType) String() string     { return "unknown" }
 func (unknownType) Hash() uint64       { return uint64(kind.Unknown) }
-func (unknownType) Equals(o Type) bool { return o.Kind() == kind.Unknown }
+func (unknownType) Equals(o Type) bool { return IsUnknown(o) }
 
 type neverType struct{}
 
 func (neverType) Kind() kind.Kind    { return kind.Never }
 func (neverType) String() string     { return "never" }
 func (neverType) Hash() uint64       { return uint64(kind.Never) }
-func (neverType) Equals(o Type) bool { return o.Kind() == kind.Never }
+func (neverType) Equals(o Type) bool { return IsNever(o) }
 
 type selfType struct{}
 
