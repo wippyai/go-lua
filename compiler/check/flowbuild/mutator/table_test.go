@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/literal"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
@@ -149,7 +150,7 @@ func TestTableMutatorFromCall_MethodCallWithCalleeSymbol(t *testing.T) {
 }
 
 func TestKeyTypeFromExpr_NilExpr(t *testing.T) {
-	result := keyTypeFromExpr(nil, nil)
+	result := literal.KeyTypeFromExpr(nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil expr")
 	}

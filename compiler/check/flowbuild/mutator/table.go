@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -105,7 +104,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 					assign.KeyVar = resolve.RootNameFromBindings(bindings, keySym, ident.Value)
 				}
 			}
-		} else if keyType := keyTypeFromExpr(attr.Key, constResolver); keyType != nil {
+		} else if keyType := literal.KeyTypeFromExpr(attr.Key, constResolver); keyType != nil {
 			assign.KeyType = keyType
 		}
 
@@ -128,26 +127,4 @@ func TableMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, 
 		return nil
 	}
 	return spec.GetTableMutator()
-}
-
-func keyTypeFromExpr(expr ast.Expr, constResolver func(string) *flow.ConstValue) typ.Type {
-	if expr == nil {
-		return nil
-	}
-	lit, ok := literal.FromExprWithConst(expr, constResolver)
-	if !ok || lit == nil {
-		return nil
-	}
-	switch lit.Base {
-	case kind.String:
-		return typ.String
-	case kind.Integer:
-		return typ.Integer
-	case kind.Number:
-		return typ.Number
-	case kind.Boolean:
-		return typ.Boolean
-	default:
-		return nil
-	}
 }

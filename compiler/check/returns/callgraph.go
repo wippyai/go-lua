@@ -32,6 +32,33 @@ func canonicalLocalSymbol(
 	)
 }
 
+func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo) func(cfg.SymbolID) *typ.Function {
+	sigCache := make(map[cfg.SymbolID]*typ.Function, len(localFuncs))
+	return func(sym cfg.SymbolID) *typ.Function {
+		if sym == 0 {
+			return nil
+		}
+		if cached, ok := sigCache[sym]; ok {
+			return cached
+		}
+
+		info := localFuncs[sym]
+		if info == nil || info.Fn == nil {
+			sigCache[sym] = nil
+			return nil
+		}
+
+		bindings := (*bind.BindingTable)(nil)
+		if info.Graph != nil {
+			bindings = info.Graph.Bindings()
+		}
+		resolver := synthresolve.New(synthresolve.Config{Bindings: bindings})
+		sig := resolver.ResolveFunctionSignature(info.Fn, info.DefScope)
+		sigCache[sym] = sig
+		return sig
+	}
+}
+
 // PropagateParamHintsFromCallGraph propagates parameter type hints through
 // inner function call graphs.
 //
@@ -72,27 +99,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 		}
 	}
 
-	sigCache := make(map[cfg.SymbolID]*typ.Function, len(localFuncs))
-	resolveLocalSignature := func(info *LocalFuncInfo) *typ.Function {
-		if info == nil || info.Sym == 0 {
-			return nil
-		}
-		if cached, ok := sigCache[info.Sym]; ok {
-			return cached
-		}
-		if info.Fn == nil {
-			sigCache[info.Sym] = nil
-			return nil
-		}
-		bindings := (*bind.BindingTable)(nil)
-		if info.Graph != nil {
-			bindings = info.Graph.Bindings()
-		}
-		resolver := synthresolve.New(synthresolve.Config{Bindings: bindings})
-		sig := resolver.ResolveFunctionSignature(info.Fn, info.DefScope)
-		sigCache[info.Sym] = sig
-		return sig
-	}
+	resolveLocalSignature := buildLocalSignatureResolver(localFuncs)
 
 	parentGraphs := make(map[uint64]*cfg.Graph)
 	moduleBindings := (*bind.BindingTable)(nil)
@@ -121,7 +128,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 			if callee == nil {
 				return
 			}
-			calleeSig := resolveLocalSignature(callee)
+			calleeSig := resolveLocalSignature(calleeSym)
 			runtimeArgCount := checkcallsite.RuntimeArgCount(ci)
 			if runtimeArgCount == 0 {
 				return
@@ -264,28 +271,7 @@ func BuildLocalCallGraph(
 		return canonicalLocalSymbol(localFuncs, moduleBindings, bindings, callInfo.Callee, callInfo.CalleeSymbol)
 	}
 
-	sigCache := make(map[cfg.SymbolID]*typ.Function, len(localFuncs))
-	resolveLocalSignature := func(sym cfg.SymbolID) *typ.Function {
-		if sym == 0 {
-			return nil
-		}
-		if cached, ok := sigCache[sym]; ok {
-			return cached
-		}
-		info := localFuncs[sym]
-		if info == nil || info.Fn == nil {
-			sigCache[sym] = nil
-			return nil
-		}
-		bindings := (*bind.BindingTable)(nil)
-		if info.Graph != nil {
-			bindings = info.Graph.Bindings()
-		}
-		resolver := synthresolve.New(synthresolve.Config{Bindings: bindings})
-		sig := resolver.ResolveFunctionSignature(info.Fn, info.DefScope)
-		sigCache[sym] = sig
-		return sig
-	}
+	resolveLocalSignature := buildLocalSignatureResolver(localFuncs)
 
 	addEdge := func(seen map[cfg.SymbolID]bool, callees *[]cfg.SymbolID, sym cfg.SymbolID) {
 		if sym == 0 {
