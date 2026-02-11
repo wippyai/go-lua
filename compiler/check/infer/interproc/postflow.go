@@ -1,8 +1,6 @@
 package interproc
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
@@ -341,51 +339,10 @@ func mergeCapturedContainerMutations(
 	existing map[cfg.SymbolID][]api.ContainerMutation,
 	next map[cfg.SymbolID][]api.ContainerMutation,
 ) map[cfg.SymbolID][]api.ContainerMutation {
-	if existing == nil {
-		return next
-	}
-	if next == nil {
-		return existing
-	}
-	merged := make(map[cfg.SymbolID][]api.ContainerMutation, len(existing)+len(next))
-	for _, sym := range cfg.SortedSymbolIDs(existing) {
-		merged[sym] = existing[sym]
-	}
-	for _, sym := range cfg.SortedSymbolIDs(next) {
-		merged[sym] = mergeContainerMutationSlice(merged[sym], next[sym])
-	}
-	return merged
-}
-
-func mergeContainerMutationSlice(
-	existing []api.ContainerMutation,
-	next []api.ContainerMutation,
-) []api.ContainerMutation {
-	if len(existing) == 0 {
-		return next
-	}
-	if len(next) == 0 {
-		return existing
-	}
-	byKey := make(map[string]api.ContainerMutation, len(existing)+len(next))
-	for _, m := range existing {
-		byKey[api.ContainerMutationKey(m)] = m
-	}
-	for _, m := range next {
-		key := api.ContainerMutationKey(m)
-		if prev, ok := byKey[key]; ok {
-			m.ValueType = returns.JoinInterprocTypes(prev.ValueType, m.ValueType)
+	return returns.MergeCapturedContainerMutationMaps(existing, next, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
+		if prev != nil {
+			next.ValueType = returns.JoinInterprocTypes(prev.ValueType, next.ValueType)
 		}
-		byKey[key] = m
-	}
-	keys := make([]string, 0, len(byKey))
-	for k := range byKey {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]api.ContainerMutation, 0, len(byKey))
-	for _, key := range keys {
-		out = append(out, byKey[key])
-	}
-	return out
+		return next
+	})
 }

@@ -1,8 +1,6 @@
 package returns
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -509,65 +507,16 @@ func WidenCapturedContainerMutations(prev, next api.CapturedContainerMutations) 
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		muts := next[sym]
 		existing := merged[sym]
-		merged[sym] = mergeCapturedContainerMutations(existing, muts)
+		merged[sym] = MergeCapturedContainerMutationMaps(existing, muts, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
+			if prev != nil {
+				next.ValueType = maybeWidenTypeForConvergence(JoinInterprocTypes(prev.ValueType, next.ValueType))
+			} else {
+				next.ValueType = maybeWidenTypeForConvergence(next.ValueType)
+			}
+			return next
+		})
 	}
 	return merged
-}
-
-func mergeCapturedContainerMutations(
-	existing map[cfg.SymbolID][]api.ContainerMutation,
-	next map[cfg.SymbolID][]api.ContainerMutation,
-) map[cfg.SymbolID][]api.ContainerMutation {
-	if existing == nil {
-		return next
-	}
-	if next == nil {
-		return existing
-	}
-	merged := make(map[cfg.SymbolID][]api.ContainerMutation, len(existing)+len(next))
-	for _, sym := range cfg.SortedSymbolIDs(existing) {
-		merged[sym] = existing[sym]
-	}
-	for _, sym := range cfg.SortedSymbolIDs(next) {
-		merged[sym] = mergeContainerMutationSlice(merged[sym], next[sym])
-	}
-	return merged
-}
-
-func mergeContainerMutationSlice(
-	existing []api.ContainerMutation,
-	next []api.ContainerMutation,
-) []api.ContainerMutation {
-	if len(existing) == 0 {
-		return next
-	}
-	if len(next) == 0 {
-		return existing
-	}
-	byKey := make(map[string]api.ContainerMutation, len(existing)+len(next))
-	for _, m := range existing {
-		key := api.ContainerMutationKey(m)
-		byKey[key] = m
-	}
-	for _, m := range next {
-		key := api.ContainerMutationKey(m)
-		if prev, ok := byKey[key]; ok {
-			m.ValueType = maybeWidenTypeForConvergence(JoinInterprocTypes(prev.ValueType, m.ValueType))
-		} else {
-			m.ValueType = maybeWidenTypeForConvergence(m.ValueType)
-		}
-		byKey[key] = m
-	}
-	keys := make([]string, 0, len(byKey))
-	for k := range byKey {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]api.ContainerMutation, 0, len(byKey))
-	for _, key := range keys {
-		out = append(out, byKey[key])
-	}
-	return out
 }
 
 // WidenConstructorFields merges constructor field maps using monotone join.
