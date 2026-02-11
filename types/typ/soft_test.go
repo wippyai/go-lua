@@ -76,36 +76,33 @@ func TestPruneSoftUnionMembers(t *testing.T) {
 	}
 }
 
-func TestPruneSoftUnionMembers_MemoizesSharedSubtrees(t *testing.T) {
-	prevHook := pruneSoftUnionMembersVisitHook
-	defer func() { pruneSoftUnionMembersVisitHook = prevHook }()
+func TestPruneSoftUnionMembers_ReusesRewrittenSharedSubtrees(t *testing.T) {
+	leaf := NewRecord().Field("id", String).Build()
+	shared := NewRecord().Field("payload", NewUnion(NewRecord().Build(), leaf)).Build()
+	root := NewRecord().Field("a", shared).Field("b", shared).Build()
 
-	seen := make(map[Type]bool)
-	calls := 0
-	pruneSoftUnionMembersVisitHook = func(t Type) {
-		calls++
-		seen[t] = true
+	got := PruneSoftUnionMembers(root)
+	rec, ok := got.(*Record)
+	if !ok {
+		t.Fatalf("expected record, got %T", got)
 	}
 
-	leaf := NewRecord().Field("x", String).Build()
-	expected := make(map[Type]bool)
-	expected[String] = true
-	expected[leaf] = true
-
-	current := leaf
-	const depth = 18
-	for i := 0; i < depth; i++ {
-		current = NewRecord().Field("a", current).Field("b", current).Build()
-		expected[current] = true
+	a := rec.GetField("a")
+	b := rec.GetField("b")
+	if a == nil || b == nil {
+		t.Fatalf("expected fields a and b, got a=%v b=%v", a, b)
+	}
+	if a.Type != b.Type {
+		t.Fatalf("expected rewritten shared subtree to be reused, got distinct pointers: %p vs %p", a.Type, b.Type)
 	}
 
-	_ = PruneSoftUnionMembers(current)
-
-	if calls != len(expected) {
-		t.Fatalf("expected %d unique visits, got %d", len(expected), calls)
+	sharedRec, ok := a.Type.(*Record)
+	if !ok {
+		t.Fatalf("expected rewritten shared record, got %T", a.Type)
 	}
-	if len(seen) != len(expected) {
-		t.Fatalf("expected %d unique nodes, got %d", len(expected), len(seen))
+	payload := sharedRec.GetField("payload")
+	if payload == nil || !TypeEquals(payload.Type, leaf) {
+		t.Fatalf("expected payload field to prune to leaf record, got %v", payload)
 	}
 }
 

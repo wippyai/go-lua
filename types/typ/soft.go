@@ -76,10 +76,6 @@ func PruneSoftUnionMembers(t Type) Type {
 	return pruneSoftUnionMembersMemo(t, guard, memo, visiting)
 }
 
-// pruneSoftUnionMembersVisitHook is a test-only hook to validate memoization.
-// It should remain nil in production.
-var pruneSoftUnionMembersVisitHook func(Type)
-
 func pruneSoftUnionMembersMemo(t Type, guard internal.RecursionGuard, memo map[Type]Type, visiting map[Type]bool) Type {
 	if t == nil {
 		return t
@@ -95,9 +91,6 @@ func pruneSoftUnionMembersMemo(t Type, guard internal.RecursionGuard, memo map[T
 		return t
 	}
 	visiting[t] = true
-	if pruneSoftUnionMembersVisitHook != nil {
-		pruneSoftUnionMembersVisitHook(t)
-	}
 
 	out := Visit(t, Visitor[Type]{
 		Union: func(u *Union) Type {
