@@ -175,3 +175,29 @@ func TestPlaceholderIndexFromString(t *testing.T) {
 		}
 	}
 }
+
+func TestReturnIndexFromString(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	overflow := strconv.FormatInt(int64(maxInt), 10) + "0"
+
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{"ret[0]", 0},
+		{"ret[42]", 42},
+		{"ret[-1]", -1},
+		{"ret[]", -1},
+		{"ret[abc]", -1},
+		{"ret[1", -1},
+		{"ret1]", -1},
+		{"x", -1},
+		{"ret[" + overflow + "]", -1},
+	}
+
+	for _, tc := range tests {
+		if got := ReturnIndexFromString(tc.input); got != tc.want {
+			t.Errorf("ReturnIndexFromString(%q) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}

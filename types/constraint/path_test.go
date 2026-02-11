@@ -443,6 +443,20 @@ func TestPathIsReturnPath(t *testing.T) {
 	if IsReturnPath(partial) {
 		t.Error("IsReturnPath should return false for partial ret path")
 	}
+
+	invalid := []Path{
+		{Root: "ret[-1]"},
+		{Root: "ret[]"},
+		{Root: "ret[abc]"},
+		{Root: "ret[1x]"},
+		{Root: "ret[1]]"},
+		{Root: "ret[0]", Symbol: 7},
+	}
+	for _, p := range invalid {
+		if IsReturnPath(p) {
+			t.Errorf("IsReturnPath should return false for invalid path %q (symbol=%d)", p.Root, p.Symbol)
+		}
+	}
 }
 
 // TestPathParentSliceAliasing tests for slice aliasing bugs in Parent().

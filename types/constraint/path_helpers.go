@@ -58,7 +58,17 @@ func RetPath(index int) Path {
 	return Path{Root: "ret[" + strconv.Itoa(index) + "]"}
 }
 
+// ReturnIndexFromString extracts a return slot index from "ret[N]".
+//
+// Returns -1 for invalid syntax, negative values, and overflow.
+func ReturnIndexFromString(s string) int {
+	if strings.HasPrefix(s, "ret[") && strings.HasSuffix(s, "]") {
+		return parseNonNegativeDecimal(s[4 : len(s)-1])
+	}
+	return -1
+}
+
 // IsReturnPath checks if the path represents a return value (ret[N] format).
 func IsReturnPath(p Path) bool {
-	return strings.HasPrefix(p.Root, "ret[") && strings.HasSuffix(p.Root, "]")
+	return p.Symbol == 0 && ReturnIndexFromString(p.Root) >= 0
 }
