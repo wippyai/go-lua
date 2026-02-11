@@ -86,7 +86,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 		index int
 	}
 	paramOwner := make(map[cfg.SymbolID]paramRef)
-	for _, sym := range SortedLocalFuncSymbols(localFuncs) {
+	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		info := localFuncs[sym]
 		if info.Graph == nil {
 			continue
@@ -104,7 +104,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 
 	parentGraphs := make(map[uint64]*cfg.Graph)
 	moduleBindings := (*bind.BindingTable)(nil)
-	for _, sym := range SortedLocalFuncSymbols(localFuncs) {
+	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		info := localFuncs[sym]
 		if info == nil || info.ParentGraph == nil {
 			continue
@@ -205,7 +205,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 			})
 		}
 
-		for _, sym := range SortedLocalFuncSymbols(localFuncs) {
+		for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 			info := localFuncs[sym]
 			if info.Graph == nil {
 				continue
@@ -314,7 +314,7 @@ func BuildLocalCallGraph(
 		}
 	}
 
-	for _, sym := range SortedLocalFuncSymbols(localFuncs) {
+	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		info := localFuncs[sym]
 		if info.Graph == nil {
 			continue

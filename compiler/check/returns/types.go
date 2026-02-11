@@ -69,8 +69,3 @@ type LocalFuncInfo struct {
 // MaxReturnSummaryIterations limits fixpoint iterations for ReturnSummaries.
 // Exceeding this indicates a bug (non-monotonic merge) or pathological recursion.
 const MaxReturnSummaryIterations = 10
-
-// SortedLocalFuncSymbols returns a deterministic ordering of local function symbols.
-func SortedLocalFuncSymbols(localFuncs map[cfg.SymbolID]*LocalFuncInfo) []cfg.SymbolID {
-	return cfg.SortedSymbolIDs(localFuncs)
-}

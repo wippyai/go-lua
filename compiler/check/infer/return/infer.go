@@ -229,7 +229,7 @@ func (i *Inferencer) ComputeForGraph(
 
 	// Apply param hints from the stable snapshot (deterministic order).
 	if hints := i.store.GetParamHintsSnapshot(graph, parentScope); len(hints) > 0 {
-		for _, sym := range returns.SortedLocalFuncSymbols(localFuncs) {
+		for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 			info := localFuncs[sym]
 			if info == nil {
 				continue
@@ -288,7 +288,7 @@ func (i *Inferencer) computeReturnSummariesForGroup(
 
 	// Initialize summaries from seed (if any).
 	summaries := make(map[cfg.SymbolID][]typ.Type, len(localFuncs))
-	for _, sym := range returns.SortedLocalFuncSymbols(localFuncs) {
+	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		if seed != nil {
 			if t := seed[sym]; len(t) > 0 {
 				summaries[sym] = t
@@ -468,7 +468,7 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 	overlay map[cfg.SymbolID]typ.Type,
 ) {
 	siblingEntries := make([]siblings.OverlayEntry, 0, len(ctx.localFuncs))
-	for _, sym := range returns.SortedLocalFuncSymbols(ctx.localFuncs) {
+	for _, sym := range cfg.SortedSymbolIDs(ctx.localFuncs) {
 		sibInfo := ctx.localFuncs[sym]
 		if sibInfo != nil && sibInfo.Fn != nil {
 			siblingEntries = append(siblingEntries, siblings.OverlayEntry{
