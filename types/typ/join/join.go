@@ -6,18 +6,9 @@ package join
 
 import "github.com/wippyai/go-lua/types/typ"
 
-// Two computes the least upper bound (union) of two types at join points.
-//
-// Used in control flow analysis when two branches merge. The result type
-// must accept values from both branches. nil and Unknown are treated as
-// absent (no information) and don't contribute to the join.
-func Two(a, b typ.Type) typ.Type {
-	return typ.JoinPreferNonSoft(a, b)
-}
-
 // ReturnVectors merges two multi-return type vectors at join points.
 //
-// Each position is joined independently using Two. Shorter vectors
+// Each position is joined independently using typ.JoinPreferNonSoft. Shorter vectors
 // are padded with Nil since Lua returns nil for missing values.
 func ReturnVectors(a, b []typ.Type) []typ.Type {
 	if len(a) == 0 {
@@ -45,14 +36,9 @@ func ReturnVectors(a, b []typ.Type) []typ.Type {
 		} else {
 			bi = typ.Nil
 		}
-		result[i] = Two(ai, bi)
+		result[i] = typ.JoinPreferNonSoft(ai, bi)
 	}
 	return result
-}
-
-// IsUnknownOrNil returns true if t is nil, unknown, or the nil type.
-func IsUnknownOrNil(t typ.Type) bool {
-	return typ.IsUnknownOrNil(t)
 }
 
 // WithReturns returns a copy of sig with the given return types grafted on.

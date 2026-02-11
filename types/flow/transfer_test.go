@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
-	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
 func TestProcessPointReturnChangedKeys_NoChanges(t *testing.T) {
@@ -121,7 +120,7 @@ func TestResolveSymbolKeyType_ValidSymbol(t *testing.T) {
 }
 
 func TestWidenArrayElementType_EmptyArray(t *testing.T) {
-	result := WidenArrayElementType(nil, typ.String, typjoin.Two)
+	result := WidenArrayElementType(nil, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("WidenArrayElementType(nil, string) = %T, want *typ.Array", result)
@@ -133,7 +132,7 @@ func TestWidenArrayElementType_EmptyArray(t *testing.T) {
 
 func TestWidenArrayElementType_ExistingArray(t *testing.T) {
 	existing := typ.NewArray(typ.Integer)
-	result := WidenArrayElementType(existing, typ.String, typjoin.Two)
+	result := WidenArrayElementType(existing, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("WidenArrayElementType(int[], string) = %T, want *typ.Array", result)
@@ -150,7 +149,7 @@ func TestWidenArrayElementType_ExistingArray(t *testing.T) {
 
 func TestWidenArrayElementType_EmptyRecord(t *testing.T) {
 	emptyRecord := typ.NewRecord().Build()
-	result := WidenArrayElementType(emptyRecord, typ.String, typjoin.Two)
+	result := WidenArrayElementType(emptyRecord, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("WidenArrayElementType({}, string) = %T, want *typ.Array", result)

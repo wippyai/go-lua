@@ -6,57 +6,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestTwo(t *testing.T) {
-	t.Run("nil left", func(t *testing.T) {
-		if Two(nil, typ.String) != typ.String {
-			t.Error("nil left should return right")
-		}
-	})
-
-	t.Run("nil right", func(t *testing.T) {
-		if Two(typ.String, nil) != typ.String {
-			t.Error("nil right should return left")
-		}
-	})
-
-	t.Run("unknown left", func(t *testing.T) {
-		if Two(typ.Unknown, typ.String) != typ.String {
-			t.Error("unknown left should return right")
-		}
-	})
-
-	t.Run("unknown right", func(t *testing.T) {
-		if Two(typ.String, typ.Unknown) != typ.String {
-			t.Error("unknown right should return left")
-		}
-	})
-
-	t.Run("equal types", func(t *testing.T) {
-		if Two(typ.String, typ.String) != typ.String {
-			t.Error("equal types should return same")
-		}
-	})
-
-	t.Run("different types", func(t *testing.T) {
-		result := Two(typ.String, typ.Number)
-		union, ok := result.(*typ.Union)
-		if !ok {
-			t.Fatal("different types should create union")
-		}
-		if len(union.Members) != 2 {
-			t.Errorf("expected 2 members, got %d", len(union.Members))
-		}
-	})
-
-	t.Run("prefers non-soft over soft placeholder", func(t *testing.T) {
-		soft := typ.NewRecord().Build() // empty record is soft under placeholder policy
-		result := Two(soft, typ.String)
-		if result != typ.String {
-			t.Fatalf("Two(soft, string) = %v, want string", result)
-		}
-	})
-}
-
 func TestReturnVectors(t *testing.T) {
 	t.Run("empty left", func(t *testing.T) {
 		right := []typ.Type{typ.String}
@@ -94,27 +43,6 @@ func TestReturnVectors(t *testing.T) {
 			t.Errorf("expected 2, got %d", len(result))
 		}
 	})
-}
-
-func TestIsUnknownOrNil(t *testing.T) {
-	tests := []struct {
-		name string
-		t    typ.Type
-		want bool
-	}{
-		{"nil", nil, true},
-		{"Unknown", typ.Unknown, true},
-		{"Nil type", typ.Nil, true},
-		{"String", typ.String, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsUnknownOrNil(tt.t); got != tt.want {
-				t.Errorf("IsUnknownOrNil() = %v, want %v", got, tt.want)
-			}
-		})
-	}
 }
 
 func TestWithReturns(t *testing.T) {

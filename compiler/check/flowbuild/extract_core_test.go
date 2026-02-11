@@ -17,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 )
 
 func TestExtract_NilGraph(t *testing.T) {
@@ -322,42 +321,42 @@ func TestMergeCallConstraintsIntoEdges_Empty(t *testing.T) {
 }
 
 func TestJoinTwo_LeftNil(t *testing.T) {
-	result := join.Two(nil, typ.String)
+	result := typ.JoinPreferNonSoft(nil, typ.String)
 	if result != typ.String {
 		t.Errorf("expected String, got %v", result)
 	}
 }
 
 func TestJoinTwo_RightNil(t *testing.T) {
-	result := join.Two(typ.String, nil)
+	result := typ.JoinPreferNonSoft(typ.String, nil)
 	if result != typ.String {
 		t.Errorf("expected String, got %v", result)
 	}
 }
 
 func TestJoinTwo_LeftUnknown(t *testing.T) {
-	result := join.Two(typ.Unknown, typ.String)
+	result := typ.JoinPreferNonSoft(typ.Unknown, typ.String)
 	if result != typ.String {
 		t.Errorf("expected String, got %v", result)
 	}
 }
 
 func TestJoinTwo_RightUnknown(t *testing.T) {
-	result := join.Two(typ.String, typ.Unknown)
+	result := typ.JoinPreferNonSoft(typ.String, typ.Unknown)
 	if result != typ.String {
 		t.Errorf("expected String, got %v", result)
 	}
 }
 
 func TestJoinTwo_Equal(t *testing.T) {
-	result := join.Two(typ.String, typ.String)
+	result := typ.JoinPreferNonSoft(typ.String, typ.String)
 	if result != typ.String {
 		t.Errorf("expected String, got %v", result)
 	}
 }
 
 func TestJoinTwo_Different(t *testing.T) {
-	result := join.Two(typ.String, typ.Integer)
+	result := typ.JoinPreferNonSoft(typ.String, typ.Integer)
 	union, ok := result.(*typ.Union)
 	if !ok {
 		t.Fatalf("expected Union, got %T", result)
@@ -368,7 +367,7 @@ func TestJoinTwo_Different(t *testing.T) {
 }
 
 func TestWidenArrayElementType_NilArray(t *testing.T) {
-	result := flow.WidenArrayElementType(nil, typ.String, join.Two)
+	result := flow.WidenArrayElementType(nil, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("expected Array, got %T", result)
@@ -380,7 +379,7 @@ func TestWidenArrayElementType_NilArray(t *testing.T) {
 
 func TestWidenArrayElementType_NilElement(t *testing.T) {
 	arr := typ.NewArray(typ.String)
-	result := flow.WidenArrayElementType(arr, nil, join.Two)
+	result := flow.WidenArrayElementType(arr, nil, typ.JoinPreferNonSoft)
 	if result != arr {
 		t.Error("expected unchanged array for nil element")
 	}
@@ -388,7 +387,7 @@ func TestWidenArrayElementType_NilElement(t *testing.T) {
 
 func TestWidenArrayElementType_Array(t *testing.T) {
 	arr := typ.NewArray(typ.String)
-	result := flow.WidenArrayElementType(arr, typ.Integer, join.Two)
+	result := flow.WidenArrayElementType(arr, typ.Integer, typ.JoinPreferNonSoft)
 	resultArr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("expected Array, got %T", result)
@@ -400,7 +399,7 @@ func TestWidenArrayElementType_Array(t *testing.T) {
 
 func TestWidenArrayElementType_EmptyRecord(t *testing.T) {
 	rec := typ.NewRecord().Build()
-	result := flow.WidenArrayElementType(rec, typ.String, join.Two)
+	result := flow.WidenArrayElementType(rec, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("expected Array, got %T", result)
@@ -412,14 +411,14 @@ func TestWidenArrayElementType_EmptyRecord(t *testing.T) {
 
 func TestWidenArrayElementType_NonEmptyRecord(t *testing.T) {
 	rec := typ.NewRecord().Field("a", typ.Integer).Build()
-	result := flow.WidenArrayElementType(rec, typ.String, join.Two)
+	result := flow.WidenArrayElementType(rec, typ.String, typ.JoinPreferNonSoft)
 	if result != rec {
 		t.Error("expected unchanged record")
 	}
 }
 
 func TestWidenArrayElementType_Unknown(t *testing.T) {
-	result := flow.WidenArrayElementType(typ.Unknown, typ.String, join.Two)
+	result := flow.WidenArrayElementType(typ.Unknown, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("expected Array, got %T", result)
@@ -430,7 +429,7 @@ func TestWidenArrayElementType_Unknown(t *testing.T) {
 }
 
 func TestWidenArrayElementType_Any(t *testing.T) {
-	result := flow.WidenArrayElementType(typ.Any, typ.String, join.Two)
+	result := flow.WidenArrayElementType(typ.Any, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("expected Array, got %T", result)
@@ -487,7 +486,7 @@ func TestIsUnknownOrNil(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := join.IsUnknownOrNil(tt.t)
+			result := typ.IsUnknownOrNil(tt.t)
 			if result != tt.expected {
 				t.Errorf("expected %v, got %v", tt.expected, result)
 			}
