@@ -34,85 +34,10 @@ func parsePath(path string) (constraint.Path, bool) {
 		return constraint.Path{}, false
 	}
 
-	var segs []constraint.Segment
-
-	for i < len(path) {
-		switch path[i] {
-		case '.':
-			i++
-
-			name := pathkey.ReadIdent(path, &i)
-			if name == "" {
-				return constraint.Path{}, false
-			}
-
-			segs = append(segs, constraint.Segment{Kind: constraint.SegmentField, Name: name})
-		case '[':
-			i++
-			if i < len(path) && path[i] == '"' {
-				i++
-
-				var out []byte
-
-				for i < len(path) {
-					ch := path[i]
-					if ch == '\\' && i+1 < len(path) {
-						out = append(out, path[i+1])
-						i += 2
-
-						continue
-					}
-
-					if ch == '"' {
-						break
-					}
-
-					out = append(out, ch)
-					i++
-				}
-
-				if i >= len(path) || path[i] != '"' {
-					return constraint.Path{}, false
-				}
-
-				i++
-				if i >= len(path) || path[i] != ']' {
-					return constraint.Path{}, false
-				}
-
-				i++
-
-				segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexString, Name: string(out)})
-
-				continue
-			}
-
-			start := i
-
-			for i < len(path) && path[i] != ']' {
-				i++
-			}
-
-			if i >= len(path) || path[i] != ']' {
-				return constraint.Path{}, false
-			}
-
-			token := path[start:i]
-			i++
-
-			if idx, ok := pathkey.ParseIntLiteral(token); ok {
-				segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})
-				continue
-			}
-
-			if token == "" {
-				return constraint.Path{}, false
-			}
-
-			segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexString, Name: token})
-		default:
-			return constraint.Path{}, false
-		}
+	suffix := path[i:]
+	segs := pathkey.ParseSuffix(suffix)
+	if suffix != "" && len(segs) == 0 {
+		return constraint.Path{}, false
 	}
 
 	return constraint.Path{Root: root, Segments: segs}, true
