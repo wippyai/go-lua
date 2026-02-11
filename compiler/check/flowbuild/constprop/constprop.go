@@ -1,7 +1,6 @@
 package constprop
 
 import (
-	"slices"
 	"strconv"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -49,12 +48,7 @@ func PropagateAllConstValues(fc *core.FlowContext, inputs *flow.Inputs) {
 	}
 	assigns := inputs.ConstValues
 	out := make(map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue)
-	syms := make([]cfg.SymbolID, 0, len(assigns))
-	for sym := range assigns {
-		syms = append(syms, sym)
-	}
-	slices.Sort(syms)
-	for _, sym := range syms {
+	for _, sym := range cfg.SortedSymbolIDs(assigns) {
 		out[sym] = propagateConstValues(fc.Graph.CFG(), assigns[sym])
 	}
 	inputs.ConstValues = out
