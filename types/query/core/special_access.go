@@ -1,7 +1,6 @@
 package core
 
 import (
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -12,14 +11,14 @@ func specialAccessType(t typ.Type) (typ.Type, bool) {
 	if t == nil {
 		return nil, false
 	}
-	switch t.Kind() {
-	case kind.Any:
+	if typ.IsAny(t) {
 		return typ.Any, true
-	case kind.Unknown:
-		return typ.Unknown, true
-	case kind.Never:
-		return typ.Never, true
-	default:
-		return nil, false
 	}
+	if typ.IsUnknown(t) {
+		return typ.Unknown, true
+	}
+	if typ.IsNever(t) {
+		return typ.Never, true
+	}
+	return nil, false
 }
