@@ -75,6 +75,20 @@ func TestFromExpr_NumberExpr_Float(t *testing.T) {
 	}
 }
 
+func TestFromExpr_NumberExpr_ZeroFloat(t *testing.T) {
+	expr := &ast.NumberExpr{Value: "0.0"}
+	lit, ok := literal.FromExpr(expr)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if lit == nil {
+		t.Fatal("expected non-nil literal")
+	}
+	if lit.Base != kind.Number {
+		t.Errorf("expected number kind for 0.0, got %v", lit.Base)
+	}
+}
+
 func TestFromExpr_TrueExpr(t *testing.T) {
 	lit, ok := literal.FromExpr(&ast.TrueExpr{})
 	if !ok {
@@ -301,5 +315,18 @@ func TestParseNumberLiteral_Invalid(t *testing.T) {
 	_, _, ok := literal.ParseNumberLiteral("not_a_number")
 	if ok {
 		t.Error("expected ok=false for invalid input")
+	}
+}
+
+func TestParseIntegerLiteral_Integer(t *testing.T) {
+	i, ok := literal.ParseIntegerLiteral("42")
+	if !ok || i != 42 {
+		t.Fatalf("expected integer literal 42, got i=%d ok=%v", i, ok)
+	}
+}
+
+func TestParseIntegerLiteral_FloatRejected(t *testing.T) {
+	if _, ok := literal.ParseIntegerLiteral("0.0"); ok {
+		t.Fatal("expected float-syntax literal to be rejected as integer")
 	}
 }

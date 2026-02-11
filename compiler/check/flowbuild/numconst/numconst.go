@@ -104,7 +104,7 @@ func NegateNumericConstraint(c constraint.NumericConstraint) constraint.NumericC
 func IntConstFromExpr(expr ast.Expr) (int64, bool) {
 	switch v := expr.(type) {
 	case *ast.NumberExpr:
-		if i, _, ok := literal.ParseNumberLiteral(v.Value); ok {
+		if i, ok := literal.ParseIntegerLiteral(v.Value); ok {
 			return i, true
 		}
 	case *ast.UnaryMinusOpExpr:

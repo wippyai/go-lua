@@ -2,6 +2,7 @@ package literal
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
@@ -23,14 +24,11 @@ func FromExpr(expr ast.Expr) (*typ.Literal, bool) {
 	case *ast.StringExpr:
 		return typ.LiteralString(v.Value), true
 	case *ast.NumberExpr:
-		if i, f, ok := ParseNumberLiteral(v.Value); ok {
-			if f == 0 && i != 0 {
-				return typ.LiteralInt(i), true
-			}
-			if f != 0 {
-				return typ.LiteralNumber(f), true
-			}
-			return typ.LiteralInt(0), true
+		if i, ok := ParseIntegerLiteral(v.Value); ok {
+			return typ.LiteralInt(i), true
+		}
+		if f, err := strconv.ParseFloat(v.Value, 64); err == nil {
+			return typ.LiteralNumber(f), true
 		}
 	case *ast.TrueExpr:
 		return typ.True, true
@@ -115,11 +113,25 @@ func ParseNumberLiteral(s string) (int64, float64, bool) {
 	if s == "" {
 		return 0, 0, false
 	}
-	if i, err := strconv.ParseInt(s, 0, 64); err == nil {
+	if i, ok := ParseIntegerLiteral(s); ok {
 		return i, 0, true
 	}
 	if f, err := strconv.ParseFloat(s, 64); err == nil {
 		return 0, f, true
 	}
 	return 0, 0, false
+}
+
+// ParseIntegerLiteral parses integer-syntax numeric literals (decimal/hex).
+//
+// Returns false for float-syntax literals (contains '.', exponent markers).
+func ParseIntegerLiteral(s string) (int64, bool) {
+	if s == "" || strings.ContainsAny(s, ".eEpP") {
+		return 0, false
+	}
+	i, err := strconv.ParseInt(s, 0, 64)
+	if err != nil {
+		return 0, false
+	}
+	return i, true
 }
