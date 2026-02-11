@@ -133,6 +133,21 @@ func TestParseNumber_InvalidHex(t *testing.T) {
 	}
 }
 
+func TestParseNumber_HexFloat(t *testing.T) {
+	result := ParseNumber("0x1p2")
+	lit, ok := result.(*typ.Literal)
+	if !ok {
+		t.Fatalf("ParseNumber(hex float) should return Literal, got %T", result)
+	}
+	if lit.Base != kind.Number {
+		t.Fatalf("ParseNumber(hex float) should have Base Number, got %v", lit.Base)
+	}
+	val, ok := lit.Value.(float64)
+	if !ok || val != 4 {
+		t.Fatalf("ParseNumber(hex float) value = %v, want 4.0", lit.Value)
+	}
+}
+
 func TestIsIntegerLiteral(t *testing.T) {
 	tests := []struct {
 		input string
@@ -142,6 +157,8 @@ func TestIsIntegerLiteral(t *testing.T) {
 		{"42", true},
 		{"0x10", true},
 		{"0XFF", true},
+		{"08", true},
+		{"0x1p2", false},
 		{"3.14", false},
 		{"1.0", false},
 		{"1e5", false},
@@ -167,6 +184,7 @@ func TestParseNumberValue_Integer(t *testing.T) {
 		{"42", 42, true},
 		{"0x10", 16, true},
 		{"0xFF", 255, true},
+		{"08", 8, true},
 	}
 	for _, tt := range tests {
 		val, isInt := ParseNumberValue(tt.input)
@@ -188,6 +206,7 @@ func TestParseNumberValue_Float(t *testing.T) {
 		{"3.14", 3.14},
 		{"0.5", 0.5},
 		{"1e10", 1e10},
+		{"0x1p2", 4},
 	}
 	for _, tt := range tests {
 		val, isInt := ParseNumberValue(tt.input)

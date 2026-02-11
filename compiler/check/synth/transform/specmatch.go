@@ -1,11 +1,10 @@
 package transform
 
 import (
-	"strconv"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -125,20 +124,17 @@ func exprMatchesLiteral(expr ast.Expr, lit *typ.Literal) bool {
 			return v.Value == s
 		}
 	case *ast.NumberExpr:
-		if i, ok := lit.Value.(int64); ok {
-			if parsed, ok := parseIntLiteral(v.Value); ok {
-				return parsed == i
+		switch val := lit.Value.(type) {
+		case int64:
+			if parsed, ok := numparse.ParseIntegerLiteral(v.Value); ok {
+				return parsed == val
+			}
+		case float64:
+			if parsed, ok := numparse.ParseFloatLiteral(v.Value); ok {
+				return parsed == val
 			}
 		}
 	}
 
 	return false
-}
-
-func parseIntLiteral(s string) (int64, bool) {
-	i, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return i, true
 }

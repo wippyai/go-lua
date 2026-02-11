@@ -50,6 +50,34 @@ func TestConstValueFromExpr_Float(t *testing.T) {
 	}
 }
 
+func TestConstValueFromExpr_NumberLeadingZeroDecimal(t *testing.T) {
+	expr := &ast.NumberExpr{Value: "08"}
+	val := constprop.ConstValueFromExpr(expr)
+	if val == nil {
+		t.Fatal("constprop.ConstValueFromExpr(08) returned nil")
+	}
+	if val.Kind != flow.ConstInt {
+		t.Errorf("Kind = %v, want ConstInt", val.Kind)
+	}
+	if val.Int != 8 {
+		t.Errorf("Int = %d, want %d", val.Int, 8)
+	}
+}
+
+func TestConstValueFromExpr_HexFloat(t *testing.T) {
+	expr := &ast.NumberExpr{Value: "0x1p2"}
+	val := constprop.ConstValueFromExpr(expr)
+	if val == nil {
+		t.Fatal("constprop.ConstValueFromExpr(0x1p2) returned nil")
+	}
+	if val.Kind != flow.ConstFloat {
+		t.Errorf("Kind = %v, want ConstFloat", val.Kind)
+	}
+	if val.Float != 4 {
+		t.Errorf("Float = %f, want 4", val.Float)
+	}
+}
+
 func TestConstValueFromExpr_Nil(t *testing.T) {
 	val := constprop.ConstValueFromExpr(nil)
 	if val != nil {
@@ -111,10 +139,14 @@ func TestParseIntLiteral(t *testing.T) {
 		ok    bool
 	}{
 		{"42", 42, true},
+		{"08", 8, true},
+		{"0xDEAD", 0xDEAD, true},
 		{"0", 0, true},
 		{"-1", -1, true},
 		{"123456", 123456, true},
 		{"9223372036854775807", 9223372036854775807, true},
+		{"1e3", 0, false},
+		{"0x1p2", 0, false},
 		{"3.14", 0, false},
 		{"abc", 0, false},
 		{"", 0, false},
@@ -141,6 +173,7 @@ func TestParseFloatLiteral(t *testing.T) {
 		{"0.0", 0.0, true},
 		{"-1.5", -1.5, true},
 		{"1e10", 1e10, true},
+		{"0x1p2", 4, true},
 		{"42", 42.0, true},
 		{"abc", 0, false},
 		{"", 0, false},

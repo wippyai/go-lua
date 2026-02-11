@@ -1,13 +1,12 @@
 package constprop
 
 import (
-	"strconv"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/numparse"
 )
 
 // CollectConstAssignments collects constant assignments from the graph
@@ -107,20 +106,12 @@ func ConstValueEqual(a, b *flow.ConstValue) bool {
 
 // ParseIntLiteral parses an integer literal string (supports decimal and hex).
 func ParseIntLiteral(s string) (int64, bool) {
-	i, err := strconv.ParseInt(s, 0, 64)
-	if err != nil {
-		return 0, false
-	}
-	return i, true
+	return numparse.ParseIntegerLiteral(s)
 }
 
 // ParseFloatLiteral parses a floating-point literal string.
 func ParseFloatLiteral(s string) (float64, bool) {
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, false
-	}
-	return f, true
+	return numparse.ParseFloatLiteral(s)
 }
 
 // propagateConstValues propagates constant values through the CFG using a worklist algorithm.

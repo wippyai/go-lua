@@ -4,10 +4,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/literal"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/numparse"
 )
 
 // NegateConstraints negates a slice of constraints.
@@ -104,7 +104,7 @@ func NegateNumericConstraint(c constraint.NumericConstraint) constraint.NumericC
 func IntConstFromExpr(expr ast.Expr) (int64, bool) {
 	switch v := expr.(type) {
 	case *ast.NumberExpr:
-		if i, ok := literal.ParseIntegerLiteral(v.Value); ok {
+		if i, ok := numparse.ParseIntegerLiteral(v.Value); ok {
 			return i, true
 		}
 	case *ast.UnaryMinusOpExpr:

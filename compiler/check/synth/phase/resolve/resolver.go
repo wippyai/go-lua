@@ -29,6 +29,7 @@ import (
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -326,10 +327,11 @@ func extractLiteralValue(expr ast.Expr) any {
 }
 
 func parseNumber(s string) (float64, error) {
-	// Simple number parsing - handles common cases
-	var f float64
-	_, err := fmt.Sscanf(s, "%f", &f)
-	return f, err
+	f, ok := numparse.ParseFloatLiteral(s)
+	if !ok {
+		return 0, fmt.Errorf("invalid number literal: %q", s)
+	}
+	return f, nil
 }
 
 func (r *Resolver) resolveNamed(name string, sc *scope.State) typ.Type {

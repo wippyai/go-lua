@@ -1,14 +1,12 @@
 package literal
 
 import (
-	"strconv"
-	"strings"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -24,10 +22,10 @@ func FromExpr(expr ast.Expr) (*typ.Literal, bool) {
 	case *ast.StringExpr:
 		return typ.LiteralString(v.Value), true
 	case *ast.NumberExpr:
-		if i, ok := ParseIntegerLiteral(v.Value); ok {
+		if i, ok := numparse.ParseIntegerLiteral(v.Value); ok {
 			return typ.LiteralInt(i), true
 		}
-		if f, err := strconv.ParseFloat(v.Value, 64); err == nil {
+		if f, ok := numparse.ParseFloatLiteral(v.Value); ok {
 			return typ.LiteralNumber(f), true
 		}
 	case *ast.TrueExpr:
@@ -106,46 +104,4 @@ func KeyTypeFromExpr(expr ast.Expr, constResolver func(string) *flow.ConstValue)
 	default:
 		return nil
 	}
-}
-
-// ParseNumberLiteral parses a number literal into int64 and float64 (supports hex).
-func ParseNumberLiteral(s string) (int64, float64, bool) {
-	if s == "" {
-		return 0, 0, false
-	}
-	if i, ok := ParseIntegerLiteral(s); ok {
-		return i, 0, true
-	}
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return 0, f, true
-	}
-	return 0, 0, false
-}
-
-// ParseIntegerLiteral parses integer-syntax numeric literals (decimal/hex).
-//
-// Returns false for float-syntax literals (contains '.', exponent markers).
-func ParseIntegerLiteral(s string) (int64, bool) {
-	if s == "" || strings.Contains(s, ".") {
-		return 0, false
-	}
-	lower := strings.ToLower(s)
-	if strings.HasPrefix(lower, "0x") || strings.HasPrefix(lower, "+0x") || strings.HasPrefix(lower, "-0x") {
-		if strings.ContainsAny(lower, "p") {
-			return 0, false
-		}
-		i, err := strconv.ParseInt(s, 0, 64)
-		if err != nil {
-			return 0, false
-		}
-		return i, true
-	}
-	if strings.ContainsAny(s, "eE") {
-		return 0, false
-	}
-	i, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return i, true
 }

@@ -279,6 +279,37 @@ func TestSelectIntercept_ZeroIndex(t *testing.T) {
 	}
 }
 
+func TestSelectIntercept_FractionalIndex(t *testing.T) {
+	s := &SelectIntercept{}
+	ex := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "select"},
+		Args: []ast.Expr{
+			&ast.NumberExpr{Value: "1.5"},
+			&ast.StringExpr{Value: "a"},
+			&ast.StringExpr{Value: "b"},
+		},
+	}
+	selectFn := typ.Func().
+		Param("index", typ.Any).
+		Variadic(typ.Any).
+		Returns(typ.Any).
+		Effects(effect.WithVariadicTransform()).
+		Build()
+	ctx := CallEnv{
+		TypeLookup: func(name string) typ.Type {
+			if name == "select" {
+				return selectFn
+			}
+			return nil
+		},
+		Recurse: func(ast.Expr) typ.Type { return typ.String },
+	}
+	result := s.InterceptCall(ex, ctx)
+	if result.Skip {
+		t.Fatal("expected skip=false for fractional index")
+	}
+}
+
 func TestIsSelectCall_NilExpr_ReturnsFalse(t *testing.T) {
 	if isSelectCall(nil, CallEnv{}) {
 		t.Fatal("expected false for nil expr")

@@ -1,10 +1,9 @@
 package intercept
 
 import (
-	"strconv"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -80,11 +79,13 @@ func (s *SelectIntercept) selectReturnType(ex *ast.FuncCallExpr, ctx CallEnv) ty
 
 	// If selecting a concrete index, use the type of that argument.
 	if num, ok := ex.Args[0].(*ast.NumberExpr); ok {
-		if idx, err := strconv.ParseFloat(num.Value, 64); err == nil {
-			i := int(idx) - 1
-			if i >= 0 && i < len(ex.Args)-1 && ctx.Recurse != nil {
-				return ctx.Recurse(ex.Args[i+1])
-			}
+		idx, ok := numparse.ParseIntegerLiteral(num.Value)
+		if !ok || idx <= 0 {
+			return nil
+		}
+		i := int(idx) - 1
+		if i >= 0 && i < len(ex.Args)-1 && ctx.Recurse != nil {
+			return ctx.Recurse(ex.Args[i+1])
 		}
 	}
 
