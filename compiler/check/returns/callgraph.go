@@ -6,9 +6,31 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	synthresolve "github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
+
+func canonicalLocalSymbol(
+	localFuncs map[cfg.SymbolID]*LocalFuncInfo,
+	moduleBindings *bind.BindingTable,
+	bindings *bind.BindingTable,
+	expr ast.Expr,
+	raw cfg.SymbolID,
+) cfg.SymbolID {
+	return checkcallsite.CanonicalSymbolFromExpr(
+		expr,
+		raw,
+		moduleBindings,
+		bindings,
+		func(sym cfg.SymbolID) bool {
+			_, ok := localFuncs[sym]
+			return ok
+		},
+	)
+}
 
 // PropagateParamHintsFromCallGraph propagates parameter type hints through
 // inner function call graphs.
@@ -50,8 +72,139 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 		}
 	}
 
+	sigCache := make(map[cfg.SymbolID]*typ.Function, len(localFuncs))
+	resolveLocalSignature := func(info *LocalFuncInfo) *typ.Function {
+		if info == nil || info.Sym == 0 {
+			return nil
+		}
+		if cached, ok := sigCache[info.Sym]; ok {
+			return cached
+		}
+		if info.Fn == nil {
+			sigCache[info.Sym] = nil
+			return nil
+		}
+		bindings := (*bind.BindingTable)(nil)
+		if info.Graph != nil {
+			bindings = info.Graph.Bindings()
+		}
+		resolver := synthresolve.New(synthresolve.Config{Bindings: bindings})
+		sig := resolver.ResolveFunctionSignature(info.Fn, info.DefScope)
+		sigCache[info.Sym] = sig
+		return sig
+	}
+
+	parentGraphs := make(map[uint64]*cfg.Graph)
+	moduleBindings := (*bind.BindingTable)(nil)
+	for _, sym := range SortedLocalFuncSymbols(localFuncs) {
+		info := localFuncs[sym]
+		if info == nil || info.ParentGraph == nil {
+			continue
+		}
+		parentGraphs[info.ParentGraph.ID()] = info.ParentGraph
+		if moduleBindings == nil {
+			moduleBindings = info.ParentGraph.Bindings()
+		}
+	}
+
 	for round := 0; round < len(localFuncs); round++ {
 		changed := false
+		processCall := func(ci *cfg.CallInfo, bindings *bind.BindingTable) {
+			if ci == nil {
+				return
+			}
+			calleeSym := canonicalLocalSymbol(localFuncs, moduleBindings, bindings, ci.Callee, ci.CalleeSymbol)
+			if calleeSym == 0 {
+				return
+			}
+			callee := localFuncs[calleeSym]
+			if callee == nil || len(ci.Args) == 0 {
+				return
+			}
+			calleeSig := resolveLocalSignature(callee)
+
+			for i, arg := range ci.Args {
+				if arg == nil {
+					continue
+				}
+
+				var argType typ.Type
+
+				// Type literal arguments directly.
+				switch arg.(type) {
+				case *ast.NumberExpr:
+					argType = typ.Number
+				case *ast.StringExpr:
+					argType = typ.String
+				case *ast.TrueExpr, *ast.FalseExpr:
+					argType = typ.Boolean
+				case *ast.NilExpr:
+					argType = typ.Nil
+				}
+
+				// For identifiers, check if the ident refers to a caller
+				// parameter with a known hint.
+				if argType == nil {
+					if ident, ok := arg.(*ast.IdentExpr); ok && bindings != nil {
+						if sym, found := bindings.SymbolOf(ident); found {
+							if ref, isParam := paramOwner[sym]; isParam {
+								if ref.index < len(ref.owner.ParamHints) {
+									argType = ref.owner.ParamHints[ref.index]
+								}
+							}
+						}
+					}
+				}
+
+				// If a local function is passed as an argument and the callee has
+				// a function-typed parameter annotation at this position, propagate
+				// those parameter types as hints to the passed local function.
+				if calleeSig != nil && i < len(calleeSig.Params) {
+					if expectedFn := unwrap.Function(calleeSig.Params[i].Type); expectedFn != nil {
+						argSym := canonicalLocalSymbol(localFuncs, moduleBindings, bindings, arg, 0)
+						if argSym != 0 {
+							if argLocal := localFuncs[argSym]; argLocal != nil {
+								if mergeFunctionParamHints(argLocal, expectedFn) {
+									changed = true
+								}
+							}
+						}
+					}
+				}
+
+				argType = typ.PruneSoftUnionMembers(argType)
+				if !paramhints.IsInformativeHintType(argType) {
+					continue
+				}
+
+				if callee.ParamHints == nil {
+					callee.ParamHints = make([]typ.Type, len(ci.Args))
+				} else if i >= len(callee.ParamHints) {
+					expanded := make([]typ.Type, i+1)
+					copy(expanded, callee.ParamHints)
+					callee.ParamHints = expanded
+				}
+
+				prev := callee.ParamHints[i]
+				joined := JoinInterprocTypes(prev, argType)
+				if !typ.TypeEquals(prev, joined) {
+					callee.ParamHints[i] = joined
+					changed = true
+				}
+			}
+		}
+
+		// Parent-graph calls (e.g. chunk-level calls to local/nested functions)
+		// provide the first wave of hints into local function params.
+		for _, g := range parentGraphs {
+			if g == nil {
+				continue
+			}
+			bindings := g.Bindings()
+			g.EachCallSite(func(_ cfg.Point, ci *cfg.CallInfo) {
+				processCall(ci, bindings)
+			})
+		}
 
 		for _, sym := range SortedLocalFuncSymbols(localFuncs) {
 			info := localFuncs[sym]
@@ -59,84 +212,8 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 				continue
 			}
 			bindings := info.Graph.Bindings()
-
-			processCall := func(ci *cfg.CallInfo) {
-				if ci == nil {
-					return
-				}
-				calleeSym := ci.CalleeSymbol
-				if calleeSym == 0 {
-					if ident, ok := ci.Callee.(*ast.IdentExpr); ok && bindings != nil {
-						if sym, found := bindings.SymbolOf(ident); found && sym != 0 {
-							calleeSym = sym
-						}
-					}
-				}
-				if calleeSym == 0 {
-					return
-				}
-				callee := localFuncs[calleeSym]
-				if callee == nil || len(ci.Args) == 0 {
-					return
-				}
-
-				for i, arg := range ci.Args {
-					if arg == nil {
-						continue
-					}
-
-					var argType typ.Type
-
-					// Type literal arguments directly.
-					switch arg.(type) {
-					case *ast.NumberExpr:
-						argType = typ.Number
-					case *ast.StringExpr:
-						argType = typ.String
-					case *ast.TrueExpr, *ast.FalseExpr:
-						argType = typ.Boolean
-					case *ast.NilExpr:
-						argType = typ.Nil
-					}
-
-					// For identifiers, check if the ident refers to a caller
-					// parameter with a known hint.
-					if argType == nil {
-						if ident, ok := arg.(*ast.IdentExpr); ok && bindings != nil {
-							if sym, found := bindings.SymbolOf(ident); found {
-								if ref, isParam := paramOwner[sym]; isParam {
-									if ref.index < len(ref.owner.ParamHints) {
-										argType = ref.owner.ParamHints[ref.index]
-									}
-								}
-							}
-						}
-					}
-
-					argType = typ.PruneSoftUnionMembers(argType)
-					if !paramhints.IsInformativeHintType(argType) {
-						continue
-					}
-
-					if callee.ParamHints == nil {
-						callee.ParamHints = make([]typ.Type, len(ci.Args))
-					} else if i >= len(callee.ParamHints) {
-						expanded := make([]typ.Type, i+1)
-						copy(expanded, callee.ParamHints)
-						callee.ParamHints = expanded
-					}
-
-					prev := callee.ParamHints[i]
-					joined := JoinInterprocTypes(prev, argType)
-					if !typ.TypeEquals(prev, joined) {
-						callee.ParamHints[i] = joined
-						changed = true
-					}
-				}
-			}
-
 			info.Graph.EachCallSite(func(_ cfg.Point, ci *cfg.CallInfo) {
-				processCall(ci)
+				processCall(ci, bindings)
 			})
 		}
 
@@ -144,6 +221,34 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 			break
 		}
 	}
+}
+
+func mergeFunctionParamHints(target *LocalFuncInfo, expectedFn *typ.Function) bool {
+	if target == nil || expectedFn == nil || len(expectedFn.Params) == 0 {
+		return false
+	}
+	changed := false
+	if target.ParamHints == nil {
+		target.ParamHints = make([]typ.Type, len(expectedFn.Params))
+	} else if len(expectedFn.Params) > len(target.ParamHints) {
+		expanded := make([]typ.Type, len(expectedFn.Params))
+		copy(expanded, target.ParamHints)
+		target.ParamHints = expanded
+	}
+
+	for i, param := range expectedFn.Params {
+		hint := typ.PruneSoftUnionMembers(param.Type)
+		if !paramhints.IsInformativeHintType(hint) {
+			continue
+		}
+		prev := target.ParamHints[i]
+		joined := JoinInterprocTypes(prev, hint)
+		if !typ.TypeEquals(prev, joined) {
+			target.ParamHints[i] = joined
+			changed = true
+		}
+	}
+	return changed
 }
 
 // BuildLocalCallGraph builds a dependency graph for local functions in a scope group.
@@ -170,40 +275,70 @@ func BuildLocalCallGraph(
 		if callInfo == nil {
 			return 0
 		}
-		calleeSym := callInfo.CalleeSymbol
-		if calleeSym != 0 {
-			return calleeSym
-		}
-		ident, ok := callInfo.Callee.(*ast.IdentExpr)
-		if !ok || ident == nil {
-			return 0
-		}
-		if bindings != nil {
-			if sym, found := bindings.SymbolOf(ident); found && sym != 0 {
-				return sym
-			}
-		}
-		if moduleBindings != nil {
-			if sym, found := moduleBindings.SymbolOf(ident); found && sym != 0 {
-				return sym
-			}
-		}
-		return 0
+		return canonicalLocalSymbol(localFuncs, moduleBindings, bindings, callInfo.Callee, callInfo.CalleeSymbol)
 	}
 
-	addEdge := func(seen map[cfg.SymbolID]bool, callees *[]cfg.SymbolID, callInfo *cfg.CallInfo, bindings *bind.BindingTable) {
+	sigCache := make(map[cfg.SymbolID]*typ.Function, len(localFuncs))
+	resolveLocalSignature := func(sym cfg.SymbolID) *typ.Function {
+		if sym == 0 {
+			return nil
+		}
+		if cached, ok := sigCache[sym]; ok {
+			return cached
+		}
+		info := localFuncs[sym]
+		if info == nil || info.Fn == nil {
+			sigCache[sym] = nil
+			return nil
+		}
+		bindings := (*bind.BindingTable)(nil)
+		if info.Graph != nil {
+			bindings = info.Graph.Bindings()
+		}
+		resolver := synthresolve.New(synthresolve.Config{Bindings: bindings})
+		sig := resolver.ResolveFunctionSignature(info.Fn, info.DefScope)
+		sigCache[sym] = sig
+		return sig
+	}
+
+	addEdge := func(seen map[cfg.SymbolID]bool, callees *[]cfg.SymbolID, sym cfg.SymbolID) {
+		if sym == 0 {
+			return
+		}
+		if _, isLocal := localFuncs[sym]; !isLocal {
+			return
+		}
+		if seen[sym] {
+			return
+		}
+		seen[sym] = true
+		*callees = append(*callees, sym)
+	}
+
+	addEdgesFromCall := func(seen map[cfg.SymbolID]bool, callees *[]cfg.SymbolID, callInfo *cfg.CallInfo, bindings *bind.BindingTable) {
 		calleeSym := resolveCalleeSym(callInfo, bindings)
 		if calleeSym == 0 {
 			return
 		}
-		if _, isLocal := localFuncs[calleeSym]; !isLocal {
+		addEdge(seen, callees, calleeSym)
+
+		// Callback arguments induce return-summary dependencies too:
+		// caller -> callback function symbol if callee parameter is function-typed.
+		calleeSig := resolveLocalSignature(calleeSym)
+		if calleeSig == nil || len(calleeSig.Params) == 0 || callInfo == nil {
 			return
 		}
-		if seen[calleeSym] {
-			return
+		for paramIdx, param := range calleeSig.Params {
+			if unwrap.Function(param.Type) == nil {
+				continue
+			}
+			arg := checkcallsite.RuntimeArgAt(callInfo, paramIdx)
+			if arg == nil {
+				continue
+			}
+			argSym := canonicalLocalSymbol(localFuncs, moduleBindings, bindings, arg, 0)
+			addEdge(seen, callees, argSym)
 		}
-		seen[calleeSym] = true
-		*callees = append(*callees, calleeSym)
 	}
 
 	for _, sym := range SortedLocalFuncSymbols(localFuncs) {
@@ -216,7 +351,7 @@ func BuildLocalCallGraph(
 		bindings := info.Graph.Bindings()
 
 		info.Graph.EachCallSite(func(_ cfg.Point, callInfo *cfg.CallInfo) {
-			addEdge(seen, &callees, callInfo, bindings)
+			addEdgesFromCall(seen, &callees, callInfo, bindings)
 		})
 
 		if len(callees) > 1 {

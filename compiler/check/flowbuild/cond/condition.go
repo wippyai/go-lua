@@ -51,11 +51,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/sibling"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -901,23 +899,6 @@ func ExtractReturnExprConstraints(expr ast.Expr, p cfg.Point, sc *scope.State, i
 	return flow.ReturnExprConstraints{
 		OnTrue: cond,
 	}
-}
-
-// isPredicateExpr checks if an expression is a predicate.
-func isPredicateExpr(expr ast.Expr, p cfg.Point, synthFunc func(ast.Expr, cfg.Point) typ.Type) bool {
-	if synthFunc != nil {
-		exprType := synthFunc(expr, p)
-		if exprType != nil {
-			if exprType.Kind() == kind.Boolean {
-				return true
-			}
-			if ops.IsLiteralBoolean(exprType) {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 // ChannelValueConstraint emits a HasType constraint for result.value when

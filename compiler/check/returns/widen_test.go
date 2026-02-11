@@ -3,7 +3,9 @@ package returns
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -183,5 +185,58 @@ func TestMergeFuncTypes_PrefersWiderSupertypeOnSubtypeRelation(t *testing.T) {
 	merged = mergeFuncTypes(typ.Number, typ.Integer)
 	if !typ.TypeEquals(merged, typ.Number) {
 		t.Fatalf("expected wider supertype number, got %v", merged)
+	}
+}
+
+func TestWidenLiteralSigs_DoesNotNarrowComparableSignature(t *testing.T) {
+	lit := &ast.FunctionExpr{}
+
+	prev := api.LiteralSigs{
+		lit: typ.Func().Returns(typ.Number).Build(),
+	}
+	next := api.LiteralSigs{
+		lit: typ.Func().Returns(typ.Integer).Build(),
+	}
+
+	merged := WidenLiteralSigs(prev, next)
+	got := merged[lit]
+	if got == nil {
+		t.Fatal("expected merged literal signature")
+	}
+	if len(got.Returns) != 1 {
+		t.Fatalf("expected one return, got %d", len(got.Returns))
+	}
+	if !subtype.IsSubtype(prev[lit].Returns[0], got.Returns[0]) {
+		t.Fatalf("expected merged return to be supertype of prev (%v), got %v", prev[lit].Returns[0], got.Returns[0])
+	}
+	if !subtype.IsSubtype(next[lit].Returns[0], got.Returns[0]) {
+		t.Fatalf("expected merged return to be supertype of next (%v), got %v", next[lit].Returns[0], got.Returns[0])
+	}
+	if typ.TypeEquals(got.Returns[0], next[lit].Returns[0]) {
+		t.Fatalf("expected merged return not to regress to narrower next-only type %v", got.Returns[0])
+	}
+}
+
+func TestWidenLiteralSigs_PrefersMergedSameShapeSignature(t *testing.T) {
+	lit := &ast.FunctionExpr{}
+
+	prev := api.LiteralSigs{
+		lit: typ.Func().Returns(typ.String).Build(),
+	}
+	next := api.LiteralSigs{
+		lit: typ.Func().Returns(typ.Integer).Build(),
+	}
+
+	merged := WidenLiteralSigs(prev, next)
+	got := merged[lit]
+	if got == nil {
+		t.Fatal("expected merged literal signature")
+	}
+	if len(got.Returns) != 1 {
+		t.Fatalf("expected one return, got %d", len(got.Returns))
+	}
+	want := typ.NewUnion(typ.String, typ.Integer)
+	if !typ.TypeEquals(got.Returns[0], want) {
+		t.Fatalf("expected merged return %v, got %v", want, got.Returns[0])
 	}
 }

@@ -89,6 +89,26 @@ func NewUnion(members ...Type) Type {
 		return Unknown
 	}
 
+	// Primitive subsumption:
+	// number subsumes integer in the lattice, so keep number only.
+	hasNumberType := false
+	for _, m := range unique {
+		if m.Kind() == kind.Number {
+			hasNumberType = true
+			break
+		}
+	}
+	if hasNumberType {
+		filtered := unique[:0]
+		for _, m := range unique {
+			if m.Kind() == kind.Integer {
+				continue
+			}
+			filtered = append(filtered, m)
+		}
+		unique = filtered
+	}
+
 	// Subsume literals: if a base type is present, drop literal members with matching base.
 	// e.g. string | "" => string, number | 42 => number
 	var baseMask uint8
@@ -115,7 +135,7 @@ func NewUnion(members ...Type) Type {
 				case kind.Number:
 					drop = baseMask&2 != 0
 				case kind.Integer:
-					drop = baseMask&4 != 0
+					drop = baseMask&4 != 0 || baseMask&2 != 0
 				case kind.Boolean:
 					drop = baseMask&8 != 0
 				}

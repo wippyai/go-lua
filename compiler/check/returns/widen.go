@@ -387,14 +387,35 @@ func WidenLiteralSigs(prev, next api.LiteralSigs) api.LiteralSigs {
 	}
 	for fn, sig := range next {
 		if existing := merged[fn]; existing != nil {
-			if sig != nil {
-				merged[fn] = maybeWidenFunctionForConvergence(sig)
-			}
+			merged[fn] = maybeWidenFunctionForConvergence(mergeLiteralSig(existing, sig))
 		} else {
 			merged[fn] = maybeWidenFunctionForConvergence(sig)
 		}
 	}
 	return merged
+}
+
+func mergeLiteralSig(prev, next *typ.Function) *typ.Function {
+	if prev == nil {
+		return next
+	}
+	if next == nil {
+		return prev
+	}
+	if merged, ok := mergeFunctionReturnsIfSameShape(prev, next); ok {
+		if fn, ok := merged.(*typ.Function); ok {
+			return fn
+		}
+	}
+	if subtype.IsSubtype(prev, next) {
+		return next
+	}
+	if subtype.IsSubtype(next, prev) {
+		return prev
+	}
+	// Literal signatures are constrained to *typ.Function. For incomparable
+	// function shapes, keep the prior stable signature instead of narrowing.
+	return prev
 }
 
 // WidenCapturedTypes merges two captured type maps using monotone join.

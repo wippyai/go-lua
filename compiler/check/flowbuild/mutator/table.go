@@ -3,6 +3,7 @@ package mutator
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/literal"
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -25,7 +26,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 
 	bindings := fc.Graph.Bindings()
 
-	fc.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	fc.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
@@ -34,8 +35,8 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 			return
 		}
 
-		targetExpr := ArgAtCall(info.Args, tm.Target.Index)
-		valueExpr := ArgAtCall(info.Args, tm.Value.Index)
+		targetExpr := RuntimeArgAtCall(info, tm.Target.Index)
+		valueExpr := RuntimeArgAtCall(info, tm.Value.Index)
 		if targetExpr == nil || valueExpr == nil {
 			return
 		}
@@ -117,13 +118,7 @@ func TableMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, 
 		return nil
 	}
 
-	var fnType typ.Type
-	if synth != nil && info.Callee != nil && info.Method == "" && info.Receiver == nil {
-		fnType = synth(info.Callee, p)
-	}
-	if fnType == nil && info.CalleeSymbol != 0 && symResolver != nil {
-		fnType, _ = symResolver(p, info.CalleeSymbol)
-	}
+	fnType := resolve.CalleeType(info, p, synth, symResolver, nil)
 	if fnType == nil {
 		return nil
 	}
@@ -137,16 +132,12 @@ func TableMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, 
 
 // ArgAtCall returns the argument at the given index, supporting negative indices from end.
 func ArgAtCall(args []ast.Expr, idx int) ast.Expr {
-	if len(args) == 0 {
-		return nil
-	}
-	if idx < 0 {
-		idx = len(args) + idx
-	}
-	if idx < 0 || idx >= len(args) {
-		return nil
-	}
-	return args[idx]
+	return callsite.PositionalArgAt(args, idx)
+}
+
+// RuntimeArgAtCall returns the runtime argument (receiver-aware) for effect parameter indices.
+func RuntimeArgAtCall(info *cfg.CallInfo, idx int) ast.Expr {
+	return callsite.RuntimeArgAt(info, idx)
 }
 
 func keyTypeFromExpr(expr ast.Expr, constResolver func(string) *flow.ConstValue) typ.Type {

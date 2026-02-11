@@ -82,13 +82,25 @@ func TestCollectExprSymbols_IdentExpr(t *testing.T) {
 }
 
 func TestCollectExprSymbols_AttrGetExpr(t *testing.T) {
-	bindings := &bind.BindingTable{}
+	bindings := bind.NewBindingTable()
+	base := &ast.IdentExpr{Value: "obj"}
+	baseSym := cfg.SymbolID(301)
+	bindings.Bind(base, baseSym)
+	bindings.SetName(baseSym, "obj")
+	fieldSym := bindings.GetOrCreateFieldSymbol(baseSym, "field")
+
 	var refs []cfg.SymbolID
 	expr := &ast.AttrGetExpr{
-		Object: &ast.IdentExpr{Value: "obj"},
+		Object: base,
 		Key:    &ast.StringExpr{Value: "field"},
 	}
 	collectExprSymbols(expr, bindings, &refs)
+	if !hasSymbol(refs, fieldSym) {
+		t.Fatalf("expected refs to include field symbol %d, got %v", fieldSym, refs)
+	}
+	if !hasSymbol(refs, baseSym) {
+		t.Fatalf("expected refs to include base symbol %d, got %v", baseSym, refs)
+	}
 }
 
 func TestCollectExprSymbols_FuncCallExpr(t *testing.T) {
@@ -180,4 +192,62 @@ func TestCollectExprSymbols_Comma3Expr(t *testing.T) {
 	if len(refs) != 0 {
 		t.Errorf("expected no refs for Comma3Expr, got %d", len(refs))
 	}
+}
+
+func TestJoinInferredType_StabilizesSelfEmbeddingFromUnknown(t *testing.T) {
+	old := typ.Unknown
+	next := typ.NewArray(typ.Unknown)
+
+	got := joinInferredType(old, next)
+	if !typ.TypeEquals(got, next) {
+		t.Fatalf("joinInferredType(unknown, any[]) = %v, want %v", got, next)
+	}
+}
+
+func TestJoinInferredType_StopsRecursiveNestingGrowth(t *testing.T) {
+	old := typ.NewArray(typ.Unknown)
+	next := typ.NewArray(old)
+
+	got := joinInferredType(old, next)
+	if !typ.TypeEquals(got, old) {
+		t.Fatalf("joinInferredType(any[], any[][]) = %v, want %v", got, old)
+	}
+}
+
+func TestTypeContains(t *testing.T) {
+	base := typ.NewArray(typ.Unknown)
+	outer := typ.NewArray(base)
+	if !typeContains(outer, base) {
+		t.Fatal("expected typeContains(any[][], any[]) to be true")
+	}
+	if typeContains(typ.Number, base) {
+		t.Fatal("expected typeContains(number, any[]) to be false")
+	}
+}
+
+func TestMergeSpecTypesSoft_IgnoresUnknownAndNilOverrides(t *testing.T) {
+	sym := cfg.SymbolID(1)
+	base := api.SpecTypes{
+		sym: typ.NewOptional(typ.LuaError),
+	}
+	override := api.SpecTypes{
+		sym: typ.Nil,
+	}
+	merged := mergeSpecTypesSoft(base, override)
+	got, ok := merged[sym]
+	if !ok || got == nil {
+		t.Fatalf("expected merged type for symbol %d", sym)
+	}
+	if !typ.TypeEquals(got, base[sym]) {
+		t.Fatalf("merged type = %v, want %v", got, base[sym])
+	}
+}
+
+func hasSymbol(refs []cfg.SymbolID, sym cfg.SymbolID) bool {
+	for _, r := range refs {
+		if r == sym {
+			return true
+		}
+	}
+	return false
 }

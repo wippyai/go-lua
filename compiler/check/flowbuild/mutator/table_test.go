@@ -4,8 +4,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestExtractTableMutatorAssignments_NilGraph(t *testing.T) {
@@ -89,9 +93,92 @@ func TestArgAtCall_OutOfBounds(t *testing.T) {
 	}
 }
 
+func TestRuntimeArgAtCall_MethodCall(t *testing.T) {
+	recv := &ast.IdentExpr{Value: "self"}
+	arg := &ast.NumberExpr{Value: "1"}
+	info := &cfg.CallInfo{
+		Method:   "push",
+		Receiver: recv,
+		Args:     []ast.Expr{arg},
+	}
+
+	if got := RuntimeArgAtCall(info, 0); got != recv {
+		t.Fatal("expected receiver at runtime index 0")
+	}
+	if got := RuntimeArgAtCall(info, 1); got != arg {
+		t.Fatal("expected first arg at runtime index 1")
+	}
+}
+
+func TestTableMutatorFromCall_MethodCallWithCalleeSymbol(t *testing.T) {
+	spec := contract.NewSpec().WithEffects(effect.TableMutator{
+		Target: effect.ParamRef{Index: 0},
+		Value:  effect.ParamRef{Index: 1},
+	})
+	fnType := typ.Func().
+		Param("target", typ.Any).
+		Param("value", typ.Any).
+		Returns(typ.Nil).
+		Spec(spec).
+		Build()
+
+	info := &cfg.CallInfo{
+		Method:       "push",
+		Receiver:     &ast.IdentExpr{Value: "t"},
+		CalleeSymbol: 42,
+	}
+
+	got := TableMutatorFromCall(
+		info,
+		0,
+		nil,
+		func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+			if sym == 42 {
+				return fnType, true
+			}
+			return nil, false
+		},
+	)
+	if got == nil {
+		t.Fatal("expected table mutator for method callee symbol")
+	}
+	if got.Target.Index != 0 || got.Value.Index != 1 {
+		t.Fatalf("unexpected mutator indices: target=%d value=%d", got.Target.Index, got.Value.Index)
+	}
+}
+
 func TestKeyTypeFromExpr_NilExpr(t *testing.T) {
 	result := keyTypeFromExpr(nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil expr")
+	}
+}
+
+func TestExtractTableMutatorAssignments_AssignmentCallSite(t *testing.T) {
+	code := `
+		local t = {}
+		local _ = table.insert(t, 1)
+	`
+	graph := buildGraph(t, code, "table")
+	inputs := &flow.Inputs{
+		Graph: graph,
+	}
+
+	ExtractTableMutatorAssignments(&core.FlowContext{
+		Graph: graph,
+		Derived: &core.Derived{
+			Synth: tableInsertSynth(),
+		},
+	}, inputs)
+
+	if len(inputs.TableMutatorAssignments) != 1 {
+		t.Fatalf("expected 1 table mutator assignment, got %d", len(inputs.TableMutatorAssignments))
+	}
+	symT, ok := graph.SymbolAt(graph.Exit(), "t")
+	if !ok || symT == 0 {
+		t.Fatal("expected symbol for t")
+	}
+	if inputs.TableMutatorAssignments[0].Target.Symbol != symT {
+		t.Fatalf("expected target symbol %d, got %d", symT, inputs.TableMutatorAssignments[0].Target.Symbol)
 	}
 }

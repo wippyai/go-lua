@@ -48,6 +48,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -62,7 +63,6 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 )
 
 // Config holds dependencies for return inference.
@@ -123,19 +123,16 @@ func (i *Inferencer) collectLocalFunctions(
 	localFuncs := make(map[cfg.SymbolID]*returns.LocalFuncInfo)
 
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil || !info.IsLocal || len(info.Targets) == 0 || len(info.Sources) == 0 {
+		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
 			return
 		}
-		for idx, target := range info.Targets {
+		info.EachTargetSource(func(idx int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
+				return
 			}
-			if idx >= len(info.Sources) {
-				continue
-			}
-			fnExpr, ok := info.Sources[idx].(*ast.FunctionExpr)
+			fnExpr, ok := source.(*ast.FunctionExpr)
 			if !ok {
-				continue
+				return
 			}
 
 			fnGraph := (*cfg.Graph)(nil)
@@ -143,14 +140,15 @@ func (i *Inferencer) collectLocalFunctions(
 				fnGraph = i.graphs.GetOrBuildCFG(fnExpr)
 			}
 			localFuncs[target.Symbol] = &returns.LocalFuncInfo{
-				Sym:      target.Symbol,
-				Fn:       fnExpr,
-				DefScope: pointScopes[p],
-				Graph:    fnGraph,
-				ParentFn: parentFn,
-				DefPoint: p,
+				Sym:         target.Symbol,
+				Fn:          fnExpr,
+				DefScope:    pointScopes[p],
+				Graph:       fnGraph,
+				ParentGraph: graph,
+				ParentFn:    parentFn,
+				DefPoint:    p,
 			}
-		}
+		})
 	})
 
 	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
@@ -165,12 +163,13 @@ func (i *Inferencer) collectLocalFunctions(
 			fnGraph = i.graphs.GetOrBuildCFG(info.FuncExpr)
 		}
 		localFuncs[info.Symbol] = &returns.LocalFuncInfo{
-			Sym:      info.Symbol,
-			Fn:       info.FuncExpr,
-			DefScope: pointScopes[p],
-			Graph:    fnGraph,
-			ParentFn: parentFn,
-			DefPoint: p,
+			Sym:         info.Symbol,
+			Fn:          info.FuncExpr,
+			DefScope:    pointScopes[p],
+			Graph:       fnGraph,
+			ParentGraph: graph,
+			ParentFn:    parentFn,
+			DefPoint:    p,
 		}
 	})
 
@@ -276,6 +275,10 @@ func (i *Inferencer) computeReturnSummariesForGroup(
 		return nil, nil
 	}
 
+	// Propagate inter-procedural parameter hints across local call edges before
+	// SCC return inference so unannotated params get stable callsite-driven seeds.
+	returns.PropagateParamHintsFromCallGraph(localFuncs)
+
 	// Build call graph
 	adj := returns.BuildLocalCallGraph(localFuncs, i.store.ModuleBindings())
 
@@ -335,9 +338,15 @@ func (i *Inferencer) iterateSCCFixpoint(
 			oldReturn := summaries[sym]
 			merged := returns.JoinReturnVectorsPreferNonSoft(oldReturn, newReturn)
 			if returns.ReturnTypesRefine(newReturn, oldReturn) {
-				merged = newReturn
+				// Avoid shrinking to nil-only from a previously non-nil summary.
+				if !returns.ReturnTypesAllNil(newReturn) || returns.ReturnTypesAllNil(oldReturn) {
+					merged = newReturn
+				}
 			} else if returns.ReturnTypesRefine(oldReturn, newReturn) {
-				merged = oldReturn
+				// Prevent stale nil-only summaries from shadowing newly inferred dynamic returns.
+				if !returns.ReturnTypesAllNil(oldReturn) || returns.ReturnTypesAllNil(newReturn) {
+					merged = oldReturn
+				}
 			} else if returns.ReturnTypesExtendRecord(newReturn, oldReturn) {
 				merged = newReturn
 			} else if returns.ReturnTypesExtendRecord(oldReturn, newReturn) {
@@ -475,7 +484,16 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 		CurrentSym: ctx.info.Sym,
 		Services: siblings.OverlayServicesFuncs{
 			SeedTypeFn: func(fn *ast.FunctionExpr) typ.Type {
-				return returns.BuildSeedFunctionType(fn, ctx.engine, ctx.resolveScope)
+				var bindings interface {
+					ParamSymbols(*ast.FunctionExpr) []cfg.SymbolID
+					Name(cfg.SymbolID) string
+				}
+				if ctx.info != nil && ctx.info.Graph != nil {
+					if b := ctx.info.Graph.Bindings(); b != nil {
+						bindings = b
+					}
+				}
+				return returns.BuildSeedFunctionTypeWithBindings(fn, ctx.engine, ctx.resolveScope, bindings)
 			},
 		},
 	})
@@ -616,7 +634,7 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 				if sym == 0 || t == nil {
 					continue
 				}
-				if _, ok := overlay[sym]; ok {
+				if existing, ok := overlay[sym]; ok && existing != nil && !typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
 					continue
 				}
 				overlay[sym] = t
@@ -626,11 +644,42 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 	if ctx.parentFacts == nil {
 		return
 	}
+	resolveCapturedAnnotation := func(sym cfg.SymbolID) typ.Type {
+		parentGraph := ctx.info.ParentGraph
+		if parentGraph == nil || sym == 0 {
+			return nil
+		}
+		var annType typ.Type
+		parentGraph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+			if annType != nil || info == nil || !info.IsLocal || len(info.Targets) == 0 {
+				return
+			}
+			info.EachTarget(func(i int, target cfg.AssignTarget) {
+				if annType != nil || target.Kind != cfg.TargetIdent || target.Symbol != sym {
+					return
+				}
+				ann := info.TypeAnnotationAt(i)
+				if ann == nil {
+					return
+				}
+				resolveScope := ctx.info.DefScope
+				if resolveScope == nil {
+					resolveScope = ctx.resolveScope
+				}
+				annType = ctx.engine.ResolveType(ann, resolveScope)
+			})
+		})
+		return annType
+	}
 	for _, sym := range localBindings.CapturedSymbols(ctx.info.Fn) {
 		if sym == 0 {
 			continue
 		}
-		if _, ok := overlay[sym]; ok {
+		if existing, ok := overlay[sym]; ok && existing != nil && !typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
+			continue
+		}
+		if annType := resolveCapturedAnnotation(sym); annType != nil {
+			overlay[sym] = annType
 			continue
 		}
 		if tv := ctx.parentFacts.EffectiveTypeAt(defPoint, sym); tv.State == flow.StateResolved && tv.Type != nil {
@@ -747,8 +796,11 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 			return
 		}
 
-		if info.NumericFor != nil && len(info.Targets) > 0 {
-			target := info.Targets[0]
+		if info.NumericFor != nil {
+			target, ok := info.FirstTarget()
+			if !ok {
+				return
+			}
 			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
 				if _, exists := overlay[target.Symbol]; !exists {
 					overlay[target.Symbol] = typ.Integer
@@ -758,34 +810,34 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 
 		if len(info.IterExprs) > 0 && len(info.Targets) > 0 {
 			varTypes := ctx.engine.InferIterVarsWithSpecTypes(info.IterExprs, len(info.Targets), p, overlay)
-			for idx, target := range info.Targets {
+			info.EachTarget(func(idx int, target cfg.AssignTarget) {
 				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-					continue
+					return
 				}
 				if _, exists := overlay[target.Symbol]; exists {
-					continue
+					return
 				}
 				varType := typ.Unknown
 				if idx < len(varTypes) && varTypes[idx] != nil {
 					varType = varTypes[idx]
 				}
 				overlay[target.Symbol] = varType
-			}
+			})
 		}
 
-		for idx, target := range info.Targets {
+		info.EachTarget(func(idx int, target cfg.AssignTarget) {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
+				return
 			}
 			if _, exists := overlay[target.Symbol]; exists {
-				continue
+				return
 			}
-			if info.TypeAnnotations != nil && idx < len(info.TypeAnnotations) && info.TypeAnnotations[idx] != nil {
-				if resolved := ctx.engine.ResolveType(info.TypeAnnotations[idx], ctx.resolveScope); resolved != nil {
+			if ann := info.TypeAnnotationAt(idx); ann != nil {
+				if resolved := ctx.engine.ResolveType(ann, ctx.resolveScope); resolved != nil {
 					overlay[target.Symbol] = resolved
 				}
 			}
-		}
+		})
 	})
 
 }
@@ -978,7 +1030,10 @@ func (i *Inferencer) collectAndApplyMutations(
 		}
 		capturedByCallee = i.store.GetCapturedFieldAssignsSnapshot(fnGraph, capturedParent)
 	}
-	nestedFieldAssignments := returns.CollectCalledNestedFieldAssignments(fnGraph, nestedBindings, capturedByCallee)
+	calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
+		return resolve.CalleeType(info, p, enrichedSynthAdapter, nil, nil)
+	}
+	nestedFieldAssignments := returns.CollectCalledNestedFieldAssignments(fnGraph, nestedBindings, capturedByCallee, calleeTypeResolver)
 	returns.MergeFieldAssignments(fieldAssignments, nestedFieldAssignments)
 
 	returns.ApplyFieldMergeToOverlay(finalOverlay, fieldAssignments)
@@ -1069,7 +1124,6 @@ func collectReturnTypes(
 		}
 
 		types := synthesizeReturnExprs(synthEngine, retInfo, p)
-
 		if !seenReturn {
 			seenReturn = true
 			returnTypes = types
@@ -1129,7 +1183,7 @@ func joinReturnTypes(existing, incoming []typ.Type) []typ.Type {
 		} else {
 			t = typ.Nil
 		}
-		existing[i] = join.Two(existing[i], t)
+		existing[i] = returns.JoinReturnSlot(existing[i], t)
 	}
 	return existing
 }

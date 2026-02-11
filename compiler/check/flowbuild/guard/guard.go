@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -62,12 +63,8 @@ func ExtractTruthyPathKeys(expr ast.Expr, bindings *bind.BindingTable) []TruthyP
 			return []TruthyPathKey{{Symbol: sym, Field: ""}}
 		}
 	case *ast.AttrGetExpr:
-		if objIdent, ok := e.Object.(*ast.IdentExpr); ok {
-			if sym, ok := bindings.SymbolOf(objIdent); ok && sym != 0 {
-				if fieldName := AttrFieldName(e); fieldName != "" {
-					return []TruthyPathKey{{Symbol: sym, Field: fieldName}}
-				}
-			}
+		if sym, fieldPath, ok := callsite.FieldPathWithBaseSymbol(bindings, e); ok && sym != 0 && fieldPath != "" {
+			return []TruthyPathKey{{Symbol: sym, Field: fieldPath}}
 		}
 	case *ast.LogicalOpExpr:
 		if e.Operator == "and" {
@@ -119,20 +116,6 @@ func propagateTruthyGuards(graph *cfg.Graph, start cfg.Point, keys []TruthyPathK
 			}
 		}
 	}
-}
-
-// AttrFieldName extracts the field name from an attribute access expression.
-func AttrFieldName(attr *ast.AttrGetExpr) string {
-	if attr == nil || attr.Key == nil {
-		return ""
-	}
-	switch k := attr.Key.(type) {
-	case *ast.StringExpr:
-		return k.Value
-	case *ast.IdentExpr:
-		return k.Value
-	}
-	return ""
 }
 
 // NarrowTableFieldsByGuard narrows optional record fields using truthy guards.
@@ -188,19 +171,11 @@ func NarrowTableFieldsByGuard(
 		if !isAttr {
 			continue
 		}
-		objIdent, isIdent := attr.Object.(*ast.IdentExpr)
-		if !isIdent {
+		sym, fieldPath, ok := callsite.FieldPathWithBaseSymbol(bindings, attr)
+		if !ok || sym == 0 || fieldPath == "" {
 			continue
 		}
-		sym, found := bindings.SymbolOf(objIdent)
-		if !found || sym == 0 {
-			continue
-		}
-		fieldName := AttrFieldName(attr)
-		if fieldName == "" {
-			continue
-		}
-		key := TruthyPathKey{Symbol: sym, Field: fieldName}
+		key := TruthyPathKey{Symbol: sym, Field: fieldPath}
 		if guards[key] {
 			newFields[i].Type = opt.Inner
 			changed = true

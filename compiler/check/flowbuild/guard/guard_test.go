@@ -85,42 +85,51 @@ func TestExtractTruthyPathKeys_IdentExpr(t *testing.T) {
 	}
 }
 
-func TestAttrFieldName_NilInput(t *testing.T) {
-	result := guard.AttrFieldName(nil)
-	if result != "" {
-		t.Errorf("expected empty string for nil input, got %q", result)
+func TestExtractTruthyPathKeys_NestedAttrExpr(t *testing.T) {
+	expr := &ast.AttrGetExpr{
+		Object: &ast.AttrGetExpr{
+			Object: &ast.IdentExpr{Value: "event"},
+			Key:    &ast.IdentExpr{Value: "payload"},
+		},
+		Key: &ast.IdentExpr{Value: "from"},
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"event"}},
+		Stmts: []ast.Stmt{
+			&ast.IfStmt{Condition: expr, Then: []ast.Stmt{&ast.ReturnStmt{}}},
+		},
+	}
+	bindings := bind.Bind(fn, nil)
+
+	result := guard.ExtractTruthyPathKeys(expr, bindings)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(result))
+	}
+	base := expr.Object.(*ast.AttrGetExpr).Object.(*ast.IdentExpr)
+	sym, _ := bindings.SymbolOf(base)
+	if result[0].Symbol != sym {
+		t.Fatalf("expected symbol %d, got %d", sym, result[0].Symbol)
+	}
+	if result[0].Field != "payload.from" {
+		t.Fatalf("expected field payload.from, got %q", result[0].Field)
 	}
 }
 
-func TestAttrFieldName_NilKey(t *testing.T) {
-	attr := &ast.AttrGetExpr{Key: nil}
-	result := guard.AttrFieldName(attr)
-	if result != "" {
-		t.Errorf("expected empty string for nil key, got %q", result)
+func TestExtractTruthyPathKeys_DynamicAttrExpr(t *testing.T) {
+	expr := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "event"},
+		Key:    &ast.NumberExpr{Value: "1"},
 	}
-}
-
-func TestAttrFieldName_StringKey(t *testing.T) {
-	attr := &ast.AttrGetExpr{Key: &ast.StringExpr{Value: "myField"}}
-	result := guard.AttrFieldName(attr)
-	if result != "myField" {
-		t.Errorf("expected 'myField', got %q", result)
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"event"}},
+		Stmts: []ast.Stmt{
+			&ast.IfStmt{Condition: expr, Then: []ast.Stmt{&ast.ReturnStmt{}}},
+		},
 	}
-}
-
-func TestAttrFieldName_IdentKey(t *testing.T) {
-	attr := &ast.AttrGetExpr{Key: &ast.IdentExpr{Value: "myField"}}
-	result := guard.AttrFieldName(attr)
-	if result != "myField" {
-		t.Errorf("expected 'myField', got %q", result)
-	}
-}
-
-func TestAttrFieldName_NumberKey(t *testing.T) {
-	attr := &ast.AttrGetExpr{Key: &ast.NumberExpr{Value: "42"}}
-	result := guard.AttrFieldName(attr)
-	if result != "" {
-		t.Errorf("expected empty string for number key, got %q", result)
+	bindings := bind.Bind(fn, nil)
+	result := guard.ExtractTruthyPathKeys(expr, bindings)
+	if len(result) != 0 {
+		t.Fatalf("expected no keys for dynamic path, got %d", len(result))
 	}
 }
 
@@ -159,5 +168,54 @@ func TestNarrowTableFieldsByGuard_NoMatchingGuards(t *testing.T) {
 	result := guard.NarrowTableFieldsByGuard(rec, tbl, 1, nil, guards)
 	if result != rec {
 		t.Error("expected original record when no matching guards")
+	}
+}
+
+func TestNarrowTableFieldsByGuard_MatchingNestedPath(t *testing.T) {
+	valueExpr := &ast.AttrGetExpr{
+		Object: &ast.AttrGetExpr{
+			Object: &ast.IdentExpr{Value: "event"},
+			Key:    &ast.IdentExpr{Value: "payload"},
+		},
+		Key: &ast.IdentExpr{Value: "from"},
+	}
+	rec := typ.NewRecord().Field("from", typ.NewOptional(typ.String)).Build()
+	tbl := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{
+				Key:   &ast.StringExpr{Value: "from"},
+				Value: valueExpr,
+			},
+		},
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"event"}},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"x"},
+				Exprs: []ast.Expr{tbl},
+			},
+		},
+	}
+	bindings := bind.Bind(fn, nil)
+	eventBase := valueExpr.Object.(*ast.AttrGetExpr).Object.(*ast.IdentExpr)
+	eventSym, _ := bindings.SymbolOf(eventBase)
+
+	guards := map[cfg.Point]map[guard.TruthyPathKey]bool{
+		1: {
+			{Symbol: eventSym, Field: "payload.from"}: true,
+		},
+	}
+
+	result := guard.NarrowTableFieldsByGuard(rec, tbl, 1, bindings, guards)
+	out, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record result, got %T", result)
+	}
+	if len(out.Fields) != 1 {
+		t.Fatalf("expected 1 field, got %d", len(out.Fields))
+	}
+	if !typ.TypeEquals(out.Fields[0].Type, typ.String) {
+		t.Fatalf("expected narrowed string field, got %s", out.Fields[0].Type.String())
 	}
 }
