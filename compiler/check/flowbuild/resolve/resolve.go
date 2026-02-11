@@ -493,7 +493,7 @@ func ExtractIteratorSource(
 // CalleeType resolves the function type for a call site.
 // For method calls, resolves the receiver type (via CalleePath.Symbol, assignmentTypes,
 // symResolver, synth) and looks up the method. For non-method calls, synthesizes the
-// callee directly. Uses CalleePath.Symbol as primary identity with fallback to CalleeSymbol.
+// callee directly. Symbol resolver lookup uses canonical callsite candidates.
 func CalleeType(
 	info *cfg.CallInfo,
 	p cfg.Point,
@@ -537,14 +537,31 @@ func CalleeType(
 		fnType = synth(info.Callee, p)
 	}
 
-	// Use CalleePath.Symbol as primary identity, fall back to CalleeSymbol
-	calleeSym := info.CalleePath.Symbol
-	if calleeSym == 0 {
-		calleeSym = info.CalleeSymbol
-	}
-
-	if fnType == nil && calleeSym != 0 && symResolver != nil {
-		fnType, _ = symResolver(p, calleeSym)
+	if fnType == nil && symResolver != nil {
+		candidates := make([]cfg.SymbolID, 0, 4)
+		seen := make(map[cfg.SymbolID]struct{}, 4)
+		push := func(sym cfg.SymbolID) {
+			if sym == 0 {
+				return
+			}
+			if _, ok := seen[sym]; ok {
+				return
+			}
+			seen[sym] = struct{}{}
+			candidates = append(candidates, sym)
+		}
+		// Preserve historical preference for CalleePath.Symbol while still
+		// falling back to canonical callsite candidates when it misses.
+		push(info.CalleePath.Symbol)
+		for _, sym := range callsite.CalleeSymbolCandidates(info, nil, nil) {
+			push(sym)
+		}
+		for _, sym := range candidates {
+			if t, ok := symResolver(p, sym); ok && t != nil {
+				fnType = t
+				break
+			}
+		}
 	}
 
 	return fnType

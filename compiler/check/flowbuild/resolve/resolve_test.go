@@ -704,3 +704,22 @@ func TestCalleeType_NilInfo(t *testing.T) {
 		t.Error("expected nil for nil info")
 	}
 }
+
+func TestCalleeType_FallsBackFromUnresolvablePathSymbolToRawSymbol(t *testing.T) {
+	info := &cfg.CallInfo{
+		CalleePath:   constraint.Path{Symbol: 111},
+		CalleeSymbol: cfg.SymbolID(222),
+	}
+	want := typ.Func().Returns(typ.String).Build()
+	symResolver := func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+		if sym == 222 {
+			return want, true
+		}
+		return nil, false
+	}
+
+	got := resolve.CalleeType(info, 0, nil, symResolver, nil)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected resolver fallback via raw symbol, got %v", got)
+	}
+}

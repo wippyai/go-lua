@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/cfg/analysis"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -75,11 +76,14 @@ func inferCallbackEnvOverlays(
 
 	// Collect parameter calls.
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		if info == nil || info.CalleeSymbol == 0 {
+		if info == nil {
 			return
 		}
-		if idx, ok := paramSet[info.CalleeSymbol]; ok {
-			calls = append(calls, paramCall{point: p, paramIndex: idx})
+		for _, sym := range callsite.CalleeSymbolCandidates(info, graph.Bindings(), nil) {
+			if idx, ok := paramSet[sym]; ok {
+				calls = append(calls, paramCall{point: p, paramIndex: idx})
+				break
+			}
 		}
 	})
 
