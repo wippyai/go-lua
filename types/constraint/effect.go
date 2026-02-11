@@ -152,6 +152,10 @@ func (e *FunctionEffect) KeysCollectorInfo() (paramIndex int, returnIndex int, o
 		return 0, 0, false
 	}
 
+	var candidateParamIdx int
+	var candidateReturnIdx int
+	found := false
+
 	for _, disj := range e.OnReturn.Disjuncts {
 		for _, c := range disj {
 			if keyOf, ok := c.(KeyOf); ok {
@@ -161,12 +165,23 @@ func (e *FunctionEffect) KeysCollectorInfo() (paramIndex int, returnIndex int, o
 				paramIdx := keyOf.Table.PlaceholderIndex()
 				returnIdx := ReturnIndexFromString(keyOf.Key.Root)
 				if paramIdx >= 0 && returnIdx >= 0 {
-					return paramIdx, returnIdx, true
+					if !found {
+						candidateParamIdx = paramIdx
+						candidateReturnIdx = returnIdx
+						found = true
+						continue
+					}
+					if candidateParamIdx != paramIdx || candidateReturnIdx != returnIdx {
+						return 0, 0, false
+					}
 				}
 			}
 		}
 	}
-	return 0, 0, false
+	if !found {
+		return 0, 0, false
+	}
+	return candidateParamIdx, candidateReturnIdx, true
 }
 
 // KeysCollectorParamIndex checks if the function returns keys of a parameter.

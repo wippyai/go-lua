@@ -242,3 +242,25 @@ func TestFunctionEffect_KeysCollectorInfo_InvalidKeyPath(t *testing.T) {
 		t.Fatalf("KeysCollectorParamIndex = %d, want -1", got)
 	}
 }
+
+func TestFunctionEffect_KeysCollectorInfo_AmbiguousDisjuncts(t *testing.T) {
+	eff := &FunctionEffect{
+		OnReturn: Condition{
+			Disjuncts: [][]Constraint{
+				{
+					KeyOf{Table: ParamPath(0), Key: RetPath(0)},
+				},
+				{
+					KeyOf{Table: ParamPath(1), Key: RetPath(0)},
+				},
+			},
+		},
+	}
+
+	if _, _, ok := eff.KeysCollectorInfo(); ok {
+		t.Fatal("expected no keys-collector info for ambiguous disjunct key sources")
+	}
+	if got := eff.KeysCollectorParamIndex(); got != -1 {
+		t.Fatalf("KeysCollectorParamIndex = %d, want -1 for ambiguous disjuncts", got)
+	}
+}
