@@ -30,9 +30,16 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 
 	push(info.CalleeSymbol)
 	push(CanonicalSymbolFromExpr(info.Callee, info.CalleeSymbol, primary, fallback, nil))
-	if fallback != nil && info.CalleeName != "" {
-		for _, sym := range fallback.SymbolsByName(info.CalleeName) {
-			push(sym)
+	if info.CalleeName != "" {
+		if primary != nil {
+			for _, sym := range primary.SymbolsByName(info.CalleeName) {
+				push(sym)
+			}
+		}
+		if fallback != nil && fallback != primary {
+			for _, sym := range fallback.SymbolsByName(info.CalleeName) {
+				push(sym)
+			}
 		}
 	}
 	return candidates

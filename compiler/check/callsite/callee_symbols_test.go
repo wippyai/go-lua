@@ -45,3 +45,16 @@ func TestCalleeSymbolCandidates_DeduplicatesRawAndCanonical(t *testing.T) {
 		t.Fatalf("candidates = %v, want [%d]", candidates, sym)
 	}
 }
+
+func TestCalleeSymbolCandidates_IncludesPrimaryNameMatches(t *testing.T) {
+	primary := bind.NewBindingTable()
+	const byName cfg.SymbolID = 41
+	primary.SetName(byName, "f")
+
+	candidates := CalleeSymbolCandidates(&cfg.CallInfo{
+		CalleeName: "f",
+	}, primary, nil)
+	if len(candidates) != 1 || candidates[0] != byName {
+		t.Fatalf("candidates = %v, want [%d]", candidates, byName)
+	}
+}
