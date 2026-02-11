@@ -244,11 +244,6 @@ func FieldOrMethod(t typ.Type, name string) (typ.Type, bool) {
 //
 // Returns (nil, false) if the type cannot be called.
 func Callable(t typ.Type) (*typ.Function, bool) {
-	return callableCompute(t)
-}
-
-// callableCompute is the entry point for callable checking.
-func callableCompute(t typ.Type) (*typ.Function, bool) {
 	return callableDepth(t, 0)
 }
 
