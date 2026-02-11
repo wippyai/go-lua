@@ -316,7 +316,7 @@ func InferCall(ctx *db.QueryContext, def CallDef) InferResult {
 	receiver := resolved.receiver
 	isMethod := def.IsMethod
 
-	if callee.Kind() == kind.Any {
+	if typ.IsAny(callee) {
 		return InferResult{
 			Kind:                InferKindAny,
 			Callee:              callee,

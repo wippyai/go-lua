@@ -177,16 +177,16 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 	}
 
 	// Never <: T (bottom type)
-	if sub.Kind() == kind.Never {
+	if typ.IsNever(sub) {
 		return true
 	}
 	// T </: Never (except Never itself, handled above)
-	if super.Kind() == kind.Never {
+	if typ.IsNever(super) {
 		return false
 	}
 
 	// T <: Any (top type)
-	if super.Kind() == kind.Any {
+	if typ.IsAny(super) {
 		return true
 	}
 	// Unknown acts as a top type for unresolved values.
@@ -195,7 +195,7 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 		return true
 	}
 	// Any is NOT assignable to specific types; only to Any itself (Unknown handled above).
-	if sub.Kind() == kind.Any {
+	if typ.IsAny(sub) {
 		return false
 	}
 
@@ -320,7 +320,7 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 			return c.check(tp.Constraint, super, depth+1)
 		}
 
-		return super.Kind() == kind.Any
+		return typ.IsAny(super)
 	}
 	// Type <: TypeParam (parameter position)
 	if tp, ok := super.(*typ.TypeParam); ok {
@@ -554,7 +554,7 @@ func canWidenTo(narrow, wide typ.Type) bool {
 	narrow = unwrap.Alias(narrow)
 
 	// Any type accepts everything
-	if wide.Kind() == kind.Any {
+	if typ.IsAny(wide) {
 		return true
 	}
 
