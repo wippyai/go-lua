@@ -30,13 +30,13 @@ func TestConditionAnyDisjunctMatches(t *testing.T) {
 }
 
 func TestPlaceholderArgIndex(t *testing.T) {
-	if idx, ok := placeholderArgIndex(constraint.ParamPath(0), 1); !ok || idx != 0 {
-		t.Fatalf("placeholderArgIndex($0,1) = (%d,%v), want (0,true)", idx, ok)
+	if idx, ok := constraint.PlaceholderArgIndex(constraint.ParamPath(0), 1); !ok || idx != 0 {
+		t.Fatalf("PlaceholderArgIndex($0,1) = (%d,%v), want (0,true)", idx, ok)
 	}
-	if idx, ok := placeholderArgIndex(constraint.ParamPath(1), 1); ok {
-		t.Fatalf("placeholderArgIndex($1,1) should fail, got (%d,true)", idx)
+	if idx, ok := constraint.PlaceholderArgIndex(constraint.ParamPath(1), 1); ok {
+		t.Fatalf("PlaceholderArgIndex($1,1) should fail, got (%d,true)", idx)
 	}
-	if idx, ok := placeholderArgIndex(constraint.Path{Root: "x"}, 1); ok {
-		t.Fatalf("placeholderArgIndex(non-placeholder,1) should fail, got (%d,true)", idx)
+	if idx, ok := constraint.PlaceholderArgIndex(constraint.Path{Root: "x"}, 1); ok {
+		t.Fatalf("PlaceholderArgIndex(non-placeholder,1) should fail, got (%d,true)", idx)
 	}
 }

@@ -54,7 +54,7 @@ func specConstraintMatchesTypes(c constraint.Constraint, args []typ.Type) bool {
 }
 
 func specFieldEqualsMatchesTypes(fe constraint.FieldEquals, args []typ.Type) bool {
-	idx, ok := placeholderArgIndex(fe.Target, len(args))
+	idx, ok := constraint.PlaceholderArgIndex(fe.Target, len(args))
 	if !ok {
 		return false
 	}

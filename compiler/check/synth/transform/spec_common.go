@@ -24,14 +24,3 @@ func conditionAnyDisjunctMatches(when constraint.Condition, match func(constrain
 	}
 	return false
 }
-
-func placeholderArgIndex(path constraint.Path, argCount int) (int, bool) {
-	if !path.IsPlaceholder() {
-		return 0, false
-	}
-	idx := path.PlaceholderIndex()
-	if idx < 0 || idx >= argCount {
-		return 0, false
-	}
-	return idx, true
-}

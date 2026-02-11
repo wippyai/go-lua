@@ -43,7 +43,7 @@ func constraintMatchesArgs(c constraint.Constraint, args []ast.Expr) bool {
 
 // fieldEqualsMatchesArgs checks if a FieldEquals constraint matches an inline table literal.
 func fieldEqualsMatchesArgs(fe constraint.FieldEquals, args []ast.Expr) bool {
-	paramIdx, ok := placeholderArgIndex(fe.Target, len(args))
+	paramIdx, ok := constraint.PlaceholderArgIndex(fe.Target, len(args))
 	if !ok {
 		return false
 	}

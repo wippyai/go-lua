@@ -441,11 +441,7 @@ func ConstraintsFromCallOnReturn(
 		for _, c := range disj {
 			switch v := c.(type) {
 			case constraint.Falsy:
-				if !v.Path.IsPlaceholder() {
-					continue
-				}
-				idx := v.Path.PlaceholderIndex()
-				if idx >= 0 && idx < len(info.Args) && argPaths[idx].IsEmpty() {
+				if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(info.Args)); ok && argPaths[idx].IsEmpty() {
 					fallback := ce.ConditionFromExpr(info.Args[idx])
 					if fallback.HasConstraints() {
 						fallback = constraint.Not(fallback)
@@ -453,11 +449,7 @@ func ConstraintsFromCallOnReturn(
 					}
 				}
 			case constraint.Truthy:
-				if !v.Path.IsPlaceholder() {
-					continue
-				}
-				idx := v.Path.PlaceholderIndex()
-				if idx >= 0 && idx < len(info.Args) && argPaths[idx].IsEmpty() {
+				if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(info.Args)); ok && argPaths[idx].IsEmpty() {
 					fallback := ce.ConditionFromExpr(info.Args[idx])
 					if fallback.HasConstraints() {
 						cond = constraint.And(cond, fallback)

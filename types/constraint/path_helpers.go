@@ -38,6 +38,20 @@ func parseNonNegativeDecimal(s string) int {
 	return value
 }
 
+// PlaceholderArgIndex resolves a placeholder path to an argument index.
+//
+// Returns false when the path is not a placeholder or index is out of bounds.
+func PlaceholderArgIndex(path Path, argCount int) (int, bool) {
+	if !path.IsPlaceholder() {
+		return 0, false
+	}
+	idx := path.PlaceholderIndex()
+	if idx < 0 || idx >= argCount {
+		return 0, false
+	}
+	return idx, true
+}
+
 // RetPath returns the path for a return value.
 func RetPath(index int) Path {
 	if index < 0 {
