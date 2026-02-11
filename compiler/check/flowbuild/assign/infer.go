@@ -457,10 +457,7 @@ func collectInferredTypes(
 					continue
 				}
 
-				var values []typ.Type
-				if synthAPI != nil && len(info.Targets) > 0 && len(info.Sources) > 0 {
-					values = synthAPI.ExpandValuesWithSpecTypes(info.Sources, len(info.Targets), p, overlay)
-				}
+				values := expandedAssignValues(synthAPI, info, p, overlay)
 
 				info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
 					if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
@@ -473,8 +470,8 @@ func collectInferredTypes(
 						return
 					}
 					assignedType := typ.Unknown
-					if i < len(values) && values[i] != nil && values[i].Kind() != kind.Unknown {
-						assignedType = values[i]
+					if value := assignValueAt(values, i); value != nil && value.Kind() != kind.Unknown {
+						assignedType = value
 					} else if wrappedSynth != nil && source != nil {
 						assignedType = wrappedSynth(source, p)
 					}

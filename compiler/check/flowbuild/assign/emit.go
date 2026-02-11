@@ -246,16 +246,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 		// Get expanded values if we have multiple targets
 		// Spec-narrowed types are passed as overlay facts instead of mutating scope.
-		var values []typ.Type
-		if fc.API != nil && len(info.Targets) > 0 && len(info.Sources) > 0 {
-			values = fc.API.ExpandValuesWithSpecTypes(info.Sources, len(info.Targets), p, overlayTypes)
-		}
-		valueAt := func(i int) typ.Type {
-			if i < 0 || i >= len(values) {
-				return nil
-			}
-			return values[i]
-		}
+		values := expandedAssignValues(fc.API, info, p, overlayTypes)
 
 		for i, target := range info.Targets {
 			source := info.SourceAt(i)
@@ -285,7 +276,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				}
 				// Fall back to expression synthesis if no declared/known type
 				if assignedType == nil || assignedType == typ.Unknown {
-					if value := valueAt(i); value != nil {
+					if value := assignValueAt(values, i); value != nil {
 						assignedType = value
 					} else if wrappedSynth != nil && source != nil {
 						assignedType = wrappedSynth(source, p)
@@ -297,7 +288,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				if call, _ := info.CallForTarget(i); call != nil {
 					if call.Receiver != nil {
 						if recvSym := call.ReceiverSymbol; recvSym != 0 {
-							if value := valueAt(i); value != nil {
+							if value := assignValueAt(values, i); value != nil {
 								if _, narrowed := specNarrowed[recvSym]; narrowed {
 									assignedType = value
 									// Propagate to specNarrowed for method calls on this variable
@@ -482,7 +473,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Determine assigned type
 				assignedType := typ.Unknown
 				// First check expanded values for multi-return assignments
-				if value := valueAt(i); value != nil && value.Kind() != kind.Unknown {
+				if value := assignValueAt(values, i); value != nil && value.Kind() != kind.Unknown {
 					assignedType = value
 				} else if source != nil {
 					if tbl, ok := source.(*ast.TableExpr); ok && wrappedSynth != nil && !tblutil.TableHasFunctionField(tbl) {
@@ -539,7 +530,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Determine assigned type
 				assignedType := typ.Unknown
 				// First check expanded values for multi-return assignments
-				if value := valueAt(i); value != nil && value.Kind() != kind.Unknown {
+				if value := assignValueAt(values, i); value != nil && value.Kind() != kind.Unknown {
 					assignedType = value
 				} else if source != nil {
 					if tbl, ok := source.(*ast.TableExpr); ok && wrappedSynth != nil && !tblutil.TableHasFunctionField(tbl) {
@@ -645,7 +636,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					names[i] = target.Name
 					symbols[i] = target.Symbol
 				}
-				if value := valueAt(start + i); value != nil {
+				if value := assignValueAt(values, start+i); value != nil {
 					types[i] = value
 				}
 			}

@@ -46,16 +46,7 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 			continue
 		}
 		sc := scopes[p]
-		var expanded []typ.Type
-		if synthAPI != nil && len(info.Targets) > 0 && len(info.Sources) > 0 {
-			expanded = synthAPI.ExpandValuesWithSpecTypes(info.Sources, len(info.Targets), p, nil)
-		}
-		valueAt := func(i int) typ.Type {
-			if i < 0 || i >= len(expanded) {
-				return nil
-			}
-			return expanded[i]
-		}
+		expanded := expandedAssignValues(synthAPI, info, p, nil)
 		info.EachTarget(func(i int, target cfg.AssignTarget) {
 			if target.Kind != cfg.TargetIdent || target.Name == "" {
 				return
@@ -77,7 +68,7 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 			// This captures t = time.now() where the return type is known
 			// Only capture non-union types to avoid interfering with narrowing
 			if call.Method != "" && synth != nil {
-				inferred := valueAt(i)
+				inferred := assignValueAt(expanded, i)
 				if inferred == nil {
 					if source := info.SourceAt(i); source != nil {
 						inferred = synth(source, p)
@@ -112,16 +103,7 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 		if info == nil {
 			continue
 		}
-		var expanded []typ.Type
-		if synthAPI != nil && len(info.Targets) > 0 && len(info.Sources) > 0 {
-			expanded = synthAPI.ExpandValuesWithSpecTypes(info.Sources, len(info.Targets), p, bySymbol)
-		}
-		valueAt := func(i int) typ.Type {
-			if i < 0 || i >= len(expanded) {
-				return nil
-			}
-			return expanded[i]
-		}
+		expanded := expandedAssignValues(synthAPI, info, p, bySymbol)
 
 		info.EachTarget(func(i int, target cfg.AssignTarget) {
 			if target.Kind != cfg.TargetIdent || target.Name == "" {
@@ -153,7 +135,7 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 			// Synth method call with known receiver via synthAPI.
 			// Use assignment-wide expansion so target-to-return mapping follows Lua
 			// multi-return semantics (including trailing targets from final call).
-			if value := valueAt(i); !typjoin.IsUnknownOrNil(value) {
+			if value := assignValueAt(expanded, i); !typjoin.IsUnknownOrNil(value) {
 				bySymbol[sym] = value
 				// Enqueue points that depend on this newly typed symbol
 				worklist = append(worklist, deps[sym]...)
