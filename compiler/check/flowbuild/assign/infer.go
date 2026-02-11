@@ -444,7 +444,7 @@ func collectInferredTypes(
 							vt = varTypes[i]
 						}
 						vt = resolve.Ref(vt, sc)
-						if vt == nil || vt.Kind() == kind.Unknown {
+						if isUnknownType(vt) {
 							return
 						}
 						old := inferred[target.Symbol]
@@ -470,13 +470,13 @@ func collectInferredTypes(
 						return
 					}
 					assignedType := typ.Unknown
-					if value := assignValueAt(values, i); value != nil && value.Kind() != kind.Unknown {
+					if value := assignValueAt(values, i); isKnownType(value) {
 						assignedType = value
 					} else if wrappedSynth != nil && source != nil {
 						assignedType = wrappedSynth(source, p)
 					}
 					assignedType = resolve.Ref(assignedType, sc)
-					if assignedType == nil || assignedType.Kind() == kind.Unknown {
+					if isUnknownType(assignedType) {
 						return
 					}
 					old := inferred[target.Symbol]
@@ -518,7 +518,7 @@ func collectInferredTypes(
 						continue
 					}
 					expected := expectedArgAt(i, expectedArgs, expectedVariadic)
-					if expected == nil || expected.Kind() == kind.Unknown {
+					if isUnknownType(expected) {
 						// Fall back to actual argument type when no expected type is available.
 						if i < len(info.Args) && info.Args[i] != nil {
 							actual := wrappedSynth(info.Args[i], p)
@@ -561,7 +561,7 @@ func collectInferredTypes(
 					valueType = t
 				}
 				valueType = resolve.Ref(valueType, sc)
-				if valueType == nil || valueType.Kind() == kind.Unknown {
+				if isUnknownType(valueType) {
 					continue
 				}
 
@@ -571,7 +571,7 @@ func collectInferredTypes(
 					if baseSym != 0 && sccSet[baseSym] {
 						keyType := wrappedSynth(attr.Key, p)
 						keyType = resolve.Ref(keyType, sc)
-						if keyType == nil || keyType.Kind() == kind.Unknown {
+						if isUnknownType(keyType) {
 							keyType = typ.String
 						}
 						old := inferred[baseSym]
@@ -632,7 +632,7 @@ func collectInferredTypes(
 		if annotated != nil && annotated[sym] {
 			continue
 		}
-		if t, ok := inferred[sym]; !ok || t == nil || t.Kind() == kind.Unknown {
+		if t, ok := inferred[sym]; !ok || isUnknownType(t) {
 			inferred[sym] = typ.Any
 		}
 	}
@@ -722,7 +722,7 @@ func joinInferredType(old, next typ.Type) typ.Type {
 		return old
 	}
 	if typeContains(next, old) {
-		if old.Kind() != kind.Unknown {
+		if isKnownType(old) {
 			return old
 		}
 		return subtype.WidenForInference(next)
@@ -744,4 +744,12 @@ func typeContains(haystack, needle typ.Type) bool {
 		return nil, false
 	})
 	return found
+}
+
+func isUnknownType(t typ.Type) bool {
+	return t == nil || t.Kind() == kind.Unknown
+}
+
+func isKnownType(t typ.Type) bool {
+	return !isUnknownType(t)
 }
