@@ -1,8 +1,6 @@
 package returns
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 )
@@ -44,14 +42,8 @@ func MergeContainerMutationSlices(
 		byKey[key] = mergeFn(nil, m)
 	}
 
-	keys := make([]string, 0, len(byKey))
-	for k := range byKey {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
 	out := make([]api.ContainerMutation, 0, len(byKey))
-	for _, key := range keys {
+	for _, key := range cfg.SortedFieldNames(byKey) {
 		out = append(out, byKey[key])
 	}
 	return out
