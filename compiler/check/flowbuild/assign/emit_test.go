@@ -337,6 +337,58 @@ func TestExtractAssignments_KeysCollectorEffectFallbackRespectsReturnIndex(t *te
 	}
 }
 
+func TestExtractAssignments_IndexAssign_NonIdentifierStringKey_UsesIndexStringSegment(t *testing.T) {
+	code := `
+		local t = {}
+		local src = "v"
+		t["x-y"] = src
+	`
+	chunk, err := parse.ParseString(code, "emit_index_string_key.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk}, "emit_index_string_key")
+	exit := graph.Exit()
+	tSym, ok := graph.SymbolAt(exit, "t")
+	if !ok || tSym == 0 {
+		t.Fatal("expected symbol for t")
+	}
+
+	inputs := &flow.Inputs{
+		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks:     make(map[string]flow.PredicateLink),
+		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+	}
+	ExtractAssignments(&core.FlowContext{
+		Graph: graph,
+		Derived: &core.Derived{
+			Synth: func(ast.Expr, cfg.Point) typ.Type {
+				return typ.Unknown
+			},
+		},
+	}, inputs, nil)
+
+	var got *flow.UnifiedAssignment
+	for i := range inputs.Assignments {
+		assign := &inputs.Assignments[i]
+		if assign.TargetPath.Symbol != tSym || len(assign.TargetPath.Segments) != 1 {
+			continue
+		}
+		seg := assign.TargetPath.Segments[0]
+		if seg.Name == "x-y" {
+			got = assign
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("expected assignment for t[\"x-y\"]")
+	}
+	seg := got.TargetPath.Segments[0]
+	if seg.Kind != constraint.SegmentIndexString {
+		t.Fatalf("expected SegmentIndexString, got %v", seg.Kind)
+	}
+}
+
 func TestCorrelationsFromFunctionType_NoImplicitErrorConvention(t *testing.T) {
 	fnType := typ.Func().
 		Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.Number)).

@@ -544,18 +544,22 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					assignedType = typ.Unknown
 				}
 
-				// Determine the field name from the key
-				var fieldName string
+				// Determine static key segment from the key expression.
+				var keySeg constraint.Segment
 				var keyType typ.Type
 				switch k := target.Key.(type) {
 				case *ast.StringExpr:
-					fieldName = k.Value
+					if seg, ok := path.StaticKeySegment(k); ok {
+						keySeg = seg
+					}
 				case *ast.IdentExpr:
 					// Variable key - try const resolution
 					if val := constResolver(k.Value); val != nil {
 						switch val.Kind {
 						case flow.ConstString:
-							fieldName = val.Str
+							if seg, ok := path.StaticKeySegment(&ast.StringExpr{Value: val.Str}); ok {
+								keySeg = seg
+							}
 						case flow.ConstInt:
 							keyType = typ.Integer
 						case flow.ConstFloat:
@@ -575,7 +579,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				}
 
 				// For non-const keys, emit an IndexerAssignment to widen the table
-				if fieldName == "" {
+				if keySeg.Name == "" {
 					if keyType == nil && target.Key != nil && wrappedSynth != nil {
 						keyType = wrappedSynth(target.Key, p)
 					}
@@ -614,7 +618,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					TargetPath: constraint.Path{
 						Root:     basePath.Root,
 						Symbol:   basePath.Symbol,
-						Segments: append(append([]constraint.Segment{}, basePath.Segments...), constraint.Segment{Kind: constraint.SegmentField, Name: fieldName}),
+						Segments: append(append([]constraint.Segment{}, basePath.Segments...), keySeg),
 					},
 					Type: resolve.Ref(assignedType, sc),
 				})
