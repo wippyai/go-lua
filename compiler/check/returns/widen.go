@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -73,7 +74,7 @@ func WidenReturnSummaries(prev, next api.ReturnSummaries) api.ReturnSummaries {
 				merged[sym] = widenReturnVectorForConvergence(preferred)
 				continue
 			}
-			merged[sym] = widenReturnVectorForConvergence(JoinReturnVectorsPreferNonSoft(existing, rets))
+			merged[sym] = widenReturnVectorForConvergence(typjoin.ReturnVectors(existing, rets))
 		} else {
 			merged[sym] = widenReturnVectorForConvergence(rets)
 		}
@@ -656,7 +657,7 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 		normalizedNext[i] = normalizeReturn(nextFn.Returns[i])
 	}
 
-	mergedReturns := JoinReturnVectorsPreferNonSoft(normalizedPrev, normalizedNext)
+	mergedReturns := typjoin.ReturnVectors(normalizedPrev, normalizedNext)
 	if ReturnTypesEqual(prevFn.Returns, mergedReturns) {
 		return prevFn, true
 	}

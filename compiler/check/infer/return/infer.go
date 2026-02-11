@@ -334,7 +334,7 @@ func (i *Inferencer) iterateSCCFixpoint(
 			}
 			newReturn := i.inferReturnWithSummary(run, info, summaries, localFuncs)
 			oldReturn := summaries[sym]
-			merged := returns.JoinReturnVectorsPreferNonSoft(oldReturn, newReturn)
+			merged := typjoin.ReturnVectors(oldReturn, newReturn)
 			if preferred, ok := returns.SelectPreferredReturnVector(newReturn, oldReturn); ok {
 				merged = preferred
 			}
@@ -498,7 +498,7 @@ func (i *Inferencer) collectAllReturnSummaries(ctx *returnInferenceContext) map[
 			continue
 		}
 		if existing, ok := allSummaries[sym]; ok {
-			allSummaries[sym] = returns.JoinReturnVectorsPreferNonSoft(existing, t)
+			allSummaries[sym] = typjoin.ReturnVectors(existing, t)
 		} else {
 			allSummaries[sym] = t
 		}

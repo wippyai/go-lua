@@ -4,35 +4,36 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
-func TestJoinReturnVectorsPreferNonSoft_Empty(t *testing.T) {
-	result := JoinReturnVectorsPreferNonSoft(nil, nil)
+func TestJoinReturnVectors_Empty(t *testing.T) {
+	result := typjoin.ReturnVectors(nil, nil)
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
 	}
 }
 
-func TestJoinReturnVectorsPreferNonSoft_AEmpty(t *testing.T) {
+func TestJoinReturnVectors_AEmpty(t *testing.T) {
 	b := []typ.Type{typ.String}
-	result := JoinReturnVectorsPreferNonSoft(nil, b)
+	result := typjoin.ReturnVectors(nil, b)
 	if len(result) != 1 || result[0] != typ.String {
 		t.Errorf("expected [string], got %v", result)
 	}
 }
 
-func TestJoinReturnVectorsPreferNonSoft_BEmpty(t *testing.T) {
+func TestJoinReturnVectors_BEmpty(t *testing.T) {
 	a := []typ.Type{typ.Number}
-	result := JoinReturnVectorsPreferNonSoft(a, nil)
+	result := typjoin.ReturnVectors(a, nil)
 	if len(result) != 1 || result[0] != typ.Number {
 		t.Errorf("expected [number], got %v", result)
 	}
 }
 
-func TestJoinReturnVectorsPreferNonSoft_SameLength(t *testing.T) {
+func TestJoinReturnVectors_SameLength(t *testing.T) {
 	a := []typ.Type{typ.String}
 	b := []typ.Type{typ.Number}
-	result := JoinReturnVectorsPreferNonSoft(a, b)
+	result := typjoin.ReturnVectors(a, b)
 	if len(result) != 1 {
 		t.Errorf("expected length 1, got %d", len(result))
 	}
@@ -62,10 +63,10 @@ func TestReturnTypesAllNil(t *testing.T) {
 	}
 }
 
-func TestJoinReturnVectorsPreferNonSoft_DifferentLengths(t *testing.T) {
+func TestJoinReturnVectors_DifferentLengths(t *testing.T) {
 	a := []typ.Type{typ.String, typ.Number}
 	b := []typ.Type{typ.Boolean}
-	result := JoinReturnVectorsPreferNonSoft(a, b)
+	result := typjoin.ReturnVectors(a, b)
 	if len(result) != 2 {
 		t.Errorf("expected length 2, got %d", len(result))
 	}

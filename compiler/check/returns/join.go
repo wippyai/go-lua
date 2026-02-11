@@ -20,32 +20,6 @@ func JoinInterprocTypes(a, b typ.Type) typ.Type {
 	return typ.JoinPreferNonSoft(a, b)
 }
 
-// JoinReturnVectorsPreferNonSoft joins two return vectors element-wise, preferring non-soft types.
-func JoinReturnVectorsPreferNonSoft(a, b []typ.Type) []typ.Type {
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
-	maxLen := len(a)
-	if len(b) > maxLen {
-		maxLen = len(b)
-	}
-	out := make([]typ.Type, maxLen)
-	for i := 0; i < maxLen; i++ {
-		var ai, bi typ.Type
-		if i < len(a) {
-			ai = a[i]
-		}
-		if i < len(b) {
-			bi = b[i]
-		}
-		out[i] = typ.JoinReturnSlot(ai, bi)
-	}
-	return out
-}
-
 // ReturnTypesEqual checks if two return vectors are structurally equal.
 func ReturnTypesEqual(a, b []typ.Type) bool {
 	if len(a) != len(b) {
