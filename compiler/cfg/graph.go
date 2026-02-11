@@ -32,6 +32,7 @@ type Graph struct {
 	declPoints    map[basecfg.SymbolID]Point              // symbol -> declaration point
 	symbolNames   map[basecfg.SymbolID]string             // symbol -> name (reverse lookup for display)
 	symbolKinds   map[basecfg.SymbolID]basecfg.SymbolKind // symbol -> kind (Param/Local/Global)
+	directAliases map[basecfg.SymbolID]basecfg.SymbolID   // target local symbol -> unambiguous direct source symbol
 
 	// Function parameters (precomputed for downstream use)
 	paramNames      []string
@@ -122,6 +123,7 @@ func BuildWithBindings(fn *ast.FunctionExpr, bindings *bind.BindingTable) *Graph
 		declPoints:      b.StealDeclPoints(),
 		symbolNames:     b.StealSymbolNames(),
 		symbolKinds:     b.StealSymbolKinds(),
+		directAliases:   computeDirectAliasIndex(b.Info, bindings),
 		paramNames:      b.ParamNames,
 		paramSymbols:    b.ParamSymbols,
 		paramDeclPoints: b.ParamDeclPoints,
@@ -176,6 +178,7 @@ func BuildBlock(stmts []ast.Stmt, globals ...string) *Graph {
 		declPoints:     b.StealDeclPoints(),
 		symbolNames:    b.StealSymbolNames(),
 		symbolKinds:    b.StealSymbolKinds(),
+		directAliases:  computeDirectAliasIndex(b.Info, bindings),
 	}
 }
 
@@ -845,57 +848,82 @@ func (g *Graph) DirectAliasSymbol(targetSym basecfg.SymbolID) basecfg.SymbolID {
 	if g == nil || targetSym == 0 {
 		return 0
 	}
-
-	bindings := g.Bindings()
-
-	if bindings == nil {
+	if g.directAliases == nil {
 		return 0
 	}
+	return g.directAliases[targetSym]
+}
 
-	var (
-		sourceSym basecfg.SymbolID
-		ambiguous bool
-	)
+type aliasState struct {
+	sourceSym basecfg.SymbolID
+	hasLocal  bool
+	ambiguous bool
+}
 
-	g.EachAssign(func(_ Point, info *AssignInfo) {
-		if info == nil || !info.IsLocal {
-			return
+func computeDirectAliasIndex(info map[basecfg.Point]NodeInfo, bindings *bind.BindingTable) map[basecfg.SymbolID]basecfg.SymbolID {
+	if len(info) == 0 || bindings == nil {
+		return nil
+	}
+
+	stateByTarget := make(map[basecfg.SymbolID]aliasState)
+
+	for _, nodeInfo := range info {
+		assign, ok := nodeInfo.(*AssignInfo)
+		if !ok || assign == nil {
+			continue
 		}
 
-		info.EachTargetSource(func(_ int, target AssignTarget, src ast.Expr) {
-			if target.Symbol != targetSym {
+		assign.EachTargetSource(func(_ int, target AssignTarget, src ast.Expr) {
+			if target.Symbol == 0 {
 				return
+			}
+
+			state := stateByTarget[target.Symbol]
+			if state.ambiguous {
+				return
+			}
+			if assign.IsLocal {
+				state.hasLocal = true
 			}
 
 			srcIdent, ok := src.(*ast.IdentExpr)
 			if !ok || srcIdent == nil {
-				ambiguous = true
-
+				state.ambiguous = true
+				state.sourceSym = 0
+				stateByTarget[target.Symbol] = state
 				return
 			}
 
 			sym, ok := bindings.SymbolOf(srcIdent)
 			if !ok || sym == 0 {
-				ambiguous = true
-
+				state.ambiguous = true
+				state.sourceSym = 0
+				stateByTarget[target.Symbol] = state
 				return
 			}
 
-			if sourceSym == 0 {
-				sourceSym = sym
-			} else if sourceSym != sym {
-				ambiguous = true
-
-				return
+			if state.sourceSym == 0 {
+				state.sourceSym = sym
+			} else if state.sourceSym != sym {
+				state.ambiguous = true
+				state.sourceSym = 0
 			}
+
+			stateByTarget[target.Symbol] = state
 		})
-	})
-
-	if ambiguous {
-		return 0
 	}
 
-	return sourceSym
+	out := make(map[basecfg.SymbolID]basecfg.SymbolID)
+	for targetSym, state := range stateByTarget {
+		if state.ambiguous || !state.hasLocal || state.sourceSym == 0 {
+			continue
+		}
+		out[targetSym] = state.sourceSym
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // SymbolKind returns the kind of a symbol (Param, Local, or Global).
