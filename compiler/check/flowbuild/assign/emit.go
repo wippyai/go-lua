@@ -274,7 +274,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 				}
 				// Fall back to expression synthesis if no declared/known type
-				if assignedType == nil || assignedType == typ.Unknown {
+				if typ.IsAbsentOrUnknown(assignedType) {
 					if value := assignValueAt(values, i); value != nil {
 						assignedType = value
 					} else if wrappedSynth != nil && source != nil {
@@ -291,7 +291,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 								if _, narrowed := specNarrowed[recvSym]; narrowed {
 									assignedType = value
 									// Propagate to specNarrowed for method calls on this variable
-									if assignedType != nil && assignedType.Kind() != typ.Unknown.Kind() {
+									if !typ.IsAbsentOrUnknown(assignedType) {
 										specNarrowed[sym] = assignedType
 									}
 								}

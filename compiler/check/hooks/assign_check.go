@@ -72,7 +72,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 					continue
 				}
 				declaredType := narrowSynth.ResolveType(ann, sc)
-				if declaredType != nil && declaredType.Kind() != typ.Unknown.Kind() {
+				if !typ.IsAbsentOrUnknown(declaredType) {
 					annotated[sym] = declaredType
 				}
 			}
@@ -112,7 +112,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 				declaredType = annotated[sym]
 			}
 
-			if declaredType == nil || declaredType.Kind() == typ.Unknown.Kind() {
+			if typ.IsAbsentOrUnknown(declaredType) {
 				return
 			}
 

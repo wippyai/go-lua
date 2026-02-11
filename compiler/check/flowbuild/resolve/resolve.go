@@ -486,7 +486,7 @@ func CalleeType(
 			receiverType = synth(info.Receiver, p)
 		}
 
-		if receiverType != nil && receiverType.Kind() != kind.Unknown {
+		if !typ.IsAbsentOrUnknown(receiverType) {
 			fnType, _ = core.Method(receiverType, info.Method)
 		}
 	} else if synth != nil && info.Callee != nil {

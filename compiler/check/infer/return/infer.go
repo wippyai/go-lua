@@ -58,7 +58,6 @@ import (
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -439,7 +438,7 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 				paramType = selfType
 			}
 		}
-		if paramType == nil || paramType.Kind() == typ.Unknown.Kind() {
+		if typ.IsAbsentOrUnknown(paramType) {
 			if ctx.info.ParamHints != nil && i < len(ctx.info.ParamHints) && ctx.info.ParamHints[i] != nil {
 				paramType = ctx.info.ParamHints[i]
 			}
@@ -448,7 +447,7 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
 			if resolved != nil {
 				if typ.IsRefinableAnnotation(resolved) {
-					if paramType == nil || paramType.Kind() == typ.Unknown.Kind() {
+					if typ.IsAbsentOrUnknown(paramType) {
 						paramType = resolved
 					}
 				} else {
@@ -883,7 +882,7 @@ func (i *Inferencer) collectAndApplyMutations(
 	}
 	for sym, t := range inferred {
 		baseType := finalOverlay[sym]
-		if baseType == nil || baseType.Kind() == kind.Unknown {
+		if typ.IsAbsentOrUnknown(baseType) {
 			finalOverlay[sym] = t
 			continue
 		}
@@ -992,7 +991,7 @@ func (i *Inferencer) collectAndApplyMutations(
 	enrichedSynthAdapter := func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && localBindings != nil {
 			if sym, found := localBindings.SymbolOf(ident); found && sym != 0 {
-				if t, exists := inferred[sym]; exists && t != nil && t.Kind() != kind.Unknown {
+				if t, exists := inferred[sym]; exists && !typ.IsAbsentOrUnknown(t) {
 					if baseType := finalOverlay[sym]; baseType != nil && !typ.IsSoft(baseType, typ.SoftAnnotationPolicy) {
 						return baseType
 					}

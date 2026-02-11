@@ -43,7 +43,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/join"
 )
@@ -143,7 +142,7 @@ func (s *Synthesizer) SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *sc
 			if expected != nil && len(expected.Returns) > 0 {
 				allUnknown := true
 				for _, r := range returns {
-					if r != nil && r.Kind() != kind.Unknown {
+					if !typ.IsAbsentOrUnknown(r) {
 						allUnknown = false
 						break
 					}
@@ -194,7 +193,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		if rt := returnSummaries[fnSym]; len(rt) > 0 {
 			hasKnown := false
 			for _, t := range rt {
-				if t != nil && t.Kind() != kind.Unknown {
+				if !typ.IsAbsentOrUnknown(t) {
 					hasKnown = true
 					break
 				}
