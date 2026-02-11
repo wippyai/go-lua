@@ -335,20 +335,8 @@ func (i *Inferencer) iterateSCCFixpoint(
 			newReturn := i.inferReturnWithSummary(run, info, summaries, localFuncs)
 			oldReturn := summaries[sym]
 			merged := returns.JoinReturnVectorsPreferNonSoft(oldReturn, newReturn)
-			if returns.ReturnTypesRefine(newReturn, oldReturn) {
-				// Avoid shrinking to nil-only from a previously non-nil summary.
-				if !returns.ReturnTypesAllNil(newReturn) || returns.ReturnTypesAllNil(oldReturn) {
-					merged = newReturn
-				}
-			} else if returns.ReturnTypesRefine(oldReturn, newReturn) {
-				// Prevent stale nil-only summaries from shadowing newly inferred dynamic returns.
-				if !returns.ReturnTypesAllNil(oldReturn) || returns.ReturnTypesAllNil(newReturn) {
-					merged = oldReturn
-				}
-			} else if returns.ReturnTypesExtendRecord(newReturn, oldReturn) {
-				merged = newReturn
-			} else if returns.ReturnTypesExtendRecord(oldReturn, newReturn) {
-				merged = oldReturn
+			if preferred, ok := returns.SelectPreferredReturnVector(newReturn, oldReturn); ok {
+				merged = preferred
 			}
 			next[sym] = merged
 			if !returns.ReturnTypesEqual(merged, oldReturn) {

@@ -161,6 +161,49 @@ func TestReturnTypesElideOptional_Empty(t *testing.T) {
 	}
 }
 
+func TestSelectPreferredReturnVector_Refinement(t *testing.T) {
+	preferred, ok := SelectPreferredReturnVector([]typ.Type{typ.String}, []typ.Type{typ.NewOptional(typ.String)})
+	if !ok {
+		t.Fatal("expected preferred vector")
+	}
+	if len(preferred) != 1 || !typ.TypeEquals(preferred[0], typ.String) {
+		t.Fatalf("expected refined string return, got %v", preferred)
+	}
+}
+
+func TestSelectPreferredReturnVector_AvoidsNilOnlyRegression(t *testing.T) {
+	preferred, ok := SelectPreferredReturnVector([]typ.Type{typ.Nil}, []typ.Type{typ.NewOptional(typ.String)})
+	if !ok {
+		t.Fatal("expected preferred vector")
+	}
+	if len(preferred) != 1 || !typ.TypeEquals(preferred[0], typ.NewOptional(typ.String)) {
+		t.Fatalf("expected non-nil summary to be preserved, got %v", preferred)
+	}
+}
+
+func TestSelectPreferredReturnVector_RejectsStaleNilOnly(t *testing.T) {
+	preferred, ok := SelectPreferredReturnVector([]typ.Type{typ.NewOptional(typ.String)}, []typ.Type{typ.Nil})
+	if !ok {
+		t.Fatal("expected preferred vector")
+	}
+	if len(preferred) != 1 || !typ.TypeEquals(preferred[0], typ.NewOptional(typ.String)) {
+		t.Fatalf("expected new non-nil summary to replace nil-only, got %v", preferred)
+	}
+}
+
+func TestSelectPreferredReturnVector_RecordExtension(t *testing.T) {
+	oldRec := typ.NewRecord().Field("x", typ.Number).Build()
+	newRec := typ.NewRecord().Field("x", typ.Number).Field("y", typ.String).Build()
+
+	preferred, ok := SelectPreferredReturnVector([]typ.Type{newRec}, []typ.Type{oldRec})
+	if !ok {
+		t.Fatal("expected preferred vector")
+	}
+	if len(preferred) != 1 || !typ.TypeEquals(preferred[0], newRec) {
+		t.Fatalf("expected record extension to be preferred, got %v", preferred)
+	}
+}
+
 func TestTypeExtendsRecord_NilTypes(t *testing.T) {
 	if TypeExtendsRecord(nil, typ.String) {
 		t.Error("nil a should not extend")

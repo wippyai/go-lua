@@ -145,6 +145,38 @@ func ReturnTypesElideOptional(a, b []typ.Type) bool {
 	return true
 }
 
+// SelectPreferredReturnVector picks a canonical winner when one return vector
+// is strictly preferable to the other without requiring a join.
+//
+// Preference order:
+//  1. subtype refinement (with nil-only regression protection)
+//  2. record extension
+//  3. optional elision
+//
+// The nil-only guard prevents a refined-but-empty-looking update from
+// regressing an already informative summary to just nil.
+func SelectPreferredReturnVector(a, b []typ.Type) ([]typ.Type, bool) {
+	if ReturnTypesRefine(a, b) {
+		if ReturnTypesAllNil(a) && !ReturnTypesAllNil(b) {
+			return b, true
+		}
+		return a, true
+	}
+	if ReturnTypesRefine(b, a) {
+		if ReturnTypesAllNil(b) && !ReturnTypesAllNil(a) {
+			return a, true
+		}
+		return b, true
+	}
+	if ReturnTypesExtendRecord(a, b) || ReturnTypesElideOptional(a, b) {
+		return a, true
+	}
+	if ReturnTypesExtendRecord(b, a) || ReturnTypesElideOptional(b, a) {
+		return b, true
+	}
+	return nil, false
+}
+
 // TypeExtendsRecord reports whether type a extends type b by adding record fields.
 // This treats record field supersets as refinements when b is a record or union of records.
 func TypeExtendsRecord(a, b typ.Type) bool {

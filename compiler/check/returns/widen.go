@@ -69,17 +69,11 @@ func WidenReturnSummaries(prev, next api.ReturnSummaries) api.ReturnSummaries {
 				merged[sym] = widenReturnVectorForConvergence(joinReturnVectorsMonotone(existing, rets))
 				continue
 			}
-			if ReturnTypesRefine(rets, existing) ||
-				ReturnTypesExtendRecord(rets, existing) ||
-				ReturnTypesElideOptional(rets, existing) {
-				merged[sym] = widenReturnVectorForConvergence(rets)
-			} else if ReturnTypesRefine(existing, rets) ||
-				ReturnTypesExtendRecord(existing, rets) ||
-				ReturnTypesElideOptional(existing, rets) {
-				merged[sym] = widenReturnVectorForConvergence(existing)
-			} else {
-				merged[sym] = widenReturnVectorForConvergence(JoinReturnVectorsPreferNonSoft(existing, rets))
+			if preferred, ok := SelectPreferredReturnVector(rets, existing); ok {
+				merged[sym] = widenReturnVectorForConvergence(preferred)
+				continue
 			}
+			merged[sym] = widenReturnVectorForConvergence(JoinReturnVectorsPreferNonSoft(existing, rets))
 		} else {
 			merged[sym] = widenReturnVectorForConvergence(rets)
 		}
