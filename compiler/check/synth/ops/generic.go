@@ -10,21 +10,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// InferTypeArgs infers type arguments for a generic function call from argument types.
-//
-// Uses local type inference with contravariant matching: argument types flow
-// up to constrain type parameters. For each argument/parameter pair, creates
-// constraints that the argument type is a subtype of the parameter type
-// (after substituting type variables).
-//
-// Example: For `function get<T>(x: T): T`, calling `get("hello")` infers T=string.
-//
-// Returns the inferred type arguments in parameter order, or error if inference fails.
-// Unresolved type parameters default to typ.Unknown.
-func InferTypeArgs(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type) ([]typ.Type, error) {
-	return InferTypeArgsWithExpectedAndMode(fn, args, isMethod, receiver, nil, false)
-}
-
 // InferTypeArgsWithExpectedAndMode performs bidirectional inference with optional
 // forced receiver consumption for method calls.
 func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {

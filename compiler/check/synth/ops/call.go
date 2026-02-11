@@ -283,7 +283,7 @@ func inferAndCall(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod 
 		typeArgs = def.TypeArgs
 	} else {
 		var err error
-		typeArgs, err = InferTypeArgs(fn, def.Args, isMethod, receiver)
+		typeArgs, err = InferTypeArgsWithExpectedAndMode(fn, def.Args, isMethod, receiver, nil, false)
 		if err != nil {
 			errors = append(errors, CallError{Kind: ErrTypeInference, Message: err.Error()})
 			return CallResult{Type: typ.Unknown, Errors: errors}

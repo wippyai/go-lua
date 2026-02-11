@@ -17,7 +17,7 @@ func TestInferTypeArgs_ArrayParam(t *testing.T) {
 
 	args := []typ.Type{typ.NewArray(typ.String)}
 
-	typeArgs, err := InferTypeArgs(fn, args, false, nil)
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(fn, args, false, nil, nil, false)
 	if err != nil {
 		t.Fatalf("InferTypeArgs error: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestInferTypeArgs_MapParam(t *testing.T) {
 
 	args := []typ.Type{typ.NewMap(typ.String, typ.Number)}
 
-	typeArgs, err := InferTypeArgs(fn, args, false, nil)
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(fn, args, false, nil, nil, false)
 	if err != nil {
 		t.Fatalf("InferTypeArgs error: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestInferTypeArgs_SimpleParam(t *testing.T) {
 
 	args := []typ.Type{typ.Integer}
 
-	typeArgs, err := InferTypeArgs(fn, args, false, nil)
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(fn, args, false, nil, nil, false)
 	if err != nil {
 		t.Fatalf("InferTypeArgs error: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestInferTypeArgs_LiteralWidens(t *testing.T) {
 
 	args := []typ.Type{typ.LiteralInt(42)}
 
-	typeArgs, err := InferTypeArgs(fn, args, false, nil)
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(fn, args, false, nil, nil, false)
 	if err != nil {
 		t.Fatalf("InferTypeArgs error: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestInferTypeArgs_RecordField(t *testing.T) {
 
 	args := []typ.Type{typ.NewRecord().Field("value", typ.String).Build()}
 
-	typeArgs, err := InferTypeArgs(fn, args, false, nil)
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(fn, args, false, nil, nil, false)
 	if err != nil {
 		t.Fatalf("InferTypeArgs error: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestInferTypeArgs_NonGeneric(t *testing.T) {
 		Returns(typ.Boolean).
 		Build()
 
-	typeArgs, err := InferTypeArgs(fn, []typ.Type{typ.String}, false, nil)
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(fn, []typ.Type{typ.String}, false, nil, nil, false)
 	if err != nil {
 		t.Fatalf("InferTypeArgs error for non-generic: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestInferTypeArgs_CannotInfer(t *testing.T) {
 		Returns(paramT).
 		Build()
 
-	args, err := InferTypeArgs(fn, []typ.Type{typ.String}, false, nil)
+	args, err := InferTypeArgsWithExpectedAndMode(fn, []typ.Type{typ.String}, false, nil, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
