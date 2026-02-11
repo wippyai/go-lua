@@ -6,8 +6,6 @@
 package pathkey
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
@@ -126,33 +124,6 @@ func ParseSuffix(suffix string) []constraint.Segment {
 		}
 	}
 	return segs
-}
-
-// splitVersionKey splits a version key into root and suffix.
-//
-// Given "sym42@3.field[0]", returns ("sym42", ".field[0]", true).
-// The root is everything before @, and the suffix starts at the first
-// '.' or '[' after the version number.
-//
-// Returns ("", "", false) if the key has no @ separator.
-func splitVersionKey(key string) (root string, suffix string, ok bool) {
-	at := strings.IndexByte(key, '@')
-	if at <= 0 {
-		return "", "", false
-	}
-	root = key[:at]
-	start := at + 1
-	for start < len(key) {
-		ch := key[start]
-		if ch == '.' || ch == '[' {
-			break
-		}
-		start++
-	}
-	if start >= len(key) {
-		return root, "", true
-	}
-	return root, key[start:], true
 }
 
 // PathRelated returns true if target and other paths share identity and overlap.

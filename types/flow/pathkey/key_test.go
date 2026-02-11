@@ -6,59 +6,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
-func Test_splitVersionKey_Simple(t *testing.T) {
-	root, suffix, ok := splitVersionKey("x@5")
-	if !ok {
-		t.Fatal("expected ok")
-	}
-	if root != "x" {
-		t.Fatalf("expected root 'x', got '%s'", root)
-	}
-	if suffix != "" {
-		t.Fatalf("expected empty suffix, got '%s'", suffix)
-	}
-}
-
-func Test_splitVersionKey_WithField(t *testing.T) {
-	root, suffix, ok := splitVersionKey("x@5.field")
-	if !ok {
-		t.Fatal("expected ok")
-	}
-	if root != "x" {
-		t.Fatalf("expected root 'x', got '%s'", root)
-	}
-	if suffix != ".field" {
-		t.Fatalf("expected '.field', got '%s'", suffix)
-	}
-}
-
-func Test_splitVersionKey_WithIndex(t *testing.T) {
-	root, suffix, ok := splitVersionKey("arr@10[0]")
-	if !ok {
-		t.Fatal("expected ok")
-	}
-	if root != "arr" {
-		t.Fatalf("expected root 'arr', got '%s'", root)
-	}
-	if suffix != "[0]" {
-		t.Fatalf("expected '[0]', got '%s'", suffix)
-	}
-}
-
-func Test_splitVersionKey_NoAt(t *testing.T) {
-	_, _, ok := splitVersionKey("noat")
-	if ok {
-		t.Fatal("expected not ok for key without @")
-	}
-}
-
-func Test_splitVersionKey_Empty(t *testing.T) {
-	_, _, ok := splitVersionKey("")
-	if ok {
-		t.Fatal("expected not ok for empty key")
-	}
-}
-
 func TestSegmentsSuffix_Empty(t *testing.T) {
 	result := SegmentsSuffix(nil)
 	if result != "" {
