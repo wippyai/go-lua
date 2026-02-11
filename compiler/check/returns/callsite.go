@@ -12,35 +12,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// HasLocalCallSites checks whether the graph contains call sites to local functions.
-//
-// This is an optimization check. If a function's CFG contains no calls to other
-// local functions, it has no mutual recursion dependencies and can be analyzed
-// independently without SCC iteration. This allows skipping the more expensive
-// fixpoint computation for simple functions.
-func HasLocalCallSites(graph *cfg.Graph, localFuncs map[cfg.SymbolID]*LocalFuncInfo) bool {
-	if graph == nil || len(localFuncs) == 0 {
-		return false
-	}
-	matches := func(info *cfg.CallInfo) bool {
-		if info == nil || info.CalleeSymbol == 0 {
-			return false
-		}
-		_, ok := localFuncs[info.CalleeSymbol]
-		return ok
-	}
-	found := false
-	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
-		if found {
-			return
-		}
-		if matches(info) {
-			found = true
-		}
-	})
-	return found
-}
-
 // CollectCalledNestedFieldAssignments collects field assignments recorded for
 // called nested functions that target symbols from the parent graph (captured variables).
 //
