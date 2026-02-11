@@ -47,6 +47,14 @@ func TestTwo(t *testing.T) {
 			t.Errorf("expected 2 members, got %d", len(union.Members))
 		}
 	})
+
+	t.Run("prefers non-soft over soft placeholder", func(t *testing.T) {
+		soft := typ.NewRecord().Build() // empty record is soft under placeholder policy
+		result := Two(soft, typ.String)
+		if result != typ.String {
+			t.Fatalf("Two(soft, string) = %v, want string", result)
+		}
+	})
 }
 
 func TestReturnVectors(t *testing.T) {

@@ -106,6 +106,28 @@ func TestHasKnownType(t *testing.T) {
 	}
 }
 
+func TestIsUnknownOrNil(t *testing.T) {
+	tests := []struct {
+		name string
+		in   Type
+		want bool
+	}{
+		{name: "nil", in: nil, want: true},
+		{name: "unknown", in: Unknown, want: true},
+		{name: "nil type", in: Nil, want: true},
+		{name: "any", in: Any, want: false},
+		{name: "number", in: Number, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsUnknownOrNil(tt.in); got != tt.want {
+				t.Fatalf("IsUnknownOrNil(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsUnknownOnlyOrEmpty(t *testing.T) {
 	tests := []struct {
 		name string

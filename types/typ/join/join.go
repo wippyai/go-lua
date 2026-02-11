@@ -4,10 +4,7 @@
 // where multiple control flow paths converge.
 package join
 
-import (
-	"github.com/wippyai/go-lua/types/kind"
-	"github.com/wippyai/go-lua/types/typ"
-)
+import "github.com/wippyai/go-lua/types/typ"
 
 // Two computes the least upper bound (union) of two types at join points.
 //
@@ -15,16 +12,7 @@ import (
 // must accept values from both branches. nil and Unknown are treated as
 // absent (no information) and don't contribute to the join.
 func Two(a, b typ.Type) typ.Type {
-	if typ.IsAbsentOrUnknown(a) {
-		return b
-	}
-	if typ.IsAbsentOrUnknown(b) {
-		return a
-	}
-	if typ.TypeEquals(a, b) {
-		return a
-	}
-	return typ.NewUnion(a, b)
+	return typ.JoinPreferNonSoft(a, b)
 }
 
 // ReturnVectors merges two multi-return type vectors at join points.
@@ -64,10 +52,7 @@ func ReturnVectors(a, b []typ.Type) []typ.Type {
 
 // IsUnknownOrNil returns true if t is nil, unknown, or the nil type.
 func IsUnknownOrNil(t typ.Type) bool {
-	if typ.IsAbsentOrUnknown(t) {
-		return true
-	}
-	return t.Kind() == kind.Nil
+	return typ.IsUnknownOrNil(t)
 }
 
 // WithReturns returns a copy of sig with the given return types grafted on.

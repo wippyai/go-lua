@@ -24,6 +24,11 @@ func IsAbsentOrUnknown(t Type) bool {
 	return t == nil || IsUnknown(t)
 }
 
+// IsUnknownOrNil reports whether t is missing (nil), unknown, or explicit nil type.
+func IsUnknownOrNil(t Type) bool {
+	return IsAbsentOrUnknown(t) || (t != nil && t.Kind() == kind.Nil)
+}
+
 // HasKnownType reports whether the slice contains at least one concrete type.
 // nil entries and unknown entries are treated as unresolved.
 func HasKnownType(types []Type) bool {

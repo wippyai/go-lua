@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/typ"
-	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -74,7 +73,7 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 						inferred = synth(source, p)
 					}
 				}
-				if typjoin.IsUnknownOrNil(inferred) {
+				if typ.IsUnknownOrNil(inferred) {
 					return
 				}
 				// Skip union types - they may need narrowing later
@@ -135,7 +134,7 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 			// Synth method call with known receiver via synthAPI.
 			// Use assignment-wide expansion so target-to-return mapping follows Lua
 			// multi-return semantics (including trailing targets from final call).
-			if value := assignValueAt(expanded, i); !typjoin.IsUnknownOrNil(value) {
+			if value := assignValueAt(expanded, i); !typ.IsUnknownOrNil(value) {
 				bySymbol[sym] = value
 				// Enqueue points that depend on this newly typed symbol
 				worklist = append(worklist, deps[sym]...)
