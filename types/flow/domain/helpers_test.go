@@ -50,6 +50,66 @@ func TestSplitPathKey_Index(t *testing.T) {
 	}
 }
 
+func TestSplitPathKey_StringIndexWithDot_NoField(t *testing.T) {
+	key := constraint.PathKey(`sym1@2["a.b"]`)
+	_, _, ok := SplitPathKey(key)
+	if ok {
+		t.Fatalf("expected split to fail for non-field terminal segment: %q", key)
+	}
+}
+
+func TestSplitPathKey_FieldAfterStringIndexWithDot(t *testing.T) {
+	key := constraint.PathKey(`sym1@2["a.b"].c`)
+	parent, field, ok := SplitPathKey(key)
+	if !ok {
+		t.Fatalf("expected split to succeed: %q", key)
+	}
+	if parent != `sym1@2["a.b"]` {
+		t.Fatalf("expected parent sym1@2[\"a.b\"], got %s", parent)
+	}
+	if field != "c" {
+		t.Fatalf("expected field c, got %s", field)
+	}
+}
+
+func TestSplitPathKey_FieldAfterEscapedStringIndex(t *testing.T) {
+	key := constraint.PathKey(`sym1@2["a\"b"].c`)
+	parent, field, ok := SplitPathKey(key)
+	if !ok {
+		t.Fatalf("expected split to succeed: %q", key)
+	}
+	if parent != `sym1@2["a\"b"]` {
+		t.Fatalf("expected escaped parent, got %s", parent)
+	}
+	if field != "c" {
+		t.Fatalf("expected field c, got %s", field)
+	}
+}
+
+func TestSplitPathKey_PlaceholderAndReturnRoots(t *testing.T) {
+	tests := []struct {
+		key    constraint.PathKey
+		parent constraint.PathKey
+		field  string
+	}{
+		{key: `$0.meta.ok`, parent: `$0.meta`, field: "ok"},
+		{key: `ret[0].ok`, parent: `ret[0]`, field: "ok"},
+	}
+
+	for _, tt := range tests {
+		parent, field, ok := SplitPathKey(tt.key)
+		if !ok {
+			t.Fatalf("expected split to succeed for %q", tt.key)
+		}
+		if parent != tt.parent {
+			t.Fatalf("key %q: parent=%q, want %q", tt.key, parent, tt.parent)
+		}
+		if field != tt.field {
+			t.Fatalf("key %q: field=%q, want %q", tt.key, field, tt.field)
+		}
+	}
+}
+
 func TestIsChildPath(t *testing.T) {
 	tests := []struct {
 		parent string
@@ -59,8 +119,13 @@ func TestIsChildPath(t *testing.T) {
 		{"#1", "#1.field", true},
 		{"#1", "#1.a.b", true},
 		{"#1.a", "#1.a.b", true},
+		{"#1", "#1[0]", true},
+		{"#1[0]", "#1[0].field", true},
+		{`sym1@2["a.b"]`, `sym1@2["a.b"].c`, true},
+		{`sym1@2["a\"b"]`, `sym1@2["a\"b"][0]`, true},
 		{"#1", "#2.field", false},
 		{"#1.a", "#1.b", false},
+		{`sym1@2["a.b"]`, `sym1@2["a.c"].d`, false},
 		{"#1", "#1", false},
 		{"", "#1.field", false},
 		{"#1", "", false},
