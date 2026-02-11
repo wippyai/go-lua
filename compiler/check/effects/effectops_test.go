@@ -147,6 +147,101 @@ func TestEnrichExportWithEffects_NonRecordNonInterface(t *testing.T) {
 	}
 }
 
+func TestExportFieldNameFromEffectSymbol(t *testing.T) {
+	tests := []struct {
+		name     string
+		rootName string
+		symbol   string
+		want     string
+		wantOK   bool
+	}{
+		{name: "direct no root", rootName: "", symbol: "validate", want: "validate", wantOK: true},
+		{name: "single dot no root", rootName: "", symbol: "M.validate", want: "validate", wantOK: true},
+		{name: "nested no root rejected", rootName: "", symbol: "M.api.validate", want: "", wantOK: false},
+		{name: "root direct", rootName: "M", symbol: "M.validate", want: "validate", wantOK: true},
+		{name: "root nested rejected", rootName: "M", symbol: "M.api.validate", want: "", wantOK: false},
+		{name: "root mismatch rejected", rootName: "M", symbol: "N.validate", want: "", wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := exportFieldNameFromEffectSymbol(tt.rootName, tt.symbol)
+			if ok != tt.wantOK {
+				t.Fatalf("ok=%v, want %v", ok, tt.wantOK)
+			}
+			if got != tt.want {
+				t.Fatalf("field=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnrichExportWithEffects_PreservesRecordQualifiersAndMetatable(t *testing.T) {
+	graph := buildGraphForEffects(t, `
+		local function validate(v)
+			return v
+		end
+		return validate
+	`, "validate")
+
+	symValidate, ok := graph.SymbolAt(graph.Entry(), "validate")
+	if !ok || symValidate == 0 {
+		t.Fatal("expected symbol for validate")
+	}
+
+	fn := typ.Func().Param("v", typ.String).Returns(typ.Boolean).Build()
+	meta := typ.NewRecord().Field("__index", typ.Any).Build()
+	export := typ.NewRecord().
+		OptReadonlyField("validate", fn).
+		Field("plain", typ.Number).
+		MapComponent(typ.String, typ.Integer).
+		SetOpen(true).
+		Metatable(meta).
+		Build()
+
+	effectsBySym := map[cfg.SymbolID]*constraint.FunctionEffect{
+		symValidate: {Terminates: true},
+	}
+
+	enriched := EnrichExportWithEffects(export, "", effectsBySym, graph)
+	rec, ok := enriched.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record, got %T", enriched)
+	}
+
+	field := rec.GetField("validate")
+	if field == nil {
+		t.Fatal("expected validate field")
+	}
+	if !field.Optional {
+		t.Fatal("validate field optional flag should be preserved")
+	}
+	if !field.Readonly {
+		t.Fatal("validate field readonly flag should be preserved")
+	}
+	fnType, ok := field.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("validate field should be function, got %T", field.Type)
+	}
+	if fnType.Refinement == nil {
+		t.Fatal("validate function should be enriched with refinement")
+	}
+
+	plain := rec.GetField("plain")
+	if plain == nil || plain.Optional || plain.Readonly {
+		t.Fatalf("plain field flags should remain unchanged: %+v", plain)
+	}
+	if !rec.HasMapComponent() || !typ.TypeEquals(rec.MapKey, typ.String) || !typ.TypeEquals(rec.MapValue, typ.Integer) {
+		t.Fatalf("map component should be preserved, got key=%v value=%v", rec.MapKey, rec.MapValue)
+	}
+	if !rec.Open {
+		t.Fatal("record open flag should be preserved")
+	}
+	if !typ.TypeEquals(rec.Metatable, meta) {
+		t.Fatalf("metatable should be preserved, got %v want %v", rec.Metatable, meta)
+	}
+}
+
 func TestPropagate_CollectsEffectFromAssignmentCallSite(t *testing.T) {
 	graph := buildGraphForEffects(t, `
 		local x = f()

@@ -39,18 +39,11 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 		if name == "" {
 			continue
 		}
-		if rootName != "" && strings.HasPrefix(name, rootName+".") {
-			field := strings.TrimPrefix(name, rootName+".")
-			if field != "" {
-				fieldEffects[field] = eff
-			}
-		} else {
-			field := name
-			if idx := strings.LastIndex(name, "."); idx != -1 && idx+1 < len(name) {
-				field = name[idx+1:]
-			}
-			fieldEffects[field] = eff
+		field, ok := exportFieldNameFromEffectSymbol(rootName, name)
+		if !ok {
+			continue
 		}
+		fieldEffects[field] = eff
 	}
 	if len(fieldEffects) == 0 {
 		return export
@@ -81,8 +74,11 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 		if v.HasMapComponent() {
 			builder.MapComponent(v.MapKey, v.MapValue)
 		}
+		if v.Metatable != nil {
+			builder.Metatable(v.Metatable)
+		}
 		for _, f := range fields {
-			builder.Field(f.Name, f.Type)
+			builder = appendRecordField(builder, f)
 		}
 		return builder.Build()
 	case *typ.Interface:
@@ -105,6 +101,57 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 	default:
 		return export
 	}
+}
+
+// exportFieldNameFromEffectSymbol resolves a graph symbol name to a top-level
+// export field name.
+//
+// Accepted forms:
+//   - rootName == "": "field" or "root.field"
+//   - rootName != "": "rootName.field"
+//
+// Deeper dotted paths are rejected to avoid ambiguous leaf mapping.
+func exportFieldNameFromEffectSymbol(rootName, name string) (string, bool) {
+	if name == "" {
+		return "", false
+	}
+	if rootName != "" {
+		prefix := rootName + "."
+		if !strings.HasPrefix(name, prefix) {
+			return "", false
+		}
+		rest := strings.TrimPrefix(name, prefix)
+		if rest == "" || strings.Contains(rest, ".") {
+			return "", false
+		}
+		return rest, true
+	}
+
+	if !strings.Contains(name, ".") {
+		return name, true
+	}
+	firstDot := strings.IndexByte(name, '.')
+	if firstDot <= 0 || firstDot >= len(name)-1 {
+		return "", false
+	}
+	rest := name[firstDot+1:]
+	if strings.Contains(rest, ".") {
+		return "", false
+	}
+	return rest, true
+}
+
+func appendRecordField(builder *typ.RecordBuilder, f typ.Field) *typ.RecordBuilder {
+	if f.Optional && f.Readonly {
+		return builder.OptReadonlyField(f.Name, f.Type)
+	}
+	if f.Optional {
+		return builder.OptField(f.Name, f.Type)
+	}
+	if f.Readonly {
+		return builder.ReadonlyField(f.Name, f.Type)
+	}
+	return builder.Field(f.Name, f.Type)
 }
 
 func applyFunctionRefinement(fn *typ.Function, eff *constraint.FunctionEffect) *typ.Function {
