@@ -63,12 +63,6 @@ func ForceMethodReceiverAtPoint(bindings *bind.BindingTable, graph *compcfg.Grap
 	return symbolForcesMethodReceiver(bindings, graph, sym)
 }
 
-// MethodCalleeSymbol resolves a method call to its field-backed function symbol
-// using static receiver/path information from the callsite.
-func MethodCalleeSymbol(bindings *bind.BindingTable, info *compcfg.CallInfo) (typecfg.SymbolID, bool) {
-	return methodCalleeSymbolFromCall(bindings, nil, info)
-}
-
 // MethodCalleeSymbolWithAliases resolves method symbols and expands receiver
 // base symbol through direct alias chains when graph is provided.
 func MethodCalleeSymbolWithAliases(bindings *bind.BindingTable, graph *compcfg.Graph, info *compcfg.CallInfo) (typecfg.SymbolID, bool) {

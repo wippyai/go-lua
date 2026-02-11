@@ -330,7 +330,7 @@ func TestCalleeSymbolCandidatesWithAliases_ResolvesMethodSymbolThroughAliasBase(
 		t.Fatal("expected Alias:run call site")
 	}
 
-	if _, ok := MethodCalleeSymbol(bindings, callInfo); ok {
+	if _, ok := MethodCalleeSymbolWithAliases(bindings, nil, callInfo); ok {
 		t.Fatal("expected non-alias method symbol resolution to miss alias receiver base")
 	}
 	methodSym, ok := MethodCalleeSymbolWithAliases(bindings, graph, callInfo)

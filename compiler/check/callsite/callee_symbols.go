@@ -36,11 +36,11 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 	if fallback != primary {
 		push(SymbolFromExpr(info.Callee, fallback))
 	}
-	if methodSym, ok := MethodCalleeSymbol(primary, info); ok {
+	if methodSym, ok := MethodCalleeSymbolWithAliases(primary, nil, info); ok {
 		push(methodSym)
 	}
 	if fallback != nil && fallback != primary {
-		if methodSym, ok := MethodCalleeSymbol(fallback, info); ok {
+		if methodSym, ok := MethodCalleeSymbolWithAliases(fallback, nil, info); ok {
 			push(methodSym)
 		}
 	}
