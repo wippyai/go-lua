@@ -575,16 +575,12 @@ func ExtractFunctionEffect(
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
 ) *constraint.FunctionEffect {
-	// Primary lookup: by symbol (all functions have symbols)
-	if effectLookupSym != nil && info.CalleeSymbol != 0 {
-		if eff := effectLookupSym(info.CalleeSymbol); eff != nil {
-			return eff
-		}
-	}
-	// Direct alias resolution (local f = B; f()).
-	if effectLookupSym != nil && info.CalleeSymbol != 0 && graph != nil {
-		if aliasSym := graph.DirectAliasSymbol(info.CalleeSymbol); aliasSym != 0 {
-			if eff := effectLookupSym(aliasSym); eff != nil {
+	candidates := calleeSymbolCandidatesForEffects(info, graph)
+
+	// Primary lookup: by canonical callsite symbol candidates.
+	if effectLookupSym != nil {
+		for _, sym := range candidates {
+			if eff := effectLookupSym(sym); eff != nil {
 				return eff
 			}
 		}
@@ -600,10 +596,12 @@ func ExtractFunctionEffect(
 	}
 
 	// Fallback: extract effect from resolved type
-	if info.CalleeSymbol != 0 && symResolver != nil {
-		if looked, ok := symResolver(p, info.CalleeSymbol); ok {
-			if eff := ExtractEffectFromType(looked); eff != nil {
-				return eff
+	if symResolver != nil {
+		for _, sym := range candidates {
+			if looked, ok := symResolver(p, sym); ok {
+				if eff := ExtractEffectFromType(looked); eff != nil {
+					return eff
+				}
 			}
 		}
 	}
@@ -637,17 +635,12 @@ func CallTerminates(
 	if info == nil {
 		return false
 	}
+	candidates := calleeSymbolCandidatesForEffects(info, graph)
 
-	// Primary check: symbol-based effect lookup
-	if effectLookupSym != nil && info.CalleeSymbol != 0 {
-		if eff := effectLookupSym(info.CalleeSymbol); eff != nil && eff.Terminates {
-			return true
-		}
-	}
-	// Direct alias resolution (local f = B; f()).
-	if effectLookupSym != nil && info.CalleeSymbol != 0 && graph != nil {
-		if aliasSym := graph.DirectAliasSymbol(info.CalleeSymbol); aliasSym != 0 {
-			if eff := effectLookupSym(aliasSym); eff != nil && eff.Terminates {
+	// Primary check: canonical callsite symbol candidates.
+	if effectLookupSym != nil {
+		for _, sym := range candidates {
+			if eff := effectLookupSym(sym); eff != nil && eff.Terminates {
 				return true
 			}
 		}
@@ -658,9 +651,14 @@ func CallTerminates(
 	if synthFn != nil && info.Callee != nil {
 		fnType = synthFn(info.Callee, p)
 	}
-	if fnType == nil && symResolver != nil && info.CalleeSymbol != 0 {
-		if looked, ok := symResolver(p, info.CalleeSymbol); ok {
-			fnType = looked
+	if fnType == nil && symResolver != nil {
+		for _, sym := range candidates {
+			if looked, ok := symResolver(p, sym); ok {
+				fnType = looked
+				if fnType != nil {
+					break
+				}
+			}
 		}
 	}
 	if fn, ok := fnType.(*typ.Function); ok && fn != nil {
@@ -684,6 +682,38 @@ func CallTerminates(
 	}
 
 	return false
+}
+
+func calleeSymbolCandidatesForEffects(info *cfg.CallInfo, graph *cfg.Graph) []cfg.SymbolID {
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
+	base := callsite.CalleeSymbolCandidates(info, bindings, nil)
+	if len(base) == 0 {
+		return base
+	}
+	candidates := make([]cfg.SymbolID, 0, len(base)*2)
+	seen := make(map[cfg.SymbolID]struct{}, len(base)*2)
+	push := func(sym cfg.SymbolID) {
+		if sym == 0 {
+			return
+		}
+		if _, ok := seen[sym]; ok {
+			return
+		}
+		seen[sym] = struct{}{}
+		candidates = append(candidates, sym)
+	}
+	for _, sym := range base {
+		push(sym)
+		if graph != nil {
+			if aliasSym := graph.DirectAliasSymbol(sym); aliasSym != 0 {
+				push(aliasSym)
+			}
+		}
+	}
+	return candidates
 }
 
 // PointHasTerminatingCallSite reports whether any callsite represented at point p

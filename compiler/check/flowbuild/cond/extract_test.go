@@ -158,6 +158,56 @@ func TestCallTerminates_NilInfo(t *testing.T) {
 	}
 }
 
+func TestCallTerminates_UsesCanonicalCandidatesWhenRawSymbolMissing(t *testing.T) {
+	src := `
+		local x = error("boom")
+	`
+	stmts, err := parse.Parse(strings.NewReader(src), "test")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts}, "error")
+	if graph == nil {
+		t.Fatal("expected non-nil graph")
+	}
+
+	var (
+		point    typecfg.Point
+		callInfo *cfg.CallInfo
+		errorSym typecfg.SymbolID
+	)
+	graph.EachAssign(func(p typecfg.Point, info *cfg.AssignInfo) {
+		if point != 0 || info == nil {
+			return
+		}
+		call, _ := info.CallForTarget(0)
+		if call == nil {
+			return
+		}
+		point = p
+		callInfo = call
+		errorSym = call.CalleeSymbol
+	})
+	if point == 0 || callInfo == nil || errorSym == 0 {
+		t.Fatal("expected assignment callsite with callee symbol")
+	}
+
+	// Simulate missing raw symbol. Canonical candidate lookup should recover
+	// from call expression/bindings and still detect termination.
+	callInfo.CalleeSymbol = 0
+
+	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionEffect {
+		if sym == errorSym {
+			return &constraint.FunctionEffect{Terminates: true}
+		}
+		return nil
+	}
+
+	if !CallTerminates(callInfo, point, nil, nil, effectLookup, graph) {
+		t.Fatal("expected terminating call via canonical callee candidate")
+	}
+}
+
 func TestExtractPredicateLinkFromCallInfo_NilInfo(t *testing.T) {
 	result := ExtractPredicateLinkFromCallInfo(nil, 0, 0, nil, nil, nil, nil, nil, nil, nil)
 	if result != nil {
