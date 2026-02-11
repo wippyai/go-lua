@@ -202,10 +202,10 @@ type Param struct {
 }
 
 func (Param) exprNode()        {}
-func (p Param) String() string { return fmt.Sprintf("param[%d]", p.Index) }
+func (p Param) String() string { return paramExprKey(p.Index) }
 
 func (p Param) Substitute(subst map[string]Expr) Expr {
-	key := fmt.Sprintf("param[%d]", p.Index)
+	key := paramExprKey(p.Index)
 	if e, ok := subst[key]; ok {
 		return e
 	}
@@ -214,11 +214,11 @@ func (p Param) Substitute(subst map[string]Expr) Expr {
 }
 
 func (p Param) Variables() []string {
-	return []string{fmt.Sprintf("param[%d]", p.Index)}
+	return []string{paramExprKey(p.Index)}
 }
 
 func (p Param) Eval(env map[string]int64) (int64, bool) {
-	key := fmt.Sprintf("param[%d]", p.Index)
+	key := paramExprKey(p.Index)
 	if val, ok := env[key]; ok {
 		return val, true
 	}
@@ -233,10 +233,10 @@ type Ret struct {
 }
 
 func (Ret) exprNode()        {}
-func (r Ret) String() string { return fmt.Sprintf("ret[%d]", r.Index) }
+func (r Ret) String() string { return retExprKey(r.Index) }
 
 func (r Ret) Substitute(subst map[string]Expr) Expr {
-	key := fmt.Sprintf("ret[%d]", r.Index)
+	key := retExprKey(r.Index)
 	if e, ok := subst[key]; ok {
 		return e
 	}
@@ -245,11 +245,11 @@ func (r Ret) Substitute(subst map[string]Expr) Expr {
 }
 
 func (r Ret) Variables() []string {
-	return []string{fmt.Sprintf("ret[%d]", r.Index)}
+	return []string{retExprKey(r.Index)}
 }
 
 func (r Ret) Eval(env map[string]int64) (int64, bool) {
-	key := fmt.Sprintf("ret[%d]", r.Index)
+	key := retExprKey(r.Index)
 	if val, ok := env[key]; ok {
 		return val, true
 	}
@@ -264,10 +264,10 @@ type ParamLen struct {
 }
 
 func (ParamLen) exprNode()        {}
-func (p ParamLen) String() string { return fmt.Sprintf("len(param[%d])", p.Index) }
+func (p ParamLen) String() string { return "len(" + paramExprKey(p.Index) + ")" }
 
 func (p ParamLen) Substitute(subst map[string]Expr) Expr {
-	key := fmt.Sprintf("param[%d].len", p.Index)
+	key := paramLenExprKey(p.Index)
 	if e, ok := subst[key]; ok {
 		return e
 	}
@@ -276,11 +276,11 @@ func (p ParamLen) Substitute(subst map[string]Expr) Expr {
 }
 
 func (p ParamLen) Variables() []string {
-	return []string{fmt.Sprintf("param[%d].len", p.Index)}
+	return []string{paramLenExprKey(p.Index)}
 }
 
 func (p ParamLen) Eval(env map[string]int64) (int64, bool) {
-	key := fmt.Sprintf("param[%d].len", p.Index)
+	key := paramLenExprKey(p.Index)
 	if val, ok := env[key]; ok {
 		return val, true
 	}
@@ -295,10 +295,10 @@ type RetLen struct {
 }
 
 func (RetLen) exprNode()        {}
-func (r RetLen) String() string { return fmt.Sprintf("len(ret[%d])", r.Index) }
+func (r RetLen) String() string { return "len(" + retExprKey(r.Index) + ")" }
 
 func (r RetLen) Substitute(subst map[string]Expr) Expr {
-	key := fmt.Sprintf("ret[%d].len", r.Index)
+	key := retLenExprKey(r.Index)
 	if e, ok := subst[key]; ok {
 		return e
 	}
@@ -307,11 +307,11 @@ func (r RetLen) Substitute(subst map[string]Expr) Expr {
 }
 
 func (r RetLen) Variables() []string {
-	return []string{fmt.Sprintf("ret[%d].len", r.Index)}
+	return []string{retLenExprKey(r.Index)}
 }
 
 func (r RetLen) Eval(env map[string]int64) (int64, bool) {
-	key := fmt.Sprintf("ret[%d].len", r.Index)
+	key := retLenExprKey(r.Index)
 	if val, ok := env[key]; ok {
 		return val, true
 	}
@@ -356,6 +356,22 @@ func PL(index int) ParamLen { return ParamLen{Index: index} }
 
 // RL creates a return length expression.
 func RL(index int) RetLen { return RetLen{Index: index} }
+
+func paramExprKey(index int) string {
+	return "param[" + strconv.Itoa(index) + "]"
+}
+
+func retExprKey(index int) string {
+	return "ret[" + strconv.Itoa(index) + "]"
+}
+
+func paramLenExprKey(index int) string {
+	return paramExprKey(index) + ".len"
+}
+
+func retLenExprKey(index int) string {
+	return retExprKey(index) + ".len"
+}
 
 // Min represents the minimum of two expressions.
 type Min struct {
