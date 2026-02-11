@@ -498,7 +498,7 @@ func (r *Resolver) resolveRef(te *ast.TypeRefExpr, sc *scope.State) typ.Type {
 	typeName := te.Path[len(te.Path)-1]
 
 	if r.manifests != nil {
-		if manifest := r.manifests.Manifest(module); manifest != nil {
+		if manifest := io.LookupManifest(r.manifests, module); manifest != nil {
 			if t, ok := manifest.LookupType(typeName); ok {
 				return t
 			}

@@ -30,6 +30,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
@@ -497,17 +498,11 @@ func (s *Synthesizer) synthMultiWithSpec(expr ast.Expr, p cfg.Point, specTypes a
 }
 
 // enrichWithManifest enriches a field type with manifest information.
-func enrichWithManifest(manifests interface{}, ft typ.Type, modulePath, fieldName string) typ.Type {
-	mq, ok := manifests.(interface {
-		Manifest(path string) interface {
-			LookupValue(name string) (typ.Type, bool)
-		}
-	})
-	if !ok || mq == nil {
+func enrichWithManifest(manifests io.ManifestQuerier, ft typ.Type, modulePath, fieldName string) typ.Type {
+	if manifests == nil {
 		return ft
 	}
-
-	manifest := mq.Manifest(modulePath)
+	manifest := io.LookupManifest(manifests, modulePath)
 	if manifest == nil {
 		return ft
 	}

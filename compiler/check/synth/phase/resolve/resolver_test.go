@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	typecfg "github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -17,6 +18,19 @@ func newTestResolver() *Resolver {
 type testParamBindings struct {
 	params map[*ast.FunctionExpr][]typecfg.SymbolID
 	names  map[typecfg.SymbolID]string
+}
+
+type manifestQuerierStub struct {
+	manifests map[string]*io.Manifest
+	imports   map[string]*io.Manifest
+}
+
+func (m manifestQuerierStub) Manifest(path string) *io.Manifest {
+	return m.manifests[path]
+}
+
+func (m manifestQuerierStub) Imports() map[string]*io.Manifest {
+	return m.imports
 }
 
 func (m testParamBindings) ParamSymbols(fn *ast.FunctionExpr) []typecfg.SymbolID {
@@ -313,6 +327,24 @@ func TestResolveType_TypeRef_Module(t *testing.T) {
 	}
 	if ref.Name != "MyType" {
 		t.Fatalf("name: got %q, want %q", ref.Name, "MyType")
+	}
+}
+
+func TestResolveType_TypeRef_ModuleImportsFallback(t *testing.T) {
+	manifest := io.NewManifest("mymodule")
+	manifest.DefineType("MyType", typ.Integer)
+	r := New(Config{
+		Manifests: manifestQuerierStub{
+			manifests: map[string]*io.Manifest{},
+			imports:   map[string]*io.Manifest{"mymodule": manifest},
+		},
+	})
+	sc := scope.New()
+
+	expr := &ast.TypeRefExpr{Path: []string{"mymodule", "MyType"}}
+	result := r.ResolveType(expr, sc)
+	if !typ.TypeEquals(result, typ.Integer) {
+		t.Fatalf("got %v, want integer from imports fallback", result)
 	}
 }
 

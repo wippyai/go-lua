@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // Manifest file format constants.
@@ -257,6 +258,27 @@ func (m *Manifest) AllGlobals() map[string]typ.Type {
 func (m *Manifest) LookupSummary(name string) (*FunctionSummary, bool) {
 	s, ok := m.Summaries[name]
 	return s, ok
+}
+
+// LookupValue finds an exported value field by name from the enriched export type.
+func (m *Manifest) LookupValue(name string) (typ.Type, bool) {
+	if m == nil || name == "" {
+		return nil, false
+	}
+	export := unwrap.Alias(m.EnrichedExport())
+	switch t := export.(type) {
+	case *typ.Record:
+		if f := t.GetField(name); f != nil {
+			return f.Type, true
+		}
+	case *typ.Interface:
+		for _, method := range t.Methods {
+			if method.Name == name && method.Type != nil {
+				return method.Type, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // EnrichedExport returns the Export type with function summaries applied.

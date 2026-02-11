@@ -66,3 +66,36 @@ func TestLookupEnrichedExport(t *testing.T) {
 		t.Fatalf("LookupEnrichedExport = %v, want string", got)
 	}
 }
+
+func TestManifestLookupValue_RecordField(t *testing.T) {
+	m := NewManifest("a")
+	m.SetExport(typ.NewRecord().Field("name", typ.String).Build())
+	got, ok := m.LookupValue("name")
+	if !ok {
+		t.Fatal("LookupValue(name) should resolve record field")
+	}
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("LookupValue(name) = %v, want string", got)
+	}
+}
+
+func TestManifestLookupValue_InterfaceMethod(t *testing.T) {
+	fn := typ.Func().Param("x", typ.Integer).Returns(typ.String).Build()
+	m := NewManifest("a")
+	m.SetExport(typ.NewInterface("", []typ.Method{{Name: "run", Type: fn}}))
+	got, ok := m.LookupValue("run")
+	if !ok {
+		t.Fatal("LookupValue(run) should resolve interface method")
+	}
+	if got != fn {
+		t.Fatalf("LookupValue(run) = %v, want %v", got, fn)
+	}
+}
+
+func TestManifestLookupValue_Missing(t *testing.T) {
+	m := NewManifest("a")
+	m.SetExport(typ.NewRecord().Field("name", typ.String).Build())
+	if got, ok := m.LookupValue("missing"); ok || got != nil {
+		t.Fatalf("LookupValue(missing) = (%v,%v), want (nil,false)", got, ok)
+	}
+}
