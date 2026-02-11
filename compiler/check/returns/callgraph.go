@@ -114,6 +114,11 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 			moduleBindings = info.ParentGraph.Bindings()
 		}
 	}
+	parentGraphIDs := make([]uint64, 0, len(parentGraphs))
+	for graphID := range parentGraphs {
+		parentGraphIDs = append(parentGraphIDs, graphID)
+	}
+	sort.Slice(parentGraphIDs, func(i, j int) bool { return parentGraphIDs[i] < parentGraphIDs[j] })
 
 	for round := 0; round < len(localFuncs); round++ {
 		changed := false
@@ -195,7 +200,8 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 
 		// Parent-graph calls (e.g. chunk-level calls to local/nested functions)
 		// provide the first wave of hints into local function params.
-		for _, g := range parentGraphs {
+		for _, graphID := range parentGraphIDs {
+			g := parentGraphs[graphID]
 			if g == nil {
 				continue
 			}
