@@ -46,6 +46,27 @@ func TestCalleeSymbolCandidates_DeduplicatesRawAndCanonical(t *testing.T) {
 	}
 }
 
+func TestCalleeSymbolCandidates_IncludesPrimaryExprSymbolWhenRawDiffers(t *testing.T) {
+	callee := &ast.IdentExpr{Value: "f"}
+	primary := bind.NewBindingTable()
+	const (
+		rawSym  cfg.SymbolID = 51
+		exprSym cfg.SymbolID = 52
+	)
+	primary.Bind(callee, exprSym)
+
+	candidates := CalleeSymbolCandidates(&cfg.CallInfo{
+		Callee:       callee,
+		CalleeSymbol: rawSym,
+	}, primary, nil)
+	if len(candidates) != 2 {
+		t.Fatalf("len(candidates) = %d, want 2 (%v)", len(candidates), candidates)
+	}
+	if candidates[0] != rawSym || candidates[1] != exprSym {
+		t.Fatalf("candidates = %v, want [%d %d]", candidates, rawSym, exprSym)
+	}
+}
+
 func TestCalleeSymbolCandidates_IncludesPrimaryNameMatches(t *testing.T) {
 	primary := bind.NewBindingTable()
 	const byName cfg.SymbolID = 41

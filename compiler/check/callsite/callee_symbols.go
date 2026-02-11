@@ -9,8 +9,9 @@ import (
 //
 // Candidate order:
 //  1. raw call callee symbol
-//  2. canonical callee symbol from call expression/bindings
-//  3. fallback-binding symbols with matching callee name
+//  2. symbol resolved from primary bindings using call expression
+//  3. symbol resolved from fallback bindings using call expression
+//  4. binding symbols with matching callee name (primary, then fallback)
 func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingTable) []cfg.SymbolID {
 	if info == nil {
 		return nil
@@ -29,7 +30,10 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 	}
 
 	push(info.CalleeSymbol)
-	push(CanonicalSymbolFromExpr(info.Callee, info.CalleeSymbol, primary, fallback, nil))
+	push(SymbolFromExpr(info.Callee, primary))
+	if fallback != primary {
+		push(SymbolFromExpr(info.Callee, fallback))
+	}
 	if info.CalleeName != "" {
 		if primary != nil {
 			for _, sym := range primary.SymbolsByName(info.CalleeName) {

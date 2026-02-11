@@ -86,3 +86,24 @@ func TestCalledSymbolsFromCall_PrefersTrackedCanonicalSymbol(t *testing.T) {
 		t.Fatalf("expected raw symbol %d to be excluded when tracked symbol is preferred, got %v", rawSym, got)
 	}
 }
+
+func TestCalledSymbolsFromCall_UsesCalleeNameCandidatesWhenRawAndExprMissing(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	ident := &ast.IdentExpr{Value: "f"}
+	const trackedSym cfg.SymbolID = 303
+	bindings.Bind(ident, trackedSym)
+	bindings.SetName(trackedSym, "f")
+
+	info := &cfg.CallInfo{
+		Callee:       nil,
+		CalleeSymbol: 0,
+		CalleeName:   "f",
+	}
+
+	got := calledSymbolsFromCall(info, 0, bindings, nil, func(sym cfg.SymbolID) bool {
+		return sym == trackedSym
+	})
+	if !got[trackedSym] {
+		t.Fatalf("expected tracked symbol %d via callee-name candidates, got %v", trackedSym, got)
+	}
+}

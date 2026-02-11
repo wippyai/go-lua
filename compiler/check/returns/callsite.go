@@ -169,8 +169,19 @@ func calledSymbolsFromCall(
 		return calledSyms
 	}
 
-	if sym := checkcallsite.CanonicalSymbolFromExpr(info.Callee, info.CalleeSymbol, bindings, bindings, prefer); sym != 0 {
-		calledSyms[sym] = true
+	candidates := checkcallsite.CalleeSymbolCandidates(info, bindings, bindings)
+	selected := cfg.SymbolID(0)
+	for _, sym := range candidates {
+		if selected == 0 {
+			selected = sym
+		}
+		if prefer != nil && prefer(sym) {
+			selected = sym
+			break
+		}
+	}
+	if selected != 0 {
+		calledSyms[selected] = true
 	}
 
 	if resolveCalleeType != nil {
