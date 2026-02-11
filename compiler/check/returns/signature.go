@@ -32,25 +32,10 @@ func BuildFunctionTypeFromSummary(returnTypes []typ.Type) typ.Type {
 	return join.WithReturnsOrUnknown(typ.Func().Build(), returnTypes)
 }
 
-// BuildSeedFunctionType builds a placeholder function type for an SCC sibling
-// that has no return summary yet.
+// BuildSeedFunctionTypeWithBindings builds a placeholder function type for an
+// SCC sibling that has no return summary yet.
 //
-// This function creates a "seed" type for mutual recursion resolution. The seed
-// preserves:
-//   - Generic type parameters (with constraints resolved)
-//   - Parameter names and types (from annotations, or Unknown if untyped)
-//   - Variadic parameter (if present)
-//   - Return types (from annotations, or Unknown if untyped)
-//
-// The seed enables calls between mutually recursive functions to type-check
-// during the first fixpoint iteration, even before return types are inferred.
-// As iterations progress, the actual return types replace the Unknown placeholders.
-func BuildSeedFunctionType(fn *ast.FunctionExpr, engine *synth.Engine, parentScope *scope.State) typ.Type {
-	return BuildSeedFunctionTypeWithBindings(fn, engine, parentScope, nil)
-}
-
-// BuildSeedFunctionTypeWithBindings is BuildSeedFunctionType with optional binder
-// metadata for implicit-self detection in method definitions.
+// Optional binder metadata enables implicit-self detection in method definitions.
 func BuildSeedFunctionTypeWithBindings(
 	fn *ast.FunctionExpr,
 	engine *synth.Engine,

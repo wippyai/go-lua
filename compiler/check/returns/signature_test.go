@@ -87,11 +87,11 @@ func TestBuildSeedFunctionTypeWithBindings_ImplicitSelf(t *testing.T) {
 	}
 }
 
-func TestBuildSeedFunctionType_WithoutBindings_NoImplicitSelf(t *testing.T) {
+func TestBuildSeedFunctionTypeWithBindings_WithoutBindings_NoImplicitSelf(t *testing.T) {
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{Names: []string{"x"}},
 	}
-	fnType, ok := BuildSeedFunctionType(fn, nil, scope.New()).(*typ.Function)
+	fnType, ok := BuildSeedFunctionTypeWithBindings(fn, nil, scope.New(), nil).(*typ.Function)
 	if !ok || fnType == nil {
 		t.Fatal("expected function seed type")
 	}
