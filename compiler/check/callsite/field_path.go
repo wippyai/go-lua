@@ -4,53 +4,34 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/types/flow/pathkey"
+	"github.com/wippyai/go-lua/types/constraint"
 )
 
 // FieldPathWithBaseSymbol resolves an expression to (base symbol, dotted field path)
 // for static field access chains like obj.f or obj.f.g.
 func FieldPathWithBaseSymbol(bindings *bind.BindingTable, expr ast.Expr) (cfg.SymbolID, string, bool) {
-	if bindings == nil || expr == nil {
+	baseSym, segs, ok := StaticPathWithBaseSymbol(bindings, expr)
+	if !ok || baseSym == 0 {
 		return 0, "", false
 	}
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		sym, ok := bindings.SymbolOf(e)
-		if !ok || sym == 0 {
-			return 0, "", false
-		}
-		return sym, "", true
-	case *ast.AttrGetExpr:
-		baseSym, basePath, ok := FieldPathWithBaseSymbol(bindings, e.Object)
-		if !ok || baseSym == 0 {
-			return 0, "", false
-		}
-		seg := fieldSegmentName(e.Key)
-		if seg == "" {
-			return 0, "", false
-		}
-		if basePath == "" {
-			return baseSym, seg, true
-		}
-		return baseSym, basePath + "." + seg, true
-	default:
-		return 0, "", false
+	if len(segs) == 0 {
+		return baseSym, "", true
 	}
-}
-
-func fieldSegmentName(expr ast.Expr) string {
-	switch k := expr.(type) {
-	case *ast.IdentExpr:
-		if pathkey.IsIdentName(k.Value) {
-			return k.Value
+	path := ""
+	for _, seg := range segs {
+		switch seg.Kind {
+		case constraint.SegmentField:
+			if seg.Name == "" {
+				return 0, "", false
+			}
+			if path == "" {
+				path = seg.Name
+			} else {
+				path += "." + seg.Name
+			}
+		default:
+			return 0, "", false
 		}
-		return ""
-	case *ast.StringExpr:
-		if pathkey.IsIdentName(k.Value) {
-			return k.Value
-		}
-		return ""
-	default:
-		return ""
 	}
+	return baseSym, path, true
 }

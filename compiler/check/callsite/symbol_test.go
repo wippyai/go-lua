@@ -49,7 +49,7 @@ func TestSymbolFromExpr_StaticFieldPath(t *testing.T) {
 	fieldSym := bindings.GetOrCreateFieldSymbol(baseSym, "f")
 	expr := &ast.AttrGetExpr{
 		Object: base,
-		Key:    &ast.IdentExpr{Value: "f"},
+		Key:    &ast.StringExpr{Value: "f"},
 	}
 
 	if got := SymbolFromExpr(expr, bindings); got != fieldSym {
@@ -68,9 +68,9 @@ func TestSymbolFromExpr_StaticFieldPathNested(t *testing.T) {
 	expr := &ast.AttrGetExpr{
 		Object: &ast.AttrGetExpr{
 			Object: base,
-			Key:    &ast.IdentExpr{Value: "a"},
+			Key:    &ast.StringExpr{Value: "a"},
 		},
-		Key: &ast.IdentExpr{Value: "b"},
+		Key: &ast.StringExpr{Value: "b"},
 	}
 
 	if got := SymbolFromExpr(expr, bindings); got != nestedSym {
@@ -86,7 +86,7 @@ func TestSymbolFromExpr_StaticFieldPathMissingSymbol(t *testing.T) {
 
 	expr := &ast.AttrGetExpr{
 		Object: base,
-		Key:    &ast.IdentExpr{Value: "missing"},
+		Key:    &ast.StringExpr{Value: "missing"},
 	}
 	if got := SymbolFromExpr(expr, bindings); got != 0 {
 		t.Fatalf("SymbolFromExpr(M.missing) = %d, want 0", got)

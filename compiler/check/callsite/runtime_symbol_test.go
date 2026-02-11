@@ -17,9 +17,9 @@ func TestSymbolOrCreateFieldFromExpr_StaticFieldPath(t *testing.T) {
 	expr := &ast.AttrGetExpr{
 		Object: &ast.AttrGetExpr{
 			Object: base,
-			Key:    &ast.IdentExpr{Value: "users"},
+			Key:    &ast.StringExpr{Value: "users"},
 		},
-		Key: &ast.IdentExpr{Value: "active"},
+		Key: &ast.StringExpr{Value: "active"},
 	}
 
 	got := SymbolOrCreateFieldFromExpr(expr, bindings)

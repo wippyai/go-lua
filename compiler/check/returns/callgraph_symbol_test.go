@@ -23,9 +23,9 @@ func TestCanonicalLocalSymbol_ResolvesStaticFieldPath(t *testing.T) {
 	expr := &ast.AttrGetExpr{
 		Object: &ast.AttrGetExpr{
 			Object: base,
-			Key:    &ast.IdentExpr{Value: "handlers"},
+			Key:    &ast.StringExpr{Value: "handlers"},
 		},
-		Key: &ast.IdentExpr{Value: "run"},
+		Key: &ast.StringExpr{Value: "run"},
 	}
 
 	got := canonicalLocalSymbol(localFuncs, nil, bindings, expr, 0)
@@ -46,7 +46,7 @@ func TestCanonicalLocalSymbol_PrefersKnownLocalOverRaw(t *testing.T) {
 		localSym: {Sym: localSym},
 	}
 
-	expr := &ast.AttrGetExpr{Object: base, Key: &ast.IdentExpr{Value: "f"}}
+	expr := &ast.AttrGetExpr{Object: base, Key: &ast.StringExpr{Value: "f"}}
 	rawNonLocal := cfg.SymbolID(9999)
 	got := canonicalLocalSymbol(localFuncs, nil, bindings, expr, rawNonLocal)
 	if got != localSym {

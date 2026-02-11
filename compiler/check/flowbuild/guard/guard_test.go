@@ -89,9 +89,9 @@ func TestExtractTruthyPathKeys_NestedAttrExpr(t *testing.T) {
 	expr := &ast.AttrGetExpr{
 		Object: &ast.AttrGetExpr{
 			Object: &ast.IdentExpr{Value: "event"},
-			Key:    &ast.IdentExpr{Value: "payload"},
+			Key:    &ast.StringExpr{Value: "payload"},
 		},
-		Key: &ast.IdentExpr{Value: "from"},
+		Key: &ast.StringExpr{Value: "from"},
 	}
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{Names: []string{"event"}},
@@ -130,6 +130,44 @@ func TestExtractTruthyPathKeys_DynamicAttrExpr(t *testing.T) {
 	result := guard.ExtractTruthyPathKeys(expr, bindings)
 	if len(result) != 0 {
 		t.Fatalf("expected no keys for dynamic path, got %d", len(result))
+	}
+}
+
+func TestExtractTruthyPathKeys_StaticIndexStringExpr(t *testing.T) {
+	expr := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "event"},
+		Key:    &ast.StringExpr{Value: "x-y"},
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"event"}},
+		Stmts: []ast.Stmt{
+			&ast.IfStmt{Condition: expr, Then: []ast.Stmt{&ast.ReturnStmt{}}},
+		},
+	}
+	bindings := bind.Bind(fn, nil)
+
+	result := guard.ExtractTruthyPathKeys(expr, bindings)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(result))
+	}
+	if result[0].Field != "[\"x-y\"]" {
+		t.Fatalf("expected [\"x-y\"], got %q", result[0].Field)
+	}
+}
+
+func TestTruthyKeyFromExpr_DynamicIdentKeyRejected(t *testing.T) {
+	expr := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "event"},
+		Key:    &ast.IdentExpr{Value: "k"},
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"event", "k"}},
+		Stmts:   []ast.Stmt{&ast.ReturnStmt{}},
+	}
+	bindings := bind.Bind(fn, nil)
+
+	if _, ok := guard.TruthyKeyFromExpr(expr, bindings); ok {
+		t.Fatal("expected dynamic ident key to be rejected")
 	}
 }
 
@@ -175,9 +213,9 @@ func TestNarrowTableFieldsByGuard_MatchingNestedPath(t *testing.T) {
 	valueExpr := &ast.AttrGetExpr{
 		Object: &ast.AttrGetExpr{
 			Object: &ast.IdentExpr{Value: "event"},
-			Key:    &ast.IdentExpr{Value: "payload"},
+			Key:    &ast.StringExpr{Value: "payload"},
 		},
-		Key: &ast.IdentExpr{Value: "from"},
+		Key: &ast.StringExpr{Value: "from"},
 	}
 	rec := typ.NewRecord().Field("from", typ.NewOptional(typ.String)).Build()
 	tbl := &ast.TableExpr{

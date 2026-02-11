@@ -158,8 +158,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 		if attr, ok := expr.(*ast.AttrGetExpr); ok {
 			t := synth(expr, p)
 			if t != nil && bindings != nil {
-				if sym, fieldPath, ok := callsite.FieldPathWithBaseSymbol(bindings, attr); ok && sym != 0 && fieldPath != "" {
-					pathKey := guard.TruthyPathKey{Symbol: sym, Field: fieldPath}
+				if pathKey, ok := guard.TruthyKeyFromExpr(attr, bindings); ok && pathKey.Field != "" {
 					if guards, ok := truthyGuards[p]; ok {
 						if guards[pathKey] {
 							if opt, ok := t.(*typ.Optional); ok {

@@ -17,9 +17,9 @@ func TestFieldPathWithBaseSymbol_Nested(t *testing.T) {
 	expr := &ast.AttrGetExpr{
 		Object: &ast.AttrGetExpr{
 			Object: base,
-			Key:    &ast.IdentExpr{Value: "a"},
+			Key:    &ast.StringExpr{Value: "a"},
 		},
-		Key: &ast.IdentExpr{Value: "b"},
+		Key: &ast.StringExpr{Value: "b"},
 	}
 
 	sym, path, ok := FieldPathWithBaseSymbol(bindings, expr)

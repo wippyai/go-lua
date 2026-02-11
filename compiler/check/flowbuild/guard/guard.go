@@ -1,10 +1,14 @@
 package guard
 
 import (
+	"strings"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -59,12 +63,12 @@ func ExtractTruthyPathKeys(expr ast.Expr, bindings *bind.BindingTable) []TruthyP
 
 	switch e := expr.(type) {
 	case *ast.IdentExpr:
-		if sym, ok := bindings.SymbolOf(e); ok && sym != 0 {
-			return []TruthyPathKey{{Symbol: sym, Field: ""}}
+		if key, ok := TruthyKeyFromExpr(e, bindings); ok {
+			return []TruthyPathKey{key}
 		}
 	case *ast.AttrGetExpr:
-		if sym, fieldPath, ok := callsite.FieldPathWithBaseSymbol(bindings, e); ok && sym != 0 && fieldPath != "" {
-			return []TruthyPathKey{{Symbol: sym, Field: fieldPath}}
+		if key, ok := TruthyKeyFromExpr(e, bindings); ok && key.Field != "" {
+			return []TruthyPathKey{key}
 		}
 	case *ast.LogicalOpExpr:
 		if e.Operator == "and" {
@@ -75,6 +79,26 @@ func ExtractTruthyPathKeys(expr ast.Expr, bindings *bind.BindingTable) []TruthyP
 		}
 	}
 	return nil
+}
+
+// TruthyKeyFromExpr builds a canonical guard key for static expression paths.
+func TruthyKeyFromExpr(expr ast.Expr, bindings *bind.BindingTable) (TruthyPathKey, bool) {
+	sym, segs, ok := callsite.StaticPathWithBaseSymbol(bindings, expr)
+	if !ok || sym == 0 {
+		return TruthyPathKey{}, false
+	}
+	return TruthyPathKey{
+		Symbol: sym,
+		Field:  truthyPathSuffix(segs),
+	}, true
+}
+
+func truthyPathSuffix(segs []constraint.Segment) string {
+	if len(segs) == 0 {
+		return ""
+	}
+	suffix := pathkey.SegmentsSuffix(segs)
+	return strings.TrimPrefix(suffix, ".")
 }
 
 // propagateTruthyGuards propagates truthy guards from a starting point to all reachable points
@@ -171,11 +195,10 @@ func NarrowTableFieldsByGuard(
 		if !isAttr {
 			continue
 		}
-		sym, fieldPath, ok := callsite.FieldPathWithBaseSymbol(bindings, attr)
-		if !ok || sym == 0 || fieldPath == "" {
+		key, ok := TruthyKeyFromExpr(attr, bindings)
+		if !ok || key.Field == "" {
 			continue
 		}
-		key := TruthyPathKey{Symbol: sym, Field: fieldPath}
 		if guards[key] {
 			newFields[i].Type = opt.Inner
 			changed = true
