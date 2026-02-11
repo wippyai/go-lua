@@ -318,15 +318,25 @@ func BuildAssignmentTypeResolver(inputs *flow.Inputs) func(cfg.SymbolID) typ.Typ
 	if inputs == nil {
 		return nil
 	}
+
+	latestBySymbol := make(map[cfg.SymbolID]typ.Type)
+	for i := len(inputs.Assignments) - 1; i >= 0; i-- {
+		a := inputs.Assignments[i]
+		sym := a.TargetPath.Symbol
+		if sym == 0 || a.Type == nil {
+			continue
+		}
+		if _, exists := latestBySymbol[sym]; !exists {
+			latestBySymbol[sym] = a.Type
+		}
+	}
+
 	return func(sym cfg.SymbolID) typ.Type {
 		if sym == 0 {
 			return nil
 		}
-		for i := len(inputs.Assignments) - 1; i >= 0; i-- {
-			a := inputs.Assignments[i]
-			if a.TargetPath.Symbol == sym && a.Type != nil {
-				return a.Type
-			}
+		if t, ok := latestBySymbol[sym]; ok {
+			return t
 		}
 		if t, ok := inputs.DeclaredTypes[sym]; ok {
 			return t

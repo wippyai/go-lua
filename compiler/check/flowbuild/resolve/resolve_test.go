@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -352,6 +353,37 @@ func TestBuildAssignmentTypeResolver_ZeroSymbol(t *testing.T) {
 	result := resolver(0)
 	if result != nil {
 		t.Error("expected nil for zero symbol")
+	}
+}
+
+func TestBuildAssignmentTypeResolver_LatestAssignmentWins(t *testing.T) {
+	inputs := &flow.Inputs{
+		Assignments: []flow.UnifiedAssignment{
+			{TargetPath: constraint.Path{Symbol: 7}, Type: typ.String},
+			{TargetPath: constraint.Path{Symbol: 7}, Type: typ.Number},
+		},
+	}
+	resolver := resolve.BuildAssignmentTypeResolver(inputs)
+	if resolver == nil {
+		t.Fatal("expected non-nil resolver")
+	}
+	if got := resolver(7); !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("resolver(7) = %v, want number", got)
+	}
+}
+
+func TestBuildAssignmentTypeResolver_FallbackDeclaredType(t *testing.T) {
+	inputs := &flow.Inputs{
+		DeclaredTypes: flow.DeclaredTypes{
+			9: typ.Boolean,
+		},
+	}
+	resolver := resolve.BuildAssignmentTypeResolver(inputs)
+	if resolver == nil {
+		t.Fatal("expected non-nil resolver")
+	}
+	if got := resolver(9); !typ.TypeEquals(got, typ.Boolean) {
+		t.Fatalf("resolver(9) = %v, want boolean", got)
 	}
 }
 
