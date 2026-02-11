@@ -52,6 +52,43 @@ func JoinReturnSlot(a, b Type) Type {
 	return JoinPreferNonSoft(a, b)
 }
 
+// JoinBranchOutcome merges mutually-exclusive expression outcomes (for example,
+// `a and b` / `a or b`) while preserving uncertainty.
+//
+// Unlike JoinPreferNonSoft, this must not treat unknown as absent information:
+// expression typing needs to preserve runtime uncertainty when one branch may
+// still produce unknown-like values.
+func JoinBranchOutcome(a, b Type) Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+
+	a = PruneSoftUnionMembers(a)
+	b = PruneSoftUnionMembers(b)
+
+	// Preserve runtime uncertainty for branch outcomes:
+	// unknown and nil means "value may be unknown or absent".
+	if (IsUnknown(a) && b.Kind() == kind.Nil) || (IsUnknown(b) && a.Kind() == kind.Nil) {
+		return NewOptional(Unknown)
+	}
+
+	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) && b.Kind() != kind.Nil {
+		return b
+	}
+	if IsSoft(b, SoftPlaceholderPolicy) && !IsSoft(a, SoftPlaceholderPolicy) && a.Kind() != kind.Nil {
+		return a
+	}
+
+	if TypeEquals(a, b) {
+		return a
+	}
+
+	return PruneSoftUnionMembers(NewUnion(a, b))
+}
+
 // IsRefinableAnnotation reports whether an explicit annotation should be
 // treated as a soft placeholder that call-site/contextual hints may refine.
 //

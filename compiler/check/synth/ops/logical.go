@@ -66,8 +66,8 @@ func LogicalAndTyped(left, right typ.Type) typ.Type {
 //   - If left is definitely falsy: result is right's type
 //   - Otherwise: union of (truthy part of left) and right
 //
-// Special case: For `any? or concrete`, prefers the concrete type.
-// This handles the common default value pattern: `x = x or default`.
+// Canonical policy: merge via typ.JoinBranchOutcome to preserve runtime
+// uncertainty while still preferring concrete alternatives over soft placeholders.
 func LogicalOrTyped(left, right typ.Type) typ.Type {
 	left = ExtractFirstValue(left)
 	right = ExtractFirstValue(right)
@@ -96,31 +96,11 @@ func LogicalOrTyped(left, right typ.Type) typ.Type {
 		return right
 	}
 
-	// Special case: when left is optional any (any?) and right is concrete,
-	// prefer right type. This handles the common `x = x or default` pattern.
-	if opt, ok := left.(*typ.Optional); ok {
-		if typ.IsAny(opt.Inner) {
-			if right != nil && right.Kind().IsConcrete() {
-				return right
-			}
-		}
-	}
-	// Soft optional default: when left is an optional soft annotation
-	// (e.g., any[]?) and right is concrete, prefer right to avoid
-	// contaminating defaults with placeholders.
-	if opt, ok := left.(*typ.Optional); ok {
-		if opt.Inner != nil && typ.IsSoft(opt.Inner, typ.SoftAnnotationPolicy) {
-			if right != nil && right.Kind().IsConcrete() {
-				return right
-			}
-		}
-	}
-
 	// Otherwise, could be either the truthy part of left or right
 	truthyLeft := narrow.ToTruthy(left)
 	if truthyLeft == nil || truthyLeft.Kind().IsNever() {
 		return right
 	}
 
-	return typ.NewUnion(truthyLeft, right)
+	return typ.JoinBranchOutcome(truthyLeft, right)
 }

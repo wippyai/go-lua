@@ -122,6 +122,13 @@ func TestLogicalAndTyped_Boolean(t *testing.T) {
 	}
 }
 
+func TestLogicalAndTyped_DoesNotDropSoftRightToNil(t *testing.T) {
+	result := LogicalAndTyped(typ.NewOptional(typ.Number), typ.Any)
+	if typ.TypeEquals(result, typ.Nil) {
+		t.Fatalf("optional(number) and any collapsed to nil: %v", result)
+	}
+}
+
 func TestLogicalOrTyped_Boolean(t *testing.T) {
 	result := LogicalOrTyped(typ.Boolean, typ.String)
 	if result == nil {
@@ -163,5 +170,22 @@ func TestLogicalOrTyped_NilRight(t *testing.T) {
 	// nil or nil -> nil (the right operand since left is falsy)
 	if result != nil {
 		t.Errorf("nil or nil should return nil, got %v", result)
+	}
+}
+
+func TestLogicalOrTyped_UnknownOrNil_DoesNotCollapseToNil(t *testing.T) {
+	result := LogicalOrTyped(typ.Unknown, typ.Nil)
+	if typ.TypeEquals(result, typ.Nil) {
+		t.Fatalf("unknown or nil collapsed to nil: %v", result)
+	}
+	if _, ok := result.(*typ.Optional); !ok {
+		t.Fatalf("unknown or nil should preserve uncertainty as optional, got %T (%v)", result, result)
+	}
+}
+
+func TestLogicalOrTyped_AnyOrNil_DoesNotCollapseToNil(t *testing.T) {
+	result := LogicalOrTyped(typ.Any, typ.Nil)
+	if typ.TypeEquals(result, typ.Nil) {
+		t.Fatalf("any or nil collapsed to nil: %v", result)
 	}
 }
