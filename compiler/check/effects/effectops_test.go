@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -333,6 +334,44 @@ func TestPropagate_UsesCanonicalCandidatesWhenRawSymbolMissing(t *testing.T) {
 	row, ok := result.Row.(effect.Row)
 	if !ok || !row.HasIO() {
 		t.Fatalf("expected propagated IO effect via canonical candidate lookup, got %#v", result.Row)
+	}
+}
+
+func TestPropagate_UsesModuleBindingNameFallback(t *testing.T) {
+	graph := buildGraphForEffects(t, `
+		local x = f()
+		return x
+	`)
+
+	const fallbackSym cfg.SymbolID = 777
+	moduleBindings := bind.NewBindingTable()
+	moduleBindings.SetName(fallbackSym, "f_alias")
+
+	// Force callsite identity recovery through module-binding name fallback.
+	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if info != nil {
+			info.Callee = nil
+			info.CalleeSymbol = 0
+			info.CalleeName = "f_alias"
+		}
+	})
+
+	result := Propagate(&api.FuncResult{
+		Graph:          graph,
+		ModuleBindings: moduleBindings,
+		FnEffect:       &constraint.FunctionEffect{},
+	}, func(sym cfg.SymbolID) *constraint.FunctionEffect {
+		if sym == fallbackSym {
+			return &constraint.FunctionEffect{
+				Row: effect.Row{Labels: []effect.Label{effect.IO{}}},
+			}
+		}
+		return nil
+	})
+
+	row, ok := result.Row.(effect.Row)
+	if !ok || !row.HasIO() {
+		t.Fatalf("expected propagated IO effect via module-binding name fallback, got %#v", result.Row)
 	}
 }
 

@@ -51,7 +51,8 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionEf
 		// Symbol-based lookup via canonical callsite symbol candidates.
 		if lookup != nil {
 			bindings := result.Graph.Bindings()
-			candidates := callsite.CalleeSymbolCandidates(info, bindings, nil)
+			moduleBindings := result.ModuleBindings
+			candidates := callsite.CalleeSymbolCandidates(info, bindings, moduleBindings)
 			for _, sym := range candidates {
 				calleeEffect = lookup(sym)
 				if calleeEffect != nil {

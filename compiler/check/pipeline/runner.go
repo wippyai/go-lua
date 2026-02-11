@@ -286,6 +286,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 
 	return &api.FuncResult{
 		Graph:              graph,
+		ModuleBindings:     env.ModuleBindings,
 		BaseScope:          scopeOut.BaseScope,
 		Scopes:             scopeOut.Scopes,
 		Facts:              narrowOut.Facts,

@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/keyscoll"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -78,7 +80,7 @@ func TestBuildKeysCollectorDetector_NilCallInfo(t *testing.T) {
 		Stmts: []ast.Stmt{&ast.ReturnStmt{}},
 	}
 	graph := cfg.Build(fn)
-	detector := keyscoll.BuildKeysCollectorDetector(graph)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
 	if detector == nil {
 		t.Fatal("expected non-nil detector")
 	}
@@ -93,7 +95,7 @@ func TestBuildKeysCollectorDetector_MethodCall(t *testing.T) {
 		Stmts: []ast.Stmt{&ast.ReturnStmt{}},
 	}
 	graph := cfg.Build(fn)
-	detector := keyscoll.BuildKeysCollectorDetector(graph)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
 	callInfo := &cfg.CallInfo{
 		Method:   "someMethod",
 		Receiver: &ast.IdentExpr{Value: "obj"},
@@ -109,7 +111,7 @@ func TestBuildKeysCollectorDetector_NoCalleeSymbol(t *testing.T) {
 		Stmts: []ast.Stmt{&ast.ReturnStmt{}},
 	}
 	graph := cfg.Build(fn)
-	detector := keyscoll.BuildKeysCollectorDetector(graph)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
 	callInfo := &cfg.CallInfo{
 		Callee:       &ast.IdentExpr{Value: "fn"},
 		CalleeSymbol: 0,
@@ -183,7 +185,7 @@ func TestBuildKeysCollectorDetector_NestedFieldArgument(t *testing.T) {
 	}
 	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sorted_keys" {
@@ -259,7 +261,7 @@ func TestBuildKeysCollectorDetector_RespectsReturnIndex(t *testing.T) {
 	}
 	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sorted_keys" {
@@ -312,7 +314,7 @@ func TestBuildKeysCollectorDetector_UsesCanonicalCandidatesWhenRawSymbolMissing(
 	}
 	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sorted_keys" {
@@ -324,6 +326,66 @@ func TestBuildKeysCollectorDetector_UsesCanonicalCandidatesWhenRawSymbolMissing(
 		info.CalleeSymbol = 0
 		if got := detector(info, p, 0); got != want {
 			t.Fatalf("detector(sorted_keys(state.users)) with missing raw sym = %d, want %d", got, want)
+		}
+	})
+	if !found {
+		t.Fatal("expected sorted_keys call site")
+	}
+}
+
+func TestBuildKeysCollectorDetector_UsesModuleBindingNameFallback(t *testing.T) {
+	body, err := parse.ParseString(`
+		local function sorted_keys(tbl)
+			local keys = {}
+			for k in pairs(tbl) do
+				table.insert(keys, k)
+			end
+			return keys
+		end
+		local state = {}
+		local keys = sorted_keys(state.users)
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{HasVargs: true},
+		Stmts:   body,
+	}
+	graph := cfg.Build(fn, "pairs", "table")
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+	stateSym, ok := graph.SymbolAt(graph.Exit(), "state")
+	if !ok || stateSym == 0 {
+		t.Fatalf("expected symbol for state, got %d", stateSym)
+	}
+	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
+
+	moduleBindings := bind.NewBindingTable()
+
+	detector := keyscoll.BuildKeysCollectorDetector(graph, moduleBindings)
+	found := false
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.CalleeName != "sorted_keys" {
+			return
+		}
+		found = true
+		exprSym := callsite.SymbolFromExpr(info.Callee, bindings)
+		if exprSym == 0 {
+			t.Fatal("expected non-zero callee expression symbol")
+		}
+		moduleBindings.SetName(exprSym, "sorted_keys_alias")
+		// Force resolution through module binding fallback only.
+		info.Callee = &ast.IdentExpr{Value: "sorted_keys_alias"}
+		info.CalleeSymbol = 0
+		info.CalleeName = "sorted_keys_alias"
+		if got := detector(info, p, 0); got != want {
+			t.Fatalf("detector(sorted_keys_alias(state.users)) = %d, want %d", got, want)
 		}
 	})
 	if !found {

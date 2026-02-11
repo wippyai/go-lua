@@ -104,7 +104,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	constprop.PropagateAllConstValues(fc, inputs)
 
 	// Assignments with const resolution.
-	assign.ExtractAssignments(fc, inputs, keyscoll.BuildKeysCollectorDetector(fc.Graph))
+	assign.ExtractAssignments(fc, inputs, keyscoll.BuildKeysCollectorDetector(fc.Graph, fc.ModuleBindings))
 
 	// Table mutator assignments (table.insert-like).
 	mutator.ExtractTableMutatorAssignments(fc, inputs)

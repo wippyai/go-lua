@@ -2,6 +2,7 @@ package keyscoll
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
@@ -255,7 +256,7 @@ func isTableInsertCall(info *cfg.CallInfo) bool {
 
 // BuildKeysCollectorDetector returns a callback that detects if a call is to a
 // keys collector function and returns the symbol of the table argument.
-func BuildKeysCollectorDetector(graph *cfg.Graph) func(*cfg.CallInfo, cfg.Point, int) cfg.SymbolID {
+func BuildKeysCollectorDetector(graph *cfg.Graph, moduleBindings *bind.BindingTable) func(*cfg.CallInfo, cfg.Point, int) cfg.SymbolID {
 	cache := make(map[cfg.SymbolID]*KeysCollectorInfo)
 	bindings := graph.Bindings()
 
@@ -263,7 +264,7 @@ func BuildKeysCollectorDetector(graph *cfg.Graph) func(*cfg.CallInfo, cfg.Point,
 		if callInfo == nil || callInfo.Callee == nil {
 			return 0
 		}
-		candidates := callsite.CalleeSymbolCandidates(callInfo, bindings, nil)
+		candidates := callsite.CalleeSymbolCandidates(callInfo, bindings, moduleBindings)
 		for _, calleeSym := range candidates {
 			// Check cache
 			if info, ok := cache[calleeSym]; ok {

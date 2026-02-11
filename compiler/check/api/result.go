@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -22,6 +23,10 @@ type FuncResult struct {
 	// Graph is the function's control flow graph containing CFG nodes,
 	// binding information, and iteration metadata.
 	Graph *cfg.Graph
+
+	// ModuleBindings is the module-level binding table used as fallback when
+	// graph-local bindings are insufficient for canonical symbol resolution.
+	ModuleBindings *bind.BindingTable
 
 	// BaseScope is the function's entry scope containing parameters,
 	// type definitions, and inherited context from the parent scope.
