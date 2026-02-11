@@ -81,7 +81,16 @@ func (s *SelectIntercept) selectReturnType(ex *ast.FuncCallExpr, ctx CallEnv) ty
 	if num, ok := ex.Args[0].(*ast.NumberExpr); ok {
 		idx, ok := numparse.ParseIntegerLiteral(num.Value)
 		if !ok || idx <= 0 {
-			return nil
+			if !ok || idx == 0 {
+				return nil
+			}
+			// Negative indices count from the end: -1 is last argument.
+			n := len(ex.Args) - 1
+			pos := n + int(idx) // idx is negative
+			if pos < 0 || pos >= n || ctx.Recurse == nil {
+				return nil
+			}
+			return ctx.Recurse(ex.Args[pos+1])
 		}
 		i := int(idx) - 1
 		if i >= 0 && i < len(ex.Args)-1 && ctx.Recurse != nil {

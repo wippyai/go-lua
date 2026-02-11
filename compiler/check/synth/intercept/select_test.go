@@ -227,7 +227,8 @@ func TestSelectIntercept_NegativeIndex(t *testing.T) {
 		Func: &ast.IdentExpr{Value: "select"},
 		Args: []ast.Expr{
 			&ast.NumberExpr{Value: "-1"},
-			&ast.StringExpr{Value: "value"},
+			&ast.StringExpr{Value: "first"},
+			&ast.StringExpr{Value: "second"},
 		},
 	}
 	selectFn := typ.Func().
@@ -237,6 +238,12 @@ func TestSelectIntercept_NegativeIndex(t *testing.T) {
 		Effects(effect.WithVariadicTransform()).
 		Build()
 	ctx := CallEnv{
+		Recurse: func(e ast.Expr) typ.Type {
+			if _, ok := e.(*ast.StringExpr); ok {
+				return typ.String
+			}
+			return typ.Unknown
+		},
 		TypeLookup: func(name string) typ.Type {
 			if name == "select" {
 				return selectFn
@@ -245,8 +252,11 @@ func TestSelectIntercept_NegativeIndex(t *testing.T) {
 		},
 	}
 	result := s.InterceptCall(ex, ctx)
-	if result.Skip {
-		t.Fatal("expected skip=false for negative index")
+	if !result.Skip {
+		t.Fatal("expected skip=true for negative index")
+	}
+	if len(result.Types) != 1 || result.Types[0] != typ.String {
+		t.Fatal("expected string type for negative index selection")
 	}
 }
 
@@ -307,6 +317,36 @@ func TestSelectIntercept_FractionalIndex(t *testing.T) {
 	result := s.InterceptCall(ex, ctx)
 	if result.Skip {
 		t.Fatal("expected skip=false for fractional index")
+	}
+}
+
+func TestSelectIntercept_NegativeIndexOutOfRange(t *testing.T) {
+	s := &SelectIntercept{}
+	ex := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "select"},
+		Args: []ast.Expr{
+			&ast.NumberExpr{Value: "-2"},
+			&ast.StringExpr{Value: "only"},
+		},
+	}
+	selectFn := typ.Func().
+		Param("index", typ.Any).
+		Variadic(typ.Any).
+		Returns(typ.Any).
+		Effects(effect.WithVariadicTransform()).
+		Build()
+	ctx := CallEnv{
+		TypeLookup: func(name string) typ.Type {
+			if name == "select" {
+				return selectFn
+			}
+			return nil
+		},
+		Recurse: func(ast.Expr) typ.Type { return typ.String },
+	}
+	result := s.InterceptCall(ex, ctx)
+	if result.Skip {
+		t.Fatal("expected skip=false for negative index out of range")
 	}
 }
 
