@@ -92,7 +92,7 @@ func CanonicalSymbolFromExprWithAliases(
 		candidates = append(candidates, sym)
 	}
 	for _, sym := range base {
-		eachSymbolWithAliases(graph, sym, func(candidate cfg.SymbolID) bool {
+		graph.EachAliasSymbol(sym, func(candidate cfg.SymbolID) bool {
 			push(candidate)
 			return false
 		})

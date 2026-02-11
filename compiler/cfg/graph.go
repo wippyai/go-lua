@@ -854,6 +854,33 @@ func (g *Graph) DirectAliasSymbol(targetSym basecfg.SymbolID) basecfg.SymbolID {
 	return g.directAliases[targetSym]
 }
 
+// EachAliasSymbol visits targetSym followed by its direct-alias chain.
+// Iteration stops on zero, self-loop, cycle, or when fn returns true.
+func (g *Graph) EachAliasSymbol(targetSym basecfg.SymbolID, fn func(basecfg.SymbolID) bool) {
+	if targetSym == 0 || fn == nil {
+		return
+	}
+
+	seen := make(map[basecfg.SymbolID]struct{}, 4)
+	current := targetSym
+	for current != 0 {
+		if _, ok := seen[current]; ok {
+			return
+		}
+		seen[current] = struct{}{}
+
+		if fn(current) {
+			return
+		}
+
+		next := g.DirectAliasSymbol(current)
+		if next == 0 || next == current {
+			return
+		}
+		current = next
+	}
+}
+
 type aliasState struct {
 	sourceSym basecfg.SymbolID
 	hasLocal  bool

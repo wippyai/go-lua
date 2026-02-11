@@ -176,7 +176,7 @@ func methodSymbolFromBaseWithAliases(
 	}
 
 	var methodSym typecfg.SymbolID
-	eachSymbolWithAliases(graph, baseSym, func(candidate typecfg.SymbolID) bool {
+	graph.EachAliasSymbol(baseSym, func(candidate typecfg.SymbolID) bool {
 		if sym, ok := bindings.FieldSymbol(candidate, path); ok && sym != 0 {
 			methodSym = sym
 			return true

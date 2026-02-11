@@ -83,3 +83,74 @@ func TestDirectAliasSymbol_NonIdentifierSourceInvalidates(t *testing.T) {
 		t.Fatalf("DirectAliasSymbol(f) = %d, want 0 for non-ident source", got)
 	}
 }
+
+func TestEachAliasSymbol_VisitsTransitiveChain(t *testing.T) {
+	g := buildGraphForDirectAliasTest(t, `
+		local function Target()
+			return 1
+		end
+		local a = Target
+		local b = a
+		local c = b
+		return c()
+	`)
+
+	cSym := symbolAtExit(t, g, "c")
+	bSym := symbolAtExit(t, g, "b")
+	aSym := symbolAtExit(t, g, "a")
+	targetSym := symbolAtExit(t, g, "Target")
+
+	var got []SymbolID
+	g.EachAliasSymbol(cSym, func(sym SymbolID) bool {
+		got = append(got, sym)
+		return false
+	})
+
+	want := []SymbolID{cSym, bSym, aSym, targetSym}
+	if len(got) != len(want) {
+		t.Fatalf("alias chain len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("alias chain[%d] = %d, want %d (full=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestEachAliasSymbol_StopsOnCycle(t *testing.T) {
+	g := &Graph{
+		directAliases: map[SymbolID]SymbolID{
+			1: 2,
+			2: 1,
+		},
+	}
+
+	var got []SymbolID
+	g.EachAliasSymbol(1, func(sym SymbolID) bool {
+		got = append(got, sym)
+		return false
+	})
+
+	want := []SymbolID{1, 2}
+	if len(got) != len(want) {
+		t.Fatalf("alias chain len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("alias chain[%d] = %d, want %d (full=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestEachAliasSymbol_NilGraphVisitsSeedOnly(t *testing.T) {
+	var g *Graph
+	var got []SymbolID
+	g.EachAliasSymbol(42, func(sym SymbolID) bool {
+		got = append(got, sym)
+		return false
+	})
+
+	if len(got) != 1 || got[0] != 42 {
+		t.Fatalf("nil graph alias walk = %v, want [42]", got)
+	}
+}

@@ -128,7 +128,7 @@ func CalleeSymbolCandidatesWithAliases(
 	}
 
 	for _, sym := range base {
-		eachSymbolWithAliases(graph, sym, func(candidate cfg.SymbolID) bool {
+		graph.EachAliasSymbol(sym, func(candidate cfg.SymbolID) bool {
 			push(candidate)
 			return false
 		})
@@ -137,14 +137,14 @@ func CalleeSymbolCandidatesWithAliases(
 	// Method calls may resolve method symbol only through an alias receiver base
 	// (for example, Alias:run() where Alias = T and T.run is defined).
 	if methodSym, ok := MethodCalleeSymbolWithAliases(primary, graph, info); ok {
-		eachSymbolWithAliases(graph, methodSym, func(candidate cfg.SymbolID) bool {
+		graph.EachAliasSymbol(methodSym, func(candidate cfg.SymbolID) bool {
 			push(candidate)
 			return false
 		})
 	}
 	if fallback != nil && fallback != primary {
 		if methodSym, ok := MethodCalleeSymbolWithAliases(fallback, graph, info); ok {
-			eachSymbolWithAliases(graph, methodSym, func(candidate cfg.SymbolID) bool {
+			graph.EachAliasSymbol(methodSym, func(candidate cfg.SymbolID) bool {
 				push(candidate)
 				return false
 			})
