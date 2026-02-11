@@ -25,9 +25,14 @@ func ParseIntLiteral(s string) (int, bool) {
 		}
 	}
 
+	maxInt := int(^uint(0) >> 1)
 	value := 0
 	for i := 0; i < len(s); i++ {
-		value = value*10 + int(s[i]-'0')
+		digit := int(s[i] - '0')
+		if value > (maxInt-digit)/10 {
+			return 0, false
+		}
+		value = value*10 + digit
 	}
 
 	return value, true

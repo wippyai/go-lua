@@ -54,6 +54,19 @@ func TestParseIntLiteral_Invalid(t *testing.T) {
 	}
 }
 
+func TestParseIntLiteral_Overflow(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	maxStr := strconv.FormatInt(int64(maxInt), 10)
+	if got, ok := ParseIntLiteral(maxStr); !ok || got != maxInt {
+		t.Fatalf("ParseIntLiteral(maxInt) = (%d, %v), want (%d, true)", got, ok, maxInt)
+	}
+
+	overflow := maxStr + "0"
+	if _, ok := ParseIntLiteral(overflow); ok {
+		t.Fatalf("ParseIntLiteral(%q) should return false on overflow", overflow)
+	}
+}
+
 func TestIsIdentStart(t *testing.T) {
 	valid := []byte{'_', 'a', 'z', 'A', 'Z'}
 	for _, ch := range valid {
