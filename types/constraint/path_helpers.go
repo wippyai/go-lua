@@ -1,14 +1,14 @@
 package constraint
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 )
 
 // ParamPath returns the path for a parameter value.
 // Uses the $N format which is recognized by IsPlaceholder() and PlaceholderIndex().
 func ParamPath(index int) Path {
-	return Path{Root: fmt.Sprintf("$%d", index)}
+	return NewPlaceholder(index)
 }
 
 // PlaceholderIndexFromString extracts a placeholder index from canonical forms.
@@ -52,7 +52,10 @@ func parseNonNegativeDecimal(s string) int {
 
 // RetPath returns the path for a return value.
 func RetPath(index int) Path {
-	return Path{Root: fmt.Sprintf("ret[%d]", index)}
+	if index < 0 {
+		return Path{}
+	}
+	return Path{Root: "ret[" + strconv.Itoa(index) + "]"}
 }
 
 // IsReturnPath checks if the path represents a return value (ret[N] format).

@@ -150,6 +150,16 @@ func TestNewPlaceholder(t *testing.T) {
 	}
 }
 
+func TestNewPlaceholder_NegativeIndex(t *testing.T) {
+	p := NewPlaceholder(-1)
+	if !p.IsEmpty() {
+		t.Fatalf("NewPlaceholder(-1) should return empty path, got %+v", p)
+	}
+	if p.IsPlaceholder() {
+		t.Fatal("empty path must not be placeholder")
+	}
+}
+
 func TestPathFluentBuilders(t *testing.T) {
 	p := NewPath(1, "obj").Field("data").IndexStr("key").IndexInt(0)
 

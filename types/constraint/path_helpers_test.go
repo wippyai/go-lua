@@ -114,6 +114,15 @@ func TestPathHelpers_Consistency(t *testing.T) {
 	}
 }
 
+func TestPathHelpers_NegativeIndicesRejected(t *testing.T) {
+	if p := ParamPath(-1); !p.IsEmpty() {
+		t.Fatalf("ParamPath(-1) should be empty path, got %+v", p)
+	}
+	if p := RetPath(-1); !p.IsEmpty() {
+		t.Fatalf("RetPath(-1) should be empty path, got %+v", p)
+	}
+}
+
 func TestPathHelpers_UniqueKeys(t *testing.T) {
 	seen := make(map[PathKey]string)
 	paths := []struct {

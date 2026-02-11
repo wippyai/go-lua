@@ -71,6 +71,9 @@ func NewPath(sym cfg.SymbolID, name string) Path {
 //	p0 := NewPlaceholder(0) // $0 (first parameter)
 //	p1 := NewPlaceholder(1) // $1 (second parameter)
 func NewPlaceholder(index int) Path {
+	if index < 0 {
+		return Path{}
+	}
 	return Path{Root: "$" + strconv.Itoa(index)}
 }
 
