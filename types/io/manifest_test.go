@@ -204,6 +204,63 @@ func TestManifest_Encode_Decode(t *testing.T) {
 	}
 }
 
+func TestManifest_EnrichedExport_DoesNotApplySummaryToNestedSameName(t *testing.T) {
+	m := NewManifest("test")
+
+	topValidate := typ.Func().Param("x", typ.String).Returns(typ.Boolean).Build()
+	nestedValidate := typ.Func().Param("x", typ.String).Returns(typ.Boolean).Build()
+	nestedRecord := typ.NewRecord().Field("validate", nestedValidate).Build()
+	exportRec := typ.NewRecord().
+		Field("validate", topValidate).
+		Field("nested", nestedRecord).
+		Build()
+	m.SetExport(exportRec)
+
+	summary := NewSummary([]typ.Type{typ.String}, []typ.Type{typ.Boolean})
+	summary.Ensures = constraint.FromConstraints(constraint.Truthy{
+		Path: constraint.Path{Root: "result"},
+	})
+	m.DefineSummary("validate", summary)
+
+	enriched := m.EnrichedExport()
+	rec, ok := enriched.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record export, got %T", enriched)
+	}
+
+	topField := rec.GetField("validate")
+	if topField == nil {
+		t.Fatal("missing top-level validate field")
+	}
+	topFn, ok := topField.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("top-level validate is not a function: %T", topField.Type)
+	}
+	if topFn.Refinement == nil {
+		t.Fatal("expected top-level validate to be enriched")
+	}
+
+	nestedField := rec.GetField("nested")
+	if nestedField == nil {
+		t.Fatal("missing nested field")
+	}
+	nestedRec, ok := nestedField.Type.(*typ.Record)
+	if !ok {
+		t.Fatalf("nested field is not a record: %T", nestedField.Type)
+	}
+	nestedValidateField := nestedRec.GetField("validate")
+	if nestedValidateField == nil {
+		t.Fatal("missing nested validate field")
+	}
+	nestedFn, ok := nestedValidateField.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("nested validate is not a function: %T", nestedValidateField.Type)
+	}
+	if nestedFn.Refinement != nil {
+		t.Fatalf("nested validate should not be enriched, got refinement %#v", nestedFn.Refinement)
+	}
+}
+
 func TestDecodeManifest_InvalidMagic(t *testing.T) {
 	_, err := DecodeManifest([]byte{0, 0, 0, 0})
 	if !errors.Is(err, ErrInvalidManifest) {

@@ -308,18 +308,64 @@ func enrichTypeWithSummaries(t typ.Type, summaries map[string]*FunctionSummary) 
 	if t == nil || len(summaries) == 0 {
 		return t
 	}
+	return enrichTopLevelTypeWithSummaries(t, summaries, 0, make(map[typ.Type]struct{}))
+}
 
-	return typ.Visit(t, typ.Visitor[typ.Type]{
-		Record: func(v *typ.Record) typ.Type {
-			return enrichRecordWithSummaries(v, summaries)
-		},
-		Interface: func(v *typ.Interface) typ.Type {
-			return enrichInterfaceWithSummaries(v, summaries)
-		},
-		Default: func(t typ.Type) typ.Type {
+func enrichTopLevelTypeWithSummaries(t typ.Type, summaries map[string]*FunctionSummary, depth int, seen map[typ.Type]struct{}) typ.Type {
+	if t == nil || len(summaries) == 0 || typ.DepthExceeded(depth) {
+		return t
+	}
+	if seen == nil {
+		seen = make(map[typ.Type]struct{})
+	}
+	if _, ok := seen[t]; ok {
+		return t
+	}
+	seen[t] = struct{}{}
+	defer delete(seen, t)
+
+	switch v := t.(type) {
+	case *typ.Record:
+		return enrichRecordWithSummaries(v, summaries)
+	case *typ.Interface:
+		return enrichInterfaceWithSummaries(v, summaries)
+	case *typ.Alias:
+		target := enrichTopLevelTypeWithSummaries(v.Target, summaries, depth+1, seen)
+		if target == v.Target {
 			return t
-		},
-	})
+		}
+		return typ.NewAlias(v.Name, target)
+	case *typ.Union:
+		changed := false
+		members := make([]typ.Type, len(v.Members))
+		for i, m := range v.Members {
+			enriched := enrichTopLevelTypeWithSummaries(m, summaries, depth+1, seen)
+			members[i] = enriched
+			if enriched != m {
+				changed = true
+			}
+		}
+		if !changed {
+			return t
+		}
+		return typ.NewUnion(members...)
+	case *typ.Intersection:
+		changed := false
+		members := make([]typ.Type, len(v.Members))
+		for i, m := range v.Members {
+			enriched := enrichTopLevelTypeWithSummaries(m, summaries, depth+1, seen)
+			members[i] = enriched
+			if enriched != m {
+				changed = true
+			}
+		}
+		if !changed {
+			return t
+		}
+		return typ.NewIntersection(members...)
+	default:
+		return t
+	}
 }
 
 // enrichRecordWithSummaries creates a new record with function fields enriched.
