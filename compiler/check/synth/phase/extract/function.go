@@ -557,10 +557,7 @@ func (s *Synthesizer) buildFunctionTypeWithSummary(
 		returnTypes = returnSummaries[sym]
 	}
 
-	if len(returnTypes) == 0 {
-		return join.WithReturns(sig, []typ.Type{typ.Unknown})
-	}
-	return join.WithReturns(sig, returnTypes)
+	return join.WithReturnsOrUnknown(sig, returnTypes)
 }
 
 func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, expected *typ.Function) map[cfg.SymbolID]typ.Type {

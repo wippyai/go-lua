@@ -20,16 +20,7 @@ import (
 // The placeholder ensures function types are never nil during SCC iteration,
 // which would cause type errors when calling the function.
 func BuildFunctionSignatureWithSummary(sig *typ.Function, returnTypes []typ.Type) *typ.Function {
-	if sig == nil {
-		return nil
-	}
-	if len(sig.Returns) > 0 {
-		return sig
-	}
-	if len(returnTypes) == 0 {
-		return join.WithReturns(sig, []typ.Type{typ.Unknown})
-	}
-	return join.WithReturns(sig, returnTypes)
+	return join.WithReturnsOrUnknown(sig, returnTypes)
 }
 
 // BuildFunctionTypeFromSummary builds a function type using only a return summary vector.

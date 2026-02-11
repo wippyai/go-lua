@@ -110,3 +110,20 @@ func WithReturns(sig *typ.Function, returns []typ.Type) *typ.Function {
 	}
 	return builder.Build()
 }
+
+// WithReturnsOrUnknown returns a signature with return slots from `returns`,
+// defaulting to a single unknown return when no summary is available.
+//
+// If sig already carries explicit returns, it is returned unchanged.
+func WithReturnsOrUnknown(sig *typ.Function, returns []typ.Type) *typ.Function {
+	if sig == nil {
+		return nil
+	}
+	if len(sig.Returns) > 0 {
+		return sig
+	}
+	if len(returns) == 0 {
+		return WithReturns(sig, []typ.Type{typ.Unknown})
+	}
+	return WithReturns(sig, returns)
+}
