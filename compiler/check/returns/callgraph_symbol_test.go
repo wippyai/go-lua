@@ -29,7 +29,7 @@ func TestCanonicalLocalSymbol_ResolvesStaticFieldPath(t *testing.T) {
 		Key: &ast.StringExpr{Value: "run"},
 	}
 
-	got := canonicalLocalSymbol(localFuncs, nil, bindings, expr, 0)
+	got := canonicalLocalSymbol(localFuncs, nil, nil, bindings, expr, 0)
 	if got != localSym {
 		t.Fatalf("canonicalLocalSymbol(M.handlers.run) = %d, want %d", got, localSym)
 	}
@@ -49,7 +49,7 @@ func TestCanonicalLocalSymbol_PrefersKnownLocalOverRaw(t *testing.T) {
 
 	expr := &ast.AttrGetExpr{Object: base, Key: &ast.StringExpr{Value: "f"}}
 	rawNonLocal := cfg.SymbolID(9999)
-	got := canonicalLocalSymbol(localFuncs, nil, bindings, expr, rawNonLocal)
+	got := canonicalLocalSymbol(localFuncs, nil, nil, bindings, expr, rawNonLocal)
 	if got != localSym {
 		t.Fatalf("canonicalLocalSymbol should prefer local symbol %d, got %d", localSym, got)
 	}

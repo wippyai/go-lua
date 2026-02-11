@@ -185,7 +185,7 @@ func calledSymbolsFromCall(
 				sort.Ints(paramIndexes)
 				for _, paramIdx := range paramIndexes {
 					arg := checkcallsite.RuntimeArgAt(info, paramIdx)
-					if sym := checkcallsite.CanonicalSymbolFromExpr(arg, 0, bindings, bindings, prefer); sym != 0 {
+					if sym := checkcallsite.CanonicalSymbolFromExprWithAliases(arg, 0, graph, bindings, bindings, prefer); sym != 0 {
 						calledSyms[sym] = true
 					}
 				}

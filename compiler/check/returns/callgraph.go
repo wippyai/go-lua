@@ -15,14 +15,16 @@ import (
 
 func canonicalLocalSymbol(
 	localFuncs map[cfg.SymbolID]*LocalFuncInfo,
+	graph *cfg.Graph,
 	moduleBindings *bind.BindingTable,
 	bindings *bind.BindingTable,
 	expr ast.Expr,
 	raw cfg.SymbolID,
 ) cfg.SymbolID {
-	return checkcallsite.CanonicalSymbolFromExpr(
+	return checkcallsite.CanonicalSymbolFromExprWithAliases(
 		expr,
 		raw,
+		graph,
 		moduleBindings,
 		bindings,
 		func(sym cfg.SymbolID) bool {
@@ -196,7 +198,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 				// those parameter types as hints to the passed local function.
 				if calleeSig != nil && i < len(calleeSig.Params) {
 					if expectedFn := unwrap.Function(calleeSig.Params[i].Type); expectedFn != nil {
-						argSym := canonicalLocalSymbol(localFuncs, moduleBindings, bindings, arg, 0)
+						argSym := canonicalLocalSymbol(localFuncs, graph, moduleBindings, bindings, arg, 0)
 						if argSym != 0 {
 							if argLocal := localFuncs[argSym]; argLocal != nil {
 								if mergeFunctionParamHints(argLocal, expectedFn) {
@@ -329,7 +331,7 @@ func BuildLocalCallGraph(
 			if arg == nil {
 				continue
 			}
-			argSym := canonicalLocalSymbol(localFuncs, moduleBindings, bindings, arg, 0)
+			argSym := canonicalLocalSymbol(localFuncs, graph, moduleBindings, bindings, arg, 0)
 			addEdge(seen, callees, argSym)
 		}
 	}

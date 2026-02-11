@@ -260,9 +260,10 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 					continue
 				}
 				if expectedFn := unwrap.Function(infer.ExpectedArgType(i)); expectedFn != nil {
-					argSym := checkcallsite.CanonicalSymbolFromExpr(
+					argSym := checkcallsite.CanonicalSymbolFromExprWithAliases(
 						arg,
 						0,
+						result.Graph,
 						bindings,
 						moduleBindings,
 						hasFunctionRef,
