@@ -167,9 +167,7 @@ func FormatSegments(segs []Segment) string {
 			b.WriteByte('.')
 			b.WriteString(seg.Name)
 		case SegmentIndexString:
-			b.WriteString("[\"")
-			b.WriteString(seg.Name)
-			b.WriteString("\"]")
+			writeQuotedPathIndex(&b, seg.Name)
 		case SegmentIndexInt:
 			b.WriteByte('[')
 			b.WriteString(strconv.Itoa(seg.Index))
@@ -177,6 +175,20 @@ func FormatSegments(segs []Segment) string {
 		}
 	}
 	return b.String()
+}
+
+func writeQuotedPathIndex(b *strings.Builder, key string) {
+	b.WriteString("[\"")
+	for i := 0; i < len(key); i++ {
+		switch key[i] {
+		case '\\', '"':
+			b.WriteByte('\\')
+			b.WriteByte(key[i])
+		default:
+			b.WriteByte(key[i])
+		}
+	}
+	b.WriteString("\"]")
 }
 
 // IsEmpty returns true if the path has no identity (no Root and no Symbol).
@@ -290,19 +302,22 @@ func (p Path) String() string {
 // sym<SymbolID><segments> for unversioned symbol paths, <Root><segments> for placeholders.
 // For versioned flow lookups, prefer pathkey.Resolver.KeyAt.
 func (p Path) Key() PathKey {
+	if p.IsEmpty() {
+		return ""
+	}
+	var b strings.Builder
 	if p.Symbol != 0 {
-		var b strings.Builder
 		b.WriteString("sym")
 		b.WriteString(strconv.FormatUint(uint64(p.Symbol), 10))
 		if p.Version != 0 {
 			b.WriteByte('@')
 			b.WriteString(strconv.Itoa(p.Version))
 		}
-		b.WriteString(FormatSegments(p.Segments))
-		return PathKey(b.String())
+	} else {
+		b.WriteString(p.Root)
 	}
-	// Placeholder path - use String() for display format
-	return PathKey(p.String())
+	b.WriteString(FormatSegments(p.Segments))
+	return PathKey(b.String())
 }
 
 // Hash returns a 64-bit hash of the path for use in hash-based collections.

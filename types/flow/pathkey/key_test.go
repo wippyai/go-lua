@@ -142,6 +142,16 @@ func TestParseSuffix_StringIndexQuotedEscaped(t *testing.T) {
 	}
 }
 
+func TestParseSuffix_StringIndexQuotedEscapedBackslash(t *testing.T) {
+	segs := ParseSuffix("[\"a\\\\b\"]")
+	if len(segs) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(segs))
+	}
+	if segs[0].Kind != constraint.SegmentIndexString || segs[0].Name != `a\b` {
+		t.Fatalf("expected string index a\\\\b, got %+v", segs[0])
+	}
+}
+
 func TestParseSuffix_StringIndexVsInt_Disambiguated(t *testing.T) {
 	stringSegs := ParseSuffix("[\"1\"]")
 	if len(stringSegs) != 1 {
@@ -157,6 +167,23 @@ func TestParseSuffix_StringIndexVsInt_Disambiguated(t *testing.T) {
 	}
 	if intSegs[0].Kind != constraint.SegmentIndexInt || intSegs[0].Index != 1 {
 		t.Fatalf("expected int index 1, got %+v", intSegs[0])
+	}
+}
+
+func TestSegmentsSuffix_ParseSuffix_RoundTripEscapedStringIndex(t *testing.T) {
+	original := []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "meta"},
+		{Kind: constraint.SegmentIndexString, Name: `a"b\c`},
+	}
+	suffix := SegmentsSuffix(original)
+	parsed := ParseSuffix(suffix)
+	if len(parsed) != len(original) {
+		t.Fatalf("round-trip length mismatch: got %d, want %d (suffix=%q)", len(parsed), len(original), suffix)
+	}
+	for i := range original {
+		if parsed[i] != original[i] {
+			t.Fatalf("round-trip mismatch at %d: got %+v, want %+v (suffix=%q)", i, parsed[i], original[i], suffix)
+		}
 	}
 }
 

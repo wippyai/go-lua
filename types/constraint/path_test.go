@@ -29,14 +29,15 @@ func TestPathStringKeyHash(t *testing.T) {
 			{Kind: SegmentIndexInt, Index: 3},
 		},
 	}
-	expected := "x.y[z][3]"
+	display := "x.y[z][3]"
+	key := `x.y["z"][3]`
 
-	if p.String() != expected {
-		t.Fatalf("expected %q, got %q", expected, p.String())
+	if p.String() != display {
+		t.Fatalf("expected %q, got %q", display, p.String())
 	}
 
-	if p.Key() != PathKey(expected) {
-		t.Fatalf("expected key %q, got %q", expected, p.Key())
+	if p.Key() != PathKey(key) {
+		t.Fatalf("expected key %q, got %q", key, p.Key())
 	}
 
 	p2 := Path{Root: "x", Segments: []Segment{
@@ -96,6 +97,16 @@ func TestFormatSegments(t *testing.T) {
 	}
 }
 
+func TestFormatSegmentsEscapesStringIndex(t *testing.T) {
+	segs := []Segment{
+		{Kind: SegmentIndexString, Name: `a"b\c`},
+	}
+	expected := `["a\"b\\c"]`
+	if got := FormatSegments(segs); got != expected {
+		t.Fatalf("FormatSegments escaped index: expected %q, got %q", expected, got)
+	}
+}
+
 func TestPathKeyUsesFormatSegments(t *testing.T) {
 	segs := []Segment{
 		{Kind: SegmentField, Name: "foo"},
@@ -108,6 +119,31 @@ func TestPathKeyUsesFormatSegments(t *testing.T) {
 	got := string(p.Key())
 	if got != expected {
 		t.Fatalf("Path.Key() should use FormatSegments: expected %q, got %q", expected, got)
+	}
+}
+
+func TestPathKeyPlaceholderUsesCanonicalSegments(t *testing.T) {
+	pStr := Path{
+		Root: "$0",
+		Segments: []Segment{
+			{Kind: SegmentIndexString, Name: "1"},
+		},
+	}
+	pInt := Path{
+		Root: "$0",
+		Segments: []Segment{
+			{Kind: SegmentIndexInt, Index: 1},
+		},
+	}
+
+	if got, want := string(pStr.Key()), `$0["1"]`; got != want {
+		t.Fatalf("string index placeholder key: got %q, want %q", got, want)
+	}
+	if got, want := string(pInt.Key()), `$0[1]`; got != want {
+		t.Fatalf("int index placeholder key: got %q, want %q", got, want)
+	}
+	if pStr.Key() == pInt.Key() {
+		t.Fatalf("placeholder keys must not collide: %q", pStr.Key())
 	}
 }
 
