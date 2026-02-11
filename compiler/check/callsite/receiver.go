@@ -1,8 +1,6 @@
 package callsite
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	compcfg "github.com/wippyai/go-lua/compiler/cfg"
@@ -106,14 +104,20 @@ func methodCalleeSymbolFromExpr(bindings *bind.BindingTable, ex *ast.FuncCallExp
 }
 
 func methodSymbolFromReceiver(bindings *bind.BindingTable, receiver ast.Expr, method string) (typecfg.SymbolID, bool) {
-	baseSym, receiverPath, ok := FieldPathWithBaseSymbol(bindings, receiver)
+	baseSym, receiverSegs, ok := StaticPathWithBaseSymbol(bindings, receiver)
 	if !ok || baseSym == 0 {
 		return 0, false
 	}
-	path := method
-	if receiverPath != "" {
-		path = receiverPath + "." + method
+
+	segs := make([]constraint.Segment, 0, len(receiverSegs)+1)
+	segs = append(segs, receiverSegs...)
+	segs = append(segs, constraint.Segment{Kind: constraint.SegmentField, Name: method})
+
+	path, ok := bind.FieldPathKeyFromSegments(segs)
+	if !ok {
+		return 0, false
 	}
+
 	return bindings.FieldSymbol(baseSym, path)
 }
 
@@ -122,19 +126,22 @@ func methodSymbolFromCalleePath(bindings *bind.BindingTable, calleePath constrai
 		return 0, false
 	}
 
-	parts := make([]string, 0, len(calleePath.Segments)+1)
+	parts := make([]constraint.Segment, 0, len(calleePath.Segments)+1)
 	for _, seg := range calleePath.Segments {
-		if seg.Name == "" {
-			return 0, false
-		}
 		switch seg.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			parts = append(parts, seg.Name)
+		case constraint.SegmentField, constraint.SegmentIndexString, constraint.SegmentIndexInt:
+			parts = append(parts, seg)
 		default:
 			return 0, false
 		}
 	}
-	parts = append(parts, method)
 
-	return bindings.FieldSymbol(calleePath.Symbol, strings.Join(parts, "."))
+	parts = append(parts, constraint.Segment{Kind: constraint.SegmentField, Name: method})
+
+	path, ok := bind.FieldPathKeyFromSegments(parts)
+	if !ok {
+		return 0, false
+	}
+
+	return bindings.FieldSymbol(calleePath.Symbol, path)
 }

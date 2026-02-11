@@ -18,8 +18,12 @@ func SymbolOrCreateFieldFromExpr(expr ast.Expr, bindings *bind.BindingTable) cfg
 	if sym := SymbolFromExpr(expr, bindings); sym != 0 {
 		return sym
 	}
-	baseSym, fieldPath, ok := FieldPathWithBaseSymbol(bindings, expr)
-	if !ok || baseSym == 0 || fieldPath == "" {
+	baseSym, segments, ok := StaticPathWithBaseSymbol(bindings, expr)
+	if !ok || baseSym == 0 || len(segments) == 0 {
+		return 0
+	}
+	fieldPath, ok := bind.FieldPathKeyFromSegments(segments)
+	if !ok {
 		return 0
 	}
 	return bindings.GetOrCreateFieldSymbol(baseSym, fieldPath)

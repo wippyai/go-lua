@@ -115,7 +115,7 @@ func TestExtractTruthyPathKeys_NestedAttrExpr(t *testing.T) {
 	}
 }
 
-func TestExtractTruthyPathKeys_DynamicAttrExpr(t *testing.T) {
+func TestExtractTruthyPathKeys_StaticIndexIntExpr(t *testing.T) {
 	expr := &ast.AttrGetExpr{
 		Object: &ast.IdentExpr{Value: "event"},
 		Key:    &ast.NumberExpr{Value: "1"},
@@ -128,8 +128,11 @@ func TestExtractTruthyPathKeys_DynamicAttrExpr(t *testing.T) {
 	}
 	bindings := bind.Bind(fn, nil)
 	result := guard.ExtractTruthyPathKeys(expr, bindings)
-	if len(result) != 0 {
-		t.Fatalf("expected no keys for dynamic path, got %d", len(result))
+	if len(result) != 1 {
+		t.Fatalf("expected 1 key for static index-int path, got %d", len(result))
+	}
+	if result[0].Field != "[1]" {
+		t.Fatalf("expected [1], got %q", result[0].Field)
 	}
 }
 

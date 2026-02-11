@@ -224,7 +224,9 @@ func (b *Builder) Assign(s *ast.AssignStmt) {
 			target.BaseSymbol = baseSym
 
 			if baseSym != 0 && len(target.FieldPath) > 0 {
-				target.Symbol = b.getOrCreateFieldPathSymbol(baseSym, target.FieldPath)
+				if fieldSegments, ok := fieldSegmentsFromNames(target.FieldPath); ok {
+					target.Symbol = b.getOrCreateFieldPathSymbol(baseSym, fieldSegments)
+				}
 
 				if i < len(s.Rhs) {
 					if fnExpr, ok := s.Rhs[i].(*ast.FunctionExpr); ok && fnExpr != nil && b.Bindings != nil {
@@ -239,11 +241,8 @@ func (b *Builder) Assign(s *ast.AssignStmt) {
 			}
 
 			if target.BaseSymbol != 0 && target.Key != nil {
-				switch keyExpr := target.Key.(type) {
-				case *ast.StringExpr:
-					target.Symbol = b.getOrCreateFieldPathSymbol(target.BaseSymbol, []string{keyExpr.Value})
-				case *ast.NumberExpr:
-					target.Symbol = b.getOrCreateFieldPathSymbol(target.BaseSymbol, []string{keyExpr.Value})
+				if keySegment, ok := staticSegmentFromKeyExpr(target.Key); ok {
+					target.Symbol = b.getOrCreateFieldPathSymbol(target.BaseSymbol, []constraint.Segment{keySegment})
 				}
 
 				if target.Symbol != 0 && i < len(s.Rhs) {
@@ -733,8 +732,7 @@ func (b *Builder) FuncDef(s *ast.FuncDefStmt) {
 		receiverPath := b.pathFromExpr(s.Name.Receiver)
 		if !receiverPath.IsEmpty() {
 			info.TargetPath = receiverPath.Append(constraint.Segment{Kind: constraint.SegmentField, Name: info.Name})
-			fieldPath := b.extractFieldPathFromTarget(info.TargetPath)
-			info.Symbol = b.getOrCreateFieldPathSymbol(receiverPath.Symbol, fieldPath)
+			info.Symbol = b.getOrCreateFieldPathSymbol(receiverPath.Symbol, info.TargetPath.Segments)
 		}
 	} else if s.Name.Func != nil {
 		switch fn := s.Name.Func.(type) {
@@ -764,8 +762,7 @@ func (b *Builder) FuncDef(s *ast.FuncDefStmt) {
 
 			info.TargetPath = b.pathFromExpr(fn)
 			if !info.TargetPath.IsEmpty() && info.TargetPath.Symbol != 0 {
-				fieldPath := b.extractFieldPathFromTarget(info.TargetPath)
-				info.Symbol = b.getOrCreateFieldPathSymbol(info.TargetPath.Symbol, fieldPath)
+				info.Symbol = b.getOrCreateFieldPathSymbol(info.TargetPath.Symbol, info.TargetPath.Segments)
 			}
 		}
 	}

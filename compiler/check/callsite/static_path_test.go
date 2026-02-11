@@ -100,3 +100,29 @@ func TestStaticPathWithBaseSymbol_DynamicIdentKeyRejected(t *testing.T) {
 		t.Fatal("expected dynamic key to be rejected")
 	}
 }
+
+func TestStaticPathWithBaseSymbol_StaticIndexInt(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	base := &ast.IdentExpr{Value: "obj"}
+	baseSym := cfg.SymbolID(19)
+	bindings.Bind(base, baseSym)
+
+	expr := &ast.AttrGetExpr{
+		Object: base,
+		Key:    &ast.NumberExpr{Value: "1"},
+	}
+
+	gotSym, segs, ok := StaticPathWithBaseSymbol(bindings, expr)
+	if !ok {
+		t.Fatal("expected static path")
+	}
+	if gotSym != baseSym {
+		t.Fatalf("symbol = %d, want %d", gotSym, baseSym)
+	}
+	if len(segs) != 1 {
+		t.Fatalf("segments len = %d, want 1", len(segs))
+	}
+	if segs[0] != (constraint.Segment{Kind: constraint.SegmentIndexInt, Index: 1}) {
+		t.Fatalf("unexpected segment: %+v", segs[0])
+	}
+}

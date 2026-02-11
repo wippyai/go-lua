@@ -52,6 +52,11 @@ func staticSegmentFromExpr(expr ast.Expr) (constraint.Segment, bool) {
 			return constraint.Segment{Kind: constraint.SegmentField, Name: k.Value}, true
 		}
 		return constraint.Segment{Kind: constraint.SegmentIndexString, Name: k.Value}, true
+	case *ast.NumberExpr:
+		if idx, ok := pathkey.ParseIntLiteral(k.Value); ok {
+			return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx}, true
+		}
+		return constraint.Segment{}, false
 	default:
 		return constraint.Segment{}, false
 	}

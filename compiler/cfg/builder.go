@@ -1,9 +1,6 @@
 package cfg
 
 import (
-	"strconv"
-	"strings"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
@@ -249,12 +246,15 @@ func (b *Builder) resolveIdentsToSymbols(idents []*ast.IdentExpr) []basecfg.Symb
 }
 
 // getOrCreateFieldPathSymbol returns or creates a symbol for a field path.
-func (b *Builder) getOrCreateFieldPathSymbol(baseSym basecfg.SymbolID, fieldPath []string) basecfg.SymbolID {
-	if baseSym == 0 || len(fieldPath) == 0 || b.Bindings == nil {
+func (b *Builder) getOrCreateFieldPathSymbol(baseSym basecfg.SymbolID, segments []constraint.Segment) basecfg.SymbolID {
+	if baseSym == 0 || len(segments) == 0 || b.Bindings == nil {
 		return 0
 	}
 
-	path := strings.Join(fieldPath, ".")
+	path, ok := bind.FieldPathKeyFromSegments(segments)
+	if !ok {
+		return 0
+	}
 
 	return b.Bindings.GetOrCreateFieldSymbol(baseSym, path)
 }
@@ -268,18 +268,12 @@ func (b *Builder) resolveFieldPathSymbol(path constraint.Path) basecfg.SymbolID 
 	currentSym := path.Symbol
 
 	for _, seg := range path.Segments {
-		var fieldName string
-
-		switch seg.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			fieldName = seg.Name
-		case constraint.SegmentIndexInt:
-			fieldName = strconv.Itoa(seg.Index)
-		default:
+		pathKey, ok := bind.FieldPathKeyFromSegments([]constraint.Segment{seg})
+		if !ok {
 			return 0
 		}
 
-		fieldSym, ok := b.Bindings.FieldSymbol(currentSym, fieldName)
+		fieldSym, ok := b.Bindings.FieldSymbol(currentSym, pathKey)
 		if !ok {
 			return b.resolveFieldPathSymbolFlat(path)
 		}
@@ -292,42 +286,15 @@ func (b *Builder) resolveFieldPathSymbol(path constraint.Path) basecfg.SymbolID 
 
 // resolveFieldPathSymbolFlat resolves using a single flat path string.
 func (b *Builder) resolveFieldPathSymbolFlat(path constraint.Path) basecfg.SymbolID {
-	fields := make([]string, 0, len(path.Segments))
-
-	for _, seg := range path.Segments {
-		switch seg.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			fields = append(fields, seg.Name)
-		case constraint.SegmentIndexInt:
-			fields = append(fields, strconv.Itoa(seg.Index))
-		default:
-			return 0
-		}
-	}
-
-	if len(fields) == 0 {
+	if len(path.Segments) == 0 {
 		return 0
 	}
 
-	pathStr := strings.Join(fields, ".")
+	pathStr, ok := bind.FieldPathKeyFromSegments(path.Segments)
+	if !ok {
+		return 0
+	}
 	sym, _ := b.Bindings.FieldSymbol(path.Symbol, pathStr)
 
 	return sym
-}
-
-// extractFieldPathFromTarget extracts field names from a constraint.Path's segments.
-func (b *Builder) extractFieldPathFromTarget(path constraint.Path) []string {
-	if len(path.Segments) == 0 {
-		return nil
-	}
-
-	fields := make([]string, 0, len(path.Segments))
-
-	for _, seg := range path.Segments {
-		if seg.Kind == constraint.SegmentField || seg.Kind == constraint.SegmentIndexString {
-			fields = append(fields, seg.Name)
-		}
-	}
-
-	return fields
 }

@@ -54,3 +54,29 @@ func TestRuntimeArgSymbolAt_MethodCallUsesReceiver(t *testing.T) {
 		t.Fatalf("RuntimeArgSymbolAt(method,1) = %d, want arg %d", got, argSym)
 	}
 }
+
+func TestSymbolOrCreateFieldFromExpr_StaticIndexStringAndInt_DoNotCollide(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	base := &ast.IdentExpr{Value: "state"}
+	baseSym := cfg.SymbolID(31)
+	bindings.Bind(base, baseSym)
+
+	stringExpr := &ast.AttrGetExpr{
+		Object: base,
+		Key:    &ast.StringExpr{Value: "1"},
+	}
+	intExpr := &ast.AttrGetExpr{
+		Object: base,
+		Key:    &ast.NumberExpr{Value: "1"},
+	}
+
+	stringSym := SymbolOrCreateFieldFromExpr(stringExpr, bindings)
+	intSym := SymbolOrCreateFieldFromExpr(intExpr, bindings)
+
+	if stringSym == 0 || intSym == 0 {
+		t.Fatalf("expected non-zero symbols, got string=%d int=%d", stringSym, intSym)
+	}
+	if stringSym == intSym {
+		t.Fatalf("expected distinct symbols for [\"1\"] and [1], got %d", stringSym)
+	}
+}

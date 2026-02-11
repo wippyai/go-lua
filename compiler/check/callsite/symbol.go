@@ -37,9 +37,16 @@ func staticFieldSymbolFromAttrGet(bindings *bind.BindingTable, attr *ast.AttrGet
 	if bindings == nil || attr == nil {
 		return 0, false
 	}
-	baseSym, path, ok := FieldPathWithBaseSymbol(bindings, attr)
-	if !ok || baseSym == 0 || path == "" {
+
+	baseSym, segments, ok := StaticPathWithBaseSymbol(bindings, attr)
+	if !ok || baseSym == 0 || len(segments) == 0 {
 		return 0, false
 	}
+
+	path, ok := bind.FieldPathKeyFromSegments(segments)
+	if !ok {
+		return 0, false
+	}
+
 	return bindings.FieldSymbol(baseSym, path)
 }

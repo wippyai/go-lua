@@ -206,17 +206,28 @@ func (t *BindingTable) GenericForSymbols(stmt *ast.GenericForStmt) []cfg.SymbolI
 // The created symbol gets a composite name (e.g., "M.f") and SymbolLocal kind.
 // Subsequent calls with the same base and path return the existing symbol.
 func (t *BindingTable) GetOrCreateFieldSymbol(baseSym cfg.SymbolID, path string) cfg.SymbolID {
-	key := fieldPathKey{base: baseSym, path: path}
+	canonicalPath, ok := NormalizeFieldPathKey(path)
+	if !ok {
+		return 0
+	}
+
+	key := fieldPathKey{base: baseSym, path: canonicalPath}
 	if sym, ok := t.fieldSymbols[key]; ok {
 		return sym
 	}
 	sym := cfg.NextSymbolID()
 	t.fieldSymbols[key] = sym
 	baseName := t.names[baseSym]
+	displayPath := displayFieldPathKey(canonicalPath)
+
 	if baseName != "" {
-		t.names[sym] = baseName + "." + path
+		if len(canonicalPath) > 0 && (canonicalPath[0] == '.' || canonicalPath[0] == '[') {
+			t.names[sym] = baseName + canonicalPath
+		} else {
+			t.names[sym] = baseName + "." + displayPath
+		}
 	} else {
-		t.names[sym] = path
+		t.names[sym] = displayPath
 	}
 	t.kind[sym] = cfg.SymbolLocal
 	return sym
@@ -225,7 +236,12 @@ func (t *BindingTable) GetOrCreateFieldSymbol(baseSym cfg.SymbolID, path string)
 // FieldSymbol looks up an existing symbol for a field path.
 // Returns zero and false if no symbol exists for the given base and path.
 func (t *BindingTable) FieldSymbol(baseSym cfg.SymbolID, path string) (cfg.SymbolID, bool) {
-	key := fieldPathKey{base: baseSym, path: path}
+	canonicalPath, ok := NormalizeFieldPathKey(path)
+	if !ok {
+		return 0, false
+	}
+
+	key := fieldPathKey{base: baseSym, path: canonicalPath}
 	sym, ok := t.fieldSymbols[key]
 	return sym, ok
 }

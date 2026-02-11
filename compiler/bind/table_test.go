@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 )
 
 func TestNewBindingTable(t *testing.T) {
@@ -367,6 +368,70 @@ func TestBindingTable_FieldSymbol(t *testing.T) {
 	}
 	if got != created {
 		t.Error("FieldSymbol should return the created symbol")
+	}
+}
+
+func TestBindingTable_FieldSymbol_CanonicalPathAvoidsDotCollisions(t *testing.T) {
+	table := NewBindingTable()
+	baseSym := cfg.NextSymbolID()
+	table.SetName(baseSym, "T")
+
+	dotSym := table.GetOrCreateFieldSymbol(baseSym, "a.b")
+	if dotSym == 0 {
+		t.Fatal("expected symbol for dotted path")
+	}
+
+	indexKey, ok := FieldPathKeyFromSegments([]constraint.Segment{
+		{Kind: constraint.SegmentIndexString, Name: "a.b"},
+	})
+	if !ok {
+		t.Fatal("expected canonical index-string key")
+	}
+
+	indexSym := table.GetOrCreateFieldSymbol(baseSym, indexKey)
+	if indexSym == 0 {
+		t.Fatal("expected symbol for index-string path")
+	}
+
+	if dotSym == indexSym {
+		t.Fatalf("collision: dotted path and index-string path share symbol %d", dotSym)
+	}
+
+	if got, ok := table.FieldSymbol(baseSym, "a.b"); !ok || got != dotSym {
+		t.Fatalf("FieldSymbol(base, \"a.b\") = (%d,%v), want (%d,true)", got, ok, dotSym)
+	}
+	if got, ok := table.FieldSymbol(baseSym, indexKey); !ok || got != indexSym {
+		t.Fatalf("FieldSymbol(base, %q) = (%d,%v), want (%d,true)", indexKey, got, ok, indexSym)
+	}
+}
+
+func TestBindingTable_FieldSymbol_CanonicalPathDistinguishesStringAndIntIndex(t *testing.T) {
+	table := NewBindingTable()
+	baseSym := cfg.NextSymbolID()
+	table.SetName(baseSym, "T")
+
+	stringIndexKey, ok := FieldPathKeyFromSegments([]constraint.Segment{
+		{Kind: constraint.SegmentIndexString, Name: "1"},
+	})
+	if !ok {
+		t.Fatal("expected canonical string-index key")
+	}
+
+	intIndexKey, ok := FieldPathKeyFromSegments([]constraint.Segment{
+		{Kind: constraint.SegmentIndexInt, Index: 1},
+	})
+	if !ok {
+		t.Fatal("expected canonical int-index key")
+	}
+
+	stringSym := table.GetOrCreateFieldSymbol(baseSym, stringIndexKey)
+	intSym := table.GetOrCreateFieldSymbol(baseSym, intIndexKey)
+
+	if stringSym == 0 || intSym == 0 {
+		t.Fatal("expected both symbols to be created")
+	}
+	if stringSym == intSym {
+		t.Fatalf("collision: string index and int index share symbol %d", stringSym)
 	}
 }
 
