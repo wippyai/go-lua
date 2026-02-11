@@ -122,10 +122,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 				return
 			}
 			calleeSig := resolveLocalSignature(callee)
-			runtimeArgCount := len(ci.Args)
-			if ci.Method != "" && ci.Receiver != nil {
-				runtimeArgCount++
-			}
+			runtimeArgCount := checkcallsite.RuntimeArgCount(ci)
 			if runtimeArgCount == 0 {
 				return
 			}

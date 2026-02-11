@@ -20,6 +20,17 @@ func PositionalArgAt(args []ast.Expr, idx int) ast.Expr {
 	return args[idx]
 }
 
+// RuntimeArgCount returns call runtime arity, including receiver for method calls.
+func RuntimeArgCount(info *cfg.CallInfo) int {
+	if info == nil {
+		return 0
+	}
+	if info.Method != "" && info.Receiver != nil {
+		return len(info.Args) + 1
+	}
+	return len(info.Args)
+}
+
 // RuntimeArgAt returns the runtime argument at parameter index paramIdx.
 //
 // For method calls, index 0 is the receiver (self), and remaining indices map
@@ -34,7 +45,7 @@ func RuntimeArgAt(info *cfg.CallInfo, paramIdx int) ast.Expr {
 			return info.Receiver
 		}
 		if paramIdx < 0 {
-			adj := len(info.Args) + 1 + paramIdx
+			adj := RuntimeArgCount(info) + paramIdx
 			if adj == 0 {
 				return info.Receiver
 			}
