@@ -198,6 +198,51 @@ func TestSelectIntercept_ConcreteIndex_ReturnsTailTypes(t *testing.T) {
 	}
 }
 
+func TestSelectIntercept_IntegralFloatIndex_ReturnsTailTypes(t *testing.T) {
+	s := &SelectIntercept{}
+	ex := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "select"},
+		Args: []ast.Expr{
+			&ast.NumberExpr{Value: "1e0"},
+			&ast.StringExpr{Value: "first"},
+			&ast.NumberExpr{Value: "3"},
+		},
+	}
+	selectFn := typ.Func().
+		Param("index", typ.Any).
+		Variadic(typ.Any).
+		Returns(typ.Any).
+		Effects(effect.WithVariadicTransform()).
+		Build()
+	ctx := CallEnv{
+		Recurse: func(e ast.Expr) typ.Type {
+			if _, ok := e.(*ast.StringExpr); ok {
+				return typ.String
+			}
+			if _, ok := e.(*ast.NumberExpr); ok {
+				return typ.Number
+			}
+			return typ.Unknown
+		},
+		TypeLookup: func(name string) typ.Type {
+			if name == "select" {
+				return selectFn
+			}
+			return nil
+		},
+	}
+	result := s.InterceptCall(ex, ctx)
+	if !result.Skip {
+		t.Fatal("expected skip=true for integral float index")
+	}
+	if len(result.Types) != 2 {
+		t.Fatalf("expected 2 tail types, got %d", len(result.Types))
+	}
+	if result.Types[0] != typ.String || result.Types[1] != typ.Number {
+		t.Fatalf("expected [string, number], got [%v, %v]", result.Types[0], result.Types[1])
+	}
+}
+
 func TestSelectIntercept_IndexOutOfRange_SkipsFalse(t *testing.T) {
 	s := &SelectIntercept{}
 	ex := &ast.FuncCallExpr{
@@ -308,6 +353,48 @@ func TestSelectIntercept_NegativeIndex_ReturnsTailTypes(t *testing.T) {
 	}
 	if result.Types[0] != typ.String || result.Types[1] != typ.Number {
 		t.Fatalf("expected [string, number], got [%v, %v]", result.Types[0], result.Types[1])
+	}
+}
+
+func TestSelectIntercept_NegativeIntegralFloatIndex(t *testing.T) {
+	s := &SelectIntercept{}
+	ex := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "select"},
+		Args: []ast.Expr{
+			&ast.NumberExpr{Value: "-1.0"},
+			&ast.StringExpr{Value: "first"},
+			&ast.NumberExpr{Value: "2"},
+		},
+	}
+	selectFn := typ.Func().
+		Param("index", typ.Any).
+		Variadic(typ.Any).
+		Returns(typ.Any).
+		Effects(effect.WithVariadicTransform()).
+		Build()
+	ctx := CallEnv{
+		Recurse: func(e ast.Expr) typ.Type {
+			if _, ok := e.(*ast.StringExpr); ok {
+				return typ.String
+			}
+			if _, ok := e.(*ast.NumberExpr); ok {
+				return typ.Number
+			}
+			return typ.Unknown
+		},
+		TypeLookup: func(name string) typ.Type {
+			if name == "select" {
+				return selectFn
+			}
+			return nil
+		},
+	}
+	result := s.InterceptCall(ex, ctx)
+	if !result.Skip {
+		t.Fatal("expected skip=true for negative integral float index")
+	}
+	if len(result.Types) != 1 || result.Types[0] != typ.Number {
+		t.Fatalf("expected [number], got %v", result.Types)
 	}
 }
 

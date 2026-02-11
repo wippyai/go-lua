@@ -1,6 +1,7 @@
 package numparse
 
 import (
+	"math"
 	"strconv"
 	"strings"
 )
@@ -74,4 +75,25 @@ func ParseFloatLiteral(s string) (float64, bool) {
 		return 0, false
 	}
 	return f, true
+}
+
+// ParseIntegralLiteral parses a numeric literal as an integral int64 value.
+//
+// Unlike ParseIntegerLiteral, this accepts float-syntax literals whose value is
+// mathematically integral (for example "1.0", "1e0", "0x1p0").
+func ParseIntegralLiteral(s string) (int64, bool) {
+	if i, ok := ParseIntegerLiteral(s); ok {
+		return i, true
+	}
+	f, ok := ParseFloatLiteral(s)
+	if !ok || math.IsInf(f, 0) || math.IsNaN(f) {
+		return 0, false
+	}
+	if math.Trunc(f) != f {
+		return 0, false
+	}
+	if f < math.MinInt64 || f > math.MaxInt64 {
+		return 0, false
+	}
+	return int64(f), true
 }

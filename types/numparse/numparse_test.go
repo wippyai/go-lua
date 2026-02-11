@@ -81,3 +81,29 @@ func TestParseFloatLiteral(t *testing.T) {
 		}
 	}
 }
+
+func TestParseIntegralLiteral(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int64
+		ok    bool
+	}{
+		{"1", 1, true},
+		{"1.0", 1, true},
+		{"1e0", 1, true},
+		{"0x1p0", 1, true},
+		{"-1.0", -1, true},
+		{"1.5", 0, false},
+		{"0x1.8p1", 3, true},
+		{"nope", 0, false},
+	}
+	for _, tt := range tests {
+		got, ok := ParseIntegralLiteral(tt.input)
+		if ok != tt.ok {
+			t.Fatalf("ParseIntegralLiteral(%q) ok=%v, want %v", tt.input, ok, tt.ok)
+		}
+		if ok && got != tt.want {
+			t.Fatalf("ParseIntegralLiteral(%q)=%v, want %v", tt.input, got, tt.want)
+		}
+	}
+}

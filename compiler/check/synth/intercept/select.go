@@ -79,7 +79,7 @@ func (s *SelectIntercept) selectReturnTypes(ex *ast.FuncCallExpr, ctx CallEnv) [
 
 	// If selecting a concrete index, use the type of that argument.
 	if num, ok := ex.Args[0].(*ast.NumberExpr); ok {
-		idx, ok := numparse.ParseIntegerLiteral(num.Value)
+		idx, ok := numparse.ParseIntegralLiteral(num.Value)
 		if !ok || idx <= 0 {
 			if !ok || idx == 0 {
 				return nil
