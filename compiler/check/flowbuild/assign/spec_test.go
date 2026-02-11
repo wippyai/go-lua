@@ -292,6 +292,79 @@ func TestCollectSpecNarrowedTypes_MultiReturnTrailingTarget(t *testing.T) {
 	}
 }
 
+func TestCollectSpecNarrowedTypes_ReprocessesPointWhenNewReceiverBecomesKnown(t *testing.T) {
+	code := `
+		local peer
+		local root = make()
+		local a, b = root:a(), peer:b()
+		peer = a:peer()
+	`
+	chunk, err := parse.ParseString(code, "spec_reprocess_point.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk}, "make")
+	exit := graph.Exit()
+
+	symRoot, ok := graph.SymbolAt(exit, "root")
+	if !ok || symRoot == 0 {
+		t.Fatal("expected symbol for root")
+	}
+	symA, ok := graph.SymbolAt(exit, "a")
+	if !ok || symA == 0 {
+		t.Fatal("expected symbol for a")
+	}
+	symB, ok := graph.SymbolAt(exit, "b")
+	if !ok || symB == 0 {
+		t.Fatal("expected symbol for b")
+	}
+	symPeer, ok := graph.SymbolAt(exit, "peer")
+	if !ok || symPeer == 0 {
+		t.Fatal("expected symbol for peer")
+	}
+
+	typeRoot := typ.NewRecord().Field("kind", typ.LiteralString("root")).Build()
+	typeA := typ.NewRecord().Field("kind", typ.LiteralString("a")).Build()
+	typePeer := typ.NewRecord().Field("kind", typ.LiteralString("peer")).Build()
+	typeB := typ.NewRecord().Field("kind", typ.LiteralString("b")).Build()
+
+	makeType := typ.Func().
+		Returns(typeRoot).
+		Spec(contract.NewSpec().WithReturnCase(constraint.TrueCondition(), typeRoot)).
+		Build()
+
+	synth := func(expr ast.Expr, _ cfg.Point) typ.Type {
+		if ident, ok := expr.(*ast.IdentExpr); ok && ident.Value == "make" {
+			return makeType
+		}
+		return typ.Unknown
+	}
+
+	synthAPI := &reprocessSpecSynthAPI{
+		graph:    graph,
+		rootSym:  symRoot,
+		aSym:     symA,
+		peerSym:  symPeer,
+		typeA:    typeA,
+		typePeer: typePeer,
+		typeB:    typeB,
+	}
+
+	result := CollectSpecNarrowedTypes(graph, map[cfg.Point]*scope.State{}, synth, nil, synthAPI, nil)
+	if !typ.TypeEquals(result[symRoot], typeRoot) {
+		t.Fatalf("expected root type to be inferred, got %v", result[symRoot])
+	}
+	if !typ.TypeEquals(result[symA], typeA) {
+		t.Fatalf("expected a type to be inferred, got %v", result[symA])
+	}
+	if !typ.TypeEquals(result[symPeer], typePeer) {
+		t.Fatalf("expected peer type to be inferred, got %v", result[symPeer])
+	}
+	if !typ.TypeEquals(result[symB], typeB) {
+		t.Fatalf("expected b type to be inferred after point reprocessing, got %v", result[symB])
+	}
+}
+
 type specTestSynthAPI struct {
 	graph   *cfg.Graph
 	msgType typ.Type
@@ -353,5 +426,59 @@ func (s *specTestSynthAPI) ExpandValuesWithSpecTypes(_ []ast.Expr, needed int, p
 }
 
 func (s *specTestSynthAPI) InferIterVarsWithSpecTypes(_ []ast.Expr, count int, _ cfg.Point, _ api.SpecTypes) []typ.Type {
+	return make([]typ.Type, count)
+}
+
+type reprocessSpecSynthAPI struct {
+	graph                  *cfg.Graph
+	rootSym, aSym, peerSym cfg.SymbolID
+	typeA, typePeer, typeB typ.Type
+}
+
+func (s *reprocessSpecSynthAPI) TypeOf(_ ast.Expr, _ cfg.Point) typ.Type {
+	return typ.Unknown
+}
+
+func (s *reprocessSpecSynthAPI) ExpandValues(_ []ast.Expr, needed int, _ cfg.Point) []typ.Type {
+	return make([]typ.Type, needed)
+}
+
+func (s *reprocessSpecSynthAPI) InferIterVars(_ []ast.Expr, count int, _ cfg.Point) []typ.Type {
+	return make([]typ.Type, count)
+}
+
+func (s *reprocessSpecSynthAPI) ExpandValuesWithSpecTypes(_ []ast.Expr, needed int, p cfg.Point, specTypes api.SpecTypes) []typ.Type {
+	values := make([]typ.Type, needed)
+	if s == nil || s.graph == nil {
+		return values
+	}
+	info := s.graph.Assign(p)
+	if info == nil {
+		return values
+	}
+	for i := 0; i < needed; i++ {
+		call, retIdx := info.CallForTarget(i)
+		if call == nil || retIdx != 0 {
+			continue
+		}
+		switch call.Method {
+		case "a":
+			if _, ok := specTypes[s.rootSym]; ok {
+				values[i] = s.typeA
+			}
+		case "peer":
+			if _, ok := specTypes[s.aSym]; ok {
+				values[i] = s.typePeer
+			}
+		case "b":
+			if _, ok := specTypes[s.peerSym]; ok {
+				values[i] = s.typeB
+			}
+		}
+	}
+	return values
+}
+
+func (s *reprocessSpecSynthAPI) InferIterVarsWithSpecTypes(_ []ast.Expr, count int, _ cfg.Point, _ api.SpecTypes) []typ.Type {
 	return make([]typ.Type, count)
 }

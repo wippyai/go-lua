@@ -102,17 +102,11 @@ func CollectSpecNarrowedTypes(
 	}
 
 	// Fixpoint phase: process worklist until no new types are added
-	processed := make(map[cfg.Point]bool)
 	for len(worklist) > 0 {
 		// Sort for deterministic processing order
 		slices.Sort(worklist)
 		p := worklist[0]
 		worklist = worklist[1:]
-
-		if processed[p] {
-			continue
-		}
-		processed[p] = true
 
 		info := graph.Assign(p)
 		if info == nil {
