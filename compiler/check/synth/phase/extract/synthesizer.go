@@ -31,6 +31,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -377,17 +378,9 @@ fallback:
 	if moduleAliasSym == 0 {
 		moduleAliasSym = moduleSym
 	}
-	if modulePath := ctx.ModuleAlias(moduleAliasSym); modulePath != "" && s.deps.Manifests != nil {
-		manifest := s.deps.Manifests.Manifest(modulePath)
-		if manifest == nil {
-			if imports := s.deps.Manifests.Imports(); imports != nil {
-				manifest = imports[modulePath]
-			}
-		}
-		if manifest != nil {
-			if exportType := manifest.EnrichedExport(); exportType != nil {
-				return exportType
-			}
+	if modulePath := ctx.ModuleAlias(moduleAliasSym); modulePath != "" {
+		if exportType := io.LookupEnrichedExport(s.deps.Manifests, modulePath); exportType != nil {
+			return exportType
 		}
 	}
 

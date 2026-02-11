@@ -34,27 +34,6 @@ func newManifest(name string, export typ.Type) *io.Manifest {
 	return m
 }
 
-func TestModuleAliasExport_ManifestHit(t *testing.T) {
-	q := &manifestQuerierStub{
-		manifests: map[string]*io.Manifest{"a": newManifest("a", typ.String)},
-	}
-	got := moduleAliasExport(q, "a")
-	if !typ.TypeEquals(got, typ.String) {
-		t.Fatalf("moduleAliasExport manifest hit = %v, want string", got)
-	}
-}
-
-func TestModuleAliasExport_ImportsFallback(t *testing.T) {
-	q := &manifestQuerierStub{
-		manifests: map[string]*io.Manifest{},
-		imports:   map[string]*io.Manifest{"a": newManifest("a", typ.Number)},
-	}
-	got := moduleAliasExport(q, "a")
-	if !typ.TypeEquals(got, typ.Number) {
-		t.Fatalf("moduleAliasExport imports fallback = %v, want number", got)
-	}
-}
-
 func TestApplyModuleAliasExports_AssignsResolvedExports(t *testing.T) {
 	aliases := map[cfg.SymbolID]string{
 		0: "skip-zero",

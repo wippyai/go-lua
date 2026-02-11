@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 func applyModuleAliasExports(
@@ -23,25 +22,9 @@ func applyModuleAliasExports(
 		if sym == 0 || path == "" {
 			continue
 		}
-		if export := moduleAliasExport(manifests, path); export != nil {
+		if export := io.LookupEnrichedExport(manifests, path); export != nil {
 			declared[sym] = export
 		}
 	}
 	return declared
-}
-
-func moduleAliasExport(manifests io.ManifestQuerier, path string) typ.Type {
-	if manifests == nil || path == "" {
-		return nil
-	}
-	manifest := manifests.Manifest(path)
-	if manifest == nil {
-		if imports := manifests.Imports(); imports != nil {
-			manifest = imports[path]
-		}
-	}
-	if manifest == nil {
-		return nil
-	}
-	return manifest.EnrichedExport()
 }

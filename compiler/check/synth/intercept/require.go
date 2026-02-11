@@ -43,19 +43,7 @@ func (r *RequireIntercept) InterceptCall(ex *ast.FuncCallExpr, ctx CallEnv) Resu
 	}
 
 	moduleName := strArg.Value
-	manifest := r.Manifests.Manifest(moduleName)
-
-	// If not found by direct path, check import aliases
-	if manifest == nil {
-		if imports := r.Manifests.Imports(); imports != nil {
-			manifest = imports[moduleName]
-		}
-	}
-	if manifest == nil {
-		return Result{}
-	}
-
-	enriched := manifest.EnrichedExport()
+	enriched := io.LookupEnrichedExport(r.Manifests, moduleName)
 	if enriched == nil {
 		return Result{}
 	}
