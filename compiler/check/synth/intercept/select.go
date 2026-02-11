@@ -20,12 +20,13 @@ type VariadicTypeResolver interface {
 // Patterns handled:
 //   - select("#", ...) -> integer (count of variadic arguments)
 //   - select(n, ...) -> nth variadic element type
-//   - select(n, a, b, c) -> type of the nth argument after n
+//   - select(n, a, b, c) -> tail return types from the nth argument onward
 //
 // Detection is effect-based: callee must have VariadicTransform effect.
 //
 // When selecting from varargs, uses VariadicResolver to get the variadic type.
-// When selecting a concrete index from literal arguments, returns that argument's type.
+// When selecting a concrete index from literal arguments, returns the tail
+// types from that position onward.
 type SelectIntercept struct {
 	// VariadicResolver resolves the variadic type in current scope.
 	// If nil, varargs pattern is not handled.
