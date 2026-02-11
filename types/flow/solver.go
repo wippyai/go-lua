@@ -595,7 +595,16 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 			}
 			existing := make(map[string]bool)
 			for _, f := range r.Fields {
-				builder.Field(f.Name, f.Type)
+				switch {
+				case f.Optional && f.Readonly:
+					builder.OptReadonlyField(f.Name, f.Type)
+				case f.Optional:
+					builder.OptField(f.Name, f.Type)
+				case f.Readonly:
+					builder.ReadonlyField(f.Name, f.Type)
+				default:
+					builder.Field(f.Name, f.Type)
+				}
 				existing[f.Name] = true
 			}
 			for _, f := range fields {
