@@ -105,10 +105,7 @@ func (r *Resolver) KeyAtVersion(sym cfg.SymbolID, versionID int, segments []cons
 //   - Sortable in a meaningful order (by symbol, then version)
 func (r *Resolver) buildKey(sym cfg.SymbolID, versionID int, segments []constraint.Segment) constraint.PathKey {
 	var b strings.Builder
-	b.WriteString("sym")
-	b.WriteString(strconv.FormatUint(uint64(sym), 10))
-	b.WriteByte('@')
-	b.WriteString(strconv.Itoa(versionID))
+	b.WriteString(SymbolVersionRoot(sym, versionID))
 	b.WriteString(SegmentsSuffix(segments))
 	return constraint.PathKey(b.String())
 }

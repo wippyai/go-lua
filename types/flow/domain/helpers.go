@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/types/constraint"
@@ -45,14 +44,10 @@ func SplitPathKey(key constraint.PathKey) (constraint.PathKey, string, bool) {
 
 func splitPathKeyRootAndSuffix(key constraint.PathKey) (root string, suffix string, ok bool) {
 	if sym, version, suffix, ok := pathkey.ParseKey(key); ok {
-		var b strings.Builder
-		b.WriteString("sym")
-		b.WriteString(strconv.FormatUint(uint64(sym), 10))
 		if version != 0 {
-			b.WriteByte('@')
-			b.WriteString(strconv.Itoa(version))
+			return pathkey.SymbolVersionRoot(sym, version), suffix, true
 		}
-		return b.String(), suffix, true
+		return pathkey.SymbolRoot(sym), suffix, true
 	}
 
 	s := string(key)

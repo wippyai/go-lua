@@ -217,6 +217,21 @@ func TestParseSuffix_Mixed(t *testing.T) {
 	}
 }
 
+func TestParseSuffix_RejectsEmptyFieldSegments(t *testing.T) {
+	cases := []string{
+		".",
+		"..a",
+		".a..b",
+		".a.",
+	}
+
+	for _, suffix := range cases {
+		if segs := ParseSuffix(suffix); segs != nil {
+			t.Fatalf("expected %q to be rejected, got %+v", suffix, segs)
+		}
+	}
+}
+
 func TestSegmentsPrefix_Empty(t *testing.T) {
 	if !SegmentsPrefix(nil, nil) {
 		t.Error("nil is prefix of nil")
