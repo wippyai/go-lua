@@ -363,7 +363,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Detect keys collector calls: local keys = sorted_keys(table)
 				if call, retIndex := info.CallForTarget(i); call != nil {
 					var tableSym cfg.SymbolID
-					calleeSymbols := callsite.CalleeSymbolCandidates(call, bindings, fc.ModuleBindings)
+					calleeSymbols := callsite.CalleeSymbolCandidatesWithAliases(call, fc.Graph, bindings, fc.ModuleBindings)
 
 					// Try local function analysis first
 					if keysCollector != nil {
@@ -410,7 +410,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				var containerElemSrc *flow.ContainerElementSource
 				if call, retIndex := info.CallForTarget(i); call != nil {
 					assignmentTypesResolver := resolve.BuildAssignmentTypeResolver(inputs)
-					if elemInfo := mutator.ContainerElementReturnFromCall(call, p, wrappedSynth, resolverWithSpec, assignmentTypesResolver, bindings, fc.ModuleBindings); elemInfo != nil {
+					if elemInfo := mutator.ContainerElementReturnFromCall(call, p, wrappedSynth, resolverWithSpec, assignmentTypesResolver, fc.Graph, bindings, fc.ModuleBindings); elemInfo != nil {
 						// Check if this return index matches
 						if elemInfo.ReturnIndex == retIndex {
 							// For method calls, index 0 is self (receiver)
@@ -625,7 +625,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					types[i] = value
 				}
 			}
-			correlations, coCorrelations := extractCallCorrelations(sourceCall, wrappedSynth, p, resolverWithSpec, bindings, fc.ModuleBindings)
+			correlations, coCorrelations := extractCallCorrelations(sourceCall, wrappedSynth, p, resolverWithSpec, fc.Graph, bindings, fc.ModuleBindings)
 			sibling := &flow.SiblingAssignment{
 				Symbols:        symbols,
 				Names:          names,
@@ -738,13 +738,14 @@ func extractCallCorrelations(
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	p cfg.Point,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	moduleBindings *bind.BindingTable,
 ) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation) {
 	if callInfo == nil {
 		return nil, nil
 	}
-	fnType := resolve.CalleeType(callInfo, p, synth, symResolver, nil, bindings, moduleBindings)
+	fnType := resolve.CalleeType(callInfo, p, synth, symResolver, nil, graph, bindings, moduleBindings)
 	inv, co := correlationsFromFunctionType(fnType)
 	return inv, co
 }

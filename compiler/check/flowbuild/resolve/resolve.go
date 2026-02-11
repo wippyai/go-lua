@@ -501,6 +501,7 @@ func CalleeType(
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	assignmentTypes func(cfg.SymbolID) typ.Type,
+	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	moduleBindings *bind.BindingTable,
 ) typ.Type {
@@ -556,7 +557,7 @@ func CalleeType(
 		// Preserve historical preference for CalleePath.Symbol while still
 		// falling back to canonical callsite candidates when it misses.
 		push(info.CalleePath.Symbol)
-		for _, sym := range callsite.CalleeSymbolCandidates(info, bindings, moduleBindings) {
+		for _, sym := range callsite.CalleeSymbolCandidatesWithAliases(info, graph, bindings, moduleBindings) {
 			push(sym)
 		}
 		for _, sym := range candidates {

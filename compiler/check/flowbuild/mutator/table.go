@@ -30,7 +30,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 		if info == nil {
 			return
 		}
-		tm := TableMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, bindings, fc.ModuleBindings)
+		tm := TableMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Graph, bindings, fc.ModuleBindings)
 		if tm == nil {
 			return
 		}
@@ -118,6 +118,7 @@ func TableMutatorFromCall(
 	p cfg.Point,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	moduleBindings *bind.BindingTable,
 ) *effect.TableMutator {
@@ -125,7 +126,7 @@ func TableMutatorFromCall(
 		return nil
 	}
 
-	fnType := resolve.CalleeType(info, p, synth, symResolver, nil, bindings, moduleBindings)
+	fnType := resolve.CalleeType(info, p, synth, symResolver, nil, graph, bindings, moduleBindings)
 	if fnType == nil {
 		return nil
 	}

@@ -40,7 +40,7 @@ func TestContainerElementReturnInfo(t *testing.T) {
 }
 
 func TestContainerElementReturnFromCall_NilInfo(t *testing.T) {
-	result := ContainerElementReturnFromCall(nil, 0, nil, nil, nil, nil, nil)
+	result := ContainerElementReturnFromCall(nil, 0, nil, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil info")
 	}

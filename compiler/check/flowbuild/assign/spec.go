@@ -73,7 +73,7 @@ func CollectSpecNarrowedTypes(
 			sym := target.Symbol
 
 			// Try spec narrowing first
-			if narrowed := NarrowReturnTypeBySpec(call, sc, synth, p, symResolver, bindings, moduleBindings); narrowed != nil {
+			if narrowed := NarrowReturnTypeBySpec(call, sc, synth, p, symResolver, graph, bindings, moduleBindings); narrowed != nil {
 				bySymbol[sym] = narrowed
 				worklist = append(worklist, deps[sym]...)
 				return
@@ -194,6 +194,7 @@ func NarrowReturnTypeBySpec(
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	p cfg.Point,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	moduleBindings *bind.BindingTable,
 ) typ.Type {
@@ -208,7 +209,7 @@ func NarrowReturnTypeBySpec(
 	}
 	// Use canonical callsite symbol candidates for identity-based lookup.
 	if fnType == nil && symResolver != nil {
-		for _, calleeSym := range callsite.CalleeSymbolCandidates(callInfo, bindings, moduleBindings) {
+		for _, calleeSym := range callsite.CalleeSymbolCandidatesWithAliases(callInfo, graph, bindings, moduleBindings) {
 			if calleeSym == 0 {
 				continue
 			}

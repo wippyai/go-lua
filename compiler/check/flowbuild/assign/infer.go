@@ -381,7 +381,7 @@ func collectInferredTypes(
 							def.Callee = candidate
 						}
 					}
-					calleeCandidates := callsite.CalleeSymbolCandidates(info, bindings, moduleBindings)
+					calleeCandidates := callsite.CalleeSymbolCandidatesWithAliases(info, graph, bindings, moduleBindings)
 					for _, calleeSym := range calleeCandidates {
 						if sig, ok := funcSigTypes[calleeSym]; ok && sig != nil {
 							setCallee(sig)
@@ -558,7 +558,7 @@ func collectInferredTypes(
 			for _, entry := range calls {
 				p := entry.p
 				info := entry.info
-				tm := mutator.TableMutatorFromCall(info, p, wrappedSynth, symResolver, bindings, moduleBindings)
+				tm := mutator.TableMutatorFromCall(info, p, wrappedSynth, symResolver, graph, bindings, moduleBindings)
 				if tm == nil {
 					continue
 				}

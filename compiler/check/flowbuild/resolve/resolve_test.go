@@ -699,7 +699,7 @@ func TestExtractIteratorSource_IteratorNegativeSourceIndexOutOfRange(t *testing.
 }
 
 func TestCalleeType_NilInfo(t *testing.T) {
-	result := resolve.CalleeType(nil, 0, nil, nil, nil, nil, nil)
+	result := resolve.CalleeType(nil, 0, nil, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil info")
 	}
@@ -718,7 +718,7 @@ func TestCalleeType_FallsBackFromUnresolvablePathSymbolToRawSymbol(t *testing.T)
 		return nil, false
 	}
 
-	got := resolve.CalleeType(info, 0, nil, symResolver, nil, nil, nil)
+	got := resolve.CalleeType(info, 0, nil, symResolver, nil, nil, nil, nil)
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("expected resolver fallback via raw symbol, got %v", got)
 	}
@@ -739,7 +739,7 @@ func TestCalleeType_UsesBindingNameCandidates(t *testing.T) {
 	}
 
 	info := &cfg.CallInfo{CalleeName: "listen"}
-	got := resolve.CalleeType(info, 0, nil, symResolver, nil, bindings, nil)
+	got := resolve.CalleeType(info, 0, nil, symResolver, nil, nil, bindings, nil)
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("expected resolver fallback via binding name candidate, got %v", got)
 	}
@@ -760,8 +760,58 @@ func TestCalleeType_UsesModuleBindingNameCandidates(t *testing.T) {
 	}
 
 	info := &cfg.CallInfo{CalleeName: "listen"}
-	got := resolve.CalleeType(info, 0, nil, symResolver, nil, nil, moduleBindings)
+	got := resolve.CalleeType(info, 0, nil, symResolver, nil, nil, nil, moduleBindings)
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("expected resolver fallback via module binding name candidate, got %v", got)
+	}
+}
+
+func TestCalleeType_UsesDirectAliasCandidates(t *testing.T) {
+	body, err := parse.ParseString(`
+		local function B()
+			return "ok"
+		end
+		local f = B
+		local x = f()
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: body})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	var (
+		callInfo *cfg.CallInfo
+		point    cfg.Point
+	)
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.CalleeName != "f" {
+			return
+		}
+		callInfo = info
+		point = p
+	})
+	if callInfo == nil {
+		t.Fatal("expected f() call site")
+	}
+
+	symB, ok := graph.SymbolAt(graph.Exit(), "B")
+	if !ok || symB == 0 {
+		t.Fatal("expected symbol for B")
+	}
+
+	want := typ.Func().Returns(typ.String).Build()
+	symResolver := func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+		if sym == symB {
+			return want, true
+		}
+		return nil, false
+	}
+
+	got := resolve.CalleeType(callInfo, point, nil, symResolver, nil, graph, graph.Bindings(), nil)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected resolver fallback via direct alias candidate, got %v", got)
 	}
 }

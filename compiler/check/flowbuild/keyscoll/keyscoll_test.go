@@ -392,3 +392,53 @@ func TestBuildKeysCollectorDetector_UsesModuleBindingNameFallback(t *testing.T) 
 		t.Fatal("expected sorted_keys call site")
 	}
 }
+
+func TestBuildKeysCollectorDetector_UsesDirectAliasCandidate(t *testing.T) {
+	body, err := parse.ParseString(`
+		local function sorted_keys(tbl)
+			local keys = {}
+			for k in pairs(tbl) do
+				table.insert(keys, k)
+			end
+			return keys
+		end
+		local sk = sorted_keys
+		local state = {}
+		local keys = sk(state.users)
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{HasVargs: true},
+		Stmts:   body,
+	}
+	graph := cfg.Build(fn, "pairs", "table")
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+	stateSym, ok := graph.SymbolAt(graph.Exit(), "state")
+	if !ok || stateSym == 0 {
+		t.Fatalf("expected symbol for state, got %d", stateSym)
+	}
+	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
+
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
+	found := false
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.CalleeName != "sk" {
+			return
+		}
+		found = true
+		if got := detector(info, p, 0); got != want {
+			t.Fatalf("detector(sk(state.users)) = %d, want %d", got, want)
+		}
+	})
+	if !found {
+		t.Fatal("expected sk call site")
+	}
+}

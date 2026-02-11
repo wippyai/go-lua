@@ -59,7 +59,7 @@ func TestBuildReceiverDependencies_EmptyGraph(t *testing.T) {
 }
 
 func TestNarrowReturnTypeBySpec_NilCallInfo(t *testing.T) {
-	result := NarrowReturnTypeBySpec(nil, nil, nil, 0, nil, nil, nil)
+	result := NarrowReturnTypeBySpec(nil, nil, nil, 0, nil, nil, nil, nil)
 	if result != nil {
 		t.Errorf("expected nil for nil callInfo, got %v", result)
 	}
@@ -67,7 +67,7 @@ func TestNarrowReturnTypeBySpec_NilCallInfo(t *testing.T) {
 
 func TestNarrowReturnTypeBySpec_NilSynth(t *testing.T) {
 	callInfo := &cfg.CallInfo{}
-	result := NarrowReturnTypeBySpec(callInfo, nil, nil, 0, nil, nil, nil)
+	result := NarrowReturnTypeBySpec(callInfo, nil, nil, 0, nil, nil, nil, nil)
 	if result != nil {
 		t.Errorf("expected nil for nil synth, got %v", result)
 	}
@@ -80,7 +80,7 @@ func TestNarrowReturnTypeBySpec_WithSynth(t *testing.T) {
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return typ.String
 	}
-	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, nil, nil, nil)
+	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, nil, nil, nil, nil)
 	// String type has no spec, so result should be nil
 	if result != nil {
 		t.Errorf("expected nil for type without spec, got %v", result)
@@ -97,7 +97,7 @@ func TestNarrowReturnTypeBySpec_WithSymResolver(t *testing.T) {
 	symResolver := func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
 		return typ.Integer, true
 	}
-	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, symResolver, nil, nil)
+	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, symResolver, nil, nil, nil)
 	// Integer type has no spec, so result should be nil
 	if result != nil {
 		t.Errorf("expected nil for type without spec, got %v", result)
@@ -117,7 +117,7 @@ func TestNarrowReturnTypeBySpec_PassesPointToSymResolver(t *testing.T) {
 		seenPoint = p
 		return typ.Integer, true
 	}
-	_ = NarrowReturnTypeBySpec(callInfo, nil, synth, wantPoint, symResolver, nil, nil)
+	_ = NarrowReturnTypeBySpec(callInfo, nil, synth, wantPoint, symResolver, nil, nil, nil)
 	if seenPoint != wantPoint {
 		t.Fatalf("symResolver point = %d, want %d", seenPoint, wantPoint)
 	}
@@ -166,7 +166,7 @@ func TestNarrowReturnTypeBySpec_UsesCalleeNameCandidateSymbols(t *testing.T) {
 		return nil, false
 	}
 
-	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, symResolver, bindings, nil)
+	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, symResolver, nil, bindings, nil)
 	if !typ.TypeEquals(result, typ.String) {
 		t.Fatalf("expected spec-narrowed string via callee-name candidate, got %v", result)
 	}
@@ -221,7 +221,7 @@ func TestNarrowReturnTypeBySpec_PrefersResolvableBindingCandidateOverRaw(t *test
 		return nil, false
 	}
 
-	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, symResolver, bindings, nil)
+	result := NarrowReturnTypeBySpec(callInfo, nil, synth, 0, symResolver, nil, bindings, nil)
 	if !typ.TypeEquals(result, typ.String) {
 		t.Fatalf("expected spec-narrowed string via binding candidate, got %v", result)
 	}

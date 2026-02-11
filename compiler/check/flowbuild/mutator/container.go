@@ -33,7 +33,7 @@ func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Input
 			return
 		}
 
-		cm := ContainerMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, assignmentTypes, bindings, fc.ModuleBindings)
+		cm := ContainerMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, assignmentTypes, fc.Graph, bindings, fc.ModuleBindings)
 		if cm == nil {
 			return
 		}
@@ -94,6 +94,7 @@ func ContainerElementReturnFromCall(
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	assignmentTypes func(cfg.SymbolID) typ.Type,
+	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	moduleBindings *bind.BindingTable,
 ) *ContainerElementReturnInfo {
@@ -101,7 +102,7 @@ func ContainerElementReturnFromCall(
 		return nil
 	}
 
-	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes, bindings, moduleBindings)
+	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes, graph, bindings, moduleBindings)
 	if fnType == nil {
 		return nil
 	}
@@ -137,6 +138,7 @@ func ContainerMutatorFromCall(
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	assignmentTypes func(cfg.SymbolID) typ.Type,
+	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	moduleBindings *bind.BindingTable,
 ) *effect.ContainerElementUnion {
@@ -144,7 +146,7 @@ func ContainerMutatorFromCall(
 		return nil
 	}
 
-	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes, bindings, moduleBindings)
+	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes, graph, bindings, moduleBindings)
 	if fnType == nil {
 		return nil
 	}

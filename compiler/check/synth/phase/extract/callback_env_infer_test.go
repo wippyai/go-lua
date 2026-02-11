@@ -227,3 +227,49 @@ func TestInferCallbackEnvOverlays_UsesModuleBindingNameFallback(t *testing.T) {
 		t.Fatalf("expected ctx overlay integer, got %v", got)
 	}
 }
+
+func TestInferCallbackEnvOverlays_UsesDirectAliasCandidate(t *testing.T) {
+	code := `
+		local f = cb
+		_G.ctx = 1
+		local x = f()
+		_G.ctx = nil
+	`
+	stmts, err := parse.ParseString(code, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{
+			Names: []string{"cb"},
+		},
+		Stmts: stmts,
+	}
+	graph := cfg.Build(fn, "_G")
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	paramSlots := graph.ParamSlots()
+	if len(paramSlots) == 0 {
+		t.Fatal("expected param slots")
+	}
+
+	synthExpr := func(expr ast.Expr, _ cfg.Point) typ.Type {
+		if _, ok := expr.(*ast.NumberExpr); ok {
+			return typ.Integer
+		}
+		return typ.Unknown
+	}
+
+	result := inferCallbackEnvOverlays(graph, paramSlots, synthExpr, nil)
+	if result == nil {
+		t.Fatal("expected callback overlay result")
+	}
+	env := result[0]
+	if env == nil {
+		t.Fatal("expected overlay for first parameter")
+	}
+	if got := env["ctx"]; got == nil || !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("expected ctx overlay integer, got %v", got)
+	}
+}

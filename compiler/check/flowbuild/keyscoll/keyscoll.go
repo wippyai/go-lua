@@ -264,7 +264,7 @@ func BuildKeysCollectorDetector(graph *cfg.Graph, moduleBindings *bind.BindingTa
 		if callInfo == nil || callInfo.Callee == nil {
 			return 0
 		}
-		candidates := callsite.CalleeSymbolCandidates(callInfo, bindings, moduleBindings)
+		candidates := callsite.CalleeSymbolCandidatesWithAliases(callInfo, graph, bindings, moduleBindings)
 		for _, calleeSym := range candidates {
 			// Check cache
 			if info, ok := cache[calleeSym]; ok {
