@@ -1,6 +1,8 @@
 package returns
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
@@ -61,14 +63,16 @@ func CollectCalledNestedFieldAssignments(
 		if len(nestedFields) == 0 {
 			continue
 		}
-		for baseSym, fields := range nestedFields {
+		for _, baseSym := range cfg.SortedSymbolIDs(nestedFields) {
+			fields := nestedFields[baseSym]
 			if !parentSymbols[baseSym] {
 				continue
 			}
 			if result[baseSym] == nil {
 				result[baseSym] = make(map[string]typ.Type)
 			}
-			for fieldName, fieldType := range fields {
+			for _, fieldName := range cfg.SortedFieldNames(fields) {
+				fieldType := fields[fieldName]
 				if existing := result[baseSym][fieldName]; existing != nil {
 					result[baseSym][fieldName] = typ.JoinPreferNonSoft(existing, fieldType)
 				} else {
@@ -110,12 +114,13 @@ func CollectCalledNestedContainerMutatorAssignments(
 			return
 		}
 
-		for sym := range calledSyms {
+		for _, sym := range cfg.SortedSymbolIDs(calledSyms) {
 			nestedMutations := capturedByCallee[sym]
 			if len(nestedMutations) == 0 {
 				continue
 			}
-			for targetSym, mutations := range nestedMutations {
+			for _, targetSym := range cfg.SortedSymbolIDs(nestedMutations) {
+				mutations := nestedMutations[targetSym]
 				if !parentSymbols[targetSym] {
 					continue
 				}
@@ -161,7 +166,12 @@ func calledSymbolsFromCall(
 	if resolveCalleeType != nil {
 		if fnType := resolveCalleeType(info, p); fnType != nil {
 			if spec := contract.ExtractSpec(fnType); spec != nil && len(spec.Callbacks) > 0 {
+				paramIndexes := make([]int, 0, len(spec.Callbacks))
 				for paramIdx := range spec.Callbacks {
+					paramIndexes = append(paramIndexes, paramIdx)
+				}
+				sort.Ints(paramIndexes)
+				for _, paramIdx := range paramIndexes {
 					arg := checkcallsite.RuntimeArgAt(info, paramIdx)
 					if sym := checkcallsite.SymbolFromExpr(arg, bindings); sym != 0 {
 						calledSyms[sym] = true
