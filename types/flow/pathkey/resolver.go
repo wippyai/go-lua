@@ -155,11 +155,14 @@ func ParseKey(key constraint.PathKey) (cfg.SymbolID, int, string, bool) {
 		for verEnd < len(rest) && rest[verEnd] != '.' && rest[verEnd] != '[' {
 			verEnd++
 		}
-		if verEnd > 0 {
-			if v, err := strconv.Atoi(rest[:verEnd]); err == nil {
-				versionID = v
-			}
+		if verEnd == 0 {
+			return 0, 0, "", false
 		}
+		v, err := strconv.Atoi(rest[:verEnd])
+		if err != nil || v < 0 {
+			return 0, 0, "", false
+		}
+		versionID = v
 		suffix = rest[verEnd:]
 	} else {
 		suffix = rest
