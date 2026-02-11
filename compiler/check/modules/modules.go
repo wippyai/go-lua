@@ -89,9 +89,9 @@ func ExportFunctionSummaries(manifest *io.Manifest, exportType typ.Type, graph *
 			continue
 		}
 
-		fieldName := fullName
-		if idx := strings.LastIndex(fullName, "."); idx != -1 && idx+1 < len(fullName) {
-			fieldName = fullName[idx+1:]
+		fieldName, ok := exportFieldNameFromSymbolName(fullName)
+		if !ok {
+			continue
 		}
 
 		field := rec.GetField(fieldName)
@@ -114,6 +114,33 @@ func ExportFunctionSummaries(manifest *io.Manifest, exportType typ.Type, graph *
 		}
 		manifest.DefineSummary(fieldName, ioSummary)
 	}
+}
+
+// exportFieldNameFromSymbolName resolves a symbol name to an exported record field.
+//
+// Accepted forms:
+//   - "field" (direct export field)
+//   - "root.field" (exported via a root table variable)
+//
+// Deeper dotted paths are rejected to avoid collapsing nested paths to an
+// ambiguous leaf name (e.g. "M.a.f" -> "f"), which can mis-associate summaries.
+func exportFieldNameFromSymbolName(fullName string) (string, bool) {
+	if fullName == "" {
+		return "", false
+	}
+	if !strings.Contains(fullName, ".") {
+		return fullName, true
+	}
+
+	firstDot := strings.IndexByte(fullName, '.')
+	if firstDot <= 0 || firstDot >= len(fullName)-1 {
+		return "", false
+	}
+	rest := fullName[firstDot+1:]
+	if rest == "" || strings.Contains(rest, ".") {
+		return "", false
+	}
+	return rest, true
 }
 
 // Disconnect removes a module's manifest from the DB.
