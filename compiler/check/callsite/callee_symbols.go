@@ -80,3 +80,40 @@ func PreferredCalleeSymbol(
 	}
 	return selected
 }
+
+// CalleeSymbolCandidatesWithAliases expands callee candidates with direct aliases.
+//
+// For each canonical candidate, this appends graph.DirectAliasSymbol(candidate)
+// when available, preserving candidate order and deduplicating symbols.
+func CalleeSymbolCandidatesWithAliases(
+	info *cfg.CallInfo,
+	graph *cfg.Graph,
+	primary, fallback *bind.BindingTable,
+) []cfg.SymbolID {
+	base := CalleeSymbolCandidates(info, primary, fallback)
+	if len(base) == 0 || graph == nil {
+		return base
+	}
+
+	candidates := make([]cfg.SymbolID, 0, len(base)*2)
+	seen := make(map[cfg.SymbolID]struct{}, len(base)*2)
+	push := func(sym cfg.SymbolID) {
+		if sym == 0 {
+			return
+		}
+		if _, ok := seen[sym]; ok {
+			return
+		}
+		seen[sym] = struct{}{}
+		candidates = append(candidates, sym)
+	}
+
+	for _, sym := range base {
+		push(sym)
+		if aliasSym := graph.DirectAliasSymbol(sym); aliasSym != 0 {
+			push(aliasSym)
+		}
+	}
+
+	return candidates
+}

@@ -692,31 +692,7 @@ func calleeSymbolCandidatesForEffects(info *cfg.CallInfo, graph *cfg.Graph, modu
 	if graph != nil {
 		bindings = graph.Bindings()
 	}
-	base := callsite.CalleeSymbolCandidates(info, bindings, moduleBindings)
-	if len(base) == 0 {
-		return base
-	}
-	candidates := make([]cfg.SymbolID, 0, len(base)*2)
-	seen := make(map[cfg.SymbolID]struct{}, len(base)*2)
-	push := func(sym cfg.SymbolID) {
-		if sym == 0 {
-			return
-		}
-		if _, ok := seen[sym]; ok {
-			return
-		}
-		seen[sym] = struct{}{}
-		candidates = append(candidates, sym)
-	}
-	for _, sym := range base {
-		push(sym)
-		if graph != nil {
-			if aliasSym := graph.DirectAliasSymbol(sym); aliasSym != 0 {
-				push(aliasSym)
-			}
-		}
-	}
-	return candidates
+	return callsite.CalleeSymbolCandidatesWithAliases(info, graph, bindings, moduleBindings)
 }
 
 // PointHasTerminatingCallSite reports whether any callsite represented at point p

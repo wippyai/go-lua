@@ -648,7 +648,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		return tempSynth.SynthExpr(expr, p, nil)
 	}
 
-	overlays := inferCallbackEnvOverlays(fnGraph, paramSlots, synthExpr)
+	overlays := inferCallbackEnvOverlays(fnGraph, paramSlots, synthExpr, s.deps.ModuleBindings)
 	if len(overlays) == 0 {
 		return nil
 	}

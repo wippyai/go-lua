@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func TestCalleeSymbolCandidates_UsesCanonicalAndNameFallback(t *testing.T) {
@@ -136,5 +137,63 @@ func TestPreferredCalleeSymbol_FallsBackToFirstCandidate(t *testing.T) {
 	}, primary, nil, func(sym cfg.SymbolID) bool { return false })
 	if got != rawSym {
 		t.Fatalf("fallback symbol = %d, want %d", got, rawSym)
+	}
+}
+
+func TestCalleeSymbolCandidatesWithAliases_IncludesDirectAliasSource(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local function B()
+			return 1
+		end
+		local f = B
+		local x = f()
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+
+	var (
+		callInfo  *cfg.CallInfo
+		callPoint cfg.Point
+	)
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.Callee == nil || callInfo != nil {
+			return
+		}
+		callPoint = p
+		callInfo = info
+	})
+	if callInfo == nil {
+		t.Fatal("expected callsite")
+	}
+
+	calleeSym := SymbolFromExpr(callInfo.Callee, bindings)
+	if calleeSym == 0 {
+		t.Fatal("expected non-zero callee symbol from expression")
+	}
+	aliasSym := graph.DirectAliasSymbol(calleeSym)
+	if aliasSym == 0 {
+		t.Fatal("expected non-zero direct alias symbol for local f = B")
+	}
+
+	if byName, ok := graph.SymbolAt(callPoint, "B"); ok && byName != 0 && byName != aliasSym {
+		t.Fatalf("alias symbol = %d, want %d", aliasSym, byName)
+	}
+
+	candidates := CalleeSymbolCandidatesWithAliases(callInfo, graph, bindings, nil)
+	if len(candidates) < 2 {
+		t.Fatalf("expected alias-expanded candidates, got %v", candidates)
+	}
+	if candidates[0] != calleeSym || candidates[1] != aliasSym {
+		t.Fatalf("candidates = %v, want prefix [%d %d]", candidates, calleeSym, aliasSym)
 	}
 }

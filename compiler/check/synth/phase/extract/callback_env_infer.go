@@ -2,6 +2,7 @@ package extract
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
@@ -34,6 +35,7 @@ func inferCallbackEnvOverlays(
 	graph *cfg.Graph,
 	paramSlots []cfg.ParamSlot,
 	synthExpr func(ast.Expr, cfg.Point) typ.Type,
+	moduleBindings *bind.BindingTable,
 ) map[int]map[string]typ.Type {
 	if graph == nil || len(paramSlots) == 0 {
 		return nil
@@ -79,7 +81,7 @@ func inferCallbackEnvOverlays(
 		if info == nil {
 			return
 		}
-		for _, sym := range callsite.CalleeSymbolCandidates(info, graph.Bindings(), nil) {
+		for _, sym := range callsite.CalleeSymbolCandidates(info, graph.Bindings(), moduleBindings) {
 			if idx, ok := paramSet[sym]; ok {
 				calls = append(calls, paramCall{point: p, paramIndex: idx})
 				break

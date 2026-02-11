@@ -52,18 +52,11 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionEf
 		if lookup != nil {
 			bindings := result.Graph.Bindings()
 			moduleBindings := result.ModuleBindings
-			candidates := callsite.CalleeSymbolCandidates(info, bindings, moduleBindings)
+			candidates := callsite.CalleeSymbolCandidatesWithAliases(info, result.Graph, bindings, moduleBindings)
 			for _, sym := range candidates {
 				calleeEffect = lookup(sym)
 				if calleeEffect != nil {
 					break
-				}
-				// Direct alias resolution (local f = B; f()).
-				if aliasSym := result.Graph.DirectAliasSymbol(sym); aliasSym != 0 {
-					calleeEffect = lookup(aliasSym)
-					if calleeEffect != nil {
-						break
-					}
 				}
 			}
 		}
