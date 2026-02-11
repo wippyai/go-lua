@@ -107,7 +107,7 @@ func CollectInferredTypes(fc *fbcore.FlowContext, specTypes api.SpecTypes, annot
 	}
 	return collectInferredTypes(
 		fc.Graph, fc.Scopes, synth, fc.API, symResolver,
-		specTypes, annotated, inputs, fc.CallCtx, fc.TypeOps, fc.Services,
+		specTypes, annotated, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, fc.Services,
 	)
 }
 
@@ -127,6 +127,7 @@ func collectInferredTypes(
 	specTypes api.SpecTypes,
 	annotated map[cfg.SymbolID]bool,
 	inputs *flow.Inputs,
+	moduleBindings *bind.BindingTable,
 	callCtx *db.QueryContext,
 	typeOps core.TypeOps,
 	services fbcore.FlowServices,
@@ -137,6 +138,9 @@ func collectInferredTypes(
 	}
 
 	bindings := graph.Bindings()
+	if moduleBindings == nil {
+		moduleBindings = bindings
+	}
 	paramSyms := graph.ParamSymbols()
 	paramSet := make(map[cfg.SymbolID]bool, len(paramSyms))
 	for _, sym := range paramSyms {
@@ -369,18 +373,30 @@ func collectInferredTypes(
 					def.MethodName = info.Method
 					def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, graph, info)
 				} else {
-					if info.CalleeSymbol != 0 {
-						if sig, ok := funcSigTypes[info.CalleeSymbol]; ok && sig != nil {
-							def.Callee = sig
+					setCallee := func(candidate typ.Type) {
+						if candidate == nil {
+							return
+						}
+						if def.Callee == nil || (def.Callee.Kind().IsPlaceholder() && !candidate.Kind().IsPlaceholder()) {
+							def.Callee = candidate
 						}
 					}
-					if info.CalleeSymbol != 0 && symResolver != nil {
-						if t, ok := symResolver(p, info.CalleeSymbol); ok && t != nil {
-							def.Callee = t
+					calleeCandidates := callsite.CalleeSymbolCandidates(info, bindings, moduleBindings)
+					for _, calleeSym := range calleeCandidates {
+						if sig, ok := funcSigTypes[calleeSym]; ok && sig != nil {
+							setCallee(sig)
+						}
+						if symResolver != nil {
+							if t, ok := symResolver(p, calleeSym); ok && t != nil {
+								setCallee(t)
+							}
+						}
+						if def.Callee != nil && !def.Callee.Kind().IsPlaceholder() {
+							break
 						}
 					}
-					if def.Callee == nil {
-						def.Callee = wrappedSynth(info.Callee, p)
+					if def.Callee == nil || def.Callee.Kind().IsPlaceholder() {
+						setCallee(wrappedSynth(info.Callee, p))
 					}
 				}
 

@@ -8,7 +8,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
+	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -240,6 +243,70 @@ func TestMergeSpecTypesSoft_IgnoresUnknownAndNilOverrides(t *testing.T) {
 	}
 	if !typ.TypeEquals(got, base[sym]) {
 		t.Fatalf("merged type = %v, want %v", got, base[sym])
+	}
+}
+
+func TestCollectInferredTypes_UsesModuleCalleeCandidatesForExpectedArgs(t *testing.T) {
+	body, err := parse.ParseString(`external_fn(x)`, "infer_module_candidates.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"x"}},
+		Stmts:   body,
+	}
+	bindings := bind.Bind(fn, []string{"external_fn"})
+	graph := cfg.BuildWithBindings(fn, bindings)
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	paramSyms := graph.ParamSymbols()
+	if len(paramSyms) != 1 || paramSyms[0] == 0 {
+		t.Fatalf("expected one parameter symbol, got %v", paramSyms)
+	}
+	xSym := paramSyms[0]
+
+	var globalCalleeSym cfg.SymbolID
+	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if globalCalleeSym == 0 && info != nil && info.CalleeName == "external_fn" {
+			globalCalleeSym = info.CalleeSymbol
+		}
+	})
+	if globalCalleeSym == 0 {
+		t.Fatal("expected callsite callee symbol for external_fn")
+	}
+
+	moduleBindings := bind.NewBindingTable()
+	const moduleCalleeSym cfg.SymbolID = 9001
+	moduleBindings.SetName(moduleCalleeSym, "external_fn")
+
+	inferred := collectInferredTypes(
+		graph,
+		nil,
+		func(ast.Expr, cfg.Point) typ.Type { return typ.Unknown },
+		nil,
+		func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+			if sym == globalCalleeSym {
+				return nil, false
+			}
+			if sym == moduleCalleeSym {
+				return typ.Func().Param("n", typ.Number).Returns(typ.Nil).Build(), true
+			}
+			return nil, false
+		},
+		nil,
+		nil,
+		nil,
+		moduleBindings,
+		db.NewQueryContext(db.New()),
+		querycore.NewEngine(),
+		nil,
+	)
+
+	got := inferred[xSym]
+	if !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("inferred param type = %v, want number", got)
 	}
 }
 

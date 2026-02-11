@@ -79,7 +79,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	// Collects spec-narrowed types from contract specs and propagates through method calls.
 	// Uses expandValues with SpecTypes overlay for method call synthesis.
 	specNarrowed := CollectSpecNarrowedTypes(fc.Graph, fc.Scopes, synth, symResolver, fc.API)
-	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, specNarrowed, inputs.AnnotatedVars, inputs, fc.CallCtx, fc.TypeOps, fc.Services)
+	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, specNarrowed, inputs.AnnotatedVars, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, fc.Services)
 	// Promote inferred parameter types into DeclaredTypes for unannotated params.
 	// This enables bidirectional inference at call sites (e.g., custom assert helpers).
 	if inputs.DeclaredTypes != nil {
