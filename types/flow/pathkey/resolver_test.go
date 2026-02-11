@@ -124,6 +124,20 @@ func TestParseKey_InvalidVersionRejected(t *testing.T) {
 	}
 }
 
+func TestParseKey_InvalidSuffixRejected(t *testing.T) {
+	invalid := []constraint.PathKey{
+		"sym1@1.",
+		"sym1@1..a",
+		"sym1@1.a-b",
+		"sym1@1[\"a\\nb\"]",
+	}
+	for _, key := range invalid {
+		if _, _, _, ok := ParseKey(key); ok {
+			t.Fatalf("expected ParseKey(%q) to fail", key)
+		}
+	}
+}
+
 func TestKeySymbolAndKeysShareSymbol(t *testing.T) {
 	if got := KeySymbol("sym99@1.foo"); got != 99 {
 		t.Fatalf("KeySymbol mismatch: got %d, want 99", got)

@@ -232,6 +232,20 @@ func TestParseSuffix_RejectsEmptyFieldSegments(t *testing.T) {
 	}
 }
 
+func TestParseSuffix_RejectsInvalidFieldIdentifiers(t *testing.T) {
+	cases := []string{
+		".1abc",
+		".a-b",
+		".a b",
+	}
+
+	for _, suffix := range cases {
+		if segs := ParseSuffix(suffix); segs != nil {
+			t.Fatalf("expected %q to be rejected, got %+v", suffix, segs)
+		}
+	}
+}
+
 func TestSegmentsPrefix_Empty(t *testing.T) {
 	if !SegmentsPrefix(nil, nil) {
 		t.Error("nil is prefix of nil")

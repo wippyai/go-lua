@@ -54,7 +54,11 @@ func ParseSuffix(suffix string) []constraint.Segment {
 			if start >= i {
 				return nil
 			}
-			segs = append(segs, constraint.Segment{Kind: constraint.SegmentField, Name: suffix[start:i]})
+			name := suffix[start:i]
+			if !IsIdentName(name) {
+				return nil
+			}
+			segs = append(segs, constraint.Segment{Kind: constraint.SegmentField, Name: name})
 		case '[':
 			i++
 			if i >= len(suffix) {

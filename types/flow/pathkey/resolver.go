@@ -165,6 +165,10 @@ func ParseKey(key constraint.PathKey) (cfg.SymbolID, int, string, bool) {
 		suffix = rest
 	}
 
+	if suffix != "" && ParseSuffix(suffix) == nil {
+		return 0, 0, "", false
+	}
+
 	return cfg.SymbolID(sym), versionID, suffix, true
 }
 
