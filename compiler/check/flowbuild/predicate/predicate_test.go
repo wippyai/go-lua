@@ -1,7 +1,6 @@
 package predicate_test
 
 import (
-	"strconv"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
@@ -121,44 +120,6 @@ func TestLinkKey_FormatCorrect(t *testing.T) {
 		result := predicate.LinkKey(tt.name, tt.defPoint)
 		if result != tt.expected {
 			t.Errorf("LinkKey(%q, %d) = %q, expected %q", tt.name, tt.defPoint, result, tt.expected)
-		}
-	}
-}
-
-func TestPlaceholderIndex_Various(t *testing.T) {
-	maxInt := int(^uint(0) >> 1)
-	overflow := strconv.FormatInt(int64(maxInt), 10) + "0"
-
-	tests := []struct {
-		input    string
-		expected int
-	}{
-		{"$0", 0},
-		{"$1", 1},
-		{"$10", 10},
-		{"$99", 99},
-		{"param[0]", 0},
-		{"param[1]", 1},
-		{"param[10]", 10},
-		{"param[99]", 99},
-		{"", -1},
-		{"x", -1},
-		{"$", -1},
-		{"$abc", -1},
-		{"$-1", -1},
-		{"param[]", -1},
-		{"param[abc]", -1},
-		{"param[-1]", -1},
-		{"param[0", -1},
-		{"other[0]", -1},
-		{"$" + overflow, -1},
-		{"param[" + overflow + "]", -1},
-	}
-
-	for _, tt := range tests {
-		result := predicate.PlaceholderIndex(tt.input)
-		if result != tt.expected {
-			t.Errorf("PlaceholderIndex(%q) = %d, expected %d", tt.input, result, tt.expected)
 		}
 	}
 }

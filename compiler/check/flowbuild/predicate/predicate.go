@@ -4,7 +4,6 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 )
 
@@ -39,11 +38,6 @@ func LookupPredicateLink(name string, inputs *flow.Inputs) *flow.PredicateLink {
 // LinkKey generates a unique key for predicate links.
 func LinkKey(name string, defPoint cfg.Point) string {
 	return name + "@" + strconv.Itoa(int(defPoint))
-}
-
-// PlaceholderIndex extracts the index from a placeholder like "$0", "$1" or "param[0]", "param[1]".
-func PlaceholderIndex(s string) int {
-	return constraint.PlaceholderIndexFromString(s)
 }
 
 // BuildConstResolver creates a const resolver function for a given CFG point.
