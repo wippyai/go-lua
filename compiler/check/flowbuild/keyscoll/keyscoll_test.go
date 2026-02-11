@@ -277,3 +277,56 @@ func TestBuildKeysCollectorDetector_RespectsReturnIndex(t *testing.T) {
 		t.Fatal("expected sorted_keys call site")
 	}
 }
+
+func TestBuildKeysCollectorDetector_UsesCanonicalCandidatesWhenRawSymbolMissing(t *testing.T) {
+	body, err := parse.ParseString(`
+		local function sorted_keys(tbl)
+			local keys = {}
+			for k in pairs(tbl) do
+				table.insert(keys, k)
+			end
+			return keys
+		end
+		local state = {}
+		local keys = sorted_keys(state.users)
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{HasVargs: true},
+		Stmts:   body,
+	}
+	graph := cfg.Build(fn, "pairs", "table")
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+
+	stateSym, ok := graph.SymbolAt(graph.Exit(), "state")
+	if !ok || stateSym == 0 {
+		t.Fatalf("expected symbol for state, got %d", stateSym)
+	}
+	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
+
+	detector := keyscoll.BuildKeysCollectorDetector(graph)
+	found := false
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.CalleeName != "sorted_keys" {
+			return
+		}
+		found = true
+		// Simulate missing raw symbol; detector should still recover via
+		// canonical callee candidates from call expression/bindings.
+		info.CalleeSymbol = 0
+		if got := detector(info, p, 0); got != want {
+			t.Fatalf("detector(sorted_keys(state.users)) with missing raw sym = %d, want %d", got, want)
+		}
+	})
+	if !found {
+		t.Fatal("expected sorted_keys call site")
+	}
+}

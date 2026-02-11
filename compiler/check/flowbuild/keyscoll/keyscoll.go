@@ -263,39 +263,36 @@ func BuildKeysCollectorDetector(graph *cfg.Graph) func(*cfg.CallInfo, cfg.Point,
 		if callInfo == nil || callInfo.Callee == nil {
 			return 0
 		}
+		candidates := callsite.CalleeSymbolCandidates(callInfo, bindings, nil)
+		for _, calleeSym := range candidates {
+			// Check cache
+			if info, ok := cache[calleeSym]; ok {
+				if info == nil {
+					continue
+				}
+				if info.ReturnIndex != retIndex {
+					continue
+				}
+				return callsite.RuntimeArgSymbolAt(callInfo, info.ParamIndex, bindings)
+			}
 
-		calleeSym := callInfo.CalleeSymbol
-		if calleeSym == 0 {
-			return 0
-		}
+			// Try to resolve callee to function literal
+			fn := resolve.ResolveSymbolToFunctionLiteral(graph, calleeSym)
+			if fn == nil {
+				cache[calleeSym] = nil
+				continue
+			}
 
-		// Check cache
-		if info, ok := cache[calleeSym]; ok {
+			info := DetectKeysCollector(fn)
+			cache[calleeSym] = info
 			if info == nil {
-				return 0
+				continue
 			}
 			if info.ReturnIndex != retIndex {
-				return 0
+				continue
 			}
 			return callsite.RuntimeArgSymbolAt(callInfo, info.ParamIndex, bindings)
 		}
-
-		// Try to resolve callee to function literal
-		fn := resolve.ResolveSymbolToFunctionLiteral(graph, calleeSym)
-		if fn == nil {
-			cache[calleeSym] = nil
-			return 0
-		}
-
-		info := DetectKeysCollector(fn)
-		cache[calleeSym] = info
-		if info == nil {
-			return 0
-		}
-		if info.ReturnIndex != retIndex {
-			return 0
-		}
-
-		return callsite.RuntimeArgSymbolAt(callInfo, info.ParamIndex, bindings)
+		return 0
 	}
 }
