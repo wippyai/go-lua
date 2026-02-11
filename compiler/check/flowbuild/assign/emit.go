@@ -47,7 +47,6 @@ import (
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -92,7 +91,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				continue
 			}
 			inferred := inferredTypes[sym]
-			if inferred == nil || inferred.Kind() == kind.Unknown {
+			if typ.IsAbsentOrUnknown(inferred) {
 				continue
 			}
 			current := inputs.DeclaredTypes[sym]
@@ -473,7 +472,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Determine assigned type
 				assignedType := typ.Unknown
 				// First check expanded values for multi-return assignments
-				if value := assignValueAt(values, i); value != nil && value.Kind() != kind.Unknown {
+				if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
 					assignedType = value
 				} else if source != nil {
 					if tbl, ok := source.(*ast.TableExpr); ok && wrappedSynth != nil && !tblutil.TableHasFunctionField(tbl) {
@@ -530,7 +529,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Determine assigned type
 				assignedType := typ.Unknown
 				// First check expanded values for multi-return assignments
-				if value := assignValueAt(values, i); value != nil && value.Kind() != kind.Unknown {
+				if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
 					assignedType = value
 				} else if source != nil {
 					if tbl, ok := source.(*ast.TableExpr); ok && wrappedSynth != nil && !tblutil.TableHasFunctionField(tbl) {

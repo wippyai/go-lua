@@ -20,10 +20,10 @@ func JoinPreferNonSoft(a, b Type) Type {
 		return a
 	}
 	// Inline join.Two to avoid dependency cycles inside typ.
-	if a == nil || a.Kind() == kind.Unknown {
+	if IsAbsentOrUnknown(a) {
 		return b
 	}
-	if b == nil || b.Kind() == kind.Unknown {
+	if IsAbsentOrUnknown(b) {
 		return a
 	}
 	if TypeEquals(a, b) {
@@ -46,7 +46,7 @@ func JoinReturnSlot(a, b Type) Type {
 	}
 	a = PruneSoftUnionMembers(a)
 	b = PruneSoftUnionMembers(b)
-	if (a.Kind() == kind.Unknown && b.Kind() == kind.Nil) || (b.Kind() == kind.Unknown && a.Kind() == kind.Nil) {
+	if (IsUnknown(a) && b.Kind() == kind.Nil) || (IsUnknown(b) && a.Kind() == kind.Nil) {
 		return Unknown
 	}
 	return JoinPreferNonSoft(a, b)

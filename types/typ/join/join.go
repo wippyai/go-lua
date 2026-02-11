@@ -15,10 +15,10 @@ import (
 // must accept values from both branches. nil and Unknown are treated as
 // absent (no information) and don't contribute to the join.
 func Two(a, b typ.Type) typ.Type {
-	if a == nil || a.Kind() == kind.Unknown {
+	if typ.IsAbsentOrUnknown(a) {
 		return b
 	}
-	if b == nil || b.Kind() == kind.Unknown {
+	if typ.IsAbsentOrUnknown(b) {
 		return a
 	}
 	if typ.TypeEquals(a, b) {
@@ -64,7 +64,10 @@ func ReturnVectors(a, b []typ.Type) []typ.Type {
 
 // IsUnknownOrNil returns true if t is nil, unknown, or the nil type.
 func IsUnknownOrNil(t typ.Type) bool {
-	return t == nil || t.Kind() == kind.Unknown || t.Kind() == kind.Nil
+	if typ.IsAbsentOrUnknown(t) {
+		return true
+	}
+	return t.Kind() == kind.Nil
 }
 
 // WithReturns returns a copy of sig with the given return types grafted on.

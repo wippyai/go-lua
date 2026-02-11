@@ -85,7 +85,7 @@ func Types(types ...typ.Type) typ.Type {
 func filterUnknown(types []typ.Type) []typ.Type {
 	result := make([]typ.Type, 0, len(types))
 	for _, t := range types {
-		if t == nil || t.Kind() == kind.Unknown {
+		if typ.IsAbsentOrUnknown(t) {
 			continue
 		}
 		result = append(result, t)

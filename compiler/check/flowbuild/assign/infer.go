@@ -62,7 +62,6 @@ import (
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -444,7 +443,7 @@ func collectInferredTypes(
 							vt = varTypes[i]
 						}
 						vt = resolve.Ref(vt, sc)
-						if isUnknownType(vt) {
+						if typ.IsAbsentOrUnknown(vt) {
 							return
 						}
 						old := inferred[target.Symbol]
@@ -470,13 +469,13 @@ func collectInferredTypes(
 						return
 					}
 					assignedType := typ.Unknown
-					if value := assignValueAt(values, i); isKnownType(value) {
+					if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
 						assignedType = value
 					} else if wrappedSynth != nil && source != nil {
 						assignedType = wrappedSynth(source, p)
 					}
 					assignedType = resolve.Ref(assignedType, sc)
-					if isUnknownType(assignedType) {
+					if typ.IsAbsentOrUnknown(assignedType) {
 						return
 					}
 					old := inferred[target.Symbol]
@@ -518,7 +517,7 @@ func collectInferredTypes(
 						continue
 					}
 					expected := expectedArgAt(i, expectedArgs, expectedVariadic)
-					if isUnknownType(expected) {
+					if typ.IsAbsentOrUnknown(expected) {
 						// Fall back to actual argument type when no expected type is available.
 						if i < len(info.Args) && info.Args[i] != nil {
 							actual := wrappedSynth(info.Args[i], p)
@@ -561,7 +560,7 @@ func collectInferredTypes(
 					valueType = t
 				}
 				valueType = resolve.Ref(valueType, sc)
-				if isUnknownType(valueType) {
+				if typ.IsAbsentOrUnknown(valueType) {
 					continue
 				}
 
@@ -571,7 +570,7 @@ func collectInferredTypes(
 					if baseSym != 0 && sccSet[baseSym] {
 						keyType := wrappedSynth(attr.Key, p)
 						keyType = resolve.Ref(keyType, sc)
-						if isUnknownType(keyType) {
+						if typ.IsAbsentOrUnknown(keyType) {
 							keyType = typ.String
 						}
 						old := inferred[baseSym]
@@ -632,7 +631,7 @@ func collectInferredTypes(
 		if annotated != nil && annotated[sym] {
 			continue
 		}
-		if t, ok := inferred[sym]; !ok || isUnknownType(t) {
+		if t, ok := inferred[sym]; !ok || typ.IsAbsentOrUnknown(t) {
 			inferred[sym] = typ.Any
 		}
 	}
@@ -722,7 +721,7 @@ func joinInferredType(old, next typ.Type) typ.Type {
 		return old
 	}
 	if typeContains(next, old) {
-		if isKnownType(old) {
+		if !typ.IsAbsentOrUnknown(old) {
 			return old
 		}
 		return subtype.WidenForInference(next)
@@ -744,12 +743,4 @@ func typeContains(haystack, needle typ.Type) bool {
 		return nil, false
 	})
 	return found
-}
-
-func isUnknownType(t typ.Type) bool {
-	return t == nil || t.Kind() == kind.Unknown
-}
-
-func isKnownType(t typ.Type) bool {
-	return !isUnknownType(t)
 }
