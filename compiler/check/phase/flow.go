@@ -79,30 +79,10 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 }
 
 func applyModuleAliasTypes(inputs *flow.Inputs, manifests io.ManifestQuerier) {
-	if inputs == nil || manifests == nil || len(inputs.ModuleAliases) == 0 {
+	if inputs == nil {
 		return
 	}
-	if inputs.DeclaredTypes == nil {
-		inputs.DeclaredTypes = make(map[cfg.SymbolID]typ.Type, len(inputs.ModuleAliases))
-	}
-	for _, sym := range cfg.SortedSymbolIDs(inputs.ModuleAliases) {
-		path := inputs.ModuleAliases[sym]
-		if sym == 0 || path == "" {
-			continue
-		}
-		manifest := manifests.Manifest(path)
-		if manifest == nil {
-			if imports := manifests.Imports(); imports != nil {
-				manifest = imports[path]
-			}
-		}
-		if manifest == nil {
-			continue
-		}
-		if export := manifest.EnrichedExport(); export != nil {
-			inputs.DeclaredTypes[sym] = export
-		}
-	}
+	inputs.DeclaredTypes = applyModuleAliasExports(inputs.DeclaredTypes, inputs.ModuleAliases, manifests)
 }
 
 // RunLiteral executes the function literal synthesis phase.

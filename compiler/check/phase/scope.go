@@ -234,31 +234,7 @@ func applyModuleAliasDeclaredTypes(
 	moduleAliases map[cfg.SymbolID]string,
 	manifests io.ManifestQuerier,
 ) flow.DeclaredTypes {
-	if manifests == nil || len(moduleAliases) == 0 {
-		return declared
-	}
-	if declared == nil {
-		declared = make(flow.DeclaredTypes, len(moduleAliases))
-	}
-	for _, sym := range cfg.SortedSymbolIDs(moduleAliases) {
-		path := moduleAliases[sym]
-		if sym == 0 || path == "" {
-			continue
-		}
-		manifest := manifests.Manifest(path)
-		if manifest == nil {
-			if imports := manifests.Imports(); imports != nil {
-				manifest = imports[path]
-			}
-		}
-		if manifest == nil {
-			continue
-		}
-		if export := manifest.EnrichedExport(); export != nil {
-			declared[sym] = export
-		}
-	}
-	return declared
+	return applyModuleAliasExports(declared, moduleAliases, manifests)
 }
 
 // buildFnSignatureResolver creates a function signature resolver that combines
