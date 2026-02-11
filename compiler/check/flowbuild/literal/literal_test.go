@@ -330,3 +330,23 @@ func TestParseIntegerLiteral_FloatRejected(t *testing.T) {
 		t.Fatal("expected float-syntax literal to be rejected as integer")
 	}
 }
+
+func TestParseIntegerLiteral_HexWithEDigit(t *testing.T) {
+	i, ok := literal.ParseIntegerLiteral("0xDEAD")
+	if !ok || i != 0xDEAD {
+		t.Fatalf("expected hex integer 0xDEAD, got i=%d ok=%v", i, ok)
+	}
+}
+
+func TestParseIntegerLiteral_DecimalLeadingZero(t *testing.T) {
+	i, ok := literal.ParseIntegerLiteral("08")
+	if !ok || i != 8 {
+		t.Fatalf("expected decimal integer 8 from 08, got i=%d ok=%v", i, ok)
+	}
+}
+
+func TestParseIntegerLiteral_DecimalExponentRejected(t *testing.T) {
+	if _, ok := literal.ParseIntegerLiteral("1e3"); ok {
+		t.Fatal("expected decimal exponent literal to be rejected as integer")
+	}
+}

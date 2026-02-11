@@ -126,10 +126,24 @@ func ParseNumberLiteral(s string) (int64, float64, bool) {
 //
 // Returns false for float-syntax literals (contains '.', exponent markers).
 func ParseIntegerLiteral(s string) (int64, bool) {
-	if s == "" || strings.ContainsAny(s, ".eEpP") {
+	if s == "" || strings.Contains(s, ".") {
 		return 0, false
 	}
-	i, err := strconv.ParseInt(s, 0, 64)
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "0x") || strings.HasPrefix(lower, "+0x") || strings.HasPrefix(lower, "-0x") {
+		if strings.ContainsAny(lower, "p") {
+			return 0, false
+		}
+		i, err := strconv.ParseInt(s, 0, 64)
+		if err != nil {
+			return 0, false
+		}
+		return i, true
+	}
+	if strings.ContainsAny(s, "eE") {
+		return 0, false
+	}
+	i, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
 		return 0, false
 	}
