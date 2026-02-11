@@ -1,9 +1,7 @@
 package ops
 
 import (
-	"strconv"
-	"strings"
-
+	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -19,24 +17,13 @@ import (
 //
 // Returns typ.Number if parsing fails.
 func ParseNumber(value string) typ.Type {
-	// Try hex first
-	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
-		if i, err := strconv.ParseInt(value, 0, 64); err == nil {
-			return typ.LiteralInt(i)
-		}
-
-		return typ.Number
+	if i, ok := numparse.ParseIntegerLiteral(value); ok {
+		return typ.LiteralInt(i)
 	}
 
-	// Try float
-	f, err := strconv.ParseFloat(value, 64)
-	if err != nil {
+	f, ok := numparse.ParseFloatLiteral(value)
+	if !ok {
 		return typ.Number
-	}
-
-	// Check if it's a whole number (integer literal)
-	if f == float64(int64(f)) && !strings.Contains(value, ".") && !strings.ContainsAny(value, "eE") {
-		return typ.LiteralInt(int64(f))
 	}
 
 	return typ.LiteralNumber(f)
@@ -44,41 +31,21 @@ func ParseNumber(value string) typ.Type {
 
 // IsIntegerLiteral checks if the string represents an integer literal.
 func IsIntegerLiteral(value string) bool {
-	// Hex literals are integers
-	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
-		_, err := strconv.ParseInt(value, 0, 64)
-		return err == nil
-	}
-
-	// Check for float indicators
-	if strings.Contains(value, ".") || strings.ContainsAny(value, "eE") {
-		return false
-	}
-
-	// Try parsing as integer
-	_, err := strconv.ParseInt(value, 10, 64)
-
-	return err == nil
+	_, ok := numparse.ParseIntegerLiteral(value)
+	return ok
 }
 
 // ParseNumberValue extracts the numeric value from a literal string.
 // Returns the value and true for integers, or the value and false for floats.
 func ParseNumberValue(value string) (float64, bool) {
-	// Try hex first
-	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
-		if i, err := strconv.ParseInt(value, 0, 64); err == nil {
-			return float64(i), true
-		}
+	if i, ok := numparse.ParseIntegerLiteral(value); ok {
+		return float64(i), true
 	}
 
-	// Try float
-	f, err := strconv.ParseFloat(value, 64)
-	if err != nil {
+	f, ok := numparse.ParseFloatLiteral(value)
+	if !ok {
 		return 0, false
 	}
 
-	// Check if it's a whole number
-	isInt := f == float64(int64(f)) && !strings.Contains(value, ".") && !strings.ContainsAny(value, "eE")
-
-	return f, isInt
+	return f, false
 }

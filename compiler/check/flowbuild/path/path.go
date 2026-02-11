@@ -11,6 +11,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
@@ -19,6 +21,19 @@ import (
 
 type versionedGraph interface {
 	VisibleVersion(p cfg.Point, sym cfg.SymbolID) cfg.Version
+}
+
+// StaticKeySegment converts a syntactically static key expression into a path segment.
+//
+// Supported static keys:
+//   - identifier key: foo        -> SegmentField("foo")
+//   - string key: "foo"          -> SegmentField("foo")
+//   - string key: "x-y"          -> SegmentIndexString("x-y")
+//   - number key: 1              -> SegmentIndexInt(1)
+//
+// Returns false for unsupported or empty keys.
+func StaticKeySegment(key ast.Expr) (constraint.Segment, bool) {
+	return pathseg.StaticTableFieldKeySegment(key)
 }
 
 // WithVersion binds a path to the SSA version visible at point p.
@@ -61,10 +76,11 @@ func FromExprWithBindings(expr ast.Expr, constResolver func(string) *flow.ConstV
 		}
 		switch key := e.Key.(type) {
 		case *ast.StringExpr:
-			if pathkey.IsIdentName(key.Value) {
-				return base.Append(constraint.Segment{Kind: constraint.SegmentField, Name: key.Value})
+			seg, ok := StaticKeySegment(key)
+			if !ok {
+				return constraint.Path{}
 			}
-			return base.Append(constraint.Segment{Kind: constraint.SegmentIndexString, Name: key.Value})
+			return base.Append(seg)
 		case *ast.NumberExpr:
 			if idx, ok := pathkey.ParseIntLiteral(key.Value); ok {
 				return base.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})
@@ -76,7 +92,10 @@ func FromExprWithBindings(expr ast.Expr, constResolver func(string) *flow.ConstV
 			if val := constResolver(key.Value); val != nil {
 				switch val.Kind {
 				case flow.ConstString:
-					return base.Append(constraint.Segment{Kind: constraint.SegmentIndexString, Name: val.Str})
+					if seg, ok := StaticKeySegment(&ast.StringExpr{Value: val.Str}); ok {
+						return base.Append(seg)
+					}
+					return constraint.Path{}
 				case flow.ConstInt:
 					return base.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(val.Int)})
 				case flow.ConstFloat:
@@ -128,7 +147,7 @@ func TypeOfCallPathWithBindings(expr ast.Expr, bindings *bind.BindingTable) (con
 	if !ok || call == nil {
 		return constraint.Path{}, false
 	}
-	if call.Method != "" || call.Receiver != nil {
+	if callsite.IsMethodLikeExpr(call) {
 		return constraint.Path{}, false
 	}
 	ident, ok := call.Func.(*ast.IdentExpr)

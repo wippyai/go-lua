@@ -5,6 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -90,5 +92,77 @@ func TestInferIterVarsFromCallCore_WithSpec_NonFunction(t *testing.T) {
 	result := s.inferIterVarsFromCallCore(call, 2, synthOne)
 	if result != nil {
 		t.Fatal("expected nil for non-function")
+	}
+}
+
+func TestInferIterVarsFromCallCore_IteratorNegativeSourceIndex(t *testing.T) {
+	s := newTestSynthesizer()
+	iterFn := typ.Func().
+		Param("prefix", typ.Any).
+		Param("src", typ.Any).
+		Returns(typ.Any).
+		Spec(contract.NewSpec().WithEffects(effect.Iterator{
+			Source: effect.ParamRef{Index: -1},
+			Kind:   effect.IterateIndexed,
+		})).
+		Build()
+
+	srcA := &ast.IdentExpr{Value: "a"}
+	srcB := &ast.IdentExpr{Value: "b"}
+	call := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "iter"},
+		Args: []ast.Expr{srcA, srcB},
+	}
+
+	synthOne := func(expr ast.Expr) typ.Type {
+		switch expr {
+		case call.Func:
+			return iterFn
+		case srcA:
+			return typ.NewArray(typ.String)
+		case srcB:
+			return typ.NewArray(typ.Integer)
+		default:
+			return typ.Unknown
+		}
+	}
+
+	result := s.inferIterVarsFromCallCore(call, 2, synthOne)
+	if len(result) != 2 {
+		t.Fatalf("got %d iter vars, want 2", len(result))
+	}
+	if result[0] != typ.Integer {
+		t.Fatalf("index var = %v, want integer", result[0])
+	}
+	if !typ.TypeEquals(result[1], typ.Integer) {
+		t.Fatalf("value var = %v, want integer from last arg source", result[1])
+	}
+}
+
+func TestInferIterVarsFromCallCore_IteratorNegativeSourceIndexOutOfRange(t *testing.T) {
+	s := newTestSynthesizer()
+	iterFn := typ.Func().
+		Param("src", typ.Any).
+		Returns(typ.Any).
+		Spec(contract.NewSpec().WithEffects(effect.Iterator{
+			Source: effect.ParamRef{Index: -2},
+			Kind:   effect.IterateIndexed,
+		})).
+		Build()
+
+	src := &ast.IdentExpr{Value: "a"}
+	call := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "iter"},
+		Args: []ast.Expr{src},
+	}
+	synthOne := func(expr ast.Expr) typ.Type {
+		if expr == call.Func {
+			return iterFn
+		}
+		return typ.NewArray(typ.String)
+	}
+
+	if got := s.inferIterVarsFromCallCore(call, 2, synthOne); got != nil {
+		t.Fatalf("expected nil for out-of-range negative source index, got %v", got)
 	}
 }

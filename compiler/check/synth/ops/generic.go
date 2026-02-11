@@ -4,41 +4,15 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// InferTypeArgs infers type arguments for a generic function call from argument types.
-//
-// Uses local type inference with contravariant matching: argument types flow
-// up to constrain type parameters. For each argument/parameter pair, creates
-// constraints that the argument type is a subtype of the parameter type
-// (after substituting type variables).
-//
-// Example: For `function get<T>(x: T): T`, calling `get("hello")` infers T=string.
-//
-// Returns the inferred type arguments in parameter order, or error if inference fails.
-// Unresolved type parameters default to typ.Unknown.
-func InferTypeArgs(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type) ([]typ.Type, error) {
-	return InferTypeArgsWithExpected(fn, args, isMethod, receiver, nil)
-}
-
-// InferTypeArgsWithExpected performs bidirectional type argument inference.
-//
-// In addition to contravariant matching from arguments, uses covariant matching
-// from the expected return type. This enables inference in cases where type
-// parameters appear only in return position.
-//
-// Example: For `function get<T>(): T?`, given expected type `string?`,
-// infers T=string by matching return T? against expected string?.
-//
-// The expectedReturn is matched covariantly: the function's return type
-// should be a subtype of what's expected. For union expected types,
-// matches against each union member.
-func InferTypeArgsWithExpected(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type) ([]typ.Type, error) {
+// InferTypeArgsWithExpectedAndMode performs bidirectional inference with optional
+// forced receiver consumption for method calls.
+func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {
 	if fn == nil || len(fn.TypeParams) == 0 {
 		return nil, nil
 	}
@@ -56,12 +30,8 @@ func InferTypeArgsWithExpected(fn *typ.Function, args []typ.Type, isMethod bool,
 	cs := constraint.NewInferSet()
 
 	inputs := args
-
-	if isMethod && hasExplicitSelfSimple(fn, receiver) {
-		if receiver == nil {
-			return nil, fmt.Errorf("infer: nil receiver")
-		}
-
+	consumeReceiver := methodConsumesReceiverSimple(fn, receiver, isMethod, forceMethodReceiver)
+	if consumeReceiver {
 		inputs = make([]typ.Type, 0, len(args)+1)
 		inputs = append(inputs, receiver)
 		inputs = append(inputs, args...)
@@ -91,7 +61,7 @@ func InferTypeArgsWithExpected(fn *typ.Function, args []typ.Type, isMethod bool,
 	// For union expected types, distribute matching over each member.
 	if expectedReturn != nil && len(fn.Returns) > 0 {
 		expKind := expectedReturn.Kind()
-		if expKind != kind.Unknown && expKind != kind.Any {
+		if !expKind.IsPlaceholder() {
 			returnType := SubstituteTypeVars(fn.Returns[0], typeVars)
 			returnType = subst.ExpandInstantiated(returnType)
 
@@ -130,7 +100,7 @@ func InferTypeArgsWithExpected(fn *typ.Function, args []typ.Type, isMethod bool,
 
 	// Validate that inferred type arguments satisfy their constraints
 	for i, tp := range fn.TypeParams {
-		if tp.Constraint != nil && result[i] != nil && result[i].Kind() != kind.Unknown {
+		if tp.Constraint != nil && !typ.IsAbsentOrUnknown(result[i]) {
 			if !subtype.IsSubtype(result[i], tp.Constraint) {
 				return nil, fmt.Errorf("infer: type argument %s does not satisfy constraint %s", result[i], tp.Constraint)
 			}

@@ -31,7 +31,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -159,6 +159,7 @@ func (s *Synthesizer) Resolver() *resolve.Resolver {
 		ExprSynth: func(expr ast.Expr, p cfg.Point) typ.Type {
 			return s.SynthExpr(expr, p, nil)
 		},
+		Bindings: s.deps.ModuleBindings,
 	})
 }
 
@@ -289,8 +290,22 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 	}
 
 	var sym cfg.SymbolID
+	var moduleSym cfg.SymbolID
 	if bindings := ctx.Bindings(); bindings != nil {
 		sym, _ = bindings.SymbolOf(ex)
+	}
+	if sym == 0 {
+		if graph := ctx.Graph(); graph != nil {
+			if resolved, ok := graph.SymbolAt(p, ex.Value); ok && resolved != 0 {
+				sym = resolved
+			}
+		}
+	}
+	if s.deps.ModuleBindings != nil {
+		moduleSym, _ = s.deps.ModuleBindings.SymbolOf(ex)
+		if sym == 0 {
+			sym = moduleSym
+		}
 	}
 
 	if sym == 0 {
@@ -324,14 +339,6 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 					if !subtype.IsSubtype(narrowed, declared.Type) {
 						goto fallback
 					}
-					declaredBase := unwrap.Alias(declared.Type)
-					if _, ok := declaredBase.(*typ.Optional); !ok {
-						if _, ok := declaredBase.(*typ.Union); !ok {
-							if narrowed.Kind() != declaredBase.Kind() {
-								goto fallback
-							}
-						}
-					}
 				}
 			}
 			return narrowed
@@ -344,27 +351,32 @@ fallback:
 		if tv.State == flow.StateResolved && tv.Type != nil {
 			// Prefer concrete resolved types over module aliases.
 			// Allow module aliases to override unknown/any placeholders.
-			switch tv.Type.Kind() {
-			case kind.Unknown, kind.Any:
+			if tv.Type.Kind().IsPlaceholder() {
 				// defer to module alias below if available
-			default:
+			} else {
 				return tv.Type
+			}
+		}
+		if moduleSym != 0 && moduleSym != sym {
+			moduleTV := types.EffectiveTypeAt(p, moduleSym)
+			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
+				if moduleTV.Type.Kind().IsPlaceholder() {
+					// keep looking for better sources
+				} else {
+					return moduleTV.Type
+				}
 			}
 		}
 	}
 
 	// Module alias lookup (require("mod")) as fallback when no concrete type is resolved.
-	if modulePath := ctx.ModuleAlias(sym); modulePath != "" && s.deps.Manifests != nil {
-		manifest := s.deps.Manifests.Manifest(modulePath)
-		if manifest == nil {
-			if imports := s.deps.Manifests.Imports(); imports != nil {
-				manifest = imports[modulePath]
-			}
-		}
-		if manifest != nil {
-			if exportType := manifest.EnrichedExport(); exportType != nil {
-				return exportType
-			}
+	moduleAliasSym := sym
+	if moduleAliasSym == 0 {
+		moduleAliasSym = moduleSym
+	}
+	if modulePath := ctx.ModuleAlias(moduleAliasSym); modulePath != "" {
+		if exportType := io.LookupEnrichedExport(s.deps.Manifests, modulePath); exportType != nil {
+			return exportType
 		}
 	}
 
@@ -373,10 +385,21 @@ fallback:
 		if tv.State == flow.StateResolved && tv.Type != nil {
 			return tv.Type
 		}
+		if moduleSym != 0 && moduleSym != sym {
+			moduleTV := types.EffectiveTypeAt(p, moduleSym)
+			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
+				return moduleTV.Type
+			}
+		}
 	}
 
 	if t, ok := ctx.GlobalType(sym); ok && t != nil {
 		return t
+	}
+	if moduleSym != 0 && moduleSym != sym {
+		if t, ok := ctx.GlobalType(moduleSym); ok && t != nil {
+			return t
+		}
 	}
 
 	return typ.Unknown

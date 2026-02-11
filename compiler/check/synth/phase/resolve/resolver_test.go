@@ -5,12 +5,40 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	typecfg "github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 func newTestResolver() *Resolver {
 	return New(Config{})
+}
+
+type testParamBindings struct {
+	params map[*ast.FunctionExpr][]typecfg.SymbolID
+	names  map[typecfg.SymbolID]string
+}
+
+type manifestQuerierStub struct {
+	manifests map[string]*io.Manifest
+	imports   map[string]*io.Manifest
+}
+
+func (m manifestQuerierStub) Manifest(path string) *io.Manifest {
+	return m.manifests[path]
+}
+
+func (m manifestQuerierStub) Imports() map[string]*io.Manifest {
+	return m.imports
+}
+
+func (m testParamBindings) ParamSymbols(fn *ast.FunctionExpr) []typecfg.SymbolID {
+	return m.params[fn]
+}
+
+func (m testParamBindings) Name(sym typecfg.SymbolID) string {
+	return m.names[sym]
 }
 
 func TestResolveType_Nil(t *testing.T) {
@@ -299,6 +327,24 @@ func TestResolveType_TypeRef_Module(t *testing.T) {
 	}
 	if ref.Name != "MyType" {
 		t.Fatalf("name: got %q, want %q", ref.Name, "MyType")
+	}
+}
+
+func TestResolveType_TypeRef_ModuleImportsFallback(t *testing.T) {
+	manifest := io.NewManifest("mymodule")
+	manifest.DefineType("MyType", typ.Integer)
+	r := New(Config{
+		Manifests: manifestQuerierStub{
+			manifests: map[string]*io.Manifest{},
+			imports:   map[string]*io.Manifest{"mymodule": manifest},
+		},
+	})
+	sc := scope.New()
+
+	expr := &ast.TypeRefExpr{Path: []string{"mymodule", "MyType"}}
+	result := r.ResolveType(expr, sc)
+	if !typ.TypeEquals(result, typ.Integer) {
+		t.Fatalf("got %v, want integer from imports fallback", result)
 	}
 }
 
@@ -599,6 +645,37 @@ func TestResolveFunctionSignature(t *testing.T) {
 	}
 	if len(result.Returns) != 1 {
 		t.Fatalf("got %d returns, want 1", len(result.Returns))
+	}
+}
+
+func TestResolveFunctionSignature_ImplicitSelfFromBindings(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{
+			Names: []string{"x"},
+		},
+	}
+	r := New(Config{
+		Bindings: testParamBindings{
+			params: map[*ast.FunctionExpr][]typecfg.SymbolID{
+				fn: {1, 2},
+			},
+			names: map[typecfg.SymbolID]string{
+				1: "self",
+				2: "x",
+			},
+		},
+	})
+	sc := scope.New().WithSelf(typ.String)
+
+	result := r.ResolveFunctionSignature(fn, sc)
+	if result == nil {
+		t.Fatal("expected function type")
+	}
+	if len(result.Params) != 2 {
+		t.Fatalf("got %d params, want 2 (self + x)", len(result.Params))
+	}
+	if result.Params[0].Name != "self" || result.Params[0].Type != typ.String {
+		t.Fatalf("unexpected self param: %+v", result.Params[0])
 	}
 }
 

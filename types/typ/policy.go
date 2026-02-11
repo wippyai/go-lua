@@ -20,15 +20,72 @@ func JoinPreferNonSoft(a, b Type) Type {
 		return a
 	}
 	// Inline join.Two to avoid dependency cycles inside typ.
-	if a == nil || a.Kind() == kind.Unknown {
+	if IsAbsentOrUnknown(a) {
 		return b
 	}
-	if b == nil || b.Kind() == kind.Unknown {
+	if IsAbsentOrUnknown(b) {
 		return a
 	}
 	if TypeEquals(a, b) {
 		return a
 	}
+	return PruneSoftUnionMembers(NewUnion(a, b))
+}
+
+// JoinReturnSlot merges return slot types while preserving uncertainty.
+//
+// Unknown in return inference means unresolved runtime behavior. When one branch
+// is unknown and another is explicit nil, keep unknown so summaries do not
+// collapse to nil-only.
+func JoinReturnSlot(a, b Type) Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	a = PruneSoftUnionMembers(a)
+	b = PruneSoftUnionMembers(b)
+	if (IsUnknown(a) && b.Kind() == kind.Nil) || (IsUnknown(b) && a.Kind() == kind.Nil) {
+		return Unknown
+	}
+	return JoinPreferNonSoft(a, b)
+}
+
+// JoinBranchOutcome merges mutually-exclusive expression outcomes (for example,
+// `a and b` / `a or b`) while preserving uncertainty.
+//
+// Unlike JoinPreferNonSoft, this must not treat unknown as absent information:
+// expression typing needs to preserve runtime uncertainty when one branch may
+// still produce unknown-like values.
+func JoinBranchOutcome(a, b Type) Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+
+	a = PruneSoftUnionMembers(a)
+	b = PruneSoftUnionMembers(b)
+
+	// Preserve runtime uncertainty for branch outcomes:
+	// unknown and nil means "value may be unknown or absent".
+	if (IsUnknown(a) && b.Kind() == kind.Nil) || (IsUnknown(b) && a.Kind() == kind.Nil) {
+		return NewOptional(Unknown)
+	}
+
+	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) && b.Kind() != kind.Nil {
+		return b
+	}
+	if IsSoft(b, SoftPlaceholderPolicy) && !IsSoft(a, SoftPlaceholderPolicy) && a.Kind() != kind.Nil {
+		return a
+	}
+
+	if TypeEquals(a, b) {
+		return a
+	}
+
 	return PruneSoftUnionMembers(NewUnion(a, b))
 }
 
@@ -42,10 +99,8 @@ func IsRefinableAnnotation(t Type) bool {
 	if t == nil {
 		return false
 	}
-	switch t.Kind() {
-	case kind.Any, kind.Unknown:
+	if t.Kind().IsPlaceholder() {
 		return false
-	default:
-		return IsSoft(t, SoftAnnotationPolicy)
 	}
+	return IsSoft(t, SoftAnnotationPolicy)
 }

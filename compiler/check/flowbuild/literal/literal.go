@@ -1,13 +1,12 @@
 package literal
 
 import (
-	"strconv"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -23,14 +22,11 @@ func FromExpr(expr ast.Expr) (*typ.Literal, bool) {
 	case *ast.StringExpr:
 		return typ.LiteralString(v.Value), true
 	case *ast.NumberExpr:
-		if i, f, ok := ParseNumberLiteral(v.Value); ok {
-			if f == 0 && i != 0 {
-				return typ.LiteralInt(i), true
-			}
-			if f != 0 {
-				return typ.LiteralNumber(f), true
-			}
-			return typ.LiteralInt(0), true
+		if i, ok := numparse.ParseIntegerLiteral(v.Value); ok {
+			return typ.LiteralInt(i), true
+		}
+		if f, ok := numparse.ParseFloatLiteral(v.Value); ok {
+			return typ.LiteralNumber(f), true
 		}
 	case *ast.TrueExpr:
 		return typ.True, true
@@ -108,18 +104,4 @@ func KeyTypeFromExpr(expr ast.Expr, constResolver func(string) *flow.ConstValue)
 	default:
 		return nil
 	}
-}
-
-// ParseNumberLiteral parses a number literal into int64 and float64 (supports hex).
-func ParseNumberLiteral(s string) (int64, float64, bool) {
-	if s == "" {
-		return 0, 0, false
-	}
-	if i, err := strconv.ParseInt(s, 0, 64); err == nil {
-		return i, 0, true
-	}
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return 0, f, true
-	}
-	return 0, 0, false
 }

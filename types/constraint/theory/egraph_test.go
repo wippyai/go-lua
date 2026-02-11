@@ -265,6 +265,41 @@ func TestEGraph_PartialCongruence(t *testing.T) {
 	}
 }
 
+func TestEGraph_IndexStringAndIndexInt_DoNotAliasInCongruence(t *testing.T) {
+	eg := NewEGraph()
+
+	x := makePath("x", 1)
+	y := makePath("y", 2)
+
+	xStringIndex := constraint.Path{
+		Root:   "x",
+		Symbol: 1,
+		Segments: []constraint.Segment{{
+			Kind: constraint.SegmentIndexString,
+			Name: "1",
+		}},
+	}
+	yIntIndex := constraint.Path{
+		Root:   "y",
+		Symbol: 2,
+		Segments: []constraint.Segment{{
+			Kind:  constraint.SegmentIndexInt,
+			Index: 1,
+		}},
+	}
+
+	eg.Register(x)
+	eg.Register(y)
+	eg.Register(xStringIndex)
+	eg.Register(yIntIndex)
+
+	eg.AddEquality(x, y)
+
+	if eg.AreEqual(xStringIndex.Key(), yIntIndex.Key()) {
+		t.Fatal("x[\"1\"] and y[1] must not become equal via congruence")
+	}
+}
+
 func TestEGraph_AllPaths(t *testing.T) {
 	eg := NewEGraph()
 

@@ -237,6 +237,115 @@ func newInputs(g *mockSSAGraph) *Inputs {
 	}
 }
 
+func TestSolutionResolveTypeKey_BuiltinWithoutTypeKeyMap(t *testing.T) {
+	s := &Solution{inputs: &Inputs{TypeKeys: nil}}
+	got := s.resolveTypeKey(narrow.BuiltinTypeKey("string"))
+	if got != typ.String {
+		t.Fatalf("resolveTypeKey(string) = %v, want %v", got, typ.String)
+	}
+}
+
+func TestSolutionResolveTypeKey_UnknownBuiltin(t *testing.T) {
+	s := &Solution{inputs: &Inputs{TypeKeys: nil}}
+	if got := s.resolveTypeKey(narrow.BuiltinTypeKey("entry")); got != nil {
+		t.Fatalf("resolveTypeKey(entry) = %v, want nil", got)
+	}
+}
+
+func TestMergeFieldAssignments_IncludesCanonicalStringIndexKeys(t *testing.T) {
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym1@1["meta.type"]`:   typ.String,
+			`sym1@1.name`:           typ.Number,
+			`sym1@1["meta.type"].x`: typ.Boolean,
+			`sym1@2["meta.type"]`:   typ.Integer,
+			`sym2@1["meta.type"]`:   typ.Nil,
+		},
+	}
+
+	base := typ.NewRecord().Field("id", typ.String).Build()
+	got := s.mergeFieldAssignments(base, "sym1@1")
+
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
+	}
+	if f := rec.GetField("meta.type"); f == nil || !typ.TypeEquals(f.Type, typ.String) {
+		t.Fatalf("expected merged field meta.type=string, got %v", f)
+	}
+	if f := rec.GetField("name"); f == nil || !typ.TypeEquals(f.Type, typ.Number) {
+		t.Fatalf("expected merged field name=number, got %v", f)
+	}
+	if f := rec.GetField("id"); f == nil || !typ.TypeEquals(f.Type, typ.String) {
+		t.Fatalf("expected existing field id=string to be preserved, got %v", f)
+	}
+}
+
+func TestMergeFieldAssignments_IncludesEscapedStringIndexKey(t *testing.T) {
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym7@3["a\"b"]`: typ.Boolean,
+		},
+	}
+
+	got := s.mergeFieldAssignments(nil, "sym7@3")
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
+	}
+	if f := rec.GetField(`a"b`); f == nil || !typ.TypeEquals(f.Type, typ.Boolean) {
+		t.Fatalf("expected escaped key field a\\\"b=boolean, got %v", f)
+	}
+}
+
+func TestMergeFieldAssignments_InvalidBaseKey_NoChange(t *testing.T) {
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym1@1["meta.type"]`: typ.String,
+		},
+	}
+
+	base := typ.NewRecord().Field("id", typ.String).Build()
+	got := s.mergeFieldAssignments(base, "not-a-canonical-key")
+	if !typ.TypeEquals(got, base) {
+		t.Fatalf("invalid base key should keep base type unchanged: got %v, want %v", got, base)
+	}
+}
+
+func TestMergeFieldAssignments_PreservesExistingFieldQualifiers(t *testing.T) {
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym3@2.new_field`: typ.Number,
+		},
+	}
+
+	base := typ.NewRecord().
+		OptReadonlyField("id", typ.String).
+		OptField("nickname", typ.String).
+		ReadonlyField("created_at", typ.Integer).
+		Build()
+
+	got := s.mergeFieldAssignments(base, "sym3@2")
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
+	}
+
+	check := func(name string, wantOptional, wantReadonly bool) {
+		f := rec.GetField(name)
+		if f == nil {
+			t.Fatalf("missing field %q", name)
+		}
+		if f.Optional != wantOptional || f.Readonly != wantReadonly {
+			t.Fatalf("field %q qualifiers changed: optional=%v readonly=%v (want optional=%v readonly=%v)", name, f.Optional, f.Readonly, wantOptional, wantReadonly)
+		}
+	}
+	check("id", true, true)
+	check("nickname", true, false)
+	check("created_at", false, true)
+	check("new_field", false, false)
+}
+
 // setupSymbol registers a symbol and sets its visibility at all given points.
 // Returns the SymbolID for use in version creation.
 func setupSymbol(g *mockSSAGraph, name string, points []cfg.Point) cfg.SymbolID {

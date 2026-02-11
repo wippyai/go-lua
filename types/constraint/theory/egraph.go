@@ -38,7 +38,6 @@ package theory
 
 import (
 	"sort"
-	"strconv"
 
 	"github.com/wippyai/go-lua/types/constraint"
 )
@@ -141,16 +140,7 @@ func (e *EGraph) RegisterKey(key constraint.PathKey) {
 
 // segmentKey returns a string key for a segment (for children map).
 func segmentKey(seg constraint.Segment) string {
-	switch seg.Kind {
-	case constraint.SegmentField:
-		return "." + seg.Name
-	case constraint.SegmentIndexString:
-		return "[" + seg.Name + "]"
-	case constraint.SegmentIndexInt:
-		return "[" + strconv.Itoa(seg.Index) + "]"
-	default:
-		return "?" + seg.Name
-	}
+	return constraint.FormatSegments([]constraint.Segment{seg})
 }
 
 // makeSet ensures a path exists in the union-find structure.

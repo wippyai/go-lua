@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/literal"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
@@ -56,7 +57,7 @@ func TestRootNameFromBindings_TableMutator_ZeroSymbol(t *testing.T) {
 }
 
 func TestTableMutatorFromCall_NilInfo(t *testing.T) {
-	result := mutator.TableMutatorFromCall(nil, 0, nil, nil)
+	result := mutator.TableMutatorFromCall(nil, 0, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil info")
 	}
@@ -64,7 +65,7 @@ func TestTableMutatorFromCall_NilInfo(t *testing.T) {
 
 func TestTableMutatorFromCall_NoCallee(t *testing.T) {
 	info := &cfg.CallInfo{}
-	result := mutator.TableMutatorFromCall(info, 0, nil, nil)
+	result := mutator.TableMutatorFromCall(info, 0, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for info without callee")
 	}
@@ -75,7 +76,7 @@ func TestTableMutatorFromCall_MethodCall(t *testing.T) {
 		Method:   "insert",
 		Receiver: &ast.IdentExpr{Value: "table"},
 	}
-	result := mutator.TableMutatorFromCall(info, 0, nil, nil)
+	result := mutator.TableMutatorFromCall(info, 0, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for method call (not plain function)")
 	}
@@ -88,7 +89,7 @@ func TestTableMutatorFromCall_NonFunction(t *testing.T) {
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return typ.String // Not a function
 	}
-	result := mutator.TableMutatorFromCall(info, 0, synth, nil)
+	result := mutator.TableMutatorFromCall(info, 0, synth, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for non-function type")
 	}
@@ -101,13 +102,13 @@ func TestTableMutatorFromCall_FunctionWithoutSpec(t *testing.T) {
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return &typ.Function{} // No spec
 	}
-	result := mutator.TableMutatorFromCall(info, 0, synth, nil)
+	result := mutator.TableMutatorFromCall(info, 0, synth, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for function without spec")
 	}
 }
 
-func TestArgAtCall_ValidIndices(t *testing.T) {
+func TestPositionalArgAt_ValidIndices(t *testing.T) {
 	args := []ast.Expr{
 		&ast.StringExpr{Value: "a"},
 		&ast.StringExpr{Value: "b"},
@@ -127,22 +128,22 @@ func TestArgAtCall_ValidIndices(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := mutator.ArgAtCall(args, tt.idx)
+		result := callsite.PositionalArgAt(args, tt.idx)
 		str, ok := result.(*ast.StringExpr)
 		if !ok || str.Value != tt.expected {
-			t.Errorf("mutator.ArgAtCall(args, %d): expected '%s', got %v", tt.idx, tt.expected, result)
+			t.Errorf("callsite.PositionalArgAt(args, %d): expected '%s', got %v", tt.idx, tt.expected, result)
 		}
 	}
 }
 
-func TestArgAtCall_InvalidIndices(t *testing.T) {
+func TestPositionalArgAt_InvalidIndices(t *testing.T) {
 	args := []ast.Expr{&ast.StringExpr{Value: "a"}}
 
 	tests := []int{5, -5, 100}
 	for _, idx := range tests {
-		result := mutator.ArgAtCall(args, idx)
+		result := callsite.PositionalArgAt(args, idx)
 		if result != nil {
-			t.Errorf("mutator.ArgAtCall(args, %d): expected nil, got %v", idx, result)
+			t.Errorf("callsite.PositionalArgAt(args, %d): expected nil, got %v", idx, result)
 		}
 	}
 }

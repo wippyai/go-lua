@@ -91,7 +91,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	// Compute derived resolvers and store in a separate derived bundle.
 	derived := &fbcore.Derived{
 		SymResolver: resolve.BuildInputSymbolResolver(fc.CheckCtx, inputs),
-		TypeKeyRes:  resolve.BuildContextTypeKeyResolver(fc.CheckCtx, fc.Scopes),
+		TypeKeyRes:  resolve.BuildContextTypeKeyResolver(fc.CheckCtx),
 		EffectBySym: resolve.BuildEffectLookup(fc.CheckCtx),
 	}
 	if fc.API != nil {
@@ -104,7 +104,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	constprop.PropagateAllConstValues(fc, inputs)
 
 	// Assignments with const resolution.
-	assign.ExtractAssignments(fc, inputs, keyscoll.BuildKeysCollectorDetector(fc.Graph))
+	assign.ExtractAssignments(fc, inputs, keyscoll.BuildKeysCollectorDetector(fc.Graph, fc.ModuleBindings))
 
 	// Table mutator assignments (table.insert-like).
 	mutator.ExtractTableMutatorAssignments(fc, inputs)
@@ -126,12 +126,12 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	MergeCallConstraintsIntoEdges(inputs, callConstraints)
 
 	// Mark terminating call edges as unreachable (error(), etc.).
-	fc.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	for _, p := range fc.Graph.RPO() {
 		if fc.Derived == nil {
-			return
+			continue
 		}
-		if !cond.CallTerminates(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.Graph) {
-			return
+		if !cond.PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.ModuleBindings) {
+			continue
 		}
 		for _, succ := range fc.Graph.Successors(p) {
 			inputs.EdgeConditions = append(inputs.EdgeConditions, flow.EdgeCondition{
@@ -140,7 +140,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 				Condition: constraint.FalseCondition(),
 			})
 		}
-	})
+	}
 
 	// Mark return points with no predecessors as dead.
 	markDeadReturns(fc.Graph, inputs)

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -180,4 +181,66 @@ func TestEmitTableLiteralFieldAssignments_WithConstResolver(t *testing.T) {
 		},
 	}
 	EmitTableLiteralFieldAssignments(table, 1, "t", 0, nil, constResolver, nil, nil, inputs)
+}
+
+func TestEmitTableLiteralFieldAssignments_StringNonIdentifierKey_UsesIndexStringSegment(t *testing.T) {
+	inputs := &flow.Inputs{
+		Assignments: []flow.UnifiedAssignment{},
+	}
+	bindings := bind.NewBindingTable()
+	src := &ast.IdentExpr{Value: "src"}
+	bindings.Bind(src, 42)
+	bindings.SetName(42, "src")
+
+	table := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{Key: &ast.StringExpr{Value: "x-y"}, Value: src},
+		},
+	}
+
+	EmitTableLiteralFieldAssignments(table, 1, "t", 0, bindings, nil, nil, nil, inputs)
+	if len(inputs.Assignments) != 1 {
+		t.Fatalf("expected 1 assignment, got %d", len(inputs.Assignments))
+	}
+	got := inputs.Assignments[0]
+	if len(got.TargetPath.Segments) != 1 {
+		t.Fatalf("expected 1 target segment, got %d", len(got.TargetPath.Segments))
+	}
+	if got.TargetPath.Segments[0].Kind != constraint.SegmentIndexString {
+		t.Fatalf("expected SegmentIndexString, got %v", got.TargetPath.Segments[0].Kind)
+	}
+	if got.TargetPath.Segments[0].Name != "x-y" {
+		t.Fatalf("expected index key x-y, got %q", got.TargetPath.Segments[0].Name)
+	}
+}
+
+func TestEmitTableLiteralFieldAssignments_IdentKey_UsesFieldSegment(t *testing.T) {
+	inputs := &flow.Inputs{
+		Assignments: []flow.UnifiedAssignment{},
+	}
+	bindings := bind.NewBindingTable()
+	src := &ast.IdentExpr{Value: "src"}
+	bindings.Bind(src, 99)
+	bindings.SetName(99, "src")
+
+	table := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{Key: &ast.IdentExpr{Value: "name"}, Value: src},
+		},
+	}
+
+	EmitTableLiteralFieldAssignments(table, 1, "t", 0, bindings, nil, nil, nil, inputs)
+	if len(inputs.Assignments) != 1 {
+		t.Fatalf("expected 1 assignment, got %d", len(inputs.Assignments))
+	}
+	got := inputs.Assignments[0]
+	if len(got.TargetPath.Segments) != 1 {
+		t.Fatalf("expected 1 target segment, got %d", len(got.TargetPath.Segments))
+	}
+	if got.TargetPath.Segments[0].Kind != constraint.SegmentField {
+		t.Fatalf("expected SegmentField, got %v", got.TargetPath.Segments[0].Kind)
+	}
+	if got.TargetPath.Segments[0].Name != "name" {
+		t.Fatalf("expected field name, got %q", got.TargetPath.Segments[0].Name)
+	}
 }

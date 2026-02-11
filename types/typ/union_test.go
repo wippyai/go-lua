@@ -224,8 +224,8 @@ func TestUnionTripleFlatten(t *testing.T) {
 		t.Fatalf("expected union, got %T", outer)
 	}
 
-	if len(u.Members) != 4 {
-		t.Errorf("expected 4 members after flattening, got %d", len(u.Members))
+	if len(u.Members) != 3 {
+		t.Errorf("expected 3 members after flattening/subsumption, got %d", len(u.Members))
 	}
 }
 
@@ -254,6 +254,20 @@ func TestUnionSubsumesIntegerLiteral(t *testing.T) {
 	u := NewUnion(Integer, LiteralInt(7))
 	if u != Integer {
 		t.Errorf("integer | 7 should collapse to integer, got %v", u)
+	}
+}
+
+func TestUnionSubsumesIntegerByNumber(t *testing.T) {
+	u := NewUnion(Number, Integer)
+	if u != Number {
+		t.Errorf("number | integer should collapse to number, got %v", u)
+	}
+}
+
+func TestUnionSubsumesIntegerLiteralByNumber(t *testing.T) {
+	u := NewUnion(Number, LiteralInt(7))
+	if u != Number {
+		t.Errorf("number | 7 should collapse to number, got %v", u)
 	}
 }
 

@@ -16,6 +16,19 @@ type ParamSlot struct {
 	IsImplicitSelf bool
 }
 
+// HasSourceParam reports whether this slot maps to a source parameter in fn.ParList.
+func (s ParamSlot) HasSourceParam() bool {
+	return s.SourceIndex >= 0
+}
+
+// SourceParamIndex returns the source parameter index when present.
+func (s ParamSlot) SourceParamIndex() (int, bool) {
+	if !s.HasSourceParam() {
+		return 0, false
+	}
+	return s.SourceIndex, true
+}
+
 // ParamSlots returns the canonical parameter layout for this graph.
 //
 // All downstream phases should consume this API rather than re-deriving
@@ -65,8 +78,8 @@ func (g *Graph) ParamSlots() []ParamSlot {
 			}
 		}
 
-		if slot.SourceIndex >= 0 && slot.SourceIndex < len(parTypes) {
-			slot.TypeAnnotation = parTypes[slot.SourceIndex]
+		if srcIdx, ok := slot.SourceParamIndex(); ok && srcIdx < len(parTypes) {
+			slot.TypeAnnotation = parTypes[srcIdx]
 		}
 
 		slots = append(slots, slot)

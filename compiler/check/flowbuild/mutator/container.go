@@ -2,7 +2,9 @@ package mutator
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
@@ -26,25 +28,18 @@ func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Input
 	// Build a resolver that can look up types from the just-extracted assignments
 	assignmentTypes := resolve.BuildAssignmentTypeResolver(inputs)
 
-	fc.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	fc.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
 
-		cm := ContainerMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, assignmentTypes)
+		cm := ContainerMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, assignmentTypes, fc.Graph, bindings, fc.ModuleBindings)
 		if cm == nil {
 			return
 		}
 
-		// For method calls, index 0 is self (receiver)
-		var targetExpr, valueExpr ast.Expr
-		if info.Method != "" && info.Receiver != nil {
-			targetExpr = containerArgAtMethod(info.Receiver, info.Args, cm.Container.Index)
-			valueExpr = containerArgAtMethod(info.Receiver, info.Args, cm.Value.Index)
-		} else {
-			targetExpr = ArgAtCall(info.Args, cm.Container.Index)
-			valueExpr = ArgAtCall(info.Args, cm.Value.Index)
-		}
+		targetExpr := callsite.RuntimeArgAt(info, cm.Container.Index)
+		valueExpr := callsite.RuntimeArgAt(info, cm.Value.Index)
 
 		if targetExpr == nil || valueExpr == nil {
 			return
@@ -93,12 +88,21 @@ type ContainerElementReturnInfo struct {
 
 // ContainerElementReturnFromCall detects if a call returns a container's element type.
 // Returns info about the Return effect if found, nil otherwise.
-func ContainerElementReturnFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool), assignmentTypes func(cfg.SymbolID) typ.Type) *ContainerElementReturnInfo {
+func ContainerElementReturnFromCall(
+	info *cfg.CallInfo,
+	p cfg.Point,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	assignmentTypes func(cfg.SymbolID) typ.Type,
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
+) *ContainerElementReturnInfo {
 	if info == nil {
 		return nil
 	}
 
-	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes)
+	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes, graph, bindings, moduleBindings)
 	if fnType == nil {
 		return nil
 	}
@@ -128,12 +132,21 @@ func ContainerElementReturnFromCall(info *cfg.CallInfo, p cfg.Point, synth func(
 }
 
 // ContainerMutatorFromCall extracts the container mutation spec from a call site.
-func ContainerMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool), assignmentTypes func(cfg.SymbolID) typ.Type) *effect.ContainerElementUnion {
+func ContainerMutatorFromCall(
+	info *cfg.CallInfo,
+	p cfg.Point,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	assignmentTypes func(cfg.SymbolID) typ.Type,
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
+) *effect.ContainerElementUnion {
 	if info == nil {
 		return nil
 	}
 
-	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes)
+	fnType := resolve.CalleeType(info, p, synth, symResolver, assignmentTypes, graph, bindings, moduleBindings)
 	if fnType == nil {
 		return nil
 	}
@@ -157,13 +170,4 @@ func ContainerMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Ex
 	}
 
 	return nil
-}
-
-// containerArgAtMethod returns the argument at the given index for method calls.
-// For method calls, index 0 is the receiver (self).
-func containerArgAtMethod(receiver ast.Expr, args []ast.Expr, idx int) ast.Expr {
-	if idx == 0 {
-		return receiver
-	}
-	return ArgAtCall(args, idx-1)
 }

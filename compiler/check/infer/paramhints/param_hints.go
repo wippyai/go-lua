@@ -5,9 +5,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+type HintJoinFn func(prev, next typ.Type) typ.Type
 
 func WidenParamHintType(t typ.Type) typ.Type {
 	if t == nil {
@@ -30,6 +33,10 @@ func WidenParamHintType(t typ.Type) typ.Type {
 		if inner != v.Inner && inner != nil {
 			return typ.NewOptional(inner)
 		}
+	case *typ.Alias:
+		if v.Target != nil {
+			return WidenParamHintType(v.Target)
+		}
 	case *typ.Union:
 		changed := false
 		members := make([]typ.Type, 0, len(v.Members))
@@ -47,6 +54,45 @@ func WidenParamHintType(t typ.Type) typ.Type {
 	return t
 }
 
+// NormalizeHintType applies canonical widening and soft-member pruning.
+func NormalizeHintType(t typ.Type) typ.Type {
+	return typ.PruneSoftUnionMembers(WidenParamHintType(t))
+}
+
+// EnsureHintCapacity grows hint vector to at least size.
+func EnsureHintCapacity(hints []typ.Type, size int) []typ.Type {
+	if size <= len(hints) {
+		return hints
+	}
+	expanded := make([]typ.Type, size)
+	copy(expanded, hints)
+	return expanded
+}
+
+// MergeHintAt normalizes and joins one hint into vector slot idx.
+func MergeHintAt(hints []typ.Type, idx int, hint typ.Type, join HintJoinFn) ([]typ.Type, bool) {
+	if idx < 0 {
+		return hints, false
+	}
+	hint = NormalizeHintType(hint)
+	if !IsInformativeHintType(hint) {
+		return hints, false
+	}
+	hints = EnsureHintCapacity(hints, idx+1)
+
+	joinFn := join
+	if joinFn == nil {
+		joinFn = typ.JoinPreferNonSoft
+	}
+	prev := hints[idx]
+	merged := joinFn(prev, hint)
+	if typ.TypeEquals(prev, merged) {
+		return hints, false
+	}
+	hints[idx] = merged
+	return hints, true
+}
+
 // IsInformativeHintType reports whether a type carries useful call-site
 // information for parameter hint propagation.
 //
@@ -54,13 +100,42 @@ func WidenParamHintType(t typ.Type) typ.Type {
 // poison hints, while preserving structured hints such as maps/arrays with
 // partial information (for example `{[string]: any[]}`).
 func IsInformativeHintType(t typ.Type) bool {
+	return isInformativeHintType(t, typ.NewGuard())
+}
+
+func isInformativeHintType(t typ.Type, guard internal.RecursionGuard) bool {
 	if t == nil {
 		return false
 	}
-
-	switch t.Kind() {
-	case kind.Any, kind.Unknown, kind.Nil, kind.Never:
+	next, ok := guard.Enter(t)
+	if !ok {
 		return false
+	}
+
+	if t.Kind().IsDeferred() {
+		return false
+	}
+
+	k := t.Kind()
+	if k.IsPlaceholder() || k == kind.Nil || k == kind.Never {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Optional:
+		return isInformativeHintType(v.Inner, next)
+	case *typ.Union:
+		for _, m := range v.Members {
+			if isInformativeHintType(m, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Alias:
+		if v.Target == nil {
+			return false
+		}
+		return isInformativeHintType(v.Target, next)
 	}
 
 	if r, ok := t.(*typ.Record); ok {

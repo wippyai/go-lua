@@ -3,6 +3,7 @@ package cfg
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 )
 
@@ -117,6 +118,299 @@ func TestAssignInfo_Fields(t *testing.T) {
 	}
 }
 
+func TestAssignInfo_TargetAtAndFirstTarget(t *testing.T) {
+	info := &AssignInfo{
+		Targets: []AssignTarget{
+			{Kind: TargetIdent, Name: "x"},
+			{Kind: TargetField, BaseName: "t"},
+		},
+	}
+
+	if target, ok := info.TargetAt(0); !ok || target.Name != "x" {
+		t.Fatalf("TargetAt(0) mismatch: ok=%v target=%+v", ok, target)
+	}
+	if target, ok := info.TargetAt(2); ok || target.Name != "" {
+		t.Fatalf("TargetAt(2) should be missing, got ok=%v target=%+v", ok, target)
+	}
+	if target, ok := info.FirstTarget(); !ok || target.Name != "x" {
+		t.Fatalf("FirstTarget mismatch: ok=%v target=%+v", ok, target)
+	}
+}
+
+func TestAssignInfo_SourceCallAt(t *testing.T) {
+	info := &AssignInfo{
+		SourceCalls: []*CallInfo{
+			{CalleeName: "a"},
+			nil,
+			{CalleeName: "c"},
+		},
+	}
+
+	if got := info.SourceCallAt(0); got == nil || got.CalleeName != "a" {
+		t.Fatalf("SourceCallAt(0) mismatch: got %+v", got)
+	}
+	if got := info.SourceCallAt(1); got != nil {
+		t.Fatalf("SourceCallAt(1) should be nil, got %+v", got)
+	}
+	if got := info.SourceCallAt(3); got != nil {
+		t.Fatalf("SourceCallAt(3) should be nil, got %+v", got)
+	}
+}
+
+func TestAssignInfo_SourceAt(t *testing.T) {
+	info := &AssignInfo{
+		Sources: []ast.Expr{
+			&ast.StringExpr{Value: "a"},
+			nil,
+			&ast.NumberExpr{Value: "1"},
+		},
+	}
+	if got := info.SourceAt(0); got == nil {
+		t.Fatal("SourceAt(0) should be non-nil")
+	}
+	if got := info.SourceAt(1); got != nil {
+		t.Fatalf("SourceAt(1) should be nil, got %+v", got)
+	}
+	if got := info.SourceAt(3); got != nil {
+		t.Fatalf("SourceAt(3) should be nil, got %+v", got)
+	}
+}
+
+func TestAssignInfo_LastSource(t *testing.T) {
+	info := &AssignInfo{
+		Sources: []ast.Expr{
+			&ast.StringExpr{Value: "a"},
+			&ast.NumberExpr{Value: "2"},
+		},
+	}
+	if got := info.LastSource(); got == nil {
+		t.Fatal("LastSource should be non-nil")
+	}
+	if num, ok := info.LastSource().(*ast.NumberExpr); !ok || num.Value != "2" {
+		t.Fatalf("LastSource mismatch: got %+v", info.LastSource())
+	}
+
+	if got := (&AssignInfo{}).LastSource(); got != nil {
+		t.Fatalf("LastSource should be nil for empty sources, got %+v", got)
+	}
+}
+
+func TestAssignInfo_TypeAnnotationAt(t *testing.T) {
+	info := &AssignInfo{
+		TypeAnnotations: []ast.TypeExpr{
+			&ast.PrimitiveTypeExpr{Name: "string"},
+			nil,
+		},
+	}
+	if got := info.TypeAnnotationAt(0); got == nil {
+		t.Fatal("TypeAnnotationAt(0) should be non-nil")
+	}
+	if got := info.TypeAnnotationAt(1); got != nil {
+		t.Fatalf("TypeAnnotationAt(1) should be nil, got %+v", got)
+	}
+	if got := info.TypeAnnotationAt(3); got != nil {
+		t.Fatalf("TypeAnnotationAt(3) should be nil, got %+v", got)
+	}
+}
+
+func TestAssignInfo_CallForTarget(t *testing.T) {
+	info := &AssignInfo{
+		SourceCalls: []*CallInfo{
+			{CalleeName: "first"},
+			nil,
+			{CalleeName: "last"},
+		},
+	}
+
+	if call, retIndex := info.CallForTarget(0); call == nil || call.CalleeName != "first" || retIndex != 0 {
+		t.Fatalf("CallForTarget(0) mismatch: call=%+v retIndex=%d", call, retIndex)
+	}
+	if call, retIndex := info.CallForTarget(2); call == nil || call.CalleeName != "last" || retIndex != 0 {
+		t.Fatalf("CallForTarget(2) mismatch: call=%+v retIndex=%d", call, retIndex)
+	}
+	if call, retIndex := info.CallForTarget(3); call == nil || call.CalleeName != "last" || retIndex != 1 {
+		t.Fatalf("CallForTarget(3) mismatch: call=%+v retIndex=%d", call, retIndex)
+	}
+	if call, retIndex := info.CallForTarget(1); call != nil || retIndex != 0 {
+		t.Fatalf("CallForTarget(1) should be nil, got call=%+v retIndex=%d", call, retIndex)
+	}
+}
+
+func TestAssignInfo_SingleSourceCall(t *testing.T) {
+	info := &AssignInfo{
+		SourceCalls: []*CallInfo{{CalleeName: "only"}},
+	}
+	if got := info.SingleSourceCall(); got == nil || got.CalleeName != "only" {
+		t.Fatalf("SingleSourceCall mismatch: got %+v", got)
+	}
+
+	info = &AssignInfo{
+		SourceCalls: []*CallInfo{{CalleeName: "a"}, {CalleeName: "b"}},
+	}
+	if got := info.SingleSourceCall(); got != nil {
+		t.Fatalf("SingleSourceCall should be nil for multiple source calls, got %+v", got)
+	}
+
+	info = &AssignInfo{
+		SourceCalls: []*CallInfo{nil},
+	}
+	if got := info.SingleSourceCall(); got != nil {
+		t.Fatalf("SingleSourceCall should be nil when sole entry is nil, got %+v", got)
+	}
+}
+
+func TestAssignInfo_HasSiblingCallExpansion(t *testing.T) {
+	info := &AssignInfo{
+		Targets: []AssignTarget{{Kind: TargetIdent}, {Kind: TargetIdent}},
+		Sources: []ast.Expr{&ast.FuncCallExpr{}},
+		SourceCalls: []*CallInfo{
+			{CalleeName: "f"},
+		},
+	}
+	if !info.HasSiblingCallExpansion() {
+		t.Fatal("HasSiblingCallExpansion should be true for multi-target single-call assignment")
+	}
+
+	info = &AssignInfo{
+		Targets:     []AssignTarget{{Kind: TargetIdent}, {Kind: TargetIdent}, {Kind: TargetIdent}},
+		Sources:     []ast.Expr{&ast.NumberExpr{Value: "1"}, &ast.FuncCallExpr{}},
+		SourceCalls: []*CallInfo{nil, {CalleeName: "f"}},
+	}
+	if !info.HasSiblingCallExpansion() {
+		t.Fatal("HasSiblingCallExpansion should be true for trailing call expansion")
+	}
+
+	info = &AssignInfo{
+		Targets:     []AssignTarget{{Kind: TargetIdent}},
+		Sources:     []ast.Expr{&ast.FuncCallExpr{}},
+		SourceCalls: []*CallInfo{{CalleeName: "f"}},
+	}
+	if info.HasSiblingCallExpansion() {
+		t.Fatal("HasSiblingCallExpansion should be false for single-target assignment")
+	}
+
+	info = &AssignInfo{
+		Targets:     []AssignTarget{{Kind: TargetIdent}, {Kind: TargetIdent}},
+		Sources:     []ast.Expr{&ast.FuncCallExpr{}},
+		SourceCalls: []*CallInfo{nil},
+	}
+	if info.HasSiblingCallExpansion() {
+		t.Fatal("HasSiblingCallExpansion should be false when source call is nil")
+	}
+}
+
+func TestAssignInfo_ExpandingSourceCall(t *testing.T) {
+	info := &AssignInfo{
+		Targets:     []AssignTarget{{Kind: TargetIdent}, {Kind: TargetIdent}, {Kind: TargetIdent}},
+		Sources:     []ast.Expr{&ast.NumberExpr{Value: "1"}, &ast.FuncCallExpr{}},
+		SourceCalls: []*CallInfo{nil, {CalleeName: "tail"}},
+	}
+
+	call, start := info.ExpandingSourceCall()
+	if call == nil || call.CalleeName != "tail" || start != 1 {
+		t.Fatalf("ExpandingSourceCall mismatch: call=%+v start=%d", call, start)
+	}
+
+	info = &AssignInfo{
+		Targets:     []AssignTarget{{Kind: TargetIdent}, {Kind: TargetIdent}},
+		Sources:     []ast.Expr{&ast.FuncCallExpr{}, &ast.NumberExpr{Value: "2"}},
+		SourceCalls: []*CallInfo{{CalleeName: "head"}, nil},
+	}
+	call, _ = info.ExpandingSourceCall()
+	if call != nil {
+		t.Fatalf("ExpandingSourceCall should be nil when only non-trailing source is a call, got %+v", call)
+	}
+}
+
+func TestAssignInfo_EachSourceCall(t *testing.T) {
+	info := &AssignInfo{
+		SourceCalls: []*CallInfo{
+			{CalleeName: "a"},
+			nil,
+			{CalleeName: "c"},
+		},
+	}
+	var got []string
+	info.EachSourceCall(func(i int, call *CallInfo) {
+		got = append(got, call.CalleeName)
+		if (i != 0 && i != 2) || call == nil {
+			t.Fatalf("unexpected callback payload: i=%d call=%+v", i, call)
+		}
+	})
+	if len(got) != 2 || got[0] != "a" || got[1] != "c" {
+		t.Fatalf("EachSourceCall mismatch: got %v", got)
+	}
+}
+
+func TestAssignInfo_EachSource(t *testing.T) {
+	info := &AssignInfo{
+		Sources: []ast.Expr{
+			&ast.StringExpr{Value: "a"},
+			nil,
+			&ast.NumberExpr{Value: "1"},
+		},
+	}
+	var idxs []int
+	info.EachSource(func(i int, src ast.Expr) {
+		if src == nil {
+			t.Fatalf("EachSource should not yield nil src at index %d", i)
+		}
+		idxs = append(idxs, i)
+	})
+	if len(idxs) != 2 || idxs[0] != 0 || idxs[1] != 2 {
+		t.Fatalf("EachSource indexes mismatch: got %v", idxs)
+	}
+}
+
+func TestAssignInfo_EachTarget(t *testing.T) {
+	info := &AssignInfo{
+		Targets: []AssignTarget{
+			{Kind: TargetIdent, Name: "x"},
+			{Kind: TargetIdent, Name: "y"},
+		},
+	}
+	var names []string
+	info.EachTarget(func(i int, target AssignTarget) {
+		if i < 0 || i > 1 {
+			t.Fatalf("unexpected target index %d", i)
+		}
+		names = append(names, target.Name)
+	})
+	if len(names) != 2 || names[0] != "x" || names[1] != "y" {
+		t.Fatalf("EachTarget names mismatch: got %v", names)
+	}
+}
+
+func TestAssignInfo_EachTargetSource(t *testing.T) {
+	info := &AssignInfo{
+		Targets: []AssignTarget{
+			{Kind: TargetIdent, Name: "a"},
+			{Kind: TargetIdent, Name: "b"},
+			{Kind: TargetIdent, Name: "c"},
+		},
+		Sources: []ast.Expr{
+			&ast.StringExpr{Value: "x"},
+			nil,
+		},
+	}
+
+	var names []string
+	var nilSources int
+	info.EachTargetSource(func(i int, target AssignTarget, src ast.Expr) {
+		names = append(names, target.Name)
+		if (i == 1 || i == 2) && src == nil {
+			nilSources++
+		}
+	})
+
+	if len(names) != 3 || names[0] != "a" || names[1] != "b" || names[2] != "c" {
+		t.Fatalf("EachTargetSource target order mismatch: got %v", names)
+	}
+	if nilSources != 2 {
+		t.Fatalf("EachTargetSource nil source count mismatch: got %d", nilSources)
+	}
+}
+
 // TestCallInfo_Fields tests CallInfo fields.
 func TestCallInfo_Fields(t *testing.T) {
 	info := &CallInfo{
@@ -152,6 +446,45 @@ func TestReturnInfo_Fields(t *testing.T) {
 	}
 	if info.Names[0] != "x" {
 		t.Error("First name should be x")
+	}
+}
+
+func TestReturnInfo_SourceCallAt(t *testing.T) {
+	info := &ReturnInfo{
+		SourceCalls: []*CallInfo{
+			{CalleeName: "x"},
+			nil,
+		},
+	}
+
+	if got := info.SourceCallAt(0); got == nil || got.CalleeName != "x" {
+		t.Fatalf("SourceCallAt(0) mismatch: got %+v", got)
+	}
+	if got := info.SourceCallAt(1); got != nil {
+		t.Fatalf("SourceCallAt(1) should be nil, got %+v", got)
+	}
+	if got := info.SourceCallAt(2); got != nil {
+		t.Fatalf("SourceCallAt(2) should be nil, got %+v", got)
+	}
+}
+
+func TestReturnInfo_EachSourceCall(t *testing.T) {
+	info := &ReturnInfo{
+		SourceCalls: []*CallInfo{
+			{CalleeName: "x"},
+			nil,
+			{CalleeName: "z"},
+		},
+	}
+	var got []string
+	info.EachSourceCall(func(i int, call *CallInfo) {
+		got = append(got, call.CalleeName)
+		if (i != 0 && i != 2) || call == nil {
+			t.Fatalf("unexpected callback payload: i=%d call=%+v", i, call)
+		}
+	})
+	if len(got) != 2 || got[0] != "x" || got[1] != "z" {
+		t.Fatalf("EachSourceCall mismatch: got %v", got)
 	}
 }
 

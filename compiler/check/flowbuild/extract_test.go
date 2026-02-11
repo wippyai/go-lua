@@ -136,7 +136,7 @@ local y = x
 
 	// Log call info from graph before extraction
 	t.Log("Calls in graph:")
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
@@ -1016,6 +1016,105 @@ func TestMultiReturnExpansion(t *testing.T) {
 	}
 	if siblingQ != siblingR {
 		t.Error("q and r should reference the same SiblingAssignment")
+	}
+}
+
+func TestMultiReturnExpansion_TrailingCallBuildsTailSiblingAssignments(t *testing.T) {
+	code := `local a, q, r = 1, divmod(10, 3)`
+	chunk, err := parse.ParseString(code, "test.lua")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{HasVargs: true},
+		Stmts:   chunk,
+	}
+
+	graph := cfg.Build(fn, "divmod")
+	if graph == nil {
+		t.Fatal("nil graph")
+	}
+
+	divmodFn := typ.Func().
+		Param("a", typ.Number).
+		Param("b", typ.Number).
+		Returns(typ.Integer, typ.Integer).
+		Build()
+
+	symDivmod, _ := graph.SymbolAt(graph.Entry(), "divmod")
+	declaredTypes := flow.DeclaredTypes{
+		symDivmod: divmodFn,
+	}
+
+	base := scope.New()
+	scopes := phase.ComputeScopes(graph, base, nil, phase.ScopeOptions{})
+	ctx := api.NewDeclaredEnv(api.DeclaredEnvConfig{
+		Graph:         graph,
+		DeclaredTypes: declaredTypes,
+		BaseScope:     base,
+	})
+
+	synthFunc := func(expr ast.Expr, p cfg.Point) typ.Type {
+		if ident, ok := expr.(*ast.IdentExpr); ok {
+			if sym, ok := graph.SymbolAt(p, ident.Value); ok {
+				if tv := ctx.Types().EffectiveTypeAt(p, sym); tv.State == flow.StateResolved {
+					return tv.Type
+				}
+			}
+		}
+		return nil
+	}
+
+	inputs := flowbuild.Run(&core.FlowContext{
+		Graph: graph, Scopes: scopes,
+		CheckCtx: ctx,
+		Base:     base,
+		API: &testSynthAPI{
+			typeOf: synthFunc,
+			expandValuesWithSpec: func(exprs []ast.Expr, count int, p cfg.Point, overlay api.SpecTypes) []typ.Type {
+				return []typ.Type{typ.Number, typ.Integer, typ.Integer}
+			},
+		},
+	})
+	if inputs == nil {
+		t.Fatal("nil inputs")
+	}
+
+	symA, okA := graph.SymbolAt(graph.Exit(), "a")
+	symQ, okQ := graph.SymbolAt(graph.Exit(), "q")
+	symR, okR := graph.SymbolAt(graph.Exit(), "r")
+	if !okA || !okQ || !okR {
+		t.Fatal("a, q, r not found in graph symbols")
+	}
+
+	var verA, verQ, verR int
+	for _, a := range inputs.Assignments {
+		switch a.TargetPath.Symbol {
+		case symA:
+			verA = graph.VisibleVersion(a.Point, symA).ID
+		case symQ:
+			verQ = graph.VisibleVersion(a.Point, symQ).ID
+		case symR:
+			verR = graph.VisibleVersion(a.Point, symR).ID
+		}
+	}
+	if verA == 0 || verQ == 0 || verR == 0 {
+		t.Fatal("expected SSA versions for a, q, r")
+	}
+
+	siblingA := inputs.SiblingAssignments[flow.SiblingKey{Symbol: symA, VersionID: verA}]
+	if siblingA != nil {
+		t.Fatal("a should not be part of trailing-call sibling assignment")
+	}
+
+	siblingQ := inputs.SiblingAssignments[flow.SiblingKey{Symbol: symQ, VersionID: verQ}]
+	siblingR := inputs.SiblingAssignments[flow.SiblingKey{Symbol: symR, VersionID: verR}]
+	if siblingQ == nil || siblingR == nil {
+		t.Fatal("q and r should have sibling assignments for trailing call expansion")
+	}
+	if siblingQ != siblingR {
+		t.Fatal("q and r should share the same trailing-call sibling assignment")
 	}
 }
 

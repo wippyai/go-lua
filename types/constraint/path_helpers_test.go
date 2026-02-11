@@ -1,6 +1,7 @@
 package constraint
 
 import (
+	"strconv"
 	"testing"
 )
 
@@ -113,6 +114,15 @@ func TestPathHelpers_Consistency(t *testing.T) {
 	}
 }
 
+func TestPathHelpers_NegativeIndicesRejected(t *testing.T) {
+	if p := ParamPath(-1); !p.IsEmpty() {
+		t.Fatalf("ParamPath(-1) should be empty path, got %+v", p)
+	}
+	if p := RetPath(-1); !p.IsEmpty() {
+		t.Fatalf("RetPath(-1) should be empty path, got %+v", p)
+	}
+}
+
 func TestPathHelpers_UniqueKeys(t *testing.T) {
 	seen := make(map[PathKey]string)
 	paths := []struct {
@@ -133,5 +143,88 @@ func TestPathHelpers_UniqueKeys(t *testing.T) {
 			t.Errorf("Key collision: %s and %s both have key %q", existing, p.name, key)
 		}
 		seen[key] = p.name
+	}
+}
+
+func TestPlaceholderIndexFromString(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	overflow := strconv.FormatInt(int64(maxInt), 10) + "0"
+
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{"$0", 0},
+		{"$42", 42},
+		{"param[0]", 0},
+		{"param[42]", 42},
+		{"$-1", -1},
+		{"param[-1]", -1},
+		{"$", -1},
+		{"param[]", -1},
+		{"param[abc]", -1},
+		{"param[1", -1},
+		{"x", -1},
+		{"$" + overflow, -1},
+		{"param[" + overflow + "]", -1},
+	}
+
+	for _, tc := range tests {
+		if got := PlaceholderIndexFromString(tc.input); got != tc.want {
+			t.Errorf("PlaceholderIndexFromString(%q) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestReturnIndexFromString(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	overflow := strconv.FormatInt(int64(maxInt), 10) + "0"
+
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{"ret[0]", 0},
+		{"ret[42]", 42},
+		{"ret[-1]", -1},
+		{"ret[]", -1},
+		{"ret[abc]", -1},
+		{"ret[1", -1},
+		{"ret1]", -1},
+		{"x", -1},
+		{"ret[" + overflow + "]", -1},
+	}
+
+	for _, tc := range tests {
+		if got := ReturnIndexFromString(tc.input); got != tc.want {
+			t.Errorf("ReturnIndexFromString(%q) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestPlaceholderArgIndex(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     Path
+		argCount int
+		wantIdx  int
+		wantOK   bool
+	}{
+		{name: "placeholder in range", path: ParamPath(0), argCount: 1, wantIdx: 0, wantOK: true},
+		{name: "placeholder out of range", path: ParamPath(1), argCount: 1, wantOK: false},
+		{name: "non-placeholder path", path: Path{Root: "x"}, argCount: 1, wantOK: false},
+		{name: "empty arg list", path: ParamPath(0), argCount: 0, wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotIdx, gotOK := PlaceholderArgIndex(tt.path, tt.argCount)
+			if gotOK != tt.wantOK {
+				t.Fatalf("PlaceholderArgIndex(%s, %d) ok = %v, want %v", tt.path, tt.argCount, gotOK, tt.wantOK)
+			}
+			if gotOK && gotIdx != tt.wantIdx {
+				t.Fatalf("PlaceholderArgIndex(%s, %d) idx = %d, want %d", tt.path, tt.argCount, gotIdx, tt.wantIdx)
+			}
+		})
 	}
 }

@@ -70,6 +70,27 @@ func TestResolveType_MultipleAnnotations(t *testing.T) {
 	}
 }
 
+func TestResolveType_NumberAnnotation_HexFloatArg(t *testing.T) {
+	resolver := New(Config{})
+	sc := scope.New()
+
+	expr := &ast.PrimitiveTypeExpr{
+		Name: "number",
+		Annotations: []ast.AnnotationExpr{
+			{Name: "min", Args: []ast.Expr{&ast.NumberExpr{Value: "0x1p2"}}},
+		},
+	}
+
+	result := resolver.ResolveType(expr, sc)
+	annotated, ok := result.(*typ.Annotated)
+	if !ok {
+		t.Fatalf("expected *typ.Annotated, got %T", result)
+	}
+	if got := annotated.Annotations[0].Arg; got != float64(4) {
+		t.Fatalf("annotation arg = %v, want 4", got)
+	}
+}
+
 func TestResolveType_StringAnnotation(t *testing.T) {
 	resolver := New(Config{})
 	sc := scope.New()

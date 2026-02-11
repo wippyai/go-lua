@@ -18,7 +18,6 @@ package pipeline
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
@@ -151,7 +150,12 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 
 	store := sess.StoreHandle()
 	parentHash := uint64(0)
-	if parent != nil {
+	if store != nil {
+		if stable := store.GraphParentHashOf(graph.ID()); stable != 0 {
+			parentHash = stable
+		}
+	}
+	if parentHash == 0 && parent != nil {
 		parentHash = parent.Hash()
 	}
 
@@ -303,12 +307,12 @@ func collectGlobalNames(globalTypes map[string]typ.Type) []string {
 	if globalTypes == nil {
 		return nil
 	}
-	names := make([]string, 0, len(globalTypes))
-	for name := range globalTypes {
+	all := cfg.SortedFieldNames(globalTypes)
+	names := make([]string, 0, len(all))
+	for _, name := range all {
 		if name != "" {
 			names = append(names, name)
 		}
 	}
-	sort.Strings(names)
 	return names
 }

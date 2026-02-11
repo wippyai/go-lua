@@ -1,12 +1,12 @@
 package decl
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/tblutil"
+	"github.com/wippyai/go-lua/compiler/check/modules"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -76,12 +76,7 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 	if fc.CheckCtx != nil && fc.CheckCtx.Bindings() != nil {
 		bindings = fc.CheckCtx.Bindings()
 	}
-	globalNames := make([]string, 0, len(fc.Globals))
-	for name := range fc.Globals {
-		globalNames = append(globalNames, name)
-	}
-	sort.Strings(globalNames)
-	for _, name := range globalNames {
+	for _, name := range cfg.SortedFieldNames(fc.Globals) {
 		t := fc.Globals[name]
 		if t == nil {
 			continue
@@ -125,13 +120,14 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 		}
 		sc := fc.Scopes[p]
 
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Name == "" {
-				continue
+				return
 			}
 
 			sym := target.Symbol
-			hasAnnotation := i < len(info.TypeAnnotations) && info.TypeAnnotations[i] != nil
+			annExpr := info.TypeAnnotationAt(i)
+			hasAnnotation := annExpr != nil
 
 			if hasAnnotation {
 				if inputs.AnnotatedVars == nil {
@@ -140,7 +136,7 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 				annotate := false
 				var annType typ.Type
 				if fc.Services != nil {
-					annType = fc.Services.ResolveTypeExpr(info.TypeAnnotations[i], sc)
+					annType = fc.Services.ResolveTypeExpr(annExpr, sc)
 					if annType != nil {
 						resolved := resolve.Ref(annType, sc)
 						if typ.IsSoft(annType, typ.SoftAnnotationPolicy) {
@@ -169,8 +165,8 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 				if annotate {
 					inputs.AnnotatedVars[sym] = true
 				}
-			} else if fc.Services != nil && i < len(info.Sources) {
-				if fnExpr, ok := info.Sources[i].(*ast.FunctionExpr); ok {
+			} else if fc.Services != nil {
+				if fnExpr, ok := info.SourceAt(i).(*ast.FunctionExpr); ok && tblutil.FunctionHasAnnotations(fnExpr) {
 					fnType := fc.Services.ResolveFunctionSignature(fnExpr, sc)
 					if fnType != nil && len(fnType.Returns) > 0 {
 						if inputs.AnnotatedVars == nil {
@@ -181,7 +177,7 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 					}
 				}
 			}
-		}
+		})
 	})
 }
 
@@ -191,41 +187,14 @@ func ExtractModuleAliases(fc *core.FlowContext, inputs *flow.Inputs) {
 	if fc.Graph == nil || inputs == nil {
 		return
 	}
-
-	fc.Graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil {
-			return
-		}
-
-		for i, target := range info.Targets {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
-			}
-			if i >= len(info.Sources) {
-				continue
-			}
-			source := info.Sources[i]
-			if source == nil {
-				continue
-			}
-
-			call, ok := source.(*ast.FuncCallExpr)
-			if !ok || call.Method != "" || call.Receiver != nil {
-				continue
-			}
-			ident, ok := call.Func.(*ast.IdentExpr)
-			if !ok || ident.Value != "require" {
-				continue
-			}
-			if len(call.Args) != 1 {
-				continue
-			}
-			strArg, ok := call.Args[0].(*ast.StringExpr)
-			if !ok {
-				continue
-			}
-
-			inputs.ModuleAliases[target.Symbol] = strArg.Value
-		}
-	})
+	aliases := modules.CollectAliases(fc.Graph)
+	if len(aliases) == 0 {
+		return
+	}
+	if inputs.ModuleAliases == nil {
+		inputs.ModuleAliases = make(map[cfg.SymbolID]string, len(aliases))
+	}
+	for sym, path := range aliases {
+		inputs.ModuleAliases[sym] = path
+	}
 }

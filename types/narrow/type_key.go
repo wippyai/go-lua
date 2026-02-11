@@ -2,6 +2,7 @@ package narrow
 
 import (
 	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -71,6 +72,16 @@ func BuiltinTypeKey(name string) TypeKey {
 	return TypeKey{Kind: TypeKeyBuiltin, Name: name}
 }
 
+// KnownBuiltinTypeKey creates a TypeKey for a recognized Lua type() result.
+//
+// Returns false when name is not a supported built-in type string.
+func KnownBuiltinTypeKey(name string) (TypeKey, bool) {
+	if kind.FromString(name) == kind.Unknown {
+		return TypeKey{}, false
+	}
+	return BuiltinTypeKey(name), true
+}
+
 // HashTypeKey creates a TypeKey for a hash-based type identity.
 //
 // Hash-based type keys are used for user-defined types (records, interfaces)
@@ -90,6 +101,20 @@ func HashTypeKey(hash uint64) TypeKey {
 //
 // A zero key represents no type and should not be used for narrowing.
 func (k TypeKey) IsZero() bool { return k.Kind == TypeKeyInvalid }
+
+// BuiltinKind resolves a built-in key name to a Kind.
+//
+// Returns false when k is not a built-in key or when its name is unknown.
+func (k TypeKey) BuiltinKind() (kind.Kind, bool) {
+	if k.Kind != TypeKeyBuiltin {
+		return kind.Unknown, false
+	}
+	resolved := kind.FromString(k.Name)
+	if resolved == kind.Unknown {
+		return kind.Unknown, false
+	}
+	return resolved, true
+}
 
 // Hash64 computes a 64-bit hash for the type key suitable for use in hash tables.
 //

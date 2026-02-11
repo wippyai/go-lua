@@ -2,8 +2,10 @@ package extract
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/cfg/analysis"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -33,6 +35,7 @@ func inferCallbackEnvOverlays(
 	graph *cfg.Graph,
 	paramSlots []cfg.ParamSlot,
 	synthExpr func(ast.Expr, cfg.Point) typ.Type,
+	moduleBindings *bind.BindingTable,
 ) map[int]map[string]typ.Type {
 	if graph == nil || len(paramSlots) == 0 {
 		return nil
@@ -40,8 +43,8 @@ func inferCallbackEnvOverlays(
 
 	paramSet := make(map[cfg.SymbolID]int, len(paramSlots))
 	for _, slot := range paramSlots {
-		if slot.SourceIndex >= 0 && slot.Symbol != 0 {
-			paramSet[slot.Symbol] = slot.SourceIndex
+		if srcIdx, ok := slot.SourceParamIndex(); ok && slot.Symbol != 0 {
+			paramSet[slot.Symbol] = srcIdx
 		}
 	}
 
@@ -54,33 +57,35 @@ func inferCallbackEnvOverlays(
 		if info == nil || info.IsLocal {
 			return
 		}
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
 			if target.Kind != cfg.TargetField {
-				continue
+				return
 			}
 			if target.BaseName != "_G" || len(target.FieldPath) != 1 {
-				continue
-			}
-			if i >= len(info.Sources) {
-				continue
+				return
 			}
 			name := target.FieldPath[0]
-			src := info.Sources[i]
+			if src == nil {
+				return
+			}
 			if _, isNil := src.(*ast.NilExpr); isNil {
 				clears = append(clears, globalClear{point: p, name: name})
 			} else {
 				setups = append(setups, globalSetup{point: p, name: name, expr: src})
 			}
-		}
+		})
 	})
 
 	// Collect parameter calls.
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
-		if info == nil || info.CalleeSymbol == 0 {
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil {
 			return
 		}
-		if idx, ok := paramSet[info.CalleeSymbol]; ok {
-			calls = append(calls, paramCall{point: p, paramIndex: idx})
+		for _, sym := range callsite.CalleeSymbolCandidatesWithAliases(info, graph, graph.Bindings(), moduleBindings) {
+			if idx, ok := paramSet[sym]; ok {
+				calls = append(calls, paramCall{point: p, paramIndex: idx})
+				break
+			}
 		}
 	})
 

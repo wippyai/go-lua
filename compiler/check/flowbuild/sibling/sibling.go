@@ -8,10 +8,11 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 )
 
-// ConstraintsForIdent returns sibling constraints for error-return patterns using bindings.
-// If wantNil is true, siblings are constrained to nil (error path).
-// If wantNil is false, siblings are constrained to not-nil (success path).
-func ConstraintsForIdent(ident *ast.IdentExpr, p cfg.Point, inputs *flow.Inputs, wantNil bool) []constraint.Constraint {
+// ConstraintsForIdent returns sibling constraints derived from correlated
+// multi-return assignments using bindings.
+//
+// wantNonNil means the queried symbol is known non-nil/truthy at this point.
+func ConstraintsForIdent(ident *ast.IdentExpr, p cfg.Point, inputs *flow.Inputs, wantNonNil bool) []constraint.Constraint {
 	if ident == nil || inputs == nil || inputs.SiblingAssignments == nil || inputs.Graph == nil {
 		return nil
 	}
@@ -31,11 +32,11 @@ func ConstraintsForIdent(ident *ast.IdentExpr, p cfg.Point, inputs *flow.Inputs,
 	if ver.ID == 0 {
 		return nil
 	}
-	return ConstraintsForSymbol(sym, ver.ID, inputs, wantNil, bindings)
+	return ConstraintsForSymbol(sym, ver.ID, inputs, wantNonNil, bindings)
 }
 
 // ConstraintsForSymbol returns sibling constraints given a resolved symbol.
-func ConstraintsForSymbol(sym cfg.SymbolID, versionID int, inputs *flow.Inputs, wantNil bool, bindings *bind.BindingTable) []constraint.Constraint {
+func ConstraintsForSymbol(sym cfg.SymbolID, versionID int, inputs *flow.Inputs, wantNonNil bool, bindings *bind.BindingTable) []constraint.Constraint {
 	if sym == 0 || versionID == 0 || inputs == nil || inputs.SiblingAssignments == nil {
 		return nil
 	}
@@ -57,8 +58,8 @@ func ConstraintsForSymbol(sym cfg.SymbolID, versionID int, inputs *flow.Inputs, 
 
 	if len(sibling.Correlations) > 0 || len(sibling.CoCorrelations) > 0 {
 		var result []constraint.Constraint
-		result = append(result, correlatedSiblingConstraints(sibling, pos, wantNil, bindings)...)
-		result = append(result, coCorrelatedSiblingConstraints(sibling, pos, wantNil, bindings)...)
+		result = append(result, correlatedSiblingConstraints(sibling, pos, wantNonNil, bindings)...)
+		result = append(result, coCorrelatedSiblingConstraints(sibling, pos, wantNonNil, bindings)...)
 		if len(result) > 0 {
 			return result
 		}
@@ -66,9 +67,11 @@ func ConstraintsForSymbol(sym cfg.SymbolID, versionID int, inputs *flow.Inputs, 
 	return nil
 }
 
-// correlatedSiblingConstraints emits constraints using spec-driven ErrorReturn correlations.
-// Bidirectional: checking error narrows value, and checking value narrows error.
-func correlatedSiblingConstraints(sibling *flow.SiblingAssignment, pos int, wantNil bool, bindings *bind.BindingTable) []constraint.Constraint {
+// correlatedSiblingConstraints emits constraints for inverse correlations
+// (ErrorReturn): one side nil implies the partner non-nil, and vice versa.
+// This is positional-agnostic: it applies symmetrically whether the queried
+// symbol is the value slot or the error slot.
+func correlatedSiblingConstraints(sibling *flow.SiblingAssignment, pos int, wantNonNil bool, bindings *bind.BindingTable) []constraint.Constraint {
 	var result []constraint.Constraint
 	for _, cor := range sibling.Correlations {
 		partnerIdx := -1
@@ -96,7 +99,8 @@ func correlatedSiblingConstraints(sibling *flow.SiblingAssignment, pos int, want
 			}
 		}
 		path := constraint.Path{Root: root, Symbol: sibSym}
-		if wantNil {
+		// Inverse relation: current non-nil -> partner nil, current nil -> partner non-nil.
+		if wantNonNil {
 			result = append(result, constraint.IsNil{Path: path})
 		} else {
 			result = append(result, constraint.NotNil{Path: path})
@@ -105,11 +109,9 @@ func correlatedSiblingConstraints(sibling *flow.SiblingAssignment, pos int, want
 	return result
 }
 
-// coCorrelatedSiblingConstraints emits constraints using spec-driven CorrelatedReturn correlations.
-// Same-direction: when one index is non-nil, the partner is also non-nil (and vice versa).
-// The direction is flipped relative to correlatedSiblingConstraints because the call site
-// applies inverse semantics for ErrorReturn; co-correlation compensates by flipping again.
-func coCorrelatedSiblingConstraints(sibling *flow.SiblingAssignment, pos int, wantNil bool, bindings *bind.BindingTable) []constraint.Constraint {
+// coCorrelatedSiblingConstraints emits constraints for same-direction correlations
+// (CorrelatedReturn): one side nil implies partner nil; non-nil implies non-nil.
+func coCorrelatedSiblingConstraints(sibling *flow.SiblingAssignment, pos int, wantNonNil bool, bindings *bind.BindingTable) []constraint.Constraint {
 	var result []constraint.Constraint
 	for _, cor := range sibling.CoCorrelations {
 		partnerIdx := -1
@@ -137,7 +139,8 @@ func coCorrelatedSiblingConstraints(sibling *flow.SiblingAssignment, pos int, wa
 			}
 		}
 		path := constraint.Path{Root: root, Symbol: sibSym}
-		if wantNil {
+		// Same-direction relation: current non-nil -> partner non-nil, current nil -> partner nil.
+		if wantNonNil {
 			result = append(result, constraint.NotNil{Path: path})
 		} else {
 			result = append(result, constraint.IsNil{Path: path})

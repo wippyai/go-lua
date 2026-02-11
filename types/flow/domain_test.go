@@ -397,6 +397,31 @@ func TestProductDomain_Join(t *testing.T) {
 	}
 }
 
+func TestProductDomain_NarrowedChildPaths_IncludesIndexChildren(t *testing.T) {
+	env := makeMockEnv(nil)
+	d := NewProductDomain(env)
+
+	parent := constraint.PathKey("sym1@1")
+	indexChild := constraint.PathKey(`sym1@1["meta.type"]`)
+	fieldChild := constraint.PathKey("sym1@1.ok")
+	unrelated := constraint.PathKey(`sym2@1["meta.type"]`)
+
+	d.Type.Narrowed[indexChild] = typ.String
+	d.Shape.Narrowed[fieldChild] = typ.Boolean
+	d.Type.Narrowed[unrelated] = typ.Number
+
+	got := d.NarrowedChildPaths(parent)
+	if _, ok := got[indexChild]; !ok {
+		t.Fatalf("expected index child narrowing for %q", indexChild)
+	}
+	if _, ok := got[fieldChild]; !ok {
+		t.Fatalf("expected field child narrowing for %q", fieldChild)
+	}
+	if _, ok := got[unrelated]; ok {
+		t.Fatalf("unexpected unrelated child narrowing for %q", unrelated)
+	}
+}
+
 func TestClassifyAtom(t *testing.T) {
 	tests := []struct {
 		name     string

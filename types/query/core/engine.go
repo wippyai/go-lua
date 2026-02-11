@@ -184,7 +184,7 @@ func NewEngine() *Engine {
 		return binaryOpCompute(key.left, key.op, key.right)
 	}, typesEqual, widenType)
 	e.callableQ = db.NewQuery("Callable", func(_ *db.QueryContext, key unwrapKey) callableResult {
-		fn, ok := callableCompute(key.t)
+		fn, ok := Callable(key.t)
 		return callableResult{fn: fn, ok: ok}
 	}, callableResultEqual)
 	e.metaQ = db.NewQueryWithWiden("GetMetamethod", func(_ *db.QueryContext, key fieldKey) fieldResult {

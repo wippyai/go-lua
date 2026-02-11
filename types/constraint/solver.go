@@ -745,10 +745,14 @@ func isExcludableValueType(t typ.Type) bool {
 			return false
 		},
 		Default: func(t typ.Type) bool {
-			switch t.Kind() {
+			k := t.Kind()
+			if k.IsPlaceholder() {
+				return false
+			}
+			switch k {
 			case kind.Record, kind.Interface, kind.Map, kind.Array, kind.Tuple, kind.Function:
 				return true
-			case kind.Any, kind.Unknown, kind.String, kind.Number, kind.Boolean, kind.Integer:
+			case kind.String, kind.Number, kind.Boolean, kind.Integer:
 				return false
 			default:
 				return false

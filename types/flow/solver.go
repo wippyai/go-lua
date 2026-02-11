@@ -3,14 +3,12 @@ package flow
 import (
 	"slices"
 	"sort"
-	"strings"
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -508,7 +506,7 @@ func (s *Solution) deriveTypeFrom(base typ.Type, segs []constraint.Segment) (typ
 // that case so callers can try index-based access as a fallback, which may
 // succeed if the record has a map component.
 func isOpenRecordFallback(base typ.Type, result typ.Type) bool {
-	if result == nil || result.Kind() != kind.Unknown {
+	if !typ.IsUnknown(result) {
 		return false
 	}
 	rec, ok := base.(*typ.Record)
@@ -516,14 +514,20 @@ func isOpenRecordFallback(base typ.Type, result typ.Type) bool {
 }
 
 func (s *Solution) resolveTypeKey(key narrow.TypeKey) typ.Type {
-	if s.inputs == nil || s.inputs.TypeKeys == nil {
+	if s.inputs == nil {
 		return nil
 	}
 	switch key.Kind {
 	case narrow.TypeKeyHash:
+		if s.inputs.TypeKeys == nil {
+			return nil
+		}
 		return s.inputs.TypeKeys[key.Hash]
 	case narrow.TypeKeyBuiltin:
-		return narrow.TypeForKind(kind.FromString(key.Name))
+		if builtinKind, ok := key.BuiltinKind(); ok {
+			return narrow.TypeForKind(builtinKind)
+		}
+		return nil
 	default:
 		return nil
 	}
@@ -538,27 +542,30 @@ func (s *Solution) resolveTypeKey(key narrow.TypeKey) typ.Type {
 //
 // This enables gradual type construction for tables built incrementally.
 func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.Type {
-	// Collect field assignments for this base key
-	prefix := baseKey + "."
 	var fields []typ.Field
+	baseSym, baseVersion, _, ok := pathkey.ParseKey(constraint.PathKey(baseKey))
+	if !ok {
+		return baseType
+	}
 	keys := make([]string, 0, len(s.values))
 	for key := range s.values {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if len(key) <= len(prefix) {
+		childSym, childVersion, suffix, ok := pathkey.ParseKey(constraint.PathKey(key))
+		if !ok || childSym != baseSym || childVersion != baseVersion || suffix == "" {
 			continue
 		}
-		if key[:len(prefix)] != prefix {
+		segs := pathkey.ParseSuffix(suffix)
+		if len(segs) != 1 {
 			continue
 		}
-		// Extract field name (only direct children, not nested paths)
-		suffix := key[len(prefix):]
-		if idx := strings.IndexAny(suffix, ".["); idx != -1 {
-			continue // Skip nested paths like ".foo.bar" or ".foo[0]"
+		seg := segs[0]
+		switch seg.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			fields = append(fields, typ.Field{Name: seg.Name, Type: s.values[key]})
 		}
-		fields = append(fields, typ.Field{Name: suffix, Type: s.values[key]})
 	}
 
 	if len(fields) == 0 {
@@ -588,7 +595,16 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 			}
 			existing := make(map[string]bool)
 			for _, f := range r.Fields {
-				builder.Field(f.Name, f.Type)
+				switch {
+				case f.Optional && f.Readonly:
+					builder.OptReadonlyField(f.Name, f.Type)
+				case f.Optional:
+					builder.OptField(f.Name, f.Type)
+				case f.Readonly:
+					builder.ReadonlyField(f.Name, f.Type)
+				default:
+					builder.Field(f.Name, f.Type)
+				}
 				existing[f.Name] = true
 			}
 			for _, f := range fields {

@@ -149,6 +149,14 @@ func TestIntConstFromExpr_InvalidNumber(t *testing.T) {
 	}
 }
 
+func TestIntConstFromExpr_FloatRejected(t *testing.T) {
+	expr := &ast.NumberExpr{Value: "3.14"}
+	_, ok := numconst.IntConstFromExpr(expr)
+	if ok {
+		t.Error("expected ok=false for float number")
+	}
+}
+
 func TestNumericConstraintFromComparisonWithBindings_LtPaths(t *testing.T) {
 	lhs := &ast.IdentExpr{Value: "a"}
 	rhs := &ast.IdentExpr{Value: "b"}

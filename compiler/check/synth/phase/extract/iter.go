@@ -60,10 +60,11 @@ func (s *Synthesizer) inferIterVarsFromCallCore(call *ast.FuncCallExpr, count in
 		return nil
 	}
 
-	if iter.Source.Index < 0 || iter.Source.Index >= len(call.Args) {
+	sourceIdx, ok := effect.ResolveParamIndex(iter.Source, len(call.Args))
+	if !ok {
 		return nil
 	}
-	sourceType := synthOne(call.Args[iter.Source.Index])
+	sourceType := synthOne(call.Args[sourceIdx])
 	if sourceType == nil {
 		return nil
 	}

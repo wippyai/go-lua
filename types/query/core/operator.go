@@ -25,24 +25,8 @@ func binaryOpCompute(left typ.Type, op string, right typ.Type) typ.Type {
 	left = unwrap.Alias(left)
 	right = unwrap.Alias(right)
 
-	// Handle any/unknown
-	// For arithmetic operators, if one operand is numeric and the other is unknown,
-	// result is the numeric type (Lua arithmetic always produces numbers).
-	if left.Kind() == kind.Unknown || right.Kind() == kind.Unknown {
-		switch op {
-		case "+", "-", "*", "/", "%", "^", "//":
-			if left.Kind() == kind.Unknown && isNumeric(right) {
-				return numericResultType(op, right)
-			}
-			if right.Kind() == kind.Unknown && isNumeric(left) {
-				return numericResultType(op, left)
-			}
-		}
-		return typ.Unknown
-	}
-
-	if left.Kind() == kind.Any || right.Kind() == kind.Any {
-		return binaryOpAny(op)
+	if top, ok := binaryOpTopTypes(left, op, right); ok {
+		return top
 	}
 
 	// Handle unions - distribute operation over members
@@ -116,16 +100,8 @@ func unaryOpCompute(op string, operand typ.Type) typ.Type {
 	// Unwrap type aliases to get underlying type
 	operand = unwrap.Alias(operand)
 
-	// Handle any/unknown
-	if operand.Kind() == kind.Unknown {
-		if op == "#" {
-			return typ.Integer
-		}
-		return typ.Unknown
-	}
-
-	if operand.Kind() == kind.Any {
-		return unaryOpAny(op)
+	if top, ok := unaryOpTopType(op, operand); ok {
+		return top
 	}
 
 	// Handle unions
@@ -604,6 +580,46 @@ func unaryOpAny(op string) typ.Type {
 	default:
 		return typ.Any
 	}
+}
+
+// binaryOpTopTypes resolves any/unknown combinations before regular operator flow.
+func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool) {
+	leftUnknown := typ.IsUnknown(left)
+	rightUnknown := typ.IsUnknown(right)
+
+	// For arithmetic operators, unknown + numeric preserves numeric result shape.
+	if leftUnknown || rightUnknown {
+		switch op {
+		case "+", "-", "*", "/", "%", "^", "//":
+			if leftUnknown && isNumeric(right) {
+				return numericResultType(op, right), true
+			}
+			if rightUnknown && isNumeric(left) {
+				return numericResultType(op, left), true
+			}
+		}
+		return typ.Unknown, true
+	}
+
+	if typ.IsAny(left) || typ.IsAny(right) {
+		return binaryOpAny(op), true
+	}
+
+	return nil, false
+}
+
+// unaryOpTopType resolves any/unknown for unary operators.
+func unaryOpTopType(op string, operand typ.Type) (typ.Type, bool) {
+	if typ.IsUnknown(operand) {
+		if op == "#" {
+			return typ.Integer, true
+		}
+		return typ.Unknown, true
+	}
+	if typ.IsAny(operand) {
+		return unaryOpAny(op), true
+	}
+	return nil, false
 }
 
 // binaryOpUnion distributes a binary operator over left union members.

@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 )
 
 func TestSynthFunctionType_Nil(t *testing.T) {
@@ -230,14 +229,14 @@ func TestSynthFunctionType_OptionalParam(t *testing.T) {
 }
 
 func TestJoinTwo_Same(t *testing.T) {
-	result := join.Two(typ.String, typ.String)
+	result := typ.JoinPreferNonSoft(typ.String, typ.String)
 	if result != typ.String {
 		t.Fatalf("got %v, want string", result)
 	}
 }
 
 func TestJoinTwo_Different(t *testing.T) {
-	result := join.Two(typ.String, typ.Integer)
+	result := typ.JoinPreferNonSoft(typ.String, typ.Integer)
 	union, ok := result.(*typ.Union)
 	if !ok {
 		t.Fatalf("got %T, want union", result)

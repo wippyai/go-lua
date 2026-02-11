@@ -97,13 +97,7 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 			if targetKey != "" {
 				old := s.values[string(targetKey)]
 				if len(assign.TargetPath.Segments) > 0 && assignedType.Kind() == kind.Nil {
-					// Treat nil-only field assignments as "optional unknown" to avoid
-					// collapsing dynamic table fields to nil when they are later narrowed.
-					if old != nil && old.Kind() != kind.Unknown {
-						assignedType = typ.NewUnion(old, typ.Nil)
-					} else {
-						assignedType = typ.NewOptional(typ.Unknown)
-					}
+					assignedType = s.normalizeNilFieldAssignmentType(p, assign.TargetPath, old)
 				}
 				if !typ.TypeEquals(old, assignedType) {
 					s.values[string(targetKey)] = assignedType
@@ -144,6 +138,30 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 	}
 
 	return changedKeys
+}
+
+func (s *Solution) normalizeNilFieldAssignmentType(p cfg.Point, targetPath constraint.Path, old typ.Type) typ.Type {
+	if !typ.IsAbsentOrUnknown(old) {
+		return typ.JoinPreferNonSoft(old, typ.Nil)
+	}
+	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
+		return typ.Nil
+	}
+
+	rootPath := constraint.Path{
+		Root:    targetPath.Root,
+		Symbol:  targetPath.Symbol,
+		Version: targetPath.Version,
+	}
+	rootType := s.TypeAt(p, rootPath)
+	if rootType == nil {
+		return typ.Nil
+	}
+	derived, ok := s.deriveTypeFrom(rootType, targetPath.Segments)
+	if !ok || typ.IsAbsentOrUnknown(derived) {
+		return typ.Nil
+	}
+	return typ.JoinPreferNonSoft(derived, typ.Nil)
 }
 
 // iterVarTypeAt derives iterator variable type from the iterator source at point p.
@@ -373,7 +391,7 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 	// Resolve value type from flow state or use fallback
 	valueType := tm.ValueType
 	if tm.ValuePath.HasSymbol() {
-		if resolved := s.NarrowedTypeAt(p, tm.ValuePath); resolved != nil && resolved.Kind() != kind.Unknown {
+		if resolved := s.NarrowedTypeAt(p, tm.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
 			valueType = resolved
 		}
 	}
@@ -404,7 +422,7 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 		if keyType == nil {
 			keyType = typ.String
 		}
-		newType = widenMapValueArray(currentType, keyType, valueType)
+		newType = WidenMapValueArray(currentType, keyType, valueType)
 	} else {
 		newType = WidenArrayElementType(currentType, valueType, typ.JoinPreferNonSoft)
 	}
@@ -438,7 +456,7 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 	// Resolve value type from flow state or use fallback
 	valueType := cm.ValueType
 	if cm.ValuePath.HasSymbol() {
-		if resolved := s.NarrowedTypeAt(p, cm.ValuePath); resolved != nil && resolved.Kind() != kind.Unknown {
+		if resolved := s.NarrowedTypeAt(p, cm.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
 			valueType = resolved
 		}
 	}
@@ -502,7 +520,7 @@ func widenContainerElementType(containerType typ.Type, valueType typ.Type) typ.T
 			oldElem := inst.TypeArgs[0]
 			// If old element is unknown, replace it with value type (not union)
 			var newElem typ.Type
-			if oldElem == nil || oldElem.Kind() == kind.Unknown { // Unknown replaced explicitly
+			if typ.IsAbsentOrUnknown(oldElem) { // Unknown replaced explicitly
 				newElem = valueType
 			} else {
 				newElem = join.Types(oldElem, valueType)
@@ -520,7 +538,7 @@ func widenContainerElementType(containerType typ.Type, valueType typ.Type) typ.T
 			// Handle array types
 			oldElem := arr.Element
 			var newElem typ.Type
-			if oldElem == nil || oldElem.Kind() == kind.Unknown { // Unknown replaced explicitly
+			if typ.IsAbsentOrUnknown(oldElem) { // Unknown replaced explicitly
 				newElem = valueType
 			} else {
 				newElem = join.Types(oldElem, valueType)
@@ -623,7 +641,7 @@ func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func
 	})
 }
 
-// widenMapValueArray widens a map's value type by adding an element to its array component.
+// WidenMapValueArray widens a map's value type by adding an element to its array component.
 //
 // This handles the pattern: suites[name] = suites[name] or {}; table.insert(suites[name], test)
 // where suites is {[string]: Test[]} and we need to widen the array element type.
@@ -636,7 +654,7 @@ func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func
 //   - Other types: Returns unchanged
 //
 // Returns the widened type.
-func widenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Type {
+func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Type {
 	if mapType == nil {
 		return typ.NewMap(keyType, typ.NewArray(elementType))
 	}
@@ -688,14 +706,6 @@ func widenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 			return mapType
 		},
 	})
-}
-
-// WidenMapValueArrayType widens a map's value type by adding an element to its array component.
-//
-// This exported helper mirrors the flow solver's logic and is used by
-// pre-flow inference to keep map value arrays in sync with mutations.
-func WidenMapValueArrayType(mapType typ.Type, keyType, elementType typ.Type) typ.Type {
-	return widenMapValueArray(mapType, keyType, elementType)
 }
 
 // widenWithIndexer widens a type based on dynamic index assignment (t[k] = v).

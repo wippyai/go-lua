@@ -358,6 +358,22 @@ func TestTypeEqualsFunctionMultiReturn(t *testing.T) {
 	}
 }
 
+func TestTypeEqualsFunctionTypeParams(t *testing.T) {
+	f1 := Func().TypeParam("T", nil).Param("x", NewTypeParam("T", nil)).Returns(NewTypeParam("T", nil)).Build()
+	f2 := Func().TypeParam("T", nil).Param("x", NewTypeParam("T", nil)).Returns(NewTypeParam("T", nil)).Build()
+	f3 := Func().TypeParam("U", nil).Param("x", NewTypeParam("U", nil)).Returns(NewTypeParam("U", nil)).Build()
+
+	if !TypeEquals(f1, f2) {
+		t.Error("functions with same type params should be equal")
+	}
+	if TypeEquals(f1, f3) {
+		t.Error("functions with different type param names should not be equal")
+	}
+	if TypeEquals(f1, Func().Param("x", Any).Returns(Any).Build()) {
+		t.Error("generic and non-generic functions should not be equal")
+	}
+}
+
 func TestTypeEqualsGeneric(t *testing.T) {
 	params := []*TypeParam{NewTypeParam("K", nil), NewTypeParam("V", nil)}
 	g1 := NewGeneric("T", params, NewMap(NewRef("", "K"), NewRef("", "V")))
@@ -455,5 +471,22 @@ func TestTypeEqualsNeverAnyCases(t *testing.T) {
 	}
 	if TypeEquals(Never, Any) {
 		t.Error("Never should not equal Any")
+	}
+}
+
+func TestTypeEqualsDeepAliasFunctionSignature(t *testing.T) {
+	aliasChain := func(depth int) Type {
+		t := Number
+		for i := 0; i < depth; i++ {
+			t = NewAlias("N", t)
+		}
+		return t
+	}
+
+	a := Func().Param("v", aliasChain(32)).Returns(Number).Build()
+	b := Func().Param("v", aliasChain(32)).Returns(Number).Build()
+
+	if !TypeEquals(a, b) {
+		t.Fatalf("expected deep alias signatures to be equal:\nleft:  %s\nright: %s", FormatShort(a), FormatShort(b))
 	}
 }

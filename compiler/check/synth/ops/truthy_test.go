@@ -67,6 +67,13 @@ func TestCanBeFalsy_Alias(t *testing.T) {
 	}
 }
 
+func TestCanBeFalsy_DeepAliasChainOptional(t *testing.T) {
+	deep := makeAliasChain(typ.NewOptional(typ.Number), 40, "Opt")
+	if !CanBeFalsy(deep) {
+		t.Fatal("deep alias chain to optional should be falsy")
+	}
+}
+
 func TestCanBeFalsy_Structures(t *testing.T) {
 	rec := &typ.Record{Fields: []typ.Field{{Name: "x", Type: typ.Integer}}}
 	if CanBeFalsy(rec) {

@@ -278,6 +278,51 @@ func TestCompatibleFunctionFromUnion_WithVariadic(t *testing.T) {
 	}
 }
 
+func TestCompatibleFunctionFromUnion_ArityUsesVariadicCompatibility(t *testing.T) {
+	variadic := typ.Func().Param("x", typ.String).Variadic(typ.Number).Returns(typ.String).Build()
+	fixed := typ.Func().Param("x", typ.Boolean).Param("y", typ.Boolean).Returns(typ.Boolean).Build()
+	unionType := typ.NewUnion(variadic, fixed)
+
+	compatible := CompatibleFunctionFromUnion(3, unionType)
+	if compatible == nil {
+		t.Fatal("expected variadic function to be selected")
+	}
+	if compatible.Variadic == nil {
+		t.Fatalf("expected variadic compatible function, got %v", compatible)
+	}
+	if len(compatible.Params) != 1 || !typ.TypeEquals(compatible.Params[0].Type, typ.String) {
+		t.Fatalf("expected variadic signature to be preserved, got %v", compatible)
+	}
+}
+
+func TestCompatibleFunctionFromUnion_ArityUsesOptionalCompatibility(t *testing.T) {
+	oneArg := typ.Func().Param("x", typ.String).Returns(typ.Number).Build()
+	optionalSecond := typ.Func().Param("x", typ.Number).OptParam("y", typ.Number).Returns(typ.String).Build()
+	unionType := typ.NewUnion(oneArg, optionalSecond)
+
+	compatible := CompatibleFunctionFromUnion(1, unionType)
+	if compatible == nil {
+		t.Fatal("expected compatible function for optional-arity match")
+	}
+	if len(compatible.Params) != 2 {
+		t.Fatalf("expected merged signature with optional second param, got %v", compatible)
+	}
+	if !compatible.Params[1].Optional {
+		t.Fatalf("expected second param to stay optional, got %v", compatible)
+	}
+}
+
+func TestCompatibleFunctionFromUnion_NoArityCompatibleFunction(t *testing.T) {
+	fn1 := typ.Func().Param("x", typ.String).Returns(typ.Number).Build()
+	fn2 := typ.Func().Param("x", typ.Number).Param("y", typ.Number).Returns(typ.String).Build()
+	unionType := typ.NewUnion(fn1, fn2)
+
+	compatible := CompatibleFunctionFromUnion(3, unionType)
+	if compatible != nil {
+		t.Fatalf("expected nil when no overload accepts arity 3, got %v", compatible)
+	}
+}
+
 func TestIsLiteralStringType(t *testing.T) {
 	if !unwrap.IsLiteralString(typ.LiteralString("test")) {
 		t.Error("expected true for literal string")

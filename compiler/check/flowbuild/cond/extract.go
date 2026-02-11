@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/numconst"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -319,25 +320,31 @@ func ExtractCallOnReturnConstraints(
 	inputs *flow.Inputs,
 ) map[EdgeKey]constraint.Condition {
 	out := make(map[EdgeKey]constraint.Condition)
+	if fc == nil || fc.Graph == nil || fc.Derived == nil || inputs == nil {
+		return out
+	}
 
-	fc.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	for _, p := range fc.Graph.RPO() {
+		if !PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.ModuleBindings) {
+			continue
+		}
+		for _, succ := range fc.Graph.Successors(p) {
+			preds := fc.Graph.Predecessors(succ)
+			if len(preds) != 1 {
+				continue
+			}
+			if inputs.DeadPoints == nil {
+				inputs.DeadPoints = make(map[cfg.Point]bool)
+			}
+			inputs.DeadPoints[succ] = true
+		}
+	}
+
+	fc.Graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
 		sc := fc.Scopes[p]
 		constResolver := predicate.BuildConstResolver(inputs, p)
 
-		if terminates := CallTerminates(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.Graph); terminates {
-			for _, succ := range fc.Graph.Successors(p) {
-				preds := fc.Graph.Predecessors(succ)
-				if len(preds) != 1 {
-					continue
-				}
-				if inputs.DeadPoints == nil {
-					inputs.DeadPoints = make(map[cfg.Point]bool)
-				}
-				inputs.DeadPoints[succ] = true
-			}
-		}
-
-		cond := ConstraintsFromCallOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.EffectBySym, constResolver, fc.Derived.SymResolver, fc.Graph)
+		cond := ConstraintsFromCallOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.EffectBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
 		if !cond.HasConstraints() {
 			return
 		}
@@ -354,7 +361,7 @@ func ExtractCallOnReturnConstraints(
 	fc.Graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		sc := fc.Scopes[p]
 		constResolver := predicate.BuildConstResolver(inputs, p)
-		cond := ConstraintsFromAssignOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.EffectBySym, constResolver, fc.Derived.SymResolver, fc.Graph)
+		cond := ConstraintsFromAssignOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.EffectBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
 		if !cond.HasConstraints() {
 			return
 		}
@@ -383,8 +390,9 @@ func ConstraintsFromCallOnReturn(
 	constResolver func(string) *flow.ConstValue,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
+	moduleBindings *bind.BindingTable,
 ) constraint.Condition {
-	if info == nil || info.Method != "" || info.Receiver != nil {
+	if info == nil || callsite.IsMethodLikeCallInfo(info) {
 		return constraint.Condition{}
 	}
 	if len(info.Args) == 0 {
@@ -405,7 +413,7 @@ func ConstraintsFromCallOnReturn(
 		}
 	}
 
-	eff := ExtractFunctionEffect(info, p, synthFn, effectLookupSym, symResolver, graph)
+	eff := ExtractFunctionEffect(info, p, synthFn, effectLookupSym, symResolver, graph, moduleBindings)
 	if eff == nil || !eff.OnReturn.HasConstraints() {
 		return constraint.Condition{}
 	}
@@ -434,11 +442,7 @@ func ConstraintsFromCallOnReturn(
 		for _, c := range disj {
 			switch v := c.(type) {
 			case constraint.Falsy:
-				if !v.Path.IsPlaceholder() {
-					continue
-				}
-				idx := v.Path.PlaceholderIndex()
-				if idx >= 0 && idx < len(info.Args) && argPaths[idx].IsEmpty() {
+				if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(info.Args)); ok && argPaths[idx].IsEmpty() {
 					fallback := ce.ConditionFromExpr(info.Args[idx])
 					if fallback.HasConstraints() {
 						fallback = constraint.Not(fallback)
@@ -446,11 +450,7 @@ func ConstraintsFromCallOnReturn(
 					}
 				}
 			case constraint.Truthy:
-				if !v.Path.IsPlaceholder() {
-					continue
-				}
-				idx := v.Path.PlaceholderIndex()
-				if idx >= 0 && idx < len(info.Args) && argPaths[idx].IsEmpty() {
+				if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(info.Args)); ok && argPaths[idx].IsEmpty() {
 					fallback := ce.ConditionFromExpr(info.Args[idx])
 					if fallback.HasConstraints() {
 						cond = constraint.And(cond, fallback)
@@ -575,17 +575,14 @@ func ExtractFunctionEffect(
 	effectLookupSym constraint.EffectLookupBySym,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
+	moduleBindings *bind.BindingTable,
 ) *constraint.FunctionEffect {
-	// Primary lookup: by symbol (all functions have symbols)
-	if effectLookupSym != nil && info.CalleeSymbol != 0 {
-		if eff := effectLookupSym(info.CalleeSymbol); eff != nil {
-			return eff
-		}
-	}
-	// Direct alias resolution (local f = B; f()).
-	if effectLookupSym != nil && info.CalleeSymbol != 0 && graph != nil {
-		if aliasSym := graph.DirectAliasSymbol(info.CalleeSymbol); aliasSym != 0 {
-			if eff := effectLookupSym(aliasSym); eff != nil {
+	candidates := calleeSymbolCandidatesForEffects(info, graph, moduleBindings)
+
+	// Primary lookup: by canonical callsite symbol candidates.
+	if effectLookupSym != nil {
+		for _, sym := range candidates {
+			if eff := effectLookupSym(sym); eff != nil {
 				return eff
 			}
 		}
@@ -601,10 +598,12 @@ func ExtractFunctionEffect(
 	}
 
 	// Fallback: extract effect from resolved type
-	if info.CalleeSymbol != 0 && symResolver != nil {
-		if looked, ok := symResolver(p, info.CalleeSymbol); ok {
-			if eff := ExtractEffectFromType(looked); eff != nil {
-				return eff
+	if symResolver != nil {
+		for _, sym := range candidates {
+			if looked, ok := symResolver(p, sym); ok {
+				if eff := ExtractEffectFromType(looked); eff != nil {
+					return eff
+				}
 			}
 		}
 	}
@@ -625,138 +624,6 @@ func ExtractEffectFromType(t typ.Type) *constraint.FunctionEffect {
 	return nil
 }
 
-func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.FunctionExpr {
-	if callee == nil {
-		return nil
-	}
-
-	if fn, ok := callee.(*ast.FunctionExpr); ok {
-		return fn
-	}
-
-	attr, ok := callee.(*ast.AttrGetExpr)
-	if !ok || graph == nil {
-		return nil
-	}
-
-	var fieldName string
-	switch k := attr.Key.(type) {
-	case *ast.StringExpr:
-		fieldName = k.Value
-	case *ast.IdentExpr:
-		fieldName = k.Value
-	default:
-		return nil
-	}
-	if fieldName == "" {
-		return nil
-	}
-
-	tableLit := ResolveExprToTableLiteral(attr.Object, graph)
-	if tableLit == nil {
-		return nil
-	}
-
-	for _, field := range tableLit.Fields {
-		if field.Key == nil {
-			continue
-		}
-		var keyName string
-		switch k := field.Key.(type) {
-		case *ast.StringExpr:
-			keyName = k.Value
-		case *ast.IdentExpr:
-			keyName = k.Value
-		}
-		if keyName == fieldName {
-			if fn, ok := field.Value.(*ast.FunctionExpr); ok {
-				return fn
-			}
-		}
-	}
-
-	return nil
-}
-
-// ResolveSymbolToFunctionLiteral attempts to resolve a symbol ID to a function literal
-// defined in the current graph (local function definitions or assignments).
-func ResolveSymbolToFunctionLiteral(graph *cfg.Graph, sym cfg.SymbolID) *ast.FunctionExpr {
-	if graph == nil || sym == 0 {
-		return nil
-	}
-
-	var found *ast.FunctionExpr
-	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-		if found != nil || info == nil {
-			return
-		}
-		if info.Symbol == sym {
-			found = info.FuncExpr
-		}
-	})
-	if found != nil {
-		return found
-	}
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if found != nil || info == nil {
-			return
-		}
-		for i, target := range info.Targets {
-			if target.Symbol == sym && i < len(info.Sources) {
-				if fn, ok := info.Sources[i].(*ast.FunctionExpr); ok {
-					found = fn
-					return
-				}
-			}
-		}
-	})
-	return found
-}
-
-func ResolveExprToTableLiteral(expr ast.Expr, graph *cfg.Graph) *ast.TableExpr {
-	if expr == nil || graph == nil {
-		return nil
-	}
-
-	if tbl, ok := expr.(*ast.TableExpr); ok {
-		return tbl
-	}
-
-	ident, ok := expr.(*ast.IdentExpr)
-	if !ok {
-		return nil
-	}
-
-	bindings := graph.Bindings()
-	if bindings == nil {
-		return nil
-	}
-
-	sym, found := bindings.SymbolOf(ident)
-	if !found || sym == 0 {
-		return nil
-	}
-
-	var tableLit *ast.TableExpr
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if tableLit != nil || info == nil || !info.IsLocal {
-			return
-		}
-		for i, target := range info.Targets {
-			if target.Symbol == sym && target.Kind == cfg.TargetIdent {
-				if i < len(info.Sources) {
-					if tbl, ok := info.Sources[i].(*ast.TableExpr); ok {
-						tableLit = tbl
-					}
-				}
-				return
-			}
-		}
-	})
-
-	return tableLit
-}
-
 // CallTerminates checks if a call is to a function that never returns.
 // Uses symbol-based effect lookup - all functions have symbols.
 func CallTerminates(
@@ -766,21 +633,17 @@ func CallTerminates(
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	effectLookupSym constraint.EffectLookupBySym,
 	graph *cfg.Graph,
+	moduleBindings *bind.BindingTable,
 ) bool {
 	if info == nil {
 		return false
 	}
+	candidates := calleeSymbolCandidatesForEffects(info, graph, moduleBindings)
 
-	// Primary check: symbol-based effect lookup
-	if effectLookupSym != nil && info.CalleeSymbol != 0 {
-		if eff := effectLookupSym(info.CalleeSymbol); eff != nil && eff.Terminates {
-			return true
-		}
-	}
-	// Direct alias resolution (local f = B; f()).
-	if effectLookupSym != nil && info.CalleeSymbol != 0 && graph != nil {
-		if aliasSym := graph.DirectAliasSymbol(info.CalleeSymbol); aliasSym != 0 {
-			if eff := effectLookupSym(aliasSym); eff != nil && eff.Terminates {
+	// Primary check: canonical callsite symbol candidates.
+	if effectLookupSym != nil {
+		for _, sym := range candidates {
+			if eff := effectLookupSym(sym); eff != nil && eff.Terminates {
 				return true
 			}
 		}
@@ -791,9 +654,14 @@ func CallTerminates(
 	if synthFn != nil && info.Callee != nil {
 		fnType = synthFn(info.Callee, p)
 	}
-	if fnType == nil && symResolver != nil && info.CalleeSymbol != 0 {
-		if looked, ok := symResolver(p, info.CalleeSymbol); ok {
-			fnType = looked
+	if fnType == nil && symResolver != nil {
+		for _, sym := range candidates {
+			if looked, ok := symResolver(p, sym); ok {
+				fnType = looked
+				if fnType != nil {
+					break
+				}
+			}
 		}
 	}
 	if fn, ok := fnType.(*typ.Function); ok && fn != nil {
@@ -819,6 +687,35 @@ func CallTerminates(
 	return false
 }
 
+func calleeSymbolCandidatesForEffects(info *cfg.CallInfo, graph *cfg.Graph, moduleBindings *bind.BindingTable) []cfg.SymbolID {
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
+	return callsite.CalleeSymbolCandidatesWithAliases(info, graph, bindings, moduleBindings)
+}
+
+// PointHasTerminatingCallSite reports whether any callsite represented at point p
+// definitely terminates control flow.
+func PointHasTerminatingCallSite(
+	graph *cfg.Graph,
+	p cfg.Point,
+	synthFn func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	effectLookupSym constraint.EffectLookupBySym,
+	moduleBindings *bind.BindingTable,
+) bool {
+	if graph == nil {
+		return false
+	}
+	for _, callInfo := range graph.CallSitesAt(p) {
+		if CallTerminates(callInfo, p, synthFn, symResolver, effectLookupSym, graph, moduleBindings) {
+			return true
+		}
+	}
+	return false
+}
+
 // ConstraintsFromAssignOnReturn extracts OnReturn constraints from assignment RHS calls.
 func ConstraintsFromAssignOnReturn(
 	info *cfg.AssignInfo,
@@ -831,23 +728,21 @@ func ConstraintsFromAssignOnReturn(
 	constResolver func(string) *flow.ConstValue,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
+	moduleBindings *bind.BindingTable,
 ) constraint.Condition {
 	if info == nil {
 		return constraint.Condition{}
 	}
 	var combined constraint.Condition
-	for _, callInfo := range info.SourceCalls {
-		if callInfo == nil {
-			continue
-		}
-		if cond := ConstraintsFromCallOnReturn(callInfo, p, sc, inputs, synthFn, typeKeyResolver, effectLookupSym, constResolver, symResolver, graph); cond.HasConstraints() {
+	info.EachSourceCall(func(_ int, callInfo *cfg.CallInfo) {
+		if cond := ConstraintsFromCallOnReturn(callInfo, p, sc, inputs, synthFn, typeKeyResolver, effectLookupSym, constResolver, symResolver, graph, moduleBindings); cond.HasConstraints() {
 			if !combined.HasConstraints() {
 				combined = cond
 			} else {
 				combined = constraint.And(combined, cond)
 			}
 		}
-	}
+	})
 	return combined
 }
 
@@ -864,6 +759,7 @@ func ExtractPredicateLinkFromCallInfo(
 	effectLookupSym constraint.EffectLookupBySym,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
+	moduleBindings *bind.BindingTable,
 ) *flow.PredicateLink {
 	if callInfo == nil {
 		return nil
@@ -902,7 +798,7 @@ func ExtractPredicateLinkFromCallInfo(
 		return nil
 	}
 
-	eff := ExtractFunctionEffect(callInfo, p, synthFn, effectLookupSym, symResolver, graph)
+	eff := ExtractFunctionEffect(callInfo, p, synthFn, effectLookupSym, symResolver, graph, moduleBindings)
 	if eff == nil || !eff.HasPredicateSemantics() {
 		return nil
 	}
@@ -933,10 +829,11 @@ func ComputeDeadPoints(
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	effectLookupSym constraint.EffectLookupBySym,
+	moduleBindings *bind.BindingTable,
 ) map[cfg.Point]bool {
 	dead := make(map[cfg.Point]bool)
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
-		if CallTerminates(info, p, synthFn, symResolver, effectLookupSym, graph) {
+	for _, p := range graph.RPO() {
+		if PointHasTerminatingCallSite(graph, p, synthFn, symResolver, effectLookupSym, moduleBindings) {
 			for _, succ := range graph.Successors(p) {
 				preds := graph.Predecessors(succ)
 				if len(preds) == 1 {
@@ -944,7 +841,7 @@ func ComputeDeadPoints(
 				}
 			}
 		}
-	})
+	}
 	entry := graph.Entry()
 	graph.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
 		if p == entry {

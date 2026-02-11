@@ -23,21 +23,18 @@
 package phase
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/returns"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -153,21 +150,22 @@ func RunScope(input ScopeInput) ScopeOutput {
 	localTypeAnnotations := make(map[cfg.SymbolID]ast.TypeExpr)
 	for _, p := range input.Graph.RPO() {
 		if info := input.Graph.Assign(p); info != nil && info.IsLocal && len(info.TypeAnnotations) > 0 {
-			for i, target := range info.Targets {
+			info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
 				if target.Kind != cfg.TargetIdent || target.Name == "" {
-					continue
+					return
 				}
-				if i >= len(info.TypeAnnotations) || info.TypeAnnotations[i] == nil {
-					continue
+				ann := info.TypeAnnotationAt(i)
+				if ann == nil {
+					return
 				}
 				sym, ok := input.Graph.SymbolAt(p, target.Name)
 				if !ok || sym == 0 {
-					continue
+					return
 				}
 				if _, exists := localTypeAnnotations[sym]; !exists {
-					localTypeAnnotations[sym] = info.TypeAnnotations[i]
+					localTypeAnnotations[sym] = ann
 				}
-			}
+			})
 		}
 	}
 
@@ -213,7 +211,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 		typeResolutionEngine,
 		input.ReturnSummaries,
 	)
-	declaredTypes = applyModuleAliasDeclaredTypes(declaredTypes, input.ModuleAliases, input.Manifests)
+	declaredTypes = applyModuleAliasExports(declaredTypes, input.ModuleAliases, input.Manifests)
 
 	return ScopeOutput{
 		BaseScope:                 base,
@@ -225,43 +223,6 @@ func RunScope(input ScopeInput) ScopeOutput {
 		SiblingTypes:              input.SiblingTypes,
 		DepthLimitExceeded:        depthExceeded,
 	}
-}
-
-func applyModuleAliasDeclaredTypes(
-	declared flow.DeclaredTypes,
-	moduleAliases map[cfg.SymbolID]string,
-	manifests io.ManifestQuerier,
-) flow.DeclaredTypes {
-	if manifests == nil || len(moduleAliases) == 0 {
-		return declared
-	}
-	if declared == nil {
-		declared = make(flow.DeclaredTypes, len(moduleAliases))
-	}
-	syms := make([]cfg.SymbolID, 0, len(moduleAliases))
-	for sym := range moduleAliases {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
-	for _, sym := range syms {
-		path := moduleAliases[sym]
-		if sym == 0 || path == "" {
-			continue
-		}
-		manifest := manifests.Manifest(path)
-		if manifest == nil {
-			if imports := manifests.Imports(); imports != nil {
-				manifest = imports[path]
-			}
-		}
-		if manifest == nil {
-			continue
-		}
-		if export := manifest.EnrichedExport(); export != nil {
-			declared[sym] = export
-		}
-	}
-	return declared
 }
 
 // buildFnSignatureResolver creates a function signature resolver that combines
@@ -319,7 +280,8 @@ func ExtractParamTypes(
 		}
 
 		// Binder/CFG-injected implicit self parameter has no source annotation.
-		if slot.SourceIndex < 0 {
+		srcIdx, hasSource := slot.SourceParamIndex()
+		if !hasSource {
 			if base != nil && base.SelfType() != nil {
 				types[slot.Symbol] = base.SelfType()
 			} else {
@@ -327,7 +289,7 @@ func ExtractParamTypes(
 			}
 			continue
 		}
-		i := slot.SourceIndex
+		i := srcIdx
 
 		var paramType typ.Type
 		var hint typ.Type
@@ -366,8 +328,7 @@ func ExtractParamTypes(
 		// Prefer scope self type over synthesized Any/Unknown for unannotated self.
 		// This allows table-field method analysis to override placeholder literal signatures.
 		if slot.Name == "self" && !hasExplicitAnnotation && base != nil && base.SelfType() != nil && paramType != nil {
-			switch paramType.Kind() {
-			case kind.Any, kind.Unknown:
+			if paramType.Kind().IsPlaceholder() {
 				paramType = base.SelfType()
 			}
 		}
@@ -414,12 +375,7 @@ func buildDeclaredTypes(
 
 	// Apply global types once using the graph's global symbol map.
 	if len(globalTypes) > 0 {
-		names := make([]string, 0, len(globalTypes))
-		for name := range globalTypes {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
+		for _, name := range cfg.SortedFieldNames(globalTypes) {
 			t := globalTypes[name]
 			if t == nil {
 				continue
@@ -441,8 +397,11 @@ func buildDeclaredTypes(
 	for _, p := range graph.RPO() {
 
 		if info := graph.Assign(p); info != nil && info.IsLocal {
-			if info.NumericFor != nil && len(info.Targets) > 0 {
-				target := info.Targets[0]
+			if info.NumericFor != nil {
+				target, ok := info.FirstTarget()
+				if !ok {
+					continue
+				}
 				if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
 					if _, exists := out[target.Symbol]; !exists {
 						out[target.Symbol] = typ.Integer
@@ -452,37 +411,37 @@ func buildDeclaredTypes(
 
 			if len(info.IterExprs) > 0 && len(info.Targets) > 0 && synthAPI != nil {
 				varTypes := synthAPI.InferIterVarsWithSpecTypes(info.IterExprs, len(info.Targets), p, nil)
-				for i, target := range info.Targets {
+				info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
 					if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-						continue
+						return
 					}
 					if _, exists := out[target.Symbol]; exists {
-						continue
+						return
 					}
 					varType := typ.Unknown
 					if i < len(varTypes) && varTypes[i] != nil {
 						varType = varTypes[i]
 					}
 					out[target.Symbol] = varType
-				}
+				})
 			}
 
 			sc := scopes[p]
-			for i, target := range info.Targets {
+			info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
 				if target.Kind != cfg.TargetIdent || target.Name == "" {
-					continue
+					return
 				}
 				sym, ok := graph.SymbolAt(p, target.Name)
 				if !ok {
-					continue
+					return
 				}
 				if _, exists := out[sym]; exists {
-					continue
+					return
 				}
 
-				if info.TypeAnnotations != nil && i < len(info.TypeAnnotations) && info.TypeAnnotations[i] != nil {
+				if ann := info.TypeAnnotationAt(i); ann != nil {
 					if typeExprResolver != nil {
-						if resolved := typeExprResolver.ResolveType(info.TypeAnnotations[i], sc); resolved != nil {
+						if resolved := typeExprResolver.ResolveType(ann, sc); resolved != nil {
 							out[sym] = resolved
 							if !typ.IsSoft(resolved, typ.SoftAnnotationPolicy) {
 								annotated[sym] = true
@@ -490,7 +449,7 @@ func buildDeclaredTypes(
 						}
 					}
 				}
-			}
+			})
 		}
 
 		if info := graph.FuncDef(p); info != nil && info.Name != "" && info.FuncExpr != nil {
@@ -505,7 +464,7 @@ func buildDeclaredTypes(
 			if fnSigResolver != nil {
 				if fnSig := fnSigResolver.ResolveFunctionSignature(info.FuncExpr, sc); fnSig != nil {
 					if returnSummaries != nil {
-						fnSig = returns.BuildFunctionSignatureWithSummary(fnSig, returnSummaries[sym])
+						fnSig = typjoin.WithReturnsOrUnknown(fnSig, returnSummaries[sym])
 					}
 					out[sym] = fnSig
 				}
@@ -677,11 +636,11 @@ func applyAssign(graph ScopeGraph, p cfg.Point, current *scope.State) *scope.Sta
 
 	// Mark local names
 	var localNames []string
-	for _, target := range info.Targets {
+	info.EachTarget(func(_ int, target cfg.AssignTarget) {
 		if target.Kind == cfg.TargetIdent && target.Name != "" {
 			localNames = append(localNames, target.Name)
 		}
-	}
+	})
 	if len(localNames) > 0 {
 		current = current.WithLocalNames(localNames)
 	}
@@ -796,7 +755,7 @@ func ResolveCallFunctionType(
 	}
 
 	// Method call: x:foo()
-	if info.Method != "" || info.Receiver != nil {
+	if callsite.IsMethodLikeCallInfo(info) {
 		recvType := exprSynth(info.Receiver, p, sc)
 		if recvType == nil || types == nil {
 			return nil

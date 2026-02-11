@@ -189,6 +189,74 @@ func TestConstraintsForSymbol_CorrelatedConstraintsResult(t *testing.T) {
 	}
 }
 
+func TestConstraintsForSymbol_CorrelatedConstraintsNotNil(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"val", "err"}},
+		Stmts:   []ast.Stmt{&ast.ReturnStmt{}},
+	}
+	bindings := bind.Bind(fn, nil)
+	paramSyms := bindings.ParamSymbols(fn)
+	if len(paramSyms) < 2 {
+		t.Skip("need 2 param symbols")
+	}
+	valSym := paramSyms[0]
+	errSym := paramSyms[1]
+
+	inputs := &flow.Inputs{
+		SiblingAssignments: map[flow.SiblingKey]*flow.SiblingAssignment{
+			{Symbol: errSym, VersionID: 1}: {
+				Names:   []string{"val", "err"},
+				Symbols: []cfg.SymbolID{valSym, errSym},
+				Correlations: []flow.ReturnCorrelation{
+					{ValueIndex: 0, ErrorIndex: 1},
+				},
+			},
+		},
+	}
+
+	result := sibling.ConstraintsForSymbol(errSym, 1, inputs, false, bindings)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 constraint, got %d", len(result))
+	}
+	if _, ok := result[0].(constraint.NotNil); !ok {
+		t.Errorf("expected NotNil constraint, got %T", result[0])
+	}
+}
+
+func TestConstraintsForSymbol_CoCorrelatedConstraintsResult(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"a", "b"}},
+		Stmts:   []ast.Stmt{&ast.ReturnStmt{}},
+	}
+	bindings := bind.Bind(fn, nil)
+	paramSyms := bindings.ParamSymbols(fn)
+	if len(paramSyms) < 2 {
+		t.Skip("need 2 param symbols")
+	}
+	aSym := paramSyms[0]
+	bSym := paramSyms[1]
+
+	inputs := &flow.Inputs{
+		SiblingAssignments: map[flow.SiblingKey]*flow.SiblingAssignment{
+			{Symbol: aSym, VersionID: 1}: {
+				Names:   []string{"a", "b"},
+				Symbols: []cfg.SymbolID{aSym, bSym},
+				CoCorrelations: []flow.ReturnCorrelation{
+					{ValueIndex: 0, ErrorIndex: 1},
+				},
+			},
+		},
+	}
+
+	result := sibling.ConstraintsForSymbol(aSym, 1, inputs, true, bindings)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 constraint, got %d", len(result))
+	}
+	if _, ok := result[0].(constraint.NotNil); !ok {
+		t.Errorf("expected NotNil constraint, got %T", result[0])
+	}
+}
+
 func TestConstraintsForIdent_WithGraphAndUnknownIdent(t *testing.T) {
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{Names: []string{"x"}},

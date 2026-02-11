@@ -85,6 +85,13 @@ func (s *Synthesizer) synthExprWithExpectedSingle(
 			return typ.Nil
 		}
 		return types[0]
+	case *ast.IdentExpr:
+		if expectedFn, ok := unwrap.Alias(expected).(*typ.Function); ok {
+			if fnExpr := s.functionLiteralForIdent(ex); fnExpr != nil {
+				return s.SynthFunctionTypeWithExpected(fnExpr, sc, expectedFn)
+			}
+		}
+		return s.synthExprCore(expr, sc, p, s.deps.Flow, recurse)
 	default:
 		return s.synthExprCore(expr, sc, p, s.deps.Flow, recurse)
 	}

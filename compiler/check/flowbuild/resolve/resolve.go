@@ -34,13 +34,14 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -64,6 +65,15 @@ func RootNameFromBindings(bindings *bind.BindingTable, sym cfg.SymbolID, fallbac
 		}
 	}
 	return fallback
+}
+
+// RootNameFromGraphAndBindings resolves display name with binding-first, graph-second fallback.
+func RootNameFromGraphAndBindings(graph *cfg.Graph, bindings *bind.BindingTable, sym cfg.SymbolID, fallback string) string {
+	name := RootNameFromBindings(bindings, sym, "")
+	if name != "" {
+		return name
+	}
+	return RootName(graph, sym, fallback)
 }
 
 // GetBindings returns the binding table from inputs.
@@ -106,14 +116,103 @@ func ClassifyReturnExpr(expr ast.Expr) flow.ReturnKind {
 	return flow.ReturnUnknown
 }
 
-// SymbolFromExpr extracts the symbol ID from an identifier expression.
-func SymbolFromExpr(expr ast.Expr, bindings *bind.BindingTable) cfg.SymbolID {
-	ident, ok := expr.(*ast.IdentExpr)
-	if !ok || bindings == nil {
-		return 0
+// ResolveSymbolToFunctionLiteral resolves a symbol to a function literal defined
+// in the current graph (local/global function definitions or assignments).
+func ResolveSymbolToFunctionLiteral(graph *cfg.Graph, sym cfg.SymbolID) *ast.FunctionExpr {
+	if sym == 0 {
+		return nil
 	}
-	sym, _ := bindings.SymbolOf(ident)
-	return sym
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
+	return callsite.FunctionLiteralForSymbol(graph, bindings, sym)
+}
+
+// ResolveExprToTableLiteral resolves expression to a table literal when possible.
+// Supports direct table expressions and identifier references to local table literals.
+func ResolveExprToTableLiteral(expr ast.Expr, graph *cfg.Graph) *ast.TableExpr {
+	if expr == nil || graph == nil {
+		return nil
+	}
+
+	if tbl, ok := expr.(*ast.TableExpr); ok {
+		return tbl
+	}
+
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok {
+		return nil
+	}
+
+	bindings := graph.Bindings()
+	if bindings == nil {
+		return nil
+	}
+
+	sym, found := bindings.SymbolOf(ident)
+	if !found || sym == 0 {
+		return nil
+	}
+
+	var tableLit *ast.TableExpr
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if tableLit != nil || info == nil || !info.IsLocal {
+			return
+		}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			if target.Symbol == sym && target.Kind == cfg.TargetIdent {
+				if tbl, ok := source.(*ast.TableExpr); ok {
+					tableLit = tbl
+				}
+			}
+		})
+	})
+
+	return tableLit
+}
+
+// ResolveCalleeToFunctionLiteral resolves a callee expression to a function literal.
+//
+// Supported forms:
+//   - direct function literal: function(...) ... end
+//   - table field function via static table literal:
+//     local t = { f = function(...) ... end }; t.f(...)
+func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.FunctionExpr {
+	if callee == nil {
+		return nil
+	}
+
+	if fn, ok := callee.(*ast.FunctionExpr); ok {
+		return fn
+	}
+
+	attr, ok := callee.(*ast.AttrGetExpr)
+	if !ok || graph == nil {
+		return nil
+	}
+
+	calleeSeg, ok := pathseg.StaticAttrKeySegment(attr.Key)
+	if !ok {
+		return nil
+	}
+
+	tableLit := ResolveExprToTableLiteral(attr.Object, graph)
+	if tableLit == nil {
+		return nil
+	}
+
+	for _, field := range tableLit.Fields {
+		fieldSeg, ok := pathseg.StaticTableFieldKeySegment(field.Key)
+		if !ok || fieldSeg != calleeSeg {
+			continue
+		}
+		if fn, ok := field.Value.(*ast.FunctionExpr); ok {
+			return fn
+		}
+	}
+
+	return nil
 }
 
 // Ref resolves typ.Ref to its actual type using scope type lookup.
@@ -130,6 +229,32 @@ func Ref(t typ.Type, sc *scope.State) typ.Type {
 	return t
 }
 
+// selectConcreteOrPlaceholder applies canonical symbol-resolver preference:
+// return concrete types immediately, and keep placeholders as fallback.
+func selectConcreteOrPlaceholder(candidate typ.Type, fallback *typ.Type) (typ.Type, bool) {
+	if candidate == nil {
+		return nil, false
+	}
+	if candidate.Kind().IsPlaceholder() {
+		if fallback != nil {
+			*fallback = candidate
+		}
+		return nil, false
+	}
+	return candidate, true
+}
+
+func selectFromTypeMap(types map[cfg.SymbolID]typ.Type, sym cfg.SymbolID, fallback *typ.Type) (typ.Type, bool) {
+	if types == nil {
+		return nil, false
+	}
+	candidate, ok := types[sym]
+	if !ok {
+		return nil, false
+	}
+	return selectConcreteOrPlaceholder(candidate, fallback)
+}
+
 // BuildContextSymbolResolver creates a symbol type resolver from Env.
 func BuildContextSymbolResolver(ctx api.BaseEnv) func(cfg.Point, cfg.SymbolID) (typ.Type, bool) {
 	if ctx == nil || ctx.Types() == nil {
@@ -140,12 +265,9 @@ func BuildContextSymbolResolver(ctx api.BaseEnv) func(cfg.Point, cfg.SymbolID) (
 	return func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
 		var fallback typ.Type
 		tv := ctx.Types().EffectiveTypeAt(p, sym)
-		if tv.State == flow.StateResolved && tv.Type != nil {
-			switch tv.Type.Kind() {
-			case kind.Unknown, kind.Any:
-				fallback = tv.Type
-			default:
-				return tv.Type, true
+		if tv.State == flow.StateResolved {
+			if selected, ok := selectConcreteOrPlaceholder(tv.Type, &fallback); ok {
+				return selected, true
 			}
 		}
 		if t, ok := ctx.GlobalType(sym); ok && t != nil {
@@ -166,35 +288,14 @@ func BuildInputSymbolResolver(ctx api.BaseEnv, inputs *flow.Inputs) func(cfg.Poi
 	}
 	return func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
 		var fallback typ.Type
-		if inputs.LiteralTypes != nil {
-			if t, ok := inputs.LiteralTypes[sym]; ok && t != nil {
-				switch t.Kind() {
-				case kind.Unknown, kind.Any:
-					fallback = t
-				default:
-					return t, true
-				}
-			}
+		if selected, ok := selectFromTypeMap(inputs.LiteralTypes, sym, &fallback); ok {
+			return selected, true
 		}
-		if inputs.SiblingTypes != nil {
-			if t, ok := inputs.SiblingTypes[sym]; ok && t != nil {
-				switch t.Kind() {
-				case kind.Unknown, kind.Any:
-					fallback = t
-				default:
-					return t, true
-				}
-			}
+		if selected, ok := selectFromTypeMap(inputs.SiblingTypes, sym, &fallback); ok {
+			return selected, true
 		}
-		if inputs.DeclaredTypes != nil {
-			if t, ok := inputs.DeclaredTypes[sym]; ok && t != nil {
-				switch t.Kind() {
-				case kind.Unknown, kind.Any:
-					fallback = t
-				default:
-					return t, true
-				}
-			}
+		if selected, ok := selectFromTypeMap(inputs.DeclaredTypes, sym, &fallback); ok {
+			return selected, true
 		}
 		if ctx != nil {
 			if t, ok := ctx.GlobalType(sym); ok && t != nil {
@@ -209,10 +310,10 @@ func BuildInputSymbolResolver(ctx api.BaseEnv, inputs *flow.Inputs) func(cfg.Poi
 }
 
 // BuildContextTypeKeyResolver creates a type key resolver from Env.
-func BuildContextTypeKeyResolver(ctx api.BaseEnv, scopes map[cfg.Point]*scope.State) func(string, *scope.State) (narrow.TypeKey, bool) {
+func BuildContextTypeKeyResolver(ctx api.BaseEnv) func(string, *scope.State) (narrow.TypeKey, bool) {
 	return func(name string, sc *scope.State) (narrow.TypeKey, bool) {
-		if kind.FromString(name) != kind.Unknown {
-			return narrow.BuiltinTypeKey(name), true
+		if key, ok := narrow.KnownBuiltinTypeKey(name); ok {
+			return key, true
 		}
 		if ctx != nil && ctx.TypeNames() != nil {
 			if t, ok := ctx.TypeNames().LookupType(name); ok && t != nil {
@@ -262,15 +363,25 @@ func BuildAssignmentTypeResolver(inputs *flow.Inputs) func(cfg.SymbolID) typ.Typ
 	if inputs == nil {
 		return nil
 	}
+
+	latestBySymbol := make(map[cfg.SymbolID]typ.Type)
+	for i := len(inputs.Assignments) - 1; i >= 0; i-- {
+		a := inputs.Assignments[i]
+		sym := a.TargetPath.Symbol
+		if sym == 0 || a.Type == nil {
+			continue
+		}
+		if _, exists := latestBySymbol[sym]; !exists {
+			latestBySymbol[sym] = a.Type
+		}
+	}
+
 	return func(sym cfg.SymbolID) typ.Type {
 		if sym == 0 {
 			return nil
 		}
-		for i := len(inputs.Assignments) - 1; i >= 0; i-- {
-			a := inputs.Assignments[i]
-			if a.TargetPath.Symbol == sym && a.Type != nil {
-				return a.Type
-			}
+		if t, ok := latestBySymbol[sym]; ok {
+			return t
 		}
 		if t, ok := inputs.DeclaredTypes[sym]; ok {
 			return t
@@ -327,9 +438,10 @@ func ExtractIteratorSource(
 		if iter == nil {
 			return nil
 		}
-		idx = iter.Source.Index
-		if idx < 0 {
-			idx = len(call.Args) + idx
+		var ok bool
+		idx, ok = effect.ResolveParamIndex(iter.Source, len(call.Args))
+		if !ok {
+			return nil
 		}
 		switch iter.Kind {
 		case effect.IterateIndexed:
@@ -381,13 +493,17 @@ func ExtractIteratorSource(
 // CalleeType resolves the function type for a call site.
 // For method calls, resolves the receiver type (via CalleePath.Symbol, assignmentTypes,
 // symResolver, synth) and looks up the method. For non-method calls, synthesizes the
-// callee directly. Uses CalleePath.Symbol as primary identity with fallback to CalleeSymbol.
+// callee directly. Symbol resolver lookup uses canonical callsite candidates with
+// binding-table fallback.
 func CalleeType(
 	info *cfg.CallInfo,
 	p cfg.Point,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	assignmentTypes func(cfg.SymbolID) typ.Type,
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
 ) typ.Type {
 	if info == nil {
 		return nil
@@ -395,7 +511,7 @@ func CalleeType(
 
 	var fnType typ.Type
 
-	if info.Method != "" && info.Receiver != nil {
+	if callsite.IsMethodCallInfo(info) {
 		var receiverType typ.Type
 
 		// Use CalleePath.Symbol as primary identity for receiver
@@ -418,21 +534,38 @@ func CalleeType(
 			receiverType = synth(info.Receiver, p)
 		}
 
-		if receiverType != nil && receiverType.Kind() != kind.Unknown {
+		if !typ.IsAbsentOrUnknown(receiverType) {
 			fnType, _ = core.Method(receiverType, info.Method)
 		}
 	} else if synth != nil && info.Callee != nil {
 		fnType = synth(info.Callee, p)
 	}
 
-	// Use CalleePath.Symbol as primary identity, fall back to CalleeSymbol
-	calleeSym := info.CalleePath.Symbol
-	if calleeSym == 0 {
-		calleeSym = info.CalleeSymbol
-	}
-
-	if fnType == nil && calleeSym != 0 && symResolver != nil {
-		fnType, _ = symResolver(p, calleeSym)
+	if fnType == nil && symResolver != nil {
+		candidates := make([]cfg.SymbolID, 0, 4)
+		seen := make(map[cfg.SymbolID]struct{}, 4)
+		push := func(sym cfg.SymbolID) {
+			if sym == 0 {
+				return
+			}
+			if _, ok := seen[sym]; ok {
+				return
+			}
+			seen[sym] = struct{}{}
+			candidates = append(candidates, sym)
+		}
+		// Preserve historical preference for CalleePath.Symbol while still
+		// falling back to canonical callsite candidates when it misses.
+		push(info.CalleePath.Symbol)
+		for _, sym := range callsite.CalleeSymbolCandidatesWithAliases(info, graph, bindings, moduleBindings) {
+			push(sym)
+		}
+		for _, sym := range candidates {
+			if t, ok := symResolver(p, sym); ok && t != nil {
+				fnType = t
+				break
+			}
+		}
 	}
 
 	return fnType

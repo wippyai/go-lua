@@ -124,9 +124,12 @@ func IsConcreteType(t typ.Type) bool {
 		return false
 	}
 
-	switch t.Kind() {
-	case kind.Any, kind.Unknown, kind.Never:
+	k := t.Kind()
+	if k.IsTopOrBottom() {
 		return false
+	}
+
+	switch k {
 	case kind.Union, kind.Intersection:
 		return false
 	case kind.Interface:

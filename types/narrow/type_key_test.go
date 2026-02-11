@@ -31,6 +31,26 @@ func TestBuiltinTypeKey_Empty(t *testing.T) {
 	}
 }
 
+func TestKnownBuiltinTypeKey(t *testing.T) {
+	k, ok := KnownBuiltinTypeKey("string")
+	if !ok {
+		t.Fatal("expected ok=true for known builtin")
+	}
+	if k != BuiltinTypeKey("string") {
+		t.Fatalf("KnownBuiltinTypeKey('string') = %+v, want %+v", k, BuiltinTypeKey("string"))
+	}
+}
+
+func TestKnownBuiltinTypeKey_Unknown(t *testing.T) {
+	k, ok := KnownBuiltinTypeKey("entry")
+	if ok {
+		t.Fatal("expected ok=false for unknown builtin name")
+	}
+	if !k.IsZero() {
+		t.Fatalf("expected zero key for unknown builtin name, got %+v", k)
+	}
+}
+
 func TestHashTypeKey(t *testing.T) {
 	k := HashTypeKey(12345)
 	if k.Kind != TypeKeyHash {
@@ -98,5 +118,32 @@ func TestTypeKey_Equal_DifferentKinds(t *testing.T) {
 
 	if k1.Equal(k2) {
 		t.Error("different kinds should not be equal")
+	}
+}
+
+func TestTypeKey_BuiltinKind(t *testing.T) {
+	k := BuiltinTypeKey("string")
+	got, ok := k.BuiltinKind()
+	if !ok {
+		t.Fatal("expected builtin key to resolve")
+	}
+	if got.String() != "string" {
+		t.Fatalf("BuiltinKind() = %v, want string", got)
+	}
+}
+
+func TestTypeKey_BuiltinKind_UnknownName(t *testing.T) {
+	k := BuiltinTypeKey("entry")
+	_, ok := k.BuiltinKind()
+	if ok {
+		t.Fatal("expected unknown builtin name to fail resolution")
+	}
+}
+
+func TestTypeKey_BuiltinKind_NonBuiltinKey(t *testing.T) {
+	k := HashTypeKey(10)
+	_, ok := k.BuiltinKind()
+	if ok {
+		t.Fatal("expected hash key to fail builtin resolution")
 	}
 }

@@ -489,3 +489,37 @@ end
 		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
+
+func TestLinterFalsePositive_AnnotatedStringNarrowsToLiteral(t *testing.T) {
+	source := `
+local function expect_literal(x: string)
+    if x == "a" then
+        local y: "a" = x
+        return y
+    end
+    return x
+end
+local _ = expect_literal("a")
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected no errors for annotated literal narrowing, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestLinterFalsePositive_AnnotatedNumberNarrowsToLiteral(t *testing.T) {
+	source := `
+local function expect_one(x: number): number
+    if x == 1 then
+        local y: 1 = x
+        return y
+    end
+    return x
+end
+local _ = expect_one(1)
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected no errors for annotated numeric literal narrowing, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}

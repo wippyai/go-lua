@@ -730,8 +730,8 @@ func substitutePath(p Path, args []Path) Path {
 	if !p.IsPlaceholder() {
 		return p
 	}
-	idx := p.PlaceholderIndex()
-	if idx < 0 || idx >= len(args) {
+	idx, ok := PlaceholderArgIndex(p, len(args))
+	if !ok {
 		return Path{}
 	}
 	arg := args[idx]

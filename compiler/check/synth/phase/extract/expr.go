@@ -30,6 +30,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
@@ -160,7 +161,7 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 							if keySym, ok := bindings.SymbolOf(key); ok && keySym != 0 {
 								keyPath := constraint.Path{Root: key.Value, Symbol: keySym}
 								if narrower.HasKeyOf(p, tablePath, keyPath) {
-									if refined := narrow.RemoveNil(it); refined != nil && refined.Kind() != kind.Never {
+									if refined := narrow.RemoveNil(it); !typ.IsNever(refined) {
 										it = refined
 									}
 								}
@@ -169,7 +170,7 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 					}
 				}
 				if derived := s.indexFromKeyOf(objType, ex.Object, key, p, sc, narrower); derived != nil {
-					if keyType != nil && (keyType.Kind() == kind.Any || keyType.Kind() == kind.Unknown) {
+					if keyType != nil && keyType.Kind().IsPlaceholder() {
 						return derived
 					}
 					if shouldPreferKeyOfIndex(it) {
@@ -275,7 +276,7 @@ func (s *Synthesizer) narrowTupleIndex(objType typ.Type, varName string, indexRe
 	tupleLen := int64(len(tuple.Elements))
 	if lower >= 1 && upper <= tupleLen {
 		narrowed := narrow.RemoveNil(indexResult)
-		if narrowed.Kind() != kind.Never {
+		if !typ.IsNever(narrowed) {
 			return narrowed
 		}
 	}
@@ -386,7 +387,7 @@ func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.P
 			narrowedType = narrow.ToFalsy(left)
 		}
 
-		if narrowedType != nil && narrowedType.Kind() != kind.Never {
+		if !typ.IsNever(narrowedType) {
 			wrapped := &localNarrowOps{
 				inner:        narrower,
 				overridePath: lhsPath,
@@ -497,17 +498,11 @@ func (s *Synthesizer) synthMultiWithSpec(expr ast.Expr, p cfg.Point, specTypes a
 }
 
 // enrichWithManifest enriches a field type with manifest information.
-func enrichWithManifest(manifests interface{}, ft typ.Type, modulePath, fieldName string) typ.Type {
-	mq, ok := manifests.(interface {
-		Manifest(path string) interface {
-			LookupValue(name string) (typ.Type, bool)
-		}
-	})
-	if !ok || mq == nil {
+func enrichWithManifest(manifests io.ManifestQuerier, ft typ.Type, modulePath, fieldName string) typ.Type {
+	if manifests == nil {
 		return ft
 	}
-
-	manifest := mq.Manifest(modulePath)
+	manifest := io.LookupManifest(manifests, modulePath)
 	if manifest == nil {
 		return ft
 	}

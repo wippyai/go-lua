@@ -4,9 +4,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -41,22 +41,23 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionEf
 	// Start with the function's own Terminates value.
 	terminates := fnEffect.Terminates
 
-	result.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	result.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
 
 		var calleeEffect *constraint.FunctionEffect
 
-		// Symbol-based lookup (all functions have symbols).
-		if info.CalleeSymbol != 0 && lookup != nil {
-			calleeEffect = lookup(info.CalleeSymbol)
-		}
-
-		// Direct alias resolution (local f = B; f()).
-		if calleeEffect == nil && info.CalleeSymbol != 0 {
-			if aliasSym := result.Graph.DirectAliasSymbol(info.CalleeSymbol); aliasSym != 0 && lookup != nil {
-				calleeEffect = lookup(aliasSym)
+		// Symbol-based lookup via canonical callsite symbol candidates.
+		if lookup != nil {
+			bindings := result.Graph.Bindings()
+			moduleBindings := result.ModuleBindings
+			candidates := callsite.CalleeSymbolCandidatesWithAliases(info, result.Graph, bindings, moduleBindings)
+			for _, sym := range candidates {
+				calleeEffect = lookup(sym)
+				if calleeEffect != nil {
+					break
+				}
 			}
 		}
 
@@ -172,7 +173,7 @@ func EffectFromType(t typ.Type) *constraint.FunctionEffect {
 			if r == nil {
 				continue
 			}
-			if unwrap.Alias(r).Kind() == kind.Never {
+			if typ.IsNever(unwrap.Alias(r)) {
 				terminates = true
 				break
 			}

@@ -5,8 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
-	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
 func TestProcessPointReturnChangedKeys_NoChanges(t *testing.T) {
@@ -48,6 +48,46 @@ func TestProcessAssignmentReturnChangedKeys_SingleAssignment(t *testing.T) {
 	}
 }
 
+func TestProcessAssignmentReturnChangedKeys_FieldNilUsesDeclaredFieldType(t *testing.T) {
+	c := cfg.New()
+	g := newMockSSAGraph(c)
+
+	symResult := setupSymbol(g, "result", []cfg.Point{c.Entry()})
+	ver := cfg.Version{Root: "result", Symbol: symResult, ID: 1}
+	setVersion(g, c.Entry(), symResult, ver)
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symResult] = typ.NewRecord().Field("err", typ.String).Build()
+	inputs.Assignments = []UnifiedAssignment{
+		{
+			Point: c.Entry(),
+			TargetPath: constraint.Path{
+				Root:     "result",
+				Symbol:   symResult,
+				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "err"}},
+			},
+			Type: typ.Nil,
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+	path := constraint.Path{
+		Root:     "result",
+		Symbol:   symResult,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "err"}},
+	}
+	got := s.TypeAt(c.Entry(), path)
+	if got == nil {
+		t.Fatal("expected field type after nil assignment")
+	}
+	if !subtype.IsSubtype(typ.String, got) || !subtype.IsSubtype(typ.Nil, got) {
+		t.Fatalf("expected string|nil from declared field + nil assignment, got %v", got)
+	}
+	if typ.IsAbsentOrUnknown(got) || typ.TypeEquals(got, typ.NewOptional(typ.Unknown)) {
+		t.Fatalf("expected concrete typed optional, got %v", got)
+	}
+}
+
 func TestResolveSymbolKeyType_ZeroSymbol(t *testing.T) {
 	c := cfg.New()
 	g := newMockSSAGraph(c)
@@ -80,7 +120,7 @@ func TestResolveSymbolKeyType_ValidSymbol(t *testing.T) {
 }
 
 func TestWidenArrayElementType_EmptyArray(t *testing.T) {
-	result := WidenArrayElementType(nil, typ.String, typjoin.Two)
+	result := WidenArrayElementType(nil, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("WidenArrayElementType(nil, string) = %T, want *typ.Array", result)
@@ -92,7 +132,7 @@ func TestWidenArrayElementType_EmptyArray(t *testing.T) {
 
 func TestWidenArrayElementType_ExistingArray(t *testing.T) {
 	existing := typ.NewArray(typ.Integer)
-	result := WidenArrayElementType(existing, typ.String, typjoin.Two)
+	result := WidenArrayElementType(existing, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("WidenArrayElementType(int[], string) = %T, want *typ.Array", result)
@@ -109,7 +149,7 @@ func TestWidenArrayElementType_ExistingArray(t *testing.T) {
 
 func TestWidenArrayElementType_EmptyRecord(t *testing.T) {
 	emptyRecord := typ.NewRecord().Build()
-	result := WidenArrayElementType(emptyRecord, typ.String, typjoin.Two)
+	result := WidenArrayElementType(emptyRecord, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("WidenArrayElementType({}, string) = %T, want *typ.Array", result)
@@ -166,10 +206,10 @@ func TestWidenWithIndexer_ExistingMap(t *testing.T) {
 }
 
 func TestWidenMapValueArray_NilBase(t *testing.T) {
-	result := widenMapValueArray(nil, typ.String, typ.Integer)
+	result := WidenMapValueArray(nil, typ.String, typ.Integer)
 	m, ok := result.(*typ.Map)
 	if !ok {
-		t.Fatalf("widenMapValueArray(nil) = %T, want *typ.Map", result)
+		t.Fatalf("WidenMapValueArray(nil) = %T, want *typ.Map", result)
 	}
 	arr, ok := m.Value.(*typ.Array)
 	if !ok {
@@ -183,10 +223,10 @@ func TestWidenMapValueArray_NilBase(t *testing.T) {
 func TestWidenMapValueArray_PrefersNonSoftElement(t *testing.T) {
 	base := typ.NewMap(typ.String, typ.NewArray(typ.Any))
 	elem := typ.NewRecord().Field("id", typ.String).Build()
-	result := widenMapValueArray(base, typ.String, elem)
+	result := WidenMapValueArray(base, typ.String, elem)
 	m, ok := result.(*typ.Map)
 	if !ok {
-		t.Fatalf("widenMapValueArray(map) = %T, want *typ.Map", result)
+		t.Fatalf("WidenMapValueArray(map) = %T, want *typ.Map", result)
 	}
 	arr, ok := m.Value.(*typ.Array)
 	if !ok {

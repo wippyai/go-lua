@@ -3,6 +3,7 @@ package transform
 import (
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -46,8 +47,8 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 
 // buildSelectResultUnion builds a union of result records from SelectCase elements.
 func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCases) typ.Type {
-	casesIdx := transform.Cases.Index
-	if casesIdx < 0 || casesIdx >= len(args) {
+	casesIdx, ok := effect.ResolveParamIndex(transform.Cases, len(args))
+	if !ok {
 		return nil
 	}
 
@@ -61,7 +62,7 @@ func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCase
 		return nil
 	}
 
-	addDefault := transform.Default.Index >= 0
+	addDefault := selectDefaultPossible(args, casesArg, transform)
 
 	var resultTypes []typ.Type
 	seen := make(map[uint64]bool)
@@ -69,6 +70,10 @@ func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCase
 	for _, caseType := range caseTypes {
 		channelType, valueType := extractSelectCaseParts(caseType)
 		if channelType == nil {
+			// Keep unknown/any case elements conservative; skip concrete non-case fields.
+			if !typ.IsAny(caseType) && !typ.IsUnknown(caseType) {
+				continue
+			}
 			channelType = typ.Any
 			valueType = typ.Any
 		}
@@ -102,6 +107,74 @@ func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCase
 	return typ.NewUnion(resultTypes...)
 }
 
+func selectDefaultPossible(args []typ.Type, casesArg typ.Type, transform effect.SelectResultOfCases) bool {
+	if idx, ok := effect.ResolveParamIndex(transform.Default, len(args)); ok {
+		if defaultArgMayEnableSelectDefault(args[idx]) {
+			return true
+		}
+	}
+	return casesArgHasDefaultFlag(casesArg)
+}
+
+func defaultArgMayEnableSelectDefault(t typ.Type) bool {
+	t = unwrap.Alias(t)
+	if t == nil {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Optional:
+		return defaultArgMayEnableSelectDefault(v.Inner)
+	case *typ.Union:
+		for _, m := range v.Members {
+			if defaultArgMayEnableSelectDefault(m) {
+				return true
+			}
+		}
+		return false
+	case *typ.Literal:
+		if v.Base == kind.Boolean {
+			b, _ := v.Value.(bool)
+			return b
+		}
+		return false
+	default:
+		return t.Kind() == kind.Boolean || typ.IsAny(t) || typ.IsUnknown(t)
+	}
+}
+
+func casesArgHasDefaultFlag(casesArg typ.Type) bool {
+	casesArg = unwrap.Alias(casesArg)
+	if casesArg == nil {
+		return false
+	}
+
+	switch v := casesArg.(type) {
+	case *typ.Optional:
+		return casesArgHasDefaultFlag(v.Inner)
+	case *typ.Union:
+		for _, m := range v.Members {
+			if casesArgHasDefaultFlag(m) {
+				return true
+			}
+		}
+		return false
+	case *typ.Record:
+		if field := v.GetField("default"); field != nil {
+			return defaultArgMayEnableSelectDefault(field.Type)
+		}
+		// Conservative map-component handling: {[string]: boolean}-style cases tables
+		// can carry a "default" flag even when not modeled as a named field.
+		if v.MapKey == nil || v.MapValue == nil {
+			return false
+		}
+		return typ.TypeMatchesLiteral(v.MapKey, typ.LiteralString("default")) &&
+			defaultArgMayEnableSelectDefault(v.MapValue)
+	default:
+		return false
+	}
+}
+
 // extractSelectCaseElements extracts individual SelectCase types from a cases argument.
 func extractSelectCaseElements(casesArg typ.Type) []typ.Type {
 	if casesArg == nil {
@@ -119,6 +192,9 @@ func extractSelectCaseElements(casesArg typ.Type) []typ.Type {
 		}
 		result := make([]typ.Type, 0, len(v.Fields))
 		for _, f := range v.Fields {
+			if f.Name == "default" {
+				continue
+			}
 			if f.Type != nil {
 				result = append(result, f.Type)
 			}

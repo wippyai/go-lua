@@ -1,12 +1,10 @@
 package ops
 
 import (
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-// maxTruthyDepth limits recursion for truthy/falsy checks.
-const maxTruthyDepth = 10
 
 // CanBeFalsy reports whether a type can represent a falsy value (nil or false).
 //
@@ -23,11 +21,15 @@ const maxTruthyDepth = 10
 //   - Arrays, maps, records, functions: Never falsy
 //   - Placeholder types: Conservatively falsy
 func CanBeFalsy(t typ.Type) bool {
-	return canBeFalsyDepth(t, 0)
+	return canBeFalsyGuard(t, typ.NewGuard())
 }
 
-func canBeFalsyDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > maxTruthyDepth {
+func canBeFalsyGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
 		return false
 	}
 
@@ -37,7 +39,7 @@ func canBeFalsyDepth(t typ.Type, depth int) bool {
 
 	case *typ.Union:
 		for _, m := range v.Members {
-			if canBeFalsyDepth(m, depth+1) {
+			if canBeFalsyGuard(m, next) {
 				return true
 			}
 		}
@@ -47,7 +49,7 @@ func canBeFalsyDepth(t typ.Type, depth int) bool {
 	case *typ.Intersection:
 		// Intersection is falsy only if ALL members can be falsy
 		for _, m := range v.Members {
-			if !canBeFalsyDepth(m, depth+1) {
+			if !canBeFalsyGuard(m, next) {
 				return false
 			}
 		}
@@ -59,7 +61,7 @@ func canBeFalsyDepth(t typ.Type, depth int) bool {
 			return false
 		}
 
-		return canBeFalsyDepth(v.Target, depth+1)
+		return canBeFalsyGuard(v.Target, next)
 
 	case *typ.Literal:
 		if b, ok := v.Value.(bool); ok && !b {
@@ -70,7 +72,7 @@ func canBeFalsyDepth(t typ.Type, depth int) bool {
 
 	case *typ.TypeParam:
 		if v.Constraint != nil {
-			return canBeFalsyDepth(v.Constraint, depth+1)
+			return canBeFalsyGuard(v.Constraint, next)
 		}
 
 		return true // unconstrained type param can be any type including nil

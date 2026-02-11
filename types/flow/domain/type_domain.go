@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -340,7 +339,7 @@ func (d *TypeDomain) Join(other Domain) Domain {
 	for _, key := range constraint.SortedPathKeys(d.Narrowed) {
 		dt := d.Narrowed[key]
 		if ot, ok := o.Narrowed[key]; ok {
-			result.Narrowed[key] = join.Two(dt, ot)
+			result.Narrowed[key] = typ.JoinPreferNonSoft(dt, ot)
 		}
 		// Keys only in one side are dropped
 	}

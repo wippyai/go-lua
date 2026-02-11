@@ -681,6 +681,7 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 //   - Number: typ.Number
 //   - Integer: typ.Integer
 //   - String: typ.String
+//   - Function: fun(...any) -> any
 //   - Any: typ.Any
 //   - Other: typ.Unknown (no canonical type available)
 func TypeForKind(k kind.Kind) typ.Type {
@@ -695,6 +696,8 @@ func TypeForKind(k kind.Kind) typ.Type {
 		return typ.Integer
 	case kind.String:
 		return typ.String
+	case kind.Function:
+		return typ.Func().Variadic(typ.Any).Returns(typ.Any).Build()
 	case kind.Any:
 		return typ.Any
 	default:

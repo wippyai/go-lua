@@ -2,7 +2,6 @@ package typ
 
 import (
 	"github.com/wippyai/go-lua/internal"
-	"github.com/wippyai/go-lua/types/kind"
 )
 
 // SoftPolicy controls how soft-placeholder detection behaves.
@@ -58,12 +57,7 @@ func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
 				return true
 			},
 			Default: func(tt Type) bool {
-				switch tt.Kind() {
-				case kind.Any, kind.Unknown:
-					return true
-				default:
-					return false
-				}
+				return tt.Kind().IsPlaceholder()
 			},
 		}
 	})
@@ -82,10 +76,6 @@ func PruneSoftUnionMembers(t Type) Type {
 	return pruneSoftUnionMembersMemo(t, guard, memo, visiting)
 }
 
-// pruneSoftUnionMembersVisitHook is a test-only hook to validate memoization.
-// It should remain nil in production.
-var pruneSoftUnionMembersVisitHook func(Type)
-
 func pruneSoftUnionMembersMemo(t Type, guard internal.RecursionGuard, memo map[Type]Type, visiting map[Type]bool) Type {
 	if t == nil {
 		return t
@@ -101,9 +91,6 @@ func pruneSoftUnionMembersMemo(t Type, guard internal.RecursionGuard, memo map[T
 		return t
 	}
 	visiting[t] = true
-	if pruneSoftUnionMembersVisitHook != nil {
-		pruneSoftUnionMembersVisitHook(t)
-	}
 
 	out := Visit(t, Visitor[Type]{
 		Union: func(u *Union) Type {

@@ -6,49 +6,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestTwo(t *testing.T) {
-	t.Run("nil left", func(t *testing.T) {
-		if Two(nil, typ.String) != typ.String {
-			t.Error("nil left should return right")
-		}
-	})
-
-	t.Run("nil right", func(t *testing.T) {
-		if Two(typ.String, nil) != typ.String {
-			t.Error("nil right should return left")
-		}
-	})
-
-	t.Run("unknown left", func(t *testing.T) {
-		if Two(typ.Unknown, typ.String) != typ.String {
-			t.Error("unknown left should return right")
-		}
-	})
-
-	t.Run("unknown right", func(t *testing.T) {
-		if Two(typ.String, typ.Unknown) != typ.String {
-			t.Error("unknown right should return left")
-		}
-	})
-
-	t.Run("equal types", func(t *testing.T) {
-		if Two(typ.String, typ.String) != typ.String {
-			t.Error("equal types should return same")
-		}
-	})
-
-	t.Run("different types", func(t *testing.T) {
-		result := Two(typ.String, typ.Number)
-		union, ok := result.(*typ.Union)
-		if !ok {
-			t.Fatal("different types should create union")
-		}
-		if len(union.Members) != 2 {
-			t.Errorf("expected 2 members, got %d", len(union.Members))
-		}
-	})
-}
-
 func TestReturnVectors(t *testing.T) {
 	t.Run("empty left", func(t *testing.T) {
 		right := []typ.Type{typ.String}
@@ -86,27 +43,18 @@ func TestReturnVectors(t *testing.T) {
 			t.Errorf("expected 2, got %d", len(result))
 		}
 	})
-}
 
-func TestIsUnknownOrNil(t *testing.T) {
-	tests := []struct {
-		name string
-		t    typ.Type
-		want bool
-	}{
-		{"nil", nil, true},
-		{"Unknown", typ.Unknown, true},
-		{"Nil type", typ.Nil, true},
-		{"String", typ.String, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsUnknownOrNil(tt.t); got != tt.want {
-				t.Errorf("IsUnknownOrNil() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	t.Run("preserves unknown when paired with implicit nil", func(t *testing.T) {
+		left := []typ.Type{typ.Unknown}
+		right := []typ.Type{}
+		result := ReturnVectors(left, right)
+		if len(result) != 1 {
+			t.Fatalf("expected 1, got %d", len(result))
+		}
+		if !typ.TypeEquals(result[0], typ.Unknown) {
+			t.Fatalf("expected unknown, got %v", result[0])
+		}
+	})
 }
 
 func TestWithReturns(t *testing.T) {
@@ -132,6 +80,38 @@ func TestWithReturns(t *testing.T) {
 		result := WithReturns(sig, []typ.Type{nil, typ.String})
 		if result.Returns[0] != typ.Unknown {
 			t.Error("nil should be normalized to Unknown")
+		}
+	})
+}
+
+func TestWithReturnsOrUnknown(t *testing.T) {
+	t.Run("nil signature", func(t *testing.T) {
+		if WithReturnsOrUnknown(nil, []typ.Type{typ.String}) != nil {
+			t.Fatal("expected nil for nil signature")
+		}
+	})
+
+	t.Run("preserves existing returns", func(t *testing.T) {
+		sig := typ.Func().Returns(typ.Number).Build()
+		got := WithReturnsOrUnknown(sig, []typ.Type{typ.String})
+		if got != sig {
+			t.Fatal("expected existing return signature to be preserved")
+		}
+	})
+
+	t.Run("defaults to unknown", func(t *testing.T) {
+		sig := typ.Func().Build()
+		got := WithReturnsOrUnknown(sig, nil)
+		if got == nil || len(got.Returns) != 1 || got.Returns[0] != typ.Unknown {
+			t.Fatalf("expected unknown default return, got %v", got)
+		}
+	})
+
+	t.Run("uses provided returns", func(t *testing.T) {
+		sig := typ.Func().Param("x", typ.Number).Build()
+		got := WithReturnsOrUnknown(sig, []typ.Type{typ.String})
+		if got == nil || len(got.Returns) != 1 || got.Returns[0] != typ.String {
+			t.Fatalf("expected provided return vector, got %v", got)
 		}
 	})
 }

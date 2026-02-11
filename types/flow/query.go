@@ -1,8 +1,6 @@
 package flow
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/join"
@@ -465,36 +463,44 @@ func (s *Solution) filterByChildNarrowings(baseType typ.Type, parentPath constra
 		return baseType
 	}
 
-	// Extract parent symbol ID from canonical key format
 	parentSym := parentPath.Symbol
-	var kept []typ.Type
-	keys := make([]constraint.PathKey, 0, len(children))
-	for key := range children {
-		keys = append(keys, key)
+
+	type parsedChildNarrowing struct {
+		narrowed typ.Type
+		segs     []constraint.Segment
 	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+
+	parsedChildren := make([]parsedChildNarrowing, 0, len(children))
+	for childKey, narrowedChild := range children {
+		childSym, _, suffix, ok := pathkey.ParseKey(childKey)
+		if !ok || childSym != parentSym {
+			continue
+		}
+		segs := pathkey.ParseSuffix(suffix)
+		if len(segs) == 0 {
+			continue
+		}
+		parsedChildren = append(parsedChildren, parsedChildNarrowing{
+			narrowed: narrowedChild,
+			segs:     segs,
+		})
+	}
+	if len(parsedChildren) == 0 {
+		return baseType
+	}
+
+	var kept []typ.Type
 	for _, member := range u.Members {
 		compatible := true
-		for _, childKey := range keys {
-			narrowedChild := children[childKey]
-			// Parse child key to extract suffix
-			childSym, _, suffix, ok := pathkey.ParseKey(childKey)
-			if !ok || childSym != parentSym {
-				continue
-			}
-			segs := pathkey.ParseSuffix(suffix)
-			if len(segs) == 0 {
-				continue
-			}
-
-			memberChild, ok := s.deriveTypeFrom(member, segs)
+		for _, child := range parsedChildren {
+			memberChild, ok := s.deriveTypeFrom(member, child.segs)
 			if !ok || memberChild == nil {
 				compatible = false
 				break
 			}
 
-			if narrowedChild.Kind() == kind.Literal {
-				if lit, ok := narrowedChild.(*typ.Literal); ok {
+			if child.narrowed.Kind() == kind.Literal {
+				if lit, ok := child.narrowed.(*typ.Literal); ok {
 					if childLit, ok := memberChild.(*typ.Literal); ok {
 						if !typ.TypeEquals(childLit, lit) {
 							compatible = false

@@ -22,3 +22,111 @@ func TestApplyEffectTransform_ErrorReturnOptionalizes(t *testing.T) {
 		t.Fatalf("ApplyEffectTransform error return: got %v, want %v", got, want)
 	}
 }
+
+func TestBuildSelectResultUnion_ResolvesNegativeCasesIndex(t *testing.T) {
+	chParam := typ.NewTypeParam("Ch", typ.Any)
+	valParam := typ.NewTypeParam("T", typ.Any)
+	selectCase := typ.NewGeneric("channel.SelectCase", []*typ.TypeParam{chParam, valParam}, typ.NewRecord().Build())
+
+	args := []typ.Type{
+		typ.String,
+		typ.NewArray(typ.Instantiate(selectCase, typ.Integer, typ.Boolean)),
+	}
+	got := buildSelectResultUnion(args, effect.SelectResultOfCases{
+		Cases:   effect.ParamRef{Index: -1},
+		Default: effect.ParamRef{Index: -1},
+	})
+
+	want := typ.NewRecord().
+		Field("channel", typ.Integer).
+		Field("ok", typ.Boolean).
+		Field("value", typ.Boolean).
+		Build()
+
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("buildSelectResultUnion negative cases index: got %v, want %v", got, want)
+	}
+}
+
+func TestBuildSelectResultUnion_DefaultFieldRequiresInRangeDefaultArg(t *testing.T) {
+	chParam := typ.NewTypeParam("Ch", typ.Any)
+	valParam := typ.NewTypeParam("T", typ.Any)
+	selectCase := typ.NewGeneric("channel.SelectCase", []*typ.TypeParam{chParam, valParam}, typ.NewRecord().Build())
+
+	args := []typ.Type{
+		typ.NewArray(typ.Instantiate(selectCase, typ.String, typ.Number)),
+	}
+	got := buildSelectResultUnion(args, effect.SelectResultOfCases{
+		Cases:   effect.ParamRef{Index: 0},
+		Default: effect.ParamRef{Index: 1},
+	})
+
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record result, got %T", got)
+	}
+	if field := rec.GetField("default"); field != nil {
+		t.Fatalf("did not expect default field when default arg is absent, got %+v", *field)
+	}
+}
+
+func TestBuildSelectResultUnion_DefaultFieldFromCasesRecordDefaultKey(t *testing.T) {
+	chParam := typ.NewTypeParam("Ch", typ.Any)
+	valParam := typ.NewTypeParam("T", typ.Any)
+	selectCase := typ.NewGeneric("channel.SelectCase", []*typ.TypeParam{chParam, valParam}, typ.NewRecord().Build())
+
+	casesArg := typ.NewRecord().
+		Field("1", typ.Instantiate(selectCase, typ.String, typ.Number)).
+		Field("default", typ.LiteralBool(true)).
+		Build()
+	args := []typ.Type{casesArg}
+
+	got := buildSelectResultUnion(args, effect.SelectResultOfCases{
+		Cases:   effect.ParamRef{Index: 0},
+		Default: effect.ParamRef{Index: 1}, // Out-of-range param index; default flag comes from cases record.
+	})
+
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record result, got %T", got)
+	}
+	field := rec.GetField("default")
+	if field == nil || !field.Optional || !typ.TypeEquals(field.Type, typ.Boolean) {
+		t.Fatalf("expected optional boolean default field, got %+v", field)
+	}
+}
+
+func TestBuildSelectResultUnion_SkipsNonCaseRecordFields(t *testing.T) {
+	chParam := typ.NewTypeParam("Ch", typ.Any)
+	valParam := typ.NewTypeParam("T", typ.Any)
+	selectCase := typ.NewGeneric("channel.SelectCase", []*typ.TypeParam{chParam, valParam}, typ.NewRecord().Build())
+
+	casesArg := typ.NewRecord().
+		Field("1", typ.Instantiate(selectCase, typ.String, typ.Number)).
+		Field("meta", typ.String).
+		Build()
+	args := []typ.Type{casesArg}
+
+	got := buildSelectResultUnion(args, effect.SelectResultOfCases{
+		Cases:   effect.ParamRef{Index: 0},
+		Default: effect.ParamRef{Index: 1},
+	})
+
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record result, got %T", got)
+	}
+
+	channelField := rec.GetField("channel")
+	valueField := rec.GetField("value")
+	if channelField == nil || valueField == nil {
+		t.Fatalf("expected channel/value fields, got %v", rec)
+	}
+
+	if !typ.TypeEquals(channelField.Type, typ.String) {
+		t.Fatalf("channel field should come from select case, got %v", channelField.Type)
+	}
+	if !typ.TypeEquals(valueField.Type, typ.Number) {
+		t.Fatalf("value field should come from select case, got %v", valueField.Type)
+	}
+}

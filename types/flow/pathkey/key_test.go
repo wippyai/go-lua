@@ -6,59 +6,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
-func Test_splitVersionKey_Simple(t *testing.T) {
-	root, suffix, ok := splitVersionKey("x@5")
-	if !ok {
-		t.Fatal("expected ok")
-	}
-	if root != "x" {
-		t.Fatalf("expected root 'x', got '%s'", root)
-	}
-	if suffix != "" {
-		t.Fatalf("expected empty suffix, got '%s'", suffix)
-	}
-}
-
-func Test_splitVersionKey_WithField(t *testing.T) {
-	root, suffix, ok := splitVersionKey("x@5.field")
-	if !ok {
-		t.Fatal("expected ok")
-	}
-	if root != "x" {
-		t.Fatalf("expected root 'x', got '%s'", root)
-	}
-	if suffix != ".field" {
-		t.Fatalf("expected '.field', got '%s'", suffix)
-	}
-}
-
-func Test_splitVersionKey_WithIndex(t *testing.T) {
-	root, suffix, ok := splitVersionKey("arr@10[0]")
-	if !ok {
-		t.Fatal("expected ok")
-	}
-	if root != "arr" {
-		t.Fatalf("expected root 'arr', got '%s'", root)
-	}
-	if suffix != "[0]" {
-		t.Fatalf("expected '[0]', got '%s'", suffix)
-	}
-}
-
-func Test_splitVersionKey_NoAt(t *testing.T) {
-	_, _, ok := splitVersionKey("noat")
-	if ok {
-		t.Fatal("expected not ok for key without @")
-	}
-}
-
-func Test_splitVersionKey_Empty(t *testing.T) {
-	_, _, ok := splitVersionKey("")
-	if ok {
-		t.Fatal("expected not ok for empty key")
-	}
-}
-
 func TestSegmentsSuffix_Empty(t *testing.T) {
 	result := SegmentsSuffix(nil)
 	if result != "" {
@@ -122,6 +69,85 @@ func TestParseSuffix_IntIndex(t *testing.T) {
 	}
 }
 
+func TestParseSuffix_StringIndexQuoted(t *testing.T) {
+	segs := ParseSuffix("[\"x-y\"]")
+	if len(segs) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(segs))
+	}
+	if segs[0].Kind != constraint.SegmentIndexString || segs[0].Name != "x-y" {
+		t.Fatalf("expected string index x-y, got %+v", segs[0])
+	}
+}
+
+func TestParseSuffix_StringIndexQuotedEscaped(t *testing.T) {
+	segs := ParseSuffix("[\"a\\\"b\"]")
+	if len(segs) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(segs))
+	}
+	if segs[0].Kind != constraint.SegmentIndexString || segs[0].Name != "a\"b" {
+		t.Fatalf("expected string index a\\\"b, got %+v", segs[0])
+	}
+}
+
+func TestParseSuffix_StringIndexQuotedEscapedBackslash(t *testing.T) {
+	segs := ParseSuffix("[\"a\\\\b\"]")
+	if len(segs) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(segs))
+	}
+	if segs[0].Kind != constraint.SegmentIndexString || segs[0].Name != `a\b` {
+		t.Fatalf("expected string index a\\\\b, got %+v", segs[0])
+	}
+}
+
+func TestParseSuffix_StringIndexQuotedInvalidEscapeRejected(t *testing.T) {
+	segs := ParseSuffix("[\"a\\nb\"]")
+	if segs != nil {
+		t.Fatalf("expected invalid escape to be rejected, got %+v", segs)
+	}
+}
+
+func TestParseSuffix_StringIndexQuotedDanglingEscapeRejected(t *testing.T) {
+	segs := ParseSuffix("[\"a\\\"]")
+	if segs != nil {
+		t.Fatalf("expected dangling escape to be rejected, got %+v", segs)
+	}
+}
+
+func TestParseSuffix_StringIndexVsInt_Disambiguated(t *testing.T) {
+	stringSegs := ParseSuffix("[\"1\"]")
+	if len(stringSegs) != 1 {
+		t.Fatalf("expected 1 segment for string index, got %d", len(stringSegs))
+	}
+	if stringSegs[0].Kind != constraint.SegmentIndexString || stringSegs[0].Name != "1" {
+		t.Fatalf("expected string index \"1\", got %+v", stringSegs[0])
+	}
+
+	intSegs := ParseSuffix("[1]")
+	if len(intSegs) != 1 {
+		t.Fatalf("expected 1 segment for int index, got %d", len(intSegs))
+	}
+	if intSegs[0].Kind != constraint.SegmentIndexInt || intSegs[0].Index != 1 {
+		t.Fatalf("expected int index 1, got %+v", intSegs[0])
+	}
+}
+
+func TestSegmentsSuffix_ParseSuffix_RoundTripEscapedStringIndex(t *testing.T) {
+	original := []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "meta"},
+		{Kind: constraint.SegmentIndexString, Name: `a"b\c`},
+	}
+	suffix := SegmentsSuffix(original)
+	parsed := ParseSuffix(suffix)
+	if len(parsed) != len(original) {
+		t.Fatalf("round-trip length mismatch: got %d, want %d (suffix=%q)", len(parsed), len(original), suffix)
+	}
+	for i := range original {
+		if parsed[i] != original[i] {
+			t.Fatalf("round-trip mismatch at %d: got %+v, want %+v (suffix=%q)", i, parsed[i], original[i], suffix)
+		}
+	}
+}
+
 func TestParseSuffix_Mixed(t *testing.T) {
 	segs := ParseSuffix(".a[1].b")
 	if len(segs) != 3 {
@@ -135,6 +161,35 @@ func TestParseSuffix_Mixed(t *testing.T) {
 	}
 	if segs[2].Kind != constraint.SegmentField || segs[2].Name != "b" {
 		t.Fatalf("expected field 'b', got %+v", segs[2])
+	}
+}
+
+func TestParseSuffix_RejectsEmptyFieldSegments(t *testing.T) {
+	cases := []string{
+		".",
+		"..a",
+		".a..b",
+		".a.",
+	}
+
+	for _, suffix := range cases {
+		if segs := ParseSuffix(suffix); segs != nil {
+			t.Fatalf("expected %q to be rejected, got %+v", suffix, segs)
+		}
+	}
+}
+
+func TestParseSuffix_RejectsInvalidFieldIdentifiers(t *testing.T) {
+	cases := []string{
+		".1abc",
+		".a-b",
+		".a b",
+	}
+
+	for _, suffix := range cases {
+		if segs := ParseSuffix(suffix); segs != nil {
+			t.Fatalf("expected %q to be rejected, got %+v", suffix, segs)
+		}
 	}
 }
 

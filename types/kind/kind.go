@@ -143,6 +143,11 @@ func (k Kind) IsConcrete() bool {
 	return k != Any && k != Unknown && k != Never
 }
 
+// IsTopOrBottom returns true for Any (top), Unknown (unresolved), or Never (bottom).
+func (k Kind) IsTopOrBottom() bool {
+	return k == Any || k == Unknown || k == Never
+}
+
 // IsNever returns true for the Never kind (bottom type).
 func (k Kind) IsNever() bool {
 	return k == Never

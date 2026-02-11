@@ -29,6 +29,7 @@ import (
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -43,12 +44,14 @@ const maxTypeDepth = 64
 type Resolver struct {
 	manifests io.ManifestQuerier
 	exprSynth api.ExprSynth
+	bindings  core.ParamSymbolLookup
 }
 
 // Config configures a Resolver.
 type Config struct {
 	Manifests io.ManifestQuerier
 	ExprSynth api.ExprSynth
+	Bindings  core.ParamSymbolLookup
 }
 
 // New creates a new type resolver.
@@ -56,6 +59,7 @@ func New(c Config) *Resolver {
 	return &Resolver{
 		manifests: c.Manifests,
 		exprSynth: c.ExprSynth,
+		bindings:  c.Bindings,
 	}
 }
 
@@ -112,9 +116,17 @@ func (r *Resolver) ResolveFunctionSignature(fn *ast.FunctionExpr, sc *scope.Stat
 		resolveScope = resolveScope.WithTypeParams(typeParams)
 	}
 
+	implicitSelf := core.HasImplicitSelfParam(fn, r.bindings)
+	var implicitSelfType typ.Type
+	if implicitSelf && resolveScope != nil && resolveScope.SelfType() != nil {
+		implicitSelfType = resolveScope.SelfType()
+	}
+
 	core.ApplyParamList(builder, fn, core.ParamListConfig{
-		ResolveType:  r.ResolveType,
-		ResolveScope: resolveScope,
+		ResolveType:      r.ResolveType,
+		ResolveScope:     resolveScope,
+		ImplicitSelf:     implicitSelf,
+		ImplicitSelfType: implicitSelfType,
 	})
 
 	if len(fn.ReturnTypes) > 0 {
@@ -315,10 +327,11 @@ func extractLiteralValue(expr ast.Expr) any {
 }
 
 func parseNumber(s string) (float64, error) {
-	// Simple number parsing - handles common cases
-	var f float64
-	_, err := fmt.Sscanf(s, "%f", &f)
-	return f, err
+	f, ok := numparse.ParseFloatLiteral(s)
+	if !ok {
+		return 0, fmt.Errorf("invalid number literal: %q", s)
+	}
+	return f, nil
 }
 
 func (r *Resolver) resolveNamed(name string, sc *scope.State) typ.Type {
@@ -487,7 +500,7 @@ func (r *Resolver) resolveRef(te *ast.TypeRefExpr, sc *scope.State) typ.Type {
 	typeName := te.Path[len(te.Path)-1]
 
 	if r.manifests != nil {
-		if manifest := r.manifests.Manifest(module); manifest != nil {
+		if manifest := io.LookupManifest(r.manifests, module); manifest != nil {
 			if t, ok := manifest.LookupType(typeName); ok {
 				return t
 			}

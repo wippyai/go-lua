@@ -5,7 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg/extraction"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 )
 
 // AddLinearEdge adds an edge from the current point to next, then updates current.
@@ -267,20 +269,13 @@ func (b *Builder) processTableField(p basecfg.Point, baseSym basecfg.SymbolID, f
 		return
 	}
 
-	// Extract field name from key
-	var fieldName string
-	switch key := field.Key.(type) {
-	case *ast.StringExpr:
-		fieldName = key.Value
-	case *ast.NumberExpr:
-		fieldName = key.Value
-	}
+	fieldSeg, hasStaticField := pathseg.StaticTableFieldKeySegment(field.Key)
 
-	// If we have a base symbol and field name, create field symbol for function values
-	if baseSym != 0 && fieldName != "" && b.Bindings != nil {
+	// If we have a base symbol and static field key, create field symbol for function values
+	if baseSym != 0 && hasStaticField && b.Bindings != nil {
 		if fnExpr, ok := field.Value.(*ast.FunctionExpr); ok && fnExpr != nil {
 			// Create field symbol and associate with function literal
-			fieldSym := b.Bindings.GetOrCreateFieldSymbol(baseSym, fieldName)
+			fieldSym := b.getOrCreateFieldPathSymbol(baseSym, []constraint.Segment{fieldSeg})
 			b.Bindings.SetFuncLitSymbol(fnExpr, fieldSym)
 			b.Nested = append(b.Nested, NestedFunc{Point: p, Func: fnExpr, Symbol: fieldSym})
 
@@ -292,9 +287,9 @@ func (b *Builder) processTableField(p basecfg.Point, baseSym basecfg.SymbolID, f
 	b.scanExprForFuncsWithContext(p, field.Key, nil, "")
 
 	// For nested tables, pass the field symbol as base
-	if baseSym != 0 && fieldName != "" && b.Bindings != nil {
+	if baseSym != 0 && hasStaticField && b.Bindings != nil {
 		if tableExpr, ok := field.Value.(*ast.TableExpr); ok && tableExpr != nil {
-			fieldSym := b.Bindings.GetOrCreateFieldSymbol(baseSym, fieldName)
+			fieldSym := b.getOrCreateFieldPathSymbol(baseSym, []constraint.Segment{fieldSeg})
 			for _, innerField := range tableExpr.Fields {
 				b.processTableField(p, fieldSym, innerField)
 			}

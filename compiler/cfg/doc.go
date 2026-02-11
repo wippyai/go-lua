@@ -73,8 +73,12 @@
 //	    // Process assignment at point p
 //	})
 //
-//	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
-//	    // Process call at point p
+//	graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
+//	    // Process call statements at point p
+//	})
+//
+//	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+//	    // Process all callsites, including assignment/return call expressions
 //	})
 //
 // # Nested Functions

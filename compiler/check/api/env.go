@@ -544,7 +544,7 @@ func (f *unifiedTypeFacts) IsAnnotated(sym cfg.SymbolID) bool {
 }
 
 func (f *unifiedTypeFacts) toTypedValue(t typ.Type) flow.TypedValue {
-	if t.Kind() == typ.Unknown.Kind() {
+	if typ.IsUnknown(t) {
 		return flow.TypedValue{Type: t, State: flow.StateUnknown}
 	}
 	return flow.TypedValue{Type: t, State: flow.StateResolved}

@@ -45,16 +45,7 @@ func BuildTypeDefScopes(
 	current := base
 
 	for _, p := range graph.RPO() {
-		if info := graph.TypeDef(p); info != nil && info.Name != "" && info.TypeExpr != nil {
-			resolved := resolver(info.Name, info.TypeExpr, ToTypeParamExprs(info.TypeParams), current)
-			if resolved != nil {
-				if _, isGeneric := resolved.(*typ.Generic); isGeneric {
-					current = current.WithType(info.Name, resolved)
-				} else {
-					current = current.WithType(info.Name, typ.NewAlias(info.Name, resolved))
-				}
-			}
-		}
+		current = applyTypeDefAtPoint(graph, p, current, resolver)
 		scopes[p] = current
 	}
 
@@ -79,19 +70,28 @@ func EnrichWithTypeDefs(
 	current := base
 
 	for _, p := range graph.RPO() {
-		if info := graph.TypeDef(p); info != nil && info.Name != "" && info.TypeExpr != nil {
-			resolved := resolver(info.Name, info.TypeExpr, ToTypeParamExprs(info.TypeParams), current)
-			if resolved != nil {
-				if _, isGeneric := resolved.(*typ.Generic); isGeneric {
-					current = current.WithType(info.Name, resolved)
-				} else {
-					current = current.WithType(info.Name, typ.NewAlias(info.Name, resolved))
-				}
-			}
-		}
+		current = applyTypeDefAtPoint(graph, p, current, resolver)
 	}
 
 	return current
+}
+
+func applyTypeDefAtPoint(graph *cfg.Graph, p cfg.Point, current *State, resolver TypeDefResolver) *State {
+	if graph == nil || resolver == nil {
+		return current
+	}
+	info := graph.TypeDef(p)
+	if info == nil || info.Name == "" || info.TypeExpr == nil {
+		return current
+	}
+	resolved := resolver(info.Name, info.TypeExpr, ToTypeParamExprs(info.TypeParams), current)
+	if resolved == nil {
+		return current
+	}
+	if _, isGeneric := resolved.(*typ.Generic); isGeneric {
+		return current.WithType(info.Name, resolved)
+	}
+	return current.WithType(info.Name, typ.NewAlias(info.Name, resolved))
 }
 
 // ToTypeParamExprs converts cfg type params to ast type param expressions.

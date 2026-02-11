@@ -1,17 +1,18 @@
 package interproc
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // Store is the minimal store interface required to record post-flow interproc facts.
@@ -132,7 +133,27 @@ func StoreFactsFromResult(
 		if facts.NarrowReturns == nil {
 			facts.NarrowReturns = make(api.NarrowReturnSummaries, 1)
 		}
-		facts.FuncTypes[sym] = fnType
+		fnTypeForFacts := fnType
+		if summary := returns.NormalizeReturnVector(facts.ReturnSummaries[sym]); len(summary) > 0 {
+			normalizedSummary := make([]typ.Type, len(summary))
+			hasInformativeSummary := false
+			for i, ret := range summary {
+				normalizedSummary[i] = typ.PruneSoftUnionMembers(ret)
+				if paramhints.IsInformativeHintType(normalizedSummary[i]) {
+					hasInformativeSummary = true
+				}
+			}
+			shouldUseSummary := hasInformativeSummary ||
+				len(fnTypeForFacts.Returns) == 0 ||
+				(returns.ReturnTypesAllNil(fnTypeForFacts.Returns) && !returns.ReturnTypesAllNil(normalizedSummary)) ||
+				returns.ReturnTypesRefine(normalizedSummary, fnTypeForFacts.Returns) ||
+				returns.ReturnTypesElideOptional(normalizedSummary, fnTypeForFacts.Returns) ||
+				returns.ReturnTypesExtendRecord(normalizedSummary, fnTypeForFacts.Returns)
+			if shouldUseSummary {
+				fnTypeForFacts = typjoin.WithReturns(fnTypeForFacts, normalizedSummary)
+			}
+		}
+		facts.FuncTypes[sym] = fnTypeForFacts
 		facts.NarrowReturns[sym] = narrowReturns
 	})
 }
@@ -145,23 +166,66 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 	}
 	graph := result.Graph
 
+	moduleBindings := store.ModuleBindings()
 	bindings := graph.Bindings()
 	if bindings == nil {
-		bindings = store.ModuleBindings()
+		bindings = moduleBindings
 	}
 
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || len(info.Args) == 0 {
 			return
 		}
-		calleeSym := info.CalleeSymbol
-		if calleeSym == 0 {
-			if ident, ok := info.Callee.(*ast.IdentExpr); ok && bindings != nil {
-				if sym, found := bindings.SymbolOf(ident); found {
-					calleeSym = sym
-				}
+		argTypes := make([]typ.Type, len(info.Args))
+		for i, arg := range info.Args {
+			if arg != nil {
+				argTypes[i] = result.NarrowSynth.TypeOf(arg, p)
 			}
 		}
+		def := ops.CallDef{
+			Args:  argTypes,
+			Query: result.NarrowSynth.CallQuery(),
+		}
+		if checkcallsite.IsMethodCallInfo(info) {
+			def.IsMethod = true
+			def.MethodName = info.Method
+			def.Receiver = result.NarrowSynth.TypeOf(info.Receiver, p)
+		} else if info.Callee != nil {
+			def.Callee = result.NarrowSynth.TypeOf(info.Callee, p)
+		}
+		infer := ops.InferCall(result.NarrowSynth.Context(), def)
+		if len(info.Args) > 0 {
+			updated := make([]typ.Type, len(argTypes))
+			copy(updated, argTypes)
+			changed := false
+			for i, arg := range info.Args {
+				if arg == nil {
+					continue
+				}
+				expected := infer.ExpectedArgType(i)
+				if expected == nil {
+					continue
+				}
+				reSynthed := result.NarrowSynth.TypeOfWithExpected(arg, p, expected)
+				if reSynthed == nil {
+					continue
+				}
+				if !typ.TypeEquals(updated[i], reSynthed) {
+					updated[i] = reSynthed
+					changed = true
+				}
+			}
+			if changed {
+				def.Args = updated
+				infer = ops.ReInfer(result.NarrowSynth.Context(), def, infer)
+				argTypes = updated
+			}
+		}
+
+		hasFunctionRef := func(sym cfg.SymbolID) bool {
+			return sym != 0 && store.FunctionRefBySym(sym) != nil
+		}
+		calleeSym := checkcallsite.PreferredCalleeSymbolWithAliases(info, result.Graph, bindings, moduleBindings, hasFunctionRef)
 		if calleeSym == 0 {
 			return
 		}
@@ -190,27 +254,36 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 			if facts.ParamHints == nil {
 				facts.ParamHints = make(api.ParamHints)
 			}
-			hints := facts.ParamHints[calleeSym]
-			if len(hints) < len(info.Args) {
-				expanded := make([]typ.Type, len(info.Args))
-				copy(expanded, hints)
-				hints = expanded
-			}
+			hints := paramhints.EnsureHintCapacity(facts.ParamHints[calleeSym], len(info.Args))
 			for i, arg := range info.Args {
 				if arg == nil {
 					continue
 				}
-				argType := result.NarrowSynth.TypeOf(arg, p)
-				argType = paramhints.WidenParamHintType(argType)
-				argType = typ.PruneSoftUnionMembers(argType)
-				if !paramhints.IsInformativeHintType(argType) {
-					continue
+				if expectedFn := unwrap.Function(infer.ExpectedArgType(i)); expectedFn != nil {
+					argSym := checkcallsite.CanonicalSymbolFromExprWithAliases(
+						arg,
+						0,
+						result.Graph,
+						bindings,
+						moduleBindings,
+						hasFunctionRef,
+					)
+					if argSym != 0 && hasFunctionRef(argSym) {
+						hintsForFn := facts.ParamHints[argSym]
+						for j, param := range expectedFn.Params {
+							hintsForFn, _ = paramhints.MergeHintAt(hintsForFn, j, param.Type, returns.JoinInterprocTypes)
+						}
+						if len(hintsForFn) > 0 {
+							facts.ParamHints[argSym] = hintsForFn
+						}
+					}
 				}
-				prev := hints[i]
-				joined := returns.JoinInterprocTypes(prev, argType)
-				if !typ.TypeEquals(prev, joined) {
-					hints[i] = joined
+
+				argType := argTypes[i]
+				if argType == nil {
+					argType = result.NarrowSynth.TypeOf(arg, p)
 				}
+				hints, _ = paramhints.MergeHintAt(hints, i, argType, returns.JoinInterprocTypes)
 			}
 			if len(hints) > 0 {
 				facts.ParamHints[calleeSym] = hints
@@ -261,55 +334,10 @@ func mergeCapturedContainerMutations(
 	existing map[cfg.SymbolID][]api.ContainerMutation,
 	next map[cfg.SymbolID][]api.ContainerMutation,
 ) map[cfg.SymbolID][]api.ContainerMutation {
-	if existing == nil {
-		return next
-	}
-	if next == nil {
-		return existing
-	}
-	merged := make(map[cfg.SymbolID][]api.ContainerMutation, len(existing)+len(next))
-	for _, sym := range cfg.SortedSymbolIDs(existing) {
-		merged[sym] = existing[sym]
-	}
-	for _, sym := range cfg.SortedSymbolIDs(next) {
-		merged[sym] = mergeContainerMutationSlice(merged[sym], next[sym])
-	}
-	return merged
-}
-
-func mergeContainerMutationSlice(
-	existing []api.ContainerMutation,
-	next []api.ContainerMutation,
-) []api.ContainerMutation {
-	if len(existing) == 0 {
-		return next
-	}
-	if len(next) == 0 {
-		return existing
-	}
-	byKey := make(map[string]api.ContainerMutation, len(existing)+len(next))
-	for _, m := range existing {
-		byKey[containerMutationKey(m)] = m
-	}
-	for _, m := range next {
-		key := containerMutationKey(m)
-		if prev, ok := byKey[key]; ok {
-			m.ValueType = returns.JoinInterprocTypes(prev.ValueType, m.ValueType)
+	return returns.MergeCapturedContainerMutationMaps(existing, next, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
+		if prev != nil {
+			next.ValueType = returns.JoinInterprocTypes(prev.ValueType, next.ValueType)
 		}
-		byKey[key] = m
-	}
-	keys := make([]string, 0, len(byKey))
-	for k := range byKey {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]api.ContainerMutation, 0, len(byKey))
-	for _, key := range keys {
-		out = append(out, byKey[key])
-	}
-	return out
-}
-
-func containerMutationKey(m api.ContainerMutation) string {
-	return constraint.FormatSegments(m.Segments)
+		return next
+	})
 }

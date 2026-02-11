@@ -177,31 +177,31 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 	}
 
 	// Never <: T (bottom type)
-	if sub.Kind() == kind.Never {
+	if typ.IsNever(sub) {
 		return true
 	}
 	// T </: Never (except Never itself, handled above)
-	if super.Kind() == kind.Never {
+	if typ.IsNever(super) {
 		return false
 	}
 
 	// T <: Any (top type)
-	if super.Kind() == kind.Any {
+	if typ.IsAny(super) {
 		return true
 	}
 	// Unknown acts as a top type for unresolved values.
 	// T <: Unknown is true for all T, including Any.
-	if super.Kind() == kind.Unknown {
+	if typ.IsUnknown(super) {
 		return true
 	}
 	// Any is NOT assignable to specific types; only to Any itself (Unknown handled above).
-	if sub.Kind() == kind.Any {
+	if typ.IsAny(sub) {
 		return false
 	}
 
 	// Unknown acts as a top type for unresolved values, but not bottom.
 	// Unknown <: T is false (except T = Any/Unknown handled above), while T <: Unknown is true.
-	if sub.Kind() == kind.Unknown {
+	if typ.IsUnknown(sub) {
 		return false
 	}
 
@@ -320,7 +320,7 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 			return c.check(tp.Constraint, super, depth+1)
 		}
 
-		return super.Kind() == kind.Any
+		return typ.IsAny(super)
 	}
 	// Type <: TypeParam (parameter position)
 	if tp, ok := super.(*typ.TypeParam); ok {
@@ -394,8 +394,8 @@ func (c *checker) checkNil(super typ.Type, depth int) bool {
 //     and sub must return at least as many values as super promises
 //   - Variadic: checked contravariantly like regular parameters
 func (c *checker) checkFunction(sub, super *typ.Function, depth int) bool {
-	subReq := requiredParams(sub)
-	superReq := requiredParams(super)
+	subReq := typ.MinRequiredArgs(sub)
+	superReq := typ.MinRequiredArgs(super)
 
 	// sub must accept at least as many args as super requires
 	// If sub requires more params than super accepts, sub is more restrictive = not subtype
@@ -554,7 +554,7 @@ func canWidenTo(narrow, wide typ.Type) bool {
 	narrow = unwrap.Alias(narrow)
 
 	// Any type accepts everything
-	if wide.Kind() == kind.Any {
+	if typ.IsAny(wide) {
 		return true
 	}
 
@@ -926,20 +926,6 @@ func (c *checker) checkInstantiated(sub, super *typ.Instantiated, depth int) boo
 	}
 
 	return true
-}
-
-// requiredParams counts the number of non-optional parameters in a function.
-// Used to determine function arity compatibility during subtype checking.
-func requiredParams(f *typ.Function) int {
-	count := 0
-
-	for _, p := range f.Params {
-		if !p.Optional {
-			count++
-		}
-	}
-
-	return count
 }
 
 // typePair stores a non-commutative pair of types for cycle detection.

@@ -84,13 +84,8 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
 	}
-
-	if t.Kind() == kind.Any {
-		return typ.Any, true
-	}
-
-	if t.Kind() == kind.Unknown {
-		return typ.Unknown, true
+	if top, ok := specialAccessType(t); ok {
+		return top, true
 	}
 
 	res := typ.Visit(t, typ.Visitor[fieldResult]{
@@ -209,14 +204,6 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 			return fieldResult{}
 		},
 		Default: func(t typ.Type) fieldResult {
-			if t.Kind() == kind.Any {
-				return fieldResult{t: typ.Any, ok: true}
-			}
-
-			if t.Kind() == kind.Never {
-				return fieldResult{t: typ.Never, ok: true}
-			}
-
 			return fieldResult{}
 		},
 	})
@@ -257,11 +244,6 @@ func FieldOrMethod(t typ.Type, name string) (typ.Type, bool) {
 //
 // Returns (nil, false) if the type cannot be called.
 func Callable(t typ.Type) (*typ.Function, bool) {
-	return callableCompute(t)
-}
-
-// callableCompute is the entry point for callable checking.
-func callableCompute(t typ.Type) (*typ.Function, bool) {
 	return callableDepth(t, 0)
 }
 

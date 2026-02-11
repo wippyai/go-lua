@@ -129,6 +129,162 @@ func (*AssignInfo) nodeInfo() {}
 // Kind returns the node kind for AssignInfo.
 func (*AssignInfo) Kind() basecfg.NodeKind { return basecfg.NodeAssign }
 
+// TargetAt returns the assignment target aligned with target index i.
+func (info *AssignInfo) TargetAt(i int) (AssignTarget, bool) {
+	if info == nil || i < 0 || i >= len(info.Targets) {
+		return AssignTarget{}, false
+	}
+	return info.Targets[i], true
+}
+
+// FirstTarget returns the first assignment target when present.
+func (info *AssignInfo) FirstTarget() (AssignTarget, bool) {
+	return info.TargetAt(0)
+}
+
+// SourceCallAt returns the source call info aligned with source index i.
+func (info *AssignInfo) SourceCallAt(i int) *CallInfo {
+	if info == nil || i < 0 || i >= len(info.SourceCalls) {
+		return nil
+	}
+	return info.SourceCalls[i]
+}
+
+// SourceAt returns the source expression aligned with source index i.
+func (info *AssignInfo) SourceAt(i int) ast.Expr {
+	if info == nil || i < 0 || i >= len(info.Sources) {
+		return nil
+	}
+	return info.Sources[i]
+}
+
+// LastSource returns the last source expression, or nil when no sources exist.
+func (info *AssignInfo) LastSource() ast.Expr {
+	if info == nil || len(info.Sources) == 0 {
+		return nil
+	}
+	return info.Sources[len(info.Sources)-1]
+}
+
+// TypeAnnotationAt returns the type annotation aligned with target index i.
+func (info *AssignInfo) TypeAnnotationAt(i int) ast.TypeExpr {
+	if info == nil || i < 0 || i >= len(info.TypeAnnotations) {
+		return nil
+	}
+	return info.TypeAnnotations[i]
+}
+
+// CallForTarget resolves the source call producing target index i.
+//
+// Lua assignment rule: when there are more targets than sources, the final
+// source expression may expand to multiple values. If that final source is a
+// call expression, it supplies trailing target values.
+func (info *AssignInfo) CallForTarget(i int) (*CallInfo, int) {
+	if info == nil || i < 0 {
+		return nil, 0
+	}
+	if call := info.SourceCallAt(i); call != nil {
+		return call, 0
+	}
+	last := len(info.SourceCalls) - 1
+	if last < 0 || i < last {
+		return nil, 0
+	}
+	call := info.SourceCallAt(last)
+	if call == nil {
+		return nil, 0
+	}
+	return call, i - last
+}
+
+// SingleSourceCall returns the call info when this assignment has exactly one
+// call expression source (directly at source index 0). Returns nil otherwise.
+func (info *AssignInfo) SingleSourceCall() *CallInfo {
+	if info == nil || len(info.SourceCalls) != 1 {
+		return nil
+	}
+	return info.SourceCallAt(0)
+}
+
+// ExpandingSourceCall returns the trailing source call that expands across
+// multiple targets, along with the first target index fed by that call.
+//
+// Lua assignment semantics only allow multi-return expansion from the last
+// source expression. This helper encodes that rule and requires at least two
+// targets to be populated by the expanding call.
+func (info *AssignInfo) ExpandingSourceCall() (*CallInfo, int) {
+	if info == nil || len(info.Targets) < 2 || len(info.Sources) == 0 {
+		return nil, 0
+	}
+	lastSource := len(info.Sources) - 1
+	call := info.SourceCallAt(lastSource)
+	if call == nil {
+		return nil, 0
+	}
+	expandedTargets := len(info.Targets) - lastSource
+	if expandedTargets < 2 {
+		return nil, 0
+	}
+	return call, lastSource
+}
+
+// HasSiblingCallExpansion reports whether assignment can produce sibling
+// correlations from a single call expression expanded across multiple targets.
+func (info *AssignInfo) HasSiblingCallExpansion() bool {
+	call, _ := info.ExpandingSourceCall()
+	return call != nil
+}
+
+// EachSource visits non-nil source expressions in source index order.
+func (info *AssignInfo) EachSource(fn func(i int, src ast.Expr)) {
+	if info == nil || fn == nil {
+		return
+	}
+	for i := range info.Sources {
+		if src := info.SourceAt(i); src != nil {
+			fn(i, src)
+		}
+	}
+}
+
+// EachTarget visits targets in target index order.
+func (info *AssignInfo) EachTarget(fn func(i int, target AssignTarget)) {
+	if info == nil || fn == nil {
+		return
+	}
+	for i := range info.Targets {
+		if target, ok := info.TargetAt(i); ok {
+			fn(i, target)
+		}
+	}
+}
+
+// EachTargetSource visits targets in target index order with their aligned
+// source expression. Source may be nil when no source exists at that index.
+//
+// This preserves raw positional alignment only; it does not apply Lua
+// multi-return expansion semantics for trailing targets.
+func (info *AssignInfo) EachTargetSource(fn func(i int, target AssignTarget, src ast.Expr)) {
+	if info == nil || fn == nil {
+		return
+	}
+	for i, target := range info.Targets {
+		fn(i, target, info.SourceAt(i))
+	}
+}
+
+// EachSourceCall visits non-nil source call infos in source index order.
+func (info *AssignInfo) EachSourceCall(fn func(i int, call *CallInfo)) {
+	if info == nil || fn == nil {
+		return
+	}
+	for i := range info.SourceCalls {
+		if call := info.SourceCallAt(i); call != nil {
+			fn(i, call)
+		}
+	}
+}
+
 // NumericForInfo captures numeric for loop details.
 type NumericForInfo struct {
 	VarName string
@@ -188,6 +344,26 @@ func (*ReturnInfo) nodeInfo() {}
 
 // Kind returns the node kind for ReturnInfo.
 func (*ReturnInfo) Kind() basecfg.NodeKind { return basecfg.NodeReturn }
+
+// SourceCallAt returns the return-expression call info aligned with expression index i.
+func (info *ReturnInfo) SourceCallAt(i int) *CallInfo {
+	if info == nil || i < 0 || i >= len(info.SourceCalls) {
+		return nil
+	}
+	return info.SourceCalls[i]
+}
+
+// EachSourceCall visits non-nil return-expression call infos in expression order.
+func (info *ReturnInfo) EachSourceCall(fn func(i int, call *CallInfo)) {
+	if info == nil || fn == nil {
+		return
+	}
+	for i := range info.SourceCalls {
+		if call := info.SourceCallAt(i); call != nil {
+			fn(i, call)
+		}
+	}
+}
 
 // BranchInfo captures pre-extracted data for branch nodes.
 type BranchInfo struct {

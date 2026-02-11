@@ -1,14 +1,12 @@
 package returns
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // WidenFacts merges two interproc fact bundles.
@@ -68,22 +66,163 @@ func WidenReturnSummaries(prev, next api.ReturnSummaries) api.ReturnSummaries {
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		rets := next[sym]
 		if existing := merged[sym]; existing != nil {
-			if ReturnTypesRefine(rets, existing) ||
-				ReturnTypesExtendRecord(rets, existing) ||
-				ReturnTypesElideOptional(rets, existing) {
-				merged[sym] = widenReturnVectorForConvergence(rets)
-			} else if ReturnTypesRefine(existing, rets) ||
-				ReturnTypesExtendRecord(existing, rets) ||
-				ReturnTypesElideOptional(existing, rets) {
-				merged[sym] = widenReturnVectorForConvergence(existing)
-			} else {
-				merged[sym] = widenReturnVectorForConvergence(JoinReturnVectorsPreferNonSoft(existing, rets))
+			if shouldUseMonotoneReturnJoin(existing, rets) {
+				merged[sym] = widenReturnVectorForConvergence(joinReturnVectorsMonotone(existing, rets))
+				continue
 			}
+			if preferred, ok := SelectPreferredReturnVector(rets, existing); ok {
+				merged[sym] = widenReturnVectorForConvergence(preferred)
+				continue
+			}
+			merged[sym] = widenReturnVectorForConvergence(typjoin.ReturnVectors(existing, rets))
 		} else {
 			merged[sym] = widenReturnVectorForConvergence(rets)
 		}
 	}
 	return merged
+}
+
+func shouldUseMonotoneReturnJoin(a, b []typ.Type) bool {
+	for _, t := range a {
+		if hasHigherOrderGrowthRisk(t) {
+			return true
+		}
+	}
+	for _, t := range b {
+		if hasHigherOrderGrowthRisk(t) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasHigherOrderGrowthRisk(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	risk := false
+	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		if risk {
+			return node, false
+		}
+		switch n := node.(type) {
+		case *typ.Function:
+			for _, ret := range n.Returns {
+				if typeContainsFunction(ret) {
+					risk = true
+					break
+				}
+			}
+		case *typ.Record:
+			if recordHasSelfRecursiveMethod(n) {
+				risk = true
+			}
+		}
+		return node, false
+	})
+	return risk
+}
+
+func typeContainsFunction(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	hasFn := false
+	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		if _, ok := node.(*typ.Function); ok {
+			hasFn = true
+		}
+		return node, false
+	})
+	return hasFn
+}
+
+func recordHasSelfRecursiveMethod(r *typ.Record) bool {
+	if r == nil {
+		return false
+	}
+	for _, f := range r.Fields {
+		if methodTypeHasSelfRecursiveReturn(f.Type, r) {
+			return true
+		}
+	}
+	if r.HasMapComponent() && methodTypeHasSelfRecursiveReturn(r.MapValue, r) {
+		return true
+	}
+	return false
+}
+
+func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
+	if t == nil || owner == nil {
+		return false
+	}
+	found := false
+	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		if found {
+			return node, false
+		}
+		fn, ok := node.(*typ.Function)
+		if !ok {
+			return node, false
+		}
+		for _, ret := range fn.Returns {
+			if ret == nil {
+				continue
+			}
+			if subtype.IsSubtype(ret, owner) || subtype.IsSubtype(owner, ret) ||
+				TypeExtendsRecord(ret, owner) || TypeExtendsRecord(owner, ret) {
+				found = true
+				break
+			}
+		}
+		return node, false
+	})
+	return found
+}
+
+func joinReturnVectorsMonotone(a, b []typ.Type) []typ.Type {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	maxLen := len(a)
+	if len(b) > maxLen {
+		maxLen = len(b)
+	}
+	out := make([]typ.Type, maxLen)
+	for i := 0; i < maxLen; i++ {
+		var ai, bi typ.Type
+		if i < len(a) {
+			ai = a[i]
+		}
+		if i < len(b) {
+			bi = b[i]
+		}
+		out[i] = joinReturnTypeMonotone(ai, bi)
+	}
+	return out
+}
+
+func joinReturnTypeMonotone(a, b typ.Type) typ.Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if typ.TypeEquals(a, b) {
+		return a
+	}
+	// Keep widening monotone: if one side is already an upper bound, keep it.
+	if subtype.IsSubtype(a, b) || TypeExtendsRecord(a, b) || typeElidesOptional(a, b) {
+		return b
+	}
+	if subtype.IsSubtype(b, a) || TypeExtendsRecord(b, a) || typeElidesOptional(b, a) {
+		return a
+	}
+	return JoinInterprocTypes(a, b)
 }
 
 // WidenParamHints merges two param hint maps using monotone union.
@@ -204,10 +343,10 @@ func joinParamHint(a, b typ.Type) typ.Type {
 	if b == nil {
 		return a
 	}
-	if isNilType(a) && !isNilType(b) {
+	if unwrap.IsNilType(a) && !unwrap.IsNilType(b) {
 		return b
 	}
-	if isNilType(b) && !isNilType(a) {
+	if unwrap.IsNilType(b) && !unwrap.IsNilType(a) {
 		return a
 	}
 	if TypeExtendsRecord(a, b) {
@@ -217,10 +356,6 @@ func joinParamHint(a, b typ.Type) typ.Type {
 		return b
 	}
 	return JoinInterprocTypes(a, b)
-}
-
-func isNilType(t typ.Type) bool {
-	return t != nil && t.Kind() == kind.Nil
 }
 
 // WidenLiteralSigs merges two literal signature maps.
@@ -240,14 +375,35 @@ func WidenLiteralSigs(prev, next api.LiteralSigs) api.LiteralSigs {
 	}
 	for fn, sig := range next {
 		if existing := merged[fn]; existing != nil {
-			if sig != nil {
-				merged[fn] = maybeWidenFunctionForConvergence(sig)
-			}
+			merged[fn] = maybeWidenFunctionForConvergence(mergeLiteralSig(existing, sig))
 		} else {
 			merged[fn] = maybeWidenFunctionForConvergence(sig)
 		}
 	}
 	return merged
+}
+
+func mergeLiteralSig(prev, next *typ.Function) *typ.Function {
+	if prev == nil {
+		return next
+	}
+	if next == nil {
+		return prev
+	}
+	if merged, ok := mergeFunctionReturnsIfSameShape(prev, next); ok {
+		if fn, ok := merged.(*typ.Function); ok {
+			return fn
+		}
+	}
+	if subtype.IsSubtype(prev, next) {
+		return next
+	}
+	if subtype.IsSubtype(next, prev) {
+		return prev
+	}
+	// Literal signatures are constrained to *typ.Function. For incomparable
+	// function shapes, keep the prior stable signature instead of narrowing.
+	return prev
 }
 
 // WidenCapturedTypes merges two captured type maps using monotone join.
@@ -346,69 +502,16 @@ func WidenCapturedContainerMutations(prev, next api.CapturedContainerMutations) 
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		muts := next[sym]
 		existing := merged[sym]
-		merged[sym] = mergeCapturedContainerMutations(existing, muts)
+		merged[sym] = MergeCapturedContainerMutationMaps(existing, muts, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
+			if prev != nil {
+				next.ValueType = maybeWidenTypeForConvergence(JoinInterprocTypes(prev.ValueType, next.ValueType))
+			} else {
+				next.ValueType = maybeWidenTypeForConvergence(next.ValueType)
+			}
+			return next
+		})
 	}
 	return merged
-}
-
-func mergeCapturedContainerMutations(
-	existing map[cfg.SymbolID][]api.ContainerMutation,
-	next map[cfg.SymbolID][]api.ContainerMutation,
-) map[cfg.SymbolID][]api.ContainerMutation {
-	if existing == nil {
-		return next
-	}
-	if next == nil {
-		return existing
-	}
-	merged := make(map[cfg.SymbolID][]api.ContainerMutation, len(existing)+len(next))
-	for _, sym := range cfg.SortedSymbolIDs(existing) {
-		merged[sym] = existing[sym]
-	}
-	for _, sym := range cfg.SortedSymbolIDs(next) {
-		merged[sym] = mergeContainerMutationSlice(merged[sym], next[sym])
-	}
-	return merged
-}
-
-func mergeContainerMutationSlice(
-	existing []api.ContainerMutation,
-	next []api.ContainerMutation,
-) []api.ContainerMutation {
-	if len(existing) == 0 {
-		return next
-	}
-	if len(next) == 0 {
-		return existing
-	}
-	byKey := make(map[string]api.ContainerMutation, len(existing)+len(next))
-	for _, m := range existing {
-		key := mutationKey(m)
-		byKey[key] = m
-	}
-	for _, m := range next {
-		key := mutationKey(m)
-		if prev, ok := byKey[key]; ok {
-			m.ValueType = maybeWidenTypeForConvergence(JoinInterprocTypes(prev.ValueType, m.ValueType))
-		} else {
-			m.ValueType = maybeWidenTypeForConvergence(m.ValueType)
-		}
-		byKey[key] = m
-	}
-	keys := make([]string, 0, len(byKey))
-	for k := range byKey {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]api.ContainerMutation, 0, len(byKey))
-	for _, key := range keys {
-		out = append(out, byKey[key])
-	}
-	return out
-}
-
-func mutationKey(m api.ContainerMutation) string {
-	return constraint.FormatSegments(m.Segments)
 }
 
 // WidenConstructorFields merges constructor field maps using monotone join.
@@ -457,18 +560,22 @@ func mergeFuncTypes(prev, next typ.Type) typ.Type {
 	if next == nil {
 		return prev
 	}
-	if subtype.IsSubtype(prev, next) {
-		return prev
-	}
-	if subtype.IsSubtype(next, prev) {
-		return next
-	}
 	prevFn, okPrev := prev.(*typ.Function)
 	nextFn, okNext := next.(*typ.Function)
 	if okPrev && okNext {
+		// For same-shape functions, merge returns before subtype short-circuiting.
+		// This avoids regressing to narrower context artifacts (e.g. nil-only returns).
 		if merged, ok := mergeFunctionReturnsIfSameShape(prevFn, nextFn); ok {
 			return merged
 		}
+	}
+	if subtype.IsSubtype(prev, next) {
+		return next
+	}
+	if subtype.IsSubtype(next, prev) {
+		return prev
+	}
+	if okPrev && okNext {
 		if len(prevFn.Returns) > 0 && len(nextFn.Returns) > 0 {
 			if ReturnTypesRefine(prevFn.Returns, nextFn.Returns) {
 				return prev
@@ -494,8 +601,7 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 	if len(prevFn.TypeParams) != len(nextFn.TypeParams) {
 		return nil, false
 	}
-	if len(prevFn.TypeParams) > 0 {
-		// Keep generic function merging conservative for now.
+	if !typeParamsEqual(prevFn.TypeParams, nextFn.TypeParams) {
 		return nil, false
 	}
 	if len(prevFn.Params) != len(nextFn.Params) {
@@ -522,7 +628,36 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 		return nil, false
 	}
 
-	mergedReturns := JoinReturnVectorsPreferNonSoft(prevFn.Returns, nextFn.Returns)
+	allowedTypeParams := make(map[string]bool, len(prevFn.TypeParams))
+	for _, tp := range prevFn.TypeParams {
+		if tp != nil && tp.Name != "" {
+			allowedTypeParams[tp.Name] = true
+		}
+	}
+	normalizeReturn := func(t typ.Type) typ.Type {
+		if t == nil {
+			return nil
+		}
+		return typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+			tp, ok := node.(*typ.TypeParam)
+			if !ok {
+				return node, false
+			}
+			if allowedTypeParams[tp.Name] {
+				return node, false
+			}
+			// Free type params in non-generic function returns are unstable placeholders.
+			return typ.Unknown, true
+		})
+	}
+	normalizedPrev := make([]typ.Type, len(prevFn.Returns))
+	normalizedNext := make([]typ.Type, len(nextFn.Returns))
+	for i := range prevFn.Returns {
+		normalizedPrev[i] = normalizeReturn(prevFn.Returns[i])
+		normalizedNext[i] = normalizeReturn(nextFn.Returns[i])
+	}
+
+	mergedReturns := typjoin.ReturnVectors(normalizedPrev, normalizedNext)
 	if ReturnTypesEqual(prevFn.Returns, mergedReturns) {
 		return prevFn, true
 	}
@@ -547,6 +682,9 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 		Effects(effects).
 		Spec(spec).
 		WithRefinement(refinement)
+	for _, tp := range prevFn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
 	for _, p := range prevFn.Params {
 		if p.Optional {
 			builder = builder.OptParam(p.Name, p.Type)
@@ -559,6 +697,24 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 	}
 	builder = builder.Returns(mergedReturns...)
 	return builder.Build(), true
+}
+
+func typeParamsEqual(a, b []*typ.TypeParam) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] == nil || b[i] == nil {
+			if a[i] != b[i] {
+				return false
+			}
+			continue
+		}
+		if !a[i].Equals(b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func widenReturnVectorForConvergence(rets []typ.Type) []typ.Type {

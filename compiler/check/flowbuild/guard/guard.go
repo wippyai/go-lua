@@ -1,9 +1,14 @@
 package guard
 
 import (
+	"strings"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -58,16 +63,12 @@ func ExtractTruthyPathKeys(expr ast.Expr, bindings *bind.BindingTable) []TruthyP
 
 	switch e := expr.(type) {
 	case *ast.IdentExpr:
-		if sym, ok := bindings.SymbolOf(e); ok && sym != 0 {
-			return []TruthyPathKey{{Symbol: sym, Field: ""}}
+		if key, ok := TruthyKeyFromExpr(e, bindings); ok {
+			return []TruthyPathKey{key}
 		}
 	case *ast.AttrGetExpr:
-		if objIdent, ok := e.Object.(*ast.IdentExpr); ok {
-			if sym, ok := bindings.SymbolOf(objIdent); ok && sym != 0 {
-				if fieldName := AttrFieldName(e); fieldName != "" {
-					return []TruthyPathKey{{Symbol: sym, Field: fieldName}}
-				}
-			}
+		if key, ok := TruthyKeyFromExpr(e, bindings); ok && key.Field != "" {
+			return []TruthyPathKey{key}
 		}
 	case *ast.LogicalOpExpr:
 		if e.Operator == "and" {
@@ -78,6 +79,26 @@ func ExtractTruthyPathKeys(expr ast.Expr, bindings *bind.BindingTable) []TruthyP
 		}
 	}
 	return nil
+}
+
+// TruthyKeyFromExpr builds a canonical guard key for static expression paths.
+func TruthyKeyFromExpr(expr ast.Expr, bindings *bind.BindingTable) (TruthyPathKey, bool) {
+	sym, segs, ok := callsite.StaticPathWithBaseSymbol(bindings, expr)
+	if !ok || sym == 0 {
+		return TruthyPathKey{}, false
+	}
+	return TruthyPathKey{
+		Symbol: sym,
+		Field:  truthyPathSuffix(segs),
+	}, true
+}
+
+func truthyPathSuffix(segs []constraint.Segment) string {
+	if len(segs) == 0 {
+		return ""
+	}
+	suffix := pathkey.SegmentsSuffix(segs)
+	return strings.TrimPrefix(suffix, ".")
 }
 
 // propagateTruthyGuards propagates truthy guards from a starting point to all reachable points
@@ -119,20 +140,6 @@ func propagateTruthyGuards(graph *cfg.Graph, start cfg.Point, keys []TruthyPathK
 			}
 		}
 	}
-}
-
-// AttrFieldName extracts the field name from an attribute access expression.
-func AttrFieldName(attr *ast.AttrGetExpr) string {
-	if attr == nil || attr.Key == nil {
-		return ""
-	}
-	switch k := attr.Key.(type) {
-	case *ast.StringExpr:
-		return k.Value
-	case *ast.IdentExpr:
-		return k.Value
-	}
-	return ""
 }
 
 // NarrowTableFieldsByGuard narrows optional record fields using truthy guards.
@@ -188,19 +195,10 @@ func NarrowTableFieldsByGuard(
 		if !isAttr {
 			continue
 		}
-		objIdent, isIdent := attr.Object.(*ast.IdentExpr)
-		if !isIdent {
+		key, ok := TruthyKeyFromExpr(attr, bindings)
+		if !ok || key.Field == "" {
 			continue
 		}
-		sym, found := bindings.SymbolOf(objIdent)
-		if !found || sym == 0 {
-			continue
-		}
-		fieldName := AttrFieldName(attr)
-		if fieldName == "" {
-			continue
-		}
-		key := TruthyPathKey{Symbol: sym, Field: fieldName}
 		if guards[key] {
 			newFields[i].Type = opt.Inner
 			changed = true

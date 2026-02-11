@@ -75,6 +75,20 @@ func TestFromExpr_NumberExpr_Float(t *testing.T) {
 	}
 }
 
+func TestFromExpr_NumberExpr_ZeroFloat(t *testing.T) {
+	expr := &ast.NumberExpr{Value: "0.0"}
+	lit, ok := literal.FromExpr(expr)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if lit == nil {
+		t.Fatal("expected non-nil literal")
+	}
+	if lit.Base != kind.Number {
+		t.Errorf("expected number kind for 0.0, got %v", lit.Base)
+	}
+}
+
 func TestFromExpr_TrueExpr(t *testing.T) {
 	lit, ok := literal.FromExpr(&ast.TrueExpr{})
 	if !ok {
@@ -267,39 +281,5 @@ func TestKeyTypeFromExpr_BoolLiteral(t *testing.T) {
 	result := literal.KeyTypeFromExpr(&ast.TrueExpr{}, nil)
 	if result != typ.Boolean {
 		t.Error("expected typ.Boolean")
-	}
-}
-
-func TestParseNumberLiteral_Empty(t *testing.T) {
-	_, _, ok := literal.ParseNumberLiteral("")
-	if ok {
-		t.Error("expected ok=false for empty string")
-	}
-}
-
-func TestParseNumberLiteral_Integer(t *testing.T) {
-	i, f, ok := literal.ParseNumberLiteral("42")
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if i != 42 || f != 0 {
-		t.Errorf("expected i=42, f=0, got i=%d, f=%f", i, f)
-	}
-}
-
-func TestParseNumberLiteral_Float(t *testing.T) {
-	i, f, ok := literal.ParseNumberLiteral("3.14")
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if i != 0 || f != 3.14 {
-		t.Errorf("expected i=0, f=3.14, got i=%d, f=%f", i, f)
-	}
-}
-
-func TestParseNumberLiteral_Invalid(t *testing.T) {
-	_, _, ok := literal.ParseNumberLiteral("not_a_number")
-	if ok {
-		t.Error("expected ok=false for invalid input")
 	}
 }

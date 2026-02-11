@@ -20,8 +20,10 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
@@ -46,12 +48,13 @@ func CheckCalls(
 
 	var diags []diag.Diagnostic
 	query := narrowSynth.CallQuery()
+	bindings := graph.Bindings()
 
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
-		callDiags := checkSingleCall(p, info, scopes, narrowView, narrowSynth, query, sourceName)
+		callDiags := checkSingleCall(p, info, scopes, narrowView, narrowSynth, query, sourceName, graph, bindings)
 		diags = append(diags, callDiags...)
 	})
 
@@ -66,6 +69,8 @@ func checkSingleCall(
 	narrowSynth api.Synth,
 	query core.TypeOps,
 	sourceName string,
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
 ) []diag.Diagnostic {
 	if info.Method == "" && info.Callee != nil {
 		if t := narrowView.TypeOf(info.Callee, p); hasCallableTypeEffect(t) {
@@ -87,7 +92,7 @@ func checkSingleCall(
 		}
 	}
 
-	if info.Method != "" && info.Receiver != nil {
+	if callsite.IsMethodCallInfo(info) {
 		if recvType := narrowView.TypeOf(info.Receiver, p); recvType != nil {
 			if hasTypeValueMethodEffect(recvType, info.Method) {
 				return nil
@@ -105,10 +110,11 @@ func checkSingleCall(
 		Query: query,
 	}
 
-	if info.Method != "" && info.Receiver != nil {
+	if callsite.IsMethodCallInfo(info) {
 		def.IsMethod = true
 		def.MethodName = info.Method
 		def.Receiver = narrowView.TypeOf(info.Receiver, p)
+		def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, graph, info)
 	} else if info.Callee != nil {
 		def.Callee = narrowView.TypeOf(info.Callee, p)
 	}

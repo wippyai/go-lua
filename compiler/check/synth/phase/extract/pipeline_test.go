@@ -275,3 +275,21 @@ func TestFullArgReSynth_Other(t *testing.T) {
 		t.Fatal("expected nil for non-function/table")
 	}
 }
+
+func TestFullArgReSynth_Identifier(t *testing.T) {
+	called := false
+	synthWithExpected := func(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type {
+		called = true
+		return typ.String
+	}
+
+	reSynth := FullArgReSynth(synthWithExpected, nil, 0)
+	result := reSynth(0, &ast.IdentExpr{Value: "cb"}, typ.Func().Build())
+
+	if !called {
+		t.Fatal("expected callback to be called for identifier")
+	}
+	if result != typ.String {
+		t.Fatalf("got %v, want string", result)
+	}
+}

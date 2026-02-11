@@ -43,6 +43,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/literal"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/numconst"
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -50,11 +51,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/sibling"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -276,6 +275,15 @@ func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) Branch
 	if !onTrue.HasConstraints() {
 		return BranchConditions{
 			OnTrue:  constraint.TrueCondition(),
+			OnFalse: constraint.TrueCondition(),
+		}
+	}
+	// Call-expression constraints are one-sided implications inferred from the
+	// callee body/signature (for example local table predicates). They are sound
+	// for truthy branches only; negating them is not generally representable.
+	if _, ok := expr.(*ast.FuncCallExpr); ok {
+		return BranchConditions{
+			OnTrue:  onTrue,
 			OnFalse: constraint.TrueCondition(),
 		}
 	}
@@ -515,7 +523,7 @@ func (ce *ConditionExtractor) typePredicatePath(expr ast.Expr) (constraint.Path,
 	if !ok || call == nil {
 		return constraint.Path{}, false
 	}
-	if call.Method != "" || call.Receiver != nil {
+	if checkcallsite.IsMethodLikeExpr(call) {
 		return constraint.Path{}, false
 	}
 	if len(call.Args) != 1 {
@@ -698,7 +706,29 @@ func (ce *ConditionExtractor) constraintsFromPathLiteral(expr ast.Expr, lit *typ
 	if target, key, ok := flowpath.SplitIndexPath(path); ok {
 		return []constraint.Constraint{constraint.IndexEquals{Target: target, Key: key, Value: lit}}
 	}
+	if typeKey, ok := ce.literalTypeKey(lit); ok {
+		return []constraint.Constraint{constraint.HasType{Path: path, Type: typeKey}}
+	}
 	return nil
+}
+
+func (ce *ConditionExtractor) literalTypeKey(lit *typ.Literal) (narrow.TypeKey, bool) {
+	if lit == nil {
+		return narrow.TypeKey{}, false
+	}
+	hash := lit.Hash()
+	if hash == 0 {
+		return narrow.TypeKey{}, false
+	}
+	if ce.Inputs != nil {
+		if ce.Inputs.TypeKeys == nil {
+			ce.Inputs.TypeKeys = make(map[uint64]typ.Type)
+		}
+		if _, exists := ce.Inputs.TypeKeys[hash]; !exists {
+			ce.Inputs.TypeKeys[hash] = lit
+		}
+	}
+	return narrow.HashTypeKey(hash), true
 }
 
 // constraintsFromCallExpr handles function call expressions.
@@ -707,7 +737,7 @@ func (ce *ConditionExtractor) constraintsFromCallExpr(expr *ast.FuncCallExpr) []
 		return nil
 	}
 
-	if expr.Method != "" || expr.Receiver != nil {
+	if checkcallsite.IsMethodLikeExpr(expr) {
 		return nil
 	}
 	if len(expr.Args) == 0 {
@@ -726,7 +756,90 @@ func (ce *ConditionExtractor) constraintsFromCallExpr(expr *ast.FuncCallExpr) []
 		}
 	}
 
+	if path := ce.pathFromExpr(expr.Args[0]); !path.IsEmpty() && ce.hasLocalTableTypePredicate(expr) {
+		return []constraint.Constraint{
+			constraint.NotNil{Path: path},
+			constraint.HasType{Path: path, Type: narrow.BuiltinTypeKey("table")},
+		}
+	}
+
 	return nil
+}
+
+func (ce *ConditionExtractor) hasLocalTableTypePredicate(call *ast.FuncCallExpr) bool {
+	if call == nil {
+		return false
+	}
+	ident, ok := call.Func.(*ast.IdentExpr)
+	if !ok || ident == nil {
+		return false
+	}
+	bindings := ce.bindings()
+	if bindings == nil {
+		return false
+	}
+	sym, ok := bindings.SymbolOf(ident)
+	if !ok || sym == 0 {
+		return false
+	}
+	graph, ok := ce.graph().(*cfg.Graph)
+	if !ok {
+		return false
+	}
+	fn := checkcallsite.FunctionLiteralForSymbol(graph, bindings, sym)
+	if fn == nil || fn.ParList == nil || len(fn.ParList.Names) == 0 {
+		return false
+	}
+	param := fn.ParList.Names[0]
+	if param == "" {
+		return false
+	}
+	for _, stmt := range fn.Stmts {
+		ret, ok := stmt.(*ast.ReturnStmt)
+		if !ok || ret == nil || len(ret.Exprs) == 0 {
+			continue
+		}
+		if exprContainsTypeCheck(ret.Exprs[0], param, "table") {
+			return true
+		}
+	}
+	return false
+}
+
+func exprContainsTypeCheck(expr ast.Expr, paramName, kindName string) bool {
+	switch e := expr.(type) {
+	case *ast.LogicalOpExpr:
+		return exprContainsTypeCheck(e.Lhs, paramName, kindName) ||
+			exprContainsTypeCheck(e.Rhs, paramName, kindName)
+	case *ast.RelationalOpExpr:
+		if e.Operator != "==" {
+			return false
+		}
+		if callIsTypeOfParam(e.Lhs, paramName) {
+			if s, ok := e.Rhs.(*ast.StringExpr); ok && s.Value == kindName {
+				return true
+			}
+		}
+		if callIsTypeOfParam(e.Rhs, paramName) {
+			if s, ok := e.Lhs.(*ast.StringExpr); ok && s.Value == kindName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func callIsTypeOfParam(expr ast.Expr, paramName string) bool {
+	call, ok := expr.(*ast.FuncCallExpr)
+	if !ok || call == nil || checkcallsite.IsMethodLikeExpr(call) || len(call.Args) != 1 {
+		return false
+	}
+	fnIdent, ok := call.Func.(*ast.IdentExpr)
+	if !ok || fnIdent == nil || fnIdent.Value != "type" {
+		return false
+	}
+	argIdent, ok := call.Args[0].(*ast.IdentExpr)
+	return ok && argIdent != nil && argIdent.Value == paramName
 }
 
 // literalFromExpr resolves a literal from an expression using the extractor's context.
@@ -740,7 +853,7 @@ func typeKeyFromStringExpr(expr ast.Expr) (narrow.TypeKey, bool) {
 	if !ok {
 		return narrow.TypeKey{}, false
 	}
-	return narrow.BuiltinTypeKey(s.Value), true
+	return narrow.KnownBuiltinTypeKey(s.Value)
 }
 
 // NumericConstraintsFromExpr extracts numeric constraints from an expression.
@@ -805,37 +918,9 @@ func ExtractReturnExprConstraints(expr ast.Expr, p cfg.Point, sc *scope.State, i
 		return flow.ReturnExprConstraints{}
 	}
 
-	isPredicate := isPredicateExpr(expr, p, synthFunc)
-	if isPredicate {
-		onFalse := constraint.Not(cond)
-		if onFalse.HasConstraints() {
-			return flow.ReturnExprConstraints{
-				OnTrue:  cond,
-				OnFalse: onFalse,
-			}
-		}
-	}
-
 	return flow.ReturnExprConstraints{
 		OnTrue: cond,
 	}
-}
-
-// isPredicateExpr checks if an expression is a predicate.
-func isPredicateExpr(expr ast.Expr, p cfg.Point, synthFunc func(ast.Expr, cfg.Point) typ.Type) bool {
-	if synthFunc != nil {
-		exprType := synthFunc(expr, p)
-		if exprType != nil {
-			if exprType.Kind() == kind.Boolean {
-				return true
-			}
-			if ops.IsLiteralBoolean(exprType) {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 // ChannelValueConstraint emits a HasType constraint for result.value when

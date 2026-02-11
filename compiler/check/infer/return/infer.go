@@ -38,8 +38,6 @@
 package infer
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
@@ -48,6 +46,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -59,10 +58,9 @@ import (
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
 // Config holds dependencies for return inference.
@@ -123,19 +121,16 @@ func (i *Inferencer) collectLocalFunctions(
 	localFuncs := make(map[cfg.SymbolID]*returns.LocalFuncInfo)
 
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil || !info.IsLocal || len(info.Targets) == 0 || len(info.Sources) == 0 {
+		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
 			return
 		}
-		for idx, target := range info.Targets {
+		info.EachTargetSource(func(idx int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
+				return
 			}
-			if idx >= len(info.Sources) {
-				continue
-			}
-			fnExpr, ok := info.Sources[idx].(*ast.FunctionExpr)
+			fnExpr, ok := source.(*ast.FunctionExpr)
 			if !ok {
-				continue
+				return
 			}
 
 			fnGraph := (*cfg.Graph)(nil)
@@ -143,14 +138,15 @@ func (i *Inferencer) collectLocalFunctions(
 				fnGraph = i.graphs.GetOrBuildCFG(fnExpr)
 			}
 			localFuncs[target.Symbol] = &returns.LocalFuncInfo{
-				Sym:      target.Symbol,
-				Fn:       fnExpr,
-				DefScope: pointScopes[p],
-				Graph:    fnGraph,
-				ParentFn: parentFn,
-				DefPoint: p,
+				Sym:         target.Symbol,
+				Fn:          fnExpr,
+				DefScope:    pointScopes[p],
+				Graph:       fnGraph,
+				ParentGraph: graph,
+				ParentFn:    parentFn,
+				DefPoint:    p,
 			}
-		}
+		})
 	})
 
 	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
@@ -165,12 +161,13 @@ func (i *Inferencer) collectLocalFunctions(
 			fnGraph = i.graphs.GetOrBuildCFG(info.FuncExpr)
 		}
 		localFuncs[info.Symbol] = &returns.LocalFuncInfo{
-			Sym:      info.Symbol,
-			Fn:       info.FuncExpr,
-			DefScope: pointScopes[p],
-			Graph:    fnGraph,
-			ParentFn: parentFn,
-			DefPoint: p,
+			Sym:         info.Symbol,
+			Fn:          info.FuncExpr,
+			DefScope:    pointScopes[p],
+			Graph:       fnGraph,
+			ParentGraph: graph,
+			ParentFn:    parentFn,
+			DefPoint:    p,
 		}
 	})
 
@@ -232,7 +229,7 @@ func (i *Inferencer) ComputeForGraph(
 
 	// Apply param hints from the stable snapshot (deterministic order).
 	if hints := i.store.GetParamHintsSnapshot(graph, parentScope); len(hints) > 0 {
-		for _, sym := range returns.SortedLocalFuncSymbols(localFuncs) {
+		for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 			info := localFuncs[sym]
 			if info == nil {
 				continue
@@ -276,6 +273,10 @@ func (i *Inferencer) computeReturnSummariesForGroup(
 		return nil, nil
 	}
 
+	// Propagate inter-procedural parameter hints across local call edges before
+	// SCC return inference so unannotated params get stable callsite-driven seeds.
+	returns.PropagateParamHintsFromCallGraph(localFuncs)
+
 	// Build call graph
 	adj := returns.BuildLocalCallGraph(localFuncs, i.store.ModuleBindings())
 
@@ -287,7 +288,7 @@ func (i *Inferencer) computeReturnSummariesForGroup(
 
 	// Initialize summaries from seed (if any).
 	summaries := make(map[cfg.SymbolID][]typ.Type, len(localFuncs))
-	for _, sym := range returns.SortedLocalFuncSymbols(localFuncs) {
+	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		if seed != nil {
 			if t := seed[sym]; len(t) > 0 {
 				summaries[sym] = t
@@ -333,15 +334,9 @@ func (i *Inferencer) iterateSCCFixpoint(
 			}
 			newReturn := i.inferReturnWithSummary(run, info, summaries, localFuncs)
 			oldReturn := summaries[sym]
-			merged := returns.JoinReturnVectorsPreferNonSoft(oldReturn, newReturn)
-			if returns.ReturnTypesRefine(newReturn, oldReturn) {
-				merged = newReturn
-			} else if returns.ReturnTypesRefine(oldReturn, newReturn) {
-				merged = oldReturn
-			} else if returns.ReturnTypesExtendRecord(newReturn, oldReturn) {
-				merged = newReturn
-			} else if returns.ReturnTypesExtendRecord(oldReturn, newReturn) {
-				merged = oldReturn
+			merged := typjoin.ReturnVectors(oldReturn, newReturn)
+			if preferred, ok := returns.SelectPreferredReturnVector(newReturn, oldReturn); ok {
+				merged = preferred
 			}
 			next[sym] = merged
 			if !returns.ReturnTypesEqual(merged, oldReturn) {
@@ -416,7 +411,8 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 		}
 
 		// Binder/CFG-injected implicit self parameter.
-		if slot.SourceIndex < 0 {
+		srcIdx, hasSource := slot.SourceParamIndex()
+		if !hasSource {
 			if selfType := ctx.resolveScope.SelfType(); selfType != nil {
 				overlay[slot.Symbol] = selfType
 			} else {
@@ -425,14 +421,14 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 			continue
 		}
 
-		i := slot.SourceIndex
+		i := srcIdx
 		paramType := typ.Unknown
 		if slot.Name == "self" {
 			if selfType := ctx.resolveScope.SelfType(); selfType != nil {
 				paramType = selfType
 			}
 		}
-		if paramType == nil || paramType.Kind() == typ.Unknown.Kind() {
+		if typ.IsAbsentOrUnknown(paramType) {
 			if ctx.info.ParamHints != nil && i < len(ctx.info.ParamHints) && ctx.info.ParamHints[i] != nil {
 				paramType = ctx.info.ParamHints[i]
 			}
@@ -441,7 +437,7 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
 			if resolved != nil {
 				if typ.IsRefinableAnnotation(resolved) {
-					if paramType == nil || paramType.Kind() == typ.Unknown.Kind() {
+					if typ.IsAbsentOrUnknown(paramType) {
 						paramType = resolved
 					}
 				} else {
@@ -460,7 +456,7 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 	overlay map[cfg.SymbolID]typ.Type,
 ) {
 	siblingEntries := make([]siblings.OverlayEntry, 0, len(ctx.localFuncs))
-	for _, sym := range returns.SortedLocalFuncSymbols(ctx.localFuncs) {
+	for _, sym := range cfg.SortedSymbolIDs(ctx.localFuncs) {
 		sibInfo := ctx.localFuncs[sym]
 		if sibInfo != nil && sibInfo.Fn != nil {
 			siblingEntries = append(siblingEntries, siblings.OverlayEntry{
@@ -475,7 +471,16 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 		CurrentSym: ctx.info.Sym,
 		Services: siblings.OverlayServicesFuncs{
 			SeedTypeFn: func(fn *ast.FunctionExpr) typ.Type {
-				return returns.BuildSeedFunctionType(fn, ctx.engine, ctx.resolveScope)
+				var bindings interface {
+					ParamSymbols(*ast.FunctionExpr) []cfg.SymbolID
+					Name(cfg.SymbolID) string
+				}
+				if ctx.info != nil && ctx.info.Graph != nil {
+					if b := ctx.info.Graph.Bindings(); b != nil {
+						bindings = b
+					}
+				}
+				return returns.BuildSeedFunctionTypeWithBindings(fn, ctx.engine, ctx.resolveScope, bindings)
 			},
 		},
 	})
@@ -487,32 +492,18 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 // collectAllReturnSummaries gathers return summaries from all scope groups.
 func (i *Inferencer) collectAllReturnSummaries(ctx *returnInferenceContext) map[cfg.SymbolID][]typ.Type {
 	allSummaries := make(map[cfg.SymbolID][]typ.Type)
-	for _, sym := range sortedSummarySymbols(ctx.summaries) {
+	for _, sym := range cfg.SortedSymbolIDs(ctx.summaries) {
 		t := ctx.summaries[sym]
 		if sym == 0 || len(t) == 0 {
 			continue
 		}
 		if existing, ok := allSummaries[sym]; ok {
-			allSummaries[sym] = returns.JoinReturnVectorsPreferNonSoft(existing, t)
+			allSummaries[sym] = typjoin.ReturnVectors(existing, t)
 		} else {
 			allSummaries[sym] = t
 		}
 	}
 	return allSummaries
-}
-
-func sortedSummarySymbols(summaries map[cfg.SymbolID][]typ.Type) []cfg.SymbolID {
-	if len(summaries) == 0 {
-		return nil
-	}
-	syms := make([]cfg.SymbolID, 0, len(summaries))
-	for sym := range summaries {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool {
-		return syms[i] < syms[j]
-	})
-	return syms
 }
 
 // enrichOverlayWithLocalFunctions adds local function types from the function body.
@@ -521,17 +512,6 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 	overlay map[cfg.SymbolID]typ.Type,
 	allSummaries map[cfg.SymbolID][]typ.Type,
 ) {
-	isUnknownSummary := func(s []typ.Type) bool {
-		if len(s) == 0 {
-			return true
-		}
-		for _, t := range s {
-			if t != nil && !typ.TypeEquals(t, typ.Unknown) {
-				return false
-			}
-		}
-		return true
-	}
 	ctx.info.Graph.EachAssign(func(p cfg.Point, assignInfo *cfg.AssignInfo) {
 		if assignInfo == nil || !assignInfo.IsLocal || len(assignInfo.Targets) == 0 || len(assignInfo.Sources) == 0 {
 			return
@@ -556,7 +536,7 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 				}
 			}
 			summary := allSummaries[target.Symbol]
-			if isUnknownSummary(summary) && i.store != nil {
+			if typ.IsUnknownOnlyOrEmpty(summary) && i.store != nil {
 				if ctx.info != nil && ctx.info.Graph != nil && ctx.resolveScope != nil {
 					if snap := i.store.GetReturnSummariesSnapshot(ctx.info.Graph, ctx.resolveScope); len(snap) > 0 {
 						if snapSummary := snap[target.Symbol]; len(snapSummary) > 0 {
@@ -564,7 +544,7 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 						}
 					}
 				}
-				if len(summary) == 0 {
+				if typ.IsUnknownOnlyOrEmpty(summary) {
 					if ref := i.store.FunctionRefBySym(target.Symbol); ref != nil && ref.ParentGraphID != 0 {
 						parentGraph := i.store.Graphs()[ref.ParentGraphID]
 						if parentGraph != nil {
@@ -580,7 +560,7 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 				}
 			}
 			sig := ctx.engine.ResolveFunctionSignature(fnExpr, ctx.resolveScope)
-			if fnType := returns.BuildFunctionSignatureWithSummary(sig, summary); fnType != nil {
+			if fnType := typjoin.WithReturnsOrUnknown(sig, summary); fnType != nil {
 				overlay[target.Symbol] = fnType
 			}
 		}
@@ -616,7 +596,7 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 				if sym == 0 || t == nil {
 					continue
 				}
-				if _, ok := overlay[sym]; ok {
+				if existing, ok := overlay[sym]; ok && existing != nil && !typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
 					continue
 				}
 				overlay[sym] = t
@@ -626,11 +606,42 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 	if ctx.parentFacts == nil {
 		return
 	}
+	resolveCapturedAnnotation := func(sym cfg.SymbolID) typ.Type {
+		parentGraph := ctx.info.ParentGraph
+		if parentGraph == nil || sym == 0 {
+			return nil
+		}
+		var annType typ.Type
+		parentGraph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+			if annType != nil || info == nil || !info.IsLocal || len(info.Targets) == 0 {
+				return
+			}
+			info.EachTarget(func(i int, target cfg.AssignTarget) {
+				if annType != nil || target.Kind != cfg.TargetIdent || target.Symbol != sym {
+					return
+				}
+				ann := info.TypeAnnotationAt(i)
+				if ann == nil {
+					return
+				}
+				resolveScope := ctx.info.DefScope
+				if resolveScope == nil {
+					resolveScope = ctx.resolveScope
+				}
+				annType = ctx.engine.ResolveType(ann, resolveScope)
+			})
+		})
+		return annType
+	}
 	for _, sym := range localBindings.CapturedSymbols(ctx.info.Fn) {
 		if sym == 0 {
 			continue
 		}
-		if _, ok := overlay[sym]; ok {
+		if existing, ok := overlay[sym]; ok && existing != nil && !typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
+			continue
+		}
+		if annType := resolveCapturedAnnotation(sym); annType != nil {
+			overlay[sym] = annType
 			continue
 		}
 		if tv := ctx.parentFacts.EffectiveTypeAt(defPoint, sym); tv.State == flow.StateResolved && tv.Type != nil {
@@ -747,8 +758,11 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 			return
 		}
 
-		if info.NumericFor != nil && len(info.Targets) > 0 {
-			target := info.Targets[0]
+		if info.NumericFor != nil {
+			target, ok := info.FirstTarget()
+			if !ok {
+				return
+			}
 			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
 				if _, exists := overlay[target.Symbol]; !exists {
 					overlay[target.Symbol] = typ.Integer
@@ -758,34 +772,34 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 
 		if len(info.IterExprs) > 0 && len(info.Targets) > 0 {
 			varTypes := ctx.engine.InferIterVarsWithSpecTypes(info.IterExprs, len(info.Targets), p, overlay)
-			for idx, target := range info.Targets {
+			info.EachTarget(func(idx int, target cfg.AssignTarget) {
 				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-					continue
+					return
 				}
 				if _, exists := overlay[target.Symbol]; exists {
-					continue
+					return
 				}
 				varType := typ.Unknown
 				if idx < len(varTypes) && varTypes[idx] != nil {
 					varType = varTypes[idx]
 				}
 				overlay[target.Symbol] = varType
-			}
+			})
 		}
 
-		for idx, target := range info.Targets {
+		info.EachTarget(func(idx int, target cfg.AssignTarget) {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
+				return
 			}
 			if _, exists := overlay[target.Symbol]; exists {
-				continue
+				return
 			}
-			if info.TypeAnnotations != nil && idx < len(info.TypeAnnotations) && info.TypeAnnotations[idx] != nil {
-				if resolved := ctx.engine.ResolveType(info.TypeAnnotations[idx], ctx.resolveScope); resolved != nil {
+			if ann := info.TypeAnnotationAt(idx); ann != nil {
+				if resolved := ctx.engine.ResolveType(ann, ctx.resolveScope); resolved != nil {
 					overlay[target.Symbol] = resolved
 				}
 			}
-		}
+		})
 	})
 
 }
@@ -843,7 +857,7 @@ func (i *Inferencer) collectAndApplyMutations(
 	}
 	for sym, t := range inferred {
 		baseType := finalOverlay[sym]
-		if baseType == nil || baseType.Kind() == kind.Unknown {
+		if typ.IsAbsentOrUnknown(baseType) {
 			finalOverlay[sym] = t
 			continue
 		}
@@ -952,7 +966,7 @@ func (i *Inferencer) collectAndApplyMutations(
 	enrichedSynthAdapter := func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && localBindings != nil {
 			if sym, found := localBindings.SymbolOf(ident); found && sym != 0 {
-				if t, exists := inferred[sym]; exists && t != nil && t.Kind() != kind.Unknown {
+				if t, exists := inferred[sym]; exists && !typ.IsAbsentOrUnknown(t) {
 					if baseType := finalOverlay[sym]; baseType != nil && !typ.IsSoft(baseType, typ.SoftAnnotationPolicy) {
 						return baseType
 					}
@@ -978,7 +992,10 @@ func (i *Inferencer) collectAndApplyMutations(
 		}
 		capturedByCallee = i.store.GetCapturedFieldAssignsSnapshot(fnGraph, capturedParent)
 	}
-	nestedFieldAssignments := returns.CollectCalledNestedFieldAssignments(fnGraph, nestedBindings, capturedByCallee)
+	calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
+		return resolve.CalleeType(info, p, enrichedSynthAdapter, nil, nil, fnGraph, nestedBindings, i.store.ModuleBindings())
+	}
+	nestedFieldAssignments := returns.CollectCalledNestedFieldAssignments(fnGraph, nestedBindings, capturedByCallee, calleeTypeResolver)
 	returns.MergeFieldAssignments(fieldAssignments, nestedFieldAssignments)
 
 	returns.ApplyFieldMergeToOverlay(finalOverlay, fieldAssignments)
@@ -1046,7 +1063,7 @@ func (i *Inferencer) buildPhase2Context(
 		}
 		return nil, false
 	}
-	deadPoints := cond.ComputeDeadPoints(fnGraph, synthAdapter, symResolver, effectLookupSym)
+	deadPoints := cond.ComputeDeadPoints(fnGraph, synthAdapter, symResolver, effectLookupSym, i.store.ModuleBindings())
 
 	return phase2InferenceState{
 		engine:     synthEngine,
@@ -1069,7 +1086,6 @@ func collectReturnTypes(
 		}
 
 		types := synthesizeReturnExprs(synthEngine, retInfo, p)
-
 		if !seenReturn {
 			seenReturn = true
 			returnTypes = types
@@ -1129,7 +1145,7 @@ func joinReturnTypes(existing, incoming []typ.Type) []typ.Type {
 		} else {
 			t = typ.Nil
 		}
-		existing[i] = join.Two(existing[i], t)
+		existing[i] = typ.JoinReturnSlot(existing[i], t)
 	}
 	return existing
 }

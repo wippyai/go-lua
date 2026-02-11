@@ -29,6 +29,7 @@ func TestMethod(t *testing.T) {
 		{"record without metatable", recNoMeta, "add", false},
 		{"function type", typ.Func().Build(), "call", false},
 		{"any type", typ.Any, "anything", true},
+		{"unknown type", typ.Unknown, "anything", true},
 		{"never type", typ.Never, "anything", true},
 		{"ref type", typ.NewRef("mod", "Type"), "x", false},
 	}

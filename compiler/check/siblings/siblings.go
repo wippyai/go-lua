@@ -37,9 +37,7 @@ package siblings
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -168,7 +166,7 @@ func Build(c BuildConfig) map[cfg.SymbolID]typ.Type {
 				if typ.IsSoft(prev, typ.SoftAnnotationPolicy) && !typ.IsSoft(capturedType, typ.SoftAnnotationPolicy) {
 					result[sym] = capturedType
 				} else {
-					result[sym] = join.Two(prev, capturedType)
+					result[sym] = typ.JoinPreferNonSoft(prev, capturedType)
 				}
 			}
 		}
@@ -183,46 +181,13 @@ func Build(c BuildConfig) map[cfg.SymbolID]typ.Type {
 		if fnType == nil {
 			continue
 		}
-		result[entry.Symbol] = MergeType(result[entry.Symbol], fnType)
+		result[entry.Symbol] = MergeSiblingType(result[entry.Symbol], fnType)
 	}
 
 	if len(result) == 0 {
 		return nil
 	}
 	return result
-}
-
-// MergeType merges two sibling types, preferring the more specific one.
-//
-// For function types, prefers whichever has return type information. If both
-// have returns, uses join.Two for union. This ensures that as return summaries
-// are computed, they are incorporated without losing parameter information.
-func MergeType(prev, next typ.Type) typ.Type {
-	if prev == nil {
-		return next
-	}
-	if next == nil {
-		return prev
-	}
-	if fn, ok := next.(*typ.Function); ok {
-		if prevFn, ok := prev.(*typ.Function); ok {
-			if len(fn.Returns) > 0 && len(prevFn.Returns) > 0 {
-				if returns.ReturnTypesRefine(fn.Returns, prevFn.Returns) {
-					return fn
-				}
-				if returns.ReturnTypesRefine(prevFn.Returns, fn.Returns) {
-					return prevFn
-				}
-			}
-			if len(fn.Returns) > 0 && len(prevFn.Returns) == 0 {
-				return fn
-			}
-			if len(prevFn.Returns) > 0 && len(fn.Returns) == 0 {
-				return prevFn
-			}
-		}
-	}
-	return join.Two(prev, next)
 }
 
 // Compute extracts sibling types for a function's scope group from the store.

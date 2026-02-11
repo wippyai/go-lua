@@ -124,37 +124,6 @@ func TestLinkKey_FormatCorrect(t *testing.T) {
 	}
 }
 
-func TestPlaceholderIndex_Various(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected int
-	}{
-		{"$0", 0},
-		{"$1", 1},
-		{"$10", 10},
-		{"$99", 99},
-		{"param[0]", 0},
-		{"param[1]", 1},
-		{"param[10]", 10},
-		{"param[99]", 99},
-		{"", -1},
-		{"x", -1},
-		{"$", -1},
-		{"$abc", -1},
-		{"param[]", -1},
-		{"param[abc]", -1},
-		{"param[0", -1},
-		{"other[0]", -1},
-	}
-
-	for _, tt := range tests {
-		result := predicate.PlaceholderIndex(tt.input)
-		if result != tt.expected {
-			t.Errorf("PlaceholderIndex(%q) = %d, expected %d", tt.input, result, tt.expected)
-		}
-	}
-}
-
 func TestBuildConstResolver_NilInputsParam(t *testing.T) {
 	result := predicate.BuildConstResolver(nil, 0)
 	if result != nil {

@@ -39,25 +39,9 @@ func ApplySpecReturnCases(fn *typ.Function, args []typ.Type) typ.Type {
 }
 
 func specReturnCaseMatchesTypes(when constraint.Condition, args []typ.Type) bool {
-	if when.IsTrue() {
-		return true
-	}
-	if when.IsFalse() {
-		return false
-	}
-	for i := 0; i < when.NumDisjuncts(); i++ {
-		disjunctMatches := true
-		for _, c := range when.DisjunctConstraints(i) {
-			if !specConstraintMatchesTypes(c, args) {
-				disjunctMatches = false
-				break
-			}
-		}
-		if disjunctMatches {
-			return true
-		}
-	}
-	return false
+	return conditionAnyDisjunctMatches(when, func(c constraint.Constraint) bool {
+		return specConstraintMatchesTypes(c, args)
+	})
 }
 
 func specConstraintMatchesTypes(c constraint.Constraint, args []typ.Type) bool {
@@ -70,11 +54,8 @@ func specConstraintMatchesTypes(c constraint.Constraint, args []typ.Type) bool {
 }
 
 func specFieldEqualsMatchesTypes(fe constraint.FieldEquals, args []typ.Type) bool {
-	if !fe.Target.IsPlaceholder() {
-		return false
-	}
-	idx := fe.Target.PlaceholderIndex()
-	if idx < 0 || idx >= len(args) {
+	idx, ok := constraint.PlaceholderArgIndex(fe.Target, len(args))
+	if !ok {
 		return false
 	}
 	return typeFieldMatchesLiteral(args[idx], fe.Field, fe.Value)

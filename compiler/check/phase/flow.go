@@ -1,8 +1,6 @@
 package phase
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
@@ -81,35 +79,10 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 }
 
 func applyModuleAliasTypes(inputs *flow.Inputs, manifests io.ManifestQuerier) {
-	if inputs == nil || manifests == nil || len(inputs.ModuleAliases) == 0 {
+	if inputs == nil {
 		return
 	}
-	if inputs.DeclaredTypes == nil {
-		inputs.DeclaredTypes = make(map[cfg.SymbolID]typ.Type, len(inputs.ModuleAliases))
-	}
-	syms := make([]cfg.SymbolID, 0, len(inputs.ModuleAliases))
-	for sym := range inputs.ModuleAliases {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
-	for _, sym := range syms {
-		path := inputs.ModuleAliases[sym]
-		if sym == 0 || path == "" {
-			continue
-		}
-		manifest := manifests.Manifest(path)
-		if manifest == nil {
-			if imports := manifests.Imports(); imports != nil {
-				manifest = imports[path]
-			}
-		}
-		if manifest == nil {
-			continue
-		}
-		if export := manifest.EnrichedExport(); export != nil {
-			inputs.DeclaredTypes[sym] = export
-		}
-	}
+	inputs.DeclaredTypes = applyModuleAliasExports(inputs.DeclaredTypes, inputs.ModuleAliases, manifests)
 }
 
 // RunLiteral executes the function literal synthesis phase.
@@ -171,7 +144,7 @@ func InferEffect(
 // Uses the CFG graph's precomputed param symbols for Symbol IDs.
 // paramTypes provides the types keyed by SymbolID.
 func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, graph *cfg.Graph) []flow.ParamInfo {
-	if fn.ParList == nil {
+	if fn == nil || fn.ParList == nil {
 		return nil
 	}
 
@@ -189,7 +162,7 @@ func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, g
 
 	params := make([]flow.ParamInfo, 0, len(fn.ParList.Names))
 	for _, slot := range slots {
-		if slot.SourceIndex < 0 {
+		if !slot.HasSourceParam() {
 			continue
 		}
 		t := typ.Unknown
@@ -218,7 +191,7 @@ func EnrichWithKeysCollector(eff *constraint.FunctionEffect, fn *ast.FunctionExp
 
 	keyOf := constraint.KeyOf{
 		Table: constraint.ParamPath(info.ParamIndex),
-		Key:   constraint.RetPath(0),
+		Key:   constraint.RetPath(info.ReturnIndex),
 	}
 
 	if eff == nil {

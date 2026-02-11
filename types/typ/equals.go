@@ -20,6 +20,9 @@ func TypeEquals(a, b Type) bool {
 }
 
 func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair]bool) bool {
+	a = unwrapAliasForEquals(a, guard)
+	b = unwrapAliasForEquals(b, guard)
+
 	if a == b {
 		return true
 	}
@@ -39,23 +42,6 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 
 	if _, ok := b.(*Ref); ok {
 		return false
-	}
-
-	// Unwrap Alias types
-	if aa, ok := a.(*Alias); ok {
-		next, ok := guard.Enter(a)
-		if !ok {
-			return false
-		}
-		return typeEqualsGuard(aa.Target, b, next, seen)
-	}
-
-	if ab, ok := b.(*Alias); ok {
-		next, ok := guard.Enter(b)
-		if !ok {
-			return false
-		}
-		return typeEqualsGuard(a, ab.Target, next, seen)
 	}
 
 	if a.Kind() != b.Kind() {
@@ -163,6 +149,14 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 			},
 			Function: func(fn *Function) bool {
 				vb := b.(*Function)
+				if len(fn.TypeParams) != len(vb.TypeParams) {
+					return false
+				}
+				for i, tp := range fn.TypeParams {
+					if !typeEqualsGuard(tp, vb.TypeParams[i], next, seen) {
+						return false
+					}
+				}
 				if len(fn.Params) != len(vb.Params) || len(fn.Returns) != len(vb.Returns) {
 					return false
 				}
@@ -239,6 +233,19 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 			},
 			Default: func(_ Type) bool {
 				return a.Equals(b)
+			},
+		}
+	})
+}
+
+func unwrapAliasForEquals(t Type, guard internal.RecursionGuard) Type {
+	return VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) Visitor[Type] {
+		return Visitor[Type]{
+			Alias: func(a *Alias) Type {
+				return unwrapAliasForEquals(a.Target, next)
+			},
+			Default: func(t Type) Type {
+				return t
 			},
 		}
 	})

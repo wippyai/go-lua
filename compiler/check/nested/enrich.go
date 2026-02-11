@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -116,18 +117,18 @@ func CollectCapturedContainerMutations(
 	}
 
 	bindings := graph.Bindings()
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
 
-		ceu := mutator.ContainerMutatorFromCall(info, p, synth, nil, nil)
+		ceu := mutator.ContainerMutatorFromCall(info, p, synth, nil, nil, graph, bindings, nil)
 		if ceu == nil {
 			return
 		}
 
-		targetExpr := argAtMethod(info, ceu.Container.Index)
-		valueExpr := argAtMethod(info, ceu.Value.Index)
+		targetExpr := callsite.RuntimeArgAt(info, ceu.Container.Index)
+		valueExpr := callsite.RuntimeArgAt(info, ceu.Value.Index)
 		if targetExpr == nil || valueExpr == nil {
 			return
 		}
@@ -158,26 +159,6 @@ func CollectCapturedContainerMutations(
 	})
 
 	return result
-}
-
-func argAtMethod(info *cfg.CallInfo, paramIdx int) ast.Expr {
-	if info == nil {
-		return nil
-	}
-	if info.Method != "" && info.Receiver != nil {
-		if paramIdx == 0 {
-			return info.Receiver
-		}
-		if paramIdx < 0 {
-			adj := len(info.Args) + 1 + paramIdx
-			if adj == 0 {
-				return info.Receiver
-			}
-			return mutator.ArgAtCall(info.Args, adj-1)
-		}
-		return mutator.ArgAtCall(info.Args, paramIdx-1)
-	}
-	return mutator.ArgAtCall(info.Args, paramIdx)
 }
 
 // EnrichSelfTypeWithConstructorFields merges constructor instance fields into a self-type.

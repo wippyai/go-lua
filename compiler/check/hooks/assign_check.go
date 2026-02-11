@@ -72,19 +72,19 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 					continue
 				}
 				declaredType := narrowSynth.ResolveType(ann, sc)
-				if declaredType != nil && declaredType.Kind() != typ.Unknown.Kind() {
+				if !typ.IsAbsentOrUnknown(declaredType) {
 					annotated[sym] = declaredType
 				}
 			}
 		}
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
+				return
 			}
-			if i < len(info.Sources) && info.Sources[i] != nil {
+			if source != nil {
 				assigned[target.Symbol] = true
 			}
-		}
+		})
 	})
 	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
 		if info == nil || info.Symbol == 0 {
@@ -98,30 +98,30 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		sc := scopes[p]
 
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Name == "" {
-				continue
+				return
 			}
 
 			sym := target.Symbol
 
 			var declaredType typ.Type
-			if info.IsLocal && i < len(info.TypeAnnotations) && info.TypeAnnotations[i] != nil {
-				declaredType = narrowSynth.ResolveType(info.TypeAnnotations[i], sc)
+			if ann := info.TypeAnnotationAt(i); info.IsLocal && ann != nil {
+				declaredType = narrowSynth.ResolveType(ann, sc)
 			} else if !info.IsLocal && sym != 0 {
 				declaredType = annotated[sym]
 			}
 
-			if declaredType == nil || declaredType.Kind() == typ.Unknown.Kind() {
-				continue
+			if typ.IsAbsentOrUnknown(declaredType) {
+				return
 			}
 
-			if info.IsLocal && i < len(info.TypeAnnotations) && info.TypeAnnotations[i] != nil && i >= len(info.Sources) {
-				if len(info.Sources) > 0 && isVarArgReturnExpr(info.Sources[len(info.Sources)-1]) {
-					continue
+			if info.IsLocal && info.TypeAnnotationAt(i) != nil && source == nil {
+				if isVarArgReturnExpr(info.LastSource()) {
+					return
 				}
 				if sym != 0 && assigned[sym] {
-					continue
+					return
 				}
 				if !subtype.IsSubtype(typ.Nil, declaredType) {
 					var posNode ast.PositionHolder
@@ -145,26 +145,22 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 						})
 					}
 				}
-				continue
+				return
 			}
 
-			if i >= len(info.Sources) {
-				continue
-			}
-			source := info.Sources[i]
 			if source == nil {
-				continue
+				return
 			}
 
 			valueType := narrowSynth.SynthWithExpected(source, p, declaredType)
 			if valueType == nil {
-				continue
+				return
 			}
 
 			if table, ok := source.(*ast.TableExpr); ok {
 				if result := tableCheck(table, declaredType, narrowSynth, p); result.Handled {
 					if result.Compatible {
-						continue
+						return
 					}
 					pos := diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()}
 					span := ast.SpanOf(source)
@@ -178,7 +174,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 						Message:  msg,
 						Help:     help,
 					})
-					continue
+					return
 				}
 			}
 
@@ -198,7 +194,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 							Message:  msg,
 							Help:     help,
 						})
-						continue
+						return
 					}
 				}
 			}
@@ -218,7 +214,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 						Message:  msg,
 						Help:     help,
 					})
-					continue
+					return
 				}
 			}
 
@@ -236,7 +232,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 					Help:     help,
 				})
 			}
-		}
+		})
 	})
 
 	return diags

@@ -228,7 +228,7 @@ assert.not_nil(x)
 
 	// Find call
 	var callInfo *cfg.CallInfo
-	g.EachCall(func(p cfg.Point, c *cfg.CallInfo) {
+	g.EachStmtCall(func(p cfg.Point, c *cfg.CallInfo) {
 		if c.CalleePath.Root == "assert" {
 			callInfo = c
 		}
@@ -278,7 +278,7 @@ M.f()
 
 	// Find call
 	var callInfo *cfg.CallInfo
-	g.EachCall(func(p cfg.Point, c *cfg.CallInfo) {
+	g.EachStmtCall(func(p cfg.Point, c *cfg.CallInfo) {
 		callInfo = c
 	})
 
@@ -361,7 +361,7 @@ t.f()
 
 	// Call should resolve to t.f
 	var callInfo *cfg.CallInfo
-	g.EachCall(func(p cfg.Point, c *cfg.CallInfo) {
+	g.EachStmtCall(func(p cfg.Point, c *cfg.CallInfo) {
 		callInfo = c
 	})
 
@@ -417,7 +417,7 @@ end
 
 	// Collect calls
 	var calls []*cfg.CallInfo
-	g.EachCall(func(p cfg.Point, c *cfg.CallInfo) {
+	g.EachStmtCall(func(p cfg.Point, c *cfg.CallInfo) {
 		calls = append(calls, c)
 	})
 
@@ -446,7 +446,7 @@ obj[k]()
 	g := cfg.Build(fn, "obj")
 
 	var callInfo *cfg.CallInfo
-	g.EachCall(func(p cfg.Point, c *cfg.CallInfo) {
+	g.EachStmtCall(func(p cfg.Point, c *cfg.CallInfo) {
 		callInfo = c
 	})
 

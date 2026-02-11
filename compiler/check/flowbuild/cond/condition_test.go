@@ -227,3 +227,59 @@ func TestTypeKeyFromStringExpr_NonString(t *testing.T) {
 		t.Error("number expr should return ok=false")
 	}
 }
+
+func TestTypeKeyFromStringExpr_UnknownBuiltin(t *testing.T) {
+	expr := &ast.StringExpr{Value: "entry"}
+	_, ok := typeKeyFromStringExpr(expr)
+	if ok {
+		t.Error("unknown type() string should return ok=false")
+	}
+}
+
+func TestConditionFromEquality_PathLiteralRegistersTypeKey(t *testing.T) {
+	inputs := &flow.Inputs{TypeKeys: make(map[uint64]typ.Type)}
+	ce := &ConditionExtractor{Inputs: inputs}
+	cond := ce.ConditionFromEquality(&ast.IdentExpr{Value: "x"}, &ast.StringExpr{Value: "a"})
+	if !cond.HasConstraints() {
+		t.Fatal("expected constraints for x == \"a\"")
+	}
+	items := cond.MustConstraints()
+	if len(items) != 1 {
+		t.Fatalf("expected exactly one constraint, got %d", len(items))
+	}
+	hasType, ok := items[0].(constraint.HasType)
+	if !ok {
+		t.Fatalf("expected HasType constraint, got %T", items[0])
+	}
+	if hasType.Type.Kind != narrow.TypeKeyHash {
+		t.Fatalf("expected hash type key, got %v", hasType.Type.Kind)
+	}
+	resolved := inputs.TypeKeys[hasType.Type.Hash]
+	if !typ.TypeEquals(resolved, typ.LiteralString("a")) {
+		t.Fatalf("expected registered literal type \"a\", got %v", resolved)
+	}
+}
+
+func TestConditionFromInequality_PathLiteralUsesNotHasType(t *testing.T) {
+	inputs := &flow.Inputs{TypeKeys: make(map[uint64]typ.Type)}
+	ce := &ConditionExtractor{Inputs: inputs}
+	cond := ce.ConditionFromInequality(&ast.IdentExpr{Value: "x"}, &ast.NumberExpr{Value: "1"})
+	if !cond.HasConstraints() {
+		t.Fatal("expected constraints for x ~= 1")
+	}
+	items := cond.MustConstraints()
+	if len(items) != 1 {
+		t.Fatalf("expected exactly one constraint, got %d", len(items))
+	}
+	notHasType, ok := items[0].(constraint.NotHasType)
+	if !ok {
+		t.Fatalf("expected NotHasType constraint, got %T", items[0])
+	}
+	if notHasType.Type.Kind != narrow.TypeKeyHash {
+		t.Fatalf("expected hash type key, got %v", notHasType.Type.Kind)
+	}
+	resolved := inputs.TypeKeys[notHasType.Type.Hash]
+	if !typ.TypeEquals(resolved, typ.LiteralInt(1)) {
+		t.Fatalf("expected registered literal type 1, got %v", resolved)
+	}
+}

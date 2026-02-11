@@ -500,7 +500,7 @@ func (b *Bounds) Solve() (typ.Type, error) {
 
 	lower = subtype.Widen(lower)
 
-	if lower.Kind() != kind.Never && upper.Kind() != kind.Any {
+	if !typ.IsNever(lower) && !typ.IsAny(upper) {
 		if !containsTypeVar(lower) && !containsTypeVar(upper) {
 			if !subtype.IsSubtype(lower, upper) {
 				return nil, &BoundsError{Lower: lower, Upper: upper}
@@ -1014,11 +1014,5 @@ func isTopOrBottom(t typ.Type) bool {
 	if t == nil {
 		return true
 	}
-
-	switch t.Kind() {
-	case kind.Any, kind.Unknown, kind.Never:
-		return true
-	default:
-		return false
-	}
+	return t.Kind().IsTopOrBottom()
 }

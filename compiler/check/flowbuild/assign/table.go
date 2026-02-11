@@ -39,18 +39,9 @@ func EmitTableLiteralFieldAssignments(
 			continue
 		}
 
-		var fieldName string
-		switch k := field.Key.(type) {
-		case *ast.StringExpr:
-			fieldName = k.Value
-		case *ast.IdentExpr:
-			fieldName = k.Value
-		default:
-			// Skip non-string keys (array elements)
-			continue
-		}
-
-		if fieldName == "" {
+		seg, ok := path.StaticKeySegment(field.Key)
+		if !ok {
+			// Skip non-static keys (array elements / computed keys).
 			continue
 		}
 
@@ -84,7 +75,7 @@ func EmitTableLiteralFieldAssignments(
 			TargetPath: constraint.Path{
 				Root:     targetRoot,
 				Symbol:   targetSym,
-				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: fieldName}},
+				Segments: []constraint.Segment{seg},
 			},
 			SourcePath: sourcePath,
 			Type:       resolve.Ref(fieldType, sc),

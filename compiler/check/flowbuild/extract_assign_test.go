@@ -5,12 +5,12 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/constprop"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/decl"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -174,7 +174,7 @@ func TestExtractModuleAliases_EmptyGraph(t *testing.T) {
 }
 
 func TestNarrowReturnTypeBySpec_NilInputs(t *testing.T) {
-	result := assign.NarrowReturnTypeBySpec(nil, nil, nil, 0, nil)
+	result := assign.NarrowReturnTypeBySpec(nil, nil, nil, 0, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil inputs")
 	}
@@ -187,7 +187,7 @@ func TestSpecNarrowedTypes_EmptyGraph(t *testing.T) {
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return nil
 	}
-	result := assign.CollectSpecNarrowedTypes(graph, scopes, synth, nil, nil)
+	result := assign.CollectSpecNarrowedTypes(graph, scopes, synth, nil, nil, nil)
 	if result == nil {
 		t.Error("expected non-nil SpecTypes map")
 	}
@@ -245,7 +245,7 @@ func TestExtractAssignments_EmptyGraph(t *testing.T) {
 }
 
 func TestArgAtCall_Empty(t *testing.T) {
-	result := mutator.ArgAtCall(nil, 0)
+	result := callsite.PositionalArgAt(nil, 0)
 	if result != nil {
 		t.Error("expected nil for empty args")
 	}
@@ -256,7 +256,7 @@ func TestArgAtCall_Positive(t *testing.T) {
 		&ast.StringExpr{Value: "a"},
 		&ast.StringExpr{Value: "b"},
 	}
-	result := mutator.ArgAtCall(args, 1)
+	result := callsite.PositionalArgAt(args, 1)
 	str, ok := result.(*ast.StringExpr)
 	if !ok || str.Value != "b" {
 		t.Errorf("expected 'b', got %v", result)
@@ -268,7 +268,7 @@ func TestArgAtCall_Negative(t *testing.T) {
 		&ast.StringExpr{Value: "a"},
 		&ast.StringExpr{Value: "b"},
 	}
-	result := mutator.ArgAtCall(args, -1)
+	result := callsite.PositionalArgAt(args, -1)
 	str, ok := result.(*ast.StringExpr)
 	if !ok || str.Value != "b" {
 		t.Errorf("expected 'b', got %v", result)
@@ -277,7 +277,7 @@ func TestArgAtCall_Negative(t *testing.T) {
 
 func TestArgAtCall_OutOfBounds(t *testing.T) {
 	args := []ast.Expr{&ast.StringExpr{Value: "a"}}
-	result := mutator.ArgAtCall(args, 5)
+	result := callsite.PositionalArgAt(args, 5)
 	if result != nil {
 		t.Error("expected nil for out of bounds")
 	}

@@ -5,6 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -200,4 +202,137 @@ func TestMaxReturnSummaryIterations_Value(t *testing.T) {
 	if MaxReturnSummaryIterations > 100 {
 		t.Error("MaxReturnSummaryIterations seems too high")
 	}
+}
+
+func TestBuildLocalCallGraph_AddsCallbackFunctionEdges(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local function wrapper(cb: fun(): number): number
+			return cb()
+		end
+
+		local function a()
+			return wrapper(b)
+		end
+
+		local function b(): number
+			return 1
+		end
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	chunk := &ast.FunctionExpr{ParList: &ast.ParList{}, Stmts: stmts}
+	chunkGraph := cfg.Build(chunk)
+	if chunkGraph == nil {
+		t.Fatal("expected chunk graph")
+	}
+
+	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{}
+	symbolsByName := map[string]cfg.SymbolID{}
+	baseScope := scope.New()
+	chunkGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if info == nil || !info.IsLocal {
+			return
+		}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			fn, ok := source.(*ast.FunctionExpr)
+			if !ok || fn == nil || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+				return
+			}
+			symbolsByName[target.Name] = target.Symbol
+			localFuncs[target.Symbol] = &LocalFuncInfo{
+				Sym:         target.Symbol,
+				Fn:          fn,
+				DefScope:    baseScope,
+				Graph:       cfg.Build(fn),
+				ParentGraph: chunkGraph,
+				DefPoint:    p,
+			}
+		})
+	})
+
+	aSym := symbolsByName["a"]
+	bSym := symbolsByName["b"]
+	if aSym == 0 || bSym == 0 {
+		t.Fatalf("expected symbols for a and b, got a=%d b=%d", aSym, bSym)
+	}
+
+	adj := BuildLocalCallGraph(localFuncs, chunkGraph.Bindings())
+	aCallees := adj[aSym]
+	if !containsSymbol(aCallees, bSym) {
+		t.Fatalf("expected call graph edge a -> b via callback argument, got %v", aCallees)
+	}
+}
+
+func TestPropagateParamHintsFromCallGraph_MethodRuntimeIndexing(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local function callee(self, x)
+			return x
+		end
+
+		local function caller()
+			local obj = {}
+			return obj:callee(7)
+		end
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	chunk := &ast.FunctionExpr{ParList: &ast.ParList{}, Stmts: stmts}
+	chunkGraph := cfg.Build(chunk)
+	if chunkGraph == nil {
+		t.Fatal("expected chunk graph")
+	}
+
+	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{}
+	symbolsByName := map[string]cfg.SymbolID{}
+	baseScope := scope.New()
+	chunkGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if info == nil || !info.IsLocal {
+			return
+		}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			fn, ok := source.(*ast.FunctionExpr)
+			if !ok || fn == nil || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+				return
+			}
+			symbolsByName[target.Name] = target.Symbol
+			localFuncs[target.Symbol] = &LocalFuncInfo{
+				Sym:         target.Symbol,
+				Fn:          fn,
+				DefScope:    baseScope,
+				Graph:       cfg.Build(fn),
+				ParentGraph: chunkGraph,
+				DefPoint:    p,
+			}
+		})
+	})
+
+	calleeSym := symbolsByName["callee"]
+	callerSym := symbolsByName["caller"]
+	if calleeSym == 0 || callerSym == 0 {
+		t.Fatalf("expected symbols for callee/caller, got callee=%d caller=%d", calleeSym, callerSym)
+	}
+
+	PropagateParamHintsFromCallGraph(localFuncs)
+
+	hints := localFuncs[calleeSym].ParamHints
+	if len(hints) < 2 {
+		t.Fatalf("expected at least 2 param hints for callee(self,x), got %d", len(hints))
+	}
+	if !typ.TypeEquals(hints[1], typ.Number) {
+		t.Fatalf("expected hint for x at index 1 to be number, got %v", hints[1])
+	}
+	if hints[0] != nil {
+		t.Fatalf("expected no informative hint for receiver at index 0, got %v", hints[0])
+	}
+}
+
+func containsSymbol(list []cfg.SymbolID, want cfg.SymbolID) bool {
+	for _, sym := range list {
+		if sym == want {
+			return true
+		}
+	}
+	return false
 }

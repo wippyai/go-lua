@@ -6,8 +6,6 @@
 package pathkey
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
@@ -32,7 +30,8 @@ func SegmentsSuffix(segs []constraint.Segment) string {
 // Supported syntax:
 //   - ".field" -> SegmentField{Name: "field"}
 //   - "[0]" -> SegmentIndexInt{Index: 0}
-//   - "[key]" -> SegmentIndexString{Name: "key"}
+//   - "[\"key\"]" -> SegmentIndexString{Name: "key"}
+//   - "[key]" -> SegmentIndexString{Name: "key"} (legacy form)
 //
 // The parser handles multiple chained segments: ".foo[0].bar" produces
 // [SegmentField{foo}, SegmentIndexInt{0}, SegmentField{bar}].
@@ -50,58 +49,81 @@ func ParseSuffix(suffix string) []constraint.Segment {
 			for i < len(suffix) && suffix[i] != '.' && suffix[i] != '[' {
 				i++
 			}
-			if start < i {
-				segs = append(segs, constraint.Segment{Kind: constraint.SegmentField, Name: suffix[start:i]})
+			if start >= i {
+				return nil
 			}
+			name := suffix[start:i]
+			if !IsIdentName(name) {
+				return nil
+			}
+			segs = append(segs, constraint.Segment{Kind: constraint.SegmentField, Name: name})
 		case '[':
 			i++
+			if i >= len(suffix) {
+				return nil
+			}
+
+			if suffix[i] == '"' {
+				i++
+				var out []byte
+				for i < len(suffix) {
+					ch := suffix[i]
+					if ch == '\\' {
+						if i+1 >= len(suffix) {
+							return nil
+						}
+						escaped := suffix[i+1]
+						if escaped != '\\' && escaped != '"' {
+							return nil
+						}
+						out = append(out, escaped)
+						i += 2
+						continue
+					}
+					if ch == '"' {
+						break
+					}
+					out = append(out, ch)
+					i++
+				}
+
+				if i >= len(suffix) || suffix[i] != '"' {
+					return nil
+				}
+				i++
+				if i >= len(suffix) || suffix[i] != ']' {
+					return nil
+				}
+				i++
+
+				segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexString, Name: string(out)})
+				continue
+			}
+
 			start := i
 			for i < len(suffix) && suffix[i] != ']' {
 				i++
 			}
-			if start < i {
-				name := suffix[start:i]
-				if idx, ok := ParseIntLiteral(name); ok {
-					segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})
-				} else {
-					segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexString, Name: name})
-				}
+			if start >= i {
+				return nil
 			}
-			if i < len(suffix) && suffix[i] == ']' {
-				i++
+
+			name := suffix[start:i]
+			if i >= len(suffix) || suffix[i] != ']' {
+				return nil
+			}
+			i++
+
+			if idx, ok := ParseIntLiteral(name); ok {
+				segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})
+			} else {
+				segs = append(segs, constraint.Segment{Kind: constraint.SegmentIndexString, Name: name})
 			}
 		default:
-			i++
+			return nil
 		}
 	}
 	return segs
-}
-
-// splitVersionKey splits a version key into root and suffix.
-//
-// Given "sym42@3.field[0]", returns ("sym42", ".field[0]", true).
-// The root is everything before @, and the suffix starts at the first
-// '.' or '[' after the version number.
-//
-// Returns ("", "", false) if the key has no @ separator.
-func splitVersionKey(key string) (root string, suffix string, ok bool) {
-	at := strings.IndexByte(key, '@')
-	if at <= 0 {
-		return "", "", false
-	}
-	root = key[:at]
-	start := at + 1
-	for start < len(key) {
-		ch := key[start]
-		if ch == '.' || ch == '[' {
-			break
-		}
-		start++
-	}
-	if start >= len(key) {
-		return root, "", true
-	}
-	return root, key[start:], true
 }
 
 // PathRelated returns true if target and other paths share identity and overlap.

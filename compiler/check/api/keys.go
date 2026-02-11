@@ -1,7 +1,11 @@
 // Package api defines the checker contract types used across phases and layers.
 package api
 
-import "github.com/wippyai/go-lua/compiler/cfg"
+import (
+	"sort"
+
+	"github.com/wippyai/go-lua/compiler/cfg"
+)
 
 // GraphKey uniquely identifies a graph within a parent scope for query lookups.
 // The key is stable and comparable, enabling memoization across iterations.
@@ -47,4 +51,34 @@ func KeyForGraph(graph *cfg.Graph, parentHash uint64) GraphKey {
 		GraphID:    graphID,
 		ParentHash: parentHash,
 	}
+}
+
+// CompareGraphKeys provides canonical ordering for GraphKey.
+func CompareGraphKeys(a, b GraphKey) int {
+	if a.GraphID < b.GraphID {
+		return -1
+	}
+	if a.GraphID > b.GraphID {
+		return 1
+	}
+	if a.ParentHash < b.ParentHash {
+		return -1
+	}
+	if a.ParentHash > b.ParentHash {
+		return 1
+	}
+	return 0
+}
+
+// SortedGraphKeys returns GraphKeys from m in canonical order.
+func SortedGraphKeys[T any](m map[GraphKey]T) []GraphKey {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]GraphKey, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return CompareGraphKeys(keys[i], keys[j]) < 0 })
+	return keys
 }

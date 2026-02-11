@@ -94,7 +94,7 @@ func (idx *LSPIndexer) extractParameters(file string, graph *cfg.Graph, result *
 	}
 
 	for _, slot := range paramSlots {
-		if slot.SourceIndex < 0 || slot.Symbol == 0 {
+		if !slot.HasSourceParam() || slot.Symbol == 0 {
 			continue
 		}
 		name := slot.Name
@@ -132,9 +132,9 @@ func (idx *LSPIndexer) extractLocals(file string, graph *cfg.Graph, result *api.
 			return
 		}
 
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Name == "" {
-				continue
+				return
 			}
 
 			span := targetSpan(target)
@@ -142,17 +142,19 @@ func (idx *LSPIndexer) extractLocals(file string, graph *cfg.Graph, result *api.
 				span = localNameSpan(info, i)
 			}
 			if !span.Valid() {
-				continue
+				return
 			}
 
 			// Get type from synth
 			var varType typ.Type
-			if result.NarrowSynth != nil && i < len(info.Sources) {
-				varType = result.NarrowSynth.TypeOf(info.Sources[i], p)
+			if result.NarrowSynth != nil {
+				if source != nil {
+					varType = result.NarrowSynth.TypeOf(source, p)
+				}
 			}
 
 			idx.Symbols.AddDefinition(file, target.Name, index.SymbolVariable, varType, span, scope)
-		}
+		})
 	})
 }
 
@@ -228,14 +230,14 @@ func (idx *LSPIndexer) extractReferencesAndCalls(file string, graph *cfg.Graph, 
 			return
 		}
 
-		for _, src := range info.Sources {
+		info.EachSource(func(_ int, src ast.Expr) {
 			idx.extractExprRefs(file, src, p, graph, bindings)
 			idx.extractExprCalls(file, callerName, src, p, graph)
-		}
+		})
 	})
 
 	// Extract references and calls from call statements.
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}

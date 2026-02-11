@@ -1,9 +1,13 @@
 package assign
 
 import (
+	"slices"
+
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/contract"
@@ -26,15 +30,28 @@ import (
 //   - Finite number of symbols bounds iterations
 //
 // Determinism: Guaranteed by sorted point processing and stable queue order.
-func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, synth func(ast.Expr, cfg.Point) typ.Type, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool), synthAPI api.SynthAPI) api.SpecTypes {
+func CollectSpecNarrowedTypes(
+	graph *cfg.Graph,
+	scopes map[cfg.Point]*scope.State,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	synthAPI api.SynthAPI,
+	moduleBindings *bind.BindingTable,
+) api.SpecTypes {
 	bySymbol := make(api.SpecTypes)
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
+	if bindings == nil {
+		bindings = moduleBindings
+	}
 
 	// Build dependency map: symbol -> points where it's used as method receiver
 	deps := BuildReceiverDependencies(graph)
 
 	// Collect and sort assign points for deterministic iteration
 	points := graph.AssignPoints()
-	sortPoints(points)
 
 	// Seed phase: collect spec-narrowed types AND inferred types from method calls
 	var worklist []cfg.Point
@@ -44,93 +61,95 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 			continue
 		}
 		sc := scopes[p]
-		for i, target := range info.Targets {
+		expanded := expandedAssignValues(synthAPI, info, p, nil)
+		info.EachTarget(func(i int, target cfg.AssignTarget) {
 			if target.Kind != cfg.TargetIdent || target.Name == "" {
-				continue
+				return
 			}
-			if i >= len(info.SourceCalls) || info.SourceCalls[i] == nil {
-				continue
+			call, _ := info.CallForTarget(i)
+			if call == nil {
+				return
 			}
 			sym := target.Symbol
 
 			// Try spec narrowing first
-			if narrowed := NarrowReturnTypeBySpec(info.SourceCalls[i], sc, synth, p, symResolver); narrowed != nil {
+			if narrowed := NarrowReturnTypeBySpec(call, sc, synth, p, symResolver, graph, bindings, moduleBindings); narrowed != nil {
 				bySymbol[sym] = narrowed
 				worklist = append(worklist, deps[sym]...)
-				continue
+				return
 			}
 
 			// Fall back to regular synthesis for method calls only
 			// This captures t = time.now() where the return type is known
 			// Only capture non-union types to avoid interfering with narrowing
-			call := info.SourceCalls[i]
-			if call != nil && call.Method != "" && i < len(info.Sources) && info.Sources[i] != nil && synth != nil {
-				if inferred := synth(info.Sources[i], p); inferred != nil && !isUnknownOrNil(inferred) {
-					// Skip union types - they may need narrowing later
-					if _, isUnion := unwrap.Alias(inferred).(*typ.Union); !isUnion {
-						bySymbol[sym] = inferred
-						worklist = append(worklist, deps[sym]...)
+			if call.Method != "" && synth != nil {
+				inferred := assignValueAt(expanded, i)
+				if inferred == nil {
+					if source := info.SourceAt(i); source != nil {
+						inferred = synth(source, p)
 					}
 				}
+				if typ.IsUnknownOrNil(inferred) {
+					return
+				}
+				// Skip union types - they may need narrowing later
+				if _, isUnion := unwrap.Alias(inferred).(*typ.Union); !isUnion {
+					bySymbol[sym] = inferred
+					worklist = append(worklist, deps[sym]...)
+				}
 			}
-		}
+		})
 	}
 
 	// Fixpoint phase: process worklist until no new types are added
-	processed := make(map[cfg.Point]bool)
 	for len(worklist) > 0 {
 		// Sort for deterministic processing order
-		sortPoints(worklist)
+		slices.Sort(worklist)
 		p := worklist[0]
 		worklist = worklist[1:]
-
-		if processed[p] {
-			continue
-		}
-		processed[p] = true
 
 		info := graph.Assign(p)
 		if info == nil {
 			continue
 		}
+		expanded := expandedAssignValues(synthAPI, info, p, bySymbol)
 
-		for i, target := range info.Targets {
+		info.EachTarget(func(i int, target cfg.AssignTarget) {
 			if target.Kind != cfg.TargetIdent || target.Name == "" {
-				continue
+				return
 			}
 			sym := target.Symbol
 
 			// Skip if already has a type (monotone: don't overwrite)
 			if _, exists := bySymbol[sym]; exists {
-				continue
+				return
 			}
 
 			// Check if this is a method call on a known receiver
-			if i >= len(info.SourceCalls) || info.SourceCalls[i] == nil {
-				continue
+			call, _ := info.CallForTarget(i)
+			if call == nil {
+				return
 			}
-			call := info.SourceCalls[i]
 			if call.Receiver == nil {
-				continue
+				return
 			}
 			recvSym := call.ReceiverSymbol
 			if recvSym == 0 {
-				continue
+				return
 			}
 			if _, hasKnownRecv := bySymbol[recvSym]; !hasKnownRecv {
-				continue
+				return
 			}
 
-			// Synth method call with known receiver via synthAPI
-			if synthAPI != nil && i < len(info.Sources) && info.Sources[i] != nil {
-				values := synthAPI.ExpandValuesWithSpecTypes(info.Sources[i:i+1], 1, p, bySymbol)
-				if len(values) > 0 && values[0] != nil && !isUnknownOrNil(values[0]) {
-					bySymbol[sym] = values[0]
-					// Enqueue points that depend on this newly typed symbol
-					worklist = append(worklist, deps[sym]...)
-				}
+			// Synth method call with known receiver via synthAPI.
+			// Use assignment-wide expansion so target-to-return mapping follows Lua
+			// multi-return semantics (including trailing targets from final call).
+			if value := assignValueAt(expanded, i); !typ.IsUnknownOrNil(value) {
+				bySymbol[sym] = value
+				// Enqueue points that depend on this newly typed symbol
+				worklist = append(worklist, deps[sym]...)
 			}
-		}
+		})
 	}
 
 	return bySymbol
@@ -140,33 +159,22 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 func BuildReceiverDependencies(graph *cfg.Graph) map[cfg.SymbolID][]cfg.Point {
 	deps := make(map[cfg.SymbolID][]cfg.Point)
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		for i := range info.Targets {
-			if i >= len(info.SourceCalls) || info.SourceCalls[i] == nil {
-				continue
+		seen := make(map[cfg.SymbolID]bool)
+		info.EachSourceCall(func(_ int, call *cfg.CallInfo) {
+			if call == nil {
+				return
 			}
-			call := info.SourceCalls[i]
 			if call.Receiver == nil || call.ReceiverSymbol == 0 {
-				continue
+				return
 			}
+			if seen[call.ReceiverSymbol] {
+				return
+			}
+			seen[call.ReceiverSymbol] = true
 			deps[call.ReceiverSymbol] = append(deps[call.ReceiverSymbol], p)
-		}
+		})
 	})
 	return deps
-}
-
-func isUnknownOrNil(t typ.Type) bool {
-	if t == nil {
-		return true
-	}
-	return t == typ.Unknown
-}
-
-func sortPoints(points []cfg.Point) {
-	for i := 1; i < len(points); i++ {
-		for j := i; j > 0 && points[j] < points[j-1]; j-- {
-			points[j], points[j-1] = points[j-1], points[j]
-		}
-	}
 }
 
 // NarrowReturnTypeBySpec checks if a call's return type should be narrowed
@@ -174,7 +182,16 @@ func sortPoints(points []cfg.Point) {
 //
 // This only handles inline table constructor literals like {message = true}.
 // It does NOT handle variable references (e.g., local opts = {...}; f(opts)).
-func NarrowReturnTypeBySpec(callInfo *cfg.CallInfo, sc *scope.State, synth func(ast.Expr, cfg.Point) typ.Type, p cfg.Point, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool)) typ.Type {
+func NarrowReturnTypeBySpec(
+	callInfo *cfg.CallInfo,
+	sc *scope.State,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	p cfg.Point,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
+) typ.Type {
 	if callInfo == nil || synth == nil {
 		return nil
 	}
@@ -184,9 +201,17 @@ func NarrowReturnTypeBySpec(callInfo *cfg.CallInfo, sc *scope.State, synth func(
 	if callInfo.Callee != nil {
 		fnType = synth(callInfo.Callee, p)
 	}
-	// Use SymbolTypeResolver for identity-based lookup when CalleeSymbol is available
-	if fnType == nil && callInfo.CalleeSymbol != 0 && symResolver != nil {
-		fnType, _ = symResolver(0, callInfo.CalleeSymbol)
+	// Use canonical callsite symbol candidates for identity-based lookup.
+	if fnType == nil && symResolver != nil {
+		for _, calleeSym := range callsite.CalleeSymbolCandidatesWithAliases(callInfo, graph, bindings, moduleBindings) {
+			if calleeSym == 0 {
+				continue
+			}
+			if t, ok := symResolver(p, calleeSym); ok && t != nil {
+				fnType = t
+				break
+			}
+		}
 	}
 	if fnType == nil {
 		return nil

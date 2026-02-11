@@ -4,44 +4,69 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
-func TestJoinReturnVectorsPreferNonSoft_Empty(t *testing.T) {
-	result := JoinReturnVectorsPreferNonSoft(nil, nil)
+func TestJoinReturnVectors_Empty(t *testing.T) {
+	result := typjoin.ReturnVectors(nil, nil)
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
 	}
 }
 
-func TestJoinReturnVectorsPreferNonSoft_AEmpty(t *testing.T) {
+func TestJoinReturnVectors_AEmpty(t *testing.T) {
 	b := []typ.Type{typ.String}
-	result := JoinReturnVectorsPreferNonSoft(nil, b)
+	result := typjoin.ReturnVectors(nil, b)
 	if len(result) != 1 || result[0] != typ.String {
 		t.Errorf("expected [string], got %v", result)
 	}
 }
 
-func TestJoinReturnVectorsPreferNonSoft_BEmpty(t *testing.T) {
+func TestJoinReturnVectors_BEmpty(t *testing.T) {
 	a := []typ.Type{typ.Number}
-	result := JoinReturnVectorsPreferNonSoft(a, nil)
+	result := typjoin.ReturnVectors(a, nil)
 	if len(result) != 1 || result[0] != typ.Number {
 		t.Errorf("expected [number], got %v", result)
 	}
 }
 
-func TestJoinReturnVectorsPreferNonSoft_SameLength(t *testing.T) {
+func TestJoinReturnVectors_SameLength(t *testing.T) {
 	a := []typ.Type{typ.String}
 	b := []typ.Type{typ.Number}
-	result := JoinReturnVectorsPreferNonSoft(a, b)
+	result := typjoin.ReturnVectors(a, b)
 	if len(result) != 1 {
 		t.Errorf("expected length 1, got %d", len(result))
 	}
 }
 
-func TestJoinReturnVectorsPreferNonSoft_DifferentLengths(t *testing.T) {
+func TestTypJoinReturnSlot_PreservesUnknownOverNil(t *testing.T) {
+	got := typ.JoinReturnSlot(typ.Unknown, typ.Nil)
+	if !typ.TypeEquals(got, typ.Unknown) {
+		t.Fatalf("typ.JoinReturnSlot(unknown, nil) = %v, want unknown", got)
+	}
+
+	got = typ.JoinReturnSlot(typ.Nil, typ.Unknown)
+	if !typ.TypeEquals(got, typ.Unknown) {
+		t.Fatalf("typ.JoinReturnSlot(nil, unknown) = %v, want unknown", got)
+	}
+}
+
+func TestReturnTypesAllNil(t *testing.T) {
+	if !ReturnTypesAllNil([]typ.Type{typ.Nil}) {
+		t.Fatal("expected [nil] to be nil-only")
+	}
+	if ReturnTypesAllNil([]typ.Type{typ.Nil, typ.Unknown}) {
+		t.Fatal("expected [nil, unknown] to not be nil-only")
+	}
+	if ReturnTypesAllNil(nil) {
+		t.Fatal("expected empty return vector to not be nil-only")
+	}
+}
+
+func TestJoinReturnVectors_DifferentLengths(t *testing.T) {
 	a := []typ.Type{typ.String, typ.Number}
 	b := []typ.Type{typ.Boolean}
-	result := JoinReturnVectorsPreferNonSoft(a, b)
+	result := typjoin.ReturnVectors(a, b)
 	if len(result) != 2 {
 		t.Errorf("expected length 2, got %d", len(result))
 	}
@@ -134,6 +159,49 @@ func TestReturnTypesExtendRecord_RecordExtends(t *testing.T) {
 func TestReturnTypesElideOptional_Empty(t *testing.T) {
 	if ReturnTypesElideOptional(nil, nil) {
 		t.Error("empty vectors should not elide")
+	}
+}
+
+func TestSelectPreferredReturnVector_Refinement(t *testing.T) {
+	preferred, ok := SelectPreferredReturnVector([]typ.Type{typ.String}, []typ.Type{typ.NewOptional(typ.String)})
+	if !ok {
+		t.Fatal("expected preferred vector")
+	}
+	if len(preferred) != 1 || !typ.TypeEquals(preferred[0], typ.String) {
+		t.Fatalf("expected refined string return, got %v", preferred)
+	}
+}
+
+func TestSelectPreferredReturnVector_AvoidsNilOnlyRegression(t *testing.T) {
+	preferred, ok := SelectPreferredReturnVector([]typ.Type{typ.Nil}, []typ.Type{typ.NewOptional(typ.String)})
+	if !ok {
+		t.Fatal("expected preferred vector")
+	}
+	if len(preferred) != 1 || !typ.TypeEquals(preferred[0], typ.NewOptional(typ.String)) {
+		t.Fatalf("expected non-nil summary to be preserved, got %v", preferred)
+	}
+}
+
+func TestSelectPreferredReturnVector_RejectsStaleNilOnly(t *testing.T) {
+	preferred, ok := SelectPreferredReturnVector([]typ.Type{typ.NewOptional(typ.String)}, []typ.Type{typ.Nil})
+	if !ok {
+		t.Fatal("expected preferred vector")
+	}
+	if len(preferred) != 1 || !typ.TypeEquals(preferred[0], typ.NewOptional(typ.String)) {
+		t.Fatalf("expected new non-nil summary to replace nil-only, got %v", preferred)
+	}
+}
+
+func TestSelectPreferredReturnVector_RecordExtension(t *testing.T) {
+	oldRec := typ.NewRecord().Field("x", typ.Number).Build()
+	newRec := typ.NewRecord().Field("x", typ.Number).Field("y", typ.String).Build()
+
+	preferred, ok := SelectPreferredReturnVector([]typ.Type{newRec}, []typ.Type{oldRec})
+	if !ok {
+		t.Fatal("expected preferred vector")
+	}
+	if len(preferred) != 1 || !typ.TypeEquals(preferred[0], newRec) {
+		t.Fatalf("expected record extension to be preferred, got %v", preferred)
 	}
 }
 

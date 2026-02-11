@@ -945,3 +945,75 @@ func TestE2E_KeysCollectorAutoExport(t *testing.T) {
 		t.Errorf("KeysCollectorParamIndex: got %d, want 0", paramIdx)
 	}
 }
+
+func TestE2E_KeysCollectorAutoExport_MultiReturnKeySlot(t *testing.T) {
+	source := `
+		local M = {}
+
+		function M.sorted_keys(tbl)
+			local keys = {}
+			for k in pairs(tbl) do
+				table.insert(keys, k)
+			end
+			return nil, keys
+		end
+
+		return M
+	`
+
+	result := testutil.CheckAndExport(source, "util", testutil.WithStdlib())
+	if result.HasError() {
+		for _, d := range result.Errors {
+			t.Logf("error: %s", d.Message)
+		}
+		t.Fatal("expected no errors")
+	}
+
+	summary, found := result.Manifest.LookupSummary("sorted_keys")
+	if !found {
+		t.Fatal("expected sorted_keys summary in manifest")
+	}
+	if !summary.Ensures.HasConstraints() {
+		t.Fatal("expected Ensures constraints on sorted_keys summary")
+	}
+
+	constraints := summary.Ensures.AllConstraints()
+	var foundKeyOf bool
+	for _, c := range constraints {
+		keyOf, ok := c.(constraint.KeyOf)
+		if !ok {
+			continue
+		}
+		foundKeyOf = true
+		if !keyOf.Table.IsPlaceholder() || keyOf.Table.PlaceholderIndex() != 0 {
+			t.Errorf("KeyOf.Table: expected $0, got %s", keyOf.Table.String())
+		}
+		if !constraint.IsReturnPath(keyOf.Key) || constraint.ReturnIndexFromString(keyOf.Key.Root) != 1 {
+			t.Errorf("KeyOf.Key: expected ret[1], got %s", keyOf.Key.String())
+		}
+	}
+	if !foundKeyOf {
+		t.Error("expected KeyOf constraint in sorted_keys summary")
+	}
+
+	enriched := result.Manifest.EnrichedExport()
+	rec, ok := enriched.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected Record, got %T", enriched)
+	}
+	fn, ok := rec.GetField("sorted_keys").Type.(*typ.Function)
+	if !ok {
+		t.Fatal("expected Function type")
+	}
+	eff, ok := fn.Refinement.(*constraint.FunctionEffect)
+	if !ok {
+		t.Fatalf("expected FunctionEffect refinement, got %T", fn.Refinement)
+	}
+	paramIdx, retIdx, ok := eff.KeysCollectorInfo()
+	if !ok {
+		t.Fatal("expected KeysCollectorInfo to be present")
+	}
+	if paramIdx != 0 || retIdx != 1 {
+		t.Fatalf("KeysCollectorInfo = (%d, %d), want (0, 1)", paramIdx, retIdx)
+	}
+}

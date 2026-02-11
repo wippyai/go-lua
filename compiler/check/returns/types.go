@@ -39,8 +39,6 @@
 package returns
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -58,8 +56,11 @@ type LocalFuncInfo struct {
 	Fn       *ast.FunctionExpr
 	DefScope *scope.State
 	Graph    *cfg.Graph
-	ParentFn *ast.FunctionExpr
-	DefPoint cfg.Point
+	// ParentGraph is the graph where this local function is defined.
+	// Used for parent-scope callsite hint propagation.
+	ParentGraph *cfg.Graph
+	ParentFn    *ast.FunctionExpr
+	DefPoint    cfg.Point
 	// ParamHints holds inferred parameter types from call sites in the parent graph.
 	// Index corresponds to parameter position.
 	ParamHints []typ.Type
@@ -68,18 +69,3 @@ type LocalFuncInfo struct {
 // MaxReturnSummaryIterations limits fixpoint iterations for ReturnSummaries.
 // Exceeding this indicates a bug (non-monotonic merge) or pathological recursion.
 const MaxReturnSummaryIterations = 10
-
-// SortedLocalFuncSymbols returns a deterministic ordering of local function symbols.
-func SortedLocalFuncSymbols(localFuncs map[cfg.SymbolID]*LocalFuncInfo) []cfg.SymbolID {
-	if len(localFuncs) == 0 {
-		return nil
-	}
-	syms := make([]cfg.SymbolID, 0, len(localFuncs))
-	for sym := range localFuncs {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool {
-		return syms[i] < syms[j]
-	})
-	return syms
-}

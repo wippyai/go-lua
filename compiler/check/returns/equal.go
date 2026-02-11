@@ -3,7 +3,6 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -177,20 +176,16 @@ func containerMutationSlicesEqual(a, b []api.ContainerMutation) bool {
 	}
 	index := make(map[string]api.ContainerMutation, len(a))
 	for _, m := range a {
-		index[mutationKeyForEqual(m)] = m
+		index[api.ContainerMutationKey(m)] = m
 	}
 	for _, m := range b {
-		key := mutationKeyForEqual(m)
+		key := api.ContainerMutationKey(m)
 		other, ok := index[key]
 		if !ok || !typ.TypeEquals(other.ValueType, m.ValueType) {
 			return false
 		}
 	}
 	return true
-}
-
-func mutationKeyForEqual(m api.ContainerMutation) string {
-	return constraint.FormatSegments(m.Segments)
 }
 
 // ConstructorFieldsEqual checks if two constructor field maps are equal.

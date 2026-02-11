@@ -2,7 +2,9 @@ package mutator
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/literal"
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -12,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -25,17 +26,17 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 
 	bindings := fc.Graph.Bindings()
 
-	fc.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	fc.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
-		tm := TableMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver)
+		tm := TableMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Graph, bindings, fc.ModuleBindings)
 		if tm == nil {
 			return
 		}
 
-		targetExpr := ArgAtCall(info.Args, tm.Target.Index)
-		valueExpr := ArgAtCall(info.Args, tm.Value.Index)
+		targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
+		valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
 		if targetExpr == nil || valueExpr == nil {
 			return
 		}
@@ -104,7 +105,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 					assign.KeyVar = resolve.RootNameFromBindings(bindings, keySym, ident.Value)
 				}
 			}
-		} else if keyType := keyTypeFromExpr(attr.Key, constResolver); keyType != nil {
+		} else if keyType := literal.KeyTypeFromExpr(attr.Key, constResolver); keyType != nil {
 			assign.KeyType = keyType
 		}
 
@@ -112,18 +113,20 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 	})
 }
 
-func TableMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool)) *effect.TableMutator {
+func TableMutatorFromCall(
+	info *cfg.CallInfo,
+	p cfg.Point,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
+) *effect.TableMutator {
 	if info == nil {
 		return nil
 	}
 
-	var fnType typ.Type
-	if synth != nil && info.Callee != nil && info.Method == "" && info.Receiver == nil {
-		fnType = synth(info.Callee, p)
-	}
-	if fnType == nil && info.CalleeSymbol != 0 && symResolver != nil {
-		fnType, _ = symResolver(p, info.CalleeSymbol)
-	}
+	fnType := resolve.CalleeType(info, p, synth, symResolver, nil, graph, bindings, moduleBindings)
 	if fnType == nil {
 		return nil
 	}
@@ -133,40 +136,4 @@ func TableMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, 
 		return nil
 	}
 	return spec.GetTableMutator()
-}
-
-// ArgAtCall returns the argument at the given index, supporting negative indices from end.
-func ArgAtCall(args []ast.Expr, idx int) ast.Expr {
-	if len(args) == 0 {
-		return nil
-	}
-	if idx < 0 {
-		idx = len(args) + idx
-	}
-	if idx < 0 || idx >= len(args) {
-		return nil
-	}
-	return args[idx]
-}
-
-func keyTypeFromExpr(expr ast.Expr, constResolver func(string) *flow.ConstValue) typ.Type {
-	if expr == nil {
-		return nil
-	}
-	lit, ok := literal.FromExprWithConst(expr, constResolver)
-	if !ok || lit == nil {
-		return nil
-	}
-	switch lit.Base {
-	case kind.String:
-		return typ.String
-	case kind.Integer:
-		return typ.Integer
-	case kind.Number:
-		return typ.Number
-	case kind.Boolean:
-		return typ.Boolean
-	default:
-		return nil
-	}
 }

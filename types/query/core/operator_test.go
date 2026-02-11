@@ -621,3 +621,42 @@ func TestBinaryOp_Any(t *testing.T) {
 		}
 	})
 }
+
+func TestBinaryOp_Unknown(t *testing.T) {
+	t.Run("unknown + number keeps numeric type", func(t *testing.T) {
+		result := BinaryOp(typ.Unknown, "+", typ.Number)
+		if result != typ.Number {
+			t.Errorf("expected number, got %v", result)
+		}
+	})
+
+	t.Run("integer + unknown keeps numeric type", func(t *testing.T) {
+		result := BinaryOp(typ.Integer, "+", typ.Unknown)
+		if result != typ.Integer {
+			t.Errorf("expected integer, got %v", result)
+		}
+	})
+
+	t.Run("unknown concat string stays unknown", func(t *testing.T) {
+		result := BinaryOp(typ.Unknown, "..", typ.String)
+		if result != typ.Unknown {
+			t.Errorf("expected unknown, got %v", result)
+		}
+	})
+}
+
+func TestUnaryOp_Unknown(t *testing.T) {
+	t.Run("length unknown returns integer", func(t *testing.T) {
+		result := UnaryOp("#", typ.Unknown)
+		if result != typ.Integer {
+			t.Errorf("expected integer, got %v", result)
+		}
+	})
+
+	t.Run("minus unknown returns unknown", func(t *testing.T) {
+		result := UnaryOp("-", typ.Unknown)
+		if result != typ.Unknown {
+			t.Errorf("expected unknown, got %v", result)
+		}
+	})
+}

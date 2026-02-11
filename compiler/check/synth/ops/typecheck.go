@@ -1,13 +1,11 @@
 package ops
 
 import (
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-// maxTypeCheckDepth limits recursion for type predicate checks.
-const maxTypeCheckDepth = 10
 
 // IsNumeric checks if a type supports arithmetic operations (+, -, *, /, %).
 //
@@ -21,18 +19,22 @@ const maxTypeCheckDepth = 10
 // Optional types are NOT numeric - they must be narrowed first.
 // Placeholder types (any, unknown) are considered numeric for flexibility.
 func IsNumeric(t typ.Type) bool {
-	return isNumericDepth(t, 0)
+	return isNumericGuard(t, typ.NewGuard())
 }
 
-func isNumericDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > maxTypeCheckDepth {
+func isNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
 		return false
 	}
 
 	switch v := t.(type) {
 	case *typ.Union:
 		for _, m := range v.Members {
-			if !isNumericDepth(m, depth+1) {
+			if !isNumericGuard(m, next) {
 				return false
 			}
 		}
@@ -41,7 +43,7 @@ func isNumericDepth(t typ.Type, depth int) bool {
 
 	case *typ.Intersection:
 		for _, m := range v.Members {
-			if !isNumericDepth(m, depth+1) {
+			if !isNumericGuard(m, next) {
 				return false
 			}
 		}
@@ -53,7 +55,7 @@ func isNumericDepth(t typ.Type, depth int) bool {
 			return false
 		}
 
-		return isNumericDepth(v.Target, depth+1)
+		return isNumericGuard(v.Target, next)
 
 	case *typ.Optional:
 		// Optional types are NOT numeric - must be narrowed first
@@ -69,7 +71,7 @@ func isNumericDepth(t typ.Type, depth int) bool {
 
 	case *typ.TypeParam:
 		if v.Constraint != nil {
-			return isNumericDepth(v.Constraint, depth+1)
+			return isNumericGuard(v.Constraint, next)
 		}
 
 		return false
@@ -90,18 +92,22 @@ func isNumericDepth(t typ.Type, depth int) bool {
 //
 // Notably, booleans and tables are NOT orderable in Lua.
 func IsOrderable(t typ.Type) bool {
-	return isOrderableDepth(t, 0)
+	return isOrderableGuard(t, typ.NewGuard())
 }
 
-func isOrderableDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > maxTypeCheckDepth {
+func isOrderableGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
 		return false
 	}
 
 	switch v := t.(type) {
 	case *typ.Union:
 		for _, m := range v.Members {
-			if !isOrderableDepth(m, depth+1) {
+			if !isOrderableGuard(m, next) {
 				return false
 			}
 		}
@@ -110,7 +116,7 @@ func isOrderableDepth(t typ.Type, depth int) bool {
 
 	case *typ.Intersection:
 		for _, m := range v.Members {
-			if !isOrderableDepth(m, depth+1) {
+			if !isOrderableGuard(m, next) {
 				return false
 			}
 		}
@@ -122,7 +128,7 @@ func isOrderableDepth(t typ.Type, depth int) bool {
 			return false
 		}
 
-		return isOrderableDepth(v.Target, depth+1)
+		return isOrderableGuard(v.Target, next)
 
 	case *typ.Optional:
 		return false
@@ -137,7 +143,7 @@ func isOrderableDepth(t typ.Type, depth int) bool {
 
 	case *typ.TypeParam:
 		if v.Constraint != nil {
-			return isOrderableDepth(v.Constraint, depth+1)
+			return isOrderableGuard(v.Constraint, next)
 		}
 
 		return false
@@ -160,15 +166,22 @@ func isOrderableDepth(t typ.Type, depth int) bool {
 //   - It's a literal string or number
 //   - It's a union/intersection where all members are stringable
 func IsStringable(t typ.Type) bool {
-	return isStringableDepth(t, 0)
+	return isStringableGuard(t, typ.NewGuard())
 }
 
-func isStringableDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > maxTypeCheckDepth {
+func isStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
 		return false
 	}
 
 	t = ExtractFirstValue(t)
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
 	if t != nil && t.Equals(typ.LuaError) {
 		return true
 	}
@@ -176,7 +189,7 @@ func isStringableDepth(t typ.Type, depth int) bool {
 	switch v := t.(type) {
 	case *typ.Union:
 		for _, m := range v.Members {
-			if !isStringableDepth(m, depth+1) {
+			if !isStringableGuard(m, next) {
 				return false
 			}
 		}
@@ -185,7 +198,7 @@ func isStringableDepth(t typ.Type, depth int) bool {
 
 	case *typ.Intersection:
 		for _, m := range v.Members {
-			if !isStringableDepth(m, depth+1) {
+			if !isStringableGuard(m, next) {
 				return false
 			}
 		}
@@ -197,7 +210,7 @@ func isStringableDepth(t typ.Type, depth int) bool {
 			return false
 		}
 
-		return isStringableDepth(v.Target, depth+1)
+		return isStringableGuard(v.Target, next)
 
 	case *typ.Optional:
 		return false
@@ -212,7 +225,7 @@ func isStringableDepth(t typ.Type, depth int) bool {
 
 	case *typ.TypeParam:
 		if v.Constraint != nil {
-			return isStringableDepth(v.Constraint, depth+1)
+			return isStringableGuard(v.Constraint, next)
 		}
 
 		return false
@@ -246,15 +259,22 @@ func isStringableDepth(t typ.Type, depth int) bool {
 //   - Tuples (element count)
 //   - Maps (entry count)
 func HasLength(t typ.Type) bool {
-	return hasLengthDepth(t, 0)
+	return hasLengthGuard(t, typ.NewGuard())
 }
 
-func hasLengthDepth(t typ.Type, depth int) bool {
-	if t == nil || depth > maxTypeCheckDepth {
+func hasLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
 		return false
 	}
 
 	t = ExtractFirstValue(t)
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
 
 	switch v := t.(type) {
 	case *typ.Array, *typ.Map, *typ.Record, *typ.Tuple:
@@ -262,7 +282,7 @@ func hasLengthDepth(t typ.Type, depth int) bool {
 
 	case *typ.Union:
 		for _, m := range v.Members {
-			if !hasLengthDepth(m, depth+1) {
+			if !hasLengthGuard(m, next) {
 				return false
 			}
 		}
@@ -271,7 +291,7 @@ func hasLengthDepth(t typ.Type, depth int) bool {
 
 	case *typ.Intersection:
 		for _, m := range v.Members {
-			if !hasLengthDepth(m, depth+1) {
+			if !hasLengthGuard(m, next) {
 				return false
 			}
 		}
@@ -283,7 +303,7 @@ func hasLengthDepth(t typ.Type, depth int) bool {
 			return false
 		}
 
-		return hasLengthDepth(v.Target, depth+1)
+		return hasLengthGuard(v.Target, next)
 
 	case *typ.Optional:
 		return false
@@ -294,7 +314,7 @@ func hasLengthDepth(t typ.Type, depth int) bool {
 
 	case *typ.TypeParam:
 		if v.Constraint != nil {
-			return hasLengthDepth(v.Constraint, depth+1)
+			return hasLengthGuard(v.Constraint, next)
 		}
 
 		return false
@@ -335,15 +355,4 @@ func IsBitwiseNumeric(t typ.Type) bool {
 	k := t.Kind()
 
 	return k == kind.Integer || k == kind.Number || k.IsPlaceholder()
-}
-
-// IsLiteralBoolean checks if a type is a literal boolean (true or false).
-func IsLiteralBoolean(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	if lit, ok := t.(*typ.Literal); ok {
-		return lit.Base == kind.Boolean
-	}
-	return false
 }

@@ -58,3 +58,31 @@ func TestExportFunctionSummaries_NonRecordExportType(t *testing.T) {
 	manifest := io.NewManifest("test")
 	ExportFunctionSummaries(manifest, typ.String, nil, nil)
 }
+
+func TestExportFieldNameFromSymbolName(t *testing.T) {
+	tests := []struct {
+		name      string
+		fullName  string
+		wantField string
+		wantOK    bool
+	}{
+		{name: "direct field", fullName: "validate", wantField: "validate", wantOK: true},
+		{name: "root field", fullName: "M.validate", wantField: "validate", wantOK: true},
+		{name: "nested path rejected", fullName: "M.api.validate", wantField: "", wantOK: false},
+		{name: "empty rejected", fullName: "", wantField: "", wantOK: false},
+		{name: "trailing dot rejected", fullName: "M.", wantField: "", wantOK: false},
+		{name: "leading dot rejected", fullName: ".x", wantField: "", wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotField, gotOK := exportFieldNameFromSymbolName(tt.fullName)
+			if gotOK != tt.wantOK {
+				t.Fatalf("ok=%v, want %v", gotOK, tt.wantOK)
+			}
+			if gotField != tt.wantField {
+				t.Fatalf("field=%q, want %q", gotField, tt.wantField)
+			}
+		})
+	}
+}

@@ -299,3 +299,48 @@ func TestParamHintsSeesEnrichedReturns_Method(t *testing.T) {
 		t.Errorf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
+
+// TestReturnFieldMerge_CallbackInvokedNestedFunction verifies callback-spec calls
+// (for example coroutine.spawn) propagate captured nested field assignments.
+func TestReturnFieldMerge_CallbackInvokedNestedFunction(t *testing.T) {
+	code := `
+		local function make_obj()
+			local obj = {}
+			local function install()
+				obj.get_value = function(self): number
+					return 42
+				end
+			end
+			coroutine.spawn(install)
+			return obj
+		end
+
+		local o = make_obj()
+		local n: number = o:get_value()
+	`
+	result := testutil.Check(code, testutil.WithStdlib())
+	if result.HasError() {
+		t.Errorf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestReturnFieldMerge_CallbackInvokedInlineFunction(t *testing.T) {
+	code := `
+		local function make_obj()
+			local obj = {}
+			coroutine.spawn(function()
+				obj.get_value = function(self): number
+					return 42
+				end
+			end)
+			return obj
+		end
+
+		local o = make_obj()
+		local n: number = o:get_value()
+	`
+	result := testutil.Check(code, testutil.WithStdlib())
+	if result.HasError() {
+		t.Errorf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}

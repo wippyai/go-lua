@@ -121,7 +121,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 				})
 				if sig := engine.ResolveFunctionSignature(fn, parent); sig != nil {
 					synthSig = sig
-				} else if seedFn, ok := returns.BuildSeedFunctionType(fn, engine, parent).(*typ.Function); ok {
+				} else if seedFn, ok := returns.BuildSeedFunctionTypeWithBindings(fn, engine, parent, graph.Bindings()).(*typ.Function); ok {
 					synthSig = seedFn
 				}
 			}
@@ -245,7 +245,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 			symResolver := resolve.BuildInputSymbolResolver(declaredEnv, extractOut.Inputs)
 			assignmentTypes := resolve.BuildAssignmentTypeResolver(extractOut.Inputs)
 			calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
-				return resolve.CalleeType(info, p, synthEngine.TypeOf, symResolver, assignmentTypes)
+				return resolve.CalleeType(info, p, synthEngine.TypeOf, symResolver, assignmentTypes, graph, bindings, env.ModuleBindings)
 			}
 
 			extra := returns.CollectCalledNestedContainerMutatorAssignments(graph, bindings, capturedContainers, calleeTypeResolver)
@@ -286,6 +286,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 
 	return &api.FuncResult{
 		Graph:              graph,
+		ModuleBindings:     env.ModuleBindings,
 		BaseScope:          scopeOut.BaseScope,
 		Scopes:             scopeOut.Scopes,
 		Facts:              narrowOut.Facts,

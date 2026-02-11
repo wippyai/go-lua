@@ -985,8 +985,8 @@ func TestFilterByKind_Union(t *testing.T) {
 func TestFilterByKind_UnionMultipleMatches(t *testing.T) {
 	union := typ.NewUnion(typ.String, typ.Integer, typ.Number)
 	got := narrow.FilterByKind(union, kind.Number)
-	if got.Kind() != kind.Union {
-		t.Errorf("FilterByKind(string|integer|number, number) kind = %v, want Union", got.Kind())
+	if !typ.TypeEquals(got, typ.Number) {
+		t.Errorf("FilterByKind(string|integer|number, number) = %v, want number", got)
 	}
 }
 
@@ -1068,6 +1068,20 @@ func TestTypeForKind_Unknown(t *testing.T) {
 	got := narrow.TypeForKind(kind.Record)
 	if !typ.TypeEquals(got, typ.Unknown) {
 		t.Errorf("TypeForKind(Record) = %v, want unknown", got)
+	}
+}
+
+func TestTypeForKind_Function(t *testing.T) {
+	got := narrow.TypeForKind(kind.Function)
+	fn, ok := got.(*typ.Function)
+	if !ok {
+		t.Fatalf("TypeForKind(Function) kind = %v, want function", got.Kind())
+	}
+	if fn.Variadic == nil || !typ.TypeEquals(fn.Variadic, typ.Any) {
+		t.Fatalf("TypeForKind(Function) variadic = %v, want any", fn.Variadic)
+	}
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.Any) {
+		t.Fatalf("TypeForKind(Function) returns = %v, want [any]", fn.Returns)
 	}
 }
 

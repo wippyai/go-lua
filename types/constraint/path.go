@@ -71,6 +71,9 @@ func NewPath(sym cfg.SymbolID, name string) Path {
 //	p0 := NewPlaceholder(0) // $0 (first parameter)
 //	p1 := NewPlaceholder(1) // $1 (second parameter)
 func NewPlaceholder(index int) Path {
+	if index < 0 {
+		return Path{}
+	}
 	return Path{Root: "$" + strconv.Itoa(index)}
 }
 
@@ -164,9 +167,7 @@ func FormatSegments(segs []Segment) string {
 			b.WriteByte('.')
 			b.WriteString(seg.Name)
 		case SegmentIndexString:
-			b.WriteString("[\"")
-			b.WriteString(seg.Name)
-			b.WriteString("\"]")
+			writeQuotedPathIndex(&b, seg.Name)
 		case SegmentIndexInt:
 			b.WriteByte('[')
 			b.WriteString(strconv.Itoa(seg.Index))
@@ -174,6 +175,20 @@ func FormatSegments(segs []Segment) string {
 		}
 	}
 	return b.String()
+}
+
+func writeQuotedPathIndex(b *strings.Builder, key string) {
+	b.WriteString("[\"")
+	for i := 0; i < len(key); i++ {
+		switch key[i] {
+		case '\\', '"':
+			b.WriteByte('\\')
+			b.WriteByte(key[i])
+		default:
+			b.WriteByte(key[i])
+		}
+	}
+	b.WriteString("\"]")
 }
 
 // IsEmpty returns true if the path has no identity (no Root and no Symbol).
@@ -287,19 +302,22 @@ func (p Path) String() string {
 // sym<SymbolID><segments> for unversioned symbol paths, <Root><segments> for placeholders.
 // For versioned flow lookups, prefer pathkey.Resolver.KeyAt.
 func (p Path) Key() PathKey {
+	if p.IsEmpty() {
+		return ""
+	}
+	var b strings.Builder
 	if p.Symbol != 0 {
-		var b strings.Builder
 		b.WriteString("sym")
 		b.WriteString(strconv.FormatUint(uint64(p.Symbol), 10))
 		if p.Version != 0 {
 			b.WriteByte('@')
 			b.WriteString(strconv.Itoa(p.Version))
 		}
-		b.WriteString(FormatSegments(p.Segments))
-		return PathKey(b.String())
+	} else {
+		b.WriteString(p.Root)
 	}
-	// Placeholder path - use String() for display format
-	return PathKey(p.String())
+	b.WriteString(FormatSegments(p.Segments))
+	return PathKey(b.String())
 }
 
 // Hash returns a 64-bit hash of the path for use in hash-based collections.
@@ -397,21 +415,7 @@ func (p Path) ValidateSymbol() string {
 // PlaceholderIndex returns the parameter index if this path's root is a placeholder ($0, $1, etc).
 // Returns -1 if not a placeholder.
 func (p Path) PlaceholderIndex() int {
-	if p.Root == "" || len(p.Root) < 2 || p.Root[0] != '$' {
-		return -1
-	}
-
-	idx := 0
-
-	for i := 1; i < len(p.Root); i++ {
-		if p.Root[i] < '0' || p.Root[i] > '9' {
-			return -1
-		}
-
-		idx = idx*10 + int(p.Root[i]-'0')
-	}
-
-	return idx
+	return PlaceholderIndexFromString(p.Root)
 }
 
 // Substitute replaces placeholder roots with actual argument paths.

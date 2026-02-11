@@ -693,6 +693,25 @@ func TestFunctionDifferentParamCount(t *testing.T) {
 	}
 }
 
+func TestFunctionSubtype_RequiredAfterOptionalIsNotSubtype(t *testing.T) {
+	// sub requires 2 positional args because required y appears after optional x.
+	sub := typ.Func().
+		OptParam("x", typ.Number).
+		Param("y", typ.Number).
+		Returns(typ.Nil).
+		Build()
+
+	// super can be called with a single positional arg.
+	super := typ.Func().
+		Param("x", typ.Number).
+		Returns(typ.Nil).
+		Build()
+
+	if IsSubtype(sub, super) {
+		t.Fatal("subtype should fail: sub requires 2 args while super requires only 1")
+	}
+}
+
 func TestFunctionDifferentReturnCount(t *testing.T) {
 	f1 := typ.Func().Returns(typ.Number).Build()
 	f2 := typ.Func().Returns(typ.Number, typ.String).Build()

@@ -4885,3 +4885,233 @@ func TestFieldSymbol_CalleeSymbol_MultipleFieldsSameTable(t *testing.T) {
 		seenSyms[sym] = name
 	}
 }
+
+func TestFieldSymbol_CalleeSymbol_DotPathVsIndexStringKey_NoCollision(t *testing.T) {
+	localT := &ast.LocalAssignStmt{
+		Names: []string{"T"},
+		Exprs: []ast.Expr{&ast.TableExpr{}},
+	}
+
+	assignIndex := &ast.AssignStmt{
+		Lhs: []ast.Expr{
+			&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "T"},
+				Key:    &ast.StringExpr{Value: "a.b"},
+			},
+		},
+		Rhs: []ast.Expr{&ast.FunctionExpr{}},
+	}
+
+	assignFieldA := &ast.AssignStmt{
+		Lhs: []ast.Expr{
+			&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "T"},
+				Key:    &ast.StringExpr{Value: "a"},
+			},
+		},
+		Rhs: []ast.Expr{&ast.TableExpr{}},
+	}
+
+	assignFieldAB := &ast.AssignStmt{
+		Lhs: []ast.Expr{
+			&ast.AttrGetExpr{
+				Object: &ast.AttrGetExpr{
+					Object: &ast.IdentExpr{Value: "T"},
+					Key:    &ast.StringExpr{Value: "a"},
+				},
+				Key: &ast.StringExpr{Value: "b"},
+			},
+		},
+		Rhs: []ast.Expr{&ast.FunctionExpr{}},
+	}
+
+	callIndex := &ast.FuncCallStmt{
+		Expr: &ast.FuncCallExpr{
+			Func: &ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "T"},
+				Key:    &ast.StringExpr{Value: "a.b"},
+			},
+		},
+	}
+
+	callField := &ast.FuncCallStmt{
+		Expr: &ast.FuncCallExpr{
+			Func: &ast.AttrGetExpr{
+				Object: &ast.AttrGetExpr{
+					Object: &ast.IdentExpr{Value: "T"},
+					Key:    &ast.StringExpr{Value: "a"},
+				},
+				Key: &ast.StringExpr{Value: "b"},
+			},
+		},
+	}
+
+	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{localT, assignIndex, assignFieldA, assignFieldAB, callIndex, callField}}
+	g := Build(fn)
+
+	var (
+		indexAssignSym SymbolID
+		fieldAssignSym SymbolID
+		indexCallSym   SymbolID
+		fieldCallSym   SymbolID
+	)
+
+	g.EachAssign(func(_ Point, info *AssignInfo) {
+		if info == nil || info.IsLocal || len(info.Targets) == 0 {
+			return
+		}
+
+		target := info.Targets[0]
+		if target.Kind == TargetIndex {
+			if key, ok := target.Key.(*ast.StringExpr); ok && key.Value == "a.b" {
+				indexAssignSym = target.Symbol
+			}
+		}
+		if target.Kind == TargetField && len(target.FieldPath) == 2 && target.FieldPath[0] == "a" && target.FieldPath[1] == "b" {
+			fieldAssignSym = target.Symbol
+		}
+	})
+
+	g.EachCall(func(_ Point, info *CallInfo) {
+		if info == nil || len(info.CalleePath.Segments) == 0 {
+			return
+		}
+
+		segs := info.CalleePath.Segments
+		if len(segs) == 1 && segs[0].Kind == constraint.SegmentIndexString && segs[0].Name == "a.b" {
+			indexCallSym = info.CalleeSymbol
+		}
+		if len(segs) == 2 &&
+			segs[0] == (constraint.Segment{Kind: constraint.SegmentField, Name: "a"}) &&
+			segs[1] == (constraint.Segment{Kind: constraint.SegmentField, Name: "b"}) {
+			fieldCallSym = info.CalleeSymbol
+		}
+	})
+
+	if indexAssignSym == 0 || fieldAssignSym == 0 || indexCallSym == 0 || fieldCallSym == 0 {
+		t.Fatalf("missing symbols: indexAssign=%d fieldAssign=%d indexCall=%d fieldCall=%d",
+			indexAssignSym, fieldAssignSym, indexCallSym, fieldCallSym)
+	}
+
+	if indexAssignSym == fieldAssignSym {
+		t.Fatalf("assign symbols collided: %d", indexAssignSym)
+	}
+	if indexCallSym == fieldCallSym {
+		t.Fatalf("call symbols collided: %d", indexCallSym)
+	}
+	if indexCallSym != indexAssignSym {
+		t.Fatalf("index call symbol = %d, want %d", indexCallSym, indexAssignSym)
+	}
+	if fieldCallSym != fieldAssignSym {
+		t.Fatalf("field call symbol = %d, want %d", fieldCallSym, fieldAssignSym)
+	}
+}
+
+func TestFieldSymbol_CalleeSymbol_StringIndexNumericVsIntegerIndex_NoCollision(t *testing.T) {
+	localT := &ast.LocalAssignStmt{
+		Names: []string{"T"},
+		Exprs: []ast.Expr{&ast.TableExpr{}},
+	}
+
+	assignStringIndex := &ast.AssignStmt{
+		Lhs: []ast.Expr{
+			&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "T"},
+				Key:    &ast.StringExpr{Value: "1"},
+			},
+		},
+		Rhs: []ast.Expr{&ast.FunctionExpr{}},
+	}
+
+	assignIntIndex := &ast.AssignStmt{
+		Lhs: []ast.Expr{
+			&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "T"},
+				Key:    &ast.NumberExpr{Value: "1"},
+			},
+		},
+		Rhs: []ast.Expr{&ast.FunctionExpr{}},
+	}
+
+	callStringIndex := &ast.FuncCallStmt{
+		Expr: &ast.FuncCallExpr{
+			Func: &ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "T"},
+				Key:    &ast.StringExpr{Value: "1"},
+			},
+		},
+	}
+
+	callIntIndex := &ast.FuncCallStmt{
+		Expr: &ast.FuncCallExpr{
+			Func: &ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "T"},
+				Key:    &ast.NumberExpr{Value: "1"},
+			},
+		},
+	}
+
+	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{localT, assignStringIndex, assignIntIndex, callStringIndex, callIntIndex}}
+	g := Build(fn)
+
+	var (
+		stringAssignSym SymbolID
+		intAssignSym    SymbolID
+		stringCallSym   SymbolID
+		intCallSym      SymbolID
+	)
+
+	g.EachAssign(func(_ Point, info *AssignInfo) {
+		if info == nil || info.IsLocal || len(info.Targets) == 0 {
+			return
+		}
+
+		target := info.Targets[0]
+		if target.Kind != TargetIndex {
+			return
+		}
+
+		switch key := target.Key.(type) {
+		case *ast.StringExpr:
+			if key.Value == "1" {
+				stringAssignSym = target.Symbol
+			}
+		case *ast.NumberExpr:
+			if key.Value == "1" {
+				intAssignSym = target.Symbol
+			}
+		}
+	})
+
+	g.EachCall(func(_ Point, info *CallInfo) {
+		if info == nil || len(info.CalleePath.Segments) != 1 {
+			return
+		}
+
+		seg := info.CalleePath.Segments[0]
+		if seg == (constraint.Segment{Kind: constraint.SegmentIndexString, Name: "1"}) {
+			stringCallSym = info.CalleeSymbol
+		}
+		if seg == (constraint.Segment{Kind: constraint.SegmentIndexInt, Index: 1}) {
+			intCallSym = info.CalleeSymbol
+		}
+	})
+
+	if stringAssignSym == 0 || intAssignSym == 0 || stringCallSym == 0 || intCallSym == 0 {
+		t.Fatalf("missing symbols: stringAssign=%d intAssign=%d stringCall=%d intCall=%d",
+			stringAssignSym, intAssignSym, stringCallSym, intCallSym)
+	}
+
+	if stringAssignSym == intAssignSym {
+		t.Fatalf("assign symbols collided: %d", stringAssignSym)
+	}
+	if stringCallSym == intCallSym {
+		t.Fatalf("call symbols collided: %d", stringCallSym)
+	}
+	if stringCallSym != stringAssignSym {
+		t.Fatalf("string-index call symbol = %d, want %d", stringCallSym, stringAssignSym)
+	}
+	if intCallSym != intAssignSym {
+		t.Fatalf("int-index call symbol = %d, want %d", intCallSym, intAssignSym)
+	}
+}

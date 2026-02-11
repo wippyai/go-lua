@@ -470,3 +470,165 @@ local result: number = d()
 		t.Log("no param hints found in ParamHintsPrev (propagation may have converged)")
 	}
 }
+
+func TestFixpointUnification_ModuleSelfReturnTable_NoNonConvergenceWarning(t *testing.T) {
+	globals := io.NewManifest("globals")
+	globals.AddGlobal("process", typ.Any)
+
+	source := `
+local test = {}
+
+local _default_context = {
+	tests = {},
+	suites_hierarchy = {},
+	current_describe = nil,
+	mocks = { registry = {}, namespace = {} }
+}
+
+function test.suite(name)
+	return {
+		name = name,
+		tests = {},
+		parent = nil,
+		children = {},
+		full_path = name,
+	}
+end
+
+function test.describe(name, fn)
+	local old_describe = _default_context.current_describe
+	local new_suite = test.suite(name)
+
+	if old_describe then
+		new_suite.parent = old_describe
+		table.insert(old_describe.children, new_suite)
+		new_suite.full_path = old_describe.full_path .. " > " .. name
+	else
+		table.insert(_default_context.suites_hierarchy, new_suite)
+	end
+
+	_default_context.current_describe = new_suite
+	fn()
+	table.insert(_default_context.tests, new_suite)
+	_default_context.current_describe = old_describe
+
+	return new_suite
+end
+
+function test.context(name, fn)
+	return test.describe(name, fn)
+end
+
+function test.spec(name, fn)
+	return test.describe(name, fn)
+end
+
+function test.it(name, fn)
+	if not _default_context.current_describe then
+		error("it must be called within describe")
+	end
+	table.insert(_default_context.current_describe.tests, { name = name, fn = fn, skipped = false })
+end
+
+function test.register_mock_namespace(target, name)
+	_default_context.mocks.namespace[target] = name
+	return test
+end
+
+function test.mock(target_or_path, field_or_replacement, replacement_optional)
+	local id = target_or_path
+	if _default_context.mocks.registry[id] == nil then
+		_default_context.mocks.registry[id] = {
+			container = _G,
+			container_key = "process",
+			original_table = process,
+		}
+	end
+	_G.process = { send = function() end }
+	return test
+end
+
+function test.restore_all_mocks()
+	local registry_keys = {}
+	for id, _ in pairs(_default_context.mocks.registry) do
+		table.insert(registry_keys, id)
+	end
+	for _, id in ipairs(registry_keys) do
+		local entry = _default_context.mocks.registry[id]
+		if entry then
+			entry.container[entry.container_key] = entry.original_table
+			_default_context.mocks.registry[id] = nil
+		end
+	end
+	return test
+end
+
+return test
+`
+
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("globals", globals))
+	if result.HasError() {
+		t.Fatalf("unexpected errors: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+	assertNoFixpointNonConvergenceWarning(t, result.Diagnostics)
+}
+
+func TestFixpointUnification_RecursiveSuiteBuilders_NoNonConvergenceWarning(t *testing.T) {
+	source := `
+local test = {}
+local st = { current = nil, suites = {} }
+
+function test.suite(name)
+	return { name = name, parent = nil, children = {}, full_path = name }
+end
+
+function test.describe(name, fn)
+	local old = st.current
+	local s = test.suite(name)
+	if old then
+		s.parent = old
+		table.insert(old.children, s)
+		s.full_path = old.full_path .. " > " .. name
+	else
+		table.insert(st.suites, s)
+	end
+	st.current = s
+	fn()
+	st.current = old
+	return s
+end
+
+function test.context(name, fn)
+	return test.describe(name, fn)
+end
+
+function test.spec(name, fn)
+	return test.describe(name, fn)
+end
+
+local a = test.describe("a", function() end)
+local b = test.context("b", function() end)
+local c = test.spec("c", function() end)
+
+return { a = a, b = b, c = c }
+`
+
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("unexpected errors: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+	assertNoFixpointNonConvergenceWarning(t, result.Diagnostics)
+}
+
+func assertNoFixpointNonConvergenceWarning(t *testing.T, diags []diag.Diagnostic) {
+	t.Helper()
+	for _, d := range diags {
+		if d.Severity != diag.SeverityWarning {
+			continue
+		}
+		if d.Message == "inter-function fixpoint did not converge" ||
+			contains(d.Message, "inter-function fixpoint did not converge;") {
+			t.Fatalf("unexpected non-convergence warning: %q", d.Message)
+		}
+	}
+}

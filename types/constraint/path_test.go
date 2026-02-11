@@ -1,10 +1,24 @@
 package constraint
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/cfg"
 )
+
+func TestPathPlaceholderIndex_OverflowRejected(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	overflowRoot := "$" + strconv.FormatInt(int64(maxInt), 10) + "0"
+	p := Path{Root: overflowRoot}
+
+	if got := p.PlaceholderIndex(); got != -1 {
+		t.Fatalf("PlaceholderIndex() = %d, want -1 for overflow input", got)
+	}
+	if p.IsPlaceholder() {
+		t.Fatal("IsPlaceholder() should be false for overflow placeholder root")
+	}
+}
 
 func TestPathStringKeyHash(t *testing.T) {
 	p := Path{
@@ -15,14 +29,15 @@ func TestPathStringKeyHash(t *testing.T) {
 			{Kind: SegmentIndexInt, Index: 3},
 		},
 	}
-	expected := "x.y[z][3]"
+	display := "x.y[z][3]"
+	key := `x.y["z"][3]`
 
-	if p.String() != expected {
-		t.Fatalf("expected %q, got %q", expected, p.String())
+	if p.String() != display {
+		t.Fatalf("expected %q, got %q", display, p.String())
 	}
 
-	if p.Key() != PathKey(expected) {
-		t.Fatalf("expected key %q, got %q", expected, p.Key())
+	if p.Key() != PathKey(key) {
+		t.Fatalf("expected key %q, got %q", key, p.Key())
 	}
 
 	p2 := Path{Root: "x", Segments: []Segment{
@@ -82,6 +97,16 @@ func TestFormatSegments(t *testing.T) {
 	}
 }
 
+func TestFormatSegmentsEscapesStringIndex(t *testing.T) {
+	segs := []Segment{
+		{Kind: SegmentIndexString, Name: `a"b\c`},
+	}
+	expected := `["a\"b\\c"]`
+	if got := FormatSegments(segs); got != expected {
+		t.Fatalf("FormatSegments escaped index: expected %q, got %q", expected, got)
+	}
+}
+
 func TestPathKeyUsesFormatSegments(t *testing.T) {
 	segs := []Segment{
 		{Kind: SegmentField, Name: "foo"},
@@ -94,6 +119,31 @@ func TestPathKeyUsesFormatSegments(t *testing.T) {
 	got := string(p.Key())
 	if got != expected {
 		t.Fatalf("Path.Key() should use FormatSegments: expected %q, got %q", expected, got)
+	}
+}
+
+func TestPathKeyPlaceholderUsesCanonicalSegments(t *testing.T) {
+	pStr := Path{
+		Root: "$0",
+		Segments: []Segment{
+			{Kind: SegmentIndexString, Name: "1"},
+		},
+	}
+	pInt := Path{
+		Root: "$0",
+		Segments: []Segment{
+			{Kind: SegmentIndexInt, Index: 1},
+		},
+	}
+
+	if got, want := string(pStr.Key()), `$0["1"]`; got != want {
+		t.Fatalf("string index placeholder key: got %q, want %q", got, want)
+	}
+	if got, want := string(pInt.Key()), `$0[1]`; got != want {
+		t.Fatalf("int index placeholder key: got %q, want %q", got, want)
+	}
+	if pStr.Key() == pInt.Key() {
+		t.Fatalf("placeholder keys must not collide: %q", pStr.Key())
 	}
 }
 
@@ -133,6 +183,16 @@ func TestNewPlaceholder(t *testing.T) {
 		if p.PlaceholderIndex() != tc.index {
 			t.Errorf("NewPlaceholder(%d): PlaceholderIndex()=%d", tc.index, p.PlaceholderIndex())
 		}
+	}
+}
+
+func TestNewPlaceholder_NegativeIndex(t *testing.T) {
+	p := NewPlaceholder(-1)
+	if !p.IsEmpty() {
+		t.Fatalf("NewPlaceholder(-1) should return empty path, got %+v", p)
+	}
+	if p.IsPlaceholder() {
+		t.Fatal("empty path must not be placeholder")
 	}
 }
 
@@ -418,6 +478,22 @@ func TestPathIsReturnPath(t *testing.T) {
 	partial := Path{Root: "ret["}
 	if IsReturnPath(partial) {
 		t.Error("IsReturnPath should return false for partial ret path")
+	}
+
+	invalid := []Path{
+		{Root: "ret[-1]"},
+		{Root: "ret[]"},
+		{Root: "ret[abc]"},
+		{Root: "ret[1x]"},
+		{Root: "ret[1]]"},
+		{Root: "ret[0]", Symbol: 7},
+		{Root: "ret[0]", Segments: []Segment{{Kind: SegmentField, Name: "k"}}},
+		{Root: "ret[0]", Segments: []Segment{{Kind: SegmentIndexInt, Index: 1}}},
+	}
+	for _, p := range invalid {
+		if IsReturnPath(p) {
+			t.Errorf("IsReturnPath should return false for invalid path %q (symbol=%d)", p.Root, p.Symbol)
+		}
 	}
 }
 

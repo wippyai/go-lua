@@ -29,10 +29,10 @@
 //
 // # METHOD CALL HANDLING
 //
-// Method calls (obj:method(args)) are resolved by:
-//   - Looking up the method on the receiver type
-//   - Detecting explicit self parameters (first param named 'self' or matching receiver type)
-//   - Applying Self type substitution in parameter and return types
+// Method calls (obj:method(args)) follow Lua call semantics:
+//   - The receiver is passed as the first runtime argument
+//   - Remaining arguments map positionally after the receiver
+//   - Self type substitution is applied in parameter and return types
 //
 // UNION/INTERSECTION CALLEES
 //
@@ -113,6 +113,9 @@ type CallDef struct {
 	Receiver   typ.Type     // Receiver type for method calls
 	MethodName string       // Method name for method calls
 	Query      core.TypeOps // Method/field resolver
+	// ForceMethodReceiver consumes receiver as first runtime argument even when
+	// function shape alone does not imply explicit self.
+	ForceMethodReceiver bool
 
 	// ExpectedReturn provides contextual typing for generic inference.
 	// When set, the expected return type guides type parameter inference
@@ -160,6 +163,8 @@ type InferResult struct {
 
 	// IsMethod indicates whether this is a method call.
 	IsMethod bool
+	// ForceMethodReceiver carries CallDef.ForceMethodReceiver through FinishCall/ReInfer.
+	ForceMethodReceiver bool
 
 	// TypeArgs contains the type arguments (explicit or inferred).
 	TypeArgs []typ.Type
@@ -278,7 +283,7 @@ func inferAndCall(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod 
 		typeArgs = def.TypeArgs
 	} else {
 		var err error
-		typeArgs, err = InferTypeArgs(fn, def.Args, isMethod, receiver)
+		typeArgs, err = InferTypeArgsWithExpectedAndMode(fn, def.Args, isMethod, receiver, nil, false)
 		if err != nil {
 			errors = append(errors, CallError{Kind: ErrTypeInference, Message: err.Error()})
 			return CallResult{Type: typ.Unknown, Errors: errors}
@@ -287,7 +292,7 @@ func inferAndCall(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod 
 
 	instantiated := InstantiateFunction(fn, typeArgs)
 
-	return callFunction(ctx, def.Query, instantiated, def.Args, receiver, isMethod, errors)
+	return callFunction(ctx, def.Query, instantiated, def.Args, receiver, isMethod, def.ForceMethodReceiver, errors)
 }
 
 // InferCall performs the first phase of call synthesis: callee resolution,
@@ -299,9 +304,10 @@ func InferCall(ctx *db.QueryContext, def CallDef) InferResult {
 	resolved, early := resolveCallee(ctx, def)
 	if early != nil {
 		return InferResult{
-			Kind:         InferKindNotCallable,
-			Errors:       early.Errors,
-			ShortCircuit: early.Type,
+			Kind:                InferKindNotCallable,
+			Errors:              early.Errors,
+			ShortCircuit:        early.Type,
+			ForceMethodReceiver: def.ForceMethodReceiver,
 		}
 	}
 
@@ -310,25 +316,27 @@ func InferCall(ctx *db.QueryContext, def CallDef) InferResult {
 	receiver := resolved.receiver
 	isMethod := def.IsMethod
 
-	if callee.Kind() == kind.Any {
+	if typ.IsAny(callee) {
 		return InferResult{
-			Kind:         InferKindAny,
-			Callee:       callee,
-			Receiver:     receiver,
-			IsMethod:     isMethod,
-			Errors:       errors,
-			ShortCircuit: typ.Any,
+			Kind:                InferKindAny,
+			Callee:              callee,
+			Receiver:            receiver,
+			IsMethod:            isMethod,
+			ForceMethodReceiver: def.ForceMethodReceiver,
+			Errors:              errors,
+			ShortCircuit:        typ.Any,
 		}
 	}
 
-	if callee.Kind() == kind.Unknown {
+	if typ.IsUnknown(callee) {
 		return InferResult{
-			Kind:         InferKindUnknown,
-			Callee:       callee,
-			Receiver:     receiver,
-			IsMethod:     isMethod,
-			Errors:       errors,
-			ShortCircuit: typ.Unknown,
+			Kind:                InferKindUnknown,
+			Callee:              callee,
+			Receiver:            receiver,
+			IsMethod:            isMethod,
+			ForceMethodReceiver: def.ForceMethodReceiver,
+			Errors:              errors,
+			ShortCircuit:        typ.Unknown,
 		}
 	}
 
@@ -340,11 +348,12 @@ func InferCall(ctx *db.QueryContext, def CallDef) InferResult {
 
 	if callee.Kind() == kind.Intersection {
 		return InferResult{
-			Kind:     InferKindIntersection,
-			Callee:   callee,
-			Receiver: receiver,
-			IsMethod: isMethod,
-			Errors:   errors,
+			Kind:                InferKindIntersection,
+			Callee:              callee,
+			Receiver:            receiver,
+			IsMethod:            isMethod,
+			ForceMethodReceiver: def.ForceMethodReceiver,
+			Errors:              errors,
 		}
 	}
 
@@ -363,17 +372,18 @@ func InferCall(ctx *db.QueryContext, def CallDef) InferResult {
 // inferFunction performs inference for a single function callee.
 func inferFunction(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod bool, receiver typ.Type, errors []CallError) InferResult {
 	result := InferResult{
-		Kind:     InferKindFunction,
-		Callee:   fn,
-		Receiver: receiver,
-		IsMethod: isMethod,
-		Function: fn,
-		Errors:   errors,
+		Kind:                InferKindFunction,
+		Callee:              fn,
+		Receiver:            receiver,
+		IsMethod:            isMethod,
+		ForceMethodReceiver: def.ForceMethodReceiver,
+		Function:            fn,
+		Errors:              errors,
 	}
 
 	if len(fn.TypeParams) == 0 {
 		result.Instantiated = fn
-		result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, fn, isMethod, receiver)
+		result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, fn, isMethod, receiver, def.ForceMethodReceiver)
 		return result
 	}
 
@@ -383,7 +393,7 @@ func inferFunction(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod
 	} else {
 		var err error
 		// Use bidirectional inference with expected return type when available
-		typeArgs, err = InferTypeArgsWithExpected(fn, def.Args, isMethod, receiver, def.ExpectedReturn)
+		typeArgs, err = InferTypeArgsWithExpectedAndMode(fn, def.Args, isMethod, receiver, def.ExpectedReturn, def.ForceMethodReceiver)
 		if err != nil {
 			result.Errors = append(result.Errors, CallError{Kind: ErrTypeInference, Message: err.Error()})
 			return result
@@ -392,7 +402,7 @@ func inferFunction(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod
 
 	result.TypeArgs = typeArgs
 	result.Instantiated = InstantiateFunction(fn, typeArgs)
-	result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, result.Instantiated, isMethod, receiver)
+	result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, result.Instantiated, isMethod, receiver, def.ForceMethodReceiver)
 
 	return result
 }
@@ -402,11 +412,12 @@ func inferFunction(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod
 // expected types from the first successful inference.
 func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, receiver typ.Type, errors []CallError) InferResult {
 	result := InferResult{
-		Kind:     InferKindUnion,
-		Callee:   u,
-		Receiver: receiver,
-		IsMethod: isMethod,
-		Errors:   errors,
+		Kind:                InferKindUnion,
+		Callee:              u,
+		Receiver:            receiver,
+		IsMethod:            isMethod,
+		ForceMethodReceiver: def.ForceMethodReceiver,
+		Errors:              errors,
 	}
 
 	// Try to find a function member for expected args computation.
@@ -422,7 +433,7 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 		if len(fn.TypeParams) == 0 {
 			result.Function = fn
 			result.Instantiated = fn
-			result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, fn, isMethod, receiver)
+			result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, fn, isMethod, receiver, def.ForceMethodReceiver)
 			return result
 		}
 
@@ -431,7 +442,7 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 			typeArgs = def.TypeArgs
 		} else {
 			var err error
-			typeArgs, err = InferTypeArgsWithExpected(fn, def.Args, isMethod, receiver, def.ExpectedReturn)
+			typeArgs, err = InferTypeArgsWithExpectedAndMode(fn, def.Args, isMethod, receiver, def.ExpectedReturn, def.ForceMethodReceiver)
 			if err != nil {
 				continue
 			}
@@ -441,7 +452,7 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 		result.Function = fn
 		result.TypeArgs = typeArgs
 		result.Instantiated = instantiated
-		result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, instantiated, isMethod, receiver)
+		result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, instantiated, isMethod, receiver, def.ForceMethodReceiver)
 		return result
 	}
 
@@ -449,13 +460,13 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 }
 
 // computeExpectedArgs computes the expected type for each argument position.
-func computeExpectedArgs(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, isMethod bool, receiver typ.Type) ([]typ.Type, typ.Type) {
+func computeExpectedArgs(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, isMethod bool, receiver typ.Type, forceMethodReceiver bool) ([]typ.Type, typ.Type) {
 	if fn == nil {
 		return nil, nil
 	}
 
 	paramOffset := 0
-	if isMethod && hasExplicitSelf(ctx, query, fn, receiver) {
+	if methodConsumesReceiver(ctx, query, fn, receiver, isMethod, forceMethodReceiver) {
 		paramOffset = 1
 	}
 
@@ -506,10 +517,18 @@ func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult
 		return CallResult{Type: typ.Unknown, Errors: infer.Errors}
 
 	case InferKindUnion:
-		return finishUnionCall(ctx, infer.Callee.(*typ.Union), def, infer)
+		return callUnionWithGenericInference(
+			ctx,
+			infer.Callee.(*typ.Union),
+			def,
+			infer.IsMethod,
+			infer.Receiver,
+			infer.ForceMethodReceiver,
+			infer.Errors,
+		)
 
 	case InferKindIntersection:
-		return callIntersection(ctx, def.Query, infer.Callee.(*typ.Intersection), def.Args, infer.Receiver, infer.IsMethod, infer.Errors)
+		return callIntersection(ctx, def.Query, infer.Callee.(*typ.Intersection), def.Args, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
 
 	case InferKindFunction:
 		fn := infer.Instantiated
@@ -519,15 +538,10 @@ func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult
 		if fn == nil {
 			return CallResult{Type: typ.Unknown, Errors: infer.Errors}
 		}
-		return callFunction(ctx, def.Query, fn, def.Args, infer.Receiver, infer.IsMethod, infer.Errors)
+		return callFunction(ctx, def.Query, fn, def.Args, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
 	}
 
 	return CallResult{Type: typ.Unknown, Errors: infer.Errors}
-}
-
-// finishUnionCall handles FinishCall for union callees.
-func finishUnionCall(ctx *db.QueryContext, u *typ.Union, def CallDef, infer InferResult) CallResult {
-	return callUnionWithGenericInference(ctx, u, def, infer.IsMethod, infer.Receiver, infer.Errors)
 }
 
 // ReInfer performs re-inference after arguments have been updated.
@@ -547,7 +561,7 @@ func ReInfer(ctx *db.QueryContext, def CallDef, prev InferResult) InferResult {
 		return prev
 	}
 
-	typeArgs, err := InferTypeArgs(fn, def.Args, prev.IsMethod, prev.Receiver)
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(fn, def.Args, prev.IsMethod, prev.Receiver, nil, prev.ForceMethodReceiver)
 	if err != nil {
 		result := prev
 		result.Errors = append(result.Errors, CallError{Kind: ErrTypeInference, Message: err.Error()})
@@ -557,7 +571,7 @@ func ReInfer(ctx *db.QueryContext, def CallDef, prev InferResult) InferResult {
 	result := prev
 	result.TypeArgs = typeArgs
 	result.Instantiated = InstantiateFunction(fn, typeArgs)
-	result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, result.Instantiated, prev.IsMethod, prev.Receiver)
+	result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, result.Instantiated, prev.IsMethod, prev.Receiver, prev.ForceMethodReceiver)
 
 	return result
 }
@@ -578,7 +592,7 @@ func (r *InferResult) ExpectedArgType(idx int) typ.Type {
 // callIntersection handles calling an intersection type.
 // All function members are called with the same args; if any member fails, the whole call fails.
 // The return type is the intersection of all member return types.
-func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Intersection, args []typ.Type, receiver typ.Type, isMethod bool, baseErrors []CallError) CallResult {
+func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Intersection, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool, baseErrors []CallError) CallResult {
 	var returnTypes []typ.Type
 
 	for _, member := range inter.Members {
@@ -595,7 +609,7 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		}
 
 		seedErrors := append([]CallError(nil), baseErrors...)
-		result := callFunction(ctx, query, fn, args, receiver, isMethod, seedErrors)
+		result := callFunction(ctx, query, fn, args, receiver, isMethod, forceMethodReceiver, seedErrors)
 		if hasHardErrors(result.Errors[len(seedErrors):]) {
 			return result
 		}
@@ -617,7 +631,7 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 // callUnionWithGenericInference handles calling a union of functions where each
 // member may be generic. Per-member generic inference is applied before calling.
 // Union semantics: the call succeeds if any member succeeds.
-func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, receiver typ.Type, baseErrors []CallError) CallResult {
+func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, receiver typ.Type, forceMethodReceiver bool, baseErrors []CallError) CallResult {
 	var validTypes []typ.Type
 	var allTypes []typ.Type
 	var hardErrors []CallError
@@ -632,7 +646,7 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 		seedErrors := append([]CallError(nil), baseErrors...)
 		var result CallResult
 		if len(fn.TypeParams) == 0 {
-			result = callFunction(ctx, def.Query, fn, def.Args, receiver, isMethod, seedErrors)
+			result = callFunction(ctx, def.Query, fn, def.Args, receiver, isMethod, forceMethodReceiver, seedErrors)
 		} else {
 			result = inferAndCall(ctx, fn, def, isMethod, receiver, seedErrors)
 		}
@@ -702,20 +716,41 @@ func mergeReturnTypes(types []typ.Type) typ.Type {
 	return typ.NewTuple(merged...)
 }
 
-func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, receiver typ.Type, isMethod bool, errors []CallError) CallResult {
+func methodConsumesReceiver(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, receiver typ.Type, isMethod bool, forceMethodReceiver bool) bool {
+	if !isMethod || receiver == nil || fn == nil {
+		return false
+	}
+	if forceMethodReceiver {
+		return true
+	}
+	return hasExplicitSelf(ctx, query, fn, receiver)
+}
+
+func methodConsumesReceiverSimple(fn *typ.Function, receiver typ.Type, isMethod bool, forceMethodReceiver bool) bool {
+	if !isMethod || receiver == nil || fn == nil {
+		return false
+	}
+	if forceMethodReceiver {
+		return true
+	}
+	return hasExplicitSelfSimple(fn, receiver)
+}
+
+func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool, errors []CallError) CallResult {
 	if fn == nil {
 		return CallResult{Type: typ.Unknown, Errors: append(errors, CallError{Kind: ErrNotCallable, Message: "nil function"})}
 	}
 
 	argCount := len(args)
-	if isMethod && hasExplicitSelf(ctx, query, fn, receiver) {
+	methodHasReceiver := methodConsumesReceiver(ctx, query, fn, receiver, isMethod, forceMethodReceiver)
+	if methodHasReceiver {
 		argCount++
 	}
 
-	requiredParams := countRequiredParams(fn)
+	minArgs := typ.MinRequiredArgs(fn)
 	hasVariadic := fn.Variadic != nil
 
-	if argCount < requiredParams {
+	if argCount < minArgs {
 		errors = append(errors, CallError{
 			Kind:    ErrWrongArity,
 			Message: "not enough arguments",
@@ -728,8 +763,26 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 	}
 
 	paramOffset := 0
-	if isMethod && hasExplicitSelf(ctx, query, fn, receiver) {
+	if methodHasReceiver {
 		paramOffset = 1
+	}
+
+	if methodHasReceiver {
+		var expectedReceiver typ.Type
+		if len(fn.Params) > 0 {
+			expectedReceiver = fn.Params[0].Type
+		} else if hasVariadic {
+			expectedReceiver = fn.Variadic
+		}
+		if expectedReceiver != nil {
+			expectedReceiver = subst.Self(expectedReceiver, receiver)
+			if !isSubtypeCheck(ctx, query, receiver, expectedReceiver) {
+				errors = append(errors, CallError{
+					Kind:    ErrTypeMismatch,
+					Message: fmt.Sprintf("method receiver: expected %s, got %s", typ.FormatShort(expectedReceiver), typ.FormatShort(receiver)),
+				})
+			}
+		}
 	}
 
 	for i, arg := range args {
@@ -811,44 +864,10 @@ func hasExplicitSelf(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function,
 	if len(fn.Params) == 0 {
 		return false
 	}
-
-	if name := fn.Params[0].Name; name == "self" || name == "Self" {
-		return true
-	}
-
-	firstParam := fn.Params[0].Type
-	if firstParam == nil {
-		return false
-	}
 	receiverMatch := normalizeReceiverForSelfCheck(ctx, query, receiver)
-	// Check for Self type or matching receiver type
-	if firstParam.Kind() == kind.Self {
-		return true
-	}
-	if tp, ok := firstParam.(*typ.TypeParam); ok {
-		if tp.Constraint != nil && receiverMatch != nil &&
-			isExplicitSelfSubtypeCandidate(receiverMatch) &&
-			isExplicitSelfSubtypeCandidate(tp.Constraint) &&
-			(isSubtypeCheck(ctx, query, receiverMatch, tp.Constraint) && isSubtypeCheck(ctx, query, tp.Constraint, receiverMatch)) {
-			return true
-		}
-		return false
-	}
-	// Check if first param is structurally equivalent to the receiver.
-	// One-way subtyping is too permissive for structural record types where
-	// optional fields can make unrelated shapes look compatible.
-	if receiverMatch != nil &&
-		isExplicitSelfSubtypeCandidate(receiverMatch) &&
-		isExplicitSelfSubtypeCandidate(firstParam) &&
-		(isSubtypeCheck(ctx, query, receiverMatch, firstParam) && isSubtypeCheck(ctx, query, firstParam, receiverMatch)) {
-		return true
-	}
-
-	if receiver != nil && isLocalRefMatch(firstParam, receiver) {
-		return true
-	}
-
-	return false
+	return hasExplicitSelfCommon(fn, receiver, receiverMatch, func(sub, super typ.Type) bool {
+		return isSubtypeCheck(ctx, query, sub, super)
+	})
 }
 
 func isLocalRefMatch(param typ.Type, receiver typ.Type) bool {
@@ -889,6 +908,19 @@ func hasExplicitSelfSimple(fn *typ.Function, receiver typ.Type) bool {
 	if len(fn.Params) == 0 {
 		return false
 	}
+	receiverMatch := normalizeReceiverForSelfCheck(nil, nil, receiver)
+	return hasExplicitSelfCommon(fn, receiver, receiverMatch, subtype.IsSubtype)
+}
+
+func hasExplicitSelfCommon(
+	fn *typ.Function,
+	receiver typ.Type,
+	receiverMatch typ.Type,
+	isSubtype func(sub, super typ.Type) bool,
+) bool {
+	if fn == nil || len(fn.Params) == 0 || isSubtype == nil {
+		return false
+	}
 
 	if name := fn.Params[0].Name; name == "self" || name == "Self" {
 		return true
@@ -898,7 +930,6 @@ func hasExplicitSelfSimple(fn *typ.Function, receiver typ.Type) bool {
 	if firstParam == nil {
 		return false
 	}
-	receiverMatch := normalizeReceiverForSelfCheck(nil, nil, receiver)
 	if firstParam.Kind() == kind.Self {
 		return true
 	}
@@ -906,23 +937,22 @@ func hasExplicitSelfSimple(fn *typ.Function, receiver typ.Type) bool {
 		if tp.Constraint != nil && receiverMatch != nil &&
 			isExplicitSelfSubtypeCandidate(receiverMatch) &&
 			isExplicitSelfSubtypeCandidate(tp.Constraint) &&
-			(subtype.IsSubtype(receiverMatch, tp.Constraint) && subtype.IsSubtype(tp.Constraint, receiverMatch)) {
+			(isSubtype(receiverMatch, tp.Constraint) && isSubtype(tp.Constraint, receiverMatch)) {
 			return true
 		}
 		return false
 	}
+	// Check if first param is structurally equivalent to the receiver.
+	// One-way subtyping is too permissive for structural record types where
+	// optional fields can make unrelated shapes look compatible.
 	if receiverMatch != nil &&
 		isExplicitSelfSubtypeCandidate(receiverMatch) &&
 		isExplicitSelfSubtypeCandidate(firstParam) &&
-		(subtype.IsSubtype(receiverMatch, firstParam) && subtype.IsSubtype(firstParam, receiverMatch)) {
+		(isSubtype(receiverMatch, firstParam) && isSubtype(firstParam, receiverMatch)) {
 		return true
 	}
 
-	if receiver != nil && isLocalRefMatch(firstParam, receiver) {
-		return true
-	}
-
-	return false
+	return receiver != nil && isLocalRefMatch(firstParam, receiver)
 }
 
 func normalizeReceiverForSelfCheck(ctx *db.QueryContext, query core.TypeOps, receiver typ.Type) typ.Type {
@@ -946,23 +976,6 @@ func isExplicitSelfSubtypeCandidate(t typ.Type) bool {
 	// Soft placeholder types are intentionally broad and should not imply
 	// implicit receiver consumption in method arity checks.
 	return !typ.IsSoft(t, typ.SoftAnnotationPolicy)
-}
-
-// countRequiredParams counts non-optional parameters.
-func countRequiredParams(fn *typ.Function) int {
-	count := 0
-
-	for _, p := range fn.Params {
-		if p.Optional || p.Type == nil || p.Type.Kind() == kind.Unknown {
-			continue
-		}
-
-		if !p.Optional {
-			count++
-		}
-	}
-
-	return count
 }
 
 // resolveSelf replaces Self type with concrete receiver type.

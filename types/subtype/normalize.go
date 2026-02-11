@@ -32,7 +32,7 @@ func NormalizeUnion(types ...typ.Type) typ.Type {
 
 	// Any absorbs all
 	for _, t := range flat {
-		if t.Kind() == kind.Any {
+		if typ.IsAny(t) {
 			return typ.Any
 		}
 	}
@@ -41,7 +41,7 @@ func NormalizeUnion(types ...typ.Type) typ.Type {
 	result := make([]typ.Type, 0, len(flat))
 
 	for _, t := range flat {
-		if t.Kind() == kind.Never {
+		if typ.IsNever(t) {
 			continue
 		}
 
@@ -114,7 +114,9 @@ func normalizeIntersectionDepth(types []typ.Type, depth int) typ.Type {
 		return typ.Any
 	}
 
-	if depth > internal.MaxShallowDepth {
+	// Use the canonical typ recursion budget to avoid behavior cliffs between
+	// shallow normalization and other type operations (which use typ.NewGuard()).
+	if depth > typ.DefaultRecursionDepth {
 		return typ.NewIntersection(types...)
 	}
 
@@ -122,7 +124,7 @@ func normalizeIntersectionDepth(types []typ.Type, depth int) typ.Type {
 
 	// Never absorbs all
 	for _, t := range flat {
-		if t.Kind() == kind.Never {
+		if typ.IsNever(t) {
 			return typ.Never
 		}
 	}
@@ -133,7 +135,7 @@ func normalizeIntersectionDepth(types []typ.Type, depth int) typ.Type {
 	nonUnions := make([]typ.Type, 0, len(flat))
 
 	for _, t := range flat {
-		if t.Kind() == kind.Any || t.Kind() == kind.Unknown {
+		if t.Kind().IsPlaceholder() {
 			continue
 		}
 
@@ -200,7 +202,7 @@ func normalizeIntersectionDepth(types []typ.Type, depth int) typ.Type {
 
 	for _, combo := range distributed {
 		normalized := normalizeIntersectionDepth(combo, depth+1)
-		if normalized.Kind() != kind.Never {
+		if !typ.IsNever(normalized) {
 			unionMembers = append(unionMembers, normalized)
 		}
 	}

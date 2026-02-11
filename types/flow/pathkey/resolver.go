@@ -105,10 +105,7 @@ func (r *Resolver) KeyAtVersion(sym cfg.SymbolID, versionID int, segments []cons
 //   - Sortable in a meaningful order (by symbol, then version)
 func (r *Resolver) buildKey(sym cfg.SymbolID, versionID int, segments []constraint.Segment) constraint.PathKey {
 	var b strings.Builder
-	b.WriteString("sym")
-	b.WriteString(strconv.FormatUint(uint64(sym), 10))
-	b.WriteByte('@')
-	b.WriteString(strconv.Itoa(versionID))
+	b.WriteString(SymbolVersionRoot(sym, versionID))
 	b.WriteString(SegmentsSuffix(segments))
 	return constraint.PathKey(b.String())
 }
@@ -155,14 +152,21 @@ func ParseKey(key constraint.PathKey) (cfg.SymbolID, int, string, bool) {
 		for verEnd < len(rest) && rest[verEnd] != '.' && rest[verEnd] != '[' {
 			verEnd++
 		}
-		if verEnd > 0 {
-			if v, err := strconv.Atoi(rest[:verEnd]); err == nil {
-				versionID = v
-			}
+		if verEnd == 0 {
+			return 0, 0, "", false
 		}
+		v, err := strconv.Atoi(rest[:verEnd])
+		if err != nil || v < 0 {
+			return 0, 0, "", false
+		}
+		versionID = v
 		suffix = rest[verEnd:]
 	} else {
 		suffix = rest
+	}
+
+	if suffix != "" && ParseSuffix(suffix) == nil {
+		return 0, 0, "", false
 	}
 
 	return cfg.SymbolID(sym), versionID, suffix, true

@@ -1,14 +1,12 @@
 package constprop
 
 import (
-	"slices"
-	"strconv"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/numparse"
 )
 
 // CollectConstAssignments collects constant assignments from the graph
@@ -20,16 +18,13 @@ func CollectConstAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 	values := make(map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue)
 
 	fc.Graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Name == "" {
-				continue
+				return
 			}
-			if i >= len(info.Sources) {
-				continue
-			}
-			val := ConstValueFromExpr(info.Sources[i])
+			val := ConstValueFromExpr(source)
 			if val == nil {
-				continue
+				return
 			}
 
 			sym := target.Symbol
@@ -38,7 +33,7 @@ func CollectConstAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 				values[sym] = make(map[cfg.Point]*flow.ConstValue)
 			}
 			values[sym][p] = val
-		}
+		})
 	})
 
 	inputs.ConstValues = values
@@ -52,12 +47,7 @@ func PropagateAllConstValues(fc *core.FlowContext, inputs *flow.Inputs) {
 	}
 	assigns := inputs.ConstValues
 	out := make(map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue)
-	syms := make([]cfg.SymbolID, 0, len(assigns))
-	for sym := range assigns {
-		syms = append(syms, sym)
-	}
-	slices.Sort(syms)
-	for _, sym := range syms {
+	for _, sym := range cfg.SortedSymbolIDs(assigns) {
 		out[sym] = propagateConstValues(fc.Graph.CFG(), assigns[sym])
 	}
 	inputs.ConstValues = out
@@ -69,10 +59,10 @@ func ConstValueFromExpr(expr ast.Expr) *flow.ConstValue {
 	case *ast.StringExpr:
 		return &flow.ConstValue{Kind: flow.ConstString, Str: e.Value}
 	case *ast.NumberExpr:
-		if idx, ok := ParseIntLiteral(e.Value); ok {
+		if idx, ok := numparse.ParseIntegerLiteral(e.Value); ok {
 			return &flow.ConstValue{Kind: flow.ConstInt, Int: idx}
 		}
-		if f, ok := ParseFloatLiteral(e.Value); ok {
+		if f, ok := numparse.ParseFloatLiteral(e.Value); ok {
 			return &flow.ConstValue{Kind: flow.ConstFloat, Float: f}
 		}
 	case *ast.TrueExpr:
@@ -112,24 +102,6 @@ func ConstValueEqual(a, b *flow.ConstValue) bool {
 	default:
 		return false
 	}
-}
-
-// ParseIntLiteral parses an integer literal string (supports decimal and hex).
-func ParseIntLiteral(s string) (int64, bool) {
-	i, err := strconv.ParseInt(s, 0, 64)
-	if err != nil {
-		return 0, false
-	}
-	return i, true
-}
-
-// ParseFloatLiteral parses a floating-point literal string.
-func ParseFloatLiteral(s string) (float64, bool) {
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, false
-	}
-	return f, true
 }
 
 // propagateConstValues propagates constant values through the CFG using a worklist algorithm.

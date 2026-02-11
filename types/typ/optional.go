@@ -33,7 +33,7 @@ func NewOptional(inner Type) Type {
 		return inner
 	}
 
-	if inner.Kind() == kind.Any {
+	if IsAny(inner) {
 		return Any
 	}
 

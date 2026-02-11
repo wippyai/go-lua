@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 )
 
 func TestNewBindingTable(t *testing.T) {
@@ -282,6 +283,35 @@ func TestBindingTable_AllSymbols_NoDuplicates(t *testing.T) {
 	}
 }
 
+func TestBindingTable_SymbolsByName(t *testing.T) {
+	table := NewBindingTable()
+	alpha1 := cfg.NextSymbolID()
+	alpha2 := cfg.NextSymbolID()
+	beta := cfg.NextSymbolID()
+
+	table.SetName(alpha1, "collect")
+	table.SetName(alpha2, "collect")
+	table.SetName(beta, "other")
+
+	got := table.SymbolsByName("collect")
+	if len(got) != 2 {
+		t.Fatalf("SymbolsByName(\"collect\") len = %d, want 2", len(got))
+	}
+	if got[0] != alpha1 || got[1] != alpha2 {
+		t.Fatalf("SymbolsByName(\"collect\") = %v, want [%d %d]", got, alpha1, alpha2)
+	}
+}
+
+func TestBindingTable_SymbolsByName_UnknownOrEmpty(t *testing.T) {
+	table := NewBindingTable()
+	if got := table.SymbolsByName(""); got != nil {
+		t.Fatalf("SymbolsByName(\"\") = %v, want nil", got)
+	}
+	if got := table.SymbolsByName("missing"); len(got) != 0 {
+		t.Fatalf("SymbolsByName(\"missing\") = %v, want empty", got)
+	}
+}
+
 func TestBindingTable_Globals(t *testing.T) {
 	table := NewBindingTable()
 
@@ -367,6 +397,108 @@ func TestBindingTable_FieldSymbol(t *testing.T) {
 	}
 	if got != created {
 		t.Error("FieldSymbol should return the created symbol")
+	}
+}
+
+func TestBindingTable_FieldSymbol_CanonicalPathAvoidsDotCollisions(t *testing.T) {
+	table := NewBindingTable()
+	baseSym := cfg.NextSymbolID()
+	table.SetName(baseSym, "T")
+
+	dotSym := table.GetOrCreateFieldSymbol(baseSym, "a.b")
+	if dotSym == 0 {
+		t.Fatal("expected symbol for dotted path")
+	}
+
+	indexKey, ok := FieldPathKeyFromSegments([]constraint.Segment{
+		{Kind: constraint.SegmentIndexString, Name: "a.b"},
+	})
+	if !ok {
+		t.Fatal("expected canonical index-string key")
+	}
+
+	indexSym := table.GetOrCreateFieldSymbol(baseSym, indexKey)
+	if indexSym == 0 {
+		t.Fatal("expected symbol for index-string path")
+	}
+
+	if dotSym == indexSym {
+		t.Fatalf("collision: dotted path and index-string path share symbol %d", dotSym)
+	}
+
+	if got, ok := table.FieldSymbol(baseSym, "a.b"); !ok || got != dotSym {
+		t.Fatalf("FieldSymbol(base, \"a.b\") = (%d,%v), want (%d,true)", got, ok, dotSym)
+	}
+	if got, ok := table.FieldSymbol(baseSym, indexKey); !ok || got != indexSym {
+		t.Fatalf("FieldSymbol(base, %q) = (%d,%v), want (%d,true)", indexKey, got, ok, indexSym)
+	}
+}
+
+func TestBindingTable_FieldSymbol_CanonicalPathDistinguishesStringAndIntIndex(t *testing.T) {
+	table := NewBindingTable()
+	baseSym := cfg.NextSymbolID()
+	table.SetName(baseSym, "T")
+
+	stringIndexKey, ok := FieldPathKeyFromSegments([]constraint.Segment{
+		{Kind: constraint.SegmentIndexString, Name: "1"},
+	})
+	if !ok {
+		t.Fatal("expected canonical string-index key")
+	}
+
+	intIndexKey, ok := FieldPathKeyFromSegments([]constraint.Segment{
+		{Kind: constraint.SegmentIndexInt, Index: 1},
+	})
+	if !ok {
+		t.Fatal("expected canonical int-index key")
+	}
+
+	stringSym := table.GetOrCreateFieldSymbol(baseSym, stringIndexKey)
+	intSym := table.GetOrCreateFieldSymbol(baseSym, intIndexKey)
+
+	if stringSym == 0 || intSym == 0 {
+		t.Fatal("expected both symbols to be created")
+	}
+	if stringSym == intSym {
+		t.Fatalf("collision: string index and int index share symbol %d", stringSym)
+	}
+}
+
+func TestBindingTable_FieldSymbol_NormalizesLegacyBracketStringKey(t *testing.T) {
+	table := NewBindingTable()
+	baseSym := cfg.NextSymbolID()
+	table.SetName(baseSym, "T")
+
+	canonicalKey, ok := FieldPathKeyFromSegments([]constraint.Segment{
+		{Kind: constraint.SegmentIndexString, Name: "k"},
+	})
+	if !ok {
+		t.Fatal("expected canonical key")
+	}
+
+	created := table.GetOrCreateFieldSymbol(baseSym, canonicalKey)
+	if created == 0 {
+		t.Fatal("expected symbol creation")
+	}
+
+	gotLegacy, ok := table.FieldSymbol(baseSym, "[k]")
+	if !ok {
+		t.Fatal("expected legacy bracket string lookup to resolve")
+	}
+	if gotLegacy != created {
+		t.Fatalf("legacy lookup returned %d, want %d", gotLegacy, created)
+	}
+}
+
+func TestBindingTable_GetOrCreateFieldSymbol_InvalidPathRejected(t *testing.T) {
+	table := NewBindingTable()
+	baseSym := cfg.NextSymbolID()
+
+	if sym := table.GetOrCreateFieldSymbol(baseSym, ".a["); sym != 0 {
+		t.Fatalf("invalid canonical path should be rejected, got symbol %d", sym)
+	}
+	if sym := table.GetOrCreateFieldSymbol(baseSym, ""); sym != 0 {
+		t.Fatalf("empty path should be rejected, got symbol %d", sym)
 	}
 }
 

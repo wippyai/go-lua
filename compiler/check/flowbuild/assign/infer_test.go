@@ -8,7 +8,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
+	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -82,13 +85,25 @@ func TestCollectExprSymbols_IdentExpr(t *testing.T) {
 }
 
 func TestCollectExprSymbols_AttrGetExpr(t *testing.T) {
-	bindings := &bind.BindingTable{}
+	bindings := bind.NewBindingTable()
+	base := &ast.IdentExpr{Value: "obj"}
+	baseSym := cfg.SymbolID(301)
+	bindings.Bind(base, baseSym)
+	bindings.SetName(baseSym, "obj")
+	fieldSym := bindings.GetOrCreateFieldSymbol(baseSym, "field")
+
 	var refs []cfg.SymbolID
 	expr := &ast.AttrGetExpr{
-		Object: &ast.IdentExpr{Value: "obj"},
+		Object: base,
 		Key:    &ast.StringExpr{Value: "field"},
 	}
 	collectExprSymbols(expr, bindings, &refs)
+	if !hasSymbol(refs, fieldSym) {
+		t.Fatalf("expected refs to include field symbol %d, got %v", fieldSym, refs)
+	}
+	if !hasSymbol(refs, baseSym) {
+		t.Fatalf("expected refs to include base symbol %d, got %v", baseSym, refs)
+	}
 }
 
 func TestCollectExprSymbols_FuncCallExpr(t *testing.T) {
@@ -180,4 +195,126 @@ func TestCollectExprSymbols_Comma3Expr(t *testing.T) {
 	if len(refs) != 0 {
 		t.Errorf("expected no refs for Comma3Expr, got %d", len(refs))
 	}
+}
+
+func TestJoinInferredType_StabilizesSelfEmbeddingFromUnknown(t *testing.T) {
+	old := typ.Unknown
+	next := typ.NewArray(typ.Unknown)
+
+	got := joinInferredType(old, next)
+	if !typ.TypeEquals(got, next) {
+		t.Fatalf("joinInferredType(unknown, any[]) = %v, want %v", got, next)
+	}
+}
+
+func TestJoinInferredType_StopsRecursiveNestingGrowth(t *testing.T) {
+	old := typ.NewArray(typ.Unknown)
+	next := typ.NewArray(old)
+
+	got := joinInferredType(old, next)
+	if !typ.TypeEquals(got, old) {
+		t.Fatalf("joinInferredType(any[], any[][]) = %v, want %v", got, old)
+	}
+}
+
+func TestTypeContains(t *testing.T) {
+	base := typ.NewArray(typ.Unknown)
+	outer := typ.NewArray(base)
+	if !typeContains(outer, base) {
+		t.Fatal("expected typeContains(any[][], any[]) to be true")
+	}
+	if typeContains(typ.Number, base) {
+		t.Fatal("expected typeContains(number, any[]) to be false")
+	}
+}
+
+func TestMergeSpecTypesSoft_IgnoresUnknownAndNilOverrides(t *testing.T) {
+	sym := cfg.SymbolID(1)
+	base := api.SpecTypes{
+		sym: typ.NewOptional(typ.LuaError),
+	}
+	override := api.SpecTypes{
+		sym: typ.Nil,
+	}
+	merged := mergeSpecTypesSoft(base, override)
+	got, ok := merged[sym]
+	if !ok || got == nil {
+		t.Fatalf("expected merged type for symbol %d", sym)
+	}
+	if !typ.TypeEquals(got, base[sym]) {
+		t.Fatalf("merged type = %v, want %v", got, base[sym])
+	}
+}
+
+func TestCollectInferredTypes_UsesModuleCalleeCandidatesForExpectedArgs(t *testing.T) {
+	body, err := parse.ParseString(`external_fn(x)`, "infer_module_candidates.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"x"}},
+		Stmts:   body,
+	}
+	bindings := bind.Bind(fn, []string{"external_fn"})
+	graph := cfg.BuildWithBindings(fn, bindings)
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	paramSyms := graph.ParamSymbols()
+	if len(paramSyms) != 1 || paramSyms[0] == 0 {
+		t.Fatalf("expected one parameter symbol, got %v", paramSyms)
+	}
+	xSym := paramSyms[0]
+
+	var globalCalleeSym cfg.SymbolID
+	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if globalCalleeSym == 0 && info != nil && info.CalleeName == "external_fn" {
+			globalCalleeSym = info.CalleeSymbol
+		}
+	})
+	if globalCalleeSym == 0 {
+		t.Fatal("expected callsite callee symbol for external_fn")
+	}
+
+	moduleBindings := bind.NewBindingTable()
+	const moduleCalleeSym cfg.SymbolID = 9001
+	moduleBindings.SetName(moduleCalleeSym, "external_fn")
+
+	inferred := collectInferredTypes(
+		graph,
+		nil,
+		func(ast.Expr, cfg.Point) typ.Type { return typ.Unknown },
+		nil,
+		func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+			if sym == globalCalleeSym {
+				return nil, false
+			}
+			if sym == moduleCalleeSym {
+				return typ.Func().Param("n", typ.Number).Returns(typ.Nil).Build(), true
+			}
+			return nil, false
+		},
+		nil,
+		nil,
+		nil,
+		moduleBindings,
+		db.NewQueryContext(db.New()),
+		querycore.NewEngine(),
+		nil,
+	)
+
+	got := inferred[xSym]
+	if !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("inferred param type = %v, want number", got)
+	}
+}
+
+func hasSymbol(refs []cfg.SymbolID, sym cfg.SymbolID) bool {
+	for _, r := range refs {
+		if r == sym {
+			return true
+		}
+	}
+	return false
 }

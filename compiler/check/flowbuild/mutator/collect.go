@@ -4,9 +4,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 )
 
 // IndexerInfo holds key and value types for dynamic index assignments.
@@ -28,18 +28,18 @@ func CollectTableInsertMutations(
 		return result
 	}
 
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
 
-		tm := TableMutatorFromCall(info, p, synth, nil)
+		tm := TableMutatorFromCall(info, p, synth, nil, graph, bindings, nil)
 		if tm == nil {
 			return
 		}
 
-		targetExpr := ArgAtCall(info.Args, tm.Target.Index)
-		valueExpr := ArgAtCall(info.Args, tm.Value.Index)
+		targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
+		valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
 		if targetExpr == nil || valueExpr == nil {
 			return
 		}
@@ -50,11 +50,7 @@ func CollectTableInsertMutations(
 			return
 		}
 
-		// Get base symbol
-		var baseSym cfg.SymbolID
-		if ident, ok := targetAttr.Object.(*ast.IdentExpr); ok && bindings != nil {
-			baseSym, _ = bindings.SymbolOf(ident)
-		}
+		baseSym := callsite.SymbolOrCreateFieldFromExpr(targetAttr.Object, bindings)
 		if baseSym == 0 {
 			return
 		}
@@ -119,29 +115,25 @@ func CollectTableInsertOnDirect(
 		return result
 	}
 
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
 
-		tm := TableMutatorFromCall(info, p, synth, nil)
+		tm := TableMutatorFromCall(info, p, synth, nil, graph, bindings, nil)
 		if tm == nil {
 			return
 		}
 
-		targetExpr := ArgAtCall(info.Args, tm.Target.Index)
-		valueExpr := ArgAtCall(info.Args, tm.Value.Index)
+		targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
+		valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
 		if targetExpr == nil || valueExpr == nil {
 			return
 		}
 
-		// Check if target is a direct variable (not indexed)
-		targetIdent, ok := targetExpr.(*ast.IdentExpr)
-		if !ok || bindings == nil {
-			return
-		}
-		sym, found := bindings.SymbolOf(targetIdent)
-		if !found || sym == 0 {
+		// Check if target resolves to a direct symbol (identifier or static field path).
+		sym := callsite.SymbolOrCreateFieldFromExpr(targetExpr, bindings)
+		if sym == 0 {
 			return
 		}
 
@@ -156,7 +148,7 @@ func CollectTableInsertOnDirect(
 
 		// Join with existing element type
 		if existing := result[sym]; existing != nil {
-			result[sym] = join.Two(existing, elemType)
+			result[sym] = typ.JoinPreferNonSoft(existing, elemType)
 		} else {
 			result[sym] = elemType
 		}

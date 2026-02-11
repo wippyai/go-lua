@@ -129,7 +129,7 @@ func TestCapturedContainerMutations_Basic(t *testing.T) {
 	mutations[nestedSym] = map[cfg.SymbolID][]ContainerMutation{
 		capturedSym: {
 			{
-				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "ch"}},
+				Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "ch"}},
 				ValueType: typ.Number,
 			},
 		},
@@ -148,6 +148,20 @@ func TestCapturedContainerMutations_Basic(t *testing.T) {
 	}
 	if list[0].ValueType != typ.Number {
 		t.Error("expected value type to be number")
+	}
+}
+
+func TestContainerMutationKey(t *testing.T) {
+	m := ContainerMutation{
+		Segments: []constraint.Segment{
+			{Kind: constraint.SegmentField, Name: "queue"},
+			{Kind: constraint.SegmentIndexString, Name: "jobs"},
+			{Kind: constraint.SegmentIndexInt, Index: 2},
+		},
+		ValueType: typ.String,
+	}
+	if got, want := ContainerMutationKey(m), ".queue[\"jobs\"][2]"; got != want {
+		t.Fatalf("ContainerMutationKey() = %q, want %q", got, want)
 	}
 }
 

@@ -3,44 +3,16 @@ package returns
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-// HasLocalCallSites checks whether the graph contains call sites to local functions.
-//
-// This is an optimization check. If a function's CFG contains no calls to other
-// local functions, it has no mutual recursion dependencies and can be analyzed
-// independently without SCC iteration. This allows skipping the more expensive
-// fixpoint computation for simple functions.
-func HasLocalCallSites(graph *cfg.Graph, localFuncs map[cfg.SymbolID]*LocalFuncInfo) bool {
-	if graph == nil || len(localFuncs) == 0 {
-		return false
-	}
-	matches := func(info *cfg.CallInfo) bool {
-		if info == nil || info.CalleeSymbol == 0 {
-			return false
-		}
-		_, ok := localFuncs[info.CalleeSymbol]
-		return ok
-	}
-	found := false
-	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
-		if found {
-			return
-		}
-		if matches(info) {
-			found = true
-		}
-	})
-	return found
-}
 
 // CollectCalledNestedFieldAssignments collects field assignments recorded for
 // called nested functions that target symbols from the parent graph (captured variables).
@@ -64,6 +36,7 @@ func CollectCalledNestedFieldAssignments(
 	parent *cfg.Graph,
 	bindings *bind.BindingTable,
 	capturedByCallee map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type,
+	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
 ) map[cfg.SymbolID]map[string]typ.Type {
 	result := make(map[cfg.SymbolID]map[string]typ.Type)
 	if parent == nil || len(capturedByCallee) == 0 {
@@ -74,19 +47,16 @@ func CollectCalledNestedFieldAssignments(
 	parentSymbols := parent.AllSymbolIDs()
 
 	// Find which local functions are called in the parent graph.
+	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedByCallee))
+	for calleeSym := range capturedByCallee {
+		trackedCallees[calleeSym] = true
+	}
 	calledSyms := make(map[cfg.SymbolID]bool)
-	parent.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
-		if info == nil {
-			return
-		}
-		if info.CalleeSymbol != 0 {
-			calledSyms[info.CalleeSymbol] = true
-			return
-		}
-		if ident, ok := info.Callee.(*ast.IdentExpr); ok && bindings != nil {
-			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-				calledSyms[sym] = true
-			}
+	parent.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		for sym := range calledSymbolsFromCall(info, p, parent, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
+			return trackedCallees[sym]
+		}) {
+			calledSyms[sym] = true
 		}
 	})
 
@@ -94,24 +64,21 @@ func CollectCalledNestedFieldAssignments(
 	if len(calledSyms) == 0 {
 		return result
 	}
-	syms := make([]cfg.SymbolID, 0, len(calledSyms))
-	for sym := range calledSyms {
-		syms = append(syms, sym)
-	}
-	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
-	for _, sym := range syms {
+	for _, sym := range cfg.SortedSymbolIDs(calledSyms) {
 		nestedFields := capturedByCallee[sym]
 		if len(nestedFields) == 0 {
 			continue
 		}
-		for baseSym, fields := range nestedFields {
+		for _, baseSym := range cfg.SortedSymbolIDs(nestedFields) {
+			fields := nestedFields[baseSym]
 			if !parentSymbols[baseSym] {
 				continue
 			}
 			if result[baseSym] == nil {
 				result[baseSym] = make(map[string]typ.Type)
 			}
-			for fieldName, fieldType := range fields {
+			for _, fieldName := range cfg.SortedFieldNames(fields) {
+				fieldType := fields[fieldName]
 				if existing := result[baseSym][fieldName]; existing != nil {
 					result[baseSym][fieldName] = typ.JoinPreferNonSoft(existing, fieldType)
 				} else {
@@ -141,6 +108,10 @@ func CollectCalledNestedContainerMutatorAssignments(
 	}
 
 	parentSymbols := parent.AllSymbolIDs()
+	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedByCallee))
+	for calleeSym := range capturedByCallee {
+		trackedCallees[calleeSym] = true
+	}
 	assignments := make([]flow.ContainerMutatorAssignment, 0)
 
 	parent.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
@@ -148,21 +119,24 @@ func CollectCalledNestedContainerMutatorAssignments(
 			return
 		}
 
-		calledSyms := calledSymbolsFromCall(info, p, bindings, resolveCalleeType)
+		calledSyms := calledSymbolsFromCall(info, p, parent, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
+			return trackedCallees[sym]
+		})
 		if len(calledSyms) == 0 {
 			return
 		}
 
-		for sym := range calledSyms {
+		for _, sym := range cfg.SortedSymbolIDs(calledSyms) {
 			nestedMutations := capturedByCallee[sym]
 			if len(nestedMutations) == 0 {
 				continue
 			}
-			for targetSym, mutations := range nestedMutations {
+			for _, targetSym := range cfg.SortedSymbolIDs(nestedMutations) {
+				mutations := nestedMutations[targetSym]
 				if !parentSymbols[targetSym] {
 					continue
 				}
-				root := rootNameFromBindings(parent, bindings, targetSym)
+				root := resolve.RootNameFromGraphAndBindings(parent, bindings, targetSym, "")
 				for _, mutation := range mutations {
 					segs := make([]constraint.Segment, len(mutation.Segments))
 					copy(segs, mutation.Segments)
@@ -186,34 +160,32 @@ func CollectCalledNestedContainerMutatorAssignments(
 func calledSymbolsFromCall(
 	info *cfg.CallInfo,
 	p cfg.Point,
+	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
+	prefer func(cfg.SymbolID) bool,
 ) map[cfg.SymbolID]bool {
 	calledSyms := make(map[cfg.SymbolID]bool)
 	if info == nil {
 		return calledSyms
 	}
 
-	if info.CalleeSymbol != 0 {
-		calledSyms[info.CalleeSymbol] = true
-	}
-	if ident, ok := info.Callee.(*ast.IdentExpr); ok && bindings != nil {
-		if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-			calledSyms[sym] = true
-		}
-	}
-	if fnExpr, ok := info.Callee.(*ast.FunctionExpr); ok && bindings != nil {
-		if sym, ok := bindings.FuncLitSymbol(fnExpr); ok && sym != 0 {
-			calledSyms[sym] = true
-		}
+	selected := checkcallsite.PreferredCalleeSymbolWithAliases(info, graph, bindings, bindings, prefer)
+	if selected != 0 {
+		calledSyms[selected] = true
 	}
 
 	if resolveCalleeType != nil {
 		if fnType := resolveCalleeType(info, p); fnType != nil {
 			if spec := contract.ExtractSpec(fnType); spec != nil && len(spec.Callbacks) > 0 {
+				paramIndexes := make([]int, 0, len(spec.Callbacks))
 				for paramIdx := range spec.Callbacks {
-					arg := callbackArgAt(info, paramIdx)
-					if sym := symbolFromExpr(arg, bindings); sym != 0 {
+					paramIndexes = append(paramIndexes, paramIdx)
+				}
+				sort.Ints(paramIndexes)
+				for _, paramIdx := range paramIndexes {
+					arg := checkcallsite.RuntimeArgAt(info, paramIdx)
+					if sym := checkcallsite.CanonicalSymbolFromExprWithAliases(arg, 0, graph, bindings, bindings, prefer); sym != 0 {
 						calledSyms[sym] = true
 					}
 				}
@@ -222,68 +194,4 @@ func calledSymbolsFromCall(
 	}
 
 	return calledSyms
-}
-
-func symbolFromExpr(expr ast.Expr, bindings *bind.BindingTable) cfg.SymbolID {
-	if expr == nil || bindings == nil {
-		return 0
-	}
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		if sym, ok := bindings.SymbolOf(e); ok {
-			return sym
-		}
-	case *ast.FunctionExpr:
-		if sym, ok := bindings.FuncLitSymbol(e); ok {
-			return sym
-		}
-	}
-	return 0
-}
-
-func callbackArgAt(info *cfg.CallInfo, paramIdx int) ast.Expr {
-	if info == nil {
-		return nil
-	}
-	if info.Method != "" && info.Receiver != nil {
-		if paramIdx == 0 {
-			return info.Receiver
-		}
-		if paramIdx < 0 {
-			adj := len(info.Args) + 1 + paramIdx
-			if adj == 0 {
-				return info.Receiver
-			}
-			return argAtCall(info.Args, adj-1)
-		}
-		return argAtCall(info.Args, paramIdx-1)
-	}
-	return argAtCall(info.Args, paramIdx)
-}
-
-func argAtCall(args []ast.Expr, idx int) ast.Expr {
-	if len(args) == 0 {
-		return nil
-	}
-	if idx < 0 {
-		idx = len(args) + idx
-	}
-	if idx < 0 || idx >= len(args) {
-		return nil
-	}
-	return args[idx]
-}
-
-func rootNameFromBindings(parent *cfg.Graph, bindings *bind.BindingTable, sym cfg.SymbolID) string {
-	if sym != 0 && bindings != nil {
-		if name := bindings.Name(sym); name != "" {
-			return name
-		}
-	}
-	if sym != 0 && parent != nil {
-		if name := parent.NameOf(sym); name != "" {
-			return name
-		}
-	}
-	return ""
 }

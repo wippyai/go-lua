@@ -4,11 +4,14 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 )
 
 // KeysCollectorInfo tracks that a function returns keys of one of its parameters.
 type KeysCollectorInfo struct {
-	ParamIndex int // Which parameter the keys come from (0-based)
+	ParamIndex  int // Which parameter the keys come from (0-based)
+	ReturnIndex int // Which return slot carries the keys table (0-based)
 }
 
 // DetectKeysCollector analyzes a function body to detect if it follows the
@@ -43,7 +46,7 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 	pairsParamIndex := -1
 	var keyVarSym cfg.SymbolID
 	insertedKeyIntoTable := false
-	returnsKeysTable := false
+	keysReturnIndex := -1
 
 	paramSymbols := graph.ParamSymbols()
 
@@ -55,11 +58,12 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 
 		// Check for local keys = {} pattern
 		if info.IsLocal && len(info.Sources) > 0 {
-			target := info.Targets[0]
-			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
-				if tbl, ok := info.Sources[0].(*ast.TableExpr); ok && tbl != nil && len(tbl.Fields) == 0 {
-					if keysTableSym == 0 {
-						keysTableSym = target.Symbol
+			if target, ok := info.FirstTarget(); ok {
+				if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
+					if tbl, ok := info.SourceAt(0).(*ast.TableExpr); ok && tbl != nil && len(tbl.Fields) == 0 {
+						if keysTableSym == 0 {
+							keysTableSym = target.Symbol
+						}
 					}
 				}
 			}
@@ -102,8 +106,8 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 				}
 			}
 			// Track the key variable (first loop variable)
-			if len(info.Targets) > 0 && info.Targets[0].Kind == cfg.TargetIdent {
-				keyVarSym = info.Targets[0].Symbol
+			if target, ok := info.FirstTarget(); ok && target.Kind == cfg.TargetIdent {
+				keyVarSym = target.Symbol
 			}
 		}
 	})
@@ -113,7 +117,7 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 	}
 
 	// Scan for table.insert(keys, k) pattern
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
@@ -163,38 +167,65 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 		return nil
 	}
 
-	// Scan for return keys pattern
+	resolveIdentSym := func(expr ast.Expr) cfg.SymbolID {
+		ident, ok := expr.(*ast.IdentExpr)
+		if !ok {
+			return 0
+		}
+		var sym cfg.SymbolID
+		if bindings != nil {
+			sym, _ = bindings.SymbolOf(ident)
+		}
+		if sym == 0 {
+			if gb := graph.Bindings(); gb != nil {
+				sym, _ = gb.SymbolOf(ident)
+			}
+		}
+		return sym
+	}
+
+	// Scan for return keys pattern with a stable return slot index.
 	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
 		if info == nil || len(info.Exprs) == 0 {
 			return
 		}
-		retIdent, ok := info.Exprs[0].(*ast.IdentExpr)
-		if !ok {
+
+		foundIdx := -1
+		for i, expr := range info.Exprs {
+			if resolveIdentSym(expr) != keysTableSym {
+				continue
+			}
+			if foundIdx >= 0 {
+				// Ambiguous: same return statement exposes keys at multiple slots.
+				keysReturnIndex = -2
+				return
+			}
+			foundIdx = i
+		}
+		if foundIdx < 0 {
+			// Every return statement must carry the keys table for sound provenance.
+			keysReturnIndex = -2
 			return
 		}
-		var retSym cfg.SymbolID
-		if bindings != nil {
-			retSym, _ = bindings.SymbolOf(retIdent)
+		if keysReturnIndex == -1 {
+			keysReturnIndex = foundIdx
+			return
 		}
-		if retSym == 0 {
-			if gb := graph.Bindings(); gb != nil {
-				retSym, _ = gb.SymbolOf(retIdent)
-			}
-		}
-		if retSym == keysTableSym {
-			returnsKeysTable = true
+		if keysReturnIndex != foundIdx {
+			// Ambiguous across return statements.
+			keysReturnIndex = -2
 		}
 	})
 
-	if !returnsKeysTable {
+	if keysReturnIndex < 0 {
 		return nil
 	}
 
-	return &KeysCollectorInfo{ParamIndex: pairsParamIndex}
+	return &KeysCollectorInfo{ParamIndex: pairsParamIndex, ReturnIndex: keysReturnIndex}
 }
 
 func isPairsCall(call *ast.FuncCallExpr) bool {
-	if call == nil || call.Method != "" || call.Receiver != nil {
+	if call == nil || callsite.IsMethodLikeExpr(call) {
 		return false
 	}
 	ident, ok := call.Func.(*ast.IdentExpr)
@@ -205,7 +236,7 @@ func isPairsCall(call *ast.FuncCallExpr) bool {
 }
 
 func isTableInsertCall(info *cfg.CallInfo) bool {
-	if info == nil || info.Method != "" || info.Receiver != nil {
+	if info == nil || callsite.IsMethodLikeCallInfo(info) {
 		return false
 	}
 	attr, ok := info.Callee.(*ast.AttrGetExpr)
@@ -225,98 +256,44 @@ func isTableInsertCall(info *cfg.CallInfo) bool {
 
 // BuildKeysCollectorDetector returns a callback that detects if a call is to a
 // keys collector function and returns the symbol of the table argument.
-func BuildKeysCollectorDetector(graph *cfg.Graph) func(*cfg.CallInfo, cfg.Point) cfg.SymbolID {
+func BuildKeysCollectorDetector(graph *cfg.Graph, moduleBindings *bind.BindingTable) func(*cfg.CallInfo, cfg.Point, int) cfg.SymbolID {
 	cache := make(map[cfg.SymbolID]*KeysCollectorInfo)
 	bindings := graph.Bindings()
 
-	return func(callInfo *cfg.CallInfo, p cfg.Point) cfg.SymbolID {
+	return func(callInfo *cfg.CallInfo, _ cfg.Point, retIndex int) cfg.SymbolID {
 		if callInfo == nil || callInfo.Callee == nil {
 			return 0
 		}
-		if callInfo.Method != "" || callInfo.Receiver != nil {
-			return 0
-		}
-
-		calleeSym := callInfo.CalleeSymbol
-		if calleeSym == 0 {
-			return 0
-		}
-
-		// Check cache
-		if info, ok := cache[calleeSym]; ok {
-			if info == nil {
-				return 0
-			}
-			return extractTableArgSymbol(callInfo, info.ParamIndex, bindings)
-		}
-
-		// Try to resolve callee to function literal
-		fn := resolveSymToFuncLiteral(graph, calleeSym)
-		if fn == nil {
-			cache[calleeSym] = nil
-			return 0
-		}
-
-		info := DetectKeysCollector(fn)
-		cache[calleeSym] = info
-		if info == nil {
-			return 0
-		}
-
-		return extractTableArgSymbol(callInfo, info.ParamIndex, bindings)
-	}
-}
-
-// extractTableArgSymbol extracts the symbol of the table argument at the given index.
-func extractTableArgSymbol(callInfo *cfg.CallInfo, paramIndex int, bindings *bind.BindingTable) cfg.SymbolID {
-	if paramIndex < 0 || paramIndex >= len(callInfo.Args) {
-		return 0
-	}
-	argExpr := callInfo.Args[paramIndex]
-	if argExpr == nil {
-		return 0
-	}
-	ident, ok := argExpr.(*ast.IdentExpr)
-	if !ok {
-		return 0
-	}
-	if bindings == nil {
-		return 0
-	}
-	sym, _ := bindings.SymbolOf(ident)
-	return sym
-}
-
-// resolveSymToFuncLiteral resolves a symbol to a function literal defined in the graph.
-func resolveSymToFuncLiteral(graph *cfg.Graph, sym cfg.SymbolID) *ast.FunctionExpr {
-	if graph == nil || sym == 0 {
-		return nil
-	}
-
-	var found *ast.FunctionExpr
-	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-		if found != nil || info == nil {
-			return
-		}
-		if info.Symbol == sym {
-			found = info.FuncExpr
-		}
-	})
-	if found != nil {
-		return found
-	}
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if found != nil || info == nil {
-			return
-		}
-		for i, target := range info.Targets {
-			if target.Symbol == sym && i < len(info.Sources) {
-				if fn, ok := info.Sources[i].(*ast.FunctionExpr); ok {
-					found = fn
-					return
+		candidates := callsite.CalleeSymbolCandidatesWithAliases(callInfo, graph, bindings, moduleBindings)
+		for _, calleeSym := range candidates {
+			// Check cache
+			if info, ok := cache[calleeSym]; ok {
+				if info == nil {
+					continue
 				}
+				if info.ReturnIndex != retIndex {
+					continue
+				}
+				return callsite.RuntimeArgSymbolAt(callInfo, info.ParamIndex, bindings)
 			}
+
+			// Try to resolve callee to function literal
+			fn := resolve.ResolveSymbolToFunctionLiteral(graph, calleeSym)
+			if fn == nil {
+				cache[calleeSym] = nil
+				continue
+			}
+
+			info := DetectKeysCollector(fn)
+			cache[calleeSym] = info
+			if info == nil {
+				continue
+			}
+			if info.ReturnIndex != retIndex {
+				continue
+			}
+			return callsite.RuntimeArgSymbolAt(callInfo, info.ParamIndex, bindings)
 		}
-	})
-	return found
+		return 0
+	}
 }

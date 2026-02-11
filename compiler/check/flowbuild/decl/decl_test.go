@@ -193,3 +193,63 @@ func TestExtractDeclaredTypes_SoftAnnotationNotAnnotated(t *testing.T) {
 		t.Fatal("expected declared type for suites")
 	}
 }
+
+func TestExtractDeclaredTypes_UnannotatedLocalFunctionStaysUnannotated(t *testing.T) {
+	code := `
+		local function a()
+			return 1
+		end
+	`
+	chunk, err := parse.ParseString(code, "test.lua")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{HasVargs: true},
+		Stmts:   chunk,
+	}
+	graph := cfg.Build(fn)
+	if graph == nil {
+		t.Fatal("nil graph")
+	}
+
+	scopes := map[cfg.Point]*scope.State{
+		graph.Entry(): scope.New(),
+	}
+
+	fc := &core.FlowContext{
+		Graph:  graph,
+		Scopes: scopes,
+		Services: core.FlowServicesFuncs{
+			// Simulate return-summary-enriched signature from upstream phases.
+			FnSigResolver: func(*ast.FunctionExpr, *scope.State) *typ.Function {
+				return typ.Func().Returns(typ.NewTypeParam("T", nil)).Build()
+			},
+		},
+	}
+	inputs := &flow.Inputs{
+		DeclaredTypes: make(map[cfg.SymbolID]typ.Type),
+	}
+	ExtractDeclaredTypes(fc, inputs)
+
+	var symA cfg.SymbolID
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if info == nil || !info.IsLocal {
+			return
+		}
+		for _, target := range info.Targets {
+			if target.Kind == cfg.TargetIdent && target.Name == "a" {
+				symA = target.Symbol
+			}
+		}
+	})
+	if symA == 0 {
+		t.Fatal("failed to resolve a symbol")
+	}
+	if inputs.AnnotatedVars != nil && inputs.AnnotatedVars[symA] {
+		t.Fatal("unannotated local function should not be marked annotated")
+	}
+	if _, ok := inputs.DeclaredTypes[symA]; ok {
+		t.Fatal("unannotated local function should not be added to DeclaredTypes")
+	}
+}
