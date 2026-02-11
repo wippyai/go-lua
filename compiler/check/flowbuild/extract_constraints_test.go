@@ -160,7 +160,7 @@ func TestResolveExprToTableLiteral_IdentWithoutGraph(t *testing.T) {
 }
 
 func TestCallTerminates_NilInfo(t *testing.T) {
-	result := cond.CallTerminates(nil, 0, nil, nil, nil, nil)
+	result := cond.CallTerminates(nil, 0, nil, nil, nil, nil, nil)
 	if result {
 		t.Error("expected false for nil info")
 	}
@@ -173,14 +173,14 @@ func TestCallTerminates_NormalFunction(t *testing.T) {
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return &typ.Function{}
 	}
-	result := cond.CallTerminates(info, 0, synth, nil, nil, nil)
+	result := cond.CallTerminates(info, 0, synth, nil, nil, nil, nil)
 	if result {
 		t.Error("expected false for normal function")
 	}
 }
 
 func TestConstraintsFromCallOnReturn_NilInfo(t *testing.T) {
-	result := cond.ConstraintsFromCallOnReturn(nil, 0, nil, nil, nil, nil, nil, nil, nil, nil)
+	result := cond.ConstraintsFromCallOnReturn(nil, 0, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if result.HasConstraints() {
 		t.Error("expected no constraints for nil info")
 	}
@@ -191,7 +191,7 @@ func TestConstraintsFromCallOnReturn_MethodCall(t *testing.T) {
 		Method:   "foo",
 		Receiver: &ast.IdentExpr{Value: "obj"},
 	}
-	result := cond.ConstraintsFromCallOnReturn(info, 0, nil, nil, nil, nil, nil, nil, nil, nil)
+	result := cond.ConstraintsFromCallOnReturn(info, 0, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if result.HasConstraints() {
 		t.Error("expected no constraints for method call")
 	}
@@ -202,14 +202,14 @@ func TestConstraintsFromCallOnReturn_NoArgs(t *testing.T) {
 		Callee: &ast.IdentExpr{Value: "fn"},
 		Args:   nil,
 	}
-	result := cond.ConstraintsFromCallOnReturn(info, 0, nil, nil, nil, nil, nil, nil, nil, nil)
+	result := cond.ConstraintsFromCallOnReturn(info, 0, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if result.HasConstraints() {
 		t.Error("expected no constraints for call without args")
 	}
 }
 
 func TestConstraintsFromAssignOnReturn_NilInfo(t *testing.T) {
-	result := cond.ConstraintsFromAssignOnReturn(nil, 0, nil, nil, nil, nil, nil, nil, nil, nil)
+	result := cond.ConstraintsFromAssignOnReturn(nil, 0, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if result.HasConstraints() {
 		t.Error("expected no constraints for nil info")
 	}
@@ -219,14 +219,14 @@ func TestConstraintsFromAssignOnReturn_NoSourceCalls(t *testing.T) {
 	info := &cfg.AssignInfo{
 		SourceCalls: nil,
 	}
-	result := cond.ConstraintsFromAssignOnReturn(info, 0, nil, nil, nil, nil, nil, nil, nil, nil)
+	result := cond.ConstraintsFromAssignOnReturn(info, 0, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if result.HasConstraints() {
 		t.Error("expected no constraints without source calls")
 	}
 }
 
 func TestExtractPredicateLinkFromCallInfo_NilInfo(t *testing.T) {
-	result := cond.ExtractPredicateLinkFromCallInfo(nil, 0, 0, nil, nil, nil, nil, nil, nil, nil)
+	result := cond.ExtractPredicateLinkFromCallInfo(nil, 0, 0, nil, nil, nil, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil info")
 	}
@@ -236,7 +236,7 @@ func TestExtractPredicateLinkFromCallInfo_NoArgs(t *testing.T) {
 	info := &cfg.CallInfo{
 		Args: nil,
 	}
-	result := cond.ExtractPredicateLinkFromCallInfo(info, 0, 0, nil, nil, nil, nil, nil, nil, nil)
+	result := cond.ExtractPredicateLinkFromCallInfo(info, 0, 0, nil, nil, nil, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for call without args")
 	}
@@ -345,7 +345,7 @@ func TestFindBranchEdges_WithEdges(t *testing.T) {
 
 func TestExtractFunctionEffect_EmptyInfo(t *testing.T) {
 	info := &cfg.CallInfo{}
-	result := cond.ExtractFunctionEffect(info, 0, nil, nil, nil, nil)
+	result := cond.ExtractFunctionEffect(info, 0, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for empty info")
 	}
@@ -358,7 +358,7 @@ func TestExtractFunctionEffect_WithCallee(t *testing.T) {
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return &typ.Function{}
 	}
-	result := cond.ExtractFunctionEffect(info, 0, synth, nil, nil, nil)
+	result := cond.ExtractFunctionEffect(info, 0, synth, nil, nil, nil, nil)
 	// No refinement, so nil expected
 	if result != nil {
 		t.Error("expected nil for function without refinement")

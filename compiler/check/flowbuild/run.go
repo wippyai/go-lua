@@ -130,7 +130,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 		if fc.Derived == nil {
 			continue
 		}
-		if !cond.PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym) {
+		if !cond.PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.ModuleBindings) {
 			continue
 		}
 		for _, succ := range fc.Graph.Successors(p) {

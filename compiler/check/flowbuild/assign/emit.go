@@ -322,7 +322,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 				// Extract predicate link if RHS is a predicate call.
 				if callInfo, retIndex := info.CallForTarget(i); callInfo != nil {
-					if link := cond.ExtractPredicateLinkFromCallInfo(callInfo, retIndex, p, sc, inputs, derived.TypeKeyRes, wrappedSynth, derived.EffectBySym, symResolver, fc.Graph); link != nil {
+					if link := cond.ExtractPredicateLinkFromCallInfo(callInfo, retIndex, p, sc, inputs, derived.TypeKeyRes, wrappedSynth, derived.EffectBySym, symResolver, fc.Graph, fc.ModuleBindings); link != nil {
 						if retIndex == 1 && callInfo.IsTypeCheck && callInfo.Method == "is" && callInfo.Receiver != nil && derived.TypeKeyRes != nil {
 							if typeKey, ok := derived.TypeKeyRes(callInfo.TypeCheckName, sc); ok && !typeKey.IsZero() {
 								valuePath := constraint.Path{}

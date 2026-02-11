@@ -1075,7 +1075,7 @@ func (i *Inferencer) buildPhase2Context(
 		}
 		return nil, false
 	}
-	deadPoints := cond.ComputeDeadPoints(fnGraph, synthAdapter, symResolver, effectLookupSym)
+	deadPoints := cond.ComputeDeadPoints(fnGraph, synthAdapter, symResolver, effectLookupSym, i.store.ModuleBindings())
 
 	return phase2InferenceState{
 		engine:     synthEngine,
