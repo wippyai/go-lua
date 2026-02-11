@@ -226,3 +226,25 @@ func TestFunctionBuild_ValidReturns(t *testing.T) {
 		t.Errorf("expected String at index 1, got %v", f.Returns[1])
 	}
 }
+
+func TestMinRequiredArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   *Function
+		want int
+	}{
+		{name: "nil function", fn: nil, want: 0},
+		{name: "no params", fn: Func().Build(), want: 0},
+		{name: "all optional", fn: Func().OptParam("x", Number).OptParam("y", String).Build(), want: 0},
+		{name: "leading required", fn: Func().Param("x", Number).OptParam("y", String).Build(), want: 1},
+		{name: "required after optional", fn: Func().OptParam("x", Number).Param("y", String).Build(), want: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MinRequiredArgs(tt.fn); got != tt.want {
+				t.Fatalf("MinRequiredArgs() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}

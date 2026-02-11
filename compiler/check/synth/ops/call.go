@@ -744,7 +744,7 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 		argCount++
 	}
 
-	minArgs := minRequiredArgs(fn)
+	minArgs := typ.MinRequiredArgs(fn)
 	hasVariadic := fn.Variadic != nil
 
 	if argCount < minArgs {
@@ -973,25 +973,6 @@ func isExplicitSelfSubtypeCandidate(t typ.Type) bool {
 	// Soft placeholder types are intentionally broad and should not imply
 	// implicit receiver consumption in method arity checks.
 	return !typ.IsSoft(t, typ.SoftAnnotationPolicy)
-}
-
-// minRequiredArgs returns the minimum positional argument count.
-// Because arguments are positional, any required parameter appearing after an
-// optional parameter still requires its position to be supplied.
-func minRequiredArgs(fn *typ.Function) int {
-	if fn == nil || len(fn.Params) == 0 {
-		return 0
-	}
-	lastRequired := -1
-	for i, p := range fn.Params {
-		if !p.Optional {
-			lastRequired = i
-		}
-	}
-	if lastRequired < 0 {
-		return 0
-	}
-	return lastRequired + 1
 }
 
 // resolveSelf replaces Self type with concrete receiver type.

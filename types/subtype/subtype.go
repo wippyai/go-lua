@@ -394,8 +394,8 @@ func (c *checker) checkNil(super typ.Type, depth int) bool {
 //     and sub must return at least as many values as super promises
 //   - Variadic: checked contravariantly like regular parameters
 func (c *checker) checkFunction(sub, super *typ.Function, depth int) bool {
-	subReq := requiredParams(sub)
-	superReq := requiredParams(super)
+	subReq := typ.MinRequiredArgs(sub)
+	superReq := typ.MinRequiredArgs(super)
 
 	// sub must accept at least as many args as super requires
 	// If sub requires more params than super accepts, sub is more restrictive = not subtype
@@ -926,20 +926,6 @@ func (c *checker) checkInstantiated(sub, super *typ.Instantiated, depth int) boo
 	}
 
 	return true
-}
-
-// requiredParams counts the number of non-optional parameters in a function.
-// Used to determine function arity compatibility during subtype checking.
-func requiredParams(f *typ.Function) int {
-	count := 0
-
-	for _, p := range f.Params {
-		if !p.Optional {
-			count++
-		}
-	}
-
-	return count
 }
 
 // typePair stores a non-commutative pair of types for cycle detection.
