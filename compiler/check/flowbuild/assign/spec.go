@@ -1,14 +1,16 @@
 package assign
 
 import (
+	"slices"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/contract"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -35,7 +37,6 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 
 	// Collect and sort assign points for deterministic iteration
 	points := graph.AssignPoints()
-	sortPoints(points)
 
 	// Seed phase: collect spec-narrowed types AND inferred types from method calls
 	var worklist []cfg.Point
@@ -82,7 +83,7 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 						inferred = synth(source, p)
 					}
 				}
-				if inferred == nil || isUnknownOrNil(inferred) {
+				if typjoin.IsUnknownOrNil(inferred) {
 					return
 				}
 				// Skip union types - they may need narrowing later
@@ -98,7 +99,7 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 	processed := make(map[cfg.Point]bool)
 	for len(worklist) > 0 {
 		// Sort for deterministic processing order
-		sortPoints(worklist)
+		slices.Sort(worklist)
 		p := worklist[0]
 		worklist = worklist[1:]
 
@@ -152,7 +153,7 @@ func CollectSpecNarrowedTypes(graph *cfg.Graph, scopes map[cfg.Point]*scope.Stat
 			// Synth method call with known receiver via synthAPI.
 			// Use assignment-wide expansion so target-to-return mapping follows Lua
 			// multi-return semantics (including trailing targets from final call).
-			if value := valueAt(i); value != nil && !isUnknownOrNil(value) {
+			if value := valueAt(i); !typjoin.IsUnknownOrNil(value) {
 				bySymbol[sym] = value
 				// Enqueue points that depend on this newly typed symbol
 				worklist = append(worklist, deps[sym]...)
@@ -183,24 +184,6 @@ func BuildReceiverDependencies(graph *cfg.Graph) map[cfg.SymbolID][]cfg.Point {
 		})
 	})
 	return deps
-}
-
-func isUnknownOrNil(t typ.Type) bool {
-	if t == nil {
-		return true
-	}
-	if t == typ.Unknown || t.Kind() == kind.Unknown {
-		return true
-	}
-	return t.Kind() == kind.Nil
-}
-
-func sortPoints(points []cfg.Point) {
-	for i := 1; i < len(points); i++ {
-		for j := i; j > 0 && points[j] < points[j-1]; j-- {
-			points[j], points[j-1] = points[j-1], points[j]
-		}
-	}
 }
 
 // NarrowReturnTypeBySpec checks if a call's return type should be narrowed

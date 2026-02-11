@@ -57,56 +57,6 @@ func TestBuildReceiverDependencies_EmptyGraph(t *testing.T) {
 	}
 }
 
-func TestSortPoints_Empty(t *testing.T) {
-	var points []cfg.Point
-	sortPoints(points)
-	if len(points) != 0 {
-		t.Error("expected empty slice to remain empty")
-	}
-}
-
-func TestSortPoints_Single(t *testing.T) {
-	points := []cfg.Point{5}
-	sortPoints(points)
-	if points[0] != 5 {
-		t.Errorf("expected 5, got %d", points[0])
-	}
-}
-
-func TestSortPoints_Multiple(t *testing.T) {
-	points := []cfg.Point{3, 1, 4, 1, 5, 9, 2, 6}
-	sortPoints(points)
-	for i := 1; i < len(points); i++ {
-		if points[i] < points[i-1] {
-			t.Errorf("not sorted at index %d: %d < %d", i, points[i], points[i-1])
-		}
-	}
-}
-
-func TestIsUnknownOrNil_Nil(t *testing.T) {
-	if !isUnknownOrNil(nil) {
-		t.Error("expected true for nil")
-	}
-}
-
-func TestIsUnknownOrNil_Unknown(t *testing.T) {
-	if !isUnknownOrNil(typ.Unknown) {
-		t.Error("expected true for typ.Unknown")
-	}
-}
-
-func TestIsUnknownOrNil_NilType(t *testing.T) {
-	if !isUnknownOrNil(typ.Nil) {
-		t.Error("expected true for typ.Nil")
-	}
-}
-
-func TestIsUnknownOrNil_ValidType(t *testing.T) {
-	if isUnknownOrNil(typ.String) {
-		t.Error("expected false for typ.String")
-	}
-}
-
 func TestNarrowReturnTypeBySpec_NilCallInfo(t *testing.T) {
 	result := NarrowReturnTypeBySpec(nil, nil, nil, 0, nil)
 	if result != nil {

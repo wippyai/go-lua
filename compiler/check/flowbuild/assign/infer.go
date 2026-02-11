@@ -66,6 +66,7 @@ import (
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
 // maxInferIterations limits fixpoint iterations per SCC.
@@ -82,7 +83,7 @@ func mergeSpecTypesSoft(base, override api.SpecTypes) api.SpecTypes {
 	for k, v := range override {
 		// Unknown/nil overlays are uninformative and can poison downstream
 		// inference (for example, trailing nil padding from unresolved calls).
-		if isUnknownOrNil(v) {
+		if typjoin.IsUnknownOrNil(v) {
 			continue
 		}
 		if v != nil && typ.IsSoft(v, typ.SoftAnnotationPolicy) {
