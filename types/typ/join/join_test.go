@@ -43,6 +43,18 @@ func TestReturnVectors(t *testing.T) {
 			t.Errorf("expected 2, got %d", len(result))
 		}
 	})
+
+	t.Run("preserves unknown when paired with implicit nil", func(t *testing.T) {
+		left := []typ.Type{typ.Unknown}
+		right := []typ.Type{}
+		result := ReturnVectors(left, right)
+		if len(result) != 1 {
+			t.Fatalf("expected 1, got %d", len(result))
+		}
+		if !typ.TypeEquals(result[0], typ.Unknown) {
+			t.Fatalf("expected unknown, got %v", result[0])
+		}
+	})
 }
 
 func TestWithReturns(t *testing.T) {

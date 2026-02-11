@@ -8,7 +8,7 @@ import "github.com/wippyai/go-lua/types/typ"
 
 // ReturnVectors merges two multi-return type vectors at join points.
 //
-// Each position is joined independently using typ.JoinPreferNonSoft. Shorter vectors
+// Each position is joined independently using typ.JoinReturnSlot. Shorter vectors
 // are padded with Nil since Lua returns nil for missing values.
 func ReturnVectors(a, b []typ.Type) []typ.Type {
 	if len(a) == 0 {
@@ -36,7 +36,7 @@ func ReturnVectors(a, b []typ.Type) []typ.Type {
 		} else {
 			bi = typ.Nil
 		}
-		result[i] = typ.JoinPreferNonSoft(ai, bi)
+		result[i] = typ.JoinReturnSlot(ai, bi)
 	}
 	return result
 }
