@@ -62,10 +62,8 @@ func IsRefinableAnnotation(t Type) bool {
 	if t == nil {
 		return false
 	}
-	switch t.Kind() {
-	case kind.Any, kind.Unknown:
+	if t.Kind().IsPlaceholder() {
 		return false
-	default:
-		return IsSoft(t, SoftAnnotationPolicy)
 	}
+	return IsSoft(t, SoftAnnotationPolicy)
 }

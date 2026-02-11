@@ -30,8 +30,16 @@ func TestIndex(t *testing.T) {
 			_, ok := t.(*typ.Optional)
 			return ok
 		}},
+		{"map with unknown key placeholder", m, typ.Unknown, true, func(t typ.Type) bool {
+			_, ok := t.(*typ.Optional)
+			return ok
+		}},
 		{"map with wrong key type", m, typ.Integer, false, nil},
 		{"map with any key", typ.NewMap(typ.Any, typ.Boolean), typ.String, true, func(t typ.Type) bool {
+			_, ok := t.(*typ.Optional)
+			return ok
+		}},
+		{"record map component with unknown key placeholder", typ.NewRecord().MapComponent(typ.String, typ.Number).Build(), typ.Unknown, true, func(t typ.Type) bool {
 			_, ok := t.(*typ.Optional)
 			return ok
 		}},

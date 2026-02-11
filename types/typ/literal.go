@@ -149,9 +149,12 @@ func TypeMatchesLiteral(t Type, lit *Literal) bool {
 		return true
 	}
 
-	switch t.Kind() {
-	case kind.Any, kind.Unknown:
+	k := t.Kind()
+	if k.IsPlaceholder() {
 		return true
+	}
+
+	switch k {
 	case kind.String:
 		return lit.Base == kind.String
 	case kind.Number:

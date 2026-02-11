@@ -260,7 +260,7 @@ func canContainWithVisited(container, target typ.Type, visited map[typ.Type]bool
 			return canContainWithVisited(a.Target, target, visited)
 		},
 		Default: func(t typ.Type) bool {
-			return t.Kind() == kind.Any || t.Kind() == kind.Unknown
+			return t.Kind().IsPlaceholder()
 		},
 	})
 }

@@ -116,8 +116,8 @@ func isInformativeHintType(t typ.Type, guard internal.RecursionGuard) bool {
 		return false
 	}
 
-	switch t.Kind() {
-	case kind.Any, kind.Unknown, kind.Nil, kind.Never:
+	k := t.Kind()
+	if k.IsPlaceholder() || k == kind.Nil || k == kind.Never {
 		return false
 	}
 

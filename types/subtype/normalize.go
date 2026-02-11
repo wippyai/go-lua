@@ -135,7 +135,7 @@ func normalizeIntersectionDepth(types []typ.Type, depth int) typ.Type {
 	nonUnions := make([]typ.Type, 0, len(flat))
 
 	for _, t := range flat {
-		if t.Kind() == kind.Any || t.Kind() == kind.Unknown {
+		if t.Kind().IsPlaceholder() {
 			continue
 		}
 

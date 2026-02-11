@@ -181,7 +181,7 @@ func GetObjectClass(t typ.Type) ObjectClass {
 
 	if rec, ok := t.(*typ.Record); ok {
 		for _, f := range rec.Fields {
-			if f.Type != nil && (f.Type.Kind() == kind.Any || f.Type.Kind() == kind.Unknown) {
+			if f.Type != nil && f.Type.Kind().IsPlaceholder() {
 				return Cyclic
 			}
 		}

@@ -2,7 +2,6 @@ package typ
 
 import (
 	"github.com/wippyai/go-lua/internal"
-	"github.com/wippyai/go-lua/types/kind"
 )
 
 // SoftPolicy controls how soft-placeholder detection behaves.
@@ -58,12 +57,7 @@ func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
 				return true
 			},
 			Default: func(tt Type) bool {
-				switch tt.Kind() {
-				case kind.Any, kind.Unknown:
-					return true
-				default:
-					return false
-				}
+				return tt.Kind().IsPlaceholder()
 			},
 		}
 	})

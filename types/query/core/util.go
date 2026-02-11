@@ -752,7 +752,7 @@ func containsNilDepth(t typ.Type, depth int) bool {
 		},
 		Default: func(t typ.Type) bool {
 			k := t.Kind()
-			return k == kind.Nil || k == kind.Any || k == kind.Unknown
+			return k == kind.Nil || k.IsPlaceholder()
 		},
 	})
 }
