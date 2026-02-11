@@ -422,7 +422,7 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 		if keyType == nil {
 			keyType = typ.String
 		}
-		newType = widenMapValueArray(currentType, keyType, valueType)
+		newType = WidenMapValueArray(currentType, keyType, valueType)
 	} else {
 		newType = WidenArrayElementType(currentType, valueType, typ.JoinPreferNonSoft)
 	}
@@ -641,7 +641,7 @@ func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func
 	})
 }
 
-// widenMapValueArray widens a map's value type by adding an element to its array component.
+// WidenMapValueArray widens a map's value type by adding an element to its array component.
 //
 // This handles the pattern: suites[name] = suites[name] or {}; table.insert(suites[name], test)
 // where suites is {[string]: Test[]} and we need to widen the array element type.
@@ -654,7 +654,7 @@ func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func
 //   - Other types: Returns unchanged
 //
 // Returns the widened type.
-func widenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Type {
+func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Type {
 	if mapType == nil {
 		return typ.NewMap(keyType, typ.NewArray(elementType))
 	}
@@ -706,14 +706,6 @@ func widenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 			return mapType
 		},
 	})
-}
-
-// WidenMapValueArrayType widens a map's value type by adding an element to its array component.
-//
-// This exported helper mirrors the flow solver's logic and is used by
-// pre-flow inference to keep map value arrays in sync with mutations.
-func WidenMapValueArrayType(mapType typ.Type, keyType, elementType typ.Type) typ.Type {
-	return widenMapValueArray(mapType, keyType, elementType)
 }
 
 // widenWithIndexer widens a type based on dynamic index assignment (t[k] = v).

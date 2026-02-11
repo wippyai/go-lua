@@ -206,10 +206,10 @@ func TestWidenWithIndexer_ExistingMap(t *testing.T) {
 }
 
 func TestWidenMapValueArray_NilBase(t *testing.T) {
-	result := widenMapValueArray(nil, typ.String, typ.Integer)
+	result := WidenMapValueArray(nil, typ.String, typ.Integer)
 	m, ok := result.(*typ.Map)
 	if !ok {
-		t.Fatalf("widenMapValueArray(nil) = %T, want *typ.Map", result)
+		t.Fatalf("WidenMapValueArray(nil) = %T, want *typ.Map", result)
 	}
 	arr, ok := m.Value.(*typ.Array)
 	if !ok {
@@ -223,10 +223,10 @@ func TestWidenMapValueArray_NilBase(t *testing.T) {
 func TestWidenMapValueArray_PrefersNonSoftElement(t *testing.T) {
 	base := typ.NewMap(typ.String, typ.NewArray(typ.Any))
 	elem := typ.NewRecord().Field("id", typ.String).Build()
-	result := widenMapValueArray(base, typ.String, elem)
+	result := WidenMapValueArray(base, typ.String, elem)
 	m, ok := result.(*typ.Map)
 	if !ok {
-		t.Fatalf("widenMapValueArray(map) = %T, want *typ.Map", result)
+		t.Fatalf("WidenMapValueArray(map) = %T, want *typ.Map", result)
 	}
 	arr, ok := m.Value.(*typ.Array)
 	if !ok {

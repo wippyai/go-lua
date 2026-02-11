@@ -574,7 +574,7 @@ func collectInferredTypes(
 							keyType = typ.String
 						}
 						old := inferred[baseSym]
-						newType := flow.WidenMapValueArrayType(old, keyType, valueType)
+						newType := flow.WidenMapValueArray(old, keyType, valueType)
 						if newType != nil && !typ.TypeEquals(old, newType) {
 							inferred[baseSym] = newType
 							changed = true
