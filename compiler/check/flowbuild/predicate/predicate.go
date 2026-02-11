@@ -2,9 +2,9 @@ package predicate
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 )
 
@@ -43,22 +43,7 @@ func LinkKey(name string, defPoint cfg.Point) string {
 
 // PlaceholderIndex extracts the index from a placeholder like "$0", "$1" or "param[0]", "param[1]".
 func PlaceholderIndex(s string) int {
-	if len(s) >= 2 && s[0] == '$' {
-		idx, err := strconv.Atoi(s[1:])
-		if err != nil {
-			return -1
-		}
-		return idx
-	}
-	if strings.HasPrefix(s, "param[") && strings.HasSuffix(s, "]") {
-		numStr := s[6 : len(s)-1]
-		idx, err := strconv.Atoi(numStr)
-		if err != nil {
-			return -1
-		}
-		return idx
-	}
-	return -1
+	return constraint.PlaceholderIndexFromString(s)
 }
 
 // BuildConstResolver creates a const resolver function for a given CFG point.

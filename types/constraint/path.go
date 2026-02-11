@@ -397,21 +397,7 @@ func (p Path) ValidateSymbol() string {
 // PlaceholderIndex returns the parameter index if this path's root is a placeholder ($0, $1, etc).
 // Returns -1 if not a placeholder.
 func (p Path) PlaceholderIndex() int {
-	if p.Root == "" || len(p.Root) < 2 || p.Root[0] != '$' {
-		return -1
-	}
-
-	idx := 0
-
-	for i := 1; i < len(p.Root); i++ {
-		if p.Root[i] < '0' || p.Root[i] > '9' {
-			return -1
-		}
-
-		idx = idx*10 + int(p.Root[i]-'0')
-	}
-
-	return idx
+	return PlaceholderIndexFromString(p.Root)
 }
 
 // Substitute replaces placeholder roots with actual argument paths.

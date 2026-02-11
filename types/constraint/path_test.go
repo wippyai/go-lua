@@ -1,10 +1,24 @@
 package constraint
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/cfg"
 )
+
+func TestPathPlaceholderIndex_OverflowRejected(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	overflowRoot := "$" + strconv.FormatInt(int64(maxInt), 10) + "0"
+	p := Path{Root: overflowRoot}
+
+	if got := p.PlaceholderIndex(); got != -1 {
+		t.Fatalf("PlaceholderIndex() = %d, want -1 for overflow input", got)
+	}
+	if p.IsPlaceholder() {
+		t.Fatal("IsPlaceholder() should be false for overflow placeholder root")
+	}
+}
 
 func TestPathStringKeyHash(t *testing.T) {
 	p := Path{
