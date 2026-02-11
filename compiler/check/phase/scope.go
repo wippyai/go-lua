@@ -33,7 +33,6 @@ import (
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -212,7 +211,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 		typeResolutionEngine,
 		input.ReturnSummaries,
 	)
-	declaredTypes = applyModuleAliasDeclaredTypes(declaredTypes, input.ModuleAliases, input.Manifests)
+	declaredTypes = applyModuleAliasExports(declaredTypes, input.ModuleAliases, input.Manifests)
 
 	return ScopeOutput{
 		BaseScope:                 base,
@@ -224,14 +223,6 @@ func RunScope(input ScopeInput) ScopeOutput {
 		SiblingTypes:              input.SiblingTypes,
 		DepthLimitExceeded:        depthExceeded,
 	}
-}
-
-func applyModuleAliasDeclaredTypes(
-	declared flow.DeclaredTypes,
-	moduleAliases map[cfg.SymbolID]string,
-	manifests io.ManifestQuerier,
-) flow.DeclaredTypes {
-	return applyModuleAliasExports(declared, moduleAliases, manifests)
 }
 
 // buildFnSignatureResolver creates a function signature resolver that combines
