@@ -6,22 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 )
-
-// BuildFunctionSignatureWithSummary returns a function type using a signature and optional summary.
-//
-// This function combines a function's declared signature with inferred return types:
-//
-//   - If the signature already has explicit return types, it is returned unchanged
-//   - If a return summary is available, it is merged into the signature
-//   - If neither is available, Unknown returns are added as a placeholder
-//
-// The placeholder ensures function types are never nil during SCC iteration,
-// which would cause type errors when calling the function.
-func BuildFunctionSignatureWithSummary(sig *typ.Function, returnTypes []typ.Type) *typ.Function {
-	return join.WithReturnsOrUnknown(sig, returnTypes)
-}
 
 // BuildSeedFunctionTypeWithBindings builds a placeholder function type for an
 // SCC sibling that has no return summary yet.

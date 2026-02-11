@@ -56,7 +56,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
-	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/internal"
@@ -65,6 +64,7 @@ import (
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
 // maxInferIterations limits fixpoint iterations per SCC.
@@ -158,7 +158,7 @@ func collectInferredTypes(
 				sc = scopes[graph.Entry()]
 			}
 			if sig := services.ResolveFunctionSignature(info.FuncExpr, sc); sig != nil {
-				funcSigTypes[info.Symbol] = returns.BuildFunctionSignatureWithSummary(sig, nil)
+				funcSigTypes[info.Symbol] = typjoin.WithReturnsOrUnknown(sig, nil)
 			}
 		})
 		graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
@@ -175,7 +175,7 @@ func collectInferredTypes(
 				}
 				if fnExpr, ok := source.(*ast.FunctionExpr); ok {
 					if sig := services.ResolveFunctionSignature(fnExpr, sc); sig != nil {
-						funcSigTypes[target.Symbol] = returns.BuildFunctionSignatureWithSummary(sig, nil)
+						funcSigTypes[target.Symbol] = typjoin.WithReturnsOrUnknown(sig, nil)
 					}
 				}
 			})

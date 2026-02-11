@@ -60,6 +60,7 @@ import (
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
 // Config holds dependencies for return inference.
@@ -571,7 +572,7 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 				}
 			}
 			sig := ctx.engine.ResolveFunctionSignature(fnExpr, ctx.resolveScope)
-			if fnType := returns.BuildFunctionSignatureWithSummary(sig, summary); fnType != nil {
+			if fnType := typjoin.WithReturnsOrUnknown(sig, summary); fnType != nil {
 				overlay[target.Symbol] = fnType
 			}
 		}

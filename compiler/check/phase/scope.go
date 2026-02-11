@@ -27,7 +27,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
-	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
@@ -35,6 +34,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -464,7 +464,7 @@ func buildDeclaredTypes(
 			if fnSigResolver != nil {
 				if fnSig := fnSigResolver.ResolveFunctionSignature(info.FuncExpr, sc); fnSig != nil {
 					if returnSummaries != nil {
-						fnSig = returns.BuildFunctionSignatureWithSummary(fnSig, returnSummaries[sym])
+						fnSig = typjoin.WithReturnsOrUnknown(fnSig, returnSummaries[sym])
 					}
 					out[sym] = fnSig
 				}
