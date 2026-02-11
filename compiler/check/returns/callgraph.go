@@ -32,6 +32,32 @@ func canonicalLocalSymbol(
 	)
 }
 
+func canonicalLocalCalleeSymbol(
+	localFuncs map[cfg.SymbolID]*LocalFuncInfo,
+	moduleBindings *bind.BindingTable,
+	bindings *bind.BindingTable,
+	callInfo *cfg.CallInfo,
+) cfg.SymbolID {
+	if callInfo == nil {
+		return 0
+	}
+	selected := checkcallsite.PreferredCalleeSymbol(callInfo, bindings, moduleBindings, func(sym cfg.SymbolID) bool {
+		_, ok := localFuncs[sym]
+		return ok
+	})
+	if selected != 0 {
+		if _, ok := localFuncs[selected]; ok {
+			return selected
+		}
+	}
+	if methodSym, ok := checkcallsite.MethodCalleeSymbol(bindings, callInfo); ok {
+		if _, isLocal := localFuncs[methodSym]; isLocal {
+			return methodSym
+		}
+	}
+	return selected
+}
+
 func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo) func(cfg.SymbolID) *typ.Function {
 	sigCache := make(map[cfg.SymbolID]*typ.Function, len(localFuncs))
 	return func(sym cfg.SymbolID) *typ.Function {
@@ -126,7 +152,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 			if ci == nil {
 				return
 			}
-			calleeSym := canonicalLocalSymbol(localFuncs, moduleBindings, bindings, ci.Callee, ci.CalleeSymbol)
+			calleeSym := canonicalLocalCalleeSymbol(localFuncs, moduleBindings, bindings, ci)
 			if calleeSym == 0 {
 				return
 			}
@@ -272,10 +298,7 @@ func BuildLocalCallGraph(
 	adj := make(map[cfg.SymbolID][]cfg.SymbolID, len(localFuncs))
 
 	resolveCalleeSym := func(callInfo *cfg.CallInfo, bindings *bind.BindingTable) cfg.SymbolID {
-		if callInfo == nil {
-			return 0
-		}
-		return canonicalLocalSymbol(localFuncs, moduleBindings, bindings, callInfo.Callee, callInfo.CalleeSymbol)
+		return canonicalLocalCalleeSymbol(localFuncs, moduleBindings, bindings, callInfo)
 	}
 
 	resolveLocalSignature := buildLocalSignatureResolver(localFuncs)

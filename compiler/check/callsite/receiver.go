@@ -20,8 +20,15 @@ func ForceMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, info
 		return false
 	}
 
-	sym := info.CalleeSymbol
-	if sym == 0 && bindings != nil {
+	sym := PreferredCalleeSymbol(info, bindings, nil, func(candidate typecfg.SymbolID) bool {
+		return symbolForcesMethodReceiver(bindings, graph, candidate)
+	})
+
+	if sym != 0 && symbolForcesMethodReceiver(bindings, graph, sym) {
+		return true
+	}
+
+	if bindings != nil {
 		if methodSym, ok := methodCalleeSymbolFromCall(bindings, info); ok {
 			sym = methodSym
 		}
@@ -54,6 +61,12 @@ func ForceMethodReceiverAtPoint(bindings *bind.BindingTable, graph *compcfg.Grap
 		return false
 	}
 	return symbolForcesMethodReceiver(bindings, graph, sym)
+}
+
+// MethodCalleeSymbol resolves a method call to its field-backed function symbol
+// using static receiver/path information from the callsite.
+func MethodCalleeSymbol(bindings *bind.BindingTable, info *compcfg.CallInfo) (typecfg.SymbolID, bool) {
+	return methodCalleeSymbolFromCall(bindings, info)
 }
 
 func symbolForcesMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, sym typecfg.SymbolID) bool {

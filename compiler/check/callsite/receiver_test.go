@@ -65,6 +65,29 @@ func TestForceMethodReceiver_UsesCalleePathWhenReceiverExprMissing(t *testing.T)
 	}
 }
 
+func TestForceMethodReceiver_PrefersCanonicalCandidateOverStaleRawSymbol(t *testing.T) {
+	src := `
+		local T = {}
+		function T.foo(x: number): number
+			return x + 1
+		end
+		local stale = 1
+		local n = T:foo(1)
+	`
+	graph, bindings, call, point := parseGraphAndMethodCall(t, src)
+	staleSym, ok := graph.SymbolAt(point, "stale")
+	if !ok || staleSym == 0 {
+		t.Fatal("expected stale symbol in scope")
+	}
+
+	callCopy := *call
+	callCopy.CalleeSymbol = staleSym
+
+	if !ForceMethodReceiver(bindings, graph, &callCopy) {
+		t.Fatal("expected ForceMethodReceiver to ignore stale raw symbol and use canonical method candidate")
+	}
+}
+
 func parseGraphAndMethodCall(t *testing.T, src string) (*ccfg.Graph, *bind.BindingTable, *ccfg.CallInfo, typecfg.Point) {
 	t.Helper()
 	stmts, err := parse.Parse(strings.NewReader(src), "test")
