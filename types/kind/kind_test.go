@@ -157,3 +157,19 @@ func TestKindIsNever(t *testing.T) {
 		}
 	}
 }
+
+func TestKindIsTopOrBottom(t *testing.T) {
+	topOrBottom := []Kind{Any, Unknown, Never}
+	for _, k := range topOrBottom {
+		if !k.IsTopOrBottom() {
+			t.Errorf("%s should be top-or-bottom", k)
+		}
+	}
+
+	others := []Kind{Nil, Boolean, Number, Integer, String, Union, Function, Array, Record}
+	for _, k := range others {
+		if k.IsTopOrBottom() {
+			t.Errorf("%s should not be top-or-bottom", k)
+		}
+	}
+}

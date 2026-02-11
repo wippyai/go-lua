@@ -1014,11 +1014,5 @@ func isTopOrBottom(t typ.Type) bool {
 	if t == nil {
 		return true
 	}
-
-	switch t.Kind() {
-	case kind.Any, kind.Unknown, kind.Never:
-		return true
-	default:
-		return false
-	}
+	return t.Kind().IsTopOrBottom()
 }
