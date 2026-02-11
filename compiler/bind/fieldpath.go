@@ -55,9 +55,14 @@ func NormalizeFieldPathKey(path string) (string, bool) {
 		return "", false
 	}
 
-	// Already in canonical segment-suffix form.
+	// Segment-suffix form (.field, [1], ["key"], legacy [key]).
+	// Parse and re-encode to canonical representation.
 	if strings.HasPrefix(path, ".") || strings.HasPrefix(path, "[") {
-		return path, true
+		segs := pathkey.ParseSuffix(path)
+		if len(segs) == 0 {
+			return "", false
+		}
+		return constraint.FormatSegments(segs), true
 	}
 
 	parts := strings.Split(path, ".")

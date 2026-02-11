@@ -435,6 +435,44 @@ func TestBindingTable_FieldSymbol_CanonicalPathDistinguishesStringAndIntIndex(t 
 	}
 }
 
+func TestBindingTable_FieldSymbol_NormalizesLegacyBracketStringKey(t *testing.T) {
+	table := NewBindingTable()
+	baseSym := cfg.NextSymbolID()
+	table.SetName(baseSym, "T")
+
+	canonicalKey, ok := FieldPathKeyFromSegments([]constraint.Segment{
+		{Kind: constraint.SegmentIndexString, Name: "k"},
+	})
+	if !ok {
+		t.Fatal("expected canonical key")
+	}
+
+	created := table.GetOrCreateFieldSymbol(baseSym, canonicalKey)
+	if created == 0 {
+		t.Fatal("expected symbol creation")
+	}
+
+	gotLegacy, ok := table.FieldSymbol(baseSym, "[k]")
+	if !ok {
+		t.Fatal("expected legacy bracket string lookup to resolve")
+	}
+	if gotLegacy != created {
+		t.Fatalf("legacy lookup returned %d, want %d", gotLegacy, created)
+	}
+}
+
+func TestBindingTable_GetOrCreateFieldSymbol_InvalidPathRejected(t *testing.T) {
+	table := NewBindingTable()
+	baseSym := cfg.NextSymbolID()
+
+	if sym := table.GetOrCreateFieldSymbol(baseSym, ".a["); sym != 0 {
+		t.Fatalf("invalid canonical path should be rejected, got symbol %d", sym)
+	}
+	if sym := table.GetOrCreateFieldSymbol(baseSym, ""); sym != 0 {
+		t.Fatalf("empty path should be rejected, got symbol %d", sym)
+	}
+}
+
 func TestBindingTable_GetOrCreateFuncLitSymbol(t *testing.T) {
 	table := NewBindingTable()
 	fn := &ast.FunctionExpr{}
