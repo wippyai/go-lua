@@ -94,3 +94,70 @@ func TestFuncKey_AsMapKey(t *testing.T) {
 		t.Error("FuncKey should work as map key")
 	}
 }
+
+func TestCompareGraphKeys(t *testing.T) {
+	cases := []struct {
+		name string
+		a    GraphKey
+		b    GraphKey
+		want int
+	}{
+		{
+			name: "graph id smaller",
+			a:    GraphKey{GraphID: 1, ParentHash: 10},
+			b:    GraphKey{GraphID: 2, ParentHash: 1},
+			want: -1,
+		},
+		{
+			name: "parent hash smaller when graph id equal",
+			a:    GraphKey{GraphID: 2, ParentHash: 1},
+			b:    GraphKey{GraphID: 2, ParentHash: 3},
+			want: -1,
+		},
+		{
+			name: "equal",
+			a:    GraphKey{GraphID: 7, ParentHash: 9},
+			b:    GraphKey{GraphID: 7, ParentHash: 9},
+			want: 0,
+		},
+	}
+	for _, tc := range cases {
+		got := CompareGraphKeys(tc.a, tc.b)
+		switch tc.want {
+		case -1:
+			if got >= 0 {
+				t.Fatalf("%s: CompareGraphKeys = %d, want < 0", tc.name, got)
+			}
+		case 0:
+			if got != 0 {
+				t.Fatalf("%s: CompareGraphKeys = %d, want 0", tc.name, got)
+			}
+		case 1:
+			if got <= 0 {
+				t.Fatalf("%s: CompareGraphKeys = %d, want > 0", tc.name, got)
+			}
+		}
+	}
+}
+
+func TestSortedGraphKeys(t *testing.T) {
+	m := map[GraphKey]struct{}{
+		{GraphID: 2, ParentHash: 3}: {},
+		{GraphID: 1, ParentHash: 9}: {},
+		{GraphID: 2, ParentHash: 1}: {},
+	}
+	got := SortedGraphKeys(m)
+	if len(got) != 3 {
+		t.Fatalf("len(got) = %d, want 3", len(got))
+	}
+	want := []GraphKey{
+		{GraphID: 1, ParentHash: 9},
+		{GraphID: 2, ParentHash: 1},
+		{GraphID: 2, ParentHash: 3},
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

@@ -136,17 +136,7 @@ func interprocFactsMapEqual(a, b map[api.GraphKey]api.Facts) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	keys := make([]api.GraphKey, 0, len(a))
-	for key := range a {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].GraphID != keys[j].GraphID {
-			return keys[i].GraphID < keys[j].GraphID
-		}
-		return keys[i].ParentHash < keys[j].ParentHash
-	})
-	for _, key := range keys {
+	for _, key := range api.SortedGraphKeys(a) {
 		if !returns.FactsEqual(a[key], b[key]) {
 			return false
 		}
@@ -160,30 +150,10 @@ func widenInterprocFacts(prev, next map[api.GraphKey]api.Facts) map[api.GraphKey
 		return make(map[api.GraphKey]api.Facts)
 	}
 	out := make(map[api.GraphKey]api.Facts, len(prev)+len(next))
-	prevKeys := make([]api.GraphKey, 0, len(prev))
-	for key := range prev {
-		prevKeys = append(prevKeys, key)
-	}
-	sort.Slice(prevKeys, func(i, j int) bool {
-		if prevKeys[i].GraphID != prevKeys[j].GraphID {
-			return prevKeys[i].GraphID < prevKeys[j].GraphID
-		}
-		return prevKeys[i].ParentHash < prevKeys[j].ParentHash
-	})
-	for _, key := range prevKeys {
+	for _, key := range api.SortedGraphKeys(prev) {
 		out[key] = prev[key]
 	}
-	nextKeys := make([]api.GraphKey, 0, len(next))
-	for key := range next {
-		nextKeys = append(nextKeys, key)
-	}
-	sort.Slice(nextKeys, func(i, j int) bool {
-		if nextKeys[i].GraphID != nextKeys[j].GraphID {
-			return nextKeys[i].GraphID < nextKeys[j].GraphID
-		}
-		return nextKeys[i].ParentHash < nextKeys[j].ParentHash
-	})
-	for _, key := range nextKeys {
+	for _, key := range api.SortedGraphKeys(next) {
 		facts := next[key]
 		if existing, ok := out[key]; ok {
 			out[key] = returns.WidenFacts(existing, facts)
