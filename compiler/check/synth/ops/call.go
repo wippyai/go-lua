@@ -328,7 +328,7 @@ func InferCall(ctx *db.QueryContext, def CallDef) InferResult {
 		}
 	}
 
-	if callee.Kind() == kind.Unknown {
+	if typ.IsUnknown(callee) {
 		return InferResult{
 			Kind:                InferKindUnknown,
 			Callee:              callee,

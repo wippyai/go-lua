@@ -99,7 +99,7 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 				if len(assign.TargetPath.Segments) > 0 && assignedType.Kind() == kind.Nil {
 					// Treat nil-only field assignments as "optional unknown" to avoid
 					// collapsing dynamic table fields to nil when they are later narrowed.
-					if old != nil && old.Kind() != kind.Unknown {
+					if !typ.IsAbsentOrUnknown(old) {
 						assignedType = typ.NewUnion(old, typ.Nil)
 					} else {
 						assignedType = typ.NewOptional(typ.Unknown)
@@ -373,7 +373,7 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 	// Resolve value type from flow state or use fallback
 	valueType := tm.ValueType
 	if tm.ValuePath.HasSymbol() {
-		if resolved := s.NarrowedTypeAt(p, tm.ValuePath); resolved != nil && resolved.Kind() != kind.Unknown {
+		if resolved := s.NarrowedTypeAt(p, tm.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
 			valueType = resolved
 		}
 	}
@@ -438,7 +438,7 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 	// Resolve value type from flow state or use fallback
 	valueType := cm.ValueType
 	if cm.ValuePath.HasSymbol() {
-		if resolved := s.NarrowedTypeAt(p, cm.ValuePath); resolved != nil && resolved.Kind() != kind.Unknown {
+		if resolved := s.NarrowedTypeAt(p, cm.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
 			valueType = resolved
 		}
 	}
@@ -502,7 +502,7 @@ func widenContainerElementType(containerType typ.Type, valueType typ.Type) typ.T
 			oldElem := inst.TypeArgs[0]
 			// If old element is unknown, replace it with value type (not union)
 			var newElem typ.Type
-			if oldElem == nil || oldElem.Kind() == kind.Unknown { // Unknown replaced explicitly
+			if typ.IsAbsentOrUnknown(oldElem) { // Unknown replaced explicitly
 				newElem = valueType
 			} else {
 				newElem = join.Types(oldElem, valueType)
@@ -520,7 +520,7 @@ func widenContainerElementType(containerType typ.Type, valueType typ.Type) typ.T
 			// Handle array types
 			oldElem := arr.Element
 			var newElem typ.Type
-			if oldElem == nil || oldElem.Kind() == kind.Unknown { // Unknown replaced explicitly
+			if typ.IsAbsentOrUnknown(oldElem) { // Unknown replaced explicitly
 				newElem = valueType
 			} else {
 				newElem = join.Types(oldElem, valueType)

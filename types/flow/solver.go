@@ -508,7 +508,7 @@ func (s *Solution) deriveTypeFrom(base typ.Type, segs []constraint.Segment) (typ
 // that case so callers can try index-based access as a fallback, which may
 // succeed if the record has a map component.
 func isOpenRecordFallback(base typ.Type, result typ.Type) bool {
-	if result == nil || result.Kind() != kind.Unknown {
+	if !typ.IsUnknown(result) {
 		return false
 	}
 	rec, ok := base.(*typ.Record)

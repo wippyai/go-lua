@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
@@ -137,7 +136,7 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 
 	// Validate that inferred type arguments satisfy their constraints
 	for i, tp := range fn.TypeParams {
-		if tp.Constraint != nil && result[i] != nil && result[i].Kind() != kind.Unknown {
+		if tp.Constraint != nil && !typ.IsAbsentOrUnknown(result[i]) {
 			if !subtype.IsSubtype(result[i], tp.Constraint) {
 				return nil, fmt.Errorf("infer: type argument %s does not satisfy constraint %s", result[i], tp.Constraint)
 			}
