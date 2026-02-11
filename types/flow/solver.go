@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -516,14 +515,20 @@ func isOpenRecordFallback(base typ.Type, result typ.Type) bool {
 }
 
 func (s *Solution) resolveTypeKey(key narrow.TypeKey) typ.Type {
-	if s.inputs == nil || s.inputs.TypeKeys == nil {
+	if s.inputs == nil {
 		return nil
 	}
 	switch key.Kind {
 	case narrow.TypeKeyHash:
+		if s.inputs.TypeKeys == nil {
+			return nil
+		}
 		return s.inputs.TypeKeys[key.Hash]
 	case narrow.TypeKeyBuiltin:
-		return narrow.TypeForKind(kind.FromString(key.Name))
+		if builtinKind, ok := key.BuiltinKind(); ok {
+			return narrow.TypeForKind(builtinKind)
+		}
+		return nil
 	default:
 		return nil
 	}

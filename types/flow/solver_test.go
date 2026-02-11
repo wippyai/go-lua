@@ -237,6 +237,21 @@ func newInputs(g *mockSSAGraph) *Inputs {
 	}
 }
 
+func TestSolutionResolveTypeKey_BuiltinWithoutTypeKeyMap(t *testing.T) {
+	s := &Solution{inputs: &Inputs{TypeKeys: nil}}
+	got := s.resolveTypeKey(narrow.BuiltinTypeKey("string"))
+	if got != typ.String {
+		t.Fatalf("resolveTypeKey(string) = %v, want %v", got, typ.String)
+	}
+}
+
+func TestSolutionResolveTypeKey_UnknownBuiltin(t *testing.T) {
+	s := &Solution{inputs: &Inputs{TypeKeys: nil}}
+	if got := s.resolveTypeKey(narrow.BuiltinTypeKey("entry")); got != nil {
+		t.Fatalf("resolveTypeKey(entry) = %v, want nil", got)
+	}
+}
+
 // setupSymbol registers a symbol and sets its visibility at all given points.
 // Returns the SymbolID for use in version creation.
 func setupSymbol(g *mockSSAGraph, name string, points []cfg.Point) cfg.SymbolID {
