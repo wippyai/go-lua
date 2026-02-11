@@ -523,12 +523,12 @@ func collectInferredTypes(
 						if i < len(info.Args) && info.Args[i] != nil {
 							actual := wrappedSynth(info.Args[i], p)
 							actual = resolve.Ref(actual, sc)
-							if actual != nil && actual.Kind() != kind.Unknown && actual.Kind() != kind.Any {
+							if actual != nil && !actual.Kind().IsPlaceholder() {
 								expected = actual
 							}
 						}
 					}
-					if expected == nil || expected.Kind() == kind.Unknown || expected.Kind() == kind.Any {
+					if expected == nil || expected.Kind().IsPlaceholder() {
 						continue
 					}
 					old := inferred[sym]

@@ -96,7 +96,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				continue
 			}
 			current := inputs.DeclaredTypes[sym]
-			if current == nil || current.Kind() == kind.Any || current.Kind() == kind.Unknown {
+			if current == nil || current.Kind().IsPlaceholder() {
 				inputs.DeclaredTypes[sym] = inferred
 			}
 		}
@@ -349,7 +349,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 									}
 									if checkType != nil {
 										baseType := unwrap.Alias(checkType)
-										if baseType != nil && baseType.Kind() != kind.Any && baseType.Kind() != kind.Unknown && !unwrap.IsOptionalLike(baseType) {
+										if baseType != nil && !baseType.Kind().IsPlaceholder() && !unwrap.IsOptionalLike(baseType) {
 											link.OnFalsy = constraint.And(link.OnFalsy, constraint.FromConstraints(constraint.NotNil{Path: valuePath}))
 										}
 									}

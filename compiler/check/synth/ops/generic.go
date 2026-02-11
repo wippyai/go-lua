@@ -98,7 +98,7 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 	// For union expected types, distribute matching over each member.
 	if expectedReturn != nil && len(fn.Returns) > 0 {
 		expKind := expectedReturn.Kind()
-		if expKind != kind.Unknown && expKind != kind.Any {
+		if !expKind.IsPlaceholder() {
 			returnType := SubstituteTypeVars(fn.Returns[0], typeVars)
 			returnType = subst.ExpandInstantiated(returnType)
 

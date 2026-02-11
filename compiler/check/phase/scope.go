@@ -34,7 +34,6 @@ import (
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -337,8 +336,7 @@ func ExtractParamTypes(
 		// Prefer scope self type over synthesized Any/Unknown for unannotated self.
 		// This allows table-field method analysis to override placeholder literal signatures.
 		if slot.Name == "self" && !hasExplicitAnnotation && base != nil && base.SelfType() != nil && paramType != nil {
-			switch paramType.Kind() {
-			case kind.Any, kind.Unknown:
+			if paramType.Kind().IsPlaceholder() {
 				paramType = base.SelfType()
 			}
 		}

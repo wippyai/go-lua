@@ -170,7 +170,7 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 					}
 				}
 				if derived := s.indexFromKeyOf(objType, ex.Object, key, p, sc, narrower); derived != nil {
-					if keyType != nil && (keyType.Kind() == kind.Any || keyType.Kind() == kind.Unknown) {
+					if keyType != nil && keyType.Kind().IsPlaceholder() {
 						return derived
 					}
 					if shouldPreferKeyOfIndex(it) {

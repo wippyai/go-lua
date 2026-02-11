@@ -197,10 +197,9 @@ func BuildContextSymbolResolver(ctx api.BaseEnv) func(cfg.Point, cfg.SymbolID) (
 		var fallback typ.Type
 		tv := ctx.Types().EffectiveTypeAt(p, sym)
 		if tv.State == flow.StateResolved && tv.Type != nil {
-			switch tv.Type.Kind() {
-			case kind.Unknown, kind.Any:
+			if tv.Type.Kind().IsPlaceholder() {
 				fallback = tv.Type
-			default:
+			} else {
 				return tv.Type, true
 			}
 		}
@@ -224,30 +223,27 @@ func BuildInputSymbolResolver(ctx api.BaseEnv, inputs *flow.Inputs) func(cfg.Poi
 		var fallback typ.Type
 		if inputs.LiteralTypes != nil {
 			if t, ok := inputs.LiteralTypes[sym]; ok && t != nil {
-				switch t.Kind() {
-				case kind.Unknown, kind.Any:
+				if t.Kind().IsPlaceholder() {
 					fallback = t
-				default:
+				} else {
 					return t, true
 				}
 			}
 		}
 		if inputs.SiblingTypes != nil {
 			if t, ok := inputs.SiblingTypes[sym]; ok && t != nil {
-				switch t.Kind() {
-				case kind.Unknown, kind.Any:
+				if t.Kind().IsPlaceholder() {
 					fallback = t
-				default:
+				} else {
 					return t, true
 				}
 			}
 		}
 		if inputs.DeclaredTypes != nil {
 			if t, ok := inputs.DeclaredTypes[sym]; ok && t != nil {
-				switch t.Kind() {
-				case kind.Unknown, kind.Any:
+				if t.Kind().IsPlaceholder() {
 					fallback = t
-				default:
+				} else {
 					return t, true
 				}
 			}

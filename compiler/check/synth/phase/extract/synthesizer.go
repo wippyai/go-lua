@@ -32,7 +32,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -353,20 +352,18 @@ fallback:
 		if tv.State == flow.StateResolved && tv.Type != nil {
 			// Prefer concrete resolved types over module aliases.
 			// Allow module aliases to override unknown/any placeholders.
-			switch tv.Type.Kind() {
-			case kind.Unknown, kind.Any:
+			if tv.Type.Kind().IsPlaceholder() {
 				// defer to module alias below if available
-			default:
+			} else {
 				return tv.Type
 			}
 		}
 		if moduleSym != 0 && moduleSym != sym {
 			moduleTV := types.EffectiveTypeAt(p, moduleSym)
 			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
-				switch moduleTV.Type.Kind() {
-				case kind.Unknown, kind.Any:
+				if moduleTV.Type.Kind().IsPlaceholder() {
 					// keep looking for better sources
-				default:
+				} else {
 					return moduleTV.Type
 				}
 			}
