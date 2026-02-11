@@ -191,7 +191,7 @@ func EnrichWithKeysCollector(eff *constraint.FunctionEffect, fn *ast.FunctionExp
 
 	keyOf := constraint.KeyOf{
 		Table: constraint.ParamPath(info.ParamIndex),
-		Key:   constraint.RetPath(0),
+		Key:   constraint.RetPath(info.ReturnIndex),
 	}
 
 	if eff == nil {
