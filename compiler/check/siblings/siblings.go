@@ -181,22 +181,13 @@ func Build(c BuildConfig) map[cfg.SymbolID]typ.Type {
 		if fnType == nil {
 			continue
 		}
-		result[entry.Symbol] = MergeType(result[entry.Symbol], fnType)
+		result[entry.Symbol] = MergeSiblingType(result[entry.Symbol], fnType)
 	}
 
 	if len(result) == 0 {
 		return nil
 	}
 	return result
-}
-
-// MergeType merges two sibling types, preferring the more specific one.
-//
-// For function types, prefers whichever has return type information. If both
-// have returns, uses a soft-aware union join. This ensures that as return summaries
-// are computed, they are incorporated without losing parameter information.
-func MergeType(prev, next typ.Type) typ.Type {
-	return MergeSiblingType(prev, next)
 }
 
 // Compute extracts sibling types for a function's scope group from the store.

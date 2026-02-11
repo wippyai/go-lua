@@ -48,31 +48,31 @@ func TestBuild_WithPrev(t *testing.T) {
 	}
 }
 
-func TestMergeType_BothNil(t *testing.T) {
-	result := MergeType(nil, nil)
+func TestMergeSiblingType_BothNilViaBuildAPI(t *testing.T) {
+	result := MergeSiblingType(nil, nil)
 	if result != nil {
 		t.Error("both nil should return nil")
 	}
 }
 
-func TestMergeType_PrevNil(t *testing.T) {
-	result := MergeType(nil, typ.String)
+func TestMergeSiblingType_PrevNilViaBuildAPI(t *testing.T) {
+	result := MergeSiblingType(nil, typ.String)
 	if result != typ.String {
 		t.Error("prev nil should return next")
 	}
 }
 
-func TestMergeType_NextNil(t *testing.T) {
-	result := MergeType(typ.String, nil)
+func TestMergeSiblingType_NextNilViaBuildAPI(t *testing.T) {
+	result := MergeSiblingType(typ.String, nil)
 	if result != typ.String {
 		t.Error("next nil should return prev")
 	}
 }
 
-func TestMergeType_Functions(t *testing.T) {
+func TestMergeSiblingType_FunctionsViaBuildAPI(t *testing.T) {
 	prevFn := typ.Func().Build()
 	nextFn := typ.Func().Returns(typ.String).Build()
-	result := MergeType(prevFn, nextFn)
+	result := MergeSiblingType(prevFn, nextFn)
 	if result == nil {
 		t.Fatal("should return merged function")
 	}
@@ -85,10 +85,10 @@ func TestMergeType_Functions(t *testing.T) {
 	}
 }
 
-func TestMergeType_FunctionAliases(t *testing.T) {
+func TestMergeSiblingType_FunctionAliasesViaBuildAPI(t *testing.T) {
 	prevFn := typ.NewAlias("Prev", typ.Func().Build())
 	nextFn := typ.NewAlias("Next", typ.Func().Returns(typ.String).Build())
-	result := MergeType(prevFn, nextFn)
+	result := MergeSiblingType(prevFn, nextFn)
 	if !typ.TypeEquals(result, nextFn) {
 		t.Fatalf("expected function alias with returns to be preferred, got %v", result)
 	}

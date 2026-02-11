@@ -825,6 +825,75 @@ end
 	}
 }
 
+// TestReturnSummary_MixedArityKeepsSecondSlotOptional verifies that merging
+// `return nil, err` with `return db` preserves nil possibility in slot 2.
+func TestReturnSummary_MixedArityKeepsSecondSlotOptional(t *testing.T) {
+	dbType := typ.NewInterface("sql.DB", []typ.Method{
+		{
+			Name: "release",
+			Type: typ.Func().Param("self", typ.Self).Build(),
+		},
+	})
+
+	sqlManifest := io.NewManifest("sql")
+	moduleType := typ.NewInterface("sql", []typ.Method{
+		{
+			Name: "get",
+			Type: typ.Func().
+				Param("dsn", typ.String).
+				Returns(dbType, typ.NewOptional(typ.LuaError)).
+				Build(),
+		},
+	})
+	sqlManifest.SetExport(moduleType)
+	sqlManifest.DefineType("DB", dbType)
+
+	source := `
+local sql = require("sql")
+
+local function get_db()
+	local db, err = sql.get("app:db")
+	if err then
+		return nil, err
+	end
+	return db
+end
+`
+
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("sql", sqlManifest))
+	if result.HasError() {
+		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+
+	sess := result.Session
+	if sess == nil || sess.RootResult == nil || sess.RootResult.Graph == nil {
+		t.Fatal("missing session root result")
+	}
+
+	var summary []typ.Type
+	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
+	parent := sess.Store.Parents()[parentHash]
+	if summaries := sess.Store.GetReturnSummariesSnapshot(sess.RootResult.Graph, parent); summaries != nil {
+		for sym, rt := range summaries {
+			if sess.RootResult.Graph.NameOf(sym) == "get_db" {
+				summary = rt
+				break
+			}
+		}
+	}
+
+	if len(summary) < 2 {
+		t.Fatalf("expected 2 return slots, got %v", summary)
+	}
+	if !unwrap.IsOptionalLike(summary[1]) {
+		t.Fatalf("expected second slot to be optional, got %v", summary[1])
+	}
+	nonNilErr := narrow.RemoveNil(summary[1])
+	if !typ.TypeEquals(nonNilErr, typ.LuaError) {
+		t.Fatalf("expected second slot non-nil type to be LuaError, got %v", nonNilErr)
+	}
+}
+
 // TestReturnSummary_NoNilSlots verifies that multi-return forwarding produces
 // no nil entries in SeedsPrev. Each slot must be a concrete type or
 // typ.Unknown, never nil.
