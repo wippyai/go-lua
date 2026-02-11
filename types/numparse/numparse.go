@@ -70,8 +70,8 @@ func ParseFloatLiteral(s string) (float64, bool) {
 	if i, ok := ParseIntegerLiteral(s); ok {
 		return float64(i), true
 	}
-	_, f, ok := ParseNumberLiteral(s)
-	if !ok {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
 		return 0, false
 	}
 	return f, true
@@ -85,8 +85,8 @@ func ParseIntegralLiteral(s string) (int64, bool) {
 	if i, ok := ParseIntegerLiteral(s); ok {
 		return i, true
 	}
-	f, ok := ParseFloatLiteral(s)
-	if !ok || math.IsInf(f, 0) || math.IsNaN(f) {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
 		return 0, false
 	}
 	if math.Trunc(f) != f {
