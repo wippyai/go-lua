@@ -152,7 +152,7 @@ func TestSelectIntercept_VarargWithoutResolver_SkipsFalse(t *testing.T) {
 	}
 }
 
-func TestSelectIntercept_ConcreteIndex_ReturnsArgType(t *testing.T) {
+func TestSelectIntercept_ConcreteIndex_ReturnsTailTypes(t *testing.T) {
 	s := &SelectIntercept{}
 	ex := &ast.FuncCallExpr{
 		Func: &ast.IdentExpr{Value: "select"},
@@ -160,7 +160,7 @@ func TestSelectIntercept_ConcreteIndex_ReturnsArgType(t *testing.T) {
 			&ast.NumberExpr{Value: "2"},
 			&ast.StringExpr{Value: "first"},
 			&ast.StringExpr{Value: "second"},
-			&ast.StringExpr{Value: "third"},
+			&ast.NumberExpr{Value: "3"},
 		},
 	}
 	selectFn := typ.Func().
@@ -173,6 +173,9 @@ func TestSelectIntercept_ConcreteIndex_ReturnsArgType(t *testing.T) {
 		Recurse: func(e ast.Expr) typ.Type {
 			if _, ok := e.(*ast.StringExpr); ok {
 				return typ.String
+			}
+			if _, ok := e.(*ast.NumberExpr); ok {
+				return typ.Number
 			}
 			return typ.Unknown
 		},
@@ -187,8 +190,11 @@ func TestSelectIntercept_ConcreteIndex_ReturnsArgType(t *testing.T) {
 	if !result.Skip {
 		t.Fatal("expected skip=true for concrete index")
 	}
-	if result.Types[0] != typ.String {
-		t.Fatal("expected string type")
+	if len(result.Types) != 2 {
+		t.Fatalf("expected 2 tail types, got %d", len(result.Types))
+	}
+	if result.Types[0] != typ.String || result.Types[1] != typ.Number {
+		t.Fatalf("expected [string, number], got [%v, %v]", result.Types[0], result.Types[1])
 	}
 }
 
@@ -257,6 +263,51 @@ func TestSelectIntercept_NegativeIndex(t *testing.T) {
 	}
 	if len(result.Types) != 1 || result.Types[0] != typ.String {
 		t.Fatal("expected string type for negative index selection")
+	}
+}
+
+func TestSelectIntercept_NegativeIndex_ReturnsTailTypes(t *testing.T) {
+	s := &SelectIntercept{}
+	ex := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "select"},
+		Args: []ast.Expr{
+			&ast.NumberExpr{Value: "-2"},
+			&ast.StringExpr{Value: "first"},
+			&ast.NumberExpr{Value: "2"},
+		},
+	}
+	selectFn := typ.Func().
+		Param("index", typ.Any).
+		Variadic(typ.Any).
+		Returns(typ.Any).
+		Effects(effect.WithVariadicTransform()).
+		Build()
+	ctx := CallEnv{
+		Recurse: func(e ast.Expr) typ.Type {
+			if _, ok := e.(*ast.StringExpr); ok {
+				return typ.String
+			}
+			if _, ok := e.(*ast.NumberExpr); ok {
+				return typ.Number
+			}
+			return typ.Unknown
+		},
+		TypeLookup: func(name string) typ.Type {
+			if name == "select" {
+				return selectFn
+			}
+			return nil
+		},
+	}
+	result := s.InterceptCall(ex, ctx)
+	if !result.Skip {
+		t.Fatal("expected skip=true for negative index")
+	}
+	if len(result.Types) != 2 {
+		t.Fatalf("expected 2 tail types, got %d", len(result.Types))
+	}
+	if result.Types[0] != typ.String || result.Types[1] != typ.Number {
+		t.Fatalf("expected [string, number], got [%v, %v]", result.Types[0], result.Types[1])
 	}
 }
 

@@ -37,13 +37,13 @@ func (s *SelectIntercept) InterceptCall(ex *ast.FuncCallExpr, ctx CallEnv) Resul
 		return Result{}
 	}
 
-	t := s.selectReturnType(ex, ctx)
-	if t == nil {
+	types := s.selectReturnTypes(ex, ctx)
+	if len(types) == 0 {
 		return Result{}
 	}
 
 	return Result{
-		Types: []typ.Type{t},
+		Types: types,
 		Skip:  true,
 	}
 }
@@ -55,14 +55,14 @@ func isSelectCall(ex *ast.FuncCallExpr, ctx CallEnv) bool {
 	return calleeHasEffect(ex, ctx, effect.Row.HasVariadicTransform)
 }
 
-func (s *SelectIntercept) selectReturnType(ex *ast.FuncCallExpr, ctx CallEnv) typ.Type {
+func (s *SelectIntercept) selectReturnTypes(ex *ast.FuncCallExpr, ctx CallEnv) []typ.Type {
 	if ex == nil || len(ex.Args) == 0 {
 		return nil
 	}
 
 	// select("#", ...) returns integer
 	if str, ok := ex.Args[0].(*ast.StringExpr); ok && str.Value == "#" {
-		return typ.Integer
+		return []typ.Type{typ.Integer}
 	}
 
 	if len(ex.Args) < 2 {
@@ -72,7 +72,7 @@ func (s *SelectIntercept) selectReturnType(ex *ast.FuncCallExpr, ctx CallEnv) ty
 	// If selecting from varargs, use the variadic type.
 	if _, ok := ex.Args[1].(*ast.Comma3Expr); ok {
 		if s.VariadicResolver != nil {
-			return s.VariadicResolver.VariadicType()
+			return []typ.Type{s.VariadicResolver.VariadicType()}
 		}
 		return nil
 	}
@@ -90,13 +90,24 @@ func (s *SelectIntercept) selectReturnType(ex *ast.FuncCallExpr, ctx CallEnv) ty
 			if pos < 0 || pos >= n || ctx.Recurse == nil {
 				return nil
 			}
-			return ctx.Recurse(ex.Args[pos+1])
+			return tailTypes(ex.Args[pos+1:], ctx.Recurse)
 		}
 		i := int(idx) - 1
 		if i >= 0 && i < len(ex.Args)-1 && ctx.Recurse != nil {
-			return ctx.Recurse(ex.Args[i+1])
+			return tailTypes(ex.Args[i+1:], ctx.Recurse)
 		}
 	}
 
 	return nil
+}
+
+func tailTypes(args []ast.Expr, recurse ExprSynth) []typ.Type {
+	if recurse == nil || len(args) == 0 {
+		return nil
+	}
+	out := make([]typ.Type, 0, len(args))
+	for _, arg := range args {
+		out = append(out, recurse(arg))
+	}
+	return out
 }
