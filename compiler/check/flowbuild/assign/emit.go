@@ -31,7 +31,6 @@ package assign
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
@@ -363,7 +362,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Detect keys collector calls: local keys = sorted_keys(table)
 				if call, retIndex := info.CallForTarget(i); call != nil {
 					var tableSym cfg.SymbolID
-					calleeSymbols := moduleCalleeSymbolCandidates(call, bindings, fc.ModuleBindings)
+					calleeSymbols := callsite.CalleeSymbolCandidates(call, bindings, fc.ModuleBindings)
 
 					// Try local function analysis first
 					if keysCollector != nil {
@@ -645,33 +644,6 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			}
 		}
 	})
-}
-
-func moduleCalleeSymbolCandidates(call *cfg.CallInfo, localBindings, moduleBindings *bind.BindingTable) []cfg.SymbolID {
-	if call == nil {
-		return nil
-	}
-	candidates := make([]cfg.SymbolID, 0, 4)
-	seen := make(map[cfg.SymbolID]struct{}, 4)
-	push := func(sym cfg.SymbolID) {
-		if sym == 0 {
-			return
-		}
-		if _, ok := seen[sym]; ok {
-			return
-		}
-		seen[sym] = struct{}{}
-		candidates = append(candidates, sym)
-	}
-
-	push(call.CalleeSymbol)
-	push(callsite.CanonicalSymbolFromExpr(call.Callee, call.CalleeSymbol, localBindings, moduleBindings, nil))
-	if moduleBindings != nil && call.CalleeName != "" {
-		for _, sym := range moduleBindings.SymbolsByName(call.CalleeName) {
-			push(sym)
-		}
-	}
-	return candidates
 }
 
 // ExtractFuncDefAssignments extracts function definitions as assignments.
