@@ -191,8 +191,8 @@ func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.Func
 		return nil
 	}
 
-	fieldName, ok := fieldNameFromExpr(attr.Key)
-	if !ok || fieldName == "" {
+	calleeSeg, ok := path.StaticKeySegment(attr.Key)
+	if !ok {
 		return nil
 	}
 
@@ -202,8 +202,8 @@ func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.Func
 	}
 
 	for _, field := range tableLit.Fields {
-		keyName, ok := fieldNameFromExpr(field.Key)
-		if !ok || keyName != fieldName {
+		fieldSeg, ok := path.StaticKeySegment(field.Key)
+		if !ok || fieldSeg.Kind != calleeSeg.Kind || fieldSeg.Name != calleeSeg.Name {
 			continue
 		}
 		if fn, ok := field.Value.(*ast.FunctionExpr); ok {
@@ -212,17 +212,6 @@ func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.Func
 	}
 
 	return nil
-}
-
-func fieldNameFromExpr(expr ast.Expr) (string, bool) {
-	switch e := expr.(type) {
-	case *ast.StringExpr:
-		return e.Value, e.Value != ""
-	case *ast.IdentExpr:
-		return e.Value, e.Value != ""
-	default:
-		return "", false
-	}
 }
 
 // Ref resolves typ.Ref to its actual type using scope type lookup.

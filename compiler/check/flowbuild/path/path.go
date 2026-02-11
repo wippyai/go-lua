@@ -22,6 +22,34 @@ type versionedGraph interface {
 	VisibleVersion(p cfg.Point, sym cfg.SymbolID) cfg.Version
 }
 
+// StaticKeySegment converts a syntactically static key expression into a path segment.
+//
+// Supported static keys:
+//   - identifier key: foo        -> SegmentField("foo")
+//   - string key: "foo"          -> SegmentField("foo")
+//   - string key: "x-y"          -> SegmentIndexString("x-y")
+//
+// Returns false for unsupported or empty keys.
+func StaticKeySegment(key ast.Expr) (constraint.Segment, bool) {
+	switch k := key.(type) {
+	case *ast.IdentExpr:
+		if k.Value == "" {
+			return constraint.Segment{}, false
+		}
+		return constraint.Segment{Kind: constraint.SegmentField, Name: k.Value}, true
+	case *ast.StringExpr:
+		if k.Value == "" {
+			return constraint.Segment{}, false
+		}
+		if pathkey.IsIdentName(k.Value) {
+			return constraint.Segment{Kind: constraint.SegmentField, Name: k.Value}, true
+		}
+		return constraint.Segment{Kind: constraint.SegmentIndexString, Name: k.Value}, true
+	default:
+		return constraint.Segment{}, false
+	}
+}
+
 // WithVersion binds a path to the SSA version visible at point p.
 // If the path is unversioned or the version is unavailable, it is returned unchanged.
 func WithVersion(path constraint.Path, graph versionedGraph, p cfg.Point) constraint.Path {
@@ -62,10 +90,11 @@ func FromExprWithBindings(expr ast.Expr, constResolver func(string) *flow.ConstV
 		}
 		switch key := e.Key.(type) {
 		case *ast.StringExpr:
-			if pathkey.IsIdentName(key.Value) {
-				return base.Append(constraint.Segment{Kind: constraint.SegmentField, Name: key.Value})
+			seg, ok := StaticKeySegment(key)
+			if !ok {
+				return constraint.Path{}
 			}
-			return base.Append(constraint.Segment{Kind: constraint.SegmentIndexString, Name: key.Value})
+			return base.Append(seg)
 		case *ast.NumberExpr:
 			if idx, ok := pathkey.ParseIntLiteral(key.Value); ok {
 				return base.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})

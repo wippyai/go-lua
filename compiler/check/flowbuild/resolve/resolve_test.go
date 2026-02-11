@@ -274,6 +274,63 @@ func TestResolveCalleeToFunctionLiteral_TableFieldFunction(t *testing.T) {
 	}
 }
 
+func TestResolveCalleeToFunctionLiteral_TableIndexStringFunction(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local t = {
+			["x-y"] = function(x)
+				return x
+			end
+		}
+		t["x-y"](1)
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{
+		ParList: &ast.ParList{},
+		Stmts:   stmts,
+	})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	var (
+		callee ast.Expr
+		want   *ast.FunctionExpr
+	)
+	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if callee != nil || info == nil {
+			return
+		}
+		callee = info.Callee
+	})
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if want != nil || info == nil {
+			return
+		}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			if want != nil || target.Name != "t" {
+				return
+			}
+			tbl, ok := source.(*ast.TableExpr)
+			if !ok || len(tbl.Fields) == 0 {
+				return
+			}
+			if fn, ok := tbl.Fields[0].Value.(*ast.FunctionExpr); ok {
+				want = fn
+			}
+		})
+	})
+	if callee == nil || want == nil {
+		t.Fatal("expected callee and table field function literal")
+	}
+
+	got := resolve.ResolveCalleeToFunctionLiteral(callee, graph)
+	if got != want {
+		t.Fatalf("ResolveCalleeToFunctionLiteral mismatch: got %p want %p", got, want)
+	}
+}
+
 func TestResolveCalleeToFunctionLiteral_TableFieldNotFunction(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local t = { f = 1 }

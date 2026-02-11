@@ -68,6 +68,42 @@ func TestPathFromExpr_AttrGetExpr_NumberKey(t *testing.T) {
 	}
 }
 
+func TestStaticKeySegment_Ident(t *testing.T) {
+	seg, ok := path.StaticKeySegment(&ast.IdentExpr{Value: "name"})
+	if !ok {
+		t.Fatal("expected static key segment")
+	}
+	if seg.Kind != constraint.SegmentField || seg.Name != "name" {
+		t.Fatalf("unexpected segment: kind=%v name=%q", seg.Kind, seg.Name)
+	}
+}
+
+func TestStaticKeySegment_StringIdentifier(t *testing.T) {
+	seg, ok := path.StaticKeySegment(&ast.StringExpr{Value: "name"})
+	if !ok {
+		t.Fatal("expected static key segment")
+	}
+	if seg.Kind != constraint.SegmentField || seg.Name != "name" {
+		t.Fatalf("unexpected segment: kind=%v name=%q", seg.Kind, seg.Name)
+	}
+}
+
+func TestStaticKeySegment_StringNonIdentifier(t *testing.T) {
+	seg, ok := path.StaticKeySegment(&ast.StringExpr{Value: "x-y"})
+	if !ok {
+		t.Fatal("expected static key segment")
+	}
+	if seg.Kind != constraint.SegmentIndexString || seg.Name != "x-y" {
+		t.Fatalf("unexpected segment: kind=%v name=%q", seg.Kind, seg.Name)
+	}
+}
+
+func TestStaticKeySegment_Unsupported(t *testing.T) {
+	if _, ok := path.StaticKeySegment(&ast.NumberExpr{Value: "1"}); ok {
+		t.Fatal("expected unsupported key to return ok=false")
+	}
+}
+
 func TestPathFromExpr_Unsupported(t *testing.T) {
 	p := path.FromExprWithBindings(&ast.StringExpr{Value: "hello"}, nil, nil)
 	if !p.IsEmpty() {
