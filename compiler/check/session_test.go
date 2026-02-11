@@ -347,7 +347,7 @@ func TestLookupConstructorFields_ZeroSymbol(t *testing.T) {
 
 func TestLookupConstructorFields_FromNext(t *testing.T) {
 	store := store.NewSessionStore()
-	SetConstructorFieldsNext(store, map[cfg.SymbolID]map[string]typ.Type{
+	setConstructorFieldsNextForTest(store, map[cfg.SymbolID]map[string]typ.Type{
 		1: {"x": typ.Number},
 	})
 	result := store.LookupConstructorFields(1)
@@ -358,7 +358,7 @@ func TestLookupConstructorFields_FromNext(t *testing.T) {
 
 func TestLookupConstructorFields_FromPrev(t *testing.T) {
 	store := store.NewSessionStore()
-	SetConstructorFieldsPrev(store, map[cfg.SymbolID]map[string]typ.Type{
+	setConstructorFieldsPrevForTest(store, map[cfg.SymbolID]map[string]typ.Type{
 		1: {"y": typ.String},
 	})
 	result := store.LookupConstructorFields(1)

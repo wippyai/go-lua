@@ -6,8 +6,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// SetConstructorFieldsNext sets the ConstructorFields Next map for testing.
-func SetConstructorFieldsNext(s *store.SessionStore, fields map[cfg.SymbolID]map[string]typ.Type) {
+func setConstructorFieldsNextForTest(s *store.SessionStore, fields map[cfg.SymbolID]map[string]typ.Type) {
 	if s == nil {
 		return
 	}
@@ -17,8 +16,7 @@ func SetConstructorFieldsNext(s *store.SessionStore, fields map[cfg.SymbolID]map
 	s.InterprocNext.ConstructorFields = fields
 }
 
-// SetConstructorFieldsPrev sets the ConstructorFields Prev map for testing.
-func SetConstructorFieldsPrev(s *store.SessionStore, fields map[cfg.SymbolID]map[string]typ.Type) {
+func setConstructorFieldsPrevForTest(s *store.SessionStore, fields map[cfg.SymbolID]map[string]typ.Type) {
 	if s == nil {
 		return
 	}
