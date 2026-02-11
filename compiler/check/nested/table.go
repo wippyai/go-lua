@@ -23,15 +23,15 @@ func FindTableLiteralForSymbol(graph *cfg.Graph, sym cfg.SymbolID) (*ast.TableEx
 		if result != nil {
 			return
 		}
-		for i, target := range info.Targets {
-			if target.Symbol == sym && i < len(info.Sources) {
-				if tbl, ok := info.Sources[i].(*ast.TableExpr); ok {
-					result = tbl
-					resultPoint = p
-					return
-				}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
+			if target.Symbol != sym {
+				return
 			}
-		}
+			if tbl, ok := src.(*ast.TableExpr); ok {
+				result = tbl
+				resultPoint = p
+			}
+		})
 	})
 	return result, resultPoint
 }
@@ -67,19 +67,19 @@ func FindFieldAssignmentBase(graph *cfg.Graph, fn *ast.FunctionExpr, point cfg.P
 	// Prefer the assignment at the function's definition point.
 	if point != 0 {
 		if info := graph.Assign(point); info != nil {
-			for i, target := range info.Targets {
-				if i >= len(info.Sources) || !matchFunc(info.Sources[i]) {
-					continue
+			info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
+				if !matchFunc(src) {
+					return
 				}
 				if target.Kind == cfg.TargetField && target.BaseSymbol != 0 {
 					baseSym = target.BaseSymbol
-					break
+					return
 				}
 				if target.Kind == cfg.TargetIndex && target.BaseSymbol != 0 {
 					baseSym = target.BaseSymbol
-					break
+					return
 				}
-			}
+			})
 		}
 	}
 
@@ -87,9 +87,9 @@ func FindFieldAssignmentBase(graph *cfg.Graph, fn *ast.FunctionExpr, point cfg.P
 		if baseSym != 0 {
 			return
 		}
-		for i, target := range info.Targets {
-			if i >= len(info.Sources) || !matchFunc(info.Sources[i]) {
-				continue
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
+			if !matchFunc(src) {
+				return
 			}
 			if target.Kind == cfg.TargetField && target.BaseSymbol != 0 {
 				baseSym = target.BaseSymbol
@@ -99,7 +99,7 @@ func FindFieldAssignmentBase(graph *cfg.Graph, fn *ast.FunctionExpr, point cfg.P
 				baseSym = target.BaseSymbol
 				return
 			}
-		}
+		})
 	})
 	if baseSym == 0 {
 		return 0, nil, 0
@@ -127,10 +127,13 @@ func FindTableLiteralOwner(graph *cfg.Graph, fn *ast.FunctionExpr) (*ast.TableEx
 		if resultTbl != nil {
 			return
 		}
-		for i, src := range info.Sources {
+		info.EachSource(func(i int, src ast.Expr) {
+			if resultTbl != nil {
+				return
+			}
 			tbl, ok := src.(*ast.TableExpr)
 			if !ok {
-				continue
+				return
 			}
 			for _, field := range tbl.Fields {
 				if field.Value == fn {
@@ -141,7 +144,7 @@ func FindTableLiteralOwner(graph *cfg.Graph, fn *ast.FunctionExpr) (*ast.TableEx
 					return
 				}
 			}
-		}
+		})
 	})
 	return resultTbl, resultSym
 }

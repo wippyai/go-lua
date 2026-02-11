@@ -29,34 +29,30 @@ func CollectAliases(graph *cfg.Graph) map[cfg.SymbolID]string {
 	aliases := make(map[cfg.SymbolID]string)
 
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil || len(info.Targets) == 0 || len(info.Sources) == 0 {
+		if info == nil || len(info.Targets) == 0 {
 			return
 		}
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent {
-				continue
+				return
 			}
-			if i >= len(info.Sources) {
-				continue
-			}
-			source := info.Sources[i]
 			if source == nil {
-				continue
+				return
 			}
 			call, ok := source.(*ast.FuncCallExpr)
 			if !ok || call.Method != "" || call.Receiver != nil {
-				continue
+				return
 			}
 			ident, ok := call.Func.(*ast.IdentExpr)
 			if !ok || ident.Value != "require" {
-				continue
+				return
 			}
 			if len(call.Args) != 1 {
-				continue
+				return
 			}
 			strLit, ok := call.Args[0].(*ast.StringExpr)
 			if !ok {
-				continue
+				return
 			}
 
 			sym := target.Symbol
@@ -64,14 +60,14 @@ func CollectAliases(graph *cfg.Graph) map[cfg.SymbolID]string {
 				var symOk bool
 				sym, symOk = graph.SymbolAt(p, target.Name)
 				if !symOk {
-					continue
+					return
 				}
 			}
 			if sym == 0 {
-				continue
+				return
 			}
 			aliases[sym] = strLit.Value
-		}
+		})
 	})
 
 	if len(aliases) == 0 {

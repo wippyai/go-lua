@@ -272,26 +272,23 @@ func (s *Session) RegisterGraphHierarchy(root *cfg.Graph) {
 		}
 		// Register local function assignments within this graph.
 		g.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-			if info == nil || !info.IsLocal || len(info.Targets) == 0 || len(info.Sources) == 0 {
+			if info == nil || !info.IsLocal || len(info.Targets) == 0 {
 				return
 			}
-			for i, target := range info.Targets {
+			info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-					continue
+					return
 				}
-				if i >= len(info.Sources) {
-					continue
-				}
-				if fnExpr, ok := info.Sources[i].(*ast.FunctionExpr); ok && fnExpr != nil {
+				if fnExpr, ok := source.(*ast.FunctionExpr); ok && fnExpr != nil {
 					child := s.GetOrBuildCFG(fnExpr)
 					if child == nil {
-						continue
+						return
 					}
 					s.Store.RegisterGraph(child, fnExpr)
 					s.Store.RegisterNestedMeta(child.ID(), g.ID(), p)
 					s.Store.RegisterFunctionRef(target.Symbol, fnExpr, child, g.ID(), p)
 				}
-			}
+			})
 		})
 		g.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
 			if info == nil || info.Symbol == 0 || info.FuncExpr == nil {

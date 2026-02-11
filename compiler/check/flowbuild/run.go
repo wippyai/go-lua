@@ -126,12 +126,12 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	MergeCallConstraintsIntoEdges(inputs, callConstraints)
 
 	// Mark terminating call edges as unreachable (error(), etc.).
-	fc.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	for _, p := range fc.Graph.RPO() {
 		if fc.Derived == nil {
-			return
+			continue
 		}
-		if !cond.CallTerminates(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.Graph) {
-			return
+		if !cond.PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym) {
+			continue
 		}
 		for _, succ := range fc.Graph.Successors(p) {
 			inputs.EdgeConditions = append(inputs.EdgeConditions, flow.EdgeCondition{
@@ -140,7 +140,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 				Condition: constraint.FalseCondition(),
 			})
 		}
-	})
+	}
 
 	// Mark return points with no predecessors as dead.
 	markDeadReturns(fc.Graph, inputs)

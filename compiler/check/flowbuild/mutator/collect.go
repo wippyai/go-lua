@@ -38,8 +38,8 @@ func CollectTableInsertMutations(
 			return
 		}
 
-		targetExpr := RuntimeArgAtCall(info, tm.Target.Index)
-		valueExpr := RuntimeArgAtCall(info, tm.Value.Index)
+		targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
+		valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
 		if targetExpr == nil || valueExpr == nil {
 			return
 		}
@@ -50,7 +50,7 @@ func CollectTableInsertMutations(
 			return
 		}
 
-		baseSym := symbolForTarget(targetAttr.Object, bindings)
+		baseSym := callsite.SymbolOrCreateFieldFromExpr(targetAttr.Object, bindings)
 		if baseSym == 0 {
 			return
 		}
@@ -125,14 +125,14 @@ func CollectTableInsertOnDirect(
 			return
 		}
 
-		targetExpr := RuntimeArgAtCall(info, tm.Target.Index)
-		valueExpr := RuntimeArgAtCall(info, tm.Value.Index)
+		targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
+		valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
 		if targetExpr == nil || valueExpr == nil {
 			return
 		}
 
 		// Check if target resolves to a direct symbol (identifier or static field path).
-		sym := symbolForTarget(targetExpr, bindings)
+		sym := callsite.SymbolOrCreateFieldFromExpr(targetExpr, bindings)
 		if sym == 0 {
 			return
 		}
@@ -155,20 +155,6 @@ func CollectTableInsertOnDirect(
 	})
 
 	return result
-}
-
-func symbolForTarget(expr ast.Expr, bindings *bind.BindingTable) cfg.SymbolID {
-	if expr == nil || bindings == nil {
-		return 0
-	}
-	if sym := callsite.SymbolFromExpr(expr, bindings); sym != 0 {
-		return sym
-	}
-	baseSym, fieldPath, ok := callsite.FieldPathWithBaseSymbol(bindings, expr)
-	if !ok || baseSym == 0 || fieldPath == "" {
-		return 0
-	}
-	return bindings.GetOrCreateFieldSymbol(baseSym, fieldPath)
 }
 
 // MergeIndexerMutations merges table mutator mutations into indexer assignments.

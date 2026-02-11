@@ -20,16 +20,13 @@ func CollectConstAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 	values := make(map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue)
 
 	fc.Graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Name == "" {
-				continue
+				return
 			}
-			if i >= len(info.Sources) {
-				continue
-			}
-			val := ConstValueFromExpr(info.Sources[i])
+			val := ConstValueFromExpr(source)
 			if val == nil {
-				continue
+				return
 			}
 
 			sym := target.Symbol
@@ -38,7 +35,7 @@ func CollectConstAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 				values[sym] = make(map[cfg.Point]*flow.ConstValue)
 			}
 			values[sym][p] = val
-		}
+		})
 	})
 
 	inputs.ConstValues = values

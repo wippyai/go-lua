@@ -2,7 +2,9 @@ package extract
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	compcfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
@@ -120,7 +122,7 @@ func (s *Synthesizer) SynthCallCore(ex *ast.FuncCallExpr, p cfg.Point, sc *scope
 // synthCallCoreWithNarrower synthesizes call with narrower context preserved.
 func (s *Synthesizer) synthCallCoreWithNarrower(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth, expected typ.Type) []typ.Type {
 	if ex.Method != "" || ex.Receiver != nil {
-		return s.synthMethodCallCoreWithExpected(ex, sc, recurse, expected)
+		return s.synthMethodCallCoreWithExpected(ex, p, sc, recurse, expected)
 	}
 
 	env := intercept.CallEnv{
@@ -168,7 +170,7 @@ func (s *Synthesizer) SynthCallCoreWithExpected(ex *ast.FuncCallExpr, p cfg.Poin
 }
 
 // synthMethodCallCoreWithExpected synthesizes method call with optional expected return type.
-func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, sc *scope.State, recurse ExprSynth, expected typ.Type) []typ.Type {
+func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, recurse ExprSynth, expected typ.Type) []typ.Type {
 	env := intercept.CallEnv{
 		Scope:      sc,
 		Recurse:    intercept.ExprSynth(recurse),
@@ -185,12 +187,13 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, sc *
 	calleeType := s.resolveMethodCallee(recvType, ex.Method)
 
 	def := ops.CallDef{
-		IsMethod:       true,
-		Receiver:       recvType,
-		MethodName:     ex.Method,
-		Args:           args,
-		Query:          s.GetCallQuery(),
-		ExpectedReturn: expected,
+		IsMethod:            true,
+		Receiver:            recvType,
+		MethodName:          ex.Method,
+		Args:                args,
+		Query:               s.GetCallQuery(),
+		ExpectedReturn:      expected,
+		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
 	}
 
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
@@ -225,11 +228,12 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 	calleeType := s.resolveMethodCallee(recvType, ex.Method)
 
 	def := ops.CallDef{
-		IsMethod:   true,
-		Receiver:   recvType,
-		MethodName: ex.Method,
-		Args:       args,
-		Query:      s.GetCallQuery(),
+		IsMethod:            true,
+		Receiver:            recvType,
+		MethodName:          ex.Method,
+		Args:                args,
+		Query:               s.GetCallQuery(),
+		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
 	}
 
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
@@ -317,6 +321,18 @@ func (s *Synthesizer) resolveMethodCallee(recvType typ.Type, method string) typ.
 		return ft
 	}
 	return nil
+}
+
+func (s *Synthesizer) forceMethodReceiverAtPoint(p cfg.Point, ex *ast.FuncCallExpr) bool {
+	bindings := s.deps.ModuleBindings
+	if bindings == nil && s.deps.CheckCtx != nil {
+		bindings = s.deps.CheckCtx.Bindings()
+	}
+	var graph *compcfg.Graph
+	if s.deps.CheckCtx != nil {
+		graph, _ = s.deps.CheckCtx.Graph().(*compcfg.Graph)
+	}
+	return callsite.ForceMethodReceiverAtPoint(bindings, graph, p, ex)
 }
 
 // Method looks up a method type on a receiver type.
@@ -417,18 +433,32 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 // synthesizer's context so they are visible inside the callback body only.
 func (s *Synthesizer) callbackAwareReSynth(calleeType typ.Type, sc *scope.State) ArgReSynth {
 	return func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
-		fnExpr, ok := arg.(*ast.FunctionExpr)
-		if !ok {
-			return nil
-		}
 		expectedFn, ok := unwrap.Alias(expected).(*typ.Function)
 		if !ok {
 			return nil
 		}
-		if overlay := callbackEnvOverlay(calleeType, idx); len(overlay) > 0 {
-			return s.withEnvOverlay(overlay).SynthFunctionTypeWithExpected(fnExpr, sc, expectedFn)
+
+		fnExpr, ok := arg.(*ast.FunctionExpr)
+		if !ok {
+			ident, isIdent := arg.(*ast.IdentExpr)
+			if !isIdent {
+				return nil
+			}
+			fnExpr = s.functionLiteralForIdent(ident)
+			if fnExpr == nil {
+				return nil
+			}
 		}
-		return s.SynthFunctionTypeWithExpected(fnExpr, sc, expectedFn)
+
+		synthFn := s.SynthFunctionTypeWithExpected
+		if overlay := callbackEnvOverlay(calleeType, idx); len(overlay) > 0 {
+			synthFn = s.withEnvOverlay(overlay).SynthFunctionTypeWithExpected
+		}
+		ft := synthFn(fnExpr, sc, expectedFn)
+		if ft == nil {
+			return nil
+		}
+		return ft
 	}
 }
 

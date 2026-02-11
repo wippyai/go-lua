@@ -151,7 +151,12 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 
 	store := sess.StoreHandle()
 	parentHash := uint64(0)
-	if parent != nil {
+	if store != nil {
+		if stable := store.GraphParentHashOf(graph.ID()); stable != 0 {
+			parentHash = stable
+		}
+	}
+	if parentHash == 0 && parent != nil {
 		parentHash = parent.Hash()
 	}
 

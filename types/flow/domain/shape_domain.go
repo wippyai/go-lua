@@ -3,7 +3,6 @@ package domain
 import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 )
 
 // ShapeDomain handles structural narrowing for tables and records.
@@ -195,7 +194,7 @@ func (d *ShapeDomain) Join(other Domain) Domain {
 	for _, key := range constraint.SortedPathKeys(d.Narrowed) {
 		dt := d.Narrowed[key]
 		if ot, ok := o.Narrowed[key]; ok {
-			result.Narrowed[key] = join.Two(dt, ot)
+			result.Narrowed[key] = typ.JoinPreferNonSoft(dt, ot)
 		}
 	}
 	return result

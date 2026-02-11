@@ -319,23 +319,29 @@ func ExtractCallOnReturnConstraints(
 	inputs *flow.Inputs,
 ) map[EdgeKey]constraint.Condition {
 	out := make(map[EdgeKey]constraint.Condition)
+	if fc == nil || fc.Graph == nil || fc.Derived == nil || inputs == nil {
+		return out
+	}
 
-	fc.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	for _, p := range fc.Graph.RPO() {
+		if !PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym) {
+			continue
+		}
+		for _, succ := range fc.Graph.Successors(p) {
+			preds := fc.Graph.Predecessors(succ)
+			if len(preds) != 1 {
+				continue
+			}
+			if inputs.DeadPoints == nil {
+				inputs.DeadPoints = make(map[cfg.Point]bool)
+			}
+			inputs.DeadPoints[succ] = true
+		}
+	}
+
+	fc.Graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
 		sc := fc.Scopes[p]
 		constResolver := predicate.BuildConstResolver(inputs, p)
-
-		if terminates := CallTerminates(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.Graph); terminates {
-			for _, succ := range fc.Graph.Successors(p) {
-				preds := fc.Graph.Predecessors(succ)
-				if len(preds) != 1 {
-					continue
-				}
-				if inputs.DeadPoints == nil {
-					inputs.DeadPoints = make(map[cfg.Point]bool)
-				}
-				inputs.DeadPoints[succ] = true
-			}
-		}
 
 		cond := ConstraintsFromCallOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.EffectBySym, constResolver, fc.Derived.SymResolver, fc.Graph)
 		if !cond.HasConstraints() {
@@ -652,7 +658,7 @@ func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.Func
 		return nil
 	}
 
-	tableLit := ResolveExprToTableLiteral(attr.Object, graph)
+	tableLit := resolve.ResolveExprToTableLiteral(attr.Object, graph)
 	if tableLit == nil {
 		return nil
 	}
@@ -676,85 +682,6 @@ func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.Func
 	}
 
 	return nil
-}
-
-// ResolveSymbolToFunctionLiteral attempts to resolve a symbol ID to a function literal
-// defined in the current graph (local function definitions or assignments).
-func ResolveSymbolToFunctionLiteral(graph *cfg.Graph, sym cfg.SymbolID) *ast.FunctionExpr {
-	if graph == nil || sym == 0 {
-		return nil
-	}
-
-	var found *ast.FunctionExpr
-	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-		if found != nil || info == nil {
-			return
-		}
-		if info.Symbol == sym {
-			found = info.FuncExpr
-		}
-	})
-	if found != nil {
-		return found
-	}
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if found != nil || info == nil {
-			return
-		}
-		for i, target := range info.Targets {
-			if target.Symbol == sym && i < len(info.Sources) {
-				if fn, ok := info.Sources[i].(*ast.FunctionExpr); ok {
-					found = fn
-					return
-				}
-			}
-		}
-	})
-	return found
-}
-
-func ResolveExprToTableLiteral(expr ast.Expr, graph *cfg.Graph) *ast.TableExpr {
-	if expr == nil || graph == nil {
-		return nil
-	}
-
-	if tbl, ok := expr.(*ast.TableExpr); ok {
-		return tbl
-	}
-
-	ident, ok := expr.(*ast.IdentExpr)
-	if !ok {
-		return nil
-	}
-
-	bindings := graph.Bindings()
-	if bindings == nil {
-		return nil
-	}
-
-	sym, found := bindings.SymbolOf(ident)
-	if !found || sym == 0 {
-		return nil
-	}
-
-	var tableLit *ast.TableExpr
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if tableLit != nil || info == nil || !info.IsLocal {
-			return
-		}
-		for i, target := range info.Targets {
-			if target.Symbol == sym && target.Kind == cfg.TargetIdent {
-				if i < len(info.Sources) {
-					if tbl, ok := info.Sources[i].(*ast.TableExpr); ok {
-						tableLit = tbl
-					}
-				}
-				return
-			}
-		}
-	})
-
-	return tableLit
 }
 
 // CallTerminates checks if a call is to a function that never returns.
@@ -819,6 +746,26 @@ func CallTerminates(
 	return false
 }
 
+// PointHasTerminatingCallSite reports whether any callsite represented at point p
+// definitely terminates control flow.
+func PointHasTerminatingCallSite(
+	graph *cfg.Graph,
+	p cfg.Point,
+	synthFn func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	effectLookupSym constraint.EffectLookupBySym,
+) bool {
+	if graph == nil {
+		return false
+	}
+	for _, callInfo := range graph.CallSitesAt(p) {
+		if CallTerminates(callInfo, p, synthFn, symResolver, effectLookupSym, graph) {
+			return true
+		}
+	}
+	return false
+}
+
 // ConstraintsFromAssignOnReturn extracts OnReturn constraints from assignment RHS calls.
 func ConstraintsFromAssignOnReturn(
 	info *cfg.AssignInfo,
@@ -836,10 +783,7 @@ func ConstraintsFromAssignOnReturn(
 		return constraint.Condition{}
 	}
 	var combined constraint.Condition
-	for _, callInfo := range info.SourceCalls {
-		if callInfo == nil {
-			continue
-		}
+	info.EachSourceCall(func(_ int, callInfo *cfg.CallInfo) {
 		if cond := ConstraintsFromCallOnReturn(callInfo, p, sc, inputs, synthFn, typeKeyResolver, effectLookupSym, constResolver, symResolver, graph); cond.HasConstraints() {
 			if !combined.HasConstraints() {
 				combined = cond
@@ -847,7 +791,7 @@ func ConstraintsFromAssignOnReturn(
 				combined = constraint.And(combined, cond)
 			}
 		}
-	}
+	})
 	return combined
 }
 
@@ -935,8 +879,8 @@ func ComputeDeadPoints(
 	effectLookupSym constraint.EffectLookupBySym,
 ) map[cfg.Point]bool {
 	dead := make(map[cfg.Point]bool)
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
-		if CallTerminates(info, p, synthFn, symResolver, effectLookupSym, graph) {
+	for _, p := range graph.RPO() {
+		if PointHasTerminatingCallSite(graph, p, synthFn, symResolver, effectLookupSym) {
 			for _, succ := range graph.Successors(p) {
 				preds := graph.Predecessors(succ)
 				if len(preds) == 1 {
@@ -944,7 +888,7 @@ func ComputeDeadPoints(
 				}
 			}
 		}
-	})
+	}
 	entry := graph.Entry()
 	graph.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
 		if p == entry {

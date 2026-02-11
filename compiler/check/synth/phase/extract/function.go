@@ -96,10 +96,23 @@ func (s *Synthesizer) SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *sc
 		resolveScope = resolveScope.WithTypeParams(typeParams)
 	}
 
+	implicitSelf := core.HasImplicitSelfParam(fn, s.deps.ModuleBindings)
+	var implicitSelfType typ.Type
+	if implicitSelf {
+		if expected != nil && len(expected.Params) > 0 && expected.Params[0].Name == "self" && expected.Params[0].Type != nil {
+			implicitSelfType = expected.Params[0].Type
+		}
+		if implicitSelfType == nil && resolveScope != nil && resolveScope.SelfType() != nil {
+			implicitSelfType = resolveScope.SelfType()
+		}
+	}
+
 	core.ApplyParamList(builder, fn, core.ParamListConfig{
-		ResolveType:  s.ResolveType,
-		ResolveScope: resolveScope,
-		Expected:     expected,
+		ResolveType:      s.ResolveType,
+		ResolveScope:     resolveScope,
+		Expected:         expected,
+		ImplicitSelf:     implicitSelf,
+		ImplicitSelfType: implicitSelfType,
 	})
 
 	// Build CFG once, shared between overlay inference and return inference.
@@ -168,48 +181,26 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		}
 	}
 
+	var fnSym cfg.SymbolID
+	if s.deps.CheckCtx != nil {
+		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && pg != nil {
+			fnSym = localFunctionSymbol(pg, fn)
+		}
+	}
+
 	// If a return summary exists for this function symbol, use the full vector.
 	// Narrowing uses post-flow summaries; declared uses pre-flow summaries.
-	if len(returnSummaries) > 0 && s.deps.CheckCtx != nil {
-		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && pg != nil {
-			var fnSym cfg.SymbolID
-			pg.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-				if fnSym != 0 || info == nil || !info.IsLocal || len(info.Targets) == 0 || len(info.Sources) == 0 {
-					return
+	if len(returnSummaries) > 0 && fnSym != 0 {
+		if rt := returnSummaries[fnSym]; len(rt) > 0 {
+			hasKnown := false
+			for _, t := range rt {
+				if t != nil && t.Kind() != kind.Unknown {
+					hasKnown = true
+					break
 				}
-				for i, target := range info.Targets {
-					if target.Kind != cfg.TargetIdent || target.Symbol == 0 || i >= len(info.Sources) {
-						continue
-					}
-					if info.Sources[i] == fn {
-						fnSym = target.Symbol
-						return
-					}
-				}
-			})
-			if fnSym == 0 {
-				pg.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-					if fnSym != 0 || info == nil || info.Symbol == 0 {
-						return
-					}
-					if info.FuncExpr == fn {
-						fnSym = info.Symbol
-					}
-				})
 			}
-			if fnSym != 0 {
-				if rt := returnSummaries[fnSym]; len(rt) > 0 {
-					hasKnown := false
-					for _, t := range rt {
-						if t != nil && t.Kind() != kind.Unknown {
-							hasKnown = true
-							break
-						}
-					}
-					if hasKnown {
-						return rt
-					}
-				}
+			if hasKnown {
+				return rt
 			}
 		}
 	}
@@ -277,23 +268,20 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 	// returnSummaries resolved above (pre-flow or post-flow depending on phase).
 
 	fnGraph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if info == nil || !info.IsLocal || len(info.Targets) == 0 || len(info.Sources) == 0 {
+		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
 			return
 		}
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
+				return
 			}
-			if i >= len(info.Sources) {
-				continue
-			}
-			if fnExpr, ok := info.Sources[i].(*ast.FunctionExpr); ok {
+			if fnExpr, ok := source.(*ast.FunctionExpr); ok {
 				fnType := s.buildFunctionTypeWithSummary(fnExpr, resolveScope, target.Symbol, returnSummaries)
 				if fnType != nil {
 					overlay[target.Symbol] = fnType
 				}
 			}
-		}
+		})
 	})
 
 	// Include captured symbol types from the parent context.
@@ -341,32 +329,29 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 						}
 					}
 					pg.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-						if info == nil || !info.IsLocal || len(info.Targets) == 0 || len(info.Sources) == 0 {
+						if info == nil || !info.IsLocal || len(info.Targets) == 0 {
 							return
 						}
-						for i, target := range info.Targets {
+						info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 							if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-								continue
+								return
 							}
 							if !visibleSyms[target.Symbol] {
-								continue
+								return
 							}
 							if _, ok := overlay[target.Symbol]; ok {
-								continue
+								return
 							}
-							if i >= len(info.Sources) {
-								continue
-							}
-							if fnExpr, ok := info.Sources[i].(*ast.FunctionExpr); ok {
+							if fnExpr, ok := source.(*ast.FunctionExpr); ok {
 								if fnExpr == fn {
-									continue
+									return
 								}
 								fnType := s.buildFunctionTypeWithSummary(fnExpr, parentScope, target.Symbol, returnSummaries)
 								if fnType != nil {
 									overlay[target.Symbol] = fnType
 								}
 							}
-						}
+						})
 					})
 				}
 			}
@@ -416,21 +401,21 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 	// Single-pass local inference from assignments (best-effort).
 	localInferred := make(map[cfg.SymbolID]typ.Type)
 	fnGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil || !info.IsLocal || len(info.Targets) == 0 || len(info.Sources) == 0 {
+		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
 			return
 		}
 		values := prelimSynth.ExpandValues(info.Sources, len(info.Targets), p)
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
+				return
 			}
 			if _, exists := overlay[target.Symbol]; exists {
-				continue
+				return
 			}
 			if i < len(values) && values[i] != nil {
 				localInferred[target.Symbol] = values[i]
 			}
-		}
+		})
 	})
 	for sym, t := range localInferred {
 		if _, exists := overlay[sym]; !exists {
@@ -498,7 +483,11 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 			} else {
 				t = typ.Nil
 			}
-			returnTypes[i] = join.Two(returnTypes[i], t)
+			if fnSym != 0 {
+				returnTypes[i] = typ.JoinReturnSlot(returnTypes[i], t)
+			} else {
+				returnTypes[i] = typ.JoinPreferNonSoft(returnTypes[i], t)
+			}
 		}
 	})
 
@@ -510,6 +499,38 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 	}
 
 	return returnTypes
+}
+
+func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
+	if graph == nil || fn == nil {
+		return 0
+	}
+	var fnSym cfg.SymbolID
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if fnSym != 0 || info == nil || !info.IsLocal || len(info.Targets) == 0 {
+			return
+		}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+				return
+			}
+			if source == fn {
+				fnSym = target.Symbol
+			}
+		})
+	})
+	if fnSym != 0 {
+		return fnSym
+	}
+	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
+		if fnSym != 0 || info == nil || info.Symbol == 0 {
+			return
+		}
+		if info.FuncExpr == fn {
+			fnSym = info.Symbol
+		}
+	})
+	return fnSym
 }
 
 // inferReturnExprTypes synthesizes types from return expressions using CFG point.
@@ -576,11 +597,9 @@ func (s *Synthesizer) buildFunctionTypeWithSummary(
 		returnTypes = returnSummaries[sym]
 	}
 
-	// If no summary available, return signature as-is (with unknown return)
 	if len(returnTypes) == 0 {
-		return sig
+		return join.WithReturns(sig, []typ.Type{typ.Unknown})
 	}
-
 	return join.WithReturns(sig, returnTypes)
 }
 

@@ -424,6 +424,7 @@ func TestCallFunction_MethodOnLiteralReceiverConsumesSelf(t *testing.T) {
 		[]typ.Type{typ.Integer, typ.Integer},
 		typ.LiteralString("abc"),
 		true,
+		false,
 		nil,
 	)
 
@@ -432,5 +433,57 @@ func TestCallFunction_MethodOnLiteralReceiverConsumesSelf(t *testing.T) {
 	}
 	if result.Type != typ.String {
 		t.Fatalf("expected string return type, got: %v", result.Type)
+	}
+}
+
+func TestCallFunction_UnknownParamStillRequired(t *testing.T) {
+	fn := typ.Func().
+		Param("x", typ.Unknown).
+		Returns(typ.Boolean).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	result := callFunction(ctx, nil, fn, nil, nil, false, false, nil)
+
+	if len(result.Errors) == 0 {
+		t.Fatal("expected arity error for missing required unknown param")
+	}
+}
+
+func TestCallFunction_RequiredAfterOptionalStillRequiresPosition(t *testing.T) {
+	fn := typ.Func().
+		OptParam("a", typ.Number).
+		Param("b", typ.Number).
+		Returns(typ.Number).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number}, nil, false, false, nil)
+
+	if len(result.Errors) == 0 {
+		t.Fatal("expected arity error when required param appears after optional")
+	}
+}
+
+func TestCallFunction_MethodAlwaysConsumesReceiver(t *testing.T) {
+	fn := typ.Func().
+		Param("x", typ.Number).
+		Returns(typ.Number).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	result := callFunction(
+		ctx,
+		nil,
+		fn,
+		[]typ.Type{typ.Number},
+		typ.String,
+		true,
+		true,
+		nil,
+	)
+
+	if len(result.Errors) == 0 {
+		t.Fatal("expected method call to fail when signature does not accept receiver")
 	}
 }

@@ -1,10 +1,16 @@
 package cond
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
+	"github.com/wippyai/go-lua/compiler/parse"
+	typecfg "github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -117,21 +123,21 @@ func TestResolveCalleeToFunctionLiteral_FunctionExpr(t *testing.T) {
 }
 
 func TestResolveSymbolToFunctionLiteral_NilGraph(t *testing.T) {
-	result := ResolveSymbolToFunctionLiteral(nil, 1)
+	result := resolve.ResolveSymbolToFunctionLiteral(nil, 1)
 	if result != nil {
 		t.Error("nil graph should return nil")
 	}
 }
 
 func TestResolveSymbolToFunctionLiteral_ZeroSymbol(t *testing.T) {
-	result := ResolveSymbolToFunctionLiteral(nil, 0)
+	result := resolve.ResolveSymbolToFunctionLiteral(nil, 0)
 	if result != nil {
 		t.Error("zero symbol should return nil")
 	}
 }
 
 func TestResolveExprToTableLiteral_NilExpr(t *testing.T) {
-	result := ResolveExprToTableLiteral(nil, nil)
+	result := resolve.ResolveExprToTableLiteral(nil, nil)
 	if result != nil {
 		t.Error("nil expr should return nil")
 	}
@@ -139,7 +145,7 @@ func TestResolveExprToTableLiteral_NilExpr(t *testing.T) {
 
 func TestResolveExprToTableLiteral_NilGraph(t *testing.T) {
 	tbl := &ast.TableExpr{}
-	result := ResolveExprToTableLiteral(tbl, nil)
+	result := resolve.ResolveExprToTableLiteral(tbl, nil)
 	if result != nil {
 		t.Error("nil graph should return nil")
 	}
@@ -166,4 +172,100 @@ func TestComputeDeadPoints_NilGraph(t *testing.T) {
 		}
 	}()
 	_ = ComputeDeadPoints(nil, nil, nil, nil)
+}
+
+func TestPointHasTerminatingCallSite_AssignSourceCall(t *testing.T) {
+	src := `
+		local x = error("boom")
+		local y = 1
+	`
+	stmts, err := parse.Parse(strings.NewReader(src), "test")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts}, "error")
+	if graph == nil {
+		t.Fatal("expected non-nil graph")
+	}
+
+	var (
+		xPoint   typecfg.Point
+		yPoint   typecfg.Point
+		errorSym typecfg.SymbolID
+	)
+	graph.EachAssign(func(p typecfg.Point, info *cfg.AssignInfo) {
+		if info == nil || len(info.Targets) == 0 || info.Targets[0].Kind != cfg.TargetIdent {
+			return
+		}
+		switch info.Targets[0].Name {
+		case "x":
+			xPoint = p
+			if call := info.SingleSourceCall(); call != nil {
+				errorSym = call.CalleeSymbol
+			}
+		case "y":
+			yPoint = p
+		}
+	})
+	if xPoint == 0 || errorSym == 0 {
+		t.Fatal("expected x assignment with resolvable error() call symbol")
+	}
+
+	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionEffect {
+		if sym == errorSym {
+			return &constraint.FunctionEffect{Terminates: true}
+		}
+		return nil
+	}
+
+	if !PointHasTerminatingCallSite(graph, xPoint, nil, nil, effectLookup) {
+		t.Fatal("expected terminating callsite at x assignment point")
+	}
+	if yPoint != 0 && PointHasTerminatingCallSite(graph, yPoint, nil, nil, effectLookup) {
+		t.Fatal("did not expect terminating callsite at y assignment point")
+	}
+}
+
+func TestComputeDeadPoints_AssignSourceCallTerminates(t *testing.T) {
+	src := `
+		local x = error("boom")
+		local y = 1
+	`
+	stmts, err := parse.Parse(strings.NewReader(src), "test")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts}, "error")
+	if graph == nil {
+		t.Fatal("expected non-nil graph")
+	}
+
+	var (
+		xPoint   typecfg.Point
+		errorSym typecfg.SymbolID
+	)
+	graph.EachAssign(func(p typecfg.Point, info *cfg.AssignInfo) {
+		if info == nil || len(info.Targets) == 0 || info.Targets[0].Kind != cfg.TargetIdent || info.Targets[0].Name != "x" {
+			return
+		}
+		xPoint = p
+		if call := info.SingleSourceCall(); call != nil {
+			errorSym = call.CalleeSymbol
+		}
+	})
+	if xPoint == 0 || errorSym == 0 {
+		t.Fatal("expected x assignment with resolvable error() call symbol")
+	}
+
+	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionEffect {
+		if sym == errorSym {
+			return &constraint.FunctionEffect{Terminates: true}
+		}
+		return nil
+	}
+
+	dead := ComputeDeadPoints(graph, nil, nil, effectLookup)
+	if len(dead) == 0 {
+		t.Fatal("expected at least one dead point from terminating assignment call")
+	}
 }

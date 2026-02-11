@@ -337,7 +337,7 @@ end
 
 		// Count calls in this function
 		callCount := 0
-		funcResult.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+		funcResult.Graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
 			if info != nil {
 				callCount++
 			}
@@ -353,7 +353,7 @@ end
 
 		// Log calls
 		t.Log("  Calls:")
-		funcResult.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+		funcResult.Graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
 			if info != nil {
 				t.Logf("    Point %v: CalleeName=%q Method=%q Callee=%T", p, info.CalleeName, info.Method, info.Callee)
 			}

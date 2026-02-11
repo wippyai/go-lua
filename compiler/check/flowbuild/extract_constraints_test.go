@@ -136,7 +136,7 @@ func TestResolveCalleeToFunctionLiteral_Ident(t *testing.T) {
 }
 
 func TestResolveExprToTableLiteral_NilExpr(t *testing.T) {
-	result := cond.ResolveExprToTableLiteral(nil, nil)
+	result := resolve.ResolveExprToTableLiteral(nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil expr")
 	}
@@ -145,7 +145,7 @@ func TestResolveExprToTableLiteral_NilExpr(t *testing.T) {
 func TestResolveExprToTableLiteral_DirectTable(t *testing.T) {
 	tbl := &ast.TableExpr{}
 	// Function returns nil when graph is nil (guards against nil graph access)
-	result := cond.ResolveExprToTableLiteral(tbl, nil)
+	result := resolve.ResolveExprToTableLiteral(tbl, nil)
 	if result != nil {
 		t.Error("expected nil when graph is nil")
 	}
@@ -153,7 +153,7 @@ func TestResolveExprToTableLiteral_DirectTable(t *testing.T) {
 
 func TestResolveExprToTableLiteral_IdentWithoutGraph(t *testing.T) {
 	ident := &ast.IdentExpr{Value: "tbl"}
-	result := cond.ResolveExprToTableLiteral(ident, nil)
+	result := resolve.ResolveExprToTableLiteral(ident, nil)
 	if result != nil {
 		t.Error("expected nil without graph")
 	}

@@ -38,6 +38,30 @@ func TestJoinReturnVectorsPreferNonSoft_SameLength(t *testing.T) {
 	}
 }
 
+func TestTypJoinReturnSlot_PreservesUnknownOverNil(t *testing.T) {
+	got := typ.JoinReturnSlot(typ.Unknown, typ.Nil)
+	if !typ.TypeEquals(got, typ.Unknown) {
+		t.Fatalf("typ.JoinReturnSlot(unknown, nil) = %v, want unknown", got)
+	}
+
+	got = typ.JoinReturnSlot(typ.Nil, typ.Unknown)
+	if !typ.TypeEquals(got, typ.Unknown) {
+		t.Fatalf("typ.JoinReturnSlot(nil, unknown) = %v, want unknown", got)
+	}
+}
+
+func TestReturnTypesAllNil(t *testing.T) {
+	if !ReturnTypesAllNil([]typ.Type{typ.Nil}) {
+		t.Fatal("expected [nil] to be nil-only")
+	}
+	if ReturnTypesAllNil([]typ.Type{typ.Nil, typ.Unknown}) {
+		t.Fatal("expected [nil, unknown] to not be nil-only")
+	}
+	if ReturnTypesAllNil(nil) {
+		t.Fatal("expected empty return vector to not be nil-only")
+	}
+}
+
 func TestJoinReturnVectorsPreferNonSoft_DifferentLengths(t *testing.T) {
 	a := []typ.Type{typ.String, typ.Number}
 	b := []typ.Type{typ.Boolean}

@@ -7,6 +7,14 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+func makeAliasChain(base typ.Type, depth int, prefix string) typ.Type {
+	out := base
+	for i := 0; i < depth; i++ {
+		out = &typ.Alias{Name: prefix, Target: out}
+	}
+	return out
+}
+
 func TestIsNumeric_Primitives(t *testing.T) {
 	tests := []struct {
 		name string
@@ -252,6 +260,27 @@ func TestIsNumeric_TypeParam(t *testing.T) {
 	tpUnconstrained := &typ.TypeParam{Name: "T", Constraint: nil}
 	if IsNumeric(tpUnconstrained) {
 		t.Error("unconstrained type param should not be numeric")
+	}
+}
+
+func TestIsNumeric_DeepAliasChain(t *testing.T) {
+	deep := makeAliasChain(typ.Number, 40, "N")
+	if !IsNumeric(deep) {
+		t.Fatal("deep alias chain to number should be numeric")
+	}
+}
+
+func TestIsStringable_DeepAliasChain(t *testing.T) {
+	deep := makeAliasChain(typ.String, 40, "S")
+	if !IsStringable(deep) {
+		t.Fatal("deep alias chain to string should be stringable")
+	}
+}
+
+func TestHasLength_DeepAliasChain(t *testing.T) {
+	deep := makeAliasChain(typ.NewArray(typ.Number), 40, "A")
+	if !HasLength(deep) {
+		t.Fatal("deep alias chain to array should have length")
 	}
 }
 

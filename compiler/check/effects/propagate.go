@@ -41,7 +41,7 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionEf
 	// Start with the function's own Terminates value.
 	terminates := fnEffect.Terminates
 
-	result.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	result.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}

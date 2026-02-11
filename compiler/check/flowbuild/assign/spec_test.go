@@ -5,7 +5,11 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -91,6 +95,12 @@ func TestIsUnknownOrNil_Unknown(t *testing.T) {
 	}
 }
 
+func TestIsUnknownOrNil_NilType(t *testing.T) {
+	if !isUnknownOrNil(typ.Nil) {
+		t.Error("expected true for typ.Nil")
+	}
+}
+
 func TestIsUnknownOrNil_ValidType(t *testing.T) {
 	if isUnknownOrNil(typ.String) {
 		t.Error("expected false for typ.String")
@@ -141,4 +151,152 @@ func TestNarrowReturnTypeBySpec_WithSymResolver(t *testing.T) {
 	if result != nil {
 		t.Errorf("expected nil for type without spec, got %v", result)
 	}
+}
+
+func TestNarrowReturnTypeBySpec_PassesPointToSymResolver(t *testing.T) {
+	callInfo := &cfg.CallInfo{
+		CalleeSymbol: 1,
+	}
+	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
+		return nil
+	}
+	wantPoint := cfg.Point(42)
+	seenPoint := cfg.Point(0)
+	symResolver := func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+		seenPoint = p
+		return typ.Integer, true
+	}
+	_ = NarrowReturnTypeBySpec(callInfo, nil, synth, wantPoint, symResolver)
+	if seenPoint != wantPoint {
+		t.Fatalf("symResolver point = %d, want %d", seenPoint, wantPoint)
+	}
+}
+
+func TestCollectSpecNarrowedTypes_MultiReturnTrailingTarget(t *testing.T) {
+	code := `
+		local obj = make()
+		local ok, msg = obj:receive()
+		local from = msg:from()
+	`
+	chunk, err := parse.ParseString(code, "spec_multi_return.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk}, "make")
+	exit := graph.Exit()
+	symObj, ok := graph.SymbolAt(exit, "obj")
+	if !ok || symObj == 0 {
+		t.Fatal("expected symbol for obj")
+	}
+	symMsg, ok := graph.SymbolAt(exit, "msg")
+	if !ok || symMsg == 0 {
+		t.Fatal("expected symbol for msg")
+	}
+	symFrom, ok := graph.SymbolAt(exit, "from")
+	if !ok || symFrom == 0 {
+		t.Fatal("expected symbol for from")
+	}
+
+	msgType := typ.NewRecord().
+		Field("id", typ.String).
+		Build()
+	objType := typ.NewInterface("Obj", []typ.Method{
+		{
+			Name: "receive",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.Boolean, msgType).
+				Build(),
+		},
+	})
+	makeType := typ.Func().
+		Returns(objType).
+		Spec(contract.NewSpec().WithReturnCase(constraint.TrueCondition(), objType)).
+		Build()
+
+	synth := func(expr ast.Expr, _ cfg.Point) typ.Type {
+		if ident, ok := expr.(*ast.IdentExpr); ok && ident.Value == "make" {
+			return makeType
+		}
+		return typ.Unknown
+	}
+	synthAPI := &specTestSynthAPI{
+		graph:   graph,
+		msgType: msgType,
+	}
+
+	result := CollectSpecNarrowedTypes(graph, map[cfg.Point]*scope.State{}, synth, nil, synthAPI)
+	if !typ.TypeEquals(result[symObj], objType) {
+		t.Fatalf("expected obj type to be inferred, got %v", result[symObj])
+	}
+	if !typ.TypeEquals(result[symMsg], msgType) {
+		t.Fatalf("expected trailing target msg type to be inferred, got %v", result[symMsg])
+	}
+	if !typ.TypeEquals(result[symFrom], typ.String) {
+		t.Fatalf("expected dependent from type to be inferred, got %v", result[symFrom])
+	}
+}
+
+type specTestSynthAPI struct {
+	graph   *cfg.Graph
+	msgType typ.Type
+}
+
+func (s *specTestSynthAPI) TypeOf(_ ast.Expr, _ cfg.Point) typ.Type {
+	return typ.Unknown
+}
+
+func (s *specTestSynthAPI) ExpandValues(_ []ast.Expr, needed int, _ cfg.Point) []typ.Type {
+	return make([]typ.Type, needed)
+}
+
+func (s *specTestSynthAPI) InferIterVars(_ []ast.Expr, count int, _ cfg.Point) []typ.Type {
+	return make([]typ.Type, count)
+}
+
+func (s *specTestSynthAPI) ExpandValuesWithSpecTypes(_ []ast.Expr, needed int, p cfg.Point, specTypes api.SpecTypes) []typ.Type {
+	values := make([]typ.Type, needed)
+	if s == nil || s.graph == nil {
+		return values
+	}
+	info := s.graph.Assign(p)
+	if info == nil {
+		return values
+	}
+	for i := 0; i < needed; i++ {
+		call, retIdx := info.CallForTarget(i)
+		if call == nil {
+			continue
+		}
+		switch call.Method {
+		case "receive":
+			if call.ReceiverSymbol == 0 {
+				continue
+			}
+			if _, ok := specTypes[call.ReceiverSymbol]; !ok {
+				continue
+			}
+			switch retIdx {
+			case 0:
+				values[i] = typ.Boolean
+			case 1:
+				values[i] = s.msgType
+			}
+		case "from":
+			if call.ReceiverSymbol == 0 {
+				continue
+			}
+			if _, ok := specTypes[call.ReceiverSymbol]; !ok {
+				continue
+			}
+			if retIdx == 0 {
+				values[i] = typ.String
+			}
+		}
+	}
+	return values
+}
+
+func (s *specTestSynthAPI) InferIterVarsWithSpecTypes(_ []ast.Expr, count int, _ cfg.Point, _ api.SpecTypes) []typ.Type {
+	return make([]typ.Type, count)
 }

@@ -550,8 +550,8 @@ func collectInferredTypes(
 				if tm == nil {
 					continue
 				}
-				targetExpr := mutator.RuntimeArgAtCall(info, tm.Target.Index)
-				valueExpr := mutator.RuntimeArgAtCall(info, tm.Value.Index)
+				targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
+				valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
 				if targetExpr == nil || valueExpr == nil {
 					continue
 				}
@@ -569,7 +569,7 @@ func collectInferredTypes(
 
 				// Handle indexed targets (t[k]) even when key is non-const.
 				if attr, ok := targetExpr.(*ast.AttrGetExpr); ok {
-					baseSym := resolve.SymbolFromExpr(attr.Object, bindings)
+					baseSym := callsite.SymbolOrCreateFieldFromExpr(attr.Object, bindings)
 					if baseSym != 0 && sccSet[baseSym] {
 						keyType := wrappedSynth(attr.Key, p)
 						keyType = resolve.Ref(keyType, sc)

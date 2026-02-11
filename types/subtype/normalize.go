@@ -114,7 +114,9 @@ func normalizeIntersectionDepth(types []typ.Type, depth int) typ.Type {
 		return typ.Any
 	}
 
-	if depth > internal.MaxShallowDepth {
+	// Use the canonical typ recursion budget to avoid behavior cliffs between
+	// shallow normalization and other type operations (which use typ.NewGuard()).
+	if depth > typ.DefaultRecursionDepth {
 		return typ.NewIntersection(types...)
 	}
 

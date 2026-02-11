@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -30,6 +31,10 @@ func WidenParamHintType(t typ.Type) typ.Type {
 		if inner != v.Inner && inner != nil {
 			return typ.NewOptional(inner)
 		}
+	case *typ.Alias:
+		if v.Target != nil {
+			return WidenParamHintType(v.Target)
+		}
 	case *typ.Union:
 		changed := false
 		members := make([]typ.Type, 0, len(v.Members))
@@ -54,13 +59,42 @@ func WidenParamHintType(t typ.Type) typ.Type {
 // poison hints, while preserving structured hints such as maps/arrays with
 // partial information (for example `{[string]: any[]}`).
 func IsInformativeHintType(t typ.Type) bool {
+	return isInformativeHintType(t, typ.NewGuard())
+}
+
+func isInformativeHintType(t typ.Type, guard internal.RecursionGuard) bool {
 	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
+
+	if t.Kind().IsDeferred() {
 		return false
 	}
 
 	switch t.Kind() {
 	case kind.Any, kind.Unknown, kind.Nil, kind.Never:
 		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Optional:
+		return isInformativeHintType(v.Inner, next)
+	case *typ.Union:
+		for _, m := range v.Members {
+			if isInformativeHintType(m, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Alias:
+		if v.Target == nil {
+			return false
+		}
+		return isInformativeHintType(v.Target, next)
 	}
 
 	if r, ok := t.(*typ.Record); ok {

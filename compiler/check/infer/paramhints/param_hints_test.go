@@ -52,6 +52,14 @@ func TestWidenParamHintType_NonLiteral(t *testing.T) {
 	}
 }
 
+func TestWidenParamHintType_Alias(t *testing.T) {
+	alias := typ.NewAlias("NumAlias", typ.Number)
+	result := WidenParamHintType(alias)
+	if result != typ.Number {
+		t.Errorf("expected alias to widen to Number, got %v", result)
+	}
+}
+
 func TestWidenParamHintType_Optional(t *testing.T) {
 	lit := typ.LiteralString("hello")
 	opt := typ.NewOptional(lit)
@@ -101,6 +109,12 @@ func TestIsInformativeHintType(t *testing.T) {
 		{name: "record map component", in: typ.NewRecord().MapComponent(typ.String, typ.Any).Build(), want: true},
 		{name: "string", in: typ.String, want: true},
 		{name: "literal", in: typ.LiteralString("x"), want: true},
+		{name: "type param", in: typ.NewTypeParam("T", nil), want: false},
+		{name: "ref", in: typ.NewRef("", "Foo"), want: false},
+		{name: "optional unknown", in: typ.NewOptional(typ.Unknown), want: false},
+		{name: "optional string", in: typ.NewOptional(typ.String), want: true},
+		{name: "union placeholders", in: typ.NewUnion(typ.Unknown, typ.Nil), want: false},
+		{name: "union with informative member", in: typ.NewUnion(typ.Unknown, typ.String), want: true},
 	}
 
 	for _, tt := range tests {

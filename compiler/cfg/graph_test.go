@@ -50,21 +50,25 @@ func TestBuild_EmptyFunction(t *testing.T) {
 func TestEachCallSite(t *testing.T) {
 	t.Parallel()
 
+	callF := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
+	callG := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "g"}}
+	callH := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "h"}}
+
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{},
 		Stmts: []ast.Stmt{
 			&ast.FuncCallStmt{
-				Expr: &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}},
+				Expr: callF,
 			},
 			&ast.LocalAssignStmt{
 				Names: []string{"x"},
 				Exprs: []ast.Expr{
-					&ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "g"}},
+					callG,
 				},
 			},
 			&ast.ReturnStmt{
 				Exprs: []ast.Expr{
-					&ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "h"}},
+					callH,
 				},
 			},
 		},
@@ -91,6 +95,119 @@ func TestEachCallSite(t *testing.T) {
 	}
 	if names[0] != "f" || names[1] != "g" || names[2] != "h" {
 		t.Fatalf("call order = %v, want [f g h]", names)
+	}
+}
+
+func TestEachStmtCall(t *testing.T) {
+	t.Parallel()
+
+	callF := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
+	callG := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "g"}}
+	callH := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "h"}}
+
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{},
+		Stmts: []ast.Stmt{
+			&ast.FuncCallStmt{Expr: callF},
+			&ast.LocalAssignStmt{
+				Names: []string{"x"},
+				Exprs: []ast.Expr{callG},
+			},
+			&ast.ReturnStmt{
+				Exprs: []ast.Expr{callH},
+			},
+		},
+	}
+
+	g := Build(fn, "f", "g", "h")
+	if g == nil {
+		t.Fatal("Build should not return nil")
+	}
+
+	var names []string
+	g.EachStmtCall(func(_ Point, info *CallInfo) {
+		if info == nil {
+			return
+		}
+		if info.CalleeName != "" {
+			names = append(names, info.CalleeName)
+		}
+	})
+
+	if len(names) != 1 {
+		t.Fatalf("got %d stmt calls, want 1", len(names))
+	}
+	if names[0] != "f" {
+		t.Fatalf("stmt call order = %v, want [f]", names)
+	}
+}
+
+func TestGraph_CallSitesAtAndCallSiteAt(t *testing.T) {
+	t.Parallel()
+
+	callF := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
+	callG := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "g"}}
+	callH := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "h"}}
+
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{},
+		Stmts: []ast.Stmt{
+			&ast.FuncCallStmt{Expr: callF},
+			&ast.LocalAssignStmt{
+				Names: []string{"x"},
+				Exprs: []ast.Expr{callG},
+			},
+			&ast.ReturnStmt{
+				Exprs: []ast.Expr{callH},
+			},
+		},
+	}
+
+	g := Build(fn, "f", "g", "h")
+	if g == nil {
+		t.Fatal("Build should not return nil")
+	}
+
+	var callPoint Point
+	var assignPoint Point
+	var returnPoint Point
+
+	g.EachCall(func(p Point, info *CallInfo) {
+		if info != nil && info.Call == callF {
+			callPoint = p
+		}
+	})
+	g.EachAssign(func(p Point, _ *AssignInfo) {
+		assignPoint = p
+	})
+	g.EachReturn(func(p Point, _ *ReturnInfo) {
+		returnPoint = p
+	})
+
+	if got := g.CallSiteAt(callPoint, callF); got == nil || got.CalleeName != "f" {
+		t.Fatalf("CallSiteAt direct call mismatch: got %+v", got)
+	}
+	if got := g.CallSiteAt(assignPoint, callG); got == nil || got.CalleeName != "g" {
+		t.Fatalf("CallSiteAt assign source mismatch: got %+v", got)
+	}
+	if got := g.CallSiteAt(returnPoint, callH); got == nil || got.CalleeName != "h" {
+		t.Fatalf("CallSiteAt return source mismatch: got %+v", got)
+	}
+	if got := g.CallSiteAt(assignPoint, callF); got != nil {
+		t.Fatalf("CallSiteAt should not match unrelated call expression, got %+v", got)
+	}
+
+	directSites := g.CallSitesAt(callPoint)
+	if len(directSites) != 1 || directSites[0].Call != callF {
+		t.Fatalf("CallSitesAt direct call mismatch: %+v", directSites)
+	}
+	assignSites := g.CallSitesAt(assignPoint)
+	if len(assignSites) != 1 || assignSites[0].Call != callG {
+		t.Fatalf("CallSitesAt assign call mismatch: %+v", assignSites)
+	}
+	returnSites := g.CallSitesAt(returnPoint)
+	if len(returnSites) != 1 || returnSites[0].Call != callH {
+		t.Fatalf("CallSitesAt return call mismatch: %+v", returnSites)
 	}
 }
 

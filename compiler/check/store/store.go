@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 )
 
 type SessionStore struct {
@@ -413,7 +412,7 @@ func (s *SessionStore) StoreConstructorFields(classSym cfg.SymbolID, fields map[
 	}
 	for name, t := range fields {
 		if existing := dst[name]; existing != nil {
-			dst[name] = join.Two(existing, t)
+			dst[name] = typ.JoinPreferNonSoft(existing, t)
 		} else {
 			dst[name] = t
 		}
@@ -469,7 +468,13 @@ func (s *SessionStore) Graphs() map[uint64]*cfg.Graph {
 
 // GraphKeyFor returns the interproc graph key for a graph and parent scope.
 func (s *SessionStore) GraphKeyFor(graph *cfg.Graph, parent *scope.State) (api.GraphKey, bool) {
-	if s == nil || graph == nil || parent == nil {
+	if s == nil || graph == nil {
+		return api.GraphKey{}, false
+	}
+	if parentHash := s.GraphParentHashOf(graph.ID()); parentHash != 0 {
+		return api.KeyForGraph(graph, parentHash), true
+	}
+	if parent == nil {
 		return api.GraphKey{}, false
 	}
 	return api.KeyForGraph(graph, parent.Hash()), true

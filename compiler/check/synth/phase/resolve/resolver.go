@@ -43,12 +43,14 @@ const maxTypeDepth = 64
 type Resolver struct {
 	manifests io.ManifestQuerier
 	exprSynth api.ExprSynth
+	bindings  core.ParamSymbolLookup
 }
 
 // Config configures a Resolver.
 type Config struct {
 	Manifests io.ManifestQuerier
 	ExprSynth api.ExprSynth
+	Bindings  core.ParamSymbolLookup
 }
 
 // New creates a new type resolver.
@@ -56,6 +58,7 @@ func New(c Config) *Resolver {
 	return &Resolver{
 		manifests: c.Manifests,
 		exprSynth: c.ExprSynth,
+		bindings:  c.Bindings,
 	}
 }
 
@@ -112,9 +115,17 @@ func (r *Resolver) ResolveFunctionSignature(fn *ast.FunctionExpr, sc *scope.Stat
 		resolveScope = resolveScope.WithTypeParams(typeParams)
 	}
 
+	implicitSelf := core.HasImplicitSelfParam(fn, r.bindings)
+	var implicitSelfType typ.Type
+	if implicitSelf && resolveScope != nil && resolveScope.SelfType() != nil {
+		implicitSelfType = resolveScope.SelfType()
+	}
+
 	core.ApplyParamList(builder, fn, core.ParamListConfig{
-		ResolveType:  r.ResolveType,
-		ResolveScope: resolveScope,
+		ResolveType:      r.ResolveType,
+		ResolveScope:     resolveScope,
+		ImplicitSelf:     implicitSelf,
+		ImplicitSelfType: implicitSelfType,
 	})
 
 	if len(fn.ReturnTypes) > 0 {

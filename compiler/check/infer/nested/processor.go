@@ -29,6 +29,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/siblings"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -241,20 +242,25 @@ func (p *Processor) processNestedFunction(
 	// For methods with self parameter, derive self-type from the owning object.
 	if info.FuncDef == nil || !info.FuncDef.IsMethod {
 		fn := info.NF.Func
-		if fn.ParList != nil && len(fn.ParList.Names) > 0 && fn.ParList.Names[0] == "self" {
-			if len(fn.ParList.Types) == 0 || fn.ParList.Types[0] == nil {
-				selfType, tblSym := p.resolveSelfTypeForImplicitSelf(info, siblingTypes, graph, parentResult, capturedTypes)
-				if selfType != nil && tblSym != 0 && p.store != nil {
-					selfType = nested.EnrichSelfTypeWithConstructorFields(selfType, tblSym, &nestedStoreAdapter{store: p.store})
-				}
-				if selfType != nil {
-					parentScope = parentScope.WithSelf(selfType).WithLocalName("self")
-				}
+		if phasecore.HasUnannotatedSelfParam(fn, graph.Bindings()) {
+			selfType, tblSym := p.resolveSelfTypeForImplicitSelf(info, siblingTypes, graph, parentResult, capturedTypes)
+			if selfType != nil && tblSym != 0 && p.store != nil {
+				selfType = nested.EnrichSelfTypeWithConstructorFields(selfType, tblSym, &nestedStoreAdapter{store: p.store})
+			}
+			if selfType != nil {
+				parentScope = parentScope.WithSelf(selfType).WithLocalName("self")
 			}
 		}
 	}
 
 	if nestedGraph != nil && len(capturedTypes) > 0 && p.store != nil {
+		if parentScope != nil && p.store.GraphParentHashOf(nestedGraph.ID()) == 0 {
+			if setter, ok := p.store.(interface {
+				SetGraphParentHash(graphID, parentHash uint64)
+			}); ok {
+				setter.SetGraphParentHash(nestedGraph.ID(), parentScope.Hash())
+			}
+		}
 		if key, ok := p.store.GraphKeyFor(nestedGraph, parentScope); ok {
 			p.store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
 				if facts.CapturedTypes == nil {

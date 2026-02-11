@@ -105,34 +105,69 @@ func TestClassifyReturnExpr_OtherExpr(t *testing.T) {
 	}
 }
 
-func TestSymbolFromExpr_IdentExpr(t *testing.T) {
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{Names: []string{"x"}},
+func TestResolveSymbolToFunctionLiteral_LocalAssign(t *testing.T) {
+	fnLit := &ast.FunctionExpr{
+		ParList: &ast.ParList{},
+		Stmts:   []ast.Stmt{&ast.ReturnStmt{}},
+	}
+	root := &ast.FunctionExpr{
+		ParList: &ast.ParList{},
 		Stmts: []ast.Stmt{
-			&ast.ReturnStmt{Exprs: []ast.Expr{&ast.IdentExpr{Value: "x"}}},
+			&ast.LocalAssignStmt{
+				Names: []string{"f"},
+				Exprs: []ast.Expr{fnLit},
+			},
 		},
 	}
-	bindings := bind.Bind(fn, nil)
-	retStmt := fn.Stmts[0].(*ast.ReturnStmt)
-	ident := retStmt.Exprs[0].(*ast.IdentExpr)
+	graph := cfg.Build(root)
+	if graph == nil {
+		t.Fatal("expected non-nil graph")
+	}
 
-	result := resolve.SymbolFromExpr(ident, bindings)
-	if result == 0 {
-		t.Error("expected non-zero symbol")
+	var sym cfg.SymbolID
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if sym != 0 || info == nil {
+			return
+		}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			if target.Name == "f" && source == fnLit {
+				sym = target.Symbol
+			}
+		})
+	})
+	if sym == 0 {
+		t.Fatal("expected non-zero symbol for local function assignment")
+	}
+
+	got := resolve.ResolveSymbolToFunctionLiteral(graph, sym)
+	if got != fnLit {
+		t.Fatalf("ResolveSymbolToFunctionLiteral mismatch: got %p want %p", got, fnLit)
 	}
 }
 
-func TestSymbolFromExpr_NonIdentExpr(t *testing.T) {
-	result := resolve.SymbolFromExpr(&ast.StringExpr{Value: "x"}, nil)
-	if result != 0 {
-		t.Error("expected 0 for non-ident expr")
+func TestResolveExprToTableLiteral_IdentRef(t *testing.T) {
+	tbl := &ast.TableExpr{}
+	retIdent := &ast.IdentExpr{Value: "t"}
+	root := &ast.FunctionExpr{
+		ParList: &ast.ParList{},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"t"},
+				Exprs: []ast.Expr{tbl},
+			},
+			&ast.ReturnStmt{
+				Exprs: []ast.Expr{retIdent},
+			},
+		},
 	}
-}
+	graph := cfg.Build(root)
+	if graph == nil {
+		t.Fatal("expected non-nil graph")
+	}
 
-func TestSymbolFromExpr_NilBindings(t *testing.T) {
-	result := resolve.SymbolFromExpr(&ast.IdentExpr{Value: "x"}, nil)
-	if result != 0 {
-		t.Error("expected 0 for nil bindings")
+	got := resolve.ResolveExprToTableLiteral(retIdent, graph)
+	if got != tbl {
+		t.Fatalf("ResolveExprToTableLiteral mismatch: got %p want %p", got, tbl)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/flow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -39,16 +40,15 @@ func FunctionLiteralTypes(graph *cfg.Graph, synth api.ExprSynth) flow.DeclaredTy
 			continue
 		}
 
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent {
-				continue
+				return
 			}
 			sym := target.Symbol
-			if sym == 0 || i >= len(info.Sources) {
-				continue
+			if sym == 0 {
+				return
 			}
 
-			source := info.Sources[i]
 			switch v := source.(type) {
 			case *ast.FunctionExpr:
 				if t := synth(source, p); t != nil {
@@ -56,13 +56,13 @@ func FunctionLiteralTypes(graph *cfg.Graph, synth api.ExprSynth) flow.DeclaredTy
 				}
 			case *ast.TableExpr:
 				if len(v.Fields) == 0 {
-					continue
+					return
 				}
 				if t := synth(source, p); t != nil {
 					types[sym] = t
 				}
 			}
-		}
+		})
 	}
 
 	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
@@ -219,12 +219,8 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 						}
 					}
 				}
-				if expectedFn == nil && selfType != nil && v.ParList != nil && len(v.ParList.Names) > 0 {
-					if v.ParList.Names[0] == "self" {
-						if len(v.ParList.Types) == 0 || v.ParList.Types[0] == nil {
-							expectedFn = typ.Func().Param("self", selfType).Build()
-						}
-					}
+				if expectedFn == nil && selfType != nil && phasecore.HasUnannotatedSelfParam(v, graph.Bindings()) {
+					expectedFn = typ.Func().Param("self", selfType).Build()
 				}
 				addSig(v, p, expectedFn)
 			case *ast.TableExpr:
@@ -249,14 +245,14 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 		if info == nil || !info.IsLocal {
 			continue
 		}
-		for _, source := range info.Sources {
+		info.EachSource(func(_ int, source ast.Expr) {
 			switch v := source.(type) {
 			case *ast.FunctionExpr:
 				addSig(v, p, nil)
 			case *ast.TableExpr:
 				collectTable(v, p, nil)
 			}
-		}
+		})
 	}
 
 	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
@@ -267,12 +263,8 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 		if info.TargetKind == cfg.FuncDefField || info.TargetKind == cfg.FuncDefMethod {
 			if info.Receiver != nil {
 				recvType := engine.TypeOf(info.Receiver, p)
-				if recvType != nil {
-					hasExplicitSelf := info.FuncExpr.ParList != nil && len(info.FuncExpr.ParList.Names) > 0 && info.FuncExpr.ParList.Names[0] == "self"
-					hasImplicitSelf := info.IsMethod
-					if hasExplicitSelf || hasImplicitSelf {
-						expectedFn = typ.Func().Param("self", recvType).Build()
-					}
+				if recvType != nil && phasecore.HasSelfParam(info.FuncExpr, graph.Bindings()) {
+					expectedFn = typ.Func().Param("self", recvType).Build()
 				}
 			}
 		}

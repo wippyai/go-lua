@@ -63,20 +63,16 @@ func DetectConstructorPattern(nestedGraph, parentGraph *cfg.Graph, fn *ast.Funct
 			if found != 0 {
 				return
 			}
-			for i, target := range info.Targets {
-				if i >= len(info.Sources) {
-					continue
-				}
-				fnExpr, ok := info.Sources[i].(*ast.FunctionExpr)
+			info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
+				fnExpr, ok := src.(*ast.FunctionExpr)
 				if !ok || fnExpr != fn {
-					continue
+					return
 				}
 				if target.Kind == cfg.TargetField && target.BaseSymbol != 0 && len(target.FieldPath) == 1 && target.FieldPath[0] == "new" {
 					found = target.BaseSymbol
 					foundName = target.BaseName
-					return
 				}
-			}
+			})
 		})
 		receiverSymbol = found
 		receiverName = foundName
@@ -111,12 +107,12 @@ func findSetmetatablePatternByName(graph *cfg.Graph, expectedClassName string) c
 		if selfSym != 0 {
 			return
 		}
-		if !info.IsLocal || len(info.Targets) == 0 || len(info.Sources) == 0 {
+		if !info.IsLocal || len(info.Targets) == 0 {
 			return
 		}
 
 		// Look for setmetatable call
-		call, ok := info.Sources[0].(*ast.FuncCallExpr)
+		call, ok := info.SourceAt(0).(*ast.FuncCallExpr)
 		if !ok {
 			return
 		}
@@ -162,9 +158,10 @@ func findSetmetatablePatternByName(graph *cfg.Graph, expectedClassName string) c
 			return
 		}
 
-		target := info.Targets[0]
-		if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
-			selfSym = target.Symbol
+		if target, ok := info.FirstTarget(); ok {
+			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
+				selfSym = target.Symbol
+			}
 		}
 	})
 

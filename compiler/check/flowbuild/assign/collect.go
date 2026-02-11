@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 )
 
 // CollectFieldAssignments scans the graph for field assignments and groups them by base symbol.
@@ -28,7 +27,7 @@ func CollectFieldAssignments(
 		if info == nil {
 			return
 		}
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 			var sym cfg.SymbolID
 			var fieldName string
 
@@ -48,15 +47,15 @@ func CollectFieldAssignments(
 			}
 
 			if sym == 0 || fieldName == "" {
-				continue
+				return
 			}
 			if filterSyms != nil && !filterSyms[sym] {
-				continue
+				return
 			}
 
 			var fieldType typ.Type
-			if i < len(info.Sources) && info.Sources[i] != nil && synth != nil {
-				fieldType = synth(info.Sources[i], p)
+			if source != nil && synth != nil {
+				fieldType = synth(source, p)
 			}
 			if fieldType == nil {
 				fieldType = typ.Unknown
@@ -66,11 +65,11 @@ func CollectFieldAssignments(
 				result[sym] = make(map[string]typ.Type)
 			}
 			if existing := result[sym][fieldName]; existing != nil {
-				result[sym][fieldName] = join.Two(existing, fieldType)
+				result[sym][fieldName] = typ.JoinPreferNonSoft(existing, fieldType)
 			} else {
 				result[sym][fieldName] = fieldType
 			}
-		}
+		})
 	})
 
 	return result
@@ -93,21 +92,21 @@ func CollectIndexerAssignments(
 		if info == nil {
 			return
 		}
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIndex {
-				continue
+				return
 			}
 			sym := target.BaseSymbol
 			if sym == 0 {
-				continue
+				return
 			}
 			if filterSyms != nil && !filterSyms[sym] {
-				continue
+				return
 			}
 
 			// Skip string literal keys (handled by field assignments)
 			if _, ok := target.Key.(*ast.StringExpr); ok {
-				continue
+				return
 			}
 
 			// Determine key type
@@ -141,8 +140,8 @@ func CollectIndexerAssignments(
 
 			// Determine value type
 			var valType typ.Type
-			if i < len(info.Sources) && info.Sources[i] != nil && synth != nil {
-				valType = synth(info.Sources[i], p)
+			if source != nil && synth != nil {
+				valType = synth(source, p)
 			}
 			if valType == nil {
 				valType = typ.Unknown
@@ -152,7 +151,7 @@ func CollectIndexerAssignments(
 				KeyType: keyType,
 				ValType: valType,
 			})
-		}
+		})
 	})
 
 	return result

@@ -153,21 +153,22 @@ func RunScope(input ScopeInput) ScopeOutput {
 	localTypeAnnotations := make(map[cfg.SymbolID]ast.TypeExpr)
 	for _, p := range input.Graph.RPO() {
 		if info := input.Graph.Assign(p); info != nil && info.IsLocal && len(info.TypeAnnotations) > 0 {
-			for i, target := range info.Targets {
+			info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
 				if target.Kind != cfg.TargetIdent || target.Name == "" {
-					continue
+					return
 				}
-				if i >= len(info.TypeAnnotations) || info.TypeAnnotations[i] == nil {
-					continue
+				ann := info.TypeAnnotationAt(i)
+				if ann == nil {
+					return
 				}
 				sym, ok := input.Graph.SymbolAt(p, target.Name)
 				if !ok || sym == 0 {
-					continue
+					return
 				}
 				if _, exists := localTypeAnnotations[sym]; !exists {
-					localTypeAnnotations[sym] = info.TypeAnnotations[i]
+					localTypeAnnotations[sym] = ann
 				}
-			}
+			})
 		}
 	}
 
@@ -441,8 +442,11 @@ func buildDeclaredTypes(
 	for _, p := range graph.RPO() {
 
 		if info := graph.Assign(p); info != nil && info.IsLocal {
-			if info.NumericFor != nil && len(info.Targets) > 0 {
-				target := info.Targets[0]
+			if info.NumericFor != nil {
+				target, ok := info.FirstTarget()
+				if !ok {
+					continue
+				}
 				if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
 					if _, exists := out[target.Symbol]; !exists {
 						out[target.Symbol] = typ.Integer
@@ -452,37 +456,37 @@ func buildDeclaredTypes(
 
 			if len(info.IterExprs) > 0 && len(info.Targets) > 0 && synthAPI != nil {
 				varTypes := synthAPI.InferIterVarsWithSpecTypes(info.IterExprs, len(info.Targets), p, nil)
-				for i, target := range info.Targets {
+				info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
 					if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-						continue
+						return
 					}
 					if _, exists := out[target.Symbol]; exists {
-						continue
+						return
 					}
 					varType := typ.Unknown
 					if i < len(varTypes) && varTypes[i] != nil {
 						varType = varTypes[i]
 					}
 					out[target.Symbol] = varType
-				}
+				})
 			}
 
 			sc := scopes[p]
-			for i, target := range info.Targets {
+			info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
 				if target.Kind != cfg.TargetIdent || target.Name == "" {
-					continue
+					return
 				}
 				sym, ok := graph.SymbolAt(p, target.Name)
 				if !ok {
-					continue
+					return
 				}
 				if _, exists := out[sym]; exists {
-					continue
+					return
 				}
 
-				if info.TypeAnnotations != nil && i < len(info.TypeAnnotations) && info.TypeAnnotations[i] != nil {
+				if ann := info.TypeAnnotationAt(i); ann != nil {
 					if typeExprResolver != nil {
-						if resolved := typeExprResolver.ResolveType(info.TypeAnnotations[i], sc); resolved != nil {
+						if resolved := typeExprResolver.ResolveType(ann, sc); resolved != nil {
 							out[sym] = resolved
 							if !typ.IsSoft(resolved, typ.SoftAnnotationPolicy) {
 								annotated[sym] = true
@@ -490,7 +494,7 @@ func buildDeclaredTypes(
 						}
 					}
 				}
-			}
+			})
 		}
 
 		if info := graph.FuncDef(p); info != nil && info.Name != "" && info.FuncExpr != nil {
@@ -677,11 +681,11 @@ func applyAssign(graph ScopeGraph, p cfg.Point, current *scope.State) *scope.Sta
 
 	// Mark local names
 	var localNames []string
-	for _, target := range info.Targets {
+	info.EachTarget(func(_ int, target cfg.AssignTarget) {
 		if target.Kind == cfg.TargetIdent && target.Name != "" {
 			localNames = append(localNames, target.Name)
 		}
-	}
+	})
 	if len(localNames) > 0 {
 		current = current.WithLocalNames(localNames)
 	}

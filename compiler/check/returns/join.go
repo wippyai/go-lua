@@ -1,6 +1,7 @@
 package returns
 
 import (
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -40,7 +41,7 @@ func JoinReturnVectorsPreferNonSoft(a, b []typ.Type) []typ.Type {
 		if i < len(b) {
 			bi = b[i]
 		}
-		out[i] = typ.JoinPreferNonSoft(ai, bi)
+		out[i] = typ.JoinReturnSlot(ai, bi)
 	}
 	return out
 }
@@ -52,6 +53,19 @@ func ReturnTypesEqual(a, b []typ.Type) bool {
 	}
 	for i := range a {
 		if !typ.TypeEquals(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// ReturnTypesAllNil reports whether all slots are explicit nil.
+func ReturnTypesAllNil(rets []typ.Type) bool {
+	if len(rets) == 0 {
+		return false
+	}
+	for _, t := range rets {
+		if t == nil || t.Kind() != kind.Nil {
 			return false
 		}
 	}

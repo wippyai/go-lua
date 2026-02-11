@@ -128,6 +128,7 @@ end
 
 // TestLinterFalsePositive_WippyTestRunner_WithRegistryFind mirrors the real
 // registry.find signature (returns entries + error) and the error guard pattern.
+// Explicit any fields must remain callable/indexable without spurious diagnostics.
 func TestLinterFalsePositive_WippyTestRunner_WithRegistryFind(t *testing.T) {
 	registryManifest := io.NewManifest("registry")
 	entryType := typ.NewRecord().
@@ -195,8 +196,11 @@ end
 `
 
 	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("registry", registryManifest))
-	if !result.HasError() {
-		t.Fatal("expected errors due to registry meta.suite being any, got none")
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatal("expected no errors for registry.find any-valued suite metadata pattern")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/literal"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
@@ -107,7 +108,7 @@ func TestTableMutatorFromCall_FunctionWithoutSpec(t *testing.T) {
 	}
 }
 
-func TestArgAtCall_ValidIndices(t *testing.T) {
+func TestPositionalArgAt_ValidIndices(t *testing.T) {
 	args := []ast.Expr{
 		&ast.StringExpr{Value: "a"},
 		&ast.StringExpr{Value: "b"},
@@ -127,22 +128,22 @@ func TestArgAtCall_ValidIndices(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := mutator.ArgAtCall(args, tt.idx)
+		result := callsite.PositionalArgAt(args, tt.idx)
 		str, ok := result.(*ast.StringExpr)
 		if !ok || str.Value != tt.expected {
-			t.Errorf("mutator.ArgAtCall(args, %d): expected '%s', got %v", tt.idx, tt.expected, result)
+			t.Errorf("callsite.PositionalArgAt(args, %d): expected '%s', got %v", tt.idx, tt.expected, result)
 		}
 	}
 }
 
-func TestArgAtCall_InvalidIndices(t *testing.T) {
+func TestPositionalArgAt_InvalidIndices(t *testing.T) {
 	args := []ast.Expr{&ast.StringExpr{Value: "a"}}
 
 	tests := []int{5, -5, 100}
 	for _, idx := range tests {
-		result := mutator.ArgAtCall(args, idx)
+		result := callsite.PositionalArgAt(args, idx)
 		if result != nil {
-			t.Errorf("mutator.ArgAtCall(args, %d): expected nil, got %v", idx, result)
+			t.Errorf("callsite.PositionalArgAt(args, %d): expected nil, got %v", idx, result)
 		}
 	}
 }

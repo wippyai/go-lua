@@ -159,6 +159,7 @@ func (s *Synthesizer) Resolver() *resolve.Resolver {
 		ExprSynth: func(expr ast.Expr, p cfg.Point) typ.Type {
 			return s.SynthExpr(expr, p, nil)
 		},
+		Bindings: s.deps.ModuleBindings,
 	})
 }
 
@@ -289,8 +290,15 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 	}
 
 	var sym cfg.SymbolID
+	var moduleSym cfg.SymbolID
 	if bindings := ctx.Bindings(); bindings != nil {
 		sym, _ = bindings.SymbolOf(ex)
+	}
+	if s.deps.ModuleBindings != nil {
+		moduleSym, _ = s.deps.ModuleBindings.SymbolOf(ex)
+		if sym == 0 {
+			sym = moduleSym
+		}
 	}
 
 	if sym == 0 {
@@ -351,10 +359,25 @@ fallback:
 				return tv.Type
 			}
 		}
+		if moduleSym != 0 && moduleSym != sym {
+			moduleTV := types.EffectiveTypeAt(p, moduleSym)
+			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
+				switch moduleTV.Type.Kind() {
+				case kind.Unknown, kind.Any:
+					// keep looking for better sources
+				default:
+					return moduleTV.Type
+				}
+			}
+		}
 	}
 
 	// Module alias lookup (require("mod")) as fallback when no concrete type is resolved.
-	if modulePath := ctx.ModuleAlias(sym); modulePath != "" && s.deps.Manifests != nil {
+	moduleAliasSym := sym
+	if moduleAliasSym == 0 {
+		moduleAliasSym = moduleSym
+	}
+	if modulePath := ctx.ModuleAlias(moduleAliasSym); modulePath != "" && s.deps.Manifests != nil {
 		manifest := s.deps.Manifests.Manifest(modulePath)
 		if manifest == nil {
 			if imports := s.deps.Manifests.Imports(); imports != nil {
@@ -373,10 +396,21 @@ fallback:
 		if tv.State == flow.StateResolved && tv.Type != nil {
 			return tv.Type
 		}
+		if moduleSym != 0 && moduleSym != sym {
+			moduleTV := types.EffectiveTypeAt(p, moduleSym)
+			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
+				return moduleTV.Type
+			}
+		}
 	}
 
 	if t, ok := ctx.GlobalType(sym); ok && t != nil {
 		return t
+	}
+	if moduleSym != 0 && moduleSym != sym {
+		if t, ok := ctx.GlobalType(moduleSym); ok && t != nil {
+			return t
+		}
 	}
 
 	return typ.Unknown

@@ -58,8 +58,11 @@ type LocalFuncInfo struct {
 	Fn       *ast.FunctionExpr
 	DefScope *scope.State
 	Graph    *cfg.Graph
-	ParentFn *ast.FunctionExpr
-	DefPoint cfg.Point
+	// ParentGraph is the graph where this local function is defined.
+	// Used for parent-scope callsite hint propagation.
+	ParentGraph *cfg.Graph
+	ParentFn    *ast.FunctionExpr
+	DefPoint    cfg.Point
 	// ParamHints holds inferred parameter types from call sites in the parent graph.
 	// Index corresponds to parameter position.
 	ParamHints []typ.Type

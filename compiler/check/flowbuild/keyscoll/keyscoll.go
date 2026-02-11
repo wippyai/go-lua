@@ -2,8 +2,9 @@ package keyscoll
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 )
 
 // KeysCollectorInfo tracks that a function returns keys of one of its parameters.
@@ -55,11 +56,12 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 
 		// Check for local keys = {} pattern
 		if info.IsLocal && len(info.Sources) > 0 {
-			target := info.Targets[0]
-			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
-				if tbl, ok := info.Sources[0].(*ast.TableExpr); ok && tbl != nil && len(tbl.Fields) == 0 {
-					if keysTableSym == 0 {
-						keysTableSym = target.Symbol
+			if target, ok := info.FirstTarget(); ok {
+				if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
+					if tbl, ok := info.SourceAt(0).(*ast.TableExpr); ok && tbl != nil && len(tbl.Fields) == 0 {
+						if keysTableSym == 0 {
+							keysTableSym = target.Symbol
+						}
 					}
 				}
 			}
@@ -102,8 +104,8 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 				}
 			}
 			// Track the key variable (first loop variable)
-			if len(info.Targets) > 0 && info.Targets[0].Kind == cfg.TargetIdent {
-				keyVarSym = info.Targets[0].Symbol
+			if target, ok := info.FirstTarget(); ok && target.Kind == cfg.TargetIdent {
+				keyVarSym = target.Symbol
 			}
 		}
 	})
@@ -113,7 +115,7 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 	}
 
 	// Scan for table.insert(keys, k) pattern
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
@@ -229,11 +231,8 @@ func BuildKeysCollectorDetector(graph *cfg.Graph) func(*cfg.CallInfo, cfg.Point)
 	cache := make(map[cfg.SymbolID]*KeysCollectorInfo)
 	bindings := graph.Bindings()
 
-	return func(callInfo *cfg.CallInfo, p cfg.Point) cfg.SymbolID {
+	return func(callInfo *cfg.CallInfo, _ cfg.Point) cfg.SymbolID {
 		if callInfo == nil || callInfo.Callee == nil {
-			return 0
-		}
-		if callInfo.Method != "" || callInfo.Receiver != nil {
 			return 0
 		}
 
@@ -247,11 +246,11 @@ func BuildKeysCollectorDetector(graph *cfg.Graph) func(*cfg.CallInfo, cfg.Point)
 			if info == nil {
 				return 0
 			}
-			return extractTableArgSymbol(callInfo, info.ParamIndex, bindings)
+			return callsite.RuntimeArgSymbolAt(callInfo, info.ParamIndex, bindings)
 		}
 
 		// Try to resolve callee to function literal
-		fn := resolveSymToFuncLiteral(graph, calleeSym)
+		fn := resolve.ResolveSymbolToFunctionLiteral(graph, calleeSym)
 		if fn == nil {
 			cache[calleeSym] = nil
 			return 0
@@ -263,60 +262,6 @@ func BuildKeysCollectorDetector(graph *cfg.Graph) func(*cfg.CallInfo, cfg.Point)
 			return 0
 		}
 
-		return extractTableArgSymbol(callInfo, info.ParamIndex, bindings)
+		return callsite.RuntimeArgSymbolAt(callInfo, info.ParamIndex, bindings)
 	}
-}
-
-// extractTableArgSymbol extracts the symbol of the table argument at the given index.
-func extractTableArgSymbol(callInfo *cfg.CallInfo, paramIndex int, bindings *bind.BindingTable) cfg.SymbolID {
-	if paramIndex < 0 || paramIndex >= len(callInfo.Args) {
-		return 0
-	}
-	argExpr := callInfo.Args[paramIndex]
-	if argExpr == nil {
-		return 0
-	}
-	ident, ok := argExpr.(*ast.IdentExpr)
-	if !ok {
-		return 0
-	}
-	if bindings == nil {
-		return 0
-	}
-	sym, _ := bindings.SymbolOf(ident)
-	return sym
-}
-
-// resolveSymToFuncLiteral resolves a symbol to a function literal defined in the graph.
-func resolveSymToFuncLiteral(graph *cfg.Graph, sym cfg.SymbolID) *ast.FunctionExpr {
-	if graph == nil || sym == 0 {
-		return nil
-	}
-
-	var found *ast.FunctionExpr
-	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-		if found != nil || info == nil {
-			return
-		}
-		if info.Symbol == sym {
-			found = info.FuncExpr
-		}
-	})
-	if found != nil {
-		return found
-	}
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if found != nil || info == nil {
-			return
-		}
-		for i, target := range info.Targets {
-			if target.Symbol == sym && i < len(info.Sources) {
-				if fn, ok := info.Sources[i].(*ast.FunctionExpr); ok {
-					found = fn
-					return
-				}
-			}
-		}
-	})
-	return found
 }

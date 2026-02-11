@@ -23,7 +23,12 @@ import (
 // Returns the inferred type arguments in parameter order, or error if inference fails.
 // Unresolved type parameters default to typ.Unknown.
 func InferTypeArgs(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type) ([]typ.Type, error) {
-	return InferTypeArgsWithExpected(fn, args, isMethod, receiver, nil)
+	return InferTypeArgsWithMode(fn, args, isMethod, receiver, false)
+}
+
+// InferTypeArgsWithMode infers type arguments with optional forced receiver consumption.
+func InferTypeArgsWithMode(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {
+	return InferTypeArgsWithExpectedAndMode(fn, args, isMethod, receiver, nil, forceMethodReceiver)
 }
 
 // InferTypeArgsWithExpected performs bidirectional type argument inference.
@@ -39,6 +44,12 @@ func InferTypeArgs(fn *typ.Function, args []typ.Type, isMethod bool, receiver ty
 // should be a subtype of what's expected. For union expected types,
 // matches against each union member.
 func InferTypeArgsWithExpected(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type) ([]typ.Type, error) {
+	return InferTypeArgsWithExpectedAndMode(fn, args, isMethod, receiver, expectedReturn, false)
+}
+
+// InferTypeArgsWithExpectedAndMode performs bidirectional inference with optional
+// forced receiver consumption for method calls.
+func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {
 	if fn == nil || len(fn.TypeParams) == 0 {
 		return nil, nil
 	}
@@ -56,12 +67,8 @@ func InferTypeArgsWithExpected(fn *typ.Function, args []typ.Type, isMethod bool,
 	cs := constraint.NewInferSet()
 
 	inputs := args
-
-	if isMethod && hasExplicitSelfSimple(fn, receiver) {
-		if receiver == nil {
-			return nil, fmt.Errorf("infer: nil receiver")
-		}
-
+	consumeReceiver := methodConsumesReceiverSimple(fn, receiver, isMethod, forceMethodReceiver)
+	if consumeReceiver {
 		inputs = make([]typ.Type, 0, len(args)+1)
 		inputs = append(inputs, receiver)
 		inputs = append(inputs, args...)

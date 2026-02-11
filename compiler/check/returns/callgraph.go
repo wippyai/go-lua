@@ -118,12 +118,20 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 				return
 			}
 			callee := localFuncs[calleeSym]
-			if callee == nil || len(ci.Args) == 0 {
+			if callee == nil {
 				return
 			}
 			calleeSig := resolveLocalSignature(callee)
+			runtimeArgCount := len(ci.Args)
+			if ci.Method != "" && ci.Receiver != nil {
+				runtimeArgCount++
+			}
+			if runtimeArgCount == 0 {
+				return
+			}
 
-			for i, arg := range ci.Args {
+			for i := 0; i < runtimeArgCount; i++ {
+				arg := checkcallsite.RuntimeArgAt(ci, i)
 				if arg == nil {
 					continue
 				}
@@ -178,7 +186,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 				}
 
 				if callee.ParamHints == nil {
-					callee.ParamHints = make([]typ.Type, len(ci.Args))
+					callee.ParamHints = make([]typ.Type, runtimeArgCount)
 				} else if i >= len(callee.ParamHints) {
 					expanded := make([]typ.Type, i+1)
 					copy(expanded, callee.ParamHints)

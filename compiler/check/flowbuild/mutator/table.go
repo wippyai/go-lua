@@ -35,8 +35,8 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 			return
 		}
 
-		targetExpr := RuntimeArgAtCall(info, tm.Target.Index)
-		valueExpr := RuntimeArgAtCall(info, tm.Value.Index)
+		targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
+		valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
 		if targetExpr == nil || valueExpr == nil {
 			return
 		}
@@ -128,16 +128,6 @@ func TableMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Expr, 
 		return nil
 	}
 	return spec.GetTableMutator()
-}
-
-// ArgAtCall returns the argument at the given index, supporting negative indices from end.
-func ArgAtCall(args []ast.Expr, idx int) ast.Expr {
-	return callsite.PositionalArgAt(args, idx)
-}
-
-// RuntimeArgAtCall returns the runtime argument (receiver-aware) for effect parameter indices.
-func RuntimeArgAtCall(info *cfg.CallInfo, idx int) ast.Expr {
-	return callsite.RuntimeArgAt(info, idx)
 }
 
 func keyTypeFromExpr(expr ast.Expr, constResolver func(string) *flow.ConstValue) typ.Type {

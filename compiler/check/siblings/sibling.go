@@ -3,14 +3,13 @@ package siblings
 import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // MergeSiblingType merges two sibling types by precision.
 //
 // For function types, this prefers the more refined type (better return info).
-// If neither refines the other, uses join.Two to create a union.
+// If neither refines the other, uses the canonical soft-aware join policy.
 //
 // This is used when updating sibling types during nested function processing:
 // as functions are analyzed, their types become more precise, and those
@@ -32,5 +31,5 @@ func MergeSiblingType(prev, next typ.Type) typ.Type {
 			return next
 		}
 	}
-	return join.Two(prev, next)
+	return typ.JoinPreferNonSoft(prev, next)
 }

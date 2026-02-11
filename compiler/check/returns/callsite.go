@@ -3,10 +3,10 @@ package returns
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
@@ -64,6 +64,7 @@ func CollectCalledNestedFieldAssignments(
 	parent *cfg.Graph,
 	bindings *bind.BindingTable,
 	capturedByCallee map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type,
+	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
 ) map[cfg.SymbolID]map[string]typ.Type {
 	result := make(map[cfg.SymbolID]map[string]typ.Type)
 	if parent == nil || len(capturedByCallee) == 0 {
@@ -75,18 +76,9 @@ func CollectCalledNestedFieldAssignments(
 
 	// Find which local functions are called in the parent graph.
 	calledSyms := make(map[cfg.SymbolID]bool)
-	parent.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
-		if info == nil {
-			return
-		}
-		if info.CalleeSymbol != 0 {
-			calledSyms[info.CalleeSymbol] = true
-			return
-		}
-		if ident, ok := info.Callee.(*ast.IdentExpr); ok && bindings != nil {
-			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-				calledSyms[sym] = true
-			}
+	parent.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		for sym := range calledSymbolsFromCall(info, p, bindings, resolveCalleeType) {
+			calledSyms[sym] = true
 		}
 	})
 
@@ -197,23 +189,16 @@ func calledSymbolsFromCall(
 	if info.CalleeSymbol != 0 {
 		calledSyms[info.CalleeSymbol] = true
 	}
-	if ident, ok := info.Callee.(*ast.IdentExpr); ok && bindings != nil {
-		if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-			calledSyms[sym] = true
-		}
-	}
-	if fnExpr, ok := info.Callee.(*ast.FunctionExpr); ok && bindings != nil {
-		if sym, ok := bindings.FuncLitSymbol(fnExpr); ok && sym != 0 {
-			calledSyms[sym] = true
-		}
+	if sym := checkcallsite.SymbolFromExpr(info.Callee, bindings); sym != 0 {
+		calledSyms[sym] = true
 	}
 
 	if resolveCalleeType != nil {
 		if fnType := resolveCalleeType(info, p); fnType != nil {
 			if spec := contract.ExtractSpec(fnType); spec != nil && len(spec.Callbacks) > 0 {
 				for paramIdx := range spec.Callbacks {
-					arg := callbackArgAt(info, paramIdx)
-					if sym := symbolFromExpr(arg, bindings); sym != 0 {
+					arg := checkcallsite.RuntimeArgAt(info, paramIdx)
+					if sym := checkcallsite.SymbolFromExpr(arg, bindings); sym != 0 {
 						calledSyms[sym] = true
 					}
 				}
@@ -223,57 +208,6 @@ func calledSymbolsFromCall(
 
 	return calledSyms
 }
-
-func symbolFromExpr(expr ast.Expr, bindings *bind.BindingTable) cfg.SymbolID {
-	if expr == nil || bindings == nil {
-		return 0
-	}
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		if sym, ok := bindings.SymbolOf(e); ok {
-			return sym
-		}
-	case *ast.FunctionExpr:
-		if sym, ok := bindings.FuncLitSymbol(e); ok {
-			return sym
-		}
-	}
-	return 0
-}
-
-func callbackArgAt(info *cfg.CallInfo, paramIdx int) ast.Expr {
-	if info == nil {
-		return nil
-	}
-	if info.Method != "" && info.Receiver != nil {
-		if paramIdx == 0 {
-			return info.Receiver
-		}
-		if paramIdx < 0 {
-			adj := len(info.Args) + 1 + paramIdx
-			if adj == 0 {
-				return info.Receiver
-			}
-			return argAtCall(info.Args, adj-1)
-		}
-		return argAtCall(info.Args, paramIdx-1)
-	}
-	return argAtCall(info.Args, paramIdx)
-}
-
-func argAtCall(args []ast.Expr, idx int) ast.Expr {
-	if len(args) == 0 {
-		return nil
-	}
-	if idx < 0 {
-		idx = len(args) + idx
-	}
-	if idx < 0 || idx >= len(args) {
-		return nil
-	}
-	return args[idx]
-}
-
 func rootNameFromBindings(parent *cfg.Graph, bindings *bind.BindingTable, sym cfg.SymbolID) string {
 	if sym != 0 && bindings != nil {
 		if name := bindings.Name(sym); name != "" {

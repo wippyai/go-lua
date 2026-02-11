@@ -45,15 +45,15 @@ func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSyn
 	seen := make(map[ast.Expr]bool)
 
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		for _, source := range info.Sources {
+		info.EachSource(func(_ int, source ast.Expr) {
 			diags = append(diags, checkFieldExpr(source, p, narrowView, resolver, seen, sourceName)...)
-		}
+		})
 		if info.NumericFor != nil {
 			diags = append(diags, checkNumericFor(info.NumericFor, p, narrowView, sourceName)...)
 		}
 	})
 
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}

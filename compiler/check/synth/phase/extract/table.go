@@ -3,7 +3,8 @@ package extract
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/types/query/core"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -39,7 +40,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 	}
 
 	if _, isUnion := unwrap.Alias(expected).(*typ.Union); isUnion {
-		if match := core.TryDiscriminatedUnionMember(ex, expected); match != nil {
+		if match := querycore.TryDiscriminatedUnionMember(ex, expected); match != nil {
 			return s.SynthTableWithExpected(ex, sc, recurse, match.Member)
 		}
 	}
@@ -124,7 +125,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 		if hasVararg {
 			return typ.NewArray(typ.NewUnion(arrayElements...))
 		}
-		if core.IsArrayLike(expected) {
+		if querycore.IsArrayLike(expected) {
 			return typ.NewArray(typ.NewUnion(arrayElements...))
 		}
 		return typ.NewTuple(arrayElements...)
@@ -143,12 +144,12 @@ func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, sc *scope.Stat
 		if expected != nil {
 			expectedFn, _ = unwrap.Alias(expected).(*typ.Function)
 		}
-		if expectedFn == nil && selfType != nil && fn.ParList != nil && len(fn.ParList.Names) > 0 {
-			if fn.ParList.Names[0] == "self" {
-				if len(fn.ParList.Types) == 0 || fn.ParList.Types[0] == nil {
-					expectedFn = typ.Func().Param("self", selfType).Build()
-				}
-			}
+		bindings := s.deps.ModuleBindings
+		if bindings == nil && s.deps.CheckCtx != nil {
+			bindings = s.deps.CheckCtx.Bindings()
+		}
+		if expectedFn == nil && selfType != nil && phasecore.HasUnannotatedSelfParam(fn, bindings) {
+			expectedFn = typ.Func().Param("self", selfType).Build()
 		}
 		return s.SynthFunctionTypeWithExpected(fn, sc, expectedFn)
 	}
@@ -162,7 +163,7 @@ func (s *Synthesizer) resolveExpectedFields(expected typ.Type) map[string]typ.Ty
 	}
 
 	if _, isUnion := unwrap.Alias(expected).(*typ.Union); !isUnion {
-		return core.AllFieldTypesResolved(expected)
+		return querycore.AllFieldTypesResolved(expected)
 	}
 
 	union := unwrap.Alias(expected).(*typ.Union)
@@ -170,7 +171,7 @@ func (s *Synthesizer) resolveExpectedFields(expected typ.Type) map[string]typ.Ty
 
 	fieldNames := make(map[string]struct{})
 	for _, member := range union.Members {
-		memberFields := core.AllFieldTypesResolved(member)
+		memberFields := querycore.AllFieldTypesResolved(member)
 		for name := range memberFields {
 			fieldNames[name] = struct{}{}
 		}
@@ -179,7 +180,7 @@ func (s *Synthesizer) resolveExpectedFields(expected typ.Type) map[string]typ.Ty
 	for name := range fieldNames {
 		var fieldTypes []typ.Type
 		for _, member := range union.Members {
-			memberFields := core.AllFieldTypesResolved(member)
+			memberFields := querycore.AllFieldTypesResolved(member)
 			if ft, ok := memberFields[name]; ok {
 				fieldTypes = append(fieldTypes, ft)
 			}

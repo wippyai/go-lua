@@ -54,28 +54,27 @@ func inferCallbackEnvOverlays(
 		if info == nil || info.IsLocal {
 			return
 		}
-		for i, target := range info.Targets {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
 			if target.Kind != cfg.TargetField {
-				continue
+				return
 			}
 			if target.BaseName != "_G" || len(target.FieldPath) != 1 {
-				continue
-			}
-			if i >= len(info.Sources) {
-				continue
+				return
 			}
 			name := target.FieldPath[0]
-			src := info.Sources[i]
+			if src == nil {
+				return
+			}
 			if _, isNil := src.(*ast.NilExpr); isNil {
 				clears = append(clears, globalClear{point: p, name: name})
 			} else {
 				setups = append(setups, globalSetup{point: p, name: name, expr: src})
 			}
-		}
+		})
 	})
 
 	// Collect parameter calls.
-	graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeSymbol == 0 {
 			return
 		}

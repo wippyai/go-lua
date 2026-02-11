@@ -34,6 +34,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -106,14 +107,60 @@ func ClassifyReturnExpr(expr ast.Expr) flow.ReturnKind {
 	return flow.ReturnUnknown
 }
 
-// SymbolFromExpr extracts the symbol ID from an identifier expression.
-func SymbolFromExpr(expr ast.Expr, bindings *bind.BindingTable) cfg.SymbolID {
-	ident, ok := expr.(*ast.IdentExpr)
-	if !ok || bindings == nil {
-		return 0
+// ResolveSymbolToFunctionLiteral resolves a symbol to a function literal defined
+// in the current graph (local/global function definitions or assignments).
+func ResolveSymbolToFunctionLiteral(graph *cfg.Graph, sym cfg.SymbolID) *ast.FunctionExpr {
+	if sym == 0 {
+		return nil
 	}
-	sym, _ := bindings.SymbolOf(ident)
-	return sym
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
+	return callsite.FunctionLiteralForSymbol(graph, bindings, sym)
+}
+
+// ResolveExprToTableLiteral resolves expression to a table literal when possible.
+// Supports direct table expressions and identifier references to local table literals.
+func ResolveExprToTableLiteral(expr ast.Expr, graph *cfg.Graph) *ast.TableExpr {
+	if expr == nil || graph == nil {
+		return nil
+	}
+
+	if tbl, ok := expr.(*ast.TableExpr); ok {
+		return tbl
+	}
+
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok {
+		return nil
+	}
+
+	bindings := graph.Bindings()
+	if bindings == nil {
+		return nil
+	}
+
+	sym, found := bindings.SymbolOf(ident)
+	if !found || sym == 0 {
+		return nil
+	}
+
+	var tableLit *ast.TableExpr
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if tableLit != nil || info == nil || !info.IsLocal {
+			return
+		}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			if target.Symbol == sym && target.Kind == cfg.TargetIdent {
+				if tbl, ok := source.(*ast.TableExpr); ok {
+					tableLit = tbl
+				}
+			}
+		})
+	})
+
+	return tableLit
 }
 
 // Ref resolves typ.Ref to its actual type using scope type lookup.

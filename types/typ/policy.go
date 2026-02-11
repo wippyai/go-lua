@@ -32,6 +32,26 @@ func JoinPreferNonSoft(a, b Type) Type {
 	return PruneSoftUnionMembers(NewUnion(a, b))
 }
 
+// JoinReturnSlot merges return slot types while preserving uncertainty.
+//
+// Unknown in return inference means unresolved runtime behavior. When one branch
+// is unknown and another is explicit nil, keep unknown so summaries do not
+// collapse to nil-only.
+func JoinReturnSlot(a, b Type) Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	a = PruneSoftUnionMembers(a)
+	b = PruneSoftUnionMembers(b)
+	if (a.Kind() == kind.Unknown && b.Kind() == kind.Nil) || (b.Kind() == kind.Unknown && a.Kind() == kind.Nil) {
+		return Unknown
+	}
+	return JoinPreferNonSoft(a, b)
+}
+
 // IsRefinableAnnotation reports whether an explicit annotation should be
 // treated as a soft placeholder that call-site/contextual hints may refine.
 //

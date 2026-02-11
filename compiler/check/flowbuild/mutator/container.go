@@ -3,6 +3,7 @@ package mutator
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
@@ -26,7 +27,7 @@ func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Input
 	// Build a resolver that can look up types from the just-extracted assignments
 	assignmentTypes := resolve.BuildAssignmentTypeResolver(inputs)
 
-	fc.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+	fc.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
@@ -36,15 +37,8 @@ func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Input
 			return
 		}
 
-		// For method calls, index 0 is self (receiver)
-		var targetExpr, valueExpr ast.Expr
-		if info.Method != "" && info.Receiver != nil {
-			targetExpr = containerArgAtMethod(info.Receiver, info.Args, cm.Container.Index)
-			valueExpr = containerArgAtMethod(info.Receiver, info.Args, cm.Value.Index)
-		} else {
-			targetExpr = ArgAtCall(info.Args, cm.Container.Index)
-			valueExpr = ArgAtCall(info.Args, cm.Value.Index)
-		}
+		targetExpr := callsite.RuntimeArgAt(info, cm.Container.Index)
+		valueExpr := callsite.RuntimeArgAt(info, cm.Value.Index)
 
 		if targetExpr == nil || valueExpr == nil {
 			return
@@ -157,13 +151,4 @@ func ContainerMutatorFromCall(info *cfg.CallInfo, p cfg.Point, synth func(ast.Ex
 	}
 
 	return nil
-}
-
-// containerArgAtMethod returns the argument at the given index for method calls.
-// For method calls, index 0 is the receiver (self).
-func containerArgAtMethod(receiver ast.Expr, args []ast.Expr, idx int) ast.Expr {
-	if idx == 0 {
-		return receiver
-	}
-	return ArgAtCall(args, idx-1)
 }

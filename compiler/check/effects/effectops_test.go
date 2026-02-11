@@ -3,8 +3,10 @@ package effects
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
@@ -143,4 +145,78 @@ func TestEnrichExportWithEffects_NonRecordNonInterface(t *testing.T) {
 	if result != typ.String {
 		t.Error("expected original type returned for non-record/non-interface")
 	}
+}
+
+func TestPropagate_CollectsEffectFromAssignmentCallSite(t *testing.T) {
+	graph := buildGraphForEffects(t, `
+		local x = f()
+		return x
+	`, "f")
+
+	symF, ok := graph.SymbolAt(graph.Entry(), "f")
+	if !ok || symF == 0 {
+		t.Fatal("expected symbol for f")
+	}
+
+	result := Propagate(&api.FuncResult{
+		Graph:    graph,
+		FnEffect: &constraint.FunctionEffect{},
+	}, func(sym cfg.SymbolID) *constraint.FunctionEffect {
+		if sym == symF {
+			return &constraint.FunctionEffect{
+				Row: effect.Row{Labels: []effect.Label{effect.IO{}}},
+			}
+		}
+		return nil
+	})
+
+	row, ok := result.Row.(effect.Row)
+	if !ok || !row.HasIO() {
+		t.Fatalf("expected propagated IO effect from assignment call site, got %#v", result.Row)
+	}
+}
+
+func TestPropagate_CollectsEffectFromReturnCallSite(t *testing.T) {
+	graph := buildGraphForEffects(t, `
+		return f()
+	`, "f")
+
+	symF, ok := graph.SymbolAt(graph.Entry(), "f")
+	if !ok || symF == 0 {
+		t.Fatal("expected symbol for f")
+	}
+
+	result := Propagate(&api.FuncResult{
+		Graph:    graph,
+		FnEffect: &constraint.FunctionEffect{},
+	}, func(sym cfg.SymbolID) *constraint.FunctionEffect {
+		if sym == symF {
+			return &constraint.FunctionEffect{
+				Row: effect.Row{Labels: []effect.Label{effect.IO{}}},
+			}
+		}
+		return nil
+	})
+
+	row, ok := result.Row.(effect.Row)
+	if !ok || !row.HasIO() {
+		t.Fatalf("expected propagated IO effect from return call site, got %#v", result.Row)
+	}
+}
+
+func buildGraphForEffects(t *testing.T, code string, globals ...string) *cfg.Graph {
+	t.Helper()
+	stmts, err := parse.ParseString(code, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{HasVargs: true},
+		Stmts:   stmts,
+	}
+	graph := cfg.Build(fn, globals...)
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	return graph
 }

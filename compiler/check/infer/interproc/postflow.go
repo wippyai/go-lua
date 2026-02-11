@@ -6,12 +6,16 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // Store is the minimal store interface required to record post-flow interproc facts.
@@ -132,7 +136,27 @@ func StoreFactsFromResult(
 		if facts.NarrowReturns == nil {
 			facts.NarrowReturns = make(api.NarrowReturnSummaries, 1)
 		}
-		facts.FuncTypes[sym] = fnType
+		fnTypeForFacts := fnType
+		if summary := returns.NormalizeReturnVector(facts.ReturnSummaries[sym]); len(summary) > 0 {
+			normalizedSummary := make([]typ.Type, len(summary))
+			hasInformativeSummary := false
+			for i, ret := range summary {
+				normalizedSummary[i] = typ.PruneSoftUnionMembers(ret)
+				if paramhints.IsInformativeHintType(normalizedSummary[i]) {
+					hasInformativeSummary = true
+				}
+			}
+			shouldUseSummary := hasInformativeSummary ||
+				len(fnTypeForFacts.Returns) == 0 ||
+				(returns.ReturnTypesAllNil(fnTypeForFacts.Returns) && !returns.ReturnTypesAllNil(normalizedSummary)) ||
+				returns.ReturnTypesRefine(normalizedSummary, fnTypeForFacts.Returns) ||
+				returns.ReturnTypesElideOptional(normalizedSummary, fnTypeForFacts.Returns) ||
+				returns.ReturnTypesExtendRecord(normalizedSummary, fnTypeForFacts.Returns)
+			if shouldUseSummary {
+				fnTypeForFacts = typjoin.WithReturns(fnTypeForFacts, normalizedSummary)
+			}
+		}
+		facts.FuncTypes[sym] = fnTypeForFacts
 		facts.NarrowReturns[sym] = narrowReturns
 	})
 }
@@ -145,23 +169,72 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 	}
 	graph := result.Graph
 
+	moduleBindings := store.ModuleBindings()
 	bindings := graph.Bindings()
 	if bindings == nil {
-		bindings = store.ModuleBindings()
+		bindings = moduleBindings
 	}
 
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || len(info.Args) == 0 {
 			return
 		}
-		calleeSym := info.CalleeSymbol
-		if calleeSym == 0 {
-			if ident, ok := info.Callee.(*ast.IdentExpr); ok && bindings != nil {
-				if sym, found := bindings.SymbolOf(ident); found {
-					calleeSym = sym
-				}
+		argTypes := make([]typ.Type, len(info.Args))
+		for i, arg := range info.Args {
+			if arg != nil {
+				argTypes[i] = result.NarrowSynth.TypeOf(arg, p)
 			}
 		}
+		def := ops.CallDef{
+			Args:  argTypes,
+			Query: result.NarrowSynth.CallQuery(),
+		}
+		if info.Method != "" && info.Receiver != nil {
+			def.IsMethod = true
+			def.MethodName = info.Method
+			def.Receiver = result.NarrowSynth.TypeOf(info.Receiver, p)
+		} else if info.Callee != nil {
+			def.Callee = result.NarrowSynth.TypeOf(info.Callee, p)
+		}
+		infer := ops.InferCall(result.NarrowSynth.Context(), def)
+		if len(info.Args) > 0 {
+			updated := make([]typ.Type, len(argTypes))
+			copy(updated, argTypes)
+			changed := false
+			for i, arg := range info.Args {
+				if arg == nil {
+					continue
+				}
+				expected := infer.ExpectedArgType(i)
+				if expected == nil {
+					continue
+				}
+				reSynthed := result.NarrowSynth.TypeOfWithExpected(arg, p, expected)
+				if reSynthed == nil {
+					continue
+				}
+				if !typ.TypeEquals(updated[i], reSynthed) {
+					updated[i] = reSynthed
+					changed = true
+				}
+			}
+			if changed {
+				def.Args = updated
+				infer = ops.ReInfer(result.NarrowSynth.Context(), def, infer)
+				argTypes = updated
+			}
+		}
+
+		hasFunctionRef := func(sym cfg.SymbolID) bool {
+			return sym != 0 && store.FunctionRefBySym(sym) != nil
+		}
+		calleeSym := checkcallsite.CanonicalSymbolFromExpr(
+			info.Callee,
+			info.CalleeSymbol,
+			bindings,
+			moduleBindings,
+			hasFunctionRef,
+		)
 		if calleeSym == 0 {
 			return
 		}
@@ -200,7 +273,43 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 				if arg == nil {
 					continue
 				}
-				argType := result.NarrowSynth.TypeOf(arg, p)
+				if expectedFn := unwrap.Function(infer.ExpectedArgType(i)); expectedFn != nil {
+					argSym := checkcallsite.CanonicalSymbolFromExpr(
+						arg,
+						0,
+						bindings,
+						moduleBindings,
+						hasFunctionRef,
+					)
+					if argSym != 0 && hasFunctionRef(argSym) {
+						hintsForFn := facts.ParamHints[argSym]
+						if len(hintsForFn) < len(expectedFn.Params) {
+							expanded := make([]typ.Type, len(expectedFn.Params))
+							copy(expanded, hintsForFn)
+							hintsForFn = expanded
+						}
+						for j, param := range expectedFn.Params {
+							hint := paramhints.WidenParamHintType(param.Type)
+							hint = typ.PruneSoftUnionMembers(hint)
+							if !paramhints.IsInformativeHintType(hint) {
+								continue
+							}
+							prev := hintsForFn[j]
+							joined := returns.JoinInterprocTypes(prev, hint)
+							if !typ.TypeEquals(prev, joined) {
+								hintsForFn[j] = joined
+							}
+						}
+						if len(hintsForFn) > 0 {
+							facts.ParamHints[argSym] = hintsForFn
+						}
+					}
+				}
+
+				argType := argTypes[i]
+				if argType == nil {
+					argType = result.NarrowSynth.TypeOf(arg, p)
+				}
 				argType = paramhints.WidenParamHintType(argType)
 				argType = typ.PruneSoftUnionMembers(argType)
 				if !paramhints.IsInformativeHintType(argType) {

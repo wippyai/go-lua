@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
@@ -36,64 +37,64 @@ func TestTableMutatorFromCall_NilInfo(t *testing.T) {
 	}
 }
 
-func TestArgAtCall_EmptyArgs(t *testing.T) {
-	result := ArgAtCall(nil, 0)
+func TestPositionalArgAt_EmptyArgs(t *testing.T) {
+	result := callsite.PositionalArgAt(nil, 0)
 	if result != nil {
 		t.Error("expected nil for empty args")
 	}
 
-	result = ArgAtCall([]ast.Expr{}, 0)
+	result = callsite.PositionalArgAt([]ast.Expr{}, 0)
 	if result != nil {
 		t.Error("expected nil for empty slice")
 	}
 }
 
-func TestArgAtCall_ValidIndex(t *testing.T) {
+func TestPositionalArgAt_ValidIndex(t *testing.T) {
 	arg0 := &ast.NumberExpr{Value: "1"}
 	arg1 := &ast.NumberExpr{Value: "2"}
 	arg2 := &ast.NumberExpr{Value: "3"}
 	args := []ast.Expr{arg0, arg1, arg2}
 
-	if ArgAtCall(args, 0) != arg0 {
+	if callsite.PositionalArgAt(args, 0) != arg0 {
 		t.Error("expected arg0 at index 0")
 	}
-	if ArgAtCall(args, 1) != arg1 {
+	if callsite.PositionalArgAt(args, 1) != arg1 {
 		t.Error("expected arg1 at index 1")
 	}
-	if ArgAtCall(args, 2) != arg2 {
+	if callsite.PositionalArgAt(args, 2) != arg2 {
 		t.Error("expected arg2 at index 2")
 	}
 }
 
-func TestArgAtCall_NegativeIndex(t *testing.T) {
+func TestPositionalArgAt_NegativeIndex(t *testing.T) {
 	arg0 := &ast.NumberExpr{Value: "1"}
 	arg1 := &ast.NumberExpr{Value: "2"}
 	arg2 := &ast.NumberExpr{Value: "3"}
 	args := []ast.Expr{arg0, arg1, arg2}
 
-	if ArgAtCall(args, -1) != arg2 {
+	if callsite.PositionalArgAt(args, -1) != arg2 {
 		t.Error("expected arg2 at index -1")
 	}
-	if ArgAtCall(args, -2) != arg1 {
+	if callsite.PositionalArgAt(args, -2) != arg1 {
 		t.Error("expected arg1 at index -2")
 	}
-	if ArgAtCall(args, -3) != arg0 {
+	if callsite.PositionalArgAt(args, -3) != arg0 {
 		t.Error("expected arg0 at index -3")
 	}
 }
 
-func TestArgAtCall_OutOfBounds(t *testing.T) {
+func TestPositionalArgAt_OutOfBounds(t *testing.T) {
 	args := []ast.Expr{&ast.NumberExpr{Value: "1"}}
 
-	if ArgAtCall(args, 5) != nil {
+	if callsite.PositionalArgAt(args, 5) != nil {
 		t.Error("expected nil for index out of bounds")
 	}
-	if ArgAtCall(args, -5) != nil {
+	if callsite.PositionalArgAt(args, -5) != nil {
 		t.Error("expected nil for negative index out of bounds")
 	}
 }
 
-func TestRuntimeArgAtCall_MethodCall(t *testing.T) {
+func TestRuntimeArgAt_MethodCall(t *testing.T) {
 	recv := &ast.IdentExpr{Value: "self"}
 	arg := &ast.NumberExpr{Value: "1"}
 	info := &cfg.CallInfo{
@@ -102,10 +103,10 @@ func TestRuntimeArgAtCall_MethodCall(t *testing.T) {
 		Args:     []ast.Expr{arg},
 	}
 
-	if got := RuntimeArgAtCall(info, 0); got != recv {
+	if got := callsite.RuntimeArgAt(info, 0); got != recv {
 		t.Fatal("expected receiver at runtime index 0")
 	}
-	if got := RuntimeArgAtCall(info, 1); got != arg {
+	if got := callsite.RuntimeArgAt(info, 1); got != arg {
 		t.Fatal("expected first arg at runtime index 1")
 	}
 }

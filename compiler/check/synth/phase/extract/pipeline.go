@@ -143,6 +143,8 @@ func FullArgReSynth(
 				return expected
 			}
 			return synthWithExpected(a, p, expected)
+		case *ast.IdentExpr:
+			return synthWithExpected(a, p, expected)
 		}
 		return nil
 	}

@@ -384,9 +384,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						if call.CalleeSymbol != 0 {
 							if fn, ok := fc.ModuleBindings.FuncLitBySymbol(call.CalleeSymbol); ok && fn != nil {
 								if info := keyscoll.DetectKeysCollector(fn); info != nil {
-									if info.ParamIndex >= 0 && info.ParamIndex < len(call.Args) {
-										tableSym = resolve.SymbolFromExpr(call.Args[info.ParamIndex], bindings)
-									}
+									tableSym = callsite.RuntimeArgSymbolAt(call, info.ParamIndex, bindings)
 								}
 							}
 						}
@@ -400,9 +398,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 									continue
 								}
 								if info := keyscoll.DetectKeysCollector(fn); info != nil {
-									if info.ParamIndex >= 0 && info.ParamIndex < len(call.Args) {
-										tableSym = resolve.SymbolFromExpr(call.Args[info.ParamIndex], bindings)
-									}
+									tableSym = callsite.RuntimeArgSymbolAt(call, info.ParamIndex, bindings)
 									break
 								}
 							}
@@ -426,9 +422,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 							}
 						}
 						if eff != nil {
-							if paramIdx := eff.KeysCollectorParamIndex(); paramIdx >= 0 && paramIdx < len(call.Args) {
-								tableSym = resolve.SymbolFromExpr(call.Args[paramIdx], bindings)
-							}
+							tableSym = callsite.RuntimeArgSymbolAt(call, eff.KeysCollectorParamIndex(), bindings)
 						}
 					}
 
