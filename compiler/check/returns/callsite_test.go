@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func TestCollectCalledNestedFieldAssignments(t *testing.T) {
@@ -75,7 +76,7 @@ func TestCalledSymbolsFromCall_PrefersTrackedCanonicalSymbol(t *testing.T) {
 		CalleeSymbol: rawSym,
 	}
 
-	got := calledSymbolsFromCall(info, 0, bindings, nil, func(sym cfg.SymbolID) bool {
+	got := calledSymbolsFromCall(info, 0, nil, bindings, nil, func(sym cfg.SymbolID) bool {
 		return sym == trackedSym
 	})
 
@@ -100,10 +101,53 @@ func TestCalledSymbolsFromCall_UsesCalleeNameCandidatesWhenRawAndExprMissing(t *
 		CalleeName:   "f",
 	}
 
-	got := calledSymbolsFromCall(info, 0, bindings, nil, func(sym cfg.SymbolID) bool {
+	got := calledSymbolsFromCall(info, 0, nil, bindings, nil, func(sym cfg.SymbolID) bool {
 		return sym == trackedSym
 	})
 	if !got[trackedSym] {
 		t.Fatalf("expected tracked symbol %d via callee-name candidates, got %v", trackedSym, got)
+	}
+}
+
+func TestCalledSymbolsFromCall_UsesAliasExpandedCandidates(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local function runner()
+			return 1
+		end
+		local f = runner
+		local _ = f()
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+	runnerSym, ok := graph.SymbolAt(graph.Exit(), "runner")
+	if !ok || runnerSym == 0 {
+		t.Fatal("expected symbol for runner")
+	}
+
+	var info *cfg.CallInfo
+	graph.EachCallSite(func(_ cfg.Point, ci *cfg.CallInfo) {
+		if ci == nil || ci.CalleeName != "f" {
+			return
+		}
+		info = ci
+	})
+	if info == nil {
+		t.Fatal("expected f() call site")
+	}
+
+	got := calledSymbolsFromCall(info, 0, graph, bindings, nil, func(sym cfg.SymbolID) bool {
+		return sym == runnerSym
+	})
+	if !got[runnerSym] {
+		t.Fatalf("expected tracked runner symbol %d via alias-expanded candidates, got %v", runnerSym, got)
 	}
 }

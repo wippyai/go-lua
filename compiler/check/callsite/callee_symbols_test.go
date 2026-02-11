@@ -197,3 +197,52 @@ func TestCalleeSymbolCandidatesWithAliases_IncludesDirectAliasSource(t *testing.
 		t.Fatalf("candidates = %v, want prefix [%d %d]", candidates, calleeSym, aliasSym)
 	}
 }
+
+func TestPreferredCalleeSymbolWithAliases_PrefersAliasCandidate(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local function B()
+			return 1
+		end
+		local f = B
+		local x = f()
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+
+	var callInfo *cfg.CallInfo
+	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.CalleeName != "f" {
+			return
+		}
+		callInfo = info
+	})
+	if callInfo == nil {
+		t.Fatal("expected f() call site")
+	}
+
+	calleeSym := SymbolFromExpr(callInfo.Callee, bindings)
+	if calleeSym == 0 {
+		t.Fatal("expected callee symbol for f")
+	}
+	aliasSym := graph.DirectAliasSymbol(calleeSym)
+	if aliasSym == 0 {
+		t.Fatal("expected alias symbol for f")
+	}
+
+	got := PreferredCalleeSymbolWithAliases(callInfo, graph, bindings, nil, func(sym cfg.SymbolID) bool {
+		return sym == aliasSym
+	})
+	if got != aliasSym {
+		t.Fatalf("preferred symbol = %d, want %d", got, aliasSym)
+	}
+}

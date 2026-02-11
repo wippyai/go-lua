@@ -53,7 +53,7 @@ func CollectCalledNestedFieldAssignments(
 	}
 	calledSyms := make(map[cfg.SymbolID]bool)
 	parent.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		for sym := range calledSymbolsFromCall(info, p, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
+		for sym := range calledSymbolsFromCall(info, p, parent, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
 			return trackedCallees[sym]
 		}) {
 			calledSyms[sym] = true
@@ -119,7 +119,7 @@ func CollectCalledNestedContainerMutatorAssignments(
 			return
 		}
 
-		calledSyms := calledSymbolsFromCall(info, p, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
+		calledSyms := calledSymbolsFromCall(info, p, parent, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
 			return trackedCallees[sym]
 		})
 		if len(calledSyms) == 0 {
@@ -160,6 +160,7 @@ func CollectCalledNestedContainerMutatorAssignments(
 func calledSymbolsFromCall(
 	info *cfg.CallInfo,
 	p cfg.Point,
+	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
 	prefer func(cfg.SymbolID) bool,
@@ -169,7 +170,7 @@ func calledSymbolsFromCall(
 		return calledSyms
 	}
 
-	selected := checkcallsite.PreferredCalleeSymbol(info, bindings, bindings, prefer)
+	selected := checkcallsite.PreferredCalleeSymbolWithAliases(info, graph, bindings, bindings, prefer)
 	if selected != 0 {
 		calledSyms[selected] = true
 	}

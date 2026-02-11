@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func TestCanonicalLocalSymbol_ResolvesStaticFieldPath(t *testing.T) {
@@ -66,7 +67,7 @@ func TestCanonicalLocalCalleeSymbol_UsesCalleeNameFallback(t *testing.T) {
 	callInfo := &cfg.CallInfo{
 		CalleeName: "runner",
 	}
-	got := canonicalLocalCalleeSymbol(localFuncs, nil, bindings, callInfo)
+	got := canonicalLocalCalleeSymbol(localFuncs, nil, nil, bindings, callInfo)
 	if got != localSym {
 		t.Fatalf("canonicalLocalCalleeSymbol via name fallback = %d, want %d", got, localSym)
 	}
@@ -90,7 +91,7 @@ func TestCanonicalLocalCalleeSymbol_PrefersKnownLocalOverRaw(t *testing.T) {
 		CalleeSymbol: rawNonLocal,
 		CalleeName:   "f",
 	}
-	got := canonicalLocalCalleeSymbol(localFuncs, nil, bindings, callInfo)
+	got := canonicalLocalCalleeSymbol(localFuncs, nil, nil, bindings, callInfo)
 	if got != localSym {
 		t.Fatalf("canonicalLocalCalleeSymbol should prefer local symbol %d, got %d", localSym, got)
 	}
@@ -117,8 +118,55 @@ func TestCanonicalLocalCalleeSymbol_ResolvesMethodFromReceiverPath(t *testing.T)
 		CalleeSymbol: rawNonLocal,
 	}
 
-	got := canonicalLocalCalleeSymbol(localFuncs, nil, bindings, callInfo)
+	got := canonicalLocalCalleeSymbol(localFuncs, nil, nil, bindings, callInfo)
 	if got != methodSym {
 		t.Fatalf("canonicalLocalCalleeSymbol should resolve method symbol %d from receiver path, got %d", methodSym, got)
+	}
+}
+
+func TestCanonicalLocalCalleeSymbol_UsesDirectAliasCandidates(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local function runner()
+			return 1
+		end
+		local f = runner
+		local _ = f()
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+
+	runnerSym, ok := graph.SymbolAt(graph.Exit(), "runner")
+	if !ok || runnerSym == 0 {
+		t.Fatal("expected symbol for runner")
+	}
+
+	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{
+		runnerSym: {Sym: runnerSym},
+	}
+
+	var callInfo *cfg.CallInfo
+	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.CalleeName != "f" {
+			return
+		}
+		callInfo = info
+	})
+	if callInfo == nil {
+		t.Fatal("expected f() call site")
+	}
+
+	got := canonicalLocalCalleeSymbol(localFuncs, graph, nil, bindings, callInfo)
+	if got != runnerSym {
+		t.Fatalf("canonicalLocalCalleeSymbol via alias-expanded candidates = %d, want %d", got, runnerSym)
 	}
 }

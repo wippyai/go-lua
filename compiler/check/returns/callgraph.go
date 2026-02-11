@@ -34,6 +34,7 @@ func canonicalLocalSymbol(
 
 func canonicalLocalCalleeSymbol(
 	localFuncs map[cfg.SymbolID]*LocalFuncInfo,
+	graph *cfg.Graph,
 	moduleBindings *bind.BindingTable,
 	bindings *bind.BindingTable,
 	callInfo *cfg.CallInfo,
@@ -41,7 +42,7 @@ func canonicalLocalCalleeSymbol(
 	if callInfo == nil {
 		return 0
 	}
-	selected := checkcallsite.PreferredCalleeSymbol(callInfo, bindings, moduleBindings, func(sym cfg.SymbolID) bool {
+	selected := checkcallsite.PreferredCalleeSymbolWithAliases(callInfo, graph, bindings, moduleBindings, func(sym cfg.SymbolID) bool {
 		_, ok := localFuncs[sym]
 		return ok
 	})
@@ -138,11 +139,11 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 
 	for round := 0; round < len(localFuncs); round++ {
 		changed := false
-		processCall := func(ci *cfg.CallInfo, bindings *bind.BindingTable) {
+		processCall := func(ci *cfg.CallInfo, graph *cfg.Graph, bindings *bind.BindingTable) {
 			if ci == nil {
 				return
 			}
-			calleeSym := canonicalLocalCalleeSymbol(localFuncs, moduleBindings, bindings, ci)
+			calleeSym := canonicalLocalCalleeSymbol(localFuncs, graph, moduleBindings, bindings, ci)
 			if calleeSym == 0 {
 				return
 			}
@@ -223,7 +224,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 			}
 			bindings := g.Bindings()
 			g.EachCallSite(func(_ cfg.Point, ci *cfg.CallInfo) {
-				processCall(ci, bindings)
+				processCall(ci, g, bindings)
 			})
 		}
 
@@ -234,7 +235,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 			}
 			bindings := info.Graph.Bindings()
 			info.Graph.EachCallSite(func(_ cfg.Point, ci *cfg.CallInfo) {
-				processCall(ci, bindings)
+				processCall(ci, info.Graph, bindings)
 			})
 		}
 
@@ -287,8 +288,8 @@ func BuildLocalCallGraph(
 ) map[cfg.SymbolID][]cfg.SymbolID {
 	adj := make(map[cfg.SymbolID][]cfg.SymbolID, len(localFuncs))
 
-	resolveCalleeSym := func(callInfo *cfg.CallInfo, bindings *bind.BindingTable) cfg.SymbolID {
-		return canonicalLocalCalleeSymbol(localFuncs, moduleBindings, bindings, callInfo)
+	resolveCalleeSym := func(callInfo *cfg.CallInfo, graph *cfg.Graph, bindings *bind.BindingTable) cfg.SymbolID {
+		return canonicalLocalCalleeSymbol(localFuncs, graph, moduleBindings, bindings, callInfo)
 	}
 
 	resolveLocalSignature := buildLocalSignatureResolver(localFuncs)
@@ -307,8 +308,8 @@ func BuildLocalCallGraph(
 		*callees = append(*callees, sym)
 	}
 
-	addEdgesFromCall := func(seen map[cfg.SymbolID]bool, callees *[]cfg.SymbolID, callInfo *cfg.CallInfo, bindings *bind.BindingTable) {
-		calleeSym := resolveCalleeSym(callInfo, bindings)
+	addEdgesFromCall := func(seen map[cfg.SymbolID]bool, callees *[]cfg.SymbolID, callInfo *cfg.CallInfo, graph *cfg.Graph, bindings *bind.BindingTable) {
+		calleeSym := resolveCalleeSym(callInfo, graph, bindings)
 		if calleeSym == 0 {
 			return
 		}
@@ -343,7 +344,7 @@ func BuildLocalCallGraph(
 		bindings := info.Graph.Bindings()
 
 		info.Graph.EachCallSite(func(_ cfg.Point, callInfo *cfg.CallInfo) {
-			addEdgesFromCall(seen, &callees, callInfo, bindings)
+			addEdgesFromCall(seen, &callees, callInfo, info.Graph, bindings)
 		})
 
 		if len(callees) > 1 {

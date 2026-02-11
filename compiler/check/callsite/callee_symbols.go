@@ -81,6 +81,29 @@ func PreferredCalleeSymbol(
 	return selected
 }
 
+// PreferredCalleeSymbolWithAliases selects a single symbol from alias-expanded candidates.
+//
+// Selection rule:
+//  1. start with the first candidate (if any)
+//  2. if prefer is provided, pick the first candidate where prefer(sym) is true
+func PreferredCalleeSymbolWithAliases(
+	info *cfg.CallInfo,
+	graph *cfg.Graph,
+	primary, fallback *bind.BindingTable,
+	prefer func(cfg.SymbolID) bool,
+) cfg.SymbolID {
+	selected := cfg.SymbolID(0)
+	for _, sym := range CalleeSymbolCandidatesWithAliases(info, graph, primary, fallback) {
+		if selected == 0 {
+			selected = sym
+		}
+		if prefer != nil && prefer(sym) {
+			return sym
+		}
+	}
+	return selected
+}
+
 // CalleeSymbolCandidatesWithAliases expands callee candidates with direct aliases.
 //
 // For each canonical candidate, this appends graph.DirectAliasSymbol(candidate)
