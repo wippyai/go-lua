@@ -5,9 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // WidenFacts merges two interproc fact bundles.
@@ -350,10 +350,10 @@ func joinParamHint(a, b typ.Type) typ.Type {
 	if b == nil {
 		return a
 	}
-	if isNilType(a) && !isNilType(b) {
+	if unwrap.IsNilType(a) && !unwrap.IsNilType(b) {
 		return b
 	}
-	if isNilType(b) && !isNilType(a) {
+	if unwrap.IsNilType(b) && !unwrap.IsNilType(a) {
 		return a
 	}
 	if TypeExtendsRecord(a, b) {
@@ -363,10 +363,6 @@ func joinParamHint(a, b typ.Type) typ.Type {
 		return b
 	}
 	return JoinInterprocTypes(a, b)
-}
-
-func isNilType(t typ.Type) bool {
-	return t != nil && t.Kind() == kind.Nil
 }
 
 // WidenLiteralSigs merges two literal signature maps.
