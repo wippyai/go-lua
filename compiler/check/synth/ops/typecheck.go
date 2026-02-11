@@ -356,14 +356,3 @@ func IsBitwiseNumeric(t typ.Type) bool {
 
 	return k == kind.Integer || k == kind.Number || k.IsPlaceholder()
 }
-
-// IsLiteralBoolean checks if a type is a literal boolean (true or false).
-func IsLiteralBoolean(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	if lit, ok := t.(*typ.Literal); ok {
-		return lit.Base == kind.Boolean
-	}
-	return false
-}
