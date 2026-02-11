@@ -152,6 +152,20 @@ func TestParseSuffix_StringIndexQuotedEscapedBackslash(t *testing.T) {
 	}
 }
 
+func TestParseSuffix_StringIndexQuotedInvalidEscapeRejected(t *testing.T) {
+	segs := ParseSuffix("[\"a\\nb\"]")
+	if segs != nil {
+		t.Fatalf("expected invalid escape to be rejected, got %+v", segs)
+	}
+}
+
+func TestParseSuffix_StringIndexQuotedDanglingEscapeRejected(t *testing.T) {
+	segs := ParseSuffix("[\"a\\\"]")
+	if segs != nil {
+		t.Fatalf("expected dangling escape to be rejected, got %+v", segs)
+	}
+}
+
 func TestParseSuffix_StringIndexVsInt_Disambiguated(t *testing.T) {
 	stringSegs := ParseSuffix("[\"1\"]")
 	if len(stringSegs) != 1 {

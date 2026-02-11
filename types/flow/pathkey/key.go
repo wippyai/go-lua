@@ -69,7 +69,11 @@ func ParseSuffix(suffix string) []constraint.Segment {
 						if i+1 >= len(suffix) {
 							return nil
 						}
-						out = append(out, suffix[i+1])
+						escaped := suffix[i+1]
+						if escaped != '\\' && escaped != '"' {
+							return nil
+						}
+						out = append(out, escaped)
 						i += 2
 						continue
 					}
