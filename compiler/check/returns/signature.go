@@ -29,10 +29,7 @@ func BuildFunctionSignatureWithSummary(sig *typ.Function, returnTypes []typ.Type
 // Creates a function type with unknown parameters and the given return types.
 // If the return vector is empty, returns a function with Unknown return.
 func BuildFunctionTypeFromSummary(returnTypes []typ.Type) typ.Type {
-	if len(returnTypes) == 0 {
-		return typ.Func().Returns(typ.Unknown).Build()
-	}
-	return join.WithReturns(typ.Func().Build(), returnTypes)
+	return join.WithReturnsOrUnknown(typ.Func().Build(), returnTypes)
 }
 
 // BuildSeedFunctionType builds a placeholder function type for an SCC sibling
