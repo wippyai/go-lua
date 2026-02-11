@@ -203,3 +203,42 @@ func TestFunctionEffect_IsRefinementInfo(t *testing.T) {
 	e := &FunctionEffect{}
 	e.IsRefinementInfo() // Should not panic
 }
+
+func TestFunctionEffect_KeysCollectorInfo(t *testing.T) {
+	eff := &FunctionEffect{
+		OnReturn: FromConstraints(KeyOf{
+			Table: ParamPath(0),
+			Key:   RetPath(1),
+		}),
+	}
+
+	paramIdx, returnIdx, ok := eff.KeysCollectorInfo()
+	if !ok {
+		t.Fatal("expected keys-collector info")
+	}
+	if paramIdx != 0 {
+		t.Fatalf("param index = %d, want 0", paramIdx)
+	}
+	if returnIdx != 1 {
+		t.Fatalf("return index = %d, want 1", returnIdx)
+	}
+	if got := eff.KeysCollectorParamIndex(); got != 0 {
+		t.Fatalf("KeysCollectorParamIndex = %d, want 0", got)
+	}
+}
+
+func TestFunctionEffect_KeysCollectorInfo_InvalidKeyPath(t *testing.T) {
+	eff := &FunctionEffect{
+		OnReturn: FromConstraints(KeyOf{
+			Table: ParamPath(0),
+			Key:   Path{Root: "ret[abc]"},
+		}),
+	}
+
+	if _, _, ok := eff.KeysCollectorInfo(); ok {
+		t.Fatal("expected no keys-collector info for invalid return key path")
+	}
+	if got := eff.KeysCollectorParamIndex(); got != -1 {
+		t.Fatalf("KeysCollectorParamIndex = %d, want -1", got)
+	}
+}

@@ -361,16 +361,16 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				}
 
 				// Detect keys collector calls: local keys = sorted_keys(table)
-				if call, _ := info.CallForTarget(i); call != nil {
+				if call, retIndex := info.CallForTarget(i); call != nil {
 					var tableSym cfg.SymbolID
 
 					// Try local function analysis first
-					if keysCollector != nil {
+					if retIndex == 0 && keysCollector != nil {
 						tableSym = keysCollector(call, p)
 					}
 
 					// Fallback: resolve function literal via module bindings (by symbol or name)
-					if tableSym == 0 && fc.ModuleBindings != nil {
+					if tableSym == 0 && retIndex == 0 && fc.ModuleBindings != nil {
 						if call.CalleeSymbol != 0 {
 							if fn, ok := fc.ModuleBindings.FuncLitBySymbol(call.CalleeSymbol); ok && fn != nil {
 								if info := keyscoll.DetectKeysCollector(fn); info != nil {
@@ -412,7 +412,9 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 							}
 						}
 						if eff != nil {
-							tableSym = callsite.RuntimeArgSymbolAt(call, eff.KeysCollectorParamIndex(), bindings)
+							if paramIdx, keyReturnIdx, ok := eff.KeysCollectorInfo(); ok && retIndex == keyReturnIdx {
+								tableSym = callsite.RuntimeArgSymbolAt(call, paramIdx, bindings)
+							}
 						}
 					}
 

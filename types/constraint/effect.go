@@ -140,27 +140,42 @@ func (e *FunctionEffect) Substitute(args []Path) *FunctionEffect {
 	return result
 }
 
-// KeysCollectorParamIndex checks if the function returns keys of a parameter.
+// KeysCollectorInfo reports KeyOf-based keys-collector behavior.
 //
 // Detects patterns like `for k in pairs(t)` where the function returns keys
-// from a table parameter. Returns the parameter index (0-based) if found,
-// or -1 if the function doesn't have this behavior.
+// from a table parameter.
 //
 // Detection looks for KeyOf constraints in OnReturn where the table is a
 // parameter placeholder ($N) and the key is a return path.
-func (e *FunctionEffect) KeysCollectorParamIndex() int {
+func (e *FunctionEffect) KeysCollectorInfo() (paramIndex int, returnIndex int, ok bool) {
 	if e == nil || !e.OnReturn.HasConstraints() {
-		return -1
+		return 0, 0, false
 	}
 
 	for _, disj := range e.OnReturn.Disjuncts {
 		for _, c := range disj {
 			if keyOf, ok := c.(KeyOf); ok {
-				if keyOf.Table.IsPlaceholder() && IsReturnPath(keyOf.Key) {
-					return keyOf.Table.PlaceholderIndex()
+				if !keyOf.Table.IsPlaceholder() || !IsReturnPath(keyOf.Key) {
+					continue
+				}
+				paramIdx := keyOf.Table.PlaceholderIndex()
+				returnIdx := ReturnIndexFromString(keyOf.Key.Root)
+				if paramIdx >= 0 && returnIdx >= 0 {
+					return paramIdx, returnIdx, true
 				}
 			}
 		}
 	}
-	return -1
+	return 0, 0, false
+}
+
+// KeysCollectorParamIndex checks if the function returns keys of a parameter.
+//
+// Returns the parameter index (0-based) if found, or -1 otherwise.
+func (e *FunctionEffect) KeysCollectorParamIndex() int {
+	paramIdx, _, ok := e.KeysCollectorInfo()
+	if !ok {
+		return -1
+	}
+	return paramIdx
 }
