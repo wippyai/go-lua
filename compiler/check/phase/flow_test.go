@@ -17,6 +17,13 @@ func TestExtractParams_NilParList(t *testing.T) {
 	}
 }
 
+func TestExtractParams_NilFunction(t *testing.T) {
+	result := ExtractParams(nil, nil, nil)
+	if result != nil {
+		t.Errorf("expected nil for nil function, got %v", result)
+	}
+}
+
 func TestExtractParams_EmptyParList(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{}}}
 	result := ExtractParams(fn, nil, nil)

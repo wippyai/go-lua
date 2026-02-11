@@ -144,7 +144,7 @@ func InferEffect(
 // Uses the CFG graph's precomputed param symbols for Symbol IDs.
 // paramTypes provides the types keyed by SymbolID.
 func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, graph *cfg.Graph) []flow.ParamInfo {
-	if fn.ParList == nil {
+	if fn == nil || fn.ParList == nil {
 		return nil
 	}
 
