@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
@@ -154,7 +155,7 @@ func CollectCalledNestedContainerMutatorAssignments(
 				if !parentSymbols[targetSym] {
 					continue
 				}
-				root := rootNameFromBindings(parent, bindings, targetSym)
+				root := resolve.RootNameFromGraphAndBindings(parent, bindings, targetSym, "")
 				for _, mutation := range mutations {
 					segs := make([]constraint.Segment, len(mutation.Segments))
 					copy(segs, mutation.Segments)
@@ -207,17 +208,4 @@ func calledSymbolsFromCall(
 	}
 
 	return calledSyms
-}
-func rootNameFromBindings(parent *cfg.Graph, bindings *bind.BindingTable, sym cfg.SymbolID) string {
-	if sym != 0 && bindings != nil {
-		if name := bindings.Name(sym); name != "" {
-			return name
-		}
-	}
-	if sym != 0 && parent != nil {
-		if name := parent.NameOf(sym); name != "" {
-			return name
-		}
-	}
-	return ""
 }

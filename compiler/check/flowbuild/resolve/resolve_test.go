@@ -49,6 +49,48 @@ func TestRootNameFromBindings_WithSymbol(t *testing.T) {
 	}
 }
 
+func TestRootNameFromGraphAndBindings_PrefersBindings(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"boundName"}},
+		Stmts:   []ast.Stmt{&ast.ReturnStmt{}},
+	}
+	graph := cfg.Build(fn)
+	if graph == nil {
+		t.Fatal("expected non-nil graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+	syms := graph.ParamSymbols()
+	if len(syms) == 0 {
+		t.Fatal("expected param symbol")
+	}
+	got := resolve.RootNameFromGraphAndBindings(graph, bindings, syms[0], "fallback")
+	if got != "boundName" {
+		t.Fatalf("expected binding name, got %q", got)
+	}
+}
+
+func TestRootNameFromGraphAndBindings_FallsBackToGraph(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"graphName"}},
+		Stmts:   []ast.Stmt{&ast.ReturnStmt{}},
+	}
+	graph := cfg.Build(fn)
+	if graph == nil {
+		t.Fatal("expected non-nil graph")
+	}
+	syms := graph.ParamSymbols()
+	if len(syms) == 0 {
+		t.Fatal("expected param symbol")
+	}
+	got := resolve.RootNameFromGraphAndBindings(graph, nil, syms[0], "fallback")
+	if got != "graphName" {
+		t.Fatalf("expected graph fallback name, got %q", got)
+	}
+}
+
 func TestGetBindings_NilInputs(t *testing.T) {
 	result := resolve.GetBindings(nil)
 	if result != nil {

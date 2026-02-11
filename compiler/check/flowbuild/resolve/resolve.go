@@ -67,6 +67,15 @@ func RootNameFromBindings(bindings *bind.BindingTable, sym cfg.SymbolID, fallbac
 	return fallback
 }
 
+// RootNameFromGraphAndBindings resolves display name with binding-first, graph-second fallback.
+func RootNameFromGraphAndBindings(graph *cfg.Graph, bindings *bind.BindingTable, sym cfg.SymbolID, fallback string) string {
+	name := RootNameFromBindings(bindings, sym, "")
+	if name != "" {
+		return name
+	}
+	return RootName(graph, sym, fallback)
+}
+
 // GetBindings returns the binding table from inputs.
 // Requires inputs.Graph to be a *cfg.Graph (not just the VersionedGraph interface).
 func GetBindings(inputs *flow.Inputs) *bind.BindingTable {
