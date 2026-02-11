@@ -48,3 +48,25 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 	}
 	return candidates
 }
+
+// PreferredCalleeSymbol selects a single symbol from callsite candidates.
+//
+// Selection rule:
+//  1. start with the first candidate (if any)
+//  2. if prefer is provided, pick the first candidate where prefer(sym) is true
+func PreferredCalleeSymbol(
+	info *cfg.CallInfo,
+	primary, fallback *bind.BindingTable,
+	prefer func(cfg.SymbolID) bool,
+) cfg.SymbolID {
+	selected := cfg.SymbolID(0)
+	for _, sym := range CalleeSymbolCandidates(info, primary, fallback) {
+		if selected == 0 {
+			selected = sym
+		}
+		if prefer != nil && prefer(sym) {
+			return sym
+		}
+	}
+	return selected
+}

@@ -79,3 +79,39 @@ func TestCalleeSymbolCandidates_IncludesPrimaryNameMatches(t *testing.T) {
 		t.Fatalf("candidates = %v, want [%d]", candidates, byName)
 	}
 }
+
+func TestPreferredCalleeSymbol_PrefersMatchingCandidate(t *testing.T) {
+	callee := &ast.IdentExpr{Value: "f"}
+	primary := bind.NewBindingTable()
+	const (
+		rawSym  cfg.SymbolID = 61
+		exprSym cfg.SymbolID = 62
+	)
+	primary.Bind(callee, exprSym)
+
+	got := PreferredCalleeSymbol(&cfg.CallInfo{
+		Callee:       callee,
+		CalleeSymbol: rawSym,
+	}, primary, nil, func(sym cfg.SymbolID) bool { return sym == exprSym })
+	if got != exprSym {
+		t.Fatalf("preferred symbol = %d, want %d", got, exprSym)
+	}
+}
+
+func TestPreferredCalleeSymbol_FallsBackToFirstCandidate(t *testing.T) {
+	callee := &ast.IdentExpr{Value: "f"}
+	primary := bind.NewBindingTable()
+	const (
+		rawSym  cfg.SymbolID = 71
+		exprSym cfg.SymbolID = 72
+	)
+	primary.Bind(callee, exprSym)
+
+	got := PreferredCalleeSymbol(&cfg.CallInfo{
+		Callee:       callee,
+		CalleeSymbol: rawSym,
+	}, primary, nil, func(sym cfg.SymbolID) bool { return false })
+	if got != rawSym {
+		t.Fatalf("fallback symbol = %d, want %d", got, rawSym)
+	}
+}

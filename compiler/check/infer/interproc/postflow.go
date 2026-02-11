@@ -225,13 +225,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 		hasFunctionRef := func(sym cfg.SymbolID) bool {
 			return sym != 0 && store.FunctionRefBySym(sym) != nil
 		}
-		calleeSym := checkcallsite.CanonicalSymbolFromExpr(
-			info.Callee,
-			info.CalleeSymbol,
-			bindings,
-			moduleBindings,
-			hasFunctionRef,
-		)
+		calleeSym := checkcallsite.PreferredCalleeSymbol(info, bindings, moduleBindings, hasFunctionRef)
 		if calleeSym == 0 {
 			return
 		}
