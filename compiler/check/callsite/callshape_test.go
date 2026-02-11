@@ -35,28 +35,22 @@ func TestMethodCallInfoHelpers(t *testing.T) {
 }
 
 func TestMethodExprHelpers(t *testing.T) {
-	if IsMethodExpr(nil) || IsMethodLikeExpr(nil) {
+	if IsMethodLikeExpr(nil) {
 		t.Fatal("nil call expr must not be method-shaped")
 	}
 
 	partialMethodOnly := &ast.FuncCallExpr{Method: "run"}
-	if IsMethodExpr(partialMethodOnly) {
-		t.Fatal("method-only expression must not be fully-formed method call")
-	}
 	if !IsMethodLikeExpr(partialMethodOnly) {
 		t.Fatal("method-only expression should be method-like")
 	}
 
 	partialReceiverOnly := &ast.FuncCallExpr{Receiver: &ast.IdentExpr{Value: "self"}}
-	if IsMethodExpr(partialReceiverOnly) {
-		t.Fatal("receiver-only expression must not be fully-formed method call")
-	}
 	if !IsMethodLikeExpr(partialReceiverOnly) {
 		t.Fatal("receiver-only expression should be method-like")
 	}
 
 	full := &ast.FuncCallExpr{Method: "run", Receiver: &ast.IdentExpr{Value: "self"}}
-	if !IsMethodExpr(full) || !IsMethodLikeExpr(full) {
-		t.Fatal("fully-formed method expression should satisfy both helpers")
+	if !IsMethodLikeExpr(full) {
+		t.Fatal("fully-formed method expression should be method-like")
 	}
 }

@@ -15,11 +15,6 @@ func IsMethodLikeCallInfo(info *cfg.CallInfo) bool {
 	return info != nil && (info.Method != "" || info.Receiver != nil)
 }
 
-// IsMethodExpr reports true only for fully-formed method call expressions.
-func IsMethodExpr(ex *ast.FuncCallExpr) bool {
-	return ex != nil && ex.Method != "" && ex.Receiver != nil
-}
-
 // IsMethodLikeExpr reports true when an expression carries any method shape.
 func IsMethodLikeExpr(ex *ast.FuncCallExpr) bool {
 	return ex != nil && (ex.Method != "" || ex.Receiver != nil)
