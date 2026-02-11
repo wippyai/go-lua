@@ -177,23 +177,9 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 					}
 				}
 
-				argType = typ.PruneSoftUnionMembers(argType)
-				if !paramhints.IsInformativeHintType(argType) {
-					continue
-				}
-
-				if callee.ParamHints == nil {
-					callee.ParamHints = make([]typ.Type, runtimeArgCount)
-				} else if i >= len(callee.ParamHints) {
-					expanded := make([]typ.Type, i+1)
-					copy(expanded, callee.ParamHints)
-					callee.ParamHints = expanded
-				}
-
-				prev := callee.ParamHints[i]
-				joined := JoinInterprocTypes(prev, argType)
-				if !typ.TypeEquals(prev, joined) {
-					callee.ParamHints[i] = joined
+				nextHints, merged := paramhints.MergeHintAt(callee.ParamHints, i, argType, JoinInterprocTypes)
+				callee.ParamHints = nextHints
+				if merged {
 					changed = true
 				}
 			}
@@ -242,14 +228,9 @@ func mergeFunctionParamHints(target *LocalFuncInfo, expectedFn *typ.Function) bo
 	}
 
 	for i, param := range expectedFn.Params {
-		hint := typ.PruneSoftUnionMembers(param.Type)
-		if !paramhints.IsInformativeHintType(hint) {
-			continue
-		}
-		prev := target.ParamHints[i]
-		joined := JoinInterprocTypes(prev, hint)
-		if !typ.TypeEquals(prev, joined) {
-			target.ParamHints[i] = joined
+		nextHints, merged := paramhints.MergeHintAt(target.ParamHints, i, param.Type, JoinInterprocTypes)
+		target.ParamHints = nextHints
+		if merged {
 			changed = true
 		}
 	}

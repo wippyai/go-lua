@@ -262,12 +262,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 			if facts.ParamHints == nil {
 				facts.ParamHints = make(api.ParamHints)
 			}
-			hints := facts.ParamHints[calleeSym]
-			if len(hints) < len(info.Args) {
-				expanded := make([]typ.Type, len(info.Args))
-				copy(expanded, hints)
-				hints = expanded
-			}
+			hints := paramhints.EnsureHintCapacity(facts.ParamHints[calleeSym], len(info.Args))
 			for i, arg := range info.Args {
 				if arg == nil {
 					continue
@@ -282,22 +277,8 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 					)
 					if argSym != 0 && hasFunctionRef(argSym) {
 						hintsForFn := facts.ParamHints[argSym]
-						if len(hintsForFn) < len(expectedFn.Params) {
-							expanded := make([]typ.Type, len(expectedFn.Params))
-							copy(expanded, hintsForFn)
-							hintsForFn = expanded
-						}
 						for j, param := range expectedFn.Params {
-							hint := paramhints.WidenParamHintType(param.Type)
-							hint = typ.PruneSoftUnionMembers(hint)
-							if !paramhints.IsInformativeHintType(hint) {
-								continue
-							}
-							prev := hintsForFn[j]
-							joined := returns.JoinInterprocTypes(prev, hint)
-							if !typ.TypeEquals(prev, joined) {
-								hintsForFn[j] = joined
-							}
+							hintsForFn, _ = paramhints.MergeHintAt(hintsForFn, j, param.Type, returns.JoinInterprocTypes)
 						}
 						if len(hintsForFn) > 0 {
 							facts.ParamHints[argSym] = hintsForFn
@@ -309,16 +290,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 				if argType == nil {
 					argType = result.NarrowSynth.TypeOf(arg, p)
 				}
-				argType = paramhints.WidenParamHintType(argType)
-				argType = typ.PruneSoftUnionMembers(argType)
-				if !paramhints.IsInformativeHintType(argType) {
-					continue
-				}
-				prev := hints[i]
-				joined := returns.JoinInterprocTypes(prev, argType)
-				if !typ.TypeEquals(prev, joined) {
-					hints[i] = joined
-				}
+				hints, _ = paramhints.MergeHintAt(hints, i, argType, returns.JoinInterprocTypes)
 			}
 			if len(hints) > 0 {
 				facts.ParamHints[calleeSym] = hints

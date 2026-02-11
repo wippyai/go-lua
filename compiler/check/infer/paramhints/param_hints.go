@@ -10,6 +10,8 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+type HintJoinFn func(prev, next typ.Type) typ.Type
+
 func WidenParamHintType(t typ.Type) typ.Type {
 	if t == nil {
 		return nil
@@ -50,6 +52,45 @@ func WidenParamHintType(t typ.Type) typ.Type {
 		}
 	}
 	return t
+}
+
+// NormalizeHintType applies canonical widening and soft-member pruning.
+func NormalizeHintType(t typ.Type) typ.Type {
+	return typ.PruneSoftUnionMembers(WidenParamHintType(t))
+}
+
+// EnsureHintCapacity grows hint vector to at least size.
+func EnsureHintCapacity(hints []typ.Type, size int) []typ.Type {
+	if size <= len(hints) {
+		return hints
+	}
+	expanded := make([]typ.Type, size)
+	copy(expanded, hints)
+	return expanded
+}
+
+// MergeHintAt normalizes and joins one hint into vector slot idx.
+func MergeHintAt(hints []typ.Type, idx int, hint typ.Type, join HintJoinFn) ([]typ.Type, bool) {
+	if idx < 0 {
+		return hints, false
+	}
+	hint = NormalizeHintType(hint)
+	if !IsInformativeHintType(hint) {
+		return hints, false
+	}
+	hints = EnsureHintCapacity(hints, idx+1)
+
+	joinFn := join
+	if joinFn == nil {
+		joinFn = typ.JoinPreferNonSoft
+	}
+	prev := hints[idx]
+	merged := joinFn(prev, hint)
+	if typ.TypeEquals(prev, merged) {
+		return hints, false
+	}
+	hints[idx] = merged
+	return hints, true
 }
 
 // IsInformativeHintType reports whether a type carries useful call-site

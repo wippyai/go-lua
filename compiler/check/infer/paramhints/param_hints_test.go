@@ -123,3 +123,42 @@ func TestIsInformativeHintType(t *testing.T) {
 		}
 	}
 }
+
+func TestEnsureHintCapacity(t *testing.T) {
+	base := []typ.Type{typ.String}
+	got := EnsureHintCapacity(base, 3)
+	if len(got) != 3 {
+		t.Fatalf("EnsureHintCapacity len = %d, want 3", len(got))
+	}
+	if got[0] != typ.String {
+		t.Fatalf("EnsureHintCapacity preserved value = %v, want string", got[0])
+	}
+}
+
+func TestMergeHintAt(t *testing.T) {
+	join := func(prev, next typ.Type) typ.Type { return typ.JoinPreferNonSoft(prev, next) }
+
+	t.Run("filters non-informative", func(t *testing.T) {
+		hints := []typ.Type{typ.String}
+		got, changed := MergeHintAt(hints, 1, typ.Unknown, join)
+		if changed {
+			t.Fatal("expected no change for unknown hint")
+		}
+		if len(got) != 1 {
+			t.Fatalf("expected unchanged slice len 1, got %d", len(got))
+		}
+	})
+
+	t.Run("normalizes literal and merges", func(t *testing.T) {
+		got, changed := MergeHintAt(nil, 0, typ.LiteralString("x"), join)
+		if !changed {
+			t.Fatal("expected merge change for informative literal")
+		}
+		if len(got) != 1 {
+			t.Fatalf("expected one hint, got %d", len(got))
+		}
+		if !typ.TypeEquals(got[0], typ.String) {
+			t.Fatalf("expected normalized string hint, got %v", got[0])
+		}
+	})
+}
