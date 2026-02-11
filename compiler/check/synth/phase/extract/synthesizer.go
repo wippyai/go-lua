@@ -294,6 +294,13 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 	if bindings := ctx.Bindings(); bindings != nil {
 		sym, _ = bindings.SymbolOf(ex)
 	}
+	if sym == 0 {
+		if graph := ctx.Graph(); graph != nil {
+			if resolved, ok := graph.SymbolAt(p, ex.Value); ok && resolved != 0 {
+				sym = resolved
+			}
+		}
+	}
 	if s.deps.ModuleBindings != nil {
 		moduleSym, _ = s.deps.ModuleBindings.SymbolOf(ex)
 		if sym == 0 {
