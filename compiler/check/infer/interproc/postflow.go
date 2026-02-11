@@ -12,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -398,10 +397,10 @@ func mergeContainerMutationSlice(
 	}
 	byKey := make(map[string]api.ContainerMutation, len(existing)+len(next))
 	for _, m := range existing {
-		byKey[containerMutationKey(m)] = m
+		byKey[api.ContainerMutationKey(m)] = m
 	}
 	for _, m := range next {
-		key := containerMutationKey(m)
+		key := api.ContainerMutationKey(m)
 		if prev, ok := byKey[key]; ok {
 			m.ValueType = returns.JoinInterprocTypes(prev.ValueType, m.ValueType)
 		}
@@ -417,8 +416,4 @@ func mergeContainerMutationSlice(
 		out = append(out, byKey[key])
 	}
 	return out
-}
-
-func containerMutationKey(m api.ContainerMutation) string {
-	return constraint.FormatSegments(m.Segments)
 }

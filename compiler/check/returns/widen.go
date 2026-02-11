@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -551,11 +550,11 @@ func mergeContainerMutationSlice(
 	}
 	byKey := make(map[string]api.ContainerMutation, len(existing)+len(next))
 	for _, m := range existing {
-		key := mutationKey(m)
+		key := api.ContainerMutationKey(m)
 		byKey[key] = m
 	}
 	for _, m := range next {
-		key := mutationKey(m)
+		key := api.ContainerMutationKey(m)
 		if prev, ok := byKey[key]; ok {
 			m.ValueType = maybeWidenTypeForConvergence(JoinInterprocTypes(prev.ValueType, m.ValueType))
 		} else {
@@ -573,10 +572,6 @@ func mergeContainerMutationSlice(
 		out = append(out, byKey[key])
 	}
 	return out
-}
-
-func mutationKey(m api.ContainerMutation) string {
-	return constraint.FormatSegments(m.Segments)
 }
 
 // WidenConstructorFields merges constructor field maps using monotone join.

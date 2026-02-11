@@ -59,6 +59,11 @@ type ContainerMutation struct {
 	ValueType typ.Type
 }
 
+// ContainerMutationKey returns the canonical path key for a container mutation.
+func ContainerMutationKey(m ContainerMutation) string {
+	return constraint.FormatSegments(m.Segments)
+}
+
 // CapturedContainerMutations maps nested function symbols to container mutations
 // they make to captured variables from parent scopes.
 //
@@ -72,13 +77,13 @@ type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
 // Facts bundles all interprocedural analysis results for a single function graph.
 // These facts are computed during analysis and stored per (graph, parent) pair.
 type Facts struct {
-	ReturnSummaries   ReturnSummaries
-	NarrowReturns     NarrowReturnSummaries
-	ParamHints        ParamHints
-	FuncTypes         FuncTypes
-	LiteralSigs       LiteralSigs
-	CapturedTypes     CapturedTypes
-	CapturedFields    CapturedFieldAssigns
+	ReturnSummaries    ReturnSummaries
+	NarrowReturns      NarrowReturnSummaries
+	ParamHints         ParamHints
+	FuncTypes          FuncTypes
+	LiteralSigs        LiteralSigs
+	CapturedTypes      CapturedTypes
+	CapturedFields     CapturedFieldAssigns
 	CapturedContainers CapturedContainerMutations
-	ConstructorFields ConstructorFields
+	ConstructorFields  ConstructorFields
 }
