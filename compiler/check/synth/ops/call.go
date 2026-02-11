@@ -561,7 +561,7 @@ func ReInfer(ctx *db.QueryContext, def CallDef, prev InferResult) InferResult {
 		return prev
 	}
 
-	typeArgs, err := InferTypeArgsWithMode(fn, def.Args, prev.IsMethod, prev.Receiver, prev.ForceMethodReceiver)
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(fn, def.Args, prev.IsMethod, prev.Receiver, nil, prev.ForceMethodReceiver)
 	if err != nil {
 		result := prev
 		result.Errors = append(result.Errors, CallError{Kind: ErrTypeInference, Message: err.Error()})

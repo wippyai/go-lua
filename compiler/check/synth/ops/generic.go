@@ -22,12 +22,7 @@ import (
 // Returns the inferred type arguments in parameter order, or error if inference fails.
 // Unresolved type parameters default to typ.Unknown.
 func InferTypeArgs(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type) ([]typ.Type, error) {
-	return InferTypeArgsWithMode(fn, args, isMethod, receiver, false)
-}
-
-// InferTypeArgsWithMode infers type arguments with optional forced receiver consumption.
-func InferTypeArgsWithMode(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {
-	return InferTypeArgsWithExpectedAndMode(fn, args, isMethod, receiver, nil, forceMethodReceiver)
+	return InferTypeArgsWithExpectedAndMode(fn, args, isMethod, receiver, nil, false)
 }
 
 // InferTypeArgsWithExpectedAndMode performs bidirectional inference with optional
