@@ -5,6 +5,8 @@ import (
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // JoinInterprocTypes centralizes the join policy used by interproc fact channels.
@@ -18,6 +20,52 @@ func JoinInterprocTypes(a, b typ.Type) typ.Type {
 		return a
 	}
 	return typ.JoinPreferNonSoft(a, b)
+}
+
+// MergeCapturedType merges values in the CapturedTypes channel.
+// It only applies return refinement when both function shapes are identical.
+func MergeCapturedType(prev, next typ.Type) typ.Type {
+	if prev == nil {
+		return next
+	}
+	if next == nil {
+		return prev
+	}
+	prevFn, _ := unwrap.Alias(prev).(*typ.Function)
+	nextFn, _ := unwrap.Alias(next).(*typ.Function)
+	if prevFn == nil || nextFn == nil {
+		return JoinInterprocTypes(prev, next)
+	}
+	if len(prevFn.TypeParams) != len(nextFn.TypeParams) || !typeParamsEqual(prevFn.TypeParams, nextFn.TypeParams) {
+		return JoinInterprocTypes(prev, next)
+	}
+	if len(prevFn.Params) != len(nextFn.Params) {
+		return JoinInterprocTypes(prev, next)
+	}
+	if (prevFn.Variadic == nil) != (nextFn.Variadic == nil) {
+		return JoinInterprocTypes(prev, next)
+	}
+	if prevFn.Variadic != nil && !typ.TypeEquals(prevFn.Variadic, nextFn.Variadic) {
+		return JoinInterprocTypes(prev, next)
+	}
+	for i := range prevFn.Params {
+		if prevFn.Params[i].Optional != nextFn.Params[i].Optional {
+			return JoinInterprocTypes(prev, next)
+		}
+		if !typ.TypeEquals(prevFn.Params[i].Type, nextFn.Params[i].Type) {
+			return JoinInterprocTypes(prev, next)
+		}
+	}
+	if preferred, ok := preferFunctionReturnRefinement(nextFn.Returns, prevFn.Returns); ok {
+		if ReturnTypesEqual(prevFn.Returns, preferred) {
+			return prev
+		}
+		if ReturnTypesEqual(nextFn.Returns, preferred) {
+			return next
+		}
+		return typjoin.WithReturns(prevFn, preferred)
+	}
+	return JoinInterprocTypes(prev, next)
 }
 
 // ReturnTypesEqual checks if two return vectors are structurally equal.

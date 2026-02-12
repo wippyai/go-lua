@@ -219,6 +219,70 @@ db:release()
 	}
 }
 
+func TestFalsePositive_NestedWrapperChain_WithInnerErrorReturnCall(t *testing.T) {
+	txType := typ.NewInterface("sql.Tx", []typ.Method{
+		{
+			Name: "rollback",
+			Type: typ.Func().Param("self", typ.Self).Build(),
+		},
+	})
+	dbType := typ.NewInterface("sql.DB", []typ.Method{
+		{
+			Name: "begin",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(txType, typ.NewOptional(typ.LuaError)).
+				Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).
+				Build(),
+		},
+		{
+			Name: "release",
+			Type: typ.Func().Param("self", typ.Self).Build(),
+		},
+	})
+
+	sqlManifest := io.NewManifest("sql")
+	sqlManifest.SetExport(typ.NewInterface("sql", []typ.Method{
+		{
+			Name: "get",
+			Type: typ.Func().
+				Param("dsn", typ.String).
+				Returns(dbType, typ.NewOptional(typ.LuaError)).
+				Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).
+				Build(),
+		},
+	}))
+
+	source := `
+local sql = require("sql")
+
+local function connect()
+	local db, err = sql:get("app:db")
+	if err then
+		error(err:message())
+	end
+	local tx, terr = db:begin()
+	if terr then
+		error(terr:message())
+	end
+	return db
+end
+
+local function get_connection()
+	return connect()
+end
+
+local db = get_connection()
+db:release()
+`
+
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("sql", sqlManifest))
+
+	if result.HasError() {
+		t.Fatalf("expected no errors; wrapper chain should preserve connect() non-nil return, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestErrorTerminates_TableFieldsDoNotCollapseToNever(t *testing.T) {
 	txType := typ.NewInterface("sql.Tx", []typ.Method{
 		{

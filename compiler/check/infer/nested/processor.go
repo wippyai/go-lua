@@ -33,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
 // CheckFunc analyzes a nested function with a given parent scope.
@@ -254,6 +255,7 @@ func (p *Processor) processNestedFunction(
 	}
 
 	if nestedGraph != nil && len(capturedTypes) > 0 && p.store != nil {
+		parentSummaries := p.store.GetReturnSummariesSnapshot(graph, parentScope)
 		if parentScope != nil && p.store.GraphParentHashOf(nestedGraph.ID()) == 0 {
 			if setter, ok := p.store.(interface {
 				SetGraphParentHash(graphID, parentHash uint64)
@@ -271,10 +273,22 @@ func (p *Processor) processNestedFunction(
 					if sym == 0 || t == nil {
 						continue
 					}
+					nextType := t
+					if fn, ok := nextType.(*typ.Function); ok && len(parentSummaries) > 0 {
+						if summary := returns.NormalizeReturnVector(parentSummaries[sym]); len(summary) > 0 {
+							normalizedSummary := make([]typ.Type, len(summary))
+							for i, ret := range summary {
+								normalizedSummary[i] = typ.PruneSoftUnionMembers(ret)
+							}
+							if !typ.IsUnknownOnlyOrEmpty(normalizedSummary) {
+								nextType = typjoin.WithReturns(fn, normalizedSummary)
+							}
+						}
+					}
 					if prev := facts.CapturedTypes[sym]; prev != nil {
-						facts.CapturedTypes[sym] = returns.JoinInterprocTypes(prev, t)
+						facts.CapturedTypes[sym] = returns.MergeCapturedType(prev, nextType)
 					} else {
-						facts.CapturedTypes[sym] = t
+						facts.CapturedTypes[sym] = nextType
 					}
 				}
 			})

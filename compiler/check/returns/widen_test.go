@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -137,6 +138,24 @@ func TestMergeFunctionReturnsIfSameShape_GenericTypeParamsMustMatch(t *testing.T
 	}
 }
 
+func TestMergeFuncTypes_PrefersOptionalElisionForSameShape(t *testing.T) {
+	prev := typ.Func().
+		Returns(typ.NewOptional(typ.String)).
+		Build()
+	next := typ.Func().
+		Returns(typ.String).
+		Build()
+
+	merged := mergeFuncTypes(prev, next)
+	fn, ok := merged.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 {
+		t.Fatalf("expected merged function return, got %T", merged)
+	}
+	if !typ.TypeEquals(fn.Returns[0], typ.String) {
+		t.Fatalf("expected optional to be elided, got %v", fn.Returns[0])
+	}
+}
+
 func TestMergeFuncTypes_DoesNotRegressToNarrowerNilReturn(t *testing.T) {
 	prev := typ.Func().
 		Returns(typ.NewOptional(typ.Integer)).
@@ -152,6 +171,35 @@ func TestMergeFuncTypes_DoesNotRegressToNarrowerNilReturn(t *testing.T) {
 	}
 	if !typ.TypeEquals(fn.Returns[0], typ.NewOptional(typ.Integer)) {
 		t.Fatalf("expected integer? return after merge, got %v", fn.Returns[0])
+	}
+}
+
+func TestWidenFacts_AlignsFuncTypeReturnsWithReturnSummaries(t *testing.T) {
+	sym := cfg.SymbolID(41)
+	prev := api.Facts{
+		ReturnSummaries: api.ReturnSummaries{
+			sym: []typ.Type{typ.NewOptional(typ.String)},
+		},
+		FuncTypes: api.FuncTypes{
+			sym: typ.Func().Returns(typ.NewOptional(typ.String)).Build(),
+		},
+	}
+	next := api.Facts{
+		ReturnSummaries: api.ReturnSummaries{
+			sym: []typ.Type{typ.String},
+		},
+		FuncTypes: api.FuncTypes{
+			sym: typ.Func().Returns(typ.NewOptional(typ.String)).Build(),
+		},
+	}
+
+	merged := WidenFacts(prev, next)
+	fn, ok := merged.FuncTypes[sym].(*typ.Function)
+	if !ok || len(fn.Returns) != 1 {
+		t.Fatalf("expected merged function type with one return, got %T", merged.FuncTypes[sym])
+	}
+	if !typ.TypeEquals(fn.Returns[0], typ.String) {
+		t.Fatalf("expected merged function return to match canonical summary string, got %v", fn.Returns[0])
 	}
 }
 

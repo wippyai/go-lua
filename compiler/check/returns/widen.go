@@ -14,11 +14,15 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 	mergedReturns := WidenReturnSummaries(prev.ReturnSummaries, next.ReturnSummaries)
 	mergedReturns = refineReturnSummariesWithNarrow(mergedReturns, prev.NarrowReturns)
 	mergedReturns = refineReturnSummariesWithNarrow(mergedReturns, next.NarrowReturns)
+	mergedFuncTypes := alignFuncTypesWithReturnSummaries(
+		WidenFuncTypes(prev.FuncTypes, next.FuncTypes),
+		mergedReturns,
+	)
 	return api.Facts{
 		ReturnSummaries:    mergedReturns,
 		NarrowReturns:      WidenReturnSummaries(prev.NarrowReturns, next.NarrowReturns),
 		ParamHints:         WidenParamHints(prev.ParamHints, next.ParamHints),
-		FuncTypes:          WidenFuncTypes(prev.FuncTypes, next.FuncTypes),
+		FuncTypes:          mergedFuncTypes,
 		LiteralSigs:        WidenLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:      WidenCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
 		CapturedFields:     WidenCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
@@ -392,7 +396,11 @@ func mergeLiteralSig(prev, next *typ.Function) *typ.Function {
 	}
 	if merged, ok := mergeFunctionReturnsIfSameShape(prev, next); ok {
 		if fn, ok := merged.(*typ.Function); ok {
-			return fn
+			// Literal signatures are widened monotonically; never regress to a
+			// narrower return-only variant even if it is currently more precise.
+			if subtype.IsSubtype(prev, fn) && subtype.IsSubtype(next, fn) {
+				return fn
+			}
 		}
 	}
 	if subtype.IsSubtype(prev, next) {
@@ -424,7 +432,7 @@ func WidenCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		t := next[sym]
 		if existing := merged[sym]; existing != nil {
-			merged[sym] = maybeWidenTypeForConvergence(JoinInterprocTypes(existing, t))
+			merged[sym] = maybeWidenTypeForConvergence(MergeCapturedType(existing, t))
 		} else {
 			merged[sym] = maybeWidenTypeForConvergence(t)
 		}
@@ -563,6 +571,15 @@ func mergeFuncTypes(prev, next typ.Type) typ.Type {
 	prevFn, okPrev := prev.(*typ.Function)
 	nextFn, okNext := next.(*typ.Function)
 	if okPrev && okNext {
+		if preferred, ok := preferFunctionReturnRefinement(nextFn.Returns, prevFn.Returns); ok {
+			if ReturnTypesEqual(prevFn.Returns, preferred) {
+				return prev
+			}
+			if ReturnTypesEqual(nextFn.Returns, preferred) {
+				return next
+			}
+			return typjoin.WithReturns(prevFn, preferred)
+		}
 		// For same-shape functions, merge returns before subtype short-circuiting.
 		// This avoids regressing to narrower context artifacts (e.g. nil-only returns).
 		if merged, ok := mergeFunctionReturnsIfSameShape(prevFn, nextFn); ok {
@@ -592,6 +609,22 @@ func mergeFuncTypes(prev, next typ.Type) typ.Type {
 		}
 	}
 	return JoinInterprocTypes(prev, next)
+}
+
+func preferFunctionReturnRefinement(a, b []typ.Type) ([]typ.Type, bool) {
+	if len(a) == 0 || len(b) == 0 {
+		return nil, false
+	}
+	if len(a) != len(b) {
+		return nil, false
+	}
+	if ReturnTypesExtendRecord(a, b) || ReturnTypesElideOptional(a, b) {
+		return a, true
+	}
+	if ReturnTypesExtendRecord(b, a) || ReturnTypesElideOptional(b, a) {
+		return b, true
+	}
+	return nil, false
 }
 
 func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bool) {
@@ -697,6 +730,68 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 	}
 	builder = builder.Returns(mergedReturns...)
 	return builder.Build(), true
+}
+
+func alignFuncTypesWithReturnSummaries(funcTypes api.FuncTypes, summaries api.ReturnSummaries) api.FuncTypes {
+	if len(funcTypes) == 0 || len(summaries) == 0 {
+		return funcTypes
+	}
+	aligned := make(api.FuncTypes, len(funcTypes))
+	for _, sym := range cfg.SortedSymbolIDs(funcTypes) {
+		current := funcTypes[sym]
+		fn, ok := current.(*typ.Function)
+		if !ok {
+			aligned[sym] = current
+			continue
+		}
+		summary := NormalizeReturnVector(summaries[sym])
+		if len(summary) == 0 {
+			aligned[sym] = current
+			continue
+		}
+		normalizedSummary := normalizeSummaryForFunction(fn, summary)
+		if typ.IsUnknownOnlyOrEmpty(normalizedSummary) {
+			aligned[sym] = current
+			continue
+		}
+		if ReturnTypesEqual(fn.Returns, normalizedSummary) {
+			aligned[sym] = current
+			continue
+		}
+		aligned[sym] = typjoin.WithReturns(fn, normalizedSummary)
+	}
+	return aligned
+}
+
+func normalizeSummaryForFunction(fn *typ.Function, summary []typ.Type) []typ.Type {
+	if fn == nil || len(summary) == 0 {
+		return nil
+	}
+	allowedTypeParams := make(map[string]bool, len(fn.TypeParams))
+	for _, tp := range fn.TypeParams {
+		if tp != nil && tp.Name != "" {
+			allowedTypeParams[tp.Name] = true
+		}
+	}
+	out := make([]typ.Type, len(summary))
+	for i, ret := range summary {
+		pruned := typ.PruneSoftUnionMembers(ret)
+		if pruned == nil {
+			out[i] = typ.Unknown
+			continue
+		}
+		out[i] = typ.Rewrite(pruned, func(node typ.Type) (typ.Type, bool) {
+			tp, ok := node.(*typ.TypeParam)
+			if !ok {
+				return node, false
+			}
+			if allowedTypeParams[tp.Name] {
+				return node, false
+			}
+			return typ.Unknown, true
+		})
+	}
+	return out
 }
 
 func typeParamsEqual(a, b []*typ.TypeParam) bool {
