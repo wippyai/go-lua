@@ -493,13 +493,6 @@ func (f *unifiedTypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedV
 			}
 		}
 	}
-	if f.literalTypes != nil {
-		if f.annotatedVars == nil || !f.annotatedVars[sym] {
-			if t, ok := f.literalTypes[sym]; ok && t != nil {
-				return f.toTypedValue(t)
-			}
-		}
-	}
 	if f.siblingTypes != nil {
 		if t, ok := f.siblingTypes[sym]; ok && t != nil {
 			return f.toTypedValue(t)
@@ -508,6 +501,16 @@ func (f *unifiedTypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedV
 	if f.declaredTypes != nil {
 		if t, ok := f.declaredTypes[sym]; ok && t != nil {
 			return f.toTypedValue(t)
+		}
+	}
+	// Literal overlays are synthesized from function/table literals and can lag
+	// behind canonical declared/sibling symbol types during fixpoint iterations.
+	// Keep them as fallback only when no canonical symbol type is available.
+	if f.literalTypes != nil {
+		if f.annotatedVars == nil || !f.annotatedVars[sym] {
+			if t, ok := f.literalTypes[sym]; ok && t != nil {
+				return f.toTypedValue(t)
+			}
 		}
 	}
 	return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}

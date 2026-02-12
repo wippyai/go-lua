@@ -91,6 +91,31 @@ func TestWidenReturnSummaries_UsesMonotoneJoinForHigherOrderReturns(t *testing.T
 	}
 }
 
+func TestWidenReturnSummaries_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
+	dbType := typ.NewInterface("sql.DB", []typ.Method{
+		{
+			Name: "release",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).
+				Build(),
+		},
+	})
+
+	prev := api.ReturnSummaries{
+		1: []typ.Type{typ.NewOptional(dbType)},
+	}
+	next := api.ReturnSummaries{
+		1: []typ.Type{dbType},
+	}
+
+	merged := WidenReturnSummaries(prev, next)
+	got := merged[1]
+	if len(got) != 1 || !typ.TypeEquals(got[0], dbType) {
+		t.Fatalf("expected optional elision for interface return, got %v", got)
+	}
+}
+
 func TestMergeFunctionReturnsIfSameShape_GenericFunctions(t *testing.T) {
 	prev := typ.Func().
 		TypeParam("T", nil).
@@ -185,6 +210,57 @@ func TestMergeFuncTypes_PrefersWiderSupertypeOnSubtypeRelation(t *testing.T) {
 	merged = mergeFuncTypes(typ.Number, typ.Integer)
 	if !typ.TypeEquals(merged, typ.Number) {
 		t.Fatalf("expected wider supertype number, got %v", merged)
+	}
+}
+
+func TestMergeFuncTypes_IsCommutativeForIncomparableSignatures(t *testing.T) {
+	coarse := typ.Func().
+		Param("entries", typ.Any).
+		Returns(typ.Integer).
+		Build()
+	refined := typ.Func().
+		Param("entries", typ.NewArray(typ.String)).
+		Returns(typ.Integer).
+		Build()
+
+	forward := mergeFuncTypes(coarse, refined)
+	reverse := mergeFuncTypes(refined, coarse)
+	if !typ.TypeEquals(forward, reverse) {
+		t.Fatalf("expected commutative merge result, got forward=%v reverse=%v", forward, reverse)
+	}
+}
+
+func TestMergeFuncTypes_AliasInputsUseCanonicalJoin(t *testing.T) {
+	coarse := typ.NewAlias("CoarseFn", typ.Func().
+		Param("entries", typ.Any).
+		Returns(typ.Integer).
+		Build())
+	refined := typ.NewAlias("RefinedFn", typ.Func().
+		Param("entries", typ.NewArray(typ.String)).
+		Returns(typ.Integer).
+		Build())
+
+	forward := mergeFuncTypes(coarse, refined)
+	reverse := mergeFuncTypes(refined, coarse)
+	if !typ.TypeEquals(forward, reverse) {
+		t.Fatalf("expected commutative alias merge result, got forward=%v reverse=%v", forward, reverse)
+	}
+}
+
+func TestMergeFuncTypes_MapVsOpenRecordUsesCanonicalJoin(t *testing.T) {
+	coarse := typ.Func().
+		Param("t", typ.NewRecord().SetOpen(true).Build()).
+		Returns(typ.String).
+		Build()
+	refined := typ.Func().
+		Param("t", typ.NewMap(typ.String, typ.NewArray(typ.String))).
+		Returns(typ.String).
+		Build()
+
+	forward := mergeFuncTypes(coarse, refined)
+	reverse := mergeFuncTypes(refined, coarse)
+	if !typ.TypeEquals(forward, reverse) {
+		t.Fatalf("expected commutative map/open-record merge result, got forward=%v reverse=%v", forward, reverse)
 	}
 }
 

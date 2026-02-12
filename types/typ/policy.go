@@ -46,10 +46,48 @@ func JoinReturnSlot(a, b Type) Type {
 	}
 	a = PruneSoftUnionMembers(a)
 	b = PruneSoftUnionMembers(b)
+	if preferred, ok := preferArrayOverEmptyRecord(a, b); ok {
+		return preferred
+	}
+	if (IsAny(a) && b.Kind() == kind.Nil) || (IsAny(b) && a.Kind() == kind.Nil) {
+		return Any
+	}
 	if (IsUnknown(a) && b.Kind() == kind.Nil) || (IsUnknown(b) && a.Kind() == kind.Nil) {
 		return Unknown
 	}
 	return JoinPreferNonSoft(a, b)
+}
+
+func preferArrayOverEmptyRecord(a, b Type) (Type, bool) {
+	if isEmptyRecordNoMap(a) && isArrayLike(b) {
+		return b, true
+	}
+	if isEmptyRecordNoMap(b) && isArrayLike(a) {
+		return a, true
+	}
+	return nil, false
+}
+
+func isEmptyRecordNoMap(t Type) bool {
+	switch v := t.(type) {
+	case *Alias:
+		return isEmptyRecordNoMap(v.Target)
+	case *Record:
+		return len(v.Fields) == 0 && !v.HasMapComponent()
+	default:
+		return false
+	}
+}
+
+func isArrayLike(t Type) bool {
+	switch v := t.(type) {
+	case *Alias:
+		return isArrayLike(v.Target)
+	case *Array:
+		return true
+	default:
+		return false
+	}
 }
 
 // JoinBranchOutcome merges mutually-exclusive expression outcomes (for example,

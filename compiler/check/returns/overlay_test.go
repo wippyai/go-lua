@@ -227,6 +227,21 @@ func TestMergeMapComponentIntoType(t *testing.T) {
 			t.Fatal("expected map component")
 		}
 	})
+
+	t.Run("open record keeps string key domain on unknown key merge", func(t *testing.T) {
+		base := typ.NewRecord().SetOpen(true).Build()
+		result := MergeMapComponentIntoType(base, typ.Unknown, typ.Number)
+		rec, ok := result.(*typ.Record)
+		if !ok {
+			t.Fatalf("expected record, got %T", result)
+		}
+		if !rec.HasMapComponent() {
+			t.Fatal("expected map component")
+		}
+		if !typ.TypeEquals(rec.MapKey, typ.String) {
+			t.Fatalf("expected string map key, got %v", rec.MapKey)
+		}
+	})
 }
 
 func TestApplyIndexerMergeToOverlay(t *testing.T) {

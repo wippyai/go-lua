@@ -333,7 +333,8 @@ type IndexerAssignment struct {
 	KeyVar    string               // Variable name if key is an identifier
 	KeySymbol cfg.SymbolID         // Symbol ID for the key variable (for SSA-aware lookup)
 	KeyType   typ.Type             // Optional explicit key type (overrides KeySymbol lookup)
-	ValType   typ.Type
+	ValuePath constraint.Path      // Path to value expression for flow-resolved type lookup
+	ValType   typ.Type             // Fallback type when ValuePath is unavailable
 }
 
 // TableMutatorAssignment describes table.insert-like mutations that widen

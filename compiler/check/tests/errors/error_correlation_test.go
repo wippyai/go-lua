@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -12,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 func TestAssertIsNilNarrowsSiblingRequire(t *testing.T) {
@@ -216,6 +218,89 @@ db:release()
 
 	if result.HasError() {
 		t.Fatalf("expected no errors; nested wrapper should preserve non-nil after error() guard, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_NestedWrapperChain_IntersectionModuleExport(t *testing.T) {
+	dbType := typ.NewInterface("sql.DB", []typ.Method{
+		{
+			Name: "query",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("sql", typ.String).
+				Returns(typ.NewArray(typ.Any), typ.NewOptional(typ.LuaError)).
+				Build(),
+		},
+		{
+			Name: "release",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).
+				Build(),
+		},
+	})
+
+	sqlManifest := io.NewManifest("sql")
+	moduleMethods := typ.NewInterface("sql", []typ.Method{
+		{
+			Name: "get",
+			Type: typ.Func().
+				Param("dsn", typ.String).
+				Returns(dbType, typ.NewOptional(typ.LuaError)).
+				Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).
+				Build(),
+		},
+	})
+	moduleFields := typ.NewRecord().
+		Field("NULL", typ.Any).
+		Build()
+	sqlManifest.SetExport(typ.NewIntersection(moduleMethods, moduleFields))
+
+	source := `
+local sql = require("sql")
+
+local function connect()
+	local db, err = sql:get("postgres://localhost/test")
+	if err then
+		error(err:message())
+	end
+	return db
+end
+
+local function get_connection()
+	return connect()
+end
+
+local db = get_connection()
+local rows, err = db:query("SELECT 1")
+db:release()
+`
+
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("sql", sqlManifest))
+	if result.HasError() {
+		t.Fatalf("expected no errors for intersection-export wrapper chain, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+
+	if result.Session == nil || result.Session.Store == nil || result.Session.RootResult == nil || result.Session.RootResult.Graph == nil {
+		t.Fatal("missing session data")
+	}
+	root := result.Session.RootResult.Graph
+	parentHash := result.Session.Store.GraphParentHashOf(root.ID())
+	parent := result.Session.Store.Parents()[parentHash]
+	summaries := result.Session.Store.GetReturnSummariesSnapshot(root, parent)
+
+	for _, name := range []string{"connect", "get_connection"} {
+		sym, ok := root.SymbolAt(root.Exit(), name)
+		if !ok || sym == 0 {
+			t.Fatalf("missing symbol for %s", name)
+		}
+		rets := returns.NormalizeReturnVector(summaries[sym])
+		if len(rets) == 0 {
+			t.Fatalf("missing return summary for %s", name)
+		}
+		if unwrap.IsOptionalLike(rets[0]) {
+			t.Fatalf("expected non-optional summary for %s, got %v", name, rets[0])
+		}
 	}
 }
 

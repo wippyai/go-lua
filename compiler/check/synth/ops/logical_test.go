@@ -189,3 +189,10 @@ func TestLogicalOrTyped_AnyOrNil_DoesNotCollapseToNil(t *testing.T) {
 		t.Fatalf("any or nil collapsed to nil: %v", result)
 	}
 }
+
+func TestLogicalAndTyped_UnknownAndUnknown_DoesNotCollapseToFalsy(t *testing.T) {
+	result := LogicalAndTyped(typ.Unknown, typ.Unknown)
+	if !typ.TypeEquals(result, typ.Unknown) {
+		t.Fatalf("unknown and unknown should stay unknown, got %v", result)
+	}
+}

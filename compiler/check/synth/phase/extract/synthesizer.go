@@ -332,11 +332,20 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 		path := constraint.Path{Root: ex.Value, Symbol: sym}
 		if narrowed := narrower.NarrowedTypeAt(p, path); narrowed != nil {
 			// Guard against unsound narrowing for annotated symbols by ensuring
-			// the narrowed type remains a subtype of the declared type.
-			if types := ctx.Types(); types != nil && types.IsAnnotated(sym) {
+			// the narrowed type remains a subtype of the declared type. Function
+			// signatures from declared overlays are also authoritative and should
+			// never be widened by flow facts.
+			if types := ctx.Types(); types != nil {
 				declared := types.DeclaredAt(p, sym)
 				if declared.Type != nil && declared.State == flow.StateResolved {
-					if !subtype.IsSubtype(narrowed, declared.Type) {
+					if typ.IsAny(unwrap.Alias(declared.Type)) && typ.IsUnknown(unwrap.Alias(narrowed)) {
+						return declared.Type
+					}
+					requireSubtype := types.IsAnnotated(sym)
+					if !requireSubtype {
+						requireSubtype = unwrap.Function(declared.Type) != nil
+					}
+					if requireSubtype && !subtype.IsSubtype(narrowed, declared.Type) {
 						goto fallback
 					}
 				}
@@ -352,6 +361,14 @@ fallback:
 			// Prefer concrete resolved types over module aliases.
 			// Allow module aliases to override unknown/any placeholders.
 			if tv.Type.Kind().IsPlaceholder() {
+				if types.IsAnnotated(sym) {
+					declared := types.DeclaredAt(p, sym)
+					if declared.State == flow.StateResolved && declared.Type != nil {
+						if typ.IsAny(unwrap.Alias(declared.Type)) {
+							return declared.Type
+						}
+					}
+				}
 				// defer to module alias below if available
 			} else {
 				return tv.Type

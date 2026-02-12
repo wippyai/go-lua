@@ -5,6 +5,8 @@ import (
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // JoinInterprocTypes centralizes the join policy used by interproc fact channels.
@@ -142,6 +144,12 @@ func SelectPreferredReturnVector(a, b []typ.Type) ([]typ.Type, bool) {
 		}
 		return b, true
 	}
+	if ReturnTypesFillNilSlots(a, b) {
+		return a, true
+	}
+	if ReturnTypesFillNilSlots(b, a) {
+		return b, true
+	}
 	if ReturnTypesExtendRecord(a, b) || ReturnTypesElideOptional(a, b) {
 		return a, true
 	}
@@ -149,6 +157,56 @@ func SelectPreferredReturnVector(a, b []typ.Type) ([]typ.Type, bool) {
 		return b, true
 	}
 	return nil, false
+}
+
+// SelectRefiningReturnVector prefers candidate only when it is a directional
+// refinement of baseline. It never prefers baseline over candidate.
+//
+// This is used in iterative channels where an older baseline may be an
+// under-constrained artifact; in those cases we must not lock in baseline just
+// because it happens to be a subtype of the newer estimate.
+func SelectRefiningReturnVector(candidate, baseline []typ.Type) ([]typ.Type, bool) {
+	if ReturnTypesRefine(candidate, baseline) {
+		if ReturnTypesAllNil(candidate) && !ReturnTypesAllNil(baseline) {
+			return baseline, true
+		}
+		return candidate, true
+	}
+	if ReturnTypesFillNilSlots(candidate, baseline) {
+		return candidate, true
+	}
+	if ReturnTypesExtendRecord(candidate, baseline) || ReturnTypesElideOptional(candidate, baseline) {
+		return candidate, true
+	}
+	return nil, false
+}
+
+// ReturnTypesFillNilSlots reports whether a improves b by replacing nil-only
+// slots with concrete return evidence while staying compatible on other slots.
+func ReturnTypesFillNilSlots(a, b []typ.Type) bool {
+	if len(a) == 0 || len(b) == 0 || len(a) != len(b) {
+		return false
+	}
+	strict := false
+	for i := range a {
+		ai := a[i]
+		bi := b[i]
+		if ai == nil || bi == nil {
+			return false
+		}
+		if unwrap.IsNilType(bi) && !unwrap.IsNilType(ai) {
+			strict = true
+			continue
+		}
+		if typ.TypeEquals(ai, bi) {
+			continue
+		}
+		if subtype.IsSubtype(ai, bi) || TypeExtendsRecord(ai, bi) || typeElidesOptional(ai, bi) {
+			continue
+		}
+		return false
+	}
+	return strict
 }
 
 // TypeExtendsRecord reports whether type a extends type b by adding record fields.
@@ -257,4 +315,376 @@ func NormalizeReturnVector(rets []typ.Type) []typ.Type {
 		}
 	}
 	return out
+}
+
+func normalizeAndPruneReturnVector(rets []typ.Type) []typ.Type {
+	out := NormalizeReturnVector(rets)
+	if len(out) == 0 {
+		return nil
+	}
+	for i, ret := range out {
+		out[i] = typ.PruneSoftUnionMembers(ret)
+	}
+	return out
+}
+
+// MergeReturnSummary applies the canonical return-summary merge policy shared by
+// all iterative channels (SCC return inference, interproc fact widening, and
+// summary-to-signature alignment). Centralizing this logic prevents divergent
+// local merge behavior across phases.
+func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
+	existing = normalizeAndPruneReturnVector(existing)
+	candidate = normalizeAndPruneReturnVector(candidate)
+	if len(existing) == 0 {
+		return candidate
+	}
+	if len(candidate) == 0 {
+		return existing
+	}
+
+	// Higher-order summaries are merged monotonically for fixpoint stability.
+	if shouldUseMonotoneReturnJoin(existing, candidate) {
+		return normalizeAndPruneReturnVector(joinReturnVectorsMonotone(existing, candidate))
+	}
+
+	// Prefer strict directional refinement from the latest candidate.
+	if preferred, ok := SelectRefiningReturnVector(candidate, existing); ok {
+		return normalizeAndPruneReturnVector(preferred)
+	}
+
+	if preferred, ok := SelectPreferredReturnVector(existing, candidate); ok {
+		return normalizeAndPruneReturnVector(preferred)
+	}
+
+	return normalizeAndPruneReturnVector(typjoin.ReturnVectors(existing, candidate))
+}
+
+// MergeFunctionFactType merges function-type facts through one canonical policy.
+// This ensures all channels agree on when to preserve shape and how to merge
+// returns, avoiding directional one-off behavior in individual phases.
+func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
+	if existing == nil {
+		return candidate
+	}
+	if candidate == nil {
+		return existing
+	}
+
+	existingFn := unwrap.Function(existing)
+	candidateFn := unwrap.Function(candidate)
+	if mergedFromVariants, ok := mergeFunctionFactVariants(existing, candidate); ok {
+		return mergedFromVariants
+	}
+	if existingFn != nil && candidateFn != nil {
+		if sameFunctionShapeForFactMerge(existingFn, candidateFn) {
+			return mergeFunctionFactsByShape(existingFn, candidateFn)
+		}
+	}
+
+	if subtype.IsSubtype(existing, candidate) {
+		return candidate
+	}
+	if subtype.IsSubtype(candidate, existing) {
+		return existing
+	}
+	return JoinInterprocTypes(existing, candidate)
+}
+
+func mergeFunctionFactVariants(existing, candidate typ.Type) (typ.Type, bool) {
+	existingFns := functionVariantsForFactMerge(existing)
+	candidateFns := functionVariantsForFactMerge(candidate)
+	if len(existingFns) == 0 || len(candidateFns) == 0 {
+		return nil, false
+	}
+	all := make([]*typ.Function, 0, len(existingFns)+len(candidateFns))
+	all = append(all, existingFns...)
+	all = append(all, candidateFns...)
+	for i := 1; i < len(all); i++ {
+		if !sameFunctionShapeForFactMerge(all[0], all[i]) {
+			return nil, false
+		}
+	}
+	merged := all[0]
+	for i := 1; i < len(all); i++ {
+		next, _ := mergeFunctionFactsByShape(merged, all[i]).(*typ.Function)
+		if next == nil {
+			return nil, false
+		}
+		merged = next
+	}
+	return merged, true
+}
+
+func functionVariantsForFactMerge(t typ.Type) []*typ.Function {
+	if t == nil {
+		return nil
+	}
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Optional:
+		// Optional function values include nil. Do not collapse them to a plain
+		// function fact or we lose optionality in merged facts.
+		return nil
+	case *typ.Function:
+		return []*typ.Function{v}
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return nil
+		}
+		var out []*typ.Function
+		for _, m := range v.Members {
+			fn := unwrap.Function(m)
+			if fn == nil {
+				// Only collapse union variants when the union is function-only.
+				// Mixed unions (for example function|nil) must stay untouched.
+				return nil
+			}
+			out = append(out, fn)
+		}
+		return out
+	}
+	if fn := unwrap.Function(t); fn != nil {
+		return []*typ.Function{fn}
+	}
+	return nil
+}
+
+func sameFunctionShapeForFactMerge(a, b *typ.Function) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if len(a.TypeParams) != len(b.TypeParams) {
+		return false
+	}
+	if !typeParamsEqual(a.TypeParams, b.TypeParams) {
+		return false
+	}
+	if len(a.Params) != len(b.Params) {
+		return false
+	}
+	// Param type precision and optionality may differ across iterations.
+	// Treat those as mergeable slots and reconcile in mergeFunctionFactsByShape.
+	return true
+}
+
+func mergeFunctionFactsByShape(existing, candidate *typ.Function) typ.Type {
+	if existing == nil {
+		return candidate
+	}
+	if candidate == nil {
+		return existing
+	}
+
+	builder := typ.Func()
+	for _, tp := range existing.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+
+	for i, p := range existing.Params {
+		paramType := mergeFunctionParamFactType(p.Type, candidate.Params[i].Type)
+		name := p.Name
+		if name == "" {
+			name = candidate.Params[i].Name
+		}
+		optional := p.Optional || candidate.Params[i].Optional
+		if optional {
+			builder = builder.OptParam(name, paramType)
+		} else {
+			builder = builder.Param(name, paramType)
+		}
+	}
+
+	if existing.Variadic != nil || candidate.Variadic != nil {
+		builder = builder.Variadic(mergeFunctionParamFactType(existing.Variadic, candidate.Variadic))
+	}
+
+	if mergedReturns := MergeReturnSummary(existing.Returns, candidate.Returns); len(mergedReturns) > 0 {
+		builder = builder.Returns(mergedReturns...)
+	}
+
+	effects := existing.Effects
+	if effects == nil {
+		effects = candidate.Effects
+	}
+	if effects != nil {
+		builder = builder.Effects(effects)
+	}
+	spec := existing.Spec
+	if spec == nil {
+		spec = candidate.Spec
+	}
+	if spec != nil {
+		builder = builder.Spec(spec)
+	}
+	refinement := existing.Refinement
+	if refinement == nil {
+		refinement = candidate.Refinement
+	}
+	if refinement != nil {
+		builder = builder.WithRefinement(refinement)
+	}
+
+	return builder.Build()
+}
+
+func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
+	if existing == nil {
+		return candidate
+	}
+	if candidate == nil {
+		return existing
+	}
+
+	existing = typ.PruneSoftUnionMembers(existing)
+	candidate = typ.PruneSoftUnionMembers(candidate)
+	if preferred, ok := preferStructuredRecordParam(existing, candidate); ok {
+		return preferred
+	}
+	if typ.IsUnknown(existing) {
+		return candidate
+	}
+	if typ.IsUnknown(candidate) {
+		return existing
+	}
+	if typ.IsAny(existing) && !typ.IsAny(candidate) {
+		return candidate
+	}
+	if typ.IsAny(candidate) && !typ.IsAny(existing) {
+		return existing
+	}
+	if typ.TypeEquals(existing, candidate) {
+		return existing
+	}
+	if subtype.IsSubtype(existing, candidate) && !subtype.IsSubtype(candidate, existing) {
+		return candidate
+	}
+	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {
+		return existing
+	}
+	return JoinInterprocTypes(existing, candidate)
+}
+
+func preferStructuredRecordParam(existing, candidate typ.Type) (typ.Type, bool) {
+	existingRec, okExisting := unwrap.Alias(existing).(*typ.Record)
+	candidateRec, okCandidate := unwrap.Alias(candidate).(*typ.Record)
+	if !okExisting || !okCandidate {
+		return nil, false
+	}
+
+	existingOpenTop := existingRec.Open && len(existingRec.Fields) == 0 && !existingRec.HasMapComponent()
+	candidateOpenTop := candidateRec.Open && len(candidateRec.Fields) == 0 && !candidateRec.HasMapComponent()
+	if existingOpenTop == candidateOpenTop {
+		return nil, false
+	}
+	if existingOpenTop {
+		if candidateRec.HasMapComponent() || len(candidateRec.Fields) > 0 {
+			return candidate, true
+		}
+	}
+	if candidateOpenTop {
+		if existingRec.HasMapComponent() || len(existingRec.Fields) > 0 {
+			return existing, true
+		}
+	}
+	return nil, false
+}
+
+// AlignFunctionTypeWithSummary applies the canonical return-summary winner to a
+// function type. It updates function returns only when the summary is the
+// preferred vector under SelectPreferredReturnVector (or when function returns
+// are missing). Returns the aligned function and whether it changed.
+func AlignFunctionTypeWithSummary(fn *typ.Function, summary []typ.Type) (*typ.Function, bool) {
+	if fn == nil {
+		return nil, false
+	}
+
+	normalizedSummary := normalizeAndPruneReturnVector(summary)
+	if len(normalizedSummary) == 0 {
+		return fn, false
+	}
+
+	current := normalizeAndPruneReturnVector(fn.Returns)
+	if len(current) == 0 {
+		aligned := typjoin.WithReturns(fn, normalizedSummary)
+		return aligned, aligned != nil
+	}
+
+	merged := MergeReturnSummary(current, normalizedSummary)
+	if ReturnTypesEqual(current, merged) {
+		return fn, false
+	}
+
+	aligned := typjoin.WithReturns(fn, merged)
+	if aligned == nil {
+		return fn, false
+	}
+	return aligned, true
+}
+
+// WithSummaryOrUnknown applies summary-derived returns to a function signature.
+// If summary is empty and the signature has no returns, a single unknown return
+// is attached to preserve call-site conservatism.
+func WithSummaryOrUnknown(fn *typ.Function, summary []typ.Type) *typ.Function {
+	if fn == nil {
+		return nil
+	}
+	if len(summary) == 0 {
+		if len(fn.Returns) > 0 {
+			return fn
+		}
+		return typjoin.WithReturns(fn, []typ.Type{typ.Unknown})
+	}
+	if aligned, changed := AlignFunctionTypeWithSummary(fn, summary); changed {
+		return aligned
+	}
+	if len(fn.Returns) > 0 {
+		return fn
+	}
+	return typjoin.WithReturns(fn, normalizeAndPruneReturnVector(summary))
+}
+
+func returnVectorRefines(a, b []typ.Type) bool {
+	if ReturnTypesRefine(a, b) {
+		return true
+	}
+	return returnVectorMapLikeRefines(a, b)
+}
+
+func returnVectorMapLikeRefines(a, b []typ.Type) bool {
+	if len(a) == 0 || len(b) == 0 || len(a) != len(b) {
+		return false
+	}
+	strict := false
+	for i := range a {
+		if typ.TypeEquals(a[i], b[i]) {
+			continue
+		}
+		if !mapLikeTypeRefines(a[i], b[i]) {
+			return false
+		}
+		if !mapLikeTypeRefines(b[i], a[i]) {
+			strict = true
+		}
+	}
+	return strict
+}
+
+func mapLikeTypeRefines(a, b typ.Type) bool {
+	ak, av, aok := mapComponentFromType(a)
+	bk, bv, bok := mapComponentFromType(b)
+	if !aok || !bok {
+		return false
+	}
+	return subtype.IsSubtype(ak, bk) && subtype.IsSubtype(av, bv)
+}
+
+func mapComponentFromType(t typ.Type) (key typ.Type, val typ.Type, ok bool) {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Map:
+		return v.Key, v.Value, true
+	case *typ.Record:
+		if v.HasMapComponent() {
+			return v.MapKey, v.MapValue, true
+		}
+	}
+	return nil, nil, false
 }

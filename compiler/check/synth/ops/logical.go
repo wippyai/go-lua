@@ -52,8 +52,16 @@ func LogicalAndTyped(left, right typ.Type) typ.Type {
 	if falsyLeft == nil || falsyLeft.Kind().IsNever() {
 		return right
 	}
+	// Unknown/any right branch must remain dominant. Using plain union here can
+	// collapse to falsy-only because typ.NewUnion treats unknown as non-informative.
+	if typ.IsUnknown(right) {
+		return typ.Unknown
+	}
+	if typ.IsAny(right) {
+		return typ.Any
+	}
 
-	return typ.NewUnion(falsyLeft, right)
+	return typ.JoinBranchOutcome(falsyLeft, right)
 }
 
 // LogicalOrTyped synthesizes the type of a Lua 'or' expression.

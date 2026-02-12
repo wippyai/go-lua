@@ -55,34 +55,21 @@ func BuildSeedFunctionTypeWithBindings(
 		builder = builder.TypeParam(tp.Name, constr)
 	}
 
-	if phasecore.HasImplicitSelfParam(fn, bindings) {
-		selfType := typ.Unknown
+	implicitSelf := phasecore.HasImplicitSelfParam(fn, bindings)
+	var implicitSelfType typ.Type
+	if implicitSelf {
+		implicitSelfType = typ.Unknown
 		if st := resolveScope.SelfType(); st != nil {
-			selfType = st
-		}
-		builder = builder.Param("self", selfType)
-	}
-
-	if fn.ParList != nil {
-		for i, name := range fn.ParList.Names {
-			paramType := typ.Unknown
-			if i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil {
-				if t := resolveType(fn.ParList.Types[i], resolveScope); t != nil {
-					paramType = t
-				}
-			}
-			builder = builder.Param(name, paramType)
-		}
-		if fn.ParList.HasVargs {
-			varargType := typ.Unknown
-			if fn.ParList.VarargType != nil {
-				if t := resolveType(fn.ParList.VarargType, resolveScope); t != nil {
-					varargType = t
-				}
-			}
-			builder = builder.Variadic(varargType)
+			implicitSelfType = st
 		}
 	}
+	phasecore.ApplyParamList(builder, fn, phasecore.ParamListConfig{
+		ResolveType:      resolveType,
+		ResolveScope:     resolveScope,
+		Expected:         nil,
+		ImplicitSelf:     implicitSelf,
+		ImplicitSelfType: implicitSelfType,
+	})
 
 	if len(fn.ReturnTypes) > 0 {
 		rets := make([]typ.Type, len(fn.ReturnTypes))

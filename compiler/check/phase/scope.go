@@ -27,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
@@ -34,7 +35,6 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
-	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -209,6 +209,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 		typeExprResolver,
 		fnSignatureResolver,
 		typeResolutionEngine,
+		input.SiblingTypes,
 		input.ReturnSummaries,
 	)
 	declaredTypes = applyModuleAliasExports(declaredTypes, input.ModuleAliases, input.Manifests)
@@ -355,6 +356,7 @@ func buildDeclaredTypes(
 	typeExprResolver TypeResolver,
 	fnSigResolver FunctionSignatureResolver,
 	synthAPI api.SynthAPI,
+	siblingTypes map[cfg.SymbolID]typ.Type,
 	returnSummaries map[cfg.SymbolID][]typ.Type,
 ) (flow.DeclaredTypes, map[cfg.SymbolID]bool) {
 	if graph == nil {
@@ -364,6 +366,15 @@ func buildDeclaredTypes(
 	out := make(flow.DeclaredTypes)
 	annotated := make(map[cfg.SymbolID]bool)
 	bindings := graph.Bindings()
+	alignWithSummary := func(sym cfg.SymbolID, fn *typ.Function) *typ.Function {
+		if fn == nil || len(returnSummaries) == 0 || sym == 0 {
+			return fn
+		}
+		if summary := returnSummaries[sym]; len(summary) > 0 {
+			return returns.WithSummaryOrUnknown(fn, summary)
+		}
+		return fn
+	}
 
 	for _, sym := range cfg.SortedSymbolIDs(paramTypes) {
 		t := paramTypes[sym]
@@ -427,7 +438,7 @@ func buildDeclaredTypes(
 			}
 
 			sc := scopes[p]
-			info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
+			info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
 				if target.Kind != cfg.TargetIdent || target.Name == "" {
 					return
 				}
@@ -436,6 +447,21 @@ func buildDeclaredTypes(
 					return
 				}
 				if _, exists := out[sym]; exists {
+					return
+				}
+
+				if fnExpr, ok := source.(*ast.FunctionExpr); ok && fnExpr != nil {
+					if siblingTypes != nil {
+						if siblingFn := siblingTypes[sym]; siblingFn != nil {
+							out[sym] = siblingFn
+							return
+						}
+					}
+					if fnSigResolver != nil {
+						if fnSig := fnSigResolver.ResolveFunctionSignature(fnExpr, sc); fnSig != nil {
+							out[sym] = alignWithSummary(sym, fnSig)
+						}
+					}
 					return
 				}
 
@@ -460,13 +486,16 @@ func buildDeclaredTypes(
 			if _, exists := out[sym]; exists {
 				continue
 			}
+			if siblingTypes != nil {
+				if siblingFn := siblingTypes[sym]; siblingFn != nil {
+					out[sym] = siblingFn
+					continue
+				}
+			}
 			sc := scopes[p]
 			if fnSigResolver != nil {
 				if fnSig := fnSigResolver.ResolveFunctionSignature(info.FuncExpr, sc); fnSig != nil {
-					if returnSummaries != nil {
-						fnSig = typjoin.WithReturnsOrUnknown(fnSig, returnSummaries[sym])
-					}
-					out[sym] = fnSig
+					out[sym] = alignWithSummary(sym, fnSig)
 				}
 			}
 		}

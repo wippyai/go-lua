@@ -10,10 +10,14 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
-	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
+
+type functionTypeWithExpected interface {
+	SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *scope.State, expected *typ.Function) *typ.Function
+}
 
 // Store is the minimal store interface required to record post-flow interproc facts.
 type Store interface {
@@ -56,7 +60,7 @@ func StoreFactsFromResult(
 		return
 	}
 	// Collect parameter hints regardless of whether the function has a symbol.
-	CollectParamHintsFromResult(store, result)
+	CollectParamHintsFromResult(store, result, parent)
 
 	// Collect captured field assignments for nested functions.
 	if fn != nil {
@@ -117,6 +121,13 @@ func StoreFactsFromResult(
 	}
 
 	fnType := result.NarrowSynth.FunctionType(fn, result.BaseScope)
+	if expected := expectedFunctionFromResult(result); expected != nil {
+		if withExpected, ok := result.NarrowSynth.(functionTypeWithExpected); ok {
+			if inferred := withExpected.SynthFunctionTypeWithExpected(fn, result.BaseScope, expected); inferred != nil {
+				fnType = inferred
+			}
+		}
+	}
 	if fnType == nil {
 		return
 	}
@@ -126,41 +137,107 @@ func StoreFactsFromResult(
 	if !ok {
 		return
 	}
+	var summaryFromSnapshot []typ.Type
+	summaryScope := parent
+	if summaryScope == nil && result.Graph != nil {
+		if parentHash := store.GraphParentHashOf(result.Graph.ID()); parentHash != 0 {
+			summaryScope = store.Parents()[parentHash]
+		}
+	}
+	if result.Graph != nil && summaryScope != nil {
+		if snap := store.GetReturnSummariesSnapshot(result.Graph, summaryScope); len(snap) > 0 {
+			summaryFromSnapshot = snap[sym]
+		}
+	}
 	store.UpdateInterprocFactsNext(parentKey, func(facts *api.Facts) {
-		if facts.FuncTypes == nil {
-			facts.FuncTypes = make(api.FuncTypes, 1)
+		candidateFunc := fnType
+		if hinted := paramhints.MergeIntoSignature(fn, facts.ParamHints[sym], unwrap.Function(candidateFunc)); hinted != nil {
+			candidateFunc = hinted
 		}
-		if facts.NarrowReturns == nil {
-			facts.NarrowReturns = make(api.NarrowReturnSummaries, 1)
-		}
-		fnTypeForFacts := fnType
-		if summary := returns.NormalizeReturnVector(facts.ReturnSummaries[sym]); len(summary) > 0 {
-			normalizedSummary := make([]typ.Type, len(summary))
-			hasInformativeSummary := false
-			for i, ret := range summary {
-				normalizedSummary[i] = typ.PruneSoftUnionMembers(ret)
-				if paramhints.IsInformativeHintType(normalizedSummary[i]) {
-					hasInformativeSummary = true
-				}
+		reconciled := returns.ReconcileFunctionFact(returns.ReconcileFunctionFactInput{
+			ExistingSummary:  facts.ReturnSummaries[sym],
+			ExistingNarrow:   facts.NarrowReturns[sym],
+			ExistingFunc:     facts.FuncTypes[sym],
+			CandidateSummary: summaryFromSnapshot,
+			CandidateNarrow:  narrowReturns,
+			CandidateFunc:    candidateFunc,
+		})
+		if len(reconciled.Summary) > 0 {
+			if facts.ReturnSummaries == nil {
+				facts.ReturnSummaries = make(api.ReturnSummaries, 1)
 			}
-			shouldUseSummary := hasInformativeSummary ||
-				len(fnTypeForFacts.Returns) == 0 ||
-				(returns.ReturnTypesAllNil(fnTypeForFacts.Returns) && !returns.ReturnTypesAllNil(normalizedSummary)) ||
-				returns.ReturnTypesRefine(normalizedSummary, fnTypeForFacts.Returns) ||
-				returns.ReturnTypesElideOptional(normalizedSummary, fnTypeForFacts.Returns) ||
-				returns.ReturnTypesExtendRecord(normalizedSummary, fnTypeForFacts.Returns)
-			if shouldUseSummary {
-				fnTypeForFacts = typjoin.WithReturns(fnTypeForFacts, normalizedSummary)
-			}
+			facts.ReturnSummaries[sym] = reconciled.Summary
 		}
-		facts.FuncTypes[sym] = fnTypeForFacts
-		facts.NarrowReturns[sym] = narrowReturns
+		if len(reconciled.Narrow) > 0 {
+			if facts.NarrowReturns == nil {
+				facts.NarrowReturns = make(api.NarrowReturnSummaries, 1)
+			}
+			facts.NarrowReturns[sym] = reconciled.Narrow
+		}
+		if reconciled.Func != nil {
+			if facts.FuncTypes == nil {
+				facts.FuncTypes = make(api.FuncTypes, 1)
+			}
+			facts.FuncTypes[sym] = reconciled.Func
+		}
 	})
+}
+
+func expectedFunctionFromResult(result *api.FuncResult) *typ.Function {
+	if result == nil || result.Graph == nil || result.FlowInputs == nil {
+		return nil
+	}
+	slots := result.Graph.ParamSlots()
+	if len(slots) == 0 {
+		return nil
+	}
+	declared := result.FlowInputs.DeclaredTypes
+	builder := typ.Func()
+	hasUntypedSourceParam := false
+	sourceFn := result.Graph.Func()
+	for _, slot := range slots {
+		name := slot.Name
+		if name == "" {
+			name = result.Graph.NameOf(slot.Symbol)
+		}
+		paramType := typ.Unknown
+		if slot.Symbol != 0 && declared != nil {
+			if t := declared[slot.Symbol]; t != nil {
+				paramType = t
+			}
+		}
+		if !slot.HasSourceParam() {
+			builder = builder.Param(name, paramType)
+			continue
+		}
+
+		optional := false
+		if slot.TypeAnnotation == nil {
+			optional = true
+			hasUntypedSourceParam = true
+		}
+		if _, ok := slot.TypeAnnotation.(*ast.OptionalTypeExpr); ok {
+			optional = true
+		}
+		if optional {
+			builder = builder.OptParam(name, paramType)
+		} else {
+			builder = builder.Param(name, paramType)
+		}
+	}
+
+	if sourceFn != nil && sourceFn.ParList != nil && sourceFn.ParList.HasVargs {
+		builder = builder.Variadic(typ.Any)
+	} else if hasUntypedSourceParam {
+		// Unannotated Lua functions accept extra positional arguments.
+		builder = builder.Variadic(typ.Any)
+	}
+	return builder.Build()
 }
 
 // CollectParamHintsFromResult records parameter hints based on call sites
 // within the current function's graph using narrowed expression types.
-func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
+func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *scope.State) {
 	if store == nil || result == nil || result.Graph == nil || result.NarrowSynth == nil {
 		return
 	}
@@ -171,16 +248,34 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 	if bindings == nil {
 		bindings = moduleBindings
 	}
+	preAssignTargets := checkcallsite.PreAssignmentTargetsByCall(graph)
 
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || len(info.Args) == 0 {
 			return
 		}
+		callTargets := preAssignTargets[info]
 		argTypes := make([]typ.Type, len(info.Args))
 		for i, arg := range info.Args {
-			if arg != nil {
-				argTypes[i] = result.NarrowSynth.TypeOf(arg, p)
+			if arg == nil {
+				continue
 			}
+			argType := result.NarrowSynth.TypeOf(arg, p)
+			argSym := cfg.SymbolID(0)
+			if i < len(info.ArgSymbols) {
+				argSym = info.ArgSymbols[i]
+			}
+			if argSym == 0 && bindings != nil {
+				argSym = checkcallsite.SymbolFromExpr(arg, bindings)
+			}
+			if preType := typeAtPredJoin(result, graph, p, argSym); preType != nil {
+				if callTargets[argSym] {
+					argType = preType
+				} else {
+					argType = typ.JoinPreferNonSoft(argType, preType)
+				}
+			}
+			argTypes[i] = argType
 		}
 		def := ops.CallDef{
 			Args:  argTypes,
@@ -210,8 +305,9 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 				if reSynthed == nil {
 					continue
 				}
-				if !typ.TypeEquals(updated[i], reSynthed) {
-					updated[i] = reSynthed
+				merged := typ.JoinPreferNonSoft(updated[i], reSynthed)
+				if !typ.TypeEquals(updated[i], merged) {
+					updated[i] = merged
 					changed = true
 				}
 			}
@@ -233,24 +329,12 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 		if ref == nil {
 			return
 		}
-		parentGraphID := ref.ParentGraphID
-		if parentGraphID == 0 {
-			parentGraphID = ref.GraphID
-		}
-		if parentGraphID == 0 {
+		parentKey, ok := parentGraphKeyForCallee(store, result, parent, calleeSym)
+		if !ok {
 			return
 		}
-		parentGraph := store.Graphs()[parentGraphID]
-		if parentGraph == nil {
-			return
-		}
-		parentHash := store.GraphParentHashOf(parentGraphID)
-		if parentHash == 0 {
-			return
-		}
-		key := api.KeyForGraph(parentGraph, parentHash)
 
-		store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
+		store.UpdateInterprocFactsNext(parentKey, func(facts *api.Facts) {
 			if facts.ParamHints == nil {
 				facts.ParamHints = make(api.ParamHints)
 			}
@@ -283,13 +367,54 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult) {
 				if argType == nil {
 					argType = result.NarrowSynth.TypeOf(arg, p)
 				}
-				hints, _ = paramhints.MergeHintAt(hints, i, argType, returns.JoinInterprocTypes)
+				hints, _ = paramhints.MergeCallArgHintAt(hints, i, argType, returns.JoinInterprocTypes, true)
 			}
 			if len(hints) > 0 {
 				facts.ParamHints[calleeSym] = hints
 			}
 		})
 	})
+}
+
+func parentGraphKeyForCallee(store Store, result *api.FuncResult, parent *scope.State, calleeSym cfg.SymbolID) (api.GraphKey, bool) {
+	if store == nil || result == nil || result.Graph == nil || calleeSym == 0 {
+		return api.GraphKey{}, false
+	}
+	if key, ok := store.ParentGraphKeyForSymbol(calleeSym); ok {
+		return key, true
+	}
+
+	ref := store.FunctionRefBySym(calleeSym)
+	if ref == nil {
+		return api.GraphKey{}, false
+	}
+	parentGraphID := ref.ParentGraphID
+	if parentGraphID == 0 {
+		parentGraphID = ref.GraphID
+	}
+	if parentGraphID != result.Graph.ID() {
+		return api.GraphKey{}, false
+	}
+	return store.GraphKeyFor(result.Graph, parent)
+}
+
+func typeAtPredJoin(result *api.FuncResult, graph *cfg.Graph, p cfg.Point, sym cfg.SymbolID) typ.Type {
+	if result == nil || result.NarrowSynth == nil || graph == nil || sym == 0 {
+		return nil
+	}
+	var joined typ.Type
+	for _, pred := range graph.Predecessors(p) {
+		tv := result.EffectiveTypeAt(pred, sym)
+		if tv.State != flow.StateResolved || tv.Type == nil {
+			continue
+		}
+		if joined == nil {
+			joined = tv.Type
+		} else {
+			joined = typ.JoinPreferNonSoft(joined, tv.Type)
+		}
+	}
+	return joined
 }
 
 func mergeCapturedFieldAssigns(

@@ -192,7 +192,7 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 			}
 		}
 
-		summaries, diags := inferencer.ComputeForGraph(returninfer.RunContext{
+		summaries, funcTypes, diags := inferencer.ComputeForGraph(returninfer.RunContext{
 			Ctx:          sess.Context(),
 			ParentFacts:  parentFacts,
 			EffectLookup: effectLookup,
@@ -203,11 +203,32 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 		if len(summaries) > 0 {
 			if key, ok := store.GraphKeyFor(graph, parent); ok {
 				store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
-					if facts.ReturnSummaries == nil {
-						facts.ReturnSummaries = make(api.ReturnSummaries, len(summaries))
-					}
 					for sym, rets := range summaries {
-						facts.ReturnSummaries[sym] = rets
+						reconciled := returns.ReconcileFunctionFact(returns.ReconcileFunctionFactInput{
+							ExistingSummary:  facts.ReturnSummaries[sym],
+							ExistingNarrow:   facts.NarrowReturns[sym],
+							ExistingFunc:     facts.FuncTypes[sym],
+							CandidateSummary: rets,
+							CandidateFunc:    funcTypes[sym],
+						})
+						if len(reconciled.Summary) > 0 {
+							if facts.ReturnSummaries == nil {
+								facts.ReturnSummaries = make(api.ReturnSummaries, len(summaries))
+							}
+							facts.ReturnSummaries[sym] = reconciled.Summary
+						}
+						if len(reconciled.Narrow) > 0 {
+							if facts.NarrowReturns == nil {
+								facts.NarrowReturns = make(api.NarrowReturnSummaries, len(summaries))
+							}
+							facts.NarrowReturns[sym] = reconciled.Narrow
+						}
+						if reconciled.Func != nil {
+							if facts.FuncTypes == nil {
+								facts.FuncTypes = make(api.FuncTypes, len(summaries))
+							}
+							facts.FuncTypes[sym] = reconciled.Func
+						}
 					}
 				})
 			}

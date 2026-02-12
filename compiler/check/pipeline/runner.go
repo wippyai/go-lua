@@ -182,6 +182,36 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	if capturedTypes := store.GetCapturedTypesSnapshot(graph, parent); len(capturedTypes) > 0 {
 		scopeOut.DeclaredTypes = captured.MergeCapturedTypes(scopeOut.DeclaredTypes, capturedTypes)
 	}
+	// Canonicalize captured function symbols from parent local function types.
+	if meta, ok := store.NestedMetaFor(graph.ID()); ok && meta.ParentGraphID != 0 {
+		parentGraph := store.Graphs()[meta.ParentGraphID]
+		if parentGraph != nil && graph.Bindings() != nil {
+			var parentParent *scope.State
+			if parentHash := store.GraphParentHashOf(parentGraph.ID()); parentHash != 0 {
+				parentParent = store.Parents()[parentHash]
+			}
+			if parentParent == nil {
+				if _, nested := store.NestedMetaFor(parentGraph.ID()); !nested {
+					parentParent = r.stdlib
+				}
+			}
+			if parentParent != nil {
+				parentFuncTypes := store.GetLocalFuncTypesSnapshot(parentGraph, parentParent)
+				if len(parentFuncTypes) > 0 {
+					for _, sym := range graph.Bindings().CapturedSymbols(fn) {
+						ft := parentFuncTypes[sym]
+						if sym == 0 || ft == nil {
+							continue
+						}
+						if scopeOut.DeclaredTypes == nil {
+							scopeOut.DeclaredTypes = make(flow.DeclaredTypes)
+						}
+						scopeOut.DeclaredTypes[sym] = ft
+					}
+				}
+			}
+		}
+	}
 
 	// Populate scopes in env for later phases.
 	env.Scopes = scopeOut.Scopes

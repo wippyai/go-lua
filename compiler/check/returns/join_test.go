@@ -3,6 +3,7 @@ package returns
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
@@ -205,6 +206,255 @@ func TestSelectPreferredReturnVector_RecordExtension(t *testing.T) {
 	}
 }
 
+func TestSelectRefiningReturnVector_Refinement(t *testing.T) {
+	refined := []typ.Type{typ.String}
+	baseline := []typ.Type{typ.NewOptional(typ.String)}
+
+	got, ok := SelectRefiningReturnVector(refined, baseline)
+	if !ok {
+		t.Fatal("expected refinement to be selected")
+	}
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+		t.Fatalf("expected refined return vector, got %v", got)
+	}
+}
+
+func TestSelectRefiningReturnVector_DoesNotSelectOlderNarrowerBaseline(t *testing.T) {
+	candidate := []typ.Type{typ.Any}
+	baseline := []typ.Type{typ.False}
+
+	_, ok := SelectRefiningReturnVector(candidate, baseline)
+	if ok {
+		t.Fatal("did not expect baseline-narrower relation to select candidate")
+	}
+}
+
+func TestReturnTypesFillNilSlots(t *testing.T) {
+	candidate := []typ.Type{typ.NewMap(typ.Unknown, typ.NewArray(typ.Unknown)), typ.NewArray(typ.Unknown)}
+	baseline := []typ.Type{typ.NewMap(typ.Unknown, typ.NewArray(typ.Unknown)), typ.Nil}
+	if !ReturnTypesFillNilSlots(candidate, baseline) {
+		t.Fatalf("expected candidate to fill nil slot: candidate=%v baseline=%v", candidate, baseline)
+	}
+}
+
+func TestMergeReturnSummary_PrefersCandidateRefinement(t *testing.T) {
+	existing := []typ.Type{typ.NewOptional(typ.String)}
+	candidate := []typ.Type{typ.String}
+
+	merged := MergeReturnSummary(existing, candidate)
+	if len(merged) != 1 || !typ.TypeEquals(merged[0], typ.String) {
+		t.Fatalf("expected refined candidate return, got %v", merged)
+	}
+}
+
+func TestMergeReturnSummary_FillsNilSlotWithCandidateEvidence(t *testing.T) {
+	existing := []typ.Type{
+		typ.NewMap(typ.Unknown, typ.NewArray(typ.Unknown)),
+		typ.Nil,
+	}
+	candidate := []typ.Type{
+		typ.NewMap(typ.Unknown, typ.NewArray(typ.Unknown)),
+		typ.NewArray(typ.Unknown),
+	}
+
+	merged := MergeReturnSummary(existing, candidate)
+	if len(merged) != 2 {
+		t.Fatalf("expected two return slots, got %v", merged)
+	}
+	if !typ.TypeEquals(merged[1], typ.NewArray(typ.Unknown)) {
+		t.Fatalf("expected nil slot to be filled with array evidence, got %v", merged[1])
+	}
+}
+
+func TestMergeFunctionFactType_MergesSameShapeReturnsCanonically(t *testing.T) {
+	existing := typ.Func().
+		Param("x", typ.String).
+		Returns(typ.NewOptional(typ.Integer)).
+		Build()
+	candidate := typ.Func().
+		Param("x", typ.String).
+		Returns(typ.Integer).
+		Build()
+
+	merged := MergeFunctionFactType(existing, candidate)
+	fn, ok := merged.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 {
+		t.Fatalf("expected merged function, got %T", merged)
+	}
+	if !typ.TypeEquals(fn.Returns[0], typ.Integer) {
+		t.Fatalf("expected refined return integer, got %v", fn.Returns[0])
+	}
+}
+
+func TestMergeFunctionFactType_PrefersConcreteParamOverSoftAny(t *testing.T) {
+	existing := typ.Func().
+		Param("x", typ.Any).
+		Returns(typ.String).
+		Build()
+	candidate := typ.Func().
+		Param("x", typ.String).
+		Returns(typ.String).
+		Build()
+
+	merged := MergeFunctionFactType(existing, candidate)
+	fn, ok := merged.(*typ.Function)
+	if !ok {
+		t.Fatalf("expected merged function, got %T", merged)
+	}
+	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, typ.String) {
+		t.Fatalf("expected param refined to string, got %+v", fn.Params)
+	}
+}
+
+func TestMergeFunctionFactType_WidensParamToCoverObservedCallsites(t *testing.T) {
+	existing := typ.Func().
+		Param("t", typ.NewArray(typ.Any)).
+		Returns(typ.String).
+		Build()
+	candidate := typ.Func().
+		Param("t", typ.NewMap(typ.String, typ.Any)).
+		Returns(typ.String).
+		Build()
+
+	merged := MergeFunctionFactType(existing, candidate)
+	fn, ok := merged.(*typ.Function)
+	if !ok {
+		t.Fatalf("expected merged function, got %T", merged)
+	}
+	if len(fn.Params) != 1 {
+		t.Fatalf("expected one param, got %+v", fn.Params)
+	}
+	if typ.TypeEquals(fn.Params[0].Type, typ.NewArray(typ.Any)) {
+		t.Fatalf("expected param widening beyond array-only shape, got %v", fn.Params[0].Type)
+	}
+	wantMap := typ.NewMap(typ.String, typ.Any)
+	if !subtype.IsSubtype(wantMap, fn.Params[0].Type) {
+		t.Fatalf("expected merged param to admit map callsite evidence, got %v", fn.Params[0].Type)
+	}
+}
+
+func TestMergeFunctionFactType_DoesNotDropNonFunctionUnionMembers(t *testing.T) {
+	fn := typ.Func().Param("x", typ.String).Returns(typ.String).Build()
+	existing := typ.NewUnion(fn, typ.Number)
+	candidate := typ.Func().Param("x", typ.String).Returns(typ.String).Build()
+
+	merged := MergeFunctionFactType(existing, candidate)
+	u, ok := merged.(*typ.Union)
+	if !ok {
+		t.Fatalf("expected union to be preserved, got %T", merged)
+	}
+	hasNumber := false
+	for _, m := range u.Members {
+		if typ.TypeEquals(m, typ.Number) {
+			hasNumber = true
+			break
+		}
+	}
+	if !hasNumber {
+		t.Fatalf("expected merged union to retain non-function member, got %v", merged)
+	}
+}
+
+func TestMergeFunctionFactType_CollapsesCompatibleFunctionVariants(t *testing.T) {
+	base := typ.Func().
+		OptParam("entries", typ.Any).
+		Returns(typ.NewMap(typ.Unknown, typ.NewArray(typ.Unknown))).
+		Build()
+	refinedEntry := typ.NewRecord().Field("id", typ.String).Build()
+	refined := typ.Func().
+		OptParam("entries", typ.NewArray(refinedEntry)).
+		Returns(typ.NewMap(typ.String, typ.NewArray(refinedEntry))).
+		Build()
+
+	merged := MergeFunctionFactType(base, refined)
+	fn, ok := merged.(*typ.Function)
+	if !ok {
+		t.Fatalf("expected function after compatible-variant collapse, got %T", merged)
+	}
+	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, typ.NewArray(refinedEntry)) {
+		t.Fatalf("expected refined param type to win, got %+v", fn.Params)
+	}
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.NewMap(typ.String, typ.NewArray(refinedEntry))) {
+		t.Fatalf("expected refined return map, got %v", fn.Returns)
+	}
+}
+
+func TestMergeFunctionFactType_DoesNotCollapseParamToNilWhenOptionalInfoExists(t *testing.T) {
+	existing := typ.Func().
+		OptParam("tests", typ.Nil).
+		Returns(typ.Integer).
+		Build()
+	candidate := typ.Func().
+		OptParam("tests", typ.NewOptional(typ.NewArray(typ.Any))).
+		Returns(typ.Integer).
+		Build()
+
+	merged := MergeFunctionFactType(existing, candidate)
+	fn, ok := merged.(*typ.Function)
+	if !ok {
+		t.Fatalf("expected function, got %T", merged)
+	}
+	want := typ.NewOptional(typ.NewArray(typ.Any))
+	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, want) {
+		t.Fatalf("expected param type %v, got %+v", want, fn.Params)
+	}
+}
+
+func TestMergeReturnSummary_ElidesOptionalForInterfaceFieldRecords(t *testing.T) {
+	txType := typ.NewInterface("sql.Tx", []typ.Method{
+		{Name: "rollback", Type: typ.Func().Param("self", typ.Self).Build()},
+	})
+	dbType := typ.NewInterface("sql.DB", []typ.Method{
+		{Name: "begin", Type: typ.Func().Param("self", typ.Self).Returns(txType, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "release", Type: typ.Func().Param("self", typ.Self).Build()},
+	})
+
+	existing := []typ.Type{
+		typ.NewRecord().
+			Field("db", typ.NewOptional(dbType)).
+			Field("tx", typ.NewOptional(txType)).
+			Build(),
+	}
+	candidate := []typ.Type{
+		typ.NewRecord().
+			Field("db", dbType).
+			Field("tx", txType).
+			Build(),
+	}
+
+	merged := MergeReturnSummary(existing, candidate)
+	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate[0]) {
+		t.Fatalf("expected candidate optional-elision to win, got %v", merged)
+	}
+}
+
+func TestWithSummaryOrUnknown_AppliesSummaryToPlaceholderReturns(t *testing.T) {
+	fn := typ.Func().
+		Param("x", typ.String).
+		Returns(typ.Unknown).
+		Build()
+	summary := []typ.Type{typ.Integer}
+
+	got := WithSummaryOrUnknown(fn, summary)
+	if got == nil || len(got.Returns) != 1 {
+		t.Fatalf("expected function return, got %v", got)
+	}
+	if !typ.TypeEquals(got.Returns[0], typ.Integer) {
+		t.Fatalf("expected summary return integer, got %v", got.Returns[0])
+	}
+}
+
+func TestWithSummaryOrUnknown_DefaultsToUnknownWhenMissing(t *testing.T) {
+	fn := typ.Func().Param("x", typ.String).Build()
+	got := WithSummaryOrUnknown(fn, nil)
+	if got == nil || len(got.Returns) != 1 {
+		t.Fatalf("expected one default return, got %v", got)
+	}
+	if !typ.TypeEquals(got.Returns[0], typ.Unknown) {
+		t.Fatalf("expected default unknown return, got %v", got.Returns[0])
+	}
+}
+
 func TestTypeExtendsRecord_NilTypes(t *testing.T) {
 	if TypeExtendsRecord(nil, typ.String) {
 		t.Error("nil a should not extend")
@@ -263,6 +513,36 @@ func TestRecordSuperset_OldHasNoMapComponent(t *testing.T) {
 	b := []typ.Type{oldRec}
 	if !ReturnTypesExtendRecord(a, b) {
 		t.Error("record with additional fields should extend record without map component")
+	}
+}
+
+func TestAlignFunctionTypeWithSummary_AppliesStrictRefinement(t *testing.T) {
+	fn := typ.Func().
+		Param("entries", typ.Any).
+		Returns(typ.NewMap(typ.Unknown, typ.NewArray(typ.Unknown))).
+		Build()
+
+	summary := []typ.Type{
+		typ.NewRecord().
+			SetOpen(true).
+			MapComponent(typ.String, typ.NewArray(typ.Unknown)).
+			Build(),
+	}
+
+	aligned, changed := AlignFunctionTypeWithSummary(fn, summary)
+	if !changed {
+		t.Fatal("expected alignment to apply strict refinement summary")
+	}
+	if aligned == nil || len(aligned.Returns) != 1 {
+		t.Fatalf("unexpected aligned returns: %v", aligned)
+	}
+	got := aligned.Returns[0]
+	rec, ok := got.(*typ.Record)
+	if !ok || !rec.HasMapComponent() {
+		t.Fatalf("expected record map-component return, got %T (%v)", got, got)
+	}
+	if !typ.TypeEquals(rec.MapKey, typ.String) {
+		t.Fatalf("expected map key string, got %v", rec.MapKey)
 	}
 }
 

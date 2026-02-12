@@ -11,6 +11,27 @@ func TestJoinReturnSlot_PreservesUnknownOverNil(t *testing.T) {
 	}
 }
 
+func TestJoinReturnSlot_PreservesAnyOverNil(t *testing.T) {
+	if got := JoinReturnSlot(Any, Nil); !TypeEquals(got, Any) {
+		t.Fatalf("JoinReturnSlot(any, nil) = %v, want any", got)
+	}
+	if got := JoinReturnSlot(Nil, Any); !TypeEquals(got, Any) {
+		t.Fatalf("JoinReturnSlot(nil, any) = %v, want any", got)
+	}
+}
+
+func TestJoinReturnSlot_PrefersArrayOverEmptyRecord(t *testing.T) {
+	empty := NewRecord().Build()
+	arr := NewArray(String)
+
+	if got := JoinReturnSlot(empty, arr); !TypeEquals(got, arr) {
+		t.Fatalf("JoinReturnSlot({}, string[]) = %v, want string[]", got)
+	}
+	if got := JoinReturnSlot(arr, empty); !TypeEquals(got, arr) {
+		t.Fatalf("JoinReturnSlot(string[], {}) = %v, want string[]", got)
+	}
+}
+
 func TestJoinBranchOutcome_PreservesUnknownWithNil(t *testing.T) {
 	got := JoinBranchOutcome(Unknown, Nil)
 	opt, ok := got.(*Optional)

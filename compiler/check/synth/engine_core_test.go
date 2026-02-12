@@ -157,6 +157,43 @@ func TestSynthExpr_IdentExpr_Narrowed(t *testing.T) {
 	}
 }
 
+func TestSynthExpr_IdentExpr_NarrowedFunctionDoesNotWidenDeclaredFunction(t *testing.T) {
+	const symFn = cfg.SymbolID(101)
+	ident := &ast.IdentExpr{Value: "f"}
+
+	bindings := bind.NewBindingTable()
+	bindings.Bind(ident, symFn)
+
+	declaredFn := typ.Func().Returns(typ.Integer).Build()
+	widenedFn := typ.NewUnion(
+		declaredFn,
+		typ.Func().Returns(typ.NewOptional(typ.Integer)).Build(),
+	)
+
+	flowQ := mockFlowOps{narrowed: map[cfg.SymbolID]typ.Type{symFn: widenedFn}}
+	graph := mockGraph{symbols: map[string]cfg.SymbolID{"f": symFn}}
+	declared := flow.DeclaredTypes{symFn: declaredFn}
+	checkCtx := api.NewNarrowEnv(api.NarrowEnvConfig{
+		Graph:         graph,
+		Bindings:      bindings,
+		DeclaredTypes: declared,
+	})
+
+	e := New(Config{
+		Ctx:    db.NewQueryContext(db.New()),
+		Types:  mockTypeQuerier{},
+		Scopes: make(api.ScopeMap),
+		Flow:   flowQ,
+		Env:    checkCtx,
+		Phase:  api.PhaseNarrowing,
+	})
+
+	result := e.Narrow().TypeOf(ident, 0)
+	if !typ.TypeEquals(result, declaredFn) {
+		t.Fatalf("got %v, want declared function %v", result, declaredFn)
+	}
+}
+
 func TestSynthExpr_RelationalOp(t *testing.T) {
 	e := newTestEngine()
 	result := e.TypeOf(&ast.RelationalOpExpr{

@@ -48,6 +48,7 @@ import (
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -243,9 +244,11 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 		// Build const resolver for this point
 		constResolver := predicate.BuildConstResolver(inputs, p)
 
-		// Get expanded values if we have multiple targets
-		// Spec-narrowed types are passed as overlay facts instead of mutating scope.
-		values := expandedAssignValues(fc.API, info, p, overlayTypes)
+		// Get expanded values if we have multiple targets.
+		// Use pre-assignment symbol overlays for assignment targets so RHS
+		// synthesis follows Lua evaluation order (`x = f(x, ...)`).
+		rhsOverlay := rhsSpecTypesAtAssignPoint(fc.Graph, info, p, overlayTypes, resolverWithSpec)
+		values := expandedAssignValues(fc.API, info, p, rhsOverlay)
 
 		for i, target := range info.Targets {
 			source := info.SourceAt(i)
@@ -269,7 +272,12 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						}
 					} else {
 						if t, ok := resolverWithSpec(p, sym); ok && t != nil {
-							assignedType = t
+							// Keep previously resolved assignment types only when
+							// they carry concrete information. Top-like placeholders
+							// (any/unknown/soft) must not block RHS-derived types.
+							if !isTopLikeResolvedAssignType(t) {
+								assignedType = t
+							}
 						}
 					}
 				}
@@ -578,6 +586,16 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						keySym, _ = bindings.SymbolOf(keyIdent)
 						keyVar = resolve.RootNameFromBindings(bindings, keySym, keyIdent.Value)
 					}
+					valuePath := constraint.Path{}
+					if source != nil {
+						if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+							valuePath = constraint.Path{
+								Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
+								Symbol:   sp.Symbol,
+								Segments: sp.Segments,
+							}
+						}
+					}
 					resolved := resolve.Ref(valType, sc)
 					inputs.IndexerAssignments = append(inputs.IndexerAssignments, flow.IndexerAssignment{
 						Point:     p,
@@ -587,6 +605,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						KeyVar:    keyVar,
 						KeySymbol: keySym,
 						KeyType:   keyType,
+						ValuePath: valuePath,
 						ValType:   resolved,
 					})
 					continue
@@ -728,6 +747,36 @@ func ExtractFuncDefAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs) {
 			Type: resolve.Ref(fnType, sc),
 		})
 	})
+}
+
+func isTopLikeResolvedAssignType(t typ.Type) bool {
+	if t == nil {
+		return true
+	}
+	t = typ.PruneSoftUnionMembers(t)
+	if typ.IsAny(t) || typ.IsUnknown(t) || typ.IsSoft(t, typ.SoftAnnotationPolicy) {
+		return true
+	}
+
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Optional:
+		return isTopLikeResolvedAssignType(v.Inner)
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return true
+		}
+		for _, m := range v.Members {
+			if m == nil || m.Kind() == kind.Nil {
+				continue
+			}
+			if !isTopLikeResolvedAssignType(m) {
+				return false
+			}
+		}
+		return true
+	}
+
+	return false
 }
 
 // extractCallCorrelations extracts ErrorReturn and CorrelatedReturn correlations from the callee's spec.

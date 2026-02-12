@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -401,6 +402,77 @@ func TestExtractAssignments_KeysCollectorEffectFallback_TriesAllNameCandidates(t
 	src, ok := inputs.KeysProvenance[keysSym]
 	if !ok || src != tSym {
 		t.Fatalf("expected keys provenance for target %d -> %d, got %d (present=%v)", keysSym, tSym, src, ok)
+	}
+}
+
+func TestExtractAssignments_KeysCollector_WithFilterBranch(t *testing.T) {
+	code := `
+		local function sorted_keys(t)
+			local keys = {}
+			for k in pairs(t) do
+				table.insert(keys, k)
+			end
+			table.sort(keys)
+			return keys
+		end
+
+		local function filter_tests(entries, patterns)
+			if not patterns or #patterns == 0 then
+				return entries
+			end
+			local filtered = {}
+			for _, entry in ipairs(entries) do
+				for _, pattern in ipairs(patterns) do
+					if entry.id:find(pattern, 1, true) then
+						table.insert(filtered, entry)
+						break
+					end
+				end
+			end
+			return filtered
+		end
+
+		local entries = {}
+		local args = {}
+		if args and #args > 0 then
+			entries = filter_tests(entries, args)
+		end
+
+		local suites = {}
+		local suite_names = sorted_keys(suites)
+	`
+	chunk, err := parse.ParseString(code, "emit_keys_provenance_filter_branch.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk}, "emit_keys_provenance_filter_branch")
+	exit := graph.Exit()
+	suitesSym, ok := graph.SymbolAt(exit, "suites")
+	if !ok || suitesSym == 0 {
+		t.Fatal("expected symbol for suites")
+	}
+	suiteNamesSym, ok := graph.SymbolAt(exit, "suite_names")
+	if !ok || suiteNamesSym == 0 {
+		t.Fatal("expected symbol for suite_names")
+	}
+
+	inputs := &flow.Inputs{
+		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks:     make(map[string]flow.PredicateLink),
+		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+	}
+	ExtractAssignments(&core.FlowContext{
+		Graph: graph,
+		Derived: &core.Derived{
+			Synth: func(ast.Expr, cfg.Point) typ.Type {
+				return typ.Unknown
+			},
+		},
+	}, inputs, keyscoll.BuildKeysCollectorDetector(graph, nil))
+
+	src, ok := inputs.KeysProvenance[suiteNamesSym]
+	if !ok || src != suitesSym {
+		t.Fatalf("expected keys provenance for suite_names %d -> suites %d, got %d (present=%v)", suiteNamesSym, suitesSym, src, ok)
 	}
 }
 

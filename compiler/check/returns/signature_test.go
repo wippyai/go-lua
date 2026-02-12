@@ -59,3 +59,22 @@ func TestBuildSeedFunctionTypeWithBindings_WithoutBindings_NoImplicitSelf(t *tes
 		t.Fatalf("expected param x, got %q", fnType.Params[0].Name)
 	}
 }
+
+func TestBuildSeedFunctionTypeWithBindings_UnannotatedParamsStayOptional(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"a", "b"}},
+	}
+	fnType, ok := BuildSeedFunctionTypeWithBindings(fn, nil, scope.New(), nil).(*typ.Function)
+	if !ok || fnType == nil {
+		t.Fatal("expected function seed type")
+	}
+	if len(fnType.Params) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(fnType.Params))
+	}
+	if !fnType.Params[0].Optional || !fnType.Params[1].Optional {
+		t.Fatalf("expected unannotated params to be optional, got %+v", fnType.Params)
+	}
+	if fnType.Variadic == nil || !typ.TypeEquals(fnType.Variadic, typ.Any) {
+		t.Fatalf("expected variadic any for unannotated seed function, got %v", fnType.Variadic)
+	}
+}

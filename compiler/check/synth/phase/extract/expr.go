@@ -92,6 +92,9 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 		if !path.IsEmpty() {
 			narrowed := narrower.NarrowedTypeAt(p, path)
 			if narrowed != nil {
+				if typ.IsUnknown(unwrap.Alias(narrowed)) && typ.IsAny(unwrap.Alias(objType)) {
+					goto skipNarrowedAttr
+				}
 				if _, isStringKey := ex.Key.(*ast.StringExpr); isStringKey {
 					if mapValueType(objType) != nil {
 						if opt, ok := narrowed.(*typ.Optional); ok {
@@ -103,6 +106,8 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 			}
 		}
 	}
+
+skipNarrowedAttr:
 
 	var manifestPath string
 	if ident, ok := ex.Object.(*ast.IdentExpr); ok && s.deps.Manifests != nil && s.deps.CheckCtx != nil {

@@ -11,44 +11,74 @@ import (
 
 // WidenFacts merges two interproc fact bundles.
 func WidenFacts(prev, next api.Facts) api.Facts {
-	mergedReturns := WidenReturnSummaries(prev.ReturnSummaries, next.ReturnSummaries)
-	mergedReturns = refineReturnSummariesWithNarrow(mergedReturns, prev.NarrowReturns)
-	mergedReturns = refineReturnSummariesWithNarrow(mergedReturns, next.NarrowReturns)
-	return api.Facts{
-		ReturnSummaries:    mergedReturns,
-		NarrowReturns:      WidenReturnSummaries(prev.NarrowReturns, next.NarrowReturns),
+	out := api.Facts{
 		ParamHints:         WidenParamHints(prev.ParamHints, next.ParamHints),
-		FuncTypes:          WidenFuncTypes(prev.FuncTypes, next.FuncTypes),
 		LiteralSigs:        WidenLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:      WidenCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
 		CapturedFields:     WidenCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
 		CapturedContainers: WidenCapturedContainerMutations(prev.CapturedContainers, next.CapturedContainers),
 		ConstructorFields:  WidenConstructorFields(prev.ConstructorFields, next.ConstructorFields),
 	}
+
+	symbols := make(map[cfg.SymbolID]bool, len(prev.ReturnSummaries)+len(next.ReturnSummaries)+len(prev.NarrowReturns)+len(next.NarrowReturns)+len(prev.FuncTypes)+len(next.FuncTypes))
+	for _, sym := range cfg.SortedSymbolIDs(prev.ReturnSummaries) {
+		symbols[sym] = true
+	}
+	for _, sym := range cfg.SortedSymbolIDs(next.ReturnSummaries) {
+		symbols[sym] = true
+	}
+	for _, sym := range cfg.SortedSymbolIDs(prev.NarrowReturns) {
+		symbols[sym] = true
+	}
+	for _, sym := range cfg.SortedSymbolIDs(next.NarrowReturns) {
+		symbols[sym] = true
+	}
+	for _, sym := range cfg.SortedSymbolIDs(prev.FuncTypes) {
+		symbols[sym] = true
+	}
+	for _, sym := range cfg.SortedSymbolIDs(next.FuncTypes) {
+		symbols[sym] = true
+	}
+	if len(symbols) == 0 {
+		return out
+	}
+
+	out.ReturnSummaries = make(api.ReturnSummaries, len(symbols))
+	out.NarrowReturns = make(api.NarrowReturnSummaries, len(symbols))
+	out.FuncTypes = make(api.FuncTypes, len(symbols))
+	for _, sym := range cfg.SortedSymbolIDs(symbols) {
+		reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
+			ExistingSummary:  prev.ReturnSummaries[sym],
+			ExistingNarrow:   prev.NarrowReturns[sym],
+			ExistingFunc:     prev.FuncTypes[sym],
+			CandidateSummary: next.ReturnSummaries[sym],
+			CandidateNarrow:  next.NarrowReturns[sym],
+			CandidateFunc:    next.FuncTypes[sym],
+		})
+		if len(reconciled.Summary) > 0 {
+			out.ReturnSummaries[sym] = widenReturnVectorForConvergence(reconciled.Summary)
+		}
+		if len(reconciled.Narrow) > 0 {
+			out.NarrowReturns[sym] = widenReturnVectorForConvergence(reconciled.Narrow)
+		}
+		if reconciled.Func != nil {
+			out.FuncTypes[sym] = maybeWidenTypeForConvergence(reconciled.Func)
+		}
+	}
+	if len(out.ReturnSummaries) == 0 {
+		out.ReturnSummaries = nil
+	}
+	if len(out.NarrowReturns) == 0 {
+		out.NarrowReturns = nil
+	}
+	if len(out.FuncTypes) == 0 {
+		out.FuncTypes = nil
+	}
+	return out
 }
 
-func refineReturnSummariesWithNarrow(summaries, narrow api.ReturnSummaries) api.ReturnSummaries {
-	if len(summaries) == 0 || len(narrow) == 0 {
-		return summaries
-	}
-	for _, sym := range cfg.SortedSymbolIDs(narrow) {
-		rets := narrow[sym]
-		if len(rets) == 0 {
-			continue
-		}
-		existing := summaries[sym]
-		if len(existing) == 0 {
-			continue
-		}
-		if ReturnTypesElideOptional(rets, existing) || ReturnTypesExtendRecord(rets, existing) {
-			summaries[sym] = widenReturnVectorForConvergence(rets)
-		}
-	}
-	return summaries
-}
-
-// WidenReturnSummaries merges two return summary maps using monotone union.
-// Types can only grow (become more general), never shrink.
+// WidenReturnSummaries merges return summaries through the canonical
+// return-summary merge policy shared by all iterative channels.
 func WidenReturnSummaries(prev, next api.ReturnSummaries) api.ReturnSummaries {
 	if prev == nil && next == nil {
 		return nil
@@ -61,22 +91,14 @@ func WidenReturnSummaries(prev, next api.ReturnSummaries) api.ReturnSummaries {
 	}
 	merged := make(api.ReturnSummaries, len(prev)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(prev) {
-		merged[sym] = widenReturnVectorForConvergence(prev[sym])
+		merged[sym] = widenReturnVectorForConvergence(NormalizeReturnVector(prev[sym]))
 	}
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		rets := next[sym]
 		if existing := merged[sym]; existing != nil {
-			if shouldUseMonotoneReturnJoin(existing, rets) {
-				merged[sym] = widenReturnVectorForConvergence(joinReturnVectorsMonotone(existing, rets))
-				continue
-			}
-			if preferred, ok := SelectPreferredReturnVector(rets, existing); ok {
-				merged[sym] = widenReturnVectorForConvergence(preferred)
-				continue
-			}
-			merged[sym] = widenReturnVectorForConvergence(typjoin.ReturnVectors(existing, rets))
+			merged[sym] = widenReturnVectorForConvergence(MergeReturnSummary(existing, rets))
 		} else {
-			merged[sym] = widenReturnVectorForConvergence(rets)
+			merged[sym] = widenReturnVectorForConvergence(NormalizeReturnVector(rets))
 		}
 	}
 	return merged
@@ -129,6 +151,11 @@ func typeContainsFunction(t typ.Type) bool {
 	}
 	hasFn := false
 	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		// Interface method signatures are behavioral contracts, not first-class
+		// returned function values. Ignore them for higher-order growth risk.
+		if _, ok := node.(*typ.Interface); ok {
+			return node, true
+		}
 		if _, ok := node.(*typ.Function); ok {
 			hasFn = true
 		}
@@ -160,6 +187,12 @@ func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
 	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
 		if found {
 			return node, false
+		}
+		// Interface method signatures are behavioral contracts, not concrete
+		// record method bodies. Treating them as self-recursive growth risk
+		// over-applies monotone widening and blocks valid summary refinement.
+		if _, ok := node.(*typ.Interface); ok {
+			return node, true
 		}
 		fn, ok := node.(*typ.Function)
 		if !ok {
@@ -302,12 +335,19 @@ func WidenFuncTypes(prev, next api.FuncTypes) api.FuncTypes {
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		t := next[sym]
 		if existing := merged[sym]; existing != nil {
-			merged[sym] = maybeWidenTypeForConvergence(mergeFuncTypes(existing, t))
+			merged[sym] = maybeWidenTypeForConvergence(MergeFuncFactType(existing, t))
 		} else {
 			merged[sym] = maybeWidenTypeForConvergence(t)
 		}
 	}
 	return merged
+}
+
+// MergeFuncFactType merges function-type facts with canonical precision policy.
+// When signatures differ only by precision (for example any/unknown params vs
+// concrete params), the more informative signature wins instead of unioning.
+func MergeFuncFactType(prev, next typ.Type) typ.Type {
+	return MergeFunctionFactType(prev, next)
 }
 
 // joinParamHintVectors joins two parameter hint vectors element-wise.
@@ -554,44 +594,7 @@ func WidenConstructorFields(prev, next api.ConstructorFields) api.ConstructorFie
 }
 
 func mergeFuncTypes(prev, next typ.Type) typ.Type {
-	if prev == nil {
-		return next
-	}
-	if next == nil {
-		return prev
-	}
-	prevFn, okPrev := prev.(*typ.Function)
-	nextFn, okNext := next.(*typ.Function)
-	if okPrev && okNext {
-		// For same-shape functions, merge returns before subtype short-circuiting.
-		// This avoids regressing to narrower context artifacts (e.g. nil-only returns).
-		if merged, ok := mergeFunctionReturnsIfSameShape(prevFn, nextFn); ok {
-			return merged
-		}
-	}
-	if subtype.IsSubtype(prev, next) {
-		return next
-	}
-	if subtype.IsSubtype(next, prev) {
-		return prev
-	}
-	if okPrev && okNext {
-		if len(prevFn.Returns) > 0 && len(nextFn.Returns) > 0 {
-			if ReturnTypesRefine(prevFn.Returns, nextFn.Returns) {
-				return prev
-			}
-			if ReturnTypesRefine(nextFn.Returns, prevFn.Returns) {
-				return next
-			}
-		}
-		if len(prevFn.Returns) > 0 && len(nextFn.Returns) == 0 {
-			return prev
-		}
-		if len(nextFn.Returns) > 0 && len(prevFn.Returns) == 0 {
-			return next
-		}
-	}
-	return JoinInterprocTypes(prev, next)
+	return MergeFunctionFactType(prev, next)
 }
 
 func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bool) {

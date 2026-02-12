@@ -114,4 +114,12 @@ func TestWithReturnsOrUnknown(t *testing.T) {
 			t.Fatalf("expected provided return vector, got %v", got)
 		}
 	})
+
+	t.Run("replaces placeholder returns with provided summary", func(t *testing.T) {
+		sig := typ.Func().Returns(typ.Unknown).Build()
+		got := WithReturnsOrUnknown(sig, []typ.Type{typ.Integer})
+		if got == nil || len(got.Returns) != 1 || got.Returns[0] != typ.Integer {
+			t.Fatalf("expected placeholder return to be replaced, got %v", got)
+		}
+	})
 }

@@ -314,7 +314,7 @@ func (s *Solution) containerElementTypeAt(p cfg.Point, src *ContainerElementSour
 //
 // Returns the changed key if widening occurred, empty string otherwise.
 func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssignment) string {
-	if ia.Symbol == 0 || ia.ValType == nil {
+	if ia.Symbol == 0 {
 		return ""
 	}
 
@@ -334,6 +334,17 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 		keyType = typ.String // Fallback for unresolvable keys
 	}
 
+	// Resolve value type from flow state or use fallback.
+	valueType := ia.ValType
+	if ia.ValuePath.HasSymbol() {
+		if resolved := s.NarrowedTypeAt(p, ia.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
+			valueType = resolved
+		}
+	}
+	if valueType == nil {
+		return ""
+	}
+
 	// Get canonical key for the root variable
 	iaPath := constraint.Path{Root: ia.Root, Symbol: ia.Symbol, Segments: ia.Segments}
 	pathKey := s.pkResolver.KeyAt(p, iaPath)
@@ -345,7 +356,7 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 	currentType := s.values[string(pathKey)]
 
 	// Compute the widened type
-	newType := widenWithIndexer(currentType, keyType, ia.ValType)
+	newType := widenWithIndexer(currentType, keyType, valueType)
 	if newType == nil || typ.TypeEquals(currentType, newType) {
 		return ""
 	}

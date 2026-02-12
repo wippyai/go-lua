@@ -54,6 +54,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -409,8 +410,43 @@ func (ce *ConditionExtractor) conditionFromRelationalExpr(expr *ast.RelationalOp
 		return ce.ConditionFromEquality(expr.Lhs, expr.Rhs)
 	case "~=":
 		return ce.ConditionFromInequality(expr.Lhs, expr.Rhs)
+	case "<", "<=", ">", ">=":
+		return ce.conditionFromOrderedComparison(expr.Lhs, expr.Rhs)
 	}
 	return constraint.TrueCondition()
+}
+
+func (ce *ConditionExtractor) conditionFromOrderedComparison(lhs, rhs ast.Expr) constraint.Condition {
+	var out []constraint.Constraint
+	if path := ce.pathFromExpr(lhs); !path.IsEmpty() {
+		if key, ok := ce.typeKeyFromOrderedOperand(rhs); ok {
+			out = append(out, constraint.HasType{Path: path, Type: key})
+		}
+	}
+	if path := ce.pathFromExpr(rhs); !path.IsEmpty() {
+		if key, ok := ce.typeKeyFromOrderedOperand(lhs); ok {
+			out = append(out, constraint.HasType{Path: path, Type: key})
+		}
+	}
+	if len(out) == 0 {
+		return constraint.TrueCondition()
+	}
+	return constraint.FromConstraints(out...)
+}
+
+func (ce *ConditionExtractor) typeKeyFromOrderedOperand(expr ast.Expr) (narrow.TypeKey, bool) {
+	lit, ok := ce.literalFromExpr(expr)
+	if !ok || lit == nil {
+		return narrow.TypeKey{}, false
+	}
+	switch lit.Base {
+	case kind.Integer, kind.Number:
+		return narrow.BuiltinTypeKey("number"), true
+	case kind.String:
+		return narrow.BuiltinTypeKey("string"), true
+	default:
+		return narrow.TypeKey{}, false
+	}
 }
 
 // conditionFromEquality handles == comparisons.

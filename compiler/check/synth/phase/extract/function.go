@@ -180,12 +180,17 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		}
 	}
 
-	// If a return summary exists for this function symbol, use the full vector.
-	// Narrowing uses post-flow summaries; declared uses pre-flow summaries.
+	// If a return summary exists for this function symbol, declared phase can
+	// use it directly. Narrowing phase must still infer from the body so flow
+	// predicates can remove stale union members from pre-flow summaries.
+	var summaryFallback []typ.Type
 	if len(returnSummaries) > 0 && fnSym != 0 {
 		if rt := returnSummaries[fnSym]; len(rt) > 0 {
 			if typ.HasKnownType(rt) {
-				return rt
+				summaryFallback = rt
+				if !s.IsNarrowing() {
+					return rt
+				}
 			}
 		}
 	}
@@ -318,6 +323,10 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		}
 	}
 
+	// Infer basic ordered-comparison hints (x > 0, name <= "zz") so unannotated
+	// params don't stay unknown when return typing depends on guarded branches.
+	enrichOverlayWithOrderedComparisonHints(fnGraph, overlay)
+
 	var globalTypes map[string]typ.Type
 	var moduleAliases map[cfg.SymbolID]string
 	if s.deps.CheckCtx != nil {
@@ -355,6 +364,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		NarrowCache:    make(api.Cache),
 		ModuleBindings: s.deps.ModuleBindings,
 		ModuleAliases:  moduleAliases,
+		Paths:          s.deps.Paths,
 	}
 	prelimSynth := NewSynthesizer(prelimDeps, s.phase)
 
@@ -403,6 +413,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		NarrowCache:    make(api.Cache),
 		ModuleBindings: s.deps.ModuleBindings,
 		ModuleAliases:  moduleAliases,
+		Paths:          s.deps.Paths,
 	}
 	if s.IsNarrowing() && s.deps.Flow != nil {
 		if fnCheckCtx != nil && fnCheckCtx.Graph() == fnGraph {
@@ -443,11 +454,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 			} else {
 				t = typ.Nil
 			}
-			if fnSym != 0 {
-				returnTypes[i] = typ.JoinReturnSlot(returnTypes[i], t)
-			} else {
-				returnTypes[i] = typ.JoinPreferNonSoft(returnTypes[i], t)
-			}
+			returnTypes[i] = typ.JoinReturnSlot(returnTypes[i], t)
 		}
 	})
 
@@ -458,7 +465,74 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		}
 	}
 
+	if typ.IsUnknownOnlyOrEmpty(returnTypes) && len(summaryFallback) > 0 {
+		return summaryFallback
+	}
+
 	return returnTypes
+}
+
+func enrichOverlayWithOrderedComparisonHints(fnGraph *cfg.Graph, overlay map[cfg.SymbolID]typ.Type) {
+	if fnGraph == nil || len(overlay) == 0 {
+		return
+	}
+	bindings := fnGraph.Bindings()
+	if bindings == nil {
+		return
+	}
+
+	applyHint := func(expr ast.Expr, hinted typ.Type) {
+		if hinted == nil || expr == nil {
+			return
+		}
+		ident, ok := expr.(*ast.IdentExpr)
+		if !ok || ident == nil {
+			return
+		}
+		sym, ok := bindings.SymbolOf(ident)
+		if !ok || sym == 0 {
+			return
+		}
+		existing := overlay[sym]
+		if existing == nil {
+			overlay[sym] = hinted
+			return
+		}
+		overlay[sym] = typ.JoinPreferNonSoft(existing, hinted)
+	}
+
+	var visit func(ast.Expr)
+	visit = func(expr ast.Expr) {
+		switch e := expr.(type) {
+		case *ast.LogicalOpExpr:
+			visit(e.Lhs)
+			visit(e.Rhs)
+		case *ast.RelationalOpExpr:
+			switch e.Operator {
+			case "<", "<=", ">", ">=":
+				applyHint(e.Lhs, orderedLiteralType(e.Rhs))
+				applyHint(e.Rhs, orderedLiteralType(e.Lhs))
+			}
+		}
+	}
+
+	fnGraph.EachBranch(func(_ cfg.Point, info *cfg.BranchInfo) {
+		if info == nil || info.Condition == nil {
+			return
+		}
+		visit(info.Condition)
+	})
+}
+
+func orderedLiteralType(expr ast.Expr) typ.Type {
+	switch expr.(type) {
+	case *ast.NumberExpr:
+		return typ.Number
+	case *ast.StringExpr:
+		return typ.String
+	default:
+		return nil
+	}
 }
 
 func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
