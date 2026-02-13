@@ -7,8 +7,10 @@ WIPPY_BIN="${WIPPY_BIN:-/tmp/wippy-local}"
 
 LINT_TARGET_SPECS=(
   "$WIPPY_DIR/tests/app::"
+  "$HOME/wippy/session::"
   "$HOME/wippy/framework/src/test::"
   "$HOME/wippy/framework/src/actor/test::"
+  "$HOME/wippy/framework/src/agent/src::wippy.lock"
   "$HOME/wippy/framework/src/bootloader::test/wippy.lock"
   "$HOME/wippy/docker-demo/src::../wippy.lock"
   "$HOME/wippy/framework/src/llm/src::wippy.lock"
