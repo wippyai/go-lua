@@ -113,3 +113,25 @@ func TestJoinReturnSlot_PreservesDiscriminatedRecordUnion(t *testing.T) {
 		t.Fatalf("JoinReturnSlot(discriminated records) = %T, want *Union", got)
 	}
 }
+
+func TestJoinReturnSlot_MessageLiteralMismatchStillCoalesces(t *testing.T) {
+	a := NewRecord().
+		Field("status_code", LiteralInt(401)).
+		Field("message", LiteralString("invalid key")).
+		Build()
+	b := NewRecord().
+		Field("status_code", LiteralInt(400)).
+		Field("message", LiteralString("invalid model")).
+		Field("error", NewRecord().Field("type", String).Build()).
+		Build()
+
+	got := JoinReturnSlot(a, b)
+	rec, ok := got.(*Record)
+	if !ok {
+		t.Fatalf("JoinReturnSlot(non-discriminant literal mismatch) = %T, want *Record", got)
+	}
+	errorField := rec.GetField("error")
+	if errorField == nil || !errorField.Optional {
+		t.Fatalf("expected optional error field after coalescing, got %v", got)
+	}
+}

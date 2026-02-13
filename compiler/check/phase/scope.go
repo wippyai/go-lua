@@ -479,9 +479,14 @@ func buildDeclaredTypes(
 		}
 
 		if info := graph.FuncDef(p); info != nil && info.Name != "" && info.FuncExpr != nil {
-			sym, ok := graph.SymbolAt(p, info.Name)
-			if !ok {
-				continue
+			sym := info.Symbol
+			if sym == 0 {
+				// Fallback for unresolved symbols in legacy/broken binding scenarios.
+				var ok bool
+				sym, ok = graph.SymbolAt(p, info.Name)
+				if !ok {
+					continue
+				}
 			}
 			if _, exists := out[sym]; exists {
 				continue

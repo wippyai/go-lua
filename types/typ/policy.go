@@ -157,7 +157,10 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 		readonly := false
 		switch {
 		case oka && okb:
-			fieldType = JoinPreferNonSoft(fa.Type, fb.Type)
+			// Record coalescing is used from JoinReturnSlot; keep field-level merge
+			// on the same return-slot policy so empty-collection paths and nil/unknown
+			// interactions are handled consistently in nested return records.
+			fieldType = JoinReturnSlot(fa.Type, fb.Type)
 			optional = fa.Optional || fb.Optional
 			readonly = fa.Readonly && fb.Readonly
 		case oka:
@@ -224,11 +227,23 @@ func hasConflictingRequiredLiteralField(a, b *Record) bool {
 		if la.Base != kind.String || lb.Base != kind.String {
 			continue
 		}
+		if !isDiscriminantLiteralField(name) {
+			continue
+		}
 		if !TypeEquals(la, lb) {
 			return true
 		}
 	}
 	return false
+}
+
+func isDiscriminantLiteralField(name string) bool {
+	switch name {
+	case "type", "kind", "tag", "role", "variant":
+		return true
+	default:
+		return false
+	}
 }
 
 func literalType(t Type) (*Literal, bool) {

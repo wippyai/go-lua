@@ -272,6 +272,11 @@ func recordSuperset(newRec, oldRec *typ.Record) bool {
 				return false
 			}
 			if of.Type != nil {
+				if isOpenTopRecordType(nf.Type) && isStructuredTableShape(of.Type) {
+					// Open-top table placeholders must not dominate structured
+					// collection/record fields when selecting preferred summaries.
+					return false
+				}
 				if nf.Type == nil || !subtype.IsSubtype(nf.Type, of.Type) {
 					return false
 				}
@@ -687,4 +692,25 @@ func mapComponentFromType(t typ.Type) (key typ.Type, val typ.Type, ok bool) {
 		}
 	}
 	return nil, nil, false
+}
+
+func isOpenTopRecordType(t typ.Type) bool {
+	rec, ok := unwrap.Alias(t).(*typ.Record)
+	if !ok || rec == nil {
+		return false
+	}
+	return rec.Open && len(rec.Fields) == 0 && !rec.HasMapComponent()
+}
+
+func isStructuredTableShape(t typ.Type) bool {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Array:
+		return true
+	case *typ.Map:
+		return true
+	case *typ.Record:
+		return v.HasMapComponent() || len(v.Fields) > 0
+	default:
+		return false
+	}
 }

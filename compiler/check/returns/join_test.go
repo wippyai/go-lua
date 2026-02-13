@@ -576,3 +576,37 @@ func TestTypeExtendsRecord_MapComponentConsistency(t *testing.T) {
 		t.Error("record without map component should not extend record with map component")
 	}
 }
+
+func TestMergeReturnSummary_PrefersStructuredCollectionOverOpenTopRecordField(t *testing.T) {
+	weak := []typ.Type{
+		typ.NewRecord().
+			Field("messages", typ.NewRecord().SetOpen(true).Build()).
+			Field("system", typ.Nil).
+			Build(),
+	}
+	strong := []typ.Type{
+		typ.NewRecord().
+			Field("messages", typ.NewArray(
+				typ.NewRecord().Field("role", typ.Unknown).Build(),
+			)).
+			Field("system", typ.Nil).
+			Build(),
+	}
+
+	merged := MergeReturnSummary(weak, strong)
+	if len(merged) != 1 {
+		t.Fatalf("expected one return slot, got %d", len(merged))
+	}
+
+	ret, ok := merged[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record return, got %T (%v)", merged[0], merged[0])
+	}
+	msgField := ret.GetField("messages")
+	if msgField == nil {
+		t.Fatalf("expected messages field in merged return: %v", merged[0])
+	}
+	if _, ok := msgField.Type.(*typ.Array); !ok {
+		t.Fatalf("expected messages field to remain array-like, got %T (%v)", msgField.Type, msgField.Type)
+	}
+}
