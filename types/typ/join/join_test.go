@@ -3,6 +3,8 @@ package join
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -80,6 +82,23 @@ func TestWithReturns(t *testing.T) {
 		result := WithReturns(sig, []typ.Type{nil, typ.String})
 		if result.Returns[0] != typ.Unknown {
 			t.Error("nil should be normalized to Unknown")
+		}
+	})
+
+	t.Run("preserves spec effects", func(t *testing.T) {
+		spec := contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
+		sig := typ.Func().
+			Param("x", typ.String).
+			Returns(typ.String, typ.NewOptional(typ.LuaError)).
+			Spec(spec).
+			Build()
+		result := WithReturns(sig, []typ.Type{typ.String, typ.NewOptional(typ.LuaError)})
+		if result.Spec == nil {
+			t.Fatal("expected function spec to be preserved")
+		}
+		extracted := contract.ExtractSpec(result)
+		if extracted == nil || extracted.Effects.GetErrorReturn(0) == nil {
+			t.Fatal("expected ErrorReturn label to be preserved")
 		}
 	})
 }

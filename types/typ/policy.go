@@ -62,7 +62,7 @@ func JoinReturnSlot(a, b Type) Type {
 	if (IsUnknown(a) && b.Kind() == kind.Nil) || (IsUnknown(b) && a.Kind() == kind.Nil) {
 		return Unknown
 	}
-	return JoinPreferNonSoft(a, b)
+	return coalesceCompatibleRecordMembers(JoinPreferNonSoft(a, b))
 }
 
 func preferArrayOverEmptyRecord(a, b Type) (Type, bool) {
@@ -200,6 +200,56 @@ func unaliasRecord(t Type) *Record {
 	return rec
 }
 
+func unaliasUnion(t Type) *Union {
+	for {
+		a, ok := t.(*Alias)
+		if !ok {
+			break
+		}
+		t = a.Target
+	}
+	u, _ := t.(*Union)
+	return u
+}
+
+func coalesceCompatibleRecordMembers(t Type) Type {
+	u := unaliasUnion(t)
+	if u == nil || len(u.Members) < 2 {
+		return t
+	}
+
+	members := make([]Type, len(u.Members))
+	copy(members, u.Members)
+	changed := false
+
+	for i := 0; i < len(members); i++ {
+		left := unaliasRecord(members[i])
+		if left == nil {
+			continue
+		}
+		for j := i + 1; j < len(members); j++ {
+			right := unaliasRecord(members[j])
+			if right == nil {
+				continue
+			}
+			merged, ok := JoinCompatibleRecords(left, right)
+			if !ok {
+				continue
+			}
+			members[i] = merged
+			left = unaliasRecord(merged)
+			members = append(members[:j], members[j+1:]...)
+			j--
+			changed = true
+		}
+	}
+
+	if !changed {
+		return t
+	}
+	return NewUnion(members...)
+}
+
 func recordFieldsByName(r *Record) map[string]Field {
 	fields := make(map[string]Field, len(r.Fields))
 	for _, field := range r.Fields {
@@ -224,9 +274,6 @@ func hasConflictingRequiredLiteralField(a, b *Record) bool {
 		if !oka || !okb {
 			continue
 		}
-		if la.Base != kind.String || lb.Base != kind.String {
-			continue
-		}
 		if !isDiscriminantLiteralField(name) {
 			continue
 		}
@@ -239,7 +286,7 @@ func hasConflictingRequiredLiteralField(a, b *Record) bool {
 
 func isDiscriminantLiteralField(name string) bool {
 	switch name {
-	case "type", "kind", "tag", "role", "variant":
+	case "type", "kind", "tag", "role", "variant", "success", "ok":
 		return true
 	default:
 		return false

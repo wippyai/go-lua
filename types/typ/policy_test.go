@@ -135,3 +135,35 @@ func TestJoinReturnSlot_MessageLiteralMismatchStillCoalesces(t *testing.T) {
 		t.Fatalf("expected optional error field after coalescing, got %v", got)
 	}
 }
+
+func TestJoinReturnSlot_CoalescesUnionRecordMember(t *testing.T) {
+	base := NewRecord().
+		Field("status_code", Number).
+		Field("message", String).
+		Build()
+	withDetails := NewRecord().
+		Field("status_code", Number).
+		Field("message", String).
+		Field("code", String).
+		Field("type", String).
+		Build()
+	unionWithNil := NewUnion(Nil, base)
+
+	got := JoinReturnSlot(unionWithNil, withDetails)
+	opt, ok := got.(*Optional)
+	if !ok {
+		t.Fatalf("JoinReturnSlot(union, record) = %T, want *Optional", got)
+	}
+	merged := unaliasRecord(opt.Inner)
+	if merged == nil {
+		t.Fatalf("expected merged record member, got %T", opt.Inner)
+	}
+	codeField := merged.GetField("code")
+	if codeField == nil || !codeField.Optional || !TypeEquals(codeField.Type, String) {
+		t.Fatalf("expected optional code:string after coalescing, got %v", codeField)
+	}
+	typeField := merged.GetField("type")
+	if typeField == nil || !typeField.Optional || !TypeEquals(typeField.Type, String) {
+		t.Fatalf("expected optional type:string after coalescing, got %v", typeField)
+	}
+}
