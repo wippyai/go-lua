@@ -140,3 +140,51 @@ func TestReconcileSoftAnnotatedInference_RecordTemplateKeepsFields(t *testing.T)
 		t.Fatalf("expected 'name: string' field preserved, got %+v", rec.Fields)
 	}
 }
+
+func TestCollectAllReturnSummaries_NormalizesAndFilters(t *testing.T) {
+	inferencer := New(Config{})
+	ctx := &returnInferenceContext{
+		summaries: map[cfg.SymbolID][]typ.Type{
+			0: {typ.String}, // invalid symbol id, ignored
+			1: nil,          // empty summary, ignored
+			2: {nil, typ.String},
+		},
+	}
+
+	got := inferencer.collectAllReturnSummaries(ctx)
+	if len(got) != 1 {
+		t.Fatalf("expected one normalized summary, got %d (%v)", len(got), got)
+	}
+	summary := got[2]
+	if len(summary) != 2 {
+		t.Fatalf("expected 2-slot summary, got %v", summary)
+	}
+	if !typ.TypeEquals(summary[0], typ.Nil) {
+		t.Fatalf("expected first slot normalized to nil, got %v", summary[0])
+	}
+	if !typ.TypeEquals(summary[1], typ.String) {
+		t.Fatalf("expected second slot string, got %v", summary[1])
+	}
+}
+
+func TestResolveLocalFunctionSummary_UsesCurrentSummaryWithoutStore(t *testing.T) {
+	inferencer := New(Config{})
+
+	got := inferencer.resolveLocalFunctionSummary(nil, map[cfg.SymbolID][]typ.Type{
+		1: {typ.String},
+	}, 1)
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+		t.Fatalf("expected string summary, got %v", got)
+	}
+
+	unknownOnly := inferencer.resolveLocalFunctionSummary(nil, map[cfg.SymbolID][]typ.Type{
+		1: {typ.Unknown},
+	}, 1)
+	if len(unknownOnly) != 1 || !typ.TypeEquals(unknownOnly[0], typ.Unknown) {
+		t.Fatalf("expected unknown summary without store fallback, got %v", unknownOnly)
+	}
+
+	if got := inferencer.resolveLocalFunctionSummary(nil, nil, 0); got != nil {
+		t.Fatalf("expected nil summary for symbol 0, got %v", got)
+	}
+}

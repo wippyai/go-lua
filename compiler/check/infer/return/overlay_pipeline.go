@@ -105,21 +105,87 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 	}
 }
 
-// collectAllReturnSummaries gathers return summaries from all scope groups.
+// collectAllReturnSummaries normalizes the current local summary map.
 func (i *Inferencer) collectAllReturnSummaries(ctx *returnInferenceContext) map[cfg.SymbolID][]typ.Type {
-	allSummaries := make(map[cfg.SymbolID][]typ.Type)
+	if ctx == nil || len(ctx.summaries) == 0 {
+		return nil
+	}
+	allSummaries := make(map[cfg.SymbolID][]typ.Type, len(ctx.summaries))
 	for _, sym := range cfg.SortedSymbolIDs(ctx.summaries) {
-		t := ctx.summaries[sym]
-		if sym == 0 || len(t) == 0 {
+		if sym == 0 {
 			continue
 		}
-		if existing, ok := allSummaries[sym]; ok {
-			allSummaries[sym] = returns.MergeReturnSummary(existing, t)
-		} else {
-			allSummaries[sym] = returns.NormalizeReturnVector(t)
+		normalized := returns.NormalizeReturnVector(ctx.summaries[sym])
+		if len(normalized) == 0 {
+			continue
 		}
+		allSummaries[sym] = normalized
 	}
 	return allSummaries
+}
+
+func (i *Inferencer) summaryFromSnapshot(
+	graph *cfg.Graph,
+	parentScope *scope.State,
+	sym cfg.SymbolID,
+) []typ.Type {
+	if i == nil || i.store == nil || graph == nil || parentScope == nil || sym == 0 {
+		return nil
+	}
+	snap := i.store.GetReturnSummariesSnapshot(graph, parentScope)
+	if len(snap) == 0 {
+		return nil
+	}
+	normalized := returns.NormalizeReturnVector(snap[sym])
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+func (i *Inferencer) resolveLocalFunctionSummary(
+	ctx *returnInferenceContext,
+	allSummaries map[cfg.SymbolID][]typ.Type,
+	sym cfg.SymbolID,
+) []typ.Type {
+	if sym == 0 {
+		return nil
+	}
+
+	// Keep the current SCC-derived summary unless it is still unknown-only.
+	summary := returns.NormalizeReturnVector(allSummaries[sym])
+	if !typ.IsUnknownOnlyOrEmpty(summary) {
+		return summary
+	}
+
+	if ctx == nil || i == nil || i.store == nil {
+		return summary
+	}
+
+	// First fallback: current graph snapshot under the current resolve scope.
+	if ctx.info != nil && ctx.info.Graph != nil && ctx.resolveScope != nil {
+		if snapSummary := i.summaryFromSnapshot(ctx.info.Graph, ctx.resolveScope, sym); len(snapSummary) > 0 {
+			return snapSummary
+		}
+	}
+
+	// Second fallback: parent graph snapshot for the function symbol, if known.
+	ref := i.store.FunctionRefBySym(sym)
+	if ref == nil || ref.ParentGraphID == 0 {
+		return summary
+	}
+	parentGraph := i.store.Graphs()[ref.ParentGraphID]
+	if parentGraph == nil {
+		return summary
+	}
+	parentScope := api.ParentScopeForGraph(i.store, parentGraph.ID(), nil)
+	if parentScope == nil {
+		return summary
+	}
+	if snapSummary := i.summaryFromSnapshot(parentGraph, parentScope, sym); len(snapSummary) > 0 {
+		return snapSummary
+	}
+	return summary
 }
 
 // enrichOverlayWithLocalFunctions adds local function types from the function body.
@@ -151,29 +217,7 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 					i.store.RegisterFunctionRef(target.Symbol, fnExpr, fnGraph, ctx.info.Graph.ID(), p)
 				}
 			}
-			summary := allSummaries[target.Symbol]
-			if typ.IsUnknownOnlyOrEmpty(summary) && i.store != nil {
-				if ctx.info != nil && ctx.info.Graph != nil && ctx.resolveScope != nil {
-					if snap := i.store.GetReturnSummariesSnapshot(ctx.info.Graph, ctx.resolveScope); len(snap) > 0 {
-						if snapSummary := snap[target.Symbol]; len(snapSummary) > 0 {
-							summary = snapSummary
-						}
-					}
-				}
-				if typ.IsUnknownOnlyOrEmpty(summary) {
-					if ref := i.store.FunctionRefBySym(target.Symbol); ref != nil && ref.ParentGraphID != 0 {
-						parentGraph := i.store.Graphs()[ref.ParentGraphID]
-						if parentGraph != nil {
-							parentScope := api.ParentScopeForGraph(i.store, parentGraph.ID(), nil)
-							if parentScope != nil {
-								if snap := i.store.GetReturnSummariesSnapshot(parentGraph, parentScope); len(snap) > 0 {
-									summary = snap[target.Symbol]
-								}
-							}
-						}
-					}
-				}
-			}
+			summary := i.resolveLocalFunctionSummary(ctx, allSummaries, target.Symbol)
 			sig := ctx.engine.ResolveFunctionSignature(fnExpr, ctx.resolveScope)
 			if fnType := returns.WithSummaryOrUnknown(sig, summary); fnType != nil {
 				overlay[target.Symbol] = fnType
