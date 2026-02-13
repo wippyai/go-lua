@@ -232,6 +232,7 @@ func (p *Processor) processNestedFunction(
 				if sym, ok := bindings.SymbolOf(recvIdent); ok {
 					selfType := p.resolveSelfTypeForMethod(info, sym, graph, parentResult, p.rootResult)
 					if selfType != nil {
+						selfType = nested.NormalizeMethodSelfType(selfType)
 						parentScope = parentScope.WithSelf(selfType).WithLocalName("self")
 					}
 				}

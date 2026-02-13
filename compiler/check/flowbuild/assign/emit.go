@@ -482,6 +482,12 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				}
 
 				// Create assignment for the field path: root.field1.field2... = assignedType
+				sourcePath := constraint.Path{}
+				if source != nil {
+					if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+						sourcePath = sp
+					}
+				}
 				inputs.Assignments = append(inputs.Assignments, flow.UnifiedAssignment{
 					Point: p,
 					TargetPath: constraint.Path{
@@ -489,7 +495,8 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						Symbol:   sym,
 						Segments: segments,
 					},
-					Type: resolve.Ref(assignedType, sc),
+					SourcePath: sourcePath,
+					Type:       resolve.Ref(assignedType, sc),
 				})
 				continue
 			}
@@ -568,8 +575,20 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 				// For non-const keys, emit an IndexerAssignment to widen the table
 				if keySeg.Name == "" {
-					if keyType == nil && target.Key != nil && wrappedSynth != nil {
+					// Extract key variable name and symbol using bindings.
+					var keyVar string
+					var keySym cfg.SymbolID
+					if keyIdent, ok := target.Key.(*ast.IdentExpr); ok && bindings != nil {
+						keySym, _ = bindings.SymbolOf(keyIdent)
+						keyVar = resolve.RootNameFromBindings(bindings, keySym, keyIdent.Value)
+					}
+					// Prefer symbol-based key typing at solve-time so branch narrowing
+					// (for example `if suite then suites[suite] = ...`) is preserved.
+					if keyType == nil && target.Key != nil && wrappedSynth != nil && keySym == 0 {
 						keyType = wrappedSynth(target.Key, p)
+					}
+					if keySym != 0 && typ.IsAbsentOrUnknown(keyType) {
+						keyType = nil
 					}
 					// Apply truthy guards to narrow optional fields in table literals.
 					valType := assignedType
@@ -577,14 +596,6 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						if tbl, ok := source.(*ast.TableExpr); ok {
 							valType = guard.NarrowTableFieldsByGuard(valType, tbl, p, bindings, truthyGuards)
 						}
-					}
-
-					// Extract key variable name and symbol using bindings
-					var keyVar string
-					var keySym cfg.SymbolID
-					if keyIdent, ok := target.Key.(*ast.IdentExpr); ok && bindings != nil {
-						keySym, _ = bindings.SymbolOf(keyIdent)
-						keyVar = resolve.RootNameFromBindings(bindings, keySym, keyIdent.Value)
 					}
 					valuePath := constraint.Path{}
 					if source != nil {
@@ -612,6 +623,12 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				}
 
 				// Create assignment for the field path: root.fieldName = assignedType
+				sourcePath := constraint.Path{}
+				if source != nil {
+					if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+						sourcePath = sp
+					}
+				}
 				inputs.Assignments = append(inputs.Assignments, flow.UnifiedAssignment{
 					Point: p,
 					TargetPath: constraint.Path{
@@ -619,7 +636,8 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						Symbol:   basePath.Symbol,
 						Segments: append(append([]constraint.Segment{}, basePath.Segments...), keySeg),
 					},
-					Type: resolve.Ref(assignedType, sc),
+					SourcePath: sourcePath,
+					Type:       resolve.Ref(assignedType, sc),
 				})
 				continue
 			}

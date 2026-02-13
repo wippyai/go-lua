@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -43,6 +44,22 @@ func ResolveCalleeEffect(
 			}
 		}
 	}
+	// Method calls (x:foo(...)) often do not have a direct callee expression.
+	// Resolve effect from receiver method/field type when available.
+	if synth != nil && info.Method != "" && info.Receiver != nil {
+		if recv := synth(info.Receiver, p); recv != nil {
+			if mt, ok := core.Method(recv, info.Method); ok {
+				if eff := effectFromType(mt); eff != nil {
+					return eff
+				}
+			}
+			if ft, ok := core.Field(recv, info.Method); ok {
+				if eff := effectFromType(ft); eff != nil {
+					return eff
+				}
+			}
+		}
+	}
 	if resolveBySym != nil {
 		for _, sym := range candidates {
 			if t, ok := resolveBySym(p, sym); ok && t != nil {
@@ -72,6 +89,16 @@ func ResolveCalleeType(
 	if synth != nil && info.Callee != nil {
 		if t := synth(info.Callee, p); t != nil {
 			return t
+		}
+	}
+	if synth != nil && info.Method != "" && info.Receiver != nil {
+		if recv := synth(info.Receiver, p); recv != nil {
+			if mt, ok := core.Method(recv, info.Method); ok {
+				return mt
+			}
+			if ft, ok := core.Field(recv, info.Method); ok {
+				return ft
+			}
 		}
 	}
 	if resolveBySym == nil {

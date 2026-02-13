@@ -88,8 +88,18 @@ func IsOptionalLike(t typ.Type) bool {
 		Optional: func(*typ.Optional) bool {
 			return true
 		},
+		Union: func(u *typ.Union) bool {
+			for _, m := range u.Members {
+				if IsOptionalLike(m) {
+					return true
+				}
+			}
+
+			return false
+		},
 		Default: func(t typ.Type) bool {
-			return t.Kind() == kind.Nil
+			k := t.Kind()
+			return k == kind.Nil || k.IsPlaceholder()
 		},
 	})
 }

@@ -13,7 +13,7 @@ import "github.com/wippyai/go-lua/internal"
 //   - Comparisons: [Le] (x-y≤c), [Lt] (x<y), [Ge] (x≥y), [Gt] (x>y), [Eq] (x==y)
 //   - Constants: [EqConst] (x==c), [LeConst] (x≤c), [GeConst] (x≥c)
 //   - Modular: [ModEq] (x%m==r)
-//   - Symbolic: [LeLenOf] (x≤len(arr))
+//   - Symbolic: [LeLenOf] (x≤len(arr)+c)
 //
 // # Usage with Theory Solvers
 //
@@ -37,7 +37,7 @@ const (
 	NumLeConst         // x <= c
 	NumGeConst         // x >= c
 	NumModEq           // x % m == r
-	NumLeLenOf         // x <= len(arr)
+	NumLeLenOf         // x <= len(arr) + offset
 )
 
 // NumericConstraint is a marker interface for numeric constraints.
@@ -176,18 +176,19 @@ func (c ModEq) Equals(o NumericConstraint) bool {
 	return ok && c.X.Equal(other.X) && c.M == other.M && c.R == other.R
 }
 
-// LeLenOf represents x <= len(arr), a symbolic upper bound.
+// LeLenOf represents x <= len(arr)+offset, a symbolic upper bound.
 type LeLenOf struct {
-	X     Path // variable being bounded
-	Array Path // array whose length is the upper bound
+	X      Path  // variable being bounded
+	Array  Path  // array whose length is the upper bound
+	Offset int64 // additive offset (can be negative)
 }
 
 func (c LeLenOf) NumKind() NumKind { return NumLeLenOf }
 func (c LeLenOf) Paths() []Path    { return []Path{c.X, c.Array} }
-func (c LeLenOf) Hash() uint64     { return hashNumConstraint(c.NumKind(), c.X, c.Array) }
+func (c LeLenOf) Hash() uint64     { return hashNumConstraint(c.NumKind(), c.X, c.Array, c.Offset) }
 func (c LeLenOf) Equals(o NumericConstraint) bool {
 	other, ok := o.(LeLenOf)
-	return ok && c.X.Equal(other.X) && c.Array.Equal(other.Array)
+	return ok && c.X.Equal(other.X) && c.Array.Equal(other.Array) && c.Offset == other.Offset
 }
 
 func hashNumConstraint(kind NumKind, a, b Path, extra ...int64) uint64 {

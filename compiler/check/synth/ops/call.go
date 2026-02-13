@@ -339,6 +339,20 @@ func InferCall(ctx *db.QueryContext, def CallDef) InferResult {
 			ShortCircuit:        typ.Unknown,
 		}
 	}
+	if typ.IsNever(callee) {
+		// Calls in unreachable paths (callee narrowed to never) should not emit
+		// secondary "not callable" errors. Preserve dead-branch semantics by
+		// short-circuiting with never.
+		return InferResult{
+			Kind:                InferKindUnknown,
+			Callee:              callee,
+			Receiver:            receiver,
+			IsMethod:            isMethod,
+			ForceMethodReceiver: def.ForceMethodReceiver,
+			Errors:              errors,
+			ShortCircuit:        typ.Never,
+		}
+	}
 
 	callee = unwrapCallee(callee)
 

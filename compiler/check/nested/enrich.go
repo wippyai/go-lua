@@ -190,6 +190,15 @@ func EnrichSelfTypeWithConstructorFields(selfType typ.Type, classSymbol cfg.Symb
 	return mergeFieldsIntoSelfType(selfType, fields)
 }
 
+// NormalizeMethodSelfType widens literal-heavy self shapes so method-local
+// flow constraints do not treat mutable receiver state as compile-time constants.
+func NormalizeMethodSelfType(selfType typ.Type) typ.Type {
+	if selfType == nil {
+		return nil
+	}
+	return subtype.WidenForInference(selfType)
+}
+
 func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.Type {
 	if len(fields) == 0 {
 		return selfType

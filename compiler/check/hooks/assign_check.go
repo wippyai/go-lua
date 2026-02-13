@@ -38,6 +38,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/flow/join"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -152,12 +153,18 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 				return
 			}
 
+			sourceUsesTarget := sourceUsesTargetSymbol(source, sym, graph)
 			valueType := narrowSynth.SynthWithExpected(source, p, declaredType)
+			if sourceUsesTarget {
+				if pre := preAssignmentExprTypeForAssign(source, p, narrowSynth, graph, declaredType); pre != nil {
+					valueType = pre
+				}
+			}
 			if valueType == nil {
 				return
 			}
 
-			if table, ok := source.(*ast.TableExpr); ok {
+			if table, ok := source.(*ast.TableExpr); ok && !sourceUsesTarget {
 				if result := tableCheck(table, declaredType, narrowSynth, p); result.Handled {
 					if result.Compatible {
 						return
@@ -261,4 +268,93 @@ func formatExcluded(value, declared typ.Type) string {
 
 func formatAssignMismatch(value, declared typ.Type) string {
 	return "cannot assign " + typ.FormatShort(value) + " to " + typ.FormatShort(declared)
+}
+
+type identBindingLookup interface {
+	SymbolOf(ident *ast.IdentExpr) (cfg.SymbolID, bool)
+}
+
+func sourceUsesTargetSymbol(expr ast.Expr, sym cfg.SymbolID, graph *cfg.Graph) bool {
+	if expr == nil || sym == 0 || graph == nil {
+		return false
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		return false
+	}
+	return exprReferencesSymbol(expr, sym, bindings)
+}
+
+func exprReferencesSymbol(expr ast.Expr, sym cfg.SymbolID, bindings identBindingLookup) bool {
+	if expr == nil || sym == 0 || bindings == nil {
+		return false
+	}
+
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		if bound, ok := bindings.SymbolOf(e); ok && bound == sym {
+			return true
+		}
+		return false
+	case *ast.AttrGetExpr:
+		return exprReferencesSymbol(e.Object, sym, bindings) || exprReferencesSymbol(e.Key, sym, bindings)
+	case *ast.TableExpr:
+		for _, field := range e.Fields {
+			if field == nil {
+				continue
+			}
+			if exprReferencesSymbol(field.Key, sym, bindings) || exprReferencesSymbol(field.Value, sym, bindings) {
+				return true
+			}
+		}
+		return false
+	case *ast.FuncCallExpr:
+		if exprReferencesSymbol(e.Func, sym, bindings) || exprReferencesSymbol(e.Receiver, sym, bindings) {
+			return true
+		}
+		for _, arg := range e.Args {
+			if exprReferencesSymbol(arg, sym, bindings) {
+				return true
+			}
+		}
+		return false
+	case *ast.LogicalOpExpr:
+		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
+	case *ast.RelationalOpExpr:
+		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
+	case *ast.StringConcatOpExpr:
+		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
+	case *ast.ArithmeticOpExpr:
+		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
+	case *ast.UnaryMinusOpExpr:
+		return exprReferencesSymbol(e.Expr, sym, bindings)
+	case *ast.UnaryNotOpExpr:
+		return exprReferencesSymbol(e.Expr, sym, bindings)
+	case *ast.UnaryLenOpExpr:
+		return exprReferencesSymbol(e.Expr, sym, bindings)
+	case *ast.UnaryBNotOpExpr:
+		return exprReferencesSymbol(e.Expr, sym, bindings)
+	default:
+		return false
+	}
+}
+
+func preAssignmentExprTypeForAssign(expr ast.Expr, p cfg.Point, synth api.Synth, graph *cfg.Graph, expected typ.Type) typ.Type {
+	if expr == nil || synth == nil || graph == nil {
+		return nil
+	}
+	preds := graph.Predecessors(p)
+	if len(preds) == 0 {
+		return nil
+	}
+	var candidate []typ.Type
+	for _, pred := range preds {
+		if t := synth.SynthWithExpected(expr, pred, expected); t != nil {
+			candidate = append(candidate, t)
+		}
+	}
+	if len(candidate) == 0 {
+		return nil
+	}
+	return join.Types(candidate...)
 }

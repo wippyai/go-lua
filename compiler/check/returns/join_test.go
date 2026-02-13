@@ -546,6 +546,40 @@ func TestAlignFunctionTypeWithSummary_AppliesStrictRefinement(t *testing.T) {
 	}
 }
 
+func TestAlignFunctionTypeWithSummary_ReplacesOpenTopRecordWithStructuredSummary(t *testing.T) {
+	openTop := typ.NewRecord().SetOpen(true).Build()
+	fn := typ.Func().Returns(openTop).Build()
+	summary := []typ.Type{typ.NewArray(typ.Unknown)}
+
+	aligned, changed := AlignFunctionTypeWithSummary(fn, summary)
+	if !changed {
+		t.Fatal("expected open-top placeholder to be replaced by structured summary")
+	}
+	if aligned == nil || len(aligned.Returns) != 1 {
+		t.Fatalf("unexpected aligned function: %v", aligned)
+	}
+	if !typ.TypeEquals(aligned.Returns[0], summary[0]) {
+		t.Fatalf("expected %v, got %v", summary[0], aligned.Returns[0])
+	}
+}
+
+func TestAlignFunctionTypeWithSummary_DoesNotDowngradeStructuredToPlaceholder(t *testing.T) {
+	structured := typ.NewRecord().Field("get_x", typ.Func().Build()).Build()
+	fn := typ.Func().Returns(structured).Build()
+	summary := []typ.Type{typ.Any}
+
+	aligned, changed := AlignFunctionTypeWithSummary(fn, summary)
+	if changed {
+		t.Fatalf("expected no downgrade change, got %v", aligned)
+	}
+	if aligned == nil || len(aligned.Returns) != 1 {
+		t.Fatalf("unexpected aligned function: %v", aligned)
+	}
+	if !typ.TypeEquals(aligned.Returns[0], structured) {
+		t.Fatalf("expected %v, got %v", structured, aligned.Returns[0])
+	}
+}
+
 func TestRecordSuperset_NewHasMapComponentOldDoesNot(t *testing.T) {
 	oldRec := typ.NewRecord().Field("x", typ.Number).Build()
 	newRec := typ.NewRecord().Field("x", typ.Number).MapComponent(typ.String, typ.Any).Build()
@@ -608,5 +642,22 @@ func TestMergeReturnSummary_PrefersStructuredCollectionOverOpenTopRecordField(t 
 	}
 	if _, ok := msgField.Type.(*typ.Array); !ok {
 		t.Fatalf("expected messages field to remain array-like, got %T (%v)", msgField.Type, msgField.Type)
+	}
+}
+
+func TestMergeReturnSummary_PromotesTopLevelStructuredOverOpenTop(t *testing.T) {
+	weak := []typ.Type{
+		typ.NewRecord().SetOpen(true).Build(),
+	}
+	strong := []typ.Type{
+		typ.NewArray(typ.Any),
+	}
+
+	merged := MergeReturnSummary(weak, strong)
+	if len(merged) != 1 {
+		t.Fatalf("expected one return slot, got %d", len(merged))
+	}
+	if _, ok := merged[0].(*typ.Array); !ok {
+		t.Fatalf("expected top-level array after merge, got %T (%v)", merged[0], merged[0])
 	}
 }

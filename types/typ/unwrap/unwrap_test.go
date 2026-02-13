@@ -66,6 +66,9 @@ func TestIsOptionalLike(t *testing.T) {
 		{"nil type", nil, true},
 		{"Nil", typ.Nil, true},
 		{"Optional", typ.NewOptional(typ.String), true},
+		{"Union with nil", typ.NewUnion(typ.String, typ.Nil), true},
+		{"Any", typ.Any, true},
+		{"Unknown", typ.Unknown, true},
 		{"String", typ.String, false},
 	}
 

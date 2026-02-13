@@ -346,6 +346,39 @@ func TestMergeFieldAssignments_PreservesExistingFieldQualifiers(t *testing.T) {
 	check("new_field", false, false)
 }
 
+func TestMergeFieldAssignments_PreservesAliasFieldType(t *testing.T) {
+	txAlias := typ.NewAlias("Tx",
+		typ.NewRecord().
+			Field("query", typ.Func().
+				Param("self", typ.NewRef("", "Tx")).
+				Param("q", typ.String).
+				Returns(typ.Number).
+				Build()).
+			Build())
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym9@1.tx`: txAlias,
+		},
+	}
+
+	got := s.mergeFieldAssignments(nil, "sym9@1")
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
+	}
+	field := rec.GetField("tx")
+	if field == nil {
+		t.Fatalf("expected field tx in merged record")
+	}
+	if field.Type.Kind() != kind.Alias {
+		t.Fatalf("expected field tx type to preserve alias, got %s", field.Type.Kind())
+	}
+	alias, _ := field.Type.(*typ.Alias)
+	if alias == nil || alias.Name != "Tx" {
+		t.Fatalf("expected alias Tx on field tx, got %v", field.Type)
+	}
+}
+
 // setupSymbol registers a symbol and sets its visibility at all given points.
 // Returns the SymbolID for use in version creation.
 func setupSymbol(g *mockSSAGraph, name string, points []cfg.Point) cfg.SymbolID {

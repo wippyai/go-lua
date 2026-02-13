@@ -211,6 +211,96 @@ func TestSession_ExportManifest_EnablesCrossModuleNarrowing(t *testing.T) {
 	}
 }
 
+func TestSession_ExportManifest_PreservesEqSummaryConstraints(t *testing.T) {
+	producerChecker := newSessionTestChecker(nil)
+	producer := producerChecker.Check(`
+		local M = {}
+
+		function M.eq(actual: any, expected: any, msg: string?)
+			if actual ~= expected then
+				error(msg or "assertion failed")
+			end
+		end
+
+		return M
+	`, "assert.lua")
+
+	assertManifest := producer.ExportManifest("assert")
+	summary, ok := assertManifest.LookupSummary("eq")
+	if !ok || summary == nil {
+		t.Fatal("expected eq summary in exported manifest")
+	}
+	if !summary.Ensures.HasConstraints() {
+		t.Fatal("expected eq summary to carry ensures constraints")
+	}
+
+	foundEq := false
+	param0 := constraint.ParamPath(0).Key()
+	param1 := constraint.ParamPath(1).Key()
+	for _, c := range summary.Ensures.AllConstraints() {
+		if eq, ok := c.(constraint.EqPath); ok {
+			leftKey := eq.Left.Key()
+			rightKey := eq.Right.Key()
+			if leftKey == param0 && rightKey == param1 {
+				foundEq = true
+				break
+			}
+			if leftKey == param1 && rightKey == param0 {
+				foundEq = true
+				break
+			}
+		}
+	}
+	if !foundEq {
+		t.Fatalf("expected EqPath($0,$1) in ensures, got: %v", summary.Ensures)
+	}
+}
+
+func TestSession_ExportManifest_EnablesCrossModuleEqLenNarrowing(t *testing.T) {
+	producerChecker := newSessionTestChecker(nil)
+	producer := producerChecker.Check(`
+		local M = {}
+
+		function M.eq(actual: any, expected: any, msg: string?)
+			if actual ~= expected then
+				error(msg or "assertion failed")
+			end
+		end
+
+		return M
+	`, "assert.lua")
+
+	assertManifest := producer.ExportManifest("assert")
+	consumerChecker := newSessionTestChecker(map[string]*io.Manifest{
+		"assert": assertManifest,
+	})
+
+	consumer := consumerChecker.Check(`
+		type Row = { stream: string }
+		local assert = require("assert")
+
+		local function parse_stream_lines(raw: string?): {Row}
+			local lines = {}
+			if raw and raw ~= "" then
+				table.insert(lines, { stream = "ok" })
+			end
+			return lines
+		end
+
+		local maybe_raw: string? = "raw"
+		local result = parse_stream_lines(maybe_raw)
+		assert.eq(#result, 1, "one row")
+		local line: string = result[1].stream
+		return line
+	`, "consumer.lua")
+
+	for _, d := range consumer.Diagnostics {
+		if d.Severity == diag.SeverityError {
+			t.Fatalf("unexpected error diagnostic: %s", d.Message)
+		}
+	}
+}
+
 func TestFuncResult_IsData(t *testing.T) {
 	// FuncResult is pure data, no methods to test
 	// This test verifies the struct can be created

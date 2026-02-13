@@ -25,9 +25,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
+	flowjoin "github.com/wippyai/go-lua/types/flow/join"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -45,8 +47,9 @@ func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSyn
 	seen := make(map[ast.Expr]bool)
 
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		assignView, assignResolver := applyAssignPreStateNarrowing(graph, info, p, narrowView, resolver)
 		info.EachSource(func(_ int, source ast.Expr) {
-			diags = append(diags, checkFieldExpr(source, p, narrowView, resolver, seen, sourceName)...)
+			diags = append(diags, checkFieldExpr(source, p, assignView, assignResolver, seen, sourceName)...)
 		})
 		if info.NumericFor != nil {
 			diags = append(diags, checkNumericFor(info.NumericFor, p, narrowView, sourceName)...)
@@ -272,6 +275,83 @@ func applyLogicalOpNarrowing(
 	}
 
 	return localView, fieldResolverImpl{view: localView, synth: resolver.synth, bindings: resolver.bindings}
+}
+
+func applyAssignPreStateNarrowing(
+	graph *cfg.Graph,
+	info *cfg.AssignInfo,
+	p cfg.Point,
+	view api.BaseSynth,
+	resolver fieldResolverImpl,
+) (api.BaseSynth, fieldResolverImpl) {
+	if graph == nil || info == nil || view == nil || resolver.bindings == nil {
+		return view, resolver
+	}
+	if len(info.Targets) == 0 {
+		return view, resolver
+	}
+
+	assignView := view
+	assignResolver := resolver
+	for _, target := range info.Targets {
+		if target.Expr == nil {
+			continue
+		}
+		targetPath := path.FromExprWithBindings(target.Expr, nil, resolver.bindings)
+		if targetPath.IsEmpty() {
+			continue
+		}
+		preType := preAssignmentExprType(graph, target.Expr, p, view)
+		if preType == nil || preType.Kind().IsPlaceholder() {
+			continue
+		}
+		if target.Kind != cfg.TargetIdent {
+			currentType := assignView.TypeOf(target.Expr, p)
+			if currentType != nil && !currentType.Kind().IsPlaceholder() && !currentType.Kind().IsNever() {
+				// For field/index targets, apply pre-state overlays only when they
+				// are at least as specific as the current point type; otherwise we
+				// risk broadening stable map/record flows.
+				if !subtype.IsSubtype(preType, currentType) {
+					continue
+				}
+			}
+		}
+		localView := &localNarrowView{
+			base:         assignView,
+			bindings:     resolver.bindings,
+			overridePath: targetPath,
+			overrideType: preType,
+		}
+		assignView = localView
+		assignResolver = fieldResolverImpl{
+			view:     localView,
+			synth:    resolver.synth,
+			bindings: resolver.bindings,
+		}
+	}
+
+	return assignView, assignResolver
+}
+
+func preAssignmentExprType(graph *cfg.Graph, expr ast.Expr, p cfg.Point, view api.BaseSynth) typ.Type {
+	if graph == nil || expr == nil || view == nil {
+		return nil
+	}
+	preds := graph.Predecessors(p)
+	if len(preds) == 0 {
+		return nil
+	}
+
+	types := make([]typ.Type, 0, len(preds))
+	for _, pred := range preds {
+		if t := view.TypeOf(expr, pred); t != nil {
+			types = append(types, t)
+		}
+	}
+	if len(types) == 0 {
+		return nil
+	}
+	return flowjoin.Types(types...)
 }
 
 func checkArithmetic(e *ast.ArithmeticOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {

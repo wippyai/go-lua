@@ -56,20 +56,22 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 	}
 
 	// Keep summary and narrow channels mutually refining when post-flow narrow
-	// provides strictly better first-order information.
+	// provides first-order information. MergeReturnSummary is the canonical
+	// policy and already encodes directional refinement preference.
 	if len(out.Narrow) > 0 {
 		if len(out.Summary) == 0 {
 			out.Summary = NormalizeReturnVector(out.Narrow)
-		} else if ReturnTypesRefine(out.Narrow, out.Summary) ||
-			ReturnTypesElideOptional(out.Narrow, out.Summary) ||
-			ReturnTypesExtendRecord(out.Narrow, out.Summary) {
+		} else {
 			out.Summary = MergeReturnSummary(out.Summary, out.Narrow)
 		}
 	}
 
 	if fn := unwrap.Function(out.Func); fn != nil {
 		alignedSummary := out.Summary
-		if len(alignedSummary) == 0 && len(out.Narrow) > 0 {
+		if len(out.Narrow) > 0 {
+			// Canonical tie-breaker: function facts track post-flow behavior.
+			// Narrow summaries are produced from solved flow and are authoritative
+			// for call-site typing in the current iteration.
 			alignedSummary = out.Narrow
 		}
 		if len(alignedSummary) > 0 {
@@ -85,7 +87,6 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 
 	return out
 }
-
 // MergeFunctionFactIntoFacts reconciles and writes function-related facts for
 // one symbol into a facts bundle using canonical kernel policy.
 func MergeFunctionFactIntoFacts(facts *api.Facts, sym cfg.SymbolID, candidate FunctionFactCandidate) {

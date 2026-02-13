@@ -102,3 +102,31 @@ func TestMergeFunctionFactsIntoFacts_BatchMerge(t *testing.T) {
 		t.Fatalf("func mismatch: got %v", got)
 	}
 }
+
+func TestReconcileFunctionFact_NarrowSummaryReplacesOpenTopPlaceholder(t *testing.T) {
+	openTop := typ.NewRecord().SetOpen(true).Build()
+	existingFunc := typ.Func().Returns(openTop).Build()
+	candidateFunc := typ.Func().Returns(openTop).Build()
+	narrow := []typ.Type{typ.NewArray(typ.Unknown)}
+
+	out := ReconcileFunctionFact(ReconcileFunctionFactInput{
+		ExistingSummary:  []typ.Type{openTop},
+		ExistingNarrow:   nil,
+		ExistingFunc:     existingFunc,
+		CandidateSummary: []typ.Type{openTop},
+		CandidateNarrow:  narrow,
+		CandidateFunc:    candidateFunc,
+	})
+
+	if !ReturnTypesEqual(normalizeAndPruneReturnVector(out.Summary), normalizeAndPruneReturnVector(narrow)) {
+		t.Fatalf("summary mismatch: got %v want %v", out.Summary, narrow)
+	}
+
+	fn, ok := out.Func.(*typ.Function)
+	if !ok {
+		t.Fatalf("expected function fact, got %T", out.Func)
+	}
+	if !ReturnTypesEqual(normalizeAndPruneReturnVector(fn.Returns), normalizeAndPruneReturnVector(narrow)) {
+		t.Fatalf("func returns mismatch: got %v want %v", fn.Returns, narrow)
+	}
+}

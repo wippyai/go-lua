@@ -251,8 +251,8 @@ func TestPathRelated_SameSymbol(t *testing.T) {
 func TestPathRelated_DifferentVersion(t *testing.T) {
 	a := constraint.Path{Symbol: 100, Version: 1}
 	b := constraint.Path{Symbol: 100, Version: 2}
-	if PathRelated(a, b) {
-		t.Error("different version paths should not be related")
+	if !PathRelated(a, b) {
+		t.Error("different version paths should still be related by symbol")
 	}
 }
 

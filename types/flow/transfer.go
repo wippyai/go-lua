@@ -1334,11 +1334,10 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 				continue
 			}
 			types = types[:0]
-			complete := true
 			for _, op := range phi.Operands {
 				opBaseKey := s.pkResolver.KeyAtVersion(op.Version.Symbol, op.Version.ID, nil)
 				if opBaseKey == "" {
-					complete = false
+					types = append(types, typ.Nil)
 					continue
 				}
 				opKey := string(opBaseKey) + suffix
@@ -1350,18 +1349,20 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 					// every sibling suffix key explicitly on each version.
 					opBaseType := s.values[string(opBaseKey)]
 					if opBaseType == nil {
-						complete = false
-						break
+						types = append(types, typ.Nil)
+						continue
 					}
 					derived, ok := s.deriveTypeFrom(opBaseType, segments)
 					if !ok || derived == nil {
-						complete = false
-						break
+						// Missing suffix on one phi operand means the merged
+						// field/index path is nil on that path.
+						types = append(types, typ.Nil)
+						continue
 					}
 					types = append(types, derived)
 				}
 			}
-			if !complete || len(types) == 0 {
+			if len(types) == 0 {
 				continue
 			}
 			joined = join.Types(types...)

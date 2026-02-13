@@ -65,6 +65,12 @@ func StoreFactsFromResult(
 		return
 	}
 	narrowReturns := returns.NormalizeReturnVector(fnType.Returns)
+	if snapNarrow := narrowSummarySnapshotForSymbol(store, result, parent, fnSym); len(snapNarrow) > 0 {
+		narrowReturns = returns.MergeReturnSummary(narrowReturns, snapNarrow)
+		if aligned, changed := returns.AlignFunctionTypeWithSummary(fnType, narrowReturns); changed {
+			fnType = aligned
+		}
+	}
 	summaryFromSnapshot := returnSummarySnapshotForSymbol(store, result, parent, fnSym)
 
 	writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
@@ -175,11 +181,48 @@ func returnSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent 
 	if store == nil || result == nil || result.Graph == nil || sym == 0 {
 		return nil
 	}
+	summaryGraph := result.Graph
 	summaryScope := api.ParentScopeForGraph(store, result.Graph.ID(), parent)
-	if summaryScope == nil {
+	if parentKey, ok := store.ParentGraphKeyForSymbol(sym); ok {
+		if g := store.Graphs()[parentKey.GraphID]; g != nil {
+			summaryGraph = g
+			if scopedParent, ok := store.Parents()[parentKey.ParentHash]; ok {
+				summaryScope = scopedParent
+			}
+		}
+	}
+	snap := store.GetReturnSummariesSnapshot(summaryGraph, summaryScope)
+	if len(snap) == 0 {
 		return nil
 	}
-	snap := store.GetReturnSummariesSnapshot(result.Graph, summaryScope)
+	return snap[sym]
+}
+
+func narrowSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent *scope.State, sym cfg.SymbolID) []typ.Type {
+	if store == nil || result == nil || result.Graph == nil || sym == 0 {
+		return nil
+	}
+	summaryGraph := result.Graph
+	summaryScope := api.ParentScopeForGraph(store, result.Graph.ID(), parent)
+	if parentKey, ok := store.ParentGraphKeyForSymbol(sym); ok {
+		if g := store.Graphs()[parentKey.GraphID]; g != nil {
+			summaryGraph = g
+			if scopedParent, ok := store.Parents()[parentKey.ParentHash]; ok {
+				summaryScope = scopedParent
+			}
+		}
+	}
+
+	var snap map[cfg.SymbolID][]typ.Type
+	if phaser, ok := any(store).(interface {
+		WithPhase(api.Phase, func())
+	}); ok {
+		phaser.WithPhase(api.PhaseNarrowing, func() {
+			snap = store.GetNarrowReturnSummariesSnapshot(summaryGraph, summaryScope)
+		})
+	} else {
+		snap = store.GetNarrowReturnSummariesSnapshot(summaryGraph, summaryScope)
+	}
 	if len(snap) == 0 {
 		return nil
 	}
@@ -252,8 +295,10 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 		bindings = moduleBindings
 	}
 	preAssignTargets := checkcallsite.PreAssignmentTargetsByCall(graph)
-
-	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+	hasFunctionRef := func(sym cfg.SymbolID) bool {
+		return sym != 0 && store.FunctionRefBySym(sym) != nil
+	}
+	collectCallHints := func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || len(info.Args) == 0 {
 			return
 		}
@@ -327,10 +372,6 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 				argTypes = updated
 			}
 		}
-
-		hasFunctionRef := func(sym cfg.SymbolID) bool {
-			return sym != 0 && store.FunctionRefBySym(sym) != nil
-		}
 		calleeSym := checkcallsite.PreferredCalleeSymbolWithAliases(info, result.Graph, bindings, moduleBindings, hasFunctionRef)
 		if calleeSym == 0 {
 			return
@@ -383,7 +424,100 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 				facts.ParamHints[calleeSym] = hints
 			}
 		})
+	}
+
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		collectCallHints(p, info)
+
+		seenNested := make(map[*ast.FuncCallExpr]struct{})
+		for _, arg := range info.Args {
+			collectNestedFuncCalls(arg, seenNested)
+		}
+		for nested := range seenNested {
+			nestedInfo := graph.CallSiteAt(p, nested)
+			if nestedInfo == nil {
+				nestedInfo = synthCallInfoFromExpr(nested, bindings)
+			}
+			collectCallHints(p, nestedInfo)
+		}
 	})
+}
+
+func synthCallInfoFromExpr(ex *ast.FuncCallExpr, bindings *bind.BindingTable) *cfg.CallInfo {
+	if ex == nil {
+		return nil
+	}
+	info := &cfg.CallInfo{
+		Call:    ex,
+		Callee:  ex.Func,
+		Args:    ex.Args,
+		Method:  ex.Method,
+		Receiver: ex.Receiver,
+		IsStmt:  false,
+	}
+	if id, ok := ex.Func.(*ast.IdentExpr); ok {
+		info.CalleeName = id.Value
+	}
+	if bindings != nil {
+		info.CalleeSymbol = checkcallsite.SymbolFromExpr(ex.Func, bindings)
+		if ex.Receiver != nil {
+			info.ReceiverSymbol = checkcallsite.SymbolFromExpr(ex.Receiver, bindings)
+			if id, ok := ex.Receiver.(*ast.IdentExpr); ok {
+				info.ReceiverName = id.Value
+			}
+		}
+		info.ArgSymbols = make([]cfg.SymbolID, len(ex.Args))
+		for i, arg := range ex.Args {
+			info.ArgSymbols[i] = checkcallsite.SymbolFromExpr(arg, bindings)
+		}
+	}
+	return info
+}
+
+func collectNestedFuncCalls(expr ast.Expr, out map[*ast.FuncCallExpr]struct{}) {
+	if expr == nil || out == nil {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.FuncCallExpr:
+		out[e] = struct{}{}
+		collectNestedFuncCalls(e.Func, out)
+		collectNestedFuncCalls(e.Receiver, out)
+		for _, arg := range e.Args {
+			collectNestedFuncCalls(arg, out)
+		}
+	case *ast.AttrGetExpr:
+		collectNestedFuncCalls(e.Object, out)
+		collectNestedFuncCalls(e.Key, out)
+	case *ast.TableExpr:
+		for _, field := range e.Fields {
+			if field == nil {
+				continue
+			}
+			collectNestedFuncCalls(field.Key, out)
+			collectNestedFuncCalls(field.Value, out)
+		}
+	case *ast.LogicalOpExpr:
+		collectNestedFuncCalls(e.Lhs, out)
+		collectNestedFuncCalls(e.Rhs, out)
+	case *ast.RelationalOpExpr:
+		collectNestedFuncCalls(e.Lhs, out)
+		collectNestedFuncCalls(e.Rhs, out)
+	case *ast.StringConcatOpExpr:
+		collectNestedFuncCalls(e.Lhs, out)
+		collectNestedFuncCalls(e.Rhs, out)
+	case *ast.ArithmeticOpExpr:
+		collectNestedFuncCalls(e.Lhs, out)
+		collectNestedFuncCalls(e.Rhs, out)
+	case *ast.UnaryMinusOpExpr:
+		collectNestedFuncCalls(e.Expr, out)
+	case *ast.UnaryNotOpExpr:
+		collectNestedFuncCalls(e.Expr, out)
+	case *ast.UnaryLenOpExpr:
+		collectNestedFuncCalls(e.Expr, out)
+	case *ast.UnaryBNotOpExpr:
+		collectNestedFuncCalls(e.Expr, out)
+	}
 }
 
 func parentGraphKeyForCallee(store Store, result *api.FuncResult, parent *scope.State, calleeSym cfg.SymbolID) (api.GraphKey, bool) {

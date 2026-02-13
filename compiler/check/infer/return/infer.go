@@ -353,9 +353,10 @@ func collectReturnTypes(
 	seenReturn := false
 
 	fnGraph.EachReturn(func(p cfg.Point, retInfo *cfg.ReturnInfo) {
-		if retInfo == nil || deadPoints[p] {
+		if retInfo == nil {
 			return
 		}
+		_ = deadPoints
 
 		types := synthesizeReturnExprs(synthEngine, retInfo, p)
 		if !seenReturn {
@@ -428,7 +429,30 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	finalOverlay map[cfg.SymbolID]typ.Type,
 ) []typ.Type {
 	state := i.runPhase2FlowNarrowing(ctx, finalOverlay)
-	return collectReturnTypes(ctx.info.Graph, state.synth, state.deadPoints)
+	narrowed := collectReturnTypes(ctx.info.Graph, state.synth, state.deadPoints)
+
+	fnGraph := ctx.info.Graph
+	if fnGraph == nil {
+		return narrowed
+	}
+	phaseReturnSummaries := summarizeWithoutCurrent(ctx.summaries, ctx.info)
+	declCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
+		Graph:           fnGraph,
+		Bindings:        ctx.bindings,
+		BaseScope:       ctx.resolveScope,
+		DeclaredTypes:   finalOverlay,
+		GlobalTypes:     i.globalTypes,
+		ModuleAliases:   ctx.moduleAliases,
+		ReturnSummaries: phaseReturnSummaries,
+	})
+	declSynth := i.newReturnInferenceEngine(
+		ctx.run,
+		uniformFunctionScopes(fnGraph, ctx.resolveScope),
+		declCheckCtx,
+	)
+	declared := collectReturnTypes(fnGraph, declSynth, nil)
+
+	return returns.MergeReturnSummary(declared, narrowed)
 }
 
 // inferReturnWithSummary infers return types for a single function using available summaries.

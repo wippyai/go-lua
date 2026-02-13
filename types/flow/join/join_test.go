@@ -110,6 +110,19 @@ func TestCoalesceEmptyRecordWithMap_BothPresent(t *testing.T) {
 	}
 }
 
+func TestCoalesceEmptyRecordWithArray_BothPresent(t *testing.T) {
+	arr := typ.NewArray(typ.Number)
+	rec := typ.NewRecord().Build()
+	input := []typ.Type{arr, rec}
+	result := CoalesceEmptyRecordWithArray(input)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 type (empty record removed), got %d", len(result))
+	}
+	if _, ok := result[0].(*typ.Array); !ok {
+		t.Errorf("expected array to remain, got %T", result[0])
+	}
+}
+
 func TestIsEmptyRecord_Nil(t *testing.T) {
 	if unwrap.IsEmptyRecord(nil) {
 		t.Error("nil should not be empty record")
@@ -154,6 +167,20 @@ func TestTypes_IntegrationWithCoalescing(t *testing.T) {
 	// Value should be number | boolean
 	if _, ok := m.Value.(*typ.Union); !ok {
 		t.Errorf("expected union value type, got %T", m.Value)
+	}
+}
+
+func TestTypes_IntegrationWithArrayCoalescing(t *testing.T) {
+	arr := typ.NewArray(typ.String)
+	emptyRec := typ.NewRecord().Build()
+
+	result := Types(arr, emptyRec)
+	gotArr, ok := result.(*typ.Array)
+	if !ok {
+		t.Fatalf("expected array after coalescing, got %T", result)
+	}
+	if !typ.TypeEquals(gotArr.Element, typ.String) {
+		t.Fatalf("expected string[] element, got %v", gotArr.Element)
 	}
 }
 

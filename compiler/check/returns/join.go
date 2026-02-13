@@ -346,6 +346,11 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 	if len(candidate) == 0 {
 		return existing
 	}
+	// Canonical promotion: open-top record placeholders should not dominate
+	// concrete structured return evidence (array/map/record with fields).
+	if replaced, ok := replaceOpenTopWithStructured(existing, candidate); ok {
+		existing = normalizeAndPruneReturnVector(replaced)
+	}
 
 	// Higher-order summaries are merged monotonically for fixpoint stability.
 	if shouldUseMonotoneReturnJoin(existing, candidate) {
@@ -612,7 +617,9 @@ func AlignFunctionTypeWithSummary(fn *typ.Function, summary []typ.Type) (*typ.Fu
 		aligned := typjoin.WithReturns(fn, normalizedSummary)
 		return aligned, aligned != nil
 	}
-
+	// Keep one canonical merge path for summary-to-signature alignment.
+	// MergeReturnSummary already handles structured promotion and refinement
+	// policy, so AlignFunctionTypeWithSummary should not duplicate local logic.
 	merged := MergeReturnSummary(current, normalizedSummary)
 	if ReturnTypesEqual(current, merged) {
 		return fn, false
@@ -623,6 +630,28 @@ func AlignFunctionTypeWithSummary(fn *typ.Function, summary []typ.Type) (*typ.Fu
 		return fn, false
 	}
 	return aligned, true
+}
+
+func replaceOpenTopWithStructured(current, summary []typ.Type) ([]typ.Type, bool) {
+	if len(current) == 0 || len(summary) == 0 || len(current) != len(summary) {
+		return nil, false
+	}
+	out := append([]typ.Type(nil), current...)
+	changed := false
+	for i := range out {
+		if !isOpenTopRecordType(out[i]) {
+			continue
+		}
+		if !isStructuredTableShape(summary[i]) {
+			continue
+		}
+		out[i] = summary[i]
+		changed = true
+	}
+	if !changed {
+		return nil, false
+	}
+	return out, true
 }
 
 // WithSummaryOrUnknown applies summary-derived returns to a function signature.

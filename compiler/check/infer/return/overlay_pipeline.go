@@ -781,12 +781,13 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 			return ctx.engine.ResolveFunctionSignature(fn, sc)
 		}),
 	}
+	phaseReturnSummaries := summarizeWithoutCurrent(ctx.summaries, ctx.info)
 
 	extractOut := phase.RunExtract(phase.FlowExtractInput{
 		PhaseEnv:        phaseEnv,
 		Resolve:         phase.ResolveOutput{TypeResolver: ctx.engine},
 		Scope:           scopeOut,
-		ReturnSummaries: ctx.summaries,
+		ReturnSummaries: phaseReturnSummaries,
 	})
 	if extractOut.Inputs == nil {
 		return phase2InferenceState{}
@@ -803,7 +804,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		Scope:                 scopeOut,
 		Extract:               extractOut,
 		Solve:                 solveOut,
-		NarrowReturnSummaries: ctx.summaries,
+		NarrowReturnSummaries: phaseReturnSummaries,
 	})
 
 	deadPoints := map[cfg.Point]bool{}
@@ -830,12 +831,32 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		DeclaredTypes:   finalOverlay,
 		GlobalTypes:     i.globalTypes,
 		ModuleAliases:   ctx.moduleAliases,
-		ReturnSummaries: ctx.summaries,
+		ReturnSummaries: phaseReturnSummaries,
 	})
 	return phase2InferenceState{
 		synth:      i.newReturnInferenceEngine(ctx.run, fnScopes, fnCheckCtx),
 		deadPoints: deadPoints,
 	}
+}
+
+func summarizeWithoutCurrent(
+	summaries map[cfg.SymbolID][]typ.Type,
+	info *returns.LocalFuncInfo,
+) map[cfg.SymbolID][]typ.Type {
+	if len(summaries) == 0 || info == nil || info.Sym == 0 {
+		return summaries
+	}
+	if _, ok := summaries[info.Sym]; !ok {
+		return summaries
+	}
+	out := make(map[cfg.SymbolID][]typ.Type, len(summaries)-1)
+	for _, sym := range cfg.SortedSymbolIDs(summaries) {
+		if sym == info.Sym {
+			continue
+		}
+		out[sym] = summaries[sym]
+	}
+	return out
 }
 
 func uniformFunctionScopes(graph *cfg.Graph, base *scope.State) map[cfg.Point]*scope.State {

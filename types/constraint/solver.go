@@ -1016,6 +1016,15 @@ func narrowByHasField(t typ.Type, field string, resolver narrow.Resolver) typ.Ty
 		return t
 	}
 
+	// Narrow through aliases so HasField can refine aliased unions.
+	if alias, ok := t.(*typ.Alias); ok {
+		narrowed := narrowByHasField(alias.Target, field, resolver)
+		if narrowed == nil || narrowed.Kind().IsNever() {
+			return typ.Never
+		}
+		return narrowed
+	}
+
 	unwrapped := unwrap.Alias(t)
 
 	// For intersections, narrow each member
@@ -1035,12 +1044,13 @@ func narrowByHasField(t typ.Type, field string, resolver narrow.Resolver) typ.Ty
 	if u, ok := unwrapped.(*typ.Union); ok {
 		var members []typ.Type
 		for _, m := range u.Members {
-			if hasField(m, field, resolver) {
-				members = append(members, m)
+			nm := narrowByHasField(m, field, resolver)
+			if nm != nil && !nm.Kind().IsNever() {
+				members = append(members, nm)
 			}
 		}
 		if len(members) == 0 {
-			return t
+			return typ.Never
 		}
 		if len(members) == 1 {
 			return members[0]

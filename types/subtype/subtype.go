@@ -595,6 +595,21 @@ func canWidenTo(narrow, wide typ.Type) bool {
 		return false
 	}
 
+	// Literal unions can widen to a primitive supertype when each branch widens.
+	// Example: 0|8000 can widen to integer for mutable record fields.
+	if u, ok := narrow.(*typ.Union); ok {
+		if len(u.Members) == 0 {
+			return false
+		}
+		for _, m := range u.Members {
+			if isSubtype(m, wide) || canWidenTo(m, wide) {
+				continue
+			}
+			return false
+		}
+		return true
+	}
+
 	// Integer can widen to number
 	if narrow.Kind() == kind.Integer && wide.Kind() == kind.Number {
 		return true

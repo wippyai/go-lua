@@ -140,6 +140,11 @@ func ParseSuffix(suffix string) []constraint.Segment {
 // Strictly requires symbol matching - no name-based fallback. If one path has
 // a symbol and the other doesn't, they are not related. This prevents unsound
 // constraint propagation across different scopes.
+//
+// Version mismatches do not block relation checks. Versioned staleness is
+// handled by assignment-driven condition killing, while relation itself must
+// stay stable across SSA versions so unaffected constraints (for sibling/root
+// paths) survive field-only redefinitions.
 func PathRelated(target constraint.Path, other constraint.Path) bool {
 	if target.IsEmpty() || other.IsEmpty() {
 		return false
@@ -148,9 +153,6 @@ func PathRelated(target constraint.Path, other constraint.Path) bool {
 	// Both must have symbols, and they must match
 	if target.Symbol != 0 && other.Symbol != 0 {
 		if target.Symbol != other.Symbol {
-			return false
-		}
-		if target.Version != 0 && other.Version != 0 && target.Version != other.Version {
 			return false
 		}
 	} else if target.Symbol == 0 && other.Symbol == 0 {

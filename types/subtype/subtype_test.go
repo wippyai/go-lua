@@ -1394,6 +1394,39 @@ func TestEmptyRecordToOptionalOnlyRecord(t *testing.T) {
 	}
 }
 
+func TestEmptyRecordToRequiredAnyFieldRecord(t *testing.T) {
+	rec := typ.NewRecord().Build()
+	super := typ.NewRecord().
+		Field("context_merger", typ.Any).
+		Build()
+
+	if !IsSubtype(rec, super) {
+		t.Error("empty record should be subtype when required field admits nil via any")
+	}
+}
+
+func TestEmptyRecordToRequiredUnknownFieldRecord(t *testing.T) {
+	rec := typ.NewRecord().Build()
+	super := typ.NewRecord().
+		Field("dynamic", typ.Unknown).
+		Build()
+
+	if !IsSubtype(rec, super) {
+		t.Error("empty record should be subtype when required field admits nil via unknown")
+	}
+}
+
+func TestEmptyRecordToRequiredNilUnionFieldRecord(t *testing.T) {
+	rec := typ.NewRecord().Build()
+	super := typ.NewRecord().
+		Field("payload", typ.NewUnion(typ.String, typ.Nil)).
+		Build()
+
+	if !IsSubtype(rec, super) {
+		t.Error("empty record should be subtype when required field is a union containing nil")
+	}
+}
+
 func TestEmptyRecordNotSubtypeOfRequiredRecord(t *testing.T) {
 	rec := typ.NewRecord().Build()
 	super := typ.NewRecord().Field("id", typ.String).Build()
@@ -1833,6 +1866,28 @@ func TestRecordMutableFieldWidening_LiteralIntToNumber(t *testing.T) {
 
 	if !IsSubtype(sub, super) {
 		t.Error("record with literal int field should widen to record with number field")
+	}
+}
+
+func TestRecordMutableFieldWidening_LiteralUnionToInteger(t *testing.T) {
+	sub := typ.NewRecord().
+		Field("x", typ.NewUnion(typ.LiteralInt(0), typ.LiteralInt(8000))).
+		Build()
+	super := typ.NewRecord().Field("x", typ.Integer).Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("record with integer literal union field should widen to integer field")
+	}
+}
+
+func TestRecordMutableFieldWidening_LiteralUnionToString(t *testing.T) {
+	sub := typ.NewRecord().
+		Field("name", typ.NewUnion(typ.LiteralString(""), typ.LiteralString("alpha"))).
+		Build()
+	super := typ.NewRecord().Field("name", typ.String).Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("record with string literal union field should widen to string field")
 	}
 }
 
