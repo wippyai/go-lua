@@ -82,17 +82,25 @@ func (s *Synthesizer) inferIterVarsFromCallCore(call *ast.FuncCallExpr, count in
 		if count > 1 {
 			if elem := core.ElementType(sourceType); elem != nil {
 				types[1] = elem
+			} else if sourceType.Kind().IsPlaceholder() {
+				// Iterating over dynamic containers (any/unknown) should keep
+				// loop values dynamic rather than collapsing to nil downstream.
+				types[1] = typ.Any
 			}
 		}
 	case effect.IterateKeyed:
 		if count > 0 {
 			if kt := core.KeyType(sourceType); kt != nil {
 				types[0] = kt
+			} else if sourceType.Kind().IsPlaceholder() {
+				types[0] = typ.Any
 			}
 		}
 		if count > 1 {
 			if vt := core.ValueType(sourceType); vt != nil {
 				types[1] = vt
+			} else if sourceType.Kind().IsPlaceholder() {
+				types[1] = typ.Any
 			}
 		}
 	}

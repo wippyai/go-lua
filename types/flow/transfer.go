@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/join"
+	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -78,10 +79,7 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 
 		var assignedType typ.Type
 		if assign.SourcePath.HasSymbol() {
-			// Use NarrowedTypeAt to propagate flow narrowing through assignments.
-			// Point conditions are computed before the worklist (see Solve order),
-			// so narrowing is available for source paths like `result.value`.
-			assignedType = s.NarrowedTypeAt(p, assign.SourcePath)
+			assignedType = s.assignmentSourceTypeAt(p, assign)
 		}
 		if assign.IterSource != nil {
 			if iterType := s.iterVarTypeAt(p, assign.IterSource); iterType != nil {
@@ -98,17 +96,39 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 			assignedType = assign.Type
 		}
 
+		targetKey := s.pkResolver.KeyAt(p, assign.TargetPath)
+		if targetKey == "" {
+			continue
+		}
+
+		// Track alias provenance for path assignments: t.cur = s
+		// so writes through t.cur.* can be mirrored to s.*.
+		if len(assign.TargetPath.Segments) > 0 {
+			targetKeyStr := string(targetKey)
+			if assign.SourcePath.HasSymbol() {
+				sourceKey := s.pkResolver.KeyAt(p, assign.SourcePath)
+				if sourceKey != "" && sourceKey != targetKey {
+					s.pathAliases[targetKeyStr] = string(sourceKey)
+				} else {
+					delete(s.pathAliases, targetKeyStr)
+				}
+			} else {
+				delete(s.pathAliases, targetKeyStr)
+			}
+		}
+
 		if assignedType != nil {
-			targetKey := s.pkResolver.KeyAt(p, assign.TargetPath)
-			if targetKey != "" {
-				old := s.values[string(targetKey)]
-				if len(assign.TargetPath.Segments) > 0 && assignedType.Kind() == kind.Nil {
-					assignedType = s.normalizeNilFieldAssignmentType(p, assign.TargetPath, old)
-				}
-				if !typ.TypeEquals(old, assignedType) {
-					s.values[string(targetKey)] = assignedType
-					changedKeys = append(changedKeys, string(targetKey))
-				}
+			targetKeyStr := string(targetKey)
+			old := s.values[targetKeyStr]
+			if len(assign.TargetPath.Segments) > 0 && assignedType.Kind() == kind.Nil {
+				assignedType = s.normalizeNilFieldAssignmentType(p, assign.TargetPath, old)
+			}
+			if !typ.TypeEquals(old, assignedType) {
+				s.values[targetKeyStr] = assignedType
+				changedKeys = append(changedKeys, targetKeyStr)
+			}
+			if len(assign.TargetPath.Segments) > 0 {
+				changedKeys = append(changedKeys, s.mirrorAliasedFieldWrite(p, assign.TargetPath, assignedType)...)
 			}
 		}
 	}
@@ -144,6 +164,171 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 	}
 
 	return changedKeys
+}
+
+func (s *Solution) assignmentSourceTypeAt(p cfg.Point, assign UnifiedAssignment) typ.Type {
+	if !assign.SourcePath.HasSymbol() {
+		return nil
+	}
+	// Lua evaluates RHS before writing assignment targets. For self-related
+	// assignments, source reads must come from predecessor state.
+	if s.assignmentNeedsPreState(assign) {
+		if pre := s.preAssignmentNarrowedTypeAt(p, assign.SourcePath); pre != nil {
+			return pre
+		}
+	}
+	return s.NarrowedTypeAt(p, assign.SourcePath)
+}
+
+func (s *Solution) assignmentNeedsPreState(assign UnifiedAssignment) bool {
+	if assign.TargetPath.Symbol == 0 || assign.SourcePath.Symbol == 0 {
+		return false
+	}
+	if assign.TargetPath.Symbol != assign.SourcePath.Symbol {
+		return false
+	}
+	return pathkey.PathRelated(assign.TargetPath, assign.SourcePath)
+}
+
+func (s *Solution) preAssignmentNarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	if s == nil || s.inputs == nil || s.inputs.Graph == nil || path.Symbol == 0 {
+		return nil
+	}
+	preds := s.inputs.Graph.Predecessors(p)
+	if len(preds) == 0 {
+		return nil
+	}
+
+	var joined []typ.Type
+	seenVersions := make(map[int]struct{}, len(preds))
+	for _, pred := range preds {
+		ver := s.inputs.Graph.VisibleVersion(pred, path.Symbol)
+		if ver.ID == 0 {
+			continue
+		}
+		if _, seen := seenVersions[ver.ID]; seen {
+			continue
+		}
+		seenVersions[ver.ID] = struct{}{}
+
+		predPath := path
+		predPath.Version = ver.ID
+		if t := s.NarrowedTypeAt(pred, predPath); t != nil {
+			joined = append(joined, t)
+		}
+	}
+	if len(joined) == 0 {
+		return nil
+	}
+	return join.Types(joined...)
+}
+
+func (s *Solution) mirrorAliasedFieldWrite(p cfg.Point, targetPath constraint.Path, assignedType typ.Type) []string {
+	if s == nil || s.pkResolver == nil || assignedType == nil || targetPath.Symbol == 0 {
+		return nil
+	}
+	if len(targetPath.Segments) == 0 {
+		return nil
+	}
+
+	// Find the longest aliased prefix, e.g. for t.cur.hook use alias(t.cur) => s.
+	for cut := len(targetPath.Segments) - 1; cut >= 1; cut-- {
+		prefix := constraint.Path{
+			Root:     targetPath.Root,
+			Symbol:   targetPath.Symbol,
+			Segments: targetPath.Segments[:cut],
+		}
+		sourceKey := s.aliasSourceKeyAt(p, prefix)
+		if sourceKey == "" {
+			continue
+		}
+
+		sourceSym, sourceVersion, suffix, ok := pathkey.ParseKey(constraint.PathKey(sourceKey))
+		if !ok || sourceSym == 0 || sourceVersion == 0 {
+			continue
+		}
+
+		aliasSegs := pathkey.ParseSuffix(suffix)
+		destSegs := append(append([]constraint.Segment{}, aliasSegs...), targetPath.Segments[cut:]...)
+		destKey := s.pkResolver.KeyAtVersion(sourceSym, sourceVersion, destSegs)
+		if destKey == "" {
+			return nil
+		}
+
+		keyStr := string(destKey)
+		old := s.values[keyStr]
+		newType := assignedType
+		if len(destSegs) > 0 && assignedType.Kind() == kind.Nil {
+			newType = s.normalizeNilFieldAssignmentType(p, constraint.Path{
+				Symbol:   sourceSym,
+				Version:  sourceVersion,
+				Segments: destSegs,
+			}, old)
+		}
+		if typ.TypeEquals(old, newType) {
+			return nil
+		}
+		s.values[keyStr] = newType
+		return []string{keyStr}
+	}
+
+	return nil
+}
+
+func (s *Solution) aliasSourceKeyAt(p cfg.Point, path constraint.Path) string {
+	if s == nil || s.inputs == nil || s.inputs.Graph == nil || s.pkResolver == nil || s.pathAliases == nil {
+		return ""
+	}
+	if path.Symbol == 0 || path.IsEmpty() {
+		return ""
+	}
+
+	// First try alias captured at current version.
+	currentKey := s.pkResolver.KeyAt(p, path)
+	if currentKey != "" {
+		if source, ok := s.pathAliases[string(currentKey)]; ok {
+			return source
+		}
+	}
+
+	// If the root is directly reassigned at this point, do not inherit predecessor aliases.
+	if s.hasRootAssignmentAtPoint(p, path.Symbol) {
+		return ""
+	}
+
+	// Fall back to predecessor versions for carried structured aliases.
+	for _, pred := range s.inputs.Graph.Predecessors(p) {
+		ver := s.inputs.Graph.VisibleVersion(pred, path.Symbol)
+		if ver.Symbol == 0 || ver.ID == 0 {
+			continue
+		}
+		predKey := s.pkResolver.KeyAtVersion(path.Symbol, ver.ID, path.Segments)
+		if predKey == "" {
+			continue
+		}
+		if source, ok := s.pathAliases[string(predKey)]; ok {
+			return source
+		}
+	}
+	return ""
+}
+
+func (s *Solution) hasRootAssignmentAtPoint(p cfg.Point, sym cfg.SymbolID) bool {
+	if s == nil || s.inputs == nil || sym == 0 {
+		return false
+	}
+	for _, assign := range s.inputs.Assignments {
+		if assign.Point != p {
+			continue
+		}
+		if assign.TargetPath.Symbol != sym {
+			continue
+		}
+		if len(assign.TargetPath.Segments) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // carryForwardStructuredVersionFacts seeds the current version with predecessor
@@ -296,21 +481,32 @@ func (s *Solution) iterVarTypeAt(p cfg.Point, iter *IteratorSource) typ.Type {
 		return typ.Integer
 	}
 
+	srcType := s.NarrowedTypeAt(p, iter.Path)
+
 	// For indexed iteration (ipairs) over keys-provenance variables,
-	// derive element type from the original table's key type.
+	// reconcile the original table key type with the keys-array element type.
 	// Pattern: local keys = sorted_keys(t); for _, k in ipairs(keys) do
 	if iter.Kind == IterateIndexed && iter.VarIndex == 1 {
 		if origTableSym := s.keysProvenanceSource(iter.Path.Symbol); origTableSym != 0 {
+			var sourceElem typ.Type
+			if srcType != nil {
+				sourceElem = s.elementTypeForIter(srcType, iter)
+			}
+			if sourceElem == nil {
+				if declType := s.lookupDeclaredType(iter.Path); declType != nil {
+					sourceElem = s.elementTypeForIter(declType, iter)
+				}
+			}
 			origPath := constraint.Path{Root: s.inputs.Graph.NameOf(origTableSym), Symbol: origTableSym}
 			if origType := s.NarrowedTypeAt(p, origPath); origType != nil {
 				if keyType := s.inputs.Decomposer.KeyType(origType); keyType != nil {
-					return keyType
+					if merged := mergeKeysProvenanceElemType(sourceElem, keyType); merged != nil {
+						return merged
+					}
 				}
 			}
 		}
 	}
-
-	srcType := s.NarrowedTypeAt(p, iter.Path)
 
 	// When flow type is missing or imprecise, prefer the declared type
 	// so that annotated element types are preserved through widening.
@@ -319,6 +515,9 @@ func (s *Solution) iterVarTypeAt(p cfg.Point, iter *IteratorSource) typ.Type {
 			if elem := s.elementTypeForIter(declType, iter); elem != nil {
 				return elem
 			}
+			if declType.Kind().IsPlaceholder() {
+				return typ.Any
+			}
 		}
 	}
 
@@ -326,7 +525,43 @@ func (s *Solution) iterVarTypeAt(p cfg.Point, iter *IteratorSource) typ.Type {
 		return nil
 	}
 
-	return s.elementTypeForIter(srcType, iter)
+	if elem := s.elementTypeForIter(srcType, iter); elem != nil {
+		return elem
+	}
+	if srcType.Kind().IsPlaceholder() {
+		return typ.Any
+	}
+	return nil
+}
+
+func mergeKeysProvenanceElemType(elemType, keyType typ.Type) typ.Type {
+	if elemType == nil {
+		return keyType
+	}
+	if keyType == nil {
+		return elemType
+	}
+	// Placeholder key domains (any/unknown) add no usable precision.
+	if keyType.Kind().IsPlaceholder() {
+		return elemType
+	}
+	// If the keys array element is still placeholder, use provenance.
+	if elemType.Kind().IsPlaceholder() {
+		return keyType
+	}
+	// Prefer the more specific type when one subsumes the other.
+	if subtype.IsSubtype(elemType, keyType) {
+		return elemType
+	}
+	if subtype.IsSubtype(keyType, elemType) {
+		return keyType
+	}
+	// Reconcile independent evidence; if incompatible, keep source-table key type.
+	intersection := subtype.NormalizeIntersection(elemType, keyType)
+	if intersection != nil && !typ.IsNever(intersection) {
+		return intersection
+	}
+	return keyType
 }
 
 // keysProvenanceSource returns the original table symbol if sym holds keys of that table.
@@ -461,6 +696,13 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 
 	// Get current type of the root
 	currentType := s.values[string(pathKey)]
+	if currentType == nil {
+		currentType = s.joinPredecessorRootTypes(p, ia.Symbol)
+	}
+	currentType = preferDeclaredTemplateForWiden(currentType, s.lookupDeclaredType(constraint.Path{
+		Root:   ia.Root,
+		Symbol: ia.Symbol,
+	}))
 
 	// Compute the widened type
 	newType := widenWithIndexer(currentType, keyType, valueType)
@@ -470,6 +712,41 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 
 	s.values[string(pathKey)] = newType
 	return string(pathKey)
+}
+
+func (s *Solution) joinPredecessorRootTypes(p cfg.Point, sym cfg.SymbolID) typ.Type {
+	if s == nil || s.inputs == nil || s.inputs.Graph == nil || s.pkResolver == nil || sym == 0 {
+		return nil
+	}
+	preds := s.inputs.Graph.Predecessors(p)
+	if len(preds) == 0 {
+		return nil
+	}
+
+	var types []typ.Type
+	seen := make(map[string]struct{}, len(preds))
+	for _, pred := range preds {
+		ver := s.inputs.Graph.VisibleVersion(pred, sym)
+		if ver.Symbol == 0 || ver.ID == 0 {
+			continue
+		}
+		key := s.pkResolver.KeyAtVersion(ver.Symbol, ver.ID, nil)
+		if key == "" {
+			continue
+		}
+		keyStr := string(key)
+		if _, ok := seen[keyStr]; ok {
+			continue
+		}
+		seen[keyStr] = struct{}{}
+		if t := s.values[keyStr]; t != nil {
+			types = append(types, t)
+		}
+	}
+	if len(types) == 0 {
+		return nil
+	}
+	return join.Types(types...)
 }
 
 // resolveSymbolKeyType gets the flow-narrowed type for a symbol at point p.
@@ -530,6 +807,10 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 	}
 
 	currentType := s.values[string(pathKey)]
+	currentType = preferDeclaredTemplateForWiden(currentType, s.lookupDeclaredType(constraint.Path{
+		Root:   tm.Target.Root,
+		Symbol: tm.Target.Symbol,
+	}))
 
 	var newType typ.Type
 	if tm.KeySymbol != 0 || tm.KeyType != nil {
@@ -779,7 +1060,7 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 
 	return typ.Visit(mapType, typ.Visitor[typ.Type]{
 		Map: func(m *typ.Map) typ.Type {
-			newKey := typ.JoinPreferNonSoft(m.Key, keyType)
+			newKey := mergeMapKeyDomain(m.Key, keyType)
 			newVal := WidenArrayElementType(m.Value, elementType, typ.JoinPreferNonSoft)
 			if newVal == nil {
 				return mapType
@@ -800,7 +1081,7 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 			found := false
 			for _, m := range u.Members {
 				if mp, ok := m.(*typ.Map); ok && !found {
-					newKey := typ.JoinPreferNonSoft(mp.Key, keyType)
+					newKey := mergeMapKeyDomain(mp.Key, keyType)
 					newVal := WidenArrayElementType(mp.Value, elementType, typ.JoinPreferNonSoft)
 					if newVal == nil {
 						updated = append(updated, m)
@@ -824,6 +1105,45 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 			return mapType
 		},
 	})
+}
+
+func mergeMapKeyDomain(existing, incoming typ.Type) typ.Type {
+	if existing == nil {
+		return incoming
+	}
+	if incoming == nil {
+		return existing
+	}
+	// Placeholder evidence (any/unknown) is non-informative for key domains.
+	// Preserve an existing concrete domain instead of widening it.
+	if incoming.Kind().IsPlaceholder() && !existing.Kind().IsPlaceholder() {
+		return existing
+	}
+	if existing.Kind().IsPlaceholder() && !incoming.Kind().IsPlaceholder() {
+		return incoming
+	}
+	return typ.JoinPreferNonSoft(existing, incoming)
+}
+
+func preferDeclaredTemplateForWiden(current, declared typ.Type) typ.Type {
+	if declared == nil {
+		return current
+	}
+	if current == nil || current.Kind().IsPlaceholder() || isEmptyRecordNoMapType(current) {
+		return declared
+	}
+	return current
+}
+
+func isEmptyRecordNoMapType(t typ.Type) bool {
+	switch v := t.(type) {
+	case *typ.Alias:
+		return isEmptyRecordNoMapType(v.Target)
+	case *typ.Record:
+		return len(v.Fields) == 0 && !v.HasMapComponent()
+	default:
+		return false
+	}
 }
 
 // widenWithIndexer widens a type based on dynamic index assignment (t[k] = v).
@@ -850,6 +1170,17 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 	}
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
+		Tuple: func(tp *typ.Tuple) typ.Type {
+			elemType := valType
+			for _, elem := range tp.Elements {
+				elemType = typ.JoinPreferNonSoft(elemType, elem)
+			}
+			// Numeric tuple indexing indicates array-like mutation; widen to array.
+			if subtype.IsSubtype(keyType, typ.Integer) || subtype.IsSubtype(keyType, typ.Number) {
+				return typ.NewArray(elemType)
+			}
+			return typ.NewMap(keyType, elemType)
+		},
 		Record: func(r *typ.Record) typ.Type {
 			// Empty record {} with no map component becomes a map (backward compat)
 			if len(r.Fields) == 0 && !r.HasMapComponent() {
@@ -857,7 +1188,7 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			}
 			// Record with fields: add or widen map component
 			if r.HasMapComponent() {
-				newKey := typ.JoinPreferNonSoft(r.MapKey, keyType)
+				newKey := mergeMapKeyDomain(r.MapKey, keyType)
 				newVal := typ.JoinPreferNonSoft(r.MapValue, valType)
 				if typ.TypeEquals(r.MapKey, newKey) && typ.TypeEquals(r.MapValue, newVal) {
 					return t
@@ -869,7 +1200,7 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 		},
 		Map: func(m *typ.Map) typ.Type {
 			// Widen existing map by unioning key/value types, preferring non-soft.
-			newKey := typ.JoinPreferNonSoft(m.Key, keyType)
+			newKey := mergeMapKeyDomain(m.Key, keyType)
 			newVal := typ.JoinPreferNonSoft(m.Value, valType)
 			if typ.TypeEquals(m.Key, newKey) && typ.TypeEquals(m.Value, newVal) {
 				return t
@@ -998,18 +1329,39 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 		}
 		sort.Strings(suffixes)
 		for _, suffix := range suffixes {
+			segments := pathkey.ParseSuffix(suffix)
+			if len(segments) == 0 {
+				continue
+			}
 			types = types[:0]
+			complete := true
 			for _, op := range phi.Operands {
 				opBaseKey := s.pkResolver.KeyAtVersion(op.Version.Symbol, op.Version.ID, nil)
 				if opBaseKey == "" {
+					complete = false
 					continue
 				}
 				opKey := string(opBaseKey) + suffix
 				if opType := s.values[opKey]; opType != nil {
 					types = append(types, opType)
+				} else {
+					// Fall back to deriving the suffix from the operand's base type.
+					// Structured assignments may update a field path without writing
+					// every sibling suffix key explicitly on each version.
+					opBaseType := s.values[string(opBaseKey)]
+					if opBaseType == nil {
+						complete = false
+						break
+					}
+					derived, ok := s.deriveTypeFrom(opBaseType, segments)
+					if !ok || derived == nil {
+						complete = false
+						break
+					}
+					types = append(types, derived)
 				}
 			}
-			if len(types) == 0 {
+			if !complete || len(types) == 0 {
 				continue
 			}
 			joined = join.Types(types...)
