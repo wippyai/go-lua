@@ -200,6 +200,16 @@ func TestErrorDetection(t *testing.T) {
 			WantError: true,
 			Stdlib:    true,
 		},
+		{
+			Name: "length on number",
+			Code: `
+				local function f(x: number): integer
+					return #x
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
 	}
 	testutil.RunCases(t, tests)
 }

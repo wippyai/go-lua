@@ -311,3 +311,26 @@ func TestHasLength_TypeParam(t *testing.T) {
 		t.Error("type param constrained to string should have length")
 	}
 }
+
+func TestMayHaveLength(t *testing.T) {
+	tests := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{"string", typ.String, true},
+		{"integer", typ.Integer, false},
+		{"optional string", typ.NewOptional(typ.String), true},
+		{"string or nil", typ.NewUnion(typ.String, typ.Nil), true},
+		{"integer or nil", typ.NewUnion(typ.Integer, typ.Nil), false},
+		{"unknown", typ.Unknown, true},
+		{"any", typ.Any, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MayHaveLength(tt.t); got != tt.want {
+				t.Errorf("MayHaveLength(%s) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}

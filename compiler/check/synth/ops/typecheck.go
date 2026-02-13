@@ -324,6 +324,70 @@ func hasLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 }
 
+// MayHaveLength checks whether a type could support the length operator (#).
+//
+// This is a conservative predicate used by diagnostics: it returns true when
+// any feasible runtime value may have length, avoiding false positives for
+// optional/union values that can be length-capable after control-flow guards.
+func MayHaveLength(t typ.Type) bool {
+	return mayHaveLengthGuard(t, typ.NewGuard())
+}
+
+func mayHaveLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Array, *typ.Map, *typ.Record, *typ.Tuple:
+		return true
+
+	case *typ.Union:
+		for _, m := range v.Members {
+			if mayHaveLengthGuard(m, next) {
+				return true
+			}
+		}
+		return false
+
+	case *typ.Intersection:
+		for _, m := range v.Members {
+			if mayHaveLengthGuard(m, next) {
+				return true
+			}
+		}
+		return false
+
+	case *typ.Alias:
+		if v.Target == nil {
+			return false
+		}
+		return mayHaveLengthGuard(v.Target, next)
+
+	case *typ.Optional:
+		if v.Inner == nil {
+			return false
+		}
+		return mayHaveLengthGuard(v.Inner, next)
+
+	case *typ.Literal:
+		_, isStr := v.Value.(string)
+		return isStr
+
+	case *typ.TypeParam:
+		if v.Constraint != nil {
+			return mayHaveLengthGuard(v.Constraint, next)
+		}
+		return false
+	}
+
+	return t.Kind().IsPlaceholder() || t.Kind() == kind.String
+}
+
 // IsStringOnly checks if type is string (not number).
 func IsStringOnly(t typ.Type) bool {
 	if t == nil {

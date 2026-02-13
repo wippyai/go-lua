@@ -209,6 +209,8 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 	case *ast.UnaryMinusOpExpr:
 		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
 		diags = append(diags, checkUnaryMinus(e, p, narrowView, sourceName)...)
+	case *ast.UnaryLenOpExpr:
+		diags = append(diags, checkUnaryLength(e, p, narrowView, sourceName)...)
 	case *ast.UnaryBNotOpExpr:
 		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
 		diags = append(diags, checkUnaryBNot(e, p, narrowView, sourceName)...)
@@ -302,6 +304,23 @@ func checkUnaryMinus(e *ast.UnaryMinusOpExpr, p cfg.Point, narrowView api.BaseSy
 		return nil
 	}
 	msg := "cannot apply unary - to " + typ.FormatShort(t) + ", expected number"
+	_, help := diag.ContextualHelp(diag.ErrInvalidOperand, msg, "")
+	return []diag.Diagnostic{{
+		Severity: diag.SeverityError,
+		Code:     diag.ErrInvalidOperand,
+		Position: diag.Position{File: sourceName, Line: e.Expr.Line(), Column: e.Expr.Column()},
+		Span:     ast.SpanOf(e.Expr),
+		Message:  msg,
+		Help:     help,
+	}}
+}
+
+func checkUnaryLength(e *ast.UnaryLenOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+	t := narrowView.TypeOf(e.Expr, p)
+	if t == nil || ops.MayHaveLength(t) || typ.IsNever(t) || t.Kind() == kind.Nil {
+		return nil
+	}
+	msg := "cannot apply length operator to " + typ.FormatShort(t) + ", expected string or table"
 	_, help := diag.ContextualHelp(diag.ErrInvalidOperand, msg, "")
 	return []diag.Diagnostic{{
 		Severity: diag.SeverityError,
