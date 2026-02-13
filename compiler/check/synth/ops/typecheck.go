@@ -154,6 +154,70 @@ func isOrderableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 }
 
+// MayBeOrderable checks whether a type could support ordering operators
+// (<, <=, >, >=). Unlike IsOrderable (all branches), this is conservative:
+// true if any feasible branch is orderable.
+func MayBeOrderable(t typ.Type) bool {
+	return mayBeOrderableGuard(t, typ.NewGuard())
+}
+
+func mayBeOrderableGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Union:
+		for _, m := range v.Members {
+			if mayBeOrderableGuard(m, next) {
+				return true
+			}
+		}
+		return false
+
+	case *typ.Intersection:
+		for _, m := range v.Members {
+			if mayBeOrderableGuard(m, next) {
+				return true
+			}
+		}
+		return false
+
+	case *typ.Alias:
+		if v.Target == nil {
+			return false
+		}
+		return mayBeOrderableGuard(v.Target, next)
+
+	case *typ.Optional:
+		if v.Inner == nil {
+			return false
+		}
+		return mayBeOrderableGuard(v.Inner, next)
+
+	case *typ.Literal:
+		switch v.Value.(type) {
+		case string, float64, int64:
+			return true
+		default:
+			return false
+		}
+
+	case *typ.TypeParam:
+		if v.Constraint != nil {
+			return mayBeOrderableGuard(v.Constraint, next)
+		}
+		return false
+	}
+
+	k := t.Kind()
+	return k == kind.String || k == kind.Number || k == kind.Integer || k.IsPlaceholder()
+}
+
 // IsStringable checks if a type can be used with string concatenation (..).
 //
 // In Lua, both strings and numbers can be concatenated (numbers are coerced).

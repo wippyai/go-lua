@@ -220,6 +220,26 @@ func TestErrorDetection(t *testing.T) {
 			WantError: true,
 			Stdlib:    true,
 		},
+		{
+			Name: "less than on boolean",
+			Code: `
+				local function f(a: boolean, b: boolean): boolean
+					return a < b
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
+		{
+			Name: "less than on table",
+			Code: `
+				local function f(a: {}, b: {}): boolean
+					return a < b
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
 	}
 	testutil.RunCases(t, tests)
 }

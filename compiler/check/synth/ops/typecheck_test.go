@@ -359,3 +359,27 @@ func TestMayBeStringable(t *testing.T) {
 		})
 	}
 }
+
+func TestMayBeOrderable(t *testing.T) {
+	tests := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{"string", typ.String, true},
+		{"number", typ.Number, true},
+		{"integer", typ.Integer, true},
+		{"boolean", typ.Boolean, false},
+		{"optional number", typ.NewOptional(typ.Number), true},
+		{"number or nil", typ.NewUnion(typ.Number, typ.Nil), true},
+		{"boolean or nil", typ.NewUnion(typ.Boolean, typ.Nil), false},
+		{"unknown", typ.Unknown, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MayBeOrderable(tt.t); got != tt.want {
+				t.Errorf("MayBeOrderable(%s) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}

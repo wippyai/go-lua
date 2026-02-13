@@ -199,6 +199,7 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 	case *ast.RelationalOpExpr:
 		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
 		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
+		diags = append(diags, checkRelational(e, p, narrowView, sourceName)...)
 	case *ast.ArithmeticOpExpr:
 		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
 		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
@@ -299,10 +300,42 @@ func checkArithmetic(e *ast.ArithmeticOpExpr, p cfg.Point, narrowView api.BaseSy
 	return nil
 }
 
+func checkRelational(e *ast.RelationalOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+	switch e.Operator {
+	case "<", "<=", ">", ">=":
+	default:
+		return nil
+	}
+
+	check := func(expr ast.Expr) *diag.Diagnostic {
+		t := narrowView.TypeOf(expr, p)
+		if t == nil || ops.MayBeOrderable(t) || typ.IsNever(t) || t.Kind() == kind.Nil {
+			return nil
+		}
+		msg := "cannot compare " + typ.FormatShort(t) + ", expected orderable type"
+		_, help := diag.ContextualHelp(diag.ErrInvalidOperand, msg, "")
+		return &diag.Diagnostic{
+			Severity: diag.SeverityError,
+			Code:     diag.ErrInvalidOperand,
+			Position: diag.Position{File: sourceName, Line: expr.Line(), Column: expr.Column()},
+			Span:     ast.SpanOf(expr),
+			Message:  msg,
+			Help:     help,
+		}
+	}
+	if d := check(e.Lhs); d != nil {
+		return []diag.Diagnostic{*d}
+	}
+	if d := check(e.Rhs); d != nil {
+		return []diag.Diagnostic{*d}
+	}
+	return nil
+}
+
 func checkStringConcat(e *ast.StringConcatOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
 	check := func(expr ast.Expr) *diag.Diagnostic {
 		t := narrowView.TypeOf(expr, p)
-		if t == nil || ops.MayBeStringable(t) || typ.IsNever(t) || t.Kind() == kind.Nil {
+		if t == nil || ops.MayBeStringable(t) || typ.IsNever(t) || t.Kind() == kind.Nil || isOptionalFalseOnly(t) {
 			return nil
 		}
 		msg := "cannot concatenate " + typ.FormatShort(t) + ", expected string or number"
@@ -323,6 +356,21 @@ func checkStringConcat(e *ast.StringConcatOpExpr, p cfg.Point, narrowView api.Ba
 		return []diag.Diagnostic{*d}
 	}
 	return nil
+}
+
+func isOptionalFalseOnly(t typ.Type) bool {
+	t = unwrap.Alias(t)
+	opt, ok := t.(*typ.Optional)
+	if !ok || opt == nil || opt.Inner == nil {
+		return false
+	}
+	inner := unwrap.Alias(opt.Inner)
+	lit, ok := inner.(*typ.Literal)
+	if !ok || lit == nil {
+		return false
+	}
+	v, ok := lit.Value.(bool)
+	return ok && !v
 }
 
 func checkUnaryMinus(e *ast.UnaryMinusOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
