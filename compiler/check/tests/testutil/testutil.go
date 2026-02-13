@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/hooks"
-	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/stdlib"
 	"github.com/wippyai/go-lua/types/contract"
@@ -261,16 +260,7 @@ func CheckAndExport(source, name string, opts ...Option) *ModuleResult {
 	}, hooks.All()...)
 
 	sess := checker.Check(source, name+".lua")
-
-	exportType := sess.ExportType()
-	exportTypes := sess.ExportTypes()
-
-	manifest := io.NewManifest(name)
-	manifest.SetExport(exportType)
-	for typeName, t := range exportTypes {
-		manifest.DefineType(typeName, t)
-	}
-	modules.ExportFunctionSummaries(manifest, exportType, sess.RootGraph(), sess.EffectsForExport())
+	manifest := sess.ExportManifest(name)
 
 	var errors []diag.Diagnostic
 	for _, d := range sess.Diagnostics {

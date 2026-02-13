@@ -464,6 +464,35 @@ func (s *Session) ExportTypes() map[string]typ.Type {
 	return modules.ExportTypes(s.RootResult)
 }
 
+// ExportManifest builds a module manifest from this session using canonical export policy.
+//
+// The manifest includes:
+//   - Export type from root returns (with converged function effects applied)
+//   - Exported type definitions
+//   - Function summaries for exported functions (ensures/effects for cross-module narrowing)
+//
+// Use this helper instead of manually stitching ExportType/ExportTypes so callers do not
+// accidentally omit function summaries.
+func (s *Session) ExportManifest(modulePath string) *io.Manifest {
+	if s == nil {
+		return nil
+	}
+	if modulePath == "" {
+		modulePath = s.SourceName
+	}
+
+	manifest := io.NewManifest(modulePath)
+	exportType := s.ExportType()
+	manifest.SetExport(exportType)
+
+	for typeName, t := range s.ExportTypes() {
+		manifest.DefineType(typeName, t)
+	}
+
+	modules.ExportFunctionSummaries(manifest, exportType, s.RootGraph(), s.EffectsForExport())
+	return manifest
+}
+
 // EffectsForExport extracts computed function effects for manifest generation.
 // Returns effects from the final converged interproc snapshot.
 //
