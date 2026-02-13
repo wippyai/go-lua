@@ -334,3 +334,28 @@ func TestMayHaveLength(t *testing.T) {
 		})
 	}
 }
+
+func TestMayBeStringable(t *testing.T) {
+	tests := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{"string", typ.String, true},
+		{"number", typ.Number, true},
+		{"boolean", typ.Boolean, false},
+		{"error interface", typ.NewInterface("Error", nil), true},
+		{"optional string", typ.NewOptional(typ.String), true},
+		{"string or nil", typ.NewUnion(typ.String, typ.Nil), true},
+		{"boolean or nil", typ.NewUnion(typ.Boolean, typ.Nil), false},
+		{"any", typ.Any, true},
+		{"unknown", typ.Unknown, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MayBeStringable(tt.t); got != tt.want {
+				t.Errorf("MayBeStringable(%s) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}

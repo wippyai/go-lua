@@ -210,6 +210,16 @@ func TestErrorDetection(t *testing.T) {
 			WantError: true,
 			Stdlib:    true,
 		},
+		{
+			Name: "string concat on boolean",
+			Code: `
+				local function f(x: boolean): string
+					return x .. "ok"
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
 	}
 	testutil.RunCases(t, tests)
 }

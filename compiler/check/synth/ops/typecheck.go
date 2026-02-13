@@ -250,6 +250,73 @@ func isStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 }
 
+// MayBeStringable checks whether a type could participate in string
+// concatenation. Unlike IsStringable (which requires all branches to be
+// stringable), this returns true if any feasible branch is stringable.
+func MayBeStringable(t typ.Type) bool {
+	return mayBeStringableGuard(t, typ.NewGuard())
+}
+
+func mayBeStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Union:
+		for _, m := range v.Members {
+			if mayBeStringableGuard(m, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Intersection:
+		for _, m := range v.Members {
+			if mayBeStringableGuard(m, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Alias:
+		if v.Target == nil {
+			return false
+		}
+		return mayBeStringableGuard(v.Target, next)
+	case *typ.Optional:
+		if v.Inner == nil {
+			return false
+		}
+		return mayBeStringableGuard(v.Inner, next)
+	case *typ.TypeParam:
+		if v.Constraint != nil {
+			return mayBeStringableGuard(v.Constraint, next)
+		}
+		return false
+	case *typ.Interface:
+		return v.Name == "Error"
+	case *typ.Literal:
+		switch v.Value.(type) {
+		case string, float64, int64:
+			return true
+		default:
+			return false
+		}
+	default:
+		k := t.Kind()
+		if k.IsPlaceholder() {
+			return true
+		}
+		if k == kind.String || k == kind.Number || k == kind.Integer {
+			return true
+		}
+		return subtype.IsSubtype(t, typ.String)
+	}
+}
+
 // HasLength checks if a type supports the length operator (#).
 //
 // In Lua, the following types have length:
