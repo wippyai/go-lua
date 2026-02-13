@@ -181,3 +181,107 @@ func TestIterationScratch_Fields(t *testing.T) {
 		t.Error("LiteralSigsByGraphID should be initialized")
 	}
 }
+
+func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
+	s := NewSessionStore()
+
+	s.InterprocNext.Effects[1] = &constraint.FunctionEffect{Terminates: true}
+	s.InterprocNext.Facts[api.GraphKey{GraphID: 7, ParentHash: 11}] = api.Facts{
+		ReturnSummaries: map[cfg.SymbolID][]typ.Type{
+			1: {typ.String},
+		},
+	}
+	s.InterprocNext.ConstructorFields[3] = map[string]typ.Type{
+		"v": typ.Number,
+	}
+
+	if !s.FixpointSwap() {
+		t.Fatal("expected fixpoint swap to report changes")
+	}
+
+	diffs := s.FixpointChannelDiffs()
+	if len(diffs) != 3 {
+		t.Fatalf("expected 3 channel diffs, got %v", diffs)
+	}
+	if diffs[0] != "Effects" || diffs[1] != "InterprocFacts" || diffs[2] != "ConstructorFields" {
+		t.Fatalf("unexpected diff order/content: %v", diffs)
+	}
+
+	if len(s.InterprocPrev.Effects) != 1 || s.InterprocPrev.Effects[1] == nil {
+		t.Fatalf("expected prev effects populated, got %#v", s.InterprocPrev.Effects)
+	}
+	if len(s.InterprocNext.Effects) != 0 {
+		t.Fatalf("expected next effects reset, got %#v", s.InterprocNext.Effects)
+	}
+	if len(s.InterprocPrev.Facts) != 1 {
+		t.Fatalf("expected prev facts populated, got %#v", s.InterprocPrev.Facts)
+	}
+	if len(s.InterprocNext.Facts) != 0 {
+		t.Fatalf("expected next facts reset, got %#v", s.InterprocNext.Facts)
+	}
+	if len(s.InterprocPrev.ConstructorFields) != 1 {
+		t.Fatalf("expected prev constructor fields populated, got %#v", s.InterprocPrev.ConstructorFields)
+	}
+	if len(s.InterprocNext.ConstructorFields) != 0 {
+		t.Fatalf("expected next constructor fields reset, got %#v", s.InterprocNext.ConstructorFields)
+	}
+}
+
+func TestClearIterationChannels_InitializesMissingState(t *testing.T) {
+	s := &SessionStore{}
+	s.ClearIterationChannels()
+
+	if s.Iteration == nil {
+		t.Fatal("expected iteration store to be initialized")
+	}
+	if s.Scratch == nil {
+		t.Fatal("expected scratch to be initialized")
+	}
+	if s.InterprocPrev == nil || s.InterprocNext == nil {
+		t.Fatal("expected interproc states to be initialized")
+	}
+	if s.Scratch.LiteralSigsByGraphID == nil {
+		t.Fatal("expected scratch literal signatures map to be initialized")
+	}
+}
+
+func TestBumpRevision_InitializesIterationStore(t *testing.T) {
+	s := &SessionStore{}
+	s.BumpRevision()
+	if got := s.Revision(); got != 1 {
+		t.Fatalf("expected revision 1, got %d", got)
+	}
+}
+
+func TestFixpointChannelDiffs_ReturnsCopy(t *testing.T) {
+	s := NewSessionStore()
+	s.StoreFunctionEffect(1, &constraint.FunctionEffect{Terminates: true})
+	if !s.FixpointSwap() {
+		t.Fatal("expected change from effect swap")
+	}
+
+	diffs := s.FixpointChannelDiffs()
+	if len(diffs) == 0 {
+		t.Fatal("expected non-empty diffs")
+	}
+	diffs[0] = "MUTATED"
+
+	diffs2 := s.FixpointChannelDiffs()
+	if len(diffs2) == 0 || diffs2[0] == "MUTATED" {
+		t.Fatalf("expected defensive copy, got %v", diffs2)
+	}
+}
+
+func TestClearIterationChannels_ResetsRevision(t *testing.T) {
+	s := NewSessionStore()
+	s.BumpRevision()
+	s.BumpRevision()
+	if got := s.Revision(); got != 2 {
+		t.Fatalf("expected revision 2, got %d", got)
+	}
+
+	s.ClearIterationChannels()
+	if got := s.Revision(); got != 0 {
+		t.Fatalf("expected revision reset to 0, got %d", got)
+	}
+}

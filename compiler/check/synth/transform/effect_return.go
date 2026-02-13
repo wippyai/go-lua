@@ -67,7 +67,7 @@ func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCase
 	var resultTypes []typ.Type
 	seen := make(map[uint64]bool)
 
-	for _, caseType := range caseTypes {
+	for caseIdx, caseType := range caseTypes {
 		channelType, valueType := extractSelectCaseParts(caseType)
 		if channelType == nil {
 			// Keep unknown/any case elements conservative; skip concrete non-case fields.
@@ -81,7 +81,10 @@ func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCase
 		builder := typ.NewRecord().
 			Field("channel", channelType).
 			Field("ok", typ.Boolean).
-			Field("value", valueType)
+			Field("value", valueType).
+			// Preserve case multiplicity even when channel/value types are equal.
+			// This keeps identity-sensitive narrowing sound for `result.channel ~= ch`.
+			Field("__select_case_id", typ.LiteralInt(int64(caseIdx)))
 
 		if addDefault {
 			builder = builder.OptField("default", typ.Boolean)

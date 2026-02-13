@@ -79,6 +79,28 @@ func TestAddDependentPoints_UnknownKey(t *testing.T) {
 	}
 }
 
+func TestAddDependentPoints_DeterministicOrder(t *testing.T) {
+	deps := make(dependencyMap)
+	deps["key2"] = []cfg.Point{4, 1}
+	deps["key1"] = []cfg.Point{3, 2}
+
+	var worklist []cfg.Point
+	inQueue := map[cfg.Point]bool{}
+
+	changedKeys := []string{"key2", "key1"}
+	worklist = addDependentPoints(deps, changedKeys, worklist, inQueue)
+
+	expected := []cfg.Point{1, 2, 3, 4}
+	if len(worklist) != len(expected) {
+		t.Fatalf("expected %d points, got %d", len(expected), len(worklist))
+	}
+	for i, got := range worklist {
+		if got != expected[i] {
+			t.Fatalf("worklist[%d] = %d, want %d", i, got, expected[i])
+		}
+	}
+}
+
 func TestSymbolTypeSource(t *testing.T) {
 	// Test that symbolTypeSource struct has correct field defaults
 	src := symbolTypeSource{}

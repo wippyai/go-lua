@@ -68,11 +68,43 @@ func Types(types ...typ.Type) typ.Type {
 	filtered = CoalesceEmptyRecordWithMap(filtered)
 	filtered = CoalesceRecordOpenness(filtered)
 	filtered = CoalesceRecordMapComponents(filtered)
+	filtered = CoalesceCompatibleRecords(filtered)
 	filtered = CoalesceMaps(filtered)
 	if len(filtered) == 1 {
 		return filtered[0]
 	}
 	return typ.PruneSoftUnionMembers(typ.NewUnion(filtered...))
+}
+
+// CoalesceCompatibleRecords merges structurally compatible record variants into
+// one optional-field record. This keeps flow joins precise for mutation-style
+// code paths while preserving discriminated unions.
+func CoalesceCompatibleRecords(types []typ.Type) []typ.Type {
+	if len(types) < 2 {
+		return types
+	}
+
+	used := make([]bool, len(types))
+	out := make([]typ.Type, 0, len(types))
+	for i := 0; i < len(types); i++ {
+		if used[i] {
+			continue
+		}
+		current := types[i]
+		for j := i + 1; j < len(types); j++ {
+			if used[j] {
+				continue
+			}
+			merged, ok := typ.JoinCompatibleRecords(current, types[j])
+			if !ok {
+				continue
+			}
+			current = merged
+			used[j] = true
+		}
+		out = append(out, current)
+	}
+	return out
 }
 
 // filterUnknown removes nil and unknown types from the slice.

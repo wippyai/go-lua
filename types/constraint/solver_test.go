@@ -95,6 +95,94 @@ func TestSolver_HasType_BuiltinAndHash(t *testing.T) {
 	}
 }
 
+func TestSolver_HasType_FieldLiteralNarrowsParent(t *testing.T) {
+	response := constraint.Path{Root: "response"}
+	success := response.Field("success")
+
+	okRec := typ.NewRecord().
+		Field("success", typ.True).
+		Field("result", typ.String).
+		Build()
+	errRec := typ.NewRecord().
+		Field("success", typ.False).
+		Field("error_message", typ.String).
+		Build()
+
+	base := map[constraint.PathKey]typ.Type{
+		response.Key(): typ.NewUnion(okRec, errRec),
+		success.Key():  typ.NewUnion(typ.True, typ.False),
+	}
+
+	resolveType := func(key narrow.TypeKey) typ.Type {
+		if key == narrow.HashTypeKey(typ.False.Hash()) {
+			return typ.False
+		}
+		return nil
+	}
+
+	s := constraint.Solver{
+		Env: constraint.Env{
+			ResolveType: resolveType,
+			Resolver:    core.Resolver(),
+		},
+	}
+
+	out := s.Apply(constraint.NewConjunction(
+		constraint.HasType{Path: success, Type: narrow.HashTypeKey(typ.False.Hash())},
+	), base)
+
+	if got := out[success.Key()]; !typ.TypeEquals(got, typ.False) {
+		t.Fatalf("field type got %v want %v", got, typ.False)
+	}
+	if got := out[response.Key()]; !typ.TypeEquals(got, errRec) {
+		t.Fatalf("parent union got %v want %v", got, errRec)
+	}
+}
+
+func TestSolver_NotHasType_FieldLiteralNarrowsParent(t *testing.T) {
+	response := constraint.Path{Root: "response"}
+	success := response.Field("success")
+
+	okRec := typ.NewRecord().
+		Field("success", typ.True).
+		Field("result", typ.String).
+		Build()
+	errRec := typ.NewRecord().
+		Field("success", typ.False).
+		Field("error_message", typ.String).
+		Build()
+
+	base := map[constraint.PathKey]typ.Type{
+		response.Key(): typ.NewUnion(okRec, errRec),
+		success.Key():  typ.NewUnion(typ.True, typ.False),
+	}
+
+	resolveType := func(key narrow.TypeKey) typ.Type {
+		if key == narrow.HashTypeKey(typ.False.Hash()) {
+			return typ.False
+		}
+		return nil
+	}
+
+	s := constraint.Solver{
+		Env: constraint.Env{
+			ResolveType: resolveType,
+			Resolver:    core.Resolver(),
+		},
+	}
+
+	out := s.Apply(constraint.NewConjunction(
+		constraint.NotHasType{Path: success, Type: narrow.HashTypeKey(typ.False.Hash())},
+	), base)
+
+	if got := out[success.Key()]; !typ.TypeEquals(got, typ.True) {
+		t.Fatalf("field type got %v want %v", got, typ.True)
+	}
+	if got := out[response.Key()]; !typ.TypeEquals(got, okRec) {
+		t.Fatalf("parent union got %v want %v", got, okRec)
+	}
+}
+
 func TestSolver_FieldEquals_Literal(t *testing.T) {
 	path := constraint.Path{Root: "x"}
 	event := typ.NewRecord().Field("kind", typ.LiteralString("event")).Build()

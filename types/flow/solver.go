@@ -593,24 +593,33 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 			if r.Open {
 				builder.SetOpen(true)
 			}
-			existing := make(map[string]bool)
+			assignedByName := make(map[string]typ.Type, len(fields))
+			for _, f := range fields {
+				if prev, ok := assignedByName[f.Name]; ok {
+					assignedByName[f.Name] = typ.JoinPreferNonSoft(prev, f.Type)
+				} else {
+					assignedByName[f.Name] = f.Type
+				}
+			}
 			for _, f := range r.Fields {
+				fieldType := f.Type
+				if assigned, ok := assignedByName[f.Name]; ok {
+					fieldType = typ.JoinPreferNonSoft(fieldType, assigned)
+					delete(assignedByName, f.Name)
+				}
 				switch {
 				case f.Optional && f.Readonly:
-					builder.OptReadonlyField(f.Name, f.Type)
+					builder.OptReadonlyField(f.Name, fieldType)
 				case f.Optional:
-					builder.OptField(f.Name, f.Type)
+					builder.OptField(f.Name, fieldType)
 				case f.Readonly:
-					builder.ReadonlyField(f.Name, f.Type)
+					builder.ReadonlyField(f.Name, fieldType)
 				default:
-					builder.Field(f.Name, f.Type)
+					builder.Field(f.Name, fieldType)
 				}
-				existing[f.Name] = true
 			}
-			for _, f := range fields {
-				if !existing[f.Name] {
-					builder.Field(f.Name, f.Type)
-				}
+			for name, fieldType := range assignedByName {
+				builder.Field(name, fieldType)
 			}
 			if r.Metatable != nil {
 				builder.Metatable(r.Metatable)

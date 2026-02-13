@@ -254,31 +254,7 @@ func (p *Processor) processNestedFunction(
 	}
 
 	if nestedGraph != nil && len(capturedTypes) > 0 && p.store != nil {
-		if parentScope != nil && p.store.GraphParentHashOf(nestedGraph.ID()) == 0 {
-			if setter, ok := p.store.(interface {
-				SetGraphParentHash(graphID, parentHash uint64)
-			}); ok {
-				setter.SetGraphParentHash(nestedGraph.ID(), parentScope.Hash())
-			}
-		}
-		if key, ok := p.store.GraphKeyFor(nestedGraph, parentScope); ok {
-			p.store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
-				if facts.CapturedTypes == nil {
-					facts.CapturedTypes = make(api.CapturedTypes, len(capturedTypes))
-				}
-				for _, sym := range cfg.SortedSymbolIDs(capturedTypes) {
-					t := capturedTypes[sym]
-					if sym == 0 || t == nil {
-						continue
-					}
-					if prev := facts.CapturedTypes[sym]; prev != nil {
-						facts.CapturedTypes[sym] = returns.JoinInterprocTypes(prev, t)
-					} else {
-						facts.CapturedTypes[sym] = t
-					}
-				}
-			})
-		}
+		p.persistCapturedTypesForNestedGraph(nestedGraph, parentScope, capturedTypes)
 	}
 
 	// Check the function.
@@ -350,6 +326,41 @@ func (p *Processor) resolveSelfTypeForMethod(
 	}
 
 	return selfType
+}
+
+func (p *Processor) persistCapturedTypesForNestedGraph(
+	nestedGraph *cfg.Graph,
+	parentScope *scope.State,
+	capturedTypes map[cfg.SymbolID]typ.Type,
+) {
+	if p.store == nil || nestedGraph == nil || parentScope == nil || len(capturedTypes) == 0 {
+		return
+	}
+	if p.store.GraphParentHashOf(nestedGraph.ID()) == 0 {
+		if setter, ok := p.store.(interface {
+			SetGraphParentHash(graphID, parentHash uint64)
+		}); ok {
+			setter.SetGraphParentHash(nestedGraph.ID(), parentScope.Hash())
+		}
+	}
+	key, ok := p.store.GraphKeyFor(nestedGraph, parentScope)
+	if !ok {
+		return
+	}
+	nextCaptured := make(api.CapturedTypes, len(capturedTypes))
+	for _, sym := range cfg.SortedSymbolIDs(capturedTypes) {
+		t := capturedTypes[sym]
+		if sym == 0 || t == nil {
+			continue
+		}
+		nextCaptured[sym] = t
+	}
+	if len(nextCaptured) == 0 {
+		return
+	}
+	p.store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
+		facts.CapturedTypes = returns.WidenCapturedTypes(facts.CapturedTypes, nextCaptured)
+	})
 }
 
 // resolveSelfTypeForImplicitSelf resolves the self-type for methods with implicit self parameter.

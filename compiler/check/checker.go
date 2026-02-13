@@ -142,13 +142,6 @@ type Checker struct {
 	maxIterations             int
 	maxScopeDepth             int
 	emitScopeDepthDiagnostics bool
-	pipeline                  *pipeline.Driver
-
-	// funcResultQ is the memoized query for function analysis results.
-	// Key: api.FuncKey (GraphID, ParentHash, StoreRevision)
-	// Value: *api.FuncResult containing all phase outputs
-	// The cache is cleared at each iteration boundary.
-	funcResultQ *db.Query[api.FuncKey, *api.FuncResult]
 }
 
 // NewChecker creates a new Checker instance with the given database, dependencies, and options.
@@ -183,6 +176,10 @@ func NewChecker(database *db.DB, deps Deps, opts ...Option) *Checker {
 		opt(c)
 	}
 
+	return c
+}
+
+func (c *Checker) newPipeline() *pipeline.Driver {
 	runner := pipeline.NewRunner(pipeline.RunnerConfig{
 		Types:         c.deps.Types,
 		GlobalTypes:   c.deps.GlobalTypes,
@@ -192,9 +189,8 @@ func NewChecker(database *db.DB, deps Deps, opts ...Option) *Checker {
 		MaxScopeDepth: c.maxScopeDepth,
 		ComputePasses: c.computePasses,
 	})
-
-	c.funcResultQ = db.NewQuery("FuncResult", runner.Run, funcResultEqual)
-	c.pipeline = pipeline.New(pipeline.Config{
+	funcResultQ := db.NewQuery("FuncResult", runner.Run, funcResultEqual)
+	return pipeline.New(pipeline.Config{
 		Types:         c.deps.Types,
 		GlobalTypes:   c.deps.GlobalTypes,
 		Stdlib:        c.deps.Stdlib,
@@ -202,10 +198,8 @@ func NewChecker(database *db.DB, deps Deps, opts ...Option) *Checker {
 		MaxIterations: c.maxIterations,
 		MaxScopeDepth: c.maxScopeDepth,
 		EmitScopeDiag: c.emitScopeDepthDiagnostics,
-		FuncResultQ:   c.funcResultQ,
+		FuncResultQ:   funcResultQ,
 	})
-
-	return c
 }
 
 // WithMaxIterations configures the maximum number of fixpoint iterations.
@@ -318,8 +312,8 @@ func (c *Checker) CheckChunk(chunk []ast.Stmt, name string) *Session {
 // checkChunk is the internal implementation for Check and CheckChunk.
 // It wraps the chunk in a FunctionExpr, runs the fixpoint loop, and executes passes.
 func (c *Checker) checkChunk(sess *Session, chunk []ast.Stmt) {
-	if c.pipeline != nil {
-		c.pipeline.Run(sess, chunk)
+	if p := c.newPipeline(); p != nil {
+		p.Run(sess, chunk)
 	}
 
 	// Run passes after fixpoint converges
@@ -361,10 +355,8 @@ func funcResultEqual(a, b *api.FuncResult) bool {
 // each fixpoint iteration boundary, so this is primarily useful for batch
 // processing scenarios where the checker analyzes many independent files.
 func (c *Checker) ClearCache() {
-	if c == nil || c.funcResultQ == nil {
-		return
-	}
-	c.funcResultQ.Clear()
+	// Function-result memoization is session-local and discarded at the end of Check.
+	// Kept for API compatibility.
 }
 
 // Database returns the checker's type database for connecting external manifests.

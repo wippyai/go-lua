@@ -2,6 +2,7 @@ package assign
 
 import (
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -47,7 +48,21 @@ func isOptionalErrorLike(t typ.Type) bool {
 	if inner == nil {
 		return false
 	}
-	return subtype.IsSubtype(inner, typ.LuaError) || subtype.IsSubtype(inner, typ.String)
+	if subtype.IsSubtype(inner, typ.LuaError) || subtype.IsSubtype(inner, typ.String) {
+		return true
+	}
+	// Structured error objects in Lua code often expose `message` as a field.
+	// Treat Optional<{message: string}> as error-like for canonical (value, err)
+	// correlation when explicit specs are absent.
+	messageType, ok := core.Field(inner, "message")
+	if !ok || messageType == nil {
+		return false
+	}
+	if subtype.IsSubtype(messageType, typ.String) {
+		return true
+	}
+	messageInner := unwrap.Optional(messageType)
+	return messageInner != nil && subtype.IsSubtype(messageInner, typ.String)
 }
 
 func isOptionalLuaError(t typ.Type) bool {

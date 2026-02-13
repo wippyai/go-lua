@@ -20,25 +20,11 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 		ConstructorFields:  WidenConstructorFields(prev.ConstructorFields, next.ConstructorFields),
 	}
 
-	symbols := make(map[cfg.SymbolID]bool, len(prev.ReturnSummaries)+len(next.ReturnSummaries)+len(prev.NarrowReturns)+len(next.NarrowReturns)+len(prev.FuncTypes)+len(next.FuncTypes))
-	for _, sym := range cfg.SortedSymbolIDs(prev.ReturnSummaries) {
-		symbols[sym] = true
-	}
-	for _, sym := range cfg.SortedSymbolIDs(next.ReturnSummaries) {
-		symbols[sym] = true
-	}
-	for _, sym := range cfg.SortedSymbolIDs(prev.NarrowReturns) {
-		symbols[sym] = true
-	}
-	for _, sym := range cfg.SortedSymbolIDs(next.NarrowReturns) {
-		symbols[sym] = true
-	}
-	for _, sym := range cfg.SortedSymbolIDs(prev.FuncTypes) {
-		symbols[sym] = true
-	}
-	for _, sym := range cfg.SortedSymbolIDs(next.FuncTypes) {
-		symbols[sym] = true
-	}
+	symbols := collectFunctionFactSymbolsFromPairs(
+		prev.ReturnSummaries, next.ReturnSummaries,
+		prev.NarrowReturns, next.NarrowReturns,
+		prev.FuncTypes, next.FuncTypes,
+	)
 	if len(symbols) == 0 {
 		return out
 	}
@@ -46,7 +32,7 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 	out.ReturnSummaries = make(api.ReturnSummaries, len(symbols))
 	out.NarrowReturns = make(api.NarrowReturnSummaries, len(symbols))
 	out.FuncTypes = make(api.FuncTypes, len(symbols))
-	for _, sym := range cfg.SortedSymbolIDs(symbols) {
+	for _, sym := range symbols {
 		reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
 			ExistingSummary:  prev.ReturnSummaries[sym],
 			ExistingNarrow:   prev.NarrowReturns[sym],

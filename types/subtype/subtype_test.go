@@ -362,6 +362,34 @@ func TestRecordMutableFieldInvariance(t *testing.T) {
 	}
 }
 
+func TestRecordMutableTupleFieldLiteralWidening(t *testing.T) {
+	super := typ.NewRecord().
+		Field("chunks", typ.NewTuple(typ.String, typ.String)).
+		Build()
+
+	sub := typ.NewRecord().
+		Field("chunks", typ.NewTuple(typ.LiteralString("a"), typ.LiteralString("b"))).
+		Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("tuple literal elements should widen in mutable record fields")
+	}
+}
+
+func TestRecordMutableFieldUnionBranchWidening(t *testing.T) {
+	super := typ.NewRecord().
+		Field("timeout", typ.NewUnion(typ.Number, typ.String)).
+		Build()
+
+	sub := typ.NewRecord().
+		Field("timeout", typ.Number).
+		Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("concrete union branch should satisfy mutable field via widening")
+	}
+}
+
 func TestRecordReadonlyFieldCovariance(t *testing.T) {
 	// Readonly fields are safe for covariant subtyping
 	dog := typ.LiteralString("dog")

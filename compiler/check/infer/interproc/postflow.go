@@ -2,6 +2,7 @@ package interproc
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
@@ -39,87 +40,126 @@ func StoreFactsFromResult(
 	if store == nil || result == nil || result.Graph == nil {
 		return
 	}
-	// Record literal signatures for this graph.
-	if len(result.LiteralSignatures) > 0 {
-		store.StoreLiteralSigs(result.Graph.ID(), result.LiteralSignatures)
-		if key, ok := store.GraphKeyFor(result.Graph, parent); ok {
-			store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
-				if facts.LiteralSigs == nil {
-					facts.LiteralSigs = make(api.LiteralSigs, len(result.LiteralSignatures))
-				}
-				for fnExpr, sig := range result.LiteralSignatures {
-					if fnExpr != nil && sig != nil {
-						facts.LiteralSigs[fnExpr] = sig
-					}
-				}
-			})
-		}
-	}
+	writer := newInterprocFactWriter(store)
+	writer.writeLiteralSignatures(result.Graph, parent, result.LiteralSignatures)
 
 	if result.NarrowSynth == nil {
 		return
 	}
+	fnSym := cfg.SymbolID(0)
+	if fn != nil {
+		if resolvedSym, ok := store.SymbolForFunc(fn); ok && resolvedSym != 0 {
+			fnSym = resolvedSym
+		}
+	}
 	// Collect parameter hints regardless of whether the function has a symbol.
 	CollectParamHintsFromResult(store, result, parent)
 
-	// Collect captured field assignments for nested functions.
-	if fn != nil {
-		bindings := result.Graph.Bindings()
-		if bindings == nil {
-			bindings = store.ModuleBindings()
-		}
-		if bindings != nil {
-			capturedList := bindings.CapturedSymbols(fn)
-			if len(capturedList) > 0 {
-				capturedSet := make(map[cfg.SymbolID]bool, len(capturedList))
-				for _, sym := range capturedList {
-					if sym != 0 {
-						capturedSet[sym] = true
-					}
-				}
-				if len(capturedSet) > 0 {
-					fields := nested.CollectCapturedFieldAssignments(result.Graph, capturedSet, result.NarrowSynth.TypeOf)
-					if len(fields) > 0 {
-						if sym, ok := store.SymbolForFunc(fn); ok && sym != 0 {
-							if parentKey, ok := store.ParentGraphKeyForSymbol(sym); ok {
-								store.UpdateInterprocFactsNext(parentKey, func(facts *api.Facts) {
-									if facts.CapturedFields == nil {
-										facts.CapturedFields = make(api.CapturedFieldAssigns)
-									}
-									existing := facts.CapturedFields[sym]
-									facts.CapturedFields[sym] = mergeCapturedFieldAssigns(existing, fields)
-								})
-							}
-						}
-					}
+	if fnSym == 0 {
+		return
+	}
+	storeCapturedFactsFromResult(store, writer, fn, fnSym, result)
 
-					mutations := nested.CollectCapturedContainerMutations(result.Graph, capturedSet, result.NarrowSynth.TypeOf)
-					if len(mutations) > 0 {
-						if sym, ok := store.SymbolForFunc(fn); ok && sym != 0 {
-							if parentKey, ok := store.ParentGraphKeyForSymbol(sym); ok {
-								store.UpdateInterprocFactsNext(parentKey, func(facts *api.Facts) {
-									if facts.CapturedContainers == nil {
-										facts.CapturedContainers = make(api.CapturedContainerMutations)
-									}
-									existing := facts.CapturedContainers[sym]
-									facts.CapturedContainers[sym] = mergeCapturedContainerMutations(existing, mutations)
-								})
-							}
-						}
-					}
-				}
+	fnType := narrowFunctionTypeFromResult(result, fn)
+	if fnType == nil {
+		return
+	}
+	narrowReturns := returns.NormalizeReturnVector(fnType.Returns)
+	summaryFromSnapshot := returnSummarySnapshotForSymbol(store, result, parent, fnSym)
+
+	writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
+		candidateFunc := fnType
+		if hinted := paramhints.MergeIntoSignature(fn, facts.ParamHints[fnSym], unwrap.Function(candidateFunc)); hinted != nil {
+			candidateFunc = hinted
+		}
+		returns.MergeFunctionFactIntoFacts(facts, fnSym, returns.FunctionFactCandidate{
+			Summary: summaryFromSnapshot,
+			Narrow:  narrowReturns,
+			Func:    candidateFunc,
+		})
+	})
+}
+
+func storeCapturedFactsFromResult(
+	store Store,
+	writer interprocFactWriter,
+	fn *ast.FunctionExpr,
+	fnSym cfg.SymbolID,
+	result *api.FuncResult,
+) {
+	if store == nil || fn == nil || fnSym == 0 || result == nil || result.Graph == nil || result.NarrowSynth == nil {
+		return
+	}
+	bindings := bindingsForGraphOrModule(result.Graph, store)
+	if bindings == nil {
+		return
+	}
+	capturedSet := capturedSymbolSet(bindings, fn)
+	if len(capturedSet) == 0 {
+		return
+	}
+
+	fields := nested.CollectCapturedFieldAssignments(result.Graph, capturedSet, result.NarrowSynth.TypeOf)
+	if len(fields) > 0 {
+		writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
+			if facts.CapturedFields == nil {
+				facts.CapturedFields = make(api.CapturedFieldAssigns)
 			}
+			existing := facts.CapturedFields[fnSym]
+			facts.CapturedFields[fnSym] = mergeCapturedFieldAssigns(existing, fields)
+		})
+	}
+
+	mutations := nested.CollectCapturedContainerMutations(result.Graph, capturedSet, result.NarrowSynth.TypeOf)
+	if len(mutations) > 0 {
+		writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
+			if facts.CapturedContainers == nil {
+				facts.CapturedContainers = make(api.CapturedContainerMutations)
+			}
+			existing := facts.CapturedContainers[fnSym]
+			facts.CapturedContainers[fnSym] = mergeCapturedContainerMutations(existing, mutations)
+		})
+	}
+}
+
+func bindingsForGraphOrModule(graph *cfg.Graph, store Store) *bind.BindingTable {
+	if graph == nil {
+		return nil
+	}
+	bindings := graph.Bindings()
+	if bindings != nil {
+		return bindings
+	}
+	if store != nil {
+		return store.ModuleBindings()
+	}
+	return nil
+}
+
+func capturedSymbolSet(bindings *bind.BindingTable, fn *ast.FunctionExpr) map[cfg.SymbolID]bool {
+	if bindings == nil || fn == nil {
+		return nil
+	}
+	captured := bindings.CapturedSymbols(fn)
+	if len(captured) == 0 {
+		return nil
+	}
+	set := make(map[cfg.SymbolID]bool, len(captured))
+	for _, sym := range captured {
+		if sym != 0 {
+			set[sym] = true
 		}
 	}
-
-	if fn == nil {
-		return
+	if len(set) == 0 {
+		return nil
 	}
-	sym, ok := store.SymbolForFunc(fn)
-	if !ok || sym == 0 {
-		return
-	}
+	return set
+}
 
+func narrowFunctionTypeFromResult(result *api.FuncResult, fn *ast.FunctionExpr) *typ.Function {
+	if result == nil || result.NarrowSynth == nil || fn == nil {
+		return nil
+	}
 	fnType := result.NarrowSynth.FunctionType(fn, result.BaseScope)
 	if expected := expectedFunctionFromResult(result); expected != nil {
 		if withExpected, ok := result.NarrowSynth.(functionTypeWithExpected); ok {
@@ -128,59 +168,22 @@ func StoreFactsFromResult(
 			}
 		}
 	}
-	if fnType == nil {
-		return
-	}
-	narrowReturns := returns.NormalizeReturnVector(fnType.Returns)
+	return returns.AttachInferredErrorReturnSpec(fnType, result.Graph, result.FlowSolution, result.NarrowSynth)
+}
 
-	parentKey, ok := store.ParentGraphKeyForSymbol(sym)
-	if !ok {
-		return
+func returnSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent *scope.State, sym cfg.SymbolID) []typ.Type {
+	if store == nil || result == nil || result.Graph == nil || sym == 0 {
+		return nil
 	}
-	var summaryFromSnapshot []typ.Type
-	summaryScope := parent
-	if summaryScope == nil && result.Graph != nil {
-		if parentHash := store.GraphParentHashOf(result.Graph.ID()); parentHash != 0 {
-			summaryScope = store.Parents()[parentHash]
-		}
+	summaryScope := api.ParentScopeForGraph(store, result.Graph.ID(), parent)
+	if summaryScope == nil {
+		return nil
 	}
-	if result.Graph != nil && summaryScope != nil {
-		if snap := store.GetReturnSummariesSnapshot(result.Graph, summaryScope); len(snap) > 0 {
-			summaryFromSnapshot = snap[sym]
-		}
+	snap := store.GetReturnSummariesSnapshot(result.Graph, summaryScope)
+	if len(snap) == 0 {
+		return nil
 	}
-	store.UpdateInterprocFactsNext(parentKey, func(facts *api.Facts) {
-		candidateFunc := fnType
-		if hinted := paramhints.MergeIntoSignature(fn, facts.ParamHints[sym], unwrap.Function(candidateFunc)); hinted != nil {
-			candidateFunc = hinted
-		}
-		reconciled := returns.ReconcileFunctionFact(returns.ReconcileFunctionFactInput{
-			ExistingSummary:  facts.ReturnSummaries[sym],
-			ExistingNarrow:   facts.NarrowReturns[sym],
-			ExistingFunc:     facts.FuncTypes[sym],
-			CandidateSummary: summaryFromSnapshot,
-			CandidateNarrow:  narrowReturns,
-			CandidateFunc:    candidateFunc,
-		})
-		if len(reconciled.Summary) > 0 {
-			if facts.ReturnSummaries == nil {
-				facts.ReturnSummaries = make(api.ReturnSummaries, 1)
-			}
-			facts.ReturnSummaries[sym] = reconciled.Summary
-		}
-		if len(reconciled.Narrow) > 0 {
-			if facts.NarrowReturns == nil {
-				facts.NarrowReturns = make(api.NarrowReturnSummaries, 1)
-			}
-			facts.NarrowReturns[sym] = reconciled.Narrow
-		}
-		if reconciled.Func != nil {
-			if facts.FuncTypes == nil {
-				facts.FuncTypes = make(api.FuncTypes, 1)
-			}
-			facts.FuncTypes[sym] = reconciled.Func
-		}
-	})
+	return snap[sym]
 }
 
 func expectedFunctionFromResult(result *api.FuncResult) *typ.Function {
@@ -268,7 +271,14 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 			if argSym == 0 && bindings != nil {
 				argSym = checkcallsite.SymbolFromExpr(arg, bindings)
 			}
-			if preType := typeAtPredJoin(result, graph, p, argSym); preType != nil {
+			preType := checkcallsite.PreAssignmentTypeAtJoin(graph, p, argSym, func(point cfg.Point, id cfg.SymbolID) (typ.Type, bool) {
+				tv := result.EffectiveTypeAt(point, id)
+				if tv.State != flow.StateResolved || tv.Type == nil {
+					return nil, false
+				}
+				return tv.Type, true
+			})
+			if preType != nil {
 				if callTargets[argSym] {
 					argType = preType
 				} else {
@@ -396,25 +406,6 @@ func parentGraphKeyForCallee(store Store, result *api.FuncResult, parent *scope.
 		return api.GraphKey{}, false
 	}
 	return store.GraphKeyFor(result.Graph, parent)
-}
-
-func typeAtPredJoin(result *api.FuncResult, graph *cfg.Graph, p cfg.Point, sym cfg.SymbolID) typ.Type {
-	if result == nil || result.NarrowSynth == nil || graph == nil || sym == 0 {
-		return nil
-	}
-	var joined typ.Type
-	for _, pred := range graph.Predecessors(p) {
-		tv := result.EffectiveTypeAt(pred, sym)
-		if tv.State != flow.StateResolved || tv.Type == nil {
-			continue
-		}
-		if joined == nil {
-			joined = tv.Type
-		} else {
-			joined = typ.JoinPreferNonSoft(joined, tv.Type)
-		}
-	}
-	return joined
 }
 
 func mergeCapturedFieldAssigns(

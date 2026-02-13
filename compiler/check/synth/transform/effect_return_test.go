@@ -38,6 +38,7 @@ func TestBuildSelectResultUnion_ResolvesNegativeCasesIndex(t *testing.T) {
 	})
 
 	want := typ.NewRecord().
+		Field("__select_case_id", typ.LiteralInt(0)).
 		Field("channel", typ.Integer).
 		Field("ok", typ.Boolean).
 		Field("value", typ.Boolean).

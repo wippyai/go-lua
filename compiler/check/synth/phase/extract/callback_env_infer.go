@@ -81,11 +81,18 @@ func inferCallbackEnvOverlays(
 		if info == nil {
 			return
 		}
-		for _, sym := range callsite.CalleeSymbolCandidatesWithAliases(info, graph, graph.Bindings(), moduleBindings) {
-			if idx, ok := paramSet[sym]; ok {
-				calls = append(calls, paramCall{point: p, paramIndex: idx})
-				break
-			}
+		sym := callsite.PreferredCalleeSymbolWithAliases(
+			info,
+			graph,
+			graph.Bindings(),
+			moduleBindings,
+			func(candidate cfg.SymbolID) bool {
+				_, ok := paramSet[candidate]
+				return ok
+			},
+		)
+		if idx, ok := paramSet[sym]; ok {
+			calls = append(calls, paramCall{point: p, paramIndex: idx})
 		}
 	})
 

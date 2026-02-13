@@ -580,6 +580,21 @@ func canWidenTo(narrow, wide typ.Type) bool {
 		}
 	}
 
+	// Allow widening into unions when narrow fits at least one member.
+	if u, ok := wide.(*typ.Union); ok {
+		for _, m := range u.Members {
+			// Keep literal-tag unions invariant for mutable fields; only allow
+			// widening through non-literal branch members (for example number|string).
+			if m.Kind() == kind.Literal {
+				continue
+			}
+			if isSubtype(narrow, m) || canWidenTo(narrow, m) {
+				return true
+			}
+		}
+		return false
+	}
+
 	// Integer can widen to number
 	if narrow.Kind() == kind.Integer && wide.Kind() == kind.Number {
 		return true
@@ -608,6 +623,23 @@ func canWidenTo(narrow, wide typ.Type) bool {
 	if subRec, ok := narrow.(*typ.Record); ok {
 		if supRec, ok := wide.(*typ.Record); ok {
 			return canWidenRecordTo(subRec, supRec)
+		}
+	}
+
+	// Tuples: allow element-wise widening for fresh tuple literals.
+	if subTuple, ok := narrow.(*typ.Tuple); ok {
+		if supTuple, ok := wide.(*typ.Tuple); ok {
+			if len(subTuple.Elements) != len(supTuple.Elements) {
+				return false
+			}
+			for i := range subTuple.Elements {
+				if isSubtype(subTuple.Elements[i], supTuple.Elements[i]) ||
+					canWidenTo(subTuple.Elements[i], supTuple.Elements[i]) {
+					continue
+				}
+				return false
+			}
+			return true
 		}
 	}
 

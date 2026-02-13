@@ -61,3 +61,55 @@ func TestJoinBranchOutcome_DoesNotCollapseSoftToNil(t *testing.T) {
 		t.Fatalf("JoinBranchOutcome(any, nil) collapsed to nil: %v", got)
 	}
 }
+
+func TestJoinReturnSlot_MergesRecordFieldsAsOptional(t *testing.T) {
+	base := NewRecord().
+		Field("status_code", Number).
+		Field("message", String).
+		Build()
+	withDetails := NewRecord().
+		Field("status_code", Number).
+		Field("message", String).
+		Field("code", String).
+		Field("type", String).
+		Build()
+
+	got := JoinReturnSlot(base, withDetails)
+	rec, ok := got.(*Record)
+	if !ok {
+		t.Fatalf("JoinReturnSlot(record, record) = %T, want *Record", got)
+	}
+	fields := map[string]Field{}
+	for _, f := range rec.Fields {
+		fields[f.Name] = f
+	}
+
+	if !TypeEquals(fields["status_code"].Type, Number) || fields["status_code"].Optional {
+		t.Fatalf("status_code mismatch: %#v", fields["status_code"])
+	}
+	if !TypeEquals(fields["message"].Type, String) || fields["message"].Optional {
+		t.Fatalf("message mismatch: %#v", fields["message"])
+	}
+	if !fields["code"].Optional || !TypeEquals(fields["code"].Type, String) {
+		t.Fatalf("code should be optional string, got %#v", fields["code"])
+	}
+	if !fields["type"].Optional || !TypeEquals(fields["type"].Type, String) {
+		t.Fatalf("type should be optional string, got %#v", fields["type"])
+	}
+}
+
+func TestJoinReturnSlot_PreservesDiscriminatedRecordUnion(t *testing.T) {
+	a := NewRecord().
+		Field("kind", LiteralString("a")).
+		Field("value", Number).
+		Build()
+	b := NewRecord().
+		Field("kind", LiteralString("b")).
+		Field("value", String).
+		Build()
+
+	got := JoinReturnSlot(a, b)
+	if _, ok := got.(*Union); !ok {
+		t.Fatalf("JoinReturnSlot(discriminated records) = %T, want *Union", got)
+	}
+}

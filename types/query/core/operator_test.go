@@ -157,6 +157,13 @@ func TestUnaryOp(t *testing.T) {
 		}
 	})
 
+	t.Run("minus integer literal", func(t *testing.T) {
+		result := UnaryOp("-", typ.LiteralInt(2))
+		if result != typ.Integer {
+			t.Errorf("expected integer, got %v", result)
+		}
+	})
+
 	t.Run("minus string", func(t *testing.T) {
 		result := UnaryOp("-", typ.String)
 		if result != nil {

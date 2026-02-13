@@ -348,15 +348,11 @@ func BuildParamHintSigView(
 	if meta, ok := store.NestedMetaFor(graph.ID()); ok {
 		parentGraph := store.Graphs()[meta.ParentGraphID]
 		if parentGraph != nil {
-			var parentScope *scope.State
-			if parentHash := store.GraphParentHashOf(parentGraph.ID()); parentHash != 0 {
-				parentScope = store.Parents()[parentHash]
+			fallback := (*scope.State)(nil)
+			if _, isNestedParent := store.NestedMetaFor(parentGraph.ID()); !isNestedParent {
+				fallback = stdlib
 			}
-			if parentScope == nil {
-				if _, ok := store.NestedMetaFor(parentGraph.ID()); !ok {
-					parentScope = stdlib
-				}
-			}
+			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), fallback)
 			if parentScope != nil {
 				parentHints := store.GetParamHintsSnapshot(parentGraph, parentScope)
 				if len(parentHints) > 0 {

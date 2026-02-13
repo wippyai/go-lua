@@ -70,6 +70,12 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 			continue
 		}
 
+		// Field/index writes create a new symbol version. Carry forward unchanged
+		// base/suffix facts from predecessor versions so sibling fields remain stable.
+		if len(assign.TargetPath.Segments) > 0 {
+			changedKeys = append(changedKeys, s.carryForwardStructuredVersionFacts(p, assign.TargetPath)...)
+		}
+
 		var assignedType typ.Type
 		if assign.SourcePath.HasSymbol() {
 			// Use NarrowedTypeAt to propagate flow narrowing through assignments.
@@ -133,6 +139,107 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 			continue
 		}
 		if key := s.processContainerMutatorAssignmentReturnKey(p, cm); key != "" {
+			changedKeys = append(changedKeys, key)
+		}
+	}
+
+	return changedKeys
+}
+
+// carryForwardStructuredVersionFacts seeds the current version with predecessor
+// root/suffix facts for structured values when assigning through a sub-path.
+func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath constraint.Path) []string {
+	if s == nil || s.inputs == nil || s.inputs.Graph == nil || s.pkResolver == nil {
+		return nil
+	}
+	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
+		return nil
+	}
+
+	currentBase := constraint.Path{
+		Root:    targetPath.Root,
+		Symbol:  targetPath.Symbol,
+		Version: targetPath.Version,
+	}
+	currentBaseKey := s.pkResolver.KeyAt(p, currentBase)
+	if currentBaseKey == "" {
+		return nil
+	}
+
+	preds := s.inputs.Graph.Predecessors(p)
+	if len(preds) == 0 {
+		return nil
+	}
+
+	predBaseKeys := make([]string, 0, len(preds))
+	seenPredBase := make(map[string]struct{}, len(preds))
+	for _, pred := range preds {
+		ver := s.inputs.Graph.VisibleVersion(pred, targetPath.Symbol)
+		if ver.Symbol == 0 || ver.ID == 0 {
+			continue
+		}
+		predBaseKey := s.pkResolver.KeyAtVersion(ver.Symbol, ver.ID, nil)
+		if predBaseKey == "" {
+			continue
+		}
+		key := string(predBaseKey)
+		if _, seen := seenPredBase[key]; seen {
+			continue
+		}
+		seenPredBase[key] = struct{}{}
+		predBaseKeys = append(predBaseKeys, key)
+	}
+	if len(predBaseKeys) == 0 {
+		return nil
+	}
+
+	var changedKeys []string
+	currentBaseKeyStr := string(currentBaseKey)
+
+	// Seed root/base value if missing on current version.
+	if s.values[currentBaseKeyStr] == nil {
+		baseTypes := make([]typ.Type, 0, len(predBaseKeys))
+		for _, predBaseKey := range predBaseKeys {
+			if t := s.values[predBaseKey]; t != nil {
+				baseTypes = append(baseTypes, t)
+			}
+		}
+		if len(baseTypes) > 0 {
+			joinedBase := join.Types(baseTypes...)
+			if !typ.TypeEquals(s.values[currentBaseKeyStr], joinedBase) {
+				s.values[currentBaseKeyStr] = joinedBase
+				changedKeys = append(changedKeys, currentBaseKeyStr)
+			}
+		}
+	}
+
+	// Seed suffix values from predecessor versions when missing on current version.
+	suffixTypes := make(map[string][]typ.Type)
+	for _, predBaseKey := range predBaseKeys {
+		prefixLen := len(predBaseKey)
+		for key, t := range s.values {
+			if t == nil || len(key) <= prefixLen || key[:prefixLen] != predBaseKey {
+				continue
+			}
+			suffix := key[prefixLen:]
+			if len(suffix) == 0 || (suffix[0] != '.' && suffix[0] != '[') {
+				continue
+			}
+			suffixTypes[suffix] = append(suffixTypes[suffix], t)
+		}
+	}
+
+	for suffix, types := range suffixTypes {
+		if len(types) == 0 {
+			continue
+		}
+		key := currentBaseKeyStr + suffix
+		if s.values[key] != nil {
+			continue
+		}
+		joined := join.Types(types...)
+		if !typ.TypeEquals(s.values[key], joined) {
+			s.values[key] = joined
 			changedKeys = append(changedKeys, key)
 		}
 	}

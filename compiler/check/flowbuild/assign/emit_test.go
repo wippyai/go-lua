@@ -589,3 +589,36 @@ func TestCorrelationsFromFunctionType_ImplicitStringErrorConvention(t *testing.T
 		t.Fatalf("unexpected convention correlation: %+v", inverse[0])
 	}
 }
+
+func TestCorrelationsFromFunctionType_ImplicitStructuredErrorConvention(t *testing.T) {
+	errorType := typ.NewRecord().
+		Field("status_code", typ.Number).
+		Field("message", typ.String).
+		Build()
+	fnType := typ.Func().
+		Returns(typ.NewOptional(typ.String), typ.NewOptional(errorType)).
+		Build()
+	inverse, co := correlationsFromFunctionType(fnType)
+	if len(co) != 0 {
+		t.Fatalf("expected no co-correlations, got %v", co)
+	}
+	if len(inverse) != 1 {
+		t.Fatalf("expected one convention-based correlation, got %v", inverse)
+	}
+	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
+		t.Fatalf("unexpected convention correlation: %+v", inverse[0])
+	}
+}
+
+func TestCorrelationsFromFunctionType_NoImplicitStructuredErrorWithoutMessage(t *testing.T) {
+	auxType := typ.NewRecord().
+		Field("status_code", typ.Number).
+		Build()
+	fnType := typ.Func().
+		Returns(typ.NewOptional(typ.String), typ.NewOptional(auxType)).
+		Build()
+	inverse, co := correlationsFromFunctionType(fnType)
+	if len(inverse) != 0 || len(co) != 0 {
+		t.Fatalf("expected no implicit correlations without message-like error slot, got inverse=%v co=%v", inverse, co)
+	}
+}

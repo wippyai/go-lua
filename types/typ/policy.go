@@ -1,6 +1,10 @@
 package typ
 
-import "github.com/wippyai/go-lua/types/kind"
+import (
+	"sort"
+
+	"github.com/wippyai/go-lua/types/kind"
+)
 
 // JoinPreferNonSoft joins two types while preferring non-soft placeholders.
 // This centralizes the "soft placeholder" policy used across inference and flow.
@@ -49,6 +53,9 @@ func JoinReturnSlot(a, b Type) Type {
 	if preferred, ok := preferArrayOverEmptyRecord(a, b); ok {
 		return preferred
 	}
+	if merged, ok := JoinCompatibleRecords(a, b); ok {
+		return merged
+	}
 	if (IsAny(a) && b.Kind() == kind.Nil) || (IsAny(b) && a.Kind() == kind.Nil) {
 		return Any
 	}
@@ -88,6 +95,152 @@ func isArrayLike(t Type) bool {
 	default:
 		return false
 	}
+}
+
+// JoinCompatibleRecords joins two record types into a single record when they
+// are structurally compatible for safe optional-field widening.
+//
+// This preserves discriminated unions by refusing joins when required literal
+// fields conflict across the two records.
+func JoinCompatibleRecords(a, b Type) (Type, bool) {
+	ar := unaliasRecord(a)
+	br := unaliasRecord(b)
+	if ar == nil || br == nil {
+		return nil, false
+	}
+
+	// Keep discriminated unions intact when required literal tags conflict.
+	if hasConflictingRequiredLiteralField(ar, br) {
+		return nil, false
+	}
+
+	// Mixing map and non-map record slots can be semantically distinct.
+	if ar.HasMapComponent() != br.HasMapComponent() {
+		return nil, false
+	}
+
+	builder := NewRecord()
+	if ar.Open || br.Open {
+		builder.SetOpen(true)
+	}
+	if ar.Metatable != nil && br.Metatable != nil && TypeEquals(ar.Metatable, br.Metatable) {
+		builder.Metatable(ar.Metatable)
+	}
+	if ar.HasMapComponent() && br.HasMapComponent() {
+		builder.MapComponent(
+			JoinPreferNonSoft(ar.MapKey, br.MapKey),
+			JoinPreferNonSoft(ar.MapValue, br.MapValue),
+		)
+	}
+
+	fieldsA := recordFieldsByName(ar)
+	fieldsB := recordFieldsByName(br)
+	names := make(map[string]struct{}, len(fieldsA)+len(fieldsB))
+	for name := range fieldsA {
+		names[name] = struct{}{}
+	}
+	for name := range fieldsB {
+		names[name] = struct{}{}
+	}
+	sortedNames := make([]string, 0, len(names))
+	for name := range names {
+		sortedNames = append(sortedNames, name)
+	}
+	sort.Strings(sortedNames)
+
+	for _, name := range sortedNames {
+		fa, oka := fieldsA[name]
+		fb, okb := fieldsB[name]
+
+		fieldType := Type(nil)
+		optional := true
+		readonly := false
+		switch {
+		case oka && okb:
+			fieldType = JoinPreferNonSoft(fa.Type, fb.Type)
+			optional = fa.Optional || fb.Optional
+			readonly = fa.Readonly && fb.Readonly
+		case oka:
+			fieldType = fa.Type
+			optional = true
+			readonly = fa.Readonly
+		case okb:
+			fieldType = fb.Type
+			optional = true
+			readonly = fb.Readonly
+		}
+
+		switch {
+		case optional && readonly:
+			builder.OptReadonlyField(name, fieldType)
+		case optional:
+			builder.OptField(name, fieldType)
+		case readonly:
+			builder.ReadonlyField(name, fieldType)
+		default:
+			builder.Field(name, fieldType)
+		}
+	}
+
+	return builder.Build(), true
+}
+
+func unaliasRecord(t Type) *Record {
+	for {
+		a, ok := t.(*Alias)
+		if !ok {
+			break
+		}
+		t = a.Target
+	}
+	rec, _ := t.(*Record)
+	return rec
+}
+
+func recordFieldsByName(r *Record) map[string]Field {
+	fields := make(map[string]Field, len(r.Fields))
+	for _, field := range r.Fields {
+		fields[field.Name] = field
+	}
+	return fields
+}
+
+func hasConflictingRequiredLiteralField(a, b *Record) bool {
+	fieldsA := recordFieldsByName(a)
+	fieldsB := recordFieldsByName(b)
+	for name, fa := range fieldsA {
+		fb, ok := fieldsB[name]
+		if !ok {
+			continue
+		}
+		if fa.Optional || fb.Optional {
+			continue
+		}
+		la, oka := literalType(fa.Type)
+		lb, okb := literalType(fb.Type)
+		if !oka || !okb {
+			continue
+		}
+		if la.Base != kind.String || lb.Base != kind.String {
+			continue
+		}
+		if !TypeEquals(la, lb) {
+			return true
+		}
+	}
+	return false
+}
+
+func literalType(t Type) (*Literal, bool) {
+	for {
+		a, ok := t.(*Alias)
+		if !ok {
+			break
+		}
+		t = a.Target
+	}
+	lit, ok := t.(*Literal)
+	return lit, ok
 }
 
 // JoinBranchOutcome merges mutually-exclusive expression outcomes (for example,

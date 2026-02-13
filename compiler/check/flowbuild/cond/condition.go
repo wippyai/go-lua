@@ -742,6 +742,23 @@ func (ce *ConditionExtractor) constraintsFromPathLiteral(expr ast.Expr, lit *typ
 	if target, key, ok := flowpath.SplitIndexPath(path); ok {
 		return []constraint.Constraint{constraint.IndexEquals{Target: target, Key: key, Value: lit}}
 	}
+	// Boolean literal equality on a path must remain portable across function
+	// boundaries (effects are applied in callers with different TypeKeys maps).
+	// Encode `x == false` as falsy + non-nil and `x == true` as truthy + boolean.
+	if lit.Base == kind.Boolean {
+		if b, ok := lit.Value.(bool); ok {
+			if b {
+				return []constraint.Constraint{
+					constraint.Truthy{Path: path},
+					constraint.HasType{Path: path, Type: narrow.BuiltinTypeKey("boolean")},
+				}
+			}
+			return []constraint.Constraint{
+				constraint.Falsy{Path: path},
+				constraint.NotNil{Path: path},
+			}
+		}
+	}
 	if typeKey, ok := ce.literalTypeKey(lit); ok {
 		return []constraint.Constraint{constraint.HasType{Path: path, Type: typeKey}}
 	}

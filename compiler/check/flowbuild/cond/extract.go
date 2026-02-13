@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	checkeffects "github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/numconst"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -27,11 +28,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/sibling"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // ExtractEdgeConstraints extracts type constraints from branch conditions.
@@ -577,51 +576,25 @@ func ExtractFunctionEffect(
 	graph *cfg.Graph,
 	moduleBindings *bind.BindingTable,
 ) *constraint.FunctionEffect {
-	candidates := calleeSymbolCandidatesForEffects(info, graph, moduleBindings)
-
-	// Primary lookup: by canonical callsite symbol candidates.
-	if effectLookupSym != nil {
-		for _, sym := range candidates {
-			if eff := effectLookupSym(sym); eff != nil {
-				return eff
-			}
-		}
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
 	}
-
-	// Fallback: extract effect from synthesized type
-	if synthFn != nil && info.Callee != nil {
-		if fnType := synthFn(info.Callee, p); fnType != nil {
-			if eff := ExtractEffectFromType(fnType); eff != nil {
-				return eff
-			}
-		}
-	}
-
-	// Fallback: extract effect from resolved type
-	if symResolver != nil {
-		for _, sym := range candidates {
-			if looked, ok := symResolver(p, sym); ok {
-				if eff := ExtractEffectFromType(looked); eff != nil {
-					return eff
-				}
-			}
-		}
-	}
-
-	return nil
+	return callsite.ResolveCalleeEffect(
+		info,
+		p,
+		graph,
+		bindings,
+		moduleBindings,
+		effectLookupSym,
+		synthFn,
+		symResolver,
+		checkeffects.EffectFromType,
+	)
 }
 
 func ExtractEffectFromType(t typ.Type) *constraint.FunctionEffect {
-	if t == nil {
-		return nil
-	}
-	unwrapped := unwrap.Alias(t)
-	if fn, ok := unwrapped.(*typ.Function); ok && fn != nil && fn.Refinement != nil {
-		if e, ok := fn.Refinement.(*constraint.FunctionEffect); ok {
-			return e
-		}
-	}
-	return nil
+	return checkeffects.EffectFromType(t)
 }
 
 // CallTerminates checks if a call is to a function that never returns.
@@ -638,61 +611,24 @@ func CallTerminates(
 	if info == nil {
 		return false
 	}
-	candidates := calleeSymbolCandidatesForEffects(info, graph, moduleBindings)
-
-	// Primary check: canonical callsite symbol candidates.
-	if effectLookupSym != nil {
-		for _, sym := range candidates {
-			if eff := effectLookupSym(sym); eff != nil && eff.Terminates {
-				return true
-			}
-		}
-	}
-
-	// Check synthesized type for termination indicators
-	var fnType typ.Type
-	if synthFn != nil && info.Callee != nil {
-		fnType = synthFn(info.Callee, p)
-	}
-	if fnType == nil && symResolver != nil {
-		for _, sym := range candidates {
-			if looked, ok := symResolver(p, sym); ok {
-				fnType = looked
-				if fnType != nil {
-					break
-				}
-			}
-		}
-	}
-	if fn, ok := fnType.(*typ.Function); ok && fn != nil {
-		if len(fn.Returns) == 1 && fn.Returns[0] != nil && fn.Returns[0].Kind().IsNever() {
-			return true
-		}
-		if fn.Refinement != nil {
-			if eff, ok := fn.Refinement.(*constraint.FunctionEffect); ok && eff.Terminates {
-				return true
-			}
-		}
-		if fn.Effects != nil {
-			if row, ok := fn.Effects.(effect.Row); ok {
-				// Only Diverge marks definite non-return.
-				// Throw means MAY throw, not always throws.
-				if row.HasDiverge() {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
-func calleeSymbolCandidatesForEffects(info *cfg.CallInfo, graph *cfg.Graph, moduleBindings *bind.BindingTable) []cfg.SymbolID {
 	var bindings *bind.BindingTable
 	if graph != nil {
 		bindings = graph.Bindings()
 	}
-	return callsite.CalleeSymbolCandidatesWithAliases(info, graph, bindings, moduleBindings)
+	if eff := callsite.ResolveCalleeEffect(
+		info,
+		p,
+		graph,
+		bindings,
+		moduleBindings,
+		effectLookupSym,
+		synthFn,
+		symResolver,
+		checkeffects.EffectFromType,
+	); eff != nil && eff.Terminates {
+		return true
+	}
+	return false
 }
 
 // PointHasTerminatingCallSite reports whether any callsite represented at point p

@@ -334,6 +334,22 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		return explicit
 	}
 
+	// Prefer concrete explicit child-path facts over placeholder parent-derived facts.
+	if derived.Kind().IsPlaceholder() && !explicit.Kind().IsPlaceholder() {
+		return explicit
+	}
+	if explicit.Kind().IsPlaceholder() && !derived.Kind().IsPlaceholder() {
+		return derived
+	}
+
+	// If one is a subtype of the other, keep the more specific type.
+	if subtype.IsSubtype(explicit, derived) {
+		return explicit
+	}
+	if subtype.IsSubtype(derived, explicit) {
+		return derived
+	}
+
 	// If explicit is narrower (e.g., string vs string?), prefer explicit
 	// This happens when a field assignment provides a flow-narrowed type
 	if opt, ok := derived.(*typ.Optional); ok {

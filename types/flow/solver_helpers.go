@@ -2,6 +2,7 @@ package flow
 
 import (
 	"slices"
+	"sort"
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -244,13 +245,27 @@ func (s *Solution) buildEdgeConditionDependencies() dependencyMap {
 //
 // Returns the updated worklist (may be the same slice if no growth occurred).
 func addDependentPoints(deps dependencyMap, changedKeys []string, worklist []cfg.Point, inQueue map[cfg.Point]bool) []cfg.Point {
-	for _, key := range changedKeys {
+	if len(changedKeys) == 0 {
+		return worklist
+	}
+	keys := append([]string(nil), changedKeys...)
+	sort.Strings(keys)
+
+	pending := make(map[cfg.Point]bool)
+	points := make([]cfg.Point, 0)
+	for _, key := range keys {
 		for _, point := range deps[key] {
-			if !inQueue[point] {
-				worklist = append(worklist, point)
-				inQueue[point] = true
+			if inQueue[point] || pending[point] {
+				continue
 			}
+			pending[point] = true
+			points = append(points, point)
 		}
+	}
+	slices.Sort(points)
+	for _, point := range points {
+		worklist = append(worklist, point)
+		inQueue[point] = true
 	}
 	return worklist
 }

@@ -93,7 +93,6 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 }
 
 func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State) {
-	store := sess.StoreHandle()
 	maxIterations := d.cfg.MaxIterations
 	if maxIterations < 1 {
 		maxIterations = 1
@@ -101,31 +100,16 @@ func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, par
 
 	converged := false
 	for iter := 0; iter < maxIterations; iter++ {
-		if d.cfg.FuncResultQ != nil {
-			d.cfg.FuncResultQ.Clear()
-		}
-		sess.ResetDiagnostics()
-
-		scopeState := sess.ScopeDepthDiagState()
-		for k := range scopeState {
-			delete(scopeState, k)
-		}
-
+		d.prepareIterationState(sess)
 		d.checkFunctionFixpoint(sess, fn, parent)
-
-		changed := false
-		if store != nil {
-			changed = store.FixpointSwap()
-		}
-		if !changed {
+		if d.advanceFixpoint(sess.StoreHandle()) {
 			converged = true
 			break
 		}
-
-		store.BumpRevision()
 	}
 
 	if !converged {
+		store := sess.StoreHandle()
 		diffs := []string(nil)
 		if store != nil {
 			diffs = store.FixpointChannelDiffs()
@@ -142,6 +126,29 @@ func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, par
 	}
 }
 
+func (d *Driver) prepareIterationState(sess api.AnalysisSession) {
+	if d.cfg.FuncResultQ != nil {
+		d.cfg.FuncResultQ.Clear()
+	}
+	sess.ResetDiagnostics()
+
+	scopeState := sess.ScopeDepthDiagState()
+	for k := range scopeState {
+		delete(scopeState, k)
+	}
+}
+
+func (d *Driver) advanceFixpoint(store api.IterationStore) bool {
+	if store == nil {
+		return true
+	}
+	if !store.FixpointSwap() {
+		return true
+	}
+	store.BumpRevision()
+	return false
+}
+
 func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State) {
 	graph := sess.GetOrBuildCFG(fn)
 	if graph == nil {
@@ -149,139 +156,18 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 	}
 
 	store := sess.StoreHandle()
-	parentHash := uint64(0)
-	if store != nil {
-		if stable := store.GraphParentHashOf(graph.ID()); stable != 0 {
-			parentHash = stable
-		}
-	}
-	if parentHash == 0 && parent != nil {
-		parentHash = parent.Hash()
-	}
+	parentHash := d.registerParentScope(store, graph.ID(), parent)
 
-	if store != nil {
-		store.SetParentScope(parentHash, parent)
-	}
+	d.runReturnInference(sess, graph, parent, store)
 
-	if store != nil {
-		inferencer := returninfer.New(returninfer.Config{
-			Types:         d.cfg.Types,
-			GlobalTypes:   d.cfg.GlobalTypes,
-			Manifests:     d.cfg.Manifests,
-			Stdlib:        d.cfg.Stdlib,
-			Store:         store,
-			Graphs:        sess,
-			SourceName:    sess.Source(),
-			MaxIterations: returns.MaxReturnSummaryIterations,
-		})
-		var effectLookup constraint.EffectLookupBySym
-		if es := store.EffectStore(); es != nil {
-			effectLookup = es.LookupEffectBySym
-		}
-		var parentFacts flow.TypeFacts
-
-		if meta, ok := store.NestedMetaFor(graph.ID()); ok && meta.ParentGraphID != 0 {
-			if results := sess.ResultsMap(); results != nil {
-				if parentGraph := store.Graphs()[meta.ParentGraphID]; parentGraph != nil {
-					if parentFn := store.FuncForGraph(parentGraph); parentFn != nil {
-						if parentResult := results[parentFn]; parentResult != nil {
-							parentFacts = parentResult.Facts
-						}
-					}
-				}
-			}
-		}
-
-		summaries, funcTypes, diags := inferencer.ComputeForGraph(returninfer.RunContext{
-			Ctx:          sess.Context(),
-			ParentFacts:  parentFacts,
-			EffectLookup: effectLookup,
-		}, graph, parent)
-		if len(diags) > 0 {
-			sess.AppendDiagnostics(diags...)
-		}
-		if len(summaries) > 0 {
-			if key, ok := store.GraphKeyFor(graph, parent); ok {
-				store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
-					for sym, rets := range summaries {
-						reconciled := returns.ReconcileFunctionFact(returns.ReconcileFunctionFactInput{
-							ExistingSummary:  facts.ReturnSummaries[sym],
-							ExistingNarrow:   facts.NarrowReturns[sym],
-							ExistingFunc:     facts.FuncTypes[sym],
-							CandidateSummary: rets,
-							CandidateFunc:    funcTypes[sym],
-						})
-						if len(reconciled.Summary) > 0 {
-							if facts.ReturnSummaries == nil {
-								facts.ReturnSummaries = make(api.ReturnSummaries, len(summaries))
-							}
-							facts.ReturnSummaries[sym] = reconciled.Summary
-						}
-						if len(reconciled.Narrow) > 0 {
-							if facts.NarrowReturns == nil {
-								facts.NarrowReturns = make(api.NarrowReturnSummaries, len(summaries))
-							}
-							facts.NarrowReturns[sym] = reconciled.Narrow
-						}
-						if reconciled.Func != nil {
-							if facts.FuncTypes == nil {
-								facts.FuncTypes = make(api.FuncTypes, len(summaries))
-							}
-							facts.FuncTypes[sym] = reconciled.Func
-						}
-					}
-				})
-			}
-		}
-	}
-
-	var revision uint64
-	if store != nil {
-		revision = store.Revision()
-	}
-
-	result := (*api.FuncResult)(nil)
-	if d.cfg.FuncResultQ != nil {
-		result = d.cfg.FuncResultQ.Get(sess.Context(), api.FuncKey{
-			GraphID:       graph.ID(),
-			ParentHash:    parentHash,
-			StoreRevision: revision,
-		})
-	}
+	result := d.loadFunctionResult(sess, graph.ID(), parentHash, store)
 	if result == nil {
 		return
 	}
 
 	results := sess.ResultsMap()
-	if results != nil {
-		results[fn] = result
-	}
-	if fn == sess.RootFuncNode() {
-		sess.SetRootResultValue(result)
-	}
-
-	if d.cfg.EmitScopeDiag && d.cfg.MaxScopeDepth > 0 && result.DepthLimitExceeded {
-		scopeState := sess.ScopeDepthDiagState()
-		if !scopeState[fn] {
-			pos := diag.Position{File: sess.Source()}
-			span := diag.Span{}
-			if fn != nil && fn.Line() > 0 {
-				pos.Line = fn.Line()
-				pos.Column = fn.Column()
-				span.StartLine = fn.Line()
-				span.StartCol = fn.Column()
-				span.EndLine = fn.LastLine()
-				span.EndCol = fn.LastColumn()
-			}
-			sess.AppendDiagnostics(diag.Diagnostic{
-				Position: pos,
-				Span:     span,
-				Severity: diag.SeverityWarning,
-				Message:  fmt.Sprintf("scope depth limit exceeded (max=%d); analysis may be incomplete", d.cfg.MaxScopeDepth),
-			})
-			scopeState[fn] = true
-		}
-	}
+	d.recordFunctionResult(sess, fn, result, results)
+	d.emitScopeDepthDiagnostic(sess, fn, result)
 
 	funcSym := cfg.SymbolID(0)
 	if store != nil {
@@ -291,7 +177,16 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 	}
 	d.storeFunctionEffect(store, result, funcSym)
 	interprocinfer.StoreFactsFromResult(store, fn, result, parent)
+	d.processNestedFunctions(sess, store, graph, results, result)
+}
 
+func (d *Driver) processNestedFunctions(
+	sess api.AnalysisSession,
+	store api.IterationStore,
+	graph *cfg.Graph,
+	results map[*ast.FunctionExpr]*api.FuncResult,
+	result *api.FuncResult,
+) {
 	nestedProc := nestedinfer.New(nestedinfer.Config{
 		Stdlib: d.cfg.Stdlib,
 		Store:  store,
@@ -308,6 +203,152 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 		RootResult: api.ViewFromResult(sess.RootResultValue()),
 	})
 	nestedProc.ProcessNestedFunctions(graph, api.ViewFromResult(result))
+}
+
+func (d *Driver) registerParentScope(store api.IterationStore, graphID uint64, parent *scope.State) uint64 {
+	parentHash := api.ParentHashForGraph(store, graphID, parent)
+	if store != nil && parentHash != 0 {
+		store.SetParentScope(parentHash, parent)
+	}
+	return parentHash
+}
+
+func (d *Driver) runReturnInference(
+	sess api.AnalysisSession,
+	graph *cfg.Graph,
+	parent *scope.State,
+	store api.IterationStore,
+) {
+	if store == nil || graph == nil {
+		return
+	}
+
+	inferencer := returninfer.New(returninfer.Config{
+		Types:         d.cfg.Types,
+		GlobalTypes:   d.cfg.GlobalTypes,
+		Manifests:     d.cfg.Manifests,
+		Stdlib:        d.cfg.Stdlib,
+		Store:         store,
+		Graphs:        sess,
+		SourceName:    sess.Source(),
+		MaxIterations: returns.MaxReturnSummaryIterations,
+	})
+
+	var effectLookup constraint.EffectLookupBySym
+	if es := store.EffectStore(); es != nil {
+		effectLookup = es.LookupEffectBySym
+	}
+
+	summaries, funcTypes, diags := inferencer.ComputeForGraph(returninfer.RunContext{
+		Ctx:          sess.Context(),
+		ParentFacts:  d.parentFactsForGraph(sess, store, graph.ID()),
+		EffectLookup: effectLookup,
+	}, graph, parent)
+	if len(diags) > 0 {
+		sess.AppendDiagnostics(diags...)
+	}
+	if len(summaries) == 0 {
+		return
+	}
+	if key, ok := store.GraphKeyFor(graph, parent); ok {
+		store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
+			returns.MergeFunctionFactsIntoFacts(facts, summaries, nil, funcTypes)
+		})
+	}
+}
+
+func (d *Driver) parentFactsForGraph(
+	sess api.AnalysisSession,
+	store api.IterationStore,
+	graphID uint64,
+) flow.TypeFacts {
+	if store == nil || graphID == 0 {
+		return nil
+	}
+	meta, ok := store.NestedMetaFor(graphID)
+	if !ok || meta.ParentGraphID == 0 {
+		return nil
+	}
+	results := sess.ResultsMap()
+	if results == nil {
+		return nil
+	}
+	parentGraph := store.Graphs()[meta.ParentGraphID]
+	if parentGraph == nil {
+		return nil
+	}
+	parentFn := store.FuncForGraph(parentGraph)
+	if parentFn == nil {
+		return nil
+	}
+	parentResult := results[parentFn]
+	if parentResult == nil {
+		return nil
+	}
+	return parentResult.Facts
+}
+
+func (d *Driver) loadFunctionResult(
+	sess api.AnalysisSession,
+	graphID, parentHash uint64,
+	store api.IterationStore,
+) *api.FuncResult {
+	if d.cfg.FuncResultQ == nil {
+		return nil
+	}
+	revision := uint64(0)
+	if store != nil {
+		revision = store.Revision()
+	}
+	return d.cfg.FuncResultQ.Get(sess.Context(), api.FuncKey{
+		GraphID:       graphID,
+		ParentHash:    parentHash,
+		StoreRevision: revision,
+	})
+}
+
+func (d *Driver) recordFunctionResult(
+	sess api.AnalysisSession,
+	fn *ast.FunctionExpr,
+	result *api.FuncResult,
+	results map[*ast.FunctionExpr]*api.FuncResult,
+) {
+	if result == nil {
+		return
+	}
+	if results != nil {
+		results[fn] = result
+	}
+	if fn == sess.RootFuncNode() {
+		sess.SetRootResultValue(result)
+	}
+}
+
+func (d *Driver) emitScopeDepthDiagnostic(sess api.AnalysisSession, fn *ast.FunctionExpr, result *api.FuncResult) {
+	if result == nil || !d.cfg.EmitScopeDiag || d.cfg.MaxScopeDepth <= 0 || !result.DepthLimitExceeded {
+		return
+	}
+	scopeState := sess.ScopeDepthDiagState()
+	if scopeState[fn] {
+		return
+	}
+	pos := diag.Position{File: sess.Source()}
+	span := diag.Span{}
+	if fn != nil && fn.Line() > 0 {
+		pos.Line = fn.Line()
+		pos.Column = fn.Column()
+		span.StartLine = fn.Line()
+		span.StartCol = fn.Column()
+		span.EndLine = fn.LastLine()
+		span.EndCol = fn.LastColumn()
+	}
+	sess.AppendDiagnostics(diag.Diagnostic{
+		Position: pos,
+		Span:     span,
+		Severity: diag.SeverityWarning,
+		Message:  fmt.Sprintf("scope depth limit exceeded (max=%d); analysis may be incomplete", d.cfg.MaxScopeDepth),
+	})
+	scopeState[fn] = true
 }
 
 func (d *Driver) storeFunctionEffect(store api.IterationStore, result *api.FuncResult, funcSym cfg.SymbolID) {

@@ -480,6 +480,9 @@ func unaryMinus(operand typ.Type) typ.Type {
 	if operand.Kind() == kind.Integer {
 		return typ.Integer
 	}
+	if lit, ok := operand.(*typ.Literal); ok && lit.Base == kind.Integer {
+		return typ.Integer
+	}
 
 	return typ.Number
 }

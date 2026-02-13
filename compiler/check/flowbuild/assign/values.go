@@ -3,10 +3,9 @@ package assign
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-type symbolResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool)
 
 func expandedAssignValues(synthAPI api.SynthAPI, info *cfg.AssignInfo, p cfg.Point, specTypes api.SpecTypes) []typ.Type {
 	if synthAPI == nil || info == nil || len(info.Targets) == 0 || len(info.Sources) == 0 {
@@ -23,7 +22,7 @@ func rhsSpecTypesAtAssignPoint(
 	info *cfg.AssignInfo,
 	p cfg.Point,
 	base api.SpecTypes,
-	resolve symbolResolver,
+	resolve checkcallsite.SymbolTypeAtPoint,
 ) api.SpecTypes {
 	if graph == nil || info == nil || resolve == nil || len(info.Targets) == 0 {
 		return base
@@ -39,7 +38,6 @@ func rhsSpecTypesAtAssignPoint(
 		return base
 	}
 
-	preds := graph.Predecessors(p)
 	var out api.SpecTypes
 	override := func(sym cfg.SymbolID, t typ.Type) {
 		if t == nil || t.Kind().IsPlaceholder() {
@@ -59,23 +57,7 @@ func rhsSpecTypesAtAssignPoint(
 	}
 
 	for sym := range targetSyms {
-		var joined typ.Type
-		if len(preds) > 0 {
-			for _, pred := range preds {
-				if t, ok := resolve(pred, sym); ok && t != nil {
-					if joined == nil {
-						joined = t
-					} else {
-						joined = typ.JoinPreferNonSoft(joined, t)
-					}
-				}
-			}
-		}
-		if joined == nil {
-			if t, ok := resolve(p, sym); ok && t != nil {
-				joined = t
-			}
-		}
+		joined := checkcallsite.PreAssignmentTypeAtJoinOrPoint(graph, p, sym, checkcallsite.SymbolTypeAtPoint(resolve))
 		override(sym, joined)
 	}
 
