@@ -190,6 +190,11 @@ func TestHasLength_Collections(t *testing.T) {
 	if !HasLength(rec) {
 		t.Error("record should have length")
 	}
+
+	tuple := typ.NewTuple(typ.Integer, typ.Integer, typ.Integer)
+	if !HasLength(tuple) {
+		t.Error("tuple should have length")
+	}
 }
 
 func TestHasLength_Optional(t *testing.T) {
@@ -231,9 +236,13 @@ func TestIsBitwiseNumeric(t *testing.T) {
 	}{
 		{"integer", typ.Integer, true},
 		{"number", typ.Number, true},
+		{"integer literal", typ.LiteralInt(5), true},
+		{"number literal", typ.LiteralNumber(5.5), true},
 		{"any", typ.Any, true},
 		{"unknown", typ.Unknown, true},
 		{"string", typ.String, false},
+		{"optional integer", typ.NewOptional(typ.Integer), false},
+		{"integer or nil", typ.NewUnion(typ.Integer, typ.Nil), false},
 		{"nil", typ.Nil, false},
 	}
 	for _, tt := range tests {

@@ -206,6 +206,14 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 	case *ast.StringConcatOpExpr:
 		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
 		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
+	case *ast.UnaryMinusOpExpr:
+		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
+		diags = append(diags, checkUnaryMinus(e, p, narrowView, sourceName)...)
+	case *ast.UnaryBNotOpExpr:
+		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
+		diags = append(diags, checkUnaryBNot(e, p, narrowView, sourceName)...)
+	case *ast.UnaryNotOpExpr:
+		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
 	}
 
 	return diags
@@ -286,6 +294,40 @@ func checkArithmetic(e *ast.ArithmeticOpExpr, p cfg.Point, narrowView api.BaseSy
 		return []diag.Diagnostic{*d}
 	}
 	return nil
+}
+
+func checkUnaryMinus(e *ast.UnaryMinusOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+	t := narrowView.TypeOf(e.Expr, p)
+	if t == nil || ops.IsNumeric(t) {
+		return nil
+	}
+	msg := "cannot apply unary - to " + typ.FormatShort(t) + ", expected number"
+	_, help := diag.ContextualHelp(diag.ErrInvalidOperand, msg, "")
+	return []diag.Diagnostic{{
+		Severity: diag.SeverityError,
+		Code:     diag.ErrInvalidOperand,
+		Position: diag.Position{File: sourceName, Line: e.Expr.Line(), Column: e.Expr.Column()},
+		Span:     ast.SpanOf(e.Expr),
+		Message:  msg,
+		Help:     help,
+	}}
+}
+
+func checkUnaryBNot(e *ast.UnaryBNotOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+	t := narrowView.TypeOf(e.Expr, p)
+	if t == nil || ops.IsBitwiseNumeric(t) {
+		return nil
+	}
+	msg := "cannot apply unary ~ to " + typ.FormatShort(t) + ", expected integer"
+	_, help := diag.ContextualHelp(diag.ErrInvalidOperand, msg, "")
+	return []diag.Diagnostic{{
+		Severity: diag.SeverityError,
+		Code:     diag.ErrInvalidOperand,
+		Position: diag.Position{File: sourceName, Line: e.Expr.Line(), Column: e.Expr.Column()},
+		Span:     ast.SpanOf(e.Expr),
+		Message:  msg,
+		Help:     help,
+	}}
 }
 
 func checkNumericFor(info *cfg.NumericForInfo, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {

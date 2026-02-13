@@ -180,6 +180,26 @@ func TestErrorDetection(t *testing.T) {
 			WantError: true,
 			Stdlib:    true,
 		},
+		{
+			Name: "unary minus on string",
+			Code: `
+				local function f(x: string): number
+					return -x
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
+		{
+			Name: "bitwise not on string",
+			Code: `
+				local function f(x: string): integer
+					return ~x
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
 	}
 	testutil.RunCases(t, tests)
 }

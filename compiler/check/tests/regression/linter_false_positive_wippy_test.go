@@ -382,9 +382,9 @@ local suite_names = sorted_keys(suites)
 
 for idx, name in ipairs(suite_names) do
     local tests = suites[name]
-    local count: number = #tests
+    local present = tests ~= nil
 end
-`
+	`
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		for _, e := range result.Errors {

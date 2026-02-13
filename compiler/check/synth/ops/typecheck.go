@@ -266,11 +266,6 @@ func hasLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	if t == nil {
 		return false
 	}
-
-	t = ExtractFirstValue(t)
-	if t == nil {
-		return false
-	}
 	next, ok := guard.Enter(t)
 	if !ok {
 		return false
@@ -346,13 +341,50 @@ func IsStringOnly(t typ.Type) bool {
 // IsBitwiseNumeric checks if a type supports bitwise operators (&, |, ~, <<, >>).
 //
 // Only integer and number types (and placeholders) support bitwise operations.
-// Unlike IsNumeric, this does not recursively check unions/aliases.
+// Optional types are rejected until narrowed.
 func IsBitwiseNumeric(t typ.Type) bool {
+	return isBitwiseNumericGuard(t, typ.NewGuard())
+}
+
+func isBitwiseNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	if t == nil {
 		return false
 	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Union:
+		for _, m := range v.Members {
+			if !isBitwiseNumericGuard(m, next) {
+				return false
+			}
+		}
+		return len(v.Members) > 0
+
+	case *typ.Intersection:
+		for _, m := range v.Members {
+			if !isBitwiseNumericGuard(m, next) {
+				return false
+			}
+		}
+		return len(v.Members) > 0
+
+	case *typ.Alias:
+		if v.Target == nil {
+			return false
+		}
+		return isBitwiseNumericGuard(v.Target, next)
+
+	case *typ.Optional:
+		return false
+
+	case *typ.Literal:
+		return v.Base == kind.Integer || v.Base == kind.Number
+	}
 
 	k := t.Kind()
-
 	return k == kind.Integer || k == kind.Number || k.IsPlaceholder()
 }
