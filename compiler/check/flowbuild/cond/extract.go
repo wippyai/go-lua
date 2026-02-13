@@ -431,47 +431,50 @@ func ConstraintsFromCallOnReturn(
 		EffectBySym:   effectLookupSym,
 	}
 
-	var result constraint.Condition
-	for _, disj := range eff.OnReturn.Disjuncts {
-		subDisj := constraint.SubstituteConjunction(disj, argPaths)
-		subDisj = normalizePathConstraints(subDisj)
-		subDisj = append(subDisj, siblingConstraintsFromOnReturn(subDisj, inputs, bindings, graph, p)...)
-		cond := constraint.FromConjunction(subDisj)
+	// OnReturn summarizes all normal-return paths. At call sites we may only
+	// apply constraints guaranteed across every disjunct; disjunct-local facts
+	// are not branch-correlated in caller flow and cause unsound narrowing.
+	templateMust := eff.OnReturn.MustConstraints()
+	if len(templateMust) == 0 {
+		return constraint.Condition{}
+	}
 
-		for _, c := range disj {
-			switch v := c.(type) {
-			case constraint.Falsy:
-				if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(info.Args)); ok && argPaths[idx].IsEmpty() {
-					fallback := ce.ConditionFromExpr(info.Args[idx])
-					if fallback.HasConstraints() {
-						fallback = constraint.Not(fallback)
-						cond = constraint.And(cond, fallback)
-					}
+	must := make([]constraint.Constraint, 0, len(templateMust))
+	for _, c := range templateMust {
+		switch v := c.(type) {
+		case constraint.Falsy:
+			if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(info.Args)); ok && argPaths[idx].IsEmpty() {
+				fallback := ce.ConditionFromExpr(info.Args[idx])
+				if fallback.HasConstraints() {
+					must = append(must, constraint.Not(fallback).MustConstraints()...)
 				}
-			case constraint.Truthy:
-				if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(info.Args)); ok && argPaths[idx].IsEmpty() {
-					fallback := ce.ConditionFromExpr(info.Args[idx])
-					if fallback.HasConstraints() {
-						cond = constraint.And(cond, fallback)
-					}
+				continue
+			}
+		case constraint.Truthy:
+			if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(info.Args)); ok && argPaths[idx].IsEmpty() {
+				fallback := ce.ConditionFromExpr(info.Args[idx])
+				if fallback.HasConstraints() {
+					must = append(must, fallback.MustConstraints()...)
 				}
+				continue
 			}
 		}
 
-		if cond.IsTrue() {
-			return constraint.TrueCondition()
-		}
-		if cond.IsFalse() || !cond.HasConstraints() {
-			continue
-		}
-		if !result.HasConstraints() {
-			result = cond
-		} else {
-			result = constraint.Or(result, cond)
-		}
+		sub := constraint.FromConstraints(c).Substitute(argPaths)
+		must = append(must, sub.MustConstraints()...)
 	}
 
-	return result
+	must = normalizePathConstraints(must)
+	if len(must) == 0 {
+		return constraint.Condition{}
+	}
+	must = append(must, siblingConstraintsFromOnReturn(must, inputs, bindings, graph, p)...)
+	cond := constraint.FromConjunction(must)
+
+	if cond.IsFalse() || !cond.HasConstraints() {
+		return constraint.Condition{}
+	}
+	return cond
 }
 
 func siblingConstraintsFromOnReturn(disj []constraint.Constraint, inputs *flow.Inputs, bindings *bind.BindingTable, graph *cfg.Graph, p cfg.Point) []constraint.Constraint {

@@ -79,6 +79,45 @@ func TestConstraintsFromCallOnReturn_NilInfo(t *testing.T) {
 	}
 }
 
+func TestConstraintsFromCallOnReturn_OnlyAppliesMustConstraints(t *testing.T) {
+	sym := typecfg.SymbolID(101)
+	info := &cfg.CallInfo{
+		CalleeSymbol: sym,
+		Args:         []ast.Expr{&ast.IdentExpr{Value: "x"}},
+	}
+
+	effectLookup := func(id typecfg.SymbolID) *constraint.FunctionEffect {
+		if id != sym {
+			return nil
+		}
+		p0 := constraint.NewPlaceholder(0)
+		return &constraint.FunctionEffect{
+			OnReturn: constraint.FromDisjuncts([][]constraint.Constraint{
+				{constraint.Truthy{Path: p0}},
+				{constraint.Falsy{Path: p0}},
+			}),
+		}
+	}
+
+	result := ConstraintsFromCallOnReturn(
+		info,
+		0,
+		nil,
+		nil,
+		nil,
+		nil,
+		effectLookup,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	if result.HasConstraints() {
+		t.Fatalf("expected no propagated constraints for non-guaranteed OnReturn, got: %v", result.Disjuncts)
+	}
+}
+
 func TestConstraintsFromAssignOnReturn_NilInfo(t *testing.T) {
 	result := ConstraintsFromAssignOnReturn(nil, 0, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if result.HasConstraints() {
