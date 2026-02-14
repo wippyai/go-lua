@@ -359,7 +359,7 @@ func (e *Engine) Context() *db.QueryContext {
 // Return transforms (like effect returns) are only applied during
 // narrowing phase when full type information is available.
 func (e *Engine) AllowReturnTransforms() bool {
-	return e.phase == api.PhaseNarrowing
+	return e.IsNarrowing()
 }
 
 // Phase returns the current compilation phase.

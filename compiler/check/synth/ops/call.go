@@ -474,7 +474,7 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 			continue
 		}
 		aggExpected = mergeExpectedArgVectors(aggExpected, expectedArgs)
-		aggVariadic = mergeExpectedArgType(aggVariadic, expectedVariadic)
+		aggVariadic = typ.JoinPreferNonSoft(aggVariadic, expectedVariadic)
 	}
 
 	if found {
@@ -502,13 +502,9 @@ func mergeExpectedArgVectors(a, b []typ.Type) []typ.Type {
 		if i < len(b) {
 			bi = b[i]
 		}
-		out[i] = mergeExpectedArgType(ai, bi)
+		out[i] = typ.JoinPreferNonSoft(ai, bi)
 	}
 	return out
-}
-
-func mergeExpectedArgType(a, b typ.Type) typ.Type {
-	return typ.JoinPreferNonSoft(a, b)
 }
 
 // computeExpectedArgs computes the expected type for each argument position.

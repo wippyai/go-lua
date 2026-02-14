@@ -63,7 +63,7 @@ func ReturnSummariesEqual(a, b api.ReturnSummaries) bool {
 
 // ParamHintsEqual checks if two param hint maps are equal.
 func ParamHintsEqual(a, b api.ParamHints) bool {
-	return symbolTypeVectorMapEqual(a, b)
+	return ReturnSummariesEqual(a, b)
 }
 
 // FuncTypesEqual checks if two function-type maps are equal.
@@ -87,7 +87,7 @@ func LiteralSigsEqual(a, b api.LiteralSigs) bool {
 
 // CapturedTypesEqual checks if two captured type maps are equal.
 func CapturedTypesEqual(a, b api.CapturedTypes) bool {
-	return symbolTypeMapEqual(a, b)
+	return FuncTypesEqual(a, b)
 }
 
 func symbolTypeVectorMapEqual(a map[cfg.SymbolID][]typ.Type, b map[cfg.SymbolID][]typ.Type) bool {
