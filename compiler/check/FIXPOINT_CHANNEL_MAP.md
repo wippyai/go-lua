@@ -16,9 +16,10 @@ Use it before changing return inference, interproc facts, or widening.
 | Channel | Stored In | Main Producer(s) | Main Consumer(s) | Merge/Swap Policy |
 |---|---|---|---|---|
 | `Effects` | `InterprocPrev/Next.Effects` | `driver.storeFunctionEffect` | effect lookup in flow extraction and termination checks | replace snapshot each iteration (`FixpointSwap`) |
-| `ReturnSummaries` | `Facts.ReturnSummaries` | pre-flow return inferencer (`driver.checkFunctionFixpoint` + `infer/return`) | scope/flow declared phase, sibling seeding, postflow alignment | widened in `returns.WidenFacts` via `WidenReturnSummaries` |
-| `NarrowReturns` | `Facts.NarrowReturns` | `interproc.StoreFactsFromResult` | narrowing env in runner | widened in `returns.WidenFacts`; also used to refine summaries |
-| `FuncTypes` | `Facts.FuncTypes` | `interproc.StoreFactsFromResult` | `runner` sibling lookup, nested self/type enrichment | widened via `WidenFuncTypes` |
+| `FunctionFacts` | `Facts.FunctionFacts` | pre-flow + post-flow via `returns.MergeFunctionFactIntoFacts` / `returns.MergeFunctionFactsIntoFacts` | declared phase, narrowing phase, sibling snapshots, callsite typing | widened in `returns.WidenFacts` via canonical `ReconcileFunctionFact` |
+| `ReturnSummaries` | `Facts.ReturnSummaries` | compatibility mirror derived from canonical writes | legacy read surfaces expecting summary maps | rewritten from `FunctionFacts` in `returns.NormalizeFunctionFactChannels` |
+| `NarrowReturns` | `Facts.NarrowReturns` | compatibility mirror derived from canonical writes | legacy narrowing env map surfaces | rewritten from `FunctionFacts` in `returns.NormalizeFunctionFactChannels` |
+| `FuncTypes` | `Facts.FuncTypes` | compatibility mirror derived from canonical writes | legacy sibling/type lookup surfaces | rewritten from `FunctionFacts` in `returns.NormalizeFunctionFactChannels` |
 | `ParamHints` | `Facts.ParamHints` | `interproc.CollectParamHintsFromResult` | `infer/return`, `infer/paramhints` | widened via `WidenParamHints` |
 | `LiteralSigs` | `Facts.LiteralSigs` + scratch | `interproc.StoreFactsFromResult`, scratch from runner | literal signature provider in runner | widened via `WidenLiteralSigs`; scratch cleared each iteration |
 | `CapturedTypes` | `Facts.CapturedTypes` | `infer/nested` | `runner` declared types merge, return infer captured overlay | widened via `WidenCapturedTypes` |
@@ -38,19 +39,12 @@ Use it before changing return inference, interproc facts, or widening.
 
 ## Current Architectural Risk (Root Cause Class)
 
-Precision for local function typing is currently split across multiple channels:
+Primary root-cause class was split policy across `ReturnSummaries` / `NarrowReturns` /
+`FuncTypes`. That path has been canonicalized around `FunctionFacts`.
 
-- `ReturnSummaries` (declared/pre-flow)
-- `NarrowReturns` (post-flow)
-- `FuncTypes` (post-flow function signatures)
-
-These are combined in multiple places with different policies:
-
-- widening (`returns.WidenFacts` + `refineReturnSummariesWithNarrow`)
-- read-time alignment (`store.GetLocalFuncTypesSnapshot`)
-- write-time alignment (`interproc.StoreFactsFromResult`)
-
-This creates policy drift: a behavior can be "fixed" in one merge path and still regress through another.
+Remaining risk is migration debt: compatibility mirrors still exist and must stay
+strictly derived from canonical facts to avoid drift. Any new producer must write
+through `returns` reconciliation helpers, never directly to mirrors.
 
 ## Non-Negotiable Invariants
 
@@ -59,18 +53,14 @@ This creates policy drift: a behavior can be "fixed" in one merge path and still
    - function signatures
    - param hints
 2. No read-time corrective merge that hides write-time inconsistency.
-3. `FuncTypes` and return channels must agree by construction, not by ad-hoc alignment in multiple layers.
+3. Compatibility mirrors are derived views only; canonical source is `FunctionFacts`.
 4. Pre-flow inference and post-flow inference must declare which one is authoritative for each consumer.
 
 ## Canonical Refactor Direction
 
-1. Define a single "function fact reconciliation" entry point in `returns/`:
-   - inputs: previous fact, new pre-flow summary, new post-flow summary, new function type
-   - output: normalized `{ReturnSummaries, NarrowReturns, FuncTypes}` for one symbol
-2. Make `interproc.StoreFactsFromResult` and pre-flow return inference both call that entry point.
-3. Remove duplicate local aligners from:
-   - `store.GetLocalFuncTypesSnapshot` (read-time patching)
-   - any ad-hoc postflow alignment branches
+1. Keep `returns.ReconcileFunctionFact` as the only policy entry point for function facts.
+2. Keep `interproc.StoreFactsFromResult` and pre-flow return inference writing via reconciliation helpers.
+3. Keep compatibility mirrors generated from canonical facts only (`NormalizeFunctionFactChannels`).
 4. Keep `WidenFacts` as the only iteration-boundary widening location.
 5. Add regression tests at three layers:
    - unit tests in `returns/` for reconciliation invariants
@@ -86,4 +76,3 @@ This creates policy drift: a behavior can be "fixed" in one merge path and still
 3. Rebuild local wippy binary from current go-lua.
 4. Run lint targets with `--cache-reset` in all integration dirs we track.
 5. Only then claim convergence/regression status.
-
