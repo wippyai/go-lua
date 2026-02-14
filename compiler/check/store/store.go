@@ -288,56 +288,62 @@ func swapSnapshotChannel[T any](
 	return changed
 }
 
-func (s *SessionStore) swapEffectsChannel() bool {
-	return swapSnapshotChannel(
-		&s.InterprocPrev.Effects,
-		&s.InterprocNext.Effects,
-		func(_prev, next map[cfg.SymbolID]*constraint.FunctionEffect) map[cfg.SymbolID]*constraint.FunctionEffect {
-			return next
-		},
-		effectsMapEqual,
-		func() map[cfg.SymbolID]*constraint.FunctionEffect {
-			return make(map[cfg.SymbolID]*constraint.FunctionEffect)
-		},
-	)
-}
-
-func (s *SessionStore) swapInterprocFactsChannel() bool {
-	return swapSnapshotChannel(
-		&s.InterprocPrev.Facts,
-		&s.InterprocNext.Facts,
-		widenInterprocFacts,
-		interprocFactsMapEqual,
-		func() map[api.GraphKey]api.Facts {
-			return make(map[api.GraphKey]api.Facts)
-		},
-	)
-}
-
-func (s *SessionStore) swapConstructorFieldsChannel() bool {
-	return swapSnapshotChannel(
-		&s.InterprocPrev.ConstructorFields,
-		&s.InterprocNext.ConstructorFields,
-		func(_prev, next api.ConstructorFields) api.ConstructorFields {
-			return next
-		},
-		returns.ConstructorFieldsEqual,
-		func() api.ConstructorFields {
-			return make(api.ConstructorFields)
-		},
-	)
-}
-
 func (s *SessionStore) swapInterprocChannels() []string {
 	s.ensureInterprocStates()
 
+	// Channel policies:
+	// - Effects/ConstructorFields are overwrite channels (next snapshot replaces prev).
+	// - InterprocFacts is a widening channel (monotone merge across iterations).
 	channels := []struct {
 		name string
 		swap func() bool
 	}{
-		{name: "Effects", swap: s.swapEffectsChannel},
-		{name: "InterprocFacts", swap: s.swapInterprocFactsChannel},
-		{name: "ConstructorFields", swap: s.swapConstructorFieldsChannel},
+		{
+			name: "Effects",
+			swap: func() bool {
+				return swapSnapshotChannel(
+					&s.InterprocPrev.Effects,
+					&s.InterprocNext.Effects,
+					func(_prev, next map[cfg.SymbolID]*constraint.FunctionEffect) map[cfg.SymbolID]*constraint.FunctionEffect {
+						return next
+					},
+					effectsMapEqual,
+					func() map[cfg.SymbolID]*constraint.FunctionEffect {
+						return make(map[cfg.SymbolID]*constraint.FunctionEffect)
+					},
+				)
+			},
+		},
+		{
+			name: "InterprocFacts",
+			swap: func() bool {
+				return swapSnapshotChannel(
+					&s.InterprocPrev.Facts,
+					&s.InterprocNext.Facts,
+					widenInterprocFacts,
+					interprocFactsMapEqual,
+					func() map[api.GraphKey]api.Facts {
+						return make(map[api.GraphKey]api.Facts)
+					},
+				)
+			},
+		},
+		{
+			name: "ConstructorFields",
+			swap: func() bool {
+				return swapSnapshotChannel(
+					&s.InterprocPrev.ConstructorFields,
+					&s.InterprocNext.ConstructorFields,
+					func(_prev, next api.ConstructorFields) api.ConstructorFields {
+						return next
+					},
+					returns.ConstructorFieldsEqual,
+					func() api.ConstructorFields {
+						return make(api.ConstructorFields)
+					},
+				)
+			},
+		},
 	}
 
 	diffs := make([]string, 0, len(channels))
