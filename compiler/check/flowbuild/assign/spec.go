@@ -203,7 +203,7 @@ func NarrowReturnTypeBySpec(
 	}
 	// Use canonical callsite symbol candidates for identity-based lookup.
 	if fnType == nil && symResolver != nil {
-		for _, calleeSym := range callsite.CalleeSymbolCandidatesWithAliases(callInfo, graph, bindings, moduleBindings) {
+		for _, calleeSym := range callsite.CallableCalleeSymbolCandidates(callInfo, graph, bindings, moduleBindings) {
 			if calleeSym == 0 {
 				continue
 			}

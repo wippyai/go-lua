@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
@@ -96,7 +97,11 @@ func TestWidenInterprocFacts_Empty(t *testing.T) {
 
 func TestWidenInterprocFacts_OnlyPrev(t *testing.T) {
 	prev := map[api.GraphKey]api.Facts{
-		{GraphID: 1}: {ReturnSummaries: map[cfg.SymbolID][]typ.Type{1: {typ.String}}},
+		{GraphID: 1}: {
+			FunctionFacts: api.FunctionFacts{
+				1: {Summary: []typ.Type{typ.String}},
+			},
+		},
 	}
 	result := widenInterprocFacts(prev, nil)
 	if len(result) != 1 {
@@ -106,7 +111,11 @@ func TestWidenInterprocFacts_OnlyPrev(t *testing.T) {
 
 func TestWidenInterprocFacts_OnlyNext(t *testing.T) {
 	next := map[api.GraphKey]api.Facts{
-		{GraphID: 1}: {ReturnSummaries: map[cfg.SymbolID][]typ.Type{1: {typ.Number}}},
+		{GraphID: 1}: {
+			FunctionFacts: api.FunctionFacts{
+				1: {Summary: []typ.Type{typ.Number}},
+			},
+		},
 	}
 	result := widenInterprocFacts(nil, next)
 	if len(result) != 1 {
@@ -116,10 +125,18 @@ func TestWidenInterprocFacts_OnlyNext(t *testing.T) {
 
 func TestWidenInterprocFacts_Merge(t *testing.T) {
 	prev := map[api.GraphKey]api.Facts{
-		{GraphID: 1}: {ReturnSummaries: map[cfg.SymbolID][]typ.Type{1: {typ.String}}},
+		{GraphID: 1}: {
+			FunctionFacts: api.FunctionFacts{
+				1: {Summary: []typ.Type{typ.String}},
+			},
+		},
 	}
 	next := map[api.GraphKey]api.Facts{
-		{GraphID: 2}: {ReturnSummaries: map[cfg.SymbolID][]typ.Type{1: {typ.Number}}},
+		{GraphID: 2}: {
+			FunctionFacts: api.FunctionFacts{
+				1: {Summary: []typ.Type{typ.Number}},
+			},
+		},
 	}
 	result := widenInterprocFacts(prev, next)
 	if len(result) != 2 {
@@ -135,7 +152,7 @@ func TestReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
 			},
 		},
 	}
-	got := returnSummariesFromFacts(facts)
+	got := returns.SummaryViewFromFacts(facts)
 	if len(got) != 1 || len(got[cfg.SymbolID(1)]) != 1 || got[cfg.SymbolID(1)][0] != typ.String {
 		t.Fatalf("unexpected summary view: %#v", got)
 	}
@@ -149,7 +166,7 @@ func TestNarrowReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
 			},
 		},
 	}
-	got := narrowReturnSummariesFromFacts(facts)
+	got := returns.NarrowViewFromFacts(facts)
 	if len(got) != 1 || len(got[cfg.SymbolID(2)]) != 1 || got[cfg.SymbolID(2)][0] != typ.Number {
 		t.Fatalf("unexpected narrow view: %#v", got)
 	}
@@ -164,7 +181,7 @@ func TestLocalFuncTypesFromFacts_FallsBackToCanonical(t *testing.T) {
 			},
 		},
 	}
-	got := localFuncTypesFromFacts(facts)
+	got := returns.FuncTypeViewFromFacts(facts)
 	if len(got) != 1 || !typ.TypeEquals(got[cfg.SymbolID(3)], fn) {
 		t.Fatalf("unexpected func type view: %#v", got)
 	}
@@ -230,8 +247,8 @@ func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 
 	s.InterprocNext.Effects[1] = &constraint.FunctionEffect{Terminates: true}
 	s.InterprocNext.Facts[api.GraphKey{GraphID: 7, ParentHash: 11}] = api.Facts{
-		ReturnSummaries: map[cfg.SymbolID][]typ.Type{
-			1: {typ.String},
+		FunctionFacts: api.FunctionFacts{
+			1: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	s.InterprocNext.ConstructorFields[3] = map[string]typ.Type{

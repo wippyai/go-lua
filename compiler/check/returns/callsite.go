@@ -170,7 +170,7 @@ func calledSymbolsFromCall(
 		return calledSyms
 	}
 
-	selected := checkcallsite.PreferredCalleeSymbolWithAliases(info, graph, bindings, bindings, prefer)
+	selected := checkcallsite.PreferredCallableCalleeSymbol(info, graph, bindings, bindings, prefer)
 	if selected != 0 {
 		calledSyms[selected] = true
 	}

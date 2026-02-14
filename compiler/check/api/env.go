@@ -93,15 +93,126 @@ func (b *envBase) withGlobalOverlay(overlay map[string]typ.Type) *envBase {
 	return &next
 }
 
+type envCommon struct {
+	base *envBase
+}
+
+func (c *envCommon) withGlobalOverlay(overlay map[string]typ.Type) *envCommon {
+	if c == nil || len(overlay) == 0 {
+		return c
+	}
+	return &envCommon{base: c.base.withGlobalOverlay(overlay)}
+}
+
+// Phase returns the current checking phase.
+func (c *envCommon) Phase() Phase {
+	if c == nil || c.base == nil {
+		return PhaseScopeCompute
+	}
+	return c.base.phase
+}
+
+// Graph returns the versioned CFG graph.
+func (c *envCommon) Graph() cfg.VersionedGraph {
+	if c == nil || c.base == nil {
+		return nil
+	}
+	return c.base.graph
+}
+
+// Types returns the type facts provider.
+func (c *envCommon) Types() flow.TypeFacts {
+	if c == nil || c.base == nil {
+		return nil
+	}
+	return c.base.types
+}
+
+// Consts returns the flow solution for constant value lookup.
+func (c *envCommon) Consts() *flow.Solution {
+	if c == nil || c.base == nil {
+		return nil
+	}
+	return c.base.solution
+}
+
+// Effects returns the effect facts provider.
+func (c *envCommon) Effects() EffectFacts {
+	if c == nil || c.base == nil {
+		return nil
+	}
+	return c.base.effects
+}
+
+// TypeNames returns the scope state for type name resolution.
+func (c *envCommon) TypeNames() *scope.State {
+	if c == nil || c.base == nil {
+		return nil
+	}
+	return c.base.typeNames
+}
+
+// Bindings returns the binding table for AST-based symbol resolution.
+func (c *envCommon) Bindings() *bind.BindingTable {
+	if c == nil || c.base == nil {
+		return nil
+	}
+	return c.base.bindings
+}
+
+// ModuleAliases returns the module alias map (symbol -> module path).
+func (c *envCommon) ModuleAliases() map[cfg.SymbolID]string {
+	if c == nil || c.base == nil {
+		return nil
+	}
+	return c.base.moduleAliases
+}
+
+// ModuleAlias returns the module path for a symbol assigned from require().
+func (c *envCommon) ModuleAlias(sym cfg.SymbolID) string {
+	if c == nil || c.base == nil || c.base.moduleAliases == nil {
+		return ""
+	}
+	return c.base.moduleAliases[sym]
+}
+
+// GlobalType returns the global type for a symbol if it is a confirmed global.
+func (c *envCommon) GlobalType(sym cfg.SymbolID) (typ.Type, bool) {
+	if c == nil || c.base == nil || c.base.globalTypes == nil || sym == 0 {
+		return nil, false
+	}
+	if c.base.bindings == nil {
+		return nil, false
+	}
+	kind, ok := c.base.bindings.Kind(sym)
+	if !ok || kind != cfg.SymbolGlobal {
+		return nil, false
+	}
+	if name := c.base.bindings.Name(sym); name != "" {
+		if t, found := c.base.globalTypes[name]; found && t != nil {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+// GlobalTypes returns the global type map.
+func (c *envCommon) GlobalTypes() map[string]typ.Type {
+	if c == nil || c.base == nil {
+		return nil
+	}
+	return c.base.globalTypes
+}
+
 // DeclaredEnvImpl is the concrete declared-phase environment.
 type DeclaredEnvImpl struct {
-	base            *envBase
+	*envCommon
 	returnSummaries map[cfg.SymbolID][]typ.Type
 }
 
 // NarrowEnvImpl is the concrete narrowing-phase environment.
 type NarrowEnvImpl struct {
-	base          *envBase
+	*envCommon
 	narrowReturns map[cfg.SymbolID][]typ.Type
 }
 
@@ -112,202 +223,178 @@ var _ NarrowEnv = (*NarrowEnvImpl)(nil)
 
 // Phase returns the current checking phase.
 func (e *DeclaredEnvImpl) Phase() Phase {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return PhaseScopeCompute
 	}
-	return e.base.phase
+	return e.envCommon.Phase()
 }
 
 // Phase returns the current checking phase.
 func (e *NarrowEnvImpl) Phase() Phase {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return PhaseScopeCompute
 	}
-	return e.base.phase
+	return e.envCommon.Phase()
 }
 
 // Graph returns the versioned CFG graph.
 func (e *DeclaredEnvImpl) Graph() cfg.VersionedGraph {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.graph
+	return e.envCommon.Graph()
 }
 
 // Graph returns the versioned CFG graph.
 func (e *NarrowEnvImpl) Graph() cfg.VersionedGraph {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.graph
+	return e.envCommon.Graph()
 }
 
 // Types returns the type facts provider.
 func (e *DeclaredEnvImpl) Types() flow.TypeFacts {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.types
+	return e.envCommon.Types()
 }
 
 // Types returns the type facts provider.
 func (e *NarrowEnvImpl) Types() flow.TypeFacts {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.types
+	return e.envCommon.Types()
 }
 
 // Consts returns the flow solution for constant value lookup.
 func (e *DeclaredEnvImpl) Consts() *flow.Solution {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.solution
+	return e.envCommon.Consts()
 }
 
 // Consts returns the flow solution for constant value lookup.
 func (e *NarrowEnvImpl) Consts() *flow.Solution {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.solution
+	return e.envCommon.Consts()
 }
 
 // Effects returns the effect facts provider.
 func (e *DeclaredEnvImpl) Effects() EffectFacts {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.effects
+	return e.envCommon.Effects()
 }
 
 // Effects returns the effect facts provider.
 func (e *NarrowEnvImpl) Effects() EffectFacts {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.effects
+	return e.envCommon.Effects()
 }
 
 // TypeNames returns the scope state for type name resolution.
 func (e *DeclaredEnvImpl) TypeNames() *scope.State {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.typeNames
+	return e.envCommon.TypeNames()
 }
 
 // TypeNames returns the scope state for type name resolution.
 func (e *NarrowEnvImpl) TypeNames() *scope.State {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.typeNames
+	return e.envCommon.TypeNames()
 }
 
 // Bindings returns the binding table for AST-based symbol resolution.
 func (e *DeclaredEnvImpl) Bindings() *bind.BindingTable {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.bindings
+	return e.envCommon.Bindings()
 }
 
 // Bindings returns the binding table for AST-based symbol resolution.
 func (e *NarrowEnvImpl) Bindings() *bind.BindingTable {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.bindings
+	return e.envCommon.Bindings()
 }
 
 // ModuleAliases returns the module alias map (symbol -> module path).
 func (e *DeclaredEnvImpl) ModuleAliases() map[cfg.SymbolID]string {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.moduleAliases
+	return e.envCommon.ModuleAliases()
 }
 
 // ModuleAliases returns the module alias map (symbol -> module path).
 func (e *NarrowEnvImpl) ModuleAliases() map[cfg.SymbolID]string {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.moduleAliases
+	return e.envCommon.ModuleAliases()
 }
 
 // ModuleAlias returns the module path for a symbol assigned from require().
 func (e *DeclaredEnvImpl) ModuleAlias(sym cfg.SymbolID) string {
-	if e == nil || e.base == nil || e.base.moduleAliases == nil {
+	if e == nil {
 		return ""
 	}
-	return e.base.moduleAliases[sym]
+	return e.envCommon.ModuleAlias(sym)
 }
 
 // ModuleAlias returns the module path for a symbol assigned from require().
 func (e *NarrowEnvImpl) ModuleAlias(sym cfg.SymbolID) string {
-	if e == nil || e.base == nil || e.base.moduleAliases == nil {
+	if e == nil {
 		return ""
 	}
-	return e.base.moduleAliases[sym]
+	return e.envCommon.ModuleAlias(sym)
 }
 
 // GlobalType returns the global type for a symbol if it is a confirmed global.
 func (e *DeclaredEnvImpl) GlobalType(sym cfg.SymbolID) (typ.Type, bool) {
-	if e == nil || e.base == nil || e.base.globalTypes == nil || sym == 0 {
+	if e == nil {
 		return nil, false
 	}
-	if e.base.bindings != nil {
-		kind, ok := e.base.bindings.Kind(sym)
-		if !ok || kind != cfg.SymbolGlobal {
-			return nil, false
-		}
-		if name := e.base.bindings.Name(sym); name != "" {
-			if t, found := e.base.globalTypes[name]; found && t != nil {
-				return t, true
-			}
-		}
-		return nil, false
-	}
-	return nil, false
+	return e.envCommon.GlobalType(sym)
 }
 
 // GlobalType returns the global type for a symbol if it is a confirmed global.
 func (e *NarrowEnvImpl) GlobalType(sym cfg.SymbolID) (typ.Type, bool) {
-	if e == nil || e.base == nil || e.base.globalTypes == nil || sym == 0 {
+	if e == nil {
 		return nil, false
 	}
-	if e.base.bindings != nil {
-		kind, ok := e.base.bindings.Kind(sym)
-		if !ok || kind != cfg.SymbolGlobal {
-			return nil, false
-		}
-		if name := e.base.bindings.Name(sym); name != "" {
-			if t, found := e.base.globalTypes[name]; found && t != nil {
-				return t, true
-			}
-		}
-		return nil, false
-	}
-	return nil, false
+	return e.envCommon.GlobalType(sym)
 }
 
 // GlobalTypes returns the global type map.
 func (e *DeclaredEnvImpl) GlobalTypes() map[string]typ.Type {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.globalTypes
+	return e.envCommon.GlobalTypes()
 }
 
 // GlobalTypes returns the global type map.
 func (e *NarrowEnvImpl) GlobalTypes() map[string]typ.Type {
-	if e == nil || e.base == nil {
+	if e == nil {
 		return nil
 	}
-	return e.base.globalTypes
+	return e.envCommon.GlobalTypes()
 }
 
 // WithGlobalOverlay returns a derived Env with additional globals merged in.
@@ -319,7 +406,7 @@ func (e *DeclaredEnvImpl) WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv
 		return e
 	}
 	next := *e
-	next.base = e.base.withGlobalOverlay(overlay)
+	next.envCommon = e.withGlobalOverlay(overlay)
 	return &next
 }
 
@@ -332,7 +419,7 @@ func (e *NarrowEnvImpl) WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv {
 		return e
 	}
 	next := *e
-	next.base = e.base.withGlobalOverlay(overlay)
+	next.envCommon = e.withGlobalOverlay(overlay)
 	return &next
 }
 
@@ -383,23 +470,47 @@ type NarrowEnvConfig struct {
 	NarrowReturnSummaries map[cfg.SymbolID][]typ.Type
 }
 
+func newEnvBase(
+	phase Phase,
+	graph cfg.VersionedGraph,
+	bindings *bind.BindingTable,
+	types flow.TypeFacts,
+	solution *flow.Solution,
+	effects EffectFacts,
+	typeNames *scope.State,
+	moduleAliases map[cfg.SymbolID]string,
+	globalTypes map[string]typ.Type,
+) *envBase {
+	return &envBase{
+		phase:         phase,
+		graph:         graph,
+		bindings:      bindings,
+		types:         types,
+		solution:      solution,
+		effects:       effects,
+		typeNames:     typeNames,
+		moduleAliases: moduleAliases,
+		globalTypes:   globalTypes,
+	}
+}
+
 // NewDeclaredEnv creates a declared-phase Env.
 func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 	if cfg.Graph == nil {
 		return nil
 	}
-	base := &envBase{
-		phase:         PhaseScopeCompute,
-		graph:         cfg.Graph,
-		bindings:      cfg.Bindings,
-		types:         newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.SiblingTypes, cfg.LiteralTypes, cfg.AnnotatedVars, nil),
-		solution:      nil,
-		effects:       NewEffectFacts(cfg.EffectStore),
-		typeNames:     cfg.BaseScope,
-		moduleAliases: cfg.ModuleAliases,
-		globalTypes:   cfg.GlobalTypes,
-	}
-	return &DeclaredEnvImpl{base: base, returnSummaries: cfg.ReturnSummaries}
+	base := newEnvBase(
+		PhaseScopeCompute,
+		cfg.Graph,
+		cfg.Bindings,
+		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.SiblingTypes, cfg.LiteralTypes, cfg.AnnotatedVars, nil),
+		nil,
+		NewEffectFacts(cfg.EffectStore),
+		cfg.BaseScope,
+		cfg.ModuleAliases,
+		cfg.GlobalTypes,
+	)
+	return &DeclaredEnvImpl{envCommon: &envCommon{base: base}, returnSummaries: cfg.ReturnSummaries}
 }
 
 // NewNarrowEnv creates a narrowing-phase Env.
@@ -407,18 +518,18 @@ func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 	if cfg.Graph == nil {
 		return nil
 	}
-	base := &envBase{
-		phase:         PhaseNarrowing,
-		graph:         cfg.Graph,
-		bindings:      cfg.Bindings,
-		types:         newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.SiblingTypes, cfg.LiteralTypes, cfg.AnnotatedVars, cfg.Solution),
-		solution:      cfg.Solution,
-		effects:       NewEffectFacts(cfg.EffectStore),
-		typeNames:     cfg.BaseScope,
-		moduleAliases: cfg.ModuleAliases,
-		globalTypes:   cfg.GlobalTypes,
-	}
-	return &NarrowEnvImpl{base: base, narrowReturns: cfg.NarrowReturnSummaries}
+	base := newEnvBase(
+		PhaseNarrowing,
+		cfg.Graph,
+		cfg.Bindings,
+		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.SiblingTypes, cfg.LiteralTypes, cfg.AnnotatedVars, cfg.Solution),
+		cfg.Solution,
+		NewEffectFacts(cfg.EffectStore),
+		cfg.BaseScope,
+		cfg.ModuleAliases,
+		cfg.GlobalTypes,
+	)
+	return &NarrowEnvImpl{envCommon: &envCommon{base: base}, narrowReturns: cfg.NarrowReturnSummaries}
 }
 
 // ReturnInferenceEnvConfig holds inputs for return type inference.
@@ -437,18 +548,18 @@ func NewReturnInferenceEnv(cfg ReturnInferenceEnvConfig) *DeclaredEnvImpl {
 	if cfg.Graph == nil {
 		return nil
 	}
-	base := &envBase{
-		phase:         PhaseScopeCompute,
-		graph:         cfg.Graph,
-		bindings:      cfg.Bindings,
-		types:         newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, nil, nil, nil, nil),
-		solution:      nil,
-		effects:       NewEffectFacts(nil),
-		typeNames:     cfg.BaseScope,
-		moduleAliases: cfg.ModuleAliases,
-		globalTypes:   cfg.GlobalTypes,
-	}
-	return &DeclaredEnvImpl{base: base, returnSummaries: cfg.ReturnSummaries}
+	base := newEnvBase(
+		PhaseScopeCompute,
+		cfg.Graph,
+		cfg.Bindings,
+		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, nil, nil, nil, nil),
+		nil,
+		NewEffectFacts(nil),
+		cfg.BaseScope,
+		cfg.ModuleAliases,
+		cfg.GlobalTypes,
+	)
+	return &DeclaredEnvImpl{envCommon: &envCommon{base: base}, returnSummaries: cfg.ReturnSummaries}
 }
 
 // unifiedTypeFacts implements flow.TypeFacts with layered type source lookup.

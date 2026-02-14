@@ -125,3 +125,30 @@ func TestResolveCalleeType_PrefersSynthThenSymbolFallback(t *testing.T) {
 		t.Fatalf("expected fallback symbol type, got %v", got)
 	}
 }
+
+func TestResolveCalleeType_UsesCalleePathSymbolCandidate(t *testing.T) {
+	info := &cfg.CallInfo{
+		CalleeSymbol: 9,
+		Callee:       &ast.IdentExpr{Value: "h"},
+		CalleePath:   constraint.Path{Symbol: 11},
+	}
+
+	fallbackType := typ.Func().Returns(typ.Number).Build()
+	got := ResolveCalleeType(
+		info,
+		0,
+		nil,
+		nil,
+		nil,
+		nil,
+		func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+			if sym == 11 {
+				return fallbackType, true
+			}
+			return nil, false
+		},
+	)
+	if !typ.TypeEquals(got, fallbackType) {
+		t.Fatalf("expected callee-path fallback symbol type, got %v", got)
+	}
+}

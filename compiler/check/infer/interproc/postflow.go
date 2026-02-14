@@ -372,7 +372,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 				argTypes = updated
 			}
 		}
-		calleeSym := checkcallsite.PreferredCalleeSymbolWithAliases(info, result.Graph, bindings, moduleBindings, hasFunctionRef)
+		calleeSym := checkcallsite.PreferredCallableCalleeSymbol(info, result.Graph, bindings, moduleBindings, hasFunctionRef)
 		if calleeSym == 0 {
 			return
 		}
@@ -448,12 +448,12 @@ func synthCallInfoFromExpr(ex *ast.FuncCallExpr, bindings *bind.BindingTable) *c
 		return nil
 	}
 	info := &cfg.CallInfo{
-		Call:    ex,
-		Callee:  ex.Func,
-		Args:    ex.Args,
-		Method:  ex.Method,
+		Call:     ex,
+		Callee:   ex.Func,
+		Args:     ex.Args,
+		Method:   ex.Method,
 		Receiver: ex.Receiver,
-		IsStmt:  false,
+		IsStmt:   false,
 	}
 	if id, ok := ex.Func.(*ast.IdentExpr); ok {
 		info.CalleeName = id.Value

@@ -18,45 +18,33 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 	if info == nil {
 		return nil
 	}
-	candidates := make([]cfg.SymbolID, 0, 4)
-	seen := make(map[cfg.SymbolID]struct{}, 4)
-	push := func(sym cfg.SymbolID) {
-		if sym == 0 {
-			return
-		}
-		if _, ok := seen[sym]; ok {
-			return
-		}
-		seen[sym] = struct{}{}
-		candidates = append(candidates, sym)
-	}
-
-	push(info.CalleeSymbol)
-	push(SymbolFromExpr(info.Callee, primary))
+	set := newSymbolSet(4)
+	set.Add(info.CalleeSymbol)
+	set.Add(SymbolFromExpr(info.Callee, primary))
 	if fallback != primary {
-		push(SymbolFromExpr(info.Callee, fallback))
+		set.Add(SymbolFromExpr(info.Callee, fallback))
 	}
 	if methodSym, ok := methodCalleeSymbolFromCall(primary, nil, info); ok {
-		push(methodSym)
+		set.Add(methodSym)
 	}
 	if fallback != nil && fallback != primary {
 		if methodSym, ok := methodCalleeSymbolFromCall(fallback, nil, info); ok {
-			push(methodSym)
+			set.Add(methodSym)
 		}
 	}
 	if info.CalleeName != "" {
 		if primary != nil {
 			for _, sym := range primary.SymbolsByName(info.CalleeName) {
-				push(sym)
+				set.Add(sym)
 			}
 		}
 		if fallback != nil && fallback != primary {
 			for _, sym := range fallback.SymbolsByName(info.CalleeName) {
-				push(sym)
+				set.Add(sym)
 			}
 		}
 	}
-	return candidates
+	return set.Slice()
 }
 
 // PreferredCalleeSymbol selects a single symbol from callsite candidates.
@@ -69,46 +57,28 @@ func PreferredCalleeSymbol(
 	primary, fallback *bind.BindingTable,
 	prefer func(cfg.SymbolID) bool,
 ) cfg.SymbolID {
-	selected := cfg.SymbolID(0)
-	for _, sym := range CalleeSymbolCandidates(info, primary, fallback) {
-		if selected == 0 {
-			selected = sym
-		}
-		if prefer != nil && prefer(sym) {
-			return sym
-		}
-	}
-	return selected
+	return selectPreferredSymbol(CalleeSymbolCandidates(info, primary, fallback), prefer)
 }
 
-// PreferredCalleeSymbolWithAliases selects a single symbol from alias-expanded candidates.
+// PreferredCallableCalleeSymbol selects a single symbol from alias-expanded candidates.
 //
 // Selection rule:
 //  1. start with the first candidate (if any)
 //  2. if prefer is provided, pick the first candidate where prefer(sym) is true
-func PreferredCalleeSymbolWithAliases(
+func PreferredCallableCalleeSymbol(
 	info *cfg.CallInfo,
 	graph *cfg.Graph,
 	primary, fallback *bind.BindingTable,
 	prefer func(cfg.SymbolID) bool,
 ) cfg.SymbolID {
-	selected := cfg.SymbolID(0)
-	for _, sym := range CalleeSymbolCandidatesWithAliases(info, graph, primary, fallback) {
-		if selected == 0 {
-			selected = sym
-		}
-		if prefer != nil && prefer(sym) {
-			return sym
-		}
-	}
-	return selected
+	return selectPreferredSymbol(CallableCalleeSymbolCandidates(info, graph, primary, fallback), prefer)
 }
 
-// CalleeSymbolCandidatesWithAliases expands callee candidates through direct-alias
+// CallableCalleeSymbolCandidates expands callee candidates through direct-alias
 // chains and includes method symbols resolvable through alias receiver bases.
 //
 // Candidate order is preserved and symbols are deduplicated.
-func CalleeSymbolCandidatesWithAliases(
+func CallableCalleeSymbolCandidates(
 	info *cfg.CallInfo,
 	graph *cfg.Graph,
 	primary, fallback *bind.BindingTable,
@@ -117,45 +87,55 @@ func CalleeSymbolCandidatesWithAliases(
 	if graph == nil {
 		return base
 	}
-	candidates := make([]cfg.SymbolID, 0, len(base)*2+2)
-	seen := make(map[cfg.SymbolID]struct{}, len(base)*2)
-	push := func(sym cfg.SymbolID) {
-		if sym == 0 {
-			return
-		}
-		if _, ok := seen[sym]; ok {
-			return
-		}
-		seen[sym] = struct{}{}
-		candidates = append(candidates, sym)
-	}
+	set := newSymbolSet(len(base)*2 + 2)
 
 	for _, sym := range base {
-		graph.EachAliasSymbol(sym, func(candidate cfg.SymbolID) bool {
-			push(candidate)
-			return false
-		})
+		addAliasExpansion(set, graph, sym)
 	}
 
 	// Method calls may resolve method symbol only through an alias receiver base
 	// (for example, Alias:run() where Alias = T and T.run is defined).
 	if methodSym, ok := methodCalleeSymbolFromCall(primary, graph, info); ok {
-		graph.EachAliasSymbol(methodSym, func(candidate cfg.SymbolID) bool {
-			push(candidate)
-			return false
-		})
+		addAliasExpansion(set, graph, methodSym)
 	}
 	if fallback != nil && fallback != primary {
 		if methodSym, ok := methodCalleeSymbolFromCall(fallback, graph, info); ok {
-			graph.EachAliasSymbol(methodSym, func(candidate cfg.SymbolID) bool {
-				push(candidate)
-				return false
-			})
+			addAliasExpansion(set, graph, methodSym)
 		}
 	}
 
+	candidates := set.Slice()
 	if len(candidates) == 0 {
 		return base
 	}
 	return candidates
+}
+
+// ResolverCalleeSymbolCandidates returns canonical callee candidates for
+// resolver contexts.
+//
+// Selection order:
+//  1. callee path symbol from call extraction (when present)
+//  2. canonical callsite candidates with alias expansion
+//
+// Order is deterministic and candidates are deduplicated.
+//
+// NOTE: this intentionally includes the base callee-path symbol (often receiver
+// identity for method calls). Use this for resolver-style fallback lookups that
+// can tolerate non-callable intermediate symbols; for strict callable lookup
+// paths, prefer CallableCalleeSymbolCandidates.
+func ResolverCalleeSymbolCandidates(
+	info *cfg.CallInfo,
+	graph *cfg.Graph,
+	primary, fallback *bind.BindingTable,
+) []cfg.SymbolID {
+	if info == nil {
+		return nil
+	}
+	set := newSymbolSet(4)
+	set.Add(info.CalleePath.Symbol)
+	for _, sym := range CallableCalleeSymbolCandidates(info, graph, primary, fallback) {
+		set.Add(sym)
+	}
+	return set.Slice()
 }

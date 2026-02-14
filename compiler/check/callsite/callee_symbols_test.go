@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/constraint"
 )
 
 func TestCalleeSymbolCandidates_UsesCanonicalAndNameFallback(t *testing.T) {
@@ -104,6 +105,27 @@ func TestCalleeSymbolCandidates_IncludeMethodSymbolFromReceiver(t *testing.T) {
 	}
 }
 
+func TestResolverCalleeSymbolCandidates_PrefersCalleePathSymbol(t *testing.T) {
+	callee := &ast.IdentExpr{Value: "f"}
+	primary := bind.NewBindingTable()
+	const (
+		pathSym cfg.SymbolID = 91
+		exprSym cfg.SymbolID = 92
+	)
+	primary.Bind(callee, exprSym)
+
+	candidates := ResolverCalleeSymbolCandidates(&cfg.CallInfo{
+		Callee:     callee,
+		CalleePath: constraint.Path{Symbol: pathSym},
+	}, nil, primary, nil)
+	if len(candidates) != 2 {
+		t.Fatalf("len(candidates) = %d, want 2 (%v)", len(candidates), candidates)
+	}
+	if candidates[0] != pathSym || candidates[1] != exprSym {
+		t.Fatalf("candidates = %v, want [%d %d]", candidates, pathSym, exprSym)
+	}
+}
+
 func TestPreferredCalleeSymbol_PrefersMatchingCandidate(t *testing.T) {
 	callee := &ast.IdentExpr{Value: "f"}
 	primary := bind.NewBindingTable()
@@ -140,7 +162,7 @@ func TestPreferredCalleeSymbol_FallsBackToFirstCandidate(t *testing.T) {
 	}
 }
 
-func TestCalleeSymbolCandidatesWithAliases_NilGraphFallsBackToBaseCandidates(t *testing.T) {
+func TestCallableCalleeSymbolCandidates_NilGraphFallsBackToBaseCandidates(t *testing.T) {
 	callee := &ast.IdentExpr{Value: "f"}
 	primary := bind.NewBindingTable()
 	fallback := bind.NewBindingTable()
@@ -159,7 +181,7 @@ func TestCalleeSymbolCandidatesWithAliases_NilGraphFallsBackToBaseCandidates(t *
 	}
 
 	base := CalleeSymbolCandidates(info, primary, fallback)
-	withAliases := CalleeSymbolCandidatesWithAliases(info, nil, primary, fallback)
+	withAliases := CallableCalleeSymbolCandidates(info, nil, primary, fallback)
 	if len(withAliases) != len(base) {
 		t.Fatalf("len(withAliases) = %d, want %d", len(withAliases), len(base))
 	}
@@ -170,7 +192,7 @@ func TestCalleeSymbolCandidatesWithAliases_NilGraphFallsBackToBaseCandidates(t *
 	}
 }
 
-func TestCalleeSymbolCandidatesWithAliases_IncludesDirectAliasSource(t *testing.T) {
+func TestCallableCalleeSymbolCandidates_IncludesDirectAliasSource(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local function B()
 			return 1
@@ -219,7 +241,7 @@ func TestCalleeSymbolCandidatesWithAliases_IncludesDirectAliasSource(t *testing.
 		t.Fatalf("alias symbol = %d, want %d", aliasSym, byName)
 	}
 
-	candidates := CalleeSymbolCandidatesWithAliases(callInfo, graph, bindings, nil)
+	candidates := CallableCalleeSymbolCandidates(callInfo, graph, bindings, nil)
 	if len(candidates) < 2 {
 		t.Fatalf("expected alias-expanded candidates, got %v", candidates)
 	}
@@ -228,7 +250,7 @@ func TestCalleeSymbolCandidatesWithAliases_IncludesDirectAliasSource(t *testing.
 	}
 }
 
-func TestPreferredCalleeSymbolWithAliases_PrefersAliasCandidate(t *testing.T) {
+func TestPreferredCallableCalleeSymbol_PrefersAliasCandidate(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local function B()
 			return 1
@@ -269,7 +291,7 @@ func TestPreferredCalleeSymbolWithAliases_PrefersAliasCandidate(t *testing.T) {
 		t.Fatal("expected alias symbol for f")
 	}
 
-	got := PreferredCalleeSymbolWithAliases(callInfo, graph, bindings, nil, func(sym cfg.SymbolID) bool {
+	got := PreferredCallableCalleeSymbol(callInfo, graph, bindings, nil, func(sym cfg.SymbolID) bool {
 		return sym == aliasSym
 	})
 	if got != aliasSym {
@@ -277,7 +299,7 @@ func TestPreferredCalleeSymbolWithAliases_PrefersAliasCandidate(t *testing.T) {
 	}
 }
 
-func TestCalleeSymbolCandidatesWithAliases_ExpandsTransitiveAliasChain(t *testing.T) {
+func TestCallableCalleeSymbolCandidates_ExpandsTransitiveAliasChain(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local function Target()
 			return 1
@@ -319,7 +341,7 @@ func TestCalleeSymbolCandidatesWithAliases_ExpandsTransitiveAliasChain(t *testin
 		t.Fatalf("expected non-zero symbols for c and Target, got c=%d Target=%d", callSym, rootSym)
 	}
 
-	candidates := CalleeSymbolCandidatesWithAliases(callInfo, graph, bindings, nil)
+	candidates := CallableCalleeSymbolCandidates(callInfo, graph, bindings, nil)
 	if !containsSymbol(candidates, callSym) {
 		t.Fatalf("candidates = %v, missing call symbol %d", candidates, callSym)
 	}
@@ -328,7 +350,7 @@ func TestCalleeSymbolCandidatesWithAliases_ExpandsTransitiveAliasChain(t *testin
 	}
 }
 
-func TestCalleeSymbolCandidatesWithAliases_ResolvesMethodSymbolThroughAliasBase(t *testing.T) {
+func TestCallableCalleeSymbolCandidates_ResolvesMethodSymbolThroughAliasBase(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local T = {}
 		function T.run(x: number): number
@@ -368,9 +390,53 @@ func TestCalleeSymbolCandidatesWithAliases_ResolvesMethodSymbolThroughAliasBase(
 		t.Fatal("expected alias-aware method symbol resolution")
 	}
 
-	candidates := CalleeSymbolCandidatesWithAliases(callInfo, graph, bindings, nil)
+	candidates := CallableCalleeSymbolCandidates(callInfo, graph, bindings, nil)
 	if !containsSymbol(candidates, methodSym) {
 		t.Fatalf("candidates = %v, missing method symbol %d", candidates, methodSym)
+	}
+}
+
+func TestMethodCalleeSymbolFromCall_ResolvesDirectBaseWithoutGraph(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local T = {}
+		function T.run(x: number): number
+			return x + 1
+		end
+		local y = T:run(1)
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+
+	var callInfo *cfg.CallInfo
+	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.Method != "run" {
+			return
+		}
+		callInfo = info
+	})
+	if callInfo == nil {
+		t.Fatal("expected T:run call site")
+	}
+
+	methodSymNoGraph, ok := methodCalleeSymbolFromCall(bindings, nil, callInfo)
+	if !ok || methodSymNoGraph == 0 {
+		t.Fatal("expected direct-base method resolution to work without graph aliases")
+	}
+	methodSymWithGraph, ok := methodCalleeSymbolFromCall(bindings, graph, callInfo)
+	if !ok || methodSymWithGraph == 0 {
+		t.Fatal("expected method resolution with graph")
+	}
+	if methodSymWithGraph != methodSymNoGraph {
+		t.Fatalf("method symbol mismatch without graph: got %d, with graph: %d", methodSymNoGraph, methodSymWithGraph)
 	}
 }
 

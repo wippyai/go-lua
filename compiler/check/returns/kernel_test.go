@@ -173,3 +173,35 @@ func TestMergeFunctionFactIntoFacts_ReadsLegacyAndWritesCanonical(t *testing.T) 
 		t.Fatalf("func drift: canonical=%v legacy=%v", ff.Func, facts.FuncTypes[sym])
 	}
 }
+
+func TestNormalizeFunctionFactChannels_PromotesLegacyIntoCanonical(t *testing.T) {
+	sym := cfg.SymbolID(77)
+	fn := typ.Func().Returns(typ.Number).Build()
+	facts := &api.Facts{
+		ReturnSummaries: api.ReturnSummaries{
+			sym: []typ.Type{typ.Number},
+		},
+		NarrowReturns: api.NarrowReturnSummaries{
+			sym: []typ.Type{typ.Number},
+		},
+		FuncTypes: api.FuncTypes{
+			sym: fn,
+		},
+	}
+
+	NormalizeFunctionFactChannels(facts)
+
+	ff, ok := facts.FunctionFacts[sym]
+	if !ok {
+		t.Fatal("expected canonical FunctionFacts entry from legacy channels")
+	}
+	if !ReturnTypesEqual(ff.Summary, facts.ReturnSummaries[sym]) {
+		t.Fatalf("summary drift: canonical=%v legacy=%v", ff.Summary, facts.ReturnSummaries[sym])
+	}
+	if !ReturnTypesEqual(ff.Narrow, facts.NarrowReturns[sym]) {
+		t.Fatalf("narrow drift: canonical=%v legacy=%v", ff.Narrow, facts.NarrowReturns[sym])
+	}
+	if !typ.TypeEquals(ff.Func, facts.FuncTypes[sym]) {
+		t.Fatalf("func drift: canonical=%v legacy=%v", ff.Func, facts.FuncTypes[sym])
+	}
+}

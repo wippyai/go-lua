@@ -81,7 +81,7 @@ func inferCallbackEnvOverlays(
 		if info == nil {
 			return
 		}
-		sym := callsite.PreferredCalleeSymbolWithAliases(
+		sym := callsite.PreferredCallableCalleeSymbol(
 			info,
 			graph,
 			graph.Bindings(),

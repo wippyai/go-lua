@@ -12,26 +12,13 @@ func canonicalExprSymbolCandidates(
 	primary *bind.BindingTable,
 	fallback *bind.BindingTable,
 ) []cfg.SymbolID {
-	candidates := make([]cfg.SymbolID, 0, 3)
-	seen := make(map[cfg.SymbolID]struct{}, 3)
-	push := func(sym cfg.SymbolID) {
-		if sym == 0 {
-			return
-		}
-		if _, ok := seen[sym]; ok {
-			return
-		}
-		seen[sym] = struct{}{}
-		candidates = append(candidates, sym)
-	}
-
-	push(raw)
-	push(SymbolFromExpr(expr, primary))
+	set := newSymbolSet(3)
+	set.Add(raw)
+	set.Add(SymbolFromExpr(expr, primary))
 	if fallback != primary {
-		push(SymbolFromExpr(expr, fallback))
+		set.Add(SymbolFromExpr(expr, fallback))
 	}
-
-	return candidates
+	return set.Slice()
 }
 
 // CanonicalSymbolFromExpr chooses a stable symbol identity for an expression.
@@ -50,17 +37,7 @@ func CanonicalSymbolFromExpr(
 	fallback *bind.BindingTable,
 	prefer func(cfg.SymbolID) bool,
 ) cfg.SymbolID {
-	candidates := canonicalExprSymbolCandidates(expr, raw, primary, fallback)
-	best := cfg.SymbolID(0)
-	for _, sym := range candidates {
-		if best == 0 {
-			best = sym
-		}
-		if prefer != nil && prefer(sym) {
-			return sym
-		}
-	}
-	return best
+	return selectPreferredSymbol(canonicalExprSymbolCandidates(expr, raw, primary, fallback), prefer)
 }
 
 // CanonicalSymbolFromExprWithAliases chooses a stable symbol identity for an
@@ -78,34 +55,17 @@ func CanonicalSymbolFromExprWithAliases(
 	if len(base) == 0 {
 		return 0
 	}
-
-	candidates := make([]cfg.SymbolID, 0, len(base)*2)
-	seen := make(map[cfg.SymbolID]struct{}, len(base)*2)
-	push := func(sym cfg.SymbolID) {
-		if sym == 0 {
-			return
-		}
-		if _, ok := seen[sym]; ok {
-			return
-		}
-		seen[sym] = struct{}{}
-		candidates = append(candidates, sym)
+	if graph == nil {
+		return selectPreferredSymbol(base, prefer)
 	}
+
+	set := newSymbolSet(len(base) * 2)
 	for _, sym := range base {
-		graph.EachAliasSymbol(sym, func(candidate cfg.SymbolID) bool {
-			push(candidate)
-			return false
-		})
+		addAliasExpansion(set, graph, sym)
 	}
-
-	best := cfg.SymbolID(0)
-	for _, sym := range candidates {
-		if best == 0 {
-			best = sym
-		}
-		if prefer != nil && prefer(sym) {
-			return sym
-		}
+	candidates := set.Slice()
+	if len(candidates) == 0 {
+		candidates = base
 	}
-	return best
+	return selectPreferredSymbol(candidates, prefer)
 }

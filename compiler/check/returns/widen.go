@@ -11,6 +11,9 @@ import (
 
 // WidenFacts merges two interproc fact bundles.
 func WidenFacts(prev, next api.Facts) api.Facts {
+	NormalizeFunctionFactChannels(&prev)
+	NormalizeFunctionFactChannels(&next)
+
 	out := api.Facts{
 		ParamHints:         WidenParamHints(prev.ParamHints, next.ParamHints),
 		LiteralSigs:        WidenLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
@@ -20,12 +23,7 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 		ConstructorFields:  WidenConstructorFields(prev.ConstructorFields, next.ConstructorFields),
 	}
 
-	symbols := collectFunctionFactSymbolsFromPairs(
-		prev.ReturnSummaries, next.ReturnSummaries,
-		prev.NarrowReturns, next.NarrowReturns,
-		prev.FuncTypes, next.FuncTypes,
-		prev.FunctionFacts, next.FunctionFacts,
-	)
+	symbols := collectCanonicalFunctionFactSymbols(prev.FunctionFacts, next.FunctionFacts)
 	if len(symbols) == 0 {
 		return out
 	}

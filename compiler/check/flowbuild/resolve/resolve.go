@@ -255,6 +255,31 @@ func selectFromTypeMap(types map[cfg.SymbolID]typ.Type, sym cfg.SymbolID, fallba
 	return selectConcreteOrPlaceholder(candidate, fallback)
 }
 
+// selectFromTypeMaps returns the first non-placeholder type for sym across maps,
+// preserving the last placeholder as fallback when no concrete type exists.
+func selectFromTypeMaps(sym cfg.SymbolID, fallback *typ.Type, maps ...map[cfg.SymbolID]typ.Type) (typ.Type, bool) {
+	for _, m := range maps {
+		if selected, ok := selectFromTypeMap(m, sym, fallback); ok {
+			return selected, true
+		}
+	}
+	return nil, false
+}
+
+// resolveGlobalOrFallback finalizes symbol resolution by preferring global type
+// bindings and otherwise returning the placeholder fallback (if any).
+func resolveGlobalOrFallback(ctx api.BaseEnv, sym cfg.SymbolID, fallback typ.Type) (typ.Type, bool) {
+	if ctx != nil {
+		if t, ok := ctx.GlobalType(sym); ok && t != nil {
+			return t, true
+		}
+	}
+	if fallback != nil {
+		return fallback, true
+	}
+	return nil, false
+}
+
 // BuildContextSymbolResolver creates a symbol type resolver from Env.
 func BuildContextSymbolResolver(ctx api.BaseEnv) func(cfg.Point, cfg.SymbolID) (typ.Type, bool) {
 	if ctx == nil || ctx.Types() == nil {
@@ -270,13 +295,7 @@ func BuildContextSymbolResolver(ctx api.BaseEnv) func(cfg.Point, cfg.SymbolID) (
 				return selected, true
 			}
 		}
-		if t, ok := ctx.GlobalType(sym); ok && t != nil {
-			return t, true
-		}
-		if fallback != nil {
-			return fallback, true
-		}
-		return nil, false
+		return resolveGlobalOrFallback(ctx, sym, fallback)
 	}
 }
 
@@ -288,24 +307,16 @@ func BuildInputSymbolResolver(ctx api.BaseEnv, inputs *flow.Inputs) func(cfg.Poi
 	}
 	return func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
 		var fallback typ.Type
-		if selected, ok := selectFromTypeMap(inputs.LiteralTypes, sym, &fallback); ok {
+		if selected, ok := selectFromTypeMaps(
+			sym,
+			&fallback,
+			inputs.LiteralTypes,
+			inputs.SiblingTypes,
+			inputs.DeclaredTypes,
+		); ok {
 			return selected, true
 		}
-		if selected, ok := selectFromTypeMap(inputs.SiblingTypes, sym, &fallback); ok {
-			return selected, true
-		}
-		if selected, ok := selectFromTypeMap(inputs.DeclaredTypes, sym, &fallback); ok {
-			return selected, true
-		}
-		if ctx != nil {
-			if t, ok := ctx.GlobalType(sym); ok && t != nil {
-				return t, true
-			}
-		}
-		if fallback != nil {
-			return fallback, true
-		}
-		return nil, false
+		return resolveGlobalOrFallback(ctx, sym, fallback)
 	}
 }
 
@@ -542,25 +553,7 @@ func CalleeType(
 	}
 
 	if fnType == nil && symResolver != nil {
-		candidates := make([]cfg.SymbolID, 0, 4)
-		seen := make(map[cfg.SymbolID]struct{}, 4)
-		push := func(sym cfg.SymbolID) {
-			if sym == 0 {
-				return
-			}
-			if _, ok := seen[sym]; ok {
-				return
-			}
-			seen[sym] = struct{}{}
-			candidates = append(candidates, sym)
-		}
-		// Preserve historical preference for CalleePath.Symbol while still
-		// falling back to canonical callsite candidates when it misses.
-		push(info.CalleePath.Symbol)
-		for _, sym := range callsite.CalleeSymbolCandidatesWithAliases(info, graph, bindings, moduleBindings) {
-			push(sym)
-		}
-		for _, sym := range candidates {
+		for _, sym := range callsite.ResolverCalleeSymbolCandidates(info, graph, bindings, moduleBindings) {
 			if t, ok := symResolver(p, sym); ok && t != nil {
 				fnType = t
 				break

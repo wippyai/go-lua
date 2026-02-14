@@ -87,13 +87,18 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 
 	return out
 }
+
 // MergeFunctionFactIntoFacts reconciles and writes function-related facts for
 // one symbol into a facts bundle using canonical kernel policy.
 func MergeFunctionFactIntoFacts(facts *api.Facts, sym cfg.SymbolID, candidate FunctionFactCandidate) {
 	if facts == nil || sym == 0 {
 		return
 	}
+	NormalizeFunctionFactChannels(facts)
+	mergeFunctionFactIntoNormalizedFacts(facts, sym, candidate)
+}
 
+func mergeFunctionFactIntoNormalizedFacts(facts *api.Facts, sym cfg.SymbolID, candidate FunctionFactCandidate) {
 	existing := readFunctionFactFromFacts(facts, sym)
 	reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
 		ExistingSummary:  existing.Summary,
@@ -121,53 +126,12 @@ func MergeFunctionFactsIntoFacts(
 	if facts == nil {
 		return
 	}
-	for _, sym := range collectFunctionFactSymbols(summaries, narrows, funcs, nil) {
-		MergeFunctionFactIntoFacts(facts, sym, FunctionFactCandidate{
+	NormalizeFunctionFactChannels(facts)
+	for _, sym := range collectFunctionFactChannelSymbols(summaries, narrows, funcs, nil) {
+		mergeFunctionFactIntoNormalizedFacts(facts, sym, FunctionFactCandidate{
 			Summary: summaries[sym],
 			Narrow:  narrows[sym],
 			Func:    funcs[sym],
 		})
-	}
-}
-
-func collectFunctionFactSymbols(
-	summaries api.ReturnSummaries,
-	narrows api.NarrowReturnSummaries,
-	funcs api.FuncTypes,
-	facts api.FunctionFacts,
-) []cfg.SymbolID {
-	symbols := make(map[cfg.SymbolID]bool, len(summaries)+len(narrows)+len(funcs)+len(facts))
-	markFunctionFactSymbols(symbols, summaries)
-	markFunctionFactSymbols(symbols, narrows)
-	markFunctionFactSymbols(symbols, funcs)
-	markFunctionFactSymbols(symbols, facts)
-	return cfg.SortedSymbolIDs(symbols)
-}
-
-func collectFunctionFactSymbolsFromPairs(
-	prevSummary api.ReturnSummaries,
-	nextSummary api.ReturnSummaries,
-	prevNarrow api.NarrowReturnSummaries,
-	nextNarrow api.NarrowReturnSummaries,
-	prevFuncs api.FuncTypes,
-	nextFuncs api.FuncTypes,
-	prevFacts api.FunctionFacts,
-	nextFacts api.FunctionFacts,
-) []cfg.SymbolID {
-	symbols := make(map[cfg.SymbolID]bool, len(prevSummary)+len(nextSummary)+len(prevNarrow)+len(nextNarrow)+len(prevFuncs)+len(nextFuncs)+len(prevFacts)+len(nextFacts))
-	markFunctionFactSymbols(symbols, prevSummary)
-	markFunctionFactSymbols(symbols, nextSummary)
-	markFunctionFactSymbols(symbols, prevNarrow)
-	markFunctionFactSymbols(symbols, nextNarrow)
-	markFunctionFactSymbols(symbols, prevFuncs)
-	markFunctionFactSymbols(symbols, nextFuncs)
-	markFunctionFactSymbols(symbols, prevFacts)
-	markFunctionFactSymbols(symbols, nextFacts)
-	return cfg.SortedSymbolIDs(symbols)
-}
-
-func markFunctionFactSymbols[T any](dst map[cfg.SymbolID]bool, src map[cfg.SymbolID]T) {
-	for _, sym := range cfg.SortedSymbolIDs(src) {
-		dst[sym] = true
 	}
 }

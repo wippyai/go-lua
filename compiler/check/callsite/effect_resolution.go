@@ -9,6 +9,50 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+func resolveSynthedCalleeType(
+	info *cfg.CallInfo,
+	p cfg.Point,
+	synth func(expr ast.Expr, p cfg.Point) typ.Type,
+) typ.Type {
+	if info == nil || synth == nil {
+		return nil
+	}
+	if info.Callee != nil {
+		if t := synth(info.Callee, p); t != nil {
+			return t
+		}
+	}
+	// Method calls (x:foo(...)) often do not have a direct callee expression.
+	// Resolve receiver method/field type when available.
+	if info.Method != "" && info.Receiver != nil {
+		if recv := synth(info.Receiver, p); recv != nil {
+			if mt, ok := core.Method(recv, info.Method); ok {
+				return mt
+			}
+			if ft, ok := core.Field(recv, info.Method); ok {
+				return ft
+			}
+		}
+	}
+	return nil
+}
+
+func resolveCalleeTypeBySymbolCandidates(
+	candidates []cfg.SymbolID,
+	p cfg.Point,
+	resolveBySym func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool),
+) typ.Type {
+	if resolveBySym == nil {
+		return nil
+	}
+	for _, sym := range candidates {
+		if t, ok := resolveBySym(p, sym); ok && t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
 // ResolveCalleeEffect resolves the best effect for a callsite using one canonical order:
 //  1. symbol candidate lookup (store/snapshot facts)
 //  2. synthesized callee type
@@ -26,7 +70,7 @@ func ResolveCalleeEffect(
 	if info == nil {
 		return nil
 	}
-	candidates := CalleeSymbolCandidatesWithAliases(info, graph, primary, fallback)
+	candidates := ResolverCalleeSymbolCandidates(info, graph, primary, fallback)
 	if lookup != nil {
 		for _, sym := range candidates {
 			if eff := lookup(sym); eff != nil {
@@ -37,36 +81,14 @@ func ResolveCalleeEffect(
 	if effectFromType == nil {
 		return nil
 	}
-	if synth != nil && info.Callee != nil {
-		if t := synth(info.Callee, p); t != nil {
-			if eff := effectFromType(t); eff != nil {
-				return eff
-			}
+	if t := resolveSynthedCalleeType(info, p, synth); t != nil {
+		if eff := effectFromType(t); eff != nil {
+			return eff
 		}
 	}
-	// Method calls (x:foo(...)) often do not have a direct callee expression.
-	// Resolve effect from receiver method/field type when available.
-	if synth != nil && info.Method != "" && info.Receiver != nil {
-		if recv := synth(info.Receiver, p); recv != nil {
-			if mt, ok := core.Method(recv, info.Method); ok {
-				if eff := effectFromType(mt); eff != nil {
-					return eff
-				}
-			}
-			if ft, ok := core.Field(recv, info.Method); ok {
-				if eff := effectFromType(ft); eff != nil {
-					return eff
-				}
-			}
-		}
-	}
-	if resolveBySym != nil {
-		for _, sym := range candidates {
-			if t, ok := resolveBySym(p, sym); ok && t != nil {
-				if eff := effectFromType(t); eff != nil {
-					return eff
-				}
-			}
+	if t := resolveCalleeTypeBySymbolCandidates(candidates, p, resolveBySym); t != nil {
+		if eff := effectFromType(t); eff != nil {
+			return eff
 		}
 	}
 	return nil
@@ -86,28 +108,12 @@ func ResolveCalleeType(
 	if info == nil {
 		return nil
 	}
-	if synth != nil && info.Callee != nil {
-		if t := synth(info.Callee, p); t != nil {
-			return t
-		}
+	if t := resolveSynthedCalleeType(info, p, synth); t != nil {
+		return t
 	}
-	if synth != nil && info.Method != "" && info.Receiver != nil {
-		if recv := synth(info.Receiver, p); recv != nil {
-			if mt, ok := core.Method(recv, info.Method); ok {
-				return mt
-			}
-			if ft, ok := core.Field(recv, info.Method); ok {
-				return ft
-			}
-		}
-	}
-	if resolveBySym == nil {
-		return nil
-	}
-	for _, sym := range CalleeSymbolCandidatesWithAliases(info, graph, primary, fallback) {
-		if t, ok := resolveBySym(p, sym); ok && t != nil {
-			return t
-		}
-	}
-	return nil
+	return resolveCalleeTypeBySymbolCandidates(
+		ResolverCalleeSymbolCandidates(info, graph, primary, fallback),
+		p,
+		resolveBySym,
+	)
 }

@@ -449,7 +449,7 @@ func collectInferredTypes(
 							def.Callee = candidate
 						}
 					}
-					calleeCandidates := callsite.CalleeSymbolCandidatesWithAliases(info, graph, bindings, moduleBindings)
+					calleeCandidates := callsite.CallableCalleeSymbolCandidates(info, graph, bindings, moduleBindings)
 					for _, calleeSym := range calleeCandidates {
 						if sig, ok := funcSigTypes[calleeSym]; ok && sig != nil {
 							setCallee(sig)
@@ -577,23 +577,23 @@ func collectInferredTypes(
 								assignedType = sig
 							}
 						}
-							if typ.IsAbsentOrUnknown(assignedType) {
-								if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
-									assignedType = value
-									// Prefer direct expression synthesis when slot expansion
-									// yields `any` for non-call RHS but the expression itself
-									// has a more precise type (e.g. indexed map reads).
-									if source != nil && wrappedSynth != nil && typ.IsAny(value) {
-										if _, isCall := source.(*ast.FuncCallExpr); !isCall {
-											if precise := resolve.Ref(wrappedSynth(source, p), sc); !typ.IsAbsentOrUnknown(precise) && !typ.IsAny(precise) {
-												assignedType = precise
-											}
+						if typ.IsAbsentOrUnknown(assignedType) {
+							if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
+								assignedType = value
+								// Prefer direct expression synthesis when slot expansion
+								// yields `any` for non-call RHS but the expression itself
+								// has a more precise type (e.g. indexed map reads).
+								if source != nil && wrappedSynth != nil && typ.IsAny(value) {
+									if _, isCall := source.(*ast.FuncCallExpr); !isCall {
+										if precise := resolve.Ref(wrappedSynth(source, p), sc); !typ.IsAbsentOrUnknown(precise) && !typ.IsAny(precise) {
+											assignedType = precise
 										}
 									}
-								} else if wrappedSynth != nil && source != nil {
-									assignedType = wrappedSynth(source, p)
 								}
+							} else if wrappedSynth != nil && source != nil {
+								assignedType = wrappedSynth(source, p)
 							}
+						}
 						assignedType = resolve.Ref(assignedType, sc)
 						if typ.IsAbsentOrUnknown(assignedType) {
 							return

@@ -44,7 +44,7 @@ func canonicalLocalCalleeSymbol(
 	if callInfo == nil {
 		return 0
 	}
-	selected := checkcallsite.PreferredCalleeSymbolWithAliases(callInfo, graph, bindings, moduleBindings, func(sym cfg.SymbolID) bool {
+	selected := checkcallsite.PreferredCallableCalleeSymbol(callInfo, graph, bindings, moduleBindings, func(sym cfg.SymbolID) bool {
 		_, ok := localFuncs[sym]
 		return ok
 	})

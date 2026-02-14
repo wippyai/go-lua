@@ -407,7 +407,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Detect keys collector calls: local keys = sorted_keys(table)
 				if call, retIndex := info.CallForTarget(i); call != nil {
 					var tableSym cfg.SymbolID
-					calleeSymbols := callsite.CalleeSymbolCandidatesWithAliases(call, fc.Graph, bindings, fc.ModuleBindings)
+					calleeSymbols := callsite.CallableCalleeSymbolCandidates(call, fc.Graph, bindings, fc.ModuleBindings)
 
 					// Try local function analysis first
 					if keysCollector != nil {

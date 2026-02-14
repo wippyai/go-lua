@@ -90,12 +90,12 @@ type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
 // These facts are computed during analysis and stored per (graph, parent) pair.
 type Facts struct {
 	FunctionFacts FunctionFacts
-	// Deprecated: compatibility mirror derived from FunctionFacts.
+	// Compatibility mirror derived from FunctionFacts.
 	ReturnSummaries ReturnSummaries
-	// Deprecated: compatibility mirror derived from FunctionFacts.
+	// Compatibility mirror derived from FunctionFacts.
 	NarrowReturns NarrowReturnSummaries
 	ParamHints    ParamHints
-	// Deprecated: compatibility mirror derived from FunctionFacts.
+	// Compatibility mirror derived from FunctionFacts.
 	FuncTypes          FuncTypes
 	LiteralSigs        LiteralSigs
 	CapturedTypes      CapturedTypes
