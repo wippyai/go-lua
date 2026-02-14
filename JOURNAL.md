@@ -953,3 +953,13 @@ Validation:
 - Validation:
   - `go test ./compiler/check/synth/... -count=1` ✅
   - `./scripts/verify-suite.sh` ✅ (all listed wippy targets `errors=0 warnings=0 hints=0`).
+
+## 2026-02-14T05:25:00Z
+- Ran `./scripts/verify-suite.sh` again after additional sweep: all checker tests pass and all harness targets remain green.
+- Performed static wrapper scan over `compiler/check` production Go files (non-test) to identify one-line delegator functions.
+- Scanner findings with meaningful candidates were:
+  - `path.StaticKeySegment` -> `pathseg.StaticTableFieldKeySegment`
+  - `conditionExtractor.literalFromExpr` -> `literal.FromExprWithSymType`
+  - `conditionExtractor.pathFromExpr` -> `flowpath.FromExprWithBindingsAt`
+  - plus several intentional API adapter/helper methods (e.g. `AllowReturnTransforms`, `RootName`, `FuncTypeViewFromFacts`) and constructors.
+- No production behavior changes were applied in this pass; wrappers above are currently retained as domain-specific abstraction points and not classified as redundant path duplicates.
