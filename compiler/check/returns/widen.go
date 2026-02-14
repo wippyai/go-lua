@@ -660,7 +660,7 @@ func maybeWidenTypeForConvergence(t typ.Type) typ.Type {
 	if t == nil {
 		return nil
 	}
-	if !needsConvergenceWiden(t) {
+	if !hasHigherOrderGrowthRisk(t) {
 		return t
 	}
 	return subtype.WidenForInference(t)
@@ -674,11 +674,4 @@ func maybeWidenFunctionForConvergence(fn *typ.Function) *typ.Function {
 		return widened
 	}
 	return fn
-}
-
-func needsConvergenceWiden(t typ.Type) bool {
-	// Convergence widening must follow semantic growth risk, not shape/size heuristics.
-	// Higher-order/self-recursive return growth is the canonical case where iterative
-	// joins can keep inflating and require widening to guarantee stabilization.
-	return hasHigherOrderGrowthRisk(t)
 }

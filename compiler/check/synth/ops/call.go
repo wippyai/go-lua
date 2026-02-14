@@ -508,12 +508,6 @@ func mergeExpectedArgVectors(a, b []typ.Type) []typ.Type {
 }
 
 func mergeExpectedArgType(a, b typ.Type) typ.Type {
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
 	return typ.JoinPreferNonSoft(a, b)
 }
 

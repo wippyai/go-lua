@@ -13,12 +13,6 @@ import (
 // Keep all interproc call sites routed through this helper to avoid scattered
 // merge behavior and accidental divergence across channels.
 func JoinInterprocTypes(a, b typ.Type) typ.Type {
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
 	return typ.JoinPreferNonSoft(a, b)
 }
 
