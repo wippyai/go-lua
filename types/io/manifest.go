@@ -3,6 +3,7 @@ package io
 import (
 	"bytes"
 	"errors"
+	"strings"
 
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -256,8 +257,11 @@ func (m *Manifest) AllGlobals() map[string]typ.Type {
 
 // LookupSummary finds a function summary.
 func (m *Manifest) LookupSummary(name string) (*FunctionSummary, bool) {
-	s, ok := m.Summaries[name]
-	return s, ok
+	if m == nil || name == "" || len(m.Summaries) == 0 {
+		return nil, false
+	}
+	idx := buildSummaryIndex(m.Summaries)
+	return idx.lookup(name)
 }
 
 // LookupValue finds an exported value field by name from the enriched export type.
@@ -308,11 +312,11 @@ func enrichTypeWithSummaries(t typ.Type, summaries map[string]*FunctionSummary) 
 	if t == nil || len(summaries) == 0 {
 		return t
 	}
-	return enrichTopLevelTypeWithSummaries(t, summaries, 0, make(map[typ.Type]struct{}))
+	return enrichTopLevelTypeWithSummaries(t, buildSummaryIndex(summaries), 0, make(map[typ.Type]struct{}))
 }
 
-func enrichTopLevelTypeWithSummaries(t typ.Type, summaries map[string]*FunctionSummary, depth int, seen map[typ.Type]struct{}) typ.Type {
-	if t == nil || len(summaries) == 0 || typ.DepthExceeded(depth) {
+func enrichTopLevelTypeWithSummaries(t typ.Type, summaries summaryIndex, depth int, seen map[typ.Type]struct{}) typ.Type {
+	if t == nil || len(summaries.exact) == 0 || typ.DepthExceeded(depth) {
 		return t
 	}
 	if seen == nil {
@@ -369,7 +373,7 @@ func enrichTopLevelTypeWithSummaries(t typ.Type, summaries map[string]*FunctionS
 }
 
 // enrichRecordWithSummaries creates a new record with function fields enriched.
-func enrichRecordWithSummaries(r *typ.Record, summaries map[string]*FunctionSummary) *typ.Record {
+func enrichRecordWithSummaries(r *typ.Record, summaries summaryIndex) *typ.Record {
 	if r == nil || len(r.Fields) == 0 {
 		return r
 	}
@@ -381,7 +385,7 @@ func enrichRecordWithSummaries(r *typ.Record, summaries map[string]*FunctionSumm
 		newFields[i] = f
 
 		if fn, ok := f.Type.(*typ.Function); ok {
-			if summary, exists := summaries[f.Name]; exists {
+			if summary, exists := summaries.lookup(f.Name); exists {
 				enriched := ApplyFunctionSummary(fn, summary)
 				if enriched != nil && enriched != fn {
 					newFields[i].Type = enriched
@@ -413,7 +417,7 @@ func enrichRecordWithSummaries(r *typ.Record, summaries map[string]*FunctionSumm
 }
 
 // enrichInterfaceWithSummaries creates a new interface with method types enriched.
-func enrichInterfaceWithSummaries(iface *typ.Interface, summaries map[string]*FunctionSummary) *typ.Interface {
+func enrichInterfaceWithSummaries(iface *typ.Interface, summaries summaryIndex) *typ.Interface {
 	if iface == nil || len(iface.Methods) == 0 {
 		return iface
 	}
@@ -425,7 +429,7 @@ func enrichInterfaceWithSummaries(iface *typ.Interface, summaries map[string]*Fu
 		newMethods[i] = m
 
 		if m.Type != nil {
-			if summary, exists := summaries[m.Name]; exists {
+			if summary, exists := summaries.lookup(m.Name); exists {
 				enriched := ApplyFunctionSummary(m.Type, summary)
 				if enriched != nil && enriched != m.Type {
 					newMethods[i].Type = enriched
@@ -522,6 +526,67 @@ func ApplyFunctionSummary(fn *typ.Function, summary *FunctionSummary) *typ.Funct
 	}
 
 	return builder.Build()
+}
+
+type summaryIndex struct {
+	exact    map[string]*FunctionSummary
+	fallback map[string]*FunctionSummary
+	ambig    map[string]bool
+}
+
+func buildSummaryIndex(summaries map[string]*FunctionSummary) summaryIndex {
+	idx := summaryIndex{
+		exact:    make(map[string]*FunctionSummary, len(summaries)),
+		fallback: make(map[string]*FunctionSummary, len(summaries)),
+		ambig:    make(map[string]bool),
+	}
+	for name, summary := range summaries {
+		if name == "" || summary == nil {
+			continue
+		}
+		idx.exact[name] = summary
+		canonical := canonicalSummaryName(name)
+		if canonical == "" {
+			continue
+		}
+		if existing, ok := idx.fallback[canonical]; ok && existing != summary {
+			delete(idx.fallback, canonical)
+			idx.ambig[canonical] = true
+			continue
+		}
+		if !idx.ambig[canonical] {
+			idx.fallback[canonical] = summary
+		}
+	}
+	return idx
+}
+
+func (idx summaryIndex) lookup(name string) (*FunctionSummary, bool) {
+	if name == "" {
+		return nil, false
+	}
+	if summary, ok := idx.exact[name]; ok && summary != nil {
+		return summary, true
+	}
+	if idx.ambig[name] {
+		return nil, false
+	}
+	summary, ok := idx.fallback[name]
+	if !ok || summary == nil {
+		return nil, false
+	}
+	return summary, true
+}
+
+func canonicalSummaryName(name string) string {
+	if name == "" {
+		return ""
+	}
+	last := strings.LastIndexAny(name, ".:")
+	if last < 0 || last+1 >= len(name) {
+		return name
+	}
+	return name[last+1:]
 }
 
 // Encode serializes manifest to binary.
