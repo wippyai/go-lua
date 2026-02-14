@@ -183,7 +183,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 				}
 			}
 		}
-		return typeResolutionEngine.ResolveTypeDefAt(info.Name, info.TypeExpr, toAstTypeParams(info.TypeParams), sc, p)
+		return typeResolutionEngine.ResolveTypeDefAt(info.Name, info.TypeExpr, scope.ToTypeParamExprs(info.TypeParams), sc, p)
 	}
 	exprSynth := func(expr ast.Expr, p cfg.Point, sc *scope.State) typ.Type {
 		return typeResolutionEngine.SynthExprAt(expr, p, sc)
@@ -510,17 +510,6 @@ func buildDeclaredTypes(
 		return nil, nil
 	}
 	return out, annotated
-}
-
-func toAstTypeParams(params []cfg.TypeParamInfo) []ast.TypeParamExpr {
-	if len(params) == 0 {
-		return nil
-	}
-	out := make([]ast.TypeParamExpr, len(params))
-	for i, p := range params {
-		out[i] = ast.TypeParamExpr{Name: p.Name, Constraint: p.Constraint}
-	}
-	return out
 }
 
 // ComputeScopes walks the CFG in reverse postorder and computes scope state at each point.

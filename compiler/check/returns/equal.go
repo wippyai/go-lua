@@ -58,53 +58,17 @@ func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 
 // ReturnSummariesEqual checks if two return summary maps are equal.
 func ReturnSummariesEqual(a, b api.ReturnSummaries) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for _, sym := range cfg.SortedSymbolIDs(a) {
-		aRets := a[sym]
-		bRets, ok := b[sym]
-		if !ok {
-			return false
-		}
-		if !ReturnTypesEqual(aRets, bRets) {
-			return false
-		}
-	}
-	return true
+	return symbolTypeVectorMapEqual(a, b)
 }
 
 // ParamHintsEqual checks if two param hint maps are equal.
 func ParamHintsEqual(a, b api.ParamHints) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for _, sym := range cfg.SortedSymbolIDs(a) {
-		aHints := a[sym]
-		bHints, ok := b[sym]
-		if !ok {
-			return false
-		}
-		if !ReturnTypesEqual(aHints, bHints) {
-			return false
-		}
-	}
-	return true
+	return symbolTypeVectorMapEqual(a, b)
 }
 
 // FuncTypesEqual checks if two function-type maps are equal.
 func FuncTypesEqual(a, b api.FuncTypes) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for _, sym := range cfg.SortedSymbolIDs(a) {
-		t := a[sym]
-		other, ok := b[sym]
-		if !ok || !typ.TypeEquals(t, other) {
-			return false
-		}
-	}
-	return true
+	return symbolTypeMapEqual(a, b)
 }
 
 // LiteralSigsEqual checks if two literal signature maps are equal.
@@ -123,13 +87,31 @@ func LiteralSigsEqual(a, b api.LiteralSigs) bool {
 
 // CapturedTypesEqual checks if two captured type maps are equal.
 func CapturedTypesEqual(a, b api.CapturedTypes) bool {
+	return symbolTypeMapEqual(a, b)
+}
+
+func symbolTypeVectorMapEqual(a map[cfg.SymbolID][]typ.Type, b map[cfg.SymbolID][]typ.Type) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for _, sym := range cfg.SortedSymbolIDs(a) {
-		t := a[sym]
-		other, ok := b[sym]
-		if !ok || !typ.TypeEquals(t, other) {
+		left := a[sym]
+		right, ok := b[sym]
+		if !ok || !ReturnTypesEqual(left, right) {
+			return false
+		}
+	}
+	return true
+}
+
+func symbolTypeMapEqual(a map[cfg.SymbolID]typ.Type, b map[cfg.SymbolID]typ.Type) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, sym := range cfg.SortedSymbolIDs(a) {
+		left := a[sym]
+		right, ok := b[sym]
+		if !ok || !typ.TypeEquals(left, right) {
 			return false
 		}
 	}

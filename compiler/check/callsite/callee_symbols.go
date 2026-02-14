@@ -86,9 +86,8 @@ func CallableCalleeSymbolCandidates(
 		return base
 	}
 	set := newSymbolSet(len(base)*2 + 2)
-
-	for _, sym := range base {
-		addAliasExpansion(set, graph, sym)
+	for _, sym := range expandAliasCandidates(base, graph) {
+		set.Add(sym)
 	}
 
 	// Method calls may resolve method symbol only through an alias receiver base

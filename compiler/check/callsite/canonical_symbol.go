@@ -43,14 +43,6 @@ func CanonicalSymbolFromExprWithAliases(
 	if graph == nil {
 		return selectPreferredSymbol(base, prefer)
 	}
-
-	set := newSymbolSet(len(base) * 2)
-	for _, sym := range base {
-		addAliasExpansion(set, graph, sym)
-	}
-	candidates := set.Slice()
-	if len(candidates) == 0 {
-		candidates = base
-	}
+	candidates := expandAliasCandidates(base, graph)
 	return selectPreferredSymbol(candidates, prefer)
 }

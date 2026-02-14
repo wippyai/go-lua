@@ -435,32 +435,12 @@ func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.Captured
 			merged[callee] = captured
 			continue
 		}
-		out := make(map[cfg.SymbolID]map[string]typ.Type, len(existing)+len(captured))
-		for _, sym := range cfg.SortedSymbolIDs(existing) {
-			out[sym] = existing[sym]
-		}
-		for _, sym := range cfg.SortedSymbolIDs(captured) {
-			fields := captured[sym]
-			existingFields := out[sym]
-			if existingFields == nil {
-				out[sym] = fields
-				continue
+		merged[callee] = MergeCapturedFieldSymbolMaps(existing, captured, func(prev typ.Type, next typ.Type) typ.Type {
+			if prev != nil {
+				return maybeWidenTypeForConvergence(JoinInterprocTypes(prev, next))
 			}
-			mergedFields := make(map[string]typ.Type, len(existingFields)+len(fields))
-			for _, name := range cfg.SortedFieldNames(existingFields) {
-				mergedFields[name] = existingFields[name]
-			}
-			for _, name := range cfg.SortedFieldNames(fields) {
-				t := fields[name]
-				if prevType := mergedFields[name]; prevType != nil {
-					mergedFields[name] = maybeWidenTypeForConvergence(JoinInterprocTypes(prevType, t))
-				} else {
-					mergedFields[name] = maybeWidenTypeForConvergence(t)
-				}
-			}
-			out[sym] = mergedFields
-		}
-		merged[callee] = out
+			return maybeWidenTypeForConvergence(next)
+		})
 	}
 	return merged
 }

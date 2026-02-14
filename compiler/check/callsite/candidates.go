@@ -56,6 +56,21 @@ func addAliasExpansion(set *symbolSet, graph *cfg.Graph, sym cfg.SymbolID) {
 	})
 }
 
+func expandAliasCandidates(base []cfg.SymbolID, graph *cfg.Graph) []cfg.SymbolID {
+	if graph == nil || len(base) == 0 {
+		return base
+	}
+	set := newSymbolSet(len(base) * 2)
+	for _, sym := range base {
+		addAliasExpansion(set, graph, sym)
+	}
+	candidates := set.Slice()
+	if len(candidates) == 0 {
+		return base
+	}
+	return candidates
+}
+
 func exprSymbolCandidates(
 	expr ast.Expr,
 	raw cfg.SymbolID,

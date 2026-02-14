@@ -113,7 +113,7 @@ func storeCapturedFactsFromResult(
 				facts.CapturedFields = make(api.CapturedFieldAssigns)
 			}
 			existing := facts.CapturedFields[fnSym]
-			facts.CapturedFields[fnSym] = mergeCapturedFieldAssigns(existing, fields)
+			facts.CapturedFields[fnSym] = returns.MergeCapturedFieldSymbolMaps(existing, fields, returns.JoinInterprocTypes)
 		})
 	}
 
@@ -124,7 +124,12 @@ func storeCapturedFactsFromResult(
 				facts.CapturedContainers = make(api.CapturedContainerMutations)
 			}
 			existing := facts.CapturedContainers[fnSym]
-			facts.CapturedContainers[fnSym] = mergeCapturedContainerMutations(existing, mutations)
+			facts.CapturedContainers[fnSym] = returns.MergeCapturedContainerMutationMaps(existing, mutations, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
+				if prev != nil {
+					next.ValueType = returns.JoinInterprocTypes(prev.ValueType, next.ValueType)
+				}
+				return next
+			})
 		})
 	}
 }
@@ -541,54 +546,4 @@ func parentGraphKeyForCallee(store Store, result *api.FuncResult, parent *scope.
 		return api.GraphKey{}, false
 	}
 	return store.GraphKeyFor(result.Graph, parent)
-}
-
-func mergeCapturedFieldAssigns(
-	existing map[cfg.SymbolID]map[string]typ.Type,
-	next map[cfg.SymbolID]map[string]typ.Type,
-) map[cfg.SymbolID]map[string]typ.Type {
-	if existing == nil {
-		return next
-	}
-	if next == nil {
-		return existing
-	}
-	merged := make(map[cfg.SymbolID]map[string]typ.Type, len(existing)+len(next))
-	for _, sym := range cfg.SortedSymbolIDs(existing) {
-		merged[sym] = existing[sym]
-	}
-	for _, sym := range cfg.SortedSymbolIDs(next) {
-		fields := next[sym]
-		existingFields := merged[sym]
-		if existingFields == nil {
-			merged[sym] = fields
-			continue
-		}
-		out := make(map[string]typ.Type, len(existingFields)+len(fields))
-		for _, name := range cfg.SortedFieldNames(existingFields) {
-			out[name] = existingFields[name]
-		}
-		for _, name := range cfg.SortedFieldNames(fields) {
-			t := fields[name]
-			if prev := out[name]; prev != nil {
-				out[name] = returns.JoinInterprocTypes(prev, t)
-			} else {
-				out[name] = t
-			}
-		}
-		merged[sym] = out
-	}
-	return merged
-}
-
-func mergeCapturedContainerMutations(
-	existing map[cfg.SymbolID][]api.ContainerMutation,
-	next map[cfg.SymbolID][]api.ContainerMutation,
-) map[cfg.SymbolID][]api.ContainerMutation {
-	return returns.MergeCapturedContainerMutationMaps(existing, next, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
-		if prev != nil {
-			next.ValueType = returns.JoinInterprocTypes(prev.ValueType, next.ValueType)
-		}
-		return next
-	})
 }
