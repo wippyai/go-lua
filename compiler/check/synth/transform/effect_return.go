@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/kind"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -34,6 +35,46 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 	}
 
 	switch transform := ret.Transform.(type) {
+	case effect.SameAs:
+		if resolved := resolveParamType(args, transform.Source); resolved != nil {
+			return resolved
+		}
+		return baseReturn
+	case effect.ElementOf:
+		if resolved := resolveParamType(args, transform.Source); resolved != nil {
+			if elem := querycore.ElementType(resolved); elem != nil {
+				return elem
+			}
+		}
+		return baseReturn
+	case effect.OptionalElementOf:
+		if resolved := resolveParamType(args, transform.Source); resolved != nil {
+			if elem := querycore.ElementType(resolved); elem != nil {
+				return typ.NewOptional(elem)
+			}
+		}
+		return baseReturn
+	case effect.DeepElementOf:
+		if resolved := resolveParamType(args, transform.Source); resolved != nil {
+			if elem := deepElementType(resolved); elem != nil {
+				return elem
+			}
+		}
+		return baseReturn
+	case effect.CallbackReturn:
+		if resolved := resolveParamType(args, transform.CallbackParam); resolved != nil {
+			if cbRet := callbackReturnType(resolved); cbRet != nil {
+				return cbRet
+			}
+		}
+		return baseReturn
+	case effect.ArrayOfCallbackReturn:
+		if resolved := resolveParamType(args, transform.CallbackParam); resolved != nil {
+			if cbRet := callbackReturnType(resolved); cbRet != nil {
+				return typ.NewArray(cbRet)
+			}
+		}
+		return baseReturn
 	case effect.SelectResultOfCases:
 		result := buildSelectResultUnion(args, transform)
 		if result != nil {
@@ -43,6 +84,63 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 	default:
 		return baseReturn
 	}
+}
+
+func resolveParamType(args []typ.Type, ref effect.ParamRef) typ.Type {
+	idx, ok := effect.ResolveParamIndex(ref, len(args))
+	if !ok || idx < 0 || idx >= len(args) {
+		return nil
+	}
+	return args[idx]
+}
+
+func callbackReturnType(t typ.Type) typ.Type {
+	t = unwrap.Alias(t)
+	if t == nil {
+		return nil
+	}
+	switch v := t.(type) {
+	case *typ.Function:
+		if len(v.Returns) == 0 || v.Returns[0] == nil {
+			return nil
+		}
+		return v.Returns[0]
+	case *typ.Optional:
+		return callbackReturnType(v.Inner)
+	case *typ.Union:
+		var members []typ.Type
+		for _, m := range v.Members {
+			if rt := callbackReturnType(m); rt != nil {
+				members = append(members, rt)
+			}
+		}
+		if len(members) == 0 {
+			return nil
+		}
+		return typ.NewUnion(members...)
+	default:
+		if typ.IsAny(t) {
+			return typ.Any
+		}
+		if typ.IsUnknown(t) {
+			return typ.Unknown
+		}
+		return nil
+	}
+}
+
+func deepElementType(t typ.Type) typ.Type {
+	current := t
+	last := querycore.ElementType(current)
+	for last != nil {
+		current = last
+		next := querycore.ElementType(current)
+		if next == nil {
+			return current
+		}
+		last = next
+	}
+	return nil
 }
 
 // buildSelectResultUnion builds a union of result records from SelectCase elements.

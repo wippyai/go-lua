@@ -15,6 +15,19 @@ var (
 	pairsSpec = contract.NewSpec().WithEffects(
 		effect.Iterator{Source: effect.ParamRef{Index: 0}, Kind: effect.IterateKeyed},
 	)
+	pcallSpec = contract.NewSpec().
+			WithCallback(0, &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce}).
+			WithEffects(effect.Return{
+			ReturnIndex: 1,
+			Transform:   effect.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}},
+		})
+	xpcallSpec = contract.NewSpec().
+			WithCallback(0, &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce}).
+			WithCallback(1, &contract.CallbackSpec{Cardinality: contract.CardAtMostOnce}).
+			WithEffects(effect.Return{
+			ReturnIndex: 1,
+			Transform:   effect.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}},
+		})
 )
 
 // Global function type definitions.
@@ -86,6 +99,7 @@ var (
 		Variadic(typ.Any).
 		Returns(typ.Boolean, typ.Any).
 		Effects(effect.BorrowsOnly()).
+		Spec(pcallSpec).
 		Build()
 
 	// cpcall(f, ...) -> success, result... (coroutine-safe pcall)
@@ -94,6 +108,7 @@ var (
 		Variadic(typ.Any).
 		Returns(typ.Boolean, typ.Any).
 		Effects(effect.BorrowsOnly()).
+		Spec(pcallSpec).
 		Build()
 
 	// xpcall(f, msgh, ...) -> success, result...
@@ -103,6 +118,7 @@ var (
 		Variadic(typ.Any).
 		Returns(typ.Boolean, typ.Any).
 		Effects(effect.BorrowsOnly()).
+		Spec(xpcallSpec).
 		Build()
 
 	// print(...) -> nil

@@ -745,37 +745,9 @@ func maybeWidenFunctionForConvergence(fn *typ.Function) *typ.Function {
 	return fn
 }
 
-const (
-	convergenceComplexityBudget = 512
-	convergenceUnionBudget      = 24
-)
-
 func needsConvergenceWiden(t typ.Type) bool {
-	if hasLargeRecordShape(t) {
-		return true
-	}
-	nodes := 0
-	wideUnion := false
-	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
-		nodes++
-		if u, ok := node.(*typ.Union); ok && len(u.Members) > convergenceUnionBudget {
-			wideUnion = true
-		}
-		return node, false
-	})
-	return wideUnion || nodes > convergenceComplexityBudget
-}
-
-func hasLargeRecordShape(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	large := false
-	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
-		if r, ok := node.(*typ.Record); ok && len(r.Fields) > typ.DefaultRecursionDepth {
-			large = true
-		}
-		return node, false
-	})
-	return large
+	// Convergence widening must follow semantic growth risk, not shape/size heuristics.
+	// Higher-order/self-recursive return growth is the canonical case where iterative
+	// joins can keep inflating and require widening to guarantee stabilization.
+	return hasHigherOrderGrowthRisk(t)
 }

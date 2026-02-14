@@ -87,7 +87,7 @@ func TestExtractCallCorrelations_PassesPointToSymResolver(t *testing.T) {
 		seenPoint = p
 		return typ.Integer, true
 	}
-	_, _ = extractCallCorrelations(callInfo, nil, wantPoint, symResolver, nil, nil, nil)
+	_, _, _ = extractCallCorrelations(callInfo, nil, wantPoint, symResolver, nil, nil, nil)
 	if seenPoint != wantPoint {
 		t.Fatalf("symResolver point = %d, want %d", seenPoint, wantPoint)
 	}
@@ -117,7 +117,7 @@ func TestExtractCallCorrelations_MethodUsesCanonicalCalleeResolution(t *testing.
 		return nil, false
 	}
 
-	inverse, co := extractCallCorrelations(callInfo, nil, 1, symResolver, nil, nil, nil)
+	inverse, co, _ := extractCallCorrelations(callInfo, nil, 1, symResolver, nil, nil, nil)
 	if len(co) != 0 {
 		t.Fatalf("expected no co-correlations, got %v", co)
 	}
@@ -620,5 +620,34 @@ func TestCorrelationsFromFunctionType_NoImplicitStructuredErrorWithoutMessage(t 
 	inverse, co := correlationsFromFunctionType(fnType)
 	if len(inverse) != 0 || len(co) != 0 {
 		t.Fatalf("expected no implicit correlations without message-like error slot, got inverse=%v co=%v", inverse, co)
+	}
+}
+
+func TestGuardedTypeCorrelationsFromCall_CallbackReturnOnTruthy(t *testing.T) {
+	fnType := typ.Func().
+		Param("f", typ.Any).
+		Returns(typ.Boolean, typ.Any).
+		Spec(contract.NewSpec().WithEffects(effect.Return{
+			ReturnIndex: 1,
+			Transform:   effect.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}},
+		})).
+		Build()
+
+	callInfo := &cfg.CallInfo{
+		Args: []ast.Expr{&ast.FunctionExpr{}},
+	}
+	synth := func(ast.Expr, cfg.Point) typ.Type {
+		return typ.Func().Returns(typ.String).Build()
+	}
+
+	got := guardedTypeCorrelationsFromCall(fnType, callInfo, synth, 1)
+	if len(got) != 1 {
+		t.Fatalf("expected one guarded correlation, got %v", got)
+	}
+	if got[0].GuardIndex != 0 || got[0].TargetIndex != 1 || !got[0].GuardOnTruthy {
+		t.Fatalf("unexpected guarded correlation shape: %+v", got[0])
+	}
+	if !typ.TypeEquals(got[0].TargetType, typ.String) {
+		t.Fatalf("expected guarded target type string, got %v", got[0].TargetType)
 	}
 }

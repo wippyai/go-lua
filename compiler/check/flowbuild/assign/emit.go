@@ -37,6 +37,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/constprop"
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/decl"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/guard"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
@@ -662,13 +663,17 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					types[i] = value
 				}
 			}
-			correlations, coCorrelations := extractCallCorrelations(sourceCall, wrappedSynth, p, resolverWithSpec, fc.Graph, bindings, fc.ModuleBindings)
+			correlations, coCorrelations, guardedCorrelations := extractCallCorrelations(sourceCall, wrappedSynth, p, resolverWithSpec, fc.Graph, bindings, fc.ModuleBindings)
+			for _, corr := range guardedCorrelations {
+				decl.AddTypeKey(inputs, corr.TargetType)
+			}
 			sibling := &flow.SiblingAssignment{
-				Symbols:        symbols,
-				Names:          names,
-				Types:          types,
-				Correlations:   correlations,
-				CoCorrelations: coCorrelations,
+				Symbols:             symbols,
+				Names:               names,
+				Types:               types,
+				Correlations:        correlations,
+				CoCorrelations:      coCorrelations,
+				GuardedCorrelations: guardedCorrelations,
 			}
 			for i, sym := range symbols {
 				if sym != 0 && names[i] != "" {
@@ -808,13 +813,14 @@ func extractCallCorrelations(
 	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	moduleBindings *bind.BindingTable,
-) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation) {
+) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation, []flow.GuardedTypeCorrelation) {
 	if callInfo == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	fnType := resolve.CalleeType(callInfo, p, synth, symResolver, nil, graph, bindings, moduleBindings)
 	inv, co := correlationsFromFunctionType(fnType)
-	return inv, co
+	guarded := guardedTypeCorrelationsFromCall(fnType, callInfo, synth, p)
+	return inv, co, guarded
 }
 
 // correlationsFromFunctionType extracts ErrorReturn and CorrelatedReturn labels from a function's spec effects.
@@ -857,4 +863,132 @@ func correlationsFromFunctionType(fnType typ.Type) ([]flow.ReturnCorrelation, []
 		}
 	}
 	return inverse, coCorr
+}
+
+func guardedTypeCorrelationsFromCall(
+	fnType typ.Type,
+	callInfo *cfg.CallInfo,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	p cfg.Point,
+) []flow.GuardedTypeCorrelation {
+	if fnType == nil || callInfo == nil || synth == nil {
+		return nil
+	}
+	fn := unwrap.Function(fnType)
+	if fn == nil {
+		return nil
+	}
+	guardIdx, ok := firstBooleanReturnIndex(fn)
+	if !ok {
+		return nil
+	}
+	spec := contract.ExtractSpec(fnType)
+	if spec == nil {
+		return nil
+	}
+
+	var out []flow.GuardedTypeCorrelation
+	for _, label := range spec.Effects.Labels {
+		ret, ok := label.(effect.Return)
+		if !ok || ret.Transform == nil || ret.ReturnIndex < 0 {
+			continue
+		}
+		cb, ok := ret.Transform.(effect.CallbackReturn)
+		if !ok {
+			continue
+		}
+		argIdx, ok := effect.ResolveParamIndex(cb.CallbackParam, len(callInfo.Args))
+		if !ok || argIdx < 0 || argIdx >= len(callInfo.Args) {
+			continue
+		}
+		arg := callInfo.Args[argIdx]
+		if arg == nil {
+			continue
+		}
+		targetType := firstCallableReturnType(synth(arg, p))
+		if targetType == nil || typ.IsAny(targetType) || typ.IsUnknown(targetType) {
+			continue
+		}
+		out = append(out, flow.GuardedTypeCorrelation{
+			GuardIndex:    guardIdx,
+			TargetIndex:   ret.ReturnIndex,
+			GuardOnTruthy: true,
+			TargetType:    targetType,
+		})
+	}
+	return out
+}
+
+func firstBooleanReturnIndex(fn *typ.Function) (int, bool) {
+	if fn == nil {
+		return 0, false
+	}
+	for i, ret := range fn.Returns {
+		if isBooleanType(ret) {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func isBooleanType(t typ.Type) bool {
+	t = unwrap.Alias(t)
+	if t == nil {
+		return false
+	}
+	switch v := t.(type) {
+	case *typ.Literal:
+		return v.Base == kind.Boolean
+	case *typ.Optional:
+		return isBooleanType(v.Inner)
+	case *typ.Union:
+		seen := false
+		for _, m := range v.Members {
+			if m == nil || m.Kind() == kind.Nil {
+				continue
+			}
+			if !isBooleanType(m) {
+				return false
+			}
+			seen = true
+		}
+		return seen
+	default:
+		return t.Kind() == kind.Boolean
+	}
+}
+
+func firstCallableReturnType(t typ.Type) typ.Type {
+	t = unwrap.Alias(t)
+	if t == nil {
+		return nil
+	}
+	switch v := t.(type) {
+	case *typ.Function:
+		if len(v.Returns) == 0 || v.Returns[0] == nil {
+			return nil
+		}
+		return v.Returns[0]
+	case *typ.Optional:
+		return firstCallableReturnType(v.Inner)
+	case *typ.Union:
+		var retTypes []typ.Type
+		for _, m := range v.Members {
+			if rt := firstCallableReturnType(m); rt != nil {
+				retTypes = append(retTypes, rt)
+			}
+		}
+		if len(retTypes) == 0 {
+			return nil
+		}
+		return typ.NewUnion(retTypes...)
+	default:
+		if typ.IsAny(t) {
+			return typ.Any
+		}
+		if typ.IsUnknown(t) {
+			return typ.Unknown
+		}
+		return nil
+	}
 }

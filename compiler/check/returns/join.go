@@ -357,11 +357,6 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 		return normalizeAndPruneReturnVector(joinReturnVectorsMonotone(existing, candidate))
 	}
 
-	// Prefer strict directional refinement from the latest candidate.
-	if preferred, ok := SelectRefiningReturnVector(candidate, existing); ok {
-		return normalizeAndPruneReturnVector(preferred)
-	}
-
 	if preferred, ok := SelectPreferredReturnVector(existing, candidate); ok {
 		return normalizeAndPruneReturnVector(preferred)
 	}
@@ -674,53 +669,6 @@ func WithSummaryOrUnknown(fn *typ.Function, summary []typ.Type) *typ.Function {
 		return fn
 	}
 	return typjoin.WithReturns(fn, normalizeAndPruneReturnVector(summary))
-}
-
-func returnVectorRefines(a, b []typ.Type) bool {
-	if ReturnTypesRefine(a, b) {
-		return true
-	}
-	return returnVectorMapLikeRefines(a, b)
-}
-
-func returnVectorMapLikeRefines(a, b []typ.Type) bool {
-	if len(a) == 0 || len(b) == 0 || len(a) != len(b) {
-		return false
-	}
-	strict := false
-	for i := range a {
-		if typ.TypeEquals(a[i], b[i]) {
-			continue
-		}
-		if !mapLikeTypeRefines(a[i], b[i]) {
-			return false
-		}
-		if !mapLikeTypeRefines(b[i], a[i]) {
-			strict = true
-		}
-	}
-	return strict
-}
-
-func mapLikeTypeRefines(a, b typ.Type) bool {
-	ak, av, aok := mapComponentFromType(a)
-	bk, bv, bok := mapComponentFromType(b)
-	if !aok || !bok {
-		return false
-	}
-	return subtype.IsSubtype(ak, bk) && subtype.IsSubtype(av, bv)
-}
-
-func mapComponentFromType(t typ.Type) (key typ.Type, val typ.Type, ok bool) {
-	switch v := unwrap.Alias(t).(type) {
-	case *typ.Map:
-		return v.Key, v.Value, true
-	case *typ.Record:
-		if v.HasMapComponent() {
-			return v.MapKey, v.MapValue, true
-		}
-	}
-	return nil, nil, false
 }
 
 func isOpenTopRecordType(t typ.Type) bool {
