@@ -171,7 +171,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 					}
 					pos := diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()}
 					span := ast.SpanOf(source)
-					msg := formatAssignMismatch(valueType, declaredType)
+					msg := formatAssignMismatchDetailed(valueType, declaredType, result.Reason)
 					_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
 					diags = append(diags, diag.Diagnostic{
 						Severity: diag.SeverityError,
@@ -268,6 +268,14 @@ func formatExcluded(value, declared typ.Type) string {
 
 func formatAssignMismatch(value, declared typ.Type) string {
 	return "cannot assign " + typ.FormatShort(value) + " to " + typ.FormatShort(declared)
+}
+
+func formatAssignMismatchDetailed(value, declared typ.Type, reason string) string {
+	msg := formatAssignMismatch(value, declared)
+	if reason == "" {
+		return msg
+	}
+	return msg + ": " + reason
 }
 
 type identBindingLookup interface {
