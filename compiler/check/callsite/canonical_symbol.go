@@ -6,15 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 )
 
-func canonicalExprSymbolCandidates(
-	expr ast.Expr,
-	raw cfg.SymbolID,
-	primary *bind.BindingTable,
-	fallback *bind.BindingTable,
-) []cfg.SymbolID {
-	return exprSymbolCandidates(expr, raw, primary, fallback)
-}
-
 // CanonicalSymbolFromExpr chooses a stable symbol identity for an expression.
 //
 // Candidate order is:
@@ -31,7 +22,7 @@ func CanonicalSymbolFromExpr(
 	fallback *bind.BindingTable,
 	prefer func(cfg.SymbolID) bool,
 ) cfg.SymbolID {
-	return selectPreferredSymbol(canonicalExprSymbolCandidates(expr, raw, primary, fallback), prefer)
+	return selectPreferredSymbol(exprSymbolCandidates(expr, raw, primary, fallback), prefer)
 }
 
 // CanonicalSymbolFromExprWithAliases chooses a stable symbol identity for an
@@ -45,7 +36,7 @@ func CanonicalSymbolFromExprWithAliases(
 	fallback *bind.BindingTable,
 	prefer func(cfg.SymbolID) bool,
 ) cfg.SymbolID {
-	base := canonicalExprSymbolCandidates(expr, raw, primary, fallback)
+	base := exprSymbolCandidates(expr, raw, primary, fallback)
 	if len(base) == 0 {
 		return 0
 	}

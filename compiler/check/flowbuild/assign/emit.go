@@ -642,7 +642,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					if keyType == nil && target.Key != nil && wrappedSynth != nil {
 						keyType = wrappedSynth(target.Key, p)
 					}
-					keyType = normalizeIndexerKeyType(keyType)
+					keyType = canonicalDynamicKeyType(keyType)
 					// Apply truthy guards to narrow optional fields in table literals.
 					valType := assignedType
 					if source != nil && bindings != nil && truthyGuards != nil {
@@ -911,7 +911,7 @@ func keyInfoForStep(
 			keyType = resolved
 		}
 	}
-	keyType = normalizeIndexerKeyType(keyType)
+	keyType = canonicalDynamicKeyType(keyType)
 	return keyVar, keySym, keyType
 }
 
@@ -1009,10 +1009,6 @@ func inferSymbolTypeFromVisibleDef(
 		})
 	})
 	return inferred
-}
-
-func normalizeIndexerKeyType(keyType typ.Type) typ.Type {
-	return canonicalDynamicKeyType(keyType)
 }
 
 // ExtractFuncDefAssignments extracts function definitions as assignments.

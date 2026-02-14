@@ -839,10 +839,6 @@ func ExtractFunctionEffect(
 	)
 }
 
-func ExtractEffectFromType(t typ.Type) *constraint.FunctionEffect {
-	return checkeffects.EffectFromType(t)
-}
-
 // CallTerminates checks if a call is to a function that never returns.
 // Uses symbol-based effect lookup - all functions have symbols.
 func CallTerminates(

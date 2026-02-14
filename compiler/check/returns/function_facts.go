@@ -6,15 +6,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func functionFactSymbols(facts api.Facts) []cfg.SymbolID {
-	return collectFunctionFactChannelSymbols(
-		facts.ReturnSummaries,
-		facts.NarrowReturns,
-		facts.FuncTypes,
-		facts.FunctionFacts,
-	)
-}
-
 func collectFunctionFactChannelSymbols(
 	summaries api.ReturnSummaries,
 	narrows api.NarrowReturnSummaries,
@@ -146,64 +137,59 @@ func writeFunctionFactToFacts(facts *api.Facts, sym cfg.SymbolID, ff api.Functio
 	setOrDeleteFuncType(&facts.FuncTypes, sym, ff.Func)
 }
 
-// SummaryViewFromFacts returns the canonical summary channel view derived from
-// FunctionFacts.
-func SummaryViewFromFacts(facts api.Facts) api.ReturnSummaries {
+func projectCanonicalFunctionFactChannel[T any](
+	facts api.Facts,
+	project func(api.FunctionFact) (T, bool),
+) map[cfg.SymbolID]T {
 	canonical := canonicalFunctionFacts(facts)
 	if len(canonical) == 0 {
 		return nil
 	}
-	out := make(api.ReturnSummaries, len(canonical))
+	out := make(map[cfg.SymbolID]T, len(canonical))
 	for _, sym := range cfg.SortedSymbolIDs(canonical) {
 		ff := canonical[sym]
-		if len(ff.Summary) > 0 {
-			out[sym] = ff.Summary
+		value, ok := project(ff)
+		if ok {
+			out[sym] = value
 		}
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// SummaryViewFromFacts returns the canonical summary channel view derived from
+// FunctionFacts.
+func SummaryViewFromFacts(facts api.Facts) api.ReturnSummaries {
+	return projectCanonicalFunctionFactChannel(facts, func(ff api.FunctionFact) ([]typ.Type, bool) {
+		if len(ff.Summary) == 0 {
+			return nil, false
+		}
+		return ff.Summary, true
+	})
 }
 
 // NarrowViewFromFacts returns the canonical narrow-summary channel view derived
 // from FunctionFacts.
 func NarrowViewFromFacts(facts api.Facts) api.NarrowReturnSummaries {
-	canonical := canonicalFunctionFacts(facts)
-	if len(canonical) == 0 {
-		return nil
-	}
-	out := make(api.NarrowReturnSummaries, len(canonical))
-	for _, sym := range cfg.SortedSymbolIDs(canonical) {
-		ff := canonical[sym]
-		if len(ff.Narrow) > 0 {
-			out[sym] = ff.Narrow
+	return projectCanonicalFunctionFactChannel(facts, func(ff api.FunctionFact) ([]typ.Type, bool) {
+		if len(ff.Narrow) == 0 {
+			return nil, false
 		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+		return ff.Narrow, true
+	})
 }
 
 // FuncTypeViewFromFacts returns the canonical function-type channel view
 // derived from FunctionFacts.
 func FuncTypeViewFromFacts(facts api.Facts) api.FuncTypes {
-	canonical := canonicalFunctionFacts(facts)
-	if len(canonical) == 0 {
-		return nil
-	}
-	out := make(api.FuncTypes, len(canonical))
-	for _, sym := range cfg.SortedSymbolIDs(canonical) {
-		ff := canonical[sym]
-		if ff.Func != nil {
-			out[sym] = ff.Func
+	return projectCanonicalFunctionFactChannel(facts, func(ff api.FunctionFact) (typ.Type, bool) {
+		if ff.Func == nil {
+			return nil, false
 		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+		return ff.Func, true
+	})
 }
 
 // NormalizeFunctionFactChannels reconciles legacy function channels into
@@ -228,7 +214,12 @@ func NormalizeFunctionFactChannels(facts *api.Facts) {
 }
 
 func canonicalFunctionFacts(facts api.Facts) api.FunctionFacts {
-	symbols := functionFactSymbols(facts)
+	symbols := collectFunctionFactChannelSymbols(
+		facts.ReturnSummaries,
+		facts.NarrowReturns,
+		facts.FuncTypes,
+		facts.FunctionFacts,
+	)
 	if len(symbols) == 0 {
 		return nil
 	}

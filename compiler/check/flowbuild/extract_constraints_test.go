@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	checkeffects "github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
@@ -82,14 +83,14 @@ func TestExtractCallOnReturnConstraints_EmptyGraph(t *testing.T) {
 }
 
 func TestExtractEffectFromType_Nil(t *testing.T) {
-	result := cond.ExtractEffectFromType(nil)
+	result := checkeffects.EffectFromType(nil)
 	if result != nil {
 		t.Error("expected nil for nil type")
 	}
 }
 
 func TestExtractEffectFromType_NonFunction(t *testing.T) {
-	result := cond.ExtractEffectFromType(typ.String)
+	result := checkeffects.EffectFromType(typ.String)
 	if result != nil {
 		t.Error("expected nil for non-function type")
 	}
@@ -97,7 +98,7 @@ func TestExtractEffectFromType_NonFunction(t *testing.T) {
 
 func TestExtractEffectFromType_FunctionWithoutRefinement(t *testing.T) {
 	fn := &typ.Function{}
-	result := cond.ExtractEffectFromType(fn)
+	result := checkeffects.EffectFromType(fn)
 	if result != nil {
 		t.Error("expected nil for function without refinement")
 	}
@@ -106,7 +107,7 @@ func TestExtractEffectFromType_FunctionWithoutRefinement(t *testing.T) {
 func TestExtractEffectFromType_AliasedFunction(t *testing.T) {
 	fn := &typ.Function{}
 	alias := &typ.Alias{Name: "MyFunc", Target: fn}
-	result := cond.ExtractEffectFromType(alias)
+	result := checkeffects.EffectFromType(alias)
 	if result != nil {
 		t.Error("expected nil for function without refinement")
 	}
