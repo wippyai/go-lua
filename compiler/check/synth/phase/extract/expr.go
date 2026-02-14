@@ -539,7 +539,7 @@ func (s *Synthesizer) expandValuesCore(exprs []ast.Expr, needed int, single func
 func (s *Synthesizer) expandValues(exprs []ast.Expr, needed int, p cfg.Point, narrower api.FlowOps) []typ.Type {
 	return s.expandValuesCore(exprs, needed,
 		func(expr ast.Expr) typ.Type { return s.SynthExpr(expr, p, narrower) },
-		func(expr ast.Expr) []typ.Type { return s.SynthMulti(expr, p, narrower) },
+		func(expr ast.Expr) []typ.Type { return s.MultiTypeOf(expr, p) },
 	)
 }
 

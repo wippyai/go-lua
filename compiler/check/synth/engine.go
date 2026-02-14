@@ -180,9 +180,6 @@ func (e *Engine) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
 // information to build a complete function type. The scope state provides
 // context for resolving type references in annotations.
 func (e *Engine) FunctionType(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
-	if e.IsNarrowing() {
-		return e.Synthesizer.SynthFunctionType(fn, sc)
-	}
 	return e.Synthesizer.FunctionType(fn, sc)
 }
 

@@ -10,7 +10,7 @@ import (
 
 func TestSynthFunctionType_Nil(t *testing.T) {
 	s := newTestSynthesizer()
-	result := s.SynthFunctionType(nil, nil)
+	result := s.FunctionType(nil, nil)
 	if result != nil {
 		t.Fatal("expected nil for nil function")
 	}
@@ -19,7 +19,7 @@ func TestSynthFunctionType_Nil(t *testing.T) {
 func TestSynthFunctionType_Empty(t *testing.T) {
 	s := newTestSynthesizer()
 	sc := scope.New()
-	result := s.SynthFunctionType(&ast.FunctionExpr{}, sc)
+	result := s.FunctionType(&ast.FunctionExpr{}, sc)
 	if result == nil {
 		t.Fatal("expected non-nil function")
 	}
@@ -39,7 +39,7 @@ func TestSynthFunctionType_WithParams(t *testing.T) {
 		},
 	}
 
-	result := s.SynthFunctionType(fn, sc)
+	result := s.FunctionType(fn, sc)
 	if result == nil {
 		t.Fatal("expected non-nil function")
 	}
@@ -62,7 +62,7 @@ func TestSynthFunctionType_WithReturns(t *testing.T) {
 		},
 	}
 
-	result := s.SynthFunctionType(fn, sc)
+	result := s.FunctionType(fn, sc)
 	if result == nil {
 		t.Fatal("expected non-nil function")
 	}
@@ -86,7 +86,7 @@ func TestSynthFunctionType_Variadic(t *testing.T) {
 		},
 	}
 
-	result := s.SynthFunctionType(fn, sc)
+	result := s.FunctionType(fn, sc)
 	if result == nil {
 		t.Fatal("expected non-nil function")
 	}
@@ -101,7 +101,7 @@ func TestSynthFunctionType_NilScope(t *testing.T) {
 		ParList: &ast.ParList{Names: []string{"x"}},
 	}
 
-	result := s.SynthFunctionType(fn, nil)
+	result := s.FunctionType(fn, nil)
 	if result == nil {
 		t.Fatal("expected non-nil function")
 	}
@@ -194,7 +194,7 @@ func TestSynthFunctionType_TypeParams(t *testing.T) {
 		},
 	}
 
-	result := s.SynthFunctionType(fn, sc)
+	result := s.FunctionType(fn, sc)
 	if result == nil {
 		t.Fatal("expected non-nil function")
 	}
@@ -216,7 +216,7 @@ func TestSynthFunctionType_OptionalParam(t *testing.T) {
 		},
 	}
 
-	result := s.SynthFunctionType(fn, sc)
+	result := s.FunctionType(fn, sc)
 	if result == nil {
 		t.Fatal("expected non-nil function")
 	}

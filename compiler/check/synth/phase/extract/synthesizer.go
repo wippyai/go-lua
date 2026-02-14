@@ -104,12 +104,22 @@ func (s *Synthesizer) TypeOfWithExpected(expr ast.Expr, p cfg.Point, expected ty
 
 // MultiTypeOf synthesizes multiple types for multi-value expressions (no narrowing).
 func (s *Synthesizer) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
-	return s.SynthMulti(expr, p, nil)
+	return s.multiTypeOf(expr, p, nil)
 }
 
-// FunctionType synthesizes the type of a function expression.
-func (s *Synthesizer) FunctionType(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
-	return s.SynthFunctionType(fn, sc)
+// SynthMulti synthesizes multiple types for multi-value expressions with optional flow narrowing.
+func (s *Synthesizer) SynthMulti(expr ast.Expr, p cfg.Point, narrower api.FlowOps) []typ.Type {
+	return s.multiTypeOf(expr, p, narrower)
+}
+
+func (s *Synthesizer) multiTypeOf(expr ast.Expr, p cfg.Point, narrower api.FlowOps) []typ.Type {
+	sc := s.deps.Scopes[p]
+	recurse := func(ex ast.Expr) typ.Type { return s.SynthExpr(ex, p, narrower) }
+	return s.synthMultiCore(expr, sc, recurse,
+		func(call *ast.FuncCallExpr) []typ.Type {
+			return s.SynthCallCore(call, p, sc, narrower, recurse)
+		},
+	)
 }
 
 // ExpandValues expands expression list to needed count (no narrowing).
@@ -216,7 +226,7 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 		}
 		return typ.Nil
 	case *ast.FunctionExpr:
-		return s.SynthFunctionType(ex, sc)
+		return s.FunctionType(ex, sc)
 	case *ast.LogicalOpExpr:
 		if s.IsNarrowing() && narrower != nil {
 			return s.synthLogicalOpWithNarrowing(ex, p, sc, narrower, recurse)
@@ -264,17 +274,6 @@ func (s *Synthesizer) synthMultiCore(expr ast.Expr, sc *scope.State, synthSingle
 	default:
 		return []typ.Type{synthSingle(expr)}
 	}
-}
-
-// SynthMulti synthesizes multiple types for multi-value expressions.
-func (s *Synthesizer) SynthMulti(expr ast.Expr, p cfg.Point, narrower api.FlowOps) []typ.Type {
-	sc := s.deps.Scopes[p]
-	recurse := func(ex ast.Expr) typ.Type { return s.SynthExpr(ex, p, narrower) }
-	return s.synthMultiCore(expr, sc, recurse,
-		func(call *ast.FuncCallExpr) []typ.Type {
-			return s.SynthCallCore(call, p, sc, narrower, recurse)
-		},
-	)
 }
 
 // synthIdentCore synthesizes type for an identifier.

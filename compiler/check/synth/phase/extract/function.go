@@ -48,11 +48,11 @@ import (
 	"github.com/wippyai/go-lua/types/typ/join"
 )
 
-// SynthFunctionType synthesizes a complete function type from a function expression.
+// FunctionType synthesizes a complete function type from a function expression.
 //
 // Combines declared type annotations with inferred information to build the
 // function signature. Delegates to SynthFunctionTypeWithExpected with no expected type.
-func (s *Synthesizer) SynthFunctionType(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
+func (s *Synthesizer) FunctionType(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
 	return s.SynthFunctionTypeWithExpected(fn, sc, nil)
 }
 
@@ -580,7 +580,7 @@ func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
 }
 
 // inferReturnExprTypes synthesizes types from return expressions using CFG point.
-// The last expression is expanded via SynthMulti to support multi-return calls.
+// The last expression is expanded via MultiTypeOf to support multi-return calls.
 func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.Type {
 	if len(exprs) == 0 {
 		return nil
@@ -592,7 +592,7 @@ func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.
 	var result []typ.Type
 	for i, expr := range exprs {
 		if i == len(exprs)-1 {
-			multi := s.SynthMulti(expr, p, narrower)
+			multi := s.multiTypeOf(expr, p, narrower)
 			if len(multi) == 0 {
 				multi = []typ.Type{typ.Unknown}
 			} else {

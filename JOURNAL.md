@@ -938,3 +938,18 @@ Validation:
   - `go test ./compiler/check/... -count=1` ✅
   - `./scripts/verify-suite.sh` ✅
     - all harness targets report `errors=0 warnings=0 hints=0`.
+
+## 2026-02-14T19:00:00Z
+- Continued `find more` cleanup in production synthesis entrypoints:
+  - Renamed canonical API in `compiler/check/synth/phase/extract/function.go`:
+    - `SynthFunctionType` → `FunctionType`.
+    - Updated all callsites/tests in extract and engine layers.
+  - Canonicalized multi-value synthesis path in `compiler/check/synth/phase/extract/synthesizer.go`:
+    - Inlined implementation for `MultiTypeOf` into a shared helper.
+    - Kept `SynthMulti` as the internal multi-with-narrowing entrypoint used by phase-specific callers.
+    - `FunctionExpr` synthesis now routes via `FunctionType` consistently.
+  - Removed remaining extractor-level pass-through dependency from return inference by using shared `multiTypeOf` path in `inferReturnExprTypes`.
+  - Updated comments/callsites in `function_test.go` and `expr.go` for the renamed/merged API.
+- Validation:
+  - `go test ./compiler/check/synth/... -count=1` ✅
+  - `./scripts/verify-suite.sh` ✅ (all listed wippy targets `errors=0 warnings=0 hints=0`).
