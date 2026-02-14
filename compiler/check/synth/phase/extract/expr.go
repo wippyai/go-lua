@@ -366,17 +366,13 @@ func indexVarOffsetFromExpr(expr ast.Expr) (string, int64, bool) {
 func intConstFromExpr(expr ast.Expr) (int64, bool) {
 	switch v := expr.(type) {
 	case *ast.NumberExpr:
-		return parseIntLiteral(v.Value)
+		return numparse.ParseIntegerLiteral(v.Value)
 	case *ast.UnaryMinusOpExpr:
 		if n, ok := intConstFromExpr(v.Expr); ok {
 			return -n, true
 		}
 	}
 	return 0, false
-}
-
-func parseIntLiteral(raw string) (int64, bool) {
-	return numparse.ParseIntegerLiteral(raw)
 }
 
 // fieldOnPartialUnion handles field access on unions where some but not all

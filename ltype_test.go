@@ -1450,3 +1450,59 @@ func TestLTypeStringTypecastError(t *testing.T) {
 		t.Error("expected error when typecasting number to string")
 	}
 }
+
+// TestLTypeCallAsLastArg tests that type validation calls used as the last
+// argument to a function pass exactly 1 result, not stale register values.
+func TestLTypeCallAsLastArg(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	OpenBase(L)
+	OpenString(L)
+
+	L.SetGlobal("string", LTypeString)
+
+	// Register a Go function that reports its argument count
+	L.SetGlobal("argcount", L.NewFunction(func(l *LState) int {
+		l.Push(LNumber(l.GetTop()))
+		return 1
+	}))
+
+	// Register a Go function that checks argument count is exactly expected
+	L.SetGlobal("check_args", L.NewFunction(func(l *LState) int {
+		expected := l.CheckInt(1)
+		val := l.CheckString(2)
+		got := l.GetTop()
+		if got != expected {
+			l.RaiseError("expected %d args, got %d", expected, got)
+		}
+		l.Push(LString(val))
+		return 1
+	}))
+
+	// string(x) as last argument should pass exactly 2 args to check_args
+	err := L.DoString(`
+		local result = check_args(2, string("hello"))
+		assert(result == "hello", "value should pass through")
+	`)
+	if err != nil {
+		t.Errorf("typeCall as last arg passed wrong number of args: %v", err)
+	}
+
+	// argcount with string(x) as the only argument should see 1 arg
+	err = L.DoString(`
+		local n = argcount(string("test"))
+		assert(n == 1, "argcount should be 1, got " .. tostring(n))
+	`)
+	if err != nil {
+		t.Errorf("typeCall as sole last arg: %v", err)
+	}
+
+	// Verify with a non-last-arg position (should always work)
+	err = L.DoString(`
+		local n = argcount(string("a"), "b")
+		assert(n == 2, "argcount should be 2, got " .. tostring(n))
+	`)
+	if err != nil {
+		t.Errorf("typeCall as non-last arg: %v", err)
+	}
+}

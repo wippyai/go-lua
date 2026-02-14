@@ -917,3 +917,16 @@ Validation:
   - `./scripts/verify-suite.sh` ✅ (all targets `errors=0 warnings=0 hints=0)
 - Notes:
   - `ltype.go` and `ltype_test.go` remain modified in working tree from prior context and were not part of this cleanup scope.
+
+## 2026-02-14T18:32:00Z
+- Canonicalized a type-call arity edge case with direct regression coverage:
+  - Removed redundant `parseIntLiteral` wrapper in `compiler/check/synth/phase/extract/expr.go`; `intConstFromExpr` now calls `numparse.ParseIntegerLiteral` directly.
+  - Fixed `ltype.go` `typeCall` handling so when `nret < 0` (typical last-result call) the validator returns to `base+1`, preventing stale stack values leaking as extra arguments.
+  - Added regression `ltype_test.go::TestLTypeCallAsLastArg` to cover:
+    - `string("hello")` as last-call argument
+    - `string("test")` as a sole argument
+    - non-terminal `string("a"), "b"` case
+- Validation:
+  - `go test ./... -run TestLTypeCallAsLastArg -count=1` ✅
+  - `go test ./compiler/check/synth/phase/extract -count=1` ✅
+  - `./scripts/verify-suite.sh` ✅ (`errors=0 warnings=0 hints=0` across all configured targets)
