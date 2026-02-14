@@ -205,3 +205,34 @@ func TestNormalizeFunctionFactChannels_PromotesLegacyIntoCanonical(t *testing.T)
 		t.Fatalf("func drift: canonical=%v legacy=%v", ff.Func, facts.FuncTypes[sym])
 	}
 }
+
+func TestFunctionFactViews_UseLegacyChannelsWhenCanonicalMissing(t *testing.T) {
+	sym := cfg.SymbolID(88)
+	fn := typ.Func().Returns(typ.String).Build()
+	facts := api.Facts{
+		ReturnSummaries: api.ReturnSummaries{
+			sym: []typ.Type{typ.String},
+		},
+		NarrowReturns: api.NarrowReturnSummaries{
+			sym: []typ.Type{typ.String},
+		},
+		FuncTypes: api.FuncTypes{
+			sym: fn,
+		},
+	}
+
+	summaries := SummaryViewFromFacts(facts)
+	if got := summaries[sym]; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
+		t.Fatalf("summary view mismatch: got %v", got)
+	}
+
+	narrows := NarrowViewFromFacts(facts)
+	if got := narrows[sym]; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
+		t.Fatalf("narrow view mismatch: got %v", got)
+	}
+
+	funcs := FuncTypeViewFromFacts(facts)
+	if got := funcs[sym]; !typ.TypeEquals(got, fn) {
+		t.Fatalf("func view mismatch: got %v", got)
+	}
+}

@@ -85,6 +85,37 @@ func TestFactsEqual_IgnoresLegacyMirrorDrift(t *testing.T) {
 	}
 }
 
+func TestFactsEqual_LegacyOnlyChannelsAreComparedCanonically(t *testing.T) {
+	sym := cfg.SymbolID(91)
+
+	a := api.Facts{
+		ReturnSummaries: api.ReturnSummaries{
+			sym: []typ.Type{typ.String},
+		},
+		NarrowReturns: api.NarrowReturnSummaries{
+			sym: []typ.Type{typ.String},
+		},
+		FuncTypes: api.FuncTypes{
+			sym: typ.Func().Returns(typ.String).Build(),
+		},
+	}
+	b := api.Facts{
+		ReturnSummaries: api.ReturnSummaries{
+			sym: []typ.Type{typ.Number},
+		},
+		NarrowReturns: api.NarrowReturnSummaries{
+			sym: []typ.Type{typ.Number},
+		},
+		FuncTypes: api.FuncTypes{
+			sym: typ.Func().Returns(typ.Number).Build(),
+		},
+	}
+
+	if FactsEqual(a, b) {
+		t.Fatal("legacy-only function channels should participate in canonical equality")
+	}
+}
+
 func TestReturnSummariesEqual_Empty(t *testing.T) {
 	if !ReturnSummariesEqual(nil, nil) {
 		t.Error("nil summaries should be equal")

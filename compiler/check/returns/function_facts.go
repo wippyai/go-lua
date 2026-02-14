@@ -7,7 +7,12 @@ import (
 )
 
 func functionFactSymbols(facts api.Facts) []cfg.SymbolID {
-	return collectCanonicalFunctionFactSymbols(facts.FunctionFacts)
+	return collectFunctionFactChannelSymbols(
+		facts.ReturnSummaries,
+		facts.NarrowReturns,
+		facts.FuncTypes,
+		facts.FunctionFacts,
+	)
 }
 
 func collectFunctionFactChannelSymbols(
@@ -144,13 +149,13 @@ func writeFunctionFactToFacts(facts *api.Facts, sym cfg.SymbolID, ff api.Functio
 // SummaryViewFromFacts returns the canonical summary channel view derived from
 // FunctionFacts.
 func SummaryViewFromFacts(facts api.Facts) api.ReturnSummaries {
-	symbols := functionFactSymbols(facts)
-	if len(symbols) == 0 {
+	canonical := canonicalFunctionFacts(facts)
+	if len(canonical) == 0 {
 		return nil
 	}
-	out := make(api.ReturnSummaries, len(symbols))
-	for _, sym := range symbols {
-		ff := facts.FunctionFacts[sym]
+	out := make(api.ReturnSummaries, len(canonical))
+	for _, sym := range cfg.SortedSymbolIDs(canonical) {
+		ff := canonical[sym]
 		if len(ff.Summary) > 0 {
 			out[sym] = ff.Summary
 		}
@@ -164,13 +169,13 @@ func SummaryViewFromFacts(facts api.Facts) api.ReturnSummaries {
 // NarrowViewFromFacts returns the canonical narrow-summary channel view derived
 // from FunctionFacts.
 func NarrowViewFromFacts(facts api.Facts) api.NarrowReturnSummaries {
-	symbols := functionFactSymbols(facts)
-	if len(symbols) == 0 {
+	canonical := canonicalFunctionFacts(facts)
+	if len(canonical) == 0 {
 		return nil
 	}
-	out := make(api.NarrowReturnSummaries, len(symbols))
-	for _, sym := range symbols {
-		ff := facts.FunctionFacts[sym]
+	out := make(api.NarrowReturnSummaries, len(canonical))
+	for _, sym := range cfg.SortedSymbolIDs(canonical) {
+		ff := canonical[sym]
 		if len(ff.Narrow) > 0 {
 			out[sym] = ff.Narrow
 		}
@@ -184,13 +189,13 @@ func NarrowViewFromFacts(facts api.Facts) api.NarrowReturnSummaries {
 // FuncTypeViewFromFacts returns the canonical function-type channel view
 // derived from FunctionFacts.
 func FuncTypeViewFromFacts(facts api.Facts) api.FuncTypes {
-	symbols := functionFactSymbols(facts)
-	if len(symbols) == 0 {
+	canonical := canonicalFunctionFacts(facts)
+	if len(canonical) == 0 {
 		return nil
 	}
-	out := make(api.FuncTypes, len(symbols))
-	for _, sym := range symbols {
-		ff := facts.FunctionFacts[sym]
+	out := make(api.FuncTypes, len(canonical))
+	for _, sym := range cfg.SortedSymbolIDs(canonical) {
+		ff := canonical[sym]
 		if ff.Func != nil {
 			out[sym] = ff.Func
 		}
