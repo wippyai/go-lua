@@ -33,7 +33,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
-	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
 // CheckFunc analyzes a nested function with a given parent scope.
@@ -233,6 +232,7 @@ func (p *Processor) processNestedFunction(
 				if sym, ok := bindings.SymbolOf(recvIdent); ok {
 					selfType := p.resolveSelfTypeForMethod(info, sym, graph, parentResult, p.rootResult)
 					if selfType != nil {
+						selfType = nested.NormalizeMethodSelfType(selfType)
 						parentScope = parentScope.WithSelf(selfType).WithLocalName("self")
 					}
 				}
@@ -255,44 +255,7 @@ func (p *Processor) processNestedFunction(
 	}
 
 	if nestedGraph != nil && len(capturedTypes) > 0 && p.store != nil {
-		parentSummaries := p.store.GetReturnSummariesSnapshot(graph, parentScope)
-		if parentScope != nil && p.store.GraphParentHashOf(nestedGraph.ID()) == 0 {
-			if setter, ok := p.store.(interface {
-				SetGraphParentHash(graphID, parentHash uint64)
-			}); ok {
-				setter.SetGraphParentHash(nestedGraph.ID(), parentScope.Hash())
-			}
-		}
-		if key, ok := p.store.GraphKeyFor(nestedGraph, parentScope); ok {
-			p.store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
-				if facts.CapturedTypes == nil {
-					facts.CapturedTypes = make(api.CapturedTypes, len(capturedTypes))
-				}
-				for _, sym := range cfg.SortedSymbolIDs(capturedTypes) {
-					t := capturedTypes[sym]
-					if sym == 0 || t == nil {
-						continue
-					}
-					nextType := t
-					if fn, ok := nextType.(*typ.Function); ok && len(parentSummaries) > 0 {
-						if summary := returns.NormalizeReturnVector(parentSummaries[sym]); len(summary) > 0 {
-							normalizedSummary := make([]typ.Type, len(summary))
-							for i, ret := range summary {
-								normalizedSummary[i] = typ.PruneSoftUnionMembers(ret)
-							}
-							if !typ.IsUnknownOnlyOrEmpty(normalizedSummary) {
-								nextType = typjoin.WithReturns(fn, normalizedSummary)
-							}
-						}
-					}
-					if prev := facts.CapturedTypes[sym]; prev != nil {
-						facts.CapturedTypes[sym] = returns.MergeCapturedType(prev, nextType)
-					} else {
-						facts.CapturedTypes[sym] = nextType
-					}
-				}
-			})
-		}
+		p.persistCapturedTypesForNestedGraph(nestedGraph, parentScope, capturedTypes)
 	}
 
 	// Check the function.
@@ -327,7 +290,7 @@ func (p *Processor) processNestedFunction(
 	// Update sibling types with the fully-inferred function type.
 	if info.IsLocal && info.FuncSym != 0 && result.NarrowSynth != nil {
 		if inferredType := result.NarrowSynth.FunctionType(info.NF.Func, parentScope); inferredType != nil {
-			siblingTypes[info.FuncSym] = siblings.MergeSiblingType(siblingTypes[info.FuncSym], inferredType)
+			siblingTypes[info.FuncSym] = returns.MergeFunctionFactType(siblingTypes[info.FuncSym], inferredType)
 		}
 	}
 }
@@ -364,6 +327,41 @@ func (p *Processor) resolveSelfTypeForMethod(
 	}
 
 	return selfType
+}
+
+func (p *Processor) persistCapturedTypesForNestedGraph(
+	nestedGraph *cfg.Graph,
+	parentScope *scope.State,
+	capturedTypes map[cfg.SymbolID]typ.Type,
+) {
+	if p.store == nil || nestedGraph == nil || parentScope == nil || len(capturedTypes) == 0 {
+		return
+	}
+	if p.store.GraphParentHashOf(nestedGraph.ID()) == 0 {
+		if setter, ok := p.store.(interface {
+			SetGraphParentHash(graphID, parentHash uint64)
+		}); ok {
+			setter.SetGraphParentHash(nestedGraph.ID(), parentScope.Hash())
+		}
+	}
+	key, ok := p.store.GraphKeyFor(nestedGraph, parentScope)
+	if !ok {
+		return
+	}
+	nextCaptured := make(api.CapturedTypes, len(capturedTypes))
+	for _, sym := range cfg.SortedSymbolIDs(capturedTypes) {
+		t := capturedTypes[sym]
+		if sym == 0 || t == nil {
+			continue
+		}
+		nextCaptured[sym] = t
+	}
+	if len(nextCaptured) == 0 {
+		return
+	}
+	p.store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
+		facts.CapturedTypes = returns.WidenCapturedTypes(facts.CapturedTypes, nextCaptured)
+	})
 }
 
 // resolveSelfTypeForImplicitSelf resolves the self-type for methods with implicit self parameter.

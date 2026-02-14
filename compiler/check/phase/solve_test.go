@@ -16,8 +16,11 @@ func TestRunSolve_NilInputs(t *testing.T) {
 	}
 }
 
-func TestRunSolveWithResolver_NilInputs(t *testing.T) {
-	output := RunSolveWithResolver(nil, nil)
+func TestRunSolve_ExplicitNilInputs(t *testing.T) {
+	output := RunSolve(FlowSolveInput{
+		Extract:  FlowExtractOutput{Inputs: nil},
+		Resolver: nil,
+	})
 	if output.Solution != nil {
 		t.Error("expected nil solution for nil inputs")
 	}
@@ -34,9 +37,12 @@ func TestRunSolve_EmptyInputs(t *testing.T) {
 	}
 }
 
-func TestRunSolveWithResolver_EmptyInputs(t *testing.T) {
+func TestRunSolve_ExplicitResolverPath(t *testing.T) {
 	inputs := &flow.Inputs{}
-	output := RunSolveWithResolver(inputs, nil)
+	output := RunSolve(FlowSolveInput{
+		Extract:  FlowExtractOutput{Inputs: inputs},
+		Resolver: nil,
+	})
 	if output.Solution == nil {
 		t.Error("expected non-nil solution for non-nil inputs")
 	}

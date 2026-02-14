@@ -296,6 +296,44 @@ func TestInferCall_Function(t *testing.T) {
 	}
 }
 
+func TestInferCall_UnionAggregatesExpectedArgsAcrossMembers(t *testing.T) {
+	arr := typ.NewArray(typ.Any)
+	m := typ.NewMap(typ.String, typ.Any)
+	fnArr := typ.Func().Param("t", arr).Returns(typ.Nil).Build()
+	fnMap := typ.Func().Param("t", m).Returns(typ.Nil).Build()
+	union := typ.NewUnion(fnArr, fnMap)
+
+	ctx := db.NewQueryContext(db.New())
+	infer := InferCall(ctx, CallDef{
+		Callee: union,
+		Args:   []typ.Type{typ.Unknown},
+	})
+
+	if infer.Kind != InferKindUnion {
+		t.Fatalf("expected union infer kind, got %v", infer.Kind)
+	}
+	if len(infer.ExpectedArgs) != 1 {
+		t.Fatalf("expected one aggregated expected arg, got %d", len(infer.ExpectedArgs))
+	}
+	expected, ok := infer.ExpectedArgs[0].(*typ.Union)
+	if !ok {
+		t.Fatalf("expected aggregated arg to be union, got %T (%v)", infer.ExpectedArgs[0], infer.ExpectedArgs[0])
+	}
+	hasArr := false
+	hasMap := false
+	for _, member := range expected.Members {
+		if typ.TypeEquals(member, arr) {
+			hasArr = true
+		}
+		if typ.TypeEquals(member, m) {
+			hasMap = true
+		}
+	}
+	if !hasArr || !hasMap {
+		t.Fatalf("expected aggregated union to include array and map, got %v", infer.ExpectedArgs[0])
+	}
+}
+
 func TestFinishCall_ShortCircuit(t *testing.T) {
 	ctx := db.NewQueryContext(db.New())
 	def := CallDef{

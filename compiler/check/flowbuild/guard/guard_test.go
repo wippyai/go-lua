@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/guard"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -175,14 +176,14 @@ func TestTruthyKeyFromExpr_DynamicIdentKeyRejected(t *testing.T) {
 }
 
 func TestNarrowTableFieldsByGuard_NonRecord(t *testing.T) {
-	result := guard.NarrowTableFieldsByGuard(typ.String, nil, 0, nil, nil)
+	result := guard.NarrowTableFieldsByGuard(typ.String, nil, 0, nil, nil, nil)
 	if result != typ.String {
 		t.Error("expected string type returned unchanged")
 	}
 }
 
 func TestNarrowTableFieldsByGuard_NilRecord(t *testing.T) {
-	result := guard.NarrowTableFieldsByGuard(nil, nil, 0, nil, nil)
+	result := guard.NarrowTableFieldsByGuard(nil, nil, 0, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil returned")
 	}
@@ -190,7 +191,7 @@ func TestNarrowTableFieldsByGuard_NilRecord(t *testing.T) {
 
 func TestNarrowTableFieldsByGuard_EmptyGuards(t *testing.T) {
 	rec := typ.NewRecord().Field("x", typ.String).Build()
-	result := guard.NarrowTableFieldsByGuard(rec, &ast.TableExpr{}, 1, nil, nil)
+	result := guard.NarrowTableFieldsByGuard(rec, &ast.TableExpr{}, 1, nil, nil, nil)
 	if result != rec {
 		t.Error("expected original record when no guards")
 	}
@@ -206,7 +207,7 @@ func TestNarrowTableFieldsByGuard_NoMatchingGuards(t *testing.T) {
 	guards := map[cfg.Point]map[guard.TruthyPathKey]bool{
 		1: {},
 	}
-	result := guard.NarrowTableFieldsByGuard(rec, tbl, 1, nil, guards)
+	result := guard.NarrowTableFieldsByGuard(rec, tbl, 1, nil, guards, nil)
 	if result != rec {
 		t.Error("expected original record when no matching guards")
 	}
@@ -248,10 +249,106 @@ func TestNarrowTableFieldsByGuard_MatchingNestedPath(t *testing.T) {
 		},
 	}
 
-	result := guard.NarrowTableFieldsByGuard(rec, tbl, 1, bindings, guards)
+	result := guard.NarrowTableFieldsByGuard(rec, tbl, 1, bindings, guards, nil)
 	out, ok := result.(*typ.Record)
 	if !ok {
 		t.Fatalf("expected record result, got %T", result)
+	}
+	if len(out.Fields) != 1 {
+		t.Fatalf("expected 1 field, got %d", len(out.Fields))
+	}
+	if !typ.TypeEquals(out.Fields[0].Type, typ.String) {
+		t.Fatalf("expected narrowed string field, got %s", out.Fields[0].Type.String())
+	}
+}
+
+func TestCollectTypeGuards_TypeNotEqReturnPropagatesFallthrough(t *testing.T) {
+	condExpr := &ast.RelationalOpExpr{
+		Operator: "~=",
+		Lhs: &ast.FuncCallExpr{
+			Func: &ast.IdentExpr{Value: "type"},
+			Args: []ast.Expr{
+				&ast.AttrGetExpr{
+					Object: &ast.IdentExpr{Value: "payload"},
+					Key:    &ast.StringExpr{Value: "respond_to"},
+				},
+			},
+		},
+		Rhs: &ast.StringExpr{Value: "string"},
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"payload"}},
+		Stmts: []ast.Stmt{
+			&ast.IfStmt{
+				Condition: condExpr,
+				Then:      []ast.Stmt{&ast.ReturnStmt{}},
+			},
+			&ast.LocalAssignStmt{
+				Names: []string{"topic"},
+				Exprs: []ast.Expr{
+					&ast.AttrGetExpr{
+						Object: &ast.IdentExpr{Value: "payload"},
+						Key:    &ast.StringExpr{Value: "respond_to"},
+					},
+				},
+			},
+		},
+	}
+	graph := cfg.Build(fn)
+	bindings := bind.Bind(fn, nil)
+	guards := guard.CollectTypeGuards(graph, bindings)
+
+	payloadSym, ok := bindings.SymbolOf(condExpr.Lhs.(*ast.FuncCallExpr).Args[0].(*ast.AttrGetExpr).Object.(*ast.IdentExpr))
+	if !ok || payloadSym == 0 {
+		t.Fatal("expected payload symbol")
+	}
+	wantKey := guard.TruthyPathKey{Symbol: payloadSym, Field: "respond_to"}
+	wantType := narrow.BuiltinTypeKey("string")
+
+	found := false
+	for _, atPoint := range guards {
+		if tk, ok := atPoint[wantKey]; ok && tk == wantType {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected propagated type guard %v -> %v", wantKey, wantType)
+	}
+}
+
+func TestNarrowTableFieldsByGuard_TypeGuardNarrowsAny(t *testing.T) {
+	valueExpr := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "payload"},
+		Key:    &ast.StringExpr{Value: "respond_to"},
+	}
+	rec := typ.NewRecord().Field("respond_to", typ.Any).Build()
+	tbl := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{Key: &ast.StringExpr{Value: "respond_to"}, Value: valueExpr},
+		},
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"payload"}},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"x"},
+				Exprs: []ast.Expr{tbl},
+			},
+		},
+	}
+	bindings := bind.Bind(fn, nil)
+	payloadSym, _ := bindings.SymbolOf(valueExpr.Object.(*ast.IdentExpr))
+	typeGuards := map[cfg.Point]map[guard.TruthyPathKey]narrow.TypeKey{
+		1: {
+			{Symbol: payloadSym, Field: "respond_to"}: narrow.BuiltinTypeKey("string"),
+		},
+	}
+
+	result := guard.NarrowTableFieldsByGuard(rec, tbl, 1, bindings, nil, typeGuards)
+	out, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record, got %T", result)
 	}
 	if len(out.Fields) != 1 {
 		t.Fatalf("expected 1 field, got %d", len(out.Fields))

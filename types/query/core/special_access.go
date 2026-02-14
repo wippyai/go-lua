@@ -2,6 +2,7 @@ package core
 
 import (
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // specialAccessType returns the canonical access result for top-like types.
@@ -19,6 +20,9 @@ func specialAccessType(t typ.Type) (typ.Type, bool) {
 	}
 	if typ.IsNever(t) {
 		return typ.Never, true
+	}
+	if unwrap.IsBuiltinTableTop(t) {
+		return typ.Unknown, true
 	}
 	return nil, false
 }

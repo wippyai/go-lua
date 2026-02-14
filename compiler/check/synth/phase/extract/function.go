@@ -39,6 +39,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/contract"
@@ -47,11 +48,11 @@ import (
 	"github.com/wippyai/go-lua/types/typ/join"
 )
 
-// SynthFunctionType synthesizes a complete function type from a function expression.
+// FunctionType synthesizes a complete function type from a function expression.
 //
 // Combines declared type annotations with inferred information to build the
 // function signature. Delegates to SynthFunctionTypeWithExpected with no expected type.
-func (s *Synthesizer) SynthFunctionType(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
+func (s *Synthesizer) FunctionType(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
 	return s.SynthFunctionTypeWithExpected(fn, sc, nil)
 }
 
@@ -134,11 +135,13 @@ func (s *Synthesizer) SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *sc
 		builder = builder.Spec(overlaySpec)
 	}
 
+	inferredErrorReturn := false
 	if len(fn.ReturnTypes) > 0 {
 		returns := s.ResolveReturnTypes(fn.ReturnTypes, resolveScope)
 		builder = builder.Returns(returns...)
 	} else {
-		if bodyReturns := s.inferReturnTypesFromBody(fn, resolveScope, expected, fnGraph); len(bodyReturns) > 0 {
+		if bodyReturns, hasErrorReturn := s.inferReturnTypesFromBody(fn, resolveScope, expected, fnGraph); len(bodyReturns) > 0 {
+			inferredErrorReturn = hasErrorReturn
 			if expected != nil && len(expected.Returns) > 0 {
 				if typ.IsUnknownOnlyOrEmpty(bodyReturns) {
 					bodyReturns = expected.Returns
@@ -150,14 +153,23 @@ func (s *Synthesizer) SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *sc
 		}
 	}
 
-	return builder.Build()
+	fnType := builder.Build()
+	if inferredErrorReturn {
+		fnType = erreffect.AttachErrorReturnSpec(fnType, 0, 1)
+	}
+	return fnType
 }
 
 // inferReturnTypesFromBody infers return types from the function body.
 // If fnGraph is non-nil, it reuses the pre-built CFG instead of building a new one.
-func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope *scope.State, expected *typ.Function, fnGraph *cfg.Graph) []typ.Type {
+func (s *Synthesizer) inferReturnTypesFromBody(
+	fn *ast.FunctionExpr,
+	parentScope *scope.State,
+	expected *typ.Function,
+	fnGraph *cfg.Graph,
+) ([]typ.Type, bool) {
 	if len(fn.Stmts) == 0 {
-		return nil
+		return nil, false
 	}
 
 	var returnSummaries map[cfg.SymbolID][]typ.Type
@@ -180,12 +192,17 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		}
 	}
 
-	// If a return summary exists for this function symbol, use the full vector.
-	// Narrowing uses post-flow summaries; declared uses pre-flow summaries.
+	// If a return summary exists for this function symbol, declared phase can
+	// use it directly. Narrowing phase must still infer from the body so flow
+	// predicates can remove stale union members from pre-flow summaries.
+	var summaryFallback []typ.Type
 	if len(returnSummaries) > 0 && fnSym != 0 {
 		if rt := returnSummaries[fnSym]; len(rt) > 0 {
 			if typ.HasKnownType(rt) {
-				return rt
+				summaryFallback = rt
+				if !s.IsNarrowing() {
+					return rt, false
+				}
 			}
 		}
 	}
@@ -205,7 +222,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		}
 	}
 	if fnGraph == nil {
-		return nil
+		return nil, false
 	}
 
 	resolveScope := parentScope
@@ -318,6 +335,10 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		}
 	}
 
+	// Infer basic ordered-comparison hints (x > 0, name <= "zz") so unannotated
+	// params don't stay unknown when return typing depends on guarded branches.
+	enrichOverlayWithOrderedComparisonHints(fnGraph, overlay)
+
 	var globalTypes map[string]typ.Type
 	var moduleAliases map[cfg.SymbolID]string
 	if s.deps.CheckCtx != nil {
@@ -355,6 +376,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		NarrowCache:    make(api.Cache),
 		ModuleBindings: s.deps.ModuleBindings,
 		ModuleAliases:  moduleAliases,
+		Paths:          s.deps.Paths,
 	}
 	prelimSynth := NewSynthesizer(prelimDeps, s.phase)
 
@@ -403,6 +425,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		NarrowCache:    make(api.Cache),
 		ModuleBindings: s.deps.ModuleBindings,
 		ModuleAliases:  moduleAliases,
+		Paths:          s.deps.Paths,
 	}
 	if s.IsNarrowing() && s.deps.Flow != nil {
 		if fnCheckCtx != nil && fnCheckCtx.Graph() == fnGraph {
@@ -443,11 +466,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 			} else {
 				t = typ.Nil
 			}
-			if fnSym != 0 {
-				returnTypes[i] = typ.JoinReturnSlot(returnTypes[i], t)
-			} else {
-				returnTypes[i] = typ.JoinPreferNonSoft(returnTypes[i], t)
-			}
+			returnTypes[i] = typ.JoinReturnSlot(returnTypes[i], t)
 		}
 	})
 
@@ -458,7 +477,74 @@ func (s *Synthesizer) inferReturnTypesFromBody(fn *ast.FunctionExpr, parentScope
 		}
 	}
 
-	return returnTypes
+	if typ.IsUnknownOnlyOrEmpty(returnTypes) && len(summaryFallback) > 0 {
+		return summaryFallback, false
+	}
+
+	return returnTypes, erreffect.HasStrictInverseReturnPattern(fnGraph, nil, tempSynth, 0, 1)
+}
+
+func enrichOverlayWithOrderedComparisonHints(fnGraph *cfg.Graph, overlay map[cfg.SymbolID]typ.Type) {
+	if fnGraph == nil || len(overlay) == 0 {
+		return
+	}
+	bindings := fnGraph.Bindings()
+	if bindings == nil {
+		return
+	}
+
+	applyHint := func(expr ast.Expr, hinted typ.Type) {
+		if hinted == nil || expr == nil {
+			return
+		}
+		ident, ok := expr.(*ast.IdentExpr)
+		if !ok || ident == nil {
+			return
+		}
+		sym, ok := bindings.SymbolOf(ident)
+		if !ok || sym == 0 {
+			return
+		}
+		existing := overlay[sym]
+		if existing == nil {
+			overlay[sym] = hinted
+			return
+		}
+		overlay[sym] = typ.JoinPreferNonSoft(existing, hinted)
+	}
+
+	var visit func(ast.Expr)
+	visit = func(expr ast.Expr) {
+		switch e := expr.(type) {
+		case *ast.LogicalOpExpr:
+			visit(e.Lhs)
+			visit(e.Rhs)
+		case *ast.RelationalOpExpr:
+			switch e.Operator {
+			case "<", "<=", ">", ">=":
+				applyHint(e.Lhs, orderedLiteralType(e.Rhs))
+				applyHint(e.Rhs, orderedLiteralType(e.Lhs))
+			}
+		}
+	}
+
+	fnGraph.EachBranch(func(_ cfg.Point, info *cfg.BranchInfo) {
+		if info == nil || info.Condition == nil {
+			return
+		}
+		visit(info.Condition)
+	})
+}
+
+func orderedLiteralType(expr ast.Expr) typ.Type {
+	switch expr.(type) {
+	case *ast.NumberExpr:
+		return typ.Number
+	case *ast.StringExpr:
+		return typ.String
+	default:
+		return nil
+	}
 }
 
 func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
@@ -494,7 +580,7 @@ func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
 }
 
 // inferReturnExprTypes synthesizes types from return expressions using CFG point.
-// The last expression is expanded via SynthMulti to support multi-return calls.
+// The last expression is expanded via MultiTypeOf to support multi-return calls.
 func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.Type {
 	if len(exprs) == 0 {
 		return nil
@@ -506,7 +592,7 @@ func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.
 	var result []typ.Type
 	for i, expr := range exprs {
 		if i == len(exprs)-1 {
-			multi := s.SynthMulti(expr, p, narrower)
+			multi := s.multiTypeOf(expr, p, narrower)
 			if len(multi) == 0 {
 				multi = []typ.Type{typ.Unknown}
 			} else {

@@ -190,6 +190,11 @@ func TestHasLength_Collections(t *testing.T) {
 	if !HasLength(rec) {
 		t.Error("record should have length")
 	}
+
+	tuple := typ.NewTuple(typ.Integer, typ.Integer, typ.Integer)
+	if !HasLength(tuple) {
+		t.Error("tuple should have length")
+	}
 }
 
 func TestHasLength_Optional(t *testing.T) {
@@ -231,9 +236,13 @@ func TestIsBitwiseNumeric(t *testing.T) {
 	}{
 		{"integer", typ.Integer, true},
 		{"number", typ.Number, true},
+		{"integer literal", typ.LiteralInt(5), true},
+		{"number literal", typ.LiteralNumber(5.5), true},
 		{"any", typ.Any, true},
 		{"unknown", typ.Unknown, true},
 		{"string", typ.String, false},
+		{"optional integer", typ.NewOptional(typ.Integer), false},
+		{"integer or nil", typ.NewUnion(typ.Integer, typ.Nil), false},
 		{"nil", typ.Nil, false},
 	}
 	for _, tt := range tests {
@@ -300,5 +309,77 @@ func TestHasLength_TypeParam(t *testing.T) {
 	tpStr := &typ.TypeParam{Name: "T", Constraint: typ.String}
 	if !HasLength(tpStr) {
 		t.Error("type param constrained to string should have length")
+	}
+}
+
+func TestMayHaveLength(t *testing.T) {
+	tests := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{"string", typ.String, true},
+		{"integer", typ.Integer, false},
+		{"optional string", typ.NewOptional(typ.String), true},
+		{"string or nil", typ.NewUnion(typ.String, typ.Nil), true},
+		{"integer or nil", typ.NewUnion(typ.Integer, typ.Nil), false},
+		{"unknown", typ.Unknown, true},
+		{"any", typ.Any, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MayHaveLength(tt.t); got != tt.want {
+				t.Errorf("MayHaveLength(%s) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMayBeStringable(t *testing.T) {
+	tests := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{"string", typ.String, true},
+		{"number", typ.Number, true},
+		{"boolean", typ.Boolean, false},
+		{"error interface", typ.NewInterface("Error", nil), true},
+		{"optional string", typ.NewOptional(typ.String), true},
+		{"string or nil", typ.NewUnion(typ.String, typ.Nil), true},
+		{"boolean or nil", typ.NewUnion(typ.Boolean, typ.Nil), false},
+		{"any", typ.Any, true},
+		{"unknown", typ.Unknown, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MayBeStringable(tt.t); got != tt.want {
+				t.Errorf("MayBeStringable(%s) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMayBeOrderable(t *testing.T) {
+	tests := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{"string", typ.String, true},
+		{"number", typ.Number, true},
+		{"integer", typ.Integer, true},
+		{"boolean", typ.Boolean, false},
+		{"optional number", typ.NewOptional(typ.Number), true},
+		{"number or nil", typ.NewUnion(typ.Number, typ.Nil), true},
+		{"boolean or nil", typ.NewUnion(typ.Boolean, typ.Nil), false},
+		{"unknown", typ.Unknown, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MayBeOrderable(tt.t); got != tt.want {
+				t.Errorf("MayBeOrderable(%s) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
 	}
 }

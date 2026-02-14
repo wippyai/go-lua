@@ -27,6 +27,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
@@ -34,7 +36,6 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
-	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -183,7 +184,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 				}
 			}
 		}
-		return typeResolutionEngine.ResolveTypeDefAt(info.Name, info.TypeExpr, toAstTypeParams(info.TypeParams), sc, p)
+		return typeResolutionEngine.ResolveTypeDefAt(info.Name, info.TypeExpr, scope.ToTypeParamExprs(info.TypeParams), sc, p)
 	}
 	exprSynth := func(expr ast.Expr, p cfg.Point, sc *scope.State) typ.Type {
 		return typeResolutionEngine.SynthExprAt(expr, p, sc)
@@ -209,6 +210,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 		typeExprResolver,
 		fnSignatureResolver,
 		typeResolutionEngine,
+		input.SiblingTypes,
 		input.ReturnSummaries,
 	)
 	declaredTypes = applyModuleAliasExports(declaredTypes, input.ModuleAliases, input.Manifests)
@@ -252,7 +254,7 @@ func buildFnSignatureResolver(
 		if len(hints) == 0 {
 			return sig
 		}
-		return MergeParamHintsIntoSig(fn, hints, sig)
+		return paramhints.MergeIntoSignature(fn, hints, sig)
 	})
 }
 
@@ -355,6 +357,7 @@ func buildDeclaredTypes(
 	typeExprResolver TypeResolver,
 	fnSigResolver FunctionSignatureResolver,
 	synthAPI api.SynthAPI,
+	siblingTypes map[cfg.SymbolID]typ.Type,
 	returnSummaries map[cfg.SymbolID][]typ.Type,
 ) (flow.DeclaredTypes, map[cfg.SymbolID]bool) {
 	if graph == nil {
@@ -364,6 +367,15 @@ func buildDeclaredTypes(
 	out := make(flow.DeclaredTypes)
 	annotated := make(map[cfg.SymbolID]bool)
 	bindings := graph.Bindings()
+	alignWithSummary := func(sym cfg.SymbolID, fn *typ.Function) *typ.Function {
+		if fn == nil || len(returnSummaries) == 0 || sym == 0 {
+			return fn
+		}
+		if summary := returnSummaries[sym]; len(summary) > 0 {
+			return returns.WithSummaryOrUnknown(fn, summary)
+		}
+		return fn
+	}
 
 	for _, sym := range cfg.SortedSymbolIDs(paramTypes) {
 		t := paramTypes[sym]
@@ -427,7 +439,7 @@ func buildDeclaredTypes(
 			}
 
 			sc := scopes[p]
-			info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
+			info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
 				if target.Kind != cfg.TargetIdent || target.Name == "" {
 					return
 				}
@@ -436,6 +448,21 @@ func buildDeclaredTypes(
 					return
 				}
 				if _, exists := out[sym]; exists {
+					return
+				}
+
+				if fnExpr, ok := source.(*ast.FunctionExpr); ok && fnExpr != nil {
+					if siblingTypes != nil {
+						if siblingFn := siblingTypes[sym]; siblingFn != nil {
+							out[sym] = siblingFn
+							return
+						}
+					}
+					if fnSigResolver != nil {
+						if fnSig := fnSigResolver.ResolveFunctionSignature(fnExpr, sc); fnSig != nil {
+							out[sym] = alignWithSummary(sym, fnSig)
+						}
+					}
 					return
 				}
 
@@ -453,20 +480,28 @@ func buildDeclaredTypes(
 		}
 
 		if info := graph.FuncDef(p); info != nil && info.Name != "" && info.FuncExpr != nil {
-			sym, ok := graph.SymbolAt(p, info.Name)
-			if !ok {
-				continue
+			sym := info.Symbol
+			if sym == 0 {
+				// Fallback for unresolved symbols in legacy/broken binding scenarios.
+				var ok bool
+				sym, ok = graph.SymbolAt(p, info.Name)
+				if !ok {
+					continue
+				}
 			}
 			if _, exists := out[sym]; exists {
 				continue
 			}
+			if siblingTypes != nil {
+				if siblingFn := siblingTypes[sym]; siblingFn != nil {
+					out[sym] = siblingFn
+					continue
+				}
+			}
 			sc := scopes[p]
 			if fnSigResolver != nil {
 				if fnSig := fnSigResolver.ResolveFunctionSignature(info.FuncExpr, sc); fnSig != nil {
-					if returnSummaries != nil {
-						fnSig = typjoin.WithReturnsOrUnknown(fnSig, returnSummaries[sym])
-					}
-					out[sym] = fnSig
+					out[sym] = alignWithSummary(sym, fnSig)
 				}
 			}
 		}
@@ -476,17 +511,6 @@ func buildDeclaredTypes(
 		return nil, nil
 	}
 	return out, annotated
-}
-
-func toAstTypeParams(params []cfg.TypeParamInfo) []ast.TypeParamExpr {
-	if len(params) == 0 {
-		return nil
-	}
-	out := make([]ast.TypeParamExpr, len(params))
-	for i, p := range params {
-		out[i] = ast.TypeParamExpr{Name: p.Name, Constraint: p.Constraint}
-	}
-	return out
 }
 
 // ComputeScopes walks the CFG in reverse postorder and computes scope state at each point.

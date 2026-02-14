@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/tblutil"
 	"github.com/wippyai/go-lua/compiler/check/modules"
+	"github.com/wippyai/go-lua/compiler/check/scope"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -14,14 +15,27 @@ import (
 
 // ExtractTypeKeys collects all type keys from scope into inputs.TypeKeys.
 func ExtractTypeKeys(fc *core.FlowContext, inputs *flow.Inputs) {
-	if fc.Base == nil {
+	if fc == nil || inputs == nil {
 		return
 	}
-	for s := fc.Base; s != nil; s = s.Parent() {
-		s.RangeTypes(func(_ string, t typ.Type) bool {
-			AddTypeKey(inputs, t)
-			return true
-		})
+
+	seen := make(map[*scope.State]bool)
+	visitScopeChain := func(root *scope.State) {
+		for s := root; s != nil; s = s.Parent() {
+			if seen[s] {
+				continue
+			}
+			seen[s] = true
+			s.RangeTypes(func(_ string, t typ.Type) bool {
+				AddTypeKey(inputs, t)
+				return true
+			})
+		}
+	}
+
+	visitScopeChain(fc.Base)
+	for _, sc := range fc.Scopes {
+		visitScopeChain(sc)
 	}
 }
 
@@ -139,7 +153,7 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 					annType = fc.Services.ResolveTypeExpr(annExpr, sc)
 					if annType != nil {
 						resolved := resolve.Ref(annType, sc)
-						if typ.IsSoft(annType, typ.SoftAnnotationPolicy) {
+						if typ.IsRefinableAnnotation(annType) {
 							if existing := inputs.DeclaredTypes[sym]; existing == nil || typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
 								inputs.DeclaredTypes[sym] = resolved
 							}
@@ -152,7 +166,7 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 					tv := fc.CheckCtx.Types().DeclaredAt(p, sym)
 					if tv.State == flow.StateResolved && tv.Type != nil {
 						resolved := resolve.Ref(tv.Type, sc)
-						if typ.IsSoft(tv.Type, typ.SoftAnnotationPolicy) {
+						if typ.IsRefinableAnnotation(tv.Type) {
 							if existing := inputs.DeclaredTypes[sym]; existing == nil || typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
 								inputs.DeclaredTypes[sym] = resolved
 							}

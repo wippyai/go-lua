@@ -29,6 +29,7 @@ func TestField(t *testing.T) {
 		{"record missing field", rec, "missing", false, nil},
 		{"interface method", iface, "read", true, func(t typ.Type) bool { return t.Kind() == typ.String.Kind() || true }},
 		{"interface missing", iface, "write", false, nil},
+		{"builtin table marker", typ.NewInterface("table", nil), "anything", true, func(t typ.Type) bool { return t == typ.Unknown }},
 		{"any type", typ.Any, "anything", true, func(t typ.Type) bool { return t == typ.Any }},
 		{"unknown type", typ.Unknown, "anything", true, func(t typ.Type) bool { return t == typ.Unknown }},
 		{"never type", typ.Never, "anything", true, func(t typ.Type) bool { return t == typ.Never }},
@@ -66,9 +67,13 @@ func TestFieldUnion(t *testing.T) {
 	})
 
 	t.Run("field only in one member", func(t *testing.T) {
-		_, ok := Field(union, "name")
-		if ok {
-			t.Error("expected not to find 'name' (only in one member)")
+		got, ok := Field(union, "name")
+		if !ok {
+			t.Error("expected to find 'name' as optional from partial union")
+			return
+		}
+		if !typ.TypeEquals(got, typ.NewOptional(typ.String)) {
+			t.Errorf("expected string?, got %v", got)
 		}
 	})
 

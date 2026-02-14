@@ -154,6 +154,70 @@ func isOrderableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 }
 
+// MayBeOrderable checks whether a type could support ordering operators
+// (<, <=, >, >=). Unlike IsOrderable (all branches), this is conservative:
+// true if any feasible branch is orderable.
+func MayBeOrderable(t typ.Type) bool {
+	return mayBeOrderableGuard(t, typ.NewGuard())
+}
+
+func mayBeOrderableGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Union:
+		for _, m := range v.Members {
+			if mayBeOrderableGuard(m, next) {
+				return true
+			}
+		}
+		return false
+
+	case *typ.Intersection:
+		for _, m := range v.Members {
+			if mayBeOrderableGuard(m, next) {
+				return true
+			}
+		}
+		return false
+
+	case *typ.Alias:
+		if v.Target == nil {
+			return false
+		}
+		return mayBeOrderableGuard(v.Target, next)
+
+	case *typ.Optional:
+		if v.Inner == nil {
+			return false
+		}
+		return mayBeOrderableGuard(v.Inner, next)
+
+	case *typ.Literal:
+		switch v.Value.(type) {
+		case string, float64, int64:
+			return true
+		default:
+			return false
+		}
+
+	case *typ.TypeParam:
+		if v.Constraint != nil {
+			return mayBeOrderableGuard(v.Constraint, next)
+		}
+		return false
+	}
+
+	k := t.Kind()
+	return k == kind.String || k == kind.Number || k == kind.Integer || k.IsPlaceholder()
+}
+
 // IsStringable checks if a type can be used with string concatenation (..).
 //
 // In Lua, both strings and numbers can be concatenated (numbers are coerced).
@@ -250,6 +314,73 @@ func isStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 }
 
+// MayBeStringable checks whether a type could participate in string
+// concatenation. Unlike IsStringable (which requires all branches to be
+// stringable), this returns true if any feasible branch is stringable.
+func MayBeStringable(t typ.Type) bool {
+	return mayBeStringableGuard(t, typ.NewGuard())
+}
+
+func mayBeStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Union:
+		for _, m := range v.Members {
+			if mayBeStringableGuard(m, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Intersection:
+		for _, m := range v.Members {
+			if mayBeStringableGuard(m, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Alias:
+		if v.Target == nil {
+			return false
+		}
+		return mayBeStringableGuard(v.Target, next)
+	case *typ.Optional:
+		if v.Inner == nil {
+			return false
+		}
+		return mayBeStringableGuard(v.Inner, next)
+	case *typ.TypeParam:
+		if v.Constraint != nil {
+			return mayBeStringableGuard(v.Constraint, next)
+		}
+		return false
+	case *typ.Interface:
+		return v.Name == "Error"
+	case *typ.Literal:
+		switch v.Value.(type) {
+		case string, float64, int64:
+			return true
+		default:
+			return false
+		}
+	default:
+		k := t.Kind()
+		if k.IsPlaceholder() {
+			return true
+		}
+		if k == kind.String || k == kind.Number || k == kind.Integer {
+			return true
+		}
+		return subtype.IsSubtype(t, typ.String)
+	}
+}
+
 // HasLength checks if a type supports the length operator (#).
 //
 // In Lua, the following types have length:
@@ -263,11 +394,6 @@ func HasLength(t typ.Type) bool {
 }
 
 func hasLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
-	if t == nil {
-		return false
-	}
-
-	t = ExtractFirstValue(t)
 	if t == nil {
 		return false
 	}
@@ -329,6 +455,70 @@ func hasLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 }
 
+// MayHaveLength checks whether a type could support the length operator (#).
+//
+// This is a conservative predicate used by diagnostics: it returns true when
+// any feasible runtime value may have length, avoiding false positives for
+// optional/union values that can be length-capable after control-flow guards.
+func MayHaveLength(t typ.Type) bool {
+	return mayHaveLengthGuard(t, typ.NewGuard())
+}
+
+func mayHaveLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Array, *typ.Map, *typ.Record, *typ.Tuple:
+		return true
+
+	case *typ.Union:
+		for _, m := range v.Members {
+			if mayHaveLengthGuard(m, next) {
+				return true
+			}
+		}
+		return false
+
+	case *typ.Intersection:
+		for _, m := range v.Members {
+			if mayHaveLengthGuard(m, next) {
+				return true
+			}
+		}
+		return false
+
+	case *typ.Alias:
+		if v.Target == nil {
+			return false
+		}
+		return mayHaveLengthGuard(v.Target, next)
+
+	case *typ.Optional:
+		if v.Inner == nil {
+			return false
+		}
+		return mayHaveLengthGuard(v.Inner, next)
+
+	case *typ.Literal:
+		_, isStr := v.Value.(string)
+		return isStr
+
+	case *typ.TypeParam:
+		if v.Constraint != nil {
+			return mayHaveLengthGuard(v.Constraint, next)
+		}
+		return false
+	}
+
+	return t.Kind().IsPlaceholder() || t.Kind() == kind.String
+}
+
 // IsStringOnly checks if type is string (not number).
 func IsStringOnly(t typ.Type) bool {
 	if t == nil {
@@ -346,13 +536,50 @@ func IsStringOnly(t typ.Type) bool {
 // IsBitwiseNumeric checks if a type supports bitwise operators (&, |, ~, <<, >>).
 //
 // Only integer and number types (and placeholders) support bitwise operations.
-// Unlike IsNumeric, this does not recursively check unions/aliases.
+// Optional types are rejected until narrowed.
 func IsBitwiseNumeric(t typ.Type) bool {
+	return isBitwiseNumericGuard(t, typ.NewGuard())
+}
+
+func isBitwiseNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	if t == nil {
 		return false
 	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Union:
+		for _, m := range v.Members {
+			if !isBitwiseNumericGuard(m, next) {
+				return false
+			}
+		}
+		return len(v.Members) > 0
+
+	case *typ.Intersection:
+		for _, m := range v.Members {
+			if !isBitwiseNumericGuard(m, next) {
+				return false
+			}
+		}
+		return len(v.Members) > 0
+
+	case *typ.Alias:
+		if v.Target == nil {
+			return false
+		}
+		return isBitwiseNumericGuard(v.Target, next)
+
+	case *typ.Optional:
+		return false
+
+	case *typ.Literal:
+		return v.Base == kind.Integer || v.Base == kind.Number
+	}
 
 	k := t.Kind()
-
 	return k == kind.Integer || k == kind.Number || k.IsPlaceholder()
 }

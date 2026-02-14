@@ -38,6 +38,7 @@ func TestBuildSelectResultUnion_ResolvesNegativeCasesIndex(t *testing.T) {
 	})
 
 	want := typ.NewRecord().
+		Field("__select_case_id", typ.LiteralInt(0)).
 		Field("channel", typ.Integer).
 		Field("ok", typ.Boolean).
 		Field("value", typ.Boolean).
@@ -128,5 +129,48 @@ func TestBuildSelectResultUnion_SkipsNonCaseRecordFields(t *testing.T) {
 	}
 	if !typ.TypeEquals(valueField.Type, typ.Number) {
 		t.Fatalf("value field should come from select case, got %v", valueField.Type)
+	}
+}
+
+func TestApplyEffectTransform_CallbackReturn(t *testing.T) {
+	spec := contract.NewSpec().WithEffects(effect.Return{
+		ReturnIndex: 1,
+		Transform:   effect.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}},
+	})
+	fn := typ.Func().
+		Param("f", typ.Any).
+		Returns(typ.Boolean, typ.Any).
+		Spec(spec).
+		Build()
+	args := []typ.Type{
+		typ.Func().Returns(typ.String).Build(),
+	}
+
+	got := ApplyEffectTransform(fn, args, 1, typ.Any)
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("expected callback return transform to produce string, got %v", got)
+	}
+}
+
+func TestApplyEffectTransform_ArrayOfCallbackReturn(t *testing.T) {
+	spec := contract.NewSpec().WithEffects(effect.Return{
+		ReturnIndex: 0,
+		Transform:   effect.ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 1}},
+	})
+	fn := typ.Func().
+		Param("arr", typ.Any).
+		Param("mapper", typ.Any).
+		Returns(typ.Any).
+		Spec(spec).
+		Build()
+	args := []typ.Type{
+		typ.NewArray(typ.Integer),
+		typ.Func().Param("x", typ.Integer).Returns(typ.String).Build(),
+	}
+
+	got := ApplyEffectTransform(fn, args, 0, typ.Any)
+	want := typ.NewArray(typ.String)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected array(callback return) transform to produce %v, got %v", want, got)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -38,6 +39,7 @@ type Solution struct {
 	// Scratch buffers to reduce allocations in hot paths
 	scratchTypes  []typ.Type
 	scratchSuffix map[string]struct{}
+	pathAliases   map[string]string // canonical target path key -> canonical source path key
 }
 
 // edgeKey identifies a CFG edge for condition and constraint lookups.
@@ -95,6 +97,7 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 		numericStates:          make(map[cfg.Point]*numeric.State),
 		scratchTypes:           make([]typ.Type, 0, 8),
 		scratchSuffix:          make(map[string]struct{}, 16),
+		pathAliases:            make(map[string]string, size),
 	}
 	s.buildEdgeConditions()
 	s.buildEdgeNumericConstraints()
@@ -184,6 +187,29 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 
 	// Add types for all paths referenced by constraints
 	if len(constraints) > 0 {
+		resolveRootType := func(sym cfg.SymbolID) (typ.Type, bool) {
+			if sym == 0 {
+				return nil, false
+			}
+			rootPath := constraint.Path{Symbol: sym}
+			rootKey := s.pkResolver.KeyAt(p, rootPath)
+			if rootKey == "" {
+				return nil, false
+			}
+			if t, ok := result[rootKey]; ok && t != nil {
+				return t, true
+			}
+			if t := s.values[string(rootKey)]; t != nil {
+				result[rootKey] = t
+				return t, true
+			}
+			if declType := s.inputs.DeclaredTypes[sym]; declType != nil {
+				result[rootKey] = declType
+				return declType, true
+			}
+			return nil, false
+		}
+
 		seen := make(map[constraint.PathKey]bool)
 		for key := range result {
 			seen[key] = true
@@ -193,6 +219,7 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 				if cpath.IsEmpty() || cpath.Symbol == 0 {
 					continue
 				}
+				cpath = normalizeConstraintPathForQuery(cpath)
 				canonicalKey := s.pkResolver.KeyAt(p, cpath)
 				if canonicalKey == "" || seen[canonicalKey] {
 					continue
@@ -216,14 +243,17 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 					}
 				}
 
-				// Fall back to declared type
-				if declType := s.inputs.DeclaredTypes[cpath.Symbol]; declType != nil {
-					if len(cpath.Segments) > 0 {
-						if derived, ok := s.deriveTypeFrom(declType, cpath.Segments); ok {
-							result[canonicalKey] = derived
-						}
-					} else {
-						result[canonicalKey] = declType
+				// Derive from root symbol type at this point. This is required for
+				// inferred symbols (no DeclaredTypes entry), where constraints may
+				// target ancestor paths like x.foo while querying x.foo.bar.
+				if rootType, ok := resolveRootType(cpath.Symbol); ok {
+					if len(cpath.Segments) == 0 {
+						result[canonicalKey] = rootType
+						continue
+					}
+					if derived, ok := s.deriveTypeFrom(rootType, cpath.Segments); ok {
+						result[canonicalKey] = derived
+						continue
 					}
 				}
 			}
@@ -542,7 +572,13 @@ func (s *Solution) resolveTypeKey(key narrow.TypeKey) typ.Type {
 //
 // This enables gradual type construction for tables built incrementally.
 func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.Type {
-	var fields []typ.Field
+	type mergedField struct {
+		Name     string
+		Type     typ.Type
+		Optional bool
+	}
+
+	var fields []mergedField
 	baseSym, baseVersion, _, ok := pathkey.ParseKey(constraint.PathKey(baseKey))
 	if !ok {
 		return baseType
@@ -564,7 +600,8 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 		seg := segs[0]
 		switch seg.Kind {
 		case constraint.SegmentField, constraint.SegmentIndexString:
-			fields = append(fields, typ.Field{Name: seg.Name, Type: s.values[key]})
+			fieldType, optional := splitOptionalAssignedFieldType(s.values[key])
+			fields = append(fields, mergedField{Name: seg.Name, Type: fieldType, Optional: optional})
 		}
 	}
 
@@ -583,7 +620,11 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 			builder := typ.NewRecord().SetOpen(true)
 			builder.MapComponent(m.Key, m.Value)
 			for _, f := range fields {
-				builder.Field(f.Name, f.Type)
+				if f.Optional {
+					builder.OptField(f.Name, f.Type)
+				} else {
+					builder.Field(f.Name, f.Type)
+				}
 			}
 			return builder.Build()
 		},
@@ -593,23 +634,46 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 			if r.Open {
 				builder.SetOpen(true)
 			}
-			existing := make(map[string]bool)
-			for _, f := range r.Fields {
-				switch {
-				case f.Optional && f.Readonly:
-					builder.OptReadonlyField(f.Name, f.Type)
-				case f.Optional:
-					builder.OptField(f.Name, f.Type)
-				case f.Readonly:
-					builder.ReadonlyField(f.Name, f.Type)
-				default:
-					builder.Field(f.Name, f.Type)
-				}
-				existing[f.Name] = true
+			type pendingField struct {
+				t        typ.Type
+				optional bool
 			}
+			assignedByName := make(map[string]pendingField, len(fields))
 			for _, f := range fields {
-				if !existing[f.Name] {
-					builder.Field(f.Name, f.Type)
+				if prev, ok := assignedByName[f.Name]; ok {
+					assignedByName[f.Name] = pendingField{
+						// Preserve unknown-vs-nil uncertainty for branch-local field assignments.
+						t:        typ.JoinReturnSlot(prev.t, f.Type),
+						optional: prev.optional || f.Optional,
+					}
+				} else {
+					assignedByName[f.Name] = pendingField{t: f.Type, optional: f.Optional}
+				}
+			}
+			for _, f := range r.Fields {
+				fieldType := f.Type
+				optional := f.Optional
+				if assigned, ok := assignedByName[f.Name]; ok {
+					fieldType = typ.JoinReturnSlot(fieldType, assigned.t)
+					optional = optional || assigned.optional
+					delete(assignedByName, f.Name)
+				}
+				switch {
+				case optional && f.Readonly:
+					builder.OptReadonlyField(f.Name, fieldType)
+				case optional:
+					builder.OptField(f.Name, fieldType)
+				case f.Readonly:
+					builder.ReadonlyField(f.Name, fieldType)
+				default:
+					builder.Field(f.Name, fieldType)
+				}
+			}
+			for name, field := range assignedByName {
+				if field.optional {
+					builder.OptField(name, field.t)
+				} else {
+					builder.Field(name, field.t)
 				}
 			}
 			if r.Metatable != nil {
@@ -624,9 +688,81 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 			// Base is not a record or map; create one with just the field assignments
 			builder := typ.NewRecord().SetOpen(true)
 			for _, f := range fields {
-				builder.Field(f.Name, f.Type)
+				if f.Optional {
+					builder.OptField(f.Name, f.Type)
+				} else {
+					builder.Field(f.Name, f.Type)
+				}
 			}
 			return builder.Build()
 		},
 	})
+}
+
+// splitOptionalAssignedFieldType converts nil-capable field assignment types
+// into (innerType, optional=true) so merged record shapes model absent fields
+// as optional fields instead of required fields typed as T|nil.
+func splitOptionalAssignedFieldType(t typ.Type) (typ.Type, bool) {
+	if t == nil {
+		return typ.Unknown, true
+	}
+	// Preserve alias identity for non-optional assignments. Losing alias names
+	// here breaks downstream receiver checks for self-recursive method types.
+	if a, ok := t.(*typ.Alias); ok {
+		if a == nil || a.Target == nil {
+			return t, false
+		}
+		if opt, ok := a.Target.(*typ.Optional); ok && opt != nil && opt.Inner != nil {
+			return opt.Inner, true
+		}
+		if u, ok := a.Target.(*typ.Union); ok && u != nil && len(u.Members) > 0 {
+			hasNil := false
+			nonNil := make([]typ.Type, 0, len(u.Members))
+			for _, m := range u.Members {
+				if m != nil && m.Kind() == kind.Nil {
+					hasNil = true
+					continue
+				}
+				nonNil = append(nonNil, m)
+			}
+			if hasNil {
+				switch len(nonNil) {
+				case 0:
+					return typ.Nil, true
+				case 1:
+					return nonNil[0], true
+				default:
+					return typ.NewUnion(nonNil...), true
+				}
+			}
+		}
+		return t, false
+	}
+	if opt, ok := t.(*typ.Optional); ok && opt != nil && opt.Inner != nil {
+		return opt.Inner, true
+	}
+	u, ok := t.(*typ.Union)
+	if !ok || u == nil || len(u.Members) == 0 {
+		return t, false
+	}
+	hasNil := false
+	nonNil := make([]typ.Type, 0, len(u.Members))
+	for _, m := range u.Members {
+		if m != nil && m.Kind() == kind.Nil {
+			hasNil = true
+			continue
+		}
+		nonNil = append(nonNil, m)
+	}
+	if !hasNil {
+		return t, false
+	}
+	switch len(nonNil) {
+	case 0:
+		return typ.Nil, true
+	case 1:
+		return nonNil[0], true
+	default:
+		return typ.NewUnion(nonNil...), true
+	}
 }

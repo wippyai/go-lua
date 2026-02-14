@@ -248,6 +248,113 @@ func NewIterationScratch() *IterationScratch {
 	}
 }
 
+func (s *SessionStore) ensureInterprocStates() {
+	if s == nil {
+		return
+	}
+	if s.InterprocPrev == nil {
+		s.InterprocPrev = NewInterprocState()
+	}
+	if s.InterprocNext == nil {
+		s.InterprocNext = NewInterprocState()
+	}
+}
+
+func (s *SessionStore) resetScratch() {
+	if s == nil {
+		return
+	}
+	if s.Scratch == nil {
+		s.Scratch = NewIterationScratch()
+		return
+	}
+	s.Scratch.LiteralSigsByGraphID = make(map[uint64]map[*ast.FunctionExpr]*typ.Function)
+}
+
+func swapSnapshotChannel[T any](
+	prev *T,
+	next *T,
+	merge func(prev, next T) T,
+	equal func(a, b T) bool,
+	reset func() T,
+) bool {
+	if prev == nil || next == nil || merge == nil || equal == nil || reset == nil {
+		return false
+	}
+	merged := merge(*prev, *next)
+	changed := !equal(*prev, merged)
+	*prev = merged
+	*next = reset()
+	return changed
+}
+
+func (s *SessionStore) swapInterprocChannels() []string {
+	s.ensureInterprocStates()
+
+	// Channel policies:
+	// - Effects/ConstructorFields are overwrite channels (next snapshot replaces prev).
+	// - InterprocFacts is a widening channel (monotone merge across iterations).
+	channels := []struct {
+		name string
+		swap func() bool
+	}{
+		{
+			name: "Effects",
+			swap: func() bool {
+				return swapSnapshotChannel(
+					&s.InterprocPrev.Effects,
+					&s.InterprocNext.Effects,
+					func(_prev, next map[cfg.SymbolID]*constraint.FunctionEffect) map[cfg.SymbolID]*constraint.FunctionEffect {
+						return next
+					},
+					effectsMapEqual,
+					func() map[cfg.SymbolID]*constraint.FunctionEffect {
+						return make(map[cfg.SymbolID]*constraint.FunctionEffect)
+					},
+				)
+			},
+		},
+		{
+			name: "InterprocFacts",
+			swap: func() bool {
+				return swapSnapshotChannel(
+					&s.InterprocPrev.Facts,
+					&s.InterprocNext.Facts,
+					widenInterprocFacts,
+					interprocFactsMapEqual,
+					func() map[api.GraphKey]api.Facts {
+						return make(map[api.GraphKey]api.Facts)
+					},
+				)
+			},
+		},
+		{
+			name: "ConstructorFields",
+			swap: func() bool {
+				return swapSnapshotChannel(
+					&s.InterprocPrev.ConstructorFields,
+					&s.InterprocNext.ConstructorFields,
+					func(_prev, next api.ConstructorFields) api.ConstructorFields {
+						return next
+					},
+					returns.ConstructorFieldsEqual,
+					func() api.ConstructorFields {
+						return make(api.ConstructorFields)
+					},
+				)
+			},
+		},
+	}
+
+	diffs := make([]string, 0, len(channels))
+	for _, channel := range channels {
+		if channel.swap() {
+			diffs = append(diffs, channel.name)
+		}
+	}
+	return diffs
+}
+
 // FixpointSwap performs the iteration boundary swap for all iteration-local channels.
 // This is the critical operation that advances the fixpoint iteration by making
 // current results available for the next iteration.
@@ -266,43 +373,14 @@ func NewIterationScratch() *IterationScratch {
 // RETURN VALUE: Returns true if any channel changed, signaling another iteration
 // is needed. Returns false when all channels stabilize (fixpoint reached).
 func (s *SessionStore) FixpointSwap() bool {
-	changed := false
-	var diffs []string
+	diffs := s.swapInterprocChannels()
 
-	// Effects (stable snapshot for interproc effect lookup)
-	if !effectsMapEqual(s.InterprocPrev.Effects, s.InterprocNext.Effects) {
-		changed = true
-		diffs = append(diffs, "Effects")
-	}
-	s.InterprocPrev.Effects = s.InterprocNext.Effects
-	s.InterprocNext.Effects = make(map[cfg.SymbolID]*constraint.FunctionEffect)
-
-	// Interproc facts (post-flow snapshots)
-	mergedFacts := widenInterprocFacts(s.InterprocPrev.Facts, s.InterprocNext.Facts)
-	if !interprocFactsMapEqual(s.InterprocPrev.Facts, mergedFacts) {
-		changed = true
-		diffs = append(diffs, "InterprocFacts")
-	}
-	s.InterprocPrev.Facts = mergedFacts
-	s.InterprocNext.Facts = make(map[api.GraphKey]api.Facts)
-
-	// ConstructorFields
-	if !returns.ConstructorFieldsEqual(s.InterprocPrev.ConstructorFields, s.InterprocNext.ConstructorFields) {
-		changed = true
-		diffs = append(diffs, "ConstructorFields")
-	}
-	s.InterprocPrev.ConstructorFields = s.InterprocNext.ConstructorFields
-	s.InterprocNext.ConstructorFields = make(api.ConstructorFields)
-
-	// Clear iteration-local scratch
-	if s.Scratch != nil {
-		s.Scratch.LiteralSigsByGraphID = make(map[uint64]map[*ast.FunctionExpr]*typ.Function)
-	}
+	s.resetScratch()
 
 	// Record which channels changed for diagnostic reporting
 	s.lastSwapDiffs = diffs
 
-	return changed
+	return len(diffs) > 0
 }
 
 // FixpointChannelDiffs returns the names of channels that changed during the
@@ -311,23 +389,31 @@ func (s *SessionStore) FixpointChannelDiffs() []string {
 	if s == nil {
 		return nil
 	}
-	return s.lastSwapDiffs
-}
-
-// bumpRevision increments the revision counter.
-// Called at fixpoint iteration boundary after FixpointSwap.
-func (s *SessionStore) bumpRevision() {
-	s.Iteration.Revision++
+	if len(s.lastSwapDiffs) == 0 {
+		return nil
+	}
+	out := make([]string, len(s.lastSwapDiffs))
+	copy(out, s.lastSwapDiffs)
+	return out
 }
 
 // Revision returns the current revision counter.
 func (s *SessionStore) Revision() uint64 {
+	if s == nil || s.Iteration == nil {
+		return 0
+	}
 	return s.Iteration.Revision
 }
 
 // BumpRevision increments the revision counter.
 func (s *SessionStore) BumpRevision() {
-	s.bumpRevision()
+	if s == nil {
+		return
+	}
+	if s.Iteration == nil {
+		s.Iteration = NewIterationStore()
+	}
+	s.Iteration.Revision++
 }
 
 // LookupEffectBySym returns the effect for a function by its SymbolID.
@@ -347,9 +433,7 @@ func (s *SessionStore) StoreFunctionEffect(sym cfg.SymbolID, eff *constraint.Fun
 	if s == nil || sym == 0 || eff == nil {
 		return
 	}
-	if s.InterprocNext == nil {
-		s.InterprocNext = NewInterprocState()
-	}
+	s.ensureInterprocStates()
 	if s.InterprocNext.Effects == nil {
 		s.InterprocNext.Effects = make(map[cfg.SymbolID]*constraint.FunctionEffect)
 	}
@@ -364,9 +448,7 @@ func (s *SessionStore) StoreConstructorFields(classSym cfg.SymbolID, fields map[
 	if classSym == 0 || len(fields) == 0 {
 		return
 	}
-	if s.InterprocNext == nil {
-		s.InterprocNext = NewInterprocState()
-	}
+	s.ensureInterprocStates()
 	if s.InterprocNext.ConstructorFields == nil {
 		s.InterprocNext.ConstructorFields = make(api.ConstructorFields)
 	}
@@ -397,11 +479,19 @@ func (s *SessionStore) LookupConstructorFields(classSym cfg.SymbolID) map[string
 
 // ClearIterationChannels clears all inter-function channel state for a fresh run.
 func (s *SessionStore) ClearIterationChannels() {
-	if s == nil || s.Iteration == nil || s.Scratch == nil {
+	if s == nil {
 		return
+	}
+	if s.Iteration == nil {
+		s.Iteration = NewIterationStore()
+	}
+	if s.Scratch == nil {
+		s.Scratch = NewIterationScratch()
 	}
 	s.InterprocPrev = NewInterprocState()
 	s.InterprocNext = NewInterprocState()
+	s.resetScratch()
+	s.Iteration.Revision = 0
 	s.lastSwapDiffs = nil
 }
 
@@ -436,13 +526,11 @@ func (s *SessionStore) GraphKeyFor(graph *cfg.Graph, parent *scope.State) (api.G
 	if s == nil || graph == nil {
 		return api.GraphKey{}, false
 	}
-	if parentHash := s.GraphParentHashOf(graph.ID()); parentHash != 0 {
-		return api.KeyForGraph(graph, parentHash), true
-	}
-	if parent == nil {
+	parentHash := api.ParentHashForGraph(s, graph.ID(), parent)
+	if parentHash == 0 {
 		return api.GraphKey{}, false
 	}
-	return api.KeyForGraph(graph, parent.Hash()), true
+	return api.KeyForGraph(graph, parentHash), true
 }
 
 // ParentGraphKeyForSymbol returns the graph key for the parent graph that owns sym.
@@ -470,17 +558,11 @@ func (s *SessionStore) ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, 
 }
 
 func initInterprocFacts(f *api.Facts) {
-	if f.ReturnSummaries == nil {
-		f.ReturnSummaries = make(map[cfg.SymbolID][]typ.Type)
-	}
-	if f.NarrowReturns == nil {
-		f.NarrowReturns = make(map[cfg.SymbolID][]typ.Type)
+	if f.FunctionFacts == nil {
+		f.FunctionFacts = make(api.FunctionFacts)
 	}
 	if f.ParamHints == nil {
 		f.ParamHints = make(map[cfg.SymbolID][]typ.Type)
-	}
-	if f.FuncTypes == nil {
-		f.FuncTypes = make(map[cfg.SymbolID]typ.Type)
 	}
 	if f.LiteralSigs == nil {
 		f.LiteralSigs = make(map[*ast.FunctionExpr]*typ.Function)
@@ -493,24 +575,18 @@ func initInterprocFacts(f *api.Facts) {
 	}
 }
 
-// updateInterprocFactsNext updates the per-iteration facts for a graph key.
-func (s *SessionStore) updateInterprocFactsNext(key api.GraphKey, update func(*api.Facts)) {
-	if s == nil {
-		return
-	}
-	if s.InterprocNext == nil {
-		s.InterprocNext = NewInterprocState()
-	}
-	facts := s.InterprocNext.Facts[key]
-	initInterprocFacts(&facts)
-	update(&facts)
-	s.InterprocNext.Facts[key] = facts
-}
-
 // UpdateInterprocFactsNext updates interproc facts for the next iteration.
 // This is the public entry point used by post-flow analysis to record results.
 func (s *SessionStore) UpdateInterprocFactsNext(key api.GraphKey, update func(*api.Facts)) {
-	s.updateInterprocFactsNext(key, update)
+	if s == nil {
+		return
+	}
+	s.ensureInterprocStates()
+	facts := s.InterprocNext.Facts[key]
+	initInterprocFacts(&facts)
+	update(&facts)
+	returns.NormalizeFunctionFactChannels(&facts)
+	s.InterprocNext.Facts[key] = facts
 }
 
 // Funcs returns the function map.
@@ -748,7 +824,7 @@ func (s *SessionStore) GetReturnSummariesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID][]typ.Type {
 	s.requirePhase(api.PhaseScopeCompute)
-	return s.GetInterprocFactsSnapshot(graph, parent).ReturnSummaries
+	return returns.SummaryViewFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
 }
 
 // GetNarrowReturnSummariesSnapshot returns post-flow return summaries from the stable snapshot.
@@ -757,7 +833,7 @@ func (s *SessionStore) GetNarrowReturnSummariesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID][]typ.Type {
 	s.requirePhase(api.PhaseNarrowing)
-	return s.GetInterprocFactsSnapshot(graph, parent).NarrowReturns
+	return returns.NarrowViewFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
 }
 
 // GetLocalFuncTypesSnapshot returns canonical local function types from the stable interproc snapshot.
@@ -766,7 +842,7 @@ func (s *SessionStore) GetLocalFuncTypesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID]typ.Type {
 	s.requirePhase(api.PhaseScopeCompute)
-	return s.GetInterprocFactsSnapshot(graph, parent).FuncTypes
+	return returns.FuncTypeViewFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
 }
 
 // GetLiteralSigsSnapshot returns literal signatures from the stable interproc snapshot.

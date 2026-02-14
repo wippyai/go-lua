@@ -1,6 +1,7 @@
 package effects
 
 import (
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
@@ -45,28 +46,21 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionEf
 		if info == nil {
 			return
 		}
-
-		var calleeEffect *constraint.FunctionEffect
-
-		// Symbol-based lookup via canonical callsite symbol candidates.
-		if lookup != nil {
-			bindings := result.Graph.Bindings()
-			moduleBindings := result.ModuleBindings
-			candidates := callsite.CalleeSymbolCandidatesWithAliases(info, result.Graph, bindings, moduleBindings)
-			for _, sym := range candidates {
-				calleeEffect = lookup(sym)
-				if calleeEffect != nil {
-					break
-				}
-			}
+		var synthFn func(ast.Expr, cfg.Point) typ.Type
+		if result.NarrowSynth != nil {
+			synthFn = result.NarrowSynth.TypeOf
 		}
-
-		// Fallback to extracting effect from synthesized type.
-		if calleeEffect == nil && result.NarrowSynth != nil && info.Callee != nil {
-			if t := result.NarrowSynth.TypeOf(info.Callee, p); t != nil {
-				calleeEffect = EffectFromType(t)
-			}
-		}
+		calleeEffect := callsite.ResolveCalleeEffect(
+			info,
+			p,
+			result.Graph,
+			result.Graph.Bindings(),
+			result.ModuleBindings,
+			lookup,
+			synthFn,
+			nil,
+			EffectFromType,
+		)
 
 		if calleeEffect == nil {
 			return

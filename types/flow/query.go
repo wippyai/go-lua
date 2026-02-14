@@ -3,9 +3,9 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow/join"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -276,6 +276,34 @@ func (s *Solution) ArrayLenBoundAt(p cfg.Point, varName string) (arrKey string, 
 	return string(pathKey), ok
 }
 
+// ArrayLenBoundWithOffsetAt returns the array key and offset for a symbolic length bound.
+func (s *Solution) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool) {
+	if s == nil || s.numericStates == nil {
+		return "", 0, false
+	}
+	state := s.numericStates[p]
+	if state == nil {
+		return "", 0, false
+	}
+	if s.inputs == nil || s.inputs.Graph == nil || s.pkResolver == nil {
+		return "", 0, false
+	}
+	sym, found := s.inputs.Graph.SymbolAt(p, varName)
+	if !found || sym == 0 {
+		return "", 0, false
+	}
+	path := constraint.Path{Root: varName, Symbol: sym}
+	key := s.pkResolver.KeyAt(p, path)
+	if key == "" {
+		return "", 0, false
+	}
+	pathKey, off, ok := state.LenRefWithOffsetFor(key)
+	if !ok {
+		return "", 0, false
+	}
+	return string(pathKey), off, true
+}
+
 // NarrowedTypeAt returns the type at point p for path, narrowed by the DNF condition.
 // This is a pure query that composes: baseTypeAt + ConditionAt + applyCondition.
 func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
@@ -334,6 +362,22 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		return explicit
 	}
 
+	// Prefer concrete explicit child-path facts over placeholder parent-derived facts.
+	if derived.Kind().IsPlaceholder() && !explicit.Kind().IsPlaceholder() {
+		return explicit
+	}
+	if explicit.Kind().IsPlaceholder() && !derived.Kind().IsPlaceholder() {
+		return derived
+	}
+
+	// If one is a subtype of the other, keep the more specific type.
+	if subtype.IsSubtype(explicit, derived) {
+		return explicit
+	}
+	if subtype.IsSubtype(derived, explicit) {
+		return derived
+	}
+
 	// If explicit is narrower (e.g., string vs string?), prefer explicit
 	// This happens when a field assignment provides a flow-narrowed type
 	if opt, ok := derived.(*typ.Optional); ok {
@@ -350,16 +394,26 @@ func (s *Solution) derivedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	if len(path.Segments) == 0 {
 		return nil
 	}
-	parentPath := constraint.Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
-	parentNarrowed := s.NarrowedTypeAt(p, parentPath)
-	if parentNarrowed == nil {
-		return nil
+
+	// Walk from the closest ancestor to the root and derive from the first
+	// narrowed ancestor we can prove at this point. This preserves narrowing
+	// learned on intermediate paths (for example, x.field ~= nil) when querying
+	// deeper descendants (for example, x.field[1].value).
+	for cut := len(path.Segments) - 1; cut >= 0; cut-- {
+		ancestor := constraint.Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
+		if cut > 0 {
+			ancestor.Segments = append(ancestor.Segments, path.Segments[:cut]...)
+		}
+		ancestorNarrowed := s.NarrowedTypeAt(p, ancestor)
+		if ancestorNarrowed == nil {
+			continue
+		}
+		derived, ok := s.deriveTypeFrom(ancestorNarrowed, path.Segments[cut:])
+		if ok {
+			return derived
+		}
 	}
-	derived, ok := s.deriveTypeFrom(parentNarrowed, path.Segments)
-	if !ok {
-		return nil
-	}
-	return derived
+	return nil
 }
 
 // isFalseLiteral returns true if t is literal false.
@@ -406,7 +460,7 @@ func (s *Solution) applyCondition(p cfg.Point, baseType typ.Type, path constrain
 	if len(narrowedTypes) == 1 {
 		return narrowedTypes[0]
 	}
-	return join.Types(narrowedTypes...)
+	return typ.PruneSoftUnionMembers(typ.NewUnion(narrowedTypes...))
 }
 
 // applyConstraints narrows baseType using constraints that apply to path at point p.
@@ -429,6 +483,7 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 
 	// Resolve constraint paths to canonical keys at query point p
 	resolvePath := func(cpath constraint.Path) constraint.PathKey {
+		cpath = normalizeConstraintPathForQuery(cpath)
 		return s.pkResolver.KeyAt(p, cpath)
 	}
 
@@ -448,12 +503,91 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 		return narrowed
 	}
 
+	if narrowed, ok := s.deriveFromNarrowedAncestors(canonicalKey, dom); ok {
+		return narrowed
+	}
+
 	childNarrowings := dom.NarrowedChildPaths(canonicalKey)
 	if len(childNarrowings) > 0 {
 		return s.filterByChildNarrowings(baseType, path, childNarrowings)
 	}
 
 	return baseType
+}
+
+// deriveFromNarrowedAncestors projects narrowed ancestor path types down to a target key.
+//
+// Example: if `x.y` is narrowed to non-nil record, querying `x.y.z` should derive
+// `z` from that narrowed ancestor even when `x.y.z` has no direct narrowing entry.
+func (s *Solution) deriveFromNarrowedAncestors(targetKey constraint.PathKey, dom *ProductDomain) (typ.Type, bool) {
+	targetSym, targetVersion, targetSuffix, ok := pathkey.ParseKey(targetKey)
+	if !ok {
+		return nil, false
+	}
+	targetSegs := pathkey.ParseSuffix(targetSuffix)
+
+	seen := make(map[constraint.PathKey]bool)
+	candidates := make([]constraint.PathKey, 0, len(dom.Type.Narrowed)+len(dom.Shape.Narrowed))
+	for _, key := range constraint.SortedPathKeys(dom.Type.Narrowed) {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		candidates = append(candidates, key)
+	}
+	for _, key := range constraint.SortedPathKeys(dom.Shape.Narrowed) {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		candidates = append(candidates, key)
+	}
+
+	var combined typ.Type
+	for _, candidateKey := range candidates {
+		ancestorType := dom.TypeAt(candidateKey)
+		if ancestorType == nil {
+			continue
+		}
+		sym, version, suffix, ok := pathkey.ParseKey(candidateKey)
+		if !ok || sym != targetSym || version != targetVersion {
+			continue
+		}
+		ancestorSegs := pathkey.ParseSuffix(suffix)
+		if len(ancestorSegs) >= len(targetSegs) {
+			continue
+		}
+		if !pathkey.SegmentsPrefix(ancestorSegs, targetSegs) {
+			continue
+		}
+
+		remaining := targetSegs[len(ancestorSegs):]
+		derived, ok := s.deriveTypeFrom(ancestorType, remaining)
+		if !ok || derived == nil {
+			continue
+		}
+		if combined == nil {
+			combined = derived
+		} else {
+			combined = narrow.Intersect(combined, derived)
+		}
+	}
+
+	if combined == nil {
+		return nil, false
+	}
+	return combined, true
+}
+
+func normalizeConstraintPathForQuery(path constraint.Path) constraint.Path {
+	if path.Symbol == 0 {
+		return path
+	}
+	// Conditions are propagated through CFG edges and can keep historical SSA
+	// version ids. At query time we must interpret related constraint paths at
+	// the point's visible version; assignment-kill already handles stale facts.
+	path.Version = 0
+	return path
 }
 
 // filterByChildNarrowings filters a type to variants where child paths match narrowed types.

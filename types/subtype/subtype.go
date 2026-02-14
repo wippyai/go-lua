@@ -272,6 +272,12 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 		return c.checkNil(super, depth+1) && c.check(o.Inner, super, depth+1)
 	}
 
+	// Builtin `table` annotation is modeled as a marker interface.
+	// Accept only Lua table-like structural shapes.
+	if unwrap.IsBuiltinTableTop(super) {
+		return isTableLikeType(sub)
+	}
+
 	// Empty record can satisfy array/map shapes, but should still flow through
 	// regular record subtyping for record supers (e.g. all-optional records).
 	if r, ok := sub.(*typ.Record); ok && len(r.Fields) == 0 {
@@ -513,8 +519,11 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 			}
 		}
 
-		// Optional compatibility
-		if !sf.Optional && subField.Optional {
+		// Optional compatibility:
+		// A super field that syntactically looks required can still admit nil
+		// via its type (e.g. `x: string?`). In that case an optional sub field
+		// remains compatible.
+		if !sf.Optional && !unwrap.IsOptionalLike(sf.Type) && subField.Optional {
 			return false
 		}
 	}
@@ -580,6 +589,36 @@ func canWidenTo(narrow, wide typ.Type) bool {
 		}
 	}
 
+	// Allow widening into unions when narrow fits at least one member.
+	if u, ok := wide.(*typ.Union); ok {
+		for _, m := range u.Members {
+			// Keep literal-tag unions invariant for mutable fields; only allow
+			// widening through non-literal branch members (for example number|string).
+			if m.Kind() == kind.Literal {
+				continue
+			}
+			if isSubtype(narrow, m) || canWidenTo(narrow, m) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Literal unions can widen to a primitive supertype when each branch widens.
+	// Example: 0|8000 can widen to integer for mutable record fields.
+	if u, ok := narrow.(*typ.Union); ok {
+		if len(u.Members) == 0 {
+			return false
+		}
+		for _, m := range u.Members {
+			if isSubtype(m, wide) || canWidenTo(m, wide) {
+				continue
+			}
+			return false
+		}
+		return true
+	}
+
 	// Integer can widen to number
 	if narrow.Kind() == kind.Integer && wide.Kind() == kind.Number {
 		return true
@@ -608,6 +647,23 @@ func canWidenTo(narrow, wide typ.Type) bool {
 	if subRec, ok := narrow.(*typ.Record); ok {
 		if supRec, ok := wide.(*typ.Record); ok {
 			return canWidenRecordTo(subRec, supRec)
+		}
+	}
+
+	// Tuples: allow element-wise widening for fresh tuple literals.
+	if subTuple, ok := narrow.(*typ.Tuple); ok {
+		if supTuple, ok := wide.(*typ.Tuple); ok {
+			if len(subTuple.Elements) != len(supTuple.Elements) {
+				return false
+			}
+			for i := range subTuple.Elements {
+				if isSubtype(subTuple.Elements[i], supTuple.Elements[i]) ||
+					canWidenTo(subTuple.Elements[i], supTuple.Elements[i]) {
+					continue
+				}
+				return false
+			}
+			return true
 		}
 	}
 
@@ -926,6 +982,17 @@ func (c *checker) checkInstantiated(sub, super *typ.Instantiated, depth int) boo
 	}
 
 	return true
+}
+
+func isTableLikeType(t typ.Type) bool {
+	switch v := t.(type) {
+	case *typ.Alias:
+		return isTableLikeType(v.Target)
+	case *typ.Record, *typ.Map, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Intersection:
+		return true
+	default:
+		return false
+	}
 }
 
 // typePair stores a non-commutative pair of types for cycle detection.

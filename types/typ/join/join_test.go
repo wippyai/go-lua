@@ -3,6 +3,8 @@ package join
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -80,6 +82,63 @@ func TestWithReturns(t *testing.T) {
 		result := WithReturns(sig, []typ.Type{nil, typ.String})
 		if result.Returns[0] != typ.Unknown {
 			t.Error("nil should be normalized to Unknown")
+		}
+	})
+
+	t.Run("preserves spec effects", func(t *testing.T) {
+		spec := contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
+		sig := typ.Func().
+			Param("x", typ.String).
+			Returns(typ.String, typ.NewOptional(typ.LuaError)).
+			Spec(spec).
+			Build()
+		result := WithReturns(sig, []typ.Type{typ.String, typ.NewOptional(typ.LuaError)})
+		if result.Spec == nil {
+			t.Fatal("expected function spec to be preserved")
+		}
+		extracted := contract.ExtractSpec(result)
+		if extracted == nil || extracted.Effects.GetErrorReturn(0) == nil {
+			t.Fatal("expected ErrorReturn label to be preserved")
+		}
+	})
+}
+
+func TestWithReturnsOrUnknown(t *testing.T) {
+	t.Run("nil signature", func(t *testing.T) {
+		if WithReturnsOrUnknown(nil, []typ.Type{typ.String}) != nil {
+			t.Fatal("expected nil for nil signature")
+		}
+	})
+
+	t.Run("preserves existing returns", func(t *testing.T) {
+		sig := typ.Func().Returns(typ.Number).Build()
+		got := WithReturnsOrUnknown(sig, []typ.Type{typ.String})
+		if got != sig {
+			t.Fatal("expected existing return signature to be preserved")
+		}
+	})
+
+	t.Run("defaults to unknown", func(t *testing.T) {
+		sig := typ.Func().Build()
+		got := WithReturnsOrUnknown(sig, nil)
+		if got == nil || len(got.Returns) != 1 || got.Returns[0] != typ.Unknown {
+			t.Fatalf("expected unknown default return, got %v", got)
+		}
+	})
+
+	t.Run("uses provided returns", func(t *testing.T) {
+		sig := typ.Func().Param("x", typ.Number).Build()
+		got := WithReturnsOrUnknown(sig, []typ.Type{typ.String})
+		if got == nil || len(got.Returns) != 1 || got.Returns[0] != typ.String {
+			t.Fatalf("expected provided return vector, got %v", got)
+		}
+	})
+
+	t.Run("replaces placeholder returns with provided summary", func(t *testing.T) {
+		sig := typ.Func().Returns(typ.Unknown).Build()
+		got := WithReturnsOrUnknown(sig, []typ.Type{typ.Integer})
+		if got == nil || len(got.Returns) != 1 || got.Returns[0] != typ.Integer {
+			t.Fatalf("expected placeholder return to be replaced, got %v", got)
 		}
 	})
 }

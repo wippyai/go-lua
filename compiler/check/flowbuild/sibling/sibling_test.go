@@ -278,3 +278,44 @@ func TestConstraintsForIdent_WithGraphAndUnknownIdent(t *testing.T) {
 		t.Error("expected nil for unknown ident")
 	}
 }
+
+func TestConstraintsForSymbol_GuardedTypeCorrelationOnTruthy(t *testing.T) {
+	okSym := cfg.SymbolID(1)
+	resSym := cfg.SymbolID(2)
+	inputs := &flow.Inputs{
+		SiblingAssignments: map[flow.SiblingKey]*flow.SiblingAssignment{
+			{Symbol: okSym, VersionID: 1}: {
+				Names:   []string{"ok", "result"},
+				Symbols: []cfg.SymbolID{okSym, resSym},
+				GuardedCorrelations: []flow.GuardedTypeCorrelation{
+					{
+						GuardIndex:    0,
+						TargetIndex:   1,
+						GuardOnTruthy: true,
+						TargetType:    typ.String,
+					},
+				},
+			},
+		},
+	}
+
+	result := sibling.ConstraintsForSymbol(okSym, 1, inputs, true, nil)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 constraint, got %d", len(result))
+	}
+	hasType, ok := result[0].(constraint.HasType)
+	if !ok {
+		t.Fatalf("expected HasType constraint, got %T", result[0])
+	}
+	if hasType.Path.Root != "result" || hasType.Path.Symbol != resSym {
+		t.Fatalf("unexpected path in HasType constraint: %+v", hasType.Path)
+	}
+	if hasType.Type.Hash != typ.String.Hash() {
+		t.Fatalf("expected string hash key, got %+v", hasType.Type)
+	}
+
+	result = sibling.ConstraintsForSymbol(okSym, 1, inputs, false, nil)
+	if len(result) != 0 {
+		t.Fatalf("expected no falsy constraints, got %v", result)
+	}
+}

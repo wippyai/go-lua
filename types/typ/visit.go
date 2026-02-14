@@ -32,6 +32,8 @@ type Visitor[R any] struct {
 
 // Visit applies the first matching handler in v to t.
 func Visit[R any](t Type, v Visitor[R]) R {
+	t = unwrapTransparentWrappers(t)
+
 	switch tt := t.(type) {
 	case *Optional:
 		if v.Optional != nil {
@@ -127,6 +129,19 @@ func Visit[R any](t Type, v Visitor[R]) R {
 	}
 	var zero R
 	return zero
+}
+
+func unwrapTransparentWrappers(t Type) Type {
+	for {
+		ann, ok := t.(*Annotated)
+		if !ok {
+			return t
+		}
+		if ann.Inner == nil || ann.Inner == t {
+			return t
+		}
+		t = ann.Inner
+	}
 }
 
 // VisitWithGuard applies a Visitor with recursion guarding.

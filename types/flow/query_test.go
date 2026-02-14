@@ -231,6 +231,63 @@ func TestDerivedTypeAt_FromNarrowedParent(t *testing.T) {
 	}
 }
 
+func TestDerivedTypeAt_FromNarrowedIntermediateAncestor(t *testing.T) {
+	c, branch, thenNode, _, _, _ := buildPhiTruthyCFG()
+	g := newMockSSAGraph(c)
+
+	symR := setupSymbol(g, "r", []cfg.Point{c.Entry(), branch, thenNode})
+	ver := cfg.Version{Root: "r", Symbol: symR, ID: 1}
+	setVersion(g, c.Entry(), symR, ver)
+	setVersion(g, branch, symR, ver)
+	setVersion(g, thenNode, symR, ver)
+
+	systemItem := typ.NewRecord().Field("text", typ.String).Build()
+	systemType := typ.NewOptional(typ.NewArray(systemItem))
+	rootType := typ.NewRecord().Field("system", systemType).Build()
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symR] = rootType
+	inputs.Assignments = []UnifiedAssignment{
+		{
+			Point:      c.Entry(),
+			TargetPath: constraint.Path{Root: "r", Symbol: symR},
+			Type:       rootType,
+		},
+	}
+
+	pathSystem := constraint.Path{
+		Root:     "r",
+		Symbol:   symR,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "system"}},
+	}
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From:      branch,
+			To:        thenNode,
+			Condition: constraint.FromConstraints(constraint.NotNil{Path: pathSystem}),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+
+	pathText := constraint.Path{
+		Root:   "r",
+		Symbol: symR,
+		Segments: []constraint.Segment{
+			{Kind: constraint.SegmentField, Name: "system"},
+			{Kind: constraint.SegmentIndexInt, Index: 1},
+			{Kind: constraint.SegmentField, Name: "text"},
+		},
+	}
+	result := s.derivedTypeAt(thenNode, pathText)
+	if result == nil {
+		t.Fatal("derivedTypeAt(r.system[1].text) = nil, want derived type from narrowed intermediate ancestor")
+	}
+	if !typ.TypeEquals(result, typ.String) {
+		t.Errorf("derivedTypeAt(r.system[1].text) = %v, want string", result)
+	}
+}
+
 func TestIsFalseLiteral(t *testing.T) {
 	tests := []struct {
 		name string

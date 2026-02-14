@@ -52,6 +52,7 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 		// Expand Instantiated types for structural matching
 		expected = subst.ExpandInstantiated(expected)
 		arg = subst.ExpandInstantiated(arg)
+		arg = normalizeArgForGenericInference(expected, arg)
 		constraint.MatchContra(expected, arg, cs)
 	}
 
@@ -108,6 +109,74 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 	}
 
 	return result, nil
+}
+
+func normalizeArgForGenericInference(expected, arg typ.Type) typ.Type {
+	if expected == nil || arg == nil {
+		return arg
+	}
+	if _, ok := unwrap.Alias(expected).(*typ.Array); !ok {
+		return arg
+	}
+
+	joinElems := func(elems []typ.Type) typ.Type {
+		var joined typ.Type
+		for _, elem := range elems {
+			if elem == nil {
+				continue
+			}
+			if joined == nil {
+				joined = elem
+			} else {
+				joined = typ.JoinPreferNonSoft(joined, elem)
+			}
+		}
+		return joined
+	}
+
+	var collectElems func(t typ.Type, out *[]typ.Type) bool
+	collectElems = func(t typ.Type, out *[]typ.Type) bool {
+		if t == nil {
+			return false
+		}
+		switch v := unwrap.Alias(t).(type) {
+		case *typ.Array:
+			*out = append(*out, v.Element)
+			return true
+		case *typ.Tuple:
+			if len(v.Elements) == 0 {
+				return false
+			}
+			*out = append(*out, v.Elements...)
+			return true
+		case *typ.Union:
+			collectedAny := false
+			for _, m := range v.Members {
+				if collectElems(m, out) {
+					collectedAny = true
+					continue
+				}
+				*out = append(*out, m)
+				collectedAny = true
+			}
+			return collectedAny
+		case *typ.Literal:
+			*out = append(*out, v)
+			return true
+		default:
+			return false
+		}
+	}
+
+	var elems []typ.Type
+	if !collectElems(arg, &elems) {
+		return arg
+	}
+	elemType := joinElems(elems)
+	if elemType == nil {
+		return arg
+	}
+	return typ.NewArray(elemType)
 }
 
 // SubstituteTypeVars replaces TypeParam with TypeVar in a type.

@@ -116,6 +116,26 @@ func TestRootFromSymbol_NilInputs(t *testing.T) {
 	}
 }
 
+func TestRootFromSymbol_UsesGraphName(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"graphVar"}},
+		Stmts:   []ast.Stmt{&ast.ReturnStmt{}},
+	}
+	graph := cfg.Build(fn)
+	if graph == nil {
+		t.Fatal("expected non-nil graph")
+	}
+	syms := graph.ParamSymbols()
+	if len(syms) == 0 {
+		t.Fatal("expected param symbol")
+	}
+	inputs := &flow.Inputs{Graph: graph}
+	got := resolve.RootFromSymbol(inputs, syms[0], "fallback")
+	if got != "graphVar" {
+		t.Fatalf("expected graph name, got %q", got)
+	}
+}
+
 func TestClassifyReturnExpr_TrueExpr(t *testing.T) {
 	result := resolve.ClassifyReturnExpr(&ast.TrueExpr{})
 	if result != flow.ReturnTrue {

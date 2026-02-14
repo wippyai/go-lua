@@ -86,6 +86,31 @@ func TestWidenParamHintType_Union(t *testing.T) {
 	}
 }
 
+func TestWidenParamHintType_RecordBecomesOpen(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("pid", typ.LiteralString("abc")).
+		Field("topic", typ.LiteralString("test:update")).
+		Build()
+
+	result := WidenParamHintType(rec)
+	widened, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record result, got %T", result)
+	}
+	if !widened.Open {
+		t.Fatalf("expected widened param hint record to be open, got closed: %v", widened)
+	}
+
+	pid := widened.GetField("pid")
+	if pid == nil || !typ.TypeEquals(pid.Type, typ.String) {
+		t.Fatalf("expected pid field widened to string, got %v", pid)
+	}
+	topic := widened.GetField("topic")
+	if topic == nil || !typ.TypeEquals(topic.Type, typ.String) {
+		t.Fatalf("expected topic field widened to string, got %v", topic)
+	}
+}
+
 func TestBuildParamHintSigView_NilInputs(t *testing.T) {
 	result := BuildParamHintSigView(nil, nil, nil, nil)
 	if result != nil {

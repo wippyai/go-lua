@@ -76,6 +76,9 @@ func WithReturns(sig *typ.Function, returns []typ.Type) *typ.Function {
 	if sig.Effects != nil {
 		builder = builder.Effects(sig.Effects)
 	}
+	if sig.Spec != nil {
+		builder = builder.Spec(sig.Spec)
+	}
 	if sig.Refinement != nil {
 		builder = builder.WithRefinement(sig.Refinement)
 	}
@@ -85,16 +88,41 @@ func WithReturns(sig *typ.Function, returns []typ.Type) *typ.Function {
 // WithReturnsOrUnknown returns a signature with return slots from `returns`,
 // defaulting to a single unknown return when no summary is available.
 //
-// If sig already carries explicit returns, it is returned unchanged.
+// If sig carries only placeholder returns (unknown/nil entries), summary
+// returns replace those placeholders.
 func WithReturnsOrUnknown(sig *typ.Function, returns []typ.Type) *typ.Function {
 	if sig == nil {
 		return nil
 	}
-	if len(sig.Returns) > 0 {
-		return sig
-	}
 	if len(returns) == 0 {
+		if len(sig.Returns) > 0 {
+			return sig
+		}
 		return WithReturns(sig, []typ.Type{typ.Unknown})
 	}
-	return WithReturns(sig, returns)
+	if len(sig.Returns) == 0 || typ.IsUnknownOnlyOrEmpty(sig.Returns) {
+		return WithReturns(sig, returns)
+	}
+	if len(sig.Returns) == len(returns) {
+		hasPlaceholder := false
+		for _, ret := range sig.Returns {
+			if ret != nil && ret.Kind().IsPlaceholder() {
+				hasPlaceholder = true
+				break
+			}
+		}
+		if hasPlaceholder {
+			return WithReturns(sig, returns)
+		}
+		return sig
+	}
+	for i, ret := range sig.Returns {
+		if i >= len(returns) {
+			break
+		}
+		if ret != nil && ret.Kind().IsPlaceholder() {
+			return WithReturns(sig, returns)
+		}
+	}
+	return sig
 }

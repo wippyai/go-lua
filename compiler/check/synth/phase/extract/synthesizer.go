@@ -30,9 +30,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -77,6 +79,31 @@ func (s *Synthesizer) Phase() api.Phase {
 	return s.phase
 }
 
+// Context returns the query context for type database operations.
+func (s *Synthesizer) Context() *db.QueryContext {
+	return s.deps.Ctx
+}
+
+// Scopes returns the CFG point to scope state mapping.
+func (s *Synthesizer) Scopes() api.ScopeMap {
+	return s.deps.Scopes
+}
+
+// AllowReturnTransforms reports whether return transforms are enabled.
+func (s *Synthesizer) AllowReturnTransforms() bool {
+	return s.IsNarrowing()
+}
+
+// CallQuery returns the type operations interface for call resolution.
+func (s *Synthesizer) CallQuery() core.TypeOps {
+	return s.GetCallQuery()
+}
+
+// Entry returns the CFG entry point for the current function graph.
+func (s *Synthesizer) Entry() cfg.Point {
+	return s.deps.Entry()
+}
+
 // Deps returns the underlying dependencies.
 func (s *Synthesizer) Deps() *Deps {
 	return s.deps
@@ -104,12 +131,22 @@ func (s *Synthesizer) TypeOfWithExpected(expr ast.Expr, p cfg.Point, expected ty
 
 // MultiTypeOf synthesizes multiple types for multi-value expressions (no narrowing).
 func (s *Synthesizer) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
-	return s.SynthMulti(expr, p, nil)
+	return s.multiTypeOf(expr, p, nil)
 }
 
-// FunctionType synthesizes the type of a function expression.
-func (s *Synthesizer) FunctionType(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
-	return s.SynthFunctionType(fn, sc)
+// SynthMulti synthesizes multiple types for multi-value expressions with optional flow narrowing.
+func (s *Synthesizer) SynthMulti(expr ast.Expr, p cfg.Point, narrower api.FlowOps) []typ.Type {
+	return s.multiTypeOf(expr, p, narrower)
+}
+
+func (s *Synthesizer) multiTypeOf(expr ast.Expr, p cfg.Point, narrower api.FlowOps) []typ.Type {
+	sc := s.deps.Scopes[p]
+	recurse := func(ex ast.Expr) typ.Type { return s.SynthExpr(ex, p, narrower) }
+	return s.synthMultiCore(expr, sc, recurse,
+		func(call *ast.FuncCallExpr) []typ.Type {
+			return s.SynthCallCore(call, p, sc, narrower, recurse)
+		},
+	)
 }
 
 // ExpandValues expands expression list to needed count (no narrowing).
@@ -128,11 +165,6 @@ func (s *Synthesizer) ExpandValuesWithSpecTypes(exprs []ast.Expr, needed int, p 
 // InferIterVars infers iterator variable types (no narrowing).
 func (s *Synthesizer) InferIterVars(exprs []ast.Expr, count int, p cfg.Point) []typ.Type {
 	return s.inferIterVars(exprs, count, p, nil)
-}
-
-// InferIterVarsWithFlow infers iterator variable types with flow narrowing.
-func (s *Synthesizer) InferIterVarsWithFlow(exprs []ast.Expr, count int, p cfg.Point, flow api.FlowOps) []typ.Type {
-	return s.inferIterVars(exprs, count, p, flow)
 }
 
 // InferIterVarsWithSpecTypes infers iterator variable types with overlay lookup.
@@ -221,7 +253,7 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 		}
 		return typ.Nil
 	case *ast.FunctionExpr:
-		return s.SynthFunctionType(ex, sc)
+		return s.FunctionType(ex, sc)
 	case *ast.LogicalOpExpr:
 		if s.IsNarrowing() && narrower != nil {
 			return s.synthLogicalOpWithNarrowing(ex, p, sc, narrower, recurse)
@@ -269,17 +301,6 @@ func (s *Synthesizer) synthMultiCore(expr ast.Expr, sc *scope.State, synthSingle
 	default:
 		return []typ.Type{synthSingle(expr)}
 	}
-}
-
-// SynthMulti synthesizes multiple types for multi-value expressions.
-func (s *Synthesizer) SynthMulti(expr ast.Expr, p cfg.Point, narrower api.FlowOps) []typ.Type {
-	sc := s.deps.Scopes[p]
-	recurse := func(ex ast.Expr) typ.Type { return s.SynthExpr(ex, p, narrower) }
-	return s.synthMultiCore(expr, sc, recurse,
-		func(call *ast.FuncCallExpr) []typ.Type {
-			return s.SynthCallCore(call, p, sc, narrower, recurse)
-		},
-	)
 }
 
 // synthIdentCore synthesizes type for an identifier.
@@ -332,11 +353,20 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 		path := constraint.Path{Root: ex.Value, Symbol: sym}
 		if narrowed := narrower.NarrowedTypeAt(p, path); narrowed != nil {
 			// Guard against unsound narrowing for annotated symbols by ensuring
-			// the narrowed type remains a subtype of the declared type.
-			if types := ctx.Types(); types != nil && types.IsAnnotated(sym) {
+			// the narrowed type remains a subtype of the declared type. Function
+			// signatures from declared overlays are also authoritative and should
+			// never be widened by flow facts.
+			if types := ctx.Types(); types != nil {
 				declared := types.DeclaredAt(p, sym)
 				if declared.Type != nil && declared.State == flow.StateResolved {
-					if !subtype.IsSubtype(narrowed, declared.Type) {
+					if typ.IsAny(unwrap.Alias(declared.Type)) && typ.IsUnknown(unwrap.Alias(narrowed)) {
+						return declared.Type
+					}
+					requireSubtype := types.IsAnnotated(sym)
+					if !requireSubtype {
+						requireSubtype = unwrap.Function(declared.Type) != nil
+					}
+					if requireSubtype && !subtype.IsSubtype(narrowed, declared.Type) {
 						goto fallback
 					}
 				}
@@ -352,6 +382,14 @@ fallback:
 			// Prefer concrete resolved types over module aliases.
 			// Allow module aliases to override unknown/any placeholders.
 			if tv.Type.Kind().IsPlaceholder() {
+				if types.IsAnnotated(sym) {
+					declared := types.DeclaredAt(p, sym)
+					if declared.State == flow.StateResolved && declared.Type != nil {
+						if typ.IsAny(unwrap.Alias(declared.Type)) {
+							return declared.Type
+						}
+					}
+				}
 				// defer to module alias below if available
 			} else {
 				return tv.Type

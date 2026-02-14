@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/types/flow"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -255,7 +256,14 @@ func MergeMapComponentIntoType(baseType, keyType, valType typ.Type) typ.Type {
 			newVal := typ.JoinPreferNonSoft(v.MapValue, valType)
 			builder.MapComponent(newKey, newVal)
 		} else {
-			builder.MapComponent(keyType, valType)
+			// Preserve existing record key domain when adding first map component.
+			// For open records (`{...}`) this keeps the canonical string-key domain
+			// instead of degrading to unknown from dynamic-key assignments.
+			existingKey := querycore.KeyType(v)
+			if existingKey == nil {
+				existingKey = typ.String
+			}
+			builder.MapComponent(typ.JoinPreferNonSoft(existingKey, keyType), valType)
 		}
 		return builder.Build()
 

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/narrow"
 )
 
 // ConstraintsForIdent returns sibling constraints derived from correlated
@@ -56,10 +57,11 @@ func ConstraintsForSymbol(sym cfg.SymbolID, versionID int, inputs *flow.Inputs, 
 		return nil
 	}
 
-	if len(sibling.Correlations) > 0 || len(sibling.CoCorrelations) > 0 {
+	if len(sibling.Correlations) > 0 || len(sibling.CoCorrelations) > 0 || len(sibling.GuardedCorrelations) > 0 {
 		var result []constraint.Constraint
 		result = append(result, correlatedSiblingConstraints(sibling, pos, wantNonNil, bindings)...)
 		result = append(result, coCorrelatedSiblingConstraints(sibling, pos, wantNonNil, bindings)...)
+		result = append(result, guardedTypeSiblingConstraints(sibling, pos, wantNonNil, bindings)...)
 		if len(result) > 0 {
 			return result
 		}
@@ -145,6 +147,39 @@ func coCorrelatedSiblingConstraints(sibling *flow.SiblingAssignment, pos int, wa
 		} else {
 			result = append(result, constraint.IsNil{Path: path})
 		}
+	}
+	return result
+}
+
+func guardedTypeSiblingConstraints(sibling *flow.SiblingAssignment, pos int, wantNonNil bool, bindings *bind.BindingTable) []constraint.Constraint {
+	var result []constraint.Constraint
+	for _, cor := range sibling.GuardedCorrelations {
+		if cor.TargetType == nil || pos != cor.GuardIndex || wantNonNil != cor.GuardOnTruthy {
+			continue
+		}
+		partnerIdx := cor.TargetIndex
+		if partnerIdx < 0 || partnerIdx >= len(sibling.Names) {
+			continue
+		}
+		sibName := sibling.Names[partnerIdx]
+		if sibName == "" {
+			continue
+		}
+		var sibSym cfg.SymbolID
+		if partnerIdx < len(sibling.Symbols) {
+			sibSym = sibling.Symbols[partnerIdx]
+		}
+		root := sibName
+		if sibSym != 0 && bindings != nil {
+			if name := bindings.Name(sibSym); name != "" {
+				root = name
+			}
+		}
+		path := constraint.Path{Root: root, Symbol: sibSym}
+		result = append(result, constraint.HasType{
+			Path: path,
+			Type: narrow.HashTypeKey(cor.TargetType.Hash()),
+		})
 	}
 	return result
 }

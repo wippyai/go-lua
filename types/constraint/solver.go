@@ -300,11 +300,21 @@ func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, 
 			if resolve(v.Path) == target {
 				return narrow.ByTypeKey(t, v.Type, s.Env.ResolveType)
 			}
+			if lit, ok := literalFromTypeKey(v.Type, s.Env.ResolveType); ok {
+				if parent, field, hasField := SplitFieldPath(v.Path); hasField && resolve(parent) == target {
+					return narrow.ByFieldLiteral(t, field, lit, &s.Env)
+				}
+			}
 			return t
 		},
 		NotHasType: func(v NotHasType) typ.Type {
 			if resolve(v.Path) == target {
 				return narrow.ExcludeByTypeKey(t, v.Type, s.Env.ResolveType)
+			}
+			if lit, ok := literalFromTypeKey(v.Type, s.Env.ResolveType); ok {
+				if parent, field, hasField := SplitFieldPath(v.Path); hasField && resolve(parent) == target {
+					return narrow.ExcludeByFieldLiteral(t, field, lit, &s.Env)
+				}
 			}
 			return t
 		},
@@ -488,14 +498,30 @@ func applyConstraint(out *map[PathKey]typ.Type, env Env, c Constraint) bool {
 			})
 		},
 		HasType: func(v HasType) bool {
-			return applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
+			changed := applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
 				return narrow.ByTypeKey(t, v.Type, env.ResolveType)
 			})
+			if lit, ok := literalFromTypeKey(v.Type, env.ResolveType); ok {
+				if parent, field, hasField := SplitFieldPath(v.Path); hasField {
+					changed = applySinglePath(out, parent, func(t typ.Type) typ.Type {
+						return narrow.ByFieldLiteral(t, field, lit, &env)
+					}) || changed
+				}
+			}
+			return changed
 		},
 		NotHasType: func(v NotHasType) bool {
-			return applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
+			changed := applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
 				return narrow.ExcludeByTypeKey(t, v.Type, env.ResolveType)
 			})
+			if lit, ok := literalFromTypeKey(v.Type, env.ResolveType); ok {
+				if parent, field, hasField := SplitFieldPath(v.Path); hasField {
+					changed = applySinglePath(out, parent, func(t typ.Type) typ.Type {
+						return narrow.ExcludeByFieldLiteral(t, field, lit, &env)
+					}) || changed
+				}
+			}
+			return changed
 		},
 		HasField: func(v HasField) bool {
 			return applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
@@ -761,6 +787,18 @@ func isExcludableValueType(t typ.Type) bool {
 	})
 }
 
+func isSingletonValueType(t typ.Type) bool {
+	t = unwrap.Alias(t)
+	if t == nil {
+		return false
+	}
+	if t.Kind() == kind.Nil {
+		return true
+	}
+	_, isLiteral := t.(*typ.Literal)
+	return isLiteral
+}
+
 func applyFieldEqualsPath(out *map[PathKey]typ.Type, target Path, field string, value Path, env Env) bool {
 	if target.IsEmpty() || value.IsEmpty() || field == "" {
 		return false
@@ -978,6 +1016,15 @@ func narrowByHasField(t typ.Type, field string, resolver narrow.Resolver) typ.Ty
 		return t
 	}
 
+	// Narrow through aliases so HasField can refine aliased unions.
+	if alias, ok := t.(*typ.Alias); ok {
+		narrowed := narrowByHasField(alias.Target, field, resolver)
+		if narrowed == nil || narrowed.Kind().IsNever() {
+			return typ.Never
+		}
+		return narrowed
+	}
+
 	unwrapped := unwrap.Alias(t)
 
 	// For intersections, narrow each member
@@ -997,12 +1044,13 @@ func narrowByHasField(t typ.Type, field string, resolver narrow.Resolver) typ.Ty
 	if u, ok := unwrapped.(*typ.Union); ok {
 		var members []typ.Type
 		for _, m := range u.Members {
-			if hasField(m, field, resolver) {
-				members = append(members, m)
+			nm := narrowByHasField(m, field, resolver)
+			if nm != nil && !nm.Kind().IsNever() {
+				members = append(members, nm)
 			}
 		}
 		if len(members) == 0 {
-			return t
+			return typ.Never
 		}
 		if len(members) == 1 {
 			return members[0]
@@ -1097,7 +1145,8 @@ func excludeByFieldType(t typ.Type, field string, other typ.Type, resolver narro
 		return t
 	}
 
-	// Prefer exact type-instance matches when excluding from a union.
+	// Path inequality (`x.field ~= y`) may exclude union members only when the
+	// compared field type identifies a unique member.
 	if u := unwrap.Union(t); u != nil {
 		if narrowed, ok := excludeUnionByFieldInstance(u, field, other, resolver); ok {
 			return narrowed
@@ -1105,7 +1154,13 @@ func excludeByFieldType(t typ.Type, field string, other typ.Type, resolver narro
 		if narrowed, ok := excludeUnionByFieldEquivalent(u, field, other, resolver); ok {
 			return narrowed
 		}
-		// Avoid structural exclusion on unions when we cannot identify a safe subset.
+		return t
+	}
+
+	// Non-union targets can still represent many runtime identities.
+	// For path inequality (x.field ~= y), excluding by type equivalence is only
+	// sound when y is a singleton value (literal/nil).
+	if !isSingletonValueType(other) {
 		return t
 	}
 
@@ -1206,7 +1261,7 @@ func excludeUnionByFieldInstance(u *typ.Union, field string, other typ.Type, res
 		return nil, false
 	}
 	var keep []typ.Type
-	exactFound := false
+	matchCount := 0
 	for _, m := range u.Members {
 		ft, ok := resolver.Field(m, field)
 		if !ok || ft == nil {
@@ -1214,12 +1269,18 @@ func excludeUnionByFieldInstance(u *typ.Union, field string, other typ.Type, res
 			continue
 		}
 		if sameTypeInstance(ft, other) {
-			exactFound = true
+			matchCount++
 			continue
 		}
 		keep = append(keep, m)
 	}
-	if !exactFound {
+	if matchCount == 0 {
+		return nil, false
+	}
+	// Field/path equality is identity-based at runtime. If multiple union variants
+	// share the same field type instance, instance matching cannot identify which
+	// variant equals the compared path, so exclusion would be unsound.
+	if matchCount > 1 {
 		return nil, false
 	}
 	if len(keep) == 0 {
@@ -1249,7 +1310,9 @@ func excludeUnionByFieldEquivalent(u *typ.Union, field string, other typ.Type, r
 		}
 		keep = append(keep, m)
 	}
-	if matchCount == 0 || matchCount == len(u.Members) {
+	// Structural equivalence is only safe for exclusion when it identifies a
+	// single union member. Multiple matches are ambiguous for path identity.
+	if matchCount != 1 {
 		return nil, false
 	}
 	if len(keep) == 0 {
@@ -1383,6 +1446,21 @@ func IsBooleanDiscriminantField(parentType typ.Type, field string, resolver narr
 	}
 
 	return hasBoolLiteral
+}
+
+func literalFromTypeKey(key narrow.TypeKey, resolve narrow.TypeResolver) (*typ.Literal, bool) {
+	if resolve == nil || key.IsZero() {
+		return nil, false
+	}
+	resolved := resolve(key)
+	if resolved == nil {
+		return nil, false
+	}
+	lit, ok := unwrap.Alias(resolved).(*typ.Literal)
+	if !ok || lit == nil {
+		return nil, false
+	}
+	return lit, true
 }
 
 // SplitFieldPath splits a path into its parent path and field name.

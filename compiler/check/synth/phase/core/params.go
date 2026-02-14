@@ -106,7 +106,7 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 
 	hasUntyped := false
 	for i, name := range fn.ParList.Names {
-		paramType := typ.Any
+		paramType := typ.Unknown
 		isOptional := false
 		expectedIdx := i
 		if shiftExpected {

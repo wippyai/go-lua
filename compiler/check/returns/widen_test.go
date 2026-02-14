@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -12,11 +11,17 @@ import (
 
 func TestWidenFacts_DoesNotOverrideReturnSummariesWithNarrowReturns(t *testing.T) {
 	prev := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			1: {Summary: []typ.Type{typ.Integer}},
+		},
 		ReturnSummaries: api.ReturnSummaries{
 			1: []typ.Type{typ.Integer},
 		},
 	}
 	next := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			1: {Narrow: []typ.Type{typ.Nil}},
+		},
 		NarrowReturns: api.NarrowReturnSummaries{
 			1: []typ.Type{typ.Nil},
 		},
@@ -31,11 +36,17 @@ func TestWidenFacts_DoesNotOverrideReturnSummariesWithNarrowReturns(t *testing.T
 
 func TestWidenFacts_ElidesOptionalFromNarrowReturns(t *testing.T) {
 	prev := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			1: {Summary: []typ.Type{typ.NewOptional(typ.Integer)}},
+		},
 		ReturnSummaries: api.ReturnSummaries{
 			1: []typ.Type{typ.NewOptional(typ.Integer)},
 		},
 	}
 	next := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			1: {Narrow: []typ.Type{typ.Integer}},
+		},
 		NarrowReturns: api.NarrowReturnSummaries{
 			1: []typ.Type{typ.Integer},
 		},
@@ -92,6 +103,31 @@ func TestWidenReturnSummaries_UsesMonotoneJoinForHigherOrderReturns(t *testing.T
 	}
 }
 
+func TestWidenReturnSummaries_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
+	dbType := typ.NewInterface("sql.DB", []typ.Method{
+		{
+			Name: "release",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).
+				Build(),
+		},
+	})
+
+	prev := api.ReturnSummaries{
+		1: []typ.Type{typ.NewOptional(dbType)},
+	}
+	next := api.ReturnSummaries{
+		1: []typ.Type{dbType},
+	}
+
+	merged := WidenReturnSummaries(prev, next)
+	got := merged[1]
+	if len(got) != 1 || !typ.TypeEquals(got[0], dbType) {
+		t.Fatalf("expected optional elision for interface return, got %v", got)
+	}
+}
+
 func TestMergeFunctionReturnsIfSameShape_GenericFunctions(t *testing.T) {
 	prev := typ.Func().
 		TypeParam("T", nil).
@@ -138,24 +174,6 @@ func TestMergeFunctionReturnsIfSameShape_GenericTypeParamsMustMatch(t *testing.T
 	}
 }
 
-func TestMergeFuncTypes_PrefersOptionalElisionForSameShape(t *testing.T) {
-	prev := typ.Func().
-		Returns(typ.NewOptional(typ.String)).
-		Build()
-	next := typ.Func().
-		Returns(typ.String).
-		Build()
-
-	merged := mergeFuncTypes(prev, next)
-	fn, ok := merged.(*typ.Function)
-	if !ok || len(fn.Returns) != 1 {
-		t.Fatalf("expected merged function return, got %T", merged)
-	}
-	if !typ.TypeEquals(fn.Returns[0], typ.String) {
-		t.Fatalf("expected optional to be elided, got %v", fn.Returns[0])
-	}
-}
-
 func TestMergeFuncTypes_DoesNotRegressToNarrowerNilReturn(t *testing.T) {
 	prev := typ.Func().
 		Returns(typ.NewOptional(typ.Integer)).
@@ -164,42 +182,13 @@ func TestMergeFuncTypes_DoesNotRegressToNarrowerNilReturn(t *testing.T) {
 		Returns(typ.Nil).
 		Build()
 
-	merged := mergeFuncTypes(prev, next)
+	merged := MergeFunctionFactType(prev, next)
 	fn, ok := merged.(*typ.Function)
 	if !ok || len(fn.Returns) != 1 {
 		t.Fatalf("expected merged function return, got %T", merged)
 	}
 	if !typ.TypeEquals(fn.Returns[0], typ.NewOptional(typ.Integer)) {
 		t.Fatalf("expected integer? return after merge, got %v", fn.Returns[0])
-	}
-}
-
-func TestWidenFacts_AlignsFuncTypeReturnsWithReturnSummaries(t *testing.T) {
-	sym := cfg.SymbolID(41)
-	prev := api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.NewOptional(typ.String)},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: typ.Func().Returns(typ.NewOptional(typ.String)).Build(),
-		},
-	}
-	next := api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.String},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: typ.Func().Returns(typ.NewOptional(typ.String)).Build(),
-		},
-	}
-
-	merged := WidenFacts(prev, next)
-	fn, ok := merged.FuncTypes[sym].(*typ.Function)
-	if !ok || len(fn.Returns) != 1 {
-		t.Fatalf("expected merged function type with one return, got %T", merged.FuncTypes[sym])
-	}
-	if !typ.TypeEquals(fn.Returns[0], typ.String) {
-		t.Fatalf("expected merged function return to match canonical summary string, got %v", fn.Returns[0])
 	}
 }
 
@@ -225,14 +214,65 @@ func TestMergeFunctionReturnsIfSameShape_NormalizesLeakedTypeParams(t *testing.T
 }
 
 func TestMergeFuncTypes_PrefersWiderSupertypeOnSubtypeRelation(t *testing.T) {
-	merged := mergeFuncTypes(typ.Integer, typ.Number)
+	merged := MergeFunctionFactType(typ.Integer, typ.Number)
 	if !typ.TypeEquals(merged, typ.Number) {
 		t.Fatalf("expected wider supertype number, got %v", merged)
 	}
 
-	merged = mergeFuncTypes(typ.Number, typ.Integer)
+	merged = MergeFunctionFactType(typ.Number, typ.Integer)
 	if !typ.TypeEquals(merged, typ.Number) {
 		t.Fatalf("expected wider supertype number, got %v", merged)
+	}
+}
+
+func TestMergeFuncTypes_IsCommutativeForIncomparableSignatures(t *testing.T) {
+	coarse := typ.Func().
+		Param("entries", typ.Any).
+		Returns(typ.Integer).
+		Build()
+	refined := typ.Func().
+		Param("entries", typ.NewArray(typ.String)).
+		Returns(typ.Integer).
+		Build()
+
+	forward := MergeFunctionFactType(coarse, refined)
+	reverse := MergeFunctionFactType(refined, coarse)
+	if !typ.TypeEquals(forward, reverse) {
+		t.Fatalf("expected commutative merge result, got forward=%v reverse=%v", forward, reverse)
+	}
+}
+
+func TestMergeFuncTypes_AliasInputsUseCanonicalJoin(t *testing.T) {
+	coarse := typ.NewAlias("CoarseFn", typ.Func().
+		Param("entries", typ.Any).
+		Returns(typ.Integer).
+		Build())
+	refined := typ.NewAlias("RefinedFn", typ.Func().
+		Param("entries", typ.NewArray(typ.String)).
+		Returns(typ.Integer).
+		Build())
+
+	forward := MergeFunctionFactType(coarse, refined)
+	reverse := MergeFunctionFactType(refined, coarse)
+	if !typ.TypeEquals(forward, reverse) {
+		t.Fatalf("expected commutative alias merge result, got forward=%v reverse=%v", forward, reverse)
+	}
+}
+
+func TestMergeFuncTypes_MapVsOpenRecordUsesCanonicalJoin(t *testing.T) {
+	coarse := typ.Func().
+		Param("t", typ.NewRecord().SetOpen(true).Build()).
+		Returns(typ.String).
+		Build()
+	refined := typ.Func().
+		Param("t", typ.NewMap(typ.String, typ.NewArray(typ.String))).
+		Returns(typ.String).
+		Build()
+
+	forward := MergeFunctionFactType(coarse, refined)
+	reverse := MergeFunctionFactType(refined, coarse)
+	if !typ.TypeEquals(forward, reverse) {
+		t.Fatalf("expected commutative map/open-record merge result, got forward=%v reverse=%v", forward, reverse)
 	}
 }
 

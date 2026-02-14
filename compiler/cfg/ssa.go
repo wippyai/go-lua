@@ -35,8 +35,9 @@ func (b *Builder) collectAssignedSymbols() map[basecfg.SymbolID]string {
 		switch v := info.(type) {
 		case *AssignInfo:
 			for _, target := range v.Targets {
-				if target.Kind == TargetIdent && target.Symbol != 0 {
-					syms[target.Symbol] = target.Name
+				sym, name := assignmentTargetSymbol(target)
+				if sym != 0 {
+					syms[sym] = name
 				}
 			}
 		case *FuncDefInfo:
@@ -81,10 +82,12 @@ func (b *Builder) collectDefPoints(assignedSyms map[basecfg.SymbolID]string) map
 		switch v := info.(type) {
 		case *AssignInfo:
 			for _, target := range v.Targets {
-				if target.Kind == TargetIdent && target.Symbol != 0 {
-					if _, ok := assignedSyms[target.Symbol]; ok {
-						defPoints[target.Symbol] = append(defPoints[target.Symbol], p)
-					}
+				sym, _ := assignmentTargetSymbol(target)
+				if sym == 0 {
+					continue
+				}
+				if _, ok := assignedSyms[sym]; ok {
+					defPoints[sym] = append(defPoints[sym], p)
 				}
 			}
 		case *FuncDefInfo:
@@ -310,19 +313,20 @@ func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints 
 			switch v := info.(type) {
 			case *AssignInfo:
 				for i, target := range v.Targets {
-					if target.Kind == TargetIdent && target.Symbol != 0 {
-						if _, ok := assignedSyms[target.Symbol]; ok {
-							sym := target.Symbol
-							ver := newVersion(sym)
-							stacks[sym] = append(stacks[sym], ver)
-							addPush(sym)
+					sym, _ := assignmentTargetSymbol(target)
+					if sym == 0 {
+						continue
+					}
+					if _, ok := assignedSyms[sym]; ok {
+						ver := newVersion(sym)
+						stacks[sym] = append(stacks[sym], ver)
+						addPush(sym)
 
-							for len(v.TargetVersions) <= i {
-								v.TargetVersions = append(v.TargetVersions, Version{})
-							}
-
-							v.TargetVersions[i] = ver
+						for len(v.TargetVersions) <= i {
+							v.TargetVersions = append(v.TargetVersions, Version{})
 						}
+
+						v.TargetVersions[i] = ver
 					}
 				}
 			case *FuncDefInfo:
@@ -433,4 +437,18 @@ func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints 
 			}
 		}
 	}
+}
+
+func assignmentTargetSymbol(target AssignTarget) (basecfg.SymbolID, string) {
+	switch target.Kind {
+	case TargetIdent:
+		if target.Symbol != 0 {
+			return target.Symbol, target.Name
+		}
+	case TargetField, TargetIndex:
+		if target.BaseSymbol != 0 {
+			return target.BaseSymbol, target.BaseName
+		}
+	}
+	return 0, ""
 }

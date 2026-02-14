@@ -83,6 +83,10 @@ func (m mockFlowOps) ArrayLenBoundAt(p cfg.Point, varName string) (arrKey string
 	return "", false
 }
 
+func (m mockFlowOps) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool) {
+	return "", 0, false
+}
+
 func (m mockFlowOps) IsPointDead(p cfg.Point) bool {
 	return false
 }

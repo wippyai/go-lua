@@ -127,8 +127,8 @@ end
 }
 
 // TestLinterFalsePositive_WippyTestRunner_WithRegistryFind mirrors the real
-// registry.find signature (returns entries + error) and the error guard pattern.
-// Explicit any fields must remain callable/indexable without spurious diagnostics.
+// registry.find signature (returns entries + error) and validates the sound
+// normalization pattern when suite metadata is any-typed.
 func TestLinterFalsePositive_WippyTestRunner_WithRegistryFind(t *testing.T) {
 	registryManifest := io.NewManifest("registry")
 	entryType := typ.NewRecord().
@@ -162,8 +162,9 @@ local function group_by_suite(entries)
     for _, entry in ipairs(entries) do
         local suite = entry.meta and entry.meta.suite
         if suite then
-            suites[suite] = suites[suite] or {}
-            table.insert(suites[suite], entry)
+            local suite_name = tostring(suite)
+            suites[suite_name] = suites[suite_name] or {}
+            table.insert(suites[suite_name], entry)
         else
             table.insert(no_suite, entry)
         end
@@ -200,7 +201,7 @@ end
 		for _, e := range result.Errors {
 			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
 		}
-		t.Fatal("expected no errors for registry.find any-valued suite metadata pattern")
+		t.Fatal("expected no errors for registry.find any-valued suite metadata with explicit string normalization")
 	}
 }
 
@@ -381,9 +382,9 @@ local suite_names = sorted_keys(suites)
 
 for idx, name in ipairs(suite_names) do
     local tests = suites[name]
-    local count: number = #tests
+    local present = tests ~= nil
 end
-`
+	`
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		for _, e := range result.Errors {

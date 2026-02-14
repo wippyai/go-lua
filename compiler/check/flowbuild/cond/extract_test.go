@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	checkeffects "github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -79,6 +80,45 @@ func TestConstraintsFromCallOnReturn_NilInfo(t *testing.T) {
 	}
 }
 
+func TestConstraintsFromCallOnReturn_OnlyAppliesMustConstraints(t *testing.T) {
+	sym := typecfg.SymbolID(101)
+	info := &cfg.CallInfo{
+		CalleeSymbol: sym,
+		Args:         []ast.Expr{&ast.IdentExpr{Value: "x"}},
+	}
+
+	effectLookup := func(id typecfg.SymbolID) *constraint.FunctionEffect {
+		if id != sym {
+			return nil
+		}
+		p0 := constraint.NewPlaceholder(0)
+		return &constraint.FunctionEffect{
+			OnReturn: constraint.FromDisjuncts([][]constraint.Constraint{
+				{constraint.Truthy{Path: p0}},
+				{constraint.Falsy{Path: p0}},
+			}),
+		}
+	}
+
+	result := ConstraintsFromCallOnReturn(
+		info,
+		0,
+		nil,
+		nil,
+		nil,
+		nil,
+		effectLookup,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	if result.HasConstraints() {
+		t.Fatalf("expected no propagated constraints for non-guaranteed OnReturn, got: %v", result.Disjuncts)
+	}
+}
+
 func TestConstraintsFromAssignOnReturn_NilInfo(t *testing.T) {
 	result := ConstraintsFromAssignOnReturn(nil, 0, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if result.HasConstraints() {
@@ -87,14 +127,14 @@ func TestConstraintsFromAssignOnReturn_NilInfo(t *testing.T) {
 }
 
 func TestExtractEffectFromType_NilType(t *testing.T) {
-	result := ExtractEffectFromType(nil)
+	result := checkeffects.EffectFromType(nil)
 	if result != nil {
 		t.Error("nil type should return nil effect")
 	}
 }
 
 func TestExtractEffectFromType_NonFunction(t *testing.T) {
-	result := ExtractEffectFromType(typ.String)
+	result := checkeffects.EffectFromType(typ.String)
 	if result != nil {
 		t.Error("non-function type should return nil effect")
 	}
@@ -102,7 +142,7 @@ func TestExtractEffectFromType_NonFunction(t *testing.T) {
 
 func TestExtractEffectFromType_FunctionNoRefinement(t *testing.T) {
 	fn := typ.Func().Returns(typ.String).Build()
-	result := ExtractEffectFromType(fn)
+	result := checkeffects.EffectFromType(fn)
 	if result != nil {
 		t.Error("function without refinement should return nil effect")
 	}

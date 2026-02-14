@@ -88,8 +88,18 @@ func IsOptionalLike(t typ.Type) bool {
 		Optional: func(*typ.Optional) bool {
 			return true
 		},
+		Union: func(u *typ.Union) bool {
+			for _, m := range u.Members {
+				if IsOptionalLike(m) {
+					return true
+				}
+			}
+
+			return false
+		},
 		Default: func(t typ.Type) bool {
-			return t.Kind() == kind.Nil
+			k := t.Kind()
+			return k == kind.Nil || k.IsPlaceholder()
 		},
 	})
 }
@@ -129,6 +139,22 @@ func IsContainer(t typ.Type) bool {
 		return true
 	}
 	return false
+}
+
+// IsBuiltinTableTop reports whether t is the builtin "table" top marker type.
+//
+// The checker models `table` as an interface named "table" with no methods.
+// This marker means "some Lua table shape", not a closed interface.
+func IsBuiltinTableTop(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	t = Alias(t)
+	if t == nil {
+		return false
+	}
+	iface, ok := t.(*typ.Interface)
+	return ok && iface.Name == "table" && len(iface.Methods) == 0
 }
 
 // Function extracts a Function type, unwrapping Alias and Optional.

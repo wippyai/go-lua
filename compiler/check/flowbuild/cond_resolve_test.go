@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/stdlib"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -237,6 +238,46 @@ func TestConstraintsFromConditionExpr_TypeCheck(t *testing.T) {
 	trueItems := result.OnTrue.MustConstraints()
 	if _, ok := trueItems[0].(constraint.HasType); !ok {
 		t.Errorf("onTrue[0] = %T, want HasType", trueItems[0])
+	}
+}
+
+func TestConstraintsFromConditionExpr_NumberComparisonNarrowsOperand(t *testing.T) {
+	expr := &ast.RelationalOpExpr{
+		Operator: ">",
+		Lhs:      &ast.IdentExpr{Value: "x"},
+		Rhs:      &ast.NumberExpr{Value: "0"},
+	}
+	result := (&cond.ConditionExtractor{}).ConstraintsFromConditionExpr(expr)
+	if !result.OnTrue.HasConstraints() {
+		t.Fatal("onTrue should have constraints")
+	}
+	items := result.OnTrue.MustConstraints()
+	got, ok := items[0].(constraint.HasType)
+	if !ok {
+		t.Fatalf("onTrue[0] = %T, want HasType", items[0])
+	}
+	if got.Type != narrow.BuiltinTypeKey("number") {
+		t.Fatalf("expected number type key, got %v", got.Type)
+	}
+}
+
+func TestConstraintsFromConditionExpr_StringComparisonNarrowsOperand(t *testing.T) {
+	expr := &ast.RelationalOpExpr{
+		Operator: "<=",
+		Lhs:      &ast.IdentExpr{Value: "name"},
+		Rhs:      &ast.StringExpr{Value: "zz"},
+	}
+	result := (&cond.ConditionExtractor{}).ConstraintsFromConditionExpr(expr)
+	if !result.OnTrue.HasConstraints() {
+		t.Fatal("onTrue should have constraints")
+	}
+	items := result.OnTrue.MustConstraints()
+	got, ok := items[0].(constraint.HasType)
+	if !ok {
+		t.Fatalf("onTrue[0] = %T, want HasType", items[0])
+	}
+	if got.Type != narrow.BuiltinTypeKey("string") {
+		t.Fatalf("expected string type key, got %v", got.Type)
 	}
 }
 

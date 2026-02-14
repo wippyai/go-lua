@@ -33,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/numparse"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -69,6 +70,13 @@ func (n *localNarrowOps) ArrayLenBoundAt(p cfg.Point, varName string) (string, b
 	return "", false
 }
 
+func (n *localNarrowOps) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (string, int64, bool) {
+	if n.inner != nil {
+		return n.inner.ArrayLenBoundWithOffsetAt(p, varName)
+	}
+	return "", 0, false
+}
+
 func (n *localNarrowOps) IsPointDead(p cfg.Point) bool {
 	if n.inner != nil {
 		return n.inner.IsPointDead(p)
@@ -92,6 +100,9 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 		if !path.IsEmpty() {
 			narrowed := narrower.NarrowedTypeAt(p, path)
 			if narrowed != nil {
+				if typ.IsUnknown(unwrap.Alias(narrowed)) && typ.IsAny(unwrap.Alias(objType)) {
+					goto skipNarrowedAttr
+				}
 				if _, isStringKey := ex.Key.(*ast.StringExpr); isStringKey {
 					if mapValueType(objType) != nil {
 						if opt, ok := narrowed.(*typ.Optional); ok {
@@ -103,6 +114,8 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 			}
 		}
 	}
+
+skipNarrowedAttr:
 
 	var manifestPath string
 	if ident, ok := ex.Object.(*ast.IdentExpr); ok && s.deps.Manifests != nil && s.deps.CheckCtx != nil {
@@ -140,6 +153,9 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, keyType); ok {
 			if narrower != nil {
 				if narrowedResult := s.narrowTupleIndex(objType, key.Value, it, p, narrower); narrowedResult != nil {
+					return narrowedResult
+				}
+				if narrowedResult := s.narrowArrayIndexByLenBound(it, ex.Object, key.Value, 0, p, sc, narrower); narrowedResult != nil {
 					return narrowedResult
 				}
 				// Check for KeyOf constraint to unwrap optional on map index
@@ -186,6 +202,13 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 	default:
 		keyType := recurse(ex.Key)
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, keyType); ok {
+			if narrower != nil {
+				if varName, offset, ok := indexVarOffsetFromExpr(ex.Key); ok {
+					if narrowedResult := s.narrowArrayIndexByLenBound(it, ex.Object, varName, offset, p, sc, narrower); narrowedResult != nil {
+						return narrowedResult
+					}
+				}
+			}
 			return it
 		}
 	}
@@ -282,6 +305,74 @@ func (s *Synthesizer) narrowTupleIndex(objType typ.Type, varName string, indexRe
 	}
 
 	return nil
+}
+
+func (s *Synthesizer) narrowArrayIndexByLenBound(indexResult typ.Type, objExpr ast.Expr, varName string, offset int64, p cfg.Point, sc *scope.State, narrower api.FlowOps) typ.Type {
+	opt, ok := indexResult.(*typ.Optional)
+	if !ok || narrower == nil || s == nil || s.deps.Paths == nil {
+		return nil
+	}
+	lower, _, hasBounds := narrower.BoundsAt(p, varName)
+	if !hasBounds {
+		return nil
+	}
+	if lower+offset < 1 {
+		return nil
+	}
+	arrKey, lenOffset, hasLenRef := narrower.ArrayLenBoundWithOffsetAt(p, varName)
+	if !hasLenRef {
+		return nil
+	}
+	tablePath := s.deps.Paths(p, objExpr, sc)
+	if tablePath.IsEmpty() {
+		return nil
+	}
+	if string(tablePath.Key()) != arrKey {
+		return nil
+	}
+	if lenOffset > -offset {
+		return nil
+	}
+	return opt.Inner
+}
+
+func indexVarOffsetFromExpr(expr ast.Expr) (string, int64, bool) {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		if e.Value == "" {
+			return "", 0, false
+		}
+		return e.Value, 0, true
+	case *ast.ArithmeticOpExpr:
+		ident, ok := e.Lhs.(*ast.IdentExpr)
+		if !ok || ident.Value == "" {
+			return "", 0, false
+		}
+		if e.Operator != "+" && e.Operator != "-" {
+			return "", 0, false
+		}
+		k, ok := intConstFromExpr(e.Rhs)
+		if !ok {
+			return "", 0, false
+		}
+		if e.Operator == "-" {
+			k = -k
+		}
+		return ident.Value, k, true
+	}
+	return "", 0, false
+}
+
+func intConstFromExpr(expr ast.Expr) (int64, bool) {
+	switch v := expr.(type) {
+	case *ast.NumberExpr:
+		return numparse.ParseIntegerLiteral(v.Value)
+	case *ast.UnaryMinusOpExpr:
+		if n, ok := intConstFromExpr(v.Expr); ok {
+			return -n, true
+		}
+	}
+	return 0, false
 }
 
 // fieldOnPartialUnion handles field access on unions where some but not all
@@ -448,7 +539,7 @@ func (s *Synthesizer) expandValuesCore(exprs []ast.Expr, needed int, single func
 func (s *Synthesizer) expandValues(exprs []ast.Expr, needed int, p cfg.Point, narrower api.FlowOps) []typ.Type {
 	return s.expandValuesCore(exprs, needed,
 		func(expr ast.Expr) typ.Type { return s.SynthExpr(expr, p, narrower) },
-		func(expr ast.Expr) []typ.Type { return s.SynthMulti(expr, p, narrower) },
+		func(expr ast.Expr) []typ.Type { return s.MultiTypeOf(expr, p) },
 	)
 }
 

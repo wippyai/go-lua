@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -49,21 +50,21 @@ func TestBuild_WithPrev(t *testing.T) {
 }
 
 func TestMergeSiblingType_BothNilViaBuildAPI(t *testing.T) {
-	result := MergeSiblingType(nil, nil)
+	result := returns.MergeFunctionFactType(nil, nil)
 	if result != nil {
 		t.Error("both nil should return nil")
 	}
 }
 
 func TestMergeSiblingType_PrevNilViaBuildAPI(t *testing.T) {
-	result := MergeSiblingType(nil, typ.String)
+	result := returns.MergeFunctionFactType(nil, typ.String)
 	if result != typ.String {
 		t.Error("prev nil should return next")
 	}
 }
 
 func TestMergeSiblingType_NextNilViaBuildAPI(t *testing.T) {
-	result := MergeSiblingType(typ.String, nil)
+	result := returns.MergeFunctionFactType(typ.String, nil)
 	if result != typ.String {
 		t.Error("next nil should return prev")
 	}
@@ -72,7 +73,7 @@ func TestMergeSiblingType_NextNilViaBuildAPI(t *testing.T) {
 func TestMergeSiblingType_FunctionsViaBuildAPI(t *testing.T) {
 	prevFn := typ.Func().Build()
 	nextFn := typ.Func().Returns(typ.String).Build()
-	result := MergeSiblingType(prevFn, nextFn)
+	result := returns.MergeFunctionFactType(prevFn, nextFn)
 	if result == nil {
 		t.Fatal("should return merged function")
 	}
@@ -88,7 +89,7 @@ func TestMergeSiblingType_FunctionsViaBuildAPI(t *testing.T) {
 func TestMergeSiblingType_FunctionAliasesViaBuildAPI(t *testing.T) {
 	prevFn := typ.NewAlias("Prev", typ.Func().Build())
 	nextFn := typ.NewAlias("Next", typ.Func().Returns(typ.String).Build())
-	result := MergeSiblingType(prevFn, nextFn)
+	result := returns.MergeFunctionFactType(prevFn, nextFn)
 	if !typ.TypeEquals(result, nextFn) {
 		t.Fatalf("expected function alias with returns to be preferred, got %v", result)
 	}

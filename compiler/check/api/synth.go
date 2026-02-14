@@ -171,6 +171,10 @@ type FlowOps interface {
 	// Used for index-length relationship tracking.
 	ArrayLenBoundAt(p cfg.Point, varName string) (arrKey string, ok bool)
 
+	// ArrayLenBoundWithOffsetAt returns array variable and offset for symbolic bound:
+	// varName <= len(array) + offset.
+	ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool)
+
 	// IsPointDead returns whether a CFG point is unreachable.
 	IsPointDead(p cfg.Point) bool
 

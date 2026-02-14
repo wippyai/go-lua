@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
@@ -96,7 +97,11 @@ func TestWidenInterprocFacts_Empty(t *testing.T) {
 
 func TestWidenInterprocFacts_OnlyPrev(t *testing.T) {
 	prev := map[api.GraphKey]api.Facts{
-		{GraphID: 1}: {ReturnSummaries: map[cfg.SymbolID][]typ.Type{1: {typ.String}}},
+		{GraphID: 1}: {
+			FunctionFacts: api.FunctionFacts{
+				1: {Summary: []typ.Type{typ.String}},
+			},
+		},
 	}
 	result := widenInterprocFacts(prev, nil)
 	if len(result) != 1 {
@@ -106,7 +111,11 @@ func TestWidenInterprocFacts_OnlyPrev(t *testing.T) {
 
 func TestWidenInterprocFacts_OnlyNext(t *testing.T) {
 	next := map[api.GraphKey]api.Facts{
-		{GraphID: 1}: {ReturnSummaries: map[cfg.SymbolID][]typ.Type{1: {typ.Number}}},
+		{GraphID: 1}: {
+			FunctionFacts: api.FunctionFacts{
+				1: {Summary: []typ.Type{typ.Number}},
+			},
+		},
 	}
 	result := widenInterprocFacts(nil, next)
 	if len(result) != 1 {
@@ -116,14 +125,65 @@ func TestWidenInterprocFacts_OnlyNext(t *testing.T) {
 
 func TestWidenInterprocFacts_Merge(t *testing.T) {
 	prev := map[api.GraphKey]api.Facts{
-		{GraphID: 1}: {ReturnSummaries: map[cfg.SymbolID][]typ.Type{1: {typ.String}}},
+		{GraphID: 1}: {
+			FunctionFacts: api.FunctionFacts{
+				1: {Summary: []typ.Type{typ.String}},
+			},
+		},
 	}
 	next := map[api.GraphKey]api.Facts{
-		{GraphID: 2}: {ReturnSummaries: map[cfg.SymbolID][]typ.Type{1: {typ.Number}}},
+		{GraphID: 2}: {
+			FunctionFacts: api.FunctionFacts{
+				1: {Summary: []typ.Type{typ.Number}},
+			},
+		},
 	}
 	result := widenInterprocFacts(prev, next)
 	if len(result) != 2 {
 		t.Errorf("expected 2 entries, got %d", len(result))
+	}
+}
+
+func TestReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
+	facts := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(1): {
+				Summary: []typ.Type{typ.String},
+			},
+		},
+	}
+	got := returns.SummaryViewFromFacts(facts)
+	if len(got) != 1 || len(got[cfg.SymbolID(1)]) != 1 || got[cfg.SymbolID(1)][0] != typ.String {
+		t.Fatalf("unexpected summary view: %#v", got)
+	}
+}
+
+func TestNarrowReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
+	facts := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(2): {
+				Narrow: []typ.Type{typ.Number},
+			},
+		},
+	}
+	got := returns.NarrowViewFromFacts(facts)
+	if len(got) != 1 || len(got[cfg.SymbolID(2)]) != 1 || got[cfg.SymbolID(2)][0] != typ.Number {
+		t.Fatalf("unexpected narrow view: %#v", got)
+	}
+}
+
+func TestLocalFuncTypesFromFacts_FallsBackToCanonical(t *testing.T) {
+	fn := typ.Func().Returns(typ.Boolean).Build()
+	facts := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(3): {
+				Func: fn,
+			},
+		},
+	}
+	got := returns.FuncTypeViewFromFacts(facts)
+	if len(got) != 1 || !typ.TypeEquals(got[cfg.SymbolID(3)], fn) {
+		t.Fatalf("unexpected func type view: %#v", got)
 	}
 }
 
@@ -179,5 +239,109 @@ func TestIterationScratch_Fields(t *testing.T) {
 	}
 	if s.LiteralSigsByGraphID == nil {
 		t.Error("LiteralSigsByGraphID should be initialized")
+	}
+}
+
+func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
+	s := NewSessionStore()
+
+	s.InterprocNext.Effects[1] = &constraint.FunctionEffect{Terminates: true}
+	s.InterprocNext.Facts[api.GraphKey{GraphID: 7, ParentHash: 11}] = api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			1: {Summary: []typ.Type{typ.String}},
+		},
+	}
+	s.InterprocNext.ConstructorFields[3] = map[string]typ.Type{
+		"v": typ.Number,
+	}
+
+	if !s.FixpointSwap() {
+		t.Fatal("expected fixpoint swap to report changes")
+	}
+
+	diffs := s.FixpointChannelDiffs()
+	if len(diffs) != 3 {
+		t.Fatalf("expected 3 channel diffs, got %v", diffs)
+	}
+	if diffs[0] != "Effects" || diffs[1] != "InterprocFacts" || diffs[2] != "ConstructorFields" {
+		t.Fatalf("unexpected diff order/content: %v", diffs)
+	}
+
+	if len(s.InterprocPrev.Effects) != 1 || s.InterprocPrev.Effects[1] == nil {
+		t.Fatalf("expected prev effects populated, got %#v", s.InterprocPrev.Effects)
+	}
+	if len(s.InterprocNext.Effects) != 0 {
+		t.Fatalf("expected next effects reset, got %#v", s.InterprocNext.Effects)
+	}
+	if len(s.InterprocPrev.Facts) != 1 {
+		t.Fatalf("expected prev facts populated, got %#v", s.InterprocPrev.Facts)
+	}
+	if len(s.InterprocNext.Facts) != 0 {
+		t.Fatalf("expected next facts reset, got %#v", s.InterprocNext.Facts)
+	}
+	if len(s.InterprocPrev.ConstructorFields) != 1 {
+		t.Fatalf("expected prev constructor fields populated, got %#v", s.InterprocPrev.ConstructorFields)
+	}
+	if len(s.InterprocNext.ConstructorFields) != 0 {
+		t.Fatalf("expected next constructor fields reset, got %#v", s.InterprocNext.ConstructorFields)
+	}
+}
+
+func TestClearIterationChannels_InitializesMissingState(t *testing.T) {
+	s := &SessionStore{}
+	s.ClearIterationChannels()
+
+	if s.Iteration == nil {
+		t.Fatal("expected iteration store to be initialized")
+	}
+	if s.Scratch == nil {
+		t.Fatal("expected scratch to be initialized")
+	}
+	if s.InterprocPrev == nil || s.InterprocNext == nil {
+		t.Fatal("expected interproc states to be initialized")
+	}
+	if s.Scratch.LiteralSigsByGraphID == nil {
+		t.Fatal("expected scratch literal signatures map to be initialized")
+	}
+}
+
+func TestBumpRevision_InitializesIterationStore(t *testing.T) {
+	s := &SessionStore{}
+	s.BumpRevision()
+	if got := s.Revision(); got != 1 {
+		t.Fatalf("expected revision 1, got %d", got)
+	}
+}
+
+func TestFixpointChannelDiffs_ReturnsCopy(t *testing.T) {
+	s := NewSessionStore()
+	s.StoreFunctionEffect(1, &constraint.FunctionEffect{Terminates: true})
+	if !s.FixpointSwap() {
+		t.Fatal("expected change from effect swap")
+	}
+
+	diffs := s.FixpointChannelDiffs()
+	if len(diffs) == 0 {
+		t.Fatal("expected non-empty diffs")
+	}
+	diffs[0] = "MUTATED"
+
+	diffs2 := s.FixpointChannelDiffs()
+	if len(diffs2) == 0 || diffs2[0] == "MUTATED" {
+		t.Fatalf("expected defensive copy, got %v", diffs2)
+	}
+}
+
+func TestClearIterationChannels_ResetsRevision(t *testing.T) {
+	s := NewSessionStore()
+	s.BumpRevision()
+	s.BumpRevision()
+	if got := s.Revision(); got != 2 {
+		t.Fatalf("expected revision 2, got %d", got)
+	}
+
+	s.ClearIterationChannels()
+	if got := s.Revision(); got != 0 {
+		t.Fatalf("expected revision reset to 0, got %d", got)
 	}
 }

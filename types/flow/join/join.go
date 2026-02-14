@@ -34,7 +34,7 @@ import (
 )
 
 // Types computes the union of multiple types for phi node joining.
-// Coalesces empty records with maps and merges multiple maps into one.
+// Coalesces empty records with container shapes and merges multiple maps into one.
 // Filters out unknown types since they don't contribute information to the join.
 func Types(types ...typ.Type) typ.Type {
 	if len(types) == 0 {
@@ -66,13 +66,76 @@ func Types(types ...typ.Type) typ.Type {
 		return first
 	}
 	filtered = CoalesceEmptyRecordWithMap(filtered)
+	filtered = CoalesceEmptyRecordWithArray(filtered)
 	filtered = CoalesceRecordOpenness(filtered)
 	filtered = CoalesceRecordMapComponents(filtered)
+	filtered = CoalesceCompatibleRecords(filtered)
 	filtered = CoalesceMaps(filtered)
 	if len(filtered) == 1 {
 		return filtered[0]
 	}
 	return typ.PruneSoftUnionMembers(typ.NewUnion(filtered...))
+}
+
+// CoalesceEmptyRecordWithArray removes empty records when arrays are present.
+//
+// Lua uses the same table runtime value for map-like and list-like tables. During
+// flow joins, a common pattern is {} on one path and array growth on another
+// (table.insert). Keeping {} in the union loses sequence intent and creates
+// downstream nil-index noise. When an array shape is present, prefer it.
+func CoalesceEmptyRecordWithArray(types []typ.Type) []typ.Type {
+	hasEmptyRecord := false
+	hasArray := false
+	for _, t := range types {
+		if unwrap.IsEmptyRecord(t) {
+			hasEmptyRecord = true
+			continue
+		}
+		if _, ok := unwrap.Alias(t).(*typ.Array); ok {
+			hasArray = true
+		}
+	}
+	if !hasEmptyRecord || !hasArray {
+		return types
+	}
+	result := make([]typ.Type, 0, len(types))
+	for _, t := range types {
+		if !unwrap.IsEmptyRecord(t) {
+			result = append(result, t)
+		}
+	}
+	return result
+}
+
+// CoalesceCompatibleRecords merges structurally compatible record variants into
+// one optional-field record. This keeps flow joins precise for mutation-style
+// code paths while preserving discriminated unions.
+func CoalesceCompatibleRecords(types []typ.Type) []typ.Type {
+	if len(types) < 2 {
+		return types
+	}
+
+	used := make([]bool, len(types))
+	out := make([]typ.Type, 0, len(types))
+	for i := 0; i < len(types); i++ {
+		if used[i] {
+			continue
+		}
+		current := types[i]
+		for j := i + 1; j < len(types); j++ {
+			if used[j] {
+				continue
+			}
+			merged, ok := typ.JoinCompatibleRecords(current, types[j])
+			if !ok {
+				continue
+			}
+			current = merged
+			used[j] = true
+		}
+		out = append(out, current)
+	}
+	return out
 }
 
 // filterUnknown removes nil and unknown types from the slice.

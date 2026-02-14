@@ -291,6 +291,17 @@ func TestRecordRequiredVsOptional(t *testing.T) {
 	}
 }
 
+func TestRecordOptionalSubFieldAllowedWhenSuperTypeAdmitsNil(t *testing.T) {
+	// Super field is syntactically required, but type admits nil (string?).
+	// Sub optional field should still be accepted.
+	sub := typ.NewRecord().OptField("status_not", typ.LiteralString("removed")).Build()
+	super := typ.NewRecord().Field("status_not", typ.NewOptional(typ.String)).Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("optional sub field should satisfy required super field when super type admits nil")
+	}
+}
+
 func TestRecordWidthSubtyping(t *testing.T) {
 	// {x, y} <: {x}
 	sub := typ.NewRecord().Field("x", typ.Number).Field("y", typ.String).Build()
@@ -359,6 +370,34 @@ func TestRecordMutableFieldInvariance(t *testing.T) {
 	recordDog2 := typ.NewRecord().Field("pet", dog).Build()
 	if !IsSubtype(recordDog, recordDog2) {
 		t.Error("records with same mutable field types should be subtypes")
+	}
+}
+
+func TestRecordMutableTupleFieldLiteralWidening(t *testing.T) {
+	super := typ.NewRecord().
+		Field("chunks", typ.NewTuple(typ.String, typ.String)).
+		Build()
+
+	sub := typ.NewRecord().
+		Field("chunks", typ.NewTuple(typ.LiteralString("a"), typ.LiteralString("b"))).
+		Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("tuple literal elements should widen in mutable record fields")
+	}
+}
+
+func TestRecordMutableFieldUnionBranchWidening(t *testing.T) {
+	super := typ.NewRecord().
+		Field("timeout", typ.NewUnion(typ.Number, typ.String)).
+		Build()
+
+	sub := typ.NewRecord().
+		Field("timeout", typ.Number).
+		Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("concrete union branch should satisfy mutable field via widening")
 	}
 }
 
@@ -1353,6 +1392,33 @@ func TestEmptyRecordToArray(t *testing.T) {
 	}
 }
 
+func TestTableMarkerAcceptsMap(t *testing.T) {
+	sub := typ.NewMap(typ.String, typ.Any)
+	super := typ.NewInterface("table", nil)
+
+	if !IsSubtype(sub, super) {
+		t.Error("map should be subtype of table marker")
+	}
+}
+
+func TestTableMarkerAcceptsArray(t *testing.T) {
+	sub := typ.NewArray(typ.String)
+	super := typ.NewInterface("table", nil)
+
+	if !IsSubtype(sub, super) {
+		t.Error("array should be subtype of table marker")
+	}
+}
+
+func TestMapIsNotSubtypeOfEmptyRecord(t *testing.T) {
+	sub := typ.NewMap(typ.String, typ.Any)
+	super := typ.NewRecord().Build()
+
+	if IsSubtype(sub, super) {
+		t.Error("map should not be subtype of empty record")
+	}
+}
+
 func TestEmptyRecordToOptionalOnlyRecord(t *testing.T) {
 	rec := typ.NewRecord().Build()
 	super := typ.NewRecord().
@@ -1363,6 +1429,39 @@ func TestEmptyRecordToOptionalOnlyRecord(t *testing.T) {
 
 	if !IsSubtype(rec, super) {
 		t.Error("empty record should be subtype of record with only optional fields")
+	}
+}
+
+func TestEmptyRecordToRequiredAnyFieldRecord(t *testing.T) {
+	rec := typ.NewRecord().Build()
+	super := typ.NewRecord().
+		Field("context_merger", typ.Any).
+		Build()
+
+	if !IsSubtype(rec, super) {
+		t.Error("empty record should be subtype when required field admits nil via any")
+	}
+}
+
+func TestEmptyRecordToRequiredUnknownFieldRecord(t *testing.T) {
+	rec := typ.NewRecord().Build()
+	super := typ.NewRecord().
+		Field("dynamic", typ.Unknown).
+		Build()
+
+	if !IsSubtype(rec, super) {
+		t.Error("empty record should be subtype when required field admits nil via unknown")
+	}
+}
+
+func TestEmptyRecordToRequiredNilUnionFieldRecord(t *testing.T) {
+	rec := typ.NewRecord().Build()
+	super := typ.NewRecord().
+		Field("payload", typ.NewUnion(typ.String, typ.Nil)).
+		Build()
+
+	if !IsSubtype(rec, super) {
+		t.Error("empty record should be subtype when required field is a union containing nil")
 	}
 }
 
@@ -1805,6 +1904,28 @@ func TestRecordMutableFieldWidening_LiteralIntToNumber(t *testing.T) {
 
 	if !IsSubtype(sub, super) {
 		t.Error("record with literal int field should widen to record with number field")
+	}
+}
+
+func TestRecordMutableFieldWidening_LiteralUnionToInteger(t *testing.T) {
+	sub := typ.NewRecord().
+		Field("x", typ.NewUnion(typ.LiteralInt(0), typ.LiteralInt(8000))).
+		Build()
+	super := typ.NewRecord().Field("x", typ.Integer).Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("record with integer literal union field should widen to integer field")
+	}
+}
+
+func TestRecordMutableFieldWidening_LiteralUnionToString(t *testing.T) {
+	sub := typ.NewRecord().
+		Field("name", typ.NewUnion(typ.LiteralString(""), typ.LiteralString("alpha"))).
+		Build()
+	super := typ.NewRecord().Field("name", typ.String).Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("record with string literal union field should widen to string field")
 	}
 }
 

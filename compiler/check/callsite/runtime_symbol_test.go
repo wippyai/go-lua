@@ -47,11 +47,11 @@ func TestRuntimeArgSymbolAt_MethodCallUsesReceiver(t *testing.T) {
 		Args:     []ast.Expr{arg},
 	}
 
-	if got := RuntimeArgSymbolAt(info, 0, bindings); got != recvSym {
-		t.Fatalf("RuntimeArgSymbolAt(method,0) = %d, want receiver %d", got, recvSym)
+	if got := SymbolOrCreateFieldFromExpr(RuntimeArgAt(info, 0), bindings); got != recvSym {
+		t.Fatalf("SymbolOrCreateFieldFromExpr(RuntimeArgAt,0) = %d, want receiver %d", got, recvSym)
 	}
-	if got := RuntimeArgSymbolAt(info, 1, bindings); got != argSym {
-		t.Fatalf("RuntimeArgSymbolAt(method,1) = %d, want arg %d", got, argSym)
+	if got := SymbolOrCreateFieldFromExpr(RuntimeArgAt(info, 1), bindings); got != argSym {
+		t.Fatalf("SymbolOrCreateFieldFromExpr(RuntimeArgAt,1) = %d, want arg %d", got, argSym)
 	}
 }
 

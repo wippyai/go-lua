@@ -18,13 +18,13 @@ func TestFactsEqual_Empty(t *testing.T) {
 
 func TestFactsEqual_ReturnSummaries(t *testing.T) {
 	a := api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			1: []typ.Type{typ.String},
+		FunctionFacts: api.FunctionFacts{
+			1: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	b := api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			1: []typ.Type{typ.String},
+		FunctionFacts: api.FunctionFacts{
+			1: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	if !FactsEqual(a, b) {
@@ -34,13 +34,13 @@ func TestFactsEqual_ReturnSummaries(t *testing.T) {
 
 func TestFactsEqual_DifferentReturnSummaries(t *testing.T) {
 	a := api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			1: []typ.Type{typ.String},
+		FunctionFacts: api.FunctionFacts{
+			1: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	b := api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			1: []typ.Type{typ.Number},
+		FunctionFacts: api.FunctionFacts{
+			1: {Summary: []typ.Type{typ.Number}},
 		},
 	}
 	if FactsEqual(a, b) {
@@ -48,8 +48,76 @@ func TestFactsEqual_DifferentReturnSummaries(t *testing.T) {
 	}
 }
 
+func TestFactsEqual_IgnoresLegacyMirrorDrift(t *testing.T) {
+	sym := cfg.SymbolID(77)
+	fn := typ.Func().Returns(typ.String).Build()
+
+	a := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			sym: {
+				Summary: []typ.Type{typ.String},
+				Narrow:  []typ.Type{typ.String},
+				Func:    fn,
+			},
+		},
+		ReturnSummaries: api.ReturnSummaries{
+			sym: []typ.Type{typ.Number},
+		},
+		NarrowReturns: api.NarrowReturnSummaries{
+			sym: []typ.Type{typ.Number},
+		},
+		FuncTypes: api.FuncTypes{
+			sym: typ.Func().Returns(typ.Number).Build(),
+		},
+	}
+	b := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			sym: {
+				Summary: []typ.Type{typ.String},
+				Narrow:  []typ.Type{typ.String},
+				Func:    fn,
+			},
+		},
+	}
+
+	if !FactsEqual(a, b) {
+		t.Fatal("expected facts to be equal by canonical function facts")
+	}
+}
+
+func TestFactsEqual_LegacyOnlyChannelsAreComparedCanonically(t *testing.T) {
+	sym := cfg.SymbolID(91)
+
+	a := api.Facts{
+		ReturnSummaries: api.ReturnSummaries{
+			sym: []typ.Type{typ.String},
+		},
+		NarrowReturns: api.NarrowReturnSummaries{
+			sym: []typ.Type{typ.String},
+		},
+		FuncTypes: api.FuncTypes{
+			sym: typ.Func().Returns(typ.String).Build(),
+		},
+	}
+	b := api.Facts{
+		ReturnSummaries: api.ReturnSummaries{
+			sym: []typ.Type{typ.Number},
+		},
+		NarrowReturns: api.NarrowReturnSummaries{
+			sym: []typ.Type{typ.Number},
+		},
+		FuncTypes: api.FuncTypes{
+			sym: typ.Func().Returns(typ.Number).Build(),
+		},
+	}
+
+	if FactsEqual(a, b) {
+		t.Fatal("legacy-only function channels should participate in canonical equality")
+	}
+}
+
 func TestReturnSummariesEqual_Empty(t *testing.T) {
-	if !ReturnSummariesEqual(nil, nil) {
+	if !symbolTypeVectorMapEqual(nil, nil) {
 		t.Error("nil summaries should be equal")
 	}
 }
@@ -57,13 +125,13 @@ func TestReturnSummariesEqual_Empty(t *testing.T) {
 func TestReturnSummariesEqual_DifferentLength(t *testing.T) {
 	a := api.ReturnSummaries{1: []typ.Type{typ.String}}
 	b := api.ReturnSummaries{}
-	if ReturnSummariesEqual(a, b) {
+	if symbolTypeVectorMapEqual(a, b) {
 		t.Error("summaries with different lengths should not be equal")
 	}
 }
 
 func TestParamHintsEqual_Empty(t *testing.T) {
-	if !ParamHintsEqual(nil, nil) {
+	if !symbolTypeVectorMapEqual(nil, nil) {
 		t.Error("nil param hints should be equal")
 	}
 }
@@ -71,13 +139,13 @@ func TestParamHintsEqual_Empty(t *testing.T) {
 func TestParamHintsEqual_Same(t *testing.T) {
 	a := api.ParamHints{1: []typ.Type{typ.String}}
 	b := api.ParamHints{1: []typ.Type{typ.String}}
-	if !ParamHintsEqual(a, b) {
+	if !symbolTypeVectorMapEqual(a, b) {
 		t.Error("same param hints should be equal")
 	}
 }
 
 func TestFuncTypesEqual_Empty(t *testing.T) {
-	if !FuncTypesEqual(nil, nil) {
+	if !symbolTypeMapEqual(nil, nil) {
 		t.Error("nil func types should be equal")
 	}
 }
@@ -86,7 +154,7 @@ func TestFuncTypesEqual_Same(t *testing.T) {
 	fn := typ.Func().Returns(typ.String).Build()
 	a := api.FuncTypes{1: fn}
 	b := api.FuncTypes{1: fn}
-	if !FuncTypesEqual(a, b) {
+	if !symbolTypeMapEqual(a, b) {
 		t.Error("same func types should be equal")
 	}
 }
@@ -98,7 +166,7 @@ func TestLiteralSigsEqual_Empty(t *testing.T) {
 }
 
 func TestCapturedTypesEqual_Empty(t *testing.T) {
-	if !CapturedTypesEqual(nil, nil) {
+	if !symbolTypeMapEqual(nil, nil) {
 		t.Error("nil captured types should be equal")
 	}
 }
@@ -106,7 +174,7 @@ func TestCapturedTypesEqual_Empty(t *testing.T) {
 func TestCapturedTypesEqual_Same(t *testing.T) {
 	a := api.CapturedTypes{cfg.SymbolID(1): typ.String}
 	b := api.CapturedTypes{cfg.SymbolID(1): typ.String}
-	if !CapturedTypesEqual(a, b) {
+	if !symbolTypeMapEqual(a, b) {
 		t.Error("same captured types should be equal")
 	}
 }

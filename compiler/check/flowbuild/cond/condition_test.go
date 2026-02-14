@@ -283,3 +283,53 @@ func TestConditionFromInequality_PathLiteralUsesNotHasType(t *testing.T) {
 		t.Fatalf("expected registered literal type 1, got %v", resolved)
 	}
 }
+
+func TestConditionFromEquality_PathFalseLiteralUsesPortableConstraints(t *testing.T) {
+	ce := &ConditionExtractor{}
+	cond := ce.ConditionFromEquality(&ast.IdentExpr{Value: "x"}, &ast.FalseExpr{})
+	if !cond.HasConstraints() {
+		t.Fatal("expected constraints for x == false")
+	}
+	items := cond.MustConstraints()
+	if len(items) != 2 {
+		t.Fatalf("expected two constraints, got %d", len(items))
+	}
+	hasFalsy := false
+	hasNotNil := false
+	for _, c := range items {
+		if _, ok := c.(constraint.Falsy); ok {
+			hasFalsy = true
+		}
+		if _, ok := c.(constraint.NotNil); ok {
+			hasNotNil = true
+		}
+	}
+	if !hasFalsy || !hasNotNil {
+		t.Fatalf("expected Falsy+NotNil, got %v", items)
+	}
+}
+
+func TestConditionFromEquality_PathTrueLiteralUsesPortableConstraints(t *testing.T) {
+	ce := &ConditionExtractor{}
+	cond := ce.ConditionFromEquality(&ast.IdentExpr{Value: "x"}, &ast.TrueExpr{})
+	if !cond.HasConstraints() {
+		t.Fatal("expected constraints for x == true")
+	}
+	items := cond.MustConstraints()
+	if len(items) != 2 {
+		t.Fatalf("expected two constraints, got %d", len(items))
+	}
+	hasTruthy := false
+	hasBoolType := false
+	for _, c := range items {
+		if _, ok := c.(constraint.Truthy); ok {
+			hasTruthy = true
+		}
+		if hasType, ok := c.(constraint.HasType); ok && hasType.Type == narrow.BuiltinTypeKey("boolean") {
+			hasBoolType = true
+		}
+	}
+	if !hasTruthy || !hasBoolType {
+		t.Fatalf("expected Truthy+HasType(boolean), got %v", items)
+	}
+}

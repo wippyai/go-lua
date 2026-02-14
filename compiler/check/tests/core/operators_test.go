@@ -180,6 +180,66 @@ func TestErrorDetection(t *testing.T) {
 			WantError: true,
 			Stdlib:    true,
 		},
+		{
+			Name: "unary minus on string",
+			Code: `
+				local function f(x: string): number
+					return -x
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
+		{
+			Name: "bitwise not on string",
+			Code: `
+				local function f(x: string): integer
+					return ~x
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
+		{
+			Name: "length on number",
+			Code: `
+				local function f(x: number): integer
+					return #x
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
+		{
+			Name: "string concat on boolean",
+			Code: `
+				local function f(x: boolean): string
+					return x .. "ok"
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
+		{
+			Name: "less than on boolean",
+			Code: `
+				local function f(a: boolean, b: boolean): boolean
+					return a < b
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
+		{
+			Name: "less than on table",
+			Code: `
+				local function f(a: {}, b: {}): boolean
+					return a < b
+				end
+			`,
+			WantError: true,
+			Stdlib:    true,
+		},
 	}
 	testutil.RunCases(t, tests)
 }

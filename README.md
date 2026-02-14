@@ -143,3 +143,8 @@ for _, d := range types.CheckChunk(chunk, types.WithStdlib()) {
 ## License
 
 MIT — see LICENSE. Based on gopher-lua by Yusuke Inuzuka.
+
+## Disclaimer
+
+This project includes AI-generated and AI-assisted implementation work.
+The type system is currently stable, but it remains in a pre-convergence state.

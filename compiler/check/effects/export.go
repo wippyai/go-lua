@@ -103,6 +103,10 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 	}
 }
 
+// EnrichExportWithFunctionFacts reconciles exported function fields against the
+// converged interproc channels for the same symbols. This keeps exported module
+// signatures consistent even when return-summary and function-type channels
+// temporarily diverge during fixpoint.
 // exportFieldNameFromEffectSymbol resolves a graph symbol name to a top-level
 // export field name.
 //

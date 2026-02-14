@@ -26,6 +26,11 @@ type relationKey struct {
 	Y constraint.PathKey
 }
 
+type lenRefBound struct {
+	Array  constraint.PathKey
+	Offset int64
+}
+
 // State represents a compact abstract state for numeric constraints.
 //
 // Uses interval bounds and modular residues instead of storing raw constraints.
@@ -43,9 +48,9 @@ type State struct {
 	// relations stores difference constraints (x - y <= c).
 	relations map[relationKey]int64
 
-	// lenRefs maps variable PathKey to array PathKey for symbolic length bounds.
-	// Entry x -> arr means x <= len(arr).
-	lenRefs map[constraint.PathKey]constraint.PathKey
+	// lenRefs maps variable PathKey to array PathKey with offset.
+	// Entry x -> {arr, off} means x <= len(arr) + off.
+	lenRefs map[constraint.PathKey]lenRefBound
 
 	// unsat is true if the state is unsatisfiable.
 	unsat bool
@@ -82,7 +87,7 @@ func NewState() *State {
 		bounds:    make(map[constraint.PathKey]Interval),
 		modular:   make(map[constraint.PathKey]ModResidue),
 		relations: make(map[relationKey]int64),
-		lenRefs:   make(map[constraint.PathKey]constraint.PathKey),
+		lenRefs:   make(map[constraint.PathKey]lenRefBound),
 	}
 }
 
@@ -121,7 +126,7 @@ func (s *State) Clone() *State {
 		bounds:    make(map[constraint.PathKey]Interval, len(s.bounds)),
 		modular:   make(map[constraint.PathKey]ModResidue, len(s.modular)),
 		relations: make(map[relationKey]int64, len(s.relations)),
-		lenRefs:   make(map[constraint.PathKey]constraint.PathKey, len(s.lenRefs)),
+		lenRefs:   make(map[constraint.PathKey]lenRefBound, len(s.lenRefs)),
 	}
 	for _, k := range constraint.SortedPathKeys(s.bounds) {
 		c.bounds[k] = s.bounds[k]
@@ -211,9 +216,9 @@ func Join(a, b *State) *State {
 
 	// LenRefs: keep only if identical in both.
 	for _, v := range constraint.SortedPathKeys(a.lenRefs) {
-		arr := a.lenRefs[v]
-		if barr, ok := b.lenRefs[v]; ok && arr == barr {
-			result.lenRefs[v] = arr
+		ref := a.lenRefs[v]
+		if bref, ok := b.lenRefs[v]; ok && ref == bref {
+			result.lenRefs[v] = ref
 		}
 	}
 
@@ -333,7 +338,7 @@ func (s *State) ApplyConstraintWithResolver(c constraint.NumericConstraint, reso
 			if xKey == "" || arrKey == "" {
 				return struct{}{}
 			}
-			s.applyLeLenOf(xKey, arrKey)
+			s.applyLeLenOf(xKey, arrKey, nc.Offset)
 			return struct{}{}
 		},
 	})
@@ -466,11 +471,15 @@ func (s *State) applyModEq(v constraint.PathKey, m, r int64) {
 }
 
 func (s *State) ApplyLeLenOf(v, arr constraint.PathKey) {
-	s.applyLeLenOf(v, arr)
+	s.applyLeLenOf(v, arr, 0)
 }
 
-func (s *State) applyLeLenOf(v, arr constraint.PathKey) {
-	s.lenRefs[v] = arr
+func (s *State) ApplyLeLenOfWithOffset(v, arr constraint.PathKey, offset int64) {
+	s.applyLeLenOf(v, arr, offset)
+}
+
+func (s *State) applyLeLenOf(v, arr constraint.PathKey, offset int64) {
+	s.lenRefs[v] = lenRefBound{Array: arr, Offset: offset}
 }
 
 // BoundsFor returns the interval bounds for a PathKey.
@@ -497,8 +506,23 @@ func (s *State) LenRefFor(key constraint.PathKey) (arrKey constraint.PathKey, ok
 	if s == nil || s.lenRefs == nil {
 		return "", false
 	}
-	arrKey, ok = s.lenRefs[key]
-	return
+	ref, ok := s.lenRefs[key]
+	if !ok {
+		return "", false
+	}
+	return ref.Array, true
+}
+
+// LenRefWithOffsetFor returns array key and offset for symbolic length bound.
+func (s *State) LenRefWithOffsetFor(key constraint.PathKey) (arrKey constraint.PathKey, offset int64, ok bool) {
+	if s == nil || s.lenRefs == nil {
+		return "", 0, false
+	}
+	ref, ok := s.lenRefs[key]
+	if !ok {
+		return "", 0, false
+	}
+	return ref.Array, ref.Offset, true
 }
 
 // CheckSatisfiability verifies the state has no contradictions.
@@ -766,7 +790,7 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 		bounds:    make(map[constraint.PathKey]Interval, len(s.bounds)),
 		modular:   make(map[constraint.PathKey]ModResidue, len(s.modular)),
 		relations: make(map[relationKey]int64, len(s.relations)),
-		lenRefs:   make(map[constraint.PathKey]constraint.PathKey, len(s.lenRefs)),
+		lenRefs:   make(map[constraint.PathKey]lenRefBound, len(s.lenRefs)),
 	}
 
 	// Remap bounds
@@ -805,16 +829,17 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 
 	// Remap length references (both variable and array keys)
 	for _, k := range constraint.SortedPathKeys(s.lenRefs) {
-		arr := s.lenRefs[k]
+		ref := s.lenRefs[k]
 		newK := k
-		newArr := arr
+		newArr := ref.Array
 		if mapped, ok := remap[k]; ok {
 			newK = mapped
 		}
-		if mapped, ok := remap[arr]; ok {
+		if mapped, ok := remap[ref.Array]; ok {
 			newArr = mapped
 		}
-		result.lenRefs[newK] = newArr
+		ref.Array = newArr
+		result.lenRefs[newK] = ref
 	}
 
 	return result

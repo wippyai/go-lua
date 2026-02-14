@@ -193,16 +193,24 @@ func fieldInInterface(i *typ.Interface, name string) (typ.Type, bool) {
 }
 
 // fieldInUnion resolves a field across all union members.
-// For a union A | B, field access t.name requires the field to exist in BOTH
-// A and B. The result type is the union of each member's field type.
-// Returns (nil, false) if any member lacks the field.
+// For a union A | B, field access t.name behaves as:
+//   - if all members expose the field, result is union of member field types
+//   - if some table-like members miss the field, result is optional(union(...))
+//   - if any non-table-like member misses the field, lookup fails
+//
+// This matches Lua table semantics for partial record unions while remaining
+// sound for non-table members (where field access would be invalid).
 func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
-	// Field must exist in ALL members
 	var types []typ.Type
+	missingFromSome := false
 
 	for _, m := range u.Members {
 		ft, ok := fieldDepth(m, name, depth+1)
 		if !ok {
+			if allowsMissingFieldAsNil(m, depth+1) {
+				missingFromSome = true
+				continue
+			}
 			return nil, false
 		}
 
@@ -213,7 +221,11 @@ func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
 		return nil, false
 	}
 
-	return typ.NewUnion(types...), true
+	out := typ.NewUnion(types...)
+	if missingFromSome {
+		out = typ.NewOptional(out)
+	}
+	return out, true
 }
 
 // fieldInIntersection resolves a field from any intersection member.
@@ -267,4 +279,36 @@ func fieldOnSpecial(t typ.Type, name string) (typ.Type, bool) {
 	}
 
 	return nil, false
+}
+
+// allowsMissingFieldAsNil reports whether missing fields are safely interpreted
+// as nil for this member when resolving a field on a union.
+func allowsMissingFieldAsNil(t typ.Type, depth int) bool {
+	if stopDepth(t, depth) || t == nil {
+		return false
+	}
+	return typ.Visit(t, typ.Visitor[bool]{
+		Alias: func(a *typ.Alias) bool {
+			return allowsMissingFieldAsNil(a.Target, depth+1)
+		},
+		Instantiated: func(inst *typ.Instantiated) bool {
+			resolved, err := ResolveInstantiated(inst)
+			if err != nil {
+				return false
+			}
+			return allowsMissingFieldAsNil(resolved, depth+1)
+		},
+		Generic: func(g *typ.Generic) bool {
+			return allowsMissingFieldAsNil(g.Body, depth+1)
+		},
+		Record: func(*typ.Record) bool {
+			return true
+		},
+		Map: func(*typ.Map) bool {
+			return true
+		},
+		Default: func(typ.Type) bool {
+			return false
+		},
+	})
 }

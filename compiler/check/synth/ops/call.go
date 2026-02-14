@@ -339,6 +339,20 @@ func InferCall(ctx *db.QueryContext, def CallDef) InferResult {
 			ShortCircuit:        typ.Unknown,
 		}
 	}
+	if typ.IsNever(callee) {
+		// Calls in unreachable paths (callee narrowed to never) should not emit
+		// secondary "not callable" errors. Preserve dead-branch semantics by
+		// short-circuiting with never.
+		return InferResult{
+			Kind:                InferKindUnknown,
+			Callee:              callee,
+			Receiver:            receiver,
+			IsMethod:            isMethod,
+			ForceMethodReceiver: def.ForceMethodReceiver,
+			Errors:              errors,
+			ShortCircuit:        typ.Never,
+		}
+	}
 
 	callee = unwrapCallee(callee)
 
@@ -420,43 +434,77 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 		Errors:              errors,
 	}
 
-	// Try to find a function member for expected args computation.
-	// For unions, we take expected types from the first function member
-	// that successfully infers. This provides contextual typing while
-	// maintaining union semantics in FinishCall.
+	// Aggregate expected argument types across all callable union members.
+	// Selecting only the first member is order-dependent and can over-specialize
+	// contextual typing for overloaded built-ins (for example pairs/ipairs).
+	var (
+		aggExpected []typ.Type
+		aggVariadic typ.Type
+		found       bool
+	)
 	for _, member := range u.Members {
 		fn, ok := member.(*typ.Function)
 		if !ok {
 			continue
 		}
 
-		if len(fn.TypeParams) == 0 {
-			result.Function = fn
-			result.Instantiated = fn
-			result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, fn, isMethod, receiver, def.ForceMethodReceiver)
-			return result
-		}
-
-		var typeArgs []typ.Type
-		if len(def.TypeArgs) > 0 {
-			typeArgs = def.TypeArgs
-		} else {
-			var err error
-			typeArgs, err = InferTypeArgsWithExpectedAndMode(fn, def.Args, isMethod, receiver, def.ExpectedReturn, def.ForceMethodReceiver)
-			if err != nil {
-				continue
+		instantiated := fn
+		typeArgs := []typ.Type(nil)
+		if len(fn.TypeParams) > 0 {
+			if len(def.TypeArgs) > 0 {
+				typeArgs = def.TypeArgs
+			} else {
+				var err error
+				typeArgs, err = InferTypeArgsWithExpectedAndMode(fn, def.Args, isMethod, receiver, def.ExpectedReturn, def.ForceMethodReceiver)
+				if err != nil {
+					continue
+				}
 			}
+			instantiated = InstantiateFunction(fn, typeArgs)
 		}
 
-		instantiated := InstantiateFunction(fn, typeArgs)
-		result.Function = fn
-		result.TypeArgs = typeArgs
-		result.Instantiated = instantiated
-		result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, instantiated, isMethod, receiver, def.ForceMethodReceiver)
-		return result
+		expectedArgs, expectedVariadic := computeExpectedArgs(ctx, def.Query, instantiated, isMethod, receiver, def.ForceMethodReceiver)
+		if !found {
+			found = true
+			result.Function = fn
+			result.TypeArgs = typeArgs
+			result.Instantiated = instantiated
+			aggExpected = append([]typ.Type(nil), expectedArgs...)
+			aggVariadic = expectedVariadic
+			continue
+		}
+		aggExpected = mergeExpectedArgVectors(aggExpected, expectedArgs)
+		aggVariadic = typ.JoinPreferNonSoft(aggVariadic, expectedVariadic)
+	}
+
+	if found {
+		result.ExpectedArgs = aggExpected
+		result.ExpectedVariadic = aggVariadic
 	}
 
 	return result
+}
+
+func mergeExpectedArgVectors(a, b []typ.Type) []typ.Type {
+	maxLen := len(a)
+	if len(b) > maxLen {
+		maxLen = len(b)
+	}
+	if maxLen == 0 {
+		return nil
+	}
+	out := make([]typ.Type, maxLen)
+	for i := 0; i < maxLen; i++ {
+		var ai, bi typ.Type
+		if i < len(a) {
+			ai = a[i]
+		}
+		if i < len(b) {
+			bi = b[i]
+		}
+		out[i] = typ.JoinPreferNonSoft(ai, bi)
+	}
+	return out
 }
 
 // computeExpectedArgs computes the expected type for each argument position.

@@ -56,7 +56,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	synthpkg "github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/db"
@@ -64,7 +66,6 @@ import (
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
-	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
 // maxInferIterations limits fixpoint iterations per SCC.
@@ -149,6 +150,7 @@ func collectInferredTypes(
 		}
 	}
 	funcSigTypes := make(map[cfg.SymbolID]typ.Type)
+	seedEngine, _ := synthAPI.(*synthpkg.Engine)
 	if services != nil {
 		graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
 			if info == nil || info.Symbol == 0 {
@@ -161,8 +163,18 @@ func collectInferredTypes(
 			if sc == nil {
 				sc = scopes[graph.Entry()]
 			}
+			if inputs != nil && inputs.SiblingTypes != nil {
+				if sibling := inputs.SiblingTypes[info.Symbol]; sibling != nil {
+					funcSigTypes[info.Symbol] = sibling
+					return
+				}
+			}
 			if sig := services.ResolveFunctionSignature(info.FuncExpr, sc); sig != nil {
-				funcSigTypes[info.Symbol] = typjoin.WithReturnsOrUnknown(sig, nil)
+				funcSigTypes[info.Symbol] = sig
+				return
+			}
+			if seed, ok := returns.BuildSeedFunctionTypeWithBindings(info.FuncExpr, seedEngine, sc, bindings).(*typ.Function); ok && seed != nil {
+				funcSigTypes[info.Symbol] = seed
 			}
 		})
 		graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
@@ -178,8 +190,18 @@ func collectInferredTypes(
 					return
 				}
 				if fnExpr, ok := source.(*ast.FunctionExpr); ok {
+					if inputs != nil && inputs.SiblingTypes != nil {
+						if sibling := inputs.SiblingTypes[target.Symbol]; sibling != nil {
+							funcSigTypes[target.Symbol] = sibling
+							return
+						}
+					}
 					if sig := services.ResolveFunctionSignature(fnExpr, sc); sig != nil {
-						funcSigTypes[target.Symbol] = typjoin.WithReturnsOrUnknown(sig, nil)
+						funcSigTypes[target.Symbol] = sig
+						return
+					}
+					if seed, ok := returns.BuildSeedFunctionTypeWithBindings(fnExpr, seedEngine, sc, bindings).(*typ.Function); ok && seed != nil {
+						funcSigTypes[target.Symbol] = seed
 					}
 				}
 			})
@@ -207,6 +229,13 @@ func collectInferredTypes(
 			calls = append(calls, callEntry{p: p, info: info})
 		}
 	})
+	assignsAtPoint := make(map[cfg.Point][]*cfg.AssignInfo)
+	for _, entry := range assigns {
+		if entry.info == nil {
+			continue
+		}
+		assignsAtPoint[entry.p] = append(assignsAtPoint[entry.p], entry.info)
+	}
 
 	// Build dependency graph: target symbol -> symbols referenced in RHS
 	deps := make(map[uint64][]uint64)
@@ -240,32 +269,49 @@ func collectInferredTypes(
 			}
 		})
 	}
-	// Process table mutator calls
+	// Process table mutator calls.
+	// Canonical dependency direction is: mutated table depends on inserted value.
+	// Do not add reverse edges (value -> table), which introduces artificial SCC
+	// cycles and false non-convergence warnings.
 	for _, entry := range calls {
+		p := entry.p
 		info := entry.info
-		if len(info.Args) < 2 {
+		if info == nil {
 			continue
 		}
-		for _, arg := range info.Args {
-			if arg == nil || bindings == nil {
-				continue
-			}
-			if sym := callsite.SymbolFromExpr(arg, bindings); sym != 0 {
-				targetSym := uint64(sym)
-				if deps[targetSym] == nil {
-					deps[targetSym] = nil
-				}
-				var refs []cfg.SymbolID
-				for _, other := range info.Args {
-					if other == arg {
-						continue
-					}
-					collectExprSymbols(other, bindings, &refs)
-				}
-				for _, ref := range refs {
-					deps[targetSym] = append(deps[targetSym], uint64(ref))
-				}
-			}
+
+		tm := mutator.TableMutatorFromCall(info, p, synth, symResolver, graph, bindings, moduleBindings)
+		if tm == nil {
+			continue
+		}
+		targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
+		valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
+		if targetExpr == nil || valueExpr == nil {
+			continue
+		}
+
+		var targetSym cfg.SymbolID
+		if attr, ok := targetExpr.(*ast.AttrGetExpr); ok {
+			targetSym = callsite.SymbolOrCreateFieldFromExpr(attr.Object, bindings)
+		} else {
+			targetSym = callsite.SymbolOrCreateFieldFromExpr(targetExpr, bindings)
+		}
+		if targetSym == 0 {
+			continue
+		}
+
+		targetKey := uint64(targetSym)
+		if deps[targetKey] == nil {
+			deps[targetKey] = nil
+		}
+
+		var refs []cfg.SymbolID
+		collectExprSymbols(valueExpr, bindings, &refs)
+		if attr, ok := targetExpr.(*ast.AttrGetExpr); ok {
+			collectExprSymbols(attr.Key, bindings, &refs)
+		}
+		for _, ref := range refs {
+			deps[targetKey] = append(deps[targetKey], uint64(ref))
 		}
 	}
 
@@ -324,9 +370,46 @@ func collectInferredTypes(
 				fullOverlay[sym] = t
 			}
 			wrappedSynth := resolve.SynthWithOverlay(fullOverlay, bindings, synth)
+			callSynthFor := func(p cfg.Point, info *cfg.CallInfo) func(ast.Expr, cfg.Point) typ.Type {
+				if info == nil {
+					return wrappedSynth
+				}
+				owner := assignmentOwningSourceCall(assignsAtPoint[p], info)
+				if owner == nil {
+					return wrappedSynth
+				}
+
+				rhsResolver := symResolver
+				if rhsResolver == nil {
+					rhsResolver = func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+						t, ok := overlay[sym]
+						return t, ok
+					}
+				}
+				callOverlay := rhsSpecTypesAtAssignPoint(graph, owner, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+					if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
+						return t, true
+					}
+					return rhsResolver(point, sym)
+				})
+
+				callFullOverlay := make(map[cfg.SymbolID]typ.Type, len(callOverlay)+len(funcSigTypes)+len(paramSet))
+				for sym := range paramSet {
+					if annotated == nil || !annotated[sym] {
+						callFullOverlay[sym] = typ.Unknown
+					}
+				}
+				for sym, t := range funcSigTypes {
+					callFullOverlay[sym] = t
+				}
+				for sym, t := range callOverlay {
+					callFullOverlay[sym] = t
+				}
+				return resolve.SynthWithOverlay(callFullOverlay, bindings, synth)
+			}
 
 			// Infer expected argument types for a call using the call inference pipeline.
-			inferExpectedArgs := func(p cfg.Point, info *cfg.CallInfo) ([]typ.Type, typ.Type) {
+			inferExpectedArgs := func(p cfg.Point, info *cfg.CallInfo, synthForCall func(ast.Expr, cfg.Point) typ.Type) ([]typ.Type, typ.Type) {
 				if info == nil || typeOps == nil {
 					return nil, nil
 				}
@@ -334,7 +417,7 @@ func collectInferredTypes(
 				args := make([]typ.Type, len(info.Args))
 				for i, arg := range info.Args {
 					if arg != nil {
-						args[i] = wrappedSynth(arg, p)
+						args[i] = synthForCall(arg, p)
 					}
 				}
 
@@ -351,7 +434,7 @@ func collectInferredTypes(
 						}
 					}
 					if recvType == nil {
-						recvType = wrappedSynth(info.Receiver, p)
+						recvType = synthForCall(info.Receiver, p)
 					}
 					def.IsMethod = true
 					def.Receiver = recvType
@@ -366,7 +449,7 @@ func collectInferredTypes(
 							def.Callee = candidate
 						}
 					}
-					calleeCandidates := callsite.CalleeSymbolCandidatesWithAliases(info, graph, bindings, moduleBindings)
+					calleeCandidates := callsite.CallableCalleeSymbolCandidates(info, graph, bindings, moduleBindings)
 					for _, calleeSym := range calleeCandidates {
 						if sig, ok := funcSigTypes[calleeSym]; ok && sig != nil {
 							setCallee(sig)
@@ -456,33 +539,71 @@ func collectInferredTypes(
 					continue
 				}
 
-				values := expandedAssignValues(synthAPI, info, p, overlay)
+				rhsResolver := symResolver
+				if rhsResolver == nil {
+					rhsResolver = func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+						t, ok := overlay[sym]
+						return t, ok
+					}
+				}
+				rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+					if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
+						return t, true
+					}
+					return rhsResolver(point, sym)
+				})
+				values := expandedAssignValues(synthAPI, info, p, rhsOverlay)
 
 				info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
-					if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-						return
-					}
-					if !sccSet[target.Symbol] {
-						return
-					}
-					if annotated != nil && annotated[target.Symbol] {
-						return
-					}
-					assignedType := typ.Unknown
-					if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
-						assignedType = value
-					} else if wrappedSynth != nil && source != nil {
-						assignedType = wrappedSynth(source, p)
-					}
-					assignedType = resolve.Ref(assignedType, sc)
-					if typ.IsAbsentOrUnknown(assignedType) {
-						return
-					}
-					old := inferred[target.Symbol]
-					joined := joinInferredType(old, assignedType)
-					if !typ.TypeEquals(old, joined) {
-						inferred[target.Symbol] = joined
-						changed = true
+					switch target.Kind {
+					case cfg.TargetIdent:
+						if target.Symbol == 0 {
+							return
+						}
+						if !sccSet[target.Symbol] {
+							return
+						}
+						if annotated != nil && annotated[target.Symbol] {
+							return
+						}
+						assignedType := typ.Unknown
+						// Canonical local-function policy: use the signature seed captured
+						// from declaration shape (params/annotations), not synthesized return
+						// summaries at this stage. Return summaries are reconciled in interproc
+						// channels and should not be re-injected through local assignment
+						// inference, which can reintroduce stale unions.
+						if _, isFnLiteral := source.(*ast.FunctionExpr); isFnLiteral {
+							if sig, ok := funcSigTypes[target.Symbol]; ok && sig != nil {
+								assignedType = sig
+							}
+						}
+						if typ.IsAbsentOrUnknown(assignedType) {
+							if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
+								assignedType = value
+								// Prefer direct expression synthesis when slot expansion
+								// yields `any` for non-call RHS but the expression itself
+								// has a more precise type (e.g. indexed map reads).
+								if source != nil && wrappedSynth != nil && typ.IsAny(value) {
+									if _, isCall := source.(*ast.FuncCallExpr); !isCall {
+										if precise := resolve.Ref(wrappedSynth(source, p), sc); !typ.IsAbsentOrUnknown(precise) && !typ.IsAny(precise) {
+											assignedType = precise
+										}
+									}
+								}
+							} else if wrappedSynth != nil && source != nil {
+								assignedType = wrappedSynth(source, p)
+							}
+						}
+						assignedType = resolve.Ref(assignedType, sc)
+						if typ.IsAbsentOrUnknown(assignedType) {
+							return
+						}
+						old := inferred[target.Symbol]
+						joined := joinInferredType(old, assignedType)
+						if !typ.TypeEquals(old, joined) {
+							inferred[target.Symbol] = joined
+							changed = true
+						}
 					}
 				})
 			}
@@ -494,11 +615,12 @@ func collectInferredTypes(
 				if info == nil || len(info.Args) == 0 {
 					continue
 				}
+				synthForCall := callSynthFor(p, info)
 				sc := scopes[p]
 				if sc == nil {
 					sc = scopes[graph.Entry()]
 				}
-				expectedArgs, expectedVariadic := inferExpectedArgs(p, info)
+				expectedArgs, expectedVariadic := inferExpectedArgs(p, info, synthForCall)
 				for i := range info.Args {
 					var sym cfg.SymbolID
 					if i < len(info.ArgSymbols) {
@@ -520,7 +642,7 @@ func collectInferredTypes(
 					if typ.IsAbsentOrUnknown(expected) {
 						// Fall back to actual argument type when no expected type is available.
 						if i < len(info.Args) && info.Args[i] != nil {
-							actual := wrappedSynth(info.Args[i], p)
+							actual := synthForCall(info.Args[i], p)
 							actual = resolve.Ref(actual, sc)
 							if actual != nil && !actual.Kind().IsPlaceholder() {
 								expected = actual
@@ -570,9 +692,7 @@ func collectInferredTypes(
 					if baseSym != 0 && sccSet[baseSym] {
 						keyType := wrappedSynth(attr.Key, p)
 						keyType = resolve.Ref(keyType, sc)
-						if typ.IsAbsentOrUnknown(keyType) {
-							keyType = typ.String
-						}
+						keyType = canonicalDynamicKeyType(keyType)
 						old := inferred[baseSym]
 						newType := flow.WidenMapValueArray(old, keyType, valueType)
 						if newType != nil && !typ.TypeEquals(old, newType) {
@@ -637,6 +757,39 @@ func collectInferredTypes(
 	}
 
 	return inferred
+}
+
+func assignmentOwningSourceCall(assigns []*cfg.AssignInfo, call *cfg.CallInfo) *cfg.AssignInfo {
+	if call == nil || len(assigns) == 0 {
+		return nil
+	}
+	for _, info := range assigns {
+		if info == nil {
+			continue
+		}
+		for _, sourceCall := range info.SourceCalls {
+			if sameCallIdentity(sourceCall, call) {
+				return info
+			}
+		}
+	}
+	return nil
+}
+
+func sameCallIdentity(a, b *cfg.CallInfo) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	return a.CalleeName == b.CalleeName &&
+		a.Method == b.Method &&
+		a.IsTypeCheck == b.IsTypeCheck &&
+		a.TypeCheckName == b.TypeCheckName &&
+		a.ReceiverSymbol == b.ReceiverSymbol &&
+		len(a.Args) == len(b.Args) &&
+		len(a.ArgSymbols) == len(b.ArgSymbols)
 }
 
 // collectExprSymbols recursively collects symbol references from an expression.

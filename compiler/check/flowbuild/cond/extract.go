@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	checkeffects "github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/numconst"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -27,11 +28,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/sibling"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // ExtractEdgeConstraints extracts type constraints from branch conditions.
@@ -258,8 +257,8 @@ func NumericForConstraints(graph *cfg.Graph, branchPoint cfg.Point, varName stri
 
 	if limitVal, limitOk := numconst.IntConstFromExpr(forInfo.Limit); limitOk {
 		result = append(result, constraint.LeConst{X: varPath, C: limitVal})
-	} else if arrPath := ExtractLenOfPath(forInfo.Limit, branchPoint, graph); !arrPath.IsEmpty() {
-		result = append(result, constraint.LeLenOf{X: varPath, Array: arrPath})
+	} else if arrPath, offset, ok := ExtractLenBound(forInfo.Limit, branchPoint, graph); ok {
+		result = append(result, constraint.LeLenOf{X: varPath, Array: arrPath, Offset: offset})
 	} else {
 		return nil
 	}
@@ -267,8 +266,7 @@ func NumericForConstraints(graph *cfg.Graph, branchPoint cfg.Point, varName stri
 	return result
 }
 
-// extractLenOfPath extracts the array path from a #arr expression.
-func ExtractLenOfPath(expr ast.Expr, p cfg.Point, graph *cfg.Graph) constraint.Path {
+func ExtractLenPath(expr ast.Expr, p cfg.Point, graph *cfg.Graph) constraint.Path {
 	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
 	if !ok {
 		return constraint.Path{}
@@ -295,6 +293,46 @@ func ExtractLenOfPath(expr ast.Expr, p cfg.Point, graph *cfg.Graph) constraint.P
 	}
 	lenPath := constraint.Path{Root: name, Symbol: sym}
 	return path.WithVersion(lenPath, graph, p)
+}
+
+// ExtractLenBound extracts symbolic len-path bound with an optional constant offset.
+//
+// Supported forms:
+//   - #arr          => (arr, 0)
+//   - #arr - K      => (arr, -K)
+//   - #arr + K      => (arr, +K)
+func ExtractLenBound(expr ast.Expr, p cfg.Point, graph *cfg.Graph) (constraint.Path, int64, bool) {
+	if arrPath := ExtractLenPath(expr, p, graph); !arrPath.IsEmpty() {
+		return arrPath, 0, true
+	}
+	op, ok := expr.(*ast.ArithmeticOpExpr)
+	if !ok {
+		return constraint.Path{}, 0, false
+	}
+	if op.Operator != "+" && op.Operator != "-" {
+		return constraint.Path{}, 0, false
+	}
+	arrPath := ExtractLenPath(op.Lhs, p, graph)
+	if arrPath.IsEmpty() {
+		return constraint.Path{}, 0, false
+	}
+	k, ok := numconst.IntConstFromExpr(op.Rhs)
+	if !ok {
+		return constraint.Path{}, 0, false
+	}
+	if op.Operator == "-" {
+		k = -k
+	}
+	return arrPath, k, true
+}
+
+// ExtractLenOfPath preserves legacy behavior for callers/tests that need only the path.
+func ExtractLenOfPath(expr ast.Expr, p cfg.Point, graph *cfg.Graph) constraint.Path {
+	arrPath, _, ok := ExtractLenBound(expr, p, graph)
+	if !ok {
+		return constraint.Path{}
+	}
+	return arrPath
 }
 
 // findBranchEdges determines which successor is the true vs false edge.
@@ -392,10 +430,11 @@ func ConstraintsFromCallOnReturn(
 	graph *cfg.Graph,
 	moduleBindings *bind.BindingTable,
 ) constraint.Condition {
-	if info == nil || callsite.IsMethodLikeCallInfo(info) {
+	if info == nil {
 		return constraint.Condition{}
 	}
-	if len(info.Args) == 0 {
+	callArgs := runtimeCallArgs(info)
+	if len(callArgs) == 0 {
 		return constraint.Condition{}
 	}
 
@@ -404,8 +443,8 @@ func ConstraintsFromCallOnReturn(
 	// TypeName(x) pattern - check metatype
 	if info.CalleeName != "" && typeKeyResolver != nil {
 		if typeKey, ok := typeKeyResolver(info.CalleeName, sc); ok && !typeKey.IsZero() {
-			if len(info.Args) > 0 {
-				argPath := path.FromExprWithBindingsAt(info.Args[0], constResolver, bindings, graph, p)
+			if len(callArgs) > 0 {
+				argPath := path.FromExprWithBindingsAt(callArgs[0], constResolver, bindings, graph, p)
 				if !argPath.IsEmpty() {
 					return constraint.FromConstraints(constraint.HasType{Path: argPath, Type: typeKey})
 				}
@@ -418,8 +457,8 @@ func ConstraintsFromCallOnReturn(
 		return constraint.Condition{}
 	}
 
-	argPaths := make([]constraint.Path, len(info.Args))
-	for i, arg := range info.Args {
+	argPaths := make([]constraint.Path, len(callArgs))
+	for i, arg := range callArgs {
 		argPaths[i] = path.FromExprWithBindingsAt(arg, constResolver, bindings, graph, p)
 	}
 
@@ -432,47 +471,202 @@ func ConstraintsFromCallOnReturn(
 		EffectBySym:   effectLookupSym,
 	}
 
-	var result constraint.Condition
-	for _, disj := range eff.OnReturn.Disjuncts {
-		subDisj := constraint.SubstituteConjunction(disj, argPaths)
-		subDisj = normalizePathConstraints(subDisj)
-		subDisj = append(subDisj, siblingConstraintsFromOnReturn(subDisj, inputs, bindings, graph, p)...)
-		cond := constraint.FromConjunction(subDisj)
+	// OnReturn summarizes all normal-return paths. At call sites we may only
+	// apply constraints guaranteed across every disjunct; disjunct-local facts
+	// are not branch-correlated in caller flow and cause unsound narrowing.
+	templateMust := eff.OnReturn.MustConstraints()
+	if len(templateMust) == 0 {
+		return constraint.Condition{}
+	}
 
-		for _, c := range disj {
-			switch v := c.(type) {
-			case constraint.Falsy:
-				if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(info.Args)); ok && argPaths[idx].IsEmpty() {
-					fallback := ce.ConditionFromExpr(info.Args[idx])
-					if fallback.HasConstraints() {
-						fallback = constraint.Not(fallback)
-						cond = constraint.And(cond, fallback)
-					}
+	must := make([]constraint.Constraint, 0, len(templateMust))
+	retTargets := callReturnTargets(info, p, graph)
+	for _, c := range templateMust {
+		switch v := c.(type) {
+		case constraint.Falsy:
+			if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(callArgs)); ok && argPaths[idx].IsEmpty() {
+				fallback := ce.ConditionFromExpr(callArgs[idx])
+				if fallback.HasConstraints() {
+					must = append(must, constraint.Not(fallback).MustConstraints()...)
 				}
-			case constraint.Truthy:
-				if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(info.Args)); ok && argPaths[idx].IsEmpty() {
-					fallback := ce.ConditionFromExpr(info.Args[idx])
-					if fallback.HasConstraints() {
-						cond = constraint.And(cond, fallback)
-					}
+				continue
+			}
+		case constraint.Truthy:
+			if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(callArgs)); ok && argPaths[idx].IsEmpty() {
+				fallback := ce.ConditionFromExpr(callArgs[idx])
+				if fallback.HasConstraints() {
+					must = append(must, fallback.MustConstraints()...)
 				}
+				continue
+			}
+		case constraint.EqPath:
+			if fallback, ok := callConstraintFallbackFromArgs(ce, callArgs, argPaths, v, true); ok {
+				must = append(must, fallback...)
+				continue
+			}
+		case constraint.NotEqPath:
+			if fallback, ok := callConstraintFallbackFromArgs(ce, callArgs, argPaths, v, false); ok {
+				must = append(must, fallback...)
+				continue
 			}
 		}
 
-		if cond.IsTrue() {
-			return constraint.TrueCondition()
-		}
-		if cond.IsFalse() || !cond.HasConstraints() {
-			continue
-		}
-		if !result.HasConstraints() {
-			result = cond
-		} else {
-			result = constraint.Or(result, cond)
+		sub := constraint.FromConstraints(c).Substitute(argPaths)
+		for _, mc := range sub.MustConstraints() {
+			must = append(must, substituteReturnConstraintPaths(mc, retTargets))
 		}
 	}
+	must = normalizePathConstraints(must)
+	if len(must) == 0 {
+		return constraint.Condition{}
+	}
+	must = append(must, siblingConstraintsFromOnReturn(must, inputs, bindings, graph, p)...)
+	cond := constraint.FromConjunction(must)
 
-	return result
+	if cond.IsFalse() || !cond.HasConstraints() {
+		return constraint.Condition{}
+	}
+	return cond
+}
+
+func runtimeCallArgs(info *cfg.CallInfo) []ast.Expr {
+	if info == nil {
+		return nil
+	}
+	n := callsite.RuntimeArgCount(info)
+	if n == 0 {
+		return nil
+	}
+	args := make([]ast.Expr, 0, n)
+	for i := 0; i < n; i++ {
+		if arg := callsite.RuntimeArgAt(info, i); arg != nil {
+			args = append(args, arg)
+		}
+	}
+	return args
+}
+
+func callReturnTargets(info *cfg.CallInfo, p cfg.Point, graph *cfg.Graph) map[int]constraint.Path {
+	if info == nil || graph == nil {
+		return nil
+	}
+	assign := graph.Assign(p)
+	if assign == nil || len(assign.Targets) == 0 {
+		return nil
+	}
+	out := make(map[int]constraint.Path)
+	for i := range assign.Targets {
+		call, retIdx := assign.CallForTarget(i)
+		if call != info || retIdx < 0 {
+			continue
+		}
+		target, ok := assign.TargetAt(i)
+		if !ok || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+			continue
+		}
+		out[retIdx] = path.WithVersion(constraint.Path{
+			Root:   target.Name,
+			Symbol: target.Symbol,
+		}, graph, p)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func substituteReturnConstraintPaths(c constraint.Constraint, retTargets map[int]constraint.Path) constraint.Constraint {
+	if len(retTargets) == 0 {
+		return c
+	}
+	subPath := func(p constraint.Path) constraint.Path {
+		if p.Symbol != 0 {
+			return p
+		}
+		idx := constraint.ReturnIndexFromString(p.Root)
+		if idx < 0 {
+			return p
+		}
+		target, ok := retTargets[idx]
+		if !ok || target.IsEmpty() {
+			return p
+		}
+		out := target
+		if len(p.Segments) > 0 {
+			out.Segments = append(append([]constraint.Segment{}, out.Segments...), p.Segments...)
+		}
+		return out
+	}
+	return constraint.VisitConstraint(c, constraint.ConstraintVisitor[constraint.Constraint]{
+		Truthy: func(v constraint.Truthy) constraint.Constraint { v.Path = subPath(v.Path); return v },
+		Falsy:  func(v constraint.Falsy) constraint.Constraint { v.Path = subPath(v.Path); return v },
+		IsNil:  func(v constraint.IsNil) constraint.Constraint { v.Path = subPath(v.Path); return v },
+		NotNil: func(v constraint.NotNil) constraint.Constraint { v.Path = subPath(v.Path); return v },
+		HasType: func(v constraint.HasType) constraint.Constraint {
+			v.Path = subPath(v.Path)
+			return v
+		},
+		NotHasType: func(v constraint.NotHasType) constraint.Constraint {
+			v.Path = subPath(v.Path)
+			return v
+		},
+		HasField: func(v constraint.HasField) constraint.Constraint {
+			v.Path = subPath(v.Path)
+			return v
+		},
+		FieldEquals: func(v constraint.FieldEquals) constraint.Constraint {
+			v.Target = subPath(v.Target)
+			return v
+		},
+		FieldNotEquals: func(v constraint.FieldNotEquals) constraint.Constraint {
+			v.Target = subPath(v.Target)
+			return v
+		},
+		IndexEquals: func(v constraint.IndexEquals) constraint.Constraint {
+			v.Target = subPath(v.Target)
+			return v
+		},
+		IndexNotEquals: func(v constraint.IndexNotEquals) constraint.Constraint {
+			v.Target = subPath(v.Target)
+			return v
+		},
+		EqPath: func(v constraint.EqPath) constraint.Constraint {
+			v.Left = subPath(v.Left)
+			v.Right = subPath(v.Right)
+			return constraint.NewEqPath(v.Left, v.Right)
+		},
+		NotEqPath: func(v constraint.NotEqPath) constraint.Constraint {
+			v.Left = subPath(v.Left)
+			v.Right = subPath(v.Right)
+			return constraint.NewNotEqPath(v.Left, v.Right)
+		},
+		FieldEqualsPath: func(v constraint.FieldEqualsPath) constraint.Constraint {
+			v.Target = subPath(v.Target)
+			v.Value = subPath(v.Value)
+			return v
+		},
+		FieldNotEqualsPath: func(v constraint.FieldNotEqualsPath) constraint.Constraint {
+			v.Target = subPath(v.Target)
+			v.Value = subPath(v.Value)
+			return v
+		},
+		IndexEqualsPath: func(v constraint.IndexEqualsPath) constraint.Constraint {
+			v.Target = subPath(v.Target)
+			v.Value = subPath(v.Value)
+			return v
+		},
+		IndexNotEqualsPath: func(v constraint.IndexNotEqualsPath) constraint.Constraint {
+			v.Target = subPath(v.Target)
+			v.Value = subPath(v.Value)
+			return v
+		},
+		KeyOf: func(v constraint.KeyOf) constraint.Constraint {
+			v.Table = subPath(v.Table)
+			v.Key = subPath(v.Key)
+			return v
+		},
+		Default: func(constraint.Constraint) constraint.Constraint { return c },
+	})
 }
 
 func siblingConstraintsFromOnReturn(disj []constraint.Constraint, inputs *flow.Inputs, bindings *bind.BindingTable, graph *cfg.Graph, p cfg.Point) []constraint.Constraint {
@@ -566,6 +760,57 @@ func normalizePathConstraint(c constraint.Constraint) constraint.Constraint {
 	return c
 }
 
+// callConstraintFallbackFromArgs canonicalizes EqPath/NotEqPath placeholder
+// constraints when one argument is non-path (for example literals or #expr).
+// In these cases direct path substitution drops the constraint; we recover by
+// re-extracting equivalent condition constraints from the original call args.
+func callConstraintFallbackFromArgs(
+	ce *ConditionExtractor,
+	args []ast.Expr,
+	argPaths []constraint.Path,
+	c constraint.Constraint,
+	equality bool,
+) ([]constraint.Constraint, bool) {
+	if ce == nil || len(args) == 0 {
+		return nil, false
+	}
+
+	var left, right constraint.Path
+	switch v := c.(type) {
+	case constraint.EqPath:
+		left, right = v.Left, v.Right
+	case constraint.NotEqPath:
+		left, right = v.Left, v.Right
+	default:
+		return nil, false
+	}
+
+	lIdx, lOK := constraint.PlaceholderArgIndex(left, len(args))
+	rIdx, rOK := constraint.PlaceholderArgIndex(right, len(args))
+	if !lOK || !rOK {
+		return nil, false
+	}
+	if lIdx >= len(argPaths) || rIdx >= len(argPaths) {
+		return nil, false
+	}
+	// If both arguments resolve to concrete paths, regular substitution keeps
+	// the original relation and we should not duplicate constraints here.
+	if !argPaths[lIdx].IsEmpty() && !argPaths[rIdx].IsEmpty() {
+		return nil, false
+	}
+
+	var cond constraint.Condition
+	if equality {
+		cond = ce.ConditionFromEquality(args[lIdx], args[rIdx])
+	} else {
+		cond = ce.ConditionFromInequality(args[lIdx], args[rIdx])
+	}
+	if !cond.HasConstraints() {
+		return nil, false
+	}
+	return cond.MustConstraints(), true
+}
+
 // ExtractFunctionEffect extracts the function effect from a call using symbol-based lookup.
 // All functions in CFG have symbols, so this is the canonical effect resolution path.
 func ExtractFunctionEffect(
@@ -577,51 +822,21 @@ func ExtractFunctionEffect(
 	graph *cfg.Graph,
 	moduleBindings *bind.BindingTable,
 ) *constraint.FunctionEffect {
-	candidates := calleeSymbolCandidatesForEffects(info, graph, moduleBindings)
-
-	// Primary lookup: by canonical callsite symbol candidates.
-	if effectLookupSym != nil {
-		for _, sym := range candidates {
-			if eff := effectLookupSym(sym); eff != nil {
-				return eff
-			}
-		}
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
 	}
-
-	// Fallback: extract effect from synthesized type
-	if synthFn != nil && info.Callee != nil {
-		if fnType := synthFn(info.Callee, p); fnType != nil {
-			if eff := ExtractEffectFromType(fnType); eff != nil {
-				return eff
-			}
-		}
-	}
-
-	// Fallback: extract effect from resolved type
-	if symResolver != nil {
-		for _, sym := range candidates {
-			if looked, ok := symResolver(p, sym); ok {
-				if eff := ExtractEffectFromType(looked); eff != nil {
-					return eff
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-func ExtractEffectFromType(t typ.Type) *constraint.FunctionEffect {
-	if t == nil {
-		return nil
-	}
-	unwrapped := unwrap.Alias(t)
-	if fn, ok := unwrapped.(*typ.Function); ok && fn != nil && fn.Refinement != nil {
-		if e, ok := fn.Refinement.(*constraint.FunctionEffect); ok {
-			return e
-		}
-	}
-	return nil
+	return callsite.ResolveCalleeEffect(
+		info,
+		p,
+		graph,
+		bindings,
+		moduleBindings,
+		effectLookupSym,
+		synthFn,
+		symResolver,
+		checkeffects.EffectFromType,
+	)
 }
 
 // CallTerminates checks if a call is to a function that never returns.
@@ -638,61 +853,24 @@ func CallTerminates(
 	if info == nil {
 		return false
 	}
-	candidates := calleeSymbolCandidatesForEffects(info, graph, moduleBindings)
-
-	// Primary check: canonical callsite symbol candidates.
-	if effectLookupSym != nil {
-		for _, sym := range candidates {
-			if eff := effectLookupSym(sym); eff != nil && eff.Terminates {
-				return true
-			}
-		}
-	}
-
-	// Check synthesized type for termination indicators
-	var fnType typ.Type
-	if synthFn != nil && info.Callee != nil {
-		fnType = synthFn(info.Callee, p)
-	}
-	if fnType == nil && symResolver != nil {
-		for _, sym := range candidates {
-			if looked, ok := symResolver(p, sym); ok {
-				fnType = looked
-				if fnType != nil {
-					break
-				}
-			}
-		}
-	}
-	if fn, ok := fnType.(*typ.Function); ok && fn != nil {
-		if len(fn.Returns) == 1 && fn.Returns[0] != nil && fn.Returns[0].Kind().IsNever() {
-			return true
-		}
-		if fn.Refinement != nil {
-			if eff, ok := fn.Refinement.(*constraint.FunctionEffect); ok && eff.Terminates {
-				return true
-			}
-		}
-		if fn.Effects != nil {
-			if row, ok := fn.Effects.(effect.Row); ok {
-				// Only Diverge marks definite non-return.
-				// Throw means MAY throw, not always throws.
-				if row.HasDiverge() {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
-func calleeSymbolCandidatesForEffects(info *cfg.CallInfo, graph *cfg.Graph, moduleBindings *bind.BindingTable) []cfg.SymbolID {
 	var bindings *bind.BindingTable
 	if graph != nil {
 		bindings = graph.Bindings()
 	}
-	return callsite.CalleeSymbolCandidatesWithAliases(info, graph, bindings, moduleBindings)
+	if eff := callsite.ResolveCalleeEffect(
+		info,
+		p,
+		graph,
+		bindings,
+		moduleBindings,
+		effectLookupSym,
+		synthFn,
+		symResolver,
+		checkeffects.EffectFromType,
+	); eff != nil && eff.Terminates {
+		return true
+	}
+	return false
 }
 
 // PointHasTerminatingCallSite reports whether any callsite represented at point p
@@ -794,7 +972,8 @@ func ExtractPredicateLinkFromCallInfo(
 	if returnIndex != 0 {
 		return nil
 	}
-	if len(callInfo.Args) == 0 {
+	callArgs := runtimeCallArgs(callInfo)
+	if len(callArgs) == 0 {
 		return nil
 	}
 
@@ -805,8 +984,8 @@ func ExtractPredicateLinkFromCallInfo(
 
 	bindings := resolve.GetBindings(inputs)
 	constResolver := predicate.BuildConstResolver(inputs, p)
-	argPaths := make([]constraint.Path, len(callInfo.Args))
-	for i, arg := range callInfo.Args {
+	argPaths := make([]constraint.Path, len(callArgs))
+	for i, arg := range callArgs {
 		argPaths[i] = path.FromExprWithBindingsAt(arg, constResolver, bindings, graph, p)
 	}
 

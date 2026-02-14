@@ -45,6 +45,28 @@ func TestExtractTypeKeys_NilBase(t *testing.T) {
 	}
 }
 
+func TestExtractTypeKeys_IncludesFlowScopes(t *testing.T) {
+	localPointType := typ.NewRecord().
+		Field("x", typ.Number).
+		Field("y", typ.Number).
+		Build()
+
+	localScope := scope.New().WithType("Point", localPointType)
+	fc := &core.FlowContext{
+		Base:   nil,
+		Scopes: map[cfg.Point]*scope.State{cfg.Point(1): localScope},
+	}
+	inputs := &flow.Inputs{
+		TypeKeys: make(map[uint64]typ.Type),
+	}
+
+	ExtractTypeKeys(fc, inputs)
+
+	if got := inputs.TypeKeys[localPointType.Hash()]; got == nil {
+		t.Fatalf("expected local scope type key for Point hash %d", localPointType.Hash())
+	}
+}
+
 func TestAddTypeKey_NilInputs(t *testing.T) {
 	AddTypeKey(nil, typ.String)
 }
@@ -251,5 +273,60 @@ func TestExtractDeclaredTypes_UnannotatedLocalFunctionStaysUnannotated(t *testin
 	}
 	if _, ok := inputs.DeclaredTypes[symA]; ok {
 		t.Fatal("unannotated local function should not be added to DeclaredTypes")
+	}
+}
+
+func TestExtractDeclaredTypes_ExplicitAnyMarksAnnotated(t *testing.T) {
+	code := `local f: any = nil`
+	chunk, err := parse.ParseString(code, "test.lua")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{HasVargs: true},
+		Stmts:   chunk,
+	}
+	graph := cfg.Build(fn)
+	if graph == nil {
+		t.Fatal("nil graph")
+	}
+
+	scopes := map[cfg.Point]*scope.State{
+		graph.Entry(): scope.New(),
+	}
+
+	fc := &core.FlowContext{
+		Graph:  graph,
+		Scopes: scopes,
+		Services: core.FlowServicesFuncs{
+			TypeExprResolver: func(ast.TypeExpr, *scope.State) typ.Type {
+				return typ.Any
+			},
+		},
+	}
+	inputs := &flow.Inputs{
+		DeclaredTypes: make(map[cfg.SymbolID]typ.Type),
+	}
+	ExtractDeclaredTypes(fc, inputs)
+
+	var symF cfg.SymbolID
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if info == nil || !info.IsLocal {
+			return
+		}
+		for _, target := range info.Targets {
+			if target.Kind == cfg.TargetIdent && target.Name == "f" {
+				symF = target.Symbol
+			}
+		}
+	})
+	if symF == 0 {
+		t.Fatal("failed to resolve f symbol")
+	}
+	if inputs.AnnotatedVars == nil || !inputs.AnnotatedVars[symF] {
+		t.Fatal("explicit any annotation should mark AnnotatedVars")
+	}
+	if got := inputs.DeclaredTypes[symF]; got == nil || !typ.TypeEquals(got, typ.Any) {
+		t.Fatalf("expected declared type any, got %v", got)
 	}
 }

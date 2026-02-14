@@ -39,7 +39,7 @@ var errorsMethods = typ.NewRecord().
 		Returns(typ.LuaError).
 		Build()).
 	Field("call_stack", typ.Func().
-		Param("err", typ.LuaError).
+		Param("err", typ.Any).
 		Returns(typ.NewOptional(CallStack)).
 		Build()).
 	Field("is", typ.Func().

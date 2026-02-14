@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -86,7 +87,7 @@ func TestExtractCallCorrelations_PassesPointToSymResolver(t *testing.T) {
 		seenPoint = p
 		return typ.Integer, true
 	}
-	_, _ = extractCallCorrelations(callInfo, nil, wantPoint, symResolver, nil, nil, nil)
+	_, _, _ = extractCallCorrelations(callInfo, nil, wantPoint, symResolver, nil, nil, nil)
 	if seenPoint != wantPoint {
 		t.Fatalf("symResolver point = %d, want %d", seenPoint, wantPoint)
 	}
@@ -116,7 +117,7 @@ func TestExtractCallCorrelations_MethodUsesCanonicalCalleeResolution(t *testing.
 		return nil, false
 	}
 
-	inverse, co := extractCallCorrelations(callInfo, nil, 1, symResolver, nil, nil, nil)
+	inverse, co, _ := extractCallCorrelations(callInfo, nil, 1, symResolver, nil, nil, nil)
 	if len(co) != 0 {
 		t.Fatalf("expected no co-correlations, got %v", co)
 	}
@@ -404,6 +405,77 @@ func TestExtractAssignments_KeysCollectorEffectFallback_TriesAllNameCandidates(t
 	}
 }
 
+func TestExtractAssignments_KeysCollector_WithFilterBranch(t *testing.T) {
+	code := `
+		local function sorted_keys(t)
+			local keys = {}
+			for k in pairs(t) do
+				table.insert(keys, k)
+			end
+			table.sort(keys)
+			return keys
+		end
+
+		local function filter_tests(entries, patterns)
+			if not patterns or #patterns == 0 then
+				return entries
+			end
+			local filtered = {}
+			for _, entry in ipairs(entries) do
+				for _, pattern in ipairs(patterns) do
+					if entry.id:find(pattern, 1, true) then
+						table.insert(filtered, entry)
+						break
+					end
+				end
+			end
+			return filtered
+		end
+
+		local entries = {}
+		local args = {}
+		if args and #args > 0 then
+			entries = filter_tests(entries, args)
+		end
+
+		local suites = {}
+		local suite_names = sorted_keys(suites)
+	`
+	chunk, err := parse.ParseString(code, "emit_keys_provenance_filter_branch.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk}, "emit_keys_provenance_filter_branch")
+	exit := graph.Exit()
+	suitesSym, ok := graph.SymbolAt(exit, "suites")
+	if !ok || suitesSym == 0 {
+		t.Fatal("expected symbol for suites")
+	}
+	suiteNamesSym, ok := graph.SymbolAt(exit, "suite_names")
+	if !ok || suiteNamesSym == 0 {
+		t.Fatal("expected symbol for suite_names")
+	}
+
+	inputs := &flow.Inputs{
+		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks:     make(map[string]flow.PredicateLink),
+		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+	}
+	ExtractAssignments(&core.FlowContext{
+		Graph: graph,
+		Derived: &core.Derived{
+			Synth: func(ast.Expr, cfg.Point) typ.Type {
+				return typ.Unknown
+			},
+		},
+	}, inputs, keyscoll.BuildKeysCollectorDetector(graph, nil))
+
+	src, ok := inputs.KeysProvenance[suiteNamesSym]
+	if !ok || src != suitesSym {
+		t.Fatalf("expected keys provenance for suite_names %d -> suites %d, got %d (present=%v)", suiteNamesSym, suitesSym, src, ok)
+	}
+}
+
 func TestExtractAssignments_IndexAssign_NonIdentifierStringKey_UsesIndexStringSegment(t *testing.T) {
 	code := `
 		local t = {}
@@ -453,6 +525,63 @@ func TestExtractAssignments_IndexAssign_NonIdentifierStringKey_UsesIndexStringSe
 	seg := got.TargetPath.Segments[0]
 	if seg.Kind != constraint.SegmentIndexString {
 		t.Fatalf("expected SegmentIndexString, got %v", seg.Kind)
+	}
+}
+
+func TestExtractAssignments_NestedDynamicIndex_LiftsToRootIndexer(t *testing.T) {
+	code := `
+		local subscribers = {}
+		local cid = "c1"
+		local sub_pid = "p1"
+
+		if not subscribers[cid] then
+			subscribers[cid] = {}
+		end
+		subscribers[cid][sub_pid] = true
+	`
+
+	chunk, err := parse.ParseString(code, "emit_nested_dynamic_index.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk}, "emit_nested_dynamic_index")
+	exit := graph.Exit()
+	subscribersSym, ok := graph.SymbolAt(exit, "subscribers")
+	if !ok || subscribersSym == 0 {
+		t.Fatal("expected symbol for subscribers")
+	}
+	cidSym, ok := graph.SymbolAt(exit, "cid")
+	if !ok || cidSym == 0 {
+		t.Fatal("expected symbol for cid")
+	}
+
+	inputs := &flow.Inputs{
+		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks:     make(map[string]flow.PredicateLink),
+		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+	}
+	ExtractAssignments(&core.FlowContext{
+		Graph: graph,
+		Derived: &core.Derived{
+			Synth: func(ast.Expr, cfg.Point) typ.Type {
+				return typ.Unknown
+			},
+		},
+	}, inputs, nil)
+
+	var lifted *flow.IndexerAssignment
+	for i := range inputs.IndexerAssignments {
+		assign := &inputs.IndexerAssignments[i]
+		if assign.Symbol != subscribersSym || assign.KeySymbol != cidSym || len(assign.Segments) != 0 {
+			continue
+		}
+			if _, ok := assign.ValType.(*typ.Map); ok {
+				lifted = assign
+				break
+			}
+		}
+	if lifted == nil {
+		t.Fatalf("expected lifted indexer assignment for nested dynamic write, got %#v", inputs.IndexerAssignments)
 	}
 }
 
@@ -515,5 +644,67 @@ func TestCorrelationsFromFunctionType_ImplicitStringErrorConvention(t *testing.T
 	}
 	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
 		t.Fatalf("unexpected convention correlation: %+v", inverse[0])
+	}
+}
+
+func TestCorrelationsFromFunctionType_ImplicitStructuredErrorConvention(t *testing.T) {
+	errorType := typ.NewRecord().
+		Field("status_code", typ.Number).
+		Field("message", typ.String).
+		Build()
+	fnType := typ.Func().
+		Returns(typ.NewOptional(typ.String), typ.NewOptional(errorType)).
+		Build()
+	inverse, co := correlationsFromFunctionType(fnType)
+	if len(co) != 0 {
+		t.Fatalf("expected no co-correlations, got %v", co)
+	}
+	if len(inverse) != 1 {
+		t.Fatalf("expected one convention-based correlation, got %v", inverse)
+	}
+	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
+		t.Fatalf("unexpected convention correlation: %+v", inverse[0])
+	}
+}
+
+func TestCorrelationsFromFunctionType_NoImplicitStructuredErrorWithoutMessage(t *testing.T) {
+	auxType := typ.NewRecord().
+		Field("status_code", typ.Number).
+		Build()
+	fnType := typ.Func().
+		Returns(typ.NewOptional(typ.String), typ.NewOptional(auxType)).
+		Build()
+	inverse, co := correlationsFromFunctionType(fnType)
+	if len(inverse) != 0 || len(co) != 0 {
+		t.Fatalf("expected no implicit correlations without message-like error slot, got inverse=%v co=%v", inverse, co)
+	}
+}
+
+func TestGuardedTypeCorrelationsFromCall_CallbackReturnOnTruthy(t *testing.T) {
+	fnType := typ.Func().
+		Param("f", typ.Any).
+		Returns(typ.Boolean, typ.Any).
+		Spec(contract.NewSpec().WithEffects(effect.Return{
+			ReturnIndex: 1,
+			Transform:   effect.CallbackReturn{CallbackParam: effect.ParamRef{Index: 0}},
+		})).
+		Build()
+
+	callInfo := &cfg.CallInfo{
+		Args: []ast.Expr{&ast.FunctionExpr{}},
+	}
+	synth := func(ast.Expr, cfg.Point) typ.Type {
+		return typ.Func().Returns(typ.String).Build()
+	}
+
+	got := guardedTypeCorrelationsFromCall(fnType, callInfo, synth, 1)
+	if len(got) != 1 {
+		t.Fatalf("expected one guarded correlation, got %v", got)
+	}
+	if got[0].GuardIndex != 0 || got[0].TargetIndex != 1 || !got[0].GuardOnTruthy {
+		t.Fatalf("unexpected guarded correlation shape: %+v", got[0])
+	}
+	if !typ.TypeEquals(got[0].TargetType, typ.String) {
+		t.Fatalf("expected guarded target type string, got %v", got[0].TargetType)
 	}
 }

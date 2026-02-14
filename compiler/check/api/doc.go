@@ -30,6 +30,7 @@
 // The [Facts] type bundles interprocedural analysis results for a single
 // function graph:
 //
+//   - [FunctionFacts]: Canonical per-function return/signature facts
 //   - [ReturnSummaries]: Inferred return types by function symbol
 //   - [NarrowReturnSummaries]: Post-narrowing return types
 //   - [ParamHints]: Parameter types inferred from call sites

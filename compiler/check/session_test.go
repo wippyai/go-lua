@@ -8,12 +8,49 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/store"
+	"github.com/wippyai/go-lua/compiler/stdlib"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/io"
+	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+func newSessionTestChecker(imports map[string]*io.Manifest) *Checker {
+	database := db.New()
+	for path, manifest := range imports {
+		if manifest != nil {
+			database.Connect(path, manifest)
+		}
+	}
+
+	globalTypes := make(map[string]typ.Type)
+	for name, t := range stdlib.Library() {
+		globalTypes[name] = t
+	}
+	for _, manifest := range imports {
+		if manifest == nil {
+			continue
+		}
+		if manifest.Export != nil {
+			globalTypes[manifest.Path] = manifest.Export
+		}
+		for name, t := range manifest.AllGlobals() {
+			globalTypes[name] = t
+		}
+	}
+
+	return NewChecker(database, Deps{
+		Types:       core.NewEngineWithStdlib(stdlib.EngineConfig()),
+		Stdlib:      scope.NewWithBuiltins(),
+		GlobalTypes: globalTypes,
+		Resolver: &core.FuncResolver{
+			FieldFunc: core.Field,
+			IndexFunc: core.Index,
+		},
+	})
+}
 
 func TestNew(t *testing.T) {
 	ctx := db.NewQueryContext(db.New())
@@ -100,6 +137,167 @@ func TestSession_ManifestVars(t *testing.T) {
 
 	if sess.ManifestVars["PKG"] != "/path/to/pkg" {
 		t.Error("ManifestVars not stored correctly")
+	}
+}
+
+func TestSession_ExportManifest_IncludesFunctionSummaries(t *testing.T) {
+	checker := newSessionTestChecker(nil)
+	sess := checker.Check(`
+		local M = {}
+
+		function M.not_nil(x: any): any
+			if x == nil then
+				error("nil")
+			end
+			return x
+		end
+
+		return M
+	`, "assert.lua")
+
+	manifest := sess.ExportManifest("assert")
+	if manifest == nil {
+		t.Fatal("ExportManifest should return manifest")
+	}
+	if manifest.Path != "assert" {
+		t.Fatalf("manifest.Path = %q, want %q", manifest.Path, "assert")
+	}
+
+	summary, ok := manifest.LookupSummary("not_nil")
+	if !ok || summary == nil {
+		t.Fatal("expected not_nil summary in exported manifest")
+	}
+	if !summary.Ensures.HasConstraints() {
+		t.Fatal("expected not_nil summary to carry ensures constraints")
+	}
+}
+
+func TestSession_ExportManifest_EnablesCrossModuleNarrowing(t *testing.T) {
+	producerChecker := newSessionTestChecker(nil)
+	producer := producerChecker.Check(`
+		local M = {}
+
+		function M.not_nil(x: any): any
+			if x == nil then
+				error("nil")
+			end
+			return x
+		end
+
+		return M
+	`, "assert.lua")
+
+	assertManifest := producer.ExportManifest("assert")
+	consumerChecker := newSessionTestChecker(map[string]*io.Manifest{
+		"assert": assertManifest,
+	})
+	consumer := consumerChecker.Check(`
+		local assert = require("assert")
+
+		local function maybe_name(): string?
+			return "ok"
+		end
+
+		local x = maybe_name()
+		assert.not_nil(x)
+		local n = #x
+		return n
+	`, "consumer.lua")
+
+	for _, d := range consumer.Diagnostics {
+		if d.Severity == diag.SeverityError {
+			t.Fatalf("unexpected error diagnostic: %s", d.Message)
+		}
+	}
+}
+
+func TestSession_ExportManifest_PreservesEqSummaryConstraints(t *testing.T) {
+	producerChecker := newSessionTestChecker(nil)
+	producer := producerChecker.Check(`
+		local M = {}
+
+		function M.eq(actual: any, expected: any, msg: string?)
+			if actual ~= expected then
+				error(msg or "assertion failed")
+			end
+		end
+
+		return M
+	`, "assert.lua")
+
+	assertManifest := producer.ExportManifest("assert")
+	summary, ok := assertManifest.LookupSummary("eq")
+	if !ok || summary == nil {
+		t.Fatal("expected eq summary in exported manifest")
+	}
+	if !summary.Ensures.HasConstraints() {
+		t.Fatal("expected eq summary to carry ensures constraints")
+	}
+
+	foundEq := false
+	param0 := constraint.ParamPath(0).Key()
+	param1 := constraint.ParamPath(1).Key()
+	for _, c := range summary.Ensures.AllConstraints() {
+		if eq, ok := c.(constraint.EqPath); ok {
+			leftKey := eq.Left.Key()
+			rightKey := eq.Right.Key()
+			if leftKey == param0 && rightKey == param1 {
+				foundEq = true
+				break
+			}
+			if leftKey == param1 && rightKey == param0 {
+				foundEq = true
+				break
+			}
+		}
+	}
+	if !foundEq {
+		t.Fatalf("expected EqPath($0,$1) in ensures, got: %v", summary.Ensures)
+	}
+}
+
+func TestSession_ExportManifest_EnablesCrossModuleEqLenNarrowing(t *testing.T) {
+	producerChecker := newSessionTestChecker(nil)
+	producer := producerChecker.Check(`
+		local M = {}
+
+		function M.eq(actual: any, expected: any, msg: string?)
+			if actual ~= expected then
+				error(msg or "assertion failed")
+			end
+		end
+
+		return M
+	`, "assert.lua")
+
+	assertManifest := producer.ExportManifest("assert")
+	consumerChecker := newSessionTestChecker(map[string]*io.Manifest{
+		"assert": assertManifest,
+	})
+
+	consumer := consumerChecker.Check(`
+		type Row = { stream: string }
+		local assert = require("assert")
+
+		local function parse_stream_lines(raw: string?): {Row}
+			local lines = {}
+			if raw and raw ~= "" then
+				table.insert(lines, { stream = "ok" })
+			end
+			return lines
+		end
+
+		local maybe_raw: string? = "raw"
+		local result = parse_stream_lines(maybe_raw)
+		assert.eq(#result, 1, "one row")
+		local line: string = result[1].stream
+		return line
+	`, "consumer.lua")
+
+	for _, d := range consumer.Diagnostics {
+		if d.Severity == diag.SeverityError {
+			t.Fatalf("unexpected error diagnostic: %s", d.Message)
+		}
 	}
 }
 

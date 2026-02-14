@@ -916,6 +916,9 @@ func (ls *LState) typeCall(lt *LType, base, nargs, nret int) {
 				}
 			}
 		}
+		if nret < 0 {
+			ls.reg.SetTop(base + 1)
+		}
 	case 0:
 		if nargs != 1 {
 			ls.RaiseError("type %s validation expects 1 value, got %d", lt.String(), nargs)
@@ -935,6 +938,9 @@ func (ls *LState) typeCall(lt *LType, base, nargs, nret int) {
 					ls.reg.Set(base+i, LNil)
 				}
 			}
+		}
+		if nret < 0 {
+			ls.reg.SetTop(base + 1)
 		}
 	default:
 		ls.RaiseError("type %s does not accept mixed type/value arguments", lt.String())

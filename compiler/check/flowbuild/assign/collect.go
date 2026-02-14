@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
-	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -116,11 +115,6 @@ func CollectIndexerAssignments(
 				if synth != nil {
 					keyType = synth(k, p)
 				}
-				if keyType == nil && bindings != nil {
-					if keySym, found := bindings.SymbolOf(k); found && keySym != 0 {
-						keyType = typ.String
-					}
-				}
 			case *ast.NumberExpr:
 				keyType = typ.Integer
 			default:
@@ -128,15 +122,7 @@ func CollectIndexerAssignments(
 					keyType = synth(target.Key, p)
 				}
 			}
-			if keyType == nil {
-				keyType = typ.String
-			}
-
-			// Strip falsy types (nil, false) from key types since they can't be valid map keys.
-			keyType = narrow.ToTruthy(keyType)
-			if keyType == nil {
-				keyType = typ.String
-			}
+			keyType = canonicalDynamicKeyType(keyType)
 
 			// Determine value type
 			var valType typ.Type

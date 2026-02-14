@@ -3,7 +3,9 @@ package pipeline
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -38,5 +40,49 @@ func TestRunnerConfig_Fields(t *testing.T) {
 	}
 	if cfg.MaxScopeDepth != 5 {
 		t.Error("field not set")
+	}
+}
+
+type computePassProbe struct {
+	name   string
+	called int
+	value  any
+}
+
+func (p *computePassProbe) Name() string { return p.name }
+
+func (p *computePassProbe) Run(_ *cfg.Graph, _ map[cfg.Point]*scope.State) any {
+	p.called++
+	return p.value
+}
+
+func TestRunnerRunComputePasses_NoGraphOrNoPasses(t *testing.T) {
+	r := NewRunner(RunnerConfig{})
+	if extras := r.runComputePasses(nil, nil); extras != nil {
+		t.Fatalf("expected nil extras for nil graph, got %#v", extras)
+	}
+	if extras := r.runComputePasses(&cfg.Graph{}, nil); extras != nil {
+		t.Fatalf("expected nil extras for empty pass list, got %#v", extras)
+	}
+}
+
+func TestRunnerRunComputePasses_CollectsResults(t *testing.T) {
+	p1 := &computePassProbe{name: "p1", value: 42}
+	p2 := &computePassProbe{name: "p2", value: "ok"}
+	r := NewRunner(RunnerConfig{
+		ComputePasses: []api.ComputePass{p1, p2},
+	})
+
+	extras := r.runComputePasses(&cfg.Graph{}, map[cfg.Point]*scope.State{
+		1: scope.New(),
+	})
+	if p1.called != 1 || p2.called != 1 {
+		t.Fatalf("expected passes to run once each, got p1=%d p2=%d", p1.called, p2.called)
+	}
+	if got := extras["p1"]; got != 42 {
+		t.Fatalf("expected extras[p1]=42, got %#v", got)
+	}
+	if got := extras["p2"]; got != "ok" {
+		t.Fatalf("expected extras[p2]=ok, got %#v", got)
 	}
 }

@@ -321,3 +321,77 @@ func TestManifest_EnrichedExport_Empty(t *testing.T) {
 		t.Error("manifest with no export should return nil")
 	}
 }
+
+func TestManifest_EnrichedExport_SummarySuffixFallback(t *testing.T) {
+	m := NewManifest("test")
+
+	baseFn := typ.Func().
+		Param("v", typ.Any).
+		OptParam("msg", typ.String).
+		Returns(typ.Any).
+		Build()
+	m.SetExport(typ.NewRecord().Field("not_nil", baseFn).Build())
+
+	summary := NewSummary([]typ.Type{typ.Any, typ.NewOptional(typ.String)}, []typ.Type{typ.Any})
+	summary.Ensures = constraint.FromConstraints(constraint.NotNil{Path: constraint.ParamPath(0)})
+	m.DefineSummary("test.not_nil", summary)
+
+	enriched := m.EnrichedExport()
+	rec, ok := enriched.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record export, got %T", enriched)
+	}
+	field := rec.GetField("not_nil")
+	if field == nil {
+		t.Fatal("missing not_nil field")
+	}
+	fn, ok := field.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("not_nil field is not function: %T", field.Type)
+	}
+	refinement, ok := fn.Refinement.(*constraint.FunctionEffect)
+	if !ok || refinement == nil || !refinement.OnReturn.HasConstraints() {
+		t.Fatalf("expected suffix-matched summary refinement on not_nil, got %#v", fn.Refinement)
+	}
+
+	if _, found := m.LookupSummary("not_nil"); !found {
+		t.Fatal("expected LookupSummary suffix fallback for not_nil")
+	}
+}
+
+func TestManifest_EnrichedExport_SummarySuffixAmbiguityDoesNotGuess(t *testing.T) {
+	m := NewManifest("test")
+	baseFn := typ.Func().
+		Param("actual", typ.Any).
+		Param("expected", typ.Any).
+		Build()
+	m.SetExport(typ.NewRecord().Field("eq", baseFn).Build())
+
+	s1 := NewSummary([]typ.Type{typ.Any, typ.Any}, nil)
+	s1.Ensures = constraint.FromConstraints(constraint.Truthy{Path: constraint.ParamPath(0)})
+	s2 := NewSummary([]typ.Type{typ.Any, typ.Any}, nil)
+	s2.Ensures = constraint.FromConstraints(constraint.Truthy{Path: constraint.ParamPath(1)})
+	m.DefineSummary("assert.eq", s1)
+	m.DefineSummary("test.eq", s2)
+
+	enriched := m.EnrichedExport()
+	rec, ok := enriched.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record export, got %T", enriched)
+	}
+	field := rec.GetField("eq")
+	if field == nil {
+		t.Fatal("missing eq field")
+	}
+	fn, ok := field.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("eq field is not function: %T", field.Type)
+	}
+	if fn.Refinement != nil {
+		t.Fatalf("ambiguous suffix summaries must not be applied, got refinement %#v", fn.Refinement)
+	}
+
+	if _, found := m.LookupSummary("eq"); found {
+		t.Fatal("expected LookupSummary to reject ambiguous suffix match")
+	}
+}

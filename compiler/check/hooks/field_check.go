@@ -25,9 +25,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
+	flowjoin "github.com/wippyai/go-lua/types/flow/join"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -45,8 +47,9 @@ func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSyn
 	seen := make(map[ast.Expr]bool)
 
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		assignView, assignResolver := applyAssignPreStateNarrowing(graph, info, p, narrowView, resolver)
 		info.EachSource(func(_ int, source ast.Expr) {
-			diags = append(diags, checkFieldExpr(source, p, narrowView, resolver, seen, sourceName)...)
+			diags = append(diags, checkFieldExpr(source, p, assignView, assignResolver, seen, sourceName)...)
 		})
 		if info.NumericFor != nil {
 			diags = append(diags, checkNumericFor(info.NumericFor, p, narrowView, sourceName)...)
@@ -199,6 +202,7 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 	case *ast.RelationalOpExpr:
 		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
 		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
+		diags = append(diags, checkRelational(e, p, narrowView, sourceName)...)
 	case *ast.ArithmeticOpExpr:
 		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
 		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
@@ -206,6 +210,17 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 	case *ast.StringConcatOpExpr:
 		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
 		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
+		diags = append(diags, checkStringConcat(e, p, narrowView, sourceName)...)
+	case *ast.UnaryMinusOpExpr:
+		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
+		diags = append(diags, checkUnaryMinus(e, p, narrowView, sourceName)...)
+	case *ast.UnaryLenOpExpr:
+		diags = append(diags, checkUnaryLength(e, p, narrowView, sourceName)...)
+	case *ast.UnaryBNotOpExpr:
+		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
+		diags = append(diags, checkUnaryBNot(e, p, narrowView, sourceName)...)
+	case *ast.UnaryNotOpExpr:
+		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
 	}
 
 	return diags
@@ -262,6 +277,83 @@ func applyLogicalOpNarrowing(
 	return localView, fieldResolverImpl{view: localView, synth: resolver.synth, bindings: resolver.bindings}
 }
 
+func applyAssignPreStateNarrowing(
+	graph *cfg.Graph,
+	info *cfg.AssignInfo,
+	p cfg.Point,
+	view api.BaseSynth,
+	resolver fieldResolverImpl,
+) (api.BaseSynth, fieldResolverImpl) {
+	if graph == nil || info == nil || view == nil || resolver.bindings == nil {
+		return view, resolver
+	}
+	if len(info.Targets) == 0 {
+		return view, resolver
+	}
+
+	assignView := view
+	assignResolver := resolver
+	for _, target := range info.Targets {
+		if target.Expr == nil {
+			continue
+		}
+		targetPath := path.FromExprWithBindings(target.Expr, nil, resolver.bindings)
+		if targetPath.IsEmpty() {
+			continue
+		}
+		preType := preAssignmentExprType(graph, target.Expr, p, view)
+		if preType == nil || preType.Kind().IsPlaceholder() {
+			continue
+		}
+		if target.Kind != cfg.TargetIdent {
+			currentType := assignView.TypeOf(target.Expr, p)
+			if currentType != nil && !currentType.Kind().IsPlaceholder() && !currentType.Kind().IsNever() {
+				// For field/index targets, apply pre-state overlays only when they
+				// are at least as specific as the current point type; otherwise we
+				// risk broadening stable map/record flows.
+				if !subtype.IsSubtype(preType, currentType) {
+					continue
+				}
+			}
+		}
+		localView := &localNarrowView{
+			base:         assignView,
+			bindings:     resolver.bindings,
+			overridePath: targetPath,
+			overrideType: preType,
+		}
+		assignView = localView
+		assignResolver = fieldResolverImpl{
+			view:     localView,
+			synth:    resolver.synth,
+			bindings: resolver.bindings,
+		}
+	}
+
+	return assignView, assignResolver
+}
+
+func preAssignmentExprType(graph *cfg.Graph, expr ast.Expr, p cfg.Point, view api.BaseSynth) typ.Type {
+	if graph == nil || expr == nil || view == nil {
+		return nil
+	}
+	preds := graph.Predecessors(p)
+	if len(preds) == 0 {
+		return nil
+	}
+
+	types := make([]typ.Type, 0, len(preds))
+	for _, pred := range preds {
+		if t := view.TypeOf(expr, pred); t != nil {
+			types = append(types, t)
+		}
+	}
+	if len(types) == 0 {
+		return nil
+	}
+	return flowjoin.Types(types...)
+}
+
 func checkArithmetic(e *ast.ArithmeticOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
 	check := func(expr ast.Expr) *diag.Diagnostic {
 		t := narrowView.TypeOf(expr, p)
@@ -286,6 +378,130 @@ func checkArithmetic(e *ast.ArithmeticOpExpr, p cfg.Point, narrowView api.BaseSy
 		return []diag.Diagnostic{*d}
 	}
 	return nil
+}
+
+func checkRelational(e *ast.RelationalOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+	switch e.Operator {
+	case "<", "<=", ">", ">=":
+	default:
+		return nil
+	}
+
+	check := func(expr ast.Expr) *diag.Diagnostic {
+		t := narrowView.TypeOf(expr, p)
+		if t == nil || ops.MayBeOrderable(t) || typ.IsNever(t) || t.Kind() == kind.Nil {
+			return nil
+		}
+		msg := "cannot compare " + typ.FormatShort(t) + ", expected orderable type"
+		_, help := diag.ContextualHelp(diag.ErrInvalidOperand, msg, "")
+		return &diag.Diagnostic{
+			Severity: diag.SeverityError,
+			Code:     diag.ErrInvalidOperand,
+			Position: diag.Position{File: sourceName, Line: expr.Line(), Column: expr.Column()},
+			Span:     ast.SpanOf(expr),
+			Message:  msg,
+			Help:     help,
+		}
+	}
+	if d := check(e.Lhs); d != nil {
+		return []diag.Diagnostic{*d}
+	}
+	if d := check(e.Rhs); d != nil {
+		return []diag.Diagnostic{*d}
+	}
+	return nil
+}
+
+func checkStringConcat(e *ast.StringConcatOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+	check := func(expr ast.Expr) *diag.Diagnostic {
+		t := narrowView.TypeOf(expr, p)
+		if t == nil || ops.MayBeStringable(t) || typ.IsNever(t) || t.Kind() == kind.Nil || isOptionalFalseOnly(t) {
+			return nil
+		}
+		msg := "cannot concatenate " + typ.FormatShort(t) + ", expected string or number"
+		_, help := diag.ContextualHelp(diag.ErrInvalidOperand, msg, "")
+		return &diag.Diagnostic{
+			Severity: diag.SeverityError,
+			Code:     diag.ErrInvalidOperand,
+			Position: diag.Position{File: sourceName, Line: expr.Line(), Column: expr.Column()},
+			Span:     ast.SpanOf(expr),
+			Message:  msg,
+			Help:     help,
+		}
+	}
+	if d := check(e.Lhs); d != nil {
+		return []diag.Diagnostic{*d}
+	}
+	if d := check(e.Rhs); d != nil {
+		return []diag.Diagnostic{*d}
+	}
+	return nil
+}
+
+func isOptionalFalseOnly(t typ.Type) bool {
+	t = unwrap.Alias(t)
+	opt, ok := t.(*typ.Optional)
+	if !ok || opt == nil || opt.Inner == nil {
+		return false
+	}
+	inner := unwrap.Alias(opt.Inner)
+	lit, ok := inner.(*typ.Literal)
+	if !ok || lit == nil {
+		return false
+	}
+	v, ok := lit.Value.(bool)
+	return ok && !v
+}
+
+func checkUnaryMinus(e *ast.UnaryMinusOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+	t := narrowView.TypeOf(e.Expr, p)
+	if t == nil || ops.IsNumeric(t) {
+		return nil
+	}
+	msg := "cannot apply unary - to " + typ.FormatShort(t) + ", expected number"
+	_, help := diag.ContextualHelp(diag.ErrInvalidOperand, msg, "")
+	return []diag.Diagnostic{{
+		Severity: diag.SeverityError,
+		Code:     diag.ErrInvalidOperand,
+		Position: diag.Position{File: sourceName, Line: e.Expr.Line(), Column: e.Expr.Column()},
+		Span:     ast.SpanOf(e.Expr),
+		Message:  msg,
+		Help:     help,
+	}}
+}
+
+func checkUnaryLength(e *ast.UnaryLenOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+	t := narrowView.TypeOf(e.Expr, p)
+	if t == nil || ops.MayHaveLength(t) || typ.IsNever(t) || t.Kind() == kind.Nil {
+		return nil
+	}
+	msg := "cannot apply length operator to " + typ.FormatShort(t) + ", expected string or table"
+	_, help := diag.ContextualHelp(diag.ErrInvalidOperand, msg, "")
+	return []diag.Diagnostic{{
+		Severity: diag.SeverityError,
+		Code:     diag.ErrInvalidOperand,
+		Position: diag.Position{File: sourceName, Line: e.Expr.Line(), Column: e.Expr.Column()},
+		Span:     ast.SpanOf(e.Expr),
+		Message:  msg,
+		Help:     help,
+	}}
+}
+
+func checkUnaryBNot(e *ast.UnaryBNotOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+	t := narrowView.TypeOf(e.Expr, p)
+	if t == nil || ops.IsBitwiseNumeric(t) {
+		return nil
+	}
+	msg := "cannot apply unary ~ to " + typ.FormatShort(t) + ", expected integer"
+	_, help := diag.ContextualHelp(diag.ErrInvalidOperand, msg, "")
+	return []diag.Diagnostic{{
+		Severity: diag.SeverityError,
+		Code:     diag.ErrInvalidOperand,
+		Position: diag.Position{File: sourceName, Line: e.Expr.Line(), Column: e.Expr.Column()},
+		Span:     ast.SpanOf(e.Expr),
+		Message:  msg,
+		Help:     help,
+	}}
 }
 
 func checkNumericFor(info *cfg.NumericForInfo, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
@@ -413,6 +629,12 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth,
 		return nil
 	}
 	keyType := narrowView.TypeOf(e.Key, p)
+	if keyType == nil {
+		// Treat unresolved key type as unknown at indexability boundary.
+		// This preserves dynamic Lua semantics for computed keys while still
+		// allowing container-specific checks to reject impossible accesses.
+		keyType = typ.Unknown
+	}
 
 	if rec, ok := unwrap.Alias(objType).(*typ.Record); ok && !rec.HasMapComponent() && !rec.Open {
 		if !isLiteralStringKeyType(keyType) {

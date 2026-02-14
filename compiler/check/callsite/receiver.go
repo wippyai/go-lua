@@ -20,9 +20,12 @@ func ForceMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, info
 		return false
 	}
 
-	sym := PreferredCalleeSymbolWithAliases(info, graph, bindings, nil, func(candidate typecfg.SymbolID) bool {
-		return symbolForcesMethodReceiver(bindings, graph, candidate)
-	})
+	sym := SelectPreferredSymbol(
+		CallableCalleeSymbolCandidates(info, graph, bindings, nil),
+		func(candidate typecfg.SymbolID) bool {
+			return symbolForcesMethodReceiver(bindings, graph, candidate)
+		},
+	)
 
 	if sym != 0 && symbolForcesMethodReceiver(bindings, graph, sym) {
 		return true
@@ -160,6 +163,15 @@ func methodSymbolFromBaseWithAliases(
 	path string,
 ) (typecfg.SymbolID, bool) {
 	if bindings == nil || baseSym == 0 {
+		return 0, false
+	}
+
+	// Always try the direct base symbol first. Alias expansion is optional
+	// enrichment and must not be required for non-alias method resolution.
+	if sym, ok := bindings.FieldSymbol(baseSym, path); ok && sym != 0 {
+		return sym, true
+	}
+	if graph == nil {
 		return 0, false
 	}
 

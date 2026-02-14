@@ -305,14 +305,25 @@ type ReturnCorrelation struct {
 	ErrorIndex int
 }
 
+// GuardedTypeCorrelation describes branch-sensitive sibling narrowing:
+// when guard return at GuardIndex is truthy/falsy (per GuardOnTruthy),
+// target return at TargetIndex narrows to TargetType.
+type GuardedTypeCorrelation struct {
+	GuardIndex    int
+	TargetIndex   int
+	GuardOnTruthy bool
+	TargetType    typ.Type
+}
+
 // SiblingAssignment tracks variables assigned from the same multi-return call.
 // Used for error return pattern: `local result, err = call()` where checking err narrows result.
 type SiblingAssignment struct {
-	Symbols        []cfg.SymbolID      // Symbol IDs in order (primary identity)
-	Names          []string            // Variable names (for constraint path construction)
-	Types          []typ.Type          // Declared types for each variable
-	Correlations   []ReturnCorrelation // Inverse correlations (ErrorReturn): value nil <-> error non-nil
-	CoCorrelations []ReturnCorrelation // Same-direction correlations (CorrelatedReturn): all nil or all non-nil
+	Symbols             []cfg.SymbolID           // Symbol IDs in order (primary identity)
+	Names               []string                 // Variable names (for constraint path construction)
+	Types               []typ.Type               // Declared types for each variable
+	Correlations        []ReturnCorrelation      // Inverse correlations (ErrorReturn): value nil <-> error non-nil
+	CoCorrelations      []ReturnCorrelation      // Same-direction correlations (CorrelatedReturn): all nil or all non-nil
+	GuardedCorrelations []GuardedTypeCorrelation // Branch-sensitive type narrowing from guard/result relations
 }
 
 // SiblingKey uniquely identifies a variable in a sibling assignment by SymbolID+SSA version.
@@ -333,7 +344,8 @@ type IndexerAssignment struct {
 	KeyVar    string               // Variable name if key is an identifier
 	KeySymbol cfg.SymbolID         // Symbol ID for the key variable (for SSA-aware lookup)
 	KeyType   typ.Type             // Optional explicit key type (overrides KeySymbol lookup)
-	ValType   typ.Type
+	ValuePath constraint.Path      // Path to value expression for flow-resolved type lookup
+	ValType   typ.Type             // Fallback type when ValuePath is unavailable
 }
 
 // TableMutatorAssignment describes table.insert-like mutations that widen

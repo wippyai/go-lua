@@ -91,8 +91,21 @@ func (s *Synthesizer) synthExprWithExpectedSingle(
 				return s.SynthFunctionTypeWithExpected(fnExpr, sc, expectedFn)
 			}
 		}
-		return s.synthExprCore(expr, sc, p, s.deps.Flow, recurse)
+		inferred := s.synthExprCore(expr, sc, p, s.deps.Flow, recurse)
+		if shouldRefineIdentWithExpected(inferred, expected) {
+			return expected
+		}
+		return inferred
 	default:
 		return s.synthExprCore(expr, sc, p, s.deps.Flow, recurse)
 	}
+}
+
+func shouldRefineIdentWithExpected(inferred, expected typ.Type) bool {
+	if inferred == nil || expected == nil {
+		return false
+	}
+	// Preserve explicit top annotations (`any`) and only use expected typing
+	// when identifier inference is unresolved.
+	return typ.IsUnknown(unwrap.Alias(inferred))
 }

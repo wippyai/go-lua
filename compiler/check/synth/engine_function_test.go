@@ -279,8 +279,8 @@ func TestSynthFunctionType_UntypedParam(t *testing.T) {
 	if len(result.Params) != 2 {
 		t.Fatalf("got %d params, want 2", len(result.Params))
 	}
-	if result.Params[1].Type != typ.Any {
-		t.Fatalf("untyped param: got %v, want any", result.Params[1].Type)
+	if result.Params[1].Type != typ.Unknown {
+		t.Fatalf("untyped param: got %v, want unknown", result.Params[1].Type)
 	}
 }
 

@@ -191,8 +191,8 @@ func TestSynthUnaryMinusCore(t *testing.T) {
 	}
 
 	result := e.TypeOf(expr, 0)
-	if result.Kind() != kind.Number {
-		t.Fatalf("got %v, want number", result)
+	if result.Kind() != kind.Integer {
+		t.Fatalf("got %v, want integer", result)
 	}
 }
 

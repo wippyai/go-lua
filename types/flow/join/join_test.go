@@ -110,6 +110,19 @@ func TestCoalesceEmptyRecordWithMap_BothPresent(t *testing.T) {
 	}
 }
 
+func TestCoalesceEmptyRecordWithArray_BothPresent(t *testing.T) {
+	arr := typ.NewArray(typ.Number)
+	rec := typ.NewRecord().Build()
+	input := []typ.Type{arr, rec}
+	result := CoalesceEmptyRecordWithArray(input)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 type (empty record removed), got %d", len(result))
+	}
+	if _, ok := result[0].(*typ.Array); !ok {
+		t.Errorf("expected array to remain, got %T", result[0])
+	}
+}
+
 func TestIsEmptyRecord_Nil(t *testing.T) {
 	if unwrap.IsEmptyRecord(nil) {
 		t.Error("nil should not be empty record")
@@ -154,6 +167,20 @@ func TestTypes_IntegrationWithCoalescing(t *testing.T) {
 	// Value should be number | boolean
 	if _, ok := m.Value.(*typ.Union); !ok {
 		t.Errorf("expected union value type, got %T", m.Value)
+	}
+}
+
+func TestTypes_IntegrationWithArrayCoalescing(t *testing.T) {
+	arr := typ.NewArray(typ.String)
+	emptyRec := typ.NewRecord().Build()
+
+	result := Types(arr, emptyRec)
+	gotArr, ok := result.(*typ.Array)
+	if !ok {
+		t.Fatalf("expected array after coalescing, got %T", result)
+	}
+	if !typ.TypeEquals(gotArr.Element, typ.String) {
+		t.Fatalf("expected string[] element, got %v", gotArr.Element)
 	}
 }
 
@@ -226,6 +253,55 @@ func TestTypes_MixedUnknown(t *testing.T) {
 	// Should have string and number only
 	if len(u.Members) != 2 {
 		t.Errorf("expected 2 members after filtering unknown, got %d", len(u.Members))
+	}
+}
+
+func TestCoalesceCompatibleRecords_MergesExtraFieldsAsOptional(t *testing.T) {
+	base := typ.NewRecord().
+		Field("status_code", typ.Number).
+		Field("message", typ.String).
+		Build()
+	withDetails := typ.NewRecord().
+		Field("status_code", typ.Number).
+		Field("message", typ.String).
+		Field("code", typ.String).
+		Field("type", typ.String).
+		Build()
+
+	result := CoalesceCompatibleRecords([]typ.Type{base, withDetails})
+	if len(result) != 1 {
+		t.Fatalf("expected one merged record, got %d", len(result))
+	}
+
+	rec, ok := result[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record, got %T", result[0])
+	}
+	fields := map[string]typ.Field{}
+	for _, f := range rec.Fields {
+		fields[f.Name] = f
+	}
+	if !fields["code"].Optional || !typ.TypeEquals(fields["code"].Type, typ.String) {
+		t.Fatalf("expected optional code:string, got %#v", fields["code"])
+	}
+	if !fields["type"].Optional || !typ.TypeEquals(fields["type"].Type, typ.String) {
+		t.Fatalf("expected optional type:string, got %#v", fields["type"])
+	}
+}
+
+func TestCoalesceCompatibleRecords_PreservesDiscriminatedUnion(t *testing.T) {
+	a := typ.NewRecord().
+		Field("kind", typ.LiteralString("a")).
+		Field("x", typ.Number).
+		Build()
+	b := typ.NewRecord().
+		Field("kind", typ.LiteralString("b")).
+		Field("y", typ.String).
+		Build()
+
+	result := CoalesceCompatibleRecords([]typ.Type{a, b})
+	if len(result) != 2 {
+		t.Fatalf("expected discriminated variants to remain separate, got %d", len(result))
 	}
 }
 

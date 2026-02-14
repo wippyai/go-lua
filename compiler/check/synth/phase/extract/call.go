@@ -417,11 +417,19 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 		return returns
 	}
 
-	transformed := transform.ApplyEffectTransform(fn, args, 0, returns[0])
-	if transformed != nil && transformed != returns[0] {
-		result := make([]typ.Type, len(returns))
-		copy(result, returns)
-		result[0] = transformed
+	var result []typ.Type
+	for i := range returns {
+		transformed := transform.ApplyEffectTransform(fn, args, i, returns[i])
+		if transformed == nil || transformed == returns[i] {
+			continue
+		}
+		if result == nil {
+			result = make([]typ.Type, len(returns))
+			copy(result, returns)
+		}
+		result[i] = transformed
+	}
+	if result != nil {
 		return result
 	}
 
