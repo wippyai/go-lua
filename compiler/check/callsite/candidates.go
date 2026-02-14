@@ -1,6 +1,10 @@
 package callsite
 
-import "github.com/wippyai/go-lua/compiler/cfg"
+import (
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
+	"github.com/wippyai/go-lua/compiler/cfg"
+)
 
 type symbolSet struct {
 	order []cfg.SymbolID
@@ -50,4 +54,19 @@ func addAliasExpansion(set *symbolSet, graph *cfg.Graph, sym cfg.SymbolID) {
 		set.Add(candidate)
 		return false
 	})
+}
+
+func exprSymbolCandidates(
+	expr ast.Expr,
+	raw cfg.SymbolID,
+	primary *bind.BindingTable,
+	fallback *bind.BindingTable,
+) []cfg.SymbolID {
+	set := newSymbolSet(3)
+	set.Add(raw)
+	set.Add(SymbolFromExpr(expr, primary))
+	if fallback != primary {
+		set.Add(SymbolFromExpr(expr, fallback))
+	}
+	return set.Slice()
 }

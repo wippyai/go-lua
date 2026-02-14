@@ -12,13 +12,7 @@ func canonicalExprSymbolCandidates(
 	primary *bind.BindingTable,
 	fallback *bind.BindingTable,
 ) []cfg.SymbolID {
-	set := newSymbolSet(3)
-	set.Add(raw)
-	set.Add(SymbolFromExpr(expr, primary))
-	if fallback != primary {
-		set.Add(SymbolFromExpr(expr, fallback))
-	}
-	return set.Slice()
+	return exprSymbolCandidates(expr, raw, primary, fallback)
 }
 
 // CanonicalSymbolFromExpr chooses a stable symbol identity for an expression.

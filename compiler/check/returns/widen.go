@@ -310,19 +310,12 @@ func WidenFuncTypes(prev, next api.FuncTypes) api.FuncTypes {
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		t := next[sym]
 		if existing := merged[sym]; existing != nil {
-			merged[sym] = maybeWidenTypeForConvergence(MergeFuncFactType(existing, t))
+			merged[sym] = maybeWidenTypeForConvergence(MergeFunctionFactType(existing, t))
 		} else {
 			merged[sym] = maybeWidenTypeForConvergence(t)
 		}
 	}
 	return merged
-}
-
-// MergeFuncFactType merges function-type facts with canonical precision policy.
-// When signatures differ only by precision (for example any/unknown params vs
-// concrete params), the more informative signature wins instead of unioning.
-func MergeFuncFactType(prev, next typ.Type) typ.Type {
-	return MergeFunctionFactType(prev, next)
 }
 
 // joinParamHintVectors joins two parameter hint vectors element-wise.
@@ -566,10 +559,6 @@ func WidenConstructorFields(prev, next api.ConstructorFields) api.ConstructorFie
 		merged[sym] = out
 	}
 	return merged
-}
-
-func mergeFuncTypes(prev, next typ.Type) typ.Type {
-	return MergeFunctionFactType(prev, next)
 }
 
 func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bool) {

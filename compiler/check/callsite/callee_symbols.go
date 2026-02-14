@@ -19,10 +19,8 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 		return nil
 	}
 	set := newSymbolSet(4)
-	set.Add(info.CalleeSymbol)
-	set.Add(SymbolFromExpr(info.Callee, primary))
-	if fallback != primary {
-		set.Add(SymbolFromExpr(info.Callee, fallback))
+	for _, sym := range exprSymbolCandidates(info.Callee, info.CalleeSymbol, primary, fallback) {
+		set.Add(sym)
 	}
 	if methodSym, ok := methodCalleeSymbolFromCall(primary, nil, info); ok {
 		set.Add(methodSym)
