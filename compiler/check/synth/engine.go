@@ -75,8 +75,7 @@ type Config struct {
 // instances for concurrent synthesis operations.
 type Engine struct {
 	*extract.Synthesizer
-	deps  *extract.Deps
-	phase api.Phase
+	deps *extract.Deps
 }
 
 // New creates a synthesis engine configured for the requested phase.
@@ -124,7 +123,6 @@ func New(cfg Config) *Engine {
 	return &Engine{
 		Synthesizer: extract.NewSynthesizer(deps, phase),
 		deps:        deps,
-		phase:       phase,
 	}
 }
 
@@ -172,15 +170,6 @@ func (e *Engine) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
 		return e.SynthMulti(expr, p, e.deps.Flow)
 	}
 	return e.Synthesizer.MultiTypeOf(expr, p)
-}
-
-// FunctionType synthesizes the function type from a function expression.
-//
-// Combines declared parameter types, return type annotations, and inferred
-// information to build a complete function type. The scope state provides
-// context for resolving type references in annotations.
-func (e *Engine) FunctionType(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
-	return e.Synthesizer.FunctionType(fn, sc)
 }
 
 // ExpandValues expands a list of expressions into the required number of types.
@@ -242,15 +231,10 @@ func (e *Engine) SynthWithExpected(expr ast.Expr, p cfg.Point, expected typ.Type
 // Returns nil if the engine was created without flow information or the phase
 // is pre-flow. Returns self if flow information is present and phase is narrowing.
 func (e *Engine) Narrow() api.BaseSynth {
-	if e.deps.Flow == nil || e.phase != api.PhaseNarrowing {
+	if e.deps.Flow == nil || !e.IsNarrowing() {
 		return nil
 	}
 	return e
-}
-
-// IsNarrowing reports whether the engine operates in narrowing phase.
-func (e *Engine) IsNarrowing() bool {
-	return e.phase == api.PhaseNarrowing
 }
 
 // ResolveTypeDefAt resolves a type definition at a specific CFG point.
@@ -265,39 +249,6 @@ func (e *Engine) ResolveTypeDefAt(name string, typeExpr ast.TypeExpr, typeParams
 		},
 	})
 	return resolver.ResolveTypeDef(name, typeExpr, typeParams, sc)
-}
-
-// Context returns the query context for type database operations.
-func (e *Engine) Context() *db.QueryContext {
-	return e.deps.Ctx
-}
-
-// Scopes returns the CFG point to scope state mapping.
-func (e *Engine) Scopes() api.ScopeMap {
-	return e.deps.Scopes
-}
-
-// AllowReturnTransforms reports if return type transforms are allowed.
-//
-// Return transforms (like effect returns) are only applied during
-// narrowing phase when full type information is available.
-func (e *Engine) AllowReturnTransforms() bool {
-	return e.IsNarrowing()
-}
-
-// Phase returns the current compilation phase.
-func (e *Engine) Phase() api.Phase {
-	return e.phase
-}
-
-// CallQuery returns the type operations interface for call resolution.
-func (e *Engine) CallQuery() core.TypeOps {
-	return e.Synthesizer.GetCallQuery()
-}
-
-// Entry returns the CFG entry point for the function being analyzed.
-func (e *Engine) Entry() cfg.Point {
-	return e.deps.Entry()
 }
 
 // ResolveFieldAccess resolves field or index access on a type.

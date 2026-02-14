@@ -30,9 +30,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -75,6 +77,31 @@ func (s *Synthesizer) IsNarrowing() bool {
 // Phase returns the current synthesis phase.
 func (s *Synthesizer) Phase() api.Phase {
 	return s.phase
+}
+
+// Context returns the query context for type database operations.
+func (s *Synthesizer) Context() *db.QueryContext {
+	return s.deps.Ctx
+}
+
+// Scopes returns the CFG point to scope state mapping.
+func (s *Synthesizer) Scopes() api.ScopeMap {
+	return s.deps.Scopes
+}
+
+// AllowReturnTransforms reports whether return transforms are enabled.
+func (s *Synthesizer) AllowReturnTransforms() bool {
+	return s.IsNarrowing()
+}
+
+// CallQuery returns the type operations interface for call resolution.
+func (s *Synthesizer) CallQuery() core.TypeOps {
+	return s.GetCallQuery()
+}
+
+// Entry returns the CFG entry point for the current function graph.
+func (s *Synthesizer) Entry() cfg.Point {
+	return s.deps.Entry()
 }
 
 // Deps returns the underlying dependencies.
