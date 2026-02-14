@@ -269,32 +269,49 @@ func collectInferredTypes(
 			}
 		})
 	}
-	// Process table mutator calls
+	// Process table mutator calls.
+	// Canonical dependency direction is: mutated table depends on inserted value.
+	// Do not add reverse edges (value -> table), which introduces artificial SCC
+	// cycles and false non-convergence warnings.
 	for _, entry := range calls {
+		p := entry.p
 		info := entry.info
-		if len(info.Args) < 2 {
+		if info == nil {
 			continue
 		}
-		for _, arg := range info.Args {
-			if arg == nil || bindings == nil {
-				continue
-			}
-			if sym := callsite.SymbolFromExpr(arg, bindings); sym != 0 {
-				targetSym := uint64(sym)
-				if deps[targetSym] == nil {
-					deps[targetSym] = nil
-				}
-				var refs []cfg.SymbolID
-				for _, other := range info.Args {
-					if other == arg {
-						continue
-					}
-					collectExprSymbols(other, bindings, &refs)
-				}
-				for _, ref := range refs {
-					deps[targetSym] = append(deps[targetSym], uint64(ref))
-				}
-			}
+
+		tm := mutator.TableMutatorFromCall(info, p, synth, symResolver, graph, bindings, moduleBindings)
+		if tm == nil {
+			continue
+		}
+		targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
+		valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
+		if targetExpr == nil || valueExpr == nil {
+			continue
+		}
+
+		var targetSym cfg.SymbolID
+		if attr, ok := targetExpr.(*ast.AttrGetExpr); ok {
+			targetSym = callsite.SymbolOrCreateFieldFromExpr(attr.Object, bindings)
+		} else {
+			targetSym = callsite.SymbolOrCreateFieldFromExpr(targetExpr, bindings)
+		}
+		if targetSym == 0 {
+			continue
+		}
+
+		targetKey := uint64(targetSym)
+		if deps[targetKey] == nil {
+			deps[targetKey] = nil
+		}
+
+		var refs []cfg.SymbolID
+		collectExprSymbols(valueExpr, bindings, &refs)
+		if attr, ok := targetExpr.(*ast.AttrGetExpr); ok {
+			collectExprSymbols(attr.Key, bindings, &refs)
+		}
+		for _, ref := range refs {
+			deps[targetKey] = append(deps[targetKey], uint64(ref))
 		}
 	}
 
