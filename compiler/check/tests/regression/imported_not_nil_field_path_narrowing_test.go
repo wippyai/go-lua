@@ -89,3 +89,43 @@ func TestImportedNotNilAndEqLenSummaryNarrowFieldArrayIndexing(t *testing.T) {
 		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
+
+// Regression guard: imported not_nil field-path narrowing must work inside
+// nested callback bodies (e.g. test.it(..., function() ... end)).
+func TestImportedNotNilSummaryNarrowsFieldPathInNestedCallback(t *testing.T) {
+	assertManifest := io.NewManifest("test")
+	assertExport := typ.NewRecord().
+		Field("not_nil", typ.Func().
+			Param("x", typ.Any).
+			OptParam("msg", typ.String).
+			Build()).
+		Build()
+	assertManifest.SetExport(assertExport)
+
+	s := io.NewSummary([]typ.Type{typ.Any, typ.NewOptional(typ.String)}, nil)
+	s.Ensures = constraint.FromConstraints(constraint.NotNil{Path: constraint.ParamPath(0)})
+	assertManifest.DefineSummary("not_nil", s)
+
+	source := `
+		local test = require("test")
+
+		local function run(cb: () -> ())
+			cb()
+		end
+
+		type Proxy = { enabled: boolean }
+		type Page = { proxy: Proxy? }
+		local page: Page = { proxy = { enabled = true } }
+
+		run(function()
+			test.not_nil(page.proxy, "proxy required")
+			local enabled: boolean = page.proxy.enabled
+			return enabled
+		end)
+	`
+
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("test", assertManifest))
+	if result.HasError() {
+		t.Fatalf("expected no errors in nested callback, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}

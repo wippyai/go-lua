@@ -187,6 +187,29 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 
 	// Add types for all paths referenced by constraints
 	if len(constraints) > 0 {
+		resolveRootType := func(sym cfg.SymbolID) (typ.Type, bool) {
+			if sym == 0 {
+				return nil, false
+			}
+			rootPath := constraint.Path{Symbol: sym}
+			rootKey := s.pkResolver.KeyAt(p, rootPath)
+			if rootKey == "" {
+				return nil, false
+			}
+			if t, ok := result[rootKey]; ok && t != nil {
+				return t, true
+			}
+			if t := s.values[string(rootKey)]; t != nil {
+				result[rootKey] = t
+				return t, true
+			}
+			if declType := s.inputs.DeclaredTypes[sym]; declType != nil {
+				result[rootKey] = declType
+				return declType, true
+			}
+			return nil, false
+		}
+
 		seen := make(map[constraint.PathKey]bool)
 		for key := range result {
 			seen[key] = true
@@ -220,14 +243,17 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 					}
 				}
 
-				// Fall back to declared type
-				if declType := s.inputs.DeclaredTypes[cpath.Symbol]; declType != nil {
-					if len(cpath.Segments) > 0 {
-						if derived, ok := s.deriveTypeFrom(declType, cpath.Segments); ok {
-							result[canonicalKey] = derived
-						}
-					} else {
-						result[canonicalKey] = declType
+				// Derive from root symbol type at this point. This is required for
+				// inferred symbols (no DeclaredTypes entry), where constraints may
+				// target ancestor paths like x.foo while querying x.foo.bar.
+				if rootType, ok := resolveRootType(cpath.Symbol); ok {
+					if len(cpath.Segments) == 0 {
+						result[canonicalKey] = rootType
+						continue
+					}
+					if derived, ok := s.deriveTypeFrom(rootType, cpath.Segments); ok {
+						result[canonicalKey] = derived
+						continue
 					}
 				}
 			}
@@ -616,7 +642,8 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 			for _, f := range fields {
 				if prev, ok := assignedByName[f.Name]; ok {
 					assignedByName[f.Name] = pendingField{
-						t:        typ.JoinPreferNonSoft(prev.t, f.Type),
+						// Preserve unknown-vs-nil uncertainty for branch-local field assignments.
+						t:        typ.JoinReturnSlot(prev.t, f.Type),
 						optional: prev.optional || f.Optional,
 					}
 				} else {
@@ -627,7 +654,7 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 				fieldType := f.Type
 				optional := f.Optional
 				if assigned, ok := assignedByName[f.Name]; ok {
-					fieldType = typ.JoinPreferNonSoft(fieldType, assigned.t)
+					fieldType = typ.JoinReturnSlot(fieldType, assigned.t)
 					optional = optional || assigned.optional
 					delete(assignedByName, f.Name)
 				}

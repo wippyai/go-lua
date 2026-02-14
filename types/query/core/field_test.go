@@ -66,9 +66,13 @@ func TestFieldUnion(t *testing.T) {
 	})
 
 	t.Run("field only in one member", func(t *testing.T) {
-		_, ok := Field(union, "name")
-		if ok {
-			t.Error("expected not to find 'name' (only in one member)")
+		got, ok := Field(union, "name")
+		if !ok {
+			t.Error("expected to find 'name' as optional from partial union")
+			return
+		}
+		if !typ.TypeEquals(got, typ.NewOptional(typ.String)) {
+			t.Errorf("expected string?, got %v", got)
 		}
 	})
 

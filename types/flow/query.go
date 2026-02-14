@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -502,12 +503,80 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 		return narrowed
 	}
 
+	if narrowed, ok := s.deriveFromNarrowedAncestors(canonicalKey, dom); ok {
+		return narrowed
+	}
+
 	childNarrowings := dom.NarrowedChildPaths(canonicalKey)
 	if len(childNarrowings) > 0 {
 		return s.filterByChildNarrowings(baseType, path, childNarrowings)
 	}
 
 	return baseType
+}
+
+// deriveFromNarrowedAncestors projects narrowed ancestor path types down to a target key.
+//
+// Example: if `x.y` is narrowed to non-nil record, querying `x.y.z` should derive
+// `z` from that narrowed ancestor even when `x.y.z` has no direct narrowing entry.
+func (s *Solution) deriveFromNarrowedAncestors(targetKey constraint.PathKey, dom *ProductDomain) (typ.Type, bool) {
+	targetSym, targetVersion, targetSuffix, ok := pathkey.ParseKey(targetKey)
+	if !ok {
+		return nil, false
+	}
+	targetSegs := pathkey.ParseSuffix(targetSuffix)
+
+	seen := make(map[constraint.PathKey]bool)
+	candidates := make([]constraint.PathKey, 0, len(dom.Type.Narrowed)+len(dom.Shape.Narrowed))
+	for _, key := range constraint.SortedPathKeys(dom.Type.Narrowed) {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		candidates = append(candidates, key)
+	}
+	for _, key := range constraint.SortedPathKeys(dom.Shape.Narrowed) {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		candidates = append(candidates, key)
+	}
+
+	var combined typ.Type
+	for _, candidateKey := range candidates {
+		ancestorType := dom.TypeAt(candidateKey)
+		if ancestorType == nil {
+			continue
+		}
+		sym, version, suffix, ok := pathkey.ParseKey(candidateKey)
+		if !ok || sym != targetSym || version != targetVersion {
+			continue
+		}
+		ancestorSegs := pathkey.ParseSuffix(suffix)
+		if len(ancestorSegs) >= len(targetSegs) {
+			continue
+		}
+		if !pathkey.SegmentsPrefix(ancestorSegs, targetSegs) {
+			continue
+		}
+
+		remaining := targetSegs[len(ancestorSegs):]
+		derived, ok := s.deriveTypeFrom(ancestorType, remaining)
+		if !ok || derived == nil {
+			continue
+		}
+		if combined == nil {
+			combined = derived
+		} else {
+			combined = narrow.Intersect(combined, derived)
+		}
+	}
+
+	if combined == nil {
+		return nil, false
+	}
+	return combined, true
 }
 
 func normalizeConstraintPathForQuery(path constraint.Path) constraint.Path {
