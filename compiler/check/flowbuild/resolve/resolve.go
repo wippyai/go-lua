@@ -47,14 +47,23 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// RootName returns the display name for a symbol, using NameOf when available.
-func RootName(graph *cfg.Graph, sym cfg.SymbolID, fallback string) string {
-	if sym != 0 && graph != nil {
-		if name := graph.NameOf(sym); name != "" {
-			return name
-		}
+type symbolNamer interface {
+	NameOf(sym cfg.SymbolID) string
+}
+
+func rootNameFromSymbolSource(source symbolNamer, sym cfg.SymbolID, fallback string) string {
+	if sym == 0 || source == nil {
+		return fallback
+	}
+	if name := source.NameOf(sym); name != "" {
+		return name
 	}
 	return fallback
+}
+
+// RootName returns the display name for a symbol, using NameOf when available.
+func RootName(graph *cfg.Graph, sym cfg.SymbolID, fallback string) string {
+	return rootNameFromSymbolSource(graph, sym, fallback)
 }
 
 // RootNameFromBindings returns the display name for a symbol using bindings.
@@ -90,12 +99,10 @@ func GetBindings(inputs *flow.Inputs) *bind.BindingTable {
 
 // RootFromSymbol returns the display name for a symbol, falling back to the provided name.
 func RootFromSymbol(inputs *flow.Inputs, sym cfg.SymbolID, fallback string) string {
-	if sym != 0 && inputs != nil && inputs.Graph != nil {
-		if name := inputs.Graph.NameOf(sym); name != "" {
-			return name
-		}
+	if inputs == nil {
+		return fallback
 	}
-	return fallback
+	return rootNameFromSymbolSource(inputs.Graph, sym, fallback)
 }
 
 // ClassifyReturnExpr determines if a return expression returns true, false, or unknown.
