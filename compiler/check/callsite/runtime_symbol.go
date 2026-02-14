@@ -28,9 +28,3 @@ func SymbolOrCreateFieldFromExpr(expr ast.Expr, bindings *bind.BindingTable) cfg
 	}
 	return bindings.GetOrCreateFieldSymbol(baseSym, fieldPath)
 }
-
-// RuntimeArgSymbolAt resolves the symbol for a runtime argument index
-// (receiver-aware for method calls).
-func RuntimeArgSymbolAt(info *cfg.CallInfo, paramIdx int, bindings *bind.BindingTable) cfg.SymbolID {
-	return SymbolOrCreateFieldFromExpr(RuntimeArgAt(info, paramIdx), bindings)
-}

@@ -378,7 +378,10 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 				argTypes = updated
 			}
 		}
-		calleeSym := checkcallsite.PreferredCallableCalleeSymbol(info, result.Graph, bindings, moduleBindings, hasFunctionRef)
+		calleeSym := checkcallsite.SelectPreferredSymbol(
+			checkcallsite.CallableCalleeSymbolCandidates(info, result.Graph, bindings, moduleBindings),
+			hasFunctionRef,
+		)
 		if calleeSym == 0 {
 			return
 		}

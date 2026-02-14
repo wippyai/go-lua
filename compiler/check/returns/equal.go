@@ -11,13 +11,13 @@ func FactsEqual(a, b api.Facts) bool {
 	if !FunctionFactsEqual(canonicalFunctionFacts(a), canonicalFunctionFacts(b)) {
 		return false
 	}
-	if !ReturnSummariesEqual(a.ParamHints, b.ParamHints) {
+	if !symbolTypeVectorMapEqual(a.ParamHints, b.ParamHints) {
 		return false
 	}
 	if !LiteralSigsEqual(a.LiteralSigs, b.LiteralSigs) {
 		return false
 	}
-	if !FuncTypesEqual(a.CapturedTypes, b.CapturedTypes) {
+	if !symbolTypeMapEqual(a.CapturedTypes, b.CapturedTypes) {
 		return false
 	}
 	if !CapturedFieldAssignsEqual(a.CapturedFields, b.CapturedFields) {
@@ -54,16 +54,6 @@ func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 		}
 	}
 	return true
-}
-
-// ReturnSummariesEqual checks if two return summary maps are equal.
-func ReturnSummariesEqual(a, b api.ReturnSummaries) bool {
-	return symbolTypeVectorMapEqual(a, b)
-}
-
-// FuncTypesEqual checks if two function-type maps are equal.
-func FuncTypesEqual(a, b api.FuncTypes) bool {
-	return symbolTypeMapEqual(a, b)
 }
 
 // LiteralSigsEqual checks if two literal signature maps are equal.

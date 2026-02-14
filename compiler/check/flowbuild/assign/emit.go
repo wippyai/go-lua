@@ -422,7 +422,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 								continue
 							}
 							if info := keyscoll.DetectKeysCollector(fn); info != nil && info.ReturnIndex == retIndex {
-								tableSym = callsite.RuntimeArgSymbolAt(call, info.ParamIndex, bindings)
+								tableSym = callsite.SymbolOrCreateFieldFromExpr(callsite.RuntimeArgAt(call, info.ParamIndex), bindings)
 								break
 							}
 						}
@@ -436,7 +436,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 								continue
 							}
 							if paramIdx, keyReturnIdx, ok := eff.KeysCollectorInfo(); ok && retIndex == keyReturnIdx {
-								tableSym = callsite.RuntimeArgSymbolAt(call, paramIdx, bindings)
+								tableSym = callsite.SymbolOrCreateFieldFromExpr(callsite.RuntimeArgAt(call, paramIdx), bindings)
 								break
 							}
 						}

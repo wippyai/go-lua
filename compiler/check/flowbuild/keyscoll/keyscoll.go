@@ -274,7 +274,7 @@ func BuildKeysCollectorDetector(graph *cfg.Graph, moduleBindings *bind.BindingTa
 				if info.ReturnIndex != retIndex {
 					continue
 				}
-				return callsite.RuntimeArgSymbolAt(callInfo, info.ParamIndex, bindings)
+				return callsite.SymbolOrCreateFieldFromExpr(callsite.RuntimeArgAt(callInfo, info.ParamIndex), bindings)
 			}
 
 			// Try to resolve callee to function literal
@@ -292,7 +292,7 @@ func BuildKeysCollectorDetector(graph *cfg.Graph, moduleBindings *bind.BindingTa
 			if info.ReturnIndex != retIndex {
 				continue
 			}
-			return callsite.RuntimeArgSymbolAt(callInfo, info.ParamIndex, bindings)
+			return callsite.SymbolOrCreateFieldFromExpr(callsite.RuntimeArgAt(callInfo, info.ParamIndex), bindings)
 		}
 		return 0
 	}

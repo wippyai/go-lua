@@ -45,20 +45,6 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 	return set.Slice()
 }
 
-// PreferredCallableCalleeSymbol selects a single symbol from alias-expanded candidates.
-//
-// Selection rule:
-//  1. start with the first candidate (if any)
-//  2. if prefer is provided, pick the first candidate where prefer(sym) is true
-func PreferredCallableCalleeSymbol(
-	info *cfg.CallInfo,
-	graph *cfg.Graph,
-	primary, fallback *bind.BindingTable,
-	prefer func(cfg.SymbolID) bool,
-) cfg.SymbolID {
-	return selectPreferredSymbol(CallableCalleeSymbolCandidates(info, graph, primary, fallback), prefer)
-}
-
 // CallableCalleeSymbolCandidates expands callee candidates through direct-alias
 // chains and includes method symbols resolvable through alias receiver bases.
 //

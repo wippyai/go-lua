@@ -117,7 +117,7 @@ func TestFactsEqual_LegacyOnlyChannelsAreComparedCanonically(t *testing.T) {
 }
 
 func TestReturnSummariesEqual_Empty(t *testing.T) {
-	if !ReturnSummariesEqual(nil, nil) {
+	if !symbolTypeVectorMapEqual(nil, nil) {
 		t.Error("nil summaries should be equal")
 	}
 }
@@ -125,13 +125,13 @@ func TestReturnSummariesEqual_Empty(t *testing.T) {
 func TestReturnSummariesEqual_DifferentLength(t *testing.T) {
 	a := api.ReturnSummaries{1: []typ.Type{typ.String}}
 	b := api.ReturnSummaries{}
-	if ReturnSummariesEqual(a, b) {
+	if symbolTypeVectorMapEqual(a, b) {
 		t.Error("summaries with different lengths should not be equal")
 	}
 }
 
 func TestParamHintsEqual_Empty(t *testing.T) {
-	if !ReturnSummariesEqual(nil, nil) {
+	if !symbolTypeVectorMapEqual(nil, nil) {
 		t.Error("nil param hints should be equal")
 	}
 }
@@ -139,13 +139,13 @@ func TestParamHintsEqual_Empty(t *testing.T) {
 func TestParamHintsEqual_Same(t *testing.T) {
 	a := api.ParamHints{1: []typ.Type{typ.String}}
 	b := api.ParamHints{1: []typ.Type{typ.String}}
-	if !ReturnSummariesEqual(a, b) {
+	if !symbolTypeVectorMapEqual(a, b) {
 		t.Error("same param hints should be equal")
 	}
 }
 
 func TestFuncTypesEqual_Empty(t *testing.T) {
-	if !FuncTypesEqual(nil, nil) {
+	if !symbolTypeMapEqual(nil, nil) {
 		t.Error("nil func types should be equal")
 	}
 }
@@ -154,7 +154,7 @@ func TestFuncTypesEqual_Same(t *testing.T) {
 	fn := typ.Func().Returns(typ.String).Build()
 	a := api.FuncTypes{1: fn}
 	b := api.FuncTypes{1: fn}
-	if !FuncTypesEqual(a, b) {
+	if !symbolTypeMapEqual(a, b) {
 		t.Error("same func types should be equal")
 	}
 }
@@ -166,7 +166,7 @@ func TestLiteralSigsEqual_Empty(t *testing.T) {
 }
 
 func TestCapturedTypesEqual_Empty(t *testing.T) {
-	if !FuncTypesEqual(nil, nil) {
+	if !symbolTypeMapEqual(nil, nil) {
 		t.Error("nil captured types should be equal")
 	}
 }
@@ -174,7 +174,7 @@ func TestCapturedTypesEqual_Empty(t *testing.T) {
 func TestCapturedTypesEqual_Same(t *testing.T) {
 	a := api.CapturedTypes{cfg.SymbolID(1): typ.String}
 	b := api.CapturedTypes{cfg.SymbolID(1): typ.String}
-	if !FuncTypesEqual(a, b) {
+	if !symbolTypeMapEqual(a, b) {
 		t.Error("same captured types should be equal")
 	}
 }

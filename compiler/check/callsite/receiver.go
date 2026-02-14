@@ -20,9 +20,12 @@ func ForceMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, info
 		return false
 	}
 
-	sym := PreferredCallableCalleeSymbol(info, graph, bindings, nil, func(candidate typecfg.SymbolID) bool {
-		return symbolForcesMethodReceiver(bindings, graph, candidate)
-	})
+	sym := SelectPreferredSymbol(
+		CallableCalleeSymbolCandidates(info, graph, bindings, nil),
+		func(candidate typecfg.SymbolID) bool {
+			return symbolForcesMethodReceiver(bindings, graph, candidate)
+		},
+	)
 
 	if sym != 0 && symbolForcesMethodReceiver(bindings, graph, sym) {
 		return true

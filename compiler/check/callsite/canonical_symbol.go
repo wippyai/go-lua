@@ -22,8 +22,8 @@ func CanonicalSymbolFromExprWithAliases(
 		return 0
 	}
 	if graph == nil {
-		return selectPreferredSymbol(base, prefer)
+		return SelectPreferredSymbol(base, prefer)
 	}
 	candidates := expandAliasCandidates(base, graph)
-	return selectPreferredSymbol(candidates, prefer)
+	return SelectPreferredSymbol(candidates, prefer)
 }

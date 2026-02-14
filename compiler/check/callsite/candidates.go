@@ -33,7 +33,9 @@ func (s *symbolSet) Slice() []cfg.SymbolID {
 	return s.order
 }
 
-func selectPreferredSymbol(candidates []cfg.SymbolID, prefer func(cfg.SymbolID) bool) cfg.SymbolID {
+// SelectPreferredSymbol returns the first candidate and, if prefer is non-nil, returns
+// the first candidate that satisfies the predicate.
+func SelectPreferredSymbol(candidates []cfg.SymbolID, prefer func(cfg.SymbolID) bool) cfg.SymbolID {
 	selected := cfg.SymbolID(0)
 	for _, sym := range candidates {
 		if selected == 0 {
