@@ -290,7 +290,7 @@ func (p *Processor) processNestedFunction(
 	// Update sibling types with the fully-inferred function type.
 	if info.IsLocal && info.FuncSym != 0 && result.NarrowSynth != nil {
 		if inferredType := result.NarrowSynth.FunctionType(info.NF.Func, parentScope); inferredType != nil {
-			siblingTypes[info.FuncSym] = siblings.MergeSiblingType(siblingTypes[info.FuncSym], inferredType)
+			siblingTypes[info.FuncSym] = returns.MergeFunctionFactType(siblingTypes[info.FuncSym], inferredType)
 		}
 	}
 }

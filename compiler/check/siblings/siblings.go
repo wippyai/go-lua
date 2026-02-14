@@ -37,6 +37,7 @@ package siblings
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -181,7 +182,7 @@ func Build(c BuildConfig) map[cfg.SymbolID]typ.Type {
 		if fnType == nil {
 			continue
 		}
-		result[entry.Symbol] = MergeSiblingType(result[entry.Symbol], fnType)
+		result[entry.Symbol] = returns.MergeFunctionFactType(result[entry.Symbol], fnType)
 	}
 
 	if len(result) == 0 {
