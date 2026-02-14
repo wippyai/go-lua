@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -51,7 +52,7 @@ func (r *Runner) resolveSynthesizedSignature(
 	if synthSig == nil {
 		return nil
 	}
-	return phase.MergeParamHintsIntoSig(fn, hints, synthSig)
+	return paramhints.MergeIntoSignature(fn, hints, synthSig)
 }
 
 func (r *Runner) appendCapturedMutatorAssignments(

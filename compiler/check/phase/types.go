@@ -44,7 +44,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -409,10 +408,4 @@ func (b *ContextBuilder) BuildNarrow() *api.NarrowEnvImpl {
 		GlobalTypes:           b.env.GlobalTypes,
 		NarrowReturnSummaries: b.narrowReturnSummaries,
 	})
-}
-
-// MergeParamHintsIntoSig replaces unannotated param types in a function signature
-// with inferred types from call-site param hints. Annotated params are preserved.
-func MergeParamHintsIntoSig(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Function) *typ.Function {
-	return paramhints.MergeIntoSignature(fn, hints, sig)
 }

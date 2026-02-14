@@ -9,13 +9,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// JoinInterprocTypes centralizes the join policy used by interproc fact channels.
-// Keep all interproc call sites routed through this helper to avoid scattered
-// merge behavior and accidental divergence across channels.
-func JoinInterprocTypes(a, b typ.Type) typ.Type {
-	return typ.JoinPreferNonSoft(a, b)
-}
-
 // ReturnTypesEqual checks if two return vectors are structurally equal.
 func ReturnTypesEqual(a, b []typ.Type) bool {
 	if len(a) != len(b) {
@@ -386,7 +379,7 @@ func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
 	if subtype.IsSubtype(candidate, existing) {
 		return existing
 	}
-	return JoinInterprocTypes(existing, candidate)
+	return typ.JoinPreferNonSoft(existing, candidate)
 }
 
 func mergeFunctionFactVariants(existing, candidate typ.Type) (typ.Type, bool) {
@@ -559,7 +552,7 @@ func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
 	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {
 		return existing
 	}
-	return JoinInterprocTypes(existing, candidate)
+	return typ.JoinPreferNonSoft(existing, candidate)
 }
 
 func preferStructuredRecordParam(existing, candidate typ.Type) (typ.Type, bool) {

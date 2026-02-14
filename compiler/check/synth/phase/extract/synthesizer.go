@@ -130,11 +130,6 @@ func (s *Synthesizer) InferIterVars(exprs []ast.Expr, count int, p cfg.Point) []
 	return s.inferIterVars(exprs, count, p, nil)
 }
 
-// InferIterVarsWithFlow infers iterator variable types with flow narrowing.
-func (s *Synthesizer) InferIterVarsWithFlow(exprs []ast.Expr, count int, p cfg.Point, flow api.FlowOps) []typ.Type {
-	return s.inferIterVars(exprs, count, p, flow)
-}
-
 // InferIterVarsWithSpecTypes infers iterator variable types with overlay lookup.
 func (s *Synthesizer) InferIterVarsWithSpecTypes(exprs []ast.Expr, count int, p cfg.Point, specTypes api.SpecTypes) []typ.Type {
 	if len(specTypes) == 0 {

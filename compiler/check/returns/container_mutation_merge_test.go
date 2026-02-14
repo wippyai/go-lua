@@ -29,7 +29,7 @@ func TestMergeContainerMutationSlices_DedupAndSorted(t *testing.T) {
 
 	got := MergeContainerMutationSlices(existing, next, func(prev *api.ContainerMutation, n api.ContainerMutation) api.ContainerMutation {
 		if prev != nil {
-			n.ValueType = JoinInterprocTypes(prev.ValueType, n.ValueType)
+			n.ValueType = typ.JoinPreferNonSoft(prev.ValueType, n.ValueType)
 		}
 		return n
 	})

@@ -131,7 +131,7 @@ func TestReturnSummariesEqual_DifferentLength(t *testing.T) {
 }
 
 func TestParamHintsEqual_Empty(t *testing.T) {
-	if !ParamHintsEqual(nil, nil) {
+	if !ReturnSummariesEqual(nil, nil) {
 		t.Error("nil param hints should be equal")
 	}
 }
@@ -139,7 +139,7 @@ func TestParamHintsEqual_Empty(t *testing.T) {
 func TestParamHintsEqual_Same(t *testing.T) {
 	a := api.ParamHints{1: []typ.Type{typ.String}}
 	b := api.ParamHints{1: []typ.Type{typ.String}}
-	if !ParamHintsEqual(a, b) {
+	if !ReturnSummariesEqual(a, b) {
 		t.Error("same param hints should be equal")
 	}
 }
@@ -166,7 +166,7 @@ func TestLiteralSigsEqual_Empty(t *testing.T) {
 }
 
 func TestCapturedTypesEqual_Empty(t *testing.T) {
-	if !CapturedTypesEqual(nil, nil) {
+	if !FuncTypesEqual(nil, nil) {
 		t.Error("nil captured types should be equal")
 	}
 }
@@ -174,7 +174,7 @@ func TestCapturedTypesEqual_Empty(t *testing.T) {
 func TestCapturedTypesEqual_Same(t *testing.T) {
 	a := api.CapturedTypes{cfg.SymbolID(1): typ.String}
 	b := api.CapturedTypes{cfg.SymbolID(1): typ.String}
-	if !CapturedTypesEqual(a, b) {
+	if !FuncTypesEqual(a, b) {
 		t.Error("same captured types should be equal")
 	}
 }

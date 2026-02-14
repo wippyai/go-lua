@@ -113,7 +113,7 @@ func storeCapturedFactsFromResult(
 				facts.CapturedFields = make(api.CapturedFieldAssigns)
 			}
 			existing := facts.CapturedFields[fnSym]
-			facts.CapturedFields[fnSym] = returns.MergeCapturedFieldSymbolMaps(existing, fields, returns.JoinInterprocTypes)
+			facts.CapturedFields[fnSym] = returns.MergeCapturedFieldSymbolMaps(existing, fields, typ.JoinPreferNonSoft)
 		})
 	}
 
@@ -126,7 +126,7 @@ func storeCapturedFactsFromResult(
 			existing := facts.CapturedContainers[fnSym]
 			facts.CapturedContainers[fnSym] = returns.MergeCapturedContainerMutationMaps(existing, mutations, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 				if prev != nil {
-					next.ValueType = returns.JoinInterprocTypes(prev.ValueType, next.ValueType)
+					next.ValueType = typ.JoinPreferNonSoft(prev.ValueType, next.ValueType)
 				}
 				return next
 			})
@@ -412,7 +412,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 					if argSym != 0 && hasFunctionRef(argSym) {
 						hintsForFn := facts.ParamHints[argSym]
 						for j, param := range expectedFn.Params {
-							hintsForFn, _ = paramhints.MergeHintAt(hintsForFn, j, param.Type, returns.JoinInterprocTypes)
+							hintsForFn, _ = paramhints.MergeHintAt(hintsForFn, j, param.Type, typ.JoinPreferNonSoft)
 						}
 						if len(hintsForFn) > 0 {
 							facts.ParamHints[argSym] = hintsForFn
@@ -424,7 +424,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 				if argType == nil {
 					argType = result.NarrowSynth.TypeOf(arg, p)
 				}
-				hints, _ = paramhints.MergeCallArgHintAt(hints, i, argType, returns.JoinInterprocTypes, true)
+				hints, _ = paramhints.MergeCallArgHintAt(hints, i, argType, typ.JoinPreferNonSoft, true)
 			}
 			if len(hints) > 0 {
 				facts.ParamHints[calleeSym] = hints

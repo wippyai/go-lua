@@ -16,11 +16,8 @@ func TestCanonicalSymbolFromExpr_PrefersCandidateByPredicate(t *testing.T) {
 	primary.Bind(ident, 11)
 	fallback.Bind(ident, 22)
 
-	got := CanonicalSymbolFromExpr(
-		ident,
-		33,
-		primary,
-		fallback,
+	got := selectPreferredSymbol(
+		exprSymbolCandidates(ident, 33, primary, fallback),
 		func(sym cfg.SymbolID) bool { return sym == 22 },
 	)
 	if got != 22 {
@@ -33,7 +30,7 @@ func TestCanonicalSymbolFromExpr_FallsBackToFirstNonZero(t *testing.T) {
 	primary := bind.NewBindingTable()
 	primary.Bind(ident, 11)
 
-	got := CanonicalSymbolFromExpr(ident, 0, primary, nil, nil)
+	got := selectPreferredSymbol(exprSymbolCandidates(ident, 0, primary, nil), nil)
 	if got != 11 {
 		t.Fatalf("CanonicalSymbolFromExpr(...) = %d, want 11", got)
 	}
@@ -46,11 +43,8 @@ func TestCanonicalSymbolFromExpr_UsesFunctionLiteralSymbol(t *testing.T) {
 	primary.SetFuncLitSymbol(fn, 41)
 	fallback.SetFuncLitSymbol(fn, 42)
 
-	got := CanonicalSymbolFromExpr(
-		fn,
-		0,
-		primary,
-		fallback,
+	got := selectPreferredSymbol(
+		exprSymbolCandidates(fn, 0, primary, fallback),
 		func(sym cfg.SymbolID) bool { return sym == 42 },
 	)
 	if got != 42 {

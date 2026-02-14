@@ -92,7 +92,7 @@ func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo) fun
 // This ensures that chains like f(x) -> g(x) -> h(x) are fully resolved even
 // if functions are processed in arbitrary order.
 //
-// Hints are accumulated using JoinInterprocTypes, producing union types when a parameter
+// Hints are accumulated using typ.JoinPreferNonSoft, producing union types when a parameter
 // is called with multiple different types across call sites.
 func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo) {
 	if len(localFuncs) == 0 {
@@ -209,7 +209,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 					}
 				}
 
-				nextHints, merged := paramhints.MergeHintAt(callee.ParamHints, i, argType, JoinInterprocTypes)
+				nextHints, merged := paramhints.MergeHintAt(callee.ParamHints, i, argType, typ.JoinPreferNonSoft)
 				callee.ParamHints = nextHints
 				if merged {
 					changed = true
@@ -261,7 +261,7 @@ func mergeFunctionParamHints(target *LocalFuncInfo, expectedFn *typ.Function) bo
 	}
 
 	for i, param := range expectedFn.Params {
-		nextHints, merged := paramhints.MergeHintAt(target.ParamHints, i, param.Type, JoinInterprocTypes)
+		nextHints, merged := paramhints.MergeHintAt(target.ParamHints, i, param.Type, typ.JoinPreferNonSoft)
 		target.ParamHints = nextHints
 		if merged {
 			changed = true

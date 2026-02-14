@@ -27,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
@@ -253,7 +254,7 @@ func buildFnSignatureResolver(
 		if len(hints) == 0 {
 			return sig
 		}
-		return MergeParamHintsIntoSig(fn, hints, sig)
+		return paramhints.MergeIntoSignature(fn, hints, sig)
 	})
 }
 

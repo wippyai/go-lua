@@ -135,10 +135,10 @@ func TestPreferredCalleeSymbol_PrefersMatchingCandidate(t *testing.T) {
 	)
 	primary.Bind(callee, exprSym)
 
-	got := PreferredCalleeSymbol(&cfg.CallInfo{
+	got := selectPreferredSymbol(CalleeSymbolCandidates(&cfg.CallInfo{
 		Callee:       callee,
 		CalleeSymbol: rawSym,
-	}, primary, nil, func(sym cfg.SymbolID) bool { return sym == exprSym })
+	}, primary, nil), func(sym cfg.SymbolID) bool { return sym == exprSym })
 	if got != exprSym {
 		t.Fatalf("preferred symbol = %d, want %d", got, exprSym)
 	}
@@ -153,10 +153,10 @@ func TestPreferredCalleeSymbol_FallsBackToFirstCandidate(t *testing.T) {
 	)
 	primary.Bind(callee, exprSym)
 
-	got := PreferredCalleeSymbol(&cfg.CallInfo{
+	got := selectPreferredSymbol(CalleeSymbolCandidates(&cfg.CallInfo{
 		Callee:       callee,
 		CalleeSymbol: rawSym,
-	}, primary, nil, func(sym cfg.SymbolID) bool { return false })
+	}, primary, nil), func(sym cfg.SymbolID) bool { return false })
 	if got != rawSym {
 		t.Fatalf("fallback symbol = %d, want %d", got, rawSym)
 	}

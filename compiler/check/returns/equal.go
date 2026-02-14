@@ -11,13 +11,13 @@ func FactsEqual(a, b api.Facts) bool {
 	if !FunctionFactsEqual(canonicalFunctionFacts(a), canonicalFunctionFacts(b)) {
 		return false
 	}
-	if !ParamHintsEqual(a.ParamHints, b.ParamHints) {
+	if !ReturnSummariesEqual(a.ParamHints, b.ParamHints) {
 		return false
 	}
 	if !LiteralSigsEqual(a.LiteralSigs, b.LiteralSigs) {
 		return false
 	}
-	if !CapturedTypesEqual(a.CapturedTypes, b.CapturedTypes) {
+	if !FuncTypesEqual(a.CapturedTypes, b.CapturedTypes) {
 		return false
 	}
 	if !CapturedFieldAssignsEqual(a.CapturedFields, b.CapturedFields) {
@@ -61,11 +61,6 @@ func ReturnSummariesEqual(a, b api.ReturnSummaries) bool {
 	return symbolTypeVectorMapEqual(a, b)
 }
 
-// ParamHintsEqual checks if two param hint maps are equal.
-func ParamHintsEqual(a, b api.ParamHints) bool {
-	return ReturnSummariesEqual(a, b)
-}
-
 // FuncTypesEqual checks if two function-type maps are equal.
 func FuncTypesEqual(a, b api.FuncTypes) bool {
 	return symbolTypeMapEqual(a, b)
@@ -83,11 +78,6 @@ func LiteralSigsEqual(a, b api.LiteralSigs) bool {
 		}
 	}
 	return true
-}
-
-// CapturedTypesEqual checks if two captured type maps are equal.
-func CapturedTypesEqual(a, b api.CapturedTypes) bool {
-	return FuncTypesEqual(a, b)
 }
 
 func symbolTypeVectorMapEqual(a map[cfg.SymbolID][]typ.Type, b map[cfg.SymbolID][]typ.Type) bool {

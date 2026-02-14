@@ -230,7 +230,7 @@ func joinReturnTypeMonotone(a, b typ.Type) typ.Type {
 	if subtype.IsSubtype(b, a) || TypeExtendsRecord(b, a) || typeElidesOptional(b, a) {
 		return a
 	}
-	return JoinInterprocTypes(a, b)
+	return typ.JoinPreferNonSoft(a, b)
 }
 
 // WidenParamHints merges two param hint maps using monotone union.
@@ -336,7 +336,7 @@ func joinParamHint(a, b typ.Type) typ.Type {
 	if TypeExtendsRecord(b, a) {
 		return b
 	}
-	return JoinInterprocTypes(a, b)
+	return typ.JoinPreferNonSoft(a, b)
 }
 
 // WidenLiteralSigs merges two literal signature maps.
@@ -405,7 +405,7 @@ func WidenCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		t := next[sym]
 		if existing := merged[sym]; existing != nil {
-			merged[sym] = maybeWidenTypeForConvergence(JoinInterprocTypes(existing, t))
+			merged[sym] = maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(existing, t))
 		} else {
 			merged[sym] = maybeWidenTypeForConvergence(t)
 		}
@@ -437,7 +437,7 @@ func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.Captured
 		}
 		merged[callee] = MergeCapturedFieldSymbolMaps(existing, captured, func(prev typ.Type, next typ.Type) typ.Type {
 			if prev != nil {
-				return maybeWidenTypeForConvergence(JoinInterprocTypes(prev, next))
+				return maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(prev, next))
 			}
 			return maybeWidenTypeForConvergence(next)
 		})
@@ -465,7 +465,7 @@ func WidenCapturedContainerMutations(prev, next api.CapturedContainerMutations) 
 		existing := merged[sym]
 		merged[sym] = MergeCapturedContainerMutationMaps(existing, muts, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
-				next.ValueType = maybeWidenTypeForConvergence(JoinInterprocTypes(prev.ValueType, next.ValueType))
+				next.ValueType = maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(prev.ValueType, next.ValueType))
 			} else {
 				next.ValueType = maybeWidenTypeForConvergence(next.ValueType)
 			}
@@ -504,7 +504,7 @@ func WidenConstructorFields(prev, next api.ConstructorFields) api.ConstructorFie
 		for _, name := range cfg.SortedFieldNames(fields) {
 			t := fields[name]
 			if prevType := out[name]; prevType != nil {
-				out[name] = maybeWidenTypeForConvergence(JoinInterprocTypes(prevType, t))
+				out[name] = maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(prevType, t))
 			} else {
 				out[name] = maybeWidenTypeForConvergence(t)
 			}
