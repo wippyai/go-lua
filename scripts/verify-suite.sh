@@ -13,10 +13,10 @@ LINT_TARGET_SPECS=(
   "$HOME/wippy/framework/src/agent/src::"
   "$HOME/wippy/framework/src/bootloader::test/wippy.lock"
   "$HOME/wippy/docker-demo::"
-  "$HOME/wippy/framework/src/llm/src::"
+  "$HOME/wippy/framework/src/llm/src::../test/wippy.lock"
   "$HOME/wippy/framework/src/llm/test::"
   "$HOME/wippy/framework/src/migration::"
-  "$HOME/wippy/framework/src/views::"
+  "$HOME/wippy/framework/src/views::test/wippy.lock"
   "$HOME/wippy/framework/src/relay/test::"
 )
 
