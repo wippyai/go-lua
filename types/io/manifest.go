@@ -285,27 +285,6 @@ func (m *Manifest) LookupValue(name string) (typ.Type, bool) {
 	return nil, false
 }
 
-// LookupValue finds an exported value field by name from the enriched export type.
-func (m *Manifest) LookupValue(name string) (typ.Type, bool) {
-	if m == nil || name == "" {
-		return nil, false
-	}
-	export := unwrap.Alias(m.EnrichedExport())
-	switch t := export.(type) {
-	case *typ.Record:
-		if f := t.GetField(name); f != nil {
-			return f.Type, true
-		}
-	case *typ.Interface:
-		for _, method := range t.Methods {
-			if method.Name == name && method.Type != nil {
-				return method.Type, true
-			}
-		}
-	}
-	return nil, false
-}
-
 // EnrichedExport returns the Export type with function summaries applied.
 //
 // This method combines the structural Export type with behavioral information
