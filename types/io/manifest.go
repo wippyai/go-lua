@@ -210,7 +210,10 @@ func (m *Manifest) AddGlobal(name string, t typ.Type) {
 // LookupType finds a type by name.
 func (m *Manifest) LookupType(name string) (typ.Type, bool) {
 	t, ok := m.Types[name]
-	return t, ok
+	if !ok {
+		return nil, false
+	}
+	return resolveManifestLocalRefs(t, m.Types), true
 }
 
 // AllTypes returns a copy of all type definitions.
@@ -300,11 +303,48 @@ func (m *Manifest) EnrichedExport() typ.Type {
 	if m == nil {
 		return nil
 	}
-	if m.Export == nil || len(m.Summaries) == 0 {
-		return m.Export
+	resolvedExport := resolveManifestLocalRefs(m.Export, m.Types)
+	if resolvedExport == nil || len(m.Summaries) == 0 {
+		return resolvedExport
 	}
 
-	return enrichTypeWithSummaries(m.Export, m.Summaries)
+	return enrichTypeWithSummaries(resolvedExport, m.Summaries)
+}
+
+// resolveManifestLocalRefs resolves local typ.Ref nodes against manifest type
+// definitions. This keeps cross-module checks representation-stable by
+// materializing named local aliases/records when available.
+func resolveManifestLocalRefs(t typ.Type, defs map[string]typ.Type) typ.Type {
+	if t == nil || len(defs) == 0 {
+		return t
+	}
+	visiting := make(map[string]bool)
+
+	var resolve func(current typ.Type, depth int) typ.Type
+	resolve = func(current typ.Type, depth int) typ.Type {
+		if current == nil || typ.DepthExceeded(depth) {
+			return current
+		}
+		return typ.Rewrite(current, func(n typ.Type) (typ.Type, bool) {
+			ref, ok := n.(*typ.Ref)
+			if !ok || ref.Module != "" {
+				return nil, false
+			}
+			target, exists := defs[ref.Name]
+			if !exists || target == nil || visiting[ref.Name] {
+				return nil, false
+			}
+			visiting[ref.Name] = true
+			resolved := resolve(target, depth+1)
+			delete(visiting, ref.Name)
+			if resolved == nil {
+				return nil, false
+			}
+			return resolved, true
+		})
+	}
+
+	return resolve(t, 0)
 }
 
 // enrichTypeWithSummaries applies summaries to function fields in a type.

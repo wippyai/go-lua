@@ -53,6 +53,39 @@ func TestManifest_DefineType(t *testing.T) {
 	}
 }
 
+func TestManifest_LookupType_ResolvesLocalRefs(t *testing.T) {
+	m := NewManifest("test")
+	customization := typ.NewRecord().
+		Field("custom_css", typ.String).
+		Field("css_variables", typ.NewMap(typ.String, typ.String)).
+		Field("icons", typ.NewMap(typ.String, typ.String)).
+		Build()
+	facadeConfig := typ.NewRecord().
+		Field("customization", typ.NewRef("", "Customization")).
+		Build()
+	m.DefineType("Customization", customization)
+	m.DefineType("FacadeConfig", facadeConfig)
+
+	got, ok := m.LookupType("FacadeConfig")
+	if !ok || got == nil {
+		t.Fatal("LookupType should resolve FacadeConfig")
+	}
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record, got %T", got)
+	}
+	field := rec.GetField("customization")
+	if field == nil {
+		t.Fatal("expected customization field")
+	}
+	if _, isRef := field.Type.(*typ.Ref); isRef {
+		t.Fatalf("expected resolved type, still got ref: %v", field.Type)
+	}
+	if !typ.TypeEquals(field.Type, customization) {
+		t.Fatalf("expected customization record, got %v", field.Type)
+	}
+}
+
 func TestManifest_DefineSummary(t *testing.T) {
 	m := NewManifest("test")
 	s := NewSummary(nil, nil)
@@ -258,6 +291,36 @@ func TestManifest_EnrichedExport_DoesNotApplySummaryToNestedSameName(t *testing.
 	}
 	if nestedFn.Refinement != nil {
 		t.Fatalf("nested validate should not be enriched, got refinement %#v", nestedFn.Refinement)
+	}
+}
+
+func TestManifest_EnrichedExport_ResolvesLocalRefs(t *testing.T) {
+	m := NewManifest("test")
+	customization := typ.NewRecord().
+		Field("custom_css", typ.String).
+		Field("css_variables", typ.NewMap(typ.String, typ.String)).
+		Field("icons", typ.NewMap(typ.String, typ.String)).
+		Build()
+	export := typ.NewRecord().
+		Field("customization", typ.NewRef("", "Customization")).
+		Build()
+	m.DefineType("Customization", customization)
+	m.SetExport(export)
+
+	enriched := m.EnrichedExport()
+	rec, ok := enriched.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record export, got %T", enriched)
+	}
+	field := rec.GetField("customization")
+	if field == nil {
+		t.Fatal("expected customization field")
+	}
+	if _, isRef := field.Type.(*typ.Ref); isRef {
+		t.Fatalf("expected resolved export field type, got ref: %v", field.Type)
+	}
+	if !typ.TypeEquals(field.Type, customization) {
+		t.Fatalf("expected customization record, got %v", field.Type)
 	}
 }
 
