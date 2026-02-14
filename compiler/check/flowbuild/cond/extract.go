@@ -894,6 +894,35 @@ func PointHasTerminatingCallSite(
 	return false
 }
 
+func calleeSymbolCandidatesForEffects(info *cfg.CallInfo, graph *cfg.Graph, moduleBindings *bind.BindingTable) []cfg.SymbolID {
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
+	return callsite.CalleeSymbolCandidatesWithAliases(info, graph, bindings, moduleBindings)
+}
+
+// PointHasTerminatingCallSite reports whether any callsite represented at point p
+// definitely terminates control flow.
+func PointHasTerminatingCallSite(
+	graph *cfg.Graph,
+	p cfg.Point,
+	synthFn func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	effectLookupSym constraint.EffectLookupBySym,
+	moduleBindings *bind.BindingTable,
+) bool {
+	if graph == nil {
+		return false
+	}
+	for _, callInfo := range graph.CallSitesAt(p) {
+		if CallTerminates(callInfo, p, synthFn, symResolver, effectLookupSym, graph, moduleBindings) {
+			return true
+		}
+	}
+	return false
+}
+
 // ConstraintsFromAssignOnReturn extracts OnReturn constraints from assignment RHS calls.
 func ConstraintsFromAssignOnReturn(
 	info *cfg.AssignInfo,

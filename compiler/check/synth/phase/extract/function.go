@@ -579,6 +579,38 @@ func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
 	return fnSym
 }
 
+func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
+	if graph == nil || fn == nil {
+		return 0
+	}
+	var fnSym cfg.SymbolID
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if fnSym != 0 || info == nil || !info.IsLocal || len(info.Targets) == 0 {
+			return
+		}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+				return
+			}
+			if source == fn {
+				fnSym = target.Symbol
+			}
+		})
+	})
+	if fnSym != 0 {
+		return fnSym
+	}
+	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
+		if fnSym != 0 || info == nil || info.Symbol == 0 {
+			return
+		}
+		if info.FuncExpr == fn {
+			fnSym = info.Symbol
+		}
+	})
+	return fnSym
+}
+
 // inferReturnExprTypes synthesizes types from return expressions using CFG point.
 // The last expression is expanded via MultiTypeOf to support multi-return calls.
 func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.Type {
