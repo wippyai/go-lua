@@ -555,42 +555,55 @@ func collectInferredTypes(
 				values := expandedAssignValues(synthAPI, info, p, rhsOverlay)
 
 				info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
-					if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-						return
-					}
-					if !sccSet[target.Symbol] {
-						return
-					}
-					if annotated != nil && annotated[target.Symbol] {
-						return
-					}
-					assignedType := typ.Unknown
-					// Canonical local-function policy: use the signature seed captured
-					// from declaration shape (params/annotations), not synthesized return
-					// summaries at this stage. Return summaries are reconciled in interproc
-					// channels and should not be re-injected through local assignment
-					// inference, which can reintroduce stale unions.
-					if _, isFnLiteral := source.(*ast.FunctionExpr); isFnLiteral {
-						if sig, ok := funcSigTypes[target.Symbol]; ok && sig != nil {
-							assignedType = sig
+					switch target.Kind {
+					case cfg.TargetIdent:
+						if target.Symbol == 0 {
+							return
 						}
-					}
-					if typ.IsAbsentOrUnknown(assignedType) {
-						if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
-							assignedType = value
-						} else if wrappedSynth != nil && source != nil {
-							assignedType = wrappedSynth(source, p)
+						if !sccSet[target.Symbol] {
+							return
 						}
-					}
-					assignedType = resolve.Ref(assignedType, sc)
-					if typ.IsAbsentOrUnknown(assignedType) {
-						return
-					}
-					old := inferred[target.Symbol]
-					joined := joinInferredType(old, assignedType)
-					if !typ.TypeEquals(old, joined) {
-						inferred[target.Symbol] = joined
-						changed = true
+						if annotated != nil && annotated[target.Symbol] {
+							return
+						}
+						assignedType := typ.Unknown
+						// Canonical local-function policy: use the signature seed captured
+						// from declaration shape (params/annotations), not synthesized return
+						// summaries at this stage. Return summaries are reconciled in interproc
+						// channels and should not be re-injected through local assignment
+						// inference, which can reintroduce stale unions.
+						if _, isFnLiteral := source.(*ast.FunctionExpr); isFnLiteral {
+							if sig, ok := funcSigTypes[target.Symbol]; ok && sig != nil {
+								assignedType = sig
+							}
+						}
+							if typ.IsAbsentOrUnknown(assignedType) {
+								if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
+									assignedType = value
+									// Prefer direct expression synthesis when slot expansion
+									// yields `any` for non-call RHS but the expression itself
+									// has a more precise type (e.g. indexed map reads).
+									if source != nil && wrappedSynth != nil && typ.IsAny(value) {
+										if _, isCall := source.(*ast.FuncCallExpr); !isCall {
+											if precise := resolve.Ref(wrappedSynth(source, p), sc); !typ.IsAbsentOrUnknown(precise) && !typ.IsAny(precise) {
+												assignedType = precise
+											}
+										}
+									}
+								} else if wrappedSynth != nil && source != nil {
+									assignedType = wrappedSynth(source, p)
+								}
+							}
+						assignedType = resolve.Ref(assignedType, sc)
+						if typ.IsAbsentOrUnknown(assignedType) {
+							return
+						}
+						old := inferred[target.Symbol]
+						joined := joinInferredType(old, assignedType)
+						if !typ.TypeEquals(old, joined) {
+							inferred[target.Symbol] = joined
+							changed = true
+						}
 					}
 				})
 			}
@@ -679,9 +692,7 @@ func collectInferredTypes(
 					if baseSym != 0 && sccSet[baseSym] {
 						keyType := wrappedSynth(attr.Key, p)
 						keyType = resolve.Ref(keyType, sc)
-						if typ.IsAbsentOrUnknown(keyType) {
-							keyType = typ.String
-						}
+						keyType = canonicalDynamicKeyType(keyType)
 						old := inferred[baseSym]
 						newType := flow.WidenMapValueArray(old, keyType, valueType)
 						if newType != nil && !typ.TypeEquals(old, newType) {

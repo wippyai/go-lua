@@ -8,16 +8,10 @@ import (
 
 // FactsEqual checks if two interproc fact bundles are equal.
 func FactsEqual(a, b api.Facts) bool {
-	if !ReturnSummariesEqual(a.ReturnSummaries, b.ReturnSummaries) {
-		return false
-	}
-	if !ReturnSummariesEqual(a.NarrowReturns, b.NarrowReturns) {
+	if !FunctionFactsEqual(canonicalFunctionFacts(a), canonicalFunctionFacts(b)) {
 		return false
 	}
 	if !ParamHintsEqual(a.ParamHints, b.ParamHints) {
-		return false
-	}
-	if !FuncTypesEqual(a.FuncTypes, b.FuncTypes) {
 		return false
 	}
 	if !LiteralSigsEqual(a.LiteralSigs, b.LiteralSigs) {
@@ -34,6 +28,30 @@ func FactsEqual(a, b api.Facts) bool {
 	}
 	if !ConstructorFieldsEqual(a.ConstructorFields, b.ConstructorFields) {
 		return false
+	}
+	return true
+}
+
+// FunctionFactsEqual checks if two canonical function-fact maps are equal.
+func FunctionFactsEqual(a, b api.FunctionFacts) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, sym := range cfg.SortedSymbolIDs(a) {
+		af := a[sym]
+		bf, ok := b[sym]
+		if !ok {
+			return false
+		}
+		if !ReturnTypesEqual(af.Summary, bf.Summary) {
+			return false
+		}
+		if !ReturnTypesEqual(af.Narrow, bf.Narrow) {
+			return false
+		}
+		if !typ.TypeEquals(af.Func, bf.Func) {
+			return false
+		}
 	}
 	return true
 }

@@ -10,6 +10,9 @@ import (
 
 func TestFacts_Zero(t *testing.T) {
 	f := Facts{}
+	if f.FunctionFacts != nil {
+		t.Error("zero Facts should have nil FunctionFacts")
+	}
 	if f.ReturnSummaries != nil {
 		t.Error("zero Facts should have nil ReturnSummaries")
 	}
@@ -167,6 +170,13 @@ func TestContainerMutationKey(t *testing.T) {
 
 func TestFacts_WithData(t *testing.T) {
 	f := Facts{
+		FunctionFacts: FunctionFacts{
+			4: {
+				Summary: []typ.Type{typ.Boolean},
+				Narrow:  []typ.Type{typ.Boolean},
+				Func:    typ.Func().Returns(typ.Boolean).Build(),
+			},
+		},
 		ReturnSummaries: ReturnSummaries{
 			1: []typ.Type{typ.String},
 		},
@@ -180,6 +190,9 @@ func TestFacts_WithData(t *testing.T) {
 
 	if len(f.ReturnSummaries) != 1 {
 		t.Error("expected 1 return summary")
+	}
+	if len(f.FunctionFacts) != 1 {
+		t.Error("expected 1 function fact")
 	}
 	if len(f.ParamHints) != 1 {
 		t.Error("expected 1 param hint")

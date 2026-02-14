@@ -3,9 +3,11 @@ package flow
 import (
 	"slices"
 	"sort"
+	"strconv"
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -106,6 +108,10 @@ func (s *Solution) initSymbolTypes(src symbolTypeSource) {
 // and values are slices of CFG points that read from that key.
 type dependencyMap map[string][]cfg.Point
 
+func symbolDependencyKey(sym cfg.SymbolID) string {
+	return "$sym:" + strconv.FormatUint(uint64(sym), 10)
+}
+
 // register adds a dependency from a canonical key to a CFG point.
 //
 // If the key is empty, the registration is silently ignored. This allows
@@ -118,6 +124,13 @@ func (dm dependencyMap) register(key constraint.PathKey, point cfg.Point) {
 	if key != "" {
 		dm[string(key)] = append(dm[string(key)], point)
 	}
+}
+
+func (dm dependencyMap) registerSymbol(sym cfg.SymbolID, point cfg.Point) {
+	if sym == 0 {
+		return
+	}
+	dm[symbolDependencyKey(sym)] = append(dm[symbolDependencyKey(sym)], point)
 }
 
 // buildPhiDependencies constructs a map from version keys to phi points.
@@ -155,6 +168,8 @@ func (s *Solution) buildPhiDependencies() dependencyMap {
 //   - Regular assignments with a source path (e.g., y = x)
 //   - Iterator source paths (e.g., for k, v in pairs(t))
 //   - Table mutator value paths (e.g., table.insert(t, value))
+//   - Map element sources (e.g., v = t[k] with dynamic key)
+//   - Container element sources (e.g., v = ch:receive())
 //
 // This enables incremental re-evaluation during worklist iteration.
 func (s *Solution) buildAssignmentDependencies() dependencyMap {
@@ -169,6 +184,17 @@ func (s *Solution) buildAssignmentDependencies() dependencyMap {
 		if assign.IterSource != nil && assign.IterSource.Path.Symbol != 0 {
 			srcKey := s.pkResolver.KeyAt(assign.Point, assign.IterSource.Path)
 			deps.register(srcKey, assign.Point)
+			deps.registerSymbol(assign.IterSource.Path.Symbol, assign.Point)
+		}
+		if assign.MapElementSource != nil && assign.MapElementSource.MapPath.Symbol != 0 {
+			srcKey := s.pkResolver.KeyAt(assign.Point, assign.MapElementSource.MapPath)
+			deps.register(srcKey, assign.Point)
+			deps.registerSymbol(assign.MapElementSource.MapPath.Symbol, assign.Point)
+		}
+		if assign.ContainerElementSource != nil && assign.ContainerElementSource.ContainerPath.Symbol != 0 {
+			srcKey := s.pkResolver.KeyAt(assign.Point, assign.ContainerElementSource.ContainerPath)
+			deps.register(srcKey, assign.Point)
+			deps.registerSymbol(assign.ContainerElementSource.ContainerPath.Symbol, assign.Point)
 		}
 	}
 
@@ -260,6 +286,15 @@ func addDependentPoints(deps dependencyMap, changedKeys []string, worklist []cfg
 			}
 			pending[point] = true
 			points = append(points, point)
+		}
+		if sym := pathkey.KeySymbol(constraint.PathKey(key)); sym != 0 {
+			for _, point := range deps[symbolDependencyKey(sym)] {
+				if inQueue[point] || pending[point] {
+					continue
+				}
+				pending[point] = true
+				points = append(points, point)
+			}
 		}
 	}
 	slices.Sort(points)

@@ -28,6 +28,7 @@ func TestMethod(t *testing.T) {
 		{"record missing method", rec, "sub", false},
 		{"record without metatable", recNoMeta, "add", false},
 		{"function type", typ.Func().Build(), "call", false},
+		{"builtin table marker", typ.NewInterface("table", nil), "anything", true},
 		{"any type", typ.Any, "anything", true},
 		{"unknown type", typ.Unknown, "anything", true},
 		{"never type", typ.Never, "anything", true},

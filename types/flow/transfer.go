@@ -92,6 +92,12 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 				assignedType = elemType
 			}
 		}
+		// Derive type from dynamic map index read if MapElementSource is set.
+		if assign.MapElementSource != nil {
+			if elemType := s.mapElementTypeAt(p, assign.MapElementSource); elemType != nil {
+				assignedType = elemType
+			}
+		}
 		if assignedType == nil {
 			assignedType = assign.Type
 		}
@@ -482,6 +488,14 @@ func (s *Solution) iterVarTypeAt(p cfg.Point, iter *IteratorSource) typ.Type {
 	}
 
 	srcType := s.NarrowedTypeAt(p, iter.Path)
+	if srcType == nil || srcType.Kind().IsPlaceholder() {
+		if preType := s.preAssignmentNarrowedTypeAt(p, iter.Path); preType != nil {
+			// Prefer predecessor flow evidence over placeholder/absent current state.
+			if srcType == nil || srcType.Kind().IsPlaceholder() || !preType.Kind().IsPlaceholder() {
+				srcType = preType
+			}
+		}
+	}
 
 	// For indexed iteration (ipairs) over keys-provenance variables,
 	// reconcile the original table key type with the keys-array element type.
@@ -640,6 +654,55 @@ func (s *Solution) containerElementTypeAt(p cfg.Point, src *ContainerElementSour
 	return s.inputs.Decomposer.ElementType(containerType)
 }
 
+// mapElementTypeAt derives the value type from a dynamic map index read source.
+//
+// For assignments like `local v = t[k]` where the key is non-const, extraction
+// records MapElementSource so solve-time flow can derive `v` from current map type.
+func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type {
+	if src == nil || src.MapPath.IsEmpty() {
+		return nil
+	}
+
+	mapType := s.NarrowedTypeAt(p, src.MapPath)
+	if mapType == nil || mapType.Kind().IsPlaceholder() {
+		if preType := s.preAssignmentNarrowedTypeAt(p, src.MapPath); preType != nil {
+			// Prefer predecessor flow evidence over placeholder/absent current state.
+			if mapType == nil || mapType.Kind().IsPlaceholder() || !preType.Kind().IsPlaceholder() {
+				mapType = preType
+			}
+		}
+	}
+	if mapType == nil {
+		if declType := s.lookupDeclaredType(src.MapPath); declType != nil {
+			mapType = declType
+		}
+	}
+	if (mapType == nil || mapType.Kind().IsPlaceholder() || isEmptyRecordNoMapType(mapType)) &&
+		src.MapPath.Symbol != 0 && len(src.MapPath.Segments) == 0 {
+		if known := s.joinKnownRootTypes(src.MapPath.Symbol); known != nil {
+			if mapType == nil {
+				mapType = known
+			} else {
+				mapType = join.Types(mapType, known)
+			}
+		}
+	}
+	if mapType == nil {
+		return nil
+	}
+
+	if valueType := s.inputs.Decomposer.ValueType(mapType); valueType != nil {
+		return valueType
+	}
+	if mapType.Kind().IsPlaceholder() {
+		return typ.Any
+	}
+	// Dynamic index on known container shape with no value evidence resolves to nil.
+	// This preserves Lua table semantics for missing keys and avoids placeholder
+	// fallback poisoning in loop fixpoint before map writes are observed.
+	return typ.Nil
+}
+
 // processIndexerAssignmentReturnKey handles dynamic index assignments like t[k] = v.
 //
 // When a table is indexed with a non-constant key (t[k] = v), the table may need
@@ -669,12 +732,10 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 
 	// Resolve key type from flow state or explicit override
 	keyType := ia.KeyType
-	if keyType == nil {
+	if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
 		keyType = s.resolveSymbolKeyType(p, ia.KeySymbol, ia.KeyVar)
 	}
-	if keyType == nil {
-		keyType = typ.String // Fallback for unresolvable keys
-	}
+	keyType = normalizeDynamicKeyType(keyType)
 
 	// Resolve value type from flow state or use fallback.
 	valueType := ia.ValType
@@ -749,6 +810,28 @@ func (s *Solution) joinPredecessorRootTypes(p cfg.Point, sym cfg.SymbolID) typ.T
 	return join.Types(types...)
 }
 
+func (s *Solution) joinKnownRootTypes(sym cfg.SymbolID) typ.Type {
+	if s == nil || s.pkResolver == nil || sym == 0 {
+		return nil
+	}
+
+	var types []typ.Type
+	for key, t := range s.values {
+		if t == nil {
+			continue
+		}
+		parsedSym, _, suffix, ok := pathkey.ParseKey(constraint.PathKey(key))
+		if !ok || parsedSym != sym || suffix != "" {
+			continue
+		}
+		types = append(types, t)
+	}
+	if len(types) == 0 {
+		return nil
+	}
+	return join.Types(types...)
+}
+
 // resolveSymbolKeyType gets the flow-narrowed type for a symbol at point p.
 //
 // Used to look up key types for dynamic index operations. The symbol ID provides
@@ -815,12 +898,10 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 	var newType typ.Type
 	if tm.KeySymbol != 0 || tm.KeyType != nil {
 		keyType := tm.KeyType
-		if keyType == nil {
+		if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
 			keyType = s.resolveSymbolKeyType(p, tm.KeySymbol, tm.KeyVar)
 		}
-		if keyType == nil {
-			keyType = typ.String
-		}
+		keyType = normalizeDynamicKeyType(keyType)
 		newType = WidenMapValueArray(currentType, keyType, valueType)
 	} else {
 		newType = WidenArrayElementType(currentType, valueType, typ.JoinPreferNonSoft)
@@ -832,6 +913,13 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 
 	s.values[string(pathKey)] = newType
 	return string(pathKey)
+}
+
+func normalizeDynamicKeyType(keyType typ.Type) typ.Type {
+	if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
+		return typ.Unknown
+	}
+	return subtype.Widen(keyType)
 }
 
 // processContainerMutatorAssignmentReturnKey handles container mutations.

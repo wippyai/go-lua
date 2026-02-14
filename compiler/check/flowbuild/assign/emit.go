@@ -45,11 +45,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/tblutil"
+	checkscope "github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -148,6 +150,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	// Precompute truthy guards: map from CFG point to paths that are narrowed (non-nil) at that point.
 	// Used during table literal synthesis to unwrap optional types.
 	truthyGuards := guard.CollectTruthyGuards(fc.Graph, bindings)
+	typeGuards := guard.CollectTypeGuards(fc.Graph, bindings)
 
 	baseSynth := resolve.SynthWithOverlay(overlayTypes, bindings, synth)
 	var wrappedSynth func(ast.Expr, cfg.Point) typ.Type
@@ -162,6 +165,13 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			t := synth(expr, p)
 			if t != nil && bindings != nil {
 				if pathKey, ok := guard.TruthyKeyFromExpr(attr, bindings); ok && pathKey.Field != "" {
+					if guards, ok := typeGuards[p]; ok {
+						if tk, ok := guards[pathKey]; ok && !tk.IsZero() {
+							if narrowed := narrow.ByTypeKey(t, tk, nil); narrowed != nil {
+								t = narrowed
+							}
+						}
+					}
 					if guards, ok := truthyGuards[p]; ok {
 						if guards[pathKey] {
 							if opt, ok := t.(*typ.Optional); ok {
@@ -317,14 +327,39 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					assignedType = narrowed
 				}
 
-				// Build source path with const resolution and bindings
+				// Build source path with const resolution and bindings.
+				// For dynamic map index reads (t[k]) where k is non-const and
+				// sourcePath cannot be represented statically, attach MapElementSource
+				// so solve-time propagation can derive the value type from map flow facts.
 				var sourcePath constraint.Path
+				var mapElementSource *flow.MapElementSource
 				if source != nil {
 					if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
 						sourcePath = constraint.Path{
 							Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
 							Symbol:   sp.Symbol,
 							Segments: sp.Segments,
+						}
+					} else if attr, ok := source.(*ast.AttrGetExpr); ok {
+						if _, isStatic := staticSegmentForAttrKey(attr.Key, constResolver); !isStatic {
+							if mp := path.FromExprWithBindings(attr.Object, constResolver, bindings); !mp.IsEmpty() && mp.Symbol != 0 {
+								mp = constraint.Path{
+									Root:     resolve.RootNameFromBindings(bindings, mp.Symbol, mp.Root),
+									Symbol:   mp.Symbol,
+									Segments: mp.Segments,
+								}
+								var keySym cfg.SymbolID
+								var keyVar string
+								if keyIdent, ok := attr.Key.(*ast.IdentExpr); ok && bindings != nil {
+									keySym, _ = bindings.SymbolOf(keyIdent)
+									keyVar = resolve.RootNameFromBindings(bindings, keySym, keyIdent.Value)
+								}
+								mapElementSource = &flow.MapElementSource{
+									MapPath:   mp,
+									KeySymbol: keySym,
+									KeyVar:    keyVar,
+								}
+							}
 						}
 					}
 				}
@@ -445,6 +480,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					SourcePath:             sourcePath,
 					Type:                   resolve.Ref(assignedType, sc),
 					ContainerElementSource: containerElemSrc,
+					MapElementSource:       mapElementSource,
 				})
 
 				// Emit per-field assignments for table literals to enable flow narrowing
@@ -520,10 +556,6 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						}
 					}
 				}
-				if basePath.IsEmpty() {
-					continue
-				}
-
 				// Determine assigned type
 				assignedType := typ.Unknown
 				// First check expanded values for multi-return assignments
@@ -550,16 +582,18 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 				case *ast.IdentExpr:
 					// Variable key - try const resolution
-					if val := constResolver(k.Value); val != nil {
-						switch val.Kind {
-						case flow.ConstString:
-							if seg, ok := path.StaticKeySegment(&ast.StringExpr{Value: val.Str}); ok {
-								keySeg = seg
+					if constResolver != nil {
+						if val := constResolver(k.Value); val != nil {
+							switch val.Kind {
+							case flow.ConstString:
+								if seg, ok := path.StaticKeySegment(&ast.StringExpr{Value: val.Str}); ok {
+									keySeg = seg
+								}
+							case flow.ConstInt:
+								keyType = typ.Integer
+							case flow.ConstFloat:
+								keyType = typ.Number
 							}
-						case flow.ConstInt:
-							keyType = typ.Integer
-						case flow.ConstFloat:
-							keyType = typ.Number
 						}
 					}
 				case *ast.NumberExpr:
@@ -574,6 +608,26 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 				}
 
+				if basePath.IsEmpty() {
+					if lifted, ok := buildLiftedDynamicIndexerAssignment(
+						target,
+						source,
+						assignedType,
+						p,
+						sc,
+						fc.Graph,
+						bindings,
+						constResolver,
+						wrappedSynth,
+						resolverWithSpec,
+						truthyGuards,
+						typeGuards,
+					); ok {
+						inputs.IndexerAssignments = append(inputs.IndexerAssignments, lifted)
+					}
+					continue
+				}
+
 				// For non-const keys, emit an IndexerAssignment to widen the table
 				if keySeg.Name == "" {
 					// Extract key variable name and symbol using bindings.
@@ -585,17 +639,15 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 					// Prefer symbol-based key typing at solve-time so branch narrowing
 					// (for example `if suite then suites[suite] = ...`) is preserved.
-					if keyType == nil && target.Key != nil && wrappedSynth != nil && keySym == 0 {
+					if keyType == nil && target.Key != nil && wrappedSynth != nil {
 						keyType = wrappedSynth(target.Key, p)
 					}
-					if keySym != 0 && typ.IsAbsentOrUnknown(keyType) {
-						keyType = nil
-					}
+					keyType = normalizeIndexerKeyType(keyType)
 					// Apply truthy guards to narrow optional fields in table literals.
 					valType := assignedType
 					if source != nil && bindings != nil && truthyGuards != nil {
 						if tbl, ok := source.(*ast.TableExpr); ok {
-							valType = guard.NarrowTableFieldsByGuard(valType, tbl, p, bindings, truthyGuards)
+							valType = guard.NarrowTableFieldsByGuard(valType, tbl, p, bindings, truthyGuards, typeGuards)
 						}
 					}
 					valuePath := constraint.Path{}
@@ -687,6 +739,280 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			}
 		}
 	})
+}
+
+type attrChainStep struct {
+	KeyExpr ast.Expr
+	Seg     constraint.Segment
+	Static  bool
+}
+
+func buildLiftedDynamicIndexerAssignment(
+	target cfg.AssignTarget,
+	source ast.Expr,
+	assignedType typ.Type,
+	p cfg.Point,
+	sc *checkscope.State,
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	constResolver func(string) *flow.ConstValue,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	truthyGuards map[cfg.Point]map[guard.TruthyPathKey]bool,
+	typeGuards map[cfg.Point]map[guard.TruthyPathKey]narrow.TypeKey,
+) (flow.IndexerAssignment, bool) {
+	if target.Expr == nil {
+		return flow.IndexerAssignment{}, false
+	}
+
+	rootExpr, steps, ok := flattenAttrChain(target.Expr, constResolver)
+	if !ok || rootExpr == nil || len(steps) == 0 {
+		return flow.IndexerAssignment{}, false
+	}
+
+	rootPath := path.FromExprWithBindings(rootExpr, constResolver, bindings)
+	if rootPath.IsEmpty() || rootPath.Symbol == 0 {
+		return flow.IndexerAssignment{}, false
+	}
+	rootPath = constraint.Path{
+		Root:     resolve.RootNameFromBindings(bindings, rootPath.Symbol, rootPath.Root),
+		Symbol:   rootPath.Symbol,
+		Segments: rootPath.Segments,
+	}
+
+	firstDynamic := -1
+	for i, step := range steps {
+		if step.Static {
+			if firstDynamic == -1 {
+				rootPath = rootPath.Append(step.Seg)
+			}
+			continue
+		}
+		if firstDynamic == -1 {
+			firstDynamic = i
+		}
+	}
+	if firstDynamic == -1 {
+		return flow.IndexerAssignment{}, false
+	}
+
+	outer := steps[firstDynamic]
+	keyVar, keySym, keyType := keyInfoForStep(outer, graph, bindings, synth, symResolver, p, true)
+
+	valType := assignedType
+	if source != nil && bindings != nil && truthyGuards != nil {
+		if tbl, ok := source.(*ast.TableExpr); ok {
+			valType = guard.NarrowTableFieldsByGuard(valType, tbl, p, bindings, truthyGuards, typeGuards)
+		}
+	}
+	valType = resolve.Ref(valType, sc)
+	if valType == nil {
+		valType = typ.Unknown
+	}
+
+	for i := len(steps) - 1; i > firstDynamic; i-- {
+		valType = wrapStepValue(steps[i], valType, graph, bindings, synth, symResolver, p)
+	}
+
+	valuePath := constraint.Path{}
+	if source != nil {
+		if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+			valuePath = constraint.Path{
+				Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
+				Symbol:   sp.Symbol,
+				Segments: sp.Segments,
+			}
+		}
+	}
+
+	return flow.IndexerAssignment{
+		Point:     p,
+		Root:      rootPath.Root,
+		Symbol:    rootPath.Symbol,
+		Segments:  rootPath.Segments,
+		KeyVar:    keyVar,
+		KeySymbol: keySym,
+		KeyType:   keyType,
+		ValuePath: valuePath,
+		ValType:   valType,
+	}, true
+}
+
+func flattenAttrChain(expr ast.Expr, constResolver func(string) *flow.ConstValue) (ast.Expr, []attrChainStep, bool) {
+	if expr == nil {
+		return nil, nil, false
+	}
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok {
+		return expr, nil, true
+	}
+
+	root, steps, ok := flattenAttrChain(attr.Object, constResolver)
+	if !ok || root == nil {
+		return nil, nil, false
+	}
+
+	step := attrChainStep{KeyExpr: attr.Key}
+	if seg, ok := staticSegmentForAttrKey(attr.Key, constResolver); ok {
+		step.Static = true
+		step.Seg = seg
+	}
+
+	steps = append(steps, step)
+	return root, steps, true
+}
+
+func staticSegmentForAttrKey(key ast.Expr, constResolver func(string) *flow.ConstValue) (constraint.Segment, bool) {
+	switch k := key.(type) {
+	case *ast.StringExpr, *ast.NumberExpr:
+		return path.StaticKeySegment(k)
+	case *ast.IdentExpr:
+		if constResolver == nil {
+			return constraint.Segment{}, false
+		}
+		val := constResolver(k.Value)
+		if val == nil {
+			return constraint.Segment{}, false
+		}
+		switch val.Kind {
+		case flow.ConstString:
+			return path.StaticKeySegment(&ast.StringExpr{Value: val.Str})
+		case flow.ConstInt:
+			return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(val.Int)}, true
+		}
+	}
+	return constraint.Segment{}, false
+}
+
+func keyInfoForStep(
+	step attrChainStep,
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	p cfg.Point,
+	_ bool,
+) (string, cfg.SymbolID, typ.Type) {
+	var keyVar string
+	var keySym cfg.SymbolID
+	if keyIdent, ok := step.KeyExpr.(*ast.IdentExpr); ok && bindings != nil {
+		keySym, _ = bindings.SymbolOf(keyIdent)
+		keyVar = resolve.RootNameFromBindings(bindings, keySym, keyIdent.Value)
+	}
+
+	keyType := inferDynamicKeyType(step, synth, p)
+	if typ.IsAbsentOrUnknown(keyType) && keySym != 0 && symResolver != nil {
+		if resolved, ok := symResolver(p, keySym); ok && !typ.IsAbsentOrUnknown(resolved) {
+			keyType = resolved
+		}
+	}
+	if typ.IsAbsentOrUnknown(keyType) && keySym != 0 {
+		if resolved := inferSymbolTypeFromVisibleDef(graph, keySym, p, synth); !typ.IsAbsentOrUnknown(resolved) {
+			keyType = resolved
+		}
+	}
+	keyType = normalizeIndexerKeyType(keyType)
+	return keyVar, keySym, keyType
+}
+
+func inferDynamicKeyType(step attrChainStep, synth func(ast.Expr, cfg.Point) typ.Type, p cfg.Point) typ.Type {
+	if step.Static {
+		switch step.Seg.Kind {
+		case constraint.SegmentIndexInt:
+			return typ.Integer
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			return typ.String
+		}
+	}
+
+	if step.KeyExpr != nil {
+		if val := constprop.ConstValueFromExpr(step.KeyExpr); val != nil {
+			switch val.Kind {
+			case flow.ConstInt:
+				return typ.Integer
+			case flow.ConstFloat:
+				return typ.Number
+			case flow.ConstString:
+				return typ.String
+			}
+		}
+		if synth != nil {
+			if t := synth(step.KeyExpr, p); !typ.IsAbsentOrUnknown(t) {
+				return t
+			}
+		}
+	}
+
+	return typ.Unknown
+}
+
+func wrapStepValue(
+	step attrChainStep,
+	value typ.Type,
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	p cfg.Point,
+) typ.Type {
+	if value == nil {
+		value = typ.Unknown
+	}
+	if step.Static {
+		switch step.Seg.Kind {
+		case constraint.SegmentField:
+			return typ.NewRecord().SetOpen(true).Field(step.Seg.Name, value).Build()
+		case constraint.SegmentIndexInt:
+			return typ.NewMap(typ.Integer, value)
+		case constraint.SegmentIndexString:
+			return typ.NewMap(typ.String, value)
+		}
+	}
+
+	_, _, keyType := keyInfoForStep(step, graph, bindings, synth, symResolver, p, false)
+	return typ.NewMap(keyType, value)
+}
+
+func inferSymbolTypeFromVisibleDef(
+	graph *cfg.Graph,
+	sym cfg.SymbolID,
+	at cfg.Point,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+) typ.Type {
+	if graph == nil || sym == 0 || synth == nil {
+		return nil
+	}
+	ver := graph.VisibleVersion(at, sym)
+	if ver.Symbol == 0 || ver.ID == 0 {
+		return nil
+	}
+
+	var inferred typ.Type
+	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if inferred != nil || p > at || info == nil {
+			return
+		}
+		if pv := graph.VisibleVersion(p, sym); pv.Symbol != ver.Symbol || pv.ID != ver.ID {
+			return
+		}
+		info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
+			if inferred != nil {
+				return
+			}
+			if target.Kind != cfg.TargetIdent || target.Symbol != sym || source == nil {
+				return
+			}
+			if t := synth(source, p); !typ.IsAbsentOrUnknown(t) {
+				inferred = t
+			}
+			_ = i
+		})
+	})
+	return inferred
+}
+
+func normalizeIndexerKeyType(keyType typ.Type) typ.Type {
+	return canonicalDynamicKeyType(keyType)
 }
 
 // ExtractFuncDefAssignments extracts function definitions as assignments.

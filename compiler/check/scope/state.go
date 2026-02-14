@@ -129,7 +129,7 @@ func NewWithBuiltins() *State {
 	s = s.WithType("integer", typ.Integer)
 	s = s.WithType("int", typ.Integer)
 	s = s.WithType("string", typ.String)
-	s = s.WithType("table", typ.NewRecord().Build())
+	s = s.WithType("table", typ.NewInterface("table", nil))
 
 	return s
 }

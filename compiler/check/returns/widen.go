@@ -24,41 +24,32 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 		prev.ReturnSummaries, next.ReturnSummaries,
 		prev.NarrowReturns, next.NarrowReturns,
 		prev.FuncTypes, next.FuncTypes,
+		prev.FunctionFacts, next.FunctionFacts,
 	)
 	if len(symbols) == 0 {
 		return out
 	}
 
-	out.ReturnSummaries = make(api.ReturnSummaries, len(symbols))
-	out.NarrowReturns = make(api.NarrowReturnSummaries, len(symbols))
-	out.FuncTypes = make(api.FuncTypes, len(symbols))
+	out.FunctionFacts = make(api.FunctionFacts, len(symbols))
 	for _, sym := range symbols {
+		prevFact := readFunctionFactFromFacts(&prev, sym)
+		nextFact := readFunctionFactFromFacts(&next, sym)
 		reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
-			ExistingSummary:  prev.ReturnSummaries[sym],
-			ExistingNarrow:   prev.NarrowReturns[sym],
-			ExistingFunc:     prev.FuncTypes[sym],
-			CandidateSummary: next.ReturnSummaries[sym],
-			CandidateNarrow:  next.NarrowReturns[sym],
-			CandidateFunc:    next.FuncTypes[sym],
+			ExistingSummary:  prevFact.Summary,
+			ExistingNarrow:   prevFact.Narrow,
+			ExistingFunc:     prevFact.Func,
+			CandidateSummary: nextFact.Summary,
+			CandidateNarrow:  nextFact.Narrow,
+			CandidateFunc:    nextFact.Func,
 		})
-		if len(reconciled.Summary) > 0 {
-			out.ReturnSummaries[sym] = widenReturnVectorForConvergence(reconciled.Summary)
-		}
-		if len(reconciled.Narrow) > 0 {
-			out.NarrowReturns[sym] = widenReturnVectorForConvergence(reconciled.Narrow)
-		}
-		if reconciled.Func != nil {
-			out.FuncTypes[sym] = maybeWidenTypeForConvergence(reconciled.Func)
-		}
+		writeFunctionFactToFacts(&out, sym, api.FunctionFact{
+			Summary: widenReturnVectorForConvergence(reconciled.Summary),
+			Narrow:  widenReturnVectorForConvergence(reconciled.Narrow),
+			Func:    maybeWidenTypeForConvergence(reconciled.Func),
+		})
 	}
-	if len(out.ReturnSummaries) == 0 {
-		out.ReturnSummaries = nil
-	}
-	if len(out.NarrowReturns) == 0 {
-		out.NarrowReturns = nil
-	}
-	if len(out.FuncTypes) == 0 {
-		out.FuncTypes = nil
+	if len(out.FunctionFacts) == 0 {
+		out.FunctionFacts = nil
 	}
 	return out
 }

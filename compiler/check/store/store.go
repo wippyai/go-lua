@@ -552,6 +552,9 @@ func (s *SessionStore) ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, 
 }
 
 func initInterprocFacts(f *api.Facts) {
+	if f.FunctionFacts == nil {
+		f.FunctionFacts = make(api.FunctionFacts)
+	}
 	if f.ReturnSummaries == nil {
 		f.ReturnSummaries = make(map[cfg.SymbolID][]typ.Type)
 	}
@@ -573,6 +576,57 @@ func initInterprocFacts(f *api.Facts) {
 	if f.CapturedFields == nil {
 		f.CapturedFields = make(api.CapturedFieldAssigns)
 	}
+}
+
+func returnSummariesFromFacts(facts api.Facts) map[cfg.SymbolID][]typ.Type {
+	if len(facts.FunctionFacts) == 0 {
+		return nil
+	}
+	out := make(map[cfg.SymbolID][]typ.Type, len(facts.FunctionFacts))
+	for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
+		ff := facts.FunctionFacts[sym]
+		if len(ff.Summary) > 0 {
+			out[sym] = ff.Summary
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func narrowReturnSummariesFromFacts(facts api.Facts) map[cfg.SymbolID][]typ.Type {
+	if len(facts.FunctionFacts) == 0 {
+		return nil
+	}
+	out := make(map[cfg.SymbolID][]typ.Type, len(facts.FunctionFacts))
+	for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
+		ff := facts.FunctionFacts[sym]
+		if len(ff.Narrow) > 0 {
+			out[sym] = ff.Narrow
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func localFuncTypesFromFacts(facts api.Facts) map[cfg.SymbolID]typ.Type {
+	if len(facts.FunctionFacts) == 0 {
+		return nil
+	}
+	out := make(map[cfg.SymbolID]typ.Type, len(facts.FunctionFacts))
+	for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
+		ff := facts.FunctionFacts[sym]
+		if ff.Func != nil {
+			out[sym] = ff.Func
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // UpdateInterprocFactsNext updates interproc facts for the next iteration.
@@ -823,7 +877,7 @@ func (s *SessionStore) GetReturnSummariesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID][]typ.Type {
 	s.requirePhase(api.PhaseScopeCompute)
-	return s.GetInterprocFactsSnapshot(graph, parent).ReturnSummaries
+	return returnSummariesFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
 }
 
 // GetNarrowReturnSummariesSnapshot returns post-flow return summaries from the stable snapshot.
@@ -832,7 +886,7 @@ func (s *SessionStore) GetNarrowReturnSummariesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID][]typ.Type {
 	s.requirePhase(api.PhaseNarrowing)
-	return s.GetInterprocFactsSnapshot(graph, parent).NarrowReturns
+	return narrowReturnSummariesFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
 }
 
 // GetLocalFuncTypesSnapshot returns canonical local function types from the stable interproc snapshot.
@@ -841,7 +895,7 @@ func (s *SessionStore) GetLocalFuncTypesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID]typ.Type {
 	s.requirePhase(api.PhaseScopeCompute)
-	return s.GetInterprocFactsSnapshot(graph, parent).FuncTypes
+	return localFuncTypesFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
 }
 
 // GetLiteralSigsSnapshot returns literal signatures from the stable interproc snapshot.

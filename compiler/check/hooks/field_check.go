@@ -629,6 +629,12 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth,
 		return nil
 	}
 	keyType := narrowView.TypeOf(e.Key, p)
+	if keyType == nil {
+		// Treat unresolved key type as unknown at indexability boundary.
+		// This preserves dynamic Lua semantics for computed keys while still
+		// allowing container-specific checks to reject impossible accesses.
+		keyType = typ.Unknown
+	}
 
 	if rec, ok := unwrap.Alias(objType).(*typ.Record); ok && !rec.HasMapComponent() && !rec.Open {
 		if !isLiteralStringKeyType(keyType) {

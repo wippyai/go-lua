@@ -33,6 +33,18 @@ type ParamHints = map[cfg.SymbolID][]typ.Type
 // same scope as the call site.
 type FuncTypes = map[cfg.SymbolID]typ.Type
 
+// FunctionFact is the canonical function-related interproc fact for one symbol.
+// Legacy channels (ReturnSummaries/NarrowReturns/FuncTypes) are compatibility
+// views and should be derivable from this value.
+type FunctionFact struct {
+	Summary []typ.Type
+	Narrow  []typ.Type
+	Func    typ.Type
+}
+
+// FunctionFacts maps function symbols to their canonical function facts.
+type FunctionFacts = map[cfg.SymbolID]FunctionFact
+
 // LiteralSigs maps anonymous function literal expressions to their signatures.
 // Used when function literals are passed as arguments or assigned to variables
 // without explicit type annotations.
@@ -77,9 +89,13 @@ type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
 // Facts bundles all interprocedural analysis results for a single function graph.
 // These facts are computed during analysis and stored per (graph, parent) pair.
 type Facts struct {
-	ReturnSummaries    ReturnSummaries
-	NarrowReturns      NarrowReturnSummaries
-	ParamHints         ParamHints
+	FunctionFacts FunctionFacts
+	// Deprecated: compatibility mirror derived from FunctionFacts.
+	ReturnSummaries ReturnSummaries
+	// Deprecated: compatibility mirror derived from FunctionFacts.
+	NarrowReturns NarrowReturnSummaries
+	ParamHints    ParamHints
+	// Deprecated: compatibility mirror derived from FunctionFacts.
 	FuncTypes          FuncTypes
 	LiteralSigs        LiteralSigs
 	CapturedTypes      CapturedTypes

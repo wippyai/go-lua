@@ -11,11 +11,17 @@ import (
 
 func TestWidenFacts_DoesNotOverrideReturnSummariesWithNarrowReturns(t *testing.T) {
 	prev := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			1: {Summary: []typ.Type{typ.Integer}},
+		},
 		ReturnSummaries: api.ReturnSummaries{
 			1: []typ.Type{typ.Integer},
 		},
 	}
 	next := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			1: {Narrow: []typ.Type{typ.Nil}},
+		},
 		NarrowReturns: api.NarrowReturnSummaries{
 			1: []typ.Type{typ.Nil},
 		},
@@ -30,11 +36,17 @@ func TestWidenFacts_DoesNotOverrideReturnSummariesWithNarrowReturns(t *testing.T
 
 func TestWidenFacts_ElidesOptionalFromNarrowReturns(t *testing.T) {
 	prev := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			1: {Summary: []typ.Type{typ.NewOptional(typ.Integer)}},
+		},
 		ReturnSummaries: api.ReturnSummaries{
 			1: []typ.Type{typ.NewOptional(typ.Integer)},
 		},
 	}
 	next := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			1: {Narrow: []typ.Type{typ.Integer}},
+		},
 		NarrowReturns: api.NarrowReturnSummaries{
 			1: []typ.Type{typ.Integer},
 		},

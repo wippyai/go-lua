@@ -141,6 +141,22 @@ func IsContainer(t typ.Type) bool {
 	return false
 }
 
+// IsBuiltinTableTop reports whether t is the builtin "table" top marker type.
+//
+// The checker models `table` as an interface named "table" with no methods.
+// This marker means "some Lua table shape", not a closed interface.
+func IsBuiltinTableTop(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	t = Alias(t)
+	if t == nil {
+		return false
+	}
+	iface, ok := t.(*typ.Interface)
+	return ok && iface.Name == "table" && len(iface.Methods) == 0
+}
+
 // Function extracts a Function type, unwrapping Alias and Optional.
 func Function(t typ.Type) *typ.Function {
 	return unwrapFunctionDepth(t, typ.NewGuard())

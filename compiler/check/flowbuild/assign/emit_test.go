@@ -528,6 +528,63 @@ func TestExtractAssignments_IndexAssign_NonIdentifierStringKey_UsesIndexStringSe
 	}
 }
 
+func TestExtractAssignments_NestedDynamicIndex_LiftsToRootIndexer(t *testing.T) {
+	code := `
+		local subscribers = {}
+		local cid = "c1"
+		local sub_pid = "p1"
+
+		if not subscribers[cid] then
+			subscribers[cid] = {}
+		end
+		subscribers[cid][sub_pid] = true
+	`
+
+	chunk, err := parse.ParseString(code, "emit_nested_dynamic_index.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk}, "emit_nested_dynamic_index")
+	exit := graph.Exit()
+	subscribersSym, ok := graph.SymbolAt(exit, "subscribers")
+	if !ok || subscribersSym == 0 {
+		t.Fatal("expected symbol for subscribers")
+	}
+	cidSym, ok := graph.SymbolAt(exit, "cid")
+	if !ok || cidSym == 0 {
+		t.Fatal("expected symbol for cid")
+	}
+
+	inputs := &flow.Inputs{
+		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks:     make(map[string]flow.PredicateLink),
+		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+	}
+	ExtractAssignments(&core.FlowContext{
+		Graph: graph,
+		Derived: &core.Derived{
+			Synth: func(ast.Expr, cfg.Point) typ.Type {
+				return typ.Unknown
+			},
+		},
+	}, inputs, nil)
+
+	var lifted *flow.IndexerAssignment
+	for i := range inputs.IndexerAssignments {
+		assign := &inputs.IndexerAssignments[i]
+		if assign.Symbol != subscribersSym || assign.KeySymbol != cidSym || len(assign.Segments) != 0 {
+			continue
+		}
+			if _, ok := assign.ValType.(*typ.Map); ok {
+				lifted = assign
+				break
+			}
+		}
+	if lifted == nil {
+		t.Fatalf("expected lifted indexer assignment for nested dynamic write, got %#v", inputs.IndexerAssignments)
+	}
+}
+
 func TestCorrelationsFromFunctionType_NoImplicitErrorConvention(t *testing.T) {
 	fnType := typ.Func().
 		Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.Number)).

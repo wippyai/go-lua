@@ -127,6 +127,49 @@ func TestWidenInterprocFacts_Merge(t *testing.T) {
 	}
 }
 
+func TestReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
+	facts := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(1): {
+				Summary: []typ.Type{typ.String},
+			},
+		},
+	}
+	got := returnSummariesFromFacts(facts)
+	if len(got) != 1 || len(got[cfg.SymbolID(1)]) != 1 || got[cfg.SymbolID(1)][0] != typ.String {
+		t.Fatalf("unexpected summary view: %#v", got)
+	}
+}
+
+func TestNarrowReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
+	facts := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(2): {
+				Narrow: []typ.Type{typ.Number},
+			},
+		},
+	}
+	got := narrowReturnSummariesFromFacts(facts)
+	if len(got) != 1 || len(got[cfg.SymbolID(2)]) != 1 || got[cfg.SymbolID(2)][0] != typ.Number {
+		t.Fatalf("unexpected narrow view: %#v", got)
+	}
+}
+
+func TestLocalFuncTypesFromFacts_FallsBackToCanonical(t *testing.T) {
+	fn := typ.Func().Returns(typ.Boolean).Build()
+	facts := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(3): {
+				Func: fn,
+			},
+		},
+	}
+	got := localFuncTypesFromFacts(facts)
+	if len(got) != 1 || !typ.TypeEquals(got[cfg.SymbolID(3)], fn) {
+		t.Fatalf("unexpected func type view: %#v", got)
+	}
+}
+
 func TestSessionStore_Fields(t *testing.T) {
 	s := &SessionStore{
 		Module: &ModuleStore{

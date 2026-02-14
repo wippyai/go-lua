@@ -35,6 +35,13 @@ func TestMergeFunctionFactIntoFacts_MatchesKernelReconcile(t *testing.T) {
 	existingFn := typ.Func().Returns(typ.Number).Build()
 	candidateFn := typ.Func().Returns(typ.String).Build()
 	facts := &api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			sym: {
+				Summary: []typ.Type{typ.Number},
+				Narrow:  []typ.Type{typ.Number},
+				Func:    existingFn,
+			},
+		},
 		ReturnSummaries: api.ReturnSummaries{
 			sym: []typ.Type{typ.Number},
 		},
@@ -50,10 +57,11 @@ func TestMergeFunctionFactIntoFacts_MatchesKernelReconcile(t *testing.T) {
 		Narrow:  []typ.Type{typ.String},
 		Func:    candidateFn,
 	}
+	existing := readFunctionFactFromFacts(facts, sym)
 	expected := ReconcileFunctionFact(ReconcileFunctionFactInput{
-		ExistingSummary:  facts.ReturnSummaries[sym],
-		ExistingNarrow:   facts.NarrowReturns[sym],
-		ExistingFunc:     facts.FuncTypes[sym],
+		ExistingSummary:  existing.Summary,
+		ExistingNarrow:   existing.Narrow,
+		ExistingFunc:     existing.Func,
 		CandidateSummary: candidate.Summary,
 		CandidateNarrow:  candidate.Narrow,
 		CandidateFunc:    candidate.Func,
@@ -128,5 +136,40 @@ func TestReconcileFunctionFact_NarrowSummaryReplacesOpenTopPlaceholder(t *testin
 	}
 	if !ReturnTypesEqual(normalizeAndPruneReturnVector(fn.Returns), normalizeAndPruneReturnVector(narrow)) {
 		t.Fatalf("func returns mismatch: got %v want %v", fn.Returns, narrow)
+	}
+}
+
+func TestMergeFunctionFactIntoFacts_ReadsLegacyAndWritesCanonical(t *testing.T) {
+	sym := cfg.SymbolID(41)
+	facts := &api.Facts{
+		ReturnSummaries: api.ReturnSummaries{
+			sym: []typ.Type{typ.Number},
+		},
+		NarrowReturns: api.NarrowReturnSummaries{
+			sym: []typ.Type{typ.Number},
+		},
+		FuncTypes: api.FuncTypes{
+			sym: typ.Func().Returns(typ.Number).Build(),
+		},
+	}
+
+	MergeFunctionFactIntoFacts(facts, sym, FunctionFactCandidate{
+		Summary: []typ.Type{typ.String},
+		Narrow:  []typ.Type{typ.String},
+		Func:    typ.Func().Returns(typ.String).Build(),
+	})
+
+	ff, ok := facts.FunctionFacts[sym]
+	if !ok {
+		t.Fatal("expected canonical FunctionFacts entry")
+	}
+	if !ReturnTypesEqual(ff.Summary, facts.ReturnSummaries[sym]) {
+		t.Fatalf("summary drift: canonical=%v legacy=%v", ff.Summary, facts.ReturnSummaries[sym])
+	}
+	if !ReturnTypesEqual(ff.Narrow, facts.NarrowReturns[sym]) {
+		t.Fatalf("narrow drift: canonical=%v legacy=%v", ff.Narrow, facts.NarrowReturns[sym])
+	}
+	if !typ.TypeEquals(ff.Func, facts.FuncTypes[sym]) {
+		t.Fatalf("func drift: canonical=%v legacy=%v", ff.Func, facts.FuncTypes[sym])
 	}
 }

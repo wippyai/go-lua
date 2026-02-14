@@ -94,35 +94,20 @@ func MergeFunctionFactIntoFacts(facts *api.Facts, sym cfg.SymbolID, candidate Fu
 		return
 	}
 
+	existing := readFunctionFactFromFacts(facts, sym)
 	reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
-		ExistingSummary:  facts.ReturnSummaries[sym],
-		ExistingNarrow:   facts.NarrowReturns[sym],
-		ExistingFunc:     facts.FuncTypes[sym],
+		ExistingSummary:  existing.Summary,
+		ExistingNarrow:   existing.Narrow,
+		ExistingFunc:     existing.Func,
 		CandidateSummary: candidate.Summary,
 		CandidateNarrow:  candidate.Narrow,
 		CandidateFunc:    candidate.Func,
 	})
-
-	if len(reconciled.Summary) > 0 {
-		if facts.ReturnSummaries == nil {
-			facts.ReturnSummaries = make(api.ReturnSummaries, 1)
-		}
-		facts.ReturnSummaries[sym] = reconciled.Summary
-	}
-
-	if len(reconciled.Narrow) > 0 {
-		if facts.NarrowReturns == nil {
-			facts.NarrowReturns = make(api.NarrowReturnSummaries, 1)
-		}
-		facts.NarrowReturns[sym] = reconciled.Narrow
-	}
-
-	if reconciled.Func != nil {
-		if facts.FuncTypes == nil {
-			facts.FuncTypes = make(api.FuncTypes, 1)
-		}
-		facts.FuncTypes[sym] = reconciled.Func
-	}
+	writeFunctionFactToFacts(facts, sym, api.FunctionFact{
+		Summary: reconciled.Summary,
+		Narrow:  reconciled.Narrow,
+		Func:    reconciled.Func,
+	})
 }
 
 // MergeFunctionFactsIntoFacts merges full function-fact channel maps into facts
@@ -136,7 +121,7 @@ func MergeFunctionFactsIntoFacts(
 	if facts == nil {
 		return
 	}
-	for _, sym := range collectFunctionFactSymbols(summaries, narrows, funcs) {
+	for _, sym := range collectFunctionFactSymbols(summaries, narrows, funcs, nil) {
 		MergeFunctionFactIntoFacts(facts, sym, FunctionFactCandidate{
 			Summary: summaries[sym],
 			Narrow:  narrows[sym],
@@ -149,11 +134,13 @@ func collectFunctionFactSymbols(
 	summaries api.ReturnSummaries,
 	narrows api.NarrowReturnSummaries,
 	funcs api.FuncTypes,
+	facts api.FunctionFacts,
 ) []cfg.SymbolID {
-	symbols := make(map[cfg.SymbolID]bool, len(summaries)+len(narrows)+len(funcs))
+	symbols := make(map[cfg.SymbolID]bool, len(summaries)+len(narrows)+len(funcs)+len(facts))
 	markFunctionFactSymbols(symbols, summaries)
 	markFunctionFactSymbols(symbols, narrows)
 	markFunctionFactSymbols(symbols, funcs)
+	markFunctionFactSymbols(symbols, facts)
 	return cfg.SortedSymbolIDs(symbols)
 }
 
@@ -164,14 +151,18 @@ func collectFunctionFactSymbolsFromPairs(
 	nextNarrow api.NarrowReturnSummaries,
 	prevFuncs api.FuncTypes,
 	nextFuncs api.FuncTypes,
+	prevFacts api.FunctionFacts,
+	nextFacts api.FunctionFacts,
 ) []cfg.SymbolID {
-	symbols := make(map[cfg.SymbolID]bool, len(prevSummary)+len(nextSummary)+len(prevNarrow)+len(nextNarrow)+len(prevFuncs)+len(nextFuncs))
+	symbols := make(map[cfg.SymbolID]bool, len(prevSummary)+len(nextSummary)+len(prevNarrow)+len(nextNarrow)+len(prevFuncs)+len(nextFuncs)+len(prevFacts)+len(nextFacts))
 	markFunctionFactSymbols(symbols, prevSummary)
 	markFunctionFactSymbols(symbols, nextSummary)
 	markFunctionFactSymbols(symbols, prevNarrow)
 	markFunctionFactSymbols(symbols, nextNarrow)
 	markFunctionFactSymbols(symbols, prevFuncs)
 	markFunctionFactSymbols(symbols, nextFuncs)
+	markFunctionFactSymbols(symbols, prevFacts)
+	markFunctionFactSymbols(symbols, nextFacts)
 	return cfg.SortedSymbolIDs(symbols)
 }
 

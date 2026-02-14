@@ -291,6 +291,17 @@ func TestRecordRequiredVsOptional(t *testing.T) {
 	}
 }
 
+func TestRecordOptionalSubFieldAllowedWhenSuperTypeAdmitsNil(t *testing.T) {
+	// Super field is syntactically required, but type admits nil (string?).
+	// Sub optional field should still be accepted.
+	sub := typ.NewRecord().OptField("status_not", typ.LiteralString("removed")).Build()
+	super := typ.NewRecord().Field("status_not", typ.NewOptional(typ.String)).Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("optional sub field should satisfy required super field when super type admits nil")
+	}
+}
+
 func TestRecordWidthSubtyping(t *testing.T) {
 	// {x, y} <: {x}
 	sub := typ.NewRecord().Field("x", typ.Number).Field("y", typ.String).Build()
@@ -1378,6 +1389,33 @@ func TestEmptyRecordToArray(t *testing.T) {
 
 	if !IsSubtype(rec, arrType) {
 		t.Error("empty record should be subtype of any array")
+	}
+}
+
+func TestTableMarkerAcceptsMap(t *testing.T) {
+	sub := typ.NewMap(typ.String, typ.Any)
+	super := typ.NewInterface("table", nil)
+
+	if !IsSubtype(sub, super) {
+		t.Error("map should be subtype of table marker")
+	}
+}
+
+func TestTableMarkerAcceptsArray(t *testing.T) {
+	sub := typ.NewArray(typ.String)
+	super := typ.NewInterface("table", nil)
+
+	if !IsSubtype(sub, super) {
+		t.Error("array should be subtype of table marker")
+	}
+}
+
+func TestMapIsNotSubtypeOfEmptyRecord(t *testing.T) {
+	sub := typ.NewMap(typ.String, typ.Any)
+	super := typ.NewRecord().Build()
+
+	if IsSubtype(sub, super) {
+		t.Error("map should not be subtype of empty record")
 	}
 }
 
