@@ -291,33 +291,6 @@ func hasNonNilHint(hints []typ.Type) bool {
 	return false
 }
 
-// WidenFuncTypes merges two function-type maps using monotone union.
-// Prefers refined return types when possible.
-func WidenFuncTypes(prev, next api.FuncTypes) api.FuncTypes {
-	if prev == nil && next == nil {
-		return nil
-	}
-	if prev == nil {
-		return next
-	}
-	if next == nil {
-		return prev
-	}
-	merged := make(api.FuncTypes, len(prev)+len(next))
-	for _, sym := range cfg.SortedSymbolIDs(prev) {
-		merged[sym] = maybeWidenTypeForConvergence(prev[sym])
-	}
-	for _, sym := range cfg.SortedSymbolIDs(next) {
-		t := next[sym]
-		if existing := merged[sym]; existing != nil {
-			merged[sym] = maybeWidenTypeForConvergence(MergeFunctionFactType(existing, t))
-		} else {
-			merged[sym] = maybeWidenTypeForConvergence(t)
-		}
-	}
-	return merged
-}
-
 // joinParamHintVectors joins two parameter hint vectors element-wise.
 func joinParamHintVectors(a, b []typ.Type) []typ.Type {
 	if len(a) == 0 {
