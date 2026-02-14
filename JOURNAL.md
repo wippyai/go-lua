@@ -917,3 +917,24 @@ Validation:
   - `./scripts/verify-suite.sh` ✅ (all targets `errors=0 warnings=0 hints=0)
 - Notes:
   - `ltype.go` and `ltype_test.go` remain modified in working tree from prior context and were not part of this cleanup scope.
+
+## 2026-02-14T18:51:34Z
+- Continued architecture cleanup with focused canonicalization in `compiler/check/synth/engine.go`:
+  - Embedded `*extract.Synthesizer` directly on `Engine` to remove pass-through layer duplication.
+  - Removed redundant pass-through wrappers that only forwarded directly to extractor methods:
+    - `ExpandValuesWithSpecTypes`
+    - `InferIterVars`
+    - `InferIterVarsWithSpecTypes`
+    - `SynthExprAt`
+    - `ResolveType`
+    - `ResolveReturnTypes`
+    - `ResolveFunctionSignature`
+    - `ResolveTypeDef`
+    - `Method`
+    - `Field`
+    - `SynthFunctionTypeWithExpected`
+  - Kept explicit wrappers where semantics are stateful/phase-specific (`TypeOf`, `TypeOfWithExpected`, `MultiTypeOf`, `FunctionType`, `ExpandValues`, `CallQuery`, `Context`, `Scopes`, etc.).
+- Validation after refactor:
+  - `go test ./compiler/check/... -count=1` ✅
+  - `./scripts/verify-suite.sh` ✅
+    - all harness targets report `errors=0 warnings=0 hints=0`.

@@ -74,9 +74,9 @@ type Config struct {
 // Thread safety: Engine instances are not thread-safe. Create separate
 // instances for concurrent synthesis operations.
 type Engine struct {
-	extract *extract.Synthesizer
-	deps    *extract.Deps
-	phase   api.Phase
+	*extract.Synthesizer
+	deps  *extract.Deps
+	phase api.Phase
 }
 
 // New creates a synthesis engine configured for the requested phase.
@@ -122,9 +122,9 @@ func New(cfg Config) *Engine {
 	}
 
 	return &Engine{
-		extract: extract.NewSynthesizer(deps, phase),
-		deps:    deps,
-		phase:   phase,
+		Synthesizer: extract.NewSynthesizer(deps, phase),
+		deps:        deps,
+		phase:       phase,
 	}
 }
 
@@ -140,11 +140,11 @@ func (e *Engine) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
 		if cached, ok := e.deps.NarrowCache.Get(expr, p); ok {
 			return cached
 		}
-		t := e.extract.SynthExpr(expr, p, e.deps.Flow)
+		t := e.SynthExpr(expr, p, e.deps.Flow)
 		e.deps.NarrowCache.Put(expr, p, t)
 		return t
 	}
-	return e.extract.TypeOf(expr, p)
+	return e.Synthesizer.TypeOf(expr, p)
 }
 
 // TypeOfWithExpected synthesizes an expression type with an expected type hint.
@@ -156,7 +156,7 @@ func (e *Engine) TypeOfWithExpected(expr ast.Expr, p cfg.Point, expected typ.Typ
 	if e.IsNarrowing() {
 		return e.SynthWithExpected(expr, p, expected)
 	}
-	return e.extract.TypeOfWithExpected(expr, p, expected)
+	return e.Synthesizer.TypeOfWithExpected(expr, p, expected)
 }
 
 // MultiTypeOf returns all types from a multi-valued expression.
@@ -169,9 +169,9 @@ func (e *Engine) TypeOfWithExpected(expr ast.Expr, p cfg.Point, expected typ.Typ
 // Returns nil for non-multi-valued expressions.
 func (e *Engine) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
 	if e.IsNarrowing() {
-		return e.extract.SynthMulti(expr, p, e.deps.Flow)
+		return e.SynthMulti(expr, p, e.deps.Flow)
 	}
-	return e.extract.MultiTypeOf(expr, p)
+	return e.Synthesizer.MultiTypeOf(expr, p)
 }
 
 // FunctionType synthesizes the function type from a function expression.
@@ -181,9 +181,9 @@ func (e *Engine) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
 // context for resolving type references in annotations.
 func (e *Engine) FunctionType(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
 	if e.IsNarrowing() {
-		return e.extract.SynthFunctionType(fn, sc)
+		return e.Synthesizer.SynthFunctionType(fn, sc)
 	}
-	return e.extract.FunctionType(fn, sc)
+	return e.Synthesizer.FunctionType(fn, sc)
 }
 
 // ExpandValues expands a list of expressions into the required number of types.
@@ -198,7 +198,7 @@ func (e *Engine) ExpandValues(exprs []ast.Expr, needed int, p cfg.Point) []typ.T
 	if e.IsNarrowing() {
 		return e.expandValuesNarrowed(exprs, needed, p)
 	}
-	return e.extract.ExpandValues(exprs, needed, p)
+	return e.Synthesizer.ExpandValues(exprs, needed, p)
 }
 
 func (e *Engine) expandValuesNarrowed(exprs []ast.Expr, needed int, p cfg.Point) []typ.Type {
@@ -223,40 +223,6 @@ func (e *Engine) expandValuesNarrowed(exprs []ast.Expr, needed int, p cfg.Point)
 	return result
 }
 
-// ExpandValuesWithSpecTypes expands values with overlay types for specific symbols.
-//
-// SpecTypes provides override types for certain symbols during expansion,
-// used when synthesizing in contexts where some types are known from
-// specialization (e.g., generic instantiation).
-func (e *Engine) ExpandValuesWithSpecTypes(exprs []ast.Expr, needed int, p cfg.Point, specTypes api.SpecTypes) []typ.Type {
-	return e.extract.ExpandValuesWithSpecTypes(exprs, needed, p, specTypes)
-}
-
-// InferIterVars infers types for iterator variables from iterator expressions.
-//
-// Given iterator expressions (generator, state, initial), infers the types
-// for count loop variables. Handles standard iterator protocols:
-//   - pairs() returns key: any, value: any
-//   - ipairs() returns index: number, value: T
-//   - Custom iterators based on function signature
-func (e *Engine) InferIterVars(exprs []ast.Expr, count int, p cfg.Point) []typ.Type {
-	return e.extract.InferIterVars(exprs, count, p)
-}
-
-// InferIterVarsWithSpecTypes infers iterator variable types with symbol overrides.
-func (e *Engine) InferIterVarsWithSpecTypes(exprs []ast.Expr, count int, p cfg.Point, specTypes api.SpecTypes) []typ.Type {
-	return e.extract.InferIterVarsWithSpecTypes(exprs, count, p, specTypes)
-}
-
-// SynthExprAt synthesizes an expression type at a point with explicit scope.
-//
-// Allows synthesis with a different scope than the one mapped to the point,
-// useful for synthesizing expressions in contexts where scope differs from
-// the standard CFG mapping.
-func (e *Engine) SynthExprAt(expr ast.Expr, p cfg.Point, sc *scope.State) typ.Type {
-	return e.extract.SynthExprAt(expr, p, sc)
-}
-
 // SynthWithExpected synthesizes with expected type, using flow information.
 //
 // Combines flow-sensitive synthesis with expected type hints. Returns typ.Nil
@@ -269,8 +235,8 @@ func (e *Engine) SynthWithExpected(expr ast.Expr, p cfg.Point, expected typ.Type
 		return e.TypeOf(expr, p)
 	}
 	sc := e.deps.Scopes[p]
-	recurse := func(ex ast.Expr) typ.Type { return e.extract.SynthExpr(ex, p, e.deps.Flow) }
-	return e.extract.SynthExprWithExpectedCore(expr, sc, p, recurse, expected)
+	recurse := func(ex ast.Expr) typ.Type { return e.SynthExpr(ex, p, e.deps.Flow) }
+	return e.SynthExprWithExpectedCore(expr, sc, p, recurse, expected)
 }
 
 // Narrow returns a narrowing-capable synth if flow information is available
@@ -290,35 +256,6 @@ func (e *Engine) IsNarrowing() bool {
 	return e.phase == api.PhaseNarrowing
 }
 
-// ResolveType resolves a type expression AST node to a concrete type.
-//
-// Handles all type expression forms: named types, generics, functions,
-// tables, unions, intersections, optionals, arrays, and maps.
-func (e *Engine) ResolveType(expr ast.TypeExpr, sc *scope.State) typ.Type {
-	return e.extract.ResolveType(expr, sc)
-}
-
-// ResolveReturnTypes resolves a list of return type annotations.
-func (e *Engine) ResolveReturnTypes(types []ast.TypeExpr, sc *scope.State) []typ.Type {
-	return e.extract.ResolveReturnTypes(types, sc)
-}
-
-// ResolveFunctionSignature resolves function type from annotations only.
-//
-// Unlike FunctionType which may infer types, this only uses explicit
-// type annotations. Returns nil if no annotations are present.
-func (e *Engine) ResolveFunctionSignature(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
-	return e.extract.ResolveFunctionSignature(fn, sc)
-}
-
-// ResolveTypeDef resolves a type definition with optional type parameters.
-//
-// For generic types, creates a type constructor that can be instantiated
-// with type arguments. For non-generic types, directly resolves the type.
-func (e *Engine) ResolveTypeDef(name string, typeExpr ast.TypeExpr, typeParams []ast.TypeParamExpr, sc *scope.State) typ.Type {
-	return e.extract.ResolveTypeDef(name, typeExpr, typeParams, sc)
-}
-
 // ResolveTypeDefAt resolves a type definition at a specific CFG point.
 //
 // This is used during scope computation to ensure typeof(expr) can see
@@ -327,31 +264,20 @@ func (e *Engine) ResolveTypeDefAt(name string, typeExpr ast.TypeExpr, typeParams
 	resolver := resolve.New(resolve.Config{
 		Manifests: e.deps.Manifests,
 		ExprSynth: func(expr ast.Expr, _ cfg.Point) typ.Type {
-			return e.extract.SynthExprAt(expr, p, sc)
+			return e.SynthExprAt(expr, p, sc)
 		},
 	})
 	return resolver.ResolveTypeDef(name, typeExpr, typeParams, sc)
 }
 
-// Method looks up a method by name on a type.
-//
-// Searches the type's method table and any inherited methods from
-// metatables or interfaces. Returns the method type and whether found.
-func (e *Engine) Method(t typ.Type, name string) (typ.Type, bool) {
-	return e.extract.Method(t, name)
-}
-
-// Field looks up a field by name on a type.
-//
-// For records/interfaces, looks up the named field. For maps, returns
-// the value type. Returns the field type and whether found.
-func (e *Engine) Field(t typ.Type, name string) (typ.Type, bool) {
-	return e.extract.Field(t, name)
-}
-
 // Context returns the query context for type database operations.
 func (e *Engine) Context() *db.QueryContext {
 	return e.deps.Ctx
+}
+
+// Scopes returns the CFG point to scope state mapping.
+func (e *Engine) Scopes() api.ScopeMap {
+	return e.deps.Scopes
 }
 
 // AllowReturnTransforms reports if return type transforms are allowed.
@@ -369,12 +295,7 @@ func (e *Engine) Phase() api.Phase {
 
 // CallQuery returns the type operations interface for call resolution.
 func (e *Engine) CallQuery() core.TypeOps {
-	return e.extract.GetCallQuery()
-}
-
-// Scopes returns the CFG point to scope state mapping.
-func (e *Engine) Scopes() api.ScopeMap {
-	return e.deps.Scopes
+	return e.Synthesizer.GetCallQuery()
 }
 
 // Entry returns the CFG entry point for the function being analyzed.
@@ -388,12 +309,4 @@ func (e *Engine) Entry() cfg.Point {
 // Returns the result type and whether the access is valid.
 func (e *Engine) ResolveFieldAccess(fullExpr *ast.AttrGetExpr, objType typ.Type, fieldName string, p cfg.Point) FieldAccessResult {
 	return ResolveFieldAccess(e, fullExpr, objType, fieldName, p)
-}
-
-// SynthFunctionTypeWithExpected synthesizes function type with expected signature hint.
-//
-// Uses the expected function type to infer parameter and return types for
-// unannotated function literals. Common for callbacks and higher-order functions.
-func (e *Engine) SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *scope.State, expected *typ.Function) *typ.Function {
-	return e.extract.SynthFunctionTypeWithExpected(fn, sc, expected)
 }
