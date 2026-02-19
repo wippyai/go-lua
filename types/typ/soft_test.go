@@ -106,6 +106,26 @@ func TestPruneSoftUnionMembers_ReusesRewrittenSharedSubtrees(t *testing.T) {
 	}
 }
 
+func TestPruneSoftUnionMembers_PrimitiveFastPath(t *testing.T) {
+	got := PruneSoftUnionMembers(Number)
+	if got != Number {
+		t.Fatalf("expected primitive prune fast-path to return original singleton")
+	}
+}
+
+func TestPruneSoftUnionMembers_AliasStillDescends(t *testing.T) {
+	leaf := NewRecord().Field("id", String).Build()
+	alias := NewAlias("T", NewUnion(NewRecord().Build(), leaf))
+	got := PruneSoftUnionMembers(alias)
+	gotAlias, ok := got.(*Alias)
+	if !ok {
+		t.Fatalf("expected alias result, got %T", got)
+	}
+	if !TypeEquals(gotAlias.Target, leaf) {
+		t.Fatalf("expected alias target to be pruned to %v, got %v", leaf, gotAlias.Target)
+	}
+}
+
 func TestIsRefinableAnnotation(t *testing.T) {
 	tests := []struct {
 		name string

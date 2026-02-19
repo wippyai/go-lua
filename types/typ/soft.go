@@ -2,6 +2,7 @@ package typ
 
 import (
 	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/kind"
 )
 
 // SoftPolicy controls how soft-placeholder detection behaves.
@@ -70,10 +71,33 @@ func PruneSoftUnionMembers(t Type) Type {
 	if t == nil {
 		return nil
 	}
+	if !softPruneCanDescend(t) {
+		return t
+	}
 	memo := make(map[Type]Type)
 	visiting := make(map[Type]struct{})
 	guard := NewGuard()
 	return pruneSoftUnionMembersMemo(t, guard, memo, visiting)
+}
+
+func softPruneCanDescend(t Type) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind() {
+	case kind.Optional,
+		kind.Union,
+		kind.Array,
+		kind.Map,
+		kind.Tuple,
+		kind.Function,
+		kind.Record,
+		kind.Alias,
+		kind.Instantiated:
+		return true
+	default:
+		return false
+	}
 }
 
 func pruneSoftUnionMembersMemo(t Type, guard internal.RecursionGuard, memo map[Type]Type, visiting map[Type]struct{}) Type {
