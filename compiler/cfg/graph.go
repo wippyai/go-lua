@@ -21,18 +21,20 @@ type Graph struct {
 	bindings *bind.BindingTable
 
 	// SSA versioning (keyed by basecfg.SymbolID for scope-aware versioning)
-	phiNodes       []PhiInfo                              // Phi nodes at join points
-	visibleVersion map[Point]map[basecfg.SymbolID]Version // (point, symbol) -> visible version
-	nextVersionID  map[basecfg.SymbolID]int               // symbol -> next version ID
+	phiNodes              []PhiInfo                              // Phi nodes at join points
+	visibleVersion        map[Point]map[basecfg.SymbolID]Version // (point, symbol) -> visible version
+	visibleVersionByPoint []map[basecfg.SymbolID]Version         // dense point-indexed view of visibleVersion
+	nextVersionID         map[basecfg.SymbolID]int               // symbol -> next version ID
 
 	// Scope visibility (structural, computed during build)
-	symbolScope   map[Point]map[string]basecfg.SymbolID   // point -> name -> symbol
-	globals       map[string]basecfg.SymbolID             // lazy globals overlay
-	mergedSymbols map[Point]map[string]basecfg.SymbolID   // cached merged local+globals
-	declPoints    map[basecfg.SymbolID]Point              // symbol -> declaration point
-	symbolNames   map[basecfg.SymbolID]string             // symbol -> name (reverse lookup for display)
-	symbolKinds   map[basecfg.SymbolID]basecfg.SymbolKind // symbol -> kind (Param/Local/Global)
-	directAliases map[basecfg.SymbolID]basecfg.SymbolID   // target local symbol -> unambiguous direct source symbol
+	symbolScope        map[Point]map[string]basecfg.SymbolID   // point -> name -> symbol
+	symbolScopeByPoint []map[string]basecfg.SymbolID           // dense point-indexed view of symbolScope
+	globals            map[string]basecfg.SymbolID             // lazy globals overlay
+	mergedSymbols      map[Point]map[string]basecfg.SymbolID   // cached merged local+globals
+	declPoints         map[basecfg.SymbolID]Point              // symbol -> declaration point
+	symbolNames        map[basecfg.SymbolID]string             // symbol -> name (reverse lookup for display)
+	symbolKinds        map[basecfg.SymbolID]basecfg.SymbolKind // symbol -> kind (Param/Local/Global)
+	directAliases      map[basecfg.SymbolID]basecfg.SymbolID   // target local symbol -> unambiguous direct source symbol
 
 	// Function parameters (precomputed for downstream use)
 	paramNames      []string
@@ -109,24 +111,34 @@ func BuildWithBindings(fn *ast.FunctionExpr, bindings *bind.BindingTable) *Graph
 	// Compute SSA versions and insert phi nodes
 	b.ComputeSSAVersions()
 
+	visibleVersion := b.VisibleVersion
+	symbolScope := b.StealScopeVisibility()
+	globalsMap := b.StealGlobals()
+	declPoints := b.StealDeclPoints()
+	symbolNames := b.StealSymbolNames()
+	symbolKinds := b.StealSymbolKinds()
+	size := b.Cfg.Size()
+
 	return &Graph{
-		cfg:             b.Cfg,
-		info:            b.Info,
-		nested:          b.Nested,
-		fn:              fn,
-		bindings:        bindings,
-		phiNodes:        b.PhiNodes,
-		visibleVersion:  b.VisibleVersion,
-		nextVersionID:   b.NextVersionID,
-		symbolScope:     b.StealScopeVisibility(),
-		globals:         b.StealGlobals(),
-		declPoints:      b.StealDeclPoints(),
-		symbolNames:     b.StealSymbolNames(),
-		symbolKinds:     b.StealSymbolKinds(),
-		directAliases:   computeDirectAliasIndex(b.Info, bindings),
-		paramNames:      b.ParamNames,
-		paramSymbols:    b.ParamSymbols,
-		paramDeclPoints: b.ParamDeclPoints,
+		cfg:                   b.Cfg,
+		info:                  b.Info,
+		nested:                b.Nested,
+		fn:                    fn,
+		bindings:              bindings,
+		phiNodes:              b.PhiNodes,
+		visibleVersion:        visibleVersion,
+		visibleVersionByPoint: denseVisibleVersionByPoint(visibleVersion, size),
+		nextVersionID:         b.NextVersionID,
+		symbolScope:           symbolScope,
+		symbolScopeByPoint:    denseSymbolScopeByPoint(symbolScope, size),
+		globals:               globalsMap,
+		declPoints:            declPoints,
+		symbolNames:           symbolNames,
+		symbolKinds:           symbolKinds,
+		directAliases:         computeDirectAliasIndex(b.Info, bindings),
+		paramNames:            b.ParamNames,
+		paramSymbols:          b.ParamSymbols,
+		paramDeclPoints:       b.ParamDeclPoints,
 	}
 }
 
@@ -164,22 +176,66 @@ func BuildBlock(stmts []ast.Stmt, globals ...string) *Graph {
 	// Compute SSA versions and insert phi nodes
 	b.ComputeSSAVersions()
 
+	visibleVersion := b.VisibleVersion
+	symbolScope := b.StealScopeVisibility()
+	globalsMap := b.StealGlobals()
+	declPoints := b.StealDeclPoints()
+	symbolNames := b.StealSymbolNames()
+	symbolKinds := b.StealSymbolKinds()
+	size := b.Cfg.Size()
+
 	return &Graph{
-		cfg:            b.Cfg,
-		info:           b.Info,
-		nested:         b.Nested,
-		fn:             syntheticFn,
-		bindings:       bindings,
-		phiNodes:       b.PhiNodes,
-		visibleVersion: b.VisibleVersion,
-		nextVersionID:  b.NextVersionID,
-		symbolScope:    b.StealScopeVisibility(),
-		globals:        b.StealGlobals(),
-		declPoints:     b.StealDeclPoints(),
-		symbolNames:    b.StealSymbolNames(),
-		symbolKinds:    b.StealSymbolKinds(),
-		directAliases:  computeDirectAliasIndex(b.Info, bindings),
+		cfg:                   b.Cfg,
+		info:                  b.Info,
+		nested:                b.Nested,
+		fn:                    syntheticFn,
+		bindings:              bindings,
+		phiNodes:              b.PhiNodes,
+		visibleVersion:        visibleVersion,
+		visibleVersionByPoint: denseVisibleVersionByPoint(visibleVersion, size),
+		nextVersionID:         b.NextVersionID,
+		symbolScope:           symbolScope,
+		symbolScopeByPoint:    denseSymbolScopeByPoint(symbolScope, size),
+		globals:               globalsMap,
+		declPoints:            declPoints,
+		symbolNames:           symbolNames,
+		symbolKinds:           symbolKinds,
+		directAliases:         computeDirectAliasIndex(b.Info, bindings),
 	}
+}
+
+func denseVisibleVersionByPoint(
+	visible map[Point]map[basecfg.SymbolID]Version,
+	size int,
+) []map[basecfg.SymbolID]Version {
+	if len(visible) == 0 || size <= 0 {
+		return nil
+	}
+	out := make([]map[basecfg.SymbolID]Version, size)
+	for p, versions := range visible {
+		idx := int(p)
+		if idx >= 0 && idx < size {
+			out[idx] = versions
+		}
+	}
+	return out
+}
+
+func denseSymbolScopeByPoint(
+	scope map[Point]map[string]basecfg.SymbolID,
+	size int,
+) []map[string]basecfg.SymbolID {
+	if len(scope) == 0 || size <= 0 {
+		return nil
+	}
+	out := make([]map[string]basecfg.SymbolID, size)
+	for p, symbols := range scope {
+		idx := int(p)
+		if idx >= 0 && idx < size {
+			out[idx] = symbols
+		}
+	}
+	return out
 }
 
 // CFG returns the underlying control flow graph.
@@ -601,12 +657,20 @@ func (g *Graph) PhiNodes() []basecfg.PhiNode {
 // Returns a zero Version if the symbol is not defined on all paths to this point.
 // Implements cfg.SymbolScope.
 func (g *Graph) VisibleVersion(p Point, sym basecfg.SymbolID) Version {
-	if g == nil || g.visibleVersion == nil {
+	if g == nil {
 		return Version{}
 	}
 
-	if m := g.visibleVersion[p]; m != nil {
-		return m[sym]
+	if idx := int(p); idx >= 0 && idx < len(g.visibleVersionByPoint) {
+		if m := g.visibleVersionByPoint[idx]; m != nil {
+			return m[sym]
+		}
+	}
+
+	if g.visibleVersion != nil {
+		if m := g.visibleVersion[p]; m != nil {
+			return m[sym]
+		}
 	}
 
 	return Version{}
@@ -616,7 +680,17 @@ func (g *Graph) VisibleVersion(p Point, sym basecfg.SymbolID) Version {
 // The returned map should not be modified.
 // Implements cfg.SSAVersioned.
 func (g *Graph) AllVisibleVersions(p Point) map[basecfg.SymbolID]Version {
-	if g == nil || g.visibleVersion == nil {
+	if g == nil {
+		return nil
+	}
+
+	if idx := int(p); idx >= 0 && idx < len(g.visibleVersionByPoint) {
+		if m := g.visibleVersionByPoint[idx]; m != nil {
+			return m
+		}
+	}
+
+	if g.visibleVersion == nil {
 		return nil
 	}
 
@@ -714,11 +788,9 @@ func (g *Graph) SymbolAt(p Point, name string) (basecfg.SymbolID, bool) {
 		return 0, false
 	}
 
-	if g.symbolScope != nil {
-		if vis := g.symbolScope[p]; vis != nil {
-			if sym, ok := vis[name]; ok {
-				return sym, true
-			}
+	if vis := g.localSymbolsAt(p); vis != nil {
+		if sym, ok := vis[name]; ok {
+			return sym, true
 		}
 	}
 
@@ -731,13 +803,19 @@ func (g *Graph) SymbolAt(p Point, name string) (basecfg.SymbolID, bool) {
 	return 0, false
 }
 
+// LocalSymbolsAt returns the point-local symbol visibility map.
+// The returned map should not be modified.
+func (g *Graph) LocalSymbolsAt(p Point) map[string]basecfg.SymbolID {
+	return g.localSymbolsAt(p)
+}
+
 // AllSymbolsAt returns all visible symbols at a CFG point.
 func (g *Graph) AllSymbolsAt(p Point) map[string]basecfg.SymbolID {
 	if g == nil {
 		return nil
 	}
 
-	local := g.symbolScope[p]
+	local := g.localSymbolsAt(p)
 
 	if len(g.globals) == 0 {
 		return local
@@ -770,6 +848,21 @@ func (g *Graph) AllSymbolsAt(p Point) map[string]basecfg.SymbolID {
 	g.mergedSymbols[p] = merged
 
 	return merged
+}
+
+func (g *Graph) localSymbolsAt(p Point) map[string]basecfg.SymbolID {
+	if g == nil {
+		return nil
+	}
+	if idx := int(p); idx >= 0 && idx < len(g.symbolScopeByPoint) {
+		if vis := g.symbolScopeByPoint[idx]; vis != nil {
+			return vis
+		}
+	}
+	if g.symbolScope == nil {
+		return nil
+	}
+	return g.symbolScope[p]
 }
 
 // DeclarationPoint returns the CFG point where a symbol was declared.

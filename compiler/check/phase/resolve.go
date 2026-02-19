@@ -7,8 +7,6 @@
 package phase
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -90,16 +88,16 @@ func BuildInitialSymbolTypes(graph *cfg.Graph, globalTypes map[string]typ.Type, 
 	}
 
 	// Collect all names we need to look up
-	namesToCheck := make(map[string]typ.Type, len(globalTypes)+len(paramTypes))
-	for name, t := range globalTypes {
-		namesToCheck[name] = t
+	namesToCheck := make(map[string]struct{}, len(globalTypes)+len(paramTypes))
+	for name := range globalTypes {
+		namesToCheck[name] = struct{}{}
 	}
 
 	paramNameTypes := make(map[string]typ.Type, len(paramTypes))
 	for sym, t := range paramTypes {
 		if name := graph.NameOf(sym); name != "" {
 			paramNameTypes[name] = t
-			namesToCheck[name] = t
+			namesToCheck[name] = struct{}{}
 		}
 	}
 
@@ -108,62 +106,97 @@ func BuildInitialSymbolTypes(graph *cfg.Graph, globalTypes map[string]typ.Type, 
 	}
 
 	names := cfg.SortedFieldNames(namesToCheck)
+	type nameMeta struct {
+		name      string
+		paramName typ.Type
+		global    typ.Type
+		globalSym cfg.SymbolID
+	}
 
+	meta := make([]nameMeta, 0, len(names))
+	for _, name := range names {
+		item := nameMeta{name: name}
+		if t := paramNameTypes[name]; t != nil {
+			item.paramName = t
+		}
+		if t := globalTypes[name]; t != nil {
+			item.global = t
+			if sym, ok := graph.GlobalSymbol(name); ok {
+				item.globalSym = sym
+			}
+		}
+		meta = append(meta, item)
+	}
+
+	paramSymbolTypes := make(map[cfg.SymbolID]flow.TypedValue, len(paramTypes))
+	for sym, t := range paramTypes {
+		if t != nil {
+			paramSymbolTypes[sym] = flow.TypedValue{Type: t, State: flow.StateResolved}
+		}
+	}
 	bindings := graph.Bindings()
-	out := make(flow.SymbolTypes)
 
+	out := make(flow.SymbolTypes)
 	// Compute types once at entry and reuse if symbols don't change
 	var prevTypesAt map[cfg.SymbolID]flow.TypedValue
 
 	for _, p := range graph.RPO() {
+		locals := graph.LocalSymbolsAt(p)
 		var typesAt map[cfg.SymbolID]flow.TypedValue
 
-		// Check each name we care about
-		for _, name := range names {
-			sym, ok := graph.SymbolAt(p, name)
-			if !ok || sym == 0 {
+		for _, item := range meta {
+			sym := locals[item.name]
+			if sym == 0 {
+				sym = item.globalSym
+			}
+			if sym == 0 {
 				continue
 			}
 
-			var tv flow.TypedValue
-			if t, ok := paramTypes[sym]; ok && t != nil {
-				tv = flow.TypedValue{Type: t, State: flow.StateResolved}
-			} else if t, ok := paramNameTypes[name]; ok && t != nil {
-				tv = flow.TypedValue{Type: t, State: flow.StateResolved}
-			} else if t, ok := globalTypes[name]; ok && t != nil {
-				if bindings != nil {
+			tv, ok := paramSymbolTypes[sym]
+			if !ok {
+				switch {
+				case item.paramName != nil:
+					tv = flow.TypedValue{Type: item.paramName, State: flow.StateResolved}
+				case item.global != nil && sym == item.globalSym:
+					tv = flow.TypedValue{Type: item.global, State: flow.StateResolved}
+				case item.global != nil && item.globalSym == 0 && bindings != nil:
 					if kind, ok := bindings.Kind(sym); ok && kind == basecfg.SymbolGlobal {
-						tv = flow.TypedValue{Type: t, State: flow.StateResolved}
-					}
-				}
-			}
-
-			if tv.Type != nil {
-				if typesAt == nil {
-					typesAt = make(map[cfg.SymbolID]flow.TypedValue, len(namesToCheck))
-				}
-				typesAt[sym] = tv
-			}
-		}
-
-		if len(typesAt) > 0 {
-			// Reuse previous map if identical content
-			if prevTypesAt != nil && len(typesAt) == len(prevTypesAt) {
-				identical := true
-				for sym, tv := range typesAt {
-					if prev, ok := prevTypesAt[sym]; !ok || prev != tv {
-						identical = false
+						tv = flow.TypedValue{Type: item.global, State: flow.StateResolved}
 						break
 					}
-				}
-				if identical {
-					out[p] = prevTypesAt
+					continue
+				default:
 					continue
 				}
 			}
-			out[p] = typesAt
-			prevTypesAt = typesAt
+
+			if typesAt == nil {
+				typesAt = make(map[cfg.SymbolID]flow.TypedValue, len(meta))
+			}
+			typesAt[sym] = tv
 		}
+
+		if len(typesAt) == 0 {
+			continue
+		}
+
+		// Reuse previous map if identical content
+		if prevTypesAt != nil && len(typesAt) == len(prevTypesAt) {
+			identical := true
+			for sym, tv := range typesAt {
+				if prev, ok := prevTypesAt[sym]; !ok || prev != tv {
+					identical = false
+					break
+				}
+			}
+			if identical {
+				out[p] = prevTypesAt
+				continue
+			}
+		}
+		out[p] = typesAt
+		prevTypesAt = typesAt
 	}
 
 	if len(out) == 0 {
@@ -178,22 +211,30 @@ func BuildDeclaredTypesFromSymbolTypes(graph basecfg.VersionedGraph, symbolTypes
 		return nil
 	}
 	out := make(flow.DeclaredTypes)
-	points := make([]cfg.Point, 0, len(symbolTypes))
-	for p := range symbolTypes {
-		points = append(points, p)
-	}
-	sort.Slice(points, func(i, j int) bool { return points[i] < points[j] })
 
 	entry := graph.Entry()
-	for _, p := range points {
-		typesAt := symbolTypes[p]
+	bestPoint := make(map[cfg.SymbolID]cfg.Point, len(symbolTypes))
+	for p, typesAt := range symbolTypes {
+		if p == entry {
+			continue
+		}
 		for sym, tv := range typesAt {
 			if tv.State != flow.StateResolved || tv.Type == nil {
 				continue
 			}
-			if p == entry || out[sym] == nil {
+			if prev, ok := bestPoint[sym]; !ok || p < prev {
+				bestPoint[sym] = p
 				out[sym] = tv.Type
 			}
+		}
+	}
+
+	if typesAt := symbolTypes[entry]; typesAt != nil {
+		for sym, tv := range typesAt {
+			if tv.State != flow.StateResolved || tv.Type == nil {
+				continue
+			}
+			out[sym] = tv.Type
 		}
 	}
 	if len(out) == 0 {
