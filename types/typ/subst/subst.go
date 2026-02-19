@@ -75,6 +75,9 @@ func expandInstantiatedWithDepth(t typ.Type, maxDepth int) typ.Type {
 }
 
 func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type {
+	if t == nil || !expandInstantiatedCanDescend(t) {
+		return t
+	}
 	return typ.VisitWithGuard(t, guard, t, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
 		return typ.Visitor[typ.Type]{
 			Instantiated: func(inst *typ.Instantiated) typ.Type {
@@ -363,4 +366,23 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 			},
 		}
 	})
+}
+
+func expandInstantiatedCanDescend(t typ.Type) bool {
+	switch t.Kind() {
+	case kind.Optional,
+		kind.Union,
+		kind.Intersection,
+		kind.Array,
+		kind.Map,
+		kind.Tuple,
+		kind.Function,
+		kind.Record,
+		kind.Alias,
+		kind.Interface,
+		kind.Instantiated:
+		return true
+	default:
+		return false
+	}
 }
