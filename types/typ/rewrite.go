@@ -19,8 +19,11 @@ func Rewrite(t Type, fn func(Type) (Type, bool)) Type {
 }
 
 func rewriteWithDepth(t Type, fn func(Type) (Type, bool), maxDepth int) Type {
-	memo := make(map[rewriteKey]Type)
 	guard := GuardForDepth(maxDepth)
+	if !rewriteCanDescend(t) {
+		return rewriteDepth(t, fn, guard, nil)
+	}
+	memo := make(map[rewriteKey]Type)
 	return rewriteDepth(t, fn, guard, memo)
 }
 
@@ -34,12 +37,10 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 		return t
 	}
 	if !rewriteCanDescend(t) {
-		return WithGuard(t, guard, t, func(internal.RecursionGuard) Type {
-			if replacement, ok := fn(t); ok {
-				return replacement
-			}
-			return t
-		})
+		if replacement, ok := fn(t); ok {
+			return replacement
+		}
+		return t
 	}
 
 	depth := guard.Depth()
@@ -71,29 +72,39 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 				return NewOptional(inner)
 			},
 			Union: func(u *Union) Type {
-				changed := false
-				members := make([]Type, len(u.Members))
+				var members []Type
 				for i, m := range u.Members {
-					members[i] = rewriteDepth(m, fn, next, memo)
-					if members[i] != m {
-						changed = true
+					newMember := rewriteDepth(m, fn, next, memo)
+					if newMember != m {
+						if members == nil {
+							members = make([]Type, len(u.Members))
+							copy(members, u.Members)
+						}
+						members[i] = newMember
+					} else if members != nil {
+						members[i] = m
 					}
 				}
-				if !changed {
+				if members == nil {
 					return t
 				}
 				return NewUnion(members...)
 			},
 			Intersection: func(u *Intersection) Type {
-				changed := false
-				members := make([]Type, len(u.Members))
+				var members []Type
 				for i, m := range u.Members {
-					members[i] = rewriteDepth(m, fn, next, memo)
-					if members[i] != m {
-						changed = true
+					newMember := rewriteDepth(m, fn, next, memo)
+					if newMember != m {
+						if members == nil {
+							members = make([]Type, len(u.Members))
+							copy(members, u.Members)
+						}
+						members[i] = newMember
+					} else if members != nil {
+						members[i] = m
 					}
 				}
-				if !changed {
+				if members == nil {
 					return t
 				}
 				return NewIntersection(members...)
@@ -114,15 +125,20 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 				return NewMap(key, value)
 			},
 			Tuple: func(tu *Tuple) Type {
-				changed := false
-				elems := make([]Type, len(tu.Elements))
+				var elems []Type
 				for i, e := range tu.Elements {
-					elems[i] = rewriteDepth(e, fn, next, memo)
-					if elems[i] != e {
-						changed = true
+					newElem := rewriteDepth(e, fn, next, memo)
+					if newElem != e {
+						if elems == nil {
+							elems = make([]Type, len(tu.Elements))
+							copy(elems, tu.Elements)
+						}
+						elems[i] = newElem
+					} else if elems != nil {
+						elems[i] = e
 					}
 				}
-				if !changed {
+				if elems == nil {
 					return t
 				}
 				return NewTuple(elems...)
@@ -141,34 +157,43 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 				return NewAlias(a.Name, target)
 			},
 			Instantiated: func(i *Instantiated) Type {
-				changed := false
-				args := make([]Type, len(i.TypeArgs))
+				var args []Type
 				for idx, a := range i.TypeArgs {
-					args[idx] = rewriteDepth(a, fn, next, memo)
-					if args[idx] != a {
-						changed = true
+					newArg := rewriteDepth(a, fn, next, memo)
+					if newArg != a {
+						if args == nil {
+							args = make([]Type, len(i.TypeArgs))
+							copy(args, i.TypeArgs)
+						}
+						args[idx] = newArg
+					} else if args != nil {
+						args[idx] = a
 					}
 				}
-				if !changed {
+				if args == nil {
 					return t
 				}
 				return Instantiate(i.Generic, args...)
 			},
 			Interface: func(i *Interface) Type {
-				changed := false
-				methods := make([]Method, len(i.Methods))
+				var methods []Method
 				for idx, m := range i.Methods {
 					newType := rewriteDepth(m.Type, fn, next, memo)
 					if newType != m.Type {
-						changed = true
-					}
-					if fnType, ok := newType.(*Function); ok {
-						methods[idx] = Method{Name: m.Name, Type: fnType}
-					} else {
+						if methods == nil {
+							methods = make([]Method, len(i.Methods))
+							copy(methods, i.Methods)
+						}
+						if fnType, ok := newType.(*Function); ok {
+							methods[idx] = Method{Name: m.Name, Type: fnType}
+						} else {
+							methods[idx] = m
+						}
+					} else if methods != nil {
 						methods[idx] = m
 					}
 				}
-				if !changed {
+				if methods == nil {
 					return t
 				}
 				return NewInterface(i.Name, methods)
