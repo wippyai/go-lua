@@ -29,6 +29,7 @@ type Solution struct {
 	pkResolver     *pathkey.Resolver
 	values         map[string]typ.Type // canonical key (sym<ID>@<ver><segs>) -> type
 	edgeConditions map[edgeKey]constraint.Condition
+	declaredSyms   []cfg.SymbolID
 
 	edgeNumericConstraints map[edgeKey][]constraint.NumericConstraint
 	unsatEdges             map[edgeKey]bool // edges proven unreachable by constraints
@@ -99,6 +100,13 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 		scratchSuffix:          make(map[string]struct{}, 16),
 		pathAliases:            make(map[string]string, size),
 	}
+	if inputs != nil && len(inputs.DeclaredTypes) > 0 {
+		s.declaredSyms = make([]cfg.SymbolID, 0, len(inputs.DeclaredTypes))
+		for sym := range inputs.DeclaredTypes {
+			s.declaredSyms = append(s.declaredSyms, sym)
+		}
+		slices.Sort(s.declaredSyms)
+	}
 	s.buildEdgeConditions()
 	s.buildEdgeNumericConstraints()
 	s.checkNumericConstraints()
@@ -167,12 +175,7 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 
 	// Add declared types for symbols visible at this point
 	if s.inputs != nil && s.inputs.DeclaredTypes != nil && s.inputs.Graph != nil {
-		declSyms := make([]cfg.SymbolID, 0, len(s.inputs.DeclaredTypes))
-		for sym := range s.inputs.DeclaredTypes {
-			declSyms = append(declSyms, sym)
-		}
-		slices.Sort(declSyms)
-		for _, sym := range declSyms {
+		for _, sym := range s.declaredSyms {
 			declPath := constraint.Path{Symbol: sym}
 			canonicalKey := s.pkResolver.KeyAt(p, declPath)
 			if canonicalKey == "" {
