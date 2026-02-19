@@ -165,7 +165,7 @@ func (s *Solution) runPropagation() {
 //
 // This environment is passed to the constraint solver for type narrowing.
 func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, baseType typ.Type, constraints []constraint.Constraint) map[constraint.PathKey]typ.Type {
-	result := make(map[constraint.PathKey]typ.Type)
+	result := make(map[constraint.PathKey]typ.Type, 1+len(s.declaredSyms))
 
 	// Add target path with its base type using canonical key
 	targetKey := s.pkResolver.KeyAt(p, targetPath)
@@ -213,10 +213,9 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 			return nil, false
 		}
 
-		seen := make(map[constraint.PathKey]bool)
-		for key := range result {
-			seen[key] = true
-		}
+		// Tracks canonical paths we already attempted but could not resolve.
+		// Successful resolutions live in result and are checked directly.
+		unresolved := make(map[constraint.PathKey]struct{}, len(constraints))
 		for _, c := range constraints {
 			for _, cpath := range c.Paths() {
 				if cpath.IsEmpty() || cpath.Symbol == 0 {
@@ -224,10 +223,15 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 				}
 				cpath = normalizeConstraintPathForQuery(cpath)
 				canonicalKey := s.pkResolver.KeyAt(p, cpath)
-				if canonicalKey == "" || seen[canonicalKey] {
+				if canonicalKey == "" {
 					continue
 				}
-				seen[canonicalKey] = true
+				if _, exists := result[canonicalKey]; exists {
+					continue
+				}
+				if _, knownUnresolved := unresolved[canonicalKey]; knownUnresolved {
+					continue
+				}
 
 				// Look up value using canonical key
 				if t := s.values[string(canonicalKey)]; t != nil {
@@ -259,6 +263,8 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 						continue
 					}
 				}
+
+				unresolved[canonicalKey] = struct{}{}
 			}
 		}
 	}
