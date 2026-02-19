@@ -886,14 +886,104 @@ func typeContains(haystack, needle typ.Type) bool {
 	if haystack == nil || needle == nil {
 		return false
 	}
-	found := false
-	_ = typ.Rewrite(haystack, func(t typ.Type) (typ.Type, bool) {
-		if typ.TypeEquals(t, needle) {
-			found = true
-			// Stop descending on this subtree once the target is found.
-			return t, true
+	return typeContainsDepth(haystack, needle, typ.NewGuard())
+}
+
+func typeContainsDepth(haystack, needle typ.Type, guard internal.RecursionGuard) bool {
+	if haystack == nil || needle == nil {
+		return false
+	}
+	next, ok := guard.Enter(haystack)
+	if !ok {
+		return false
+	}
+	if typ.TypeEquals(haystack, needle) {
+		return true
+	}
+
+	// Match typ.Visit behavior: annotated wrappers are transparent for traversal.
+	node := haystack
+	for {
+		ann, ok := node.(*typ.Annotated)
+		if !ok || ann.Inner == nil || ann.Inner == node {
+			break
 		}
-		return nil, false
-	})
-	return found
+		node = ann.Inner
+	}
+
+	switch tt := node.(type) {
+	case *typ.Optional:
+		return typeContainsDepth(tt.Inner, needle, next)
+	case *typ.Union:
+		for _, m := range tt.Members {
+			if typeContainsDepth(m, needle, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Intersection:
+		for _, m := range tt.Members {
+			if typeContainsDepth(m, needle, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Array:
+		return typeContainsDepth(tt.Element, needle, next)
+	case *typ.Map:
+		return typeContainsDepth(tt.Key, needle, next) || typeContainsDepth(tt.Value, needle, next)
+	case *typ.Tuple:
+		for _, e := range tt.Elements {
+			if typeContainsDepth(e, needle, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Function:
+		for _, p := range tt.Params {
+			if typeContainsDepth(p.Type, needle, next) {
+				return true
+			}
+		}
+		for _, r := range tt.Returns {
+			if typeContainsDepth(r, needle, next) {
+				return true
+			}
+		}
+		if tt.Variadic != nil {
+			return typeContainsDepth(tt.Variadic, needle, next)
+		}
+		return false
+	case *typ.Record:
+		for _, f := range tt.Fields {
+			if typeContainsDepth(f.Type, needle, next) {
+				return true
+			}
+		}
+		if tt.Metatable != nil && typeContainsDepth(tt.Metatable, needle, next) {
+			return true
+		}
+		if tt.HasMapComponent() {
+			return typeContainsDepth(tt.MapKey, needle, next) || typeContainsDepth(tt.MapValue, needle, next)
+		}
+		return false
+	case *typ.Alias:
+		return typeContainsDepth(tt.Target, needle, next)
+	case *typ.Instantiated:
+		for _, a := range tt.TypeArgs {
+			if typeContainsDepth(a, needle, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Interface:
+		for _, m := range tt.Methods {
+			if m.Type != nil && typeContainsDepth(m.Type, needle, next) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }

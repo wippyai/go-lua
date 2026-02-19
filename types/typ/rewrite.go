@@ -1,6 +1,9 @@
 package typ
 
-import "github.com/wippyai/go-lua/internal"
+import (
+	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/kind"
+)
 
 // Rewrite traverses a type tree and applies fn at each node (bottom-up transformation).
 //
@@ -30,9 +33,19 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 	if t == nil {
 		return t
 	}
+	if !rewriteCanDescend(t) {
+		return WithGuard(t, guard, t, func(internal.RecursionGuard) Type {
+			if replacement, ok := fn(t); ok {
+				return replacement
+			}
+			return t
+		})
+	}
+
 	depth := guard.Depth()
+	var key rewriteKey
 	if memo != nil {
-		key := rewriteKey{t: t, depth: depth}
+		key = rewriteKey{t: t, depth: depth}
 		if cached, ok := memo[key]; ok {
 			return cached
 		}
@@ -41,7 +54,7 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 	return WithGuard(t, guard, t, func(next internal.RecursionGuard) Type {
 		if replacement, ok := fn(t); ok {
 			if memo != nil {
-				memo[rewriteKey{t: t, depth: depth}] = replacement
+				memo[key] = replacement
 			}
 			return replacement
 		}
@@ -166,10 +179,32 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 		})
 
 		if memo != nil {
-			memo[rewriteKey{t: t, depth: depth}] = out
+			memo[key] = out
 		}
 		return out
 	})
+}
+
+func rewriteCanDescend(t Type) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind() {
+	case kind.Optional,
+		kind.Union,
+		kind.Intersection,
+		kind.Array,
+		kind.Map,
+		kind.Tuple,
+		kind.Function,
+		kind.Record,
+		kind.Alias,
+		kind.Instantiated,
+		kind.Interface:
+		return true
+	default:
+		return false
+	}
 }
 
 func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard internal.RecursionGuard, memo map[rewriteKey]Type) Type {

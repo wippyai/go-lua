@@ -71,12 +71,12 @@ func PruneSoftUnionMembers(t Type) Type {
 		return nil
 	}
 	memo := make(map[Type]Type)
-	visiting := make(map[Type]bool)
+	visiting := make(map[Type]struct{})
 	guard := NewGuard()
 	return pruneSoftUnionMembersMemo(t, guard, memo, visiting)
 }
 
-func pruneSoftUnionMembersMemo(t Type, guard internal.RecursionGuard, memo map[Type]Type, visiting map[Type]bool) Type {
+func pruneSoftUnionMembersMemo(t Type, guard internal.RecursionGuard, memo map[Type]Type, visiting map[Type]struct{}) Type {
 	if t == nil {
 		return t
 	}
@@ -87,14 +87,15 @@ func pruneSoftUnionMembersMemo(t Type, guard internal.RecursionGuard, memo map[T
 	if cached, ok := memo[t]; ok {
 		return cached
 	}
-	if visiting[t] {
+	if _, ok := visiting[t]; ok {
 		return t
 	}
-	visiting[t] = true
+	visiting[t] = struct{}{}
 
 	out := Visit(t, Visitor[Type]{
 		Union: func(u *Union) Type {
 			members := make([]Type, 0, len(u.Members))
+			softFlags := make([]bool, 0, len(u.Members))
 			softCount := 0
 			nonSoftCount := 0
 			changed := false
@@ -103,7 +104,9 @@ func pruneSoftUnionMembersMemo(t Type, guard internal.RecursionGuard, memo map[T
 				if pm != m {
 					changed = true
 				}
-				if IsSoft(pm, SoftPlaceholderPolicy) {
+				soft := IsSoft(pm, SoftPlaceholderPolicy)
+				softFlags = append(softFlags, soft)
+				if soft {
 					softCount++
 				} else {
 					nonSoftCount++
@@ -112,8 +115,8 @@ func pruneSoftUnionMembersMemo(t Type, guard internal.RecursionGuard, memo map[T
 			}
 			if softCount > 0 && nonSoftCount > 0 {
 				filtered := members[:0]
-				for _, m := range members {
-					if !IsSoft(m, SoftPlaceholderPolicy) {
+				for i, m := range members {
+					if !softFlags[i] {
 						filtered = append(filtered, m)
 					}
 				}
@@ -200,7 +203,7 @@ func pruneSoftUnionMembersMemo(t Type, guard internal.RecursionGuard, memo map[T
 		},
 	})
 
-	visiting[t] = false
+	delete(visiting, t)
 	memo[t] = out
 	return out
 }
