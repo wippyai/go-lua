@@ -196,6 +196,11 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 	}
 	// Any is NOT assignable to specific types; only to Any itself (Unknown handled above).
 	if typ.IsAny(sub) {
+		// Builtin table-top marker is a dynamic table boundary; explicit `any`
+		// values are permitted to flow through it.
+		if unwrap.IsBuiltinTableTop(super) {
+			return true
+		}
 		return false
 	}
 

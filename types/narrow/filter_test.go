@@ -343,6 +343,29 @@ func TestByFieldLiteral_DiscriminatedUnion(t *testing.T) {
 	}
 }
 
+func TestByFieldLiteral_BuiltinTableTopMaterializesRecord(t *testing.T) {
+	resolver := newMockResolver()
+	tableTop := typ.NewInterface("table", nil)
+	lit := typ.LiteralString("image")
+
+	result := ByFieldLiteral(tableTop, "type", lit, resolver)
+	want := typ.NewRecord().Field("type", lit).SetOpen(true).Build()
+	if !typ.TypeEquals(result, want) {
+		t.Errorf("ByFieldLiteral(tableTop, type, \"image\") = %v, want %v", result, want)
+	}
+}
+
+func TestByFieldLiteral_PlaceholderMaterializesRecord(t *testing.T) {
+	resolver := newMockResolver()
+	lit := typ.LiteralString("image")
+
+	result := ByFieldLiteral(typ.Any, "type", lit, resolver)
+	want := typ.NewRecord().Field("type", lit).SetOpen(true).Build()
+	if !typ.TypeEquals(result, want) {
+		t.Errorf("ByFieldLiteral(any, type, \"image\") = %v, want %v", result, want)
+	}
+}
+
 func TestExcludeByFieldLiteral_EmptyField(t *testing.T) {
 	resolver := newMockResolver()
 	rec := typ.NewRecord().Field("kind", typ.LiteralString("a")).Build()

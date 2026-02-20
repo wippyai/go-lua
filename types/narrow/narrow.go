@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
+var tableTopType = typ.NewInterface("table", nil)
+
 // narrowConfig defines customization points for recursive type narrowing.
 //
 // Each narrowing operation (RemoveNil, ToTruthy, etc.) creates a narrowConfig
@@ -682,6 +684,7 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 //   - Integer: typ.Integer
 //   - String: typ.String
 //   - Function: fun(...any) -> any
+//   - Record: builtin table top marker interface
 //   - Any: typ.Any
 //   - Other: typ.Unknown (no canonical type available)
 func TypeForKind(k kind.Kind) typ.Type {
@@ -698,6 +701,8 @@ func TypeForKind(k kind.Kind) typ.Type {
 		return typ.String
 	case kind.Function:
 		return typ.Func().Variadic(typ.Any).Returns(typ.Any).Build()
+	case kind.Record:
+		return tableTopType
 	case kind.Any:
 		return typ.Any
 	default:

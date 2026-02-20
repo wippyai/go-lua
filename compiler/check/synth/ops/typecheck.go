@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // IsNumeric checks if a type supports arithmetic operations (+, -, *, /, %).
@@ -397,6 +398,9 @@ func hasLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	if t == nil {
 		return false
 	}
+	if unwrap.IsBuiltinTableTop(t) {
+		return true
+	}
 	next, ok := guard.Enter(t)
 	if !ok {
 		return false
@@ -467,6 +471,9 @@ func MayHaveLength(t typ.Type) bool {
 func mayHaveLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	if t == nil {
 		return false
+	}
+	if unwrap.IsBuiltinTableTop(t) {
+		return true
 	}
 	next, ok := guard.Enter(t)
 	if !ok {

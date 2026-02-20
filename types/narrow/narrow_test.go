@@ -1064,10 +1064,11 @@ func TestTypeForKind_Primitives(t *testing.T) {
 	}
 }
 
-func TestTypeForKind_Unknown(t *testing.T) {
+func TestTypeForKind_Record(t *testing.T) {
 	got := narrow.TypeForKind(kind.Record)
-	if !typ.TypeEquals(got, typ.Unknown) {
-		t.Errorf("TypeForKind(Record) = %v, want unknown", got)
+	want := typ.NewInterface("table", nil)
+	if !typ.TypeEquals(got, want) {
+		t.Errorf("TypeForKind(Record) = %v, want %v", got, want)
 	}
 }
 

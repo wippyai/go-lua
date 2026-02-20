@@ -325,6 +325,13 @@ func ByFieldLiteral(t typ.Type, field string, lit *typ.Literal, resolver Resolve
 	if t == nil || field == "" || lit == nil || resolver == nil {
 		return t
 	}
+	if t.Kind().IsPlaceholder() || unwrap.IsBuiltinTableTop(t) {
+		// Refining `table` by a field literal should materialize a structural
+		// shape so downstream assignment/subtyping can use the discriminant.
+		// This also makes narrowing order-independent when placeholder and
+		// table-type constraints are both present.
+		return typ.NewRecord().Field(field, lit).SetOpen(true).Build()
+	}
 
 	return FilterByMatch(t, func(m typ.Type) bool {
 		return FieldMatchesLiteral(m, field, lit, resolver)

@@ -163,6 +163,7 @@ func TestHasLength(t *testing.T) {
 	}{
 		{"string", typ.String, true},
 		{"any", typ.Any, true},
+		{"builtin table marker", typ.NewInterface("table", nil), true},
 		{"integer", typ.Integer, false},
 		{"boolean", typ.Boolean, false},
 	}
@@ -319,6 +320,7 @@ func TestMayHaveLength(t *testing.T) {
 		want bool
 	}{
 		{"string", typ.String, true},
+		{"builtin table marker", typ.NewInterface("table", nil), true},
 		{"integer", typ.Integer, false},
 		{"optional string", typ.NewOptional(typ.String), true},
 		{"string or nil", typ.NewUnion(typ.String, typ.Nil), true},

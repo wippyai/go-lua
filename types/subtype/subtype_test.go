@@ -1410,6 +1410,15 @@ func TestTableMarkerAcceptsArray(t *testing.T) {
 	}
 }
 
+func TestTableMarkerAcceptsAny(t *testing.T) {
+	sub := typ.Any
+	super := typ.NewInterface("table", nil)
+
+	if !IsSubtype(sub, super) {
+		t.Error("any should be subtype of table marker")
+	}
+}
+
 func TestMapIsNotSubtypeOfEmptyRecord(t *testing.T) {
 	sub := typ.NewMap(typ.String, typ.Any)
 	super := typ.NewRecord().Build()
