@@ -52,162 +52,164 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 		}
 	}
 
-	return WithGuard(t, guard, t, func(next internal.RecursionGuard) Type {
-		if replacement, ok := fn(t); ok {
-			if memo != nil {
-				memo[key] = replacement
-			}
-			return replacement
-		}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return t
+	}
 
-		out := Visit(t, Visitor[Type]{
-			Optional: func(o *Optional) Type {
-				if o.Inner == nil {
-					return t
-				}
-				inner := rewriteDepth(o.Inner, fn, next, memo)
-				if inner == o.Inner {
-					return t
-				}
-				return NewOptional(inner)
-			},
-			Union: func(u *Union) Type {
-				var members []Type
-				for i, m := range u.Members {
-					newMember := rewriteDepth(m, fn, next, memo)
-					if newMember != m {
-						if members == nil {
-							members = make([]Type, len(u.Members))
-							copy(members, u.Members)
-						}
-						members[i] = newMember
-					} else if members != nil {
-						members[i] = m
-					}
-				}
-				if members == nil {
-					return t
-				}
-				return NewUnion(members...)
-			},
-			Intersection: func(u *Intersection) Type {
-				var members []Type
-				for i, m := range u.Members {
-					newMember := rewriteDepth(m, fn, next, memo)
-					if newMember != m {
-						if members == nil {
-							members = make([]Type, len(u.Members))
-							copy(members, u.Members)
-						}
-						members[i] = newMember
-					} else if members != nil {
-						members[i] = m
-					}
-				}
-				if members == nil {
-					return t
-				}
-				return NewIntersection(members...)
-			},
-			Array: func(a *Array) Type {
-				elem := rewriteDepth(a.Element, fn, next, memo)
-				if elem == a.Element {
-					return t
-				}
-				return NewArray(elem)
-			},
-			Map: func(m *Map) Type {
-				key := rewriteDepth(m.Key, fn, next, memo)
-				value := rewriteDepth(m.Value, fn, next, memo)
-				if key == m.Key && value == m.Value {
-					return t
-				}
-				return NewMap(key, value)
-			},
-			Tuple: func(tu *Tuple) Type {
-				var elems []Type
-				for i, e := range tu.Elements {
-					newElem := rewriteDepth(e, fn, next, memo)
-					if newElem != e {
-						if elems == nil {
-							elems = make([]Type, len(tu.Elements))
-							copy(elems, tu.Elements)
-						}
-						elems[i] = newElem
-					} else if elems != nil {
-						elems[i] = e
-					}
-				}
-				if elems == nil {
-					return t
-				}
-				return NewTuple(elems...)
-			},
-			Function: func(f *Function) Type {
-				return rewriteFunction(f, t, fn, next, memo)
-			},
-			Record: func(r *Record) Type {
-				return rewriteRecord(r, t, fn, next, memo)
-			},
-			Alias: func(a *Alias) Type {
-				target := rewriteDepth(a.Target, fn, next, memo)
-				if target == a.Target {
-					return t
-				}
-				return NewAlias(a.Name, target)
-			},
-			Instantiated: func(i *Instantiated) Type {
-				var args []Type
-				for idx, a := range i.TypeArgs {
-					newArg := rewriteDepth(a, fn, next, memo)
-					if newArg != a {
-						if args == nil {
-							args = make([]Type, len(i.TypeArgs))
-							copy(args, i.TypeArgs)
-						}
-						args[idx] = newArg
-					} else if args != nil {
-						args[idx] = a
-					}
-				}
-				if args == nil {
-					return t
-				}
-				return Instantiate(i.Generic, args...)
-			},
-			Interface: func(i *Interface) Type {
-				var methods []Method
-				for idx, m := range i.Methods {
-					newType := rewriteDepth(m.Type, fn, next, memo)
-					if newType != m.Type {
-						if methods == nil {
-							methods = make([]Method, len(i.Methods))
-							copy(methods, i.Methods)
-						}
-						if fnType, ok := newType.(*Function); ok {
-							methods[idx] = Method{Name: m.Name, Type: fnType}
-						} else {
-							methods[idx] = m
-						}
-					} else if methods != nil {
-						methods[idx] = m
-					}
-				}
-				if methods == nil {
-					return t
-				}
-				return NewInterface(i.Name, methods)
-			},
-			Default: func(_ Type) Type {
-				return t
-			},
-		})
-
+	if replacement, ok := fn(t); ok {
 		if memo != nil {
-			memo[key] = out
+			memo[key] = replacement
 		}
-		return out
-	})
+		return replacement
+	}
+
+	var out Type
+	switch tt := unwrapTransparentWrappers(t).(type) {
+	case *Optional:
+		if tt.Inner == nil {
+			out = t
+			break
+		}
+		inner := rewriteDepth(tt.Inner, fn, next, memo)
+		if inner == tt.Inner {
+			out = t
+			break
+		}
+		out = NewOptional(inner)
+	case *Union:
+		var members []Type
+		for i, m := range tt.Members {
+			newMember := rewriteDepth(m, fn, next, memo)
+			if newMember != m {
+				if members == nil {
+					members = make([]Type, len(tt.Members))
+					copy(members, tt.Members)
+				}
+				members[i] = newMember
+			} else if members != nil {
+				members[i] = m
+			}
+		}
+		if members == nil {
+			out = t
+			break
+		}
+		out = NewUnion(members...)
+	case *Intersection:
+		var members []Type
+		for i, m := range tt.Members {
+			newMember := rewriteDepth(m, fn, next, memo)
+			if newMember != m {
+				if members == nil {
+					members = make([]Type, len(tt.Members))
+					copy(members, tt.Members)
+				}
+				members[i] = newMember
+			} else if members != nil {
+				members[i] = m
+			}
+		}
+		if members == nil {
+			out = t
+			break
+		}
+		out = NewIntersection(members...)
+	case *Array:
+		elem := rewriteDepth(tt.Element, fn, next, memo)
+		if elem == tt.Element {
+			out = t
+			break
+		}
+		out = NewArray(elem)
+	case *Map:
+		keyType := rewriteDepth(tt.Key, fn, next, memo)
+		valueType := rewriteDepth(tt.Value, fn, next, memo)
+		if keyType == tt.Key && valueType == tt.Value {
+			out = t
+			break
+		}
+		out = NewMap(keyType, valueType)
+	case *Tuple:
+		var elems []Type
+		for i, e := range tt.Elements {
+			newElem := rewriteDepth(e, fn, next, memo)
+			if newElem != e {
+				if elems == nil {
+					elems = make([]Type, len(tt.Elements))
+					copy(elems, tt.Elements)
+				}
+				elems[i] = newElem
+			} else if elems != nil {
+				elems[i] = e
+			}
+		}
+		if elems == nil {
+			out = t
+			break
+		}
+		out = NewTuple(elems...)
+	case *Function:
+		out = rewriteFunction(tt, t, fn, next, memo)
+	case *Record:
+		out = rewriteRecord(tt, t, fn, next, memo)
+	case *Alias:
+		target := rewriteDepth(tt.Target, fn, next, memo)
+		if target == tt.Target {
+			out = t
+			break
+		}
+		out = NewAlias(tt.Name, target)
+	case *Instantiated:
+		var args []Type
+		for idx, a := range tt.TypeArgs {
+			newArg := rewriteDepth(a, fn, next, memo)
+			if newArg != a {
+				if args == nil {
+					args = make([]Type, len(tt.TypeArgs))
+					copy(args, tt.TypeArgs)
+				}
+				args[idx] = newArg
+			} else if args != nil {
+				args[idx] = a
+			}
+		}
+		if args == nil {
+			out = t
+			break
+		}
+		out = Instantiate(tt.Generic, args...)
+	case *Interface:
+		var methods []Method
+		for idx, m := range tt.Methods {
+			newType := rewriteDepth(m.Type, fn, next, memo)
+			if newType != m.Type {
+				if methods == nil {
+					methods = make([]Method, len(tt.Methods))
+					copy(methods, tt.Methods)
+				}
+				if fnType, ok := newType.(*Function); ok {
+					methods[idx] = Method{Name: m.Name, Type: fnType}
+				} else {
+					methods[idx] = m
+				}
+			} else if methods != nil {
+				methods[idx] = m
+			}
+		}
+		if methods == nil {
+			out = t
+			break
+		}
+		out = NewInterface(tt.Name, methods)
+	default:
+		out = t
+	}
+
+	if memo != nil {
+		memo[key] = out
+	}
+	return out
 }
 
 func rewriteCanDescend(t Type) bool {

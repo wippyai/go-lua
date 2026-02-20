@@ -151,123 +151,121 @@ func pruneSoftUnionMembersMemo(
 		out = pruneSoftFunction(node, t, next, memo, visiting, softMemo)
 	case *Record:
 		out = pruneSoftRecord(node, t, next, memo, visiting, softMemo)
-	default:
-		out = Visit(t, Visitor[Type]{
-			Union: func(u *Union) Type {
-				var rewritten []Type
-				var nonSoftMembers []Type
-				softCount := 0
-				nonSoftCount := 0
-				changed := false
-				for idx, m := range u.Members {
-					pm := pruneSoftUnionMembersMemo(m, next, memo, visiting, softMemo)
-					if pm != m {
-						if rewritten == nil {
-							rewritten = make([]Type, len(u.Members))
-							copy(rewritten, u.Members)
-						}
-						rewritten[idx] = pm
-						changed = true
-					} else if rewritten != nil {
-						rewritten[idx] = m
-					}
-					soft := isSoftWithMemo(pm, SoftPlaceholderPolicy, softMemo)
-					if soft {
-						softCount++
-					} else {
-						nonSoftCount++
-						if nonSoftMembers == nil {
-							nonSoftMembers = make([]Type, 0, len(u.Members))
-						}
-						nonSoftMembers = append(nonSoftMembers, pm)
-					}
+	case *Union:
+		var rewritten []Type
+		var nonSoftMembers []Type
+		softCount := 0
+		nonSoftCount := 0
+		changed := false
+		for idx, m := range node.Members {
+			pm := pruneSoftUnionMembersMemo(m, next, memo, visiting, softMemo)
+			if pm != m {
+				if rewritten == nil {
+					rewritten = make([]Type, len(node.Members))
+					copy(rewritten, node.Members)
 				}
-				if softCount > 0 && nonSoftCount > 0 {
-					return NewUnion(nonSoftMembers...)
+				rewritten[idx] = pm
+				changed = true
+			} else if rewritten != nil {
+				rewritten[idx] = m
+			}
+			soft := isSoftWithMemo(pm, SoftPlaceholderPolicy, softMemo)
+			if soft {
+				softCount++
+			} else {
+				nonSoftCount++
+				if nonSoftMembers == nil {
+					nonSoftMembers = make([]Type, 0, len(node.Members))
 				}
-				if !changed {
-					return t
-				}
-				members := u.Members
-				if rewritten != nil {
-					members = rewritten
-				}
-				return NewUnion(members...)
-			},
-			Optional: func(o *Optional) Type {
-				if o.Inner == nil {
-					return t
-				}
-				inner := pruneSoftUnionMembersMemo(o.Inner, next, memo, visiting, softMemo)
-				if inner == o.Inner {
-					return t
-				}
-				return NewOptional(inner)
-			},
-			Array: func(a *Array) Type {
-				elem := pruneSoftUnionMembersMemo(a.Element, next, memo, visiting, softMemo)
-				if elem == a.Element {
-					return t
-				}
-				return NewArray(elem)
-			},
-			Map: func(m *Map) Type {
-				key := pruneSoftUnionMembersMemo(m.Key, next, memo, visiting, softMemo)
-				val := pruneSoftUnionMembersMemo(m.Value, next, memo, visiting, softMemo)
-				if key == m.Key && val == m.Value {
-					return t
-				}
-				return NewMap(key, val)
-			},
-			Tuple: func(tu *Tuple) Type {
-				var elems []Type
-				for i, e := range tu.Elements {
-					newElem := pruneSoftUnionMembersMemo(e, next, memo, visiting, softMemo)
-					if newElem != e {
-						if elems == nil {
-							elems = make([]Type, len(tu.Elements))
-							copy(elems, tu.Elements)
-						}
-						elems[i] = newElem
-					} else if elems != nil {
-						elems[i] = e
-					}
-				}
+				nonSoftMembers = append(nonSoftMembers, pm)
+			}
+		}
+		if softCount > 0 && nonSoftCount > 0 {
+			out = NewUnion(nonSoftMembers...)
+			break
+		}
+		if !changed {
+			out = t
+			break
+		}
+		members := node.Members
+		if rewritten != nil {
+			members = rewritten
+		}
+		out = NewUnion(members...)
+	case *Optional:
+		if node.Inner == nil {
+			out = t
+			break
+		}
+		inner := pruneSoftUnionMembersMemo(node.Inner, next, memo, visiting, softMemo)
+		if inner == node.Inner {
+			out = t
+			break
+		}
+		out = NewOptional(inner)
+	case *Array:
+		elem := pruneSoftUnionMembersMemo(node.Element, next, memo, visiting, softMemo)
+		if elem == node.Element {
+			out = t
+			break
+		}
+		out = NewArray(elem)
+	case *Map:
+		key := pruneSoftUnionMembersMemo(node.Key, next, memo, visiting, softMemo)
+		val := pruneSoftUnionMembersMemo(node.Value, next, memo, visiting, softMemo)
+		if key == node.Key && val == node.Value {
+			out = t
+			break
+		}
+		out = NewMap(key, val)
+	case *Tuple:
+		var elems []Type
+		for i, e := range node.Elements {
+			newElem := pruneSoftUnionMembersMemo(e, next, memo, visiting, softMemo)
+			if newElem != e {
 				if elems == nil {
-					return t
+					elems = make([]Type, len(node.Elements))
+					copy(elems, node.Elements)
 				}
-				return NewTuple(elems...)
-			},
-			Alias: func(a *Alias) Type {
-				target := pruneSoftUnionMembersMemo(a.Target, next, memo, visiting, softMemo)
-				if target == a.Target {
-					return t
-				}
-				return NewAlias(a.Name, target)
-			},
-			Instantiated: func(i *Instantiated) Type {
-				var args []Type
-				for idx, a := range i.TypeArgs {
-					newArg := pruneSoftUnionMembersMemo(a, next, memo, visiting, softMemo)
-					if newArg != a {
-						if args == nil {
-							args = make([]Type, len(i.TypeArgs))
-							copy(args, i.TypeArgs)
-						}
-						args[idx] = newArg
-					} else if args != nil {
-						args[idx] = a
-					}
-				}
+				elems[i] = newElem
+			} else if elems != nil {
+				elems[i] = e
+			}
+		}
+		if elems == nil {
+			out = t
+			break
+		}
+		out = NewTuple(elems...)
+	case *Alias:
+		target := pruneSoftUnionMembersMemo(node.Target, next, memo, visiting, softMemo)
+		if target == node.Target {
+			out = t
+			break
+		}
+		out = NewAlias(node.Name, target)
+	case *Instantiated:
+		var args []Type
+		for idx, a := range node.TypeArgs {
+			newArg := pruneSoftUnionMembersMemo(a, next, memo, visiting, softMemo)
+			if newArg != a {
 				if args == nil {
-					return t
+					args = make([]Type, len(node.TypeArgs))
+					copy(args, node.TypeArgs)
 				}
-				return Instantiate(i.Generic, args...)
-			},
-			Default: func(_ Type) Type {
-				return t
-			},
-		})
+				args[idx] = newArg
+			} else if args != nil {
+				args[idx] = a
+			}
+		}
+		if args == nil {
+			out = t
+			break
+		}
+		out = Instantiate(node.Generic, args...)
+	default:
+		out = t
 	}
 
 	delete(visiting, t)
