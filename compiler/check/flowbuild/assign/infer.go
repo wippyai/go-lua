@@ -185,26 +185,31 @@ func collectInferredTypes(
 			if sc == nil {
 				sc = scopes[graph.Entry()]
 			}
-			info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			sources := info.Sources
+			for i, target := range info.Targets {
+				var source ast.Expr
+				if i < len(sources) {
+					source = sources[i]
+				}
 				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-					return
+					continue
 				}
 				if fnExpr, ok := source.(*ast.FunctionExpr); ok {
 					if inputs != nil && inputs.SiblingTypes != nil {
 						if sibling := inputs.SiblingTypes[target.Symbol]; sibling != nil {
 							funcSigTypes[target.Symbol] = sibling
-							return
+							continue
 						}
 					}
 					if sig := services.ResolveFunctionSignature(fnExpr, sc); sig != nil {
 						funcSigTypes[target.Symbol] = sig
-						return
+						continue
 					}
 					if seed, ok := returns.BuildSeedFunctionTypeWithBindings(fnExpr, seedEngine, sc, bindings).(*typ.Function); ok && seed != nil {
 						funcSigTypes[target.Symbol] = seed
 					}
 				}
-			})
+			}
 		})
 	}
 
@@ -310,9 +315,9 @@ func collectInferredTypes(
 	}
 	for _, entry := range assigns {
 		info := entry.info
-		info.EachTarget(func(_ int, target cfg.AssignTarget) {
+		for _, target := range info.Targets {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				return
+				continue
 			}
 			targetSym := uint64(target.Symbol)
 			if deps[targetSym] == nil {
@@ -321,16 +326,19 @@ func collectInferredTypes(
 
 			// Collect references from sources
 			var refs []cfg.SymbolID
-			info.EachSource(func(_ int, src ast.Expr) {
+			for _, src := range info.Sources {
+				if src == nil {
+					continue
+				}
 				collectExprSymbols(src, bindings, &refs)
-			})
+			}
 			for _, iter := range info.IterExprs {
 				collectExprSymbols(iter, bindings, &refs)
 			}
 			for _, ref := range refs {
 				deps[targetSym] = append(deps[targetSym], uint64(ref))
 			}
-		})
+		}
 	}
 	// Process table mutator calls.
 	// Canonical dependency direction is: mutated table depends on inserted value.
@@ -580,15 +588,15 @@ func collectInferredTypes(
 				// Generic for loops
 				if len(info.IterExprs) > 0 && len(info.Targets) > 0 && synthAPI != nil {
 					varTypes := synthAPI.InferIterVarsWithSpecTypes(info.IterExprs, len(info.Targets), p, overlay)
-					info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
+					for i, target := range info.Targets {
 						if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-							return
+							continue
 						}
 						if !sccSet[target.Symbol] {
-							return
+							continue
 						}
 						if annotated != nil && annotated[target.Symbol] {
-							return
+							continue
 						}
 						vt := typ.Unknown
 						if i < len(varTypes) && varTypes[i] != nil {
@@ -596,7 +604,7 @@ func collectInferredTypes(
 						}
 						vt = resolve.Ref(vt, sc)
 						if typ.IsAbsentOrUnknown(vt) {
-							return
+							continue
 						}
 						old := inferred[target.Symbol]
 						joined := joinInferredType(old, vt)
@@ -604,7 +612,7 @@ func collectInferredTypes(
 							inferred[target.Symbol] = joined
 							changed = true
 						}
-					})
+					}
 					continue
 				}
 
@@ -623,17 +631,22 @@ func collectInferredTypes(
 				})
 				values := expandedAssignValues(synthAPI, info, p, rhsOverlay)
 
-				info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
+				sources := info.Sources
+				for i, target := range info.Targets {
+					var source ast.Expr
+					if i < len(sources) {
+						source = sources[i]
+					}
 					switch target.Kind {
 					case cfg.TargetIdent:
 						if target.Symbol == 0 {
-							return
+							continue
 						}
 						if !sccSet[target.Symbol] {
-							return
+							continue
 						}
 						if annotated != nil && annotated[target.Symbol] {
-							return
+							continue
 						}
 						assignedType := typ.Unknown
 						// Canonical local-function policy: use the signature seed captured
@@ -665,7 +678,7 @@ func collectInferredTypes(
 						}
 						assignedType = resolve.Ref(assignedType, sc)
 						if typ.IsAbsentOrUnknown(assignedType) {
-							return
+							continue
 						}
 						old := inferred[target.Symbol]
 						joined := joinInferredType(old, assignedType)
@@ -674,7 +687,7 @@ func collectInferredTypes(
 							changed = true
 						}
 					}
-				})
+				}
 			}
 
 			// Infer parameter types from call argument expectations.

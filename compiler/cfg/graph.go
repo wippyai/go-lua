@@ -63,16 +63,27 @@ type pointIndex struct {
 	typeDef  []Point
 }
 
-func buildPointIndex(info map[basecfg.Point]NodeInfo) pointIndex {
+func buildPointIndex(info map[basecfg.Point]NodeInfo, size int) pointIndex {
 	if len(info) == 0 {
 		return pointIndex{}
 	}
 
 	all := make([]Point, 0, len(info))
-	for p := range info {
-		all = append(all, p)
+	if size > 0 {
+		for i := range size {
+			p := Point(i)
+			if _, ok := info[p]; ok {
+				all = append(all, p)
+			}
+		}
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
+	if len(all) != len(info) {
+		all = all[:0]
+		for p := range info {
+			all = append(all, p)
+		}
+		sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
+	}
 
 	idx := pointIndex{all: all}
 	for _, p := range all {
@@ -168,7 +179,7 @@ func BuildWithBindings(fn *ast.FunctionExpr, bindings *bind.BindingTable) *Graph
 	symbolNames := b.StealSymbolNames()
 	symbolKinds := b.StealSymbolKinds()
 	size := b.Cfg.Size()
-	pointIdx := buildPointIndex(b.Info)
+	pointIdx := buildPointIndex(b.Info, size)
 
 	return &Graph{
 		cfg:                   b.Cfg,
@@ -241,7 +252,7 @@ func BuildBlock(stmts []ast.Stmt, globals ...string) *Graph {
 	symbolNames := b.StealSymbolNames()
 	symbolKinds := b.StealSymbolKinds()
 	size := b.Cfg.Size()
-	pointIdx := buildPointIndex(b.Info)
+	pointIdx := buildPointIndex(b.Info, size)
 
 	return &Graph{
 		cfg:                   b.Cfg,
@@ -538,9 +549,22 @@ func (g *Graph) EachCallSite(fn func(Point, *CallInfo)) {
 		points = g.sortedPoints(nil)
 	}
 	for _, p := range points {
-		for _, call := range g.CallSitesAt(p) {
-			if call != nil {
-				fn(p, call)
+		switch info := g.info[p].(type) {
+		case *CallInfo:
+			if info != nil {
+				fn(p, info)
+			}
+		case *AssignInfo:
+			for _, call := range info.SourceCalls {
+				if call != nil {
+					fn(p, call)
+				}
+			}
+		case *ReturnInfo:
+			for _, call := range info.SourceCalls {
+				if call != nil {
+					fn(p, call)
+				}
 			}
 		}
 	}

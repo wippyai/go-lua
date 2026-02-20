@@ -1,16 +1,16 @@
 package cfg
 
 import (
-	"reflect"
 	"sort"
+	"unsafe"
 
 	"github.com/wippyai/go-lua/compiler/cfg/analysis"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 )
 
 // mapPtr returns a uintptr that uniquely identifies a map instance.
-func mapPtr(m any) uintptr {
-	return reflect.ValueOf(m).Pointer()
+func mapPtr(m map[string]basecfg.SymbolID) uintptr {
+	return *(*uintptr)(unsafe.Pointer(&m))
 }
 
 // ComputeSSAVersions computes SSA versions for all variables and inserts phi nodes.
@@ -59,14 +59,20 @@ func (b *Builder) collectAssignedSymbols() map[basecfg.SymbolID]string {
 
 	if b.Cfg != nil && b.ScopeTracker != nil {
 		entry := b.Cfg.Entry()
-		if vis := b.ScopeTracker.VisibleAt(entry); vis != nil {
-			vis.Range(func(name string, sym basecfg.SymbolID) bool {
+		if vis := b.ScopeTracker.visibility[entry]; vis != nil {
+			for name, sym := range vis {
 				if _, exists := syms[sym]; !exists {
 					syms[sym] = name
 				}
-
-				return true
-			})
+			}
+			for name, sym := range b.ScopeTracker.globals {
+				if _, inLocal := vis[name]; inLocal {
+					continue
+				}
+				if _, exists := syms[sym]; !exists {
+					syms[sym] = name
+				}
+			}
 		}
 	}
 
@@ -78,7 +84,20 @@ func (b *Builder) collectDefPoints(assignedSyms map[basecfg.SymbolID]string) map
 	defPoints := make(map[basecfg.SymbolID][]basecfg.Point)
 	entry := b.Cfg.Entry()
 
-	for p, info := range b.Info {
+	if b.ScopeTracker != nil {
+		for sym := range assignedSyms {
+			if declPoint, ok := b.ScopeTracker.declPoints[sym]; ok && declPoint == 0 {
+				defPoints[sym] = append(defPoints[sym], entry)
+			}
+		}
+	}
+
+	for pi := 0; pi < b.Cfg.Size(); pi++ {
+		p := basecfg.Point(pi)
+		info := b.Info[p]
+		if info == nil {
+			continue
+		}
 		switch v := info.(type) {
 		case *AssignInfo:
 			for _, target := range v.Targets {
@@ -99,25 +118,15 @@ func (b *Builder) collectDefPoints(assignedSyms map[basecfg.SymbolID]string) map
 		}
 	}
 
-	if b.ScopeTracker != nil {
-		for sym := range assignedSyms {
-			if declPoint, ok := b.ScopeTracker.declPoints[sym]; ok && declPoint == 0 {
-				defPoints[sym] = append(defPoints[sym], entry)
-			}
-		}
-	}
-
-	for sym := range defPoints {
-		pts := defPoints[sym]
-		sort.Slice(pts, func(i, j int) bool { return pts[i] < pts[j] })
-	}
-
 	return defPoints
 }
 
 // placePhis uses the iterated dominance frontier to determine where phi nodes are needed.
 func (b *Builder) placePhis(assignedSyms map[basecfg.SymbolID]string, defPoints map[basecfg.SymbolID][]basecfg.Point, df map[basecfg.Point][]basecfg.Point) map[basecfg.Point]map[basecfg.SymbolID]bool {
 	phiSites := make(map[basecfg.Point]map[basecfg.SymbolID]bool)
+	if b.ScopeTracker == nil {
+		return phiSites
+	}
 
 	sortedSyms := make([]basecfg.SymbolID, 0, len(assignedSyms))
 
@@ -126,6 +135,12 @@ func (b *Builder) placePhis(assignedSyms map[basecfg.SymbolID]string, defPoints 
 	}
 
 	sort.Slice(sortedSyms, func(i, j int) bool { return sortedSyms[i] < sortedSyms[j] })
+	cfgSize := b.Cfg.Size()
+	visibility := b.ScopeTracker.visibility
+	globals := b.ScopeTracker.globals
+	hasAlreadyMarks := make([]int, cfgSize)
+	everOnWorklistMarks := make([]int, cfgSize)
+	markEpoch := 0
 
 	for _, sym := range sortedSyms {
 		name := assignedSyms[sym]
@@ -135,13 +150,18 @@ func (b *Builder) placePhis(assignedSyms map[basecfg.SymbolID]string, defPoints 
 			continue
 		}
 
-		hasAlready := make(map[basecfg.Point]bool)
-		everOnWorklist := make(map[basecfg.Point]bool)
-		worklist := make([]basecfg.Point, len(defs))
-		copy(worklist, defs)
-
+		markEpoch++
+		worklist := make([]basecfg.Point, 0, len(defs))
 		for _, d := range defs {
-			everOnWorklist[d] = true
+			di := int(d)
+			if di < 0 || di >= cfgSize {
+				continue
+			}
+			if everOnWorklistMarks[di] == markEpoch {
+				continue
+			}
+			everOnWorklistMarks[di] = markEpoch
+			worklist = append(worklist, d)
 		}
 
 		for len(worklist) > 0 {
@@ -149,22 +169,27 @@ func (b *Builder) placePhis(assignedSyms map[basecfg.SymbolID]string, defPoints 
 			worklist = worklist[:len(worklist)-1]
 
 			for _, y := range df[d] {
-				if hasAlready[y] {
+				yi := int(y)
+				if yi < 0 || yi >= cfgSize {
+					continue
+				}
+				if hasAlreadyMarks[yi] == markEpoch {
 					continue
 				}
 
-				vis := b.ScopeTracker.VisibleAt(y)
-
+				vis := visibility[y]
 				if vis == nil {
 					continue
 				}
-
-				resolvedSym, ok := vis.Get(name)
+				resolvedSym, ok := vis[name]
+				if !ok {
+					resolvedSym, ok = globals[name]
+				}
 				if !ok || resolvedSym != sym {
 					continue
 				}
 
-				hasAlready[y] = true
+				hasAlreadyMarks[yi] = markEpoch
 
 				if phiSites[y] == nil {
 					phiSites[y] = make(map[basecfg.SymbolID]bool)
@@ -172,8 +197,8 @@ func (b *Builder) placePhis(assignedSyms map[basecfg.SymbolID]string, defPoints 
 
 				phiSites[y][sym] = true
 
-				if !everOnWorklist[y] {
-					everOnWorklist[y] = true
+				if everOnWorklistMarks[yi] != markEpoch {
+					everOnWorklistMarks[yi] = markEpoch
 					worklist = append(worklist, y)
 				}
 			}
@@ -187,15 +212,20 @@ func (b *Builder) placePhis(assignedSyms map[basecfg.SymbolID]string, defPoints 
 func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints map[basecfg.SymbolID][]basecfg.Point, phiSites map[basecfg.Point]map[basecfg.SymbolID]bool, domInfo *analysis.DomInfo) {
 	entry := b.Cfg.Entry()
 
-	phiMap := make(map[basecfg.Point]map[basecfg.SymbolID]*PhiInfo)
+	phiMap := make(map[basecfg.Point]map[basecfg.SymbolID]*PhiInfo, len(phiSites))
+	phiOrdered := make(map[basecfg.Point][]basecfg.SymbolID, len(phiSites))
 	for p, syms := range phiSites {
-		phiMap[p] = make(map[basecfg.SymbolID]*PhiInfo)
+		ordered := make([]basecfg.SymbolID, 0, len(syms))
+		phiMap[p] = make(map[basecfg.SymbolID]*PhiInfo, len(syms))
 		for sym := range syms {
+			ordered = append(ordered, sym)
 			phiMap[p][sym] = &PhiInfo{
 				Point:  p,
 				Target: Version{Root: assignedSyms[sym], Symbol: sym},
 			}
 		}
+		sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+		phiOrdered[p] = ordered
 	}
 
 	var seededGlobals []basecfg.SymbolID
@@ -240,6 +270,8 @@ func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints 
 
 	// Cache visible assigned symbols by visibility map pointer to avoid per-point scans.
 	visAssignedCache := make(map[uintptr][]basecfg.SymbolID)
+	visibility := b.ScopeTracker.visibility
+	globals := b.ScopeTracker.globals
 
 	// Track parent's VisibleVersion for sharing when unchanged
 	type renameState struct {
@@ -284,15 +316,8 @@ func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints 
 			pushedMap[sym]++
 		}
 
-		if phis := phiMap[p]; phis != nil {
-			phiSyms := make([]basecfg.SymbolID, 0, len(phis))
-
-			for sym := range phis {
-				phiSyms = append(phiSyms, sym)
-			}
-
-			sort.Slice(phiSyms, func(i, j int) bool { return phiSyms[i] < phiSyms[j] })
-
+		if phiSyms := phiOrdered[p]; len(phiSyms) > 0 {
+			phis := phiMap[p]
 			for _, sym := range phiSyms {
 				ver := newVersion(sym)
 				phis[sym].Target = ver
@@ -345,21 +370,26 @@ func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints 
 			currentVisPtr   uintptr
 		)
 
-		if vis := b.ScopeTracker.VisibleAt(p); vis != nil {
-			visMap := vis.ToMap()
-			currentVisPtr = mapPtr(visMap)
-			visibleAssigned := visAssignedCache[currentVisPtr]
+		if visLocal := visibility[p]; visLocal != nil {
+			currentVisPtr = mapPtr(visLocal)
+			visibleAssigned, cached := visAssignedCache[currentVisPtr]
 
-			if visibleAssigned == nil {
+			if !cached {
 				visibleAssigned = make([]basecfg.SymbolID, 0, len(assignedSyms))
-
-				for sym, name := range assignedSyms {
-					if resolvedSym, ok := vis.Get(name); ok && resolvedSym == sym {
-						visibleAssigned = append(visibleAssigned, sym)
+				for name, resolvedSym := range visLocal {
+					if expectedName, ok := assignedSyms[resolvedSym]; ok && expectedName == name {
+						visibleAssigned = append(visibleAssigned, resolvedSym)
+					}
+				}
+				for name, resolvedSym := range globals {
+					if _, shadowed := visLocal[name]; shadowed {
+						continue
+					}
+					if expectedName, ok := assignedSyms[resolvedSym]; ok && expectedName == name {
+						visibleAssigned = append(visibleAssigned, resolvedSym)
 					}
 				}
 				sort.Slice(visibleAssigned, func(i, j int) bool { return visibleAssigned[i] < visibleAssigned[j] })
-
 				visAssignedCache[currentVisPtr] = visibleAssigned
 			}
 
@@ -383,7 +413,7 @@ func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints 
 			}
 		}
 
-		for _, succ := range b.Cfg.Successors(p) {
+		emitPhiOperands := func(succ basecfg.Point) {
 			if succPhis := phiMap[succ]; succPhis != nil {
 				for sym, phi := range succPhis {
 					if stack := stacks[sym]; len(stack) > 0 {
@@ -394,6 +424,14 @@ func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints 
 					}
 				}
 			}
+		}
+
+		if b.Cfg.IsBranch(p) {
+			for _, succ := range b.Cfg.Successors(p) {
+				emitPhiOperands(succ)
+			}
+		} else if succ := b.Cfg.Successor(p); succ != p {
+			emitPhiOperands(succ)
 		}
 
 		childState := renameState{
@@ -420,15 +458,8 @@ func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints 
 	rename(entry, renameState{})
 
 	for _, p := range b.Cfg.RPO() {
-		if phis := phiMap[p]; phis != nil {
-			phiSyms := make([]basecfg.SymbolID, 0, len(phis))
-
-			for sym := range phis {
-				phiSyms = append(phiSyms, sym)
-			}
-
-			sort.Slice(phiSyms, func(i, j int) bool { return phiSyms[i] < phiSyms[j] })
-
+		if phiSyms := phiOrdered[p]; len(phiSyms) > 0 {
+			phis := phiMap[p]
 			for _, sym := range phiSyms {
 				phi := phis[sym]
 				if len(phi.Operands) > 0 {
