@@ -69,7 +69,7 @@ func (r *Resolver) KeyAt(p cfg.Point, path constraint.Path) constraint.PathKey {
 
 	// Placeholders ($0, $1) use Root directly
 	if path.IsPlaceholder() {
-		return constraint.PathKey(path.Root + SegmentsSuffix(path.Segments))
+		return buildPlaceholderKey(path.Root, path.Segments)
 	}
 
 	// Non-placeholder paths require Symbol
@@ -105,9 +105,64 @@ func (r *Resolver) KeyAtVersion(sym cfg.SymbolID, versionID int, segments []cons
 //   - Sortable in a meaningful order (by symbol, then version)
 func (r *Resolver) buildKey(sym cfg.SymbolID, versionID int, segments []constraint.Segment) constraint.PathKey {
 	var b strings.Builder
-	b.WriteString(SymbolVersionRoot(sym, versionID))
-	b.WriteString(SegmentsSuffix(segments))
+	b.WriteString("sym")
+	writeUint(&b, uint64(sym))
+	b.WriteByte('@')
+	writeInt(&b, versionID)
+	appendSegments(&b, segments)
 	return constraint.PathKey(b.String())
+}
+
+func buildPlaceholderKey(root string, segments []constraint.Segment) constraint.PathKey {
+	if len(segments) == 0 {
+		return constraint.PathKey(root)
+	}
+	var b strings.Builder
+	b.WriteString(root)
+	appendSegments(&b, segments)
+	return constraint.PathKey(b.String())
+}
+
+func appendSegments(b *strings.Builder, segments []constraint.Segment) {
+	for _, seg := range segments {
+		switch seg.Kind {
+		case constraint.SegmentField:
+			b.WriteByte('.')
+			b.WriteString(seg.Name)
+		case constraint.SegmentIndexString:
+			writeQuotedSegmentIndex(b, seg.Name)
+		case constraint.SegmentIndexInt:
+			b.WriteByte('[')
+			writeInt(b, seg.Index)
+			b.WriteByte(']')
+		}
+	}
+}
+
+func writeQuotedSegmentIndex(b *strings.Builder, key string) {
+	b.WriteString("[\"")
+	for i := 0; i < len(key); i++ {
+		switch key[i] {
+		case '\\', '"':
+			b.WriteByte('\\')
+			b.WriteByte(key[i])
+		default:
+			b.WriteByte(key[i])
+		}
+	}
+	b.WriteString("\"]")
+}
+
+func writeUint(b *strings.Builder, value uint64) {
+	var scratch [20]byte
+	out := strconv.AppendUint(scratch[:0], value, 10)
+	_, _ = b.Write(out)
+}
+
+func writeInt(b *strings.Builder, value int) {
+	var scratch [20]byte
+	out := strconv.AppendInt(scratch[:0], int64(value), 10)
+	_, _ = b.Write(out)
 }
 
 // ParseKey extracts components from a canonical key string.
