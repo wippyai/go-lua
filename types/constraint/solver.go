@@ -134,7 +134,7 @@ func (s Solver) applyWithWorkSkipping(constraints []Constraint, out map[PathKey]
 	pathConstraints := buildPathConstraintIndex(constraints)
 
 	// Track which paths changed in each iteration.
-	changedPaths := make(map[PathKey]bool, len(out))
+	changedPaths := make(map[PathKey]struct{}, len(out))
 
 	// First iteration: evaluate all constraints
 	for _, c := range constraints {
@@ -188,15 +188,15 @@ func buildPathConstraintIndex(constraints []Constraint) map[PathKey][]Constraint
 }
 
 // collectAffectedConstraints returns unique constraints that reference any of the changed paths.
-func collectAffectedConstraints(changedPaths map[PathKey]bool, pathConstraints map[PathKey][]Constraint) []Constraint {
-	seen := make(map[uint64]bool)
+func collectAffectedConstraints(changedPaths map[PathKey]struct{}, pathConstraints map[PathKey][]Constraint) []Constraint {
+	seen := make(map[uint64]struct{})
 	var result []Constraint
 
 	for _, pathKey := range SortedPathKeys(changedPaths) {
 		for _, c := range pathConstraints[pathKey] {
 			h := c.Hash()
-			if !seen[h] {
-				seen[h] = true
+			if _, ok := seen[h]; !ok {
+				seen[h] = struct{}{}
 				result = append(result, c)
 			}
 		}
@@ -205,18 +205,43 @@ func collectAffectedConstraints(changedPaths map[PathKey]bool, pathConstraints m
 }
 
 // applyConstraintTrackChanges applies a constraint and tracks which paths changed.
-func applyConstraintTrackChanges(out *map[PathKey]typ.Type, env Env, c Constraint, changedPaths map[PathKey]bool) bool {
+func applyConstraintTrackChanges(out *map[PathKey]typ.Type, env Env, c Constraint, changedPaths map[PathKey]struct{}) bool {
 	// Snapshot types before applying
 	paths := c.Paths()
-	before := make(map[PathKey]typ.Type, len(paths))
+	var keys [4]PathKey
+	var before [4]typ.Type
+	count := 0
+	var overflow map[PathKey]typ.Type
+	addSnapshot := func(key PathKey) {
+		if key == "" {
+			return
+		}
+		for i := 0; i < count; i++ {
+			if keys[i] == key {
+				return
+			}
+		}
+		t, ok := (*out)[key]
+		if !ok {
+			return
+		}
+		if count < len(keys) {
+			keys[count] = key
+			before[count] = t
+			count++
+			return
+		}
+		if overflow == nil {
+			overflow = make(map[PathKey]typ.Type, len(paths)-count)
+		}
+		overflow[key] = t
+	}
 	for _, p := range paths {
 		if p.IsEmpty() {
 			continue
 		}
 		key := p.Key()
-		if t, ok := (*out)[key]; ok {
-			before[key] = t
-		}
+		addSnapshot(key)
 	}
 
 	// Apply the constraint
@@ -224,10 +249,19 @@ func applyConstraintTrackChanges(out *map[PathKey]typ.Type, env Env, c Constrain
 
 	// Track which paths actually changed
 	if changed {
-		for key, oldType := range before {
+		for i := 0; i < count; i++ {
+			key := keys[i]
+			oldType := before[i]
 			if newType, ok := (*out)[key]; ok {
 				if !typeEqual(oldType, newType) {
-					changedPaths[key] = true
+					changedPaths[key] = struct{}{}
+				}
+			}
+		}
+		for key, oldType := range overflow {
+			if newType, ok := (*out)[key]; ok {
+				if !typeEqual(oldType, newType) {
+					changedPaths[key] = struct{}{}
 				}
 			}
 		}
