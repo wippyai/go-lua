@@ -1,6 +1,8 @@
 package typ
 
 import (
+	"sync"
+
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 )
@@ -23,8 +25,30 @@ func rewriteWithDepth(t Type, fn func(Type) (Type, bool), maxDepth int) Type {
 	if !rewriteCanDescend(t) {
 		return rewriteDepth(t, fn, guard, nil)
 	}
-	memo := make(map[rewriteKey]Type)
+	memo := getRewriteMemo()
+	defer putRewriteMemo(memo)
 	return rewriteDepth(t, fn, guard, memo)
+}
+
+const rewriteMemoMaxEntries = 4096
+
+var rewriteMemoPool = sync.Pool{
+	New: func() any {
+		return make(map[rewriteKey]Type, 64)
+	},
+}
+
+func getRewriteMemo() map[rewriteKey]Type {
+	return rewriteMemoPool.Get().(map[rewriteKey]Type)
+}
+
+func putRewriteMemo(m map[rewriteKey]Type) {
+	if len(m) > rewriteMemoMaxEntries {
+		rewriteMemoPool.Put(make(map[rewriteKey]Type, 64))
+		return
+	}
+	clear(m)
+	rewriteMemoPool.Put(m)
 }
 
 type rewriteKey struct {

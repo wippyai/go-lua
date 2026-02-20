@@ -38,9 +38,12 @@ type Solution struct {
 	iterations             int
 
 	// Scratch buffers to reduce allocations in hot paths
-	scratchTypes  []typ.Type
-	scratchSuffix map[string]struct{}
-	pathAliases   map[string]string // canonical target path key -> canonical source path key
+	scratchTypes           []typ.Type
+	scratchSuffix          map[string]struct{}
+	scratchVersionIDs      map[cfg.SymbolID]int
+	scratchMissingVersions map[cfg.SymbolID]struct{}
+	scratchUnresolvedPaths map[constraint.PathKey]struct{}
+	pathAliases            map[string]string // canonical target path key -> canonical source path key
 }
 
 // edgeKey identifies a CFG edge for condition and constraint lookups.
@@ -98,6 +101,9 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 		numericStates:          make(map[cfg.Point]*numeric.State),
 		scratchTypes:           make([]typ.Type, 0, 8),
 		scratchSuffix:          make(map[string]struct{}, 16),
+		scratchVersionIDs:      make(map[cfg.SymbolID]int, 16),
+		scratchMissingVersions: make(map[cfg.SymbolID]struct{}, 16),
+		scratchUnresolvedPaths: make(map[constraint.PathKey]struct{}, 16),
 		pathAliases:            make(map[string]string, size),
 	}
 	if inputs != nil && len(inputs.DeclaredTypes) > 0 {
@@ -166,8 +172,26 @@ func (s *Solution) runPropagation() {
 // This environment is passed to the constraint solver for type narrowing.
 func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, baseType typ.Type, constraints []constraint.Constraint) map[constraint.PathKey]typ.Type {
 	result := make(map[constraint.PathKey]typ.Type, 1+len(s.declaredSyms))
-	versionIDs := make(map[cfg.SymbolID]int, len(s.declaredSyms)+1)
-	var missingVersions map[cfg.SymbolID]struct{}
+
+	versionIDs := s.scratchVersionIDs
+	if versionIDs == nil {
+		versionIDs = make(map[cfg.SymbolID]int, len(s.declaredSyms)+1)
+	}
+	clear(versionIDs)
+
+	missingVersions := s.scratchMissingVersions
+	if missingVersions == nil {
+		missingVersions = make(map[cfg.SymbolID]struct{}, 8)
+	}
+	clear(missingVersions)
+	hasMissingVersions := false
+
+	unresolved := s.scratchUnresolvedPaths
+	if unresolved == nil {
+		unresolved = make(map[constraint.PathKey]struct{}, len(constraints))
+	}
+	clear(unresolved)
+
 	keyAtPoint := func(path constraint.Path) constraint.PathKey {
 		if path.IsEmpty() {
 			return ""
@@ -181,7 +205,7 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 		if path.Version != 0 {
 			return s.pkResolver.KeyAtVersion(path.Symbol, path.Version, path.Segments)
 		}
-		if missingVersions != nil {
+		if hasMissingVersions {
 			if _, missing := missingVersions[path.Symbol]; missing {
 				return ""
 			}
@@ -191,10 +215,8 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 		}
 		ver := s.pkResolver.VersionAtSym(p, path.Symbol)
 		if ver.IsZero() {
-			if missingVersions == nil {
-				missingVersions = make(map[cfg.SymbolID]struct{}, 4)
-			}
 			missingVersions[path.Symbol] = struct{}{}
+			hasMissingVersions = true
 			return ""
 		}
 		versionIDs[path.Symbol] = ver.ID
@@ -249,7 +271,6 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 
 		// Tracks canonical paths we already attempted but could not resolve.
 		// Successful resolutions live in result and are checked directly.
-		unresolved := make(map[constraint.PathKey]struct{}, len(constraints))
 		for _, c := range constraints {
 			for _, cpath := range c.Paths() {
 				if cpath.IsEmpty() || cpath.Symbol == 0 {

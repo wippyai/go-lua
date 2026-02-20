@@ -1,6 +1,8 @@
 package typ
 
 import (
+	"sync"
+
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 )
@@ -93,11 +95,54 @@ func PruneSoftUnionMembers(t Type) Type {
 	if !softPruneCanDescend(t) {
 		return t
 	}
-	memo := make(map[Type]Type)
-	visiting := make(map[Type]struct{})
-	softMemo := make(map[Type]bool)
+	state := getSoftPruneState()
+	defer putSoftPruneState(state)
 	guard := NewGuard()
-	return pruneSoftUnionMembersMemo(t, guard, memo, visiting, softMemo)
+	return pruneSoftUnionMembersMemo(t, guard, state.memo, state.visiting, state.softMemo)
+}
+
+const softPruneMemoMaxEntries = 4096
+
+type softPruneState struct {
+	memo     map[Type]Type
+	visiting map[Type]struct{}
+	softMemo map[Type]bool
+}
+
+var softPruneStatePool = sync.Pool{
+	New: func() any {
+		return &softPruneState{
+			memo:     make(map[Type]Type, 64),
+			visiting: make(map[Type]struct{}, 64),
+			softMemo: make(map[Type]bool, 64),
+		}
+	},
+}
+
+func getSoftPruneState() *softPruneState {
+	return softPruneStatePool.Get().(*softPruneState)
+}
+
+func putSoftPruneState(state *softPruneState) {
+	if state == nil {
+		return
+	}
+	if len(state.memo) > softPruneMemoMaxEntries {
+		state.memo = make(map[Type]Type, 64)
+	} else {
+		clear(state.memo)
+	}
+	if len(state.visiting) > softPruneMemoMaxEntries {
+		state.visiting = make(map[Type]struct{}, 64)
+	} else {
+		clear(state.visiting)
+	}
+	if len(state.softMemo) > softPruneMemoMaxEntries {
+		state.softMemo = make(map[Type]bool, 64)
+	} else {
+		clear(state.softMemo)
+	}
+	softPruneStatePool.Put(state)
 }
 
 func softPruneCanDescend(t Type) bool {
@@ -153,9 +198,7 @@ func pruneSoftUnionMembersMemo(
 		out = pruneSoftRecord(node, t, next, memo, visiting, softMemo)
 	case *Union:
 		var rewritten []Type
-		var nonSoftMembers []Type
 		softCount := 0
-		nonSoftCount := 0
 		changed := false
 		for idx, m := range node.Members {
 			pm := pruneSoftUnionMembersMemo(m, next, memo, visiting, softMemo)
@@ -169,18 +212,21 @@ func pruneSoftUnionMembersMemo(
 			} else if rewritten != nil {
 				rewritten[idx] = m
 			}
-			soft := isSoftWithMemo(pm, SoftPlaceholderPolicy, softMemo)
-			if soft {
+			if isSoftWithMemo(pm, SoftPlaceholderPolicy, softMemo) {
 				softCount++
-			} else {
-				nonSoftCount++
-				if nonSoftMembers == nil {
-					nonSoftMembers = make([]Type, 0, len(node.Members))
-				}
-				nonSoftMembers = append(nonSoftMembers, pm)
 			}
 		}
-		if softCount > 0 && nonSoftCount > 0 {
+		if softCount > 0 && softCount < len(node.Members) {
+			members := node.Members
+			if rewritten != nil {
+				members = rewritten
+			}
+			nonSoftMembers := make([]Type, 0, len(node.Members)-softCount)
+			for _, member := range members {
+				if !isSoftWithMemo(member, SoftPlaceholderPolicy, softMemo) {
+					nonSoftMembers = append(nonSoftMembers, member)
+				}
+			}
 			out = NewUnion(nonSoftMembers...)
 			break
 		}
