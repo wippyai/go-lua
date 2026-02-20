@@ -7,6 +7,8 @@
 package phase
 
 import (
+	"reflect"
+
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -139,9 +141,19 @@ func BuildInitialSymbolTypes(graph *cfg.Graph, globalTypes map[string]typ.Type, 
 	out := make(flow.SymbolTypes)
 	// Compute types once at entry and reuse if symbols don't change
 	var prevTypesAt map[cfg.SymbolID]flow.TypedValue
+	var prevLocalsToken uintptr
+	hasPrevLocals := false
 
 	for _, p := range graph.RPO() {
 		locals := graph.LocalSymbolsAt(p)
+		localsToken := reflect.ValueOf(locals).Pointer()
+		if hasPrevLocals && localsToken == prevLocalsToken {
+			if prevTypesAt != nil {
+				out[p] = prevTypesAt
+			}
+			continue
+		}
+
 		var typesAt map[cfg.SymbolID]flow.TypedValue
 
 		for _, item := range meta {
@@ -178,6 +190,9 @@ func BuildInitialSymbolTypes(graph *cfg.Graph, globalTypes map[string]typ.Type, 
 		}
 
 		if len(typesAt) == 0 {
+			hasPrevLocals = true
+			prevLocalsToken = localsToken
+			prevTypesAt = nil
 			continue
 		}
 
@@ -192,11 +207,15 @@ func BuildInitialSymbolTypes(graph *cfg.Graph, globalTypes map[string]typ.Type, 
 			}
 			if identical {
 				out[p] = prevTypesAt
+				hasPrevLocals = true
+				prevLocalsToken = localsToken
 				continue
 			}
 		}
 		out[p] = typesAt
 		prevTypesAt = typesAt
+		hasPrevLocals = true
+		prevLocalsToken = localsToken
 	}
 
 	if len(out) == 0 {

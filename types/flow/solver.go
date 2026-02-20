@@ -166,9 +166,43 @@ func (s *Solution) runPropagation() {
 // This environment is passed to the constraint solver for type narrowing.
 func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, baseType typ.Type, constraints []constraint.Constraint) map[constraint.PathKey]typ.Type {
 	result := make(map[constraint.PathKey]typ.Type, 1+len(s.declaredSyms))
+	versionIDs := make(map[cfg.SymbolID]int, len(s.declaredSyms)+1)
+	var missingVersions map[cfg.SymbolID]struct{}
+	keyAtPoint := func(path constraint.Path) constraint.PathKey {
+		if path.IsEmpty() {
+			return ""
+		}
+		if path.IsPlaceholder() {
+			return s.pkResolver.KeyAt(p, path)
+		}
+		if path.Symbol == 0 {
+			return ""
+		}
+		if path.Version != 0 {
+			return s.pkResolver.KeyAtVersion(path.Symbol, path.Version, path.Segments)
+		}
+		if missingVersions != nil {
+			if _, missing := missingVersions[path.Symbol]; missing {
+				return ""
+			}
+		}
+		if verID, ok := versionIDs[path.Symbol]; ok {
+			return s.pkResolver.KeyAtVersion(path.Symbol, verID, path.Segments)
+		}
+		ver := s.pkResolver.VersionAtSym(p, path.Symbol)
+		if ver.IsZero() {
+			if missingVersions == nil {
+				missingVersions = make(map[cfg.SymbolID]struct{}, 4)
+			}
+			missingVersions[path.Symbol] = struct{}{}
+			return ""
+		}
+		versionIDs[path.Symbol] = ver.ID
+		return s.pkResolver.KeyAtVersion(path.Symbol, ver.ID, path.Segments)
+	}
 
 	// Add target path with its base type using canonical key
-	targetKey := s.pkResolver.KeyAt(p, targetPath)
+	targetKey := keyAtPoint(targetPath)
 	if targetKey != "" {
 		result[targetKey] = baseType
 	}
@@ -177,7 +211,7 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 	if s.inputs != nil && s.inputs.DeclaredTypes != nil && s.inputs.Graph != nil {
 		for _, sym := range s.declaredSyms {
 			declPath := constraint.Path{Symbol: sym}
-			canonicalKey := s.pkResolver.KeyAt(p, declPath)
+			canonicalKey := keyAtPoint(declPath)
 			if canonicalKey == "" {
 				continue
 			}
@@ -195,7 +229,7 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 				return nil, false
 			}
 			rootPath := constraint.Path{Symbol: sym}
-			rootKey := s.pkResolver.KeyAt(p, rootPath)
+			rootKey := keyAtPoint(rootPath)
 			if rootKey == "" {
 				return nil, false
 			}
@@ -222,7 +256,7 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 					continue
 				}
 				cpath = normalizeConstraintPathForQuery(cpath)
-				canonicalKey := s.pkResolver.KeyAt(p, cpath)
+				canonicalKey := keyAtPoint(cpath)
 				if canonicalKey == "" {
 					continue
 				}
