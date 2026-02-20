@@ -43,6 +43,8 @@ type Solution struct {
 	scratchVersionIDs      map[cfg.SymbolID]int
 	scratchMissingVersions map[cfg.SymbolID]struct{}
 	scratchUnresolvedPaths map[constraint.PathKey]struct{}
+	scratchValueMap        map[constraint.PathKey]typ.Type
+	scratchResolvedPathMap map[constraint.PathKey]constraint.PathKey
 	pathAliases            map[string]string // canonical target path key -> canonical source path key
 }
 
@@ -104,6 +106,8 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 		scratchVersionIDs:      make(map[cfg.SymbolID]int, 16),
 		scratchMissingVersions: make(map[cfg.SymbolID]struct{}, 16),
 		scratchUnresolvedPaths: make(map[constraint.PathKey]struct{}, 16),
+		scratchValueMap:        make(map[constraint.PathKey]typ.Type, 16),
+		scratchResolvedPathMap: make(map[constraint.PathKey]constraint.PathKey, 16),
 		pathAliases:            make(map[string]string, size),
 	}
 	if inputs != nil && len(inputs.DeclaredTypes) > 0 {
@@ -171,7 +175,11 @@ func (s *Solution) runPropagation() {
 //
 // This environment is passed to the constraint solver for type narrowing.
 func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, baseType typ.Type, constraints []constraint.Constraint) map[constraint.PathKey]typ.Type {
-	result := make(map[constraint.PathKey]typ.Type, 1+len(s.declaredSyms))
+	result := s.scratchValueMap
+	if result == nil {
+		result = make(map[constraint.PathKey]typ.Type, 1+len(s.declaredSyms))
+	}
+	clear(result)
 
 	versionIDs := s.scratchVersionIDs
 	if versionIDs == nil {

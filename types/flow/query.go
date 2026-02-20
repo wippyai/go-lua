@@ -480,11 +480,22 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 	}
 
 	valueMap := s.buildPointValueMap(p, path, baseType, constraints)
+	resolvePathCache := s.scratchResolvedPathMap
+	if resolvePathCache == nil {
+		resolvePathCache = make(map[constraint.PathKey]constraint.PathKey, len(constraints)*2)
+	}
+	clear(resolvePathCache)
 
 	// Resolve constraint paths to canonical keys at query point p
 	resolvePath := func(cpath constraint.Path) constraint.PathKey {
 		cpath = normalizeConstraintPathForQuery(cpath)
-		return s.pkResolver.KeyAt(p, cpath)
+		rawKey := cpath.Key()
+		if resolved, ok := resolvePathCache[rawKey]; ok {
+			return resolved
+		}
+		resolved := s.pkResolver.KeyAt(p, cpath)
+		resolvePathCache[rawKey] = resolved
+		return resolved
 	}
 
 	env := s.constraintEnv()
