@@ -592,16 +592,26 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 	if !ok {
 		return baseType
 	}
+	baseRoot := pathkey.SymbolVersionRoot(baseSym, baseVersion)
+	prefixLen := len(baseRoot)
 	keys := make([]string, 0, len(s.values))
 	for key := range s.values {
+		if len(key) <= prefixLen || key[:prefixLen] != baseRoot {
+			continue
+		}
+		// Match only strict child paths of this symbol/version root.
+		next := key[prefixLen]
+		if next != '.' && next != '[' {
+			continue
+		}
 		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return baseType
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		childSym, childVersion, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
-		if !ok || childSym != baseSym || childVersion != baseVersion || suffix == "" {
-			continue
-		}
+		suffix := key[prefixLen:]
 		segs := pathkey.ParseSuffix(suffix)
 		if len(segs) != 1 {
 			continue
