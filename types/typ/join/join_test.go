@@ -142,35 +142,3 @@ func TestWithReturnsOrUnknown(t *testing.T) {
 		}
 	})
 }
-
-func TestWithReturnsOrUnknown(t *testing.T) {
-	t.Run("nil signature", func(t *testing.T) {
-		if WithReturnsOrUnknown(nil, []typ.Type{typ.String}) != nil {
-			t.Fatal("expected nil for nil signature")
-		}
-	})
-
-	t.Run("preserves existing returns", func(t *testing.T) {
-		sig := typ.Func().Returns(typ.Number).Build()
-		got := WithReturnsOrUnknown(sig, []typ.Type{typ.String})
-		if got != sig {
-			t.Fatal("expected existing return signature to be preserved")
-		}
-	})
-
-	t.Run("defaults to unknown", func(t *testing.T) {
-		sig := typ.Func().Build()
-		got := WithReturnsOrUnknown(sig, nil)
-		if got == nil || len(got.Returns) != 1 || got.Returns[0] != typ.Unknown {
-			t.Fatalf("expected unknown default return, got %v", got)
-		}
-	})
-
-	t.Run("uses provided returns", func(t *testing.T) {
-		sig := typ.Func().Param("x", typ.Number).Build()
-		got := WithReturnsOrUnknown(sig, []typ.Type{typ.String})
-		if got == nil || len(got.Returns) != 1 || got.Returns[0] != typ.String {
-			t.Fatalf("expected provided return vector, got %v", got)
-		}
-	})
-}
