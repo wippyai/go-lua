@@ -149,3 +149,26 @@ func TestKeySymbolAndKeysShareSymbol(t *testing.T) {
 		t.Fatal("expected KeysShareSymbol false for different symbols")
 	}
 }
+
+func TestParseKeyUnchecked_AllowsUnvalidatedSuffix(t *testing.T) {
+	sym, version, suffix, ok := ParseKeyUnchecked("sym7@2.a-b")
+	if !ok {
+		t.Fatal("expected unchecked parse to succeed")
+	}
+	if sym != 7 || version != 2 || suffix != ".a-b" {
+		t.Fatalf("unexpected unchecked parse result: sym=%d version=%d suffix=%q", sym, version, suffix)
+	}
+
+	if _, _, _, ok := ParseKey("sym7@2.a-b"); ok {
+		t.Fatal("expected strict ParseKey to reject invalid suffix")
+	}
+}
+
+func TestKeySymbolUnchecked(t *testing.T) {
+	if got := KeySymbolUnchecked("sym123@99..bad"); got != 123 {
+		t.Fatalf("KeySymbolUnchecked mismatch: got %d, want 123", got)
+	}
+	if got := KeySymbolUnchecked("x123@99"); got != 0 {
+		t.Fatalf("expected non-symbol key to return 0, got %d", got)
+	}
+}

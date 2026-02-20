@@ -287,7 +287,7 @@ func addDependentPoints(deps dependencyMap, changedKeys []string, worklist []cfg
 			pending[point] = true
 			points = append(points, point)
 		}
-		if sym := pathkey.KeySymbol(constraint.PathKey(key)); sym != 0 {
+		if sym := pathkey.KeySymbolUnchecked(constraint.PathKey(key)); sym != 0 {
 			for _, point := range deps[symbolDependencyKey(sym)] {
 				if inQueue[point] || pending[point] {
 					continue

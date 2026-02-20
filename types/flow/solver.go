@@ -588,7 +588,7 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 	}
 
 	var fields []mergedField
-	baseSym, baseVersion, _, ok := pathkey.ParseKey(constraint.PathKey(baseKey))
+	baseSym, baseVersion, _, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(baseKey))
 	if !ok {
 		return baseType
 	}
@@ -598,7 +598,7 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		childSym, childVersion, suffix, ok := pathkey.ParseKey(constraint.PathKey(key))
+		childSym, childVersion, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
 		if !ok || childSym != baseSym || childVersion != baseVersion || suffix == "" {
 			continue
 		}

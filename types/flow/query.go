@@ -520,7 +520,7 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 // Example: if `x.y` is narrowed to non-nil record, querying `x.y.z` should derive
 // `z` from that narrowed ancestor even when `x.y.z` has no direct narrowing entry.
 func (s *Solution) deriveFromNarrowedAncestors(targetKey constraint.PathKey, dom *ProductDomain) (typ.Type, bool) {
-	targetSym, targetVersion, targetSuffix, ok := pathkey.ParseKey(targetKey)
+	targetSym, targetVersion, targetSuffix, ok := pathkey.ParseKeyUnchecked(targetKey)
 	if !ok {
 		return nil, false
 	}
@@ -549,7 +549,7 @@ func (s *Solution) deriveFromNarrowedAncestors(targetKey constraint.PathKey, dom
 		if ancestorType == nil {
 			continue
 		}
-		sym, version, suffix, ok := pathkey.ParseKey(candidateKey)
+		sym, version, suffix, ok := pathkey.ParseKeyUnchecked(candidateKey)
 		if !ok || sym != targetSym || version != targetVersion {
 			continue
 		}
@@ -606,7 +606,7 @@ func (s *Solution) filterByChildNarrowings(baseType typ.Type, parentPath constra
 
 	parsedChildren := make([]parsedChildNarrowing, 0, len(children))
 	for childKey, narrowedChild := range children {
-		childSym, _, suffix, ok := pathkey.ParseKey(childKey)
+		childSym, _, suffix, ok := pathkey.ParseKeyUnchecked(childKey)
 		if !ok || childSym != parentSym {
 			continue
 		}

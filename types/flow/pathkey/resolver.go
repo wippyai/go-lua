@@ -9,7 +9,6 @@
 package pathkey
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/types/cfg"
@@ -154,15 +153,16 @@ func writeQuotedSegmentIndex(b *strings.Builder, key string) {
 }
 
 func writeUint(b *strings.Builder, value uint64) {
-	var scratch [20]byte
-	out := strconv.AppendUint(scratch[:0], value, 10)
-	_, _ = b.Write(out)
+	writeUnsignedDecimal(b, value)
 }
 
 func writeInt(b *strings.Builder, value int) {
-	var scratch [20]byte
-	out := strconv.AppendInt(scratch[:0], int64(value), 10)
-	_, _ = b.Write(out)
+	if value < 0 {
+		b.WriteByte('-')
+		writeUnsignedDecimal(b, uint64(-value))
+		return
+	}
+	writeUnsignedDecimal(b, uint64(value))
 }
 
 // ParseKey extracts components from a canonical key string.
@@ -178,53 +178,47 @@ func writeInt(b *strings.Builder, value int) {
 //
 // The suffix includes any field or index path after the version number.
 func ParseKey(key constraint.PathKey) (cfg.SymbolID, int, string, bool) {
+	return parseKey(key, true)
+}
+
+// ParseKeyUnchecked extracts key components without suffix grammar validation.
+//
+// This is intended for trusted internal keys produced by this package. It skips
+// ParseSuffix validation to reduce parse overhead in hot paths.
+func ParseKeyUnchecked(key constraint.PathKey) (cfg.SymbolID, int, string, bool) {
+	return parseKey(key, false)
+}
+
+func parseKey(key constraint.PathKey, validateSuffix bool) (cfg.SymbolID, int, string, bool) {
 	s := string(key)
-	if !strings.HasPrefix(s, "sym") {
+	sym, i, ok := parseLeadingSymbol(s)
+	if !ok {
 		return 0, 0, "", false
 	}
-	s = s[3:] // skip "sym"
-
-	// Find symbol end (@ or . or [ or end)
-	symEnd := 0
-	for symEnd < len(s) && s[symEnd] != '@' && s[symEnd] != '.' && s[symEnd] != '[' {
-		symEnd++
-	}
-	if symEnd == 0 {
-		return 0, 0, "", false
-	}
-	sym, err := strconv.ParseUint(s[:symEnd], 10, 64)
-	if err != nil {
-		return 0, 0, "", false
-	}
-
-	rest := s[symEnd:]
 	versionID := 0
-	suffix := ""
-
-	if len(rest) > 0 && rest[0] == '@' {
-		rest = rest[1:]
-		verEnd := 0
-		for verEnd < len(rest) && rest[verEnd] != '.' && rest[verEnd] != '[' {
-			verEnd++
-		}
-		if verEnd == 0 {
+	suffixStart := i
+	if i < len(s) && s[i] == '@' {
+		ver, next, ok := parseLeadingVersionAfterAt(s, i+1)
+		if !ok {
 			return 0, 0, "", false
 		}
-		v, err := strconv.Atoi(rest[:verEnd])
-		if err != nil || v < 0 {
-			return 0, 0, "", false
-		}
-		versionID = v
-		suffix = rest[verEnd:]
-	} else {
-		suffix = rest
+		versionID = ver
+		suffixStart = next
 	}
 
-	if suffix != "" && ParseSuffix(suffix) == nil {
+	suffix := s[suffixStart:]
+	if suffix != "" {
+		switch suffix[0] {
+		case '.', '[':
+		default:
+			return 0, 0, "", false
+		}
+	}
+	if validateSuffix && suffix != "" && ParseSuffix(suffix) == nil {
 		return 0, 0, "", false
 	}
 
-	return cfg.SymbolID(sym), versionID, suffix, true
+	return sym, versionID, suffix, true
 }
 
 // KeySymbol extracts the symbol ID from a canonical key.
@@ -239,6 +233,18 @@ func KeySymbol(key constraint.PathKey) cfg.SymbolID {
 	return sym
 }
 
+// KeySymbolUnchecked extracts a symbol ID from a key without suffix validation.
+//
+// This is intended for trusted internal keys. It is cheaper than KeySymbol and
+// returns 0 when the key does not begin with a canonical symbol root.
+func KeySymbolUnchecked(key constraint.PathKey) cfg.SymbolID {
+	s, _, ok := parseLeadingSymbol(string(key))
+	if !ok {
+		return 0
+	}
+	return s
+}
+
 // KeysShareSymbol returns true if both keys reference the same symbol.
 //
 // This is used to check if two keys are versions of the same variable,
@@ -249,6 +255,76 @@ func KeysShareSymbol(a, b constraint.PathKey) bool {
 	symB, _, _, okB := ParseKey(b)
 	return okA && okB && symA == symB
 }
+
+func parseLeadingSymbol(s string) (cfg.SymbolID, int, bool) {
+	if len(s) < 4 || s[0] != 's' || s[1] != 'y' || s[2] != 'm' {
+		return 0, 0, false
+	}
+	value, end, ok := parseNonNegativeUintComponent(s, 3)
+	if !ok {
+		return 0, 0, false
+	}
+	return cfg.SymbolID(value), end, true
+}
+
+func parseLeadingVersionAfterAt(s string, start int) (int, int, bool) {
+	value, end, ok := parseNonNegativeUintComponent(s, start)
+	if !ok || value > uint64(maxInt) {
+		return 0, 0, false
+	}
+	return int(value), end, true
+}
+
+func parseNonNegativeUintComponent(s string, start int) (uint64, int, bool) {
+	if start >= len(s) {
+		return 0, 0, false
+	}
+	i := start
+	var value uint64
+	for i < len(s) {
+		ch := s[i]
+		switch ch {
+		case '@', '.', '[':
+			if i == start {
+				return 0, 0, false
+			}
+			return value, i, true
+		}
+		if ch < '0' || ch > '9' {
+			return 0, 0, false
+		}
+		digit := uint64(ch - '0')
+		if value > (maxUint64-digit)/10 {
+			return 0, 0, false
+		}
+		value = value*10 + digit
+		i++
+	}
+	if i == start {
+		return 0, 0, false
+	}
+	return value, i, true
+}
+
+func writeUnsignedDecimal(b *strings.Builder, value uint64) {
+	if value == 0 {
+		b.WriteByte('0')
+		return
+	}
+	var digits [20]byte
+	i := len(digits)
+	for value > 0 {
+		i--
+		digits[i] = byte('0' + value%10)
+		value /= 10
+	}
+	_, _ = b.Write(digits[i:])
+}
+
+const (
+	maxUint64 = ^uint64(0)
+	maxInt    = int(^uint(0) >> 1)
+)
 
 // versionAt returns the visible SSA version for a path at point p.
 //
