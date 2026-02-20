@@ -142,16 +142,33 @@ func (b *Builder) LocalAssign(s *ast.LocalAssignStmt) {
 	p := b.Cfg.AddNode(basecfg.NodeAssign, 0, "")
 	b.AddLinearEdge(p)
 
-	localSyms := b.Bindings.LocalSymbols(s)
+	var annotations []ast.TypeExpr
+	if len(s.Types) > 0 {
+		annotations = make([]ast.TypeExpr, len(s.Names))
+	}
+	sourceNames := extractIdentNames(s.Exprs)
 
-	targets := make([]AssignTarget, 0, len(s.Names))
-	annotations := make([]ast.TypeExpr, 0, len(s.Names))
+	info := &AssignInfo{
+		IsLocal:         true,
+		Stmt:            s,
+		Sources:         s.Exprs,
+		SourceNames:     sourceNames,
+		SourceCalls:     ExtractSourceCalls(s.Exprs),
+		TypeAnnotations: annotations,
+	}
+	switch len(s.Names) {
+	case 1:
+		info.Targets = info.singleTarget[:]
+	case 2, 3, 4, 5, 6, 7, 8:
+		info.Targets = make([]AssignTarget, len(s.Names))
+	default:
+		if len(s.Names) > 0 {
+			info.Targets = make([]AssignTarget, len(s.Names))
+		}
+	}
 
 	for i, name := range s.Names {
-		var sym basecfg.SymbolID
-		if i < len(localSyms) {
-			sym = localSyms[i]
-		}
+		sym := b.localAssignSymbolAt(s, i)
 
 		if sym != 0 {
 			b.ScopeTracker.RegisterSymbol(sym, name, basecfg.SymbolLocal, p)
@@ -163,43 +180,36 @@ func (b *Builder) LocalAssign(s *ast.LocalAssignStmt) {
 			}
 		}
 
-		targets = append(targets, AssignTarget{Kind: TargetIdent, Name: name, Symbol: sym})
+		info.Targets[i] = AssignTarget{Kind: TargetIdent, Name: name, Symbol: sym}
 
-		if i < len(s.Types) {
-			annotations = append(annotations, s.Types[i])
-		} else {
-			annotations = append(annotations, nil)
+		if annotations != nil && i < len(s.Types) {
+			annotations[i] = s.Types[i]
 		}
 	}
 
 	b.ScopeTracker.SnapshotVisibility(p)
 
-	sourceNames := make([]string, len(s.Exprs))
-
 	for i, expr := range s.Exprs {
-		sourceNames[i] = extraction.IdentName(expr)
-
 		var baseSym basecfg.SymbolID
-
-		if i < len(localSyms) {
-			baseSym = localSyms[i]
+		if i < len(info.Targets) {
+			baseSym = info.Targets[i].Symbol
 		}
 
 		b.scanExprForFuncsWithSymbol(p, expr, baseSym)
 	}
 
-	info := &AssignInfo{
-		IsLocal:         true,
-		Stmt:            s,
-		Targets:         targets,
-		Sources:         s.Exprs,
-		SourceNames:     sourceNames,
-		SourceCalls:     ExtractSourceCalls(s.Exprs),
-		TypeAnnotations: annotations,
-	}
 	b.resolveSourceSymbols(info, s.Exprs)
 	b.resolveCallInfos(info.SourceCalls)
 	b.Info[p] = info
+}
+
+func (b *Builder) localAssignSymbolAt(s *ast.LocalAssignStmt, i int) basecfg.SymbolID {
+	if b.Bindings == nil {
+		return 0
+	}
+	sym, _ := b.Bindings.LocalSymbolAt(s, i)
+
+	return sym
 }
 
 // Assign processes a regular assignment statement.
@@ -207,7 +217,23 @@ func (b *Builder) Assign(s *ast.AssignStmt) {
 	p := b.Cfg.AddNode(basecfg.NodeAssign, 0, "")
 	b.AddLinearEdge(p)
 
-	targets := make([]AssignTarget, 0, len(s.Lhs))
+	info := &AssignInfo{
+		IsLocal:     false,
+		Stmt:        s,
+		Sources:     s.Rhs,
+		SourceCalls: ExtractSourceCalls(s.Rhs),
+	}
+	switch len(s.Lhs) {
+	case 1:
+		info.Targets = info.singleTarget[:]
+	case 2, 3, 4, 5, 6, 7, 8:
+		info.Targets = make([]AssignTarget, len(s.Lhs))
+	default:
+		if len(s.Lhs) > 0 {
+			info.Targets = make([]AssignTarget, len(s.Lhs))
+		}
+	}
+
 	for i, lhs := range s.Lhs {
 		target := ExtractAssignTarget(lhs)
 		switch target.Kind {
@@ -254,19 +280,12 @@ func (b *Builder) Assign(s *ast.AssignStmt) {
 			}
 		}
 
-		targets = append(targets, target)
+		info.Targets[i] = target
 	}
 
 	b.ScopeTracker.SnapshotVisibility(p)
+	info.SourceNames = b.ProcessExprs(p, s.Rhs)
 
-	info := &AssignInfo{
-		IsLocal:     false,
-		Stmt:        s,
-		Targets:     targets,
-		Sources:     s.Rhs,
-		SourceNames: b.ProcessExprs(p, s.Rhs),
-		SourceCalls: ExtractSourceCalls(s.Rhs),
-	}
 	b.resolveSourceSymbols(info, s.Rhs)
 	b.resolveCallInfos(info.SourceCalls)
 	b.Info[p] = info
@@ -292,13 +311,17 @@ func (b *Builder) ReturnStmt(s *ast.ReturnStmt) {
 	b.resolveCallInfos(info.SourceCalls)
 
 	if len(s.Exprs) > 0 {
-		info.Symbols = make([]basecfg.SymbolID, len(s.Exprs))
+		var symbols []basecfg.SymbolID
 
 		for i, expr := range s.Exprs {
 			if sym, ok := b.symbolFromExpr(expr); ok {
-				info.Symbols[i] = sym
+				if symbols == nil {
+					symbols = make([]basecfg.SymbolID, len(s.Exprs))
+				}
+				symbols[i] = sym
 			}
 		}
+		info.Symbols = symbols
 	}
 
 	b.Info[p] = info
@@ -696,8 +719,8 @@ func (b *Builder) CallStmt(s *ast.FuncCallStmt) {
 	if call, ok := s.Expr.(*ast.FuncCallExpr); ok {
 		b.scanExprForFuncsWithContext(p, call.Func, nil, "")
 		b.scanExprForFuncsWithContext(p, call.Receiver, nil, "")
+		b.scanExprsForFuncs(p, call.Args)
 		info := BuildCallInfo(call, true)
-		info.ArgNames = b.ProcessExprs(p, call.Args)
 		b.resolveCallInfoSymbols(info)
 		b.Info[p] = info
 	}

@@ -36,14 +36,32 @@ type ScopeTracker struct {
 
 // NewScopeTracker creates a new scope tracker.
 func NewScopeTracker() *ScopeTracker {
+	return NewScopeTrackerWithCapacity(0)
+}
+
+// NewScopeTrackerWithCapacity creates a new scope tracker with visibility capacity hint.
+func NewScopeTrackerWithCapacity(pointCap int) *ScopeTracker {
+	if pointCap < 0 {
+		pointCap = 0
+	}
+	if pointCap > 64 {
+		pointCap = 64
+	} else if pointCap > 32 {
+		pointCap = 32
+	}
+	symbolCap := 0
+	if pointCap > 32 {
+		symbolCap = pointCap
+	}
+
 	return &ScopeTracker{
 		stack:       []map[string]basecfg.SymbolID{make(map[string]basecfg.SymbolID)},
 		shared:      []bool{false},
 		globals:     make(map[string]basecfg.SymbolID),
-		visibility:  make(map[basecfg.Point]map[string]basecfg.SymbolID),
-		declPoints:  make(map[basecfg.SymbolID]basecfg.Point),
-		symbolNames: make(map[basecfg.SymbolID]string),
-		symbolKinds: make(map[basecfg.SymbolID]basecfg.SymbolKind),
+		visibility:  make(map[basecfg.Point]map[string]basecfg.SymbolID, pointCap),
+		declPoints:  make(map[basecfg.SymbolID]basecfg.Point, symbolCap),
+		symbolNames: make(map[basecfg.SymbolID]string, symbolCap),
+		symbolKinds: make(map[basecfg.SymbolID]basecfg.SymbolKind, symbolCap),
 	}
 }
 

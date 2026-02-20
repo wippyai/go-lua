@@ -104,6 +104,9 @@ type AssignInfo struct {
 	Stmt    ast.Stmt // original AST statement (for position info)
 
 	Targets       []AssignTarget
+	// Inline backing for the common single-target assignment case.
+	// Keeps Targets behavior while avoiding a per-node heap allocation.
+	singleTarget  [1]AssignTarget
 	Sources       []ast.Expr
 	SourceNames   []string           // Pre-extracted: identifier name or "" if not ident
 	SourceSymbols []basecfg.SymbolID // Symbol IDs for source expressions (0 if not ident or unresolved)
@@ -122,6 +125,9 @@ type AssignInfo struct {
 
 	// SSA versions assigned by this node (one per target, may be zero if not yet computed)
 	TargetVersions []Version
+	// Inline backing for the common single-target assignment case.
+	// Keeps TargetVersions behavior while avoiding a per-node heap allocation.
+	singleTargetVersion [1]Version
 }
 
 func (*AssignInfo) nodeInfo() {}
