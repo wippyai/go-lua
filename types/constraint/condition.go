@@ -338,11 +338,24 @@ func (c Condition) Subsumes(other Condition) bool {
 		return true
 	}
 
+	cDisjHashes := make([][]uint64, len(c.Disjuncts))
+	for i, d := range c.Disjuncts {
+		hashes := make([]uint64, len(d))
+		for j, ct := range d {
+			hashes[j] = ct.Hash()
+		}
+		cDisjHashes[i] = hashes
+	}
+
 	// For each disjunct in other, check if some disjunct in c subsumes it
 	for _, otherD := range other.Disjuncts {
+		otherHashes := make([]uint64, len(otherD))
+		for i, ct := range otherD {
+			otherHashes[i] = ct.Hash()
+		}
 		subsumed := false
-		for _, cD := range c.Disjuncts {
-			if conjunctionSubsumes(cD, otherD) {
+		for i, cD := range c.Disjuncts {
+			if conjunctionSubsumesWithHashes(cD, cDisjHashes[i], otherD, otherHashes) {
 				subsumed = true
 				break
 			}
@@ -368,8 +381,11 @@ func (c Condition) Hash() uint64 {
 
 // constraintWithHash pairs a constraint with its precomputed hash.
 type constraintWithHash struct {
-	c Constraint
-	h uint64
+	c         Constraint
+	h         uint64
+	k         Kind
+	repr      string
+	reprReady bool
 }
 
 // constraintSorter implements sort.Interface with cached hashes.
@@ -381,11 +397,21 @@ func (s constraintSorter) Less(i, j int) bool {
 	if s[i].h != s[j].h {
 		return s[i].h < s[j].h
 	}
-	ki, kj := s[i].c.Kind(), s[j].c.Kind()
-	if ki != kj {
-		return ki < kj
+	if s[i].k != s[j].k {
+		return s[i].k < s[j].k
 	}
-	return constraintString(s[i].c) < constraintString(s[j].c)
+	si := cachedConstraintRepr(s, i)
+	sj := cachedConstraintRepr(s, j)
+	return si < sj
+}
+
+func cachedConstraintRepr(items constraintSorter, idx int) string {
+	item := &items[idx]
+	if !item.reprReady {
+		item.repr = constraintString(item.c)
+		item.reprReady = true
+	}
+	return item.repr
 }
 
 // canonicalizeConjunction deduplicates and sorts constraints.
@@ -401,10 +427,25 @@ func canonicalizeConjunction(items []Constraint) []Constraint {
 	// Fast path for 2 items (very common)
 	if n == 2 {
 		h0, h1 := items[0].Hash(), items[1].Hash()
-		if h0 == h1 && items[0].Equals(items[1]) {
+		k0, k1 := items[0].Kind(), items[1].Kind()
+		if h0 == h1 && k0 == k1 && items[0].Equals(items[1]) {
 			return items[:1]
 		}
-		if h0 < h1 || (h0 == h1 && items[0].Kind() < items[1].Kind()) {
+		if h0 < h1 {
+			return items
+		}
+		if h0 > h1 {
+			return []Constraint{items[1], items[0]}
+		}
+		if k0 < k1 {
+			return items
+		}
+		if k0 > k1 {
+			return []Constraint{items[1], items[0]}
+		}
+		s0 := constraintString(items[0])
+		s1 := constraintString(items[1])
+		if s0 <= s1 {
 			return items
 		}
 		return []Constraint{items[1], items[0]}
@@ -416,7 +457,11 @@ func canonicalizeConjunction(items []Constraint) []Constraint {
 
 	// Build slice with precomputed hashes
 	for _, c := range items {
-		withHash = append(withHash, constraintWithHash{c: c, h: c.Hash()})
+		withHash = append(withHash, constraintWithHash{
+			c: c,
+			h: c.Hash(),
+			k: c.Kind(),
+		})
 	}
 
 	// Sort by hash
@@ -529,11 +574,71 @@ func mergeConjunctions(a, b []Constraint) []Constraint {
 	if len(b) == 0 {
 		return a
 	}
-	// Pre-allocate with exact capacity needed
-	merged := make([]Constraint, len(a)+len(b))
-	copy(merged, a)
-	copy(merged[len(a):], b)
-	return canonicalizeConjunction(merged)
+
+	aHashes := make([]uint64, len(a))
+	for i := range a {
+		aHashes[i] = a[i].Hash()
+	}
+	bHashes := make([]uint64, len(b))
+	for i := range b {
+		bHashes[i] = b[i].Hash()
+	}
+
+	out := make([]Constraint, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		cmp := compareConstraints(a[i], aHashes[i], b[j], bHashes[j])
+		switch {
+		case cmp < 0:
+			out = append(out, a[i])
+			i++
+		case cmp > 0:
+			out = append(out, b[j])
+			j++
+		default:
+			if a[i].Equals(b[j]) {
+				out = append(out, a[i])
+				i++
+				j++
+				continue
+			}
+			// Tie on ordering keys but non-equal constraints (typically hash collision):
+			// preserve canonical ordering with a full fallback sort.
+			merged := make([]Constraint, 0, len(out)+len(a)-i+len(b)-j)
+			merged = append(merged, out...)
+			merged = append(merged, a[i:]...)
+			merged = append(merged, b[j:]...)
+			return canonicalizeConjunction(merged)
+		}
+	}
+	out = append(out, a[i:]...)
+	out = append(out, b[j:]...)
+	return out
+}
+
+func compareConstraints(a Constraint, aHash uint64, b Constraint, bHash uint64) int {
+	if aHash < bHash {
+		return -1
+	}
+	if aHash > bHash {
+		return 1
+	}
+	aKind, bKind := a.Kind(), b.Kind()
+	if aKind < bKind {
+		return -1
+	}
+	if aKind > bKind {
+		return 1
+	}
+	aStr := constraintString(a)
+	bStr := constraintString(b)
+	if aStr < bStr {
+		return -1
+	}
+	if aStr > bStr {
+		return 1
+	}
+	return 0
 }
 
 func intersectConjunctions(a, b []Constraint) []Constraint {
@@ -762,8 +867,9 @@ func substitutePath(p Path, args []Path) Path {
 
 // disjunctWithHash pairs a disjunct with its precomputed hash.
 type disjunctWithHash struct {
-	conj []Constraint
-	hash uint64
+	conj   []Constraint
+	hashes []uint64
+	hash   uint64
 }
 
 // disjunctSorter implements sort.Interface with cached hashes.
@@ -797,6 +903,77 @@ func (s disjunctSorter) Less(i, j int) bool {
 	return false
 }
 
+func constraintHashesAndConjunctionHash(conj []Constraint) ([]uint64, uint64) {
+	if len(conj) == 0 {
+		return nil, 0
+	}
+	hashes := make([]uint64, len(conj))
+	var h uint64 = internal.FnvOffset64
+	for i, c := range conj {
+		ch := c.Hash()
+		hashes[i] = ch
+		h = internal.HashCombine(h, ch)
+	}
+	return hashes, h
+}
+
+func conjunctionEqualsWithHashes(a []Constraint, aHashes []uint64, b []Constraint, bHashes []uint64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if aHashes[i] != bHashes[i] {
+			return false
+		}
+		if !a[i].Equals(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func conjunctionSubsumesWithHashes(a []Constraint, aHashes []uint64, b []Constraint, bHashes []uint64) bool {
+	if len(aHashes) != len(a) || len(bHashes) != len(b) {
+		return conjunctionSubsumes(a, b)
+	}
+	if len(a) == 0 {
+		return true
+	}
+	if len(a) > len(b) {
+		return false
+	}
+	bIdx := 0
+	for ai, ct := range a {
+		targetHash := aHashes[ai]
+		for bIdx < len(bHashes) {
+			h := bHashes[bIdx]
+			if h >= targetHash {
+				break
+			}
+			bIdx++
+		}
+		if bIdx == len(bHashes) || bHashes[bIdx] > targetHash {
+			return false
+		}
+
+		matched := false
+		for bi := bIdx; bi < len(b); bi++ {
+			h := bHashes[bi]
+			if h > targetHash {
+				break
+			}
+			if h == targetHash && b[bi].Equals(ct) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
 func normalizeCondition(c Condition) Condition {
 	n := len(c.Disjuncts)
 	if n == 0 {
@@ -820,7 +997,12 @@ func normalizeCondition(c Condition) Condition {
 
 	// Precompute hashes once
 	for _, d := range c.Disjuncts {
-		withHash = append(withHash, disjunctWithHash{conj: d, hash: conjunctionHash(d)})
+		hashes, h := constraintHashesAndConjunctionHash(d)
+		withHash = append(withHash, disjunctWithHash{
+			conj:   d,
+			hashes: hashes,
+			hash:   h,
+		})
 	}
 
 	sort.Sort(withHash)
@@ -830,7 +1012,7 @@ func normalizeCondition(c Condition) Condition {
 	for _, dh := range withHash {
 		duplicate := false
 		for _, kh := range kept {
-			if dh.hash == kh.hash && conjunctionEquals(dh.conj, kh.conj) {
+			if dh.hash == kh.hash && conjunctionEqualsWithHashes(dh.conj, dh.hashes, kh.conj, kh.hashes) {
 				duplicate = true
 				break
 			}
@@ -841,7 +1023,7 @@ func normalizeCondition(c Condition) Condition {
 
 		skip := false
 		for _, kh := range kept {
-			if conjunctionSubsumes(kh.conj, dh.conj) {
+			if conjunctionSubsumesWithHashes(kh.conj, kh.hashes, dh.conj, dh.hashes) {
 				skip = true
 				break
 			}
@@ -882,43 +1064,15 @@ func normalizeCondition(c Condition) Condition {
 }
 
 func conjunctionSubsumes(a, b []Constraint) bool {
-	if len(a) == 0 {
-		return true
+	aHashes := make([]uint64, len(a))
+	for i, ct := range a {
+		aHashes[i] = ct.Hash()
 	}
-	if len(a) > len(b) {
-		return false
+	bHashes := make([]uint64, len(b))
+	for i, ct := range b {
+		bHashes[i] = ct.Hash()
 	}
-	bIdx := 0
-	for _, ct := range a {
-		targetHash := ct.Hash()
-		for bIdx < len(b) {
-			h := b[bIdx].Hash()
-			if h >= targetHash {
-				break
-			}
-			bIdx++
-		}
-		if bIdx == len(b) || b[bIdx].Hash() > targetHash {
-			return false
-		}
-
-		matched := false
-		for i := bIdx; i < len(b); i++ {
-			item := b[i]
-			h := item.Hash()
-			if h > targetHash {
-				break
-			}
-			if h == targetHash && item.Equals(ct) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return false
-		}
-	}
-	return true
+	return conjunctionSubsumesWithHashes(a, aHashes, b, bHashes)
 }
 
 // NegateConstraint negates a single constraint when possible.

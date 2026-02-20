@@ -230,7 +230,11 @@ func computeConditionAtPoint(
 				if len(node.LoopVars) > 0 {
 					preCond = FilterConditionSymbols(preCond, node.LoopVars)
 				}
-				predCond = constraint.And(predCond, preCond)
+				if predCond.HasConstraints() {
+					predCond = constraint.And(predCond, preCond)
+				} else {
+					predCond = preCond
+				}
 			}
 		}
 	skipPreheaderReinforcement:
@@ -240,7 +244,17 @@ func computeConditionAtPoint(
 			edgeCond = constraint.TrueCondition()
 		}
 
-		combinedCond := constraint.And(predCond, edgeCond)
+		var combinedCond constraint.Condition
+		switch {
+		case edgeCond.IsFalse():
+			continue
+		case !edgeCond.HasConstraints():
+			combinedCond = predCond
+		case !predCond.HasConstraints():
+			combinedCond = edgeCond
+		default:
+			combinedCond = constraint.And(predCond, edgeCond)
+		}
 		if combinedCond.IsFalse() {
 			continue
 		}
