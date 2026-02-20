@@ -26,12 +26,20 @@ func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
 	if t == nil {
 		return false
 	}
-	next, ok := guard.Enter(t)
+	node := unwrapTransparentSoft(t)
+	switch node.(type) {
+	case *Alias, *Optional, *Array, *Map, *Record, *Union:
+		// recurse below
+	default:
+		return node.Kind().IsPlaceholder()
+	}
+
+	next, ok := guard.Enter(node)
 	if !ok {
 		return false
 	}
 
-	switch tt := unwrapTransparentSoft(t).(type) {
+	switch tt := node.(type) {
 	case *Alias:
 		return isSoft(tt.Target, next, policy)
 	case *Optional:
@@ -58,9 +66,8 @@ func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
 			}
 		}
 		return true
-	default:
-		return tt.Kind().IsPlaceholder()
 	}
+	return false
 }
 
 func unwrapTransparentSoft(t Type) Type {
@@ -121,6 +128,9 @@ func pruneSoftUnionMembersMemo(
 	softMemo map[Type]bool,
 ) Type {
 	if t == nil {
+		return t
+	}
+	if !softPruneCanDescend(t) {
 		return t
 	}
 	next, ok := guard.Enter(t)
@@ -414,7 +424,17 @@ func isSoftWithMemo(t Type, policy SoftPolicy, memo map[Type]bool) bool {
 	if cached, ok := memo[t]; ok {
 		return cached
 	}
-	soft := IsSoft(t, policy)
+	node := unwrapTransparentSoft(t)
+	if node != t {
+		if cached, ok := memo[node]; ok {
+			memo[t] = cached
+			return cached
+		}
+	}
+	soft := IsSoft(node, policy)
 	memo[t] = soft
+	if node != t {
+		memo[node] = soft
+	}
 	return soft
 }
