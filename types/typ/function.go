@@ -3,7 +3,6 @@ package typ
 import (
 	"strings"
 
-	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 )
 
@@ -106,46 +105,15 @@ func (b *FunctionBuilder) WithRefinement(r RefinementInfo) *FunctionBuilder {
 
 // Build creates the function type.
 func (b *FunctionBuilder) Build() *Function {
-	h := uint64(kind.Function)
-	for _, tp := range b.typeParams {
-		h = internal.HashCombine(h, tp.Hash())
-	}
-
-	for _, p := range b.params {
-		h = internal.HashCombine(h, p.Type.Hash())
-		if p.Optional {
-			h = internal.HashCombine(h, 1)
-		}
-	}
-
-	if b.variadic != nil {
-		h = internal.HashCombine(h, b.variadic.Hash())
-	}
-
-	for _, r := range b.returns {
-		if r == nil {
-			panic("FunctionBuilder.Build: nil entry in returns; normalize before building")
-		}
-		h = internal.HashCombine(h, r.Hash())
-	}
-
-	typeParams := make([]*TypeParam, len(b.typeParams))
-	copy(typeParams, b.typeParams)
-	params := make([]Param, len(b.params))
-	copy(params, b.params)
-	returns := make([]Type, len(b.returns))
-	copy(returns, b.returns)
-
-	return &Function{
-		TypeParams: typeParams,
-		Params:     params,
-		Variadic:   b.variadic,
-		Returns:    returns,
-		Effects:    b.effects,
-		Spec:       b.spec,
-		Refinement: b.refinement,
-		hash:       h,
-	}
+	return buildFunctionType(
+		b.typeParams,
+		b.params,
+		b.variadic,
+		b.returns,
+		b.effects,
+		b.spec,
+		b.refinement,
+	)
 }
 
 func (f *Function) Kind() kind.Kind { return kind.Function }

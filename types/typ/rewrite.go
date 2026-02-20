@@ -277,38 +277,23 @@ func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard i
 		return orig
 	}
 
-	builder := Func()
 	paramSrc := v.Params
 	if params != nil {
 		paramSrc = params
-	}
-	for _, p := range paramSrc {
-		if p.Optional {
-			builder = builder.OptParam(p.Name, p.Type)
-		} else {
-			builder = builder.Param(p.Name, p.Type)
-		}
-	}
-	if variadic != nil {
-		builder = builder.Variadic(variadic)
 	}
 	returnsSrc := v.Returns
 	if returns != nil {
 		returnsSrc = returns
 	}
-	if len(returnsSrc) > 0 {
-		builder = builder.Returns(returnsSrc...)
-	}
-	if v.Effects != nil {
-		builder = builder.Effects(v.Effects)
-	}
-	if v.Spec != nil {
-		builder = builder.Spec(v.Spec)
-	}
-	if v.Refinement != nil {
-		builder = builder.WithRefinement(v.Refinement)
-	}
-	return builder.Build()
+	return buildFunctionType(
+		v.TypeParams,
+		paramSrc,
+		variadic,
+		returnsSrc,
+		v.Effects,
+		v.Spec,
+		v.Refinement,
+	)
 }
 
 func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard internal.RecursionGuard, memo map[rewriteKey]Type) Type {
@@ -354,31 +339,9 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard inter
 		return orig
 	}
 
-	builder := NewRecord()
-	if v.Open {
-		builder.SetOpen(true)
-	}
 	fieldsSrc := v.Fields
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	for _, f := range fieldsSrc {
-		switch {
-		case f.Optional && f.Readonly:
-			builder = builder.OptReadonlyField(f.Name, f.Type)
-		case f.Optional:
-			builder = builder.OptField(f.Name, f.Type)
-		case f.Readonly:
-			builder = builder.ReadonlyField(f.Name, f.Type)
-		default:
-			builder = builder.Field(f.Name, f.Type)
-		}
-	}
-	if metatable != nil {
-		builder = builder.Metatable(metatable)
-	}
-	if mapKey != nil && mapValue != nil {
-		builder = builder.MapComponent(mapKey, mapValue)
-	}
-	return builder.Build()
+	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, v.Open, true)
 }

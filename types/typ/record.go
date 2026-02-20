@@ -1,10 +1,8 @@
 package typ
 
 import (
-	"sort"
 	"strings"
 
-	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 )
 
@@ -113,59 +111,7 @@ func (b *RecordBuilder) MapComponent(key, value Type) *RecordBuilder {
 
 // Build creates the record type.
 func (b *RecordBuilder) Build() *Record {
-	// Sort fields by name for deterministic hashing
-	sorted := make([]Field, len(b.fields))
-	copy(sorted, b.fields)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Name < sorted[j].Name
-	})
-	for i := range sorted {
-		if sorted[i].Type == nil {
-			sorted[i].Type = Unknown
-		}
-	}
-
-	mapKey := b.mapKey
-	mapValue := b.mapValue
-	if mapKey == nil && mapValue != nil {
-		mapKey = Unknown
-	}
-	if mapValue == nil && mapKey != nil {
-		mapValue = Unknown
-	}
-
-	h := uint64(kind.Record)
-	for _, f := range sorted {
-		h = internal.HashCombine(h, internal.FnvString(f.Name))
-		h = internal.HashCombine(h, f.Type.Hash())
-
-		if f.Optional {
-			h = internal.HashCombine(h, 1)
-		}
-
-		if f.Readonly {
-			h = internal.HashCombine(h, 2)
-		}
-	}
-
-	if b.metatable != nil {
-		h = internal.HashCombine(h, b.metatable.Hash())
-	}
-
-	if b.open {
-		h = internal.HashCombine(h, 3)
-	}
-
-	if mapKey != nil {
-		h = internal.HashCombine(h, internal.FnvString("$mapKey"))
-		h = internal.HashCombine(h, mapKey.Hash())
-	}
-	if mapValue != nil {
-		h = internal.HashCombine(h, internal.FnvString("$mapValue"))
-		h = internal.HashCombine(h, mapValue.Hash())
-	}
-
-	return &Record{Fields: sorted, Metatable: b.metatable, MapKey: mapKey, MapValue: mapValue, Open: b.open, hash: h}
+	return buildRecordType(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, false)
 }
 
 func (r *Record) Kind() kind.Kind { return kind.Record }
