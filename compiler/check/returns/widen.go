@@ -3,6 +3,7 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
@@ -97,46 +98,38 @@ func hasHigherOrderGrowthRisk(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	risk := false
-	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
-		if risk {
-			return node, false
-		}
+	return scanType(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
 		switch n := node.(type) {
 		case *typ.Function:
 			for _, ret := range n.Returns {
 				if typeContainsFunction(ret) {
-					risk = true
-					break
+					return true, false
 				}
 			}
 		case *typ.Record:
 			if recordHasSelfRecursiveMethod(n) {
-				risk = true
+				return true, false
 			}
 		}
-		return node, false
+		return false, true
 	})
-	return risk
 }
 
 func typeContainsFunction(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	hasFn := false
-	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+	return scanType(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
 		// Interface method signatures are behavioral contracts, not first-class
 		// returned function values. Ignore them for higher-order growth risk.
 		if _, ok := node.(*typ.Interface); ok {
-			return node, true
+			return false, false
 		}
 		if _, ok := node.(*typ.Function); ok {
-			hasFn = true
+			return true, false
 		}
-		return node, false
+		return false, true
 	})
-	return hasFn
 }
 
 func recordHasSelfRecursiveMethod(r *typ.Record) bool {
@@ -158,20 +151,16 @@ func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
 	if t == nil || owner == nil {
 		return false
 	}
-	found := false
-	_ = typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
-		if found {
-			return node, false
-		}
+	return scanType(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
 		// Interface method signatures are behavioral contracts, not concrete
 		// record method bodies. Treating them as self-recursive growth risk
 		// over-applies monotone widening and blocks valid summary refinement.
 		if _, ok := node.(*typ.Interface); ok {
-			return node, true
+			return false, false
 		}
 		fn, ok := node.(*typ.Function)
 		if !ok {
-			return node, false
+			return false, true
 		}
 		for _, ret := range fn.Returns {
 			if ret == nil {
@@ -179,13 +168,113 @@ func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
 			}
 			if subtype.IsSubtype(ret, owner) || subtype.IsSubtype(owner, ret) ||
 				TypeExtendsRecord(ret, owner) || TypeExtendsRecord(owner, ret) {
-				found = true
-				break
+				return true, false
 			}
 		}
-		return node, false
+		return false, true
 	})
-	return found
+}
+
+func scanType(
+	t typ.Type,
+	guard internal.RecursionGuard,
+	visit func(node typ.Type) (stop bool, descend bool),
+) bool {
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
+
+	node := t
+	for {
+		ann, ok := node.(*typ.Annotated)
+		if !ok || ann.Inner == nil || ann.Inner == node {
+			break
+		}
+		node = ann.Inner
+	}
+
+	if stop, descend := visit(node); stop {
+		return true
+	} else if !descend {
+		return false
+	}
+
+	switch n := node.(type) {
+	case *typ.Optional:
+		return scanType(n.Inner, next, visit)
+	case *typ.Union:
+		for _, m := range n.Members {
+			if scanType(m, next, visit) {
+				return true
+			}
+		}
+		return false
+	case *typ.Intersection:
+		for _, m := range n.Members {
+			if scanType(m, next, visit) {
+				return true
+			}
+		}
+		return false
+	case *typ.Array:
+		return scanType(n.Element, next, visit)
+	case *typ.Map:
+		return scanType(n.Key, next, visit) || scanType(n.Value, next, visit)
+	case *typ.Tuple:
+		for _, e := range n.Elements {
+			if scanType(e, next, visit) {
+				return true
+			}
+		}
+		return false
+	case *typ.Function:
+		for _, p := range n.Params {
+			if scanType(p.Type, next, visit) {
+				return true
+			}
+		}
+		for _, r := range n.Returns {
+			if scanType(r, next, visit) {
+				return true
+			}
+		}
+		return n.Variadic != nil && scanType(n.Variadic, next, visit)
+	case *typ.Record:
+		for _, f := range n.Fields {
+			if scanType(f.Type, next, visit) {
+				return true
+			}
+		}
+		if n.Metatable != nil && scanType(n.Metatable, next, visit) {
+			return true
+		}
+		if n.HasMapComponent() {
+			return scanType(n.MapKey, next, visit) || scanType(n.MapValue, next, visit)
+		}
+		return false
+	case *typ.Alias:
+		return scanType(n.Target, next, visit)
+	case *typ.Instantiated:
+		for _, a := range n.TypeArgs {
+			if scanType(a, next, visit) {
+				return true
+			}
+		}
+		return false
+	case *typ.Interface:
+		for _, m := range n.Methods {
+			if m.Type != nil && scanType(m.Type, next, visit) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 func joinReturnVectorsMonotone(a, b []typ.Type) []typ.Type {

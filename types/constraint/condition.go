@@ -465,6 +465,14 @@ func ConjunctionContains(conj []Constraint, c Constraint) bool {
 		return false
 	}
 	h := c.Hash()
+	if len(conj) <= 4 {
+		for _, item := range conj {
+			if item.Hash() == h && item.Equals(c) {
+				return true
+			}
+		}
+		return false
+	}
 
 	// Binary search for hash
 	lo, hi := 0, len(conj)
@@ -479,8 +487,12 @@ func ConjunctionContains(conj []Constraint, c Constraint) bool {
 	}
 
 	// Check all items with matching hash
-	for i := lo; i < len(conj) && conj[i].Hash() == h; i++ {
-		if conj[i].Equals(c) {
+	for i := lo; i < len(conj); i++ {
+		item := conj[i]
+		if item.Hash() != h {
+			break
+		}
+		if item.Equals(c) {
 			return true
 		}
 	}
@@ -876,8 +888,33 @@ func conjunctionSubsumes(a, b []Constraint) bool {
 	if len(a) > len(b) {
 		return false
 	}
+	bIdx := 0
 	for _, ct := range a {
-		if !ConjunctionContains(b, ct) {
+		targetHash := ct.Hash()
+		for bIdx < len(b) {
+			h := b[bIdx].Hash()
+			if h >= targetHash {
+				break
+			}
+			bIdx++
+		}
+		if bIdx == len(b) || b[bIdx].Hash() > targetHash {
+			return false
+		}
+
+		matched := false
+		for i := bIdx; i < len(b); i++ {
+			item := b[i]
+			h := item.Hash()
+			if h > targetHash {
+				break
+			}
+			if h == targetHash && item.Equals(ct) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			return false
 		}
 	}

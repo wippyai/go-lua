@@ -75,6 +75,9 @@ func expandInstantiatedWithDepth(t typ.Type, maxDepth int) typ.Type {
 }
 
 func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type {
+	if t == nil || !expandInstantiatedCanDescend(t) {
+		return t
+	}
 	return typ.VisitWithGuard(t, guard, t, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
 		return typ.Visitor[typ.Type]{
 			Instantiated: func(inst *typ.Instantiated) typ.Type {
@@ -96,29 +99,39 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 				return typ.NewOptional(inner)
 			},
 			Union: func(u *typ.Union) typ.Type {
-				changed := false
-				members := make([]typ.Type, len(u.Members))
+				var members []typ.Type
 				for i, m := range u.Members {
-					members[i] = expandInstantiatedGuard(m, next)
-					if members[i] != m {
-						changed = true
+					newMember := expandInstantiatedGuard(m, next)
+					if newMember != m {
+						if members == nil {
+							members = make([]typ.Type, len(u.Members))
+							copy(members, u.Members)
+						}
+						members[i] = newMember
+					} else if members != nil {
+						members[i] = m
 					}
 				}
-				if !changed {
+				if members == nil {
 					return t
 				}
 				return typ.NewUnion(members...)
 			},
 			Intersection: func(in *typ.Intersection) typ.Type {
-				changed := false
-				members := make([]typ.Type, len(in.Members))
+				var members []typ.Type
 				for i, m := range in.Members {
-					members[i] = expandInstantiatedGuard(m, next)
-					if members[i] != m {
-						changed = true
+					newMember := expandInstantiatedGuard(m, next)
+					if newMember != m {
+						if members == nil {
+							members = make([]typ.Type, len(in.Members))
+							copy(members, in.Members)
+						}
+						members[i] = newMember
+					} else if members != nil {
+						members[i] = m
 					}
 				}
-				if !changed {
+				if members == nil {
 					return t
 				}
 				return typ.NewIntersection(members...)
@@ -139,46 +152,65 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 				return typ.NewMap(key, value)
 			},
 			Tuple: func(tup *typ.Tuple) typ.Type {
-				changed := false
-				elems := make([]typ.Type, len(tup.Elements))
+				var elems []typ.Type
 				for i, e := range tup.Elements {
-					elems[i] = expandInstantiatedGuard(e, next)
-					if elems[i] != e {
-						changed = true
+					newElem := expandInstantiatedGuard(e, next)
+					if newElem != e {
+						if elems == nil {
+							elems = make([]typ.Type, len(tup.Elements))
+							copy(elems, tup.Elements)
+						}
+						elems[i] = newElem
+					} else if elems != nil {
+						elems[i] = e
 					}
 				}
-				if !changed {
+				if elems == nil {
 					return t
 				}
 				return typ.NewTuple(elems...)
 			},
 			Function: func(fn *typ.Function) typ.Type {
 				changed := false
-				params := make([]typ.Param, len(fn.Params))
+				var params []typ.Param
 				for i, p := range fn.Params {
 					newType := p.Type
 					if _, isInst := p.Type.(*typ.Instantiated); !isInst {
 						newType = expandInstantiatedGuard(p.Type, next)
 					}
 					if newType != p.Type {
+						if params == nil {
+							params = make([]typ.Param, len(fn.Params))
+							copy(params, fn.Params)
+						}
 						changed = true
+						params[i] = typ.Param{Name: p.Name, Type: newType, Optional: p.Optional}
+					} else if params != nil {
+						params[i] = p
 					}
-					params[i] = typ.Param{Name: p.Name, Type: newType, Optional: p.Optional}
 				}
 
-				returns := make([]typ.Type, len(fn.Returns))
+				var returns []typ.Type
 				for i, r := range fn.Returns {
-					returns[i] = expandInstantiatedGuard(r, next)
-					if returns[i] != r {
+					newRet := expandInstantiatedGuard(r, next)
+					if newRet != r {
+						if returns == nil {
+							returns = make([]typ.Type, len(fn.Returns))
+							copy(returns, fn.Returns)
+						}
 						changed = true
+						returns[i] = newRet
+					} else if returns != nil {
+						returns[i] = r
 					}
 				}
 
-				var variadic typ.Type
+				variadic := fn.Variadic
 				if fn.Variadic != nil {
-					variadic = expandInstantiatedGuard(fn.Variadic, next)
-					if variadic != fn.Variadic {
+					newVariadic := expandInstantiatedGuard(fn.Variadic, next)
+					if newVariadic != fn.Variadic {
 						changed = true
+						variadic = newVariadic
 					}
 				}
 
@@ -187,7 +219,11 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 				}
 
 				builder := typ.Func()
-				for _, p := range params {
+				paramsSrc := fn.Params
+				if params != nil {
+					paramsSrc = params
+				}
+				for _, p := range paramsSrc {
 					if p.Optional {
 						builder = builder.OptParam(p.Name, p.Type)
 					} else {
@@ -197,8 +233,12 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 				if variadic != nil {
 					builder = builder.Variadic(variadic)
 				}
-				if len(returns) > 0 {
-					builder = builder.Returns(returns...)
+				returnsSrc := fn.Returns
+				if returns != nil {
+					returnsSrc = returns
+				}
+				if len(returnsSrc) > 0 {
+					builder = builder.Returns(returnsSrc...)
 				}
 				if fn.Effects != nil {
 					builder = builder.Effects(fn.Effects)
@@ -213,20 +253,27 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 			},
 			Record: func(rec *typ.Record) typ.Type {
 				changed := false
-				fields := make([]typ.Field, len(rec.Fields))
+				var fields []typ.Field
 				for i, f := range rec.Fields {
 					newType := expandInstantiatedGuard(f.Type, next)
 					if newType != f.Type {
+						if fields == nil {
+							fields = make([]typ.Field, len(rec.Fields))
+							copy(fields, rec.Fields)
+						}
 						changed = true
+						fields[i] = typ.Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+					} else if fields != nil {
+						fields[i] = f
 					}
-					fields[i] = typ.Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
 				}
 
-				var metatable typ.Type
+				metatable := rec.Metatable
 				if rec.Metatable != nil {
-					metatable = expandInstantiatedGuard(rec.Metatable, next)
-					if metatable != rec.Metatable {
+					newMetatable := expandInstantiatedGuard(rec.Metatable, next)
+					if newMetatable != rec.Metatable {
 						changed = true
+						metatable = newMetatable
 					}
 				}
 
@@ -251,7 +298,11 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 				if rec.Open {
 					builder.SetOpen(true)
 				}
-				for _, f := range fields {
+				fieldsSrc := rec.Fields
+				if fields != nil {
+					fieldsSrc = fields
+				}
+				for _, f := range fieldsSrc {
 					switch {
 					case f.Optional && f.Readonly:
 						builder = builder.OptReadonlyField(f.Name, f.Type)
@@ -280,7 +331,7 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 			},
 			Interface: func(i *typ.Interface) typ.Type {
 				changed := false
-				methods := make([]typ.Method, len(i.Methods))
+				var methods []typ.Method
 				for idx := range i.Methods {
 					m := i.Methods[idx]
 					newType := expandInstantiatedGuard(m.Type, next)
@@ -289,9 +340,15 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 						fn = m.Type
 					}
 					if fn != m.Type {
+						if methods == nil {
+							methods = make([]typ.Method, len(i.Methods))
+							copy(methods, i.Methods)
+						}
 						changed = true
+						methods[idx] = typ.Method{Name: m.Name, Type: fn}
+					} else if methods != nil {
+						methods[idx] = m
 					}
-					methods[idx] = typ.Method{Name: m.Name, Type: fn}
 				}
 				if !changed {
 					return t
@@ -309,4 +366,23 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 			},
 		}
 	})
+}
+
+func expandInstantiatedCanDescend(t typ.Type) bool {
+	switch t.Kind() {
+	case kind.Optional,
+		kind.Union,
+		kind.Intersection,
+		kind.Array,
+		kind.Map,
+		kind.Tuple,
+		kind.Function,
+		kind.Record,
+		kind.Alias,
+		kind.Interface,
+		kind.Instantiated:
+		return true
+	default:
+		return false
+	}
 }

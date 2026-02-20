@@ -504,6 +504,10 @@ func unaryMinusWithMeta(operand typ.Type) typ.Type {
 // unaryLength handles the # operator without metamethod fallback.
 // Returns integer for strings, arrays, tuples, records, and maps.
 func unaryLength(operand typ.Type) typ.Type {
+	if unwrap.IsBuiltinTableTop(operand) {
+		return typ.Integer
+	}
+
 	switch operand.Kind() {
 	case kind.String, kind.Array, kind.Tuple:
 		return typ.Integer

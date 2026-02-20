@@ -164,6 +164,7 @@ type CFG struct {
 	edges []Edge
 	preds map[Point][]Point
 	succs map[Point][]Point
+	rpo   []Point
 }
 
 var cfgCounter uint64
@@ -218,6 +219,7 @@ func (c *CFG) ID() uint64 {
 
 // AddNode adds a node and returns its point.
 func (c *CFG) AddNode(kind NodeKind, target SymbolID, callee string) Point {
+	c.invalidateRPO()
 	p := Point(len(c.Nodes))
 	c.Nodes = append(c.Nodes, Node{Point: p, Kind: kind, Target: target, Callee: callee})
 	return p
@@ -225,6 +227,7 @@ func (c *CFG) AddNode(kind NodeKind, target SymbolID, callee string) Point {
 
 // AddEdge adds an edge.
 func (c *CFG) AddEdge(from, to Point, cond bool) {
+	c.invalidateRPO()
 	c.edges = append(c.edges, Edge{From: from, To: to, Cond: cond})
 	c.succs[from] = append(c.succs[from], to)
 	c.preds[to] = append(c.preds[to], from)
@@ -239,6 +242,7 @@ func (c *CFG) RemoveOutgoing(from Point) {
 	if len(succs) == 0 {
 		return
 	}
+	c.invalidateRPO()
 	filtered := c.edges[:0]
 	for _, e := range c.edges {
 		if e.From == from {
@@ -343,6 +347,7 @@ func (c *CFG) EdgeCond(from, to Point) (bool, bool) {
 
 // AddBranch adds a branch node with condition info.
 func (c *CFG) AddBranch(condVar SymbolID, condCheck CondCheck) Point {
+	c.invalidateRPO()
 	p := Point(len(c.Nodes))
 	c.Nodes = append(c.Nodes, Node{
 		Point:     p,
@@ -363,6 +368,15 @@ func (c *CFG) AddBranch(condVar SymbolID, condCheck CondCheck) Point {
 // Only nodes reachable from the entry point are included. Unreachable code
 // (after unconditional return, for example) is excluded.
 func (c *CFG) RPO() []Point {
+	if c == nil {
+		return nil
+	}
+	if len(c.rpo) > 0 {
+		out := make([]Point, len(c.rpo))
+		copy(out, c.rpo)
+		return out
+	}
+
 	n := len(c.Nodes)
 	visited := make([]bool, n)
 	order := make([]Point, 0, n)
@@ -385,7 +399,19 @@ func (c *CFG) RPO() []Point {
 	for i, j := 0, len(order)-1; i < j; i, j = i+1, j-1 {
 		order[i], order[j] = order[j], order[i]
 	}
-	return order
+	c.rpo = make([]Point, len(order))
+	copy(c.rpo, order)
+
+	out := make([]Point, len(c.rpo))
+	copy(out, c.rpo)
+	return out
+}
+
+func (c *CFG) invalidateRPO() {
+	if c == nil {
+		return
+	}
+	c.rpo = nil
 }
 
 // Reachable returns a set of all nodes reachable from entry.

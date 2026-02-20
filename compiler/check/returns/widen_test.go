@@ -328,3 +328,43 @@ func TestWidenLiteralSigs_PrefersMergedSameShapeSignature(t *testing.T) {
 		t.Fatalf("expected merged return %v, got %v", want, got.Returns[0])
 	}
 }
+
+func TestTypeContainsFunction_IgnoresInterfaceMethodSignatures(t *testing.T) {
+	iface := typ.NewInterface("Reader", []typ.Method{
+		{
+			Name: "next",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.Func().Returns(typ.String).Build()).
+				Build(),
+		},
+	})
+	if typeContainsFunction(iface) {
+		t.Fatalf("expected interface method signatures to be ignored, got true")
+	}
+}
+
+func TestHasHigherOrderGrowthRisk_DetectsFunctionReturningFunction(t *testing.T) {
+	tp := typ.Func().
+		Returns(typ.Func().Returns(typ.String).Build()).
+		Build()
+	if !hasHigherOrderGrowthRisk(tp) {
+		t.Fatalf("expected higher-order growth risk to be detected")
+	}
+}
+
+func TestMethodTypeHasSelfRecursiveReturn_IgnoresInterfaceMethods(t *testing.T) {
+	owner := typ.NewRecord().Field("id", typ.String).Build()
+	methodType := typ.NewInterface("HasBuild", []typ.Method{
+		{
+			Name: "build",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(owner).
+				Build(),
+		},
+	})
+	if methodTypeHasSelfRecursiveReturn(methodType, owner) {
+		t.Fatalf("expected interface method signatures to be ignored for self-recursive detection")
+	}
+}

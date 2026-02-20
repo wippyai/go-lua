@@ -935,6 +935,60 @@ func TestRPO(t *testing.T) {
 	})
 }
 
+func TestRPO_ReturnValueIsIndependentSlice(t *testing.T) {
+	c := New()
+	n1 := c.AddNode(NodeAssign, 0, "")
+	n2 := c.AddNode(NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), n1, false)
+	c.AddEdge(n1, n2, false)
+	c.AddEdge(n2, c.Exit(), false)
+
+	first := c.RPO()
+	if len(first) == 0 {
+		t.Fatal("expected non-empty RPO")
+	}
+	origHead := first[0]
+	first[0] = c.Exit()
+
+	second := c.RPO()
+	if len(second) == 0 {
+		t.Fatal("expected non-empty RPO on second call")
+	}
+	if second[0] != origHead {
+		t.Fatalf("expected second RPO head %d, got %d", origHead, second[0])
+	}
+}
+
+func TestRPO_InvalidatesOnGraphMutation(t *testing.T) {
+	c := New()
+	n1 := c.AddNode(NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), n1, false)
+	c.AddEdge(n1, c.Exit(), false)
+
+	before := c.RPO()
+	if len(before) != 3 {
+		t.Fatalf("expected 3 points before mutation, got %d", len(before))
+	}
+
+	n2 := c.AddNode(NodeAssign, 0, "")
+	c.AddEdge(n1, n2, false)
+	c.RemoveOutgoing(n1)
+	c.AddEdge(n1, n2, false)
+	c.AddEdge(n2, c.Exit(), false)
+
+	after := c.RPO()
+	found := false
+	for _, p := range after {
+		if p == n2 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected mutated graph RPO to include node %d", n2)
+	}
+}
+
 // Benchmarks
 
 func BenchmarkNew(b *testing.B) {

@@ -224,41 +224,22 @@ func FilterConstraintsForPath(constraints []constraint.Constraint, target constr
 
 	var filtered []constraint.Constraint
 	for _, c := range constraints {
-		keep := false
 		// Field/Index NotEquals constraints are asymmetric: they narrow the target,
 		// not the value. If we're filtering for the value side only, drop them.
-		if drop := constraint.VisitConstraint(c, constraint.ConstraintVisitor[bool]{
-			FieldNotEqualsPath: func(v constraint.FieldNotEqualsPath) bool {
-				valueRelated := PathRelated(target, v.Value)
-				targetRelated := PathRelated(target, v.Target)
-				return valueRelated && !targetRelated
-			},
-			IndexNotEqualsPath: func(v constraint.IndexNotEqualsPath) bool {
-				valueRelated := PathRelated(target, v.Value)
-				targetRelated := PathRelated(target, v.Target)
-				return valueRelated && !targetRelated
-			},
-			Default: func(constraint.Constraint) bool {
-				return false
-			},
-		}); drop {
+		if shouldDropAsymmetricNotEquals(c, target) {
 			continue
 		}
-		for _, p := range c.Paths() {
+		if constraintAnyPathMatches(c, func(p constraint.Path) bool {
 			if PathRelated(target, p) {
-				keep = true
-				break
+				return true
 			}
-			if _, isEquiv := equivalentPaths[p.Key()]; isEquiv {
-				keep = true
-				break
+			key := p.Key()
+			if equivalentPaths[key] {
+				return true
 			}
-			if _, isRelated := relatedValuePaths[p.Key()]; isRelated {
-				keep = true
-				break
-			}
-		}
-		if keep {
+			_, ok := relatedValuePaths[key]
+			return ok
+		}) {
 			filtered = append(filtered, c)
 		}
 	}
@@ -282,25 +263,41 @@ func CollectEquivalentPaths(constraints []constraint.Constraint, target constrai
 	result[target.Key()] = true
 
 	type eqPair struct {
-		left, right constraint.Path
+		left, right       constraint.Path
+		leftKey, rightKey constraint.PathKey
 	}
 	var pairs []eqPair
 
 	for _, c := range constraints {
 		constraint.VisitConstraint(c, constraint.ConstraintVisitor[struct{}]{
 			EqPath: func(v constraint.EqPath) struct{} {
-				pairs = append(pairs, eqPair{v.Left, v.Right})
+				pairs = append(pairs, eqPair{
+					left:     v.Left,
+					right:    v.Right,
+					leftKey:  v.Left.Key(),
+					rightKey: v.Right.Key(),
+				})
 				return struct{}{}
 			},
 			FieldEqualsPath: func(v constraint.FieldEqualsPath) struct{} {
 				fieldPath := v.Target.Append(constraint.Segment{Kind: constraint.SegmentField, Name: v.Field})
 				if !fieldPath.IsEmpty() {
-					pairs = append(pairs, eqPair{fieldPath, v.Value})
+					pairs = append(pairs, eqPair{
+						left:     fieldPath,
+						right:    v.Value,
+						leftKey:  fieldPath.Key(),
+						rightKey: v.Value.Key(),
+					})
 				}
 				return struct{}{}
 			},
 			IndexEqualsPath: func(v constraint.IndexEqualsPath) struct{} {
-				pairs = append(pairs, eqPair{v.Target, v.Value})
+				pairs = append(pairs, eqPair{
+					left:     v.Target,
+					right:    v.Value,
+					leftKey:  v.Target.Key(),
+					rightKey: v.Value.Key(),
+				})
 				return struct{}{}
 			},
 		})
@@ -314,19 +311,130 @@ func CollectEquivalentPaths(constraints []constraint.Constraint, target constrai
 	for changed {
 		changed = false
 		for _, pair := range pairs {
-			leftKey := pair.left.Key()
-			rightKey := pair.right.Key()
-			leftIn := result[leftKey]
-			rightIn := result[rightKey]
+			leftIn := result[pair.leftKey]
+			rightIn := result[pair.rightKey]
 			if leftIn && !rightIn {
-				result[rightKey] = true
+				result[pair.rightKey] = true
 				changed = true
 			} else if rightIn && !leftIn {
-				result[leftKey] = true
+				result[pair.leftKey] = true
 				changed = true
 			}
 		}
 	}
 
 	return result
+}
+
+func shouldDropAsymmetricNotEquals(c constraint.Constraint, target constraint.Path) bool {
+	return constraint.VisitConstraint(c, constraint.ConstraintVisitor[bool]{
+		FieldNotEqualsPath: func(v constraint.FieldNotEqualsPath) bool {
+			valueRelated := PathRelated(target, v.Value)
+			targetRelated := PathRelated(target, v.Target)
+			return valueRelated && !targetRelated
+		},
+		IndexNotEqualsPath: func(v constraint.IndexNotEqualsPath) bool {
+			valueRelated := PathRelated(target, v.Value)
+			targetRelated := PathRelated(target, v.Target)
+			return valueRelated && !targetRelated
+		},
+		Default: func(constraint.Constraint) bool {
+			return false
+		},
+	})
+}
+
+func constraintAnyPathMatches(c constraint.Constraint, match func(constraint.Path) bool) bool {
+	return constraint.VisitConstraint(c, constraint.ConstraintVisitor[bool]{
+		Truthy: func(v constraint.Truthy) bool {
+			if match(v.Path) {
+				return true
+			}
+			return matchParentFieldPath(v.Path, match)
+		},
+		Falsy: func(v constraint.Falsy) bool {
+			if match(v.Path) {
+				return true
+			}
+			return matchParentFieldPath(v.Path, match)
+		},
+		IsNil: func(v constraint.IsNil) bool {
+			return match(v.Path)
+		},
+		NotNil: func(v constraint.NotNil) bool {
+			return match(v.Path)
+		},
+		HasType: func(v constraint.HasType) bool {
+			return match(v.Path)
+		},
+		NotHasType: func(v constraint.NotHasType) bool {
+			return match(v.Path)
+		},
+		HasField: func(v constraint.HasField) bool {
+			return match(v.Path)
+		},
+		FieldEquals: func(v constraint.FieldEquals) bool {
+			if match(v.Target) {
+				return true
+			}
+			return matchParentFieldPath(v.Target, match)
+		},
+		FieldNotEquals: func(v constraint.FieldNotEquals) bool {
+			if match(v.Target) {
+				return true
+			}
+			return matchParentFieldPath(v.Target, match)
+		},
+		IndexEquals: func(v constraint.IndexEquals) bool {
+			return match(v.Target)
+		},
+		IndexNotEquals: func(v constraint.IndexNotEquals) bool {
+			return match(v.Target)
+		},
+		EqPath: func(v constraint.EqPath) bool {
+			return match(v.Left) || match(v.Right)
+		},
+		NotEqPath: func(v constraint.NotEqPath) bool {
+			return match(v.Left) || match(v.Right)
+		},
+		FieldEqualsPath: func(v constraint.FieldEqualsPath) bool {
+			if match(v.Target) || match(v.Value) {
+				return true
+			}
+			return matchParentFieldPath(v.Target, match)
+		},
+		FieldNotEqualsPath: func(v constraint.FieldNotEqualsPath) bool {
+			if match(v.Target) || match(v.Value) {
+				return true
+			}
+			return matchParentFieldPath(v.Target, match)
+		},
+		IndexEqualsPath: func(v constraint.IndexEqualsPath) bool {
+			return match(v.Target) || match(v.Value)
+		},
+		IndexNotEqualsPath: func(v constraint.IndexNotEqualsPath) bool {
+			return match(v.Target) || match(v.Value)
+		},
+		KeyOf: func(v constraint.KeyOf) bool {
+			return match(v.Table) || match(v.Key)
+		},
+		Default: func(constraint.Constraint) bool {
+			return false
+		},
+	})
+}
+
+func matchParentFieldPath(path constraint.Path, match func(constraint.Path) bool) bool {
+	if len(path.Segments) == 0 {
+		return false
+	}
+	if path.Segments[len(path.Segments)-1].Kind != constraint.SegmentField {
+		return false
+	}
+	parent := constraint.Path{Root: path.Root, Symbol: path.Symbol}
+	if len(path.Segments) > 1 {
+		// Paths() semantics use a parent path without version and avoid mutating the source path.
+		parent.Segments = path.Segments[:len(path.Segments)-1]
+	}
+	return match(parent)
 }

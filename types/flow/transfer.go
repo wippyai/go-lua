@@ -249,7 +249,7 @@ func (s *Solution) mirrorAliasedFieldWrite(p cfg.Point, targetPath constraint.Pa
 			continue
 		}
 
-		sourceSym, sourceVersion, suffix, ok := pathkey.ParseKey(constraint.PathKey(sourceKey))
+		sourceSym, sourceVersion, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(sourceKey))
 		if !ok || sourceSym == 0 || sourceVersion == 0 {
 			continue
 		}
@@ -820,7 +820,7 @@ func (s *Solution) joinKnownRootTypes(sym cfg.SymbolID) typ.Type {
 		if t == nil {
 			continue
 		}
-		parsedSym, _, suffix, ok := pathkey.ParseKey(constraint.PathKey(key))
+		parsedSym, _, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
 		if !ok || parsedSym != sym || suffix != "" {
 			continue
 		}

@@ -310,6 +310,148 @@ func TestCollectInferredTypes_UsesModuleCalleeCandidatesForExpectedArgs(t *testi
 	}
 }
 
+func TestNormalizedCallArgSymbols_UsesBindingsFallback(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	x := &ast.IdentExpr{Value: "x"}
+	y := &ast.IdentExpr{Value: "y"}
+	xSym := cfg.SymbolID(11)
+	ySym := cfg.SymbolID(12)
+	bindings.Bind(x, xSym)
+	bindings.Bind(y, ySym)
+
+	info := &cfg.CallInfo{
+		Args:       []ast.Expr{x, y},
+		ArgSymbols: []cfg.SymbolID{0, 42},
+	}
+	got := normalizedCallArgSymbols(info, bindings)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 arg symbols, got %d", len(got))
+	}
+	if got[0] != xSym {
+		t.Fatalf("expected first arg symbol %d from bindings, got %d", xSym, got[0])
+	}
+	if got[1] != 42 {
+		t.Fatalf("expected second arg symbol to preserve explicit symbol 42, got %d", got[1])
+	}
+}
+
+func TestCallRefSymbols_CollectsAndDeduplicates(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	callee := &ast.IdentExpr{Value: "f"}
+	recv := &ast.IdentExpr{Value: "recv"}
+	arg := &ast.IdentExpr{Value: "x"}
+	obj := &ast.IdentExpr{Value: "obj"}
+
+	calleeSym := cfg.SymbolID(101)
+	recvSym := cfg.SymbolID(102)
+	argSym := cfg.SymbolID(103)
+	objSym := cfg.SymbolID(104)
+	bindings.Bind(callee, calleeSym)
+	bindings.Bind(recv, recvSym)
+	bindings.Bind(arg, argSym)
+	bindings.Bind(obj, objSym)
+	fieldSym := bindings.GetOrCreateFieldSymbol(objSym, "k")
+
+	attr := &ast.AttrGetExpr{
+		Object: obj,
+		Key:    &ast.StringExpr{Value: "k"},
+	}
+	info := &cfg.CallInfo{
+		Callee:   callee,
+		Receiver: recv,
+		Args:     []ast.Expr{arg, attr, arg},
+	}
+
+	refs := callRefSymbols(info, bindings)
+	if !hasSymbol(refs, calleeSym) || !hasSymbol(refs, recvSym) || !hasSymbol(refs, argSym) || !hasSymbol(refs, objSym) || !hasSymbol(refs, fieldSym) {
+		t.Fatalf("expected refs to include callee/receiver/arg/object/field symbols, got %v", refs)
+	}
+}
+
+func TestSynthWithInferenceOverlay_PriorityAndParamFallback(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	ident := &ast.IdentExpr{Value: "a"}
+	aSym := cfg.SymbolID(201)
+	bindings.Bind(ident, aSym)
+
+	base := func(ast.Expr, cfg.Point) typ.Type { return typ.Boolean }
+	paramSet := map[cfg.SymbolID]bool{aSym: true}
+
+	synth := synthWithInferenceOverlay(
+		map[cfg.SymbolID]typ.Type{aSym: typ.String},
+		map[cfg.SymbolID]typ.Type{aSym: typ.Number},
+		paramSet,
+		nil,
+		bindings,
+		base,
+	)
+	if got := synth(ident, 0); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("expected overlay type string, got %v", got)
+	}
+
+	synth = synthWithInferenceOverlay(
+		nil,
+		map[cfg.SymbolID]typ.Type{aSym: typ.Number},
+		paramSet,
+		nil,
+		bindings,
+		base,
+	)
+	if got := synth(ident, 0); !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("expected function signature type number, got %v", got)
+	}
+
+	synth = synthWithInferenceOverlay(
+		nil,
+		nil,
+		paramSet,
+		nil,
+		bindings,
+		base,
+	)
+	if got := synth(ident, 0); !typ.TypeEquals(got, typ.Unknown) {
+		t.Fatalf("expected unknown fallback for unannotated param, got %v", got)
+	}
+
+	synth = synthWithInferenceOverlay(
+		nil,
+		nil,
+		paramSet,
+		map[cfg.SymbolID]bool{aSym: true},
+		bindings,
+		base,
+	)
+	if got := synth(ident, 0); !typ.TypeEquals(got, typ.Boolean) {
+		t.Fatalf("expected base type for annotated param, got %v", got)
+	}
+}
+
+func TestSynthWithInferenceOverlay_PreservesNilOverlayEntries(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	ident := &ast.IdentExpr{Value: "a"}
+	aSym := cfg.SymbolID(301)
+	bindings.Bind(ident, aSym)
+
+	baseCalled := false
+	synth := synthWithInferenceOverlay(
+		map[cfg.SymbolID]typ.Type{aSym: nil},
+		nil,
+		nil,
+		nil,
+		bindings,
+		func(ast.Expr, cfg.Point) typ.Type {
+			baseCalled = true
+			return typ.Boolean
+		},
+	)
+	if got := synth(ident, 0); got != nil {
+		t.Fatalf("expected nil type from explicit nil overlay, got %v", got)
+	}
+	if baseCalled {
+		t.Fatalf("expected base synth not to be called when overlay entry exists")
+	}
+}
+
 func hasSymbol(refs []cfg.SymbolID, sym cfg.SymbolID) bool {
 	for _, r := range refs {
 		if r == sym {

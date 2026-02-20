@@ -319,12 +319,20 @@ func TestUnaryOp_LengthMetamethod(t *testing.T) {
 	lenFn := typ.Func().Param("self", typ.Any).Returns(typ.Integer).Build()
 	meta := typ.NewRecord().Field("__len", lenFn).Build()
 	set := typ.NewRecord().Field("count", typ.Integer).Metatable(meta).Build()
+	tableTop := typ.NewInterface("table", nil)
 
 	t.Run("# on record with __len", func(t *testing.T) {
 		result := UnaryOp("#", set)
 		// Current: returns integer (records have default length behavior)
 		// This is actually correct for records without __len,
 		// but __len should take precedence if defined
+		if result != typ.Integer {
+			t.Errorf("expected integer, got %v", result)
+		}
+	})
+
+	t.Run("# on builtin table marker", func(t *testing.T) {
+		result := UnaryOp("#", tableTop)
 		if result != typ.Integer {
 			t.Errorf("expected integer, got %v", result)
 		}

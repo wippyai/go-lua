@@ -236,6 +236,69 @@ func collectInferredTypes(
 		}
 		assignsAtPoint[entry.p] = append(assignsAtPoint[entry.p], entry.info)
 	}
+	callOwnerByPointer := make(map[*cfg.CallInfo]*cfg.AssignInfo)
+	for _, infos := range assignsAtPoint {
+		for _, info := range infos {
+			if info == nil {
+				continue
+			}
+			for _, sourceCall := range info.SourceCalls {
+				if sourceCall != nil && callOwnerByPointer[sourceCall] == nil {
+					callOwnerByPointer[sourceCall] = info
+				}
+			}
+		}
+	}
+
+	assignIdxByTargetSym := make(map[cfg.SymbolID][]int)
+	for idx, entry := range assigns {
+		if entry.info == nil {
+			continue
+		}
+		seenTargets := make(map[cfg.SymbolID]struct{})
+		for _, target := range entry.info.Targets {
+			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+				continue
+			}
+			if _, seen := seenTargets[target.Symbol]; seen {
+				continue
+			}
+			seenTargets[target.Symbol] = struct{}{}
+			assignIdxByTargetSym[target.Symbol] = append(assignIdxByTargetSym[target.Symbol], idx)
+		}
+	}
+
+	callArgSymbolsByIdx := make([][]cfg.SymbolID, len(calls))
+	callIdxByParamArgSym := make(map[cfg.SymbolID][]int)
+	callIdxByRefSym := make(map[cfg.SymbolID][]int)
+	for idx, entry := range calls {
+		if entry.info == nil {
+			continue
+		}
+		argSymbols := normalizedCallArgSymbols(entry.info, bindings)
+		callArgSymbolsByIdx[idx] = argSymbols
+
+		seenParamArg := make(map[cfg.SymbolID]struct{})
+		for _, sym := range argSymbols {
+			if sym == 0 || !paramSet[sym] {
+				continue
+			}
+			if _, seen := seenParamArg[sym]; seen {
+				continue
+			}
+			seenParamArg[sym] = struct{}{}
+			callIdxByParamArgSym[sym] = append(callIdxByParamArgSym[sym], idx)
+		}
+
+		for _, sym := range callRefSymbols(entry.info, bindings) {
+			callIdxByRefSym[sym] = append(callIdxByRefSym[sym], idx)
+		}
+	}
+
+	assignIdxMarks := make([]int, len(assigns))
+	paramCallIdxMarks := make([]int, len(calls))
+	mutatorCallIdxMarks := make([]int, len(calls))
+	markEpoch := 0
 
 	// Build dependency graph: target symbol -> symbols referenced in RHS
 	deps := make(map[uint64][]uint64)
@@ -349,32 +412,49 @@ func collectInferredTypes(
 			sccSyms[i] = sym
 		}
 
+		markEpoch++
+		sccAssignIdx := make([]int, 0, len(scc))
+		sccParamCallIdx := make([]int, 0, len(scc))
+		sccMutatorCallIdx := make([]int, 0, len(scc))
+		for _, sym := range sccSyms {
+			for _, idx := range assignIdxByTargetSym[sym] {
+				if assignIdxMarks[idx] == markEpoch {
+					continue
+				}
+				assignIdxMarks[idx] = markEpoch
+				sccAssignIdx = append(sccAssignIdx, idx)
+			}
+			for _, idx := range callIdxByParamArgSym[sym] {
+				if paramCallIdxMarks[idx] == markEpoch {
+					continue
+				}
+				paramCallIdxMarks[idx] = markEpoch
+				sccParamCallIdx = append(sccParamCallIdx, idx)
+			}
+			for _, idx := range callIdxByRefSym[sym] {
+				if mutatorCallIdxMarks[idx] == markEpoch {
+					continue
+				}
+				mutatorCallIdxMarks[idx] = markEpoch
+				sccMutatorCallIdx = append(sccMutatorCallIdx, idx)
+			}
+		}
+
 		// Fixpoint iteration for this SCC
 		converged := false
 		for iter := 0; iter < maxInferIterations; iter++ {
 			changed := false
 			overlay := mergeSpecTypesSoft(inferred, specTypes)
 
-			// Build a full overlay: overlay (highest priority), then funcSigTypes,
-			// then unknown for unannotated params.
-			fullOverlay := make(map[cfg.SymbolID]typ.Type, len(overlay)+len(funcSigTypes)+len(paramSet))
-			for sym := range paramSet {
-				if annotated == nil || !annotated[sym] {
-					fullOverlay[sym] = typ.Unknown
-				}
-			}
-			for sym, t := range funcSigTypes {
-				fullOverlay[sym] = t
-			}
-			for sym, t := range overlay {
-				fullOverlay[sym] = t
-			}
-			wrappedSynth := resolve.SynthWithOverlay(fullOverlay, bindings, synth)
+			wrappedSynth := synthWithInferenceOverlay(overlay, funcSigTypes, paramSet, annotated, bindings, synth)
 			callSynthFor := func(p cfg.Point, info *cfg.CallInfo) func(ast.Expr, cfg.Point) typ.Type {
 				if info == nil {
 					return wrappedSynth
 				}
-				owner := assignmentOwningSourceCall(assignsAtPoint[p], info)
+				owner := callOwnerByPointer[info]
+				if owner == nil {
+					owner = assignmentOwningSourceCall(assignsAtPoint[p], info)
+				}
 				if owner == nil {
 					return wrappedSynth
 				}
@@ -393,19 +473,7 @@ func collectInferredTypes(
 					return rhsResolver(point, sym)
 				})
 
-				callFullOverlay := make(map[cfg.SymbolID]typ.Type, len(callOverlay)+len(funcSigTypes)+len(paramSet))
-				for sym := range paramSet {
-					if annotated == nil || !annotated[sym] {
-						callFullOverlay[sym] = typ.Unknown
-					}
-				}
-				for sym, t := range funcSigTypes {
-					callFullOverlay[sym] = t
-				}
-				for sym, t := range callOverlay {
-					callFullOverlay[sym] = t
-				}
-				return resolve.SynthWithOverlay(callFullOverlay, bindings, synth)
+				return synthWithInferenceOverlay(callOverlay, funcSigTypes, paramSet, annotated, bindings, synth)
 			}
 
 			// Infer expected argument types for a call using the call inference pipeline.
@@ -479,7 +547,8 @@ func collectInferredTypes(
 			}
 
 			// Process assignments for symbols in this SCC
-			for _, entry := range assigns {
+			for _, idx := range sccAssignIdx {
+				entry := assigns[idx]
 				p := entry.p
 				info := entry.info
 				sc := scopes[p]
@@ -609,7 +678,8 @@ func collectInferredTypes(
 			}
 
 			// Infer parameter types from call argument expectations.
-			for _, entry := range calls {
+			for _, idx := range sccParamCallIdx {
+				entry := calls[idx]
 				p := entry.p
 				info := entry.info
 				if info == nil || len(info.Args) == 0 {
@@ -621,13 +691,11 @@ func collectInferredTypes(
 					sc = scopes[graph.Entry()]
 				}
 				expectedArgs, expectedVariadic := inferExpectedArgs(p, info, synthForCall)
+				callArgSymbols := callArgSymbolsByIdx[idx]
 				for i := range info.Args {
 					var sym cfg.SymbolID
-					if i < len(info.ArgSymbols) {
-						sym = info.ArgSymbols[i]
-					}
-					if sym == 0 && i < len(info.Args) && bindings != nil {
-						sym = callsite.SymbolFromExpr(info.Args[i], bindings)
+					if i < len(callArgSymbols) {
+						sym = callArgSymbols[i]
 					}
 					if sym == 0 || !sccSet[sym] {
 						continue
@@ -662,7 +730,8 @@ func collectInferredTypes(
 			}
 
 			// Process table mutator calls for symbols in this SCC
-			for _, entry := range calls {
+			for _, idx := range sccMutatorCallIdx {
+				entry := calls[idx]
 				p := entry.p
 				info := entry.info
 				tm := mutator.TableMutatorFromCall(info, p, wrappedSynth, symResolver, graph, bindings, moduleBindings)
@@ -757,6 +826,82 @@ func collectInferredTypes(
 	}
 
 	return inferred
+}
+
+func normalizedCallArgSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) []cfg.SymbolID {
+	if info == nil || len(info.Args) == 0 {
+		return nil
+	}
+	out := make([]cfg.SymbolID, len(info.Args))
+	for i := range info.Args {
+		if i < len(info.ArgSymbols) {
+			out[i] = info.ArgSymbols[i]
+		}
+		if out[i] == 0 && bindings != nil {
+			out[i] = callsite.SymbolFromExpr(info.Args[i], bindings)
+		}
+	}
+	return out
+}
+
+func callRefSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) []cfg.SymbolID {
+	if info == nil || bindings == nil {
+		return nil
+	}
+	refs := make([]cfg.SymbolID, 0, len(info.Args)+2)
+	collectExprSymbols(info.Callee, bindings, &refs)
+	collectExprSymbols(info.Receiver, bindings, &refs)
+	for _, arg := range info.Args {
+		collectExprSymbols(arg, bindings, &refs)
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	seen := make(map[cfg.SymbolID]struct{}, len(refs))
+	out := make([]cfg.SymbolID, 0, len(refs))
+	for _, sym := range refs {
+		if sym == 0 {
+			continue
+		}
+		if _, ok := seen[sym]; ok {
+			continue
+		}
+		seen[sym] = struct{}{}
+		out = append(out, sym)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func synthWithInferenceOverlay(
+	overlay map[cfg.SymbolID]typ.Type,
+	funcSigTypes map[cfg.SymbolID]typ.Type,
+	paramSet map[cfg.SymbolID]bool,
+	annotated map[cfg.SymbolID]bool,
+	bindings *bind.BindingTable,
+	base func(ast.Expr, cfg.Point) typ.Type,
+) func(ast.Expr, cfg.Point) typ.Type {
+	return func(expr ast.Expr, p cfg.Point) typ.Type {
+		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
+			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
+				if t, exists := overlay[sym]; exists {
+					return t
+				}
+				if t, exists := funcSigTypes[sym]; exists {
+					return t
+				}
+				if paramSet[sym] && (annotated == nil || !annotated[sym]) {
+					return typ.Unknown
+				}
+			}
+		}
+		if base == nil {
+			return nil
+		}
+		return base(expr, p)
+	}
 }
 
 func assignmentOwningSourceCall(assigns []*cfg.AssignInfo, call *cfg.CallInfo) *cfg.AssignInfo {
@@ -886,14 +1031,104 @@ func typeContains(haystack, needle typ.Type) bool {
 	if haystack == nil || needle == nil {
 		return false
 	}
-	found := false
-	_ = typ.Rewrite(haystack, func(t typ.Type) (typ.Type, bool) {
-		if typ.TypeEquals(t, needle) {
-			found = true
-			// Stop descending on this subtree once the target is found.
-			return t, true
+	return typeContainsDepth(haystack, needle, typ.NewGuard())
+}
+
+func typeContainsDepth(haystack, needle typ.Type, guard internal.RecursionGuard) bool {
+	if haystack == nil || needle == nil {
+		return false
+	}
+	next, ok := guard.Enter(haystack)
+	if !ok {
+		return false
+	}
+	if typ.TypeEquals(haystack, needle) {
+		return true
+	}
+
+	// Match typ.Visit behavior: annotated wrappers are transparent for traversal.
+	node := haystack
+	for {
+		ann, ok := node.(*typ.Annotated)
+		if !ok || ann.Inner == nil || ann.Inner == node {
+			break
 		}
-		return nil, false
-	})
-	return found
+		node = ann.Inner
+	}
+
+	switch tt := node.(type) {
+	case *typ.Optional:
+		return typeContainsDepth(tt.Inner, needle, next)
+	case *typ.Union:
+		for _, m := range tt.Members {
+			if typeContainsDepth(m, needle, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Intersection:
+		for _, m := range tt.Members {
+			if typeContainsDepth(m, needle, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Array:
+		return typeContainsDepth(tt.Element, needle, next)
+	case *typ.Map:
+		return typeContainsDepth(tt.Key, needle, next) || typeContainsDepth(tt.Value, needle, next)
+	case *typ.Tuple:
+		for _, e := range tt.Elements {
+			if typeContainsDepth(e, needle, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Function:
+		for _, p := range tt.Params {
+			if typeContainsDepth(p.Type, needle, next) {
+				return true
+			}
+		}
+		for _, r := range tt.Returns {
+			if typeContainsDepth(r, needle, next) {
+				return true
+			}
+		}
+		if tt.Variadic != nil {
+			return typeContainsDepth(tt.Variadic, needle, next)
+		}
+		return false
+	case *typ.Record:
+		for _, f := range tt.Fields {
+			if typeContainsDepth(f.Type, needle, next) {
+				return true
+			}
+		}
+		if tt.Metatable != nil && typeContainsDepth(tt.Metatable, needle, next) {
+			return true
+		}
+		if tt.HasMapComponent() {
+			return typeContainsDepth(tt.MapKey, needle, next) || typeContainsDepth(tt.MapValue, needle, next)
+		}
+		return false
+	case *typ.Alias:
+		return typeContainsDepth(tt.Target, needle, next)
+	case *typ.Instantiated:
+		for _, a := range tt.TypeArgs {
+			if typeContainsDepth(a, needle, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Interface:
+		for _, m := range tt.Methods {
+			if m.Type != nil && typeContainsDepth(m.Type, needle, next) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }

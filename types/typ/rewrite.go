@@ -1,6 +1,11 @@
 package typ
 
-import "github.com/wippyai/go-lua/internal"
+import (
+	"sync"
+
+	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/kind"
+)
 
 // Rewrite traverses a type tree and applies fn at each node (bottom-up transformation).
 //
@@ -16,9 +21,34 @@ func Rewrite(t Type, fn func(Type) (Type, bool)) Type {
 }
 
 func rewriteWithDepth(t Type, fn func(Type) (Type, bool), maxDepth int) Type {
-	memo := make(map[rewriteKey]Type)
 	guard := GuardForDepth(maxDepth)
+	if !rewriteCanDescend(t) {
+		return rewriteDepth(t, fn, guard, nil)
+	}
+	memo := getRewriteMemo()
+	defer putRewriteMemo(memo)
 	return rewriteDepth(t, fn, guard, memo)
+}
+
+const rewriteMemoMaxEntries = 4096
+
+var rewriteMemoPool = sync.Pool{
+	New: func() any {
+		return make(map[rewriteKey]Type, 64)
+	},
+}
+
+func getRewriteMemo() map[rewriteKey]Type {
+	return rewriteMemoPool.Get().(map[rewriteKey]Type)
+}
+
+func putRewriteMemo(m map[rewriteKey]Type) {
+	if len(m) > rewriteMemoMaxEntries {
+		rewriteMemoPool.Put(make(map[rewriteKey]Type, 64))
+		return
+	}
+	clear(m)
+	rewriteMemoPool.Put(m)
 }
 
 type rewriteKey struct {
@@ -30,146 +60,202 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 	if t == nil {
 		return t
 	}
+	if !rewriteCanDescend(t) {
+		if replacement, ok := fn(t); ok {
+			return replacement
+		}
+		return t
+	}
+
 	depth := guard.Depth()
+	var key rewriteKey
 	if memo != nil {
-		key := rewriteKey{t: t, depth: depth}
+		key = rewriteKey{t: t, depth: depth}
 		if cached, ok := memo[key]; ok {
 			return cached
 		}
 	}
 
-	return WithGuard(t, guard, t, func(next internal.RecursionGuard) Type {
-		if replacement, ok := fn(t); ok {
-			if memo != nil {
-				memo[rewriteKey{t: t, depth: depth}] = replacement
-			}
-			return replacement
-		}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return t
+	}
 
-		out := Visit(t, Visitor[Type]{
-			Optional: func(o *Optional) Type {
-				if o.Inner == nil {
-					return t
-				}
-				inner := rewriteDepth(o.Inner, fn, next, memo)
-				if inner == o.Inner {
-					return t
-				}
-				return NewOptional(inner)
-			},
-			Union: func(u *Union) Type {
-				changed := false
-				members := make([]Type, len(u.Members))
-				for i, m := range u.Members {
-					members[i] = rewriteDepth(m, fn, next, memo)
-					if members[i] != m {
-						changed = true
-					}
-				}
-				if !changed {
-					return t
-				}
-				return NewUnion(members...)
-			},
-			Intersection: func(u *Intersection) Type {
-				changed := false
-				members := make([]Type, len(u.Members))
-				for i, m := range u.Members {
-					members[i] = rewriteDepth(m, fn, next, memo)
-					if members[i] != m {
-						changed = true
-					}
-				}
-				if !changed {
-					return t
-				}
-				return NewIntersection(members...)
-			},
-			Array: func(a *Array) Type {
-				elem := rewriteDepth(a.Element, fn, next, memo)
-				if elem == a.Element {
-					return t
-				}
-				return NewArray(elem)
-			},
-			Map: func(m *Map) Type {
-				key := rewriteDepth(m.Key, fn, next, memo)
-				value := rewriteDepth(m.Value, fn, next, memo)
-				if key == m.Key && value == m.Value {
-					return t
-				}
-				return NewMap(key, value)
-			},
-			Tuple: func(tu *Tuple) Type {
-				changed := false
-				elems := make([]Type, len(tu.Elements))
-				for i, e := range tu.Elements {
-					elems[i] = rewriteDepth(e, fn, next, memo)
-					if elems[i] != e {
-						changed = true
-					}
-				}
-				if !changed {
-					return t
-				}
-				return NewTuple(elems...)
-			},
-			Function: func(f *Function) Type {
-				return rewriteFunction(f, t, fn, next, memo)
-			},
-			Record: func(r *Record) Type {
-				return rewriteRecord(r, t, fn, next, memo)
-			},
-			Alias: func(a *Alias) Type {
-				target := rewriteDepth(a.Target, fn, next, memo)
-				if target == a.Target {
-					return t
-				}
-				return NewAlias(a.Name, target)
-			},
-			Instantiated: func(i *Instantiated) Type {
-				changed := false
-				args := make([]Type, len(i.TypeArgs))
-				for idx, a := range i.TypeArgs {
-					args[idx] = rewriteDepth(a, fn, next, memo)
-					if args[idx] != a {
-						changed = true
-					}
-				}
-				if !changed {
-					return t
-				}
-				return Instantiate(i.Generic, args...)
-			},
-			Interface: func(i *Interface) Type {
-				changed := false
-				methods := make([]Method, len(i.Methods))
-				for idx, m := range i.Methods {
-					newType := rewriteDepth(m.Type, fn, next, memo)
-					if newType != m.Type {
-						changed = true
-					}
-					if fnType, ok := newType.(*Function); ok {
-						methods[idx] = Method{Name: m.Name, Type: fnType}
-					} else {
-						methods[idx] = m
-					}
-				}
-				if !changed {
-					return t
-				}
-				return NewInterface(i.Name, methods)
-			},
-			Default: func(_ Type) Type {
-				return t
-			},
-		})
-
+	if replacement, ok := fn(t); ok {
 		if memo != nil {
-			memo[rewriteKey{t: t, depth: depth}] = out
+			memo[key] = replacement
 		}
-		return out
-	})
+		return replacement
+	}
+
+	var out Type
+	switch tt := unwrapTransparentWrappers(t).(type) {
+	case *Optional:
+		if tt.Inner == nil {
+			out = t
+			break
+		}
+		inner := rewriteDepth(tt.Inner, fn, next, memo)
+		if inner == tt.Inner {
+			out = t
+			break
+		}
+		out = NewOptional(inner)
+	case *Union:
+		var members []Type
+		for i, m := range tt.Members {
+			newMember := rewriteDepth(m, fn, next, memo)
+			if newMember != m {
+				if members == nil {
+					members = make([]Type, len(tt.Members))
+					copy(members, tt.Members)
+				}
+				members[i] = newMember
+			} else if members != nil {
+				members[i] = m
+			}
+		}
+		if members == nil {
+			out = t
+			break
+		}
+		out = NewUnion(members...)
+	case *Intersection:
+		var members []Type
+		for i, m := range tt.Members {
+			newMember := rewriteDepth(m, fn, next, memo)
+			if newMember != m {
+				if members == nil {
+					members = make([]Type, len(tt.Members))
+					copy(members, tt.Members)
+				}
+				members[i] = newMember
+			} else if members != nil {
+				members[i] = m
+			}
+		}
+		if members == nil {
+			out = t
+			break
+		}
+		out = NewIntersection(members...)
+	case *Array:
+		elem := rewriteDepth(tt.Element, fn, next, memo)
+		if elem == tt.Element {
+			out = t
+			break
+		}
+		out = NewArray(elem)
+	case *Map:
+		keyType := rewriteDepth(tt.Key, fn, next, memo)
+		valueType := rewriteDepth(tt.Value, fn, next, memo)
+		if keyType == tt.Key && valueType == tt.Value {
+			out = t
+			break
+		}
+		out = NewMap(keyType, valueType)
+	case *Tuple:
+		var elems []Type
+		for i, e := range tt.Elements {
+			newElem := rewriteDepth(e, fn, next, memo)
+			if newElem != e {
+				if elems == nil {
+					elems = make([]Type, len(tt.Elements))
+					copy(elems, tt.Elements)
+				}
+				elems[i] = newElem
+			} else if elems != nil {
+				elems[i] = e
+			}
+		}
+		if elems == nil {
+			out = t
+			break
+		}
+		out = NewTuple(elems...)
+	case *Function:
+		out = rewriteFunction(tt, t, fn, next, memo)
+	case *Record:
+		out = rewriteRecord(tt, t, fn, next, memo)
+	case *Alias:
+		target := rewriteDepth(tt.Target, fn, next, memo)
+		if target == tt.Target {
+			out = t
+			break
+		}
+		out = NewAlias(tt.Name, target)
+	case *Instantiated:
+		var args []Type
+		for idx, a := range tt.TypeArgs {
+			newArg := rewriteDepth(a, fn, next, memo)
+			if newArg != a {
+				if args == nil {
+					args = make([]Type, len(tt.TypeArgs))
+					copy(args, tt.TypeArgs)
+				}
+				args[idx] = newArg
+			} else if args != nil {
+				args[idx] = a
+			}
+		}
+		if args == nil {
+			out = t
+			break
+		}
+		out = Instantiate(tt.Generic, args...)
+	case *Interface:
+		var methods []Method
+		for idx, m := range tt.Methods {
+			newType := rewriteDepth(m.Type, fn, next, memo)
+			if newType != m.Type {
+				if methods == nil {
+					methods = make([]Method, len(tt.Methods))
+					copy(methods, tt.Methods)
+				}
+				if fnType, ok := newType.(*Function); ok {
+					methods[idx] = Method{Name: m.Name, Type: fnType}
+				} else {
+					methods[idx] = m
+				}
+			} else if methods != nil {
+				methods[idx] = m
+			}
+		}
+		if methods == nil {
+			out = t
+			break
+		}
+		out = NewInterface(tt.Name, methods)
+	default:
+		out = t
+	}
+
+	if memo != nil {
+		memo[key] = out
+	}
+	return out
+}
+
+func rewriteCanDescend(t Type) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind() {
+	case kind.Optional,
+		kind.Union,
+		kind.Intersection,
+		kind.Array,
+		kind.Map,
+		kind.Tuple,
+		kind.Function,
+		kind.Record,
+		kind.Alias,
+		kind.Instantiated,
+		kind.Interface:
+		return true
+	default:
+		return false
+	}
 }
 
 func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard internal.RecursionGuard, memo map[rewriteKey]Type) Type {
@@ -217,38 +303,23 @@ func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard i
 		return orig
 	}
 
-	builder := Func()
 	paramSrc := v.Params
 	if params != nil {
 		paramSrc = params
-	}
-	for _, p := range paramSrc {
-		if p.Optional {
-			builder = builder.OptParam(p.Name, p.Type)
-		} else {
-			builder = builder.Param(p.Name, p.Type)
-		}
-	}
-	if variadic != nil {
-		builder = builder.Variadic(variadic)
 	}
 	returnsSrc := v.Returns
 	if returns != nil {
 		returnsSrc = returns
 	}
-	if len(returnsSrc) > 0 {
-		builder = builder.Returns(returnsSrc...)
-	}
-	if v.Effects != nil {
-		builder = builder.Effects(v.Effects)
-	}
-	if v.Spec != nil {
-		builder = builder.Spec(v.Spec)
-	}
-	if v.Refinement != nil {
-		builder = builder.WithRefinement(v.Refinement)
-	}
-	return builder.Build()
+	return buildFunctionType(
+		v.TypeParams,
+		paramSrc,
+		variadic,
+		returnsSrc,
+		v.Effects,
+		v.Spec,
+		v.Refinement,
+	)
 }
 
 func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard internal.RecursionGuard, memo map[rewriteKey]Type) Type {
@@ -294,31 +365,9 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard inter
 		return orig
 	}
 
-	builder := NewRecord()
-	if v.Open {
-		builder.SetOpen(true)
-	}
 	fieldsSrc := v.Fields
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	for _, f := range fieldsSrc {
-		switch {
-		case f.Optional && f.Readonly:
-			builder = builder.OptReadonlyField(f.Name, f.Type)
-		case f.Optional:
-			builder = builder.OptField(f.Name, f.Type)
-		case f.Readonly:
-			builder = builder.ReadonlyField(f.Name, f.Type)
-		default:
-			builder = builder.Field(f.Name, f.Type)
-		}
-	}
-	if metatable != nil {
-		builder = builder.Metatable(metatable)
-	}
-	if mapKey != nil && mapValue != nil {
-		builder = builder.MapComponent(mapKey, mapValue)
-	}
-	return builder.Build()
+	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, v.Open, true)
 }

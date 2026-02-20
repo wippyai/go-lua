@@ -29,6 +29,7 @@ type Solution struct {
 	pkResolver     *pathkey.Resolver
 	values         map[string]typ.Type // canonical key (sym<ID>@<ver><segs>) -> type
 	edgeConditions map[edgeKey]constraint.Condition
+	declaredSyms   []cfg.SymbolID
 
 	edgeNumericConstraints map[edgeKey][]constraint.NumericConstraint
 	unsatEdges             map[edgeKey]bool // edges proven unreachable by constraints
@@ -37,9 +38,14 @@ type Solution struct {
 	iterations             int
 
 	// Scratch buffers to reduce allocations in hot paths
-	scratchTypes  []typ.Type
-	scratchSuffix map[string]struct{}
-	pathAliases   map[string]string // canonical target path key -> canonical source path key
+	scratchTypes           []typ.Type
+	scratchSuffix          map[string]struct{}
+	scratchVersionIDs      map[cfg.SymbolID]int
+	scratchMissingVersions map[cfg.SymbolID]struct{}
+	scratchUnresolvedPaths map[constraint.PathKey]struct{}
+	scratchValueMap        map[constraint.PathKey]typ.Type
+	scratchResolvedPathMap map[constraint.PathKey]constraint.PathKey
+	pathAliases            map[string]string // canonical target path key -> canonical source path key
 }
 
 // edgeKey identifies a CFG edge for condition and constraint lookups.
@@ -97,7 +103,19 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 		numericStates:          make(map[cfg.Point]*numeric.State),
 		scratchTypes:           make([]typ.Type, 0, 8),
 		scratchSuffix:          make(map[string]struct{}, 16),
+		scratchVersionIDs:      make(map[cfg.SymbolID]int, 16),
+		scratchMissingVersions: make(map[cfg.SymbolID]struct{}, 16),
+		scratchUnresolvedPaths: make(map[constraint.PathKey]struct{}, 16),
+		scratchValueMap:        make(map[constraint.PathKey]typ.Type, 16),
+		scratchResolvedPathMap: make(map[constraint.PathKey]constraint.PathKey, 16),
 		pathAliases:            make(map[string]string, size),
+	}
+	if inputs != nil && len(inputs.DeclaredTypes) > 0 {
+		s.declaredSyms = make([]cfg.SymbolID, 0, len(inputs.DeclaredTypes))
+		for sym := range inputs.DeclaredTypes {
+			s.declaredSyms = append(s.declaredSyms, sym)
+		}
+		slices.Sort(s.declaredSyms)
 	}
 	s.buildEdgeConditions()
 	s.buildEdgeNumericConstraints()
@@ -157,24 +175,73 @@ func (s *Solution) runPropagation() {
 //
 // This environment is passed to the constraint solver for type narrowing.
 func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, baseType typ.Type, constraints []constraint.Constraint) map[constraint.PathKey]typ.Type {
-	result := make(map[constraint.PathKey]typ.Type)
+	result := s.scratchValueMap
+	if result == nil {
+		result = make(map[constraint.PathKey]typ.Type, 1+len(s.declaredSyms))
+	}
+	clear(result)
+
+	versionIDs := s.scratchVersionIDs
+	if versionIDs == nil {
+		versionIDs = make(map[cfg.SymbolID]int, len(s.declaredSyms)+1)
+	}
+	clear(versionIDs)
+
+	missingVersions := s.scratchMissingVersions
+	if missingVersions == nil {
+		missingVersions = make(map[cfg.SymbolID]struct{}, 8)
+	}
+	clear(missingVersions)
+	hasMissingVersions := false
+
+	unresolved := s.scratchUnresolvedPaths
+	if unresolved == nil {
+		unresolved = make(map[constraint.PathKey]struct{}, len(constraints))
+	}
+	clear(unresolved)
+
+	keyAtPoint := func(path constraint.Path) constraint.PathKey {
+		if path.IsEmpty() {
+			return ""
+		}
+		if path.IsPlaceholder() {
+			return s.pkResolver.KeyAt(p, path)
+		}
+		if path.Symbol == 0 {
+			return ""
+		}
+		if path.Version != 0 {
+			return s.pkResolver.KeyAtVersion(path.Symbol, path.Version, path.Segments)
+		}
+		if hasMissingVersions {
+			if _, missing := missingVersions[path.Symbol]; missing {
+				return ""
+			}
+		}
+		if verID, ok := versionIDs[path.Symbol]; ok {
+			return s.pkResolver.KeyAtVersion(path.Symbol, verID, path.Segments)
+		}
+		ver := s.pkResolver.VersionAtSym(p, path.Symbol)
+		if ver.IsZero() {
+			missingVersions[path.Symbol] = struct{}{}
+			hasMissingVersions = true
+			return ""
+		}
+		versionIDs[path.Symbol] = ver.ID
+		return s.pkResolver.KeyAtVersion(path.Symbol, ver.ID, path.Segments)
+	}
 
 	// Add target path with its base type using canonical key
-	targetKey := s.pkResolver.KeyAt(p, targetPath)
+	targetKey := keyAtPoint(targetPath)
 	if targetKey != "" {
 		result[targetKey] = baseType
 	}
 
 	// Add declared types for symbols visible at this point
 	if s.inputs != nil && s.inputs.DeclaredTypes != nil && s.inputs.Graph != nil {
-		declSyms := make([]cfg.SymbolID, 0, len(s.inputs.DeclaredTypes))
-		for sym := range s.inputs.DeclaredTypes {
-			declSyms = append(declSyms, sym)
-		}
-		slices.Sort(declSyms)
-		for _, sym := range declSyms {
+		for _, sym := range s.declaredSyms {
 			declPath := constraint.Path{Symbol: sym}
-			canonicalKey := s.pkResolver.KeyAt(p, declPath)
+			canonicalKey := keyAtPoint(declPath)
 			if canonicalKey == "" {
 				continue
 			}
@@ -192,7 +259,7 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 				return nil, false
 			}
 			rootPath := constraint.Path{Symbol: sym}
-			rootKey := s.pkResolver.KeyAt(p, rootPath)
+			rootKey := keyAtPoint(rootPath)
 			if rootKey == "" {
 				return nil, false
 			}
@@ -210,21 +277,24 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 			return nil, false
 		}
 
-		seen := make(map[constraint.PathKey]bool)
-		for key := range result {
-			seen[key] = true
-		}
+		// Tracks canonical paths we already attempted but could not resolve.
+		// Successful resolutions live in result and are checked directly.
 		for _, c := range constraints {
 			for _, cpath := range c.Paths() {
 				if cpath.IsEmpty() || cpath.Symbol == 0 {
 					continue
 				}
 				cpath = normalizeConstraintPathForQuery(cpath)
-				canonicalKey := s.pkResolver.KeyAt(p, cpath)
-				if canonicalKey == "" || seen[canonicalKey] {
+				canonicalKey := keyAtPoint(cpath)
+				if canonicalKey == "" {
 					continue
 				}
-				seen[canonicalKey] = true
+				if _, exists := result[canonicalKey]; exists {
+					continue
+				}
+				if _, knownUnresolved := unresolved[canonicalKey]; knownUnresolved {
+					continue
+				}
 
 				// Look up value using canonical key
 				if t := s.values[string(canonicalKey)]; t != nil {
@@ -256,6 +326,8 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 						continue
 					}
 				}
+
+				unresolved[canonicalKey] = struct{}{}
 			}
 		}
 	}
@@ -579,20 +651,30 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 	}
 
 	var fields []mergedField
-	baseSym, baseVersion, _, ok := pathkey.ParseKey(constraint.PathKey(baseKey))
+	baseSym, baseVersion, _, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(baseKey))
 	if !ok {
 		return baseType
 	}
+	baseRoot := pathkey.SymbolVersionRoot(baseSym, baseVersion)
+	prefixLen := len(baseRoot)
 	keys := make([]string, 0, len(s.values))
 	for key := range s.values {
+		if len(key) <= prefixLen || key[:prefixLen] != baseRoot {
+			continue
+		}
+		// Match only strict child paths of this symbol/version root.
+		next := key[prefixLen]
+		if next != '.' && next != '[' {
+			continue
+		}
 		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return baseType
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		childSym, childVersion, suffix, ok := pathkey.ParseKey(constraint.PathKey(key))
-		if !ok || childSym != baseSym || childVersion != baseVersion || suffix == "" {
-			continue
-		}
+		suffix := key[prefixLen:]
 		segs := pathkey.ParseSuffix(suffix)
 		if len(segs) != 1 {
 			continue
