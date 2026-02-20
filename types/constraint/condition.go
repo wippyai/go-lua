@@ -400,6 +400,9 @@ func (s constraintSorter) Less(i, j int) bool {
 	if s[i].k != s[j].k {
 		return s[i].k < s[j].k
 	}
+	if s[i].c.Equals(s[j].c) {
+		return false
+	}
 	si := cachedConstraintRepr(s, i)
 	sj := cachedConstraintRepr(s, j)
 	return si < sj
@@ -629,6 +632,9 @@ func compareConstraints(a Constraint, aHash uint64, b Constraint, bHash uint64) 
 	}
 	if aKind > bKind {
 		return 1
+	}
+	if a.Equals(b) {
+		return 0
 	}
 	aStr := constraintString(a)
 	bStr := constraintString(b)
@@ -886,14 +892,18 @@ func (s disjunctSorter) Less(i, j int) bool {
 		return s[i].hash < s[j].hash
 	}
 	ai, aj := s[i].conj, s[j].conj
+	ahi, ahj := s[i].hashes, s[j].hashes
 	for k := 0; k < len(ai) && k < len(aj); k++ {
-		aki, akj := ai[k].Hash(), aj[k].Hash()
+		aki, akj := ahi[k], ahj[k]
 		if aki != akj {
 			return aki < akj
 		}
 		ki, kj := ai[k].Kind(), aj[k].Kind()
 		if ki != kj {
 			return ki < kj
+		}
+		if ai[k].Equals(aj[k]) {
+			continue
 		}
 		si, sj := constraintString(ai[k]), constraintString(aj[k])
 		if si != sj {

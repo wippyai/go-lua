@@ -16,6 +16,14 @@ type Graph struct {
 	info   map[basecfg.Point]NodeInfo
 	nested []NestedFunc
 	fn     *ast.FunctionExpr
+	// Precomputed point order/indexes for hot iterator paths.
+	orderedPoints         []Point
+	orderedAssignPoints   []Point
+	orderedStmtCallPoints []Point
+	orderedReturnPoints   []Point
+	orderedBranchPoints   []Point
+	orderedFuncDefPoints  []Point
+	orderedTypeDefPoints  []Point
 
 	// Binding table (AST ident -> symbol, populated before CFG build)
 	bindings *bind.BindingTable
@@ -44,6 +52,48 @@ type Graph struct {
 
 // Compile-time check that Graph implements VersionedGraph interface.
 var _ basecfg.VersionedGraph = (*Graph)(nil)
+
+type pointIndex struct {
+	all      []Point
+	assign   []Point
+	stmtCall []Point
+	ret      []Point
+	branch   []Point
+	funcDef  []Point
+	typeDef  []Point
+}
+
+func buildPointIndex(info map[basecfg.Point]NodeInfo) pointIndex {
+	if len(info) == 0 {
+		return pointIndex{}
+	}
+
+	all := make([]Point, 0, len(info))
+	for p := range info {
+		all = append(all, p)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
+
+	idx := pointIndex{all: all}
+	for _, p := range all {
+		switch info[p].(type) {
+		case *AssignInfo:
+			idx.assign = append(idx.assign, p)
+		case *CallInfo:
+			idx.stmtCall = append(idx.stmtCall, p)
+		case *ReturnInfo:
+			idx.ret = append(idx.ret, p)
+		case *BranchInfo:
+			idx.branch = append(idx.branch, p)
+		case *FuncDefInfo:
+			idx.funcDef = append(idx.funcDef, p)
+		case *TypeDefInfo:
+			idx.typeDef = append(idx.typeDef, p)
+		}
+	}
+
+	return idx
+}
 
 // Build creates an immutable Graph for a function body.
 // If globals is provided, those names are seeded into the binder's root scope
@@ -118,12 +168,20 @@ func BuildWithBindings(fn *ast.FunctionExpr, bindings *bind.BindingTable) *Graph
 	symbolNames := b.StealSymbolNames()
 	symbolKinds := b.StealSymbolKinds()
 	size := b.Cfg.Size()
+	pointIdx := buildPointIndex(b.Info)
 
 	return &Graph{
 		cfg:                   b.Cfg,
 		info:                  b.Info,
 		nested:                b.Nested,
 		fn:                    fn,
+		orderedPoints:         pointIdx.all,
+		orderedAssignPoints:   pointIdx.assign,
+		orderedStmtCallPoints: pointIdx.stmtCall,
+		orderedReturnPoints:   pointIdx.ret,
+		orderedBranchPoints:   pointIdx.branch,
+		orderedFuncDefPoints:  pointIdx.funcDef,
+		orderedTypeDefPoints:  pointIdx.typeDef,
 		bindings:              bindings,
 		phiNodes:              b.PhiNodes,
 		visibleVersion:        visibleVersion,
@@ -183,12 +241,20 @@ func BuildBlock(stmts []ast.Stmt, globals ...string) *Graph {
 	symbolNames := b.StealSymbolNames()
 	symbolKinds := b.StealSymbolKinds()
 	size := b.Cfg.Size()
+	pointIdx := buildPointIndex(b.Info)
 
 	return &Graph{
 		cfg:                   b.Cfg,
 		info:                  b.Info,
 		nested:                b.Nested,
 		fn:                    syntheticFn,
+		orderedPoints:         pointIdx.all,
+		orderedAssignPoints:   pointIdx.assign,
+		orderedStmtCallPoints: pointIdx.stmtCall,
+		orderedReturnPoints:   pointIdx.ret,
+		orderedBranchPoints:   pointIdx.branch,
+		orderedFuncDefPoints:  pointIdx.funcDef,
+		orderedTypeDefPoints:  pointIdx.typeDef,
 		bindings:              bindings,
 		phiNodes:              b.PhiNodes,
 		visibleVersion:        visibleVersion,
@@ -367,13 +433,27 @@ func (g *Graph) sortedPoints(match func(NodeInfo) bool) []Point {
 	if g == nil || g.info == nil {
 		return nil
 	}
-	points := make([]Point, 0, len(g.info))
-	for p, info := range g.info {
-		if match == nil || match(info) {
+	if len(g.orderedPoints) == 0 {
+		points := make([]Point, 0, len(g.info))
+		for p, info := range g.info {
+			if match == nil || match(info) {
+				points = append(points, p)
+			}
+		}
+		sort.Slice(points, func(i, j int) bool { return points[i] < points[j] })
+		return points
+	}
+	if match == nil {
+		points := make([]Point, len(g.orderedPoints))
+		copy(points, g.orderedPoints)
+		return points
+	}
+	points := make([]Point, 0, len(g.orderedPoints))
+	for _, p := range g.orderedPoints {
+		if match(g.info[p]) {
 			points = append(points, p)
 		}
 	}
-	sort.Slice(points, func(i, j int) bool { return points[i] < points[j] })
 	return points
 }
 
@@ -382,20 +462,36 @@ func (g *Graph) EachAssign(fn func(Point, *AssignInfo)) {
 	if g == nil || g.info == nil {
 		return
 	}
-	for _, p := range g.sortedPoints(func(info NodeInfo) bool {
-		_, ok := info.(*AssignInfo)
-		return ok
-	}) {
+	points := g.orderedAssignPoints
+	if len(points) == 0 && len(g.info) > 0 {
+		points = g.sortedPoints(func(info NodeInfo) bool {
+			_, ok := info.(*AssignInfo)
+			return ok
+		})
+	}
+	for _, p := range points {
 		fn(p, g.info[p].(*AssignInfo))
 	}
 }
 
 // AssignPoints returns all assignment points.
 func (g *Graph) AssignPoints() []Point {
-	return g.sortedPoints(func(info NodeInfo) bool {
-		_, ok := info.(*AssignInfo)
-		return ok
-	})
+	if g == nil || g.info == nil {
+		return nil
+	}
+	points := g.orderedAssignPoints
+	if len(points) == 0 && len(g.info) > 0 {
+		points = g.sortedPoints(func(info NodeInfo) bool {
+			_, ok := info.(*AssignInfo)
+			return ok
+		})
+	}
+	if len(points) == 0 {
+		return nil
+	}
+	out := make([]Point, len(points))
+	copy(out, points)
+	return out
 }
 
 // EachStmtCall calls fn for each call statement node in point order.
@@ -405,10 +501,14 @@ func (g *Graph) EachStmtCall(fn func(Point, *CallInfo)) {
 	if g == nil || g.info == nil {
 		return
 	}
-	for _, p := range g.sortedPoints(func(info NodeInfo) bool {
-		_, ok := info.(*CallInfo)
-		return ok
-	}) {
+	points := g.orderedStmtCallPoints
+	if len(points) == 0 && len(g.info) > 0 {
+		points = g.sortedPoints(func(info NodeInfo) bool {
+			_, ok := info.(*CallInfo)
+			return ok
+		})
+	}
+	for _, p := range points {
 		fn(p, g.info[p].(*CallInfo))
 	}
 }
@@ -433,7 +533,11 @@ func (g *Graph) EachCallSite(fn func(Point, *CallInfo)) {
 	if g == nil || g.info == nil {
 		return
 	}
-	for _, p := range g.sortedPoints(nil) {
+	points := g.orderedPoints
+	if len(points) == 0 && len(g.info) > 0 {
+		points = g.sortedPoints(nil)
+	}
+	for _, p := range points {
 		for _, call := range g.CallSitesAt(p) {
 			if call != nil {
 				fn(p, call)
@@ -447,10 +551,14 @@ func (g *Graph) EachReturn(fn func(Point, *ReturnInfo)) {
 	if g == nil || g.info == nil {
 		return
 	}
-	for _, p := range g.sortedPoints(func(info NodeInfo) bool {
-		_, ok := info.(*ReturnInfo)
-		return ok
-	}) {
+	points := g.orderedReturnPoints
+	if len(points) == 0 && len(g.info) > 0 {
+		points = g.sortedPoints(func(info NodeInfo) bool {
+			_, ok := info.(*ReturnInfo)
+			return ok
+		})
+	}
+	for _, p := range points {
 		fn(p, g.info[p].(*ReturnInfo))
 	}
 }
@@ -460,10 +568,14 @@ func (g *Graph) EachBranch(fn func(Point, *BranchInfo)) {
 	if g == nil || g.info == nil {
 		return
 	}
-	for _, p := range g.sortedPoints(func(info NodeInfo) bool {
-		_, ok := info.(*BranchInfo)
-		return ok
-	}) {
+	points := g.orderedBranchPoints
+	if len(points) == 0 && len(g.info) > 0 {
+		points = g.sortedPoints(func(info NodeInfo) bool {
+			_, ok := info.(*BranchInfo)
+			return ok
+		})
+	}
+	for _, p := range points {
 		fn(p, g.info[p].(*BranchInfo))
 	}
 }
@@ -473,10 +585,14 @@ func (g *Graph) EachFuncDef(fn func(Point, *FuncDefInfo)) {
 	if g == nil || g.info == nil {
 		return
 	}
-	for _, p := range g.sortedPoints(func(info NodeInfo) bool {
-		_, ok := info.(*FuncDefInfo)
-		return ok
-	}) {
+	points := g.orderedFuncDefPoints
+	if len(points) == 0 && len(g.info) > 0 {
+		points = g.sortedPoints(func(info NodeInfo) bool {
+			_, ok := info.(*FuncDefInfo)
+			return ok
+		})
+	}
+	for _, p := range points {
 		fn(p, g.info[p].(*FuncDefInfo))
 	}
 }
@@ -486,10 +602,14 @@ func (g *Graph) EachTypeDef(fn func(Point, *TypeDefInfo)) {
 	if g == nil || g.info == nil {
 		return
 	}
-	for _, p := range g.sortedPoints(func(info NodeInfo) bool {
-		_, ok := info.(*TypeDefInfo)
-		return ok
-	}) {
+	points := g.orderedTypeDefPoints
+	if len(points) == 0 && len(g.info) > 0 {
+		points = g.sortedPoints(func(info NodeInfo) bool {
+			_, ok := info.(*TypeDefInfo)
+			return ok
+		})
+	}
+	for _, p := range points {
 		fn(p, g.info[p].(*TypeDefInfo))
 	}
 }
@@ -499,7 +619,11 @@ func (g *Graph) EachNode(fn func(Point, NodeInfo)) {
 	if g == nil || g.info == nil {
 		return
 	}
-	for _, p := range g.sortedPoints(nil) {
+	points := g.orderedPoints
+	if len(points) == 0 && len(g.info) > 0 {
+		points = g.sortedPoints(nil)
+	}
+	for _, p := range points {
 		fn(p, g.info[p])
 	}
 }
