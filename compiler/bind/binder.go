@@ -77,7 +77,7 @@ func NewBinderWithDeclHint(globals []string, declHint int) *Binder {
 
 	symbolHint := len(globals)
 	if declHint >= 32 {
-		symbolHint += declHint + 8
+		symbolHint += declHint
 	}
 
 	b := &Binder{

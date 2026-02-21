@@ -130,6 +130,21 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 
 				return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
 			}
+			// Placeholder/unknown keys may still resolve to string fields at runtime.
+			// Keep this sound by returning an optional union of field types.
+			if keyType.Kind().IsPlaceholder() {
+				var types []typ.Type
+				for _, f := range r.Fields {
+					types = append(types, f.Type)
+				}
+				if r.HasMapComponent() {
+					types = append(types, r.MapValue)
+				}
+				if len(types) == 0 {
+					return indexResult{t: typ.Nil, ok: true}
+				}
+				return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
+			}
 
 			// Map component fallback for non-string-literal keys.
 			if r.HasMapComponent() && keyType != nil {

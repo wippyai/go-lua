@@ -162,8 +162,8 @@ type CFG struct {
 	exit  Point
 	Nodes []Node
 	edges []Edge
-	preds map[Point][]Point
-	succs map[Point][]Point
+	preds [][]Point
+	succs [][]Point
 	rpo   []Point
 }
 
@@ -175,14 +175,57 @@ func nextCFGID() uint64 {
 
 // New creates an empty CFG.
 func New() *CFG {
+	return NewWithCapacity(0, 0)
+}
+
+// NewWithCapacity creates an empty CFG with initial node/edge capacity hints.
+func NewWithCapacity(nodeCap, edgeCap int) *CFG {
+	if nodeCap < 2 {
+		nodeCap = 2
+	}
+	if edgeCap < 0 {
+		edgeCap = 0
+	}
+
 	c := &CFG{
 		id:    nextCFGID(),
-		preds: make(map[Point][]Point),
-		succs: make(map[Point][]Point),
+		Nodes: make([]Node, 0, nodeCap),
+		edges: make([]Edge, 0, edgeCap),
+		preds: make([][]Point, 0, nodeCap),
+		succs: make([][]Point, 0, nodeCap),
 	}
 	c.entry = c.AddNode(NodeEntry, 0, "")
 	c.exit = c.AddNode(NodeExit, 0, "")
 	return c
+}
+
+// Reserve increases node/edge capacities to at least the provided values.
+func (c *CFG) Reserve(nodeCap, edgeCap int) {
+	if c == nil {
+		return
+	}
+
+	if nodeCap > cap(c.Nodes) {
+		nodes := make([]Node, len(c.Nodes), nodeCap)
+		copy(nodes, c.Nodes)
+		c.Nodes = nodes
+	}
+	if nodeCap > cap(c.preds) {
+		preds := make([][]Point, len(c.preds), nodeCap)
+		copy(preds, c.preds)
+		c.preds = preds
+	}
+	if nodeCap > cap(c.succs) {
+		succs := make([][]Point, len(c.succs), nodeCap)
+		copy(succs, c.succs)
+		c.succs = succs
+	}
+
+	if edgeCap > cap(c.edges) {
+		edges := make([]Edge, len(c.edges), edgeCap)
+		copy(edges, c.edges)
+		c.edges = edges
+	}
 }
 
 // Entry returns the entry point.
@@ -203,8 +246,11 @@ func (c *CFG) Exit() Point {
 
 // Successor returns single successor (for non-branch nodes).
 func (c *CFG) Successor(p Point) Point {
-	if succs := c.succs[p]; len(succs) > 0 {
-		return succs[0]
+	idx := int(p)
+	if idx >= 0 && idx < len(c.succs) {
+		if succs := c.succs[idx]; len(succs) > 0 {
+			return succs[0]
+		}
 	}
 	return p
 }
@@ -222,15 +268,38 @@ func (c *CFG) AddNode(kind NodeKind, target SymbolID, callee string) Point {
 	c.invalidateRPO()
 	p := Point(len(c.Nodes))
 	c.Nodes = append(c.Nodes, Node{Point: p, Kind: kind, Target: target, Callee: callee})
+	c.ensureAdjacencyLen(len(c.Nodes))
 	return p
 }
 
 // AddEdge adds an edge.
 func (c *CFG) AddEdge(from, to Point, cond bool) {
+	fromIdx := int(from)
+	toIdx := int(to)
+	if fromIdx < 0 || toIdx < 0 {
+		return
+	}
+	maxIdx := fromIdx
+	if toIdx > maxIdx {
+		maxIdx = toIdx
+	}
+	c.ensureAdjacencyLen(maxIdx + 1)
+
 	c.invalidateRPO()
 	c.edges = append(c.edges, Edge{From: from, To: to, Cond: cond})
-	c.succs[from] = append(c.succs[from], to)
-	c.preds[to] = append(c.preds[to], from)
+	succs := c.succs[fromIdx]
+	if succs == nil {
+		succs = make([]Point, 0, 2)
+	}
+	succs = append(succs, to)
+	c.succs[fromIdx] = succs
+
+	preds := c.preds[toIdx]
+	if preds == nil {
+		preds = make([]Point, 0, 2)
+	}
+	preds = append(preds, from)
+	c.preds[toIdx] = preds
 }
 
 // RemoveOutgoing removes all outgoing edges from a node.
@@ -238,7 +307,11 @@ func (c *CFG) RemoveOutgoing(from Point) {
 	if c == nil {
 		return
 	}
-	succs := c.succs[from]
+	fromIdx := int(from)
+	if fromIdx < 0 || fromIdx >= len(c.succs) {
+		return
+	}
+	succs := c.succs[fromIdx]
 	if len(succs) == 0 {
 		return
 	}
@@ -251,9 +324,13 @@ func (c *CFG) RemoveOutgoing(from Point) {
 		filtered = append(filtered, e)
 	}
 	c.edges = filtered
-	delete(c.succs, from)
+	c.succs[fromIdx] = nil
 	for _, to := range succs {
-		preds := c.preds[to]
+		toIdx := int(to)
+		if toIdx < 0 || toIdx >= len(c.preds) {
+			continue
+		}
+		preds := c.preds[toIdx]
 		if len(preds) == 0 {
 			continue
 		}
@@ -264,10 +341,10 @@ func (c *CFG) RemoveOutgoing(from Point) {
 			}
 		}
 		if len(next) == 0 {
-			delete(c.preds, to)
+			c.preds[toIdx] = nil
 			continue
 		}
-		c.preds[to] = next
+		c.preds[toIdx] = next
 	}
 }
 
@@ -281,7 +358,11 @@ func (c *CFG) Node(p Point) *Node {
 
 // Predecessors returns all predecessors of p.
 func (c *CFG) Predecessors(p Point) []Point {
-	preds := c.preds[p]
+	idx := int(p)
+	if idx < 0 || idx >= len(c.preds) {
+		return nil
+	}
+	preds := c.preds[idx]
 	if len(preds) == 0 {
 		return nil
 	}
@@ -290,17 +371,35 @@ func (c *CFG) Predecessors(p Point) []Point {
 	return result
 }
 
+// PredecessorsReadOnly returns the internal predecessor slice for p.
+//
+// The returned slice must be treated as read-only by callers.
+func (c *CFG) PredecessorsReadOnly(p Point) []Point {
+	idx := int(p)
+	if idx < 0 || idx >= len(c.preds) {
+		return nil
+	}
+	return c.preds[idx]
+}
+
 // Predecessor returns single predecessor (for non-join nodes).
 func (c *CFG) Predecessor(p Point) Point {
-	if preds := c.preds[p]; len(preds) > 0 {
-		return preds[0]
+	idx := int(p)
+	if idx >= 0 && idx < len(c.preds) {
+		if preds := c.preds[idx]; len(preds) > 0 {
+			return preds[0]
+		}
 	}
 	return p
 }
 
 // Successors returns all successors of p.
 func (c *CFG) Successors(p Point) []Point {
-	succs := c.succs[p]
+	idx := int(p)
+	if idx < 0 || idx >= len(c.succs) {
+		return nil
+	}
+	succs := c.succs[idx]
 	if len(succs) == 0 {
 		return nil
 	}
@@ -309,14 +408,27 @@ func (c *CFG) Successors(p Point) []Point {
 	return result
 }
 
+// SuccessorsReadOnly returns the internal successor slice for p.
+//
+// The returned slice must be treated as read-only by callers.
+func (c *CFG) SuccessorsReadOnly(p Point) []Point {
+	idx := int(p)
+	if idx < 0 || idx >= len(c.succs) {
+		return nil
+	}
+	return c.succs[idx]
+}
+
 // IsJoin returns true if p has multiple predecessors.
 func (c *CFG) IsJoin(p Point) bool {
-	return len(c.preds[p]) > 1
+	idx := int(p)
+	return idx >= 0 && idx < len(c.preds) && len(c.preds[idx]) > 1
 }
 
 // IsBranch returns true if p has multiple successors.
 func (c *CFG) IsBranch(p Point) bool {
-	return len(c.succs[p]) > 1
+	idx := int(p)
+	return idx >= 0 && idx < len(c.succs) && len(c.succs[idx]) > 1
 }
 
 // Edges returns all edges.
@@ -368,13 +480,24 @@ func (c *CFG) AddBranch(condVar SymbolID, condCheck CondCheck) Point {
 // Only nodes reachable from the entry point are included. Unreachable code
 // (after unconditional return, for example) is excluded.
 func (c *CFG) RPO() []Point {
+	ro := c.RPOReadOnly()
+	if len(ro) == 0 {
+		return nil
+	}
+	out := make([]Point, len(ro))
+	copy(out, ro)
+	return out
+}
+
+// RPOReadOnly returns cached reverse post-order without making a copy.
+//
+// The returned slice must be treated as read-only by callers.
+func (c *CFG) RPOReadOnly() []Point {
 	if c == nil {
 		return nil
 	}
 	if len(c.rpo) > 0 {
-		out := make([]Point, len(c.rpo))
-		copy(out, c.rpo)
-		return out
+		return c.rpo
 	}
 
 	n := len(c.Nodes)
@@ -401,10 +524,7 @@ func (c *CFG) RPO() []Point {
 	}
 	c.rpo = make([]Point, len(order))
 	copy(c.rpo, order)
-
-	out := make([]Point, len(c.rpo))
-	copy(out, c.rpo)
-	return out
+	return c.rpo
 }
 
 func (c *CFG) invalidateRPO() {
@@ -412,6 +532,15 @@ func (c *CFG) invalidateRPO() {
 		return
 	}
 	c.rpo = nil
+}
+
+func (c *CFG) ensureAdjacencyLen(n int) {
+	if c == nil || n <= len(c.preds) {
+		return
+	}
+	grow := n - len(c.preds)
+	c.preds = append(c.preds, make([][]Point, grow)...)
+	c.succs = append(c.succs, make([][]Point, grow)...)
 }
 
 // Reachable returns a set of all nodes reachable from entry.
@@ -430,7 +559,7 @@ func (c *CFG) Reachable() map[Point]bool {
 		}
 		visited[p] = true
 		result[p] = true
-		for _, succ := range c.succs[p] {
+		for _, succ := range c.succs[int(p)] {
 			visit(succ)
 		}
 	}

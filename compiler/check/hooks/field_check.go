@@ -637,7 +637,11 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth,
 	}
 
 	if rec, ok := unwrap.Alias(objType).(*typ.Record); ok && !rec.HasMapComponent() && !rec.Open {
-		if !isLiteralStringKeyType(keyType) {
+		// Closed records support dynamic string indexing (Lua table semantics).
+		// Non-string keys remain invalid.
+		keyKind := keyType.Kind()
+		allowsDynamicString := keyKind == kind.String || keyKind.IsPlaceholder()
+		if !allowsDynamicString && !isLiteralStringKeyType(keyType) {
 			return []diag.Diagnostic{indexError(objType, e, sourceName)}
 		}
 	}
