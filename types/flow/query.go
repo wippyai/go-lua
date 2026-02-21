@@ -105,7 +105,7 @@ func (s *Solution) conditionAtFallback(p cfg.Point, depth int) constraint.Condit
 	if s.inputs == nil || s.inputs.Graph == nil {
 		return constraint.TrueCondition()
 	}
-	preds := s.inputs.Graph.Predecessors(p)
+	preds := graphPredecessors(s.inputs.Graph, p)
 	if len(preds) != 1 {
 		return constraint.TrueCondition()
 	}

@@ -800,6 +800,17 @@ func (g *Graph) Predecessors(p Point) []Point {
 	return g.cfg.Predecessors(p)
 }
 
+// PredecessorsReadOnly returns predecessors without copying.
+//
+// The returned slice must be treated as read-only by callers.
+func (g *Graph) PredecessorsReadOnly(p Point) []Point {
+	if g == nil || g.cfg == nil {
+		return nil
+	}
+
+	return g.cfg.PredecessorsReadOnly(p)
+}
+
 // Successors returns all successors of p.
 func (g *Graph) Successors(p Point) []Point {
 	if g == nil || g.cfg == nil {
@@ -807,6 +818,17 @@ func (g *Graph) Successors(p Point) []Point {
 	}
 
 	return g.cfg.Successors(p)
+}
+
+// SuccessorsReadOnly returns successors without copying.
+//
+// The returned slice must be treated as read-only by callers.
+func (g *Graph) SuccessorsReadOnly(p Point) []Point {
+	if g == nil || g.cfg == nil {
+		return nil
+	}
+
+	return g.cfg.SuccessorsReadOnly(p)
 }
 
 // Successor returns single successor (for non-branch nodes).

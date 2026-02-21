@@ -475,7 +475,7 @@ func (s *Solution) solve() {
 		changedKeys := s.processPointReturnChangedKeys(p)
 		if len(changedKeys) > 0 {
 			// Add direct successors
-			for _, succ := range g.Successors(p) {
+			for _, succ := range graphSuccessors(g, p) {
 				if succIdx := int(succ); succIdx >= 0 && succIdx < len(inQueue) && !inQueue[succIdx] {
 					worklist = append(worklist, succ)
 					inQueue[succIdx] = true

@@ -200,7 +200,7 @@ func (s *Solution) preAssignmentNarrowedTypeAt(p cfg.Point, path constraint.Path
 	if s == nil || s.inputs == nil || s.inputs.Graph == nil || path.Symbol == 0 {
 		return nil
 	}
-	preds := s.inputs.Graph.Predecessors(p)
+	preds := graphPredecessors(s.inputs.Graph, p)
 	if len(preds) == 0 {
 		return nil
 	}
@@ -303,7 +303,7 @@ func (s *Solution) aliasSourceKeyAt(p cfg.Point, path constraint.Path) string {
 	}
 
 	// Fall back to predecessor versions for carried structured aliases.
-	for _, pred := range s.inputs.Graph.Predecessors(p) {
+	for _, pred := range graphPredecessors(s.inputs.Graph, p) {
 		ver := s.inputs.Graph.VisibleVersion(pred, path.Symbol)
 		if ver.Symbol == 0 || ver.ID == 0 {
 			continue
@@ -357,7 +357,7 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 		return nil
 	}
 
-	preds := s.inputs.Graph.Predecessors(p)
+	preds := graphPredecessors(s.inputs.Graph, p)
 	if len(preds) == 0 {
 		return nil
 	}
@@ -779,7 +779,7 @@ func (s *Solution) joinPredecessorRootTypes(p cfg.Point, sym cfg.SymbolID) typ.T
 	if s == nil || s.inputs == nil || s.inputs.Graph == nil || s.pkResolver == nil || sym == 0 {
 		return nil
 	}
-	preds := s.inputs.Graph.Predecessors(p)
+	preds := graphPredecessors(s.inputs.Graph, p)
 	if len(preds) == 0 {
 		return nil
 	}

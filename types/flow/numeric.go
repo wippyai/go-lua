@@ -84,7 +84,7 @@ func (s *Solution) checkNumericConstraints() {
 			} else {
 				state[p] = newState
 			}
-			for _, succ := range c.Successors(p) {
+			for _, succ := range graphSuccessors(c, p) {
 				if relevant[succ] && !inQueue[succ] {
 					worklist = append(worklist, succ)
 					inQueue[succ] = true
@@ -177,7 +177,7 @@ func (s *Solution) computeRelevantPoints() map[cfg.Point]bool {
 
 	for i := 0; i < len(seeds); i++ {
 		p := seeds[i]
-		for _, succ := range c.Successors(p) {
+		for _, succ := range graphSuccessors(c, p) {
 			if !relevant[succ] {
 				relevant[succ] = true
 				seeds = append(seeds, succ)
@@ -193,7 +193,7 @@ func (s *Solution) computeRelevantPoints() map[cfg.Point]bool {
 
 	for i := 0; i < len(backSeeds); i++ {
 		p := backSeeds[i]
-		for _, pred := range c.Predecessors(p) {
+		for _, pred := range graphPredecessors(c, p) {
 			if !relevant[pred] {
 				relevant[pred] = true
 				backSeeds = append(backSeeds, pred)
@@ -218,7 +218,7 @@ func (s *Solution) computeRelevantPoints() map[cfg.Point]bool {
 //
 // Returns nil if no predecessor has a non-top state (point has no numeric facts).
 func (s *Solution) computeNumericStateAt(c cfg.Graph, p cfg.Point, state map[cfg.Point]*numeric.State) *numeric.State {
-	preds := c.Predecessors(p)
+	preds := graphPredecessors(c, p)
 	if len(preds) == 0 {
 		return nil
 	}

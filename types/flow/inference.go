@@ -250,7 +250,7 @@ func inferFunctionEffectCore(
 		onReturnCond = substituteToPlaceholdersCondition(filterParamCondition(onReturnCond, paramIndex, paramNameIndex), paramIndex, paramNameIndex)
 	}
 
-	exitHasPredecessors := len(g.Predecessors(g.Exit())) > 0
+	exitHasPredecessors := len(graphPredecessors(g, g.Exit())) > 0
 	terminates := !hasReturnNode && !exitHasPredecessors
 
 	eff := &constraint.FunctionEffect{

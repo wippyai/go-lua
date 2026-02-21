@@ -33,6 +33,28 @@ type Graph interface {
 	Successors(p cfg.Point) []cfg.Point
 }
 
+type predecessorReadOnly interface {
+	PredecessorsReadOnly(p cfg.Point) []cfg.Point
+}
+
+type successorReadOnly interface {
+	SuccessorsReadOnly(p cfg.Point) []cfg.Point
+}
+
+func graphPredecessors(g Graph, p cfg.Point) []cfg.Point {
+	if ro, ok := g.(predecessorReadOnly); ok {
+		return ro.PredecessorsReadOnly(p)
+	}
+	return g.Predecessors(p)
+}
+
+func graphSuccessors(g Graph, p cfg.Point) []cfg.Point {
+	if ro, ok := g.(successorReadOnly); ok {
+		return ro.SuccessorsReadOnly(p)
+	}
+	return g.Successors(p)
+}
+
 // EdgeConditions maps CFG edges to their guard conditions.
 //
 // An edge condition describes what must be true when control flows along
@@ -151,7 +173,7 @@ func Propagate(inputs *Inputs) *Result {
 		}
 
 		if changed {
-			for _, succ := range g.Successors(p) {
+			for _, succ := range graphSuccessors(g, p) {
 				if !inQueue[succ] {
 					worklist = append(worklist, succ)
 					inQueue[succ] = true
@@ -186,7 +208,7 @@ func computeConditionAtPoint(
 		return constraint.TrueCondition()
 	}
 
-	preds := g.Predecessors(p)
+	preds := graphPredecessors(g, p)
 	if len(preds) == 0 {
 		return constraint.FalseCondition()
 	}
