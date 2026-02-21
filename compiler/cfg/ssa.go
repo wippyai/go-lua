@@ -304,10 +304,14 @@ func (b *Builder) renameSSA(
 		rootByIndex[i] = assignedSyms[sym]
 		nextVersionID[i] = b.NextVersionID[sym]
 
-		// Estimate capacity: 1 for initial def + typical dominator depth.
-		capacity := len(defPoints[sym]) + 2
-		if capacity > 4 {
-			capacity = 4
+		// Keep initial stack capacity modest; growth is cheap and many symbols
+		// only need a small number of active versions.
+		capacity := len(defPoints[sym]) + 1
+		if capacity < 2 {
+			capacity = 2
+		}
+		if capacity > 3 {
+			capacity = 3
 		}
 		stacks[i] = make([]Version, 0, capacity)
 	}
