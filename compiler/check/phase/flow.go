@@ -150,7 +150,7 @@ func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, g
 
 	var slots []cfg.ParamSlot
 	if graph != nil {
-		slots = graph.ParamSlots()
+		slots = graph.ParamSlotsReadOnly()
 	}
 	if len(slots) == 0 {
 		params := make([]flow.ParamInfo, 0, len(fn.ParList.Names))

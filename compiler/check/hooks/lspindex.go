@@ -86,7 +86,7 @@ func (idx *LSPIndexer) extractParameters(file string, graph *cfg.Graph, result *
 		return
 	}
 
-	paramSlots := graph.ParamSlots()
+	paramSlots := graph.ParamSlotsReadOnly()
 	fn := graph.Func()
 
 	if fn == nil || len(paramSlots) == 0 {

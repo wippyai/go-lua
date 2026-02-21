@@ -113,7 +113,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 		if info.Graph == nil {
 			continue
 		}
-		for _, slot := range info.Graph.ParamSlots() {
+		for _, slot := range info.Graph.ParamSlotsReadOnly() {
 			srcIdx, hasSource := slot.SourceParamIndex()
 			if !hasSource || slot.Symbol == 0 {
 				continue

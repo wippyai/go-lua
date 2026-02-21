@@ -34,39 +34,61 @@ func (s ParamSlot) SourceParamIndex() (int, bool) {
 // All downstream phases should consume this API rather than re-deriving
 // ParList-to-symbol mapping, which can drift for implicit method receivers.
 func (g *Graph) ParamSlots() []ParamSlot {
-	if g == nil || len(g.paramSymbols) == 0 {
+	if g == nil || len(g.paramSlots) == 0 {
 		return nil
 	}
+	slots := make([]ParamSlot, len(g.paramSlots))
+	copy(slots, g.paramSlots)
+	return slots
+}
 
-	slots := make([]ParamSlot, 0, len(g.paramSymbols))
+// ParamSlotsReadOnly returns the canonical parameter layout for this graph.
+// The returned slice must be treated as immutable by callers.
+func (g *Graph) ParamSlotsReadOnly() []ParamSlot {
+	if g == nil {
+		return nil
+	}
+	return g.paramSlots
+}
 
+func buildParamSlots(
+	fn *ast.FunctionExpr,
+	paramNames []string,
+	paramSymbols []SymbolID,
+	paramDeclPoints []Point,
+	symbolNames map[SymbolID]string,
+) []ParamSlot {
+	if len(paramSymbols) == 0 {
+		return nil
+	}
+	slots := make([]ParamSlot, 0, len(paramSymbols))
 	var parNames []string
 	var parTypes []ast.TypeExpr
-	if g.fn != nil && g.fn.ParList != nil {
-		parNames = g.fn.ParList.Names
-		parTypes = g.fn.ParList.Types
+	if fn != nil && fn.ParList != nil {
+		parNames = fn.ParList.Names
+		parTypes = fn.ParList.Types
 	}
 
-	hasImplicitSelf := len(g.paramSymbols) == len(parNames)+1 &&
-		len(g.paramNames) == len(g.paramSymbols) &&
-		len(g.paramNames) > 0 &&
-		g.paramNames[0] == "self" &&
+	hasImplicitSelf := len(paramSymbols) == len(parNames)+1 &&
+		len(paramNames) == len(paramSymbols) &&
+		len(paramNames) > 0 &&
+		paramNames[0] == "self" &&
 		(len(parNames) == 0 || parNames[0] != "self")
 
-	for i, sym := range g.paramSymbols {
+	for i, sym := range paramSymbols {
 		slot := ParamSlot{
 			Symbol:      sym,
 			SourceIndex: i,
 		}
 
-		if i < len(g.paramNames) {
-			slot.Name = g.paramNames[i]
+		if i < len(paramNames) {
+			slot.Name = paramNames[i]
 		}
 		if slot.Name == "" && sym != 0 {
-			slot.Name = g.NameOf(sym)
+			slot.Name = symbolNames[sym]
 		}
-		if i < len(g.paramDeclPoints) {
-			slot.DeclPoint = g.paramDeclPoints[i]
+		if i < len(paramDeclPoints) {
+			slot.DeclPoint = paramDeclPoints[i]
 		}
 
 		if hasImplicitSelf {

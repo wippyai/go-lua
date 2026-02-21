@@ -648,7 +648,7 @@ func (s *Synthesizer) buildFunctionTypeWithSummary(
 
 func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, expected *typ.Function) map[cfg.SymbolID]typ.Type {
 	overlay := make(map[cfg.SymbolID]typ.Type)
-	for _, slot := range fnGraph.ParamSlots() {
+	for _, slot := range fnGraph.ParamSlotsReadOnly() {
 		if slot.Symbol == 0 {
 			continue
 		}
@@ -686,7 +686,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		return nil
 	}
 
-	paramSlots := fnGraph.ParamSlots()
+	paramSlots := fnGraph.ParamSlotsReadOnly()
 	if len(paramSlots) == 0 {
 		return nil
 	}

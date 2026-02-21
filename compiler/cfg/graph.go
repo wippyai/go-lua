@@ -48,6 +48,7 @@ type Graph struct {
 	paramNames      []string
 	paramSymbols    []basecfg.SymbolID
 	paramDeclPoints []Point
+	paramSlots      []ParamSlot
 }
 
 // Compile-time check that Graph implements VersionedGraph interface.
@@ -181,6 +182,7 @@ func BuildWithBindings(fn *ast.FunctionExpr, bindings *bind.BindingTable) *Graph
 	declPoints := b.StealDeclPoints()
 	symbolNames := b.StealSymbolNames()
 	symbolKinds := b.StealSymbolKinds()
+	paramSlots := buildParamSlots(fn, b.ParamNames, b.ParamSymbols, b.ParamDeclPoints, symbolNames)
 	size := b.Cfg.Size()
 	pointIdx := buildPointIndex(b.Info, size)
 	infoByPoint := denseNodeInfoByPoint(b.Info, size)
@@ -216,6 +218,7 @@ func BuildWithBindings(fn *ast.FunctionExpr, bindings *bind.BindingTable) *Graph
 		paramNames:            b.ParamNames,
 		paramSymbols:          b.ParamSymbols,
 		paramDeclPoints:       b.ParamDeclPoints,
+		paramSlots:            paramSlots,
 	}
 }
 
@@ -261,6 +264,7 @@ func BuildBlock(stmts []ast.Stmt, globals ...string) *Graph {
 	declPoints := b.StealDeclPoints()
 	symbolNames := b.StealSymbolNames()
 	symbolKinds := b.StealSymbolKinds()
+	paramSlots := buildParamSlots(syntheticFn, b.ParamNames, b.ParamSymbols, b.ParamDeclPoints, symbolNames)
 	size := b.Cfg.Size()
 	pointIdx := buildPointIndex(b.Info, size)
 	infoByPoint := denseNodeInfoByPoint(b.Info, size)
@@ -293,6 +297,7 @@ func BuildBlock(stmts []ast.Stmt, globals ...string) *Graph {
 		symbolNames:           symbolNames,
 		symbolKinds:           symbolKinds,
 		directAliases:         computeDirectAliasIndex(b.Info, bindings),
+		paramSlots:            paramSlots,
 	}
 }
 
