@@ -103,7 +103,7 @@ type AssignInfo struct {
 	IsLocal bool     // local x = ... vs x = ...
 	Stmt    ast.Stmt // original AST statement (for position info)
 
-	Targets       []AssignTarget
+	Targets []AssignTarget
 	// Inline backing for the common single-target assignment case.
 	// Keeps Targets behavior while avoiding a per-node heap allocation.
 	singleTarget  [1]AssignTarget
@@ -116,6 +116,9 @@ type AssignInfo struct {
 
 	// Type annotations (for local assignments)
 	TypeAnnotations []ast.TypeExpr
+	// Inline backing for the common single-target annotation case.
+	// Keeps TypeAnnotations behavior while avoiding a per-node heap allocation.
+	singleTypeAnnotation [1]ast.TypeExpr
 
 	// For generic for: iterator expressions
 	IterExprs []ast.Expr

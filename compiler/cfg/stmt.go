@@ -82,11 +82,12 @@ func (b *Builder) ParamDefs(fn *ast.FunctionExpr) {
 		b.ParamSymbols = append(b.ParamSymbols, sym)
 		b.ParamDeclPoints = append(b.ParamDeclPoints, p)
 
-		b.Info[p] = &AssignInfo{
-			IsLocal:         true,
-			Targets:         []AssignTarget{{Kind: TargetIdent, Name: name, Symbol: sym}},
-			TypeAnnotations: []ast.TypeExpr{typeAnnotation},
-		}
+		info := &AssignInfo{IsLocal: true}
+		info.Targets = info.singleTarget[:]
+		info.Targets[0] = AssignTarget{Kind: TargetIdent, Name: name, Symbol: sym}
+		info.TypeAnnotations = info.singleTypeAnnotation[:]
+		info.TypeAnnotations[0] = typeAnnotation
+		b.Info[p] = info
 	}
 }
 
@@ -142,20 +143,23 @@ func (b *Builder) LocalAssign(s *ast.LocalAssignStmt) {
 	p := b.Cfg.AddNode(basecfg.NodeAssign, 0, "")
 	b.AddLinearEdge(p)
 
-	var annotations []ast.TypeExpr
-	if len(s.Types) > 0 {
-		annotations = make([]ast.TypeExpr, len(s.Names))
-	}
 	sourceNames := extractIdentNames(s.Exprs)
 
 	info := &AssignInfo{
-		IsLocal:         true,
-		Stmt:            s,
-		Sources:         s.Exprs,
-		SourceNames:     sourceNames,
-		SourceCalls:     ExtractSourceCalls(s.Exprs),
-		TypeAnnotations: annotations,
+		IsLocal:     true,
+		Stmt:        s,
+		Sources:     s.Exprs,
+		SourceNames: sourceNames,
+		SourceCalls: ExtractSourceCalls(s.Exprs),
 	}
+	if len(s.Types) > 0 {
+		if len(s.Names) == 1 {
+			info.TypeAnnotations = info.singleTypeAnnotation[:]
+		} else {
+			info.TypeAnnotations = make([]ast.TypeExpr, len(s.Names))
+		}
+	}
+	annotations := info.TypeAnnotations
 	switch len(s.Names) {
 	case 1:
 		info.Targets = info.singleTarget[:]

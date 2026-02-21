@@ -86,7 +86,38 @@ func buildPointIndex(info map[basecfg.Point]NodeInfo, size int) pointIndex {
 		sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
 	}
 
-	idx := pointIndex{all: all}
+	assignCount := 0
+	stmtCallCount := 0
+	retCount := 0
+	branchCount := 0
+	funcDefCount := 0
+	typeDefCount := 0
+	for _, p := range all {
+		switch info[p].(type) {
+		case *AssignInfo:
+			assignCount++
+		case *CallInfo:
+			stmtCallCount++
+		case *ReturnInfo:
+			retCount++
+		case *BranchInfo:
+			branchCount++
+		case *FuncDefInfo:
+			funcDefCount++
+		case *TypeDefInfo:
+			typeDefCount++
+		}
+	}
+
+	idx := pointIndex{
+		all:      all,
+		assign:   make([]Point, 0, assignCount),
+		stmtCall: make([]Point, 0, stmtCallCount),
+		ret:      make([]Point, 0, retCount),
+		branch:   make([]Point, 0, branchCount),
+		funcDef:  make([]Point, 0, funcDefCount),
+		typeDef:  make([]Point, 0, typeDefCount),
+	}
 	for _, p := range all {
 		switch info[p].(type) {
 		case *AssignInfo:
