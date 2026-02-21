@@ -2,6 +2,7 @@ package typ
 
 import (
 	"reflect"
+	"unsafe"
 
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
@@ -68,187 +69,180 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 		}
 	}
 
-	return VisitWithGuard(a, guard, false, func(next internal.RecursionGuard) Visitor[bool] {
-		return Visitor[bool]{
-			Optional: func(o *Optional) bool {
-				return typeEqualsGuard(o.Inner, b.(*Optional).Inner, next, seen)
-			},
-			Union: func(u *Union) bool {
-				vb := b.(*Union)
-				if len(u.Members) != len(vb.Members) {
-					return false
-				}
-				for i, m := range u.Members {
-					if !typeEqualsGuard(m, vb.Members[i], next, seen) {
-						return false
-					}
-				}
-				return true
-			},
-			Intersection: func(u *Intersection) bool {
-				vb := b.(*Intersection)
-				if len(u.Members) != len(vb.Members) {
-					return false
-				}
-				for i, m := range u.Members {
-					if !typeEqualsGuard(m, vb.Members[i], next, seen) {
-						return false
-					}
-				}
-				return true
-			},
-			Tuple: func(tu *Tuple) bool {
-				vb := b.(*Tuple)
-				if len(tu.Elements) != len(vb.Elements) {
-					return false
-				}
-				for i, e := range tu.Elements {
-					if !typeEqualsGuard(e, vb.Elements[i], next, seen) {
-						return false
-					}
-				}
-				return true
-			},
-			Array: func(a *Array) bool {
-				return typeEqualsGuard(a.Element, b.(*Array).Element, next, seen)
-			},
-			Map: func(m *Map) bool {
-				vb := b.(*Map)
-				return typeEqualsGuard(m.Key, vb.Key, next, seen) &&
-					typeEqualsGuard(m.Value, vb.Value, next, seen)
-			},
-			Record: func(r *Record) bool {
-				vb := b.(*Record)
-				if r.Open != vb.Open {
-					return false
-				}
-				if len(r.Fields) != len(vb.Fields) {
-					return false
-				}
-				for i, f := range r.Fields {
-					fb := vb.Fields[i]
-					if f.Name != fb.Name || f.Optional != fb.Optional || f.Readonly != fb.Readonly {
-						return false
-					}
-					if !typeEqualsGuard(f.Type, fb.Type, next, seen) {
-						return false
-					}
-				}
-				if r.HasMapComponent() != vb.HasMapComponent() {
-					return false
-				}
-				if r.HasMapComponent() {
-					if !typeEqualsGuard(r.MapKey, vb.MapKey, next, seen) {
-						return false
-					}
-					if !typeEqualsGuard(r.MapValue, vb.MapValue, next, seen) {
-						return false
-					}
-				}
-				return true
-			},
-			Function: func(fn *Function) bool {
-				vb := b.(*Function)
-				if len(fn.TypeParams) != len(vb.TypeParams) {
-					return false
-				}
-				for i, tp := range fn.TypeParams {
-					if !typeEqualsGuard(tp, vb.TypeParams[i], next, seen) {
-						return false
-					}
-				}
-				if len(fn.Params) != len(vb.Params) || len(fn.Returns) != len(vb.Returns) {
-					return false
-				}
-				for i, p := range fn.Params {
-					pb := vb.Params[i]
-					if p.Optional != pb.Optional {
-						return false
-					}
-					if !typeEqualsGuard(p.Type, pb.Type, next, seen) {
-						return false
-					}
-				}
-				if (fn.Variadic == nil) != (vb.Variadic == nil) {
-					return false
-				}
-				if fn.Variadic != nil && !typeEqualsGuard(fn.Variadic, vb.Variadic, next, seen) {
-					return false
-				}
-				for i, r := range fn.Returns {
-					if !typeEqualsGuard(r, vb.Returns[i], next, seen) {
-						return false
-					}
-				}
-				return true
-			},
-			Generic: func(g *Generic) bool {
-				vb := b.(*Generic)
-				if g.Name != vb.Name || len(g.TypeParams) != len(vb.TypeParams) {
-					return false
-				}
-				for i, tp := range g.TypeParams {
-					if !tp.Equals(vb.TypeParams[i]) {
-						return false
-					}
-				}
-				if g.Name != "" {
-					return true
-				}
-				if (g.Body == nil) != (vb.Body == nil) {
-					return false
-				}
-				if g.Body != nil && !typeEqualsGuard(g.Body, vb.Body, next, seen) {
-					return false
-				}
-				return true
-			},
-			Instantiated: func(i *Instantiated) bool {
-				vb := b.(*Instantiated)
-				if !typeEqualsGuard(i.Generic, vb.Generic, next, seen) {
-					return false
-				}
-				if len(i.TypeArgs) != len(vb.TypeArgs) {
-					return false
-				}
-				for idx, arg := range i.TypeArgs {
-					if !typeEqualsGuard(arg, vb.TypeArgs[idx], next, seen) {
-						return false
-					}
-				}
-				return true
-			},
-			Recursive: func(r *Recursive) bool {
-				vb, ok := b.(*Recursive)
-				if !ok {
-					return false
-				}
-				if r.ID == vb.ID {
-					return true
-				}
-				if r.Name != vb.Name {
-					return false
-				}
-				return typeEqualsGuard(r.Body, vb.Body, next, seen)
-			},
-			Default: func(_ Type) bool {
-				return a.Equals(b)
-			},
+	next, ok := guard.Enter(a)
+	if !ok {
+		return false
+	}
+
+	a = unwrapTransparentWrappers(a)
+	b = unwrapTransparentWrappers(b)
+
+	switch va := a.(type) {
+	case *Optional:
+		vb, ok := b.(*Optional)
+		return ok && typeEqualsGuard(va.Inner, vb.Inner, next, seen)
+	case *Union:
+		vb, ok := b.(*Union)
+		if !ok || len(va.Members) != len(vb.Members) {
+			return false
 		}
-	})
+		for i, m := range va.Members {
+			if !typeEqualsGuard(m, vb.Members[i], next, seen) {
+				return false
+			}
+		}
+		return true
+	case *Intersection:
+		vb, ok := b.(*Intersection)
+		if !ok || len(va.Members) != len(vb.Members) {
+			return false
+		}
+		for i, m := range va.Members {
+			if !typeEqualsGuard(m, vb.Members[i], next, seen) {
+				return false
+			}
+		}
+		return true
+	case *Tuple:
+		vb, ok := b.(*Tuple)
+		if !ok || len(va.Elements) != len(vb.Elements) {
+			return false
+		}
+		for i, e := range va.Elements {
+			if !typeEqualsGuard(e, vb.Elements[i], next, seen) {
+				return false
+			}
+		}
+		return true
+	case *Array:
+		vb, ok := b.(*Array)
+		return ok && typeEqualsGuard(va.Element, vb.Element, next, seen)
+	case *Map:
+		vb, ok := b.(*Map)
+		return ok &&
+			typeEqualsGuard(va.Key, vb.Key, next, seen) &&
+			typeEqualsGuard(va.Value, vb.Value, next, seen)
+	case *Record:
+		vb, ok := b.(*Record)
+		if !ok || va.Open != vb.Open || len(va.Fields) != len(vb.Fields) {
+			return false
+		}
+		for i, f := range va.Fields {
+			fb := vb.Fields[i]
+			if f.Name != fb.Name || f.Optional != fb.Optional || f.Readonly != fb.Readonly {
+				return false
+			}
+			if !typeEqualsGuard(f.Type, fb.Type, next, seen) {
+				return false
+			}
+		}
+		if va.HasMapComponent() != vb.HasMapComponent() {
+			return false
+		}
+		if va.HasMapComponent() {
+			if !typeEqualsGuard(va.MapKey, vb.MapKey, next, seen) {
+				return false
+			}
+			if !typeEqualsGuard(va.MapValue, vb.MapValue, next, seen) {
+				return false
+			}
+		}
+		return true
+	case *Function:
+		vb, ok := b.(*Function)
+		if !ok || len(va.TypeParams) != len(vb.TypeParams) {
+			return false
+		}
+		for i, tp := range va.TypeParams {
+			if !typeEqualsGuard(tp, vb.TypeParams[i], next, seen) {
+				return false
+			}
+		}
+		if len(va.Params) != len(vb.Params) || len(va.Returns) != len(vb.Returns) {
+			return false
+		}
+		for i, p := range va.Params {
+			pb := vb.Params[i]
+			if p.Optional != pb.Optional {
+				return false
+			}
+			if !typeEqualsGuard(p.Type, pb.Type, next, seen) {
+				return false
+			}
+		}
+		if (va.Variadic == nil) != (vb.Variadic == nil) {
+			return false
+		}
+		if va.Variadic != nil && !typeEqualsGuard(va.Variadic, vb.Variadic, next, seen) {
+			return false
+		}
+		for i, r := range va.Returns {
+			if !typeEqualsGuard(r, vb.Returns[i], next, seen) {
+				return false
+			}
+		}
+		return true
+	case *Generic:
+		vb, ok := b.(*Generic)
+		if !ok || va.Name != vb.Name || len(va.TypeParams) != len(vb.TypeParams) {
+			return false
+		}
+		for i, tp := range va.TypeParams {
+			if !tp.Equals(vb.TypeParams[i]) {
+				return false
+			}
+		}
+		if va.Name != "" {
+			return true
+		}
+		if (va.Body == nil) != (vb.Body == nil) {
+			return false
+		}
+		return va.Body == nil || typeEqualsGuard(va.Body, vb.Body, next, seen)
+	case *Instantiated:
+		vb, ok := b.(*Instantiated)
+		if !ok || !typeEqualsGuard(va.Generic, vb.Generic, next, seen) || len(va.TypeArgs) != len(vb.TypeArgs) {
+			return false
+		}
+		for i, arg := range va.TypeArgs {
+			if !typeEqualsGuard(arg, vb.TypeArgs[i], next, seen) {
+				return false
+			}
+		}
+		return true
+	case *Recursive:
+		vb, ok := b.(*Recursive)
+		if !ok {
+			return false
+		}
+		if va.ID == vb.ID {
+			return true
+		}
+		if va.Name != vb.Name {
+			return false
+		}
+		return typeEqualsGuard(va.Body, vb.Body, next, seen)
+	default:
+		return a.Equals(b)
+	}
 }
 
 func unwrapAliasForEquals(t Type, guard internal.RecursionGuard) Type {
-	return VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) Visitor[Type] {
-		return Visitor[Type]{
-			Alias: func(a *Alias) Type {
-				return unwrapAliasForEquals(a.Target, next)
-			},
-			Default: func(t Type) Type {
-				return t
-			},
+	for t != nil {
+		t = unwrapTransparentWrappers(t)
+		next, ok := guard.Enter(t)
+		if !ok {
+			return nil
 		}
-	})
+		guard = next
+
+		alias, ok := t.(*Alias)
+		if !ok {
+			return t
+		}
+		t = alias.Target
+	}
+	return nil
 }
 
 func needsCycleCheck(k kind.Kind) bool {
@@ -267,6 +261,25 @@ type typePair struct {
 }
 
 func typePointer(t Type) uintptr {
+	switch tt := t.(type) {
+	case *Union:
+		return uintptr(unsafe.Pointer(tt))
+	case *Intersection:
+		return uintptr(unsafe.Pointer(tt))
+	case *Record:
+		return uintptr(unsafe.Pointer(tt))
+	case *Function:
+		return uintptr(unsafe.Pointer(tt))
+	case *Generic:
+		return uintptr(unsafe.Pointer(tt))
+	case *Instantiated:
+		return uintptr(unsafe.Pointer(tt))
+	case *Interface:
+		return uintptr(unsafe.Pointer(tt))
+	case *Recursive:
+		return uintptr(unsafe.Pointer(tt))
+	}
+
 	v := reflect.ValueOf(t)
 	if v.Kind() != reflect.Pointer {
 		return 0

@@ -404,7 +404,7 @@ func (b *Builder) renameSSA(
 
 		pushedLen := 0
 
-		var pushedMap map[int]int // only allocated if overflow
+		var pushedOverflow []pushedEntry // only allocated if overflow
 
 		addPush := func(symIdx int) {
 			// Check array first.
@@ -422,16 +422,14 @@ func (b *Builder) renameSSA(
 
 				return
 			}
-			// Overflow to map.
-			if pushedMap == nil {
-				pushedMap = make(map[int]int, 16)
-
-				for i := range pushedLen {
-					pushedMap[pushedArr[i].symIdx] = pushedArr[i].count
+			// Overflow to a compact slice. Overflow is rare in practice.
+			for i := range pushedOverflow {
+				if pushedOverflow[i].symIdx == symIdx {
+					pushedOverflow[i].count++
+					return
 				}
 			}
-
-			pushedMap[symIdx]++
+			pushedOverflow = append(pushedOverflow, pushedEntry{symIdx: symIdx, count: 1})
 		}
 
 		if phiEntries := phiByPoint[p]; len(phiEntries) > 0 {
@@ -494,7 +492,7 @@ func (b *Builder) renameSSA(
 		pIdx := int(p)
 		if visLocal := visibility[p]; visLocal != nil {
 			currentVisPtr = mapPtr(visLocal)
-			noPushes := pushedLen == 0 && pushedMap == nil
+			noPushes := pushedLen == 0 && len(pushedOverflow) == 0
 			sameVisibilityAsParent := state.parentVersions != nil && currentVisPtr == state.parentVisPtr
 
 			// Reuse parent's VisibleVersion if visibility unchanged and no pushes.
@@ -503,22 +501,20 @@ func (b *Builder) renameSSA(
 				currentVersions = state.parentVersions
 			} else if sameVisibilityAsParent {
 				// Visibility unchanged: copy parent once and patch only locally updated symbols.
-				currentVersions = make(map[basecfg.SymbolID]Version, len(state.parentVersions)+pushedLen)
+				currentVersions = make(map[basecfg.SymbolID]Version, len(state.parentVersions)+pushedLen+len(pushedOverflow))
 				for sym, ver := range state.parentVersions {
 					currentVersions[sym] = ver
 				}
-				if pushedMap != nil {
-					for symIdx := range pushedMap {
-						if stack := stacks[symIdx]; len(stack) > 0 {
-							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
-						}
+				for i := range pushedLen {
+					symIdx := pushedArr[i].symIdx
+					if stack := stacks[symIdx]; len(stack) > 0 {
+						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
 					}
-				} else {
-					for i := range pushedLen {
-						symIdx := pushedArr[i].symIdx
-						if stack := stacks[symIdx]; len(stack) > 0 {
-							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
-						}
+				}
+				for i := range pushedOverflow {
+					symIdx := pushedOverflow[i].symIdx
+					if stack := stacks[symIdx]; len(stack) > 0 {
+						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
 					}
 				}
 				visibleVersionByPoint[pIdx] = currentVersions
@@ -539,27 +535,30 @@ func (b *Builder) renameSSA(
 					}
 					visAssignedCache[currentVisPtr] = visibleAssigned
 				}
+				activeCount := 0
 				for _, symIdx := range visibleAssigned {
 					if stack := stacks[symIdx]; len(stack) > 0 {
-						if currentVersions == nil {
-							currentVersions = make(map[basecfg.SymbolID]Version, len(visibleAssigned))
-							visibleVersionByPoint[pIdx] = currentVersions
+						activeCount++
+					}
+				}
+				if activeCount > 0 {
+					currentVersions = make(map[basecfg.SymbolID]Version, activeCount)
+					visibleVersionByPoint[pIdx] = currentVersions
+					for _, symIdx := range visibleAssigned {
+						if stack := stacks[symIdx]; len(stack) > 0 {
+							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
 						}
-						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
 					}
 				}
 			} else {
+				activeCount := 0
 				for name, resolvedSym := range visLocal {
 					symIdx, ok := symIndex[resolvedSym]
 					if !ok || rootByIndex[symIdx] != name {
 						continue
 					}
 					if stack := stacks[symIdx]; len(stack) > 0 {
-						if currentVersions == nil {
-							currentVersions = make(map[basecfg.SymbolID]Version, len(visLocal)+len(globalAssigned))
-							visibleVersionByPoint[pIdx] = currentVersions
-						}
-						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+						activeCount++
 					}
 				}
 				for _, globalInfo := range globalAssigned {
@@ -568,11 +567,33 @@ func (b *Builder) renameSSA(
 					}
 					symIdx := globalInfo.symIdx
 					if stack := stacks[symIdx]; len(stack) > 0 {
-						if currentVersions == nil {
-							currentVersions = make(map[basecfg.SymbolID]Version, len(visLocal)+len(globalAssigned))
-							visibleVersionByPoint[pIdx] = currentVersions
+						activeCount++
+					}
+				}
+				if activeCount > 0 {
+					currentVersions = make(map[basecfg.SymbolID]Version, activeCount)
+					visibleVersionByPoint[pIdx] = currentVersions
+				}
+				for name, resolvedSym := range visLocal {
+					symIdx, ok := symIndex[resolvedSym]
+					if !ok || rootByIndex[symIdx] != name {
+						continue
+					}
+					if stack := stacks[symIdx]; len(stack) > 0 {
+						if currentVersions != nil {
+							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
 						}
-						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+					}
+				}
+				for _, globalInfo := range globalAssigned {
+					if _, shadowed := visLocal[globalInfo.name]; shadowed {
+						continue
+					}
+					symIdx := globalInfo.symIdx
+					if stack := stacks[symIdx]; len(stack) > 0 {
+						if currentVersions != nil {
+							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+						}
 					}
 				}
 			}
@@ -609,16 +630,15 @@ func (b *Builder) renameSSA(
 			}
 		}
 
-		if pushedMap != nil {
-			for symIdx, count := range pushedMap {
-				stacks[symIdx] = stacks[symIdx][:len(stacks[symIdx])-count]
-			}
-		} else {
-			for i := range pushedLen {
-				symIdx := pushedArr[i].symIdx
-				count := pushedArr[i].count
-				stacks[symIdx] = stacks[symIdx][:len(stacks[symIdx])-count]
-			}
+		for i := range pushedLen {
+			symIdx := pushedArr[i].symIdx
+			count := pushedArr[i].count
+			stacks[symIdx] = stacks[symIdx][:len(stacks[symIdx])-count]
+		}
+		for i := range pushedOverflow {
+			symIdx := pushedOverflow[i].symIdx
+			count := pushedOverflow[i].count
+			stacks[symIdx] = stacks[symIdx][:len(stacks[symIdx])-count]
 		}
 	}
 
