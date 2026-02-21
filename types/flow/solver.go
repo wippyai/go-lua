@@ -72,23 +72,6 @@ type edgeKey struct {
 	to   cfg.Point
 }
 
-func sortedEdgeKeys(m map[edgeKey]constraint.Condition) []edgeKey {
-	if len(m) == 0 {
-		return nil
-	}
-	keys := make([]edgeKey, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].from != keys[j].from {
-			return keys[i].from < keys[j].from
-		}
-		return keys[i].to < keys[j].to
-	})
-	return keys
-}
-
 // Solve computes flow analysis and returns the solution.
 //
 // Solve is the main entry point for flow-sensitive type analysis. It takes
@@ -158,13 +141,13 @@ func (s *Solution) runPropagation() {
 	}
 
 	// Convert edge conditions to propagate format
-	edgeConds := make(propagate.EdgeConditions)
-	for _, k := range sortedEdgeKeys(s.edgeConditions) {
-		edgeConds[propagate.EdgeKey{From: k.from, To: k.to}] = s.edgeConditions[k]
+	edgeConds := make(propagate.EdgeConditions, len(s.edgeConditions))
+	for k, cond := range s.edgeConditions {
+		edgeConds[propagate.EdgeKey{From: k.from, To: k.to}] = cond
 	}
 
 	// Convert assignments to propagate format
-	var assigns []propagate.Assignment
+	assigns := make([]propagate.Assignment, 0, len(s.inputs.Assignments))
 	for _, a := range s.inputs.Assignments {
 		if a.TargetPath.Symbol != 0 {
 			assigns = append(assigns, propagate.Assignment{
