@@ -72,15 +72,14 @@ func NewBuilderWithCapacity(nodeCap, edgeCap int) *Builder {
 	}
 
 	return &Builder{
-		Cfg:                   basecfg.NewWithCapacity(nodeCap, edgeCap),
-		Info:                  make(map[basecfg.Point]NodeInfo, mapCap),
-		CurrentLive:           true,
-		Labels:                make(map[string]basecfg.Point),
-		Pending:               make(map[string][]basecfg.Point),
-		NextVersionID:         make(map[basecfg.SymbolID]int),
-		VisibleVersion:        make(map[basecfg.Point]map[basecfg.SymbolID]Version, mapCap),
-		VisibleVersionByPoint: make([]map[basecfg.SymbolID]Version, 0, nodeCap),
-		ScopeTracker:          NewScopeTrackerWithCapacity(nodeCap),
+		Cfg:            basecfg.NewWithCapacity(nodeCap, edgeCap),
+		Info:           make(map[basecfg.Point]NodeInfo, mapCap),
+		CurrentLive:    true,
+		Labels:         make(map[string]basecfg.Point),
+		Pending:        make(map[string][]basecfg.Point),
+		NextVersionID:  make(map[basecfg.SymbolID]int),
+		VisibleVersion: make(map[basecfg.Point]map[basecfg.SymbolID]Version),
+		ScopeTracker:   NewScopeTrackerWithCapacity(nodeCap),
 	}
 }
 
