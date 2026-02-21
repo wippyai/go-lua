@@ -33,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/constprop"
@@ -143,9 +144,11 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			})
 		}
 	})
-	overlayTypes := MergeSpecTypes(inputs.DeclaredTypes, inferredTypes)
-	overlayTypes = MergeSpecTypes(overlayTypes, specNarrowed)
-	overlayTypes = MergeSpecTypes(overlayTypes, loopVarTypes)
+	var overlayTypes api.SpecTypes
+	overlayTypes = mergeSpecTypesInto(overlayTypes, inputs.DeclaredTypes)
+	overlayTypes = mergeSpecTypesInto(overlayTypes, inferredTypes)
+	overlayTypes = mergeSpecTypesInto(overlayTypes, specNarrowed)
+	overlayTypes = mergeSpecTypesInto(overlayTypes, loopVarTypes)
 
 	// Precompute truthy guards: map from CFG point to paths that are narrowed (non-nil) at that point.
 	// Used during table literal synthesis to unwrap optional types.
