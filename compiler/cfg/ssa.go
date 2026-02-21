@@ -619,14 +619,18 @@ func (b *Builder) renameSSA(
 					}
 				}
 			} else {
-				activeCount := 0
+				estimatedCap := len(visLocal) + len(globalAssigned)
 				for name, resolvedSym := range visLocal {
 					symIdx, ok := lookupSymIndex(resolvedSym)
 					if !ok || rootByIndex[symIdx] != name {
 						continue
 					}
 					if stack := stacks[symIdx]; len(stack) > 0 {
-						activeCount++
+						if currentVersions == nil {
+							currentVersions = make(map[basecfg.SymbolID]Version, estimatedCap)
+							visibleVersionByPoint[pIdx] = currentVersions
+						}
+						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
 					}
 				}
 				for _, globalInfo := range globalAssigned {
@@ -635,33 +639,11 @@ func (b *Builder) renameSSA(
 					}
 					symIdx := globalInfo.symIdx
 					if stack := stacks[symIdx]; len(stack) > 0 {
-						activeCount++
-					}
-				}
-				if activeCount > 0 {
-					currentVersions = make(map[basecfg.SymbolID]Version, activeCount)
-					visibleVersionByPoint[pIdx] = currentVersions
-				}
-				for name, resolvedSym := range visLocal {
-					symIdx, ok := lookupSymIndex(resolvedSym)
-					if !ok || rootByIndex[symIdx] != name {
-						continue
-					}
-					if stack := stacks[symIdx]; len(stack) > 0 {
-						if currentVersions != nil {
-							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+						if currentVersions == nil {
+							currentVersions = make(map[basecfg.SymbolID]Version, estimatedCap)
+							visibleVersionByPoint[pIdx] = currentVersions
 						}
-					}
-				}
-				for _, globalInfo := range globalAssigned {
-					if _, shadowed := visLocal[globalInfo.name]; shadowed {
-						continue
-					}
-					symIdx := globalInfo.symIdx
-					if stack := stacks[symIdx]; len(stack) > 0 {
-						if currentVersions != nil {
-							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
-						}
+						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
 					}
 				}
 			}
