@@ -277,14 +277,29 @@ func (b *Builder) renameSSA(
 	}
 	sort.Slice(sortedAssignedSyms, func(i, j int) bool { return sortedAssignedSyms[i] < sortedAssignedSyms[j] })
 
-	symIndex := make(map[basecfg.SymbolID]int, len(sortedAssignedSyms))
+	symIndexMap := make(map[basecfg.SymbolID]int, len(sortedAssignedSyms))
+	var symIndexDense []int
+	if len(sortedAssignedSyms) > 0 {
+		maxSym := int(sortedAssignedSyms[len(sortedAssignedSyms)-1])
+		// Prefer dense lookup only when symbol IDs are reasonably compact.
+		if maxSym > 0 && maxSym <= 16384 && maxSym <= len(sortedAssignedSyms)*8 {
+			symIndexDense = make([]int, maxSym+1)
+			for i := range symIndexDense {
+				symIndexDense[i] = -1
+			}
+		}
+	}
 	symByIndex := make([]basecfg.SymbolID, len(sortedAssignedSyms))
 	rootByIndex := make([]string, len(sortedAssignedSyms))
 	nextVersionID := make([]int, len(sortedAssignedSyms))
 	stacks := make([][]Version, len(sortedAssignedSyms))
 
 	for i, sym := range sortedAssignedSyms {
-		symIndex[sym] = i
+		if symIndexDense != nil {
+			symIndexDense[int(sym)] = i
+		} else {
+			symIndexMap[sym] = i
+		}
 		symByIndex[i] = sym
 		rootByIndex[i] = assignedSyms[sym]
 		nextVersionID[i] = b.NextVersionID[sym]
@@ -295,6 +310,19 @@ func (b *Builder) renameSSA(
 			capacity = 4
 		}
 		stacks[i] = make([]Version, 0, capacity)
+	}
+
+	lookupSymIndex := func(sym basecfg.SymbolID) (int, bool) {
+		if symIndexDense != nil {
+			symInt := int(sym)
+			if symInt < 0 || symInt >= len(symIndexDense) {
+				return 0, false
+			}
+			idx := symIndexDense[symInt]
+			return idx, idx >= 0
+		}
+		idx, ok := symIndexMap[sym]
+		return idx, ok
 	}
 
 	type phiEntry struct {
@@ -312,7 +340,7 @@ func (b *Builder) renameSSA(
 
 		entries := make([]phiEntry, 0, len(ordered))
 		for _, sym := range ordered {
-			symIdx, ok := symIndex[sym]
+			symIdx, ok := lookupSymIndex(sym)
 			if !ok {
 				continue
 			}
@@ -334,7 +362,9 @@ func (b *Builder) renameSSA(
 		seededGlobals = make([]int, 0, len(sortedAssignedSyms))
 		for _, sym := range sortedAssignedSyms {
 			if declPoint, ok := b.ScopeTracker.declPoints[sym]; ok && declPoint == 0 {
-				seededGlobals = append(seededGlobals, symIndex[sym])
+				if symIdx, found := lookupSymIndex(sym); found {
+					seededGlobals = append(seededGlobals, symIdx)
+				}
 			}
 		}
 	}
@@ -364,7 +394,7 @@ func (b *Builder) renameSSA(
 	}
 	globalAssigned := make([]globalAssignedSym, 0, len(globals))
 	for name, resolvedSym := range globals {
-		if symIdx, ok := symIndex[resolvedSym]; ok && rootByIndex[symIdx] == name {
+		if symIdx, ok := lookupSymIndex(resolvedSym); ok && rootByIndex[symIdx] == name {
 			globalAssigned = append(globalAssigned, globalAssignedSym{name: name, symIdx: symIdx})
 		}
 	}
@@ -469,7 +499,7 @@ func (b *Builder) renameSSA(
 					if sym == 0 {
 						continue
 					}
-					if symIdx, ok := symIndex[sym]; ok {
+					if symIdx, ok := lookupSymIndex(sym); ok {
 						ver := newVersion(symIdx)
 						stacks[symIdx] = append(stacks[symIdx], ver)
 						addPush(symIdx)
@@ -478,7 +508,7 @@ func (b *Builder) renameSSA(
 				}
 			case *FuncDefInfo:
 				if v.Symbol != 0 && v.TargetKind == FuncDefGlobal {
-					if symIdx, ok := symIndex[v.Symbol]; ok {
+					if symIdx, ok := lookupSymIndex(v.Symbol); ok {
 						ver := newVersion(symIdx)
 						stacks[symIdx] = append(stacks[symIdx], ver)
 						addPush(symIdx)
@@ -557,7 +587,7 @@ func (b *Builder) renameSSA(
 				if !cached {
 					visibleAssigned = make([]int, 0, len(visLocal)+len(globalAssigned))
 					for name, resolvedSym := range visLocal {
-						if symIdx, ok := symIndex[resolvedSym]; ok && rootByIndex[symIdx] == name {
+						if symIdx, ok := lookupSymIndex(resolvedSym); ok && rootByIndex[symIdx] == name {
 							visibleAssigned = append(visibleAssigned, symIdx)
 						}
 					}
@@ -587,7 +617,7 @@ func (b *Builder) renameSSA(
 			} else {
 				activeCount := 0
 				for name, resolvedSym := range visLocal {
-					symIdx, ok := symIndex[resolvedSym]
+					symIdx, ok := lookupSymIndex(resolvedSym)
 					if !ok || rootByIndex[symIdx] != name {
 						continue
 					}
@@ -609,7 +639,7 @@ func (b *Builder) renameSSA(
 					visibleVersionByPoint[pIdx] = currentVersions
 				}
 				for name, resolvedSym := range visLocal {
-					symIdx, ok := symIndex[resolvedSym]
+					symIdx, ok := lookupSymIndex(resolvedSym)
 					if !ok || rootByIndex[symIdx] != name {
 						continue
 					}
