@@ -28,6 +28,7 @@ package bind
 
 import (
 	"sort"
+	"sync"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/cfg"
@@ -59,8 +60,12 @@ type BindingTable struct {
 	// paramSymbols maps functions to their parameter symbol list
 	paramSymbols map[*ast.FunctionExpr][]cfg.SymbolID
 
-	// localSymbols maps local declarations to their symbol list
-	localSymbols map[*ast.LocalAssignStmt][]cfg.SymbolID
+	// localSymbolSingle maps single-name local declarations to their symbol.
+	// This avoids allocating a one-element slice for the common local form.
+	localSymbolSingle map[*ast.LocalAssignStmt]cfg.SymbolID
+
+	// localSymbolsMulti maps multi-name local declarations to their symbol list.
+	localSymbolsMulti map[*ast.LocalAssignStmt][]cfg.SymbolID
 
 	// numForSymbols maps numeric for loops to their iteration variable
 	numForSymbols map[*ast.NumberForStmt]cfg.SymbolID
@@ -76,6 +81,10 @@ type BindingTable struct {
 
 	// funcLitBySymbol maps symbols back to their function literals
 	funcLitBySymbol map[cfg.SymbolID]*ast.FunctionExpr
+
+	// capturedCache memoizes captured symbols per function for repeated queries.
+	capturedMu    sync.RWMutex
+	capturedCache map[*ast.FunctionExpr][]cfg.SymbolID
 }
 
 // fieldPathKey identifies a field access path rooted at a base symbol.
@@ -87,17 +96,42 @@ type fieldPathKey struct {
 
 // NewBindingTable creates an empty binding table with all maps initialized.
 func NewBindingTable() *BindingTable {
+	return NewBindingTableWithHint(0, 0)
+}
+
+// NewBindingTableWithHint creates a binding table with optional size hints.
+//
+// symbolHint estimates total symbols in the bound unit (locals/params/globals),
+// while stmtHint estimates top-level statement volume.
+func NewBindingTableWithHint(symbolHint, stmtHint int) *BindingTable {
+	if symbolHint < 0 {
+		symbolHint = 0
+	}
+	if stmtHint < 0 {
+		stmtHint = 0
+	}
+
+	identHint := 0
+	localSingleHint := 0
+
+	// Only pre-size maps on larger units where map growth dominates.
+	if stmtHint >= 32 {
+		localSingleHint = stmtHint
+	}
+
 	return &BindingTable{
-		symbols:           make(map[*ast.IdentExpr]cfg.SymbolID),
-		kind:              make(map[cfg.SymbolID]cfg.SymbolKind),
-		names:             make(map[cfg.SymbolID]string),
+		symbols:           make(map[*ast.IdentExpr]cfg.SymbolID, identHint),
+		kind:              make(map[cfg.SymbolID]cfg.SymbolKind, symbolHint),
+		names:             make(map[cfg.SymbolID]string, symbolHint),
 		paramSymbols:      make(map[*ast.FunctionExpr][]cfg.SymbolID),
-		localSymbols:      make(map[*ast.LocalAssignStmt][]cfg.SymbolID),
+		localSymbolSingle: make(map[*ast.LocalAssignStmt]cfg.SymbolID, localSingleHint),
+		localSymbolsMulti: make(map[*ast.LocalAssignStmt][]cfg.SymbolID),
 		numForSymbols:     make(map[*ast.NumberForStmt]cfg.SymbolID),
 		genericForSymbols: make(map[*ast.GenericForStmt][]cfg.SymbolID),
 		fieldSymbols:      make(map[fieldPathKey]cfg.SymbolID),
 		funcLitSymbols:    make(map[*ast.FunctionExpr]cfg.SymbolID),
 		funcLitBySymbol:   make(map[cfg.SymbolID]*ast.FunctionExpr),
+		capturedCache:     make(map[*ast.FunctionExpr][]cfg.SymbolID),
 	}
 }
 
@@ -182,12 +216,81 @@ func (t *BindingTable) SetLocalSymbols(stmt *ast.LocalAssignStmt, syms []cfg.Sym
 	if stmt == nil {
 		return
 	}
-	t.localSymbols[stmt] = syms
+	delete(t.localSymbolSingle, stmt)
+
+	switch len(syms) {
+	case 0:
+		delete(t.localSymbolsMulti, stmt)
+	case 1:
+		if syms[0] != 0 {
+			t.localSymbolSingle[stmt] = syms[0]
+			delete(t.localSymbolsMulti, stmt)
+		} else {
+			delete(t.localSymbolsMulti, stmt)
+		}
+	default:
+		t.localSymbolsMulti[stmt] = syms
+	}
+}
+
+// SetLocalSymbol records the symbol declared by a single-name local assignment.
+func (t *BindingTable) SetLocalSymbol(stmt *ast.LocalAssignStmt, sym cfg.SymbolID) {
+	if stmt == nil || sym == 0 {
+		return
+	}
+	t.localSymbolSingle[stmt] = sym
+	delete(t.localSymbolsMulti, stmt)
+}
+
+// HasLocalSymbols reports whether local symbols were recorded for stmt.
+func (t *BindingTable) HasLocalSymbols(stmt *ast.LocalAssignStmt) bool {
+	if stmt == nil {
+		return false
+	}
+	if _, ok := t.localSymbolSingle[stmt]; ok {
+		return true
+	}
+	_, ok := t.localSymbolsMulti[stmt]
+
+	return ok
+}
+
+// LocalSymbolAt returns the i-th symbol declared by a local assignment.
+func (t *BindingTable) LocalSymbolAt(stmt *ast.LocalAssignStmt, i int) (cfg.SymbolID, bool) {
+	if stmt == nil || i < 0 {
+		return 0, false
+	}
+
+	if sym, ok := t.localSymbolSingle[stmt]; ok {
+		if i == 0 {
+			return sym, true
+		}
+
+		return 0, false
+	}
+
+	syms, ok := t.localSymbolsMulti[stmt]
+	if !ok || i >= len(syms) {
+		return 0, false
+	}
+
+	sym := syms[i]
+	if sym == 0 {
+		return 0, false
+	}
+
+	return sym, true
 }
 
 // LocalSymbols returns the symbols declared by a local assignment.
 func (t *BindingTable) LocalSymbols(stmt *ast.LocalAssignStmt) []cfg.SymbolID {
-	return t.localSymbols[stmt]
+	if stmt == nil {
+		return nil
+	}
+	if sym, ok := t.localSymbolSingle[stmt]; ok && sym != 0 {
+		return []cfg.SymbolID{sym}
+	}
+	return t.localSymbolsMulti[stmt]
 }
 
 // SetNumForSymbol records the iteration variable for a numeric for loop.
@@ -326,6 +429,12 @@ func (t *BindingTable) CapturedSymbols(fn *ast.FunctionExpr) []cfg.SymbolID {
 	if fn == nil {
 		return nil
 	}
+	t.capturedMu.RLock()
+	if cached, ok := t.capturedCache[fn]; ok {
+		t.capturedMu.RUnlock()
+		return cached
+	}
+	t.capturedMu.RUnlock()
 
 	declared := make(map[cfg.SymbolID]bool)
 
@@ -346,6 +455,16 @@ func (t *BindingTable) CapturedSymbols(fn *ast.FunctionExpr) []cfg.SymbolID {
 			captured = append(captured, sym)
 		}
 	}
+	if len(captured) > 1 {
+		sort.Slice(captured, func(i, j int) bool { return captured[i] < captured[j] })
+	}
+	t.capturedMu.Lock()
+	if existing, ok := t.capturedCache[fn]; ok {
+		t.capturedMu.Unlock()
+		return existing
+	}
+	t.capturedCache[fn] = captured
+	t.capturedMu.Unlock()
 	return captured
 }
 
@@ -364,7 +483,11 @@ func (t *BindingTable) collectDeclaredInStmt(stmt ast.Stmt, declared map[cfg.Sym
 	}
 	switch s := stmt.(type) {
 	case *ast.LocalAssignStmt:
-		for _, sym := range t.localSymbols[s] {
+		if sym, ok := t.localSymbolSingle[s]; ok && sym != 0 {
+			declared[sym] = true
+			break
+		}
+		for _, sym := range t.localSymbolsMulti[s] {
 			if sym != 0 {
 				declared[sym] = true
 			}
@@ -557,7 +680,12 @@ func (t *BindingTable) AllSymbols() []cfg.SymbolID {
 		}
 	}
 
-	for _, syms := range t.localSymbols {
+	for _, sym := range t.localSymbolSingle {
+		if sym != 0 {
+			seen[sym] = true
+		}
+	}
+	for _, syms := range t.localSymbolsMulti {
 		for _, sym := range syms {
 			if sym != 0 {
 				seen[sym] = true

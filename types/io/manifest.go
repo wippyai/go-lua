@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"strings"
+	"sync"
 
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -57,6 +58,16 @@ type Manifest struct {
 
 	// Globals records types assigned to _G for global namespace pollution tracking.
 	Globals map[string]typ.Type
+
+	cacheMu             sync.RWMutex
+	cachedEnriched      typ.Type
+	cachedEnrichedReady bool
+	cachedLookupValues  map[string]lookupValueResult
+}
+
+type lookupValueResult struct {
+	t  typ.Type
+	ok bool
 }
 
 // ManifestQuerier provides read-only access to module manifests.
@@ -190,21 +201,36 @@ func NewSummary(params, returns []typ.Type) *FunctionSummary {
 // DefineType adds a type definition.
 func (m *Manifest) DefineType(name string, t typ.Type) {
 	m.Types[name] = t
+	m.invalidateCaches()
 }
 
 // DefineSummary adds a function summary.
 func (m *Manifest) DefineSummary(name string, s *FunctionSummary) {
 	m.Summaries[name] = s
+	m.invalidateCaches()
 }
 
 // SetExport sets the module's export type.
 func (m *Manifest) SetExport(t typ.Type) {
 	m.Export = t
+	m.invalidateCaches()
 }
 
 // AddGlobal records a _G assignment.
 func (m *Manifest) AddGlobal(name string, t typ.Type) {
 	m.Globals[name] = t
+}
+
+func (m *Manifest) invalidateCaches() {
+	if m == nil {
+		return
+	}
+
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
+	m.cachedEnriched = nil
+	m.cachedEnrichedReady = false
+	m.cachedLookupValues = nil
 }
 
 // LookupType finds a type by name.
@@ -272,20 +298,44 @@ func (m *Manifest) LookupValue(name string) (typ.Type, bool) {
 	if m == nil || name == "" {
 		return nil, false
 	}
+
+	m.cacheMu.RLock()
+	if m.cachedLookupValues != nil {
+		if cached, ok := m.cachedLookupValues[name]; ok {
+			m.cacheMu.RUnlock()
+			return cached.t, cached.ok
+		}
+	}
+	m.cacheMu.RUnlock()
+
+	var (
+		result typ.Type
+		ok     bool
+	)
+
 	export := unwrap.Alias(m.EnrichedExport())
 	switch t := export.(type) {
 	case *typ.Record:
 		if f := t.GetField(name); f != nil {
-			return f.Type, true
+			result, ok = f.Type, true
 		}
 	case *typ.Interface:
 		for _, method := range t.Methods {
 			if method.Name == name && method.Type != nil {
-				return method.Type, true
+				result, ok = method.Type, true
+				break
 			}
 		}
 	}
-	return nil, false
+
+	m.cacheMu.Lock()
+	if m.cachedLookupValues == nil {
+		m.cachedLookupValues = make(map[string]lookupValueResult, 8)
+	}
+	m.cachedLookupValues[name] = lookupValueResult{t: result, ok: ok}
+	m.cacheMu.Unlock()
+
+	return result, ok
 }
 
 // EnrichedExport returns the Export type with function summaries applied.
@@ -303,12 +353,30 @@ func (m *Manifest) EnrichedExport() typ.Type {
 	if m == nil {
 		return nil
 	}
+
+	m.cacheMu.RLock()
+	if m.cachedEnrichedReady {
+		cached := m.cachedEnriched
+		m.cacheMu.RUnlock()
+		return cached
+	}
+	m.cacheMu.RUnlock()
+
 	resolvedExport := resolveManifestLocalRefs(m.Export, m.Types)
-	if resolvedExport == nil || len(m.Summaries) == 0 {
-		return resolvedExport
+	enriched := resolvedExport
+	if resolvedExport != nil && len(m.Summaries) > 0 {
+		enriched = enrichTypeWithSummaries(resolvedExport, m.Summaries)
 	}
 
-	return enrichTypeWithSummaries(resolvedExport, m.Summaries)
+	m.cacheMu.Lock()
+	if !m.cachedEnrichedReady {
+		m.cachedEnriched = enriched
+		m.cachedEnrichedReady = true
+	}
+	cached := m.cachedEnriched
+	m.cacheMu.Unlock()
+
+	return cached
 }
 
 // resolveManifestLocalRefs resolves local typ.Ref nodes against manifest type

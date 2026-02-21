@@ -25,8 +25,11 @@ func TestNewBindingTable(t *testing.T) {
 	if table.paramSymbols == nil {
 		t.Error("paramSymbols map not initialized")
 	}
-	if table.localSymbols == nil {
-		t.Error("localSymbols map not initialized")
+	if table.localSymbolSingle == nil {
+		t.Error("localSymbolSingle map not initialized")
+	}
+	if table.localSymbolsMulti == nil {
+		t.Error("localSymbolsMulti map not initialized")
 	}
 	if table.numForSymbols == nil {
 		t.Error("numForSymbols map not initialized")

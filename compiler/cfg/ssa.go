@@ -1,16 +1,16 @@
 package cfg
 
 import (
-	"reflect"
-	"sort"
+	"slices"
+	"unsafe"
 
 	"github.com/wippyai/go-lua/compiler/cfg/analysis"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 )
 
 // mapPtr returns a uintptr that uniquely identifies a map instance.
-func mapPtr(m any) uintptr {
-	return reflect.ValueOf(m).Pointer()
+func mapPtr(m map[string]basecfg.SymbolID) uintptr {
+	return *(*uintptr)(unsafe.Pointer(&m))
 }
 
 // ComputeSSAVersions computes SSA versions for all variables and inserts phi nodes.
@@ -22,9 +22,9 @@ func (b *Builder) ComputeSSAVersions() {
 	}
 
 	defPoints := b.collectDefPoints(assignedSyms)
-	domInfo := analysis.ComputeDomInfo(b.Cfg)
+	domInfo := analysis.ComputeDomInfoDense(b.Cfg)
 	phiSites := b.placePhis(assignedSyms, defPoints, domInfo.DominanceFrontier)
-	b.renameSSA(assignedSyms, defPoints, phiSites, domInfo)
+	b.renameSSA(assignedSyms, defPoints, phiSites, domInfo.DominatorTree)
 }
 
 // collectAssignedSymbols returns the set of SymbolIDs that need SSA versions.
@@ -59,14 +59,20 @@ func (b *Builder) collectAssignedSymbols() map[basecfg.SymbolID]string {
 
 	if b.Cfg != nil && b.ScopeTracker != nil {
 		entry := b.Cfg.Entry()
-		if vis := b.ScopeTracker.VisibleAt(entry); vis != nil {
-			vis.Range(func(name string, sym basecfg.SymbolID) bool {
+		if vis := b.ScopeTracker.visibility[entry]; vis != nil {
+			for name, sym := range vis {
 				if _, exists := syms[sym]; !exists {
 					syms[sym] = name
 				}
-
-				return true
-			})
+			}
+			for name, sym := range b.ScopeTracker.globals {
+				if _, inLocal := vis[name]; inLocal {
+					continue
+				}
+				if _, exists := syms[sym]; !exists {
+					syms[sym] = name
+				}
+			}
 		}
 	}
 
@@ -75,10 +81,69 @@ func (b *Builder) collectAssignedSymbols() map[basecfg.SymbolID]string {
 
 // collectDefPoints returns the set of CFG points where each symbol is defined.
 func (b *Builder) collectDefPoints(assignedSyms map[basecfg.SymbolID]string) map[basecfg.SymbolID][]basecfg.Point {
-	defPoints := make(map[basecfg.SymbolID][]basecfg.Point)
+	if len(assignedSyms) == 0 {
+		return map[basecfg.SymbolID][]basecfg.Point{}
+	}
+
+	defCounts := make(map[basecfg.SymbolID]int, len(assignedSyms))
 	entry := b.Cfg.Entry()
 
-	for p, info := range b.Info {
+	if b.ScopeTracker != nil {
+		for sym := range assignedSyms {
+			if declPoint, ok := b.ScopeTracker.declPoints[sym]; ok && declPoint == 0 {
+				defCounts[sym]++
+			}
+		}
+	}
+
+	// Count defs first to avoid repeated slice growth while appending.
+	for pi := 0; pi < b.Cfg.Size(); pi++ {
+		p := basecfg.Point(pi)
+		info := b.Info[p]
+		if info == nil {
+			continue
+		}
+		switch v := info.(type) {
+		case *AssignInfo:
+			for _, target := range v.Targets {
+				sym, _ := assignmentTargetSymbol(target)
+				if sym == 0 {
+					continue
+				}
+				if _, ok := assignedSyms[sym]; ok {
+					defCounts[sym]++
+				}
+			}
+		case *FuncDefInfo:
+			if v.Symbol != 0 && v.TargetKind == FuncDefGlobal {
+				if _, ok := assignedSyms[v.Symbol]; ok {
+					defCounts[v.Symbol]++
+				}
+			}
+		}
+	}
+
+	defPoints := make(map[basecfg.SymbolID][]basecfg.Point, len(defCounts))
+	for sym, count := range defCounts {
+		if count > 0 {
+			defPoints[sym] = make([]basecfg.Point, 0, count)
+		}
+	}
+
+	if b.ScopeTracker != nil {
+		for sym := range assignedSyms {
+			if declPoint, ok := b.ScopeTracker.declPoints[sym]; ok && declPoint == 0 {
+				defPoints[sym] = append(defPoints[sym], entry)
+			}
+		}
+	}
+
+	for pi := 0; pi < b.Cfg.Size(); pi++ {
+		p := basecfg.Point(pi)
+		info := b.Info[p]
+		if info == nil {
+			continue
+		}
 		switch v := info.(type) {
 		case *AssignInfo:
 			for _, target := range v.Targets {
@@ -99,25 +164,19 @@ func (b *Builder) collectDefPoints(assignedSyms map[basecfg.SymbolID]string) map
 		}
 	}
 
-	if b.ScopeTracker != nil {
-		for sym := range assignedSyms {
-			if declPoint, ok := b.ScopeTracker.declPoints[sym]; ok && declPoint == 0 {
-				defPoints[sym] = append(defPoints[sym], entry)
-			}
-		}
-	}
-
-	for sym := range defPoints {
-		pts := defPoints[sym]
-		sort.Slice(pts, func(i, j int) bool { return pts[i] < pts[j] })
-	}
-
 	return defPoints
 }
 
 // placePhis uses the iterated dominance frontier to determine where phi nodes are needed.
-func (b *Builder) placePhis(assignedSyms map[basecfg.SymbolID]string, defPoints map[basecfg.SymbolID][]basecfg.Point, df map[basecfg.Point][]basecfg.Point) map[basecfg.Point]map[basecfg.SymbolID]bool {
-	phiSites := make(map[basecfg.Point]map[basecfg.SymbolID]bool)
+func (b *Builder) placePhis(
+	assignedSyms map[basecfg.SymbolID]string,
+	defPoints map[basecfg.SymbolID][]basecfg.Point,
+	df [][]basecfg.Point,
+) map[basecfg.Point][]basecfg.SymbolID {
+	phiSites := make(map[basecfg.Point][]basecfg.SymbolID)
+	if b.ScopeTracker == nil {
+		return phiSites
+	}
 
 	sortedSyms := make([]basecfg.SymbolID, 0, len(assignedSyms))
 
@@ -125,7 +184,13 @@ func (b *Builder) placePhis(assignedSyms map[basecfg.SymbolID]string, defPoints 
 		sortedSyms = append(sortedSyms, sym)
 	}
 
-	sort.Slice(sortedSyms, func(i, j int) bool { return sortedSyms[i] < sortedSyms[j] })
+	slices.Sort(sortedSyms)
+	cfgSize := b.Cfg.Size()
+	visibility := b.ScopeTracker.visibility
+	globals := b.ScopeTracker.globals
+	hasAlreadyMarks := make([]int, cfgSize)
+	everOnWorklistMarks := make([]int, cfgSize)
+	markEpoch := 0
 
 	for _, sym := range sortedSyms {
 		name := assignedSyms[sym]
@@ -135,45 +200,55 @@ func (b *Builder) placePhis(assignedSyms map[basecfg.SymbolID]string, defPoints 
 			continue
 		}
 
-		hasAlready := make(map[basecfg.Point]bool)
-		everOnWorklist := make(map[basecfg.Point]bool)
-		worklist := make([]basecfg.Point, len(defs))
-		copy(worklist, defs)
-
+		markEpoch++
+		worklist := make([]basecfg.Point, 0, len(defs))
 		for _, d := range defs {
-			everOnWorklist[d] = true
+			di := int(d)
+			if di < 0 || di >= cfgSize {
+				continue
+			}
+			if everOnWorklistMarks[di] == markEpoch {
+				continue
+			}
+			everOnWorklistMarks[di] = markEpoch
+			worklist = append(worklist, d)
 		}
 
 		for len(worklist) > 0 {
 			d := worklist[len(worklist)-1]
 			worklist = worklist[:len(worklist)-1]
 
-			for _, y := range df[d] {
-				if hasAlready[y] {
+			dIdx := int(d)
+			if dIdx < 0 || dIdx >= len(df) {
+				continue
+			}
+			for _, y := range df[dIdx] {
+				yi := int(y)
+				if yi < 0 || yi >= cfgSize {
+					continue
+				}
+				if hasAlreadyMarks[yi] == markEpoch {
 					continue
 				}
 
-				vis := b.ScopeTracker.VisibleAt(y)
-
+				vis := visibility[y]
 				if vis == nil {
 					continue
 				}
-
-				resolvedSym, ok := vis.Get(name)
+				resolvedSym, ok := vis[name]
+				if !ok {
+					resolvedSym, ok = globals[name]
+				}
 				if !ok || resolvedSym != sym {
 					continue
 				}
 
-				hasAlready[y] = true
+				hasAlreadyMarks[yi] = markEpoch
 
-				if phiSites[y] == nil {
-					phiSites[y] = make(map[basecfg.SymbolID]bool)
-				}
+				phiSites[y] = append(phiSites[y], sym)
 
-				phiSites[y][sym] = true
-
-				if !everOnWorklist[y] {
-					everOnWorklist[y] = true
+				if everOnWorklistMarks[yi] != markEpoch {
+					everOnWorklistMarks[yi] = markEpoch
 					worklist = append(worklist, y)
 				}
 			}
@@ -184,64 +259,175 @@ func (b *Builder) placePhis(assignedSyms map[basecfg.SymbolID]string, defPoints 
 }
 
 // renameSSA performs dominator-tree preorder traversal to assign SSA version numbers.
-func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints map[basecfg.SymbolID][]basecfg.Point, phiSites map[basecfg.Point]map[basecfg.SymbolID]bool, domInfo *analysis.DomInfo) {
+func (b *Builder) renameSSA(
+	assignedSyms map[basecfg.SymbolID]string,
+	defPoints map[basecfg.SymbolID][]basecfg.Point,
+	phiSites map[basecfg.Point][]basecfg.SymbolID,
+	domTree [][]basecfg.Point,
+) {
 	entry := b.Cfg.Entry()
 
-	phiMap := make(map[basecfg.Point]map[basecfg.SymbolID]*PhiInfo)
-	for p, syms := range phiSites {
-		phiMap[p] = make(map[basecfg.SymbolID]*PhiInfo)
-		for sym := range syms {
-			phiMap[p][sym] = &PhiInfo{
-				Point:  p,
-				Target: Version{Root: assignedSyms[sym], Symbol: sym},
-			}
-		}
-	}
-
-	var seededGlobals []basecfg.SymbolID
-
-	if b.ScopeTracker != nil {
-		seededGlobals = make([]basecfg.SymbolID, 0, len(assignedSyms))
-
-		for sym := range assignedSyms {
-			if declPoint, ok := b.ScopeTracker.declPoints[sym]; ok && declPoint == 0 {
-				seededGlobals = append(seededGlobals, sym)
-			}
-		}
-
-		sort.Slice(seededGlobals, func(i, j int) bool { return seededGlobals[i] < seededGlobals[j] })
-	}
-
-	// Pre-allocate stacks with capacity based on defPoints + 1 for seeded globals
-	stacks := make(map[basecfg.SymbolID][]Version, len(assignedSyms))
-
+	sortedAssignedSyms := make([]basecfg.SymbolID, 0, len(assignedSyms))
 	for sym := range assignedSyms {
-		// Estimate capacity: 1 for initial def + depth of typical dominator tree path
-		capacity := len(defPoints[sym]) + 2
+		sortedAssignedSyms = append(sortedAssignedSyms, sym)
+	}
+	slices.Sort(sortedAssignedSyms)
 
-		if capacity > 8 {
-			capacity = 8
+	var symIndexMap map[basecfg.SymbolID]int
+	var symIndexDense []int
+	if len(sortedAssignedSyms) > 0 {
+		maxSym := int(sortedAssignedSyms[len(sortedAssignedSyms)-1])
+		// Prefer dense lookup only when symbol IDs are reasonably compact.
+		if maxSym > 0 && maxSym <= 16384 && maxSym <= len(sortedAssignedSyms)*8 {
+			symIndexDense = make([]int, maxSym+1)
+		} else {
+			symIndexMap = make(map[basecfg.SymbolID]int, len(sortedAssignedSyms))
 		}
+	} else {
+		symIndexMap = make(map[basecfg.SymbolID]int)
+	}
+	symByIndex := make([]basecfg.SymbolID, len(sortedAssignedSyms))
+	rootByIndex := make([]string, len(sortedAssignedSyms))
+	nextVersionID := make([]int, len(sortedAssignedSyms))
+	touchedVersionID := make([]bool, len(sortedAssignedSyms))
+	stacks := make([][]Version, len(sortedAssignedSyms))
 
-		stacks[sym] = make([]Version, 0, capacity)
+	for i, sym := range sortedAssignedSyms {
+		if symIndexDense != nil {
+			// Store index+1 so zero remains the "not present" sentinel.
+			symIndexDense[int(sym)] = i + 1
+		} else {
+			symIndexMap[sym] = i
+		}
+		symByIndex[i] = sym
+		rootByIndex[i] = assignedSyms[sym]
+		nextVersionID[i] = b.NextVersionID[sym]
+
+		// Keep initial stack capacity modest; growth is cheap and many symbols
+		// only need a small number of active versions.
+		capacity := len(defPoints[sym]) + 1
+		if capacity < 2 {
+			capacity = 2
+		}
+		if capacity > 3 {
+			capacity = 3
+		}
+		stacks[i] = make([]Version, 0, capacity)
 	}
 
-	newVersion := func(sym basecfg.SymbolID) Version {
-		b.NextVersionID[sym]++
-
-		return Version{Root: assignedSyms[sym], Symbol: sym, ID: b.NextVersionID[sym]}
+	lookupSymIndex := func(sym basecfg.SymbolID) (int, bool) {
+		if symIndexDense != nil {
+			symInt := int(sym)
+			if symInt < 0 || symInt >= len(symIndexDense) {
+				return 0, false
+			}
+			idx := symIndexDense[symInt]
+			if idx == 0 {
+				return 0, false
+			}
+			return idx - 1, true
+		}
+		idx, ok := symIndexMap[sym]
+		return idx, ok
 	}
 
-	// pushedEntry stores a symbol and its push count for the small array optimization
+	type phiEntry struct {
+		symIdx int
+		phi    PhiInfo
+	}
+
+	phiByPoint := make(map[basecfg.Point][]phiEntry, len(phiSites))
+	for p, ordered := range phiSites {
+		operandCap := len(b.Cfg.PredecessorsReadOnly(p))
+		entries := make([]phiEntry, 0, len(ordered))
+		for _, sym := range ordered {
+			symIdx, ok := lookupSymIndex(sym)
+			if !ok {
+				continue
+			}
+			entries = append(entries, phiEntry{
+				symIdx: symIdx,
+				phi: PhiInfo{
+					Point:    p,
+					Target:   Version{Root: rootByIndex[symIdx], Symbol: sym},
+					Operands: make([]PhiOperand, 0, operandCap),
+				},
+			})
+		}
+		if len(entries) > 0 {
+			phiByPoint[p] = entries
+		}
+	}
+
+	var seededGlobals []int
+	if b.ScopeTracker != nil {
+		seededGlobals = make([]int, 0, len(sortedAssignedSyms))
+		for _, sym := range sortedAssignedSyms {
+			if declPoint, ok := b.ScopeTracker.declPoints[sym]; ok && declPoint == 0 {
+				if symIdx, found := lookupSymIndex(sym); found {
+					seededGlobals = append(seededGlobals, symIdx)
+				}
+			}
+		}
+	}
+
+	newVersion := func(symIdx int) Version {
+		nextVersionID[symIdx]++
+		touchedVersionID[symIdx] = true
+
+		return Version{
+			Root:   rootByIndex[symIdx],
+			Symbol: symByIndex[symIdx],
+			ID:     nextVersionID[symIdx],
+		}
+	}
+
+	// pushedEntry stores a symbol index and its push count for the small array optimization.
 	type pushedEntry struct {
-		sym   basecfg.SymbolID
-		count int
+		symIdx int
+		count  int
 	}
 
 	// Cache visible assigned symbols by visibility map pointer to avoid per-point scans.
-	visAssignedCache := make(map[uintptr][]basecfg.SymbolID)
+	visibility := b.ScopeTracker.visibility
+	globals := b.ScopeTracker.globals
+	type globalAssignedSym struct {
+		name   string
+		symIdx int
+	}
+	globalAssigned := make([]globalAssignedSym, 0, len(globals))
+	for name, resolvedSym := range globals {
+		if symIdx, ok := lookupSymIndex(resolvedSym); ok && rootByIndex[symIdx] == name {
+			globalAssigned = append(globalAssigned, globalAssignedSym{name: name, symIdx: symIdx})
+		}
+	}
 
-	// Track parent's VisibleVersion for sharing when unchanged
+	// Count visibility-map pointer reuse only for small graphs.
+	// On larger graphs this pre-pass can allocate substantially more than it saves.
+	var visRefCount map[uintptr]int
+	var visAssignedCache map[uintptr][]int
+	if len(visibility) <= 512 {
+		visRefCount = make(map[uintptr]int, len(visibility))
+		for _, visLocal := range visibility {
+			if visLocal != nil {
+				visRefCount[mapPtr(visLocal)]++
+			}
+		}
+		cacheCap := len(visRefCount)
+		if cacheCap > 128 {
+			cacheCap = 128
+		}
+		visAssignedCache = make(map[uintptr][]int, cacheCap)
+	}
+	visibleVersionByPoint := b.VisibleVersionByPoint
+	cfgSize := b.Cfg.Size()
+	if len(visibleVersionByPoint) < cfgSize {
+		visibleVersionByPoint = make([]map[basecfg.SymbolID]Version, cfgSize)
+	} else {
+		visibleVersionByPoint = visibleVersionByPoint[:cfgSize]
+	}
+
+	// Track parent's VisibleVersion for sharing when unchanged.
 	type renameState struct {
 		parentVersions map[basecfg.SymbolID]Version
 		parentVisPtr   uintptr // pointer to parent's visibility map for identity check
@@ -249,92 +435,87 @@ func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints 
 
 	var rename func(p basecfg.Point, state renameState)
 	rename = func(p basecfg.Point, state renameState) {
-		// Use small fixed array for common case (most points have 0-4 pushes)
+		// Use small fixed array for common case (most points have 0-4 pushes).
 		var pushedArr [8]pushedEntry
 
 		pushedLen := 0
 
-		var pushedMap map[basecfg.SymbolID]int // only allocated if overflow
+		var pushedOverflow []pushedEntry // only allocated if overflow
 
-		addPush := func(sym basecfg.SymbolID) {
-			// Check array first
+		addPush := func(symIdx int) {
+			// Check array first.
 			for i := range pushedLen {
-				if pushedArr[i].sym == sym {
+				if pushedArr[i].symIdx == symIdx {
 					pushedArr[i].count++
 
 					return
 				}
 			}
-			// Add to array if space
+			// Add to array if space.
 			if pushedLen < len(pushedArr) {
-				pushedArr[pushedLen] = pushedEntry{sym: sym, count: 1}
+				pushedArr[pushedLen] = pushedEntry{symIdx: symIdx, count: 1}
 				pushedLen++
 
 				return
 			}
-			// Overflow to map
-			if pushedMap == nil {
-				pushedMap = make(map[basecfg.SymbolID]int, 16)
-
-				for i := range pushedLen {
-					pushedMap[pushedArr[i].sym] = pushedArr[i].count
+			// Overflow to a compact slice. Overflow is rare in practice.
+			for i := range pushedOverflow {
+				if pushedOverflow[i].symIdx == symIdx {
+					pushedOverflow[i].count++
+					return
 				}
 			}
-
-			pushedMap[sym]++
+			pushedOverflow = append(pushedOverflow, pushedEntry{symIdx: symIdx, count: 1})
 		}
 
-		if phis := phiMap[p]; phis != nil {
-			phiSyms := make([]basecfg.SymbolID, 0, len(phis))
-
-			for sym := range phis {
-				phiSyms = append(phiSyms, sym)
-			}
-
-			sort.Slice(phiSyms, func(i, j int) bool { return phiSyms[i] < phiSyms[j] })
-
-			for _, sym := range phiSyms {
-				ver := newVersion(sym)
-				phis[sym].Target = ver
-				stacks[sym] = append(stacks[sym], ver)
-				addPush(sym)
+		if phiEntries := phiByPoint[p]; len(phiEntries) > 0 {
+			for i := range phiEntries {
+				entry := &phiEntries[i]
+				ver := newVersion(entry.symIdx)
+				entry.phi.Target = ver
+				stacks[entry.symIdx] = append(stacks[entry.symIdx], ver)
+				addPush(entry.symIdx)
 			}
 		}
 
 		if p == entry {
-			for _, sym := range seededGlobals {
-				ver := newVersion(sym)
-				stacks[sym] = append(stacks[sym], ver)
-				addPush(sym)
+			for _, symIdx := range seededGlobals {
+				ver := newVersion(symIdx)
+				stacks[symIdx] = append(stacks[symIdx], ver)
+				addPush(symIdx)
 			}
 		}
 
 		if info := b.Info[p]; info != nil {
 			switch v := info.(type) {
 			case *AssignInfo:
+				if len(v.TargetVersions) < len(v.Targets) {
+					if len(v.Targets) == 1 {
+						v.TargetVersions = v.singleTargetVersion[:]
+					} else {
+						targetVersions := make([]Version, len(v.Targets))
+						copy(targetVersions, v.TargetVersions)
+						v.TargetVersions = targetVersions
+					}
+				}
 				for i, target := range v.Targets {
 					sym, _ := assignmentTargetSymbol(target)
 					if sym == 0 {
 						continue
 					}
-					if _, ok := assignedSyms[sym]; ok {
-						ver := newVersion(sym)
-						stacks[sym] = append(stacks[sym], ver)
-						addPush(sym)
-
-						for len(v.TargetVersions) <= i {
-							v.TargetVersions = append(v.TargetVersions, Version{})
-						}
-
+					if symIdx, ok := lookupSymIndex(sym); ok {
+						ver := newVersion(symIdx)
+						stacks[symIdx] = append(stacks[symIdx], ver)
+						addPush(symIdx)
 						v.TargetVersions[i] = ver
 					}
 				}
 			case *FuncDefInfo:
 				if v.Symbol != 0 && v.TargetKind == FuncDefGlobal {
-					if _, ok := assignedSyms[v.Symbol]; ok {
-						ver := newVersion(v.Symbol)
-						stacks[v.Symbol] = append(stacks[v.Symbol], ver)
-						addPush(v.Symbol)
+					if symIdx, ok := lookupSymIndex(v.Symbol); ok {
+						ver := newVersion(symIdx)
+						stacks[symIdx] = append(stacks[symIdx], ver)
+						addPush(symIdx)
 					}
 				}
 			}
@@ -345,49 +526,135 @@ func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints 
 			currentVisPtr   uintptr
 		)
 
-		if vis := b.ScopeTracker.VisibleAt(p); vis != nil {
-			visMap := vis.ToMap()
-			currentVisPtr = mapPtr(visMap)
-			visibleAssigned := visAssignedCache[currentVisPtr]
+		pIdx := int(p)
+		if visLocal := visibility[p]; visLocal != nil {
+			currentVisPtr = mapPtr(visLocal)
+			noPushes := pushedLen == 0 && len(pushedOverflow) == 0
+			sameVisibilityAsParent := state.parentVersions != nil && currentVisPtr == state.parentVisPtr
 
-			if visibleAssigned == nil {
-				visibleAssigned = make([]basecfg.SymbolID, 0, len(assignedSyms))
-
-				for sym, name := range assignedSyms {
-					if resolvedSym, ok := vis.Get(name); ok && resolvedSym == sym {
-						visibleAssigned = append(visibleAssigned, sym)
+			// Reuse parent's VisibleVersion if visibility unchanged and no pushes.
+			if noPushes && sameVisibilityAsParent {
+				visibleVersionByPoint[pIdx] = state.parentVersions
+				currentVersions = state.parentVersions
+			} else if sameVisibilityAsParent {
+				hasVisiblePush := false
+				isVisiblePushedSym := func(symIdx int) bool {
+					name := rootByIndex[symIdx]
+					sym := symByIndex[symIdx]
+					if resolvedSym, ok := visLocal[name]; ok {
+						return resolvedSym == sym
+					}
+					if resolvedSym, ok := globals[name]; ok {
+						return resolvedSym == sym
+					}
+					return false
+				}
+				for i := range pushedLen {
+					if isVisiblePushedSym(pushedArr[i].symIdx) {
+						hasVisiblePush = true
+						break
 					}
 				}
-				sort.Slice(visibleAssigned, func(i, j int) bool { return visibleAssigned[i] < visibleAssigned[j] })
-
-				visAssignedCache[currentVisPtr] = visibleAssigned
-			}
-
-			noPushes := pushedLen == 0 && pushedMap == nil
-
-			// Reuse parent's VisibleVersion if visibility unchanged and no pushes
-			if noPushes && state.parentVersions != nil && currentVisPtr == state.parentVisPtr {
-				b.VisibleVersion[p] = state.parentVersions
-				currentVersions = state.parentVersions
-			} else {
-				for _, sym := range visibleAssigned {
-					if stack := stacks[sym]; len(stack) > 0 {
-						if currentVersions == nil {
-							currentVersions = make(map[basecfg.SymbolID]Version, len(visibleAssigned))
-							b.VisibleVersion[p] = currentVersions
+				if !hasVisiblePush {
+					for i := range pushedOverflow {
+						if isVisiblePushedSym(pushedOverflow[i].symIdx) {
+							hasVisiblePush = true
+							break
 						}
-
-						currentVersions[sym] = stack[len(stack)-1]
+					}
+				}
+				if !hasVisiblePush {
+					visibleVersionByPoint[pIdx] = state.parentVersions
+					currentVersions = state.parentVersions
+				} else {
+					// Visibility unchanged: copy parent once and patch only locally updated symbols.
+					currentVersions = make(map[basecfg.SymbolID]Version, len(state.parentVersions)+pushedLen+len(pushedOverflow))
+					for sym, ver := range state.parentVersions {
+						currentVersions[sym] = ver
+					}
+					for i := range pushedLen {
+						symIdx := pushedArr[i].symIdx
+						if stack := stacks[symIdx]; len(stack) > 0 {
+							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+						}
+					}
+					for i := range pushedOverflow {
+						symIdx := pushedOverflow[i].symIdx
+						if stack := stacks[symIdx]; len(stack) > 0 {
+							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+						}
+					}
+					visibleVersionByPoint[pIdx] = currentVersions
+				}
+			} else if visAssignedCache != nil && visRefCount[currentVisPtr] > 1 {
+				visibleAssigned, cached := visAssignedCache[currentVisPtr]
+				if !cached {
+					visibleAssigned = make([]int, 0, len(visLocal)+len(globalAssigned))
+					for name, resolvedSym := range visLocal {
+						if symIdx, ok := lookupSymIndex(resolvedSym); ok && rootByIndex[symIdx] == name {
+							visibleAssigned = append(visibleAssigned, symIdx)
+						}
+					}
+					for _, globalInfo := range globalAssigned {
+						if _, shadowed := visLocal[globalInfo.name]; shadowed {
+							continue
+						}
+						visibleAssigned = append(visibleAssigned, globalInfo.symIdx)
+					}
+					visAssignedCache[currentVisPtr] = visibleAssigned
+				}
+				activeCount := 0
+				for _, symIdx := range visibleAssigned {
+					if stack := stacks[symIdx]; len(stack) > 0 {
+						activeCount++
+					}
+				}
+				if activeCount > 0 {
+					currentVersions = make(map[basecfg.SymbolID]Version, activeCount)
+					visibleVersionByPoint[pIdx] = currentVersions
+					for _, symIdx := range visibleAssigned {
+						if stack := stacks[symIdx]; len(stack) > 0 {
+							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+						}
+					}
+				}
+			} else {
+				estimatedCap := len(visLocal) + len(globalAssigned)
+				for name, resolvedSym := range visLocal {
+					symIdx, ok := lookupSymIndex(resolvedSym)
+					if !ok || rootByIndex[symIdx] != name {
+						continue
+					}
+					if stack := stacks[symIdx]; len(stack) > 0 {
+						if currentVersions == nil {
+							currentVersions = make(map[basecfg.SymbolID]Version, estimatedCap)
+							visibleVersionByPoint[pIdx] = currentVersions
+						}
+						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+					}
+				}
+				for _, globalInfo := range globalAssigned {
+					if _, shadowed := visLocal[globalInfo.name]; shadowed {
+						continue
+					}
+					symIdx := globalInfo.symIdx
+					if stack := stacks[symIdx]; len(stack) > 0 {
+						if currentVersions == nil {
+							currentVersions = make(map[basecfg.SymbolID]Version, estimatedCap)
+							visibleVersionByPoint[pIdx] = currentVersions
+						}
+						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
 					}
 				}
 			}
 		}
 
-		for _, succ := range b.Cfg.Successors(p) {
-			if succPhis := phiMap[succ]; succPhis != nil {
-				for sym, phi := range succPhis {
-					if stack := stacks[sym]; len(stack) > 0 {
-						phi.Operands = append(phi.Operands, PhiOperand{
+		emitPhiOperands := func(succ basecfg.Point) {
+			if succPhiEntries := phiByPoint[succ]; len(succPhiEntries) > 0 {
+				for i := range succPhiEntries {
+					entry := &succPhiEntries[i]
+					if stack := stacks[entry.symIdx]; len(stack) > 0 {
+						entry.phi.Operands = append(entry.phi.Operands, PhiOperand{
 							From:    p,
 							Version: stack[len(stack)-1],
 						})
@@ -396,43 +663,64 @@ func (b *Builder) renameSSA(assignedSyms map[basecfg.SymbolID]string, defPoints 
 			}
 		}
 
+		if b.Cfg.IsBranch(p) {
+			for _, succ := range b.Cfg.SuccessorsReadOnly(p) {
+				emitPhiOperands(succ)
+			}
+		} else if succ := b.Cfg.Successor(p); succ != p {
+			emitPhiOperands(succ)
+		}
+
 		childState := renameState{
 			parentVersions: currentVersions,
 			parentVisPtr:   currentVisPtr,
 		}
-		for _, child := range domInfo.DominatorTree[p] {
-			rename(child, childState)
+		if pIdx >= 0 && pIdx < len(domTree) {
+			for _, child := range domTree[pIdx] {
+				rename(child, childState)
+			}
 		}
 
-		if pushedMap != nil {
-			for sym, count := range pushedMap {
-				stacks[sym] = stacks[sym][:len(stacks[sym])-count]
-			}
-		} else {
-			for i := range pushedLen {
-				sym := pushedArr[i].sym
-				count := pushedArr[i].count
-				stacks[sym] = stacks[sym][:len(stacks[sym])-count]
-			}
+		for i := range pushedLen {
+			symIdx := pushedArr[i].symIdx
+			count := pushedArr[i].count
+			stacks[symIdx] = stacks[symIdx][:len(stacks[symIdx])-count]
+		}
+		for i := range pushedOverflow {
+			symIdx := pushedOverflow[i].symIdx
+			count := pushedOverflow[i].count
+			stacks[symIdx] = stacks[symIdx][:len(stacks[symIdx])-count]
 		}
 	}
 
 	rename(entry, renameState{})
 
-	for _, p := range b.Cfg.RPO() {
-		if phis := phiMap[p]; phis != nil {
-			phiSyms := make([]basecfg.SymbolID, 0, len(phis))
+	for symIdx, sym := range symByIndex {
+		if touchedVersionID[symIdx] {
+			b.NextVersionID[sym] = nextVersionID[symIdx]
+		}
+	}
+	b.VisibleVersionByPoint = visibleVersionByPoint
+	phiCap := 0
+	for _, phiEntries := range phiByPoint {
+		phiCap += len(phiEntries)
+	}
+	if phiCap > 0 {
+		if cap(b.PhiNodes) < phiCap {
+			b.PhiNodes = make([]PhiInfo, 0, phiCap)
+		} else {
+			b.PhiNodes = b.PhiNodes[:0]
+		}
+	} else {
+		b.PhiNodes = b.PhiNodes[:0]
+	}
 
-			for sym := range phis {
-				phiSyms = append(phiSyms, sym)
-			}
-
-			sort.Slice(phiSyms, func(i, j int) bool { return phiSyms[i] < phiSyms[j] })
-
-			for _, sym := range phiSyms {
-				phi := phis[sym]
-				if len(phi.Operands) > 0 {
-					b.PhiNodes = append(b.PhiNodes, *phi)
+	for _, p := range b.Cfg.RPOReadOnly() {
+		if phiEntries := phiByPoint[p]; len(phiEntries) > 0 {
+			for i := range phiEntries {
+				entry := &phiEntries[i]
+				if len(entry.phi.Operands) > 0 {
+					b.PhiNodes = append(b.PhiNodes, entry.phi)
 				}
 			}
 		}

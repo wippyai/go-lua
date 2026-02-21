@@ -65,8 +65,23 @@ type Binder struct {
 // Globals are sorted before processing to ensure deterministic SymbolID
 // assignment across multiple bindings of the same source.
 func NewBinder(globals []string) *Binder {
+	return NewBinderWithDeclHint(globals, 0)
+}
+
+// NewBinderWithDeclHint creates a binder initialized with global names and an
+// optional declaration-count hint for sizing internal binding maps.
+func NewBinderWithDeclHint(globals []string, declHint int) *Binder {
+	if declHint < 0 {
+		declHint = 0
+	}
+
+	symbolHint := len(globals)
+	if declHint >= 32 {
+		symbolHint += declHint
+	}
+
 	b := &Binder{
-		table:   NewBindingTable(),
+		table:   NewBindingTableWithHint(symbolHint, declHint),
 		stack:   []scopeFrame{{locals: make(map[string]cfg.SymbolID)}},
 		globals: make(map[string]cfg.SymbolID),
 	}
@@ -97,6 +112,12 @@ func NewBinder(globals []string) *Binder {
 	return b
 }
 
+// NewBinderWithStmtHint preserves the previous API surface; stmtHint is treated
+// as a declaration-density hint.
+func NewBinderWithStmtHint(globals []string, stmtHint int) *Binder {
+	return NewBinderWithDeclHint(globals, stmtHint)
+}
+
 // Bind performs complete name resolution on a function AST.
 //
 // This is the main entry point for the binding phase. It creates a binder
@@ -106,9 +127,162 @@ func NewBinder(globals []string) *Binder {
 // The returned table maps all IdentExpr nodes to their resolved symbols
 // and records parameter/local symbol lists for each function and declaration.
 func Bind(fn *ast.FunctionExpr, globals []string) *BindingTable {
-	b := NewBinder(globals)
+	declHint := 0
+	if fn != nil {
+		declHint = countDeclHintsInFunction(fn, false)
+	}
+
+	b := NewBinderWithDeclHint(globals, declHint)
 	b.bindFunctionWithImplicitSelf(fn, false)
 	return b.table
+}
+
+func countDeclHintsInFunction(fn *ast.FunctionExpr, hasImplicitSelf bool) int {
+	if fn == nil {
+		return 0
+	}
+
+	count := 0
+
+	hasExplicitSelf := fn.ParList != nil && len(fn.ParList.Names) > 0 && fn.ParList.Names[0] == "self"
+	if hasImplicitSelf && !hasExplicitSelf {
+		count++
+	}
+
+	if fn.ParList != nil {
+		count += len(fn.ParList.Names)
+	}
+
+	count += countDeclHintsInStmts(fn.Stmts)
+
+	return count
+}
+
+func countDeclHintsInStmts(stmts []ast.Stmt) int {
+	count := 0
+
+	for _, stmt := range stmts {
+		count += countDeclHintsInStmt(stmt)
+	}
+
+	return count
+}
+
+func countDeclHintsInStmt(stmt ast.Stmt) int {
+	if stmt == nil {
+		return 0
+	}
+
+	switch s := stmt.(type) {
+	case *ast.LocalAssignStmt:
+		count := len(s.Names)
+		for _, expr := range s.Exprs {
+			count += countDeclHintsInExpr(expr)
+		}
+
+		return count
+	case *ast.AssignStmt:
+		count := 0
+		for _, expr := range s.Lhs {
+			count += countDeclHintsInExpr(expr)
+		}
+		for _, expr := range s.Rhs {
+			count += countDeclHintsInExpr(expr)
+		}
+
+		return count
+	case *ast.FuncCallStmt:
+		return countDeclHintsInExpr(s.Expr)
+	case *ast.DoBlockStmt:
+		return countDeclHintsInStmts(s.Stmts)
+	case *ast.WhileStmt:
+		return countDeclHintsInExpr(s.Condition) + countDeclHintsInStmts(s.Stmts)
+	case *ast.RepeatStmt:
+		return countDeclHintsInStmts(s.Stmts) + countDeclHintsInExpr(s.Condition)
+	case *ast.IfStmt:
+		return countDeclHintsInExpr(s.Condition) + countDeclHintsInStmts(s.Then) + countDeclHintsInStmts(s.Else)
+	case *ast.NumberForStmt:
+		return 1 + countDeclHintsInExpr(s.Init) + countDeclHintsInExpr(s.Limit) + countDeclHintsInExpr(s.Step) +
+			countDeclHintsInStmts(s.Stmts)
+	case *ast.GenericForStmt:
+		count := len(s.Names)
+		for _, expr := range s.Exprs {
+			count += countDeclHintsInExpr(expr)
+		}
+		count += countDeclHintsInStmts(s.Stmts)
+
+		return count
+	case *ast.FuncDefStmt:
+		isMethod := s.Name != nil && s.Name.Method != ""
+		count := countDeclHintsInFunction(s.Func, isMethod)
+		if s.Name != nil {
+			count += countDeclHintsInExpr(s.Name.Func) + countDeclHintsInExpr(s.Name.Receiver)
+		}
+
+		return count
+	case *ast.ReturnStmt:
+		count := 0
+		for _, expr := range s.Exprs {
+			count += countDeclHintsInExpr(expr)
+		}
+
+		return count
+	default:
+		return 0
+	}
+}
+
+func countDeclHintsInExpr(expr ast.Expr) int {
+	if expr == nil {
+		return 0
+	}
+
+	switch e := expr.(type) {
+	case *ast.FunctionExpr:
+		return countDeclHintsInFunction(e, false)
+	case *ast.AttrGetExpr:
+		return countDeclHintsInExpr(e.Object) + countDeclHintsInExpr(e.Key)
+	case *ast.TableExpr:
+		count := 0
+		for _, field := range e.Fields {
+			if field == nil {
+				continue
+			}
+			count += countDeclHintsInExpr(field.Key)
+			count += countDeclHintsInExpr(field.Value)
+		}
+
+		return count
+	case *ast.FuncCallExpr:
+		count := countDeclHintsInExpr(e.Func) + countDeclHintsInExpr(e.Receiver)
+		for _, arg := range e.Args {
+			count += countDeclHintsInExpr(arg)
+		}
+
+		return count
+	case *ast.LogicalOpExpr:
+		return countDeclHintsInExpr(e.Lhs) + countDeclHintsInExpr(e.Rhs)
+	case *ast.RelationalOpExpr:
+		return countDeclHintsInExpr(e.Lhs) + countDeclHintsInExpr(e.Rhs)
+	case *ast.StringConcatOpExpr:
+		return countDeclHintsInExpr(e.Lhs) + countDeclHintsInExpr(e.Rhs)
+	case *ast.ArithmeticOpExpr:
+		return countDeclHintsInExpr(e.Lhs) + countDeclHintsInExpr(e.Rhs)
+	case *ast.UnaryMinusOpExpr:
+		return countDeclHintsInExpr(e.Expr)
+	case *ast.UnaryNotOpExpr:
+		return countDeclHintsInExpr(e.Expr)
+	case *ast.UnaryLenOpExpr:
+		return countDeclHintsInExpr(e.Expr)
+	case *ast.UnaryBNotOpExpr:
+		return countDeclHintsInExpr(e.Expr)
+	case *ast.CastExpr:
+		return countDeclHintsInExpr(e.Expr)
+	case *ast.NonNilAssertExpr:
+		return countDeclHintsInExpr(e.Expr)
+	default:
+		return 0
+	}
 }
 
 // enterScope pushes a new empty scope frame onto the stack.
@@ -214,12 +388,12 @@ func (b *Binder) predeclareLocalFunctions(stmts []ast.Stmt) {
 			continue
 		}
 		// Already declared (shouldn't happen, but be safe)
-		if syms := b.table.LocalSymbols(local); len(syms) > 0 {
+		if b.table.HasLocalSymbols(local) {
 			continue
 		}
 		// Declare the local function name now
 		sym := b.declareLocal(local.Names[0])
-		b.table.SetLocalSymbols(local, []cfg.SymbolID{sym})
+		b.table.SetLocalSymbol(local, sym)
 	}
 }
 
@@ -329,7 +503,7 @@ func (b *Binder) bindAssignTarget(expr ast.Expr) {
 // then the new local names are declared. This ensures 'local x = x' binds
 // the RHS x to any outer declaration before shadowing it.
 func (b *Binder) bindLocalAssignStmt(s *ast.LocalAssignStmt) {
-	if syms := b.table.LocalSymbols(s); len(syms) > 0 {
+	if b.table.HasLocalSymbols(s) {
 		for _, expr := range s.Exprs {
 			b.bindExpr(expr)
 		}
@@ -339,10 +513,15 @@ func (b *Binder) bindLocalAssignStmt(s *ast.LocalAssignStmt) {
 	for _, expr := range s.Exprs {
 		b.bindExpr(expr)
 	}
-	syms := make([]cfg.SymbolID, 0, len(s.Names))
-	for _, name := range s.Names {
-		sym := b.declareLocal(name)
-		syms = append(syms, sym)
+	if len(s.Names) == 1 {
+		b.table.SetLocalSymbol(s, b.declareLocal(s.Names[0]))
+
+		return
+	}
+
+	syms := make([]cfg.SymbolID, len(s.Names))
+	for i, name := range s.Names {
+		syms[i] = b.declareLocal(name)
 	}
 	b.table.SetLocalSymbols(s, syms)
 }

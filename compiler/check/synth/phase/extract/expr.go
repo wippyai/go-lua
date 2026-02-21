@@ -563,14 +563,14 @@ func (s *Synthesizer) synthExprWithSpec(expr ast.Expr, p cfg.Point, specTypes ap
 			}
 		}
 	}
-	sc := s.deps.Scopes[p]
+	sc := s.deps.ScopeAt(p)
 	recurse := func(ex ast.Expr) typ.Type { return s.synthExprWithSpec(ex, p, specTypes) }
 	return s.synthExprCore(expr, sc, p, nil, recurse)
 }
 
 // synthMultiWithSpec synthesizes multi-return expression with spec-narrowed lookup.
 func (s *Synthesizer) synthMultiWithSpec(expr ast.Expr, p cfg.Point, specTypes api.SpecTypes) []typ.Type {
-	sc := s.deps.Scopes[p]
+	sc := s.deps.ScopeAt(p)
 	recurse := func(ex ast.Expr) typ.Type { return s.synthExprWithSpec(ex, p, specTypes) }
 	return s.synthMultiCore(expr, sc, recurse,
 		func(call *ast.FuncCallExpr) []typ.Type {

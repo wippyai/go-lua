@@ -34,9 +34,10 @@ type Builder struct {
 	LoopExits   []basecfg.Point
 
 	// SSA versioning state (keyed by basecfg.SymbolID for scope-aware versioning)
-	NextVersionID  map[basecfg.SymbolID]int                       // symbol -> next version ID
-	VisibleVersion map[basecfg.Point]map[basecfg.SymbolID]Version // (point, symbol) -> visible version
-	PhiNodes       []PhiInfo                                      // Collected phi nodes
+	NextVersionID         map[basecfg.SymbolID]int                       // symbol -> next version ID
+	VisibleVersion        map[basecfg.Point]map[basecfg.SymbolID]Version // (point, symbol) -> visible version (legacy sparse)
+	VisibleVersionByPoint []map[basecfg.SymbolID]Version                 // dense point-indexed view
+	PhiNodes              []PhiInfo                                      // Collected phi nodes
 
 	// Scope tracking (structural visibility)
 	ScopeTracker *ScopeTracker
@@ -52,15 +53,33 @@ type Builder struct {
 
 // NewBuilder creates a new Builder with initialized fields.
 func NewBuilder() *Builder {
+	return NewBuilderWithCapacity(0, 0)
+}
+
+// NewBuilderWithCapacity creates a new Builder with initial CFG size hints.
+func NewBuilderWithCapacity(nodeCap, edgeCap int) *Builder {
+	if nodeCap < 0 {
+		nodeCap = 0
+	}
+	mapCap := nodeCap
+	switch {
+	case mapCap > 256:
+		mapCap = 256
+	case mapCap > 128:
+		mapCap = 128
+	case mapCap > 64:
+		mapCap = 64
+	}
+
 	return &Builder{
-		Cfg:            basecfg.New(),
-		Info:           make(map[basecfg.Point]NodeInfo),
+		Cfg:            basecfg.NewWithCapacity(nodeCap, edgeCap),
+		Info:           make(map[basecfg.Point]NodeInfo, mapCap),
 		CurrentLive:    true,
 		Labels:         make(map[string]basecfg.Point),
 		Pending:        make(map[string][]basecfg.Point),
 		NextVersionID:  make(map[basecfg.SymbolID]int),
 		VisibleVersion: make(map[basecfg.Point]map[basecfg.SymbolID]Version),
-		ScopeTracker:   NewScopeTracker(),
+		ScopeTracker:   NewScopeTrackerWithCapacity(nodeCap),
 	}
 }
 
@@ -144,13 +163,17 @@ func (b *Builder) resolveCallInfoSymbols(info *CallInfo) {
 	}
 
 	if len(info.Args) > 0 {
-		info.ArgSymbols = make([]basecfg.SymbolID, len(info.Args))
+		var argSymbols []basecfg.SymbolID
 
 		for argIndex, arg := range info.Args {
 			if sym, ok := b.symbolFromExpr(arg); ok {
-				info.ArgSymbols[argIndex] = sym
+				if argSymbols == nil {
+					argSymbols = make([]basecfg.SymbolID, len(info.Args))
+				}
+				argSymbols[argIndex] = sym
 			}
 		}
+		info.ArgSymbols = argSymbols
 
 		if info.IsTypeCheck {
 			info.TypeCheckPath = b.pathFromExpr(info.Args[0])
@@ -190,11 +213,14 @@ func (b *Builder) resolveSourceSymbols(info *AssignInfo, exprs []ast.Expr) {
 		return
 	}
 
-	info.SourceSymbols = make([]basecfg.SymbolID, len(exprs))
+	var sourceSymbols []basecfg.SymbolID
 
 	for exprIndex, expr := range exprs {
 		if sym, ok := b.symbolFromExpr(expr); ok {
-			info.SourceSymbols[exprIndex] = sym
+			if sourceSymbols == nil {
+				sourceSymbols = make([]basecfg.SymbolID, len(exprs))
+			}
+			sourceSymbols[exprIndex] = sym
 
 			continue
 		}
@@ -202,10 +228,14 @@ func (b *Builder) resolveSourceSymbols(info *AssignInfo, exprs []ast.Expr) {
 		path := b.pathFromExpr(expr)
 		if !path.IsEmpty() && len(path.Segments) > 0 {
 			if sym := b.resolveFieldPathSymbol(path); sym != 0 {
-				info.SourceSymbols[exprIndex] = sym
+				if sourceSymbols == nil {
+					sourceSymbols = make([]basecfg.SymbolID, len(exprs))
+				}
+				sourceSymbols[exprIndex] = sym
 			}
 		}
 	}
+	info.SourceSymbols = sourceSymbols
 }
 
 // resolveFieldBaseSymbol resolves the base symbol for a field access expression.

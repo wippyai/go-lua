@@ -51,11 +51,7 @@ func BuildCallInfo(call *ast.FuncCallExpr, isStmt bool) *CallInfo {
 	if info.CalleeName == "" {
 		info.CalleeName = staticFieldCalleeName(call.Func)
 	}
-	info.ArgNames = make([]string, len(call.Args))
-
-	for i, arg := range call.Args {
-		info.ArgNames[i] = extraction.IdentName(arg)
-	}
+	info.ArgNames = extractIdentNames(call.Args)
 
 	ExtractTypeCheckPattern(info)
 
@@ -87,15 +83,43 @@ func ExtractSourceCalls(exprs []ast.Expr) []*CallInfo {
 		return nil
 	}
 
-	calls := make([]*CallInfo, len(exprs))
+	var calls []*CallInfo
 
 	for i, expr := range exprs {
 		if call, ok := expr.(*ast.FuncCallExpr); ok {
+			if calls == nil {
+				calls = make([]*CallInfo, len(exprs))
+			}
 			calls[i] = BuildCallInfo(call, false)
 		}
 	}
 
 	return calls
+}
+
+// extractIdentNames returns identifier names aligned to expr indexes.
+//
+// It lazily allocates the output slice only when at least one expression is
+// an identifier; callers get nil when no identifiers are present.
+func extractIdentNames(exprs []ast.Expr) []string {
+	if len(exprs) == 0 {
+		return nil
+	}
+
+	var names []string
+
+	for i, expr := range exprs {
+		name := extraction.IdentName(expr)
+		if name == "" {
+			continue
+		}
+		if names == nil {
+			names = make([]string, len(exprs))
+		}
+		names[i] = name
+	}
+
+	return names
 }
 
 func isStaticReceiver(expr ast.Expr) bool {

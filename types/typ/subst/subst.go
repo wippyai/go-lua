@@ -78,294 +78,287 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 	if t == nil || !expandInstantiatedCanDescend(t) {
 		return t
 	}
-	return typ.VisitWithGuard(t, guard, t, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
-		return typ.Visitor[typ.Type]{
-			Instantiated: func(inst *typ.Instantiated) typ.Type {
-				if inst.Generic == nil || len(inst.TypeArgs) != len(inst.Generic.TypeParams) {
-					return t
-				}
-				if inst.Generic.Body == nil {
-					return t
-				}
-				body := Params(inst.Generic.Body, inst.Generic.TypeParams, inst.TypeArgs)
-				body = Self(body, t)
-				return expandInstantiatedGuard(body, next)
-			},
-			Optional: func(o *typ.Optional) typ.Type {
-				inner := expandInstantiatedGuard(o.Inner, next)
-				if inner == o.Inner {
-					return t
-				}
-				return typ.NewOptional(inner)
-			},
-			Union: func(u *typ.Union) typ.Type {
-				var members []typ.Type
-				for i, m := range u.Members {
-					newMember := expandInstantiatedGuard(m, next)
-					if newMember != m {
-						if members == nil {
-							members = make([]typ.Type, len(u.Members))
-							copy(members, u.Members)
-						}
-						members[i] = newMember
-					} else if members != nil {
-						members[i] = m
-					}
-				}
-				if members == nil {
-					return t
-				}
-				return typ.NewUnion(members...)
-			},
-			Intersection: func(in *typ.Intersection) typ.Type {
-				var members []typ.Type
-				for i, m := range in.Members {
-					newMember := expandInstantiatedGuard(m, next)
-					if newMember != m {
-						if members == nil {
-							members = make([]typ.Type, len(in.Members))
-							copy(members, in.Members)
-						}
-						members[i] = newMember
-					} else if members != nil {
-						members[i] = m
-					}
-				}
-				if members == nil {
-					return t
-				}
-				return typ.NewIntersection(members...)
-			},
-			Array: func(a *typ.Array) typ.Type {
-				elem := expandInstantiatedGuard(a.Element, next)
-				if elem == a.Element {
-					return t
-				}
-				return typ.NewArray(elem)
-			},
-			Map: func(m *typ.Map) typ.Type {
-				key := expandInstantiatedGuard(m.Key, next)
-				value := expandInstantiatedGuard(m.Value, next)
-				if key == m.Key && value == m.Value {
-					return t
-				}
-				return typ.NewMap(key, value)
-			},
-			Tuple: func(tup *typ.Tuple) typ.Type {
-				var elems []typ.Type
-				for i, e := range tup.Elements {
-					newElem := expandInstantiatedGuard(e, next)
-					if newElem != e {
-						if elems == nil {
-							elems = make([]typ.Type, len(tup.Elements))
-							copy(elems, tup.Elements)
-						}
-						elems[i] = newElem
-					} else if elems != nil {
-						elems[i] = e
-					}
-				}
-				if elems == nil {
-					return t
-				}
-				return typ.NewTuple(elems...)
-			},
-			Function: func(fn *typ.Function) typ.Type {
-				changed := false
-				var params []typ.Param
-				for i, p := range fn.Params {
-					newType := p.Type
-					if _, isInst := p.Type.(*typ.Instantiated); !isInst {
-						newType = expandInstantiatedGuard(p.Type, next)
-					}
-					if newType != p.Type {
-						if params == nil {
-							params = make([]typ.Param, len(fn.Params))
-							copy(params, fn.Params)
-						}
-						changed = true
-						params[i] = typ.Param{Name: p.Name, Type: newType, Optional: p.Optional}
-					} else if params != nil {
-						params[i] = p
-					}
-				}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return t
+	}
 
-				var returns []typ.Type
-				for i, r := range fn.Returns {
-					newRet := expandInstantiatedGuard(r, next)
-					if newRet != r {
-						if returns == nil {
-							returns = make([]typ.Type, len(fn.Returns))
-							copy(returns, fn.Returns)
-						}
-						changed = true
-						returns[i] = newRet
-					} else if returns != nil {
-						returns[i] = r
-					}
-				}
-
-				variadic := fn.Variadic
-				if fn.Variadic != nil {
-					newVariadic := expandInstantiatedGuard(fn.Variadic, next)
-					if newVariadic != fn.Variadic {
-						changed = true
-						variadic = newVariadic
-					}
-				}
-
-				if !changed {
-					return t
-				}
-
-				builder := typ.Func()
-				paramsSrc := fn.Params
-				if params != nil {
-					paramsSrc = params
-				}
-				for _, p := range paramsSrc {
-					if p.Optional {
-						builder = builder.OptParam(p.Name, p.Type)
-					} else {
-						builder = builder.Param(p.Name, p.Type)
-					}
-				}
-				if variadic != nil {
-					builder = builder.Variadic(variadic)
-				}
-				returnsSrc := fn.Returns
-				if returns != nil {
-					returnsSrc = returns
-				}
-				if len(returnsSrc) > 0 {
-					builder = builder.Returns(returnsSrc...)
-				}
-				if fn.Effects != nil {
-					builder = builder.Effects(fn.Effects)
-				}
-				if fn.Spec != nil {
-					builder = builder.Spec(fn.Spec)
-				}
-				if fn.Refinement != nil {
-					builder = builder.WithRefinement(fn.Refinement)
-				}
-				return builder.Build()
-			},
-			Record: func(rec *typ.Record) typ.Type {
-				changed := false
-				var fields []typ.Field
-				for i, f := range rec.Fields {
-					newType := expandInstantiatedGuard(f.Type, next)
-					if newType != f.Type {
-						if fields == nil {
-							fields = make([]typ.Field, len(rec.Fields))
-							copy(fields, rec.Fields)
-						}
-						changed = true
-						fields[i] = typ.Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
-					} else if fields != nil {
-						fields[i] = f
-					}
-				}
-
-				metatable := rec.Metatable
-				if rec.Metatable != nil {
-					newMetatable := expandInstantiatedGuard(rec.Metatable, next)
-					if newMetatable != rec.Metatable {
-						changed = true
-						metatable = newMetatable
-					}
-				}
-
-				mapKey := rec.MapKey
-				mapValue := rec.MapValue
-				if rec.HasMapComponent() {
-					mapKey = expandInstantiatedGuard(rec.MapKey, next)
-					if mapKey != rec.MapKey {
-						changed = true
-					}
-					mapValue = expandInstantiatedGuard(rec.MapValue, next)
-					if mapValue != rec.MapValue {
-						changed = true
-					}
-				}
-
-				if !changed {
-					return t
-				}
-
-				builder := typ.NewRecord()
-				if rec.Open {
-					builder.SetOpen(true)
-				}
-				fieldsSrc := rec.Fields
-				if fields != nil {
-					fieldsSrc = fields
-				}
-				for _, f := range fieldsSrc {
-					switch {
-					case f.Optional && f.Readonly:
-						builder = builder.OptReadonlyField(f.Name, f.Type)
-					case f.Optional:
-						builder = builder.OptField(f.Name, f.Type)
-					case f.Readonly:
-						builder = builder.ReadonlyField(f.Name, f.Type)
-					default:
-						builder = builder.Field(f.Name, f.Type)
-					}
-				}
-				if metatable != nil {
-					builder = builder.Metatable(metatable)
-				}
-				if mapKey != nil && mapValue != nil {
-					builder = builder.MapComponent(mapKey, mapValue)
-				}
-				return builder.Build()
-			},
-			Alias: func(a *typ.Alias) typ.Type {
-				target := expandInstantiatedGuard(a.Target, next)
-				if target == a.Target {
-					return t
-				}
-				return typ.NewAlias(a.Name, target)
-			},
-			Interface: func(i *typ.Interface) typ.Type {
-				changed := false
-				var methods []typ.Method
-				for idx := range i.Methods {
-					m := i.Methods[idx]
-					newType := expandInstantiatedGuard(m.Type, next)
-					fn, ok := newType.(*typ.Function)
-					if !ok {
-						fn = m.Type
-					}
-					if fn != m.Type {
-						if methods == nil {
-							methods = make([]typ.Method, len(i.Methods))
-							copy(methods, i.Methods)
-						}
-						changed = true
-						methods[idx] = typ.Method{Name: m.Name, Type: fn}
-					} else if methods != nil {
-						methods[idx] = m
-					}
-				}
-				if !changed {
-					return t
-				}
-				return typ.NewInterface(i.Name, methods)
-			},
-			Ref: func(r *typ.Ref) typ.Type {
-				return t
-			},
-			Generic: func(g *typ.Generic) typ.Type {
-				return t
-			},
-			Default: func(t typ.Type) typ.Type {
-				return t
-			},
+	orig := t
+	for {
+		ann, ok := t.(*typ.Annotated)
+		if !ok || ann.Inner == nil || ann.Inner == t {
+			break
 		}
-	})
+		t = ann.Inner
+	}
+
+	switch v := t.(type) {
+	case *typ.Instantiated:
+		if v.Generic == nil || len(v.TypeArgs) != len(v.Generic.TypeParams) || v.Generic.Body == nil {
+			return orig
+		}
+		body := Params(v.Generic.Body, v.Generic.TypeParams, v.TypeArgs)
+		body = Self(body, orig)
+		return expandInstantiatedGuard(body, next)
+	case *typ.Optional:
+		inner := expandInstantiatedGuard(v.Inner, next)
+		if inner == v.Inner {
+			return orig
+		}
+		return typ.NewOptional(inner)
+	case *typ.Union:
+		var members []typ.Type
+		for i, m := range v.Members {
+			newMember := expandInstantiatedGuard(m, next)
+			if newMember != m {
+				if members == nil {
+					members = make([]typ.Type, len(v.Members))
+					copy(members, v.Members)
+				}
+				members[i] = newMember
+			} else if members != nil {
+				members[i] = m
+			}
+		}
+		if members == nil {
+			return orig
+		}
+		return typ.NewUnion(members...)
+	case *typ.Intersection:
+		var members []typ.Type
+		for i, m := range v.Members {
+			newMember := expandInstantiatedGuard(m, next)
+			if newMember != m {
+				if members == nil {
+					members = make([]typ.Type, len(v.Members))
+					copy(members, v.Members)
+				}
+				members[i] = newMember
+			} else if members != nil {
+				members[i] = m
+			}
+		}
+		if members == nil {
+			return orig
+		}
+		return typ.NewIntersection(members...)
+	case *typ.Array:
+		elem := expandInstantiatedGuard(v.Element, next)
+		if elem == v.Element {
+			return orig
+		}
+		return typ.NewArray(elem)
+	case *typ.Map:
+		key := expandInstantiatedGuard(v.Key, next)
+		value := expandInstantiatedGuard(v.Value, next)
+		if key == v.Key && value == v.Value {
+			return orig
+		}
+		return typ.NewMap(key, value)
+	case *typ.Tuple:
+		var elems []typ.Type
+		for i, e := range v.Elements {
+			newElem := expandInstantiatedGuard(e, next)
+			if newElem != e {
+				if elems == nil {
+					elems = make([]typ.Type, len(v.Elements))
+					copy(elems, v.Elements)
+				}
+				elems[i] = newElem
+			} else if elems != nil {
+				elems[i] = e
+			}
+		}
+		if elems == nil {
+			return orig
+		}
+		return typ.NewTuple(elems...)
+	case *typ.Function:
+		changed := false
+		var params []typ.Param
+		for i, p := range v.Params {
+			newType := p.Type
+			if _, isInst := p.Type.(*typ.Instantiated); !isInst {
+				newType = expandInstantiatedGuard(p.Type, next)
+			}
+			if newType != p.Type {
+				if params == nil {
+					params = make([]typ.Param, len(v.Params))
+					copy(params, v.Params)
+				}
+				changed = true
+				params[i] = typ.Param{Name: p.Name, Type: newType, Optional: p.Optional}
+			} else if params != nil {
+				params[i] = p
+			}
+		}
+
+		var returns []typ.Type
+		for i, r := range v.Returns {
+			newRet := expandInstantiatedGuard(r, next)
+			if newRet != r {
+				if returns == nil {
+					returns = make([]typ.Type, len(v.Returns))
+					copy(returns, v.Returns)
+				}
+				changed = true
+				returns[i] = newRet
+			} else if returns != nil {
+				returns[i] = r
+			}
+		}
+
+		variadic := v.Variadic
+		if v.Variadic != nil {
+			newVariadic := expandInstantiatedGuard(v.Variadic, next)
+			if newVariadic != v.Variadic {
+				changed = true
+				variadic = newVariadic
+			}
+		}
+
+		if !changed {
+			return orig
+		}
+
+		builder := typ.Func()
+		paramsSrc := v.Params
+		if params != nil {
+			paramsSrc = params
+		}
+		for _, p := range paramsSrc {
+			if p.Optional {
+				builder = builder.OptParam(p.Name, p.Type)
+			} else {
+				builder = builder.Param(p.Name, p.Type)
+			}
+		}
+		if variadic != nil {
+			builder = builder.Variadic(variadic)
+		}
+		returnsSrc := v.Returns
+		if returns != nil {
+			returnsSrc = returns
+		}
+		if len(returnsSrc) > 0 {
+			builder = builder.Returns(returnsSrc...)
+		}
+		if v.Effects != nil {
+			builder = builder.Effects(v.Effects)
+		}
+		if v.Spec != nil {
+			builder = builder.Spec(v.Spec)
+		}
+		if v.Refinement != nil {
+			builder = builder.WithRefinement(v.Refinement)
+		}
+		return builder.Build()
+	case *typ.Record:
+		changed := false
+		var fields []typ.Field
+		for i, f := range v.Fields {
+			newType := expandInstantiatedGuard(f.Type, next)
+			if newType != f.Type {
+				if fields == nil {
+					fields = make([]typ.Field, len(v.Fields))
+					copy(fields, v.Fields)
+				}
+				changed = true
+				fields[i] = typ.Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+			} else if fields != nil {
+				fields[i] = f
+			}
+		}
+
+		metatable := v.Metatable
+		if v.Metatable != nil {
+			newMetatable := expandInstantiatedGuard(v.Metatable, next)
+			if newMetatable != v.Metatable {
+				changed = true
+				metatable = newMetatable
+			}
+		}
+
+		mapKey := v.MapKey
+		mapValue := v.MapValue
+		if v.HasMapComponent() {
+			mapKey = expandInstantiatedGuard(v.MapKey, next)
+			if mapKey != v.MapKey {
+				changed = true
+			}
+			mapValue = expandInstantiatedGuard(v.MapValue, next)
+			if mapValue != v.MapValue {
+				changed = true
+			}
+		}
+
+		if !changed {
+			return orig
+		}
+
+		builder := typ.NewRecord()
+		if v.Open {
+			builder.SetOpen(true)
+		}
+		fieldsSrc := v.Fields
+		if fields != nil {
+			fieldsSrc = fields
+		}
+		for _, f := range fieldsSrc {
+			switch {
+			case f.Optional && f.Readonly:
+				builder = builder.OptReadonlyField(f.Name, f.Type)
+			case f.Optional:
+				builder = builder.OptField(f.Name, f.Type)
+			case f.Readonly:
+				builder = builder.ReadonlyField(f.Name, f.Type)
+			default:
+				builder = builder.Field(f.Name, f.Type)
+			}
+		}
+		if metatable != nil {
+			builder = builder.Metatable(metatable)
+		}
+		if mapKey != nil && mapValue != nil {
+			builder = builder.MapComponent(mapKey, mapValue)
+		}
+		return builder.Build()
+	case *typ.Alias:
+		target := expandInstantiatedGuard(v.Target, next)
+		if target == v.Target {
+			return orig
+		}
+		return typ.NewAlias(v.Name, target)
+	case *typ.Interface:
+		changed := false
+		var methods []typ.Method
+		for idx := range v.Methods {
+			m := v.Methods[idx]
+			newType := expandInstantiatedGuard(m.Type, next)
+			fn, ok := newType.(*typ.Function)
+			if !ok {
+				fn = m.Type
+			}
+			if fn != m.Type {
+				if methods == nil {
+					methods = make([]typ.Method, len(v.Methods))
+					copy(methods, v.Methods)
+				}
+				changed = true
+				methods[idx] = typ.Method{Name: m.Name, Type: fn}
+			} else if methods != nil {
+				methods[idx] = m
+			}
+		}
+		if !changed {
+			return orig
+		}
+		return typ.NewInterface(v.Name, methods)
+	case *typ.Ref, *typ.Generic:
+		return orig
+	default:
+		return orig
+	}
 }
 
 func expandInstantiatedCanDescend(t typ.Type) bool {

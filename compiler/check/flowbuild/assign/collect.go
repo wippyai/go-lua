@@ -26,7 +26,12 @@ func CollectFieldAssignments(
 		if info == nil {
 			return
 		}
-		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+		sources := info.Sources
+		for i, target := range info.Targets {
+			var source ast.Expr
+			if i < len(sources) {
+				source = sources[i]
+			}
 			var sym cfg.SymbolID
 			var fieldName string
 
@@ -68,7 +73,7 @@ func CollectFieldAssignments(
 			} else {
 				result[sym][fieldName] = fieldType
 			}
-		})
+		}
 	})
 
 	return result
@@ -91,21 +96,26 @@ func CollectIndexerAssignments(
 		if info == nil {
 			return
 		}
-		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+		sources := info.Sources
+		for i, target := range info.Targets {
+			var source ast.Expr
+			if i < len(sources) {
+				source = sources[i]
+			}
 			if target.Kind != cfg.TargetIndex {
-				return
+				continue
 			}
 			sym := target.BaseSymbol
 			if sym == 0 {
-				return
+				continue
 			}
 			if filterSyms != nil && !filterSyms[sym] {
-				return
+				continue
 			}
 
 			// Skip string literal keys (handled by field assignments)
 			if _, ok := target.Key.(*ast.StringExpr); ok {
-				return
+				continue
 			}
 
 			// Determine key type
@@ -137,7 +147,7 @@ func CollectIndexerAssignments(
 				KeyType: keyType,
 				ValType: valType,
 			})
-		})
+		}
 	})
 
 	return result

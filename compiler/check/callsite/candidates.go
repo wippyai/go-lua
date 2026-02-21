@@ -11,10 +11,26 @@ type symbolSet struct {
 	seen  map[cfg.SymbolID]struct{}
 }
 
+const symbolSetMapThreshold = 8
+
 func newSymbolSet(capacity int) *symbolSet {
+	if capacity < 0 {
+		capacity = 0
+	}
+
 	return &symbolSet{
 		order: make([]cfg.SymbolID, 0, capacity),
-		seen:  make(map[cfg.SymbolID]struct{}, capacity),
+	}
+}
+
+func (s *symbolSet) ensureSeen() {
+	if s.seen != nil {
+		return
+	}
+
+	s.seen = make(map[cfg.SymbolID]struct{}, len(s.order)+1)
+	for _, existing := range s.order {
+		s.seen[existing] = struct{}{}
 	}
 }
 
@@ -22,10 +38,27 @@ func (s *symbolSet) Add(sym cfg.SymbolID) {
 	if sym == 0 {
 		return
 	}
-	if _, ok := s.seen[sym]; ok {
+
+	if s.seen != nil {
+		if _, ok := s.seen[sym]; ok {
+			return
+		}
+		s.seen[sym] = struct{}{}
+		s.order = append(s.order, sym)
 		return
 	}
-	s.seen[sym] = struct{}{}
+
+	for _, existing := range s.order {
+		if existing == sym {
+			return
+		}
+	}
+
+	if len(s.order) >= symbolSetMapThreshold {
+		s.ensureSeen()
+		s.seen[sym] = struct{}{}
+	}
+
 	s.order = append(s.order, sym)
 }
 

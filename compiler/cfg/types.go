@@ -103,7 +103,10 @@ type AssignInfo struct {
 	IsLocal bool     // local x = ... vs x = ...
 	Stmt    ast.Stmt // original AST statement (for position info)
 
-	Targets       []AssignTarget
+	Targets []AssignTarget
+	// Inline backing for the common single-target assignment case.
+	// Keeps Targets behavior while avoiding a per-node heap allocation.
+	singleTarget  [1]AssignTarget
 	Sources       []ast.Expr
 	SourceNames   []string           // Pre-extracted: identifier name or "" if not ident
 	SourceSymbols []basecfg.SymbolID // Symbol IDs for source expressions (0 if not ident or unresolved)
@@ -113,6 +116,9 @@ type AssignInfo struct {
 
 	// Type annotations (for local assignments)
 	TypeAnnotations []ast.TypeExpr
+	// Inline backing for the common single-target annotation case.
+	// Keeps TypeAnnotations behavior while avoiding a per-node heap allocation.
+	singleTypeAnnotation [1]ast.TypeExpr
 
 	// For generic for: iterator expressions
 	IterExprs []ast.Expr
@@ -122,6 +128,9 @@ type AssignInfo struct {
 
 	// SSA versions assigned by this node (one per target, may be zero if not yet computed)
 	TargetVersions []Version
+	// Inline backing for the common single-target assignment case.
+	// Keeps TargetVersions behavior while avoiding a per-node heap allocation.
+	singleTargetVersion [1]Version
 }
 
 func (*AssignInfo) nodeInfo() {}
@@ -240,8 +249,8 @@ func (info *AssignInfo) EachSource(fn func(i int, src ast.Expr)) {
 	if info == nil || fn == nil {
 		return
 	}
-	for i := range info.Sources {
-		if src := info.SourceAt(i); src != nil {
+	for i, src := range info.Sources {
+		if src != nil {
 			fn(i, src)
 		}
 	}
@@ -268,8 +277,13 @@ func (info *AssignInfo) EachTargetSource(fn func(i int, target AssignTarget, src
 	if info == nil || fn == nil {
 		return
 	}
+	sources := info.Sources
 	for i, target := range info.Targets {
-		fn(i, target, info.SourceAt(i))
+		var src ast.Expr
+		if i < len(sources) {
+			src = sources[i]
+		}
+		fn(i, target, src)
 	}
 }
 
@@ -278,8 +292,8 @@ func (info *AssignInfo) EachSourceCall(fn func(i int, call *CallInfo)) {
 	if info == nil || fn == nil {
 		return
 	}
-	for i := range info.SourceCalls {
-		if call := info.SourceCallAt(i); call != nil {
+	for i, call := range info.SourceCalls {
+		if call != nil {
 			fn(i, call)
 		}
 	}

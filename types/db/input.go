@@ -75,13 +75,14 @@ func (i *Input[K, V]) Get(ctx *QueryContext, key K) (V, bool) {
 	entry, ok := i.values[key]
 	i.mu.RUnlock()
 
-	if ctx != nil {
+	if ctx != nil && ctx.hasActiveFrame() {
 		last := entry.revision
 
 		ctx.recordDep(dep{
-			changed: func(_ *QueryContext) bool {
-				return i.revision(key) > last
-			},
+			kind:   depKindInput,
+			source: i,
+			key:    key,
+			last:   last,
 		})
 	}
 
@@ -102,6 +103,10 @@ func (i *Input[K, V]) revision(key K) Revision {
 	}
 
 	return entry.revision
+}
+
+func (i *Input[K, V]) revisionAny(key any) Revision {
+	return i.revision(key.(K))
 }
 
 // Range iterates over all stored values in a deterministic order.

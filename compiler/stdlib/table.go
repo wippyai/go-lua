@@ -45,10 +45,14 @@ var tableMethods = typ.NewRecord().
 		OptParam("nhash", typ.Integer).
 		Returns(typ.NewRecord().Build()).
 		Build()).
-	Field("freeze", typ.Func().
-		Param("t", typ.Any).
-		Returns(typ.Any).
-		Build()).
+	Field("freeze", func() typ.Type {
+		tp := typ.NewTypeParam("T", nil)
+		return typ.Func().
+			TypeParam("T", nil).
+			Param("t", tp).
+			Returns(tp).
+			Build()
+	}()).
 	Field("insert", typ.Func().
 		Param("list", typ.Any).
 		Param("pos_or_value", typ.Any).

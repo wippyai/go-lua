@@ -26,6 +26,7 @@ type QueryContext struct {
 	db          *DB
 	tracker     *tracker
 	attachments map[string]any
+	validation  *QueryContext
 }
 
 // NewQueryContext creates a query context for a DB.
@@ -33,8 +34,8 @@ func NewQueryContext(db *DB) *QueryContext {
 	return &QueryContext{
 		db: db,
 		tracker: &tracker{
-			inProgress: make(map[any]bool),
-			cycle:      make(map[any]bool),
+			inProgress: make(map[cycleKey]bool),
+			cycle:      make(map[cycleKey]bool),
 		},
 	}
 }
@@ -48,6 +49,10 @@ func (c *QueryContext) DB() *DB {
 	return c.db
 }
 
+func (c *QueryContext) hasActiveFrame() bool {
+	return c != nil && c.tracker != nil && len(c.tracker.stack) > 0
+}
+
 func (c *QueryContext) validationContext() *QueryContext {
 	if c == nil {
 		return nil
@@ -57,17 +62,33 @@ func (c *QueryContext) validationContext() *QueryContext {
 		return NewQueryContext(c.db)
 	}
 
-	return &QueryContext{
-		db:          c.db,
-		tracker:     &tracker{inProgress: c.tracker.inProgress, cycle: c.tracker.cycle},
-		attachments: c.attachments,
+	if c.validation == nil {
+		c.validation = &QueryContext{
+			db: c.db,
+			tracker: &tracker{
+				inProgress: c.tracker.inProgress,
+				cycle:      c.tracker.cycle,
+			},
+			attachments: c.attachments,
+		}
+		return c.validation
 	}
+
+	validationTracker := c.validation.tracker
+	validationTracker.inProgress = c.tracker.inProgress
+	validationTracker.cycle = c.tracker.cycle
+	if len(validationTracker.stack) > 0 {
+		validationTracker.stack = validationTracker.stack[:0]
+	}
+	c.validation.attachments = c.attachments
+
+	return c.validation
 }
 
 type tracker struct {
-	stack      []*frame
-	inProgress map[any]bool // tracks queries currently being computed to detect cycles
-	cycle      map[any]bool // tracks queries that detected a cycle
+	stack      []frame
+	inProgress map[cycleKey]bool // tracks queries currently being computed to detect cycles
+	cycle      map[cycleKey]bool // tracks queries that detected a cycle
 }
 
 type frame struct {
@@ -75,17 +96,36 @@ type frame struct {
 }
 
 type dep struct {
-	changed func(*QueryContext) bool
+	kind   depKind
+	source any
+	key    any
+	last   Revision
+}
+
+type depKind uint8
+
+const (
+	depKindCustom depKind = iota
+	depKindQuery
+	depKindInput
+)
+
+type queryDepRevalidator interface {
+	revalidateAny(*QueryContext, any) Revision
+}
+
+type inputDepRevisioner interface {
+	revisionAny(any) Revision
 }
 
 // cycleKey uniquely identifies a query invocation for cycle detection.
 type cycleKey struct {
-	queryName string
-	key       any
+	query any
+	key   any
 }
 
 func (t *tracker) push() {
-	t.stack = append(t.stack, &frame{})
+	t.stack = append(t.stack, frame{})
 }
 
 func (t *tracker) pop() []dep {
@@ -100,15 +140,11 @@ func (t *tracker) pop() []dep {
 }
 
 func (c *QueryContext) recordDep(d dep) {
-	if c == nil || c.tracker == nil {
+	if !c.hasActiveFrame() {
 		return
 	}
 
-	if len(c.tracker.stack) == 0 {
-		return
-	}
-
-	top := c.tracker.stack[len(c.tracker.stack)-1]
+	top := &c.tracker.stack[len(c.tracker.stack)-1]
 	top.deps = append(top.deps, d)
 }
 
@@ -248,19 +284,17 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 	}
 
 	// Cycle detection: if in progress, return current approximation.
-	ck := cycleKey{queryName: q.name, key: key}
+	ck := cycleKey{query: q, key: key}
 	if ctx.tracker.inProgress[ck] {
 		ctx.tracker.cycle[ck] = true
 
 		if value, ok := q.getCachedValue(key); ok {
-			// Record dependency even during cycles so callers revalidate on update.
-			ctx.recordDep(q.queryDep(key, q.updatedAt(key)))
+			q.recordQueryDep(ctx, key, q.updatedAt(key))
 			return value
 		}
 
 		if q.seed != nil {
-			// Record dependency even when returning seed to avoid missing updates.
-			ctx.recordDep(q.queryDep(key, q.updatedAt(key)))
+			q.recordQueryDep(ctx, key, q.updatedAt(key))
 			return q.seed()
 		}
 
@@ -287,14 +321,14 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 
 	// Fast path: already verified at this revision.
 	if hasEntry && cachedVerifiedAt == ctx.db.Revision() {
-		ctx.recordDep(q.queryDep(key, cachedUpdatedAt))
+		q.recordQueryDep(ctx, key, cachedUpdatedAt)
 		return cachedValue
 	}
 
 	// Use copied values for validation check.
 	if hasEntry && !depsChanged(ctx.validationContext(), cachedDeps) {
 		q.markVerified(key, ctx.db.Revision())
-		ctx.recordDep(q.queryDep(key, cachedUpdatedAt))
+		q.recordQueryDep(ctx, key, cachedUpdatedAt)
 
 		return cachedValue
 	}
@@ -332,7 +366,7 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 		cycled := ctx.tracker.cycle[ck]
 		value, updatedAt = q.updateCacheEntry(key, value, deps, ctx.db.Revision(), equalFn, cycled && q.widen != nil)
 
-		ctx.recordDep(q.queryDep(key, updatedAt))
+		q.recordQueryDep(ctx, key, updatedAt)
 		delete(ctx.tracker.cycle, ck)
 
 		if !cycled {
@@ -365,16 +399,25 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 	}
 }
 
+func (q *Query[K, V]) recordQueryDep(ctx *QueryContext, key K, last Revision) {
+	if !ctx.hasActiveFrame() {
+		return
+	}
+
+	ctx.recordDep(q.queryDep(key, last))
+}
+
 func (q *Query[K, V]) queryDep(key K, last Revision) dep {
 	return dep{
-		changed: func(ctx *QueryContext) bool {
-			if ctx == nil {
-				return false
-			}
-			updatedAt := q.revalidate(ctx, key)
-			return updatedAt > last
-		},
+		kind:   depKindQuery,
+		source: q,
+		key:    key,
+		last:   last,
 	}
+}
+
+func (q *Query[K, V]) revalidateAny(ctx *QueryContext, key any) Revision {
+	return q.revalidate(ctx, key.(K))
 }
 
 func (q *Query[K, V]) revalidate(ctx *QueryContext, key K) Revision {
@@ -427,12 +470,7 @@ func (q *Query[K, V]) readCacheEntry(key K, value *V, deps *[]dep, updatedAt, ve
 		*value = entry.Value.(V)
 	}
 
-	if len(entry.Deps) > 0 {
-		*deps = make([]dep, len(entry.Deps))
-		copy(*deps, entry.Deps)
-	} else {
-		*deps = nil
-	}
+	*deps = entry.Deps
 
 	*updatedAt = entry.UpdatedAt
 	*verifiedAt = entry.VerifiedAt
@@ -475,12 +513,7 @@ func (q *Query[K, V]) updateCacheEntry(
 	}
 
 	entry.VerifiedAt = rev
-	if len(deps) > 0 {
-		entry.Deps = make([]dep, len(deps))
-		copy(entry.Deps, deps)
-	} else {
-		entry.Deps = nil
-	}
+	entry.Deps = deps
 
 	if entry.UpdatedAt == 0 {
 		entry.Value = value
@@ -498,12 +531,40 @@ func (q *Query[K, V]) updateCacheEntry(
 
 func depsChanged(ctx *QueryContext, deps []dep) bool {
 	for _, d := range deps {
-		if d.changed != nil && d.changed(ctx) {
+		if d.changedAt(ctx) {
 			return true
 		}
 	}
 
 	return false
+}
+
+func (d dep) changedAt(ctx *QueryContext) bool {
+	if ctx == nil {
+		return false
+	}
+
+	if ctx.db != nil && ctx.db.Revision() <= d.last {
+		return false
+	}
+
+	switch d.kind {
+	case depKindQuery:
+		query, ok := d.source.(queryDepRevalidator)
+		if !ok || query == nil {
+			return false
+		}
+		return query.revalidateAny(ctx, d.key) > d.last
+	case depKindInput:
+		input, ok := d.source.(inputDepRevisioner)
+		if !ok || input == nil {
+			return false
+		}
+		return input.revisionAny(d.key) > d.last
+	default:
+		changed, ok := d.source.(func(*QueryContext) bool)
+		return ok && changed != nil && changed(ctx)
+	}
 }
 
 // anyEqual compares two values using internal.Equaler if available.

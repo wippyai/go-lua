@@ -299,10 +299,10 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			if defPoint != 0 {
 				visible := pg.AllSymbolsAt(defPoint)
 				if len(visible) > 0 {
-					visibleSyms := make(map[cfg.SymbolID]bool, len(visible))
+					visibleSyms := make(map[cfg.SymbolID]struct{}, len(visible))
 					for _, sym := range visible {
 						if sym != 0 {
-							visibleSyms[sym] = true
+							visibleSyms[sym] = struct{}{}
 						}
 					}
 					pg.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
@@ -313,7 +313,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 							if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 								return
 							}
-							if !visibleSyms[target.Symbol] {
+							if _, ok := visibleSyms[target.Symbol]; !ok {
 								return
 							}
 							if _, ok := overlay[target.Symbol]; ok {
@@ -350,43 +350,98 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	if moduleAliases == nil {
 		moduleAliases = s.deps.ModuleAliases
 	}
-	fnScopes := make(api.ScopeMap)
-	fnGraph.EachNode(func(p cfg.Point, _ cfg.NodeInfo) {
-		fnScopes[p] = resolveScope
-	})
-	fnScopes[fnGraph.Entry()] = resolveScope
-
 	// Phase 1: infer local assignment types using a preliminary context.
-	prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:         fnGraph,
-		Bindings:      fnGraph.Bindings(),
-		BaseScope:     resolveScope,
-		DeclaredTypes: overlay,
-		GlobalTypes:   globalTypes,
-		ModuleAliases: moduleAliases,
-	})
+	// Build the preliminary synthesizer lazily; many functions never need it.
+	var prelimSynth *Synthesizer
+	ensurePrelimSynth := func() *Synthesizer {
+		if prelimSynth != nil {
+			return prelimSynth
+		}
+		prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
+			Graph:         fnGraph,
+			Bindings:      fnGraph.Bindings(),
+			BaseScope:     resolveScope,
+			DeclaredTypes: overlay,
+			GlobalTypes:   globalTypes,
+			ModuleAliases: moduleAliases,
+		})
 
-	prelimDeps := &Deps{
-		Ctx:            s.deps.Ctx,
-		Types:          s.deps.Types,
-		Scopes:         fnScopes,
-		Manifests:      s.deps.Manifests,
-		CheckCtx:       prelimCtx,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
-		ModuleBindings: s.deps.ModuleBindings,
-		ModuleAliases:  moduleAliases,
-		Paths:          s.deps.Paths,
+		prelimDeps := &Deps{
+			Ctx:            s.deps.Ctx,
+			Types:          s.deps.Types,
+			DefaultScope:   resolveScope,
+			Manifests:      s.deps.Manifests,
+			CheckCtx:       prelimCtx,
+			PreCache:       make(api.Cache),
+			NarrowCache:    make(api.Cache),
+			ModuleBindings: s.deps.ModuleBindings,
+			ModuleAliases:  moduleAliases,
+			Paths:          s.deps.Paths,
+		}
+		prelimSynth = NewSynthesizer(prelimDeps, s.phase)
+		return prelimSynth
 	}
-	prelimSynth := NewSynthesizer(prelimDeps, s.phase)
 
 	// Single-pass local inference from assignments (best-effort).
-	localInferred := make(map[cfg.SymbolID]typ.Type)
+	var localInferred map[cfg.SymbolID]typ.Type
 	fnGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
 			return
 		}
-		values := prelimSynth.ExpandValues(info.Sources, len(info.Targets), p)
+		needsInference := false
+		for _, target := range info.Targets {
+			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+				continue
+			}
+			if _, exists := overlay[target.Symbol]; !exists {
+				needsInference = true
+				break
+			}
+		}
+		if !needsInference {
+			return
+		}
+		if len(info.Targets) == 1 && len(info.Sources) == 1 {
+			target := info.Targets[0]
+			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
+				if _, exists := overlay[target.Symbol]; !exists {
+					src := info.Sources[0]
+					switch src.(type) {
+					case *ast.FuncCallExpr, *ast.Comma3Expr:
+					default:
+						var t typ.Type
+						switch lit := src.(type) {
+						case *ast.NilExpr:
+							t = typ.Nil
+						case *ast.TrueExpr:
+							t = typ.True
+						case *ast.FalseExpr:
+							t = typ.False
+						case *ast.StringExpr:
+							t = typ.LiteralString(lit.Value)
+						}
+						if t == nil && len(info.SourceSymbols) > 0 {
+							if sym := info.SourceSymbols[0]; sym != 0 {
+								if inferred, ok := overlay[sym]; ok && inferred != nil {
+									t = inferred
+								}
+							}
+						}
+						if t == nil {
+							t = ensurePrelimSynth().SynthExpr(src, p, nil)
+						}
+						if t != nil {
+							if localInferred == nil {
+								localInferred = make(map[cfg.SymbolID]typ.Type)
+							}
+							localInferred[target.Symbol] = t
+						}
+						return
+					}
+				}
+			}
+		}
+		values := ensurePrelimSynth().ExpandValues(info.Sources, len(info.Targets), p)
 		info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 				return
@@ -395,6 +450,9 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 				return
 			}
 			if i < len(values) && values[i] != nil {
+				if localInferred == nil {
+					localInferred = make(map[cfg.SymbolID]typ.Type)
+				}
 				localInferred[target.Symbol] = values[i]
 			}
 		})
@@ -418,7 +476,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	tempDeps := &Deps{
 		Ctx:            s.deps.Ctx,
 		Types:          s.deps.Types,
-		Scopes:         fnScopes,
+		DefaultScope:   resolveScope,
 		Manifests:      s.deps.Manifests,
 		CheckCtx:       fnCheckCtx,
 		PreCache:       make(api.Cache),
@@ -551,6 +609,13 @@ func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
 	if graph == nil || fn == nil {
 		return 0
 	}
+	if bindings := graph.Bindings(); bindings != nil {
+		if sym, ok := bindings.FuncLitSymbol(fn); ok && sym != 0 {
+			if graph.NameOf(sym) != "" {
+				return sym
+			}
+		}
+	}
 	var fnSym cfg.SymbolID
 	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
 		if fnSym != 0 || info == nil || !info.IsLocal || len(info.Targets) == 0 {
@@ -647,8 +712,9 @@ func (s *Synthesizer) buildFunctionTypeWithSummary(
 }
 
 func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, expected *typ.Function) map[cfg.SymbolID]typ.Type {
-	overlay := make(map[cfg.SymbolID]typ.Type)
-	for _, slot := range fnGraph.ParamSlots() {
+	paramSlots := fnGraph.ParamSlotsReadOnly()
+	overlay := make(map[cfg.SymbolID]typ.Type, len(paramSlots))
+	for _, slot := range paramSlots {
 		if slot.Symbol == 0 {
 			continue
 		}
@@ -686,51 +752,47 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		return nil
 	}
 
-	paramSlots := fnGraph.ParamSlots()
+	paramSlots := fnGraph.ParamSlotsReadOnly()
 	if len(paramSlots) == 0 {
 		return nil
 	}
 
-	overlay := s.buildParamOverlay(fnGraph, sc, expected)
-
-	// Build pre-flow synthesizer for expression type synthesis.
-	var globalTypes map[string]typ.Type
-	var moduleAliases map[cfg.SymbolID]string
-	if s.deps.CheckCtx != nil {
-		globalTypes = s.deps.CheckCtx.GlobalTypes()
-		if moduleAliases == nil {
-			moduleAliases = s.deps.CheckCtx.ModuleAliases()
-		}
-	}
-	if moduleAliases == nil {
-		moduleAliases = s.deps.ModuleAliases
-	}
-	fnCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:         fnGraph,
-		Bindings:      fnGraph.Bindings(),
-		BaseScope:     sc,
-		DeclaredTypes: overlay,
-		GlobalTypes:   globalTypes,
-		ModuleAliases: moduleAliases,
-	})
-	fnScopes := make(api.ScopeMap)
-	fnGraph.EachNode(func(p cfg.Point, _ cfg.NodeInfo) { fnScopes[p] = sc })
-	fnScopes[fnGraph.Entry()] = sc
-
-	tempDeps := &Deps{
-		Ctx:            s.deps.Ctx,
-		Types:          s.deps.Types,
-		Scopes:         fnScopes,
-		Manifests:      s.deps.Manifests,
-		CheckCtx:       fnCheckCtx,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
-		ModuleBindings: s.deps.ModuleBindings,
-		ModuleAliases:  moduleAliases,
-	}
-	tempSynth := NewSynthesizer(tempDeps, api.PhaseTypeResolution)
-
+	var tempSynth *Synthesizer
 	synthExpr := func(expr ast.Expr, p cfg.Point) typ.Type {
+		if tempSynth == nil {
+			overlay := s.buildParamOverlay(fnGraph, sc, expected)
+
+			var globalTypes map[string]typ.Type
+			var moduleAliases map[cfg.SymbolID]string
+			if s.deps.CheckCtx != nil {
+				globalTypes = s.deps.CheckCtx.GlobalTypes()
+				moduleAliases = s.deps.CheckCtx.ModuleAliases()
+			}
+			if moduleAliases == nil {
+				moduleAliases = s.deps.ModuleAliases
+			}
+
+			fnCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
+				Graph:         fnGraph,
+				Bindings:      fnGraph.Bindings(),
+				BaseScope:     sc,
+				DeclaredTypes: overlay,
+				GlobalTypes:   globalTypes,
+				ModuleAliases: moduleAliases,
+			})
+			tempDeps := &Deps{
+				Ctx:            s.deps.Ctx,
+				Types:          s.deps.Types,
+				DefaultScope:   sc,
+				Manifests:      s.deps.Manifests,
+				CheckCtx:       fnCheckCtx,
+				PreCache:       make(api.Cache),
+				NarrowCache:    make(api.Cache),
+				ModuleBindings: s.deps.ModuleBindings,
+				ModuleAliases:  moduleAliases,
+			}
+			tempSynth = NewSynthesizer(tempDeps, api.PhaseTypeResolution)
+		}
 		return tempSynth.SynthExpr(expr, p, nil)
 	}
 

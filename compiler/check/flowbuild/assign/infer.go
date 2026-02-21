@@ -71,11 +71,13 @@ import (
 // maxInferIterations limits fixpoint iterations per SCC.
 const maxInferIterations = 10
 
-func mergeSpecTypesSoft(base, override api.SpecTypes) api.SpecTypes {
-	if len(base) == 0 && len(override) == 0 {
-		return nil
+func mergeSpecTypesSoftInto(out, base, override api.SpecTypes) api.SpecTypes {
+	if out == nil {
+		out = make(api.SpecTypes, len(base)+len(override))
+	} else {
+		clear(out)
 	}
-	out := make(api.SpecTypes, len(base)+len(override))
+
 	for k, v := range base {
 		out[k] = v
 	}
@@ -93,6 +95,14 @@ func mergeSpecTypesSoft(base, override api.SpecTypes) api.SpecTypes {
 		out[k] = v
 	}
 	return out
+}
+
+func mergeSpecTypesSoft(base, override api.SpecTypes) api.SpecTypes {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+
+	return mergeSpecTypesSoftInto(nil, base, override)
 }
 
 // CollectInferredTypes is the exported entry point for collectInferredTypes.
@@ -185,26 +195,31 @@ func collectInferredTypes(
 			if sc == nil {
 				sc = scopes[graph.Entry()]
 			}
-			info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			sources := info.Sources
+			for i, target := range info.Targets {
+				var source ast.Expr
+				if i < len(sources) {
+					source = sources[i]
+				}
 				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-					return
+					continue
 				}
 				if fnExpr, ok := source.(*ast.FunctionExpr); ok {
 					if inputs != nil && inputs.SiblingTypes != nil {
 						if sibling := inputs.SiblingTypes[target.Symbol]; sibling != nil {
 							funcSigTypes[target.Symbol] = sibling
-							return
+							continue
 						}
 					}
 					if sig := services.ResolveFunctionSignature(fnExpr, sc); sig != nil {
 						funcSigTypes[target.Symbol] = sig
-						return
+						continue
 					}
 					if seed, ok := returns.BuildSeedFunctionTypeWithBindings(fnExpr, seedEngine, sc, bindings).(*typ.Function); ok && seed != nil {
 						funcSigTypes[target.Symbol] = seed
 					}
 				}
-			})
+			}
 		})
 	}
 
@@ -255,15 +270,10 @@ func collectInferredTypes(
 		if entry.info == nil {
 			continue
 		}
-		seenTargets := make(map[cfg.SymbolID]struct{})
 		for _, target := range entry.info.Targets {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 				continue
 			}
-			if _, seen := seenTargets[target.Symbol]; seen {
-				continue
-			}
-			seenTargets[target.Symbol] = struct{}{}
 			assignIdxByTargetSym[target.Symbol] = append(assignIdxByTargetSym[target.Symbol], idx)
 		}
 	}
@@ -278,15 +288,10 @@ func collectInferredTypes(
 		argSymbols := normalizedCallArgSymbols(entry.info, bindings)
 		callArgSymbolsByIdx[idx] = argSymbols
 
-		seenParamArg := make(map[cfg.SymbolID]struct{})
 		for _, sym := range argSymbols {
 			if sym == 0 || !paramSet[sym] {
 				continue
 			}
-			if _, seen := seenParamArg[sym]; seen {
-				continue
-			}
-			seenParamArg[sym] = struct{}{}
 			callIdxByParamArgSym[sym] = append(callIdxByParamArgSym[sym], idx)
 		}
 
@@ -310,9 +315,9 @@ func collectInferredTypes(
 	}
 	for _, entry := range assigns {
 		info := entry.info
-		info.EachTarget(func(_ int, target cfg.AssignTarget) {
+		for _, target := range info.Targets {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				return
+				continue
 			}
 			targetSym := uint64(target.Symbol)
 			if deps[targetSym] == nil {
@@ -321,16 +326,19 @@ func collectInferredTypes(
 
 			// Collect references from sources
 			var refs []cfg.SymbolID
-			info.EachSource(func(_ int, src ast.Expr) {
+			for _, src := range info.Sources {
+				if src == nil {
+					continue
+				}
 				collectExprSymbols(src, bindings, &refs)
-			})
+			}
 			for _, iter := range info.IterExprs {
 				collectExprSymbols(iter, bindings, &refs)
 			}
 			for _, ref := range refs {
 				deps[targetSym] = append(deps[targetSym], uint64(ref))
 			}
-		})
+		}
 	}
 	// Process table mutator calls.
 	// Canonical dependency direction is: mutated table depends on inserted value.
@@ -383,13 +391,15 @@ func collectInferredTypes(
 		if len(edges) == 0 {
 			continue
 		}
-		seen := make(map[uint64]bool)
+
+		seen := make(map[uint64]struct{}, len(edges))
 		unique := make([]uint64, 0, len(edges))
 		for _, e := range edges {
-			if !seen[e] {
-				seen[e] = true
-				unique = append(unique, e)
+			if _, ok := seen[e]; ok {
+				continue
 			}
+			seen[e] = struct{}{}
+			unique = append(unique, e)
 		}
 		deps[sym] = unique
 	}
@@ -442,9 +452,11 @@ func collectInferredTypes(
 
 		// Fixpoint iteration for this SCC
 		converged := false
+		var overlayScratch api.SpecTypes
 		for iter := 0; iter < maxInferIterations; iter++ {
 			changed := false
-			overlay := mergeSpecTypesSoft(inferred, specTypes)
+			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
+			overlay := overlayScratch
 
 			wrappedSynth := synthWithInferenceOverlay(overlay, funcSigTypes, paramSet, annotated, bindings, synth)
 			callSynthFor := func(p cfg.Point, info *cfg.CallInfo) func(ast.Expr, cfg.Point) typ.Type {
@@ -580,15 +592,15 @@ func collectInferredTypes(
 				// Generic for loops
 				if len(info.IterExprs) > 0 && len(info.Targets) > 0 && synthAPI != nil {
 					varTypes := synthAPI.InferIterVarsWithSpecTypes(info.IterExprs, len(info.Targets), p, overlay)
-					info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
+					for i, target := range info.Targets {
 						if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-							return
+							continue
 						}
 						if !sccSet[target.Symbol] {
-							return
+							continue
 						}
 						if annotated != nil && annotated[target.Symbol] {
-							return
+							continue
 						}
 						vt := typ.Unknown
 						if i < len(varTypes) && varTypes[i] != nil {
@@ -596,7 +608,7 @@ func collectInferredTypes(
 						}
 						vt = resolve.Ref(vt, sc)
 						if typ.IsAbsentOrUnknown(vt) {
-							return
+							continue
 						}
 						old := inferred[target.Symbol]
 						joined := joinInferredType(old, vt)
@@ -604,36 +616,31 @@ func collectInferredTypes(
 							inferred[target.Symbol] = joined
 							changed = true
 						}
-					})
+					}
 					continue
 				}
 
-				rhsResolver := symResolver
-				if rhsResolver == nil {
-					rhsResolver = func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-						t, ok := overlay[sym]
-						return t, ok
-					}
-				}
-				rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-					if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
-						return t, true
-					}
-					return rhsResolver(point, sym)
-				})
-				values := expandedAssignValues(synthAPI, info, p, rhsOverlay)
+				var (
+					values         []typ.Type
+					valuesComputed bool
+				)
 
-				info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
+				sources := info.Sources
+				for i, target := range info.Targets {
+					var source ast.Expr
+					if i < len(sources) {
+						source = sources[i]
+					}
 					switch target.Kind {
 					case cfg.TargetIdent:
 						if target.Symbol == 0 {
-							return
+							continue
 						}
 						if !sccSet[target.Symbol] {
-							return
+							continue
 						}
 						if annotated != nil && annotated[target.Symbol] {
-							return
+							continue
 						}
 						assignedType := typ.Unknown
 						// Canonical local-function policy: use the signature seed captured
@@ -647,6 +654,23 @@ func collectInferredTypes(
 							}
 						}
 						if typ.IsAbsentOrUnknown(assignedType) {
+							if !valuesComputed {
+								rhsResolver := symResolver
+								if rhsResolver == nil {
+									rhsResolver = func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+										t, ok := overlay[sym]
+										return t, ok
+									}
+								}
+								rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+									if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
+										return t, true
+									}
+									return rhsResolver(point, sym)
+								})
+								values = expandedAssignValues(synthAPI, info, p, rhsOverlay)
+								valuesComputed = true
+							}
 							if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
 								assignedType = value
 								// Prefer direct expression synthesis when slot expansion
@@ -665,7 +689,7 @@ func collectInferredTypes(
 						}
 						assignedType = resolve.Ref(assignedType, sc)
 						if typ.IsAbsentOrUnknown(assignedType) {
-							return
+							continue
 						}
 						old := inferred[target.Symbol]
 						joined := joinInferredType(old, assignedType)
@@ -674,7 +698,7 @@ func collectInferredTypes(
 							changed = true
 						}
 					}
-				})
+				}
 			}
 
 			// Infer parameter types from call argument expectations.
@@ -848,6 +872,7 @@ func callRefSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) []cfg.Symbo
 	if info == nil || bindings == nil {
 		return nil
 	}
+
 	refs := make([]cfg.SymbolID, 0, len(info.Args)+2)
 	collectExprSymbols(info.Callee, bindings, &refs)
 	collectExprSymbols(info.Receiver, bindings, &refs)
@@ -857,6 +882,42 @@ func callRefSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) []cfg.Symbo
 	if len(refs) == 0 {
 		return nil
 	}
+
+	out := dedupeSymbolIDs(refs)
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
+func dedupeSymbolIDs(refs []cfg.SymbolID) []cfg.SymbolID {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	// Most callsites reference only a handful of symbols; use linear dedupe
+	// in that hot path to avoid per-call map allocation.
+	if len(refs) <= 8 {
+		out := make([]cfg.SymbolID, 0, len(refs))
+		for _, sym := range refs {
+			if sym == 0 {
+				continue
+			}
+			seen := false
+			for _, existing := range out {
+				if existing == sym {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				out = append(out, sym)
+			}
+		}
+		return out
+	}
+
 	seen := make(map[cfg.SymbolID]struct{}, len(refs))
 	out := make([]cfg.SymbolID, 0, len(refs))
 	for _, sym := range refs {
@@ -869,9 +930,7 @@ func callRefSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) []cfg.Symbo
 		seen[sym] = struct{}{}
 		out = append(out, sym)
 	}
-	if len(out) == 0 {
-		return nil
-	}
+
 	return out
 }
 

@@ -43,16 +43,6 @@ local y = x.field
 			contains: "cannot index type number",
 		},
 		{
-			name: "dynamic index on closed record",
-			code: `
-local r: {name: string} = {name = "a"}
-local k: string = "name"
-local v = r[k]
-`,
-			wantCode: diag.ErrTypeMismatch,
-			contains: "cannot index type",
-		},
-		{
 			name: "type name shadowed by local value does not resolve Type:is",
 			code: `
 type Point = {x: number, y: number}

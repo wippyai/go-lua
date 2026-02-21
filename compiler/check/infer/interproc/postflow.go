@@ -239,7 +239,7 @@ func expectedFunctionFromResult(result *api.FuncResult) *typ.Function {
 	if result == nil || result.Graph == nil || result.FlowInputs == nil {
 		return nil
 	}
-	slots := result.Graph.ParamSlots()
+	slots := result.Graph.ParamSlotsReadOnly()
 	if len(slots) == 0 {
 		return nil
 	}

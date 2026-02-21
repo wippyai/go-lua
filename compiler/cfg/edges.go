@@ -140,14 +140,16 @@ func (b *Builder) ProcessExprs(p basecfg.Point, exprs []ast.Expr) []string {
 		return nil
 	}
 
-	names := make([]string, len(exprs))
-
-	for i, expr := range exprs {
-		names[i] = extraction.IdentName(expr)
-		b.scanExprForFuncsWithContext(p, expr, nil, "")
-	}
+	names := extractIdentNames(exprs)
+	b.scanExprsForFuncs(p, exprs)
 
 	return names
+}
+
+func (b *Builder) scanExprsForFuncs(p basecfg.Point, exprs []ast.Expr) {
+	for _, expr := range exprs {
+		b.scanExprForFuncsWithContext(p, expr, nil, "")
+	}
 }
 
 // scanExprForFuncsWithContext scans expressions for nested functions with table context.

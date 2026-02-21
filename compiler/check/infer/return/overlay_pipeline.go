@@ -21,7 +21,7 @@ import (
 func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.SymbolID]typ.Type {
 	overlay := make(map[cfg.SymbolID]typ.Type)
 	fnGraph := ctx.info.Graph
-	for _, slot := range fnGraph.ParamSlots() {
+	for _, slot := range fnGraph.ParamSlotsReadOnly() {
 		if slot.Symbol == 0 {
 			continue
 		}

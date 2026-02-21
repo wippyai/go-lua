@@ -275,7 +275,7 @@ func ExtractParamTypes(
 	types = make(map[cfg.SymbolID]typ.Type)
 	annotated = make(map[cfg.SymbolID]bool)
 
-	slots := graph.ParamSlots()
+	slots := graph.ParamSlotsReadOnly()
 	for _, slot := range slots {
 		if slot.Symbol == 0 || slot.Name == "" {
 			continue

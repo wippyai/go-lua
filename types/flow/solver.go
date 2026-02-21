@@ -46,29 +46,30 @@ type Solution struct {
 	scratchValueMap        map[constraint.PathKey]typ.Type
 	scratchResolvedPathMap map[constraint.PathKey]constraint.PathKey
 	pathAliases            map[string]string // canonical target path key -> canonical source path key
+	narrowedTypeCache      map[narrowedTypeCacheKey]narrowedTypeCacheValue
+	queryCacheEnabled      bool
+
+	// Worklist/dependency scratch to reduce per-iteration allocations.
+	scratchChangedKeys  []string
+	scratchPendingMarks []int
+	scratchPendingPts   []cfg.Point
+	pendingMarkEpoch    int
+}
+
+type narrowedTypeCacheKey struct {
+	point cfg.Point
+	path  constraint.PathKey
+}
+
+type narrowedTypeCacheValue struct {
+	t  typ.Type
+	ok bool
 }
 
 // edgeKey identifies a CFG edge for condition and constraint lookups.
 type edgeKey struct {
 	from cfg.Point
 	to   cfg.Point
-}
-
-func sortedEdgeKeys(m map[edgeKey]constraint.Condition) []edgeKey {
-	if len(m) == 0 {
-		return nil
-	}
-	keys := make([]edgeKey, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].from != keys[j].from {
-			return keys[i].from < keys[j].from
-		}
-		return keys[i].to < keys[j].to
-	})
-	return keys
 }
 
 // Solve computes flow analysis and returns the solution.
@@ -101,13 +102,6 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 		unsatEdges:             make(map[edgeKey]bool),
 		pointConditions:        make(map[cfg.Point]constraint.Condition),
 		numericStates:          make(map[cfg.Point]*numeric.State),
-		scratchTypes:           make([]typ.Type, 0, 8),
-		scratchSuffix:          make(map[string]struct{}, 16),
-		scratchVersionIDs:      make(map[cfg.SymbolID]int, 16),
-		scratchMissingVersions: make(map[cfg.SymbolID]struct{}, 16),
-		scratchUnresolvedPaths: make(map[constraint.PathKey]struct{}, 16),
-		scratchValueMap:        make(map[constraint.PathKey]typ.Type, 16),
-		scratchResolvedPathMap: make(map[constraint.PathKey]constraint.PathKey, 16),
 		pathAliases:            make(map[string]string, size),
 	}
 	if inputs != nil && len(inputs.DeclaredTypes) > 0 {
@@ -125,6 +119,7 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 	s.runPropagation()
 
 	s.solve()
+	s.queryCacheEnabled = true
 	return s
 }
 
@@ -138,13 +133,13 @@ func (s *Solution) runPropagation() {
 	}
 
 	// Convert edge conditions to propagate format
-	edgeConds := make(propagate.EdgeConditions)
-	for _, k := range sortedEdgeKeys(s.edgeConditions) {
-		edgeConds[propagate.EdgeKey{From: k.from, To: k.to}] = s.edgeConditions[k]
+	edgeConds := make(propagate.EdgeConditions, len(s.edgeConditions))
+	for k, cond := range s.edgeConditions {
+		edgeConds[propagate.EdgeKey{From: k.from, To: k.to}] = cond
 	}
 
 	// Convert assignments to propagate format
-	var assigns []propagate.Assignment
+	assigns := make([]propagate.Assignment, 0, len(s.inputs.Assignments))
 	for _, a := range s.inputs.Assignments {
 		if a.TargetPath.Symbol != 0 {
 			assigns = append(assigns, propagate.Assignment{
@@ -178,18 +173,21 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 	result := s.scratchValueMap
 	if result == nil {
 		result = make(map[constraint.PathKey]typ.Type, 1+len(s.declaredSyms))
+		s.scratchValueMap = result
 	}
 	clear(result)
 
 	versionIDs := s.scratchVersionIDs
 	if versionIDs == nil {
 		versionIDs = make(map[cfg.SymbolID]int, len(s.declaredSyms)+1)
+		s.scratchVersionIDs = versionIDs
 	}
 	clear(versionIDs)
 
 	missingVersions := s.scratchMissingVersions
 	if missingVersions == nil {
 		missingVersions = make(map[cfg.SymbolID]struct{}, 8)
+		s.scratchMissingVersions = missingVersions
 	}
 	clear(missingVersions)
 	hasMissingVersions := false
@@ -197,6 +195,7 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 	unresolved := s.scratchUnresolvedPaths
 	if unresolved == nil {
 		unresolved = make(map[constraint.PathKey]struct{}, len(constraints))
+		s.scratchUnresolvedPaths = unresolved
 	}
 	clear(unresolved)
 
@@ -453,9 +452,11 @@ func (s *Solution) solve() {
 	edgeDeps := s.buildEdgeConditionDependencies()
 
 	worklist := g.RPO()
-	inQueue := make(map[cfg.Point]bool, len(worklist))
+	inQueue := make([]bool, g.Size())
 	for _, p := range worklist {
-		inQueue[p] = true
+		if idx := int(p); idx >= 0 && idx < len(inQueue) {
+			inQueue[idx] = true
+		}
 	}
 
 	maxIterations := g.Size() * 100
@@ -463,21 +464,21 @@ func (s *Solution) solve() {
 		// FIFO queue: process in forward RPO order for correct dataflow
 		p := worklist[0]
 		worklist = worklist[1:]
-		inQueue[p] = false
+		if idx := int(p); idx >= 0 && idx < len(inQueue) {
+			inQueue[idx] = false
+		}
 
 		changedKeys := s.processPointReturnChangedKeys(p)
 		if len(changedKeys) > 0 {
 			// Add direct successors
-			for _, succ := range g.Successors(p) {
-				if !inQueue[succ] {
+			for _, succ := range graphSuccessors(g, p) {
+				if succIdx := int(succ); succIdx >= 0 && succIdx < len(inQueue) && !inQueue[succIdx] {
 					worklist = append(worklist, succ)
-					inQueue[succ] = true
+					inQueue[succIdx] = true
 				}
 			}
-			// Add dependent points from all dependency maps
-			worklist = addDependentPoints(phiDeps, changedKeys, worklist, inQueue)
-			worklist = addDependentPoints(assignDeps, changedKeys, worklist, inQueue)
-			worklist = addDependentPoints(edgeDeps, changedKeys, worklist, inQueue)
+			// Add dependent points from all dependency maps in one pass.
+			worklist = s.addDependentPointsBatch(phiDeps, assignDeps, edgeDeps, changedKeys, worklist, inQueue)
 		}
 
 		s.iterations++
@@ -485,6 +486,74 @@ func (s *Solution) solve() {
 			break
 		}
 	}
+}
+
+func (s *Solution) addDependentPointsBatch(
+	phiDeps, assignDeps, edgeDeps dependencyMap,
+	changedKeys []string,
+	worklist []cfg.Point,
+	inQueue []bool,
+) []cfg.Point {
+	if len(changedKeys) == 0 {
+		return worklist
+	}
+
+	// Keep deterministic behavior while reusing backing storage.
+	keys := s.scratchChangedKeys[:0]
+	keys = append(keys, changedKeys...)
+	sort.Strings(keys)
+	s.scratchChangedKeys = keys
+
+	if len(s.scratchPendingMarks) < len(inQueue) {
+		s.scratchPendingMarks = make([]int, len(inQueue))
+	}
+	s.pendingMarkEpoch++
+	if s.pendingMarkEpoch == 0 {
+		clear(s.scratchPendingMarks)
+		s.pendingMarkEpoch = 1
+	}
+	epoch := s.pendingMarkEpoch
+
+	pendingPts := s.scratchPendingPts[:0]
+	marks := s.scratchPendingMarks
+
+	addPoint := func(point cfg.Point) {
+		idx := int(point)
+		if idx < 0 || idx >= len(inQueue) || inQueue[idx] || marks[idx] == epoch {
+			return
+		}
+		marks[idx] = epoch
+		pendingPts = append(pendingPts, point)
+	}
+	addByKey := func(dm dependencyMap, key string) {
+		for _, point := range dm[key] {
+			addPoint(point)
+		}
+	}
+
+	for _, key := range keys {
+		addByKey(phiDeps, key)
+		addByKey(assignDeps, key)
+		addByKey(edgeDeps, key)
+
+		if sym := pathkey.KeySymbolUnchecked(constraint.PathKey(key)); sym != 0 {
+			symKey := symbolDependencyKey(sym)
+			addByKey(phiDeps, symKey)
+			addByKey(assignDeps, symKey)
+			addByKey(edgeDeps, symKey)
+		}
+	}
+
+	slices.Sort(pendingPts)
+	for _, point := range pendingPts {
+		if idx := int(point); idx >= 0 && idx < len(inQueue) {
+			worklist = append(worklist, point)
+			inQueue[idx] = true
+		}
+	}
+	s.scratchPendingPts = pendingPts
+
+	return worklist
 }
 
 // initializeDeclarations seeds the solution with declared types.
