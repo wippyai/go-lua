@@ -503,24 +503,55 @@ func (b *Builder) renameSSA(
 				visibleVersionByPoint[pIdx] = state.parentVersions
 				currentVersions = state.parentVersions
 			} else if sameVisibilityAsParent {
-				// Visibility unchanged: copy parent once and patch only locally updated symbols.
-				currentVersions = make(map[basecfg.SymbolID]Version, len(state.parentVersions)+pushedLen+len(pushedOverflow))
-				for sym, ver := range state.parentVersions {
-					currentVersions[sym] = ver
+				hasVisiblePush := false
+				isVisiblePushedSym := func(symIdx int) bool {
+					name := rootByIndex[symIdx]
+					sym := symByIndex[symIdx]
+					if resolvedSym, ok := visLocal[name]; ok {
+						return resolvedSym == sym
+					}
+					if resolvedSym, ok := globals[name]; ok {
+						return resolvedSym == sym
+					}
+					return false
 				}
 				for i := range pushedLen {
-					symIdx := pushedArr[i].symIdx
-					if stack := stacks[symIdx]; len(stack) > 0 {
-						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+					if isVisiblePushedSym(pushedArr[i].symIdx) {
+						hasVisiblePush = true
+						break
 					}
 				}
-				for i := range pushedOverflow {
-					symIdx := pushedOverflow[i].symIdx
-					if stack := stacks[symIdx]; len(stack) > 0 {
-						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+				if !hasVisiblePush {
+					for i := range pushedOverflow {
+						if isVisiblePushedSym(pushedOverflow[i].symIdx) {
+							hasVisiblePush = true
+							break
+						}
 					}
 				}
-				visibleVersionByPoint[pIdx] = currentVersions
+				if !hasVisiblePush {
+					visibleVersionByPoint[pIdx] = state.parentVersions
+					currentVersions = state.parentVersions
+				} else {
+					// Visibility unchanged: copy parent once and patch only locally updated symbols.
+					currentVersions = make(map[basecfg.SymbolID]Version, len(state.parentVersions)+pushedLen+len(pushedOverflow))
+					for sym, ver := range state.parentVersions {
+						currentVersions[sym] = ver
+					}
+					for i := range pushedLen {
+						symIdx := pushedArr[i].symIdx
+						if stack := stacks[symIdx]; len(stack) > 0 {
+							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+						}
+					}
+					for i := range pushedOverflow {
+						symIdx := pushedOverflow[i].symIdx
+						if stack := stacks[symIdx]; len(stack) > 0 {
+							currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
+						}
+					}
+					visibleVersionByPoint[pIdx] = currentVersions
+				}
 			} else if visAssignedCache != nil && visRefCount[currentVisPtr] > 1 {
 				visibleAssigned, cached := visAssignedCache[currentVisPtr]
 				if !cached {
