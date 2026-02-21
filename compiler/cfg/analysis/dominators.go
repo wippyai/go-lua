@@ -2,7 +2,7 @@
 package analysis
 
 import (
-	"sort"
+	"slices"
 
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 )
@@ -189,10 +189,16 @@ func ComputeDominators(g basecfg.Graph) (idom map[basecfg.Point]basecfg.Point, d
 		}
 	}
 
-	// Sort children for deterministic order
+	// Sort children for deterministic order.
 	for p := range domTree {
-		sort.Slice(domTree[p], func(i, j int) bool {
-			return rpoNum[domTree[p][i]] < rpoNum[domTree[p][j]]
+		slices.SortFunc(domTree[p], func(a, b basecfg.Point) int {
+			if rpoNum[a] < rpoNum[b] {
+				return -1
+			}
+			if rpoNum[a] > rpoNum[b] {
+				return 1
+			}
+			return 0
 		})
 	}
 
@@ -280,8 +286,14 @@ func computeDominanceFrontierDense(
 		if len(sortedDF) <= 1 {
 			continue
 		}
-		sort.Slice(sortedDF, func(i, j int) bool {
-			return rpoNum[sortedDF[i]] < rpoNum[sortedDF[j]]
+		slices.SortFunc(sortedDF, func(a, b basecfg.Point) int {
+			if rpoNum[a] < rpoNum[b] {
+				return -1
+			}
+			if rpoNum[a] > rpoNum[b] {
+				return 1
+			}
+			return 0
 		})
 	}
 
@@ -449,8 +461,14 @@ func ComputeDomInfoDense(g basecfg.Graph) *DenseDomInfo {
 		if len(children) <= 1 {
 			continue
 		}
-		sort.Slice(children, func(i, j int) bool {
-			return rpoNum[children[i]] < rpoNum[children[j]]
+		slices.SortFunc(children, func(a, b basecfg.Point) int {
+			if rpoNum[a] < rpoNum[b] {
+				return -1
+			}
+			if rpoNum[a] > rpoNum[b] {
+				return 1
+			}
+			return 0
 		})
 	}
 
