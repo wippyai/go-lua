@@ -45,12 +45,12 @@ func NewScopeTrackerWithCapacity(pointCap int) *ScopeTracker {
 		pointCap = 0
 	}
 	switch {
-	case pointCap > 1024:
-		pointCap = 1024
 	case pointCap > 512:
 		pointCap = 512
 	case pointCap > 256:
 		pointCap = 256
+	case pointCap > 128:
+		pointCap = 128
 	}
 	symbolCap := 0
 	if pointCap > 0 {

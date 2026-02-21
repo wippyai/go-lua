@@ -63,12 +63,12 @@ func NewBuilderWithCapacity(nodeCap, edgeCap int) *Builder {
 	}
 	mapCap := nodeCap
 	switch {
-	case mapCap > 1024:
-		mapCap = 1024
 	case mapCap > 512:
 		mapCap = 512
 	case mapCap > 256:
 		mapCap = 256
+	case mapCap > 128:
+		mapCap = 128
 	}
 
 	return &Builder{
