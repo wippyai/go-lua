@@ -797,7 +797,7 @@ func (g *Graph) Predecessors(p Point) []Point {
 		return nil
 	}
 
-	return g.cfg.Predecessors(p)
+	return g.cfg.PredecessorsReadOnly(p)
 }
 
 // PredecessorsReadOnly returns predecessors without copying.
@@ -817,7 +817,7 @@ func (g *Graph) Successors(p Point) []Point {
 		return nil
 	}
 
-	return g.cfg.Successors(p)
+	return g.cfg.SuccessorsReadOnly(p)
 }
 
 // SuccessorsReadOnly returns successors without copying.
