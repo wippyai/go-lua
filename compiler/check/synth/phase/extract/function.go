@@ -299,10 +299,10 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			if defPoint != 0 {
 				visible := pg.AllSymbolsAt(defPoint)
 				if len(visible) > 0 {
-					visibleSyms := make(map[cfg.SymbolID]bool, len(visible))
+					visibleSyms := make(map[cfg.SymbolID]struct{}, len(visible))
 					for _, sym := range visible {
 						if sym != 0 {
-							visibleSyms[sym] = true
+							visibleSyms[sym] = struct{}{}
 						}
 					}
 					pg.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
@@ -313,7 +313,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 							if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 								return
 							}
-							if !visibleSyms[target.Symbol] {
+							if _, ok := visibleSyms[target.Symbol]; !ok {
 								return
 							}
 							if _, ok := overlay[target.Symbol]; ok {
@@ -379,9 +379,22 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	prelimSynth := NewSynthesizer(prelimDeps, s.phase)
 
 	// Single-pass local inference from assignments (best-effort).
-	localInferred := make(map[cfg.SymbolID]typ.Type)
+	var localInferred map[cfg.SymbolID]typ.Type
 	fnGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
+			return
+		}
+		needsInference := false
+		for _, target := range info.Targets {
+			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+				continue
+			}
+			if _, exists := overlay[target.Symbol]; !exists {
+				needsInference = true
+				break
+			}
+		}
+		if !needsInference {
 			return
 		}
 		values := prelimSynth.ExpandValues(info.Sources, len(info.Targets), p)
@@ -393,6 +406,9 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 				return
 			}
 			if i < len(values) && values[i] != nil {
+				if localInferred == nil {
+					localInferred = make(map[cfg.SymbolID]typ.Type)
+				}
 				localInferred[target.Symbol] = values[i]
 			}
 		})
@@ -646,8 +662,9 @@ func (s *Synthesizer) buildFunctionTypeWithSummary(
 }
 
 func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, expected *typ.Function) map[cfg.SymbolID]typ.Type {
-	overlay := make(map[cfg.SymbolID]typ.Type)
-	for _, slot := range fnGraph.ParamSlotsReadOnly() {
+	paramSlots := fnGraph.ParamSlotsReadOnly()
+	overlay := make(map[cfg.SymbolID]typ.Type, len(paramSlots))
+	for _, slot := range paramSlots {
 		if slot.Symbol == 0 {
 			continue
 		}
