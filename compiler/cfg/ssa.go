@@ -293,6 +293,7 @@ func (b *Builder) renameSSA(
 	symByIndex := make([]basecfg.SymbolID, len(sortedAssignedSyms))
 	rootByIndex := make([]string, len(sortedAssignedSyms))
 	nextVersionID := make([]int, len(sortedAssignedSyms))
+	touchedVersionID := make([]bool, len(sortedAssignedSyms))
 	stacks := make([][]Version, len(sortedAssignedSyms))
 
 	for i, sym := range sortedAssignedSyms {
@@ -382,6 +383,7 @@ func (b *Builder) renameSSA(
 
 	newVersion := func(symIdx int) Version {
 		nextVersionID[symIdx]++
+		touchedVersionID[symIdx] = true
 
 		return Version{
 			Root:   rootByIndex[symIdx],
@@ -722,7 +724,9 @@ func (b *Builder) renameSSA(
 	rename(entry, renameState{})
 
 	for symIdx, sym := range symByIndex {
-		b.NextVersionID[sym] = nextVersionID[symIdx]
+		if touchedVersionID[symIdx] {
+			b.NextVersionID[sym] = nextVersionID[symIdx]
+		}
 	}
 	b.VisibleVersionByPoint = visibleVersionByPoint
 	phiCap := 0
