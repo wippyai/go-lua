@@ -1,6 +1,7 @@
 package typ
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/wippyai/go-lua/types/kind"
@@ -31,6 +32,7 @@ type Record struct {
 	MapKey    Type // Map component key type (nil if no map component)
 	MapValue  Type // Map component value type (nil if no map component)
 	Open      bool // Allow access to undefined fields
+	sorted    bool
 	hash      uint64
 }
 
@@ -175,6 +177,16 @@ func (r *Record) HasMapComponent() bool {
 
 // GetField returns the field with the given name, or nil.
 func (r *Record) GetField(name string) *Field {
+	if r.sorted {
+		i := sort.Search(len(r.Fields), func(i int) bool {
+			return r.Fields[i].Name >= name
+		})
+		if i < len(r.Fields) && r.Fields[i].Name == name {
+			return &r.Fields[i]
+		}
+		return nil
+	}
+
 	for i := range r.Fields {
 		if r.Fields[i].Name == name {
 			return &r.Fields[i]

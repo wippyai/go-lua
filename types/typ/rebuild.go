@@ -117,6 +117,7 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		MapKey:    mapKey,
 		MapValue:  mapValue,
 		Open:      open,
+		sorted:    true,
 		hash:      h,
 	}
 }

@@ -99,3 +99,36 @@ func TestManifestLookupValue_Missing(t *testing.T) {
 		t.Fatalf("LookupValue(missing) = (%v,%v), want (nil,false)", got, ok)
 	}
 }
+
+func TestManifestLookupValue_CacheInvalidatesOnSetExport(t *testing.T) {
+	m := NewManifest("a")
+	m.SetExport(typ.NewRecord().Field("name", typ.String).Build())
+
+	got, ok := m.LookupValue("name")
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("LookupValue(name) first = (%v,%v), want (string,true)", got, ok)
+	}
+
+	m.SetExport(typ.NewRecord().Field("name", typ.Integer).Build())
+	got, ok = m.LookupValue("name")
+	if !ok || !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("LookupValue(name) after SetExport = (%v,%v), want (integer,true)", got, ok)
+	}
+}
+
+func TestManifestLookupValue_CacheInvalidatesOnDefineType(t *testing.T) {
+	m := NewManifest("a")
+	m.DefineType("NameType", typ.String)
+	m.SetExport(typ.NewRecord().Field("name", typ.NewRef("", "NameType")).Build())
+
+	got, ok := m.LookupValue("name")
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("LookupValue(name) first = (%v,%v), want (string,true)", got, ok)
+	}
+
+	m.DefineType("NameType", typ.Integer)
+	got, ok = m.LookupValue("name")
+	if !ok || !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("LookupValue(name) after DefineType = (%v,%v), want (integer,true)", got, ok)
+	}
+}

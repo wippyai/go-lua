@@ -75,11 +75,14 @@ func (i *Input[K, V]) Get(ctx *QueryContext, key K) (V, bool) {
 	entry, ok := i.values[key]
 	i.mu.RUnlock()
 
-	if ctx != nil {
+	if ctx != nil && ctx.hasActiveFrame() {
 		last := entry.revision
 
 		ctx.recordDep(dep{
-			changed: func(_ *QueryContext) bool {
+			changed: func(ctx *QueryContext) bool {
+				if ctx != nil && ctx.db != nil && ctx.db.Revision() <= last {
+					return false
+				}
 				return i.revision(key) > last
 			},
 		})

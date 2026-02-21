@@ -33,8 +33,8 @@ func NewQueryContext(db *DB) *QueryContext {
 	return &QueryContext{
 		db: db,
 		tracker: &tracker{
-			inProgress: make(map[any]bool),
-			cycle:      make(map[any]bool),
+			inProgress: make(map[cycleKey]bool),
+			cycle:      make(map[cycleKey]bool),
 		},
 	}
 }
@@ -46,6 +46,10 @@ func (c *QueryContext) DB() *DB {
 	}
 
 	return c.db
+}
+
+func (c *QueryContext) hasActiveFrame() bool {
+	return c != nil && c.tracker != nil && len(c.tracker.stack) > 0
 }
 
 func (c *QueryContext) validationContext() *QueryContext {
@@ -66,8 +70,8 @@ func (c *QueryContext) validationContext() *QueryContext {
 
 type tracker struct {
 	stack      []*frame
-	inProgress map[any]bool // tracks queries currently being computed to detect cycles
-	cycle      map[any]bool // tracks queries that detected a cycle
+	inProgress map[cycleKey]bool // tracks queries currently being computed to detect cycles
+	cycle      map[cycleKey]bool // tracks queries that detected a cycle
 }
 
 type frame struct {
@@ -80,8 +84,8 @@ type dep struct {
 
 // cycleKey uniquely identifies a query invocation for cycle detection.
 type cycleKey struct {
-	queryName string
-	key       any
+	query any
+	key   any
 }
 
 func (t *tracker) push() {
@@ -100,11 +104,7 @@ func (t *tracker) pop() []dep {
 }
 
 func (c *QueryContext) recordDep(d dep) {
-	if c == nil || c.tracker == nil {
-		return
-	}
-
-	if len(c.tracker.stack) == 0 {
+	if !c.hasActiveFrame() {
 		return
 	}
 
@@ -248,19 +248,17 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 	}
 
 	// Cycle detection: if in progress, return current approximation.
-	ck := cycleKey{queryName: q.name, key: key}
+	ck := cycleKey{query: q, key: key}
 	if ctx.tracker.inProgress[ck] {
 		ctx.tracker.cycle[ck] = true
 
 		if value, ok := q.getCachedValue(key); ok {
-			// Record dependency even during cycles so callers revalidate on update.
-			ctx.recordDep(q.queryDep(key, q.updatedAt(key)))
+			q.recordQueryDep(ctx, key, q.updatedAt(key))
 			return value
 		}
 
 		if q.seed != nil {
-			// Record dependency even when returning seed to avoid missing updates.
-			ctx.recordDep(q.queryDep(key, q.updatedAt(key)))
+			q.recordQueryDep(ctx, key, q.updatedAt(key))
 			return q.seed()
 		}
 
@@ -287,14 +285,14 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 
 	// Fast path: already verified at this revision.
 	if hasEntry && cachedVerifiedAt == ctx.db.Revision() {
-		ctx.recordDep(q.queryDep(key, cachedUpdatedAt))
+		q.recordQueryDep(ctx, key, cachedUpdatedAt)
 		return cachedValue
 	}
 
 	// Use copied values for validation check.
 	if hasEntry && !depsChanged(ctx.validationContext(), cachedDeps) {
 		q.markVerified(key, ctx.db.Revision())
-		ctx.recordDep(q.queryDep(key, cachedUpdatedAt))
+		q.recordQueryDep(ctx, key, cachedUpdatedAt)
 
 		return cachedValue
 	}
@@ -332,7 +330,7 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 		cycled := ctx.tracker.cycle[ck]
 		value, updatedAt = q.updateCacheEntry(key, value, deps, ctx.db.Revision(), equalFn, cycled && q.widen != nil)
 
-		ctx.recordDep(q.queryDep(key, updatedAt))
+		q.recordQueryDep(ctx, key, updatedAt)
 		delete(ctx.tracker.cycle, ck)
 
 		if !cycled {
@@ -365,10 +363,21 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 	}
 }
 
+func (q *Query[K, V]) recordQueryDep(ctx *QueryContext, key K, last Revision) {
+	if !ctx.hasActiveFrame() {
+		return
+	}
+
+	ctx.recordDep(q.queryDep(key, last))
+}
+
 func (q *Query[K, V]) queryDep(key K, last Revision) dep {
 	return dep{
 		changed: func(ctx *QueryContext) bool {
 			if ctx == nil {
+				return false
+			}
+			if ctx.db != nil && ctx.db.Revision() <= last {
 				return false
 			}
 			updatedAt := q.revalidate(ctx, key)
@@ -427,12 +436,7 @@ func (q *Query[K, V]) readCacheEntry(key K, value *V, deps *[]dep, updatedAt, ve
 		*value = entry.Value.(V)
 	}
 
-	if len(entry.Deps) > 0 {
-		*deps = make([]dep, len(entry.Deps))
-		copy(*deps, entry.Deps)
-	} else {
-		*deps = nil
-	}
+	*deps = entry.Deps
 
 	*updatedAt = entry.UpdatedAt
 	*verifiedAt = entry.VerifiedAt
@@ -475,12 +479,7 @@ func (q *Query[K, V]) updateCacheEntry(
 	}
 
 	entry.VerifiedAt = rev
-	if len(deps) > 0 {
-		entry.Deps = make([]dep, len(deps))
-		copy(entry.Deps, deps)
-	} else {
-		entry.Deps = nil
-	}
+	entry.Deps = deps
 
 	if entry.UpdatedAt == 0 {
 		entry.Value = value
