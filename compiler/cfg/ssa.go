@@ -399,11 +399,11 @@ func (b *Builder) renameSSA(
 		}
 	}
 
-	// Count visibility-map pointer reuse only for smaller graphs.
-	// On very large graphs this pre-pass can allocate substantially more than it saves.
+	// Count visibility-map pointer reuse only for small graphs.
+	// On larger graphs this pre-pass can allocate substantially more than it saves.
 	var visRefCount map[uintptr]int
 	var visAssignedCache map[uintptr][]int
-	if len(visibility) <= 2048 {
+	if len(visibility) <= 512 {
 		visRefCount = make(map[uintptr]int, len(visibility))
 		for _, visLocal := range visibility {
 			if visLocal != nil {
