@@ -369,20 +369,23 @@ func (b *Builder) renameSSA(
 		}
 	}
 
-	// Count visibility-map pointer reuse. Caching symbol indexes only helps when
-	// the same immutable visibility map is referenced by multiple points.
-	// For one-off maps, retaining cached slices causes large transient memory growth.
-	visRefCount := make(map[uintptr]int, len(visibility))
-	for _, visLocal := range visibility {
-		if visLocal != nil {
-			visRefCount[mapPtr(visLocal)]++
+	// Count visibility-map pointer reuse only for smaller graphs.
+	// On very large graphs this pre-pass can allocate substantially more than it saves.
+	var visRefCount map[uintptr]int
+	var visAssignedCache map[uintptr][]int
+	if len(visibility) <= 2048 {
+		visRefCount = make(map[uintptr]int, len(visibility))
+		for _, visLocal := range visibility {
+			if visLocal != nil {
+				visRefCount[mapPtr(visLocal)]++
+			}
 		}
+		cacheCap := len(visRefCount)
+		if cacheCap > 128 {
+			cacheCap = 128
+		}
+		visAssignedCache = make(map[uintptr][]int, cacheCap)
 	}
-	cacheCap := len(visRefCount)
-	if cacheCap > 128 {
-		cacheCap = 128
-	}
-	visAssignedCache := make(map[uintptr][]int, cacheCap)
 	visibleVersionByPoint := b.VisibleVersionByPoint
 	cfgSize := b.Cfg.Size()
 	if len(visibleVersionByPoint) < cfgSize {
@@ -518,7 +521,7 @@ func (b *Builder) renameSSA(
 					}
 				}
 				visibleVersionByPoint[pIdx] = currentVersions
-			} else if visRefCount[currentVisPtr] > 1 {
+			} else if visAssignedCache != nil && visRefCount[currentVisPtr] > 1 {
 				visibleAssigned, cached := visAssignedCache[currentVisPtr]
 				if !cached {
 					visibleAssigned = make([]int, 0, len(visLocal)+len(globalAssigned))
