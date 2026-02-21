@@ -270,15 +270,10 @@ func collectInferredTypes(
 		if entry.info == nil {
 			continue
 		}
-		seenTargets := make(map[cfg.SymbolID]struct{})
 		for _, target := range entry.info.Targets {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 				continue
 			}
-			if _, seen := seenTargets[target.Symbol]; seen {
-				continue
-			}
-			seenTargets[target.Symbol] = struct{}{}
 			assignIdxByTargetSym[target.Symbol] = append(assignIdxByTargetSym[target.Symbol], idx)
 		}
 	}
@@ -293,15 +288,10 @@ func collectInferredTypes(
 		argSymbols := normalizedCallArgSymbols(entry.info, bindings)
 		callArgSymbolsByIdx[idx] = argSymbols
 
-		seenParamArg := make(map[cfg.SymbolID]struct{})
 		for _, sym := range argSymbols {
 			if sym == 0 || !paramSet[sym] {
 				continue
 			}
-			if _, seen := seenParamArg[sym]; seen {
-				continue
-			}
-			seenParamArg[sym] = struct{}{}
 			callIdxByParamArgSym[sym] = append(callIdxByParamArgSym[sym], idx)
 		}
 
