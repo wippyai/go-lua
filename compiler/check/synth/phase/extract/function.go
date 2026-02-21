@@ -405,10 +405,31 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			target := info.Targets[0]
 			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
 				if _, exists := overlay[target.Symbol]; !exists {
-					switch info.Sources[0].(type) {
+					src := info.Sources[0]
+					switch src.(type) {
 					case *ast.FuncCallExpr, *ast.Comma3Expr:
 					default:
-						t := ensurePrelimSynth().SynthExpr(info.Sources[0], p, nil)
+						var t typ.Type
+						switch lit := src.(type) {
+						case *ast.NilExpr:
+							t = typ.Nil
+						case *ast.TrueExpr:
+							t = typ.True
+						case *ast.FalseExpr:
+							t = typ.False
+						case *ast.StringExpr:
+							t = typ.LiteralString(lit.Value)
+						}
+						if t == nil && len(info.SourceSymbols) > 0 {
+							if sym := info.SourceSymbols[0]; sym != 0 {
+								if inferred, ok := overlay[sym]; ok && inferred != nil {
+									t = inferred
+								}
+							}
+						}
+						if t == nil {
+							t = ensurePrelimSynth().SynthExpr(src, p, nil)
+						}
 						if t != nil {
 							if localInferred == nil {
 								localInferred = make(map[cfg.SymbolID]typ.Type)
