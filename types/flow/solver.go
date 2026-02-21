@@ -48,6 +48,12 @@ type Solution struct {
 	pathAliases            map[string]string // canonical target path key -> canonical source path key
 	narrowedTypeCache      map[narrowedTypeCacheKey]narrowedTypeCacheValue
 	queryCacheEnabled      bool
+
+	// Worklist/dependency scratch to reduce per-iteration allocations.
+	scratchChangedKeys  []string
+	scratchPendingMarks []int
+	scratchPendingPts   []cfg.Point
+	pendingMarkEpoch    int
 }
 
 type narrowedTypeCacheKey struct {
@@ -467,9 +473,11 @@ func (s *Solution) solve() {
 	edgeDeps := s.buildEdgeConditionDependencies()
 
 	worklist := g.RPO()
-	inQueue := make(map[cfg.Point]bool, len(worklist))
+	inQueue := make([]bool, g.Size())
 	for _, p := range worklist {
-		inQueue[p] = true
+		if idx := int(p); idx >= 0 && idx < len(inQueue) {
+			inQueue[idx] = true
+		}
 	}
 
 	maxIterations := g.Size() * 100
@@ -477,21 +485,21 @@ func (s *Solution) solve() {
 		// FIFO queue: process in forward RPO order for correct dataflow
 		p := worklist[0]
 		worklist = worklist[1:]
-		inQueue[p] = false
+		if idx := int(p); idx >= 0 && idx < len(inQueue) {
+			inQueue[idx] = false
+		}
 
 		changedKeys := s.processPointReturnChangedKeys(p)
 		if len(changedKeys) > 0 {
 			// Add direct successors
 			for _, succ := range g.Successors(p) {
-				if !inQueue[succ] {
+				if succIdx := int(succ); succIdx >= 0 && succIdx < len(inQueue) && !inQueue[succIdx] {
 					worklist = append(worklist, succ)
-					inQueue[succ] = true
+					inQueue[succIdx] = true
 				}
 			}
-			// Add dependent points from all dependency maps
-			worklist = addDependentPoints(phiDeps, changedKeys, worklist, inQueue)
-			worklist = addDependentPoints(assignDeps, changedKeys, worklist, inQueue)
-			worklist = addDependentPoints(edgeDeps, changedKeys, worklist, inQueue)
+			// Add dependent points from all dependency maps in one pass.
+			worklist = s.addDependentPointsBatch(phiDeps, assignDeps, edgeDeps, changedKeys, worklist, inQueue)
 		}
 
 		s.iterations++
@@ -499,6 +507,74 @@ func (s *Solution) solve() {
 			break
 		}
 	}
+}
+
+func (s *Solution) addDependentPointsBatch(
+	phiDeps, assignDeps, edgeDeps dependencyMap,
+	changedKeys []string,
+	worklist []cfg.Point,
+	inQueue []bool,
+) []cfg.Point {
+	if len(changedKeys) == 0 {
+		return worklist
+	}
+
+	// Keep deterministic behavior while reusing backing storage.
+	keys := s.scratchChangedKeys[:0]
+	keys = append(keys, changedKeys...)
+	sort.Strings(keys)
+	s.scratchChangedKeys = keys
+
+	if len(s.scratchPendingMarks) < len(inQueue) {
+		s.scratchPendingMarks = make([]int, len(inQueue))
+	}
+	s.pendingMarkEpoch++
+	if s.pendingMarkEpoch == 0 {
+		clear(s.scratchPendingMarks)
+		s.pendingMarkEpoch = 1
+	}
+	epoch := s.pendingMarkEpoch
+
+	pendingPts := s.scratchPendingPts[:0]
+	marks := s.scratchPendingMarks
+
+	addPoint := func(point cfg.Point) {
+		idx := int(point)
+		if idx < 0 || idx >= len(inQueue) || inQueue[idx] || marks[idx] == epoch {
+			return
+		}
+		marks[idx] = epoch
+		pendingPts = append(pendingPts, point)
+	}
+	addByKey := func(dm dependencyMap, key string) {
+		for _, point := range dm[key] {
+			addPoint(point)
+		}
+	}
+
+	for _, key := range keys {
+		addByKey(phiDeps, key)
+		addByKey(assignDeps, key)
+		addByKey(edgeDeps, key)
+
+		if sym := pathkey.KeySymbolUnchecked(constraint.PathKey(key)); sym != 0 {
+			symKey := symbolDependencyKey(sym)
+			addByKey(phiDeps, symKey)
+			addByKey(assignDeps, symKey)
+			addByKey(edgeDeps, symKey)
+		}
+	}
+
+	slices.Sort(pendingPts)
+	for _, point := range pendingPts {
+		if idx := int(point); idx >= 0 && idx < len(inQueue) {
+			worklist = append(worklist, point)
+			inQueue[idx] = true
+		}
+	}
+	s.scratchPendingPts = pendingPts
+
+	return worklist
 }
 
 // initializeDeclarations seeds the solution with declared types.
