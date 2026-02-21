@@ -289,10 +289,10 @@ func (b *Builder) renameSSA(
 		rootByIndex[i] = assignedSyms[sym]
 		nextVersionID[i] = b.NextVersionID[sym]
 
-		// Estimate capacity: 1 for initial def + depth of typical dominator tree path.
+		// Estimate capacity: 1 for initial def + typical dominator depth.
 		capacity := len(defPoints[sym]) + 2
-		if capacity > 8 {
-			capacity = 8
+		if capacity > 4 {
+			capacity = 4
 		}
 		stacks[i] = make([]Version, 0, capacity)
 	}
