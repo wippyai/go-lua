@@ -110,7 +110,6 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 		scratchValueMap:        make(map[constraint.PathKey]typ.Type, 16),
 		scratchResolvedPathMap: make(map[constraint.PathKey]constraint.PathKey, 16),
 		pathAliases:            make(map[string]string, size),
-		narrowedTypeCache:      make(map[narrowedTypeCacheKey]narrowedTypeCacheValue, size*8),
 	}
 	if inputs != nil && len(inputs.DeclaredTypes) > 0 {
 		s.declaredSyms = make([]cfg.SymbolID, 0, len(inputs.DeclaredTypes))

@@ -315,6 +315,9 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		cacheable = false
 	}
 	if cacheable {
+		if s.narrowedTypeCache == nil {
+			s.narrowedTypeCache = make(map[narrowedTypeCacheKey]narrowedTypeCacheValue)
+		}
 		if cached, ok := s.narrowedTypeCache[cacheKey]; ok {
 			if cached.ok {
 				return cached.t
