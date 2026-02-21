@@ -331,7 +331,7 @@ func (b *Builder) renameSSA(
 
 	type phiEntry struct {
 		symIdx int
-		phi    *PhiInfo
+		phi    PhiInfo
 	}
 
 	phiByPoint := make(map[basecfg.Point][]phiEntry, len(phiSites))
@@ -350,7 +350,7 @@ func (b *Builder) renameSSA(
 			}
 			entries = append(entries, phiEntry{
 				symIdx: symIdx,
-				phi: &PhiInfo{
+				phi: PhiInfo{
 					Point:  p,
 					Target: Version{Root: rootByIndex[symIdx], Symbol: sym},
 				},
@@ -470,7 +470,8 @@ func (b *Builder) renameSSA(
 		}
 
 		if phiEntries := phiByPoint[p]; len(phiEntries) > 0 {
-			for _, entry := range phiEntries {
+			for i := range phiEntries {
+				entry := &phiEntries[i]
 				ver := newVersion(entry.symIdx)
 				entry.phi.Target = ver
 				stacks[entry.symIdx] = append(stacks[entry.symIdx], ver)
@@ -669,7 +670,8 @@ func (b *Builder) renameSSA(
 
 		emitPhiOperands := func(succ basecfg.Point) {
 			if succPhiEntries := phiByPoint[succ]; len(succPhiEntries) > 0 {
-				for _, entry := range succPhiEntries {
+				for i := range succPhiEntries {
+					entry := &succPhiEntries[i]
 					if stack := stacks[entry.symIdx]; len(stack) > 0 {
 						entry.phi.Operands = append(entry.phi.Operands, PhiOperand{
 							From:    p,
@@ -716,12 +718,26 @@ func (b *Builder) renameSSA(
 		b.NextVersionID[sym] = nextVersionID[symIdx]
 	}
 	b.VisibleVersionByPoint = visibleVersionByPoint
+	phiCap := 0
+	for _, phiEntries := range phiByPoint {
+		phiCap += len(phiEntries)
+	}
+	if phiCap > 0 {
+		if cap(b.PhiNodes) < phiCap {
+			b.PhiNodes = make([]PhiInfo, 0, phiCap)
+		} else {
+			b.PhiNodes = b.PhiNodes[:0]
+		}
+	} else {
+		b.PhiNodes = b.PhiNodes[:0]
+	}
 
 	for _, p := range b.Cfg.RPOReadOnly() {
 		if phiEntries := phiByPoint[p]; len(phiEntries) > 0 {
-			for _, entry := range phiEntries {
+			for i := range phiEntries {
+				entry := &phiEntries[i]
 				if len(entry.phi.Operands) > 0 {
-					b.PhiNodes = append(b.PhiNodes, *entry.phi)
+					b.PhiNodes = append(b.PhiNodes, entry.phi)
 				}
 			}
 		}
