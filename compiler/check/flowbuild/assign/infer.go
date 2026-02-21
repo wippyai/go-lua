@@ -71,11 +71,13 @@ import (
 // maxInferIterations limits fixpoint iterations per SCC.
 const maxInferIterations = 10
 
-func mergeSpecTypesSoft(base, override api.SpecTypes) api.SpecTypes {
-	if len(base) == 0 && len(override) == 0 {
-		return nil
+func mergeSpecTypesSoftInto(out, base, override api.SpecTypes) api.SpecTypes {
+	if out == nil {
+		out = make(api.SpecTypes, len(base)+len(override))
+	} else {
+		clear(out)
 	}
-	out := make(api.SpecTypes, len(base)+len(override))
+
 	for k, v := range base {
 		out[k] = v
 	}
@@ -93,6 +95,14 @@ func mergeSpecTypesSoft(base, override api.SpecTypes) api.SpecTypes {
 		out[k] = v
 	}
 	return out
+}
+
+func mergeSpecTypesSoft(base, override api.SpecTypes) api.SpecTypes {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+
+	return mergeSpecTypesSoftInto(nil, base, override)
 }
 
 // CollectInferredTypes is the exported entry point for collectInferredTypes.
@@ -450,9 +460,11 @@ func collectInferredTypes(
 
 		// Fixpoint iteration for this SCC
 		converged := false
+		var overlayScratch api.SpecTypes
 		for iter := 0; iter < maxInferIterations; iter++ {
 			changed := false
-			overlay := mergeSpecTypesSoft(inferred, specTypes)
+			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
+			overlay := overlayScratch
 
 			wrappedSynth := synthWithInferenceOverlay(overlay, funcSigTypes, paramSet, annotated, bindings, synth)
 			callSynthFor := func(p cfg.Point, info *cfg.CallInfo) func(ast.Expr, cfg.Point) typ.Type {
