@@ -44,24 +44,30 @@ func NewScopeTrackerWithCapacity(pointCap int) *ScopeTracker {
 	if pointCap < 0 {
 		pointCap = 0
 	}
+
+	visCap := pointCap
 	switch {
-	case pointCap > 256:
-		pointCap = 256
-	case pointCap > 128:
-		pointCap = 128
-	case pointCap > 64:
-		pointCap = 64
+	case visCap > 128:
+		visCap = 128
+	case visCap > 64:
+		visCap = 64
+	case visCap > 32:
+		visCap = 32
 	}
+
 	symbolCap := 0
-	if pointCap > 0 {
-		symbolCap = pointCap
+	if visCap > 0 {
+		symbolCap = visCap
+		if symbolCap > 64 {
+			symbolCap = 64
+		}
 	}
 
 	return &ScopeTracker{
 		stack:       []map[string]basecfg.SymbolID{make(map[string]basecfg.SymbolID)},
 		shared:      []bool{false},
 		globals:     make(map[string]basecfg.SymbolID),
-		visibility:  make(map[basecfg.Point]map[string]basecfg.SymbolID, pointCap),
+		visibility:  make(map[basecfg.Point]map[string]basecfg.SymbolID, visCap),
 		declPoints:  make(map[basecfg.SymbolID]basecfg.Point, symbolCap),
 		symbolNames: make(map[basecfg.SymbolID]string, symbolCap),
 		symbolKinds: make(map[basecfg.SymbolID]basecfg.SymbolKind, symbolCap),
