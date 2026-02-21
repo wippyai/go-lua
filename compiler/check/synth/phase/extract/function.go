@@ -721,42 +721,42 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		return nil
 	}
 
-	overlay := s.buildParamOverlay(fnGraph, sc, expected)
-
-	// Build pre-flow synthesizer for expression type synthesis.
-	var globalTypes map[string]typ.Type
-	var moduleAliases map[cfg.SymbolID]string
-	if s.deps.CheckCtx != nil {
-		globalTypes = s.deps.CheckCtx.GlobalTypes()
-		if moduleAliases == nil {
-			moduleAliases = s.deps.CheckCtx.ModuleAliases()
-		}
-	}
-	if moduleAliases == nil {
-		moduleAliases = s.deps.ModuleAliases
-	}
-	fnCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:         fnGraph,
-		Bindings:      fnGraph.Bindings(),
-		BaseScope:     sc,
-		DeclaredTypes: overlay,
-		GlobalTypes:   globalTypes,
-		ModuleAliases: moduleAliases,
-	})
-	tempDeps := &Deps{
-		Ctx:            s.deps.Ctx,
-		Types:          s.deps.Types,
-		DefaultScope:   sc,
-		Manifests:      s.deps.Manifests,
-		CheckCtx:       fnCheckCtx,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
-		ModuleBindings: s.deps.ModuleBindings,
-		ModuleAliases:  moduleAliases,
-	}
-	tempSynth := NewSynthesizer(tempDeps, api.PhaseTypeResolution)
-
+	var tempSynth *Synthesizer
 	synthExpr := func(expr ast.Expr, p cfg.Point) typ.Type {
+		if tempSynth == nil {
+			overlay := s.buildParamOverlay(fnGraph, sc, expected)
+
+			var globalTypes map[string]typ.Type
+			var moduleAliases map[cfg.SymbolID]string
+			if s.deps.CheckCtx != nil {
+				globalTypes = s.deps.CheckCtx.GlobalTypes()
+				moduleAliases = s.deps.CheckCtx.ModuleAliases()
+			}
+			if moduleAliases == nil {
+				moduleAliases = s.deps.ModuleAliases
+			}
+
+			fnCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
+				Graph:         fnGraph,
+				Bindings:      fnGraph.Bindings(),
+				BaseScope:     sc,
+				DeclaredTypes: overlay,
+				GlobalTypes:   globalTypes,
+				ModuleAliases: moduleAliases,
+			})
+			tempDeps := &Deps{
+				Ctx:            s.deps.Ctx,
+				Types:          s.deps.Types,
+				DefaultScope:   sc,
+				Manifests:      s.deps.Manifests,
+				CheckCtx:       fnCheckCtx,
+				PreCache:       make(api.Cache),
+				NarrowCache:    make(api.Cache),
+				ModuleBindings: s.deps.ModuleBindings,
+				ModuleAliases:  moduleAliases,
+			}
+			tempSynth = NewSynthesizer(tempDeps, api.PhaseTypeResolution)
+		}
 		return tempSynth.SynthExpr(expr, p, nil)
 	}
 
