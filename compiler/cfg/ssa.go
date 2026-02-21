@@ -172,8 +172,8 @@ func (b *Builder) placePhis(
 	assignedSyms map[basecfg.SymbolID]string,
 	defPoints map[basecfg.SymbolID][]basecfg.Point,
 	df [][]basecfg.Point,
-) map[basecfg.Point]map[basecfg.SymbolID]bool {
-	phiSites := make(map[basecfg.Point]map[basecfg.SymbolID]bool)
+) map[basecfg.Point][]basecfg.SymbolID {
+	phiSites := make(map[basecfg.Point][]basecfg.SymbolID)
 	if b.ScopeTracker == nil {
 		return phiSites
 	}
@@ -245,11 +245,7 @@ func (b *Builder) placePhis(
 
 				hasAlreadyMarks[yi] = markEpoch
 
-				if phiSites[y] == nil {
-					phiSites[y] = make(map[basecfg.SymbolID]bool)
-				}
-
-				phiSites[y][sym] = true
+				phiSites[y] = append(phiSites[y], sym)
 
 				if everOnWorklistMarks[yi] != markEpoch {
 					everOnWorklistMarks[yi] = markEpoch
@@ -266,7 +262,7 @@ func (b *Builder) placePhis(
 func (b *Builder) renameSSA(
 	assignedSyms map[basecfg.SymbolID]string,
 	defPoints map[basecfg.SymbolID][]basecfg.Point,
-	phiSites map[basecfg.Point]map[basecfg.SymbolID]bool,
+	phiSites map[basecfg.Point][]basecfg.SymbolID,
 	domTree [][]basecfg.Point,
 ) {
 	entry := b.Cfg.Entry()
@@ -341,14 +337,8 @@ func (b *Builder) renameSSA(
 	}
 
 	phiByPoint := make(map[basecfg.Point][]phiEntry, len(phiSites))
-	for p, syms := range phiSites {
+	for p, ordered := range phiSites {
 		operandCap := len(b.Cfg.PredecessorsReadOnly(p))
-		ordered := make([]basecfg.SymbolID, 0, len(syms))
-		for sym := range syms {
-			ordered = append(ordered, sym)
-		}
-		slices.Sort(ordered)
-
 		entries := make([]phiEntry, 0, len(ordered))
 		for _, sym := range ordered {
 			symIdx, ok := lookupSymIndex(sym)
