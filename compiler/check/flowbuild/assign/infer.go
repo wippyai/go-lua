@@ -401,13 +401,15 @@ func collectInferredTypes(
 		if len(edges) == 0 {
 			continue
 		}
-		seen := make(map[uint64]bool)
+
+		seen := make(map[uint64]struct{}, len(edges))
 		unique := make([]uint64, 0, len(edges))
 		for _, e := range edges {
-			if !seen[e] {
-				seen[e] = true
-				unique = append(unique, e)
+			if _, ok := seen[e]; ok {
+				continue
 			}
+			seen[e] = struct{}{}
+			unique = append(unique, e)
 		}
 		deps[sym] = unique
 	}
