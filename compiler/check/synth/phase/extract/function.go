@@ -350,10 +350,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	if moduleAliases == nil {
 		moduleAliases = s.deps.ModuleAliases
 	}
-	fnScopes := make(api.ScopeMap)
-	fnGraph.EachNode(func(p cfg.Point, _ cfg.NodeInfo) {
-		fnScopes[p] = resolveScope
-	})
+	fnScopes := make(api.ScopeMap, 1)
 	fnScopes[fnGraph.Entry()] = resolveScope
 
 	// Phase 1: infer local assignment types using a preliminary context.
@@ -370,6 +367,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		Ctx:            s.deps.Ctx,
 		Types:          s.deps.Types,
 		Scopes:         fnScopes,
+		DefaultScope:   resolveScope,
 		Manifests:      s.deps.Manifests,
 		CheckCtx:       prelimCtx,
 		PreCache:       make(api.Cache),
@@ -419,6 +417,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		Ctx:            s.deps.Ctx,
 		Types:          s.deps.Types,
 		Scopes:         fnScopes,
+		DefaultScope:   resolveScope,
 		Manifests:      s.deps.Manifests,
 		CheckCtx:       fnCheckCtx,
 		PreCache:       make(api.Cache),
@@ -713,14 +712,14 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		GlobalTypes:   globalTypes,
 		ModuleAliases: moduleAliases,
 	})
-	fnScopes := make(api.ScopeMap)
-	fnGraph.EachNode(func(p cfg.Point, _ cfg.NodeInfo) { fnScopes[p] = sc })
+	fnScopes := make(api.ScopeMap, 1)
 	fnScopes[fnGraph.Entry()] = sc
 
 	tempDeps := &Deps{
 		Ctx:            s.deps.Ctx,
 		Types:          s.deps.Types,
 		Scopes:         fnScopes,
+		DefaultScope:   sc,
 		Manifests:      s.deps.Manifests,
 		CheckCtx:       fnCheckCtx,
 		PreCache:       make(api.Cache),

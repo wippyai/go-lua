@@ -3,6 +3,7 @@ package extract
 import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/io"
@@ -22,11 +23,14 @@ import (
 //   - Caches for synthesis memoization (PreCache, NarrowCache)
 //   - Module-level bindings and aliases for cross-function synthesis
 type Deps struct {
-	Ctx       *db.QueryContext
-	Types     core.TypeOps
-	Scopes    api.ScopeMap
-	Manifests io.ManifestQuerier
-	CheckCtx  api.BaseEnv
+	Ctx    *db.QueryContext
+	Types  core.TypeOps
+	Scopes api.ScopeMap
+	// DefaultScope is used when a point has no explicit scope entry.
+	// This allows sparse scope maps for transient inference passes.
+	DefaultScope *scope.State
+	Manifests    io.ManifestQuerier
+	CheckCtx     api.BaseEnv
 
 	Flow  api.FlowOps
 	Paths api.PathFromExprFunc
@@ -68,4 +72,17 @@ func (d *Deps) Entry() cfg.Point {
 		return g.Entry()
 	}
 	return 0
+}
+
+// ScopeAt returns scope for point p with optional default fallback.
+func (d *Deps) ScopeAt(p cfg.Point) *scope.State {
+	if d == nil {
+		return nil
+	}
+	if d.Scopes != nil {
+		if sc := d.Scopes[p]; sc != nil {
+			return sc
+		}
+	}
+	return d.DefaultScope
 }

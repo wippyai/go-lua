@@ -124,7 +124,7 @@ func (s *Synthesizer) TypeOfWithExpected(expr ast.Expr, p cfg.Point, expected ty
 	if expected == nil {
 		return s.TypeOf(expr, p)
 	}
-	sc := s.deps.Scopes[p]
+	sc := s.deps.ScopeAt(p)
 	recurse := func(ex ast.Expr) typ.Type { return s.SynthExpr(ex, p, nil) }
 	return s.SynthExprWithExpectedCore(expr, sc, p, recurse, expected)
 }
@@ -140,7 +140,7 @@ func (s *Synthesizer) SynthMulti(expr ast.Expr, p cfg.Point, narrower api.FlowOp
 }
 
 func (s *Synthesizer) multiTypeOf(expr ast.Expr, p cfg.Point, narrower api.FlowOps) []typ.Type {
-	sc := s.deps.Scopes[p]
+	sc := s.deps.ScopeAt(p)
 	recurse := func(ex ast.Expr) typ.Type { return s.SynthExpr(ex, p, narrower) }
 	return s.synthMultiCore(expr, sc, recurse,
 		func(call *ast.FuncCallExpr) []typ.Type {
@@ -220,7 +220,7 @@ func (s *Synthesizer) SynthExpr(expr ast.Expr, p cfg.Point, narrower api.FlowOps
 	if expr == nil {
 		return typ.Nil
 	}
-	sc := s.deps.Scopes[p]
+	sc := s.deps.ScopeAt(p)
 	recurse := func(ex ast.Expr) typ.Type { return s.SynthExpr(ex, p, narrower) }
 	return s.synthExprCore(expr, sc, p, narrower, recurse)
 }
