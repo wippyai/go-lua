@@ -393,6 +393,25 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		if !needsInference {
 			return
 		}
+		if len(info.Targets) == 1 && len(info.Sources) == 1 {
+			target := info.Targets[0]
+			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
+				if _, exists := overlay[target.Symbol]; !exists {
+					switch info.Sources[0].(type) {
+					case *ast.FuncCallExpr, *ast.Comma3Expr:
+					default:
+						t := prelimSynth.SynthExpr(info.Sources[0], p, nil)
+						if t != nil {
+							if localInferred == nil {
+								localInferred = make(map[cfg.SymbolID]typ.Type)
+							}
+							localInferred[target.Symbol] = t
+						}
+						return
+					}
+				}
+			}
+		}
 		values := prelimSynth.ExpandValues(info.Sources, len(info.Targets), p)
 		info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
