@@ -79,12 +79,10 @@ func (i *Input[K, V]) Get(ctx *QueryContext, key K) (V, bool) {
 		last := entry.revision
 
 		ctx.recordDep(dep{
-			changed: func(ctx *QueryContext) bool {
-				if ctx != nil && ctx.db != nil && ctx.db.Revision() <= last {
-					return false
-				}
-				return i.revision(key) > last
-			},
+			kind:  depKindInput,
+			input: i,
+			key:   key,
+			last:  last,
 		})
 	}
 
@@ -105,6 +103,10 @@ func (i *Input[K, V]) revision(key K) Revision {
 	}
 
 	return entry.revision
+}
+
+func (i *Input[K, V]) revisionAny(key any) Revision {
+	return i.revision(key.(K))
 }
 
 // Range iterates over all stored values in a deterministic order.

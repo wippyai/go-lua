@@ -79,7 +79,28 @@ type frame struct {
 }
 
 type dep struct {
+	kind    depKind
+	query   queryDepRevalidator
+	input   inputDepRevisioner
+	key     any
+	last    Revision
 	changed func(*QueryContext) bool
+}
+
+type depKind uint8
+
+const (
+	depKindCustom depKind = iota
+	depKindQuery
+	depKindInput
+)
+
+type queryDepRevalidator interface {
+	revalidateAny(*QueryContext, any) Revision
+}
+
+type inputDepRevisioner interface {
+	revisionAny(any) Revision
 }
 
 // cycleKey uniquely identifies a query invocation for cycle detection.
@@ -373,17 +394,15 @@ func (q *Query[K, V]) recordQueryDep(ctx *QueryContext, key K, last Revision) {
 
 func (q *Query[K, V]) queryDep(key K, last Revision) dep {
 	return dep{
-		changed: func(ctx *QueryContext) bool {
-			if ctx == nil {
-				return false
-			}
-			if ctx.db != nil && ctx.db.Revision() <= last {
-				return false
-			}
-			updatedAt := q.revalidate(ctx, key)
-			return updatedAt > last
-		},
+		kind:  depKindQuery,
+		query: q,
+		key:   key,
+		last:  last,
 	}
+}
+
+func (q *Query[K, V]) revalidateAny(ctx *QueryContext, key any) Revision {
+	return q.revalidate(ctx, key.(K))
 }
 
 func (q *Query[K, V]) revalidate(ctx *QueryContext, key K) Revision {
@@ -497,12 +516,37 @@ func (q *Query[K, V]) updateCacheEntry(
 
 func depsChanged(ctx *QueryContext, deps []dep) bool {
 	for _, d := range deps {
-		if d.changed != nil && d.changed(ctx) {
+		if d.changedAt(ctx) {
 			return true
 		}
 	}
 
 	return false
+}
+
+func (d dep) changedAt(ctx *QueryContext) bool {
+	if ctx == nil {
+		return false
+	}
+
+	if ctx.db != nil && ctx.db.Revision() <= d.last {
+		return false
+	}
+
+	switch d.kind {
+	case depKindQuery:
+		if d.query == nil {
+			return false
+		}
+		return d.query.revalidateAny(ctx, d.key) > d.last
+	case depKindInput:
+		if d.input == nil {
+			return false
+		}
+		return d.input.revisionAny(d.key) > d.last
+	default:
+		return d.changed != nil && d.changed(ctx)
+	}
 }
 
 // anyEqual compares two values using internal.Equaler if available.
