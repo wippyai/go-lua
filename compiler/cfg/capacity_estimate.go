@@ -3,8 +3,8 @@ package cfg
 import "github.com/wippyai/go-lua/compiler/ast"
 
 const (
-	minNodeCapacity = 8
-	minEdgeCapacity = 12
+	minNodeCapacity = 6
+	minEdgeCapacity = 8
 )
 
 func estimateFunctionCFGCapacity(fn *ast.FunctionExpr) (nodes int, edges int) {
