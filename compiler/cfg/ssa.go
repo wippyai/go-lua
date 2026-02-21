@@ -1,7 +1,7 @@
 package cfg
 
 import (
-	"sort"
+	"slices"
 	"unsafe"
 
 	"github.com/wippyai/go-lua/compiler/cfg/analysis"
@@ -184,7 +184,7 @@ func (b *Builder) placePhis(
 		sortedSyms = append(sortedSyms, sym)
 	}
 
-	sort.Slice(sortedSyms, func(i, j int) bool { return sortedSyms[i] < sortedSyms[j] })
+	slices.Sort(sortedSyms)
 	cfgSize := b.Cfg.Size()
 	visibility := b.ScopeTracker.visibility
 	globals := b.ScopeTracker.globals
@@ -275,7 +275,7 @@ func (b *Builder) renameSSA(
 	for sym := range assignedSyms {
 		sortedAssignedSyms = append(sortedAssignedSyms, sym)
 	}
-	sort.Slice(sortedAssignedSyms, func(i, j int) bool { return sortedAssignedSyms[i] < sortedAssignedSyms[j] })
+	slices.Sort(sortedAssignedSyms)
 
 	var symIndexMap map[basecfg.SymbolID]int
 	var symIndexDense []int
@@ -347,7 +347,7 @@ func (b *Builder) renameSSA(
 		for sym := range syms {
 			ordered = append(ordered, sym)
 		}
-		sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+		slices.Sort(ordered)
 
 		entries := make([]phiEntry, 0, len(ordered))
 		for _, sym := range ordered {
