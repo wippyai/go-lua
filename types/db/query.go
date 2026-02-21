@@ -69,7 +69,7 @@ func (c *QueryContext) validationContext() *QueryContext {
 }
 
 type tracker struct {
-	stack      []*frame
+	stack      []frame
 	inProgress map[cycleKey]bool // tracks queries currently being computed to detect cycles
 	cycle      map[cycleKey]bool // tracks queries that detected a cycle
 }
@@ -110,7 +110,7 @@ type cycleKey struct {
 }
 
 func (t *tracker) push() {
-	t.stack = append(t.stack, &frame{})
+	t.stack = append(t.stack, frame{})
 }
 
 func (t *tracker) pop() []dep {
@@ -129,7 +129,7 @@ func (c *QueryContext) recordDep(d dep) {
 		return
 	}
 
-	top := c.tracker.stack[len(c.tracker.stack)-1]
+	top := &c.tracker.stack[len(c.tracker.stack)-1]
 	top.deps = append(top.deps, d)
 }
 
