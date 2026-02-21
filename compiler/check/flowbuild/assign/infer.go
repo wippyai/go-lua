@@ -630,20 +630,10 @@ func collectInferredTypes(
 					continue
 				}
 
-				rhsResolver := symResolver
-				if rhsResolver == nil {
-					rhsResolver = func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-						t, ok := overlay[sym]
-						return t, ok
-					}
-				}
-				rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-					if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
-						return t, true
-					}
-					return rhsResolver(point, sym)
-				})
-				values := expandedAssignValues(synthAPI, info, p, rhsOverlay)
+				var (
+					values         []typ.Type
+					valuesComputed bool
+				)
 
 				sources := info.Sources
 				for i, target := range info.Targets {
@@ -674,6 +664,23 @@ func collectInferredTypes(
 							}
 						}
 						if typ.IsAbsentOrUnknown(assignedType) {
+							if !valuesComputed {
+								rhsResolver := symResolver
+								if rhsResolver == nil {
+									rhsResolver = func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+										t, ok := overlay[sym]
+										return t, ok
+									}
+								}
+								rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+									if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
+										return t, true
+									}
+									return rhsResolver(point, sym)
+								})
+								values = expandedAssignValues(synthAPI, info, p, rhsOverlay)
+								valuesComputed = true
+							}
 							if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
 								assignedType = value
 								// Prefer direct expression synthesis when slot expansion
