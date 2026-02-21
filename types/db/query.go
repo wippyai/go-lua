@@ -26,6 +26,7 @@ type QueryContext struct {
 	db          *DB
 	tracker     *tracker
 	attachments map[string]any
+	validation  *QueryContext
 }
 
 // NewQueryContext creates a query context for a DB.
@@ -61,11 +62,27 @@ func (c *QueryContext) validationContext() *QueryContext {
 		return NewQueryContext(c.db)
 	}
 
-	return &QueryContext{
-		db:          c.db,
-		tracker:     &tracker{inProgress: c.tracker.inProgress, cycle: c.tracker.cycle},
-		attachments: c.attachments,
+	if c.validation == nil {
+		c.validation = &QueryContext{
+			db: c.db,
+			tracker: &tracker{
+				inProgress: c.tracker.inProgress,
+				cycle:      c.tracker.cycle,
+			},
+			attachments: c.attachments,
+		}
+		return c.validation
 	}
+
+	validationTracker := c.validation.tracker
+	validationTracker.inProgress = c.tracker.inProgress
+	validationTracker.cycle = c.tracker.cycle
+	if len(validationTracker.stack) > 0 {
+		validationTracker.stack = validationTracker.stack[:0]
+	}
+	c.validation.attachments = c.attachments
+
+	return c.validation
 }
 
 type tracker struct {
