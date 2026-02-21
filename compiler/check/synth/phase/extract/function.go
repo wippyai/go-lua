@@ -350,9 +350,6 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	if moduleAliases == nil {
 		moduleAliases = s.deps.ModuleAliases
 	}
-	fnScopes := make(api.ScopeMap, 1)
-	fnScopes[fnGraph.Entry()] = resolveScope
-
 	// Phase 1: infer local assignment types using a preliminary context.
 	prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
 		Graph:         fnGraph,
@@ -366,7 +363,6 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	prelimDeps := &Deps{
 		Ctx:            s.deps.Ctx,
 		Types:          s.deps.Types,
-		Scopes:         fnScopes,
 		DefaultScope:   resolveScope,
 		Manifests:      s.deps.Manifests,
 		CheckCtx:       prelimCtx,
@@ -432,7 +428,6 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	tempDeps := &Deps{
 		Ctx:            s.deps.Ctx,
 		Types:          s.deps.Types,
-		Scopes:         fnScopes,
 		DefaultScope:   resolveScope,
 		Manifests:      s.deps.Manifests,
 		CheckCtx:       fnCheckCtx,
@@ -729,13 +724,9 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		GlobalTypes:   globalTypes,
 		ModuleAliases: moduleAliases,
 	})
-	fnScopes := make(api.ScopeMap, 1)
-	fnScopes[fnGraph.Entry()] = sc
-
 	tempDeps := &Deps{
 		Ctx:            s.deps.Ctx,
 		Types:          s.deps.Types,
-		Scopes:         fnScopes,
 		DefaultScope:   sc,
 		Manifests:      s.deps.Manifests,
 		CheckCtx:       fnCheckCtx,
