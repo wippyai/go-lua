@@ -873,6 +873,7 @@ func callRefSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) []cfg.Symbo
 	if info == nil || bindings == nil {
 		return nil
 	}
+
 	refs := make([]cfg.SymbolID, 0, len(info.Args)+2)
 	collectExprSymbols(info.Callee, bindings, &refs)
 	collectExprSymbols(info.Receiver, bindings, &refs)
@@ -882,6 +883,42 @@ func callRefSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) []cfg.Symbo
 	if len(refs) == 0 {
 		return nil
 	}
+
+	out := dedupeSymbolIDs(refs)
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
+func dedupeSymbolIDs(refs []cfg.SymbolID) []cfg.SymbolID {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	// Most callsites reference only a handful of symbols; use linear dedupe
+	// in that hot path to avoid per-call map allocation.
+	if len(refs) <= 8 {
+		out := make([]cfg.SymbolID, 0, len(refs))
+		for _, sym := range refs {
+			if sym == 0 {
+				continue
+			}
+			seen := false
+			for _, existing := range out {
+				if existing == sym {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				out = append(out, sym)
+			}
+		}
+		return out
+	}
+
 	seen := make(map[cfg.SymbolID]struct{}, len(refs))
 	out := make([]cfg.SymbolID, 0, len(refs))
 	for _, sym := range refs {
@@ -894,9 +931,7 @@ func callRefSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) []cfg.Symbo
 		seen[sym] = struct{}{}
 		out = append(out, sym)
 	}
-	if len(out) == 0 {
-		return nil
-	}
+
 	return out
 }
 
