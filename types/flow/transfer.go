@@ -1481,6 +1481,10 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 // Uses scratch buffer s.scratchSuffix to reduce allocations in the hot path.
 func (s *Solution) collectPhiOperandSuffixes(phi cfg.PhiNode) map[string]struct{} {
 	out := s.scratchSuffix
+	if out == nil {
+		out = make(map[string]struct{}, 16)
+		s.scratchSuffix = out
+	}
 	clear(out)
 
 	for _, op := range phi.Operands {

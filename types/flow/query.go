@@ -525,6 +525,7 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 	resolvePathCache := s.scratchResolvedPathMap
 	if resolvePathCache == nil {
 		resolvePathCache = make(map[constraint.PathKey]constraint.PathKey, len(constraints)*2)
+		s.scratchResolvedPathMap = resolvePathCache
 	}
 	clear(resolvePathCache)
 

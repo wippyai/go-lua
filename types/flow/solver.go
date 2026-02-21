@@ -102,13 +102,6 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 		unsatEdges:             make(map[edgeKey]bool),
 		pointConditions:        make(map[cfg.Point]constraint.Condition),
 		numericStates:          make(map[cfg.Point]*numeric.State),
-		scratchTypes:           make([]typ.Type, 0, 8),
-		scratchSuffix:          make(map[string]struct{}, 16),
-		scratchVersionIDs:      make(map[cfg.SymbolID]int, 16),
-		scratchMissingVersions: make(map[cfg.SymbolID]struct{}, 16),
-		scratchUnresolvedPaths: make(map[constraint.PathKey]struct{}, 16),
-		scratchValueMap:        make(map[constraint.PathKey]typ.Type, 16),
-		scratchResolvedPathMap: make(map[constraint.PathKey]constraint.PathKey, 16),
 		pathAliases:            make(map[string]string, size),
 	}
 	if inputs != nil && len(inputs.DeclaredTypes) > 0 {
@@ -180,18 +173,21 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 	result := s.scratchValueMap
 	if result == nil {
 		result = make(map[constraint.PathKey]typ.Type, 1+len(s.declaredSyms))
+		s.scratchValueMap = result
 	}
 	clear(result)
 
 	versionIDs := s.scratchVersionIDs
 	if versionIDs == nil {
 		versionIDs = make(map[cfg.SymbolID]int, len(s.declaredSyms)+1)
+		s.scratchVersionIDs = versionIDs
 	}
 	clear(versionIDs)
 
 	missingVersions := s.scratchMissingVersions
 	if missingVersions == nil {
 		missingVersions = make(map[cfg.SymbolID]struct{}, 8)
+		s.scratchMissingVersions = missingVersions
 	}
 	clear(missingVersions)
 	hasMissingVersions := false
@@ -199,6 +195,7 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 	unresolved := s.scratchUnresolvedPaths
 	if unresolved == nil {
 		unresolved = make(map[constraint.PathKey]struct{}, len(constraints))
+		s.scratchUnresolvedPaths = unresolved
 	}
 	clear(unresolved)
 
