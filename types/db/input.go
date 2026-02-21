@@ -79,10 +79,10 @@ func (i *Input[K, V]) Get(ctx *QueryContext, key K) (V, bool) {
 		last := entry.revision
 
 		ctx.recordDep(dep{
-			kind:  depKindInput,
-			input: i,
-			key:   key,
-			last:  last,
+			kind:   depKindInput,
+			source: i,
+			key:    key,
+			last:   last,
 		})
 	}
 

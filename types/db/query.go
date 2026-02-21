@@ -96,12 +96,10 @@ type frame struct {
 }
 
 type dep struct {
-	kind    depKind
-	query   queryDepRevalidator
-	input   inputDepRevisioner
-	key     any
-	last    Revision
-	changed func(*QueryContext) bool
+	kind   depKind
+	source any
+	key    any
+	last   Revision
 }
 
 type depKind uint8
@@ -411,10 +409,10 @@ func (q *Query[K, V]) recordQueryDep(ctx *QueryContext, key K, last Revision) {
 
 func (q *Query[K, V]) queryDep(key K, last Revision) dep {
 	return dep{
-		kind:  depKindQuery,
-		query: q,
-		key:   key,
-		last:  last,
+		kind:   depKindQuery,
+		source: q,
+		key:    key,
+		last:   last,
 	}
 }
 
@@ -552,17 +550,20 @@ func (d dep) changedAt(ctx *QueryContext) bool {
 
 	switch d.kind {
 	case depKindQuery:
-		if d.query == nil {
+		query, ok := d.source.(queryDepRevalidator)
+		if !ok || query == nil {
 			return false
 		}
-		return d.query.revalidateAny(ctx, d.key) > d.last
+		return query.revalidateAny(ctx, d.key) > d.last
 	case depKindInput:
-		if d.input == nil {
+		input, ok := d.source.(inputDepRevisioner)
+		if !ok || input == nil {
 			return false
 		}
-		return d.input.revisionAny(d.key) > d.last
+		return input.revisionAny(d.key) > d.last
 	default:
-		return d.changed != nil && d.changed(ctx)
+		changed, ok := d.source.(func(*QueryContext) bool)
+		return ok && changed != nil && changed(ctx)
 	}
 }
 
