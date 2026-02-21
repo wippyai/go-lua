@@ -18,9 +18,9 @@ func estimateFunctionCFGCapacity(fn *ast.FunctionExpr) (nodes int, edges int) {
 	nodes += bodyNodes
 	edges += bodyEdges
 
-	// Entry/exit + a cushion for implicit return plumbing.
-	nodes += 4
-	edges += 6
+	// Entry/exit + a small cushion for implicit return plumbing.
+	nodes += 3
+	edges += 5
 
 	if nodes < minNodeCapacity {
 		nodes = minNodeCapacity
@@ -34,8 +34,8 @@ func estimateFunctionCFGCapacity(fn *ast.FunctionExpr) (nodes int, edges int) {
 
 func estimateBlockCFGCapacity(stmts []ast.Stmt) (nodes int, edges int) {
 	bodyNodes, bodyEdges := estimateStmtListCFGCapacity(stmts)
-	nodes = bodyNodes + 4
-	edges = bodyEdges + 4
+	nodes = bodyNodes + 3
+	edges = bodyEdges + 3
 
 	if nodes < minNodeCapacity {
 		nodes = minNodeCapacity
