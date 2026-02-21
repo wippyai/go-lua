@@ -277,17 +277,18 @@ func (b *Builder) renameSSA(
 	}
 	sort.Slice(sortedAssignedSyms, func(i, j int) bool { return sortedAssignedSyms[i] < sortedAssignedSyms[j] })
 
-	symIndexMap := make(map[basecfg.SymbolID]int, len(sortedAssignedSyms))
+	var symIndexMap map[basecfg.SymbolID]int
 	var symIndexDense []int
 	if len(sortedAssignedSyms) > 0 {
 		maxSym := int(sortedAssignedSyms[len(sortedAssignedSyms)-1])
 		// Prefer dense lookup only when symbol IDs are reasonably compact.
 		if maxSym > 0 && maxSym <= 16384 && maxSym <= len(sortedAssignedSyms)*8 {
 			symIndexDense = make([]int, maxSym+1)
-			for i := range symIndexDense {
-				symIndexDense[i] = -1
-			}
+		} else {
+			symIndexMap = make(map[basecfg.SymbolID]int, len(sortedAssignedSyms))
 		}
+	} else {
+		symIndexMap = make(map[basecfg.SymbolID]int)
 	}
 	symByIndex := make([]basecfg.SymbolID, len(sortedAssignedSyms))
 	rootByIndex := make([]string, len(sortedAssignedSyms))
@@ -296,7 +297,8 @@ func (b *Builder) renameSSA(
 
 	for i, sym := range sortedAssignedSyms {
 		if symIndexDense != nil {
-			symIndexDense[int(sym)] = i
+			// Store index+1 so zero remains the "not present" sentinel.
+			symIndexDense[int(sym)] = i + 1
 		} else {
 			symIndexMap[sym] = i
 		}
@@ -323,7 +325,10 @@ func (b *Builder) renameSSA(
 				return 0, false
 			}
 			idx := symIndexDense[symInt]
-			return idx, idx >= 0
+			if idx == 0 {
+				return 0, false
+			}
+			return idx - 1, true
 		}
 		idx, ok := symIndexMap[sym]
 		return idx, ok
@@ -336,6 +341,7 @@ func (b *Builder) renameSSA(
 
 	phiByPoint := make(map[basecfg.Point][]phiEntry, len(phiSites))
 	for p, syms := range phiSites {
+		operandCap := len(b.Cfg.PredecessorsReadOnly(p))
 		ordered := make([]basecfg.SymbolID, 0, len(syms))
 		for sym := range syms {
 			ordered = append(ordered, sym)
@@ -351,8 +357,9 @@ func (b *Builder) renameSSA(
 			entries = append(entries, phiEntry{
 				symIdx: symIdx,
 				phi: PhiInfo{
-					Point:  p,
-					Target: Version{Root: rootByIndex[symIdx], Symbol: sym},
+					Point:    p,
+					Target:   Version{Root: rootByIndex[symIdx], Symbol: sym},
+					Operands: make([]PhiOperand, 0, operandCap),
 				},
 			})
 		}
