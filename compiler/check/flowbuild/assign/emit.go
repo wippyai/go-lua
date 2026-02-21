@@ -258,11 +258,20 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 		// Build const resolver for this point
 		constResolver := predicate.BuildConstResolver(inputs, p)
 
-		// Get expanded values if we have multiple targets.
-		// Use pre-assignment symbol overlays for assignment targets so RHS
-		// synthesis follows Lua evaluation order (`x = f(x, ...)`).
-		rhsOverlay := rhsSpecTypesAtAssignPoint(fc.Graph, info, p, overlayTypes, resolverWithSpec)
-		values := expandedAssignValues(fc.API, info, p, rhsOverlay)
+		var (
+			values         []typ.Type
+			valuesComputed bool
+		)
+		ensureValues := func() {
+			if valuesComputed {
+				return
+			}
+			// Use pre-assignment symbol overlays for assignment targets so RHS
+			// synthesis follows Lua evaluation order (`x = f(x, ...)`).
+			rhsOverlay := rhsSpecTypesAtAssignPoint(fc.Graph, info, p, overlayTypes, resolverWithSpec)
+			values = expandedAssignValues(fc.API, info, p, rhsOverlay)
+			valuesComputed = true
+		}
 
 		for i, target := range info.Targets {
 			source := info.SourceAt(i)
@@ -297,6 +306,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				}
 				// Fall back to expression synthesis if no declared/known type
 				if typ.IsAbsentOrUnknown(assignedType) {
+					ensureValues()
 					if value := assignValueAt(values, i); value != nil {
 						assignedType = value
 					} else if wrappedSynth != nil && source != nil {
@@ -309,6 +319,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				if call, _ := info.CallForTarget(i); call != nil {
 					if call.Receiver != nil {
 						if recvSym := call.ReceiverSymbol; recvSym != 0 {
+							ensureValues()
 							if value := assignValueAt(values, i); value != nil {
 								if _, narrowed := specNarrowed[recvSym]; narrowed {
 									assignedType = value
@@ -502,6 +513,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Determine assigned type
 				assignedType := typ.Unknown
 				// First check expanded values for multi-return assignments
+				ensureValues()
 				if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
 					assignedType = value
 				} else if source != nil {
@@ -562,6 +574,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Determine assigned type
 				assignedType := typ.Unknown
 				// First check expanded values for multi-return assignments
+				ensureValues()
 				if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
 					assignedType = value
 				} else if source != nil {
@@ -705,6 +718,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			symbols := make([]cfg.SymbolID, count)
 			names := make([]string, count)
 			types := make([]typ.Type, count)
+			ensureValues()
 			for i := 0; i < count; i++ {
 				target, ok := info.TargetAt(start + i)
 				if !ok {
