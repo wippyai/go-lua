@@ -46,6 +46,18 @@ type Solution struct {
 	scratchValueMap        map[constraint.PathKey]typ.Type
 	scratchResolvedPathMap map[constraint.PathKey]constraint.PathKey
 	pathAliases            map[string]string // canonical target path key -> canonical source path key
+	narrowedTypeCache      map[narrowedTypeCacheKey]narrowedTypeCacheValue
+	queryCacheEnabled      bool
+}
+
+type narrowedTypeCacheKey struct {
+	point cfg.Point
+	path  constraint.PathKey
+}
+
+type narrowedTypeCacheValue struct {
+	t  typ.Type
+	ok bool
 }
 
 // edgeKey identifies a CFG edge for condition and constraint lookups.
@@ -109,6 +121,7 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 		scratchValueMap:        make(map[constraint.PathKey]typ.Type, 16),
 		scratchResolvedPathMap: make(map[constraint.PathKey]constraint.PathKey, 16),
 		pathAliases:            make(map[string]string, size),
+		narrowedTypeCache:      make(map[narrowedTypeCacheKey]narrowedTypeCacheValue, size*8),
 	}
 	if inputs != nil && len(inputs.DeclaredTypes) > 0 {
 		s.declaredSyms = make([]cfg.SymbolID, 0, len(inputs.DeclaredTypes))
@@ -125,6 +138,7 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 	s.runPropagation()
 
 	s.solve()
+	s.queryCacheEnabled = true
 	return s
 }
 

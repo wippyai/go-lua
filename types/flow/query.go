@@ -310,9 +310,24 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	if s == nil {
 		return nil
 	}
+	cacheKey, cacheable := s.narrowedTypeCacheKey(p, path)
+	if !s.queryCacheEnabled {
+		cacheable = false
+	}
+	if cacheable {
+		if cached, ok := s.narrowedTypeCache[cacheKey]; ok {
+			if cached.ok {
+				return cached.t
+			}
+			return nil
+		}
+	}
 
 	baseType := s.baseTypeAt(p, path)
 	if baseType == nil {
+		if cacheable {
+			s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{}
+		}
 		return nil
 	}
 	// For annotated symbols, ensure base type does not drop required structure.
@@ -329,11 +344,35 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 
 	condition := s.ConditionAt(p)
 	if !condition.HasConstraints() {
+		if cacheable {
+			s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: baseType, ok: true}
+		}
 		return baseType
 	}
 
 	result := s.applyCondition(p, baseType, path, condition)
+	if cacheable {
+		s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: result, ok: true}
+	}
 	return result
+}
+
+func (s *Solution) narrowedTypeCacheKey(p cfg.Point, path constraint.Path) (narrowedTypeCacheKey, bool) {
+	if path.IsEmpty() {
+		return narrowedTypeCacheKey{}, false
+	}
+
+	if s.pkResolver != nil {
+		if key := s.pkResolver.KeyAt(p, path); key != "" {
+			return narrowedTypeCacheKey{point: p, path: key}, true
+		}
+	}
+
+	if key := path.Key(); key != "" {
+		return narrowedTypeCacheKey{point: p, path: key}, true
+	}
+
+	return narrowedTypeCacheKey{}, false
 }
 
 // baseTypeAt returns the base type for a path at point p, for use in narrowing.
