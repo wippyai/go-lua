@@ -351,28 +351,36 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		moduleAliases = s.deps.ModuleAliases
 	}
 	// Phase 1: infer local assignment types using a preliminary context.
-	prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:         fnGraph,
-		Bindings:      fnGraph.Bindings(),
-		BaseScope:     resolveScope,
-		DeclaredTypes: overlay,
-		GlobalTypes:   globalTypes,
-		ModuleAliases: moduleAliases,
-	})
+	// Build the preliminary synthesizer lazily; many functions never need it.
+	var prelimSynth *Synthesizer
+	ensurePrelimSynth := func() *Synthesizer {
+		if prelimSynth != nil {
+			return prelimSynth
+		}
+		prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
+			Graph:         fnGraph,
+			Bindings:      fnGraph.Bindings(),
+			BaseScope:     resolveScope,
+			DeclaredTypes: overlay,
+			GlobalTypes:   globalTypes,
+			ModuleAliases: moduleAliases,
+		})
 
-	prelimDeps := &Deps{
-		Ctx:            s.deps.Ctx,
-		Types:          s.deps.Types,
-		DefaultScope:   resolveScope,
-		Manifests:      s.deps.Manifests,
-		CheckCtx:       prelimCtx,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
-		ModuleBindings: s.deps.ModuleBindings,
-		ModuleAliases:  moduleAliases,
-		Paths:          s.deps.Paths,
+		prelimDeps := &Deps{
+			Ctx:            s.deps.Ctx,
+			Types:          s.deps.Types,
+			DefaultScope:   resolveScope,
+			Manifests:      s.deps.Manifests,
+			CheckCtx:       prelimCtx,
+			PreCache:       make(api.Cache),
+			NarrowCache:    make(api.Cache),
+			ModuleBindings: s.deps.ModuleBindings,
+			ModuleAliases:  moduleAliases,
+			Paths:          s.deps.Paths,
+		}
+		prelimSynth = NewSynthesizer(prelimDeps, s.phase)
+		return prelimSynth
 	}
-	prelimSynth := NewSynthesizer(prelimDeps, s.phase)
 
 	// Single-pass local inference from assignments (best-effort).
 	var localInferred map[cfg.SymbolID]typ.Type
@@ -400,7 +408,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 					switch info.Sources[0].(type) {
 					case *ast.FuncCallExpr, *ast.Comma3Expr:
 					default:
-						t := prelimSynth.SynthExpr(info.Sources[0], p, nil)
+						t := ensurePrelimSynth().SynthExpr(info.Sources[0], p, nil)
 						if t != nil {
 							if localInferred == nil {
 								localInferred = make(map[cfg.SymbolID]typ.Type)
@@ -412,7 +420,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 				}
 			}
 		}
-		values := prelimSynth.ExpandValues(info.Sources, len(info.Targets), p)
+		values := ensurePrelimSynth().ExpandValues(info.Sources, len(info.Targets), p)
 		info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 				return
