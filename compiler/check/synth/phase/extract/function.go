@@ -609,6 +609,13 @@ func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
 	if graph == nil || fn == nil {
 		return 0
 	}
+	if bindings := graph.Bindings(); bindings != nil {
+		if sym, ok := bindings.FuncLitSymbol(fn); ok && sym != 0 {
+			if graph.NameOf(sym) != "" {
+				return sym
+			}
+		}
+	}
 	var fnSym cfg.SymbolID
 	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
 		if fnSym != 0 || info == nil || !info.IsLocal || len(info.Targets) == 0 {
