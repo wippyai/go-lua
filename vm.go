@@ -552,7 +552,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			// Fast path: both integers
 			if lhsI, ok1 := lhs.(LInteger); ok1 {
 				if rhsI, ok2 := rhs.(LInteger); ok2 {
-					v := reg.alloc.LInteger2I(lhsI + rhsI)
+					v := lintegerToValue(lhsI + rhsI)
 					newSize := RA + 1
 					if newSize > cap(reg.array) {
 						reg.resize(newSize)
@@ -567,7 +567,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			// Fast path: both numbers
 			if lhsN, ok1 := lhs.(LNumber); ok1 {
 				if rhsN, ok2 := rhs.(LNumber); ok2 {
-					v := reg.alloc.LNumber2I(lhsN + rhsN)
+					v := lnumberToValue(lhsN + rhsN)
 					newSize := RA + 1
 					if newSize > cap(reg.array) {
 						reg.resize(newSize)
@@ -583,7 +583,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			v1, ok1 := toNumber(lhs)
 			v2, ok2 := toNumber(rhs)
 			if ok1 && ok2 {
-				v := reg.alloc.LNumber2I(v1 + v2)
+				v := lnumberToValue(v1 + v2)
 				newSize := RA + 1
 				if newSize > cap(reg.array) {
 					reg.resize(newSize)
@@ -628,7 +628,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			// Fast path: both integers
 			if lhsI, ok1 := lhs.(LInteger); ok1 {
 				if rhsI, ok2 := rhs.(LInteger); ok2 {
-					v := reg.alloc.LInteger2I(lhsI - rhsI)
+					v := lintegerToValue(lhsI - rhsI)
 					newSize := RA + 1
 					if newSize > cap(reg.array) {
 						reg.resize(newSize)
@@ -643,7 +643,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			// Fast path: both numbers
 			if lhsN, ok1 := lhs.(LNumber); ok1 {
 				if rhsN, ok2 := rhs.(LNumber); ok2 {
-					v := reg.alloc.LNumber2I(lhsN - rhsN)
+					v := lnumberToValue(lhsN - rhsN)
 					newSize := RA + 1
 					if newSize > cap(reg.array) {
 						reg.resize(newSize)
@@ -659,7 +659,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			v1, ok1 := toNumber(lhs)
 			v2, ok2 := toNumber(rhs)
 			if ok1 && ok2 {
-				v := reg.alloc.LNumber2I(v1 - v2)
+				v := lnumberToValue(v1 - v2)
 				newSize := RA + 1
 				if newSize > cap(reg.array) {
 					reg.resize(newSize)
@@ -704,7 +704,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			// Fast path: both integers
 			if lhsI, ok1 := lhs.(LInteger); ok1 {
 				if rhsI, ok2 := rhs.(LInteger); ok2 {
-					v := reg.alloc.LInteger2I(lhsI * rhsI)
+					v := lintegerToValue(lhsI * rhsI)
 					newSize := RA + 1
 					if newSize > cap(reg.array) {
 						reg.resize(newSize)
@@ -719,7 +719,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			// Fast path: both numbers
 			if lhsN, ok1 := lhs.(LNumber); ok1 {
 				if rhsN, ok2 := rhs.(LNumber); ok2 {
-					v := reg.alloc.LNumber2I(lhsN * rhsN)
+					v := lnumberToValue(lhsN * rhsN)
 					newSize := RA + 1
 					if newSize > cap(reg.array) {
 						reg.resize(newSize)
@@ -735,7 +735,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			v1, ok1 := toNumber(lhs)
 			v2, ok2 := toNumber(rhs)
 			if ok1 && ok2 {
-				v := reg.alloc.LNumber2I(v1 * v2)
+				v := lnumberToValue(v1 * v2)
 				newSize := RA + 1
 				if newSize > cap(reg.array) {
 					reg.resize(newSize)
@@ -784,7 +784,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 							rg.resize(requiredSize)
 						}
 					}
-					rg.array[regi] = rg.alloc.LNumber2I(vali)
+					rg.array[regi] = lnumberToValue(vali)
 					if regi >= rg.top {
 						rg.top = regi + 1
 					}
@@ -841,7 +841,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 							rg.resize(requiredSize)
 						}
 					}
-					rg.array[regi] = rg.alloc.LNumber2I(vali)
+					rg.array[regi] = lnumberToValue(vali)
 					if regi >= rg.top {
 						rg.top = regi + 1
 					}
@@ -898,7 +898,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 							rg.resize(requiredSize)
 						}
 					}
-					rg.array[regi] = rg.alloc.LNumber2I(vali)
+					rg.array[regi] = lnumberToValue(vali)
 					if regi >= rg.top {
 						rg.top = regi + 1
 					}
@@ -967,7 +967,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				if (l^r) < 0 && l%r != 0 {
 					q--
 				}
-				vali := rg.alloc.LInteger2I(LInteger(q))
+				vali := lintegerToValue(LInteger(q))
 				newSize := regi + 1
 				if newSize > cap(rg.array) {
 					rg.resize(newSize)
@@ -1009,7 +1009,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			{
 				rg := reg
 				regi := RA
-				vali := rg.alloc.LInteger2I(LInteger(l & r))
+				vali := lintegerToValue(LInteger(l & r))
 				newSize := regi + 1
 				if newSize > cap(rg.array) {
 					rg.resize(newSize)
@@ -1051,7 +1051,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			{
 				rg := reg
 				regi := RA
-				vali := rg.alloc.LInteger2I(LInteger(l | r))
+				vali := lintegerToValue(LInteger(l | r))
 				newSize := regi + 1
 				if newSize > cap(rg.array) {
 					rg.resize(newSize)
@@ -1093,7 +1093,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			{
 				rg := reg
 				regi := RA
-				vali := rg.alloc.LInteger2I(LInteger(l ^ r))
+				vali := lintegerToValue(LInteger(l ^ r))
 				newSize := regi + 1
 				if newSize > cap(rg.array) {
 					rg.resize(newSize)
@@ -1143,7 +1143,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			{
 				rg := reg
 				regi := RA
-				vali := rg.alloc.LInteger2I(LInteger(result))
+				vali := lintegerToValue(LInteger(result))
 				newSize := regi + 1
 				if newSize > cap(rg.array) {
 					rg.resize(newSize)
@@ -1193,7 +1193,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			{
 				rg := reg
 				regi := RA
-				vali := rg.alloc.LInteger2I(LInteger(result))
+				vali := lintegerToValue(LInteger(result))
 				newSize := regi + 1
 				if newSize > cap(rg.array) {
 					rg.resize(newSize)
@@ -1217,7 +1217,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				{
 					rg := reg
 					regi := RA
-					vali := rg.alloc.LNumber2I(-nm)
+					vali := lnumberToValue(-nm)
 					newSize := regi + 1
 					// this section is inlined by go-inline
 					// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
@@ -1308,7 +1308,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			{
 				rg := reg
 				regi := RA
-				vali := rg.alloc.LInteger2I(LInteger(^n))
+				vali := lintegerToValue(LInteger(^n))
 				newSize := regi + 1
 				if newSize > cap(rg.array) {
 					rg.resize(newSize)
@@ -1392,7 +1392,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 							rg.resize(requiredSize)
 						}
 					}
-					rg.array[regi] = rg.alloc.LNumber2I(vali)
+					rg.array[regi] = lnumberToValue(vali)
 					if regi >= rg.top {
 						rg.top = regi + 1
 					}
@@ -1421,7 +1421,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 									rg.resize(requiredSize)
 								}
 							}
-							rg.array[regi] = rg.alloc.LNumber2I(vali)
+							rg.array[regi] = lnumberToValue(vali)
 							if regi >= rg.top {
 								rg.top = regi + 1
 							}
@@ -1464,7 +1464,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 								rg.resize(requiredSize)
 							}
 						}
-						rg.array[regi] = rg.alloc.LNumber2I(vali)
+						rg.array[regi] = lnumberToValue(vali)
 						if regi >= rg.top {
 							rg.top = regi + 1
 						}
@@ -2237,7 +2237,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 						init := int64(initI) + int64(stepI)
 						limit := int64(limitI)
 						step := int64(stepI)
-						v := reg.alloc.LInteger2I(LInteger(init))
+						v := lintegerToValue(LInteger(init))
 						newSize := RA + 1
 						if newSize > cap(reg.array) {
 							reg.resize(newSize)
@@ -2295,7 +2295,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 									rg.resize(requiredSize)
 								}
 							}
-							rg.array[regi] = rg.alloc.LNumber2I(vali)
+							rg.array[regi] = lnumberToValue(vali)
 							if regi >= rg.top {
 								rg.top = regi + 1
 							}
@@ -2314,7 +2314,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 										rg.resize(requiredSize)
 									}
 								}
-								rg.array[regi] = rg.alloc.LNumber2I(vali)
+								rg.array[regi] = lnumberToValue(vali)
 								if regi >= rg.top {
 									rg.top = regi + 1
 								}
@@ -2373,7 +2373,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			if initI, ok1 := initVal.(LInteger); ok1 {
 				if stepI, ok2 := stepVal.(LInteger); ok2 {
 					result := int64(initI) - int64(stepI)
-					v := reg.alloc.LInteger2I(LInteger(result))
+					v := lintegerToValue(LInteger(result))
 					newSize := RA + 1
 					if newSize > cap(reg.array) {
 						reg.resize(newSize)
@@ -2397,7 +2397,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 						if newSize > cap(rg.array) {
 							rg.resize(newSize)
 						}
-						rg.array[regi] = rg.alloc.LNumber2I(vali)
+						rg.array[regi] = lnumberToValue(vali)
 						if regi >= rg.top {
 							rg.top = regi + 1
 						}

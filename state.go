@@ -445,8 +445,8 @@ func panicWithoutTraceback(L *LState) {
 func newLState(options Options) *LState {
 	// Try to get a state from the pool
 	if pooled := statePool.Get(); pooled != nil {
-		if ls, ok := pooled.(*LState); ok && ls != nil && ls.alloc != nil {
-			// Reuse pooled state with its allocator
+		if ls, ok := pooled.(*LState); ok && ls != nil {
+			// Reuse pooled state.
 			ls.G = newGlobal()
 			ls.Parent = nil
 			ls.Panic = panicWithTraceback
@@ -461,11 +461,6 @@ func newLState(options Options) *LState {
 			ls.ctx = nil
 			ls.ctxDone = nil
 
-			// Reset allocator slice but keep capacity
-			if ls.alloc.ptrs != nil {
-				ls.alloc.ptrs = ls.alloc.ptrs[:0]
-			}
-
 			// Reuse or recreate registry
 			if ls.reg != nil && cap(ls.reg.array) >= options.RegistrySize {
 				ls.reg.handler = ls
@@ -473,7 +468,7 @@ func newLState(options Options) *LState {
 				ls.reg.maxSize = options.RegistryMaxSize
 				ls.reg.growBy = options.RegistryGrowStep
 			} else {
-				ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, ls.alloc)
+				ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 			}
 
 			// Reuse auto-growing stack (can handle any size), recreate fixed stacks
@@ -494,7 +489,6 @@ func newLState(options Options) *LState {
 	}
 
 	// Create fresh state
-	al := newAllocator(64)
 	ls := &LState{
 		G:       newGlobal(),
 		Parent:  nil,
@@ -503,7 +497,6 @@ func newLState(options Options) *LState {
 		Options: options,
 
 		stop:         0,
-		alloc:        al,
 		currentFrame: nil,
 		wrapped:      false,
 		uvcache:      nil,
@@ -516,7 +509,7 @@ func newLState(options Options) *LState {
 	} else {
 		ls.stack = newFixedCallFrameStack(options.CallStackSize)
 	}
-	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, al)
+	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 	ls.Env = ls.G.Global
 	return ls
 }
@@ -1423,7 +1416,7 @@ func (ls *LState) CreateTable(acap, hcap int) *LTable {
 // NewThreadWithContext returns a new LState with the given context.
 // Pass nil for no context (faster execution without cancellation checks).
 func (ls *LState) NewThreadWithContext(ctx context.Context) *LState {
-	thread := newLStateWithGAndAlloc(ls.Options, ls.G, ls.Env, ls.alloc)
+	thread := newLStateWithGlobal(ls.Options, ls.G, ls.Env)
 	if ctx != nil {
 		thread.mainLoop = mainLoopWithContext
 		thread.ctx = ctx

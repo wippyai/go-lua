@@ -61,29 +61,25 @@ func TestIsArrayKey(t *testing.T) {
 }
 
 func TestLNumber2IPreload(t *testing.T) {
-	al := newAllocator(32)
-
 	for i := 0; i < preloadLimit; i++ {
-		v := al.LNumber2I(LNumber(i))
-		if v != preloads[i] {
-			t.Errorf("LNumber2I(%d) did not return preloaded value", i)
+		v := lnumberToValue(LNumber(i))
+		if v != preloadedNumbers[i] {
+			t.Errorf("lnumberToValue(%d) did not return preloaded value", i)
 		}
 	}
 
-	v := al.LNumber2I(LNumber(preloadLimit))
-	if v == preloads[int(preloadLimit)-1] {
-		t.Errorf("LNumber2I(%d) should not return preloaded value", preloadLimit)
+	v := lnumberToValue(LNumber(preloadLimit))
+	if v == preloadedNumbers[int(preloadLimit)-1] {
+		t.Errorf("lnumberToValue(%d) should not return preloaded value", preloadLimit)
 	}
 }
 
 func TestLNumber2INonInteger(t *testing.T) {
-	al := newAllocator(32)
-
 	tests := []LNumber{0.5, 1.5, -0.5, math.Pi, 127.5}
 	for _, v := range tests {
-		result := al.LNumber2I(v)
+		result := lnumberToValue(v)
 		if n, ok := result.(LNumber); !ok || n != v {
-			t.Errorf("LNumber2I(%v) returned incorrect value", v)
+			t.Errorf("lnumberToValue(%v) returned incorrect value", v)
 		}
 	}
 }

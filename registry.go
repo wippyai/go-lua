@@ -10,12 +10,11 @@ type registry struct {
 	top     int
 	growBy  int
 	maxSize int
-	alloc   *allocator
 	handler registryHandler
 }
 
-func newRegistry(handler registryHandler, initialSize int, growBy int, maxSize int, alloc *allocator) *registry {
-	return &registry{make([]LValue, initialSize), 0, growBy, maxSize, alloc, handler}
+func newRegistry(handler registryHandler, initialSize int, growBy int, maxSize int) *registry {
+	return &registry{make([]LValue, initialSize), 0, growBy, maxSize, handler}
 }
 
 func (rg *registry) resize(requiredSize int) bool { // +inline-start
@@ -266,7 +265,7 @@ func (rg *registry) SetNumber(regi int, vali LNumber) { // +inline-start
 			rg.resize(requiredSize)
 		}
 	}
-	rg.array[regi] = rg.alloc.LNumber2I(vali)
+	rg.array[regi] = lnumberToValue(vali)
 	if regi >= rg.top {
 		rg.top = regi + 1
 	}
