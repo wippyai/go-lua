@@ -65,8 +65,8 @@ func (ls *LState) Close() {
 	}
 }
 
-// newLStateWithGAndAlloc creates a thread that shares the parent's allocator
-func newLStateWithGAndAlloc(options Options, G *Global, env *LTable, parentAlloc *allocator) *LState {
+// newLStateWithGlobal creates a thread that shares the parent's global/env.
+func newLStateWithGlobal(options Options, G *Global, env *LTable) *LState {
 	// Try to get a state from the pool
 	pooledState := statePool.Get()
 
@@ -77,17 +77,15 @@ func newLStateWithGAndAlloc(options Options, G *Global, env *LTable, parentAlloc
 		ls.Panic = panicWithTraceback
 		ls.Options = options
 		ls.mainLoop = mainLoop
-		ls.alloc = parentAlloc
 		ls.stop = 0
 		ls.ctx = nil
 		ls.ctxDone = nil
 
 		// Registry was preserved but might need resetting if options changed
 		if ls.reg != nil && cap(ls.reg.array) != options.RegistrySize {
-			ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, parentAlloc)
+			ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 		} else if ls.reg != nil {
 			ls.reg.handler = ls
-			ls.reg.alloc = parentAlloc
 		}
 
 		return ls
@@ -101,7 +99,6 @@ func newLStateWithGAndAlloc(options Options, G *Global, env *LTable, parentAlloc
 		Dead:         false,
 		Options:      options,
 		stop:         0,
-		alloc:        parentAlloc,
 		currentFrame: nil,
 		wrapped:      false,
 		uvcache:      nil,
@@ -116,7 +113,7 @@ func newLStateWithGAndAlloc(options Options, G *Global, env *LTable, parentAlloc
 		ls.stack = newFixedCallFrameStack(options.CallStackSize)
 	}
 
-	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize, parentAlloc)
+	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 	ls.Env = env
 
 	return ls

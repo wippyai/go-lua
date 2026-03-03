@@ -14,8 +14,7 @@ func (h *testRegistryHandler) registryOverflow() {
 
 func TestRegistryBasicOperations(t *testing.T) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(32)
-	rg := newRegistry(handler, 10, 5, 100, alloc)
+	rg := newRegistry(handler, 10, 5, 100)
 
 	// Test initial state
 	if rg.Top() != 0 {
@@ -51,8 +50,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 
 func TestRegistrySetTop(t *testing.T) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(32)
-	rg := newRegistry(handler, 10, 5, 100, alloc)
+	rg := newRegistry(handler, 10, 5, 100)
 
 	// Push some values
 	rg.Push(LNumber(1))
@@ -80,8 +78,7 @@ func TestRegistrySetTop(t *testing.T) {
 
 func TestRegistrySet(t *testing.T) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(32)
-	rg := newRegistry(handler, 10, 5, 100, alloc)
+	rg := newRegistry(handler, 10, 5, 100)
 
 	// Set beyond current top
 	rg.Set(5, LNumber(100))
@@ -101,8 +98,7 @@ func TestRegistrySet(t *testing.T) {
 
 func TestRegistryResize(t *testing.T) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(32)
-	rg := newRegistry(handler, 2, 2, 100, alloc) // small initial size
+	rg := newRegistry(handler, 2, 2, 100) // small initial size
 
 	// Push beyond initial capacity
 	for i := 0; i < 10; i++ {
@@ -123,8 +119,7 @@ func TestRegistryResize(t *testing.T) {
 
 func TestRegistryOverflow(t *testing.T) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(32)
-	rg := newRegistry(handler, 2, 2, 5, alloc) // small max size
+	rg := newRegistry(handler, 2, 2, 5) // small max size
 
 	// Push until we hit max size
 	for i := 0; i < 5; i++ {
@@ -147,8 +142,7 @@ func TestRegistryOverflow(t *testing.T) {
 
 func TestRegistryCopyRange(t *testing.T) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(32)
-	rg := newRegistry(handler, 20, 5, 100, alloc)
+	rg := newRegistry(handler, 20, 5, 100)
 
 	// Setup: push 5 values
 	for i := 0; i < 5; i++ {
@@ -176,8 +170,7 @@ func TestRegistryCopyRange(t *testing.T) {
 
 func TestRegistryFillNil(t *testing.T) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(32)
-	rg := newRegistry(handler, 20, 5, 100, alloc)
+	rg := newRegistry(handler, 20, 5, 100)
 
 	// Setup: push some values
 	rg.Push(LNumber(1))
@@ -200,8 +193,7 @@ func TestRegistryFillNil(t *testing.T) {
 
 func TestRegistryInsert(t *testing.T) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(32)
-	rg := newRegistry(handler, 20, 5, 100, alloc)
+	rg := newRegistry(handler, 20, 5, 100)
 
 	// Push initial values
 	rg.Push(LNumber(1))
@@ -225,8 +217,7 @@ func TestRegistryInsert(t *testing.T) {
 
 func TestRegistryIsFull(t *testing.T) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(32)
-	rg := newRegistry(handler, 3, 2, 100, alloc)
+	rg := newRegistry(handler, 3, 2, 100)
 
 	if rg.IsFull() {
 		t.Error("registry should not be full initially")
@@ -249,10 +240,9 @@ func TestRegistryIsFull(t *testing.T) {
 
 func TestRegistrySetNumber(t *testing.T) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(32)
-	rg := newRegistry(handler, 10, 5, 100, alloc)
+	rg := newRegistry(handler, 10, 5, 100)
 
-	// SetNumber uses allocator for non-preloaded values
+	// SetNumber uses number boxing helper for non-preloaded values.
 	rg.SetNumber(0, LNumber(1000)) // outside preload range
 
 	v := rg.Get(0)
@@ -266,8 +256,7 @@ func TestRegistrySetNumber(t *testing.T) {
 
 func TestRegistryGetNilValue(t *testing.T) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(32)
-	rg := newRegistry(handler, 10, 5, 100, alloc)
+	rg := newRegistry(handler, 10, 5, 100)
 
 	rg.SetTop(5)
 
@@ -281,8 +270,7 @@ func TestRegistryGetNilValue(t *testing.T) {
 
 func BenchmarkRegistryPush(b *testing.B) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(1024)
-	rg := newRegistry(handler, 1024, 256, 10000, alloc)
+	rg := newRegistry(handler, 1024, 256, 10000)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -295,8 +283,7 @@ func BenchmarkRegistryPush(b *testing.B) {
 
 func BenchmarkRegistrySetNumber(b *testing.B) {
 	handler := &testRegistryHandler{}
-	alloc := newAllocator(1024)
-	rg := newRegistry(handler, 1024, 256, 10000, alloc)
+	rg := newRegistry(handler, 1024, 256, 10000)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

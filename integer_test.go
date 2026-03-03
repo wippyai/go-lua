@@ -30,11 +30,9 @@ func TestLInteger_TypeName(t *testing.T) {
 }
 
 func TestLInteger_Preloads(t *testing.T) {
-	al := newAllocator(64)
-
 	// Values in [-256, 256) should be preloaded (zero alloc)
 	for i := int64(-256); i < 256; i++ {
-		v := al.LInteger2I(LInteger(i))
+		v := lintegerToValue(LInteger(i))
 		if v.Type() != LTInteger {
 			t.Errorf("LInteger(%d) should have type LTInteger", i)
 		}
@@ -45,12 +43,10 @@ func TestLInteger_Preloads(t *testing.T) {
 }
 
 func TestLInteger_LargeValues(t *testing.T) {
-	al := newAllocator(64)
-
 	// Values outside preload range should also work
 	large := []int64{1000, -1000, 1 << 62, -(1 << 62)}
 	for _, i := range large {
-		v := al.LInteger2I(LInteger(i))
+		v := lintegerToValue(LInteger(i))
 		if v.Type() != LTInteger {
 			t.Errorf("LInteger(%d) should have type LTInteger", i)
 		}
