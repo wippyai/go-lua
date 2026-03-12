@@ -63,8 +63,8 @@ func coCreate(L *LState) int {
 	return 1
 }
 
-func coYield(_ *LState) int {
-	return -1
+func coYield(L *LState) int {
+	return -2 // -2 signals user yield (vs -1 for system yield)
 }
 
 func coResume(L *LState) int {
@@ -105,8 +105,74 @@ func coResume(L *LState) int {
 		L.XMoveTo(th, nargs)
 	}
 	top := L.GetTop()
+	th.yieldState = yieldNone
 	threadRun(th)
-	return L.GetTop() - top
+	if th.yieldState != yieldSystem || L.Parent == nil {
+		return L.GetTop() - top
+	}
+	return coResumePropagate(L, th, top)
+}
+
+// coResumePropagate handles system yield propagation through a coroutine boundary.
+// Called only when the inner thread yielded via a Go function returning -1
+// (not coroutine.yield) and this coroutine has a parent to propagate to.
+func coResumePropagate(L *LState, th *LState, top int) int {
+	// switchToParentThread already moved yield values to L's stack.
+	// For non-wrapped threads it also pushed LTrue before the values.
+	// Extract the raw yield values.
+	yieldStart := top + 1
+	if !th.wrapped {
+		yieldStart++ // skip LTrue from switchToParentThread
+	}
+	nvals := L.GetTop() - yieldStart + 1
+
+	// Transfer yield values to parent thread. For non-wrapped outer coroutines,
+	// Resume expects [LTrue, val1, val2, ...] on the parent's stack.
+	parent := L.Parent
+	if !L.wrapped {
+		parent.Push(LTrue)
+	}
+	for i := 0; i < nvals; i++ {
+		parent.Push(L.Get(yieldStart + i))
+	}
+
+	// Clear our stack so resume values land cleanly.
+	L.SetTop(0)
+
+	// Perform the thread switch manually to preserve the current frame.
+	// Unlike switchToParentThread, we do NOT pop the frame — the continuation
+	// installed below needs it to survive for the next resume.
+	L.G.CurrentThread = parent
+	L.Parent = nil
+	L.yieldState = yieldSystem
+
+	// Install continuation so the next resume re-enters the inner thread.
+	ext := L.setFrameExt(L.currentFrame)
+	ext.Continuation = coResumeContinuation
+	ext.ContinuationCtx = th
+
+	// callGFunction checks L.yieldState and skips switchToParentThread when set,
+	// preserving the frame on the stack.
+	return -1
+}
+
+// coResumeContinuation re-resumes the inner thread after a system yield was
+// propagated through this coroutine boundary. Resume values are on L's stack.
+func coResumeContinuation(L *LState, ctx interface{}, _ ResumeState) int {
+	th := ctx.(*LState)
+
+	th.Parent = L
+	L.G.CurrentThread = th
+	nargs := L.GetTop()
+	L.XMoveTo(th, nargs)
+	th.yieldState = yieldNone
+
+	top := L.GetTop()
+	threadRun(th)
+	if th.yieldState != yieldSystem || L.Parent == nil {
+		return L.GetTop() - top
+	}
+	return coResumePropagate(L, th, top)
 }
 
 func coRunning(L *LState) int {

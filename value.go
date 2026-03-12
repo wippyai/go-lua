@@ -234,7 +234,11 @@ type LState struct {
 	ctxCancelFn  context.CancelFunc
 	ctxDone      <-chan struct{}
 	frameExt     map[int16]*callFrameExt // lazy-allocated frame extensions keyed by Idx
-	yielded      bool                    // set when coroutine yields without panic
+	yieldState   uint8                   // 0=not yielded, 1=system yield, 2=user yield
+	yieldCont    uint8                   // pending yield continuation type for Lua frames
+	yieldContRA  int32                   // target register for continuation result
+	yieldContRB  int32                   // call's ReturnBase (where the result lands)
+	yieldContIdx int16                   // frame Idx that owns this continuation
 }
 
 func (ls *LState) String() string   { return fmt.Sprintf("thread: %p", ls) }

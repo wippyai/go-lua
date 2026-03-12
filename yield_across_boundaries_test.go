@@ -2,6 +2,7 @@ package lua
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -1115,5 +1116,679 @@ func TestYieldFromCoroutineWrapIterator(t *testing.T) {
 	results := expectDone(t, L, co, fn)
 	if results[0].String() != "a,b,c" {
 		t.Errorf("Expected 'a,b,c', got %v", results[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// System yield from coroutine.resume (non-wrapped, explicit resume)
+// ---------------------------------------------------------------------------
+
+func TestYieldFromCoroutineResumeExplicit(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_yield", L.NewFunction(yieldingGoFunc))
+
+	if err := L.DoString(`
+		function test()
+			local th = coroutine.create(function()
+				go_yield("sys:1")
+				coroutine.yield("user:1")
+				go_yield("sys:2")
+				return "done"
+			end)
+
+			local results = {}
+			while true do
+				local ok, val = coroutine.resume(th)
+				if not ok then break end
+				results[#results + 1] = val
+				if coroutine.status(th) == "dead" then break end
+			end
+			return table.concat(results, ",")
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	r := expectYield(t, L, co, fn)
+	if r[0].String() != "sys:1" {
+		t.Fatalf("Expected 'sys:1', got %v", r[0])
+	}
+
+	r = expectYield(t, L, co, fn)
+	if r[0].String() != "sys:2" {
+		t.Fatalf("Expected 'sys:2', got %v", r[0])
+	}
+
+	// System yields propagate to the host transparently — they don't appear
+	// in the Lua code's coroutine.resume return values. The Lua code only sees
+	// the user yield and the final return.
+	results := expectDone(t, L, co, fn)
+	if results[0].String() != "user:1,done" {
+		t.Errorf("Expected 'user:1,done', got %v", results[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// System yield through nested coroutine.wrap (2 levels deep)
+// ---------------------------------------------------------------------------
+
+func TestYieldFromNestedCoroutineWrap(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_yield", L.NewFunction(yieldingGoFunc))
+
+	if err := L.DoString(`
+		function inner_iter(items)
+			return coroutine.wrap(function()
+				for _, v in ipairs(items) do
+					go_yield("inner:" .. v)
+					coroutine.yield(v)
+				end
+			end)
+		end
+
+		function outer_iter()
+			return coroutine.wrap(function()
+				for v in inner_iter({"x", "y"}) do
+					go_yield("outer:" .. v)
+					coroutine.yield("got:" .. v)
+				end
+			end)
+		end
+
+		function test()
+			local results = {}
+			for val in outer_iter() do
+				results[#results + 1] = val
+			end
+			return table.concat(results, ",")
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	expected := []string{"inner:x", "outer:x", "inner:y", "outer:y"}
+	for _, exp := range expected {
+		r := expectYield(t, L, co, fn)
+		if r[0].String() != exp {
+			t.Fatalf("Expected %q, got %v", exp, r[0])
+		}
+	}
+
+	results := expectDone(t, L, co, fn)
+	if results[0].String() != "got:x,got:y" {
+		t.Errorf("Expected 'got:x,got:y', got %v", results[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// System yield interleaved with pcall inside coroutine.wrap
+// ---------------------------------------------------------------------------
+
+func TestYieldFromCoroutineWrapWithPcall(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_yield", L.NewFunction(yieldingGoFunc))
+
+	if err := L.DoString(`
+		function test()
+			local iter = coroutine.wrap(function()
+				go_yield("before_pcall")
+				local ok, err = pcall(function()
+					go_yield("inside_pcall")
+					error("planned_error")
+				end)
+				coroutine.yield(ok)
+				go_yield("after_pcall")
+				coroutine.yield(tostring(err))
+			end)
+
+			local results = {}
+			for val in iter do
+				results[#results + 1] = tostring(val)
+			end
+			return table.concat(results, ",")
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	r := expectYield(t, L, co, fn)
+	if r[0].String() != "before_pcall" {
+		t.Fatalf("Expected 'before_pcall', got %v", r[0])
+	}
+
+	r = expectYield(t, L, co, fn)
+	if r[0].String() != "inside_pcall" {
+		t.Fatalf("Expected 'inside_pcall', got %v", r[0])
+	}
+
+	r = expectYield(t, L, co, fn)
+	if r[0].String() != "after_pcall" {
+		t.Fatalf("Expected 'after_pcall', got %v", r[0])
+	}
+
+	results := expectDone(t, L, co, fn)
+	got := results[0].String()
+	if !strings.Contains(got, "false") || !strings.Contains(got, "planned_error") {
+		t.Errorf("Expected result containing 'false' and 'planned_error', got %v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// System yield from __index inside coroutine.wrap iterator
+// ---------------------------------------------------------------------------
+
+func TestYieldFromMetamethodInsideCoroutineWrap(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_yield", L.NewFunction(yieldingGoFunc))
+
+	if err := L.DoString(`
+		local mt = {
+			__index = function(t, k)
+				go_yield("index:" .. k)
+				return rawget(t, "_" .. k)
+			end
+		}
+
+		function test()
+			local obj = setmetatable({_name = "alice", _age = "30"}, mt)
+			local iter = coroutine.wrap(function()
+				coroutine.yield(obj.name)
+				coroutine.yield(obj.age)
+			end)
+
+			local results = {}
+			for val in iter do
+				results[#results + 1] = val
+			end
+			return table.concat(results, ",")
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	r := expectYield(t, L, co, fn)
+	if r[0].String() != "index:name" {
+		t.Fatalf("Expected 'index:name', got %v", r[0])
+	}
+
+	r = expectYield(t, L, co, fn)
+	if r[0].String() != "index:age" {
+		t.Fatalf("Expected 'index:age', got %v", r[0])
+	}
+
+	results := expectDone(t, L, co, fn)
+	if results[0].String() != "alice,30" {
+		t.Errorf("Expected 'alice,30', got %v", results[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// System yield with multiple return values propagated through wrap
+// ---------------------------------------------------------------------------
+
+func TestYieldFromCoroutineWrapMultipleValues(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_yield_multi", L.NewFunction(func(L *LState) int {
+		return L.Yield(L.Get(1), L.Get(2))
+	}))
+
+	if err := L.DoString(`
+		function test()
+			local iter = coroutine.wrap(function()
+				go_yield_multi("a", "b")
+				coroutine.yield("single")
+				go_yield_multi("c", "d")
+			end)
+
+			local results = {}
+			for val in iter do
+				results[#results + 1] = val
+			end
+			return table.concat(results, ",")
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	r := expectYield(t, L, co, fn)
+	if len(r) < 2 || r[0].String() != "a" || r[1].String() != "b" {
+		t.Fatalf("Expected [a, b], got %v", r)
+	}
+
+	r = expectYield(t, L, co, fn)
+	if len(r) < 2 || r[0].String() != "c" || r[1].String() != "d" {
+		t.Fatalf("Expected [c, d], got %v", r)
+	}
+
+	results := expectDone(t, L, co, fn)
+	if results[0].String() != "single" {
+		t.Errorf("Expected 'single', got %v", results[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// System yield from arithmetic metamethod inside coroutine.wrap
+// ---------------------------------------------------------------------------
+
+func TestYieldFromArithInsideCoroutineWrap(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_yield", L.NewFunction(yieldingGoFunc))
+
+	if err := L.DoString(`
+		local mt = {
+			__add = function(a, b)
+				go_yield("add:" .. rawget(a, "v") .. "+" .. rawget(b, "v"))
+				return setmetatable({v = rawget(a, "v") + rawget(b, "v")}, getmetatable(a))
+			end
+		}
+
+		function num(x)
+			return setmetatable({v = x}, mt)
+		end
+
+		function test()
+			local iter = coroutine.wrap(function()
+				local a = num(10)
+				local b = num(20)
+				local c = a + b
+				coroutine.yield(rawget(c, "v"))
+				local d = c + num(5)
+				coroutine.yield(rawget(d, "v"))
+			end)
+
+			local results = {}
+			for val in iter do
+				results[#results + 1] = tostring(val)
+			end
+			return table.concat(results, ",")
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	r := expectYield(t, L, co, fn)
+	if r[0].String() != "add:10+20" {
+		t.Fatalf("Expected 'add:10+20', got %v", r[0])
+	}
+
+	r = expectYield(t, L, co, fn)
+	if r[0].String() != "add:30+5" {
+		t.Fatalf("Expected 'add:30+5', got %v", r[0])
+	}
+
+	results := expectDone(t, L, co, fn)
+	if results[0].String() != "30,35" {
+		t.Errorf("Expected '30,35', got %v", results[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// System yield from for-in iterator with resume values passed back
+// ---------------------------------------------------------------------------
+
+func TestYieldFromIteratorWithResumeValues(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_request", L.NewFunction(func(L *LState) int {
+		query := L.CheckString(1)
+		L.SetTop(0)
+		L.Push(LString(query))
+		return -1
+	}))
+
+	if err := L.DoString(`
+		function test()
+			local iter = coroutine.wrap(function()
+				local resp1 = go_request("get_name")
+				coroutine.yield(resp1)
+				local resp2 = go_request("get_age")
+				coroutine.yield(resp2)
+			end)
+
+			local results = {}
+			for val in iter do
+				results[#results + 1] = val
+			end
+			return table.concat(results, ",")
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	r := expectYield(t, L, co, fn)
+	if r[0].String() != "get_name" {
+		t.Fatalf("Expected 'get_name', got %v", r[0])
+	}
+
+	r = expectYield(t, L, co, fn, LString("Alice"))
+	if r[0].String() != "get_age" {
+		t.Fatalf("Expected 'get_age', got %v", r[0])
+	}
+
+	results := expectDone(t, L, co, fn, LString("30"))
+	if results[0].String() != "Alice,30" {
+		t.Errorf("Expected 'Alice,30', got %v", results[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// System yield through coroutine.wrap that dies mid-iteration
+// ---------------------------------------------------------------------------
+
+func TestYieldFromCoroutineWrapWithError(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_yield", L.NewFunction(yieldingGoFunc))
+
+	if err := L.DoString(`
+		function test()
+			local iter = coroutine.wrap(function()
+				go_yield("step1")
+				coroutine.yield("ok1")
+				go_yield("step2")
+				error("boom")
+			end)
+
+			local results = {}
+			local ok, err = pcall(function()
+				for val in iter do
+					results[#results + 1] = val
+				end
+			end)
+			results[#results + 1] = tostring(err)
+			return table.concat(results, "|")
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	r := expectYield(t, L, co, fn)
+	if r[0].String() != "step1" {
+		t.Fatalf("Expected 'step1', got %v", r[0])
+	}
+
+	r = expectYield(t, L, co, fn)
+	if r[0].String() != "step2" {
+		t.Fatalf("Expected 'step2', got %v", r[0])
+	}
+
+	results := expectDone(t, L, co, fn)
+	got := results[0].String()
+	if !strings.HasPrefix(got, "ok1|") || !strings.Contains(got, "boom") {
+		t.Errorf("Expected 'ok1|...boom', got %v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// System yield with __newindex inside coroutine.wrap
+// ---------------------------------------------------------------------------
+
+func TestYieldFromNewIndexInsideCoroutineWrap(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_yield", L.NewFunction(yieldingGoFunc))
+
+	if err := L.DoString(`
+		local store = {}
+		local mt = {
+			__newindex = function(t, k, v)
+				go_yield("set:" .. k .. "=" .. tostring(v))
+				store[k] = v
+			end,
+			__index = function(t, k)
+				return store[k]
+			end
+		}
+
+		function test()
+			local obj = setmetatable({}, mt)
+			local iter = coroutine.wrap(function()
+				obj.x = 10
+				obj.y = 20
+				coroutine.yield(obj.x + obj.y)
+			end)
+
+			local results = {}
+			for val in iter do
+				results[#results + 1] = tostring(val)
+			end
+			return table.concat(results, ",")
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	r := expectYield(t, L, co, fn)
+	if r[0].String() != "set:x=10" {
+		t.Fatalf("Expected 'set:x=10', got %v", r[0])
+	}
+
+	r = expectYield(t, L, co, fn)
+	if r[0].String() != "set:y=20" {
+		t.Fatalf("Expected 'set:y=20', got %v", r[0])
+	}
+
+	results := expectDone(t, L, co, fn)
+	if results[0].String() != "30" {
+		t.Errorf("Expected '30', got %v", results[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// High-frequency system yields: many yields in tight loop
+// ---------------------------------------------------------------------------
+
+func TestYieldFromIteratorHighFrequency(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_yield", L.NewFunction(yieldingGoFunc))
+
+	if err := L.DoString(`
+		function test()
+			local sum = 0
+			for i = 1, 100 do
+				go_yield(i)
+				sum = sum + i
+			end
+			return sum
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	for i := 1; i <= 100; i++ {
+		r := expectYield(t, L, co, fn)
+		if LVAsNumber(r[0]) != LNumber(i) {
+			t.Fatalf("Yield %d: expected %d, got %v", i, i, r[0])
+		}
+	}
+
+	results := expectDone(t, L, co, fn)
+	if LVAsNumber(results[0]) != LNumber(5050) {
+		t.Errorf("Expected 5050, got %v", results[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// System yield from comparison metamethod inside coroutine.wrap
+// ---------------------------------------------------------------------------
+
+func TestYieldFromComparisonInsideCoroutineWrap(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_yield", L.NewFunction(yieldingGoFunc))
+
+	if err := L.DoString(`
+		local mt = {
+			__lt = function(a, b)
+				go_yield("cmp:" .. rawget(a, "v") .. "<" .. rawget(b, "v"))
+				return rawget(a, "v") < rawget(b, "v")
+			end
+		}
+
+		function val(x)
+			return setmetatable({v = x}, mt)
+		end
+
+		function test()
+			local iter = coroutine.wrap(function()
+				local a, b = val(3), val(7)
+				if a < b then
+					coroutine.yield("less")
+				else
+					coroutine.yield("greater")
+				end
+				local c = val(10)
+				if c < b then
+					coroutine.yield("less2")
+				else
+					coroutine.yield("greater2")
+				end
+			end)
+
+			local results = {}
+			for val in iter do
+				results[#results + 1] = val
+			end
+			return table.concat(results, ",")
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	r := expectYield(t, L, co, fn)
+	if r[0].String() != "cmp:3<7" {
+		t.Fatalf("Expected 'cmp:3<7', got %v", r[0])
+	}
+
+	r = expectYield(t, L, co, fn)
+	if r[0].String() != "cmp:10<7" {
+		t.Fatalf("Expected 'cmp:10<7', got %v", r[0])
+	}
+
+	results := expectDone(t, L, co, fn)
+	if results[0].String() != "less,greater2" {
+		t.Errorf("Expected 'less,greater2', got %v", results[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// System yield from __len and __concat inside coroutine.wrap
+// ---------------------------------------------------------------------------
+
+func TestYieldFromLenConcatInsideCoroutineWrap(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	L.SetGlobal("go_yield", L.NewFunction(yieldingGoFunc))
+
+	if err := L.DoString(`
+		local mt = {
+			__len = function(t)
+				go_yield("len:" .. rawget(t, "name"))
+				return rawget(t, "size")
+			end,
+			__concat = function(a, b)
+				local av = type(a) == "table" and rawget(a, "name") or tostring(a)
+				local bv = type(b) == "table" and rawget(b, "name") or tostring(b)
+				go_yield("concat:" .. av .. ".." .. bv)
+				return av .. bv
+			end
+		}
+
+		function obj(name, size)
+			return setmetatable({name = name, size = size}, mt)
+		end
+
+		function test()
+			local iter = coroutine.wrap(function()
+				local a = obj("foo", 3)
+				local b = obj("bar", 5)
+				coroutine.yield(#a)
+				coroutine.yield(#b)
+				coroutine.yield(a .. b)
+			end)
+
+			local results = {}
+			for val in iter do
+				results[#results + 1] = tostring(val)
+			end
+			return table.concat(results, ",")
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("test").(*LFunction)
+
+	r := expectYield(t, L, co, fn)
+	if r[0].String() != "len:foo" {
+		t.Fatalf("Expected 'len:foo', got %v", r[0])
+	}
+
+	r = expectYield(t, L, co, fn)
+	if r[0].String() != "len:bar" {
+		t.Fatalf("Expected 'len:bar', got %v", r[0])
+	}
+
+	r = expectYield(t, L, co, fn)
+	if r[0].String() != "concat:foo..bar" {
+		t.Fatalf("Expected 'concat:foo..bar', got %v", r[0])
+	}
+
+	results := expectDone(t, L, co, fn)
+	if results[0].String() != "3,5,foobar" {
+		t.Errorf("Expected '3,5,foobar', got %v", results[0])
 	}
 }

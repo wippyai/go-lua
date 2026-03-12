@@ -136,6 +136,30 @@ type Debug struct {
 // ctx is user-defined context passed through yield, status is the resume result.
 type LGContinuation func(L *LState, ctx any, status ResumeState) int
 
+// Yield continuation types for Lua frames. When an opcode calls a function
+// via callR/Call and the call yields, these identify the post-call logic
+// to execute on resume.
+const (
+	yieldContNone     uint8 = 0
+	yieldContTForLoop uint8 = 1 // OP_TFORLOOP: check iterator result, update loop
+	yieldContGetField uint8 = 2 // getField/getFieldString result → store at RA
+	yieldContSetField uint8 = 3 // setField/setFieldString → no result to store
+	yieldContSelf     uint8 = 4 // OP_SELF: store method at RA, selfobj at RA+1
+	yieldContArith    uint8 = 5 // objectArith result → store at RA
+	yieldContUnm      uint8 = 6 // OP_UNM __unm result → store at RA
+	yieldContLen      uint8 = 7 // OP_LEN __len result → store at RA
+	yieldContConcat   uint8 = 8 // OP_CONCAT __concat result → store at RA
+	yieldContCompare  uint8 = 9 // OP_EQ/LT/LE comparison result → affects Pc jump
+)
+
+// Yield state: combined yielded flag + yield kind in a single field.
+// 0 = not yielded, nonzero = yielded with specific kind.
+const (
+	yieldNone   uint8 = 0 // not yielded
+	yieldSystem uint8 = 1 // Go function returned -1 (propagates through coroutine boundaries)
+	yieldUser   uint8 = 2 // coroutine.yield (caught by the immediate resumer)
+)
+
 // callFrameExt holds rarely-used fields for protected calls and continuations.
 // Allocated lazily only when needed.
 type callFrameExt struct {
@@ -1033,8 +1057,10 @@ func (ls *LState) callR(nargs, nret, rbase int) {
 	} else {
 		ls.mainLoop(ls, ls.currentFrame)
 	}
-	// Skip register adjustment if yield happened (state is already set by switchToParentThread)
-	if ls.yielded {
+	// Skip register adjustment if yield happened (state is already set by switchToParentThread).
+	// Save the return base so the continuation handler knows where the result lands.
+	if ls.yieldState != yieldNone {
+		ls.yieldContRB = int32(rbase)
 		return
 	}
 	if nret != MultRet {
@@ -1077,6 +1103,9 @@ func (ls *LState) getField(obj LValue, key LValue) LValue {
 			ls.reg.Push(curobj)
 			ls.reg.Push(key)
 			ls.Call(2, 1)
+			if ls.yieldState != yieldNone {
+				return LNil
+			}
 			return ls.reg.Pop()
 		}
 		curobj = metaindex
@@ -1117,6 +1146,9 @@ func (ls *LState) getFieldString(obj LValue, key string) LValue {
 			ls.reg.Push(curobj)
 			ls.reg.Push(LString(key))
 			ls.Call(2, 1)
+			if ls.yieldState != yieldNone {
+				return LNil
+			}
 			return ls.reg.Pop()
 		}
 		curobj = metaindex
@@ -1165,7 +1197,9 @@ func (ls *LState) setField(obj LValue, key LValue, value LValue) {
 		}
 		curobj = metaindex
 	}
-	ls.RaiseError("too many recursions in settable")
+	if ls.yieldState == yieldNone {
+		ls.RaiseError("too many recursions in settable")
+	}
 }
 
 func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
@@ -1208,7 +1242,9 @@ func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
 		}
 		curobj = metaindex
 	}
-	ls.RaiseError("too many recursions in settable")
+	if ls.yieldState == yieldNone {
+		ls.RaiseError("too many recursions in settable")
+	}
 }
 
 /* }}} */
@@ -1832,7 +1868,7 @@ func (ls *LState) CallK(nargs, nret int, cont LGContinuation, ctx any) {
 	}
 	ls.callR(nargs, nret, -1)
 	// If yield happened, keep continuation for resume
-	if ls.yielded {
+	if ls.yieldState != yieldNone {
 		return
 	}
 	// Call completed without yield - clear continuation
@@ -1903,7 +1939,7 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 			ls.reg.SetTop(base)
 		}
 		// Skip stack reset if yield happened
-		if ls.yielded {
+		if ls.yieldState != yieldNone {
 			return
 		}
 		ls.stack.SetSp(sp)
@@ -2028,7 +2064,7 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 		}
 	}
 	top := ls.GetTop()
-	th.yielded = false // Clear yield flag for new resume
+	th.yieldState = yieldNone // Clear yield flag for new resume
 	threadRun(th)
 	haserror := LVIsFalse(ls.Get(top + 1))
 	ret := make([]LValue, 0, ls.GetTop())
@@ -2106,7 +2142,7 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 		}
 	}
 	top := ls.GetTop()
-	th.yielded = false // Clear yield flag for new resume
+	th.yieldState = yieldNone // Clear yield flag for new resume
 	threadRun(th)
 	haserror := LVIsFalse(ls.Get(top + 1))
 
