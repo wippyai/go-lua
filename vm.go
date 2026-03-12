@@ -66,6 +66,14 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 		inst = cf.Fn.Proto.Code[cf.Pc]
 		cf.Pc++
 
+		// Handle yield continuation: when an opcode's inner call yielded and has
+		// now completed, finish the originating opcode's post-call work. Only fires
+		// when the current frame is the one that owns the continuation.
+		if L.yieldCont != 0 && cf.Idx == L.yieldContIdx {
+			handleYieldContinuation(L, cf, inst)
+			continue
+		}
+
 		// Note: Some opcodes (CALL, TAILCALL, RETURN) may need to `return` from mainLoop
 		// Others just `continue` to next instruction
 		switch int(inst >> 26) {
@@ -302,6 +310,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			Bx := int(inst & 0x3ffff) //GETBX
 			//reg.Set(RA, L.getField(cf.Fn.Env, cf.Fn.Proto.Constants[Bx]))
 			v := L.getFieldString(cf.Fn.Env, cf.Fn.Proto.stringConstants[Bx])
+			if L.yieldState != yieldNone {
+				L.yieldCont = yieldContGetField
+				L.yieldContRA = int32(RA)
+				L.yieldContIdx = cf.Idx
+				cf.Pc--
+				return
+			}
 			// this section is inlined by go-inline
 			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 			{
@@ -363,6 +378,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
 			v := L.getField(reg.Get(int(lbase)+B), L.rkValue(C))
+			if L.yieldState != yieldNone {
+				L.yieldCont = yieldContGetField
+				L.yieldContRA = int32(RA)
+				L.yieldContIdx = cf.Idx
+				cf.Pc--
+				return
+			}
 			// this section is inlined by go-inline
 			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 			{
@@ -392,6 +414,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
 			v := L.getFieldString(reg.Get(int(lbase)+B), L.rkString(C))
+			if L.yieldState != yieldNone {
+				L.yieldCont = yieldContGetField
+				L.yieldContRA = int32(RA)
+				L.yieldContIdx = cf.Idx
+				cf.Pc--
+				return
+			}
 			// this section is inlined by go-inline
 			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 			{
@@ -421,6 +450,12 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			Bx := int(inst & 0x3ffff) //GETBX
 			value := reg.Get(RA)
 			L.setFieldString(cf.Fn.Env, cf.Fn.Proto.stringConstants[Bx], value)
+			if L.yieldState != yieldNone {
+				L.yieldCont = yieldContSetField
+				L.yieldContIdx = cf.Idx
+				cf.Pc--
+				return
+			}
 
 		case OP_SETUPVAL:
 			reg := L.reg
@@ -439,6 +474,12 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
 			L.setField(reg.Get(RA), L.rkValue(B), L.rkValue(C))
+			if L.yieldState != yieldNone {
+				L.yieldCont = yieldContSetField
+				L.yieldContIdx = cf.Idx
+				cf.Pc--
+				return
+			}
 
 		case OP_SETTABLEKS:
 			reg := L.reg
@@ -448,6 +489,12 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
 			L.setFieldString(reg.Get(RA), L.rkString(B), L.rkValue(C))
+			if L.yieldState != yieldNone {
+				L.yieldCont = yieldContSetField
+				L.yieldContIdx = cf.Idx
+				cf.Pc--
+				return
+			}
 
 		case OP_NEWTABLE:
 			reg := L.reg
@@ -487,6 +534,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff //GETC
 			selfobj := reg.Get(int(lbase) + B)
 			v := L.getFieldString(selfobj, L.rkString(C))
+			if L.yieldState != yieldNone {
+				L.yieldCont = yieldContSelf
+				L.yieldContRA = int32(RA)
+				L.yieldContIdx = cf.Idx
+				cf.Pc--
+				return
+			}
 			// this section is inlined by go-inline
 			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 			{
@@ -594,6 +648,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			} else {
 				v := objectArith(L, OP_ADD, lhs, rhs)
+				if L.yieldState != yieldNone {
+					L.yieldCont = yieldContArith
+					L.yieldContRA = int32(RA)
+					L.yieldContIdx = cf.Idx
+					cf.Pc--
+					return
+				}
 				newSize := RA + 1
 				if newSize > cap(reg.array) {
 					reg.resize(newSize)
@@ -670,6 +731,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			} else {
 				v := objectArith(L, OP_SUB, lhs, rhs)
+				if L.yieldState != yieldNone {
+					L.yieldCont = yieldContArith
+					L.yieldContRA = int32(RA)
+					L.yieldContIdx = cf.Idx
+					cf.Pc--
+					return
+				}
 				newSize := RA + 1
 				if newSize > cap(reg.array) {
 					reg.resize(newSize)
@@ -746,6 +814,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			} else {
 				v := objectArith(L, OP_MUL, lhs, rhs)
+				if L.yieldState != yieldNone {
+					L.yieldCont = yieldContArith
+					L.yieldContRA = int32(RA)
+					L.yieldContIdx = cf.Idx
+					cf.Pc--
+					return
+				}
 				newSize := RA + 1
 				if newSize > cap(reg.array) {
 					reg.resize(newSize)
@@ -791,6 +866,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			} else {
 				v := objectArith(L, OP_DIV, lhs, rhs)
+				if L.yieldState != yieldNone {
+					L.yieldCont = yieldContArith
+					L.yieldContRA = int32(RA)
+					L.yieldContIdx = cf.Idx
+					cf.Pc--
+					return
+				}
 				// this section is inlined by go-inline
 				// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 				{
@@ -848,6 +930,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			} else {
 				v := objectArith(L, OP_MOD, lhs, rhs)
+				if L.yieldState != yieldNone {
+					L.yieldCont = yieldContArith
+					L.yieldContRA = int32(RA)
+					L.yieldContIdx = cf.Idx
+					cf.Pc--
+					return
+				}
 				// this section is inlined by go-inline
 				// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 				{
@@ -905,6 +994,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			} else {
 				v := objectArith(L, OP_POW, lhs, rhs)
+				if L.yieldState != yieldNone {
+					L.yieldCont = yieldContArith
+					L.yieldContRA = int32(RA)
+					L.yieldContIdx = cf.Idx
+					cf.Pc--
+					return
+				}
 				// this section is inlined by go-inline
 				// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 				{
@@ -1238,6 +1334,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 					reg.Push(op)
 					reg.Push(unaryv)
 					L.Call(1, 1)
+					if L.yieldState != yieldNone {
+						L.yieldCont = yieldContUnm
+						L.yieldContRA = int32(RA)
+						L.yieldContIdx = cf.Idx
+						cf.Pc--
+						return
+					}
 					// this section is inlined by go-inline
 					// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 					{
@@ -1403,6 +1506,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 					reg.Push(op)
 					reg.Push(lv)
 					L.Call(1, 1)
+					if L.yieldState != yieldNone {
+						L.yieldCont = yieldContLen
+						L.yieldContRA = int32(RA)
+						L.yieldContIdx = cf.Idx
+						cf.Pc--
+						return
+					}
 					ret := reg.Pop()
 					if ret.Type() == LTNumber {
 						v, _ := ret.(LNumber)
@@ -1484,6 +1594,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			RC := int(lbase) + C
 			RB := int(lbase) + B
 			v := stringConcat(L, RC-RB+1, RC)
+			if L.yieldState != yieldNone {
+				L.yieldCont = yieldContConcat
+				L.yieldContRA = int32(RA)
+				L.yieldContIdx = cf.Idx
+				cf.Pc--
+				return
+			}
 			// this section is inlined by go-inline
 			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 			{
@@ -1517,6 +1634,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
 			ret := equals(L, L.rkValue(B), L.rkValue(C), false)
+			if L.yieldState != yieldNone {
+				L.yieldCont = yieldContCompare
+				L.yieldContRA = int32(A)
+				L.yieldContIdx = cf.Idx
+				cf.Pc--
+				return
+			}
 			v := 1
 			if ret {
 				v = 0
@@ -1530,6 +1654,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
 			ret := lessThan(L, L.rkValue(B), L.rkValue(C))
+			if L.yieldState != yieldNone {
+				L.yieldCont = yieldContCompare
+				L.yieldContRA = int32(A)
+				L.yieldContIdx = cf.Idx
+				cf.Pc--
+				return
+			}
 			v := 1
 			if ret {
 				v = 0
@@ -1567,8 +1698,21 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 						ret = true
 					case 0:
 						ret = false
+					case -2:
+						L.yieldCont = yieldContCompare
+						L.yieldContRA = int32(A)
+						L.yieldContIdx = cf.Idx
+						cf.Pc--
+						return
 					default:
 						ret = !objectRationalWithError(L, rhs, lhs, "__lt")
+						if L.yieldState != yieldNone {
+							L.yieldCont = yieldContCompare
+							L.yieldContRA = int32(A)
+							L.yieldContIdx = cf.Idx
+							cf.Pc--
+							return
+						}
 					}
 				}
 			}
@@ -1835,8 +1979,19 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				if callGFunction(L, true) {
 					return
 				}
-				if L.currentFrame == nil || L.currentFrame.GoFunc != nil || (L.currentFrame.Fn != nil && L.currentFrame.Fn.IsG) || luaframe == baseframe {
+				if L.currentFrame == nil || luaframe == baseframe {
 					return
+				}
+				// If tail call returned to a Go frame, check for continuation (e.g. pcall)
+				if L.currentFrame.GoFunc != nil || (L.currentFrame.Fn != nil && L.currentFrame.Fn.IsG) {
+					ext := L.getFrameExt(L.currentFrame)
+					if ext != nil && ext.Continuation != nil {
+						if callGFunction(L, false) {
+							return
+						}
+					} else {
+						return
+					}
 				}
 			} else {
 				base := cf.Base
@@ -2511,6 +2666,13 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			}
 			L.callR(2, nret, RA+3)
+			if L.yieldState != yieldNone {
+				L.yieldCont = yieldContTForLoop
+				L.yieldContRA = int32(RA)
+				L.yieldContIdx = cf.Idx
+				cf.Pc--
+				return
+			}
 			if value := reg.Get(RA + 3); value != LNil {
 				// this section is inlined by go-inline
 				// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
@@ -2712,9 +2874,12 @@ func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
 		L.kill()
 	}
 
-	// For yield, mark as yielded (no panic needed - callers check L.yielded)
+	// For yield, mark as yielded (no panic needed - callers check L.yieldState).
+	// Preserve yieldUser if already set by coYield before this call.
 	if !haserror && !kill {
-		L.yielded = true
+		if L.yieldState == yieldNone {
+			L.yieldState = yieldSystem
+		}
 	}
 }
 
@@ -2778,6 +2943,65 @@ func returnFromTailcall(L *LState, baseframe *callFrame, cf *callFrame, RA int, 
 	return false
 }
 
+// handleYieldContinuation finishes an opcode whose inner call yielded.
+// The called function has completed and OP_RETURN placed the result at
+// yieldContRB. We execute only the post-call logic of the originating opcode.
+func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) {
+	contType := L.yieldCont
+	ra := int(L.yieldContRA)
+	rb := int(L.yieldContRB)
+	reg := L.reg
+
+	// Clear continuation state before executing post-call logic.
+	L.yieldCont = yieldContNone
+	L.yieldContRA = 0
+	L.yieldContRB = 0
+	L.yieldContIdx = 0
+
+	switch contType {
+	case yieldContGetField, yieldContArith, yieldContUnm, yieldContLen, yieldContConcat:
+		// All these place a single return value at RA.
+		v := reg.Get(rb)
+		reg.Set(ra, v)
+
+	case yieldContSetField:
+		// No result to store, execution continues.
+
+	case yieldContSelf:
+		// OP_SELF: store method result at RA, self object at RA+1.
+		v := reg.Get(rb)
+		reg.Set(ra, v)
+		// Re-extract B from instruction to get the self object.
+		lbase := cf.LocalBase
+		B := int(inst & 0x1ff) //GETB
+		selfobj := reg.Get(int(lbase) + B)
+		reg.Set(ra+1, selfobj)
+
+	case yieldContCompare:
+		// RA holds the A operand from the comparison instruction (not a register index).
+		// The metamethod result is at rb. Evaluate as bool and apply the skip logic.
+		v := reg.Get(rb)
+		result := 1
+		if LVAsBool(v) {
+			result = 0
+		}
+		if result == int(ra) {
+			cf.Pc++
+		}
+
+	case yieldContTForLoop:
+		// OP_TFORLOOP: iterator results are at RA+3..RA+3+nret-1 (placed by callR/OP_RETURN).
+		// Check first result: if nil, loop ends. Otherwise update control variable.
+		if value := reg.Get(ra + 3); value != LNil {
+			reg.Set(ra+2, value)
+			// Read the JMP instruction that follows OP_TFORLOOP.
+			pc := cf.Fn.Proto.Code[cf.Pc]
+			cf.Pc += int32(int(pc&0x3ffff) - opMaxArgSbx)
+		}
+		cf.Pc++
+	}
+}
+
 func callGFunction(L *LState, tailcall bool) bool {
 	frame := L.currentFrame
 	var gfnret int
@@ -2800,10 +3024,15 @@ func callGFunction(L *LState, tailcall bool) bool {
 	}
 
 	if gfnret < 0 {
-		// Only call switchToParentThread if not already yielded
-		// (yield propagation through pcall/xpcall returns -1 with L.yielded already set)
-		if !L.yielded {
+		// Only call switchToParentThread for the first yield in the chain.
+		// Subsequent Go functions returning -1 (pcall, xpcall, coResume) detect
+		// the yield via yieldState and propagate it without a second thread switch.
+		if L.yieldState == yieldNone {
 			switchToParentThread(L, L.GetTop(), false, false)
+			// -2 = user yield (coroutine.yield), -1 = system yield (Go function)
+			if gfnret == -2 {
+				L.yieldState = yieldUser
+			}
 		}
 		return true
 	}
@@ -3021,6 +3250,9 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 		L.reg.Push(rhs)
 
 		L.Call(2, 1)
+		if L.yieldState != yieldNone {
+			return LNil
+		}
 		return L.reg.Pop()
 	}
 	if str, ok := lhs.(LString); ok {
@@ -3070,6 +3302,9 @@ func stringConcat(L *LState, total, last int) LValue {
 				L.reg.Push(lhs)
 				L.reg.Push(rhs)
 				L.Call(2, 1)
+				if L.yieldState != yieldNone {
+					return LNil
+				}
 				rhs = L.reg.Pop()
 				total--
 				i--
@@ -3188,6 +3423,8 @@ func equals(L *LState, lhs, rhs LValue, raw bool) bool {
 			switch objectRational(L, lhs, rhs, "__eq") {
 			case 1:
 				ret = true
+			case -2:
+				return false // yield happened, caller checks L.yieldState
 			default:
 				ret = false
 			}
@@ -3217,6 +3454,8 @@ func objectRationalWithError(L *LState, lhs, rhs LValue, event string) bool {
 		return true
 	case 0:
 		return false
+	case -2:
+		return false // yield happened, caller checks L.yieldState
 	}
 	L.RaiseError("attempt to compare %v with %v", lhs.Type().String(), rhs.Type().String())
 	return false
@@ -3230,6 +3469,9 @@ func objectRational(L *LState, lhs, rhs LValue, event string) int {
 		L.reg.Push(lhs)
 		L.reg.Push(rhs)
 		L.Call(2, 1)
+		if L.yieldState != yieldNone {
+			return -2
+		}
 		if LVAsBool(L.reg.Pop()) {
 			return 1
 		}

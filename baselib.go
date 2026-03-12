@@ -206,7 +206,7 @@ func basePCall(L *LState) int {
 		}()
 
 		// Check for yield before any cleanup
-		if L.yielded {
+		if L.yieldState != yieldNone {
 			return -1
 		}
 
@@ -416,7 +416,7 @@ func baseXPCall(L *LState) int {
 	L.CallK(0, MultRet, xpcallContinuation, top)
 
 	// Check for yield before any cleanup
-	if L.yielded {
+	if L.yieldState != yieldNone {
 		return -1
 	}
 
