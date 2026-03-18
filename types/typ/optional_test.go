@@ -132,3 +132,14 @@ func TestOptionalOfUnionWithoutNil(t *testing.T) {
 		t.Error("Normalized union should contain Nil")
 	}
 }
+
+func TestOptionalAnnotatedUnion(t *testing.T) {
+	// NewOptional with Annotated wrapping Union should not panic
+	inner := NewUnion(String, Number)
+	annotated := NewAnnotated(inner, []Annotation{{Name: "max_len", Arg: int64(255)}})
+	o := NewOptional(annotated)
+
+	if o == nil {
+		t.Fatal("optional should not be nil")
+	}
+}

@@ -48,7 +48,13 @@ func NewUnion(members ...Type) Type {
 			return
 		}
 
-		switch m.Kind() {
+		// Unwrap Annotated to access structural type for flattening.
+		// Annotations delegate Kind() to their inner type, so type
+		// assertions on concrete wrappers (Union, Optional) require
+		// operating on the unwrapped type.
+		unwrapped := UnwrapAnnotated(m)
+
+		switch unwrapped.Kind() {
 		case kind.Never:
 			return // Never is identity for union
 		case kind.Unknown:
@@ -59,12 +65,12 @@ func NewUnion(members ...Type) Type {
 		case kind.Nil:
 			hasNil = true
 		case kind.Union:
-			for _, member := range m.(*Union).Members {
+			for _, member := range unwrapped.(*Union).Members {
 				addMember(member)
 			}
 		case kind.Optional:
 			hasNil = true
-			addMember(m.(*Optional).Inner)
+			addMember(unwrapped.(*Optional).Inner)
 		default:
 			flat = append(flat, m)
 		}

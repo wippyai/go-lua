@@ -327,6 +327,10 @@ func validateValue(val LValue, t typ.Type, resolver *typeResolver) bool {
 		}
 		return false
 
+	case *typ.Interface:
+		_, ok := val.(*LTable)
+		return ok
+
 	case *typ.Generic:
 		// Generic types need to be instantiated before validation
 		return false
@@ -535,6 +539,12 @@ func validateWithErrorResolver(val LValue, t typ.Type, resolver *typeResolver, p
 			}
 		}
 		return false, formatValidationError(path, typeName, luaTypeName(val))
+
+	case *typ.Interface:
+		if _, ok := val.(*LTable); ok {
+			return true, ""
+		}
+		return false, formatValidationError(path, "table", luaTypeName(val))
 
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(tt)

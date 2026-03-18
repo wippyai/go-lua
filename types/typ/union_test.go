@@ -335,3 +335,24 @@ func TestUnionNestedOptionalAndUnionNilDedups(t *testing.T) {
 		t.Fatalf("expected exactly one nil in union, got %d in %v", nilCount, u)
 	}
 }
+
+func TestUnionAnnotatedOptionalMember(t *testing.T) {
+	// Annotated wrapping Optional should not panic during union construction
+	annotatedOpt := NewAnnotated(NewOptional(String), []Annotation{{Name: "min_len", Arg: int64(1)}})
+	u := NewUnion(annotatedOpt, Number)
+
+	if u == nil {
+		t.Fatal("union should not be nil")
+	}
+}
+
+func TestUnionAnnotatedUnionMember(t *testing.T) {
+	// Annotated wrapping Union should not panic during union construction
+	inner := NewUnion(String, Number)
+	annotatedUnion := NewAnnotated(inner, []Annotation{{Name: "max_len", Arg: int64(255)}})
+	u := NewUnion(annotatedUnion, Boolean)
+
+	if u == nil {
+		t.Fatal("union should not be nil")
+	}
+}
