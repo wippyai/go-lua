@@ -970,53 +970,52 @@ func TestPcallErrorWithGoFunctionCallAfter(t *testing.T) {
 	})
 }
 
-// TestPooledStateYieldedFlagReset_ResetLState verifies that resetLState
-// (called during Close/pool return) clears the yielded flag.
-func TestPooledStateYieldedFlagReset_ResetLState(t *testing.T) {
+// TestPooledStateYieldReset_ResetLState verifies that resetLState
+// (called during Close/pool return) clears the yield state.
+func TestPooledStateYieldReset_ResetLState(t *testing.T) {
 	L := NewState()
-	L.yielded = true
+	L.yieldState = yieldSystem
 	resetLState(L)
-	if L.yielded {
-		t.Fatal("resetLState must clear yielded flag")
+	if L.yieldState != yieldNone {
+		t.Fatal("resetLState must clear yieldState")
 	}
 }
 
-// TestPooledStateYieldedFlagReset_NewLState verifies that newLState
-// clears yielded on a state retrieved from the pool.
-func TestPooledStateYieldedFlagReset_NewLState(t *testing.T) {
+// TestPooledStateYieldReset_NewLState verifies that newLState
+// clears yieldState on a state retrieved from the pool.
+func TestPooledStateYieldReset_NewLState(t *testing.T) {
 	for statePool.Get() != nil {
 	}
 
 	dirty := NewState()
-	dirty.yielded = true
+	dirty.yieldState = yieldSystem
 	statePool.Put(dirty)
 
 	reused := NewState()
 	defer reused.Close()
-	if reused.yielded {
-		t.Fatal("newLState must reset yielded on pooled state")
+	if reused.yieldState != yieldNone {
+		t.Fatal("newLState must reset yieldState on pooled state")
 	}
 }
 
-// TestPooledStateYieldedFlagReset_NewLStateWithGAndAlloc verifies that
-// newLStateWithGAndAlloc clears yielded on a state retrieved from the pool.
-func TestPooledStateYieldedFlagReset_NewLStateWithGAndAlloc(t *testing.T) {
+// TestPooledStateYieldReset_NewLStateWithGAndAlloc verifies that
+// newLStateWithGAndAlloc clears yieldState on a state retrieved from the pool.
+func TestPooledStateYieldReset_NewLStateWithGAndAlloc(t *testing.T) {
 	for statePool.Get() != nil {
 	}
 
-	// Put two dirty states: one for NewState (parent), one for NewThreadWithContext
 	d1 := NewState()
-	d1.yielded = true
+	d1.yieldState = yieldSystem
 	d2 := NewState()
-	d2.yielded = true
+	d2.yieldState = yieldUser
 	statePool.Put(d1)
 	statePool.Put(d2)
 
 	parent := NewState()
 	defer parent.Close()
 	thread := parent.NewThreadWithContext(context.TODO())
-	if thread.yielded {
-		t.Fatal("newLStateWithGAndAlloc must reset yielded on pooled state")
+	if thread.yieldState != yieldNone {
+		t.Fatal("newLStateWithGAndAlloc must reset yieldState on pooled state")
 	}
 }
 
@@ -1046,8 +1045,8 @@ func TestPooledStateYieldedFlagReset_EndToEnd(t *testing.T) {
 		if state != ResumeYield {
 			t.Fatalf("expected ResumeYield, got %v", state)
 		}
-		if !co.yielded {
-			t.Fatal("co.yielded must be true after yield")
+		if co.yieldState == yieldNone {
+			t.Fatal("co.yieldState must be non-zero after yield")
 		}
 		L.Close()
 	}()
