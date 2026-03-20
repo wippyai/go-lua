@@ -969,3 +969,115 @@ func TestPcallErrorWithGoFunctionCallAfter(t *testing.T) {
 		}
 	})
 }
+
+// TestPooledStateYieldedFlagReset_ResetLState verifies that resetLState
+// (called during Close/pool return) clears the yielded flag.
+func TestPooledStateYieldedFlagReset_ResetLState(t *testing.T) {
+	L := NewState()
+	L.yielded = true
+	resetLState(L)
+	if L.yielded {
+		t.Fatal("resetLState must clear yielded flag")
+	}
+}
+
+// TestPooledStateYieldedFlagReset_NewLState verifies that newLState
+// clears yielded on a state retrieved from the pool.
+func TestPooledStateYieldedFlagReset_NewLState(t *testing.T) {
+	for statePool.Get() != nil {
+	}
+
+	dirty := NewState()
+	dirty.yielded = true
+	statePool.Put(dirty)
+
+	reused := NewState()
+	defer reused.Close()
+	if reused.yielded {
+		t.Fatal("newLState must reset yielded on pooled state")
+	}
+}
+
+// TestPooledStateYieldedFlagReset_NewLStateWithGAndAlloc verifies that
+// newLStateWithGAndAlloc clears yielded on a state retrieved from the pool.
+func TestPooledStateYieldedFlagReset_NewLStateWithGAndAlloc(t *testing.T) {
+	for statePool.Get() != nil {
+	}
+
+	// Put two dirty states: one for NewState (parent), one for NewThreadWithContext
+	d1 := NewState()
+	d1.yielded = true
+	d2 := NewState()
+	d2.yielded = true
+	statePool.Put(d1)
+	statePool.Put(d2)
+
+	parent := NewState()
+	defer parent.Close()
+	thread := parent.NewThreadWithContext(context.TODO())
+	if thread.yielded {
+		t.Fatal("newLStateWithGAndAlloc must reset yielded on pooled state")
+	}
+}
+
+// TestPooledStateYieldedFlagReset_EndToEnd simulates the real-world scenario:
+// a coroutine yields, its state is pooled, then reused for a new execution.
+func TestPooledStateYieldedFlagReset_EndToEnd(t *testing.T) {
+	for statePool.Get() != nil {
+	}
+
+	// Phase 1: Yield inside a coroutine, then close the parent to pool everything
+	func() {
+		L := NewState()
+		if err := L.DoString(`
+			function yielder()
+				coroutine.yield("y")
+				return "done"
+			end
+		`); err != nil {
+			t.Fatal(err)
+		}
+		co := L.NewThreadWithContext(context.TODO())
+		fn := L.GetGlobal("yielder").(*LFunction)
+		state, _, err := L.Resume(co, fn)
+		if err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		if state != ResumeYield {
+			t.Fatalf("expected ResumeYield, got %v", state)
+		}
+		if !co.yielded {
+			t.Fatal("co.yielded must be true after yield")
+		}
+		L.Close()
+	}()
+
+	// Phase 2: Reuse pooled states - everything must work correctly
+	L := NewState()
+	defer L.Close()
+
+	if err := L.DoString(`
+		function compute()
+			local ok, val = pcall(function()
+				return "result"
+			end)
+			if not ok then error("pcall failed") end
+			return val
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	co := L.NewThreadWithContext(context.TODO())
+	fn := L.GetGlobal("compute").(*LFunction)
+	state, results, err := L.Resume(co, fn)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if state != ResumeOK {
+		t.Fatalf("expected ResumeOK, got %v", state)
+	}
+	if len(results) < 1 || results[0].String() != "result" {
+		t.Fatalf("expected 'result', got %v", results)
+	}
+}

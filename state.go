@@ -479,6 +479,7 @@ func newLState(options Options) *LState {
 			ls.stop = 0
 			ls.currentFrame = nil
 			ls.wrapped = false
+			ls.yielded = false
 			ls.uvcache = nil
 			ls.hasErrorFunc = false
 			ls.mainLoop = mainLoop

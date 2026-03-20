@@ -45,7 +45,9 @@ func NewIntersection(members ...Type) Type {
 			continue
 		}
 
-		switch m.Kind() {
+		unwrapped := UnwrapAnnotated(m)
+
+		switch unwrapped.Kind() {
 		case kind.Any:
 			continue // Any is identity for intersection
 		case kind.Never:
@@ -53,7 +55,7 @@ func NewIntersection(members ...Type) Type {
 		case kind.Nil:
 			hasNil = true
 		case kind.Intersection:
-			flat = append(flat, m.(*Intersection).Members...)
+			flat = append(flat, unwrapped.(*Intersection).Members...)
 		default:
 			flat = append(flat, m)
 		}

@@ -1506,3 +1506,85 @@ func TestLTypeCallAsLastArg(t *testing.T) {
 		t.Errorf("typeCall as non-last arg: %v", err)
 	}
 }
+
+func TestLTypeInterfaceTable(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	tableType := &LType{inner: typ.NewInterface("table", nil)}
+
+	plainTable := L.NewTable()
+	plainTable.RawSetString("key", LString("value"))
+
+	tableWithArray := L.NewTable()
+	tableWithArray.RawSetString("tags", L.NewTable())
+	tableWithArray.RawGet(LString("tags")).(*LTable).Append(LString("a"))
+	tableWithArray.RawGet(LString("tags")).(*LTable).Append(LString("b"))
+
+	tests := []struct {
+		name     string
+		value    LValue
+		expected bool
+	}{
+		{"table accepts plain table", plainTable, true},
+		{"table accepts table with nested arrays", tableWithArray, true},
+		{"table accepts empty table", L.NewTable(), true},
+		{"table rejects string", LString("hello"), false},
+		{"table rejects number", LNumber(42), false},
+		{"table rejects nil", LNil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tableType.Validate(L, tt.value)
+			if result != tt.expected {
+				t.Errorf("Validate() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestLTypeRecordWithTableField(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	// {kind: string, data: table}
+	commandType := &LType{
+		inner: typ.NewRecord().
+			Field("kind", typ.String).
+			Field("data", typ.NewInterface("table", nil)).
+			Build(),
+	}
+
+	valid := L.NewTable()
+	valid.RawSetString("kind", LString("create"))
+	data := L.NewTable()
+	data.RawSetString("name", LString("test"))
+	tags := L.NewTable()
+	tags.Append(LString("a"))
+	tags.Append(LString("b"))
+	data.RawSetString("tags", tags)
+	valid.RawSetString("data", data)
+
+	invalid := L.NewTable()
+	invalid.RawSetString("kind", LString("create"))
+	invalid.RawSetString("data", LString("not a table"))
+
+	tests := []struct {
+		name     string
+		value    LValue
+		expected bool
+	}{
+		{"record with table field accepts nested arrays", valid, true},
+		{"record with table field rejects non-table data", invalid, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := commandType.Validate(L, tt.value)
+			if result != tt.expected {
+				t.Errorf("Validate() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}

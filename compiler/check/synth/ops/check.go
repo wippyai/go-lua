@@ -98,17 +98,19 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 		return CheckResult{Type: expected, Errors: errors}
 	}
 
-	switch expected.Kind() {
+	unwrapped := typ.UnwrapAnnotated(expected)
+
+	switch unwrapped.Kind() {
 	case kind.Array:
-		return checkTableAsArray(fields, arrayElems, expected.(*typ.Array))
+		return checkTableAsArray(fields, arrayElems, unwrapped.(*typ.Array))
 	case kind.Map:
-		return checkTableAsMap(fields, arrayElems, expected.(*typ.Map))
+		return checkTableAsMap(fields, arrayElems, unwrapped.(*typ.Map))
 	case kind.Record:
-		return checkTableAsRecord(fields, arrayElems, expected.(*typ.Record))
+		return checkTableAsRecord(fields, arrayElems, unwrapped.(*typ.Record))
 	case kind.Tuple:
-		return checkTableAsTuple(arrayElems, expected.(*typ.Tuple))
+		return checkTableAsTuple(arrayElems, unwrapped.(*typ.Tuple))
 	case kind.Union:
-		return checkTableAsUnion(fields, arrayElems, expected.(*typ.Union))
+		return checkTableAsUnion(fields, arrayElems, unwrapped.(*typ.Union))
 	default:
 		// Try synthesis and check compatibility
 		synthesized := tableConstructor(fields, arrayElems)

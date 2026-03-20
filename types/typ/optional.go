@@ -38,7 +38,7 @@ func NewOptional(inner Type) Type {
 	}
 
 	if inner.Kind() == kind.Union {
-		u := inner.(*Union)
+		u := UnwrapAnnotated(inner).(*Union)
 		members := make([]Type, 0, len(u.Members)+1)
 		members = append(members, Nil)
 		members = append(members, u.Members...)

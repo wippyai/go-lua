@@ -226,12 +226,14 @@ func flattenUnion(acc []typ.Type, types []typ.Type) []typ.Type {
 			continue
 		}
 
-		switch t.Kind() {
+		unwrapped := typ.UnwrapAnnotated(t)
+
+		switch unwrapped.Kind() {
 		case kind.Union:
-			acc = flattenUnion(acc, t.(*typ.Union).Members)
+			acc = flattenUnion(acc, unwrapped.(*typ.Union).Members)
 		case kind.Optional:
 			acc = append(acc, typ.Nil)
-			acc = flattenUnion(acc, []typ.Type{t.(*typ.Optional).Inner})
+			acc = flattenUnion(acc, []typ.Type{unwrapped.(*typ.Optional).Inner})
 		default:
 			acc = append(acc, t)
 		}
@@ -248,7 +250,7 @@ func flattenIntersection(acc []typ.Type, types []typ.Type) []typ.Type {
 			continue
 		}
 
-		if i, ok := t.(*typ.Intersection); ok {
+		if i, ok := typ.UnwrapAnnotated(t).(*typ.Intersection); ok {
 			acc = flattenIntersection(acc, i.Members)
 		} else {
 			acc = append(acc, t)
