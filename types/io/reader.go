@@ -13,11 +13,16 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+const maxTypeDepth = 32
+const maxTypeNodes = 1024
+
 type typeReader struct {
 	r   *bytes.Reader
 	err error
 
 	recursive map[uint64]*typ.Recursive
+	depth     int
+	nodeCount int
 }
 
 func (r *typeReader) readByte() byte {
@@ -94,6 +99,13 @@ func (r *typeReader) readType() typ.Type {
 	if r.err != nil {
 		return nil
 	}
+	r.depth++
+	r.nodeCount++
+	if r.depth > maxTypeDepth || r.nodeCount > maxTypeNodes {
+		r.err = ErrCorruptedData
+		return nil
+	}
+	defer func() { r.depth-- }()
 
 	k := byteToKind(r.readByte())
 

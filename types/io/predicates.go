@@ -402,6 +402,9 @@ func (r *typeReader) readCondition() constraint.Condition {
 	if count == 0 {
 		return constraint.Condition{}
 	}
+	if !r.checkSliceLen(count) {
+		return constraint.Condition{}
+	}
 	disjuncts := make([][]constraint.Constraint, int(count))
 	for i := 0; i < int(count); i++ {
 		disjuncts[i] = r.readConjunction()

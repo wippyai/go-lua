@@ -121,7 +121,11 @@ func (i *Intersection) Kind() kind.Kind { return kind.Intersection }
 func (i *Intersection) String() string {
 	parts := make([]string, len(i.Members))
 	for j, m := range i.Members {
-		parts[j] = m.String()
+		if m == nil {
+			parts[j] = "unknown"
+		} else {
+			parts[j] = m.String()
+		}
 	}
 
 	return strings.Join(parts, " & ")
