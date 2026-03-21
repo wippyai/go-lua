@@ -44,12 +44,19 @@ func NewAnnotated(inner Type, annotations []Annotation) Type {
 }
 
 func (a *Annotated) Kind() kind.Kind {
+	if a.Inner == nil {
+		return kind.Unknown
+	}
 	return a.Inner.Kind()
 }
 
 func (a *Annotated) String() string {
 	var sb strings.Builder
-	sb.WriteString(a.Inner.String())
+	if a.Inner != nil {
+		sb.WriteString(a.Inner.String())
+	} else {
+		sb.WriteString("unknown")
+	}
 	for _, ann := range a.Annotations {
 		sb.WriteString(" @")
 		sb.WriteString(ann.Name)
@@ -101,6 +108,9 @@ func (a *Annotated) Equals(other Type) bool {
 // UnwrapAnnotated returns the inner type, stripping annotations.
 func UnwrapAnnotated(t Type) Type {
 	if a, ok := t.(*Annotated); ok {
+		if a.Inner == nil {
+			return Unknown
+		}
 		return a.Inner
 	}
 	return t

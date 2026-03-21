@@ -58,7 +58,7 @@ jobs:
           cache: true
 
       - name: Run tests
-        run: go test ./...
+        run: go test -timeout 120s ./...
 
   race:
     name: Race Tests
@@ -79,4 +79,54 @@ jobs:
       - name: Run race tests
         env:
           GORACE: "halt_on_error=1"
-        run: go test -race ./...
+        run: go test -race -timeout 120s ./...
+
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOCACHE: ${{ runner.temp }}/go-build
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Fuzz type decode
+        run: go test -fuzz=FuzzTypeDecodeToValidation -fuzztime=60s -timeout=120s
+
+      - name: Fuzz Lua source types
+        run: go test -fuzz=FuzzLuaTypeValidation -fuzztime=60s -timeout=120s
+
+      - name: Fuzz Lua with manifest
+        run: go test -fuzz=FuzzLuaWithManifestTypes -fuzztime=60s -timeout=120s
+
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOCACHE: ${{ runner.temp }}/go-build
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Run benchmarks
+        run: go test -bench="Benchmark(Validate|Is)" -benchmem -count=1 -timeout=60s | tee bench.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench.txt

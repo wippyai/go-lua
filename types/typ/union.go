@@ -202,7 +202,11 @@ func (u *Union) Kind() kind.Kind { return kind.Union }
 func (u *Union) String() string {
 	parts := make([]string, len(u.Members))
 	for i, m := range u.Members {
-		parts[i] = m.String()
+		if m == nil {
+			parts[i] = "nil"
+		} else {
+			parts[i] = m.String()
+		}
 	}
 
 	return strings.Join(parts, " | ")

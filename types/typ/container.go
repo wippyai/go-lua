@@ -27,7 +27,12 @@ func NewArray(elem Type) *Array {
 }
 
 func (a *Array) Kind() kind.Kind { return kind.Array }
-func (a *Array) String() string  { return a.Element.String() + "[]" }
+func (a *Array) String() string {
+	if a.Element == nil {
+		return "unknown[]"
+	}
+	return a.Element.String() + "[]"
+}
 func (a *Array) Hash() uint64    { return a.hash }
 func (a *Array) Equals(o Type) bool {
 	return TypeEquals(a, o)
@@ -59,7 +64,16 @@ func NewMap(key, value Type) *Map {
 }
 
 func (m *Map) Kind() kind.Kind { return kind.Map }
-func (m *Map) String() string  { return "{[" + m.Key.String() + "]: " + m.Value.String() + "}" }
+func (m *Map) String() string {
+	ks, vs := "unknown", "unknown"
+	if m.Key != nil {
+		ks = m.Key.String()
+	}
+	if m.Value != nil {
+		vs = m.Value.String()
+	}
+	return "{[" + ks + "]: " + vs + "}"
+}
 func (m *Map) Hash() uint64    { return m.hash }
 func (m *Map) Equals(o Type) bool {
 	return TypeEquals(m, o)
@@ -95,7 +109,11 @@ func (t *Tuple) Kind() kind.Kind { return kind.Tuple }
 func (t *Tuple) String() string {
 	parts := make([]string, len(t.Elements))
 	for i, e := range t.Elements {
-		parts[i] = e.String()
+		if e == nil {
+			parts[i] = "unknown"
+		} else {
+			parts[i] = e.String()
+		}
 	}
 
 	return "(" + strings.Join(parts, ", ") + ")"

@@ -139,7 +139,11 @@ func (r *Record) String() string {
 		}
 
 		sb.WriteString(": ")
-		sb.WriteString(f.Type.String())
+		if f.Type != nil {
+			sb.WriteString(f.Type.String())
+		} else {
+			sb.WriteString("unknown")
+		}
 	}
 
 	if r.HasMapComponent() {
@@ -147,9 +151,17 @@ func (r *Record) String() string {
 			sb.WriteString(", ")
 		}
 		sb.WriteString("[")
-		sb.WriteString(r.MapKey.String())
+		if r.MapKey != nil {
+			sb.WriteString(r.MapKey.String())
+		} else {
+			sb.WriteString("unknown")
+		}
 		sb.WriteString("]: ")
-		sb.WriteString(r.MapValue.String())
+		if r.MapValue != nil {
+			sb.WriteString(r.MapValue.String())
+		} else {
+			sb.WriteString("unknown")
+		}
 	}
 
 	if r.Open {

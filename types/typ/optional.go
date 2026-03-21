@@ -54,6 +54,9 @@ func NewOptional(inner Type) Type {
 func (o *Optional) Kind() kind.Kind { return kind.Optional }
 
 func (o *Optional) String() string {
+	if o.Inner == nil {
+		return "nil?"
+	}
 	return o.Inner.String() + "?"
 }
 

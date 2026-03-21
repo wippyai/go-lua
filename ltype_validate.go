@@ -153,6 +153,30 @@ func (vc *ValidationContext) validateValue(val LValue, t typ.Type, path *pathBui
 				return
 			}
 		}
+
+	case *typ.Intersection:
+		for _, member := range tt.Members {
+			vc.validateValue(val, member, path, errors)
+		}
+
+	case *typ.Recursive:
+		if tt.Body != nil {
+			vc.validateValue(val, tt.Body, path, errors)
+		}
+
+	case *typ.Tuple:
+		tbl := val.(*LTable)
+		for i, elemType := range tt.Elements {
+			var elemVal LValue
+			if i < len(tbl.Array) {
+				elemVal = tbl.Array[i]
+			} else {
+				elemVal = LNil
+			}
+			path.pushIndex(i + 1)
+			vc.validateValue(elemVal, elemType, path, errors)
+			path.pop()
+		}
 	}
 }
 
@@ -205,7 +229,15 @@ func validateBasic(val LValue, t typ.Type) bool {
 		kind.Sum, kind.Interface, kind.Intersection:
 		_, ok := val.(*LTable)
 		return ok
-	case kind.Generic, kind.TypeParam, kind.Platform, kind.Self, kind.Meta:
+	case kind.Recursive:
+		if rec, ok := t.(*typ.Recursive); ok && rec.Body != nil {
+			return validateBasic(val, rec.Body)
+		}
+		return true
+	case kind.Platform:
+		_, ok := val.(*LUserData)
+		return ok
+	case kind.Generic, kind.TypeParam, kind.Self, kind.Meta:
 		return true
 	default:
 		// fall though
