@@ -1,0 +1,4 @@
+{
+  "files": ["counter.lua", "main.lua"],
+  "check": {"errors": 6}
+}

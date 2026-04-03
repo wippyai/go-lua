@@ -1,0 +1,4 @@
+{
+  "files": ["registry.lua", "plugins.lua", "main.lua"],
+  "check": {"errors": 12}
+}
