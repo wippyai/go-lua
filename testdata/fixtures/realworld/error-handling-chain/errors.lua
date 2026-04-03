@@ -5,6 +5,7 @@ type AppError = {
 }
 
 local M = {}
+M.AppError = AppError
 
 function M.new(code: string, message: string, retryable: boolean?): AppError
     return {
