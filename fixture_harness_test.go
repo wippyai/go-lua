@@ -196,24 +196,28 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 		allExpectations = append(allExpectations, parseExpectations(f, src)...)
 	}
 
-	// Check and export dependency modules (all except entry)
-	modules := make(map[string]*testutil.ModuleResult)
+	// Check and export dependency modules (all except entry), preserving file order
+	type namedModule struct {
+		name string
+		mod  *testutil.ModuleResult
+	}
+	var moduleOrder []namedModule
 	var allDiagnostics []diag.Diagnostic
 	for _, f := range files[:len(files)-1] {
 		modOpts := append([]testutil.Option{}, baseOpts...)
-		for depName, depMod := range modules {
-			modOpts = append(modOpts, testutil.WithModule(depName, depMod))
+		for _, nm := range moduleOrder {
+			modOpts = append(modOpts, testutil.WithModule(nm.name, nm.mod))
 		}
 		name := strings.TrimSuffix(f, ".lua")
 		mod := testutil.CheckAndExport(sources[f], name, modOpts...)
-		modules[name] = mod
+		moduleOrder = append(moduleOrder, namedModule{name, mod})
 		allDiagnostics = append(allDiagnostics, mod.Errors...)
 	}
 
 	// Check entry point
 	entryOpts := append([]testutil.Option{}, baseOpts...)
-	for name, mod := range modules {
-		entryOpts = append(entryOpts, testutil.WithModule(name, mod))
+	for _, nm := range moduleOrder {
+		entryOpts = append(entryOpts, testutil.WithModule(nm.name, nm.mod))
 	}
 	entryFile := files[len(files)-1]
 	result := testutil.Check(sources[entryFile], entryOpts...)
