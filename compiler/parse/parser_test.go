@@ -1942,3 +1942,41 @@ func TestParseGenericFunctionExpr(t *testing.T) {
 		t.Errorf("TypeParams[0].Name = %q, want 'T'", fn.TypeParams[0].Name)
 	}
 }
+
+func TestParseVoidReturnInRecordField(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "named params void return with comma",
+			input: `type C = {f: (self: C) -> (),}`,
+		},
+		{
+			name:  "named params void return no comma",
+			input: `type C = {f: (self: C) -> ()}`,
+		},
+		{
+			name:  "named params void return multiline",
+			input: "type C = {\n    f: (self: C) -> (),\n    g: (self: C, x: number) -> ()\n}",
+		},
+		{
+			name:  "multiple named params void return",
+			input: `type C = {f: (a: number, b: string) -> ()}`,
+		},
+		{
+			name:  "no params void return",
+			input: `type C = {f: () -> ()}`,
+		},
+		// Parenthesized single return like (number) is ambiguous with grouping
+		// and handled separately via the typeexprlist2 rule for 2+ returns.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseString(tt.input, "test")
+			if err != nil {
+				t.Errorf("expected no parse error, got: %v", err)
+			}
+		})
+	}
+}
