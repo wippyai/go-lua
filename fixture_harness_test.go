@@ -227,13 +227,13 @@ func verifyInlineExpectations(t *testing.T, expectations []inlineExpectation, di
 
 	for _, exp := range expectations {
 		found := false
+		// An expect-error annotation absorbs ALL matching diagnostics on that line
 		for i, d := range diagnostics {
 			if !matchesExpectation(exp, d, entryFile) {
 				continue
 			}
 			found = true
 			matched[i] = true
-			break
 		}
 		if !found {
 			failed = true
