@@ -1,0 +1,4 @@
+{
+  "files": ["counter.lua", "main.lua"],
+  "check": {"skip": "factory return type not tracked cross-module: counter.lua has syntax issue with () -> () in record field"}
+}

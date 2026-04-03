@@ -13,6 +13,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/io"
 )
 
 // Suite describes a fixture suite loaded from manifest.json.
@@ -20,6 +21,7 @@ type fixtureSuite struct {
 	Description string             `json:"description,omitempty"`
 	Files       []string           `json:"files,omitempty"`
 	Stdlib      *bool              `json:"stdlib,omitempty"`
+	Packages    []string           `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs"
 	Check       *fixtureCheck      `json:"check,omitempty"`
 	Run         *fixtureRun        `json:"run,omitempty"`
 	Bench       *fixtureBench      `json:"bench,omitempty"`
@@ -176,6 +178,13 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	var baseOpts []testutil.Option
 	if stdlib {
 		baseOpts = append(baseOpts, testutil.WithStdlib())
+	}
+	for _, pkg := range s.Suite.Packages {
+		if m := resolvePackageManifest(pkg); m != nil {
+			baseOpts = append(baseOpts, testutil.WithManifest(pkg, m))
+		} else {
+			t.Fatalf("unknown system package: %s", pkg)
+		}
 	}
 
 	// Collect all sources and their expectations
@@ -371,6 +380,18 @@ func runExecPhase(t *testing.T, s namedSuite) {
 	}
 
 	verifyGoldenOutput(t, s, &buf)
+}
+
+// resolvePackageManifest returns a predefined manifest for a system package name.
+func resolvePackageManifest(name string) *io.Manifest {
+	switch name {
+	case "channel":
+		return testutil.ChannelManifest()
+	case "funcs":
+		return testutil.FuncsManifest()
+	default:
+		return nil
+	}
 }
 
 // installRequire sets up a require() global that loads modules from the given source map.
