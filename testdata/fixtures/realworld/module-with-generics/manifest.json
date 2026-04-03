@@ -1,4 +1,4 @@
 {
   "files": ["collection.lua", "main.lua"],
-  "check": {"skip": "generic record type definition syntax not fully supported in parser"}
+  "check": {"errors": 5}
 }

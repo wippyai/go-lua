@@ -1,4 +1,4 @@
 {
   "files": ["config.lua", "main.lua"],
-  "check": {"skip": "builder chain loses return type through method chaining"}
+  "check": {"errors": 3}
 }
