@@ -998,6 +998,10 @@ primarytypeexpr:
             $$ = &ast.FunctionTypeExpr{Params: $2, Returns: $6}
             $$.SetPosFromToken($1.Pos)
         } |
+        '(' funcparamlist ')' TArrow '(' ')' {
+            $$ = &ast.FunctionTypeExpr{Params: $2, Returns: []ast.TypeExpr{}}
+            $$.SetPosFromToken($1.Pos)
+        } |
         '(' funcparamlist ')' TArrow typeexpr {
             $$ = &ast.FunctionTypeExpr{Params: $2, Returns: []ast.TypeExpr{$5}}
             $$.SetPosFromToken($1.Pos)
