@@ -2,6 +2,7 @@ package domain
 
 import (
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -227,7 +228,16 @@ func (d *TypeDomain) applyFalsy(atom constraint.Atom) bool {
 
 func (d *TypeDomain) applyIsNil(atom constraint.Atom) bool {
 	key := atom.Left.Path
-	d.Narrowed[key] = typ.Nil
+	base := d.TypeAt(key)
+	if base == nil {
+		return true
+	}
+	narrowed := narrow.FilterByKind(base, kind.Nil)
+	if narrowed == nil || narrowed.Kind().IsNever() {
+		d.Unsat = true
+		return false
+	}
+	d.Narrowed[key] = narrowed
 	return true
 }
 

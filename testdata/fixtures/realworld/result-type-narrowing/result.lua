@@ -1,6 +1,7 @@
 type Result<T> = {ok: true, value: T} | {ok: false, error: string}
 
 local M = {}
+M.Result = Result
 
 function M.ok<T>(value: T): Result<T>
     return {ok = true, value = value}

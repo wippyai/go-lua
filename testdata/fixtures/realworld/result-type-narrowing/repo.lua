@@ -3,6 +3,7 @@ local result = require("result")
 type User = {id: string, name: string, email: string, active: boolean}
 
 local M = {}
+M.User = User
 
 local users: {[string]: User} = {
     ["u1"] = {id = "u1", name = "Alice", email = "alice@test.com", active = true},

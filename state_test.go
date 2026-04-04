@@ -2,6 +2,7 @@ package lua
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -561,6 +562,15 @@ func TestRegistryAutoGrow(t *testing.T) {
 // directly to the reg's Array, but crucially, before it had updated "top". This meant when the resize occurred, the
 // values beyond top where not copied, and were lost, leading to a later uninitialised value being found in the registry.
 func TestUninitializedVarAccess(t *testing.T) {
+	// This regression needs a fresh 128-slot registry to trigger a resize at
+	// the exact point that exposed the original bug. Drain the pool and force
+	// a GC to flush per-P caches, preventing recycled states with wrong capacity.
+	for statePool.Get() != nil {
+	}
+	runtime.GC()
+	for statePool.Get() != nil {
+	}
+
 	L := NewState(Options{
 		RegistrySize:    128,
 		RegistryMaxSize: 256,

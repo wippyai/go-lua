@@ -8,6 +8,7 @@ type ValidConfig = {
 }
 
 local M = {}
+M.ValidConfig = ValidConfig
 
 function M.validate(config: ParsedConfig): (ValidConfig?, string?)
     if #config.host == 0 then

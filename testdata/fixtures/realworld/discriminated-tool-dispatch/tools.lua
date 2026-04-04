@@ -15,6 +15,8 @@ type ToolResult = {
 }
 
 local M = {}
+M.Tool = Tool
+M.ToolResult = ToolResult
 
 function M.search(query: string, limit: number?): SearchTool
     return {type = "search", name = "web_search", args = {query = query, limit = limit}}

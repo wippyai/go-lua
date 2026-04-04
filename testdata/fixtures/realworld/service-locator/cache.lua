@@ -10,6 +10,7 @@ type Cache = {
 }
 
 local M = {}
+M.Cache = Cache
 
 function M.new(): Cache
     local c: Cache = {

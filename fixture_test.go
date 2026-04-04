@@ -41,3 +41,28 @@ func BenchmarkFixtures(b *testing.B) {
 		})
 	}
 }
+
+func TestFixtureOrder_GenericRegistryThenMultiReturn(t *testing.T) {
+	suites, err := discoverFixtures("testdata/fixtures")
+	if err != nil {
+		t.Fatalf("discovering fixtures: %v", err)
+	}
+
+	var generic namedSuite
+	var multi namedSuite
+	for _, s := range suites {
+		switch s.Name {
+		case "realworld/generic-registry":
+			generic = s
+		case "realworld/multi-return-error-chain":
+			multi = s
+		}
+	}
+
+	if generic.Name == "" || multi.Name == "" {
+		t.Fatalf("missing target suites: generic=%q multi=%q", generic.Name, multi.Name)
+	}
+
+	runCheckPhase(t, generic)
+	runCheckPhase(t, multi)
+}

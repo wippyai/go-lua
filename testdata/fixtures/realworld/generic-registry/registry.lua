@@ -9,6 +9,7 @@ type Registry = {
 }
 
 local M = {}
+M.Registry = Registry
 
 function M.new(): Registry
     local r: Registry = {

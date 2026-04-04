@@ -337,6 +337,11 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 				}
 			}
 		}
+		if sc != nil {
+			if t, ok := sc.LookupType(ex.Value); ok && t != nil {
+				return typ.NewMeta(t)
+			}
+		}
 		return typ.Unknown
 	}
 
@@ -437,6 +442,16 @@ fallback:
 	if moduleSym != 0 && moduleSym != sym {
 		if t, ok := ctx.GlobalType(moduleSym); ok && t != nil {
 			return t
+		}
+	}
+
+	// Type names used in expression context (e.g. Config = Config in a return
+	// table) resolve to a Meta type wrapping the declared type. This enables
+	// type values to flow through module exports as first-class values,
+	// supporting patterns like mylib.Config:is(data) across module boundaries.
+	if sc != nil {
+		if t, ok := sc.LookupType(ex.Value); ok && t != nil {
+			return typ.NewMeta(t)
 		}
 	}
 

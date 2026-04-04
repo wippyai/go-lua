@@ -5,6 +5,7 @@ type ParsedConfig = {
 }
 
 local M = {}
+M.ParsedConfig = ParsedConfig
 
 function M.parse_string(input: string): (ParsedConfig?, string?)
     if #input == 0 then

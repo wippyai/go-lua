@@ -3,6 +3,7 @@ type ContextMerger = (base: Context?, override: Context?) -> Context
 type Middleware = (ctx: Context, next: (Context) -> Context) -> Context
 
 local M = {}
+M.Context = Context
 
 function M.merge(base: Context?, override: Context?): Context
     local merged: Context = {}
