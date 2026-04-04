@@ -3,6 +3,7 @@ package extract
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	compcfg "github.com/wippyai/go-lua/compiler/cfg"
+	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -124,6 +125,75 @@ func (s *Synthesizer) graphLocalFunctionForExpr(expr ast.Expr) (compcfg.SymbolID
 func (s *Synthesizer) graphLocalFunctionLiteralForExpr(expr ast.Expr) *ast.FunctionExpr {
 	_, fn, _ := s.graphLocalFunctionForExpr(expr)
 	return fn
+}
+
+func (s *Synthesizer) hasDominatingDirectFunctionRebind(sym compcfg.SymbolID, stableFn *ast.FunctionExpr, p cfg.Point) bool {
+	if s == nil || sym == 0 || stableFn == nil || s.deps == nil || s.deps.CheckCtx == nil {
+		return false
+	}
+
+	graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph)
+	if !ok || graph == nil {
+		return false
+	}
+
+	idom, _ := cfganalysis.ComputeDominators(graph.CFG())
+	rebound := false
+
+	graph.EachAssign(func(assignPoint cfg.Point, info *compcfg.AssignInfo) {
+		if rebound || info == nil || assignPoint == p || !cfganalysis.StrictlyDominates(idom, assignPoint, p) {
+			return
+		}
+
+		info.EachTarget(func(_ int, target compcfg.AssignTarget) {
+			if rebound || target.Symbol != sym {
+				return
+			}
+			if target.Kind == compcfg.TargetField || target.Kind == compcfg.TargetIndex {
+				rebound = true
+			}
+		})
+	})
+
+	if rebound {
+		return true
+	}
+
+	graph.EachFuncDef(func(defPoint cfg.Point, info *compcfg.FuncDefInfo) {
+		if rebound || info == nil || info.Symbol != sym || info.FuncExpr == nil || info.FuncExpr == stableFn {
+			return
+		}
+		if !cfganalysis.StrictlyDominates(idom, defPoint, p) {
+			return
+		}
+		if info.TargetKind == compcfg.FuncDefField || info.TargetKind == compcfg.FuncDefGlobal {
+			rebound = true
+		}
+	})
+
+	return rebound
+}
+
+func (s *Synthesizer) expectedGraphLocalFunctionValueType(
+	expr ast.Expr,
+	p cfg.Point,
+	sc *scope.State,
+	expected *typ.Function,
+	captureTypes map[cfg.SymbolID]typ.Type,
+) typ.Type {
+	if s == nil || expected == nil {
+		return nil
+	}
+
+	sym, fn, _ := s.graphLocalFunctionForExpr(expr)
+	if fn == nil {
+		return nil
+	}
+	if s.hasDominatingDirectFunctionRebind(sym, fn, p) {
+		return nil
+	}
+
+	return s.synthFunctionTypeWithCapturePoint(fn, sc, expected, p, captureTypes)
 }
 
 func (s *Synthesizer) stableGraphLocalFunctionSnapshotType(sym compcfg.SymbolID) typ.Type {

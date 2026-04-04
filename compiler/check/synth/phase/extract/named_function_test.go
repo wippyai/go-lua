@@ -236,3 +236,135 @@ func TestGraphLocalFunctionLiteralForExpr_IgnoresMutableFieldPathAttr(t *testing
 		t.Fatalf("graphLocalFunctionLiteralForExpr(M.dep.get) = %v, want nil", got)
 	}
 }
+
+func TestHasDominatingDirectFunctionRebind_FalseWhenOnlyCapturedFieldChanges(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local M = {
+			dep = {
+				get = function()
+					return nil
+				end,
+			},
+		}
+		function M.run()
+			return M.dep.get()
+		end
+		M.dep = {
+			get = function()
+				return { answer = "ok" }
+			end,
+		}
+		local f = M.run
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{Stmts: stmts}
+	localBindings := bind.Bind(fn, nil)
+	graph := ccfg.BuildWithBindings(fn, localBindings)
+	checkCtx := api.NewDeclaredEnv(api.DeclaredEnvConfig{
+		Graph:    graph,
+		Bindings: localBindings,
+	})
+	synth := NewSynthesizer(&Deps{
+		CheckCtx:       checkCtx,
+		ModuleBindings: localBindings,
+		PreCache:       make(api.Cache),
+		NarrowCache:    make(api.Cache),
+	}, api.PhaseTypeResolution)
+
+	var (
+		attr *ast.AttrGetExpr
+		at   ccfg.Point
+	)
+	graph.EachAssign(func(p ccfg.Point, info *ccfg.AssignInfo) {
+		if attr != nil || info == nil {
+			return
+		}
+		info.EachTargetSource(func(_ int, _ ccfg.AssignTarget, source ast.Expr) {
+			if attr != nil {
+				return
+			}
+			if candidate, ok := source.(*ast.AttrGetExpr); ok {
+				attr = candidate
+				at = p
+			}
+		})
+	})
+	if attr == nil {
+		t.Fatal("expected alias assignment attr source")
+	}
+
+	sym, stableFn, _ := synth.graphLocalFunctionForExpr(attr)
+	if stableFn == nil || sym == 0 {
+		t.Fatalf("expected stable graph-local function for attr, got sym=%d fn=%v", sym, stableFn)
+	}
+	if synth.hasDominatingDirectFunctionRebind(sym, stableFn, at) {
+		t.Fatal("captured field mutation should not invalidate field-defined wrapper value")
+	}
+}
+
+func TestHasDominatingDirectFunctionRebind_TrueWhenFieldIsReassigned(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local M = {
+			dep = {
+				get = function()
+					return nil
+				end,
+			},
+		}
+		function M.run()
+			return M.dep.get()
+		end
+		M.run = function()
+			return nil
+		end
+		local f = M.run
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{Stmts: stmts}
+	localBindings := bind.Bind(fn, nil)
+	graph := ccfg.BuildWithBindings(fn, localBindings)
+	checkCtx := api.NewDeclaredEnv(api.DeclaredEnvConfig{
+		Graph:    graph,
+		Bindings: localBindings,
+	})
+	synth := NewSynthesizer(&Deps{
+		CheckCtx:       checkCtx,
+		ModuleBindings: localBindings,
+		PreCache:       make(api.Cache),
+		NarrowCache:    make(api.Cache),
+	}, api.PhaseTypeResolution)
+
+	var (
+		attr *ast.AttrGetExpr
+		at   ccfg.Point
+	)
+	graph.EachAssign(func(p ccfg.Point, info *ccfg.AssignInfo) {
+		if attr != nil || info == nil {
+			return
+		}
+		info.EachTargetSource(func(_ int, _ ccfg.AssignTarget, source ast.Expr) {
+			if attr != nil {
+				return
+			}
+			if candidate, ok := source.(*ast.AttrGetExpr); ok {
+				attr = candidate
+				at = p
+			}
+		})
+	})
+	if attr == nil {
+		t.Fatal("expected alias assignment attr source")
+	}
+
+	sym, stableFn, _ := synth.graphLocalFunctionForExpr(attr)
+	if stableFn == nil || sym == 0 {
+		t.Fatalf("expected stable graph-local function for attr, got sym=%d fn=%v", sym, stableFn)
+	}
+	if !synth.hasDominatingDirectFunctionRebind(sym, stableFn, at) {
+		t.Fatal("direct dominating field reassignment should invalidate field-defined wrapper value")
+	}
+}

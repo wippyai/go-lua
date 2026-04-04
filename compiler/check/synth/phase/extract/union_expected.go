@@ -96,6 +96,13 @@ func (s *Synthesizer) synthExprWithExpectedSingle(
 			return expected
 		}
 		return inferred
+	case *ast.AttrGetExpr:
+		if expectedFn, ok := unwrap.Alias(expected).(*typ.Function); ok {
+			if fnType := s.expectedGraphLocalFunctionValueType(ex, p, sc, expectedFn, nil); fnType != nil {
+				return fnType
+			}
+		}
+		return s.synthExprCore(expr, sc, p, s.deps.Flow, recurse)
 	default:
 		return s.synthExprCore(expr, sc, p, s.deps.Flow, recurse)
 	}
