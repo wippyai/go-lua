@@ -39,7 +39,7 @@ var (
 		OptParam("message", typ.String).
 		Returns(typ.Any).
 		Effects(effect.Throws()).
-		WithRefinement(&constraint.FunctionEffect{
+		WithRefinement(&constraint.FunctionRefinement{
 			OnReturn: constraint.FromConstraints(
 				constraint.Truthy{Path: constraint.ParamPath(0)},
 			),

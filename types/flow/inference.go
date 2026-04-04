@@ -29,7 +29,7 @@ type ParamInfo struct {
 	Type   typ.Type
 }
 
-// InferFunctionEffect computes a FunctionEffect from solved flow analysis.
+// InferFunctionRefinement computes a FunctionRefinement from solved flow analysis.
 //
 // This is the post-flow variant that uses the complete flow solution to determine
 // which constraints hold at each return point. It examines return points to compute:
@@ -51,12 +51,12 @@ type ParamInfo struct {
 // Example: For function `function is_string(x) return type(x) == "string" end`:
 //   - OnTrue: HasType($0, string)
 //   - OnFalse: NotHasType($0, string)
-func InferFunctionEffect(
+func InferFunctionRefinement(
 	solution *Solution,
 	g *cfg.CFG,
 	params []ParamInfo,
 	returnType typ.Type,
-) *constraint.FunctionEffect {
+) *constraint.FunctionRefinement {
 	if solution == nil || g == nil {
 		return nil
 	}
@@ -67,10 +67,10 @@ func InferFunctionEffect(
 		src.returnKinds = solution.inputs.ReturnKinds
 	}
 
-	return inferFunctionEffectCore(src, g, params, returnType)
+	return inferFunctionRefinementCore(src, g, params, returnType)
 }
 
-// InferFunctionEffectFromInputs computes a FunctionEffect without running full flow analysis.
+// InferFunctionRefinementFromInputs computes a FunctionRefinement without running full flow analysis.
 //
 // This is the pre-flow variant that uses only the extracted return constraints without
 // propagating conditions through the CFG. It produces conservative effects based on:
@@ -85,19 +85,19 @@ func InferFunctionEffect(
 // Example: For function `function assert_string(x) assert(type(x) == "string") end`:
 //   - OnReturn: HasType($0, string) (from assert expression)
 //   - Terminates: false (has implicit return via exit)
-func InferFunctionEffectFromInputs(
+func InferFunctionRefinementFromInputs(
 	inputs *Inputs,
 	g *cfg.CFG,
 	params []ParamInfo,
 	returnType typ.Type,
-) *constraint.FunctionEffect {
+) *constraint.FunctionRefinement {
 	if inputs == nil || g == nil {
 		return nil
 	}
 
 	src := effectSource{returnConstraints: inputs.ReturnConstraints}
 
-	return inferFunctionEffectCore(src, g, params, returnType)
+	return inferFunctionRefinementCore(src, g, params, returnType)
 }
 
 // effectSource abstracts the data sources for effect inference.
@@ -122,7 +122,7 @@ type effectSource struct {
 	conditionAt       func(cfg.Point) constraint.Condition
 }
 
-// inferFunctionEffectCore is the shared implementation for effect inference.
+// inferFunctionRefinementCore is the shared implementation for effect inference.
 //
 // This method walks the CFG to find all return and exit points, collecting
 // constraints that hold at each. The algorithm:
@@ -137,12 +137,12 @@ type effectSource struct {
 //
 // The effectSource parameter routes queries to the appropriate data source
 // (pre-flow inputs vs. post-flow solution).
-func inferFunctionEffectCore(
+func inferFunctionRefinementCore(
 	src effectSource,
 	g *cfg.CFG,
 	params []ParamInfo,
 	returnType typ.Type,
-) *constraint.FunctionEffect {
+) *constraint.FunctionRefinement {
 	// Build param Symbol -> index and name -> index maps
 	paramIndex := make(map[cfg.SymbolID]int)
 	paramNameIndex := make(map[string]int)
@@ -253,7 +253,7 @@ func inferFunctionEffectCore(
 	exitHasPredecessors := len(graphPredecessors(g, g.Exit())) > 0
 	terminates := !hasReturnNode && !exitHasPredecessors
 
-	eff := &constraint.FunctionEffect{
+	eff := &constraint.FunctionRefinement{
 		OnTrue:     onTrueCond,
 		OnFalse:    onFalseCond,
 		OnReturn:   onReturnCond,

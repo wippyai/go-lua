@@ -86,7 +86,7 @@ type ConditionExtractor struct {
 	SymResolver   func(cfg.Point, cfg.SymbolID) (typ.Type, bool)    // Symbol type resolution
 	TypeKeyRes    func(string, *scope.State) (narrow.TypeKey, bool) // Type name resolution
 	ConstResolver func(string) *flow.ConstValue                     // Constant value lookup
-	EffectBySym   constraint.EffectLookupBySym                      // Function effect lookup
+	EffectBySym   constraint.RefinementLookupBySym                      // Function effect lookup
 }
 
 // constraintsFromBranch extracts type constraints from branch info.

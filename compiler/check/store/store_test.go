@@ -35,7 +35,7 @@ func TestEffectsEqual_BothNil(t *testing.T) {
 }
 
 func TestEffectsEqual_OneNil(t *testing.T) {
-	eff := &constraint.FunctionEffect{}
+	eff := &constraint.FunctionRefinement{}
 	if effectsEqual(eff, nil) {
 		t.Error("non-nil and nil should not be equal")
 	}
@@ -45,7 +45,7 @@ func TestEffectsEqual_OneNil(t *testing.T) {
 }
 
 func TestEffectsEqual_Same(t *testing.T) {
-	eff := &constraint.FunctionEffect{Terminates: true}
+	eff := &constraint.FunctionRefinement{Terminates: true}
 	if !effectsEqual(eff, eff) {
 		t.Error("same reference should be equal")
 	}
@@ -55,14 +55,14 @@ func TestEffectsMapEqual_Empty(t *testing.T) {
 	if !effectsMapEqual(nil, nil) {
 		t.Error("two nils should be equal")
 	}
-	if !effectsMapEqual(map[cfg.SymbolID]*constraint.FunctionEffect{}, map[cfg.SymbolID]*constraint.FunctionEffect{}) {
+	if !effectsMapEqual(map[cfg.SymbolID]*constraint.FunctionRefinement{}, map[cfg.SymbolID]*constraint.FunctionRefinement{}) {
 		t.Error("two empty maps should be equal")
 	}
 }
 
 func TestEffectsMapEqual_DifferentLength(t *testing.T) {
-	a := map[cfg.SymbolID]*constraint.FunctionEffect{1: {}}
-	b := map[cfg.SymbolID]*constraint.FunctionEffect{}
+	a := map[cfg.SymbolID]*constraint.FunctionRefinement{1: {}}
+	b := map[cfg.SymbolID]*constraint.FunctionRefinement{}
 	if effectsMapEqual(a, b) {
 		t.Error("maps of different length should not be equal")
 	}
@@ -245,7 +245,7 @@ func TestIterationScratch_Fields(t *testing.T) {
 func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	s := NewSessionStore()
 
-	s.InterprocNext.Effects[1] = &constraint.FunctionEffect{Terminates: true}
+	s.InterprocNext.Effects[1] = &constraint.FunctionRefinement{Terminates: true}
 	s.InterprocNext.Facts[api.GraphKey{GraphID: 7, ParentHash: 11}] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {Summary: []typ.Type{typ.String}},
@@ -315,7 +315,7 @@ func TestBumpRevision_InitializesIterationStore(t *testing.T) {
 
 func TestFixpointChannelDiffs_ReturnsCopy(t *testing.T) {
 	s := NewSessionStore()
-	s.StoreFunctionEffect(1, &constraint.FunctionEffect{Terminates: true})
+	s.StoreFunctionRefinement(1, &constraint.FunctionRefinement{Terminates: true})
 	if !s.FixpointSwap() {
 		t.Fatal("expected change from effect swap")
 	}

@@ -19,7 +19,7 @@
 //
 // [Solver]: Applies constraints to type environments to produce narrowed types.
 //
-// [FunctionEffect]: Describes type refinements a function produces on its parameters.
+// [FunctionRefinement]: Describes type refinements a function produces on its parameters.
 //
 // [Interner]: Provides constraint interning to reduce allocations for common patterns.
 //

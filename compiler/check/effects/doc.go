@@ -24,7 +24,7 @@
 //
 // # Effect Lookup
 //
-// [LookupEffectBySym] resolves effects for called functions:
+// [LookupRefinementBySym] resolves effects for called functions:
 //   - First checks the effect store for analyzed functions
 //   - Falls back to global type information for builtins
 //   - Extracts effects from function type annotations

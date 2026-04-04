@@ -176,7 +176,7 @@ func (w *typeWriter) writeCondition(cond constraint.Condition) {
 	}
 }
 
-func (w *typeWriter) writeFunctionEffect(eff *constraint.FunctionEffect) {
+func (w *typeWriter) writeFunctionRefinement(eff *constraint.FunctionRefinement) {
 	if eff == nil {
 		w.writeBool(false)
 		return
@@ -412,12 +412,12 @@ func (r *typeReader) readCondition() constraint.Condition {
 	return constraint.Condition{Disjuncts: disjuncts}
 }
 
-func (r *typeReader) readFunctionEffect() *constraint.FunctionEffect {
+func (r *typeReader) readFunctionRefinement() *constraint.FunctionRefinement {
 	if !r.readBool() {
 		return nil
 	}
 
-	return &constraint.FunctionEffect{
+	return &constraint.FunctionRefinement{
 		OnReturn: r.readCondition(),
 		OnTrue:   r.readCondition(),
 		OnFalse:  r.readCondition(),

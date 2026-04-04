@@ -452,7 +452,7 @@ func (r *Resolver) resolveFunction(te *ast.FunctionTypeExpr, sc *scope.State, de
 	return builder.Build()
 }
 
-func (r *Resolver) buildAssertEffect(paramIdx int, narrowTo ast.TypeExpr, sc *scope.State, depth int) *constraint.FunctionEffect {
+func (r *Resolver) buildAssertEffect(paramIdx int, narrowTo ast.TypeExpr, sc *scope.State, depth int) *constraint.FunctionRefinement {
 	placeholder := fmt.Sprintf("$%d", paramIdx)
 	path := constraint.Path{Root: placeholder}
 
@@ -472,7 +472,7 @@ func (r *Resolver) buildAssertEffect(paramIdx int, narrowTo ast.TypeExpr, sc *sc
 	if len(constraints) == 0 {
 		return nil
 	}
-	return constraint.NewEffect(constraints, nil, nil)
+	return constraint.NewRefinement(constraints, nil, nil)
 }
 
 func (r *Resolver) resolveRef(te *ast.TypeRefExpr, sc *scope.State) typ.Type {

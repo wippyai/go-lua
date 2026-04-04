@@ -234,9 +234,9 @@ func (d *Driver) runReturnInference(
 		MaxIterations: returns.MaxReturnSummaryIterations,
 	})
 
-	var effectLookup constraint.EffectLookupBySym
-	if es := store.EffectStore(); es != nil {
-		effectLookup = es.LookupEffectBySym
+	var effectLookup constraint.RefinementLookupBySym
+	if es := store.RefinementStore(); es != nil {
+		effectLookup = es.LookupRefinementBySym
 	}
 
 	summaries, funcTypes, diags := inferencer.ComputeForGraph(returninfer.RunContext{
@@ -355,14 +355,14 @@ func (d *Driver) storeFunctionEffect(store api.IterationStore, result *api.FuncR
 	if result == nil || store == nil || funcSym == 0 {
 		return
 	}
-	lookup := func(sym cfg.SymbolID) *constraint.FunctionEffect {
-		return effects.LookupEffectBySym(store.EffectStore(), store.ModuleBindings(), d.cfg.GlobalTypes, sym)
+	lookup := func(sym cfg.SymbolID) *constraint.FunctionRefinement {
+		return effects.LookupRefinementBySym(store.RefinementStore(), store.ModuleBindings(), d.cfg.GlobalTypes, sym)
 	}
 	fnEffect := effects.Propagate(result, lookup)
 	if fnEffect == nil {
 		return
 	}
-	store.StoreFunctionEffect(funcSym, fnEffect)
+	store.StoreFunctionRefinement(funcSym, fnEffect)
 }
 
 func collectGlobalNames(globalTypes map[string]typ.Type) []string {

@@ -400,8 +400,8 @@ func TestFixpointChannelDiffs_IsolatedBetweenStores(t *testing.T) {
 	storeA := store.NewSessionStore()
 	storeB := store.NewSessionStore()
 
-	storeA.StoreFunctionEffect(cfg.SymbolID(42), &constraint.FunctionEffect{})
-	storeB.StoreFunctionEffect(cfg.SymbolID(42), &constraint.FunctionEffect{})
+	storeA.StoreFunctionRefinement(cfg.SymbolID(42), &constraint.FunctionRefinement{})
+	storeB.StoreFunctionRefinement(cfg.SymbolID(42), &constraint.FunctionRefinement{})
 
 	if !storeA.FixpointSwap() {
 		t.Fatal("expected storeA FixpointSwap to report change")
@@ -419,8 +419,8 @@ func TestSessionStore_ClearIterationChannels(t *testing.T) {
 	store := store.NewSessionStore()
 
 	store.StoreConstructorFields(cfg.SymbolID(2), map[string]typ.Type{"name": typ.String})
-	store.InterprocPrev.Effects[cfg.SymbolID(4)] = &constraint.FunctionEffect{}
-	store.StoreFunctionEffect(cfg.SymbolID(5), &constraint.FunctionEffect{})
+	store.InterprocPrev.Effects[cfg.SymbolID(4)] = &constraint.FunctionRefinement{}
+	store.StoreFunctionRefinement(cfg.SymbolID(5), &constraint.FunctionRefinement{})
 
 	store.ClearIterationChannels()
 

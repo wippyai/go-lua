@@ -254,7 +254,7 @@ func (r *typeReader) readType() typ.Type {
 			}
 		}
 
-		if refinement := r.readFunctionEffect(); refinement != nil {
+		if refinement := r.readFunctionRefinement(); refinement != nil {
 			fb.WithRefinement(refinement)
 		}
 

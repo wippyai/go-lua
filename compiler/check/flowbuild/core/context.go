@@ -68,7 +68,7 @@ type Derived struct {
 	Synth       func(ast.Expr, cfg.Point) typ.Type
 	SymResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool)
 	TypeKeyRes  func(string, *scope.State) (narrow.TypeKey, bool)
-	EffectBySym constraint.EffectLookupBySym
+	EffectBySym constraint.RefinementLookupBySym
 }
 
 // FlowServicesFuncs adapts function fields to FlowServices.

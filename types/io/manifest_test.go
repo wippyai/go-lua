@@ -412,7 +412,7 @@ func TestManifest_EnrichedExport_SummarySuffixFallback(t *testing.T) {
 	if !ok {
 		t.Fatalf("not_nil field is not function: %T", field.Type)
 	}
-	refinement, ok := fn.Refinement.(*constraint.FunctionEffect)
+	refinement, ok := fn.Refinement.(*constraint.FunctionRefinement)
 	if !ok || refinement == nil || !refinement.OnReturn.HasConstraints() {
 		t.Fatalf("expected suffix-matched summary refinement on not_nil, got %#v", fn.Refinement)
 	}

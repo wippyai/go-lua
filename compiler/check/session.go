@@ -370,7 +370,7 @@ func (s *Session) ExportType() typ.Type {
 	if s == nil {
 		return typ.Nil
 	}
-	var effects map[cfg.SymbolID]*constraint.FunctionEffect
+	var effects map[cfg.SymbolID]*constraint.FunctionRefinement
 	if s.Store != nil {
 		if s.Store.InterprocPrev != nil {
 			effects = s.Store.InterprocPrev.Effects
@@ -499,7 +499,7 @@ func (s *Session) ExportManifest(modulePath string) *io.Manifest {
 // The returned map associates each function's SymbolID with its computed effect,
 // including IO effects (row), termination status, and conditional effects.
 // This enables importers to see side effect information for exported functions.
-func (s *Session) EffectsForExport() map[cfg.SymbolID]*constraint.FunctionEffect {
+func (s *Session) EffectsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
 	if s == nil || s.Store == nil {
 		return nil
 	}

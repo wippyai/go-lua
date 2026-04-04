@@ -147,7 +147,7 @@ func TestEnrichWithKeysCollector_AppendsToExistingOnReturn(t *testing.T) {
 		Stmts:   body,
 	}
 
-	existing := &constraint.FunctionEffect{
+	existing := &constraint.FunctionRefinement{
 		OnReturn: constraint.FromConstraints(constraint.NotNil{Path: constraint.RetPath(0)}),
 	}
 	result := EnrichWithKeysCollector(existing, fn)

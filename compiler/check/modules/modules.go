@@ -40,7 +40,7 @@ import (
 //  3. Defines any exported types
 //  4. Extracts function summaries for cross-module analysis
 //  5. Registers the manifest with the database
-func Connect(database *db.DB, name string, exportType typ.Type, exportTypes map[string]typ.Type, graph *cfg.Graph, effectsBySym map[cfg.SymbolID]*constraint.FunctionEffect) *io.Manifest {
+func Connect(database *db.DB, name string, exportType typ.Type, exportTypes map[string]typ.Type, graph *cfg.Graph, effectsBySym map[cfg.SymbolID]*constraint.FunctionRefinement) *io.Manifest {
 	manifest := io.NewManifest(name)
 	manifest.SetExport(exportType)
 
@@ -65,7 +65,7 @@ func Connect(database *db.DB, name string, exportType typ.Type, exportTypes map[
 //
 // OnReturn constraints encode assert-style narrowing (e.g. assert.not_nil),
 // enabling callers to narrow types based on imported module behavior.
-func ExportFunctionSummaries(manifest *io.Manifest, exportType typ.Type, graph *cfg.Graph, effectsBySym map[cfg.SymbolID]*constraint.FunctionEffect) {
+func ExportFunctionSummaries(manifest *io.Manifest, exportType typ.Type, graph *cfg.Graph, effectsBySym map[cfg.SymbolID]*constraint.FunctionRefinement) {
 	if graph == nil || len(effectsBySym) == 0 {
 		return
 	}

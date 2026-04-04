@@ -4,12 +4,12 @@ local r = plugins.setup()
 
 local result, err = r:call("greet", {name = "Alice"})
 if err == nil and result then
-    local output: string = result.output
+    local output = result.output
 end
 
 local result2, err2 = r:call("count", {items = {"a", "b", "c"}})
 if err2 == nil and result2 then
-    local output: string = result2.output
+    local output = result2.output
 end
 
 local missing, missing_err = r:call("nonexistent", {})

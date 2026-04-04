@@ -268,9 +268,9 @@ func TestExtractAssignments_KeysCollectorEffectFallbackIgnoresNonCollectorEffect
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown
 			},
-			EffectBySym: func(cfg.SymbolID) *constraint.FunctionEffect {
+			EffectBySym: func(cfg.SymbolID) *constraint.FunctionRefinement {
 				// Non-collector effect (no KeyOf constraint).
-				return &constraint.FunctionEffect{}
+				return &constraint.FunctionRefinement{}
 			},
 		},
 	}, inputs, nil)
@@ -318,8 +318,8 @@ func TestExtractAssignments_KeysCollectorEffectFallbackRespectsReturnIndex(t *te
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown
 			},
-			EffectBySym: func(cfg.SymbolID) *constraint.FunctionEffect {
-				return &constraint.FunctionEffect{
+			EffectBySym: func(cfg.SymbolID) *constraint.FunctionRefinement {
+				return &constraint.FunctionRefinement{
 					OnReturn: constraint.FromConstraints(constraint.KeyOf{
 						Table: constraint.ParamPath(0),
 						Key:   constraint.RetPath(1),
@@ -376,17 +376,17 @@ func TestExtractAssignments_KeysCollectorEffectFallback_TriesAllNameCandidates(t
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown
 			},
-			EffectBySym: func(sym cfg.SymbolID) *constraint.FunctionEffect {
+			EffectBySym: func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 				switch sym {
 				case mismatchSym:
-					return &constraint.FunctionEffect{
+					return &constraint.FunctionRefinement{
 						OnReturn: constraint.FromConstraints(constraint.KeyOf{
 							Table: constraint.ParamPath(0),
 							Key:   constraint.RetPath(1),
 						}),
 					}
 				case matchSym:
-					return &constraint.FunctionEffect{
+					return &constraint.FunctionRefinement{
 						OnReturn: constraint.FromConstraints(constraint.KeyOf{
 							Table: constraint.ParamPath(0),
 							Key:   constraint.RetPath(0),

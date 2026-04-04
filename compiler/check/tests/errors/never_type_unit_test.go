@@ -25,7 +25,7 @@ func TestNeverType(t *testing.T) {
 		Build()
 
 	// Create assert manifest with refinement
-	notNilEffect := constraint.NewEffect(
+	notNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.NotNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)
@@ -35,7 +35,7 @@ func TestNeverType(t *testing.T) {
 		WithRefinement(notNilEffect).
 		Build()
 
-	isNilEffect := constraint.NewEffect(
+	isNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.IsNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)

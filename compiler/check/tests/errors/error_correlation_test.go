@@ -41,7 +41,7 @@ func TestAssertIsNilNarrowsSiblingRequire(t *testing.T) {
 		Field("is_nil", typ.Func().
 			Param("val", typ.Any).
 			OptParam("msg", typ.String).
-			WithRefinement(constraint.NewEffect(
+			WithRefinement(constraint.NewRefinement(
 				[]constraint.Constraint{constraint.IsNil{Path: constraint.Path{Root: "$0"}}},
 				nil, nil,
 			)).

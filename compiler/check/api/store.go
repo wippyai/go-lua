@@ -141,8 +141,8 @@ type IterationStore interface {
 	Revision() uint64
 	BumpRevision()
 
-	EffectStore() EffectStore
-	StoreFunctionEffect(sym cfg.SymbolID, eff *constraint.FunctionEffect)
+	RefinementStore() RefinementStore
+	StoreFunctionRefinement(sym cfg.SymbolID, eff *constraint.FunctionRefinement)
 
 	SetModuleBindings(bindings *bind.BindingTable)
 	SetModuleAliases(aliases map[cfg.SymbolID]string)

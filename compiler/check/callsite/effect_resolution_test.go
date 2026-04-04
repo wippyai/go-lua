@@ -15,8 +15,8 @@ func TestResolveCalleeEffect_PrefersLookup(t *testing.T) {
 		CalleeSymbol: 7,
 		Callee:       &ast.IdentExpr{Value: "f"},
 	}
-	lookupEff := &constraint.FunctionEffect{Terminates: true}
-	typeEff := &constraint.FunctionEffect{OnReturn: constraint.TrueCondition()}
+	lookupEff := &constraint.FunctionRefinement{Terminates: true}
+	typeEff := &constraint.FunctionRefinement{OnReturn: constraint.TrueCondition()}
 
 	got := ResolveCalleeEffect(
 		info,
@@ -24,7 +24,7 @@ func TestResolveCalleeEffect_PrefersLookup(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		func(sym cfg.SymbolID) *constraint.FunctionEffect {
+		func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 			if sym == 7 {
 				return lookupEff
 			}
@@ -34,10 +34,10 @@ func TestResolveCalleeEffect_PrefersLookup(t *testing.T) {
 			return typ.Func().WithRefinement(typeEff).Build()
 		},
 		nil,
-		func(t typ.Type) *constraint.FunctionEffect {
+		func(t typ.Type) *constraint.FunctionRefinement {
 			fn := unwrap.Function(t)
 			if fn != nil {
-				if eff, ok := fn.Refinement.(*constraint.FunctionEffect); ok {
+				if eff, ok := fn.Refinement.(*constraint.FunctionRefinement); ok {
 					return eff
 				}
 			}
@@ -54,7 +54,7 @@ func TestResolveCalleeEffect_FallsBackToSymbolTypeWhenSynthNoEffect(t *testing.T
 		CalleeSymbol: 3,
 		Callee:       &ast.IdentExpr{Value: "g"},
 	}
-	want := &constraint.FunctionEffect{Terminates: true}
+	want := &constraint.FunctionRefinement{Terminates: true}
 
 	got := ResolveCalleeEffect(
 		info,
@@ -72,12 +72,12 @@ func TestResolveCalleeEffect_FallsBackToSymbolTypeWhenSynthNoEffect(t *testing.T
 			}
 			return nil, false
 		},
-		func(t typ.Type) *constraint.FunctionEffect {
+		func(t typ.Type) *constraint.FunctionRefinement {
 			fn, ok := t.(*typ.Function)
 			if !ok || fn == nil {
 				return nil
 			}
-			eff, _ := fn.Refinement.(*constraint.FunctionEffect)
+			eff, _ := fn.Refinement.(*constraint.FunctionRefinement)
 			return eff
 		},
 	)

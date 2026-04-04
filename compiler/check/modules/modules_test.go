@@ -51,7 +51,7 @@ func TestExportFunctionSummaries_NilGraph(t *testing.T) {
 
 func TestExportFunctionSummaries_EmptyEffects(t *testing.T) {
 	manifest := io.NewManifest("test")
-	ExportFunctionSummaries(manifest, typ.NewRecord().Build(), nil, make(map[cfg.SymbolID]*constraint.FunctionEffect))
+	ExportFunctionSummaries(manifest, typ.NewRecord().Build(), nil, make(map[cfg.SymbolID]*constraint.FunctionRefinement))
 }
 
 func TestExportFunctionSummaries_NonRecordExportType(t *testing.T) {

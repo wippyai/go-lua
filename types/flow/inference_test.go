@@ -289,7 +289,7 @@ func TestInferFunctionEffect_Empty(t *testing.T) {
 	inputs := &Inputs{Graph: mock}
 	solver := Solve(inputs, testResolver())
 
-	effect := InferFunctionEffect(solver, g, nil, typ.Boolean)
+	effect := InferFunctionRefinement(solver, g, nil, typ.Boolean)
 	if effect != nil {
 		t.Error("expected nil effect for empty constraints")
 	}
@@ -306,7 +306,7 @@ func TestInferFunctionEffect_NonBoolean(t *testing.T) {
 	solver := Solve(inputs, testResolver())
 
 	// Non-boolean return type should not produce OnTrue/OnFalse
-	effect := InferFunctionEffect(solver, g, []ParamInfo{{Name: "x", Symbol: 100, Type: typ.Any}}, typ.String)
+	effect := InferFunctionRefinement(solver, g, []ParamInfo{{Name: "x", Symbol: 100, Type: typ.Any}}, typ.String)
 	if effect != nil {
 		t.Error("expected nil effect for non-boolean return type")
 	}

@@ -125,19 +125,19 @@ func RunLiteral(input LiteralInput) LiteralOutput {
 	}
 }
 
-// InferEffect computes a FunctionEffect from solved flow analysis.
+// InferEffect computes a FunctionRefinement from solved flow analysis.
 // Examines return points to determine OnTrue/OnFalse/OnReturn constraints.
 func InferEffect(
 	graph *cfg.Graph,
 	solution *flow.Solution,
 	params []flow.ParamInfo,
 	returnType typ.Type,
-) *constraint.FunctionEffect {
+) *constraint.FunctionRefinement {
 	if graph == nil || solution == nil {
 		return nil
 	}
 
-	return flow.InferFunctionEffect(solution, graph.CFG(), params, returnType)
+	return flow.InferFunctionRefinement(solution, graph.CFG(), params, returnType)
 }
 
 // ExtractParams extracts parameter info from a function expression.
@@ -179,7 +179,7 @@ func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, g
 // EnrichWithKeysCollector detects if a function is a "keys collector"
 // (returns keys of a parameter) and adds KeyOf constraint to OnReturn.
 // This enables cross-module key-provenance tracking.
-func EnrichWithKeysCollector(eff *constraint.FunctionEffect, fn *ast.FunctionExpr) *constraint.FunctionEffect {
+func EnrichWithKeysCollector(eff *constraint.FunctionRefinement, fn *ast.FunctionExpr) *constraint.FunctionRefinement {
 	if fn == nil {
 		return eff
 	}
@@ -195,12 +195,12 @@ func EnrichWithKeysCollector(eff *constraint.FunctionEffect, fn *ast.FunctionExp
 	}
 
 	if eff == nil {
-		return &constraint.FunctionEffect{
+		return &constraint.FunctionRefinement{
 			OnReturn: constraint.FromConstraints(keyOf),
 		}
 	}
 
-	return &constraint.FunctionEffect{
+	return &constraint.FunctionRefinement{
 		Row:        eff.Row,
 		OnReturn:   constraint.And(eff.OnReturn, constraint.FromConstraints(keyOf)),
 		OnTrue:     eff.OnTrue,

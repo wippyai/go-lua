@@ -125,7 +125,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		GlobalTypes:    r.globalTypes,
 		ModuleAliases:  mergedAliases,
 		ModuleBindings: store.ModuleBindings(),
-		EffectStore:    effectStoreFrom(store),
+		RefinementStore:    effectStoreFrom(store),
 	}
 
 	// Phase A: Resolve type annotations.
@@ -221,7 +221,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		Facts:              narrowOut.Facts,
 		FlowInputs:         extractOut.Inputs,
 		FlowSolution:       solveOut.Solution,
-		FnEffect:           narrowOut.Effect,
+		FnRefinement:           narrowOut.Effect,
 		NarrowSynth:        narrowOut.Synth,
 		LiteralSignatures:  literalOut.Signatures,
 		Extras:             extras,

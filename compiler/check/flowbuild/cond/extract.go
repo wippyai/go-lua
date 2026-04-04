@@ -424,7 +424,7 @@ func ConstraintsFromCallOnReturn(
 	inputs *flow.Inputs,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
 	typeKeyResolver func(string, *scope.State) (narrow.TypeKey, bool),
-	effectLookupSym constraint.EffectLookupBySym,
+	effectLookupSym constraint.RefinementLookupBySym,
 	constResolver func(string) *flow.ConstValue,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
@@ -817,11 +817,11 @@ func ExtractFunctionEffect(
 	info *cfg.CallInfo,
 	p cfg.Point,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
-	effectLookupSym constraint.EffectLookupBySym,
+	effectLookupSym constraint.RefinementLookupBySym,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
 	moduleBindings *bind.BindingTable,
-) *constraint.FunctionEffect {
+) *constraint.FunctionRefinement {
 	var bindings *bind.BindingTable
 	if graph != nil {
 		bindings = graph.Bindings()
@@ -846,7 +846,7 @@ func CallTerminates(
 	p cfg.Point,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	effectLookupSym constraint.EffectLookupBySym,
+	effectLookupSym constraint.RefinementLookupBySym,
 	graph *cfg.Graph,
 	moduleBindings *bind.BindingTable,
 ) bool {
@@ -880,7 +880,7 @@ func PointHasTerminatingCallSite(
 	p cfg.Point,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	effectLookupSym constraint.EffectLookupBySym,
+	effectLookupSym constraint.RefinementLookupBySym,
 	moduleBindings *bind.BindingTable,
 ) bool {
 	if graph == nil {
@@ -902,7 +902,7 @@ func ConstraintsFromAssignOnReturn(
 	inputs *flow.Inputs,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
 	typeKeyResolver func(string, *scope.State) (narrow.TypeKey, bool),
-	effectLookupSym constraint.EffectLookupBySym,
+	effectLookupSym constraint.RefinementLookupBySym,
 	constResolver func(string) *flow.ConstValue,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
@@ -934,7 +934,7 @@ func ExtractPredicateLinkFromCallInfo(
 	inputs *flow.Inputs,
 	typeKeyResolver func(string, *scope.State) (narrow.TypeKey, bool),
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
-	effectLookupSym constraint.EffectLookupBySym,
+	effectLookupSym constraint.RefinementLookupBySym,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
 	moduleBindings *bind.BindingTable,
@@ -1007,7 +1007,7 @@ func ComputeDeadPoints(
 	graph *cfg.Graph,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	effectLookupSym constraint.EffectLookupBySym,
+	effectLookupSym constraint.RefinementLookupBySym,
 	moduleBindings *bind.BindingTable,
 ) map[cfg.Point]bool {
 	dead := make(map[cfg.Point]bool)

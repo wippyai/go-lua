@@ -100,8 +100,8 @@ type PhaseEnv struct {
 	// ModuleBindings is the binding table for the entire module.
 	ModuleBindings *bind.BindingTable
 
-	// EffectStore provides function effect lookups for callee analysis.
-	EffectStore api.EffectStore
+	// RefinementStore provides function effect lookups for callee analysis.
+	RefinementStore api.RefinementStore
 
 	// Scopes maps CFG points to scope states (populated after scope phase).
 	Scopes map[cfg.Point]*scope.State
@@ -274,7 +274,7 @@ type NarrowInput struct {
 // Phase D outputs: TypeFacts and effects.
 type NarrowOutput struct {
 	Facts  flow.TypeFacts
-	Effect *constraint.FunctionEffect
+	Effect *constraint.FunctionRefinement
 	Synth  synth.Synth
 }
 
@@ -385,7 +385,7 @@ func (b *ContextBuilder) BuildDeclared() *api.DeclaredEnvImpl {
 		LiteralTypes:    b.literalTypes,
 		AnnotatedVars:   b.annotatedVars,
 		BaseScope:       b.baseScope,
-		EffectStore:     b.env.EffectStore,
+		RefinementStore:     b.env.RefinementStore,
 		ModuleAliases:   b.env.ModuleAliases,
 		GlobalTypes:     b.env.GlobalTypes,
 		ReturnSummaries: b.returnSummaries,
@@ -403,7 +403,7 @@ func (b *ContextBuilder) BuildNarrow() *api.NarrowEnvImpl {
 		AnnotatedVars:         b.annotatedVars,
 		Solution:              b.solution,
 		BaseScope:             b.baseScope,
-		EffectStore:           b.env.EffectStore,
+		RefinementStore:           b.env.RefinementStore,
 		ModuleAliases:         b.env.ModuleAliases,
 		GlobalTypes:           b.env.GlobalTypes,
 		NarrowReturnSummaries: b.narrowReturnSummaries,

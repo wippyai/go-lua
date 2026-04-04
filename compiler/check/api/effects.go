@@ -5,37 +5,37 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
-// EffectFacts provides function effect lookup.
-type EffectFacts interface {
-	LookupBySym(sym cfg.SymbolID) *constraint.FunctionEffect
+// RefinementFacts provides function effect lookup.
+type RefinementFacts interface {
+	LookupBySym(sym cfg.SymbolID) *constraint.FunctionRefinement
 }
 
-// EffectStore provides methods for storing and retrieving function effects.
-type EffectStore interface {
-	LookupEffectBySym(sym cfg.SymbolID) *constraint.FunctionEffect
+// RefinementStore provides methods for storing and retrieving function effects.
+type RefinementStore interface {
+	LookupRefinementBySym(sym cfg.SymbolID) *constraint.FunctionRefinement
 }
 
-// storeEffectFacts implements EffectFacts backed by an EffectStore.
-type storeEffectFacts struct {
-	store EffectStore
+// storeRefinementFacts implements RefinementFacts backed by an RefinementStore.
+type storeRefinementFacts struct {
+	store RefinementStore
 }
 
-// NewEffectFacts creates an EffectFacts backed by an EffectStore.
-func NewEffectFacts(store EffectStore) EffectFacts {
+// NewRefinementFacts creates an RefinementFacts backed by an RefinementStore.
+func NewRefinementFacts(store RefinementStore) RefinementFacts {
 	if store == nil {
-		return nilEffectFacts{}
+		return nilRefinementFacts{}
 	}
-	return &storeEffectFacts{store: store}
+	return &storeRefinementFacts{store: store}
 }
 
-func (f *storeEffectFacts) LookupBySym(sym cfg.SymbolID) *constraint.FunctionEffect {
+func (f *storeRefinementFacts) LookupBySym(sym cfg.SymbolID) *constraint.FunctionRefinement {
 	if f.store == nil || sym == 0 {
 		return nil
 	}
-	return f.store.LookupEffectBySym(sym)
+	return f.store.LookupRefinementBySym(sym)
 }
 
-// nilEffectFacts is a no-op EffectFacts implementation.
-type nilEffectFacts struct{}
+// nilRefinementFacts is a no-op RefinementFacts implementation.
+type nilRefinementFacts struct{}
 
-func (nilEffectFacts) LookupBySym(cfg.SymbolID) *constraint.FunctionEffect { return nil }
+func (nilRefinementFacts) LookupBySym(cfg.SymbolID) *constraint.FunctionRefinement { return nil }

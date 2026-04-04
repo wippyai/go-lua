@@ -24,12 +24,12 @@ import (
 // EnrichExportWithEffects attaches known function refinements to exported values.
 // This is used when exporting module records or interfaces so method refinements
 // (like termination or guard effects) are preserved at module boundaries.
-func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[cfg.SymbolID]*constraint.FunctionEffect, graph *cfg.Graph) typ.Type {
+func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[cfg.SymbolID]*constraint.FunctionRefinement, graph *cfg.Graph) typ.Type {
 	if export == nil || graph == nil || len(effectsBySym) == 0 {
 		return export
 	}
 
-	fieldEffects := make(map[string]*constraint.FunctionEffect)
+	fieldEffects := make(map[string]*constraint.FunctionRefinement)
 	for _, sym := range cfg.SortedSymbolIDs(effectsBySym) {
 		eff := effectsBySym[sym]
 		if eff == nil {
@@ -158,7 +158,7 @@ func appendRecordField(builder *typ.RecordBuilder, f typ.Field) *typ.RecordBuild
 	return builder.Field(f.Name, f.Type)
 }
 
-func applyFunctionRefinement(fn *typ.Function, eff *constraint.FunctionEffect) *typ.Function {
+func applyFunctionRefinement(fn *typ.Function, eff *constraint.FunctionRefinement) *typ.Function {
 	if fn == nil || eff == nil {
 		return fn
 	}

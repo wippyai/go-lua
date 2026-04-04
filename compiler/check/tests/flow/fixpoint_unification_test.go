@@ -372,14 +372,14 @@ end
 }
 
 // TestFixpointUnification_EffectRowLabels verifies that effect row labels
-// are properly stored on FunctionEffect and survive the fixpoint swap.
+// are properly stored on FunctionRefinement and survive the fixpoint swap.
 func TestFixpointUnification_EffectRowLabels(t *testing.T) {
-	// Verify that the Row field on FunctionEffect supports union and equality.
+	// Verify that the Row field on FunctionRefinement supports union and equality.
 	row1 := effect.WithModuleLoad()
 	row2 := effect.WithVariadicTransform()
 	combined := effect.Union(row1, row2)
 
-	eff := &constraint.FunctionEffect{
+	eff := &constraint.FunctionRefinement{
 		Row:        combined,
 		Terminates: false,
 	}

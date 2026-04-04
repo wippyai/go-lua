@@ -13,18 +13,18 @@ import (
 )
 
 // LookupFunc resolves a function effect by symbol.
-type LookupFunc func(sym cfg.SymbolID) *constraint.FunctionEffect
+type LookupFunc func(sym cfg.SymbolID) *constraint.FunctionRefinement
 
 // Propagate computes the complete effect for a function by combining its
 // local effects with effects propagated from callees.
-func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionEffect {
+func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionRefinement {
 	if result == nil {
 		return nil
 	}
 
-	fnEffect := result.FnEffect
+	fnEffect := result.FnRefinement
 	if fnEffect == nil {
-		fnEffect = &constraint.FunctionEffect{}
+		fnEffect = &constraint.FunctionRefinement{}
 	}
 
 	if result.Graph == nil {
@@ -82,7 +82,7 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionEf
 		effectRow = row
 	}
 
-	return &constraint.FunctionEffect{
+	return &constraint.FunctionRefinement{
 		Row:        effectRow,
 		OnReturn:   fnEffect.OnReturn,
 		OnTrue:     fnEffect.OnTrue,
@@ -91,17 +91,17 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionEf
 	}
 }
 
-// LookupEffectBySym resolves effects from the store or global type information.
-func LookupEffectBySym(
-	store api.EffectStore,
+// LookupRefinementBySym resolves effects from the store or global type information.
+func LookupRefinementBySym(
+	store api.RefinementStore,
 	bindings *bind.BindingTable,
 	globalTypes map[string]typ.Type,
 	sym cfg.SymbolID,
-) *constraint.FunctionEffect {
+) *constraint.FunctionRefinement {
 	if store == nil || sym == 0 {
 		return nil
 	}
-	if eff := store.LookupEffectBySym(sym); eff != nil {
+	if eff := store.LookupRefinementBySym(sym); eff != nil {
 		return eff
 	}
 	if bindings != nil && globalTypes != nil {
@@ -140,8 +140,8 @@ func TerminatesFromReachability(result *api.FuncResult) bool {
 	return exitCond.IsFalse()
 }
 
-// EffectFromType extracts FunctionEffect from a function type's declared effect annotations.
-func EffectFromType(t typ.Type) *constraint.FunctionEffect {
+// EffectFromType extracts FunctionRefinement from a function type's declared effect annotations.
+func EffectFromType(t typ.Type) *constraint.FunctionRefinement {
 	if t == nil {
 		return nil
 	}
@@ -150,7 +150,7 @@ func EffectFromType(t typ.Type) *constraint.FunctionEffect {
 		return nil
 	}
 	if fn.Refinement != nil {
-		if eff, ok := fn.Refinement.(*constraint.FunctionEffect); ok {
+		if eff, ok := fn.Refinement.(*constraint.FunctionRefinement); ok {
 			return eff
 		}
 	}
@@ -176,7 +176,7 @@ func EffectFromType(t typ.Type) *constraint.FunctionEffect {
 	if row.Pure() && !row.IsOpen() && !terminates {
 		return nil
 	}
-	return &constraint.FunctionEffect{
+	return &constraint.FunctionRefinement{
 		Row:        row,
 		Terminates: terminates,
 	}

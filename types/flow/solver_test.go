@@ -7151,11 +7151,11 @@ func TestInferFunctionEffect_ReturnConstraint(t *testing.T) {
 	}
 	t.Logf("Entry: %d, Exit: %d", c.Entry(), c.Exit())
 
-	eff := InferFunctionEffect(s, c, params, typ.Any)
+	eff := InferFunctionRefinement(s, c, params, typ.Any)
 
 	t.Logf("Effect: %+v", eff)
 	if eff == nil {
-		t.Fatal("InferFunctionEffect returned nil, want effect with OnReturn")
+		t.Fatal("InferFunctionRefinement returned nil, want effect with OnReturn")
 	}
 
 	if !eff.OnReturn.HasConstraints() {

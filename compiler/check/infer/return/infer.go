@@ -104,7 +104,7 @@ func New(cfg Config) *Inferencer {
 type RunContext struct {
 	Ctx          *db.QueryContext
 	ParentFacts  flow.TypeFacts
-	EffectLookup constraint.EffectLookupBySym
+	EffectLookup constraint.RefinementLookupBySym
 }
 
 // collectLocalFunctions gathers local function definitions from assignments and FuncDef nodes.

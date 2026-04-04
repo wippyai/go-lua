@@ -87,12 +87,12 @@ func TestConstraintsFromCallOnReturn_OnlyAppliesMustConstraints(t *testing.T) {
 		Args:         []ast.Expr{&ast.IdentExpr{Value: "x"}},
 	}
 
-	effectLookup := func(id typecfg.SymbolID) *constraint.FunctionEffect {
+	effectLookup := func(id typecfg.SymbolID) *constraint.FunctionRefinement {
 		if id != sym {
 			return nil
 		}
 		p0 := constraint.NewPlaceholder(0)
-		return &constraint.FunctionEffect{
+		return &constraint.FunctionRefinement{
 			OnReturn: constraint.FromDisjuncts([][]constraint.Constraint{
 				{constraint.Truthy{Path: p0}},
 				{constraint.Falsy{Path: p0}},
@@ -237,9 +237,9 @@ func TestCallTerminates_UsesCanonicalCandidatesWhenRawSymbolMissing(t *testing.T
 	// from call expression/bindings and still detect termination.
 	callInfo.CalleeSymbol = 0
 
-	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionEffect {
+	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == errorSym {
-			return &constraint.FunctionEffect{Terminates: true}
+			return &constraint.FunctionRefinement{Terminates: true}
 		}
 		return nil
 	}
@@ -291,9 +291,9 @@ func TestCallTerminates_UsesModuleBindingNameFallback(t *testing.T) {
 	callInfo.Callee = &ast.IdentExpr{Value: "error_alias"}
 	callInfo.CalleeName = "error_alias"
 
-	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionEffect {
+	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == errorSym {
-			return &constraint.FunctionEffect{Terminates: true}
+			return &constraint.FunctionRefinement{Terminates: true}
 		}
 		return nil
 	}
@@ -356,9 +356,9 @@ func TestPointHasTerminatingCallSite_AssignSourceCall(t *testing.T) {
 		t.Fatal("expected x assignment with resolvable error() call symbol")
 	}
 
-	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionEffect {
+	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == errorSym {
-			return &constraint.FunctionEffect{Terminates: true}
+			return &constraint.FunctionRefinement{Terminates: true}
 		}
 		return nil
 	}
@@ -402,9 +402,9 @@ func TestComputeDeadPoints_AssignSourceCallTerminates(t *testing.T) {
 		t.Fatal("expected x assignment with resolvable error() call symbol")
 	}
 
-	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionEffect {
+	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == errorSym {
-			return &constraint.FunctionEffect{Terminates: true}
+			return &constraint.FunctionRefinement{Terminates: true}
 		}
 		return nil
 	}

@@ -18,7 +18,7 @@ import (
 //   - Phase A (Resolve): Type annotations resolved into Scopes
 //   - Phase B (Scope/Extract): BaseScope, Scopes, FlowInputs
 //   - Phase C (Solve): FlowSolution
-//   - Phase D (Narrow): Facts, FnEffect, NarrowSynth
+//   - Phase D (Narrow): Facts, FnRefinement, NarrowSynth
 type FuncResult struct {
 	// Graph is the function's control flow graph containing CFG nodes,
 	// binding information, and iteration metadata.
@@ -48,9 +48,9 @@ type FuncResult struct {
 	// Provides reachability conditions and exclusion facts for narrowing.
 	FlowSolution *flow.Solution
 
-	// FnEffect captures the function's side effects (io, error, terminate).
+	// FnRefinement captures the function's side effects (io, error, terminate).
 	// Propagated from callees and used for inter-function effect analysis.
-	FnEffect *constraint.FunctionEffect
+	FnRefinement *constraint.FunctionRefinement
 
 	// NarrowSynth is the narrowed-phase synthesis engine for this function.
 	// Use TypeOf to query expression types with flow-based narrowing applied.

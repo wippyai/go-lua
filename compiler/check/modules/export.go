@@ -11,7 +11,7 @@ import (
 
 // ExportType computes the module's exported type from return statements.
 // Pass effectsBySym to enrich exported functions with effect summaries.
-func ExportType(result *api.FuncResult, effectsBySym map[cfg.SymbolID]*constraint.FunctionEffect) typ.Type {
+func ExportType(result *api.FuncResult, effectsBySym map[cfg.SymbolID]*constraint.FunctionRefinement) typ.Type {
 	if result == nil || result.Graph == nil || result.NarrowSynth == nil {
 		return typ.Nil
 	}
@@ -94,11 +94,11 @@ func ExportTypes(result *api.FuncResult) map[string]typ.Type {
 }
 
 // CopyEffectsForExport returns a defensive copy of effects for manifest export.
-func CopyEffectsForExport(effectsBySym map[cfg.SymbolID]*constraint.FunctionEffect) map[cfg.SymbolID]*constraint.FunctionEffect {
+func CopyEffectsForExport(effectsBySym map[cfg.SymbolID]*constraint.FunctionRefinement) map[cfg.SymbolID]*constraint.FunctionRefinement {
 	if len(effectsBySym) == 0 {
 		return nil
 	}
-	effects := make(map[cfg.SymbolID]*constraint.FunctionEffect, len(effectsBySym))
+	effects := make(map[cfg.SymbolID]*constraint.FunctionRefinement, len(effectsBySym))
 	for sym, eff := range effectsBySym {
 		if eff != nil {
 			effects[sym] = eff

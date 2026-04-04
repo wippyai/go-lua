@@ -27,7 +27,7 @@ type Function struct {
 	Returns    []Type         // Return types (empty for void functions)
 	Effects    EffectInfo     // Effect row (effect.Row) for mutation/throw/io tracking
 	Spec       SpecInfo       // Contract specification (*contract.Spec)
-	Refinement RefinementInfo // Type refinement effect (*constraint.FunctionEffect)
+	Refinement RefinementInfo // Type refinement effect (*constraint.FunctionRefinement)
 	hash       uint64
 }
 
