@@ -474,6 +474,27 @@ func TestMergeFieldAssignments_PreservesRecursiveAliasRootType(t *testing.T) {
 	}
 }
 
+func TestFieldAssignmentsForRoot_InvalidatesCachedRootOnFieldWrite(t *testing.T) {
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym21@1.name`: typ.String,
+		},
+		fieldOverlayCache: make(map[string][]mergedField),
+	}
+
+	first := s.fieldAssignmentsForRoot("sym21@1")
+	if len(first) != 1 || first[0].Name != "name" || !typ.TypeEquals(first[0].Type, typ.String) {
+		t.Fatalf("first field overlay = %v, want name:string", first)
+	}
+
+	s.setValue(`sym21@1.name`, typ.Integer)
+
+	second := s.fieldAssignmentsForRoot("sym21@1")
+	if len(second) != 1 || second[0].Name != "name" || !typ.TypeEquals(second[0].Type, typ.Integer) {
+		t.Fatalf("second field overlay = %v, want name:integer", second)
+	}
+}
+
 // setupSymbol registers a symbol and sets its visibility at all given points.
 // Returns the SymbolID for use in version creation.
 func setupSymbol(g *mockSSAGraph, name string, points []cfg.Point) cfg.SymbolID {

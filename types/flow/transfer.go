@@ -130,7 +130,7 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 				assignedType = s.normalizeNilFieldAssignmentType(p, assign.TargetPath, old)
 			}
 			if !typ.TypeEquals(old, assignedType) {
-				s.values[targetKeyStr] = assignedType
+				s.setValue(targetKeyStr, assignedType)
 				changedKeys = append(changedKeys, targetKeyStr)
 			}
 			if len(assign.TargetPath.Segments) > 0 {
@@ -274,7 +274,7 @@ func (s *Solution) mirrorAliasedFieldWrite(p cfg.Point, targetPath constraint.Pa
 		if typ.TypeEquals(old, newType) {
 			return nil
 		}
-		s.values[keyStr] = newType
+		s.setValue(keyStr, newType)
 		return []string{keyStr}
 	}
 
@@ -771,7 +771,7 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 		return ""
 	}
 
-	s.values[string(pathKey)] = newType
+	s.setValue(string(pathKey), newType)
 	return string(pathKey)
 }
 
@@ -911,7 +911,7 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 		return ""
 	}
 
-	s.values[string(pathKey)] = newType
+	s.setValue(string(pathKey), newType)
 	return string(pathKey)
 }
 
@@ -971,7 +971,7 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 		return ""
 	}
 
-	s.values[string(pathKey)] = newType
+	s.setValue(string(pathKey), newType)
 	return string(pathKey)
 }
 
@@ -1408,7 +1408,7 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 		}
 		old := s.values[string(targetKey)]
 		if !typ.TypeEquals(old, joined) {
-			s.values[string(targetKey)] = joined
+			s.setValue(string(targetKey), joined)
 			changedKeys = append(changedKeys, string(targetKey))
 		}
 
@@ -1439,7 +1439,7 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 			fullKey := string(targetKey) + suffix
 			old = s.values[fullKey]
 			if !typ.TypeEquals(old, joined) {
-				s.values[fullKey] = joined
+				s.setValue(fullKey, joined)
 				changedKeys = append(changedKeys, fullKey)
 			}
 		}

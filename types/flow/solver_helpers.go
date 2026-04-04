@@ -93,8 +93,23 @@ func (s *Solution) initSymbolTypes(src symbolTypeSource) {
 			}
 		}
 
-		s.values[keyStr] = t
+		s.setValue(keyStr, t)
 	}
+}
+
+func (s *Solution) setValue(key string, t typ.Type) {
+	if s == nil || s.values == nil || key == "" {
+		return
+	}
+	s.values[key] = t
+	if s.fieldOverlayCache == nil {
+		return
+	}
+	_, _, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
+	if !ok || suffix == "" {
+		return
+	}
+	delete(s.fieldOverlayCache, key[:len(key)-len(suffix)])
 }
 
 // dependencyMap tracks which CFG points depend on a given canonical key.

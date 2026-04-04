@@ -315,6 +315,37 @@ func TestBindingTable_SymbolsByName_UnknownOrEmpty(t *testing.T) {
 	}
 }
 
+func TestBindingTable_SymbolsByNameReadOnly_TracksUpdatesAndCopyIsolation(t *testing.T) {
+	table := NewBindingTable()
+	alpha := cfg.NextSymbolID()
+	beta := cfg.NextSymbolID()
+
+	table.SetName(alpha, "collect")
+	table.SetName(beta, "collect")
+
+	got := table.SymbolsByNameReadOnly("collect")
+	if len(got) != 2 || got[0] != alpha || got[1] != beta {
+		t.Fatalf("SymbolsByNameReadOnly(\"collect\") = %v, want [%d %d]", got, alpha, beta)
+	}
+
+	copied := table.SymbolsByName("collect")
+	copied[0] = beta
+	got = table.SymbolsByNameReadOnly("collect")
+	if len(got) != 2 || got[0] != alpha || got[1] != beta {
+		t.Fatalf("SymbolsByName copy should not mutate stored index, got %v", got)
+	}
+
+	table.SetName(beta, "other")
+	got = table.SymbolsByNameReadOnly("collect")
+	if len(got) != 1 || got[0] != alpha {
+		t.Fatalf("SymbolsByNameReadOnly(\"collect\") after rename = %v, want [%d]", got, alpha)
+	}
+	other := table.SymbolsByNameReadOnly("other")
+	if len(other) != 1 || other[0] != beta {
+		t.Fatalf("SymbolsByNameReadOnly(\"other\") after rename = %v, want [%d]", other, beta)
+	}
+}
+
 func TestBindingTable_Globals(t *testing.T) {
 	table := NewBindingTable()
 

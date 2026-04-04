@@ -179,11 +179,11 @@ func (s *Solution) runPropagation() {
 func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, baseType typ.Type, constraints []constraint.Constraint) map[constraint.PathKey]typ.Type {
 	visibleVersions := map[cfg.SymbolID]cfg.Version(nil)
 	visibleCount := len(s.declaredSyms)
-	if s.queryCacheEnabled && s.inputs != nil && s.inputs.Graph != nil {
+	if s.inputs != nil && s.inputs.Graph != nil {
 		visibleVersions = s.inputs.Graph.AllVisibleVersions(p)
 		visibleCount = len(visibleVersions)
 	}
-	queryVisibleLookup := s.queryCacheEnabled && visibleVersions != nil
+	queryVisibleLookup := visibleVersions != nil
 
 	result := s.scratchValueMap
 	if result == nil {
@@ -920,36 +920,15 @@ func (s *Solution) fieldAssignmentsForRoot(baseRoot string) []mergedField {
 	if s == nil || len(s.values) == 0 || baseRoot == "" {
 		return nil
 	}
-	if s.queryCacheEnabled {
-		if s.fieldOverlayCache == nil {
-			s.fieldOverlayCache = s.buildFieldOverlayCache()
-		}
-		return s.fieldOverlayCache[baseRoot]
+	if s.fieldOverlayCache == nil {
+		s.fieldOverlayCache = make(map[string][]mergedField)
 	}
-
-	return s.collectFieldAssignmentsForRoot(baseRoot)
-}
-
-func (s *Solution) buildFieldOverlayCache() map[string][]mergedField {
-	cache := make(map[string][]mergedField)
-	for key, value := range s.values {
-		_, _, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
-		if !ok || suffix == "" {
-			continue
-		}
-		seg, ok := parseSingleOverlaySegment(suffix)
-		if !ok {
-			continue
-		}
-		root := key[:len(key)-len(suffix)]
-		fieldType, optional := typ.SplitNilableFieldType(value)
-		cache[root] = append(cache[root], mergedField{Name: seg.Name, Type: fieldType, Optional: optional})
+	if fields, ok := s.fieldOverlayCache[baseRoot]; ok {
+		return fields
 	}
-	for root, fields := range cache {
-		sortMergedFields(fields)
-		cache[root] = fields
-	}
-	return cache
+	fields := s.collectFieldAssignmentsForRoot(baseRoot)
+	s.fieldOverlayCache[baseRoot] = fields
+	return fields
 }
 
 func (s *Solution) collectFieldAssignmentsForRoot(baseRoot string) []mergedField {

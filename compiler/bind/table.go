@@ -57,6 +57,9 @@ type BindingTable struct {
 	// names stores the original source name for each symbol
 	names map[cfg.SymbolID]string
 
+	// symbolsByName lazily indexes symbols by source name in ascending symbol order.
+	symbolsByName map[string][]cfg.SymbolID
+
 	// paramSymbols maps functions to their parameter symbol list
 	paramSymbols map[*ast.FunctionExpr][]cfg.SymbolID
 
@@ -167,7 +170,16 @@ func (t *BindingTable) Kind(sym cfg.SymbolID) (cfg.SymbolKind, bool) {
 
 // SetName records the source name associated with a symbol.
 func (t *BindingTable) SetName(sym cfg.SymbolID, name string) {
+	if t == nil || sym == 0 {
+		return
+	}
+	if prev, ok := t.names[sym]; ok {
+		if prev == name {
+			return
+		}
+	}
 	t.names[sym] = name
+	t.symbolsByName = nil
 }
 
 // Name returns the source name of a symbol, or empty if unknown.
@@ -179,21 +191,48 @@ func (t *BindingTable) Name(sym cfg.SymbolID) string {
 //
 // Results are sorted by symbol ID for deterministic iteration.
 func (t *BindingTable) SymbolsByName(name string) []cfg.SymbolID {
+	syms := t.SymbolsByNameReadOnly(name)
+	if len(syms) == 0 {
+		return nil
+	}
+	out := make([]cfg.SymbolID, len(syms))
+	copy(out, syms)
+	return out
+}
+
+// SymbolsByNameReadOnly returns the stored symbols for a source name.
+//
+// The returned slice is sorted by symbol ID and must be treated as read-only.
+func (t *BindingTable) SymbolsByNameReadOnly(name string) []cfg.SymbolID {
 	if t == nil || name == "" {
 		return nil
 	}
-	result := make([]cfg.SymbolID, 0, 2)
-	for sym, n := range t.names {
-		if n == name && sym != 0 {
-			result = append(result, sym)
+	if t.symbolsByName == nil {
+		t.symbolsByName = t.buildSymbolsByNameIndex()
+	}
+	return t.symbolsByName[name]
+}
+
+func (t *BindingTable) buildSymbolsByNameIndex() map[string][]cfg.SymbolID {
+	if t == nil || len(t.names) == 0 {
+		return nil
+	}
+	index := make(map[string][]cfg.SymbolID)
+	for sym, name := range t.names {
+		if sym == 0 || name == "" {
+			continue
 		}
+		index[name] = append(index[name], sym)
 	}
-	if len(result) > 1 {
-		sort.Slice(result, func(i, j int) bool {
-			return result[i] < result[j]
-		})
+	for name, syms := range index {
+		if len(syms) > 1 {
+			sort.Slice(syms, func(i, j int) bool {
+				return syms[i] < syms[j]
+			})
+		}
+		index[name] = syms
 	}
-	return result
+	return index
 }
 
 // SetParamSymbols records the ordered parameter symbols for a function.
