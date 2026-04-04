@@ -52,6 +52,79 @@ func TestSolver_IsNil_NotNil(t *testing.T) {
 	}
 }
 
+func TestSolver_IsNil_OrderIndependentWithTruthy(t *testing.T) {
+	path := constraint.Path{Root: "x"}
+	base := map[constraint.PathKey]typ.Type{
+		path.Key(): typ.NewOptional(typ.String),
+	}
+	s := constraint.Solver{}
+
+	cases := []struct {
+		name        string
+		constraints []constraint.Constraint
+	}{
+		{
+			name: "truthy then isnil",
+			constraints: []constraint.Constraint{
+				constraint.Truthy{Path: path},
+				constraint.IsNil{Path: path},
+			},
+		},
+		{
+			name: "isnil then truthy",
+			constraints: []constraint.Constraint{
+				constraint.IsNil{Path: path},
+				constraint.Truthy{Path: path},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := s.Apply(tc.constraints, base)
+			if got := out[path.Key()]; !typ.TypeEquals(got, typ.Never) {
+				t.Fatalf("got %v want %v", got, typ.Never)
+			}
+		})
+	}
+}
+
+func TestSolver_ApplyToSingle_IsNil_OrderIndependentWithTruthy(t *testing.T) {
+	path := constraint.Path{Root: "x"}
+	key := path.Key()
+	base := typ.NewOptional(typ.String)
+	resolve := func(p constraint.Path) constraint.PathKey { return p.Key() }
+	s := constraint.Solver{}
+
+	cases := []struct {
+		name        string
+		constraints []constraint.Constraint
+	}{
+		{
+			name: "truthy then isnil",
+			constraints: []constraint.Constraint{
+				constraint.Truthy{Path: path},
+				constraint.IsNil{Path: path},
+			},
+		},
+		{
+			name: "isnil then truthy",
+			constraints: []constraint.Constraint{
+				constraint.IsNil{Path: path},
+				constraint.Truthy{Path: path},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := s.ApplyToSingle(tc.constraints, key, base, resolve); !typ.TypeEquals(got, typ.Never) {
+				t.Fatalf("got %v want %v", got, typ.Never)
+			}
+		})
+	}
+}
+
 func TestSolver_HasType_BuiltinAndHash(t *testing.T) {
 	path := constraint.Path{Root: "x"}
 	rec := typ.NewRecord().Field("value", typ.String).Build()

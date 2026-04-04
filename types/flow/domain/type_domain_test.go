@@ -111,6 +111,49 @@ func TestTypeDomain_ApplyIsNil(t *testing.T) {
 	}
 }
 
+func TestTypeDomain_ApplyIsNil_RespectsPriorTruthyNarrowing(t *testing.T) {
+	key := constraint.PathKey("x")
+	env := makeTestEnv(map[constraint.PathKey]typ.Type{
+		key: typ.NewUnion(typ.String, typ.Nil),
+	})
+
+	cases := []struct {
+		name  string
+		atoms []constraint.Atom
+	}{
+		{
+			name: "truthy then isnil",
+			atoms: []constraint.Atom{
+				constraint.AtomTruthy(constraint.TermVar(key)),
+				constraint.AtomEq(constraint.TermVar(key), constraint.TermNil()),
+			},
+		},
+		{
+			name: "isnil then truthy",
+			atoms: []constraint.Atom{
+				constraint.AtomEq(constraint.TermVar(key), constraint.TermNil()),
+				constraint.AtomTruthy(constraint.TermVar(key)),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewTypeDomain(env)
+
+			if ok := d.ApplyAtom(tc.atoms[0]); !ok {
+				t.Fatalf("first atom unexpectedly failed; unsat=%v", d.IsUnsat())
+			}
+			if ok := d.ApplyAtom(tc.atoms[1]); ok {
+				t.Fatal("second atom should make the domain unsatisfiable")
+			}
+			if !d.IsUnsat() {
+				t.Fatal("domain should be marked unsatisfiable")
+			}
+		})
+	}
+}
+
 func TestTypeDomain_ApplyNotNil(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{

@@ -320,7 +320,7 @@ func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, 
 		},
 		IsNil: func(v IsNil) typ.Type {
 			if resolve(v.Path) == target {
-				return typ.Nil
+				return narrow.FilterByKind(t, kind.Nil)
 			}
 			return t
 		},
@@ -522,8 +522,8 @@ func applyConstraint(out *map[PathKey]typ.Type, env Env, c Constraint) bool {
 			return changed
 		},
 		IsNil: func(v IsNil) bool {
-			return applySinglePath(out, v.Path, func(_ typ.Type) typ.Type {
-				return typ.Nil
+			return applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
+				return narrow.FilterByKind(t, kind.Nil)
 			})
 		},
 		NotNil: func(v NotNil) bool {
