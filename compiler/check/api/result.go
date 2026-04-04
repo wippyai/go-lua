@@ -48,8 +48,8 @@ type FuncResult struct {
 	// Provides reachability conditions and exclusion facts for narrowing.
 	FlowSolution *flow.Solution
 
-	// FnRefinement captures the function's side effects (io, error, terminate).
-	// Propagated from callees and used for inter-function effect analysis.
+	// FnRefinement captures the function's inferred refinement summary.
+	// It includes propagated effect rows and branch-specific narrowing facts.
 	FnRefinement *constraint.FunctionRefinement
 
 	// NarrowSynth is the narrowed-phase synthesis engine for this function.

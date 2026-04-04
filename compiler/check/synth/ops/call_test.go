@@ -193,6 +193,56 @@ func TestCallWithGenericInference_MultiReturn(t *testing.T) {
 	if tuple.Elements[1] != typ.Boolean {
 		t.Errorf("second return should be boolean, got %v", tuple.Elements[1])
 	}
+
+	if len(result.Returns) != 2 {
+		t.Fatalf("expected 2 return slots, got %d", len(result.Returns))
+	}
+	if result.Returns[0] != typ.String || result.Returns[1] != typ.Boolean {
+		t.Fatalf("unexpected return vector: %v", result.Returns)
+	}
+}
+
+func TestCallWithGenericInference_SingleTupleReturnPreservesArityOne(t *testing.T) {
+	tupleValue := typ.NewTuple(typ.Integer, typ.String)
+	fn := typ.Func().
+		Returns(tupleValue).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	def := CallDef{Callee: fn}
+
+	result := CallWithGenericInference(ctx, def)
+	if result.Type != tupleValue {
+		t.Fatalf("expected tuple-valued return, got %v", result.Type)
+	}
+	if len(result.Returns) != 1 {
+		t.Fatalf("expected 1 return slot, got %d", len(result.Returns))
+	}
+	if result.Returns[0] != tupleValue {
+		t.Fatalf("expected first return slot to be tuple value, got %v", result.Returns[0])
+	}
+}
+
+func TestCallWithGenericInference_UnionCarriesMergedReturnVector(t *testing.T) {
+	one := typ.Func().Returns(typ.String).Build()
+	two := typ.Func().Returns(typ.String, typ.Boolean).Build()
+
+	ctx := db.NewQueryContext(db.New())
+	def := CallDef{
+		Callee: typ.NewUnion(one, two),
+	}
+
+	result := CallWithGenericInference(ctx, def)
+	if len(result.Returns) != 2 {
+		t.Fatalf("expected merged arity 2, got %d", len(result.Returns))
+	}
+	if result.Returns[0] != typ.String {
+		t.Fatalf("expected first merged slot string, got %v", result.Returns[0])
+	}
+	wantSecond := typ.NewUnion(typ.Nil, typ.Boolean)
+	if !typ.TypeEquals(result.Returns[1], wantSecond) {
+		t.Fatalf("expected second merged slot %v, got %v", wantSecond, result.Returns[1])
+	}
 }
 
 func TestCallWithGenericInference_NoReturn(t *testing.T) {

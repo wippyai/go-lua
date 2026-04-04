@@ -305,8 +305,17 @@ func (p *Processor) resolveSelfTypeForMethod(
 ) typ.Type {
 	var selfType typ.Type
 
+	// Prefer the explicit type-space binding for `T` in `function T:m(...)`.
+	// The receiver value `T` is the class table; the instance/self contract
+	// lives in the type namespace binding with the same name.
+	if info != nil && info.FuncDef != nil && info.FuncDef.ReceiverName != "" && info.DefScope != nil {
+		if named, ok := info.DefScope.LookupType(info.FuncDef.ReceiverName); ok && named != nil {
+			selfType = named
+		}
+	}
+
 	// First try root result facts.
-	if rootResult != nil && rootResult.Facts != nil {
+	if selfType == nil && rootResult != nil && rootResult.Facts != nil {
 		tv := rootResult.Facts.EffectiveTypeAt(info.NF.Point, sym)
 		if tv.Type != nil && tv.State == flow.StateResolved {
 			selfType = tv.Type

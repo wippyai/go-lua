@@ -125,9 +125,9 @@ func RunLiteral(input LiteralInput) LiteralOutput {
 	}
 }
 
-// InferEffect computes a FunctionRefinement from solved flow analysis.
+// InferRefinement computes a FunctionRefinement from solved flow analysis.
 // Examines return points to determine OnTrue/OnFalse/OnReturn constraints.
-func InferEffect(
+func InferRefinement(
 	graph *cfg.Graph,
 	solution *flow.Solution,
 	params []flow.ParamInfo,

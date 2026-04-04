@@ -276,7 +276,8 @@ func TestAssign_ErrorMessage(t *testing.T) {
 }
 
 // TestAssign_DynamicTableIndexing tests that tables populated via t[key] = value
-// are properly typed and can be accessed.
+// keep sound index semantics: exact dominating writes can be definite, while
+// arbitrary map lookups remain optional until proven present.
 func TestAssign_DynamicTableIndexing(t *testing.T) {
 	tests := []testutil.Case{
 		{
@@ -288,7 +289,7 @@ func TestAssign_DynamicTableIndexing(t *testing.T) {
 				for _, m in ipairs(methods) do
 					method_names[m.name] = true
 				end
-				local exists: boolean = method_names["greet"]
+				local exists: boolean? = method_names["greet"]
 			`,
 			WantError: false,
 			Stdlib:    true,

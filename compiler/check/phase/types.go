@@ -100,7 +100,7 @@ type PhaseEnv struct {
 	// ModuleBindings is the binding table for the entire module.
 	ModuleBindings *bind.BindingTable
 
-	// RefinementStore provides function effect lookups for callee analysis.
+	// RefinementStore provides function refinement lookups for callee analysis.
 	RefinementStore api.RefinementStore
 
 	// Scopes maps CFG points to scope states (populated after scope phase).
@@ -271,11 +271,11 @@ type NarrowInput struct {
 }
 
 // NarrowOutput contains outputs from the narrowing phase.
-// Phase D outputs: TypeFacts and effects.
+// Phase D outputs: TypeFacts and the inferred function refinement.
 type NarrowOutput struct {
-	Facts  flow.TypeFacts
-	Effect *constraint.FunctionRefinement
-	Synth  synth.Synth
+	Facts      flow.TypeFacts
+	Refinement *constraint.FunctionRefinement
+	Synth      synth.Synth
 }
 
 // ContextBuilder constructs Env instances from phase outputs.
@@ -385,7 +385,7 @@ func (b *ContextBuilder) BuildDeclared() *api.DeclaredEnvImpl {
 		LiteralTypes:    b.literalTypes,
 		AnnotatedVars:   b.annotatedVars,
 		BaseScope:       b.baseScope,
-		RefinementStore:     b.env.RefinementStore,
+		RefinementStore: b.env.RefinementStore,
 		ModuleAliases:   b.env.ModuleAliases,
 		GlobalTypes:     b.env.GlobalTypes,
 		ReturnSummaries: b.returnSummaries,
@@ -403,7 +403,7 @@ func (b *ContextBuilder) BuildNarrow() *api.NarrowEnvImpl {
 		AnnotatedVars:         b.annotatedVars,
 		Solution:              b.solution,
 		BaseScope:             b.baseScope,
-		RefinementStore:           b.env.RefinementStore,
+		RefinementStore:       b.env.RefinementStore,
 		ModuleAliases:         b.env.ModuleAliases,
 		GlobalTypes:           b.env.GlobalTypes,
 		NarrowReturnSummaries: b.narrowReturnSummaries,

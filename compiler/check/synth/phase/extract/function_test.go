@@ -297,7 +297,7 @@ func TestReturnInference_ArityUnion_ErrorObject(t *testing.T) {
 		},
 	}
 
-	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil)
+	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil, 0, nil)
 	if len(result) != 2 {
 		t.Fatalf("got %d return types, want 2", len(result))
 	}
@@ -353,7 +353,7 @@ func TestReturnInference_LastExprExpands(t *testing.T) {
 		},
 	}
 
-	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil)
+	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil, 0, nil)
 	if len(result) != 2 {
 		t.Fatalf("got %d return types, want 2", len(result))
 	}
@@ -395,7 +395,7 @@ func TestReturnInference_ZeroReturn(t *testing.T) {
 		},
 	}
 
-	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil)
+	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil, 0, nil)
 	if len(result) != 1 {
 		t.Fatalf("got %d return types, want 1", len(result))
 	}

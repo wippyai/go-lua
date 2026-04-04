@@ -40,14 +40,14 @@ func TestPropagate_WithLocalEffect(t *testing.T) {
 	}
 }
 
-func TestLookupEffectBySym_NilStore(t *testing.T) {
+func TestLookupRefinementBySym_NilStore(t *testing.T) {
 	result := LookupRefinementBySym(nil, nil, nil, 1)
 	if result != nil {
 		t.Errorf("expected nil for nil store, got %v", result)
 	}
 }
 
-func TestLookupEffectBySym_ZeroSym(t *testing.T) {
+func TestLookupRefinementBySym_ZeroSym(t *testing.T) {
 	result := LookupRefinementBySym(nil, nil, nil, 0)
 	if result != nil {
 		t.Errorf("expected nil for zero symbol, got %v", result)
@@ -255,7 +255,7 @@ func TestPropagate_CollectsEffectFromAssignmentCallSite(t *testing.T) {
 	}
 
 	result := Propagate(&api.FuncResult{
-		Graph:    graph,
+		Graph:        graph,
 		FnRefinement: &constraint.FunctionRefinement{},
 	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == symF {
@@ -283,7 +283,7 @@ func TestPropagate_CollectsEffectFromReturnCallSite(t *testing.T) {
 	}
 
 	result := Propagate(&api.FuncResult{
-		Graph:    graph,
+		Graph:        graph,
 		FnRefinement: &constraint.FunctionRefinement{},
 	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == symF {
@@ -320,7 +320,7 @@ func TestPropagate_UsesCanonicalCandidatesWhenRawSymbolMissing(t *testing.T) {
 	})
 
 	result := Propagate(&api.FuncResult{
-		Graph:    graph,
+		Graph:        graph,
 		FnRefinement: &constraint.FunctionRefinement{},
 	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == symF {
@@ -359,7 +359,7 @@ func TestPropagate_UsesModuleBindingNameFallback(t *testing.T) {
 	result := Propagate(&api.FuncResult{
 		Graph:          graph,
 		ModuleBindings: moduleBindings,
-		FnRefinement:       &constraint.FunctionRefinement{},
+		FnRefinement:   &constraint.FunctionRefinement{},
 	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == fallbackSym {
 			return &constraint.FunctionRefinement{

@@ -40,8 +40,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -72,9 +75,28 @@ func (s *Synthesizer) FunctionType(fn *ast.FunctionExpr, sc *scope.State) *typ.F
 //
 // If fn is nil, returns nil. If scope is nil, returns an empty function type.
 func (s *Synthesizer) SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *scope.State, expected *typ.Function) *typ.Function {
+	return s.synthFunctionTypeWithCapturePoint(fn, sc, expected, 0, nil)
+}
+
+func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
+	fn *ast.FunctionExpr,
+	sc *scope.State,
+	expected *typ.Function,
+	capturePoint cfg.Point,
+	captureTypes map[cfg.SymbolID]typ.Type,
+) *typ.Function {
 	if fn == nil {
 		return nil
 	}
+	if s.deps.FunctionTypeInProgress == nil {
+		s.deps.FunctionTypeInProgress = make(map[functionTypeProgressKey]bool)
+	}
+	progressKey := functionTypeProgressKey{Func: fn, CapturePoint: capturePoint}
+	if s.deps.FunctionTypeInProgress[progressKey] {
+		return s.buildFunctionTypeSummaryFallback(fn, sc, expected)
+	}
+	s.deps.FunctionTypeInProgress[progressKey] = true
+	defer delete(s.deps.FunctionTypeInProgress, progressKey)
 
 	builder := typ.Func()
 
@@ -140,7 +162,7 @@ func (s *Synthesizer) SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *sc
 		returns := s.ResolveReturnTypes(fn.ReturnTypes, resolveScope)
 		builder = builder.Returns(returns...)
 	} else {
-		if bodyReturns, hasErrorReturn := s.inferReturnTypesFromBody(fn, resolveScope, expected, fnGraph); len(bodyReturns) > 0 {
+		if bodyReturns, hasErrorReturn := s.inferReturnTypesFromBody(fn, resolveScope, expected, fnGraph, capturePoint, captureTypes); len(bodyReturns) > 0 {
 			inferredErrorReturn = hasErrorReturn
 			if expected != nil && len(expected.Returns) > 0 {
 				if typ.IsUnknownOnlyOrEmpty(bodyReturns) {
@@ -167,6 +189,8 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	parentScope *scope.State,
 	expected *typ.Function,
 	fnGraph *cfg.Graph,
+	capturePoint cfg.Point,
+	captureTypes map[cfg.SymbolID]typ.Type,
 ) ([]typ.Type, bool) {
 	if len(fn.Stmts) == 0 {
 		return nil, false
@@ -200,7 +224,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		if rt := returnSummaries[fnSym]; len(rt) > 0 {
 			if typ.HasKnownType(rt) {
 				summaryFallback = rt
-				if !s.IsNarrowing() {
+				if !s.IsNarrowing() && capturePoint == 0 && len(captureTypes) == 0 {
 					return rt, false
 				}
 			}
@@ -265,9 +289,11 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	// This allows nested local functions to call sibling locals defined in the parent scope.
 	if s.deps.CheckCtx != nil {
 		if types := s.deps.CheckCtx.Types(); types != nil {
-			p := cfg.Point(0)
+			p := capturePoint
 			if g := s.deps.CheckCtx.Graph(); g != nil {
-				p = g.Entry()
+				if p == 0 {
+					p = g.Entry()
+				}
 			}
 			if bindings := fnGraph.Bindings(); bindings != nil {
 				for _, sym := range bindings.CapturedSymbols(fn) {
@@ -277,7 +303,17 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 					if _, ok := overlay[sym]; ok {
 						continue
 					}
-					if tv := types.DeclaredAt(p, sym); tv.State == flow.StateResolved && tv.Type != nil {
+					if t := captureTypes[sym]; t != nil {
+						overlay[sym] = t
+						continue
+					}
+					if solution := s.deps.CheckCtx.Consts(); solution != nil {
+						if t := solution.TypeAt(p, constraint.Path{Symbol: sym}); t != nil {
+							overlay[sym] = t
+							continue
+						}
+					}
+					if tv := types.EffectiveTypeAt(p, sym); tv.State == flow.StateResolved && tv.Type != nil {
 						overlay[sym] = tv.Type
 					}
 				}
@@ -367,16 +403,17 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		})
 
 		prelimDeps := &Deps{
-			Ctx:            s.deps.Ctx,
-			Types:          s.deps.Types,
-			DefaultScope:   resolveScope,
-			Manifests:      s.deps.Manifests,
-			CheckCtx:       prelimCtx,
-			PreCache:       make(api.Cache),
-			NarrowCache:    make(api.Cache),
-			ModuleBindings: s.deps.ModuleBindings,
-			ModuleAliases:  moduleAliases,
-			Paths:          s.deps.Paths,
+			Ctx:                    s.deps.Ctx,
+			Types:                  s.deps.Types,
+			DefaultScope:           resolveScope,
+			Manifests:              s.deps.Manifests,
+			CheckCtx:               prelimCtx,
+			PreCache:               make(api.Cache),
+			NarrowCache:            make(api.Cache),
+			FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
+			ModuleBindings:         s.deps.ModuleBindings,
+			ModuleAliases:          moduleAliases,
+			Paths:                  s.deps.Paths,
 		}
 		prelimSynth = NewSynthesizer(prelimDeps, s.phase)
 		return prelimSynth
@@ -463,6 +500,37 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		}
 	}
 
+	// Apply the same direct mutation enrichment law used by return inference:
+	// returned locals must reflect visible field/index/direct container writes
+	// before return expressions are synthesized.
+	mutationBindings := fnGraph.Bindings()
+	if mutationBindings == nil {
+		mutationBindings = s.deps.ModuleBindings
+	}
+	if mutationBindings != nil {
+		enrichedSynth := func(expr ast.Expr, p cfg.Point) typ.Type {
+			if ident, ok := expr.(*ast.IdentExpr); ok {
+				if sym, found := mutationBindings.SymbolOf(ident); found && sym != 0 {
+					if t := overlay[sym]; t != nil {
+						return t
+					}
+				}
+			}
+			return ensurePrelimSynth().SynthExpr(expr, p, nil)
+		}
+
+		fieldAssignments := overlaymut.CollectFieldAssignments(fnGraph, enrichedSynth, nil)
+		overlaymut.ApplyFieldMergeToOverlay(overlay, fieldAssignments)
+
+		indexerAssignments := overlaymut.CollectIndexerAssignments(fnGraph, enrichedSynth, mutationBindings, nil)
+		tableMutations := mutator.CollectTableInsertMutations(fnGraph, enrichedSynth, mutationBindings)
+		mutator.MergeIndexerMutations(indexerAssignments, tableMutations)
+		overlaymut.ApplyIndexerMergeToOverlay(overlay, indexerAssignments)
+
+		directMutations := mutator.CollectTableInsertOnDirect(fnGraph, enrichedSynth, mutationBindings)
+		overlaymut.ApplyDirectMutationsToOverlay(overlay, directMutations)
+	}
+
 	// Phase 2: build final context with enriched overlay for return inference.
 	fnCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
 		Graph:         fnGraph,
@@ -474,19 +542,20 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	})
 
 	tempDeps := &Deps{
-		Ctx:            s.deps.Ctx,
-		Types:          s.deps.Types,
-		DefaultScope:   resolveScope,
-		Manifests:      s.deps.Manifests,
-		CheckCtx:       fnCheckCtx,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
-		ModuleBindings: s.deps.ModuleBindings,
-		ModuleAliases:  moduleAliases,
-		Paths:          s.deps.Paths,
+		Ctx:                    s.deps.Ctx,
+		Types:                  s.deps.Types,
+		DefaultScope:           resolveScope,
+		Manifests:              s.deps.Manifests,
+		CheckCtx:               fnCheckCtx,
+		PreCache:               make(api.Cache),
+		NarrowCache:            make(api.Cache),
+		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
+		ModuleBindings:         s.deps.ModuleBindings,
+		ModuleAliases:          moduleAliases,
+		Paths:                  s.deps.Paths,
 	}
-	if s.IsNarrowing() && s.deps.Flow != nil {
-		if fnCheckCtx != nil && fnCheckCtx.Graph() == fnGraph {
+	if s.IsNarrowing() && s.deps.Flow != nil && s.deps.CheckCtx != nil {
+		if currentGraph, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && currentGraph == fnGraph {
 			tempDeps.Flow = s.deps.Flow
 		}
 	}
@@ -709,6 +778,43 @@ func (s *Synthesizer) buildFunctionTypeWithSummary(
 	}
 
 	return join.WithReturnsOrUnknown(sig, returnTypes)
+}
+
+func (s *Synthesizer) buildFunctionTypeSummaryFallback(
+	fn *ast.FunctionExpr,
+	sc *scope.State,
+	expected *typ.Function,
+) *typ.Function {
+	if fn == nil {
+		return nil
+	}
+	sig := s.ResolveFunctionSignature(fn, sc)
+	if sig == nil {
+		return nil
+	}
+	if expected != nil && len(sig.Returns) == 0 && len(expected.Returns) > 0 {
+		sig = join.WithReturns(sig, expected.Returns)
+	}
+	var summaries map[cfg.SymbolID][]typ.Type
+	if s.deps.CheckCtx != nil {
+		if s.IsNarrowing() {
+			if ctx, ok := s.deps.CheckCtx.(api.NarrowEnv); ok {
+				summaries = ctx.NarrowReturnSummaries()
+			}
+		} else if ctx, ok := s.deps.CheckCtx.(api.DeclaredEnv); ok {
+			summaries = ctx.ReturnSummaries()
+		}
+	}
+	var fnSym cfg.SymbolID
+	if s.deps.CheckCtx != nil {
+		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && pg != nil {
+			fnSym = localFunctionSymbol(pg, fn)
+		}
+	}
+	if fnSym != 0 {
+		return join.WithReturnsOrUnknown(sig, summaries[fnSym])
+	}
+	return join.WithReturnsOrUnknown(sig, nil)
 }
 
 func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, expected *typ.Function) map[cfg.SymbolID]typ.Type {

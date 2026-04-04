@@ -347,15 +347,15 @@ func BuildContextTypeKeyResolver(ctx api.BaseEnv) func(string, *scope.State) (na
 	}
 }
 
-// BuildEffectLookup creates the effect lookup function from Env.
+// BuildRefinementLookup creates the refinement lookup function from Env.
 // Returns symbol-based lookup only - all functions have symbols.
-func BuildEffectLookup(ctx api.BaseEnv) constraint.RefinementLookupBySym {
-	if ctx == nil || ctx.Effects() == nil {
+func BuildRefinementLookup(ctx api.BaseEnv) constraint.RefinementLookupBySym {
+	if ctx == nil || ctx.Refinements() == nil {
 		return nil
 	}
-	effects := ctx.Effects()
+	refinements := ctx.Refinements()
 	return func(sym cfg.SymbolID) *constraint.FunctionRefinement {
-		return effects.LookupBySym(sym)
+		return refinements.LookupBySym(sym)
 	}
 }
 

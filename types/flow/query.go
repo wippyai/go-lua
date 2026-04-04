@@ -76,15 +76,19 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	}
 
 	if full != nil && full.Kind().IsPlaceholder() && derived != nil {
-		return derived
+		full = derived
 	}
 	if derived != nil && derived.Kind().IsPlaceholder() && full != nil {
-		return full
+		derived = full
 	}
+
+	var candidate typ.Type
 	if full != nil {
-		return full
+		candidate = full
+	} else {
+		candidate = derived
 	}
-	return derived
+	return candidate
 }
 
 // ConditionAt returns the full DNF condition at a CFG point.

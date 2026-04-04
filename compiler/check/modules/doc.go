@@ -17,7 +17,7 @@
 // # Type Enrichment
 //
 // Exported types are enriched with:
-//   - Function effect annotations (terminates, type guards)
+//   - Function refinement annotations (terminates, type guards)
 //   - Refined field types from flow analysis
 //   - Method signatures from implementation analysis
 //

@@ -1094,6 +1094,13 @@ func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func
 	}
 
 	return typ.Visit(arrayType, typ.Visitor[typ.Type]{
+		Alias: func(a *typ.Alias) typ.Type {
+			widened := WidenArrayElementType(a.Target, elementType, joinFn)
+			if widened == nil || typ.TypeEquals(widened, a.Target) {
+				return arrayType
+			}
+			return typ.NewAlias(a.Name, widened)
+		},
 		Array: func(arr *typ.Array) typ.Type {
 			return typ.NewArray(joinFn(arr.Element, elementType))
 		},
@@ -1147,6 +1154,13 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 	}
 
 	return typ.Visit(mapType, typ.Visitor[typ.Type]{
+		Alias: func(a *typ.Alias) typ.Type {
+			widened := WidenMapValueArray(a.Target, keyType, elementType)
+			if widened == nil || typ.TypeEquals(widened, a.Target) {
+				return mapType
+			}
+			return typ.NewAlias(a.Name, widened)
+		},
 		Map: func(m *typ.Map) typ.Type {
 			newKey := mergeMapKeyDomain(m.Key, keyType)
 			newVal := WidenArrayElementType(m.Value, elementType, typ.JoinPreferNonSoft)
@@ -1258,6 +1272,13 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 	}
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
+		Alias: func(a *typ.Alias) typ.Type {
+			widened := widenWithIndexer(a.Target, keyType, valType)
+			if widened == nil || typ.TypeEquals(widened, a.Target) {
+				return t
+			}
+			return typ.NewAlias(a.Name, widened)
+		},
 		Tuple: func(tp *typ.Tuple) typ.Type {
 			elemType := valType
 			for _, elem := range tp.Elements {
@@ -1365,30 +1386,12 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 			continue
 		}
 
-		// Construct path for this phi symbol
-		path := constraint.Path{
-			Root:   phi.Target.Root,
-			Symbol: phi.Target.Symbol,
-		}
-
 		// Collect types from operands, applying edge conditions
 		types := s.scratchTypes[:0]
 		for _, op := range phi.Operands {
-			opKey := s.pkResolver.KeyAtVersion(op.Version.Symbol, op.Version.ID, nil)
-			if opKey == "" {
-				continue
-			}
-			opType := s.values[string(opKey)]
+			opType := s.phiOperandTypeAt(p, op, nil)
 			if opType == nil {
 				continue
-			}
-
-			// Apply edge condition from predecessor to phi point
-			edgeK := edgeKey{from: op.From, to: p}
-			if cond, ok := s.edgeConditions[edgeK]; ok && cond.HasConstraints() {
-				if narrowed := s.applyCondition(op.From, opType, path, cond); narrowed != nil {
-					opType = narrowed
-				}
 			}
 			types = append(types, opType)
 		}
@@ -1423,32 +1426,11 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 			}
 			types = types[:0]
 			for _, op := range phi.Operands {
-				opBaseKey := s.pkResolver.KeyAtVersion(op.Version.Symbol, op.Version.ID, nil)
-				if opBaseKey == "" {
-					types = append(types, typ.Nil)
-					continue
+				opType := s.phiOperandTypeAt(p, op, segments)
+				if opType == nil {
+					opType = typ.Nil
 				}
-				opKey := string(opBaseKey) + suffix
-				if opType := s.values[opKey]; opType != nil {
-					types = append(types, opType)
-				} else {
-					// Fall back to deriving the suffix from the operand's base type.
-					// Structured assignments may update a field path without writing
-					// every sibling suffix key explicitly on each version.
-					opBaseType := s.values[string(opBaseKey)]
-					if opBaseType == nil {
-						types = append(types, typ.Nil)
-						continue
-					}
-					derived, ok := s.deriveTypeFrom(opBaseType, segments)
-					if !ok || derived == nil {
-						// Missing suffix on one phi operand means the merged
-						// field/index path is nil on that path.
-						types = append(types, typ.Nil)
-						continue
-					}
-					types = append(types, derived)
-				}
+				types = append(types, opType)
 			}
 			if len(types) == 0 {
 				continue
@@ -1464,6 +1446,36 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 	}
 
 	return changedKeys
+}
+
+func (s *Solution) phiOperandTypeAt(joinPoint cfg.Point, op cfg.PhiOperand, segments []constraint.Segment) typ.Type {
+	if s == nil {
+		return nil
+	}
+	path := constraint.Path{
+		Root:    op.Version.Root,
+		Symbol:  op.Version.Symbol,
+		Version: op.Version.ID,
+	}
+	if len(segments) > 0 {
+		path.Segments = append(path.Segments, segments...)
+	}
+
+	opType := s.NarrowedTypeAt(op.From, path)
+	if opType == nil {
+		opType = s.baseTypeAt(op.From, path)
+	}
+	if opType == nil {
+		return nil
+	}
+
+	edgeK := edgeKey{from: op.From, to: joinPoint}
+	if cond, ok := s.edgeConditions[edgeK]; ok && cond.HasConstraints() {
+		if narrowed := s.applyCondition(op.From, opType, path, cond); narrowed != nil {
+			opType = narrowed
+		}
+	}
+	return opType
 }
 
 // collectPhiOperandSuffixes collects field suffixes from phi operand canonical keys.

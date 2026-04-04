@@ -122,8 +122,8 @@ func TestDeclaredEnv_NilSafety(t *testing.T) {
 	if env.Consts() != nil {
 		t.Error("nil.Consts() should be nil")
 	}
-	if env.Effects() != nil {
-		t.Error("nil.Effects() should be nil")
+	if env.Refinements() != nil {
+		t.Error("nil.Refinements() should be nil")
 	}
 	if env.TypeNames() != nil {
 		t.Error("nil.TypeNames() should be nil")

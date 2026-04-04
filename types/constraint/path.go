@@ -36,7 +36,7 @@ type Segment struct {
 // Symbol provides SSA identity; Root is optional for display when Symbol is set.
 // When Symbol is non-zero, it is the primary identity for the path root.
 // Placeholder paths ($0, $1, etc.) use Root only with Symbol=0 and are
-// substituted with concrete paths when applying function effects at call sites.
+// substituted with concrete paths when applying function refinements at call sites.
 //
 // Examples:
 //   - {Root: "x", Symbol: 5}: Variable x with symbol ID 5
@@ -63,7 +63,7 @@ func NewPath(sym cfg.SymbolID, name string) Path {
 	return Path{Root: name, Symbol: sym}
 }
 
-// NewPlaceholder creates a placeholder path for function effect parameters.
+// NewPlaceholder creates a placeholder path for function refinement parameters.
 // Index 0 creates $0, index 1 creates $1, etc.
 //
 // Example:
@@ -389,7 +389,7 @@ func (p Path) Less(other Path) bool {
 	return false
 }
 
-// IsPlaceholder returns true if this path is a placeholder (used in function effects).
+// IsPlaceholder returns true if this path is a placeholder (used in function refinements).
 // Placeholders have Symbol == 0 and Root matching $0, $1, etc.
 func (p Path) IsPlaceholder() bool {
 	return p.Symbol == 0 && p.PlaceholderIndex() >= 0

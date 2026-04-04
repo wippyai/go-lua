@@ -358,8 +358,8 @@ func (s *Session) PluginLoad(key any) any {
 //
 // EFFECT ENRICHMENT:
 // If the returned value is a table/record, its method types are enriched with
-// function effects computed during analysis. This ensures exported functions
-// carry their side effect annotations.
+// function refinements computed during analysis. This ensures exported functions
+// carry their refinement summaries.
 //
 // USAGE:
 //
@@ -370,13 +370,13 @@ func (s *Session) ExportType() typ.Type {
 	if s == nil {
 		return typ.Nil
 	}
-	var effects map[cfg.SymbolID]*constraint.FunctionRefinement
+	var refinements map[cfg.SymbolID]*constraint.FunctionRefinement
 	if s.Store != nil {
 		if s.Store.InterprocPrev != nil {
-			effects = s.Store.InterprocPrev.Effects
+			refinements = s.Store.InterprocPrev.Refinements
 		}
 	}
-	return modules.ExportType(s.RootResult, effects)
+	return modules.ExportType(s.RootResult, refinements)
 }
 
 // Release frees heavy allocations to reduce memory pressure after analysis.
@@ -414,12 +414,12 @@ func (s *Session) Release() {
 		// Clear interproc snapshots
 		if s.Store.InterprocPrev != nil {
 			clear(s.Store.InterprocPrev.Facts)
-			clear(s.Store.InterprocPrev.Effects)
+			clear(s.Store.InterprocPrev.Refinements)
 			clear(s.Store.InterprocPrev.ConstructorFields)
 		}
 		if s.Store.InterprocNext != nil {
 			clear(s.Store.InterprocNext.Facts)
-			clear(s.Store.InterprocNext.Effects)
+			clear(s.Store.InterprocNext.Refinements)
 			clear(s.Store.InterprocNext.ConstructorFields)
 		}
 
@@ -467,7 +467,7 @@ func (s *Session) ExportTypes() map[string]typ.Type {
 // ExportManifest builds a module manifest from this session using canonical export policy.
 //
 // The manifest includes:
-//   - Export type from root returns (with converged function effects applied)
+//   - Export type from root returns (with converged function refinements applied)
 //   - Exported type definitions
 //   - Function summaries for exported functions (ensures/effects for cross-module narrowing)
 //
@@ -489,24 +489,24 @@ func (s *Session) ExportManifest(modulePath string) *io.Manifest {
 		manifest.DefineType(typeName, t)
 	}
 
-	modules.ExportFunctionSummaries(manifest, exportType, s.RootGraph(), s.EffectsForExport())
+	modules.ExportFunctionSummaries(manifest, exportType, s.RootGraph(), s.RefinementsForExport())
 	return manifest
 }
 
-// EffectsForExport extracts computed function effects for manifest generation.
-// Returns effects from the final converged interproc snapshot.
+// RefinementsForExport extracts computed function refinements for manifest generation.
+// Returns refinements from the final converged interproc snapshot.
 //
-// The returned map associates each function's SymbolID with its computed effect,
+// The returned map associates each function's SymbolID with its computed refinement,
 // including IO effects (row), termination status, and conditional effects.
 // This enables importers to see side effect information for exported functions.
-func (s *Session) EffectsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
+func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
 	if s == nil || s.Store == nil {
 		return nil
 	}
 	if s.Store.InterprocPrev == nil {
 		return nil
 	}
-	return modules.CopyEffectsForExport(s.Store.InterprocPrev.Effects)
+	return modules.CopyRefinementsForExport(s.Store.InterprocPrev.Refinements)
 }
 
 // RootGraph returns the root function's control flow graph.

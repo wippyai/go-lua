@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -751,7 +750,7 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 		seg := segs[0]
 		switch seg.Kind {
 		case constraint.SegmentField, constraint.SegmentIndexString:
-			fieldType, optional := splitOptionalAssignedFieldType(s.values[key])
+			fieldType, optional := typ.SplitNilableFieldType(s.values[key])
 			fields = append(fields, mergedField{Name: seg.Name, Type: fieldType, Optional: optional})
 		}
 	}
@@ -766,6 +765,29 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 
 	// Merge fields into base type
 	return typ.Visit(baseType, typ.Visitor[typ.Type]{
+		Alias: func(a *typ.Alias) typ.Type {
+			merged := s.mergeFieldAssignments(a.Target, baseKey)
+			if merged == nil || typ.TypeEquals(merged, a.Target) {
+				return baseType
+			}
+			return typ.NewAlias(a.Name, merged)
+		},
+		Recursive: func(r *typ.Recursive) typ.Type {
+			mergedBody := s.mergeFieldAssignments(r.Body, baseKey)
+			if mergedBody == nil || typ.TypeEquals(mergedBody, r.Body) {
+				return baseType
+			}
+
+			rebuilt := typ.NewRecursivePlaceholder(r.Name)
+			rebuiltBody := typ.Rewrite(mergedBody, func(n typ.Type) (typ.Type, bool) {
+				if typ.IsRecursiveRef(n, r) {
+					return rebuilt, true
+				}
+				return nil, false
+			})
+			rebuilt.SetBody(rebuiltBody)
+			return rebuilt
+		},
 		Map: func(m *typ.Map) typ.Type {
 			// Map base: create Record(open) with MapComponent + merged fields
 			builder := typ.NewRecord().SetOpen(true)
@@ -805,8 +827,13 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 				fieldType := f.Type
 				optional := f.Optional
 				if assigned, ok := assignedByName[f.Name]; ok {
-					fieldType = typ.JoinReturnSlot(fieldType, assigned.t)
-					optional = optional || assigned.optional
+					// Child-path facts already represent the current value of the
+					// field at this program point. Rebuilding the root should
+					// project that current field value back into the record rather
+					// than re-join it with the declared/base slot as if it were a
+					// separate branch.
+					fieldType = assigned.t
+					optional = assigned.optional
 					delete(assignedByName, f.Name)
 				}
 				switch {
@@ -848,72 +875,4 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 			return builder.Build()
 		},
 	})
-}
-
-// splitOptionalAssignedFieldType converts nil-capable field assignment types
-// into (innerType, optional=true) so merged record shapes model absent fields
-// as optional fields instead of required fields typed as T|nil.
-func splitOptionalAssignedFieldType(t typ.Type) (typ.Type, bool) {
-	if t == nil {
-		return typ.Unknown, true
-	}
-	// Preserve alias identity for non-optional assignments. Losing alias names
-	// here breaks downstream receiver checks for self-recursive method types.
-	if a, ok := t.(*typ.Alias); ok {
-		if a == nil || a.Target == nil {
-			return t, false
-		}
-		if opt, ok := a.Target.(*typ.Optional); ok && opt != nil && opt.Inner != nil {
-			return opt.Inner, true
-		}
-		if u, ok := a.Target.(*typ.Union); ok && u != nil && len(u.Members) > 0 {
-			hasNil := false
-			nonNil := make([]typ.Type, 0, len(u.Members))
-			for _, m := range u.Members {
-				if m != nil && m.Kind() == kind.Nil {
-					hasNil = true
-					continue
-				}
-				nonNil = append(nonNil, m)
-			}
-			if hasNil {
-				switch len(nonNil) {
-				case 0:
-					return typ.Nil, true
-				case 1:
-					return nonNil[0], true
-				default:
-					return typ.NewUnion(nonNil...), true
-				}
-			}
-		}
-		return t, false
-	}
-	if opt, ok := t.(*typ.Optional); ok && opt != nil && opt.Inner != nil {
-		return opt.Inner, true
-	}
-	u, ok := t.(*typ.Union)
-	if !ok || u == nil || len(u.Members) == 0 {
-		return t, false
-	}
-	hasNil := false
-	nonNil := make([]typ.Type, 0, len(u.Members))
-	for _, m := range u.Members {
-		if m != nil && m.Kind() == kind.Nil {
-			hasNil = true
-			continue
-		}
-		nonNil = append(nonNil, m)
-	}
-	if !hasNil {
-		return t, false
-	}
-	switch len(nonNil) {
-	case 0:
-		return typ.Nil, true
-	case 1:
-		return nonNil[0], true
-	default:
-		return typ.NewUnion(nonNil...), true
-	}
 }

@@ -77,14 +77,10 @@ func extractTableFields(table *ast.TableExpr, expected typ.Type, synth api.Synth
 	fields := make([]ops.FieldDef, 0, len(table.Fields))
 	var arrayElems []typ.Type
 
-	var mapValueType typ.Type
-	if m, ok := unwrap.Alias(expected).(*typ.Map); ok {
-		mapValueType = m.Value
-	}
-
 	for _, field := range table.Fields {
 		if field.Key == nil {
-			elemType := synth.SynthWithExpected(field.Value, p, mapValueType)
+			elemExpected := ops.ExpectedTableElementType(expected, len(arrayElems))
+			elemType := synth.SynthWithExpected(field.Value, p, elemExpected)
 			if elemType == nil {
 				elemType = typ.Unknown
 			}
@@ -103,7 +99,8 @@ func extractTableFields(table *ast.TableExpr, expected typ.Type, synth api.Synth
 			name = k.Value
 		case *ast.NumberExpr:
 			_ = k
-			elemType := synth.SynthWithExpected(field.Value, p, mapValueType)
+			elemExpected := ops.ExpectedTableElementType(expected, len(arrayElems))
+			elemType := synth.SynthWithExpected(field.Value, p, elemExpected)
 			arrayElems = append(arrayElems, elemType)
 			continue
 		default:

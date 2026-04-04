@@ -79,6 +79,13 @@ func fieldDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 			ft, ok := fieldInOptional(o, name, depth)
 			return fieldResult{t: ft, ok: ok}
 		},
+		Recursive: func(rec *typ.Recursive) fieldResult {
+			if rec.Body == nil || rec.Body == rec {
+				return fieldResult{}
+			}
+			ft, ok := fieldDepth(rec.Body, name, depth+1)
+			return fieldResult{t: ft, ok: ok}
+		},
 		Alias: func(a *typ.Alias) fieldResult {
 			ft, ok := fieldDepth(a.Target, name, depth+1)
 			return fieldResult{t: ft, ok: ok}
@@ -128,6 +135,9 @@ func fieldInRecordDepth(r *typ.Record, name string, depth int) (typ.Type, bool) 
 
 	// Direct field lookup
 	if f := r.GetField(name); f != nil {
+		if f.Optional {
+			return typ.NewOptional(f.Type), true
+		}
 		return f.Type, true
 	}
 

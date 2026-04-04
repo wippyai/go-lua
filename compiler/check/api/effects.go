@@ -5,22 +5,22 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
-// RefinementFacts provides function effect lookup.
+// RefinementFacts provides function refinement lookup.
 type RefinementFacts interface {
 	LookupBySym(sym cfg.SymbolID) *constraint.FunctionRefinement
 }
 
-// RefinementStore provides methods for storing and retrieving function effects.
+// RefinementStore provides methods for storing and retrieving function refinements.
 type RefinementStore interface {
 	LookupRefinementBySym(sym cfg.SymbolID) *constraint.FunctionRefinement
 }
 
-// storeRefinementFacts implements RefinementFacts backed by an RefinementStore.
+// storeRefinementFacts implements RefinementFacts backed by a RefinementStore.
 type storeRefinementFacts struct {
 	store RefinementStore
 }
 
-// NewRefinementFacts creates an RefinementFacts backed by an RefinementStore.
+// NewRefinementFacts creates RefinementFacts backed by a RefinementStore.
 func NewRefinementFacts(store RefinementStore) RefinementFacts {
 	if store == nil {
 		return nilRefinementFacts{}

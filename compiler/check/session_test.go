@@ -388,10 +388,10 @@ func TestAttachStore_NilStore(t *testing.T) {
 func TestSessionStore_EffectMaps(t *testing.T) {
 	store := store.NewSessionStore()
 
-	if store.InterprocPrev == nil || store.InterprocPrev.Effects == nil {
+	if store.InterprocPrev == nil || store.InterprocPrev.Refinements == nil {
 		t.Error("InterprocPrev effects not initialized")
 	}
-	if store.InterprocNext == nil || store.InterprocNext.Effects == nil {
+	if store.InterprocNext == nil || store.InterprocNext.Refinements == nil {
 		t.Error("InterprocNext effects not initialized")
 	}
 }
@@ -419,7 +419,7 @@ func TestSessionStore_ClearIterationChannels(t *testing.T) {
 	store := store.NewSessionStore()
 
 	store.StoreConstructorFields(cfg.SymbolID(2), map[string]typ.Type{"name": typ.String})
-	store.InterprocPrev.Effects[cfg.SymbolID(4)] = &constraint.FunctionRefinement{}
+	store.InterprocPrev.Refinements[cfg.SymbolID(4)] = &constraint.FunctionRefinement{}
 	store.StoreFunctionRefinement(cfg.SymbolID(5), &constraint.FunctionRefinement{})
 
 	store.ClearIterationChannels()
@@ -427,7 +427,7 @@ func TestSessionStore_ClearIterationChannels(t *testing.T) {
 	if store.InterprocNext == nil || len(store.InterprocNext.ConstructorFields) != 0 {
 		t.Fatal("expected constructor fields to be cleared")
 	}
-	if len(store.InterprocPrev.Effects) != 0 || len(store.InterprocNext.Effects) != 0 {
+	if len(store.InterprocPrev.Refinements) != 0 || len(store.InterprocNext.Refinements) != 0 {
 		t.Fatal("expected effects to be cleared")
 	}
 }

@@ -87,7 +87,7 @@ func TestConstraintsFromCallOnReturn_OnlyAppliesMustConstraints(t *testing.T) {
 		Args:         []ast.Expr{&ast.IdentExpr{Value: "x"}},
 	}
 
-	effectLookup := func(id typecfg.SymbolID) *constraint.FunctionRefinement {
+	refinementLookup := func(id typecfg.SymbolID) *constraint.FunctionRefinement {
 		if id != sym {
 			return nil
 		}
@@ -107,7 +107,7 @@ func TestConstraintsFromCallOnReturn_OnlyAppliesMustConstraints(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		effectLookup,
+		refinementLookup,
 		nil,
 		nil,
 		nil,
@@ -237,14 +237,14 @@ func TestCallTerminates_UsesCanonicalCandidatesWhenRawSymbolMissing(t *testing.T
 	// from call expression/bindings and still detect termination.
 	callInfo.CalleeSymbol = 0
 
-	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
+	refinementLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == errorSym {
 			return &constraint.FunctionRefinement{Terminates: true}
 		}
 		return nil
 	}
 
-	if !CallTerminates(callInfo, point, nil, nil, effectLookup, graph, nil) {
+	if !CallTerminates(callInfo, point, nil, nil, refinementLookup, graph, nil) {
 		t.Fatal("expected terminating call via canonical callee candidate")
 	}
 }
@@ -291,14 +291,14 @@ func TestCallTerminates_UsesModuleBindingNameFallback(t *testing.T) {
 	callInfo.Callee = &ast.IdentExpr{Value: "error_alias"}
 	callInfo.CalleeName = "error_alias"
 
-	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
+	refinementLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == errorSym {
 			return &constraint.FunctionRefinement{Terminates: true}
 		}
 		return nil
 	}
 
-	if !CallTerminates(callInfo, point, nil, nil, effectLookup, graph, moduleBindings) {
+	if !CallTerminates(callInfo, point, nil, nil, refinementLookup, graph, moduleBindings) {
 		t.Fatal("expected terminating call via module-binding callee candidate")
 	}
 }
@@ -356,17 +356,17 @@ func TestPointHasTerminatingCallSite_AssignSourceCall(t *testing.T) {
 		t.Fatal("expected x assignment with resolvable error() call symbol")
 	}
 
-	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
+	refinementLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == errorSym {
 			return &constraint.FunctionRefinement{Terminates: true}
 		}
 		return nil
 	}
 
-	if !PointHasTerminatingCallSite(graph, xPoint, nil, nil, effectLookup, nil) {
+	if !PointHasTerminatingCallSite(graph, xPoint, nil, nil, refinementLookup, nil) {
 		t.Fatal("expected terminating callsite at x assignment point")
 	}
-	if yPoint != 0 && PointHasTerminatingCallSite(graph, yPoint, nil, nil, effectLookup, nil) {
+	if yPoint != 0 && PointHasTerminatingCallSite(graph, yPoint, nil, nil, refinementLookup, nil) {
 		t.Fatal("did not expect terminating callsite at y assignment point")
 	}
 }
@@ -402,14 +402,14 @@ func TestComputeDeadPoints_AssignSourceCallTerminates(t *testing.T) {
 		t.Fatal("expected x assignment with resolvable error() call symbol")
 	}
 
-	effectLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
+	refinementLookup := func(sym typecfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == errorSym {
 			return &constraint.FunctionRefinement{Terminates: true}
 		}
 		return nil
 	}
 
-	dead := ComputeDeadPoints(graph, nil, nil, effectLookup, nil)
+	dead := ComputeDeadPoints(graph, nil, nil, refinementLookup, nil)
 	if len(dead) == 0 {
 		t.Fatal("expected at least one dead point from terminating assignment call")
 	}

@@ -237,6 +237,48 @@ func TestWidenMapValueArray_PrefersNonSoftElement(t *testing.T) {
 	}
 }
 
+func TestWidenArrayElementType_PreservesAlias(t *testing.T) {
+	base := typ.NewAlias("Items", typ.NewArray(typ.String))
+	got := WidenArrayElementType(base, typ.Integer, typ.JoinPreferNonSoft)
+	alias, ok := got.(*typ.Alias)
+	if !ok {
+		t.Fatalf("WidenArrayElementType(alias) = %T, want *typ.Alias", got)
+	}
+	if alias.Name != "Items" {
+		t.Fatalf("alias name = %q, want Items", alias.Name)
+	}
+	arr, ok := alias.Target.(*typ.Array)
+	if !ok {
+		t.Fatalf("alias target = %T, want *typ.Array", alias.Target)
+	}
+	if !typ.TypeEquals(arr.Element, typ.NewUnion(typ.String, typ.Integer)) {
+		t.Fatalf("alias array element = %v, want string|integer", arr.Element)
+	}
+}
+
+func TestWidenMapValueArray_PreservesAlias(t *testing.T) {
+	base := typ.NewAlias("Registry", typ.NewMap(typ.String, typ.NewArray(typ.String)))
+	got := WidenMapValueArray(base, typ.String, typ.Integer)
+	alias, ok := got.(*typ.Alias)
+	if !ok {
+		t.Fatalf("WidenMapValueArray(alias) = %T, want *typ.Alias", got)
+	}
+	if alias.Name != "Registry" {
+		t.Fatalf("alias name = %q, want Registry", alias.Name)
+	}
+	mp, ok := alias.Target.(*typ.Map)
+	if !ok {
+		t.Fatalf("alias target = %T, want *typ.Map", alias.Target)
+	}
+	arr, ok := mp.Value.(*typ.Array)
+	if !ok {
+		t.Fatalf("map value = %T, want *typ.Array", mp.Value)
+	}
+	if !typ.TypeEquals(arr.Element, typ.NewUnion(typ.String, typ.Integer)) {
+		t.Fatalf("map alias array element = %v, want string|integer", arr.Element)
+	}
+}
+
 func TestProcessJoinReturnChangedKeys_NoPhi(t *testing.T) {
 	c := cfg.New()
 	g := newMockSSAGraph(c)

@@ -148,6 +148,14 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 		return c.check(sub, aa.Target, depth+1)
 	}
 
+	if rr, ok := sub.(*typ.Recursive); ok && super.Kind() != kind.Recursive && rr.Body != nil && rr.Body != rr {
+		return c.check(rr.Body, super, depth+1)
+	}
+
+	if rr, ok := super.(*typ.Recursive); ok && sub.Kind() != kind.Recursive && rr.Body != nil && rr.Body != rr {
+		return c.check(sub, rr.Body, depth+1)
+	}
+
 	// Handle instantiated generics
 	subInst, subIsInst := sub.(*typ.Instantiated)
 	superInst, superIsInst := super.(*typ.Instantiated)
@@ -993,6 +1001,8 @@ func isTableLikeType(t typ.Type) bool {
 	switch v := t.(type) {
 	case *typ.Alias:
 		return isTableLikeType(v.Target)
+	case *typ.Recursive:
+		return v.Body != nil && v.Body != v && isTableLikeType(v.Body)
 	case *typ.Record, *typ.Map, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Intersection:
 		return true
 	default:

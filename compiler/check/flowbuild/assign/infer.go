@@ -49,6 +49,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
@@ -147,6 +148,8 @@ func collectInferredTypes(
 	if graph == nil {
 		return inferred
 	}
+	idom, _ := cfganalysis.ComputeDominators(graph.CFG())
+	structuredWrites := indexStructuredWrites(graph)
 
 	bindings := graph.Bindings()
 	if moduleBindings == nil {
@@ -458,7 +461,7 @@ func collectInferredTypes(
 			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
 			overlay := overlayScratch
 
-			wrappedSynth := synthWithInferenceOverlay(overlay, funcSigTypes, paramSet, annotated, bindings, synth)
+			wrappedSynth := synthWithInferenceOverlay(graph, overlay, funcSigTypes, paramSet, annotated, bindings, synth)
 			callSynthFor := func(p cfg.Point, info *cfg.CallInfo) func(ast.Expr, cfg.Point) typ.Type {
 				if info == nil {
 					return wrappedSynth
@@ -484,8 +487,9 @@ func collectInferredTypes(
 					}
 					return rhsResolver(point, sym)
 				})
+				callOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, callOverlay, rhsResolver, wrappedSynth)
 
-				return synthWithInferenceOverlay(callOverlay, funcSigTypes, paramSet, annotated, bindings, synth)
+				return synthWithInferenceOverlay(graph, callOverlay, funcSigTypes, paramSet, annotated, bindings, synth)
 			}
 
 			// Infer expected argument types for a call using the call inference pipeline.
@@ -668,21 +672,13 @@ func collectInferredTypes(
 									}
 									return rhsResolver(point, sym)
 								})
+								rhsOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, rhsOverlay, rhsResolver, wrappedSynth)
 								values = expandedAssignValues(synthAPI, info, p, rhsOverlay)
 								valuesComputed = true
 							}
 							if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
 								assignedType = value
-								// Prefer direct expression synthesis when slot expansion
-								// yields `any` for non-call RHS but the expression itself
-								// has a more precise type (e.g. indexed map reads).
-								if source != nil && wrappedSynth != nil && typ.IsAny(value) {
-									if _, isCall := source.(*ast.FuncCallExpr); !isCall {
-										if precise := resolve.Ref(wrappedSynth(source, p), sc); !typ.IsAbsentOrUnknown(precise) && !typ.IsAny(precise) {
-											assignedType = precise
-										}
-									}
-								}
+								assignedType = preferPreciseDirectSourceType(assignedType, source, p, sc, wrappedSynth, len(info.Targets) == 1)
 							} else if wrappedSynth != nil && source != nil {
 								assignedType = wrappedSynth(source, p)
 							}
@@ -935,6 +931,7 @@ func dedupeSymbolIDs(refs []cfg.SymbolID) []cfg.SymbolID {
 }
 
 func synthWithInferenceOverlay(
+	graph *cfg.Graph,
 	overlay map[cfg.SymbolID]typ.Type,
 	funcSigTypes map[cfg.SymbolID]typ.Type,
 	paramSet map[cfg.SymbolID]bool,
@@ -942,6 +939,7 @@ func synthWithInferenceOverlay(
 	bindings *bind.BindingTable,
 	base func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
+	_ = graph
 	return func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
 			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {

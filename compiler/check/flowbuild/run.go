@@ -90,9 +90,9 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 
 	// Compute derived resolvers and store in a separate derived bundle.
 	derived := &fbcore.Derived{
-		SymResolver: resolve.BuildInputSymbolResolver(fc.CheckCtx, inputs),
-		TypeKeyRes:  resolve.BuildContextTypeKeyResolver(fc.CheckCtx),
-		EffectBySym: resolve.BuildEffectLookup(fc.CheckCtx),
+		SymResolver:     resolve.BuildInputSymbolResolver(fc.CheckCtx, inputs),
+		TypeKeyRes:      resolve.BuildContextTypeKeyResolver(fc.CheckCtx),
+		RefinementBySym: resolve.BuildRefinementLookup(fc.CheckCtx),
 	}
 	if fc.API != nil {
 		derived.Synth = fc.API.TypeOf
@@ -130,7 +130,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 		if fc.Derived == nil {
 			continue
 		}
-		if !cond.PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.ModuleBindings) {
+		if !cond.PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.RefinementBySym, fc.ModuleBindings) {
 			continue
 		}
 		for _, succ := range fc.Graph.Successors(p) {

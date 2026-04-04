@@ -208,3 +208,40 @@ func TestCheckError_Fields(t *testing.T) {
 		t.Error("wrong field")
 	}
 }
+
+func TestExpectedTableElementType_Array(t *testing.T) {
+	expected := typ.NewArray(typ.String)
+	got := ExpectedTableElementType(expected, 0)
+	if got != typ.String {
+		t.Fatalf("got %v, want string", got)
+	}
+}
+
+func TestExpectedTableElementType_TupleUsesIndex(t *testing.T) {
+	expected := typ.NewTuple(typ.String, typ.Integer)
+	if got := ExpectedTableElementType(expected, 0); got != typ.String {
+		t.Fatalf("index 0 got %v, want string", got)
+	}
+	if got := ExpectedTableElementType(expected, 1); got != typ.Integer {
+		t.Fatalf("index 1 got %v, want integer", got)
+	}
+}
+
+func TestExpectedTableElementType_UnionCollectsMembers(t *testing.T) {
+	expected := typ.NewUnion(
+		typ.NewArray(typ.String),
+		typ.NewTuple(typ.Integer, typ.Boolean),
+	)
+	got := ExpectedTableElementType(expected, 0)
+	if !typ.TypeEquals(got, typ.NewUnion(typ.String, typ.Integer)) {
+		t.Fatalf("got %v, want string|integer", got)
+	}
+}
+
+func TestExpectedTableElementType_NumericMap(t *testing.T) {
+	expected := typ.NewMap(typ.Integer, typ.Boolean)
+	got := ExpectedTableElementType(expected, 0)
+	if got != typ.Boolean {
+		t.Fatalf("got %v, want boolean", got)
+	}
+}

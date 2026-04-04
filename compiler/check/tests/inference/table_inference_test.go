@@ -346,6 +346,16 @@ func TestTableInference_TypedRecords(t *testing.T) {
 			Stdlib:    true,
 		},
 		{
+			Name: "typed record optional field from nilable expression",
+			Code: `
+				type Config = {name: string, debug: boolean?}
+				local maybe_debug: boolean? = nil
+				local c: Config = {name = "prod", debug = maybe_debug}
+			`,
+			WantError: false,
+			Stdlib:    true,
+		},
+		{
 			Name: "typed record with computed key rejects",
 			Code: `
 				type Config = {name: string, debug: boolean?}
@@ -373,10 +383,10 @@ func TestTableInference_TypedRecords(t *testing.T) {
 func TestTableInference_MapTypes(t *testing.T) {
 	tests := []testutil.Case{
 		{
-			Name: "string to number map",
+			Name: "string to number map lookup is optional",
 			Code: `
 				local scores: {[string]: number} = {["alice"] = 100, ["bob"] = 90}
-				local s: number = scores["alice"]
+				local s: number? = scores["alice"]
 			`,
 			WantError: false,
 			Stdlib:    true,

@@ -100,15 +100,11 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 		if !path.IsEmpty() {
 			narrowed := narrower.NarrowedTypeAt(p, path)
 			if narrowed != nil {
+				if specialized := s.stableLocalFunctionValueType(ex, p, sc, narrowed, nil); specialized != nil {
+					return specialized
+				}
 				if typ.IsUnknown(unwrap.Alias(narrowed)) && typ.IsAny(unwrap.Alias(objType)) {
 					goto skipNarrowedAttr
-				}
-				if _, isStringKey := ex.Key.(*ast.StringExpr); isStringKey {
-					if mapValueType(objType) != nil {
-						if opt, ok := narrowed.(*typ.Optional); ok {
-							return opt.Inner
-						}
-					}
 				}
 				return narrowed
 			}
@@ -130,22 +126,34 @@ skipNarrowedAttr:
 	case *ast.StringExpr:
 		if ft, ok := s.deps.Types.Field(s.deps.Ctx, objType, key.Value); ok {
 			if manifestPath != "" {
-				return enrichWithManifest(s.deps.Manifests, ft, manifestPath, key.Value)
+				ft = enrichWithManifest(s.deps.Manifests, ft, manifestPath, key.Value)
+			}
+			if specialized := s.stableLocalFunctionValueType(ex, p, sc, ft, nil); specialized != nil {
+				return specialized
 			}
 			return ft
 		}
 		if ft := fieldOnPartialUnion(objType, key.Value, s.deps.Types, s.deps.Ctx); ft != nil {
+			if specialized := s.stableLocalFunctionValueType(ex, p, sc, ft, nil); specialized != nil {
+				return specialized
+			}
 			return ft
 		}
 		if vt := mapValueType(objType); vt != nil {
 			return vt
 		}
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, typ.LiteralString(key.Value)); ok {
+			if specialized := s.stableLocalFunctionValueType(ex, p, sc, it, nil); specialized != nil {
+				return specialized
+			}
 			return it
 		}
 	case *ast.NumberExpr:
 		keyType := ops.ParseNumber(key.Value)
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, keyType); ok {
+			if specialized := s.stableLocalFunctionValueType(ex, p, sc, it, nil); specialized != nil {
+				return specialized
+			}
 			return it
 		}
 	case *ast.IdentExpr:
@@ -194,6 +202,9 @@ skipNarrowedAttr:
 					}
 				}
 			}
+			if specialized := s.stableLocalFunctionValueType(ex, p, sc, it, nil); specialized != nil {
+				return specialized
+			}
 			return it
 		}
 		if derived := s.indexFromKeyOf(objType, ex.Object, key, p, sc, narrower); derived != nil {
@@ -208,6 +219,9 @@ skipNarrowedAttr:
 						return narrowedResult
 					}
 				}
+			}
+			if specialized := s.stableLocalFunctionValueType(ex, p, sc, it, nil); specialized != nil {
+				return specialized
 			}
 			return it
 		}
@@ -556,6 +570,13 @@ func (s *Synthesizer) synthExprWithSpec(expr ast.Expr, p cfg.Point, specTypes ap
 	if expr == nil {
 		return typ.Nil
 	}
+	if call, ok := expr.(*ast.FuncCallExpr); ok {
+		multi := s.synthMultiWithSpec(call, p, specTypes)
+		if len(multi) == 0 || multi[0] == nil {
+			return typ.Unknown
+		}
+		return multi[0]
+	}
 	if ident, ok := expr.(*ast.IdentExpr); ok {
 		if sym := s.LookupSymbol(ident); sym != 0 {
 			if t, exists := specTypes[sym]; exists {
@@ -583,7 +604,7 @@ func (s *Synthesizer) synthMultiWithSpec(expr ast.Expr, p cfg.Point, specTypes a
 					}
 				}
 			}
-			return s.SynthCallCore(call, p, sc, nil, recurse)
+			return s.synthCallCoreWithCaptureTypes(call, p, sc, nil, recurse, nil, specTypes)
 		},
 	)
 }

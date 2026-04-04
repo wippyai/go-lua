@@ -169,7 +169,131 @@ func (r *Resolver) ResolveTypeDef(name string, typeExpr ast.TypeExpr, typeParams
 		body := r.ResolveType(typeExpr, bodyScope)
 		return typ.NewGeneric(name, params, body)
 	}
-	return r.ResolveType(typeExpr, sc)
+	return r.resolveNonGenericTypeDef(name, typeExpr, sc)
+}
+
+// resolveNonGenericTypeDef resolves a non-generic type alias, preserving
+// self-recursive aliases as canonical recursive types.
+//
+// The resolution uses two passes:
+//   - Pass 1 builds a provisional body to detect self recursion and seed the
+//     recursive placeholder with a structurally correct body.
+//   - Pass 2 rebuilds the body once the placeholder has a real body so any
+//     enclosing function/record hashes that mention self are finalized against
+//     the completed recursive shape rather than an empty placeholder.
+func (r *Resolver) resolveNonGenericTypeDef(name string, typeExpr ast.TypeExpr, sc *scope.State) typ.Type {
+	self := typ.NewRecursivePlaceholder(name)
+	bodyScope := sc.WithType(name, self)
+
+	provisional := r.ResolveType(typeExpr, bodyScope)
+	if !containsRecursiveRef(provisional, self, 0) {
+		return provisional
+	}
+
+	self.SetBody(provisional)
+	finalBody := r.ResolveType(typeExpr, bodyScope)
+	self.SetBody(finalBody)
+	return self
+}
+
+func containsRecursiveRef(t typ.Type, self *typ.Recursive, depth int) bool {
+	if t == nil || self == nil || typ.DepthExceeded(depth) {
+		return false
+	}
+	if t == self {
+		return true
+	}
+
+	return typ.Visit(t, typ.Visitor[bool]{
+		Optional: func(o *typ.Optional) bool {
+			return containsRecursiveRef(o.Inner, self, depth+1)
+		},
+		Union: func(u *typ.Union) bool {
+			for _, m := range u.Members {
+				if containsRecursiveRef(m, self, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Intersection: func(in *typ.Intersection) bool {
+			for _, m := range in.Members {
+				if containsRecursiveRef(m, self, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Array: func(a *typ.Array) bool {
+			return containsRecursiveRef(a.Element, self, depth+1)
+		},
+		Map: func(m *typ.Map) bool {
+			return containsRecursiveRef(m.Key, self, depth+1) ||
+				containsRecursiveRef(m.Value, self, depth+1)
+		},
+		Tuple: func(tup *typ.Tuple) bool {
+			for _, elem := range tup.Elements {
+				if containsRecursiveRef(elem, self, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Function: func(fn *typ.Function) bool {
+			for _, p := range fn.Params {
+				if containsRecursiveRef(p.Type, self, depth+1) {
+					return true
+				}
+			}
+			if containsRecursiveRef(fn.Variadic, self, depth+1) {
+				return true
+			}
+			for _, ret := range fn.Returns {
+				if containsRecursiveRef(ret, self, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Record: func(rec *typ.Record) bool {
+			for _, f := range rec.Fields {
+				if containsRecursiveRef(f.Type, self, depth+1) {
+					return true
+				}
+			}
+			return containsRecursiveRef(rec.Metatable, self, depth+1) ||
+				containsRecursiveRef(rec.MapKey, self, depth+1) ||
+				containsRecursiveRef(rec.MapValue, self, depth+1)
+		},
+		Alias: func(a *typ.Alias) bool {
+			return containsRecursiveRef(a.Target, self, depth+1)
+		},
+		Interface: func(iface *typ.Interface) bool {
+			for _, m := range iface.Methods {
+				if containsRecursiveRef(m.Type, self, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Instantiated: func(inst *typ.Instantiated) bool {
+			if inst.Generic != nil && containsRecursiveRef(inst.Generic.Body, self, depth+1) {
+				return true
+			}
+			for _, arg := range inst.TypeArgs {
+				if containsRecursiveRef(arg, self, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Recursive: func(rec *typ.Recursive) bool {
+			return rec == self
+		},
+		Default: func(typ.Type) bool {
+			return false
+		},
+	})
 }
 
 func (r *Resolver) resolveTypeDepth(expr ast.TypeExpr, sc *scope.State, depth int) typ.Type {
@@ -407,6 +531,10 @@ func (r *Resolver) resolveFunction(te *ast.FunctionTypeExpr, sc *scope.State, de
 
 	for _, p := range te.Params {
 		paramType := r.resolveTypeDepth(p.Type, sc, depth+1)
+		if _, ok := p.Type.(*ast.OptionalTypeExpr); ok {
+			builder.OptParam(p.Name, paramType)
+			continue
+		}
 		builder.Param(p.Name, paramType)
 	}
 

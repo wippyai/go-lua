@@ -264,6 +264,33 @@ func TestResolveType_Function(t *testing.T) {
 	}
 }
 
+func TestResolveType_FunctionOptionalParam(t *testing.T) {
+	r := newTestResolver()
+	sc := scope.New()
+
+	expr := &ast.FunctionTypeExpr{
+		Params: []ast.FunctionParamExpr{
+			{Name: "n", Type: &ast.OptionalTypeExpr{Inner: &ast.PrimitiveTypeExpr{Name: "number"}}},
+		},
+		Returns: []ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "string"}},
+	}
+	result := r.ResolveType(expr, sc)
+
+	fn, ok := result.(*typ.Function)
+	if !ok {
+		t.Fatalf("got %T, want function", result)
+	}
+	if len(fn.Params) != 1 {
+		t.Fatalf("got %d params, want 1", len(fn.Params))
+	}
+	if !fn.Params[0].Optional {
+		t.Fatal("expected function type optional param to preserve optional arity")
+	}
+	if !typ.TypeEquals(fn.Params[0].Type, typ.NewOptional(typ.Number)) {
+		t.Fatalf("got param type %v, want number?", fn.Params[0].Type)
+	}
+}
+
 func TestResolveType_FunctionVariadic(t *testing.T) {
 	r := newTestResolver()
 	sc := scope.New()
@@ -729,5 +756,63 @@ func TestResolveTypeDef_Generic(t *testing.T) {
 	}
 	if len(generic.TypeParams) != 1 {
 		t.Fatalf("got %d type params, want 1", len(generic.TypeParams))
+	}
+}
+
+func TestResolveTypeDef_RecursiveAliasBodyUsesResolvedSelfType(t *testing.T) {
+	r := newTestResolver()
+	sc := scope.New()
+
+	typeExpr := &ast.RecordTypeExpr{
+		Fields: []ast.RecordFieldExpr{
+			{
+				Name: "f",
+				Type: &ast.FunctionTypeExpr{
+					Params: []ast.FunctionParamExpr{
+						{Name: "self", Type: &ast.PrimitiveTypeExpr{Name: "Node"}},
+					},
+					Returns: []ast.TypeExpr{
+						&ast.PrimitiveTypeExpr{Name: "Node"},
+					},
+				},
+			},
+			{
+				Name: "g",
+				Type: &ast.FunctionTypeExpr{
+					Params: []ast.FunctionParamExpr{
+						{Name: "self", Type: &ast.PrimitiveTypeExpr{Name: "Node"}},
+					},
+					Returns: []ast.TypeExpr{
+						&ast.PrimitiveTypeExpr{Name: "number"},
+					},
+				},
+			},
+		},
+	}
+
+	result := r.ResolveTypeDef("Node", typeExpr, nil, sc)
+	rec, ok := result.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("got %T, want recursive type", result)
+	}
+
+	body, ok := rec.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("body: got %T, want record", rec.Body)
+	}
+
+	fField := body.GetField("f")
+	if fField == nil {
+		t.Fatal("missing f field")
+	}
+	fType, ok := fField.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("f: got %T, want function", fField.Type)
+	}
+	if len(fType.Params) != 1 || fType.Params[0].Type != rec {
+		t.Fatalf("f self param: got %v, want recursive self type", fType.Params[0].Type)
+	}
+	if len(fType.Returns) != 1 || fType.Returns[0] != rec {
+		t.Fatalf("f return: got %v, want recursive self type", fType.Returns[0])
 	}
 }

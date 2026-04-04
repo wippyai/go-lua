@@ -20,8 +20,8 @@ func TestNewInterprocState(t *testing.T) {
 	if state.Facts == nil {
 		t.Error("Facts map should be initialized")
 	}
-	if state.Effects == nil {
-		t.Error("Effects map should be initialized")
+	if state.Refinements == nil {
+		t.Error("Refinements map should be initialized")
 	}
 	if state.ConstructorFields == nil {
 		t.Error("ConstructorFields map should be initialized")
@@ -245,7 +245,7 @@ func TestIterationScratch_Fields(t *testing.T) {
 func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	s := NewSessionStore()
 
-	s.InterprocNext.Effects[1] = &constraint.FunctionRefinement{Terminates: true}
+	s.InterprocNext.Refinements[1] = &constraint.FunctionRefinement{Terminates: true}
 	s.InterprocNext.Facts[api.GraphKey{GraphID: 7, ParentHash: 11}] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {Summary: []typ.Type{typ.String}},
@@ -263,15 +263,15 @@ func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	if len(diffs) != 3 {
 		t.Fatalf("expected 3 channel diffs, got %v", diffs)
 	}
-	if diffs[0] != "Effects" || diffs[1] != "InterprocFacts" || diffs[2] != "ConstructorFields" {
+	if diffs[0] != "Refinements" || diffs[1] != "InterprocFacts" || diffs[2] != "ConstructorFields" {
 		t.Fatalf("unexpected diff order/content: %v", diffs)
 	}
 
-	if len(s.InterprocPrev.Effects) != 1 || s.InterprocPrev.Effects[1] == nil {
-		t.Fatalf("expected prev effects populated, got %#v", s.InterprocPrev.Effects)
+	if len(s.InterprocPrev.Refinements) != 1 || s.InterprocPrev.Refinements[1] == nil {
+		t.Fatalf("expected prev effects populated, got %#v", s.InterprocPrev.Refinements)
 	}
-	if len(s.InterprocNext.Effects) != 0 {
-		t.Fatalf("expected next effects reset, got %#v", s.InterprocNext.Effects)
+	if len(s.InterprocNext.Refinements) != 0 {
+		t.Fatalf("expected next effects reset, got %#v", s.InterprocNext.Refinements)
 	}
 	if len(s.InterprocPrev.Facts) != 1 {
 		t.Fatalf("expected prev facts populated, got %#v", s.InterprocPrev.Facts)

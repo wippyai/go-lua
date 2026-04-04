@@ -48,6 +48,10 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 		return CheckResult{Type: tableConstructor(fields, arrayElems)}
 	}
 
+	if rec := unwrap.Record(expected); rec != nil {
+		return checkTableAsRecord(fields, arrayElems, rec)
+	}
+
 	if alias, ok := expected.(*typ.Alias); ok {
 		return CheckTable(fields, arrayElems, alias.Target)
 	}

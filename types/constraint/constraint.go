@@ -93,7 +93,7 @@ const (
 // enabling efficient incremental narrowing.
 //
 // Substitute replaces placeholder paths ($0, $1) with concrete argument paths,
-// used when applying function effect constraints at call sites.
+// used when applying function refinement constraints at call sites.
 type Constraint interface {
 	Kind() Kind
 	Paths() []Path

@@ -21,7 +21,7 @@ function M.new(): Pipeline
             table.insert(self._stages, {name = name, process = processor})
             return self
         end,
-        run = function(self: Pipeline, initial: context.Context?): Pipeline
+        run = function(self: Pipeline, initial: context.Context?): context.Context
             local ctx = initial or context.empty()
             for _, stage in ipairs(self._stages) do
                 ctx = stage.process(ctx)

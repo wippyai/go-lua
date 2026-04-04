@@ -12,7 +12,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// LookupFunc resolves a function effect by symbol.
+// LookupFunc resolves a function refinement by symbol.
 type LookupFunc func(sym cfg.SymbolID) *constraint.FunctionRefinement
 
 // Propagate computes the complete effect for a function by combining its

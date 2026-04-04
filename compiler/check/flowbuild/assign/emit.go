@@ -33,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
@@ -156,6 +157,8 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	typeGuards := guard.CollectTypeGuards(fc.Graph, bindings)
 
 	baseSynth := resolve.SynthWithOverlay(overlayTypes, bindings, synth)
+	idom, _ := cfganalysis.ComputeDominators(fc.Graph.CFG())
+	structuredWrites := indexStructuredWrites(fc.Graph)
 	var wrappedSynth func(ast.Expr, cfg.Point) typ.Type
 	wrappedSynth = func(expr ast.Expr, p cfg.Point) typ.Type {
 		if table, ok := expr.(*ast.TableExpr); ok && !tblutil.TableHasFunctionField(table) {
@@ -269,6 +272,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			// Use pre-assignment symbol overlays for assignment targets so RHS
 			// synthesis follows Lua evaluation order (`x = f(x, ...)`).
 			rhsOverlay := rhsSpecTypesAtAssignPoint(fc.Graph, info, p, overlayTypes, resolverWithSpec)
+			rhsOverlay = enrichStructuredOverlayAtPoint(fc.Graph, idom, structuredWrites, p, rhsOverlay, resolverWithSpec, wrappedSynth)
 			values = expandedAssignValues(fc.API, info, p, rhsOverlay)
 			valuesComputed = true
 		}
@@ -309,6 +313,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					ensureValues()
 					if value := assignValueAt(values, i); value != nil {
 						assignedType = value
+						assignedType = preferPreciseDirectSourceType(assignedType, source, p, sc, wrappedSynth, len(info.Targets) == 1)
 					} else if wrappedSynth != nil && source != nil {
 						assignedType = wrappedSynth(source, p)
 					}
@@ -380,7 +385,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 				// Extract predicate link if RHS is a predicate call.
 				if callInfo, retIndex := info.CallForTarget(i); callInfo != nil {
-					if link := cond.ExtractPredicateLinkFromCallInfo(callInfo, retIndex, p, sc, inputs, derived.TypeKeyRes, wrappedSynth, derived.EffectBySym, symResolver, fc.Graph, fc.ModuleBindings); link != nil {
+					if link := cond.ExtractPredicateLinkFromCallInfo(callInfo, retIndex, p, sc, inputs, derived.TypeKeyRes, wrappedSynth, derived.RefinementBySym, symResolver, fc.Graph, fc.ModuleBindings); link != nil {
 						if retIndex == 1 && callInfo.IsTypeCheck && callInfo.Method == "is" && callInfo.Receiver != nil && derived.TypeKeyRes != nil {
 							if typeKey, ok := derived.TypeKeyRes(callInfo.TypeCheckName, sc); ok && !typeKey.IsZero() {
 								valuePath := constraint.Path{}
@@ -442,10 +447,10 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						}
 					}
 
-					// Fallback: check function effect for KeyOf-based keys collector
-					if tableSym == 0 && derived.EffectBySym != nil {
+					// Fallback: check function refinement for KeyOf-based keys collector.
+					if tableSym == 0 && derived.RefinementBySym != nil {
 						for _, calleeSym := range calleeSymbols {
-							eff := derived.EffectBySym(calleeSym)
+							eff := derived.RefinementBySym(calleeSym)
 							if eff == nil {
 								continue
 							}

@@ -170,3 +170,131 @@ func TestInferTypeArgs_CannotInfer(t *testing.T) {
 		t.Errorf("expected unknown for unresolved T, got %v", args[0])
 	}
 }
+
+func TestInferTypeArgs_ExpectedInstantiatedUnionReturn(t *testing.T) {
+	tParam := typ.NewTypeParam("T", nil)
+	user := typ.NewRecord().
+		Field("id", typ.String).
+		Field("email", typ.String).
+		Build()
+	resultGeneric := typ.NewGeneric("Result", []*typ.TypeParam{tParam},
+		typ.NewUnion(
+			typ.NewRecord().
+				Field("ok", typ.True).
+				Field("value", tParam).
+				Build(),
+			typ.NewRecord().
+				Field("ok", typ.False).
+				Field("error", typ.String).
+				Build(),
+		),
+	)
+	fn := typ.Func().
+		TypeParam("T", nil).
+		Param("message", typ.String).
+		Returns(typ.Instantiate(resultGeneric, tParam)).
+		Build()
+
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(
+		fn,
+		[]typ.Type{typ.String},
+		false,
+		nil,
+		typ.Instantiate(resultGeneric, user),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("InferTypeArgs error: %v", err)
+	}
+	if len(typeArgs) != 1 {
+		t.Fatalf("type args len = %d, want 1", len(typeArgs))
+	}
+	if !typ.TypeEquals(typeArgs[0], user) {
+		t.Fatalf("T = %v, want %v", typeArgs[0], user)
+	}
+}
+
+func TestInferTypeArgs_FunctionParamWithInstantiatedUnionReturn(t *testing.T) {
+	tParam := typ.NewTypeParam("T", nil)
+	uParam := typ.NewTypeParam("U", nil)
+	user := typ.NewRecord().
+		Field("id", typ.String).
+		Field("email", typ.String).
+		Build()
+	resultGeneric := typ.NewGeneric("Result", []*typ.TypeParam{tParam},
+		typ.NewUnion(
+			typ.NewRecord().
+				Field("ok", typ.True).
+				Field("value", tParam).
+				Build(),
+			typ.NewRecord().
+				Field("ok", typ.False).
+				Field("error", typ.String).
+				Build(),
+		),
+	)
+	fn := typ.Func().
+		TypeParam("T", nil).
+		TypeParam("U", nil).
+		Param("r", typ.Instantiate(resultGeneric, tParam)).
+		Param("mapper", typ.Func().
+			Param("value", tParam).
+			Returns(typ.Instantiate(resultGeneric, uParam)).
+			Build()).
+		Returns(typ.Instantiate(resultGeneric, uParam)).
+		Build()
+	callback := typ.Func().
+		Param("value", user).
+		Returns(typ.Instantiate(resultGeneric, user)).
+		Build()
+
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(
+		fn,
+		[]typ.Type{
+			typ.Instantiate(resultGeneric, user),
+			callback,
+		},
+		false,
+		nil,
+		nil,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("InferTypeArgs error: %v", err)
+	}
+	if len(typeArgs) != 2 {
+		t.Fatalf("type args len = %d, want 2", len(typeArgs))
+	}
+	if !typ.TypeEquals(typeArgs[0], user) {
+		t.Fatalf("T = %v, want %v", typeArgs[0], user)
+	}
+	if !typ.TypeEquals(typeArgs[1], user) {
+		t.Fatalf("U = %v, want %v", typeArgs[1], user)
+	}
+}
+
+func TestInferTypeArgs_ExpectedExplicitUnionPrefersSpecificMember(t *testing.T) {
+	tParam := typ.NewTypeParam("T", nil)
+	fn := typ.Func().
+		TypeParam("T", nil).
+		Returns(typ.NewUnion(tParam, typ.Nil)).
+		Build()
+
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(
+		fn,
+		nil,
+		false,
+		nil,
+		typ.NewUnion(typ.String, typ.Nil),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("InferTypeArgs error: %v", err)
+	}
+	if len(typeArgs) != 1 {
+		t.Fatalf("type args len = %d, want 1", len(typeArgs))
+	}
+	if !typ.TypeEquals(typeArgs[0], typ.String) {
+		t.Fatalf("T = %v, want string", typeArgs[0])
+	}
+}

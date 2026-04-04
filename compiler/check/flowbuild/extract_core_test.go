@@ -182,8 +182,8 @@ func TestBuildContextTypeKeyResolver_UnknownType(t *testing.T) {
 	}
 }
 
-func TestBuildEffectLookup_NilCtx(t *testing.T) {
-	symLookup := resolve.BuildEffectLookup(nil)
+func TestBuildRefinementLookup_NilCtx(t *testing.T) {
+	symLookup := resolve.BuildRefinementLookup(nil)
 	if symLookup != nil {
 		t.Error("expected nil symLookup for nil context")
 	}

@@ -3,6 +3,7 @@ package core
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -124,6 +125,48 @@ func TestEngine_Callable_Function(t *testing.T) {
 	}
 	if result == nil {
 		t.Error("should return function type")
+	}
+}
+
+func TestEngine_IsSubtype_RecursiveAliasRecordUnion(t *testing.T) {
+	e := NewEngine()
+	ctx := db.NewQueryContext(db.New())
+
+	rec := typ.NewRecursivePlaceholder("Message")
+	msgAlias := typ.NewAlias("Message", rec)
+	rec.SetBody(typ.NewRecord().
+		Field("_topic", typ.String).
+		Field("topic", typ.Func().Param("self", rec).Returns(typ.String).Build()).
+		Build())
+
+	msgCh := typ.NewAlias("MsgCh", typ.NewRecord().Field("__tag", typ.LiteralString("msg")).Build())
+	timerCh := typ.NewAlias("TimerCh", typ.NewRecord().Field("__tag", typ.LiteralString("timer")).Build())
+	timer := typ.NewRecord().Field("elapsed", typ.Number).Build()
+
+	result := typ.NewUnion(
+		typ.NewRecord().
+			Field("channel", msgCh).
+			Field("value", msgAlias).
+			Field("ok", typ.Boolean).
+			Build(),
+		typ.NewRecord().
+			Field("channel", timerCh).
+			Field("value", timer).
+			Field("ok", typ.Boolean).
+			Build(),
+	)
+
+	synthesized := typ.NewRecord().
+		Field("channel", msgCh).
+		Field("value", typ.NewRecord().
+			Field("_topic", typ.String).
+			Field("topic", typ.Func().Param("s", msgAlias).Returns(typ.String).Build()).
+			Build()).
+		Field("ok", typ.True).
+		Build()
+
+	if !e.IsSubtype(ctx, synthesized, result) {
+		t.Fatal("engine subtype should accept recursive alias record inside union member")
 	}
 }
 

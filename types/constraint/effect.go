@@ -5,15 +5,15 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// RefinementLookupBySym retrieves a function's inferred effect by symbol ID.
+// RefinementLookupBySym retrieves a function's inferred refinement by symbol ID.
 //
 // Used during call site analysis to determine what type refinements a
-// function call produces. Returns nil if the function has no recorded effect.
+// function call produces. Returns nil if the function has no recorded refinement.
 type RefinementLookupBySym func(sym cfg.SymbolID) *FunctionRefinement
 
 // FunctionRefinement describes the type refinements a function produces.
 //
-// Effects encode how a function call narrows types based on its return value.
+// Refinements encode how a function call narrows types based on its return value.
 // Three categories are supported:
 //   - OnReturn: constraints that hold when the function returns normally
 //     (used for assert-style functions that error() on failure)
@@ -73,7 +73,7 @@ func (e *FunctionRefinement) HasPredicateSemantics() bool {
 	return e != nil && (e.OnTrue.HasConstraints() || e.OnFalse.HasConstraints())
 }
 
-// Equals returns true if two function effects are structurally equal.
+// Equals returns true if two function refinements are structurally equal.
 // Implements internal.Equaler interface for use in typ.Function.
 func (e *FunctionRefinement) Equals(other any) bool {
 	if other == nil {

@@ -217,7 +217,7 @@ end
 
 	// Verify effects exist and A's effect has Terminates == true.
 	foundA := false
-	for sym, eff := range sess.Store.InterprocPrev.Effects {
+	for sym, eff := range sess.Store.InterprocPrev.Refinements {
 		if eff == nil {
 			continue
 		}
@@ -267,7 +267,7 @@ end
 	}
 
 	foundA := false
-	for sym, eff := range sess.Store.InterprocPrev.Effects {
+	for sym, eff := range sess.Store.InterprocPrev.Refinements {
 		if eff == nil {
 			continue
 		}
@@ -307,7 +307,7 @@ end
 	}
 
 	foundA := false
-	for sym, eff := range sess.Store.InterprocPrev.Effects {
+	for sym, eff := range sess.Store.InterprocPrev.Refinements {
 		if eff == nil {
 			continue
 		}
@@ -351,7 +351,7 @@ end
 	}
 
 	foundA := false
-	for sym, eff := range sess.Store.InterprocPrev.Effects {
+	for sym, eff := range sess.Store.InterprocPrev.Refinements {
 		if eff == nil {
 			continue
 		}

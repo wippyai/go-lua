@@ -43,7 +43,7 @@ type BaseEnv interface {
 	Graph() cfg.VersionedGraph
 	Types() flow.TypeFacts
 	Consts() *flow.Solution
-	Effects() RefinementFacts
+	Refinements() RefinementFacts
 	TypeNames() *scope.State
 	Bindings() *bind.BindingTable
 	ModuleAliases() map[cfg.SymbolID]string
@@ -71,7 +71,7 @@ type envBase struct {
 	bindings      *bind.BindingTable
 	types         flow.TypeFacts
 	solution      *flow.Solution
-	effects       RefinementFacts
+	refinements   RefinementFacts
 	typeNames     *scope.State
 	moduleAliases map[cfg.SymbolID]string
 	globalTypes   map[string]typ.Type
@@ -136,12 +136,12 @@ func (c *envCommon) Consts() *flow.Solution {
 	return c.base.solution
 }
 
-// Effects returns the effect facts provider.
-func (c *envCommon) Effects() RefinementFacts {
+// Refinements returns the refinement facts provider.
+func (c *envCommon) Refinements() RefinementFacts {
 	if c == nil || c.base == nil {
 		return nil
 	}
-	return c.base.effects
+	return c.base.refinements
 }
 
 // TypeNames returns the scope state for type name resolution.
@@ -285,20 +285,20 @@ func (e *NarrowEnvImpl) Consts() *flow.Solution {
 	return e.envCommon.Consts()
 }
 
-// Effects returns the effect facts provider.
-func (e *DeclaredEnvImpl) Effects() RefinementFacts {
+// Refinements returns the refinement facts provider.
+func (e *DeclaredEnvImpl) Refinements() RefinementFacts {
 	if e == nil {
 		return nil
 	}
-	return e.envCommon.Effects()
+	return e.envCommon.Refinements()
 }
 
-// Effects returns the effect facts provider.
-func (e *NarrowEnvImpl) Effects() RefinementFacts {
+// Refinements returns the refinement facts provider.
+func (e *NarrowEnvImpl) Refinements() RefinementFacts {
 	if e == nil {
 		return nil
 	}
-	return e.envCommon.Effects()
+	return e.envCommon.Refinements()
 }
 
 // TypeNames returns the scope state for type name resolution.
@@ -446,7 +446,7 @@ type DeclaredEnvConfig struct {
 	DeclaredTypes   flow.DeclaredTypes
 	AnnotatedVars   map[cfg.SymbolID]bool
 	BaseScope       *scope.State
-	RefinementStore     RefinementStore
+	RefinementStore RefinementStore
 	ModuleAliases   map[cfg.SymbolID]string
 	GlobalTypes     map[string]typ.Type
 	SiblingTypes    map[cfg.SymbolID]typ.Type
@@ -462,7 +462,7 @@ type NarrowEnvConfig struct {
 	AnnotatedVars         map[cfg.SymbolID]bool
 	Solution              *flow.Solution
 	BaseScope             *scope.State
-	RefinementStore           RefinementStore
+	RefinementStore       RefinementStore
 	ModuleAliases         map[cfg.SymbolID]string
 	GlobalTypes           map[string]typ.Type
 	SiblingTypes          map[cfg.SymbolID]typ.Type
@@ -476,7 +476,7 @@ func newEnvBase(
 	bindings *bind.BindingTable,
 	types flow.TypeFacts,
 	solution *flow.Solution,
-	effects RefinementFacts,
+	refinements RefinementFacts,
 	typeNames *scope.State,
 	moduleAliases map[cfg.SymbolID]string,
 	globalTypes map[string]typ.Type,
@@ -487,7 +487,7 @@ func newEnvBase(
 		bindings:      bindings,
 		types:         types,
 		solution:      solution,
-		effects:       effects,
+		refinements:   refinements,
 		typeNames:     typeNames,
 		moduleAliases: moduleAliases,
 		globalTypes:   globalTypes,

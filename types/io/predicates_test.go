@@ -296,7 +296,7 @@ func TestPredicateCodec_Condition_MultiDisjunct(t *testing.T) {
 	}
 }
 
-func TestPredicateCodec_FunctionEffect(t *testing.T) {
+func TestPredicateCodec_FunctionRefinement(t *testing.T) {
 	orig := &constraint.FunctionRefinement{
 		OnReturn: constraint.FromConstraints(constraint.NotNil{Path: path("$0")}),
 		OnTrue:   constraint.FromConstraints(constraint.HasType{Path: path("$0"), Type: narrow.BuiltinTypeKey("string")}),
@@ -326,7 +326,7 @@ func TestPredicateCodec_FunctionEffect(t *testing.T) {
 	}
 }
 
-func TestPredicateCodec_FunctionEffect_Nil(t *testing.T) {
+func TestPredicateCodec_FunctionRefinement_Nil(t *testing.T) {
 	var buf bytes.Buffer
 	w := &typeWriter{w: &buf}
 	w.writeFunctionRefinement(nil)
@@ -507,7 +507,7 @@ func TestPredicateCodec_KeyOf(t *testing.T) {
 	}
 }
 
-func TestPredicateCodec_FunctionEffect_WithKeyOf(t *testing.T) {
+func TestPredicateCodec_FunctionRefinement_WithKeyOf(t *testing.T) {
 	keyOf := constraint.KeyOf{
 		Table: constraint.ParamPath(0),
 		Key:   constraint.RetPath(0),

@@ -279,7 +279,7 @@ func TestConstraintPropagation_Loop(_ *testing.T) {
 	_ = solver.ConditionAt(ret)
 }
 
-func TestInferFunctionEffect_Empty(t *testing.T) {
+func TestInferFunctionRefinement_Empty(t *testing.T) {
 	g := cfg.New()
 	ret := g.AddNode(cfg.NodeReturn, cfg.SymbolID(0), "")
 	g.AddEdge(g.Entry(), ret, false)
@@ -295,7 +295,7 @@ func TestInferFunctionEffect_Empty(t *testing.T) {
 	}
 }
 
-func TestInferFunctionEffect_NonBoolean(t *testing.T) {
+func TestInferFunctionRefinement_NonBoolean(t *testing.T) {
 	g := cfg.New()
 	ret := g.AddNode(cfg.NodeReturn, cfg.SymbolID(0), "")
 	g.AddEdge(g.Entry(), ret, false)

@@ -139,6 +139,55 @@ func TestReconcileFunctionFact_NarrowSummaryReplacesOpenTopPlaceholder(t *testin
 	}
 }
 
+func TestReconcileFunctionFact_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
+	bad := []typ.Type{
+		typ.NewUnion(
+			typ.NewRecord().
+				Field("success", typ.True).
+				Field("result", typ.NewRecord().OptField("data", typ.Never).Build()).
+				Build(),
+			typ.NewRecord().
+				Field("success", typ.False).
+				Field("error", typ.LiteralString("missing")).
+				Build(),
+		),
+	}
+	good := []typ.Type{
+		typ.NewUnion(
+			typ.NewRecord().
+				Field("success", typ.True).
+				Field("result", typ.NewRecord().OptField("data", typ.Unknown).Build()).
+				Build(),
+			typ.NewRecord().
+				Field("success", typ.False).
+				Field("error", typ.LiteralString("missing")).
+				Build(),
+		),
+	}
+	existingFunc := typ.Func().Returns(bad...).Build()
+
+	out := ReconcileFunctionFact(ReconcileFunctionFactInput{
+		ExistingSummary: bad,
+		ExistingNarrow:  nil,
+		ExistingFunc:    existingFunc,
+		CandidateNarrow: good,
+	})
+
+	if !ReturnTypesEqual(out.Summary, good) {
+		t.Fatalf("summary mismatch: got %v want %v", out.Summary, good)
+	}
+	if !ReturnTypesEqual(out.Narrow, good) {
+		t.Fatalf("narrow mismatch: got %v want %v", out.Narrow, good)
+	}
+	fn, ok := out.Func.(*typ.Function)
+	if !ok {
+		t.Fatalf("expected function fact, got %T", out.Func)
+	}
+	if !ReturnTypesEqual(fn.Returns, good) {
+		t.Fatalf("func returns mismatch: got %v want %v", fn.Returns, good)
+	}
+}
+
 func TestMergeFunctionFactIntoFacts_ReadsLegacyAndWritesCanonical(t *testing.T) {
 	sym := cfg.SymbolID(41)
 	facts := &api.Facts{

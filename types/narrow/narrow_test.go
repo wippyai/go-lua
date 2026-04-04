@@ -269,6 +269,31 @@ func TestExcludeKind_Unknown_PreservesUnknown(t *testing.T) {
 	}
 }
 
+func TestFilterByKind_UnionPlaceholderAndNil_PreservesRuntimePossibility(t *testing.T) {
+	got := narrow.FilterByKind(typ.NewUnion(typ.Unknown, typ.Nil), kind.Record)
+	if got == nil || got.Kind().IsNever() {
+		t.Fatalf("FilterByKind(unknown|nil, table) = %v, want table-like type", got)
+	}
+	if !narrow.KindMatches(got, kind.Record) {
+		t.Fatalf("FilterByKind(unknown|nil, table) = %v, want table-like type", got)
+	}
+}
+
+func TestFilterByKind_UnionAnyAndNil_Number(t *testing.T) {
+	got := narrow.FilterByKind(typ.NewUnion(typ.Any, typ.Nil), kind.Number)
+	if !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("FilterByKind(any|nil, number) = %v, want number", got)
+	}
+}
+
+func TestExcludeKind_OptionalUnknown_PreservesUnknownOptional(t *testing.T) {
+	got := narrow.ExcludeKind(typ.NewOptional(typ.Unknown), kind.String)
+	want := typ.NewOptional(typ.Unknown)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("ExcludeKind(unknown?, string) = %v, want %v", got, want)
+	}
+}
+
 func TestExcludeType_Optional(t *testing.T) {
 	opt := typ.NewOptional(typ.NewUnion(typ.String, typ.Number))
 	got := narrow.ExcludeType(opt, typ.Number)

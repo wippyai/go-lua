@@ -1103,9 +1103,9 @@ func TestDNFPreservation_SpecEnsures(t *testing.T) {
 	}
 }
 
-// TestDNFPreservation_FunctionEffect verifies multi-disjunct OnTrue/OnFalse
+// TestDNFPreservation_FunctionRefinement verifies multi-disjunct OnTrue/OnFalse
 // conditions in FunctionRefinement are preserved through encode/decode.
-func TestDNFPreservation_FunctionEffect(t *testing.T) {
+func TestDNFPreservation_FunctionRefinement(t *testing.T) {
 	// OnTrue: (string) OR (number)
 	onTrueDisjuncts := [][]constraint.Constraint{
 		{constraint.HasType{Path: constraint.Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}},

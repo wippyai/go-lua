@@ -117,15 +117,15 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	localAliases := modules.CollectAliases(graph)
 	mergedAliases := modules.MergeAliases(store.ModuleAliases(), localAliases)
 	env := phase.PhaseEnv{
-		Ctx:            ctx,
-		Graph:          graph,
-		Fn:             fn,
-		Types:          r.types,
-		Manifests:      r.manifests,
-		GlobalTypes:    r.globalTypes,
-		ModuleAliases:  mergedAliases,
-		ModuleBindings: store.ModuleBindings(),
-		RefinementStore:    effectStoreFrom(store),
+		Ctx:             ctx,
+		Graph:           graph,
+		Fn:              fn,
+		Types:           r.types,
+		Manifests:       r.manifests,
+		GlobalTypes:     r.globalTypes,
+		ModuleAliases:   mergedAliases,
+		ModuleBindings:  store.ModuleBindings(),
+		RefinementStore: effectStoreFrom(store),
 	}
 
 	// Phase A: Resolve type annotations.
@@ -221,7 +221,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		Facts:              narrowOut.Facts,
 		FlowInputs:         extractOut.Inputs,
 		FlowSolution:       solveOut.Solution,
-		FnRefinement:           narrowOut.Effect,
+		FnRefinement:       narrowOut.Refinement,
 		NarrowSynth:        narrowOut.Synth,
 		LiteralSignatures:  literalOut.Signatures,
 		Extras:             extras,

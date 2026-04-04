@@ -344,22 +344,22 @@ func TestFindBranchEdges_WithEdges(t *testing.T) {
 	}
 }
 
-func TestExtractFunctionEffect_EmptyInfo(t *testing.T) {
+func TestExtractFunctionRefinement_EmptyInfo(t *testing.T) {
 	info := &cfg.CallInfo{}
-	result := cond.ExtractFunctionEffect(info, 0, nil, nil, nil, nil, nil)
+	result := cond.ExtractFunctionRefinement(info, 0, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for empty info")
 	}
 }
 
-func TestExtractFunctionEffect_WithCallee(t *testing.T) {
+func TestExtractFunctionRefinement_WithCallee(t *testing.T) {
 	info := &cfg.CallInfo{
 		Callee: &ast.IdentExpr{Value: "fn"},
 	}
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return &typ.Function{}
 	}
-	result := cond.ExtractFunctionEffect(info, 0, synth, nil, nil, nil, nil)
+	result := cond.ExtractFunctionRefinement(info, 0, synth, nil, nil, nil, nil)
 	// No refinement, so nil expected
 	if result != nil {
 		t.Error("expected nil for function without refinement")

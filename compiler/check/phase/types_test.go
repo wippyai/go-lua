@@ -246,7 +246,7 @@ func TestNarrowOutput_Fields(t *testing.T) {
 	if out.Facts != nil {
 		t.Error("Facts should be nil by default")
 	}
-	if out.Effect != nil {
+	if out.Refinement != nil {
 		t.Error("Effect should be nil by default")
 	}
 	if out.Synth != nil {

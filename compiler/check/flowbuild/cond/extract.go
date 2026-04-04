@@ -50,11 +50,11 @@ func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 
 		ce := &ConditionExtractor{
 			P: p, SC: fc.Scopes[p], Inputs: inputs,
-			Synth:         fc.Derived.Synth,
-			SymResolver:   fc.Derived.SymResolver,
-			TypeKeyRes:    fc.Derived.TypeKeyRes,
-			ConstResolver: constResolver,
-			EffectBySym:   fc.Derived.EffectBySym,
+			Synth:           fc.Derived.Synth,
+			SymResolver:     fc.Derived.SymResolver,
+			TypeKeyRes:      fc.Derived.TypeKeyRes,
+			ConstResolver:   constResolver,
+			RefinementBySym: fc.Derived.RefinementBySym,
 		}
 		constraints := ce.ConstraintsFromBranch(info)
 
@@ -363,7 +363,7 @@ func ExtractCallOnReturnConstraints(
 	}
 
 	for _, p := range fc.Graph.RPO() {
-		if !PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.EffectBySym, fc.ModuleBindings) {
+		if !PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.RefinementBySym, fc.ModuleBindings) {
 			continue
 		}
 		for _, succ := range fc.Graph.Successors(p) {
@@ -382,7 +382,7 @@ func ExtractCallOnReturnConstraints(
 		sc := fc.Scopes[p]
 		constResolver := predicate.BuildConstResolver(inputs, p)
 
-		cond := ConstraintsFromCallOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.EffectBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
+		cond := ConstraintsFromCallOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
 		if !cond.HasConstraints() {
 			return
 		}
@@ -399,7 +399,7 @@ func ExtractCallOnReturnConstraints(
 	fc.Graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		sc := fc.Scopes[p]
 		constResolver := predicate.BuildConstResolver(inputs, p)
-		cond := ConstraintsFromAssignOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.EffectBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
+		cond := ConstraintsFromAssignOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
 		if !cond.HasConstraints() {
 			return
 		}
@@ -424,7 +424,7 @@ func ConstraintsFromCallOnReturn(
 	inputs *flow.Inputs,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
 	typeKeyResolver func(string, *scope.State) (narrow.TypeKey, bool),
-	effectLookupSym constraint.RefinementLookupBySym,
+	refinementLookupSym constraint.RefinementLookupBySym,
 	constResolver func(string) *flow.ConstValue,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
@@ -452,7 +452,7 @@ func ConstraintsFromCallOnReturn(
 		}
 	}
 
-	eff := ExtractFunctionEffect(info, p, synthFn, effectLookupSym, symResolver, graph, moduleBindings)
+	eff := ExtractFunctionRefinement(info, p, synthFn, refinementLookupSym, symResolver, graph, moduleBindings)
 	if eff == nil || !eff.OnReturn.HasConstraints() {
 		return constraint.Condition{}
 	}
@@ -464,11 +464,11 @@ func ConstraintsFromCallOnReturn(
 
 	ce := &ConditionExtractor{
 		P: p, SC: sc, Inputs: inputs,
-		Synth:         synthFn,
-		SymResolver:   symResolver,
-		TypeKeyRes:    typeKeyResolver,
-		ConstResolver: constResolver,
-		EffectBySym:   effectLookupSym,
+		Synth:           synthFn,
+		SymResolver:     symResolver,
+		TypeKeyRes:      typeKeyResolver,
+		ConstResolver:   constResolver,
+		RefinementBySym: refinementLookupSym,
 	}
 
 	// OnReturn summarizes all normal-return paths. At call sites we may only
@@ -811,13 +811,13 @@ func callConstraintFallbackFromArgs(
 	return cond.MustConstraints(), true
 }
 
-// ExtractFunctionEffect extracts the function effect from a call using symbol-based lookup.
-// All functions in CFG have symbols, so this is the canonical effect resolution path.
-func ExtractFunctionEffect(
+// ExtractFunctionRefinement extracts the function refinement from a call using symbol-based lookup.
+// All functions in CFG have symbols, so this is the canonical refinement resolution path.
+func ExtractFunctionRefinement(
 	info *cfg.CallInfo,
 	p cfg.Point,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
-	effectLookupSym constraint.RefinementLookupBySym,
+	refinementLookupSym constraint.RefinementLookupBySym,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
 	moduleBindings *bind.BindingTable,
@@ -832,7 +832,7 @@ func ExtractFunctionEffect(
 		graph,
 		bindings,
 		moduleBindings,
-		effectLookupSym,
+		refinementLookupSym,
 		synthFn,
 		symResolver,
 		checkeffects.EffectFromType,
@@ -840,13 +840,13 @@ func ExtractFunctionEffect(
 }
 
 // CallTerminates checks if a call is to a function that never returns.
-// Uses symbol-based effect lookup - all functions have symbols.
+// Uses symbol-based refinement lookup; all functions have symbols.
 func CallTerminates(
 	info *cfg.CallInfo,
 	p cfg.Point,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	effectLookupSym constraint.RefinementLookupBySym,
+	refinementLookupSym constraint.RefinementLookupBySym,
 	graph *cfg.Graph,
 	moduleBindings *bind.BindingTable,
 ) bool {
@@ -863,7 +863,7 @@ func CallTerminates(
 		graph,
 		bindings,
 		moduleBindings,
-		effectLookupSym,
+		refinementLookupSym,
 		synthFn,
 		symResolver,
 		checkeffects.EffectFromType,
@@ -880,14 +880,14 @@ func PointHasTerminatingCallSite(
 	p cfg.Point,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	effectLookupSym constraint.RefinementLookupBySym,
+	refinementLookupSym constraint.RefinementLookupBySym,
 	moduleBindings *bind.BindingTable,
 ) bool {
 	if graph == nil {
 		return false
 	}
 	for _, callInfo := range graph.CallSitesAt(p) {
-		if CallTerminates(callInfo, p, synthFn, symResolver, effectLookupSym, graph, moduleBindings) {
+		if CallTerminates(callInfo, p, synthFn, symResolver, refinementLookupSym, graph, moduleBindings) {
 			return true
 		}
 	}
@@ -902,7 +902,7 @@ func ConstraintsFromAssignOnReturn(
 	inputs *flow.Inputs,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
 	typeKeyResolver func(string, *scope.State) (narrow.TypeKey, bool),
-	effectLookupSym constraint.RefinementLookupBySym,
+	refinementLookupSym constraint.RefinementLookupBySym,
 	constResolver func(string) *flow.ConstValue,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
@@ -913,7 +913,7 @@ func ConstraintsFromAssignOnReturn(
 	}
 	var combined constraint.Condition
 	info.EachSourceCall(func(_ int, callInfo *cfg.CallInfo) {
-		if cond := ConstraintsFromCallOnReturn(callInfo, p, sc, inputs, synthFn, typeKeyResolver, effectLookupSym, constResolver, symResolver, graph, moduleBindings); cond.HasConstraints() {
+		if cond := ConstraintsFromCallOnReturn(callInfo, p, sc, inputs, synthFn, typeKeyResolver, refinementLookupSym, constResolver, symResolver, graph, moduleBindings); cond.HasConstraints() {
 			if !combined.HasConstraints() {
 				combined = cond
 			} else {
@@ -934,7 +934,7 @@ func ExtractPredicateLinkFromCallInfo(
 	inputs *flow.Inputs,
 	typeKeyResolver func(string, *scope.State) (narrow.TypeKey, bool),
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
-	effectLookupSym constraint.RefinementLookupBySym,
+	refinementLookupSym constraint.RefinementLookupBySym,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	graph *cfg.Graph,
 	moduleBindings *bind.BindingTable,
@@ -977,7 +977,7 @@ func ExtractPredicateLinkFromCallInfo(
 		return nil
 	}
 
-	eff := ExtractFunctionEffect(callInfo, p, synthFn, effectLookupSym, symResolver, graph, moduleBindings)
+	eff := ExtractFunctionRefinement(callInfo, p, synthFn, refinementLookupSym, symResolver, graph, moduleBindings)
 	if eff == nil || !eff.HasPredicateSemantics() {
 		return nil
 	}
@@ -1007,12 +1007,12 @@ func ComputeDeadPoints(
 	graph *cfg.Graph,
 	synthFn func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	effectLookupSym constraint.RefinementLookupBySym,
+	refinementLookupSym constraint.RefinementLookupBySym,
 	moduleBindings *bind.BindingTable,
 ) map[cfg.Point]bool {
 	dead := make(map[cfg.Point]bool)
 	for _, p := range graph.RPO() {
-		if PointHasTerminatingCallSite(graph, p, synthFn, symResolver, effectLookupSym, moduleBindings) {
+		if PointHasTerminatingCallSite(graph, p, synthFn, symResolver, refinementLookupSym, moduleBindings) {
 			for _, succ := range graph.Successors(p) {
 				preds := graph.Predecessors(succ)
 				if len(preds) == 1 {

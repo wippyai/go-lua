@@ -34,7 +34,7 @@ type VersionedGraph interface {
 //
 //   - Querying the CFG for visible SSA versions
 //   - Building canonical key strings in the "sym<ID>@<Ver><segments>" format
-//   - Handling placeholder paths (used in function effects)
+//   - Handling placeholder paths (used in function refinements)
 //   - Validating that paths have resolvable versions
 //
 // Using the resolver ensures that the same path at the same point always

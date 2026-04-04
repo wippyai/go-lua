@@ -357,6 +357,9 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 	if s.IsNarrowing() && narrower != nil {
 		path := constraint.Path{Root: ex.Value, Symbol: sym}
 		if narrowed := narrower.NarrowedTypeAt(p, path); narrowed != nil {
+			if specialized := s.stableLocalFunctionValueType(ex, p, sc, narrowed, nil); specialized != nil {
+				return specialized
+			}
 			// Guard against unsound narrowing for annotated symbols by ensuring
 			// the narrowed type remains a subtype of the declared type. Function
 			// signatures from declared overlays are also authoritative and should
@@ -384,6 +387,9 @@ fallback:
 	if types := ctx.Types(); types != nil {
 		tv := types.EffectiveTypeAt(p, sym)
 		if tv.State == flow.StateResolved && tv.Type != nil {
+			if specialized := s.stableLocalFunctionValueType(ex, p, sc, tv.Type, nil); specialized != nil {
+				return specialized
+			}
 			// Prefer concrete resolved types over module aliases.
 			// Allow module aliases to override unknown/any placeholders.
 			if tv.Type.Kind().IsPlaceholder() {
@@ -403,6 +409,9 @@ fallback:
 		if moduleSym != 0 && moduleSym != sym {
 			moduleTV := types.EffectiveTypeAt(p, moduleSym)
 			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
+				if specialized := s.stableLocalFunctionValueType(ex, p, sc, moduleTV.Type, nil); specialized != nil {
+					return specialized
+				}
 				if moduleTV.Type.Kind().IsPlaceholder() {
 					// keep looking for better sources
 				} else {
@@ -426,11 +435,17 @@ fallback:
 	if types := ctx.Types(); types != nil {
 		tv := types.EffectiveTypeAt(p, sym)
 		if tv.State == flow.StateResolved && tv.Type != nil {
+			if specialized := s.stableLocalFunctionValueType(ex, p, sc, tv.Type, nil); specialized != nil {
+				return specialized
+			}
 			return tv.Type
 		}
 		if moduleSym != 0 && moduleSym != sym {
 			moduleTV := types.EffectiveTypeAt(p, moduleSym)
 			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
+				if specialized := s.stableLocalFunctionValueType(ex, p, sc, moduleTV.Type, nil); specialized != nil {
+					return specialized
+				}
 				return moduleTV.Type
 			}
 		}

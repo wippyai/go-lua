@@ -116,11 +116,23 @@ func (s *Synthesizer) GetCallQuery() core.TypeOps {
 //
 // For method calls (obj:method()), dispatches to synthMethodCallCoreWithExpected.
 func (s *Synthesizer) SynthCallCore(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth) []typ.Type {
-	return s.synthCallCoreWithNarrower(ex, p, sc, narrower, recurse, nil)
+	return s.synthCallCoreWithCaptureTypes(ex, p, sc, narrower, recurse, nil, nil)
 }
 
 // synthCallCoreWithNarrower synthesizes call with narrower context preserved.
 func (s *Synthesizer) synthCallCoreWithNarrower(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth, expected typ.Type) []typ.Type {
+	return s.synthCallCoreWithCaptureTypes(ex, p, sc, narrower, recurse, expected, nil)
+}
+
+func (s *Synthesizer) synthCallCoreWithCaptureTypes(
+	ex *ast.FuncCallExpr,
+	p cfg.Point,
+	sc *scope.State,
+	narrower api.FlowOps,
+	recurse ExprSynth,
+	expected typ.Type,
+	captureTypes map[cfg.SymbolID]typ.Type,
+) []typ.Type {
 	if callsite.IsMethodLikeExpr(ex) {
 		return s.synthMethodCallCoreWithExpected(ex, p, sc, recurse, expected)
 	}
@@ -137,6 +149,9 @@ func (s *Synthesizer) synthCallCoreWithNarrower(ex *ast.FuncCallExpr, p cfg.Poin
 	}
 
 	calleeType := recurse(ex.Func)
+	if specialized := s.specializedLocalFunctionCalleeType(ex, p, sc, calleeType, captureTypes); specialized != nil {
+		calleeType = specialized
+	}
 	args := synthArgs(ex.Args, recurse)
 	typeArgs := s.resolveTypeArgs(ex.TypeArgs, sc)
 
@@ -162,6 +177,47 @@ func (s *Synthesizer) synthCallCoreWithNarrower(ex *ast.FuncCallExpr, p cfg.Poin
 
 	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
 	return intercept.ApplyOverride(returns, specOverride)
+}
+
+func (s *Synthesizer) specializedLocalFunctionCalleeType(
+	ex *ast.FuncCallExpr,
+	p cfg.Point,
+	sc *scope.State,
+	current typ.Type,
+	captureTypes map[cfg.SymbolID]typ.Type,
+) typ.Type {
+	if s == nil || ex == nil || s.deps.CheckCtx == nil {
+		return nil
+	}
+	if specialized := s.stableLocalFunctionValueType(ex.Func, p, sc, current, captureTypes); specialized != nil {
+		return specialized
+	}
+	graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph)
+	if !ok || graph == nil {
+		return nil
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		bindings = s.deps.ModuleBindings
+	}
+	if bindings == nil {
+		return nil
+	}
+	info := graph.CallSiteAt(p, ex)
+	if info == nil {
+		return nil
+	}
+	for _, sym := range callsite.CallableCalleeSymbolCandidates(info, graph, bindings, nil) {
+		fn := callsite.FunctionLiteralForGraphSymbol(graph, sym)
+		if fn == nil {
+			continue
+		}
+		expectedFn, _ := unwrap.Optional(unwrap.Alias(current)).(*typ.Function)
+		if fnType := s.synthFunctionTypeWithCapturePoint(fn, sc, expectedFn, p, captureTypes); fnType != nil {
+			return fnType
+		}
+	}
+	return nil
 }
 
 // SynthCallCoreWithExpected synthesizes call with optional expected return type for generic inference.
@@ -390,6 +446,9 @@ func (s *Synthesizer) specReturnOverride(fnType typ.Type, astArgs []ast.Expr, ar
 
 // unwrapCallResult converts CallResult to a slice of types.
 func unwrapCallResult(result ops.CallResult) []typ.Type {
+	if len(result.Returns) > 0 {
+		return CopyTypes(result.Returns)
+	}
 	if tuple, ok := result.Type.(*typ.Tuple); ok {
 		return CopyTypes(tuple.Elements)
 	}
@@ -494,17 +553,18 @@ func (s *Synthesizer) withEnvOverlay(overlay map[string]typ.Type) *Synthesizer {
 		overlaidCtx = overlaidCtx.WithGlobalOverlay(overlay)
 	}
 	overlaidDeps := &Deps{
-		Ctx:            s.deps.Ctx,
-		Types:          s.deps.Types,
-		Scopes:         s.deps.Scopes,
-		Manifests:      s.deps.Manifests,
-		CheckCtx:       overlaidCtx,
-		Flow:           s.deps.Flow,
-		Paths:          s.deps.Paths,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
-		ModuleBindings: s.deps.ModuleBindings,
-		ModuleAliases:  s.deps.ModuleAliases,
+		Ctx:                    s.deps.Ctx,
+		Types:                  s.deps.Types,
+		Scopes:                 s.deps.Scopes,
+		Manifests:              s.deps.Manifests,
+		CheckCtx:               overlaidCtx,
+		Flow:                   s.deps.Flow,
+		Paths:                  s.deps.Paths,
+		PreCache:               make(api.Cache),
+		NarrowCache:            make(api.Cache),
+		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
+		ModuleBindings:         s.deps.ModuleBindings,
+		ModuleAliases:          s.deps.ModuleAliases,
 	}
 	return NewSynthesizer(overlaidDeps, s.phase)
 }

@@ -1,11 +1,11 @@
-// inference.go implements function effect inference from flow analysis results.
+// inference.go implements function refinement inference from flow analysis results.
 //
-// Function effects describe how a function's return value relates to its parameters.
-// For predicate functions (returning boolean), effects capture when parameters are
+// Function refinements describe how a function's return value relates to its parameters.
+// For predicate functions (returning boolean), refinements capture when parameters are
 // narrowed based on the return value (OnTrue/OnFalse). For assert-style functions,
-// effects capture constraints that hold after the function returns (OnReturn).
+// refinements capture constraints that hold after the function returns (OnReturn).
 //
-// Effects enable interprocedural narrowing: calling a predicate function in a
+// Refinements enable interprocedural narrowing: calling a predicate function in a
 // conditional allows the checker to narrow argument types in the appropriate branch.
 package flow
 
@@ -61,7 +61,7 @@ func InferFunctionRefinement(
 		return nil
 	}
 
-	src := effectSource{conditionAt: solution.ConditionAt}
+	src := refinementSource{conditionAt: solution.ConditionAt}
 	if solution.inputs != nil {
 		src.returnConstraints = solution.inputs.ReturnConstraints
 		src.returnKinds = solution.inputs.ReturnKinds
@@ -80,7 +80,7 @@ func InferFunctionRefinement(
 //
 // The pre-flow variant is faster but less precise than post-flow inference because
 // it cannot account for path conditions from prior conditionals. It's suitable for
-// bootstrapping effect extraction before the full type checking pass.
+// bootstrapping refinement extraction before the full type checking pass.
 //
 // Example: For function `function assert_string(x) assert(type(x) == "string") end`:
 //   - OnReturn: HasType($0, string) (from assert expression)
@@ -95,12 +95,12 @@ func InferFunctionRefinementFromInputs(
 		return nil
 	}
 
-	src := effectSource{returnConstraints: inputs.ReturnConstraints}
+	src := refinementSource{returnConstraints: inputs.ReturnConstraints}
 
 	return inferFunctionRefinementCore(src, g, params, returnType)
 }
 
-// effectSource abstracts the data sources for effect inference.
+// refinementSource abstracts the data sources for refinement inference.
 //
 // This struct allows the same inference algorithm to work with both pre-flow
 // and post-flow data by providing optional access to different data sources:
@@ -116,7 +116,7 @@ func InferFunctionRefinementFromInputs(
 //
 // Nil fields indicate the data is unavailable, causing the inference to skip
 // the corresponding analysis step.
-type effectSource struct {
+type refinementSource struct {
 	returnConstraints map[cfg.Point]ReturnExprConstraints
 	returnKinds       map[cfg.Point]ReturnKind
 	conditionAt       func(cfg.Point) constraint.Condition
@@ -135,10 +135,10 @@ type effectSource struct {
 //  6. Substitute parameter names/symbols with placeholders ($0, $1, ...)
 //  7. Detect terminating functions (no return nodes, exit unreachable)
 //
-// The effectSource parameter routes queries to the appropriate data source
+// The refinementSource parameter routes queries to the appropriate data source
 // (pre-flow inputs vs. post-flow solution).
 func inferFunctionRefinementCore(
-	src effectSource,
+	src refinementSource,
 	g *cfg.CFG,
 	params []ParamInfo,
 	returnType typ.Type,

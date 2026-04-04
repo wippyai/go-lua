@@ -1,4 +1,4 @@
 {
   "files": ["context.lua", "pipeline.lua", "main.lua"],
-  "check": {"errors": 3}
+  "check": {"errors": 0}
 }
