@@ -28,10 +28,10 @@ func TestPropagate_EmptyResult(t *testing.T) {
 }
 
 func TestPropagate_WithLocalEffect(t *testing.T) {
-	fnEffect := &constraint.FunctionEffect{
+	fnEffect := &constraint.FunctionRefinement{
 		Terminates: true,
 	}
-	result := Propagate(&api.FuncResult{FnEffect: fnEffect}, nil)
+	result := Propagate(&api.FuncResult{FnRefinement: fnEffect}, nil)
 	if result == nil {
 		t.Fatal("expected non-nil effect")
 	}
@@ -40,15 +40,15 @@ func TestPropagate_WithLocalEffect(t *testing.T) {
 	}
 }
 
-func TestLookupEffectBySym_NilStore(t *testing.T) {
-	result := LookupEffectBySym(nil, nil, nil, 1)
+func TestLookupRefinementBySym_NilStore(t *testing.T) {
+	result := LookupRefinementBySym(nil, nil, nil, 1)
 	if result != nil {
 		t.Errorf("expected nil for nil store, got %v", result)
 	}
 }
 
-func TestLookupEffectBySym_ZeroSym(t *testing.T) {
-	result := LookupEffectBySym(nil, nil, nil, 0)
+func TestLookupRefinementBySym_ZeroSym(t *testing.T) {
+	result := LookupRefinementBySym(nil, nil, nil, 0)
 	if result != nil {
 		t.Errorf("expected nil for zero symbol, got %v", result)
 	}
@@ -107,7 +107,7 @@ func TestEffectFromType_NeverReturn(t *testing.T) {
 }
 
 func TestEffectFromType_WithRefinement(t *testing.T) {
-	eff := &constraint.FunctionEffect{Terminates: true}
+	eff := &constraint.FunctionRefinement{Terminates: true}
 	fn := typ.Func().Returns(typ.String).WithRefinement(eff).Build()
 	result := EffectFromType(fn)
 	if result == nil {
@@ -135,14 +135,14 @@ func TestEnrichExportWithEffects_NilGraph(t *testing.T) {
 
 func TestEnrichExportWithEffects_EmptyEffects(t *testing.T) {
 	rec := typ.NewRecord().Build()
-	result := EnrichExportWithEffects(rec, "", map[cfg.SymbolID]*constraint.FunctionEffect{}, nil)
+	result := EnrichExportWithEffects(rec, "", map[cfg.SymbolID]*constraint.FunctionRefinement{}, nil)
 	if result != rec {
 		t.Error("expected original record returned when effects map is empty")
 	}
 }
 
 func TestEnrichExportWithEffects_NonRecordNonInterface(t *testing.T) {
-	result := EnrichExportWithEffects(typ.String, "", map[cfg.SymbolID]*constraint.FunctionEffect{1: {}}, nil)
+	result := EnrichExportWithEffects(typ.String, "", map[cfg.SymbolID]*constraint.FunctionRefinement{1: {}}, nil)
 	if result != typ.String {
 		t.Error("expected original type returned for non-record/non-interface")
 	}
@@ -200,7 +200,7 @@ func TestEnrichExportWithEffects_PreservesRecordQualifiersAndMetatable(t *testin
 		Metatable(meta).
 		Build()
 
-	effectsBySym := map[cfg.SymbolID]*constraint.FunctionEffect{
+	effectsBySym := map[cfg.SymbolID]*constraint.FunctionRefinement{
 		symValidate: {Terminates: true},
 	}
 
@@ -255,11 +255,11 @@ func TestPropagate_CollectsEffectFromAssignmentCallSite(t *testing.T) {
 	}
 
 	result := Propagate(&api.FuncResult{
-		Graph:    graph,
-		FnEffect: &constraint.FunctionEffect{},
-	}, func(sym cfg.SymbolID) *constraint.FunctionEffect {
+		Graph:        graph,
+		FnRefinement: &constraint.FunctionRefinement{},
+	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == symF {
-			return &constraint.FunctionEffect{
+			return &constraint.FunctionRefinement{
 				Row: effect.Row{Labels: []effect.Label{effect.IO{}}},
 			}
 		}
@@ -283,11 +283,11 @@ func TestPropagate_CollectsEffectFromReturnCallSite(t *testing.T) {
 	}
 
 	result := Propagate(&api.FuncResult{
-		Graph:    graph,
-		FnEffect: &constraint.FunctionEffect{},
-	}, func(sym cfg.SymbolID) *constraint.FunctionEffect {
+		Graph:        graph,
+		FnRefinement: &constraint.FunctionRefinement{},
+	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == symF {
-			return &constraint.FunctionEffect{
+			return &constraint.FunctionRefinement{
 				Row: effect.Row{Labels: []effect.Label{effect.IO{}}},
 			}
 		}
@@ -320,11 +320,11 @@ func TestPropagate_UsesCanonicalCandidatesWhenRawSymbolMissing(t *testing.T) {
 	})
 
 	result := Propagate(&api.FuncResult{
-		Graph:    graph,
-		FnEffect: &constraint.FunctionEffect{},
-	}, func(sym cfg.SymbolID) *constraint.FunctionEffect {
+		Graph:        graph,
+		FnRefinement: &constraint.FunctionRefinement{},
+	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == symF {
-			return &constraint.FunctionEffect{
+			return &constraint.FunctionRefinement{
 				Row: effect.Row{Labels: []effect.Label{effect.IO{}}},
 			}
 		}
@@ -359,10 +359,10 @@ func TestPropagate_UsesModuleBindingNameFallback(t *testing.T) {
 	result := Propagate(&api.FuncResult{
 		Graph:          graph,
 		ModuleBindings: moduleBindings,
-		FnEffect:       &constraint.FunctionEffect{},
-	}, func(sym cfg.SymbolID) *constraint.FunctionEffect {
+		FnRefinement:   &constraint.FunctionRefinement{},
+	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == fallbackSym {
-			return &constraint.FunctionEffect{
+			return &constraint.FunctionRefinement{
 				Row: effect.Row{Labels: []effect.Label{effect.IO{}}},
 			}
 		}

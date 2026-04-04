@@ -601,26 +601,6 @@ func isStringKeyExpr(key ast.Expr) bool {
 	return ok
 }
 
-func isLiteralStringKeyType(t typ.Type) bool {
-	switch v := t.(type) {
-	case *typ.Literal:
-		return v.Base == kind.String
-	case *typ.Union:
-		if len(v.Members) == 0 {
-			return false
-		}
-		for _, m := range v.Members {
-			lit, ok := m.(*typ.Literal)
-			if !ok || lit.Base != kind.String {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
 func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, resolver fieldResolverImpl, objType typ.Type, sourceName string) []diag.Diagnostic {
 	if e == nil || narrowView == nil {
 		return nil
@@ -636,12 +616,12 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth,
 		keyType = typ.Unknown
 	}
 
-	if rec, ok := unwrap.Alias(objType).(*typ.Record); ok && !rec.HasMapComponent() && !rec.Open {
+	if rec := unwrap.Record(objType); rec != nil && !rec.HasMapComponent() && !rec.Open {
 		// Closed records support dynamic string indexing (Lua table semantics).
 		// Non-string keys remain invalid.
 		keyKind := keyType.Kind()
-		allowsDynamicString := keyKind == kind.String || keyKind.IsPlaceholder()
-		if !allowsDynamicString && !isLiteralStringKeyType(keyType) {
+		allowsStringIndex := keyKind.IsPlaceholder() || subtype.IsSubtype(keyType, typ.String)
+		if !allowsStringIndex {
 			return []diag.Diagnostic{indexError(objType, e, sourceName)}
 		}
 	}
@@ -720,6 +700,10 @@ func memberTypeName(t typ.Type) string {
 			return "{" + f.Name + ": ..., ...}"
 		}
 		return "{}"
+	case *typ.Recursive:
+		if v.Name != "" {
+			return v.Name
+		}
 	case *typ.Instantiated:
 		if v.Generic != nil && v.Generic.Name != "" {
 			return v.Generic.Name + "<...>"
@@ -750,6 +734,8 @@ func hasField(t typ.Type, field string) bool {
 		return false
 	case *typ.Alias:
 		return hasField(v.Target, field)
+	case *typ.Recursive:
+		return v.Body != nil && v.Body != v && hasField(v.Body, field)
 	case *typ.Optional:
 		return hasField(v.Inner, field)
 	}

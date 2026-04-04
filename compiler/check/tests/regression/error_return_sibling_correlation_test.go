@@ -19,11 +19,11 @@ import (
 //
 // and ensures the second assertion does not collapse err to never.
 func TestRegression_ErrorReturnSiblingCorrelationDirection(t *testing.T) {
-	notNilEffect := constraint.NewEffect(
+	notNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.NotNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)
-	isNilEffect := constraint.NewEffect(
+	isNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.IsNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)

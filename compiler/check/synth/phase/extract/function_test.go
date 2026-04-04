@@ -4,9 +4,22 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	ccfg "github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+type countingGraphProvider struct {
+	graph *ccfg.Graph
+	calls int
+}
+
+func (p *countingGraphProvider) GetOrBuildCFG(*ast.FunctionExpr) *ccfg.Graph {
+	p.calls++
+	return p.graph
+}
 
 func TestSynthFunctionType_Nil(t *testing.T) {
 	s := newTestSynthesizer()
@@ -178,6 +191,33 @@ func TestSynthFunctionTypeWithExpected_VariadicInference(t *testing.T) {
 	}
 }
 
+func TestSynthFunctionType_UsesAttachedGraphProvider(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{Exprs: []ast.Expr{&ast.StringExpr{Value: "ok"}}},
+		},
+	}
+	provider := &countingGraphProvider{graph: ccfg.Build(fn)}
+	ctx := db.NewQueryContext(db.New())
+	api.AttachGraphs(ctx, provider)
+
+	s := NewSynthesizer(&Deps{
+		Ctx:      ctx,
+		Types:    mockTypeQuerier{},
+		Scopes:   make(api.ScopeMap),
+		Graphs:   provider,
+		PreCache: make(api.Cache),
+	}, api.PhaseTypeResolution)
+
+	result := s.FunctionType(fn, scope.New())
+	if result == nil {
+		t.Fatal("expected non-nil function")
+	}
+	if provider.calls == 0 {
+		t.Fatal("expected function synthesis to use attached graph provider")
+	}
+}
+
 func TestSynthFunctionType_TypeParams(t *testing.T) {
 	s := newTestSynthesizer()
 	sc := scope.New()
@@ -297,7 +337,7 @@ func TestReturnInference_ArityUnion_ErrorObject(t *testing.T) {
 		},
 	}
 
-	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil)
+	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil, 0, nil)
 	if len(result) != 2 {
 		t.Fatalf("got %d return types, want 2", len(result))
 	}
@@ -353,7 +393,7 @@ func TestReturnInference_LastExprExpands(t *testing.T) {
 		},
 	}
 
-	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil)
+	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil, 0, nil)
 	if len(result) != 2 {
 		t.Fatalf("got %d return types, want 2", len(result))
 	}
@@ -395,7 +435,7 @@ func TestReturnInference_ZeroReturn(t *testing.T) {
 		},
 	}
 
-	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil)
+	result, _ := s.inferReturnTypesFromBody(fn, sc, nil, nil, 0, nil)
 	if len(result) != 1 {
 		t.Fatalf("got %d return types, want 1", len(result))
 	}

@@ -172,10 +172,10 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 				w.writeBool(false)
 			}
 
-			if eff, ok := v.Refinement.(*constraint.FunctionEffect); ok {
-				w.writeFunctionEffect(eff)
+			if eff, ok := v.Refinement.(*constraint.FunctionRefinement); ok {
+				w.writeFunctionRefinement(eff)
 			} else {
-				w.writeFunctionEffect(nil)
+				w.writeFunctionRefinement(nil)
 			}
 			return struct{}{}
 		},

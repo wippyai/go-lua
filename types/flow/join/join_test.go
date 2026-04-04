@@ -78,6 +78,52 @@ func TestCoalesceMaps_MultipleMaps(t *testing.T) {
 	}
 }
 
+func TestCoalesceRecordMapComponents_MergesMatchingFieldShapes(t *testing.T) {
+	left := typ.NewRecord().
+		Field("kind", typ.String).
+		Field("handler", typ.Func().Returns(typ.String).Build()).
+		MapComponent(typ.String, typ.Number).
+		Build()
+	right := typ.NewRecord().
+		Field("kind", typ.String).
+		Field("handler", typ.Func().Returns(typ.String).Build()).
+		MapComponent(typ.String, typ.Boolean).
+		Build()
+
+	result := CoalesceRecordMapComponents([]typ.Type{left, right})
+	if len(result) != 1 {
+		t.Fatalf("expected 1 merged record, got %d", len(result))
+	}
+	rec, ok := result[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record, got %T", result[0])
+	}
+	if !rec.HasMapComponent() {
+		t.Fatal("expected merged record to keep map component")
+	}
+	if _, ok := rec.MapValue.(*typ.Union); !ok {
+		t.Fatalf("expected merged map value union, got %T", rec.MapValue)
+	}
+}
+
+func TestCoalesceRecordMapComponents_DoesNotMergeDifferentFieldTypes(t *testing.T) {
+	left := typ.NewRecord().
+		Field("kind", typ.String).
+		Field("handler", typ.Func().Returns(typ.String).Build()).
+		MapComponent(typ.String, typ.Number).
+		Build()
+	right := typ.NewRecord().
+		Field("kind", typ.String).
+		Field("handler", typ.Func().Returns(typ.Integer).Build()).
+		MapComponent(typ.String, typ.Boolean).
+		Build()
+
+	result := CoalesceRecordMapComponents([]typ.Type{left, right})
+	if len(result) != 2 {
+		t.Fatalf("expected distinct records to remain separate, got %d", len(result))
+	}
+}
+
 func TestCoalesceEmptyRecordWithMap_NoEmptyRecord(t *testing.T) {
 	m := typ.NewMap(typ.String, typ.Number)
 	rec := typ.NewRecord().Field("x", typ.Number).Build()

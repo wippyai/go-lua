@@ -13,20 +13,20 @@ import (
 // False Positive Reproductions from wippy lint
 // These tests document bugs that produce false positive errors
 
-// 1. E0004: Field access on {} type with bracket notation
-// Pattern: method_names["greet"] where method_names is a map/table
-
-func TestFalsePositive_BracketNotationOnMap(t *testing.T) {
+// 1. Bracket notation on maps remains soundly optional until presence is proven.
+func TestBracketNotationOnMap_GuardedAccess(t *testing.T) {
 	source := `
 		local method_names: {[string]: string} = {
 			greet = "hello",
 			farewell = "goodbye"
 		}
+		local maybe_name: string? = method_names["greet"]
+		assert(method_names["greet"])
 		local name: string = method_names["greet"]
 	`
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
-		t.Errorf("expected no errors for bracket notation on map, got: %v", testutil.ErrorMessages(result.Diagnostics))
+		t.Errorf("expected no errors for guarded bracket notation on map, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 

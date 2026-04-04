@@ -5,15 +5,15 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// EffectLookupBySym retrieves a function's inferred effect by symbol ID.
+// RefinementLookupBySym retrieves a function's inferred refinement by symbol ID.
 //
 // Used during call site analysis to determine what type refinements a
-// function call produces. Returns nil if the function has no recorded effect.
-type EffectLookupBySym func(sym cfg.SymbolID) *FunctionEffect
+// function call produces. Returns nil if the function has no recorded refinement.
+type RefinementLookupBySym func(sym cfg.SymbolID) *FunctionRefinement
 
-// FunctionEffect describes the type refinements a function produces.
+// FunctionRefinement describes the type refinements a function produces.
 //
-// Effects encode how a function call narrows types based on its return value.
+// Refinements encode how a function call narrows types based on its return value.
 // Three categories are supported:
 //   - OnReturn: constraints that hold when the function returns normally
 //     (used for assert-style functions that error() on failure)
@@ -23,7 +23,7 @@ type EffectLookupBySym func(sym cfg.SymbolID) *FunctionEffect
 //
 // Placeholder roots ($0, $1, ...) reference parameters by position.
 // At call sites, placeholders are substituted with actual argument paths.
-type FunctionEffect struct {
+type FunctionRefinement struct {
 	// Row is the effect label set (IO, Mutate, Throw, etc.).
 	// Stored as typ.EffectInfo to avoid circular import with effect package.
 	// The concrete type is effect.Row.
@@ -45,9 +45,9 @@ type FunctionEffect struct {
 	Terminates bool
 }
 
-// NewEffect creates a FunctionEffect from constraint slices.
-func NewEffect(onReturn, onTrue, onFalse []Constraint) *FunctionEffect {
-	return &FunctionEffect{
+// NewRefinement creates a FunctionRefinement from constraint slices.
+func NewRefinement(onReturn, onTrue, onFalse []Constraint) *FunctionRefinement {
+	return &FunctionRefinement{
 		OnReturn: FromConstraints(onReturn...),
 		OnTrue:   FromConstraints(onTrue...),
 		OnFalse:  FromConstraints(onFalse...),
@@ -55,7 +55,7 @@ func NewEffect(onReturn, onTrue, onFalse []Constraint) *FunctionEffect {
 }
 
 // IsEmpty returns true if the effect has no constraints, no row, and doesn't terminate.
-func (e *FunctionEffect) IsEmpty() bool {
+func (e *FunctionRefinement) IsEmpty() bool {
 	if e == nil {
 		return true
 	}
@@ -64,23 +64,23 @@ func (e *FunctionEffect) IsEmpty() bool {
 }
 
 // HasAssertSemantics returns true if function has assert-style semantics.
-func (e *FunctionEffect) HasAssertSemantics() bool {
+func (e *FunctionRefinement) HasAssertSemantics() bool {
 	return e != nil && e.OnReturn.HasConstraints()
 }
 
 // HasPredicateSemantics returns true if function has predicate semantics.
-func (e *FunctionEffect) HasPredicateSemantics() bool {
+func (e *FunctionRefinement) HasPredicateSemantics() bool {
 	return e != nil && (e.OnTrue.HasConstraints() || e.OnFalse.HasConstraints())
 }
 
-// Equals returns true if two function effects are structurally equal.
+// Equals returns true if two function refinements are structurally equal.
 // Implements internal.Equaler interface for use in typ.Function.
-func (e *FunctionEffect) Equals(other any) bool {
+func (e *FunctionRefinement) Equals(other any) bool {
 	if other == nil {
 		return e == nil
 	}
 
-	o, ok := other.(*FunctionEffect)
+	o, ok := other.(*FunctionRefinement)
 
 	if !ok {
 		return false
@@ -116,19 +116,19 @@ func effectRowEquals(a, b typ.EffectInfo) bool {
 }
 
 // IsRefinementInfo implements typ.RefinementInfo.
-func (e *FunctionEffect) IsRefinementInfo() {}
+func (e *FunctionRefinement) IsRefinementInfo() {}
 
-// Substitute returns a new FunctionEffect with placeholder paths replaced.
+// Substitute returns a new FunctionRefinement with placeholder paths replaced.
 //
 // At a call site, parameter placeholders ($0, $1, ...) are replaced with
 // the actual argument paths, producing concrete constraints that can be
 // applied to narrow types at the call location.
-func (e *FunctionEffect) Substitute(args []Path) *FunctionEffect {
+func (e *FunctionRefinement) Substitute(args []Path) *FunctionRefinement {
 	if e == nil || e.IsEmpty() {
 		return nil
 	}
 
-	result := &FunctionEffect{
+	result := &FunctionRefinement{
 		OnReturn: e.OnReturn.Substitute(args),
 		OnTrue:   e.OnTrue.Substitute(args),
 		OnFalse:  e.OnFalse.Substitute(args),
@@ -147,7 +147,7 @@ func (e *FunctionEffect) Substitute(args []Path) *FunctionEffect {
 //
 // Detection looks for KeyOf constraints in OnReturn where the table is a
 // parameter placeholder ($N) and the key is a return path.
-func (e *FunctionEffect) KeysCollectorInfo() (paramIndex int, returnIndex int, ok bool) {
+func (e *FunctionRefinement) KeysCollectorInfo() (paramIndex int, returnIndex int, ok bool) {
 	if e == nil || !e.OnReturn.HasConstraints() {
 		return 0, 0, false
 	}
@@ -187,7 +187,7 @@ func (e *FunctionEffect) KeysCollectorInfo() (paramIndex int, returnIndex int, o
 // KeysCollectorParamIndex checks if the function returns keys of a parameter.
 //
 // Returns the parameter index (0-based) if found, or -1 otherwise.
-func (e *FunctionEffect) KeysCollectorParamIndex() int {
+func (e *FunctionRefinement) KeysCollectorParamIndex() int {
 	paramIdx, _, ok := e.KeysCollectorInfo()
 	if !ok {
 		return -1

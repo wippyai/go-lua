@@ -1,6 +1,7 @@
 package assign
 
 import (
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -48,13 +49,48 @@ func isOptionalErrorLike(t typ.Type) bool {
 	if inner == nil {
 		return false
 	}
-	if subtype.IsSubtype(inner, typ.LuaError) || subtype.IsSubtype(inner, typ.String) {
+	return isErrorLikeType(inner)
+}
+
+func isErrorLikeType(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	t = unwrap.Alias(t)
+	if t == nil {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return false
+		}
+		for _, m := range v.Members {
+			if m == nil || m.Kind() == kind.Nil {
+				continue
+			}
+			if !isErrorLikeType(m) {
+				return false
+			}
+		}
+		return true
+	case *typ.Intersection:
+		for _, m := range v.Members {
+			if isErrorLikeType(m) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if subtype.IsSubtype(t, typ.LuaError) || subtype.IsSubtype(t, typ.String) {
 		return true
 	}
 	// Structured error objects in Lua code often expose `message` as a field.
 	// Treat Optional<{message: string}> as error-like for canonical (value, err)
 	// correlation when explicit specs are absent.
-	messageType, ok := core.Field(inner, "message")
+	messageType, ok := core.Field(t, "message")
 	if !ok || messageType == nil {
 		return false
 	}

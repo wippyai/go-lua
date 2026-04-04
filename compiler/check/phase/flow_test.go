@@ -66,17 +66,17 @@ func TestExtractParams_WithTypes(t *testing.T) {
 	}
 }
 
-func TestInferEffect_NilGraph(t *testing.T) {
-	result := InferEffect(nil, &flow.Solution{}, nil, nil)
+func TestInferRefinement_NilGraph(t *testing.T) {
+	result := InferRefinement(nil, &flow.Solution{}, nil, nil)
 	if result != nil {
 		t.Errorf("expected nil for nil graph, got %v", result)
 	}
 }
 
-func TestInferEffect_NilSolution(t *testing.T) {
+func TestInferRefinement_NilSolution(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
 	graph := cfg.Build(fn)
-	result := InferEffect(graph, nil, nil, nil)
+	result := InferRefinement(graph, nil, nil, nil)
 	if result != nil {
 		t.Errorf("expected nil for nil solution, got %v", result)
 	}
@@ -147,7 +147,7 @@ func TestEnrichWithKeysCollector_AppendsToExistingOnReturn(t *testing.T) {
 		Stmts:   body,
 	}
 
-	existing := &constraint.FunctionEffect{
+	existing := &constraint.FunctionRefinement{
 		OnReturn: constraint.FromConstraints(constraint.NotNil{Path: constraint.RetPath(0)}),
 	}
 	result := EnrichWithKeysCollector(existing, fn)

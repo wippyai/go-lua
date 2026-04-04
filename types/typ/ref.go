@@ -17,6 +17,7 @@ type Ref struct {
 	Module string // Module path (empty for local references)
 	Name   string // Type name
 	hash   uint64
+	str    string
 }
 
 // NewRef creates a type reference.
@@ -24,17 +25,17 @@ func NewRef(module, name string) *Ref {
 	h := internal.HashCombine(uint64(kind.Ref), internal.FnvString(module))
 	h = internal.HashCombine(h, internal.FnvString(name))
 
-	return &Ref{Module: module, Name: name, hash: h}
+	str := name
+	if module != "" {
+		str = module + "." + name
+	}
+	return &Ref{Module: module, Name: name, hash: h, str: str}
 }
 
 func (r *Ref) Kind() kind.Kind { return kind.Ref }
 
 func (r *Ref) String() string {
-	if r.Module == "" {
-		return r.Name
-	}
-
-	return r.Module + "." + r.Name
+	return r.str
 }
 
 func (r *Ref) Hash() uint64 { return r.hash }
@@ -57,9 +58,11 @@ func (r *Ref) Equals(other Type) bool {
 //
 // Example: type UserId = number creates Alias{Name: "UserId", Target: number}
 type Alias struct {
-	Name   string // Alias name
-	Target Type   // Underlying type
-	hash   uint64
+	Name         string // Alias name
+	Target       Type   // Underlying type
+	unaliased    Type
+	hash         uint64
+	softPrunable bool
 }
 
 // NewAlias creates a type alias.
@@ -67,16 +70,48 @@ func NewAlias(name string, target Type) *Alias {
 	h := internal.HashCombine(uint64(kind.Alias), internal.FnvString(name))
 	h = internal.HashCombine(h, target.Hash())
 
-	return &Alias{Name: name, Target: target, hash: h}
+	return &Alias{
+		Name:         name,
+		Target:       target,
+		unaliased:    flattenAliasTarget(target),
+		hash:         h,
+		softPrunable: softPruneMayRewrite(target),
+	}
 }
 
 func (a *Alias) Kind() kind.Kind { return kind.Alias }
 func (a *Alias) String() string  { return a.Name }
 func (a *Alias) Hash() uint64    { return a.hash }
 
+func (a *Alias) UnaliasedTarget() Type {
+	if a == nil || a.unaliased == nil {
+		return a.Target
+	}
+	return a.unaliased
+}
+
 // Equals compares structurally through the alias target.
 func (a *Alias) Equals(other Type) bool {
 	return TypeEquals(a.Target, other)
+}
+
+func flattenAliasTarget(target Type) Type {
+	current := target
+	for depth := 0; depth < DefaultRecursionDepth; depth++ {
+		alias, ok := current.(*Alias)
+		if !ok || alias == nil {
+			return current
+		}
+		next := alias.Target
+		if alias.unaliased != nil {
+			next = alias.unaliased
+		}
+		if next == nil || next == current {
+			return current
+		}
+		current = next
+	}
+	return current
 }
 
 // Platform represents a platform-specific opaque type.
@@ -116,8 +151,9 @@ func (p *Platform) Equals(other Type) bool {
 //
 // Example: typeof(Point) has type Meta{Of: Point}
 type Meta struct {
-	Of   Type // The type being wrapped
-	hash uint64
+	Of       Type // The type being wrapped
+	hash     uint64
+	strCache stringCache
 }
 
 // NewMeta creates a metatype.
@@ -127,8 +163,12 @@ func NewMeta(of Type) *Meta {
 }
 
 func (m *Meta) Kind() kind.Kind { return kind.Meta }
-func (m *Meta) String() string  { return "typeof(" + m.Of.String() + ")" }
-func (m *Meta) Hash() uint64    { return m.hash }
+func (m *Meta) String() string {
+	return m.strCache.get(func() string {
+		return "typeof(" + m.Of.String() + ")"
+	})
+}
+func (m *Meta) Hash() uint64 { return m.hash }
 func (m *Meta) Equals(other Type) bool {
 	if other.Kind() != kind.Meta {
 		return false

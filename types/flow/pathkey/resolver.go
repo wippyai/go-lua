@@ -34,13 +34,25 @@ type VersionedGraph interface {
 //
 //   - Querying the CFG for visible SSA versions
 //   - Building canonical key strings in the "sym<ID>@<Ver><segments>" format
-//   - Handling placeholder paths (used in function effects)
+//   - Handling placeholder paths (used in function refinements)
 //   - Validating that paths have resolvable versions
 //
 // Using the resolver ensures that the same path at the same point always
 // produces the same key, enabling correct value lookup and constraint matching.
 type Resolver struct {
-	graph VersionedGraph
+	graph  VersionedGraph
+	root   map[versionedRootKey]constraint.PathKey
+	single map[singleSegmentKey]constraint.PathKey
+}
+
+type versionedRootKey struct {
+	sym     cfg.SymbolID
+	version int
+}
+
+type singleSegmentKey struct {
+	root versionedRootKey
+	seg  constraint.Segment
 }
 
 // NewResolver creates a resolver bound to a versioned graph.
@@ -48,7 +60,11 @@ type Resolver struct {
 // The graph must provide SSA version lookup for all symbols that will be
 // resolved. Typically this is a cfg.VersionedGraph from CFG construction.
 func NewResolver(g VersionedGraph) *Resolver {
-	return &Resolver{graph: g}
+	return &Resolver{
+		graph:  g,
+		root:   make(map[versionedRootKey]constraint.PathKey),
+		single: make(map[singleSegmentKey]constraint.PathKey),
+	}
 }
 
 // KeyAt returns the canonical key for a path at a CFG point.
@@ -103,13 +119,47 @@ func (r *Resolver) KeyAtVersion(sym cfg.SymbolID, versionID int, segments []cons
 //   - Parseable back to components via ParseKey
 //   - Sortable in a meaningful order (by symbol, then version)
 func (r *Resolver) buildKey(sym cfg.SymbolID, versionID int, segments []constraint.Segment) constraint.PathKey {
+	rootKey := r.rootKey(sym, versionID)
+	if len(segments) == 0 {
+		return rootKey
+	}
+	if len(segments) == 1 {
+		cacheKey := singleSegmentKey{
+			root: versionedRootKey{sym: sym, version: versionID},
+			seg:  segments[0],
+		}
+		if cached, ok := r.single[cacheKey]; ok {
+			return cached
+		}
+		b := strings.Builder{}
+		b.Grow(len(rootKey) + segmentStringLen(segments[0]))
+		b.WriteString(string(rootKey))
+		appendSegments(&b, segments)
+		key := constraint.PathKey(b.String())
+		r.single[cacheKey] = key
+		return key
+	}
 	var b strings.Builder
+	b.Grow(len(rootKey) + segmentsStringLen(segments))
+	b.WriteString(string(rootKey))
+	appendSegments(&b, segments)
+	return constraint.PathKey(b.String())
+}
+
+func (r *Resolver) rootKey(sym cfg.SymbolID, versionID int) constraint.PathKey {
+	cacheKey := versionedRootKey{sym: sym, version: versionID}
+	if cached, ok := r.root[cacheKey]; ok {
+		return cached
+	}
+	var b strings.Builder
+	b.Grow(16)
 	b.WriteString("sym")
 	writeUint(&b, uint64(sym))
 	b.WriteByte('@')
 	writeInt(&b, versionID)
-	appendSegments(&b, segments)
-	return constraint.PathKey(b.String())
+	key := constraint.PathKey(b.String())
+	r.root[cacheKey] = key
+	return key
 }
 
 func buildPlaceholderKey(root string, segments []constraint.Segment) constraint.PathKey {
@@ -135,6 +185,47 @@ func appendSegments(b *strings.Builder, segments []constraint.Segment) {
 			writeInt(b, seg.Index)
 			b.WriteByte(']')
 		}
+	}
+}
+
+func segmentsStringLen(segments []constraint.Segment) int {
+	total := 0
+	for _, seg := range segments {
+		total += segmentStringLen(seg)
+	}
+	return total
+}
+
+func segmentStringLen(seg constraint.Segment) int {
+	switch seg.Kind {
+	case constraint.SegmentField:
+		return 1 + len(seg.Name)
+	case constraint.SegmentIndexString:
+		escaped := 0
+		for i := 0; i < len(seg.Name); i++ {
+			switch seg.Name[i] {
+			case '\\', '"':
+				escaped++
+			}
+		}
+		return 4 + len(seg.Name) + escaped
+	case constraint.SegmentIndexInt:
+		n := seg.Index
+		if n == 0 {
+			return 3
+		}
+		digits := 0
+		if n < 0 {
+			digits++
+			n = -n
+		}
+		for n > 0 {
+			digits++
+			n /= 10
+		}
+		return digits + 2
+	default:
+		return 0
 	}
 }
 

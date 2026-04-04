@@ -5,6 +5,8 @@
 package subst
 
 import (
+	"sync"
+
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
@@ -66,18 +68,55 @@ func Self(t typ.Type, selfType typ.Type) typ.Type {
 //
 // Does not enforce generic constraints; use subtype checking for that.
 func ExpandInstantiated(t typ.Type) typ.Type {
-	return expandInstantiatedWithDepth(t, typ.DeepRecursionDepth)
-}
-
-func expandInstantiatedWithDepth(t typ.Type, maxDepth int) typ.Type {
-	guard := typ.GuardForDepth(maxDepth)
-	return expandInstantiatedGuard(t, guard)
-}
-
-func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type {
 	if t == nil || !expandInstantiatedCanDescend(t) {
 		return t
 	}
+	memo := getExpandMemo()
+	defer putExpandMemo(memo)
+	guard := typ.GuardForDepth(typ.DefaultRecursionDepth)
+	return expandInstantiatedGuard(t, guard, memo)
+}
+
+const expandMemoMaxEntries = 2048
+
+var expandMemoPool = sync.Pool{
+	New: func() any {
+		return make(map[typ.Type]typ.Type, 32)
+	},
+}
+
+func getExpandMemo() map[typ.Type]typ.Type {
+	return expandMemoPool.Get().(map[typ.Type]typ.Type)
+}
+
+func putExpandMemo(m map[typ.Type]typ.Type) {
+	if len(m) > expandMemoMaxEntries {
+		expandMemoPool.Put(make(map[typ.Type]typ.Type, 32))
+		return
+	}
+	clear(m)
+	expandMemoPool.Put(m)
+}
+
+func expandInstantiatedWithDepth(t typ.Type, maxDepth int) typ.Type {
+	if t == nil || !expandInstantiatedCanDescend(t) {
+		return t
+	}
+	memo := getExpandMemo()
+	defer putExpandMemo(memo)
+	guard := typ.GuardForDepth(maxDepth)
+	return expandInstantiatedGuard(t, guard, memo)
+}
+
+func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard, memo map[typ.Type]typ.Type) typ.Type {
+	if t == nil || !expandInstantiatedCanDescend(t) {
+		return t
+	}
+
+	if cached, ok := memo[t]; ok {
+		return cached
+	}
+
 	next, ok := guard.Enter(t)
 	if !ok {
 		return t
@@ -92,6 +131,12 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 		t = ann.Inner
 	}
 
+	result := expandInstantiatedCore(t, orig, next, memo)
+	memo[orig] = result
+	return result
+}
+
+func expandInstantiatedCore(t typ.Type, orig typ.Type, guard internal.RecursionGuard, memo map[typ.Type]typ.Type) typ.Type {
 	switch v := t.(type) {
 	case *typ.Instantiated:
 		if v.Generic == nil || len(v.TypeArgs) != len(v.Generic.TypeParams) || v.Generic.Body == nil {
@@ -99,9 +144,9 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 		}
 		body := Params(v.Generic.Body, v.Generic.TypeParams, v.TypeArgs)
 		body = Self(body, orig)
-		return expandInstantiatedGuard(body, next)
+		return expandInstantiatedGuard(body, guard, memo)
 	case *typ.Optional:
-		inner := expandInstantiatedGuard(v.Inner, next)
+		inner := expandInstantiatedGuard(v.Inner, guard, memo)
 		if inner == v.Inner {
 			return orig
 		}
@@ -109,7 +154,7 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 	case *typ.Union:
 		var members []typ.Type
 		for i, m := range v.Members {
-			newMember := expandInstantiatedGuard(m, next)
+			newMember := expandInstantiatedGuard(m, guard, memo)
 			if newMember != m {
 				if members == nil {
 					members = make([]typ.Type, len(v.Members))
@@ -127,7 +172,7 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 	case *typ.Intersection:
 		var members []typ.Type
 		for i, m := range v.Members {
-			newMember := expandInstantiatedGuard(m, next)
+			newMember := expandInstantiatedGuard(m, guard, memo)
 			if newMember != m {
 				if members == nil {
 					members = make([]typ.Type, len(v.Members))
@@ -143,14 +188,14 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 		}
 		return typ.NewIntersection(members...)
 	case *typ.Array:
-		elem := expandInstantiatedGuard(v.Element, next)
+		elem := expandInstantiatedGuard(v.Element, guard, memo)
 		if elem == v.Element {
 			return orig
 		}
 		return typ.NewArray(elem)
 	case *typ.Map:
-		key := expandInstantiatedGuard(v.Key, next)
-		value := expandInstantiatedGuard(v.Value, next)
+		key := expandInstantiatedGuard(v.Key, guard, memo)
+		value := expandInstantiatedGuard(v.Value, guard, memo)
 		if key == v.Key && value == v.Value {
 			return orig
 		}
@@ -158,7 +203,7 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 	case *typ.Tuple:
 		var elems []typ.Type
 		for i, e := range v.Elements {
-			newElem := expandInstantiatedGuard(e, next)
+			newElem := expandInstantiatedGuard(e, guard, memo)
 			if newElem != e {
 				if elems == nil {
 					elems = make([]typ.Type, len(v.Elements))
@@ -179,7 +224,7 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 		for i, p := range v.Params {
 			newType := p.Type
 			if _, isInst := p.Type.(*typ.Instantiated); !isInst {
-				newType = expandInstantiatedGuard(p.Type, next)
+				newType = expandInstantiatedGuard(p.Type, guard, memo)
 			}
 			if newType != p.Type {
 				if params == nil {
@@ -195,7 +240,7 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 
 		var returns []typ.Type
 		for i, r := range v.Returns {
-			newRet := expandInstantiatedGuard(r, next)
+			newRet := expandInstantiatedGuard(r, guard, memo)
 			if newRet != r {
 				if returns == nil {
 					returns = make([]typ.Type, len(v.Returns))
@@ -210,7 +255,7 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 
 		variadic := v.Variadic
 		if v.Variadic != nil {
-			newVariadic := expandInstantiatedGuard(v.Variadic, next)
+			newVariadic := expandInstantiatedGuard(v.Variadic, guard, memo)
 			if newVariadic != v.Variadic {
 				changed = true
 				variadic = newVariadic
@@ -257,7 +302,7 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 		changed := false
 		var fields []typ.Field
 		for i, f := range v.Fields {
-			newType := expandInstantiatedGuard(f.Type, next)
+			newType := expandInstantiatedGuard(f.Type, guard, memo)
 			if newType != f.Type {
 				if fields == nil {
 					fields = make([]typ.Field, len(v.Fields))
@@ -272,7 +317,7 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 
 		metatable := v.Metatable
 		if v.Metatable != nil {
-			newMetatable := expandInstantiatedGuard(v.Metatable, next)
+			newMetatable := expandInstantiatedGuard(v.Metatable, guard, memo)
 			if newMetatable != v.Metatable {
 				changed = true
 				metatable = newMetatable
@@ -282,11 +327,11 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 		mapKey := v.MapKey
 		mapValue := v.MapValue
 		if v.HasMapComponent() {
-			mapKey = expandInstantiatedGuard(v.MapKey, next)
+			mapKey = expandInstantiatedGuard(v.MapKey, guard, memo)
 			if mapKey != v.MapKey {
 				changed = true
 			}
-			mapValue = expandInstantiatedGuard(v.MapValue, next)
+			mapValue = expandInstantiatedGuard(v.MapValue, guard, memo)
 			if mapValue != v.MapValue {
 				changed = true
 			}
@@ -324,7 +369,7 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 		}
 		return builder.Build()
 	case *typ.Alias:
-		target := expandInstantiatedGuard(v.Target, next)
+		target := expandInstantiatedGuard(v.Target, guard, memo)
 		if target == v.Target {
 			return orig
 		}
@@ -334,7 +379,7 @@ func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard) typ.Type
 		var methods []typ.Method
 		for idx := range v.Methods {
 			m := v.Methods[idx]
-			newType := expandInstantiatedGuard(m.Type, next)
+			newType := expandInstantiatedGuard(m.Type, guard, memo)
 			fn, ok := newType.(*typ.Function)
 			if !ok {
 				fn = m.Type

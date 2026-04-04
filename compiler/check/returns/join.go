@@ -119,6 +119,12 @@ func ReturnTypesElideOptional(a, b []typ.Type) bool {
 // The nil-only guard prevents a refined-but-empty-looking update from
 // regressing an already informative summary to just nil.
 func SelectPreferredReturnVector(a, b []typ.Type) ([]typ.Type, bool) {
+	if ReturnTypesRepairNever(a, b) {
+		return a, true
+	}
+	if ReturnTypesRepairNever(b, a) {
+		return b, true
+	}
 	if ReturnTypesRefine(a, b) {
 		if ReturnTypesAllNil(a) && !ReturnTypesAllNil(b) {
 			return b, true
@@ -196,6 +202,30 @@ func ReturnTypesFillNilSlots(a, b []typ.Type) bool {
 	return strict
 }
 
+// ReturnTypesRepairNever reports whether candidate is a runtime-possible repair
+// of baseline by replacing nested never artifacts while otherwise widening
+// compatibly. This lets post-flow summaries correct pre-flow bottoms such as
+// `{data?: never}` -> `{data?: unknown}`.
+func ReturnTypesRepairNever(candidate, baseline []typ.Type) bool {
+	if len(candidate) == 0 || len(baseline) == 0 || len(candidate) != len(baseline) {
+		return false
+	}
+	strict := false
+	for i := range candidate {
+		if candidate[i] == nil || baseline[i] == nil {
+			return false
+		}
+		if typ.TypeEquals(candidate[i], baseline[i]) {
+			continue
+		}
+		if !typeRepairsNever(candidate[i], baseline[i]) {
+			return false
+		}
+		strict = true
+	}
+	return strict
+}
+
 // TypeExtendsRecord reports whether type a extends type b by adding record fields.
 // This treats record field supersets as refinements when b is a record or union of records.
 func TypeExtendsRecord(a, b typ.Type) bool {
@@ -214,6 +244,290 @@ func TypeExtendsRecord(a, b typ.Type) bool {
 	default:
 		return false
 	}
+}
+
+func typeRepairsNever(candidate, baseline typ.Type) bool {
+	if candidate == nil || baseline == nil {
+		return false
+	}
+	if !typeContainsNever(baseline) || typeContainsNever(candidate) {
+		return false
+	}
+	ok, strict := typeNeverRepairRelation(candidate, baseline)
+	return ok && strict
+}
+
+func typeNeverRepairRelation(candidate, baseline typ.Type) (bool, bool) {
+	if candidate == nil || baseline == nil {
+		return false, false
+	}
+	if typ.TypeEquals(candidate, baseline) {
+		return true, false
+	}
+
+	candidate = unwrap.Alias(candidate)
+	baseline = unwrap.Alias(baseline)
+	if candidate == nil || baseline == nil {
+		return false, false
+	}
+
+	if typ.IsNever(baseline) {
+		return !typ.IsNever(candidate), !typ.IsNever(candidate)
+	}
+	if !typeContainsNever(baseline) {
+		return false, false
+	}
+
+	switch b := baseline.(type) {
+	case *typ.Optional:
+		c, ok := candidate.(*typ.Optional)
+		if !ok {
+			return false, false
+		}
+		return typeNeverRepairRelation(c.Inner, b.Inner)
+	case *typ.Union:
+		c, ok := candidate.(*typ.Union)
+		if !ok || len(c.Members) != len(b.Members) {
+			return false, false
+		}
+		used := make([]bool, len(c.Members))
+		strict := false
+		for _, bm := range b.Members {
+			matched := false
+			for j, cm := range c.Members {
+				if used[j] || !typ.TypeEquals(cm, bm) {
+					continue
+				}
+				used[j] = true
+				matched = true
+				break
+			}
+			if matched {
+				continue
+			}
+			for j, cm := range c.Members {
+				if used[j] {
+					continue
+				}
+				ok, repaired := typeNeverRepairRelation(cm, bm)
+				if !ok {
+					continue
+				}
+				used[j] = true
+				matched = true
+				if repaired {
+					strict = true
+				}
+				break
+			}
+			if !matched {
+				return false, false
+			}
+		}
+		return true, strict
+	case *typ.Record:
+		c, ok := candidate.(*typ.Record)
+		if !ok || c.Open != b.Open || c.HasMapComponent() != b.HasMapComponent() || len(c.Fields) != len(b.Fields) {
+			return false, false
+		}
+		strict := false
+		for _, bf := range b.Fields {
+			cf := c.GetField(bf.Name)
+			if cf == nil || cf.Optional != bf.Optional || cf.Readonly != bf.Readonly {
+				return false, false
+			}
+			ok, repaired := typeNeverRepairRelation(cf.Type, bf.Type)
+			if !ok {
+				return false, false
+			}
+			if repaired {
+				strict = true
+			}
+		}
+		if b.HasMapComponent() {
+			ok, repaired := typeNeverRepairRelation(c.MapKey, b.MapKey)
+			if !ok {
+				return false, false
+			}
+			if repaired {
+				strict = true
+			}
+			ok, repaired = typeNeverRepairRelation(c.MapValue, b.MapValue)
+			if !ok {
+				return false, false
+			}
+			if repaired {
+				strict = true
+			}
+		}
+		if b.Metatable != nil || c.Metatable != nil {
+			if b.Metatable == nil || c.Metatable == nil {
+				return false, false
+			}
+			ok, repaired := typeNeverRepairRelation(c.Metatable, b.Metatable)
+			if !ok {
+				return false, false
+			}
+			if repaired {
+				strict = true
+			}
+		}
+		return true, strict
+	case *typ.Array:
+		c, ok := candidate.(*typ.Array)
+		if !ok {
+			return false, false
+		}
+		return typeNeverRepairRelation(c.Element, b.Element)
+	case *typ.Map:
+		c, ok := candidate.(*typ.Map)
+		if !ok {
+			return false, false
+		}
+		keyOK, keyStrict := typeNeverRepairRelation(c.Key, b.Key)
+		if !keyOK {
+			return false, false
+		}
+		valOK, valStrict := typeNeverRepairRelation(c.Value, b.Value)
+		if !valOK {
+			return false, false
+		}
+		return true, keyStrict || valStrict
+	case *typ.Tuple:
+		c, ok := candidate.(*typ.Tuple)
+		if !ok || len(c.Elements) != len(b.Elements) {
+			return false, false
+		}
+		strict := false
+		for i := range b.Elements {
+			ok, repaired := typeNeverRepairRelation(c.Elements[i], b.Elements[i])
+			if !ok {
+				return false, false
+			}
+			if repaired {
+				strict = true
+			}
+		}
+		return true, strict
+	case *typ.Function:
+		c, ok := candidate.(*typ.Function)
+		if !ok || !sameFunctionShapeForFactMerge(c, b) || len(c.Returns) != len(b.Returns) {
+			return false, false
+		}
+		for i := range b.Params {
+			if c.Params[i].Name != b.Params[i].Name ||
+				c.Params[i].Optional != b.Params[i].Optional ||
+				!typ.TypeEquals(c.Params[i].Type, b.Params[i].Type) {
+				return false, false
+			}
+		}
+		switch {
+		case (c.Variadic == nil) != (b.Variadic == nil):
+			return false, false
+		case c.Variadic != nil && !typ.TypeEquals(c.Variadic, b.Variadic):
+			return false, false
+		}
+		strict := false
+		for i := range b.Returns {
+			ok, repaired := typeNeverRepairRelation(c.Returns[i], b.Returns[i])
+			if !ok {
+				return false, false
+			}
+			if repaired {
+				strict = true
+			}
+		}
+		return true, strict
+	default:
+		return false, false
+	}
+}
+
+func typeContainsNever(t typ.Type) bool {
+	seen := make(map[typ.Type]bool)
+	return typeContainsNeverMemo(t, seen)
+}
+
+func typeContainsNeverMemo(t typ.Type, seen map[typ.Type]bool) bool {
+	if t == nil {
+		return false
+	}
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+	t = unwrap.Alias(t)
+	if t == nil {
+		return false
+	}
+	if typ.IsNever(t) {
+		return true
+	}
+	return typ.Visit(t, typ.Visitor[bool]{
+		Optional: func(o *typ.Optional) bool {
+			return typeContainsNeverMemo(o.Inner, seen)
+		},
+		Union: func(u *typ.Union) bool {
+			for _, m := range u.Members {
+				if typeContainsNeverMemo(m, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Intersection: func(in *typ.Intersection) bool {
+			for _, m := range in.Members {
+				if typeContainsNeverMemo(m, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Tuple: func(tup *typ.Tuple) bool {
+			for _, e := range tup.Elements {
+				if typeContainsNeverMemo(e, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Array: func(a *typ.Array) bool {
+			return typeContainsNeverMemo(a.Element, seen)
+		},
+		Map: func(m *typ.Map) bool {
+			return typeContainsNeverMemo(m.Key, seen) || typeContainsNeverMemo(m.Value, seen)
+		},
+		Record: func(r *typ.Record) bool {
+			for _, f := range r.Fields {
+				if typeContainsNeverMemo(f.Type, seen) {
+					return true
+				}
+			}
+			if r.HasMapComponent() {
+				return typeContainsNeverMemo(r.MapKey, seen) || typeContainsNeverMemo(r.MapValue, seen)
+			}
+			return false
+		},
+		Function: func(fn *typ.Function) bool {
+			for _, p := range fn.Params {
+				if typeContainsNeverMemo(p.Type, seen) {
+					return true
+				}
+			}
+			if fn.Variadic != nil && typeContainsNeverMemo(fn.Variadic, seen) {
+				return true
+			}
+			for _, ret := range fn.Returns {
+				if typeContainsNeverMemo(ret, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Default: func(typ.Type) bool {
+			return false
+		},
+	})
 }
 
 func typeElidesOptional(a, b typ.Type) bool {
@@ -337,6 +651,12 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 	// concrete structured return evidence (array/map/record with fields).
 	if replaced, ok := replaceOpenTopWithStructured(existing, candidate); ok {
 		existing = normalizeAndPruneReturnVector(replaced)
+	}
+	if ReturnTypesRepairNever(existing, candidate) {
+		return existing
+	}
+	if ReturnTypesRepairNever(candidate, existing) {
+		return candidate
 	}
 
 	// Higher-order summaries are merged monotonically for fixpoint stability.

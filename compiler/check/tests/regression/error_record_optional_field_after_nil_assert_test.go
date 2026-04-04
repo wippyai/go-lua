@@ -13,7 +13,7 @@ import (
 // additional fields on some paths, merged return slots should expose those
 // fields as optional (instead of producing "field missing on union member").
 func TestRegression_ErrorRecordFieldsBecomeOptionalAcrossReturnPaths(t *testing.T) {
-	isNilEffect := constraint.NewEffect(
+	isNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.IsNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)

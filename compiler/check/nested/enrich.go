@@ -16,7 +16,7 @@ import (
 // This file provides type enrichment utilities for self-type resolution.
 //
 // When a method is defined in a table literal, the function's literal signature
-// (with inferred effects and return types) may be more precise than the initially
+// (with inferred refinements and return types) may be more precise than the initially
 // synthesized type. These utilities replace placeholder types with literal sigs.
 
 // EnrichTableTypeWithFuncTypes replaces method function types in a record

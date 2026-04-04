@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
@@ -16,6 +17,31 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+type preciseSourceSynthStub struct {
+	preciseType typ.Type
+}
+
+func (s *preciseSourceSynthStub) TypeOf(expr ast.Expr, _ cfg.Point) typ.Type {
+	switch expr.(type) {
+	case *ast.LogicalOpExpr:
+		return s.preciseType
+	default:
+		return typ.Unknown
+	}
+}
+
+func (s *preciseSourceSynthStub) ExpandValues([]ast.Expr, int, cfg.Point) []typ.Type { return nil }
+
+func (s *preciseSourceSynthStub) InferIterVars([]ast.Expr, int, cfg.Point) []typ.Type { return nil }
+
+func (s *preciseSourceSynthStub) ExpandValuesWithSpecTypes([]ast.Expr, int, cfg.Point, api.SpecTypes) []typ.Type {
+	return []typ.Type{typ.Any}
+}
+
+func (s *preciseSourceSynthStub) InferIterVarsWithSpecTypes([]ast.Expr, int, cfg.Point, api.SpecTypes) []typ.Type {
+	return nil
+}
 
 func TestExtractAssignments_NilConfig(t *testing.T) {
 	inputs := &flow.Inputs{
@@ -268,9 +294,9 @@ func TestExtractAssignments_KeysCollectorEffectFallbackIgnoresNonCollectorEffect
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown
 			},
-			EffectBySym: func(cfg.SymbolID) *constraint.FunctionEffect {
+			RefinementBySym: func(cfg.SymbolID) *constraint.FunctionRefinement {
 				// Non-collector effect (no KeyOf constraint).
-				return &constraint.FunctionEffect{}
+				return &constraint.FunctionRefinement{}
 			},
 		},
 	}, inputs, nil)
@@ -278,6 +304,54 @@ func TestExtractAssignments_KeysCollectorEffectFallbackIgnoresNonCollectorEffect
 	if src, ok := inputs.KeysProvenance[keysSym]; ok && src != 0 {
 		t.Fatalf("unexpected keys provenance for non-collector effect: keys sym %d -> %d", keysSym, src)
 	}
+}
+
+func TestExtractAssignments_PrefersPreciseDirectTypeOverExpandedAnyForLogicalOr(t *testing.T) {
+	code := `
+		local left = nil
+		local right = nil
+		local ctx = left or right
+	`
+	chunk, err := parse.ParseString(code, "emit_precise_or.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk}, "emit_precise_or")
+	exit := graph.Exit()
+	ctxSym, ok := graph.SymbolAt(exit, "ctx")
+	if !ok || ctxSym == 0 {
+		t.Fatal("expected symbol for ctx")
+	}
+
+	contextAlias := typ.NewAlias("Context", typ.NewMap(typ.String, typ.Any))
+	synthAPI := &preciseSourceSynthStub{preciseType: contextAlias}
+	inputs := &flow.Inputs{
+		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks:     make(map[string]flow.PredicateLink),
+		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+	}
+	ExtractAssignments(&core.FlowContext{
+		Graph: graph,
+		API:   synthAPI,
+		Derived: &core.Derived{
+			Synth: synthAPI.TypeOf,
+			SymResolver: func(cfg.Point, cfg.SymbolID) (typ.Type, bool) {
+				return nil, false
+			},
+		},
+	}, inputs, nil)
+
+	for _, assign := range inputs.Assignments {
+		if assign.TargetPath.Symbol != ctxSym {
+			continue
+		}
+		if !typ.TypeEquals(assign.Type, contextAlias) {
+			t.Fatalf("ctx assignment type = %v, want %v", assign.Type, contextAlias)
+		}
+		return
+	}
+
+	t.Fatal("expected assignment for ctx")
 }
 
 func TestExtractAssignments_KeysCollectorEffectFallbackRespectsReturnIndex(t *testing.T) {
@@ -318,8 +392,8 @@ func TestExtractAssignments_KeysCollectorEffectFallbackRespectsReturnIndex(t *te
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown
 			},
-			EffectBySym: func(cfg.SymbolID) *constraint.FunctionEffect {
-				return &constraint.FunctionEffect{
+			RefinementBySym: func(cfg.SymbolID) *constraint.FunctionRefinement {
+				return &constraint.FunctionRefinement{
 					OnReturn: constraint.FromConstraints(constraint.KeyOf{
 						Table: constraint.ParamPath(0),
 						Key:   constraint.RetPath(1),
@@ -376,17 +450,17 @@ func TestExtractAssignments_KeysCollectorEffectFallback_TriesAllNameCandidates(t
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown
 			},
-			EffectBySym: func(sym cfg.SymbolID) *constraint.FunctionEffect {
+			RefinementBySym: func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 				switch sym {
 				case mismatchSym:
-					return &constraint.FunctionEffect{
+					return &constraint.FunctionRefinement{
 						OnReturn: constraint.FromConstraints(constraint.KeyOf{
 							Table: constraint.ParamPath(0),
 							Key:   constraint.RetPath(1),
 						}),
 					}
 				case matchSym:
-					return &constraint.FunctionEffect{
+					return &constraint.FunctionRefinement{
 						OnReturn: constraint.FromConstraints(constraint.KeyOf{
 							Table: constraint.ParamPath(0),
 							Key:   constraint.RetPath(0),
@@ -575,11 +649,11 @@ func TestExtractAssignments_NestedDynamicIndex_LiftsToRootIndexer(t *testing.T) 
 		if assign.Symbol != subscribersSym || assign.KeySymbol != cidSym || len(assign.Segments) != 0 {
 			continue
 		}
-			if _, ok := assign.ValType.(*typ.Map); ok {
-				lifted = assign
-				break
-			}
+		if _, ok := assign.ValType.(*typ.Map); ok {
+			lifted = assign
+			break
 		}
+	}
 	if lifted == nil {
 		t.Fatalf("expected lifted indexer assignment for nested dynamic write, got %#v", inputs.IndexerAssignments)
 	}
@@ -654,6 +728,25 @@ func TestCorrelationsFromFunctionType_ImplicitStructuredErrorConvention(t *testi
 		Build()
 	fnType := typ.Func().
 		Returns(typ.NewOptional(typ.String), typ.NewOptional(errorType)).
+		Build()
+	inverse, co := correlationsFromFunctionType(fnType)
+	if len(co) != 0 {
+		t.Fatalf("expected no co-correlations, got %v", co)
+	}
+	if len(inverse) != 1 {
+		t.Fatalf("expected one convention-based correlation, got %v", inverse)
+	}
+	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
+		t.Fatalf("unexpected convention correlation: %+v", inverse[0])
+	}
+}
+
+func TestCorrelationsFromFunctionType_ImplicitUnionErrorConvention(t *testing.T) {
+	errorType := typ.NewRecord().
+		Field("message", typ.String).
+		Build()
+	fnType := typ.Func().
+		Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.NewUnion(typ.String, typ.LuaError, errorType))).
 		Build()
 	inverse, co := correlationsFromFunctionType(fnType)
 	if len(co) != 0 {

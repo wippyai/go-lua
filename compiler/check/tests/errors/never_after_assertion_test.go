@@ -14,7 +14,7 @@ import (
 // TestFunctionRefinementSetup verifies that function refinements are properly set.
 func TestFunctionRefinementSetup(t *testing.T) {
 	// Create function with refinement
-	notNilEffect := constraint.NewEffect(
+	notNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.NotNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)
@@ -26,9 +26,9 @@ func TestFunctionRefinementSetup(t *testing.T) {
 	if fn.Refinement == nil {
 		t.Fatal("Refinement is nil")
 	}
-	eff, ok := fn.Refinement.(*constraint.FunctionEffect)
+	eff, ok := fn.Refinement.(*constraint.FunctionRefinement)
 	if !ok {
-		t.Fatalf("Refinement is %T, not *constraint.FunctionEffect", fn.Refinement)
+		t.Fatalf("Refinement is %T, not *constraint.FunctionRefinement", fn.Refinement)
 	}
 	if len(eff.OnReturn.MustConstraints()) != 1 {
 		t.Fatalf("OnReturn.Len() = %d, want 1", len(eff.OnReturn.MustConstraints()))
@@ -52,7 +52,7 @@ func TestFunctionRefinementSetup(t *testing.T) {
 	if fieldFn.Refinement == nil {
 		t.Fatal("field function Refinement is nil after record lookup")
 	}
-	fieldEff, ok := fieldFn.Refinement.(*constraint.FunctionEffect)
+	fieldEff, ok := fieldFn.Refinement.(*constraint.FunctionRefinement)
 	if !ok {
 		t.Fatalf("field Refinement is %T", fieldFn.Refinement)
 	}
@@ -64,7 +64,7 @@ func TestFunctionRefinementSetup(t *testing.T) {
 
 // TestScopeLookupWithManifest verifies that manifest symbols are accessible in scope.
 func TestScopeLookupWithManifest(t *testing.T) {
-	notNilEffect := constraint.NewEffect(
+	notNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.NotNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)
@@ -123,7 +123,7 @@ func TestNeverAfterAssertion(t *testing.T) {
 		Build()
 
 	// assert.not_nil narrows first param to non-nil via OnReturn
-	notNilEffect := constraint.NewEffect(
+	notNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.NotNil{Path: constraint.Path{Root: "$0"}}}, // OnReturn
 		nil, // OnTrue
 		nil, // OnFalse
@@ -135,7 +135,7 @@ func TestNeverAfterAssertion(t *testing.T) {
 		Build()
 
 	// assert.is_nil narrows first param to nil via OnReturn
-	isNilEffect := constraint.NewEffect(
+	isNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.IsNil{Path: constraint.Path{Root: "$0"}}}, // OnReturn
 		nil, // OnTrue
 		nil, // OnFalse
@@ -289,7 +289,7 @@ func TestFlowSolutionDebug(t *testing.T) {
 		Build()
 
 	// assert.not_nil narrows first param to non-nil via OnReturn
-	notNilEffect := constraint.NewEffect(
+	notNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.NotNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)

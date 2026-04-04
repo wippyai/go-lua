@@ -3,6 +3,7 @@ package extract
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -63,14 +64,22 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 				if ft == nil {
 					ft = typ.Unknown
 				}
-				selfBuilder.Field(k.Value, ft)
+				if inner, optional := typ.SplitNilableFieldType(ft); optional {
+					selfBuilder.OptField(k.Value, inner)
+				} else {
+					selfBuilder.Field(k.Value, ft)
+				}
 				fieldCount++
 			case *ast.IdentExpr:
 				ft := recurse(field.Value)
 				if ft == nil {
 					ft = typ.Unknown
 				}
-				selfBuilder.Field(k.Value, ft)
+				if inner, optional := typ.SplitNilableFieldType(ft); optional {
+					selfBuilder.OptField(k.Value, inner)
+				} else {
+					selfBuilder.Field(k.Value, ft)
+				}
 				fieldCount++
 			}
 		}
@@ -80,6 +89,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 	}
 
 	builder := typ.NewRecord()
+	var fieldDefs []ops.FieldDef
 	var arrayElements []typ.Type
 	hasVararg := false
 	fieldCount := 0
@@ -89,7 +99,8 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			if _, ok := field.Value.(*ast.Comma3Expr); ok {
 				hasVararg = true
 			}
-			elemType := recurse(field.Value)
+			elemExpected := ops.ExpectedTableElementType(expected, len(arrayElements))
+			elemType := s.synthFieldValueWithExpected(field.Value, sc, recurse, elemExpected, selfType)
 			if elemType == nil {
 				elemType = typ.Unknown
 			}
@@ -103,17 +114,28 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			if ft == nil {
 				ft = typ.Unknown
 			}
-			builder.Field(k.Value, ft)
+			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft})
+			if inner, optional := typ.SplitNilableFieldType(ft); optional {
+				builder.OptField(k.Value, inner)
+			} else {
+				builder.Field(k.Value, ft)
+			}
 			fieldCount++
 		case *ast.IdentExpr:
 			ft := s.synthFieldValueWithExpected(field.Value, sc, recurse, expectedFields[k.Value], selfType)
 			if ft == nil {
 				ft = typ.Unknown
 			}
-			builder.Field(k.Value, ft)
+			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft})
+			if inner, optional := typ.SplitNilableFieldType(ft); optional {
+				builder.OptField(k.Value, inner)
+			} else {
+				builder.Field(k.Value, ft)
+			}
 			fieldCount++
 		case *ast.NumberExpr:
-			elemType := recurse(field.Value)
+			elemExpected := ops.ExpectedTableElementType(expected, len(arrayElements))
+			elemType := s.synthFieldValueWithExpected(field.Value, sc, recurse, elemExpected, selfType)
 			if elemType == nil {
 				elemType = typ.Unknown
 			}
@@ -122,16 +144,25 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 	}
 
 	if len(arrayElements) > 0 && fieldCount == 0 {
+		var result typ.Type
 		if hasVararg {
-			return typ.NewArray(typ.NewUnion(arrayElements...))
+			result = typ.NewArray(typ.NewUnion(arrayElements...))
+		} else if querycore.IsArrayLike(expected) {
+			result = typ.NewArray(typ.NewUnion(arrayElements...))
+		} else {
+			result = typ.NewTuple(arrayElements...)
 		}
-		if querycore.IsArrayLike(expected) {
-			return typ.NewArray(typ.NewUnion(arrayElements...))
+		if expected != nil && len(ops.CheckTable(nil, arrayElements, expected).Errors) == 0 {
+			return expected
 		}
-		return typ.NewTuple(arrayElements...)
+		return result
 	}
 
-	return builder.Build()
+	result := builder.Build()
+	if expected != nil && len(ops.CheckTable(fieldDefs, arrayElements, expected).Errors) == 0 {
+		return expected
+	}
+	return result
 }
 
 // synthFieldValueWithExpected synthesizes type for a table field value with optional expected type.

@@ -240,7 +240,7 @@ func unwrapAliasForEquals(t Type, guard internal.RecursionGuard) Type {
 		if !ok {
 			return t
 		}
-		t = alias.Target
+		t = alias.UnaliasedTarget()
 	}
 	return nil
 }

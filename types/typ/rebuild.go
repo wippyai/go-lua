@@ -50,16 +50,18 @@ func buildFunctionType(
 	copy(paramsCopy, params)
 	returnsCopy := make([]Type, len(returns))
 	copy(returnsCopy, returns)
+	softPrunable := softPruneParams(paramsCopy) || softPruneAny(variadic) || softPruneAny(returnsCopy...)
 
 	return &Function{
-		TypeParams: typeParamsCopy,
-		Params:     paramsCopy,
-		Variadic:   variadic,
-		Returns:    returnsCopy,
-		Effects:    effects,
-		Spec:       spec,
-		Refinement: refinement,
-		hash:       h,
+		TypeParams:   typeParamsCopy,
+		Params:       paramsCopy,
+		Variadic:     variadic,
+		Returns:      returnsCopy,
+		Effects:      effects,
+		Spec:         spec,
+		Refinement:   refinement,
+		hash:         h,
+		softPrunable: softPrunable,
 	}
 }
 
@@ -110,15 +112,17 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		h = internal.HashCombine(h, recordMapValueHash)
 		h = internal.HashCombine(h, mapValue.Hash())
 	}
+	softPrunable := softPruneFields(sorted) || softPruneAny(metatable, mapKey, mapValue)
 
 	return &Record{
-		Fields:    sorted,
-		Metatable: metatable,
-		MapKey:    mapKey,
-		MapValue:  mapValue,
-		Open:      open,
-		sorted:    true,
-		hash:      h,
+		Fields:       sorted,
+		Metatable:    metatable,
+		MapKey:       mapKey,
+		MapValue:     mapValue,
+		Open:         open,
+		sorted:       true,
+		hash:         h,
+		softPrunable: softPrunable,
 	}
 }
 

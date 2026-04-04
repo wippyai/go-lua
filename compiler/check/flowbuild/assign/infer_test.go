@@ -302,6 +302,7 @@ func TestCollectInferredTypes_UsesModuleCalleeCandidatesForExpectedArgs(t *testi
 		db.NewQueryContext(db.New()),
 		querycore.NewEngine(),
 		nil,
+		nil,
 	)
 
 	got := inferred[xSym]
@@ -378,11 +379,16 @@ func TestSynthWithInferenceOverlay_PriorityAndParamFallback(t *testing.T) {
 	paramSet := map[cfg.SymbolID]bool{aSym: true}
 
 	synth := synthWithInferenceOverlay(
+		nil,
 		map[cfg.SymbolID]typ.Type{aSym: typ.String},
 		map[cfg.SymbolID]typ.Type{aSym: typ.Number},
 		paramSet,
 		nil,
 		bindings,
+		nil,
+		nil,
+		nil,
+		nil,
 		base,
 	)
 	if got := synth(ident, 0); !typ.TypeEquals(got, typ.String) {
@@ -391,10 +397,15 @@ func TestSynthWithInferenceOverlay_PriorityAndParamFallback(t *testing.T) {
 
 	synth = synthWithInferenceOverlay(
 		nil,
+		nil,
 		map[cfg.SymbolID]typ.Type{aSym: typ.Number},
 		paramSet,
 		nil,
 		bindings,
+		nil,
+		nil,
+		nil,
+		nil,
 		base,
 	)
 	if got := synth(ident, 0); !typ.TypeEquals(got, typ.Number) {
@@ -404,9 +415,14 @@ func TestSynthWithInferenceOverlay_PriorityAndParamFallback(t *testing.T) {
 	synth = synthWithInferenceOverlay(
 		nil,
 		nil,
+		nil,
 		paramSet,
 		nil,
 		bindings,
+		nil,
+		nil,
+		nil,
+		nil,
 		base,
 	)
 	if got := synth(ident, 0); !typ.TypeEquals(got, typ.Unknown) {
@@ -416,9 +432,14 @@ func TestSynthWithInferenceOverlay_PriorityAndParamFallback(t *testing.T) {
 	synth = synthWithInferenceOverlay(
 		nil,
 		nil,
+		nil,
 		paramSet,
 		map[cfg.SymbolID]bool{aSym: true},
 		bindings,
+		nil,
+		nil,
+		nil,
+		nil,
 		base,
 	)
 	if got := synth(ident, 0); !typ.TypeEquals(got, typ.Boolean) {
@@ -434,11 +455,16 @@ func TestSynthWithInferenceOverlay_PreservesNilOverlayEntries(t *testing.T) {
 
 	baseCalled := false
 	synth := synthWithInferenceOverlay(
+		nil,
 		map[cfg.SymbolID]typ.Type{aSym: nil},
 		nil,
 		nil,
 		nil,
 		bindings,
+		nil,
+		nil,
+		nil,
+		nil,
 		func(ast.Expr, cfg.Point) typ.Type {
 			baseCalled = true
 			return typ.Boolean

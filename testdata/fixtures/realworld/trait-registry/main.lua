@@ -1,7 +1,7 @@
 local types = require("types")
 local processor = require("processor")
 
-local entry: TraitRegistryEntry = {
+local entry: types.TraitRegistryEntry = {
     id = "search-trait",
     meta = {type = types.TRAIT_TYPE, name = "Search", comment = "Web search capability"},
     data = {

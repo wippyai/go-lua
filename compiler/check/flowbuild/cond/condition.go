@@ -77,16 +77,16 @@ type BranchConditions struct {
 //   - SymResolver: symbol-to-type resolution (declared and narrowed types)
 //   - TypeKeyRes: type name to TypeKey mapping (for type(x) == "T" patterns)
 //   - ConstResolver: constant value lookup (for const-folded conditions)
-//   - EffectBySym: function effect lookup (for predicate/terminating functions)
+//   - RefinementBySym: function refinement lookup (for predicate/terminating functions)
 type ConditionExtractor struct {
-	P             cfg.Point                                         // Current CFG point
-	SC            *scope.State                                      // Scope state at this point
-	Inputs        *flow.Inputs                                      // Flow inputs being built
-	Synth         func(ast.Expr, cfg.Point) typ.Type                // Expression type synthesis
-	SymResolver   func(cfg.Point, cfg.SymbolID) (typ.Type, bool)    // Symbol type resolution
-	TypeKeyRes    func(string, *scope.State) (narrow.TypeKey, bool) // Type name resolution
-	ConstResolver func(string) *flow.ConstValue                     // Constant value lookup
-	EffectBySym   constraint.EffectLookupBySym                      // Function effect lookup
+	P               cfg.Point                                         // Current CFG point
+	SC              *scope.State                                      // Scope state at this point
+	Inputs          *flow.Inputs                                      // Flow inputs being built
+	Synth           func(ast.Expr, cfg.Point) typ.Type                // Expression type synthesis
+	SymResolver     func(cfg.Point, cfg.SymbolID) (typ.Type, bool)    // Symbol type resolution
+	TypeKeyRes      func(string, *scope.State) (narrow.TypeKey, bool) // Type name resolution
+	ConstResolver   func(string) *flow.ConstValue                     // Constant value lookup
+	RefinementBySym constraint.RefinementLookupBySym                  // Function refinement lookup
 }
 
 // constraintsFromBranch extracts type constraints from branch info.
@@ -579,11 +579,11 @@ func (ce *ConditionExtractor) calleeHasEffect(call *ast.FuncCallExpr, want func(
 	if call == nil {
 		return false
 	}
-	// Try effect lookup by symbol.
+	// Try refinement lookup by symbol.
 	if ident, ok := call.Func.(*ast.IdentExpr); ok {
-		if bindings := ce.bindings(); bindings != nil && ce.EffectBySym != nil {
+		if bindings := ce.bindings(); bindings != nil && ce.RefinementBySym != nil {
 			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-				if eff := ce.EffectBySym(sym); eff != nil {
+				if eff := ce.RefinementBySym(sym); eff != nil {
 					if row, ok := eff.Row.(effect.Row); ok && want(row) {
 						return true
 					}

@@ -35,12 +35,15 @@ M.ErrorInfo = ErrorInfo
 M.StreamCallbacks = StreamCallbacks
 
 function M.empty_result(): StreamResult
-    return {
+    local empty_tools: {ToolCall} = {}
+    local empty_usage: Usage = {input_tokens = 0, output_tokens = 0}
+    local result: StreamResult = {
         content = "",
-        tool_calls = {},
+        tool_calls = empty_tools,
         finish_reason = nil,
-        usage = {input_tokens = 0, output_tokens = 0},
+        usage = empty_usage,
     }
+    return result
 end
 
 return M

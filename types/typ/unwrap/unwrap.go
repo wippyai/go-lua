@@ -22,7 +22,7 @@ func underlyingDepth(t typ.Type, guard internal.RecursionGuard) typ.Type {
 	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
 		return typ.Visitor[typ.Type]{
 			Alias: func(a *typ.Alias) typ.Type {
-				return underlyingDepth(a.Target, next)
+				return underlyingDepth(a.UnaliasedTarget(), next)
 			},
 			Optional: func(o *typ.Optional) typ.Type {
 				return underlyingDepth(o.Inner, next)
@@ -43,7 +43,7 @@ func unwrapAliasDepth(t typ.Type, guard internal.RecursionGuard) typ.Type {
 	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
 		return typ.Visitor[typ.Type]{
 			Alias: func(a *typ.Alias) typ.Type {
-				return unwrapAliasDepth(a.Target, next)
+				return unwrapAliasDepth(a.UnaliasedTarget(), next)
 			},
 			Default: func(t typ.Type) typ.Type {
 				return t
@@ -62,7 +62,7 @@ func unwrapOptionalDepth(t typ.Type, guard internal.RecursionGuard) typ.Type {
 	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
 		return typ.Visitor[typ.Type]{
 			Alias: func(a *typ.Alias) typ.Type {
-				return unwrapOptionalDepth(a.Target, next)
+				return unwrapOptionalDepth(a.UnaliasedTarget(), next)
 			},
 			Optional: func(o *typ.Optional) typ.Type {
 				return unwrapOptionalDepth(o.Inner, next)
@@ -171,8 +171,14 @@ func unwrapFunctionDepth(t typ.Type, guard internal.RecursionGuard) *typ.Functio
 			Optional: func(o *typ.Optional) *typ.Function {
 				return unwrapFunctionDepth(o.Inner, next)
 			},
+			Recursive: func(rec *typ.Recursive) *typ.Function {
+				if rec.Body == nil || rec.Body == rec {
+					return nil
+				}
+				return unwrapFunctionDepth(rec.Body, next)
+			},
 			Alias: func(a *typ.Alias) *typ.Function {
-				return unwrapFunctionDepth(a.Target, next)
+				return unwrapFunctionDepth(a.UnaliasedTarget(), next)
 			},
 			Default: func(t typ.Type) *typ.Function {
 				return nil
@@ -192,8 +198,14 @@ func unwrapRecordDepth(t typ.Type, guard internal.RecursionGuard) *typ.Record {
 			Record: func(rec *typ.Record) *typ.Record {
 				return rec
 			},
+			Recursive: func(rec *typ.Recursive) *typ.Record {
+				if rec.Body == nil || rec.Body == rec {
+					return nil
+				}
+				return unwrapRecordDepth(rec.Body, next)
+			},
 			Alias: func(a *typ.Alias) *typ.Record {
-				return unwrapRecordDepth(a.Target, next)
+				return unwrapRecordDepth(a.UnaliasedTarget(), next)
 			},
 			Optional: func(o *typ.Optional) *typ.Record {
 				return unwrapRecordDepth(o.Inner, next)
@@ -223,8 +235,14 @@ func unwrapUnionDepth(t typ.Type, guard internal.RecursionGuard) *typ.Union {
 			Union: func(u *typ.Union) *typ.Union {
 				return u
 			},
+			Recursive: func(rec *typ.Recursive) *typ.Union {
+				if rec.Body == nil || rec.Body == rec {
+					return nil
+				}
+				return unwrapUnionDepth(rec.Body, next)
+			},
 			Alias: func(a *typ.Alias) *typ.Union {
-				return unwrapUnionDepth(a.Target, next)
+				return unwrapUnionDepth(a.UnaliasedTarget(), next)
 			},
 			Optional: func(o *typ.Optional) *typ.Union {
 				return unwrapUnionDepth(o.Inner, next)
@@ -269,8 +287,14 @@ func unwrapToKindDepth(t typ.Type, k kind.Kind, guard internal.RecursionGuard) t
 	}
 	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
 		return typ.Visitor[typ.Type]{
+			Recursive: func(rec *typ.Recursive) typ.Type {
+				if rec.Body == nil || rec.Body == rec {
+					return nil
+				}
+				return unwrapToKindDepth(rec.Body, k, next)
+			},
 			Alias: func(a *typ.Alias) typ.Type {
-				return unwrapToKindDepth(a.Target, k, next)
+				return unwrapToKindDepth(a.UnaliasedTarget(), k, next)
 			},
 			Default: func(t typ.Type) typ.Type {
 				return nil

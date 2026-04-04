@@ -79,6 +79,12 @@ func allFieldsDepth(t typ.Type, depth int) []string {
 
 			return names
 		},
+		Recursive: func(rec *typ.Recursive) []string {
+			if rec.Body == nil || rec.Body == rec {
+				return nil
+			}
+			return allFieldsDepth(rec.Body, depth+1)
+		},
 		Alias: func(a *typ.Alias) []string {
 			return allFieldsDepth(a.Target, depth+1)
 		},
@@ -209,6 +215,12 @@ func allFieldTypesDepth(t typ.Type, depth int) map[string]typ.Type {
 				fields[m.Name] = m.Type
 			}
 			return fields
+		},
+		Recursive: func(rec *typ.Recursive) map[string]typ.Type {
+			if rec.Body == nil || rec.Body == rec {
+				return nil
+			}
+			return allFieldTypesDepth(rec.Body, depth+1)
 		},
 		Alias: func(a *typ.Alias) map[string]typ.Type {
 			return allFieldTypesDepth(a.Target, depth+1)
@@ -342,6 +354,12 @@ func allMethodsDepth(t typ.Type, depth int) []string {
 
 			return allMethodsDepth(r.Metatable, depth+1)
 		},
+		Recursive: func(rec *typ.Recursive) []string {
+			if rec.Body == nil || rec.Body == rec {
+				return nil
+			}
+			return allMethodsDepth(rec.Body, depth+1)
+		},
 		Alias: func(a *typ.Alias) []string {
 			return allMethodsDepth(a.Target, depth+1)
 		},
@@ -381,6 +399,12 @@ func lengthDepth(t typ.Type, depth int) int {
 			}
 
 			return -1
+		},
+		Recursive: func(rec *typ.Recursive) int {
+			if rec.Body == nil || rec.Body == rec {
+				return -1
+			}
+			return lengthDepth(rec.Body, depth+1)
 		},
 		Alias: func(a *typ.Alias) int {
 			return lengthDepth(a.Target, depth+1)
@@ -423,6 +447,12 @@ func iterableDepth(t typ.Type, depth int) bool {
 		},
 		Record: func(r *typ.Record) bool {
 			return true
+		},
+		Recursive: func(rec *typ.Recursive) bool {
+			if rec.Body == nil || rec.Body == rec {
+				return false
+			}
+			return iterableDepth(rec.Body, depth+1)
 		},
 		Union: func(u *typ.Union) bool {
 			for _, member := range u.Members {

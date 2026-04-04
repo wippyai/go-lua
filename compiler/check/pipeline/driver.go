@@ -175,7 +175,7 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 			funcSym = sym
 		}
 	}
-	d.storeFunctionEffect(store, result, funcSym)
+	d.storeFunctionRefinement(store, result, funcSym)
 	interprocinfer.StoreFactsFromResult(store, fn, result, parent)
 	d.processNestedFunctions(sess, store, graph, results, result)
 }
@@ -234,15 +234,15 @@ func (d *Driver) runReturnInference(
 		MaxIterations: returns.MaxReturnSummaryIterations,
 	})
 
-	var effectLookup constraint.EffectLookupBySym
-	if es := store.EffectStore(); es != nil {
-		effectLookup = es.LookupEffectBySym
+	var refinementLookup constraint.RefinementLookupBySym
+	if es := store.RefinementStore(); es != nil {
+		refinementLookup = es.LookupRefinementBySym
 	}
 
 	summaries, funcTypes, diags := inferencer.ComputeForGraph(returninfer.RunContext{
 		Ctx:          sess.Context(),
 		ParentFacts:  d.parentFactsForGraph(sess, store, graph.ID()),
-		EffectLookup: effectLookup,
+		EffectLookup: refinementLookup,
 	}, graph, parent)
 	if len(diags) > 0 {
 		sess.AppendDiagnostics(diags...)
@@ -351,18 +351,18 @@ func (d *Driver) emitScopeDepthDiagnostic(sess api.AnalysisSession, fn *ast.Func
 	scopeState[fn] = true
 }
 
-func (d *Driver) storeFunctionEffect(store api.IterationStore, result *api.FuncResult, funcSym cfg.SymbolID) {
+func (d *Driver) storeFunctionRefinement(store api.IterationStore, result *api.FuncResult, funcSym cfg.SymbolID) {
 	if result == nil || store == nil || funcSym == 0 {
 		return
 	}
-	lookup := func(sym cfg.SymbolID) *constraint.FunctionEffect {
-		return effects.LookupEffectBySym(store.EffectStore(), store.ModuleBindings(), d.cfg.GlobalTypes, sym)
+	lookup := func(sym cfg.SymbolID) *constraint.FunctionRefinement {
+		return effects.LookupRefinementBySym(store.RefinementStore(), store.ModuleBindings(), d.cfg.GlobalTypes, sym)
 	}
 	fnEffect := effects.Propagate(result, lookup)
 	if fnEffect == nil {
 		return
 	}
-	store.StoreFunctionEffect(funcSym, fnEffect)
+	store.StoreFunctionRefinement(funcSym, fnEffect)
 }
 
 func collectGlobalNames(globalTypes map[string]typ.Type) []string {

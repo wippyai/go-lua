@@ -3,12 +3,12 @@ local class = require("class")
 type Counter = {
     _count: number,
     _name: string,
-    _emitter: EventEmitter,
+    _emitter: class.EventEmitter,
     increment: (self: Counter) -> (),
     decrement: (self: Counter) -> (),
     get: (self: Counter) -> number,
     name: (self: Counter) -> string,
-    on_change: (self: Counter, handler: (self: EventEmitter, event: string, data: any) -> ()) -> Counter,
+    on_change: (self: Counter, handler: (self: class.EventEmitter, event: string, data: any) -> ()) -> Counter,
 }
 
 local Counter = {}
@@ -48,7 +48,7 @@ function Counter:name(): string
     return self._name
 end
 
-function Counter:on_change(handler: (self: EventEmitter, event: string, data: any) -> ()): Counter
+function Counter:on_change(handler: (self: class.EventEmitter, event: string, data: any) -> ()): Counter
     self._emitter:on("change", handler)
     return self
 end

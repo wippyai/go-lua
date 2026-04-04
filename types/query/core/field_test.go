@@ -11,6 +11,9 @@ func TestField(t *testing.T) {
 		Field("name", typ.String).
 		Field("age", typ.Integer).
 		Build()
+	recWithOpt := typ.NewRecord().
+		OptField("name", typ.String).
+		Build()
 
 	iface := typ.NewInterface("Reader", []typ.Method{
 		{Name: "read", Type: typ.Func().Param("n", typ.Integer).Returns(typ.String).Build()},
@@ -26,6 +29,9 @@ func TestField(t *testing.T) {
 		{"nil type", nil, "x", false, nil},
 		{"record existing field", rec, "name", true, func(t typ.Type) bool { return t == typ.String }},
 		{"record another field", rec, "age", true, func(t typ.Type) bool { return t == typ.Integer }},
+		{"record optional field", recWithOpt, "name", true, func(t typ.Type) bool {
+			return typ.TypeEquals(t, typ.NewOptional(typ.String))
+		}},
 		{"record missing field", rec, "missing", false, nil},
 		{"interface method", iface, "read", true, func(t typ.Type) bool { return t.Kind() == typ.String.Kind() || true }},
 		{"interface missing", iface, "write", false, nil},
@@ -125,6 +131,8 @@ func TestFieldIntersection(t *testing.T) {
 func TestFieldOptional(t *testing.T) {
 	rec := typ.NewRecord().Field("x", typ.Number).Build()
 	opt := typ.NewOptional(rec)
+	optFieldRec := typ.NewRecord().OptField("x", typ.Number).Build()
+	optFieldOptRec := typ.NewOptional(optFieldRec)
 
 	t.Run("field on optional record", func(t *testing.T) {
 		result, ok := Field(opt, "x")
@@ -139,6 +147,26 @@ func TestFieldOptional(t *testing.T) {
 
 		if _, isOpt := result.(*typ.Optional); !isOpt {
 			t.Error("expected optional wrapper on field type")
+		}
+	})
+
+	t.Run("optional field on record", func(t *testing.T) {
+		result, ok := Field(optFieldRec, "x")
+		if !ok {
+			t.Error("expected to find optional field")
+		}
+		if !typ.TypeEquals(result, typ.NewOptional(typ.Number)) {
+			t.Errorf("expected number?, got %v", result)
+		}
+	})
+
+	t.Run("optional field on optional record stays optional", func(t *testing.T) {
+		result, ok := Field(optFieldOptRec, "x")
+		if !ok {
+			t.Error("expected to find optional field on optional record")
+		}
+		if !typ.TypeEquals(result, typ.NewOptional(typ.Number)) {
+			t.Errorf("expected number?, got %v", result)
 		}
 	})
 }

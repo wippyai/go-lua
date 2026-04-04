@@ -6,6 +6,13 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+var stringUnpackSpec = contract.NewSpec().WithEffects(
+	effect.Return{
+		ReturnIndex: 0,
+		Transform:   effect.StringUnpackValue{Format: effect.ParamRef{Index: 0}},
+	},
+)
+
 var stringMethods = typ.NewRecord().
 	Field("byte", typ.Func().
 		Param("s", typ.String).
@@ -79,7 +86,9 @@ var stringMethods = typ.NewRecord().
 		Param("fmt", typ.String).
 		Param("s", typ.String).
 		OptParam("pos", typ.Integer).
-		Returns(typ.Any).Build()).
+		Returns(typ.Any).
+		Spec(stringUnpackSpec).
+		Build()).
 	Field("upper", typ.Func().
 		Param("s", typ.String).
 		Returns(typ.String).Build()).

@@ -18,7 +18,7 @@ import (
 //   - Phase A (Resolve): Type annotations resolved into Scopes
 //   - Phase B (Scope/Extract): BaseScope, Scopes, FlowInputs
 //   - Phase C (Solve): FlowSolution
-//   - Phase D (Narrow): Facts, FnEffect, NarrowSynth
+//   - Phase D (Narrow): Facts, FnRefinement, NarrowSynth
 type FuncResult struct {
 	// Graph is the function's control flow graph containing CFG nodes,
 	// binding information, and iteration metadata.
@@ -48,9 +48,9 @@ type FuncResult struct {
 	// Provides reachability conditions and exclusion facts for narrowing.
 	FlowSolution *flow.Solution
 
-	// FnEffect captures the function's side effects (io, error, terminate).
-	// Propagated from callees and used for inter-function effect analysis.
-	FnEffect *constraint.FunctionEffect
+	// FnRefinement captures the function's inferred refinement summary.
+	// It includes propagated effect rows and branch-specific narrowing facts.
+	FnRefinement *constraint.FunctionRefinement
 
 	// NarrowSynth is the narrowed-phase synthesis engine for this function.
 	// Use TypeOf to query expression types with flow-based narrowing applied.
@@ -80,6 +80,14 @@ func (r *FuncResult) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedVa
 		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 	}
 	return r.Facts.EffectiveTypeAt(p, sym)
+}
+
+// NarrowedTypeAt returns the precise path-sensitive narrowed type at a CFG point.
+func (r *FuncResult) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	if r == nil || r.FlowSolution == nil {
+		return nil
+	}
+	return r.FlowSolution.NarrowedTypeAt(p, path)
 }
 
 // ExcludesTypeAt checks if the flow solution proves a type is excluded at a CFG point.

@@ -32,12 +32,12 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 	}
 	if info.CalleeName != "" {
 		if primary != nil {
-			for _, sym := range primary.SymbolsByName(info.CalleeName) {
+			for _, sym := range primary.SymbolsByNameReadOnly(info.CalleeName) {
 				set.Add(sym)
 			}
 		}
 		if fallback != nil && fallback != primary {
-			for _, sym := range fallback.SymbolsByName(info.CalleeName) {
+			for _, sym := range fallback.SymbolsByNameReadOnly(info.CalleeName) {
 				set.Add(sym)
 			}
 		}

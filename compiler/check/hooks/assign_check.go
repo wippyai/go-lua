@@ -163,6 +163,14 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 			if valueType == nil {
 				return
 			}
+			if flowQ != nil {
+				sourcePath := extractSourcePath(source, graph, p)
+				if !sourcePath.IsEmpty() {
+					if narrowed := flowQ.NarrowedTypeAt(p, sourcePath); !typ.IsAbsentOrUnknown(narrowed) {
+						valueType = preferPreciseSourcePathType(valueType, narrowed)
+					}
+				}
+			}
 
 			if table, ok := source.(*ast.TableExpr); ok && !sourceUsesTarget {
 				if result := tableCheck(table, declaredType, narrowSynth, p); result.Handled {
@@ -243,6 +251,16 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 	})
 
 	return diags
+}
+
+func preferPreciseSourcePathType(current, narrowed typ.Type) typ.Type {
+	if typ.IsAbsentOrUnknown(current) {
+		return narrowed
+	}
+	if subtype.IsSubtype(narrowed, current) {
+		return narrowed
+	}
+	return current
 }
 
 func extractSourcePath(source ast.Expr, graph *cfg.Graph, _ cfg.Point) constraint.Path {

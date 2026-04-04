@@ -10,7 +10,7 @@ type ValidConfig = {
 local M = {}
 M.ValidConfig = ValidConfig
 
-function M.validate(config: ParsedConfig): (ValidConfig?, string?)
+function M.validate(config: parse.ParsedConfig): (ValidConfig?, string?)
     if #config.host == 0 then
         return nil, "host is empty"
     end

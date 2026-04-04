@@ -21,6 +21,7 @@ type Annotated struct {
 	Inner       Type
 	Annotations []Annotation
 	hash        uint64
+	strCache    stringCache
 }
 
 // NewAnnotated creates an annotated type wrapper.
@@ -51,35 +52,37 @@ func (a *Annotated) Kind() kind.Kind {
 }
 
 func (a *Annotated) String() string {
-	var sb strings.Builder
-	if a.Inner != nil {
-		sb.WriteString(a.Inner.String())
-	} else {
-		sb.WriteString("unknown")
-	}
-	for _, ann := range a.Annotations {
-		sb.WriteString(" @")
-		sb.WriteString(ann.Name)
-		if ann.Arg != nil {
-			sb.WriteString("(")
-			switch v := ann.Arg.(type) {
-			case string:
-				sb.WriteString("\"")
-				sb.WriteString(v)
-				sb.WriteString("\"")
-			case float64:
-				sb.WriteString(formatFloat(v))
-			case int64:
-				sb.WriteString(formatInt(v))
-			case int:
-				sb.WriteString(formatInt(int64(v)))
-			default:
-				sb.WriteString("...")
-			}
-			sb.WriteString(")")
+	return a.strCache.get(func() string {
+		var sb strings.Builder
+		if a.Inner != nil {
+			sb.WriteString(a.Inner.String())
+		} else {
+			sb.WriteString("unknown")
 		}
-	}
-	return sb.String()
+		for _, ann := range a.Annotations {
+			sb.WriteString(" @")
+			sb.WriteString(ann.Name)
+			if ann.Arg != nil {
+				sb.WriteString("(")
+				switch v := ann.Arg.(type) {
+				case string:
+					sb.WriteString("\"")
+					sb.WriteString(v)
+					sb.WriteString("\"")
+				case float64:
+					sb.WriteString(formatFloat(v))
+				case int64:
+					sb.WriteString(formatInt(v))
+				case int:
+					sb.WriteString(formatInt(int64(v)))
+				default:
+					sb.WriteString("...")
+				}
+				sb.WriteString(")")
+			}
+		}
+		return sb.String()
+	})
 }
 
 func (a *Annotated) Hash() uint64 {

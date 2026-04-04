@@ -580,6 +580,70 @@ func TestAlignFunctionTypeWithSummary_DoesNotDowngradeStructuredToPlaceholder(t 
 	}
 }
 
+func TestMergeReturnSummary_PrefersRuntimePossibleSummaryOverNeverArtifact(t *testing.T) {
+	bad := []typ.Type{
+		typ.NewUnion(
+			typ.NewRecord().
+				Field("success", typ.True).
+				Field("result", typ.NewRecord().OptField("data", typ.Never).Build()).
+				Build(),
+			typ.NewRecord().
+				Field("success", typ.False).
+				Field("error", typ.LiteralString("missing")).
+				Build(),
+		),
+	}
+	good := []typ.Type{
+		typ.NewUnion(
+			typ.NewRecord().
+				Field("success", typ.True).
+				Field("result", typ.NewRecord().OptField("data", typ.Unknown).Build()).
+				Build(),
+			typ.NewRecord().
+				Field("success", typ.False).
+				Field("error", typ.LiteralString("missing")).
+				Build(),
+		),
+	}
+
+	got := MergeReturnSummary(bad, good)
+	if !ReturnTypesEqual(got, good) {
+		t.Fatalf("MergeReturnSummary(%v, %v) = %v, want %v", bad, good, got, good)
+	}
+}
+
+func TestAlignFunctionTypeWithSummary_RepairsNestedNeverArtifact(t *testing.T) {
+	bad := typ.NewUnion(
+		typ.NewRecord().
+			Field("success", typ.True).
+			Field("result", typ.NewRecord().OptField("data", typ.Never).Build()).
+			Build(),
+		typ.NewRecord().
+			Field("success", typ.False).
+			Field("error", typ.LiteralString("missing")).
+			Build(),
+	)
+	good := typ.NewUnion(
+		typ.NewRecord().
+			Field("success", typ.True).
+			Field("result", typ.NewRecord().OptField("data", typ.Unknown).Build()).
+			Build(),
+		typ.NewRecord().
+			Field("success", typ.False).
+			Field("error", typ.LiteralString("missing")).
+			Build(),
+	)
+
+	fn := typ.Func().Returns(bad).Build()
+	aligned, changed := AlignFunctionTypeWithSummary(fn, []typ.Type{good})
+	if !changed {
+		t.Fatal("expected never-artifact repair to update function returns")
+	}
+	if aligned == nil || len(aligned.Returns) != 1 || !typ.TypeEquals(aligned.Returns[0], good) {
+		t.Fatalf("aligned returns = %v, want %v", aligned, good)
+	}
+}
+
 func TestRecordSuperset_NewHasMapComponentOldDoesNot(t *testing.T) {
 	oldRec := typ.NewRecord().Field("x", typ.Number).Build()
 	newRec := typ.NewRecord().Field("x", typ.Number).MapComponent(typ.String, typ.Any).Build()

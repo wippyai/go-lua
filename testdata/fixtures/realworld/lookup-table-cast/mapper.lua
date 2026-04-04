@@ -6,23 +6,26 @@ type StatusCodeMap = {[number]: string}
 
 local M = {}
 
-M.finish_reasons: FinishReasonMap = {}
-M.finish_reasons["end_turn"] = constants.FINISH_REASON.STOP
-M.finish_reasons["max_tokens"] = constants.FINISH_REASON.LENGTH
-M.finish_reasons["stop_sequence"] = constants.FINISH_REASON.STOP
-M.finish_reasons["tool_use"] = constants.FINISH_REASON.TOOL_CALL
+local finish_reasons: FinishReasonMap = {}
+finish_reasons["end_turn"] = constants.FINISH_REASON.STOP
+finish_reasons["max_tokens"] = constants.FINISH_REASON.LENGTH
+finish_reasons["stop_sequence"] = constants.FINISH_REASON.STOP
+finish_reasons["tool_use"] = constants.FINISH_REASON.TOOL_CALL
+M.finish_reasons = finish_reasons
 
-M.error_types: ErrorTypeMap = {}
-M.error_types["invalid_request_error"] = constants.ERROR_TYPE.INVALID_REQUEST
-M.error_types["authentication_error"] = constants.ERROR_TYPE.AUTHENTICATION
-M.error_types["rate_limit_error"] = constants.ERROR_TYPE.RATE_LIMIT
-M.error_types["api_error"] = constants.ERROR_TYPE.SERVER_ERROR
+local error_types: ErrorTypeMap = {}
+error_types["invalid_request_error"] = constants.ERROR_TYPE.INVALID_REQUEST
+error_types["authentication_error"] = constants.ERROR_TYPE.AUTHENTICATION
+error_types["rate_limit_error"] = constants.ERROR_TYPE.RATE_LIMIT
+error_types["api_error"] = constants.ERROR_TYPE.SERVER_ERROR
+M.error_types = error_types
 
-M.status_codes: StatusCodeMap = {}
-M.status_codes[400] = constants.ERROR_TYPE.INVALID_REQUEST
-M.status_codes[401] = constants.ERROR_TYPE.AUTHENTICATION
-M.status_codes[429] = constants.ERROR_TYPE.RATE_LIMIT
-M.status_codes[500] = constants.ERROR_TYPE.SERVER_ERROR
+local status_codes: StatusCodeMap = {}
+status_codes[400] = constants.ERROR_TYPE.INVALID_REQUEST
+status_codes[401] = constants.ERROR_TYPE.AUTHENTICATION
+status_codes[429] = constants.ERROR_TYPE.RATE_LIMIT
+status_codes[500] = constants.ERROR_TYPE.SERVER_ERROR
+M.status_codes = status_codes
 
 function M.map_finish_reason(api_reason: string): string
     return M.finish_reasons[api_reason] or "unknown"

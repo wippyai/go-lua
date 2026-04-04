@@ -13,7 +13,7 @@ import (
 // error record members must be coalesced before export/import so assert-based
 // nil checks can correlate sibling returns without spurious field-missing errors.
 func TestRegression_ModuleErrorReturnUnionCoalescesAcrossBoundary(t *testing.T) {
-	isNilEffect := constraint.NewEffect(
+	isNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.IsNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)

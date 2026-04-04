@@ -130,6 +130,77 @@ func TestIndex_RecordWithMapComponent_GenericStringIncludesFieldAndMap(t *testin
 	}
 }
 
+func TestIndex_RecordWithAliasLiteralKeyUnion_KnownKeysStayDefinite(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("postgres", typ.String).
+		Field("sqlite", typ.Integer).
+		Field("mysql", typ.Boolean).
+		Build()
+	keyType := typ.NewAlias("DbType", typ.NewUnion(
+		typ.LiteralString("postgres"),
+		typ.LiteralString("sqlite"),
+		typ.LiteralString("mysql"),
+	))
+
+	got, ok := Index(rec, keyType)
+	if !ok {
+		t.Fatal("expected alias-wrapped literal key domain to resolve")
+	}
+	if ContainsNil(got) {
+		t.Fatalf("expected definite result, got %v", got)
+	}
+	if !subtype.IsSubtype(typ.String, got) || !subtype.IsSubtype(typ.Integer, got) || !subtype.IsSubtype(typ.Boolean, got) {
+		t.Fatalf("expected union of matching field types, got %v", got)
+	}
+}
+
+func TestIndex_RecordWithAliasLiteralKey_PreservesSingleFieldPrecision(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("name", typ.String).
+		Field("count", typ.Integer).
+		Build()
+	keyType := typ.NewAlias("NameKey", typ.LiteralString("name"))
+
+	got, ok := Index(rec, keyType)
+	if !ok {
+		t.Fatal("expected alias-wrapped literal key to resolve")
+	}
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("expected string, got %v", got)
+	}
+}
+
+func TestIndex_RecordWithLiteralKeyUnion_PartialMissBecomesOptional(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("present", typ.String).
+		Field("count", typ.Integer).
+		Build()
+	keyType := typ.NewUnion(typ.LiteralString("present"), typ.LiteralString("missing"))
+
+	got, ok := Index(rec, keyType)
+	if !ok {
+		t.Fatal("expected partial literal key domain to resolve")
+	}
+	if !ContainsNil(got) {
+		t.Fatalf("expected optional result for partial miss, got %v", got)
+	}
+	if !subtype.IsSubtype(typ.String, got) {
+		t.Fatalf("expected present field type to survive, got %v", got)
+	}
+}
+
+func TestIndex_RecordWithLiteralKeyUnion_AllMissingStillFails(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("present", typ.String).
+		Field("count", typ.Integer).
+		Build()
+	keyType := typ.NewUnion(typ.LiteralString("missing"), typ.LiteralString("also_missing"))
+
+	if _, ok := Index(rec, keyType); ok {
+		t.Fatal("expected all-missing literal key domain to fail on closed record")
+	}
+}
+
 func TestIndexUnion(t *testing.T) {
 	arr1 := typ.NewArray(typ.String)
 	arr2 := typ.NewArray(typ.Integer)

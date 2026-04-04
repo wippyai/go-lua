@@ -13,8 +13,10 @@ import (
 // The Inner field holds the non-nil type. An Optional never contains
 // another Optional (they are flattened during construction).
 type Optional struct {
-	Inner Type
-	hash  uint64
+	Inner        Type
+	hash         uint64
+	softPrunable bool
+	strCache     stringCache
 }
 
 // NewOptional creates an optional type (T | nil).
@@ -48,16 +50,18 @@ func NewOptional(inner Type) Type {
 
 	h := internal.HashCombine(uint64(kind.Optional), inner.Hash())
 
-	return &Optional{Inner: inner, hash: h}
+	return &Optional{Inner: inner, hash: h, softPrunable: softPruneMayRewrite(inner)}
 }
 
 func (o *Optional) Kind() kind.Kind { return kind.Optional }
 
 func (o *Optional) String() string {
-	if o.Inner == nil {
-		return "nil?"
-	}
-	return o.Inner.String() + "?"
+	return o.strCache.get(func() string {
+		if o.Inner == nil {
+			return "nil?"
+		}
+		return o.Inner.String() + "?"
+	})
 }
 
 func (o *Optional) Hash() uint64 { return o.hash }

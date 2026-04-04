@@ -73,6 +73,7 @@ type mockFlowQuery struct{}
 func (m *mockFlowQuery) EffectiveTypeAt(cfg.Point, cfg.SymbolID) flow.TypedValue {
 	return flow.TypedValue{}
 }
+func (m *mockFlowQuery) NarrowedTypeAt(cfg.Point, constraint.Path) typ.Type { return nil }
 func (m *mockFlowQuery) ExcludesTypeAt(cfg.Point, constraint.Path, typ.Type) bool { return false }
 
 type mockFlowOps struct{}

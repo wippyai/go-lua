@@ -23,7 +23,7 @@
 //	reachability conditions and type narrowing facts at each CFG point.
 //
 //	Phase D (Narrow): Applies flow solution to narrow declared types, computing
-//	final effective types for all expressions and generating function effects.
+//	final effective types for all expressions and generating function refinements.
 //
 // # INTERPROCEDURAL ANALYSIS
 //
@@ -33,7 +33,7 @@
 //   - ParamHints: Inferred parameter types from call sites
 //   - FuncTypes: Canonical local function types for sibling lookups
 //   - LiteralSigs: Synthesized signatures for function literals
-//   - Effects: Function effects (side effects, termination), stored per symbol
+//   - Refinements: Function refinement summaries, stored per symbol
 //
 // # DETERMINISTIC ORDERING
 //

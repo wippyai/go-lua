@@ -10,8 +10,8 @@ import (
 )
 
 // ExportType computes the module's exported type from return statements.
-// Pass effectsBySym to enrich exported functions with effect summaries.
-func ExportType(result *api.FuncResult, effectsBySym map[cfg.SymbolID]*constraint.FunctionEffect) typ.Type {
+// Pass refinementsBySym to enrich exported functions with effect summaries.
+func ExportType(result *api.FuncResult, refinementsBySym map[cfg.SymbolID]*constraint.FunctionRefinement) typ.Type {
 	if result == nil || result.Graph == nil || result.NarrowSynth == nil {
 		return typ.Nil
 	}
@@ -59,8 +59,8 @@ func ExportType(result *api.FuncResult, effectsBySym map[cfg.SymbolID]*constrain
 		}
 	})
 
-	if export != nil && len(effectsBySym) > 0 && result.Graph != nil {
-		export = effects.EnrichExportWithEffects(export, exportRootName, effectsBySym, result.Graph)
+	if export != nil && len(refinementsBySym) > 0 && result.Graph != nil {
+		export = effects.EnrichExportWithEffects(export, exportRootName, refinementsBySym, result.Graph)
 	}
 
 	if export == nil {
@@ -93,18 +93,18 @@ func ExportTypes(result *api.FuncResult) map[string]typ.Type {
 	return types
 }
 
-// CopyEffectsForExport returns a defensive copy of effects for manifest export.
-func CopyEffectsForExport(effectsBySym map[cfg.SymbolID]*constraint.FunctionEffect) map[cfg.SymbolID]*constraint.FunctionEffect {
-	if len(effectsBySym) == 0 {
+// CopyRefinementsForExport returns a defensive copy of refinements for manifest export.
+func CopyRefinementsForExport(refinementsBySym map[cfg.SymbolID]*constraint.FunctionRefinement) map[cfg.SymbolID]*constraint.FunctionRefinement {
+	if len(refinementsBySym) == 0 {
 		return nil
 	}
-	effects := make(map[cfg.SymbolID]*constraint.FunctionEffect, len(effectsBySym))
-	for sym, eff := range effectsBySym {
-		if eff != nil {
-			effects[sym] = eff
+	refinements := make(map[cfg.SymbolID]*constraint.FunctionRefinement, len(refinementsBySym))
+	for sym, refinement := range refinementsBySym {
+		if refinement != nil {
+			refinements[sym] = refinement
 		}
 	}
-	return effects
+	return refinements
 }
 
 // ResolveExportTypeNames resolves type names to concrete types for a given scope.

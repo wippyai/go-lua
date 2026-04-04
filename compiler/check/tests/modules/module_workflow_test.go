@@ -567,8 +567,8 @@ func TestModuleWorkflow_ExportTypeIncludesEffects(t *testing.T) {
 	if fn.Refinement == nil {
 		t.Fatalf("expected not_nil to carry refinement in export")
 	}
-	if _, ok := fn.Refinement.(*constraint.FunctionEffect); !ok {
-		t.Fatalf("expected FunctionEffect refinement, got %T", fn.Refinement)
+	if _, ok := fn.Refinement.(*constraint.FunctionRefinement); !ok {
+		t.Fatalf("expected FunctionRefinement refinement, got %T", fn.Refinement)
 	}
 }
 
@@ -835,9 +835,9 @@ func TestE2E_KeysCollectorCrossModule(t *testing.T) {
 	if fn.Refinement == nil {
 		t.Fatal("expected refinement on sorted_keys")
 	}
-	eff, ok := fn.Refinement.(*constraint.FunctionEffect)
+	eff, ok := fn.Refinement.(*constraint.FunctionRefinement)
 	if !ok {
-		t.Fatalf("expected FunctionEffect, got %T", fn.Refinement)
+		t.Fatalf("expected FunctionRefinement, got %T", fn.Refinement)
 	}
 	if paramIdx := eff.KeysCollectorParamIndex(); paramIdx != 0 {
 		t.Errorf("KeysCollectorParamIndex: got %d, want 0", paramIdx)
@@ -869,7 +869,7 @@ func TestE2E_KeysCollectorCrossModule(t *testing.T) {
 	if decodedFn.Refinement == nil {
 		t.Fatal("decoded function missing refinement")
 	}
-	decodedEff, _ := decodedFn.Refinement.(*constraint.FunctionEffect)
+	decodedEff, _ := decodedFn.Refinement.(*constraint.FunctionRefinement)
 	if paramIdx := decodedEff.KeysCollectorParamIndex(); paramIdx != 0 {
 		t.Errorf("decoded KeysCollectorParamIndex: got %d, want 0", paramIdx)
 	}
@@ -937,9 +937,9 @@ func TestE2E_KeysCollectorAutoExport(t *testing.T) {
 	if fn.Refinement == nil {
 		t.Fatal("expected refinement on sorted_keys")
 	}
-	eff, ok := fn.Refinement.(*constraint.FunctionEffect)
+	eff, ok := fn.Refinement.(*constraint.FunctionRefinement)
 	if !ok {
-		t.Fatalf("expected FunctionEffect, got %T", fn.Refinement)
+		t.Fatalf("expected FunctionRefinement, got %T", fn.Refinement)
 	}
 	if paramIdx := eff.KeysCollectorParamIndex(); paramIdx != 0 {
 		t.Errorf("KeysCollectorParamIndex: got %d, want 0", paramIdx)
@@ -1005,9 +1005,9 @@ func TestE2E_KeysCollectorAutoExport_MultiReturnKeySlot(t *testing.T) {
 	if !ok {
 		t.Fatal("expected Function type")
 	}
-	eff, ok := fn.Refinement.(*constraint.FunctionEffect)
+	eff, ok := fn.Refinement.(*constraint.FunctionRefinement)
 	if !ok {
-		t.Fatalf("expected FunctionEffect refinement, got %T", fn.Refinement)
+		t.Fatalf("expected FunctionRefinement refinement, got %T", fn.Refinement)
 	}
 	paramIdx, retIdx, ok := eff.KeysCollectorInfo()
 	if !ok {

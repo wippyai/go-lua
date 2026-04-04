@@ -187,6 +187,13 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 			mt, ok := methodDepth(o.Inner, name, depth+1)
 			return fieldResult{t: mt, ok: ok}
 		},
+		Recursive: func(rec *typ.Recursive) fieldResult {
+			if rec.Body == nil || rec.Body == rec {
+				return fieldResult{}
+			}
+			mt, ok := methodDepth(rec.Body, name, depth+1)
+			return fieldResult{t: mt, ok: ok}
+		},
 		Alias: func(a *typ.Alias) fieldResult {
 			mt, ok := methodDepth(a.Target, name, depth+1)
 			return fieldResult{t: mt, ok: ok}
@@ -259,6 +266,13 @@ func callableDepth(t typ.Type, depth int) (*typ.Function, bool) {
 		},
 		Optional: func(o *typ.Optional) callableResult {
 			fn, ok := callableDepth(o.Inner, depth+1)
+			return callableResult{fn: fn, ok: ok}
+		},
+		Recursive: func(rec *typ.Recursive) callableResult {
+			if rec.Body == nil || rec.Body == rec {
+				return callableResult{}
+			}
+			fn, ok := callableDepth(rec.Body, depth+1)
 			return callableResult{fn: fn, ok: ok}
 		},
 		Alias: func(a *typ.Alias) callableResult {
@@ -360,6 +374,13 @@ func getMetamethodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 		},
 		Optional: func(o *typ.Optional) fieldResult {
 			mt, ok := getMetamethodDepth(o.Inner, name, depth+1)
+			return fieldResult{t: mt, ok: ok}
+		},
+		Recursive: func(rec *typ.Recursive) fieldResult {
+			if rec.Body == nil || rec.Body == rec {
+				return fieldResult{}
+			}
+			mt, ok := getMetamethodDepth(rec.Body, name, depth+1)
 			return fieldResult{t: mt, ok: ok}
 		},
 		Alias: func(a *typ.Alias) fieldResult {

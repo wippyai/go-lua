@@ -311,7 +311,7 @@ func TestEncodeDecode_Function(t *testing.T) {
 	})
 
 	t.Run("with-refinement", func(t *testing.T) {
-		refinement := &constraint.FunctionEffect{
+		refinement := &constraint.FunctionRefinement{
 			OnReturn: constraint.FromConstraints(constraint.NotNil{Path: constraint.Path{Root: "$0"}}),
 			OnTrue:   constraint.FromConstraints(constraint.HasType{Path: constraint.Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}),
 			OnFalse:  constraint.FromConstraints(constraint.NotHasType{Path: constraint.Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}),
@@ -337,7 +337,7 @@ func TestEncodeDecode_Function(t *testing.T) {
 			t.Fatalf("expected Function, got %T", decoded)
 		}
 
-		decodedRefinement, ok := fn.Refinement.(*constraint.FunctionEffect)
+		decodedRefinement, ok := fn.Refinement.(*constraint.FunctionRefinement)
 		if !ok || decodedRefinement == nil {
 			t.Fatal("expected refinement")
 		}
@@ -1103,9 +1103,9 @@ func TestDNFPreservation_SpecEnsures(t *testing.T) {
 	}
 }
 
-// TestDNFPreservation_FunctionEffect verifies multi-disjunct OnTrue/OnFalse
-// conditions in FunctionEffect are preserved through encode/decode.
-func TestDNFPreservation_FunctionEffect(t *testing.T) {
+// TestDNFPreservation_FunctionRefinement verifies multi-disjunct OnTrue/OnFalse
+// conditions in FunctionRefinement are preserved through encode/decode.
+func TestDNFPreservation_FunctionRefinement(t *testing.T) {
 	// OnTrue: (string) OR (number)
 	onTrueDisjuncts := [][]constraint.Constraint{
 		{constraint.HasType{Path: constraint.Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}},
@@ -1120,7 +1120,7 @@ func TestDNFPreservation_FunctionEffect(t *testing.T) {
 		},
 	}
 
-	refinement := &constraint.FunctionEffect{
+	refinement := &constraint.FunctionRefinement{
 		OnReturn: constraint.FromConstraints(constraint.NotNil{Path: constraint.Path{Root: "$0"}}),
 		OnTrue:   constraint.Condition{Disjuncts: onTrueDisjuncts},
 		OnFalse:  constraint.Condition{Disjuncts: onFalseDisjuncts},
@@ -1143,7 +1143,7 @@ func TestDNFPreservation_FunctionEffect(t *testing.T) {
 	}
 
 	fn := decoded.(*typ.Function)
-	decodedRef := fn.Refinement.(*constraint.FunctionEffect)
+	decodedRef := fn.Refinement.(*constraint.FunctionRefinement)
 
 	// Verify OnTrue DNF
 	if decodedRef.OnTrue.NumDisjuncts() != 2 {

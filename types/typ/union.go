@@ -20,8 +20,11 @@ import (
 //
 // Members are sorted by hash for deterministic comparison and serialization.
 type Union struct {
-	Members []Type
-	hash    uint64
+	Members      []Type
+	hash         uint64
+	hasSoftMbr   bool // true if any member is a soft placeholder
+	softPrunable bool
+	strCache     stringCache
 }
 
 // NewUnion creates a normalized union type from the given members.
@@ -188,28 +191,92 @@ func NewUnion(members ...Type) Type {
 		return unique[0]
 	}
 
-	// Compute hash
+	// Compute hash and check for soft members
 	h := uint64(kind.Union)
+	hasSoft := false
+	hasNonSoft := false
+	softPrunable := false
 	for _, m := range unique {
 		h = internal.HashCombine(h, m.Hash())
+		if softPruneMayRewrite(m) {
+			softPrunable = true
+		}
+		if memberIsSoft(m) {
+			hasSoft = true
+		} else {
+			hasNonSoft = true
+		}
+	}
+	if hasSoft && hasNonSoft {
+		softPrunable = true
 	}
 
-	return &Union{Members: unique, hash: h}
+	return &Union{Members: unique, hash: h, hasSoftMbr: hasSoft, softPrunable: softPrunable}
 }
+
+// HasSoftMember reports whether any union member is a soft placeholder type.
+// Computed at construction time for O(1) access.
+func (u *Union) HasSoftMember() bool { return u.hasSoftMbr }
 
 func (u *Union) Kind() kind.Kind { return kind.Union }
 
-func (u *Union) String() string {
-	parts := make([]string, len(u.Members))
-	for i, m := range u.Members {
-		if m == nil {
-			parts[i] = "nil"
-		} else {
-			parts[i] = m.String()
-		}
+// memberIsSoft checks if a type is a soft placeholder.
+// Used at Union construction to set the hasSoftMbr flag.
+// Mirrors isSoft logic but without recursion guard (unions are already flat).
+func memberIsSoft(t Type) bool {
+	if t == nil {
+		return false
 	}
+	for {
+		if ann, ok := t.(*Annotated); ok && ann.Inner != nil {
+			t = ann.Inner
+			continue
+		}
+		break
+	}
+	if t.Kind().IsPlaceholder() {
+		return true
+	}
+	switch v := t.(type) {
+	case *Optional:
+		return memberIsSoft(v.Inner)
+	case *Alias:
+		return memberIsSoft(v.Target)
+	case *Array:
+		return memberIsSoft(v.Element)
+	case *Map:
+		return memberIsSoft(v.Value)
+	case *Record:
+		if len(v.Fields) == 0 && !v.HasMapComponent() {
+			return true
+		}
+		if v.HasMapComponent() && len(v.Fields) == 0 {
+			return memberIsSoft(v.MapValue)
+		}
+		return false
+	case *Union:
+		for _, m := range v.Members {
+			if !memberIsSoft(m) {
+				return false
+			}
+		}
+		return len(v.Members) > 0
+	}
+	return false
+}
 
-	return strings.Join(parts, " | ")
+func (u *Union) String() string {
+	return u.strCache.get(func() string {
+		parts := make([]string, len(u.Members))
+		for i, m := range u.Members {
+			if m == nil {
+				parts[i] = "nil"
+			} else {
+				parts[i] = m.String()
+			}
+		}
+		return strings.Join(parts, " | ")
+	})
 }
 
 func (u *Union) Hash() uint64 { return u.hash }

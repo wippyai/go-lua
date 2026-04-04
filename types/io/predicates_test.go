@@ -296,8 +296,8 @@ func TestPredicateCodec_Condition_MultiDisjunct(t *testing.T) {
 	}
 }
 
-func TestPredicateCodec_FunctionEffect(t *testing.T) {
-	orig := &constraint.FunctionEffect{
+func TestPredicateCodec_FunctionRefinement(t *testing.T) {
+	orig := &constraint.FunctionRefinement{
 		OnReturn: constraint.FromConstraints(constraint.NotNil{Path: path("$0")}),
 		OnTrue:   constraint.FromConstraints(constraint.HasType{Path: path("$0"), Type: narrow.BuiltinTypeKey("string")}),
 		OnFalse:  constraint.FromConstraints(constraint.NotHasType{Path: path("$0"), Type: narrow.BuiltinTypeKey("string")}),
@@ -305,15 +305,15 @@ func TestPredicateCodec_FunctionEffect(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := &typeWriter{w: &buf}
-	w.writeFunctionEffect(orig)
+	w.writeFunctionRefinement(orig)
 
 	r := &typeReader{r: bytes.NewReader(buf.Bytes())}
-	got := r.readFunctionEffect()
+	got := r.readFunctionRefinement()
 	if r.err != nil {
-		t.Fatalf("readFunctionEffect: %v", r.err)
+		t.Fatalf("readFunctionRefinement: %v", r.err)
 	}
 	if got == nil {
-		t.Fatal("expected non-nil FunctionEffect")
+		t.Fatal("expected non-nil FunctionRefinement")
 	}
 	if len(got.OnReturn.MustConstraints()) != 1 {
 		t.Errorf("OnReturn: got %d, want 1", len(got.OnReturn.MustConstraints()))
@@ -326,15 +326,15 @@ func TestPredicateCodec_FunctionEffect(t *testing.T) {
 	}
 }
 
-func TestPredicateCodec_FunctionEffect_Nil(t *testing.T) {
+func TestPredicateCodec_FunctionRefinement_Nil(t *testing.T) {
 	var buf bytes.Buffer
 	w := &typeWriter{w: &buf}
-	w.writeFunctionEffect(nil)
+	w.writeFunctionRefinement(nil)
 
 	r := &typeReader{r: bytes.NewReader(buf.Bytes())}
-	got := r.readFunctionEffect()
+	got := r.readFunctionRefinement()
 	if r.err != nil {
-		t.Fatalf("readFunctionEffect: %v", r.err)
+		t.Fatalf("readFunctionRefinement: %v", r.err)
 	}
 	if got != nil {
 		t.Errorf("expected nil, got %+v", got)
@@ -507,29 +507,29 @@ func TestPredicateCodec_KeyOf(t *testing.T) {
 	}
 }
 
-func TestPredicateCodec_FunctionEffect_WithKeyOf(t *testing.T) {
+func TestPredicateCodec_FunctionRefinement_WithKeyOf(t *testing.T) {
 	keyOf := constraint.KeyOf{
 		Table: constraint.ParamPath(0),
 		Key:   constraint.RetPath(0),
 	}
-	orig := &constraint.FunctionEffect{
+	orig := &constraint.FunctionRefinement{
 		OnReturn: constraint.FromConstraints(keyOf),
 	}
 
 	var buf bytes.Buffer
 	w := &typeWriter{w: &buf}
-	w.writeFunctionEffect(orig)
+	w.writeFunctionRefinement(orig)
 	if w.err != nil {
-		t.Fatalf("writeFunctionEffect: %v", w.err)
+		t.Fatalf("writeFunctionRefinement: %v", w.err)
 	}
 
 	r := &typeReader{r: bytes.NewReader(buf.Bytes())}
-	got := r.readFunctionEffect()
+	got := r.readFunctionRefinement()
 	if r.err != nil {
-		t.Fatalf("readFunctionEffect: %v", r.err)
+		t.Fatalf("readFunctionRefinement: %v", r.err)
 	}
 	if got == nil {
-		t.Fatal("expected non-nil FunctionEffect")
+		t.Fatal("expected non-nil FunctionRefinement")
 	}
 	if !got.OnReturn.HasConstraints() {
 		t.Fatal("OnReturn should have constraints")

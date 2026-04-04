@@ -21,14 +21,16 @@ type Param struct {
 // The Spec field holds Hoare-style contracts (pre/post conditions).
 // The Refinement field holds type narrowing constraints for predicate functions.
 type Function struct {
-	TypeParams []*TypeParam   // Generic type parameters (empty for non-generic)
-	Params     []Param        // Positional parameters
-	Variadic   Type           // Variadic element type (nil if not variadic)
-	Returns    []Type         // Return types (empty for void functions)
-	Effects    EffectInfo     // Effect row (effect.Row) for mutation/throw/io tracking
-	Spec       SpecInfo       // Contract specification (*contract.Spec)
-	Refinement RefinementInfo // Type refinement effect (*constraint.FunctionEffect)
-	hash       uint64
+	TypeParams   []*TypeParam   // Generic type parameters (empty for non-generic)
+	Params       []Param        // Positional parameters
+	Variadic     Type           // Variadic element type (nil if not variadic)
+	Returns      []Type         // Return types (empty for void functions)
+	Effects      EffectInfo     // Effect row (effect.Row) for mutation/throw/io tracking
+	Spec         SpecInfo       // Contract specification (*contract.Spec)
+	Refinement   RefinementInfo // Type refinement effect (*constraint.FunctionRefinement)
+	hash         uint64
+	softPrunable bool
+	strCache     stringCache
 }
 
 // FunctionBuilder provides a fluent API for constructing function types.
@@ -119,75 +121,77 @@ func (b *FunctionBuilder) Build() *Function {
 func (f *Function) Kind() kind.Kind { return kind.Function }
 
 func (f *Function) String() string {
-	var sb strings.Builder
+	return f.strCache.get(func() string {
+		var sb strings.Builder
 
-	sb.WriteString("fun")
+		sb.WriteString("fun")
 
-	if len(f.TypeParams) > 0 {
-		sb.WriteString("<")
+		if len(f.TypeParams) > 0 {
+			sb.WriteString("<")
 
-		for i, tp := range f.TypeParams {
-			if i > 0 {
-				sb.WriteString(", ")
-			}
-
-			sb.WriteString(tp.String())
-		}
-
-		sb.WriteString(">")
-	}
-
-	sb.WriteString("(")
-
-	for i, p := range f.Params {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
-
-		if p.Name != "" {
-			sb.WriteString(p.Name)
-			sb.WriteString(": ")
-		}
-
-		sb.WriteString(p.Type.String())
-
-		if p.Optional {
-			sb.WriteString("?")
-		}
-	}
-
-	if f.Variadic != nil {
-		if len(f.Params) > 0 {
-			sb.WriteString(", ")
-		}
-
-		sb.WriteString("...")
-		sb.WriteString(f.Variadic.String())
-	}
-
-	sb.WriteString(")")
-
-	if len(f.Returns) > 0 {
-		sb.WriteString(" -> ")
-
-		if len(f.Returns) == 1 {
-			sb.WriteString(f.Returns[0].String())
-		} else {
-			sb.WriteString("(")
-
-			for i, r := range f.Returns {
+			for i, tp := range f.TypeParams {
 				if i > 0 {
 					sb.WriteString(", ")
 				}
 
-				sb.WriteString(r.String())
+				sb.WriteString(tp.String())
 			}
 
-			sb.WriteString(")")
+			sb.WriteString(">")
 		}
-	}
 
-	return sb.String()
+		sb.WriteString("(")
+
+		for i, p := range f.Params {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+
+			if p.Name != "" {
+				sb.WriteString(p.Name)
+				sb.WriteString(": ")
+			}
+
+			sb.WriteString(p.Type.String())
+
+			if p.Optional {
+				sb.WriteString("?")
+			}
+		}
+
+		if f.Variadic != nil {
+			if len(f.Params) > 0 {
+				sb.WriteString(", ")
+			}
+
+			sb.WriteString("...")
+			sb.WriteString(f.Variadic.String())
+		}
+
+		sb.WriteString(")")
+
+		if len(f.Returns) > 0 {
+			sb.WriteString(" -> ")
+
+			if len(f.Returns) == 1 {
+				sb.WriteString(f.Returns[0].String())
+			} else {
+				sb.WriteString("(")
+
+				for i, r := range f.Returns {
+					if i > 0 {
+						sb.WriteString(", ")
+					}
+
+					sb.WriteString(r.String())
+				}
+
+				sb.WriteString(")")
+			}
+		}
+
+		return sb.String()
+	})
 }
 
 func (f *Function) Hash() uint64 { return f.hash }

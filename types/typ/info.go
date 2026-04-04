@@ -17,7 +17,7 @@ type SpecInfo interface {
 }
 
 // RefinementInfo describes type refinements from function calls.
-// Implemented by *constraint.FunctionEffect.
+// Implemented by *constraint.FunctionRefinement.
 type RefinementInfo interface {
 	internal.Equaler
 	IsRefinementInfo()

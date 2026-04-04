@@ -12,7 +12,7 @@ import (
 // Regression: local functions returning `(value?, custom_error_record?)` must
 // produce ErrorReturn correlation so assert-based nil checks narrow siblings.
 func TestRegression_CustomErrorReturnCorrelationFromBody(t *testing.T) {
-	isNilEffect := constraint.NewEffect(
+	isNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.IsNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)

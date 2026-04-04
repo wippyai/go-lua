@@ -518,8 +518,8 @@ func TestBuildContextTypeKeyResolver_UnknownType(t *testing.T) {
 	}
 }
 
-func TestBuildEffectLookup_NilContext(t *testing.T) {
-	result := resolve.BuildEffectLookup(nil)
+func TestBuildRefinementLookup_NilContext(t *testing.T) {
+	result := resolve.BuildRefinementLookup(nil)
 	if result != nil {
 		t.Error("expected nil for nil context")
 	}

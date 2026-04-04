@@ -67,8 +67,9 @@ import (
 // Type is the computed return type (typ.Tuple for multiple returns, typ.Nil for void).
 // Errors contains type mismatches, arity problems, and other call-related issues.
 type CallResult struct {
-	Type   typ.Type    // Return type (or tuple for multiple returns)
-	Errors []CallError // Type errors detected
+	Type    typ.Type    // Packed return type (or tuple for multiple returns)
+	Returns []typ.Type  // Expression-adjusted return vector
+	Errors  []CallError // Type errors detected
 }
 
 // CallError describes a type error in a function call.
@@ -258,9 +259,7 @@ func resolveCallee(ctx *db.QueryContext, def CallDef) (*resolvedCallee, *CallRes
 
 // unwrapCallee performs alias, generic body, and instantiated unwrapping.
 func unwrapCallee(callee typ.Type) typ.Type {
-	if callee.Kind() == kind.Alias {
-		callee = callee.(*typ.Alias).Target
-	}
+	callee = unwrap.Alias(callee)
 
 	if g, ok := callee.(*typ.Generic); ok {
 		callee = g.Body
@@ -273,7 +272,7 @@ func unwrapCallee(callee typ.Type) typ.Type {
 		}
 	}
 
-	return callee
+	return unwrap.Alias(callee)
 }
 
 // inferAndCall performs generic type inference and calls the instantiated function.
@@ -286,7 +285,7 @@ func inferAndCall(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod 
 		typeArgs, err = InferTypeArgsWithExpectedAndMode(fn, def.Args, isMethod, receiver, nil, false)
 		if err != nil {
 			errors = append(errors, CallError{Kind: ErrTypeInference, Message: err.Error()})
-			return CallResult{Type: typ.Unknown, Errors: errors}
+			return singleValueCallResult(typ.Unknown, errors)
 		}
 	}
 
@@ -551,18 +550,18 @@ func computeExpectedArgs(ctx *db.QueryContext, query core.TypeOps, fn *typ.Funct
 // Otherwise, performs full argument checking and return type computation.
 func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult {
 	if infer.ShortCircuit != nil {
-		return CallResult{Type: infer.ShortCircuit, Errors: infer.Errors}
+		return singleValueCallResult(infer.ShortCircuit, infer.Errors)
 	}
 
 	switch infer.Kind {
 	case InferKindNotCallable:
-		return CallResult{Type: typ.Unknown, Errors: infer.Errors}
+		return singleValueCallResult(typ.Unknown, infer.Errors)
 
 	case InferKindAny:
-		return CallResult{Type: typ.Any, Errors: infer.Errors}
+		return singleValueCallResult(typ.Any, infer.Errors)
 
 	case InferKindUnknown:
-		return CallResult{Type: typ.Unknown, Errors: infer.Errors}
+		return singleValueCallResult(typ.Unknown, infer.Errors)
 
 	case InferKindUnion:
 		return callUnionWithGenericInference(
@@ -584,12 +583,12 @@ func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult
 			fn = infer.Function
 		}
 		if fn == nil {
-			return CallResult{Type: typ.Unknown, Errors: infer.Errors}
+			return singleValueCallResult(typ.Unknown, infer.Errors)
 		}
 		return callFunction(ctx, def.Query, fn, def.Args, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
 	}
 
-	return CallResult{Type: typ.Unknown, Errors: infer.Errors}
+	return singleValueCallResult(typ.Unknown, infer.Errors)
 }
 
 // ReInfer performs re-inference after arguments have been updated.
@@ -642,6 +641,7 @@ func (r *InferResult) ExpectedArgType(idx int) typ.Type {
 // The return type is the intersection of all member return types.
 func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Intersection, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool, baseErrors []CallError) CallResult {
 	var returnTypes []typ.Type
+	var returnVectors [][]typ.Type
 
 	for _, member := range inter.Members {
 		if member.Kind().IsPlaceholder() {
@@ -651,7 +651,8 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		fn, ok := member.(*typ.Function)
 		if !ok {
 			return CallResult{
-				Type:   typ.Unknown,
+				Type:    typ.Unknown,
+				Returns: []typ.Type{typ.Unknown},
 				Errors: append(baseErrors, CallError{Kind: ErrNotCallable, Message: fmt.Sprintf("intersection member is not callable: %s", typ.FormatShort(member))}),
 			}
 		}
@@ -663,25 +664,34 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		}
 
 		returnTypes = append(returnTypes, result.Type)
+		returnVectors = append(returnVectors, normalizedCallReturns(result))
 	}
 
 	if len(returnTypes) == 0 {
-		return CallResult{Type: typ.Unknown, Errors: baseErrors}
+		return singleValueCallResult(typ.Unknown, baseErrors)
 	}
 
 	if len(returnTypes) == 1 {
-		return CallResult{Type: returnTypes[0], Errors: baseErrors}
+		return callResultFromReturns(returnVectors[0], baseErrors)
 	}
 
-	return CallResult{Type: typ.NewIntersection(returnTypes...), Errors: baseErrors}
+	if returns, ok := intersectReturnVectors(returnVectors); ok {
+		return callResultFromReturns(returns, baseErrors)
+	}
+
+	return CallResult{
+		Type:    typ.NewIntersection(returnTypes...),
+		Returns: []typ.Type{typ.NewIntersection(returnTypes...)},
+		Errors:  baseErrors,
+	}
 }
 
 // callUnionWithGenericInference handles calling a union of functions where each
 // member may be generic. Per-member generic inference is applied before calling.
 // Union semantics: the call succeeds if any member succeeds.
 func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, receiver typ.Type, forceMethodReceiver bool, baseErrors []CallError) CallResult {
-	var validTypes []typ.Type
-	var allTypes []typ.Type
+	var validReturns [][]typ.Type
+	var allReturns [][]typ.Type
 	var hardErrors []CallError
 
 	for _, member := range u.Members {
@@ -698,70 +708,58 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 		} else {
 			result = inferAndCall(ctx, fn, def, isMethod, receiver, seedErrors)
 		}
-		allTypes = append(allTypes, result.Type)
+		allReturns = append(allReturns, normalizedCallReturns(result))
 
 		if hasHardErrors(result.Errors[len(seedErrors):]) {
 			hardErrors = append(hardErrors, result.Errors...)
 			continue
 		}
 
-		validTypes = append(validTypes, result.Type)
+		validReturns = append(validReturns, normalizedCallReturns(result))
 	}
 
-	if len(validTypes) > 0 {
-		return CallResult{Type: mergeReturnTypes(validTypes), Errors: baseErrors}
+	if len(validReturns) > 0 {
+		return callResultFromReturns(mergeReturnVectors(validReturns), baseErrors)
 	}
 
-	if len(allTypes) > 0 {
-		return CallResult{Type: mergeReturnTypes(allTypes), Errors: uniqueCallErrors(hardErrors)}
+	if len(allReturns) > 0 {
+		return callResultFromReturns(mergeReturnVectors(allReturns), uniqueCallErrors(hardErrors))
 	}
 
-	return CallResult{Type: typ.Unknown, Errors: uniqueCallErrors(hardErrors)}
+	return singleValueCallResult(typ.Unknown, uniqueCallErrors(hardErrors))
 }
 
-// mergeReturnTypes merges multiple return types position-wise for tuples.
-// If all types are tuples with the same arity, merges them position-wise:
-// (A, B) and (A, C) become (A, B | C).
-// Otherwise falls back to creating a union.
-func mergeReturnTypes(types []typ.Type) typ.Type {
-	if len(types) == 0 {
-		return typ.Unknown
+func mergeReturnVectors(vectors [][]typ.Type) []typ.Type {
+	if len(vectors) == 0 {
+		return []typ.Type{typ.Unknown}
 	}
-	if len(types) == 1 {
-		return types[0]
+	if len(vectors) == 1 {
+		return copyTypeSlice(vectors[0])
 	}
 
-	// Check if all types are tuples
-	var tuples []*typ.Tuple
 	maxLen := 0
-	for _, t := range types {
-		tuple, ok := t.(*typ.Tuple)
-		if !ok {
-			return typ.NewUnion(types...)
-		}
-		tuples = append(tuples, tuple)
-		if len(tuple.Elements) > maxLen {
-			maxLen = len(tuple.Elements)
+	for _, returns := range vectors {
+		if len(returns) > maxLen {
+			maxLen = len(returns)
 		}
 	}
+	if maxLen == 0 {
+		return []typ.Type{typ.Nil}
+	}
 
-	// Merge position-wise
 	merged := make([]typ.Type, maxLen)
 	for i := 0; i < maxLen; i++ {
-		var posTypes []typ.Type
-		for _, tuple := range tuples {
-			if i < len(tuple.Elements) {
-				posTypes = append(posTypes, tuple.Elements[i])
+		slotTypes := make([]typ.Type, 0, len(vectors))
+		for _, returns := range vectors {
+			if i < len(returns) {
+				slotTypes = append(slotTypes, returns[i])
+			} else {
+				slotTypes = append(slotTypes, typ.Nil)
 			}
 		}
-		if len(posTypes) == 1 {
-			merged[i] = posTypes[0]
-		} else {
-			merged[i] = typ.NewUnion(posTypes...)
-		}
+		merged[i] = typ.NewUnion(slotTypes...)
 	}
-
-	return typ.NewTuple(merged...)
+	return merged
 }
 
 func methodConsumesReceiver(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, receiver typ.Type, isMethod bool, forceMethodReceiver bool) bool {
@@ -786,7 +784,7 @@ func methodConsumesReceiverSimple(fn *typ.Function, receiver typ.Type, isMethod 
 
 func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool, errors []CallError) CallResult {
 	if fn == nil {
-		return CallResult{Type: typ.Unknown, Errors: append(errors, CallError{Kind: ErrNotCallable, Message: "nil function"})}
+		return singleValueCallResult(typ.Unknown, append(errors, CallError{Kind: ErrNotCallable, Message: "nil function"}))
 	}
 
 	argCount := len(args)
@@ -797,13 +795,14 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 
 	minArgs := typ.MinRequiredArgs(fn)
 	hasVariadic := fn.Variadic != nil
+	allowExtraArgs := len(fn.Params) == 0 && !hasVariadic
 
 	if argCount < minArgs {
 		errors = append(errors, CallError{
 			Kind:    ErrWrongArity,
 			Message: "not enough arguments",
 		})
-	} else if !hasVariadic && argCount > len(fn.Params) {
+	} else if !hasVariadic && !allowExtraArgs && argCount > len(fn.Params) {
 		errors = append(errors, CallError{
 			Kind:    ErrWrongArity,
 			Message: "too many arguments",
@@ -868,14 +867,82 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 	}
 
 	if len(returns) == 0 {
-		return CallResult{Type: typ.Nil, Errors: errors}
+		return singleValueCallResult(typ.Nil, errors)
 	}
 
+	return callResultFromReturns(returns, errors)
+}
+
+func normalizedCallReturns(result CallResult) []typ.Type {
+	if len(result.Returns) > 0 {
+		return copyTypeSlice(result.Returns)
+	}
+	return []typ.Type{result.Type}
+}
+
+func callResultFromReturns(returns []typ.Type, errors []CallError) CallResult {
+	if len(returns) == 0 {
+		return singleValueCallResult(typ.Nil, errors)
+	}
 	if len(returns) == 1 {
-		return CallResult{Type: returns[0], Errors: errors}
+		return CallResult{
+			Type:    returns[0],
+			Returns: copyTypeSlice(returns),
+			Errors:  errors,
+		}
+	}
+	return CallResult{
+		Type:    typ.NewTuple(returns...),
+		Returns: copyTypeSlice(returns),
+		Errors:  errors,
+	}
+}
+
+func singleValueCallResult(t typ.Type, errors []CallError) CallResult {
+	return CallResult{
+		Type:    t,
+		Returns: []typ.Type{t},
+		Errors:  errors,
+	}
+}
+
+func intersectReturnVectors(vectors [][]typ.Type) ([]typ.Type, bool) {
+	if len(vectors) == 0 {
+		return nil, false
+	}
+	if len(vectors) == 1 {
+		return copyTypeSlice(vectors[0]), true
 	}
 
-	return CallResult{Type: typ.NewTuple(returns...), Errors: errors}
+	arity := len(vectors[0])
+	for _, returns := range vectors[1:] {
+		if len(returns) != arity {
+			return nil, false
+		}
+	}
+
+	merged := make([]typ.Type, arity)
+	for i := 0; i < arity; i++ {
+		slotTypes := make([]typ.Type, 0, len(vectors))
+		for _, returns := range vectors {
+			slotTypes = append(slotTypes, returns[i])
+		}
+		if len(slotTypes) == 1 {
+			merged[i] = slotTypes[0]
+			continue
+		}
+		merged[i] = typ.NewIntersection(slotTypes...)
+	}
+	return merged, true
+}
+
+func copyTypeSlice(types []typ.Type) []typ.Type {
+	if len(types) == 0 {
+		return nil
+	}
+	out := make([]typ.Type, len(types))
+	copy(out, types)
+	return out
 }
 
 func hasHardErrors(errors []CallError) bool {

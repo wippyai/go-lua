@@ -379,6 +379,122 @@ func TestMergeFieldAssignments_PreservesAliasFieldType(t *testing.T) {
 	}
 }
 
+func TestMergeFieldAssignments_PreservesAliasRootType(t *testing.T) {
+	builderAlias := typ.NewAlias("Builder", typ.NewRecord().Field("_messages", typ.NewArray(typ.String)).Build())
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym11@1._messages`: typ.NewArray(typ.NewUnion(typ.String, typ.Integer)),
+		},
+	}
+
+	got := s.mergeFieldAssignments(builderAlias, "sym11@1")
+	alias, ok := got.(*typ.Alias)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments(alias root) = %T, want *typ.Alias", got)
+	}
+	if alias.Name != "Builder" {
+		t.Fatalf("alias name = %q, want Builder", alias.Name)
+	}
+	rec, ok := alias.Target.(*typ.Record)
+	if !ok {
+		t.Fatalf("alias target = %T, want *typ.Record", alias.Target)
+	}
+	field := rec.GetField("_messages")
+	if field == nil {
+		t.Fatalf("expected _messages field in merged alias target")
+	}
+	arr, ok := field.Type.(*typ.Array)
+	if !ok {
+		t.Fatalf("_messages field type = %T, want *typ.Array", field.Type)
+	}
+	if !typ.TypeEquals(arr.Element, typ.NewUnion(typ.String, typ.Integer)) {
+		t.Fatalf("_messages element = %v, want string|integer", arr.Element)
+	}
+}
+
+func TestMergeFieldAssignments_PreservesRecursiveAliasRootType(t *testing.T) {
+	rec := typ.NewRecursivePlaceholder("Builder")
+	rec.SetBody(
+		typ.NewRecord().
+			Field("_messages", typ.NewArray(typ.String)).
+			Field("clone", typ.Func().
+				Param("self", rec).
+				Returns(rec).
+				Build()).
+			Build(),
+	)
+	builderAlias := typ.NewAlias("Builder", rec)
+
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym12@1._messages`: typ.NewArray(typ.LiteralString("x")),
+		},
+	}
+
+	got := s.mergeFieldAssignments(builderAlias, "sym12@1")
+	alias, ok := got.(*typ.Alias)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments(recursive alias root) = %T, want *typ.Alias", got)
+	}
+	if alias.Name != "Builder" {
+		t.Fatalf("alias name = %q, want Builder", alias.Name)
+	}
+	mergedRec, ok := alias.Target.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("alias target = %T, want *typ.Recursive", alias.Target)
+	}
+	body, ok := mergedRec.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("recursive body = %T, want *typ.Record", mergedRec.Body)
+	}
+	msgs := body.GetField("_messages")
+	if msgs == nil {
+		t.Fatalf("missing _messages field in merged recursive body")
+	}
+	arr, ok := msgs.Type.(*typ.Array)
+	if !ok {
+		t.Fatalf("_messages field type = %T, want *typ.Array", msgs.Type)
+	}
+	if !typ.TypeEquals(arr.Element, typ.LiteralString("x")) {
+		t.Fatalf("_messages element = %v, want literal x", arr.Element)
+	}
+	clone := body.GetField("clone")
+	if clone == nil {
+		t.Fatalf("missing clone field in merged recursive body")
+	}
+	fn, ok := clone.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("clone field type = %T, want *typ.Function", clone.Type)
+	}
+	if len(fn.Params) != 1 || !typ.IsRecursiveRef(fn.Params[0].Type, mergedRec) {
+		t.Fatalf("clone self param = %v, want rebuilt recursive self", fn.Params)
+	}
+	if len(fn.Returns) != 1 || !typ.IsRecursiveRef(fn.Returns[0], mergedRec) {
+		t.Fatalf("clone return = %v, want rebuilt recursive self", fn.Returns)
+	}
+}
+
+func TestFieldAssignmentsForRoot_InvalidatesCachedRootOnFieldWrite(t *testing.T) {
+	s := &Solution{
+		values: map[string]typ.Type{
+			`sym21@1.name`: typ.String,
+		},
+		fieldOverlayCache: make(map[string][]mergedField),
+	}
+
+	first := s.fieldAssignmentsForRoot("sym21@1")
+	if len(first) != 1 || first[0].Name != "name" || !typ.TypeEquals(first[0].Type, typ.String) {
+		t.Fatalf("first field overlay = %v, want name:string", first)
+	}
+
+	s.setValue(`sym21@1.name`, typ.Integer)
+
+	second := s.fieldAssignmentsForRoot("sym21@1")
+	if len(second) != 1 || second[0].Name != "name" || !typ.TypeEquals(second[0].Type, typ.Integer) {
+		t.Fatalf("second field overlay = %v, want name:integer", second)
+	}
+}
+
 // setupSymbol registers a symbol and sets its visibility at all given points.
 // Returns the SymbolID for use in version creation.
 func setupSymbol(g *mockSSAGraph, name string, points []cfg.Point) cfg.SymbolID {
@@ -444,6 +560,159 @@ func TestFlow_PhiKey_Join(t *testing.T) {
 
 	if got == nil || !typ.TypeEquals(got, want) {
 		t.Fatalf("expected joined type %v, got %v", want, got)
+	}
+}
+
+func TestFlow_PhiChildSuffix_UsesPredecessorNarrowingWhenSuffixMissing(t *testing.T) {
+	c, branch, thenNode, elseNode, join := buildBranchJoinCFG()
+	g := newMockSSAGraph(c)
+
+	allPoints := []cfg.Point{c.Entry(), branch, thenNode, elseNode, join, c.Exit()}
+	symMessages := setupSymbol(g, "messages", allPoints)
+
+	ver1 := cfg.Version{Root: "messages", Symbol: symMessages, ID: 1}
+	ver2 := cfg.Version{Root: "messages", Symbol: symMessages, ID: 2}
+	ver3 := cfg.Version{Root: "messages", Symbol: symMessages, ID: 3}
+
+	setVersion(g, c.Entry(), symMessages, ver1)
+	setVersion(g, branch, symMessages, ver1)
+	setVersion(g, thenNode, symMessages, ver2)
+	setVersion(g, elseNode, symMessages, ver1)
+	setVersion(g, join, symMessages, ver3)
+	setVersion(g, c.Exit(), symMessages, ver3)
+
+	g.addPhiNode(cfg.PhiNode{
+		Point:  join,
+		Target: ver3,
+		Operands: []cfg.PhiOperand{
+			{From: thenNode, Version: ver2},
+			{From: elseNode, Version: ver1},
+		},
+	})
+
+	messageType := typ.NewRecord().
+		Field("topic", typ.Func().Returns(typ.String).Build()).
+		Build()
+	messagesType := typ.NewMap(typ.String, messageType)
+	childPath := constraint.Path{
+		Root:   "messages",
+		Symbol: symMessages,
+		Segments: []constraint.Segment{
+			{Kind: constraint.SegmentField, Name: "root"},
+		},
+	}
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symMessages] = messagesType
+	inputs.Assignments = []UnifiedAssignment{
+		{
+			Point:      c.Entry(),
+			TargetPath: constraint.Path{Root: "messages", Symbol: symMessages},
+			Type:       messagesType,
+		},
+		{
+			Point:      thenNode,
+			TargetPath: childPath,
+			Type:       messageType,
+		},
+	}
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From:      branch,
+			To:        thenNode,
+			Condition: constraint.FromConstraints(constraint.Falsy{Path: childPath}),
+		},
+		{
+			From:      branch,
+			To:        elseNode,
+			Condition: constraint.FromConstraints(constraint.Truthy{Path: childPath}),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+
+	got := s.TypeAt(join, childPath)
+	if got == nil {
+		t.Fatal("TypeAt(join, messages.root) returned nil")
+	}
+	if core.ContainsNil(got) {
+		t.Fatalf("TypeAt(join, messages.root) should be definite after constructive join, got %v", got)
+	}
+	if !typ.TypeEquals(got, messageType) {
+		t.Fatalf("TypeAt(join, messages.root) = %v, want %v", got, messageType)
+	}
+
+	fullKey := string(s.pkResolver.KeyAt(join, childPath))
+	raw := s.DebugValueAt(fullKey, join)
+	if raw == nil {
+		t.Fatal("joined child suffix value missing from solver state")
+	}
+	if core.ContainsNil(raw) {
+		t.Fatalf("raw joined child suffix should not contain nil, got %v", raw)
+	}
+}
+
+func TestFlow_PhiChildSuffix_OneBranchOnlyInstallRemainsOptional(t *testing.T) {
+	c, _, thenNode, elseNode, join := buildBranchJoinCFG()
+	g := newMockSSAGraph(c)
+
+	allPoints := []cfg.Point{c.Entry(), thenNode, elseNode, join, c.Exit()}
+	symMessages := setupSymbol(g, "messages", allPoints)
+
+	ver1 := cfg.Version{Root: "messages", Symbol: symMessages, ID: 1}
+	ver2 := cfg.Version{Root: "messages", Symbol: symMessages, ID: 2}
+	ver3 := cfg.Version{Root: "messages", Symbol: symMessages, ID: 3}
+
+	setVersion(g, c.Entry(), symMessages, ver1)
+	setVersion(g, thenNode, symMessages, ver2)
+	setVersion(g, elseNode, symMessages, ver1)
+	setVersion(g, join, symMessages, ver3)
+	setVersion(g, c.Exit(), symMessages, ver3)
+
+	g.addPhiNode(cfg.PhiNode{
+		Point:  join,
+		Target: ver3,
+		Operands: []cfg.PhiOperand{
+			{From: thenNode, Version: ver2},
+			{From: elseNode, Version: ver1},
+		},
+	})
+
+	messageType := typ.NewRecord().
+		Field("topic", typ.Func().Returns(typ.String).Build()).
+		Build()
+	messagesType := typ.NewMap(typ.String, messageType)
+	childPath := constraint.Path{
+		Root:   "messages",
+		Symbol: symMessages,
+		Segments: []constraint.Segment{
+			{Kind: constraint.SegmentField, Name: "root"},
+		},
+	}
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symMessages] = messagesType
+	inputs.Assignments = []UnifiedAssignment{
+		{
+			Point:      c.Entry(),
+			TargetPath: constraint.Path{Root: "messages", Symbol: symMessages},
+			Type:       messagesType,
+		},
+		{
+			Point:      thenNode,
+			TargetPath: childPath,
+			Type:       messageType,
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+
+	got := s.TypeAt(join, childPath)
+	if got == nil {
+		t.Fatal("TypeAt(join, messages.root) returned nil")
+	}
+	if !core.ContainsNil(got) {
+		t.Fatalf("TypeAt(join, messages.root) should remain optional when only one branch installs it, got %v", got)
 	}
 }
 
@@ -841,6 +1110,71 @@ func TestNarrowedTypeAt_NestedBranch_PropagatesNarrowing(t *testing.T) {
 	}
 	if !typ.TypeEquals(got3, typ.String) {
 		t.Errorf("NarrowedTypeAt(then2) = %v, want string", got3)
+	}
+}
+
+func TestNarrowedTypeAt_ComposesNotNilWithChildDiscriminant(t *testing.T) {
+	c, branch1, then1, branch2, then2 := buildNestedBranchCFG()
+	g := newMockSSAGraph(c)
+
+	allPoints := []cfg.Point{c.Entry(), branch1, then1, branch2, then2, c.Exit()}
+	symX := setupSymbol(g, "x", allPoints)
+	verX := cfg.Version{Root: "x", Symbol: symX, ID: 1}
+	for _, p := range allPoints {
+		setVersion(g, p, symX, verX)
+	}
+
+	allow := typ.NewRecord().
+		Field("kind", typ.LiteralString("allow")).
+		Field("reason", typ.String).
+		Build()
+	deny := typ.NewRecord().
+		Field("kind", typ.LiteralString("deny")).
+		Field("reason", typ.String).
+		Build()
+	deferType := typ.NewRecord().
+		Field("kind", typ.LiteralString("defer")).
+		Field("queue", typ.String).
+		Build()
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symX] = typ.NewOptional(typ.NewUnion(allow, deny, deferType))
+
+	pathX := constraint.Path{Root: "x", Symbol: symX}
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From:      branch1,
+			To:        then1,
+			Condition: constraint.FromConstraints(constraint.NotNil{Path: pathX}),
+		},
+		{
+			From: branch2,
+			To:   then2,
+			Condition: constraint.FromConstraints(constraint.FieldEquals{
+				Target: pathX,
+				Field:  "kind",
+				Value:  typ.LiteralString("defer"),
+			}),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+
+	got := s.NarrowedTypeAt(then2, pathX)
+	if !typ.TypeEquals(got, deferType) {
+		t.Fatalf("NarrowedTypeAt(then2) = %v, want %v", got, deferType)
+	}
+
+	pathQueue := constraint.Path{
+		Root:   "x",
+		Symbol: symX,
+		Segments: []constraint.Segment{
+			{Kind: constraint.SegmentField, Name: "queue"},
+		},
+	}
+	gotQueue := s.NarrowedTypeAt(then2, pathQueue)
+	if !typ.TypeEquals(gotQueue, typ.String) {
+		t.Fatalf("NarrowedTypeAt(then2, x.queue) = %v, want string", gotQueue)
 	}
 }
 
@@ -7089,9 +7423,9 @@ func TestUnionWithMixedTableAndPrimitive(t *testing.T) {
 	}
 }
 
-// TestInferFunctionEffect_ReturnConstraint tests that return expression constraints
-// are correctly converted to function effects with placeholder substitution.
-func TestInferFunctionEffect_ReturnConstraint(t *testing.T) {
+// TestInferFunctionRefinement_ReturnConstraint tests that return expression constraints
+// are correctly converted to function refinements with placeholder substitution.
+func TestInferFunctionRefinement_ReturnConstraint(t *testing.T) {
 	// Build simple CFG: entry -> return -> exit
 	c := cfg.New()
 	ret := c.AddNode(cfg.NodeReturn, cfg.SymbolID(0), "")
@@ -7151,11 +7485,11 @@ func TestInferFunctionEffect_ReturnConstraint(t *testing.T) {
 	}
 	t.Logf("Entry: %d, Exit: %d", c.Entry(), c.Exit())
 
-	eff := InferFunctionEffect(s, c, params, typ.Any)
+	eff := InferFunctionRefinement(s, c, params, typ.Any)
 
 	t.Logf("Effect: %+v", eff)
 	if eff == nil {
-		t.Fatal("InferFunctionEffect returned nil, want effect with OnReturn")
+		t.Fatal("InferFunctionRefinement returned nil, want effect with OnReturn")
 	}
 
 	if !eff.OnReturn.HasConstraints() {

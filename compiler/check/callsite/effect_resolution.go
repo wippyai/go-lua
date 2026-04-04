@@ -62,11 +62,11 @@ func ResolveCalleeEffect(
 	p cfg.Point,
 	graph *cfg.Graph,
 	primary, fallback *bind.BindingTable,
-	lookup func(sym cfg.SymbolID) *constraint.FunctionEffect,
+	lookup func(sym cfg.SymbolID) *constraint.FunctionRefinement,
 	synth func(expr ast.Expr, p cfg.Point) typ.Type,
 	resolveBySym func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool),
-	effectFromType func(t typ.Type) *constraint.FunctionEffect,
-) *constraint.FunctionEffect {
+	effectFromType func(t typ.Type) *constraint.FunctionRefinement,
+) *constraint.FunctionRefinement {
 	if info == nil {
 		return nil
 	}

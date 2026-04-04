@@ -1057,6 +1057,63 @@ func TestTripleMutualRecursive(t *testing.T) {
 	}
 }
 
+func TestRecursiveAliasRecordSubtype_WithSelfMethodField(t *testing.T) {
+	rec := typ.NewRecursivePlaceholder("Message")
+	msgAlias := typ.NewAlias("Message", rec)
+	rec.SetBody(typ.NewRecord().
+		Field("_topic", typ.String).
+		Field("topic", typ.Func().Param("self", rec).Returns(typ.String).Build()).
+		Build())
+
+	synthesized := typ.NewRecord().
+		Field("_topic", typ.String).
+		Field("topic", typ.Func().Param("s", msgAlias).Returns(typ.String).Build()).
+		Build()
+
+	if !IsSubtype(synthesized, msgAlias) {
+		t.Fatal("record literal with Message-annotated self method should subtype recursive Message alias")
+	}
+}
+
+func TestRecursiveAliasRecordSubtype_InsideUnionMember(t *testing.T) {
+	rec := typ.NewRecursivePlaceholder("Message")
+	msgAlias := typ.NewAlias("Message", rec)
+	rec.SetBody(typ.NewRecord().
+		Field("_topic", typ.String).
+		Field("topic", typ.Func().Param("self", rec).Returns(typ.String).Build()).
+		Build())
+
+	msgCh := typ.NewAlias("MsgCh", typ.NewRecord().Field("__tag", typ.LiteralString("msg")).Build())
+	timerCh := typ.NewAlias("TimerCh", typ.NewRecord().Field("__tag", typ.LiteralString("timer")).Build())
+	timer := typ.NewRecord().Field("elapsed", typ.Number).Build()
+
+	result := typ.NewUnion(
+		typ.NewRecord().
+			Field("channel", msgCh).
+			Field("value", msgAlias).
+			Field("ok", typ.Boolean).
+			Build(),
+		typ.NewRecord().
+			Field("channel", timerCh).
+			Field("value", timer).
+			Field("ok", typ.Boolean).
+			Build(),
+	)
+
+	synthesized := typ.NewRecord().
+		Field("channel", msgCh).
+		Field("value", typ.NewRecord().
+			Field("_topic", typ.String).
+			Field("topic", typ.Func().Param("s", msgAlias).Returns(typ.String).Build()).
+			Build()).
+		Field("ok", typ.True).
+		Build()
+
+	if !IsSubtype(synthesized, result) {
+		t.Fatal("record literal should subtype union member carrying recursive Message alias")
+	}
+}
+
 // Edge cases for empty unions and intersections
 
 func TestEmptyUnionIsNever(t *testing.T) {
@@ -1335,6 +1392,17 @@ func TestRecordToMap(t *testing.T) {
 
 	if !IsSubtype(rec, mapType) {
 		t.Error("record should be subtype of compatible map")
+	}
+}
+
+func TestRecursiveRecordToMap(t *testing.T) {
+	rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("child", self).Build()
+	})
+	mapType := typ.NewMap(typ.String, rec)
+
+	if !IsSubtype(rec, mapType) {
+		t.Error("recursive record should be subtype of compatible recursive map")
 	}
 }
 

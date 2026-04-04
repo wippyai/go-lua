@@ -252,6 +252,13 @@ func TestDeepElementOf_String(t *testing.T) {
 	}
 }
 
+func TestStringUnpackValue_String(t *testing.T) {
+	u := StringUnpackValue{Format: ParamRef{Index: 0}}
+	if got := u.String(); got != "string_unpack(param[0])" {
+		t.Errorf("StringUnpackValue.String() = %q", got)
+	}
+}
+
 func TestThrow(t *testing.T) {
 	th := Throw{}
 	if got := th.String(); got != "throw" {
@@ -372,6 +379,7 @@ func TestReturnTypeInterface(t *testing.T) {
 		ArrayOfCallbackReturn{},
 		SameAs{},
 		DeepElementOf{},
+		StringUnpackValue{},
 	}
 
 	for _, rt := range returnTypes {
@@ -553,6 +561,7 @@ func TestMarkerMethods(t *testing.T) {
 	ArrayOfCallbackReturn{}.returnType()
 	SameAs{}.returnType()
 	DeepElementOf{}.returnType()
+	StringUnpackValue{}.returnType()
 }
 
 func TestReturnLengthEqualsNonMatch(t *testing.T) {

@@ -650,8 +650,9 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 		handleUnion: func(u *typ.Union, _ func(typ.Type) typ.Type) typ.Type {
 			var kept []typ.Type
 			for _, m := range u.Members {
-				if KindMatches(m, target) {
-					kept = append(kept, m)
+				narrowed := FilterByKind(m, target)
+				if narrowed != nil && !narrowed.Kind().IsNever() {
+					kept = append(kept, narrowed)
 				}
 			}
 			if len(kept) == 0 {
@@ -663,6 +664,9 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 			return typ.NewUnion(kept...)
 		},
 		handleLeaf: func(t typ.Type) typ.Type {
+			if t.Kind().IsPlaceholder() {
+				return TypeForKind(target)
+			}
 			if KindMatches(t, target) {
 				return t
 			}

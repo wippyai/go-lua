@@ -10,7 +10,7 @@ import (
 )
 
 func TestRegression_TableFieldFunctionErrorReturnCorrelation(t *testing.T) {
-	isNilEffect := constraint.NewEffect(
+	isNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.IsNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)

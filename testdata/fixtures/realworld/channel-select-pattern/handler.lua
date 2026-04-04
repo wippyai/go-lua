@@ -4,7 +4,7 @@ type HandlerResult = {ok: boolean, message: string}
 
 local M = {}
 
-function M.process_event(event: Event): HandlerResult
+function M.process_event(event: types.Event): HandlerResult
     if event.error then
         return {ok = false, message = "error: " .. tostring(event.error)}
     end

@@ -1030,8 +1030,16 @@ primarytypeexpr:
             $$ = &ast.FunctionTypeExpr{Params: $3, Returns: $7}
             $$.SetPosFromToken($1.Pos)
         } |
+        '(' '(' funcparamlist ')' TArrow '(' ')' ')' {
+            $$ = &ast.FunctionTypeExpr{Params: $3, Returns: []ast.TypeExpr{}}
+            $$.SetPosFromToken($1.Pos)
+        } |
         '(' '(' ')' TArrow '(' typeexprlist2 ')' ')' {
             $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: $6}
+            $$.SetPosFromToken($1.Pos)
+        } |
+        '(' '(' ')' TArrow '(' ')' ')' {
+            $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: []ast.TypeExpr{}}
             $$.SetPosFromToken($1.Pos)
         } |
         TFun '(' funcparamlist ')' ':' typeexpr {
@@ -1048,6 +1056,14 @@ primarytypeexpr:
         } |
         TFun '(' ')' ':' '(' typeexprlist2 ')' {
             $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: $6}
+            $$.SetPosFromToken($1.Pos)
+        } |
+        TFun '(' funcparamlist ')' ':' '(' ')' {
+            $$ = &ast.FunctionTypeExpr{Params: $3, Returns: []ast.TypeExpr{}}
+            $$.SetPosFromToken($1.Pos)
+        } |
+        TFun '(' ')' ':' '(' ')' {
+            $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: []ast.TypeExpr{}}
             $$.SetPosFromToken($1.Pos)
         } |
         TFun '(' funcparamlist ')' {

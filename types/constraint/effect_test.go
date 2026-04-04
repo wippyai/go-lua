@@ -6,14 +6,14 @@ import (
 	"github.com/wippyai/go-lua/types/narrow"
 )
 
-func TestNewEffect(t *testing.T) {
+func TestNewRefinement(t *testing.T) {
 	onReturn := []Constraint{HasType{Path: Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}}
 	onTrue := []Constraint{Truthy{Path: Path{Root: "$0"}}}
 	onFalse := []Constraint{Falsy{Path: Path{Root: "$0"}}}
 
-	e := NewEffect(onReturn, onTrue, onFalse)
+	e := NewRefinement(onReturn, onTrue, onFalse)
 	if e == nil {
-		t.Fatal("NewEffect returned nil")
+		t.Fatal("NewRefinement returned nil")
 	}
 
 	if len(e.OnReturn.MustConstraints()) != 1 {
@@ -29,18 +29,18 @@ func TestNewEffect(t *testing.T) {
 	}
 }
 
-func TestFunctionEffect_IsEmpty(t *testing.T) {
-	var nilEffect *FunctionEffect
+func TestFunctionRefinement_IsEmpty(t *testing.T) {
+	var nilEffect *FunctionRefinement
 	if !nilEffect.IsEmpty() {
 		t.Error("nil effect should be empty")
 	}
 
-	empty := &FunctionEffect{}
+	empty := &FunctionRefinement{}
 	if !empty.IsEmpty() {
 		t.Error("empty effect should be empty")
 	}
 
-	nonEmpty := NewEffect(
+	nonEmpty := NewRefinement(
 		[]Constraint{HasType{Path: Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}},
 		nil, nil,
 	)
@@ -49,13 +49,13 @@ func TestFunctionEffect_IsEmpty(t *testing.T) {
 	}
 }
 
-func TestFunctionEffect_HasAssertSemantics(t *testing.T) {
-	var nilEffect *FunctionEffect
+func TestFunctionRefinement_HasAssertSemantics(t *testing.T) {
+	var nilEffect *FunctionRefinement
 	if nilEffect.HasAssertSemantics() {
 		t.Error("nil effect should not have assert semantics")
 	}
 
-	assert := NewEffect(
+	assert := NewRefinement(
 		[]Constraint{HasType{Path: Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}},
 		nil, nil,
 	)
@@ -63,7 +63,7 @@ func TestFunctionEffect_HasAssertSemantics(t *testing.T) {
 		t.Error("effect with OnReturn should have assert semantics")
 	}
 
-	predicate := NewEffect(nil,
+	predicate := NewRefinement(nil,
 		[]Constraint{HasType{Path: Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}},
 		nil,
 	)
@@ -72,13 +72,13 @@ func TestFunctionEffect_HasAssertSemantics(t *testing.T) {
 	}
 }
 
-func TestFunctionEffect_HasPredicateSemantics(t *testing.T) {
-	var nilEffect *FunctionEffect
+func TestFunctionRefinement_HasPredicateSemantics(t *testing.T) {
+	var nilEffect *FunctionRefinement
 	if nilEffect.HasPredicateSemantics() {
 		t.Error("nil effect should not have predicate semantics")
 	}
 
-	withOnTrue := NewEffect(nil,
+	withOnTrue := NewRefinement(nil,
 		[]Constraint{HasType{Path: Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}},
 		nil,
 	)
@@ -86,14 +86,14 @@ func TestFunctionEffect_HasPredicateSemantics(t *testing.T) {
 		t.Error("effect with OnTrue should have predicate semantics")
 	}
 
-	withOnFalse := NewEffect(nil, nil,
+	withOnFalse := NewRefinement(nil, nil,
 		[]Constraint{NotHasType{Path: Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}},
 	)
 	if !withOnFalse.HasPredicateSemantics() {
 		t.Error("effect with OnFalse should have predicate semantics")
 	}
 
-	assertOnly := NewEffect(
+	assertOnly := NewRefinement(
 		[]Constraint{HasType{Path: Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}},
 		nil, nil,
 	)
@@ -102,13 +102,13 @@ func TestFunctionEffect_HasPredicateSemantics(t *testing.T) {
 	}
 }
 
-func TestFunctionEffect_Equals(t *testing.T) {
-	e1 := NewEffect(
+func TestFunctionRefinement_Equals(t *testing.T) {
+	e1 := NewRefinement(
 		[]Constraint{HasType{Path: Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}},
 		[]Constraint{Truthy{Path: Path{Root: "$0"}}},
 		nil,
 	)
-	e2 := NewEffect(
+	e2 := NewRefinement(
 		[]Constraint{HasType{Path: Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}},
 		[]Constraint{Truthy{Path: Path{Root: "$0"}}},
 		nil,
@@ -118,7 +118,7 @@ func TestFunctionEffect_Equals(t *testing.T) {
 		t.Error("identical effects should be equal")
 	}
 
-	e3 := NewEffect(
+	e3 := NewRefinement(
 		[]Constraint{HasType{Path: Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("number")}},
 		nil, nil,
 	)
@@ -126,7 +126,7 @@ func TestFunctionEffect_Equals(t *testing.T) {
 		t.Error("different effects should not be equal")
 	}
 
-	var nilEffect *FunctionEffect
+	var nilEffect *FunctionRefinement
 	if !nilEffect.Equals(nil) {
 		t.Error("nil effect should equal nil")
 	}
@@ -144,8 +144,8 @@ func TestFunctionEffect_Equals(t *testing.T) {
 	}
 }
 
-func TestFunctionEffect_Substitute(t *testing.T) {
-	e := NewEffect(
+func TestFunctionRefinement_Substitute(t *testing.T) {
+	e := NewRefinement(
 		[]Constraint{HasType{Path: Path{Root: "$0"}, Type: narrow.BuiltinTypeKey("string")}},
 		[]Constraint{Truthy{Path: Path{Root: "$1"}}},
 		nil,
@@ -187,25 +187,25 @@ func TestFunctionEffect_Substitute(t *testing.T) {
 	}
 }
 
-func TestFunctionEffect_SubstituteNil(t *testing.T) {
-	var nilEffect *FunctionEffect
+func TestFunctionRefinement_SubstituteNil(t *testing.T) {
+	var nilEffect *FunctionRefinement
 	if nilEffect.Substitute([]Path{{Root: "x"}}) != nil {
 		t.Error("substituting nil effect should return nil")
 	}
 
-	empty := &FunctionEffect{}
+	empty := &FunctionRefinement{}
 	if empty.Substitute([]Path{{Root: "x"}}) != nil {
 		t.Error("substituting empty effect should return nil")
 	}
 }
 
-func TestFunctionEffect_IsRefinementInfo(t *testing.T) {
-	e := &FunctionEffect{}
+func TestFunctionRefinement_IsRefinementInfo(t *testing.T) {
+	e := &FunctionRefinement{}
 	e.IsRefinementInfo() // Should not panic
 }
 
-func TestFunctionEffect_KeysCollectorInfo(t *testing.T) {
-	eff := &FunctionEffect{
+func TestFunctionRefinement_KeysCollectorInfo(t *testing.T) {
+	eff := &FunctionRefinement{
 		OnReturn: FromConstraints(KeyOf{
 			Table: ParamPath(0),
 			Key:   RetPath(1),
@@ -227,8 +227,8 @@ func TestFunctionEffect_KeysCollectorInfo(t *testing.T) {
 	}
 }
 
-func TestFunctionEffect_KeysCollectorInfo_InvalidKeyPath(t *testing.T) {
-	eff := &FunctionEffect{
+func TestFunctionRefinement_KeysCollectorInfo_InvalidKeyPath(t *testing.T) {
+	eff := &FunctionRefinement{
 		OnReturn: FromConstraints(KeyOf{
 			Table: ParamPath(0),
 			Key:   Path{Root: "ret[abc]"},
@@ -243,8 +243,8 @@ func TestFunctionEffect_KeysCollectorInfo_InvalidKeyPath(t *testing.T) {
 	}
 }
 
-func TestFunctionEffect_KeysCollectorInfo_AmbiguousDisjuncts(t *testing.T) {
-	eff := &FunctionEffect{
+func TestFunctionRefinement_KeysCollectorInfo_AmbiguousDisjuncts(t *testing.T) {
+	eff := &FunctionRefinement{
 		OnReturn: Condition{
 			Disjuncts: [][]Constraint{
 				{

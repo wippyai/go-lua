@@ -1,4 +1,4 @@
 {
   "files": ["result.lua", "repo.lua", "service.lua", "main.lua"],
-  "check": {"errors": 4}
+  "check": {"errors": 0}
 }

@@ -69,13 +69,13 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 		input.ModuleAliases,
 	)
 
-	fnEffect := InferEffect(input.Graph, input.Solve.Solution, input.Extract.Params, input.Extract.ReturnType)
+	fnEffect := InferRefinement(input.Graph, input.Solve.Solution, input.Extract.Params, input.Extract.ReturnType)
 	fnEffect = EnrichWithKeysCollector(fnEffect, input.Fn)
 
 	return NarrowOutput{
-		Facts:  narrowingCtx.Types(),
-		Effect: fnEffect,
-		Synth:  engine,
+		Facts:      narrowingCtx.Types(),
+		Refinement: fnEffect,
+		Synth:      engine,
 	}
 }
 

@@ -5,7 +5,7 @@ type PluginResult = {output: string, metadata: {[string]: any}}
 
 local M = {}
 
-function M.setup(): Registry
+function M.setup(): registry.Registry
     local r = registry.new()
 
     r:register("greet", function(args: {[string]: any}): (PluginResult?, string?)

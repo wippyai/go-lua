@@ -351,6 +351,16 @@ func TestStoreFrom(t *testing.T) {
 	}
 }
 
+func TestGraphsFrom(t *testing.T) {
+	ctx := db.NewQueryContext(db.New())
+	sess := New(ctx, "test.lua")
+
+	graphs := api.GraphsFrom(ctx)
+	if graphs != sess {
+		t.Error("GraphsFrom should return the session graph provider")
+	}
+}
+
 func TestStoreFrom_NilContext(t *testing.T) {
 	store := api.StoreFrom(nil)
 	if store != nil {
@@ -388,10 +398,10 @@ func TestAttachStore_NilStore(t *testing.T) {
 func TestSessionStore_EffectMaps(t *testing.T) {
 	store := store.NewSessionStore()
 
-	if store.InterprocPrev == nil || store.InterprocPrev.Effects == nil {
+	if store.InterprocPrev == nil || store.InterprocPrev.Refinements == nil {
 		t.Error("InterprocPrev effects not initialized")
 	}
-	if store.InterprocNext == nil || store.InterprocNext.Effects == nil {
+	if store.InterprocNext == nil || store.InterprocNext.Refinements == nil {
 		t.Error("InterprocNext effects not initialized")
 	}
 }
@@ -400,8 +410,8 @@ func TestFixpointChannelDiffs_IsolatedBetweenStores(t *testing.T) {
 	storeA := store.NewSessionStore()
 	storeB := store.NewSessionStore()
 
-	storeA.StoreFunctionEffect(cfg.SymbolID(42), &constraint.FunctionEffect{})
-	storeB.StoreFunctionEffect(cfg.SymbolID(42), &constraint.FunctionEffect{})
+	storeA.StoreFunctionRefinement(cfg.SymbolID(42), &constraint.FunctionRefinement{})
+	storeB.StoreFunctionRefinement(cfg.SymbolID(42), &constraint.FunctionRefinement{})
 
 	if !storeA.FixpointSwap() {
 		t.Fatal("expected storeA FixpointSwap to report change")
@@ -419,15 +429,15 @@ func TestSessionStore_ClearIterationChannels(t *testing.T) {
 	store := store.NewSessionStore()
 
 	store.StoreConstructorFields(cfg.SymbolID(2), map[string]typ.Type{"name": typ.String})
-	store.InterprocPrev.Effects[cfg.SymbolID(4)] = &constraint.FunctionEffect{}
-	store.StoreFunctionEffect(cfg.SymbolID(5), &constraint.FunctionEffect{})
+	store.InterprocPrev.Refinements[cfg.SymbolID(4)] = &constraint.FunctionRefinement{}
+	store.StoreFunctionRefinement(cfg.SymbolID(5), &constraint.FunctionRefinement{})
 
 	store.ClearIterationChannels()
 
 	if store.InterprocNext == nil || len(store.InterprocNext.ConstructorFields) != 0 {
 		t.Fatal("expected constructor fields to be cleared")
 	}
-	if len(store.InterprocPrev.Effects) != 0 || len(store.InterprocNext.Effects) != 0 {
+	if len(store.InterprocPrev.Refinements) != 0 || len(store.InterprocNext.Refinements) != 0 {
 		t.Fatal("expected effects to be cleared")
 	}
 }

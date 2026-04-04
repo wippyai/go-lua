@@ -375,6 +375,17 @@ func (c *InferSet) unifySCC(scc []int) {
 
 // walkType traverses a type tree, calling pred on each node.
 // Returns true if pred returns true for any node.
+func canContainTypeVar(k kind.Kind) bool {
+	switch k {
+	case kind.Optional, kind.Union, kind.Intersection, kind.Array,
+		kind.Map, kind.Tuple, kind.Function, kind.Record, kind.Alias,
+		kind.TypeVar, kind.Instantiated:
+		return true
+	default:
+		return false
+	}
+}
+
 func walkType(t typ.Type, depth int, pred func(typ.Type) bool) bool {
 	if stopDepth(t, depth) {
 		return false
@@ -382,6 +393,10 @@ func walkType(t typ.Type, depth int, pred func(typ.Type) bool) bool {
 
 	if pred(t) {
 		return true
+	}
+
+	if !canContainTypeVar(t.Kind()) {
+		return false
 	}
 
 	return typ.Visit(t, typ.Visitor[bool]{
@@ -451,12 +466,90 @@ func walkType(t typ.Type, depth int, pred func(typ.Type) bool) bool {
 }
 
 func occursIn(varID int, t typ.Type) bool {
-	return walkType(t, 0, func(inner typ.Type) bool {
+	seen := make(map[typ.Type]bool)
+	return walkTypeMemo(t, 0, seen, func(inner typ.Type) bool {
 		if tv, ok := inner.(*typ.TypeVar); ok {
 			return tv.ID == varID
 		}
-
 		return false
+	})
+}
+
+func walkTypeMemo(t typ.Type, depth int, seen map[typ.Type]bool, pred func(typ.Type) bool) bool {
+	if stopDepth(t, depth) {
+		return false
+	}
+	if pred(t) {
+		return true
+	}
+	if !canContainTypeVar(t.Kind()) {
+		return false
+	}
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+	return typ.Visit(t, typ.Visitor[bool]{
+		Optional: func(o *typ.Optional) bool {
+			return walkTypeMemo(o.Inner, depth+1, seen, pred)
+		},
+		Union: func(u *typ.Union) bool {
+			for _, m := range u.Members {
+				if walkTypeMemo(m, depth+1, seen, pred) {
+					return true
+				}
+			}
+			return false
+		},
+		Intersection: func(in *typ.Intersection) bool {
+			for _, m := range in.Members {
+				if walkTypeMemo(m, depth+1, seen, pred) {
+					return true
+				}
+			}
+			return false
+		},
+		Tuple: func(tup *typ.Tuple) bool {
+			for _, e := range tup.Elements {
+				if walkTypeMemo(e, depth+1, seen, pred) {
+					return true
+				}
+			}
+			return false
+		},
+		Array: func(a *typ.Array) bool {
+			return walkTypeMemo(a.Element, depth+1, seen, pred)
+		},
+		Map: func(m *typ.Map) bool {
+			return walkTypeMemo(m.Key, depth+1, seen, pred) || walkTypeMemo(m.Value, depth+1, seen, pred)
+		},
+		Function: func(fn *typ.Function) bool {
+			for _, p := range fn.Params {
+				if walkTypeMemo(p.Type, depth+1, seen, pred) {
+					return true
+				}
+			}
+			for _, r := range fn.Returns {
+				if walkTypeMemo(r, depth+1, seen, pred) {
+					return true
+				}
+			}
+			return walkTypeMemo(fn.Variadic, depth+1, seen, pred)
+		},
+		Record: func(r *typ.Record) bool {
+			for _, f := range r.Fields {
+				if walkTypeMemo(f.Type, depth+1, seen, pred) {
+					return true
+				}
+			}
+			return false
+		},
+		Alias: func(a *typ.Alias) bool {
+			return walkTypeMemo(a.Target, depth+1, seen, pred)
+		},
+		Default: func(t typ.Type) bool {
+			return false
+		},
 	})
 }
 
@@ -565,7 +658,8 @@ func (e *UnsatisfiableError) Error() string {
 }
 
 func containsTypeVar(t typ.Type) bool {
-	return walkType(t, 0, func(inner typ.Type) bool {
+	seen := make(map[typ.Type]bool)
+	return walkTypeMemo(t, 0, seen, func(inner typ.Type) bool {
 		return inner.Kind() == kind.TypeVar
 	})
 }
@@ -576,23 +670,19 @@ type InferSubstitution map[int]typ.Type
 // Apply applies this substitution to a type.
 func (s InferSubstitution) Apply(t typ.Type) typ.Type {
 	visited := make(map[int]bool)
-	typeVisited := make(map[typ.Type]bool)
+	memo := make(map[typ.Type]typ.Type)
 
-	return applyInferSubst(t, s, visited, typeVisited, 0)
+	return applyInferSubst(t, s, visited, memo, 0)
 }
 
-func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, typeVisited map[typ.Type]bool, depth int) typ.Type {
+func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo map[typ.Type]typ.Type, depth int) typ.Type {
 	if stopDepth(t, depth) {
 		return t
 	}
 
-	if typeVisited[t] {
-		return t
+	if result, ok := memo[t]; ok {
+		return result
 	}
-
-	typeVisited[t] = true
-
-	defer delete(typeVisited, t)
 
 	if _, ok := t.(*typ.TypeVar); ok {
 		current := t
@@ -619,7 +709,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 				continue
 			}
 
-			result := applyInferSubst(solved, s, visited, typeVisited, depth+1)
+			result := applyInferSubst(solved, s, visited, memo, depth+1)
 			curr := t
 
 			for {
@@ -648,9 +738,11 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 		return current
 	}
 
-	return typ.Visit(t, typ.Visitor[typ.Type]{
+	// Sentinel: mark t as in-progress so recursive references return t as-is.
+	memo[t] = t
+	result := typ.Visit(t, typ.Visitor[typ.Type]{
 		Optional: func(o *typ.Optional) typ.Type {
-			inner := applyInferSubst(o.Inner, s, visited, typeVisited, depth+1)
+			inner := applyInferSubst(o.Inner, s, visited, memo, depth+1)
 			if inner == o.Inner {
 				return t
 			}
@@ -662,7 +754,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 
 			members := make([]typ.Type, len(u.Members))
 			for i, m := range u.Members {
-				members[i] = applyInferSubst(m, s, visited, typeVisited, depth+1)
+				members[i] = applyInferSubst(m, s, visited, memo, depth+1)
 				if members[i] != m {
 					changed = true
 				}
@@ -679,7 +771,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 
 			members := make([]typ.Type, len(in.Members))
 			for i, m := range in.Members {
-				members[i] = applyInferSubst(m, s, visited, typeVisited, depth+1)
+				members[i] = applyInferSubst(m, s, visited, memo, depth+1)
 				if members[i] != m {
 					changed = true
 				}
@@ -696,7 +788,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 
 			elems := make([]typ.Type, len(tup.Elements))
 			for i, e := range tup.Elements {
-				elems[i] = applyInferSubst(e, s, visited, typeVisited, depth+1)
+				elems[i] = applyInferSubst(e, s, visited, memo, depth+1)
 				if elems[i] != e {
 					changed = true
 				}
@@ -713,7 +805,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 			params := make([]typ.Param, len(fn.Params))
 
 			for i, p := range fn.Params {
-				pType := applyInferSubst(p.Type, s, visited, typeVisited, depth+1)
+				pType := applyInferSubst(p.Type, s, visited, memo, depth+1)
 				params[i] = typ.Param{Name: p.Name, Type: pType, Optional: p.Optional}
 
 				if pType != p.Type {
@@ -724,7 +816,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 			returns := make([]typ.Type, len(fn.Returns))
 
 			for i, r := range fn.Returns {
-				returns[i] = applyInferSubst(r, s, visited, typeVisited, depth+1)
+				returns[i] = applyInferSubst(r, s, visited, memo, depth+1)
 				if returns[i] != r {
 					changed = true
 				}
@@ -732,7 +824,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 
 			var variadic typ.Type
 			if fn.Variadic != nil {
-				variadic = applyInferSubst(fn.Variadic, s, visited, typeVisited, depth+1)
+				variadic = applyInferSubst(fn.Variadic, s, visited, memo, depth+1)
 				if variadic != fn.Variadic {
 					changed = true
 				}
@@ -761,7 +853,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 			return fb.Build()
 		},
 		Array: func(a *typ.Array) typ.Type {
-			elem := applyInferSubst(a.Element, s, visited, typeVisited, depth+1)
+			elem := applyInferSubst(a.Element, s, visited, memo, depth+1)
 			if elem == a.Element {
 				return t
 			}
@@ -769,8 +861,8 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 			return typ.NewArray(elem)
 		},
 		Map: func(m *typ.Map) typ.Type {
-			key := applyInferSubst(m.Key, s, visited, typeVisited, depth+1)
-			value := applyInferSubst(m.Value, s, visited, typeVisited, depth+1)
+			key := applyInferSubst(m.Key, s, visited, memo, depth+1)
+			value := applyInferSubst(m.Value, s, visited, memo, depth+1)
 
 			if key == m.Key && value == m.Value {
 				return t
@@ -783,7 +875,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 			fields := make([]typ.Field, len(r.Fields))
 
 			for i, f := range r.Fields {
-				fType := applyInferSubst(f.Type, s, visited, typeVisited, depth+1)
+				fType := applyInferSubst(f.Type, s, visited, memo, depth+1)
 				fields[i] = typ.Field{Name: f.Name, Type: fType, Optional: f.Optional, Readonly: f.Readonly}
 
 				if fType != f.Type {
@@ -813,7 +905,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 			return rec
 		},
 		Alias: func(a *typ.Alias) typ.Type {
-			target := applyInferSubst(a.Target, s, visited, typeVisited, depth+1)
+			target := applyInferSubst(a.Target, s, visited, memo, depth+1)
 			if target == a.Target {
 				return t
 			}
@@ -824,6 +916,8 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, type
 			return t
 		},
 	})
+	memo[t] = result
+	return result
 }
 
 // Match walks pattern and concrete types in parallel, collecting constraints.
@@ -881,6 +975,14 @@ func matchDepth(pattern, concrete typ.Type, cs *InferSet, variance subtype.Varia
 			} else {
 				matchDepth(p.Inner, concrete, cs, variance, depth+1)
 			}
+			return struct{}{}
+		},
+		Union: func(p *typ.Union) struct{} {
+			concreteMembers := []typ.Type{concrete}
+			if c, ok := concrete.(*typ.Union); ok {
+				concreteMembers = c.Members
+			}
+			matchUnionMembers(p.Members, concreteMembers, cs, variance, depth+1)
 			return struct{}{}
 		},
 		Array: func(p *typ.Array) struct{} {
@@ -1008,6 +1110,92 @@ func matchDepth(pattern, concrete typ.Type, cs *InferSet, variance subtype.Varia
 			return struct{}{}
 		},
 	})
+}
+
+func matchUnionMembers(patternMembers, concreteMembers []typ.Type, cs *InferSet, variance subtype.Variance, depth int) {
+	if len(patternMembers) == 0 || len(concreteMembers) == 0 {
+		return
+	}
+
+	order := make([]int, len(patternMembers))
+	for i := range patternMembers {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		left := unionMemberSpecificity(patternMembers[order[i]])
+		right := unionMemberSpecificity(patternMembers[order[j]])
+		if left != right {
+			return left > right
+		}
+		return order[i] < order[j]
+	})
+
+	used := make([]bool, len(concreteMembers))
+	for _, patternIdx := range order {
+		patternMember := patternMembers[patternIdx]
+
+		bestConcrete := -1
+		bestScore := -1
+		for concreteIdx, concreteMember := range concreteMembers {
+			if used[concreteIdx] || !typesOverlapForInference(patternMember, concreteMember) {
+				continue
+			}
+			score := unionPairScore(patternMember, concreteMember)
+			if score > bestScore {
+				bestScore = score
+				bestConcrete = concreteIdx
+			}
+		}
+
+		if bestConcrete < 0 {
+			continue
+		}
+
+		used[bestConcrete] = true
+		matchDepth(patternMember, concreteMembers[bestConcrete], cs, variance, depth)
+	}
+}
+
+func unionMemberSpecificity(t typ.Type) int {
+	if t == nil {
+		return 0
+	}
+
+	score := 0
+	if !containsTypeVar(t) {
+		score += 4
+	}
+
+	switch unwrap.Alias(t).Kind() {
+	case kind.TypeVar:
+		// Leave fully-generic members as the last resort.
+	case kind.Literal:
+		score += 4
+	default:
+		score += 2
+	}
+
+	return score
+}
+
+func unionPairScore(pattern, concrete typ.Type) int {
+	score := unionMemberSpecificity(pattern)
+
+	patternKind := unwrap.Alias(pattern).Kind()
+	concreteKind := unwrap.Alias(concrete).Kind()
+	if patternKind == concreteKind {
+		score += 4
+	}
+	if subtype.IsSubtype(concrete, pattern) || subtype.IsSubtype(pattern, concrete) {
+		score += 2
+	}
+
+	return score
+}
+
+func typesOverlapForInference(a, b typ.Type) bool {
+	intersection := subtype.NormalizeIntersection(a, b)
+	return intersection != nil && !typ.IsNever(intersection)
 }
 
 func isTopOrBottom(t typ.Type) bool {

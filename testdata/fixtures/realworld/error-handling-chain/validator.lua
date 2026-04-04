@@ -1,6 +1,6 @@
 local errors = require("errors")
 
-type ValidationResult = {ok: true, value: string} | {ok: false, error: AppError}
+type ValidationResult = {ok: true, value: string} | {ok: false, error: errors.AppError}
 
 local M = {}
 M.ValidationResult = ValidationResult

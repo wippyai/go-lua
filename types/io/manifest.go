@@ -625,7 +625,7 @@ func ApplyFunctionSummary(fn *typ.Function, summary *FunctionSummary) *typ.Funct
 
 	// Build refinement from summary ensures (for narrowing), fall back to fn's refinement
 	if summary.Ensures.HasConstraints() {
-		eff := &constraint.FunctionEffect{
+		eff := &constraint.FunctionRefinement{
 			OnReturn: summary.Ensures,
 		}
 		builder.WithRefinement(eff)

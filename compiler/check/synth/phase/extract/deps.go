@@ -1,6 +1,7 @@
 package extract
 
 import (
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -31,12 +32,17 @@ type Deps struct {
 	DefaultScope *scope.State
 	Manifests    io.ManifestQuerier
 	CheckCtx     api.BaseEnv
+	Graphs       api.GraphProvider
 
 	Flow  api.FlowOps
 	Paths api.PathFromExprFunc
 
 	PreCache    api.Cache
 	NarrowCache api.Cache
+
+	// FunctionTypeInProgress guards call-point local function specialization
+	// against recursion across temporary synthesizers.
+	FunctionTypeInProgress map[functionTypeProgressKey]bool
 
 	// Module-level bindings for nested function CFG building.
 	ModuleBindings *bind.BindingTable
@@ -45,16 +51,23 @@ type Deps struct {
 	ModuleAliases map[cfg.SymbolID]string
 }
 
+type functionTypeProgressKey struct {
+	Func         *ast.FunctionExpr
+	CapturePoint cfg.Point
+}
+
 // NewDeps creates a new Deps instance.
 func NewDeps(ctx *db.QueryContext, types core.TypeOps, scopes api.ScopeMap, manifests io.ManifestQuerier, checkCtx api.BaseEnv) *Deps {
 	return &Deps{
-		Ctx:         ctx,
-		Types:       types,
-		Scopes:      scopes,
-		Manifests:   manifests,
-		CheckCtx:    checkCtx,
-		PreCache:    make(api.Cache),
-		NarrowCache: make(api.Cache),
+		Ctx:                    ctx,
+		Types:                  types,
+		Scopes:                 scopes,
+		Manifests:              manifests,
+		CheckCtx:               checkCtx,
+		Graphs:                 api.GraphsFrom(ctx),
+		PreCache:               make(api.Cache),
+		NarrowCache:            make(api.Cache),
+		FunctionTypeInProgress: make(map[functionTypeProgressKey]bool),
 	}
 }
 

@@ -86,6 +86,7 @@ type flowQueryImpl struct{}
 func (f *flowQueryImpl) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 	return flow.TypedValue{}
 }
+func (f *flowQueryImpl) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type { return nil }
 func (f *flowQueryImpl) ExcludesTypeAt(p cfg.Point, path constraint.Path, declared typ.Type) bool {
 	return false
 }

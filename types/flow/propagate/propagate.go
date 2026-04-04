@@ -337,15 +337,16 @@ func FilterConditionSymbols(cond constraint.Condition, syms []cfg.SymbolID) cons
 		var kept []constraint.Constraint
 		for _, c := range d {
 			shouldKeep := true
-			for _, p := range c.Paths() {
+			constraint.VisitPaths(c, func(p constraint.Path) bool {
 				if p.Symbol == 0 {
-					continue
+					return false
 				}
 				if _, ok := symSet[p.Symbol]; ok {
 					shouldKeep = false
-					break
+					return true
 				}
-			}
+				return false
+			})
 			if shouldKeep {
 				kept = append(kept, c)
 			}
@@ -395,20 +396,18 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 		var kept []constraint.Constraint
 		for _, c := range d {
 			shouldKeep := true
-			for _, cpath := range c.Paths() {
+			constraint.VisitPaths(c, func(cpath constraint.Path) bool {
 				if cpath.Symbol == 0 {
-					continue
+					return false
 				}
 				for _, ap := range assignedPaths {
 					if PathAffectedByAssignment(cpath, ap.TargetSym, ap.TargetSegs) {
 						shouldKeep = false
-						break
+						return true
 					}
 				}
-				if !shouldKeep {
-					break
-				}
-			}
+				return false
+			})
 			if shouldKeep {
 				kept = append(kept, c)
 			}

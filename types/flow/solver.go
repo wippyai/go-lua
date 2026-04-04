@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -45,6 +44,8 @@ type Solution struct {
 	scratchUnresolvedPaths map[constraint.PathKey]struct{}
 	scratchValueMap        map[constraint.PathKey]typ.Type
 	scratchResolvedPathMap map[constraint.PathKey]constraint.PathKey
+	scratchParsedSuffixes  map[string][]constraint.Segment
+	fieldOverlayCache      map[string][]mergedField
 	pathAliases            map[string]string // canonical target path key -> canonical source path key
 	narrowedTypeCache      map[narrowedTypeCacheKey]narrowedTypeCacheValue
 	queryCacheEnabled      bool
@@ -70,6 +71,12 @@ type narrowedTypeCacheValue struct {
 type edgeKey struct {
 	from cfg.Point
 	to   cfg.Point
+}
+
+type mergedField struct {
+	Name     string
+	Type     typ.Type
+	Optional bool
 }
 
 // Solve computes flow analysis and returns the solution.
@@ -170,31 +177,43 @@ func (s *Solution) runPropagation() {
 //
 // This environment is passed to the constraint solver for type narrowing.
 func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, baseType typ.Type, constraints []constraint.Constraint) map[constraint.PathKey]typ.Type {
+	visibleVersions := map[cfg.SymbolID]cfg.Version(nil)
+	visibleCount := len(s.declaredSyms)
+	if s.inputs != nil && s.inputs.Graph != nil {
+		visibleVersions = s.inputs.Graph.AllVisibleVersions(p)
+		visibleCount = len(visibleVersions)
+	}
+	queryVisibleLookup := visibleVersions != nil
+
 	result := s.scratchValueMap
 	if result == nil {
-		result = make(map[constraint.PathKey]typ.Type, 1+len(s.declaredSyms))
+		result = make(map[constraint.PathKey]typ.Type, estimatePointValueMapCapacity(visibleCount, len(constraints)))
 		s.scratchValueMap = result
 	}
 	clear(result)
 
-	versionIDs := s.scratchVersionIDs
-	if versionIDs == nil {
-		versionIDs = make(map[cfg.SymbolID]int, len(s.declaredSyms)+1)
-		s.scratchVersionIDs = versionIDs
-	}
-	clear(versionIDs)
-
-	missingVersions := s.scratchMissingVersions
-	if missingVersions == nil {
-		missingVersions = make(map[cfg.SymbolID]struct{}, 8)
-		s.scratchMissingVersions = missingVersions
-	}
-	clear(missingVersions)
+	var versionIDs map[cfg.SymbolID]int
+	var missingVersions map[cfg.SymbolID]struct{}
 	hasMissingVersions := false
+	if !queryVisibleLookup {
+		versionIDs = s.scratchVersionIDs
+		if versionIDs == nil {
+			versionIDs = make(map[cfg.SymbolID]int, estimateVersionCacheCapacity(visibleCount))
+			s.scratchVersionIDs = versionIDs
+		}
+		clear(versionIDs)
+
+		missingVersions = s.scratchMissingVersions
+		if missingVersions == nil {
+			missingVersions = make(map[cfg.SymbolID]struct{}, 8)
+			s.scratchMissingVersions = missingVersions
+		}
+		clear(missingVersions)
+	}
 
 	unresolved := s.scratchUnresolvedPaths
 	if unresolved == nil {
-		unresolved = make(map[constraint.PathKey]struct{}, len(constraints))
+		unresolved = make(map[constraint.PathKey]struct{}, estimateUnresolvedPathCapacity(len(constraints)))
 		s.scratchUnresolvedPaths = unresolved
 	}
 	clear(unresolved)
@@ -211,6 +230,13 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 		}
 		if path.Version != 0 {
 			return s.pkResolver.KeyAtVersion(path.Symbol, path.Version, path.Segments)
+		}
+		if queryVisibleLookup {
+			ver, ok := visibleVersions[path.Symbol]
+			if !ok || ver.IsZero() {
+				return ""
+			}
+			return s.pkResolver.KeyAtVersion(path.Symbol, ver.ID, path.Segments)
 		}
 		if hasMissingVersions {
 			if _, missing := missingVersions[path.Symbol]; missing {
@@ -238,15 +264,39 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 
 	// Add declared types for symbols visible at this point
 	if s.inputs != nil && s.inputs.DeclaredTypes != nil && s.inputs.Graph != nil {
-		for _, sym := range s.declaredSyms {
-			declPath := constraint.Path{Symbol: sym}
-			canonicalKey := keyAtPoint(declPath)
-			if canonicalKey == "" {
-				continue
-			}
-			declType := s.inputs.DeclaredTypes[sym]
-			if _, exists := result[canonicalKey]; !exists {
+		if s.queryCacheEnabled {
+			for sym, ver := range visibleVersions {
+				if ver.IsZero() {
+					continue
+				}
+				declType := s.inputs.DeclaredTypes[sym]
+				if declType == nil {
+					continue
+				}
+				canonicalKey := s.pkResolver.KeyAtVersion(sym, ver.ID, nil)
+				if canonicalKey == "" {
+					continue
+				}
+				if _, exists := result[canonicalKey]; exists {
+					continue
+				}
+				if t := s.values[string(canonicalKey)]; t != nil {
+					result[canonicalKey] = t
+					continue
+				}
 				result[canonicalKey] = declType
+			}
+		} else {
+			for _, sym := range s.declaredSyms {
+				declPath := constraint.Path{Symbol: sym}
+				canonicalKey := keyAtPoint(declPath)
+				if canonicalKey == "" {
+					continue
+				}
+				declType := s.inputs.DeclaredTypes[sym]
+				if _, exists := result[canonicalKey]; !exists {
+					result[canonicalKey] = declType
+				}
 			}
 		}
 	}
@@ -279,26 +329,26 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 		// Tracks canonical paths we already attempted but could not resolve.
 		// Successful resolutions live in result and are checked directly.
 		for _, c := range constraints {
-			for _, cpath := range c.Paths() {
+			constraint.VisitPaths(c, func(cpath constraint.Path) bool {
 				if cpath.IsEmpty() || cpath.Symbol == 0 {
-					continue
+					return false
 				}
 				cpath = normalizeConstraintPathForQuery(cpath)
 				canonicalKey := keyAtPoint(cpath)
 				if canonicalKey == "" {
-					continue
+					return false
 				}
 				if _, exists := result[canonicalKey]; exists {
-					continue
+					return false
 				}
 				if _, knownUnresolved := unresolved[canonicalKey]; knownUnresolved {
-					continue
+					return false
 				}
 
 				// Look up value using canonical key
 				if t := s.values[string(canonicalKey)]; t != nil {
 					result[canonicalKey] = t
-					continue
+					return false
 				}
 
 				// Derive child path type from parent's base type
@@ -307,7 +357,7 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 					if len(relativeSegs) > 0 {
 						if derived, ok := s.deriveTypeFrom(baseType, relativeSegs); ok {
 							result[canonicalKey] = derived
-							continue
+							return false
 						}
 					}
 				}
@@ -318,20 +368,46 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 				if rootType, ok := resolveRootType(cpath.Symbol); ok {
 					if len(cpath.Segments) == 0 {
 						result[canonicalKey] = rootType
-						continue
+						return false
 					}
 					if derived, ok := s.deriveTypeFrom(rootType, cpath.Segments); ok {
 						result[canonicalKey] = derived
-						continue
+						return false
 					}
 				}
 
 				unresolved[canonicalKey] = struct{}{}
-			}
+				return false
+			})
 		}
 	}
 
 	return result
+}
+
+func estimatePointValueMapCapacity(visibleCount, constraintCount int) int {
+	capacity := 8
+	if visibleCount > 0 {
+		capacity += min(visibleCount, 32)
+	}
+	if constraintCount > 0 {
+		capacity += min(constraintCount*2, 32)
+	}
+	return capacity
+}
+
+func estimateVersionCacheCapacity(visibleCount int) int {
+	if visibleCount <= 0 {
+		return 8
+	}
+	return min(visibleCount+1, 32)
+}
+
+func estimateUnresolvedPathCapacity(constraintCount int) int {
+	if constraintCount <= 0 {
+		return 8
+	}
+	return min(constraintCount, 16)
 }
 
 // isDescendantOf returns true if child is a strict descendant of parent.
@@ -713,49 +789,11 @@ func (s *Solution) resolveTypeKey(key narrow.TypeKey) typ.Type {
 //
 // This enables gradual type construction for tables built incrementally.
 func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.Type {
-	type mergedField struct {
-		Name     string
-		Type     typ.Type
-		Optional bool
-	}
-
-	var fields []mergedField
 	baseSym, baseVersion, _, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(baseKey))
 	if !ok {
 		return baseType
 	}
-	baseRoot := pathkey.SymbolVersionRoot(baseSym, baseVersion)
-	prefixLen := len(baseRoot)
-	keys := make([]string, 0, len(s.values))
-	for key := range s.values {
-		if len(key) <= prefixLen || key[:prefixLen] != baseRoot {
-			continue
-		}
-		// Match only strict child paths of this symbol/version root.
-		next := key[prefixLen]
-		if next != '.' && next != '[' {
-			continue
-		}
-		keys = append(keys, key)
-	}
-	if len(keys) == 0 {
-		return baseType
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		suffix := key[prefixLen:]
-		segs := pathkey.ParseSuffix(suffix)
-		if len(segs) != 1 {
-			continue
-		}
-		seg := segs[0]
-		switch seg.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			fieldType, optional := splitOptionalAssignedFieldType(s.values[key])
-			fields = append(fields, mergedField{Name: seg.Name, Type: fieldType, Optional: optional})
-		}
-	}
-
+	fields := s.fieldAssignmentsForRoot(pathkey.SymbolVersionRoot(baseSym, baseVersion))
 	if len(fields) == 0 {
 		return baseType
 	}
@@ -766,6 +804,29 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 
 	// Merge fields into base type
 	return typ.Visit(baseType, typ.Visitor[typ.Type]{
+		Alias: func(a *typ.Alias) typ.Type {
+			merged := s.mergeFieldAssignments(a.Target, baseKey)
+			if merged == nil || typ.TypeEquals(merged, a.Target) {
+				return baseType
+			}
+			return typ.NewAlias(a.Name, merged)
+		},
+		Recursive: func(r *typ.Recursive) typ.Type {
+			mergedBody := s.mergeFieldAssignments(r.Body, baseKey)
+			if mergedBody == nil || typ.TypeEquals(mergedBody, r.Body) {
+				return baseType
+			}
+
+			rebuilt := typ.NewRecursivePlaceholder(r.Name)
+			rebuiltBody := typ.Rewrite(mergedBody, func(n typ.Type) (typ.Type, bool) {
+				if typ.IsRecursiveRef(n, r) {
+					return rebuilt, true
+				}
+				return nil, false
+			})
+			rebuilt.SetBody(rebuiltBody)
+			return rebuilt
+		},
 		Map: func(m *typ.Map) typ.Type {
 			// Map base: create Record(open) with MapComponent + merged fields
 			builder := typ.NewRecord().SetOpen(true)
@@ -805,8 +866,13 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 				fieldType := f.Type
 				optional := f.Optional
 				if assigned, ok := assignedByName[f.Name]; ok {
-					fieldType = typ.JoinReturnSlot(fieldType, assigned.t)
-					optional = optional || assigned.optional
+					// Child-path facts already represent the current value of the
+					// field at this program point. Rebuilding the root should
+					// project that current field value back into the record rather
+					// than re-join it with the declared/base slot as if it were a
+					// separate branch.
+					fieldType = assigned.t
+					optional = assigned.optional
 					delete(assignedByName, f.Name)
 				}
 				switch {
@@ -850,70 +916,123 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 	})
 }
 
-// splitOptionalAssignedFieldType converts nil-capable field assignment types
-// into (innerType, optional=true) so merged record shapes model absent fields
-// as optional fields instead of required fields typed as T|nil.
-func splitOptionalAssignedFieldType(t typ.Type) (typ.Type, bool) {
-	if t == nil {
-		return typ.Unknown, true
+func (s *Solution) fieldAssignmentsForRoot(baseRoot string) []mergedField {
+	if s == nil || len(s.values) == 0 || baseRoot == "" {
+		return nil
 	}
-	// Preserve alias identity for non-optional assignments. Losing alias names
-	// here breaks downstream receiver checks for self-recursive method types.
-	if a, ok := t.(*typ.Alias); ok {
-		if a == nil || a.Target == nil {
-			return t, false
-		}
-		if opt, ok := a.Target.(*typ.Optional); ok && opt != nil && opt.Inner != nil {
-			return opt.Inner, true
-		}
-		if u, ok := a.Target.(*typ.Union); ok && u != nil && len(u.Members) > 0 {
-			hasNil := false
-			nonNil := make([]typ.Type, 0, len(u.Members))
-			for _, m := range u.Members {
-				if m != nil && m.Kind() == kind.Nil {
-					hasNil = true
-					continue
-				}
-				nonNil = append(nonNil, m)
-			}
-			if hasNil {
-				switch len(nonNil) {
-				case 0:
-					return typ.Nil, true
-				case 1:
-					return nonNil[0], true
-				default:
-					return typ.NewUnion(nonNil...), true
-				}
-			}
-		}
-		return t, false
+	if s.fieldOverlayCache == nil {
+		s.fieldOverlayCache = make(map[string][]mergedField)
 	}
-	if opt, ok := t.(*typ.Optional); ok && opt != nil && opt.Inner != nil {
-		return opt.Inner, true
+	if fields, ok := s.fieldOverlayCache[baseRoot]; ok {
+		return fields
 	}
-	u, ok := t.(*typ.Union)
-	if !ok || u == nil || len(u.Members) == 0 {
-		return t, false
-	}
-	hasNil := false
-	nonNil := make([]typ.Type, 0, len(u.Members))
-	for _, m := range u.Members {
-		if m != nil && m.Kind() == kind.Nil {
-			hasNil = true
+	fields := s.collectFieldAssignmentsForRoot(baseRoot)
+	s.fieldOverlayCache[baseRoot] = fields
+	return fields
+}
+
+func (s *Solution) collectFieldAssignmentsForRoot(baseRoot string) []mergedField {
+	prefixLen := len(baseRoot)
+	fields := make([]mergedField, 0, 8)
+	for key, value := range s.values {
+		if len(key) <= prefixLen || key[:prefixLen] != baseRoot {
 			continue
 		}
-		nonNil = append(nonNil, m)
+		seg, ok := parseSingleOverlaySegment(key[prefixLen:])
+		if !ok {
+			continue
+		}
+		fieldType, optional := typ.SplitNilableFieldType(value)
+		fields = append(fields, mergedField{Name: seg.Name, Type: fieldType, Optional: optional})
 	}
-	if !hasNil {
-		return t, false
+	sortMergedFields(fields)
+	return fields
+}
+
+func sortMergedFields(fields []mergedField) {
+	if len(fields) <= 1 {
+		return
 	}
-	switch len(nonNil) {
-	case 0:
-		return typ.Nil, true
-	case 1:
-		return nonNil[0], true
+	sort.Slice(fields, func(i, j int) bool {
+		if fields[i].Name != fields[j].Name {
+			return fields[i].Name < fields[j].Name
+		}
+		if fields[i].Optional != fields[j].Optional {
+			return !fields[i].Optional && fields[j].Optional
+		}
+		return fields[i].Type.Hash() < fields[j].Type.Hash()
+	})
+}
+
+func parseSingleOverlaySegment(suffix string) (constraint.Segment, bool) {
+	if suffix == "" {
+		return constraint.Segment{}, false
+	}
+	switch suffix[0] {
+	case '.':
+		name := suffix[1:]
+		if name == "" || !pathkey.IsIdentName(name) {
+			return constraint.Segment{}, false
+		}
+		return constraint.Segment{Kind: constraint.SegmentField, Name: name}, true
+	case '[':
+		if len(suffix) < 3 || suffix[len(suffix)-1] != ']' {
+			return constraint.Segment{}, false
+		}
+		inner := suffix[1 : len(suffix)-1]
+		if inner == "" {
+			return constraint.Segment{}, false
+		}
+		if inner[0] == '"' {
+			if len(inner) < 2 || inner[len(inner)-1] != '"' {
+				return constraint.Segment{}, false
+			}
+			name, ok := parseQuotedOverlayIndex(inner[1 : len(inner)-1])
+			if !ok {
+				return constraint.Segment{}, false
+			}
+			return constraint.Segment{Kind: constraint.SegmentIndexString, Name: name}, true
+		}
+		if _, ok := pathkey.ParseIntLiteral(inner); ok {
+			return constraint.Segment{}, false
+		}
+		return constraint.Segment{Kind: constraint.SegmentIndexString, Name: inner}, true
 	default:
-		return typ.NewUnion(nonNil...), true
+		return constraint.Segment{}, false
 	}
+}
+
+func parseQuotedOverlayIndex(inner string) (string, bool) {
+	if inner == "" {
+		return "", true
+	}
+	escaped := false
+	for i := 0; i < len(inner); i++ {
+		if inner[i] == '\\' {
+			escaped = true
+			break
+		}
+	}
+	if !escaped {
+		return inner, true
+	}
+
+	out := make([]byte, 0, len(inner))
+	for i := 0; i < len(inner); i++ {
+		ch := inner[i]
+		if ch != '\\' {
+			out = append(out, ch)
+			continue
+		}
+		if i+1 >= len(inner) {
+			return "", false
+		}
+		next := inner[i+1]
+		if next != '\\' && next != '"' {
+			return "", false
+		}
+		out = append(out, next)
+		i++
+	}
+	return string(out), true
 }

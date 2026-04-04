@@ -181,15 +181,15 @@ func (r *Runner) literalSigProvider(store api.StoreView, graph *cfg.Graph, paren
 }
 
 type effectStoreProvider interface {
-	EffectStore() api.EffectStore
+	RefinementStore() api.RefinementStore
 }
 
-func effectStoreFrom(store api.StoreView) api.EffectStore {
+func effectStoreFrom(store api.StoreView) api.RefinementStore {
 	if store == nil {
 		return nil
 	}
 	if provider, ok := store.(effectStoreProvider); ok {
-		return provider.EffectStore()
+		return provider.RefinementStore()
 	}
 	return nil
 }

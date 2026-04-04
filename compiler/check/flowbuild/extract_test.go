@@ -83,7 +83,7 @@ local y = x
 	}
 
 	// Create assert_not_nil function with refinement
-	notNilEffect := constraint.NewEffect(
+	notNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.NotNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)
@@ -205,7 +205,7 @@ local y = x.field
 	}
 
 	// Create assert_is_nil function with refinement
-	isNilEffect := constraint.NewEffect(
+	isNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.IsNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)
@@ -215,7 +215,7 @@ local y = x.field
 		Build()
 
 	// Create assert_not_nil function with refinement
-	notNilEffect := constraint.NewEffect(
+	notNilEffect := constraint.NewRefinement(
 		[]constraint.Constraint{constraint.NotNil{Path: constraint.Path{Root: "$0"}}},
 		nil, nil,
 	)

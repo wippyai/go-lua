@@ -2,10 +2,15 @@ local types = require("types")
 local stream = require("stream")
 
 local collected_chunks: {string} = {}
-local collected_tools: {ToolCall} = {}
-local final_result: StreamResult? = nil
+local collected_tools: {types.ToolCall} = {}
+local final_result: types.StreamResult? = nil
 
-local events = {
+type ContentEvent = {type: "content", data: string}
+type ToolCallEvent = {type: "tool_call", id: string, name: string, arguments: {[string]: any}}
+type DoneEvent = {type: "done", reason: string?, usage: types.Usage?}
+type StreamEvent = ContentEvent | ToolCallEvent | DoneEvent
+
+local events: {StreamEvent} = {
     {type = "content", data = "Hello "},
     {type = "content", data = "world"},
     {type = "tool_call", id = "t1", name = "search", arguments = {query = "test"}},
@@ -16,12 +21,12 @@ local result, err = stream.process(events, {
     on_content = function(chunk: string)
         table.insert(collected_chunks, chunk)
     end,
-    on_tool_call = function(call: ToolCall)
+    on_tool_call = function(call: types.ToolCall)
         table.insert(collected_tools, call)
         local name: string = call.name
         local id: string = call.id
     end,
-    on_done = function(result: StreamResult)
+    on_done = function(result: types.StreamResult)
         final_result = result
         local content: string = result.content
         local tokens: number = result.usage.input_tokens

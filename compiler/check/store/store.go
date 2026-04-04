@@ -40,10 +40,10 @@ type SessionStore struct {
 	phase api.Phase
 }
 
-// InterprocState holds interprocedural facts and effects for an iteration snapshot.
+// InterprocState holds interprocedural facts and refinements for an iteration snapshot.
 type InterprocState struct {
 	Facts             map[api.GraphKey]api.Facts
-	Effects           map[cfg.SymbolID]*constraint.FunctionEffect
+	Refinements       map[cfg.SymbolID]*constraint.FunctionRefinement
 	ConstructorFields api.ConstructorFields
 }
 
@@ -51,7 +51,7 @@ type InterprocState struct {
 func NewInterprocState() *InterprocState {
 	return &InterprocState{
 		Facts:             make(map[api.GraphKey]api.Facts),
-		Effects:           make(map[cfg.SymbolID]*constraint.FunctionEffect),
+		Refinements:       make(map[cfg.SymbolID]*constraint.FunctionRefinement),
 		ConstructorFields: make(api.ConstructorFields),
 	}
 }
@@ -107,8 +107,8 @@ type IterationScratch struct {
 	LiteralSigsByGraphID map[uint64]map[*ast.FunctionExpr]*typ.Function
 }
 
-// effectsEqual compares two FunctionEffects for structural equality.
-func effectsEqual(a, b *constraint.FunctionEffect) bool {
+// effectsEqual compares two FunctionRefinements for structural equality.
+func effectsEqual(a, b *constraint.FunctionRefinement) bool {
 	if a == b {
 		return true
 	}
@@ -119,7 +119,7 @@ func effectsEqual(a, b *constraint.FunctionEffect) bool {
 }
 
 // effectsMapEqual compares two effect maps for structural equality.
-func effectsMapEqual(a, b map[cfg.SymbolID]*constraint.FunctionEffect) bool {
+func effectsMapEqual(a, b map[cfg.SymbolID]*constraint.FunctionRefinement) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -292,24 +292,24 @@ func (s *SessionStore) swapInterprocChannels() []string {
 	s.ensureInterprocStates()
 
 	// Channel policies:
-	// - Effects/ConstructorFields are overwrite channels (next snapshot replaces prev).
+	// - Refinements/ConstructorFields are overwrite channels (next snapshot replaces prev).
 	// - InterprocFacts is a widening channel (monotone merge across iterations).
 	channels := []struct {
 		name string
 		swap func() bool
 	}{
 		{
-			name: "Effects",
+			name: "Refinements",
 			swap: func() bool {
 				return swapSnapshotChannel(
-					&s.InterprocPrev.Effects,
-					&s.InterprocNext.Effects,
-					func(_prev, next map[cfg.SymbolID]*constraint.FunctionEffect) map[cfg.SymbolID]*constraint.FunctionEffect {
+					&s.InterprocPrev.Refinements,
+					&s.InterprocNext.Refinements,
+					func(_prev, next map[cfg.SymbolID]*constraint.FunctionRefinement) map[cfg.SymbolID]*constraint.FunctionRefinement {
 						return next
 					},
 					effectsMapEqual,
-					func() map[cfg.SymbolID]*constraint.FunctionEffect {
-						return make(map[cfg.SymbolID]*constraint.FunctionEffect)
+					func() map[cfg.SymbolID]*constraint.FunctionRefinement {
+						return make(map[cfg.SymbolID]*constraint.FunctionRefinement)
 					},
 				)
 			},
@@ -367,7 +367,7 @@ func (s *SessionStore) swapInterprocChannels() []string {
 //  5. Record which channels changed for diagnostic reporting
 //
 // CHANGE DETECTION: Each channel uses type-appropriate equality:
-//   - Effects: FunctionEffect.Equals (structural comparison)
+//   - Refinements: FunctionRefinement.Equals (structural comparison)
 //   - ConstructorFields: typ.TypeEquals (structural equality)
 //
 // RETURN VALUE: Returns true if any channel changed, signaling another iteration
@@ -416,31 +416,31 @@ func (s *SessionStore) BumpRevision() {
 	s.Iteration.Revision++
 }
 
-// LookupEffectBySym returns the effect for a function by its SymbolID.
-// Reads from the stable interproc effect snapshot for order-independent analysis.
-func (s *SessionStore) LookupEffectBySym(sym cfg.SymbolID) *constraint.FunctionEffect {
+// LookupRefinementBySym returns the refinement for a function by its SymbolID.
+// Reads from the stable interproc refinement snapshot for order-independent analysis.
+func (s *SessionStore) LookupRefinementBySym(sym cfg.SymbolID) *constraint.FunctionRefinement {
 	if sym == 0 {
 		return nil
 	}
-	if s.InterprocPrev == nil || s.InterprocPrev.Effects == nil {
+	if s.InterprocPrev == nil || s.InterprocPrev.Refinements == nil {
 		return nil
 	}
-	return s.InterprocPrev.Effects[sym]
+	return s.InterprocPrev.Refinements[sym]
 }
 
-// StoreFunctionEffect records a function effect for the current iteration.
-func (s *SessionStore) StoreFunctionEffect(sym cfg.SymbolID, eff *constraint.FunctionEffect) {
+// StoreFunctionRefinement records a function refinement for the current iteration.
+func (s *SessionStore) StoreFunctionRefinement(sym cfg.SymbolID, eff *constraint.FunctionRefinement) {
 	if s == nil || sym == 0 || eff == nil {
 		return
 	}
 	s.ensureInterprocStates()
-	if s.InterprocNext.Effects == nil {
-		s.InterprocNext.Effects = make(map[cfg.SymbolID]*constraint.FunctionEffect)
+	if s.InterprocNext.Refinements == nil {
+		s.InterprocNext.Refinements = make(map[cfg.SymbolID]*constraint.FunctionRefinement)
 	}
-	if existing := s.InterprocNext.Effects[sym]; effectsEqual(existing, eff) {
+	if existing := s.InterprocNext.Refinements[sym]; effectsEqual(existing, eff) {
 		return
 	}
-	s.InterprocNext.Effects[sym] = eff
+	s.InterprocNext.Refinements[sym] = eff
 }
 
 // StoreConstructorFields stores constructor fields for a class symbol.
@@ -495,12 +495,12 @@ func (s *SessionStore) ClearIterationChannels() {
 	s.lastSwapDiffs = nil
 }
 
-// EffectStore returns a view over the stable interproc effect snapshot.
-func (s *SessionStore) EffectStore() api.EffectStore {
+// RefinementStore returns a view over the stable interproc refinement snapshot.
+func (s *SessionStore) RefinementStore() api.RefinementStore {
 	if s == nil || s.InterprocPrev == nil {
-		return &snapshotEffectStore{effects: nil}
+		return &snapshotRefinementStore{refinements: nil}
 	}
-	return &snapshotEffectStore{effects: s.InterprocPrev.Effects}
+	return &snapshotRefinementStore{refinements: s.InterprocPrev.Refinements}
 }
 
 // ModuleBindings returns the module binding table.
@@ -905,20 +905,20 @@ func (s *SessionStore) GetCapturedContainerMutationsSnapshot(
 	return s.GetInterprocFactsSnapshot(graph, parent).CapturedContainers
 }
 
-// snapshotEffectStore implements api.EffectStore using the stable snapshot.
-type snapshotEffectStore struct {
-	effects map[cfg.SymbolID]*constraint.FunctionEffect
+// snapshotRefinementStore implements api.RefinementStore using the stable snapshot.
+type snapshotRefinementStore struct {
+	refinements map[cfg.SymbolID]*constraint.FunctionRefinement
 }
 
-func (o *snapshotEffectStore) LookupEffectBySym(sym cfg.SymbolID) *constraint.FunctionEffect {
+func (o *snapshotRefinementStore) LookupRefinementBySym(sym cfg.SymbolID) *constraint.FunctionRefinement {
 	if o == nil || sym == 0 {
 		return nil
 	}
-	if o.effects == nil {
+	if o.refinements == nil {
 		return nil
 	}
-	if eff := o.effects[sym]; eff != nil {
-		return eff
+	if refinement := o.refinements[sym]; refinement != nil {
+		return refinement
 	}
 	return nil
 }
