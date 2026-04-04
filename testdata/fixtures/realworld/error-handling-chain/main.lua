@@ -5,8 +5,8 @@ local validator = require("validator")
 local raw_data = {code = "TEST", message = "hello", retryable = false}
 local validated, type_err = errors.AppError:is(raw_data)
 if type_err == nil and validated then
-    local code: string = validated.code -- expect-error
-    local msg: string = validated.message -- expect-error
+    local code: string = validated.code
+    local msg: string = validated.message
 end
 
 -- Normal flow with typed functions
