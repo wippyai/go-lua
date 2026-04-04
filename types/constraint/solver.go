@@ -176,13 +176,14 @@ func (s Solver) applyWithWorkSkipping(constraints []Constraint, out map[PathKey]
 func buildPathConstraintIndex(constraints []Constraint) map[PathKey][]Constraint {
 	index := make(map[PathKey][]Constraint)
 	for _, c := range constraints {
-		for _, p := range c.Paths() {
+		VisitPaths(c, func(p Path) bool {
 			if p.IsEmpty() {
-				continue
+				return false
 			}
 			key := p.Key()
 			index[key] = append(index[key], c)
-		}
+			return false
+		})
 	}
 	return index
 }
@@ -207,7 +208,6 @@ func collectAffectedConstraints(changedPaths map[PathKey]struct{}, pathConstrain
 // applyConstraintTrackChanges applies a constraint and tracks which paths changed.
 func applyConstraintTrackChanges(out *map[PathKey]typ.Type, env Env, c Constraint, changedPaths map[PathKey]struct{}) bool {
 	// Snapshot types before applying
-	paths := c.Paths()
 	var keys [4]PathKey
 	var before [4]typ.Type
 	count := 0
@@ -232,17 +232,18 @@ func applyConstraintTrackChanges(out *map[PathKey]typ.Type, env Env, c Constrain
 			return
 		}
 		if overflow == nil {
-			overflow = make(map[PathKey]typ.Type, len(paths)-count)
+			overflow = make(map[PathKey]typ.Type, 4)
 		}
 		overflow[key] = t
 	}
-	for _, p := range paths {
+	VisitPaths(c, func(p Path) bool {
 		if p.IsEmpty() {
-			continue
+			return false
 		}
 		key := p.Key()
 		addSnapshot(key)
-	}
+		return false
+	})
 
 	// Apply the constraint
 	changed := applyConstraint(out, env, c)

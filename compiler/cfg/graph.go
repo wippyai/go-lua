@@ -548,7 +548,7 @@ func (g *Graph) EachAssign(fn func(Point, *AssignInfo)) {
 		return
 	}
 	points := g.orderedAssignPoints
-	if len(points) == 0 && len(g.infoByPoint) > 0 {
+	if points == nil && len(g.infoByPoint) > 0 {
 		points = g.sortedPoints(func(info NodeInfo) bool {
 			_, ok := info.(*AssignInfo)
 			return ok
@@ -565,7 +565,7 @@ func (g *Graph) AssignPoints() []Point {
 		return nil
 	}
 	points := g.orderedAssignPoints
-	if len(points) == 0 && len(g.infoByPoint) > 0 {
+	if points == nil && len(g.infoByPoint) > 0 {
 		points = g.sortedPoints(func(info NodeInfo) bool {
 			_, ok := info.(*AssignInfo)
 			return ok
@@ -587,7 +587,7 @@ func (g *Graph) EachStmtCall(fn func(Point, *CallInfo)) {
 		return
 	}
 	points := g.orderedStmtCallPoints
-	if len(points) == 0 && len(g.infoByPoint) > 0 {
+	if points == nil && len(g.infoByPoint) > 0 {
 		points = g.sortedPoints(func(info NodeInfo) bool {
 			_, ok := info.(*CallInfo)
 			return ok
@@ -619,7 +619,7 @@ func (g *Graph) EachCallSite(fn func(Point, *CallInfo)) {
 		return
 	}
 	points := g.orderedPoints
-	if len(points) == 0 && len(g.infoByPoint) > 0 {
+	if points == nil && len(g.infoByPoint) > 0 {
 		points = g.sortedPoints(nil)
 	}
 	for _, p := range points {
@@ -650,7 +650,7 @@ func (g *Graph) EachReturn(fn func(Point, *ReturnInfo)) {
 		return
 	}
 	points := g.orderedReturnPoints
-	if len(points) == 0 && len(g.infoByPoint) > 0 {
+	if points == nil && len(g.infoByPoint) > 0 {
 		points = g.sortedPoints(func(info NodeInfo) bool {
 			_, ok := info.(*ReturnInfo)
 			return ok
@@ -667,7 +667,7 @@ func (g *Graph) EachBranch(fn func(Point, *BranchInfo)) {
 		return
 	}
 	points := g.orderedBranchPoints
-	if len(points) == 0 && len(g.infoByPoint) > 0 {
+	if points == nil && len(g.infoByPoint) > 0 {
 		points = g.sortedPoints(func(info NodeInfo) bool {
 			_, ok := info.(*BranchInfo)
 			return ok
@@ -684,7 +684,7 @@ func (g *Graph) EachFuncDef(fn func(Point, *FuncDefInfo)) {
 		return
 	}
 	points := g.orderedFuncDefPoints
-	if len(points) == 0 && len(g.infoByPoint) > 0 {
+	if points == nil && len(g.infoByPoint) > 0 {
 		points = g.sortedPoints(func(info NodeInfo) bool {
 			_, ok := info.(*FuncDefInfo)
 			return ok
@@ -701,7 +701,7 @@ func (g *Graph) EachTypeDef(fn func(Point, *TypeDefInfo)) {
 		return
 	}
 	points := g.orderedTypeDefPoints
-	if len(points) == 0 && len(g.infoByPoint) > 0 {
+	if points == nil && len(g.infoByPoint) > 0 {
 		points = g.sortedPoints(func(info NodeInfo) bool {
 			_, ok := info.(*TypeDefInfo)
 			return ok
@@ -718,7 +718,7 @@ func (g *Graph) EachNode(fn func(Point, NodeInfo)) {
 		return
 	}
 	points := g.orderedPoints
-	if len(points) == 0 && len(g.infoByPoint) > 0 {
+	if points == nil && len(g.infoByPoint) > 0 {
 		points = g.sortedPoints(nil)
 	}
 	for _, p := range points {
@@ -966,7 +966,7 @@ func (g *Graph) PopulateSymbols(resolve SymbolResolver) {
 	}
 
 	points := g.orderedPoints
-	if len(points) == 0 {
+	if points == nil {
 		points = g.sortedPoints(nil)
 	}
 

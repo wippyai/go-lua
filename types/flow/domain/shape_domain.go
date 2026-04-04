@@ -116,14 +116,14 @@ func (d *ShapeDomain) ApplyConstraint(c constraint.Constraint, target constraint
 	}
 
 	// Propagate to ALL ancestor paths for nested field constraints
-	paths := c.Paths()
-	if len(paths) > 0 && len(paths[0].Segments) > 0 {
+	path, ok := constraint.FirstPath(c)
+	if ok && len(path.Segments) > 0 {
 		// Walk up the path tree, propagating to each ancestor
-		for depth := len(paths[0].Segments) - 1; depth >= 0; depth-- {
+		for depth := len(path.Segments) - 1; depth >= 0; depth-- {
 			ancestorPath := constraint.Path{
-				Root:     paths[0].Root,
-				Symbol:   paths[0].Symbol,
-				Segments: paths[0].Segments[:depth],
+				Root:     path.Root,
+				Symbol:   path.Symbol,
+				Segments: path.Segments[:depth],
 			}
 			if d.Env.ResolvePath == nil {
 				continue

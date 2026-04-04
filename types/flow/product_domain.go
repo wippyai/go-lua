@@ -146,14 +146,14 @@ func (d *ProductDomain) ApplyAtom(atom constraint.Atom) bool {
 //
 // Returns false if the constraint proves the domain unsatisfiable.
 func (d *ProductDomain) ApplyLeftoverConstraint(c constraint.Constraint) bool {
-	paths := c.Paths()
-	if len(paths) == 0 {
+	path, ok := constraint.FirstPath(c)
+	if !ok {
 		return true
 	}
 	if d.env.ResolvePath == nil {
 		return true
 	}
-	target := d.env.ResolvePath(paths[0])
+	target := d.env.ResolvePath(path)
 	if target == "" {
 		return true
 	}
@@ -269,12 +269,13 @@ func (d *ProductDomain) buildCongruenceClosure(atoms []constraint.Atom, constrai
 	resolve := d.env.ResolvePath
 
 	for _, c := range constraints {
-		for _, path := range c.Paths() {
+		constraint.VisitPaths(c, func(path constraint.Path) bool {
 			key := resolve(path)
 			if key != "" {
 				d.EGraph.RegisterKey(key)
 			}
-		}
+			return false
+		})
 	}
 
 	for _, c := range constraints {

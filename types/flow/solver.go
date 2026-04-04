@@ -177,31 +177,43 @@ func (s *Solution) runPropagation() {
 //
 // This environment is passed to the constraint solver for type narrowing.
 func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, baseType typ.Type, constraints []constraint.Constraint) map[constraint.PathKey]typ.Type {
+	visibleVersions := map[cfg.SymbolID]cfg.Version(nil)
+	visibleCount := len(s.declaredSyms)
+	if s.queryCacheEnabled && s.inputs != nil && s.inputs.Graph != nil {
+		visibleVersions = s.inputs.Graph.AllVisibleVersions(p)
+		visibleCount = len(visibleVersions)
+	}
+	queryVisibleLookup := s.queryCacheEnabled && visibleVersions != nil
+
 	result := s.scratchValueMap
 	if result == nil {
-		result = make(map[constraint.PathKey]typ.Type, 1+len(s.declaredSyms))
+		result = make(map[constraint.PathKey]typ.Type, estimatePointValueMapCapacity(visibleCount, len(constraints)))
 		s.scratchValueMap = result
 	}
 	clear(result)
 
-	versionIDs := s.scratchVersionIDs
-	if versionIDs == nil {
-		versionIDs = make(map[cfg.SymbolID]int, len(s.declaredSyms)+1)
-		s.scratchVersionIDs = versionIDs
-	}
-	clear(versionIDs)
-
-	missingVersions := s.scratchMissingVersions
-	if missingVersions == nil {
-		missingVersions = make(map[cfg.SymbolID]struct{}, 8)
-		s.scratchMissingVersions = missingVersions
-	}
-	clear(missingVersions)
+	var versionIDs map[cfg.SymbolID]int
+	var missingVersions map[cfg.SymbolID]struct{}
 	hasMissingVersions := false
+	if !queryVisibleLookup {
+		versionIDs = s.scratchVersionIDs
+		if versionIDs == nil {
+			versionIDs = make(map[cfg.SymbolID]int, estimateVersionCacheCapacity(visibleCount))
+			s.scratchVersionIDs = versionIDs
+		}
+		clear(versionIDs)
+
+		missingVersions = s.scratchMissingVersions
+		if missingVersions == nil {
+			missingVersions = make(map[cfg.SymbolID]struct{}, 8)
+			s.scratchMissingVersions = missingVersions
+		}
+		clear(missingVersions)
+	}
 
 	unresolved := s.scratchUnresolvedPaths
 	if unresolved == nil {
-		unresolved = make(map[constraint.PathKey]struct{}, len(constraints))
+		unresolved = make(map[constraint.PathKey]struct{}, estimateUnresolvedPathCapacity(len(constraints)))
 		s.scratchUnresolvedPaths = unresolved
 	}
 	clear(unresolved)
@@ -218,6 +230,13 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 		}
 		if path.Version != 0 {
 			return s.pkResolver.KeyAtVersion(path.Symbol, path.Version, path.Segments)
+		}
+		if queryVisibleLookup {
+			ver, ok := visibleVersions[path.Symbol]
+			if !ok || ver.IsZero() {
+				return ""
+			}
+			return s.pkResolver.KeyAtVersion(path.Symbol, ver.ID, path.Segments)
 		}
 		if hasMissingVersions {
 			if _, missing := missingVersions[path.Symbol]; missing {
@@ -245,15 +264,39 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 
 	// Add declared types for symbols visible at this point
 	if s.inputs != nil && s.inputs.DeclaredTypes != nil && s.inputs.Graph != nil {
-		for _, sym := range s.declaredSyms {
-			declPath := constraint.Path{Symbol: sym}
-			canonicalKey := keyAtPoint(declPath)
-			if canonicalKey == "" {
-				continue
-			}
-			declType := s.inputs.DeclaredTypes[sym]
-			if _, exists := result[canonicalKey]; !exists {
+		if s.queryCacheEnabled {
+			for sym, ver := range visibleVersions {
+				if ver.IsZero() {
+					continue
+				}
+				declType := s.inputs.DeclaredTypes[sym]
+				if declType == nil {
+					continue
+				}
+				canonicalKey := s.pkResolver.KeyAtVersion(sym, ver.ID, nil)
+				if canonicalKey == "" {
+					continue
+				}
+				if _, exists := result[canonicalKey]; exists {
+					continue
+				}
+				if t := s.values[string(canonicalKey)]; t != nil {
+					result[canonicalKey] = t
+					continue
+				}
 				result[canonicalKey] = declType
+			}
+		} else {
+			for _, sym := range s.declaredSyms {
+				declPath := constraint.Path{Symbol: sym}
+				canonicalKey := keyAtPoint(declPath)
+				if canonicalKey == "" {
+					continue
+				}
+				declType := s.inputs.DeclaredTypes[sym]
+				if _, exists := result[canonicalKey]; !exists {
+					result[canonicalKey] = declType
+				}
 			}
 		}
 	}
@@ -286,26 +329,26 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 		// Tracks canonical paths we already attempted but could not resolve.
 		// Successful resolutions live in result and are checked directly.
 		for _, c := range constraints {
-			for _, cpath := range c.Paths() {
+			constraint.VisitPaths(c, func(cpath constraint.Path) bool {
 				if cpath.IsEmpty() || cpath.Symbol == 0 {
-					continue
+					return false
 				}
 				cpath = normalizeConstraintPathForQuery(cpath)
 				canonicalKey := keyAtPoint(cpath)
 				if canonicalKey == "" {
-					continue
+					return false
 				}
 				if _, exists := result[canonicalKey]; exists {
-					continue
+					return false
 				}
 				if _, knownUnresolved := unresolved[canonicalKey]; knownUnresolved {
-					continue
+					return false
 				}
 
 				// Look up value using canonical key
 				if t := s.values[string(canonicalKey)]; t != nil {
 					result[canonicalKey] = t
-					continue
+					return false
 				}
 
 				// Derive child path type from parent's base type
@@ -314,7 +357,7 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 					if len(relativeSegs) > 0 {
 						if derived, ok := s.deriveTypeFrom(baseType, relativeSegs); ok {
 							result[canonicalKey] = derived
-							continue
+							return false
 						}
 					}
 				}
@@ -325,20 +368,46 @@ func (s *Solution) buildPointValueMap(p cfg.Point, targetPath constraint.Path, b
 				if rootType, ok := resolveRootType(cpath.Symbol); ok {
 					if len(cpath.Segments) == 0 {
 						result[canonicalKey] = rootType
-						continue
+						return false
 					}
 					if derived, ok := s.deriveTypeFrom(rootType, cpath.Segments); ok {
 						result[canonicalKey] = derived
-						continue
+						return false
 					}
 				}
 
 				unresolved[canonicalKey] = struct{}{}
-			}
+				return false
+			})
 		}
 	}
 
 	return result
+}
+
+func estimatePointValueMapCapacity(visibleCount, constraintCount int) int {
+	capacity := 8
+	if visibleCount > 0 {
+		capacity += min(visibleCount, 32)
+	}
+	if constraintCount > 0 {
+		capacity += min(constraintCount*2, 32)
+	}
+	return capacity
+}
+
+func estimateVersionCacheCapacity(visibleCount int) int {
+	if visibleCount <= 0 {
+		return 8
+	}
+	return min(visibleCount+1, 32)
+}
+
+func estimateUnresolvedPathCapacity(constraintCount int) int {
+	if constraintCount <= 0 {
+		return 8
+	}
+	return min(constraintCount, 16)
 }
 
 // isDescendantOf returns true if child is a strict descendant of parent.

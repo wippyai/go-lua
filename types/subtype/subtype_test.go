@@ -1395,6 +1395,17 @@ func TestRecordToMap(t *testing.T) {
 	}
 }
 
+func TestRecursiveRecordToMap(t *testing.T) {
+	rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("child", self).Build()
+	})
+	mapType := typ.NewMap(typ.String, rec)
+
+	if !IsSubtype(rec, mapType) {
+		t.Error("recursive record should be subtype of compatible recursive map")
+	}
+}
+
 func TestRecordToMapIncompatibleKey(t *testing.T) {
 	rec := typ.NewRecord().Field("name", typ.String).Build()
 	mapType := typ.NewMap(typ.Number, typ.String)
