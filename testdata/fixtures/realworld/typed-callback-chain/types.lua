@@ -29,6 +29,10 @@ type StreamCallbacks = {
 }
 
 local M = {}
+M.ToolCall = ToolCall
+M.StreamResult = StreamResult
+M.ErrorInfo = ErrorInfo
+M.StreamCallbacks = StreamCallbacks
 
 function M.empty_result(): StreamResult
     return {

@@ -15,6 +15,10 @@ type Response = {
 }
 
 local M = {}
+M.HttpMethod = HttpMethod
+M.Request = Request
+M.Response = Response
+M.StatusCode = StatusCode
 
 M.METHOD = {
     GET = "GET",

@@ -9,6 +9,7 @@ type Database = {
 }
 
 local M = {}
+M.Database = Database
 
 M.type = {
     POSTGRES = "postgres",

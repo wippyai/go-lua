@@ -32,6 +32,10 @@ type TraitRegistryEntry = {
 }
 
 local M = {}
+M.TraitToolDef = TraitToolDef
+M.TraitToolEntry = TraitToolEntry
+M.TraitSpec = TraitSpec
+M.TraitRegistryEntry = TraitRegistryEntry
 
 M.TRAIT_TYPE = "agent.trait"
 

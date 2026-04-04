@@ -10,6 +10,8 @@ type Logger = {
 }
 
 local M = {}
+M.LogLevel = LogLevel
+M.Logger = Logger
 
 function M.new(level: LogLevel?): Logger
     local logger: Logger = {
