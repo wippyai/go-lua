@@ -82,6 +82,14 @@ func (r *FuncResult) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedVa
 	return r.Facts.EffectiveTypeAt(p, sym)
 }
 
+// NarrowedTypeAt returns the precise path-sensitive narrowed type at a CFG point.
+func (r *FuncResult) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	if r == nil || r.FlowSolution == nil {
+		return nil
+	}
+	return r.FlowSolution.NarrowedTypeAt(p, path)
+}
+
 // ExcludesTypeAt checks if the flow solution proves a type is excluded at a CFG point.
 // Used for type narrowing when control flow eliminates certain type possibilities.
 //

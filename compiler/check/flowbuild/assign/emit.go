@@ -86,7 +86,8 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	// Collects spec-narrowed types from contract specs and propagates through method calls.
 	// Uses expandValues with SpecTypes overlay for method call synthesis.
 	specNarrowed := CollectSpecNarrowedTypes(fc.Graph, fc.Scopes, synth, symResolver, fc.API, fc.ModuleBindings)
-	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, specNarrowed, inputs.AnnotatedVars, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, fc.Services)
+	preflowBranchSolution := buildPreflowBranchSolution(fc, inputs)
+	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, specNarrowed, inputs.AnnotatedVars, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution, fc.Services)
 	// Promote inferred parameter types into DeclaredTypes for unannotated params.
 	// This enables bidirectional inference at call sites (e.g., custom assert helpers).
 	if inputs.DeclaredTypes != nil {
@@ -150,13 +151,12 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	overlayTypes = mergeSpecTypesInto(overlayTypes, inferredTypes)
 	overlayTypes = mergeSpecTypesInto(overlayTypes, specNarrowed)
 	overlayTypes = mergeSpecTypesInto(overlayTypes, loopVarTypes)
-
 	// Precompute truthy guards: map from CFG point to paths that are narrowed (non-nil) at that point.
 	// Used during table literal synthesis to unwrap optional types.
 	truthyGuards := guard.CollectTruthyGuards(fc.Graph, bindings)
 	typeGuards := guard.CollectTypeGuards(fc.Graph, bindings)
 
-	baseSynth := resolve.SynthWithOverlay(overlayTypes, bindings, synth)
+	baseSynth := synthWithOverlayAndPreflow(overlayTypes, bindings, inputs, fc.CallCtx, fc.TypeOps, preflowBranchSolution, synth)
 	idom, _ := cfganalysis.ComputeDominators(fc.Graph.CFG())
 	structuredWrites := indexStructuredWrites(fc.Graph)
 	var wrappedSynth func(ast.Expr, cfg.Point) typ.Type

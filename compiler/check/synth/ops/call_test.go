@@ -223,6 +223,29 @@ func TestCallWithGenericInference_SingleTupleReturnPreservesArityOne(t *testing.
 	}
 }
 
+func TestCallWithGenericInference_NestedAliasFunctionIsCallable(t *testing.T) {
+	fn := typ.Func().
+		Param("x", typ.String).
+		Returns(typ.Integer).
+		Build()
+	moduleAlias := typ.NewAlias("ModuleHandler", fn)
+	localAlias := typ.NewAlias("Handler", moduleAlias)
+
+	ctx := db.NewQueryContext(db.New())
+	def := CallDef{
+		Callee: localAlias,
+		Args:   []typ.Type{typ.String},
+	}
+
+	result := CallWithGenericInference(ctx, def)
+	if len(result.Errors) > 0 {
+		t.Fatalf("expected nested alias callee to unwrap to function, got errors: %v", result.Errors)
+	}
+	if result.Type != typ.Integer {
+		t.Fatalf("expected integer return through nested aliases, got %v", result.Type)
+	}
+}
+
 func TestCallWithGenericInference_UnionCarriesMergedReturnVector(t *testing.T) {
 	one := typ.Func().Returns(typ.String).Build()
 	two := typ.Func().Returns(typ.String, typ.Boolean).Build()

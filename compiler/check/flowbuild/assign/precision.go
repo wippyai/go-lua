@@ -43,10 +43,29 @@ func preferPreciseDirectSourceType(
 		if subtype.IsSubtype(precise, assignedType) && !subtype.IsSubtype(assignedType, precise) {
 			return precise
 		}
+		if preferNamedEquivalentDirectType(precise, assignedType) {
+			return precise
+		}
 		return assignedType
 	}
 	if typ.IsAny(assignedType) && !typ.IsAny(precise) {
 		return precise
 	}
 	return assignedType
+}
+
+func preferNamedEquivalentDirectType(precise, assignedType typ.Type) bool {
+	if !isNamedIdentityType(precise) || isNamedIdentityType(assignedType) {
+		return false
+	}
+	return subtype.IsSubtype(precise, assignedType) && subtype.IsSubtype(assignedType, precise)
+}
+
+func isNamedIdentityType(t typ.Type) bool {
+	switch t.(type) {
+	case *typ.Alias, *typ.Ref:
+		return true
+	default:
+		return false
+	}
 }

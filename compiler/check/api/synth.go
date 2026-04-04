@@ -151,6 +151,10 @@ type FlowQuery interface {
 	// Combines declared type with flow refinements.
 	EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue
 
+	// NarrowedTypeAt returns the exact narrowed type for a source path at a point.
+	// Used when diagnostics need the solved path-sensitive type, not just symbol-level facts.
+	NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type
+
 	// ExcludesTypeAt checks if flow analysis excludes a type at a point.
 	// Used for narrowing union types when branches eliminate possibilities.
 	ExcludesTypeAt(p cfg.Point, path constraint.Path, declared typ.Type) bool

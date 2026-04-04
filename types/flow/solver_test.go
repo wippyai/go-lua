@@ -1092,6 +1092,71 @@ func TestNarrowedTypeAt_NestedBranch_PropagatesNarrowing(t *testing.T) {
 	}
 }
 
+func TestNarrowedTypeAt_ComposesNotNilWithChildDiscriminant(t *testing.T) {
+	c, branch1, then1, branch2, then2 := buildNestedBranchCFG()
+	g := newMockSSAGraph(c)
+
+	allPoints := []cfg.Point{c.Entry(), branch1, then1, branch2, then2, c.Exit()}
+	symX := setupSymbol(g, "x", allPoints)
+	verX := cfg.Version{Root: "x", Symbol: symX, ID: 1}
+	for _, p := range allPoints {
+		setVersion(g, p, symX, verX)
+	}
+
+	allow := typ.NewRecord().
+		Field("kind", typ.LiteralString("allow")).
+		Field("reason", typ.String).
+		Build()
+	deny := typ.NewRecord().
+		Field("kind", typ.LiteralString("deny")).
+		Field("reason", typ.String).
+		Build()
+	deferType := typ.NewRecord().
+		Field("kind", typ.LiteralString("defer")).
+		Field("queue", typ.String).
+		Build()
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symX] = typ.NewOptional(typ.NewUnion(allow, deny, deferType))
+
+	pathX := constraint.Path{Root: "x", Symbol: symX}
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From:      branch1,
+			To:        then1,
+			Condition: constraint.FromConstraints(constraint.NotNil{Path: pathX}),
+		},
+		{
+			From: branch2,
+			To:   then2,
+			Condition: constraint.FromConstraints(constraint.FieldEquals{
+				Target: pathX,
+				Field:  "kind",
+				Value:  typ.LiteralString("defer"),
+			}),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+
+	got := s.NarrowedTypeAt(then2, pathX)
+	if !typ.TypeEquals(got, deferType) {
+		t.Fatalf("NarrowedTypeAt(then2) = %v, want %v", got, deferType)
+	}
+
+	pathQueue := constraint.Path{
+		Root:   "x",
+		Symbol: symX,
+		Segments: []constraint.Segment{
+			{Kind: constraint.SegmentField, Name: "queue"},
+		},
+	}
+	gotQueue := s.NarrowedTypeAt(then2, pathQueue)
+	if !typ.TypeEquals(gotQueue, typ.String) {
+		t.Fatalf("NarrowedTypeAt(then2, x.queue) = %v, want string", gotQueue)
+	}
+}
+
 // buildReassignCFG creates: entry -> assign1(x) -> call1 -> assign2(x) -> call2 -> use -> exit
 // This models: x = f1(); assert_is_nil(x); x = f2(); assert_not_nil(x); use(x)
 func buildReassignCFG() (*cfg.CFG, cfg.Point, cfg.Point, cfg.Point, cfg.Point, cfg.Point) {

@@ -247,6 +247,8 @@ func (e *Engine) ResolveTypeDefAt(name string, typeExpr ast.TypeExpr, typeParams
 		ExprSynth: func(expr ast.Expr, _ cfg.Point) typ.Type {
 			return e.SynthExprAt(expr, p, sc)
 		},
+		ModuleBindings: e.deps.ModuleBindings,
+		ModuleAliases:  e.deps.ModuleAliases,
 	})
 	return resolver.ResolveTypeDef(name, typeExpr, typeParams, sc)
 }

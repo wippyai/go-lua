@@ -9,8 +9,10 @@ package phase
 import (
 	"reflect"
 
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
@@ -44,11 +46,13 @@ func RunResolve(input ResolveInput) ResolveOutput {
 	})
 
 	engine := synth.New(synth.Config{
-		Ctx:       input.Ctx,
-		Types:     input.Types,
-		Manifests: input.Manifests,
-		Env:       globalCtx,
-		Phase:     api.PhaseTypeResolution,
+		Ctx:            input.Ctx,
+		Types:          input.Types,
+		Manifests:      input.Manifests,
+		Env:            globalCtx,
+		Phase:          api.PhaseTypeResolution,
+		ModuleBindings: firstNonNilBindings(input.ModuleBindings, input.Bindings),
+		ModuleAliases:  firstNonNilAliases(input.ModuleAliases, modules.CollectAliases(input.Graph)),
 	})
 
 	return ResolveOutput{
@@ -75,12 +79,28 @@ func CreateTypeResolutionEngine(
 		GlobalTypes:   globalTypes,
 	})
 	return synth.New(synth.Config{
-		Ctx:       ctx,
-		Types:     types,
-		Manifests: manifests,
-		Env:       checkCtx,
-		Phase:     api.PhaseTypeResolution,
+		Ctx:            ctx,
+		Types:          types,
+		Manifests:      manifests,
+		Env:            checkCtx,
+		Phase:          api.PhaseTypeResolution,
+		ModuleBindings: graph.Bindings(),
+		ModuleAliases:  modules.CollectAliases(graph),
 	})
+}
+
+func firstNonNilBindings(primary, fallback *bind.BindingTable) *bind.BindingTable {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
+func firstNonNilAliases(primary, fallback map[cfg.SymbolID]string) map[cfg.SymbolID]string {
+	if len(primary) > 0 {
+		return primary
+	}
+	return fallback
 }
 
 // BuildInitialSymbolTypes creates SymbolTypes for globals and parameters at all CFG points.

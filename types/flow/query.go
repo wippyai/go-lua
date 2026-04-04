@@ -556,21 +556,25 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 		return nil
 	}
 
-	// Look up narrowed type using canonical key
+	current := baseType
 	if narrowed := dom.TypeAt(canonicalKey); narrowed != nil {
-		return narrowed
+		current = narrowed
 	}
 
 	if narrowed, ok := s.deriveFromNarrowedAncestors(canonicalKey, dom); ok {
-		return narrowed
+		if current == nil {
+			current = narrowed
+		} else {
+			current = narrow.Intersect(current, narrowed)
+		}
 	}
 
 	childNarrowings := dom.NarrowedChildPaths(canonicalKey)
 	if len(childNarrowings) > 0 {
-		return s.filterByChildNarrowings(baseType, path, childNarrowings)
+		current = s.filterByChildNarrowings(current, path, childNarrowings)
 	}
 
-	return baseType
+	return current
 }
 
 // deriveFromNarrowedAncestors projects narrowed ancestor path types down to a target key.

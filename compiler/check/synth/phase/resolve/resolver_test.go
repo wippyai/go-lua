@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	typecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/io"
@@ -91,6 +92,31 @@ func TestResolveType_SelfNoScope(t *testing.T) {
 	result := r.ResolveType(&ast.SelfTypeExpr{}, nil)
 	if result != typ.Self {
 		t.Fatalf("got %v, want Self", result)
+	}
+}
+
+func TestResolveType_ModuleAliasPrefixUsesRequireAliasPath(t *testing.T) {
+	manifest := io.NewManifest("store")
+	storeType := typ.NewAlias("Store", typ.NewRecord().
+		Field("cache", typ.NewMap(typ.String, typ.String)).
+		Build())
+	manifest.DefineType("Store", storeType)
+
+	bt := bind.NewBindingTable()
+	const sym typecfg.SymbolID = 42
+	bt.SetName(sym, "store_mod")
+
+	r := New(Config{
+		Manifests: manifestQuerierStub{
+			manifests: map[string]*io.Manifest{"store": manifest},
+		},
+		ModuleBindings: bt,
+		ModuleAliases:  map[typecfg.SymbolID]string{sym: "store"},
+	})
+
+	result := r.ResolveType(&ast.TypeRefExpr{Path: []string{"store_mod", "Store"}}, scope.New())
+	if !typ.TypeEquals(result, storeType) {
+		t.Fatalf("got %s, want %s", typ.FormatShort(result), typ.FormatShort(storeType))
 	}
 }
 

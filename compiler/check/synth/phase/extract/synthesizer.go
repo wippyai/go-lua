@@ -191,7 +191,9 @@ func (s *Synthesizer) Resolver() *resolve.Resolver {
 		ExprSynth: func(expr ast.Expr, p cfg.Point) typ.Type {
 			return s.SynthExpr(expr, p, nil)
 		},
-		Bindings: s.deps.ModuleBindings,
+		Bindings:       s.deps.ModuleBindings,
+		ModuleBindings: s.deps.ModuleBindings,
+		ModuleAliases:  s.deps.ModuleAliases,
 	})
 }
 

@@ -211,7 +211,7 @@ func (d *ProductDomain) ApplyConjunction(constraints []constraint.Constraint) bo
 
 	// Update PathTypeAt to include Type domain narrowings for leftover constraints
 	originalPathTypeAt := d.Shape.Solver.Env.PathTypeAt
-	d.Shape.Solver.Env.PathTypeAt = func(key constraint.PathKey) typ.Type {
+	narrowedPathTypeAt := func(key constraint.PathKey) typ.Type {
 		if narrowed := d.Type.NarrowedTypeAt(key); narrowed != nil {
 			return narrowed
 		}
@@ -220,6 +220,8 @@ func (d *ProductDomain) ApplyConjunction(constraints []constraint.Constraint) bo
 		}
 		return nil
 	}
+	d.Shape.Solver.Env.PathTypeAt = narrowedPathTypeAt
+	d.Shape.Env.PathTypeAt = narrowedPathTypeAt
 
 	// Apply leftovers (Shape domain via wrapped Solver)
 	for _, c := range result.Leftover {

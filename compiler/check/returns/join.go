@@ -444,9 +444,18 @@ func typeNeverRepairRelation(candidate, baseline typ.Type) (bool, bool) {
 }
 
 func typeContainsNever(t typ.Type) bool {
+	seen := make(map[typ.Type]bool)
+	return typeContainsNeverMemo(t, seen)
+}
+
+func typeContainsNeverMemo(t typ.Type, seen map[typ.Type]bool) bool {
 	if t == nil {
 		return false
 	}
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
 	t = unwrap.Alias(t)
 	if t == nil {
 		return false
@@ -456,11 +465,11 @@ func typeContainsNever(t typ.Type) bool {
 	}
 	return typ.Visit(t, typ.Visitor[bool]{
 		Optional: func(o *typ.Optional) bool {
-			return typeContainsNever(o.Inner)
+			return typeContainsNeverMemo(o.Inner, seen)
 		},
 		Union: func(u *typ.Union) bool {
 			for _, m := range u.Members {
-				if typeContainsNever(m) {
+				if typeContainsNeverMemo(m, seen) {
 					return true
 				}
 			}
@@ -468,7 +477,7 @@ func typeContainsNever(t typ.Type) bool {
 		},
 		Intersection: func(in *typ.Intersection) bool {
 			for _, m := range in.Members {
-				if typeContainsNever(m) {
+				if typeContainsNeverMemo(m, seen) {
 					return true
 				}
 			}
@@ -476,40 +485,40 @@ func typeContainsNever(t typ.Type) bool {
 		},
 		Tuple: func(tup *typ.Tuple) bool {
 			for _, e := range tup.Elements {
-				if typeContainsNever(e) {
+				if typeContainsNeverMemo(e, seen) {
 					return true
 				}
 			}
 			return false
 		},
 		Array: func(a *typ.Array) bool {
-			return typeContainsNever(a.Element)
+			return typeContainsNeverMemo(a.Element, seen)
 		},
 		Map: func(m *typ.Map) bool {
-			return typeContainsNever(m.Key) || typeContainsNever(m.Value)
+			return typeContainsNeverMemo(m.Key, seen) || typeContainsNeverMemo(m.Value, seen)
 		},
 		Record: func(r *typ.Record) bool {
 			for _, f := range r.Fields {
-				if typeContainsNever(f.Type) {
+				if typeContainsNeverMemo(f.Type, seen) {
 					return true
 				}
 			}
 			if r.HasMapComponent() {
-				return typeContainsNever(r.MapKey) || typeContainsNever(r.MapValue)
+				return typeContainsNeverMemo(r.MapKey, seen) || typeContainsNeverMemo(r.MapValue, seen)
 			}
 			return false
 		},
 		Function: func(fn *typ.Function) bool {
 			for _, p := range fn.Params {
-				if typeContainsNever(p.Type) {
+				if typeContainsNeverMemo(p.Type, seen) {
 					return true
 				}
 			}
-			if fn.Variadic != nil && typeContainsNever(fn.Variadic) {
+			if fn.Variadic != nil && typeContainsNeverMemo(fn.Variadic, seen) {
 				return true
 			}
 			for _, ret := range fn.Returns {
-				if typeContainsNever(ret) {
+				if typeContainsNeverMemo(ret, seen) {
 					return true
 				}
 			}

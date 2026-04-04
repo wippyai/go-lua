@@ -117,9 +117,10 @@ func CollectInferredTypes(fc *fbcore.FlowContext, specTypes api.SpecTypes, annot
 	if fc.Derived != nil {
 		symResolver = fc.Derived.SymResolver
 	}
+	preflowBranchSolution := buildPreflowBranchSolution(fc, inputs)
 	return collectInferredTypes(
 		fc.Graph, fc.Scopes, synth, fc.API, symResolver,
-		specTypes, annotated, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, fc.Services,
+		specTypes, annotated, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution, fc.Services,
 	)
 }
 
@@ -142,6 +143,7 @@ func collectInferredTypes(
 	moduleBindings *bind.BindingTable,
 	callCtx *db.QueryContext,
 	typeOps core.TypeOps,
+	preflowBranchSolution *flow.Solution,
 	services fbcore.FlowServices,
 ) api.SpecTypes {
 	inferred := make(api.SpecTypes)
@@ -461,7 +463,7 @@ func collectInferredTypes(
 			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
 			overlay := overlayScratch
 
-			wrappedSynth := synthWithInferenceOverlay(graph, overlay, funcSigTypes, paramSet, annotated, bindings, synth)
+			wrappedSynth := synthWithInferenceOverlay(graph, overlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
 			callSynthFor := func(p cfg.Point, info *cfg.CallInfo) func(ast.Expr, cfg.Point) typ.Type {
 				if info == nil {
 					return wrappedSynth
@@ -489,7 +491,7 @@ func collectInferredTypes(
 				})
 				callOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, callOverlay, rhsResolver, wrappedSynth)
 
-				return synthWithInferenceOverlay(graph, callOverlay, funcSigTypes, paramSet, annotated, bindings, synth)
+				return synthWithInferenceOverlay(graph, callOverlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
 			}
 
 			// Infer expected argument types for a call using the call inference pipeline.
@@ -937,18 +939,26 @@ func synthWithInferenceOverlay(
 	paramSet map[cfg.SymbolID]bool,
 	annotated map[cfg.SymbolID]bool,
 	bindings *bind.BindingTable,
+	inputs *flow.Inputs,
+	callCtx *db.QueryContext,
+	typeOps core.TypeOps,
+	preflow *flow.Solution,
 	base func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
 	_ = graph
-	return func(expr ast.Expr, p cfg.Point) typ.Type {
+	mergedOverlay := make(map[cfg.SymbolID]typ.Type, len(overlay)+len(funcSigTypes))
+	for sym, t := range funcSigTypes {
+		if t != nil {
+			mergedOverlay[sym] = t
+		}
+	}
+	for sym, t := range overlay {
+		mergedOverlay[sym] = t
+	}
+
+	wrappedBase := func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
 			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-				if t, exists := overlay[sym]; exists {
-					return t
-				}
-				if t, exists := funcSigTypes[sym]; exists {
-					return t
-				}
 				if paramSet[sym] && (annotated == nil || !annotated[sym]) {
 					return typ.Unknown
 				}
@@ -959,6 +969,8 @@ func synthWithInferenceOverlay(
 		}
 		return base(expr, p)
 	}
+
+	return synthWithOverlayAndPreflow(mergedOverlay, bindings, inputs, callCtx, typeOps, preflow, wrappedBase)
 }
 
 func assignmentOwningSourceCall(assigns []*cfg.AssignInfo, call *cfg.CallInfo) *cfg.AssignInfo {

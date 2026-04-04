@@ -259,9 +259,7 @@ func resolveCallee(ctx *db.QueryContext, def CallDef) (*resolvedCallee, *CallRes
 
 // unwrapCallee performs alias, generic body, and instantiated unwrapping.
 func unwrapCallee(callee typ.Type) typ.Type {
-	if callee.Kind() == kind.Alias {
-		callee = callee.(*typ.Alias).Target
-	}
+	callee = unwrap.Alias(callee)
 
 	if g, ok := callee.(*typ.Generic); ok {
 		callee = g.Body
@@ -274,7 +272,7 @@ func unwrapCallee(callee typ.Type) typ.Type {
 		}
 	}
 
-	return callee
+	return unwrap.Alias(callee)
 }
 
 // inferAndCall performs generic type inference and calls the instantiated function.

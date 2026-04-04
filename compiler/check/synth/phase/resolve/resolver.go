@@ -22,9 +22,11 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
+	typecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
@@ -45,6 +47,8 @@ type Resolver struct {
 	manifests io.ManifestQuerier
 	exprSynth api.ExprSynth
 	bindings  core.ParamSymbolLookup
+	moduleBindings *bind.BindingTable
+	moduleAliases  map[typecfg.SymbolID]string
 }
 
 // Config configures a Resolver.
@@ -52,14 +56,18 @@ type Config struct {
 	Manifests io.ManifestQuerier
 	ExprSynth api.ExprSynth
 	Bindings  core.ParamSymbolLookup
+	ModuleBindings *bind.BindingTable
+	ModuleAliases  map[typecfg.SymbolID]string
 }
 
 // New creates a new type resolver.
 func New(c Config) *Resolver {
 	return &Resolver{
-		manifests: c.Manifests,
-		exprSynth: c.ExprSynth,
-		bindings:  c.Bindings,
+		manifests:      c.Manifests,
+		exprSynth:      c.ExprSynth,
+		bindings:       c.Bindings,
+		moduleBindings: c.ModuleBindings,
+		moduleAliases:  c.ModuleAliases,
 	}
 }
 
@@ -621,7 +629,7 @@ func (r *Resolver) resolveRef(te *ast.TypeRefExpr, sc *scope.State) typ.Type {
 		return typ.NewRef("", name)
 	}
 
-	module := te.Path[0]
+	module := r.resolveModuleAliasPath(te.Path[0])
 	for i := 1; i < len(te.Path)-1; i++ {
 		module += "." + te.Path[i]
 	}
@@ -636,6 +644,37 @@ func (r *Resolver) resolveRef(te *ast.TypeRefExpr, sc *scope.State) typ.Type {
 	}
 
 	return typ.NewRef(module, typeName)
+}
+
+func (r *Resolver) resolveModuleAliasPath(name string) string {
+	if name == "" || r == nil || r.moduleBindings == nil || len(r.moduleAliases) == 0 {
+		return name
+	}
+
+	syms := r.moduleBindings.SymbolsByName(name)
+	if len(syms) == 0 {
+		return name
+	}
+
+	resolved := ""
+	for _, sym := range syms {
+		path := r.moduleAliases[sym]
+		if path == "" {
+			continue
+		}
+		if resolved == "" {
+			resolved = path
+			continue
+		}
+		if resolved != path {
+			return name
+		}
+	}
+
+	if resolved == "" {
+		return name
+	}
+	return resolved
 }
 
 func (r *Resolver) resolveGeneric(te *ast.GenericTypeExpr, sc *scope.State, depth int) typ.Type {
