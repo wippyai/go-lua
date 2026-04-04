@@ -44,6 +44,8 @@ type Solution struct {
 	scratchUnresolvedPaths map[constraint.PathKey]struct{}
 	scratchValueMap        map[constraint.PathKey]typ.Type
 	scratchResolvedPathMap map[constraint.PathKey]constraint.PathKey
+	scratchParsedSuffixes  map[string][]constraint.Segment
+	fieldOverlayCache      map[string][]mergedField
 	pathAliases            map[string]string // canonical target path key -> canonical source path key
 	narrowedTypeCache      map[narrowedTypeCacheKey]narrowedTypeCacheValue
 	queryCacheEnabled      bool
@@ -69,6 +71,12 @@ type narrowedTypeCacheValue struct {
 type edgeKey struct {
 	from cfg.Point
 	to   cfg.Point
+}
+
+type mergedField struct {
+	Name     string
+	Type     typ.Type
+	Optional bool
 }
 
 // Solve computes flow analysis and returns the solution.
@@ -712,49 +720,11 @@ func (s *Solution) resolveTypeKey(key narrow.TypeKey) typ.Type {
 //
 // This enables gradual type construction for tables built incrementally.
 func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.Type {
-	type mergedField struct {
-		Name     string
-		Type     typ.Type
-		Optional bool
-	}
-
-	var fields []mergedField
 	baseSym, baseVersion, _, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(baseKey))
 	if !ok {
 		return baseType
 	}
-	baseRoot := pathkey.SymbolVersionRoot(baseSym, baseVersion)
-	prefixLen := len(baseRoot)
-	keys := make([]string, 0, len(s.values))
-	for key := range s.values {
-		if len(key) <= prefixLen || key[:prefixLen] != baseRoot {
-			continue
-		}
-		// Match only strict child paths of this symbol/version root.
-		next := key[prefixLen]
-		if next != '.' && next != '[' {
-			continue
-		}
-		keys = append(keys, key)
-	}
-	if len(keys) == 0 {
-		return baseType
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		suffix := key[prefixLen:]
-		segs := pathkey.ParseSuffix(suffix)
-		if len(segs) != 1 {
-			continue
-		}
-		seg := segs[0]
-		switch seg.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			fieldType, optional := typ.SplitNilableFieldType(s.values[key])
-			fields = append(fields, mergedField{Name: seg.Name, Type: fieldType, Optional: optional})
-		}
-	}
-
+	fields := s.fieldAssignmentsForRoot(pathkey.SymbolVersionRoot(baseSym, baseVersion))
 	if len(fields) == 0 {
 		return baseType
 	}
@@ -875,4 +845,146 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 			return builder.Build()
 		},
 	})
+}
+
+func (s *Solution) fieldAssignmentsForRoot(baseRoot string) []mergedField {
+	if s == nil || len(s.values) == 0 || baseRoot == "" {
+		return nil
+	}
+	if s.queryCacheEnabled {
+		if s.fieldOverlayCache == nil {
+			s.fieldOverlayCache = s.buildFieldOverlayCache()
+		}
+		return s.fieldOverlayCache[baseRoot]
+	}
+
+	return s.collectFieldAssignmentsForRoot(baseRoot)
+}
+
+func (s *Solution) buildFieldOverlayCache() map[string][]mergedField {
+	cache := make(map[string][]mergedField)
+	for key, value := range s.values {
+		_, _, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
+		if !ok || suffix == "" {
+			continue
+		}
+		seg, ok := parseSingleOverlaySegment(suffix)
+		if !ok {
+			continue
+		}
+		root := key[:len(key)-len(suffix)]
+		fieldType, optional := typ.SplitNilableFieldType(value)
+		cache[root] = append(cache[root], mergedField{Name: seg.Name, Type: fieldType, Optional: optional})
+	}
+	for root, fields := range cache {
+		sortMergedFields(fields)
+		cache[root] = fields
+	}
+	return cache
+}
+
+func (s *Solution) collectFieldAssignmentsForRoot(baseRoot string) []mergedField {
+	prefixLen := len(baseRoot)
+	fields := make([]mergedField, 0, 8)
+	for key, value := range s.values {
+		if len(key) <= prefixLen || key[:prefixLen] != baseRoot {
+			continue
+		}
+		seg, ok := parseSingleOverlaySegment(key[prefixLen:])
+		if !ok {
+			continue
+		}
+		fieldType, optional := typ.SplitNilableFieldType(value)
+		fields = append(fields, mergedField{Name: seg.Name, Type: fieldType, Optional: optional})
+	}
+	sortMergedFields(fields)
+	return fields
+}
+
+func sortMergedFields(fields []mergedField) {
+	if len(fields) <= 1 {
+		return
+	}
+	sort.Slice(fields, func(i, j int) bool {
+		if fields[i].Name != fields[j].Name {
+			return fields[i].Name < fields[j].Name
+		}
+		if fields[i].Optional != fields[j].Optional {
+			return !fields[i].Optional && fields[j].Optional
+		}
+		return fields[i].Type.Hash() < fields[j].Type.Hash()
+	})
+}
+
+func parseSingleOverlaySegment(suffix string) (constraint.Segment, bool) {
+	if suffix == "" {
+		return constraint.Segment{}, false
+	}
+	switch suffix[0] {
+	case '.':
+		name := suffix[1:]
+		if name == "" || !pathkey.IsIdentName(name) {
+			return constraint.Segment{}, false
+		}
+		return constraint.Segment{Kind: constraint.SegmentField, Name: name}, true
+	case '[':
+		if len(suffix) < 3 || suffix[len(suffix)-1] != ']' {
+			return constraint.Segment{}, false
+		}
+		inner := suffix[1 : len(suffix)-1]
+		if inner == "" {
+			return constraint.Segment{}, false
+		}
+		if inner[0] == '"' {
+			if len(inner) < 2 || inner[len(inner)-1] != '"' {
+				return constraint.Segment{}, false
+			}
+			name, ok := parseQuotedOverlayIndex(inner[1 : len(inner)-1])
+			if !ok {
+				return constraint.Segment{}, false
+			}
+			return constraint.Segment{Kind: constraint.SegmentIndexString, Name: name}, true
+		}
+		if _, ok := pathkey.ParseIntLiteral(inner); ok {
+			return constraint.Segment{}, false
+		}
+		return constraint.Segment{Kind: constraint.SegmentIndexString, Name: inner}, true
+	default:
+		return constraint.Segment{}, false
+	}
+}
+
+func parseQuotedOverlayIndex(inner string) (string, bool) {
+	if inner == "" {
+		return "", true
+	}
+	escaped := false
+	for i := 0; i < len(inner); i++ {
+		if inner[i] == '\\' {
+			escaped = true
+			break
+		}
+	}
+	if !escaped {
+		return inner, true
+	}
+
+	out := make([]byte, 0, len(inner))
+	for i := 0; i < len(inner); i++ {
+		ch := inner[i]
+		if ch != '\\' {
+			out = append(out, ch)
+			continue
+		}
+		if i+1 >= len(inner) {
+			return "", false
+		}
+		next := inner[i+1]
+		if next != '\\' && next != '"' {
+			return "", false
+		}
+		out = append(out, next)
+		i++
+	}
+	return string(out), true
 }

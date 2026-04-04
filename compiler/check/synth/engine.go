@@ -55,6 +55,7 @@ type Config struct {
 	Paths          api.PathFromExprFunc
 	PreCache       api.Cache
 	NarrowCache    api.Cache
+	Graphs         api.GraphProvider
 	Phase          api.Phase
 	ModuleBindings *bind.BindingTable
 	ModuleAliases  map[cfg.SymbolID]string
@@ -105,6 +106,10 @@ func New(cfg Config) *Engine {
 	if narrowCache == nil && isNarrowing {
 		narrowCache = make(api.Cache)
 	}
+	graphs := cfg.Graphs
+	if graphs == nil {
+		graphs = api.GraphsFrom(cfg.Ctx)
+	}
 
 	deps := &extract.Deps{
 		Ctx:            cfg.Ctx,
@@ -112,6 +117,7 @@ func New(cfg Config) *Engine {
 		Scopes:         cfg.Scopes,
 		Manifests:      cfg.Manifests,
 		CheckCtx:       cfg.Env,
+		Graphs:         graphs,
 		Flow:           cfg.Flow,
 		Paths:          cfg.Paths,
 		PreCache:       preCache,

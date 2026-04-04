@@ -21,6 +21,7 @@ type Literal struct {
 	Base  kind.Kind // Boolean, Number, Integer, or String
 	Value any       // bool, float64, int64, or string
 	hash  uint64
+	str   string
 }
 
 // True and False are singleton boolean literals.
@@ -28,8 +29,8 @@ var (
 	trueHash  = internal.HashCombine(internal.HashCombine(uint64(kind.Literal), uint64(kind.Boolean)), 1)
 	falseHash = internal.HashCombine(uint64(kind.Literal), uint64(kind.Boolean))
 
-	True  = &Literal{Base: kind.Boolean, Value: true, hash: trueHash}
-	False = &Literal{Base: kind.Boolean, Value: false, hash: falseHash}
+	True  = &Literal{Base: kind.Boolean, Value: true, hash: trueHash, str: "true"}
+	False = &Literal{Base: kind.Boolean, Value: false, hash: falseHash, str: "false"}
 )
 
 // LiteralBool returns the canonical boolean literal type.
@@ -46,7 +47,7 @@ func LiteralInt(v int64) *Literal {
 	h := internal.HashCombine(uint64(kind.Literal), uint64(kind.Integer))
 	h = internal.HashCombine(h, uint64(v))
 
-	return &Literal{Base: kind.Integer, Value: v, hash: h}
+	return &Literal{Base: kind.Integer, Value: v, hash: h, str: strconv.FormatInt(v, 10)}
 }
 
 // LiteralNumber creates a number literal type.
@@ -54,7 +55,7 @@ func LiteralNumber(v float64) *Literal {
 	h := internal.HashCombine(uint64(kind.Literal), uint64(kind.Number))
 	h = internal.HashCombine(h, uint64(v))
 
-	return &Literal{Base: kind.Number, Value: v, hash: h}
+	return &Literal{Base: kind.Number, Value: v, hash: h, str: strconv.FormatFloat(v, 'g', -1, 64)}
 }
 
 // LiteralString creates a string literal type.
@@ -62,12 +63,15 @@ func LiteralString(v string) *Literal {
 	h := internal.HashCombine(uint64(kind.Literal), uint64(kind.String))
 	h = internal.HashCombine(h, internal.FnvString(v))
 
-	return &Literal{Base: kind.String, Value: v, hash: h}
+	return &Literal{Base: kind.String, Value: v, hash: h, str: strconv.Quote(v)}
 }
 
 func (l *Literal) Kind() kind.Kind { return kind.Literal }
 
 func (l *Literal) String() string {
+	if l.str != "" {
+		return l.str
+	}
 	switch l.Base {
 	case kind.Boolean:
 		if l.Value.(bool) {

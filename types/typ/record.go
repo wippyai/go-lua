@@ -27,13 +27,15 @@ type Field struct {
 //
 // Fields are sorted by name for deterministic hashing and comparison.
 type Record struct {
-	Fields    []Field
-	Metatable Type // Metatable type for metamethod lookup
-	MapKey    Type // Map component key type (nil if no map component)
-	MapValue  Type // Map component value type (nil if no map component)
-	Open      bool // Allow access to undefined fields
-	sorted    bool
-	hash      uint64
+	Fields       []Field
+	Metatable    Type // Metatable type for metamethod lookup
+	MapKey       Type // Map component key type (nil if no map component)
+	MapValue     Type // Map component value type (nil if no map component)
+	Open         bool // Allow access to undefined fields
+	sorted       bool
+	hash         uint64
+	softPrunable bool
+	strCache     stringCache
 }
 
 // RecordBuilder provides a fluent API for constructing record types.
@@ -119,61 +121,63 @@ func (b *RecordBuilder) Build() *Record {
 func (r *Record) Kind() kind.Kind { return kind.Record }
 
 func (r *Record) String() string {
-	var sb strings.Builder
+	return r.strCache.get(func() string {
+		var sb strings.Builder
 
-	sb.WriteString("{")
+		sb.WriteString("{")
 
-	for i, f := range r.Fields {
-		if i > 0 {
-			sb.WriteString(", ")
+		for i, f := range r.Fields {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+
+			if f.Readonly {
+				sb.WriteString("readonly ")
+			}
+
+			sb.WriteString(f.Name)
+
+			if f.Optional {
+				sb.WriteString("?")
+			}
+
+			sb.WriteString(": ")
+			if f.Type != nil {
+				sb.WriteString(f.Type.String())
+			} else {
+				sb.WriteString("unknown")
+			}
 		}
 
-		if f.Readonly {
-			sb.WriteString("readonly ")
+		if r.HasMapComponent() {
+			if len(r.Fields) > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("[")
+			if r.MapKey != nil {
+				sb.WriteString(r.MapKey.String())
+			} else {
+				sb.WriteString("unknown")
+			}
+			sb.WriteString("]: ")
+			if r.MapValue != nil {
+				sb.WriteString(r.MapValue.String())
+			} else {
+				sb.WriteString("unknown")
+			}
 		}
 
-		sb.WriteString(f.Name)
-
-		if f.Optional {
-			sb.WriteString("?")
+		if r.Open {
+			if len(r.Fields) > 0 || r.HasMapComponent() {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("...")
 		}
 
-		sb.WriteString(": ")
-		if f.Type != nil {
-			sb.WriteString(f.Type.String())
-		} else {
-			sb.WriteString("unknown")
-		}
-	}
+		sb.WriteString("}")
 
-	if r.HasMapComponent() {
-		if len(r.Fields) > 0 {
-			sb.WriteString(", ")
-		}
-		sb.WriteString("[")
-		if r.MapKey != nil {
-			sb.WriteString(r.MapKey.String())
-		} else {
-			sb.WriteString("unknown")
-		}
-		sb.WriteString("]: ")
-		if r.MapValue != nil {
-			sb.WriteString(r.MapValue.String())
-		} else {
-			sb.WriteString("unknown")
-		}
-	}
-
-	if r.Open {
-		if len(r.Fields) > 0 || r.HasMapComponent() {
-			sb.WriteString(", ")
-		}
-		sb.WriteString("...")
-	}
-
-	sb.WriteString("}")
-
-	return sb.String()
+		return sb.String()
+	})
 }
 
 func (r *Record) Hash() uint64 { return r.hash }

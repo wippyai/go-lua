@@ -19,8 +19,9 @@ import (
 //
 // Members are sorted by hash for deterministic comparison.
 type Intersection struct {
-	Members []Type
-	hash    uint64
+	Members  []Type
+	hash     uint64
+	strCache stringCache
 }
 
 // NewIntersection creates a normalized intersection type.
@@ -119,16 +120,17 @@ func NewIntersection(members ...Type) Type {
 func (i *Intersection) Kind() kind.Kind { return kind.Intersection }
 
 func (i *Intersection) String() string {
-	parts := make([]string, len(i.Members))
-	for j, m := range i.Members {
-		if m == nil {
-			parts[j] = "unknown"
-		} else {
-			parts[j] = m.String()
+	return i.strCache.get(func() string {
+		parts := make([]string, len(i.Members))
+		for j, m := range i.Members {
+			if m == nil {
+				parts[j] = "unknown"
+			} else {
+				parts[j] = m.String()
+			}
 		}
-	}
-
-	return strings.Join(parts, " & ")
+		return strings.Join(parts, " & ")
+	})
 }
 
 func (i *Intersection) Hash() uint64 { return i.hash }

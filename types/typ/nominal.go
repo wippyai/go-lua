@@ -24,6 +24,7 @@ type Sum struct {
 	Name     string    // Type name for display
 	Variants []Variant // Possible cases
 	hash     uint64
+	strCache stringCache
 }
 
 // NewSum creates a sum type.
@@ -45,37 +46,39 @@ func NewSum(name string, variants []Variant) *Sum {
 func (s *Sum) Kind() kind.Kind { return kind.Sum }
 
 func (s *Sum) String() string {
-	var sb strings.Builder
+	return s.strCache.get(func() string {
+		var sb strings.Builder
 
-	sb.WriteString("enum ")
-	sb.WriteString(s.Name)
-	sb.WriteString(" { ")
+		sb.WriteString("enum ")
+		sb.WriteString(s.Name)
+		sb.WriteString(" { ")
 
-	for i, v := range s.Variants {
-		if i > 0 {
-			sb.WriteString(" | ")
-		}
-
-		sb.WriteString(v.Tag)
-
-		if len(v.Types) > 0 {
-			sb.WriteString("(")
-
-			for j, t := range v.Types {
-				if j > 0 {
-					sb.WriteString(", ")
-				}
-
-				sb.WriteString(t.String())
+		for i, v := range s.Variants {
+			if i > 0 {
+				sb.WriteString(" | ")
 			}
 
-			sb.WriteString(")")
+			sb.WriteString(v.Tag)
+
+			if len(v.Types) > 0 {
+				sb.WriteString("(")
+
+				for j, t := range v.Types {
+					if j > 0 {
+						sb.WriteString(", ")
+					}
+
+					sb.WriteString(t.String())
+				}
+
+				sb.WriteString(")")
+			}
 		}
-	}
 
-	sb.WriteString(" }")
+		sb.WriteString(" }")
 
-	return sb.String()
+		return sb.String()
+	})
 }
 
 func (s *Sum) Hash() uint64 { return s.hash }
@@ -121,9 +124,10 @@ type Method struct {
 // Named interfaces (Name != "") use nominal identity for marker interfaces
 // (interfaces with no methods, like Channel<T>).
 type Interface struct {
-	Name    string   // Interface name (empty for anonymous)
-	Methods []Method // Required methods
-	hash    uint64
+	Name     string   // Interface name (empty for anonymous)
+	Methods  []Method // Required methods
+	hash     uint64
+	strCache stringCache
 }
 
 // NewInterface creates an interface type.
@@ -143,28 +147,28 @@ func NewInterface(name string, methods []Method) *Interface {
 func (i *Interface) Kind() kind.Kind { return kind.Interface }
 
 func (i *Interface) String() string {
-	// Named interfaces render as just the name
-	if i.Name != "" {
-		return i.Name
-	}
-
-	// Anonymous interfaces expand methods
-	var sb strings.Builder
-	sb.WriteString("interface { ")
-
-	for j, m := range i.Methods {
-		if j > 0 {
-			sb.WriteString("; ")
+	return i.strCache.get(func() string {
+		if i.Name != "" {
+			return i.Name
 		}
 
-		sb.WriteString(m.Name)
-		sb.WriteString(": ")
-		sb.WriteString(m.Type.String())
-	}
+		var sb strings.Builder
+		sb.WriteString("interface { ")
 
-	sb.WriteString(" }")
+		for j, m := range i.Methods {
+			if j > 0 {
+				sb.WriteString("; ")
+			}
 
-	return sb.String()
+			sb.WriteString(m.Name)
+			sb.WriteString(": ")
+			sb.WriteString(m.Type.String())
+		}
+
+		sb.WriteString(" }")
+
+		return sb.String()
+	})
 }
 
 func (i *Interface) Hash() uint64 { return i.hash }

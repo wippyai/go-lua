@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/internal"
-	"github.com/wippyai/go-lua/types/kind"
 )
 
 // SoftPolicy controls how soft-placeholder detection behaves.
@@ -92,7 +91,7 @@ func PruneSoftUnionMembers(t Type) Type {
 	if t == nil {
 		return nil
 	}
-	if !softPruneCanDescend(t) {
+	if !softPruneMayRewrite(t) {
 		return t
 	}
 	state := getSoftPruneState()
@@ -145,26 +144,6 @@ func putSoftPruneState(state *softPruneState) {
 	softPruneStatePool.Put(state)
 }
 
-func softPruneCanDescend(t Type) bool {
-	if t == nil {
-		return false
-	}
-	switch t.Kind() {
-	case kind.Optional,
-		kind.Union,
-		kind.Array,
-		kind.Map,
-		kind.Tuple,
-		kind.Function,
-		kind.Record,
-		kind.Alias,
-		kind.Instantiated:
-		return true
-	default:
-		return false
-	}
-}
-
 func pruneSoftUnionMembersMemo(
 	t Type,
 	guard internal.RecursionGuard,
@@ -175,7 +154,7 @@ func pruneSoftUnionMembersMemo(
 	if t == nil {
 		return t
 	}
-	if !softPruneCanDescend(t) {
+	if !softPruneMayRewrite(t) {
 		return t
 	}
 	if cached, ok := memo[t]; ok {
@@ -197,6 +176,32 @@ func pruneSoftUnionMembersMemo(
 	case *Record:
 		out = pruneSoftRecord(node, t, next, memo, visiting, softMemo)
 	case *Union:
+		// Fast path: if this union has no soft members and no nested changes needed,
+		// skip the expensive isSoftWithMemo checks entirely.
+		if !node.HasSoftMember() {
+			anyChildChanged := false
+			var rewrittenFast []Type
+			for idx, m := range node.Members {
+				pm := pruneSoftUnionMembersMemo(m, next, memo, visiting, softMemo)
+				if pm != m {
+					if rewrittenFast == nil {
+						rewrittenFast = make([]Type, len(node.Members))
+						copy(rewrittenFast, node.Members)
+					}
+					rewrittenFast[idx] = pm
+					anyChildChanged = true
+				} else if rewrittenFast != nil {
+					rewrittenFast[idx] = m
+				}
+			}
+			if !anyChildChanged {
+				out = t
+			} else {
+				out = NewUnion(rewrittenFast...)
+			}
+			break
+		}
+
 		var rewritten []Type
 		softCount := 0
 		changed := false

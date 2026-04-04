@@ -219,7 +219,7 @@ func (s *Session) ScopeDepthDiagState() map[*ast.FunctionExpr]bool {
 func New(ctx *db.QueryContext, name string) *Session {
 	store := store.NewSessionStore()
 	api.AttachStore(ctx, store)
-	return &Session{
+	sess := &Session{
 		Ctx:                   ctx,
 		SourceName:            name,
 		Store:                 store,
@@ -230,6 +230,8 @@ func New(ctx *db.QueryContext, name string) *Session {
 		cfgCache:              make(map[*ast.FunctionExpr]*cfg.Graph),
 		scopeDepthDiagEmitted: make(map[*ast.FunctionExpr]bool),
 	}
+	api.AttachGraphs(ctx, sess)
+	return sess
 }
 
 // GetOrBuildCFG returns a cached CFG for the function or builds and caches a new one.

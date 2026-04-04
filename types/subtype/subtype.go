@@ -141,11 +141,11 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 
 	// Unwrap aliases
 	if aa, ok := sub.(*typ.Alias); ok {
-		return c.check(aa.Target, super, depth+1)
+		return c.check(aa.UnaliasedTarget(), super, depth+1)
 	}
 
 	if aa, ok := super.(*typ.Alias); ok {
-		return c.check(sub, aa.Target, depth+1)
+		return c.check(sub, aa.UnaliasedTarget(), depth+1)
 	}
 
 	if rr, ok := sub.(*typ.Recursive); ok && super.Kind() != kind.Recursive && rr.Body != nil && rr.Body != rr {
@@ -1000,7 +1000,7 @@ func (c *checker) checkInstantiated(sub, super *typ.Instantiated, depth int) boo
 func isTableLikeType(t typ.Type) bool {
 	switch v := t.(type) {
 	case *typ.Alias:
-		return isTableLikeType(v.Target)
+		return isTableLikeType(v.UnaliasedTarget())
 	case *typ.Recursive:
 		return v.Body != nil && v.Body != v && isTableLikeType(v.Body)
 	case *typ.Record, *typ.Map, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Intersection:

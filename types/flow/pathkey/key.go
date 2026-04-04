@@ -6,8 +6,17 @@
 package pathkey
 
 import (
+	"sync"
+
 	"github.com/wippyai/go-lua/types/constraint"
 )
+
+type eqPair struct {
+	left, right       constraint.Path
+	leftKey, rightKey constraint.PathKey
+}
+
+var parseSuffixCache sync.Map
 
 // SegmentsSuffix converts path segments to a suffix string for key construction.
 //
@@ -39,6 +48,20 @@ func ParseSuffix(suffix string) []constraint.Segment {
 	if suffix == "" {
 		return nil
 	}
+	if cached, ok := parseSuffixCache.Load(suffix); ok {
+		return cached.([]constraint.Segment)
+	}
+	segs := parseSuffixSlow(suffix)
+	if segs == nil {
+		return nil
+	}
+	if cached, loaded := parseSuffixCache.LoadOrStore(suffix, segs); loaded {
+		return cached.([]constraint.Segment)
+	}
+	return segs
+}
+
+func parseSuffixSlow(suffix string) []constraint.Segment {
 	var segs []constraint.Segment
 	i := 0
 	for i < len(suffix) {
@@ -202,26 +225,23 @@ func FilterConstraintsForPath(constraints []constraint.Constraint, target constr
 		return constraints
 	}
 
-	equivalentPaths := CollectEquivalentPaths(constraints, target)
-	// If target is used in Field/Index EqualsPath constraints, keep constraints on the value path too.
-	relatedValuePaths := make(map[constraint.PathKey]struct{})
-	for _, c := range constraints {
-		constraint.VisitConstraint(c, constraint.ConstraintVisitor[struct{}]{
-			FieldEqualsPath: func(v constraint.FieldEqualsPath) struct{} {
-				if PathRelated(target, v.Target) {
-					relatedValuePaths[v.Value.Key()] = struct{}{}
-				}
-				return struct{}{}
-			},
-			IndexEqualsPath: func(v constraint.IndexEqualsPath) struct{} {
-				if PathRelated(target, v.Target) {
-					relatedValuePaths[v.Value.Key()] = struct{}{}
-				}
-				return struct{}{}
-			},
-		})
+	pairs, relatedValuePaths := collectPathFilterFacts(constraints, target)
+	if len(pairs) == 0 && len(relatedValuePaths) == 0 {
+		var filtered []constraint.Constraint
+		for _, c := range constraints {
+			if shouldDropAsymmetricNotEquals(c, target) {
+				continue
+			}
+			if constraintAnyPathMatches(c, func(p constraint.Path) bool {
+				return PathRelated(target, p)
+			}) {
+				filtered = append(filtered, c)
+			}
+		}
+		return filtered
 	}
 
+	equivalentPaths := collectEquivalentPathsFromPairs(pairs, target)
 	var filtered []constraint.Constraint
 	for _, c := range constraints {
 		// Field/Index NotEquals constraints are asymmetric: they narrow the target,
@@ -259,50 +279,61 @@ func FilterConstraintsForPath(constraints []constraint.Constraint, target constr
 //
 // Returns a set of PathKeys that are transitively equivalent to target.
 func CollectEquivalentPaths(constraints []constraint.Constraint, target constraint.Path) map[constraint.PathKey]bool {
-	result := make(map[constraint.PathKey]bool)
-	result[target.Key()] = true
+	pairs, _ := collectPathFilterFacts(constraints, constraint.Path{})
+	return collectEquivalentPathsFromPairs(pairs, target)
+}
 
-	type eqPair struct {
-		left, right       constraint.Path
-		leftKey, rightKey constraint.PathKey
-	}
+func collectPathFilterFacts(constraints []constraint.Constraint, target constraint.Path) ([]eqPair, map[constraint.PathKey]struct{}) {
 	var pairs []eqPair
+	var relatedValuePaths map[constraint.PathKey]struct{}
 
 	for _, c := range constraints {
-		constraint.VisitConstraint(c, constraint.ConstraintVisitor[struct{}]{
-			EqPath: func(v constraint.EqPath) struct{} {
+		switch v := c.(type) {
+		case constraint.EqPath:
+			pairs = append(pairs, eqPair{
+				left:     v.Left,
+				right:    v.Right,
+				leftKey:  v.Left.Key(),
+				rightKey: v.Right.Key(),
+			})
+		case constraint.FieldEqualsPath:
+			fieldPath := v.Target.Append(constraint.Segment{Kind: constraint.SegmentField, Name: v.Field})
+			if !fieldPath.IsEmpty() {
 				pairs = append(pairs, eqPair{
-					left:     v.Left,
-					right:    v.Right,
-					leftKey:  v.Left.Key(),
-					rightKey: v.Right.Key(),
-				})
-				return struct{}{}
-			},
-			FieldEqualsPath: func(v constraint.FieldEqualsPath) struct{} {
-				fieldPath := v.Target.Append(constraint.Segment{Kind: constraint.SegmentField, Name: v.Field})
-				if !fieldPath.IsEmpty() {
-					pairs = append(pairs, eqPair{
-						left:     fieldPath,
-						right:    v.Value,
-						leftKey:  fieldPath.Key(),
-						rightKey: v.Value.Key(),
-					})
-				}
-				return struct{}{}
-			},
-			IndexEqualsPath: func(v constraint.IndexEqualsPath) struct{} {
-				pairs = append(pairs, eqPair{
-					left:     v.Target,
+					left:     fieldPath,
 					right:    v.Value,
-					leftKey:  v.Target.Key(),
+					leftKey:  fieldPath.Key(),
 					rightKey: v.Value.Key(),
 				})
-				return struct{}{}
-			},
-		})
+			}
+			if !target.IsEmpty() && PathRelated(target, v.Target) {
+				if relatedValuePaths == nil {
+					relatedValuePaths = make(map[constraint.PathKey]struct{})
+				}
+				relatedValuePaths[v.Value.Key()] = struct{}{}
+			}
+		case constraint.IndexEqualsPath:
+			pairs = append(pairs, eqPair{
+				left:     v.Target,
+				right:    v.Value,
+				leftKey:  v.Target.Key(),
+				rightKey: v.Value.Key(),
+			})
+			if !target.IsEmpty() && PathRelated(target, v.Target) {
+				if relatedValuePaths == nil {
+					relatedValuePaths = make(map[constraint.PathKey]struct{})
+				}
+				relatedValuePaths[v.Value.Key()] = struct{}{}
+			}
+		}
 	}
 
+	return pairs, relatedValuePaths
+}
+
+func collectEquivalentPathsFromPairs(pairs []eqPair, target constraint.Path) map[constraint.PathKey]bool {
+	result := make(map[constraint.PathKey]bool, len(pairs)+1)
+	result[target.Key()] = true
 	if len(pairs) == 0 {
 		return result
 	}
@@ -322,7 +353,6 @@ func CollectEquivalentPaths(constraints []constraint.Constraint, target constrai
 			}
 		}
 	}
-
 	return result
 }
 

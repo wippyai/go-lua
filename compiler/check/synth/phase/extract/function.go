@@ -78,6 +78,26 @@ func (s *Synthesizer) SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *sc
 	return s.synthFunctionTypeWithCapturePoint(fn, sc, expected, 0, nil)
 }
 
+func (s *Synthesizer) getOrBuildFunctionGraph(fn *ast.FunctionExpr) *cfg.Graph {
+	if fn == nil {
+		return nil
+	}
+	if s.deps.CheckCtx != nil {
+		if g, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && g != nil && g.Func() == fn {
+			return g
+		}
+	}
+	if s.deps.Graphs != nil {
+		if g := s.deps.Graphs.GetOrBuildCFG(fn); g != nil {
+			return g
+		}
+	}
+	if s.deps.ModuleBindings != nil {
+		return cfg.BuildWithBindings(fn, s.deps.ModuleBindings)
+	}
+	return cfg.Build(fn)
+}
+
 func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 	fn *ast.FunctionExpr,
 	sc *scope.State,
@@ -139,17 +159,8 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 
 	// Build CFG once, shared between overlay inference and return inference.
 	var fnGraph *cfg.Graph
-	if s.deps.CheckCtx != nil {
-		if g, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && g != nil && g.Func() == fn {
-			fnGraph = g
-		}
-	}
-	if fnGraph == nil && fn.Stmts != nil && len(fn.Stmts) > 0 {
-		if s.deps.ModuleBindings != nil {
-			fnGraph = cfg.BuildWithBindings(fn, s.deps.ModuleBindings)
-		} else {
-			fnGraph = cfg.Build(fn)
-		}
+	if fn.Stmts != nil && len(fn.Stmts) > 0 {
+		fnGraph = s.getOrBuildFunctionGraph(fn)
 	}
 
 	// Infer callback env overlays (runs before return types).
@@ -232,18 +243,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	}
 
 	if fnGraph == nil {
-		if s.deps.CheckCtx != nil {
-			if g, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && g != nil && g.Func() == fn {
-				fnGraph = g
-			}
-		}
-	}
-	if fnGraph == nil {
-		if s.deps.ModuleBindings != nil {
-			fnGraph = cfg.BuildWithBindings(fn, s.deps.ModuleBindings)
-		} else {
-			fnGraph = cfg.Build(fn)
-		}
+		fnGraph = s.getOrBuildFunctionGraph(fn)
 	}
 	if fnGraph == nil {
 		return nil, false
@@ -408,6 +408,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			DefaultScope:           resolveScope,
 			Manifests:              s.deps.Manifests,
 			CheckCtx:               prelimCtx,
+			Graphs:                 s.deps.Graphs,
 			PreCache:               make(api.Cache),
 			NarrowCache:            make(api.Cache),
 			FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
@@ -547,6 +548,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		DefaultScope:           resolveScope,
 		Manifests:              s.deps.Manifests,
 		CheckCtx:               fnCheckCtx,
+		Graphs:                 s.deps.Graphs,
 		PreCache:               make(api.Cache),
 		NarrowCache:            make(api.Cache),
 		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
@@ -892,6 +894,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 				DefaultScope:   sc,
 				Manifests:      s.deps.Manifests,
 				CheckCtx:       fnCheckCtx,
+				Graphs:         s.deps.Graphs,
 				PreCache:       make(api.Cache),
 				NarrowCache:    make(api.Cache),
 				ModuleBindings: s.deps.ModuleBindings,

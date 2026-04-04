@@ -558,6 +558,7 @@ func (s *Synthesizer) withEnvOverlay(overlay map[string]typ.Type) *Synthesizer {
 		Scopes:                 s.deps.Scopes,
 		Manifests:              s.deps.Manifests,
 		CheckCtx:               overlaidCtx,
+		Graphs:                 s.deps.Graphs,
 		Flow:                   s.deps.Flow,
 		Paths:                  s.deps.Paths,
 		PreCache:               make(api.Cache),

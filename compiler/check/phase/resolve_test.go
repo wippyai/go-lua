@@ -1,6 +1,7 @@
 package phase
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -193,6 +194,45 @@ func TestBuildDeclaredTypesFromSymbolTypes_EmptySymbolTypes(t *testing.T) {
 	result := BuildDeclaredTypesFromSymbolTypes(graph, symbolTypes)
 	if result != nil {
 		t.Errorf("expected nil for empty symbolTypes, got %v", result)
+	}
+}
+
+func TestBuildDeclaredTypesForResolve_MatchesSymbolTypePipeline(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{
+			Names: []string{"x"},
+		},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"print"},
+				Exprs: []ast.Expr{&ast.NumberExpr{Value: "1"}},
+			},
+			&ast.LocalAssignStmt{
+				Names: []string{"x"},
+				Exprs: []ast.Expr{&ast.NumberExpr{Value: "2"}},
+			},
+			&ast.ReturnStmt{
+				Exprs: []ast.Expr{
+					&ast.IdentExpr{Value: "print"},
+					&ast.IdentExpr{Value: "x"},
+				},
+			},
+		},
+	}
+
+	graph := cfg.Build(fn, "print")
+	paramSyms := graph.ParamSymbols()
+	if len(paramSyms) != 1 || paramSyms[0] == 0 {
+		t.Fatal("expected one parameter symbol")
+	}
+
+	globalTypes := map[string]typ.Type{"print": typ.String}
+	paramTypes := map[cfg.SymbolID]typ.Type{paramSyms[0]: typ.Number}
+
+	want := BuildDeclaredTypesFromSymbolTypes(graph, BuildInitialSymbolTypes(graph, globalTypes, paramTypes))
+	got := BuildDeclaredTypesForResolve(graph, globalTypes, paramTypes)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildDeclaredTypesForResolve mismatch:\n got: %#v\nwant: %#v", got, want)
 	}
 }
 

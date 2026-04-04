@@ -36,11 +36,10 @@ func RunResolve(input ResolveInput) ResolveOutput {
 		return ResolveOutput{}
 	}
 
-	initialSymbolTypes := BuildInitialSymbolTypes(input.Graph, input.GlobalTypes, nil)
 	globalCtx := api.NewDeclaredEnv(api.DeclaredEnvConfig{
 		Graph:         input.Graph,
 		Bindings:      input.Bindings,
-		DeclaredTypes: BuildDeclaredTypesFromSymbolTypes(input.Graph, initialSymbolTypes),
+		DeclaredTypes: BuildDeclaredTypesForResolve(input.Graph, input.GlobalTypes, nil),
 		BaseScope:     input.BaseScope,
 		GlobalTypes:   input.GlobalTypes,
 	})
@@ -70,11 +69,10 @@ func CreateTypeResolutionEngine(
 	types core.TypeOps,
 	manifests io.ManifestQuerier,
 ) *synth.Engine {
-	initialSymbolTypes := BuildInitialSymbolTypes(graph, globalTypes, paramTypes)
 	checkCtx := api.NewDeclaredEnv(api.DeclaredEnvConfig{
 		Graph:         graph,
 		Bindings:      graph.Bindings(),
-		DeclaredTypes: BuildDeclaredTypesFromSymbolTypes(graph, initialSymbolTypes),
+		DeclaredTypes: BuildDeclaredTypesForResolve(graph, globalTypes, paramTypes),
 		BaseScope:     base,
 		GlobalTypes:   globalTypes,
 	})
@@ -159,17 +157,14 @@ func BuildInitialSymbolTypes(graph *cfg.Graph, globalTypes map[string]typ.Type, 
 	bindings := graph.Bindings()
 
 	out := make(flow.SymbolTypes)
-	// Compute types once at entry and reuse if symbols don't change
-	var prevTypesAt map[cfg.SymbolID]flow.TypedValue
-	var prevLocalsToken uintptr
-	hasPrevLocals := false
+	typesByLocalsToken := make(map[uintptr]map[cfg.SymbolID]flow.TypedValue)
 
 	for _, p := range graph.RPO() {
 		locals := graph.LocalSymbolsAt(p)
 		localsToken := reflect.ValueOf(locals).Pointer()
-		if hasPrevLocals && localsToken == prevLocalsToken {
-			if prevTypesAt != nil {
-				out[p] = prevTypesAt
+		if cached, ok := typesByLocalsToken[localsToken]; ok {
+			if cached != nil {
+				out[p] = cached
 			}
 			continue
 		}
@@ -210,32 +205,12 @@ func BuildInitialSymbolTypes(graph *cfg.Graph, globalTypes map[string]typ.Type, 
 		}
 
 		if len(typesAt) == 0 {
-			hasPrevLocals = true
-			prevLocalsToken = localsToken
-			prevTypesAt = nil
+			typesByLocalsToken[localsToken] = nil
 			continue
 		}
 
-		// Reuse previous map if identical content
-		if prevTypesAt != nil && len(typesAt) == len(prevTypesAt) {
-			identical := true
-			for sym, tv := range typesAt {
-				if prev, ok := prevTypesAt[sym]; !ok || prev != tv {
-					identical = false
-					break
-				}
-			}
-			if identical {
-				out[p] = prevTypesAt
-				hasPrevLocals = true
-				prevLocalsToken = localsToken
-				continue
-			}
-		}
 		out[p] = typesAt
-		prevTypesAt = typesAt
-		hasPrevLocals = true
-		prevLocalsToken = localsToken
+		typesByLocalsToken[localsToken] = typesAt
 	}
 
 	if len(out) == 0 {
@@ -253,10 +228,21 @@ func BuildDeclaredTypesFromSymbolTypes(graph basecfg.VersionedGraph, symbolTypes
 
 	entry := graph.Entry()
 	bestPoint := make(map[cfg.SymbolID]cfg.Point, len(symbolTypes))
+	lowestPointByTypesToken := make(map[uintptr]cfg.Point, len(symbolTypes))
+	typesByToken := make(map[uintptr]map[cfg.SymbolID]flow.TypedValue, len(symbolTypes))
 	for p, typesAt := range symbolTypes {
-		if p == entry {
+		if p == entry || typesAt == nil {
 			continue
 		}
+		token := reflect.ValueOf(typesAt).Pointer()
+		if prev, ok := lowestPointByTypesToken[token]; !ok || p < prev {
+			lowestPointByTypesToken[token] = p
+			typesByToken[token] = typesAt
+		}
+	}
+
+	for token, typesAt := range typesByToken {
+		p := lowestPointByTypesToken[token]
 		for sym, tv := range typesAt {
 			if tv.State != flow.StateResolved || tv.Type == nil {
 				continue
@@ -276,6 +262,75 @@ func BuildDeclaredTypesFromSymbolTypes(graph basecfg.VersionedGraph, symbolTypes
 			out[sym] = tv.Type
 		}
 	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// BuildDeclaredTypesForResolve computes declared types directly for the resolve phase.
+//
+// This avoids materializing the full per-point SymbolTypes map when resolve only
+// needs the collapsed DeclaredTypes result.
+func BuildDeclaredTypesForResolve(graph *cfg.Graph, globalTypes map[string]typ.Type, paramTypes map[cfg.SymbolID]typ.Type) flow.DeclaredTypes {
+	if graph == nil || (len(globalTypes) == 0 && len(paramTypes) == 0) {
+		return nil
+	}
+
+	out := make(flow.DeclaredTypes, len(globalTypes)+len(paramTypes))
+
+	paramNameTypes := make(map[string]typ.Type, len(paramTypes))
+	for sym, t := range paramTypes {
+		if t == nil {
+			continue
+		}
+		out[sym] = t
+		if name := graph.NameOf(sym); name != "" {
+			paramNameTypes[name] = t
+		}
+	}
+
+	for name, t := range globalTypes {
+		if t == nil {
+			continue
+		}
+		if sym, ok := graph.GlobalSymbol(name); ok && sym != 0 {
+			out[sym] = t
+		}
+	}
+
+	if len(paramNameTypes) == 0 {
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+
+	localsByToken := make(map[uintptr]map[string]cfg.SymbolID)
+	lowestPointByToken := make(map[uintptr]cfg.Point)
+	for _, p := range graph.RPO() {
+		locals := graph.LocalSymbolsAt(p)
+		if len(locals) == 0 {
+			continue
+		}
+		token := reflect.ValueOf(locals).Pointer()
+		if prev, ok := lowestPointByToken[token]; !ok || p < prev {
+			lowestPointByToken[token] = p
+			localsByToken[token] = locals
+		}
+	}
+
+	for _, locals := range localsByToken {
+		for name, sym := range locals {
+			if _, exists := out[sym]; exists {
+				continue
+			}
+			if t := paramNameTypes[name]; t != nil {
+				out[sym] = t
+			}
+		}
+	}
+
 	if len(out) == 0 {
 		return nil
 	}

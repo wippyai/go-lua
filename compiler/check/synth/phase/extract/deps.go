@@ -32,6 +32,7 @@ type Deps struct {
 	DefaultScope *scope.State
 	Manifests    io.ManifestQuerier
 	CheckCtx     api.BaseEnv
+	Graphs       api.GraphProvider
 
 	Flow  api.FlowOps
 	Paths api.PathFromExprFunc
@@ -63,6 +64,7 @@ func NewDeps(ctx *db.QueryContext, types core.TypeOps, scopes api.ScopeMap, mani
 		Scopes:                 scopes,
 		Manifests:              manifests,
 		CheckCtx:               checkCtx,
+		Graphs:                 api.GraphsFrom(ctx),
 		PreCache:               make(api.Cache),
 		NarrowCache:            make(api.Cache),
 		FunctionTypeInProgress: make(map[functionTypeProgressKey]bool),

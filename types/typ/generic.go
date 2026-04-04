@@ -73,6 +73,7 @@ type Generic struct {
 	TypeParams []*TypeParam // Type parameters to be substituted
 	Body       Type         // Template type with TypeParam references
 	hash       uint64
+	strCache   stringCache
 }
 
 // NewGeneric creates a generic type definition.
@@ -97,22 +98,24 @@ func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
 
 func (g *Generic) Kind() kind.Kind { return kind.Generic }
 func (g *Generic) String() string {
-	var sb strings.Builder
+	return g.strCache.get(func() string {
+		var sb strings.Builder
 
-	sb.WriteString(g.Name)
-	sb.WriteString("<")
+		sb.WriteString(g.Name)
+		sb.WriteString("<")
 
-	for i, p := range g.TypeParams {
-		if i > 0 {
-			sb.WriteString(", ")
+		for i, p := range g.TypeParams {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+
+			sb.WriteString(p.String())
 		}
 
-		sb.WriteString(p.String())
-	}
+		sb.WriteString(">")
 
-	sb.WriteString(">")
-
-	return sb.String()
+		return sb.String()
+	})
 }
 func (g *Generic) Hash() uint64 { return g.hash }
 func (g *Generic) Equals(other Type) bool {
@@ -125,39 +128,47 @@ func (g *Generic) Equals(other Type) bool {
 // type is created with Generic=Array and TypeArgs=[number]. The body can
 // be expanded by substituting type parameters with arguments.
 type Instantiated struct {
-	Generic  *Generic // The generic being instantiated
-	TypeArgs []Type   // Concrete types for each type parameter
-	hash     uint64
+	Generic      *Generic // The generic being instantiated
+	TypeArgs     []Type   // Concrete types for each type parameter
+	hash         uint64
+	softPrunable bool
+	strCache     stringCache
 }
 
 // Instantiate creates an instantiated generic type with the given arguments.
 func Instantiate(g *Generic, args ...Type) *Instantiated {
 	h := internal.HashCombine(uint64(kind.Instantiated), g.Hash())
+	softPrunable := false
 	for _, a := range args {
 		h = internal.HashCombine(h, a.Hash())
+		if !softPrunable && softPruneMayRewrite(a) {
+			softPrunable = true
+		}
 	}
 
-	return &Instantiated{Generic: g, TypeArgs: args, hash: h}
+	return &Instantiated{Generic: g, TypeArgs: args, hash: h, softPrunable: softPrunable}
 }
 
 func (i *Instantiated) Kind() kind.Kind { return kind.Instantiated }
 func (i *Instantiated) String() string {
-	var sb strings.Builder
+	return i.strCache.get(func() string {
+		var sb strings.Builder
 
-	sb.WriteString(i.Generic.Name)
-	sb.WriteString("<")
+		sb.WriteString(i.Generic.Name)
+		sb.WriteString("<")
 
-	for j, a := range i.TypeArgs {
-		if j > 0 {
-			sb.WriteString(", ")
+		for j, a := range i.TypeArgs {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+
+			sb.WriteString(a.String())
 		}
 
-		sb.WriteString(a.String())
-	}
+		sb.WriteString(">")
 
-	sb.WriteString(">")
-
-	return sb.String()
+		return sb.String()
+	})
 }
 func (i *Instantiated) Hash() uint64 { return i.hash }
 func (i *Instantiated) Equals(other Type) bool {

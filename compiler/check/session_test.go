@@ -351,6 +351,16 @@ func TestStoreFrom(t *testing.T) {
 	}
 }
 
+func TestGraphsFrom(t *testing.T) {
+	ctx := db.NewQueryContext(db.New())
+	sess := New(ctx, "test.lua")
+
+	graphs := api.GraphsFrom(ctx)
+	if graphs != sess {
+		t.Error("GraphsFrom should return the session graph provider")
+	}
+}
+
 func TestStoreFrom_NilContext(t *testing.T) {
 	store := api.StoreFrom(nil)
 	if store != nil {

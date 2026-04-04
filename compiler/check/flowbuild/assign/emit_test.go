@@ -741,6 +741,25 @@ func TestCorrelationsFromFunctionType_ImplicitStructuredErrorConvention(t *testi
 	}
 }
 
+func TestCorrelationsFromFunctionType_ImplicitUnionErrorConvention(t *testing.T) {
+	errorType := typ.NewRecord().
+		Field("message", typ.String).
+		Build()
+	fnType := typ.Func().
+		Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.NewUnion(typ.String, typ.LuaError, errorType))).
+		Build()
+	inverse, co := correlationsFromFunctionType(fnType)
+	if len(co) != 0 {
+		t.Fatalf("expected no co-correlations, got %v", co)
+	}
+	if len(inverse) != 1 {
+		t.Fatalf("expected one convention-based correlation, got %v", inverse)
+	}
+	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
+		t.Fatalf("unexpected convention correlation: %+v", inverse[0])
+	}
+}
+
 func TestCorrelationsFromFunctionType_NoImplicitStructuredErrorWithoutMessage(t *testing.T) {
 	auxType := typ.NewRecord().
 		Field("status_code", typ.Number).

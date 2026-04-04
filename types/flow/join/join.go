@@ -28,6 +28,7 @@
 package join
 
 import (
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -273,42 +274,52 @@ func CoalesceRecordMapComponents(types []typ.Type) []typ.Type {
 
 	// Group records by field signature
 	type recGroup struct {
-		indices []int
-		records []*typ.Record
+		template *typ.Record
+		indices  []int
+		records  []*typ.Record
 	}
-	groups := make(map[string]*recGroup)
+	groups := make(map[uint64][]*recGroup)
 	for i, t := range types {
 		rec, ok := t.(*typ.Record)
 		if !ok || len(rec.Fields) == 0 {
 			continue
 		}
-		// Only group records that have a map component (at least one in the set)
-		// Build a signature from field names, types, and flags
-		sig := recordFieldSignature(rec)
-		g, exists := groups[sig]
-		if !exists {
-			g = &recGroup{}
-			groups[sig] = g
+		sigHash := recordFieldSignatureHash(rec)
+		var group *recGroup
+		for _, candidate := range groups[sigHash] {
+			if sameRecordFieldSignature(candidate.template, rec) {
+				group = candidate
+				break
+			}
 		}
-		g.indices = append(g.indices, i)
-		g.records = append(g.records, rec)
+		if group == nil {
+			group = &recGroup{template: rec}
+			groups[sigHash] = append(groups[sigHash], group)
+		}
+		group.indices = append(group.indices, i)
+		group.records = append(group.records, rec)
 	}
 
 	// Check if any group has records with map components to merge
 	needsMerge := false
-	for _, g := range groups {
-		if len(g.records) < 2 {
-			continue
-		}
-		hasMap := false
-		for _, r := range g.records {
-			if r.HasMapComponent() {
-				hasMap = true
+	for _, bucket := range groups {
+		for _, g := range bucket {
+			if len(g.records) < 2 {
+				continue
+			}
+			hasMap := false
+			for _, r := range g.records {
+				if r.HasMapComponent() {
+					hasMap = true
+					break
+				}
+			}
+			if hasMap {
+				needsMerge = true
 				break
 			}
 		}
-		if hasMap {
-			needsMerge = true
+		if needsMerge {
 			break
 		}
 	}
@@ -319,67 +330,69 @@ func CoalesceRecordMapComponents(types []typ.Type) []typ.Type {
 	// Build result replacing merged groups
 	skip := make(map[int]bool)
 	result := make([]typ.Type, 0, len(types))
-	for sig, g := range groups {
-		_ = sig
-		if len(g.records) < 2 {
-			continue
-		}
-		hasMap := false
-		for _, r := range g.records {
-			if r.HasMapComponent() {
-				hasMap = true
-				break
-			}
-		}
-		if !hasMap {
-			continue
-		}
-		// Merge map components
-		var mapKey, mapValue typ.Type
-		for _, r := range g.records {
-			if !r.HasMapComponent() {
+	for _, bucket := range groups {
+		for _, g := range bucket {
+			if len(g.records) < 2 {
 				continue
 			}
-			if mapKey == nil {
-				mapKey = r.MapKey
-				mapValue = r.MapValue
-			} else {
-				mapKey = Types(mapKey, r.MapKey)
-				mapValue = Types(mapValue, r.MapValue)
+			hasMap := false
+			for _, r := range g.records {
+				if r.HasMapComponent() {
+					hasMap = true
+					break
+				}
 			}
-		}
-		// Use the first record as the template
-		template := g.records[0]
-		builder := typ.NewRecord()
-		if template.Open {
-			builder.SetOpen(true)
-		}
-		for _, f := range template.Fields {
-			switch {
-			case f.Optional && f.Readonly:
-				builder.OptReadonlyField(f.Name, f.Type)
-			case f.Optional:
-				builder.OptField(f.Name, f.Type)
-			case f.Readonly:
-				builder.ReadonlyField(f.Name, f.Type)
-			default:
-				builder.Field(f.Name, f.Type)
+			if !hasMap {
+				continue
 			}
-		}
-		if template.Metatable != nil {
-			builder.Metatable(template.Metatable)
-		}
-		if mapKey != nil && mapValue != nil {
-			builder.MapComponent(mapKey, mapValue)
-		}
-		merged := builder.Build()
 
-		// Mark all indices in this group for replacement
-		for _, idx := range g.indices {
-			skip[idx] = true
+			// Merge map components
+			var mapKey, mapValue typ.Type
+			for _, r := range g.records {
+				if !r.HasMapComponent() {
+					continue
+				}
+				if mapKey == nil {
+					mapKey = r.MapKey
+					mapValue = r.MapValue
+				} else {
+					mapKey = Types(mapKey, r.MapKey)
+					mapValue = Types(mapValue, r.MapValue)
+				}
+			}
+			// Use the first record as the template
+			template := g.template
+			builder := typ.NewRecord()
+			if template.Open {
+				builder.SetOpen(true)
+			}
+			for _, f := range template.Fields {
+				switch {
+				case f.Optional && f.Readonly:
+					builder.OptReadonlyField(f.Name, f.Type)
+				case f.Optional:
+					builder.OptField(f.Name, f.Type)
+				case f.Readonly:
+					builder.ReadonlyField(f.Name, f.Type)
+				default:
+					builder.Field(f.Name, f.Type)
+				}
+			}
+			if template.Metatable != nil {
+				builder.Metatable(template.Metatable)
+			}
+			if mapKey != nil && mapValue != nil {
+				builder.MapComponent(mapKey, mapValue)
+			}
+			merged := builder.Build()
+
+			// Mark all indices in this group for replacement
+			for _, idx := range g.indices {
+				skip[idx] = true
+			}
+			// Add merged record at the position of the first occurrence
+			result = append(result, merged)
 		}
-		// Add merged record at the position of the first occurrence
-		result = append(result, merged)
 	}
 
 	if len(skip) == 0 {
@@ -398,33 +411,44 @@ func CoalesceRecordMapComponents(types []typ.Type) []typ.Type {
 	return final
 }
 
-// recordFieldSignature computes a canonical string signature for a record's fields.
-//
-// The signature includes for each field: name, optional flag (?), readonly flag (!),
-// and type string. Records with identical signatures have the same fields with the
-// same types, and their map components can be merged.
-//
-// The signature also includes the open flag to distinguish {x: T} from {x: T, ...}.
-func recordFieldSignature(r *typ.Record) string {
-	if len(r.Fields) == 0 {
-		return ""
+func sameRecordFieldSignature(a, b *typ.Record) bool {
+	if a == nil || b == nil {
+		return a == b
 	}
-	// Fields are already sorted by name in Record.Build()
-	sig := ""
+	if a.Open != b.Open || len(a.Fields) != len(b.Fields) {
+		return false
+	}
+	for i, af := range a.Fields {
+		bf := b.Fields[i]
+		if af.Name != bf.Name || af.Optional != bf.Optional || af.Readonly != bf.Readonly {
+			return false
+		}
+		if !typ.TypeEquals(af.Type, bf.Type) {
+			return false
+		}
+	}
+	return true
+}
+
+func recordFieldSignatureHash(r *typ.Record) uint64 {
+	if r == nil {
+		return 0
+	}
+	h := internal.HashCombine(uint64(kind.Record), uint64(len(r.Fields)))
+	if r.Open {
+		h = internal.HashCombine(h, 1)
+	}
 	for _, f := range r.Fields {
-		sig += f.Name + ":"
+		h = internal.HashCombine(h, internal.FnvString(f.Name))
 		if f.Optional {
-			sig += "?"
+			h = internal.HashCombine(h, 2)
 		}
 		if f.Readonly {
-			sig += "!"
+			h = internal.HashCombine(h, 3)
 		}
-		sig += f.Type.String() + ";"
+		h = internal.HashCombine(h, f.Type.Hash())
 	}
-	if r.Open {
-		sig += "..."
-	}
-	return sig
+	return h
 }
 
 // CoalesceEmptyRecordWithMap removes empty records when maps are present.

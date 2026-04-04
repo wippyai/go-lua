@@ -586,7 +586,7 @@ func (s *Solution) deriveFromNarrowedAncestors(targetKey constraint.PathKey, dom
 	if !ok {
 		return nil, false
 	}
-	targetSegs := pathkey.ParseSuffix(targetSuffix)
+	targetSegs := s.parseSuffixCached(targetSuffix)
 
 	seen := make(map[constraint.PathKey]bool)
 	candidates := make([]constraint.PathKey, 0, len(dom.Type.Narrowed)+len(dom.Shape.Narrowed))
@@ -615,7 +615,7 @@ func (s *Solution) deriveFromNarrowedAncestors(targetKey constraint.PathKey, dom
 		if !ok || sym != targetSym || version != targetVersion {
 			continue
 		}
-		ancestorSegs := pathkey.ParseSuffix(suffix)
+		ancestorSegs := s.parseSuffixCached(suffix)
 		if len(ancestorSegs) >= len(targetSegs) {
 			continue
 		}
@@ -672,7 +672,7 @@ func (s *Solution) filterByChildNarrowings(baseType typ.Type, parentPath constra
 		if !ok || childSym != parentSym {
 			continue
 		}
-		segs := pathkey.ParseSuffix(suffix)
+		segs := s.parseSuffixCached(suffix)
 		if len(segs) == 0 {
 			continue
 		}
@@ -741,4 +741,21 @@ func (s *Solution) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) boo
 		return s.pkResolver.KeyAt(p, path)
 	}
 	return constraint.HasKeyOfConstraint(cond, tablePath, keyPath, resolve)
+}
+
+func (s *Solution) parseSuffixCached(suffix string) []constraint.Segment {
+	if suffix == "" {
+		return nil
+	}
+	cache := s.scratchParsedSuffixes
+	if cache == nil {
+		cache = make(map[string][]constraint.Segment, 32)
+		s.scratchParsedSuffixes = cache
+	}
+	if segs, ok := cache[suffix]; ok {
+		return segs
+	}
+	segs := pathkey.ParseSuffix(suffix)
+	cache[suffix] = segs
+	return segs
 }
