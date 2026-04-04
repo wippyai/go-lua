@@ -290,6 +290,9 @@ func (r ReturnLength) Equals(other Label) bool {
 //   - DeepElementOf: Recursively extracts non-array leaf types.
 //     For nested arrays, returns the innermost element type.
 //
+//   - StringUnpackValue: Returns the first unpacked value type derived from a
+//     string.pack/string.unpack format parameter when that format is known.
+//
 //   - SelectCaseOfParam: Builds select case from parameter type.
 //
 //   - SelectResultOfCases: Builds select result from cases and default.
@@ -377,6 +380,19 @@ type DeepElementOf struct {
 func (DeepElementOf) returnType() {}
 func (d DeepElementOf) String() string {
 	return fmt.Sprintf("deep_elem(%s)", d.Source)
+}
+
+// StringUnpackValue derives the first unpacked value type from a format parameter.
+//
+// This models builtins like string.unpack where the first returned value depends
+// on the literal format string supplied at the call site.
+type StringUnpackValue struct {
+	Format ParamRef
+}
+
+func (StringUnpackValue) returnType() {}
+func (s StringUnpackValue) String() string {
+	return fmt.Sprintf("string_unpack(%s)", s.Format)
 }
 
 // Throw indicates the function may throw an error.
@@ -773,6 +789,12 @@ func returnTypeEquals(a, b ReturnType) bool {
 		DeepElementOf: func(av DeepElementOf) bool {
 			if bv, ok := b.(DeepElementOf); ok {
 				return av.Source.Index == bv.Source.Index
+			}
+			return false
+		},
+		StringUnpackValue: func(av StringUnpackValue) bool {
+			if bv, ok := b.(StringUnpackValue); ok {
+				return av.Format.Index == bv.Format.Index
 			}
 			return false
 		},

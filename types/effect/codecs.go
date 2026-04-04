@@ -372,8 +372,9 @@ const (
 	returnTypeArrayOfCallback   = 4
 	returnTypeSameAs            = 5
 	returnTypeDeepElementOf     = 6
-	returnTypeSelectCaseOfParam = 7
-	returnTypeSelectResultCases = 8
+	returnTypeStringUnpackValue = 7
+	returnTypeSelectCaseOfParam = 8
+	returnTypeSelectResultCases = 9
 )
 
 func writeReturnType(w Writer, rt ReturnType) error {
@@ -417,6 +418,12 @@ func writeReturnType(w Writer, rt ReturnType) error {
 				return err
 			}
 			return w.WriteInt32(int32(v.Source.Index))
+		},
+		StringUnpackValue: func(v StringUnpackValue) error {
+			if err := w.WriteByte(returnTypeStringUnpackValue); err != nil {
+				return err
+			}
+			return w.WriteInt32(int32(v.Format.Index))
 		},
 		SelectCaseOfParam: func(v SelectCaseOfParam) error {
 			if err := w.WriteByte(returnTypeSelectCaseOfParam); err != nil {
@@ -490,6 +497,13 @@ func readReturnType(r Reader) (ReturnType, error) {
 		}
 
 		return DeepElementOf{Source: ParamRef{Index: int(idx)}}, nil
+	case returnTypeStringUnpackValue:
+		idx, err := r.ReadInt32()
+		if err != nil {
+			return nil, err
+		}
+
+		return StringUnpackValue{Format: ParamRef{Index: int(idx)}}, nil
 	case returnTypeSelectCaseOfParam:
 		idx, err := r.ReadInt32()
 		if err != nil {

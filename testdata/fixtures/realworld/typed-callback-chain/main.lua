@@ -5,7 +5,12 @@ local collected_chunks: {string} = {}
 local collected_tools: {types.ToolCall} = {}
 local final_result: types.StreamResult? = nil
 
-local events = {
+type ContentEvent = {type: "content", data: string}
+type ToolCallEvent = {type: "tool_call", id: string, name: string, arguments: {[string]: any}}
+type DoneEvent = {type: "done", reason: string?, usage: types.Usage?}
+type StreamEvent = ContentEvent | ToolCallEvent | DoneEvent
+
+local events: {StreamEvent} = {
     {type = "content", data = "Hello "},
     {type = "content", data = "world"},
     {type = "tool_call", id = "t1", name = "search", arguments = {query = "test"}},

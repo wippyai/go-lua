@@ -952,6 +952,10 @@ func TestWriteReadReturnType(t *testing.T) {
 			rt:   DeepElementOf{Source: ParamRef{Index: 1}},
 		},
 		{
+			name: "string unpack value",
+			rt:   StringUnpackValue{Format: ParamRef{Index: 0}},
+		},
+		{
 			name: "select case of param",
 			rt:   SelectCaseOfParam{Source: ParamRef{Index: 1}},
 		},
@@ -1844,6 +1848,15 @@ func TestWriteReturnTypeErrorPaths(t *testing.T) {
 		w := &errorAfterNWriter{n: 0}
 
 		err := writeReturnType(w, DeepElementOf{Source: ParamRef{Index: 0}})
+		if err == nil {
+			t.Error("expected error")
+		}
+	})
+
+	t.Run("string unpack value tag error", func(t *testing.T) {
+		w := &errorAfterNWriter{n: 0}
+
+		err := writeReturnType(w, StringUnpackValue{Format: ParamRef{Index: 0}})
 		if err == nil {
 			t.Error("expected error")
 		}

@@ -67,6 +67,23 @@ func TestCallWithGenericInference_TooManyArgs(t *testing.T) {
 	}
 }
 
+func TestCallWithGenericInference_ZeroParamAllowsExtraArgs(t *testing.T) {
+	fn := typ.Func().
+		Returns(typ.Boolean).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	def := CallDef{
+		Callee: fn,
+		Args:   []typ.Type{typ.Integer, typ.String},
+	}
+
+	result := CallWithGenericInference(ctx, def)
+	if len(result.Errors) > 0 {
+		t.Fatalf("zero-param function should accept extra args, got: %v", result.Errors)
+	}
+}
+
 func TestCallWithGenericInference_Variadic(t *testing.T) {
 	fn := typ.Func().
 		Param("x", typ.Integer).
@@ -523,5 +540,21 @@ func TestCallFunction_MethodAlwaysConsumesReceiver(t *testing.T) {
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected method call to fail when signature does not accept receiver")
+	}
+}
+
+func TestCallFunction_ZeroParamAllowsExtraArgs(t *testing.T) {
+	fn := typ.Func().
+		Returns(typ.Boolean).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number, typ.String}, nil, false, false, nil)
+
+	if len(result.Errors) != 0 {
+		t.Fatalf("zero-param function should accept extra args, got: %v", result.Errors)
+	}
+	if result.Type != typ.Boolean {
+		t.Fatalf("expected boolean return type, got: %v", result.Type)
 	}
 }

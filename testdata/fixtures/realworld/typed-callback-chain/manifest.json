@@ -1,4 +1,1 @@
-{
-  "files": ["types.lua", "stream.lua", "main.lua"],
-  "check": {"errors": 6}
-}
+{"files": ["types.lua", "stream.lua", "main.lua"], "check": {"errors": 1}}

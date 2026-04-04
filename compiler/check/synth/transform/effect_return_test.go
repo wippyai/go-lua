@@ -174,3 +174,60 @@ func TestApplyEffectTransform_ArrayOfCallbackReturn(t *testing.T) {
 		t.Fatalf("expected array(callback return) transform to produce %v, got %v", want, got)
 	}
 }
+
+func TestApplyEffectTransform_StringUnpackValue_IntegerFormat(t *testing.T) {
+	spec := contract.NewSpec().WithEffects(effect.Return{
+		ReturnIndex: 0,
+		Transform:   effect.StringUnpackValue{Format: effect.ParamRef{Index: 0}},
+	})
+	fn := typ.Func().
+		Param("fmt", typ.String).
+		Param("s", typ.String).
+		OptParam("pos", typ.Integer).
+		Returns(typ.Any).
+		Spec(spec).
+		Build()
+
+	got := ApplyEffectTransform(fn, []typ.Type{typ.LiteralString(">I4"), typ.String, typ.Integer}, 0, typ.Any)
+	if !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("expected string.unpack integer format to produce integer, got %v", got)
+	}
+}
+
+func TestApplyEffectTransform_StringUnpackValue_StringFormat(t *testing.T) {
+	spec := contract.NewSpec().WithEffects(effect.Return{
+		ReturnIndex: 0,
+		Transform:   effect.StringUnpackValue{Format: effect.ParamRef{Index: 0}},
+	})
+	fn := typ.Func().
+		Param("fmt", typ.String).
+		Param("s", typ.String).
+		OptParam("pos", typ.Integer).
+		Returns(typ.Any).
+		Spec(spec).
+		Build()
+
+	got := ApplyEffectTransform(fn, []typ.Type{typ.LiteralString("z"), typ.String, typ.Integer}, 0, typ.Any)
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("expected string.unpack string format to produce string, got %v", got)
+	}
+}
+
+func TestApplyEffectTransform_StringUnpackValue_UnsupportedFormatFallsBack(t *testing.T) {
+	spec := contract.NewSpec().WithEffects(effect.Return{
+		ReturnIndex: 0,
+		Transform:   effect.StringUnpackValue{Format: effect.ParamRef{Index: 0}},
+	})
+	fn := typ.Func().
+		Param("fmt", typ.String).
+		Param("s", typ.String).
+		OptParam("pos", typ.Integer).
+		Returns(typ.Any).
+		Spec(spec).
+		Build()
+
+	got := ApplyEffectTransform(fn, []typ.Type{typ.LiteralString("X"), typ.String, typ.Integer}, 0, typ.Any)
+	if !typ.TypeEquals(got, typ.Any) {
+		t.Fatalf("expected unsupported string.unpack format to fall back to any, got %v", got)
+	}
+}

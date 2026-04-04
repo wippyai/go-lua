@@ -797,13 +797,14 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 
 	minArgs := typ.MinRequiredArgs(fn)
 	hasVariadic := fn.Variadic != nil
+	allowExtraArgs := len(fn.Params) == 0 && !hasVariadic
 
 	if argCount < minArgs {
 		errors = append(errors, CallError{
 			Kind:    ErrWrongArity,
 			Message: "not enough arguments",
 		})
-	} else if !hasVariadic && argCount > len(fn.Params) {
+	} else if !hasVariadic && !allowExtraArgs && argCount > len(fn.Params) {
 		errors = append(errors, CallError{
 			Kind:    ErrWrongArity,
 			Message: "too many arguments",

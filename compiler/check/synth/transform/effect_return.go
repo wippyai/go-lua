@@ -61,6 +61,13 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 			}
 		}
 		return baseReturn
+	case effect.StringUnpackValue:
+		if resolved := resolveParamType(args, transform.Format); resolved != nil {
+			if unpacked := unpackFirstValueType(resolved); unpacked != nil {
+				return unpacked
+			}
+		}
+		return baseReturn
 	case effect.CallbackReturn:
 		if resolved := resolveParamType(args, transform.CallbackParam); resolved != nil {
 			if cbRet := callbackReturnType(resolved); cbRet != nil {
