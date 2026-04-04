@@ -2,16 +2,16 @@ local status = require("status")
 local handler = require("handler")
 
 local router = handler.new()
-    :add("GET", "/users", function(req: Request): Response
+    :add("GET", "/users", function(req: status.Request): status.Response
         return status.ok({users = {"Alice", "Bob"}})
     end)
-    :add("POST", "/users", function(req: Request): Response
+    :add("POST", "/users", function(req: status.Request): status.Response
         if not req.body then
             return status.error(400, "Missing body")
         end
         return status.created({id = "new-user"})
     end)
-    :add("DELETE", "/users", function(req: Request): Response
+    :add("DELETE", "/users", function(req: status.Request): status.Response
         return status.ok()
     end)
 

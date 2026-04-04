@@ -2,7 +2,7 @@ local tools = require("tools")
 
 local M = {}
 
-function M.execute(tool: Tool): ToolResult
+function M.execute(tool: tools.Tool): tools.ToolResult
     if tool.type == "search" then
         local query: string = tool.args.query
         local limit: number = tool.args.limit or 10
@@ -30,8 +30,8 @@ function M.execute(tool: Tool): ToolResult
     return {tool_name = "unknown", output = "unsupported tool type", success = false}
 end
 
-function M.execute_batch(tool_list: {Tool}): {ToolResult}
-    local results: {ToolResult} = {}
+function M.execute_batch(tool_list: {tools.Tool}): {tools.ToolResult}
+    local results: {tools.ToolResult} = {}
     for _, tool in ipairs(tool_list) do
         table.insert(results, M.execute(tool))
     end

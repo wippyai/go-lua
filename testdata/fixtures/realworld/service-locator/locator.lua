@@ -2,15 +2,15 @@ local logger = require("logger")
 local cache = require("cache")
 
 type Services = {
-    logger: Logger,
-    cache: Cache,
+    logger: logger.Logger,
+    cache: cache.Cache,
 }
 
 local M = {}
 
 local _services: Services? = nil
 
-function M.init(log_level: LogLevel?): Services
+function M.init(log_level: logger.LogLevel?): Services
     local s: Services = {
         logger = logger.new(log_level),
         cache = cache.new(),
@@ -26,11 +26,11 @@ function M.get(): Services
     return _services
 end
 
-function M.logger(): Logger
+function M.logger(): logger.Logger
     return M.get().logger
 end
 
-function M.cache(): Cache
+function M.cache(): cache.Cache
     return M.get().cache
 end
 

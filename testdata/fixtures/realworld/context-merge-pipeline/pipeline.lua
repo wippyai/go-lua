@@ -2,13 +2,13 @@ local context = require("context")
 
 type Stage = {
     name: string,
-    process: (ctx: Context) -> Context,
+    process: (ctx: context.Context) -> context.Context,
 }
 
 type Pipeline = {
     _stages: {Stage},
-    add: (self: Pipeline, name: string, processor: (ctx: Context) -> Context) -> Pipeline,
-    run: (self: Pipeline, initial: Context?) -> Context,
+    add: (self: Pipeline, name: string, processor: (ctx: context.Context) -> context.Context) -> Pipeline,
+    run: (self: Pipeline, initial: context.Context?) -> context.Context,
     count: (self: Pipeline) -> number,
 }
 
@@ -17,11 +17,11 @@ local M = {}
 function M.new(): Pipeline
     local p: Pipeline = {
         _stages = {},
-        add = function(self: Pipeline, name: string, processor: (ctx: Context) -> Context): Pipeline
+        add = function(self: Pipeline, name: string, processor: (ctx: context.Context) -> context.Context): Pipeline
             table.insert(self._stages, {name = name, process = processor})
             return self
         end,
-        run = function(self: Pipeline, initial: Context?): Pipeline
+        run = function(self: Pipeline, initial: context.Context?): Pipeline
             local ctx = initial or context.empty()
             for _, stage in ipairs(self._stages) do
                 ctx = stage.process(ctx)

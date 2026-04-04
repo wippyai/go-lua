@@ -2,7 +2,7 @@ local types = require("types")
 
 local M = {}
 
-function M.process(events: {any}, callbacks: StreamCallbacks?): (StreamResult?, string?)
+function M.process(events: {any}, callbacks: types.StreamCallbacks?): (types.StreamResult?, string?)
     callbacks = callbacks or {}
 
     local on_content = callbacks.on_content
@@ -20,7 +20,7 @@ function M.process(events: {any}, callbacks: StreamCallbacks?): (StreamResult?, 
                 on_content(chunk)
             end
         elseif event.type == "tool_call" then
-            local call: ToolCall = {
+            local call: types.ToolCall = {
                 id = event.id,
                 name = event.name,
                 arguments = event.arguments or {},
@@ -30,7 +30,7 @@ function M.process(events: {any}, callbacks: StreamCallbacks?): (StreamResult?, 
                 on_tool_call(call)
             end
         elseif event.type == "error" then
-            local err: ErrorInfo = {message = event.message, code = event.code}
+            local err: types.ErrorInfo = {message = event.message, code = event.code}
             if on_error then
                 on_error(err)
             end

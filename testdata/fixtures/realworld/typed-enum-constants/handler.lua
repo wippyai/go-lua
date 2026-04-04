@@ -1,15 +1,15 @@
 local status = require("status")
 
 type Route = {
-    method: HttpMethod,
+    method: status.HttpMethod,
     path: string,
-    handler: (req: Request) -> Response,
+    handler: (req: status.Request) -> status.Response,
 }
 
 type Router = {
     _routes: {Route},
-    add: (self: Router, method: HttpMethod, path: string, handler: (req: Request) -> Response) -> Router,
-    handle: (self: Router, req: Request) -> Response,
+    add: (self: Router, method: status.HttpMethod, path: string, handler: (req: status.Request) -> status.Response) -> Router,
+    handle: (self: Router, req: status.Request) -> status.Response,
 }
 
 local M = {}
@@ -17,11 +17,11 @@ local M = {}
 function M.new(): Router
     local router: Router = {
         _routes = {},
-        add = function(self: Router, method: HttpMethod, path: string, handler: (req: Request) -> Response): Router
+        add = function(self: Router, method: status.HttpMethod, path: string, handler: (req: status.Request) -> status.Response): Router
             table.insert(self._routes, {method = method, path = path, handler = handler})
             return self
         end,
-        handle = function(self: Router, req: Request): Response
+        handle = function(self: Router, req: status.Request): status.Response
             for _, route in ipairs(self._routes) do
                 if route.method == req.method and route.path == req.path then
                     return route.handler(req)

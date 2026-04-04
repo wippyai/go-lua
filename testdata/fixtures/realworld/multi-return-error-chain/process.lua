@@ -2,7 +2,7 @@ local validate = require("validate")
 
 type ProcessResult = {
     message: string,
-    config: ValidConfig,
+    config: validate.ValidConfig,
 }
 
 local M = {}

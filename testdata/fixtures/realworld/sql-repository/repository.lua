@@ -32,7 +32,7 @@ M.table_exists_queries = {
     mysql = [[SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_name = '_migrations']],
 }
 
-function M.table_exists(database: Database): (boolean?, string?)
+function M.table_exists(database: db.Database): (boolean?, string?)
     local db_type, err = database:type()
     if err then
         return nil, "Failed to determine database type: " .. tostring(err)
@@ -51,7 +51,7 @@ function M.table_exists(database: Database): (boolean?, string?)
     return false, nil
 end
 
-function M.init(database: Database): (boolean, string?)
+function M.init(database: db.Database): (boolean, string?)
     local exists, err = M.table_exists(database)
     if err then return false, err end
     if exists then return true, nil end
@@ -66,14 +66,14 @@ function M.init(database: Database): (boolean, string?)
     return database:execute(schema)
 end
 
-function M.record(database: Database, id: string, description: string?): (boolean, string?)
+function M.record(database: db.Database, id: string, description: string?): (boolean, string?)
     return database:execute(
         "INSERT INTO _migrations (id, description) VALUES (?, ?)",
         {id, description or ""}
     )
 end
 
-function M.is_applied(database: Database, id: string): (boolean, string?)
+function M.is_applied(database: db.Database, id: string): (boolean, string?)
     local result, err = database:query(
         "SELECT id FROM _migrations WHERE id = ?",
         {id}
