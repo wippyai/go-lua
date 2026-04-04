@@ -1,4 +1,4 @@
 {
   "files": ["types.lua", "stream.lua", "main.lua"],
-  "check": {"errors": 29}
+  "check": {"errors": 6}
 }

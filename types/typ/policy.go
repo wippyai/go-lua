@@ -327,6 +327,16 @@ func JoinBranchOutcome(a, b Type) Type {
 	if (IsUnknown(a) && b.Kind() == kind.Nil) || (IsUnknown(b) && a.Kind() == kind.Nil) {
 		return NewOptional(Unknown)
 	}
+	// any on either branch dominates the merged runtime outcome.
+	if IsAny(a) || IsAny(b) {
+		return Any
+	}
+	// unknown on either non-nil branch must remain unknown. Branch outcomes are
+	// not normal preference joins; pruning soft placeholders here collapses real
+	// runtime uncertainty (for example `callbacks.on_x or function() end`).
+	if IsUnknown(a) || IsUnknown(b) {
+		return Unknown
+	}
 
 	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) && b.Kind() != kind.Nil {
 		return b

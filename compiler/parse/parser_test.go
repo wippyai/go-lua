@@ -1980,3 +1980,42 @@ func TestParseVoidReturnInRecordField(t *testing.T) {
 		})
 	}
 }
+
+func TestParseVoidReturnAllForms(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		// Parenthesized forms for optional/union wrapping
+		{name: "paren params void", input: `type T = {f: ((x: number) -> ())?}`},
+		{name: "paren empty void", input: `type T = {f: (() -> ())?}`},
+		{name: "paren params single", input: `type T = {f: ((x: number) -> string)?}`},
+		{name: "paren empty single", input: `type T = {f: (() -> string)?}`},
+		{name: "paren params multi", input: `type T = {f: ((x: number) -> (string, number))?}`},
+		{name: "paren empty multi", input: `type T = {f: (() -> (string, number))?}`},
+		{name: "paren void in union", input: `type T = ((x: number) -> ()) | nil`},
+		// fun keyword with void return
+		{name: "fun params void", input: `type T = {f: fun(x: number): ()}`},
+		{name: "fun empty void", input: `type T = {f: fun(): ()}`},
+		// fun keyword regression
+		{name: "fun params single", input: `type T = {f: fun(x: number): string}`},
+		{name: "fun empty single", input: `type T = {f: fun(): string}`},
+		{name: "fun params multi", input: `type T = {f: fun(x: number): (string, number)}`},
+		{name: "fun empty multi", input: `type T = {f: fun(): (string, number)}`},
+		{name: "fun params no return", input: `type T = {f: fun(x: number)}`},
+		{name: "fun empty no return", input: `type T = {f: fun()}`},
+		// Bare arrow forms
+		{name: "bare params void", input: `type T = {f: (x: number) -> ()}`},
+		{name: "bare empty void", input: `type T = {f: () -> ()}`},
+		{name: "bare params single", input: `type T = {f: (x: number) -> string}`},
+		{name: "bare empty single", input: `type T = {f: () -> string}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseString(tt.input, "test")
+			if err != nil {
+				t.Errorf("expected no parse error, got: %v", err)
+			}
+		})
+	}
+}

@@ -190,6 +190,34 @@ func TestLogicalOrTyped_AnyOrNil_DoesNotCollapseToNil(t *testing.T) {
 	}
 }
 
+func TestLogicalOrTyped_UnknownOrFunction_DoesNotCollapseToFunction(t *testing.T) {
+	fn := typ.Func().Returns(typ.String).Build()
+	result := LogicalOrTyped(typ.Unknown, fn)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if typ.TypeEquals(result, fn) {
+		t.Fatalf("unknown or function collapsed to function: %v", result)
+	}
+	if !typ.TypeEquals(result, typ.Unknown) {
+		t.Fatalf("unknown or function should preserve unknown, got %v", result)
+	}
+}
+
+func TestLogicalOrTyped_AnyOrFunction_DoesNotCollapseToFunction(t *testing.T) {
+	fn := typ.Func().Returns(typ.String).Build()
+	result := LogicalOrTyped(typ.Any, fn)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if typ.TypeEquals(result, fn) {
+		t.Fatalf("any or function collapsed to function: %v", result)
+	}
+	if !typ.TypeEquals(result, typ.Any) {
+		t.Fatalf("any or function should preserve any, got %v", result)
+	}
+}
+
 func TestLogicalAndTyped_UnknownAndUnknown_DoesNotCollapseToFalsy(t *testing.T) {
 	result := LogicalAndTyped(typ.Unknown, typ.Unknown)
 	if !typ.TypeEquals(result, typ.Unknown) {
