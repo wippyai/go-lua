@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/io"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Suite describes a fixture suite loaded from manifest.json.
@@ -393,9 +394,35 @@ func resolvePackageManifest(name string) *io.Manifest {
 		return testutil.ChannelManifest()
 	case "funcs":
 		return testutil.FuncsManifest()
+	case "time":
+		return fixtureTimeManifest()
 	default:
 		return nil
 	}
+}
+
+func fixtureTimeManifest() *io.Manifest {
+	m := io.NewManifest("time")
+
+	durationType := typ.NewInterface("time.Duration", []typ.Method{
+		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
+	})
+
+	timeType := typ.NewInterface("time.Time", []typ.Method{
+		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("t", typ.Self).Returns(durationType).Build()},
+		{Name: "add", Type: typ.Func().Param("self", typ.Self).Param("d", durationType).Returns(typ.Self).Build()},
+		{Name: "unix", Type: typ.Func().Param("self", typ.Self).Returns(typ.Integer).Build()},
+	})
+
+	m.DefineType("Time", timeType)
+	m.DefineType("Duration", durationType)
+
+	moduleType := typ.NewInterface("time", []typ.Method{
+		{Name: "now", Type: typ.Func().Returns(timeType).Build()},
+	})
+	m.SetExport(moduleType)
+
+	return m
 }
 
 // installRequire sets up a require() global that loads modules from the given source map.
