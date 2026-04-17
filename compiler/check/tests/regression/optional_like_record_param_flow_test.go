@@ -34,4 +34,3 @@ func TestOptionalLikeRecordParamFlow(t *testing.T) {
 		t.Fatalf("expected no errors for optional-like record param flow, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
-

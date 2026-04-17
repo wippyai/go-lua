@@ -30,4 +30,3 @@ func TestCallPredicate_FalseBranchDoesNotNegateToNil(t *testing.T) {
 		}
 	}
 }
-

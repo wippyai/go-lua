@@ -19,14 +19,14 @@ import (
 
 // Suite describes a fixture suite loaded from manifest.json.
 type fixtureSuite struct {
-	Description string             `json:"description,omitempty"`
-	Files       []string           `json:"files,omitempty"`
-	Stdlib      *bool              `json:"stdlib,omitempty"`
-	Packages    []string           `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs"
-	Check       *fixtureCheck      `json:"check,omitempty"`
-	Run         *fixtureRun        `json:"run,omitempty"`
-	Bench       *fixtureBench      `json:"bench,omitempty"`
-	Skip        string             `json:"skip,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Files       []string      `json:"files,omitempty"`
+	Stdlib      *bool         `json:"stdlib,omitempty"`
+	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs"
+	Check       *fixtureCheck `json:"check,omitempty"`
+	Run         *fixtureRun   `json:"run,omitempty"`
+	Bench       *fixtureBench `json:"bench,omitempty"`
+	Skip        string        `json:"skip,omitempty"`
 }
 
 type fixtureCheck struct {

@@ -44,18 +44,18 @@ const maxTypeDepth = 64
 //
 // Thread safety: Resolver is stateless and safe for concurrent use.
 type Resolver struct {
-	manifests io.ManifestQuerier
-	exprSynth api.ExprSynth
-	bindings  core.ParamSymbolLookup
+	manifests      io.ManifestQuerier
+	exprSynth      api.ExprSynth
+	bindings       core.ParamSymbolLookup
 	moduleBindings *bind.BindingTable
 	moduleAliases  map[typecfg.SymbolID]string
 }
 
 // Config configures a Resolver.
 type Config struct {
-	Manifests io.ManifestQuerier
-	ExprSynth api.ExprSynth
-	Bindings  core.ParamSymbolLookup
+	Manifests      io.ManifestQuerier
+	ExprSynth      api.ExprSynth
+	Bindings       core.ParamSymbolLookup
 	ModuleBindings *bind.BindingTable
 	ModuleAliases  map[typecfg.SymbolID]string
 }

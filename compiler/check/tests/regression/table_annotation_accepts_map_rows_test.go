@@ -31,4 +31,3 @@ func TestRegression_TableAnnotationAcceptsMapRow(t *testing.T) {
 		t.Fatalf("expected no errors for table? return from map row, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
-

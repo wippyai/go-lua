@@ -37,4 +37,3 @@ func TestDynamicIndexTableLiteralPreservesTypeGuardedField(t *testing.T) {
 		t.Fatalf("expected no errors for type-guarded field in dynamic-index table literal, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
-

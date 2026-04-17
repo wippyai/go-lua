@@ -653,7 +653,7 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 			return CallResult{
 				Type:    typ.Unknown,
 				Returns: []typ.Type{typ.Unknown},
-				Errors: append(baseErrors, CallError{Kind: ErrNotCallable, Message: fmt.Sprintf("intersection member is not callable: %s", typ.FormatShort(member))}),
+				Errors:  append(baseErrors, CallError{Kind: ErrNotCallable, Message: fmt.Sprintf("intersection member is not callable: %s", typ.FormatShort(member))}),
 			}
 		}
 

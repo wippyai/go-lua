@@ -1,8 +1,8 @@
 package assign
 
 import (
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"

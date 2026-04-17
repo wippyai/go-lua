@@ -77,4 +77,3 @@ return run
 		t.Fatalf("expected no errors across module boundary, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
-

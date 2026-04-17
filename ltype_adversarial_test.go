@@ -387,8 +387,8 @@ func TestAdversarial_TableWithBothArrayAndDict(t *testing.T) {
 	// A table that has BOTH array entries and string keys
 	// This is valid Lua — tables can be mixed
 	mixed := L.NewTable()
-	mixed.Append(LNumber(1))          // Array[0] = 1
-	mixed.Append(LNumber(2))          // Array[1] = 2
+	mixed.Append(LNumber(1))                    // Array[0] = 1
+	mixed.Append(LNumber(2))                    // Array[1] = 2
 	mixed.RawSetString("name", LString("test")) // Strdict["name"] = "test"
 
 	// Record should see "name" field

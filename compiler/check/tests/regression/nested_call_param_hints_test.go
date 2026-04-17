@@ -39,4 +39,3 @@ func TestNestedCall_ParamHintsFlowIntoLocalHelper(t *testing.T) {
 		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
-

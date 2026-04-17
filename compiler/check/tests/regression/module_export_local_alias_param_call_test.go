@@ -117,4 +117,3 @@ return ok
 		t.Fatalf("expected no errors for inferred local alias call, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
-

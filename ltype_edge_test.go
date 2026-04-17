@@ -707,11 +707,11 @@ func TestErrorMessages_ExpectedVsGot(t *testing.T) {
 	defer L.Close()
 
 	tests := []struct {
-		name         string
-		typ          *LType
-		value        LValue
-		expectInErr  string
-		rejectInErr  string
+		name        string
+		typ         *LType
+		value       LValue
+		expectInErr string
+		rejectInErr string
 	}{
 		{
 			"number rejects string",

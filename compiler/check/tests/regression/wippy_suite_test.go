@@ -153,4 +153,3 @@ func TestRegistryTypeLoss(t *testing.T) {
 		})
 	}
 }
-

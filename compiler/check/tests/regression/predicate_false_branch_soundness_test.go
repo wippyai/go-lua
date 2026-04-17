@@ -44,4 +44,3 @@ func TestPredicateFalseBranch_DoesNotCollapseUnknownToNil(t *testing.T) {
 		}
 	}
 }
-

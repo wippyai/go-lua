@@ -17,4 +17,3 @@ func canonicalDynamicKeyType(keyType typ.Type) typ.Type {
 	}
 	return subtype.Widen(keyType)
 }
-

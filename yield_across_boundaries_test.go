@@ -241,8 +241,8 @@ func TestYieldFromForInIterator_MultipleReturnValues(t *testing.T) {
 	co := L.NewThreadWithContext(context.TODO())
 	fn := L.GetGlobal("test").(*LFunction)
 
-	expectYield(t, L, co, fn)                   // fetch:a
-	expectYield(t, L, co, fn)                   // fetch:b
+	expectYield(t, L, co, fn) // fetch:a
+	expectYield(t, L, co, fn) // fetch:b
 	results := expectDone(t, L, co, fn)
 	if results[0].String() != "a=1,b=2" {
 		t.Errorf("Expected 'a=1,b=2', got %v", results[0])
