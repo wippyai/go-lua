@@ -98,8 +98,11 @@ func (s *Solution) initSymbolTypes(src symbolTypeSource) {
 }
 
 func (s *Solution) setValue(key string, t typ.Type) {
-	if s == nil || s.values == nil || key == "" {
+	if s == nil || key == "" {
 		return
+	}
+	if s.values == nil {
+		s.values = make(map[string]typ.Type, 1)
 	}
 	s.values[key] = t
 	if s.fieldOverlayCache == nil {

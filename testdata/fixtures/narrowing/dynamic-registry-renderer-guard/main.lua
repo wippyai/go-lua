@@ -9,8 +9,8 @@ local function get_page_data(page)
         return {}, nil
     end
 
-    local name: string = page.data_func -- expect-error: cannot assign string | true to string
-    takes_string(page.data_func) -- expect-error: argument 1: expected string, got string | true
+    local name: string = page.data_func
+    takes_string(page.data_func)
     return {}, nil
 end
 
@@ -19,4 +19,4 @@ local page = page_registry.build_page({
     data = { data_func = "load_data" },
 })
 
-return get_page_data(page) -- expect-error: expected {data_func?: boolean | string
+return get_page_data(page)

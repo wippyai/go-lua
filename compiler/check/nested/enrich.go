@@ -19,20 +19,20 @@ import (
 // (with inferred refinements and return types) may be more precise than the initially
 // synthesized type. These utilities replace placeholder types with literal sigs.
 
-// EnrichTableTypeWithFuncTypes replaces method function types in a record
-// with canonical function types derived from the interproc queries.
+// EnrichTableTypeWithFunctionLookup replaces method function types in a record
+// with function types resolved by symbol.
 //
 // For table literals with method fields, the initially synthesized record may
 // have function types without inferred return types. After analyzing the methods,
 // canonical function types are available per symbol. This function updates the
 // record with those more precise signatures.
-func EnrichTableTypeWithFuncTypes(
+func EnrichTableTypeWithFunctionLookup(
 	rec *typ.Record,
 	tableExpr *ast.TableExpr,
 	graph *cfg.Graph,
-	funcTypes map[cfg.SymbolID]typ.Type,
+	lookup func(cfg.SymbolID) typ.Type,
 ) typ.Type {
-	if rec == nil || tableExpr == nil || graph == nil || len(funcTypes) == 0 {
+	if rec == nil || tableExpr == nil || graph == nil || lookup == nil {
 		return rec
 	}
 
@@ -60,7 +60,7 @@ func EnrichTableTypeWithFuncTypes(
 			}
 			if bindings != nil {
 				if sym, ok := bindings.FuncLitSymbol(fnExpr); ok {
-					if t := funcTypes[sym]; t != nil {
+					if t := lookup(sym); t != nil {
 						fieldType = t
 						modified = true
 					}

@@ -83,12 +83,7 @@ var (
 
 // NewState creates an empty (top) numeric state.
 func NewState() *State {
-	return &State{
-		bounds:    make(map[constraint.PathKey]Interval),
-		modular:   make(map[constraint.PathKey]ModResidue),
-		relations: make(map[relationKey]int64),
-		lenRefs:   make(map[constraint.PathKey]lenRefBound),
-	}
+	return &State{}
 }
 
 // Bottom returns the unsatisfiable state (bottom of the lattice).
@@ -122,26 +117,33 @@ func (s *State) Clone() *State {
 		return Bottom()
 	}
 
-	c := &State{
-		bounds:    make(map[constraint.PathKey]Interval, len(s.bounds)),
-		modular:   make(map[constraint.PathKey]ModResidue, len(s.modular)),
-		relations: make(map[relationKey]int64, len(s.relations)),
-		lenRefs:   make(map[constraint.PathKey]lenRefBound, len(s.lenRefs)),
-	}
-	for _, k := range constraint.SortedPathKeys(s.bounds) {
-		c.bounds[k] = s.bounds[k]
+	c := &State{}
+	if len(s.bounds) > 0 {
+		c.bounds = make(map[constraint.PathKey]Interval, len(s.bounds))
+		for k, v := range s.bounds {
+			c.bounds[k] = v
+		}
 	}
 
-	for _, k := range constraint.SortedPathKeys(s.modular) {
-		c.modular[k] = s.modular[k]
+	if len(s.modular) > 0 {
+		c.modular = make(map[constraint.PathKey]ModResidue, len(s.modular))
+		for k, v := range s.modular {
+			c.modular[k] = v
+		}
 	}
 
-	for _, k := range sortedRelationKeys(s.relations) {
-		c.relations[k] = s.relations[k]
+	if len(s.relations) > 0 {
+		c.relations = make(map[relationKey]int64, len(s.relations))
+		for k, v := range s.relations {
+			c.relations[k] = v
+		}
 	}
 
-	for _, k := range constraint.SortedPathKeys(s.lenRefs) {
-		c.lenRefs[k] = s.lenRefs[k]
+	if len(s.lenRefs) > 0 {
+		c.lenRefs = make(map[constraint.PathKey]lenRefBound, len(s.lenRefs))
+		for k, v := range s.lenRefs {
+			c.lenRefs[k] = v
+		}
 	}
 
 	return c
@@ -179,11 +181,10 @@ func Join(a, b *State) *State {
 		return a.Clone()
 	}
 
-	result := NewState()
+	result := &State{}
 
 	// Bounds: keep only variables in both, intersect intervals.
-	for _, v := range constraint.SortedPathKeys(a.bounds) {
-		ai := a.bounds[v]
+	for v, ai := range a.bounds {
 		if bi, ok := b.bounds[v]; ok {
 			merged := intersectIntervals(ai, bi)
 			if merged.Lower > merged.Upper {
@@ -191,33 +192,42 @@ func Join(a, b *State) *State {
 			}
 
 			if merged != unboundedInterval {
+				if result.bounds == nil {
+					result.bounds = make(map[constraint.PathKey]Interval, minMapLen(len(a.bounds), len(b.bounds)))
+				}
 				result.bounds[v] = merged
 			}
 		}
 	}
 
 	// Modular: keep only if identical in both.
-	for _, v := range constraint.SortedPathKeys(a.modular) {
-		am := a.modular[v]
+	for v, am := range a.modular {
 		if bm, ok := b.modular[v]; ok {
 			if am.Modulus == bm.Modulus && am.Residue == bm.Residue {
+				if result.modular == nil {
+					result.modular = make(map[constraint.PathKey]ModResidue, minMapLen(len(a.modular), len(b.modular)))
+				}
 				result.modular[v] = am
 			}
 		}
 	}
 
 	// Relations: keep only if present in both, take maximum (loosest bound).
-	for _, k := range sortedRelationKeys(a.relations) {
-		av := a.relations[k]
+	for k, av := range a.relations {
 		if bv, ok := b.relations[k]; ok {
+			if result.relations == nil {
+				result.relations = make(map[relationKey]int64, minMapLen(len(a.relations), len(b.relations)))
+			}
 			result.relations[k] = maxInt64(av, bv)
 		}
 	}
 
 	// LenRefs: keep only if identical in both.
-	for _, v := range constraint.SortedPathKeys(a.lenRefs) {
-		ref := a.lenRefs[v]
+	for v, ref := range a.lenRefs {
 		if bref, ok := b.lenRefs[v]; ok && ref == bref {
+			if result.lenRefs == nil {
+				result.lenRefs = make(map[constraint.PathKey]lenRefBound, minMapLen(len(a.lenRefs), len(b.lenRefs)))
+			}
 			result.lenRefs[v] = ref
 		}
 	}
@@ -240,6 +250,37 @@ func intersectIntervals(a, b Interval) Interval {
 	return Interval{
 		Lower: maxInt64(a.Lower, b.Lower),
 		Upper: minInt64(a.Upper, b.Upper),
+	}
+}
+
+func minMapLen(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func (s *State) ensureBounds(capacity int) {
+	if s.bounds == nil {
+		s.bounds = make(map[constraint.PathKey]Interval, capacity)
+	}
+}
+
+func (s *State) ensureModular(capacity int) {
+	if s.modular == nil {
+		s.modular = make(map[constraint.PathKey]ModResidue, capacity)
+	}
+}
+
+func (s *State) ensureRelations(capacity int) {
+	if s.relations == nil {
+		s.relations = make(map[relationKey]int64, capacity)
+	}
+}
+
+func (s *State) ensureLenRefs(capacity int) {
+	if s.lenRefs == nil {
+		s.lenRefs = make(map[constraint.PathKey]lenRefBound, capacity)
 	}
 }
 
@@ -350,6 +391,7 @@ func (s *State) applyLe(x, y constraint.PathKey) {
 
 func (s *State) applyLeWithConst(x, y constraint.PathKey, c int64) {
 	// x - y <= c
+	s.ensureRelations(1)
 	key := relationKey{X: x, Y: y}
 	if old, ok := s.relations[key]; ok {
 		s.relations[key] = minInt64(old, c)
@@ -364,6 +406,7 @@ func (s *State) ApplyLt(x, y constraint.PathKey) {
 
 func (s *State) applyLt(x, y constraint.PathKey) {
 	// x < y  =>  x - y <= -1
+	s.ensureRelations(1)
 	key := relationKey{X: x, Y: y}
 	if old, ok := s.relations[key]; ok {
 		s.relations[key] = minInt64(old, -1)
@@ -382,6 +425,7 @@ func (s *State) ApplyGe(x, y constraint.PathKey) {
 
 func (s *State) applyGe(x, y constraint.PathKey) {
 	// x >= y  =>  y - x <= 0
+	s.ensureRelations(1)
 	key := relationKey{X: y, Y: x}
 	if old, ok := s.relations[key]; ok {
 		s.relations[key] = minInt64(old, 0)
@@ -396,6 +440,7 @@ func (s *State) ApplyGt(x, y constraint.PathKey) {
 
 func (s *State) applyGt(x, y constraint.PathKey) {
 	// x > y  =>  y - x <= -1
+	s.ensureRelations(1)
 	key := relationKey{X: y, Y: x}
 	if old, ok := s.relations[key]; ok {
 		s.relations[key] = minInt64(old, -1)
@@ -419,6 +464,7 @@ func (s *State) ApplyEqConst(v constraint.PathKey, c int64) {
 }
 
 func (s *State) applyEqConst(v constraint.PathKey, c int64) {
+	s.ensureBounds(1)
 	s.bounds[v] = Interval{Lower: c, Upper: c}
 }
 
@@ -427,6 +473,7 @@ func (s *State) ApplyLeConst(v constraint.PathKey, c int64) {
 }
 
 func (s *State) applyLeConst(v constraint.PathKey, c int64) {
+	s.ensureBounds(1)
 	if b, ok := s.bounds[v]; ok {
 		b.Upper = minInt64(b.Upper, c)
 		if b.Lower > b.Upper {
@@ -444,6 +491,7 @@ func (s *State) ApplyGeConst(v constraint.PathKey, c int64) {
 }
 
 func (s *State) applyGeConst(v constraint.PathKey, c int64) {
+	s.ensureBounds(1)
 	if b, ok := s.bounds[v]; ok {
 		b.Lower = maxInt64(b.Lower, c)
 		if b.Lower > b.Upper {
@@ -461,6 +509,7 @@ func (s *State) ApplyModEq(v constraint.PathKey, m, r int64) {
 }
 
 func (s *State) applyModEq(v constraint.PathKey, m, r int64) {
+	s.ensureModular(1)
 	if existing, ok := s.modular[v]; ok {
 		if existing.Modulus != m || existing.Residue != r {
 			s.unsat = true
@@ -479,6 +528,7 @@ func (s *State) ApplyLeLenOfWithOffset(v, arr constraint.PathKey, offset int64) 
 }
 
 func (s *State) applyLeLenOf(v, arr constraint.PathKey, offset int64) {
+	s.ensureLenRefs(1)
 	s.lenRefs[v] = lenRefBound{Array: arr, Offset: offset}
 }
 
@@ -566,16 +616,17 @@ func (s *State) checkDifferenceConstraints() bool {
 		return true
 	}
 
-	// Collect variables.
-	vars := make(map[constraint.PathKey]bool)
+	relKeys := sortedRelationKeys(s.relations)
 
-	for _, k := range sortedRelationKeys(s.relations) {
-		vars[k.X] = true
-		vars[k.Y] = true
+	// Collect variables.
+	vars := make(map[constraint.PathKey]struct{}, len(s.relations)*2)
+	for _, k := range relKeys {
+		vars[k.X] = struct{}{}
+		vars[k.Y] = struct{}{}
 	}
 
 	// Initialize distances from virtual source.
-	dist := make(map[constraint.PathKey]int64)
+	dist := make(map[constraint.PathKey]int64, len(vars))
 	for _, v := range constraint.SortedPathKeys(vars) {
 		dist[v] = 0
 	}
@@ -585,7 +636,7 @@ func (s *State) checkDifferenceConstraints() bool {
 	for i := 0; i < n; i++ {
 		changed := false
 
-		for _, k := range sortedRelationKeys(s.relations) {
+		for _, k := range relKeys {
 			w := s.relations[k]
 			// x - y <= w  =>  dist[x] <= dist[y] + w
 			if dist[k.Y]+w < dist[k.X] {
@@ -600,7 +651,7 @@ func (s *State) checkDifferenceConstraints() bool {
 	}
 
 	// Check for negative cycle (one more iteration).
-	for _, k := range sortedRelationKeys(s.relations) {
+	for _, k := range relKeys {
 		w := s.relations[k]
 		if dist[k.Y]+w < dist[k.X] {
 			return false
@@ -742,10 +793,11 @@ func (s *State) Relations() map[constraint.PathKey]map[constraint.PathKey]int64 
 	}
 	result := make(map[constraint.PathKey]map[constraint.PathKey]int64)
 	for _, rel := range sortedRelationKeys(s.relations) {
+		c := s.relations[rel]
 		if result[rel.X] == nil {
 			result[rel.X] = make(map[constraint.PathKey]int64)
 		}
-		result[rel.X][rel.Y] = s.relations[rel]
+		result[rel.X][rel.Y] = c
 	}
 	return result
 }
@@ -785,12 +837,22 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 	if s.unsat {
 		return Bottom()
 	}
+	if s.isTop() {
+		return s
+	}
 
-	result := &State{
-		bounds:    make(map[constraint.PathKey]Interval, len(s.bounds)),
-		modular:   make(map[constraint.PathKey]ModResidue, len(s.modular)),
-		relations: make(map[relationKey]int64, len(s.relations)),
-		lenRefs:   make(map[constraint.PathKey]lenRefBound, len(s.lenRefs)),
+	result := &State{}
+	if len(s.bounds) > 0 {
+		result.bounds = make(map[constraint.PathKey]Interval, len(s.bounds))
+	}
+	if len(s.modular) > 0 {
+		result.modular = make(map[constraint.PathKey]ModResidue, len(s.modular))
+	}
+	if len(s.relations) > 0 {
+		result.relations = make(map[relationKey]int64, len(s.relations))
+	}
+	if len(s.lenRefs) > 0 {
+		result.lenRefs = make(map[constraint.PathKey]lenRefBound, len(s.lenRefs))
 	}
 
 	// Remap bounds
@@ -799,6 +861,12 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 		newKey := k
 		if mapped, ok := remap[k]; ok {
 			newKey = mapped
+		}
+		if existing, ok := result.bounds[newKey]; ok {
+			v = intersectIntervals(existing, v)
+			if v.Lower > v.Upper {
+				return Bottom()
+			}
 		}
 		result.bounds[newKey] = v
 	}
@@ -809,6 +877,9 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 		newKey := k
 		if mapped, ok := remap[k]; ok {
 			newKey = mapped
+		}
+		if existing, ok := result.modular[newKey]; ok && existing != v {
+			return Bottom()
 		}
 		result.modular[newKey] = v
 	}
@@ -824,7 +895,11 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 		if mapped, ok := remap[rel.Y]; ok {
 			newY = mapped
 		}
-		result.relations[relationKey{X: newX, Y: newY}] = c
+		newRel := relationKey{X: newX, Y: newY}
+		if existing, ok := result.relations[newRel]; ok {
+			c = minInt64(existing, c)
+		}
+		result.relations[newRel] = c
 	}
 
 	// Remap length references (both variable and array keys)
@@ -839,6 +914,10 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 			newArr = mapped
 		}
 		ref.Array = newArr
+		if existing, ok := result.lenRefs[newK]; ok && existing != ref {
+			delete(result.lenRefs, newK)
+			continue
+		}
 		result.lenRefs[newK] = ref
 	}
 

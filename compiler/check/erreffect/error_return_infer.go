@@ -13,6 +13,62 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
+// ErrorReturnConvention describes a return layout where one slot carries the
+// success value and another carries the error. ReturnCount is exact: a function
+// with extra returned values is not inferred as this convention.
+type ErrorReturnConvention struct {
+	ValueIndex  int
+	ErrorIndex  int
+	ReturnCount int
+}
+
+// CanonicalLuaValueErrorConvention returns the canonical Lua `(value, err)` layout.
+func CanonicalLuaValueErrorConvention() ErrorReturnConvention {
+	return ErrorReturnConvention{
+		ValueIndex:  0,
+		ErrorIndex:  1,
+		ReturnCount: 2,
+	}
+}
+
+func (c ErrorReturnConvention) valid() bool {
+	return c.ValueIndex >= 0 &&
+		c.ErrorIndex >= 0 &&
+		c.ValueIndex != c.ErrorIndex &&
+		c.ValueIndex < c.ReturnCount &&
+		c.ErrorIndex < c.ReturnCount
+}
+
+// CanClassifyReturns reports whether returnTypes has the exact shape required
+// by this convention before the expensive per-return inverse-pattern proof runs.
+func (c ErrorReturnConvention) CanClassifyReturns(returnTypes []typ.Type) bool {
+	return c.valid() && len(returnTypes) == c.ReturnCount
+}
+
+func (c ErrorReturnConvention) canClassifyFunction(fn *typ.Function) bool {
+	return fn != nil && c.CanClassifyReturns(fn.Returns)
+}
+
+// HasStrictInversePattern proves this convention from the function body.
+func (c ErrorReturnConvention) HasStrictInversePattern(
+	graph *cfg.Graph,
+	solution *flow.Solution,
+	synth api.BaseSynth,
+) bool {
+	if !c.valid() {
+		return false
+	}
+	return HasStrictInverseReturnPattern(graph, solution, synth, c.ValueIndex, c.ErrorIndex)
+}
+
+// Attach enriches fn with this convention's ErrorReturn effect.
+func (c ErrorReturnConvention) Attach(fn *typ.Function) *typ.Function {
+	if !c.valid() {
+		return fn
+	}
+	return AttachErrorReturnSpec(fn, c.ValueIndex, c.ErrorIndex)
+}
+
 // AttachInferredErrorReturnSpec enriches function types with a canonical
 // ErrorReturn effect when the function body proves the `(value, err)` pattern.
 func AttachInferredErrorReturnSpec(
@@ -21,7 +77,8 @@ func AttachInferredErrorReturnSpec(
 	solution *flow.Solution,
 	synth api.Synth,
 ) *typ.Function {
-	if fn == nil || graph == nil || synth == nil || len(fn.Returns) != 2 {
+	convention := CanonicalLuaValueErrorConvention()
+	if graph == nil || synth == nil || !convention.canClassifyFunction(fn) {
 		return fn
 	}
 	if HasErrorReturnLabel(fn) {
@@ -31,11 +88,11 @@ func AttachInferredErrorReturnSpec(
 	if base == nil {
 		base = synth
 	}
-	if !HasStrictInverseReturnPattern(graph, solution, base, 0, 1) {
+	if !convention.HasStrictInversePattern(graph, solution, base) {
 		return fn
 	}
 
-	return AttachErrorReturnSpec(fn, 0, 1)
+	return convention.Attach(fn)
 }
 
 func HasErrorReturnLabel(fn *typ.Function) bool {

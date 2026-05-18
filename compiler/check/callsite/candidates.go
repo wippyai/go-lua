@@ -66,6 +66,61 @@ func (s *symbolSet) Slice() []cfg.SymbolID {
 	return s.order
 }
 
+type symbolDeduper struct {
+	small [symbolSetMapThreshold]cfg.SymbolID
+	count int
+	seen  map[cfg.SymbolID]struct{}
+}
+
+func (d *symbolDeduper) Add(sym cfg.SymbolID) bool {
+	if sym == 0 {
+		return false
+	}
+	if d.seen != nil {
+		if _, ok := d.seen[sym]; ok {
+			return false
+		}
+		d.seen[sym] = struct{}{}
+		return true
+	}
+	for i := 0; i < d.count; i++ {
+		if d.small[i] == sym {
+			return false
+		}
+	}
+	if d.count < len(d.small) {
+		d.small[d.count] = sym
+		d.count++
+		return true
+	}
+	d.seen = make(map[cfg.SymbolID]struct{}, len(d.small)+1)
+	for i := 0; i < d.count; i++ {
+		d.seen[d.small[i]] = struct{}{}
+	}
+	d.seen[sym] = struct{}{}
+	return true
+}
+
+type preferredSymbolSelector struct {
+	prefer   func(cfg.SymbolID) bool
+	selected cfg.SymbolID
+	seen     symbolDeduper
+}
+
+func (s *preferredSymbolSelector) Add(sym cfg.SymbolID) bool {
+	if !s.seen.Add(sym) {
+		return false
+	}
+	if s.selected == 0 {
+		s.selected = sym
+	}
+	if s.prefer != nil && s.prefer(sym) {
+		s.selected = sym
+		return true
+	}
+	return false
+}
+
 // SelectPreferredSymbol returns the first candidate and, if prefer is non-nil, returns
 // the first candidate that satisfies the predicate.
 func SelectPreferredSymbol(candidates []cfg.SymbolID, prefer func(cfg.SymbolID) bool) cfg.SymbolID {
@@ -81,14 +136,77 @@ func SelectPreferredSymbol(candidates []cfg.SymbolID, prefer func(cfg.SymbolID) 
 	return selected
 }
 
+func visitExprSymbolCandidates(
+	expr ast.Expr,
+	raw cfg.SymbolID,
+	primary *bind.BindingTable,
+	fallback *bind.BindingTable,
+	visit func(cfg.SymbolID) bool,
+) bool {
+	if visit == nil {
+		return false
+	}
+	if visit(raw) {
+		return true
+	}
+	if visit(SymbolFromExpr(expr, primary)) {
+		return true
+	}
+	if fallback != primary {
+		return visit(SymbolFromExpr(expr, fallback))
+	}
+	return false
+}
+
+func addExprSymbolCandidates(
+	set *symbolSet,
+	expr ast.Expr,
+	raw cfg.SymbolID,
+	primary *bind.BindingTable,
+	fallback *bind.BindingTable,
+) {
+	if set == nil {
+		return
+	}
+	visitExprSymbolCandidates(expr, raw, primary, fallback, func(sym cfg.SymbolID) bool {
+		set.Add(sym)
+		return false
+	})
+}
+
 func addAliasExpansion(set *symbolSet, graph *cfg.Graph, sym cfg.SymbolID) {
 	if set == nil || graph == nil || sym == 0 {
 		return
 	}
-	graph.EachAliasSymbol(sym, func(candidate cfg.SymbolID) bool {
+	visitAliasExpansion(graph, sym, func(candidate cfg.SymbolID) bool {
 		set.Add(candidate)
 		return false
 	})
+}
+
+func visitAliasExpansion(graph *cfg.Graph, sym cfg.SymbolID, visit func(cfg.SymbolID) bool) bool {
+	if sym == 0 || visit == nil {
+		return false
+	}
+	if graph == nil {
+		return visit(sym)
+	}
+	var chain symbolDeduper
+	current := sym
+	for current != 0 {
+		if !chain.Add(current) {
+			return false
+		}
+		if visit(current) {
+			return true
+		}
+		next := graph.DirectAliasSymbol(current)
+		if next == 0 || next == current {
+			return false
+		}
+		current = next
+	}
+	return false
 }
 
 func expandAliasCandidates(base []cfg.SymbolID, graph *cfg.Graph) []cfg.SymbolID {
@@ -113,10 +231,6 @@ func exprSymbolCandidates(
 	fallback *bind.BindingTable,
 ) []cfg.SymbolID {
 	set := newSymbolSet(3)
-	set.Add(raw)
-	set.Add(SymbolFromExpr(expr, primary))
-	if fallback != primary {
-		set.Add(SymbolFromExpr(expr, fallback))
-	}
+	addExprSymbolCandidates(set, expr, raw, primary, fallback)
 	return set.Slice()
 }

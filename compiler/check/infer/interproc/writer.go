@@ -9,7 +9,7 @@ import (
 )
 
 type factsWriteStore interface {
-	UpdateInterprocFactsNext(key api.GraphKey, update func(*api.Facts))
+	MergeInterprocFactsNext(key api.GraphKey, delta api.Facts)
 	StoreLiteralSigs(graphID uint64, sigs map[*ast.FunctionExpr]*typ.Function)
 	GraphKeyFor(graph *cfg.Graph, parent *scope.State) (api.GraphKey, bool)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
@@ -23,15 +23,15 @@ func newInterprocFactWriter(store factsWriteStore) interprocFactWriter {
 	return interprocFactWriter{store: store}
 }
 
-func (w interprocFactWriter) updateParentFactsForSymbol(sym cfg.SymbolID, update func(*api.Facts)) bool {
-	if w.store == nil || sym == 0 || update == nil {
+func (w interprocFactWriter) mergeParentFactsForSymbol(sym cfg.SymbolID, delta api.Facts) bool {
+	if w.store == nil || sym == 0 {
 		return false
 	}
 	parentKey, ok := w.store.ParentGraphKeyForSymbol(sym)
 	if !ok {
 		return false
 	}
-	w.store.UpdateInterprocFactsNext(parentKey, update)
+	w.store.MergeInterprocFactsNext(parentKey, delta)
 	return true
 }
 
@@ -45,15 +45,14 @@ func (w interprocFactWriter) writeLiteralSignatures(
 	}
 	w.store.StoreLiteralSigs(graph.ID(), sigs)
 	if key, ok := w.store.GraphKeyFor(graph, parent); ok {
-		w.store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
-			if facts.LiteralSigs == nil {
-				facts.LiteralSigs = make(api.LiteralSigs, len(sigs))
+		delta := api.LiteralSigs{}
+		for fnExpr, sig := range sigs {
+			if fnExpr != nil && sig != nil {
+				delta[fnExpr] = sig
 			}
-			for fnExpr, sig := range sigs {
-				if fnExpr != nil && sig != nil {
-					facts.LiteralSigs[fnExpr] = sig
-				}
-			}
-		})
+		}
+		if len(delta) > 0 {
+			w.store.MergeInterprocFactsNext(key, api.Facts{LiteralSigs: delta})
+		}
 	}
 }

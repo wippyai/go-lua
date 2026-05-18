@@ -19,9 +19,10 @@ import (
 )
 
 func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.SymbolID]typ.Type {
-	overlay := make(map[cfg.SymbolID]typ.Type)
 	fnGraph := ctx.info.Graph
-	for _, slot := range fnGraph.ParamSlotsReadOnly() {
+	paramSlots := fnGraph.ParamSlotsReadOnly()
+	overlay := make(map[cfg.SymbolID]typ.Type, overlaySymbolCapacity(fnGraph, len(paramSlots)))
+	for _, slot := range paramSlots {
 		if slot.Symbol == 0 {
 			continue
 		}
@@ -66,7 +67,18 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 	return overlay
 }
 
-// enrichOverlayWithSiblings adds sibling function types to the overlay using summaries.
+func overlaySymbolCapacity(fnGraph *cfg.Graph, floor int) int {
+	if fnGraph == nil {
+		return floor
+	}
+	if count := fnGraph.SymbolCount(); count > floor {
+		return count
+	}
+	return floor
+}
+
+// enrichOverlayWithSiblings adds sibling function types from the current
+// return-vector state.
 func (i *Inferencer) enrichOverlayWithSiblings(
 	ctx *returnInferenceContext,
 	overlay map[cfg.SymbolID]typ.Type,
@@ -82,9 +94,9 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 		}
 	}
 	siblingOverlay := siblings.BuildOverlay(siblings.OverlayConfig{
-		Summaries:  ctx.summaries,
-		Siblings:   siblingEntries,
-		CurrentSym: ctx.info.Sym,
+		ReturnVectors: ctx.returnVectors,
+		Siblings:      siblingEntries,
+		CurrentSym:    ctx.info.Sym,
 		Services: siblings.OverlayServicesFuncs{
 			SeedTypeFn: func(fn *ast.FunctionExpr) typ.Type {
 				var bindings interface {
@@ -105,26 +117,26 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 	}
 }
 
-// collectAllReturnSummaries normalizes the current local summary map.
-func (i *Inferencer) collectAllReturnSummaries(ctx *returnInferenceContext) map[cfg.SymbolID][]typ.Type {
-	if ctx == nil || len(ctx.summaries) == 0 {
+// collectAllReturnVectors normalizes the current local return-vector map.
+func (i *Inferencer) collectAllReturnVectors(ctx *returnInferenceContext) map[cfg.SymbolID][]typ.Type {
+	if ctx == nil || len(ctx.returnVectors) == 0 {
 		return nil
 	}
-	allSummaries := make(map[cfg.SymbolID][]typ.Type, len(ctx.summaries))
-	for _, sym := range cfg.SortedSymbolIDs(ctx.summaries) {
+	allReturnVectors := make(map[cfg.SymbolID][]typ.Type, len(ctx.returnVectors))
+	for _, sym := range cfg.SortedSymbolIDs(ctx.returnVectors) {
 		if sym == 0 {
 			continue
 		}
-		normalized := returns.NormalizeReturnVector(ctx.summaries[sym])
+		normalized := returns.NormalizeReturnVectorInPlace(ctx.returnVectors[sym])
 		if len(normalized) == 0 {
 			continue
 		}
-		allSummaries[sym] = normalized
+		allReturnVectors[sym] = normalized
 	}
-	return allSummaries
+	return allReturnVectors
 }
 
-func (i *Inferencer) summaryFromSnapshot(
+func (i *Inferencer) returnVectorFromSnapshot(
 	graph *cfg.Graph,
 	parentScope *scope.State,
 	sym cfg.SymbolID,
@@ -132,67 +144,67 @@ func (i *Inferencer) summaryFromSnapshot(
 	if i == nil || i.store == nil || graph == nil || parentScope == nil || sym == 0 {
 		return nil
 	}
-	snap := i.store.GetReturnSummariesSnapshot(graph, parentScope)
-	if len(snap) == 0 {
+	facts := i.store.GetFunctionFactsSnapshot(graph, parentScope)
+	if len(facts) == 0 {
 		return nil
 	}
-	normalized := returns.NormalizeReturnVector(snap[sym])
+	normalized := returns.NormalizeReturnVector(facts.Summary(sym))
 	if len(normalized) == 0 {
 		return nil
 	}
 	return normalized
 }
 
-func (i *Inferencer) resolveLocalFunctionSummary(
+func (i *Inferencer) resolveLocalFunctionReturns(
 	ctx *returnInferenceContext,
-	allSummaries map[cfg.SymbolID][]typ.Type,
+	allReturnVectors map[cfg.SymbolID][]typ.Type,
 	sym cfg.SymbolID,
 ) []typ.Type {
 	if sym == 0 {
 		return nil
 	}
 
-	// Keep the current SCC-derived summary unless it is still unknown-only.
-	summary := returns.NormalizeReturnVector(allSummaries[sym])
-	if !typ.IsUnknownOnlyOrEmpty(summary) {
-		return summary
+	// Keep the current SCC-derived return vector unless it is still unknown-only.
+	returnVector := returns.NormalizeReturnVectorInPlace(allReturnVectors[sym])
+	if !typ.IsUnknownOnlyOrEmpty(returnVector) {
+		return returnVector
 	}
 
 	if ctx == nil || i == nil || i.store == nil {
-		return summary
+		return returnVector
 	}
 
-	// First fallback: current graph snapshot under the current resolve scope.
+	// Snapshot recovery path: current graph under the current resolve scope.
 	if ctx.info != nil && ctx.info.Graph != nil && ctx.resolveScope != nil {
-		if snapSummary := i.summaryFromSnapshot(ctx.info.Graph, ctx.resolveScope, sym); len(snapSummary) > 0 {
-			return snapSummary
+		if snapVector := i.returnVectorFromSnapshot(ctx.info.Graph, ctx.resolveScope, sym); len(snapVector) > 0 {
+			return snapVector
 		}
 	}
 
-	// Second fallback: parent graph snapshot for the function symbol, if known.
+	// Snapshot recovery path: parent graph for the function symbol, if known.
 	ref := i.store.FunctionRefBySym(sym)
 	if ref == nil || ref.ParentGraphID == 0 {
-		return summary
+		return returnVector
 	}
 	parentGraph := i.store.Graphs()[ref.ParentGraphID]
 	if parentGraph == nil {
-		return summary
+		return returnVector
 	}
 	parentScope := api.ParentScopeForGraph(i.store, parentGraph.ID(), nil)
 	if parentScope == nil {
-		return summary
+		return returnVector
 	}
-	if snapSummary := i.summaryFromSnapshot(parentGraph, parentScope, sym); len(snapSummary) > 0 {
-		return snapSummary
+	if snapVector := i.returnVectorFromSnapshot(parentGraph, parentScope, sym); len(snapVector) > 0 {
+		return snapVector
 	}
-	return summary
+	return returnVector
 }
 
 // enrichOverlayWithLocalFunctions adds local function types from the function body.
 func (i *Inferencer) enrichOverlayWithLocalFunctions(
 	ctx *returnInferenceContext,
 	overlay map[cfg.SymbolID]typ.Type,
-	allSummaries map[cfg.SymbolID][]typ.Type,
+	allReturnVectors map[cfg.SymbolID][]typ.Type,
 ) {
 	ctx.info.Graph.EachAssign(func(p cfg.Point, assignInfo *cfg.AssignInfo) {
 		if assignInfo == nil || !assignInfo.IsLocal || len(assignInfo.Targets) == 0 || len(assignInfo.Sources) == 0 {
@@ -217,9 +229,9 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 					i.store.RegisterFunctionRef(target.Symbol, fnExpr, fnGraph, ctx.info.Graph.ID(), p)
 				}
 			}
-			summary := i.resolveLocalFunctionSummary(ctx, allSummaries, target.Symbol)
+			returnVector := i.resolveLocalFunctionReturns(ctx, allReturnVectors, target.Symbol)
 			sig := ctx.engine.ResolveFunctionSignature(fnExpr, ctx.resolveScope)
-			if fnType := returns.WithSummaryOrUnknown(sig, summary); fnType != nil {
+			if fnType := returns.WithSummaryOrUnknown(sig, returnVector); fnType != nil {
 				overlay[target.Symbol] = fnType
 			}
 		}
@@ -311,12 +323,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 ) (map[cfg.SymbolID]typ.Type, *synth.Engine, func(ast.Expr, cfg.Point) typ.Type) {
 	fnGraph := ctx.info.Graph
 	annotated := make(map[cfg.SymbolID]bool, len(overlay))
-	paramSet := make(map[cfg.SymbolID]bool)
-	for _, sym := range fnGraph.ParamSymbols() {
-		if sym != 0 {
-			paramSet[sym] = true
-		}
-	}
+	paramSet := paramSymbolSet(fnGraph)
 	for sym, tp := range overlay {
 		if paramSet[sym] {
 			annotated[sym] = true
@@ -352,13 +359,13 @@ func (i *Inferencer) inferLocalVariableTypes(
 	fnScopes := uniformFunctionScopes(fnGraph, ctx.resolveScope)
 
 	prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:           fnGraph,
-		Bindings:        ctx.bindings,
-		BaseScope:       ctx.resolveScope,
-		DeclaredTypes:   overlay,
-		GlobalTypes:     i.globalTypes,
-		ModuleAliases:   ctx.moduleAliases,
-		ReturnSummaries: ctx.summaries,
+		Graph:         fnGraph,
+		Bindings:      ctx.bindings,
+		BaseScope:     ctx.resolveScope,
+		DeclaredTypes: overlay,
+		GlobalTypes:   i.globalTypes,
+		ModuleAliases: ctx.moduleAliases,
+		FunctionFacts: functionFactsFromReturnVectors(ctx.returnVectors),
 	})
 
 	prelimEngine := i.newReturnInferenceEngine(ctx.run, fnScopes, prelimCtx)
@@ -513,13 +520,17 @@ func newOverlayMutationStage(
 }
 
 func paramSymbolSet(graph *cfg.Graph) map[cfg.SymbolID]bool {
-	out := make(map[cfg.SymbolID]bool)
 	if graph == nil {
-		return out
+		return nil
 	}
-	for _, sym := range graph.ParamSymbols() {
-		if sym != 0 {
-			out[sym] = true
+	paramSlots := graph.ParamSlotsReadOnly()
+	if len(paramSlots) == 0 {
+		return nil
+	}
+	out := make(map[cfg.SymbolID]bool, len(paramSlots))
+	for _, slot := range paramSlots {
+		if slot.Symbol != 0 {
+			out[slot.Symbol] = true
 		}
 	}
 	return out
@@ -749,7 +760,7 @@ type phase2InferenceState struct {
 }
 
 // runPhase2FlowNarrowing executes extract->solve->narrow over the final overlay.
-// This makes return summary collection path-sensitive instead of declared-only.
+// This makes return collection path-sensitive instead of declared-only.
 func (i *Inferencer) runPhase2FlowNarrowing(
 	ctx *returnInferenceContext,
 	finalOverlay map[cfg.SymbolID]typ.Type,
@@ -781,13 +792,13 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 			return ctx.engine.ResolveFunctionSignature(fn, sc)
 		}),
 	}
-	phaseReturnSummaries := summarizeWithoutCurrent(ctx.summaries, ctx.info)
+	phaseFunctionFacts := functionFactsExcludingCurrent(ctx.returnVectors, ctx.info)
 
 	extractOut := phase.RunExtract(phase.FlowExtractInput{
-		PhaseEnv:        phaseEnv,
-		Resolve:         phase.ResolveOutput{TypeResolver: ctx.engine},
-		Scope:           scopeOut,
-		ReturnSummaries: phaseReturnSummaries,
+		PhaseEnv:      phaseEnv,
+		Resolve:       phase.ResolveOutput{TypeResolver: ctx.engine},
+		Scope:         scopeOut,
+		FunctionFacts: phaseFunctionFacts,
 	})
 	if extractOut.Inputs == nil {
 		return phase2InferenceState{}
@@ -800,11 +811,11 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 	})
 
 	narrowOut := phase.RunNarrow(phase.NarrowInput{
-		PhaseEnv:              phaseEnv,
-		Scope:                 scopeOut,
-		Extract:               extractOut,
-		Solve:                 solveOut,
-		NarrowReturnSummaries: phaseReturnSummaries,
+		PhaseEnv:      phaseEnv,
+		Scope:         scopeOut,
+		Extract:       extractOut,
+		Solve:         solveOut,
+		FunctionFacts: phaseFunctionFacts,
 	})
 
 	deadPoints := map[cfg.Point]bool{}
@@ -823,15 +834,15 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		}
 	}
 
-	// Fallback: declared-phase synth (should be uncommon, e.g. nil solution path).
+	// Declared-phase recomputation path for uncommon nil-solution states.
 	fnCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:           fnGraph,
-		Bindings:        ctx.bindings,
-		BaseScope:       ctx.resolveScope,
-		DeclaredTypes:   finalOverlay,
-		GlobalTypes:     i.globalTypes,
-		ModuleAliases:   ctx.moduleAliases,
-		ReturnSummaries: phaseReturnSummaries,
+		Graph:         fnGraph,
+		Bindings:      ctx.bindings,
+		BaseScope:     ctx.resolveScope,
+		DeclaredTypes: finalOverlay,
+		GlobalTypes:   i.globalTypes,
+		ModuleAliases: ctx.moduleAliases,
+		FunctionFacts: phaseFunctionFacts,
 	})
 	return phase2InferenceState{
 		synth:      i.newReturnInferenceEngine(ctx.run, fnScopes, fnCheckCtx),
@@ -839,22 +850,43 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 	}
 }
 
-func summarizeWithoutCurrent(
-	summaries map[cfg.SymbolID][]typ.Type,
+func functionFactsExcludingCurrent(
+	returnVectors map[cfg.SymbolID][]typ.Type,
 	info *returns.LocalFuncInfo,
-) map[cfg.SymbolID][]typ.Type {
-	if len(summaries) == 0 || info == nil || info.Sym == 0 {
-		return summaries
+) api.FunctionFacts {
+	if len(returnVectors) == 0 || info == nil || info.Sym == 0 {
+		return functionFactsFromReturnVectors(returnVectors)
 	}
-	if _, ok := summaries[info.Sym]; !ok {
-		return summaries
+	if _, ok := returnVectors[info.Sym]; !ok {
+		return functionFactsFromReturnVectors(returnVectors)
 	}
-	out := make(map[cfg.SymbolID][]typ.Type, len(summaries)-1)
-	for _, sym := range cfg.SortedSymbolIDs(summaries) {
+	out := make(map[cfg.SymbolID][]typ.Type, len(returnVectors)-1)
+	for _, sym := range cfg.SortedSymbolIDs(returnVectors) {
 		if sym == info.Sym {
 			continue
 		}
-		out[sym] = summaries[sym]
+		out[sym] = returnVectors[sym]
+	}
+	return functionFactsFromReturnVectors(out)
+}
+
+func functionFactsFromReturnVectors(returnVectors map[cfg.SymbolID][]typ.Type) api.FunctionFacts {
+	if len(returnVectors) == 0 {
+		return nil
+	}
+	out := make(api.FunctionFacts, len(returnVectors))
+	for _, sym := range cfg.SortedSymbolIDs(returnVectors) {
+		if sym == 0 {
+			continue
+		}
+		returnVector := returns.NormalizeReturnVectorInPlace(returnVectors[sym])
+		if len(returnVector) == 0 {
+			continue
+		}
+		out[sym] = api.FunctionFact{Summary: returnVector}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

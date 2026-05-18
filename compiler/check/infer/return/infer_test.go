@@ -10,21 +10,18 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestComputeReturnSummariesForGraph_Empty(t *testing.T) {
+func TestComputeFunctionFactsForGraph_Empty(t *testing.T) {
 	inferencer := New(Config{})
-	summaries, funcTypes, diags := inferencer.ComputeForGraph(RunContext{}, nil, nil)
-	if summaries != nil {
-		t.Error("nil graph should return nil summaries")
-	}
-	if funcTypes != nil {
-		t.Error("nil graph should return nil function types")
+	functionFacts, diags := inferencer.ComputeForGraph(RunContext{}, nil, nil)
+	if functionFacts != nil {
+		t.Error("nil graph should return nil function facts")
 	}
 	if len(diags) != 0 {
 		t.Error("nil graph should return no diagnostics")
 	}
 }
 
-func TestSeedSummariesFromSeed_UsesKnownFunctionSymbolsOnly(t *testing.T) {
+func TestSeedReturnVectorsFromSeed_UsesKnownFunctionSymbolsOnly(t *testing.T) {
 	localFuncs := map[cfg.SymbolID]*returns.LocalFuncInfo{
 		1: nil,
 		2: nil,
@@ -34,28 +31,28 @@ func TestSeedSummariesFromSeed_UsesKnownFunctionSymbolsOnly(t *testing.T) {
 		3: {typ.Number}, // not in local funcs; should be ignored
 	}
 
-	got := seedSummariesFromSeed(localFuncs, seed)
+	got := seedReturnVectorsFromSeed(localFuncs, seed)
 	if len(got) != 1 {
-		t.Fatalf("expected one seeded summary, got %d", len(got))
+		t.Fatalf("expected one seeded return vector, got %d", len(got))
 	}
 	if seeded := got[1]; len(seeded) != 1 || !typ.TypeEquals(seeded[0], typ.String) {
-		t.Fatalf("unexpected seeded summary for symbol 1: %v", seeded)
+		t.Fatalf("unexpected seeded return vector for symbol 1: %v", seeded)
 	}
 	if _, ok := got[3]; ok {
 		t.Fatalf("unexpected seed for unknown symbol 3: %v", got[3])
 	}
 }
 
-func TestSeedSummariesFromSeed_HandlesNilSeed(t *testing.T) {
+func TestSeedReturnVectorsFromSeed_HandlesNilSeed(t *testing.T) {
 	localFuncs := map[cfg.SymbolID]*returns.LocalFuncInfo{
 		1: nil,
 	}
-	got := seedSummariesFromSeed(localFuncs, nil)
+	got := seedReturnVectorsFromSeed(localFuncs, nil)
 	if got == nil {
-		t.Fatal("expected non-nil summary map")
+		t.Fatal("expected non-nil return-vector map")
 	}
 	if len(got) != 0 {
-		t.Fatalf("expected empty summary map, got %v", got)
+		t.Fatalf("expected empty return-vector map, got %v", got)
 	}
 }
 
@@ -141,50 +138,50 @@ func TestReconcileSoftAnnotatedInference_RecordTemplateKeepsFields(t *testing.T)
 	}
 }
 
-func TestCollectAllReturnSummaries_NormalizesAndFilters(t *testing.T) {
+func TestCollectAllReturnVectors_NormalizesAndFilters(t *testing.T) {
 	inferencer := New(Config{})
 	ctx := &returnInferenceContext{
-		summaries: map[cfg.SymbolID][]typ.Type{
+		returnVectors: map[cfg.SymbolID][]typ.Type{
 			0: {typ.String}, // invalid symbol id, ignored
-			1: nil,          // empty summary, ignored
+			1: nil,          // empty return vector, ignored
 			2: {nil, typ.String},
 		},
 	}
 
-	got := inferencer.collectAllReturnSummaries(ctx)
+	got := inferencer.collectAllReturnVectors(ctx)
 	if len(got) != 1 {
-		t.Fatalf("expected one normalized summary, got %d (%v)", len(got), got)
+		t.Fatalf("expected one normalized return vector, got %d (%v)", len(got), got)
 	}
-	summary := got[2]
-	if len(summary) != 2 {
-		t.Fatalf("expected 2-slot summary, got %v", summary)
+	returnVector := got[2]
+	if len(returnVector) != 2 {
+		t.Fatalf("expected 2-slot return vector, got %v", returnVector)
 	}
-	if !typ.TypeEquals(summary[0], typ.Nil) {
-		t.Fatalf("expected first slot normalized to nil, got %v", summary[0])
+	if !typ.TypeEquals(returnVector[0], typ.Nil) {
+		t.Fatalf("expected first slot normalized to nil, got %v", returnVector[0])
 	}
-	if !typ.TypeEquals(summary[1], typ.String) {
-		t.Fatalf("expected second slot string, got %v", summary[1])
+	if !typ.TypeEquals(returnVector[1], typ.String) {
+		t.Fatalf("expected second slot string, got %v", returnVector[1])
 	}
 }
 
-func TestResolveLocalFunctionSummary_UsesCurrentSummaryWithoutStore(t *testing.T) {
+func TestResolveLocalFunctionReturns_UsesCurrentVectorWithoutStore(t *testing.T) {
 	inferencer := New(Config{})
 
-	got := inferencer.resolveLocalFunctionSummary(nil, map[cfg.SymbolID][]typ.Type{
+	got := inferencer.resolveLocalFunctionReturns(nil, map[cfg.SymbolID][]typ.Type{
 		1: {typ.String},
 	}, 1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
-		t.Fatalf("expected string summary, got %v", got)
+		t.Fatalf("expected string return vector, got %v", got)
 	}
 
-	unknownOnly := inferencer.resolveLocalFunctionSummary(nil, map[cfg.SymbolID][]typ.Type{
+	unknownOnly := inferencer.resolveLocalFunctionReturns(nil, map[cfg.SymbolID][]typ.Type{
 		1: {typ.Unknown},
 	}, 1)
 	if len(unknownOnly) != 1 || !typ.TypeEquals(unknownOnly[0], typ.Unknown) {
-		t.Fatalf("expected unknown summary without store fallback, got %v", unknownOnly)
+		t.Fatalf("expected unknown return vector without store recovery, got %v", unknownOnly)
 	}
 
-	if got := inferencer.resolveLocalFunctionSummary(nil, nil, 0); got != nil {
-		t.Fatalf("expected nil summary for symbol 0, got %v", got)
+	if got := inferencer.resolveLocalFunctionReturns(nil, nil, 0); got != nil {
+		t.Fatalf("expected nil return vector for symbol 0, got %v", got)
 	}
 }

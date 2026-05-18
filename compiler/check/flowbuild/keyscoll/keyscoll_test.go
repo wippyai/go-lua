@@ -21,6 +21,10 @@ func TestKeysCollectorInfo_ParamIndex(t *testing.T) {
 	}
 }
 
+func detectKeysCollector(fn *ast.FunctionExpr) *keyscoll.KeysCollectorInfo {
+	return keyscoll.DetectKeysCollector(cfg.Build(fn))
+}
+
 func TestDetectKeysCollector_NilFunction(t *testing.T) {
 	result := keyscoll.DetectKeysCollector(nil)
 	if result != nil {
@@ -30,7 +34,7 @@ func TestDetectKeysCollector_NilFunction(t *testing.T) {
 
 func TestDetectKeysCollector_NilStmts(t *testing.T) {
 	fn := &ast.FunctionExpr{Stmts: nil}
-	result := keyscoll.DetectKeysCollector(fn)
+	result := detectKeysCollector(fn)
 	if result != nil {
 		t.Error("expected nil for nil statements")
 	}
@@ -38,7 +42,7 @@ func TestDetectKeysCollector_NilStmts(t *testing.T) {
 
 func TestDetectKeysCollector_EmptyStmts(t *testing.T) {
 	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{}}
-	result := keyscoll.DetectKeysCollector(fn)
+	result := detectKeysCollector(fn)
 	if result != nil {
 		t.Error("expected nil for empty statements")
 	}
@@ -50,7 +54,7 @@ func TestDetectKeysCollector_SimpleReturn(t *testing.T) {
 			&ast.ReturnStmt{Exprs: []ast.Expr{&ast.NilExpr{}}},
 		},
 	}
-	result := keyscoll.DetectKeysCollector(fn)
+	result := detectKeysCollector(fn)
 	if result != nil {
 		t.Error("expected nil for simple return function")
 	}
@@ -69,7 +73,7 @@ func TestDetectKeysCollector_NoKeysPattern(t *testing.T) {
 			},
 		},
 	}
-	result := keyscoll.DetectKeysCollector(fn)
+	result := detectKeysCollector(fn)
 	if result != nil {
 		t.Error("expected nil for function without keys pattern")
 	}
@@ -80,7 +84,7 @@ func TestBuildKeysCollectorDetector_NilCallInfo(t *testing.T) {
 		Stmts: []ast.Stmt{&ast.ReturnStmt{}},
 	}
 	graph := cfg.Build(fn)
-	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil, nil)
 	if detector == nil {
 		t.Fatal("expected non-nil detector")
 	}
@@ -95,7 +99,7 @@ func TestBuildKeysCollectorDetector_MethodCall(t *testing.T) {
 		Stmts: []ast.Stmt{&ast.ReturnStmt{}},
 	}
 	graph := cfg.Build(fn)
-	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil, nil)
 	callInfo := &cfg.CallInfo{
 		Method:   "someMethod",
 		Receiver: &ast.IdentExpr{Value: "obj"},
@@ -111,7 +115,7 @@ func TestBuildKeysCollectorDetector_NoCalleeSymbol(t *testing.T) {
 		Stmts: []ast.Stmt{&ast.ReturnStmt{}},
 	}
 	graph := cfg.Build(fn)
-	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil, nil)
 	callInfo := &cfg.CallInfo{
 		Callee:       &ast.IdentExpr{Value: "fn"},
 		CalleeSymbol: 0,
@@ -138,7 +142,7 @@ func TestDetectKeysCollector_TableInsertAsAssignmentCallSite(t *testing.T) {
 		ParList: &ast.ParList{Names: []string{"tbl"}},
 		Stmts:   body,
 	}
-	info := keyscoll.DetectKeysCollector(fn)
+	info := detectKeysCollector(fn)
 	if info == nil {
 		t.Fatal("expected keys collector to be detected when insert call is in assignment expression")
 	}
@@ -185,7 +189,7 @@ func TestBuildKeysCollectorDetector_NestedFieldArgument(t *testing.T) {
 	}
 	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil, nil)
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sorted_keys" {
@@ -216,7 +220,7 @@ func TestDetectKeysCollector_MultiReturnKeysIndex(t *testing.T) {
 		ParList: &ast.ParList{Names: []string{"tbl"}},
 		Stmts:   body,
 	}
-	info := keyscoll.DetectKeysCollector(fn)
+	info := detectKeysCollector(fn)
 	if info == nil {
 		t.Fatal("expected keys collector info")
 	}
@@ -261,7 +265,7 @@ func TestBuildKeysCollectorDetector_RespectsReturnIndex(t *testing.T) {
 	}
 	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil, nil)
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sorted_keys" {
@@ -314,7 +318,7 @@ func TestBuildKeysCollectorDetector_UsesCanonicalCandidatesWhenRawSymbolMissing(
 	}
 	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil, nil)
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sorted_keys" {
@@ -368,7 +372,7 @@ func TestBuildKeysCollectorDetector_UsesModuleBindingNameFallback(t *testing.T) 
 
 	moduleBindings := bind.NewBindingTable()
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph, moduleBindings)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, moduleBindings, nil)
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sorted_keys" {
@@ -427,7 +431,7 @@ func TestBuildKeysCollectorDetector_UsesDirectAliasCandidate(t *testing.T) {
 	}
 	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, nil, nil)
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sk" {

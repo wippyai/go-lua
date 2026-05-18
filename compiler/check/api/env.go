@@ -1,6 +1,6 @@
 // env.go defines phase-typed environments for synthesis.
 // DeclaredEnv is used pre-flow; NarrowEnv is used post-flow.
-// This split prevents pre-flow return summaries from being accessed in narrowing.
+// This split keeps declared and flow-refined function facts phase-explicit.
 package api
 
 import (
@@ -37,7 +37,7 @@ func (p Phase) String() string {
 }
 
 // BaseEnv is the shared environment interface for synthesis.
-// It intentionally excludes return summaries to prevent cross-phase misuse.
+// It intentionally excludes FunctionFacts to prevent cross-phase misuse.
 type BaseEnv interface {
 	Phase() Phase
 	Graph() cfg.VersionedGraph
@@ -53,16 +53,16 @@ type BaseEnv interface {
 	WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv
 }
 
-// DeclaredEnv provides access to pre-flow return summaries.
+// DeclaredEnv provides canonical function facts in declared phase.
 type DeclaredEnv interface {
 	BaseEnv
-	ReturnSummaries() map[cfg.SymbolID][]typ.Type
+	FunctionFacts() FunctionFacts
 }
 
-// NarrowEnv provides access to post-flow return summaries.
+// NarrowEnv provides canonical function facts in narrowing phase.
 type NarrowEnv interface {
 	BaseEnv
-	NarrowReturnSummaries() map[cfg.SymbolID][]typ.Type
+	FunctionFacts() FunctionFacts
 }
 
 type envBase struct {
@@ -77,8 +77,8 @@ type envBase struct {
 	globalTypes   map[string]typ.Type
 }
 
-func (b *envBase) withGlobalOverlay(overlay map[string]typ.Type) *envBase {
-	if b == nil || len(overlay) == 0 {
+func (b envBase) withGlobalOverlay(overlay map[string]typ.Type) envBase {
+	if len(overlay) == 0 {
 		return b
 	}
 	merged := make(map[string]typ.Type, len(b.globalTypes)+len(overlay))
@@ -88,25 +88,28 @@ func (b *envBase) withGlobalOverlay(overlay map[string]typ.Type) *envBase {
 	for k, v := range overlay {
 		merged[k] = v
 	}
-	next := *b
+	next := b
 	next.globalTypes = merged
-	return &next
+	return next
 }
 
 type envCommon struct {
-	base *envBase
+	base envBase
 }
 
-func (c *envCommon) withGlobalOverlay(overlay map[string]typ.Type) *envCommon {
+func (c *envCommon) withGlobalOverlay(overlay map[string]typ.Type) envCommon {
 	if c == nil || len(overlay) == 0 {
-		return c
+		if c == nil {
+			return envCommon{}
+		}
+		return *c
 	}
-	return &envCommon{base: c.base.withGlobalOverlay(overlay)}
+	return envCommon{base: c.base.withGlobalOverlay(overlay)}
 }
 
 // Phase returns the current checking phase.
 func (c *envCommon) Phase() Phase {
-	if c == nil || c.base == nil {
+	if c == nil {
 		return PhaseScopeCompute
 	}
 	return c.base.phase
@@ -114,7 +117,7 @@ func (c *envCommon) Phase() Phase {
 
 // Graph returns the versioned CFG graph.
 func (c *envCommon) Graph() cfg.VersionedGraph {
-	if c == nil || c.base == nil {
+	if c == nil {
 		return nil
 	}
 	return c.base.graph
@@ -122,7 +125,7 @@ func (c *envCommon) Graph() cfg.VersionedGraph {
 
 // Types returns the type facts provider.
 func (c *envCommon) Types() flow.TypeFacts {
-	if c == nil || c.base == nil {
+	if c == nil {
 		return nil
 	}
 	return c.base.types
@@ -130,7 +133,7 @@ func (c *envCommon) Types() flow.TypeFacts {
 
 // Consts returns the flow solution for constant value lookup.
 func (c *envCommon) Consts() *flow.Solution {
-	if c == nil || c.base == nil {
+	if c == nil {
 		return nil
 	}
 	return c.base.solution
@@ -138,7 +141,7 @@ func (c *envCommon) Consts() *flow.Solution {
 
 // Refinements returns the refinement facts provider.
 func (c *envCommon) Refinements() RefinementFacts {
-	if c == nil || c.base == nil {
+	if c == nil {
 		return nil
 	}
 	return c.base.refinements
@@ -146,7 +149,7 @@ func (c *envCommon) Refinements() RefinementFacts {
 
 // TypeNames returns the scope state for type name resolution.
 func (c *envCommon) TypeNames() *scope.State {
-	if c == nil || c.base == nil {
+	if c == nil {
 		return nil
 	}
 	return c.base.typeNames
@@ -154,7 +157,7 @@ func (c *envCommon) TypeNames() *scope.State {
 
 // Bindings returns the binding table for AST-based symbol resolution.
 func (c *envCommon) Bindings() *bind.BindingTable {
-	if c == nil || c.base == nil {
+	if c == nil {
 		return nil
 	}
 	return c.base.bindings
@@ -162,7 +165,7 @@ func (c *envCommon) Bindings() *bind.BindingTable {
 
 // ModuleAliases returns the module alias map (symbol -> module path).
 func (c *envCommon) ModuleAliases() map[cfg.SymbolID]string {
-	if c == nil || c.base == nil {
+	if c == nil {
 		return nil
 	}
 	return c.base.moduleAliases
@@ -170,7 +173,7 @@ func (c *envCommon) ModuleAliases() map[cfg.SymbolID]string {
 
 // ModuleAlias returns the module path for a symbol assigned from require().
 func (c *envCommon) ModuleAlias(sym cfg.SymbolID) string {
-	if c == nil || c.base == nil || c.base.moduleAliases == nil {
+	if c == nil || c.base.moduleAliases == nil {
 		return ""
 	}
 	return c.base.moduleAliases[sym]
@@ -178,7 +181,7 @@ func (c *envCommon) ModuleAlias(sym cfg.SymbolID) string {
 
 // GlobalType returns the global type for a symbol if it is a confirmed global.
 func (c *envCommon) GlobalType(sym cfg.SymbolID) (typ.Type, bool) {
-	if c == nil || c.base == nil || c.base.globalTypes == nil || sym == 0 {
+	if c == nil || c.base.globalTypes == nil || sym == 0 {
 		return nil, false
 	}
 	if c.base.bindings == nil {
@@ -198,7 +201,7 @@ func (c *envCommon) GlobalType(sym cfg.SymbolID) (typ.Type, bool) {
 
 // GlobalTypes returns the global type map.
 func (c *envCommon) GlobalTypes() map[string]typ.Type {
-	if c == nil || c.base == nil {
+	if c == nil {
 		return nil
 	}
 	return c.base.globalTypes
@@ -206,14 +209,14 @@ func (c *envCommon) GlobalTypes() map[string]typ.Type {
 
 // DeclaredEnvImpl is the concrete declared-phase environment.
 type DeclaredEnvImpl struct {
-	*envCommon
-	returnSummaries map[cfg.SymbolID][]typ.Type
+	envCommon
+	functionFacts FunctionFacts
 }
 
 // NarrowEnvImpl is the concrete narrowing-phase environment.
 type NarrowEnvImpl struct {
-	*envCommon
-	narrowReturns map[cfg.SymbolID][]typ.Type
+	envCommon
+	functionFacts FunctionFacts
 }
 
 var _ BaseEnv = (*DeclaredEnvImpl)(nil)
@@ -423,20 +426,20 @@ func (e *NarrowEnvImpl) WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv {
 	return &next
 }
 
-// ReturnSummaries returns the return type summaries for sibling functions.
-func (e *DeclaredEnvImpl) ReturnSummaries() map[cfg.SymbolID][]typ.Type {
+// FunctionFacts returns canonical function facts for sibling functions.
+func (e *DeclaredEnvImpl) FunctionFacts() FunctionFacts {
 	if e == nil {
 		return nil
 	}
-	return e.returnSummaries
+	return e.functionFacts
 }
 
-// NarrowReturnSummaries returns post-flow return summaries for narrowing.
-func (e *NarrowEnvImpl) NarrowReturnSummaries() map[cfg.SymbolID][]typ.Type {
+// FunctionFacts returns canonical function facts for sibling functions.
+func (e *NarrowEnvImpl) FunctionFacts() FunctionFacts {
 	if e == nil {
 		return nil
 	}
-	return e.narrowReturns
+	return e.functionFacts
 }
 
 // DeclaredEnvConfig holds inputs for building a declared-phase Env.
@@ -449,25 +452,23 @@ type DeclaredEnvConfig struct {
 	RefinementStore RefinementStore
 	ModuleAliases   map[cfg.SymbolID]string
 	GlobalTypes     map[string]typ.Type
-	SiblingTypes    map[cfg.SymbolID]typ.Type
 	LiteralTypes    flow.DeclaredTypes
-	ReturnSummaries map[cfg.SymbolID][]typ.Type
+	FunctionFacts   FunctionFacts
 }
 
 // NarrowEnvConfig holds inputs for building a narrowing-phase Env.
 type NarrowEnvConfig struct {
-	Graph                 cfg.VersionedGraph
-	Bindings              *bind.BindingTable
-	DeclaredTypes         flow.DeclaredTypes
-	AnnotatedVars         map[cfg.SymbolID]bool
-	Solution              *flow.Solution
-	BaseScope             *scope.State
-	RefinementStore       RefinementStore
-	ModuleAliases         map[cfg.SymbolID]string
-	GlobalTypes           map[string]typ.Type
-	SiblingTypes          map[cfg.SymbolID]typ.Type
-	LiteralTypes          flow.DeclaredTypes
-	NarrowReturnSummaries map[cfg.SymbolID][]typ.Type
+	Graph           cfg.VersionedGraph
+	Bindings        *bind.BindingTable
+	DeclaredTypes   flow.DeclaredTypes
+	AnnotatedVars   map[cfg.SymbolID]bool
+	Solution        *flow.Solution
+	BaseScope       *scope.State
+	RefinementStore RefinementStore
+	ModuleAliases   map[cfg.SymbolID]string
+	GlobalTypes     map[string]typ.Type
+	LiteralTypes    flow.DeclaredTypes
+	FunctionFacts   FunctionFacts
 }
 
 func newEnvBase(
@@ -480,8 +481,8 @@ func newEnvBase(
 	typeNames *scope.State,
 	moduleAliases map[cfg.SymbolID]string,
 	globalTypes map[string]typ.Type,
-) *envBase {
-	return &envBase{
+) envBase {
+	return envBase{
 		phase:         phase,
 		graph:         graph,
 		bindings:      bindings,
@@ -503,14 +504,14 @@ func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 		PhaseScopeCompute,
 		cfg.Graph,
 		cfg.Bindings,
-		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.SiblingTypes, cfg.LiteralTypes, cfg.AnnotatedVars, nil),
+		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.FunctionFacts, cfg.LiteralTypes, cfg.AnnotatedVars, nil),
 		nil,
 		NewRefinementFacts(cfg.RefinementStore),
 		cfg.BaseScope,
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
 	)
-	return &DeclaredEnvImpl{envCommon: &envCommon{base: base}, returnSummaries: cfg.ReturnSummaries}
+	return &DeclaredEnvImpl{envCommon: envCommon{base: base}, functionFacts: cfg.FunctionFacts}
 }
 
 // NewNarrowEnv creates a narrowing-phase Env.
@@ -522,25 +523,25 @@ func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 		PhaseNarrowing,
 		cfg.Graph,
 		cfg.Bindings,
-		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.SiblingTypes, cfg.LiteralTypes, cfg.AnnotatedVars, cfg.Solution),
+		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.FunctionFacts, cfg.LiteralTypes, cfg.AnnotatedVars, cfg.Solution),
 		cfg.Solution,
 		NewRefinementFacts(cfg.RefinementStore),
 		cfg.BaseScope,
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
 	)
-	return &NarrowEnvImpl{envCommon: &envCommon{base: base}, narrowReturns: cfg.NarrowReturnSummaries}
+	return &NarrowEnvImpl{envCommon: envCommon{base: base}, functionFacts: cfg.FunctionFacts}
 }
 
 // ReturnInferenceEnvConfig holds inputs for return type inference.
 type ReturnInferenceEnvConfig struct {
-	Graph           cfg.VersionedGraph
-	Bindings        *bind.BindingTable
-	BaseScope       *scope.State
-	DeclaredTypes   flow.DeclaredTypes
-	GlobalTypes     map[string]typ.Type
-	ModuleAliases   map[cfg.SymbolID]string
-	ReturnSummaries map[cfg.SymbolID][]typ.Type
+	Graph         cfg.VersionedGraph
+	Bindings      *bind.BindingTable
+	BaseScope     *scope.State
+	DeclaredTypes flow.DeclaredTypes
+	GlobalTypes   map[string]typ.Type
+	ModuleAliases map[cfg.SymbolID]string
+	FunctionFacts FunctionFacts
 }
 
 // NewReturnInferenceEnv creates a declared-phase Env for return inference.
@@ -552,21 +553,21 @@ func NewReturnInferenceEnv(cfg ReturnInferenceEnvConfig) *DeclaredEnvImpl {
 		PhaseScopeCompute,
 		cfg.Graph,
 		cfg.Bindings,
-		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, nil, nil, nil, nil),
+		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.FunctionFacts, nil, nil, nil),
 		nil,
 		NewRefinementFacts(nil),
 		cfg.BaseScope,
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
 	)
-	return &DeclaredEnvImpl{envCommon: &envCommon{base: base}, returnSummaries: cfg.ReturnSummaries}
+	return &DeclaredEnvImpl{envCommon: envCommon{base: base}, functionFacts: cfg.FunctionFacts}
 }
 
 // unifiedTypeFacts implements flow.TypeFacts with layered type source lookup.
 type unifiedTypeFacts struct {
 	graph         cfg.VersionedGraph
 	declaredTypes flow.DeclaredTypes
-	siblingTypes  map[cfg.SymbolID]typ.Type
+	functionFacts FunctionFacts
 	literalTypes  flow.DeclaredTypes
 	annotatedVars map[cfg.SymbolID]bool
 	solution      *flow.Solution
@@ -575,7 +576,7 @@ type unifiedTypeFacts struct {
 func newUnifiedTypeFacts(
 	graph cfg.VersionedGraph,
 	declared flow.DeclaredTypes,
-	siblings map[cfg.SymbolID]typ.Type,
+	functionFacts FunctionFacts,
 	literals flow.DeclaredTypes,
 	annotated map[cfg.SymbolID]bool,
 	solution *flow.Solution,
@@ -583,7 +584,7 @@ func newUnifiedTypeFacts(
 	return &unifiedTypeFacts{
 		graph:         graph,
 		declaredTypes: declared,
-		siblingTypes:  siblings,
+		functionFacts: functionFacts,
 		literalTypes:  literals,
 		annotatedVars: annotated,
 		solution:      solution,
@@ -604,8 +605,8 @@ func (f *unifiedTypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedV
 			}
 		}
 	}
-	if f.siblingTypes != nil {
-		if t, ok := f.siblingTypes[sym]; ok && t != nil {
+	if f.functionFacts != nil {
+		if t := f.functionFacts.FunctionType(sym); t != nil {
 			return f.toTypedValue(t)
 		}
 	}
@@ -616,7 +617,7 @@ func (f *unifiedTypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedV
 	}
 	// Literal overlays are synthesized from function/table literals and can lag
 	// behind canonical declared/sibling symbol types during fixpoint iterations.
-	// Keep them as fallback only when no canonical symbol type is available.
+	// Use them only after canonical symbol facts and declared types are absent.
 	if f.literalTypes != nil {
 		if f.annotatedVars == nil || !f.annotatedVars[sym] {
 			if t, ok := f.literalTypes[sym]; ok && t != nil {

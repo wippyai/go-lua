@@ -801,10 +801,10 @@ end
 	var summary []typ.Type
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if summaries := sess.Store.GetReturnSummariesSnapshot(sess.RootResult.Graph, parent); summaries != nil {
-		for sym, rt := range summaries {
+	if facts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent); facts != nil {
+		for sym, fact := range facts {
 			if sess.RootResult.Graph.NameOf(sym) == "get_db" {
-				summary = rt
+				summary = fact.Summary
 				break
 			}
 		}
@@ -873,10 +873,10 @@ end
 	var summary []typ.Type
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if summaries := sess.Store.GetReturnSummariesSnapshot(sess.RootResult.Graph, parent); summaries != nil {
-		for sym, rt := range summaries {
+	if facts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent); facts != nil {
+		for sym, fact := range facts {
 			if sess.RootResult.Graph.NameOf(sym) == "get_db" {
-				summary = rt
+				summary = fact.Summary
 				break
 			}
 		}
@@ -931,10 +931,10 @@ local y: string = b
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if summaries := sess.Store.GetReturnSummariesSnapshot(sess.RootResult.Graph, parent); summaries != nil {
-		for sym, rt := range summaries {
+	if facts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent); facts != nil {
+		for sym, fact := range facts {
 			name := sess.RootResult.Graph.NameOf(sym)
-			for i, slot := range rt {
+			for i, slot := range fact.Summary {
 				if slot == nil {
 					t.Errorf("nil slot at index %d in return summary for %q", i, name)
 				}
@@ -965,9 +965,9 @@ end
 	found := 0
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if summaries := sess.Store.GetReturnSummariesSnapshot(sess.RootResult.Graph, parent); summaries != nil {
-		for sym, rt := range summaries {
-			if len(rt) == 0 {
+	if facts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent); facts != nil {
+		for sym, fact := range facts {
+			if len(fact.Summary) == 0 {
 				name := ""
 				if sess.RootResult.Graph != nil {
 					name = sess.RootResult.Graph.NameOf(sym)

@@ -83,15 +83,15 @@ end
 	root := result.Session.RootResult.Graph
 	parentHash := result.Session.Store.GraphParentHashOf(root.ID())
 	parent := result.Session.Store.Parents()[parentHash]
-	funcTypes := result.Session.Store.GetLocalFuncTypesSnapshot(root, parent)
+	functionFacts := result.Session.Store.GetFunctionFactsSnapshot(root, parent)
 
 	sym, ok := root.SymbolAt(root.Exit(), "get_tracker")
 	if !ok || sym == 0 {
 		t.Fatal("missing symbol get_tracker")
 	}
-	fn := unwrap.Function(funcTypes[sym])
+	fn := unwrap.Function(functionFacts.FunctionType(sym))
 	if fn == nil || len(fn.Returns) == 0 || fn.Returns[0] == nil {
-		t.Fatalf("expected get_tracker function return type, got %v", funcTypes[sym])
+		t.Fatalf("expected get_tracker function return type, got %v", functionFacts.FunctionType(sym))
 	}
 	if fn.Returns[0].Kind() == kind.Nil {
 		t.Fatalf("expected get_tracker return not to collapse to nil, got %v", fn.Returns[0])

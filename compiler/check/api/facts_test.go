@@ -13,17 +13,8 @@ func TestFacts_Zero(t *testing.T) {
 	if f.FunctionFacts != nil {
 		t.Error("zero Facts should have nil FunctionFacts")
 	}
-	if f.ReturnSummaries != nil {
-		t.Error("zero Facts should have nil ReturnSummaries")
-	}
-	if f.NarrowReturns != nil {
-		t.Error("zero Facts should have nil NarrowReturns")
-	}
 	if f.ParamHints != nil {
 		t.Error("zero Facts should have nil ParamHints")
-	}
-	if f.FuncTypes != nil {
-		t.Error("zero Facts should have nil FuncTypes")
 	}
 	if f.LiteralSigs != nil {
 		t.Error("zero Facts should have nil LiteralSigs")
@@ -39,15 +30,12 @@ func TestFacts_Zero(t *testing.T) {
 	}
 }
 
-func TestReturnSummaries_Basic(t *testing.T) {
-	summaries := make(ReturnSummaries)
+func TestFunctionFacts_Summary(t *testing.T) {
+	facts := make(FunctionFacts)
 	sym := cfg.SymbolID(1)
-	summaries[sym] = []typ.Type{typ.String, typ.Nil}
+	facts[sym] = FunctionFact{Summary: []typ.Type{typ.String, typ.Nil}}
 
-	rets, ok := summaries[sym]
-	if !ok {
-		t.Fatal("expected symbol to be in summaries")
-	}
+	rets := facts.Summary(sym)
 	if len(rets) != 2 {
 		t.Errorf("expected 2 return types, got %d", len(rets))
 	}
@@ -67,16 +55,13 @@ func TestParamHints_Basic(t *testing.T) {
 	}
 }
 
-func TestFuncTypes_Basic(t *testing.T) {
-	funcTypes := make(FuncTypes)
+func TestFunctionFacts_FunctionType(t *testing.T) {
+	facts := make(FunctionFacts)
 	sym := cfg.SymbolID(1)
 	fn := typ.Func().Param("x", typ.Number).Returns(typ.String).Build()
-	funcTypes[sym] = fn
+	facts[sym] = FunctionFact{Type: fn}
 
-	retrieved, ok := funcTypes[sym]
-	if !ok {
-		t.Fatal("expected symbol to be in funcTypes")
-	}
+	retrieved := facts.FunctionType(sym)
 	if retrieved == nil {
 		t.Error("expected non-nil function type")
 	}
@@ -174,30 +159,18 @@ func TestFacts_WithData(t *testing.T) {
 			4: {
 				Summary: []typ.Type{typ.Boolean},
 				Narrow:  []typ.Type{typ.Boolean},
-				Func:    typ.Func().Returns(typ.Boolean).Build(),
+				Type:    typ.Func().Returns(typ.Boolean).Build(),
 			},
-		},
-		ReturnSummaries: ReturnSummaries{
-			1: []typ.Type{typ.String},
 		},
 		ParamHints: ParamHints{
 			2: []typ.Type{typ.Number},
 		},
-		FuncTypes: FuncTypes{
-			3: typ.Func().Build(),
-		},
 	}
 
-	if len(f.ReturnSummaries) != 1 {
-		t.Error("expected 1 return summary")
-	}
 	if len(f.FunctionFacts) != 1 {
 		t.Error("expected 1 function fact")
 	}
 	if len(f.ParamHints) != 1 {
 		t.Error("expected 1 param hint")
-	}
-	if len(f.FuncTypes) != 1 {
-		t.Error("expected 1 func type")
 	}
 }

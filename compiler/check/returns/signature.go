@@ -9,7 +9,7 @@ import (
 )
 
 // BuildSeedFunctionTypeWithBindings builds a placeholder function type for an
-// SCC sibling that has no return summary yet.
+// SCC sibling that has no inferred return vector yet.
 //
 // Optional binder metadata enables implicit-self detection in method definitions.
 func BuildSeedFunctionTypeWithBindings(

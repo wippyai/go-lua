@@ -12,38 +12,60 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// ReturnSummaries maps function symbols to their inferred return type vectors.
-// Each entry is a slice of types representing the tuple of values returned
-// by the function. For example, a function returning (value, error) has
-// a two-element slice [valueType, errorType].
-type ReturnSummaries = map[cfg.SymbolID][]typ.Type
-
-// NarrowReturnSummaries holds post-flow return summaries with narrowing applied.
-// These are computed after flow analysis and reflect the precise types at
-// each return statement, accounting for control flow narrowing.
-type NarrowReturnSummaries = map[cfg.SymbolID][]typ.Type
-
 // ParamHints maps function symbols to parameter type hints inferred from call sites.
 // When a function is called with known argument types, those types are recorded
 // as hints and propagated to the function's parameter declarations.
 type ParamHints = map[cfg.SymbolID][]typ.Type
 
-// FuncTypes maps local function symbols to their canonical function types.
-// Used for sibling function lookups where the function is defined in the
-// same scope as the call site.
-type FuncTypes = map[cfg.SymbolID]typ.Type
-
 // FunctionFact is the canonical function-related interproc fact for one symbol.
-// Legacy channels (ReturnSummaries/NarrowReturns/FuncTypes) are compatibility
-// views and should be derivable from this value.
+// All return and local-function type evidence for a function converges here.
 type FunctionFact struct {
+	// Summary is the declared/pre-flow return vector.
 	Summary []typ.Type
-	Narrow  []typ.Type
-	Func    typ.Type
+	// Narrow is the post-flow return vector.
+	Narrow []typ.Type
+	// Type is the canonical local function type evidence.
+	Type typ.Type
 }
 
 // FunctionFacts maps function symbols to their canonical function facts.
-type FunctionFacts = map[cfg.SymbolID]FunctionFact
+type FunctionFacts map[cfg.SymbolID]FunctionFact
+
+// Fact returns the canonical fact for sym.
+func (facts FunctionFacts) Fact(sym cfg.SymbolID) (FunctionFact, bool) {
+	if len(facts) == 0 || sym == 0 {
+		return FunctionFact{}, false
+	}
+	ff, ok := facts[sym]
+	return ff, ok
+}
+
+// Summary returns the declared/pre-flow return vector for sym.
+func (facts FunctionFacts) Summary(sym cfg.SymbolID) []typ.Type {
+	ff, ok := facts.Fact(sym)
+	if !ok {
+		return nil
+	}
+	return ff.Summary
+}
+
+// NarrowSummary returns the post-flow return vector for sym.
+func (facts FunctionFacts) NarrowSummary(sym cfg.SymbolID) []typ.Type {
+	ff, ok := facts.Fact(sym)
+	if !ok {
+		return nil
+	}
+	return ff.Narrow
+}
+
+// FunctionType returns the canonical local function type for sym.
+func (facts FunctionFacts) FunctionType(sym cfg.SymbolID) typ.Type {
+	ff, ok := facts.Fact(sym)
+	if !ok {
+		return nil
+	}
+	return ff.Type
+}
 
 // LiteralSigs maps anonymous function literal expressions to their signatures.
 // Used when function literals are passed as arguments or assigned to variables
@@ -89,14 +111,8 @@ type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
 // Facts bundles all interprocedural analysis results for a single function graph.
 // These facts are computed during analysis and stored per (graph, parent) pair.
 type Facts struct {
-	FunctionFacts FunctionFacts
-	// Compatibility mirror derived from FunctionFacts.
-	ReturnSummaries ReturnSummaries
-	// Compatibility mirror derived from FunctionFacts.
-	NarrowReturns NarrowReturnSummaries
-	ParamHints    ParamHints
-	// Compatibility mirror derived from FunctionFacts.
-	FuncTypes          FuncTypes
+	FunctionFacts      FunctionFacts
+	ParamHints         ParamHints
 	LiteralSigs        LiteralSigs
 	CapturedTypes      CapturedTypes
 	CapturedFields     CapturedFieldAssigns

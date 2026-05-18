@@ -57,6 +57,17 @@ func Func() *FunctionBuilder {
 	return &FunctionBuilder{}
 }
 
+// ReserveParams avoids reallocating while appending known effective parameters.
+func (b *FunctionBuilder) ReserveParams(n int) *FunctionBuilder {
+	if b == nil || n <= 1 || cap(b.params) >= n {
+		return b
+	}
+	params := make([]Param, len(b.params), n)
+	copy(params, b.params)
+	b.params = params
+	return b
+}
+
 // TypeParam adds a type parameter for generic functions.
 func (b *FunctionBuilder) TypeParam(name string, constraint Type) *FunctionBuilder {
 	b.typeParams = append(b.typeParams, NewTypeParam(name, constraint))

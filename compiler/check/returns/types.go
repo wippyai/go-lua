@@ -13,21 +13,20 @@
 // an SCC, functions are processed together using fixpoint iteration until
 // return types stabilize.
 //
-// # Return Summaries
+// # Return Vectors
 //
-// A return summary is a vector of types representing the types returned by
-// a function. For `return a, b, c`, the summary would be [typeof(a), typeof(b),
-// typeof(c)]. Summaries are accumulated across all return statements in a
+// A return vector represents the types returned by a function. For
+// `return a, b, c`, the vector is [typeof(a), typeof(b), typeof(c)]. Vectors
+// are accumulated across all return statements in a
 // function body and joined to produce the final return type.
 //
-// # Canonical vs Seed Summaries
+// # Canonical Function Facts vs Iteration Vectors
 //
-// Two summary stores are maintained:
-//   - Canonical: Fully computed return types from completed analysis
-//   - Seed: Provisional return types from the current iteration
+// The stored authority is api.FunctionFacts. During SCC solving, the inferencer
+// also keeps a provisional map of return vectors for the current iteration.
 //
-// During analysis, seed summaries are used for functions in the current SCC
-// (to avoid circular dependence), while canonical summaries are used for
+// During analysis, iteration vectors are used for functions in the current SCC
+// to avoid circular dependence, while canonical function facts are used for
 // functions outside the SCC (whose types are already known).
 //
 // # Parameter Hint Propagation
@@ -66,6 +65,6 @@ type LocalFuncInfo struct {
 	ParamHints []typ.Type
 }
 
-// MaxReturnSummaryIterations limits fixpoint iterations for ReturnSummaries.
+// MaxReturnSummaryIterations limits fixpoint iterations for return-vector inference.
 // Exceeding this indicates a bug (non-monotonic merge) or pathological recursion.
 const MaxReturnSummaryIterations = 10

@@ -1,6 +1,6 @@
 // infer.go implements return type inference for local functions.
 // This runs as a pre-phase before the main analysis pipeline to ensure
-// return summaries are available when the parent function is analyzed.
+// return vectors are available when the parent function is analyzed.
 //
 // # RETURN TYPE INFERENCE
 //
@@ -31,7 +31,7 @@
 //
 // # SEED PROPAGATION
 //
-// Return summaries are seeded from the previous fixpoint iteration:
+// Return vectors are seeded from the previous fixpoint iteration:
 //   - Seeds provide initial return type estimates
 //   - Iteration refines seeds using actual function body analysis
 //   - Convergence occurs when seeds stabilize across iterations
@@ -64,19 +64,19 @@ type Config struct {
 	GlobalTypes   map[string]typ.Type
 	Manifests     io.ManifestQuerier
 	Stdlib        *scope.State
-	Store         api.StoreView
+	Store         api.StoreReader
 	Graphs        api.GraphProvider
 	SourceName    string
 	MaxIterations int
 }
 
-// Inferencer computes pre-flow return summaries for local functions.
+// Inferencer computes pre-flow return vectors for local functions.
 type Inferencer struct {
 	types         core.TypeOps
 	globalTypes   map[string]typ.Type
 	manifests     io.ManifestQuerier
 	stdlib        *scope.State
-	store         api.StoreView
+	store         api.StoreReader
 	graphs        api.GraphProvider
 	sourceName    string
 	maxIterations int
@@ -170,13 +170,13 @@ func (i *Inferencer) collectLocalFunctions(
 }
 
 // newReturnInferenceEngine creates a synthesis engine configured for return type
-// inference within the pre-flow return summary computation phase.
+// inference within the pre-flow return-vector computation phase.
 //
 // The engine operates in PhaseScopeCompute mode with:
 //   - Declared types from the overlay (params, siblings, captured variables)
 //   - Global types for built-in function resolution
 //   - Module aliases for require() resolution
-//   - Return summaries from previous iteration for recursive call resolution
+//   - Return vectors from previous iteration for recursive call resolution
 //
 // Unlike the main analysis engine, this engine does not have access to flow
 // solution or narrowed types, producing "declared-phase" type estimates.
@@ -197,15 +197,14 @@ func (i *Inferencer) newReturnInferenceEngine(
 	})
 }
 
-// computeReturnSummariesForGraph computes return summaries for local functions in a graph
-// and stores them into the interproc facts for the current iteration.
+// ComputeForGraph computes canonical function facts for local functions in a graph.
 func (i *Inferencer) ComputeForGraph(
 	run RunContext,
 	graph *cfg.Graph,
 	parent *scope.State,
-) (api.ReturnSummaries, api.FuncTypes, []diag.Diagnostic) {
+) (api.FunctionFacts, []diag.Diagnostic) {
 	if i == nil || i.store == nil || graph == nil || parent == nil {
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	parentScope := api.ParentScopeForGraph(i.store, graph.ID(), parent)
@@ -214,7 +213,7 @@ func (i *Inferencer) ComputeForGraph(
 	pointScopes := scope.BuildTypeDefScopes(graph, parentScope, engine.ResolveTypeDef)
 	localFuncs := i.collectLocalFunctions(graph, pointScopes, graph.Func())
 	if len(localFuncs) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	// Apply param hints from the stable snapshot (deterministic order).
@@ -230,22 +229,28 @@ func (i *Inferencer) ComputeForGraph(
 		}
 	}
 
-	seed := i.store.GetReturnSummariesSnapshot(graph, parentScope)
-	summaries, diags := i.computeReturnSummariesForGroup(run, parentScope.GroupHash(), localFuncs, seed)
-	funcTypes := i.buildLocalFuncTypes(localFuncs, summaries, engine, parentScope)
-	return summaries, funcTypes, diags
+	seedFacts := i.store.GetFunctionFactsSnapshot(graph, parentScope)
+	seed := make(map[cfg.SymbolID][]typ.Type, len(seedFacts))
+	for sym, fact := range seedFacts {
+		if len(fact.Summary) > 0 {
+			seed[sym] = fact.Summary
+		}
+	}
+	returnVectors, diags := i.computeReturnVectorsForGroup(run, parentScope.GroupHash(), localFuncs, seed)
+	functionTypes := i.buildLocalFunctionTypes(localFuncs, returnVectors, engine, parentScope)
+	return assembleFunctionFacts(returnVectors, functionTypes), diags
 }
 
-func (i *Inferencer) buildLocalFuncTypes(
+func (i *Inferencer) buildLocalFunctionTypes(
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
-	summaries map[cfg.SymbolID][]typ.Type,
+	returnVectors map[cfg.SymbolID][]typ.Type,
 	engine *synth.Engine,
 	parentScope *scope.State,
-) api.FuncTypes {
+) map[cfg.SymbolID]typ.Type {
 	if len(localFuncs) == 0 {
 		return nil
 	}
-	out := make(api.FuncTypes, len(localFuncs))
+	out := make(map[cfg.SymbolID]typ.Type, len(localFuncs))
 	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		info := localFuncs[sym]
 		if info == nil || info.Fn == nil {
@@ -275,8 +280,8 @@ func (i *Inferencer) buildLocalFuncTypes(
 				fnType = merged
 			}
 		}
-		if summary := summaries[sym]; len(summary) > 0 {
-			if withSummary := returns.WithSummaryOrUnknown(fnType, summary); withSummary != nil {
+		if returnVector := returnVectors[sym]; len(returnVector) > 0 {
+			if withSummary := returns.WithSummaryOrUnknown(fnType, returnVector); withSummary != nil {
 				fnType = withSummary
 			}
 		}
@@ -288,7 +293,46 @@ func (i *Inferencer) buildLocalFuncTypes(
 	return out
 }
 
-// computeReturnSummariesForGroup computes return type summaries for a scope group
+func assembleFunctionFacts(
+	returnVectors map[cfg.SymbolID][]typ.Type,
+	funcs map[cfg.SymbolID]typ.Type,
+) api.FunctionFacts {
+	total := len(returnVectors) + len(funcs)
+	if total == 0 {
+		return nil
+	}
+	symbols := make(map[cfg.SymbolID]bool, total)
+	for sym := range returnVectors {
+		if sym != 0 {
+			symbols[sym] = true
+		}
+	}
+	for sym := range funcs {
+		if sym != 0 {
+			symbols[sym] = true
+		}
+	}
+	if len(symbols) == 0 {
+		return nil
+	}
+	out := make(api.FunctionFacts, len(symbols))
+	for _, sym := range cfg.SortedSymbolIDs(symbols) {
+		ff := returns.JoinFunctionFact(api.FunctionFact{}, api.FunctionFact{
+			Summary: returnVectors[sym],
+			Type:    funcs[sym],
+		})
+		if len(ff.Summary) == 0 && ff.Type == nil && len(ff.Narrow) == 0 {
+			continue
+		}
+		out[sym] = ff
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// computeReturnVectorsForGroup computes return type vectors for a scope group
 // using strongly connected component (SCC) based fixpoint iteration.
 //
 // SCC ORDERING: Functions are partitioned into SCCs by their call graph. SCCs are
@@ -306,7 +350,7 @@ func (i *Inferencer) buildLocalFuncTypes(
 //
 // SEEDING: Initial return type estimates come from the seed map (previous fixpoint
 // iteration). This accelerates convergence for iteratively-refined modules.
-func (i *Inferencer) computeReturnSummariesForGroup(
+func (i *Inferencer) computeReturnVectorsForGroup(
 	run RunContext,
 	groupHash uint64,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
@@ -322,15 +366,15 @@ func (i *Inferencer) computeReturnSummariesForGroup(
 		return nil, nil
 	}
 
-	summaries := seedSummariesFromSeed(localFuncs, seed)
-	return summaries, i.processSCCSummaries(run, sccs, localFuncs, summaries)
+	returnVectors := seedReturnVectorsFromSeed(localFuncs, seed)
+	return returnVectors, i.processSCCReturnVectors(run, sccs, localFuncs, returnVectors)
 }
 
 // returnInferenceContext holds shared state for return type inference phases.
 type returnInferenceContext struct {
 	run           RunContext
 	info          *returns.LocalFuncInfo
-	summaries     map[cfg.SymbolID][]typ.Type
+	returnVectors map[cfg.SymbolID][]typ.Type
 	localFuncs    map[cfg.SymbolID]*returns.LocalFuncInfo
 	engine        *synth.Engine
 	resolveScope  *scope.State
@@ -368,7 +412,7 @@ func collectReturnTypes(
 		returnTypes = joinReturnTypes(returnTypes, types)
 	})
 
-	return returns.NormalizeReturnVector(returnTypes)
+	return returns.NormalizeReturnVectorInPlace(returnTypes)
 }
 
 // synthesizeReturnExprs computes types for a single return statement's expressions.
@@ -381,9 +425,9 @@ func synthesizeReturnExprs(
 		return nil
 	}
 
-	var types []typ.Type
+	types := make([]typ.Type, 0, len(retInfo.Exprs))
 	for i, expr := range retInfo.Exprs {
-		if i == len(retInfo.Exprs)-1 {
+		if i == len(retInfo.Exprs)-1 && ast.CanProduceMultipleValues(expr) {
 			multi := synthEngine.MultiTypeOf(expr, p)
 			if len(multi) == 0 {
 				multi = []typ.Type{typ.Unknown}
@@ -435,15 +479,15 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	if fnGraph == nil {
 		return narrowed
 	}
-	phaseReturnSummaries := summarizeWithoutCurrent(ctx.summaries, ctx.info)
+	phaseFunctionFacts := functionFactsExcludingCurrent(ctx.returnVectors, ctx.info)
 	declCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:           fnGraph,
-		Bindings:        ctx.bindings,
-		BaseScope:       ctx.resolveScope,
-		DeclaredTypes:   finalOverlay,
-		GlobalTypes:     i.globalTypes,
-		ModuleAliases:   ctx.moduleAliases,
-		ReturnSummaries: phaseReturnSummaries,
+		Graph:         fnGraph,
+		Bindings:      ctx.bindings,
+		BaseScope:     ctx.resolveScope,
+		DeclaredTypes: finalOverlay,
+		GlobalTypes:   i.globalTypes,
+		ModuleAliases: ctx.moduleAliases,
+		FunctionFacts: phaseFunctionFacts,
 	})
 	declSynth := i.newReturnInferenceEngine(
 		ctx.run,
@@ -455,15 +499,16 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	return returns.MergeReturnSummary(declared, narrowed)
 }
 
-// inferReturnWithSummary infers return types for a single function using available summaries.
-// This is the core inference logic called by computeReturnSummariesForGroup for each function.
+// inferReturnForFunction infers return types for one local function from the
+// current SCC return-vector state.
+// This is the core inference logic called by computeReturnVectorsForGroup for each function.
 //
 // TWO-PHASE INFERENCE:
 //
 // Phase 1 (Preliminary): Collect inferred types for local variables within the function.
 // This uses a preliminary synthesis engine with:
 //   - Parameter types (from annotations or param hints)
-//   - Sibling function types (from summaries)
+//   - Sibling function types (from return vectors)
 //   - Captured variable types (from parent function result)
 //
 // Phase 2 (Final): Compute return types using enriched overlay containing:
@@ -477,10 +522,10 @@ func (i *Inferencer) inferReturnTypesFromBody(
 //
 // MULTI-RETURN: Functions may return multiple values. The inference handles multi-return
 // by expanding the last expression (which may be a call or vararg) and joining position-wise.
-func (i *Inferencer) inferReturnWithSummary(
+func (i *Inferencer) inferReturnForFunction(
 	run RunContext,
 	info *returns.LocalFuncInfo,
-	summaries map[cfg.SymbolID][]typ.Type,
+	returnVectors map[cfg.SymbolID][]typ.Type,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 ) []typ.Type {
 	if info == nil || info.Fn == nil || info.Graph == nil {
@@ -525,7 +570,7 @@ func (i *Inferencer) inferReturnWithSummary(
 	ctx := &returnInferenceContext{
 		run:           run,
 		info:          info,
-		summaries:     summaries,
+		returnVectors: returnVectors,
 		localFuncs:    localFuncs,
 		engine:        engine,
 		resolveScope:  resolveScope,
@@ -537,12 +582,12 @@ func (i *Inferencer) inferReturnWithSummary(
 	// Build type overlay with parameter types.
 	overlay := i.buildParameterOverlay(ctx)
 
-	// Add sibling function types from summaries.
+	// Add sibling function types from return vectors.
 	i.enrichOverlayWithSiblings(ctx, overlay)
 
-	// Collect all return summaries and add local function types.
-	allSummaries := i.collectAllReturnSummaries(ctx)
-	i.enrichOverlayWithLocalFunctions(ctx, overlay, allSummaries)
+	// Collect normalized return vectors and add local function types.
+	allReturnVectors := i.collectAllReturnVectors(ctx)
+	i.enrichOverlayWithLocalFunctions(ctx, overlay, allReturnVectors)
 
 	// Add captured variable types from parent.
 	i.enrichOverlayWithCaptured(ctx, overlay)

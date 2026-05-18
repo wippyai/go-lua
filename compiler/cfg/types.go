@@ -133,6 +133,13 @@ type AssignInfo struct {
 	singleTargetVersion [1]Version
 }
 
+// LocalFunctionAssignment describes `local f = function(...) ... end`.
+type LocalFunctionAssignment struct {
+	Symbol basecfg.SymbolID
+	Name   string
+	Func   *ast.FunctionExpr
+}
+
 func (*AssignInfo) nodeInfo() {}
 
 // Kind returns the node kind for AssignInfo.

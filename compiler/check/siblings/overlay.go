@@ -22,8 +22,8 @@ type OverlayEntry struct {
 // sibling functions so that calls between them can be typed during
 // fixpoint iteration.
 type OverlayConfig struct {
-	// Summaries maps symbols to their return type summaries.
-	Summaries map[cfg.SymbolID][]typ.Type
+	// ReturnVectors maps symbols to their current inferred return vectors.
+	ReturnVectors map[cfg.SymbolID][]typ.Type
 
 	// Siblings are the sibling functions in this scope group.
 	Siblings []OverlayEntry
@@ -31,7 +31,7 @@ type OverlayConfig struct {
 	// CurrentSym is the symbol of the function being analyzed (excluded from overlay).
 	CurrentSym cfg.SymbolID
 
-	// Services provides seed type resolution for siblings without summaries.
+	// Services provides seed type resolution for siblings without return vectors.
 	Services OverlayServices
 }
 
@@ -55,18 +55,18 @@ func (o OverlayServicesFuncs) SeedType(fn *ast.FunctionExpr) typ.Type {
 // BuildOverlay constructs an overlay map for return inference.
 //
 // This overlay is used during SCC-based return type inference. It provides
-// function types for sibling functions based on their current return summaries.
+// function types for sibling functions based on their current return vectors.
 // The current function (CurrentSym) is excluded from the overlay to avoid
 // circular dependence during its own analysis.
 //
-// For siblings without summaries yet, placeholder function types are created
+// For siblings without return vectors yet, placeholder function types are created
 // using seed type services to preserve parameter arity. This enables the fixpoint
 // to make progress even when not all return types are known.
 func BuildOverlay(c OverlayConfig) map[cfg.SymbolID]typ.Type {
 	overlay := make(map[cfg.SymbolID]typ.Type)
 
-	// Add sibling function types with current return summaries.
-	for sym, returnTypes := range c.Summaries {
+	// Add sibling function types with current return vectors.
+	for sym, returnTypes := range c.ReturnVectors {
 		if sym == c.CurrentSym {
 			continue
 		}
@@ -75,7 +75,7 @@ func BuildOverlay(c OverlayConfig) map[cfg.SymbolID]typ.Type {
 		}
 	}
 
-	// Seed siblings without summaries with placeholder function types.
+	// Seed siblings without return vectors with placeholder function types.
 	for _, sib := range c.Siblings {
 		if sib.Symbol == c.CurrentSym {
 			continue

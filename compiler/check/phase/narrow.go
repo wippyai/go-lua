@@ -52,10 +52,9 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 		WithBindings(bindings).
 		WithDeclaredTypes(declaredTypes).
 		WithAnnotatedVars(annotatedVars).
-		WithSiblingTypes(input.SiblingTypes).
+		WithFunctionFacts(input.FunctionFacts).
 		WithLiteralTypes(input.LiteralTypes).
 		WithSolution(input.Solve.Solution).
-		WithNarrowReturnSummaries(input.NarrowReturnSummaries).
 		BuildNarrow()
 
 	engine := createNarrowedEngine(
@@ -70,7 +69,7 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 	)
 
 	fnEffect := InferRefinement(input.Graph, input.Solve.Solution, input.Extract.Params, input.Extract.ReturnType)
-	fnEffect = EnrichWithKeysCollector(fnEffect, input.Fn)
+	fnEffect = EnrichWithKeysCollector(fnEffect, input.Graph)
 
 	return NarrowOutput{
 		Facts:      narrowingCtx.Types(),

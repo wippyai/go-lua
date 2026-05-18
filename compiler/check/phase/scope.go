@@ -210,8 +210,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 		typeExprResolver,
 		fnSignatureResolver,
 		typeResolutionEngine,
-		input.SiblingTypes,
-		input.ReturnSummaries,
+		input.FunctionFacts,
 	)
 	declaredTypes = applyModuleAliasExports(declaredTypes, input.ModuleAliases, input.Manifests)
 
@@ -222,7 +221,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 		AnnotatedVars:             annotatedVars,
 		ParamTypes:                paramTypes,
 		FunctionSignatureResolver: fnSignatureResolver,
-		SiblingTypes:              input.SiblingTypes,
+		FunctionFacts:             input.FunctionFacts,
 		DepthLimitExceeded:        depthExceeded,
 	}
 }
@@ -357,8 +356,7 @@ func buildDeclaredTypes(
 	typeExprResolver TypeResolver,
 	fnSigResolver FunctionSignatureResolver,
 	synthAPI api.SynthAPI,
-	siblingTypes map[cfg.SymbolID]typ.Type,
-	returnSummaries map[cfg.SymbolID][]typ.Type,
+	functionFacts api.FunctionFacts,
 ) (flow.DeclaredTypes, map[cfg.SymbolID]bool) {
 	if graph == nil {
 		return nil, nil
@@ -368,10 +366,10 @@ func buildDeclaredTypes(
 	annotated := make(map[cfg.SymbolID]bool)
 	bindings := graph.Bindings()
 	alignWithSummary := func(sym cfg.SymbolID, fn *typ.Function) *typ.Function {
-		if fn == nil || len(returnSummaries) == 0 || sym == 0 {
+		if fn == nil || len(functionFacts) == 0 || sym == 0 {
 			return fn
 		}
-		if summary := returnSummaries[sym]; len(summary) > 0 {
+		if summary := functionFacts.Summary(sym); len(summary) > 0 {
 			return returns.WithSummaryOrUnknown(fn, summary)
 		}
 		return fn
@@ -452,11 +450,9 @@ func buildDeclaredTypes(
 				}
 
 				if fnExpr, ok := source.(*ast.FunctionExpr); ok && fnExpr != nil {
-					if siblingTypes != nil {
-						if siblingFn := siblingTypes[sym]; siblingFn != nil {
-							out[sym] = siblingFn
-							return
-						}
+					if siblingFn := functionFacts.FunctionType(sym); siblingFn != nil {
+						out[sym] = siblingFn
+						return
 					}
 					if fnSigResolver != nil {
 						if fnSig := fnSigResolver.ResolveFunctionSignature(fnExpr, sc); fnSig != nil {
@@ -482,7 +478,8 @@ func buildDeclaredTypes(
 		if info := graph.FuncDef(p); info != nil && info.Name != "" && info.FuncExpr != nil {
 			sym := info.Symbol
 			if sym == 0 {
-				// Fallback for unresolved symbols in legacy/broken binding scenarios.
+				// Some CFG FuncDef nodes only carry the source name; recover the
+				// symbol from the graph's binding table for this point.
 				var ok bool
 				sym, ok = graph.SymbolAt(p, info.Name)
 				if !ok {
@@ -492,11 +489,9 @@ func buildDeclaredTypes(
 			if _, exists := out[sym]; exists {
 				continue
 			}
-			if siblingTypes != nil {
-				if siblingFn := siblingTypes[sym]; siblingFn != nil {
-					out[sym] = siblingFn
-					continue
-				}
+			if siblingFn := functionFacts.FunctionType(sym); siblingFn != nil {
+				out[sym] = siblingFn
+				continue
 			}
 			sc := scopes[p]
 			if fnSigResolver != nil {

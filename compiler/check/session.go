@@ -11,8 +11,8 @@
 //     Contains binding tables, CFG graphs, and module aliases. Never modified
 //     during fixpoint iteration.
 //
-//   - IterationStore: Iteration-local state used during fixpoint convergence
-//     (revision counter and constructor field collection).
+//   - Snapshot inputs: query-tracked interprocedural snapshots used to revalidate
+//     cached function analysis when facts/effects actually change.
 //
 //   - IterationScratch: Single-iteration state cleared at each boundary.
 //     Tracks which literals have been analyzed, pending parameter hints,
@@ -217,7 +217,11 @@ func (s *Session) ScopeDepthDiagState() map[*ast.FunctionExpr]bool {
 
 // New creates a session for checking a file.
 func New(ctx *db.QueryContext, name string) *Session {
-	store := store.NewSessionStore()
+	var database *db.DB
+	if ctx != nil {
+		database = ctx.DB()
+	}
+	store := store.NewSessionStoreWithDB(database)
 	api.AttachStore(ctx, store)
 	sess := &Session{
 		Ctx:                   ctx,

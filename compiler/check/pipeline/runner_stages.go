@@ -17,7 +17,7 @@ import (
 
 func (r *Runner) resolveSynthesizedSignature(
 	ctx *db.QueryContext,
-	store api.StoreView,
+	store api.StoreReader,
 	graph *cfg.Graph,
 	fn *ast.FunctionExpr,
 	parent *scope.State,
@@ -56,13 +56,13 @@ func (r *Runner) resolveSynthesizedSignature(
 }
 
 func (r *Runner) appendCapturedMutatorAssignments(
-	store api.StoreView,
+	store api.StoreReader,
 	graph *cfg.Graph,
 	parent *scope.State,
 	env phase.PhaseEnv,
 	scopeOut phase.ScopeOutput,
 	literalOut phase.LiteralOutput,
-	returnSummaries map[cfg.SymbolID][]typ.Type,
+	functionFacts api.FunctionFacts,
 	extractOut *phase.FlowExtractOutput,
 ) {
 	if store == nil || graph == nil || extractOut == nil || extractOut.Inputs == nil {
@@ -81,9 +81,8 @@ func (r *Runner) appendCapturedMutatorAssignments(
 
 	declaredEnv := phase.NewContextBuilder(env).
 		WithScope(scopeOut).
-		WithSiblingTypes(scopeOut.SiblingTypes).
 		WithLiteralTypes(literalOut.LiteralTypes).
-		WithReturnSummaries(returnSummaries).
+		WithFunctionFacts(functionFacts).
 		BuildDeclared()
 
 	synthEngine := synth.New(synth.Config{
@@ -121,7 +120,7 @@ func (r *Runner) runComputePasses(graph *cfg.Graph, scopes map[cfg.Point]*scope.
 	return extras
 }
 
-func (r *Runner) literalSignatureForFunction(store api.StoreView, graph *cfg.Graph, fn *ast.FunctionExpr) *typ.Function {
+func (r *Runner) literalSignatureForFunction(store api.StoreReader, graph *cfg.Graph, fn *ast.FunctionExpr) *typ.Function {
 	if store == nil || graph == nil || fn == nil {
 		return nil
 	}
@@ -152,7 +151,7 @@ func (r *Runner) literalSignatureForFunction(store api.StoreView, graph *cfg.Gra
 	return nil
 }
 
-func (r *Runner) literalSigProvider(store api.StoreView, graph *cfg.Graph, parent *scope.State) phase.LiteralSigsProvider {
+func (r *Runner) literalSigProvider(store api.StoreReader, graph *cfg.Graph, parent *scope.State) phase.LiteralSigsProvider {
 	if store == nil || graph == nil || parent == nil {
 		return nil
 	}
@@ -184,7 +183,7 @@ type effectStoreProvider interface {
 	RefinementStore() api.RefinementStore
 }
 
-func effectStoreFrom(store api.StoreView) api.RefinementStore {
+func effectStoreFrom(store api.StoreReader) api.RefinementStore {
 	if store == nil {
 		return nil
 	}
@@ -198,7 +197,7 @@ type scratchLiteralStore interface {
 	ScratchLiteralSigs(graphID uint64) map[*ast.FunctionExpr]*typ.Function
 }
 
-func scratchLiteralSigs(store api.StoreView, graphID uint64) map[*ast.FunctionExpr]*typ.Function {
+func scratchLiteralSigs(store api.StoreReader, graphID uint64) map[*ast.FunctionExpr]*typ.Function {
 	if store == nil {
 		return nil
 	}
@@ -208,7 +207,7 @@ func scratchLiteralSigs(store api.StoreView, graphID uint64) map[*ast.FunctionEx
 	return nil
 }
 
-func (r *Runner) parentScopeForGraph(store api.StoreView, graph *cfg.Graph) *scope.State {
+func (r *Runner) parentScopeForGraph(store api.StoreReader, graph *cfg.Graph) *scope.State {
 	if store == nil || graph == nil {
 		return nil
 	}
@@ -221,8 +220,8 @@ func (r *Runner) parentScopeForGraph(store api.StoreView, graph *cfg.Graph) *sco
 	return nil
 }
 
-func (r *Runner) mergeCapturedParentFuncTypes(
-	store api.StoreView,
+func (r *Runner) mergeCapturedParentFunctionTypes(
+	store api.StoreReader,
 	graph *cfg.Graph,
 	fn *ast.FunctionExpr,
 	scopeOut *phase.ScopeOutput,
@@ -242,12 +241,12 @@ func (r *Runner) mergeCapturedParentFuncTypes(
 	if parentScope == nil {
 		return
 	}
-	parentFuncTypes := store.GetLocalFuncTypesSnapshot(parentGraph, parentScope)
-	if len(parentFuncTypes) == 0 {
+	parentFacts := store.GetFunctionFactsSnapshot(parentGraph, parentScope)
+	if len(parentFacts) == 0 {
 		return
 	}
 	for _, sym := range graph.Bindings().CapturedSymbols(fn) {
-		ft := parentFuncTypes[sym]
+		ft := parentFacts.FunctionType(sym)
 		if sym == 0 || ft == nil {
 			continue
 		}

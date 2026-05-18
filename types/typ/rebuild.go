@@ -77,6 +77,9 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		if sorted[i].Type == nil {
 			sorted[i].Type = Unknown
 		}
+		if sorted[i].Optional {
+			sorted[i].Type = normalizeOptionalFieldType(sorted[i].Type)
+		}
 	}
 
 	if mapKey == nil && mapValue != nil {
@@ -123,6 +126,41 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		sorted:       true,
 		hash:         h,
 		softPrunable: softPrunable,
+	}
+}
+
+func normalizeOptionalFieldType(t Type) Type {
+	if t == nil {
+		return Unknown
+	}
+	switch v := t.(type) {
+	case *Annotated:
+		inner := normalizeOptionalFieldType(v.Inner)
+		if inner == v.Inner {
+			return t
+		}
+		return NewAnnotated(inner, v.Annotations)
+	case *Alias:
+		return t
+	case *Optional:
+		if v.Inner == nil || v.Inner.Kind() == kind.Never || v.Inner.Kind() == kind.Nil {
+			return t
+		}
+		return v.Inner
+	case *Union:
+		kept := make([]Type, 0, len(v.Members))
+		for _, member := range v.Members {
+			if member == nil || member.Kind() == kind.Nil || member.Kind() == kind.Never {
+				continue
+			}
+			kept = append(kept, member)
+		}
+		if len(kept) == 0 {
+			return t
+		}
+		return NewUnion(kept...)
+	default:
+		return t
 	}
 }
 

@@ -31,7 +31,7 @@ func TestEnrichWithManifest_DirectLookup(t *testing.T) {
 	}
 }
 
-func TestEnrichWithManifest_ImportsFallback(t *testing.T) {
+func TestEnrichWithManifest_ImportsLookup(t *testing.T) {
 	manifest := io.NewManifest("m")
 	manifest.SetExport(typ.NewRecord().Field("name", typ.String).Build())
 	got := enrichWithManifest(manifestQuerierStub{
@@ -39,7 +39,7 @@ func TestEnrichWithManifest_ImportsFallback(t *testing.T) {
 		imports:   map[string]*io.Manifest{"m": manifest},
 	}, typ.Number, "m", "name")
 	if !typ.TypeEquals(got, typ.String) {
-		t.Fatalf("enrichWithManifest imports fallback = %v, want string", got)
+		t.Fatalf("enrichWithManifest imports lookup = %v, want string", got)
 	}
 }
 

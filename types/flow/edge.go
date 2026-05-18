@@ -27,6 +27,9 @@ func (s *Solution) buildEdgeConditions() {
 		if !ec.Condition.HasConstraints() && !ec.Condition.IsFalse() {
 			continue
 		}
+		if s.edgeConditions == nil {
+			s.edgeConditions = make(map[edgeKey]constraint.Condition, len(s.inputs.EdgeConditions))
+		}
 		key := edgeKey{from: ec.From, to: ec.To}
 		if existing, ok := s.edgeConditions[key]; ok && (existing.HasConstraints() || existing.IsFalse()) {
 			s.edgeConditions[key] = constraint.And(existing, ec.Condition)

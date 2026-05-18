@@ -24,8 +24,8 @@ type FuncResult struct {
 	// binding information, and iteration metadata.
 	Graph *cfg.Graph
 
-	// ModuleBindings is the module-level binding table used as fallback when
-	// graph-local bindings are insufficient for canonical symbol resolution.
+	// ModuleBindings is the module-level binding table used when graph-local
+	// bindings are insufficient for canonical symbol resolution.
 	ModuleBindings *bind.BindingTable
 
 	// BaseScope is the function's entry scope containing parameters,
@@ -109,9 +109,9 @@ func (r *FuncResult) ExcludesTypeAt(p cfg.Point, path constraint.Path, declared 
 	return r.FlowSolution.ExcludesTypeAt(p, path, declared)
 }
 
-// FuncResultView is the minimal view of a function analysis result
+// FuncResultSnapshot is the stable slice of a function analysis result
 // required by nested processing and interprocedural helpers.
-type FuncResultView struct {
+type FuncResultSnapshot struct {
 	Graph        *cfg.Graph
 	Scopes       map[cfg.Point]*scope.State
 	Facts        flow.TypeFacts
@@ -119,12 +119,12 @@ type FuncResultView struct {
 	NarrowSynth  Synth
 }
 
-// ViewFromResult constructs a minimal view from a full function result.
-func ViewFromResult(r *FuncResult) *FuncResultView {
+// SnapshotFromResult constructs a stable snapshot from a full function result.
+func SnapshotFromResult(r *FuncResult) *FuncResultSnapshot {
 	if r == nil {
 		return nil
 	}
-	return &FuncResultView{
+	return &FuncResultSnapshot{
 		Graph:        r.Graph,
 		Scopes:       r.Scopes,
 		Facts:        r.Facts,

@@ -15,11 +15,11 @@ func (i *Inferencer) iterateSCCFixpoint(
 	run RunContext,
 	scc []cfg.SymbolID,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
-	summaries map[cfg.SymbolID][]typ.Type,
+	returnVectors map[cfg.SymbolID][]typ.Type,
 ) bool {
 	for iter := 0; iter < i.maxIterations; iter++ {
-		next, changed := i.runSCCIteration(run, scc, localFuncs, summaries)
-		applySCCIterationUpdates(summaries, scc, next)
+		next, changed := i.runSCCIteration(run, scc, localFuncs, returnVectors)
+		applySCCIterationUpdates(returnVectors, scc, next)
 		if !changed {
 			return true
 		}
@@ -40,37 +40,37 @@ func (i *Inferencer) planLocalFunctionSCCs(localFuncs map[cfg.SymbolID]*returns.
 	return returns.ComputeSymbolSCCs(adj)
 }
 
-func seedSummariesFromSeed(
+func seedReturnVectorsFromSeed(
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	seed map[cfg.SymbolID][]typ.Type,
 ) map[cfg.SymbolID][]typ.Type {
-	summaries := make(map[cfg.SymbolID][]typ.Type, len(localFuncs))
+	returnVectors := make(map[cfg.SymbolID][]typ.Type, len(localFuncs))
 	if seed == nil {
-		return summaries
+		return returnVectors
 	}
 	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		if seeded := seed[sym]; len(seeded) > 0 {
-			summaries[sym] = seeded
+			returnVectors[sym] = seeded
 		}
 	}
-	return summaries
+	return returnVectors
 }
 
-func (i *Inferencer) processSCCSummaries(
+func (i *Inferencer) processSCCReturnVectors(
 	run RunContext,
 	sccs [][]cfg.SymbolID,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
-	summaries map[cfg.SymbolID][]typ.Type,
+	returnVectors map[cfg.SymbolID][]typ.Type,
 ) []diag.Diagnostic {
 	var diags []diag.Diagnostic
 	for _, scc := range sccs {
 		if len(scc) == 0 {
 			continue
 		}
-		if i.iterateSCCFixpoint(run, scc, localFuncs, summaries) {
+		if i.iterateSCCFixpoint(run, scc, localFuncs, returnVectors) {
 			continue
 		}
-		if warn := i.widenSCCToUnknown(scc, localFuncs, summaries); warn != nil {
+		if warn := i.widenSCCToUnknown(scc, localFuncs, returnVectors); warn != nil {
 			diags = append(diags, *warn)
 		}
 	}
@@ -81,7 +81,7 @@ func (i *Inferencer) runSCCIteration(
 	run RunContext,
 	scc []cfg.SymbolID,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
-	summaries map[cfg.SymbolID][]typ.Type,
+	returnVectors map[cfg.SymbolID][]typ.Type,
 ) (map[cfg.SymbolID][]typ.Type, bool) {
 	changed := false
 	next := make(map[cfg.SymbolID][]typ.Type, len(scc))
@@ -90,8 +90,8 @@ func (i *Inferencer) runSCCIteration(
 		if info == nil || info.Fn == nil {
 			continue
 		}
-		newReturn := i.inferReturnWithSummary(run, info, summaries, localFuncs)
-		oldReturn := summaries[sym]
+		newReturn := i.inferReturnForFunction(run, info, returnVectors, localFuncs)
+		oldReturn := returnVectors[sym]
 		merged := returns.MergeReturnSummary(oldReturn, newReturn)
 		next[sym] = merged
 		if !returns.ReturnTypesEqual(merged, oldReturn) {
@@ -102,13 +102,13 @@ func (i *Inferencer) runSCCIteration(
 }
 
 func applySCCIterationUpdates(
-	summaries map[cfg.SymbolID][]typ.Type,
+	returnVectors map[cfg.SymbolID][]typ.Type,
 	scc []cfg.SymbolID,
 	next map[cfg.SymbolID][]typ.Type,
 ) {
 	for _, sym := range scc {
 		if v, ok := next[sym]; ok {
-			summaries[sym] = v
+			returnVectors[sym] = v
 		}
 	}
 }
@@ -118,18 +118,18 @@ func applySCCIterationUpdates(
 func (i *Inferencer) widenSCCToUnknown(
 	scc []cfg.SymbolID,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
-	summaries map[cfg.SymbolID][]typ.Type,
+	returnVectors map[cfg.SymbolID][]typ.Type,
 ) *diag.Diagnostic {
 	for _, sym := range scc {
-		existing := summaries[sym]
+		existing := returnVectors[sym]
 		if len(existing) == 0 {
-			summaries[sym] = []typ.Type{typ.Unknown}
+			returnVectors[sym] = []typ.Type{typ.Unknown}
 		} else {
 			widened := make([]typ.Type, len(existing))
 			for i := range widened {
 				widened[i] = typ.Unknown
 			}
-			summaries[sym] = widened
+			returnVectors[sym] = widened
 		}
 	}
 	if info := localFuncs[scc[0]]; info != nil && info.Fn != nil {

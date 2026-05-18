@@ -127,9 +127,6 @@ func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, par
 }
 
 func (d *Driver) prepareIterationState(sess api.AnalysisSession) {
-	if d.cfg.FuncResultQ != nil {
-		d.cfg.FuncResultQ.Clear()
-	}
 	sess.ResetDiagnostics()
 
 	scopeState := sess.ScopeDepthDiagState()
@@ -145,7 +142,6 @@ func (d *Driver) advanceFixpoint(store api.IterationStore) bool {
 	if !store.FixpointSwap() {
 		return true
 	}
-	store.BumpRevision()
 	return false
 }
 
@@ -194,15 +190,15 @@ func (d *Driver) processNestedFunctions(
 		Check: func(fn *ast.FunctionExpr, parent *scope.State) {
 			d.checkFunctionFixpoint(sess, fn, parent)
 		},
-		ResultForFunc: func(fn *ast.FunctionExpr) *api.FuncResultView {
+		ResultForFunc: func(fn *ast.FunctionExpr) *api.FuncResultSnapshot {
 			if results == nil {
 				return nil
 			}
-			return api.ViewFromResult(results[fn])
+			return api.SnapshotFromResult(results[fn])
 		},
-		RootResult: api.ViewFromResult(sess.RootResultValue()),
+		RootResult: api.SnapshotFromResult(sess.RootResultValue()),
 	})
-	nestedProc.ProcessNestedFunctions(graph, api.ViewFromResult(result))
+	nestedProc.ProcessNestedFunctions(graph, api.SnapshotFromResult(result))
 }
 
 func (d *Driver) registerParentScope(store api.IterationStore, graphID uint64, parent *scope.State) uint64 {
@@ -239,7 +235,7 @@ func (d *Driver) runReturnInference(
 		refinementLookup = es.LookupRefinementBySym
 	}
 
-	summaries, funcTypes, diags := inferencer.ComputeForGraph(returninfer.RunContext{
+	functionFacts, diags := inferencer.ComputeForGraph(returninfer.RunContext{
 		Ctx:          sess.Context(),
 		ParentFacts:  d.parentFactsForGraph(sess, store, graph.ID()),
 		EffectLookup: refinementLookup,
@@ -247,12 +243,12 @@ func (d *Driver) runReturnInference(
 	if len(diags) > 0 {
 		sess.AppendDiagnostics(diags...)
 	}
-	if len(summaries) == 0 {
+	if len(functionFacts) == 0 {
 		return
 	}
 	if key, ok := store.GraphKeyFor(graph, parent); ok {
-		store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
-			returns.MergeFunctionFactsIntoFacts(facts, summaries, nil, funcTypes)
+		store.MergeInterprocFactsNext(key, api.Facts{
+			FunctionFacts: functionFacts,
 		})
 	}
 }
@@ -296,14 +292,9 @@ func (d *Driver) loadFunctionResult(
 	if d.cfg.FuncResultQ == nil {
 		return nil
 	}
-	revision := uint64(0)
-	if store != nil {
-		revision = store.Revision()
-	}
 	return d.cfg.FuncResultQ.Get(sess.Context(), api.FuncKey{
-		GraphID:       graphID,
-		ParentHash:    parentHash,
-		StoreRevision: revision,
+		GraphID:    graphID,
+		ParentHash: parentHash,
 	})
 }
 

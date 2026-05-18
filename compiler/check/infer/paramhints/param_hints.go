@@ -299,11 +299,11 @@ func isInformativeHintType(t typ.Type, guard internal.RecursionGuard) bool {
 	return true
 }
 
-// BuildParamHintSigView builds a function-expression keyed hint map for this graph.
+// BuildParamHintSignatures builds a function-expression keyed hint map for this graph.
 // It merges per-iteration scratch hints with symbol-based hints from the store.
 // Scratch hints take precedence over symbol-derived hints.
-func BuildParamHintSigView(
-	store api.StoreView,
+func BuildParamHintSignatures(
+	store api.StoreReader,
 	graph *cfg.Graph,
 	parent *scope.State,
 	stdlib *scope.State,
@@ -348,11 +348,11 @@ func BuildParamHintSigView(
 	if meta, ok := store.NestedMetaFor(graph.ID()); ok {
 		parentGraph := store.Graphs()[meta.ParentGraphID]
 		if parentGraph != nil {
-			fallback := (*scope.State)(nil)
+			defaultScope := (*scope.State)(nil)
 			if _, isNestedParent := store.NestedMetaFor(parentGraph.ID()); !isNestedParent {
-				fallback = stdlib
+				defaultScope = stdlib
 			}
-			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), fallback)
+			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), defaultScope)
 			if parentScope != nil {
 				parentHints := store.GetParamHintsSnapshot(parentGraph, parentScope)
 				if len(parentHints) > 0 {

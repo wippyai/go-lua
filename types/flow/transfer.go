@@ -114,6 +114,9 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 			if assign.SourcePath.HasSymbol() {
 				sourceKey := s.pkResolver.KeyAt(p, assign.SourcePath)
 				if sourceKey != "" && sourceKey != targetKey {
+					if s.pathAliases == nil {
+						s.pathAliases = make(map[string]string)
+					}
 					s.pathAliases[targetKeyStr] = string(sourceKey)
 				} else {
 					delete(s.pathAliases, targetKeyStr)

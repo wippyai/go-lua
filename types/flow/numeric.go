@@ -25,6 +25,9 @@ func (s *Solution) buildEdgeNumericConstraints() {
 		if len(edge.Constraints) == 0 {
 			continue
 		}
+		if s.edgeNumericConstraints == nil {
+			s.edgeNumericConstraints = make(map[edgeKey][]constraint.NumericConstraint, len(s.inputs.EdgeNumericConstraints))
+		}
 		key := edgeKey{from: edge.From, to: edge.To}
 		s.edgeNumericConstraints[key] = append(s.edgeNumericConstraints[key], edge.Constraints...)
 	}
@@ -122,6 +125,9 @@ func (s *Solution) checkNumericConstraints() {
 			edgeState.ApplyConstraintWithResolver(nc, resolver)
 		}
 		if !edgeState.CheckSatisfiability() {
+			if s.unsatEdges == nil {
+				s.unsatEdges = make(map[edgeKey]bool)
+			}
 			s.unsatEdges[key] = true
 		}
 	}
@@ -223,7 +229,7 @@ func (s *Solution) computeNumericStateAt(c cfg.Graph, p cfg.Point, state map[cfg
 		return nil
 	}
 
-	var predStates []*numeric.State
+	var result *numeric.State
 	for _, pred := range preds {
 		predState := state[pred]
 		edgeConstraints := s.edgeNumericConstraints[edgeKey{from: pred, to: p}]
@@ -251,20 +257,13 @@ func (s *Solution) computeNumericStateAt(c cfg.Graph, p cfg.Point, state map[cfg
 		if edgeState.IsTop() {
 			continue
 		}
-		predStates = append(predStates, edgeState)
+		if result == nil {
+			result = edgeState
+			continue
+		}
+		result = numeric.Join(result, edgeState)
 	}
 
-	if len(predStates) == 0 {
-		return nil
-	}
-	if len(predStates) == 1 {
-		return predStates[0]
-	}
-
-	result := predStates[0]
-	for i := 1; i < len(predStates); i++ {
-		result = numeric.Join(result, predStates[i])
-	}
 	return result
 }
 
@@ -302,27 +301,24 @@ func (s *Solution) rekeyForPhis(state *numeric.State, pred, p cfg.Point) *numeri
 		return state
 	}
 
-	// Find phi nodes at point p
-	var relevantPhis []cfg.PhiNode
+	var keyRemap map[constraint.PathKey]constraint.PathKey
 	for _, phi := range s.inputs.Graph.PhiNodes() {
-		if phi.Point == p {
-			relevantPhis = append(relevantPhis, phi)
+		if phi.Point != p {
+			continue
 		}
-	}
-
-	if len(relevantPhis) == 0 {
-		return state
-	}
-
-	// Build mapping from old keys to new keys
-	keyRemap := make(map[constraint.PathKey]constraint.PathKey)
-	for _, phi := range relevantPhis {
-		// Find the operand version coming from pred
+		newKey := s.pkResolver.KeyAtVersion(phi.Target.Symbol, phi.Target.ID, nil)
+		if newKey == "" {
+			continue
+		}
 		for _, op := range phi.Operands {
-			// Check if this operand's definition point is reachable from pred
+			if op.From != pred {
+				continue
+			}
 			oldKey := s.pkResolver.KeyAtVersion(op.Version.Symbol, op.Version.ID, nil)
-			newKey := s.pkResolver.KeyAtVersion(phi.Target.Symbol, phi.Target.ID, nil)
 			if oldKey != "" && newKey != "" && oldKey != newKey {
+				if keyRemap == nil {
+					keyRemap = make(map[constraint.PathKey]constraint.PathKey)
+				}
 				keyRemap[oldKey] = newKey
 			}
 		}

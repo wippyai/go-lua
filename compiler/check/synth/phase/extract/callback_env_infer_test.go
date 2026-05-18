@@ -171,7 +171,7 @@ func TestInferCallbackEnvOverlays_UsesCanonicalCandidatesWhenRawCallSymbolMissin
 	}
 }
 
-func TestInferCallbackEnvOverlays_UsesModuleBindingNameFallback(t *testing.T) {
+func TestInferCallbackEnvOverlays_UsesModuleBindingNameResolution(t *testing.T) {
 	code := `
 		_G.ctx = 1
 		local x = cb()
@@ -199,7 +199,7 @@ func TestInferCallbackEnvOverlays_UsesModuleBindingNameFallback(t *testing.T) {
 	moduleBindings := bind.NewBindingTable()
 	moduleBindings.SetName(paramSlots[0].Symbol, "cb_alias")
 
-	// Force callback identity recovery through module-binding name fallback.
+	// Force callback identity recovery through module-binding name resolution.
 	graph.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
 		if info != nil {
 			info.CalleeSymbol = 0

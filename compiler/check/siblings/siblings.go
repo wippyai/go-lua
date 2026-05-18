@@ -18,18 +18,18 @@
 //
 // # Build Algorithm
 //
-// The Build function constructs sibling types through four steps:
+// The Build function constructs sibling types through three steps:
 //  1. Seed from previous iteration (monotonic accumulation across fixpoint iterations)
 //  2. Merge captured variable types from the parent scope
-//  3. Add sibling function types enriched with return summaries
-//  4. Overlay literal signatures for refined function types
+//  3. Add sibling function types from canonical function facts
 //
 // The result is a SymbolID -> Type map that can be injected into the type environment
 // when analyzing any function in the group.
 //
 // # Integration with Fixpoint
 //
-// Sibling types are recomputed on each fixpoint iteration as return summaries improve.
+// Sibling types are recomputed on each fixpoint iteration as canonical function
+// facts improve.
 // The monotonic accumulation (step 1) ensures that types only grow more precise,
 // guaranteeing convergence.
 package siblings
@@ -37,6 +37,7 @@ package siblings
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -70,8 +71,8 @@ type BuildConfig struct {
 	// SiblingTypesPrev are sibling types from the previous iteration (monotonic accumulation).
 	SiblingTypesPrev map[cfg.SymbolID]typ.Type
 
-	// FuncTypes are canonical local function types for this scope group.
-	FuncTypes map[cfg.SymbolID]typ.Type
+	// FunctionFacts are canonical local function facts for this scope group.
+	FunctionFacts api.FunctionFacts
 
 	// Services provides required lookups for sibling construction.
 	Services BuildServices
@@ -178,7 +179,7 @@ func Build(c BuildConfig) map[cfg.SymbolID]typ.Type {
 		if !entry.IsLocal || entry.Symbol == 0 {
 			continue
 		}
-		fnType := c.FuncTypes[entry.Symbol]
+		fnType := c.FunctionFacts.FunctionType(entry.Symbol)
 		if fnType == nil {
 			continue
 		}

@@ -46,7 +46,7 @@ function M.table_exists(database: db.Database): (boolean?, string?)
         return nil, "Query failed: " .. tostring(query_err)
     end
     if result and result[1] then
-        return result[1].exists or (result[1].count and result[1].count > 0), nil
+        return result[1].exists == true or (result[1].count and result[1].count > 0), nil
     end
     return false, nil
 end

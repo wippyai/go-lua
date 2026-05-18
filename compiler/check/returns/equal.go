@@ -6,9 +6,9 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// FactsEqual checks if two interproc fact bundles are equal.
+// FactsEqual checks if two canonical interproc fact bundles are equal.
 func FactsEqual(a, b api.Facts) bool {
-	if !FunctionFactsEqual(canonicalFunctionFacts(a), canonicalFunctionFacts(b)) {
+	if !FunctionFactsEqual(a.FunctionFacts, b.FunctionFacts) {
 		return false
 	}
 	if !symbolTypeVectorMapEqual(a.ParamHints, b.ParamHints) {
@@ -49,7 +49,7 @@ func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 		if !ReturnTypesEqual(af.Narrow, bf.Narrow) {
 			return false
 		}
-		if !typ.TypeEquals(af.Func, bf.Func) {
+		if !typ.TypeEquals(af.Type, bf.Type) {
 			return false
 		}
 	}
@@ -89,8 +89,9 @@ func symbolTypeMapEqual(a map[cfg.SymbolID]typ.Type, b map[cfg.SymbolID]typ.Type
 		return false
 	}
 	for _, sym := range cfg.SortedSymbolIDs(a) {
-		left := a[sym]
+		left := canonicalInterprocValueType(a[sym])
 		right, ok := b[sym]
+		right = canonicalInterprocValueType(right)
 		if !ok || !typ.TypeEquals(left, right) {
 			return false
 		}
@@ -116,7 +117,9 @@ func CapturedFieldAssignsEqual(a, b api.CapturedFieldAssigns) bool {
 				return false
 			}
 			for _, name := range cfg.SortedFieldNames(fields) {
-				if !typ.TypeEquals(fields[name], otherFields[name]) {
+				left := canonicalInterprocValueType(fields[name])
+				right := canonicalInterprocValueType(otherFields[name])
+				if !typ.TypeEquals(left, right) {
 					return false
 				}
 			}
@@ -161,7 +164,7 @@ func containerMutationSlicesEqual(a, b []api.ContainerMutation) bool {
 	for _, m := range b {
 		key := api.ContainerMutationKey(m)
 		other, ok := index[key]
-		if !ok || !typ.TypeEquals(other.ValueType, m.ValueType) {
+		if !ok || !typ.TypeEquals(canonicalInterprocValueType(other.ValueType), canonicalInterprocValueType(m.ValueType)) {
 			return false
 		}
 	}
@@ -180,7 +183,9 @@ func ConstructorFieldsEqual(a, b api.ConstructorFields) bool {
 			return false
 		}
 		for _, name := range cfg.SortedFieldNames(fields) {
-			if !typ.TypeEquals(fields[name], other[name]) {
+			left := canonicalInterprocValueType(fields[name])
+			right := canonicalInterprocValueType(other[name])
+			if !typ.TypeEquals(left, right) {
 				return false
 			}
 		}

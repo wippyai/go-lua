@@ -532,10 +532,10 @@ func (s *Synthesizer) expandValuesCore(exprs []ast.Expr, needed int, single func
 	if len(exprs) == 0 {
 		return nil
 	}
-	result := make([]typ.Type, 0, needed)
+	result := make([]typ.Type, 0, exprListResultCapacity(exprs, needed))
 
 	for i, expr := range exprs {
-		if i == len(exprs)-1 {
+		if i == len(exprs)-1 && ast.CanProduceMultipleValues(expr) {
 			result = append(result, multi(expr)...)
 		} else {
 			result = append(result, single(expr))
@@ -547,6 +547,13 @@ func (s *Synthesizer) expandValuesCore(exprs []ast.Expr, needed int, single func
 	}
 
 	return result
+}
+
+func exprListResultCapacity(exprs []ast.Expr, needed int) int {
+	if needed > len(exprs) {
+		return needed
+	}
+	return len(exprs)
 }
 
 // expandValues expands expression list to types.

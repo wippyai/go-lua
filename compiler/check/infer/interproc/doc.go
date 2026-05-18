@@ -20,6 +20,6 @@
 //
 // # Integration
 //
-// This package bridges per-function flow analysis with the global
+// This package connects per-function flow analysis with the global
 // fixpoint iteration that resolves cross-function dependencies.
 package interproc

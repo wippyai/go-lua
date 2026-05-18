@@ -49,7 +49,7 @@ func WithReturns(sig *typ.Function, returns []typ.Type) *typ.Function {
 		return nil
 	}
 
-	builder := typ.Func()
+	builder := typ.Func().ReserveParams(len(sig.Params))
 	for _, tp := range sig.TypeParams {
 		builder = builder.TypeParam(tp.Name, tp.Constraint)
 	}
@@ -64,11 +64,18 @@ func WithReturns(sig *typ.Function, returns []typ.Type) *typ.Function {
 		builder = builder.Variadic(sig.Variadic)
 	}
 
-	normalized := make([]typ.Type, len(returns))
-	copy(normalized, returns)
-	for i, t := range normalized {
+	normalized := returns
+	for i, t := range returns {
 		if t == nil {
+			normalized = make([]typ.Type, len(returns))
+			copy(normalized, returns)
 			normalized[i] = typ.Unknown
+			for j := i + 1; j < len(normalized); j++ {
+				if normalized[j] == nil {
+					normalized[j] = typ.Unknown
+				}
+			}
+			break
 		}
 	}
 	builder = builder.Returns(normalized...)
@@ -101,6 +108,9 @@ func WithReturnsOrUnknown(sig *typ.Function, returns []typ.Type) *typ.Function {
 		return WithReturns(sig, []typ.Type{typ.Unknown})
 	}
 	if len(sig.Returns) == 0 || typ.IsUnknownOnlyOrEmpty(sig.Returns) {
+		if returnVectorsEqual(sig.Returns, returns) {
+			return sig
+		}
 		return WithReturns(sig, returns)
 	}
 	if len(sig.Returns) == len(returns) {
@@ -112,6 +122,9 @@ func WithReturnsOrUnknown(sig *typ.Function, returns []typ.Type) *typ.Function {
 			}
 		}
 		if hasPlaceholder {
+			if returnVectorsEqual(sig.Returns, returns) {
+				return sig
+			}
 			return WithReturns(sig, returns)
 		}
 		return sig
@@ -121,8 +134,33 @@ func WithReturnsOrUnknown(sig *typ.Function, returns []typ.Type) *typ.Function {
 			break
 		}
 		if ret != nil && ret.Kind().IsPlaceholder() {
+			if returnVectorsEqual(sig.Returns, returns) {
+				return sig
+			}
 			return WithReturns(sig, returns)
 		}
 	}
 	return sig
+}
+
+func returnVectorsEqual(existing, returns []typ.Type) bool {
+	if len(existing) != len(returns) {
+		return false
+	}
+	for i, right := range returns {
+		if right == nil {
+			right = typ.Unknown
+		}
+		left := existing[i]
+		if left == right {
+			continue
+		}
+		if left == nil || right == nil {
+			return false
+		}
+		if left.Hash() != right.Hash() || !typ.TypeEquals(left, right) {
+			return false
+		}
+	}
+	return true
 }

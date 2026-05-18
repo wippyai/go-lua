@@ -12,7 +12,7 @@
 //   - [GraphStore]: Access to built CFGs by ID
 //   - [ParentScopes]: Parent scope lookup for nested functions
 //   - [SnapshotStore]: Stable interprocedural fact snapshots
-//   - [StoreView]: Read-only view combining all above
+//   - [StoreReader]: Read contract combining the immutable stores above
 //   - [IterationStore]: Adds mutation for fixpoint iteration
 //
 // These interfaces allow different phases to declare their dependencies and
@@ -31,14 +31,14 @@
 // function graph:
 //
 //   - [FunctionFacts]: Canonical per-function return/signature facts
-//   - [ReturnSummaries]: Inferred return types by function symbol
-//   - [NarrowReturnSummaries]: Post-narrowing return types
 //   - [ParamHints]: Parameter types inferred from call sites
-//   - [FuncTypes]: Canonical types for local function symbols
 //   - [LiteralSigs]: Signatures for anonymous function literals
+//   - [CapturedTypes]: Flow-derived types for captured variables
 //   - [CapturedFieldAssigns]: Field assignments to captured variables
+//   - [CapturedContainerMutations]: Container writes to captured variables
+//   - [ConstructorFields]: Instance fields collected from constructors
 //
-// Facts are computed incrementally and stored per (graph, parent-scope) pair.
+// Facts are emitted as canonical deltas and stored per (graph, parent-scope) pair.
 // The [GraphKey] type provides the canonical key for this lookup.
 //
 // # Function References

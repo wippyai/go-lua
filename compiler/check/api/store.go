@@ -11,8 +11,8 @@
 //	NestedMetaStore - Nested function metadata
 //	SnapshotStore   - Stable interproc fact snapshots
 //	FunctionRefs    - Symbol/function bidirectional lookup
-//	StoreView       - Read-only combination of above
-//	NestedStore     - StoreView + constructor field storage
+//	StoreReader     - Read-only combination of above
+//	NestedStore     - StoreReader + constructor field storage
 //	IterationStore  - Full mutation capability for fixpoint
 package api
 
@@ -74,12 +74,10 @@ type NestedMetaStore interface {
 // SnapshotStore exposes stable interproc fact snapshots.
 type SnapshotStore interface {
 	GetParamHintsSnapshot(graph *cfg.Graph, parent *scope.State) ParamHints
-	GetReturnSummariesSnapshot(graph *cfg.Graph, parent *scope.State) ReturnSummaries
-	GetNarrowReturnSummariesSnapshot(graph *cfg.Graph, parent *scope.State) NarrowReturnSummaries
+	GetFunctionFactsSnapshot(graph *cfg.Graph, parent *scope.State) FunctionFacts
 	GetCapturedTypesSnapshot(graph *cfg.Graph, parent *scope.State) CapturedTypes
 	GetCapturedFieldAssignsSnapshot(graph *cfg.Graph, parent *scope.State) CapturedFieldAssigns
 	GetCapturedContainerMutationsSnapshot(graph *cfg.Graph, parent *scope.State) CapturedContainerMutations
-	GetLocalFuncTypesSnapshot(graph *cfg.Graph, parent *scope.State) FuncTypes
 	GetLiteralSigsSnapshot(graph *cfg.Graph, parent *scope.State) LiteralSigs
 }
 
@@ -92,8 +90,8 @@ type FunctionRefs interface {
 	SymbolForFunc(fn *ast.FunctionExpr) (cfg.SymbolID, bool)
 }
 
-// StoreView is the minimal interface required by pre-flow return inference.
-type StoreView interface {
+// StoreReader is the read contract shared by checker phases.
+type StoreReader interface {
 	ModuleStore
 	GraphStore
 	ParentScopes
@@ -110,12 +108,12 @@ type ConstructorFieldStore interface {
 
 // InterprocFactSink provides write access to per-iteration interproc facts.
 type InterprocFactSink interface {
-	UpdateInterprocFactsNext(key GraphKey, update func(*Facts))
+	MergeInterprocFactsNext(key GraphKey, delta Facts)
 }
 
 // NestedStore is the store interface required by nested processing.
 type NestedStore interface {
-	StoreView
+	StoreReader
 	ConstructorFieldStore
 	InterprocFactSink
 }
@@ -138,8 +136,6 @@ type IterationStore interface {
 	ClearIterationChannels()
 	FixpointSwap() bool
 	FixpointChannelDiffs() []string
-	Revision() uint64
-	BumpRevision()
 
 	RefinementStore() RefinementStore
 	StoreFunctionRefinement(sym cfg.SymbolID, eff *constraint.FunctionRefinement)
@@ -149,6 +145,6 @@ type IterationStore interface {
 	SetParentScope(parentHash uint64, parent *scope.State)
 	SetGraphParentHash(graphID, parentHash uint64)
 
-	UpdateInterprocFactsNext(key GraphKey, update func(*Facts))
+	MergeInterprocFactsNext(key GraphKey, delta Facts)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
 }

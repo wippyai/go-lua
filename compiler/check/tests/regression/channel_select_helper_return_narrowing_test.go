@@ -85,18 +85,18 @@ end
 	root := sess.RootResult.Graph
 	parentHash := sess.Store.GraphParentHashOf(root.ID())
 	parent := sess.Store.Parents()[parentHash]
-	funcTypes := sess.Store.GetLocalFuncTypesSnapshot(root, parent)
+	functionFacts := sess.Store.GetFunctionFactsSnapshot(root, parent)
 
 	var helperFn *typ.Function
-	for sym, tpe := range funcTypes {
+	for sym, fact := range functionFacts {
 		if root.NameOf(sym) != "wait_for_exit" {
 			continue
 		}
-		helperFn = unwrap.Function(tpe)
+		helperFn = unwrap.Function(fact.Type)
 		break
 	}
 	if helperFn == nil || len(helperFn.Returns) == 0 {
-		t.Fatalf("missing wait_for_exit function type in local func snapshot: %v", funcTypes)
+		t.Fatalf("missing wait_for_exit function type in FunctionFacts: %v", functionFacts)
 	}
 
 	nonNil := narrow.RemoveNil(helperFn.Returns[0])

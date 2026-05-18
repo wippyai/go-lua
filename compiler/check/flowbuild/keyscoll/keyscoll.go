@@ -14,7 +14,12 @@ type KeysCollectorInfo struct {
 	ReturnIndex int // Which return slot carries the keys table (0-based)
 }
 
-// DetectKeysCollector analyzes a function body to detect if it follows the
+// GraphProvider resolves canonical CFGs for function literals.
+type GraphProvider interface {
+	GetOrBuildCFG(fn *ast.FunctionExpr) *cfg.Graph
+}
+
+// DetectKeysCollector analyzes a function graph to detect if it follows the
 // "keys collector" pattern: creates a table, iterates with pairs over a param,
 // inserts keys into the table, and returns it.
 //
@@ -25,18 +30,15 @@ type KeysCollectorInfo struct {
 //	    table.insert(keys, k)
 //	end
 //	return keys
-func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
+func DetectKeysCollector(graph *cfg.Graph) *KeysCollectorInfo {
+	if graph == nil {
+		return nil
+	}
+	fn := graph.Func()
 	if fn == nil || fn.Stmts == nil || len(fn.Stmts) == 0 {
 		return nil
 	}
 
-	graph := cfg.Build(fn)
-	if graph == nil {
-		return nil
-	}
-
-	// Use graph's own bindings since we build a fresh CFG.
-	// Passed-in bindings may have different symbol IDs.
 	bindings := graph.Bindings()
 
 	// Track: which local symbol is the "keys" table
@@ -48,7 +50,7 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 	insertedKeyIntoTable := false
 	keysReturnIndex := -1
 
-	paramSymbols := graph.ParamSymbols()
+	paramSlots := graph.ParamSlotsReadOnly()
 
 	// Scan for local keys = {} pattern and generic for loop with pairs
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
@@ -97,9 +99,10 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 					argSym, _ = gb.SymbolOf(argIdent)
 				}
 			}
-			// Check if argSym is a parameter
-			for i, ps := range paramSymbols {
-				if ps == argSym {
+			// Check if argSym is a parameter. The slot index is the runtime
+			// argument index, including implicit self when present.
+			for i, slot := range paramSlots {
+				if slot.Symbol == argSym {
 					pairsParamSym = argSym
 					pairsParamIndex = i
 					break
@@ -254,9 +257,31 @@ func isTableInsertCall(info *cfg.CallInfo) bool {
 	return true
 }
 
+func functionGraph(fn *ast.FunctionExpr, owner *cfg.Graph, graphs GraphProvider) *cfg.Graph {
+	if fn == nil {
+		return nil
+	}
+	if owner != nil && owner.Func() == fn {
+		return owner
+	}
+	if graphs != nil {
+		if graph := graphs.GetOrBuildCFG(fn); graph != nil {
+			return graph
+		}
+	}
+	if owner != nil && owner.Bindings() != nil {
+		return cfg.BuildWithBindings(fn, owner.Bindings())
+	}
+	return cfg.Build(fn)
+}
+
 // BuildKeysCollectorDetector returns a callback that detects if a call is to a
 // keys collector function and returns the symbol of the table argument.
-func BuildKeysCollectorDetector(graph *cfg.Graph, moduleBindings *bind.BindingTable) func(*cfg.CallInfo, cfg.Point, int) cfg.SymbolID {
+func BuildKeysCollectorDetector(
+	graph *cfg.Graph,
+	moduleBindings *bind.BindingTable,
+	graphs GraphProvider,
+) func(*cfg.CallInfo, cfg.Point, int) cfg.SymbolID {
 	cache := make(map[cfg.SymbolID]*KeysCollectorInfo)
 	bindings := graph.Bindings()
 
@@ -284,7 +309,7 @@ func BuildKeysCollectorDetector(graph *cfg.Graph, moduleBindings *bind.BindingTa
 				continue
 			}
 
-			info := DetectKeysCollector(fn)
+			info := DetectKeysCollector(functionGraph(fn, graph, graphs))
 			cache[calleeSym] = info
 			if info == nil {
 				continue

@@ -143,10 +143,10 @@ func Propagate(inputs *Inputs) *Result {
 	}
 
 	g := inputs.Graph
-	pointConditions := make(map[cfg.Point]constraint.Condition)
+	worklist := g.RPO()
+	pointConditions := make(map[cfg.Point]constraint.Condition, len(worklist))
 	pointConditions[g.Entry()] = constraint.TrueCondition()
 
-	worklist := g.RPO()
 	inQueue := make(map[cfg.Point]bool, len(worklist))
 	for _, p := range worklist {
 		inQueue[p] = true
@@ -217,7 +217,8 @@ func computeConditionAtPoint(
 		return constraint.FalseCondition()
 	}
 
-	var predConds []constraint.Condition
+	var result constraint.Condition
+	hasResult := false
 	for _, pred := range preds {
 		if inputs.DeadPoints != nil && inputs.DeadPoints[pred] {
 			continue
@@ -263,7 +264,13 @@ func computeConditionAtPoint(
 
 		edgeCond, ok := inputs.EdgeConditions[EdgeKey{From: pred, To: p}]
 		if !ok || (!edgeCond.HasConstraints() && !edgeCond.IsFalse()) {
-			edgeCond = constraint.TrueCondition()
+			if !hasResult {
+				result = predCond
+				hasResult = true
+			} else {
+				result = constraint.Or(result, predCond)
+			}
+			continue
 		}
 
 		var combinedCond constraint.Condition
@@ -281,21 +288,16 @@ func computeConditionAtPoint(
 			continue
 		}
 
-		predConds = append(predConds, combinedCond)
-	}
-
-	if len(predConds) == 0 {
-		return constraint.FalseCondition()
-	}
-
-	var result constraint.Condition
-	if len(predConds) == 1 {
-		result = predConds[0]
-	} else {
-		result = predConds[0]
-		for i := 1; i < len(predConds); i++ {
-			result = constraint.Or(result, predConds[i])
+		if !hasResult {
+			result = combinedCond
+			hasResult = true
+		} else {
+			result = constraint.Or(result, combinedCond)
 		}
+	}
+
+	if !hasResult {
+		return constraint.FalseCondition()
 	}
 
 	result = KillRedefinedConditions(result, p, inputs.Assignments)

@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -18,14 +19,11 @@ type SessionStore struct {
 	// Created once at the start of checking and shared by all CFG builds.
 	Module *ModuleStore
 
-	// Iteration contains iteration-local state for fixpoint convergence.
-	Iteration *IterationStore
-
 	// Scratch contains iteration-local state cleared each cycle.
 	Scratch *IterationScratch
 
 	// InterprocPrev holds the stable interproc snapshot used during analysis.
-	// Updated at fixpoint boundaries to provide a consistent view.
+	// Updated at fixpoint boundaries to provide a consistent snapshot.
 	InterprocPrev *InterprocState
 	// InterprocNext accumulates facts/effects produced during the current iteration.
 	InterprocNext *InterprocState
@@ -36,6 +34,9 @@ type SessionStore struct {
 	// lastSwapDiffs records which channels changed during the most recent FixpointSwap.
 	// Stored per-session to avoid cross-session contamination.
 	lastSwapDiffs []string
+
+	snapshotInputs *snapshotInputs
+	snapshotCtx    *db.QueryContext
 
 	phase api.Phase
 }
@@ -91,13 +92,6 @@ type FunctionRegistry struct {
 	BySym     map[cfg.SymbolID]*api.FunctionRef
 	ByFunc    map[*ast.FunctionExpr]*api.FunctionRef
 	ByGraphID map[uint64]*api.FunctionRef
-}
-
-// IterationStore holds iteration-local state for fixpoint iteration.
-type IterationStore struct {
-	// Revision is bumped at fixpoint iteration boundary.
-	// Included in FuncKey to invalidate cached results when interproc facts/effects change.
-	Revision uint64
 }
 
 // IterationScratch holds iteration-local state cleared each cycle.
@@ -158,7 +152,7 @@ func widenInterprocFacts(prev, next map[api.GraphKey]api.Facts) map[api.GraphKey
 		if existing, ok := out[key]; ok {
 			out[key] = returns.WidenFacts(existing, facts)
 		} else {
-			out[key] = facts
+			out[key] = returns.WidenFacts(api.Facts{}, facts)
 		}
 	}
 	return out
@@ -166,13 +160,21 @@ func widenInterprocFacts(prev, next map[api.GraphKey]api.Facts) map[api.GraphKey
 
 // NewSessionStore creates an initialized store with all sub-structs.
 func NewSessionStore() *SessionStore {
+	return NewSessionStoreWithDB(nil)
+}
+
+// NewSessionStoreWithDB creates a store whose interproc snapshots are tracked
+// as query inputs. The checker uses this form so function-result queries can be
+// revalidated from the exact facts/effects they read instead of from a coarse
+// iteration revision key.
+func NewSessionStoreWithDB(database *db.DB) *SessionStore {
 	return &SessionStore{
 		Module:          NewModuleStore(),
-		Iteration:       NewIterationStore(),
 		Scratch:         NewIterationScratch(),
 		InterprocPrev:   NewInterprocState(),
 		InterprocNext:   NewInterprocState(),
 		GraphParentHash: make(map[uint64]uint64),
+		snapshotInputs:  newSnapshotInputs(database),
 		phase:           api.PhaseScopeCompute,
 	}
 }
@@ -234,11 +236,6 @@ func NewModuleStore() *ModuleStore {
 		ModuleAliases: make(map[cfg.SymbolID]string),
 		NestedMeta:    make(map[uint64]api.NestedMeta),
 	}
-}
-
-// NewIterationStore creates an initialized iteration store.
-func NewIterationStore() *IterationStore {
-	return &IterationStore{}
 }
 
 // NewIterationScratch creates an initialized iteration scratch.
@@ -376,6 +373,7 @@ func (s *SessionStore) FixpointSwap() bool {
 	diffs := s.swapInterprocChannels()
 
 	s.resetScratch()
+	s.syncSnapshotInputs()
 
 	// Record which channels changed for diagnostic reporting
 	s.lastSwapDiffs = diffs
@@ -397,30 +395,15 @@ func (s *SessionStore) FixpointChannelDiffs() []string {
 	return out
 }
 
-// Revision returns the current revision counter.
-func (s *SessionStore) Revision() uint64 {
-	if s == nil || s.Iteration == nil {
-		return 0
-	}
-	return s.Iteration.Revision
-}
-
-// BumpRevision increments the revision counter.
-func (s *SessionStore) BumpRevision() {
-	if s == nil {
-		return
-	}
-	if s.Iteration == nil {
-		s.Iteration = NewIterationStore()
-	}
-	s.Iteration.Revision++
-}
-
 // LookupRefinementBySym returns the refinement for a function by its SymbolID.
 // Reads from the stable interproc refinement snapshot for order-independent analysis.
 func (s *SessionStore) LookupRefinementBySym(sym cfg.SymbolID) *constraint.FunctionRefinement {
-	if sym == 0 {
+	if s == nil || sym == 0 {
 		return nil
+	}
+	if s.snapshotInputs != nil {
+		refinement, _ := s.snapshotInputs.refinement(s.snapshotCtx, sym)
+		return refinement
 	}
 	if s.InterprocPrev == nil || s.InterprocPrev.Refinements == nil {
 		return nil
@@ -471,6 +454,10 @@ func (s *SessionStore) LookupConstructorFields(classSym cfg.SymbolID) map[string
 	if s == nil || classSym == 0 {
 		return nil
 	}
+	if s.snapshotInputs != nil {
+		fields, _ := s.snapshotInputs.constructorFieldsFor(s.snapshotCtx, classSym)
+		return fields
+	}
 	if s.InterprocPrev == nil {
 		return nil
 	}
@@ -482,25 +469,21 @@ func (s *SessionStore) ClearIterationChannels() {
 	if s == nil {
 		return
 	}
-	if s.Iteration == nil {
-		s.Iteration = NewIterationStore()
-	}
 	if s.Scratch == nil {
 		s.Scratch = NewIterationScratch()
 	}
 	s.InterprocPrev = NewInterprocState()
 	s.InterprocNext = NewInterprocState()
 	s.resetScratch()
-	s.Iteration.Revision = 0
 	s.lastSwapDiffs = nil
+	if s.snapshotInputs != nil {
+		s.snapshotInputs.reset()
+	}
 }
 
-// RefinementStore returns a view over the stable interproc refinement snapshot.
+// RefinementStore returns a reader over the stable interproc refinement snapshot.
 func (s *SessionStore) RefinementStore() api.RefinementStore {
-	if s == nil || s.InterprocPrev == nil {
-		return &snapshotRefinementStore{refinements: nil}
-	}
-	return &snapshotRefinementStore{refinements: s.InterprocPrev.Refinements}
+	return &snapshotRefinementStore{store: s}
 }
 
 // ModuleBindings returns the module binding table.
@@ -557,36 +540,38 @@ func (s *SessionStore) ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, 
 	return api.KeyForGraph(graph, parentHash), true
 }
 
-func initInterprocFacts(f *api.Facts) {
-	if f.FunctionFacts == nil {
-		f.FunctionFacts = make(api.FunctionFacts)
-	}
-	if f.ParamHints == nil {
-		f.ParamHints = make(map[cfg.SymbolID][]typ.Type)
-	}
-	if f.LiteralSigs == nil {
-		f.LiteralSigs = make(map[*ast.FunctionExpr]*typ.Function)
-	}
-	if f.CapturedTypes == nil {
-		f.CapturedTypes = make(api.CapturedTypes)
-	}
-	if f.CapturedFields == nil {
-		f.CapturedFields = make(api.CapturedFieldAssigns)
-	}
+func factsEmpty(f api.Facts) bool {
+	return len(f.FunctionFacts) == 0 &&
+		len(f.ParamHints) == 0 &&
+		len(f.LiteralSigs) == 0 &&
+		len(f.CapturedTypes) == 0 &&
+		len(f.CapturedFields) == 0 &&
+		len(f.CapturedContainers) == 0 &&
+		len(f.ConstructorFields) == 0
 }
 
-// UpdateInterprocFactsNext updates interproc facts for the next iteration.
-// This is the public entry point used by post-flow analysis to record results.
-func (s *SessionStore) UpdateInterprocFactsNext(key api.GraphKey, update func(*api.Facts)) {
+// MergeInterprocFactsNext merges a canonical fact delta into the next
+// interprocedural snapshot for the current iteration.
+func (s *SessionStore) MergeInterprocFactsNext(key api.GraphKey, delta api.Facts) {
 	if s == nil {
 		return
 	}
 	s.ensureInterprocStates()
-	facts := s.InterprocNext.Facts[key]
-	initInterprocFacts(&facts)
-	update(&facts)
-	returns.NormalizeFunctionFactChannels(&facts)
+	existing := s.InterprocNext.Facts[key]
+	facts := returns.JoinFacts(existing, delta)
+	if factsEmpty(facts) {
+		if factsEmpty(existing) {
+			return
+		}
+		delete(s.InterprocNext.Facts, key)
+		s.syncFactsInput(key)
+		return
+	}
+	if returns.FactsEqual(existing, facts) {
+		return
+	}
 	s.InterprocNext.Facts[key] = facts
+	s.syncFactsInput(key)
 }
 
 // Funcs returns the function map.
@@ -797,16 +782,29 @@ func (s *SessionStore) SetModuleAliases(aliases map[cfg.SymbolID]string) {
 	s.Module.ModuleAliases = aliases
 }
 
-// GetInterprocFactsSnapshot returns the stable interproc facts snapshot for a graph.
+// GetInterprocFactsSnapshot returns the current joined interproc facts snapshot
+// for a graph. It starts from the stable previous snapshot and overlays facts
+// produced earlier in the current iteration, giving deterministic Gauss-Seidel
+// propagation instead of forcing every local refinement through a full outer
+// iteration.
 func (s *SessionStore) GetInterprocFactsSnapshot(
 	graph *cfg.Graph,
 	parent *scope.State,
 ) api.Facts {
-	if s == nil || s.InterprocPrev == nil || s.InterprocPrev.Facts == nil || graph == nil || parent == nil {
+	if s == nil || graph == nil {
 		return api.Facts{}
 	}
-	key := api.KeyForGraph(graph, parent.Hash())
-	return s.InterprocPrev.Facts[key]
+	key, ok := s.GraphKeyFor(graph, parent)
+	if !ok {
+		return api.Facts{}
+	}
+	if s.snapshotInputs != nil {
+		if facts, ok := s.snapshotInputs.factsFor(s.snapshotCtx, key); ok {
+			return facts
+		}
+		return api.Facts{}
+	}
+	return s.currentInterprocFacts(key)
 }
 
 // GetParamHintsSnapshot returns param hints from the stable interproc snapshot.
@@ -818,31 +816,15 @@ func (s *SessionStore) GetParamHintsSnapshot(
 	return s.GetInterprocFactsSnapshot(graph, parent).ParamHints
 }
 
-// GetReturnSummariesSnapshot returns return summaries from the stable interproc snapshot.
-func (s *SessionStore) GetReturnSummariesSnapshot(
+// GetFunctionFactsSnapshot returns canonical function facts from the stable
+// interproc snapshot.
+func (s *SessionStore) GetFunctionFactsSnapshot(
 	graph *cfg.Graph,
 	parent *scope.State,
-) map[cfg.SymbolID][]typ.Type {
-	s.requirePhase(api.PhaseScopeCompute)
-	return returns.SummaryViewFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
-}
-
-// GetNarrowReturnSummariesSnapshot returns post-flow return summaries from the stable snapshot.
-func (s *SessionStore) GetNarrowReturnSummariesSnapshot(
-	graph *cfg.Graph,
-	parent *scope.State,
-) map[cfg.SymbolID][]typ.Type {
-	s.requirePhase(api.PhaseNarrowing)
-	return returns.NarrowViewFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
-}
-
-// GetLocalFuncTypesSnapshot returns canonical local function types from the stable interproc snapshot.
-func (s *SessionStore) GetLocalFuncTypesSnapshot(
-	graph *cfg.Graph,
-	parent *scope.State,
-) map[cfg.SymbolID]typ.Type {
-	s.requirePhase(api.PhaseScopeCompute)
-	return returns.FuncTypeViewFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
+) api.FunctionFacts {
+	s.requirePhase(api.PhaseScopeCompute, api.PhaseNarrowing)
+	facts := s.GetInterprocFactsSnapshot(graph, parent)
+	return facts.FunctionFacts
 }
 
 // GetLiteralSigsSnapshot returns literal signatures from the stable interproc snapshot.
@@ -907,18 +889,12 @@ func (s *SessionStore) GetCapturedContainerMutationsSnapshot(
 
 // snapshotRefinementStore implements api.RefinementStore using the stable snapshot.
 type snapshotRefinementStore struct {
-	refinements map[cfg.SymbolID]*constraint.FunctionRefinement
+	store *SessionStore
 }
 
 func (o *snapshotRefinementStore) LookupRefinementBySym(sym cfg.SymbolID) *constraint.FunctionRefinement {
 	if o == nil || sym == 0 {
 		return nil
 	}
-	if o.refinements == nil {
-		return nil
-	}
-	if refinement := o.refinements[sym]; refinement != nil {
-		return refinement
-	}
-	return nil
+	return o.store.LookupRefinementBySym(sym)
 }

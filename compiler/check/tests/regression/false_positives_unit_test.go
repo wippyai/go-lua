@@ -1025,6 +1025,41 @@ func TestFP_OrEmptyStringStaysString(t *testing.T) {
 	}
 }
 
+func TestFP_ErrorReturnOptionalFieldOrEmptyStringStaysString(t *testing.T) {
+	responseType := typ.NewRecord().
+		Field("status_code", typ.Number).
+		OptField("body", typ.String).
+		Build()
+	httpManifest := io.NewManifest("http_client")
+	httpManifest.SetExport(typ.NewRecord().
+		Field("post", typ.Func().
+			Param("url", typ.String).
+			OptParam("opts", typ.Any).
+			Returns(typ.NewOptional(responseType), typ.NewOptional(typ.LuaError)).
+			Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).
+			Build()).
+		Build())
+
+	source := `
+		local http = require("http_client")
+		local json = require("json")
+
+		local client = {}
+		client._http_client = http
+
+		local response, err = client._http_client.post("https://example.local", {})
+		if err then
+			return nil, err
+		end
+
+		return json.decode(response.body or "")
+	`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("http_client", httpManifest))
+	if result.HasError() {
+		t.Errorf("expected no errors for optional response body fallback, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestFP_AndGuardNarrowsNestedPath(t *testing.T) {
 	source := `
 		local rec: {foo: {bar: string}?}? = nil

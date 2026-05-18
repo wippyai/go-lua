@@ -24,6 +24,7 @@ type Graph struct {
 	orderedBranchPoints   []Point
 	orderedFuncDefPoints  []Point
 	orderedTypeDefPoints  []Point
+	localFunctionAssigns  []LocalFunctionAssignment
 
 	// Binding table (AST ident -> symbol, populated before CFG build)
 	bindings *bind.BindingTable
@@ -217,6 +218,7 @@ func BuildWithBindings(fn *ast.FunctionExpr, bindings *bind.BindingTable) *Graph
 	size := b.Cfg.Size()
 	pointIdx := buildPointIndex(b.Info, size)
 	infoByPoint := denseNodeInfoByPoint(b.Info, size)
+	localFunctionAssigns := buildLocalFunctionAssignments(infoByPoint, pointIdx.assign)
 
 	if len(visibleVersionByPoint) == 0 {
 		visibleVersionByPoint = denseVisibleVersionByPoint(visibleVersion, size)
@@ -234,6 +236,7 @@ func BuildWithBindings(fn *ast.FunctionExpr, bindings *bind.BindingTable) *Graph
 		orderedBranchPoints:   pointIdx.branch,
 		orderedFuncDefPoints:  pointIdx.funcDef,
 		orderedTypeDefPoints:  pointIdx.typeDef,
+		localFunctionAssigns:  localFunctionAssigns,
 		bindings:              bindings,
 		phiNodes:              b.PhiNodes,
 		visibleVersion:        visibleVersion,
@@ -299,6 +302,7 @@ func BuildBlock(stmts []ast.Stmt, globals ...string) *Graph {
 	size := b.Cfg.Size()
 	pointIdx := buildPointIndex(b.Info, size)
 	infoByPoint := denseNodeInfoByPoint(b.Info, size)
+	localFunctionAssigns := buildLocalFunctionAssignments(infoByPoint, pointIdx.assign)
 
 	if len(visibleVersionByPoint) == 0 {
 		visibleVersionByPoint = denseVisibleVersionByPoint(visibleVersion, size)
@@ -316,6 +320,7 @@ func BuildBlock(stmts []ast.Stmt, globals ...string) *Graph {
 		orderedBranchPoints:   pointIdx.branch,
 		orderedFuncDefPoints:  pointIdx.funcDef,
 		orderedTypeDefPoints:  pointIdx.typeDef,
+		localFunctionAssigns:  localFunctionAssigns,
 		bindings:              bindings,
 		phiNodes:              b.PhiNodes,
 		visibleVersion:        visibleVersion,
@@ -733,6 +738,14 @@ func (g *Graph) NestedFunctions() []NestedFunc {
 	}
 
 	return g.nested
+}
+
+// LocalFunctionAssignments returns local identifiers bound directly to function literals.
+func (g *Graph) LocalFunctionAssignments() []LocalFunctionAssignment {
+	if g == nil {
+		return nil
+	}
+	return g.localFunctionAssigns
 }
 
 // CFG delegated methods.
@@ -1207,13 +1220,40 @@ func (g *Graph) EachAliasSymbol(targetSym basecfg.SymbolID, fn func(basecfg.Symb
 		return
 	}
 
-	seen := make(map[basecfg.SymbolID]struct{}, 4)
+	var smallSeen [8]basecfg.SymbolID
+	seenCount := 0
+	var seen map[basecfg.SymbolID]struct{}
+	remember := func(sym basecfg.SymbolID) bool {
+		if seen != nil {
+			if _, ok := seen[sym]; ok {
+				return false
+			}
+			seen[sym] = struct{}{}
+			return true
+		}
+		for i := 0; i < seenCount; i++ {
+			if smallSeen[i] == sym {
+				return false
+			}
+		}
+		if seenCount < len(smallSeen) {
+			smallSeen[seenCount] = sym
+			seenCount++
+			return true
+		}
+		seen = make(map[basecfg.SymbolID]struct{}, len(smallSeen)+1)
+		for i := 0; i < seenCount; i++ {
+			seen[smallSeen[i]] = struct{}{}
+		}
+		seen[sym] = struct{}{}
+		return true
+	}
+
 	current := targetSym
 	for current != 0 {
-		if _, ok := seen[current]; ok {
+		if !remember(current) {
 			return
 		}
-		seen[current] = struct{}{}
 
 		if fn(current) {
 			return
@@ -1309,6 +1349,14 @@ func (g *Graph) SymbolKind(sym basecfg.SymbolID) (basecfg.SymbolKind, bool) {
 	kind, ok := g.symbolKinds[sym]
 
 	return kind, ok
+}
+
+// SymbolCount returns the number of symbols tracked by the graph.
+func (g *Graph) SymbolCount() int {
+	if g == nil {
+		return 0
+	}
+	return len(g.symbolKinds)
 }
 
 // HasScopeTracking returns true if scope visibility was computed during build.

@@ -19,9 +19,7 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 		return nil
 	}
 	set := newSymbolSet(4)
-	for _, sym := range exprSymbolCandidates(info.Callee, info.CalleeSymbol, primary, fallback) {
-		set.Add(sym)
-	}
+	addExprSymbolCandidates(set, info.Callee, info.CalleeSymbol, primary, fallback)
 	if methodSym, ok := methodCalleeSymbolFromCall(primary, nil, info); ok {
 		set.Add(methodSym)
 	}
@@ -59,8 +57,8 @@ func CallableCalleeSymbolCandidates(
 		return base
 	}
 	set := newSymbolSet(len(base)*2 + 2)
-	for _, sym := range expandAliasCandidates(base, graph) {
-		set.Add(sym)
+	for _, sym := range base {
+		addAliasExpansion(set, graph, sym)
 	}
 
 	// Method calls may resolve method symbol only through an alias receiver base

@@ -91,7 +91,7 @@ func TestEnrichWithKeysCollector_NilFn(t *testing.T) {
 
 func TestEnrichWithKeysCollector_NonKeysCollector(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
-	result := EnrichWithKeysCollector(nil, fn)
+	result := EnrichWithKeysCollector(nil, cfg.Build(fn))
 	if result != nil {
 		t.Errorf("expected nil for non-keys-collector fn, got %v", result)
 	}
@@ -113,7 +113,7 @@ func TestEnrichWithKeysCollector_UsesDetectedReturnIndex(t *testing.T) {
 		Stmts:   body,
 	}
 
-	result := EnrichWithKeysCollector(nil, fn)
+	result := EnrichWithKeysCollector(nil, cfg.Build(fn))
 	if result == nil {
 		t.Fatal("expected non-nil enriched effect")
 	}
@@ -150,7 +150,7 @@ func TestEnrichWithKeysCollector_AppendsToExistingOnReturn(t *testing.T) {
 	existing := &constraint.FunctionRefinement{
 		OnReturn: constraint.FromConstraints(constraint.NotNil{Path: constraint.RetPath(0)}),
 	}
-	result := EnrichWithKeysCollector(existing, fn)
+	result := EnrichWithKeysCollector(existing, cfg.Build(fn))
 	if result == nil {
 		t.Fatal("expected non-nil enriched effect")
 	}

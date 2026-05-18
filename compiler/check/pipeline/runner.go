@@ -19,7 +19,6 @@
 package pipeline
 
 import (
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
@@ -77,6 +76,12 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	if store == nil {
 		return nil
 	}
+	if tracker, ok := store.(interface {
+		PushSnapshotReadContext(*db.QueryContext) func()
+	}); ok {
+		pop := tracker.PushSnapshotReadContext(ctx)
+		defer pop()
+	}
 	withPhase := func(_ api.Phase, fn func()) { fn() }
 	if phaser, ok := store.(interface{ WithPhase(api.Phase, func()) }); ok {
 		withPhase = phaser.WithPhase
@@ -101,17 +106,10 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		setter.SetGraphParentHash(graph.ID(), key.ParentHash)
 	}
 
-	paramHintSigs := paramhints.BuildParamHintSigView(store, graph, parent, r.stdlib)
+	paramHintSigs := paramhints.BuildParamHintSignatures(store, graph, parent, r.stdlib)
 	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, paramHintSigs)
 
-	// Canonical local function types for this graph (stable snapshot).
-	siblingTypes := store.GetLocalFuncTypesSnapshot(graph, parent)
-	// Return summaries include captured field assignments (stable snapshot).
-	returnSummaries := store.GetReturnSummariesSnapshot(graph, parent)
-	var narrowReturnSummaries map[cfg.SymbolID][]typ.Type
-	withPhase(api.PhaseNarrowing, func() {
-		narrowReturnSummaries = store.GetNarrowReturnSummariesSnapshot(graph, parent)
-	})
+	functionFacts := store.GetFunctionFactsSnapshot(graph, parent)
 
 	// Build shared phase environment once.
 	localAliases := modules.CollectAliases(graph)
@@ -147,49 +145,46 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		SynthesizedFunctionSig:    synthSig,
 		FunctionLiteralSignatures: literalSigs,
 		ParamHintSignatures:       paramHintSigs,
-		SiblingTypes:              siblingTypes,
-		ReturnSummaries:           returnSummaries,
+		FunctionFacts:             functionFacts,
 	})
 	// Declared is the default phase for scope/extract and interproc reads.
 
 	if capturedTypes := store.GetCapturedTypesSnapshot(graph, parent); len(capturedTypes) > 0 {
 		scopeOut.DeclaredTypes = captured.MergeCapturedTypes(scopeOut.DeclaredTypes, capturedTypes)
 	}
-	r.mergeCapturedParentFuncTypes(store, graph, fn, &scopeOut)
+	r.mergeCapturedParentFunctionTypes(store, graph, fn, &scopeOut)
 
 	// Populate scopes in env for later phases.
 	env.Scopes = scopeOut.Scopes
 
 	// Phase B (continued): Synthesize function literal types.
 	literalOut := phase.RunLiteral(phase.LiteralInput{
-		PhaseEnv:        env,
-		Scope:           scopeOut,
-		SiblingTypes:    scopeOut.SiblingTypes,
-		ReturnSummaries: returnSummaries,
+		PhaseEnv:      env,
+		Scope:         scopeOut,
+		FunctionFacts: functionFacts,
 	})
 	// Ensure literal function types use canonical local function types.
-	if len(siblingTypes) > 0 {
+	if len(functionFacts) > 0 {
 		if literalOut.LiteralTypes == nil {
-			literalOut.LiteralTypes = make(flow.DeclaredTypes, len(siblingTypes))
+			literalOut.LiteralTypes = make(flow.DeclaredTypes, len(functionFacts))
 		}
-		for sym, fnType := range siblingTypes {
-			if fnType == nil {
+		for sym, fact := range functionFacts {
+			if fact.Type == nil {
 				continue
 			}
-			literalOut.LiteralTypes[sym] = fnType
+			literalOut.LiteralTypes[sym] = fact.Type
 		}
 	}
 
 	// Phase B (continued): Extract flow constraints.
 	extractOut := phase.RunExtract(phase.FlowExtractInput{
-		PhaseEnv:        env,
-		Resolve:         resolveOut,
-		Scope:           scopeOut,
-		SiblingTypes:    scopeOut.SiblingTypes,
-		LiteralTypes:    literalOut.LiteralTypes,
-		ReturnSummaries: returnSummaries,
+		PhaseEnv:      env,
+		Resolve:       resolveOut,
+		Scope:         scopeOut,
+		FunctionFacts: functionFacts,
+		LiteralTypes:  literalOut.LiteralTypes,
 	})
-	r.appendCapturedMutatorAssignments(store, graph, parent, env, scopeOut, literalOut, returnSummaries, &extractOut)
+	r.appendCapturedMutatorAssignments(store, graph, parent, env, scopeOut, literalOut, functionFacts, &extractOut)
 
 	// Phase C: Solve flow system.
 	solveOut := phase.RunSolve(phase.FlowSolveInput{
@@ -201,13 +196,12 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	var narrowOut phase.NarrowOutput
 	withPhase(api.PhaseNarrowing, func() {
 		narrowOut = phase.RunNarrow(phase.NarrowInput{
-			PhaseEnv:              env,
-			Scope:                 scopeOut,
-			Extract:               extractOut,
-			Solve:                 solveOut,
-			SiblingTypes:          scopeOut.SiblingTypes,
-			LiteralTypes:          literalOut.LiteralTypes,
-			NarrowReturnSummaries: narrowReturnSummaries,
+			PhaseEnv:      env,
+			Scope:         scopeOut,
+			Extract:       extractOut,
+			Solve:         solveOut,
+			FunctionFacts: functionFacts,
+			LiteralTypes:  literalOut.LiteralTypes,
 		})
 	})
 

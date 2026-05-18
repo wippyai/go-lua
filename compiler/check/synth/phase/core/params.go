@@ -91,6 +91,7 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 	if builder == nil || fn == nil || fn.ParList == nil {
 		return
 	}
+	builder.ReserveParams(paramListCapacity(fn, cfg.ImplicitSelf))
 
 	shiftExpected := false
 	if cfg.ImplicitSelf {
@@ -159,4 +160,15 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 		// Unannotated functions accept extra args; treat as variadic any.
 		builder.Variadic(typ.Any)
 	}
+}
+
+func paramListCapacity(fn *ast.FunctionExpr, implicitSelf bool) int {
+	if fn == nil || fn.ParList == nil {
+		return 0
+	}
+	n := len(fn.ParList.Names)
+	if implicitSelf {
+		n++
+	}
+	return n
 }

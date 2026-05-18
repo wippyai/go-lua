@@ -29,7 +29,7 @@
 //
 // # Overlay System
 //
-// [Overlay] provides a mutable view over stable return summaries:
+// [Overlay] provides the mutable return-summary layer:
 //   - Stable summaries from previous iterations
 //   - Pending updates from current iteration
 //   - Atomic commit when iteration converges

@@ -67,6 +67,29 @@ func TestRecordFieldsSorted(t *testing.T) {
 	}
 }
 
+func TestRecordOptionalFieldNormalizesNestedOptionalType(t *testing.T) {
+	r := NewRecord().
+		OptField("error", NewOptional(String)).
+		OptField("nil_only", Nil).
+		Build()
+
+	err := r.GetField("error")
+	if err == nil || !err.Optional {
+		t.Fatal("expected optional error field")
+	}
+	if !TypeEquals(err.Type, String) {
+		t.Fatalf("expected nested optional field type to normalize to string, got %v", err.Type)
+	}
+
+	nilOnly := r.GetField("nil_only")
+	if nilOnly == nil || !nilOnly.Optional {
+		t.Fatal("expected optional nil_only field")
+	}
+	if !TypeEquals(nilOnly.Type, Nil) {
+		t.Fatalf("expected nil-only optional field type to remain nil, got %v", nilOnly.Type)
+	}
+}
+
 func TestRecordOptionalField(t *testing.T) {
 	r := NewRecord().
 		Field("x", Number).

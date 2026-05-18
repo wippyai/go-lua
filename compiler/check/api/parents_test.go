@@ -25,54 +25,54 @@ func (s *parentScopeStoreStub) GraphKeyFor(graph *cfg.Graph, parent *scope.State
 }
 
 func TestParentScopeForGraph_PrefersStoredParent(t *testing.T) {
-	fallback := scope.New()
+	defaultScope := scope.New()
 	stored := scope.New()
 	store := &parentScopeStoreStub{
 		parents: map[uint64]*scope.State{11: stored},
 		hashes:  map[uint64]uint64{7: 11},
 	}
 
-	got := ParentScopeForGraph(store, 7, fallback)
+	got := ParentScopeForGraph(store, 7, defaultScope)
 	if got != stored {
 		t.Fatalf("expected stored parent, got %p want %p", got, stored)
 	}
 }
 
-func TestParentScopeForGraph_FallsBackWhenStoredMissing(t *testing.T) {
-	fallback := scope.New()
+func TestParentScopeForGraph_UsesDefaultWhenStoredMissing(t *testing.T) {
+	defaultScope := scope.New()
 	store := &parentScopeStoreStub{
 		parents: map[uint64]*scope.State{},
 		hashes:  map[uint64]uint64{7: 11},
 	}
 
-	got := ParentScopeForGraph(store, 7, fallback)
-	if got != fallback {
-		t.Fatalf("expected fallback parent, got %p want %p", got, fallback)
+	got := ParentScopeForGraph(store, 7, defaultScope)
+	if got != defaultScope {
+		t.Fatalf("expected default parent, got %p want %p", got, defaultScope)
 	}
 }
 
 func TestParentHashForGraph_PrefersStoredHash(t *testing.T) {
-	fallback := scope.New()
+	defaultScope := scope.New()
 	store := &parentScopeStoreStub{
 		parents: map[uint64]*scope.State{},
 		hashes:  map[uint64]uint64{7: 11},
 	}
 
-	got := ParentHashForGraph(store, 7, fallback)
+	got := ParentHashForGraph(store, 7, defaultScope)
 	if got != 11 {
 		t.Fatalf("expected stored hash 11, got %d", got)
 	}
 }
 
-func TestParentHashForGraph_FallsBackToScopeHash(t *testing.T) {
-	fallback := scope.New()
+func TestParentHashForGraph_UsesDefaultScopeHash(t *testing.T) {
+	defaultScope := scope.New()
 	store := &parentScopeStoreStub{
 		parents: map[uint64]*scope.State{},
 		hashes:  map[uint64]uint64{},
 	}
 
-	got := ParentHashForGraph(store, 7, fallback)
-	if got != fallback.Hash() {
-		t.Fatalf("expected fallback hash %d, got %d", fallback.Hash(), got)
+	got := ParentHashForGraph(store, 7, defaultScope)
+	if got != defaultScope.Hash() {
+		t.Fatalf("expected default hash %d, got %d", defaultScope.Hash(), got)
 	}
 }

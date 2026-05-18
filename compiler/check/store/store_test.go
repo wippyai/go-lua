@@ -6,9 +6,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -123,6 +123,28 @@ func TestWidenInterprocFacts_OnlyNext(t *testing.T) {
 	}
 }
 
+func TestWidenInterprocFacts_NormalizesNewFacts(t *testing.T) {
+	fn := typ.Func().Param("value", typ.Unknown).Build()
+	key := api.GraphKey{GraphID: 1, ParentHash: 2}
+	next := map[api.GraphKey]api.Facts{
+		key: {
+			CapturedFields: api.CapturedFieldAssigns{
+				cfg.SymbolID(10): {
+					cfg.SymbolID(20): {
+						"after_all": typ.NewOptional(fn),
+					},
+				},
+			},
+		},
+	}
+
+	result := widenInterprocFacts(nil, next)
+	got := result[key].CapturedFields[cfg.SymbolID(10)][cfg.SymbolID(20)]["after_all"]
+	if !typ.TypeEquals(got, fn) {
+		t.Fatalf("expected new facts to be normalized through WidenFacts, got %v", got)
+	}
+}
+
 func TestWidenInterprocFacts_Merge(t *testing.T) {
 	prev := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
@@ -144,7 +166,7 @@ func TestWidenInterprocFacts_Merge(t *testing.T) {
 	}
 }
 
-func TestReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
+func TestFunctionFactsSummaryAccessor(t *testing.T) {
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {
@@ -152,13 +174,13 @@ func TestReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
 			},
 		},
 	}
-	got := returns.SummaryViewFromFacts(facts)
-	if len(got) != 1 || len(got[cfg.SymbolID(1)]) != 1 || got[cfg.SymbolID(1)][0] != typ.String {
-		t.Fatalf("unexpected summary view: %#v", got)
+	got := facts.FunctionFacts.Summary(cfg.SymbolID(1))
+	if len(got) != 1 || got[0] != typ.String {
+		t.Fatalf("unexpected summary: %#v", got)
 	}
 }
 
-func TestNarrowReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
+func TestFunctionFactsNarrowAccessor(t *testing.T) {
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(2): {
@@ -166,24 +188,142 @@ func TestNarrowReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
 			},
 		},
 	}
-	got := returns.NarrowViewFromFacts(facts)
-	if len(got) != 1 || len(got[cfg.SymbolID(2)]) != 1 || got[cfg.SymbolID(2)][0] != typ.Number {
-		t.Fatalf("unexpected narrow view: %#v", got)
+	got := facts.FunctionFacts.NarrowSummary(cfg.SymbolID(2))
+	if len(got) != 1 || got[0] != typ.Number {
+		t.Fatalf("unexpected narrow summary: %#v", got)
 	}
 }
 
-func TestLocalFuncTypesFromFacts_FallsBackToCanonical(t *testing.T) {
+func TestFunctionFactsTypeAccessor(t *testing.T) {
 	fn := typ.Func().Returns(typ.Boolean).Build()
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(3): {
-				Func: fn,
+				Type: fn,
 			},
 		},
 	}
-	got := returns.FuncTypeViewFromFacts(facts)
-	if len(got) != 1 || !typ.TypeEquals(got[cfg.SymbolID(3)], fn) {
-		t.Fatalf("unexpected func type view: %#v", got)
+	got := facts.FunctionFacts.FunctionType(cfg.SymbolID(3))
+	if !typ.TypeEquals(got, fn) {
+		t.Fatalf("unexpected function type: %#v", got)
+	}
+}
+
+func TestGetInterprocFactsSnapshot_UsesStoredGraphParentHash(t *testing.T) {
+	graph := cfg.Build(&ast.FunctionExpr{})
+	if graph == nil || graph.ID() == 0 {
+		t.Fatal("expected graph with stable ID")
+	}
+
+	storedParent := scope.New().WithType("T", typ.String)
+	currentParent := scope.New().WithType("T", typ.Number)
+	if storedParent.Hash() == currentParent.Hash() {
+		t.Fatal("test requires different parent hashes")
+	}
+
+	s := NewSessionStore()
+	s.SetGraphParentHash(graph.ID(), storedParent.Hash())
+	s.SetParentScope(storedParent.Hash(), storedParent)
+	key := api.KeyForGraph(graph, storedParent.Hash())
+	s.InterprocPrev.Facts[key] = api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(1): {Summary: []typ.Type{typ.String}},
+		},
+	}
+
+	got := s.GetInterprocFactsSnapshot(graph, currentParent)
+	summary := got.FunctionFacts.Summary(cfg.SymbolID(1))
+	if len(summary) != 1 || !typ.TypeEquals(summary[0], typ.String) {
+		t.Fatalf("expected snapshot from stored parent hash, got %#v", summary)
+	}
+}
+
+func TestGetInterprocFactsSnapshot_OverlaysCurrentIterationFacts(t *testing.T) {
+	graph := cfg.Build(&ast.FunctionExpr{})
+	if graph == nil || graph.ID() == 0 {
+		t.Fatal("expected graph with stable ID")
+	}
+
+	parent := scope.New().WithType("T", typ.String)
+	s := NewSessionStore()
+	s.SetGraphParentHash(graph.ID(), parent.Hash())
+	s.SetParentScope(parent.Hash(), parent)
+	key := api.KeyForGraph(graph, parent.Hash())
+	s.InterprocPrev.Facts[key] = api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(1): {Summary: []typ.Type{typ.String}},
+		},
+	}
+	s.InterprocNext.Facts[key] = api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(1): {Summary: []typ.Type{typ.Number}},
+		},
+	}
+
+	got := s.GetInterprocFactsSnapshot(graph, parent)
+	summary := got.FunctionFacts.Summary(cfg.SymbolID(1))
+	want := typ.NewUnion(typ.String, typ.Number)
+	if len(summary) != 1 || !typ.TypeEquals(summary[0], want) {
+		t.Fatalf("expected widened current snapshot %v, got %#v", want, summary)
+	}
+}
+
+func TestMergeInterprocFactsNext_ReconcilesDeltasWithinIteration(t *testing.T) {
+	key := api.GraphKey{GraphID: 1, ParentHash: 2}
+	sym := cfg.SymbolID(7)
+	refined := typ.Func().Param("path", typ.String).Returns(typ.String).Build()
+	broad := typ.Func().Param("path", typ.Any).Returns(typ.String).Build()
+
+	s := NewSessionStore()
+	first := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Type: refined}}}
+	s.MergeInterprocFactsNext(key, first)
+	s.MergeInterprocFactsNext(key, api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			sym: {Type: broad},
+		},
+	})
+
+	got := s.InterprocNext.Facts[key].FunctionFacts.FunctionType(sym)
+	if !typ.TypeEquals(got, refined) {
+		t.Fatalf("expected update boundary to keep canonical refined function fact, got %v", got)
+	}
+}
+
+func TestSnapshotInputs_RevalidateFactQueries(t *testing.T) {
+	database := db.New()
+	ctx := db.NewQueryContext(database)
+	s := NewSessionStoreWithDB(database)
+	key := api.GraphKey{GraphID: 1, ParentHash: 2}
+	sym := cfg.SymbolID(7)
+
+	calls := 0
+	q := db.NewQuery("trackedFactsTest", func(ctx *db.QueryContext, key api.GraphKey) int {
+		calls++
+		facts, _ := s.snapshotInputs.factsFor(ctx, key)
+		if len(facts.FunctionFacts.Summary(sym)) == 0 {
+			return 0
+		}
+		return 1
+	}, func(a, b int) bool { return a == b })
+
+	if got := q.Get(ctx, key); got != 0 {
+		t.Fatalf("initial query = %d, want 0", got)
+	}
+	if got := q.Get(ctx, key); got != 0 || calls != 1 {
+		t.Fatalf("unchanged query = %d calls=%d, want 0/1", got, calls)
+	}
+
+	delta := api.Facts{FunctionFacts: api.FunctionFacts{
+		sym: {Summary: []typ.Type{typ.String}},
+	}}
+	s.MergeInterprocFactsNext(key, delta)
+	if got := q.Get(ctx, key); got != 1 || calls != 2 {
+		t.Fatalf("changed query = %d calls=%d, want 1/2", got, calls)
+	}
+
+	s.MergeInterprocFactsNext(key, delta)
+	if got := q.Get(ctx, key); got != 1 || calls != 2 {
+		t.Fatalf("equal update query = %d calls=%d, want 1/2", got, calls)
 	}
 }
 
@@ -192,15 +332,9 @@ func TestSessionStore_Fields(t *testing.T) {
 		Module: &ModuleStore{
 			Graphs: make(map[uint64]*cfg.Graph),
 		},
-		Iteration: &IterationStore{
-			Revision: 5,
-		},
 	}
 	if s.Module == nil {
 		t.Error("Module should be set")
-	}
-	if s.Iteration.Revision != 5 {
-		t.Error("Revision should be 5")
 	}
 }
 
@@ -223,13 +357,6 @@ func TestFunctionRegistry_Fields(t *testing.T) {
 	}
 	if r.BySym == nil {
 		t.Error("BySym should be initialized")
-	}
-}
-
-func TestIterationStore_Fields(t *testing.T) {
-	i := &IterationStore{Revision: 10}
-	if i.Revision != 10 {
-		t.Error("Revision not set")
 	}
 }
 
@@ -291,9 +418,6 @@ func TestClearIterationChannels_InitializesMissingState(t *testing.T) {
 	s := &SessionStore{}
 	s.ClearIterationChannels()
 
-	if s.Iteration == nil {
-		t.Fatal("expected iteration store to be initialized")
-	}
 	if s.Scratch == nil {
 		t.Fatal("expected scratch to be initialized")
 	}
@@ -302,14 +426,6 @@ func TestClearIterationChannels_InitializesMissingState(t *testing.T) {
 	}
 	if s.Scratch.LiteralSigsByGraphID == nil {
 		t.Fatal("expected scratch literal signatures map to be initialized")
-	}
-}
-
-func TestBumpRevision_InitializesIterationStore(t *testing.T) {
-	s := &SessionStore{}
-	s.BumpRevision()
-	if got := s.Revision(); got != 1 {
-		t.Fatalf("expected revision 1, got %d", got)
 	}
 }
 
@@ -329,19 +445,5 @@ func TestFixpointChannelDiffs_ReturnsCopy(t *testing.T) {
 	diffs2 := s.FixpointChannelDiffs()
 	if len(diffs2) == 0 || diffs2[0] == "MUTATED" {
 		t.Fatalf("expected defensive copy, got %v", diffs2)
-	}
-}
-
-func TestClearIterationChannels_ResetsRevision(t *testing.T) {
-	s := NewSessionStore()
-	s.BumpRevision()
-	s.BumpRevision()
-	if got := s.Revision(); got != 2 {
-		t.Fatalf("expected revision 2, got %d", got)
-	}
-
-	s.ClearIterationChannels()
-	if got := s.Revision(); got != 0 {
-		t.Fatalf("expected revision reset to 0, got %d", got)
 	}
 }

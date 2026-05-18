@@ -18,7 +18,7 @@ import (
 // and so on. This ordering ensures that when processing an SCC, all functions
 // it depends on have already been analyzed.
 //
-// Type conversion is performed to bridge cfg.SymbolID and the uint64-based
+// Type conversion maps cfg.SymbolID to the uint64-based
 // internal SCC implementation.
 func ComputeSymbolSCCs(adj map[cfg.SymbolID][]cfg.SymbolID) [][]cfg.SymbolID {
 	if len(adj) == 0 {

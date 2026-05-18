@@ -29,9 +29,8 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 
 	extractionCtx := NewContextBuilder(input.PhaseEnv).
 		WithScope(input.Scope).
-		WithSiblingTypes(input.SiblingTypes).
+		WithFunctionFacts(input.FunctionFacts).
 		WithLiteralTypes(input.LiteralTypes).
-		WithReturnSummaries(input.ReturnSummaries).
 		BuildDeclared()
 
 	engine := synth.New(synth.Config{
@@ -50,6 +49,7 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		Scopes:   input.Scope.Scopes,
 		CheckCtx: extractionCtx,
 		CallCtx:  input.Ctx,
+		Graphs:   api.GraphsFrom(input.Ctx),
 		TypeOps:  input.Types,
 		Base:     input.Scope.BaseScope,
 		Globals:  input.GlobalTypes,
@@ -59,7 +59,6 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 			TypeExprResolver: typeResolverFn,
 		},
 		InitialDeclaredTypes: input.Scope.DeclaredTypes,
-		SiblingTypes:         input.SiblingTypes,
 		LiteralTypes:         input.LiteralTypes,
 		ModuleAliases:        moduleAliases,
 		ModuleBindings:       input.ModuleBindings,
@@ -89,7 +88,7 @@ func applyModuleAliasTypes(inputs *flow.Inputs, manifests io.ManifestQuerier) {
 func RunLiteral(input LiteralInput) LiteralOutput {
 	initialCtx := NewContextBuilder(input.PhaseEnv).
 		WithScope(input.Scope).
-		WithReturnSummaries(input.ReturnSummaries).
+		WithFunctionFacts(input.FunctionFacts).
 		BuildDeclared()
 
 	engine := synth.New(synth.Config{
@@ -179,12 +178,12 @@ func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, g
 // EnrichWithKeysCollector detects if a function is a "keys collector"
 // (returns keys of a parameter) and adds KeyOf constraint to OnReturn.
 // This enables cross-module key-provenance tracking.
-func EnrichWithKeysCollector(eff *constraint.FunctionRefinement, fn *ast.FunctionExpr) *constraint.FunctionRefinement {
-	if fn == nil {
+func EnrichWithKeysCollector(eff *constraint.FunctionRefinement, graph *cfg.Graph) *constraint.FunctionRefinement {
+	if graph == nil {
 		return eff
 	}
 
-	info := keyscoll.DetectKeysCollector(fn)
+	info := keyscoll.DetectKeysCollector(graph)
 	if info == nil {
 		return eff
 	}

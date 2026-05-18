@@ -111,8 +111,8 @@ func TestWidenParamHintType_RecordBecomesOpen(t *testing.T) {
 	}
 }
 
-func TestBuildParamHintSigView_NilInputs(t *testing.T) {
-	result := BuildParamHintSigView(nil, nil, nil, nil)
+func TestBuildParamHintSignatures_NilInputs(t *testing.T) {
+	result := BuildParamHintSignatures(nil, nil, nil, nil)
 	if result != nil {
 		t.Errorf("expected nil for nil inputs, got %v", result)
 	}

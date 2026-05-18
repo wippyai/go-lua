@@ -21,7 +21,7 @@
 //
 // # Overlay System
 //
-// [Overlay] provides a view that combines:
+// [Overlay] combines:
 //   - Stable sibling types from previous iterations
 //   - Pending updates from current iteration
 //

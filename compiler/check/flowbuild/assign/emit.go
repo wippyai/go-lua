@@ -157,8 +157,11 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	typeGuards := guard.CollectTypeGuards(fc.Graph, bindings)
 
 	baseSynth := synthWithOverlayAndPreflow(overlayTypes, bindings, inputs, fc.CallCtx, fc.TypeOps, preflowBranchSolution, synth)
-	idom, _ := cfganalysis.ComputeDominators(fc.Graph.CFG())
 	structuredWrites := indexStructuredWrites(fc.Graph)
+	var idom map[cfg.Point]cfg.Point
+	if len(structuredWrites) > 0 {
+		idom = cfganalysis.ComputeImmediateDominators(fc.Graph.CFG())
+	}
 	var wrappedSynth func(ast.Expr, cfg.Point) typ.Type
 	wrappedSynth = func(expr ast.Expr, p cfg.Point) typ.Type {
 		if table, ok := expr.(*ast.TableExpr); ok && !tblutil.TableHasFunctionField(table) {
@@ -440,7 +443,14 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 							if !ok || fn == nil {
 								continue
 							}
-							if info := keyscoll.DetectKeysCollector(fn); info != nil && info.ReturnIndex == retIndex {
+							var fnGraph *cfg.Graph
+							if fc.Graphs != nil {
+								fnGraph = fc.Graphs.GetOrBuildCFG(fn)
+							}
+							if fnGraph == nil {
+								fnGraph = cfg.BuildWithBindings(fn, fc.ModuleBindings)
+							}
+							if info := keyscoll.DetectKeysCollector(fnGraph); info != nil && info.ReturnIndex == retIndex {
 								tableSym = callsite.SymbolOrCreateFieldFromExpr(callsite.RuntimeArgAt(call, info.ParamIndex), bindings)
 								break
 							}

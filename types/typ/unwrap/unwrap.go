@@ -5,7 +5,6 @@
 package unwrap
 
 import (
-	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
@@ -15,63 +14,72 @@ import (
 // Unwraps: Alias, Optional (to inner type).
 // Does NOT unwrap: Instantiated (requires type substitution), Union, Ref.
 func Underlying(t typ.Type) typ.Type {
-	return underlyingDepth(t, typ.NewGuard())
-}
-
-func underlyingDepth(t typ.Type, guard internal.RecursionGuard) typ.Type {
-	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
-		return typ.Visitor[typ.Type]{
-			Alias: func(a *typ.Alias) typ.Type {
-				return underlyingDepth(a.UnaliasedTarget(), next)
-			},
-			Optional: func(o *typ.Optional) typ.Type {
-				return underlyingDepth(o.Inner, next)
-			},
-			Default: func(t typ.Type) typ.Type {
-				return t
-			},
+	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+		t = transparent(t)
+		switch tt := t.(type) {
+		case nil:
+			return nil
+		case *typ.Alias:
+			next := tt.UnaliasedTarget()
+			if next == nil || next == t {
+				return next
+			}
+			t = next
+		case *typ.Optional:
+			next := tt.Inner
+			if next == nil || next == t {
+				return next
+			}
+			t = next
+		default:
+			return t
 		}
-	})
+	}
+	return nil
 }
 
 // Alias unwraps only Alias wrappers, preserving Optional.
 func Alias(t typ.Type) typ.Type {
-	return unwrapAliasDepth(t, typ.NewGuard())
-}
-
-func unwrapAliasDepth(t typ.Type, guard internal.RecursionGuard) typ.Type {
-	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
-		return typ.Visitor[typ.Type]{
-			Alias: func(a *typ.Alias) typ.Type {
-				return unwrapAliasDepth(a.UnaliasedTarget(), next)
-			},
-			Default: func(t typ.Type) typ.Type {
-				return t
-			},
+	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+		t = transparent(t)
+		alias, ok := t.(*typ.Alias)
+		if !ok {
+			return t
 		}
-	})
+		next := alias.UnaliasedTarget()
+		if next == nil || next == t {
+			return next
+		}
+		t = next
+	}
+	return nil
 }
 
 // Optional unwraps Optional to get the inner non-nil type.
 // Also unwraps Alias. Returns nil if type is nil or Nil.
 func Optional(t typ.Type) typ.Type {
-	return unwrapOptionalDepth(t, typ.NewGuard())
-}
-
-func unwrapOptionalDepth(t typ.Type, guard internal.RecursionGuard) typ.Type {
-	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
-		return typ.Visitor[typ.Type]{
-			Alias: func(a *typ.Alias) typ.Type {
-				return unwrapOptionalDepth(a.UnaliasedTarget(), next)
-			},
-			Optional: func(o *typ.Optional) typ.Type {
-				return unwrapOptionalDepth(o.Inner, next)
-			},
-			Default: func(t typ.Type) typ.Type {
-				return t
-			},
+	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+		t = transparent(t)
+		switch tt := t.(type) {
+		case nil:
+			return nil
+		case *typ.Alias:
+			next := tt.UnaliasedTarget()
+			if next == nil || next == t {
+				return next
+			}
+			t = next
+		case *typ.Optional:
+			next := tt.Inner
+			if next == nil || next == t {
+				return next
+			}
+			t = next
+		default:
+			return t
 		}
-	})
+	}
+	return nil
 }
 
 // IsOptionalLike returns true if the type is Optional or contains nil.
@@ -159,106 +167,116 @@ func IsBuiltinTableTop(t typ.Type) bool {
 
 // Function extracts a Function type, unwrapping Alias and Optional.
 func Function(t typ.Type) *typ.Function {
-	return unwrapFunctionDepth(t, typ.NewGuard())
-}
-
-func unwrapFunctionDepth(t typ.Type, guard internal.RecursionGuard) *typ.Function {
-	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[*typ.Function] {
-		return typ.Visitor[*typ.Function]{
-			Function: func(fn *typ.Function) *typ.Function {
-				return fn
-			},
-			Optional: func(o *typ.Optional) *typ.Function {
-				return unwrapFunctionDepth(o.Inner, next)
-			},
-			Recursive: func(rec *typ.Recursive) *typ.Function {
-				if rec.Body == nil || rec.Body == rec {
-					return nil
-				}
-				return unwrapFunctionDepth(rec.Body, next)
-			},
-			Alias: func(a *typ.Alias) *typ.Function {
-				return unwrapFunctionDepth(a.UnaliasedTarget(), next)
-			},
-			Default: func(t typ.Type) *typ.Function {
+	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+		t = transparent(t)
+		switch tt := t.(type) {
+		case nil:
+			return nil
+		case *typ.Function:
+			return tt
+		case *typ.Optional:
+			next := tt.Inner
+			if next == nil || next == t {
 				return nil
-			},
+			}
+			t = next
+		case *typ.Recursive:
+			next := tt.Body
+			if next == nil || next == t {
+				return nil
+			}
+			t = next
+		case *typ.Alias:
+			next := tt.UnaliasedTarget()
+			if next == nil || next == t {
+				return nil
+			}
+			t = next
+		default:
+			return nil
 		}
-	})
+	}
+	return nil
 }
 
 // Record extracts a Record type, unwrapping Alias and Optional.
 func Record(t typ.Type) *typ.Record {
-	return unwrapRecordDepth(t, typ.NewGuard())
-}
-
-func unwrapRecordDepth(t typ.Type, guard internal.RecursionGuard) *typ.Record {
-	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[*typ.Record] {
-		return typ.Visitor[*typ.Record]{
-			Record: func(rec *typ.Record) *typ.Record {
-				return rec
-			},
-			Recursive: func(rec *typ.Recursive) *typ.Record {
-				if rec.Body == nil || rec.Body == rec {
-					return nil
-				}
-				return unwrapRecordDepth(rec.Body, next)
-			},
-			Alias: func(a *typ.Alias) *typ.Record {
-				return unwrapRecordDepth(a.UnaliasedTarget(), next)
-			},
-			Optional: func(o *typ.Optional) *typ.Record {
-				return unwrapRecordDepth(o.Inner, next)
-			},
-			Instantiated: func(inst *typ.Instantiated) *typ.Record {
-				expanded := subst.ExpandInstantiated(inst)
-				if expanded == nil || expanded == t {
-					return nil
-				}
-				return unwrapRecordDepth(expanded, next)
-			},
-			Default: func(t typ.Type) *typ.Record {
+	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+		t = transparent(t)
+		switch tt := t.(type) {
+		case nil:
+			return nil
+		case *typ.Record:
+			return tt
+		case *typ.Recursive:
+			next := tt.Body
+			if next == nil || next == t {
 				return nil
-			},
+			}
+			t = next
+		case *typ.Alias:
+			next := tt.UnaliasedTarget()
+			if next == nil || next == t {
+				return nil
+			}
+			t = next
+		case *typ.Optional:
+			next := tt.Inner
+			if next == nil || next == t {
+				return nil
+			}
+			t = next
+		case *typ.Instantiated:
+			next := subst.ExpandInstantiated(tt)
+			if next == nil || next == t {
+				return nil
+			}
+			t = next
+		default:
+			return nil
 		}
-	})
+	}
+	return nil
 }
 
 // Union extracts a Union type, unwrapping Alias and Optional.
 func Union(t typ.Type) *typ.Union {
-	return unwrapUnionDepth(t, typ.NewGuard())
-}
-
-func unwrapUnionDepth(t typ.Type, guard internal.RecursionGuard) *typ.Union {
-	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[*typ.Union] {
-		return typ.Visitor[*typ.Union]{
-			Union: func(u *typ.Union) *typ.Union {
-				return u
-			},
-			Recursive: func(rec *typ.Recursive) *typ.Union {
-				if rec.Body == nil || rec.Body == rec {
-					return nil
-				}
-				return unwrapUnionDepth(rec.Body, next)
-			},
-			Alias: func(a *typ.Alias) *typ.Union {
-				return unwrapUnionDepth(a.UnaliasedTarget(), next)
-			},
-			Optional: func(o *typ.Optional) *typ.Union {
-				return unwrapUnionDepth(o.Inner, next)
-			},
-			Instantiated: func(inst *typ.Instantiated) *typ.Union {
-				expanded := subst.ExpandInstantiated(inst)
-				if expanded == nil || expanded == t {
-					return nil
-				}
-				return unwrapUnionDepth(expanded, next)
-			},
-			Default: func(t typ.Type) *typ.Union {
+	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+		t = transparent(t)
+		switch tt := t.(type) {
+		case nil:
+			return nil
+		case *typ.Union:
+			return tt
+		case *typ.Recursive:
+			next := tt.Body
+			if next == nil || next == t {
 				return nil
-			},
+			}
+			t = next
+		case *typ.Alias:
+			next := tt.UnaliasedTarget()
+			if next == nil || next == t {
+				return nil
+			}
+			t = next
+		case *typ.Optional:
+			next := tt.Inner
+			if next == nil || next == t {
+				return nil
+			}
+			t = next
+		case *typ.Instantiated:
+			next := subst.ExpandInstantiated(tt)
+			if next == nil || next == t {
+				return nil
+			}
+			t = next
+		default:
+			return nil
 		}
-	})
+	}
+	return nil
 }
 
 // IsLiteralString returns true if the type is a string literal.
@@ -275,32 +293,32 @@ func IsLiteralString(t typ.Type) bool {
 // Follows aliases to find the underlying type of the specified kind.
 // Returns nil if the requested kind is not found or if aliases form a cycle.
 func ToKind(t typ.Type, k kind.Kind) typ.Type {
-	return unwrapToKindDepth(t, k, typ.NewGuard())
-}
-
-func unwrapToKindDepth(t typ.Type, k kind.Kind, guard internal.RecursionGuard) typ.Type {
-	if t == nil {
-		return nil
-	}
-	if t.Kind() == k {
-		return t
-	}
-	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
-		return typ.Visitor[typ.Type]{
-			Recursive: func(rec *typ.Recursive) typ.Type {
-				if rec.Body == nil || rec.Body == rec {
-					return nil
-				}
-				return unwrapToKindDepth(rec.Body, k, next)
-			},
-			Alias: func(a *typ.Alias) typ.Type {
-				return unwrapToKindDepth(a.UnaliasedTarget(), k, next)
-			},
-			Default: func(t typ.Type) typ.Type {
-				return nil
-			},
+	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {
+		t = transparent(t)
+		if t == nil {
+			return nil
 		}
-	})
+		if t.Kind() == k {
+			return t
+		}
+		switch tt := t.(type) {
+		case *typ.Recursive:
+			next := tt.Body
+			if next == nil || next == t {
+				return nil
+			}
+			t = next
+		case *typ.Alias:
+			next := tt.UnaliasedTarget()
+			if next == nil || next == t {
+				return nil
+			}
+			t = next
+		default:
+			return nil
+		}
+	}
+	return nil
 }
 
 // IsNilType returns true if the type is exactly nil.
@@ -324,4 +342,17 @@ func Instantiated(t typ.Type) typ.Type {
 		return t
 	}
 	return expanded
+}
+
+func transparent(t typ.Type) typ.Type {
+	for {
+		annotated, ok := t.(*typ.Annotated)
+		if !ok {
+			return t
+		}
+		if annotated.Inner == nil || annotated.Inner == t {
+			return t
+		}
+		t = annotated.Inner
+	}
 }

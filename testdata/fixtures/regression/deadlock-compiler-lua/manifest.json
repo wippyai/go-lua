@@ -1,0 +1,6 @@
+{
+  "description": "Large dynamic compiler fixture must terminate; dynamic any-to-string calls are reported soundly",
+  "check": {
+    "errors": 2
+  }
+}

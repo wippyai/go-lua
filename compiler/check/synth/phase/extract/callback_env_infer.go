@@ -102,8 +102,8 @@ func inferCallbackEnvOverlays(
 		return nil
 	}
 
-	idom, _ := analysis.ComputeDominators(baseCFG)
-	postIdom, _ := analysis.ComputePostDominators(baseCFG)
+	idom := analysis.ComputeImmediateDominators(baseCFG)
+	postIdom := analysis.ComputeImmediatePostDominators(baseCFG)
 
 	result := make(map[int]map[string]typ.Type)
 

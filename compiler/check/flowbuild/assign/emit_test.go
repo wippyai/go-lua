@@ -542,7 +542,7 @@ func TestExtractAssignments_KeysCollector_WithFilterBranch(t *testing.T) {
 				return typ.Unknown
 			},
 		},
-	}, inputs, keyscoll.BuildKeysCollectorDetector(graph, nil))
+	}, inputs, keyscoll.BuildKeysCollectorDetector(graph, nil, nil))
 
 	src, ok := inputs.KeysProvenance[suiteNamesSym]
 	if !ok || src != suitesSym {

@@ -36,6 +36,6 @@
 //
 // # Integration
 //
-// This package bridges the CFG representation with the expression-level
+// This package connects the CFG representation with the expression-level
 // type synthesis performed by the synth engine.
 package extract

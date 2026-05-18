@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Deps aggregates all dependencies needed by the Synthesizer.
@@ -43,6 +44,8 @@ type Deps struct {
 	// FunctionTypeInProgress guards call-point local function specialization
 	// against recursion across temporary synthesizers.
 	FunctionTypeInProgress map[functionTypeProgressKey]bool
+	FunctionTypeCache      map[functionTypeCacheKey]*typ.Function
+	StableFunctionSnapshot map[stableFunctionSnapshotKey]typ.Type
 
 	// Module-level bindings for nested function CFG building.
 	ModuleBindings *bind.BindingTable
@@ -54,6 +57,20 @@ type Deps struct {
 type functionTypeProgressKey struct {
 	Func         *ast.FunctionExpr
 	CapturePoint cfg.Point
+}
+
+type functionTypeCacheKey struct {
+	Func         *ast.FunctionExpr
+	Scope        *scope.State
+	Expected     *typ.Function
+	CapturePoint cfg.Point
+	Phase        api.Phase
+}
+
+type stableFunctionSnapshotKey struct {
+	GraphID uint64
+	Parent  *scope.State
+	Sym     cfg.SymbolID
 }
 
 // NewDeps creates a new Deps instance.
@@ -68,6 +85,8 @@ func NewDeps(ctx *db.QueryContext, types core.TypeOps, scopes api.ScopeMap, mani
 		PreCache:               make(api.Cache),
 		NarrowCache:            make(api.Cache),
 		FunctionTypeInProgress: make(map[functionTypeProgressKey]bool),
+		FunctionTypeCache:      make(map[functionTypeCacheKey]*typ.Function),
+		StableFunctionSnapshot: make(map[stableFunctionSnapshotKey]typ.Type),
 	}
 }
 
@@ -87,7 +106,7 @@ func (d *Deps) Entry() cfg.Point {
 	return 0
 }
 
-// ScopeAt returns scope for point p with optional default fallback.
+// ScopeAt returns scope for point p, using DefaultScope when point scope is absent.
 func (d *Deps) ScopeAt(p cfg.Point) *scope.State {
 	if d == nil {
 		return nil

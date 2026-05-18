@@ -89,6 +89,17 @@ type FuncCallExpr struct {
 	AdjustRet bool       // Whether return count should be adjusted
 }
 
+// CanProduceMultipleValues reports whether expr can expand to multiple Lua values
+// when it appears in the final slot of an expression list.
+func CanProduceMultipleValues(expr Expr) bool {
+	switch expr.(type) {
+	case *FuncCallExpr, *Comma3Expr:
+		return true
+	default:
+		return false
+	}
+}
+
 // LogicalOpExpr represents a logical operator (and, or).
 type LogicalOpExpr struct {
 	ExprBase

@@ -176,13 +176,9 @@ type ScopeInput struct {
 	// ParamHintSignatures contains inferred param types from call sites.
 	// Read-only - populated from ParamHints channel during iteration.
 	ParamHintSignatures map[*ast.FunctionExpr][]typ.Type
-	// SiblingTypes contains types of functions in the same scope group.
-	// Explicit input - not looked up from store during phase execution.
-	SiblingTypes map[cfg.SymbolID]typ.Type
-
-	// ReturnSummaries contains pre-flow return summaries for sibling functions.
-	// This is declared-phase only and intentionally not part of PhaseEnv.
-	ReturnSummaries map[cfg.SymbolID][]typ.Type
+	// FunctionFacts contains canonical facts for functions in this graph
+	// context. Explicit input - not looked up from store during phase execution.
+	FunctionFacts api.FunctionFacts
 }
 
 // ScopeOutput contains outputs from Phase B (scope computation).
@@ -200,8 +196,8 @@ type ScopeOutput struct {
 	ParamTypes map[cfg.SymbolID]typ.Type
 	// FunctionSignatureResolver resolves function signatures from AST.
 	FunctionSignatureResolver FunctionSignatureResolver
-	// SiblingTypes contains sibling function types (passed through from input).
-	SiblingTypes map[cfg.SymbolID]typ.Type
+	// FunctionFacts contains canonical function facts (passed through from input).
+	FunctionFacts api.FunctionFacts
 	// DepthLimitExceeded indicates scope depth exceeded MaxScopeDepth.
 	DepthLimitExceeded bool
 }
@@ -210,10 +206,8 @@ type ScopeOutput struct {
 // Phase B (continued): synthesizes function literal types.
 type LiteralInput struct {
 	PhaseEnv
-	Scope        ScopeOutput
-	SiblingTypes map[cfg.SymbolID]typ.Type
-	// ReturnSummaries contains pre-flow return summaries for sibling functions.
-	ReturnSummaries map[cfg.SymbolID][]typ.Type
+	Scope         ScopeOutput
+	FunctionFacts api.FunctionFacts
 }
 
 // LiteralOutput contains outputs from the function literal synthesis phase.
@@ -227,12 +221,10 @@ type LiteralOutput struct {
 // Phase B: extracts flow constraints and assignments.
 type FlowExtractInput struct {
 	PhaseEnv
-	Resolve      ResolveOutput
-	Scope        ScopeOutput
-	SiblingTypes map[cfg.SymbolID]typ.Type
-	LiteralTypes flow.DeclaredTypes
-	// ReturnSummaries contains pre-flow return summaries for sibling functions.
-	ReturnSummaries map[cfg.SymbolID][]typ.Type
+	Resolve       ResolveOutput
+	Scope         ScopeOutput
+	FunctionFacts api.FunctionFacts
+	LiteralTypes  flow.DeclaredTypes
 }
 
 // FlowExtractOutput contains outputs from the flow extraction phase.
@@ -261,13 +253,11 @@ type FlowSolveOutput struct {
 // Phase D: builds TypeFacts and infers effects.
 type NarrowInput struct {
 	PhaseEnv
-	Scope        ScopeOutput
-	Extract      FlowExtractOutput
-	Solve        FlowSolveOutput
-	SiblingTypes map[cfg.SymbolID]typ.Type
-	LiteralTypes flow.DeclaredTypes
-	// NarrowReturnSummaries contains post-flow return summaries for narrowing.
-	NarrowReturnSummaries map[cfg.SymbolID][]typ.Type
+	Scope         ScopeOutput
+	Extract       FlowExtractOutput
+	Solve         FlowSolveOutput
+	FunctionFacts api.FunctionFacts
+	LiteralTypes  flow.DeclaredTypes
 }
 
 // NarrowOutput contains outputs from the narrowing phase.
@@ -281,16 +271,14 @@ type NarrowOutput struct {
 // ContextBuilder constructs Env instances from phase outputs.
 // Centralizes the wiring that was previously duplicated across phase run files.
 type ContextBuilder struct {
-	env                   PhaseEnv
-	bindings              *bind.BindingTable
-	baseScope             *scope.State
-	declaredTypes         flow.DeclaredTypes
-	annotatedVars         map[cfg.SymbolID]bool
-	siblingTypes          map[cfg.SymbolID]typ.Type
-	literalTypes          flow.DeclaredTypes
-	solution              *flow.Solution
-	returnSummaries       map[cfg.SymbolID][]typ.Type
-	narrowReturnSummaries map[cfg.SymbolID][]typ.Type
+	env           PhaseEnv
+	bindings      *bind.BindingTable
+	baseScope     *scope.State
+	declaredTypes flow.DeclaredTypes
+	annotatedVars map[cfg.SymbolID]bool
+	functionFacts api.FunctionFacts
+	literalTypes  flow.DeclaredTypes
+	solution      *flow.Solution
 }
 
 // NewContextBuilder creates a builder pre-populated from the shared phase environment.
@@ -311,7 +299,7 @@ func (b *ContextBuilder) WithScope(out ScopeOutput) *ContextBuilder {
 	b.baseScope = out.BaseScope
 	b.declaredTypes = out.DeclaredTypes
 	b.annotatedVars = out.AnnotatedVars
-	b.siblingTypes = out.SiblingTypes
+	b.functionFacts = out.FunctionFacts
 	return b
 }
 
@@ -351,9 +339,9 @@ func (b *ContextBuilder) WithAnnotatedVars(av map[cfg.SymbolID]bool) *ContextBui
 	return b
 }
 
-// WithSiblingTypes overrides sibling function types.
-func (b *ContextBuilder) WithSiblingTypes(st map[cfg.SymbolID]typ.Type) *ContextBuilder {
-	b.siblingTypes = st
+// WithFunctionFacts overrides canonical function facts.
+func (b *ContextBuilder) WithFunctionFacts(ff api.FunctionFacts) *ContextBuilder {
+	b.functionFacts = ff
 	return b
 }
 
@@ -363,49 +351,35 @@ func (b *ContextBuilder) WithLiteralTypes(lt flow.DeclaredTypes) *ContextBuilder
 	return b
 }
 
-// WithReturnSummaries sets declared-phase return summaries.
-func (b *ContextBuilder) WithReturnSummaries(rs map[cfg.SymbolID][]typ.Type) *ContextBuilder {
-	b.returnSummaries = rs
-	return b
-}
-
-// WithNarrowReturnSummaries sets post-flow return summaries for narrowing.
-func (b *ContextBuilder) WithNarrowReturnSummaries(rs map[cfg.SymbolID][]typ.Type) *ContextBuilder {
-	b.narrowReturnSummaries = rs
-	return b
-}
-
 // BuildDeclared constructs a declared-phase Env from accumulated fields.
 func (b *ContextBuilder) BuildDeclared() *api.DeclaredEnvImpl {
 	return api.NewDeclaredEnv(api.DeclaredEnvConfig{
 		Graph:           b.env.Graph,
 		Bindings:        b.bindings,
 		DeclaredTypes:   b.declaredTypes,
-		SiblingTypes:    b.siblingTypes,
 		LiteralTypes:    b.literalTypes,
 		AnnotatedVars:   b.annotatedVars,
 		BaseScope:       b.baseScope,
 		RefinementStore: b.env.RefinementStore,
 		ModuleAliases:   b.env.ModuleAliases,
 		GlobalTypes:     b.env.GlobalTypes,
-		ReturnSummaries: b.returnSummaries,
+		FunctionFacts:   b.functionFacts,
 	})
 }
 
 // BuildNarrow constructs a narrowing-phase Env from accumulated fields.
 func (b *ContextBuilder) BuildNarrow() *api.NarrowEnvImpl {
 	return api.NewNarrowEnv(api.NarrowEnvConfig{
-		Graph:                 b.env.Graph,
-		Bindings:              b.bindings,
-		DeclaredTypes:         b.declaredTypes,
-		SiblingTypes:          b.siblingTypes,
-		LiteralTypes:          b.literalTypes,
-		AnnotatedVars:         b.annotatedVars,
-		Solution:              b.solution,
-		BaseScope:             b.baseScope,
-		RefinementStore:       b.env.RefinementStore,
-		ModuleAliases:         b.env.ModuleAliases,
-		GlobalTypes:           b.env.GlobalTypes,
-		NarrowReturnSummaries: b.narrowReturnSummaries,
+		Graph:           b.env.Graph,
+		Bindings:        b.bindings,
+		DeclaredTypes:   b.declaredTypes,
+		LiteralTypes:    b.literalTypes,
+		AnnotatedVars:   b.annotatedVars,
+		Solution:        b.solution,
+		BaseScope:       b.baseScope,
+		RefinementStore: b.env.RefinementStore,
+		ModuleAliases:   b.env.ModuleAliases,
+		GlobalTypes:     b.env.GlobalTypes,
+		FunctionFacts:   b.functionFacts,
 	})
 }

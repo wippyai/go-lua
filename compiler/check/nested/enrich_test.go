@@ -11,15 +11,15 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestEnrichTableTypeWithFuncTypes_NilInputs(t *testing.T) {
-	result := EnrichTableTypeWithFuncTypes(nil, nil, nil, nil)
+func TestEnrichTableTypeWithFunctionLookup_NilInputs(t *testing.T) {
+	result := EnrichTableTypeWithFunctionLookup(nil, nil, nil, nil)
 	if rec, ok := result.(*typ.Record); !ok || rec != nil {
 		t.Error("expected nil record for nil inputs")
 	}
 }
 
-func TestEnrichTableTypeWithFuncTypes_NilRecord(t *testing.T) {
-	result := EnrichTableTypeWithFuncTypes(nil, nil, &cfg.Graph{}, nil)
+func TestEnrichTableTypeWithFunctionLookup_NilRecord(t *testing.T) {
+	result := EnrichTableTypeWithFunctionLookup(nil, nil, &cfg.Graph{}, nil)
 	if rec, ok := result.(*typ.Record); !ok || rec != nil {
 		t.Error("expected nil record for nil record input")
 	}

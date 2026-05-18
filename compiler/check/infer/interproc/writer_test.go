@@ -26,10 +26,8 @@ func newFactsWriteStoreStub() *factsWriteStoreStub {
 	}
 }
 
-func (s *factsWriteStoreStub) UpdateInterprocFactsNext(key api.GraphKey, update func(*api.Facts)) {
-	facts := s.factsByGraphKeyNext[key]
-	update(&facts)
-	s.factsByGraphKeyNext[key] = facts
+func (s *factsWriteStoreStub) MergeInterprocFactsNext(key api.GraphKey, delta api.Facts) {
+	s.factsByGraphKeyNext[key] = delta
 }
 
 func (s *factsWriteStoreStub) StoreLiteralSigs(graphID uint64, sigs map[*ast.FunctionExpr]*typ.Function) {
@@ -45,16 +43,16 @@ func (s *factsWriteStoreStub) ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.Gra
 	return key, ok
 }
 
-func TestInterprocFactWriter_UpdateParentFactsForSymbol(t *testing.T) {
+func TestInterprocFactWriter_MergeParentFactsForSymbol(t *testing.T) {
 	stub := newFactsWriteStoreStub()
 	key := api.GraphKey{GraphID: 7, ParentHash: 11}
 	stub.parentKeyBySymbol[3] = key
 	writer := newInterprocFactWriter(stub)
 
-	ok := writer.updateParentFactsForSymbol(3, func(facts *api.Facts) {
-		facts.ParamHints = map[cfg.SymbolID][]typ.Type{
+	ok := writer.mergeParentFactsForSymbol(3, api.Facts{
+		ParamHints: map[cfg.SymbolID][]typ.Type{
 			3: {typ.String},
-		}
+		},
 	})
 	if !ok {
 		t.Fatal("expected update to succeed")
@@ -64,7 +62,7 @@ func TestInterprocFactWriter_UpdateParentFactsForSymbol(t *testing.T) {
 		t.Fatalf("unexpected parent facts update: %#v", got.ParamHints)
 	}
 
-	if writer.updateParentFactsForSymbol(99, func(*api.Facts) {}) {
+	if writer.mergeParentFactsForSymbol(99, api.Facts{}) {
 		t.Fatal("expected update to fail for unknown symbol")
 	}
 }

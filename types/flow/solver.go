@@ -100,16 +100,10 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 	}
 
 	s := &Solution{
-		inputs:                 inputs,
-		resolver:               resolver,
-		pkResolver:             pkRes,
-		values:                 make(map[string]typ.Type, size*2),
-		edgeConditions:         make(map[edgeKey]constraint.Condition),
-		edgeNumericConstraints: make(map[edgeKey][]constraint.NumericConstraint),
-		unsatEdges:             make(map[edgeKey]bool),
-		pointConditions:        make(map[cfg.Point]constraint.Condition),
-		numericStates:          make(map[cfg.Point]*numeric.State),
-		pathAliases:            make(map[string]string, size),
+		inputs:     inputs,
+		resolver:   resolver,
+		pkResolver: pkRes,
+		values:     make(map[string]typ.Type, estimateSolutionValueCapacity(inputs, size)),
 	}
 	if inputs != nil && len(inputs.DeclaredTypes) > 0 {
 		s.declaredSyms = make([]cfg.SymbolID, 0, len(inputs.DeclaredTypes))
@@ -130,6 +124,26 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 	return s
 }
 
+func estimateSolutionValueCapacity(inputs *Inputs, graphSize int) int {
+	if inputs == nil {
+		return 0
+	}
+	capacity := len(inputs.DeclaredTypes) + len(inputs.Assignments)
+	capacity += len(inputs.IndexerAssignments) + len(inputs.TableMutatorAssignments)
+	capacity += len(inputs.ContainerMutatorAssignments)
+	if capacity < len(inputs.ConstValues) {
+		capacity += len(inputs.ConstValues)
+	}
+	if capacity < 8 && graphSize > 0 {
+		capacity = 8
+	}
+	maxByGraph := graphSize * 2
+	if maxByGraph > 0 && capacity > maxByGraph {
+		return maxByGraph
+	}
+	return capacity
+}
+
 // runPropagation runs constraint propagation using the propagate package.
 //
 // Converts edge conditions to the propagate package format and runs
@@ -140,9 +154,12 @@ func (s *Solution) runPropagation() {
 	}
 
 	// Convert edge conditions to propagate format
-	edgeConds := make(propagate.EdgeConditions, len(s.edgeConditions))
-	for k, cond := range s.edgeConditions {
-		edgeConds[propagate.EdgeKey{From: k.from, To: k.to}] = cond
+	var edgeConds propagate.EdgeConditions
+	if len(s.edgeConditions) > 0 {
+		edgeConds = make(propagate.EdgeConditions, len(s.edgeConditions))
+		for k, cond := range s.edgeConditions {
+			edgeConds[propagate.EdgeKey{From: k.from, To: k.to}] = cond
+		}
 	}
 
 	// Convert assignments to propagate format

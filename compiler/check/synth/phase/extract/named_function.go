@@ -137,7 +137,7 @@ func (s *Synthesizer) hasDominatingDirectFunctionRebind(sym compcfg.SymbolID, st
 		return false
 	}
 
-	idom, _ := cfganalysis.ComputeDominators(graph.CFG())
+	idom := cfganalysis.ComputeImmediateDominators(graph.CFG())
 	rebound := false
 
 	graph.EachAssign(func(assignPoint cfg.Point, info *compcfg.AssignInfo) {
@@ -211,29 +211,45 @@ func (s *Synthesizer) stableGraphLocalFunctionSnapshotType(sym compcfg.SymbolID)
 		return nil
 	}
 
-	fallbackParent := s.deps.DefaultScope
-	if fallbackParent == nil {
-		fallbackParent = s.deps.CheckCtx.TypeNames()
+	defaultParent := s.deps.DefaultScope
+	if defaultParent == nil {
+		defaultParent = s.deps.CheckCtx.TypeNames()
 	}
-	parent := api.ParentScopeForGraph(store, graph.ID(), fallbackParent)
+	parent := api.ParentScopeForGraph(store, graph.ID(), defaultParent)
 	if parent == nil {
 		return nil
 	}
 
-	var fnTypes map[cfg.SymbolID]typ.Type
+	cacheKey := stableFunctionSnapshotKey{GraphID: graph.ID(), Parent: parent, Sym: sym}
+	if s.deps.StableFunctionSnapshot != nil {
+		if cached, ok := s.deps.StableFunctionSnapshot[cacheKey]; ok {
+			return cached
+		}
+	}
+
+	var facts api.FunctionFacts
 	load := func() {
-		fnTypes = store.GetLocalFuncTypesSnapshot(graph, parent)
+		facts = store.GetFunctionFactsSnapshot(graph, parent)
 	}
 	if phaser, ok := store.(interface{ WithPhase(api.Phase, func()) }); ok {
 		phaser.WithPhase(api.PhaseScopeCompute, load)
 	} else {
 		load()
 	}
-	if len(fnTypes) == 0 {
+	if len(facts) == 0 {
+		if s.deps.StableFunctionSnapshot == nil {
+			s.deps.StableFunctionSnapshot = make(map[stableFunctionSnapshotKey]typ.Type)
+		}
+		s.deps.StableFunctionSnapshot[cacheKey] = nil
 		return nil
 	}
 
-	return fnTypes[sym]
+	snapshotType := facts.FunctionType(sym)
+	if s.deps.StableFunctionSnapshot == nil {
+		s.deps.StableFunctionSnapshot = make(map[stableFunctionSnapshotKey]typ.Type)
+	}
+	s.deps.StableFunctionSnapshot[cacheKey] = snapshotType
+	return snapshotType
 }
 
 func (s *Synthesizer) stableLocalFunctionValueType(
@@ -256,9 +272,23 @@ func (s *Synthesizer) stableLocalFunctionValueType(
 			}
 		}
 	}
-	if snapshot := s.stableGraphLocalFunctionSnapshotType(sym); snapshot != nil {
-		if authoritative == nil || subtype.IsSubtype(snapshot, authoritative) {
-			authoritative = snapshot
+	hasContextFact := false
+	if s.deps != nil && s.deps.CheckCtx != nil {
+		if ctx, ok := s.deps.CheckCtx.(interface{ FunctionFacts() api.FunctionFacts }); ok {
+			facts := ctx.FunctionFacts()
+			if factType := facts.FunctionType(sym); factType != nil {
+				hasContextFact = true
+				if authoritative == nil || subtype.IsSubtype(factType, authoritative) {
+					authoritative = factType
+				}
+			}
+		}
+	}
+	if !hasContextFact {
+		if snapshot := s.stableGraphLocalFunctionSnapshotType(sym); snapshot != nil {
+			if authoritative == nil || subtype.IsSubtype(snapshot, authoritative) {
+				authoritative = snapshot
+			}
 		}
 	}
 	if !hasCaptures && authoritative != nil {

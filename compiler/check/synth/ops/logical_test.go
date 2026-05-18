@@ -87,12 +87,13 @@ func TestLogicalOrTyped_LeftOptional(t *testing.T) {
 	}
 }
 
-func TestLogicalOrTyped_SoftOptionalPrefersRight(t *testing.T) {
+func TestLogicalOrTyped_SoftOptionalPreservesLeftRuntimeAlternative(t *testing.T) {
 	left := typ.NewOptional(typ.NewArray(typ.Any))
 	right := typ.NewArray(typ.Number)
 	result := LogicalOrTyped(left, right)
-	if result == nil || result.String() != "number[]" {
-		t.Errorf("expected right to win for soft optional, got %v", result)
+	want := typ.NewUnion(typ.NewArray(typ.Any), right)
+	if !typ.TypeEquals(result, want) {
+		t.Errorf("expected truthy left and right alternatives, got %v, want %v", result, want)
 	}
 }
 

@@ -20,8 +20,9 @@ type SymbolKey struct {
 	ParentHash uint64
 }
 
-// FuncKey uniquely identifies a function analysis request for memoization purposes.
-// The key combines three components to ensure cache correctness:
+// FuncKey uniquely identifies a function analysis request for memoization.
+// Snapshot dependencies are tracked by the query database as the function result
+// reads interprocedural facts, refinements, and constructor fields.
 //
 //   - GraphID: Unique identifier for the function's control flow graph. Each CFG
 //     receives a monotonically increasing ID during construction, ensuring distinct
@@ -30,15 +31,9 @@ type SymbolKey struct {
 //   - ParentHash: Hash of the parent scope state. Functions with identical code but
 //     different lexical environments (e.g., different captured variables or type
 //     definitions in scope) must be analyzed separately.
-//
-//   - StoreRevision: Counter incremented at each fixpoint iteration boundary.
-//     This ensures cached results are invalidated when inter-function summaries
-//     (return types, effects, sibling types) change, forcing recomputation with
-//     updated cross-function information.
 type FuncKey struct {
-	GraphID       uint64
-	ParentHash    uint64
-	StoreRevision uint64
+	GraphID    uint64
+	ParentHash uint64
 }
 
 // KeyForGraph creates a GraphKey from a graph and parent scope.

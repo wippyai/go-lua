@@ -16,7 +16,7 @@ func TestFactsEqual_Empty(t *testing.T) {
 	}
 }
 
-func TestFactsEqual_ReturnSummaries(t *testing.T) {
+func TestFactsEqual_FunctionFactSummary(t *testing.T) {
 	a := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {Summary: []typ.Type{typ.String}},
@@ -32,7 +32,7 @@ func TestFactsEqual_ReturnSummaries(t *testing.T) {
 	}
 }
 
-func TestFactsEqual_DifferentReturnSummaries(t *testing.T) {
+func TestFactsEqual_DifferentFunctionFactSummary(t *testing.T) {
 	a := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {Summary: []typ.Type{typ.String}},
@@ -48,7 +48,7 @@ func TestFactsEqual_DifferentReturnSummaries(t *testing.T) {
 	}
 }
 
-func TestFactsEqual_IgnoresLegacyMirrorDrift(t *testing.T) {
+func TestFactsEqual_UsesCanonicalFunctionFactsOnly(t *testing.T) {
 	sym := cfg.SymbolID(77)
 	fn := typ.Func().Returns(typ.String).Build()
 
@@ -57,17 +57,8 @@ func TestFactsEqual_IgnoresLegacyMirrorDrift(t *testing.T) {
 			sym: {
 				Summary: []typ.Type{typ.String},
 				Narrow:  []typ.Type{typ.String},
-				Func:    fn,
+				Type:    fn,
 			},
-		},
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: typ.Func().Returns(typ.Number).Build(),
 		},
 	}
 	b := api.Facts{
@@ -75,7 +66,7 @@ func TestFactsEqual_IgnoresLegacyMirrorDrift(t *testing.T) {
 			sym: {
 				Summary: []typ.Type{typ.String},
 				Narrow:  []typ.Type{typ.String},
-				Func:    fn,
+				Type:    fn,
 			},
 		},
 	}
@@ -85,46 +76,34 @@ func TestFactsEqual_IgnoresLegacyMirrorDrift(t *testing.T) {
 	}
 }
 
-func TestFactsEqual_LegacyOnlyChannelsAreComparedCanonically(t *testing.T) {
+func TestFactsEqual_DifferentCanonicalFunctionFacts(t *testing.T) {
 	sym := cfg.SymbolID(91)
 
 	a := api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.String},
-		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			sym: []typ.Type{typ.String},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: typ.Func().Returns(typ.String).Build(),
+		FunctionFacts: api.FunctionFacts{
+			sym: {Summary: []typ.Type{typ.String}, Type: typ.Func().Returns(typ.String).Build()},
 		},
 	}
 	b := api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: typ.Func().Returns(typ.Number).Build(),
+		FunctionFacts: api.FunctionFacts{
+			sym: {Summary: []typ.Type{typ.Number}, Type: typ.Func().Returns(typ.Number).Build()},
 		},
 	}
 
 	if FactsEqual(a, b) {
-		t.Fatal("legacy-only function channels should participate in canonical equality")
+		t.Fatal("different canonical function facts should not be equal")
 	}
 }
 
-func TestReturnSummariesEqual_Empty(t *testing.T) {
+func TestTypeVectorMapEqual_Empty(t *testing.T) {
 	if !symbolTypeVectorMapEqual(nil, nil) {
 		t.Error("nil summaries should be equal")
 	}
 }
 
-func TestReturnSummariesEqual_DifferentLength(t *testing.T) {
-	a := api.ReturnSummaries{1: []typ.Type{typ.String}}
-	b := api.ReturnSummaries{}
+func TestTypeVectorMapEqual_DifferentLength(t *testing.T) {
+	a := map[cfg.SymbolID][]typ.Type{1: {typ.String}}
+	b := map[cfg.SymbolID][]typ.Type{}
 	if symbolTypeVectorMapEqual(a, b) {
 		t.Error("summaries with different lengths should not be equal")
 	}
@@ -144,16 +123,16 @@ func TestParamHintsEqual_Same(t *testing.T) {
 	}
 }
 
-func TestFuncTypesEqual_Empty(t *testing.T) {
+func TestSymbolTypeMapEqual_Empty(t *testing.T) {
 	if !symbolTypeMapEqual(nil, nil) {
 		t.Error("nil func types should be equal")
 	}
 }
 
-func TestFuncTypesEqual_Same(t *testing.T) {
+func TestSymbolTypeMapEqual_Same(t *testing.T) {
 	fn := typ.Func().Returns(typ.String).Build()
-	a := api.FuncTypes{1: fn}
-	b := api.FuncTypes{1: fn}
+	a := map[cfg.SymbolID]typ.Type{1: fn}
+	b := map[cfg.SymbolID]typ.Type{1: fn}
 	if !symbolTypeMapEqual(a, b) {
 		t.Error("same func types should be equal")
 	}
@@ -214,5 +193,14 @@ func TestCapturedContainerMutationsEqual_Basic(t *testing.T) {
 	}
 	if !CapturedContainerMutationsEqual(a, b) {
 		t.Error("same container mutations should be equal")
+	}
+}
+
+func TestCapturedFieldAssignsEqual_CanonicalizesOptionalFunctionValues(t *testing.T) {
+	fn := typ.Func().Param("fn", typ.Unknown).Build()
+	left := api.CapturedFieldAssigns{1: {2: {"after_all": typ.NewOptional(fn)}}}
+	right := api.CapturedFieldAssigns{1: {2: {"after_all": fn}}}
+	if !CapturedFieldAssignsEqual(left, right) {
+		t.Fatal("expected optional function captured field to equal canonical function value")
 	}
 }

@@ -140,8 +140,8 @@ local result: number = a()
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	summaries := sess.Store.GetReturnSummariesSnapshot(sess.RootResult.Graph, parent)
-	if len(summaries) == 0 {
+	functionFacts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent)
+	if len(functionFacts) == 0 {
 		t.Error("expected non-empty return summaries for the call chain")
 	}
 
@@ -151,14 +151,14 @@ local result: number = a()
 		t.Fatal("missing root graph")
 	}
 
-	for sym, rt := range summaries {
+	for sym, fact := range functionFacts {
 		name := graph.NameOf(sym)
 		if name == "a" || name == "b" || name == "c" {
-			if len(rt) == 0 {
+			if len(fact.Summary) == 0 {
 				t.Errorf("empty return summary for %q", name)
 				continue
 			}
-			if typ.TypeEquals(rt[0], typ.Unknown) {
+			if typ.TypeEquals(fact.Summary[0], typ.Unknown) {
 				t.Errorf("return type for %q is unknown, expected number", name)
 			}
 		}
@@ -446,16 +446,16 @@ local result: number = d()
 	checkedFunctions := make(map[string]bool)
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	summaries := sess.Store.GetReturnSummariesSnapshot(sess.RootResult.Graph, parent)
-	for sym, rt := range summaries {
+	functionFacts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent)
+	for sym, fact := range functionFacts {
 		name := graph.NameOf(sym)
 		if name == "b" || name == "c" || name == "d" {
 			checkedFunctions[name] = true
-			if len(rt) == 0 {
+			if len(fact.Summary) == 0 {
 				t.Errorf("empty return summary for %q", name)
 				continue
 			}
-			if typ.TypeEquals(rt[0], typ.Unknown) {
+			if typ.TypeEquals(fact.Summary[0], typ.Unknown) {
 				t.Errorf("return type for %q is unknown, expected number (hints didn't propagate)", name)
 			}
 		}

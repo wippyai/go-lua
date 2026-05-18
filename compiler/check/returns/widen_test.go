@@ -9,72 +9,60 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestWidenFacts_DoesNotOverrideReturnSummariesWithNarrowReturns(t *testing.T) {
+func TestWidenFacts_DoesNotOverrideSummaryWithNilNarrow(t *testing.T) {
 	prev := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {Summary: []typ.Type{typ.Integer}},
-		},
-		ReturnSummaries: api.ReturnSummaries{
-			1: []typ.Type{typ.Integer},
 		},
 	}
 	next := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {Narrow: []typ.Type{typ.Nil}},
 		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			1: []typ.Type{typ.Nil},
-		},
 	}
 
 	merged := WidenFacts(prev, next)
-	got := merged.ReturnSummaries[1]
+	got := merged.FunctionFacts.Summary(1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
-		t.Fatalf("expected ReturnSummaries[1]=integer, got %v", got)
+		t.Fatalf("expected summary[1]=integer, got %v", got)
 	}
 }
 
-func TestWidenFacts_ElidesOptionalFromNarrowReturns(t *testing.T) {
+func TestWidenFacts_ElidesOptionalFromNarrowFunctionFact(t *testing.T) {
 	prev := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {Summary: []typ.Type{typ.NewOptional(typ.Integer)}},
-		},
-		ReturnSummaries: api.ReturnSummaries{
-			1: []typ.Type{typ.NewOptional(typ.Integer)},
 		},
 	}
 	next := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {Narrow: []typ.Type{typ.Integer}},
 		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			1: []typ.Type{typ.Integer},
-		},
 	}
 
 	merged := WidenFacts(prev, next)
-	got := merged.ReturnSummaries[1]
+	got := merged.FunctionFacts.Summary(1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
-		t.Fatalf("expected ReturnSummaries[1]=integer, got %v", got)
+		t.Fatalf("expected summary[1]=integer, got %v", got)
 	}
 }
 
-func TestWidenReturnSummaries_RefinesOptionalForFirstOrderTypes(t *testing.T) {
-	prev := api.ReturnSummaries{
-		1: []typ.Type{typ.NewOptional(typ.Integer)},
-	}
-	next := api.ReturnSummaries{
-		1: []typ.Type{typ.Integer},
-	}
+func TestWidenFacts_RefinesOptionalForFirstOrderFunctionSummary(t *testing.T) {
+	prev := api.Facts{FunctionFacts: api.FunctionFacts{
+		1: {Summary: []typ.Type{typ.NewOptional(typ.Integer)}},
+	}}
+	next := api.Facts{FunctionFacts: api.FunctionFacts{
+		1: {Summary: []typ.Type{typ.Integer}},
+	}}
 
-	merged := WidenReturnSummaries(prev, next)
-	got := merged[1]
+	merged := WidenFacts(prev, next)
+	got := merged.FunctionFacts.Summary(1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected integer after first-order refinement, got %v", got)
 	}
 }
 
-func TestWidenReturnSummaries_UsesMonotoneJoinForHigherOrderReturns(t *testing.T) {
+func TestWidenFacts_UsesMonotoneJoinForHigherOrderFunctionSummary(t *testing.T) {
 	nestedUnknown := typ.NewRecord().
 		Field("next", typ.Func().Returns(typ.Unknown).Build()).
 		Build()
@@ -89,21 +77,21 @@ func TestWidenReturnSummaries_UsesMonotoneJoinForHigherOrderReturns(t *testing.T
 		Field("build", typ.Func().Returns(nestedString).Build()).
 		Build()
 
-	prev := api.ReturnSummaries{
-		1: []typ.Type{base},
-	}
-	next := api.ReturnSummaries{
-		1: []typ.Type{refined},
-	}
+	prev := api.Facts{FunctionFacts: api.FunctionFacts{
+		1: {Summary: []typ.Type{base}},
+	}}
+	next := api.Facts{FunctionFacts: api.FunctionFacts{
+		1: {Summary: []typ.Type{refined}},
+	}}
 
-	merged := WidenReturnSummaries(prev, next)
-	got := merged[1]
+	merged := WidenFacts(prev, next)
+	got := merged.FunctionFacts.Summary(1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], base) {
 		t.Fatalf("expected stable upper bound for higher-order return, got %v", got)
 	}
 }
 
-func TestWidenReturnSummaries_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
+func TestWidenFacts_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
 	dbType := typ.NewInterface("sql.DB", []typ.Method{
 		{
 			Name: "release",
@@ -114,17 +102,268 @@ func TestWidenReturnSummaries_InterfaceMethodsDoNotBlockOptionalElision(t *testi
 		},
 	})
 
-	prev := api.ReturnSummaries{
-		1: []typ.Type{typ.NewOptional(dbType)},
-	}
-	next := api.ReturnSummaries{
-		1: []typ.Type{dbType},
-	}
+	prev := api.Facts{FunctionFacts: api.FunctionFacts{
+		1: {Summary: []typ.Type{typ.NewOptional(dbType)}},
+	}}
+	next := api.Facts{FunctionFacts: api.FunctionFacts{
+		1: {Summary: []typ.Type{dbType}},
+	}}
 
-	merged := WidenReturnSummaries(prev, next)
-	got := merged[1]
+	merged := WidenFacts(prev, next)
+	got := merged.FunctionFacts.Summary(1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], dbType) {
 		t.Fatalf("expected optional elision for interface return, got %v", got)
+	}
+}
+
+func TestMergeReturnSummary_StopsRecursiveContainerReturnGrowth(t *testing.T) {
+	recordMap := func(value typ.Type) typ.Type {
+		return typ.NewRecord().MapComponent(typ.String, value).Build()
+	}
+	recordField := func(value typ.Type) typ.Type {
+		return typ.NewRecord().Field("value", value).SetOpen(true).Build()
+	}
+
+	tests := []struct {
+		name   string
+		stable typ.Type
+		growth typ.Type
+	}{
+		{
+			name:   "map",
+			stable: typ.NewMap(typ.String, typ.Any),
+			growth: typ.NewMap(typ.String, typ.NewMap(typ.String, typ.Nil)),
+		},
+		{
+			name:   "record map component",
+			stable: recordMap(typ.Any),
+			growth: recordMap(recordMap(typ.Nil)),
+		},
+		{
+			name:   "record field",
+			stable: recordField(typ.Any),
+			growth: recordField(recordField(typ.Nil)),
+		},
+		{
+			name:   "array",
+			stable: typ.NewArray(typ.Any),
+			growth: typ.NewArray(typ.NewArray(typ.Nil)),
+		},
+		{
+			name:   "tuple",
+			stable: typ.NewTuple(typ.Any),
+			growth: typ.NewTuple(typ.NewTuple(typ.Nil)),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			merged := MergeReturnSummary([]typ.Type{tt.stable}, []typ.Type{tt.growth})
+			if len(merged) != 1 || !typ.TypeEquals(merged[0], tt.stable) {
+				t.Fatalf("expected stable recursive return shape, got %v", merged)
+			}
+		})
+	}
+}
+
+func TestMergeReturnSummary_KeepsNonRecursiveContainerRefinement(t *testing.T) {
+	stable := typ.NewMap(typ.String, typ.Any)
+	refined := typ.NewMap(typ.String, typ.String)
+
+	merged := MergeReturnSummary([]typ.Type{stable}, []typ.Type{refined})
+	if len(merged) != 1 || !typ.TypeEquals(merged[0], refined) {
+		t.Fatalf("expected non-recursive map refinement to survive, got %v", merged)
+	}
+}
+
+func TestWidenParamHints_StopsSelfEmbeddingRecordGrowth(t *testing.T) {
+	prevHint := typ.NewUnion(
+		typ.Number,
+		typ.NewRecord().
+			Field("limit", typ.Any).
+			SetOpen(true).
+			Build(),
+	)
+	nextHint := typ.NewRecord().
+		Field("limit", prevHint).
+		SetOpen(true).
+		Build()
+
+	merged := WidenParamHints(
+		api.ParamHints{1: []typ.Type{prevHint}},
+		api.ParamHints{1: []typ.Type{nextHint}},
+	)
+
+	got := merged[1][0]
+	if !typ.TypeEquals(got, prevHint) {
+		t.Fatalf("expected stable previous hint, got %v", got)
+	}
+}
+
+func TestWidenParamHints_StopsSelfEmbeddingContainerGrowth(t *testing.T) {
+	prevHint := typ.NewUnion(
+		typ.Number,
+		typ.NewRecord().
+			Field("limit", typ.Any).
+			SetOpen(true).
+			Build(),
+	)
+
+	tests := []struct {
+		name string
+		next typ.Type
+	}{
+		{
+			name: "record",
+			next: typ.NewRecord().
+				Field("value", prevHint).
+				SetOpen(true).
+				Build(),
+		},
+		{
+			name: "array",
+			next: typ.NewArray(prevHint),
+		},
+		{
+			name: "map",
+			next: typ.NewMap(typ.String, prevHint),
+		},
+		{
+			name: "tuple",
+			next: typ.NewTuple(prevHint),
+		},
+		{
+			name: "function",
+			next: typ.Func().
+				Param("value", prevHint).
+				Returns(prevHint).
+				Build(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			merged := WidenParamHints(
+				api.ParamHints{1: []typ.Type{prevHint}},
+				api.ParamHints{1: []typ.Type{tt.next}},
+			)
+
+			got := merged[1][0]
+			if !typ.TypeEquals(got, prevHint) {
+				t.Fatalf("expected stable previous hint, got %v", got)
+			}
+		})
+	}
+}
+
+func TestWidenParamHints_KeepsFirstRecordWrapperObservation(t *testing.T) {
+	nextHint := typ.NewRecord().
+		Field("limit", typ.Number).
+		SetOpen(true).
+		Build()
+
+	merged := WidenParamHints(
+		api.ParamHints{1: []typ.Type{typ.Number}},
+		api.ParamHints{1: []typ.Type{nextHint}},
+	)
+
+	got := merged[1][0]
+	if typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("expected wrapper observation to be preserved, got %v", got)
+	}
+	if !typ.TypeEquals(got, typ.NewUnion(typ.Number, nextHint)) {
+		t.Fatalf("expected number | wrapper hint, got %v", got)
+	}
+}
+
+func TestWidenParamHints_JoinsNestedRecordObservations(t *testing.T) {
+	nested := typ.NewRecord().
+		Field("routes", typ.NewRecord().Field("users", typ.Boolean).SetOpen(true).Build()).
+		SetOpen(true).
+		Build()
+	outer := typ.NewRecord().
+		Field("api", nested).
+		SetOpen(true).
+		Build()
+
+	merged := WidenParamHints(
+		api.ParamHints{1: []typ.Type{outer}},
+		api.ParamHints{1: []typ.Type{nested}},
+	)
+
+	got := merged[1][0]
+	want := typ.NewUnion(outer, nested)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected nested record observations to be joined as %v, got %v", want, got)
+	}
+}
+
+func TestWidenParamHints_ReplacesStaleBroadHintWithCurrentRefinement(t *testing.T) {
+	stale := typ.NewUnion(typ.String, typ.False)
+	current := typ.String
+
+	merged := WidenParamHints(
+		api.ParamHints{1: []typ.Type{stale}},
+		api.ParamHints{1: []typ.Type{current}},
+	)
+
+	got := merged[1][0]
+	if !typ.TypeEquals(got, current) {
+		t.Fatalf("expected current refined hint %v to replace stale broad hint, got %v", current, got)
+	}
+}
+
+func TestWidenCapturedFieldAssigns_NormalizesOptionalFunctionValues(t *testing.T) {
+	fn := typ.Func().Param("fn", typ.Unknown).Build()
+	merged := WidenCapturedFieldAssigns(nil, api.CapturedFieldAssigns{
+		1: {2: {"after_all": typ.NewOptional(fn)}},
+	})
+
+	got := merged[1][2]["after_all"]
+	if !typ.TypeEquals(got, fn) {
+		t.Fatalf("expected optional function value to canonicalize to function, got %v", got)
+	}
+}
+
+func TestWidenCapturedFieldAssigns_MergesSameShapeFunctionValues(t *testing.T) {
+	prevFn := typ.Func().
+		Param("name", typ.Unknown).
+		Returns(typ.NewRecord().
+			Field("full_path", typ.String).
+			SetOpen(true).
+			Build()).
+		Build()
+	nextFn := typ.Func().
+		Param("name", typ.Unknown).
+		Returns(typ.NewRecord().
+			Field("full_path", typ.String).
+			Field("children", typ.NewArray(typ.Unknown)).
+			SetOpen(true).
+			Build()).
+		Build()
+
+	merged := WidenCapturedFieldAssigns(
+		api.CapturedFieldAssigns{1: {2: {"describe": prevFn}}},
+		api.CapturedFieldAssigns{1: {2: {"describe": nextFn}}},
+	)
+
+	got := merged[1][2]["describe"]
+	if _, ok := got.(*typ.Union); ok {
+		t.Fatalf("expected function observations to merge, got union %v", got)
+	}
+	fn, ok := got.(*typ.Function)
+	if !ok {
+		t.Fatalf("expected merged function, got %T", got)
+	}
+	if len(fn.Returns) != 1 {
+		t.Fatalf("expected one return, got %d", len(fn.Returns))
+	}
+	rec, ok := fn.Returns[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record return, got %T", fn.Returns[0])
+	}
+	if rec.GetField("full_path") == nil || rec.GetField("children") == nil {
+		t.Fatalf("expected merged return fields, got %v", rec)
 	}
 }
 
@@ -174,7 +413,7 @@ func TestMergeFunctionReturnsIfSameShape_GenericTypeParamsMustMatch(t *testing.T
 	}
 }
 
-func TestMergeFuncTypes_DoesNotRegressToNarrowerNilReturn(t *testing.T) {
+func TestMergeFunctionFactType_DoesNotRegressToNarrowerNilReturn(t *testing.T) {
 	prev := typ.Func().
 		Returns(typ.NewOptional(typ.Integer)).
 		Build()
@@ -213,7 +452,7 @@ func TestMergeFunctionReturnsIfSameShape_NormalizesLeakedTypeParams(t *testing.T
 	}
 }
 
-func TestMergeFuncTypes_PrefersWiderSupertypeOnSubtypeRelation(t *testing.T) {
+func TestMergeFunctionFactType_PrefersWiderSupertypeOnSubtypeRelation(t *testing.T) {
 	merged := MergeFunctionFactType(typ.Integer, typ.Number)
 	if !typ.TypeEquals(merged, typ.Number) {
 		t.Fatalf("expected wider supertype number, got %v", merged)
@@ -225,7 +464,7 @@ func TestMergeFuncTypes_PrefersWiderSupertypeOnSubtypeRelation(t *testing.T) {
 	}
 }
 
-func TestMergeFuncTypes_IsCommutativeForIncomparableSignatures(t *testing.T) {
+func TestMergeFunctionFactType_IsCommutativeForIncomparableSignatures(t *testing.T) {
 	coarse := typ.Func().
 		Param("entries", typ.Any).
 		Returns(typ.Integer).
@@ -242,7 +481,7 @@ func TestMergeFuncTypes_IsCommutativeForIncomparableSignatures(t *testing.T) {
 	}
 }
 
-func TestMergeFuncTypes_AliasInputsUseCanonicalJoin(t *testing.T) {
+func TestMergeFunctionFactType_AliasInputsUseCanonicalJoin(t *testing.T) {
 	coarse := typ.NewAlias("CoarseFn", typ.Func().
 		Param("entries", typ.Any).
 		Returns(typ.Integer).
@@ -259,7 +498,7 @@ func TestMergeFuncTypes_AliasInputsUseCanonicalJoin(t *testing.T) {
 	}
 }
 
-func TestMergeFuncTypes_MapVsOpenRecordUsesCanonicalJoin(t *testing.T) {
+func TestMergeFunctionFactType_MapVsOpenRecordUsesCanonicalJoin(t *testing.T) {
 	coarse := typ.Func().
 		Param("t", typ.NewRecord().SetOpen(true).Build()).
 		Returns(typ.String).
@@ -326,6 +565,20 @@ func TestWidenLiteralSigs_PrefersMergedSameShapeSignature(t *testing.T) {
 	want := typ.NewUnion(typ.String, typ.Integer)
 	if !typ.TypeEquals(got.Returns[0], want) {
 		t.Fatalf("expected merged return %v, got %v", want, got.Returns[0])
+	}
+}
+
+func TestWidenLiteralSigs_NormalizesNilBranch(t *testing.T) {
+	lit := &ast.FunctionExpr{}
+	sig := typ.Func().
+		Returns(typ.NewUnion(typ.NewRecord().Build(), typ.String)).
+		Build()
+
+	merged := WidenLiteralSigs(nil, api.LiteralSigs{lit: sig})
+	got := merged[lit]
+	want := maybeWidenFunctionForConvergence(sig)
+	if got == nil || !typ.TypeEquals(got, want) {
+		t.Fatalf("expected nil-branch literal signature %v to be normalized to %v, got %v", sig, want, got)
 	}
 }
 

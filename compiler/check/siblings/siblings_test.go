@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -22,7 +23,7 @@ func TestBuild_WithFuncs(t *testing.T) {
 		Funcs: []FuncEntry{
 			{Symbol: 1, IsLocal: true},
 		},
-		FuncTypes: map[cfg.SymbolID]typ.Type{1: fnType},
+		FunctionFacts: api.FunctionFacts{1: {Type: fnType}},
 	}
 	result := Build(conf)
 	if result == nil {
@@ -38,7 +39,7 @@ func TestBuild_WithPrev(t *testing.T) {
 		Funcs: []FuncEntry{
 			{Symbol: 1, IsLocal: true},
 		},
-		FuncTypes: map[cfg.SymbolID]typ.Type{1: typ.Func().Build()},
+		FunctionFacts: api.FunctionFacts{1: {Type: typ.Func().Build()}},
 		SiblingTypesPrev: map[cfg.SymbolID]typ.Type{
 			2: typ.String,
 		},

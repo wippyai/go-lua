@@ -28,6 +28,9 @@ type FlowContext struct {
 	// Query context for memoization
 	CallCtx *db.QueryContext
 
+	// Graphs provides canonical CFGs for function literals.
+	Graphs api.GraphProvider
+
 	// Type operations
 	TypeOps core.TypeOps
 

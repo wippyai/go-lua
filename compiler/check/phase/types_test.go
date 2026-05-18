@@ -106,22 +106,22 @@ func TestScopeInput_Fields(t *testing.T) {
 	if input.ParamHintSignatures != nil {
 		t.Error("ParamHintSignatures should be nil by default")
 	}
-	if input.SiblingTypes != nil {
-		t.Error("SiblingTypes should be nil by default")
+	if input.FunctionFacts != nil {
+		t.Error("FunctionFacts should be nil by default")
 	}
 }
 
 func TestLiteralInput_Fields(t *testing.T) {
 	input := LiteralInput{}
-	if input.SiblingTypes != nil {
-		t.Error("SiblingTypes should be nil by default")
+	if input.FunctionFacts != nil {
+		t.Error("FunctionFacts should be nil by default")
 	}
 }
 
 func TestFlowExtractInput_Fields(t *testing.T) {
 	input := FlowExtractInput{}
-	if input.SiblingTypes != nil {
-		t.Error("SiblingTypes should be nil by default")
+	if input.FunctionFacts != nil {
+		t.Error("FunctionFacts should be nil by default")
 	}
 	if input.LiteralTypes != nil {
 		t.Error("LiteralTypes should be nil by default")
@@ -137,8 +137,8 @@ func TestFlowSolveInput_Fields(t *testing.T) {
 
 func TestNarrowInput_Fields(t *testing.T) {
 	input := NarrowInput{}
-	if input.SiblingTypes != nil {
-		t.Error("SiblingTypes should be nil by default")
+	if input.FunctionFacts != nil {
+		t.Error("FunctionFacts should be nil by default")
 	}
 	if input.LiteralTypes != nil {
 		t.Error("LiteralTypes should be nil by default")
@@ -184,8 +184,8 @@ func TestScopeOutput_Fields(t *testing.T) {
 	if out.FunctionSignatureResolver != nil {
 		t.Error("FunctionSignatureResolver should be nil by default")
 	}
-	if out.SiblingTypes != nil {
-		t.Error("SiblingTypes should be nil by default")
+	if out.FunctionFacts != nil {
+		t.Error("FunctionFacts should be nil by default")
 	}
 }
 
@@ -272,7 +272,7 @@ func TestContextBuilder_WithScope(t *testing.T) {
 		BaseScope:     &scope.State{},
 		DeclaredTypes: make(flow.DeclaredTypes),
 		AnnotatedVars: make(map[cfg.SymbolID]bool),
-		SiblingTypes:  make(map[cfg.SymbolID]typ.Type),
+		FunctionFacts: make(api.FunctionFacts),
 	}
 
 	result := builder.WithScope(out)
@@ -345,13 +345,13 @@ func TestContextBuilder_WithAnnotatedVars(t *testing.T) {
 	}
 }
 
-func TestContextBuilder_WithSiblingTypes(t *testing.T) {
+func TestContextBuilder_WithFunctionFacts(t *testing.T) {
 	env := PhaseEnv{}
 	builder := NewContextBuilder(env)
 
-	result := builder.WithSiblingTypes(make(map[cfg.SymbolID]typ.Type))
+	result := builder.WithFunctionFacts(make(api.FunctionFacts))
 	if result != builder {
-		t.Error("WithSiblingTypes should return the same builder for chaining")
+		t.Error("WithFunctionFacts should return the same builder for chaining")
 	}
 }
 
@@ -381,7 +381,7 @@ func TestContextBuilder_Chaining(t *testing.T) {
 		WithBaseScope(&scope.State{}).
 		WithDeclaredTypes(make(flow.DeclaredTypes)).
 		WithAnnotatedVars(make(map[cfg.SymbolID]bool)).
-		WithSiblingTypes(make(map[cfg.SymbolID]typ.Type)).
+		WithFunctionFacts(make(api.FunctionFacts)).
 		WithLiteralTypes(make(flow.DeclaredTypes)).
 		WithSolution(nil).
 		BuildDeclared()

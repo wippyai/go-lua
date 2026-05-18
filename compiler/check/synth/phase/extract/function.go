@@ -12,7 +12,7 @@
 // CONTEXTUAL TYPING (EXPECTED TYPES)
 //
 // When an expected function type is available (e.g., from callback parameter context),
-// it provides default types for unannotated parameters and fallback return types.
+// it provides default types for unannotated parameters and return types.
 // This enables idioms like:
 //
 //	items:filter(function(x) return x > 0 end)  -- x inferred from filter's param
@@ -21,7 +21,7 @@
 //
 // Return types are inferred by analyzing all return statements in the function body.
 // The algorithm:
-//  1. Check ReturnSummaries for pre-computed results (from prior iterations)
+//  1. Check FunctionFacts for pre-computed results (from prior iterations)
 //  2. Build CFG and create type overlay with parameter types
 //  3. Create a temporary synthesizer environment
 //  4. Visit each return statement, synthesizing expression types
@@ -63,7 +63,7 @@ func (s *Synthesizer) FunctionType(fn *ast.FunctionExpr, sc *scope.State) *typ.F
 //
 // When an expected function type is provided, it guides inference for:
 //   - Unannotated parameter types (uses expected parameter types)
-//   - Unannotated return types (uses expected return types as fallback)
+//   - Unannotated return types (uses expected return types)
 //   - Self parameter in methods (infers from expected first param)
 //
 // Processing order:
@@ -98,6 +98,17 @@ func (s *Synthesizer) getOrBuildFunctionGraph(fn *ast.FunctionExpr) *cfg.Graph {
 	return cfg.Build(fn)
 }
 
+func (s *Synthesizer) currentFunctionFacts() api.FunctionFacts {
+	if s == nil || s.deps.CheckCtx == nil {
+		return nil
+	}
+	ctx, ok := s.deps.CheckCtx.(interface{ FunctionFacts() api.FunctionFacts })
+	if !ok {
+		return nil
+	}
+	return ctx.FunctionFacts()
+}
+
 func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 	fn *ast.FunctionExpr,
 	sc *scope.State,
@@ -108,12 +119,18 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 	if fn == nil {
 		return nil
 	}
+	cacheKey, cacheable := s.functionTypeCacheKey(fn, sc, expected, capturePoint, captureTypes)
+	if cacheable && s.deps.FunctionTypeCache != nil {
+		if cached, ok := s.deps.FunctionTypeCache[cacheKey]; ok {
+			return cached
+		}
+	}
 	if s.deps.FunctionTypeInProgress == nil {
 		s.deps.FunctionTypeInProgress = make(map[functionTypeProgressKey]bool)
 	}
 	progressKey := functionTypeProgressKey{Func: fn, CapturePoint: capturePoint}
 	if s.deps.FunctionTypeInProgress[progressKey] {
-		return s.buildFunctionTypeSummaryFallback(fn, sc, expected)
+		return s.buildFunctionTypeFromAvailableFacts(fn, sc, expected)
 	}
 	s.deps.FunctionTypeInProgress[progressKey] = true
 	defer delete(s.deps.FunctionTypeInProgress, progressKey)
@@ -188,9 +205,34 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 
 	fnType := builder.Build()
 	if inferredErrorReturn {
-		fnType = erreffect.AttachErrorReturnSpec(fnType, 0, 1)
+		fnType = erreffect.CanonicalLuaValueErrorConvention().Attach(fnType)
+	}
+	if cacheable {
+		if s.deps.FunctionTypeCache == nil {
+			s.deps.FunctionTypeCache = make(map[functionTypeCacheKey]*typ.Function)
+		}
+		s.deps.FunctionTypeCache[cacheKey] = fnType
 	}
 	return fnType
+}
+
+func (s *Synthesizer) functionTypeCacheKey(
+	fn *ast.FunctionExpr,
+	sc *scope.State,
+	expected *typ.Function,
+	capturePoint cfg.Point,
+	captureTypes map[cfg.SymbolID]typ.Type,
+) (functionTypeCacheKey, bool) {
+	if s == nil || s.deps == nil || fn == nil || len(captureTypes) != 0 {
+		return functionTypeCacheKey{}, false
+	}
+	return functionTypeCacheKey{
+		Func:         fn,
+		Scope:        sc,
+		Expected:     expected,
+		CapturePoint: capturePoint,
+		Phase:        s.phase,
+	}, true
 }
 
 // inferReturnTypesFromBody infers return types from the function body.
@@ -207,18 +249,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		return nil, false
 	}
 
-	var returnSummaries map[cfg.SymbolID][]typ.Type
-	if s.deps.CheckCtx != nil {
-		if s.IsNarrowing() {
-			if ctx, ok := s.deps.CheckCtx.(api.NarrowEnv); ok {
-				returnSummaries = ctx.NarrowReturnSummaries()
-			}
-		} else {
-			if ctx, ok := s.deps.CheckCtx.(api.DeclaredEnv); ok {
-				returnSummaries = ctx.ReturnSummaries()
-			}
-		}
-	}
+	functionFacts := s.currentFunctionFacts()
 
 	var fnSym cfg.SymbolID
 	if s.deps.CheckCtx != nil {
@@ -227,14 +258,20 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		}
 	}
 
-	// If a return summary exists for this function symbol, declared phase can
-	// use it directly. Narrowing phase must still infer from the body so flow
-	// predicates can remove stale union members from pre-flow summaries.
-	var summaryFallback []typ.Type
-	if len(returnSummaries) > 0 && fnSym != 0 {
-		if rt := returnSummaries[fnSym]; len(rt) > 0 {
+	// If canonical facts already know this function's returns, declared phase
+	// can use them directly. Narrowing phase still analyzes the body so flow
+	// predicates can refine the pre-flow fact.
+	var canonicalReturns []typ.Type
+	if len(functionFacts) > 0 && fnSym != 0 {
+		rt := functionFacts.Summary(fnSym)
+		if s.IsNarrowing() {
+			if narrow := functionFacts.NarrowSummary(fnSym); len(narrow) > 0 {
+				rt = narrow
+			}
+		}
+		if len(rt) > 0 {
 			if typ.HasKnownType(rt) {
-				summaryFallback = rt
+				canonicalReturns = rt
 				if !s.IsNarrowing() && capturePoint == 0 && len(captureTypes) == 0 {
 					return rt, false
 				}
@@ -264,26 +301,15 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 
 	overlay := s.buildParamOverlay(fnGraph, resolveScope, expected)
 
-	// Collect local function types from assignments using return summaries.
-	// Uses annotations for params and looks up return types from summaries.
-	// returnSummaries resolved above (pre-flow or post-flow depending on phase).
+	// Collect local function types from assignments using canonical function facts.
+	// Uses annotations for params and looks up return types from the product fact.
 
-	fnGraph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-			return
+	for _, localFn := range fnGraph.LocalFunctionAssignments() {
+		fnType := s.buildLocalFunctionTypeFromFacts(localFn.Func, resolveScope, localFn.Symbol, functionFacts)
+		if fnType != nil {
+			overlay[localFn.Symbol] = fnType
 		}
-		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				return
-			}
-			if fnExpr, ok := source.(*ast.FunctionExpr); ok {
-				fnType := s.buildFunctionTypeWithSummary(fnExpr, resolveScope, target.Symbol, returnSummaries)
-				if fnType != nil {
-					overlay[target.Symbol] = fnType
-				}
-			}
-		})
-	})
+	}
 
 	// Include captured symbol types from the parent context.
 	// This allows nested local functions to call sibling locals defined in the parent scope.
@@ -322,7 +348,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	}
 
 	// Include local function types from the parent graph that are visible at this function's definition point.
-	// Uses return summaries for return types instead of recursive inference.
+	// Uses canonical function facts for return types instead of recursive inference.
 	if s.deps.CheckCtx != nil {
 		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && pg != nil {
 			var defPoint cfg.Point
@@ -335,37 +361,21 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			if defPoint != 0 {
 				visible := pg.AllSymbolsAt(defPoint)
 				if len(visible) > 0 {
-					visibleSyms := make(map[cfg.SymbolID]struct{}, len(visible))
-					for _, sym := range visible {
-						if sym != 0 {
-							visibleSyms[sym] = struct{}{}
+					for _, localFn := range pg.LocalFunctionAssignments() {
+						if localFn.Func == fn || localFn.Name == "" {
+							continue
+						}
+						if visibleSym, ok := visible[localFn.Name]; !ok || visibleSym != localFn.Symbol {
+							continue
+						}
+						if _, ok := overlay[localFn.Symbol]; ok {
+							continue
+						}
+						fnType := s.buildLocalFunctionTypeFromFacts(localFn.Func, parentScope, localFn.Symbol, functionFacts)
+						if fnType != nil {
+							overlay[localFn.Symbol] = fnType
 						}
 					}
-					pg.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-						if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-							return
-						}
-						info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
-							if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-								return
-							}
-							if _, ok := visibleSyms[target.Symbol]; !ok {
-								return
-							}
-							if _, ok := overlay[target.Symbol]; ok {
-								return
-							}
-							if fnExpr, ok := source.(*ast.FunctionExpr); ok {
-								if fnExpr == fn {
-									return
-								}
-								fnType := s.buildFunctionTypeWithSummary(fnExpr, parentScope, target.Symbol, returnSummaries)
-								if fnType != nil {
-									overlay[target.Symbol] = fnType
-								}
-							}
-						})
-					})
 				}
 			}
 		}
@@ -400,6 +410,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			DeclaredTypes: overlay,
 			GlobalTypes:   globalTypes,
 			ModuleAliases: moduleAliases,
+			FunctionFacts: functionFacts,
 		})
 
 		prelimDeps := &Deps{
@@ -409,8 +420,6 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			Manifests:              s.deps.Manifests,
 			CheckCtx:               prelimCtx,
 			Graphs:                 s.deps.Graphs,
-			PreCache:               make(api.Cache),
-			NarrowCache:            make(api.Cache),
 			FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
 			ModuleBindings:         s.deps.ModuleBindings,
 			ModuleAliases:          moduleAliases,
@@ -422,6 +431,17 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 
 	// Single-pass local inference from assignments (best-effort).
 	var localInferred map[cfg.SymbolID]typ.Type
+	ensureLocalInferred := func() map[cfg.SymbolID]typ.Type {
+		if localInferred != nil {
+			return localInferred
+		}
+		capHint := overlaySymbolCapacity(fnGraph, 1) - len(overlay)
+		if capHint < 1 {
+			capHint = 1
+		}
+		localInferred = make(map[cfg.SymbolID]typ.Type, capHint)
+		return localInferred
+	}
 	fnGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
 			return
@@ -469,10 +489,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 							t = ensurePrelimSynth().SynthExpr(src, p, nil)
 						}
 						if t != nil {
-							if localInferred == nil {
-								localInferred = make(map[cfg.SymbolID]typ.Type)
-							}
-							localInferred[target.Symbol] = t
+							ensureLocalInferred()[target.Symbol] = t
 						}
 						return
 					}
@@ -488,10 +505,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 				return
 			}
 			if i < len(values) && values[i] != nil {
-				if localInferred == nil {
-					localInferred = make(map[cfg.SymbolID]typ.Type)
-				}
-				localInferred[target.Symbol] = values[i]
+				ensureLocalInferred()[target.Symbol] = values[i]
 			}
 		})
 	})
@@ -540,6 +554,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		DeclaredTypes: overlay,
 		GlobalTypes:   globalTypes,
 		ModuleAliases: moduleAliases,
+		FunctionFacts: functionFacts,
 	})
 
 	tempDeps := &Deps{
@@ -549,8 +564,6 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		Manifests:              s.deps.Manifests,
 		CheckCtx:               fnCheckCtx,
 		Graphs:                 s.deps.Graphs,
-		PreCache:               make(api.Cache),
-		NarrowCache:            make(api.Cache),
 		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
 		ModuleBindings:         s.deps.ModuleBindings,
 		ModuleAliases:          moduleAliases,
@@ -606,11 +619,15 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		}
 	}
 
-	if typ.IsUnknownOnlyOrEmpty(returnTypes) && len(summaryFallback) > 0 {
-		return summaryFallback, false
+	if typ.IsUnknownOnlyOrEmpty(returnTypes) && len(canonicalReturns) > 0 {
+		return canonicalReturns, false
 	}
 
-	return returnTypes, erreffect.HasStrictInverseReturnPattern(fnGraph, nil, tempSynth, 0, 1)
+	convention := erreffect.CanonicalLuaValueErrorConvention()
+	if !convention.CanClassifyReturns(returnTypes) {
+		return returnTypes, false
+	}
+	return returnTypes, convention.HasStrictInversePattern(fnGraph, nil, tempSynth)
 }
 
 func enrichOverlayWithOrderedComparisonHints(fnGraph *cfg.Graph, overlay map[cfg.SymbolID]typ.Type) {
@@ -688,19 +705,12 @@ func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
 		}
 	}
 	var fnSym cfg.SymbolID
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if fnSym != 0 || info == nil || !info.IsLocal || len(info.Targets) == 0 {
-			return
+	for _, localFn := range graph.LocalFunctionAssignments() {
+		if localFn.Func == fn {
+			fnSym = localFn.Symbol
+			break
 		}
-		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				return
-			}
-			if source == fn {
-				fnSym = target.Symbol
-			}
-		})
-	})
+	}
 	if fnSym != 0 {
 		return fnSym
 	}
@@ -716,7 +726,7 @@ func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
 }
 
 // inferReturnExprTypes synthesizes types from return expressions using CFG point.
-// The last expression is expanded via MultiTypeOf to support multi-return calls.
+// Lua expands only the final multivalue expression in a return list.
 func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.Type {
 	if len(exprs) == 0 {
 		return nil
@@ -725,9 +735,9 @@ func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.
 	if s.IsNarrowing() && s.deps.Flow != nil {
 		narrower = s.deps.Flow
 	}
-	var result []typ.Type
+	result := make([]typ.Type, 0, len(exprs))
 	for i, expr := range exprs {
-		if i == len(exprs)-1 {
+		if i == len(exprs)-1 && ast.CanProduceMultipleValues(expr) {
 			multi := s.multiTypeOf(expr, p, narrower)
 			if len(multi) == 0 {
 				multi = []typ.Type{typ.Unknown}
@@ -750,13 +760,13 @@ func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.
 	return result
 }
 
-// buildFunctionTypeWithSummary builds a function type using annotations for parameters
-// and ReturnSummaries for return types. Does not recursively infer return types.
-func (s *Synthesizer) buildFunctionTypeWithSummary(
+// buildLocalFunctionTypeFromFacts builds a local function type from annotations
+// and canonical function facts. It does not recursively infer returns.
+func (s *Synthesizer) buildLocalFunctionTypeFromFacts(
 	fn *ast.FunctionExpr,
 	sc *scope.State,
 	sym cfg.SymbolID,
-	returnSummaries map[cfg.SymbolID][]typ.Type,
+	functionFacts api.FunctionFacts,
 ) *typ.Function {
 	if fn == nil {
 		return nil
@@ -773,16 +783,15 @@ func (s *Synthesizer) buildFunctionTypeWithSummary(
 		return sig
 	}
 
-	// Look up return types from summaries
 	var returnTypes []typ.Type
-	if returnSummaries != nil && sym != 0 {
-		returnTypes = returnSummaries[sym]
+	if functionFacts != nil && sym != 0 {
+		returnTypes = functionFacts.Summary(sym)
 	}
 
 	return join.WithReturnsOrUnknown(sig, returnTypes)
 }
 
-func (s *Synthesizer) buildFunctionTypeSummaryFallback(
+func (s *Synthesizer) buildFunctionTypeFromAvailableFacts(
 	fn *ast.FunctionExpr,
 	sc *scope.State,
 	expected *typ.Function,
@@ -797,16 +806,7 @@ func (s *Synthesizer) buildFunctionTypeSummaryFallback(
 	if expected != nil && len(sig.Returns) == 0 && len(expected.Returns) > 0 {
 		sig = join.WithReturns(sig, expected.Returns)
 	}
-	var summaries map[cfg.SymbolID][]typ.Type
-	if s.deps.CheckCtx != nil {
-		if s.IsNarrowing() {
-			if ctx, ok := s.deps.CheckCtx.(api.NarrowEnv); ok {
-				summaries = ctx.NarrowReturnSummaries()
-			}
-		} else if ctx, ok := s.deps.CheckCtx.(api.DeclaredEnv); ok {
-			summaries = ctx.ReturnSummaries()
-		}
-	}
+	functionFacts := s.currentFunctionFacts()
 	var fnSym cfg.SymbolID
 	if s.deps.CheckCtx != nil {
 		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && pg != nil {
@@ -814,14 +814,20 @@ func (s *Synthesizer) buildFunctionTypeSummaryFallback(
 		}
 	}
 	if fnSym != 0 {
-		return join.WithReturnsOrUnknown(sig, summaries[fnSym])
+		rets := functionFacts.Summary(fnSym)
+		if s.IsNarrowing() {
+			if narrow := functionFacts.NarrowSummary(fnSym); len(narrow) > 0 {
+				rets = narrow
+			}
+		}
+		return join.WithReturnsOrUnknown(sig, rets)
 	}
 	return join.WithReturnsOrUnknown(sig, nil)
 }
 
 func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, expected *typ.Function) map[cfg.SymbolID]typ.Type {
 	paramSlots := fnGraph.ParamSlotsReadOnly()
-	overlay := make(map[cfg.SymbolID]typ.Type, len(paramSlots))
+	overlay := make(map[cfg.SymbolID]typ.Type, overlaySymbolCapacity(fnGraph, len(paramSlots)))
 	for _, slot := range paramSlots {
 		if slot.Symbol == 0 {
 			continue
@@ -851,6 +857,16 @@ func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, exp
 	return overlay
 }
 
+func overlaySymbolCapacity(fnGraph *cfg.Graph, floor int) int {
+	if fnGraph == nil {
+		return floor
+	}
+	if count := fnGraph.SymbolCount(); count > floor {
+		return count
+	}
+	return floor
+}
+
 // inferCallbackOverlaySpec detects the "setup -> param call -> cleanup" pattern
 // and builds a contract.Spec with EnvOverlay for each callback parameter.
 func (s *Synthesizer) inferCallbackOverlaySpec(
@@ -869,6 +885,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 	synthExpr := func(expr ast.Expr, p cfg.Point) typ.Type {
 		if tempSynth == nil {
 			overlay := s.buildParamOverlay(fnGraph, sc, expected)
+			functionFacts := s.currentFunctionFacts()
 
 			var globalTypes map[string]typ.Type
 			var moduleAliases map[cfg.SymbolID]string
@@ -887,6 +904,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 				DeclaredTypes: overlay,
 				GlobalTypes:   globalTypes,
 				ModuleAliases: moduleAliases,
+				FunctionFacts: functionFacts,
 			})
 			tempDeps := &Deps{
 				Ctx:            s.deps.Ctx,
@@ -895,8 +913,6 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 				Manifests:      s.deps.Manifests,
 				CheckCtx:       fnCheckCtx,
 				Graphs:         s.deps.Graphs,
-				PreCache:       make(api.Cache),
-				NarrowCache:    make(api.Cache),
 				ModuleBindings: s.deps.ModuleBindings,
 				ModuleAliases:  moduleAliases,
 			}

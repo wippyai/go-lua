@@ -1,0 +1,6 @@
+{
+  "description": "Large dynamic dataflow-node fixture must terminate; dynamic record-shape errors are reported soundly",
+  "check": {
+    "errors": 4
+  }
+}

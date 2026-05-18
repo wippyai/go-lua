@@ -55,7 +55,7 @@ func TestCanonicalLocalSymbol_PrefersKnownLocalOverRaw(t *testing.T) {
 	}
 }
 
-func TestCanonicalLocalCalleeSymbol_UsesCalleeNameFallback(t *testing.T) {
+func TestCanonicalLocalCalleeSymbol_UsesCalleeNameResolution(t *testing.T) {
 	bindings := bind.NewBindingTable()
 	const localSym cfg.SymbolID = 3001
 	bindings.SetName(localSym, "runner")
@@ -69,7 +69,7 @@ func TestCanonicalLocalCalleeSymbol_UsesCalleeNameFallback(t *testing.T) {
 	}
 	got := canonicalLocalCalleeSymbol(localFuncs, nil, nil, bindings, callInfo)
 	if got != localSym {
-		t.Fatalf("canonicalLocalCalleeSymbol via name fallback = %d, want %d", got, localSym)
+		t.Fatalf("canonicalLocalCalleeSymbol via name resolution = %d, want %d", got, localSym)
 	}
 }
 

@@ -3,9 +3,11 @@ package returns
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 func TestJoinReturnVectors_Empty(t *testing.T) {
@@ -330,6 +332,119 @@ func TestMergeFunctionFactType_WidensParamToCoverObservedCallsites(t *testing.T)
 	wantMap := typ.NewMap(typ.String, typ.Any)
 	if !subtype.IsSubtype(wantMap, fn.Params[0].Type) {
 		t.Fatalf("expected merged param to admit map callsite evidence, got %v", fn.Params[0].Type)
+	}
+}
+
+func TestMergeFunctionFactType_KeepsBaselineOverNestedNilOnlyRegression(t *testing.T) {
+	baselineReturn := typ.NewRecord().
+		Field("full_path", typ.String).
+		Field("parent", typ.Unknown).
+		OptField("after_all", typ.Nil).
+		SetOpen(true).
+		Build()
+	candidateReturn := typ.NewRecord().
+		Field("full_path", typ.String).
+		Field("parent", typ.Nil).
+		Field("after_all", typ.Nil).
+		SetOpen(true).
+		Build()
+
+	baseline := typ.Func().Param("name", typ.Unknown).Returns(baselineReturn).Build()
+	candidate := typ.Func().Param("name", typ.Unknown).Returns(candidateReturn).Build()
+
+	merged := MergeFunctionFactType(baseline, candidate)
+	fn, ok := merged.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 {
+		t.Fatalf("expected merged function return, got %v", merged)
+	}
+	if !typ.TypeEquals(fn.Returns[0], baselineReturn) {
+		t.Fatalf("expected baseline record to survive nil-only refinement, got %v", fn.Returns[0])
+	}
+}
+
+func TestMergeReturnSummary_PrefersCurrentTruthyMapKeyRefinement(t *testing.T) {
+	baseline := typ.NewMap(typ.NewUnion(typ.String, typ.False), typ.Unknown)
+	candidate := typ.NewMap(typ.String, typ.Unknown)
+
+	merged := MergeReturnSummary([]typ.Type{baseline}, []typ.Type{candidate})
+	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate) {
+		t.Fatalf("expected stale falsy map key to refine to %v, got %v", candidate, merged)
+	}
+}
+
+func TestMergeReturnSummary_PrefersCurrentTruthyRecordMapKeyRefinement(t *testing.T) {
+	entryArray := typ.NewArray(typ.Unknown)
+	baseline := typ.NewRecord().
+		MapComponent(typ.NewUnion(typ.Nil, typ.String, typ.False), entryArray).
+		SetOpen(true).
+		Build()
+	candidate := typ.NewRecord().
+		MapComponent(typ.String, entryArray).
+		Build()
+
+	merged := MergeReturnSummary([]typ.Type{baseline}, []typ.Type{candidate})
+	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate) {
+		t.Fatalf("expected stale falsy record map key to refine to %v, got %v", candidate, merged)
+	}
+}
+
+func TestMergeReturnSummary_PrefersMapOverStaleOpenRecordMapKeyRefinement(t *testing.T) {
+	entryArray := typ.NewArray(typ.Unknown)
+	baseline := typ.NewRecord().
+		MapComponent(typ.NewUnion(typ.Nil, typ.String, typ.False), entryArray).
+		SetOpen(true).
+		Build()
+	candidate := typ.NewMap(typ.String, entryArray)
+
+	merged := MergeReturnSummary([]typ.Type{baseline}, []typ.Type{candidate})
+	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate) {
+		t.Fatalf("expected map to replace stale open record map %v, got %v", candidate, merged)
+	}
+}
+
+func TestMergeFunctionFactType_CollapsesMixedFunctionUnionVariants(t *testing.T) {
+	base := typ.Func().
+		Param("name", typ.Unknown).
+		Returns(typ.NewRecord().Field("full_path", typ.String).SetOpen(true).Build()).
+		Build()
+	withChildren := typ.Func().
+		Param("name", typ.Unknown).
+		Returns(typ.NewRecord().
+			Field("full_path", typ.String).
+			Field("children", typ.NewArray(typ.Unknown)).
+			SetOpen(true).
+			Build()).
+		Build()
+	withTests := typ.Func().
+		Param("name", typ.Unknown).
+		Returns(typ.NewRecord().
+			Field("full_path", typ.String).
+			Field("tests", typ.NewArray(typ.Unknown)).
+			SetOpen(true).
+			Build()).
+		Build()
+
+	merged := MergeFunctionFactType(typ.NewUnion(typ.Nil, base, withChildren), withTests)
+	if merged == nil {
+		t.Fatal("expected merged type")
+	}
+	if fn := unwrap.Function(merged); fn == nil {
+		t.Fatalf("expected merged function variant, got %v", merged)
+	} else if len(fn.Returns) != 1 {
+		t.Fatalf("expected one return, got %v", fn.Returns)
+	} else {
+		rec, ok := fn.Returns[0].(*typ.Record)
+		if !ok {
+			t.Fatalf("expected record return, got %T", fn.Returns[0])
+		}
+		for _, field := range []string{"full_path", "children", "tests"} {
+			if rec.GetField(field) == nil {
+				t.Fatalf("expected merged field %q in %v", field, rec)
+			}
+		}
+	}
+	if merged.Kind() != kind.Optional {
+		t.Fatalf("expected nil residual to be preserved as optional, got %v", merged)
 	}
 }
 

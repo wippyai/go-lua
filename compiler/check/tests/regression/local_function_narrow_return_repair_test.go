@@ -59,13 +59,13 @@ return { f = f }
 	parent := sess.Store.Parents()[parentHash]
 	snap := sess.Store.GetInterprocFactsSnapshot(sess.RootResult.Graph, parent)
 
-	if got := snap.ReturnSummaries[sym]; len(got) != 1 || containsNever(got[0]) {
+	if got := snap.FunctionFacts.Summary(sym); len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("summary contains never artifact: %v", got)
 	}
-	if got := snap.NarrowReturns[sym]; len(got) != 1 || containsNever(got[0]) {
+	if got := snap.FunctionFacts.NarrowSummary(sym); len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("narrow contains never artifact: %v", got)
 	}
-	if got := snap.FuncTypes[sym]; got == nil || containsNever(got) {
+	if got := snap.FunctionFacts.FunctionType(sym); got == nil || containsNever(got) {
 		t.Fatalf("function fact contains never artifact: %v", got)
 	}
 

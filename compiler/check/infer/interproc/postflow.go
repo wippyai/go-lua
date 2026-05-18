@@ -23,9 +23,9 @@ type functionTypeWithExpected interface {
 
 // Store is the minimal store interface required to record post-flow interproc facts.
 type Store interface {
-	api.StoreView
+	api.StoreReader
 
-	UpdateInterprocFactsNext(key api.GraphKey, update func(*api.Facts))
+	MergeInterprocFactsNext(key api.GraphKey, delta api.Facts)
 	StoreLiteralSigs(graphID uint64, sigs map[*ast.FunctionExpr]*typ.Function)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
 }
@@ -65,26 +65,29 @@ func StoreFactsFromResult(
 	if fnType == nil {
 		return
 	}
-	narrowReturns := returns.NormalizeReturnVector(fnType.Returns)
+	narrowSummary := returns.NormalizeReturnVector(fnType.Returns)
 	if snapNarrow := narrowSummarySnapshotForSymbol(store, result, parent, fnSym); len(snapNarrow) > 0 {
-		narrowReturns = returns.MergeReturnSummary(narrowReturns, snapNarrow)
-		if aligned, changed := returns.AlignFunctionTypeWithSummary(fnType, narrowReturns); changed {
+		narrowSummary = returns.MergeReturnSummary(narrowSummary, snapNarrow)
+		if aligned, changed := returns.AlignFunctionTypeWithSummary(fnType, narrowSummary); changed {
 			fnType = aligned
 		}
 	}
 	summaryFromSnapshot := returnSummarySnapshotForSymbol(store, result, parent, fnSym)
 
-	writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
-		candidateFunc := fnType
-		if hinted := paramhints.MergeIntoSignature(fn, facts.ParamHints[fnSym], unwrap.Function(candidateFunc)); hinted != nil {
+	candidateFunc := fnType
+	if hints := store.GetParamHintsSnapshot(result.Graph, parent); len(hints) > 0 {
+		if hinted := paramhints.MergeIntoSignature(fn, hints[fnSym], unwrap.Function(candidateFunc)); hinted != nil {
 			candidateFunc = hinted
 		}
-		returns.MergeFunctionFactIntoFacts(facts, fnSym, returns.FunctionFactCandidate{
+	}
+	delta := api.Facts{FunctionFacts: api.FunctionFacts{
+		fnSym: returns.JoinFunctionFact(api.FunctionFact{}, api.FunctionFact{
 			Summary: summaryFromSnapshot,
-			Narrow:  narrowReturns,
-			Func:    candidateFunc,
-		})
-	})
+			Narrow:  narrowSummary,
+			Type:    candidateFunc,
+		}),
+	}}
+	writer.mergeParentFactsForSymbol(fnSym, delta)
 }
 
 func storeCapturedFactsFromResult(
@@ -108,28 +111,19 @@ func storeCapturedFactsFromResult(
 
 	fields := nested.CollectCapturedFieldAssignments(result.Graph, capturedSet, result.NarrowSynth.TypeOf)
 	if len(fields) > 0 {
-		writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
-			if facts.CapturedFields == nil {
-				facts.CapturedFields = make(api.CapturedFieldAssigns)
-			}
-			existing := facts.CapturedFields[fnSym]
-			facts.CapturedFields[fnSym] = returns.MergeCapturedFieldSymbolMaps(existing, fields, typ.JoinPreferNonSoft)
+		writer.mergeParentFactsForSymbol(fnSym, api.Facts{
+			CapturedFields: api.CapturedFieldAssigns{
+				fnSym: fields,
+			},
 		})
 	}
 
 	mutations := nested.CollectCapturedContainerMutations(result.Graph, capturedSet, result.NarrowSynth.TypeOf)
 	if len(mutations) > 0 {
-		writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
-			if facts.CapturedContainers == nil {
-				facts.CapturedContainers = make(api.CapturedContainerMutations)
-			}
-			existing := facts.CapturedContainers[fnSym]
-			facts.CapturedContainers[fnSym] = returns.MergeCapturedContainerMutationMaps(existing, mutations, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
-				if prev != nil {
-					next.ValueType = typ.JoinPreferNonSoft(prev.ValueType, next.ValueType)
-				}
-				return next
-			})
+		writer.mergeParentFactsForSymbol(fnSym, api.Facts{
+			CapturedContainers: api.CapturedContainerMutations{
+				fnSym: mutations,
+			},
 		})
 	}
 }
@@ -197,11 +191,11 @@ func returnSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent 
 			}
 		}
 	}
-	snap := store.GetReturnSummariesSnapshot(summaryGraph, summaryScope)
-	if len(snap) == 0 {
+	facts := store.GetFunctionFactsSnapshot(summaryGraph, summaryScope)
+	if len(facts) == 0 {
 		return nil
 	}
-	return snap[sym]
+	return facts.Summary(sym)
 }
 
 func narrowSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent *scope.State, sym cfg.SymbolID) []typ.Type {
@@ -219,20 +213,20 @@ func narrowSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent 
 		}
 	}
 
-	var snap map[cfg.SymbolID][]typ.Type
+	var facts api.FunctionFacts
 	if phaser, ok := any(store).(interface {
 		WithPhase(api.Phase, func())
 	}); ok {
 		phaser.WithPhase(api.PhaseNarrowing, func() {
-			snap = store.GetNarrowReturnSummariesSnapshot(summaryGraph, summaryScope)
+			facts = store.GetFunctionFactsSnapshot(summaryGraph, summaryScope)
 		})
 	} else {
-		snap = store.GetNarrowReturnSummariesSnapshot(summaryGraph, summaryScope)
+		facts = store.GetFunctionFactsSnapshot(summaryGraph, summaryScope)
 	}
-	if len(snap) == 0 {
+	if len(facts) == 0 {
 		return nil
 	}
-	return snap[sym]
+	return facts.NarrowSummary(sym)
 }
 
 func expectedFunctionFromResult(result *api.FuncResult) *typ.Function {
@@ -394,45 +388,44 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 			return
 		}
 
-		store.UpdateInterprocFactsNext(parentKey, func(facts *api.Facts) {
-			if facts.ParamHints == nil {
-				facts.ParamHints = make(api.ParamHints)
+		deltaHints := make(api.ParamHints)
+		hints := paramhints.EnsureHintCapacity(nil, len(info.Args))
+		for i, arg := range info.Args {
+			if arg == nil {
+				continue
 			}
-			hints := paramhints.EnsureHintCapacity(facts.ParamHints[calleeSym], len(info.Args))
-			for i, arg := range info.Args {
-				if arg == nil {
-					continue
-				}
-				if expectedFn := unwrap.Function(infer.ExpectedArgType(i)); expectedFn != nil {
-					argSym := checkcallsite.CanonicalSymbolFromExprWithAliases(
-						arg,
-						0,
-						result.Graph,
-						bindings,
-						moduleBindings,
-						hasFunctionRef,
-					)
-					if argSym != 0 && hasFunctionRef(argSym) {
-						hintsForFn := facts.ParamHints[argSym]
-						for j, param := range expectedFn.Params {
-							hintsForFn, _ = paramhints.MergeHintAt(hintsForFn, j, param.Type, typ.JoinPreferNonSoft)
-						}
-						if len(hintsForFn) > 0 {
-							facts.ParamHints[argSym] = hintsForFn
-						}
+			if expectedFn := unwrap.Function(infer.ExpectedArgType(i)); expectedFn != nil {
+				argSym := checkcallsite.CanonicalSymbolFromExprWithAliases(
+					arg,
+					0,
+					result.Graph,
+					bindings,
+					moduleBindings,
+					hasFunctionRef,
+				)
+				if argSym != 0 && hasFunctionRef(argSym) {
+					hintsForFn := deltaHints[argSym]
+					for j, param := range expectedFn.Params {
+						hintsForFn, _ = paramhints.MergeHintAt(hintsForFn, j, param.Type, typ.JoinPreferNonSoft)
+					}
+					if len(hintsForFn) > 0 {
+						deltaHints[argSym] = hintsForFn
 					}
 				}
+			}
 
-				argType := argTypes[i]
-				if argType == nil {
-					argType = result.NarrowSynth.TypeOf(arg, p)
-				}
-				hints, _ = paramhints.MergeCallArgHintAt(hints, i, argType, typ.JoinPreferNonSoft, true)
+			argType := argTypes[i]
+			if argType == nil {
+				argType = result.NarrowSynth.TypeOf(arg, p)
 			}
-			if len(hints) > 0 {
-				facts.ParamHints[calleeSym] = hints
-			}
-		})
+			hints, _ = paramhints.MergeCallArgHintAt(hints, i, argType, typ.JoinPreferNonSoft, true)
+		}
+		if len(hints) > 0 {
+			deltaHints[calleeSym] = hints
+		}
+		if len(deltaHints) > 0 {
+			store.MergeInterprocFactsNext(parentKey, api.Facts{ParamHints: deltaHints})
+		}
 	}
 
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {

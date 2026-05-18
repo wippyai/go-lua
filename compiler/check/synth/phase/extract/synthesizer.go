@@ -44,6 +44,27 @@ import (
 // Used as callback to allow synthExprCore to recursively synthesize sub-expressions.
 type ExprSynth func(expr ast.Expr) typ.Type
 
+type exprRecurser struct {
+	s        *Synthesizer
+	p        cfg.Point
+	sc       *scope.State
+	narrower api.FlowOps
+	recurse  ExprSynth
+}
+
+func newExprRecurser(s *Synthesizer, p cfg.Point, sc *scope.State, narrower api.FlowOps) *exprRecurser {
+	r := &exprRecurser{s: s, p: p, sc: sc, narrower: narrower}
+	r.recurse = r.synth
+	return r
+}
+
+func (r *exprRecurser) synth(expr ast.Expr) typ.Type {
+	if expr == nil {
+		return typ.Nil
+	}
+	return r.s.synthExprCore(expr, r.sc, r.p, r.narrower, r.recurse)
+}
+
 // Synthesizer is the core type synthesis engine for expressions.
 //
 // It implements a recursive descent over the AST, computing types for each
@@ -125,8 +146,8 @@ func (s *Synthesizer) TypeOfWithExpected(expr ast.Expr, p cfg.Point, expected ty
 		return s.TypeOf(expr, p)
 	}
 	sc := s.deps.ScopeAt(p)
-	recurse := func(ex ast.Expr) typ.Type { return s.SynthExpr(ex, p, nil) }
-	return s.SynthExprWithExpectedCore(expr, sc, p, recurse, expected)
+	recurser := newExprRecurser(s, p, sc, nil)
+	return s.SynthExprWithExpectedCore(expr, sc, p, recurser.recurse, expected)
 }
 
 // MultiTypeOf synthesizes multiple types for multi-value expressions (no narrowing).
@@ -141,10 +162,13 @@ func (s *Synthesizer) SynthMulti(expr ast.Expr, p cfg.Point, narrower api.FlowOp
 
 func (s *Synthesizer) multiTypeOf(expr ast.Expr, p cfg.Point, narrower api.FlowOps) []typ.Type {
 	sc := s.deps.ScopeAt(p)
-	recurse := func(ex ast.Expr) typ.Type { return s.SynthExpr(ex, p, narrower) }
-	return s.synthMultiCore(expr, sc, recurse,
+	if t, ok := s.synthNonRecursiveExpr(expr, sc, p, narrower); ok {
+		return []typ.Type{t}
+	}
+	recurser := newExprRecurser(s, p, sc, narrower)
+	return s.synthMultiCore(expr, sc, recurser.recurse,
 		func(call *ast.FuncCallExpr) []typ.Type {
-			return s.SynthCallCore(call, p, sc, narrower, recurse)
+			return s.SynthCallCore(call, p, sc, narrower, recurser.recurse)
 		},
 	)
 }
@@ -180,8 +204,11 @@ func (s *Synthesizer) SynthExprAt(expr ast.Expr, p cfg.Point, sc *scope.State) t
 	if expr == nil {
 		return typ.Nil
 	}
-	recurse := func(ex ast.Expr) typ.Type { return s.SynthExprAt(ex, p, sc) }
-	return s.synthExprCore(expr, sc, p, nil, recurse)
+	if t, ok := s.synthNonRecursiveExpr(expr, sc, p, nil); ok {
+		return t
+	}
+	recurser := newExprRecurser(s, p, sc, nil)
+	return recurser.synth(expr)
 }
 
 // Resolver returns a type resolver.
@@ -223,27 +250,54 @@ func (s *Synthesizer) SynthExpr(expr ast.Expr, p cfg.Point, narrower api.FlowOps
 		return typ.Nil
 	}
 	sc := s.deps.ScopeAt(p)
-	recurse := func(ex ast.Expr) typ.Type { return s.SynthExpr(ex, p, narrower) }
-	return s.synthExprCore(expr, sc, p, narrower, recurse)
+	if t, ok := s.synthNonRecursiveExpr(expr, sc, p, narrower); ok {
+		return t
+	}
+	recurser := newExprRecurser(s, p, sc, narrower)
+	return recurser.synth(expr)
+}
+
+// synthNonRecursiveExpr handles expression forms whose type does not depend on
+// recursively synthesizing child expressions.
+func (s *Synthesizer) synthNonRecursiveExpr(expr ast.Expr, sc *scope.State, p cfg.Point, narrower api.FlowOps) (typ.Type, bool) {
+	switch ex := expr.(type) {
+	case *ast.NilExpr:
+		return typ.Nil, true
+	case *ast.TrueExpr:
+		return typ.True, true
+	case *ast.FalseExpr:
+		return typ.False, true
+	case *ast.NumberExpr:
+		return ops.ParseNumber(ex.Value), true
+	case *ast.StringExpr:
+		return typ.LiteralString(ex.Value), true
+	case *ast.Comma3Expr:
+		return s.synthComma3(sc), true
+	case *ast.IdentExpr:
+		return s.synthIdentCore(ex, p, sc, narrower), true
+	case *ast.FunctionExpr:
+		return s.FunctionType(ex, sc), true
+	case *ast.RelationalOpExpr:
+		return typ.Boolean, true
+	case *ast.StringConcatOpExpr:
+		return typ.String, true
+	case *ast.UnaryNotOpExpr:
+		return typ.Boolean, true
+	case *ast.UnaryBNotOpExpr:
+		return typ.Integer, true
+	case *ast.CastExpr:
+		return s.ResolveType(ex.Type, sc), true
+	default:
+		return nil, false
+	}
 }
 
 // synthExprCore is the shared expression synthesizer implementation.
 func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point, narrower api.FlowOps, recurse ExprSynth) typ.Type {
+	if t, ok := s.synthNonRecursiveExpr(expr, sc, p, narrower); ok {
+		return t
+	}
 	switch ex := expr.(type) {
-	case *ast.NilExpr:
-		return typ.Nil
-	case *ast.TrueExpr:
-		return typ.True
-	case *ast.FalseExpr:
-		return typ.False
-	case *ast.NumberExpr:
-		return ops.ParseNumber(ex.Value)
-	case *ast.StringExpr:
-		return typ.LiteralString(ex.Value)
-	case *ast.Comma3Expr:
-		return s.synthComma3(sc)
-	case *ast.IdentExpr:
-		return s.synthIdentCore(ex, p, sc, narrower)
 	case *ast.AttrGetExpr:
 		return s.synthAttrGetCore(ex, p, sc, narrower, recurse)
 	case *ast.TableExpr:
@@ -254,30 +308,18 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 			return types[0]
 		}
 		return typ.Nil
-	case *ast.FunctionExpr:
-		return s.FunctionType(ex, sc)
 	case *ast.LogicalOpExpr:
 		if s.IsNarrowing() && narrower != nil {
 			return s.synthLogicalOpWithNarrowing(ex, p, sc, narrower, recurse)
 		}
 		return s.synthLogicalOpCore(ex, recurse)
-	case *ast.RelationalOpExpr:
-		return typ.Boolean
-	case *ast.StringConcatOpExpr:
-		return typ.String
 	case *ast.ArithmeticOpExpr:
 		return s.synthArithmeticOpCore(ex, recurse)
 	case *ast.UnaryMinusOpExpr:
 		return s.synthUnaryMinusCore(ex, recurse)
-	case *ast.UnaryNotOpExpr:
-		return typ.Boolean
 	case *ast.UnaryLenOpExpr:
 		operand := recurse(ex.Expr)
 		return s.deps.Types.UnaryOp(s.deps.Ctx, "#", operand)
-	case *ast.UnaryBNotOpExpr:
-		return typ.Integer
-	case *ast.CastExpr:
-		return s.ResolveType(ex.Type, sc)
 	case *ast.NonNilAssertExpr:
 		inner := recurse(ex.Expr)
 		return narrow.RemoveNil(inner)
@@ -349,7 +391,7 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 
 	// For "self" identifier, check scope's self type first.
 	// This ensures methods assigned via field assignment (obj.method = function(self)...)
-	// get the correct self type before falling back to parameter type lookup.
+	// get the correct self type before parameter lookup.
 	if ex.Value == "self" && sc != nil {
 		if selfType := sc.SelfType(); selfType != nil {
 			return selfType
@@ -377,7 +419,7 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 						requireSubtype = unwrap.Function(declared.Type) != nil
 					}
 					if requireSubtype && !subtype.IsSubtype(narrowed, declared.Type) {
-						goto fallback
+						goto declaredLookup
 					}
 				}
 			}
@@ -385,7 +427,7 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 		}
 	}
 
-fallback:
+declaredLookup:
 	if types := ctx.Types(); types != nil {
 		tv := types.EffectiveTypeAt(p, sym)
 		if tv.State == flow.StateResolved && tv.Type != nil {
@@ -423,7 +465,7 @@ fallback:
 		}
 	}
 
-	// Module alias lookup (require("mod")) as fallback when no concrete type is resolved.
+	// Module alias lookup (require("mod")) when no concrete type is resolved.
 	moduleAliasSym := sym
 	if moduleAliasSym == 0 {
 		moduleAliasSym = moduleSym

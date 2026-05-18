@@ -29,9 +29,8 @@
 //
 // The checker supports interprocedural analysis through a unified interproc snapshot:
 //
-//   - ReturnSummaries: Inferred return types for local functions
+//   - FunctionFacts: Canonical return/narrow/signature facts for local functions
 //   - ParamHints: Inferred parameter types from call sites
-//   - FuncTypes: Canonical local function types for sibling lookups
 //   - LiteralSigs: Synthesized signatures for function literals
 //   - Refinements: Function refinement summaries, stored per symbol
 //
@@ -44,9 +43,9 @@
 //
 // # MEMOIZATION
 //
-// Function analysis results are memoized by (GraphID, ParentHash, StoreRevision).
-// The memoization cache is cleared at each iteration boundary to force recomputation
-// with updated inter-function summaries.
+// Function analysis results are memoized by (GraphID, ParentHash). Interprocedural
+// facts, refinements, and constructor fields are tracked as query inputs, so
+// cached results are revalidated precisely when the snapshots they read change.
 //
 // # CONVERGENCE
 //
@@ -128,8 +127,8 @@ func WithComputePass(p api.ComputePass) Option {
 // for analyzing multiple files in sequence or parallel.
 //
 // MEMOIZATION: Function analysis is memoized through funcResultQ keyed by FuncKey.
-// The cache is cleared at each fixpoint iteration boundary to ensure fresh
-// computation with updated inter-function summaries.
+// Inter-function inputs are tracked through the query database, so unchanged
+// functions can be reused across fixpoint iterations without a coarse revision key.
 //
 // EXTENSION POINTS: Checker supports two extension mechanisms:
 //   - Pass: Diagnostic generators that run after fixpoint convergence
@@ -336,16 +335,7 @@ func (c *Checker) runPasses(sess *Session) {
 }
 
 func funcResultEqual(a, b *api.FuncResult) bool {
-	if a == b {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	if a.Graph != nil && b.Graph != nil {
-		return a.Graph.ID() == b.Graph.ID()
-	}
-	return false
+	return a == b
 }
 
 // ClearCache removes all memoized function analysis results from the query cache.

@@ -24,7 +24,7 @@ func newNamedFunctionSynth(localBindings, moduleBindings *bind.BindingTable) *Sy
 	}, api.PhaseTypeResolution)
 }
 
-func TestFunctionLiteralForIdent_UsesModuleFallbackSymbolWhenPrimaryHasNoLiteral(t *testing.T) {
+func TestFunctionLiteralForIdent_UsesModuleSymbolWhenPrimaryHasNoLiteral(t *testing.T) {
 	ident := &ast.IdentExpr{Value: "f"}
 
 	localBindings := bind.NewBindingTable()

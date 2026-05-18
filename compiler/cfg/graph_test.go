@@ -587,17 +587,16 @@ func TestGraph_CFGMethods(t *testing.T) {
 func TestGraph_NestedFunctions(t *testing.T) {
 	t.Parallel()
 
+	nestedFn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"a"}},
+		Stmts:   []ast.Stmt{},
+	}
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{},
 		Stmts: []ast.Stmt{
 			&ast.LocalAssignStmt{
 				Names: []string{"fn"},
-				Exprs: []ast.Expr{
-					&ast.FunctionExpr{
-						ParList: &ast.ParList{Names: []string{"a"}},
-						Stmts:   []ast.Stmt{},
-					},
-				},
+				Exprs: []ast.Expr{nestedFn},
 			},
 		},
 	}
@@ -610,6 +609,20 @@ func TestGraph_NestedFunctions(t *testing.T) {
 	nested := g.NestedFunctions()
 	if len(nested) != 1 {
 		t.Errorf("Expected 1 nested function, got %d", len(nested))
+	}
+
+	localFns := g.LocalFunctionAssignments()
+	if len(localFns) != 1 {
+		t.Fatalf("Expected 1 local function assignment, got %d", len(localFns))
+	}
+	if localFns[0].Name != "fn" {
+		t.Fatalf("LocalFunctionAssignments()[0].Name = %q, want fn", localFns[0].Name)
+	}
+	if localFns[0].Symbol == 0 {
+		t.Fatal("LocalFunctionAssignments()[0].Symbol should be non-zero")
+	}
+	if localFns[0].Func != nestedFn {
+		t.Fatal("LocalFunctionAssignments()[0].Func should be the assigned function literal")
 	}
 }
 
@@ -973,6 +986,9 @@ func TestGraph_SymbolKind(t *testing.T) {
 	g := Build(fn)
 	if g == nil {
 		t.Fatal("Build should return graph")
+	}
+	if got, want := g.SymbolCount(), 4; got != want {
+		t.Fatalf("SymbolCount() = %d, want %d", got, want)
 	}
 
 	// Check parameter symbols are basecfg.SymbolParam

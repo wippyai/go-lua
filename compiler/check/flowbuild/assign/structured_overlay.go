@@ -19,11 +19,11 @@ type structuredWrite struct {
 
 // indexStructuredWrites collects static field/index writes keyed by base symbol.
 func indexStructuredWrites(graph *cfg.Graph) map[cfg.SymbolID][]structuredWrite {
-	result := make(map[cfg.SymbolID][]structuredWrite)
 	if graph == nil {
-		return result
+		return nil
 	}
 
+	var result map[cfg.SymbolID][]structuredWrite
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		if info == nil {
 			return
@@ -32,6 +32,9 @@ func indexStructuredWrites(graph *cfg.Graph) map[cfg.SymbolID][]structuredWrite 
 			write, sym, ok := structuredWriteForTarget(graph, p, info.SourceAt(i), target)
 			if !ok {
 				continue
+			}
+			if result == nil {
+				result = make(map[cfg.SymbolID][]structuredWrite)
 			}
 			result[sym] = append(result[sym], write)
 		}

@@ -81,7 +81,7 @@ type Condition struct {
 
 // TrueCondition returns a condition that imposes no constraints.
 func TrueCondition() Condition {
-	return Condition{Disjuncts: [][]Constraint{{}}}
+	return Condition{Disjuncts: [][]Constraint{nil}}
 }
 
 // FalseCondition returns an unsatisfiable condition.

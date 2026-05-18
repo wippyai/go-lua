@@ -44,24 +44,24 @@ func TestSymbolKey_Equality(t *testing.T) {
 
 func TestFuncKey_Zero(t *testing.T) {
 	k := FuncKey{}
-	if k.GraphID != 0 || k.ParentHash != 0 || k.StoreRevision != 0 {
+	if k.GraphID != 0 || k.ParentHash != 0 {
 		t.Error("zero FuncKey should have zero fields")
 	}
 }
 
 func TestFuncKey_Equality(t *testing.T) {
-	a := FuncKey{GraphID: 1, ParentHash: 2, StoreRevision: 3}
-	b := FuncKey{GraphID: 1, ParentHash: 2, StoreRevision: 3}
+	a := FuncKey{GraphID: 1, ParentHash: 2}
+	b := FuncKey{GraphID: 1, ParentHash: 2}
 	if a != b {
 		t.Error("equal FuncKeys should be ==")
 	}
 }
 
-func TestFuncKey_DifferentRevision(t *testing.T) {
-	a := FuncKey{GraphID: 1, ParentHash: 2, StoreRevision: 3}
-	b := FuncKey{GraphID: 1, ParentHash: 2, StoreRevision: 4}
+func TestFuncKey_DifferentParent(t *testing.T) {
+	a := FuncKey{GraphID: 1, ParentHash: 2}
+	b := FuncKey{GraphID: 1, ParentHash: 3}
 	if a == b {
-		t.Error("FuncKeys with different revisions should not be ==")
+		t.Error("FuncKeys with different parents should not be ==")
 	}
 }
 
@@ -87,8 +87,8 @@ func TestKeyForGraph_AsMapKey(t *testing.T) {
 
 func TestFuncKey_AsMapKey(t *testing.T) {
 	m := make(map[FuncKey]int)
-	k1 := FuncKey{GraphID: 1, ParentHash: 2, StoreRevision: 3}
-	k2 := FuncKey{GraphID: 1, ParentHash: 2, StoreRevision: 3}
+	k1 := FuncKey{GraphID: 1, ParentHash: 2}
+	k2 := FuncKey{GraphID: 1, ParentHash: 2}
 	m[k1] = 42
 	if m[k2] != 42 {
 		t.Error("FuncKey should work as map key")

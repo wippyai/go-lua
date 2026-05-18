@@ -46,12 +46,13 @@ func TestJoinBranchOutcome_PreservesUnknownWithNil(t *testing.T) {
 	}
 }
 
-func TestJoinBranchOutcome_PrefersConcreteOverSoft(t *testing.T) {
+func TestJoinBranchOutcome_PreservesSoftRuntimeAlternative(t *testing.T) {
 	left := NewOptional(NewArray(Any))
 	right := NewArray(Number)
 	got := JoinBranchOutcome(left, right)
-	if got == nil || got.String() != "number[]" {
-		t.Fatalf("JoinBranchOutcome(%v, %v) = %v, want number[]", left, right, got)
+	want := NewUnion(left, right)
+	if !TypeEquals(got, want) {
+		t.Fatalf("JoinBranchOutcome(%v, %v) = %v, want %v", left, right, got, want)
 	}
 }
 

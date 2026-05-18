@@ -16,9 +16,9 @@ func TestBuildOverlay_Empty(t *testing.T) {
 	}
 }
 
-func TestBuildOverlay_WithSummaries(t *testing.T) {
+func TestBuildOverlay_WithReturnVectors(t *testing.T) {
 	conf := OverlayConfig{
-		Summaries: map[cfg.SymbolID][]typ.Type{
+		ReturnVectors: map[cfg.SymbolID][]typ.Type{
 			1: {typ.String},
 			2: {typ.Number},
 		},
@@ -35,7 +35,7 @@ func TestBuildOverlay_WithSummaries(t *testing.T) {
 
 func TestBuildOverlay_ExcludesCurrent(t *testing.T) {
 	conf := OverlayConfig{
-		Summaries: map[cfg.SymbolID][]typ.Type{
+		ReturnVectors: map[cfg.SymbolID][]typ.Type{
 			1: {typ.String},
 		},
 		CurrentSym: 1,
@@ -56,7 +56,7 @@ func TestOverlayEntry(t *testing.T) {
 	}
 }
 
-func TestBuildOverlay_SeedsSiblingsWithoutSummaries(t *testing.T) {
+func TestBuildOverlay_SeedsSiblingsWithoutReturnVectors(t *testing.T) {
 	seedType := typ.Func().Param("x", typ.Number).Build()
 	fn := &ast.FunctionExpr{}
 	conf := OverlayConfig{
@@ -72,14 +72,14 @@ func TestBuildOverlay_SeedsSiblingsWithoutSummaries(t *testing.T) {
 	}
 	result := BuildOverlay(conf)
 	if result[1] != seedType {
-		t.Error("should seed sibling without summary using SeedType")
+		t.Error("should seed sibling without a return vector using SeedType")
 	}
 }
 
-func TestBuildOverlay_SummaryOverridesSeed(t *testing.T) {
+func TestBuildOverlay_ReturnVectorOverridesSeed(t *testing.T) {
 	fn := &ast.FunctionExpr{}
 	conf := OverlayConfig{
-		Summaries: map[cfg.SymbolID][]typ.Type{
+		ReturnVectors: map[cfg.SymbolID][]typ.Type{
 			1: {typ.String},
 		},
 		Siblings: []OverlayEntry{
@@ -98,7 +98,7 @@ func TestBuildOverlay_SummaryOverridesSeed(t *testing.T) {
 		t.Fatal("should produce function type")
 	}
 	if len(fn2.Returns) == 0 || fn2.Returns[0] != typ.String {
-		t.Error("summary should take precedence")
+		t.Error("return vector should take precedence")
 	}
 }
 

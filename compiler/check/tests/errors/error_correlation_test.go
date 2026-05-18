@@ -139,9 +139,9 @@ db:release()
 		if getDbSym != 0 && result.Session.Store != nil {
 			parentHash := result.Session.Store.GraphParentHashOf(root.Graph.ID())
 			parent := result.Session.Store.Parents()[parentHash]
-			if summaries := result.Session.Store.GetReturnSummariesSnapshot(root.Graph, parent); summaries != nil {
-				if returns, ok := summaries[getDbSym]; ok {
-					t.Logf("ReturnSummaries[%d][get_db]=%v", parentHash, returns)
+			if facts := result.Session.Store.GetFunctionFactsSnapshot(root.Graph, parent); facts != nil {
+				if fact, ok := facts[getDbSym]; ok {
+					t.Logf("FunctionFacts[%d][get_db].Summary=%v", parentHash, fact.Summary)
 				}
 			}
 		}
@@ -287,14 +287,14 @@ db:release()
 	root := result.Session.RootResult.Graph
 	parentHash := result.Session.Store.GraphParentHashOf(root.ID())
 	parent := result.Session.Store.Parents()[parentHash]
-	summaries := result.Session.Store.GetReturnSummariesSnapshot(root, parent)
+	functionFacts := result.Session.Store.GetFunctionFactsSnapshot(root, parent)
 
 	for _, name := range []string{"connect", "get_connection"} {
 		sym, ok := root.SymbolAt(root.Exit(), name)
 		if !ok || sym == 0 {
 			t.Fatalf("missing symbol for %s", name)
 		}
-		rets := returns.NormalizeReturnVector(summaries[sym])
+		rets := returns.NormalizeReturnVector(functionFacts.Summary(sym))
 		if len(rets) == 0 {
 			t.Fatalf("missing return summary for %s", name)
 		}

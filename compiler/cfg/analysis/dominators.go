@@ -33,6 +33,13 @@ type rpoReader interface {
 	RPOReadOnly() []basecfg.Point
 }
 
+type immediateDominatorData struct {
+	rpo         []basecfg.Point
+	rpoNum      []int
+	idomByPoint []basecfg.Point
+	hasIDom     []bool
+}
+
 func predecessorsOf(g basecfg.Graph, point basecfg.Point) []basecfg.Point {
 	if direct, ok := g.(predecessorsReader); ok {
 		return direct.PredecessorsReadOnly(point)
@@ -57,33 +64,28 @@ func rpoOf(g basecfg.Graph) []basecfg.Point {
 	return g.RPO()
 }
 
-// ComputeDominators computes immediate dominators and the dominator tree.
-// Uses the Cooper-Harvey-Kennedy algorithm with RPO iteration.
-func ComputeDominators(g basecfg.Graph) (idom map[basecfg.Point]basecfg.Point, domTree map[basecfg.Point][]basecfg.Point) {
+func computeImmediateDominatorData(g basecfg.Graph) immediateDominatorData {
 	rpo := rpoOf(g)
 	if len(rpo) == 0 {
-		return make(map[basecfg.Point]basecfg.Point), make(map[basecfg.Point][]basecfg.Point)
+		return immediateDominatorData{}
 	}
 
 	graphSize := g.Size()
-
 	if graphSize == 0 {
-		return make(map[basecfg.Point]basecfg.Point), make(map[basecfg.Point][]basecfg.Point)
+		return immediateDominatorData{}
 	}
 
-	// Build RPO number lookup for intersection and deterministic sorting.
 	rpoNum := make([]int, graphSize)
 	for i, p := range rpo {
 		if int(p) >= graphSize {
 			continue
 		}
-
 		rpoNum[p] = i
 	}
 
 	entry := g.Entry()
 	if int(entry) >= graphSize {
-		return make(map[basecfg.Point]basecfg.Point), make(map[basecfg.Point][]basecfg.Point)
+		return immediateDominatorData{}
 	}
 
 	idomByPoint := make([]basecfg.Point, graphSize)
@@ -91,96 +93,111 @@ func ComputeDominators(g basecfg.Graph) (idom map[basecfg.Point]basecfg.Point, d
 	idomByPoint[entry] = entry
 	hasIDom[entry] = true
 
-	// intersect finds the common dominator of two nodes
-	intersect := func(b1, b2 basecfg.Point) basecfg.Point {
-		finger1, finger2 := b1, b2
-
-		for finger1 != finger2 {
-			for rpoNum[finger1] > rpoNum[finger2] {
-				finger1 = idomByPoint[finger1]
+	intersect := func(pointA, pointB basecfg.Point) basecfg.Point {
+		fingerA, fingerB := pointA, pointB
+		for fingerA != fingerB {
+			for rpoNum[fingerA] > rpoNum[fingerB] {
+				fingerA = idomByPoint[fingerA]
 			}
-
-			for rpoNum[finger2] > rpoNum[finger1] {
-				finger2 = idomByPoint[finger2]
+			for rpoNum[fingerB] > rpoNum[fingerA] {
+				fingerB = idomByPoint[fingerB]
 			}
 		}
-
-		return finger1
+		return fingerA
 	}
 
-	// Iterate until fixed point
 	changed := true
 	for changed {
 		changed = false
-		for _, b := range rpo {
-			if b == entry {
+		for _, block := range rpo {
+			if block == entry || int(block) >= graphSize {
 				continue
 			}
 
-			if int(b) >= graphSize {
-				continue
-			}
-
-			preds := predecessorsOf(g, b)
+			preds := predecessorsOf(g, block)
 			if len(preds) == 0 {
 				continue
 			}
 
-			// Find first predecessor with defined idom
-			var newIdom basecfg.Point
-
+			var newIDom basecfg.Point
 			found := false
-
-			for _, p := range preds {
-				if int(p) >= graphSize {
+			for _, pred := range preds {
+				predIdx := int(pred)
+				if predIdx >= graphSize {
 					continue
 				}
-
-				if hasIDom[p] {
-					newIdom = p
+				if hasIDom[predIdx] {
+					newIDom = pred
 					found = true
-
 					break
 				}
 			}
-
 			if !found {
 				continue
 			}
 
-			// Intersect with other defined predecessors
-			for _, p := range preds {
-				if p == newIdom {
+			for _, pred := range preds {
+				if pred == newIDom {
 					continue
 				}
-
-				if int(p) >= graphSize {
+				predIdx := int(pred)
+				if predIdx >= graphSize {
 					continue
 				}
-
-				if hasIDom[p] {
-					newIdom = intersect(p, newIdom)
+				if hasIDom[predIdx] {
+					newIDom = intersect(pred, newIDom)
 				}
 			}
 
-			if !hasIDom[b] || idomByPoint[b] != newIdom {
-				idomByPoint[b] = newIdom
-				hasIDom[b] = true
+			blockIdx := int(block)
+			if !hasIDom[blockIdx] || idomByPoint[blockIdx] != newIDom {
+				idomByPoint[blockIdx] = newIDom
+				hasIDom[blockIdx] = true
 				changed = true
 			}
 		}
 	}
 
-	idom = make(map[basecfg.Point]basecfg.Point, len(rpo))
-	for _, point := range rpo {
-		if int(point) >= graphSize || !hasIDom[point] {
+	return immediateDominatorData{
+		rpo:         rpo,
+		rpoNum:      rpoNum,
+		idomByPoint: idomByPoint,
+		hasIDom:     hasIDom,
+	}
+}
+
+func (d immediateDominatorData) asMap() map[basecfg.Point]basecfg.Point {
+	if len(d.rpo) == 0 {
+		return make(map[basecfg.Point]basecfg.Point)
+	}
+	idom := make(map[basecfg.Point]basecfg.Point, len(d.rpo))
+	for _, point := range d.rpo {
+		idx := int(point)
+		if idx >= len(d.hasIDom) || !d.hasIDom[idx] {
 			continue
 		}
+		idom[point] = d.idomByPoint[idx]
+	}
+	return idom
+}
 
-		idom[point] = idomByPoint[point]
+// ComputeImmediateDominators computes only the immediate-dominator map.
+//
+// Use this when callers only need dominance predicates. It avoids building the
+// dominator tree, which is meaningful allocation in hot type-checking paths.
+func ComputeImmediateDominators(g basecfg.Graph) map[basecfg.Point]basecfg.Point {
+	return computeImmediateDominatorData(g).asMap()
+}
+
+// ComputeDominators computes immediate dominators and the dominator tree.
+// Uses the Cooper-Harvey-Kennedy algorithm with RPO iteration.
+func ComputeDominators(g basecfg.Graph) (idom map[basecfg.Point]basecfg.Point, domTree map[basecfg.Point][]basecfg.Point) {
+	data := computeImmediateDominatorData(g)
+	if len(data.rpo) == 0 {
+		return make(map[basecfg.Point]basecfg.Point), make(map[basecfg.Point][]basecfg.Point)
 	}
 
-	// Build dominator tree from idom
+	idom = data.asMap()
 	domTree = make(map[basecfg.Point][]basecfg.Point, len(idom))
 
 	for n, dom := range idom {
@@ -192,10 +209,10 @@ func ComputeDominators(g basecfg.Graph) (idom map[basecfg.Point]basecfg.Point, d
 	// Sort children for deterministic order.
 	for p := range domTree {
 		slices.SortFunc(domTree[p], func(a, b basecfg.Point) int {
-			if rpoNum[a] < rpoNum[b] {
+			if data.rpoNum[a] < data.rpoNum[b] {
 				return -1
 			}
-			if rpoNum[a] > rpoNum[b] {
+			if data.rpoNum[a] > data.rpoNum[b] {
 				return 1
 			}
 			return 0
@@ -597,6 +614,11 @@ func (r *reversedGraph) RPO() []basecfg.Point {
 // algorithm on the reversed CFG.
 func ComputePostDominators(graph basecfg.Graph) (map[basecfg.Point]basecfg.Point, map[basecfg.Point][]basecfg.Point) {
 	return ComputeDominators(&reversedGraph{g: graph})
+}
+
+// ComputeImmediatePostDominators computes only the immediate post-dominator map.
+func ComputeImmediatePostDominators(graph basecfg.Graph) map[basecfg.Point]basecfg.Point {
+	return ComputeImmediateDominators(&reversedGraph{g: graph})
 }
 
 // PostDominates returns true if a post-dominates b (a is on every path from b to exit).

@@ -220,11 +220,11 @@ func TestSynthesizer_TypeOf_Ident(t *testing.T) {
 	}
 }
 
-func TestSynthesizer_TypeOf_IdentFallsBackToGraphSymbolAt(t *testing.T) {
+func TestSynthesizer_TypeOf_IdentUsesGraphSymbolAt(t *testing.T) {
 	s, _ := newTestSynthesizerWithSymbol("x", typ.Integer)
 	result := s.TypeOf(&ast.IdentExpr{Value: "x"}, 0)
 	if result != typ.Integer {
-		t.Fatalf("got %v, want integer via SymbolAt fallback", result)
+		t.Fatalf("got %v, want integer via SymbolAt", result)
 	}
 }
 

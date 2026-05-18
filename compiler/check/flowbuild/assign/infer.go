@@ -150,8 +150,11 @@ func collectInferredTypes(
 	if graph == nil {
 		return inferred
 	}
-	idom, _ := cfganalysis.ComputeDominators(graph.CFG())
 	structuredWrites := indexStructuredWrites(graph)
+	var idom map[cfg.Point]cfg.Point
+	if len(structuredWrites) > 0 {
+		idom = cfganalysis.ComputeImmediateDominators(graph.CFG())
+	}
 
 	bindings := graph.Bindings()
 	if moduleBindings == nil {

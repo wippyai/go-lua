@@ -391,12 +391,13 @@ func TestWippyRunner_NearLiteralTestRunnerFlow(t *testing.T) {
 			root := result.Session.RootResult.Graph
 			parentHash := result.Session.Store.GraphParentHashOf(root.ID())
 			parent := result.Session.Store.Parents()[parentHash]
-			localTypes := result.Session.Store.GetLocalFuncTypesSnapshot(root, parent)
+			functionFacts := result.Session.Store.GetFunctionFactsSnapshot(root, parent)
 			hints := result.Session.Store.GetParamHintsSnapshot(root, parent)
 			if bindings := result.Session.Store.ModuleBindings(); bindings != nil {
-				for sym, fnType := range localTypes {
+				for sym, fact := range functionFacts {
 					name := bindings.Name(sym)
 					if name == "sorted_keys" || name == "run_suite" || name == "run_test" || name == "group_by_suite" {
+						fnType := fact.Type
 						t.Logf("local-fn %q sym=%d type=%s", name, sym, typ.Format(fnType, typ.DefaultFormatOptions))
 						if hv := hints[sym]; len(hv) > 0 {
 							t.Logf("param-hints %q: %v", name, hv)
