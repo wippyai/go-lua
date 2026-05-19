@@ -189,21 +189,17 @@ func inferFunctionRefinementCore(
 		// Check for return expression constraints from predicate/assert calls
 		if src.returnConstraints != nil {
 			if rc, ok := src.returnConstraints[p]; ok {
-				isPredicate := rc.OnTrue.HasConstraints() && rc.OnFalse.HasConstraints()
-				if returnsBool || isPredicate {
-					if rc.OnTrue.HasConstraints() {
-						cond := constraint.And(baseCond, rc.OnTrue)
-						onTrueCond = orCondition(onTrueCond, cond)
-					}
-					if rc.OnFalse.HasConstraints() {
-						cond := constraint.And(baseCond, rc.OnFalse)
-						onFalseCond = orCondition(onFalseCond, cond)
-					}
-				} else {
-					if rc.OnTrue.HasConstraints() {
-						cond := constraint.And(baseCond, rc.OnTrue)
-						onReturnCond = orCondition(onReturnCond, cond)
-					}
+				if rc.OnReturn.HasConstraints() {
+					cond := constraint.And(baseCond, rc.OnReturn)
+					onReturnCond = orCondition(onReturnCond, cond)
+				}
+				if rc.OnTrue.HasConstraints() {
+					cond := constraint.And(baseCond, rc.OnTrue)
+					onTrueCond = orCondition(onTrueCond, cond)
+				}
+				if rc.OnFalse.HasConstraints() {
+					cond := constraint.And(baseCond, rc.OnFalse)
+					onFalseCond = orCondition(onFalseCond, cond)
 				}
 				continue
 			}

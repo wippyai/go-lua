@@ -33,7 +33,7 @@ func ExtractReturnKinds(fc *core.FlowContext, inputs *flow.Inputs) {
 
 		sc := fc.Scopes[p]
 		exprConstraints := cond.ExtractReturnExprConstraints(info.Exprs[0], p, sc, inputs, derived.TypeKeyRes, derived.Synth, constResolver, derived.SymResolver)
-		if exprConstraints.OnTrue.HasConstraints() || exprConstraints.OnFalse.HasConstraints() {
+		if exprConstraints.OnReturn.HasConstraints() || exprConstraints.OnTrue.HasConstraints() || exprConstraints.OnFalse.HasConstraints() {
 			inputs.ReturnConstraints[p] = exprConstraints
 		}
 	})

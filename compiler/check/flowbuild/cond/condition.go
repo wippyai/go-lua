@@ -87,6 +87,7 @@ type ConditionExtractor struct {
 	TypeKeyRes      func(string, *scope.State) (narrow.TypeKey, bool) // Type name resolution
 	ConstResolver   func(string) *flow.ConstValue                     // Constant value lookup
 	RefinementBySym constraint.RefinementLookupBySym                  // Function refinement lookup
+	ModuleBindings  *bind.BindingTable                                // Module-level fallback bindings for callee resolution
 }
 
 // constraintsFromBranch extracts type constraints from branch info.
@@ -174,6 +175,14 @@ func (ce *ConditionExtractor) graph() interface {
 	return ce.Inputs.Graph
 }
 
+func (ce *ConditionExtractor) cfgGraph() *cfg.Graph {
+	if ce.Inputs == nil {
+		return nil
+	}
+	graph, _ := ce.Inputs.Graph.(*cfg.Graph)
+	return graph
+}
+
 // pathFromExpr extracts a path using bindings from inputs.
 func (ce *ConditionExtractor) pathFromExpr(expr ast.Expr) constraint.Path {
 	return flowpath.FromExprWithBindingsAt(expr, ce.ConstResolver, ce.bindings(), ce.graph(), ce.P)
@@ -181,172 +190,70 @@ func (ce *ConditionExtractor) pathFromExpr(expr ast.Expr) constraint.Path {
 
 // constraintsFromConditionExpr extracts predicate conditions from a full condition expression.
 func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) BranchConditions {
-	// Special-case nil comparisons for error-return and predicate-link patterns.
-	if rel, ok := expr.(*ast.RelationalOpExpr); ok && (rel.Operator == "==" || rel.Operator == "~=") {
-		var ident *ast.IdentExpr
-		if literal.IsNilExpr(rel.Lhs) {
-			ident, _ = rel.Rhs.(*ast.IdentExpr)
-		} else if literal.IsNilExpr(rel.Rhs) {
-			ident, _ = rel.Lhs.(*ast.IdentExpr)
-		}
-		if ident != nil {
-			path := ce.pathFromExpr(ident)
-			if !path.IsEmpty() {
-				sibNil := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)
-				sibNotNil := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)
-				link := predicate.LookupPredicateLink(ident.Value, ce.Inputs)
-				hasLink := link != nil && (link.OnTruthy.HasConstraints() || link.OnFalsy.HasConstraints())
-				if hasLink || len(sibNil) > 0 || len(sibNotNil) > 0 {
-					var onTrue, onFalse constraint.Condition
-					if rel.Operator == "==" {
-						onTrue = constraint.FromConstraints(append([]constraint.Constraint{constraint.IsNil{Path: path}}, sibNotNil...)...)
-						onFalse = constraint.FromConstraints(append([]constraint.Constraint{constraint.NotNil{Path: path}}, sibNil...)...)
-						if hasLink {
-							if link.OnFalsy.HasConstraints() {
-								onTrue = constraint.And(onTrue, link.OnFalsy)
-							}
-							if link.OnTruthy.HasConstraints() {
-								onFalse = constraint.And(onFalse, link.OnTruthy)
-							}
-						}
-					} else {
-						onTrue = constraint.FromConstraints(append([]constraint.Constraint{constraint.NotNil{Path: path}}, sibNil...)...)
-						onFalse = constraint.FromConstraints(append([]constraint.Constraint{constraint.IsNil{Path: path}}, sibNotNil...)...)
-						if hasLink {
-							if link.OnTruthy.HasConstraints() {
-								onTrue = constraint.And(onTrue, link.OnTruthy)
-							}
-							if link.OnFalsy.HasConstraints() {
-								onFalse = constraint.And(onFalse, link.OnFalsy)
-							}
-						}
-					}
-					return BranchConditions{OnTrue: onTrue, OnFalse: onFalse}
-				}
-			}
-		}
-	}
-
-	// Special-case error-return patterns: if err then ... / if not err then ...
-	if ident, ok := expr.(*ast.IdentExpr); ok {
-		if sibTrue := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P); len(sibTrue) > 0 {
-			path := ce.pathFromExpr(ident)
-			if !path.IsEmpty() {
-				onTrue := constraint.FromConstraints(append([]constraint.Constraint{constraint.Truthy{Path: path}}, sibTrue...)...)
-				sibFalse := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)
-				onFalse := constraint.FromConstraints(append([]constraint.Constraint{constraint.Falsy{Path: path}}, sibFalse...)...)
-				return BranchConditions{OnTrue: onTrue, OnFalse: onFalse}
-			}
-		}
-	}
-	if notExpr, ok := expr.(*ast.UnaryNotOpExpr); ok {
-		if ident, ok := notExpr.Expr.(*ast.IdentExpr); ok {
-			if sibTrue := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P); len(sibTrue) > 0 {
-				path := ce.pathFromExpr(ident)
-				if !path.IsEmpty() {
-					sibFalse := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)
-					onTrue := constraint.FromConstraints(append([]constraint.Constraint{constraint.Falsy{Path: path}}, sibFalse...)...)
-					onFalse := constraint.FromConstraints(append([]constraint.Constraint{constraint.Truthy{Path: path}}, sibTrue...)...)
-					return BranchConditions{OnTrue: onTrue, OnFalse: onFalse}
-				}
-			}
-		}
-	}
-
-	if isConstTrueExpr(expr) {
-		return BranchConditions{
-			OnTrue:  constraint.TrueCondition(),
-			OnFalse: constraint.FalseCondition(),
-		}
-	}
-	if isConstFalseExpr(expr) {
-		return BranchConditions{
-			OnTrue:  constraint.FalseCondition(),
-			OnFalse: constraint.TrueCondition(),
-		}
-	}
-
-	onTrue := ce.ConditionFromExpr(expr)
-	if onTrue.IsFalse() {
-		return BranchConditions{
-			OnTrue:  onTrue,
-			OnFalse: constraint.TrueCondition(),
-		}
-	}
-	if !onTrue.HasConstraints() {
-		return BranchConditions{
-			OnTrue:  constraint.TrueCondition(),
-			OnFalse: constraint.TrueCondition(),
-		}
-	}
-	// Call-expression constraints are one-sided implications inferred from the
-	// callee body/signature (for example local table predicates). They are sound
-	// for truthy branches only; negating them is not generally representable.
-	if _, ok := expr.(*ast.FuncCallExpr); ok {
-		return BranchConditions{
-			OnTrue:  onTrue,
-			OnFalse: constraint.TrueCondition(),
-		}
-	}
-	return BranchConditions{
-		OnTrue:  onTrue,
-		OnFalse: constraint.Not(onTrue),
-	}
+	return ce.branchConditionsFromExpr(expr)
 }
 
 // conditionFromExpr extracts predicate conditions from an expression (true branch).
 func (ce *ConditionExtractor) ConditionFromExpr(expr ast.Expr) constraint.Condition {
+	return ce.branchConditionsFromExpr(expr).OnTrue
+}
+
+func (ce *ConditionExtractor) branchConditionsFromExpr(expr ast.Expr) BranchConditions {
 	switch e := expr.(type) {
 	case *ast.TrueExpr:
-		return constraint.TrueCondition()
+		return BranchConditions{
+			OnTrue:  constraint.TrueCondition(),
+			OnFalse: constraint.FalseCondition(),
+		}
 	case *ast.FalseExpr:
-		return constraint.FalseCondition()
+		return BranchConditions{
+			OnTrue:  constraint.FalseCondition(),
+			OnFalse: constraint.TrueCondition(),
+		}
 	case *ast.UnaryNotOpExpr:
-		if isConstTrueExpr(e.Expr) {
-			return constraint.FalseCondition()
+		inner := ce.branchConditionsFromExpr(e.Expr)
+		return BranchConditions{
+			OnTrue:  inner.OnFalse,
+			OnFalse: inner.OnTrue,
 		}
-		if isConstFalseExpr(e.Expr) {
-			return constraint.TrueCondition()
-		}
-		inner := ce.ConditionFromExpr(e.Expr)
-		if inner.HasConstraints() || inner.IsFalse() {
-			return constraint.Not(inner)
-		}
-		return constraint.TrueCondition()
 
 	case *ast.LogicalOpExpr:
-		return ce.conditionFromLogicalExpr(e)
+		return ce.branchConditionsFromLogicalExpr(e)
 
 	case *ast.RelationalOpExpr:
-		return ce.conditionFromRelationalExpr(e)
+		return ce.branchConditionsFromRelationalExpr(e)
 
 	case *ast.FuncCallExpr:
-		return constraint.FromConstraints(ce.constraintsFromCallExpr(e)...)
+		if branches, ok := ce.branchConditionsFromPredicateCall(e); ok {
+			return branches
+		}
+		return BranchConditions{
+			OnTrue:  conditionFromOptionalConstraints(ce.constraintsFromCallExpr(e)),
+			OnFalse: constraint.TrueCondition(),
+		}
 
 	case *ast.IdentExpr:
 		if e.Value == "true" {
-			return constraint.TrueCondition()
+			return BranchConditions{
+				OnTrue:  constraint.TrueCondition(),
+				OnFalse: constraint.FalseCondition(),
+			}
 		}
 		if e.Value == "false" {
-			return constraint.FalseCondition()
-		}
-		if link := predicate.LookupPredicateLink(e.Value, ce.Inputs); link != nil && link.OnTruthy.HasConstraints() {
-			path := ce.pathFromExpr(e)
-			if path.IsEmpty() {
-				return link.OnTruthy
+			return BranchConditions{
+				OnTrue:  constraint.FalseCondition(),
+				OnFalse: constraint.TrueCondition(),
 			}
-			return constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.Truthy{Path: path}))
 		}
-		path := ce.pathFromExpr(e)
-		if path.IsEmpty() {
-			return constraint.TrueCondition()
-		}
-		return constraint.FromConstraints(constraint.Truthy{Path: path})
+		return ce.branchConditionsFromIdent(e)
 
 	case *ast.AttrGetExpr:
 		path := ce.pathFromExpr(e)
 		if path.IsEmpty() {
-			return constraint.TrueCondition()
+			return BranchConditions{
+				OnTrue:  constraint.TrueCondition(),
+				OnFalse: constraint.TrueCondition(),
+			}
 		}
 		result := []constraint.Constraint{constraint.Truthy{Path: path}}
 		basePath := ce.pathFromExpr(e.Object)
@@ -359,59 +266,182 @@ func (ce *ConditionExtractor) ConditionFromExpr(expr ast.Expr) constraint.Condit
 				})
 			}
 		}
-		return constraint.FromConstraints(result...)
+		return BranchConditions{
+			OnTrue:  constraint.FromConstraints(result...),
+			OnFalse: constraint.FromConstraints(constraint.Falsy{Path: path}),
+		}
 	}
-	return constraint.TrueCondition()
+	return BranchConditions{
+		OnTrue:  constraint.TrueCondition(),
+		OnFalse: constraint.TrueCondition(),
+	}
 }
 
-func isConstTrueExpr(expr ast.Expr) bool {
-	switch e := expr.(type) {
-	case *ast.TrueExpr:
-		return true
-	case *ast.IdentExpr:
-		return e.Value == "true"
-	case *ast.UnaryNotOpExpr:
-		return isConstFalseExpr(e.Expr)
+func (ce *ConditionExtractor) branchConditionsFromLogicalExpr(expr *ast.LogicalOpExpr) BranchConditions {
+	if expr == nil {
+		return BranchConditions{
+			OnTrue:  constraint.TrueCondition(),
+			OnFalse: constraint.TrueCondition(),
+		}
 	}
-	return false
-}
-
-func isConstFalseExpr(expr ast.Expr) bool {
-	switch e := expr.(type) {
-	case *ast.FalseExpr:
-		return true
-	case *ast.IdentExpr:
-		return e.Value == "false"
-	case *ast.UnaryNotOpExpr:
-		return isConstTrueExpr(e.Expr)
-	}
-	return false
-}
-
-// conditionFromLogicalExpr handles 'and' and 'or' operators.
-func (ce *ConditionExtractor) conditionFromLogicalExpr(expr *ast.LogicalOpExpr) constraint.Condition {
+	left := ce.branchConditionsFromExpr(expr.Lhs)
+	right := ce.branchConditionsFromExpr(expr.Rhs)
 	switch expr.Operator {
 	case "and":
-		left := ce.ConditionFromExpr(expr.Lhs)
-		right := ce.ConditionFromExpr(expr.Rhs)
-		return constraint.And(left, right)
+		return BranchConditions{
+			OnTrue:  constraint.And(left.OnTrue, right.OnTrue),
+			OnFalse: constraint.Or(left.OnFalse, constraint.And(left.OnTrue, right.OnFalse)),
+		}
 	case "or":
-		left := ce.ConditionFromExpr(expr.Lhs)
-		right := ce.ConditionFromExpr(expr.Rhs)
-		return constraint.Or(left, right)
+		return BranchConditions{
+			OnTrue:  constraint.Or(left.OnTrue, constraint.And(left.OnFalse, right.OnTrue)),
+			OnFalse: constraint.And(left.OnFalse, right.OnFalse),
+		}
+	default:
+		return BranchConditions{
+			OnTrue:  constraint.TrueCondition(),
+			OnFalse: constraint.TrueCondition(),
+		}
 	}
-	return constraint.TrueCondition()
 }
 
-// conditionFromRelationalExpr handles comparison operators.
-func (ce *ConditionExtractor) conditionFromRelationalExpr(expr *ast.RelationalOpExpr) constraint.Condition {
+func (ce *ConditionExtractor) branchConditionsFromRelationalExpr(expr *ast.RelationalOpExpr) BranchConditions {
+	if expr == nil {
+		return BranchConditions{
+			OnTrue:  constraint.TrueCondition(),
+			OnFalse: constraint.TrueCondition(),
+		}
+	}
 	switch expr.Operator {
 	case "==":
-		return ce.ConditionFromEquality(expr.Lhs, expr.Rhs)
+		return BranchConditions{
+			OnTrue:  ce.ConditionFromEquality(expr.Lhs, expr.Rhs),
+			OnFalse: ce.ConditionFromInequality(expr.Lhs, expr.Rhs),
+		}
 	case "~=":
-		return ce.ConditionFromInequality(expr.Lhs, expr.Rhs)
+		return BranchConditions{
+			OnTrue:  ce.ConditionFromInequality(expr.Lhs, expr.Rhs),
+			OnFalse: ce.ConditionFromEquality(expr.Lhs, expr.Rhs),
+		}
 	case "<", "<=", ">", ">=":
-		return ce.conditionFromOrderedComparison(expr.Lhs, expr.Rhs)
+		return BranchConditions{
+			OnTrue:  ce.conditionFromOrderedComparison(expr.Lhs, expr.Rhs),
+			OnFalse: constraint.TrueCondition(),
+		}
+	default:
+		return BranchConditions{
+			OnTrue:  constraint.TrueCondition(),
+			OnFalse: constraint.TrueCondition(),
+		}
+	}
+}
+
+func (ce *ConditionExtractor) branchConditionsFromIdent(ident *ast.IdentExpr) BranchConditions {
+	if ident == nil {
+		return BranchConditions{
+			OnTrue:  constraint.TrueCondition(),
+			OnFalse: constraint.TrueCondition(),
+		}
+	}
+	path := ce.pathFromExpr(ident)
+	onTrue := constraint.TrueCondition()
+	onFalse := constraint.TrueCondition()
+	if !path.IsEmpty() {
+		onTrue = constraint.FromConstraints(append([]constraint.Constraint{constraint.Truthy{Path: path}},
+			versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)...)...)
+		onFalse = constraint.FromConstraints(append([]constraint.Constraint{constraint.Falsy{Path: path}},
+			versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)...)...)
+	}
+	if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil {
+		if link.OnTruthy.HasConstraints() {
+			onTrue = constraint.And(onTrue, link.OnTruthy)
+		}
+		if link.OnFalsy.HasConstraints() {
+			onFalse = constraint.And(onFalse, link.OnFalsy)
+		}
+	}
+	return BranchConditions{OnTrue: onTrue, OnFalse: onFalse}
+}
+
+func (ce *ConditionExtractor) branchConditionsFromPredicateCall(expr *ast.FuncCallExpr) (BranchConditions, bool) {
+	link := ce.predicateLinkFromCallExpr(expr)
+	if link == nil || (!link.OnTruthy.HasConstraints() && !link.OnFalsy.HasConstraints()) {
+		return BranchConditions{}, false
+	}
+	return BranchConditions{
+		OnTrue:  conditionOrTrue(link.OnTruthy),
+		OnFalse: conditionOrTrue(link.OnFalsy),
+	}, true
+}
+
+func (ce *ConditionExtractor) predicateLinkFromCallExpr(expr *ast.FuncCallExpr) *flow.PredicateLink {
+	if expr == nil {
+		return nil
+	}
+	info := cfg.BuildCallInfo(expr, false)
+	if info == nil {
+		return nil
+	}
+	ce.resolveSyntheticCallInfo(info)
+	return ExtractPredicateLinkFromCallInfo(info, 0, ce.P, ce.SC, ce.Inputs, ce.TypeKeyRes, ce.Synth, ce.RefinementBySym, ce.SymResolver, ce.cfgGraph(), ce.ModuleBindings)
+}
+
+func (ce *ConditionExtractor) resolveSyntheticCallInfo(info *cfg.CallInfo) {
+	if info == nil {
+		return
+	}
+	bindings := ce.bindings()
+	if bindings != nil {
+		if ident, ok := info.Callee.(*ast.IdentExpr); ok {
+			if sym, found := bindings.SymbolOf(ident); found {
+				info.CalleeSymbol = sym
+			}
+		}
+		if ident, ok := info.Receiver.(*ast.IdentExpr); ok {
+			if sym, found := bindings.SymbolOf(ident); found {
+				info.ReceiverSymbol = sym
+			}
+		}
+		if len(info.Args) > 0 {
+			for i, arg := range info.Args {
+				ident, ok := arg.(*ast.IdentExpr)
+				if !ok {
+					continue
+				}
+				sym, found := bindings.SymbolOf(ident)
+				if !found {
+					continue
+				}
+				if info.ArgSymbols == nil {
+					info.ArgSymbols = make([]cfg.SymbolID, len(info.Args))
+				}
+				info.ArgSymbols[i] = sym
+			}
+		}
+	}
+	if info.IsTypeCheck && len(info.Args) > 0 {
+		info.TypeCheckPath = ce.pathFromExpr(info.Args[0])
+	}
+	if info.Method != "" {
+		info.CalleePath = ce.pathFromExpr(info.Receiver)
+	} else {
+		info.CalleePath = ce.pathFromExpr(info.Callee)
+	}
+	if info.CalleeSymbol == 0 && !info.CalleePath.IsEmpty() && len(info.CalleePath.Segments) == 0 {
+		info.CalleeSymbol = info.CalleePath.Symbol
+	}
+}
+
+func conditionFromOptionalConstraints(items []constraint.Constraint) constraint.Condition {
+	if len(items) == 0 {
+		return constraint.TrueCondition()
+	}
+	return constraint.FromConstraints(items...)
+}
+
+func conditionOrTrue(c constraint.Condition) constraint.Condition {
+	if c.HasConstraints() {
+		return c
 	}
 	return constraint.TrueCondition()
 }
@@ -797,16 +827,8 @@ func (ce *ConditionExtractor) constraintsFromCallExpr(expr *ast.FuncCallExpr) []
 		return nil
 	}
 
-	// TypeName(x) pattern
-	if fnIdent, ok := expr.Func.(*ast.IdentExpr); ok && ce.TypeKeyRes != nil {
-		if ce.calleeHasEffect(expr, effect.Row.HasCallableType) {
-			if typeKey, ok := ce.TypeKeyRes(fnIdent.Value, ce.SC); ok && !typeKey.IsZero() {
-				path := ce.pathFromExpr(expr.Args[0])
-				if !path.IsEmpty() {
-					return []constraint.Constraint{constraint.HasType{Path: path, Type: typeKey}}
-				}
-			}
-		}
+	if constraints := ce.constraintsFromCallableTypeCallExpr(expr); len(constraints) > 0 {
+		return constraints
 	}
 
 	if path := ce.pathFromExpr(expr.Args[0]); !path.IsEmpty() && ce.hasLocalTableTypePredicate(expr) {
@@ -817,6 +839,28 @@ func (ce *ConditionExtractor) constraintsFromCallExpr(expr *ast.FuncCallExpr) []
 	}
 
 	return nil
+}
+
+func (ce *ConditionExtractor) constraintsFromCallableTypeCallExpr(expr *ast.FuncCallExpr) []constraint.Constraint {
+	if expr == nil || checkcallsite.IsMethodLikeExpr(expr) || len(expr.Args) == 0 || ce.TypeKeyRes == nil {
+		return nil
+	}
+	fnIdent, ok := expr.Func.(*ast.IdentExpr)
+	if !ok {
+		return nil
+	}
+	if !ce.calleeHasEffect(expr, effect.Row.HasCallableType) {
+		return nil
+	}
+	typeKey, ok := ce.TypeKeyRes(fnIdent.Value, ce.SC)
+	if !ok || typeKey.IsZero() {
+		return nil
+	}
+	path := ce.pathFromExpr(expr.Args[0])
+	if path.IsEmpty() {
+		return nil
+	}
+	return []constraint.Constraint{constraint.HasType{Path: path, Type: typeKey}}
 }
 
 func (ce *ConditionExtractor) hasLocalTableTypePredicate(call *ast.FuncCallExpr) bool {
@@ -957,23 +1001,30 @@ func numericConstraintsFromLogicalExprInternal(expr *ast.LogicalOpExpr, p cfg.Po
 
 // ExtractReturnExprConstraints extracts constraints from a return expression.
 func ExtractReturnExprConstraints(expr ast.Expr, p cfg.Point, sc *scope.State, inputs *flow.Inputs, typeKeyResolver func(string, *scope.State) (narrow.TypeKey, bool), synthFunc func(ast.Expr, cfg.Point) typ.Type, constResolver func(string) *flow.ConstValue, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool)) flow.ReturnExprConstraints {
-	if _, ok := expr.(*ast.IdentExpr); ok {
-		return flow.ReturnExprConstraints{}
+	if ident, ok := expr.(*ast.IdentExpr); ok {
+		link := predicate.LookupPredicateLink(ident.Value, inputs)
+		if link == nil || (!link.OnTruthy.HasConstraints() && !link.OnFalsy.HasConstraints()) {
+			return flow.ReturnExprConstraints{}
+		}
 	}
 
 	ce := &ConditionExtractor{
 		P: p, SC: sc, Inputs: inputs,
-		SymResolver: symResolver, TypeKeyRes: typeKeyResolver,
+		Synth:         synthFunc,
+		SymResolver:   symResolver,
+		TypeKeyRes:    typeKeyResolver,
 		ConstResolver: constResolver,
 	}
-	cond := ce.ConditionFromExpr(expr)
-	if !cond.HasConstraints() {
+	branches := ce.ConstraintsFromConditionExpr(expr)
+	var onReturn constraint.Condition
+	if call, ok := expr.(*ast.FuncCallExpr); ok {
+		onReturn = conditionFromOptionalConstraints(ce.constraintsFromCallableTypeCallExpr(call))
+	}
+	if !onReturn.HasConstraints() && !branches.OnTrue.HasConstraints() && !branches.OnFalse.HasConstraints() {
 		return flow.ReturnExprConstraints{}
 	}
 
-	return flow.ReturnExprConstraints{
-		OnTrue: cond,
-	}
+	return flow.ReturnExprConstraints{OnReturn: onReturn, OnTrue: branches.OnTrue, OnFalse: branches.OnFalse}
 }
 
 // ChannelValueConstraint emits a HasType constraint for result.value when

@@ -771,6 +771,244 @@ return run
 	}
 }
 
+func TestExternalLint_TruthyAnyFieldRequiresStringProof(t *testing.T) {
+	result := testutil.Check(`
+local function parse_text(text: string?)
+	return text
+end
+
+local function extract(block: any)
+	if block.text then
+		return parse_text(block.text)
+	end
+	return nil
+end
+
+return extract
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected string")
+}
+
+func TestExternalLint_GuardedAnyFieldFeedsStringParser(t *testing.T) {
+	result := testutil.Check(`
+local function parse_text(text: string?)
+	return text
+end
+
+local function extract(block: any)
+	if type(block.text) == "string" then
+		return parse_text(block.text)
+	end
+	return nil
+end
+
+return extract
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected string field guard to feed parser contract, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_GuardedProviderModelFeedsContractArgs(t *testing.T) {
+	result := testutil.Check(`
+type ContractArgs = {
+	model: string,
+	options: table,
+}
+
+local function merge_provider_options(args: ContractArgs)
+	return args
+end
+
+local function generate(provider_info: any)
+	if type(provider_info.provider_model) == "string" then
+		local contract_args = {
+			model = provider_info.provider_model,
+			options = {},
+		}
+		return merge_provider_options(contract_args)
+	end
+	return nil
+end
+
+return generate
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected guarded provider model to feed contract args, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_LengthGuardOnAnyDoesNotProveFirstElementShape(t *testing.T) {
+	result := testutil.Check(`
+local function load_rows(): any
+	return {}
+end
+
+local rows = load_rows()
+if rows and #rows > 0 then
+	local first_name: string = rows[1].name
+	return first_name
+end
+return nil
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "cannot assign")
+}
+
+func TestExternalLint_LocalPredicateGuardNarrowsNumberAfterEarlyReturn(t *testing.T) {
+	result := testutil.Check(`
+local DEFAULTS = {
+	BATCH_SIZE = 10,
+}
+
+local function validate_batch_size(size)
+	return type(size) == "number" and size > 0 and size <= 1000
+end
+
+local function run(config: any, items: {any})
+	local batch_size = config.batch_size or DEFAULTS.BATCH_SIZE
+	if not validate_batch_size(batch_size) then
+		return nil
+	end
+
+	for batch_start = 1, #items, batch_size do
+		local batch_end = math.min(batch_start + batch_size - 1, #items)
+	end
+	return true
+end
+
+return run
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected local predicate guard to narrow batch size for numeric loop, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_DirectPredicateTrueBranchNarrowsArgument(t *testing.T) {
+	result := testutil.Check(`
+local function is_positive_number(value)
+	return type(value) == "number" and value > 0
+end
+
+local function run(value: any)
+	if is_positive_number(value) then
+		local narrowed: number = value
+		return narrowed + 1
+	end
+	return 0
+end
+
+return run
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected direct predicate true branch to narrow argument, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_AssignedPredicateTrueBranchNarrowsArgument(t *testing.T) {
+	result := testutil.Check(`
+local function is_positive_number(value)
+	return type(value) == "number" and value > 0
+end
+
+local function run(value: any)
+	local ok = is_positive_number(value)
+	if ok then
+		local narrowed: number = value
+		return narrowed + 1
+	end
+	return 0
+end
+
+return run
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected assigned predicate true branch to narrow argument, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_OneSidedPredicateFalseBranchDoesNotNarrowArgument(t *testing.T) {
+	result := testutil.Check(`
+local function is_positive_number(value)
+	return type(value) == "number" and value > 0
+end
+
+local function run(value: any)
+	if not is_positive_number(value) then
+		local narrowed: number = value
+		return narrowed
+	end
+	return 0
+end
+
+return run
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "cannot assign")
+}
+
+func TestExternalLint_AssignedOneSidedPredicateFalseBranchDoesNotNarrowArgument(t *testing.T) {
+	result := testutil.Check(`
+local function is_positive_number(value)
+	return type(value) == "number" and value > 0
+end
+
+local function run(value: any)
+	local ok = is_positive_number(value)
+	if not ok then
+		local narrowed: number = value
+		return narrowed
+	end
+	return 0
+end
+
+return run
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "cannot assign")
+}
+
+func TestExternalLint_LogicalPredicateTruePathNarrowsThroughLoop(t *testing.T) {
+	result := testutil.Check(`
+local function is_count(value)
+	return type(value) == "number" and value >= 1
+end
+
+local function run(value: any, items: {string})
+	if is_count(value) and value <= #items then
+		local total = 0
+		for i = 1, value do
+			total = total + #items[i]
+		end
+		return total
+	end
+	return 0
+end
+
+return run
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected logical predicate true path to narrow loop bound, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_LogicalPredicateElsePathDoesNotOverNarrow(t *testing.T) {
+	result := testutil.Check(`
+local function is_count(value)
+	return type(value) == "number" and value >= 1
+end
+
+local function run(value: any, flag: boolean)
+	if is_count(value) and flag then
+		return value + 1
+	else
+		local narrowed: number = value
+		return narrowed
+	end
+end
+
+return run
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "cannot assign")
+}
+
 func TestExternalLint_ReturnedCallbackUsesExpectedParameterTypesInBody(t *testing.T) {
 	result := testutil.Check(`
 type Time = { unix: integer }

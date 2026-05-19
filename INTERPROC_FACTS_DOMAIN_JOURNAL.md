@@ -6343,3 +6343,158 @@ external diagnostic is reclassified as an engine issue, the rule is unchanged:
 first reduce it into a go-lua regression, then fix the canonical domain or query
 owner. Do not widen `any` into typed contracts, do not assume assertion effects
 from names, and do not add bridge/fallback facts.
+
+## 2026-05-19 Predicate Effect And Branch Product Checkpoint
+
+The next external replay reclassified one docker/dataflow diagnostic as a real
+engine issue, not source code:
+
+```lua
+local function validate_batch_size(size)
+  return type(size) == "number" and size > 0 and size <= 1000
+end
+
+local batch_size = config.batch_size or DEFAULTS.BATCH_SIZE
+if not validate_batch_size(batch_size) then
+  return nil
+end
+
+for i = 1, #items, batch_size do
+  ...
+end
+```
+
+The old implementation had two foundational problems:
+
+- direct predicate calls in conditions did not consume inferred function
+  refinements, while variables assigned from predicate calls used a separate
+  predicate-link path;
+- the falsy side of a one-sided proof could be approximated by negating the
+  truthy proof. For predicates such as `type(x) == "number" and x > 0`, that is
+  unsound: a false result does not prove `x` is not a number.
+
+The correction is the final abstract-interpreter shape for branch facts:
+
+```text
+branch(expr) -> { truthy: Condition, falsy: Condition }
+```
+
+The branch extractor now computes this product compositionally:
+
+- `not e` swaps the truthy/falsy products;
+- `a and b` uses short-circuit transfer:
+  `truthy = a.truthy & b.truthy`,
+  `falsy = a.falsy | (a.truthy & b.falsy)`;
+- `a or b` uses:
+  `truthy = a.truthy | (a.falsy & b.truthy)`,
+  `falsy = a.falsy & b.falsy`;
+- equality and inequality use their canonical positive operators on one side
+  and the opposite relation on the other;
+- ordered comparisons only prove numeric/string operand type on the truthy
+  side. Their falsy side is intentionally not the negation of that type proof;
+- direct predicate calls instantiate the same `FunctionRefinement` product used
+  by assigned predicate results;
+- assigned predicate variables apply only stored `OnTruthy` and `OnFalsy`
+  channels. Missing `OnFalsy` means no argument narrowing, not
+  `not OnTruthy`.
+
+Return-expression effect inference was split into three channels:
+
+```text
+OnReturn = facts guaranteed after the callee returns normally
+OnTrue   = facts guaranteed when the returned value is truthy
+OnFalse  = facts guaranteed when the returned value is falsy
+```
+
+This matters because callable type casts and assertion-style helpers are normal
+return effects, while predicate helper results are truthiness effects. A wrapper
+around `Point(x)` must publish `OnReturn: x is Point`; a wrapper around
+`type(x) == "number" and x > 0` must publish `OnTrue: x is number` without
+inventing a useful `OnFalse`.
+
+Regression coverage added in this pass:
+
+- a local `validate_batch_size` predicate narrows an `any` batch size after
+  early return and supports numeric `for` steps;
+- direct predicate calls narrow their arguments on the truthy branch;
+- assigned predicate results narrow their arguments on the truthy branch;
+- direct and assigned one-sided predicates do not narrow the falsy branch;
+- logical predicate paths narrow loop bounds through `and`;
+- logical `else` paths do not over-narrow when only one disjunct proves the
+  predicate;
+- callable type-call wrappers still publish normal-return cast refinements;
+- plain identifier returns still allow guard-established path conditions to
+  publish assertion-style `OnReturn` refinements.
+
+Verification after this correction:
+
+```text
+env GOCACHE=/tmp/go-build go test ./compiler/check/... -count=1
+env GOCACHE=/tmp/go-build go test ./... -count=1 -timeout 300s
+env GOCACHE=/tmp/go-build go test ./compiler/check -run '^$' \
+  -bench BenchmarkCheck_LargeFunction -benchmem -count=3
+```
+
+All passed.
+
+Benchmark sample:
+
+```text
+BenchmarkCheck_LargeFunction-32  811  1452509 ns/op  989363 B/op  10017 allocs/op
+BenchmarkCheck_LargeFunction-32  831  1465673 ns/op  989516 B/op  10017 allocs/op
+BenchmarkCheck_LargeFunction-32  817  1474103 ns/op  989520 B/op  10017 allocs/op
+```
+
+External local-replace replay after rebuilding
+`/tmp/wippy-golua-predicate-current` against this checkout:
+
+```text
+/tmp/framework-clean-head/src/llm/src     14 errors
+/tmp/framework-clean-head/src/views        2 errors
+/tmp/wippy-clean-head/tests/app            2 errors
+/tmp/session-clean-head                   45 errors
+/tmp/framework-clean-head/src/actor/test   4 errors
+/tmp/framework-clean-head/src/agent/src   14 errors
+/tmp/framework-clean-head/src/test         0 errors
+/tmp/framework-clean-head/src/bootloader/src 0 errors
+/home/wolfy-j/wippy/docker-demo           66 errors
+```
+
+The docker/dataflow predicate false positive is fixed in the real replay:
+`userspace.dataflow.node.parallel` dropped from 4 errors to 3, and the removed
+diagnostic was the `batch_size` numeric-loop error. The remaining three
+parallel diagnostics are map-key shape issues:
+
+```text
+argument 3: expected {[string]: any}?, got {[any]: any}?
+```
+
+Those remain classified as source/manifest proof gaps unless a smaller
+go-lua-only reduction proves otherwise. The engine rule remains the same:
+predicate/effect facts must flow through the canonical branch product and
+function-refinement channels, not through call-site expectation backflow or
+name-based special cases.
+
+Official `../scripts/verify-suite.sh` result after this correction:
+
+```text
+go-lua checker tests: pass
+wippy binary build: pass
+wippy/tests/app: 0
+session: 8 errors
+framework/src/test: 0
+framework/src/actor/test: 0
+framework/src/agent/src: 9 errors
+framework/src/bootloader: 0
+docker-demo: 21 errors, 2 warnings
+framework/src/llm/src: 0
+framework/src/llm/test: 0
+framework/src/migration: 0
+framework/src/views: 0
+framework/src/relay/test: 0
+```
+
+The script still exits non-zero because those external lint targets are part of
+the Wippy checkout, not because go-lua tests or binary build failed. This is the
+same pinned-suite caveat recorded above: use local-replace replay for this
+checkout's checker behavior and official verify for the repository gate shape.

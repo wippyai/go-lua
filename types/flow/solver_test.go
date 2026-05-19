@@ -7595,15 +7595,15 @@ func TestInferFunctionRefinement_ReturnConstraint(t *testing.T) {
 
 	t.Logf("Effect: %+v", eff)
 	if eff == nil {
-		t.Fatal("InferFunctionRefinement returned nil, want effect with OnReturn")
+		t.Fatal("InferFunctionRefinement returned nil, want effect with OnTrue")
 	}
 
-	if !eff.OnReturn.HasConstraints() {
-		t.Errorf("OnReturn.HasConstraints() = false, want true")
+	if !eff.OnTrue.HasConstraints() {
+		t.Errorf("OnTrue.HasConstraints() = false, want true")
 	}
 
 	// Check that the constraint has been substituted with placeholder $0
-	for i, disj := range eff.OnReturn.Disjuncts {
+	for i, disj := range eff.OnTrue.Disjuncts {
 		for j, c := range disj {
 			t.Logf("  Disjunct[%d][%d]: %T paths=%v", i, j, c, c.Paths())
 			for _, path := range c.Paths() {

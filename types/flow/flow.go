@@ -270,9 +270,14 @@ type Inputs struct {
 }
 
 // ReturnExprConstraints holds constraints extracted from a return expression.
+//
+// OnReturn facts hold whenever the function returns normally from this
+// expression. OnTrue and OnFalse facts are correlated with the truthiness of the
+// returned value at callers.
 type ReturnExprConstraints struct {
-	OnTrue  constraint.Condition
-	OnFalse constraint.Condition
+	OnReturn constraint.Condition
+	OnTrue   constraint.Condition
+	OnFalse  constraint.Condition
 }
 
 // PredicateLink stores predicate constraints for a variable assigned from a predicate call.

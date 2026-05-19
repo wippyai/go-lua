@@ -55,6 +55,7 @@ func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 			TypeKeyRes:      fc.Derived.TypeKeyRes,
 			ConstResolver:   constResolver,
 			RefinementBySym: fc.Derived.RefinementBySym,
+			ModuleBindings:  fc.ModuleBindings,
 		}
 		constraints := ce.ConstraintsFromBranch(info)
 
@@ -469,6 +470,7 @@ func ConstraintsFromCallOnReturn(
 		TypeKeyRes:      typeKeyResolver,
 		ConstResolver:   constResolver,
 		RefinementBySym: refinementLookupSym,
+		ModuleBindings:  moduleBindings,
 	}
 
 	// OnReturn summarizes all normal-return paths. At call sites we may only
