@@ -7,7 +7,7 @@
 //  3. Execute the memoized function analysis pipeline
 //  4. Propagate effects and interprocedural facts
 //  5. Process nested functions recursively
-//  6. Repeat until fixpoint (no channel changes) or max iterations
+//  6. Repeat until fixpoint (no channel changes)
 //
 // The driver coordinates several inference subsystems:
 //   - Return inference: Computes return types for local functions
@@ -28,7 +28,6 @@ import (
 	nestedinfer "github.com/wippyai/go-lua/compiler/check/infer/nested"
 	returninfer "github.com/wippyai/go-lua/compiler/check/infer/return"
 	"github.com/wippyai/go-lua/compiler/check/modules"
-	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -44,7 +43,6 @@ type Config struct {
 	GlobalTypes   map[string]typ.Type
 	Stdlib        *scope.State
 	Manifests     *db.DB
-	MaxIterations int
 	MaxScopeDepth int
 	EmitScopeDiag bool
 	FuncResultQ   *db.Query[api.FuncKey, *api.FuncResult]
@@ -93,36 +91,12 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 }
 
 func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State) {
-	maxIterations := d.cfg.MaxIterations
-	if maxIterations < 1 {
-		maxIterations = 1
-	}
-
-	converged := false
-	for iter := 0; iter < maxIterations; iter++ {
+	for {
 		d.prepareIterationState(sess)
 		d.checkFunctionFixpoint(sess, fn, parent)
 		if d.advanceFixpoint(sess.StoreHandle()) {
-			converged = true
-			break
+			return
 		}
-	}
-
-	if !converged {
-		store := sess.StoreHandle()
-		diffs := []string(nil)
-		if store != nil {
-			diffs = store.FixpointChannelDiffs()
-		}
-		msg := "inter-function fixpoint did not converge"
-		if len(diffs) > 0 {
-			msg += "; unstable channels: " + fmt.Sprintf("%v", diffs)
-		}
-		sess.AppendDiagnostics(diag.Diagnostic{
-			Position: diag.Position{File: sess.Source()},
-			Severity: diag.SeverityWarning,
-			Message:  msg,
-		})
 	}
 }
 
@@ -139,10 +113,7 @@ func (d *Driver) advanceFixpoint(store api.IterationStore) bool {
 	if store == nil {
 		return true
 	}
-	if !store.FixpointSwap() {
-		return true
-	}
-	return false
+	return !store.FixpointSwap()
 }
 
 func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State) {
@@ -220,14 +191,13 @@ func (d *Driver) runReturnInference(
 	}
 
 	inferencer := returninfer.New(returninfer.Config{
-		Types:         d.cfg.Types,
-		GlobalTypes:   d.cfg.GlobalTypes,
-		Manifests:     d.cfg.Manifests,
-		Stdlib:        d.cfg.Stdlib,
-		Store:         store,
-		Graphs:        sess,
-		SourceName:    sess.Source(),
-		MaxIterations: returns.MaxReturnSummaryIterations,
+		Types:       d.cfg.Types,
+		GlobalTypes: d.cfg.GlobalTypes,
+		Manifests:   d.cfg.Manifests,
+		Stdlib:      d.cfg.Stdlib,
+		Store:       store,
+		Graphs:      sess,
+		SourceName:  sess.Source(),
 	})
 
 	var refinementLookup constraint.RefinementLookupBySym

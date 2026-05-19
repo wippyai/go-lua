@@ -57,17 +57,3 @@ func TestLocalFuncInfoStructure(t *testing.T) {
 		}
 	})
 }
-
-func TestMaxReturnSummaryIterations(t *testing.T) {
-	t.Run("constant value", func(t *testing.T) {
-		if MaxReturnSummaryIterations != 10 {
-			t.Fatalf("expected MaxReturnSummaryIterations=10, got %d", MaxReturnSummaryIterations)
-		}
-	})
-
-	t.Run("constant is positive", func(t *testing.T) {
-		if MaxReturnSummaryIterations <= 0 {
-			t.Fatal("expected positive constant")
-		}
-	})
-}

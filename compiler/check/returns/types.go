@@ -64,7 +64,3 @@ type LocalFuncInfo struct {
 	// parent graph. For methods, index 0 is self.
 	ParameterEvidence []typ.Type
 }
-
-// MaxReturnSummaryIterations limits fixpoint iterations for return-vector inference.
-// Exceeding this indicates a bug (non-monotonic merge) or pathological recursion.
-const MaxReturnSummaryIterations = 10

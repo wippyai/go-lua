@@ -69,10 +69,7 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 		}
 	}
 
-	next, ok := guard.Enter(a)
-	if !ok {
-		return false
-	}
+	next := guard
 
 	a = unwrapTransparentWrappers(a)
 	b = unwrapTransparentWrappers(b)

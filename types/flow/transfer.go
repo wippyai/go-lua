@@ -1099,7 +1099,11 @@ func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func
 			return typ.NewAlias(a.Name, widened)
 		},
 		Array: func(arr *typ.Array) typ.Type {
-			return typ.NewArray(joinFn(arr.Element, elementType))
+			joined := joinFn(arr.Element, elementType)
+			if joined == nil || typ.TypeEquals(joined, arr.Element) {
+				return arrayType
+			}
+			return typ.NewArray(joined)
 		},
 		Record: func(rec *typ.Record) typ.Type {
 			if len(rec.Fields) == 0 {
@@ -1110,15 +1114,22 @@ func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func
 		Union: func(u *typ.Union) typ.Type {
 			var updated []typ.Type
 			found := false
+			changed := false
 			for _, m := range u.Members {
 				if arr, ok := m.(*typ.Array); ok && !found {
-					updated = append(updated, typ.NewArray(joinFn(arr.Element, elementType)))
+					joined := joinFn(arr.Element, elementType)
+					if joined == nil || typ.TypeEquals(joined, arr.Element) {
+						updated = append(updated, m)
+					} else {
+						updated = append(updated, typ.NewArray(joined))
+						changed = true
+					}
 					found = true
 				} else {
 					updated = append(updated, m)
 				}
 			}
-			if found {
+			if found && changed {
 				return typ.NewUnion(updated...)
 			}
 			return arrayType
@@ -1178,21 +1189,25 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 		Union: func(u *typ.Union) typ.Type {
 			var updated []typ.Type
 			found := false
+			changed := false
 			for _, m := range u.Members {
 				if mp, ok := m.(*typ.Map); ok && !found {
 					newKey := mergeMapKeyDomain(mp.Key, keyType)
 					newVal := WidenArrayElementType(mp.Value, elementType, joinContainerValueTypes)
 					if newVal == nil {
 						updated = append(updated, m)
+					} else if typ.TypeEquals(mp.Key, newKey) && typ.TypeEquals(mp.Value, newVal) {
+						updated = append(updated, m)
 					} else {
 						updated = append(updated, typ.NewMap(newKey, newVal))
+						changed = true
 					}
 					found = true
 				} else {
 					updated = append(updated, m)
 				}
 			}
-			if found {
+			if found && changed {
 				return typ.NewUnion(updated...)
 			}
 			return mapType

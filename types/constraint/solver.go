@@ -109,9 +109,8 @@ func (s Solver) Apply(constraints []Constraint, base map[PathKey]typ.Type) map[P
 		return s.applyWithWorkSkipping(constraints, out)
 	}
 
-	// Simple path for small constraint sets
-	maxIters := len(constraints)*2 + len(out) + 1
-	for i := 0; i < maxIters; i++ {
+	// Simple path for small constraint sets.
+	for {
 		changed := false
 
 		for _, c := range constraints {
@@ -121,11 +120,9 @@ func (s Solver) Apply(constraints []Constraint, base map[PathKey]typ.Type) map[P
 		}
 
 		if !changed {
-			break
+			return out
 		}
 	}
-
-	return out
 }
 
 // applyWithWorkSkipping uses path-based tracking to skip unchanged constraints.
@@ -145,13 +142,12 @@ func (s Solver) applyWithWorkSkipping(constraints []Constraint, out map[PathKey]
 		return out
 	}
 
-	// Subsequent iterations: only evaluate constraints affected by changed paths
-	maxIters := len(constraints)*2 + len(out)
-	for iter := 1; iter < maxIters; iter++ {
+	// Subsequent iterations: only evaluate constraints affected by changed paths.
+	for {
 		// Collect constraints to re-evaluate based on changed paths
 		toEvaluate := collectAffectedConstraints(changedPaths, pathConstraints)
 		if len(toEvaluate) == 0 {
-			break
+			return out
 		}
 
 		// Clear changed paths for this iteration
@@ -165,11 +161,9 @@ func (s Solver) applyWithWorkSkipping(constraints []Constraint, out map[PathKey]
 		}
 
 		if len(changedPaths) == 0 {
-			break
+			return out
 		}
 	}
-
-	return out
 }
 
 // buildPathConstraintIndex creates a map from path keys to constraints that reference them.

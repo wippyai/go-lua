@@ -195,15 +195,6 @@ func TestLocalFuncInfo_ParameterEvidenceExpansion(t *testing.T) {
 	}
 }
 
-func TestMaxReturnSummaryIterations_Value(t *testing.T) {
-	if MaxReturnSummaryIterations < 1 {
-		t.Error("MaxReturnSummaryIterations should be positive")
-	}
-	if MaxReturnSummaryIterations > 100 {
-		t.Error("MaxReturnSummaryIterations seems too high")
-	}
-}
-
 func TestBuildLocalCallGraph_AddsCallbackFunctionEdges(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local function wrapper(cb: fun(): number): number

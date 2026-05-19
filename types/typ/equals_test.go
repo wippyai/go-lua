@@ -332,6 +332,22 @@ func TestTypeEqualsOptionalField(t *testing.T) {
 	}
 }
 
+func TestTypeEqualsSharedDAGNodes(t *testing.T) {
+	shared := NewRecord().Field("value", String).Build()
+	left := NewRecord().
+		Field("a", shared).
+		Field("b", shared).
+		Build()
+	right := NewRecord().
+		Field("a", NewRecord().Field("value", String).Build()).
+		Field("b", NewRecord().Field("value", String).Build()).
+		Build()
+
+	if !TypeEquals(left, right) {
+		t.Error("structurally equal DAG-shaped records should be equal even when sharing differs")
+	}
+}
+
 func TestTypeEqualsFunctionVariadic(t *testing.T) {
 	f1 := Func().Variadic(Number).Returns(Nil).Build()
 	f2 := Func().Variadic(Number).Returns(Nil).Build()

@@ -61,6 +61,7 @@ func (s *Solution) checkNumericConstraints() {
 	}
 
 	state := make(map[cfg.Point]*numeric.State, len(relevant))
+	widenedTop := make(map[cfg.Point]bool)
 	worklist := make([]cfg.Point, 0, len(relevant))
 	inQueue := make(map[cfg.Point]bool, len(relevant))
 
@@ -72,14 +73,23 @@ func (s *Solution) checkNumericConstraints() {
 	}
 	slices.Sort(worklist)
 
-	maxIter := len(relevant) * 10
-	for iter := 0; len(worklist) > 0 && iter < maxIter; iter++ {
+	for len(worklist) > 0 {
 		p := worklist[len(worklist)-1]
 		worklist = worklist[:len(worklist)-1]
 		inQueue[p] = false
 
-		newState := s.computeNumericStateAt(c, p, state)
 		oldState := state[p]
+		rawState := s.computeNumericStateAt(c, p, state)
+		newState := rawState
+		if widenedTop[p] {
+			newState = nil
+		} else {
+			newState = numeric.Widen(oldState, rawState)
+			if numericStateWidenedToTop(oldState, rawState, newState) {
+				widenedTop[p] = true
+				newState = nil
+			}
+		}
 
 		if !newState.Equals(oldState) {
 			if newState == nil || newState.IsTop() {
@@ -131,6 +141,16 @@ func (s *Solution) checkNumericConstraints() {
 			s.unsatEdges[key] = true
 		}
 	}
+}
+
+func numericStateWidenedToTop(oldState, rawState, widened *numeric.State) bool {
+	if oldState == nil || oldState.IsTop() {
+		return false
+	}
+	if widened != nil && !widened.IsTop() {
+		return false
+	}
+	return !rawState.Equals(oldState)
 }
 
 // computeRelevantPoints identifies CFG points needed for numeric constraint analysis.

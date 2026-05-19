@@ -148,8 +148,6 @@ func (c *QueryContext) recordDep(d dep) {
 	top.deps = append(top.deps, d)
 }
 
-const defaultMaxIter = 64
-
 // Query represents a memoized query with dependency tracking.
 //
 // Query is the core abstraction for incremental computation. Each Query:
@@ -177,8 +175,6 @@ type Query[K comparable, V any] struct {
 	widen       func(prev, next V) V
 	alwaysWiden bool
 	seed        func() V
-	onMaxIter   func(iter int, last V, key K) (V, bool)
-	maxIter     int
 	mu          sync.RWMutex
 	cache       map[K]*MemoEntry
 }
@@ -206,8 +202,8 @@ func NewQuery[K comparable, V any](
 // convergence. Common widening strategies include unioning type sets or taking
 // upper bounds in lattices.
 //
-// Without widening, cycles may iterate indefinitely. With widening, the sequence
-// prev, widen(prev, next), widen(..., next), ... is guaranteed to stabilize.
+// Cyclic queries must compute over a finite monotone domain, or supply a
+// widening operator that makes the recursive sequence finite-height.
 func NewQueryWithWiden[K comparable, V any](
 	name string,
 	compute func(*QueryContext, K) V,
@@ -222,18 +218,8 @@ func NewQueryWithWiden[K comparable, V any](
 		equal:   equal,
 		widen:   widen,
 		seed:    func() V { return zero },
-		maxIter: defaultMaxIter,
 		cache:   make(map[K]*MemoEntry),
 	}
-}
-
-// SetMaxIter controls how many fixpoint iterations to attempt before triggering onMaxIter.
-func (q *Query[K, V]) SetMaxIter(limit int) {
-	if q == nil {
-		return
-	}
-
-	q.maxIter = limit
 }
 
 // SetAlwaysWiden enables widening on every update, not just during cycles.
@@ -243,20 +229,6 @@ func (q *Query[K, V]) SetAlwaysWiden(enabled bool) {
 		return
 	}
 	q.alwaysWiden = enabled
-}
-
-// SetOnMaxIter registers a handler for non-converging cycles.
-func (q *Query[K, V]) SetOnMaxIter(fn func(iter int, last V, key K) (V, bool)) {
-	if q == nil {
-		return
-	}
-
-	q.onMaxIter = fn
-}
-
-// SetOnMaxIterReturnLast avoids panics by returning the last value after max iterations.
-func (q *Query[K, V]) SetOnMaxIterReturnLast() {
-	q.SetOnMaxIter(func(_ int, last V, _ K) (V, bool) { return last, true })
 }
 
 // Get returns the query result, recomputing if dependencies changed.
@@ -337,9 +309,8 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 
 	var updatedAt Revision
 
-	var seen []V
-
-	iterations := 0
+	var last V
+	hasLast := false
 
 	for {
 		// Mark as in progress before computing.
@@ -374,28 +345,11 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 		}
 
 		// If we detected a cycle, iterate to a fixpoint.
-		if len(seen) > 0 && equalFn(seen[len(seen)-1], value) {
+		if hasLast && equalFn(last, value) {
 			return value
 		}
-
-		for i := range len(seen) - 1 {
-			if equalFn(seen[i], value) {
-				return value
-			}
-		}
-
-		seen = append(seen, value)
-
-		iterations++
-		if q.maxIter > 0 && iterations >= q.maxIter {
-			if q.onMaxIter != nil {
-				if result, ok := q.onMaxIter(iterations, value, key); ok {
-					return result
-				}
-			}
-
-			panic("db.Query.Get exceeded max fixpoint iterations for " + q.name)
-		}
+		last = value
+		hasLast = true
 	}
 }
 

@@ -137,7 +137,6 @@ type Checker struct {
 	deps                      Deps
 	passes                    []Pass
 	computePasses             []api.ComputePass
-	maxIterations             int
 	maxScopeDepth             int
 	emitScopeDepthDiagnostics bool
 }
@@ -166,7 +165,6 @@ func NewChecker(database *db.DB, deps Deps, opts ...Option) *Checker {
 	c := &Checker{
 		db:            database,
 		deps:          deps,
-		maxIterations: 10,
 		maxScopeDepth: 0,
 	}
 
@@ -193,22 +191,10 @@ func (c *Checker) newPipeline() *pipeline.Driver {
 		GlobalTypes:   c.deps.GlobalTypes,
 		Stdlib:        c.deps.Stdlib,
 		Manifests:     c.db,
-		MaxIterations: c.maxIterations,
 		MaxScopeDepth: c.maxScopeDepth,
 		EmitScopeDiag: c.emitScopeDepthDiagnostics,
 		FuncResultQ:   funcResultQ,
 	})
-}
-
-// WithMaxIterations configures the maximum number of fixpoint iterations.
-// Values less than 1 are clamped to 1.
-func WithMaxIterations(n int) Option {
-	return func(c *Checker) {
-		if n < 1 {
-			n = 1
-		}
-		c.maxIterations = n
-	}
 }
 
 // WithMaxScopeDepth configures a maximum lexical scope nesting depth.
@@ -327,9 +313,6 @@ func (c *Checker) runPasses(sess *Session) {
 			diags := p(sess, fn, result)
 			sess.Diagnostics = append(sess.Diagnostics, diags...)
 		}
-
-		// Emit widening diagnostics for preflow inference precision loss
-		sess.Diagnostics = append(sess.Diagnostics, pipeline.WideningDiagnostics(sess.SourceName, fn, result)...)
 	}
 }
 

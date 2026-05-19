@@ -148,19 +148,6 @@ func (in *Inputs) Normalize() {
 		})
 	}
 
-	if len(in.WideningEvents) > 1 {
-		sort.Slice(in.WideningEvents, func(i, j int) bool {
-			a := in.WideningEvents[i]
-			b := in.WideningEvents[j]
-			if a.SCCIndex != b.SCCIndex {
-				return a.SCCIndex < b.SCCIndex
-			}
-			if a.Symbol != b.Symbol {
-				return a.Symbol < b.Symbol
-			}
-			return false
-		})
-	}
 }
 
 func iteratorSourceLess(a, b *IteratorSource) bool {

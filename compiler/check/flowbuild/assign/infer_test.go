@@ -217,6 +217,42 @@ func TestJoinInferredType_StopsRecursiveNestingGrowth(t *testing.T) {
 	}
 }
 
+func TestJoinInferredType_TreatsAnyAsTop(t *testing.T) {
+	suite := typ.NewRecord().Field("name", typ.String).Build()
+
+	got := joinInferredType(suite, typ.Any)
+	if !typ.TypeEquals(got, typ.Any) {
+		t.Fatalf("joinInferredType(Suite, any) = %v, want any", got)
+	}
+
+	got = mergeCallExpectation(typ.Any, suite, true)
+	if !typ.TypeEquals(got, typ.Any) {
+		t.Fatalf("mergeCallExpectation(any, Suite) = %v, want any", got)
+	}
+}
+
+func TestMergeCallExpectation_ParamDominatesCompatibleBodyEvidence(t *testing.T) {
+	headerMap := typ.NewMap(typ.String, typ.String)
+	bodyHeaderEvidence := typ.NewRecord().
+		SetOpen(true).
+		OptField("Accept", typ.String).
+		Build()
+	old := typ.NewRecord().
+		SetOpen(true).
+		OptField("headers", typ.NewUnion(headerMap, bodyHeaderEvidence)).
+		OptField("stream", typ.Unknown).
+		Build()
+	expected := typ.NewRecord().
+		Field("headers", headerMap).
+		OptField("stream", typ.Boolean).
+		Build()
+
+	got := mergeCallExpectation(old, expected, true)
+	if !typ.TypeEquals(got, expected) {
+		t.Fatalf("mergeCallExpectation(body evidence, expected param) = %v, want %v", got, expected)
+	}
+}
+
 func TestTypeContains(t *testing.T) {
 	base := typ.NewArray(typ.Unknown)
 	outer := typ.NewArray(base)

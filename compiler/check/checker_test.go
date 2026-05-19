@@ -26,9 +26,6 @@ func TestNewChecker(t *testing.T) {
 	if c.db != database {
 		t.Error("db not set")
 	}
-	if c.maxIterations != 10 {
-		t.Fatalf("default maxIterations = %d, want 10", c.maxIterations)
-	}
 }
 
 func TestChecker_WithPass(t *testing.T) {
@@ -41,20 +38,6 @@ func TestChecker_WithPass(t *testing.T) {
 	}
 	if len(c.passes) != 1 {
 		t.Error("pass not registered")
-	}
-}
-
-func TestChecker_WithMaxIterations(t *testing.T) {
-	c := NewChecker(db.New(), Deps{Types: core.NewEngine()}, WithMaxIterations(3))
-	if c.maxIterations != 3 {
-		t.Fatalf("maxIterations = %d, want 3", c.maxIterations)
-	}
-}
-
-func TestChecker_WithMaxIterationsClamp(t *testing.T) {
-	c := NewChecker(db.New(), Deps{Types: core.NewEngine()}, WithMaxIterations(0))
-	if c.maxIterations != 1 {
-		t.Fatalf("maxIterations = %d, want 1", c.maxIterations)
 	}
 }
 

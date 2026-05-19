@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -134,5 +135,28 @@ func TestFlow_NumericConstraints_PathContradiction(t *testing.T) {
 
 	if !s.IsEdgeUnreachable(branch2, target) {
 		t.Error("expected edge to be marked unreachable due to path contradiction (x >= 6 AND x <= 2)")
+	}
+}
+
+func TestNumericStateWidenedToTop_RemembersDroppedFacts(t *testing.T) {
+	pathX := constraint.Path{Root: "x", Symbol: 1}
+	keyX := constraint.PathKey("x@1")
+	resolver := func(path constraint.Path) constraint.PathKey {
+		if path.Root == pathX.Root && path.Symbol == pathX.Symbol {
+			return keyX
+		}
+		return ""
+	}
+	oldState := numeric.NewState()
+	oldState.ApplyConstraintWithResolver(constraint.GeConst{X: pathX, C: 1}, resolver)
+
+	if !numericStateWidenedToTop(oldState, nil, nil) {
+		t.Fatal("expected dropping a non-top numeric state to be remembered as widened Top")
+	}
+	if numericStateWidenedToTop(nil, oldState, oldState) {
+		t.Fatal("initial precision should not be treated as widened Top")
+	}
+	if numericStateWidenedToTop(oldState, oldState, oldState) {
+		t.Fatal("stable numeric state should not be treated as widened Top")
 	}
 }

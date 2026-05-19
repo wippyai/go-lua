@@ -19,8 +19,8 @@
 //
 //   - Stop when no changes occur
 //
-//     4. Widening: If an SCC doesn't converge within maxInferIterations, widen all
-//     symbols in that SCC to Unknown. This ensures termination.
+//     4. Convergence: recursive SCCs iterate until the widened abstract domain
+//     stabilizes; there is no caller-visible iteration cap.
 //
 // # SCC PROCESSING
 //
@@ -70,9 +70,6 @@ import (
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-// maxInferIterations limits fixpoint iterations per SCC.
-const maxInferIterations = 10
 
 func mergeSpecTypesSoftInto(out, base, override api.SpecTypes) api.SpecTypes {
 	if out == nil {
@@ -131,8 +128,7 @@ func CollectInferredTypes(fc *fbcore.FlowContext, specTypes api.SpecTypes, annot
 // Algorithm:
 //  1. Build dependency graph: symbol -> symbols referenced in RHS
 //  2. Compute SCCs in topological order
-//  3. For each SCC, run bounded fixpoint iteration with monotone joins
-//  4. If not converged by max iterations, widen to Unknown
+//  3. For each SCC, run fixpoint iteration with monotone joins
 func collectInferredTypes(
 	graph *cfg.Graph,
 	scopes map[cfg.Point]*scope.State,
@@ -528,10 +524,11 @@ func collectInferredTypes(
 			}
 		}
 
-		// Fixpoint iteration for this SCC
-		converged := false
+		// Fixpoint iteration for this SCC.
 		var overlayScratch api.SpecTypes
-		for iter := 0; iter < maxInferIterations; iter++ {
+		snapshot := make([]typ.Type, len(sccSyms))
+		for {
+			snapshotSCCTypes(snapshot, inferred, sccSyms)
 			changed := false
 			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
 			overlay := overlayScratch
@@ -989,23 +986,8 @@ func collectInferredTypes(
 				changed = true
 			}
 
-			if !changed {
-				converged = true
+			if !changed || sccTypesStable(snapshot, inferred, sccSyms) {
 				break
-			}
-		}
-
-		// Widen ALL symbols in non-converged SCC to Unknown (except annotated).
-		// This is sound: partial types may be under-approximations. Local
-		// preflow inference is a hint source, so the fallback is intentionally
-		// internal; surfacing it as a lint warning produces false positives for
-		// dynamic but valid Lua patterns.
-		if !converged {
-			for _, sym := range sccSyms {
-				if annotated != nil && annotated[sym] {
-					continue
-				}
-				inferred[sym] = typ.Unknown
 			}
 		}
 	}
@@ -1029,6 +1011,32 @@ func collectInferredTypes(
 	}
 
 	return inferred
+}
+
+func snapshotSCCTypes(out []typ.Type, inferred api.SpecTypes, syms []cfg.SymbolID) {
+	for i, sym := range syms {
+		out[i] = inferred[sym]
+	}
+}
+
+func sccTypesStable(prev []typ.Type, inferred api.SpecTypes, syms []cfg.SymbolID) bool {
+	for i, sym := range syms {
+		before := prev[i]
+		after := inferred[sym]
+		if before == after {
+			continue
+		}
+		if before == nil || after == nil {
+			return false
+		}
+		if before.Hash() != after.Hash() {
+			return false
+		}
+		if !typ.TypeEquals(before, after) {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizedCallArgSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) []cfg.SymbolID {
@@ -1328,6 +1336,9 @@ func joinInferredType(old, next typ.Type) typ.Type {
 	if next == nil {
 		return old
 	}
+	if typ.IsAny(old) || typ.IsAny(next) {
+		return typ.Any
+	}
 	if typeContains(next, old) {
 		if !typ.IsAbsentOrUnknown(old) {
 			return old
@@ -1344,6 +1355,9 @@ func callExpectationCanRefineLocal(old typ.Type) bool {
 }
 
 func mergeCallExpectation(old, expected typ.Type, isParam bool) typ.Type {
+	if typ.IsAny(old) || typ.IsAny(expected) {
+		return typ.Any
+	}
 	if isParam {
 		if expectedParamTypeDominates(old, expected) {
 			return expected
@@ -1393,11 +1407,7 @@ func recordEvidenceCompatibleWithExpected(old, expected *typ.Record) bool {
 		if expectedField.Optional {
 			expectedType = typ.NewOptional(expectedType)
 		}
-		fieldType := field.Type
-		if field.Optional {
-			fieldType = typ.NewOptional(fieldType)
-		}
-		if !subtype.IsSubtype(fieldType, expectedType) {
+		if !evidenceTypeCompatibleWithExpected(field.Type, expectedType) {
 			return false
 		}
 	}
@@ -1405,10 +1415,80 @@ func recordEvidenceCompatibleWithExpected(old, expected *typ.Record) bool {
 		if !expected.HasMapComponent() {
 			return false
 		}
-		if !fieldEvidenceIsUnresolved(old.MapKey) && !subtype.IsSubtype(old.MapKey, expected.MapKey) {
+		if !fieldEvidenceIsUnresolved(old.MapKey) && !evidenceTypeCompatibleWithExpected(old.MapKey, expected.MapKey) {
 			return false
 		}
-		if !fieldEvidenceIsUnresolved(old.MapValue) && !subtype.IsSubtype(old.MapValue, expected.MapValue) {
+		if !fieldEvidenceIsUnresolved(old.MapValue) && !evidenceTypeCompatibleWithExpected(old.MapValue, expected.MapValue) {
+			return false
+		}
+	}
+	return true
+}
+
+func evidenceTypeCompatibleWithExpected(evidence, expected typ.Type) bool {
+	if fieldEvidenceIsUnresolved(evidence) {
+		return true
+	}
+	if evidence == nil || expected == nil {
+		return false
+	}
+	if subtype.IsSubtype(evidence, expected) {
+		return true
+	}
+	switch e := typ.UnwrapAnnotated(evidence).(type) {
+	case *typ.Alias:
+		return evidenceTypeCompatibleWithExpected(e.Target, expected)
+	case *typ.Union:
+		for _, member := range e.Members {
+			if !evidenceTypeCompatibleWithExpected(member, expected) {
+				return false
+			}
+		}
+		return true
+	case *typ.Record:
+		if expectedMap := mapForEvidenceExpected(expected); expectedMap != nil {
+			return recordEvidenceCompatibleWithExpectedMap(e, expectedMap)
+		}
+	}
+	if opt, ok := typ.UnwrapAnnotated(expected).(*typ.Optional); ok {
+		return evidenceTypeCompatibleWithExpected(evidence, opt.Inner)
+	}
+	return false
+}
+
+func mapForEvidenceExpected(t typ.Type) *typ.Map {
+	for {
+		switch v := typ.UnwrapAnnotated(t).(type) {
+		case *typ.Alias:
+			t = v.Target
+		case *typ.Optional:
+			t = v.Inner
+		case *typ.Map:
+			return v
+		default:
+			return nil
+		}
+	}
+}
+
+func recordEvidenceCompatibleWithExpectedMap(evidence *typ.Record, expected *typ.Map) bool {
+	if evidence == nil || expected == nil {
+		return false
+	}
+	for _, field := range evidence.Fields {
+		keyType := typ.LiteralString(field.Name)
+		if !evidenceTypeCompatibleWithExpected(keyType, expected.Key) {
+			return false
+		}
+		if !evidenceTypeCompatibleWithExpected(field.Type, expected.Value) {
+			return false
+		}
+	}
+	if evidence.HasMapComponent() {
+		if !evidenceTypeCompatibleWithExpected(evidence.MapKey, expected.Key) {
+			return false
+		}
+		if !evidenceTypeCompatibleWithExpected(evidence.MapValue, expected.Value) {
 			return false
 		}
 	}

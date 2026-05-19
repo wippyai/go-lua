@@ -147,6 +147,22 @@ func TestWidenArrayElementType_ExistingArray(t *testing.T) {
 	}
 }
 
+func TestWidenArrayElementType_StableArrayIsIdempotent(t *testing.T) {
+	existing := typ.NewArray(typ.String)
+	result := WidenArrayElementType(existing, typ.String, typ.JoinPreferNonSoft)
+	if result != existing {
+		t.Fatalf("stable array widening rebuilt type: got %p, want %p", result, existing)
+	}
+}
+
+func TestWidenArrayElementType_StableUnionArrayIsIdempotent(t *testing.T) {
+	existing := typ.NewUnion(typ.NewArray(typ.String), typ.Nil)
+	result := WidenArrayElementType(existing, typ.String, typ.JoinPreferNonSoft)
+	if result != existing {
+		t.Fatalf("stable union array widening rebuilt type: got %p, want %p", result, existing)
+	}
+}
+
 func TestWidenArrayElementType_EmptyRecord(t *testing.T) {
 	emptyRecord := typ.NewRecord().Build()
 	result := WidenArrayElementType(emptyRecord, typ.String, typ.JoinPreferNonSoft)
@@ -234,6 +250,14 @@ func TestWidenMapValueArray_PrefersNonSoftElement(t *testing.T) {
 	}
 	if !typ.TypeEquals(arr.Element, elem) {
 		t.Fatalf("widenMapValueArray.Value.Element = %v, want %v", arr.Element, elem)
+	}
+}
+
+func TestWidenMapValueArray_StableMapIsIdempotent(t *testing.T) {
+	base := typ.NewMap(typ.String, typ.NewArray(typ.Integer))
+	got := WidenMapValueArray(base, typ.String, typ.Integer)
+	if got != base {
+		t.Fatalf("stable map value array widening rebuilt type: got %p, want %p", got, base)
 	}
 }
 

@@ -409,7 +409,7 @@ func WidenCapturedContainerMutations(prev, next api.CapturedContainerMutations) 
 		existing := merged[sym]
 		merged[sym] = MergeCapturedContainerMutationMaps(existing, muts, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
-				next.ValueType = mergeInterprocValueType(prev.ValueType, next.ValueType)
+				next.ValueType = widenContainerMutationValueType(prev.ValueType, next.ValueType)
 			} else {
 				next.ValueType = value.WidenForConvergence(next.ValueType)
 			}
@@ -440,11 +440,14 @@ func normalizeCapturedContainerMutationMap(muts map[cfg.SymbolID][]api.Container
 		if len(entries) == 0 {
 			continue
 		}
-		normalized := make([]api.ContainerMutation, len(entries))
-		for i, mut := range entries {
-			normalized[i] = mut
-			normalized[i].ValueType = canonicalInterprocValueType(mut.ValueType)
-		}
+		normalized := MergeContainerMutationSlices(nil, entries, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
+			if prev != nil {
+				next.ValueType = widenContainerMutationValueType(prev.ValueType, next.ValueType)
+			} else {
+				next.ValueType = value.WidenForConvergence(next.ValueType)
+			}
+			return next
+		})
 		out[sym] = normalized
 	}
 	if len(out) == 0 {
@@ -473,7 +476,7 @@ func JoinCapturedContainerMutations(prev, next api.CapturedContainerMutations) a
 		existing := merged[sym]
 		merged[sym] = MergeCapturedContainerMutationMaps(existing, muts, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
-				next.ValueType = joinInterprocValueType(prev.ValueType, next.ValueType)
+				next.ValueType = joinContainerMutationValueType(prev.ValueType, next.ValueType)
 			} else {
 				next.ValueType = normalizeInterprocValueType(next.ValueType)
 			}
@@ -504,17 +507,50 @@ func normalizeCapturedContainerMutationMapForJoin(muts map[cfg.SymbolID][]api.Co
 		if len(entries) == 0 {
 			continue
 		}
-		normalized := make([]api.ContainerMutation, len(entries))
-		for i, mut := range entries {
-			normalized[i] = mut
-			normalized[i].ValueType = normalizeInterprocValueType(mut.ValueType)
-		}
+		normalized := MergeContainerMutationSlices(nil, entries, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
+			if prev != nil {
+				next.ValueType = joinContainerMutationValueType(prev.ValueType, next.ValueType)
+			} else {
+				next.ValueType = normalizeInterprocValueType(next.ValueType)
+			}
+			return next
+		})
 		out[sym] = normalized
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+func widenContainerMutationValueType(prev, next typ.Type) typ.Type {
+	prev = canonicalInterprocValueType(prev)
+	next = canonicalInterprocValueType(next)
+	if prev == nil {
+		return value.WidenForConvergence(next)
+	}
+	if next == nil {
+		return value.WidenForConvergence(prev)
+	}
+	if typ.TypeEquals(prev, next) {
+		return prev
+	}
+	return value.WidenForConvergence(typ.JoinReturnSlot(prev, next))
+}
+
+func joinContainerMutationValueType(prev, next typ.Type) typ.Type {
+	prev = normalizeInterprocValueType(prev)
+	next = normalizeInterprocValueType(next)
+	if prev == nil {
+		return next
+	}
+	if next == nil {
+		return prev
+	}
+	if typ.TypeEquals(prev, next) {
+		return prev
+	}
+	return normalizeInterprocValueType(typ.JoinReturnSlot(prev, next))
 }
 
 // WidenConstructorFields merges constructor field maps using monotone join.

@@ -1,7 +1,6 @@
 // This package handles post-analysis diagnostic operations:
 //   - Sorting functions by source position for deterministic pass execution
 //   - Sorting diagnostics for stable output ordering
-//   - Generating widening diagnostics when type inference doesn't converge
 //
 // Deterministic ordering is essential for reproducible builds and test stability.
 // All sorting uses stable tie-breakers (graph ID, message content) to ensure
@@ -9,7 +8,6 @@
 package pipeline
 
 import (
-	"fmt"
 	"sort"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -114,50 +112,6 @@ func SortDiagnostics(diags []diag.Diagnostic) {
 		}
 		return a.Explanation < b.Explanation
 	})
-}
-
-// WideningDiagnostics reports symbols that were widened to unknown during preflow inference.
-func WideningDiagnostics(sourceName string, fn *ast.FunctionExpr, result *api.FuncResult) []diag.Diagnostic {
-	if result == nil || result.FlowInputs == nil || len(result.FlowInputs.WideningEvents) == 0 {
-		return nil
-	}
-
-	seenSCC := make(map[int]bool)
-	var diags []diag.Diagnostic
-	for _, event := range result.FlowInputs.WideningEvents {
-		if seenSCC[event.SCCIndex] {
-			continue
-		}
-		seenSCC[event.SCCIndex] = true
-
-		symName := ""
-		if result.Graph != nil {
-			symName = result.Graph.NameOf(event.Symbol)
-		}
-		if symName == "" {
-			symName = "<unknown>"
-		}
-
-		sccSize := len(event.SCC)
-		msg := fmt.Sprintf("type inference did not converge for '%s' (SCC size %d); widened to unknown", symName, sccSize)
-
-		pos := diag.Position{File: sourceName}
-		span := diag.Span{}
-		if fn != nil {
-			pos.Line = fn.Line()
-			pos.Column = fn.Column()
-			span = ast.SpanOf(fn)
-		}
-
-		diags = append(diags, diag.Diagnostic{
-			Position: pos,
-			Span:     span,
-			Severity: diag.SeverityWarning,
-			Message:  msg,
-		})
-	}
-
-	return diags
 }
 
 // ResolveSymbolName provides a stable name for diagnostics when CFG data is available.

@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/diag"
-	"github.com/wippyai/go-lua/types/flow"
 )
 
 func TestSortedResultFunctions_Empty(t *testing.T) {
@@ -152,71 +151,6 @@ func TestSortDiagnostics_ByMessage(t *testing.T) {
 
 	if diags[0].Message != "alpha" {
 		t.Errorf("expected alpha first, got %s", diags[0].Message)
-	}
-}
-
-func TestWideningDiagnostics_NilResult(t *testing.T) {
-	result := WideningDiagnostics("test.lua", nil, nil)
-	if result != nil {
-		t.Error("expected nil for nil result")
-	}
-}
-
-func TestWideningDiagnostics_NilFlowInputs(t *testing.T) {
-	result := WideningDiagnostics("test.lua", nil, &api.FuncResult{})
-	if result != nil {
-		t.Error("expected nil for nil flow inputs")
-	}
-}
-
-func TestWideningDiagnostics_NoEvents(t *testing.T) {
-	result := WideningDiagnostics("test.lua", nil, &api.FuncResult{
-		FlowInputs: &flow.Inputs{},
-	})
-	if result != nil {
-		t.Error("expected nil for no widening events")
-	}
-}
-
-func TestWideningDiagnostics_WithEvents(t *testing.T) {
-	fn := &ast.FunctionExpr{}
-	fn.SetLine(10)
-	fn.SetColumn(5)
-
-	result := WideningDiagnostics("test.lua", fn, &api.FuncResult{
-		FlowInputs: &flow.Inputs{
-			WideningEvents: []flow.WideningEvent{
-				{Symbol: 1, SCCIndex: 0, SCC: []cfg.SymbolID{1, 2}},
-			},
-		},
-	})
-
-	if len(result) != 1 {
-		t.Fatalf("expected 1 diagnostic, got %d", len(result))
-	}
-	if result[0].Position.File != "test.lua" {
-		t.Error("wrong file")
-	}
-	if result[0].Position.Line != 10 {
-		t.Error("wrong line")
-	}
-	if result[0].Severity != diag.SeverityWarning {
-		t.Error("expected warning severity")
-	}
-}
-
-func TestWideningDiagnostics_DeduplicatesSCC(t *testing.T) {
-	result := WideningDiagnostics("test.lua", nil, &api.FuncResult{
-		FlowInputs: &flow.Inputs{
-			WideningEvents: []flow.WideningEvent{
-				{Symbol: 1, SCCIndex: 0, SCC: []cfg.SymbolID{1, 2}},
-				{Symbol: 2, SCCIndex: 0, SCC: []cfg.SymbolID{1, 2}},
-			},
-		},
-	})
-
-	if len(result) != 1 {
-		t.Errorf("expected 1 diagnostic (deduplicated), got %d", len(result))
 	}
 }
 

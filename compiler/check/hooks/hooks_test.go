@@ -6,8 +6,8 @@ import (
 
 func TestAll_ReturnsOptions(t *testing.T) {
 	opts := All()
-	if len(opts) != 6 {
-		t.Errorf("All() returned %d options, expected 6", len(opts))
+	if len(opts) != 7 {
+		t.Errorf("All() returned %d options, expected 7", len(opts))
 	}
 }
 
@@ -43,6 +43,13 @@ func TestWithControl_NotNil(t *testing.T) {
 	opt := WithControl()
 	if opt == nil {
 		t.Error("WithControl() returned nil")
+	}
+}
+
+func TestWithExhaustiveness_NotNil(t *testing.T) {
+	opt := WithExhaustiveness()
+	if opt == nil {
+		t.Error("WithExhaustiveness() returned nil")
 	}
 }
 

@@ -5354,6 +5354,119 @@ git diff --check
 
 All checks pass.
 
+## 2026-05-19 Exhaustiveness Warnings for Closed Matches and Channel Select
+
+Added the checker warning the user asked for. The standard term is
+**exhaustiveness checking**; the diagnostic is a warning for a
+**non-exhaustive match**.
+
+Correction made during review: the real `channel.select` exhaustiveness target
+is `result.channel`, not `result.value.kind`. `result.value` is the selected
+receive payload. A payload discriminator such as `result.value.kind` only makes
+sense after a channel guard has already proven which channel produced the
+payload. It is a separate nested discriminated-union match, not the select-arm
+match itself.
+
+Diagnostic boundary:
+
+- The diagnostic is warning-only: `diag.ErrNonExhaustive` with
+  `SeverityWarning`. It does not make type checking fail.
+- Closed literal-tag proof lives in `types/narrow.ClosedDiscriminantDomain`.
+- The checker hook recognizes match-like Lua `if/elseif` chains and delegates
+  closed literal-tag domain proof to the narrowing domain.
+- The hook also recognizes real `channel.select` result arms by indexing
+  assignments of `channel.select { ch:case_receive(), ... }` and matching
+  `result.channel == ch` branches against the selected channel paths.
+- The warning is emitted only for match-like chains with at least two explicit
+  arms and no final `else`. A single early-return guard stays silent because
+  fallthrough may intentionally handle the remaining case.
+- Open or dynamic cases stay silent: `any`, `unknown`, `nil`, optional
+  discriminants, broad tags like `kind: string`, missing tags, non-record
+  members, unextractable select channels, and select calls with default cases.
+
+Correct `channel.select` warning sample:
+
+```lua
+local result = channel.select {
+    events_ch:case_receive(),
+    stop_ch:case_receive(),
+    timeout_ch:case_receive(),
+}
+
+if result.channel == events_ch then
+    return result.value.kind
+elseif result.channel == stop_ch then
+    return result.value.reason
+end
+```
+
+Warning:
+
+```text
+non-exhaustive match on result.channel; missing case: timeout_ch
+```
+
+Correct complete select sample:
+
+```lua
+if result.channel == events_ch then
+    return result.value.kind
+elseif result.channel == stop_ch then
+    return result.value.reason
+elseif result.channel == timeout_ch then
+    return tostring(result.value.sec)
+end
+```
+
+No warning is emitted there because every selected channel arm is represented.
+
+The nested payload-discriminant case is still supported separately:
+
+```lua
+if result.channel == events_ch then
+    if result.value.kind == "message" then
+        ...
+    elseif result.value.kind == "tool" then
+        ...
+    end
+end
+```
+
+That warning is about the closed `Event` payload union after the `events_ch`
+guard, not about the `channel.select` arm set.
+
+Added coverage:
+
+- `types/narrow/discriminant_domain_test.go`
+  - closed string tag domains,
+  - closed numeric tag domains,
+  - broad tag rejection,
+  - optional tag rejection.
+- `compiler/check/tests/regression/exhaustiveness_warning_test.go`
+  - plain discriminated-union missing case,
+  - real `channel.select` missing channel case,
+  - real `channel.select` all-cases-handled no-warning case,
+  - real `channel.select` single early-return guard no-warning case,
+  - final `else` suppresses warning,
+  - all literal variants handled suppresses warning,
+  - open discriminant suppresses warning,
+  - numeric discriminant missing case.
+- `testdata/fixtures/narrowing/channel-select-case-exhaustiveness-warning`
+  pins the real fixture harness line-level `expect-warning` for the selected
+  channel case pattern.
+
+Verification:
+
+```text
+go test ./types/narrow -run TestClosedDiscriminantDomain -count=1 -v
+go test ./compiler/check/tests/regression -run TestExhaustivenessWarning -count=1 -v
+go test ./compiler/check/hooks -count=1
+go test . -run 'TestFixtures/narrowing/channel-select-case-exhaustiveness-warning/check' -count=1 -v
+go test ./... -count=1
+```
+
+All checks pass.
+
 ## 2026-05-19 Adversarial Gradual-Typing Regressions
 
 Added a dedicated gradual-typing regression suite and fixture. The goal is to
@@ -5441,3 +5554,136 @@ git diff --check
 ```
 
 All checks pass.
+
+## 2026-05-19 Exhaustiveness Lint Wiring and Real-Code Probe
+
+The exhaustiveness checker is intentionally a configurable warning class for
+Wippy lint, not a globally forced diagnostic. The Wippy runtime type-checker
+already had `TypeCheckRules.Exhaustive` in its cache fingerprint; that bit is
+now the single authority for installing `hooks.WithExhaustiveness()`.
+
+Design notes:
+
+- go-lua owns the semantic pass and exposes it as `hooks.WithExhaustiveness()`;
+- Wippy lint exposes the policy switch as `wippy lint --exhaustiveness`;
+- typecheck cache fingerprints already include `Rules.Exhaustive`, so cached
+  diagnostics cannot hide the opt-in warning state;
+- default lint remains unchanged and does not emit exhaustiveness warnings unless
+  the flag is requested.
+
+Real-code proof:
+
+1. temporarily injected a third unhandled `channel.select` case into
+   `framework/src/llm/src/llm.lua`;
+2. rebuilt the temporary Wippy binary against this checkout with the local
+   go-lua replace;
+3. ran `wippy lint --cache-reset --json --exhaustiveness` in
+   `framework/src/llm/src`;
+4. observed the expected warning:
+   `E0014 warning: non-exhaustive match on result.channel; missing case: c`;
+5. restored `llm.lua` byte-for-byte and reran the same lint command;
+6. confirmed `warning_count: 0`.
+
+Added Wippy-side coverage:
+
+- `TestTypeChecker_ExhaustiveRuleOptIn`
+- `TestTypeChecker_ExhaustiveRuleOffByDefault`
+- `TestParseLintFlags_Exhaustiveness`
+
+Verification:
+
+```text
+env GOFLAGS=-modfile=/tmp/wippy-local-replace.mod go test ./runtime/lua/code -run 'TestTypeChecker_ExhaustiveRule|TestChannelSelectNarrowing_ProcessEvent' -count=1 -v
+env GOFLAGS=-modfile=/tmp/wippy-local-replace.mod go test ./cmd/wippy/cmd -run TestParseLintFlags_Exhaustiveness -count=1 -v
+env GOFLAGS=-modfile=/tmp/wippy-local-replace.mod go build -o /tmp/wippy-local-replace-bin ./cmd/wippy
+env GOFLAGS=-modfile=/tmp/wippy-local-replace.mod /tmp/wippy-local-replace-bin lint --cache-reset --json --exhaustiveness
+```
+
+The restored real-code lint run still reports the known nine LLM errors and no
+warnings. Exhaustiveness did not backfire on real code after the temporary probe
+was removed.
+
+## 2026-05-19 Flash Convergence Rectification: No Caps
+
+Removed the artificial convergence caps from the checker pipeline, return SCC
+inference, assignment inference, query cycle handling, constraint solving,
+flow solving, and numeric solving. Non-convergence is no longer handled by
+"iterate N times then warn/fallback"; it must be handled by finite-height
+abstract domains, idempotent transfer functions, and explicit widening.
+
+Key design decisions:
+
+- Interprocedural facts are a product-domain fixpoint. Captured container
+  mutations now canonicalize same-path writes and join element/value types on
+  the fact boundary instead of preserving duplicate mutation events.
+- Return SCCs merge with `returnsummary.WidenForConvergence`, so recursive
+  return summaries stabilize through domain widening instead of an unknown
+  fallback.
+- Assignment SCCs now test the actual SCC product state for stability after a
+  sweep. A transient update inside the sweep is not a semantic change unless
+  the final vector differs.
+- `any` is treated as top in local inference joins and call-expectation merges.
+  This prevents `T -> any -> T` oscillation while preserving soundness.
+- Numeric flow has per-point widening memory: once moving numeric facts widen
+  to Top, that point remains Top for the solve. This prevents `Top -> fact ->
+  Top -> fact` reintroduction caused by representing Top as an absent state.
+
+Important fixes found by real replays:
+
+- `types/typ.TypeEquals` no longer rejects structurally equal DAG-shaped types
+  just because one side shares a subnode and the other side duplicates it. The
+  equality proof now relies on pair-based coinduction for compound cycles.
+- Array/map mutator widening is idempotent. Re-inserting an already-known array
+  element type returns the original abstract value instead of rebuilding an
+  equal value and causing false "changed" reports.
+- Body-local parameter evidence is treated as evidence, not as a final declared
+  upper bound. A stronger whole-parameter call contract can dominate compatible
+  body evidence, including record evidence compatible with a string-keyed map.
+
+Regression coverage added:
+
+- same-iteration captured container mutation dedupe;
+- captured container mutation joins for loop/table-insert patterns;
+- assignment `any` top behavior;
+- assignment SCC product-stability regressions from guarded options;
+- structural equality for shared DAG-shaped records;
+- array/map mutator idempotence;
+- numeric widening-to-Top memory;
+- body evidence plus whole-parameter call expectation;
+- adversarial gradual-typing and loop-carried refinement cases;
+- exhaustiveness opt-in warnings.
+
+Verification:
+
+```text
+go test ./... -count=1 -timeout 180s
+go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction -benchmem -count=3
+env GOFLAGS=-modfile=/tmp/wippy-local-replace.mod go build -o /tmp/wippy-local-replace-verify ./cmd/wippy
+timeout 60s /tmp/wippy-local-replace-verify lint --cache-reset --json --ns wippy.session.api
+timeout 60s /tmp/wippy-local-replace-verify lint --cache-reset --json
+```
+
+The go-lua suite passes. The local-replace Wippy replays that previously hung
+now terminate. `wippy.session.api` no longer times out; the full session target
+also terminates.
+
+Final benchmark sample:
+
+```text
+BenchmarkCheck_LargeFunction-32  382  3399067 ns/op  1084024 B/op  10938 allocs/op
+BenchmarkCheck_LargeFunction-32  345  3236163 ns/op  1084162 B/op  10938 allocs/op
+BenchmarkCheck_LargeFunction-32  385  3162319 ns/op  1084096 B/op  10938 allocs/op
+```
+
+Remaining verification boundary:
+
+- The stock `../scripts/verify-suite.sh` still cannot build Wippy without a
+  local replace because the Wippy checkout references the new
+  `hooks.WithExhaustiveness()` while its normal module graph resolves an older
+  published go-lua.
+- Local-replace Wippy lint is not clean. The remaining diagnostics are finite
+  and must be classified separately as source/manifest issues or precision gaps;
+  this pass fixed the convergence class, not every external diagnostic.
+- `tests/app` still reports an `E9999` internal-error diagnostic for
+  `app.test.types:lib_inner_types`; that is an engine-facing item and should be
+  investigated before claiming the global harness is clean.

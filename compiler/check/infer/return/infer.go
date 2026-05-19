@@ -20,7 +20,8 @@
 // Return type inference uses monotone union for convergence:
 //   - New return types are joined with previous return types
 //   - Types can only grow (become more general), never shrink
-//   - Bounded iteration with widening to unknown on non-convergence
+//   - Recursive SCCs use convergence widening, so iteration is governed by
+//     domain stabilization rather than an artificial budget
 //
 // # PARAMETER EVIDENCE
 //
@@ -66,43 +67,36 @@ import (
 
 // Config holds dependencies for return inference.
 type Config struct {
-	Types         core.TypeOps
-	GlobalTypes   map[string]typ.Type
-	Manifests     io.ManifestQuerier
-	Stdlib        *scope.State
-	Store         api.StoreReader
-	Graphs        api.GraphProvider
-	SourceName    string
-	MaxIterations int
+	Types       core.TypeOps
+	GlobalTypes map[string]typ.Type
+	Manifests   io.ManifestQuerier
+	Stdlib      *scope.State
+	Store       api.StoreReader
+	Graphs      api.GraphProvider
+	SourceName  string
 }
 
 // Inferencer computes pre-flow return vectors for local functions.
 type Inferencer struct {
-	types         core.TypeOps
-	globalTypes   map[string]typ.Type
-	manifests     io.ManifestQuerier
-	stdlib        *scope.State
-	store         api.StoreReader
-	graphs        api.GraphProvider
-	sourceName    string
-	maxIterations int
+	types       core.TypeOps
+	globalTypes map[string]typ.Type
+	manifests   io.ManifestQuerier
+	stdlib      *scope.State
+	store       api.StoreReader
+	graphs      api.GraphProvider
+	sourceName  string
 }
 
 // New creates a configured return inferencer.
 func New(cfg Config) *Inferencer {
-	maxIter := cfg.MaxIterations
-	if maxIter <= 0 {
-		maxIter = 10
-	}
 	return &Inferencer{
-		types:         cfg.Types,
-		globalTypes:   cfg.GlobalTypes,
-		manifests:     cfg.Manifests,
-		stdlib:        cfg.Stdlib,
-		store:         cfg.Store,
-		graphs:        cfg.Graphs,
-		sourceName:    cfg.SourceName,
-		maxIterations: maxIter,
+		types:       cfg.Types,
+		globalTypes: cfg.GlobalTypes,
+		manifests:   cfg.Manifests,
+		stdlib:      cfg.Stdlib,
+		store:       cfg.Store,
+		graphs:      cfg.Graphs,
+		sourceName:  cfg.SourceName,
 	}
 }
 
@@ -362,8 +356,8 @@ func assembleFunctionFacts(
 //   - New types are joined with previous types via monotone union
 //   - Iteration stops when no type changes
 //
-// WIDENING: If SCC iteration exceeds MaxReturnSummaryIterations, types are widened
-// to unknown to guarantee termination. A diagnostic is emitted for the non-convergence.
+// WIDENING: Recursive SCCs merge through the convergence widening operator each
+// round. The domain owns termination; callers do not cap iteration count.
 //
 // SEEDING: Initial return type estimates come from the seed map (previous fixpoint
 // iteration). This accelerates convergence for iteratively-refined modules.

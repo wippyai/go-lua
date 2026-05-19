@@ -214,11 +214,7 @@ local c: number = b
 	}
 }
 
-// TestPreflowConvergence_WideningSoundness tests that when an SCC doesn't converge,
-// ALL members are widened to unknown, not just missing entries.
-func TestPreflowConvergence_WideningSoundness(t *testing.T) {
-	// This test verifies that partial types don't leak through when widening occurs.
-	// The key property is that if widening triggers, all affected symbols get unknown.
+func TestPreflowConvergence_RecursiveRecordCycleConverges(t *testing.T) {
 	source := `
 local a = {x = 1}
 local b = {y = a}
@@ -236,10 +232,7 @@ local n: number = a.x
 	}
 }
 
-// TestPreflowConvergence_WideningReported tests that widening events are recorded.
-func TestPreflowConvergence_WideningReported(t *testing.T) {
-	// Create a case that triggers widening by exceeding max iterations.
-	// Deeply recursive mutual dependencies that don't stabilize quickly.
+func TestPreflowConvergence_RecursiveFunctionCycleConverges(t *testing.T) {
 	source := `
 local a, b, c, d, e
 
@@ -251,66 +244,10 @@ e = function() return a() end
 `
 
 	result := testutil.Check(source, testutil.WithStdlib())
-
-	// Access widening events from flow inputs
-	if result.Session == nil || result.Session.RootResult == nil {
-		t.Fatal("expected session with root result")
+	if result.HasError() {
+		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
-
-	inputs := result.Session.RootResult.FlowInputs
-	if inputs == nil {
-		t.Fatal("expected flow inputs")
-	}
-
-	// Even if no widening occurs in this simple case, verify the field exists
-	// and the API works. A true non-converging case is hard to construct
-	// without artificial iteration limits.
-	t.Logf("widening events count: %d", len(inputs.WideningEvents))
-}
-
-// TestPreflowConvergence_WideningDiagnosticEmitted tests that widening diagnostics
-// are emitted when preflow inference doesn't converge.
-func TestPreflowConvergence_WideningDiagnosticEmitted(t *testing.T) {
-	// This test verifies the diagnostic plumbing works.
-	// Note: Most real code converges within the iteration limit,
-	// so widening diagnostics are rare in practice.
-	source := `
-local a, b, c, d, e
-
-a = function() return b() end
-b = function() return c() end
-c = function() return d() end
-d = function() return e() end
-e = function() return a() end
-`
-
-	result := testutil.Check(source, testutil.WithStdlib())
-
-	if result.Session == nil || result.Session.RootResult == nil {
-		t.Fatal("expected session with root result")
-	}
-
-	// Count widening diagnostics (if any)
-	wideningDiagCount := 0
-	for _, d := range result.Session.Diagnostics {
-		if d.Severity == diag.SeverityWarning {
-			if len(d.Message) > 0 && (contains(d.Message, "widened to unknown") || contains(d.Message, "type inference did not converge")) {
-				wideningDiagCount++
-				t.Logf("Widening diagnostic: %s", d.Message)
-			}
-		}
-	}
-
-	// Log whether widening occurred
-	inputs := result.Session.RootResult.FlowInputs
-	if inputs != nil {
-		t.Logf("widening events: %d, widening diagnostics: %d", len(inputs.WideningEvents), wideningDiagCount)
-
-		// If widening events occurred, diagnostics should be emitted
-		if len(inputs.WideningEvents) > 0 && wideningDiagCount == 0 {
-			t.Error("widening events occurred but no diagnostics were emitted")
-		}
-	}
+	assertNoConvergenceWarnings(t, result.Diagnostics)
 }
 
 // TestPreflowConvergence_MapEntryFallbackCounters_NoWarnings reproduces
@@ -354,13 +291,25 @@ mark_passed("suite:a")
 	}
 
 	for _, d := range result.Diagnostics {
-		if d.Severity != diag.SeverityWarning {
-			continue
-		}
-		if contains(d.Message, "type inference did not converge") || d.Message == "inter-function fixpoint did not converge" {
+		if isConvergenceWarning(d) {
 			t.Fatalf("unexpected convergence warning: %q", d.Message)
 		}
 	}
+}
+
+func assertNoConvergenceWarnings(t *testing.T, diags []diag.Diagnostic) {
+	t.Helper()
+	for _, d := range diags {
+		if isConvergenceWarning(d) {
+			t.Fatalf("unexpected convergence warning: %q", d.Message)
+		}
+	}
+}
+
+func isConvergenceWarning(d diag.Diagnostic) bool {
+	return d.Severity == diag.SeverityWarning &&
+		(contains(d.Message, "type inference did not converge") ||
+			contains(d.Message, "inter-function fixpoint did not converge"))
 }
 
 // contains is a simple substring check helper.

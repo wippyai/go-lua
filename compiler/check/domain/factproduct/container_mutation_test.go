@@ -108,3 +108,61 @@ func TestMergeContainerMutationSlices_KeepsOperatorKindsDistinct(t *testing.T) {
 		t.Fatalf("expected separate facts for same path with different operators, got %#v", got)
 	}
 }
+
+func TestWidenCapturedContainerMutations_JoinsSameContainerElement(t *testing.T) {
+	prevRecord := typ.NewRecord().Field("name", typ.Any).Build()
+	nextRecord := typ.NewRecord().Field("error", typ.String).Build()
+
+	prev := api.CapturedContainerMutations{
+		10: {
+			20: {
+				{Kind: api.ContainerMutationContainerElement, ValueType: prevRecord},
+			},
+		},
+	}
+	next := api.CapturedContainerMutations{
+		10: {
+			20: {
+				{Kind: api.ContainerMutationContainerElement, ValueType: nextRecord},
+			},
+		},
+	}
+
+	got := WidenCapturedContainerMutations(prev, next)
+	muts := got[10][20]
+	if len(muts) != 1 {
+		t.Fatalf("len(muts) = %d, want 1", len(muts))
+	}
+	if typ.TypeEquals(muts[0].ValueType, prevRecord) || typ.TypeEquals(muts[0].ValueType, nextRecord) {
+		t.Fatalf("expected joined container element type, got %v", muts[0].ValueType)
+	}
+	if !typ.TypeEquals(got[10][20][0].ValueType, WidenCapturedContainerMutations(got, next)[10][20][0].ValueType) {
+		t.Fatalf("widened captured container mutation must be idempotent, got %v then %v", got[10][20][0].ValueType, WidenCapturedContainerMutations(got, next)[10][20][0].ValueType)
+	}
+}
+
+func TestWidenCapturedContainerMutations_DedupesSameIterationMutations(t *testing.T) {
+	firstRecord := typ.NewRecord().Field("name", typ.Any).Build()
+	secondRecord := typ.NewRecord().Field("error", typ.String).Build()
+
+	next := api.CapturedContainerMutations{
+		10: {
+			20: {
+				{Kind: api.ContainerMutationContainerElement, ValueType: firstRecord},
+				{Kind: api.ContainerMutationContainerElement, ValueType: secondRecord},
+			},
+		},
+	}
+
+	got := WidenCapturedContainerMutations(nil, next)
+	muts := got[10][20]
+	if len(muts) != 1 {
+		t.Fatalf("len(muts) = %d, want 1 canonical mutation per path", len(muts))
+	}
+	if typ.TypeEquals(muts[0].ValueType, firstRecord) || typ.TypeEquals(muts[0].ValueType, secondRecord) {
+		t.Fatalf("expected same-iteration container writes to join, got %v", muts[0].ValueType)
+	}
+	if !CapturedContainerMutationsEqual(got, WidenCapturedContainerMutations(got, next)) {
+		t.Fatalf("widened captured container mutations must be idempotent")
+	}
+}

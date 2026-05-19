@@ -1,7 +1,6 @@
 package infer
 
 import (
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
@@ -12,21 +11,20 @@ import (
 )
 
 // iterateSCCFixpoint runs fixpoint iteration for a single SCC until convergence.
-// Returns true if types stabilized within the iteration limit.
+// Returns once the widened return-vector product stabilizes.
 func (i *Inferencer) iterateSCCFixpoint(
 	run RunContext,
 	scc []cfg.SymbolID,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	returnVectors map[cfg.SymbolID][]typ.Type,
 ) bool {
-	for iter := 0; iter < i.maxIterations; iter++ {
+	for {
 		next, changed := i.runSCCIteration(run, scc, localFuncs, returnVectors)
 		applySCCIterationUpdates(returnVectors, scc, next)
 		if !changed {
 			return true
 		}
 	}
-	return false
 }
 
 func (i *Inferencer) planLocalFunctionSCCs(localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo) [][]cfg.SymbolID {
@@ -75,19 +73,13 @@ func (i *Inferencer) processSCCReturnVectors(
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	returnVectors map[cfg.SymbolID][]typ.Type,
 ) []diag.Diagnostic {
-	var diags []diag.Diagnostic
 	for _, scc := range sccs {
 		if len(scc) == 0 {
 			continue
 		}
-		if i.iterateSCCFixpoint(run, scc, localFuncs, returnVectors) {
-			continue
-		}
-		if warn := i.widenSCCToUnknown(scc, localFuncs, returnVectors); warn != nil {
-			diags = append(diags, *warn)
-		}
+		i.iterateSCCFixpoint(run, scc, localFuncs, returnVectors)
 	}
-	return diags
+	return nil
 }
 
 func (i *Inferencer) runSCCIteration(
@@ -105,7 +97,7 @@ func (i *Inferencer) runSCCIteration(
 		}
 		newReturn := i.inferReturnForFunction(run, info, returnVectors, localFuncs)
 		oldReturn := returnVectors[sym]
-		merged := returnsummary.Merge(oldReturn, newReturn)
+		merged := returnsummary.WidenForConvergence(oldReturn, newReturn)
 		next[sym] = merged
 		if !returnsummary.Equal(merged, oldReturn) {
 			changed = true
@@ -124,34 +116,4 @@ func applySCCIterationUpdates(
 			returnVectors[sym] = v
 		}
 	}
-}
-
-// widenSCCToUnknown widens all SCC members to unknown when fixpoint did not converge.
-// Preserves return arity while replacing type slots with unknown.
-func (i *Inferencer) widenSCCToUnknown(
-	scc []cfg.SymbolID,
-	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
-	returnVectors map[cfg.SymbolID][]typ.Type,
-) *diag.Diagnostic {
-	for _, sym := range scc {
-		existing := returnVectors[sym]
-		if len(existing) == 0 {
-			returnVectors[sym] = []typ.Type{typ.Unknown}
-		} else {
-			widened := make([]typ.Type, len(existing))
-			for i := range widened {
-				widened[i] = typ.Unknown
-			}
-			returnVectors[sym] = widened
-		}
-	}
-	if info := localFuncs[scc[0]]; info != nil && info.Fn != nil {
-		return &diag.Diagnostic{
-			Position: diag.Position{File: i.sourceName, Line: info.Fn.Line(), Column: info.Fn.Column()},
-			Span:     ast.SpanOf(info.Fn),
-			Severity: diag.SeverityWarning,
-			Message:  "return type fixpoint did not converge; using unknown",
-		}
-	}
-	return nil
 }

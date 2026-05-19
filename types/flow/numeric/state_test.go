@@ -55,6 +55,33 @@ func TestState_Clone_Nil(t *testing.T) {
 	}
 }
 
+func TestWiden_DropsMovingBounds(t *testing.T) {
+	prev := NewState()
+	prev.ApplyGeConst("x", 1)
+	prev.ApplyLeConst("x", 1)
+	next := NewState()
+	next.ApplyGeConst("x", 2)
+	next.ApplyLeConst("x", 2)
+
+	if got := Widen(prev, next); got != nil {
+		t.Fatalf("moving exact bound widened to %v, want top", got)
+	}
+}
+
+func TestWiden_KeepsStableBounds(t *testing.T) {
+	prev := NewState()
+	prev.ApplyGeConst("x", 1)
+	prev.ApplyLeConst("x", 10)
+	next := NewState()
+	next.ApplyGeConst("x", 1)
+	next.ApplyLeConst("x", 10)
+
+	got := Widen(prev, next)
+	if got == nil || !got.Equals(prev) {
+		t.Fatalf("stable bound widened to %v, want %v", got, prev)
+	}
+}
+
 func TestState_ApplyBounds(t *testing.T) {
 	s := NewState()
 	s.ApplyGeConst("x", 0)

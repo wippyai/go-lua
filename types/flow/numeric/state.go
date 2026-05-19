@@ -269,6 +269,75 @@ func Join(a, b *State) *State {
 	return result
 }
 
+// Widen returns the stable facts shared by the previous and next numeric states.
+//
+// Numeric facts inside loops can move indefinitely (for example a counter whose
+// exact upper bound increases on each trip). The sound widening is to keep only
+// facts that are unchanged across iterations and drop moving facts to Top.
+func Widen(prev, next *State) *State {
+	if prev == nil && next == nil {
+		return nil
+	}
+	if prev == nil || prev.isTop() {
+		return next.Clone()
+	}
+	if next == nil || next.isTop() {
+		return nil
+	}
+	if prev.unsat {
+		return next.Clone()
+	}
+	if next.unsat {
+		return prev.Clone()
+	}
+
+	result := &State{}
+	for k, pv := range prev.bounds {
+		if nv, ok := next.bounds[k]; ok && pv == nv {
+			if result.bounds == nil {
+				result.bounds = make(map[constraint.PathKey]Interval)
+			}
+			result.bounds[k] = pv
+		}
+	}
+	for k, pv := range prev.modular {
+		if nv, ok := next.modular[k]; ok && pv == nv {
+			if result.modular == nil {
+				result.modular = make(map[constraint.PathKey]ModResidue)
+			}
+			result.modular[k] = pv
+		}
+	}
+	for k, pv := range prev.relations {
+		if nv, ok := next.relations[k]; ok && pv == nv {
+			if result.relations == nil {
+				result.relations = make(map[relationKey]int64)
+			}
+			result.relations[k] = pv
+		}
+	}
+	for k, pv := range prev.lenRefs {
+		if nv, ok := next.lenRefs[k]; ok && pv == nv {
+			if result.lenRefs == nil {
+				result.lenRefs = make(map[constraint.PathKey]lenRefBound)
+			}
+			result.lenRefs[k] = pv
+		}
+	}
+	for k, pv := range prev.lenBounds {
+		if nv, ok := next.lenBounds[k]; ok && pv == nv {
+			if result.lenBounds == nil {
+				result.lenBounds = make(map[constraint.PathKey]Interval)
+			}
+			result.lenBounds[k] = pv
+		}
+	}
+	if result.isTop() {
+		return nil
+	}
+	return result
+}
+
 // intersectIntervals computes the intersection of two intervals.
 //
 // The intersection is the range of values that satisfy both intervals:

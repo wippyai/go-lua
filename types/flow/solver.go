@@ -552,7 +552,6 @@ func (s *Solution) solve() {
 		}
 	}
 
-	maxIterations := g.Size() * 100
 	for len(worklist) > 0 {
 		// FIFO queue: process in forward RPO order for correct dataflow
 		p := worklist[0]
@@ -575,9 +574,6 @@ func (s *Solution) solve() {
 		}
 
 		s.iterations++
-		if s.iterations > maxIterations {
-			break
-		}
 	}
 }
 

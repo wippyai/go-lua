@@ -16,11 +16,8 @@ func MergeContainerMutationSlices(
 	next []api.ContainerMutation,
 	merge ContainerMutationMerger,
 ) []api.ContainerMutation {
-	if len(existing) == 0 {
-		return next
-	}
-	if len(next) == 0 {
-		return existing
+	if len(existing) == 0 && len(next) == 0 {
+		return nil
 	}
 
 	mergeFn := merge
@@ -29,17 +26,20 @@ func MergeContainerMutationSlices(
 	}
 
 	byKey := make(map[string]api.ContainerMutation, len(existing)+len(next))
-	for _, m := range existing {
-		byKey[api.ContainerMutationKey(m)] = m
-	}
-	for _, m := range next {
+	add := func(m api.ContainerMutation) {
 		key := api.ContainerMutationKey(m)
 		if prev, ok := byKey[key]; ok {
 			merged := mergeFn(&prev, m)
 			byKey[key] = merged
-			continue
+			return
 		}
 		byKey[key] = mergeFn(nil, m)
+	}
+	for _, m := range existing {
+		add(m)
+	}
+	for _, m := range next {
+		add(m)
 	}
 
 	out := make([]api.ContainerMutation, 0, len(byKey))
@@ -55,15 +55,12 @@ func MergeCapturedContainerMutationMaps(
 	next map[cfg.SymbolID][]api.ContainerMutation,
 	merge ContainerMutationMerger,
 ) map[cfg.SymbolID][]api.ContainerMutation {
-	if existing == nil {
-		return next
-	}
-	if next == nil {
-		return existing
+	if len(existing) == 0 && len(next) == 0 {
+		return nil
 	}
 	merged := make(map[cfg.SymbolID][]api.ContainerMutation, len(existing)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(existing) {
-		merged[sym] = existing[sym]
+		merged[sym] = MergeContainerMutationSlices(nil, existing[sym], merge)
 	}
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		merged[sym] = MergeContainerMutationSlices(merged[sym], next[sym], merge)

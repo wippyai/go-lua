@@ -19,6 +19,7 @@
 //   - WithCall: Argument type mismatches in function calls
 //   - WithField: Invalid field access on types without the field
 //   - WithControl: Unreachable code and control flow issues
+//   - WithExhaustiveness: Non-exhaustive discriminated union matches
 //   - WithIdent: References to undefined identifiers
 //
 // # USAGE
@@ -50,6 +51,7 @@ func All() []check.Option {
 		WithCall(),
 		WithField(),
 		WithControl(),
+		WithExhaustiveness(),
 		WithIdent(),
 	}
 }
@@ -104,6 +106,16 @@ func WithControl() check.Option {
 			return nil
 		}
 		return CheckControl(fn.Stmts, sess.SourceName)
+	})
+}
+
+// WithExhaustiveness enables warnings for non-exhaustive discriminated union matches.
+func WithExhaustiveness() check.Option {
+	return check.WithPass(func(sess *check.Session, fn *ast.FunctionExpr, result *api.FuncResult) []diag.Diagnostic {
+		if fn == nil || result.Graph == nil || result.NarrowSynth == nil {
+			return nil
+		}
+		return CheckExhaustiveness(fn, result.Graph, result.NarrowSynth.Narrow(), sess.SourceName)
 	})
 }
 

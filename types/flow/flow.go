@@ -49,11 +49,6 @@
 //   - MapElementSource: Derives types from dynamic map index reads (t[k])
 //   - SiblingAssignment: Correlates multi-return values (result, err patterns)
 //
-// # Widening
-//
-// When recursive dependencies prevent convergence, symbols are widened to Unknown.
-// WideningEvent records these cases for diagnostic reporting.
-//
 // # Subpackages
 //
 // The flow package has several subpackages:
@@ -178,13 +173,6 @@ type EdgeNumericConstraint struct {
 	Constraints []constraint.NumericConstraint
 }
 
-// WideningEvent records when preflow inference widens a symbol to Unknown.
-type WideningEvent struct {
-	Symbol   cfg.SymbolID   // Widened symbol
-	SCCIndex int            // Index of the non-converged SCC
-	SCC      []cfg.SymbolID // All symbols in the SCC
-}
-
 // TypeDecomposer extracts element, key, and value types from composite types.
 // Used by the flow solver for iterator and container element derivation
 // without depending on query/core.
@@ -273,10 +261,6 @@ type Inputs struct {
 	// LiteralTypes provides function literal types synthesized in the literal phase.
 	// Explicit overlay, never merged into DeclaredTypes.
 	LiteralTypes map[cfg.SymbolID]typ.Type
-
-	// WideningEvents records symbols that were widened to Unknown during preflow inference.
-	// Used for diagnostics to report precision loss.
-	WideningEvents []WideningEvent
 
 	// KeysProvenance tracks variables that contain keys of another table.
 	// Key: symbol of variable holding keys (e.g., suite_names)
