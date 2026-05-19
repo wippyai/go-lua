@@ -1200,6 +1200,334 @@ Examples:
 
 Effects are applied by transfer. They do not rewrite types directly.
 
+## Relation And Effect Calculus
+
+Relations and effects are the bridge between local flow precision and
+interprocedural power. They must be first-class domain facts, not names of known
+functions.
+
+Core rule:
+
+```text
+Relations describe conditional truth between locations.
+Effects describe state transitions caused by execution.
+```
+
+An assertion, predicate, table mutator, callback, error-return convention, and
+terminating function all fit this rule.
+
+### Relation Shape
+
+A relation should be represented as a structured fact:
+
+```text
+Relation =
+  RelationID
+  + Participants
+  + Arms
+  + Directionality
+  + Validity
+  + Provenance
+```
+
+Participants are canonical locations:
+
+- tuple slots,
+- locals,
+- fields,
+- indexes,
+- receiver/self,
+- callback arguments,
+- captured paths.
+
+Arms describe conditional cases:
+
+- success/failure branch,
+- true/false predicate branch,
+- nil/non-nil branch,
+- type-test branch,
+- discriminant branch,
+- custom effect branch.
+
+Directionality matters. Some relations are bidirectional; many are not. For
+example, `err == nil` may imply success-side value evidence, but using a value
+does not necessarily prove `err == nil` unless the relation declares that
+reverse implication.
+
+Validity records when the relation is safe to apply:
+
+- CFG region,
+- dominance/post-dominance requirement,
+- location identity requirement,
+- alias validity,
+- tuple-slot identity,
+- function summary boundary,
+- effect precondition.
+
+### Relation Operations
+
+The relation domain should own these operations:
+
+```text
+Attach(relation, state)
+Assume(location predicate, state)
+Remap(relation, location mapping)
+Project(location, state)
+Join(a, b)
+Widen(prev, next)
+Publish(relation, boundary)
+```
+
+`Attach` stores a relation after validating participants.
+`Assume` applies a branch predicate and derives consequences.
+`Remap` preserves a relation through assignment, wrapper forwarding, or tuple
+reordering only when identity mapping is explicit.
+`Project` answers what a relation proves about a queried location.
+`Join` keeps only facts valid on all incoming paths or marks path-conditional
+arms explicitly.
+`Widen` bounds recursive relation growth.
+`Publish` emits only relations that remain meaningful across the boundary.
+
+Forbidden relation operations:
+
+- infer relation from return arity alone;
+- preserve relation after assignment without location mapping;
+- treat a predicate function name as proof outside effect transfer;
+- erase relation provenance during join;
+- encode relation as a special `typ.Type`.
+
+### Tuple Relation Law
+
+The `(value, err)` convention is one tuple relation instance:
+
+```text
+SuccessArm: err is nil     -> value is success value
+FailureArm: err is non-nil -> value is nil/unknown failure value
+```
+
+It is not:
+
+- any two-return function,
+- any call followed by `test.is_nil`,
+- a special return-summary vector,
+- a call-checking hack.
+
+Custom error records, boolean-success APIs, result objects, and status-code
+APIs should be expressible by defining different relation arms over locations.
+
+### Predicate Relation Law
+
+Predicate/assertion functions apply relations through effects.
+
+Examples:
+
+- `is_nil(x)` proves nil/non-nil branches for `x`;
+- `is_string(x)` proves string/non-string branches for `x`;
+- `assert_type(x, "string")` refines `x` or terminates;
+- `has_field(x, "name")` proves presence for `x.name`;
+- custom manifest predicate proves declared relation arms.
+
+The function name is only a lookup key for an effect summary. The effect summary
+is the semantic object.
+
+Wrong shape:
+
+```text
+if call name == "test.is_nil" then patch value type
+```
+
+Correct shape:
+
+```text
+call -> effect summary -> relation transfer -> query
+```
+
+### Effect Shape
+
+An effect summary should be a structured transition:
+
+```text
+Effect =
+  EffectID
+  + Preconditions
+  + MemoryEffects
+  + RelationEffects
+  + ValueEffects
+  + TerminationEffect
+  + CallbackEffects
+  + PublicationPolicy
+  + Provenance
+```
+
+Preconditions decide when the effect is valid.
+Memory effects mutate locations through `MemoryDomain`.
+Relation effects attach or assume relations through `RelationDomain`.
+Value effects refine or produce value evidence through `ValueDomain`.
+Termination effects update reachability through `TerminationDomain`.
+Callback effects describe higher-order execution.
+Publication policy decides whether the summary can cross a function/module
+boundary.
+
+### Effect Application Law
+
+Applying an effect is transfer:
+
+```text
+Call instruction
+  -> resolve callee/effect summary
+  -> instantiate summary with actual argument/receiver/return locations
+  -> validate preconditions
+  -> apply memory effects
+  -> apply relation effects
+  -> apply value effects
+  -> apply termination effects
+  -> schedule callback effects if invoked
+```
+
+Every sub-step calls the owning domain. The effect domain coordinates; it does
+not own memory, value, relation, or termination laws.
+
+### Callback Effect Law
+
+Callbacks are effectful calls whose callee is a parameter or field.
+
+Rules:
+
+- callback invocation has its own call site and locations;
+- callback argument evidence flows as call observations;
+- callback return/effect evidence flows back only through declared callback
+  summary;
+- captured caller memory can be mutated only through explicit captured location
+  effects;
+- unknown callback effects are not pure unless the effect row is closed.
+
+This prevents higher-order code from becoming a blind spot or a source of
+unsound broadening.
+
+### Termination Law
+
+Termination is an effect, not a diagnostic side channel.
+
+Examples:
+
+- `error()` terminates the current path;
+- assertion failure terminates one branch;
+- `return` terminates the current function path;
+- infinite loop may terminate analysis reachability differently from runtime
+  non-return depending on proof.
+
+Reachability must update before value queries observe post-call state. Otherwise
+the checker can report false positives from impossible paths or accept values
+from dead branches.
+
+### Open And Closed Effect Rows
+
+Effects need the same open/closed discipline as structural types.
+
+Closed effect row:
+
+```text
+This call has exactly these modeled effects.
+```
+
+Open effect row:
+
+```text
+This call has at least these effects; unknown effects may remain.
+```
+
+Rules:
+
+- no effect summary does not mean pure call;
+- closed pure summary can prove no mutation/termination/refinement;
+- open summary cannot prove absence of unknown mutation;
+- unknown external call must not refine values without a declared effect;
+- manifest effects are typed inputs, not hardcoded behavior.
+
+### Relation/Effect Join And Widen
+
+Join:
+
+- keeps relations/effects valid on all joined paths;
+- preserves path-conditional arms when the domain represents them explicitly;
+- drops or weakens facts whose participant locations are no longer identical;
+- never converts absence of relation into proof of independence.
+
+Widen:
+
+- bounds recursive relation chains;
+- bounds callback/effect expansion;
+- bounds recursive captured mutation growth;
+- preserves sound top/unknown effects when precision is lost.
+
+Precision loss here must be visible as domain widening, not hidden in query or
+publication.
+
+### Publication Law
+
+Publishable relations/effects:
+
+- function return tuple relation,
+- predicate/assertion function relation summary,
+- captured memory mutation effect,
+- callback invocation effect,
+- termination/non-returning effect,
+- external manifest effect,
+- constructor/receiver mutation effect.
+
+Non-publishable relations/effects:
+
+- branch-local guard that does not escape;
+- local assertion proof after the checked value dies;
+- relation over temporary tuple slots unless remapped to exported locations;
+- query-only refinement;
+- diagnostic-only proof.
+
+Publication should remap local locations to boundary locations. If a relation or
+effect cannot be remapped, it does not publish.
+
+### Performance Consequences
+
+The relation/effect calculus should improve performance by making reuse
+structural.
+
+Expected wins:
+
+- relation queries index by participant location;
+- effect summaries are cached by callee identity and manifest/source version;
+- effect instantiation is local and cheap because locations are canonical;
+- callback expansion is bounded by summary widening;
+- wrapper forwarding remaps relation IDs instead of resynthesizing return
+  behavior;
+- predicate handling uses one transfer path.
+
+Rejected shapes:
+
+- scanning all relations for every type query;
+- recomputing effect summaries inside every call check;
+- using string function names in hot semantic paths;
+- replaying captured mutations by rebuilding table types;
+- preserving all recursive callback effects without widening;
+- clearing false positives by treating unknown effects as pure.
+
+### Relation And Effect Law Tests
+
+The flash migration should add focused tests for:
+
+- tuple relation attaches only from declared summary, not arity;
+- tuple relation survives identity wrapper forwarding;
+- tuple relation remaps through swapped returns only with explicit mapping;
+- predicate effect narrows only declared participants;
+- assertion termination removes impossible paths before value query;
+- unknown external call does not refine argument;
+- closed pure effect proves no mutation;
+- open effect row does not prove no mutation;
+- callback call observation reaches callback parameter evidence;
+- callback unknown effects do not mutate closed state without declaration;
+- captured mutation effect preserves operator kind and target location;
+- relation join does not invent independence;
+- recursive relation/effect widening converges without erasing all useful proof.
+
 ### Delta
 
 A `Delta` is a completed analysis contribution to another scope or iteration.
