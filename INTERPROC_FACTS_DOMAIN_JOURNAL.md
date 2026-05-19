@@ -651,6 +651,252 @@ checker. These are the invariants that should guide the flash migration.
 - derived views are not write targets;
 - snapshot inputs mirror canonical read state exactly.
 
+## Domain Interaction Protocol
+
+The product-domain design is only useful if packages interact through a small
+set of verbs. These verbs are the mental model for the future implementation.
+
+```text
+Syntax/Graph -> Instruction -> Transfer -> Domain operation -> AbstractState
+AbstractState -> Query -> Answer
+FunctionResult -> InterprocDelta -> FactsDomain -> Snapshot
+```
+
+### Transfer
+
+Transfer applies one semantic instruction to one abstract state.
+
+Allowed:
+
+- read the instruction payload,
+- ask a domain for local semantic operations,
+- produce a new abstract state.
+
+Forbidden:
+
+- scan unrelated AST,
+- publish interproc facts,
+- mutate Salsa inputs,
+- call compatibility projections,
+- repair old facts.
+
+If a transfer needs a type meaning question, it asks `ValueDomain`. If it needs
+a location question, it asks `MemoryDomain`. If it needs a correlation question,
+it asks `RelationDomain`. It does not inline those laws.
+
+### Domain Operation
+
+A domain operation defines what a fact means and how it combines.
+
+Allowed:
+
+- normalize owned values,
+- compare owned values,
+- join owned values,
+- meet or refine owned values,
+- widen owned values,
+- answer pure owned-domain predicates.
+
+Forbidden:
+
+- depend on source syntax,
+- depend on checker phase order,
+- allocate hidden facts in another domain,
+- read mutable store state,
+- perform query invalidation.
+
+Domain operations must be deterministic and law-testable without constructing a
+whole checker.
+
+### Abstract State
+
+`AbstractState` is the one mutable semantic product during analysis.
+
+Allowed:
+
+- hold domain components,
+- combine components through their domains,
+- expose read-only query views after solving.
+
+Forbidden:
+
+- keep shadow facts that duplicate domain-owned facts,
+- hide a second mini solver,
+- let equality normalize,
+- let queries write analysis evidence.
+
+### Query
+
+Queries answer questions against solved state.
+
+Allowed:
+
+- read state,
+- memoize performance-only answers keyed by immutable input,
+- project final user-facing answers.
+
+Forbidden:
+
+- create new evidence,
+- change convergence,
+- backfill facts into the store,
+- call `Join` or `Widen`.
+
+If a query discovers that useful information is missing, the correct response is
+to add a transfer/effect/domain fact that produces it before solving. The query
+must not become a hidden analysis phase.
+
+### Publication
+
+Publication converts a solved function result into an immutable interproc delta.
+
+Allowed:
+
+- summarize returns,
+- summarize parameter obligations,
+- summarize captured effects,
+- summarize relations,
+- emit deltas.
+
+Forbidden:
+
+- merge deltas directly,
+- reconcile legacy channels,
+- mutate existing facts,
+- apply caller-specific preferences.
+
+The only writer of canonical interproc state is `FactsDomain`.
+
+### Snapshot
+
+Snapshotting wires canonical facts into Salsa inputs.
+
+Allowed:
+
+- copy canonical facts into inputs,
+- invalidate dependent queries through Salsa dependency tracking.
+
+Forbidden:
+
+- normalize,
+- widen,
+- infer,
+- drop fields for compatibility,
+- reconstruct projections that were not canonical facts.
+
+Snapshotting is cache plumbing. It is not part of type semantics.
+
+## Layering And Import Rules
+
+The final code should make illegal designs difficult to express. Package
+dependencies should encode the semantic architecture.
+
+### Domain Packages
+
+Domain packages may import:
+
+- low-level type structures,
+- subtype/query primitives,
+- small immutable domain-local helper packages.
+
+Domain packages must not import:
+
+- AST packages,
+- flow builders,
+- checker store,
+- Salsa database handles,
+- diagnostics emitters,
+- compatibility view builders.
+
+Reason: a domain is a pure algebra over facts. If it can see syntax or mutable
+store state, local helper logic will grow back.
+
+### Memory And Location Packages
+
+Memory/location packages may import:
+
+- symbol/location identity,
+- type values needed to represent field and container facts,
+- relation keys where tuple/path identity must be preserved.
+
+They must not import:
+
+- call checking,
+- interproc store,
+- return inference,
+- diagnostics formatting.
+
+Reason: every producer must use the same path identity rules. No producer should
+construct its own equivalent of "field path", "tuple slot", or "receiver self".
+
+### Transfer Packages
+
+Transfer packages may import:
+
+- normalized checker IR,
+- abstract state,
+- domain set,
+- memory/location model.
+
+They must not import:
+
+- old fact bridges,
+- compatibility projections,
+- checker diagnostics as control flow,
+- global interproc store mutation.
+
+Reason: transfer is the executable abstract semantics for one instruction. It
+can create deltas inside state, but publication happens later.
+
+### Store And Pipeline Packages
+
+Store/pipeline packages may import:
+
+- domain interfaces,
+- abstract interpreter engine,
+- Salsa database handles,
+- diagnostics/reporting.
+
+They must not implement:
+
+- truthiness laws,
+- soft/hard evidence ordering,
+- return tuple relation semantics,
+- path dominance rules,
+- recursive type widening.
+
+Reason: orchestration controls when analysis runs. Domains control what analysis
+means.
+
+### Query Packages
+
+Query packages may import:
+
+- read-only solved state,
+- Salsa query APIs,
+- pure domain predicates used for answering.
+
+They must not import:
+
+- mutable transfer state,
+- publication writers,
+- domain normalization writers.
+
+Reason: a query can be cached aggressively only when it is pure.
+
+### Test Packages
+
+Tests should mirror these boundaries:
+
+- domain law tests construct only domain values,
+- transfer tests build small IR fragments and inspect abstract state,
+- solver tests check convergence and widening,
+- replay tests validate production programs,
+- negative tests prove that convenience broadening did not happen.
+
+Tests that require a whole checker to prove a simple domain law are a signal
+that the domain boundary is still too implicit.
+
 ## Dataflow Walkthroughs
 
 ### Guarded Field To Call Argument
@@ -865,6 +1111,102 @@ Rules:
 - higher-order signatures must use variance-aware merge rules;
 - literal signatures are facts in the interproc product, not a second function
   authority.
+
+### Effect Inference
+
+Scope:
+
+- built-in and manifest call effects,
+- assertion/predicate refinements,
+- table and container mutations,
+- callback invocation effects,
+- termination and non-returning calls,
+- return tuple relation attachment,
+- captured mutation summaries,
+- external contract effects.
+
+Authority:
+
+```text
+EffectDomain
+MemoryDomain
+RelationDomain
+TerminationDomain
+```
+
+Rules:
+
+- an effect is an abstract transfer summary, not a postflow patch;
+- applying an effect must produce the same state change as inlining its
+  corresponding transfer instructions would produce, up to the abstraction;
+- effect summaries preserve target locations, tuple slots, operator kind,
+  dominance, and provenance;
+- effects that refine values must emit relation/value constraints through the
+  owning domains;
+- effects that mutate memory must emit memory mutations through the memory
+  domain;
+- effects that terminate execution must update reachability before any value
+  query observes the post-call state;
+- callback effects are higher-order summaries and must be applied at the call
+  edge that invokes the callback, not at publication time;
+- external effects are typed inputs to the domain, not hardcoded names in call
+  checking.
+
+Wrong effect inference shapes:
+
+- "after this call, rewrite argument type" in call checking;
+- "after this function, patch captured fields" in interproc merge;
+- "if function name is `test.is_nil`, narrow slot" outside relation/effect
+  transfer;
+- "if table mutator is seen later, replay as generic container mutation";
+- "if global harness fails, add a special accepted shape".
+
+Correct effect inference shape:
+
+```text
+call instruction
+  -> resolve effect summary
+  -> EffectDomain.Apply(summary, state)
+  -> MemoryDomain/RelationDomain/ValueDomain/TerminationDomain operations
+  -> new AbstractState
+```
+
+Effect inference must be compositional. A user-defined wrapper around an effect
+should publish the same kind of summary that the built-in effect uses, so callers
+do not need wrapper-specific logic.
+
+### Inference Soundness Boundary
+
+The checker should infer every property that is proven by:
+
+- source annotations,
+- reachable transfer facts,
+- memory/path identity,
+- relation facts,
+- effect summaries,
+- interproc summaries,
+- declared external contracts.
+
+The checker must not infer a property from:
+
+- the type expected by a later failing call,
+- most callers preferring a shape,
+- `any`,
+- absent evidence,
+- a compatibility projection,
+- a cache hit whose input identity is incomplete.
+
+This boundary is the core soundness rule:
+
+```text
+Expected type is a constraint to check against evidence.
+It is not evidence unless a declared contract explicitly says so.
+```
+
+Contextual typing is still valid, but it must be represented as evidence with
+provenance. For example, a table literal checked against an expected record can
+receive contextual field types at the literal boundary. A dynamic payload flowing
+through `any` cannot acquire those field types because a callee wanted them.
 
 ## Phase Responsibility Table
 
@@ -1605,6 +1947,53 @@ Performance target:
 - stable interning/hash-consing where already available,
 - no object pools until ownership is proved and structural wins are exhausted.
 
+### Cache Placement Decision Model
+
+Use Salsa when:
+
+- the computation is pure,
+- the inputs are immutable identities,
+- dependency tracking can precisely invalidate dependent queries,
+- the result is reused across functions, modules, or fixpoint iterations,
+- recomputation is more expensive than dependency tracking.
+
+Use a per-function local cache when:
+
+- the computation is hot inside one solve,
+- the cache key is a small local identity,
+- the result is invalid after the current function solve,
+- Salsa dependency tracking would be more expensive than recomputation.
+
+Use no cache when:
+
+- the operation is a cheap domain primitive,
+- the input is already interned,
+- the allocation is caused by poor ownership rather than repeated work,
+- correctness would require observing mutable phase order.
+
+Do not use a pool until:
+
+- the allocation site remains hot after domain consolidation,
+- ownership of each pooled object is single-phase and obvious,
+- tests prove no retained result can observe a reused object,
+- profiling shows the pool wins after synchronization and clearing costs.
+
+The main expected Salsa gains are:
+
+- graph-indexed parameter-use summaries instead of AST rescans,
+- function-result queries keyed by graph and parent scope,
+- pure type/operator queries,
+- shape classification for large recursive types if profiling proves reuse,
+- canonical interproc snapshots as inputs instead of manually invalidated maps.
+
+The main non-Salsa gains are:
+
+- domain operations that avoid rebuilding maps for no-op joins,
+- path/location interning,
+- copy-on-write fact vectors,
+- removing compatibility projections from hot publication paths,
+- making equality structural instead of repair-driven.
+
 ## Weak Points To Fix In The Design
 
 ### 1. Domain Laws Are Not Named
@@ -1769,6 +2158,57 @@ Every cache must state:
 - whether it is semantic or performance-only.
 
 If the cache depends on phase call order, it is not SOTA.
+
+## Failure Taxonomy
+
+Future regressions should be classified by failed domain responsibility, not by
+the helper function that happened to produce the symptom.
+
+| Symptom | Likely Owner | First Question |
+|---|---|---|
+| guarded field still nilable at call site | `RelationDomain` or `MemoryDomain` | Did the guard create a path relation for the same location queried by the call? |
+| error-return refinement does not affect value slot | `RelationDomain` | Was the tuple relation preserved through return assignment and wrapper forwarding? |
+| external dynamic value passes concrete parameter | `ValueDomain` or `ParameterEvidenceDomain` | Did `any` get treated as proof instead of dynamic top? |
+| unknown disappears from return summary | `ReturnSummaryDomain` | Did join/widen erase unresolved evidence? |
+| nil field write behaves like absent field | `MemoryDomain` | Was nil overwrite represented as a value fact instead of structural deletion? |
+| closed missing field behaves like open row-tail | `ValueDomain` or `MemoryDomain` | Was openness carried on the record/map component being queried? |
+| table insert lost before iteration | `MemoryDomain` and `EffectDomain` | Was mutation replay attached to the canonical child location and operator kind? |
+| recursive type keeps growing | owning domain `Widen` | Is growth bounded at the correct SCC/fixpoint boundary? |
+| result changes after no semantic input changed | Salsa/cache layer | Is a cache keyed by mutable state or phase order? |
+| result does not change after facts changed | Salsa/cache layer | Did the query read the canonical snapshot input that changed? |
+| lint clears by accepting too much | `ValueDomain` or assignability boundary | Which negative test proves the new acceptance is sound? |
+| repeated performance hot spot after caching | domain/query boundary | Is the computation duplicated because the owner is unclear? |
+
+Classification rule:
+
+```text
+If a symptom requires reading three unrelated helpers to understand why it
+happened, the domain model is still wrong.
+```
+
+The fix should move the law to the owner, delete the scattered helpers, and add
+domain law tests plus one production-shaped replay test.
+
+## Traceability Matrix
+
+Every high-value behavior should be traceable from syntax to proof.
+
+| Behavior | Producer | Canonical Fact | Consumer | Proof |
+|---|---|---|---|---|
+| truthy field guard | condition transfer | path truthiness relation | call/type query | relation law + guarded-call fixture |
+| `test.is_nil(err)` success branch | predicate effect transfer | tuple-slot relation constraint | value-slot query | relation law + error-return fixture |
+| body demands parameter field | transfer over field read/use | parameter obligation | interproc fact join | parameter evidence law + SCC fixture |
+| call observes argument type | call transfer | call observation | parameter evidence join | authority-order law + negative any fixture |
+| table insert mutates array element | effect transfer | container element mutation | iteration query | memory law + dominance fixture |
+| nil overwrite | assignment transfer | explicit nil value or deletion effect | field query | nil/absent law + record fixture |
+| wrapper forwards returns | return transfer | tuple relation preservation | caller assignment | relation preservation law + wrapper fixture |
+| imported dynamic payload | external contract transfer | `any` or `unknown` with provenance | assignability check | value law + negative concrete-param fixture |
+| recursive local function | SCC solver | widened param/return evidence | function result query | widen law + convergence fixture |
+| module export | publication | immutable interproc delta | dependent Salsa query | snapshot dependency test |
+
+This matrix is not a test list by itself. It is the audit trail showing that a
+behavior has one producer, one canonical representation, one consumer path, and
+one proof family.
 
 ## Design Review Decision Tree
 
@@ -1953,6 +2393,80 @@ No step should leave:
 - duplicate merge functions for the same semantic slot,
 - fallback normalization in equality,
 - broad `any` acceptance to clear lints.
+
+## Flash Cutover Gate
+
+The flash migration should be reviewed as one semantic cutover, not as a chain
+of transitional accommodations. The cutover is ready only when the following
+artifacts can be listed before coding starts.
+
+### Deletion Map
+
+For each old helper cluster:
+
+- current file/package,
+- semantic law it currently approximates,
+- final domain owner,
+- final API call site,
+- tests that replace helper-specific tests,
+- commit in which the helper disappears.
+
+If a helper cannot be mapped to a domain owner, the design is incomplete. If it
+maps to more than one owner, the fact representation is probably mixed and must
+be split before implementation.
+
+### Replacement Map
+
+For each production call site:
+
+- current call,
+- final call,
+- expected semantic output,
+- changed cache dependency if any,
+- changed diagnostic behavior if any.
+
+The migration should not introduce "temporary" calls that are expected to be
+removed later. A call site either moves to the final API or stays unchanged until
+the cutover is ready.
+
+### Proof Map
+
+For each domain law:
+
+- unit law test,
+- one positive checker fixture,
+- one negative checker fixture when soundness could be weakened,
+- one replay/global-harness case if the law came from real code.
+
+No proof should depend only on external lint going quiet. The suite must show
+both the precision gain and the rejection boundary.
+
+### Performance Map
+
+For each expensive operation touched:
+
+- current benchmark/profile location,
+- final owner,
+- expected cache key or no-cache reason,
+- allocation behavior,
+- invalidation story.
+
+Performance work should favor fewer repeated analyses and fewer duplicated data
+structures before object pools. Pools are allowed only after ownership is clear
+and tests prove no fact lifetime can leak across checks.
+
+### Cutover Rejection Rules
+
+Reject the migration if it contains:
+
+- compatibility authority,
+- fallback repair,
+- two writers for one fact,
+- query-time publication,
+- equality-time normalization,
+- broad assignability introduced only to clear production code,
+- new cache without an immutable input contract,
+- new helper whose name describes a case instead of a domain law.
 
 ## Proposed Final Package Map
 
