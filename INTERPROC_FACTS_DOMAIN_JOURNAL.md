@@ -176,6 +176,178 @@ The doctrine gives a direct review test:
 
 No rule should need to be implemented twice under different helper names.
 
+## Abstract Machine Specification
+
+The final checker should be specified as a small abstract machine. This gives the
+code a single target shape and gives reviews a way to reject scattered helper
+logic.
+
+```text
+Machine =
+  Inputs
+  + Program
+  + State
+  + Domains
+  + Worklist
+  + QueryView
+  + Publisher
+```
+
+### Inputs
+
+Inputs are immutable during one function analysis query:
+
+- graph identity,
+- parent scope identity,
+- manifest/module environment,
+- declared type environment,
+- canonical interproc snapshot,
+- constructor snapshot,
+- effect/refinement snapshot,
+- graph summaries,
+- pure type-query engine.
+
+Inputs are the only values allowed to affect the answer besides the transfer
+program. If an answer depends on something not listed here, the dependency model
+is incomplete.
+
+### Program
+
+The program is normalized checker IR:
+
+- no source AST policy decisions,
+- no hidden synthesis callbacks,
+- no direct store mutation,
+- no cache-dependent control flow.
+
+Each instruction has one meaning as a transfer over `AbstractState`.
+
+### State
+
+The state is the product:
+
+```text
+State =
+  Memory
+  x Values
+  x Shapes
+  x NumericFacts
+  x Relations
+  x Effects
+  x Termination
+  x DiagnosticsEvidence
+```
+
+`DiagnosticsEvidence` is not user diagnostics. It is proof metadata such as
+"this constraint failed here" or "this widening lost precision here". User
+diagnostics are emitted after solving by querying this evidence. This keeps
+diagnostic formatting out of domain semantics.
+
+### Domains
+
+Domains define the algebra:
+
+```text
+Normalize, Leq, Join, Meet, Refine, Widen, Equal
+```
+
+Every operation must be local to its owned component or explicitly part of a
+product operation. For example, relation transfer can ask value and memory
+domains to interpret a path predicate, but it cannot create a private value
+merge law.
+
+### Worklist
+
+The worklist owns traversal, not meaning.
+
+Allowed:
+
+- schedule CFG points,
+- schedule SCC members,
+- detect local stabilization,
+- invoke loop/SCC widening at declared boundaries.
+
+Forbidden:
+
+- prefer one fact over another,
+- normalize facts,
+- publish interproc state,
+- recover precision after widening.
+
+If the worklist needs semantic information to decide convergence, that
+information must be exposed through `Leq` or `Equal` on the relevant domain.
+
+### QueryView
+
+The query view is a read-only projection over solved state.
+
+It answers:
+
+- type at location/point,
+- relation at location/point,
+- effect summary at call/function boundary,
+- return tuple summary,
+- parameter obligation summary,
+- diagnostic projection.
+
+It must not write facts, widen, repair state, or backfill caches that later act
+as analysis state.
+
+### Publisher
+
+The publisher converts solved state into immutable deltas:
+
+```text
+State -> FunctionResult -> InterprocDelta
+```
+
+The publisher does not merge with previous results. It does not reconstruct
+legacy channels. It emits the final product-domain representation expected by
+`FactsDomain`.
+
+### Machine Transition Rules
+
+The core machine transitions are:
+
+```text
+step(instruction, state) = Transfer.Apply(instruction, state, domains)
+join(predStates)         = AbstractState.Join(predStates, domains)
+widen(prev, next)        = AbstractState.Widen(prev, next, domains)
+query(state, question)   = QueryView.Answer(state, question)
+publish(state)           = InterprocDelta
+```
+
+Every specialized feature should reduce to these transitions:
+
+- branch narrowing is transfer plus join;
+- field writes are memory transfer;
+- table mutators are effect transfer plus memory transfer;
+- assertions are effect transfer plus relation/value refinement;
+- error-return behavior is relation transfer over tuple slots;
+- callback behavior is higher-order effect transfer;
+- local function inference is an SCC over function-state summaries;
+- interproc inference is a fixpoint over `InterprocDelta` values.
+
+If a feature cannot be expressed this way, either the machine is missing a
+domain or the feature is implemented at the wrong layer.
+
+### Machine Laws
+
+The implementation should preserve these laws:
+
+- Transfer is monotone with respect to domain `Leq`.
+- Join is least-upper-bound or a documented approximation.
+- Meet/refine never invents evidence without provenance.
+- Widen is only applied at explicit recursive boundaries.
+- Normalize is idempotent and is not hidden in equality.
+- Query is pure over solved state.
+- Publication is deterministic.
+- Cache hits do not change semantics.
+- Diagnostics are projections of evidence, not sources of evidence.
+
+These laws should become test names. A regression that violates one of them is a
+design regression, not a local bug.
+
 ## Semantic Atoms
 
 The final design should use a small shared vocabulary. These words should have
@@ -1877,6 +2049,136 @@ Output:
 - Salsa snapshot inputs and dependent query invalidation.
 
 No semantic repair is allowed here. Snapshotting is cache wiring only.
+
+## Nested Fixed-Point Model
+
+The final checker has several fixed points, but they should all use the same
+domain vocabulary. The existence of multiple schedules does not justify
+multiple semantic models.
+
+### Level 0: Pure Graph Summaries
+
+Graph summaries are not fixpoints over types. They are immutable facts about
+syntax and binding:
+
+- parameter uses,
+- return sites,
+- local function edges,
+- call sites,
+- mutator sites,
+- captured path mentions,
+- normalized transfer instructions.
+
+They can be cached by graph identity because they do not read interproc facts or
+solved flow state.
+
+### Level 1: Intraprocedural CFG Fixpoint
+
+The local solver computes:
+
+```text
+CFG x TransferProgram x InitialState -> SolvedState
+```
+
+Convergence boundary:
+
+- CFG joins use `AbstractState.Join`;
+- loops use the relevant domain widen only when a loop-carried component grows
+  past the domain's finite-height fragment;
+- dead/unreachable paths update termination/reachability before value queries.
+
+Forbidden:
+
+- AST rescans during solve,
+- producer-specific joins,
+- query-time narrowing that writes state,
+- loop-specific precision hacks outside domain widening.
+
+### Level 2: Local Function SCC Fixpoint
+
+Local functions inside a graph can be mutually recursive. The final model should
+treat their summaries as another domain product:
+
+```text
+FunctionSummary =
+  Parameters
+  x Returns
+  x Relations
+  x Effects
+  x Captures
+```
+
+Convergence boundary:
+
+- recursive calls read the current SCC summary through the function fact domain;
+- each function body emits a new summary delta;
+- SCC join/widen uses the same parameter, return, relation, effect, capture,
+  and memory domains used elsewhere;
+- when the SCC stabilizes, the solved summaries become ordinary evidence for
+  the enclosing function analysis.
+
+This replaces "return overlay", "preflow synthesis", and "local function
+snapshot repair" as separate semantic concepts. Those may remain as scheduling
+or performance techniques, but not as separate laws.
+
+### Level 3: Interprocedural Fixpoint
+
+The outer fixpoint computes canonical facts across function/module boundaries:
+
+```text
+InterprocPrev + all FunctionResult deltas -> InterprocNext
+InterprocPrev' = FactsDomain.Widen(InterprocPrev, InterprocNext)
+```
+
+Convergence boundary:
+
+- producers emit immutable deltas;
+- `FactsDomain` is the only merge/widen authority;
+- no producer reads its own just-emitted delta except through the declared
+  current-iteration overlay contract;
+- equality checks canonical state only;
+- snapshot inputs are updated only after the canonical product changes.
+
+Iteration caps are diagnostics, not semantics. If convergence requires raising a
+cap for normal programs, the relevant `Widen` is missing or too precise.
+
+### Level 4: Incremental Revalidation
+
+Salsa does not define type semantics. It revalidates query results after inputs
+change.
+
+Required dependency shape:
+
+```text
+FuncResultQ
+  reads GraphSummaryQ
+  reads Manifest/Input queries
+  reads SnapshotInputs
+  reads TypeQuery caches
+  computes local fixed points
+  publishes deltas
+```
+
+When a snapshot input is unchanged, dependent results should revalidate without
+re-solving. When a graph summary is unchanged, function queries should not rescan
+the AST to rediscover it. When a type-query cache hits, it should only avoid
+structural recomputation; it must not mask missing checker dependencies.
+
+### Fixed-Point Proof Obligations
+
+Each level needs a proof surface:
+
+- finite input identity,
+- monotone transfer or documented approximation,
+- explicit join/widen boundary,
+- stable equality without repair,
+- deterministic publication,
+- cache invalidation by immutable dependency.
+
+Performance and soundness meet at these obligations. A cache that is missing a
+dependency is unsound. A widen that erases too much precision causes false
+positives. A join that keeps rebuilding equivalent maps causes unnecessary
+invalidations.
 
 ## Salsa And Cache Model
 
