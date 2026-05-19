@@ -123,6 +123,49 @@ func TestCallPipeline_ExpectedArgType_OutOfRange(t *testing.T) {
 	}
 }
 
+func TestCallPipeline_ExpectedArgType_Intersection(t *testing.T) {
+	ctx := db.NewQueryContext(db.New())
+	fnA := typ.Func().Param("x", typ.String).Returns(typ.Any).Build()
+	fnB := typ.Func().Param("x", typ.String).Returns(typ.Unknown).Build()
+	def := ops.CallDef{
+		Callee: typ.NewIntersection(fnA, fnB),
+		Args:   []typ.Type{typ.NewOptional(typ.String)},
+	}
+	pipeline := NewCallPipeline(ctx, def, []ast.Expr{&ast.LogicalOpExpr{}})
+	pipeline.Infer()
+
+	arg0 := pipeline.ExpectedArgType(0)
+	if arg0 != typ.String {
+		t.Fatalf("got %v, want string", arg0)
+	}
+}
+
+func TestCallPipeline_IntersectionReSynthesizesLogicalArg(t *testing.T) {
+	ctx := db.NewQueryContext(db.New())
+	fnA := typ.Func().Param("x", typ.String).Returns(typ.Any).Build()
+	fnB := typ.Func().Param("x", typ.String).Returns(typ.Unknown).Build()
+	arg := &ast.LogicalOpExpr{}
+	def := ops.CallDef{
+		Callee: typ.NewIntersection(fnA, fnB),
+		Args:   []typ.Type{typ.NewOptional(typ.String)},
+	}
+	pipeline := NewCallPipeline(ctx, def, []ast.Expr{arg}).
+		WithReSynth(func(idx int, got ast.Expr, expected typ.Type) typ.Type {
+			if got != arg {
+				t.Fatalf("got arg %p, want %p", got, arg)
+			}
+			if expected != typ.String {
+				t.Fatalf("got expected %v, want string", expected)
+			}
+			return typ.String
+		})
+
+	result := pipeline.Run()
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no errors after contextual re-synthesis, got %v", result.Errors)
+	}
+}
+
 func TestCallPipeline_ReSynthAndReInfer_NoReSynth(t *testing.T) {
 	ctx := db.NewQueryContext(db.New())
 	fn := typ.Func().Build()
@@ -272,7 +315,49 @@ func TestFullArgReSynth_Other(t *testing.T) {
 	result := reSynth(0, &ast.NumberExpr{}, typ.Integer)
 
 	if result != nil {
-		t.Fatal("expected nil for non-function/table")
+		t.Fatal("expected nil for expression that does not benefit from contextual re-synthesis")
+	}
+}
+
+func TestFullArgReSynth_Cast(t *testing.T) {
+	called := false
+	synthWithExpected := func(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type {
+		called = true
+		if _, ok := arg.(*ast.CastExpr); !ok {
+			t.Fatalf("got %T, want CastExpr", arg)
+		}
+		return typ.String
+	}
+
+	reSynth := FullArgReSynth(synthWithExpected, nil, 0)
+	result := reSynth(0, &ast.CastExpr{}, typ.String)
+
+	if !called {
+		t.Fatal("expected callback to be called for cast expression")
+	}
+	if result != typ.String {
+		t.Fatalf("got %v, want string", result)
+	}
+}
+
+func TestFullArgReSynth_Logical(t *testing.T) {
+	called := false
+	synthWithExpected := func(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type {
+		called = true
+		if _, ok := arg.(*ast.LogicalOpExpr); !ok {
+			t.Fatalf("got %T, want LogicalOpExpr", arg)
+		}
+		return typ.String
+	}
+
+	reSynth := FullArgReSynth(synthWithExpected, nil, 0)
+	result := reSynth(0, &ast.LogicalOpExpr{}, typ.String)
+
+	if !called {
+		t.Fatal("expected callback to be called for logical expression")
+	}
+	if result != typ.String {
+		t.Fatalf("got %v, want string", result)
 	}
 }
 

@@ -325,6 +325,19 @@ func ByFieldLiteral(t typ.Type, field string, lit *typ.Literal, resolver Resolve
 	if t == nil || field == "" || lit == nil || resolver == nil {
 		return t
 	}
+	return refineByFieldLiteral(t, field, lit, resolver)
+}
+
+func refineByFieldLiteral(t typ.Type, field string, lit *typ.Literal, resolver Resolver) typ.Type {
+	if t == nil {
+		return t
+	}
+	if a, ok := t.(*typ.Alias); ok {
+		return refineByFieldLiteral(a.Target, field, lit, resolver)
+	}
+	if expanded := unwrap.Instantiated(t); expanded != t {
+		return refineByFieldLiteral(expanded, field, lit, resolver)
+	}
 	if t.Kind().IsPlaceholder() || unwrap.IsBuiltinTableTop(t) {
 		// Refining `table` by a field literal should materialize a structural
 		// shape so downstream assignment/subtyping can use the discriminant.
@@ -333,9 +346,70 @@ func ByFieldLiteral(t typ.Type, field string, lit *typ.Literal, resolver Resolve
 		return typ.NewRecord().Field(field, lit).SetOpen(true).Build()
 	}
 
-	return FilterByMatch(t, func(m typ.Type) bool {
-		return FieldMatchesLiteral(m, field, lit, resolver)
-	}, false)
+	switch v := t.(type) {
+	case *typ.Optional:
+		return refineByFieldLiteral(v.Inner, field, lit, resolver)
+	case *typ.Union:
+		kept := make([]typ.Type, 0, len(v.Members))
+		for _, m := range v.Members {
+			refined := refineByFieldLiteral(m, field, lit, resolver)
+			if refined != nil && !refined.Kind().IsNever() {
+				kept = append(kept, refined)
+			}
+		}
+		if len(kept) == 0 {
+			return typ.Never
+		}
+		return typ.NewUnion(kept...)
+	case *typ.Record:
+		return refineRecordByFieldLiteral(v, field, lit, resolver)
+	case *typ.Map:
+		return refineMapByFieldLiteral(v, field, lit, resolver)
+	case *typ.Intersection:
+		if FieldMatchesLiteral(v, field, lit, resolver) {
+			return v
+		}
+		return typ.Never
+	default:
+		if FieldMatchesLiteral(t, field, lit, resolver) {
+			return t
+		}
+		return typ.Never
+	}
+}
+
+func refineRecordByFieldLiteral(r *typ.Record, field string, lit *typ.Literal, resolver Resolver) typ.Type {
+	if r == nil {
+		return typ.Never
+	}
+	if f := r.GetField(field); f != nil {
+		if f.Type == nil || !typ.TypeMatchesLiteral(f.Type, lit) {
+			return typ.Never
+		}
+		if f.Type.Kind().IsPlaceholder() {
+			return typ.ExtendRecordWithField(r, field, lit)
+		}
+		return r
+	}
+	fieldType, ok := resolver.Field(r, field)
+	if !ok || fieldType == nil || !typ.TypeMatchesLiteral(fieldType, lit) {
+		return typ.Never
+	}
+	return typ.ExtendRecordWithField(r, field, lit)
+}
+
+func refineMapByFieldLiteral(m *typ.Map, field string, lit *typ.Literal, resolver Resolver) typ.Type {
+	if m == nil {
+		return typ.Never
+	}
+	fieldType, ok := resolver.Field(m, field)
+	if !ok || fieldType == nil || !typ.TypeMatchesLiteral(fieldType, lit) {
+		return typ.Never
+	}
+	return typ.NewRecord().
+		Field(field, lit).
+		MapComponent(m.Key, m.Value).
+		Build()
 }
 
 // ExcludeByFieldLiteral excludes union members where a field exactly equals a literal.

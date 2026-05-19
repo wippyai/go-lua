@@ -156,6 +156,8 @@ func FullArgReSynth(
 				return expected
 			}
 			return inferred
+		case *ast.CastExpr, *ast.LogicalOpExpr, *ast.FuncCallExpr, *ast.NonNilAssertExpr:
+			return synthWithExpected(a, p, expected)
 		}
 		return nil
 	}

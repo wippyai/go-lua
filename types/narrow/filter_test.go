@@ -137,6 +137,9 @@ func (r *mockResolver) Field(t typ.Type, name string) (typ.Type, bool) {
 		if f := rec.GetField(name); f != nil {
 			return f.Type, true
 		}
+		if rec.Open {
+			return typ.Unknown, true
+		}
 	}
 	key := t.String()
 	if fields, ok := r.fields[key]; ok {
@@ -363,6 +366,60 @@ func TestByFieldLiteral_PlaceholderMaterializesRecord(t *testing.T) {
 	want := typ.NewRecord().Field("type", lit).SetOpen(true).Build()
 	if !typ.TypeEquals(result, want) {
 		t.Errorf("ByFieldLiteral(any, type, \"image\") = %v, want %v", result, want)
+	}
+}
+
+func TestByFieldLiteral_OpenRecordMissingFieldMaterializesLiteral(t *testing.T) {
+	resolver := newMockResolver()
+	lit := typ.LiteralString("image")
+	base := typ.NewRecord().Field("text", typ.LiteralString("")).SetOpen(true).Build()
+
+	result := ByFieldLiteral(base, "type", lit, resolver)
+	want := typ.NewRecord().
+		Field("text", typ.LiteralString("")).
+		Field("type", lit).
+		SetOpen(true).
+		Build()
+	if !typ.TypeEquals(result, want) {
+		t.Errorf("ByFieldLiteral(open record, type, \"image\") = %v, want %v", result, want)
+	}
+}
+
+func TestByFieldLiteral_OpenRecordRefinementIsOrderIndependent(t *testing.T) {
+	resolver := newMockResolver()
+	image := typ.LiteralString("image")
+	empty := typ.LiteralString("")
+
+	leftFirst := ByFieldLiteral(ByFieldLiteral(typ.Any, "text", empty, resolver), "type", image, resolver)
+	rightFirst := ByFieldLiteral(ByFieldLiteral(typ.Any, "type", image, resolver), "text", empty, resolver)
+	if !typ.TypeEquals(leftFirst, rightFirst) {
+		t.Fatalf("field literal refinements should commute, got %v and %v", leftFirst, rightFirst)
+	}
+
+	want := typ.NewRecord().
+		Field("text", empty).
+		Field("type", image).
+		SetOpen(true).
+		Build()
+	if !typ.TypeEquals(leftFirst, want) {
+		t.Errorf("combined refinement = %v, want %v", leftFirst, want)
+	}
+}
+
+func TestByFieldLiteral_UnionRefinesOpenMembers(t *testing.T) {
+	resolver := newMockResolver()
+	image := typ.LiteralString("image")
+	textOnly := typ.NewRecord().Field("text", typ.LiteralString("")).SetOpen(true).Build()
+	functionCall := typ.NewRecord().Field("type", typ.LiteralString("function_call")).SetOpen(true).Build()
+
+	result := ByFieldLiteral(typ.NewUnion(textOnly, functionCall), "type", image, resolver)
+	want := typ.NewRecord().
+		Field("text", typ.LiteralString("")).
+		Field("type", image).
+		SetOpen(true).
+		Build()
+	if !typ.TypeEquals(result, want) {
+		t.Errorf("ByFieldLiteral(union, type, \"image\") = %v, want %v", result, want)
 	}
 }
 

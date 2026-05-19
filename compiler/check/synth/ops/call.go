@@ -360,14 +360,7 @@ func InferCall(ctx *db.QueryContext, def CallDef) InferResult {
 	}
 
 	if callee.Kind() == kind.Intersection {
-		return InferResult{
-			Kind:                InferKindIntersection,
-			Callee:              callee,
-			Receiver:            receiver,
-			IsMethod:            isMethod,
-			ForceMethodReceiver: def.ForceMethodReceiver,
-			Errors:              errors,
-		}
+		return inferIntersection(ctx, callee.(*typ.Intersection), def, isMethod, receiver, errors)
 	}
 
 	fn, ok := callee.(*typ.Function)
@@ -417,6 +410,69 @@ func inferFunction(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod
 	result.Instantiated = InstantiateFunction(fn, typeArgs)
 	result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, result.Instantiated, isMethod, receiver, def.ForceMethodReceiver)
 
+	return result
+}
+
+// inferIntersection aggregates contextual argument expectations from every
+// callable intersection member. FinishCall still validates every member, so
+// these expectations guide expression synthesis without weakening checking.
+func inferIntersection(ctx *db.QueryContext, inter *typ.Intersection, def CallDef, isMethod bool, receiver typ.Type, errors []CallError) InferResult {
+	result := InferResult{
+		Kind:                InferKindIntersection,
+		Callee:              inter,
+		Receiver:            receiver,
+		IsMethod:            isMethod,
+		ForceMethodReceiver: def.ForceMethodReceiver,
+		Errors:              errors,
+	}
+	if inter == nil {
+		return result
+	}
+
+	var (
+		aggExpected []typ.Type
+		aggVariadic typ.Type
+		found       bool
+	)
+	for _, member := range inter.Members {
+		fn, ok := member.(*typ.Function)
+		if !ok {
+			continue
+		}
+
+		instantiated := fn
+		typeArgs := []typ.Type(nil)
+		if len(fn.TypeParams) > 0 {
+			if len(def.TypeArgs) > 0 {
+				typeArgs = def.TypeArgs
+			} else {
+				var err error
+				typeArgs, err = InferTypeArgsWithExpectedAndMode(fn, def.Args, isMethod, receiver, def.ExpectedReturn, def.ForceMethodReceiver)
+				if err != nil {
+					continue
+				}
+			}
+			instantiated = InstantiateFunction(fn, typeArgs)
+		}
+
+		expectedArgs, expectedVariadic := computeExpectedArgs(ctx, def.Query, instantiated, isMethod, receiver, def.ForceMethodReceiver)
+		if !found {
+			found = true
+			result.Function = fn
+			result.TypeArgs = typeArgs
+			result.Instantiated = instantiated
+			aggExpected = append([]typ.Type(nil), expectedArgs...)
+			aggVariadic = expectedVariadic
+			continue
+		}
+		aggExpected = mergeExpectedArgVectors(aggExpected, expectedArgs)
+		aggVariadic = typ.JoinPreferNonSoft(aggVariadic, expectedVariadic)
+	}
+
+	if found {
+		result.ExpectedArgs = aggExpected
+		result.ExpectedVariadic = aggVariadic
+	}
 	return result
 }
 

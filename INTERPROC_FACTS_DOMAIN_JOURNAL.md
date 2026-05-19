@@ -397,6 +397,108 @@ Verification for this slice so far:
   2 warnings. One first run printed agent/src 12 errors; direct replay of that
   target and a full rerun both returned 10.
 
+## 2026-05-19 False-Positive Replay And Domain Refinement Checkpoint
+
+The next pass classified remaining local-replace lint failures and fixed the
+ones that were checker false positives without weakening `any` soundness.
+
+Direct engine fixes:
+
+- the call pipeline now re-synthesizes every expected-sensitive argument form
+  that can change meaning under a concrete callee parameter expectation:
+  function literals, table literals, identifiers, attribute reads, explicit
+  casts, logical operators, call expressions, and non-nil assertions;
+- intersection callees now publish contextual expected-argument vectors during
+  phase one, using the same merge law as union callees while still requiring
+  `FinishCall` to validate every intersection member;
+- positive field-literal narrowing is now a domain meet for top/open table
+  shapes instead of only a union filter. A guard such as `part.type == "image"`
+  materializes the proven field on `any`, table top, maps, and open records with
+  row-tail evidence. Existing closed broad fields keep the previous "may match"
+  policy, so `field: string` does not collapse to a literal singleton merely
+  because one branch compared it.
+
+The key false-positive class was:
+
+```lua
+for _, part in ipairs(content) do
+    if part.type == "text" and part.text and part.text ~= "" then
+        table.insert(content_blocks, { text = part.text })
+    elseif part.type == "image" then
+        convert_image_to_converse(part)
+    end
+end
+```
+
+When `content` came from `any`, the negative side of the text branch could
+create an open `{text: ""}` shape. The later `part.type == "image"` check kept
+that open shape because the open tail could contain `type`, but it failed to
+record the hard proof that this branch's `type` field is present and equal to
+`"image"`. The result was a false error when passing `part` to a helper that
+requires a `type: string` field.
+
+Correct abstract interpretation:
+
+```text
+Observation: part.type == "image"
+Location:    Location(part).field("type")
+Evidence:    hard runtime proof, field-literal equality
+Domain:      value/shape meet
+State:       open row-tail shape plus explicit type = "image"
+Query:       helper parameter assignability sees required type field
+```
+
+Wrong interpretation:
+
+```text
+open row-tail may contain type -> keep the old shape unchanged
+```
+
+That wrong interpretation lost proof. It was not a reason to let `any` flow
+into concrete contracts generally.
+
+Regression coverage added:
+
+- imported optional response-body fallback into an imported string call;
+- explicit cast of an imported unknown field into an imported method call;
+- intersection callee expected-argument publication;
+- logical/cast/call/non-nil expected-sensitive argument re-synthesis;
+- discriminated array elements from typed and untyped sources;
+- open-record field-literal meet commutativity and union refinement laws.
+
+Local-replace Wippy replay after this fix:
+
+- `wippy.llm.bedrock:mapper` line 240 is clean; the reproduced checker false
+  positive is gone.
+- `wippy.llm.bedrock:mapper` still reports line 503 (`parse_text_tool_call(text,
+  tool_names)` with `text` from `text_blocks`). This is not fixed in go-lua
+  because `text_blocks` is populated from `block.text` on an untyped external
+  payload. `if block.text then` proves truthiness, not stringness. Treating that
+  as string would be an `any`-to-concrete unsoundness unless the engine grows an
+  explicit successful-operator refinement model for `..` and string methods.
+- session dependency diagnostics such as `expected string, got string?` remain
+  tied to pinned/locked external source shapes without a local fallback or cast.
+- larger local-replace sweeps still contain true strictness diagnostics where
+  `any`, `unknown`, optional values, or intentionally invalid test inputs flow
+  into concrete contracts. Those must not be hidden by changing go-lua
+  assignability.
+
+Verification for this pass:
+
+- `go test ./types/constraint ./types/flow ./types/narrow` passes.
+- `go test ./compiler/check/synth/phase/extract ./compiler/check/synth/ops
+  ./compiler/check/tests/regression` passes.
+- `go test ./compiler/check/...` passes.
+- `go test ./...` passes.
+- `git diff --check` passes.
+- `go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction
+  -benchmem -count=3` reports about 1.13-1.15 ms/op, 881 KB/op, and 9390
+  allocs/op on this machine.
+- `../scripts/verify-suite.sh` passes the go-lua checker tests and Wippy binary
+  build, then exits non-zero on the external pinned lint targets:
+  session 8 errors, agent/src 8 errors, docker-demo 21 errors and 2 warnings.
+  The rest of the verify-suite lint targets report zero diagnostics.
+
 ## Goal
 
 The checker should read as one abstract interpreter over a product domain.

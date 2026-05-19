@@ -48,6 +48,44 @@ local parsed, parse_err = json.decode(response.body or "")
 	}
 }
 
+func TestExternalLint_ImportedOptionalResponseBodyDefaultIsStringAtCall(t *testing.T) {
+	jsonModule := testutil.CheckAndExport(`
+local json = {}
+function json.decode(raw: string): any
+	return {}
+end
+return json
+`, "json", testutil.WithStdlib())
+	if jsonModule.HasError() {
+		t.Fatalf("json module errors: %v", testutil.ErrorMessages(jsonModule.Errors))
+	}
+
+	source := `
+local json = require("json")
+
+type Response = {
+	status_code: number,
+	body: string?,
+}
+
+local function request(): (Response?, string?)
+	return { status_code = 200 }, nil
+end
+
+local response, err = request()
+if not response then
+	return nil, err
+end
+
+local parsed, parse_err = json.decode(response.body or "")
+return parsed, parse_err
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("json", jsonModule))
+	if result.HasError() {
+		t.Fatalf("expected imported optional body fallback to feed string call argument, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestExternalLint_GuardedOptionsModelSurvivesProviderBranches(t *testing.T) {
 	source := `
 local models = {
@@ -289,6 +327,50 @@ local result, err = get_page_data({ data_func = true })
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected explicit field cast to feed call argument checking, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_CastUnknownImportedFieldFeedsImportedMethodCall(t *testing.T) {
+	templatesModule := testutil.CheckAndExport(`
+local templates = {}
+function templates.get(id: string)
+	return {
+		render = function(self, name: string, context: table)
+			return name, nil
+		end,
+		release = function(self)
+		end,
+	}, nil
+end
+return templates
+`, "templates", testutil.WithStdlib())
+	if templatesModule.HasError() {
+		t.Fatalf("templates module errors: %v", testutil.ErrorMessages(templatesModule.Errors))
+	}
+
+	source := `
+local templates = require("templates")
+
+local function get_page()
+	return {
+		template_set = "main",
+		template_name = nil :: unknown,
+	}
+end
+
+local page = get_page()
+local tmpl, err = templates.get(page.template_set)
+if err then
+	return nil, err
+end
+
+local content, render_err = tmpl:render(page.template_name :: string, {})
+tmpl:release()
+return content, render_err
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("templates", templatesModule))
+	if result.HasError() {
+		t.Fatalf("expected explicit cast of imported field to feed method argument checking, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 
@@ -582,5 +664,112 @@ end
 			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
 		}
 		t.Fatalf("expected discriminated array element to feed image helper, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_DiscriminatedArrayElementDoesNotInheritAccumulatorShape(t *testing.T) {
+	source := `
+type ImagePart = {
+	type: string,
+	source: any?,
+	text: string?,
+}
+
+local function convert_image_to_converse(content_part: ImagePart)
+	if content_part.type == "image" and content_part.source then
+		return { image = content_part.source }
+	end
+	return nil
+end
+
+local message = {
+	content = {
+		{ type = "text", text = "hello" },
+		{ type = "image", source = { media_type = "image/png", data = "abc" } },
+	},
+}
+
+local content_blocks = {}
+for _, part in ipairs(message.content) do
+	if part.type == "text" and part.text and part.text ~= "" then
+		table.insert(content_blocks, { text = part.text })
+	elseif part.type == "image" then
+		local img = convert_image_to_converse(part)
+		if img then
+			table.insert(content_blocks, img)
+		end
+	end
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected discriminated source array element not to inherit accumulator-only shapes, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_UntypedDiscriminatedArrayElementFeedsTypedBranchHelper(t *testing.T) {
+	source := `
+type ImagePart = {
+	type: string,
+	source: any?,
+	text: string?,
+}
+
+local prompt = {
+	ROLE = {
+		ASSISTANT = "assistant",
+	}
+}
+
+local function convert_image_to_converse(content_part: ImagePart)
+	if content_part.type == "image" and content_part.source then
+		return { image = content_part.source }
+	end
+	return nil
+end
+
+local function map_messages(contract_messages)
+	local converse_messages = {}
+	for _, msg in ipairs(contract_messages) do
+		if msg.role == prompt.ROLE.ASSISTANT then
+			local content_blocks = {}
+			local content = msg.content
+			if type(content) == "string" then
+				if content ~= "" then
+					table.insert(content_blocks, { text = content })
+				end
+			elseif type(content) == "table" then
+				for _, part in ipairs(content) do
+					if part.type == "text" and part.text and part.text ~= "" then
+						table.insert(content_blocks, { text = part.text })
+					elseif part.type == "function_call" then
+						table.insert(content_blocks, { toolUse = { name = part.name or "" } })
+					elseif part.type == "image" then
+						local img = convert_image_to_converse(part)
+						if img then
+							table.insert(content_blocks, img)
+						end
+					end
+				end
+			end
+			if #content_blocks > 0 then
+				table.insert(converse_messages, { role = "assistant", content = content_blocks })
+			end
+		end
+	end
+	return converse_messages
+end
+
+map_messages(nil :: any)
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected untyped discriminated source element to feed typed image helper, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
