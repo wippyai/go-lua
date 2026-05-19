@@ -83,6 +83,17 @@ func TestFieldUnion(t *testing.T) {
 		}
 	})
 
+	t.Run("field missing from all record members", func(t *testing.T) {
+		got, ok := Field(union, "missing")
+		if !ok {
+			t.Error("expected missing record-union field to resolve as nil")
+			return
+		}
+		if !typ.TypeEquals(got, typ.Nil) {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+
 	t.Run("empty union members", func(t *testing.T) {
 		emptyUnion := &typ.Union{Members: []typ.Type{}}
 

@@ -3,6 +3,8 @@ package paramhints
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -86,7 +88,23 @@ func TestWidenParamHintType_Union(t *testing.T) {
 	}
 }
 
-func TestWidenParamHintType_RecordBecomesOpen(t *testing.T) {
+func TestNormalizeHintType_TableTopAbsorbsPreciseTableMembers(t *testing.T) {
+	tableTop := typ.NewInterface("table", nil)
+	preciseA := typ.NewRecord().
+		Field("name", typ.String).
+		Field("tools", typ.NewArray(typ.String)).
+		Build()
+	preciseB := typ.NewMap(typ.String, typ.Integer)
+	hint := typ.NewUnion(typ.NewOptional(tableTop), preciseA, preciseB, typ.String)
+
+	got := NormalizeHintType(hint)
+	want := typ.NewUnion(typ.NewOptional(tableTop), typ.String)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected table top to absorb precise table members as %v, got %v", want, got)
+	}
+}
+
+func TestWidenParamHintType_RecordPreservesClosedShape(t *testing.T) {
 	rec := typ.NewRecord().
 		Field("pid", typ.LiteralString("abc")).
 		Field("topic", typ.LiteralString("test:update")).
@@ -97,8 +115,8 @@ func TestWidenParamHintType_RecordBecomesOpen(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected record result, got %T", result)
 	}
-	if !widened.Open {
-		t.Fatalf("expected widened param hint record to be open, got closed: %v", widened)
+	if widened.Open {
+		t.Fatalf("expected param hint to preserve closed call-site shape, got open: %v", widened)
 	}
 
 	pid := widened.GetField("pid")
@@ -116,6 +134,293 @@ func TestBuildParamHintSignatures_NilInputs(t *testing.T) {
 	if result != nil {
 		t.Errorf("expected nil for nil inputs, got %v", result)
 	}
+}
+
+func TestMergeIntoSignature_ImplicitSelfUsesEffectiveHintSlots(t *testing.T) {
+	fn := functionWithParams("name")
+	sig := typ.Func().
+		Param("self", typ.Unknown).
+		Param("name", typ.Unknown).
+		Build()
+	selfType := typ.NewRecord().Field("prefix", typ.String).Build()
+
+	got := MergeIntoSignature(fn, []typ.Type{selfType, typ.String}, sig)
+	if got == nil || len(got.Params) != 2 {
+		t.Fatalf("unexpected merged signature: %v", got)
+	}
+	if !typ.TypeEquals(got.Params[0].Type, selfType) {
+		t.Fatalf("self hint should use effective slot 0, got %v", got.Params[0].Type)
+	}
+	if !typ.TypeEquals(got.Params[1].Type, typ.String) {
+		t.Fatalf("source parameter hint should use effective slot 1, got %v", got.Params[1].Type)
+	}
+}
+
+func TestMergeIntoSignature_PreservesExplicitNilabilityOnOptionalSlot(t *testing.T) {
+	fn := functionWithParams("context")
+	context := typ.NewRecord().
+		MapComponent(typ.String, typ.Any).
+		SetOpen(true).
+		Build()
+	sig := typ.Func().OptParam("context", typ.Any).Build()
+
+	got := MergeIntoSignature(fn, []typ.Type{typ.NewOptional(context)}, sig)
+	if got == nil || len(got.Params) != 1 {
+		t.Fatalf("unexpected merged signature: %v", got)
+	}
+	if !got.Params[0].Optional {
+		t.Fatalf("expected parameter slot to remain optional: %v", got)
+	}
+	want := typ.NewOptional(context)
+	if !typ.TypeEquals(got.Params[0].Type, want) {
+		t.Fatalf("expected nilability to remain in the value type, got %v", got.Params[0].Type)
+	}
+}
+
+func TestProjectHintsToParamUse_KeepsDemandedRecordFields(t *testing.T) {
+	fn := functionWithParams("client", "model_id")
+	fn.Stmts = []ast.Stmt{
+		&ast.ReturnStmt{Exprs: []ast.Expr{
+			&ast.FuncCallExpr{
+				Func: &ast.AttrGetExpr{
+					Object: &ast.IdentExpr{Value: "client"},
+					Key:    &ast.StringExpr{Value: "invoke"},
+				},
+				Args: []ast.Expr{
+					&ast.IdentExpr{Value: "model_id"},
+					&ast.TableExpr{},
+					&ast.TableExpr{},
+				},
+			},
+		}},
+	}
+	graph := cfg.Build(fn)
+	invoke := typ.Func().Param("model_id", typ.String).Returns(typ.Unknown).Build()
+	client := typ.NewRecord().
+		Field("invoke", invoke).
+		Field("process_converse_stream", typ.Func().Returns(typ.String).Build()).
+		Field("_credentials", typ.String).
+		Build()
+
+	got := ProjectHintsToParamUse(graph, fn, []typ.Type{client, typ.String})
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("projected client hint = %T, want record (%v)", got[0], got[0])
+	}
+	if rec.GetField("invoke") == nil {
+		t.Fatalf("projected client hint lost demanded invoke field: %v", rec)
+	}
+	for _, unused := range []string{"process_converse_stream", "_credentials"} {
+		if rec.GetField(unused) != nil {
+			t.Fatalf("projected client hint kept unused field %q: %v", unused, rec)
+		}
+	}
+	if !typ.TypeEquals(got[1], typ.String) {
+		t.Fatalf("directly used scalar hint should stay intact, got %v", got[1])
+	}
+}
+
+func TestProjectHintsToParamUse_KeepsDemandedAbsentRecordFieldsAsNil(t *testing.T) {
+	fn := functionWithParams("options")
+	fn.Stmts = []ast.Stmt{
+		&ast.IfStmt{
+			Condition: &ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "options"},
+				Key:    &ast.StringExpr{Value: "stream"},
+			},
+		},
+		&ast.AssignStmt{
+			Lhs: []ast.Expr{
+				&ast.AttrGetExpr{
+					Object: &ast.AttrGetExpr{
+						Object: &ast.IdentExpr{Value: "options"},
+						Key:    &ast.StringExpr{Value: "headers"},
+					},
+					Key: &ast.StringExpr{Value: "Accept"},
+				},
+			},
+			Rhs: []ast.Expr{&ast.StringExpr{Value: "application/json"}},
+		},
+	}
+	graph := cfg.Build(fn)
+	hint := typ.NewRecord().
+		Field("headers", typ.NewRecord().Build()).
+		Build()
+
+	got := ProjectHintsToParamUse(graph, fn, []typ.Type{hint})
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("projected options hint = %T, want record (%v)", got[0], got[0])
+	}
+	stream := rec.GetField("stream")
+	if stream == nil || !typ.TypeEquals(stream.Type, typ.Nil) {
+		t.Fatalf("demanded absent stream field should project as nil, got %v in %v", stream, rec)
+	}
+	headers := rec.GetField("headers")
+	if headers == nil {
+		t.Fatalf("projected options hint lost demanded headers field: %v", rec)
+	}
+}
+
+func TestProjectSignatureToParamUse_CompletesDemandedAbsentFields(t *testing.T) {
+	fn := functionWithParams("info")
+	fn.Stmts = []ast.Stmt{
+		&ast.AssignStmt{
+			Lhs: []ast.Expr{&ast.IdentExpr{Value: "info"}},
+			Rhs: []ast.Expr{&ast.LogicalOpExpr{
+				Operator: "or",
+				Lhs:      &ast.IdentExpr{Value: "info"},
+				Rhs:      &ast.TableExpr{},
+			}},
+		},
+		&ast.LocalAssignStmt{Exprs: []ast.Expr{
+			&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "info"},
+				Key:    &ast.StringExpr{Value: "message"},
+			},
+		}},
+		&ast.LocalAssignStmt{Exprs: []ast.Expr{
+			&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "info"},
+				Key:    &ast.StringExpr{Value: "status_code"},
+			},
+		}},
+	}
+	graph := cfg.Build(fn)
+	info := typ.NewRecord().
+		OptField("message", typ.String).
+		Build()
+	sig := typ.Func().
+		Param("info", info).
+		Returns(typ.String).
+		Build()
+
+	got := ProjectSignatureToParamUse(graph, fn, sig)
+	rec, ok := got.Params[0].Type.(*typ.Record)
+	if !ok {
+		t.Fatalf("projected param = %T, want record (%v)", got.Params[0].Type, got.Params[0].Type)
+	}
+	if rec.GetField("message") == nil {
+		t.Fatalf("projected signature lost existing demanded message field: %v", rec)
+	}
+	status := rec.GetField("status_code")
+	if status == nil || !typ.TypeEquals(status.Type, typ.Nil) {
+		t.Fatalf("projected signature should include demanded absent status_code as nil, got %v in %v", status, rec)
+	}
+	if len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], typ.String) {
+		t.Fatalf("projected signature lost returns: %v", got)
+	}
+}
+
+func TestProjectHintsToParamUse_DedupsUnionAfterProjection(t *testing.T) {
+	fn := functionWithParams("client")
+	fn.Stmts = []ast.Stmt{
+		&ast.ReturnStmt{Exprs: []ast.Expr{
+			&ast.FuncCallExpr{
+				Func: &ast.AttrGetExpr{
+					Object: &ast.IdentExpr{Value: "client"},
+					Key:    &ast.StringExpr{Value: "invoke"},
+				},
+			},
+		}},
+	}
+	graph := cfg.Build(fn)
+	invoke := typ.Func().Returns(typ.Unknown).Build()
+	broad := typ.NewRecord().
+		Field("invoke", invoke).
+		Field("stream", typ.Func().Returns(typ.String).Build()).
+		Build()
+	narrow := typ.NewRecord().
+		Field("invoke", invoke).
+		Field("stream", typ.Func().Returns(typ.LiteralString("invalid")).Build()).
+		Build()
+
+	got := ProjectHintsToParamUse(graph, fn, []typ.Type{typ.NewUnion(broad, narrow)})
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("projected union hint = %T, want coalesced record (%v)", got[0], got[0])
+	}
+	if rec.GetField("invoke") == nil || rec.GetField("stream") != nil {
+		t.Fatalf("projected union should keep only invoke, got %v", rec)
+	}
+}
+
+func TestProjectHintsToParamUse_WholeParameterUseKeepsHint(t *testing.T) {
+	fn := functionWithParams("client")
+	fn.Stmts = []ast.Stmt{
+		&ast.ReturnStmt{Exprs: []ast.Expr{
+			&ast.FuncCallExpr{
+				Func: &ast.IdentExpr{Value: "use_client"},
+				Args: []ast.Expr{&ast.IdentExpr{Value: "client"}},
+			},
+		}},
+	}
+	graph := cfg.Build(fn, "use_client")
+	client := typ.NewRecord().Field("invoke", typ.Func().Returns(typ.Unknown).Build()).Build()
+
+	got := ProjectHintsToParamUse(graph, fn, []typ.Type{client})
+	if !typ.TypeEquals(got[0], client) {
+		t.Fatalf("whole-parameter use should keep full hint, got %v", got[0])
+	}
+}
+
+func TestProjectHintsToParamUse_RecursiveForwardingDoesNotKeepWholeHint(t *testing.T) {
+	recursiveIdent := &ast.IdentExpr{Value: "visit"}
+	selfIdent := &ast.IdentExpr{Value: "self"}
+	valueIdent := &ast.IdentExpr{Value: "value"}
+	fn := functionWithParams("self", "value")
+	fn.Stmts = []ast.Stmt{
+		&ast.IfStmt{
+			Condition: &ast.AttrGetExpr{
+				Object: valueIdent,
+				Key:    &ast.StringExpr{Value: "next"},
+			},
+			Then: []ast.Stmt{
+				&ast.ReturnStmt{Exprs: []ast.Expr{
+					&ast.FuncCallExpr{
+						Func: recursiveIdent,
+						Args: []ast.Expr{
+							selfIdent,
+							&ast.AttrGetExpr{
+								Object: &ast.IdentExpr{Value: "value"},
+								Key:    &ast.StringExpr{Value: "next"},
+							},
+						},
+					},
+				}},
+			},
+		},
+		&ast.ReturnStmt{Exprs: []ast.Expr{
+			&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "self"},
+				Key:    &ast.StringExpr{Value: "id"},
+			},
+		}},
+	}
+	graph := cfg.Build(fn, "visit")
+	if sym, ok := graph.Bindings().SymbolOf(recursiveIdent); ok {
+		graph.Bindings().SetFuncLitSymbol(fn, sym)
+	}
+	selfHint := typ.NewRecord().
+		Field("id", typ.String).
+		Field("command", typ.Func().Returns(typ.Nil, typ.String).Build()).
+		Build()
+
+	got := ProjectHintsToParamUse(graph, fn, []typ.Type{selfHint, typ.NewRecord().Field("next", typ.Any).Build()})
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("projected self hint = %T, want record (%v)", got[0], got[0])
+	}
+	if rec.GetField("id") == nil {
+		t.Fatalf("projected self hint lost demanded id field: %v", rec)
+	}
+	if rec.GetField("command") != nil {
+		t.Fatalf("recursive forwarding should not keep unused command field: %v", rec)
+	}
+}
+
+func functionWithParams(names ...string) *ast.FunctionExpr {
+	return &ast.FunctionExpr{ParList: &ast.ParList{Names: names}}
 }
 
 func TestIsInformativeHintType(t *testing.T) {

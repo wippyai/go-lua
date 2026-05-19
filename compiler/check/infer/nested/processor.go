@@ -279,6 +279,24 @@ func (p *Processor) processNestedFunction(
 			var synthFn func(ast.Expr, cfg.Point) typ.Type
 			if result.NarrowSynth != nil {
 				synthFn = result.NarrowSynth.TypeOf
+				if result.Graph != nil {
+					if bindings := result.Graph.Bindings(); bindings != nil {
+						baseSynth := synthFn
+						synthFn = func(expr ast.Expr, p cfg.Point) typ.Type {
+							if ident, ok := expr.(*ast.IdentExpr); ok {
+								if sym, found := bindings.SymbolOf(ident); found && sym != 0 {
+									if result.Facts != nil {
+										tv := result.Facts.EffectiveTypeAt(p, sym)
+										if tv.State == flow.StateResolved && !typ.IsAbsentOrUnknown(tv.Type) {
+											return tv.Type
+										}
+									}
+								}
+							}
+							return baseSynth(expr, p)
+						}
+					}
+				}
 			}
 			fields := nested.CollectConstructorFields(result.Graph, selfSym, synthFn)
 			if len(fields) > 0 {

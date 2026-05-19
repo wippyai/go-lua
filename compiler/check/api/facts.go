@@ -12,9 +12,9 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// ParamHints maps function symbols to parameter type hints inferred from call sites.
-// When a function is called with known argument types, those types are recorded
-// as hints and propagated to the function's parameter declarations.
+// ParamHints maps function symbols to effective-parameter type hints inferred
+// from call sites. For method calls, slot 0 is the receiver/self argument and
+// the remaining slots are the source arguments.
 type ParamHints = map[cfg.SymbolID][]typ.Type
 
 // FunctionFact is the canonical function-related interproc fact for one symbol.
@@ -86,16 +86,40 @@ type CapturedTypes = map[cfg.SymbolID]typ.Type
 // to its captured variables, supporting constructor inference patterns.
 type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type
 
+// ContainerMutationKind describes the operator used for a captured container
+// mutation. Different operators have different abstract transfer functions in
+// the parent flow.
+type ContainerMutationKind uint8
+
+const (
+	// ContainerMutationContainerElement widens generic container element types,
+	// such as channel:send(value) through a ContainerElementUnion effect.
+	ContainerMutationContainerElement ContainerMutationKind = iota
+	// ContainerMutationTableElement widens Lua table array/map-array element
+	// types, such as table.insert(t, value).
+	ContainerMutationTableElement
+)
+
 // ContainerMutation records a container element mutation on a captured variable.
 // Segments capture the path from the base symbol (e.g., .ch, ["queue"]).
 type ContainerMutation struct {
+	Kind      ContainerMutationKind
 	Segments  []constraint.Segment
 	ValueType typ.Type
 }
 
 // ContainerMutationKey returns the canonical path key for a container mutation.
 func ContainerMutationKey(m ContainerMutation) string {
-	return constraint.FormatSegments(m.Segments)
+	return containerMutationKindKey(m.Kind) + ":" + constraint.FormatSegments(m.Segments)
+}
+
+func containerMutationKindKey(kind ContainerMutationKind) string {
+	switch kind {
+	case ContainerMutationTableElement:
+		return "table"
+	default:
+		return "container"
+	}
 }
 
 // CapturedContainerMutations maps nested function symbols to container mutations

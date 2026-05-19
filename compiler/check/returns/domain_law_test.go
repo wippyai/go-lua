@@ -130,6 +130,32 @@ func TestFactsDomain_WidenFunctionParamsIsVarianceAware(t *testing.T) {
 	}
 }
 
+func TestFactsDomain_PreservesArityAndNilabilityAsSeparateParamAxes(t *testing.T) {
+	sym := cfg.SymbolID(1)
+	context := typ.NewRecord().
+		MapComponent(typ.String, typ.Any).
+		SetOpen(true).
+		Build()
+	raw := api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			sym: {Type: typ.Func().OptParam("context", typ.NewOptional(context)).Build()},
+		},
+	}
+
+	widened := WidenFacts(api.Facts{}, raw)
+	fn := unwrapFunctionForDomainTest(t, widened.FunctionFacts.FunctionType(sym))
+	if len(fn.Params) != 1 || !fn.Params[0].Optional {
+		t.Fatalf("expected optional parameter slot, got %v", fn)
+	}
+	want := typ.NewOptional(context)
+	if !typ.TypeEquals(fn.Params[0].Type, want) {
+		t.Fatalf("expected explicit nilability to remain in the value type, got %v", fn.Params[0].Type)
+	}
+	if !FactsEqual(widened, WidenFacts(widened, raw)) {
+		t.Fatalf("expected optional parameter product-domain representation to be idempotent")
+	}
+}
+
 func TestFactsDomain_WidenPreservesCapturedCallbackUnionMembers(t *testing.T) {
 	sym := cfg.SymbolID(9)
 	withPending := typ.NewUnion(

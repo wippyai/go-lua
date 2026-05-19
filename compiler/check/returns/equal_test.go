@@ -196,6 +196,26 @@ func TestCapturedContainerMutationsEqual_Basic(t *testing.T) {
 	}
 }
 
+func TestCapturedContainerMutationsEqual_DifferentOperatorKind(t *testing.T) {
+	a := api.CapturedContainerMutations{
+		cfg.SymbolID(1): {
+			cfg.SymbolID(2): {
+				{Kind: api.ContainerMutationContainerElement, ValueType: typ.Number},
+			},
+		},
+	}
+	b := api.CapturedContainerMutations{
+		cfg.SymbolID(1): {
+			cfg.SymbolID(2): {
+				{Kind: api.ContainerMutationTableElement, ValueType: typ.Number},
+			},
+		},
+	}
+	if CapturedContainerMutationsEqual(a, b) {
+		t.Error("same path with different mutation operators should not be equal")
+	}
+}
+
 func TestCapturedFieldAssignsEqual_CanonicalizesOptionalFunctionValues(t *testing.T) {
 	fn := typ.Func().Param("fn", typ.Unknown).Build()
 	left := api.CapturedFieldAssigns{1: {2: {"after_all": typ.NewOptional(fn)}}}

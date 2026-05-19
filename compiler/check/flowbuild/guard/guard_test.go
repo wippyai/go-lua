@@ -317,6 +317,35 @@ func TestCollectTypeGuards_TypeNotEqReturnPropagatesFallthrough(t *testing.T) {
 	}
 }
 
+func TestExtractTypeEqualityProbe(t *testing.T) {
+	target := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "page"},
+		Key:    &ast.StringExpr{Value: "placement"},
+	}
+	expr := &ast.RelationalOpExpr{
+		Operator: "==",
+		Lhs: &ast.FuncCallExpr{
+			Func: &ast.IdentExpr{Value: "type"},
+			Args: []ast.Expr{target},
+		},
+		Rhs: &ast.StringExpr{Value: "string"},
+	}
+
+	probe, ok := guard.ExtractTypeEqualityProbe(expr)
+	if !ok {
+		t.Fatal("expected type equality probe")
+	}
+	if probe.Expr != target {
+		t.Fatal("expected probe expression to be preserved")
+	}
+	if probe.Key != narrow.BuiltinTypeKey("string") {
+		t.Fatalf("probe key = %v, want string key", probe.Key)
+	}
+	if got := guard.TypeForTypeKey(probe.Key); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("probe type = %v, want string", got)
+	}
+}
+
 func TestNarrowTableFieldsByGuard_TypeGuardNarrowsAny(t *testing.T) {
 	valueExpr := &ast.AttrGetExpr{
 		Object: &ast.IdentExpr{Value: "payload"},

@@ -3,6 +3,7 @@ package returns
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
@@ -91,20 +92,31 @@ func CollectCalledNestedFieldAssignments(
 	return result
 }
 
-// CollectCalledNestedContainerMutatorAssignments collects container mutations recorded for
-// called nested functions that target symbols from the parent graph (captured variables).
+// CalledNestedMutatorAssignments is the flow replay payload for captured
+// mutations made by called nested functions.
+type CalledNestedMutatorAssignments struct {
+	Table     []flow.TableMutatorAssignment
+	Container []flow.ContainerMutatorAssignment
+}
+
+// CollectNestedMutatorAssignments collects captured mutations recorded for
+// parent-visible nested functions and replays them through the matching flow
+// operator.
 //
-// This supports cases where a nested function mutates a captured container (e.g., channel.send)
-// and the nested function is invoked directly or passed as a callback to a function with a
-// callback spec (e.g., coroutine.spawn).
-func CollectCalledNestedContainerMutatorAssignments(
+// This supports cases where a nested function mutates a captured table
+// (table.insert) or generic container (channel.send) and the nested function is:
+//   - invoked directly,
+//   - passed as a callback to a function with a callback spec, or
+//   - stored in a field/global position that can be called outside the parent
+//     graph before another exported function reads the captured state.
+func CollectNestedMutatorAssignments(
 	parent *cfg.Graph,
 	bindings *bind.BindingTable,
 	capturedByCallee api.CapturedContainerMutations,
 	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
-) []flow.ContainerMutatorAssignment {
+) CalledNestedMutatorAssignments {
 	if parent == nil || len(capturedByCallee) == 0 {
-		return nil
+		return CalledNestedMutatorAssignments{}
 	}
 
 	parentSymbols := parent.AllSymbolIDs()
@@ -112,7 +124,21 @@ func CollectCalledNestedContainerMutatorAssignments(
 	for calleeSym := range capturedByCallee {
 		trackedCallees[calleeSym] = true
 	}
-	assignments := make([]flow.ContainerMutatorAssignment, 0)
+	assignments := CalledNestedMutatorAssignments{}
+	emitForCallee := func(p cfg.Point, sym cfg.SymbolID) {
+		nestedMutations := capturedByCallee[sym]
+		if len(nestedMutations) == 0 {
+			return
+		}
+		for _, targetSym := range cfg.SortedSymbolIDs(nestedMutations) {
+			mutations := nestedMutations[targetSym]
+			if !parentSymbols[targetSym] {
+				continue
+			}
+			root := resolve.RootNameFromGraphAndBindings(parent, bindings, targetSym, "")
+			appendNestedMutatorAssignments(&assignments, p, root, targetSym, mutations)
+		}
+	}
 
 	parent.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
@@ -127,34 +153,136 @@ func CollectCalledNestedContainerMutatorAssignments(
 		}
 
 		for _, sym := range cfg.SortedSymbolIDs(calledSyms) {
-			nestedMutations := capturedByCallee[sym]
-			if len(nestedMutations) == 0 {
-				continue
-			}
-			for _, targetSym := range cfg.SortedSymbolIDs(nestedMutations) {
-				mutations := nestedMutations[targetSym]
-				if !parentSymbols[targetSym] {
-					continue
-				}
-				root := resolve.RootNameFromGraphAndBindings(parent, bindings, targetSym, "")
-				for _, mutation := range mutations {
-					segs := make([]constraint.Segment, len(mutation.Segments))
-					copy(segs, mutation.Segments)
-					assignments = append(assignments, flow.ContainerMutatorAssignment{
-						Point: p,
-						Target: constraint.Path{
-							Root:     root,
-							Symbol:   targetSym,
-							Segments: segs,
-						},
-						ValueType: mutation.ValueType,
-					})
-				}
-			}
+			emitForCallee(p, sym)
 		}
 	})
 
+	for _, trigger := range escapedNestedMutationTriggers(parent, bindings, trackedCallees) {
+		emitForCallee(trigger.Point, trigger.Symbol)
+	}
+
 	return assignments
+}
+
+func appendNestedMutatorAssignments(
+	assignments *CalledNestedMutatorAssignments,
+	p cfg.Point,
+	root string,
+	targetSym cfg.SymbolID,
+	mutations []api.ContainerMutation,
+) {
+	if assignments == nil || targetSym == 0 || len(mutations) == 0 {
+		return
+	}
+	for _, mutation := range mutations {
+		segs := make([]constraint.Segment, len(mutation.Segments))
+		copy(segs, mutation.Segments)
+		target := constraint.Path{
+			Root:     root,
+			Symbol:   targetSym,
+			Segments: segs,
+		}
+		switch mutation.Kind {
+		case api.ContainerMutationTableElement:
+			assignments.Table = append(assignments.Table, flow.TableMutatorAssignment{
+				Point:     p,
+				Target:    target,
+				ValueType: mutation.ValueType,
+			})
+		default:
+			assignments.Container = append(assignments.Container, flow.ContainerMutatorAssignment{
+				Point:     p,
+				Target:    target,
+				ValueType: mutation.ValueType,
+			})
+		}
+	}
+}
+
+type nestedMutationTrigger struct {
+	Point  cfg.Point
+	Symbol cfg.SymbolID
+}
+
+func escapedNestedMutationTriggers(
+	parent *cfg.Graph,
+	bindings *bind.BindingTable,
+	trackedCallees map[cfg.SymbolID]bool,
+) []nestedMutationTrigger {
+	if parent == nil || len(trackedCallees) == 0 {
+		return nil
+	}
+	var triggers []nestedMutationTrigger
+	seen := make(map[nestedMutationTrigger]bool)
+	appendTrigger := func(p cfg.Point, sym cfg.SymbolID) {
+		if sym == 0 || !trackedCallees[sym] {
+			return
+		}
+		trigger := nestedMutationTrigger{Point: p, Symbol: sym}
+		if seen[trigger] {
+			return
+		}
+		seen[trigger] = true
+		triggers = append(triggers, trigger)
+	}
+
+	parent.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
+		if info == nil || !funcDefEscapesParent(info.TargetKind) {
+			return
+		}
+		appendTrigger(p, info.Symbol)
+	})
+
+	parent.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if info == nil {
+			return
+		}
+		info.EachTargetSource(func(i int, target cfg.AssignTarget, src ast.Expr) {
+			if !assignmentTargetEscapesFunction(target) {
+				return
+			}
+			appendTrigger(p, assignmentSourceFunctionSymbol(info, i, src, bindings))
+		})
+	})
+
+	return triggers
+}
+
+func funcDefEscapesParent(kind cfg.FuncDefTargetKind) bool {
+	switch kind {
+	case cfg.FuncDefGlobal, cfg.FuncDefField, cfg.FuncDefMethod:
+		return true
+	default:
+		return false
+	}
+}
+
+func assignmentTargetEscapesFunction(target cfg.AssignTarget) bool {
+	switch target.Kind {
+	case cfg.TargetField, cfg.TargetIndex:
+		return true
+	default:
+		return false
+	}
+}
+
+func assignmentSourceFunctionSymbol(
+	info *cfg.AssignInfo,
+	i int,
+	src ast.Expr,
+	bindings *bind.BindingTable,
+) cfg.SymbolID {
+	if info != nil && i >= 0 && i < len(info.SourceSymbols) {
+		if sym := info.SourceSymbols[i]; sym != 0 {
+			return sym
+		}
+	}
+	if fn, ok := src.(*ast.FunctionExpr); ok && bindings != nil {
+		if sym, found := bindings.FuncLitSymbol(fn); found {
+			return sym
+		}
+	}
+	return 0
 }
 
 func calledSymbolsFromCall(

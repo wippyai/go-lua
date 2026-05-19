@@ -72,11 +72,14 @@ func normalizeFunctionFactMap(facts api.FunctionFacts) api.FunctionFacts {
 }
 
 func writeFunctionFactToFacts(facts *api.Facts, sym cfg.SymbolID, ff api.FunctionFact) {
+	writeNormalizedFunctionFactToFacts(facts, sym, NormalizeFunctionFact(ff))
+}
+
+func writeNormalizedFunctionFactToFacts(facts *api.Facts, sym cfg.SymbolID, ff api.FunctionFact) {
 	if facts == nil || sym == 0 {
 		return
 	}
 
-	ff = NormalizeFunctionFact(ff)
 	if functionFactEmpty(ff) {
 		if facts.FunctionFacts != nil {
 			delete(facts.FunctionFacts, sym)

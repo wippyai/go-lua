@@ -381,7 +381,9 @@ func TestSynthWithInferenceOverlay_PriorityAndParamFallback(t *testing.T) {
 	synth := synthWithInferenceOverlay(
 		nil,
 		map[cfg.SymbolID]typ.Type{aSym: typ.String},
+		nil,
 		map[cfg.SymbolID]typ.Type{aSym: typ.Number},
+		nil,
 		paramSet,
 		nil,
 		bindings,
@@ -398,7 +400,9 @@ func TestSynthWithInferenceOverlay_PriorityAndParamFallback(t *testing.T) {
 	synth = synthWithInferenceOverlay(
 		nil,
 		nil,
+		nil,
 		map[cfg.SymbolID]typ.Type{aSym: typ.Number},
+		nil,
 		paramSet,
 		nil,
 		bindings,
@@ -416,6 +420,8 @@ func TestSynthWithInferenceOverlay_PriorityAndParamFallback(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
+		nil,
 		paramSet,
 		nil,
 		bindings,
@@ -430,6 +436,8 @@ func TestSynthWithInferenceOverlay_PriorityAndParamFallback(t *testing.T) {
 	}
 
 	synth = synthWithInferenceOverlay(
+		nil,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -457,6 +465,8 @@ func TestSynthWithInferenceOverlay_PreservesNilOverlayEntries(t *testing.T) {
 	synth := synthWithInferenceOverlay(
 		nil,
 		map[cfg.SymbolID]typ.Type{aSym: nil},
+		nil,
+		nil,
 		nil,
 		nil,
 		nil,

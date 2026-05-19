@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/kind"
 )
 
 // SoftPolicy controls how soft-placeholder detection behaves.
@@ -50,6 +51,9 @@ func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
 	case *Map:
 		return isSoft(tt.Value, next, policy)
 	case *Record:
+		if tt.Open && len(tt.Fields) == 0 && !tt.HasMapComponent() {
+			return true
+		}
 		if len(tt.Fields) == 0 && !tt.HasMapComponent() {
 			return policy.AllowEmptyRecord
 		}
@@ -227,13 +231,19 @@ func pruneSoftUnionMembersMemo(
 				members = rewritten
 			}
 			nonSoftMembers := make([]Type, 0, len(node.Members)-softCount)
+			hasNonNilConcreteMember := false
 			for _, member := range members {
 				if !isSoftWithMemo(member, SoftPlaceholderPolicy, softMemo) {
 					nonSoftMembers = append(nonSoftMembers, member)
+					if member != nil && member.Kind() != kind.Nil {
+						hasNonNilConcreteMember = true
+					}
 				}
 			}
-			out = NewUnion(nonSoftMembers...)
-			break
+			if hasNonNilConcreteMember {
+				out = NewUnion(nonSoftMembers...)
+				break
+			}
 		}
 		if !changed {
 			out = t

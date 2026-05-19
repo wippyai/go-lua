@@ -59,7 +59,7 @@ func JoinReturnSlot(a, b Type) Type {
 	if (IsAny(a) && b.Kind() == kind.Nil) || (IsAny(b) && a.Kind() == kind.Nil) {
 		return Any
 	}
-	if (IsUnknown(a) && b.Kind() == kind.Nil) || (IsUnknown(b) && a.Kind() == kind.Nil) {
+	if IsUnknown(a) || IsUnknown(b) {
 		return Unknown
 	}
 	return coalesceCompatibleRecordMembers(JoinPreferNonSoft(a, b))
@@ -167,10 +167,18 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 			fieldType = fa.Type
 			optional = true
 			readonly = fa.Readonly
+			if tail, ok := recordTailFieldType(br, name); ok {
+				fieldType, optional = normalizeMergedRecordField(JoinReturnSlot(fa.Type, tail))
+				readonly = false
+			}
 		case okb:
 			fieldType = fb.Type
 			optional = true
 			readonly = fb.Readonly
+			if tail, ok := recordTailFieldType(ar, name); ok {
+				fieldType, optional = normalizeMergedRecordField(JoinReturnSlot(tail, fb.Type))
+				readonly = false
+			}
 		}
 
 		switch {
@@ -186,6 +194,50 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 	}
 
 	return builder.Build(), true
+}
+
+func normalizeMergedRecordField(t Type) (Type, bool) {
+	if inner, optional := SplitNilableFieldType(t); optional {
+		return inner, true
+	}
+	return t, false
+}
+
+func recordTailFieldType(r *Record, name string) (Type, bool) {
+	if r == nil {
+		return nil, false
+	}
+	if r.HasMapComponent() && mapComponentMayContainStringKey(r.MapKey, name) {
+		return NewOptional(r.MapValue), true
+	}
+	if r.Open {
+		return Unknown, true
+	}
+	return nil, false
+}
+
+func mapComponentMayContainStringKey(key Type, name string) bool {
+	if key == nil {
+		return false
+	}
+	if IsAny(key) || IsUnknown(key) {
+		return true
+	}
+	switch k := key.(type) {
+	case *Alias:
+		return mapComponentMayContainStringKey(k.Target, name)
+	case *Union:
+		for _, member := range k.Members {
+			if mapComponentMayContainStringKey(member, name) {
+				return true
+			}
+		}
+		return false
+	case *Literal:
+		return k.Base == kind.String && k.Value == name
+	default:
+		return k.Kind() == kind.String
+	}
 }
 
 func unaliasRecord(t Type) *Record {
@@ -320,6 +372,15 @@ func JoinBranchOutcome(a, b Type) Type {
 	}
 	if TypeEquals(a, b) {
 		return a
+	}
+	if IsAny(a) || IsAny(b) {
+		return Any
+	}
+	if IsUnknown(a) && b.Kind() != kind.Nil {
+		return Unknown
+	}
+	if IsUnknown(b) && a.Kind() != kind.Nil {
+		return Unknown
 	}
 	return NewUnion(a, b)
 }

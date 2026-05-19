@@ -70,6 +70,59 @@ func TestSynthTableCore_ArrayLike(t *testing.T) {
 	}
 }
 
+func TestSynthTableWithExpectedAnyPreservesTuplePrecision(t *testing.T) {
+	s := newTestSynthesizer()
+	sc := scope.New()
+	recurse := func(ex ast.Expr) typ.Type { return s.TypeOf(ex, 0) }
+
+	table := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{Value: &ast.StringExpr{Value: "first"}},
+		},
+	}
+	result := s.SynthTableWithExpected(table, sc, recurse, typ.Any)
+
+	tuple, ok := result.(*typ.Tuple)
+	if !ok {
+		t.Fatalf("got %T, want tuple", result)
+	}
+	if len(tuple.Elements) != 1 {
+		t.Fatalf("got %d elements, want 1", len(tuple.Elements))
+	}
+}
+
+func TestSynthTableWithExpectedEmptyMapUsesNonNilExpected(t *testing.T) {
+	s := newTestSynthesizer()
+	sc := scope.New()
+	recurse := func(ex ast.Expr) typ.Type { return s.TypeOf(ex, 0) }
+
+	expected := typ.NewOptional(typ.NewMap(typ.String, typ.Any))
+	table := &ast.TableExpr{}
+	result := s.SynthTableWithExpected(table, sc, recurse, expected)
+
+	if !typ.TypeEquals(result, typ.NewMap(typ.String, typ.Any)) {
+		t.Fatalf("got %v, want non-nil expected map", result)
+	}
+}
+
+func TestSynthTableWithExpectedEmptyRecordRequiresFields(t *testing.T) {
+	s := newTestSynthesizer()
+	sc := scope.New()
+	recurse := func(ex ast.Expr) typ.Type { return s.TypeOf(ex, 0) }
+
+	expected := typ.NewRecord().Field("name", typ.String).Build()
+	table := &ast.TableExpr{}
+	result := s.SynthTableWithExpected(table, sc, recurse, expected)
+
+	rec, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("got %T, want synthesized open record", result)
+	}
+	if !rec.Open || len(rec.Fields) != 0 {
+		t.Fatalf("got %v, want empty open record for missing required fields", result)
+	}
+}
+
 func TestSynthTableWithExpected_Record(t *testing.T) {
 	s := newTestSynthesizer()
 	sc := scope.New()

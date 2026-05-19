@@ -107,6 +107,1132 @@ func TestFalsePositive_TupleDynamicIndexing(t *testing.T) {
 	}
 }
 
+func TestFalsePositive_CapturedLocalHelperReceivesGuardedParamField(t *testing.T) {
+	source := `
+		local api = {}
+
+		local function resolve_model(model_identifier)
+			local class_name = model_identifier:match("^class:(.+)")
+			if class_name then
+				return { id = class_name }, nil
+			end
+			return { id = model_identifier }, nil
+		end
+
+		function api.generate(options)
+			if not options or not options.model then
+				return nil, "model required"
+			end
+
+			local model_card, err = resolve_model(options.model)
+			if not model_card then
+				return nil, err
+			end
+			return model_card.id
+		end
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected guarded param field to satisfy captured helper parameter, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_OptionalMapDefaultEmptyTable(t *testing.T) {
+	source := `
+local function find(options: {[string]: any}?)
+	options = options or {}
+	local criteria: {[string]: any} = {}
+	for k, v in pairs(options) do
+		criteria[k] = v
+	end
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected optional map default to empty table to type-check, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_GuardedTableElementKeepsRecordFields(t *testing.T) {
+	source := `
+		local blocks = {}
+		local data = nil :: any
+		local event_type = nil :: any
+
+		while true do
+			if event_type == "content_block_start" then
+				if data.index ~= nil and data.content_block then
+					if data.content_block.type == "thinking" then
+						blocks[data.index] = {
+							type = "thinking",
+							thinking = data.content_block.thinking or "",
+							signature = data.content_block.signature or "",
+						}
+					end
+				end
+			elseif event_type == "content_block_delta" then
+				local index = data.index or 0
+				local delta = data.delta or {}
+				if delta.type == "thinking_delta" then
+					local thinking_chunk = delta.thinking or ""
+					if blocks[index] then
+						blocks[index].thinking = blocks[index].thinking .. thinking_chunk
+					end
+				elseif delta.type == "signature_delta" then
+					local signature_chunk = delta.signature or ""
+					if blocks[index] then
+						blocks[index].signature = blocks[index].signature .. signature_chunk
+					end
+				end
+			end
+			break
+		end
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Errorf("expected guarded table element fields to stay available, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_NestedAnyFieldFallbackInArithmetic(t *testing.T) {
+	source := `
+		local stats = nil :: any
+		if stats.cpu_stats and stats.precpu_stats then
+			local cpu_delta = (stats.cpu_stats.cpu_usage and stats.cpu_stats.cpu_usage.total_usage or 0) -
+				(stats.precpu_stats.cpu_usage and stats.precpu_stats.cpu_usage.total_usage or 0)
+			local sys_delta = (stats.cpu_stats.system_cpu_usage or 0) - (stats.precpu_stats.system_cpu_usage or 0)
+			if sys_delta > 0 and cpu_delta > 0 then
+				local cpu_percent = (cpu_delta / sys_delta) * 100
+			end
+		end
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Errorf("expected nested any field fallback arithmetic to type-check, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_ParsedAnyBodyNestedFieldFallbackInArithmetic(t *testing.T) {
+	source := `
+		local function parse_response(body: any)
+			if not body then
+				return nil
+			end
+			if type(body) == "table" then
+				return body
+			end
+			if type(body) == "string" then
+				return { raw = body }
+			end
+			return body
+		end
+
+		local function container_stats()
+			local response = nil :: any
+			local result = {
+				body = parse_response(response.body),
+			}
+			return result.body, nil
+		end
+
+		local stats, err = container_stats()
+		if err then
+			return
+		end
+		if stats.cpu_stats and stats.precpu_stats then
+			local cpu_delta = (stats.cpu_stats.cpu_usage and stats.cpu_stats.cpu_usage.total_usage or 0) -
+				(stats.precpu_stats.cpu_usage and stats.precpu_stats.cpu_usage.total_usage or 0)
+			local sys_delta = (stats.cpu_stats.system_cpu_usage or 0) - (stats.precpu_stats.system_cpu_usage or 0)
+			if sys_delta > 0 and cpu_delta > 0 then
+				local cpu_percent = (cpu_delta / sys_delta) * 100
+			end
+		end
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Errorf("expected parsed any body arithmetic to type-check, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_ErrorReturnSuccessWithImplicitNilErrorNarrowsSibling(t *testing.T) {
+	httpResponse := typ.NewRecord().
+		Field("status_code", typ.Integer).
+		OptField("body", typ.String).
+		Build()
+	httpManifest := io.NewManifest("http_client")
+	httpManifest.SetExport(typ.NewRecord().
+		Field("get", typ.Func().
+			Param("url", typ.String).
+			OptParam("options", typ.Any).
+			Returns(typ.NewOptional(httpResponse), typ.NewOptional(typ.String)).
+			Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).
+			Build()).
+		Build())
+
+	testModule := testutil.CheckAndExport(`
+		local test = {}
+
+		function test.is_nil(val: any, msg: string?)
+			if val ~= nil then
+				error(msg or "assertion failed")
+			end
+		end
+
+		return test
+	`, "test_mod", testutil.WithStdlib())
+	if testModule.HasError() {
+		t.Fatalf("unexpected test module errors: %v", testutil.ErrorMessages(testModule.Errors))
+	}
+
+	jsonModule := testutil.CheckAndExport(`
+		local json = {}
+
+		function json.decode(raw: string): any
+			if raw == "" then
+				return nil, "empty"
+			end
+			return {
+				candidates = {
+					{ content = { parts = { { text = "Hello" } } } }
+				}
+			}
+		end
+
+		return json
+	`, "json", testutil.WithStdlib())
+	if jsonModule.HasError() {
+		t.Fatalf("unexpected json module errors: %v", testutil.ErrorMessages(jsonModule.Errors))
+	}
+
+	source := `
+		local http_client = require("http_client")
+		local json = require("json")
+		local test = require("test_mod")
+
+		local client = {
+			_http_client = http_client,
+		}
+
+		local function parse_error_response(http_response)
+			return {
+				status_code = http_response.status_code,
+				message = "request failed",
+			}
+		end
+
+		function client.request(method, url, http_options)
+			local response, err = client._http_client.get(url, http_options)
+			if not response then
+				return nil, {
+					status_code = 0,
+					message = tostring(err),
+				}
+			end
+
+			if response.status_code < 200 or response.status_code >= 300 then
+				return nil, parse_error_response(response)
+			end
+
+			local parsed, parse_err = json.decode(tostring(response.body or ""))
+			if parse_err then
+				return nil, {
+					status_code = response.status_code,
+					message = parse_err,
+					metadata = {},
+				}
+			end
+
+			parsed.metadata = {}
+			parsed.status_code = response.status_code
+			return parsed
+		end
+
+		local response, err = client.request("GET", "https://example.test", { headers = {} })
+		test.is_nil(err)
+		local text = response.candidates[1].content.parts[1].text
+		return text
+	`
+	result := testutil.Check(source,
+		testutil.WithStdlib(),
+		testutil.WithManifest("http_client", httpManifest),
+		testutil.WithModule("json", jsonModule),
+		testutil.WithModule("test_mod", testModule),
+	)
+	if result.HasError() {
+		t.Errorf("expected is_nil(err) to narrow implicit-success error return sibling, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_MethodReceiverParamHintInfersCapturedSelfFields(t *testing.T) {
+	source := `
+		type Output = {
+			kind: "rendered",
+			label: string?,
+		}
+
+		type HandlerBuilder = {
+			name: string?,
+			prefix: string?,
+			prefix_with: (self: HandlerBuilder, prefix: string) -> HandlerBuilder,
+			build: (self: HandlerBuilder) -> () -> Output,
+		}
+
+		type Builder = HandlerBuilder
+
+		local Builder = {}
+		Builder.__index = Builder
+
+		local M = {}
+
+		function M.new(): HandlerBuilder
+			local self: Builder = {
+				name = nil,
+				prefix = nil,
+				prefix_with = Builder.prefix_with,
+				build = Builder.build,
+			}
+			setmetatable(self, Builder)
+			return self
+		end
+
+		function Builder:prefix_with(prefix: string): Builder
+			self.prefix = prefix
+			return self
+		end
+
+		function Builder:build(): () -> Output
+			local name = self.name or "plugin"
+			local prefix = self.prefix or name
+			local check_prefix: string = prefix
+
+			return function(): Output
+				return {
+					kind = "rendered",
+					label = prefix,
+				}
+			end
+		end
+
+		local handler = M.new()
+			:prefix_with("render")
+			:build()
+
+		local out: Output = handler()
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Errorf("expected method receiver hints to type captured builder fields, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_ErrorReturnDelegatedHelperNarrowsSibling(t *testing.T) {
+	testModule := testutil.CheckAndExport(`
+		local test = {}
+
+		function test.is_nil(val: any, msg: string?)
+			if val ~= nil then
+				error(msg or "assertion failed")
+			end
+		end
+
+		return test
+	`, "test_mod", testutil.WithStdlib())
+	if testModule.HasError() {
+		t.Fatalf("unexpected test module errors: %v", testutil.ErrorMessages(testModule.Errors))
+	}
+
+	source := `
+		local test = require("test_mod")
+
+		local function finish(ok)
+			if not ok then
+				return nil, { message = "failed" }, nil
+			end
+			return {
+				candidates = {
+					{ content = { parts = { { text = "Hello" } } } }
+				}
+			}, nil, { source = "finish" }
+		end
+
+		local function request(ok)
+			if not ok then
+				return nil, { message = "failed early" }, nil
+			end
+			return finish(ok)
+		end
+
+		local response, err = request(true)
+		test.is_nil(err)
+		local text = response.candidates[1].content.parts[1].text
+		return text
+	`
+	result := testutil.Check(source,
+		testutil.WithStdlib(),
+		testutil.WithModule("test_mod", testModule),
+	)
+	if result.HasError() {
+		t.Errorf("expected is_nil(err) to narrow delegated error-return helper sibling, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_ImportedClientMockResponseKeepsDecodedArrayPresence(t *testing.T) {
+	jsonManifest := io.NewManifest("json")
+	jsonManifest.SetExport(typ.NewRecord().
+		Field("encode", typ.Func().
+			Param("value", typ.Any).
+			Returns(typ.String, typ.NewOptional(typ.LuaError)).
+			Build()).
+		Field("decode", typ.Func().
+			Param("source", typ.String).
+			Returns(typ.Any, typ.NewOptional(typ.LuaError)).
+			Build()).
+		Build())
+
+	testModule := testutil.CheckAndExport(`
+		local test = {}
+
+		function test.is_nil(val: any, msg: string?)
+			if val ~= nil then
+				error(msg or "assertion failed")
+			end
+		end
+
+		function test.eq(_actual: any, _expected: any, _msg: string?)
+		end
+
+		return test
+	`, "test_mod", testutil.WithStdlib())
+	if testModule.HasError() {
+		t.Fatalf("unexpected test module errors: %v", testutil.ErrorMessages(testModule.Errors))
+	}
+
+	clientModule := testutil.CheckAndExport(`
+		local json = require("json")
+
+		local client = {
+			_http_client = nil :: any,
+		}
+
+		local function parse_error_response(http_response)
+			return {
+				status_code = http_response.status_code,
+				message = "request failed",
+			}
+		end
+
+		function client.request(method, url, http_options)
+			local response = nil
+			local err = nil
+			if method == "GET" then
+				response, err = client._http_client.get(url, http_options)
+			else
+				response, err = client._http_client.post(url, http_options)
+			end
+
+			if not response then
+				return nil, {
+					status_code = 0,
+					message = tostring(err),
+				}
+			end
+
+			if response.status_code < 200 or response.status_code >= 300 then
+				return nil, parse_error_response(response)
+			end
+
+			local parsed, parse_err = json.decode(tostring(response.body or ""))
+			if parse_err then
+				return nil, {
+					status_code = response.status_code,
+					message = tostring(parse_err),
+					metadata = {},
+				}
+			end
+
+			parsed.metadata = {}
+			parsed.status_code = response.status_code
+			return parsed
+		end
+
+		return client
+	`, "client_mod", testutil.WithStdlib(), testutil.WithManifest("json", jsonManifest))
+	if clientModule.HasError() {
+		t.Fatalf("unexpected client module errors: %v", testutil.ErrorMessages(clientModule.Errors))
+	}
+
+	source := `
+		local client = require("client_mod")
+		local json = require("json")
+		local test = require("test_mod")
+
+		client._http_client = {
+			get = function(_url, _options)
+				return {
+					status_code = 200,
+					body = json.encode({
+						candidates = {
+							{ content = { parts = { { text = "Hello" } } } }
+						}
+					})
+				}
+			end
+		}
+
+		local response, err = client.request("GET", "https://example.test", { headers = {} })
+		test.is_nil(err)
+		test.eq(response.candidates[1].content.parts[1].text, "Hello")
+	`
+	result := testutil.Check(source,
+		testutil.WithStdlib(),
+		testutil.WithManifest("json", jsonManifest),
+		testutil.WithModule("client_mod", clientModule),
+		testutil.WithModule("test_mod", testModule),
+	)
+	if result.HasError() {
+		t.Errorf("expected imported client mock response to preserve decoded array presence after err narrowing, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_ImportedGoogleLikeClientSuiteKeepsCandidatesArray(t *testing.T) {
+	jsonManifest := io.NewManifest("json")
+	jsonManifest.SetExport(typ.NewRecord().
+		Field("encode", typ.Func().
+			Param("value", typ.Any).
+			Returns(typ.String, typ.NewOptional(typ.LuaError)).
+			Build()).
+		Field("decode", typ.Func().
+			Param("source", typ.String).
+			Returns(typ.Any, typ.NewOptional(typ.LuaError)).
+			Build()).
+		Build())
+
+	streamReaderType := typ.NewInterface("http_client.StreamReader", []typ.Method{
+		{Name: "read", Type: typ.Func().Param("self", typ.Self).OptParam("size", typ.Number).Returns(typ.String, typ.NewOptional(typ.LuaError)).Build()},
+	})
+	httpResponse := typ.NewRecord().
+		Field("status_code", typ.Number).
+		OptField("body", typ.String).
+		OptField("stream", streamReaderType).
+		Build()
+	httpFn := typ.Func().
+		Param("url", typ.String).
+		OptParam("options", typ.Any).
+		Returns(httpResponse, typ.NewOptional(typ.LuaError)).
+		Build()
+	httpManifest := io.NewManifest("http_client")
+	httpManifest.SetExport(typ.NewRecord().
+		Field("get", httpFn).
+		Field("post", httpFn).
+		Build())
+
+	outputModule := testutil.CheckAndExport(`
+		local output = {}
+
+		function output.streamer(_pid: string?, _topic: string?, _buffer_size: any?)
+			return {
+				buffer_content = function(self, _text: string?) return true end,
+				send_tool_call = function(self, _name: string, _arguments: string, _id: string?) return true end,
+				send_thinking = function(self, _text: string) return true end,
+				send_error = function(self, _kind: string, _message: string, _code: any?) return true end,
+				flush = function(self) return true end,
+			}, nil
+		end
+
+		return output
+	`, "output_mod", testutil.WithStdlib())
+	if outputModule.HasError() {
+		t.Fatalf("unexpected output module errors: %v", testutil.ErrorMessages(outputModule.Errors))
+	}
+
+	testModule := testutil.CheckAndExport(`
+		local test = {}
+
+		function test.is_nil(val: any, msg: string?)
+			if val ~= nil then
+				error(msg or "assertion failed")
+			end
+		end
+
+		function test.eq(_actual: any, _expected: any, _msg: string?)
+		end
+
+		function test.not_nil(val: any, msg: string?): any
+			if val == nil then
+				error(msg or "assertion failed")
+			end
+			return val
+		end
+
+		function test.describe(_name: string, fn: fun())
+			fn()
+		end
+
+		function test.it(_name: string, fn: fun())
+			fn()
+		end
+
+		function test.after_each(fn: fun())
+			fn()
+		end
+
+		function test.run_cases(define_cases_fn: fun())
+			return function()
+				_G.describe = test.describe
+				_G.it = test.it
+				_G.after_each = test.after_each
+				define_cases_fn()
+				_G.describe = nil
+				_G.it = nil
+				_G.after_each = nil
+			end
+		end
+
+		return test
+	`, "test_mod", testutil.WithStdlib())
+	if testModule.HasError() {
+		t.Fatalf("unexpected test module errors: %v", testutil.ErrorMessages(testModule.Errors))
+	}
+
+	clientModule := testutil.CheckAndExport(`
+		local json = require("json")
+		local http_client = require("http_client")
+		local output = require("output_mod")
+
+		local client = {
+			_http_client = http_client,
+		}
+
+		local function extract_response_metadata(response_body: any)
+			if not response_body then
+				return {}
+			end
+			return {
+				model_version = response_body.modelVersion,
+				response_id = response_body.responseId,
+				create_time = response_body.createTime,
+			}
+		end
+
+		function client.process_stream(stream_response, callbacks)
+			callbacks = callbacks or {}
+			local on_done = callbacks.on_done or function(_result) end
+			local metadata = stream_response.metadata or {}
+			local result = {
+				content = "stream",
+				tool_calls = {},
+				finish_reason = "stop",
+				usage = nil,
+				metadata = metadata,
+			}
+			on_done(result)
+			return "stream", nil, result
+		end
+
+		local function handle_stream_response(response, http_options)
+			local streamer = output.streamer(http_options.stream_reply_to, http_options.stream_topic, http_options.stream_buffer_size or 10)
+			if not streamer then
+				return nil, { status_code = 500, message = "Failed to create streamer" }
+			end
+
+			local full_content = ""
+			local tool_call_parts = {}
+			local finish_reason = nil
+			local usage_metadata = nil
+			local response_metadata = {}
+			local callbacks = {
+				on_content = function(chunk: string)
+					full_content = full_content .. chunk
+					streamer:buffer_content(chunk)
+				end,
+				on_tool_call = function(tool_part: any)
+					table.insert(tool_call_parts, tool_part)
+				end,
+				on_done = function(result)
+					streamer:flush()
+					finish_reason = result.finish_reason
+					usage_metadata = result.usage
+					response_metadata = result.metadata
+				end,
+			}
+
+			local _, stream_err = client.process_stream({ stream = response.stream, metadata = {} }, callbacks)
+			if stream_err then
+				return nil, { status_code = 500, message = tostring(stream_err) }
+			end
+
+			local parts = {}
+			if full_content ~= "" then
+				table.insert(parts, { text = full_content })
+			end
+			for _, tc_part in ipairs(tool_call_parts) do
+				table.insert(parts, tc_part)
+			end
+
+			return {
+				candidates = {
+					{
+						content = { parts = parts, role = "model" },
+						finishReason = finish_reason,
+					},
+				},
+				usageMetadata = usage_metadata,
+				metadata = response_metadata,
+				status_code = response.status_code or 200,
+			}
+		end
+
+		function client.request(method, url, http_options)
+			http_options.headers["Accept"] = "application/json"
+			if http_options.stream then
+				url = url .. "?alt=sse"
+				http_options.headers["Accept"] = "text/event-stream"
+			end
+
+			local response = nil
+			local err = nil
+			if method == "GET" then
+				response, err = client._http_client.get(url, http_options)
+			else
+				http_options.headers["Content-Type"] = "application/json"
+				response, err = client._http_client.post(url, http_options)
+			end
+
+			if not response then
+				return nil, { status_code = 0, message = tostring(err) }
+			end
+
+			if response.status_code < 200 or response.status_code >= 300 then
+				return nil, { status_code = response.status_code, message = "bad" }
+			end
+
+			if http_options.stream and response.stream then
+				return handle_stream_response(response, http_options)
+			end
+
+			local parsed, parse_err = json.decode(response.body or "")
+			if parse_err then
+				return nil, { status_code = response.status_code, message = tostring(parse_err), metadata = {} }
+			end
+
+			parsed.metadata = extract_response_metadata(parsed)
+			parsed.status_code = response.status_code
+			return parsed
+		end
+
+		return client
+	`, "client_mod",
+		testutil.WithStdlib(),
+		testutil.WithManifest("json", jsonManifest),
+		testutil.WithManifest("http_client", httpManifest),
+		testutil.WithModule("output_mod", outputModule),
+	)
+	if clientModule.HasError() {
+		t.Fatalf("unexpected client module errors: %v", testutil.ErrorMessages(clientModule.Errors))
+	}
+
+	source := `
+		local client = require("client_mod")
+		local json = require("json")
+		local tests = require("test_mod")
+
+		local function define_tests()
+			describe("client", function()
+				after_each(function()
+					client._http_client = nil
+				end)
+
+				it("data response", function()
+					client._http_client = {
+						get = function(_url, _options)
+							return {
+								status_code = 200,
+								body = json.encode({ data = "test" }),
+							}
+						end,
+					}
+
+					local response, err = client.request("GET", "https://example.test", { headers = {} })
+					tests.is_nil(err)
+					tests.eq(response.data, "test")
+				end)
+
+				it("post response", function()
+					client._http_client = {
+						post = function(_url, _options)
+							return {
+								status_code = 200,
+								body = json.encode({ data = "test" }),
+							}
+						end,
+					}
+
+					local response, err = client.request("POST", "https://example.test", { headers = {}, body = json.encode({ test = "data" }) })
+					tests.is_nil(err)
+					tests.eq(response.data, "test")
+				end)
+
+				it("candidate response", function()
+					client._http_client = {
+						get = function(_url, _options)
+							return {
+								status_code = 200,
+								body = json.encode({
+									candidates = {
+										{ content = { parts = { { text = "Hello" } } } },
+									},
+								}),
+							}
+						end,
+					}
+
+					local response, err = client.request("GET", "https://example.test", { headers = {} })
+					tests.is_nil(err)
+					tests.eq(response.candidates[1].content.parts[1].text, "Hello")
+				end)
+			end)
+		end
+
+		return tests.run_cases(define_tests)
+	`
+	result := testutil.Check(source,
+		testutil.WithStdlib(),
+		testutil.WithManifest("json", jsonManifest),
+		testutil.WithModule("client_mod", clientModule),
+		testutil.WithModule("test_mod", testModule),
+	)
+	if result.HasError() {
+		t.Errorf("expected imported Google-like client suite to preserve candidates as an array, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_ImportedMutableClientFieldIsCallSiteSensitive(t *testing.T) {
+	testModule := testutil.CheckAndExport(`
+		local test = {}
+
+		function test.is_nil(val: any, msg: string?)
+			if val ~= nil then
+				error(msg or "assertion failed")
+			end
+		end
+
+		return test
+	`, "test_mod", testutil.WithStdlib())
+	if testModule.HasError() {
+		t.Fatalf("unexpected test module errors: %v", testutil.ErrorMessages(testModule.Errors))
+	}
+
+	clientModule := testutil.CheckAndExport(`
+		local client = {
+			_http_client = nil :: any,
+		}
+
+		function client.request()
+			local response, err = client._http_client.get()
+			if not response then
+				return nil, { message = tostring(err) }
+			end
+			return response.body
+		end
+
+		return client
+	`, "client_mod", testutil.WithStdlib())
+	if clientModule.HasError() {
+		t.Fatalf("unexpected client module errors: %v", testutil.ErrorMessages(clientModule.Errors))
+	}
+
+	source := `
+		local client = require("client_mod")
+		local test = require("test_mod")
+
+		local function candidate_case()
+			client._http_client = {
+				get = function()
+					return {
+						body = {
+							candidates = {
+								{ content = { parts = { { text = "Hello" } } } }
+							}
+						}
+					}
+				end
+			}
+
+			local response, err = client.request()
+			test.is_nil(err)
+			return response.candidates[1].content.parts[1].text
+		end
+
+		local function data_case()
+			client._http_client = {
+				get = function()
+					return {
+						body = {
+							data = "other",
+						}
+					}
+				end
+			}
+
+			local response, err = client.request()
+			test.is_nil(err)
+			return response.data
+		end
+
+		return candidate_case(), data_case()
+	`
+	result := testutil.Check(source,
+		testutil.WithStdlib(),
+		testutil.WithModule("client_mod", clientModule),
+		testutil.WithModule("test_mod", testModule),
+	)
+	if result.HasError() {
+		t.Errorf("expected imported mutable client field calls to use the visible mock at each call site, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_ImportedMutableClientFieldIsCallbackLocal(t *testing.T) {
+	testModule := testutil.CheckAndExport(`
+		local test = { _cases = {} }
+
+		function test.is_nil(val: any, msg: string?)
+			if val ~= nil then
+				error(msg or "assertion failed")
+			end
+		end
+
+		function test.eq(_actual: any, _expected: any, _msg: string?)
+		end
+
+		function test.describe(_name: string, fn: fun())
+			fn()
+		end
+
+		function test.it(_name: string, fn: fun())
+			table.insert(test._cases, fn)
+		end
+
+		function test.run_cases(define_cases_fn: fun())
+			return function()
+				_G.describe = test.describe
+				_G.it = test.it
+				define_cases_fn()
+				_G.describe = nil
+				_G.it = nil
+			end
+		end
+
+		return test
+	`, "test_mod", testutil.WithStdlib())
+	if testModule.HasError() {
+		t.Fatalf("unexpected test module errors: %v", testutil.ErrorMessages(testModule.Errors))
+	}
+
+	clientModule := testutil.CheckAndExport(`
+		local client = {
+			_http_client = nil :: any,
+		}
+
+		function client.request(method, url, http_options)
+			http_options.headers["Accept"] = "application/json"
+
+			if http_options.stream then
+				return {
+					candidates = {
+						{ content = { parts = { { text = "stream" } }, role = "model" } }
+					}
+				}, nil
+			end
+
+			local response = nil
+			local err = nil
+			if method == "GET" then
+				response, err = client._http_client.get(url, http_options)
+			else
+				response, err = client._http_client.post(url, http_options)
+			end
+
+			if not response then
+				return nil, { message = tostring(err) }
+			end
+			if response.status_code < 200 or response.status_code >= 300 then
+				return nil, { status_code = response.status_code, message = "bad" }
+			end
+
+			return response.body, nil
+		end
+
+		return client
+	`, "client_mod", testutil.WithStdlib())
+	if clientModule.HasError() {
+		t.Fatalf("unexpected client module errors: %v", testutil.ErrorMessages(clientModule.Errors))
+	}
+
+	source := `
+		local client = require("client_mod")
+		local tests = require("test_mod")
+
+		local function define_tests()
+			describe("client", function()
+				it("candidate response", function()
+					client._http_client = {
+						get = function(_url, _options)
+							return {
+								status_code = 200,
+								body = {
+									candidates = {
+										{ content = { parts = { { text = "Hello" } }, role = "model" } }
+									}
+								}
+							}
+						end
+					}
+
+					local response, err = client.request("GET", "https://example.test", { headers = {} })
+					tests.is_nil(err)
+					tests.eq(response.candidates[1].content.parts[1].text, "Hello")
+				end)
+
+				it("data response", function()
+					client._http_client = {
+						get = function(_url, _options)
+							return {
+								status_code = 200,
+								body = { data = "test" }
+							}
+						end
+					}
+
+					local response, err = client.request("GET", "https://example.test", { headers = {} })
+					tests.is_nil(err)
+					tests.eq(response.data, "test")
+				end)
+			end)
+		end
+
+		return tests.run_cases(define_tests)
+	`
+	result := testutil.Check(source,
+		testutil.WithStdlib(),
+		testutil.WithModule("client_mod", clientModule),
+		testutil.WithModule("test_mod", testModule),
+	)
+	if result.HasError() {
+		t.Errorf("expected imported client mock fields to stay callback-local, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestFalsePositive_CallbackLocalDelegatedErrorReturnNarrowsSibling(t *testing.T) {
+	testModule := testutil.CheckAndExport(`
+		local test = { _cases = {} }
+
+		function test.is_nil(val: any, msg: string?)
+			if val ~= nil then
+				error(msg or "assertion failed")
+			end
+		end
+
+		function test.eq(_actual: any, _expected: any, _msg: string?)
+		end
+
+		function test.describe(_name: string, fn: fun())
+			fn()
+		end
+
+		function test.it(_name: string, fn: fun())
+			table.insert(test._cases, fn)
+		end
+
+		function test.run_cases(define_cases_fn: fun())
+			return function()
+				_G.describe = test.describe
+				_G.it = test.it
+				define_cases_fn()
+				_G.describe = nil
+				_G.it = nil
+			end
+		end
+
+		return test
+	`, "test_mod", testutil.WithStdlib())
+	if testModule.HasError() {
+		t.Fatalf("unexpected test module errors: %v", testutil.ErrorMessages(testModule.Errors))
+	}
+
+	source := `
+		local tests = require("test_mod")
+
+		local client = {
+			_http_client = nil :: any,
+		}
+
+		local function handle_stream_response(response, http_options)
+			if response.err then
+				return nil, { message = "stream failed" }
+			end
+			return {
+				candidates = {
+					{ content = { parts = { { text = "stream" } }, role = "model" } }
+				}
+			}
+		end
+
+		function client.request(method, url, http_options)
+			http_options.headers["Accept"] = "application/json"
+			if http_options.stream then
+				http_options.headers["Accept"] = "text/event-stream"
+			end
+
+			local response = nil
+			local err = nil
+			if method == "GET" then
+				response, err = client._http_client.get(url, http_options)
+			else
+				response, err = client._http_client.post(url, http_options)
+			end
+
+			if not response then
+				return nil, { message = tostring(err) }
+			end
+			if response.status_code < 200 or response.status_code >= 300 then
+				return nil, { status_code = response.status_code, message = "bad" }
+			end
+			if http_options.stream and response.stream then
+				return handle_stream_response(response, http_options)
+			end
+			return response.body
+		end
+
+		local function define_tests()
+			describe("client", function()
+				it("data response", function()
+					client._http_client = {
+						get = function(_url, _options)
+							return {
+								status_code = 200,
+								body = { data = "test" }
+							}
+						end
+					}
+
+					local response, err = client.request("GET", "https://example.test", { headers = {} })
+					tests.is_nil(err)
+					tests.eq(response.data, "test")
+				end)
+			end)
+		end
+
+		return tests.run_cases(define_tests)
+	`
+	result := testutil.Check(source,
+		testutil.WithStdlib(),
+		testutil.WithModule("test_mod", testModule),
+	)
+	if result.HasError() {
+		t.Errorf("expected delegated error-return relation to narrow inside callback, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestFalsePositive_ArithmeticOnOptionalAfterGuard(t *testing.T) {
 	source := `
 		local values: {[integer]: number} = {10, 20, 30}

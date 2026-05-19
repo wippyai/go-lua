@@ -619,7 +619,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		}
 	}
 
-	if typ.IsUnknownOnlyOrEmpty(returnTypes) && len(canonicalReturns) > 0 {
+	if len(returnTypes) == 0 && len(canonicalReturns) > 0 {
 		return canonicalReturns, false
 	}
 
@@ -828,14 +828,17 @@ func (s *Synthesizer) buildFunctionTypeFromAvailableFacts(
 func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, expected *typ.Function) map[cfg.SymbolID]typ.Type {
 	paramSlots := fnGraph.ParamSlotsReadOnly()
 	overlay := make(map[cfg.SymbolID]typ.Type, overlaySymbolCapacity(fnGraph, len(paramSlots)))
-	for _, slot := range paramSlots {
+	for paramIdx, slot := range paramSlots {
 		if slot.Symbol == 0 {
 			continue
 		}
 
-		srcIdx, hasSource := slot.SourceParamIndex()
+		_, hasSource := slot.SourceParamIndex()
 		if !hasSource {
-			if selfType := sc.SelfType(); selfType != nil {
+			if expected != nil && paramIdx < len(expected.Params) && expected.Params[paramIdx].Type != nil {
+				overlay[slot.Symbol] = expected.Params[paramIdx].Type
+			} else if sc != nil && sc.SelfType() != nil {
+				selfType := sc.SelfType()
 				overlay[slot.Symbol] = selfType
 			} else {
 				overlay[slot.Symbol] = typ.Unknown
@@ -843,12 +846,11 @@ func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, exp
 			continue
 		}
 
-		i := srcIdx
 		paramType := typ.Unknown
 		if slot.TypeAnnotation != nil {
 			paramType = s.ResolveType(slot.TypeAnnotation, sc)
-		} else if expected != nil && i < len(expected.Params) {
-			paramType = expected.Params[i].Type
+		} else if expected != nil && paramIdx < len(expected.Params) {
+			paramType = expected.Params[paramIdx].Type
 		} else if slot.Name == "self" && sc != nil && sc.SelfType() != nil {
 			paramType = sc.SelfType()
 		}

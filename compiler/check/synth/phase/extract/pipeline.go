@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -144,8 +145,88 @@ func FullArgReSynth(
 			}
 			return synthWithExpected(a, p, expected)
 		case *ast.IdentExpr:
-			return synthWithExpected(a, p, expected)
+			inferred := synthWithExpected(a, p, expected)
+			if shouldRefineCallArgWithExpected(inferred, expected) {
+				return expected
+			}
+			return inferred
+		case *ast.AttrGetExpr:
+			inferred := synthWithExpected(a, p, expected)
+			if shouldRefineCallArgWithExpected(inferred, expected) {
+				return expected
+			}
+			return inferred
 		}
 		return nil
 	}
+}
+
+func shouldRefineCallArgWithExpected(inferred, expected typ.Type) bool {
+	if inferred == nil || expected == nil {
+		return false
+	}
+	if typ.IsAny(inferred) || typ.IsAny(expected) || expected.Kind().IsPlaceholder() {
+		return false
+	}
+	if typ.IsUnknown(unwrap.Alias(inferred)) {
+		return true
+	}
+	if subtype.IsSubtype(inferred, expected) {
+		return true
+	}
+	inferredRec := unwrap.Record(inferred)
+	expectedRec := unwrap.Record(expected)
+	if inferredRec == nil || expectedRec == nil {
+		return false
+	}
+	return recordEvidenceMatchesExpected(inferredRec, expectedRec)
+}
+
+func recordEvidenceMatchesExpected(inferred, expected *typ.Record) bool {
+	if inferred == nil || expected == nil {
+		return false
+	}
+	for _, field := range inferred.Fields {
+		expectedField := expected.GetField(field.Name)
+		if expectedField == nil {
+			if expected.Open {
+				continue
+			}
+			return false
+		}
+		if unresolvedRecordEvidence(field.Type) {
+			continue
+		}
+		inferredType := field.Type
+		if field.Optional {
+			inferredType = typ.NewOptional(inferredType)
+		}
+		expectedType := expectedField.Type
+		if expectedField.Optional {
+			expectedType = typ.NewOptional(expectedType)
+		}
+		if !subtype.IsSubtype(inferredType, expectedType) {
+			return false
+		}
+	}
+	if inferred.HasMapComponent() {
+		if !expected.HasMapComponent() {
+			return false
+		}
+		if !unresolvedRecordEvidence(inferred.MapKey) && !subtype.IsSubtype(inferred.MapKey, expected.MapKey) {
+			return false
+		}
+		if !unresolvedRecordEvidence(inferred.MapValue) && !subtype.IsSubtype(inferred.MapValue, expected.MapValue) {
+			return false
+		}
+	}
+	return true
+}
+
+func unresolvedRecordEvidence(t typ.Type) bool {
+	if typ.IsAbsentOrUnknown(t) {
+		return true
+	}
+	rec := unwrap.Record(t)
+	return rec != nil && len(rec.Fields) == 0 && !rec.HasMapComponent()
 }

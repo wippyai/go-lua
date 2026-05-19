@@ -763,10 +763,7 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 	if currentType == nil {
 		currentType = s.joinPredecessorRootTypes(p, ia.Symbol)
 	}
-	currentType = preferDeclaredTemplateForWiden(currentType, s.lookupDeclaredType(constraint.Path{
-		Root:   ia.Root,
-		Symbol: ia.Symbol,
-	}))
+	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(iaPath))
 
 	// Compute the widened type
 	newType := widenWithIndexer(currentType, keyType, valueType)
@@ -893,10 +890,7 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 	}
 
 	currentType := s.values[string(pathKey)]
-	currentType = preferDeclaredTemplateForWiden(currentType, s.lookupDeclaredType(constraint.Path{
-		Root:   tm.Target.Root,
-		Symbol: tm.Target.Symbol,
-	}))
+	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(tm.Target))
 
 	var newType typ.Type
 	if tm.KeySymbol != 0 || tm.KeyType != nil {
@@ -1166,7 +1160,7 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 		},
 		Map: func(m *typ.Map) typ.Type {
 			newKey := mergeMapKeyDomain(m.Key, keyType)
-			newVal := WidenArrayElementType(m.Value, elementType, typ.JoinPreferNonSoft)
+			newVal := WidenArrayElementType(m.Value, elementType, joinContainerValueTypes)
 			if newVal == nil {
 				return mapType
 			}
@@ -1187,7 +1181,7 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 			for _, m := range u.Members {
 				if mp, ok := m.(*typ.Map); ok && !found {
 					newKey := mergeMapKeyDomain(mp.Key, keyType)
-					newVal := WidenArrayElementType(mp.Value, elementType, typ.JoinPreferNonSoft)
+					newVal := WidenArrayElementType(mp.Value, elementType, joinContainerValueTypes)
 					if newVal == nil {
 						updated = append(updated, m)
 					} else {
@@ -1230,6 +1224,14 @@ func mergeMapKeyDomain(existing, incoming typ.Type) typ.Type {
 	return typ.JoinPreferNonSoft(existing, incoming)
 }
 
+func joinContainerValueTypes(existing, incoming typ.Type) typ.Type {
+	joined := typ.JoinPreferNonSoft(existing, incoming)
+	if union, ok := joined.(*typ.Union); ok {
+		return join.Types(union.Members...)
+	}
+	return joined
+}
+
 func preferDeclaredTemplateForWiden(current, declared typ.Type) typ.Type {
 	if declared == nil {
 		return current
@@ -1238,6 +1240,20 @@ func preferDeclaredTemplateForWiden(current, declared typ.Type) typ.Type {
 		return declared
 	}
 	return current
+}
+
+func (s *Solution) declaredTemplateForPath(path constraint.Path) typ.Type {
+	if s == nil || path.Symbol == 0 {
+		return nil
+	}
+	root := s.lookupDeclaredType(constraint.Path{Root: path.Root, Symbol: path.Symbol})
+	if root == nil || len(path.Segments) == 0 {
+		return root
+	}
+	if t, ok := s.deriveTypeFrom(root, path.Segments); ok {
+		return t
+	}
+	return nil
 }
 
 func isEmptyRecordNoMapType(t typ.Type) bool {
@@ -1301,7 +1317,7 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			// Record with fields: add or widen map component
 			if r.HasMapComponent() {
 				newKey := mergeMapKeyDomain(r.MapKey, keyType)
-				newVal := typ.JoinPreferNonSoft(r.MapValue, valType)
+				newVal := joinContainerValueTypes(r.MapValue, valType)
 				if typ.TypeEquals(r.MapKey, newKey) && typ.TypeEquals(r.MapValue, newVal) {
 					return t
 				}
@@ -1313,7 +1329,7 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 		Map: func(m *typ.Map) typ.Type {
 			// Widen existing map by unioning key/value types, preferring non-soft.
 			newKey := mergeMapKeyDomain(m.Key, keyType)
-			newVal := typ.JoinPreferNonSoft(m.Value, valType)
+			newVal := joinContainerValueTypes(m.Value, valType)
 			if typ.TypeEquals(m.Key, newKey) && typ.TypeEquals(m.Value, newVal) {
 				return t
 			}

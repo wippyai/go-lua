@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/guard"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	checksynth "github.com/wippyai/go-lua/compiler/check/synth"
@@ -182,6 +183,10 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 	case *ast.FuncCallExpr:
 		diags = append(diags, checkFieldExpr(e.Func, p, narrowView, resolver, seen, sourceName)...)
 		for _, arg := range e.Args {
+			if guard.IsTypeCall(e) {
+				diags = append(diags, checkTypeProbeArg(arg, p, narrowView, resolver, seen, sourceName)...)
+				continue
+			}
 			diags = append(diags, checkFieldExpr(arg, p, narrowView, resolver, seen, sourceName)...)
 		}
 	case *ast.TableExpr:
@@ -189,6 +194,24 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 			diags = append(diags, checkFieldExpr(f.Value, p, narrowView, resolver, seen, sourceName)...)
 		}
 	case *ast.LogicalOpExpr:
+		if e.Operator == "and" {
+			if probe, ok := guard.ExtractTypeEqualityProbe(e.Lhs); ok && resolver.bindings != nil {
+				probeType := guard.TypeForTypeKey(probe.Key)
+				diags = append(diags, checkTypeProbeArg(probe.Expr, p, narrowView, resolver, seen, sourceName)...)
+				probePath := path.FromExprWithBindings(probe.Expr, nil, resolver.bindings)
+				if !probePath.IsEmpty() {
+					localView := &localNarrowView{
+						base:         narrowView,
+						bindings:     resolver.bindings,
+						overridePath: probePath,
+						overrideType: probeType,
+					}
+					localResolver := fieldResolverImpl{view: localView, synth: resolver.synth, bindings: resolver.bindings}
+					diags = append(diags, checkFieldExpr(e.Rhs, p, localView, localResolver, seen, sourceName)...)
+					return diags
+				}
+			}
+		}
 		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
 		lhsType := narrowView.TypeOf(e.Lhs, p)
 		if e.Operator == "and" && ops.IsFalsy(lhsType) {
@@ -357,7 +380,7 @@ func preAssignmentExprType(graph *cfg.Graph, expr ast.Expr, p cfg.Point, view ap
 func checkArithmetic(e *ast.ArithmeticOpExpr, p cfg.Point, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
 	check := func(expr ast.Expr) *diag.Diagnostic {
 		t := narrowView.TypeOf(expr, p)
-		if t == nil || ops.IsNumeric(t) {
+		if t == nil || ops.IsNumeric(t) || typ.IsNever(t) {
 			return nil
 		}
 		msg := "cannot perform arithmetic on " + typ.FormatShort(t) + ", expected number"
@@ -534,6 +557,9 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 	var diags []diag.Diagnostic
 
 	diags = append(diags, checkFieldExpr(e.Object, p, narrowView, resolver, seen, sourceName)...)
+	if localViewOverridesExpr(narrowView, e) {
+		return diags
+	}
 
 	objType := narrowView.TypeOf(e.Object, p)
 
@@ -591,6 +617,30 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 	}
 
 	return diags
+}
+
+func checkTypeProbeArg(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolver fieldResolverImpl, seen map[ast.Expr]bool, sourceName string) []diag.Diagnostic {
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || attr == nil {
+		return checkFieldExpr(expr, p, narrowView, resolver, seen, sourceName)
+	}
+	return checkFieldExpr(attr.Object, p, narrowView, resolver, seen, sourceName)
+}
+
+func localViewOverridesExpr(view api.BaseSynth, expr ast.Expr) bool {
+	for {
+		localView, ok := view.(*localNarrowView)
+		if !ok || localView == nil {
+			return false
+		}
+		if localView.bindings != nil {
+			exprPath := path.FromExprWithBindings(expr, nil, localView.bindings)
+			if !exprPath.IsEmpty() && exprPath.Equal(localView.overridePath) {
+				return true
+			}
+		}
+		view = localView.base
+	}
 }
 
 func isStringKeyExpr(key ast.Expr) bool {

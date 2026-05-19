@@ -705,6 +705,22 @@ func TestCorrelationsFromFunctionType_ImplicitLuaErrorConvention(t *testing.T) {
 	}
 }
 
+func TestCorrelationsFromFunctionType_ImplicitLuaErrorConventionWithExtraReturns(t *testing.T) {
+	fnType := typ.Func().
+		Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.LuaError), typ.NewOptional(typ.Boolean)).
+		Build()
+	inverse, co := correlationsFromFunctionType(fnType)
+	if len(co) != 0 {
+		t.Fatalf("expected no co-correlations, got %v", co)
+	}
+	if len(inverse) != 1 {
+		t.Fatalf("expected one convention-based correlation, got %v", inverse)
+	}
+	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
+		t.Fatalf("unexpected convention correlation: %+v", inverse[0])
+	}
+}
+
 func TestCorrelationsFromFunctionType_ImplicitStringErrorConvention(t *testing.T) {
 	fnType := typ.Func().
 		Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.String)).

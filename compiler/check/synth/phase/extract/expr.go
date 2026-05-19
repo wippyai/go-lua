@@ -25,6 +25,7 @@ package extract
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/guard"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/cfg"
@@ -105,6 +106,15 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 				}
 				if typ.IsUnknown(unwrap.Alias(narrowed)) && typ.IsAny(unwrap.Alias(objType)) {
 					goto skipNarrowedAttr
+				}
+				if key, ok := ex.Key.(*ast.StringExpr); ok {
+					if declaredField, ok := s.deps.Types.Field(s.deps.Ctx, objType, key.Value); ok && declaredField != nil {
+						refined, ok := s.refineNarrowedFieldFact(narrowed, declaredField)
+						if !ok {
+							goto skipNarrowedAttr
+						}
+						narrowed = refined
+					}
 				}
 				return narrowed
 			}
@@ -228,6 +238,35 @@ skipNarrowedAttr:
 	}
 
 	return typ.Unknown
+}
+
+func (s *Synthesizer) refineNarrowedFieldFact(narrowed, declared typ.Type) (typ.Type, bool) {
+	if narrowed == nil || declared == nil {
+		return narrowed, true
+	}
+	declared = unwrap.Alias(declared)
+	narrowed = unwrap.Alias(narrowed)
+	if declared == nil || narrowed == nil {
+		return narrowed, true
+	}
+	if declared.Kind().IsPlaceholder() {
+		return narrowed, true
+	}
+	if s.deps.Types != nil {
+		if s.deps.Types.IsSubtype(s.deps.Ctx, narrowed, declared) {
+			return narrowed, true
+		}
+		declaredNonNil := narrow.RemoveNil(declared)
+		if !typ.IsNever(declaredNonNil) {
+			if s.deps.Types.IsSubtype(s.deps.Ctx, declaredNonNil, narrowed) {
+				return declaredNonNil, true
+			}
+			if unwrap.Function(declaredNonNil) != nil && unwrap.Function(narrowed) != nil {
+				return declaredNonNil, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func (s *Synthesizer) indexFromKeyOf(objType typ.Type, objExpr ast.Expr, key *ast.IdentExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps) typ.Type {
@@ -469,19 +508,23 @@ func (s *Synthesizer) synthLogicalOpCore(ex *ast.LogicalOpExpr, recurse ExprSynt
 func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth) typ.Type {
 	left := recurse(ex.Lhs)
 
-	// Extract path for LHS expression
-	var lhsPath constraint.Path
-	if s.deps.Paths != nil {
-		lhsPath = s.deps.Paths(p, ex.Lhs, sc)
-	} else if ident, ok := ex.Lhs.(*ast.IdentExpr); ok {
-		if s.deps.CheckCtx != nil {
-			if bindings := s.deps.CheckCtx.Bindings(); bindings != nil {
-				if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-					lhsPath = constraint.Path{Root: ident.Value, Symbol: sym}
+	if ex.Operator == "and" {
+		if probe, ok := guard.ExtractTypeEqualityProbe(ex.Lhs); ok {
+			probePath := s.logicalNarrowPath(p, probe.Expr, sc)
+			if !probePath.IsEmpty() {
+				wrapped := &localNarrowOps{
+					inner:        narrower,
+					overridePath: probePath,
+					overrideType: guard.TypeForTypeKey(probe.Key),
 				}
+				right := s.SynthExpr(ex.Rhs, p, wrapped)
+				return ops.LogicalAndTyped(left, right)
 			}
 		}
 	}
+
+	// Extract path for LHS expression
+	lhsPath := s.logicalNarrowPath(p, ex.Lhs, sc)
 
 	if !lhsPath.IsEmpty() && ops.CanBeFalsy(left) {
 		var narrowedType typ.Type
@@ -512,6 +555,52 @@ func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.P
 	}
 
 	return s.synthLogicalOpCore(ex, recurse)
+}
+
+func (s *Synthesizer) logicalNarrowPath(p cfg.Point, expr ast.Expr, sc *scope.State) constraint.Path {
+	if s == nil {
+		return constraint.Path{}
+	}
+	if s.deps.Paths != nil {
+		return s.deps.Paths(p, expr, sc)
+	}
+	if ident, ok := expr.(*ast.IdentExpr); ok {
+		if s.deps.CheckCtx != nil {
+			if bindings := s.deps.CheckCtx.Bindings(); bindings != nil {
+				if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
+					return constraint.Path{Root: ident.Value, Symbol: sym}
+				}
+			}
+		}
+	}
+	return constraint.Path{}
+}
+
+func (s *Synthesizer) synthLogicalOpWithExpected(ex *ast.LogicalOpExpr, sc *scope.State, p cfg.Point, recurse ExprSynth, expected typ.Type) typ.Type {
+	if ex == nil {
+		return typ.Unknown
+	}
+	if expected == nil || ex.Operator != "or" && ex.Operator != "and" {
+		return s.synthLogicalOpCore(ex, recurse)
+	}
+
+	branch := func(expr ast.Expr) typ.Type {
+		if expr == nil {
+			return typ.Unknown
+		}
+		return s.SynthExprWithExpectedCore(expr, sc, p, recurse, expected)
+	}
+
+	left := recurse(ex.Lhs)
+	right := branch(ex.Rhs)
+	switch ex.Operator {
+	case "and":
+		return ops.LogicalAndTyped(left, right)
+	case "or":
+		return ops.LogicalOrTyped(left, right)
+	default:
+		return typ.Unknown
+	}
 }
 
 // synthArithmeticOpCore synthesizes type for arithmetic operators.

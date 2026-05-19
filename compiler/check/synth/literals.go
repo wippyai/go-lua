@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -148,6 +149,18 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 			out[fn] = sig
 		}
 	}
+	receiverSelfType := func(expr ast.Expr, p cfg.Point) typ.Type {
+		sc := scopes[p]
+		if sc == nil {
+			sc = scopes[entry]
+		}
+		if ident, ok := expr.(*ast.IdentExpr); ok && ident != nil && sc != nil {
+			if named, ok := sc.LookupType(ident.Value); ok && named != nil {
+				return named
+			}
+		}
+		return widenMutableReceiverState(engine.TypeOf(expr, p))
+	}
 
 	var collectExpr func(expr ast.Expr, p cfg.Point, expected typ.Type)
 	var collectTable func(tbl *ast.TableExpr, p cfg.Point, expected typ.Type)
@@ -194,7 +207,7 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 				}
 			}
 			if fieldCount > 0 {
-				selfType = selfBuilder.Build()
+				selfType = widenMutableReceiverState(selfBuilder.Build())
 			}
 		}
 
@@ -262,7 +275,7 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 		var expectedFn *typ.Function
 		if info.TargetKind == cfg.FuncDefField || info.TargetKind == cfg.FuncDefMethod {
 			if info.Receiver != nil {
-				recvType := engine.TypeOf(info.Receiver, p)
+				recvType := receiverSelfType(info.Receiver, p)
 				if recvType != nil && phasecore.HasSelfParam(info.FuncExpr, graph.Bindings()) {
 					expectedFn = typ.Func().Param("self", recvType).Build()
 				}
@@ -290,4 +303,62 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 		return nil
 	}
 	return out
+}
+
+func widenMutableReceiverState(t typ.Type) typ.Type {
+	rec, ok := unwrap.Alias(t).(*typ.Record)
+	if !ok {
+		return t
+	}
+
+	builder := typ.NewRecord()
+	if rec.Open {
+		builder.SetOpen(true)
+	}
+	for _, f := range rec.Fields {
+		fieldType := widenMutableReceiverField(f.Type)
+		switch {
+		case f.Optional && f.Readonly:
+			builder.OptReadonlyField(f.Name, fieldType)
+		case f.Optional:
+			builder.OptField(f.Name, fieldType)
+		case f.Readonly:
+			builder.ReadonlyField(f.Name, fieldType)
+		default:
+			builder.Field(f.Name, fieldType)
+		}
+	}
+	if rec.Metatable != nil {
+		builder.Metatable(rec.Metatable)
+	}
+	if rec.HasMapComponent() {
+		builder.MapComponent(rec.MapKey, rec.MapValue)
+	}
+	return builder.Build()
+}
+
+func widenMutableReceiverField(t typ.Type) typ.Type {
+	if t == nil {
+		return typ.Unknown
+	}
+	unaliased := unwrap.Alias(t)
+	if unaliased == nil {
+		return typ.Unknown
+	}
+	if unaliased.Kind() == kind.Nil {
+		return typ.Unknown
+	}
+	if v, ok := unaliased.(*typ.Literal); ok {
+		switch v.Base {
+		case kind.Boolean:
+			return typ.Boolean
+		case kind.String:
+			return typ.String
+		case kind.Integer:
+			return typ.Integer
+		case kind.Number:
+			return typ.Number
+		}
+	}
+	return t
 }

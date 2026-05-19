@@ -157,7 +157,9 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 			valueType := narrowSynth.SynthWithExpected(source, p, declaredType)
 			if sourceUsesTarget {
 				if pre := preAssignmentExprTypeForAssign(source, p, narrowSynth, graph, declaredType); pre != nil {
-					valueType = pre
+					if !typ.IsAbsentOrUnknown(pre) {
+						valueType = pre
+					}
 				}
 			}
 			if valueType == nil {

@@ -34,25 +34,27 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
 	}
+	if keyType == nil {
+		keyType = typ.Unknown
+	}
 	if top, ok := specialAccessType(t); ok {
 		return top, true
 	}
 
 	res := typ.Visit(t, typ.Visitor[indexResult]{
 		Array: func(a *typ.Array) indexResult {
-			if keyType != nil && isNumeric(keyType) {
+			if isNumeric(keyType) {
 				if a.Element == nil {
 					return indexResult{t: typ.Nil, ok: true}
 				}
 				return indexResult{t: a.Element, ok: true}
 			}
+			if keyType.Kind().IsPlaceholder() && a.Element != nil {
+				return indexResult{t: typ.NewOptional(a.Element), ok: true}
+			}
 			return indexResult{}
 		},
 		Map: func(m *typ.Map) indexResult {
-			if keyType == nil {
-				return indexResult{}
-			}
-
 			if keyType.Kind().IsPlaceholder() {
 				if m.Value == nil {
 					return indexResult{}
@@ -83,6 +85,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			}
 			// Unknown integer index returns optional union of all elements
 			if isNumeric(keyType) && len(tup.Elements) > 0 {
+				return indexResult{t: typ.NewOptional(typ.NewUnion(tup.Elements...)), ok: true}
+			}
+			if keyType != nil && keyType.Kind().IsPlaceholder() && len(tup.Elements) > 0 {
 				return indexResult{t: typ.NewOptional(typ.NewUnion(tup.Elements...)), ok: true}
 			}
 

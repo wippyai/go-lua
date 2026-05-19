@@ -26,6 +26,12 @@ func TestIndex(t *testing.T) {
 		{"nil type", nil, typ.Integer, false, nil},
 		{"array with integer key", arr, typ.Integer, true, func(t typ.Type) bool { return t == typ.String }},
 		{"array with number key", arr, typ.Number, true, func(t typ.Type) bool { return t == typ.String }},
+		{"array with unknown key placeholder", arr, typ.Unknown, true, func(t typ.Type) bool {
+			return ContainsNil(t)
+		}},
+		{"array with nil key type", arr, nil, true, func(t typ.Type) bool {
+			return ContainsNil(t)
+		}},
 		{"array with string key", arr, typ.String, false, nil},
 		{"map with matching key", m, typ.String, true, func(t typ.Type) bool {
 			_, ok := t.(*typ.Optional)
@@ -52,9 +58,18 @@ func TestIndex(t *testing.T) {
 		{"tuple with generic integer", tuple, typ.Integer, true, func(t typ.Type) bool {
 			return ContainsNil(t)
 		}},
+		{"tuple with unknown key placeholder", tuple, typ.Unknown, true, func(t typ.Type) bool {
+			return ContainsNil(t)
+		}},
+		{"tuple with nil key type", tuple, nil, true, func(t typ.Type) bool {
+			return ContainsNil(t)
+		}},
 		{"empty tuple with integer", typ.NewTuple(), typ.Integer, false, nil},
 		{"record with string literal key", rec, typ.LiteralString("a"), true, func(t typ.Type) bool { return t == typ.String }},
 		{"record with generic string key", rec, typ.String, true, func(t typ.Type) bool {
+			return ContainsNil(t)
+		}},
+		{"record with nil key type", rec, nil, true, func(t typ.Type) bool {
 			return ContainsNil(t)
 		}},
 		{"empty record with string", typ.NewRecord().Build(), typ.String, true, func(t typ.Type) bool { return t == typ.Nil }},

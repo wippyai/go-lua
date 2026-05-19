@@ -21,6 +21,9 @@ type ParamListConfig struct {
 	// ImplicitSelfType is used for the prepended `self` parameter.
 	// When nil, `unknown` is used.
 	ImplicitSelfType typ.Type
+	// UntypedParamType is used for unannotated source parameters without an
+	// expected type. When nil, `unknown` is used.
+	UntypedParamType typ.Type
 }
 
 // ParamSymbolLookup exposes parameter symbol layout for a function expression.
@@ -135,6 +138,9 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 			isOptional = cfg.Expected.Params[expectedIdx].Optional
 		} else {
 			// Unannotated params are optional in Lua (missing args become nil).
+			if cfg.UntypedParamType != nil {
+				paramType = cfg.UntypedParamType
+			}
 			isOptional = true
 			hasUntyped = true
 		}

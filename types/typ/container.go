@@ -60,6 +60,7 @@ func NewMap(key, value Type) *Map {
 	if key == nil {
 		key = Unknown
 	}
+	key = NormalizeTableKey(key)
 	if value == nil {
 		value = Unknown
 	}

@@ -34,6 +34,7 @@ import (
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -108,6 +109,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 
 	depthExceeded := false
 	base := BuildFunctionScope(input.Fn, input.Parent, typeExprResolver, input.MaxScopeDepth, &depthExceeded)
+	base = normalizeBaseImplicitSelf(input.Graph, base)
 
 	var synthSig *typ.Function
 	if input.SynthesizedFunctionSig != nil {
@@ -117,6 +119,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 	var hints []typ.Type
 	if input.ParamHintSignatures != nil && input.Fn != nil {
 		hints = input.ParamHintSignatures[input.Fn]
+		hints = paramhints.ProjectHintsToParamUse(input.Graph, input.Fn, hints)
 	}
 	paramTypes, paramAnnotated := ExtractParamTypes(input.Graph, input.Fn, typeExprResolver, synthSig, base, hints)
 
@@ -132,7 +135,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 			}
 			if i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
 				if name == "self" && base.SelfType() == nil {
-					base = base.WithSelf(synthSig.Params[i].Type)
+					base = base.WithSelf(widenImplicitSelfState(synthSig.Params[i].Type))
 				}
 			}
 		}
@@ -189,7 +192,15 @@ func RunScope(input ScopeInput) ScopeOutput {
 	exprSynth := func(expr ast.Expr, p cfg.Point, sc *scope.State) typ.Type {
 		return typeResolutionEngine.SynthExprAt(expr, p, sc)
 	}
-	fnSignatureResolver := buildFnSignatureResolver(input.FunctionLiteralSignatures, input.ParamHintSignatures, typeResolutionEngine)
+	paramHintSignatures := input.ParamHintSignatures
+	if input.Fn != nil && hints != nil && input.ParamHintSignatures != nil {
+		paramHintSignatures = make(map[*ast.FunctionExpr][]typ.Type, len(input.ParamHintSignatures))
+		for fn, hintVec := range input.ParamHintSignatures {
+			paramHintSignatures[fn] = hintVec
+		}
+		paramHintSignatures[input.Fn] = hints
+	}
+	fnSignatureResolver := buildFnSignatureResolver(input.FunctionLiteralSignatures, paramHintSignatures, typeResolutionEngine)
 
 	callMutator := buildCallMutator(input.Types, input.Ctx, exprSynth)
 	services := ScopeServicesFuncs{
@@ -224,6 +235,19 @@ func RunScope(input ScopeInput) ScopeOutput {
 		FunctionFacts:             input.FunctionFacts,
 		DepthLimitExceeded:        depthExceeded,
 	}
+}
+
+func normalizeBaseImplicitSelf(graph *cfg.Graph, base *scope.State) *scope.State {
+	if graph == nil || base == nil || base.SelfType() == nil {
+		return base
+	}
+	for _, slot := range graph.ParamSlotsReadOnly() {
+		if slot.Name != "self" || slot.TypeAnnotation != nil {
+			continue
+		}
+		return base.WithSelf(widenImplicitSelfState(base.SelfType()))
+	}
+	return base
 }
 
 // buildFnSignatureResolver creates a function signature resolver that combines
@@ -275,28 +299,33 @@ func ExtractParamTypes(
 	annotated = make(map[cfg.SymbolID]bool)
 
 	slots := graph.ParamSlotsReadOnly()
-	for _, slot := range slots {
+	for paramIdx, slot := range slots {
 		if slot.Symbol == 0 || slot.Name == "" {
 			continue
 		}
 
 		// Binder/CFG-injected implicit self parameter has no source annotation.
-		srcIdx, hasSource := slot.SourceParamIndex()
+		_, hasSource := slot.SourceParamIndex()
+		var hint typ.Type
+		if paramHints != nil && paramIdx < len(paramHints) {
+			hint = paramHints[paramIdx]
+		}
 		if !hasSource {
 			if base != nil && base.SelfType() != nil {
 				types[slot.Symbol] = base.SelfType()
+			} else if synthSig != nil && paramIdx < len(synthSig.Params) && synthSig.Params[paramIdx].Type != nil {
+				types[slot.Symbol] = synthSig.Params[paramIdx].Type
+			} else if hint != nil {
+				types[slot.Symbol] = hint
 			} else {
 				types[slot.Symbol] = typ.Unknown
 			}
+			if slot.Name == "self" {
+				types[slot.Symbol] = widenImplicitSelfState(types[slot.Symbol])
+			}
 			continue
 		}
-		i := srcIdx
-
 		var paramType typ.Type
-		var hint typ.Type
-		if paramHints != nil && i < len(paramHints) {
-			hint = paramHints[i]
-		}
 		var isAnnotated bool
 		var hasExplicitAnnotation bool
 		if slot.TypeAnnotation != nil {
@@ -308,8 +337,8 @@ func ExtractParamTypes(
 			if typ.IsRefinableAnnotation(paramType) {
 				if hint != nil {
 					paramType = hint
-				} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
-					paramType = synthSig.Params[i].Type
+				} else if synthSig != nil && paramIdx < len(synthSig.Params) && synthSig.Params[paramIdx].Type != nil {
+					paramType = synthSig.Params[paramIdx].Type
 				}
 			} else {
 				isAnnotated = true
@@ -317,9 +346,8 @@ func ExtractParamTypes(
 			}
 		} else if hint != nil {
 			paramType = hint
-		} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
-			paramType = synthSig.Params[i].Type
-			isAnnotated = true
+		} else if synthSig != nil && paramIdx < len(synthSig.Params) && synthSig.Params[paramIdx].Type != nil {
+			paramType = synthSig.Params[paramIdx].Type
 		} else if slot.Name == "self" && base != nil && base.SelfType() != nil {
 			paramType = base.SelfType()
 		} else {
@@ -333,6 +361,9 @@ func ExtractParamTypes(
 				paramType = base.SelfType()
 			}
 		}
+		if slot.Name == "self" && !hasExplicitAnnotation {
+			paramType = widenImplicitSelfState(paramType)
+		}
 
 		types[slot.Symbol] = paramType
 		if isAnnotated {
@@ -344,6 +375,63 @@ func ExtractParamTypes(
 		return nil, nil
 	}
 	return types, annotated
+}
+
+func widenImplicitSelfState(t typ.Type) typ.Type {
+	rec, ok := t.(*typ.Record)
+	if !ok {
+		return t
+	}
+	builder := typ.NewRecord()
+	if rec.Open {
+		builder.SetOpen(true)
+	}
+	for _, f := range rec.Fields {
+		fieldType := widenImplicitSelfField(f.Type)
+		switch {
+		case f.Optional && f.Readonly:
+			builder.OptReadonlyField(f.Name, fieldType)
+		case f.Optional:
+			builder.OptField(f.Name, fieldType)
+		case f.Readonly:
+			builder.ReadonlyField(f.Name, fieldType)
+		default:
+			builder.Field(f.Name, fieldType)
+		}
+	}
+	if rec.Metatable != nil {
+		builder.Metatable(rec.Metatable)
+	}
+	if rec.HasMapComponent() {
+		builder.MapComponent(rec.MapKey, rec.MapValue)
+	}
+	return builder.Build()
+}
+
+func widenImplicitSelfField(t typ.Type) typ.Type {
+	if t == nil {
+		return typ.Unknown
+	}
+	unaliased := unwrap.Alias(t)
+	if unaliased == nil {
+		return typ.Unknown
+	}
+	if unaliased.Kind() == kind.Nil {
+		return typ.Unknown
+	}
+	if lit, ok := unaliased.(*typ.Literal); ok {
+		switch lit.Base {
+		case kind.Boolean:
+			return typ.Boolean
+		case kind.String:
+			return typ.String
+		case kind.Integer:
+			return typ.Integer
+		case kind.Number:
+			return typ.Number
+		}
+	}
+	return t
 }
 
 // buildDeclaredTypes builds declared types from annotations.

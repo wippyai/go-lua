@@ -3,10 +3,13 @@ package modules
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // TestManifest_BasicExport tests basic manifest export types.
@@ -182,6 +185,50 @@ func TestManifest_SoftLocalAnnotations(t *testing.T) {
 		}
 		t.Errorf("expected no errors with soft local annotations")
 	}
+
+	if result.Session == nil || result.Session.Store == nil || result.Session.RootResult == nil || result.Session.RootResult.Graph == nil {
+		t.Fatal("missing session data")
+	}
+	root := result.Session.RootResult.Graph
+	parentHash := result.Session.Store.GraphParentHashOf(root.ID())
+	parent := result.Session.Store.Parents()[parentHash]
+	functionFacts := result.Session.Store.GetFunctionFactsSnapshot(root, parent)
+	paramHints := result.Session.Store.GetParamHintsSnapshot(root, parent)
+
+	groupSym := localFunctionSymbolByName(t, root, functionFacts, "group_by_suite")
+	runSuiteSym := localFunctionSymbolByName(t, root, functionFacts, "run_suite")
+	entryArray := typ.NewArray(entryType)
+	suiteMap := typ.NewMap(typ.String, entryArray)
+
+	groupFact := functionFacts[groupSym]
+	if len(groupFact.Summary) != 2 || !typ.TypeEquals(groupFact.Summary[0], suiteMap) || !typ.TypeEquals(groupFact.Summary[1], entryArray) {
+		t.Fatalf("expected group_by_suite summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Summary)
+	}
+	if len(groupFact.Narrow) != 2 || !typ.TypeEquals(groupFact.Narrow[0], suiteMap) || !typ.TypeEquals(groupFact.Narrow[1], entryArray) {
+		t.Fatalf("expected group_by_suite narrow summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Narrow)
+	}
+	groupFn := unwrap.Function(groupFact.Type)
+	if groupFn == nil || len(groupFn.Returns) != 2 || !typ.TypeEquals(groupFn.Returns[0], suiteMap) || !typ.TypeEquals(groupFn.Returns[1], entryArray) {
+		t.Fatalf("expected group_by_suite function returns (%v, %v), got %v", suiteMap, entryArray, groupFact.Type)
+	}
+	runSuiteFn := unwrap.Function(functionFacts.FunctionType(runSuiteSym))
+	if runSuiteFn == nil || len(runSuiteFn.Params) < 2 || !typ.TypeEquals(runSuiteFn.Params[1].Type, entryArray) {
+		t.Fatalf("expected run_suite tests param to refine to %v, got %v", entryArray, functionFacts.FunctionType(runSuiteSym))
+	}
+	if hints := paramHints[runSuiteSym]; len(hints) < 2 || !typ.TypeEquals(hints[1], entryArray) {
+		t.Fatalf("expected run_suite param hint %v, got %v", entryArray, hints)
+	}
+}
+
+func localFunctionSymbolByName(t *testing.T, graph *cfg.Graph, facts api.FunctionFacts, name string) cfg.SymbolID {
+	t.Helper()
+	for sym := range facts {
+		if graph.NameOf(sym) == name {
+			return sym
+		}
+	}
+	t.Fatalf("missing function fact for %s", name)
+	return 0
 }
 
 // TestManifest_InterfaceExport tests manifest with interface types.

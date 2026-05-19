@@ -66,6 +66,7 @@ func TestPruneSoftUnionMembers(t *testing.T) {
 		{"drop soft array", NewUnion(softArray, entryArray), entryArray},
 		{"drop empty record", NewUnion(emptyRecord, entryArray), entryArray},
 		{"all soft stays", NewUnion(Any, softArray), Any},
+		{"nil does not erase optional soft table shape", NewUnion(Nil, softArray, NewRecord().SetOpen(true).Build()), NewUnion(Nil, softArray, NewRecord().SetOpen(true).Build())},
 	}
 
 	for _, tt := range tests {
@@ -137,6 +138,8 @@ func TestIsRefinableAnnotation(t *testing.T) {
 		{"unknown", Unknown, false},
 		{"optional any", NewOptional(Any), false},
 		{"array any", NewArray(Any), true},
+		{"open table top", NewRecord().SetOpen(true).Build(), true},
+		{"array or open table top", NewUnion(NewArray(Any), NewRecord().SetOpen(true).Build()), true},
 		{"record map any", NewRecord().MapComponent(String, Any).Build(), true},
 		{"record", NewRecord().Field("id", String).Build(), false},
 	}

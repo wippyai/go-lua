@@ -135,6 +135,16 @@ func TestReturnTypesRefine_DifferentLength(t *testing.T) {
 	}
 }
 
+func TestMergeReturnSummary_ReplacesStaleFalsyKeyArrayElement(t *testing.T) {
+	stale := []typ.Type{typ.NewArray(typ.NewUnion(typ.Boolean, typ.String))}
+	current := []typ.Type{typ.NewArray(typ.String)}
+
+	got := MergeReturnSummary(stale, current)
+	if !ReturnTypesEqual(got, current) {
+		t.Fatalf("expected truthy-refined key array %v, got %v", current, got)
+	}
+}
+
 func TestReturnTypesExtendRecord_Empty(t *testing.T) {
 	if ReturnTypesExtendRecord(nil, nil) {
 		t.Error("empty vectors should not extend")
@@ -288,7 +298,7 @@ func TestMergeFunctionFactType_MergesSameShapeReturnsCanonically(t *testing.T) {
 	}
 }
 
-func TestMergeFunctionFactType_PrefersConcreteParamOverSoftAny(t *testing.T) {
+func TestMergeFunctionFactType_PrefersConcreteParamOverTopObservation(t *testing.T) {
 	existing := typ.Func().
 		Param("x", typ.Any).
 		Returns(typ.String).
@@ -369,6 +379,17 @@ func TestMergeReturnSummary_PrefersCurrentTruthyMapKeyRefinement(t *testing.T) {
 	merged := MergeReturnSummary([]typ.Type{baseline}, []typ.Type{candidate})
 	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate) {
 		t.Fatalf("expected stale falsy map key to refine to %v, got %v", candidate, merged)
+	}
+}
+
+func TestMergeReturnSummary_PrefersConcreteMapValueOverSoftPlaceholder(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	baseline := typ.NewMap(typ.String, typ.NewArray(typ.Any))
+	candidate := typ.NewMap(typ.String, typ.NewArray(entry))
+
+	merged := MergeReturnSummary([]typ.Type{baseline}, []typ.Type{candidate})
+	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate) {
+		t.Fatalf("expected concrete map value evidence %v, got %v", candidate, merged)
 	}
 }
 
@@ -510,8 +531,61 @@ func TestMergeFunctionFactType_DoesNotCollapseParamToNilWhenOptionalInfoExists(t
 		t.Fatalf("expected function, got %T", merged)
 	}
 	want := typ.NewOptional(typ.NewArray(typ.Any))
-	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, want) {
-		t.Fatalf("expected param type %v, got %+v", want, fn.Params)
+	if len(fn.Params) != 1 || !fn.Params[0].Optional || !typ.TypeEquals(fn.Params[0].Type, want) {
+		t.Fatalf("expected optional param slot with type %v, got %+v", want, fn.Params)
+	}
+}
+
+func TestMergeFunctionFactType_NilDoesNotDominateSoftOptionalParamShape(t *testing.T) {
+	softArray := typ.NewOptional(typ.NewUnion(typ.NewArray(typ.Any), typ.NewRecord().SetOpen(true).Build()))
+	preciseArray := typ.NewOptional(typ.NewArray(typ.String))
+
+	merged := MergeFunctionFactType(
+		typ.Func().OptParam("tests", typ.Nil).Returns(typ.Integer).Build(),
+		typ.Func().OptParam("tests", softArray).Returns(typ.Integer).Build(),
+	)
+	fn, ok := merged.(*typ.Function)
+	if !ok || len(fn.Params) != 1 {
+		t.Fatalf("expected merged function, got %T", merged)
+	}
+	if !typ.TypeEquals(fn.Params[0].Type, softArray) {
+		t.Fatalf("expected nil observation not to replace soft optional table shape, got %v", fn.Params[0].Type)
+	}
+
+	merged = MergeFunctionFactType(
+		typ.Func().OptParam("tests", softArray).Returns(typ.Integer).Build(),
+		typ.Func().OptParam("tests", preciseArray).Returns(typ.Integer).Build(),
+	)
+	fn, ok = merged.(*typ.Function)
+	if !ok || len(fn.Params) != 1 {
+		t.Fatalf("expected merged function, got %T", merged)
+	}
+	if !typ.TypeEquals(fn.Params[0].Type, preciseArray) {
+		t.Fatalf("expected precise optional array evidence to replace soft shape, got %v", fn.Params[0].Type)
+	}
+}
+
+func TestMergeFunctionFactType_ReplacesStaleFalsyMapKeyWithTruthyRefinement(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	stale := typ.NewRecord().
+		MapComponent(typ.NewUnion(typ.Boolean, typ.String), typ.NewArray(entry)).
+		SetOpen(true).
+		Build()
+	current := typ.NewRecord().
+		MapComponent(typ.String, typ.NewArray(entry)).
+		SetOpen(true).
+		Build()
+
+	merged := MergeFunctionFactType(
+		typ.Func().OptParam("t", stale).Returns(typ.NewArray(typ.NewUnion(typ.Boolean, typ.String))).Build(),
+		typ.Func().OptParam("t", current).Returns(typ.NewArray(typ.String)).Build(),
+	)
+	fn, ok := merged.(*typ.Function)
+	if !ok || len(fn.Params) != 1 {
+		t.Fatalf("expected merged function, got %T", merged)
+	}
+	if !typ.TypeEquals(fn.Params[0].Type, current) {
+		t.Fatalf("expected truthy-refined map key param %v, got %v", current, fn.Params[0].Type)
 	}
 }
 

@@ -85,6 +85,9 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 	if mapKey == nil && mapValue != nil {
 		mapKey = Unknown
 	}
+	if mapKey != nil {
+		mapKey = NormalizeTableKey(mapKey)
+	}
 	if mapValue == nil && mapKey != nil {
 		mapValue = Unknown
 	}

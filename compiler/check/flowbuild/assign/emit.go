@@ -87,7 +87,9 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	// Uses expandValues with SpecTypes overlay for method call synthesis.
 	specNarrowed := CollectSpecNarrowedTypes(fc.Graph, fc.Scopes, synth, symResolver, fc.API, fc.ModuleBindings)
 	preflowBranchSolution := buildPreflowBranchSolution(fc, inputs)
-	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, specNarrowed, inputs.AnnotatedVars, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution, fc.Services)
+	inferenceSeeds := mergeSpecTypesInto(nil, inputs.DeclaredTypes)
+	inferenceSeeds = mergeSpecTypesInto(inferenceSeeds, specNarrowed)
+	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, inferenceSeeds, inputs.AnnotatedVars, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution, fc.Services)
 	// Promote inferred parameter types into DeclaredTypes for unannotated params.
 	// This enables bidirectional inference at call sites (e.g., custom assert helpers).
 	if inputs.DeclaredTypes != nil {
@@ -103,8 +105,8 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				continue
 			}
 			current := inputs.DeclaredTypes[sym]
-			if current == nil || current.Kind().IsPlaceholder() {
-				inputs.DeclaredTypes[sym] = inferred
+			if merged := mergeUnannotatedParamType(current, inferred); !typ.TypeEquals(current, merged) {
+				inputs.DeclaredTypes[sym] = merged
 			}
 		}
 	}
@@ -140,23 +142,78 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				if target.Kind != cfg.TargetIdent || target.Name == "" || target.Symbol == 0 {
 					return
 				}
-				if i < len(varTypes) && varTypes[i] != nil {
+				if i < len(varTypes) && informativeLoopVarType(varTypes[i]) {
 					loopVarTypes[target.Symbol] = varTypes[i]
 				}
 			})
 		}
 	})
-	var overlayTypes api.SpecTypes
-	overlayTypes = mergeSpecTypesInto(overlayTypes, inputs.DeclaredTypes)
-	overlayTypes = mergeSpecTypesInto(overlayTypes, inferredTypes)
-	overlayTypes = mergeSpecTypesInto(overlayTypes, specNarrowed)
-	overlayTypes = mergeSpecTypesInto(overlayTypes, loopVarTypes)
+	paramSet := paramSymbolSet(fc.Graph)
+	valueDefs := collectValueDefinitionVersions(fc.Graph)
+	var overlayScratch api.SpecTypes
+	overlayTypesAt := func(p cfg.Point) api.SpecTypes {
+		size := len(inferredTypes) + len(specNarrowed) + len(loopVarTypes)
+		if inputs != nil {
+			size += len(inputs.DeclaredTypes)
+		}
+		if overlayScratch == nil {
+			overlayScratch = make(api.SpecTypes, size)
+		} else {
+			clear(overlayScratch)
+		}
+		if inputs != nil {
+			for sym, t := range inputs.DeclaredTypes {
+				overlayScratch[sym] = t
+			}
+		}
+		for sym, t := range loopVarTypes {
+			overlayScratch[sym] = t
+		}
+		for sym, t := range inferredTypes {
+			if overlayTypeVisibleAt(fc.Graph, valueDefs, paramSet, sym, p) {
+				overlayScratch[sym] = t
+			}
+		}
+		for sym, t := range specNarrowed {
+			overlayScratch[sym] = t
+		}
+		return overlayScratch
+	}
+	overlayTypeAt := func(sym cfg.SymbolID, p cfg.Point) (typ.Type, bool) {
+		if t, ok := specNarrowed[sym]; ok {
+			return t, true
+		}
+		var declared typ.Type
+		var hasDeclared bool
+		if inputs != nil && inputs.DeclaredTypes != nil {
+			if t, ok := inputs.DeclaredTypes[sym]; ok {
+				declared = t
+				hasDeclared = true
+				if inputs.AnnotatedVars != nil && inputs.AnnotatedVars[sym] {
+					return t, true
+				}
+			}
+		}
+		if t, ok := visibleInferredTypeAt(inferredTypes, fc.Graph, valueDefs, paramSet, sym, p); ok {
+			_, staleLoopVar := loopVarTypes[sym]
+			if staleLoopVar || inferredOverridesUnannotatedDeclared(t, declared) {
+				return t, true
+			}
+		}
+		if hasDeclared {
+			return declared, true
+		}
+		if t, ok := loopVarTypes[sym]; ok {
+			return t, true
+		}
+		return nil, false
+	}
 	// Precompute truthy guards: map from CFG point to paths that are narrowed (non-nil) at that point.
 	// Used during table literal synthesis to unwrap optional types.
 	truthyGuards := guard.CollectTruthyGuards(fc.Graph, bindings)
 	typeGuards := guard.CollectTypeGuards(fc.Graph, bindings)
 
-	baseSynth := synthWithOverlayAndPreflow(overlayTypes, bindings, inputs, fc.CallCtx, fc.TypeOps, preflowBranchSolution, synth)
+	baseSynth := synthWithOverlayAndPreflow(overlayTypeAt, bindings, inputs, fc.CallCtx, fc.TypeOps, preflowBranchSolution, synth)
 	structuredWrites := indexStructuredWrites(fc.Graph)
 	var idom map[cfg.Point]cfg.Point
 	if len(structuredWrites) > 0 {
@@ -230,7 +287,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 		if len(info.IterExprs) > 0 && len(info.Targets) > 0 {
 			var varTypes []typ.Type
 			if fc.API != nil {
-				varTypes = fc.API.InferIterVarsWithSpecTypes(info.IterExprs, len(info.Targets), p, overlayTypes)
+				varTypes = fc.API.InferIterVarsWithSpecTypes(info.IterExprs, len(info.Targets), p, overlayTypesAt(p))
 			}
 			// Build const resolver for iterator source extraction
 			constResolver := predicate.BuildConstResolver(inputs, p)
@@ -274,7 +331,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			}
 			// Use pre-assignment symbol overlays for assignment targets so RHS
 			// synthesis follows Lua evaluation order (`x = f(x, ...)`).
-			rhsOverlay := rhsSpecTypesAtAssignPoint(fc.Graph, info, p, overlayTypes, resolverWithSpec)
+			rhsOverlay := rhsSpecTypesAtAssignPoint(fc.Graph, info, p, overlayTypesAt(p), resolverWithSpec)
 			rhsOverlay = enrichStructuredOverlayAtPoint(fc.Graph, idom, structuredWrites, p, rhsOverlay, resolverWithSpec, wrappedSynth)
 			values = expandedAssignValues(fc.API, info, p, rhsOverlay)
 			valuesComputed = true
@@ -342,6 +399,12 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				}
 				if assignedType == nil {
 					assignedType = typ.Unknown
+				}
+
+				if source != nil && info.IsLocal && (inputs == nil || inputs.AnnotatedVars == nil || !inputs.AnnotatedVars[sym]) {
+					if inferred := inferredTypes[sym]; sameExpressionHasMoreEvidence(inferred, assignedType) {
+						assignedType = inferred
+					}
 				}
 
 				// Use pre-collected spec-narrowed type if available (via SymbolID)
@@ -527,15 +590,22 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 				// Determine assigned type
 				assignedType := typ.Unknown
+				if expected := assignmentTargetExpectedType(target, p, wrappedSynth); expected != nil {
+					if expectedType := synthAssignmentSourceWithExpected(fc.API, source, p, expected); expectedType != nil {
+						assignedType = expectedType
+					}
+				}
 				// First check expanded values for multi-return assignments
-				ensureValues()
-				if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
-					assignedType = value
-				} else if source != nil {
-					if tbl, ok := source.(*ast.TableExpr); ok && wrappedSynth != nil && !tblutil.TableHasFunctionField(tbl) {
-						assignedType = wrappedSynth(source, p)
-					} else if wrappedSynth != nil {
-						assignedType = wrappedSynth(source, p)
+				if typ.IsAbsentOrUnknown(assignedType) {
+					ensureValues()
+					if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
+						assignedType = value
+					} else if source != nil {
+						if tbl, ok := source.(*ast.TableExpr); ok && wrappedSynth != nil && !tblutil.TableHasFunctionField(tbl) {
+							assignedType = wrappedSynth(source, p)
+						} else if wrappedSynth != nil {
+							assignedType = wrappedSynth(source, p)
+						}
 					}
 				}
 				if assignedType == nil {
@@ -588,15 +658,22 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				}
 				// Determine assigned type
 				assignedType := typ.Unknown
+				if expected := assignmentTargetExpectedType(target, p, wrappedSynth); expected != nil {
+					if expectedType := synthAssignmentSourceWithExpected(fc.API, source, p, expected); expectedType != nil {
+						assignedType = expectedType
+					}
+				}
 				// First check expanded values for multi-return assignments
-				ensureValues()
-				if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
-					assignedType = value
-				} else if source != nil {
-					if tbl, ok := source.(*ast.TableExpr); ok && wrappedSynth != nil && !tblutil.TableHasFunctionField(tbl) {
-						assignedType = wrappedSynth(source, p)
-					} else if wrappedSynth != nil {
-						assignedType = wrappedSynth(source, p)
+				if typ.IsAbsentOrUnknown(assignedType) {
+					ensureValues()
+					if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
+						assignedType = value
+					} else if source != nil {
+						if tbl, ok := source.(*ast.TableExpr); ok && wrappedSynth != nil && !tblutil.TableHasFunctionField(tbl) {
+							assignedType = wrappedSynth(source, p)
+						} else if wrappedSynth != nil {
+							assignedType = wrappedSynth(source, p)
+						}
 					}
 				}
 				if assignedType == nil {
@@ -1124,6 +1201,48 @@ func ExtractFuncDefAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs) {
 			Type: resolve.Ref(fnType, sc),
 		})
 	})
+}
+
+func assignmentTargetExpectedType(
+	target cfg.AssignTarget,
+	p cfg.Point,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+) typ.Type {
+	if target.Expr == nil || synth == nil {
+		return nil
+	}
+	expected := synth(target.Expr, p)
+	if expected == nil || typ.IsAny(expected) || typ.IsUnknown(expected) || typ.IsSoft(expected, typ.SoftAnnotationPolicy) {
+		return nil
+	}
+	if inner, nilable := typ.SplitNilableFieldType(expected); nilable {
+		return inner
+	}
+	return expected
+}
+
+type expectedAssignmentSynth interface {
+	TypeOfWithExpected(ast.Expr, cfg.Point, typ.Type) typ.Type
+}
+
+func synthAssignmentSourceWithExpected(synthAPI api.SynthAPI, source ast.Expr, p cfg.Point, expected typ.Type) typ.Type {
+	if synthAPI == nil || source == nil || expected == nil {
+		return nil
+	}
+	switch source.(type) {
+	case *ast.TableExpr, *ast.FunctionExpr, *ast.LogicalOpExpr:
+	default:
+		return nil
+	}
+	withExpected, ok := synthAPI.(expectedAssignmentSynth)
+	if !ok {
+		return nil
+	}
+	inferred := withExpected.TypeOfWithExpected(source, p, expected)
+	if inferred == nil || typ.IsAbsentOrUnknown(inferred) {
+		return nil
+	}
+	return inferred
 }
 
 func isTopLikeResolvedAssignType(t typ.Type) bool {

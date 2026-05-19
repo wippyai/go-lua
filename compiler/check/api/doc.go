@@ -31,7 +31,7 @@
 // function graph:
 //
 //   - [FunctionFacts]: Canonical per-function return/signature facts
-//   - [ParamHints]: Parameter types inferred from call sites
+//   - [ParamHints]: Effective parameter types inferred from call sites
 //   - [LiteralSigs]: Signatures for anonymous function literals
 //   - [CapturedTypes]: Flow-derived types for captured variables
 //   - [CapturedFieldAssigns]: Field assignments to captured variables

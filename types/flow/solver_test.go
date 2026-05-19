@@ -281,6 +281,112 @@ func TestMergeFieldAssignments_IncludesCanonicalStringIndexKeys(t *testing.T) {
 	}
 }
 
+func TestWidenWithIndexer_CoalescesPartialRecordElementUpdates(t *testing.T) {
+	full := typ.NewRecord().
+		Field("type", typ.LiteralString("thinking")).
+		Field("thinking", typ.Any).
+		Field("signature", typ.Any).
+		Build()
+	thinkingOnly := typ.NewRecord().Field("thinking", typ.String).Build()
+	signatureOnly := typ.NewRecord().Field("signature", typ.String).Build()
+
+	got := widenWithIndexer(typ.NewMap(typ.Integer, full), typ.Integer, thinkingOnly)
+	got = widenWithIndexer(got, typ.Integer, signatureOnly)
+
+	mp, ok := got.(*typ.Map)
+	if !ok {
+		t.Fatalf("widenWithIndexer returned %T, want *typ.Map", got)
+	}
+	rec, ok := mp.Value.(*typ.Record)
+	if !ok {
+		t.Fatalf("map value = %T, want coalesced *typ.Record (%v)", mp.Value, mp.Value)
+	}
+	for _, name := range []string{"type", "thinking", "signature"} {
+		if rec.GetField(name) == nil {
+			t.Fatalf("coalesced record missing field %q: %v", name, rec)
+		}
+	}
+}
+
+func TestWidenWithIndexer_KeepsConflictingRecordElementsDiscriminated(t *testing.T) {
+	thinking := typ.NewRecord().
+		Field("type", typ.LiteralString("thinking")).
+		Field("thinking", typ.String).
+		Build()
+	tool := typ.NewRecord().
+		Field("type", typ.LiteralString("tool_use")).
+		Field("partial_json", typ.String).
+		Build()
+
+	got := widenWithIndexer(typ.NewMap(typ.Integer, thinking), typ.Integer, tool)
+
+	mp, ok := got.(*typ.Map)
+	if !ok {
+		t.Fatalf("widenWithIndexer returned %T, want *typ.Map", got)
+	}
+	if _, ok := mp.Value.(*typ.Union); !ok {
+		t.Fatalf("conflicting discriminant records should remain a union, got %T (%v)", mp.Value, mp.Value)
+	}
+}
+
+func TestWidenWithIndexer_CoalescesRecordMapComponentValues(t *testing.T) {
+	full := typ.NewRecord().
+		Field("type", typ.LiteralString("thinking")).
+		Field("thinking", typ.Any).
+		Field("signature", typ.Any).
+		Build()
+	partial := typ.NewRecord().Field("thinking", typ.String).Build()
+	base := typ.NewRecord().
+		Field("count", typ.Integer).
+		MapComponent(typ.Integer, full).
+		Build()
+
+	got := widenWithIndexer(base, typ.Integer, partial)
+
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("widenWithIndexer returned %T, want *typ.Record", got)
+	}
+	mapValue, ok := rec.MapValue.(*typ.Record)
+	if !ok {
+		t.Fatalf("record map value = %T, want coalesced *typ.Record (%v)", rec.MapValue, rec.MapValue)
+	}
+	for _, name := range []string{"type", "thinking", "signature"} {
+		if mapValue.GetField(name) == nil {
+			t.Fatalf("coalesced map value missing field %q: %v", name, mapValue)
+		}
+	}
+}
+
+func TestWidenMapValueArray_CoalescesPartialRecordElements(t *testing.T) {
+	full := typ.NewRecord().
+		Field("type", typ.LiteralString("thinking")).
+		Field("thinking", typ.Any).
+		Field("signature", typ.Any).
+		Build()
+	partial := typ.NewRecord().Field("signature", typ.String).Build()
+
+	got := WidenMapValueArray(typ.NewMap(typ.String, typ.NewArray(full)), typ.String, partial)
+
+	mp, ok := got.(*typ.Map)
+	if !ok {
+		t.Fatalf("WidenMapValueArray returned %T, want *typ.Map", got)
+	}
+	arr, ok := mp.Value.(*typ.Array)
+	if !ok {
+		t.Fatalf("map value = %T, want *typ.Array (%v)", mp.Value, mp.Value)
+	}
+	elem, ok := arr.Element.(*typ.Record)
+	if !ok {
+		t.Fatalf("array element = %T, want coalesced *typ.Record (%v)", arr.Element, arr.Element)
+	}
+	for _, name := range []string{"type", "thinking", "signature"} {
+		if elem.GetField(name) == nil {
+			t.Fatalf("coalesced array element missing field %q: %v", name, elem)
+		}
+	}
+}
+
 func TestMergeFieldAssignments_IncludesEscapedStringIndexKey(t *testing.T) {
 	s := &Solution{
 		values: map[string]typ.Type{

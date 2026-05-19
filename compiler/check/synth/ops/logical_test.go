@@ -57,6 +57,13 @@ func TestLogicalAndTyped_Never(t *testing.T) {
 	}
 }
 
+func TestLogicalAndTyped_RightNeverPreservesFalsyShortCircuit(t *testing.T) {
+	result := LogicalAndTyped(typ.NewOptional(typ.Integer), typ.Never)
+	if !typ.TypeEquals(result, typ.Nil) {
+		t.Errorf("optional(integer) and never should preserve nil short-circuit, got %v", result)
+	}
+}
+
 func TestLogicalOrTyped_LeftTruthy(t *testing.T) {
 	result := LogicalOrTyped(typ.Integer, typ.String)
 	if result != typ.Integer {
@@ -104,8 +111,15 @@ func TestLogicalOrTyped_Never(t *testing.T) {
 	}
 
 	result = LogicalOrTyped(typ.Integer, typ.Never)
-	if result.Kind() != kind.Never {
-		t.Errorf("X or never should return never, got %v", result)
+	if result != typ.Integer {
+		t.Errorf("truthy or never should preserve truthy short-circuit, got %v", result)
+	}
+}
+
+func TestLogicalOrTyped_RightNeverPreservesTruthyShortCircuit(t *testing.T) {
+	result := LogicalOrTyped(typ.NewOptional(typ.Integer), typ.Never)
+	if !typ.TypeEquals(result, typ.Integer) {
+		t.Errorf("optional(integer) or never should preserve truthy short-circuit, got %v", result)
 	}
 }
 

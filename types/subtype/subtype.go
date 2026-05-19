@@ -509,6 +509,9 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 
 			continue
 		}
+		if sf.Optional && subField.Type != nil && subField.Type.Kind() == kind.Nil {
+			continue
+		}
 
 		if sf.Readonly {
 			// Readonly in super: covariant check is sound (no writes through supertype)
@@ -602,21 +605,6 @@ func canWidenTo(narrow, wide typ.Type) bool {
 		}
 	}
 
-	// Allow widening into unions when narrow fits at least one member.
-	if u, ok := wide.(*typ.Union); ok {
-		for _, m := range u.Members {
-			// Keep literal-tag unions invariant for mutable fields; only allow
-			// widening through non-literal branch members (for example number|string).
-			if m.Kind() == kind.Literal {
-				continue
-			}
-			if isSubtype(narrow, m) || canWidenTo(narrow, m) {
-				return true
-			}
-		}
-		return false
-	}
-
 	// Literal unions can widen to a primitive supertype when each branch widens.
 	// Example: 0|8000 can widen to integer for mutable record fields.
 	if u, ok := narrow.(*typ.Union); ok {
@@ -630,6 +618,21 @@ func canWidenTo(narrow, wide typ.Type) bool {
 			return false
 		}
 		return true
+	}
+
+	// Allow widening into unions when narrow fits at least one member.
+	if u, ok := wide.(*typ.Union); ok {
+		for _, m := range u.Members {
+			// Keep literal-tag unions invariant for mutable fields; only allow
+			// widening through non-literal branch members (for example number|string).
+			if m.Kind() == kind.Literal {
+				continue
+			}
+			if isSubtype(narrow, m) || canWidenTo(narrow, m) {
+				return true
+			}
+		}
+		return false
 	}
 
 	// Integer can widen to number

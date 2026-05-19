@@ -69,6 +69,7 @@ func BuildSeedFunctionTypeWithBindings(
 		Expected:         nil,
 		ImplicitSelf:     implicitSelf,
 		ImplicitSelfType: implicitSelfType,
+		UntypedParamType: typ.Any,
 	})
 
 	if len(fn.ReturnTypes) > 0 {

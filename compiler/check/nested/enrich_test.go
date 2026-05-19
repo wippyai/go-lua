@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
@@ -104,6 +105,48 @@ func TestCollectCapturedContainerMutations_AssignmentCallSite(t *testing.T) {
 	if len(muts) != 1 {
 		t.Fatalf("expected 1 container mutation for c, got %d", len(muts))
 	}
+	if muts[0].Kind != api.ContainerMutationContainerElement {
+		t.Fatalf("expected generic container mutation kind, got %v", muts[0].Kind)
+	}
+	if !typ.TypeEquals(muts[0].ValueType, typ.Integer) {
+		t.Fatalf("expected integer mutation value, got %v", muts[0].ValueType)
+	}
+}
+
+func TestCollectCapturedContainerMutations_TableInsertCallSite(t *testing.T) {
+	code := `
+		local c = {}
+		local _ = table.insert(c.items, 1)
+	`
+	stmts, err := parse.ParseString(code, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{HasVargs: true},
+		Stmts:   stmts,
+	}
+	graph := cfg.Build(fn, "table")
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	symC, ok := graph.SymbolAt(graph.Exit(), "c")
+	if !ok || symC == 0 {
+		t.Fatal("expected symbol for c")
+	}
+
+	captured := map[cfg.SymbolID]bool{symC: true}
+	result := CollectCapturedContainerMutations(graph, captured, nestedTableInsertSynth())
+	muts := result[symC]
+	if len(muts) != 1 {
+		t.Fatalf("expected 1 table mutation for c, got %d", len(muts))
+	}
+	if muts[0].Kind != api.ContainerMutationTableElement {
+		t.Fatalf("expected table mutation kind, got %v", muts[0].Kind)
+	}
+	if len(muts[0].Segments) != 1 || muts[0].Segments[0].Name != "items" {
+		t.Fatalf("expected .items mutation path, got %#v", muts[0].Segments)
+	}
 	if !typ.TypeEquals(muts[0].ValueType, typ.Integer) {
 		t.Fatalf("expected integer mutation value, got %v", muts[0].ValueType)
 	}
@@ -129,6 +172,33 @@ func nestedContainerSendSynth() func(ast.Expr, cfg.Point) typ.Type {
 		case *ast.IdentExpr:
 			if v.Value == "send" {
 				return send
+			}
+		case *ast.NumberExpr:
+			return typ.Integer
+		}
+		return typ.Unknown
+	}
+}
+
+func nestedTableInsertSynth() func(ast.Expr, cfg.Point) typ.Type {
+	spec := contract.NewSpec().WithEffects(effect.TableMutator{
+		Target: effect.ParamRef{Index: 0},
+		Value:  effect.ParamRef{Index: 1},
+	})
+	insert := typ.Func().
+		Param("target", typ.Any).
+		Param("value", typ.Any).
+		Returns(typ.Nil).
+		Spec(spec).
+		Build()
+
+	return func(expr ast.Expr, _ cfg.Point) typ.Type {
+		switch v := expr.(type) {
+		case *ast.AttrGetExpr:
+			obj, objOK := v.Object.(*ast.IdentExpr)
+			key, keyOK := v.Key.(*ast.StringExpr)
+			if objOK && keyOK && obj.Value == "table" && key.Value == "insert" {
+				return insert
 			}
 		case *ast.NumberExpr:
 			return typ.Integer

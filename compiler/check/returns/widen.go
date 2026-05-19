@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
-	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -32,7 +31,7 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 	for _, sym := range symbols {
 		prevFact := readFunctionFactFromFacts(&prev, sym)
 		nextFact := readFunctionFactFromFacts(&next, sym)
-		writeFunctionFactToFacts(&out, sym, widenFunctionFactForConvergence(prevFact, nextFact))
+		writeNormalizedFunctionFactToFacts(&out, sym, widenFunctionFactForConvergence(prevFact, nextFact))
 	}
 	if len(out.FunctionFacts) == 0 {
 		out.FunctionFacts = nil
@@ -60,7 +59,7 @@ func JoinFacts(prev, next api.Facts) api.Facts {
 	for _, sym := range symbols {
 		prevFact := readFunctionFactFromFacts(&prev, sym)
 		nextFact := readFunctionFactFromFacts(&next, sym)
-		writeFunctionFactToFacts(&out, sym, JoinFunctionFact(prevFact, nextFact))
+		writeNormalizedFunctionFactToFacts(&out, sym, JoinFunctionFact(prevFact, nextFact))
 	}
 	return out
 }
@@ -493,13 +492,13 @@ func WidenParamHints(prev, next api.ParamHints) api.ParamHints {
 	}
 	merged := make(api.ParamHints, len(prev)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(prev) {
-		hints := prev[sym]
+		hints := normalizeParamHintVector(prev[sym])
 		if hasNonNilHint(hints) {
 			merged[sym] = hints
 		}
 	}
 	for _, sym := range cfg.SortedSymbolIDs(next) {
-		hints := next[sym]
+		hints := normalizeParamHintVector(next[sym])
 		if !hasNonNilHint(hints) {
 			continue
 		}
@@ -518,7 +517,7 @@ func filterEmptyParamHints(hints api.ParamHints) api.ParamHints {
 	}
 	out := make(api.ParamHints, len(hints))
 	for _, sym := range cfg.SortedSymbolIDs(hints) {
-		v := hints[sym]
+		v := normalizeParamHintVector(hints[sym])
 		if hasNonNilHint(v) {
 			out[sym] = v
 		}
@@ -527,6 +526,26 @@ func filterEmptyParamHints(hints api.ParamHints) api.ParamHints {
 		return nil
 	}
 	return out
+}
+
+func normalizeParamHintVector(hints []typ.Type) []typ.Type {
+	var out []typ.Type
+	for i, hint := range hints {
+		normalized := paramhints.NormalizeHintType(hint)
+		if out != nil {
+			out[i] = normalized
+			continue
+		}
+		if !typ.TypeEquals(hint, normalized) {
+			out = make([]typ.Type, len(hints))
+			copy(out, hints[:i])
+			out[i] = normalized
+		}
+	}
+	if out != nil {
+		return out
+	}
+	return hints
 }
 
 func hasNonNilHint(hints []typ.Type) bool {
@@ -579,6 +598,67 @@ func joinParamHint(a, b typ.Type) typ.Type {
 	if unwrap.IsNilType(b) && !unwrap.IsNilType(a) {
 		return a
 	}
+	if joined, ok := joinNilableParamHint(a, b); ok {
+		return joined
+	}
+	return joinNonNilParamHint(a, b)
+}
+
+func joinNilableParamHint(a, b typ.Type) (typ.Type, bool) {
+	ai, anil := splitNilableParamHint(a)
+	bi, bnil := splitNilableParamHint(b)
+	if !anil && !bnil {
+		return nil, false
+	}
+	if ai == nil && bi == nil {
+		return typ.Nil, true
+	}
+	if ai == nil {
+		return typ.NewOptional(bi), true
+	}
+	if bi == nil {
+		return typ.NewOptional(ai), true
+	}
+	return typ.NewOptional(joinNonNilParamHint(ai, bi)), true
+}
+
+func splitNilableParamHint(t typ.Type) (typ.Type, bool) {
+	t = unwrap.Alias(t)
+	switch v := t.(type) {
+	case nil:
+		return nil, false
+	case *typ.Optional:
+		return v.Inner, true
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(v.Members))
+		nilable := false
+		for _, member := range v.Members {
+			member = unwrap.Alias(member)
+			if unwrap.IsNilType(member) {
+				nilable = true
+				continue
+			}
+			members = append(members, member)
+		}
+		if !nilable {
+			return t, false
+		}
+		return typ.NewUnion(members...), true
+	default:
+		if unwrap.IsNilType(t) {
+			return nil, true
+		}
+		return t, false
+	}
+}
+
+func joinNonNilParamHint(a, b typ.Type) typ.Type {
+	if upper, ok := selectParamHintTableUpperBound(a, b); ok {
+		return upper
+	}
+	if preferred, ok := preferConcreteOverSoftType(a, b); ok {
+		return preferred
+	}
 	if typeCanSelfEmbed(a) && typeContainsEquivalent(b, a) && !typ.IsAbsentOrUnknown(a) {
 		if typeContainsUnion(a) {
 			return a
@@ -597,13 +677,226 @@ func joinParamHint(a, b typ.Type) typ.Type {
 	if typeIsTruthyRefinement(b, a) {
 		return b
 	}
+	if joined, ok := typ.JoinCompatibleRecords(a, b); ok {
+		return joined
+	}
+	if joined, ok := joinParamHintMapRecord(a, b); ok {
+		return joined
+	}
 	if TypeExtendsRecord(a, b) {
 		return a
 	}
 	if TypeExtendsRecord(b, a) {
 		return b
 	}
-	return typ.JoinPreferNonSoft(a, b)
+	if !typ.IsAbsentOrUnknown(a) && !typ.IsAbsentOrUnknown(b) {
+		if subtype.IsSubtype(a, b) {
+			return b
+		}
+		if subtype.IsSubtype(b, a) {
+			return a
+		}
+	}
+	return paramhints.NormalizeHintType(typ.JoinPreferNonSoft(a, b))
+}
+
+func preferConcreteOverSoftType(a, b typ.Type) (typ.Type, bool) {
+	aSoft := typ.IsSoft(a, typ.SoftPlaceholderPolicy)
+	bSoft := typ.IsSoft(b, typ.SoftPlaceholderPolicy)
+	switch {
+	case aSoft && !bSoft && !unwrap.IsNilType(b):
+		return b, true
+	case bSoft && !aSoft && !unwrap.IsNilType(a):
+		return a, true
+	}
+	if preferred, ok := preferConcreteOverNilableSoftType(a, b); ok {
+		return preferred, true
+	}
+	return nil, false
+}
+
+func preferConcreteOverNilableSoftType(a, b typ.Type) (typ.Type, bool) {
+	if preferred, ok := preferConcreteOverNilableSoftTypeDirected(a, b); ok {
+		return preferred, true
+	}
+	return preferConcreteOverNilableSoftTypeDirected(b, a)
+}
+
+func preferConcreteOverNilableSoftTypeDirected(softMaybeNil, concrete typ.Type) (typ.Type, bool) {
+	inner, nilable := splitNilableParamHint(softMaybeNil)
+	if !nilable || inner == nil || !typ.IsSoft(inner, typ.SoftPlaceholderPolicy) {
+		return nil, false
+	}
+	if concrete == nil || unwrap.IsNilType(concrete) {
+		return nil, false
+	}
+	concreteInner, concreteNilable := splitNilableParamHint(concrete)
+	if concreteInner == nil {
+		return nil, false
+	}
+	if typ.IsSoft(concreteInner, typ.SoftPlaceholderPolicy) {
+		return nil, false
+	}
+	if concreteNilable {
+		return concrete, true
+	}
+	return typ.NewOptional(concrete), true
+}
+
+func joinParamHintMapRecord(a, b typ.Type) (typ.Type, bool) {
+	if joined, ok := joinParamHintMapRecordDirected(a, b); ok {
+		return joined, true
+	}
+	return joinParamHintMapRecordDirected(b, a)
+}
+
+func joinParamHintMapRecordDirected(mapType, recordType typ.Type) (typ.Type, bool) {
+	m, ok := unwrap.Alias(mapType).(*typ.Map)
+	if !ok || m == nil {
+		return nil, false
+	}
+	r, ok := unwrap.Alias(recordType).(*typ.Record)
+	if !ok || r == nil || !r.HasMapComponent() {
+		return nil, false
+	}
+
+	key := joinNonNilParamHint(m.Key, r.MapKey)
+	value := joinNonNilParamHint(m.Value, r.MapValue)
+	if len(r.Fields) == 0 && r.Metatable == nil {
+		return typ.NewMap(key, value), true
+	}
+	builder := typ.NewRecord()
+	if r.Open {
+		builder.SetOpen(true)
+	}
+	if r.Metatable != nil {
+		builder.Metatable(r.Metatable)
+	}
+	builder.MapComponent(key, value)
+	for _, field := range r.Fields {
+		fieldType := field.Type
+		optional := true
+		if subtype.IsSubtype(typ.LiteralString(field.Name), key) {
+			fieldType = joinNonNilParamHint(field.Type, value)
+		} else {
+			optional = field.Optional
+		}
+		switch {
+		case optional && field.Readonly:
+			builder.OptReadonlyField(field.Name, fieldType)
+		case optional:
+			builder.OptField(field.Name, fieldType)
+		case field.Readonly:
+			builder.ReadonlyField(field.Name, fieldType)
+		default:
+			builder.Field(field.Name, fieldType)
+		}
+	}
+	return builder.Build(), true
+}
+
+func selectParamHintTableUpperBound(a, b typ.Type) (typ.Type, bool) {
+	if paramHintIsOnlyTableTop(a) && typ.IsAny(b) {
+		return a, true
+	}
+	if paramHintIsOnlyTableTop(b) && typ.IsAny(a) {
+		return b, true
+	}
+	if paramHintContainsTableTop(a) && paramHintCoveredByTableTop(b) && subtype.IsSubtype(b, a) {
+		return a, true
+	}
+	if paramHintContainsTableTop(b) && paramHintCoveredByTableTop(a) && subtype.IsSubtype(a, b) {
+		return b, true
+	}
+	return nil, false
+}
+
+func paramHintContainsTableTop(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	if unwrap.IsBuiltinTableTop(typ.UnwrapAnnotated(t)) {
+		return true
+	}
+	switch v := typ.UnwrapAnnotated(t).(type) {
+	case *typ.Alias:
+		return paramHintContainsTableTop(v.UnaliasedTarget())
+	case *typ.Optional:
+		return paramHintContainsTableTop(v.Inner)
+	case *typ.Union:
+		for _, member := range v.Members {
+			if paramHintContainsTableTop(member) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func paramHintIsOnlyTableTop(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	if unwrap.IsBuiltinTableTop(typ.UnwrapAnnotated(t)) {
+		return true
+	}
+	switch v := typ.UnwrapAnnotated(t).(type) {
+	case *typ.Alias:
+		return paramHintIsOnlyTableTop(v.UnaliasedTarget())
+	case *typ.Optional:
+		return paramHintIsOnlyTableTop(v.Inner)
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return false
+		}
+		hasTableTop := false
+		for _, member := range v.Members {
+			if unwrap.IsNilType(member) {
+				continue
+			}
+			if !paramHintIsOnlyTableTop(member) {
+				return false
+			}
+			hasTableTop = true
+		}
+		return hasTableTop
+	default:
+		return false
+	}
+}
+
+func paramHintCoveredByTableTop(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	if typ.IsAny(t) {
+		return true
+	}
+	if unwrap.IsNilType(t) || unwrap.IsBuiltinTableTop(typ.UnwrapAnnotated(t)) {
+		return true
+	}
+	switch v := typ.UnwrapAnnotated(t).(type) {
+	case *typ.Alias:
+		return paramHintCoveredByTableTop(v.UnaliasedTarget())
+	case *typ.Optional:
+		return paramHintCoveredByTableTop(v.Inner)
+	case *typ.Recursive:
+		return v.Body != nil && v.Body != v && paramHintCoveredByTableTop(v.Body)
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return false
+		}
+		for _, member := range v.Members {
+			if !paramHintCoveredByTableTop(member) {
+				return false
+			}
+		}
+		return true
+	case *typ.Record, *typ.Map, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Intersection:
+		return true
+	default:
+		return false
+	}
 }
 
 func typeIsTruthyRefinement(candidate, baseline typ.Type) bool {
@@ -737,6 +1030,12 @@ func widenValueTypeForConvergence(existing, candidate typ.Type) typ.Type {
 	if typ.TypeEquals(existing, candidate) {
 		return existing
 	}
+	if unwrap.IsNilType(existing) && !unwrap.IsNilType(candidate) {
+		return candidate
+	}
+	if unwrap.IsNilType(candidate) && !unwrap.IsNilType(existing) {
+		return existing
+	}
 	if typ.IsAny(existing) || typ.IsUnknown(existing) {
 		return existing
 	}
@@ -851,8 +1150,14 @@ func widenFunctionParamFactTypeForConvergence(existing, candidate typ.Type) typ.
 	if typ.IsAny(candidate) || typ.IsUnknown(candidate) {
 		return candidate
 	}
-	if typeElidesOptional(candidate, existing) || typeIsTruthyRefinement(candidate, existing) {
+	if preferred, ok := preferConcreteOverSoftType(existing, candidate); ok {
+		return preferred
+	}
+	if candidateRefinesFunctionParam(candidate, existing) {
 		return candidate
+	}
+	if candidateRefinesFunctionParam(existing, candidate) {
+		return existing
 	}
 	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {
 		return existing
@@ -1442,10 +1747,11 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 			allowedTypeParams[tp.Name] = true
 		}
 	}
-	normalizeReturn := func(t typ.Type) typ.Type {
+	normalizeReturn := func(t typ.Type) (typ.Type, bool) {
 		if t == nil {
-			return nil
+			return nil, false
 		}
+		leaked := false
 		return typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
 			tp, ok := node.(*typ.TypeParam)
 			if !ok {
@@ -1455,17 +1761,30 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 				return node, false
 			}
 			// Free type params in non-generic function returns are unstable placeholders.
+			leaked = true
 			return typ.Unknown, true
-		})
+		}), leaked
 	}
 	normalizedPrev := make([]typ.Type, len(prevFn.Returns))
 	normalizedNext := make([]typ.Type, len(nextFn.Returns))
+	leakedPrev := make([]bool, len(prevFn.Returns))
+	leakedNext := make([]bool, len(nextFn.Returns))
 	for i := range prevFn.Returns {
-		normalizedPrev[i] = normalizeReturn(prevFn.Returns[i])
-		normalizedNext[i] = normalizeReturn(nextFn.Returns[i])
+		normalizedPrev[i], leakedPrev[i] = normalizeReturn(prevFn.Returns[i])
+		normalizedNext[i], leakedNext[i] = normalizeReturn(nextFn.Returns[i])
 	}
 
-	mergedReturns := typjoin.ReturnVectors(normalizedPrev, normalizedNext)
+	mergedReturns := make([]typ.Type, len(normalizedPrev))
+	for i := range mergedReturns {
+		switch {
+		case leakedPrev[i] && !leakedNext[i]:
+			mergedReturns[i] = normalizedNext[i]
+		case leakedNext[i] && !leakedPrev[i]:
+			mergedReturns[i] = normalizedPrev[i]
+		default:
+			mergedReturns[i] = typ.JoinReturnSlot(normalizedPrev[i], normalizedNext[i])
+		}
+	}
 	if ReturnTypesEqual(prevFn.Returns, mergedReturns) {
 		return prevFn, true
 	}

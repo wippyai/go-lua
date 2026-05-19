@@ -42,18 +42,22 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
+	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
+	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -224,7 +228,7 @@ func (i *Inferencer) ComputeForGraph(
 				continue
 			}
 			if hintVec, ok := hints[sym]; ok && len(hintVec) > 0 {
-				info.ParamHints = hintVec
+				info.ParamHints = paramhints.ProjectHintsToParamUse(info.Graph, info.Fn, hintVec)
 			}
 		}
 	}
@@ -389,6 +393,7 @@ func collectReturnTypes(
 	fnGraph *cfg.Graph,
 	synthEngine api.Synth,
 	deadPoints map[cfg.Point]bool,
+	skipReturnExpr func(ast.Expr) bool,
 ) []typ.Type {
 	if fnGraph == nil || synthEngine == nil {
 		return nil
@@ -402,7 +407,10 @@ func collectReturnTypes(
 		}
 		_ = deadPoints
 
-		types := synthesizeReturnExprs(synthEngine, retInfo, p)
+		if len(retInfo.Exprs) == 1 && skipReturnExpr != nil && skipReturnExpr(retInfo.Exprs[0]) {
+			return
+		}
+		types := synthesizeReturnExprs(synthEngine, retInfo, p, skipReturnExpr)
 		if !seenReturn {
 			seenReturn = true
 			returnTypes = types
@@ -420,11 +428,11 @@ func synthesizeReturnExprs(
 	synthEngine api.Synth,
 	retInfo *cfg.ReturnInfo,
 	p cfg.Point,
+	skipReturnExpr func(ast.Expr) bool,
 ) []typ.Type {
 	if len(retInfo.Exprs) == 0 {
 		return nil
 	}
-
 	types := make([]typ.Type, 0, len(retInfo.Exprs))
 	for i, expr := range retInfo.Exprs {
 		if i == len(retInfo.Exprs)-1 && ast.CanProduceMultipleValues(expr) {
@@ -473,7 +481,8 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	finalOverlay map[cfg.SymbolID]typ.Type,
 ) []typ.Type {
 	state := i.runPhase2FlowNarrowing(ctx, finalOverlay)
-	narrowed := collectReturnTypes(ctx.info.Graph, state.synth, state.deadPoints)
+	skipUnresolvedLocalCall := i.skipUnresolvedLocalReturnCall(ctx)
+	narrowed := collectReturnTypes(ctx.info.Graph, state.synth, state.deadPoints, skipUnresolvedLocalCall)
 
 	fnGraph := ctx.info.Graph
 	if fnGraph == nil {
@@ -494,9 +503,33 @@ func (i *Inferencer) inferReturnTypesFromBody(
 		uniformFunctionScopes(fnGraph, ctx.resolveScope),
 		declCheckCtx,
 	)
-	declared := collectReturnTypes(fnGraph, declSynth, nil)
+	declared := collectReturnTypes(fnGraph, declSynth, nil, skipUnresolvedLocalCall)
 
 	return returns.MergeReturnSummary(declared, narrowed)
+}
+
+func (i *Inferencer) skipUnresolvedLocalReturnCall(ctx *returnInferenceContext) func(ast.Expr) bool {
+	if ctx == nil || ctx.info == nil || ctx.info.Graph == nil || len(ctx.localFuncs) == 0 {
+		return nil
+	}
+	bindings := ctx.bindings
+	if bindings == nil {
+		bindings = ctx.info.Graph.Bindings()
+	}
+	if bindings == nil {
+		return nil
+	}
+	return func(expr ast.Expr) bool {
+		call, ok := expr.(*ast.FuncCallExpr)
+		if !ok || call == nil || call.Method != "" {
+			return false
+		}
+		sym := callsite.SymbolFromExpr(call.Func, bindings)
+		if sym == 0 || ctx.localFuncs[sym] == nil {
+			return false
+		}
+		return typ.IsUnknownOnlyOrEmpty(returns.NormalizeReturnVector(ctx.returnVectors[sym]))
+	}
 }
 
 // inferReturnForFunction infers return types for one local function from the
@@ -593,14 +626,478 @@ func (i *Inferencer) inferReturnForFunction(
 	i.enrichOverlayWithCaptured(ctx, overlay)
 
 	// Add local declared types (annotations, loop variables) as overlay hints.
-	i.enrichOverlayWithLocalDeclarations(ctx, overlay)
+	localValueSeeds := i.enrichOverlayWithLocalDeclarations(ctx, overlay)
+
+	// Body-derived parameter contracts are needed by local assignment inference
+	// in the same function. For example, a helper call may prove that a parameter
+	// field is string?, which then makes `param.field or "default"` synthesize as
+	// string without relying on a value-level fallback shortcut.
+	i.mergeParamHintsFromBodyUses(ctx, overlay)
+	i.applyParamHintsToOverlay(ctx, overlay)
 
 	// Phase 1: Infer local variable types.
-	inferred, _, synthAdapter := i.inferLocalVariableTypes(ctx, overlay)
+	inferred, _, synthAdapter := i.inferLocalVariableTypes(ctx, overlay, localValueSeeds)
 
 	// Collect field/indexer assignments and apply mutations.
-	finalOverlay := i.collectAndApplyMutations(ctx, overlay, inferred, synthAdapter)
+	finalOverlay := i.collectAndApplyMutations(ctx, overlay, inferred, synthAdapter, localValueSeeds)
+	i.mergeParamHintsFromOverlay(ctx, finalOverlay)
 
 	// Phase 2: Infer return types from body.
 	return i.inferReturnTypesFromBody(ctx, finalOverlay)
+}
+
+func (i *Inferencer) applyParamHintsToOverlay(ctx *returnInferenceContext, overlay map[cfg.SymbolID]typ.Type) {
+	if ctx == nil || ctx.info == nil || ctx.info.Graph == nil || len(ctx.info.ParamHints) == 0 || overlay == nil {
+		return
+	}
+	for idx, slot := range ctx.info.Graph.ParamSlotsReadOnly() {
+		if slot.Symbol == 0 || idx >= len(ctx.info.ParamHints) {
+			continue
+		}
+		hint := ctx.info.ParamHints[idx]
+		if !paramhints.IsInformativeHintType(hint) {
+			continue
+		}
+		if slot.TypeAnnotation != nil && ctx.engine != nil {
+			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
+			if resolved != nil && !typ.IsRefinableAnnotation(resolved) {
+				continue
+			}
+		}
+		overlay[slot.Symbol] = hint
+	}
+}
+
+func (i *Inferencer) mergeParamHintsFromOverlay(ctx *returnInferenceContext, overlay map[cfg.SymbolID]typ.Type) {
+	if ctx == nil || ctx.info == nil || ctx.info.Graph == nil || ctx.info.Fn == nil || len(overlay) == 0 {
+		return
+	}
+	for idx, slot := range ctx.info.Graph.ParamSlotsReadOnly() {
+		if slot.Symbol == 0 {
+			continue
+		}
+		_, hasSource := slot.SourceParamIndex()
+		if hasSource && slot.TypeAnnotation != nil && ctx.engine != nil {
+			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
+			if resolved != nil && !typ.IsRefinableAnnotation(resolved) {
+				continue
+			}
+		}
+		t := overlay[slot.Symbol]
+		if !paramhints.IsInformativeHintType(t) {
+			continue
+		}
+		next, merged := paramhints.MergeHintAt(ctx.info.ParamHints, idx, t, typ.JoinPreferNonSoft)
+		if merged {
+			ctx.info.ParamHints = next
+		}
+	}
+	i.mergeParamHintsFromBodyUses(ctx, overlay)
+}
+
+func (i *Inferencer) mergeParamHintsFromBodyUses(ctx *returnInferenceContext, overlay map[cfg.SymbolID]typ.Type) {
+	if i == nil || ctx == nil || ctx.info == nil || ctx.info.Graph == nil || ctx.info.Fn == nil {
+		return
+	}
+	bindings := ctx.info.Graph.Bindings()
+	if bindings == nil || i.types == nil {
+		return
+	}
+	paramIndexBySym := make(map[cfg.SymbolID]int)
+	for idx, slot := range ctx.info.Graph.ParamSlotsReadOnly() {
+		if slot.Symbol == 0 {
+			continue
+		}
+		_, hasSource := slot.SourceParamIndex()
+		if hasSource && slot.TypeAnnotation != nil && ctx.engine != nil {
+			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
+			if resolved != nil && !typ.IsRefinableAnnotation(resolved) {
+				continue
+			}
+		}
+		paramIndexBySym[slot.Symbol] = idx
+	}
+	if len(paramIndexBySym) == 0 {
+		return
+	}
+
+	var visitStmt func(ast.Stmt)
+	var visitExpr func(ast.Expr)
+	mergeReceiver := func(receiver ast.Expr, method string) {
+		if receiver == nil || method == "" {
+			return
+		}
+		ident, ok := receiver.(*ast.IdentExpr)
+		if !ok || ident == nil {
+			return
+		}
+		sym, ok := bindings.SymbolOf(ident)
+		if !ok || sym == 0 {
+			return
+		}
+		idx, ok := paramIndexBySym[sym]
+		if !ok {
+			return
+		}
+		hint := i.receiverHintForMethod(ctx, method)
+		if !paramhints.IsInformativeHintType(hint) {
+			return
+		}
+		next, merged := paramhints.MergeHintAt(ctx.info.ParamHints, idx, hint, typ.JoinPreferNonSoft)
+		if merged {
+			ctx.info.ParamHints = next
+		}
+	}
+	mergeParamFieldHint := func(sym cfg.SymbolID, field string, hint typ.Type, required bool) {
+		if sym == 0 || field == "" || !paramhints.IsInformativeHintType(hint) {
+			return
+		}
+		idx, ok := paramIndexBySym[sym]
+		if !ok {
+			return
+		}
+		builder := typ.NewRecord()
+		if required {
+			builder.Field(field, hint)
+		} else {
+			builder.OptField(field, hint)
+		}
+		rec := builder.Build()
+		next, merged := paramhints.MergeHintAt(ctx.info.ParamHints, idx, rec, typ.JoinPreferNonSoft)
+		if merged {
+			ctx.info.ParamHints = next
+		}
+	}
+	bodyContractJoin := func(prev, next typ.Type) typ.Type {
+		if next != nil {
+			return next
+		}
+		return prev
+	}
+	mergeParamHint := func(sym cfg.SymbolID, hint typ.Type) {
+		if sym == 0 || !paramhints.IsInformativeHintType(hint) {
+			return
+		}
+		idx, ok := paramIndexBySym[sym]
+		if !ok {
+			return
+		}
+		next, merged := paramhints.MergeHintAt(ctx.info.ParamHints, idx, hint, bodyContractJoin)
+		if merged {
+			ctx.info.ParamHints = next
+		}
+	}
+	paramSymbol := func(expr ast.Expr) (cfg.SymbolID, bool) {
+		ident, ok := expr.(*ast.IdentExpr)
+		if !ok || ident == nil {
+			return 0, false
+		}
+		sym, ok := bindings.SymbolOf(ident)
+		if !ok || sym == 0 {
+			return 0, false
+		}
+		if _, ok := paramIndexBySym[sym]; !ok {
+			return 0, false
+		}
+		return sym, true
+	}
+	paramFieldPath := func(expr ast.Expr) (cfg.SymbolID, string, bool) {
+		attr, ok := expr.(*ast.AttrGetExpr)
+		if !ok || attr == nil {
+			return 0, "", false
+		}
+		obj, ok := attr.Object.(*ast.IdentExpr)
+		if !ok || obj == nil {
+			return 0, "", false
+		}
+		key, ok := attr.Key.(*ast.StringExpr)
+		if !ok || key == nil || key.Value == "" {
+			return 0, "", false
+		}
+		sym, ok := bindings.SymbolOf(obj)
+		if !ok {
+			return 0, "", false
+		}
+		if _, ok := paramIndexBySym[sym]; !ok {
+			return 0, "", false
+		}
+		return sym, key.Value, true
+	}
+	typeAt := func(expr ast.Expr, p cfg.Point) typ.Type {
+		if expr == nil {
+			return typ.Unknown
+		}
+		if t, ok := overlayPathType(expr, overlay, bindings, i.types, ctx.run.Ctx); ok {
+			return t
+		}
+		if ctx.engine != nil {
+			if t := ctx.engine.TypeOf(expr, p); t != nil {
+				return t
+			}
+		}
+		return typ.Unknown
+	}
+	isDirectSelfRecursiveCall := func(info *cfg.CallInfo) bool {
+		if info == nil || ctx.info.Sym == 0 {
+			return false
+		}
+		for _, sym := range callsite.CallableCalleeSymbolCandidates(info, ctx.info.Graph, bindings, bindings) {
+			if sym == ctx.info.Sym {
+				return true
+			}
+		}
+		return false
+	}
+	var bodyParamContracts map[cfg.SymbolID]typ.Type
+	mergeParamContract := func(sym cfg.SymbolID, hint typ.Type) {
+		if sym == 0 || !paramhints.IsInformativeHintType(hint) {
+			return
+		}
+		if bodyParamContracts == nil {
+			bodyParamContracts = make(map[cfg.SymbolID]typ.Type)
+		}
+		if prev := bodyParamContracts[sym]; prev != nil {
+			bodyParamContracts[sym] = subtype.NormalizeIntersection(prev, hint)
+			return
+		}
+		bodyParamContracts[sym] = hint
+	}
+	mergeCallExpectedFieldHints := func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || i.types == nil {
+			return
+		}
+		if isDirectSelfRecursiveCall(info) {
+			return
+		}
+		args := make([]typ.Type, len(info.Args))
+		for idx, arg := range info.Args {
+			args[idx] = typeAt(arg, p)
+		}
+		def := ops.CallDef{
+			Args:  args,
+			Query: i.types,
+		}
+		if info.Method != "" {
+			def.IsMethod = true
+			def.MethodName = info.Method
+			def.Receiver = typeAt(info.Receiver, p)
+			def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, ctx.info.Graph, info)
+		} else {
+			def.Callee = typeAt(info.Callee, p)
+		}
+		inferredCall := ops.InferCall(ctx.run.Ctx, def)
+		for idx, arg := range info.Args {
+			expected := inferredCall.ExpectedArgType(idx)
+			if !paramhints.IsInformativeHintType(expected) {
+				continue
+			}
+			if sym, ok := paramSymbol(arg); ok {
+				mergeParamContract(sym, expected)
+				continue
+			}
+			if sym, field, ok := paramFieldPath(arg); ok {
+				mergeParamFieldHint(sym, field, expected, true)
+				continue
+			}
+		}
+	}
+	ctx.info.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		mergeCallExpectedFieldHints(p, info)
+	})
+	for _, sym := range cfg.SortedSymbolIDs(bodyParamContracts) {
+		mergeParamHint(sym, bodyParamContracts[sym])
+	}
+	defaultLiteralType := func(expr ast.Expr) typ.Type {
+		switch expr.(type) {
+		case *ast.StringExpr:
+			return typ.String
+		case *ast.NumberExpr:
+			return typ.Number
+		case *ast.TrueExpr, *ast.FalseExpr:
+			return typ.Boolean
+		default:
+			return nil
+		}
+	}
+	visitExpr = func(expr ast.Expr) {
+		switch e := expr.(type) {
+		case *ast.FuncCallExpr:
+			mergeReceiver(e.Receiver, e.Method)
+			visitExpr(e.Func)
+			visitExpr(e.Receiver)
+			for _, arg := range e.Args {
+				visitExpr(arg)
+			}
+		case *ast.AttrGetExpr:
+			visitExpr(e.Object)
+			visitExpr(e.Key)
+		case *ast.TableExpr:
+			for _, f := range e.Fields {
+				if f == nil {
+					continue
+				}
+				visitExpr(f.Key)
+				visitExpr(f.Value)
+			}
+		case *ast.LogicalOpExpr:
+			if e.Operator == "or" {
+				if sym, field, ok := paramFieldPath(e.Lhs); ok {
+					mergeParamFieldHint(sym, field, defaultLiteralType(e.Rhs), false)
+				}
+			}
+			visitExpr(e.Lhs)
+			visitExpr(e.Rhs)
+		case *ast.RelationalOpExpr:
+			visitExpr(e.Lhs)
+			visitExpr(e.Rhs)
+		case *ast.StringConcatOpExpr:
+			visitExpr(e.Lhs)
+			visitExpr(e.Rhs)
+		case *ast.ArithmeticOpExpr:
+			visitExpr(e.Lhs)
+			visitExpr(e.Rhs)
+		case *ast.UnaryMinusOpExpr:
+			visitExpr(e.Expr)
+		case *ast.UnaryNotOpExpr:
+			visitExpr(e.Expr)
+		case *ast.UnaryLenOpExpr:
+			visitExpr(e.Expr)
+		case *ast.UnaryBNotOpExpr:
+			visitExpr(e.Expr)
+		case *ast.CastExpr:
+			visitExpr(e.Expr)
+		case *ast.NonNilAssertExpr:
+			visitExpr(e.Expr)
+		case *ast.FunctionExpr:
+			return
+		}
+	}
+	visitStmt = func(stmt ast.Stmt) {
+		switch s := stmt.(type) {
+		case *ast.AssignStmt:
+			for _, expr := range s.Lhs {
+				visitExpr(expr)
+			}
+			for _, expr := range s.Rhs {
+				visitExpr(expr)
+			}
+		case *ast.LocalAssignStmt:
+			for _, expr := range s.Exprs {
+				visitExpr(expr)
+			}
+		case *ast.FuncCallStmt:
+			visitExpr(s.Expr)
+		case *ast.DoBlockStmt:
+			for _, child := range s.Stmts {
+				visitStmt(child)
+			}
+		case *ast.WhileStmt:
+			visitExpr(s.Condition)
+			for _, child := range s.Stmts {
+				visitStmt(child)
+			}
+		case *ast.RepeatStmt:
+			for _, child := range s.Stmts {
+				visitStmt(child)
+			}
+			visitExpr(s.Condition)
+		case *ast.IfStmt:
+			visitExpr(s.Condition)
+			for _, child := range s.Then {
+				visitStmt(child)
+			}
+			for _, child := range s.Else {
+				visitStmt(child)
+			}
+		case *ast.NumberForStmt:
+			visitExpr(s.Init)
+			visitExpr(s.Limit)
+			visitExpr(s.Step)
+			for _, child := range s.Stmts {
+				visitStmt(child)
+			}
+		case *ast.GenericForStmt:
+			for _, expr := range s.Exprs {
+				visitExpr(expr)
+			}
+			for _, child := range s.Stmts {
+				visitStmt(child)
+			}
+		case *ast.FuncDefStmt:
+			if s.Name != nil {
+				visitExpr(s.Name.Func)
+				visitExpr(s.Name.Receiver)
+			}
+		case *ast.ReturnStmt:
+			for _, expr := range s.Exprs {
+				visitExpr(expr)
+			}
+		}
+	}
+	for _, stmt := range ctx.info.Fn.Stmts {
+		visitStmt(stmt)
+	}
+}
+
+func (i *Inferencer) receiverHintForMethod(ctx *returnInferenceContext, method string) typ.Type {
+	if i == nil || i.types == nil || method == "" {
+		return nil
+	}
+	methodType, ok := i.types.Method(ctx.run.Ctx, typ.String, method)
+	if !ok || methodType == nil {
+		return nil
+	}
+	fn, ok := methodType.(*typ.Function)
+	if !ok || len(fn.Params) == 0 || !typ.TypeEquals(fn.Params[0].Type, typ.String) {
+		return nil
+	}
+	return typ.String
+}
+
+func overlayPathType(
+	expr ast.Expr,
+	overlay map[cfg.SymbolID]typ.Type,
+	bindings *bind.BindingTable,
+	typeOps core.TypeOps,
+	ctx *db.QueryContext,
+) (typ.Type, bool) {
+	if expr == nil || len(overlay) == 0 || bindings == nil {
+		return nil, false
+	}
+	p := flowpath.FromExprWithBindings(expr, nil, bindings)
+	if p.IsEmpty() || p.Symbol == 0 {
+		return nil, false
+	}
+	t, ok := overlay[p.Symbol]
+	if !ok || t == nil {
+		return nil, false
+	}
+	for _, seg := range p.Segments {
+		if typeOps == nil {
+			return nil, false
+		}
+		switch seg.Kind {
+		case constraint.SegmentField:
+			ft, ok := typeOps.Field(ctx, t, seg.Name)
+			if !ok {
+				return nil, false
+			}
+			t = ft
+		case constraint.SegmentIndexString:
+			ft, ok := typeOps.Index(ctx, t, typ.LiteralString(seg.Name))
+			if !ok {
+				return nil, false
+			}
+			t = ft
+		case constraint.SegmentIndexInt:
+			ft, ok := typeOps.Index(ctx, t, typ.LiteralInt(int64(seg.Index)))
+			if !ok {
+				return nil, false
+			}
+			t = ft
+		default:
+			return nil, false
+		}
+	}
+	return t, true
 }

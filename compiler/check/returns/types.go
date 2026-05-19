@@ -60,8 +60,8 @@ type LocalFuncInfo struct {
 	ParentGraph *cfg.Graph
 	ParentFn    *ast.FunctionExpr
 	DefPoint    cfg.Point
-	// ParamHints holds inferred parameter types from call sites in the parent graph.
-	// Index corresponds to parameter position.
+	// ParamHints holds inferred effective-parameter types from call sites in the
+	// parent graph. For methods, index 0 is self.
 	ParamHints []typ.Type
 }
 

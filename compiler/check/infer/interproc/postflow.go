@@ -299,7 +299,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 		return sym != 0 && store.FunctionRefBySym(sym) != nil
 	}
 	collectCallHints := func(p cfg.Point, info *cfg.CallInfo) {
-		if info == nil || len(info.Args) == 0 {
+		if info == nil || checkcallsite.RuntimeArgCount(info) == 0 {
 			return
 		}
 		callTargets := preAssignTargets[info]
@@ -389,7 +389,30 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 		}
 
 		deltaHints := make(api.ParamHints)
-		hints := paramhints.EnsureHintCapacity(nil, len(info.Args))
+		runtimeArgCount := checkcallsite.RuntimeArgCount(info)
+		hints := paramhints.EnsureHintCapacity(nil, runtimeArgCount)
+		for runtimeIdx := 0; runtimeIdx < runtimeArgCount; runtimeIdx++ {
+			arg := checkcallsite.RuntimeArgAt(info, runtimeIdx)
+			if arg == nil {
+				continue
+			}
+			var argType typ.Type
+			if checkcallsite.IsMethodCallInfo(info) && runtimeIdx == 0 {
+				argType = def.Receiver
+			} else {
+				argIdx := runtimeIdx
+				if checkcallsite.IsMethodCallInfo(info) {
+					argIdx--
+				}
+				if argIdx >= 0 && argIdx < len(argTypes) {
+					argType = argTypes[argIdx]
+				}
+			}
+			if argType == nil {
+				argType = result.NarrowSynth.TypeOf(arg, p)
+			}
+			hints, _ = paramhints.MergeCallArgHintAt(hints, runtimeIdx, argType, typ.JoinPreferNonSoft, true)
+		}
 		for i, arg := range info.Args {
 			if arg == nil {
 				continue
@@ -413,12 +436,6 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 					}
 				}
 			}
-
-			argType := argTypes[i]
-			if argType == nil {
-				argType = result.NarrowSynth.TypeOf(arg, p)
-			}
-			hints, _ = paramhints.MergeCallArgHintAt(hints, i, argType, typ.JoinPreferNonSoft, true)
 		}
 		if len(hints) > 0 {
 			deltaHints[calleeSym] = hints

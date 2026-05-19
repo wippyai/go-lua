@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 type HintJoinFn func(prev, next typ.Type) typ.Type
@@ -23,7 +24,7 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 		if i >= len(hints) || hints[i] == nil {
 			continue
 		}
-		if i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil {
+		if srcIdx, hasSource := signatureSourceParamIndex(fn, sig, i); hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil {
 			if !typ.IsRefinableAnnotation(p.Type) {
 				continue
 			}
@@ -40,7 +41,8 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 	for i, p := range sig.Params {
 		paramType := p.Type
 		if i < len(hints) && hints[i] != nil {
-			annotated := i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil
+			srcIdx, hasSource := signatureSourceParamIndex(fn, sig, i)
+			annotated := hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil
 			if !annotated || typ.IsRefinableAnnotation(paramType) {
 				paramType = hints[i]
 			}
@@ -67,6 +69,33 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 		builder = builder.WithRefinement(sig.Refinement)
 	}
 	return builder.Build()
+}
+
+func signatureSourceParamIndex(fn *ast.FunctionExpr, sig *typ.Function, paramIdx int) (int, bool) {
+	if fn == nil || fn.ParList == nil || sig == nil || paramIdx < 0 || paramIdx >= len(sig.Params) {
+		return 0, false
+	}
+	if signatureHasImplicitSelf(fn, sig) {
+		if paramIdx == 0 {
+			return 0, false
+		}
+		srcIdx := paramIdx - 1
+		return srcIdx, srcIdx >= 0 && srcIdx < len(fn.ParList.Names)
+	}
+	return paramIdx, paramIdx < len(fn.ParList.Names)
+}
+
+func signatureHasImplicitSelf(fn *ast.FunctionExpr, sig *typ.Function) bool {
+	if fn == nil || fn.ParList == nil || sig == nil || len(sig.Params) == 0 {
+		return false
+	}
+	if sig.Params[0].Name != "self" {
+		return false
+	}
+	if len(fn.ParList.Names) > 0 && fn.ParList.Names[0] == "self" {
+		return false
+	}
+	return len(sig.Params) == len(fn.ParList.Names)+1
 }
 
 func WidenParamHintType(t typ.Type) typ.Type {
@@ -110,12 +139,7 @@ func WidenParamHintType(t typ.Type) typ.Type {
 	case *typ.Record:
 		builder := typ.NewRecord()
 		changed := false
-		if !v.Open {
-			// Call-site table literals should not over-constrain unannotated params.
-			// Widen record hints to open records so optional field probes remain valid.
-			builder.SetOpen(true)
-			changed = true
-		} else {
+		if v.Open {
 			builder.SetOpen(true)
 		}
 		for _, f := range v.Fields {
@@ -149,7 +173,126 @@ func WidenParamHintType(t typ.Type) typ.Type {
 
 // NormalizeHintType applies canonical widening and soft-member pruning.
 func NormalizeHintType(t typ.Type) typ.Type {
-	return typ.PruneSoftUnionMembers(WidenParamHintType(t))
+	return collapseTableTopHint(typ.PruneSoftUnionMembers(WidenParamHintType(t)))
+}
+
+func collapseTableTopHint(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	switch v := t.(type) {
+	case *typ.Alias:
+		target := collapseTableTopHint(v.Target)
+		if target != nil && !typ.TypeEquals(target, v.Target) {
+			return typ.NewAlias(v.Name, target)
+		}
+		return t
+	case *typ.Optional:
+		inner := collapseTableTopHint(v.Inner)
+		if inner != nil && !typ.TypeEquals(inner, v.Inner) {
+			return typ.NewOptional(inner)
+		}
+		return t
+	case *typ.Union:
+		return collapseTableTopUnion(v)
+	default:
+		return t
+	}
+}
+
+func collapseTableTopUnion(u *typ.Union) typ.Type {
+	if u == nil {
+		return nil
+	}
+	tableTop := firstTableTopMember(u.Members)
+	members := make([]typ.Type, 0, len(u.Members))
+	changed := false
+
+	if tableTop == nil {
+		for _, member := range u.Members {
+			collapsed := collapseTableTopHint(member)
+			if !typ.TypeEquals(collapsed, member) {
+				changed = true
+			}
+			members = append(members, collapsed)
+		}
+		if !changed {
+			return u
+		}
+		return typ.NewUnion(members...)
+	}
+
+	tableAdded := false
+	for _, member := range u.Members {
+		if member == nil {
+			continue
+		}
+		if typ.UnwrapAnnotated(member).Kind() == kind.Nil {
+			members = append(members, member)
+			continue
+		}
+		collapsed := collapseTableTopHint(member)
+		if tableTopCoversHintMember(collapsed) {
+			if !tableAdded {
+				members = append(members, tableTop)
+				tableAdded = true
+			}
+			if !typ.TypeEquals(member, tableTop) {
+				changed = true
+			}
+			continue
+		}
+		if !typ.TypeEquals(collapsed, member) {
+			changed = true
+		}
+		members = append(members, collapsed)
+	}
+	if !changed {
+		return u
+	}
+	return typ.NewUnion(members...)
+}
+
+func firstTableTopMember(members []typ.Type) typ.Type {
+	for _, member := range members {
+		if isBuiltinTableTopHint(member) {
+			return member
+		}
+	}
+	return nil
+}
+
+func isBuiltinTableTopHint(t typ.Type) bool {
+	return unwrap.IsBuiltinTableTop(typ.UnwrapAnnotated(t))
+}
+
+func tableTopCoversHintMember(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	if isBuiltinTableTopHint(t) {
+		return true
+	}
+	switch v := typ.UnwrapAnnotated(t).(type) {
+	case *typ.Alias:
+		return tableTopCoversHintMember(v.UnaliasedTarget())
+	case *typ.Recursive:
+		return v.Body != nil && v.Body != v && tableTopCoversHintMember(v.Body)
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return false
+		}
+		for _, member := range v.Members {
+			if member == nil || typ.UnwrapAnnotated(member).Kind() == kind.Nil || !tableTopCoversHintMember(member) {
+				return false
+			}
+		}
+		return true
+	case *typ.Record, *typ.Map, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Intersection:
+		return true
+	default:
+		return false
+	}
 }
 
 // EnsureHintCapacity grows hint vector to at least size.

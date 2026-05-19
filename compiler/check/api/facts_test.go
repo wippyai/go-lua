@@ -148,8 +148,12 @@ func TestContainerMutationKey(t *testing.T) {
 		},
 		ValueType: typ.String,
 	}
-	if got, want := ContainerMutationKey(m), ".queue[\"jobs\"][2]"; got != want {
-		t.Fatalf("ContainerMutationKey() = %q, want %q", got, want)
+	if got, want := ContainerMutationKey(m), "container:.queue[\"jobs\"][2]"; got != want {
+		t.Fatalf("container key = %q, want %q", got, want)
+	}
+	m.Kind = ContainerMutationTableElement
+	if got, want := ContainerMutationKey(m), "table:.queue[\"jobs\"][2]"; got != want {
+		t.Fatalf("table key = %q, want %q", got, want)
 	}
 }
 

@@ -11,6 +11,16 @@ func TestJoinReturnSlot_PreservesUnknownOverNil(t *testing.T) {
 	}
 }
 
+func TestJoinReturnSlot_PreservesUnknownOverConcrete(t *testing.T) {
+	rec := NewRecord().Field("value", String).Build()
+	if got := JoinReturnSlot(Unknown, rec); !TypeEquals(got, Unknown) {
+		t.Fatalf("JoinReturnSlot(unknown, record) = %v, want unknown", got)
+	}
+	if got := JoinReturnSlot(rec, Unknown); !TypeEquals(got, Unknown) {
+		t.Fatalf("JoinReturnSlot(record, unknown) = %v, want unknown", got)
+	}
+}
+
 func TestJoinReturnSlot_PreservesAnyOverNil(t *testing.T) {
 	if got := JoinReturnSlot(Any, Nil); !TypeEquals(got, Any) {
 		t.Fatalf("JoinReturnSlot(any, nil) = %v, want any", got)
@@ -43,6 +53,15 @@ func TestJoinBranchOutcome_PreservesUnknownWithNil(t *testing.T) {
 	opt, ok = got.(*Optional)
 	if !ok || !TypeEquals(opt.Inner, Unknown) {
 		t.Fatalf("JoinBranchOutcome(nil, unknown) = %v, want unknown?", got)
+	}
+}
+
+func TestJoinBranchOutcome_PreservesUnknownOverConcrete(t *testing.T) {
+	if got := JoinBranchOutcome(Unknown, String); !TypeEquals(got, Unknown) {
+		t.Fatalf("JoinBranchOutcome(unknown, string) = %v, want unknown", got)
+	}
+	if got := JoinBranchOutcome(String, Unknown); !TypeEquals(got, Unknown) {
+		t.Fatalf("JoinBranchOutcome(string, unknown) = %v, want unknown", got)
 	}
 }
 
@@ -96,6 +115,46 @@ func TestJoinReturnSlot_MergesRecordFieldsAsOptional(t *testing.T) {
 	}
 	if !fields["type"].Optional || !TypeEquals(fields["type"].Type, String) {
 		t.Fatalf("type should be optional string, got %#v", fields["type"])
+	}
+}
+
+func TestJoinReturnSlot_MergesMissingOpenRecordFieldWithUnknownTail(t *testing.T) {
+	candidate := NewTuple(NewRecord().
+		Field("content", NewRecord().
+			Field("parts", NewTuple(NewRecord().Field("text", String).Build())).
+			Build()).
+		Build())
+	stream := NewRecord().
+		Field("candidates", candidate).
+		Field("status_code", Number).
+		Build()
+	decoded := NewRecord().
+		Field("metadata", NewRecord().Build()).
+		Field("status_code", Number).
+		SetOpen(true).
+		Build()
+
+	got := JoinReturnSlot(stream, decoded)
+	rec, ok := got.(*Record)
+	if !ok {
+		t.Fatalf("JoinReturnSlot(stream, decoded) = %T, want *Record", got)
+	}
+	field := rec.GetField("candidates")
+	if field == nil {
+		t.Fatalf("merged record lost candidates field: %v", rec)
+	}
+	if field.Optional {
+		t.Fatalf("candidates should merge with the open row tail, not absence: %#v", field)
+	}
+	if !TypeEquals(field.Type, Unknown) {
+		t.Fatalf("candidates = %v, want unknown from open row tail", field.Type)
+	}
+}
+
+func TestRecordMapKeyRemovesImpossibleNil(t *testing.T) {
+	rec := NewRecord().MapComponent(NewOptional(String), Number).Build()
+	if !TypeEquals(rec.MapKey, String) {
+		t.Fatalf("record map key = %v, want string", rec.MapKey)
 	}
 }
 

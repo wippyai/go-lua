@@ -228,6 +228,9 @@ func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
 	}
 
 	if len(types) == 0 {
+		if missingFromSome {
+			return typ.Nil, true
+		}
 		return nil, false
 	}
 

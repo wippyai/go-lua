@@ -33,10 +33,6 @@ func LogicalAndTyped(left, right typ.Type) typ.Type {
 		return typ.Never
 	}
 
-	if right != nil && right.Kind().IsNever() {
-		return typ.Never
-	}
-
 	// If left is definitely truthy (cannot be nil or false), result is right
 	if !CanBeFalsy(left) {
 		return right
@@ -51,6 +47,9 @@ func LogicalAndTyped(left, right typ.Type) typ.Type {
 	falsyLeft := narrow.ToFalsy(left)
 	if falsyLeft == nil || falsyLeft.Kind().IsNever() {
 		return right
+	}
+	if right != nil && right.Kind().IsNever() {
+		return falsyLeft
 	}
 	// Unknown/any right branch must remain dominant. Using plain union here can
 	// collapse to falsy-only because typ.NewUnion treats unknown as non-informative.
@@ -90,10 +89,6 @@ func LogicalOrTyped(left, right typ.Type) typ.Type {
 		return typ.Never
 	}
 
-	if right != nil && right.Kind().IsNever() {
-		return typ.Never
-	}
-
 	// If left is definitely truthy, result is left
 	if !CanBeFalsy(left) {
 		return left
@@ -108,6 +103,9 @@ func LogicalOrTyped(left, right typ.Type) typ.Type {
 	truthyLeft := narrow.ToTruthy(left)
 	if truthyLeft == nil || truthyLeft.Kind().IsNever() {
 		return right
+	}
+	if right != nil && right.Kind().IsNever() {
+		return truthyLeft
 	}
 
 	return typ.JoinBranchOutcome(truthyLeft, right)

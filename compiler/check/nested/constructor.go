@@ -224,7 +224,16 @@ func CollectConstructorFields(graph *cfg.Graph, selfSym cfg.SymbolID, synth func
 	fields := assign.CollectFieldAssignments(graph, synth, filterSyms)
 
 	if selfFields, ok := fields[selfSym]; ok && len(selfFields) > 0 {
-		return selfFields
+		filtered := make(map[string]typ.Type, len(selfFields))
+		for name, t := range selfFields {
+			if typ.IsAbsentOrUnknown(t) {
+				continue
+			}
+			filtered[name] = t
+		}
+		if len(filtered) > 0 {
+			return filtered
+		}
 	}
 	return nil
 }

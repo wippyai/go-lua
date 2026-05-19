@@ -2,17 +2,20 @@ package infer
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/siblings"
 	"github.com/wippyai/go-lua/compiler/check/synth"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -22,23 +25,24 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 	fnGraph := ctx.info.Graph
 	paramSlots := fnGraph.ParamSlotsReadOnly()
 	overlay := make(map[cfg.SymbolID]typ.Type, overlaySymbolCapacity(fnGraph, len(paramSlots)))
-	for _, slot := range paramSlots {
+	for paramIdx, slot := range paramSlots {
 		if slot.Symbol == 0 {
 			continue
 		}
 
 		// Binder/CFG-injected implicit self parameter.
-		srcIdx, hasSource := slot.SourceParamIndex()
+		_, hasSource := slot.SourceParamIndex()
 		if !hasSource {
 			if selfType := ctx.resolveScope.SelfType(); selfType != nil {
 				overlay[slot.Symbol] = selfType
+			} else if ctx.info.ParamHints != nil && paramIdx < len(ctx.info.ParamHints) && ctx.info.ParamHints[paramIdx] != nil {
+				overlay[slot.Symbol] = ctx.info.ParamHints[paramIdx]
 			} else {
 				overlay[slot.Symbol] = typ.Unknown
 			}
 			continue
 		}
 
-		i := srcIdx
 		paramType := typ.Unknown
 		if slot.Name == "self" {
 			if selfType := ctx.resolveScope.SelfType(); selfType != nil {
@@ -46,9 +50,12 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 			}
 		}
 		if typ.IsAbsentOrUnknown(paramType) {
-			if ctx.info.ParamHints != nil && i < len(ctx.info.ParamHints) && ctx.info.ParamHints[i] != nil {
-				paramType = ctx.info.ParamHints[i]
+			if ctx.info.ParamHints != nil && paramIdx < len(ctx.info.ParamHints) && ctx.info.ParamHints[paramIdx] != nil {
+				paramType = ctx.info.ParamHints[paramIdx]
 			}
+		}
+		if typ.IsAbsentOrUnknown(paramType) && slot.TypeAnnotation == nil {
+			paramType = typ.Any
 		}
 		if slot.TypeAnnotation != nil {
 			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
@@ -99,16 +106,34 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 		CurrentSym:    ctx.info.Sym,
 		Services: siblings.OverlayServicesFuncs{
 			SeedTypeFn: func(fn *ast.FunctionExpr) typ.Type {
+				var localInfo *returns.LocalFuncInfo
+				for _, sym := range cfg.SortedSymbolIDs(ctx.localFuncs) {
+					candidate := ctx.localFuncs[sym]
+					if candidate != nil && candidate.Fn == fn {
+						localInfo = candidate
+						break
+					}
+				}
 				var bindings interface {
 					ParamSymbols(*ast.FunctionExpr) []cfg.SymbolID
 					Name(cfg.SymbolID) string
 				}
-				if ctx.info != nil && ctx.info.Graph != nil {
+				if localInfo != nil && localInfo.Graph != nil {
+					if b := localInfo.Graph.Bindings(); b != nil {
+						bindings = b
+					}
+				}
+				if bindings == nil && ctx.info != nil && ctx.info.Graph != nil {
 					if b := ctx.info.Graph.Bindings(); b != nil {
 						bindings = b
 					}
 				}
-				return returns.BuildSeedFunctionTypeWithBindings(fn, ctx.engine, ctx.resolveScope, bindings)
+				seed := returns.BuildSeedFunctionTypeWithBindings(fn, ctx.engine, ctx.resolveScope, bindings)
+				fnType, _ := seed.(*typ.Function)
+				if localInfo != nil && len(localInfo.ParamHints) > 0 && fnType != nil {
+					return paramhints.MergeIntoSignature(fn, localInfo.ParamHints, fnType)
+				}
+				return seed
 			},
 		},
 	})
@@ -231,6 +256,9 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 			}
 			returnVector := i.resolveLocalFunctionReturns(ctx, allReturnVectors, target.Symbol)
 			sig := ctx.engine.ResolveFunctionSignature(fnExpr, ctx.resolveScope)
+			if localInfo := ctx.localFuncs[target.Symbol]; localInfo != nil && len(localInfo.ParamHints) > 0 && sig != nil {
+				sig = paramhints.MergeIntoSignature(fnExpr, localInfo.ParamHints, sig)
+			}
 			if fnType := returns.WithSummaryOrUnknown(sig, returnVector); fnType != nil {
 				overlay[target.Symbol] = fnType
 			}
@@ -303,6 +331,10 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 		if sym == 0 {
 			continue
 		}
+		if fnType := i.capturedFunctionFactType(ctx, sym); fnType != nil {
+			overlay[sym] = fnType
+			continue
+		}
 		if existing, ok := overlay[sym]; ok && existing != nil && !typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
 			continue
 		}
@@ -316,17 +348,61 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 	}
 }
 
+func (i *Inferencer) capturedFunctionFactType(ctx *returnInferenceContext, sym cfg.SymbolID) typ.Type {
+	if i == nil || i.store == nil || ctx == nil || sym == 0 {
+		return nil
+	}
+	ref := i.store.FunctionRefBySym(sym)
+	if ref == nil {
+		return nil
+	}
+	parentGraphID := ref.ParentGraphID
+	if parentGraphID == 0 {
+		parentGraphID = ref.GraphID
+	}
+	parentGraph := i.store.Graphs()[parentGraphID]
+	if parentGraph == nil {
+		return nil
+	}
+	parentScope := ctx.info.DefScope
+	if parentHash := i.store.GraphParentHashOf(parentGraphID); parentHash != 0 {
+		if scoped := i.store.Parents()[parentHash]; scoped != nil {
+			parentScope = scoped
+		}
+	}
+	facts := i.store.GetFunctionFactsSnapshot(parentGraph, parentScope)
+	return facts.FunctionType(sym)
+}
+
 // inferLocalVariableTypes runs phase 1 synthesis to infer local variable types.
 func (i *Inferencer) inferLocalVariableTypes(
 	ctx *returnInferenceContext,
 	overlay map[cfg.SymbolID]typ.Type,
+	localValueSeeds map[cfg.SymbolID]bool,
 ) (map[cfg.SymbolID]typ.Type, *synth.Engine, func(ast.Expr, cfg.Point) typ.Type) {
 	fnGraph := ctx.info.Graph
 	annotated := make(map[cfg.SymbolID]bool, len(overlay))
 	paramSet := paramSymbolSet(fnGraph)
+	explicitParamAnnotations := make(map[cfg.SymbolID]bool)
+	for _, slot := range fnGraph.ParamSlotsReadOnly() {
+		if slot.Symbol == 0 || slot.TypeAnnotation == nil || ctx.engine == nil {
+			continue
+		}
+		resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
+		if resolved != nil && !typ.IsRefinableAnnotation(resolved) {
+			explicitParamAnnotations[slot.Symbol] = true
+		}
+	}
 	for sym, tp := range overlay {
 		if paramSet[sym] {
-			annotated[sym] = true
+			if explicitParamAnnotations[sym] {
+				annotated[sym] = true
+			} else if tp != nil && !typ.IsAny(tp) && !typ.IsAbsentOrUnknown(tp) && !typ.IsSoft(tp, typ.SoftAnnotationPolicy) {
+				annotated[sym] = true
+			}
+			continue
+		}
+		if localValueSeeds[sym] {
 			continue
 		}
 		if tp != nil && !typ.IsSoft(tp, typ.SoftAnnotationPolicy) {
@@ -356,13 +432,21 @@ func (i *Inferencer) inferLocalVariableTypes(
 		}
 	})
 
+	inferenceOverlay := overlay
+	if len(localValueSeeds) > 0 {
+		inferenceOverlay = cloneOverlay(overlay, 0)
+		for sym := range localValueSeeds {
+			delete(inferenceOverlay, sym)
+		}
+	}
+
 	fnScopes := uniformFunctionScopes(fnGraph, ctx.resolveScope)
 
 	prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
 		Graph:         fnGraph,
 		Bindings:      ctx.bindings,
 		BaseScope:     ctx.resolveScope,
-		DeclaredTypes: overlay,
+		DeclaredTypes: inferenceOverlay,
 		GlobalTypes:   i.globalTypes,
 		ModuleAliases: ctx.moduleAliases,
 		FunctionFacts: functionFactsFromReturnVectors(ctx.returnVectors),
@@ -396,7 +480,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 		Derived: &fbcore.Derived{
 			SymResolver: symResolver,
 		},
-	}, overlay, annotated, nil)
+	}, inferenceOverlay, annotated, nil)
 
 	return inferred, prelimEngine, synthAdapter
 }
@@ -404,12 +488,13 @@ func (i *Inferencer) inferLocalVariableTypes(
 func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 	ctx *returnInferenceContext,
 	overlay map[cfg.SymbolID]typ.Type,
-) {
+) map[cfg.SymbolID]bool {
 	fnGraph := ctx.info.Graph
 	if fnGraph == nil {
-		return
+		return nil
 	}
 
+	localValueSeeds := make(map[cfg.SymbolID]bool)
 	fnGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		if info == nil || !info.IsLocal {
 			return
@@ -461,12 +546,17 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 				if _, ok := info.Sources[idx].(*ast.TableExpr); ok {
 					if seeded := ctx.engine.TypeOf(info.Sources[idx], p); seeded != nil {
 						overlay[target.Symbol] = seeded
+						localValueSeeds[target.Symbol] = true
 					}
 				}
 			}
 		})
 	})
 
+	if len(localValueSeeds) == 0 {
+		return nil
+	}
+	return localValueSeeds
 }
 
 type localSymbolLookup interface {
@@ -476,6 +566,7 @@ type localSymbolLookup interface {
 type overlayMutationStage struct {
 	fnGraph              *cfg.Graph
 	paramSyms            map[cfg.SymbolID]bool
+	localValueSeeds      map[cfg.SymbolID]bool
 	finalOverlay         map[cfg.SymbolID]typ.Type
 	inferred             map[cfg.SymbolID]typ.Type
 	synthAdapter         func(ast.Expr, cfg.Point) typ.Type
@@ -488,10 +579,11 @@ func (i *Inferencer) collectAndApplyMutations(
 	overlay map[cfg.SymbolID]typ.Type,
 	inferred map[cfg.SymbolID]typ.Type,
 	synthAdapter func(ast.Expr, cfg.Point) typ.Type,
+	localValueSeeds map[cfg.SymbolID]bool,
 ) map[cfg.SymbolID]typ.Type {
-	stage := newOverlayMutationStage(ctx, overlay, inferred, synthAdapter)
-	mergeInferredIntoOverlay(stage.finalOverlay, stage.inferred, stage.paramSyms)
-	stage.enrichedSynthAdapter = buildEnrichedSynthAdapter(stage.fnGraph.Bindings(), stage.inferred, stage.finalOverlay, stage.synthAdapter)
+	stage := newOverlayMutationStage(ctx, overlay, inferred, synthAdapter, localValueSeeds)
+	mergeInferredIntoOverlay(stage.finalOverlay, stage.inferred, stage.paramSyms, stage.localValueSeeds)
+	stage.enrichedSynthAdapter = buildEnrichedSynthAdapter(stage.fnGraph.Bindings(), stage.inferred, stage.finalOverlay, stage.localValueSeeds, i.types, ctx.run.Ctx, stage.synthAdapter)
 
 	i.applyFieldMutations(ctx, &stage)
 	i.applyIndexerMutations(&stage)
@@ -505,17 +597,19 @@ func newOverlayMutationStage(
 	overlay map[cfg.SymbolID]typ.Type,
 	inferred map[cfg.SymbolID]typ.Type,
 	synthAdapter func(ast.Expr, cfg.Point) typ.Type,
+	localValueSeeds map[cfg.SymbolID]bool,
 ) overlayMutationStage {
 	fnGraph := (*cfg.Graph)(nil)
 	if ctx != nil && ctx.info != nil {
 		fnGraph = ctx.info.Graph
 	}
 	return overlayMutationStage{
-		fnGraph:      fnGraph,
-		paramSyms:    paramSymbolSet(fnGraph),
-		finalOverlay: cloneOverlay(overlay, len(inferred)),
-		inferred:     inferred,
-		synthAdapter: synthAdapter,
+		fnGraph:         fnGraph,
+		paramSyms:       paramSymbolSet(fnGraph),
+		localValueSeeds: localValueSeeds,
+		finalOverlay:    cloneOverlay(overlay, len(inferred)),
+		inferred:        inferred,
+		synthAdapter:    synthAdapter,
 	}
 }
 
@@ -548,6 +642,7 @@ func mergeInferredIntoOverlay(
 	finalOverlay map[cfg.SymbolID]typ.Type,
 	inferred map[cfg.SymbolID]typ.Type,
 	paramSyms map[cfg.SymbolID]bool,
+	localValueSeeds map[cfg.SymbolID]bool,
 ) {
 	for sym, inferredType := range inferred {
 		baseType := finalOverlay[sym]
@@ -557,6 +652,10 @@ func mergeInferredIntoOverlay(
 			if typ.IsAbsentOrUnknown(baseType) {
 				finalOverlay[sym] = inferredType
 			}
+			continue
+		}
+		if localValueSeeds[sym] {
+			finalOverlay[sym] = inferredType
 			continue
 		}
 		if typ.IsAbsentOrUnknown(baseType) {
@@ -683,21 +782,30 @@ func reconcileSoftAnnotatedInference(baseType, inferredType typ.Type) typ.Type {
 }
 
 func buildEnrichedSynthAdapter(
-	bindings localSymbolLookup,
+	bindings *bind.BindingTable,
 	inferred map[cfg.SymbolID]typ.Type,
 	finalOverlay map[cfg.SymbolID]typ.Type,
+	localValueSeeds map[cfg.SymbolID]bool,
+	typeOps core.TypeOps,
+	queryCtx *db.QueryContext,
 	baseAdapter func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
 	return func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
 			if sym, found := bindings.SymbolOf(ident); found && sym != 0 {
 				if t, exists := inferred[sym]; exists && !typ.IsAbsentOrUnknown(t) {
+					if localValueSeeds[sym] {
+						return t
+					}
 					if baseType := finalOverlay[sym]; baseType != nil && !typ.IsSoft(baseType, typ.SoftAnnotationPolicy) {
 						return baseType
 					}
 					return t
 				}
 			}
+		}
+		if t, ok := overlayPathType(expr, finalOverlay, bindings, typeOps, queryCtx); ok && !typ.IsAbsentOrUnknown(t) {
+			return t
 		}
 		return baseAdapter(expr, p)
 	}

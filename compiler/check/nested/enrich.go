@@ -2,6 +2,7 @@ package nested
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
@@ -122,43 +123,59 @@ func CollectCapturedContainerMutations(
 			return
 		}
 
-		ceu := mutator.ContainerMutatorFromCall(info, p, synth, nil, nil, graph, bindings, nil)
-		if ceu == nil {
-			return
+		if ceu := mutator.ContainerMutatorFromCall(info, p, synth, nil, nil, graph, bindings, nil); ceu != nil {
+			targetExpr := callsite.RuntimeArgAt(info, ceu.Container.Index)
+			valueExpr := callsite.RuntimeArgAt(info, ceu.Value.Index)
+			collectCapturedContainerMutation(result, bindings, capturedSyms, targetExpr, valueExpr, p, synth, api.ContainerMutationContainerElement)
 		}
 
-		targetExpr := callsite.RuntimeArgAt(info, ceu.Container.Index)
-		valueExpr := callsite.RuntimeArgAt(info, ceu.Value.Index)
-		if targetExpr == nil || valueExpr == nil {
-			return
+		if tm := mutator.TableMutatorFromCall(info, p, synth, nil, graph, bindings, nil); tm != nil {
+			targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
+			valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
+			collectCapturedContainerMutation(result, bindings, capturedSyms, targetExpr, valueExpr, p, synth, api.ContainerMutationTableElement)
 		}
-
-		targetPath := flowpath.FromExprWithBindings(targetExpr, nil, bindings)
-		if targetPath.IsEmpty() || targetPath.Symbol == 0 {
-			return
-		}
-		if !capturedSyms[targetPath.Symbol] {
-			return
-		}
-
-		var valueType typ.Type
-		if synth != nil {
-			valueType = synth(valueExpr, p)
-		}
-		if valueType == nil {
-			valueType = typ.Unknown
-		}
-		valueType = subtype.WidenForInference(valueType)
-
-		segs := make([]constraint.Segment, len(targetPath.Segments))
-		copy(segs, targetPath.Segments)
-		result[targetPath.Symbol] = append(result[targetPath.Symbol], api.ContainerMutation{
-			Segments:  segs,
-			ValueType: valueType,
-		})
 	})
 
 	return result
+}
+
+func collectCapturedContainerMutation(
+	result map[cfg.SymbolID][]api.ContainerMutation,
+	bindings *bind.BindingTable,
+	capturedSyms map[cfg.SymbolID]bool,
+	targetExpr ast.Expr,
+	valueExpr ast.Expr,
+	p cfg.Point,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	kind api.ContainerMutationKind,
+) {
+	if result == nil || targetExpr == nil || valueExpr == nil {
+		return
+	}
+	targetPath := flowpath.FromExprWithBindings(targetExpr, nil, bindings)
+	if targetPath.IsEmpty() || targetPath.Symbol == 0 {
+		return
+	}
+	if !capturedSyms[targetPath.Symbol] {
+		return
+	}
+
+	var valueType typ.Type
+	if synth != nil {
+		valueType = synth(valueExpr, p)
+	}
+	if valueType == nil {
+		valueType = typ.Unknown
+	}
+	valueType = subtype.WidenForInference(valueType)
+
+	segs := make([]constraint.Segment, len(targetPath.Segments))
+	copy(segs, targetPath.Segments)
+	result[targetPath.Symbol] = append(result[targetPath.Symbol], api.ContainerMutation{
+		Kind:      kind,
+		Segments:  segs,
+		ValueType: valueType,
+	})
 }
 
 // EnrichSelfTypeWithConstructorFields merges constructor instance fields into a self-type.
@@ -213,10 +230,14 @@ func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.
 
 		existingFields := make(map[string]bool)
 		for _, f := range v.Fields {
+			fieldType := f.Type
+			if constructorType := fields[f.Name]; constructorType != nil && (typ.IsAbsentOrUnknown(fieldType) || typ.IsAny(fieldType)) {
+				fieldType = constructorType
+			}
 			if f.Optional {
-				builder.OptField(f.Name, f.Type)
+				builder.OptField(f.Name, fieldType)
 			} else {
-				builder.Field(f.Name, f.Type)
+				builder.Field(f.Name, fieldType)
 			}
 			existingFields[f.Name] = true
 		}

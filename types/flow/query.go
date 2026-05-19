@@ -402,16 +402,18 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		return explicit
 	}
 
-	// Both available: prefer the narrower one
+	// Direct child-path facts are the product-domain authority for that path.
+	// Parent-derived facts are a fallback: they describe the container shape, but
+	// may be stale after a direct field/index assignment or table mutator.
+	if !explicit.Kind().IsPlaceholder() {
+		return explicit
+	}
+
 	// If derived is falsy (nil/false), prefer explicit to avoid narrowing to never
 	if derived.Kind() == kind.Nil || isFalseLiteral(derived) {
 		return explicit
 	}
 
-	// Prefer concrete explicit child-path facts over placeholder parent-derived facts.
-	if derived.Kind().IsPlaceholder() && !explicit.Kind().IsPlaceholder() {
-		return explicit
-	}
 	if explicit.Kind().IsPlaceholder() && !derived.Kind().IsPlaceholder() {
 		return derived
 	}

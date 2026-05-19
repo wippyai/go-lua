@@ -13,7 +13,7 @@ import (
 // from a function signature when no explicit effect labels are present.
 //
 // Rule:
-//   - Signature must have exactly two returns.
+//   - Signature must expose at least the conventional value and error slots.
 //   - Error slot is selected by conventional position with type-based precedence:
 //   - Prefer return[1] when it is Optional<LuaError> or Optional<string>.
 //   - Otherwise allow return[0] only when return[1] is not error-like and
@@ -24,7 +24,7 @@ import (
 // policy centralized and deterministic.
 func InferErrorReturnConvention(fnType typ.Type) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation) {
 	fn := unwrap.Function(fnType)
-	if fn == nil || len(fn.Returns) != 2 {
+	if fn == nil || len(fn.Returns) < 2 {
 		return nil, nil
 	}
 

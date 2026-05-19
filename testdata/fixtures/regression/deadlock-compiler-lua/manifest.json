@@ -1,6 +1,6 @@
 {
-  "description": "Large dynamic compiler fixture must terminate; dynamic any-to-string calls are reported soundly",
+  "description": "Large dynamic compiler fixture must terminate; proven dynamic calls should not report stale false positives",
   "check": {
-    "errors": 2
+    "errors": 0
   }
 }

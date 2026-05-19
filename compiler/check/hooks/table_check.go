@@ -217,6 +217,9 @@ func checkTableWithOptionalRelax(fields []ops.FieldDef, arrayElems []typ.Type, e
 		if err.Message == "missing required field" && unwrap.IsOptionalLike(err.Expected) {
 			continue
 		}
+		if err.Message == "field type mismatch" && unresolvedTableEvidence(err.Got) {
+			continue
+		}
 		if err.Message == "unexpected field" {
 			continue
 		}
@@ -238,6 +241,14 @@ func checkTableWithOptionalRelax(fields []ops.FieldDef, arrayElems []typ.Type, e
 		reason += ", got " + typ.FormatShort(first.Got)
 	}
 	return false, reason
+}
+
+func unresolvedTableEvidence(t typ.Type) bool {
+	if typ.IsAbsentOrUnknown(t) {
+		return true
+	}
+	rec := unwrap.Record(t)
+	return rec != nil && len(rec.Fields) == 0 && !rec.HasMapComponent()
 }
 
 func unionAllRecordLike(u *typ.Union) bool {

@@ -1,6 +1,8 @@
 package io
 
-import "github.com/wippyai/go-lua/types/typ"
+import (
+	"github.com/wippyai/go-lua/types/typ"
+)
 
 // LookupManifest resolves a manifest by path.
 //

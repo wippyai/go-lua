@@ -85,6 +85,8 @@ func (s *Synthesizer) synthExprWithExpectedSingle(
 			return typ.Nil
 		}
 		return types[0]
+	case *ast.LogicalOpExpr:
+		return s.synthLogicalOpWithExpected(ex, sc, p, recurse, expected)
 	case *ast.IdentExpr:
 		if expectedFn, ok := unwrap.Alias(expected).(*typ.Function); ok {
 			if fnExpr := s.functionLiteralForIdent(ex); fnExpr != nil {

@@ -62,7 +62,11 @@ func (in *snapshotInputs) factsFor(ctx *db.QueryContext, key api.GraphKey) (api.
 	if in == nil || in.facts == nil {
 		return api.Facts{}, false
 	}
-	return in.facts.Get(ctx, key)
+	facts, ok := in.facts.Get(ctx, key)
+	if !ok {
+		return api.Facts{}, false
+	}
+	return cloneFacts(facts), true
 }
 
 func (in *snapshotInputs) setFacts(key api.GraphKey, facts api.Facts) {
@@ -77,7 +81,7 @@ func (in *snapshotInputs) setFacts(key api.GraphKey, facts api.Facts) {
 		in.facts.Set(key, api.Facts{})
 		return
 	}
-	next := facts
+	next := cloneFacts(facts)
 	if prev, ok := in.factValues[key]; ok && returns.FactsEqual(prev, next) {
 		return
 	}
@@ -184,15 +188,15 @@ func (s *SessionStore) currentInterprocFacts(key api.GraphKey) api.Facts {
 	if s.InterprocNext != nil && s.InterprocNext.Facts != nil {
 		if next, ok := s.InterprocNext.Facts[key]; ok {
 			if factsEmpty(prev) {
-				return next
+				return cloneFacts(next)
 			}
 			if factsEmpty(next) {
-				return prev
+				return cloneFacts(prev)
 			}
-			return returns.JoinFacts(prev, next)
+			return cloneFacts(returns.JoinFacts(prev, next))
 		}
 	}
-	return prev
+	return cloneFacts(prev)
 }
 
 func (s *SessionStore) syncFactsInput(key api.GraphKey) {

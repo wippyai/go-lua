@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
+	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -37,6 +38,9 @@ func (s *Synthesizer) SynthTableCore(ex *ast.TableExpr, sc *scope.State, recurse
 // Empty tables return an open record (can have any additional fields assigned).
 func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State, recurse ExprSynth, expected typ.Type) typ.Type {
 	if len(ex.Fields) == 0 {
+		if result := emptyTableExpectedResult(expected); result != nil {
+			return result
+		}
 		return typ.NewRecord().SetOpen(true).Build()
 	}
 
@@ -152,17 +156,45 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 		} else {
 			result = typ.NewTuple(arrayElements...)
 		}
-		if expected != nil && len(ops.CheckTable(nil, arrayElements, expected).Errors) == 0 {
+		if useExpectedTableResult(expected) && len(ops.CheckTable(nil, arrayElements, expected).Errors) == 0 {
 			return expected
 		}
 		return result
 	}
 
 	result := builder.Build()
-	if expected != nil && len(ops.CheckTable(fieldDefs, arrayElements, expected).Errors) == 0 {
+	if useExpectedTableResult(expected) && len(ops.CheckTable(fieldDefs, arrayElements, expected).Errors) == 0 {
 		return expected
 	}
 	return result
+}
+
+func emptyTableExpectedResult(expected typ.Type) typ.Type {
+	if expected == nil {
+		return nil
+	}
+	nonNil := narrow.RemoveNil(expected)
+	if nonNil == nil || typ.IsNever(nonNil) || typ.IsAbsentOrUnknown(nonNil) || typ.IsAny(nonNil) {
+		return nil
+	}
+	if !useExpectedTableResult(nonNil) {
+		return nil
+	}
+	if len(ops.CheckTable(nil, nil, nonNil).Errors) != 0 {
+		return nil
+	}
+	return nonNil
+}
+
+func useExpectedTableResult(expected typ.Type) bool {
+	if expected == nil {
+		return false
+	}
+	unwrapped := unwrap.Alias(expected)
+	if unwrapped == nil {
+		return false
+	}
+	return !unwrapped.Kind().IsPlaceholder()
 }
 
 // synthFieldValueWithExpected synthesizes type for a table field value with optional expected type.

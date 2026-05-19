@@ -13,36 +13,37 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// ErrorReturnConvention describes a return layout where one slot carries the
-// success value and another carries the error. ReturnCount is exact: a function
-// with extra returned values is not inferred as this convention.
+// ErrorReturnConvention describes a return relation where one slot carries the
+// success value and another carries the error. The convention is a pair
+// relation, not a complete return-vector shape: extra return slots do not affect
+// whether the value/error pair can be proven.
 type ErrorReturnConvention struct {
-	ValueIndex  int
-	ErrorIndex  int
-	ReturnCount int
+	ValueIndex int
+	ErrorIndex int
 }
 
 // CanonicalLuaValueErrorConvention returns the canonical Lua `(value, err)` layout.
 func CanonicalLuaValueErrorConvention() ErrorReturnConvention {
 	return ErrorReturnConvention{
-		ValueIndex:  0,
-		ErrorIndex:  1,
-		ReturnCount: 2,
+		ValueIndex: 0,
+		ErrorIndex: 1,
 	}
 }
 
 func (c ErrorReturnConvention) valid() bool {
 	return c.ValueIndex >= 0 &&
 		c.ErrorIndex >= 0 &&
-		c.ValueIndex != c.ErrorIndex &&
-		c.ValueIndex < c.ReturnCount &&
-		c.ErrorIndex < c.ReturnCount
+		c.ValueIndex != c.ErrorIndex
 }
 
-// CanClassifyReturns reports whether returnTypes has the exact shape required
-// by this convention before the expensive per-return inverse-pattern proof runs.
+func (c ErrorReturnConvention) requiredReturnSlots() int {
+	return requiredReturnSlots(c.ValueIndex, c.ErrorIndex)
+}
+
+// CanClassifyReturns reports whether returnTypes contains the slots required by
+// this convention before the expensive per-return inverse-pattern proof runs.
 func (c ErrorReturnConvention) CanClassifyReturns(returnTypes []typ.Type) bool {
-	return c.valid() && len(returnTypes) == c.ReturnCount
+	return c.valid() && len(returnTypes) >= c.requiredReturnSlots()
 }
 
 func (c ErrorReturnConvention) canClassifyFunction(fn *typ.Function) bool {
@@ -118,6 +119,10 @@ func HasStrictInverseReturnPattern(
 	if graph == nil || synth == nil {
 		return false
 	}
+	needed := requiredReturnSlots(valueIdx, errorIdx)
+	if needed == 0 {
+		return false
+	}
 	var sawSuccess bool
 	var sawFailure bool
 	var incompatible bool
@@ -136,7 +141,14 @@ func HasStrictInverseReturnPattern(
 			return
 		}
 
-		values := synth.ExpandValues(info.Exprs, 2, p)
+		if delegatesErrorReturn(info, p, synth, valueIdx, errorIdx) {
+			classified = true
+			sawSuccess = true
+			sawFailure = true
+			return
+		}
+
+		values := synth.ExpandValues(info.Exprs, needed, p)
 		if valueIdx >= len(values) || errorIdx >= len(values) {
 			incompatible = true
 			return
@@ -167,6 +179,42 @@ func HasStrictInverseReturnPattern(
 	})
 
 	return classified && !incompatible && sawSuccess && sawFailure
+}
+
+func delegatesErrorReturn(
+	info *cfg.ReturnInfo,
+	p cfg.Point,
+	synth api.BaseSynth,
+	valueIdx int,
+	errorIdx int,
+) bool {
+	if info == nil || synth == nil || len(info.Exprs) != 1 {
+		return false
+	}
+	call, ok := info.Exprs[0].(*ast.FuncCallExpr)
+	if !ok || call == nil || call.Func == nil {
+		return false
+	}
+	fn := unwrap.Function(synth.TypeOf(call.Func, p))
+	if fn == nil {
+		return false
+	}
+	spec := contract.ExtractSpec(fn)
+	if spec == nil {
+		return false
+	}
+	er := spec.Effects.GetErrorReturn(valueIdx)
+	return er != nil && er.ErrorIndex == errorIdx
+}
+
+func requiredReturnSlots(valueIdx int, errorIdx int) int {
+	if valueIdx < 0 || errorIdx < 0 || valueIdx == errorIdx {
+		return 0
+	}
+	if valueIdx > errorIdx {
+		return valueIdx + 1
+	}
+	return errorIdx + 1
 }
 
 func AttachErrorReturnSpec(fn *typ.Function, valueIndex, errorIndex int) *typ.Function {

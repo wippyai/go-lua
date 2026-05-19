@@ -368,21 +368,21 @@ function FlowGraph:detect_cycles()
 
         local edges = (self.edges[node_id] :: any)
         if edges then
-            for _, edge in ipairs(edges.targets) do
-                if edge.target_node_id then
-                    local has_cycle, cycle_desc = dfs(edge.target_node_id, path)
-                    if has_cycle then
-                        return true, cycle_desc
-                    end
-                end
-            end
-            for _, edge in ipairs(edges.error_targets) do
-                if edge.target_node_id then
-                    local has_cycle, cycle_desc = dfs(edge.target_node_id, path)
-                    if has_cycle then
-                        return true, cycle_desc
-                    end
-                end
+			for _, edge in ipairs(edges.targets) do
+				if edge.target_node_id then
+					local has_cycle, cycle_desc = dfs(edge.target_node_id :: string, path)
+					if has_cycle then
+						return true, cycle_desc
+					end
+				end
+			end
+			for _, edge in ipairs(edges.error_targets) do
+				if edge.target_node_id then
+					local has_cycle, cycle_desc = dfs(edge.target_node_id :: string, path)
+					if has_cycle then
+						return true, cycle_desc
+					end
+				end
             end
         end
 

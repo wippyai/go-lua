@@ -1373,6 +1373,15 @@ func TestRecordOptionalFields(t *testing.T) {
 	}
 }
 
+func TestRecordNilFieldSatisfiesOptionalField(t *testing.T) {
+	sub := typ.NewRecord().Field("headers", typ.Nil).Build()
+	super := typ.NewRecord().OptField("headers", typ.NewMap(typ.String, typ.String)).Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("nil field represents Lua absence and should satisfy optional field")
+	}
+}
+
 func TestRecordFieldTypeSubtype(t *testing.T) {
 	// {value: integer} <: {value: number}
 	rec1 := typ.NewRecord().Field("value", typ.Integer).Build()
@@ -2012,6 +2021,21 @@ func TestRecordMutableFieldWidening_LiteralBool(t *testing.T) {
 
 	if !IsSubtype(sub, super) {
 		t.Error("record with literal bool field should widen to record with boolean field")
+	}
+}
+
+func TestRecordMutableFieldWidening_OptionalLiteralUnionToPrimitiveUnion(t *testing.T) {
+	sub := typ.NewRecord().
+		SetOpen(true).
+		OptField("data_func", typ.NewUnion(typ.String, typ.False)).
+		Build()
+	super := typ.NewRecord().
+		SetOpen(true).
+		OptField("data_func", typ.NewUnion(typ.String, typ.Boolean)).
+		Build()
+
+	if !IsSubtype(sub, super) {
+		t.Fatalf("expected %s to be subtype of %s", typ.FormatShort(sub), typ.FormatShort(super))
 	}
 }
 

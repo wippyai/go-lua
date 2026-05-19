@@ -719,6 +719,9 @@ func unaryOpUnion(op string, u *typ.Union) typ.Type {
 // isNumeric returns true if the type represents a numeric value.
 // Includes number, integer, and numeric literals.
 func isNumeric(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
 	switch t.Kind() {
 	case kind.Number, kind.Integer:
 		return true

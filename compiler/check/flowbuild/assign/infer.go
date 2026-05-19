@@ -62,8 +62,10 @@ import (
 	synthpkg "github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	flowjoin "github.com/wippyai/go-lua/types/flow/join"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -155,6 +157,7 @@ func collectInferredTypes(
 	if len(structuredWrites) > 0 {
 		idom = cfganalysis.ComputeImmediateDominators(graph.CFG())
 	}
+	valueDefs := collectValueDefinitionVersions(graph)
 
 	bindings := graph.Bindings()
 	if moduleBindings == nil {
@@ -279,15 +282,25 @@ func collectInferredTypes(
 			continue
 		}
 		for _, target := range entry.info.Targets {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+			var sym cfg.SymbolID
+			switch target.Kind {
+			case cfg.TargetIdent:
+				sym = target.Symbol
+			case cfg.TargetField:
+				if paramSet[target.BaseSymbol] {
+					sym = target.BaseSymbol
+				}
+			}
+			if sym == 0 {
 				continue
 			}
-			assignIdxByTargetSym[target.Symbol] = append(assignIdxByTargetSym[target.Symbol], idx)
+			assignIdxByTargetSym[sym] = append(assignIdxByTargetSym[sym], idx)
 		}
 	}
 
 	callArgSymbolsByIdx := make([][]cfg.SymbolID, len(calls))
-	callIdxByParamArgSym := make(map[cfg.SymbolID][]int)
+	callReceiverSymbolByIdx := make([]cfg.SymbolID, len(calls))
+	callIdxByArgSym := make(map[cfg.SymbolID][]int)
 	callIdxByRefSym := make(map[cfg.SymbolID][]int)
 	for idx, entry := range calls {
 		if entry.info == nil {
@@ -295,12 +308,23 @@ func collectInferredTypes(
 		}
 		argSymbols := normalizedCallArgSymbols(entry.info, bindings)
 		callArgSymbolsByIdx[idx] = argSymbols
+		receiverSym := normalizedCallReceiverSymbol(entry.info, bindings)
+		callReceiverSymbolByIdx[idx] = receiverSym
+		if receiverSym != 0 {
+			callIdxByArgSym[receiverSym] = append(callIdxByArgSym[receiverSym], idx)
+		}
 
 		for _, sym := range argSymbols {
-			if sym == 0 || !paramSet[sym] {
+			if sym == 0 {
 				continue
 			}
-			callIdxByParamArgSym[sym] = append(callIdxByParamArgSym[sym], idx)
+			callIdxByArgSym[sym] = append(callIdxByArgSym[sym], idx)
+		}
+		for _, arg := range entry.info.Args {
+			argPath := path.FromExprWithBindings(arg, nil, bindings)
+			if argPath.Symbol != 0 && len(argPath.Segments) > 0 && paramSet[argPath.Symbol] {
+				callIdxByArgSym[argPath.Symbol] = append(callIdxByArgSym[argPath.Symbol], idx)
+			}
 		}
 
 		for _, sym := range callRefSymbols(entry.info, bindings) {
@@ -324,10 +348,19 @@ func collectInferredTypes(
 	for _, entry := range assigns {
 		info := entry.info
 		for _, target := range info.Targets {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+			var targetSymID cfg.SymbolID
+			switch target.Kind {
+			case cfg.TargetIdent:
+				targetSymID = target.Symbol
+			case cfg.TargetField:
+				if paramSet[target.BaseSymbol] {
+					targetSymID = target.BaseSymbol
+				}
+			}
+			if targetSymID == 0 {
 				continue
 			}
-			targetSym := uint64(target.Symbol)
+			targetSym := uint64(targetSymID)
 			if deps[targetSym] == nil {
 				deps[targetSym] = nil // ensure node exists
 			}
@@ -393,6 +426,43 @@ func collectInferredTypes(
 			deps[targetKey] = append(deps[targetKey], uint64(ref))
 		}
 	}
+	for _, entry := range calls {
+		info := entry.info
+		if info == nil {
+			continue
+		}
+		var calleeRefs []cfg.SymbolID
+		collectExprSymbols(info.Callee, bindings, &calleeRefs)
+		collectExprSymbols(info.Receiver, bindings, &calleeRefs)
+		calleeRefs = dedupeSymbolIDs(calleeRefs)
+		if len(calleeRefs) == 0 {
+			continue
+		}
+		addArgExpectationDeps := func(sym cfg.SymbolID) {
+			if sym == 0 {
+				return
+			}
+			targetKey := uint64(sym)
+			if deps[targetKey] == nil {
+				deps[targetKey] = nil
+			}
+			for _, ref := range calleeRefs {
+				if ref == 0 || ref == sym {
+					continue
+				}
+				deps[targetKey] = append(deps[targetKey], uint64(ref))
+			}
+		}
+		for _, sym := range normalizedCallArgSymbols(info, bindings) {
+			addArgExpectationDeps(sym)
+		}
+		for _, arg := range info.Args {
+			argPath := path.FromExprWithBindings(arg, nil, bindings)
+			if argPath.Symbol != 0 && len(argPath.Segments) > 0 && paramSet[argPath.Symbol] {
+				addArgExpectationDeps(argPath.Symbol)
+			}
+		}
+	}
 
 	// Deduplicate edges
 	for sym, edges := range deps {
@@ -416,7 +486,7 @@ func collectInferredTypes(
 	sccs := internal.ComputeSCCs(deps)
 
 	// Process each SCC in topological order
-	for sccIdx, scc := range sccs {
+	for _, scc := range sccs {
 		if len(scc) == 0 {
 			continue
 		}
@@ -432,7 +502,7 @@ func collectInferredTypes(
 
 		markEpoch++
 		sccAssignIdx := make([]int, 0, len(scc))
-		sccParamCallIdx := make([]int, 0, len(scc))
+		sccArgCallIdx := make([]int, 0, len(scc))
 		sccMutatorCallIdx := make([]int, 0, len(scc))
 		for _, sym := range sccSyms {
 			for _, idx := range assignIdxByTargetSym[sym] {
@@ -442,12 +512,12 @@ func collectInferredTypes(
 				assignIdxMarks[idx] = markEpoch
 				sccAssignIdx = append(sccAssignIdx, idx)
 			}
-			for _, idx := range callIdxByParamArgSym[sym] {
+			for _, idx := range callIdxByArgSym[sym] {
 				if paramCallIdxMarks[idx] == markEpoch {
 					continue
 				}
 				paramCallIdxMarks[idx] = markEpoch
-				sccParamCallIdx = append(sccParamCallIdx, idx)
+				sccArgCallIdx = append(sccArgCallIdx, idx)
 			}
 			for _, idx := range callIdxByRefSym[sym] {
 				if mutatorCallIdxMarks[idx] == markEpoch {
@@ -466,7 +536,7 @@ func collectInferredTypes(
 			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
 			overlay := overlayScratch
 
-			wrappedSynth := synthWithInferenceOverlay(graph, overlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
+			wrappedSynth := synthWithInferenceOverlay(graph, inferred, specTypes, funcSigTypes, valueDefs, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
 			callSynthFor := func(p cfg.Point, info *cfg.CallInfo) func(ast.Expr, cfg.Point) typ.Type {
 				if info == nil {
 					return wrappedSynth
@@ -486,15 +556,16 @@ func collectInferredTypes(
 						return t, ok
 					}
 				}
-				callOverlay := rhsSpecTypesAtAssignPoint(graph, owner, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-					if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
+				callOverlayBase := inferenceOverlayAtPoint(graph, p, inferred, specTypes, funcSigTypes, valueDefs, paramSet)
+				callOverlay := rhsSpecTypesAtAssignPoint(graph, owner, p, callOverlayBase, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+					if t, ok := callOverlayBase[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
 						return t, true
 					}
 					return rhsResolver(point, sym)
 				})
 				callOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, callOverlay, rhsResolver, wrappedSynth)
 
-				return synthWithInferenceOverlay(graph, callOverlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
+				return synthWithOverlayAndPreflow(mapOverlayTypeAt(callOverlay), bindings, inputs, callCtx, typeOps, preflowBranchSolution, wrappedBaseForInference(bindings, paramSet, annotated, synth))
 			}
 
 			// Infer expected argument types for a call using the call inference pipeline.
@@ -671,8 +742,9 @@ func collectInferredTypes(
 										return t, ok
 									}
 								}
-								rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-									if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
+								rhsOverlayBase := inferenceOverlayAtPoint(graph, p, inferred, specTypes, funcSigTypes, valueDefs, paramSet)
+								rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, rhsOverlayBase, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+									if t, ok := rhsOverlayBase[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
 										return t, true
 									}
 									return rhsResolver(point, sym)
@@ -698,12 +770,76 @@ func collectInferredTypes(
 							inferred[target.Symbol] = joined
 							changed = true
 						}
+					case cfg.TargetField:
+						if target.BaseSymbol == 0 || len(target.FieldPath) == 0 {
+							continue
+						}
+						if !paramSet[target.BaseSymbol] {
+							continue
+						}
+						if !sccSet[target.BaseSymbol] {
+							continue
+						}
+						if annotated != nil && annotated[target.BaseSymbol] {
+							continue
+						}
+						assignedType := typ.Unknown
+						if !valuesComputed {
+							rhsResolver := symResolver
+							if rhsResolver == nil {
+								rhsResolver = func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+									t, ok := overlay[sym]
+									return t, ok
+								}
+							}
+							rhsOverlayBase := inferenceOverlayAtPoint(graph, p, inferred, specTypes, funcSigTypes, valueDefs, paramSet)
+							rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, rhsOverlayBase, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+								if t, ok := rhsOverlayBase[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
+									return t, true
+								}
+								return rhsResolver(point, sym)
+							})
+							rhsOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, rhsOverlay, rhsResolver, wrappedSynth)
+							values = expandedAssignValues(synthAPI, info, p, rhsOverlay)
+							valuesComputed = true
+						}
+						if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
+							assignedType = value
+						} else if wrappedSynth != nil && source != nil {
+							assignedType = wrappedSynth(source, p)
+						}
+						assignedType = resolve.Ref(assignedType, sc)
+						if typ.IsAbsentOrUnknown(assignedType) {
+							continue
+						}
+						segments := make([]constraint.Segment, 0, len(target.FieldPath))
+						for _, field := range target.FieldPath {
+							if field == "" {
+								continue
+							}
+							segments = append(segments, constraint.Segment{Kind: constraint.SegmentField, Name: field})
+						}
+						if len(segments) == 0 {
+							continue
+						}
+						old := inferred[target.BaseSymbol]
+						updated := mergeExpectedAtPath(old, segments, assignedType, paramSet[target.BaseSymbol])
+						if updated == nil {
+							continue
+						}
+						if !typ.TypeEquals(old, updated) {
+							inferred[target.BaseSymbol] = updated
+							changed = true
+						}
 					}
 				}
 			}
 
-			// Infer parameter types from call argument expectations.
-			for _, idx := range sccParamCallIdx {
+			// Infer unannotated symbol types from call argument expectations.
+			// Parameters keep the traditional bidirectional behavior. Locals only
+			// accept expected types while still top-like, so a concrete assignment
+			// is not hidden by a later incompatible call.
+			for _, idx := range sccArgCallIdx {
 				entry := calls[idx]
 				p := entry.p
 				info := entry.info
@@ -716,40 +852,76 @@ func collectInferredTypes(
 					sc = scopes[graph.Entry()]
 				}
 				expectedArgs, expectedVariadic := inferExpectedArgs(p, info, synthForCall)
+
+				if receiverSym := callReceiverSymbolByIdx[idx]; receiverSym != 0 && sccSet[receiverSym] {
+					if annotated == nil || !annotated[receiverSym] {
+						expected := expectedReceiverTypeForMethod(callCtx, typeOps, info)
+						if expected != nil && !expected.Kind().IsPlaceholder() {
+							old := inferred[receiverSym]
+							if paramSet[receiverSym] || callExpectationCanRefineLocal(old) {
+								joined := mergeCallExpectation(old, expected, paramSet[receiverSym])
+								if !typ.TypeEquals(old, joined) {
+									inferred[receiverSym] = joined
+									changed = true
+								}
+							}
+						}
+					}
+				}
+
 				callArgSymbols := callArgSymbolsByIdx[idx]
 				for i := range info.Args {
+					expected := expectedArgAt(i, expectedArgs, expectedVariadic)
 					var sym cfg.SymbolID
 					if i < len(callArgSymbols) {
 						sym = callArgSymbols[i]
 					}
-					if sym == 0 || !sccSet[sym] {
-						continue
-					}
-					if !paramSet[sym] {
-						continue
-					}
-					if annotated != nil && annotated[sym] {
-						continue
-					}
-					expected := expectedArgAt(i, expectedArgs, expectedVariadic)
-					if typ.IsAbsentOrUnknown(expected) {
-						// Fall back to actual argument type when no expected type is available.
-						if i < len(info.Args) && info.Args[i] != nil {
-							actual := synthForCall(info.Args[i], p)
-							actual = resolve.Ref(actual, sc)
-							if actual != nil && !actual.Kind().IsPlaceholder() {
-								expected = actual
+					if sym != 0 && sccSet[sym] {
+						if annotated != nil && annotated[sym] {
+							continue
+						}
+						if typ.IsAbsentOrUnknown(expected) {
+							// Fall back to actual argument type when no expected type is available.
+							if i < len(info.Args) && info.Args[i] != nil {
+								actual := synthForCall(info.Args[i], p)
+								actual = resolve.Ref(actual, sc)
+								if actual != nil && !actual.Kind().IsPlaceholder() {
+									expected = actual
+								}
 							}
 						}
+						if expected == nil || expected.Kind().IsPlaceholder() {
+							continue
+						}
+						old := inferred[sym]
+						if !paramSet[sym] && !callExpectationCanRefineLocal(old) {
+							continue
+						}
+						joined := mergeCallExpectation(old, expected, paramSet[sym])
+						if !typ.TypeEquals(old, joined) {
+							inferred[sym] = joined
+							changed = true
+						}
 					}
-					if expected == nil || expected.Kind().IsPlaceholder() {
-						continue
-					}
-					old := inferred[sym]
-					joined := joinInferredType(old, expected)
-					if !typ.TypeEquals(old, joined) {
-						inferred[sym] = joined
-						changed = true
+					if i < len(info.Args) && expected != nil && !expected.Kind().IsPlaceholder() {
+						argPath := path.FromExprWithBindings(info.Args[i], nil, bindings)
+						if argPath.Symbol != 0 && len(argPath.Segments) > 0 && sccSet[argPath.Symbol] {
+							if !paramSet[argPath.Symbol] {
+								continue
+							}
+							if annotated != nil && annotated[argPath.Symbol] {
+								continue
+							}
+							old := inferred[argPath.Symbol]
+							if !paramSet[argPath.Symbol] && !callExpectationCanRefineLocal(old) {
+								continue
+							}
+							joined := mergePathCallExpectation(old, argPath.Segments, expected, paramSet[argPath.Symbol])
+							if !typ.TypeEquals(old, joined) {
+								inferred[argPath.Symbol] = joined
+								changed = true
+							}
+						}
 					}
 				}
 			}
@@ -782,18 +954,20 @@ func collectInferredTypes(
 
 				// Handle indexed targets (t[k]) even when key is non-const.
 				if attr, ok := targetExpr.(*ast.AttrGetExpr); ok {
-					baseSym := callsite.SymbolOrCreateFieldFromExpr(attr.Object, bindings)
-					if baseSym != 0 && sccSet[baseSym] {
-						keyType := wrappedSynth(attr.Key, p)
-						keyType = resolve.Ref(keyType, sc)
-						keyType = canonicalDynamicKeyType(keyType)
-						old := inferred[baseSym]
-						newType := flow.WidenMapValueArray(old, keyType, valueType)
-						if newType != nil && !typ.TypeEquals(old, newType) {
-							inferred[baseSym] = newType
-							changed = true
+					if _, static := path.StaticKeySegment(attr.Key); !static {
+						baseSym := callsite.SymbolOrCreateFieldFromExpr(attr.Object, bindings)
+						if baseSym != 0 && sccSet[baseSym] {
+							keyType := wrappedSynth(attr.Key, p)
+							keyType = resolve.Ref(keyType, sc)
+							keyType = canonicalDynamicKeyType(keyType)
+							old := inferred[baseSym]
+							newType := flow.WidenMapValueArray(old, keyType, valueType)
+							if newType != nil && !typ.TypeEquals(old, newType) {
+								inferred[baseSym] = newType
+								changed = true
+							}
+							continue
 						}
-						continue
 					}
 				}
 
@@ -803,8 +977,11 @@ func collectInferredTypes(
 				if !sccSet[targetPath.Symbol] {
 					continue
 				}
+				if len(targetPath.Segments) > 0 && !paramSet[targetPath.Symbol] {
+					continue
+				}
 				old := inferred[targetPath.Symbol]
-				newType := flow.WidenArrayElementType(old, valueType, typ.JoinPreferNonSoft)
+				newType := widenArrayElementAtPath(old, targetPath.Segments, valueType)
 				if newType == nil || typ.TypeEquals(old, newType) {
 					continue
 				}
@@ -819,20 +996,16 @@ func collectInferredTypes(
 		}
 
 		// Widen ALL symbols in non-converged SCC to Unknown (except annotated).
-		// This is sound: partial types may be under-approximations.
+		// This is sound: partial types may be under-approximations. Local
+		// preflow inference is a hint source, so the fallback is intentionally
+		// internal; surfacing it as a lint warning produces false positives for
+		// dynamic but valid Lua patterns.
 		if !converged {
 			for _, sym := range sccSyms {
 				if annotated != nil && annotated[sym] {
 					continue
 				}
 				inferred[sym] = typ.Unknown
-				if inputs != nil {
-					inputs.WideningEvents = append(inputs.WideningEvents, flow.WideningEvent{
-						Symbol:   sym,
-						SCCIndex: sccIdx,
-						SCC:      sccSyms,
-					})
-				}
 			}
 		}
 	}
@@ -844,6 +1017,11 @@ func collectInferredTypes(
 		}
 		if annotated != nil && annotated[sym] {
 			continue
+		}
+		if inputs != nil && inputs.DeclaredTypes != nil {
+			if declared := inputs.DeclaredTypes[sym]; !typ.IsAbsentOrUnknown(declared) {
+				continue
+			}
 		}
 		if t, ok := inferred[sym]; !ok || typ.IsAbsentOrUnknown(t) {
 			inferred[sym] = typ.Any
@@ -867,6 +1045,37 @@ func normalizedCallArgSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) [
 		}
 	}
 	return out
+}
+
+func normalizedCallReceiverSymbol(info *cfg.CallInfo, bindings *bind.BindingTable) cfg.SymbolID {
+	if info == nil || info.Method == "" {
+		return 0
+	}
+	if info.ReceiverSymbol != 0 {
+		return info.ReceiverSymbol
+	}
+	if bindings == nil {
+		return 0
+	}
+	return callsite.SymbolFromExpr(info.Receiver, bindings)
+}
+
+func expectedReceiverTypeForMethod(ctx *db.QueryContext, typeOps core.TypeOps, info *cfg.CallInfo) typ.Type {
+	if info == nil || info.Method == "" {
+		return nil
+	}
+	if typeOps == nil {
+		return nil
+	}
+	methodType, ok := typeOps.Method(ctx, typ.String, info.Method)
+	if !ok || methodType == nil {
+		return nil
+	}
+	fn, ok := methodType.(*typ.Function)
+	if !ok || len(fn.Params) == 0 || !typ.TypeEquals(fn.Params[0].Type, typ.String) {
+		return nil
+	}
+	return typ.String
 }
 
 func callRefSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) []cfg.SymbolID {
@@ -937,8 +1146,10 @@ func dedupeSymbolIDs(refs []cfg.SymbolID) []cfg.SymbolID {
 
 func synthWithInferenceOverlay(
 	graph *cfg.Graph,
-	overlay map[cfg.SymbolID]typ.Type,
+	inferred map[cfg.SymbolID]typ.Type,
+	seedTypes map[cfg.SymbolID]typ.Type,
 	funcSigTypes map[cfg.SymbolID]typ.Type,
+	valueDefs map[symbolVersionKey]struct{},
 	paramSet map[cfg.SymbolID]bool,
 	annotated map[cfg.SymbolID]bool,
 	bindings *bind.BindingTable,
@@ -948,18 +1159,47 @@ func synthWithInferenceOverlay(
 	preflow *flow.Solution,
 	base func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
-	_ = graph
-	mergedOverlay := make(map[cfg.SymbolID]typ.Type, len(overlay)+len(funcSigTypes))
-	for sym, t := range funcSigTypes {
-		if t != nil {
-			mergedOverlay[sym] = t
+	lookup := func(sym cfg.SymbolID, p cfg.Point) (typ.Type, bool) {
+		var seed typ.Type
+		var hasSeed bool
+		if t, ok := seedTypes[sym]; ok {
+			seed = t
+			hasSeed = true
+			if annotated != nil && annotated[sym] {
+				return t, true
+			}
 		}
-	}
-	for sym, t := range overlay {
-		mergedOverlay[sym] = t
+		if _, ok := inferred[sym]; ok {
+			if t, visible := visibleInferredTypeAt(inferred, graph, valueDefs, paramSet, sym, p); visible {
+				if t == nil {
+					return nil, true
+				}
+				if inferredOverridesUnannotatedDeclared(t, seed) {
+					return t, true
+				}
+			}
+		}
+		if hasSeed {
+			return seed, true
+		}
+		if t, ok := funcSigTypes[sym]; ok {
+			if overlayTypeVisibleAt(graph, valueDefs, paramSet, sym, p) {
+				return t, true
+			}
+		}
+		return nil, false
 	}
 
-	wrappedBase := func(expr ast.Expr, p cfg.Point) typ.Type {
+	return synthWithOverlayAndPreflow(lookup, bindings, inputs, callCtx, typeOps, preflow, wrappedBaseForInference(bindings, paramSet, annotated, base))
+}
+
+func wrappedBaseForInference(
+	bindings *bind.BindingTable,
+	paramSet map[cfg.SymbolID]bool,
+	annotated map[cfg.SymbolID]bool,
+	base func(ast.Expr, cfg.Point) typ.Type,
+) func(ast.Expr, cfg.Point) typ.Type {
+	return func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
 			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
 				if paramSet[sym] && (annotated == nil || !annotated[sym]) {
@@ -972,8 +1212,6 @@ func synthWithInferenceOverlay(
 		}
 		return base(expr, p)
 	}
-
-	return synthWithOverlayAndPreflow(mergedOverlay, bindings, inputs, callCtx, typeOps, preflow, wrappedBase)
 }
 
 func assignmentOwningSourceCall(assigns []*cfg.AssignInfo, call *cfg.CallInfo) *cfg.AssignInfo {
@@ -1096,7 +1334,285 @@ func joinInferredType(old, next typ.Type) typ.Type {
 		}
 		return subtype.WidenForInference(next)
 	}
-	return typ.JoinPreferNonSoft(old, next)
+	return subtype.WidenForInference(flowjoin.Types(old, next))
+}
+
+func callExpectationCanRefineLocal(old typ.Type) bool {
+	return old == nil ||
+		typ.IsUnknown(old) ||
+		typ.IsSoft(old, typ.SoftAnnotationPolicy)
+}
+
+func mergeCallExpectation(old, expected typ.Type, isParam bool) typ.Type {
+	if isParam {
+		if expectedParamTypeDominates(old, expected) {
+			return expected
+		}
+		return joinInferredType(old, expected)
+	}
+	if callExpectationCanRefineLocal(old) {
+		return expected
+	}
+	return joinInferredType(old, expected)
+}
+
+func expectedParamTypeDominates(old, expected typ.Type) bool {
+	if typ.IsAbsentOrUnknown(old) || typ.IsAbsentOrUnknown(expected) {
+		return false
+	}
+	if typ.IsAny(old) || typ.IsAny(expected) || expected.Kind().IsPlaceholder() {
+		return false
+	}
+	if subtype.IsSubtype(old, expected) {
+		return true
+	}
+	oldRec := recordForPathMerge(old)
+	expectedRec := recordForPathMerge(expected)
+	if oldRec == nil || expectedRec == nil {
+		return false
+	}
+	return recordEvidenceCompatibleWithExpected(oldRec, expectedRec)
+}
+
+func recordEvidenceCompatibleWithExpected(old, expected *typ.Record) bool {
+	if old == nil || expected == nil {
+		return false
+	}
+	for _, field := range old.Fields {
+		expectedField := expected.GetField(field.Name)
+		if expectedField == nil {
+			if expected.Open {
+				continue
+			}
+			return false
+		}
+		if fieldEvidenceIsUnresolved(field.Type) {
+			continue
+		}
+		expectedType := expectedField.Type
+		if expectedField.Optional {
+			expectedType = typ.NewOptional(expectedType)
+		}
+		fieldType := field.Type
+		if field.Optional {
+			fieldType = typ.NewOptional(fieldType)
+		}
+		if !subtype.IsSubtype(fieldType, expectedType) {
+			return false
+		}
+	}
+	if old.HasMapComponent() {
+		if !expected.HasMapComponent() {
+			return false
+		}
+		if !fieldEvidenceIsUnresolved(old.MapKey) && !subtype.IsSubtype(old.MapKey, expected.MapKey) {
+			return false
+		}
+		if !fieldEvidenceIsUnresolved(old.MapValue) && !subtype.IsSubtype(old.MapValue, expected.MapValue) {
+			return false
+		}
+	}
+	return true
+}
+
+func fieldEvidenceIsUnresolved(t typ.Type) bool {
+	if typ.IsAbsentOrUnknown(t) {
+		return true
+	}
+	switch v := typ.UnwrapAnnotated(t).(type) {
+	case *typ.Alias:
+		return fieldEvidenceIsUnresolved(v.Target)
+	case *typ.Record:
+		return len(v.Fields) == 0 && !v.HasMapComponent()
+	default:
+		return false
+	}
+}
+
+func mergePathCallExpectation(old typ.Type, segments []constraint.Segment, expected typ.Type, isParam bool) typ.Type {
+	if len(segments) == 0 {
+		return mergeCallExpectation(old, expected, isParam)
+	}
+	if expected == nil || expected.Kind().IsPlaceholder() || typ.IsAbsentOrUnknown(expected) {
+		return old
+	}
+	return mergeExpectedAtPath(old, segments, expected, isParam)
+}
+
+func mergeExpectedAtPath(base typ.Type, segments []constraint.Segment, expected typ.Type, isParam bool) typ.Type {
+	if len(segments) == 0 {
+		return mergeCallExpectation(base, expected, isParam)
+	}
+	seg := segments[0]
+	field, ok := segmentFieldName(seg)
+	if !ok {
+		return base
+	}
+
+	rec := recordForPathMerge(base)
+	child := typ.Type(nil)
+	wasOptional := isParam
+	if rec != nil {
+		if existing := rec.GetField(field); existing != nil {
+			child = existing.Type
+			wasOptional = wasOptional || existing.Optional
+		} else if rec.HasMapComponent() && rec.MapValue != nil {
+			child = rec.MapValue
+			wasOptional = true
+		}
+	}
+	if child == nil {
+		child = typ.Unknown
+	}
+	mergedChild := mergeExpectedAtPath(child, segments[1:], expected, isParam)
+	if mergedChild == nil {
+		return base
+	}
+	return setRecordField(base, field, mergedChild, wasOptional)
+}
+
+func widenArrayElementAtPath(base typ.Type, segments []constraint.Segment, element typ.Type) typ.Type {
+	if len(segments) == 0 {
+		return flow.WidenArrayElementType(base, element, typ.JoinPreferNonSoft)
+	}
+	seg := segments[0]
+	field, ok := segmentFieldName(seg)
+	if !ok {
+		return base
+	}
+
+	rec := recordForPathMerge(base)
+	child := typ.Type(nil)
+	optional := false
+	if rec != nil {
+		if existing := rec.GetField(field); existing != nil {
+			child = existing.Type
+			optional = existing.Optional
+		} else if rec.HasMapComponent() && rec.MapValue != nil {
+			child = rec.MapValue
+			optional = true
+		}
+	}
+	updated := widenArrayElementAtPath(child, segments[1:], element)
+	if updated == nil {
+		return base
+	}
+	return setRecordField(base, field, updated, optional)
+}
+
+func segmentFieldName(seg constraint.Segment) (string, bool) {
+	switch seg.Kind {
+	case constraint.SegmentField, constraint.SegmentIndexString:
+		return seg.Name, seg.Name != ""
+	default:
+		return "", false
+	}
+}
+
+func recordForPathMerge(t typ.Type) *typ.Record {
+	for {
+		switch v := typ.UnwrapAnnotated(t).(type) {
+		case *typ.Alias:
+			t = v.Target
+		case *typ.Optional:
+			t = v.Inner
+		case *typ.Record:
+			return v
+		default:
+			return nil
+		}
+	}
+}
+
+func setRecordField(base typ.Type, field string, fieldType typ.Type, optional bool) typ.Type {
+	if field == "" || fieldType == nil {
+		return base
+	}
+	switch v := typ.UnwrapAnnotated(base).(type) {
+	case *typ.Alias:
+		updated := setRecordField(v.Target, field, fieldType, optional)
+		if updated == nil || typ.TypeEquals(updated, v.Target) {
+			return base
+		}
+		return typ.NewAlias(v.Name, updated)
+	case *typ.Union:
+		updated := make([]typ.Type, 0, len(v.Members))
+		changed := false
+		for _, member := range v.Members {
+			if member == nil || typ.IsAny(member) || typ.TypeEquals(member, typ.Nil) {
+				updated = append(updated, member)
+				continue
+			}
+			next := setRecordField(member, field, fieldType, optional)
+			if next == nil {
+				next = member
+			}
+			if !typ.TypeEquals(member, next) {
+				changed = true
+			}
+			updated = append(updated, next)
+		}
+		if !changed {
+			return base
+		}
+		return typ.NewUnion(updated...)
+	case *typ.Optional:
+		updated := setRecordField(v.Inner, field, fieldType, optional)
+		if updated == nil || typ.TypeEquals(updated, v.Inner) {
+			return base
+		}
+		return typ.NewOptional(updated)
+	case *typ.Record:
+		return rebuildRecordWithField(v, field, fieldType, optional)
+	default:
+		builder := typ.NewRecord().SetOpen(true)
+		if optional {
+			builder.OptField(field, fieldType)
+		} else {
+			builder.Field(field, fieldType)
+		}
+		return builder.Build()
+	}
+}
+
+func rebuildRecordWithField(rec *typ.Record, field string, fieldType typ.Type, optional bool) typ.Type {
+	builder := typ.NewRecord()
+	if rec.Open {
+		builder.SetOpen(true)
+	}
+	if rec.Metatable != nil {
+		builder.Metatable(rec.Metatable)
+	}
+	if rec.HasMapComponent() {
+		builder.MapComponent(rec.MapKey, rec.MapValue)
+	}
+
+	added := false
+	for _, f := range rec.Fields {
+		if f.Name != field {
+			addRecordField(builder, f.Name, f.Type, f.Optional, f.Readonly)
+			continue
+		}
+		addRecordField(builder, f.Name, fieldType, optional || f.Optional, f.Readonly)
+		added = true
+	}
+	if !added {
+		addRecordField(builder, field, fieldType, optional, false)
+	}
+	return builder.Build()
+}
+
+func addRecordField(builder *typ.RecordBuilder, name string, fieldType typ.Type, optional, readonly bool) {
+	switch {
+	case optional && readonly:
+		builder.OptReadonlyField(name, fieldType)
+	case optional:
+		builder.OptField(name, fieldType)
+	case readonly:
+		builder.ReadonlyField(name, fieldType)
+	default:
+		builder.Field(name, fieldType)
+	}
 }
 
 func typeContains(haystack, needle typ.Type) bool {

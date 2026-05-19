@@ -6,8 +6,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestCollectCalledNestedFieldAssignments(t *testing.T) {
@@ -19,13 +22,133 @@ func TestCollectCalledNestedFieldAssignments(t *testing.T) {
 	})
 }
 
-func TestCollectCalledNestedContainerMutatorAssignments(t *testing.T) {
+func TestCollectNestedMutatorAssignments(t *testing.T) {
 	t.Run("nil graph returns empty slice", func(t *testing.T) {
-		result := CollectCalledNestedContainerMutatorAssignments(nil, nil, nil, nil)
-		if len(result) != 0 {
+		result := CollectNestedMutatorAssignments(nil, nil, nil, nil)
+		if len(result.Table) != 0 || len(result.Container) != 0 {
 			t.Error("expected empty result")
 		}
 	})
+}
+
+func TestCollectNestedMutatorAssignments_SplitsOperatorKinds(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local state = {}
+		local function setup()
+			return nil
+		end
+		setup()
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+	stateSym, ok := graph.SymbolAt(graph.Exit(), "state")
+	if !ok || stateSym == 0 {
+		t.Fatal("expected symbol for state")
+	}
+	setupSym, ok := graph.SymbolAt(graph.Exit(), "setup")
+	if !ok || setupSym == 0 {
+		t.Fatal("expected symbol for setup")
+	}
+
+	captured := api.CapturedContainerMutations{
+		setupSym: {
+			stateSym: {
+				{
+					Kind:      api.ContainerMutationTableElement,
+					Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}},
+					ValueType: typ.String,
+				},
+				{
+					Kind:      api.ContainerMutationContainerElement,
+					Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "channel"}},
+					ValueType: typ.Number,
+				},
+			},
+		},
+	}
+
+	got := CollectNestedMutatorAssignments(graph, bindings, captured, nil)
+	if len(got.Table) != 1 {
+		t.Fatalf("table assignments = %d, want 1", len(got.Table))
+	}
+	if len(got.Container) != 1 {
+		t.Fatalf("container assignments = %d, want 1", len(got.Container))
+	}
+	if got.Table[0].Target.Symbol != stateSym || len(got.Table[0].Target.Segments) != 1 || got.Table[0].Target.Segments[0].Name != "items" {
+		t.Fatalf("unexpected table target: %#v", got.Table[0].Target)
+	}
+	if got.Container[0].Target.Symbol != stateSym || len(got.Container[0].Target.Segments) != 1 || got.Container[0].Target.Segments[0].Name != "channel" {
+		t.Fatalf("unexpected container target: %#v", got.Container[0].Target)
+	}
+}
+
+func TestCollectNestedMutatorAssignments_ReplaysExportedFieldFunction(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local api = {}
+		local state = {}
+		function api.add()
+			return nil
+		end
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+	stateSym, ok := graph.SymbolAt(graph.Exit(), "state")
+	if !ok || stateSym == 0 {
+		t.Fatal("expected symbol for state")
+	}
+
+	var addSym cfg.SymbolID
+	var addPoint cfg.Point
+	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
+		if info != nil && info.Name == "add" {
+			addSym = info.Symbol
+			addPoint = p
+		}
+	})
+	if addSym == 0 {
+		t.Fatal("expected symbol for api.add")
+	}
+
+	captured := api.CapturedContainerMutations{
+		addSym: {
+			stateSym: {
+				{
+					Kind:      api.ContainerMutationTableElement,
+					Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}},
+					ValueType: typ.String,
+				},
+			},
+		},
+	}
+
+	got := CollectNestedMutatorAssignments(graph, bindings, captured, nil)
+	if len(got.Table) != 1 {
+		t.Fatalf("table assignments = %d, want 1", len(got.Table))
+	}
+	if got.Table[0].Point != addPoint {
+		t.Fatalf("assignment point = %d, want exported definition point %d", got.Table[0].Point, addPoint)
+	}
+	if got.Table[0].Target.Symbol != stateSym || got.Table[0].Target.Segments[0].Name != "items" {
+		t.Fatalf("unexpected exported table target: %#v", got.Table[0].Target)
+	}
 }
 
 func TestRuntimeArgAt(t *testing.T) {

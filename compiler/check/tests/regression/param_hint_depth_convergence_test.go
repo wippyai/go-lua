@@ -146,6 +146,55 @@ func TestParamHints_NestedWrapperFeedback_NoInterprocNonConvergenceWarning(t *te
 	}
 }
 
+func TestParamHints_OptionalContextTableFeedback_NoInterprocNonConvergenceWarning(t *testing.T) {
+	code := `
+		local function merge_context(base, additions)
+			local out = {}
+			if base then
+				for k, v in pairs(base) do
+					out[k] = v
+				end
+			end
+			if additions then
+				for k, v in pairs(additions) do
+					out[k] = v
+				end
+			end
+			return out
+		end
+
+		local function call_func(func_id: string, data: any, context: {[string]: any}?)
+			return data, nil
+		end
+
+		local function run(items)
+			local result = {}
+			for index, item in ipairs(items) do
+				local ctx = merge_context(nil, {
+					current_item = item,
+					item_index = index,
+				})
+				result[index] = call_func("item", item, ctx)
+			end
+			call_func("done", result)
+			return result
+		end
+
+		return run({ "a", "b" })
+	`
+
+	result := testutil.Check(code, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+
+	for _, d := range result.Diagnostics {
+		if d.Severity == diag.SeverityWarning && strings.Contains(d.Message, "inter-function fixpoint did not converge") {
+			t.Fatalf("unexpected non-convergence warning: %v", d.Message)
+		}
+	}
+}
+
 func TestReturnSummary_RecursiveDeepCopy_NoInterprocNonConvergenceWarning(t *testing.T) {
 	code := `
 		local function deep_copy_table(original)

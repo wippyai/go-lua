@@ -125,6 +125,12 @@ func SelectPreferredReturnVector(a, b []typ.Type) ([]typ.Type, bool) {
 	if ReturnTypesRepairNever(b, a) {
 		return b, true
 	}
+	if ReturnTypesRefineSoftContainers(a, b) {
+		return a, true
+	}
+	if ReturnTypesRefineSoftContainers(b, a) {
+		return b, true
+	}
 	if ReturnTypesStopRecursiveStructuralGrowth(a, b) {
 		return a, true
 	}
@@ -170,11 +176,105 @@ func SelectPreferredReturnVector(a, b []typ.Type) ([]typ.Type, bool) {
 	return nil, false
 }
 
-// ReturnTypesRefineFalsyMapKeys reports whether candidate is the same map-like
-// shape as baseline after removing stale falsy key members from baseline. This
-// handles fixed-point rounds where an early branch-insensitive dynamic index
-// observes a key as `string | false`, then the solved guard proves the actual
-// write key is `string`.
+// ReturnTypesRefineSoftContainers reports whether candidate preserves the same
+// table shape while replacing soft placeholder element/value evidence with
+// concrete evidence. This is a summary-lattice rule only; it does not weaken
+// mutable map subtyping.
+func ReturnTypesRefineSoftContainers(candidate, baseline []typ.Type) bool {
+	if len(candidate) == 0 || len(baseline) == 0 || len(candidate) != len(baseline) {
+		return false
+	}
+	strict := false
+	for i := range candidate {
+		refines, changed := typeRefinesSoftContainer(candidate[i], baseline[i])
+		if !refines {
+			return false
+		}
+		if changed {
+			strict = true
+		}
+	}
+	return strict
+}
+
+func typeRefinesSoftContainer(candidate, baseline typ.Type) (bool, bool) {
+	candidate = unwrapStructuralShape(candidate)
+	baseline = unwrapStructuralShape(baseline)
+	if candidate == nil || baseline == nil {
+		return candidate == baseline, false
+	}
+	if typ.TypeEquals(candidate, baseline) {
+		return true, false
+	}
+
+	switch b := baseline.(type) {
+	case *typ.Array:
+		c, ok := candidate.(*typ.Array)
+		if !ok {
+			return false, false
+		}
+		return typeRefinesSoftContainerSlot(c.Element, b.Element)
+	case *typ.Map:
+		c, ok := candidate.(*typ.Map)
+		if !ok || !equivalentParamValueType(c.Key, b.Key) {
+			return false, false
+		}
+		return typeRefinesSoftContainerSlot(c.Value, b.Value)
+	case *typ.Record:
+		c, ok := candidate.(*typ.Record)
+		if !ok || !sameRecordFrame(c, b) {
+			return false, false
+		}
+		if !c.HasMapComponent() && !b.HasMapComponent() {
+			return true, false
+		}
+		if !c.HasMapComponent() || !b.HasMapComponent() || !equivalentParamValueType(c.MapKey, b.MapKey) {
+			return false, false
+		}
+		return typeRefinesSoftContainerSlot(c.MapValue, b.MapValue)
+	default:
+		return false, false
+	}
+}
+
+func typeRefinesSoftContainerSlot(candidate, baseline typ.Type) (bool, bool) {
+	if typ.TypeEquals(candidate, baseline) {
+		return true, false
+	}
+	if (typ.IsAny(baseline) || typ.IsUnknown(baseline)) && typeCanSelfEmbed(candidate) {
+		return false, false
+	}
+	preferred, ok := preferConcreteOverSoftType(baseline, candidate)
+	return ok && typ.TypeEquals(preferred, candidate), ok
+}
+
+func sameRecordFrame(a, b *typ.Record) bool {
+	if a == nil || b == nil || a.Open != b.Open || len(a.Fields) != len(b.Fields) {
+		return false
+	}
+	if (a.Metatable == nil) != (b.Metatable == nil) {
+		return false
+	}
+	if a.Metatable != nil && !typ.TypeEquals(a.Metatable, b.Metatable) {
+		return false
+	}
+	for i, field := range a.Fields {
+		other := b.Fields[i]
+		if field.Name != other.Name || field.Optional != other.Optional || field.Readonly != other.Readonly {
+			return false
+		}
+		if !typ.TypeEquals(field.Type, other.Type) {
+			return false
+		}
+	}
+	return true
+}
+
+// ReturnTypesRefineFalsyMapKeys reports whether candidate is the same
+// table-derived shape as baseline after removing stale falsy members from
+// baseline. This handles fixed-point rounds where an early branch-insensitive
+// dynamic index observes a key as `string | false`, then the solved guard proves
+// the actual write key is `string`.
 func ReturnTypesRefineFalsyMapKeys(candidate, baseline []typ.Type) bool {
 	if len(candidate) == 0 || len(baseline) == 0 || len(candidate) != len(baseline) {
 		return false
@@ -203,6 +303,12 @@ func typeRefinesFalsyMapKey(candidate, baseline typ.Type) (bool, bool) {
 	}
 
 	switch b := baseline.(type) {
+	case *typ.Array:
+		c, ok := candidate.(*typ.Array)
+		if !ok {
+			return false, false
+		}
+		return truthyElementRefinement(c.Element, b.Element)
 	case *typ.Map:
 		c, ok := candidate.(*typ.Map)
 		if !ok {
@@ -250,6 +356,16 @@ func mapKeyTruthyRefinement(candidateKey, candidateValue, baselineKey, baselineV
 		return false, false
 	}
 	if typ.TypeEquals(candidateKey, refinedKey) || subtype.IsSubtype(candidateKey, refinedKey) {
+		return true, true
+	}
+	return false, false
+}
+
+func truthyElementRefinement(candidate, baseline typ.Type) (bool, bool) {
+	if typ.TypeEquals(candidate, baseline) {
+		return true, false
+	}
+	if typeIsTruthyRefinement(candidate, baseline) {
 		return true, true
 	}
 	return false, false
@@ -1331,7 +1447,16 @@ func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
 
 	existing = typ.PruneSoftUnionMembers(existing)
 	candidate = typ.PruneSoftUnionMembers(candidate)
+	if unwrap.IsNilType(existing) && !unwrap.IsNilType(candidate) {
+		return candidate
+	}
+	if unwrap.IsNilType(candidate) && !unwrap.IsNilType(existing) {
+		return existing
+	}
 	if preferred, ok := preferStructuredRecordParam(existing, candidate); ok {
+		return preferred
+	}
+	if preferred, ok := preferConcreteOverSoftType(existing, candidate); ok {
 		return preferred
 	}
 	if typ.IsUnknown(existing) {
@@ -1340,13 +1465,22 @@ func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
 	if typ.IsUnknown(candidate) {
 		return existing
 	}
-	if typ.IsAny(existing) && !typ.IsAny(candidate) {
+	if typ.IsAny(existing) && typ.IsAny(candidate) {
+		return typ.Any
+	}
+	if typ.IsAny(existing) {
 		return candidate
 	}
-	if typ.IsAny(candidate) && !typ.IsAny(existing) {
+	if typ.IsAny(candidate) {
 		return existing
 	}
 	if typ.TypeEquals(existing, candidate) {
+		return existing
+	}
+	if candidateRefinesFunctionParam(candidate, existing) {
+		return candidate
+	}
+	if candidateRefinesFunctionParam(existing, candidate) {
 		return existing
 	}
 	if subtype.IsSubtype(existing, candidate) && !subtype.IsSubtype(candidate, existing) {
@@ -1356,6 +1490,75 @@ func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
 		return existing
 	}
 	return typ.JoinPreferNonSoft(existing, candidate)
+}
+
+func candidateRefinesFunctionParam(candidate, baseline typ.Type) bool {
+	return typeElidesOptional(candidate, baseline) ||
+		typeIsTruthyRefinement(candidate, baseline) ||
+		typeRefinesTableKeyByTruthiness(candidate, baseline)
+}
+
+func typeRefinesTableKeyByTruthiness(candidate, baseline typ.Type) bool {
+	if candidate == nil || baseline == nil || typ.TypeEquals(candidate, baseline) {
+		return false
+	}
+	candidateInner, _ := splitNilableParamHint(candidate)
+	baselineInner, _ := splitNilableParamHint(baseline)
+	if candidateInner == nil || baselineInner == nil {
+		return false
+	}
+	return nonNilTypeRefinesTableKeyByTruthiness(candidateInner, baselineInner)
+}
+
+func nonNilTypeRefinesTableKeyByTruthiness(candidate, baseline typ.Type) bool {
+	candidate = unwrap.Alias(candidate)
+	baseline = unwrap.Alias(baseline)
+	switch b := baseline.(type) {
+	case *typ.Record:
+		c, ok := candidate.(*typ.Record)
+		if !ok {
+			return false
+		}
+		return recordRefinesTableKeyByTruthiness(c, b)
+	case *typ.Map:
+		c, ok := candidate.(*typ.Map)
+		if !ok {
+			return false
+		}
+		return typeIsTruthyRefinement(c.Key, b.Key) && equivalentParamValueType(c.Value, b.Value)
+	default:
+		return false
+	}
+}
+
+func recordRefinesTableKeyByTruthiness(candidate, baseline *typ.Record) bool {
+	if candidate == nil || baseline == nil || !candidate.HasMapComponent() || !baseline.HasMapComponent() {
+		return false
+	}
+	if candidate.Open != baseline.Open || len(candidate.Fields) != len(baseline.Fields) {
+		return false
+	}
+	if (candidate.Metatable == nil) != (baseline.Metatable == nil) {
+		return false
+	}
+	if candidate.Metatable != nil && !typ.TypeEquals(candidate.Metatable, baseline.Metatable) {
+		return false
+	}
+	for i, field := range candidate.Fields {
+		other := baseline.Fields[i]
+		if field.Name != other.Name || field.Optional != other.Optional || field.Readonly != other.Readonly {
+			return false
+		}
+		if !equivalentParamValueType(field.Type, other.Type) {
+			return false
+		}
+	}
+	return typeIsTruthyRefinement(candidate.MapKey, baseline.MapKey) &&
+		equivalentParamValueType(candidate.MapValue, baseline.MapValue)
+}
+
+func equivalentParamValueType(a, b typ.Type) bool {
+	return typ.TypeEquals(a, b) || (subtype.IsSubtype(a, b) && subtype.IsSubtype(b, a))
 }
 
 func preferStructuredRecordParam(existing, candidate typ.Type) (typ.Type, bool) {

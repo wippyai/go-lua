@@ -64,6 +64,12 @@ func (o OverlayServicesFuncs) SeedType(fn *ast.FunctionExpr) typ.Type {
 // to make progress even when not all return types are known.
 func BuildOverlay(c OverlayConfig) map[cfg.SymbolID]typ.Type {
 	overlay := make(map[cfg.SymbolID]typ.Type)
+	siblingFuncs := make(map[cfg.SymbolID]*ast.FunctionExpr, len(c.Siblings))
+	for _, sib := range c.Siblings {
+		if sib.Symbol != 0 && sib.Func != nil {
+			siblingFuncs[sib.Symbol] = sib.Func
+		}
+	}
 
 	// Add sibling function types with current return vectors.
 	for sym, returnTypes := range c.ReturnVectors {
@@ -71,7 +77,11 @@ func BuildOverlay(c OverlayConfig) map[cfg.SymbolID]typ.Type {
 			continue
 		}
 		if len(returnTypes) > 0 {
-			overlay[sym] = buildFunctionFromReturns(returnTypes)
+			var seedType typ.Type
+			if c.Services != nil {
+				seedType = c.Services.SeedType(siblingFuncs[sym])
+			}
+			overlay[sym] = buildFunctionFromSeedAndReturns(seedType, returnTypes)
 		}
 	}
 
@@ -100,4 +110,39 @@ func buildFunctionFromReturns(returnTypes []typ.Type) typ.Type {
 		return nil
 	}
 	return typ.Func().Returns(returnTypes...).Build()
+}
+
+func buildFunctionFromSeedAndReturns(seed typ.Type, returnTypes []typ.Type) typ.Type {
+	if len(returnTypes) == 0 {
+		return seed
+	}
+	fn, ok := seed.(*typ.Function)
+	if !ok || fn == nil {
+		return buildFunctionFromReturns(returnTypes)
+	}
+	builder := typ.Func()
+	for _, tp := range fn.TypeParams {
+		builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, p := range fn.Params {
+		if p.Optional {
+			builder.OptParam(p.Name, p.Type)
+		} else {
+			builder.Param(p.Name, p.Type)
+		}
+	}
+	if fn.Variadic != nil {
+		builder.Variadic(fn.Variadic)
+	}
+	builder.Returns(returnTypes...)
+	if fn.Effects != nil {
+		builder.Effects(fn.Effects)
+	}
+	if fn.Spec != nil {
+		builder.Spec(fn.Spec)
+	}
+	if fn.Refinement != nil {
+		builder.WithRefinement(fn.Refinement)
+	}
+	return builder.Build()
 }

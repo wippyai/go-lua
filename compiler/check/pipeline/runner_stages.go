@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 func (r *Runner) resolveSynthesizedSignature(
@@ -27,14 +28,14 @@ func (r *Runner) resolveSynthesizedSignature(
 		return nil
 	}
 
-	// Prefer literal signature from parent graph for nested functions.
+	factSig := paramhints.ProjectSignatureToParamUse(graph, fn, r.functionFactSignatureForFunction(store, graph, fn))
 	synthSig := r.literalSignatureForFunction(store, graph, fn)
 	if paramHintSigs == nil {
-		return synthSig
+		return mergeSynthesizedSignatureFact(synthSig, factSig)
 	}
 	hints := paramHintSigs[fn]
 	if len(hints) == 0 {
-		return synthSig
+		return mergeSynthesizedSignatureFact(synthSig, factSig)
 	}
 	if synthSig == nil {
 		engine := synth.New(synth.Config{
@@ -50,9 +51,50 @@ func (r *Runner) resolveSynthesizedSignature(
 		}
 	}
 	if synthSig == nil {
+		return factSig
+	}
+	return mergeSynthesizedSignatureFact(paramhints.MergeIntoSignature(fn, hints, synthSig), factSig)
+}
+
+func mergeSynthesizedSignatureFact(seed, fact *typ.Function) *typ.Function {
+	if seed == nil {
+		return fact
+	}
+	if fact == nil {
+		return seed
+	}
+	if merged := unwrap.Function(returns.MergeFunctionFactType(seed, fact)); merged != nil {
+		return merged
+	}
+	return seed
+}
+
+func (r *Runner) functionFactSignatureForFunction(
+	store api.StoreReader,
+	graph *cfg.Graph,
+	fn *ast.FunctionExpr,
+) *typ.Function {
+	if store == nil || graph == nil || fn == nil {
 		return nil
 	}
-	return paramhints.MergeIntoSignature(fn, hints, synthSig)
+	sym, ok := store.SymbolForFunc(fn)
+	if !ok || sym == 0 {
+		return nil
+	}
+	meta, ok := store.NestedMetaFor(graph.ID())
+	if !ok || meta.ParentGraphID == 0 {
+		return nil
+	}
+	parentGraph := store.Graphs()[meta.ParentGraphID]
+	if parentGraph == nil {
+		return nil
+	}
+	parentScope := r.parentScopeForGraph(store, parentGraph)
+	if parentScope == nil {
+		return nil
+	}
+	facts := store.GetFunctionFactsSnapshot(parentGraph, parentScope)
+	return unwrap.Function(facts.FunctionType(sym))
 }
 
 func (r *Runner) appendCapturedMutatorAssignments(
@@ -102,11 +144,13 @@ func (r *Runner) appendCapturedMutatorAssignments(
 		return resolve.CalleeType(info, p, synthEngine.TypeOf, symResolver, assignmentTypes, graph, bindings, env.ModuleBindings)
 	}
 
-	extra := returns.CollectCalledNestedContainerMutatorAssignments(graph, bindings, capturedContainers, calleeTypeResolver)
-	if len(extra) == 0 {
-		return
+	extra := returns.CollectNestedMutatorAssignments(graph, bindings, capturedContainers, calleeTypeResolver)
+	if len(extra.Table) > 0 {
+		extractOut.Inputs.TableMutatorAssignments = append(extractOut.Inputs.TableMutatorAssignments, extra.Table...)
 	}
-	extractOut.Inputs.ContainerMutatorAssignments = append(extractOut.Inputs.ContainerMutatorAssignments, extra...)
+	if len(extra.Container) > 0 {
+		extractOut.Inputs.ContainerMutatorAssignments = append(extractOut.Inputs.ContainerMutatorAssignments, extra.Container...)
+	}
 }
 
 func (r *Runner) runComputePasses(graph *cfg.Graph, scopes map[cfg.Point]*scope.State) map[string]any {

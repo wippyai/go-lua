@@ -19,6 +19,44 @@ type TruthyPathKey struct {
 	Field  string
 }
 
+// TypeProbe describes a builtin type(expr) equality check.
+type TypeProbe struct {
+	Expr ast.Expr
+	Key  narrow.TypeKey
+}
+
+// ExtractTypeEqualityProbe extracts the runtime type predicate from a
+// `type(expr) == "kind"` comparison. It is intentionally expression-only so
+// synthesis, field validation, and flow guard collection share one parser.
+func ExtractTypeEqualityProbe(expr ast.Expr) (TypeProbe, bool) {
+	rel, ok := expr.(*ast.RelationalOpExpr)
+	if !ok || rel == nil || rel.Operator != "==" {
+		return TypeProbe{}, false
+	}
+	if probe, ok := typeProbeSide(rel.Lhs, rel.Rhs); ok {
+		return probe, true
+	}
+	return typeProbeSide(rel.Rhs, rel.Lhs)
+}
+
+// IsTypeCall reports whether call has builtin type(expr) shape.
+func IsTypeCall(call *ast.FuncCallExpr) bool {
+	if call == nil || callsite.IsMethodLikeExpr(call) || len(call.Args) != 1 {
+		return false
+	}
+	ident, ok := call.Func.(*ast.IdentExpr)
+	return ok && ident != nil && ident.Value == "type"
+}
+
+// TypeForTypeKey returns the broad runtime type represented by a builtin
+// type() result key.
+func TypeForTypeKey(key narrow.TypeKey) typ.Type {
+	if kind, ok := key.BuiltinKind(); ok {
+		return narrow.TypeForKind(kind)
+	}
+	return typ.Unknown
+}
+
 // CollectTruthyGuards scans the CFG for conditions that establish truthy guards
 // and propagates them to dominated points. Used to narrow optional types.
 func CollectTruthyGuards(graph *cfg.Graph, bindings *bind.BindingTable) map[cfg.Point]map[TruthyPathKey]bool {
@@ -363,29 +401,32 @@ func extractTypeGuard(expr ast.Expr, bindings *bind.BindingTable) (TruthyPathKey
 }
 
 func typeGuardPathAndKey(typeExpr, keyExpr ast.Expr, bindings *bind.BindingTable) (TruthyPathKey, narrow.TypeKey, bool) {
-	call, ok := typeExpr.(*ast.FuncCallExpr)
-	if !ok || call == nil || callsite.IsMethodLikeExpr(call) || len(call.Args) != 1 {
-		return TruthyPathKey{}, narrow.TypeKey{}, false
-	}
-	ident, ok := call.Func.(*ast.IdentExpr)
-	if !ok || ident.Value != "type" {
-		return TruthyPathKey{}, narrow.TypeKey{}, false
-	}
-
-	typeName, ok := typeStringLiteral(keyExpr)
-	if !ok {
-		return TruthyPathKey{}, narrow.TypeKey{}, false
-	}
-	typeKey, ok := narrow.KnownBuiltinTypeKey(typeName)
+	probe, ok := typeProbeSide(typeExpr, keyExpr)
 	if !ok {
 		return TruthyPathKey{}, narrow.TypeKey{}, false
 	}
 
-	key, ok := TruthyKeyFromExpr(call.Args[0], bindings)
+	key, ok := TruthyKeyFromExpr(probe.Expr, bindings)
 	if !ok || key.Field == "" {
 		return TruthyPathKey{}, narrow.TypeKey{}, false
 	}
-	return key, typeKey, true
+	return key, probe.Key, true
+}
+
+func typeProbeSide(typeExpr, keyExpr ast.Expr) (TypeProbe, bool) {
+	call, ok := typeExpr.(*ast.FuncCallExpr)
+	if !ok || !IsTypeCall(call) {
+		return TypeProbe{}, false
+	}
+	typeName, ok := typeStringLiteral(keyExpr)
+	if !ok {
+		return TypeProbe{}, false
+	}
+	typeKey, ok := narrow.KnownBuiltinTypeKey(typeName)
+	if !ok {
+		return TypeProbe{}, false
+	}
+	return TypeProbe{Expr: call.Args[0], Key: typeKey}, true
 }
 
 func typeStringLiteral(expr ast.Expr) (string, bool) {
