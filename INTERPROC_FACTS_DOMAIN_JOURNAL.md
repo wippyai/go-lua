@@ -262,6 +262,254 @@ Owns facts emitted by a completed function analysis:
 
 The delta is immutable. The store combines it through `FactsDomain` only.
 
+## Evidence Lifecycle
+
+Every fact in the checker should have a visible lifecycle:
+
+```text
+Observed -> Located -> Qualified -> Transferred -> Joined -> Widened -> Queried -> Published
+```
+
+### Observed
+
+Evidence starts from one of a small number of sources:
+
+- source annotation,
+- literal syntax,
+- assignment,
+- guard/predicate/assertion,
+- call argument,
+- call return,
+- effect spec,
+- table/container mutation,
+- imported manifest,
+- previous interproc snapshot.
+
+Observation records provenance. It does not decide final authority.
+
+### Located
+
+Every observation must attach to a location:
+
+- symbol,
+- field path,
+- index path,
+- tuple slot,
+- function graph,
+- parent scope,
+- call site,
+- return site.
+
+Location must be canonical before the evidence enters transfer. This prevents
+one helper using AST paths while another uses SSA path keys.
+
+### Qualified
+
+The evidence is tagged with its authority:
+
+```text
+explicit annotation > hard proof > body obligation > call observation >
+soft annotation > unresolved evidence
+```
+
+`any` is not "very strong evidence." It is dynamic top. `unknown` is not "safe
+to ignore." It is unresolved evidence. These two facts must remain distinct in
+every domain.
+
+### Transferred
+
+Transfer applies evidence to the current `AbstractState`.
+
+Examples:
+
+- assignment writes memory/value facts,
+- guard writes relation and shape facts,
+- call writes return tuple and effect facts,
+- table insert writes a mutation fact,
+- error-return check reads a tuple relation and narrows linked slots.
+
+Transfer does not call interproc merge functions. Transfer does not widen.
+
+### Joined
+
+Control-flow joins combine same-phase predecessor states through domain `Join`.
+This is where branch evidence meets.
+
+Branch joins must preserve runtime alternatives. For Lua, `x or y` and `x and y`
+return actual operand values, so the value domain cannot prune a live branch just
+because the other branch is more precise.
+
+### Widened
+
+Widening is allowed only at named recursive boundaries:
+
+- loop fixpoint,
+- local function SCC,
+- interprocedural fixpoint,
+- recursive type/shape growth boundary.
+
+Widening must be visible in code. If a helper "prefers" one side to force
+stability, it is a widening rule and belongs to the domain that owns that
+cycle.
+
+### Queried
+
+Queries produce read-only views:
+
+- type at point,
+- narrowed path,
+- field/index evidence,
+- relation state,
+- effect summary.
+
+Queries cannot publish facts. If a query has to synthesize new evidence to
+answer correctly, that evidence belongs in transfer or in a cached derived input
+computed before solving.
+
+### Published
+
+Only completed function analysis publishes interproc deltas. Publication is a
+data move:
+
+```text
+FunctionResult -> InterprocDelta -> FactsDomain.Join/Widen -> SnapshotInputs
+```
+
+Publication is not another inference pass.
+
+## Required Domain API Shape
+
+Every domain should expose the same conceptual operations even if Go uses
+concrete types instead of generics everywhere.
+
+```go
+type Domain[T any] interface {
+    Normalize(T) T
+    Leq(a, b T) bool
+    Join(a, b T) T
+    Meet(a, b T) T
+    Widen(prev, next T) T
+}
+```
+
+Transfer is separate:
+
+```go
+type Transfer[I any, S any] interface {
+    Apply(input I, state S) S
+}
+```
+
+Query is separate:
+
+```go
+type Query[S any, Q any, A any] interface {
+    Answer(state S, question Q) A
+}
+```
+
+This separation is important:
+
+- `Join` and `Widen` do not inspect AST.
+- `Transfer` does not know interproc storage.
+- `Query` does not mutate state.
+- `Normalize` is explicit and not hidden in equality.
+
+## Dataflow Walkthroughs
+
+### Guarded Field To Call Argument
+
+Pattern:
+
+```lua
+if options.model then
+    provider.open(options.model)
+end
+```
+
+Correct dataflow:
+
+1. `options.model` is observed as a field read.
+2. The guard transfers a truthy relation for `Location(options, "model")`.
+3. The call argument query reads that relation and answers `NonNil(modelType)`.
+4. Parameter evidence records a call observation for the callee.
+5. If the callee body requires `string`, body obligation and call observation
+   combine in `ParameterEvidenceDomain`.
+
+Wrong shape:
+
+- special-case `options.model` in call checking,
+- make all truthy fields strings,
+- accept `any` as string.
+
+### Table Insert To Later Iteration
+
+Pattern:
+
+```lua
+table.insert(state.items, value)
+for _, item in ipairs(state.items) do ... end
+```
+
+Correct dataflow:
+
+1. `state.items` resolves to one memory location.
+2. `table.insert` transfers a `MutationTableElement` to that location.
+3. Memory join preserves the element fact at the exact child path.
+4. `ipairs` queries the array element evidence from memory.
+
+Wrong shape:
+
+- replay captured table insert through generic container mutation,
+- let parent table literal shape override explicit child-path evidence,
+- infer element type from the loop variable without memory provenance.
+
+### Error Return Correlation
+
+Pattern:
+
+```lua
+local value, err = f()
+test.is_nil(err)
+value.field
+```
+
+Correct dataflow:
+
+1. `f()` returns a tuple with a relation summary.
+2. Assignment binds tuple slots to locations.
+3. `test.is_nil(err)` transfers a relation constraint on the error slot.
+4. Relation query narrows the linked value slot.
+5. Field access reads the narrowed value slot.
+
+Wrong shape:
+
+- hardcode `test.is_nil` as a value-slot refinement,
+- assume every two-return function is `(value, err)`,
+- drop tuple relation when a wrapper forwards returns.
+
+### Unknown External Payload
+
+Pattern:
+
+```lua
+local payload = json.decode(raw)
+needs_string(payload.name)
+```
+
+Correct dataflow:
+
+1. `json.decode` returns dynamic/unresolved data.
+2. `payload.name` is unresolved or `any` depending on API contract.
+3. Passing it to `string` must fail unless a guard, schema, cast, or contract
+   proves it.
+
+Wrong shape:
+
+- treat unknown external fields as strings because most callers expect strings,
+- let table shape contextualization silently rewrite explicit `any`,
+- clear global lint by broadening assignability.
+
 ## Inference Model
 
 Inference is not a separate magical subsystem. It is the process of solving for
@@ -961,6 +1209,26 @@ Current weak shape:
 - param-use projection can rescan AST bodies instead of reading a graph-indexed
   use summary.
 
+Canonical Salsa wiring:
+
+```text
+db.Input[ManifestKey]        -> module/type environment queries
+db.Input[GraphKey]           -> graph-derived summaries
+db.Input[InterprocGraphKey]  -> function-result queries
+db.Input[SymbolKey]          -> constructor/refinement/effect summaries
+
+FuncResultQuery(GraphID, ParentHash)
+  reads graph bundle
+  reads interproc snapshot inputs
+  builds transfer program
+  solves abstract state
+  publishes immutable result
+```
+
+The query key is stable identity. The dependency edges come from the exact
+inputs read during analysis. There should be no artificial revision number in
+the function key and no manual cache clearing for correctness.
+
 Final cache contracts:
 
 1. Source inputs are `db.Input`s:
@@ -1082,6 +1350,80 @@ Every major law needs:
 - a positive test proving wanted inference,
 - a negative test proving sound rejection,
 - a domain law test proving normalize/join/widen idempotence and monotonicity.
+
+## Anti-Pattern Catalog
+
+These shapes should be rejected during the flash migration.
+
+### Local Domain Predicate In An Orchestration Package
+
+Example smell:
+
+```go
+func typeRefinesTableKeyByTruthiness(...)
+```
+
+If the helper defines what refinement means, it belongs to a domain package.
+Orchestration packages can ask a domain whether a refinement is valid; they
+cannot define the refinement locally.
+
+### Equality-Time Repair
+
+If equality normalizes, rebuilds, or reconciles facts to make two states look
+equal, convergence bugs become invisible.
+
+Correct shape:
+
+```text
+write boundary -> Normalize
+merge boundary -> Join/Widen
+equality -> structural comparison of canonical state
+```
+
+### Query-Time Fact Production
+
+If a query discovers a fact that later code relies on as if it were stored
+analysis state, the system has a hidden analysis path.
+
+Correct shape:
+
+```text
+query can memoize an answer, but cannot publish evidence
+```
+
+### Producer-Specific Merge
+
+If one producer has its own merge rules for a fact family, the product domain is
+not canonical.
+
+Correct shape:
+
+```text
+producer emits delta
+store calls FactsDomain.Join or FactsDomain.Widen
+```
+
+### Compatibility View As Authority
+
+A projection may exist for display or API response, but not as stored authority.
+If production code writes through a view, it recreates the legacy mirror problem.
+
+### Soundness Shortcut
+
+Any change whose main effect is "fewer external diagnostics because `any` now
+passes" is rejected unless a domain proof explains why that `any` was not truly
+dynamic.
+
+### Cache Without Input Contract
+
+Every cache must state:
+
+- exact key,
+- immutable inputs,
+- invalidation mechanism,
+- whether it is semantic or performance-only.
+
+If the cache depends on phase call order, it is not SOTA.
 
 ## Edge-Case Matrix
 
