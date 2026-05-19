@@ -1528,6 +1528,347 @@ The flash migration should add focused tests for:
 - relation join does not invent independence;
 - recursive relation/effect widening converges without erasing all useful proof.
 
+## Function Boundary Summary Calculus
+
+A function boundary is where local abstract state becomes reusable evidence for
+callers. This boundary must have one product-domain object. It should not be
+spread across parameter hints, return summaries, narrow summaries, function
+types, captured fields, captured containers, literal signatures, and effect
+maps as independent authorities.
+
+Core rule:
+
+```text
+FunctionSummary = abstraction(QueryView(SolvedState), BoundaryMap)
+```
+
+The summary is not a second analysis. It is a deterministic abstraction of the
+solved state through the function boundary.
+
+### Boundary Map
+
+The boundary map explains how local locations become external locations.
+
+```text
+BoundaryMap =
+  Parameters
+  + Receiver
+  + Returns
+  + Captures
+  + Exports
+  + Constructors
+  + CallbackSlots
+```
+
+Examples:
+
+- parameter location maps to parameter slot;
+- receiver `self` maps to receiver slot;
+- local return tuple slots map to return slots;
+- captured upvalue paths map to captured locations;
+- module fields map to export locations;
+- constructor writes map to constructor instance fields;
+- callback parameters map to callback function slots.
+
+Any summary fact that cannot be expressed through the boundary map is not
+publishable. It remains local evidence.
+
+### Summary Product
+
+The canonical function summary should be a product:
+
+```text
+FunctionSummary =
+  SignatureSurface
+  x ParameterEvidence
+  x ReturnTupleSummary
+  x RelationSummary
+  x EffectSummary
+  x CaptureSummary
+  x ConstructorSummary
+  x ExportSummary
+```
+
+`SignatureSurface` is the user-facing callable type projection. It is derived
+from the product. It is not the stored authority.
+
+`ParameterEvidence` records annotations, body obligations, call observations,
+soft evidence, contextual literal evidence, and recursive widening state.
+
+`ReturnTupleSummary` records explicit arity, nil padding, unknown slots, any
+slots, multivalue expansion policy, and per-slot provenance.
+
+`RelationSummary` records tuple/path relations that survive the boundary map.
+
+`EffectSummary` records memory, relation, value, termination, and callback
+effects that callers must apply through transfer.
+
+`CaptureSummary` records captured value/path/mutation evidence that escaped the
+function body.
+
+`ConstructorSummary` records constructor field facts only when construction
+semantics prove them.
+
+`ExportSummary` records module-visible fields and functions.
+
+### Parameter Summary Law
+
+Parameters have several evidence sources, but one domain.
+
+Evidence sources:
+
+- explicit parameter annotation,
+- manifest/API contract,
+- body obligation,
+- call observation,
+- function literal expected type,
+- soft annotation,
+- recursive SCC seed,
+- interproc snapshot.
+
+Merge policy:
+
+- explicit contracts define the checked surface;
+- body obligations can infer required structure;
+- call observations are weak evidence and cannot create a hard contract alone;
+- soft evidence refines only when compatible proof exists;
+- recursive evidence widens only at SCC/interproc boundaries;
+- optionality and nilability are separate axes;
+- `any` remains dynamic top unless explicit cast/contract changes the question;
+- absence of parameter evidence is unresolved, not `any`.
+
+Wrong shape:
+
+```text
+ParamHints merge differently from FunctionFacts.Params
+```
+
+Correct shape:
+
+```text
+ParameterEvidenceDomain.Join(existing, candidate)
+```
+
+### Return Summary Law
+
+Returns are tuples with attached relations and effects.
+
+Rules:
+
+- arity is explicit;
+- nil padding is explicit;
+- zero returns differ from one nil return;
+- unknown return evidence is not bottom;
+- any return evidence remains dynamic top;
+- recursive return growth widens at the return domain boundary;
+- narrow/success returns are derived views over tuple relation state;
+- wrapper forwarding preserves return relations only through explicit location
+  remapping;
+- vararg return expansion has a distinct summary policy.
+
+Wrong shape:
+
+```text
+ReturnSummaries and NarrowReturns are stored as separate truths
+```
+
+Correct shape:
+
+```text
+ReturnTupleSummary + RelationSummary -> projected narrow/success view
+```
+
+### Function Type Projection Law
+
+A function type is a projection, not an authority.
+
+Projection:
+
+```text
+FunctionType =
+  params(ParameterEvidence)
+  + returns(ReturnTupleSummary)
+  + effects(EffectSummary)
+  + relation metadata if the surface type can carry it
+```
+
+Rules:
+
+- projection is deterministic and cacheable;
+- projection does not write facts;
+- projection does not reconcile legacy channels;
+- projection must be invalidated by changes to the canonical summary product;
+- two projections of the same summary must be equal.
+
+This removes the need for bridge shapes such as "function types from facts" as a
+semantic layer. A projection function may exist as a read-only view, but it is
+not a merge or fallback path.
+
+### Capture Summary Law
+
+Captures are memory/effect facts remapped through lexical ownership.
+
+Publishable capture facts:
+
+- captured variable value evidence;
+- captured field write;
+- captured nil overwrite/deletion when modeled;
+- captured table/container mutation;
+- captured relation over exported/captured locations;
+- captured callback effect.
+
+Rules:
+
+- captured paths use canonical locations with lexical owner identity;
+- mutation operator kind is preserved;
+- dominance/escape controls whether the mutation publishes;
+- parent-derived table shape cannot overwrite child captured mutation;
+- captured facts are applied by transfer in the receiving context, not by
+  rebuilding parent table types.
+
+### Constructor And Export Summary Law
+
+Constructor and export facts are boundary memory facts.
+
+Rules:
+
+- constructor fields are published only from construction evidence;
+- module export fields are published only from export locations;
+- local helper facts do not publish just because the name is visible;
+- exported functions publish their function summary product;
+- imports read snapshots and apply summaries through transfer/query, not through
+  local special cases.
+
+### Call Application Law
+
+Calling a function applies its summary to actual locations.
+
+```text
+CallSite
+  + FunctionSummary
+  + ActualArgumentLocations
+  + ReturnDestinationLocations
+  -> Transfer over AbstractState
+```
+
+Application steps:
+
+1. check actuals against projected parameter contracts;
+2. record call observations as weak parameter evidence;
+3. instantiate effect summary over actual locations;
+4. instantiate relation summary over return and argument locations;
+5. bind return tuple summary to destination locations;
+6. update termination/reachability;
+7. publish caller-side deltas only after the caller solves.
+
+Forbidden:
+
+- expected parameter type rewrites actual evidence;
+- callee summary mutates interproc store during call checking;
+- caller synthesizes a new callee summary from local expectations;
+- return arity heuristic creates relation summary;
+- call application bypasses transfer.
+
+### Summary Join And Widen
+
+Function summaries combine through their domains.
+
+Join:
+
+- combines independent observations within one iteration;
+- preserves provenance and authority;
+- keeps tuple arity explicit;
+- joins relations/effects only when participant remapping is compatible;
+- avoids rebuilding equivalent maps or slices on no-op joins.
+
+Widen:
+
+- applies at local function SCC and interproc boundaries;
+- bounds recursive parameter, return, capture, relation, and effect growth;
+- preserves sound unknown/any distinction;
+- emits precision-loss evidence for diagnostics/profiling;
+- never hides convergence by equality-time normalization.
+
+Leq/Equal:
+
+- compare canonical summary state only;
+- do not rebuild projections;
+- do not normalize as repair;
+- are the basis for fixpoint convergence and snapshot invalidation.
+
+### Summary Storage Law
+
+The stored authority should be one canonical product.
+
+Allowed stored authority:
+
+```text
+FunctionSummary product
+```
+
+Allowed derived views:
+
+- callable `typ.Function` surface;
+- display signature;
+- backward-compatible API response if needed outside production semantics;
+- narrow/success return projection;
+- parameter hint projection for UI/debugging.
+
+Forbidden stored authority:
+
+- param hints as separate merge truth;
+- return summaries as separate merge truth;
+- narrow returns as separate merge truth;
+- function type cache as separate merge truth;
+- captured mutation helper summaries with custom merge;
+- legacy compatibility view written back into facts.
+
+The final flash migration should delete duplicate stored channels in the same
+change that introduces the canonical product.
+
+### Performance Consequences
+
+The boundary summary calculus should make interproc faster because summaries
+become smaller and more stable.
+
+Expected wins:
+
+- one summary hash/equality path instead of multiple channel comparisons;
+- no function-type projection during convergence unless a caller asks for it;
+- no return narrow projection during convergence unless a query asks for it;
+- no-op joins can reuse previous summary components;
+- snapshot inputs update only changed canonical summaries;
+- wrapper forwarding remaps summaries instead of resynthesizing them;
+- parameter-use graph summaries feed parameter evidence without AST rescans.
+
+Rejected shapes:
+
+- rebuilding all derived views on every merge;
+- writing projections back into canonical facts;
+- comparing function summaries by formatting types;
+- widening by dropping entire summary families;
+- adding iteration caps instead of domain widening;
+- clearing caches manually to repair stale summary dependencies.
+
+### Function Boundary Law Tests
+
+The flash migration should add focused tests for:
+
+- function type projection is deterministic from the same summary;
+- parameter body obligation outranks call observation;
+- call observation alone does not prove concrete callee contract;
+- explicit `any` parameter does not become concrete from calls;
+- zero returns differ from one nil return;
+- unknown return survives merge with concrete return when unresolved;
+- narrow/success return is derived from relation summary;
+- wrapper forwarding preserves relation through explicit remap;
+- captured field write and captured container mutation use same memory law;
+- constructor field publishes only from constructor evidence;
+- export summary does not include non-escaping locals;
+- no-op summary join preserves equality and avoids snapshot rewrite;
+- recursive function summary widens and converges without erasing all relation
+  proof.
+
 ### Delta
 
 A `Delta` is a completed analysis contribution to another scope or iteration.
