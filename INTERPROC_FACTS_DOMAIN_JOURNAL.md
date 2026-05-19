@@ -223,6 +223,62 @@ Verification for this slice so far:
   targets: session 8 errors, agent/src 9 errors, docker-demo 21 errors and
   2 warnings.
 
+## 2026-05-19 Function Fact Domain Checkpoint
+
+The next rectification slice moved the per-function fact laws out of
+`compiler/check/returns` and into `compiler/check/domain/functionfact`.
+
+Moved domain laws:
+
+- canonicalization and emptiness for one `api.FunctionFact`;
+- same-iteration join for one function fact;
+- merge policy for function-type fact projections;
+- compatible function-variant collapse inside unions while preserving residual
+  non-function union members;
+- same-shape function merging across params, variadic params, returns, effects,
+  error-return specs, and refinements;
+- parameter-slot fact merge policy that delegates to `domain/paramevidence`;
+- return-slot fact merge policy that delegates to `domain/returnsummary`.
+
+Production callers now import `domain/functionfact` directly for individual
+function facts. The old `returns.JoinFunctionFact`,
+`returns.MergeFunctionFactType`, `returns.NormalizeFunctionFact`, and
+`returns.NormalizeFunctionFacts` names were deleted instead of wrapped.
+
+Current package ownership:
+
+```text
+domain/value         = reusable structural value relations
+domain/paramevidence = parameter evidence lattice, equality, and parameter-slot refinement
+domain/returnsummary = return-vector lattice and function-return alignment
+domain/functionfact  = one-function fact normalization, join, and type projection
+returns              = function-fact maps, captured effects, local SCC orchestration, and interproc widening
+```
+
+The resulting data flow is now narrower:
+
+1. inference and post-flow code produce one-function deltas through
+   `functionfact.Join`;
+2. `returns.JoinFacts` and `returns.WidenFacts` decide how those deltas combine
+   across symbol maps and fixpoint iterations;
+3. convergence-specific widening remains in `returns` because it depends on the
+   whole interprocedural product and iteration boundary;
+4. no production code calls legacy per-function fact helpers through `returns`.
+
+Verification for this slice so far:
+
+- `go test ./compiler/check/domain/functionfact ./compiler/check/returns
+  ./compiler/check/...` passes.
+- `go test ./...` passes.
+- `git diff --check` passes.
+- `go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction
+  -benchmem -count=3` reports about 1.15-1.17 ms/op, 882 KB/op, and 9390
+  allocs/op on this machine.
+- Standard `../scripts/verify-suite.sh` passes go-lua checker tests and builds
+  the Wippy binary, then exits non-zero on the known external pinned lint
+  targets: session 8 errors, agent/src 10 errors, docker-demo 21 errors and
+  2 warnings.
+
 ## Goal
 
 The checker should read as one abstract interpreter over a product domain.

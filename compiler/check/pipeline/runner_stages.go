@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/phase"
@@ -63,7 +64,7 @@ func mergeSynthesizedSignatureFact(seed, fact *typ.Function) *typ.Function {
 	if fact == nil {
 		return seed
 	}
-	if merged := unwrap.Function(returns.MergeFunctionFactType(seed, fact)); merged != nil {
+	if merged := unwrap.Function(functionfact.MergeType(seed, fact)); merged != nil {
 		return merged
 	}
 	return seed

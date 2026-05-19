@@ -6,11 +6,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/compiler/check/nested"
-	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/flow"
@@ -82,7 +82,7 @@ func StoreFactsFromResult(
 		}
 	}
 	delta := api.Facts{FunctionFacts: api.FunctionFacts{
-		fnSym: returns.JoinFunctionFact(api.FunctionFact{}, api.FunctionFact{
+		fnSym: functionfact.Join(api.FunctionFact{}, api.FunctionFact{
 			Summary: summaryFromSnapshot,
 			Narrow:  narrowSummary,
 			Type:    candidateFunc,
@@ -433,13 +433,13 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 						fnEvidence, _ = paramevidence.MergeAt(fnEvidence, j, param.Type, typ.JoinPreferNonSoft)
 					}
 					if len(fnEvidence) > 0 {
-						deltaFacts[argSym] = returns.JoinFunctionFact(deltaFacts[argSym], api.FunctionFact{Params: fnEvidence})
+						deltaFacts[argSym] = functionfact.Join(deltaFacts[argSym], api.FunctionFact{Params: fnEvidence})
 					}
 				}
 			}
 		}
 		if len(evidence) > 0 {
-			deltaFacts[calleeSym] = returns.JoinFunctionFact(deltaFacts[calleeSym], api.FunctionFact{Params: evidence})
+			deltaFacts[calleeSym] = functionfact.Join(deltaFacts[calleeSym], api.FunctionFact{Params: evidence})
 		}
 		if len(deltaFacts) > 0 {
 			store.MergeInterprocFactsNext(parentKey, api.Facts{FunctionFacts: deltaFacts})

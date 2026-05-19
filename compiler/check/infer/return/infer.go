@@ -43,6 +43,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -332,7 +333,7 @@ func assembleFunctionFacts(
 		if info := localFuncs[sym]; info != nil {
 			params = info.ParameterEvidence
 		}
-		ff := returns.JoinFunctionFact(api.FunctionFact{}, api.FunctionFact{
+		ff := functionfact.Join(api.FunctionFact{}, api.FunctionFact{
 			Params:  params,
 			Summary: returnVectors[sym],
 			Type:    funcs[sym],

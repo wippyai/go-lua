@@ -3,6 +3,7 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/domain/value"
@@ -57,7 +58,7 @@ func JoinFacts(prev, next api.Facts) api.Facts {
 	for _, sym := range symbols {
 		prevFact := readFunctionFactFromFacts(&prev, sym)
 		nextFact := readFunctionFactFromFacts(&next, sym)
-		writeNormalizedFunctionFactToFacts(&out, sym, JoinFunctionFact(prevFact, nextFact))
+		writeNormalizedFunctionFactToFacts(&out, sym, functionfact.Join(prevFact, nextFact))
 	}
 	return out
 }
@@ -270,7 +271,7 @@ func joinInterprocValueType(existing, candidate typ.Type) typ.Type {
 		return existing
 	}
 	if unwrap.Function(existing) != nil || unwrap.Function(candidate) != nil {
-		return MergeFunctionFactType(existing, candidate)
+		return functionfact.MergeType(existing, candidate)
 	}
 	return typ.JoinPreferNonSoft(existing, candidate)
 }
@@ -330,7 +331,7 @@ func widenFunctionFactTypeForConvergence(existing, candidate typ.Type) typ.Type 
 	}
 	existingFn := unwrap.Function(existing)
 	candidateFn := unwrap.Function(candidate)
-	if existingFn != nil && candidateFn != nil && sameFunctionShapeForFactMerge(existingFn, candidateFn) {
+	if existingFn != nil && candidateFn != nil && functionfact.SameShape(existingFn, candidateFn) {
 		return maybeWidenTypeForConvergence(widenFunctionFactsByShape(existingFn, candidateFn))
 	}
 	return widenValueTypeForConvergence(existing, candidate)

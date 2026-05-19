@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/nested"
@@ -308,7 +309,7 @@ func (p *Processor) processNestedFunction(
 	// Update sibling types with the fully-inferred function type.
 	if info.IsLocal && info.FuncSym != 0 && result.NarrowSynth != nil {
 		if inferredType := result.NarrowSynth.FunctionType(info.NF.Func, parentScope); inferredType != nil {
-			siblingFunctionTypes[info.FuncSym] = returns.MergeFunctionFactType(siblingFunctionTypes[info.FuncSym], inferredType)
+			siblingFunctionTypes[info.FuncSym] = functionfact.MergeType(siblingFunctionTypes[info.FuncSym], inferredType)
 		}
 	}
 }

@@ -5,15 +5,16 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestJoinFunctionFact_InitialObservation(t *testing.T) {
+func TestFunctionFactJoin_InitialObservation(t *testing.T) {
 	sym := cfg.SymbolID(11)
 	fn := typ.Func().Returns(typ.String).Build()
 
-	facts := api.Facts{FunctionFacts: api.FunctionFacts{sym: JoinFunctionFact(api.FunctionFact{}, api.FunctionFact{
+	facts := api.Facts{FunctionFacts: api.FunctionFacts{sym: functionfact.Join(api.FunctionFact{}, api.FunctionFact{
 		Summary: []typ.Type{typ.String},
 		Narrow:  []typ.Type{typ.String},
 		Type:    fn,
@@ -30,7 +31,7 @@ func TestJoinFunctionFact_InitialObservation(t *testing.T) {
 	}
 }
 
-func TestJoinFunctionFact_MergesExistingAndCandidate(t *testing.T) {
+func TestFunctionFactJoin_MergesExistingAndCandidate(t *testing.T) {
 	existingFn := typ.Func().Returns(typ.Number).Build()
 	candidateFn := typ.Func().Returns(typ.String).Build()
 	existing := api.FunctionFact{
@@ -43,7 +44,7 @@ func TestJoinFunctionFact_MergesExistingAndCandidate(t *testing.T) {
 		Narrow:  []typ.Type{typ.String},
 		Type:    candidateFn,
 	}
-	got := JoinFunctionFact(existing, candidate)
+	got := functionfact.Join(existing, candidate)
 
 	if !returnsummary.Equal(got.Summary, []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
 		t.Fatalf("summary mismatch: got %v", got.Summary)
@@ -87,13 +88,13 @@ func TestJoinFacts_BatchMergeFunctionFacts(t *testing.T) {
 	}
 }
 
-func TestJoinFunctionFact_NarrowSummaryReplacesOpenTopPlaceholder(t *testing.T) {
+func TestFunctionFactJoin_NarrowSummaryReplacesOpenTopPlaceholder(t *testing.T) {
 	openTop := typ.NewRecord().SetOpen(true).Build()
 	existingFunc := typ.Func().Returns(openTop).Build()
 	candidateFunc := typ.Func().Returns(openTop).Build()
 	narrow := []typ.Type{typ.NewArray(typ.Unknown)}
 
-	out := JoinFunctionFact(
+	out := functionfact.Join(
 		api.FunctionFact{Summary: []typ.Type{openTop}, Type: existingFunc},
 		api.FunctionFact{Summary: []typ.Type{openTop}, Narrow: narrow, Type: candidateFunc},
 	)
@@ -111,7 +112,7 @@ func TestJoinFunctionFact_NarrowSummaryReplacesOpenTopPlaceholder(t *testing.T) 
 	}
 }
 
-func TestJoinFunctionFact_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
+func TestFunctionFactJoin_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
 	bad := []typ.Type{
 		typ.NewUnion(
 			typ.NewRecord().
@@ -138,7 +139,7 @@ func TestJoinFunctionFact_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
 	}
 	existingFunc := typ.Func().Returns(bad...).Build()
 
-	out := JoinFunctionFact(
+	out := functionfact.Join(
 		api.FunctionFact{Summary: bad, Type: existingFunc},
 		api.FunctionFact{Narrow: good},
 	)
@@ -158,7 +159,7 @@ func TestJoinFunctionFact_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
 	}
 }
 
-func TestJoinFunctionFact_DoesNotAlignFunctionToNarrowFieldRegression(t *testing.T) {
+func TestFunctionFactJoin_DoesNotAlignFunctionToNarrowFieldRegression(t *testing.T) {
 	withCapturedMethod := typ.NewRecord().
 		Field("x", typ.Integer).
 		Field("get_x", typ.Func().Param("self", typ.Unknown).Returns(typ.Number).Build()).
@@ -168,7 +169,7 @@ func TestJoinFunctionFact_DoesNotAlignFunctionToNarrowFieldRegression(t *testing
 		Build()
 	existingFunc := typ.Func().Returns(flowOnly).Build()
 
-	out := JoinFunctionFact(
+	out := functionfact.Join(
 		api.FunctionFact{Summary: []typ.Type{withCapturedMethod}, Narrow: []typ.Type{flowOnly}, Type: existingFunc},
 		api.FunctionFact{Summary: []typ.Type{withCapturedMethod}, Narrow: []typ.Type{flowOnly}, Type: existingFunc},
 	)
@@ -185,7 +186,7 @@ func TestJoinFunctionFact_DoesNotAlignFunctionToNarrowFieldRegression(t *testing
 	}
 }
 
-func TestNormalizeFunctionFacts_CanonicalizesStoredFunctionFacts(t *testing.T) {
+func TestFunctionFactNormalize_CanonicalizesStoredFunctionFacts(t *testing.T) {
 	sym := cfg.SymbolID(77)
 	fn := typ.Func().Returns(typ.Number).Build()
 	facts := &api.Facts{
@@ -194,7 +195,7 @@ func TestNormalizeFunctionFacts_CanonicalizesStoredFunctionFacts(t *testing.T) {
 		},
 	}
 
-	NormalizeFunctionFacts(facts)
+	facts.FunctionFacts[sym] = functionfact.Normalize(facts.FunctionFacts[sym])
 
 	ff, ok := facts.FunctionFacts[sym]
 	if !ok {

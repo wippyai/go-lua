@@ -3,6 +3,7 @@ package returns
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -279,7 +280,7 @@ func TestReturnSummaryMerge_FillsNilSlotWithCandidateEvidence(t *testing.T) {
 	}
 }
 
-func TestMergeFunctionFactType_MergesSameShapeReturnsCanonically(t *testing.T) {
+func TestFunctionFactMergeType_MergesSameShapeReturnsCanonically(t *testing.T) {
 	existing := typ.Func().
 		Param("x", typ.String).
 		Returns(typ.NewOptional(typ.Integer)).
@@ -289,7 +290,7 @@ func TestMergeFunctionFactType_MergesSameShapeReturnsCanonically(t *testing.T) {
 		Returns(typ.Integer).
 		Build()
 
-	merged := MergeFunctionFactType(existing, candidate)
+	merged := functionfact.MergeType(existing, candidate)
 	fn, ok := merged.(*typ.Function)
 	if !ok || len(fn.Returns) != 1 {
 		t.Fatalf("expected merged function, got %T", merged)
@@ -299,7 +300,7 @@ func TestMergeFunctionFactType_MergesSameShapeReturnsCanonically(t *testing.T) {
 	}
 }
 
-func TestMergeFunctionFactType_PrefersConcreteParamOverTopObservation(t *testing.T) {
+func TestFunctionFactMergeType_PrefersConcreteParamOverTopObservation(t *testing.T) {
 	existing := typ.Func().
 		Param("x", typ.Any).
 		Returns(typ.String).
@@ -309,7 +310,7 @@ func TestMergeFunctionFactType_PrefersConcreteParamOverTopObservation(t *testing
 		Returns(typ.String).
 		Build()
 
-	merged := MergeFunctionFactType(existing, candidate)
+	merged := functionfact.MergeType(existing, candidate)
 	fn, ok := merged.(*typ.Function)
 	if !ok {
 		t.Fatalf("expected merged function, got %T", merged)
@@ -319,7 +320,7 @@ func TestMergeFunctionFactType_PrefersConcreteParamOverTopObservation(t *testing
 	}
 }
 
-func TestMergeFunctionFactType_WidensParamToCoverObservedCallsites(t *testing.T) {
+func TestFunctionFactMergeType_WidensParamToCoverObservedCallsites(t *testing.T) {
 	existing := typ.Func().
 		Param("t", typ.NewArray(typ.Any)).
 		Returns(typ.String).
@@ -329,7 +330,7 @@ func TestMergeFunctionFactType_WidensParamToCoverObservedCallsites(t *testing.T)
 		Returns(typ.String).
 		Build()
 
-	merged := MergeFunctionFactType(existing, candidate)
+	merged := functionfact.MergeType(existing, candidate)
 	fn, ok := merged.(*typ.Function)
 	if !ok {
 		t.Fatalf("expected merged function, got %T", merged)
@@ -346,7 +347,7 @@ func TestMergeFunctionFactType_WidensParamToCoverObservedCallsites(t *testing.T)
 	}
 }
 
-func TestMergeFunctionFactType_KeepsBaselineOverNestedNilOnlyRegression(t *testing.T) {
+func TestFunctionFactMergeType_KeepsBaselineOverNestedNilOnlyRegression(t *testing.T) {
 	baselineReturn := typ.NewRecord().
 		Field("full_path", typ.String).
 		Field("parent", typ.Unknown).
@@ -363,7 +364,7 @@ func TestMergeFunctionFactType_KeepsBaselineOverNestedNilOnlyRegression(t *testi
 	baseline := typ.Func().Param("name", typ.Unknown).Returns(baselineReturn).Build()
 	candidate := typ.Func().Param("name", typ.Unknown).Returns(candidateReturn).Build()
 
-	merged := MergeFunctionFactType(baseline, candidate)
+	merged := functionfact.MergeType(baseline, candidate)
 	fn, ok := merged.(*typ.Function)
 	if !ok || len(fn.Returns) != 1 {
 		t.Fatalf("expected merged function return, got %v", merged)
@@ -424,7 +425,7 @@ func TestReturnSummaryMerge_PrefersMapOverStaleOpenRecordMapKeyRefinement(t *tes
 	}
 }
 
-func TestMergeFunctionFactType_CollapsesMixedFunctionUnionVariants(t *testing.T) {
+func TestFunctionFactMergeType_CollapsesMixedFunctionUnionVariants(t *testing.T) {
 	base := typ.Func().
 		Param("name", typ.Unknown).
 		Returns(typ.NewRecord().Field("full_path", typ.String).SetOpen(true).Build()).
@@ -446,7 +447,7 @@ func TestMergeFunctionFactType_CollapsesMixedFunctionUnionVariants(t *testing.T)
 			Build()).
 		Build()
 
-	merged := MergeFunctionFactType(typ.NewUnion(typ.Nil, base, withChildren), withTests)
+	merged := functionfact.MergeType(typ.NewUnion(typ.Nil, base, withChildren), withTests)
 	if merged == nil {
 		t.Fatal("expected merged type")
 	}
@@ -470,12 +471,12 @@ func TestMergeFunctionFactType_CollapsesMixedFunctionUnionVariants(t *testing.T)
 	}
 }
 
-func TestMergeFunctionFactType_DoesNotDropNonFunctionUnionMembers(t *testing.T) {
+func TestFunctionFactMergeType_DoesNotDropNonFunctionUnionMembers(t *testing.T) {
 	fn := typ.Func().Param("x", typ.String).Returns(typ.String).Build()
 	existing := typ.NewUnion(fn, typ.Number)
 	candidate := typ.Func().Param("x", typ.String).Returns(typ.String).Build()
 
-	merged := MergeFunctionFactType(existing, candidate)
+	merged := functionfact.MergeType(existing, candidate)
 	u, ok := merged.(*typ.Union)
 	if !ok {
 		t.Fatalf("expected union to be preserved, got %T", merged)
@@ -492,7 +493,7 @@ func TestMergeFunctionFactType_DoesNotDropNonFunctionUnionMembers(t *testing.T) 
 	}
 }
 
-func TestMergeFunctionFactType_CollapsesCompatibleFunctionVariants(t *testing.T) {
+func TestFunctionFactMergeType_CollapsesCompatibleFunctionVariants(t *testing.T) {
 	base := typ.Func().
 		OptParam("entries", typ.Any).
 		Returns(typ.NewMap(typ.Unknown, typ.NewArray(typ.Unknown))).
@@ -503,7 +504,7 @@ func TestMergeFunctionFactType_CollapsesCompatibleFunctionVariants(t *testing.T)
 		Returns(typ.NewMap(typ.String, typ.NewArray(refinedEntry))).
 		Build()
 
-	merged := MergeFunctionFactType(base, refined)
+	merged := functionfact.MergeType(base, refined)
 	fn, ok := merged.(*typ.Function)
 	if !ok {
 		t.Fatalf("expected function after compatible-variant collapse, got %T", merged)
@@ -516,7 +517,7 @@ func TestMergeFunctionFactType_CollapsesCompatibleFunctionVariants(t *testing.T)
 	}
 }
 
-func TestMergeFunctionFactType_DoesNotCollapseParamToNilWhenOptionalInfoExists(t *testing.T) {
+func TestFunctionFactMergeType_DoesNotCollapseParamToNilWhenOptionalInfoExists(t *testing.T) {
 	existing := typ.Func().
 		OptParam("tests", typ.Nil).
 		Returns(typ.Integer).
@@ -526,7 +527,7 @@ func TestMergeFunctionFactType_DoesNotCollapseParamToNilWhenOptionalInfoExists(t
 		Returns(typ.Integer).
 		Build()
 
-	merged := MergeFunctionFactType(existing, candidate)
+	merged := functionfact.MergeType(existing, candidate)
 	fn, ok := merged.(*typ.Function)
 	if !ok {
 		t.Fatalf("expected function, got %T", merged)
@@ -537,11 +538,11 @@ func TestMergeFunctionFactType_DoesNotCollapseParamToNilWhenOptionalInfoExists(t
 	}
 }
 
-func TestMergeFunctionFactType_NilDoesNotDominateSoftOptionalParamShape(t *testing.T) {
+func TestFunctionFactMergeType_NilDoesNotDominateSoftOptionalParamShape(t *testing.T) {
 	softArray := typ.NewOptional(typ.NewUnion(typ.NewArray(typ.Any), typ.NewRecord().SetOpen(true).Build()))
 	preciseArray := typ.NewOptional(typ.NewArray(typ.String))
 
-	merged := MergeFunctionFactType(
+	merged := functionfact.MergeType(
 		typ.Func().OptParam("tests", typ.Nil).Returns(typ.Integer).Build(),
 		typ.Func().OptParam("tests", softArray).Returns(typ.Integer).Build(),
 	)
@@ -553,7 +554,7 @@ func TestMergeFunctionFactType_NilDoesNotDominateSoftOptionalParamShape(t *testi
 		t.Fatalf("expected nil observation not to replace soft optional table shape, got %v", fn.Params[0].Type)
 	}
 
-	merged = MergeFunctionFactType(
+	merged = functionfact.MergeType(
 		typ.Func().OptParam("tests", softArray).Returns(typ.Integer).Build(),
 		typ.Func().OptParam("tests", preciseArray).Returns(typ.Integer).Build(),
 	)
@@ -566,7 +567,7 @@ func TestMergeFunctionFactType_NilDoesNotDominateSoftOptionalParamShape(t *testi
 	}
 }
 
-func TestMergeFunctionFactType_ReplacesStaleFalsyMapKeyWithTruthyRefinement(t *testing.T) {
+func TestFunctionFactMergeType_ReplacesStaleFalsyMapKeyWithTruthyRefinement(t *testing.T) {
 	entry := typ.NewRecord().Field("id", typ.String).Build()
 	stale := typ.NewRecord().
 		MapComponent(typ.NewUnion(typ.Boolean, typ.String), typ.NewArray(entry)).
@@ -577,7 +578,7 @@ func TestMergeFunctionFactType_ReplacesStaleFalsyMapKeyWithTruthyRefinement(t *t
 		SetOpen(true).
 		Build()
 
-	merged := MergeFunctionFactType(
+	merged := functionfact.MergeType(
 		typ.Func().OptParam("t", stale).Returns(typ.NewArray(typ.NewUnion(typ.Boolean, typ.String))).Build(),
 		typ.Func().OptParam("t", current).Returns(typ.NewArray(typ.String)).Build(),
 	)

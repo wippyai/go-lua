@@ -1,8 +1,15 @@
-// Package returns provides interprocedural return type analysis.
+// Package returns orchestrates local return inference and interprocedural fact
+// products.
 //
-// This package implements the fixpoint iteration for return type inference
-// across mutually recursive function groups. It computes strongly connected
-// components in the call graph and processes them in dependency order.
+// It does not own the lattice laws for individual fact slots. Those live in
+// domain packages:
+//   - domain/paramevidence owns parameter evidence;
+//   - domain/returnsummary owns return vectors and function-return alignment;
+//   - domain/functionfact owns one api.FunctionFact at a time;
+//   - domain/value owns reusable structural value relations.
+//
+// This package owns when those domains are applied across maps, SCCs, overlays,
+// captured mutations, and recursive interprocedural fixpoint boundaries.
 //
 // # SCC-Based Analysis
 //
@@ -18,8 +25,8 @@
 // For each function:
 //   - Collect return expressions from all return statements
 //   - Synthesize types for return expressions
-//   - Join multiple return types into a union
-//   - Apply widening for recursive convergence
+//   - Merge candidate return vectors through domain/returnsummary
+//   - Apply product-level widening for recursive convergence
 //
 // # Type Widening
 //
@@ -41,6 +48,6 @@
 //
 // # Signature Inference
 //
-// [InferSignature] combines parameter evidence and return types to produce
+// Signature inference combines parameter evidence and return types to produce
 // complete function signatures for functions without annotations.
 package returns

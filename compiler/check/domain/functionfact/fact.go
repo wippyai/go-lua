@@ -1,6 +1,7 @@
-package returns
+package functionfact
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/domain/value"
@@ -9,10 +10,78 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// MergeFunctionFactType merges function-type facts through one canonical policy.
-// This ensures all channels agree on when to preserve shape and how to merge
-// returns, avoiding directional one-off behavior in individual phases.
-func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
+// Normalize canonicalizes one stored function fact.
+func Normalize(ff api.FunctionFact) api.FunctionFact {
+	return api.FunctionFact{
+		Params:  paramevidence.FilterEmptyVector(ff.Params),
+		Summary: returnsummary.Canonical(ff.Summary),
+		Narrow:  returnsummary.Canonical(ff.Narrow),
+		Type:    normalizeType(ff.Type),
+	}
+}
+
+// Empty reports whether a canonical function fact contains no information.
+func Empty(ff api.FunctionFact) bool {
+	return len(ff.Params) == 0 && len(ff.Summary) == 0 && len(ff.Narrow) == 0 && ff.Type == nil
+}
+
+// Join precisely merges two observations for one local function during a single
+// analysis iteration.
+func Join(existing, candidate api.FunctionFact) api.FunctionFact {
+	existing = Normalize(existing)
+	candidate = Normalize(candidate)
+	out := existing
+
+	if len(candidate.Params) > 0 {
+		out.Params = paramevidence.JoinVectors(out.Params, candidate.Params)
+	}
+	if len(candidate.Summary) > 0 {
+		out.Summary = returnsummary.Merge(out.Summary, candidate.Summary)
+	}
+	if len(candidate.Narrow) > 0 {
+		out.Narrow = returnsummary.Merge(out.Narrow, candidate.Narrow)
+	}
+	if candidate.Type != nil {
+		out.Type = MergeType(out.Type, candidate.Type)
+	}
+
+	if len(out.Narrow) > 0 {
+		if len(out.Summary) == 0 {
+			out.Summary = returnsummary.Canonical(out.Narrow)
+		} else {
+			out.Summary = returnsummary.Merge(out.Summary, out.Narrow)
+		}
+	}
+
+	if fn := unwrap.Function(out.Type); fn != nil {
+		alignedSummary := out.Summary
+		if len(alignedSummary) > 0 {
+			if aligned, changed := returnsummary.AlignFunction(fn, alignedSummary); changed {
+				out.Type = aligned
+				fn = aligned
+			}
+		}
+		if len(out.Summary) == 0 && fn != nil && len(fn.Returns) > 0 {
+			out.Summary = returnsummary.Canonical(fn.Returns)
+		}
+	}
+
+	return out
+}
+
+func normalizeType(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	if fn := unwrap.Function(t); fn != nil {
+		return fn
+	}
+	return typ.PruneSoftUnionMembers(t)
+}
+
+// MergeType merges function-type facts through the canonical per-function fact
+// policy.
+func MergeType(existing, candidate typ.Type) typ.Type {
 	if existing == nil {
 		return candidate
 	}
@@ -22,12 +91,12 @@ func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
 
 	existingFn := unwrap.Function(existing)
 	candidateFn := unwrap.Function(candidate)
-	if mergedFromVariants, ok := mergeFunctionFactVariants(existing, candidate); ok {
+	if mergedFromVariants, ok := mergeVariants(existing, candidate); ok {
 		return mergedFromVariants
 	}
 	if existingFn != nil && candidateFn != nil {
-		if sameFunctionShapeForFactMerge(existingFn, candidateFn) {
-			return mergeFunctionFactsByShape(existingFn, candidateFn)
+		if SameShape(existingFn, candidateFn) {
+			return mergeByShape(existingFn, candidateFn)
 		}
 	}
 
@@ -40,14 +109,14 @@ func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
 	return typ.JoinPreferNonSoft(existing, candidate)
 }
 
-type functionFactVariants struct {
+type variants struct {
 	funcs     []*typ.Function
 	residuals []typ.Type
 }
 
-func mergeFunctionFactVariants(existing, candidate typ.Type) (typ.Type, bool) {
-	existingVariants := splitFunctionFactVariants(existing)
-	candidateVariants := splitFunctionFactVariants(candidate)
+func mergeVariants(existing, candidate typ.Type) (typ.Type, bool) {
+	existingVariants := splitVariants(existing)
+	candidateVariants := splitVariants(candidate)
 	if len(existingVariants.funcs) == 0 || len(candidateVariants.funcs) == 0 {
 		return nil, false
 	}
@@ -56,14 +125,14 @@ func mergeFunctionFactVariants(existing, candidate typ.Type) (typ.Type, bool) {
 	all = append(all, existingVariants.funcs...)
 	all = append(all, candidateVariants.funcs...)
 	for i := 1; i < len(all); i++ {
-		if !sameFunctionShapeForFactMerge(all[0], all[i]) {
+		if !SameShape(all[0], all[i]) {
 			return nil, false
 		}
 	}
 
 	merged := all[0]
 	for i := 1; i < len(all); i++ {
-		next, _ := mergeFunctionFactsByShape(merged, all[i]).(*typ.Function)
+		next, _ := mergeByShape(merged, all[i]).(*typ.Function)
 		if next == nil {
 			return nil, false
 		}
@@ -80,20 +149,20 @@ func mergeFunctionFactVariants(existing, candidate typ.Type) (typ.Type, bool) {
 	return typ.NewUnion(residuals...), true
 }
 
-func splitFunctionFactVariants(t typ.Type) functionFactVariants {
-	var out functionFactVariants
-	collectFunctionFactVariants(t, &out)
+func splitVariants(t typ.Type) variants {
+	var out variants
+	collectVariants(t, &out)
 	return out
 }
 
-func collectFunctionFactVariants(t typ.Type, out *functionFactVariants) {
+func collectVariants(t typ.Type, out *variants) {
 	if t == nil || out == nil {
 		return
 	}
 	switch v := unwrap.Alias(t).(type) {
 	case *typ.Union:
 		for _, member := range v.Members {
-			collectFunctionFactVariants(member, out)
+			collectVariants(member, out)
 		}
 		return
 	}
@@ -104,7 +173,8 @@ func collectFunctionFactVariants(t typ.Type, out *functionFactVariants) {
 	out.residuals = append(out.residuals, t)
 }
 
-func sameFunctionShapeForFactMerge(a, b *typ.Function) bool {
+// SameShape reports whether two function fact types can be merged slot-wise.
+func SameShape(a, b *typ.Function) bool {
 	if a == nil || b == nil {
 		return false
 	}
@@ -114,15 +184,10 @@ func sameFunctionShapeForFactMerge(a, b *typ.Function) bool {
 	if !typeParamsEqual(a.TypeParams, b.TypeParams) {
 		return false
 	}
-	if len(a.Params) != len(b.Params) {
-		return false
-	}
-	// Param type precision and optionality may differ across iterations.
-	// Treat those as mergeable slots and reconcile in mergeFunctionFactsByShape.
-	return true
+	return len(a.Params) == len(b.Params)
 }
 
-func mergeFunctionFactsByShape(existing, candidate *typ.Function) typ.Type {
+func mergeByShape(existing, candidate *typ.Function) typ.Type {
 	if existing == nil {
 		return candidate
 	}
@@ -136,7 +201,7 @@ func mergeFunctionFactsByShape(existing, candidate *typ.Function) typ.Type {
 	}
 
 	for i, p := range existing.Params {
-		paramType := mergeFunctionParamFactType(p.Type, candidate.Params[i].Type)
+		paramType := mergeParamType(p.Type, candidate.Params[i].Type)
 		name := p.Name
 		if name == "" {
 			name = candidate.Params[i].Name
@@ -150,7 +215,7 @@ func mergeFunctionFactsByShape(existing, candidate *typ.Function) typ.Type {
 	}
 
 	if existing.Variadic != nil || candidate.Variadic != nil {
-		builder = builder.Variadic(mergeFunctionParamFactType(existing.Variadic, candidate.Variadic))
+		builder = builder.Variadic(mergeParamType(existing.Variadic, candidate.Variadic))
 	}
 
 	if mergedReturns := returnsummary.Merge(existing.Returns, candidate.Returns); len(mergedReturns) > 0 {
@@ -182,7 +247,7 @@ func mergeFunctionFactsByShape(existing, candidate *typ.Function) typ.Type {
 	return builder.Build()
 }
 
-func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
+func mergeParamType(existing, candidate typ.Type) typ.Type {
 	if existing == nil {
 		return candidate
 	}
@@ -198,7 +263,7 @@ func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
 	if unwrap.IsNilType(candidate) && !unwrap.IsNilType(existing) {
 		return existing
 	}
-	if preferred, ok := preferStructuredRecordParam(existing, candidate); ok {
+	if preferred, ok := preferStructuredRecord(existing, candidate); ok {
 		return preferred
 	}
 	if preferred, ok := value.PreferConcreteOverSoft(existing, candidate); ok {
@@ -237,7 +302,7 @@ func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
 	return typ.JoinPreferNonSoft(existing, candidate)
 }
 
-func preferStructuredRecordParam(existing, candidate typ.Type) (typ.Type, bool) {
+func preferStructuredRecord(existing, candidate typ.Type) (typ.Type, bool) {
 	existingRec, okExisting := unwrap.Alias(existing).(*typ.Record)
 	candidateRec, okCandidate := unwrap.Alias(candidate).(*typ.Record)
 	if !okExisting || !okCandidate {
@@ -260,4 +325,22 @@ func preferStructuredRecordParam(existing, candidate typ.Type) (typ.Type, bool) 
 		}
 	}
 	return nil, false
+}
+
+func typeParamsEqual(a, b []*typ.TypeParam) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] == nil || b[i] == nil {
+			if a[i] != b[i] {
+				return false
+			}
+			continue
+		}
+		if !a[i].Equals(b[i]) {
+			return false
+		}
+	}
+	return true
 }

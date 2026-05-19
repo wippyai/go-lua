@@ -3,8 +3,7 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 )
 
 func collectCanonicalFunctionFactSymbols(factSets ...api.FunctionFacts) []cfg.SymbolID {
@@ -25,19 +24,6 @@ func markFunctionFactSymbols[T any](dst map[cfg.SymbolID]bool, src map[cfg.Symbo
 	}
 }
 
-func NormalizeFunctionFact(ff api.FunctionFact) api.FunctionFact {
-	return api.FunctionFact{
-		Params:  paramevidence.FilterEmptyVector(ff.Params),
-		Summary: returnsummary.Canonical(ff.Summary),
-		Narrow:  returnsummary.Canonical(ff.Narrow),
-		Type:    normalizeInterprocValueType(ff.Type),
-	}
-}
-
-func functionFactEmpty(ff api.FunctionFact) bool {
-	return len(ff.Params) == 0 && len(ff.Summary) == 0 && len(ff.Narrow) == 0 && ff.Type == nil
-}
-
 func readFunctionFactFromFacts(facts *api.Facts, sym cfg.SymbolID) api.FunctionFact {
 	if facts == nil || sym == 0 {
 		return api.FunctionFact{}
@@ -49,33 +35,11 @@ func readFunctionFactFromFacts(facts *api.Facts, sym cfg.SymbolID) api.FunctionF
 	if !ok {
 		return api.FunctionFact{}
 	}
-	canonical := NormalizeFunctionFact(ff)
-	if !functionFactEmpty(canonical) {
+	canonical := functionfact.Normalize(ff)
+	if !functionfact.Empty(canonical) {
 		return canonical
 	}
 	return api.FunctionFact{}
-}
-
-func normalizeFunctionFactMap(facts api.FunctionFacts) api.FunctionFacts {
-	if len(facts) == 0 {
-		return nil
-	}
-	out := make(api.FunctionFacts, len(facts))
-	for _, sym := range cfg.SortedSymbolIDs(facts) {
-		canonical := NormalizeFunctionFact(facts[sym])
-		if functionFactEmpty(canonical) {
-			continue
-		}
-		out[sym] = canonical
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func writeFunctionFactToFacts(facts *api.Facts, sym cfg.SymbolID, ff api.FunctionFact) {
-	writeNormalizedFunctionFactToFacts(facts, sym, NormalizeFunctionFact(ff))
 }
 
 func writeNormalizedFunctionFactToFacts(facts *api.Facts, sym cfg.SymbolID, ff api.FunctionFact) {
@@ -83,7 +47,7 @@ func writeNormalizedFunctionFactToFacts(facts *api.Facts, sym cfg.SymbolID, ff a
 		return
 	}
 
-	if functionFactEmpty(ff) {
+	if functionfact.Empty(ff) {
 		if facts.FunctionFacts != nil {
 			delete(facts.FunctionFacts, sym)
 			if len(facts.FunctionFacts) == 0 {
@@ -96,12 +60,4 @@ func writeNormalizedFunctionFactToFacts(facts *api.Facts, sym cfg.SymbolID, ff a
 		}
 		facts.FunctionFacts[sym] = ff
 	}
-}
-
-// NormalizeFunctionFacts canonicalizes the stored FunctionFacts map.
-func NormalizeFunctionFacts(facts *api.Facts) {
-	if facts == nil {
-		return
-	}
-	facts.FunctionFacts = normalizeFunctionFactMap(facts.FunctionFacts)
 }
