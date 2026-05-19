@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/returns"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -294,7 +294,7 @@ db:release()
 		if !ok || sym == 0 {
 			t.Fatalf("missing symbol for %s", name)
 		}
-		rets := returns.NormalizeReturnVector(functionFacts.Summary(sym))
+		rets := returnsummary.Normalize(functionFacts.Summary(sym))
 		if len(rets) == 0 {
 			t.Fatalf("missing return summary for %s", name)
 		}

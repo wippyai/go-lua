@@ -3,6 +3,7 @@ package returns
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -54,14 +55,14 @@ func TestTypJoinReturnSlot_PreservesUnknownOverNil(t *testing.T) {
 	}
 }
 
-func TestReturnTypesAllNil(t *testing.T) {
-	if !ReturnTypesAllNil([]typ.Type{typ.Nil}) {
+func TestReturnSummaryAllNil(t *testing.T) {
+	if !returnsummary.AllNil([]typ.Type{typ.Nil}) {
 		t.Fatal("expected [nil] to be nil-only")
 	}
-	if ReturnTypesAllNil([]typ.Type{typ.Nil, typ.Unknown}) {
+	if returnsummary.AllNil([]typ.Type{typ.Nil, typ.Unknown}) {
 		t.Fatal("expected [nil, unknown] to not be nil-only")
 	}
-	if ReturnTypesAllNil(nil) {
+	if returnsummary.AllNil(nil) {
 		t.Fatal("expected empty return vector to not be nil-only")
 	}
 }
@@ -75,108 +76,108 @@ func TestJoinReturnVectors_DifferentLengths(t *testing.T) {
 	}
 }
 
-func TestReturnTypesEqual_Empty(t *testing.T) {
-	if !ReturnTypesEqual(nil, nil) {
+func TestReturnSummaryEqual_Empty(t *testing.T) {
+	if !returnsummary.Equal(nil, nil) {
 		t.Error("nil slices should be equal")
 	}
 }
 
-func TestReturnTypesEqual_DifferentLength(t *testing.T) {
+func TestReturnSummaryEqual_DifferentLength(t *testing.T) {
 	a := []typ.Type{typ.String}
 	b := []typ.Type{typ.String, typ.Number}
-	if ReturnTypesEqual(a, b) {
+	if returnsummary.Equal(a, b) {
 		t.Error("different lengths should not be equal")
 	}
 }
 
-func TestReturnTypesEqual_Same(t *testing.T) {
+func TestReturnSummaryEqual_Same(t *testing.T) {
 	a := []typ.Type{typ.String, typ.Number}
 	b := []typ.Type{typ.String, typ.Number}
-	if !ReturnTypesEqual(a, b) {
+	if !returnsummary.Equal(a, b) {
 		t.Error("same types should be equal")
 	}
 }
 
-func TestReturnTypesEqual_Different(t *testing.T) {
+func TestReturnSummaryEqual_Different(t *testing.T) {
 	a := []typ.Type{typ.String}
 	b := []typ.Type{typ.Number}
-	if ReturnTypesEqual(a, b) {
+	if returnsummary.Equal(a, b) {
 		t.Error("different types should not be equal")
 	}
 }
 
-func TestReturnTypesRefine_EmptyA(t *testing.T) {
+func TestReturnSummaryRefines_EmptyA(t *testing.T) {
 	b := []typ.Type{typ.String}
-	if ReturnTypesRefine(nil, b) {
+	if returnsummary.Refines(nil, b) {
 		t.Error("empty a should not refine b")
 	}
 }
 
-func TestReturnTypesRefine_EmptyB(t *testing.T) {
+func TestReturnSummaryRefines_EmptyB(t *testing.T) {
 	a := []typ.Type{typ.String}
-	if !ReturnTypesRefine(a, nil) {
+	if !returnsummary.Refines(a, nil) {
 		t.Error("a should refine empty b")
 	}
 }
 
-func TestReturnTypesRefine_Same(t *testing.T) {
+func TestReturnSummaryRefines_Same(t *testing.T) {
 	a := []typ.Type{typ.String}
 	b := []typ.Type{typ.String}
-	if !ReturnTypesRefine(a, b) {
+	if !returnsummary.Refines(a, b) {
 		t.Error("same types should refine")
 	}
 }
 
-func TestReturnTypesRefine_DifferentLength(t *testing.T) {
+func TestReturnSummaryRefines_DifferentLength(t *testing.T) {
 	a := []typ.Type{typ.String, typ.Number}
 	b := []typ.Type{typ.String}
-	if ReturnTypesRefine(a, b) {
+	if returnsummary.Refines(a, b) {
 		t.Error("different lengths should not refine")
 	}
 }
 
-func TestMergeReturnSummary_ReplacesStaleFalsyKeyArrayElement(t *testing.T) {
+func TestReturnSummaryMerge_ReplacesStaleFalsyKeyArrayElement(t *testing.T) {
 	stale := []typ.Type{typ.NewArray(typ.NewUnion(typ.Boolean, typ.String))}
 	current := []typ.Type{typ.NewArray(typ.String)}
 
-	got := MergeReturnSummary(stale, current)
-	if !ReturnTypesEqual(got, current) {
+	got := returnsummary.Merge(stale, current)
+	if !returnsummary.Equal(got, current) {
 		t.Fatalf("expected truthy-refined key array %v, got %v", current, got)
 	}
 }
 
-func TestReturnTypesExtendRecord_Empty(t *testing.T) {
-	if ReturnTypesExtendRecord(nil, nil) {
+func TestReturnSummaryExtendsRecord_Empty(t *testing.T) {
+	if returnsummary.ExtendsRecord(nil, nil) {
 		t.Error("empty vectors should not extend")
 	}
 }
 
-func TestReturnTypesExtendRecord_NotRecords(t *testing.T) {
+func TestReturnSummaryExtendsRecord_NotRecords(t *testing.T) {
 	a := []typ.Type{typ.String}
 	b := []typ.Type{typ.String}
-	if ReturnTypesExtendRecord(a, b) {
+	if returnsummary.ExtendsRecord(a, b) {
 		t.Error("non-records should not extend")
 	}
 }
 
-func TestReturnTypesExtendRecord_RecordExtends(t *testing.T) {
+func TestReturnSummaryExtendsRecord_RecordExtends(t *testing.T) {
 	oldRec := typ.NewRecord().Field("x", typ.Number).Build()
 	newRec := typ.NewRecord().Field("x", typ.Number).Field("y", typ.Number).Build()
 	a := []typ.Type{newRec}
 	b := []typ.Type{oldRec}
-	if !ReturnTypesExtendRecord(a, b) {
+	if !returnsummary.ExtendsRecord(a, b) {
 		t.Error("record with more fields should extend")
 	}
 }
 
-func TestReturnTypesElideOptional_Empty(t *testing.T) {
-	if ReturnTypesElideOptional(nil, nil) {
+func TestReturnSummaryElidesOptional_Empty(t *testing.T) {
+	if returnsummary.ElidesOptional(nil, nil) {
 		t.Error("empty vectors should not elide")
 	}
 }
 
-func TestSelectPreferredReturnVector_Refinement(t *testing.T) {
-	preferred, ok := SelectPreferredReturnVector([]typ.Type{typ.String}, []typ.Type{typ.NewOptional(typ.String)})
+func TestReturnSummarySelectPreferred_Refinement(t *testing.T) {
+	preferred, ok := returnsummary.SelectPreferred([]typ.Type{typ.String}, []typ.Type{typ.NewOptional(typ.String)})
 	if !ok {
 		t.Fatal("expected preferred vector")
 	}
@@ -185,8 +186,8 @@ func TestSelectPreferredReturnVector_Refinement(t *testing.T) {
 	}
 }
 
-func TestSelectPreferredReturnVector_AvoidsNilOnlyRegression(t *testing.T) {
-	preferred, ok := SelectPreferredReturnVector([]typ.Type{typ.Nil}, []typ.Type{typ.NewOptional(typ.String)})
+func TestReturnSummarySelectPreferred_AvoidsNilOnlyRegression(t *testing.T) {
+	preferred, ok := returnsummary.SelectPreferred([]typ.Type{typ.Nil}, []typ.Type{typ.NewOptional(typ.String)})
 	if !ok {
 		t.Fatal("expected preferred vector")
 	}
@@ -195,8 +196,8 @@ func TestSelectPreferredReturnVector_AvoidsNilOnlyRegression(t *testing.T) {
 	}
 }
 
-func TestSelectPreferredReturnVector_RejectsStaleNilOnly(t *testing.T) {
-	preferred, ok := SelectPreferredReturnVector([]typ.Type{typ.NewOptional(typ.String)}, []typ.Type{typ.Nil})
+func TestReturnSummarySelectPreferred_RejectsStaleNilOnly(t *testing.T) {
+	preferred, ok := returnsummary.SelectPreferred([]typ.Type{typ.NewOptional(typ.String)}, []typ.Type{typ.Nil})
 	if !ok {
 		t.Fatal("expected preferred vector")
 	}
@@ -205,11 +206,11 @@ func TestSelectPreferredReturnVector_RejectsStaleNilOnly(t *testing.T) {
 	}
 }
 
-func TestSelectPreferredReturnVector_RecordExtension(t *testing.T) {
+func TestReturnSummarySelectPreferred_RecordExtension(t *testing.T) {
 	oldRec := typ.NewRecord().Field("x", typ.Number).Build()
 	newRec := typ.NewRecord().Field("x", typ.Number).Field("y", typ.String).Build()
 
-	preferred, ok := SelectPreferredReturnVector([]typ.Type{newRec}, []typ.Type{oldRec})
+	preferred, ok := returnsummary.SelectPreferred([]typ.Type{newRec}, []typ.Type{oldRec})
 	if !ok {
 		t.Fatal("expected preferred vector")
 	}
@@ -218,11 +219,11 @@ func TestSelectPreferredReturnVector_RecordExtension(t *testing.T) {
 	}
 }
 
-func TestSelectRefiningReturnVector_Refinement(t *testing.T) {
+func TestReturnSummarySelectRefining_Refinement(t *testing.T) {
 	refined := []typ.Type{typ.String}
 	baseline := []typ.Type{typ.NewOptional(typ.String)}
 
-	got, ok := SelectRefiningReturnVector(refined, baseline)
+	got, ok := returnsummary.SelectRefining(refined, baseline)
 	if !ok {
 		t.Fatal("expected refinement to be selected")
 	}
@@ -231,35 +232,35 @@ func TestSelectRefiningReturnVector_Refinement(t *testing.T) {
 	}
 }
 
-func TestSelectRefiningReturnVector_DoesNotSelectOlderNarrowerBaseline(t *testing.T) {
+func TestReturnSummarySelectRefining_DoesNotSelectOlderNarrowerBaseline(t *testing.T) {
 	candidate := []typ.Type{typ.Any}
 	baseline := []typ.Type{typ.False}
 
-	_, ok := SelectRefiningReturnVector(candidate, baseline)
+	_, ok := returnsummary.SelectRefining(candidate, baseline)
 	if ok {
 		t.Fatal("did not expect baseline-narrower relation to select candidate")
 	}
 }
 
-func TestReturnTypesFillNilSlots(t *testing.T) {
+func TestReturnSummaryFillsNilSlots(t *testing.T) {
 	candidate := []typ.Type{typ.NewMap(typ.Unknown, typ.NewArray(typ.Unknown)), typ.NewArray(typ.Unknown)}
 	baseline := []typ.Type{typ.NewMap(typ.Unknown, typ.NewArray(typ.Unknown)), typ.Nil}
-	if !ReturnTypesFillNilSlots(candidate, baseline) {
+	if !returnsummary.FillsNilSlots(candidate, baseline) {
 		t.Fatalf("expected candidate to fill nil slot: candidate=%v baseline=%v", candidate, baseline)
 	}
 }
 
-func TestMergeReturnSummary_PrefersCandidateRefinement(t *testing.T) {
+func TestReturnSummaryMerge_PrefersCandidateRefinement(t *testing.T) {
 	existing := []typ.Type{typ.NewOptional(typ.String)}
 	candidate := []typ.Type{typ.String}
 
-	merged := MergeReturnSummary(existing, candidate)
+	merged := returnsummary.Merge(existing, candidate)
 	if len(merged) != 1 || !typ.TypeEquals(merged[0], typ.String) {
 		t.Fatalf("expected refined candidate return, got %v", merged)
 	}
 }
 
-func TestMergeReturnSummary_FillsNilSlotWithCandidateEvidence(t *testing.T) {
+func TestReturnSummaryMerge_FillsNilSlotWithCandidateEvidence(t *testing.T) {
 	existing := []typ.Type{
 		typ.NewMap(typ.Unknown, typ.NewArray(typ.Unknown)),
 		typ.Nil,
@@ -269,7 +270,7 @@ func TestMergeReturnSummary_FillsNilSlotWithCandidateEvidence(t *testing.T) {
 		typ.NewArray(typ.Unknown),
 	}
 
-	merged := MergeReturnSummary(existing, candidate)
+	merged := returnsummary.Merge(existing, candidate)
 	if len(merged) != 2 {
 		t.Fatalf("expected two return slots, got %v", merged)
 	}
@@ -372,28 +373,28 @@ func TestMergeFunctionFactType_KeepsBaselineOverNestedNilOnlyRegression(t *testi
 	}
 }
 
-func TestMergeReturnSummary_PrefersCurrentTruthyMapKeyRefinement(t *testing.T) {
+func TestReturnSummaryMerge_PrefersCurrentTruthyMapKeyRefinement(t *testing.T) {
 	baseline := typ.NewMap(typ.NewUnion(typ.String, typ.False), typ.Unknown)
 	candidate := typ.NewMap(typ.String, typ.Unknown)
 
-	merged := MergeReturnSummary([]typ.Type{baseline}, []typ.Type{candidate})
+	merged := returnsummary.Merge([]typ.Type{baseline}, []typ.Type{candidate})
 	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate) {
 		t.Fatalf("expected stale falsy map key to refine to %v, got %v", candidate, merged)
 	}
 }
 
-func TestMergeReturnSummary_PrefersConcreteMapValueOverSoftPlaceholder(t *testing.T) {
+func TestReturnSummaryMerge_PrefersConcreteMapValueOverSoftPlaceholder(t *testing.T) {
 	entry := typ.NewRecord().Field("id", typ.String).Build()
 	baseline := typ.NewMap(typ.String, typ.NewArray(typ.Any))
 	candidate := typ.NewMap(typ.String, typ.NewArray(entry))
 
-	merged := MergeReturnSummary([]typ.Type{baseline}, []typ.Type{candidate})
+	merged := returnsummary.Merge([]typ.Type{baseline}, []typ.Type{candidate})
 	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate) {
 		t.Fatalf("expected concrete map value evidence %v, got %v", candidate, merged)
 	}
 }
 
-func TestMergeReturnSummary_PrefersCurrentTruthyRecordMapKeyRefinement(t *testing.T) {
+func TestReturnSummaryMerge_PrefersCurrentTruthyRecordMapKeyRefinement(t *testing.T) {
 	entryArray := typ.NewArray(typ.Unknown)
 	baseline := typ.NewRecord().
 		MapComponent(typ.NewUnion(typ.Nil, typ.String, typ.False), entryArray).
@@ -403,13 +404,13 @@ func TestMergeReturnSummary_PrefersCurrentTruthyRecordMapKeyRefinement(t *testin
 		MapComponent(typ.String, entryArray).
 		Build()
 
-	merged := MergeReturnSummary([]typ.Type{baseline}, []typ.Type{candidate})
+	merged := returnsummary.Merge([]typ.Type{baseline}, []typ.Type{candidate})
 	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate) {
 		t.Fatalf("expected stale falsy record map key to refine to %v, got %v", candidate, merged)
 	}
 }
 
-func TestMergeReturnSummary_PrefersMapOverStaleOpenRecordMapKeyRefinement(t *testing.T) {
+func TestReturnSummaryMerge_PrefersMapOverStaleOpenRecordMapKeyRefinement(t *testing.T) {
 	entryArray := typ.NewArray(typ.Unknown)
 	baseline := typ.NewRecord().
 		MapComponent(typ.NewUnion(typ.Nil, typ.String, typ.False), entryArray).
@@ -417,7 +418,7 @@ func TestMergeReturnSummary_PrefersMapOverStaleOpenRecordMapKeyRefinement(t *tes
 		Build()
 	candidate := typ.NewMap(typ.String, entryArray)
 
-	merged := MergeReturnSummary([]typ.Type{baseline}, []typ.Type{candidate})
+	merged := returnsummary.Merge([]typ.Type{baseline}, []typ.Type{candidate})
 	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate) {
 		t.Fatalf("expected map to replace stale open record map %v, got %v", candidate, merged)
 	}
@@ -589,7 +590,7 @@ func TestMergeFunctionFactType_ReplacesStaleFalsyMapKeyWithTruthyRefinement(t *t
 	}
 }
 
-func TestMergeReturnSummary_ElidesOptionalForInterfaceFieldRecords(t *testing.T) {
+func TestReturnSummaryMerge_ElidesOptionalForInterfaceFieldRecords(t *testing.T) {
 	txType := typ.NewInterface("sql.Tx", []typ.Method{
 		{Name: "rollback", Type: typ.Func().Param("self", typ.Self).Build()},
 	})
@@ -611,20 +612,20 @@ func TestMergeReturnSummary_ElidesOptionalForInterfaceFieldRecords(t *testing.T)
 			Build(),
 	}
 
-	merged := MergeReturnSummary(existing, candidate)
+	merged := returnsummary.Merge(existing, candidate)
 	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate[0]) {
 		t.Fatalf("expected candidate optional-elision to win, got %v", merged)
 	}
 }
 
-func TestWithSummaryOrUnknown_AppliesSummaryToPlaceholderReturns(t *testing.T) {
+func TestReturnSummaryApplyToFunctionType_AppliesSummaryToPlaceholderReturns(t *testing.T) {
 	fn := typ.Func().
 		Param("x", typ.String).
 		Returns(typ.Unknown).
 		Build()
 	summary := []typ.Type{typ.Integer}
 
-	got := WithSummaryOrUnknown(fn, summary)
+	got := returnsummary.ApplyToFunctionType(fn, summary)
 	if got == nil || len(got.Returns) != 1 {
 		t.Fatalf("expected function return, got %v", got)
 	}
@@ -633,9 +634,9 @@ func TestWithSummaryOrUnknown_AppliesSummaryToPlaceholderReturns(t *testing.T) {
 	}
 }
 
-func TestWithSummaryOrUnknown_DefaultsToUnknownWhenMissing(t *testing.T) {
+func TestReturnSummaryApplyToFunctionType_DefaultsToUnknownWhenMissing(t *testing.T) {
 	fn := typ.Func().Param("x", typ.String).Build()
-	got := WithSummaryOrUnknown(fn, nil)
+	got := returnsummary.ApplyToFunctionType(fn, nil)
 	if got == nil || len(got.Returns) != 1 {
 		t.Fatalf("expected one default return, got %v", got)
 	}
@@ -644,16 +645,16 @@ func TestWithSummaryOrUnknown_DefaultsToUnknownWhenMissing(t *testing.T) {
 	}
 }
 
-func TestNormalizeReturnVector_Empty(t *testing.T) {
-	result := NormalizeReturnVector(nil)
+func TestReturnSummaryNormalize_Empty(t *testing.T) {
+	result := returnsummary.Normalize(nil)
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
 	}
 }
 
-func TestNormalizeReturnVector_ReplacesNil(t *testing.T) {
+func TestReturnSummaryNormalize_ReplacesNil(t *testing.T) {
 	input := []typ.Type{typ.String, nil, typ.Number}
-	result := NormalizeReturnVector(input)
+	result := returnsummary.Normalize(input)
 	if len(result) != 3 {
 		t.Fatalf("expected length 3, got %d", len(result))
 	}
@@ -675,7 +676,7 @@ func TestRecordSuperset_BothHaveMapComponent(t *testing.T) {
 	newRec := typ.NewRecord().MapComponent(typ.String, typ.Number).Field("x", typ.Number).Build()
 	a := []typ.Type{newRec}
 	b := []typ.Type{oldRec}
-	if !ReturnTypesExtendRecord(a, b) {
+	if !returnsummary.ExtendsRecord(a, b) {
 		t.Error("record with same map component and additional fields should extend")
 	}
 }
@@ -685,12 +686,12 @@ func TestRecordSuperset_OldHasNoMapComponent(t *testing.T) {
 	newRec := typ.NewRecord().Field("x", typ.Number).Field("y", typ.String).Build()
 	a := []typ.Type{newRec}
 	b := []typ.Type{oldRec}
-	if !ReturnTypesExtendRecord(a, b) {
+	if !returnsummary.ExtendsRecord(a, b) {
 		t.Error("record with additional fields should extend record without map component")
 	}
 }
 
-func TestAlignFunctionTypeWithSummary_AppliesStrictRefinement(t *testing.T) {
+func TestReturnSummaryAlignFunction_AppliesStrictRefinement(t *testing.T) {
 	fn := typ.Func().
 		Param("entries", typ.Any).
 		Returns(typ.NewMap(typ.Unknown, typ.NewArray(typ.Unknown))).
@@ -703,7 +704,7 @@ func TestAlignFunctionTypeWithSummary_AppliesStrictRefinement(t *testing.T) {
 			Build(),
 	}
 
-	aligned, changed := AlignFunctionTypeWithSummary(fn, summary)
+	aligned, changed := returnsummary.AlignFunction(fn, summary)
 	if !changed {
 		t.Fatal("expected alignment to apply strict refinement summary")
 	}
@@ -720,12 +721,12 @@ func TestAlignFunctionTypeWithSummary_AppliesStrictRefinement(t *testing.T) {
 	}
 }
 
-func TestAlignFunctionTypeWithSummary_ReplacesOpenTopRecordWithStructuredSummary(t *testing.T) {
+func TestReturnSummaryAlignFunction_ReplacesOpenTopRecordWithStructuredSummary(t *testing.T) {
 	openTop := typ.NewRecord().SetOpen(true).Build()
 	fn := typ.Func().Returns(openTop).Build()
 	summary := []typ.Type{typ.NewArray(typ.Unknown)}
 
-	aligned, changed := AlignFunctionTypeWithSummary(fn, summary)
+	aligned, changed := returnsummary.AlignFunction(fn, summary)
 	if !changed {
 		t.Fatal("expected open-top placeholder to be replaced by structured summary")
 	}
@@ -737,12 +738,12 @@ func TestAlignFunctionTypeWithSummary_ReplacesOpenTopRecordWithStructuredSummary
 	}
 }
 
-func TestAlignFunctionTypeWithSummary_DoesNotDowngradeStructuredToPlaceholder(t *testing.T) {
+func TestReturnSummaryAlignFunction_DoesNotDowngradeStructuredToPlaceholder(t *testing.T) {
 	structured := typ.NewRecord().Field("get_x", typ.Func().Build()).Build()
 	fn := typ.Func().Returns(structured).Build()
 	summary := []typ.Type{typ.Any}
 
-	aligned, changed := AlignFunctionTypeWithSummary(fn, summary)
+	aligned, changed := returnsummary.AlignFunction(fn, summary)
 	if changed {
 		t.Fatalf("expected no downgrade change, got %v", aligned)
 	}
@@ -754,7 +755,7 @@ func TestAlignFunctionTypeWithSummary_DoesNotDowngradeStructuredToPlaceholder(t 
 	}
 }
 
-func TestMergeReturnSummary_PrefersRuntimePossibleSummaryOverNeverArtifact(t *testing.T) {
+func TestReturnSummaryMerge_PrefersRuntimePossibleSummaryOverNeverArtifact(t *testing.T) {
 	bad := []typ.Type{
 		typ.NewUnion(
 			typ.NewRecord().
@@ -780,13 +781,13 @@ func TestMergeReturnSummary_PrefersRuntimePossibleSummaryOverNeverArtifact(t *te
 		),
 	}
 
-	got := MergeReturnSummary(bad, good)
-	if !ReturnTypesEqual(got, good) {
-		t.Fatalf("MergeReturnSummary(%v, %v) = %v, want %v", bad, good, got, good)
+	got := returnsummary.Merge(bad, good)
+	if !returnsummary.Equal(got, good) {
+		t.Fatalf("returnsummary.Merge(%v, %v) = %v, want %v", bad, good, got, good)
 	}
 }
 
-func TestAlignFunctionTypeWithSummary_RepairsNestedNeverArtifact(t *testing.T) {
+func TestReturnSummaryAlignFunction_RepairsNestedNeverArtifact(t *testing.T) {
 	bad := typ.NewUnion(
 		typ.NewRecord().
 			Field("success", typ.True).
@@ -809,7 +810,7 @@ func TestAlignFunctionTypeWithSummary_RepairsNestedNeverArtifact(t *testing.T) {
 	)
 
 	fn := typ.Func().Returns(bad).Build()
-	aligned, changed := AlignFunctionTypeWithSummary(fn, []typ.Type{good})
+	aligned, changed := returnsummary.AlignFunction(fn, []typ.Type{good})
 	if !changed {
 		t.Fatal("expected never-artifact repair to update function returns")
 	}
@@ -823,7 +824,7 @@ func TestRecordSuperset_NewHasMapComponentOldDoesNot(t *testing.T) {
 	newRec := typ.NewRecord().Field("x", typ.Number).MapComponent(typ.String, typ.Any).Build()
 	a := []typ.Type{newRec}
 	b := []typ.Type{oldRec}
-	if !ReturnTypesExtendRecord(a, b) {
+	if !returnsummary.ExtendsRecord(a, b) {
 		t.Error("record with additional map component should extend record without it")
 	}
 }
@@ -833,12 +834,12 @@ func TestRecordSuperset_IncompatibleMapComponent(t *testing.T) {
 	newRec := typ.NewRecord().MapComponent(typ.String, typ.Number).Build()
 	a := []typ.Type{newRec}
 	b := []typ.Type{oldRec}
-	if ReturnTypesExtendRecord(a, b) {
+	if returnsummary.ExtendsRecord(a, b) {
 		t.Error("record with incompatible map component should not extend")
 	}
 }
 
-func TestMergeReturnSummary_PrefersStructuredCollectionOverOpenTopRecordField(t *testing.T) {
+func TestReturnSummaryMerge_PrefersStructuredCollectionOverOpenTopRecordField(t *testing.T) {
 	weak := []typ.Type{
 		typ.NewRecord().
 			Field("messages", typ.NewRecord().SetOpen(true).Build()).
@@ -854,7 +855,7 @@ func TestMergeReturnSummary_PrefersStructuredCollectionOverOpenTopRecordField(t 
 			Build(),
 	}
 
-	merged := MergeReturnSummary(weak, strong)
+	merged := returnsummary.Merge(weak, strong)
 	if len(merged) != 1 {
 		t.Fatalf("expected one return slot, got %d", len(merged))
 	}
@@ -872,7 +873,7 @@ func TestMergeReturnSummary_PrefersStructuredCollectionOverOpenTopRecordField(t 
 	}
 }
 
-func TestMergeReturnSummary_PromotesTopLevelStructuredOverOpenTop(t *testing.T) {
+func TestReturnSummaryMerge_PromotesTopLevelStructuredOverOpenTop(t *testing.T) {
 	weak := []typ.Type{
 		typ.NewRecord().SetOpen(true).Build(),
 	}
@@ -880,7 +881,7 @@ func TestMergeReturnSummary_PromotesTopLevelStructuredOverOpenTop(t *testing.T) 
 		typ.NewArray(typ.Any),
 	}
 
-	merged := MergeReturnSummary(weak, strong)
+	merged := returnsummary.Merge(weak, strong)
 	if len(merged) != 1 {
 		t.Fatalf("expected one return slot, got %d", len(merged))
 	}

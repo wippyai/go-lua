@@ -28,7 +28,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	"github.com/wippyai/go-lua/compiler/check/returns"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
@@ -458,7 +458,7 @@ func buildDeclaredTypes(
 			return fn
 		}
 		if summary := functionFacts.Summary(sym); len(summary) > 0 {
-			return returns.WithSummaryOrUnknown(fn, summary)
+			return returnsummary.ApplyToFunctionType(fn, summary)
 		}
 		return fn
 	}

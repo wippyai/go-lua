@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -59,10 +60,10 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 		t.Fatalf("Join must be idempotent across the product domain")
 	}
 
-	if got := normalized.FunctionFacts.Summary(fnSym); !ReturnTypesEqual(got, []typ.Type{typ.String}) {
+	if got := normalized.FunctionFacts.Summary(fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary must come from canonical FunctionFacts, got %v", got)
 	}
-	if got := normalized.FunctionFacts.NarrowSummary(fnSym); !ReturnTypesEqual(got, []typ.Type{typ.String}) {
+	if got := normalized.FunctionFacts.NarrowSummary(fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("narrow summary must come from canonical FunctionFacts, got %v", got)
 	}
 	if got := normalized.FunctionFacts.FunctionType(fnSym); got == nil {

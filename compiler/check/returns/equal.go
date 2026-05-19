@@ -3,6 +3,8 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -40,13 +42,13 @@ func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 		if !ok {
 			return false
 		}
-		if !ReturnTypesEqual(af.Params, bf.Params) {
+		if !paramevidence.EqualVectors(af.Params, bf.Params) {
 			return false
 		}
-		if !ReturnTypesEqual(af.Summary, bf.Summary) {
+		if !returnsummary.Equal(af.Summary, bf.Summary) {
 			return false
 		}
-		if !ReturnTypesEqual(af.Narrow, bf.Narrow) {
+		if !returnsummary.Equal(af.Narrow, bf.Narrow) {
 			return false
 		}
 		if !typ.TypeEquals(af.Type, bf.Type) {

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -71,9 +72,9 @@ func widenFunctionFactForConvergence(prev, next api.FunctionFact) api.FunctionFa
 
 	// Narrow summaries can refine optional/non-nil returns, but a nil-only
 	// narrow observation must not erase an already-informative summary.
-	if len(out.Narrow) > 0 && !ReturnTypesAllNil(out.Narrow) {
+	if len(out.Narrow) > 0 && !returnsummary.AllNil(out.Narrow) {
 		if len(out.Summary) == 0 {
-			out.Summary = canonicalReturnVector(out.Narrow)
+			out.Summary = returnsummary.Canonical(out.Narrow)
 		} else {
 			out.Summary = widenReturnSummaryForConvergence(out.Summary, out.Narrow)
 		}
@@ -81,7 +82,7 @@ func widenFunctionFactForConvergence(prev, next api.FunctionFact) api.FunctionFa
 
 	if fn := unwrap.Function(out.Type); fn != nil {
 		if len(out.Summary) > 0 {
-			if aligned, changed := AlignFunctionTypeWithSummary(fn, out.Summary); changed {
+			if aligned, changed := returnsummary.AlignFunction(fn, out.Summary); changed {
 				out.Type = widenFunctionFactTypeForConvergence(fn, aligned)
 			}
 		} else if len(fn.Returns) > 0 {
@@ -92,149 +93,9 @@ func widenFunctionFactForConvergence(prev, next api.FunctionFact) api.FunctionFa
 	return out
 }
 
-func shouldUseMonotoneReturnJoin(a, b []typ.Type) bool {
-	for _, t := range a {
-		if hasHigherOrderGrowthRisk(t) {
-			return true
-		}
-	}
-	for _, t := range b {
-		if hasHigherOrderGrowthRisk(t) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasHigherOrderGrowthRisk(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	return value.Scan(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
-		switch n := node.(type) {
-		case *typ.Function:
-			for _, ret := range n.Returns {
-				if typeContainsFunction(ret) {
-					return true, false
-				}
-			}
-		case *typ.Record:
-			if recordHasSelfRecursiveMethod(n) {
-				return true, false
-			}
-		}
-		return false, true
-	})
-}
-
-func typeContainsFunction(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	return value.Scan(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
-		// Interface method signatures are behavioral contracts, not first-class
-		// returned function values. Ignore them for higher-order growth risk.
-		if _, ok := node.(*typ.Interface); ok {
-			return false, false
-		}
-		if _, ok := node.(*typ.Function); ok {
-			return true, false
-		}
-		return false, true
-	})
-}
-
-func recordHasSelfRecursiveMethod(r *typ.Record) bool {
-	if r == nil {
-		return false
-	}
-	for _, f := range r.Fields {
-		if methodTypeHasSelfRecursiveReturn(f.Type, r) {
-			return true
-		}
-	}
-	if r.HasMapComponent() && methodTypeHasSelfRecursiveReturn(r.MapValue, r) {
-		return true
-	}
-	return false
-}
-
-func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
-	if t == nil || owner == nil {
-		return false
-	}
-	return value.Scan(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
-		// Interface method signatures are behavioral contracts, not concrete
-		// record method bodies. Treating them as self-recursive growth risk
-		// over-applies monotone widening and blocks valid summary refinement.
-		if _, ok := node.(*typ.Interface); ok {
-			return false, false
-		}
-		fn, ok := node.(*typ.Function)
-		if !ok {
-			return false, true
-		}
-		for _, ret := range fn.Returns {
-			if ret == nil {
-				continue
-			}
-			if subtype.IsSubtype(ret, owner) || subtype.IsSubtype(owner, ret) ||
-				value.ExtendsRecord(ret, owner) || value.ExtendsRecord(owner, ret) {
-				return true, false
-			}
-		}
-		return false, true
-	})
-}
-
-func joinReturnVectorsMonotone(a, b []typ.Type) []typ.Type {
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
-	maxLen := len(a)
-	if len(b) > maxLen {
-		maxLen = len(b)
-	}
-	out := make([]typ.Type, maxLen)
-	for i := 0; i < maxLen; i++ {
-		var ai, bi typ.Type
-		if i < len(a) {
-			ai = a[i]
-		}
-		if i < len(b) {
-			bi = b[i]
-		}
-		out[i] = joinReturnTypeMonotone(ai, bi)
-	}
-	return out
-}
-
-func joinReturnTypeMonotone(a, b typ.Type) typ.Type {
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
-	if typ.TypeEquals(a, b) {
-		return a
-	}
-	// Keep widening monotone: if one side is already an upper bound, keep it.
-	if subtype.IsSubtype(a, b) || value.ExtendsRecord(a, b) || value.ElidesOptional(a, b) {
-		return b
-	}
-	if subtype.IsSubtype(b, a) || value.ExtendsRecord(b, a) || value.ElidesOptional(b, a) {
-		return a
-	}
-	return typ.JoinPreferNonSoft(a, b)
-}
-
 func widenReturnSummaryForConvergence(prev, next []typ.Type) []typ.Type {
-	prev = normalizeAndPruneReturnVector(prev)
-	next = normalizeAndPruneReturnVector(next)
+	prev = returnsummary.NormalizeAndPrune(prev)
+	next = returnsummary.NormalizeAndPrune(next)
 	if len(prev) == 0 {
 		return widenReturnVectorForConvergence(next)
 	}
@@ -242,11 +103,11 @@ func widenReturnSummaryForConvergence(prev, next []typ.Type) []typ.Type {
 		return widenReturnVectorForConvergence(prev)
 	}
 
-	merged := MergeReturnSummary(prev, next)
+	merged := returnsummary.Merge(prev, next)
 	if returnVectorUnsafePrecisionDrop(prev, merged) {
 		merged = prev
 	}
-	return widenReturnVectorForConvergence(normalizeAndPruneReturnVector(merged))
+	return widenReturnVectorForConvergence(returnsummary.NormalizeAndPrune(merged))
 }
 
 func returnVectorUnsafePrecisionDrop(prev, merged []typ.Type) bool {
@@ -1178,10 +1039,10 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 			mergedReturns[i] = typ.JoinReturnSlot(normalizedPrev[i], normalizedNext[i])
 		}
 	}
-	if ReturnTypesEqual(prevFn.Returns, mergedReturns) {
+	if returnsummary.Equal(prevFn.Returns, mergedReturns) {
 		return prevFn, true
 	}
-	if ReturnTypesEqual(nextFn.Returns, mergedReturns) {
+	if returnsummary.Equal(nextFn.Returns, mergedReturns) {
 		return nextFn, true
 	}
 
@@ -1260,7 +1121,7 @@ func maybeWidenTypeForConvergence(t typ.Type) typ.Type {
 	if t == nil {
 		return nil
 	}
-	if !hasHigherOrderGrowthRisk(t) {
+	if !returnsummary.HasHigherOrderGrowthRisk(t) {
 		return t
 	}
 	return subtype.WidenForInference(t)

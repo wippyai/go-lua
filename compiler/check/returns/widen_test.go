@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -116,7 +117,7 @@ func TestWidenFacts_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
 	}
 }
 
-func TestMergeReturnSummary_StopsRecursiveContainerReturnGrowth(t *testing.T) {
+func TestReturnSummaryMerge_StopsRecursiveContainerReturnGrowth(t *testing.T) {
 	recordMap := func(value typ.Type) typ.Type {
 		return typ.NewRecord().MapComponent(typ.String, value).Build()
 	}
@@ -158,7 +159,7 @@ func TestMergeReturnSummary_StopsRecursiveContainerReturnGrowth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			merged := MergeReturnSummary([]typ.Type{tt.stable}, []typ.Type{tt.growth})
+			merged := returnsummary.Merge([]typ.Type{tt.stable}, []typ.Type{tt.growth})
 			if len(merged) != 1 || !typ.TypeEquals(merged[0], tt.stable) {
 				t.Fatalf("expected stable recursive return shape, got %v", merged)
 			}
@@ -166,11 +167,11 @@ func TestMergeReturnSummary_StopsRecursiveContainerReturnGrowth(t *testing.T) {
 	}
 }
 
-func TestMergeReturnSummary_KeepsNonRecursiveContainerRefinement(t *testing.T) {
+func TestReturnSummaryMerge_KeepsNonRecursiveContainerRefinement(t *testing.T) {
 	stable := typ.NewMap(typ.String, typ.Any)
 	refined := typ.NewMap(typ.String, typ.String)
 
-	merged := MergeReturnSummary([]typ.Type{stable}, []typ.Type{refined})
+	merged := returnsummary.Merge([]typ.Type{stable}, []typ.Type{refined})
 	if len(merged) != 1 || !typ.TypeEquals(merged[0], refined) {
 		t.Fatalf("expected non-recursive map refinement to survive, got %v", merged)
 	}
@@ -442,45 +443,5 @@ func TestWidenLiteralSigs_NormalizesNilBranch(t *testing.T) {
 	want := maybeWidenFunctionForConvergence(sig)
 	if got == nil || !typ.TypeEquals(got, want) {
 		t.Fatalf("expected nil-branch literal signature %v to be normalized to %v, got %v", sig, want, got)
-	}
-}
-
-func TestTypeContainsFunction_IgnoresInterfaceMethodSignatures(t *testing.T) {
-	iface := typ.NewInterface("Reader", []typ.Method{
-		{
-			Name: "next",
-			Type: typ.Func().
-				Param("self", typ.Self).
-				Returns(typ.Func().Returns(typ.String).Build()).
-				Build(),
-		},
-	})
-	if typeContainsFunction(iface) {
-		t.Fatalf("expected interface method signatures to be ignored, got true")
-	}
-}
-
-func TestHasHigherOrderGrowthRisk_DetectsFunctionReturningFunction(t *testing.T) {
-	tp := typ.Func().
-		Returns(typ.Func().Returns(typ.String).Build()).
-		Build()
-	if !hasHigherOrderGrowthRisk(tp) {
-		t.Fatalf("expected higher-order growth risk to be detected")
-	}
-}
-
-func TestMethodTypeHasSelfRecursiveReturn_IgnoresInterfaceMethods(t *testing.T) {
-	owner := typ.NewRecord().Field("id", typ.String).Build()
-	methodType := typ.NewInterface("HasBuild", []typ.Method{
-		{
-			Name: "build",
-			Type: typ.Func().
-				Param("self", typ.Self).
-				Returns(owner).
-				Build(),
-		},
-	})
-	if methodTypeHasSelfRecursiveReturn(methodType, owner) {
-		t.Fatalf("expected interface method signatures to be ignored for self-recursive detection")
 	}
 }

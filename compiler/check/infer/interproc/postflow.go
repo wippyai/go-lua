@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -65,10 +66,10 @@ func StoreFactsFromResult(
 	if fnType == nil {
 		return
 	}
-	narrowSummary := returns.NormalizeReturnVector(fnType.Returns)
+	narrowSummary := returnsummary.Normalize(fnType.Returns)
 	if snapNarrow := narrowSummarySnapshotForSymbol(store, result, parent, fnSym); len(snapNarrow) > 0 {
-		narrowSummary = returns.MergeReturnSummary(narrowSummary, snapNarrow)
-		if aligned, changed := returns.AlignFunctionTypeWithSummary(fnType, narrowSummary); changed {
+		narrowSummary = returnsummary.Merge(narrowSummary, snapNarrow)
+		if aligned, changed := returnsummary.AlignFunction(fnType, narrowSummary); changed {
 			fnType = aligned
 		}
 	}

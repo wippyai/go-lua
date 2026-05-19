@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/typ"
@@ -104,9 +105,9 @@ func (i *Inferencer) runSCCIteration(
 		}
 		newReturn := i.inferReturnForFunction(run, info, returnVectors, localFuncs)
 		oldReturn := returnVectors[sym]
-		merged := returns.MergeReturnSummary(oldReturn, newReturn)
+		merged := returnsummary.Merge(oldReturn, newReturn)
 		next[sym] = merged
-		if !returns.ReturnTypesEqual(merged, oldReturn) {
+		if !returnsummary.Equal(merged, oldReturn) {
 			changed = true
 		}
 	}

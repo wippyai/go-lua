@@ -161,6 +161,68 @@ Verification for this slice so far:
   Wippy binary build, then exits non-zero on the existing external lint targets:
   session 8 errors, agent/src 8 errors, docker-demo 21 errors and 2 warnings.
 
+## 2026-05-19 Return Summary Domain Checkpoint
+
+The next rectification slice moved return-vector policy and function-signature
+return alignment out of `compiler/check/returns` and into
+`compiler/check/domain/returnsummary`.
+
+Moved domain laws:
+
+- return-vector equality and nil-slot canonicalization;
+- return-vector normalization with soft-union pruning;
+- directional refinement, optional elision, record extension, and nil-slot fill;
+- concrete-over-soft summary preference and stale falsy map-key refinement;
+- nested nil-only regression protection;
+- recursive structural-growth stopping for table builders;
+- nested `never` artifact repair;
+- higher-order monotone summary merge for function-returning-function and
+  self-recursive method shapes;
+- summary-to-function-return alignment and conservative unknown return
+  attachment for otherwise returnless callable values.
+
+Production callers now import `domain/returnsummary` directly. The old
+`returns.ReturnTypes*`, `returns.MergeReturnSummary`,
+`returns.NormalizeReturnVector*`, `returns.AlignFunctionTypeWithSummary`,
+`returns.WithSummaryOrUnknown`, `canonicalReturnVector`, and
+`normalizeAndPruneReturnVector` names were deleted instead of wrapped.
+
+Current package ownership:
+
+```text
+domain/value         = reusable structural value relations
+domain/paramevidence = parameter evidence lattice, equality, and parameter-slot refinement
+domain/returnsummary = return-vector lattice and function-return alignment
+returns              = function-fact product orchestration and interproc widening
+```
+
+This keeps one clear abstract-interpreter data flow:
+
+1. flow and return inference produce candidate return evidence;
+2. `domain/returnsummary` decides how return vectors normalize, compare, merge,
+   and align to callable types;
+3. `returns` only decides when function-fact products are joined or widened;
+4. Salsa snapshots continue to observe the canonical fact product rather than a
+   compatibility mirror.
+
+This is a flash migration, not a bridge. Production code no longer calls the old
+return-summary helpers through `returns`.
+
+Verification for this slice so far:
+
+- `go test ./compiler/check/domain/returnsummary ./compiler/check/returns`
+  passes.
+- `go test ./compiler/check/...` passes.
+- `go test ./...` passes.
+- `git diff --check` passes.
+- `go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction
+  -benchmem -count=3` reports about 1.15 ms/op, 882 KB/op, and 9390
+  allocs/op on this machine.
+- Standard `../scripts/verify-suite.sh` passes go-lua checker tests and builds
+  the Wippy binary, then exits non-zero on the known external pinned lint
+  targets: session 8 errors, agent/src 9 errors, docker-demo 21 errors and
+  2 warnings.
+
 ## Goal
 
 The checker should read as one abstract interpreter over a product domain.

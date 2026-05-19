@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
@@ -152,7 +153,7 @@ func (i *Inferencer) collectAllReturnVectors(ctx *returnInferenceContext) map[cf
 		if sym == 0 {
 			continue
 		}
-		normalized := returns.NormalizeReturnVectorInPlace(ctx.returnVectors[sym])
+		normalized := returnsummary.NormalizeOwned(ctx.returnVectors[sym])
 		if len(normalized) == 0 {
 			continue
 		}
@@ -173,7 +174,7 @@ func (i *Inferencer) returnVectorFromSnapshot(
 	if len(facts) == 0 {
 		return nil
 	}
-	normalized := returns.NormalizeReturnVector(facts.Summary(sym))
+	normalized := returnsummary.Normalize(facts.Summary(sym))
 	if len(normalized) == 0 {
 		return nil
 	}
@@ -190,7 +191,7 @@ func (i *Inferencer) resolveLocalFunctionReturns(
 	}
 
 	// Keep the current SCC-derived return vector unless it is still unknown-only.
-	returnVector := returns.NormalizeReturnVectorInPlace(allReturnVectors[sym])
+	returnVector := returnsummary.NormalizeOwned(allReturnVectors[sym])
 	if !typ.IsUnknownOnlyOrEmpty(returnVector) {
 		return returnVector
 	}
@@ -259,7 +260,7 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 			if localInfo := ctx.localFuncs[target.Symbol]; localInfo != nil && len(localInfo.ParameterEvidence) > 0 && sig != nil {
 				sig = paramevidence.MergeIntoSignature(fnExpr, localInfo.ParameterEvidence, sig)
 			}
-			if fnType := returns.WithSummaryOrUnknown(sig, returnVector); fnType != nil {
+			if fnType := returnsummary.ApplyToFunctionType(sig, returnVector); fnType != nil {
 				overlay[target.Symbol] = fnType
 			}
 		}
@@ -987,7 +988,7 @@ func functionFactsFromReturnVectors(returnVectors map[cfg.SymbolID][]typ.Type) a
 		if sym == 0 {
 			continue
 		}
-		returnVector := returns.NormalizeReturnVectorInPlace(returnVectors[sym])
+		returnVector := returnsummary.NormalizeOwned(returnVectors[sym])
 		if len(returnVector) == 0 {
 			continue
 		}

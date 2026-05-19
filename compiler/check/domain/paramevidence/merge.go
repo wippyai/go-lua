@@ -91,6 +91,20 @@ func NormalizeVector(evidence []typ.Type) []typ.Type {
 	return evidence
 }
 
+// EqualVectors reports whether two normalized evidence vectors are structurally
+// equal.
+func EqualVectors(a, b []typ.Type) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !typ.TypeEquals(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func hasNonNilEvidence(evidence []typ.Type) bool {
 	for _, observed := range evidence {
 		if observed != nil {

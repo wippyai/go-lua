@@ -44,6 +44,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
@@ -285,7 +286,7 @@ func (i *Inferencer) buildLocalFunctionTypes(
 			}
 		}
 		if returnVector := returnVectors[sym]; len(returnVector) > 0 {
-			if withSummary := returns.WithSummaryOrUnknown(fnType, returnVector); withSummary != nil {
+			if withSummary := returnsummary.ApplyToFunctionType(fnType, returnVector); withSummary != nil {
 				fnType = withSummary
 			}
 		}
@@ -431,7 +432,7 @@ func collectReturnTypes(
 		returnTypes = joinReturnTypes(returnTypes, types)
 	})
 
-	return returns.NormalizeReturnVectorInPlace(returnTypes)
+	return returnsummary.NormalizeOwned(returnTypes)
 }
 
 // synthesizeReturnExprs computes types for a single return statement's expressions.
@@ -516,7 +517,7 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	)
 	declared := collectReturnTypes(fnGraph, declSynth, nil, skipUnresolvedLocalCall)
 
-	return returns.MergeReturnSummary(declared, narrowed)
+	return returnsummary.Merge(declared, narrowed)
 }
 
 func (i *Inferencer) skipUnresolvedLocalReturnCall(ctx *returnInferenceContext) func(ast.Expr) bool {
@@ -539,7 +540,7 @@ func (i *Inferencer) skipUnresolvedLocalReturnCall(ctx *returnInferenceContext) 
 		if sym == 0 || ctx.localFuncs[sym] == nil {
 			return false
 		}
-		return typ.IsUnknownOnlyOrEmpty(returns.NormalizeReturnVector(ctx.returnVectors[sym]))
+		return typ.IsUnknownOnlyOrEmpty(returnsummary.Normalize(ctx.returnVectors[sym]))
 	}
 }
 

@@ -274,25 +274,25 @@ func TestWidenMap_TableTopUpperBoundAbsorbsAnyObservation(t *testing.T) {
 	}
 }
 
+func TestEqualVectors(t *testing.T) {
+	if !EqualVectors([]typ.Type{typ.String, typ.Nil}, []typ.Type{typ.String, typ.Nil}) {
+		t.Fatal("expected equal evidence vectors")
+	}
+	if EqualVectors([]typ.Type{typ.String}, []typ.Type{typ.String, typ.Nil}) {
+		t.Fatal("expected different lengths to be unequal")
+	}
+	if EqualVectors([]typ.Type{typ.String}, []typ.Type{typ.Number}) {
+		t.Fatal("expected different evidence slots to be unequal")
+	}
+}
+
 func evidenceMapsEqual(a, b map[cfg.SymbolID][]typ.Type) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for _, sym := range cfg.SortedSymbolIDs(a) {
 		right, ok := b[sym]
-		if !ok || !evidenceVectorsEqual(a[sym], right) {
-			return false
-		}
-	}
-	return true
-}
-
-func evidenceVectorsEqual(a, b []typ.Type) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if !typ.TypeEquals(a[i], b[i]) {
+		if !ok || !EqualVectors(a[sym], right) {
 			return false
 		}
 	}
