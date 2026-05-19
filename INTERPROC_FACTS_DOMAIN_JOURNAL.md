@@ -1994,6 +1994,179 @@ The main non-Salsa gains are:
 - removing compatibility projections from hot publication paths,
 - making equality structural instead of repair-driven.
 
+### Concrete Salsa Wiring Plan
+
+The final design should classify every current cache and summary producer before
+implementation. The goal is not "put everything in Salsa". The goal is exact
+incremental boundaries and no hidden semantic cache.
+
+| Current Component | Final Role | Cache Kind | Owner |
+|---|---|---|---|
+| `api.FuncKey{GraphID, ParentHash}` | function analysis identity | Salsa query key | pipeline/analysis engine |
+| `FuncResultQ` | analyze one function under one parent scope | Salsa query | analysis engine |
+| `snapshotInputs.facts` | canonical interproc fact snapshot | Salsa input | store/facts domain boundary |
+| `snapshotInputs.refinements` | function refinement/effect snapshot | Salsa input | effect/refinement boundary |
+| `snapshotInputs.constructorFields` | constructor field snapshot | Salsa input | memory/constructor boundary |
+| `types/query/core.Engine` | pure type operations | query engine cache | type-query layer |
+| `types/flow.ProductDomain` | branch-local narrowing algebra | ephemeral domain state | abstract state / flow domain |
+| `paramhints.collectParamUses` | body-demand summary | graph-derived Salsa query | graph summary layer |
+| `ProjectHintsToParamUse` | parameter evidence projection | domain operation over cached body summary | parameter domain |
+| `PreCache` / `NarrowCache` | repeated expression synthesis inside one solve | per-function local cache | transfer/query phase |
+| `FunctionTypeCache` | local function specialization during one solve | per-function local cache unless key is immutable | function analysis |
+| `StableFunctionSnapshot` | read canonical function fact snapshot | Salsa query/input read, not ad hoc map | function fact domain |
+| flow solution narrow caches | repeated solved-state query | solved-state local cache | query view |
+| path suffix/root caches | identity interning | local/global intern cache if immutable | memory/location layer |
+
+This table is a migration contract. If a component does not appear here or in a
+successor table before coding, adding a cache for it should be rejected.
+
+### Query Dependency Contract
+
+`FuncResultQ` must read all semantic dependencies through tracked inputs or
+tracked pure queries.
+
+Required reads:
+
+- graph bundle by `GraphID`,
+- parent scope by `ParentHash`,
+- canonical interproc facts by `GraphKey`,
+- function refinements/effects by owning symbol key,
+- constructor fields by owning symbol key,
+- manifest/module environment through manifest inputs,
+- graph-derived body summaries through graph summary queries,
+- pure type operations through the type-query layer.
+
+Forbidden reads:
+
+- mutable `InterprocPrev` maps without snapshot input tracking,
+- current-iteration `InterprocNext` except through the canonical overlay input
+  contract,
+- ad hoc stable snapshot maps inside synthesis,
+- source AST rescans for reusable graph summaries,
+- global variables whose mutation does not bump a tracked input.
+
+When a function reads a fact for a graph or symbol, the query database must know
+that dependency. When the fact does not change semantically, the input should not
+be rewritten. This gives both correctness and performance: no stale result, no
+unnecessary invalidation.
+
+### Snapshot Update Protocol
+
+The store should be the only bridge from fixpoint state to Salsa inputs.
+
+```text
+producer emits InterprocDelta
+  -> FactsDomain.Join/Widen into InterprocNext
+  -> iteration boundary computes canonical InterprocPrev
+  -> compare canonical old/new with structural equality
+  -> set only changed snapshot inputs
+  -> Salsa revalidates dependent FuncResultQ entries
+```
+
+Required properties:
+
+- `setFacts` receives canonical facts only;
+- equality is structural and does not normalize;
+- empty facts are represented explicitly enough to clear stale inputs;
+- per-symbol inputs are used only for facts whose key is truly symbol-local;
+- parent-scoped facts use `GraphKey` or `SymbolKey`, not raw `SymbolID`;
+- current-iteration overlay is either part of the canonical input contract or is
+  not visible to `FuncResultQ`.
+
+This avoids manual cache clearing as a correctness mechanism. Clearing may still
+exist as a memory-pressure tool, but a correct result must not depend on it.
+
+### Graph Summary Queries
+
+Several expensive operations are currently repeated because syntax-derived
+summaries are computed by the consumer. These should become graph summary
+queries.
+
+Recommended summaries:
+
+- parameter-use summary by `GraphID` and function symbol,
+- return-site summary by `GraphID`,
+- local function/call graph summary by `GraphID`,
+- table mutator call summary by `GraphID`,
+- key-collector summary by `GraphID`,
+- captured variable/path summary by `GraphID`,
+- normalized transfer program by `GraphID` plus declared environment identity.
+
+These queries read immutable graph/source data and produce immutable summaries.
+They do not read interproc facts and they do not infer types. The analysis query
+then combines those summaries with parent scope and interproc snapshots.
+
+### Hot Local Cache Contract
+
+Some caches should remain local because they are only useful during one solve.
+
+Local cache keys must include:
+
+- phase (`declared`, `preflow`, `narrow`, or final query),
+- expression identity or normalized instruction identity,
+- CFG point,
+- parent scope identity when the answer can depend on scope,
+- solved-state token when the answer depends on flow facts.
+
+Local caches must not:
+
+- survive across `FuncResultQ` computations unless the key is fully immutable,
+- contain mutable domain state,
+- publish facts,
+- suppress dependency tracking by reading snapshots behind Salsa's back.
+
+This keeps hot expression synthesis fast without making it a second semantic
+store.
+
+### Type Query Layer Contract
+
+The core type query engine is already the right kind of abstraction for
+field/index/operator/subtype queries: pure inputs, stable type identities, and
+memoized expensive structural work.
+
+Final rules:
+
+- checker domains may call pure type queries;
+- type queries must not read checker store state;
+- type query caches are performance-only;
+- type query answers must be invalidated or keyed by all external type-provider
+  inputs they depend on;
+- domain law tests should not depend on query cache hit order.
+
+This means Salsa does not replace `types/query/core`. Salsa coordinates checker
+analysis dependencies. The type query engine owns repeated structural type
+operations.
+
+### Performance Proof Requirements
+
+A performance correction is accepted only with a before/after profile or
+benchmark that names the reduced work.
+
+Required measurements for the flash migration:
+
+- large-function checker benchmark,
+- representative interproc convergence fixture,
+- production replay wall time,
+- allocation profile for hot joins and expression synthesis,
+- cache hit/miss counters for `FuncResultQ` and graph summary queries,
+- number of snapshot inputs rewritten per fixpoint iteration.
+
+Expected improvements:
+
+- fewer `collectParamUses` rescans,
+- fewer repeated local function snapshot syntheses,
+- fewer map allocations in no-op fact joins,
+- fewer invalidated function queries after no-op fact updates,
+- fewer expression synthesis calls during narrow/final query phases.
+
+Regression rule:
+
+```text
+If a performance win comes from accepting less precise facts, it is invalid.
+If a precision win causes repeated semantic recomputation, the cache boundary is
+wrong and must be fixed before the flash migration lands.
+```
+
 ## Weak Points To Fix In The Design
 
 ### 1. Domain Laws Are Not Named
