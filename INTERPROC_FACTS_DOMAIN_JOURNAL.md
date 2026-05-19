@@ -147,6 +147,35 @@ That sentence is the guardrail.
 If a function violates one of these rules, it is a design smell even if the
 behavioral test passes.
 
+## One-Page Doctrine
+
+The final checker should fit in this operational doctrine.
+
+```text
+1. Source syntax is lowered once into graph-indexed transfer IR.
+2. Transfer IR is interpreted over one product AbstractState.
+3. AbstractState owns every persistent intraprocedural fact.
+4. Domain objects own every combine/refine/widen law.
+5. Queries are read-only views over solved AbstractState.
+6. Function inference publishes immutable InterprocDelta values.
+7. FactsDomain is the only interprocedural merge/widen authority.
+8. Salsa tracks immutable inputs and query dependencies.
+```
+
+Everything else is implementation detail.
+
+The doctrine gives a direct review test:
+
+- If code lowers syntax, it belongs in graph/IR/extract.
+- If code changes state, it is transfer.
+- If code combines facts, it is a domain operation.
+- If code forces convergence, it is widening.
+- If code answers a question, it is a query.
+- If code crosses function/module boundaries, it emits or consumes a delta.
+- If code caches, it must name immutable inputs and invalidation.
+
+No rule should need to be implemented twice under different helper names.
+
 ## Canonical Dataflow Contract
 
 The final dataflow should have explicit boundary objects.
@@ -414,6 +443,78 @@ This separation is important:
 - `Transfer` does not know interproc storage.
 - `Query` does not mutate state.
 - `Normalize` is explicit and not hidden in equality.
+
+## Domain Invariant Ledger
+
+Each domain needs invariants that can be tested independently from the full
+checker. These are the invariants that should guide the flash migration.
+
+### Value Domain Invariants
+
+- `unknown` means unresolved evidence and must not be silently dropped at
+  return, branch, table, or relation joins.
+- `any` means dynamic top and must not satisfy concrete contracts without an
+  explicit proof, guard, schema, or cast.
+- `nil` is a Lua value; absent field is structural absence; optional field is a
+  type-level allowance for absence/nil depending on context.
+- soft evidence is lower authority than hard evidence, but `nil` alone does not
+  erase a soft structured shape.
+- open row-tail field access produces row-tail evidence; closed missing field
+  does not.
+- table top absorbs table-like precision only in domains where table-likeness is
+  the intended upper bound, not as a general precision eraser.
+
+### Memory Domain Invariants
+
+- every fact has exactly one canonical location;
+- child-path facts outrank parent-derived fallback evidence for the same path;
+- alias replay preserves identity and dominance;
+- mutation replay preserves operator kind;
+- nil overwrite and field deletion are represented explicitly;
+- branch-local mutation does not leak unless control-flow dominance proves it.
+
+### Relation Domain Invariants
+
+- tuple/path relations are first-class facts;
+- relation facts survive assignment, wrapper forwarding, and module export only
+  when slot/path identity is preserved;
+- relation narrowing is bidirectional only when the relation declares it;
+- a guard helper such as `is_nil` can apply a relation but cannot invent one.
+
+### Effect Domain Invariants
+
+- effects are summaries, not post-hoc type rewrites;
+- effect application goes through transfer;
+- captured effects preserve location, operator kind, and provenance;
+- termination effects affect reachability before value queries;
+- external contract effects are typed inputs, not hardcoded checker behavior.
+
+### Parameter Evidence Invariants
+
+- call observations are weaker than body obligations;
+- body obligations are inferred only from actual body demand;
+- source annotations remain authoritative;
+- soft annotations can refine but not override hard proof;
+- recursive parameter evidence widens at SCC/interproc boundaries only;
+- function-fact params and param hints use the same evidence order.
+
+### Return Summary Invariants
+
+- tuple arity is explicit;
+- nil padding is explicit;
+- unknown return evidence is not bottom;
+- relation summaries travel with tuple summaries;
+- recursive container growth has one widening policy;
+- narrow summary is derived from solved flow facts, not a second stored truth.
+
+### Interproc Facts Invariants
+
+- producers emit immutable deltas;
+- store merge uses `FactsDomain.Join`;
+- fixpoint boundary uses `FactsDomain.Widen`;
+- equality compares canonical state only;
+- derived views are not write targets;
+- snapshot inputs mirror canonical read state exactly.
 
 ## Dataflow Walkthroughs
 
@@ -1425,6 +1526,120 @@ Every cache must state:
 
 If the cache depends on phase call order, it is not SOTA.
 
+## Design Review Decision Tree
+
+Every future rule should be classified before code is written.
+
+### Is It About What A Type Means?
+
+Examples:
+
+- `unknown` vs `any`,
+- open row tail,
+- nilability,
+- truthiness,
+- soft evidence,
+- table top.
+
+Owner:
+
+```text
+ValueDomain
+```
+
+Reject if implemented in return inference, call checking, or postflow writer.
+
+### Is It About Where A Fact Lives?
+
+Examples:
+
+- field path,
+- dynamic index,
+- alias target,
+- tuple slot,
+- captured mutation target,
+- receiver `self`.
+
+Owner:
+
+```text
+MemoryDomain / Location model
+```
+
+Reject if every producer computes its own path identity.
+
+### Is It About How Facts Combine?
+
+Examples:
+
+- branch join,
+- parameter evidence merge,
+- return vector merge,
+- function fact merge,
+- recursive shape cutoff.
+
+Owner:
+
+```text
+The domain that owns that fact family
+```
+
+Reject if implemented as a producer-specific helper.
+
+### Is It About When Analysis Converges?
+
+Examples:
+
+- loop widening,
+- local function SCC widening,
+- interproc widening,
+- recursive type growth.
+
+Owner:
+
+```text
+Widen operation of the relevant domain
+```
+
+Reject if hidden inside equality, query, or local preference helpers.
+
+### Is It About What A Call Does?
+
+Examples:
+
+- mutates a table,
+- narrows an argument,
+- returns `(value, err)`,
+- terminates,
+- invokes a callback,
+- collects keys.
+
+Owner:
+
+```text
+EffectDomain + RelationDomain + MemoryDomain transfer
+```
+
+Reject if modeled as a one-off postprocessing pass.
+
+### Is It About Reusing Work?
+
+Examples:
+
+- graph summaries,
+- parameter-use summaries,
+- function result,
+- type operator query,
+- shape classification.
+
+Owner:
+
+```text
+Salsa query or explicit local cache with named inputs
+```
+
+Reject if invalidation depends on call order or hidden mutable state.
+
 ## Edge-Case Matrix
 
 The migration must consider edge cases beyond the failures already seen. The
@@ -1531,6 +1746,88 @@ The key rule:
 
 Orchestration packages may decide when a fact is produced. Domain packages
 decide what that fact means and how it combines.
+
+## Minimum Final-Shape API Sketch
+
+This is not a transitional API. It is the smallest final surface that should
+exist after the flash migration.
+
+```go
+// compiler/check/analysis
+type Engine struct {
+    Graphs GraphProvider
+    Domains Domains
+    Queries Queries
+}
+
+func (e *Engine) AnalyzeFunction(input FunctionInput) FunctionResult
+```
+
+```go
+// compiler/check/flowstate
+type AbstractState struct {
+    Memory MemoryState
+    Values ValueFacts
+    Numeric NumericFacts
+    Shape ShapeFacts
+    Relations RelationFacts
+    Effects EffectFacts
+    Termination TerminationFacts
+}
+
+func (s AbstractState) Join(other AbstractState, d Domains) AbstractState
+func (s AbstractState) Widen(next AbstractState, d Domains) AbstractState
+```
+
+```go
+// compiler/check/transfer
+type Instruction interface {
+    Apply(state flowstate.AbstractState, d Domains) flowstate.AbstractState
+}
+```
+
+```go
+// compiler/check/domain
+type Domains struct {
+    Value ValueDomain
+    Memory MemoryDomain
+    Relation RelationDomain
+    Effect EffectDomain
+    Parameter ParameterEvidenceDomain
+    Return ReturnSummaryDomain
+    Function FunctionFactDomain
+    Interproc InterprocFactsDomain
+}
+```
+
+```go
+// compiler/check/domain/interproc
+type InterprocFactsDomain interface {
+    Normalize(api.Facts) api.Facts
+    Leq(a, b api.Facts) bool
+    Join(a, b api.Facts) api.Facts
+    Widen(prev, next api.Facts) api.Facts
+    Equal(a, b api.Facts) bool
+}
+```
+
+```go
+// compiler/check/query
+type View interface {
+    TypeAt(point cfg.Point, loc memory.Location) typ.Type
+    RelationAt(point cfg.Point, rel relation.Query) relation.Answer
+    EffectAt(point cfg.Point, call CallSite) effect.Summary
+}
+```
+
+The important part is not exact names. The important part is that:
+
+- state is one product;
+- transfer mutates only that product;
+- domains own all combination;
+- query is read-only;
+- interproc publication is delta-based;
+- no package owns a shadow merge policy.
 
 ## Verification Model For The Future Migration
 
