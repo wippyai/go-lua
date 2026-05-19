@@ -1,6 +1,7 @@
 package regression
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
@@ -1788,6 +1789,604 @@ return budget("default")
 	}
 }
 
+func TestExternalLint_CompressModelInfoNumericHelpersStayNonNil(t *testing.T) {
+	modelsModule := testutil.CheckAndExport(`
+local models = {}
+
+function models.get_by_name(name)
+	if not name then
+		return nil, "name required"
+	end
+	return {
+		max_tokens = 8000,
+		output_tokens = 1000,
+	}, nil
+end
+
+return models
+`, "models", testutil.WithStdlib())
+	if modelsModule.HasError() {
+		t.Fatalf("models module errors: %v", testutil.ErrorMessages(modelsModule.Errors))
+	}
+
+	source := `
+local models = require("models")
+
+local compress = {
+	_models = models,
+}
+
+local CONFIG = {
+	chars_per_token = 4,
+	prompt_buffer_tokens = 500,
+	context_safety_margin = 0.1,
+	output_buffer_tokens = 200,
+}
+
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * CONFIG.chars_per_token)
+end
+
+local function chars_to_tokens(chars)
+	return math.floor((tonumber(chars) or 0) / CONFIG.chars_per_token)
+end
+
+local function get_model_info(model_name, mock_model_info)
+	if mock_model_info then
+		return mock_model_info, nil
+	end
+
+	local model_card, err = compress._models.get_by_name(model_name)
+	if not model_card then
+		return nil, err
+	end
+
+	local max_context_tokens = model_card.max_tokens or 8000
+	local max_output_tokens = model_card.output_tokens or 1000
+	local usable_input_tokens = max_context_tokens - max_output_tokens - CONFIG.prompt_buffer_tokens
+	local usable_input_chars = tokens_to_chars(usable_input_tokens)
+	local safe_input_chars = math.floor(usable_input_chars * (1 - CONFIG.context_safety_margin))
+	local safe_output_chars = tokens_to_chars(max_output_tokens)
+
+	return {
+		max_context_tokens = max_context_tokens,
+		max_output_tokens = max_output_tokens,
+		usable_input_chars = safe_input_chars,
+		usable_input_tokens = chars_to_tokens(safe_input_chars),
+		max_output_chars = safe_output_chars,
+	}, nil
+end
+
+local function calculate_safe_max_tokens(target_chars, model_info)
+	local needed_tokens = chars_to_tokens(target_chars) + CONFIG.output_buffer_tokens
+	return math.min(needed_tokens, tonumber(model_info.max_output_tokens) or 1000)
+end
+
+function compress.to_size(model_name, content, target_chars, options, mock_model_info)
+	options = options or {}
+	local model_info, err = get_model_info(model_name, mock_model_info)
+	if err then
+		return nil, err
+	end
+	model_info = assert(model_info)
+	return calculate_safe_max_tokens(target_chars, model_info)
+end
+
+function compress.get_stats(model_name, content, target_chars, mock_model_info)
+	local model_info, err = get_model_info(model_name, mock_model_info)
+	if err then
+		return nil, err
+	end
+
+	local content_chars = #content
+	return {
+		model_max_context_tokens = model_info.max_context_tokens,
+		model_max_output_tokens = model_info.max_output_tokens,
+		model_usable_input_chars = model_info.usable_input_chars,
+		model_max_output_chars = model_info.max_output_chars,
+		fits_in_context = content_chars <= model_info.usable_input_chars,
+		safe_max_tokens_for_target = calculate_safe_max_tokens(target_chars, model_info),
+	}
+end
+
+return compress.to_size("model", "content", 1000, nil, nil)
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("models", modelsModule))
+	if result.HasError() {
+		t.Fatalf("expected compress-style numeric helpers to keep defaulted tokens non-nil, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_UnionModelResolverGuardKeepsNumericDefaultsNonNil(t *testing.T) {
+	source := `
+local resolver
+if unknown_condition then
+	resolver = {
+		get_by_name = function(model_name)
+			return {
+				max_tokens = 128000,
+				output_tokens = 16384,
+			}, nil
+		end,
+	}
+else
+	resolver = {
+		get_by_name = function(model_name)
+			return nil, "Model not found"
+		end,
+	}
+end
+
+local function get_model_info(model_name)
+	local model_card, err = resolver.get_by_name(model_name)
+	if not model_card then
+		return nil, err
+	end
+
+	local max_context_tokens = model_card.max_tokens or 8000
+	local max_output_tokens = model_card.output_tokens or 1000
+	return max_context_tokens - max_output_tokens - 500
+end
+
+return get_model_info("model")
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected guarded union resolver return to keep numeric defaults non-nil, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_MutableModelResolverFieldGuardKeepsNumericDefaultsNonNil(t *testing.T) {
+	source := `
+local compress = {
+	_models = {
+		get_by_name = function(model_name)
+			return {
+				max_tokens = 128000,
+				output_tokens = 16384,
+			}, nil
+		end,
+	},
+}
+
+if unknown_condition then
+	compress._models = {
+		get_by_name = function(model_name)
+			return nil, "Model not found"
+		end,
+	}
+end
+
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * 4)
+end
+
+local function get_model_info(model_name)
+	local model_card, err = compress._models.get_by_name(model_name)
+	if not model_card then
+		return nil, err
+	end
+
+	local max_context_tokens = model_card.max_tokens or 8000
+	local max_output_tokens = model_card.output_tokens or 1000
+	local usable_input_tokens = max_context_tokens - max_output_tokens - 500
+	return tokens_to_chars(usable_input_tokens), tokens_to_chars(max_output_tokens)
+end
+
+return get_model_info("model")
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected mutable resolver field guard to keep numeric defaults non-nil, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_NestedReturnTableCallFeedsHelperParamEvidence(t *testing.T) {
+	source := `
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * 4)
+end
+
+local function model_info()
+	local usable_input_tokens = 6500
+	local max_output_tokens = 1000
+	return {
+		usable_input_chars = tokens_to_chars(usable_input_tokens),
+		max_output_chars = tokens_to_chars(max_output_tokens),
+	}
+end
+
+return model_info().usable_input_chars
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected calls nested in returned table fields to feed helper parameter evidence, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_NestedAssignedTableCallFeedsHelperParamEvidence(t *testing.T) {
+	source := `
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * 4)
+end
+
+local function model_info()
+	local usable_input_tokens = 6500
+	local info = {
+		usable_input_chars = tokens_to_chars(usable_input_tokens),
+	}
+	return info
+end
+
+return model_info().usable_input_chars
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected calls nested in assigned table fields to feed helper parameter evidence, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_ConditionCallFeedsHelperParamEvidence(t *testing.T) {
+	source := `
+local function has_budget(tokens)
+	return math.floor(tokens) > 0
+end
+
+local function run()
+	local usable_input_tokens = 6500
+	if has_budget(usable_input_tokens) then
+		return true
+	end
+	return false
+end
+
+return run()
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected calls in branch conditions to feed helper parameter evidence, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_NumericForBoundCallFeedsHelperParamEvidence(t *testing.T) {
+	source := `
+local function clamp_bound(tokens)
+	return math.floor(tokens)
+end
+
+local function run()
+	local max_tokens = 3
+	local total = 0
+	for i = 1, clamp_bound(max_tokens) do
+		total = total + i
+	end
+	return total
+end
+
+return run()
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected calls in numeric for bounds to feed helper parameter evidence, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_GuardedConfigUpdateKeepsUnchangedNumericFields(t *testing.T) {
+	source := `
+local CONFIG = {
+	chars_per_token = 4,
+	prompt_buffer_tokens = 500,
+	default_temperature = 0.2,
+}
+
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * CONFIG.chars_per_token)
+end
+
+local function usable_chars()
+	local max_context_tokens = 8000
+	local max_output_tokens = 1000
+	local usable_input_tokens = max_context_tokens - max_output_tokens - CONFIG.prompt_buffer_tokens
+	return tokens_to_chars(usable_input_tokens)
+end
+
+local function configure(new_config)
+	for key, value in pairs(new_config) do
+		if CONFIG[key] ~= nil then
+			CONFIG[key] = value
+		end
+	end
+end
+
+configure({ default_temperature = 0.8 })
+configure({ unknown_key = "value" })
+return usable_chars()
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected guarded config updates not to optionalize unrelated numeric fields, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_GuardedExportedConfigUpdateKeepsUnchangedNumericFields(t *testing.T) {
+	source := `
+local compress = {}
+local CONFIG = {
+	chars_per_token = 4,
+	prompt_buffer_tokens = 500,
+	default_temperature = 0.2,
+}
+
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * CONFIG.chars_per_token)
+end
+
+local function usable_chars()
+	local max_context_tokens = 8000
+	local max_output_tokens = 1000
+	local usable_input_tokens = max_context_tokens - max_output_tokens - CONFIG.prompt_buffer_tokens
+	return tokens_to_chars(usable_input_tokens)
+end
+
+function compress.configure(new_config)
+	for key, value in pairs(new_config) do
+		if CONFIG[key] ~= nil then
+			CONFIG[key] = value
+		end
+	end
+end
+
+compress.configure({ default_temperature = 0.8 })
+compress.configure({ unknown_key = "value" })
+return usable_chars()
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected guarded exported config updates not to optionalize unrelated numeric fields, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_GuardedConfigRoundTripKeepsUnchangedNumericFields(t *testing.T) {
+	source := `
+local compress = {}
+local CONFIG = {
+	chars_per_token = 4,
+	prompt_buffer_tokens = 500,
+	default_temperature = 0.2,
+}
+
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * CONFIG.chars_per_token)
+end
+
+local function usable_chars()
+	local max_context_tokens = 8000
+	local max_output_tokens = 1000
+	local usable_input_tokens = max_context_tokens - max_output_tokens - CONFIG.prompt_buffer_tokens
+	return tokens_to_chars(usable_input_tokens)
+end
+
+function compress.configure(new_config)
+	for key, value in pairs(new_config) do
+		if CONFIG[key] ~= nil then
+			CONFIG[key] = value
+		end
+	end
+end
+
+function compress.get_config()
+	local config_copy = {}
+	for key, value in pairs(CONFIG) do
+		config_copy[key] = value
+	end
+	return config_copy
+end
+
+local original = compress.get_config().default_temperature
+compress.configure({ default_temperature = 0.8 })
+compress.configure({ default_temperature = original })
+compress.configure({ unknown_key = "value" })
+return usable_chars()
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected guarded config round-trip not to optionalize unrelated numeric fields, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_TestDslMutableModelResolverDoesNotPolluteNumericHelper(t *testing.T) {
+	source := `
+local test = {}
+function test.describe(_name: string, fn: fun()) fn() end
+function test.it(_name: string, fn: fun()) fn() end
+function test.run_cases(define_cases_fn: fun())
+	return function()
+		_G.describe = test.describe
+		_G.it = test.it
+		define_cases_fn()
+		_G.describe = nil
+		_G.it = nil
+	end
+end
+
+local compress = {
+	_models = {
+		get_by_name = function(model_name)
+			return {
+				max_tokens = 8000,
+				output_tokens = 1000,
+			}, nil
+		end,
+	},
+}
+
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * 4)
+end
+
+local function get_model_info(model_name)
+	local model_card, err = compress._models.get_by_name(model_name)
+	if not model_card then
+		return nil, err
+	end
+
+	local max_context_tokens = model_card.max_tokens or 8000
+	local max_output_tokens = model_card.output_tokens or 1000
+	local usable_input_tokens = max_context_tokens - max_output_tokens - 500
+	return {
+		usable_input_chars = tokens_to_chars(usable_input_tokens),
+		max_output_chars = tokens_to_chars(max_output_tokens),
+	}, nil
+end
+
+function compress.to_size(model_name: string, content: string, target_chars: number)
+	local model_info, err = get_model_info(model_name)
+	if err then
+		return nil, err
+	end
+	if not model_info then
+		return nil, err
+	end
+	return model_info.usable_input_chars
+end
+
+local function define_tests()
+	describe("compress", function()
+		it("uses a large model", function()
+			compress._models = {
+				get_by_name = function(model_name)
+					return {
+						max_tokens = 128000,
+						output_tokens = 16384,
+					}, nil
+				end,
+			}
+			return compress.to_size("gpt-4o-mini", "content", 100)
+		end)
+
+		it("handles model not found", function()
+			compress._models = {
+				get_by_name = function(model_name)
+					return nil, "Model not found"
+				end,
+			}
+			return compress.to_size("unknown-model", "content", 100)
+		end)
+	end)
+end
+
+return test.run_cases(define_tests)
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected test DSL mutable model mocks not to pollute numeric helper, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_ModelCardBuilderPreludeDoesNotOptionalizeNumericDefaults(t *testing.T) {
+	source := `
+local function build_model_card(entry)
+	local dimensions: number? = nil
+	if type(entry.data) == "table" then
+		local parsed_dimensions = tonumber(entry.data.dimensions)
+		if type(parsed_dimensions) == "number" then
+			dimensions = parsed_dimensions
+		end
+	end
+
+	return {
+		max_tokens = entry.data and entry.data.max_tokens or 0,
+		output_tokens = entry.data and entry.data.output_tokens or 0,
+		dimensions = dimensions,
+	}
+end
+
+local entry: {data: {max_tokens: integer?, output_tokens: integer?, dimensions: any?}?} = {
+	data = { max_tokens = 1000 },
+}
+local model_card = build_model_card(entry)
+local max_context_tokens = model_card.max_tokens or 8000
+local max_output_tokens = model_card.output_tokens or 1000
+return max_context_tokens - max_output_tokens - 500
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected model-card builder prelude not to optionalize numeric defaults, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_DynamicModelCardNumericFieldsRequireProof(t *testing.T) {
+	source := `
+local function build_model_card(entry)
+	return {
+		max_tokens = entry.data and entry.data.max_tokens or 0,
+		output_tokens = entry.data and entry.data.output_tokens or 0,
+	}
+end
+
+local entry = {
+	data = unknown_condition and {
+		max_tokens = "not numeric",
+		output_tokens = 1000,
+	} or {
+		max_tokens = 8000,
+		output_tokens = 1000,
+	},
+}
+
+local model_card = build_model_card(entry)
+local max_context_tokens = model_card.max_tokens or 8000
+local max_output_tokens = model_card.output_tokens or 1000
+return max_context_tokens - max_output_tokens
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "cannot perform arithmetic")
+}
+
+func TestExternalLint_AnyProviderModelRequiresStringProof(t *testing.T) {
+	source := `
+local function merge_provider_options(contract_args: {model: string, options: table}, provider_info)
+	return contract_args
+end
+
+local provider_info = {
+	provider_model = "gpt-4o-mini",
+} as any
+
+local contract_args = {
+	model = provider_info.provider_model,
+	options = {},
+}
+
+return merge_provider_options(contract_args, provider_info)
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected")
+}
+
+func TestExternalLint_DynamicResponseTextRequiresStringProof(t *testing.T) {
+	source := `
+local function parse_text_tool_call(text: string?, tool_names)
+	return text
+end
+
+local converse_response = unknown_response
+local text_blocks = {}
+
+for _, block in ipairs(converse_response.output.message.content) do
+	if block.text then
+		table.insert(text_blocks, block.text)
+	end
+end
+
+for _, text in ipairs(text_blocks) do
+	parse_text_tool_call(text, {})
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected string?")
+}
+
 func TestExternalLint_GuardedStringFieldAccumulatorFeedsHelper(t *testing.T) {
 	source := `
 local function parse_text_tool_call(text: string?, tool_names)
@@ -1819,6 +2418,17 @@ return extract({ output = { message = { content = { { text = "call" } } } } }, {
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected guarded string field accumulator to feed optional-string helper, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func requireExternalLintErrorContaining(t *testing.T, result *testutil.Result, want string) {
+	t.Helper()
+	if !result.HasError() {
+		t.Fatalf("expected diagnostic containing %q, got no errors", want)
+	}
+	messages := strings.Join(testutil.ErrorMessages(result.Diagnostics), " | ")
+	if !strings.Contains(messages, want) {
+		t.Fatalf("expected diagnostic containing %q, got: %s", want, messages)
 	}
 }
 

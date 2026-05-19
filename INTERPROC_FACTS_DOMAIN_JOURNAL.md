@@ -5168,3 +5168,87 @@ Current rule:
   reduction that proves the checker lost information it already had.
 - External Wippy fixes, if desired, should be explicit guards, casts at real
   trust boundaries, or stronger manifests; they are outside this go-lua PR.
+
+## 2026-05-19 Expression Call Evidence Closure
+
+One real engine regression remained in the external `compress` replay: local
+helper calls nested under returned table fields were not always represented as
+call sites for parameter evidence. The old collector handled statement calls,
+top-level assignment/return source calls, and nested calls inside call
+arguments, but missed expression positions like:
+
+- `return { field = helper(value) }`;
+- `local t = { field = helper(value) }`;
+- `if helper(value) then ... end`;
+- numeric/generic loop header expressions;
+- calls wrapped by casts or non-nil assertions.
+
+That was a domain bug, not a reason to weaken arithmetic or `any`/`unknown`.
+The correction keeps `FunctionFacts.Params` as the only parameter-evidence
+authority and expands the collector to visit every call expression that occurs
+inside assignment sources, return expressions, branch conditions, and loop
+headers. The final implementation walks each owned expression tree once from
+its CFG point, so the collector does not need a compatibility call-site channel
+or per-point dedupe maps.
+
+Regression coverage added:
+
+- returned-table and assigned-table helper calls feed numeric parameter
+  evidence;
+- branch-condition and numeric-for-bound helper calls feed numeric parameter
+  evidence;
+- the original `compress`/test-DSL mutable resolver reduction no longer
+  pollutes `tokens_to_chars`;
+- guarded config update reductions verify unrelated numeric config fields stay
+  non-optional when call evidence proves the updates are safe;
+- existing compress/model-card reductions remain green.
+- negative soundness reductions verify the checker does not accept untyped
+  model-card fields as numbers, explicit `any` provider models as strings, or
+  untyped response text as `string?` without a real guard, cast, or manifest.
+
+Verification from this pass:
+
+```text
+go test ./compiler/check/infer/interproc ./compiler/check/tests/regression -count=1
+go test ./... -count=1
+git diff --check
+go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction -benchmem -count=5
+```
+
+Results:
+
+- `go test ./... -count=1` passes.
+- `git diff --check` passes.
+- `BenchmarkCheck_LargeFunction` is about 1.97-2.15 ms/op, about 1.054 MB/op,
+  and 10,699 allocs/op on this machine after the expression-call scan.
+- A local-replace Wippy binary built from this checkout now reduces the full
+  `framework/src/llm/src` replay to 9 errors: the known 6 `llm.lua` contract
+  errors, 1 Bedrock dynamic text-block parser error, and 2 `compress.lua`
+  arithmetic errors.
+
+Updated classification:
+
+- The previous nested-call evidence bug is fixed in go-lua.
+- The remaining `wippy.llm.util:compress` errors are now classified as an
+  external source/manifest proof gap. Replaying the real
+  `wippy.llm.discovery:models` export locally shows `get_by_name` exports
+  `max_tokens` and `output_tokens` as `unknown`, because registry `entry.data`
+  is not typed as numeric. `compress.lua` then uses those fields in arithmetic
+  after `or` defaults. go-lua must not invent numeric proof across that module
+  boundary; external code should either type the registry/model-card manifest or
+  coerce with `tonumber(...) or <default>` before arithmetic.
+- The same soundness boundary covers the Bedrock and `llm.lua` diagnostics:
+  `block.text` comes from untyped provider JSON, and `provider_info` is
+  explicitly cast to `any` before being used to build contract args whose
+  `model` field must be `string`.
+- The remaining global replay diagnostics are still true dynamic-boundary or
+  source-shape issues unless independently reduced to a failing go-lua engine
+  test. Current local-replace counts: `framework/src/llm/src` 9 errors,
+  `framework/src/agent/src` 11 errors, `session` 38 errors, and `docker-demo`
+  60 errors.
+- Standard `../scripts/verify-suite.sh` still exits non-zero because external
+  lint targets fail under the Wippy repo's pinned `github.com/wippyai/go-lua
+  v1.5.16` build, but the go-lua checker tests and Wippy binary build pass.
+  The external counts from that official path are currently `session` 8 errors,
+  `framework/src/agent/src` 6 errors, and `docker-demo` 21 errors plus
+  2 warnings.

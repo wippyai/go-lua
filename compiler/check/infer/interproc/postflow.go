@@ -483,19 +483,98 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 		}
 	}
 
-	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		collectCallEvidence(p, info)
-
-		seenNested := make(map[*ast.FuncCallExpr]struct{})
-		for _, arg := range info.Args {
-			collectNestedFuncCalls(arg, seenNested)
+	var collectExprCall func(cfg.Point, ast.Expr)
+	collectExprCalls := func(p cfg.Point, exprs []ast.Expr) {
+		if len(exprs) == 0 {
+			return
 		}
-		for nested := range seenNested {
-			nestedInfo := graph.CallSiteAt(p, nested)
-			if nestedInfo == nil {
-				nestedInfo = synthCallInfoFromExpr(nested, bindings)
+		for _, expr := range exprs {
+			collectExprCall(p, expr)
+		}
+	}
+	collectCallExpr := func(p cfg.Point, call *ast.FuncCallExpr) {
+		if call == nil {
+			return
+		}
+		callInfo := graph.CallSiteAt(p, call)
+		if callInfo == nil {
+			callInfo = synthCallInfoFromExpr(call, bindings)
+		}
+		collectCallEvidence(p, callInfo)
+		collectExprCall(p, call.Func)
+		collectExprCall(p, call.Receiver)
+		collectExprCalls(p, call.Args)
+	}
+	collectExprCall = func(p cfg.Point, expr ast.Expr) {
+		if expr == nil {
+			return
+		}
+		switch e := expr.(type) {
+		case *ast.FuncCallExpr:
+			collectCallExpr(p, e)
+		case *ast.AttrGetExpr:
+			collectExprCall(p, e.Object)
+			collectExprCall(p, e.Key)
+		case *ast.TableExpr:
+			for _, field := range e.Fields {
+				if field == nil {
+					continue
+				}
+				collectExprCall(p, field.Key)
+				collectExprCall(p, field.Value)
 			}
-			collectCallEvidence(p, nestedInfo)
+		case *ast.LogicalOpExpr:
+			collectExprCall(p, e.Lhs)
+			collectExprCall(p, e.Rhs)
+		case *ast.RelationalOpExpr:
+			collectExprCall(p, e.Lhs)
+			collectExprCall(p, e.Rhs)
+		case *ast.StringConcatOpExpr:
+			collectExprCall(p, e.Lhs)
+			collectExprCall(p, e.Rhs)
+		case *ast.ArithmeticOpExpr:
+			collectExprCall(p, e.Lhs)
+			collectExprCall(p, e.Rhs)
+		case *ast.UnaryMinusOpExpr:
+			collectExprCall(p, e.Expr)
+		case *ast.UnaryNotOpExpr:
+			collectExprCall(p, e.Expr)
+		case *ast.UnaryLenOpExpr:
+			collectExprCall(p, e.Expr)
+		case *ast.UnaryBNotOpExpr:
+			collectExprCall(p, e.Expr)
+		case *ast.CastExpr:
+			collectExprCall(p, e.Expr)
+		case *ast.NonNilAssertExpr:
+			collectExprCall(p, e.Expr)
+		}
+	}
+
+	graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil {
+			return
+		}
+		collectCallExpr(p, info.Call)
+	})
+	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if info != nil {
+			collectExprCalls(p, info.Sources)
+			collectExprCalls(p, info.IterExprs)
+			if info.NumericFor != nil {
+				collectExprCall(p, info.NumericFor.Init)
+				collectExprCall(p, info.NumericFor.Limit)
+				collectExprCall(p, info.NumericFor.Step)
+			}
+		}
+	})
+	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if info != nil {
+			collectExprCalls(p, info.Exprs)
+		}
+	})
+	graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
+		if info != nil {
+			collectExprCall(p, info.Condition)
 		}
 	})
 }
@@ -504,17 +583,7 @@ func synthCallInfoFromExpr(ex *ast.FuncCallExpr, bindings *bind.BindingTable) *c
 	if ex == nil {
 		return nil
 	}
-	info := &cfg.CallInfo{
-		Call:     ex,
-		Callee:   ex.Func,
-		Args:     ex.Args,
-		Method:   ex.Method,
-		Receiver: ex.Receiver,
-		IsStmt:   false,
-	}
-	if id, ok := ex.Func.(*ast.IdentExpr); ok {
-		info.CalleeName = id.Value
-	}
+	info := cfg.BuildCallInfo(ex, false)
 	if bindings != nil {
 		info.CalleeSymbol = checkcallsite.SymbolFromExpr(ex.Func, bindings)
 		if ex.Receiver != nil {
@@ -529,52 +598,6 @@ func synthCallInfoFromExpr(ex *ast.FuncCallExpr, bindings *bind.BindingTable) *c
 		}
 	}
 	return info
-}
-
-func collectNestedFuncCalls(expr ast.Expr, out map[*ast.FuncCallExpr]struct{}) {
-	if expr == nil || out == nil {
-		return
-	}
-	switch e := expr.(type) {
-	case *ast.FuncCallExpr:
-		out[e] = struct{}{}
-		collectNestedFuncCalls(e.Func, out)
-		collectNestedFuncCalls(e.Receiver, out)
-		for _, arg := range e.Args {
-			collectNestedFuncCalls(arg, out)
-		}
-	case *ast.AttrGetExpr:
-		collectNestedFuncCalls(e.Object, out)
-		collectNestedFuncCalls(e.Key, out)
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			collectNestedFuncCalls(field.Key, out)
-			collectNestedFuncCalls(field.Value, out)
-		}
-	case *ast.LogicalOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.RelationalOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.StringConcatOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.ArithmeticOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.UnaryMinusOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryNotOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryLenOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryBNotOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	}
 }
 
 func parentGraphKeyForCallee(store Store, result *api.FuncResult, parent *scope.State, calleeSym cfg.SymbolID) (api.GraphKey, bool) {
