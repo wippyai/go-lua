@@ -123,6 +123,157 @@ analysis engine with explicit theory:
 Anything less will keep producing local helper patches. The migration should
 make the checker look like the theory it is implementing.
 
+## Core Moral Model
+
+The checker should be taught and reasoned about with one sentence:
+
+```text
+Evidence is produced by transfer, combined by domains, stabilized by widening,
+and observed by queries.
+```
+
+That sentence is the guardrail.
+
+- Extraction does not decide lattice policy. It only converts source syntax into
+  typed evidence and transfer instructions.
+- Transfer does not decide cross-iteration convergence. It only updates the
+  current abstract state.
+- Domains do not inspect AST. They only combine abstract values and facts.
+- Widening does not recover precision. It only guarantees convergence.
+- Queries do not produce new facts. They only read the solved state and apply
+  already-recorded constraints.
+- Interprocedural producers do not mutate old state. They emit deltas.
+
+If a function violates one of these rules, it is a design smell even if the
+behavioral test passes.
+
+## Canonical Dataflow Contract
+
+The final dataflow should have explicit boundary objects.
+
+```text
+Source
+  -> GraphBundle
+  -> CheckerIR
+  -> TransferProgram
+  -> AbstractState
+  -> QueryView
+  -> FunctionResult
+  -> InterprocDelta
+  -> FactsDomain
+  -> SnapshotInputs
+```
+
+### GraphBundle
+
+Owns:
+
+- AST function body,
+- CFG,
+- symbol table,
+- parent scope identity,
+- dominance/post-dominance indexes,
+- local function indexes,
+- parameter-use summaries.
+
+It is immutable after construction. Anything expensive and graph-derived should
+be cached here or through a Salsa query keyed by graph identity.
+
+### CheckerIR
+
+Owns the normalized checker program:
+
+- declarations,
+- assignments,
+- branch predicates,
+- calls,
+- returns,
+- table constructors,
+- field/index writes,
+- mutation effects,
+- termination effects.
+
+It should be AST-free except for source spans and stable graph references. This
+is where the checker stops being syntax-driven and becomes analysis-driven.
+
+### TransferProgram
+
+Owns executable transfer instructions over `AbstractState`.
+
+Examples:
+
+```text
+Assign(Location, ValueExpr)
+Assume(Condition)
+Mutate(Mutation)
+Call(CallSite)
+Return(ReturnTuple)
+Terminate(Reason)
+```
+
+Every statement-level fact should enter the solver through an instruction like
+this. A table insert, captured mutation replay, field assignment, and dynamic
+index write should not each invent their own path rules.
+
+### AbstractState
+
+Owns the whole product:
+
+```text
+AbstractState =
+  MemoryState
+  x ValueFacts
+  x NumericFacts
+  x ShapeFacts
+  x RelationFacts
+  x EffectFacts
+  x TerminationFacts
+```
+
+This must be the persistent state of the intraprocedural solver. Query-time
+`ProductDomain` construction should be replaced by reading this product, or by
+creating a cheap view over it. The state product is the source of truth.
+
+### QueryView
+
+Owns read-only answers:
+
+- type at point,
+- narrowed path type,
+- field/index presence,
+- tuple relation at call site,
+- constant/numeric facts,
+- reachability.
+
+It cannot write facts. It cannot perform fresh synthesis that changes the
+answer independently from `AbstractState`.
+
+### InterprocDelta
+
+Owns facts emitted by a completed function analysis:
+
+- function fact,
+- parameter evidence,
+- literal signatures,
+- captured field mutations,
+- captured container/table mutations,
+- constructor fields,
+- relation summaries.
+
+The delta is immutable. The store combines it through `FactsDomain` only.
+
+## Phase Responsibility Table
+
+| Phase | May Create | May Combine | May Widen | May Query | Forbidden |
+|---|---|---|---|---|---|
+| Scope/CFG | graph identity, symbols | no type facts | no | no | type merge policy |
+| Extract/IR | transfer instructions | no domain joins | no | declared-only queries | fixpoint repair |
+| Flow solve | abstract state updates | domain joins at CFG joins | loop-local widening only if owned by flow domain | internal state reads | interproc fact writes |
+| Narrow/query | read-only answers | no persistent joins | no | yes | producing facts |
+| Return SCC | local return/param deltas | local domain joins | SCC widening through domain only | solved flow state | AST-specific merge laws |
+| Interproc store | immutable deltas | `FactsDomain.Join` | `FactsDomain.Widen` | snapshot reads | producer-specific callbacks |
+| Salsa | dependencies/cache | no semantic joins | no | query execution | hidden state mutation |
+
 ## Foundational Diagnosis
 
 The checker has accumulated strong behavior before it acquired the right
@@ -427,6 +578,180 @@ helper joins directly.
 | body parameter contracts | `infer/return`, `flowbuild/assign` | `domain/paramevidence` |
 | Salsa snapshot inputs | `store/snapshot_inputs.go` | keep in store, but document as cache boundary |
 
+## Worked Consolidation Examples
+
+### Table-Key Truthiness Refinement
+
+Current smell:
+
+```go
+candidateRefinesFunctionParam(candidate, baseline)
+typeRefinesTableKeyByTruthiness(candidate, baseline)
+recordRefinesTableKeyByTruthiness(candidate, baseline)
+```
+
+These helpers are trying to express one domain law:
+
+```text
+A table-like parameter fact may refine its key domain by removing falsy key
+members only if the table value domain and structural frame are preserved.
+```
+
+Final home:
+
+```text
+domain/value.Refinement
+domain/functionfact.ParamSlotDomain
+domain/paramevidence
+```
+
+Final expression:
+
+```go
+refinement := value.Refinement{
+    Kind: value.RefineTruthyKey,
+    PreserveFrame: true,
+    PreserveValue: true,
+}
+paramSlot.Join(existing, candidate, refinement)
+```
+
+The check is no longer a local function-param helper. It is a value-domain
+refinement rule reused by parameter evidence, function facts, and return
+summary map-key refinement.
+
+### Soft Evidence Replacement
+
+Current smell:
+
+```go
+preferConcreteOverSoftType(a, b)
+typ.PruneSoftUnionMembers(t)
+reconcileSoftAnnotatedInference(base, inferred)
+```
+
+These are fragments of one evidence-ordering law:
+
+```text
+hard concrete evidence dominates soft placeholder evidence, but nil alone does
+not erase soft structured evidence.
+```
+
+Final home:
+
+```text
+domain/value.EvidenceOrder
+```
+
+Final expression:
+
+```go
+EvidenceOrder.Select(existing, candidate)
+```
+
+Every caller gets the same policy:
+
+- soft annotation refinement,
+- function parameter facts,
+- parameter evidence,
+- return-summary container refinement,
+- flow assignment refinement.
+
+### Open-Record Row Tail
+
+Current smell:
+
+Open-record behavior is split between record join, subtyping, table literal
+contextualization, and external-regression fixes.
+
+Canonical law:
+
+```text
+A missing field on an open record is row-tail evidence, not proof of nil.
+A missing field on a closed record is absence.
+```
+
+Final home:
+
+```text
+domain/value.RowShape
+```
+
+Final API:
+
+```go
+RowShape.FieldEvidence(record, fieldName) FieldEvidence
+```
+
+The rest of the checker asks for field evidence. It does not rediscover whether
+the record is open, closed, map-like, or table-top.
+
+### Captured Table Mutation Replay
+
+Current smell:
+
+Captured table inserts, generic container mutations, parent replay, direct
+flow mutators, and nested function calls have separate paths.
+
+Canonical law:
+
+```text
+A mutation has one semantic operator and one memory location. Replay is valid
+only when alias identity, dominance, and operator kind are preserved.
+```
+
+Final home:
+
+```text
+compiler/check/memory
+```
+
+Final expression:
+
+```go
+MemoryState.Apply(Mutation{
+    Kind: MutationTableElement,
+    Target: Location,
+    Value: Type,
+    Provenance: CapturedCall,
+})
+```
+
+The same apply path handles direct `table.insert`, nested captured insert, and
+exported callback replay.
+
+### Error-Return Correlation
+
+Current smell:
+
+Several phases know about the `(value, err)` convention, arity checks, and
+success/failure narrowing.
+
+Canonical law:
+
+```text
+Error-return behavior is a tuple relation over return slots, not a special case
+of a two-result function.
+```
+
+Final home:
+
+```text
+domain/relation
+```
+
+Final expression:
+
+```go
+RelationDomain.Attach(ReturnTupleRelation{
+    Success: { ErrSlot: Nil, ValueSlot: NonNilOrUnknown },
+    Failure: { ErrSlot: NonNil, ValueSlot: NilOrUnknown },
+})
+```
+
+The canonical Lua `(value, err)` convention is one predefined relation. Future
+relations do not require new helper clusters.
+
 ## Target Data Flow
 
 The final flow should be:
@@ -578,6 +903,52 @@ Every major law needs:
 - a positive test proving wanted inference,
 - a negative test proving sound rejection,
 - a domain law test proving normalize/join/widen idempotence and monotonicity.
+
+## Edge-Case Matrix
+
+The migration must consider edge cases beyond the failures already seen. The
+design is not complete until each row below has an owner domain and tests.
+
+| Area | Edge Cases To Model |
+|---|---|
+| `unknown` | branch join with concrete, return merge with concrete, exported summary, table field, array element, call argument, relation slot |
+| `any` | explicit cast to any, imported dynamic data, any flowing to concrete param, any in record field, any as table key/value, any through relation facts |
+| `nil` | nil as Lua value, nil as field deletion, nil satisfying optional absence, nil array slot, nil map value, nil return slot |
+| absent field | closed record absence, open row-tail unknown, map-tail optional value, table-top field access, absence after mutation |
+| soft evidence | soft table top, soft array element, soft map value, nil plus soft shape, hard evidence replacing soft evidence, soft evidence across imports |
+| table top | `table`, `{...}`, `{[any]: any}`, arrays, maps, closed records, open records, unions with precise tables |
+| row shape | open vs closed, readonly fields, optional fields, metatables, map component overlap, discriminant tags |
+| truthiness | false/nil removal, literal false keys, `and`/`or` branch values, truthy field guards, truthy dynamic indexes |
+| mutation | field write, nil overwrite, dynamic index write, table insert, container send, captured mutation, exported callback mutation |
+| aliasing | local alias, field alias, imported alias, method receiver alias, self alias, cyclic alias, alias after reassignment |
+| dominance | dominating writes, branch-local writes, loop-carried writes, post-dominated assertions, early returns, dead paths |
+| functions | optional function values, union of function signatures, method `self`, varargs, higher-order callbacks, recursive locals |
+| returns | zero returns, one return, two returns, more than two returns, tuple expansion, nil padding, recursive containers |
+| relations | `(value, err)`, custom error record, multiple independent relations, swapped slots, relation through wrapper, relation through any |
+| interproc | parent scope change, module boundary, literal signatures, captured fields, constructor fields, sibling overlay, stale snapshots |
+| caching | stale query after fact change, query reuse after no-op fact change, cache key missing parent scope, cache key missing graph identity |
+| performance | recursive structural scan, repeated AST projection, repeated map allocation, query dependency overhead, equality-time canonicalization |
+
+Adversarial cases must include both:
+
+- precision cases where the checker should infer the strongest provable type;
+- soundness cases where similar-looking code must still fail.
+
+Examples:
+
+- guarded `options.model` should infer `string`; `provider_info as any` should
+  not become `string` without proof;
+- `response.body or ""` should be `string`; `response.body` alone remains
+  `string?`;
+- open row-tail field access is `unknown`; closed missing field is absent/nil
+  evidence depending on context;
+- table insert before an `ipairs` loop should feed element type; branch-local
+  insert must not leak if the loop is not dominated by that branch;
+- `test.is_nil(err)` may refine a related value slot only if a relation fact
+  proves the tuple contract.
+
+The suite should be generated around these matrices, not around the names of
+the old helper functions.
 
 ## Flash Migration Shape
 
