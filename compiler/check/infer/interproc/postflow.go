@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -76,11 +77,17 @@ func StoreFactsFromResult(
 	summaryFromSnapshot := returnSummarySnapshotForSymbol(store, result, parent, fnSym)
 
 	candidateFunc := fnType
+	if len(narrowSummary) > 0 && !returnsummary.AllNil(narrowSummary) {
+		if aligned := typjoin.WithReturns(candidateFunc, narrowSummary); aligned != nil {
+			candidateFunc = aligned
+		}
+	}
 	if facts := store.GetFunctionFactsSnapshot(result.Graph, parent); len(facts) > 0 {
 		if hinted := paramevidence.MergeIntoSignature(fn, facts.Params(fnSym), unwrap.Function(candidateFunc)); hinted != nil {
 			candidateFunc = hinted
 		}
 	}
+	candidateFunc = stripSyntheticVariadic(fn, unwrap.Function(candidateFunc))
 	delta := api.Facts{FunctionFacts: api.FunctionFacts{
 		fnSym: functionfact.Join(api.FunctionFact{}, api.FunctionFact{
 			Summary: summaryFromSnapshot,
@@ -127,6 +134,36 @@ func storeCapturedFactsFromResult(
 			},
 		})
 	}
+}
+
+func stripSyntheticVariadic(fn *ast.FunctionExpr, sig *typ.Function) *typ.Function {
+	if fn == nil || fn.ParList == nil || fn.ParList.HasVargs || sig == nil || sig.Variadic == nil {
+		return sig
+	}
+	builder := typ.Func().ReserveParams(len(sig.Params))
+	for _, tp := range sig.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, p := range sig.Params {
+		if p.Optional {
+			builder = builder.OptParam(p.Name, p.Type)
+		} else {
+			builder = builder.Param(p.Name, p.Type)
+		}
+	}
+	if len(sig.Returns) > 0 {
+		builder = builder.Returns(sig.Returns...)
+	}
+	if sig.Effects != nil {
+		builder = builder.Effects(sig.Effects)
+	}
+	if sig.Spec != nil {
+		builder = builder.Spec(sig.Spec)
+	}
+	if sig.Refinement != nil {
+		builder = builder.WithRefinement(sig.Refinement)
+	}
+	return builder.Build()
 }
 
 func bindingsForGraphOrModule(graph *cfg.Graph, store Store) *bind.BindingTable {

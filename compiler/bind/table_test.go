@@ -524,6 +524,51 @@ func TestBindingTable_FieldSymbol_NormalizesLegacyBracketStringKey(t *testing.T)
 	}
 }
 
+func TestBindingTable_DirectFieldSymbols(t *testing.T) {
+	table := NewBindingTable()
+	baseSym := cfg.NextSymbolID()
+	otherSym := cfg.NextSymbolID()
+
+	beta := table.GetOrCreateFieldSymbol(baseSym, "beta")
+	alpha := table.GetOrCreateFieldSymbol(baseSym, "alpha")
+	nested := table.GetOrCreateFieldSymbol(baseSym, "alpha.deep")
+	indexKey, ok := FieldPathKeyFromSegments([]constraint.Segment{
+		{Kind: constraint.SegmentIndexString, Name: "quoted-key"},
+	})
+	if !ok {
+		t.Fatal("expected canonical string-index key")
+	}
+	quoted := table.GetOrCreateFieldSymbol(baseSym, indexKey)
+	numericKey, ok := FieldPathKeyFromSegments([]constraint.Segment{
+		{Kind: constraint.SegmentIndexInt, Index: 1},
+	})
+	if !ok {
+		t.Fatal("expected canonical int-index key")
+	}
+	_ = table.GetOrCreateFieldSymbol(baseSym, numericKey)
+	_ = table.GetOrCreateFieldSymbol(otherSym, "alpha")
+
+	got := table.DirectFieldSymbols(baseSym)
+	want := []FieldSymbolRef{
+		{Name: "alpha", Symbol: alpha},
+		{Name: "beta", Symbol: beta},
+		{Name: "quoted-key", Symbol: quoted},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("DirectFieldSymbols length = %d, want %d; got %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("DirectFieldSymbols[%d] = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+	for _, ref := range got {
+		if ref.Symbol == nested {
+			t.Fatal("nested field path should not be returned as a direct field")
+		}
+	}
+}
+
 func TestBindingTable_GetOrCreateFieldSymbol_InvalidPathRejected(t *testing.T) {
 	table := NewBindingTable()
 	baseSym := cfg.NextSymbolID()

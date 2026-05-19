@@ -337,6 +337,12 @@ func NumericConstraintToAtom(c NumericConstraint) (Atom, bool) {
 		LeLenOf: func(v LeLenOf) result {
 			return result{atom: AtomLe(TermVar(v.X.Key()), TermLen(v.Array.Key())), ok: true}
 		},
+		LenLeConst: func(v LenLeConst) result {
+			return result{atom: AtomLe(TermLen(v.Array.Key()), TermConst(v.C)), ok: true}
+		},
+		LenGeConst: func(v LenGeConst) result {
+			return result{atom: AtomGe(TermLen(v.Array.Key()), TermConst(v.C)), ok: true}
+		},
 		Default: func(NumericConstraint) result {
 			return result{}
 		},

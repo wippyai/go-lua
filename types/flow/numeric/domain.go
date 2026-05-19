@@ -88,6 +88,8 @@ func (d *Domain) ApplyAtom(atom constraint.Atom) bool {
 			d.theory.AddBounds(atom.Left.Path, -maxWeight, atom.Right.Const)
 		} else if atom.Left.IsVar() && atom.Right.IsLen() {
 			d.state.ApplyLeLenOf(atom.Left.Path, atom.Right.Path)
+		} else if atom.Left.IsLen() && atom.Right.IsConst() {
+			d.state.ApplyLenLeConst(atom.Left.Path, atom.Right.Const)
 		} else if atom.Left.IsVar() && atom.Right.IsVar() {
 			d.state.ApplyLe(atom.Left.Path, atom.Right.Path)
 			d.theory.AddDifferenceConstraint(atom.Left.Path, atom.Right.Path, 0)
@@ -96,6 +98,8 @@ func (d *Domain) ApplyAtom(atom constraint.Atom) bool {
 		if atom.Left.IsVar() && atom.Right.IsConst() {
 			d.state.ApplyGeConst(atom.Left.Path, atom.Right.Const)
 			d.theory.AddBounds(atom.Left.Path, atom.Right.Const, maxWeight)
+		} else if atom.Left.IsLen() && atom.Right.IsConst() {
+			d.state.ApplyLenGeConst(atom.Left.Path, atom.Right.Const)
 		} else if atom.Left.IsVar() && atom.Right.IsVar() {
 			d.state.ApplyGe(atom.Left.Path, atom.Right.Path)
 			d.theory.AddDifferenceConstraint(atom.Right.Path, atom.Left.Path, 0)

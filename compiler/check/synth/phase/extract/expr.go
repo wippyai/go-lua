@@ -78,6 +78,13 @@ func (n *localNarrowOps) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) 
 	return "", 0, false
 }
 
+func (n *localNarrowOps) LengthBoundsAt(p cfg.Point, path constraint.Path) (int64, int64, bool) {
+	if n.inner != nil {
+		return n.inner.LengthBoundsAt(p, path)
+	}
+	return 0, 0, false
+}
+
 func (n *localNarrowOps) IsPointDead(p cfg.Point) bool {
 	if n.inner != nil {
 		return n.inner.IsPointDead(p)
@@ -101,6 +108,9 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 		if !path.IsEmpty() {
 			narrowed := narrower.NarrowedTypeAt(p, path)
 			if narrowed != nil {
+				if key, ok := ex.Key.(*ast.NumberExpr); ok && nilPresenceIsOnlyFlowUncertainty(narrowed) && s.literalLengthBoundProvesIndex(objType, ex.Object, key.Value, p, sc, narrower) {
+					goto skipNarrowedAttr
+				}
 				if specialized := s.stableLocalFunctionValueType(ex, p, sc, narrowed, nil); specialized != nil {
 					return specialized
 				}
@@ -161,6 +171,11 @@ skipNarrowedAttr:
 	case *ast.NumberExpr:
 		keyType := ops.ParseNumber(key.Value)
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, keyType); ok {
+			if narrower != nil {
+				if narrowedResult := s.narrowArrayIndexByLiteralLenBound(objType, it, ex.Object, key.Value, p, sc, narrower); narrowedResult != nil {
+					return narrowedResult
+				}
+			}
 			if specialized := s.stableLocalFunctionValueType(ex, p, sc, it, nil); specialized != nil {
 				return specialized
 			}
@@ -387,6 +402,160 @@ func (s *Synthesizer) narrowArrayIndexByLenBound(indexResult typ.Type, objExpr a
 		return nil
 	}
 	return opt.Inner
+}
+
+func (s *Synthesizer) narrowArrayIndexByLiteralLenBound(objType, indexResult typ.Type, objExpr ast.Expr, indexLiteral string, p cfg.Point, sc *scope.State, narrower api.FlowOps) typ.Type {
+	if !s.literalLengthBoundProvesIndex(objType, objExpr, indexLiteral, p, sc, narrower) {
+		return nil
+	}
+	narrowed := narrow.RemoveNil(indexResult)
+	if typ.IsNever(narrowed) || typ.TypeEquals(narrowed, indexResult) {
+		return nil
+	}
+	return narrowed
+}
+
+func (s *Synthesizer) literalLengthBoundProvesIndex(objType typ.Type, objExpr ast.Expr, indexLiteral string, p cfg.Point, sc *scope.State, narrower api.FlowOps) bool {
+	if narrower == nil || s == nil || s.deps.Paths == nil {
+		return false
+	}
+	index, ok := numparse.ParseIntegerLiteral(indexLiteral)
+	if !ok || index < 1 {
+		return false
+	}
+	tablePath := s.deps.Paths(p, objExpr, sc)
+	if tablePath.IsEmpty() {
+		return false
+	}
+	lower, _, ok := narrower.LengthBoundsAt(p, tablePath)
+	return ok && lower >= index && lengthBoundProvesSequenceIndex(objType, index)
+}
+
+func nilPresenceIsOnlyFlowUncertainty(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	if t.Kind() == kind.Nil {
+		return true
+	}
+	narrowed := narrow.RemoveNil(t)
+	return !typ.IsNever(narrowed) && !typ.TypeEquals(narrowed, t)
+}
+
+func lengthBoundProvesSequenceIndex(t typ.Type, index int64) bool {
+	return lengthBoundProvesSequenceIndexDepth(t, index, 0)
+}
+
+func lengthBoundProvesSequenceIndexDepth(t typ.Type, index int64, depth int) bool {
+	if t == nil || typ.DepthExceeded(depth) {
+		return false
+	}
+	t = unwrap.Alias(t)
+	if inst, ok := t.(*typ.Instantiated); ok {
+		if resolved, err := querycore.ResolveInstantiated(inst); err == nil {
+			return lengthBoundProvesSequenceIndexDepth(resolved, index, depth+1)
+		}
+	}
+	return typ.Visit(t, typ.Visitor[bool]{
+		Array: func(*typ.Array) bool {
+			return true
+		},
+		Tuple: func(tuple *typ.Tuple) bool {
+			return tuple != nil && int64(len(tuple.Elements)) >= index
+		},
+		Optional: func(o *typ.Optional) bool {
+			return lengthBoundProvesSequenceIndexDepth(o.Inner, index, depth+1)
+		},
+		Union: func(u *typ.Union) bool {
+			found := false
+			for _, m := range u.Members {
+				if m == nil || m.Kind() == kind.Nil {
+					continue
+				}
+				if lengthBoundProvesSequenceIndexDepth(m, index, depth+1) {
+					found = true
+					continue
+				}
+				if typeMaxLenLessThanIndex(m, index, depth+1) {
+					continue
+				}
+				return false
+			}
+			return found
+		},
+		Intersection: func(in *typ.Intersection) bool {
+			for _, m := range in.Members {
+				if lengthBoundProvesSequenceIndexDepth(m, index, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Recursive: func(r *typ.Recursive) bool {
+			if r.Body == nil || r.Body == r {
+				return false
+			}
+			return lengthBoundProvesSequenceIndexDepth(r.Body, index, depth+1)
+		},
+		Default: func(typ.Type) bool {
+			return false
+		},
+	})
+}
+
+func typeMaxLenLessThanIndex(t typ.Type, index int64, depth int) bool {
+	if t == nil || typ.DepthExceeded(depth) {
+		return false
+	}
+	t = unwrap.Alias(t)
+	if inst, ok := t.(*typ.Instantiated); ok {
+		if resolved, err := querycore.ResolveInstantiated(inst); err == nil {
+			return typeMaxLenLessThanIndex(resolved, index, depth+1)
+		}
+	}
+	return typ.Visit(t, typ.Visitor[bool]{
+		Tuple: func(tuple *typ.Tuple) bool {
+			return tuple == nil || int64(len(tuple.Elements)) < index
+		},
+		Record: func(rec *typ.Record) bool {
+			return rec != nil &&
+				!rec.Open &&
+				!rec.HasMapComponent() &&
+				rec.Metatable == nil &&
+				index > 0
+		},
+		Optional: func(o *typ.Optional) bool {
+			return o == nil || typeMaxLenLessThanIndex(o.Inner, index, depth+1)
+		},
+		Union: func(u *typ.Union) bool {
+			for _, m := range u.Members {
+				if m == nil || m.Kind() == kind.Nil {
+					continue
+				}
+				if !typeMaxLenLessThanIndex(m, index, depth+1) {
+					return false
+				}
+			}
+			return true
+		},
+		Intersection: func(in *typ.Intersection) bool {
+			for _, m := range in.Members {
+				if typeMaxLenLessThanIndex(m, index, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Recursive: func(r *typ.Recursive) bool {
+			if r.Body == nil || r.Body == r {
+				return false
+			}
+			return typeMaxLenLessThanIndex(r.Body, index, depth+1)
+		},
+		Default: func(typ.Type) bool {
+			return false
+		},
+	})
 }
 
 func indexVarOffsetFromExpr(expr ast.Expr) (string, int64, bool) {

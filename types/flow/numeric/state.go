@@ -5,6 +5,7 @@
 //   - Modular residues: congruence relations (x % m == r)
 //   - Difference constraints: relationships between pairs (x - y <= c)
 //   - Symbolic length bounds: array length references
+//   - Length bounds: lower and upper limits for len(array)
 //
 // The solver uses Bellman-Ford to detect unsatisfiable constraint sets via
 // negative cycle detection in the difference constraint graph.
@@ -51,6 +52,9 @@ type State struct {
 	// lenRefs maps variable PathKey to array PathKey with offset.
 	// Entry x -> {arr, off} means x <= len(arr) + off.
 	lenRefs map[constraint.PathKey]lenRefBound
+
+	// lenBounds maps array PathKey to its known len(array) interval.
+	lenBounds map[constraint.PathKey]Interval
 
 	// unsat is true if the state is unsatisfiable.
 	unsat bool
@@ -146,6 +150,13 @@ func (s *State) Clone() *State {
 		}
 	}
 
+	if len(s.lenBounds) > 0 {
+		c.lenBounds = make(map[constraint.PathKey]Interval, len(s.lenBounds))
+		for k, v := range s.lenBounds {
+			c.lenBounds[k] = v
+		}
+	}
+
 	return c
 }
 
@@ -165,6 +176,8 @@ func (s *State) Clone() *State {
 //     that holds on both paths.
 //
 //   - LenRefs: Keep only identical length references from both states.
+//
+//   - LenBounds: Keep arrays present in both, take interval intersection.
 //
 // If both states are nil or Bottom, returns the non-Bottom one.
 // If the result is Top (empty maps), returns nil to save memory.
@@ -232,6 +245,23 @@ func Join(a, b *State) *State {
 		}
 	}
 
+	// LenBounds: keep only arrays in both, intersect intervals.
+	for arr, ai := range a.lenBounds {
+		if bi, ok := b.lenBounds[arr]; ok {
+			merged := intersectIntervals(ai, bi)
+			if merged.Lower > merged.Upper {
+				return Bottom()
+			}
+
+			if merged != unboundedInterval {
+				if result.lenBounds == nil {
+					result.lenBounds = make(map[constraint.PathKey]Interval, minMapLen(len(a.lenBounds), len(b.lenBounds)))
+				}
+				result.lenBounds[arr] = merged
+			}
+		}
+	}
+
 	if result.isTop() {
 		return nil
 	}
@@ -281,6 +311,12 @@ func (s *State) ensureRelations(capacity int) {
 func (s *State) ensureLenRefs(capacity int) {
 	if s.lenRefs == nil {
 		s.lenRefs = make(map[constraint.PathKey]lenRefBound, capacity)
+	}
+}
+
+func (s *State) ensureLenBounds(capacity int) {
+	if s.lenBounds == nil {
+		s.lenBounds = make(map[constraint.PathKey]Interval, capacity)
 	}
 }
 
@@ -380,6 +416,22 @@ func (s *State) ApplyConstraintWithResolver(c constraint.NumericConstraint, reso
 				return struct{}{}
 			}
 			s.applyLeLenOf(xKey, arrKey, nc.Offset)
+			return struct{}{}
+		},
+		LenLeConst: func(nc constraint.LenLeConst) struct{} {
+			arrKey := resolve(nc.Array)
+			if arrKey == "" {
+				return struct{}{}
+			}
+			s.applyLenLeConst(arrKey, nc.C)
+			return struct{}{}
+		},
+		LenGeConst: func(nc constraint.LenGeConst) struct{} {
+			arrKey := resolve(nc.Array)
+			if arrKey == "" {
+				return struct{}{}
+			}
+			s.applyLenGeConst(arrKey, nc.C)
 			return struct{}{}
 		},
 	})
@@ -532,6 +584,49 @@ func (s *State) applyLeLenOf(v, arr constraint.PathKey, offset int64) {
 	s.lenRefs[v] = lenRefBound{Array: arr, Offset: offset}
 }
 
+func (s *State) ApplyLenLeConst(arr constraint.PathKey, c int64) {
+	s.applyLenLeConst(arr, c)
+}
+
+func (s *State) applyLenLeConst(arr constraint.PathKey, c int64) {
+	s.ensureLenBounds(1)
+	if b, ok := s.lenBounds[arr]; ok {
+		b.Upper = minInt64(b.Upper, c)
+		if b.Lower > b.Upper {
+			s.unsat = true
+			return
+		}
+		s.lenBounds[arr] = b
+		return
+	}
+	if c < 0 {
+		s.unsat = true
+		return
+	}
+	s.lenBounds[arr] = Interval{Lower: 0, Upper: c}
+}
+
+func (s *State) ApplyLenGeConst(arr constraint.PathKey, c int64) {
+	s.applyLenGeConst(arr, c)
+}
+
+func (s *State) applyLenGeConst(arr constraint.PathKey, c int64) {
+	if c < 0 {
+		c = 0
+	}
+	s.ensureLenBounds(1)
+	if b, ok := s.lenBounds[arr]; ok {
+		b.Lower = maxInt64(b.Lower, c)
+		if b.Lower > b.Upper {
+			s.unsat = true
+			return
+		}
+		s.lenBounds[arr] = b
+		return
+	}
+	s.lenBounds[arr] = Interval{Lower: c, Upper: math.MaxInt64}
+}
+
 // BoundsFor returns the interval bounds for a PathKey.
 //
 // Returns (lower, upper, true) if the key has known bounds, or (0, 0, false)
@@ -542,6 +637,18 @@ func (s *State) BoundsFor(key constraint.PathKey) (lower, upper int64, ok bool) 
 		return 0, 0, false
 	}
 	interval, found := s.bounds[key]
+	if !found {
+		return 0, 0, false
+	}
+	return interval.Lower, interval.Upper, true
+}
+
+// LenBoundsFor returns the interval bounds for len(key).
+func (s *State) LenBoundsFor(key constraint.PathKey) (lower, upper int64, ok bool) {
+	if s == nil || s.lenBounds == nil {
+		return 0, 0, false
+	}
+	interval, found := s.lenBounds[key]
 	if !found {
 		return 0, 0, false
 	}
@@ -588,6 +695,18 @@ func (s *State) CheckSatisfiability() bool {
 	// Check bounds consistency.
 	for _, key := range constraint.SortedPathKeys(s.bounds) {
 		b := s.bounds[key]
+		if b.Lower > b.Upper {
+			s.unsat = true
+			return false
+		}
+	}
+
+	for _, key := range constraint.SortedPathKeys(s.lenBounds) {
+		b := s.lenBounds[key]
+		if b.Lower < 0 {
+			b.Lower = 0
+			s.lenBounds[key] = b
+		}
 		if b.Lower > b.Upper {
 			s.unsat = true
 			return false
@@ -664,7 +783,7 @@ func (s *State) checkDifferenceConstraints() bool {
 // Equals checks if two states are semantically equal.
 //
 // Two states are equal if they have the same unsat flag and identical maps
-// for bounds, modular constraints, relations, and length references.
+// for bounds, modular constraints, relations, length references, and length bounds.
 // nil and Top (empty maps) states are considered equal.
 func (s *State) Equals(other *State) bool {
 	if s == nil && other == nil {
@@ -703,6 +822,10 @@ func (s *State) Equals(other *State) bool {
 		return false
 	}
 
+	if len(s.lenBounds) != len(other.lenBounds) {
+		return false
+	}
+
 	for _, k := range constraint.SortedPathKeys(s.bounds) {
 		v := s.bounds[k]
 		if ov, ok := other.bounds[k]; !ok || v != ov {
@@ -731,6 +854,13 @@ func (s *State) Equals(other *State) bool {
 		}
 	}
 
+	for _, k := range constraint.SortedPathKeys(s.lenBounds) {
+		v := s.lenBounds[k]
+		if ov, ok := other.lenBounds[k]; !ok || v != ov {
+			return false
+		}
+	}
+
 	return true
 }
 
@@ -752,7 +882,7 @@ func (s *State) isTop() bool {
 		return false
 	}
 
-	return len(s.bounds) == 0 && len(s.modular) == 0 && len(s.relations) == 0 && len(s.lenRefs) == 0
+	return len(s.bounds) == 0 && len(s.modular) == 0 && len(s.relations) == 0 && len(s.lenRefs) == 0 && len(s.lenBounds) == 0
 }
 
 func minInt64(a, b int64) int64 {
@@ -854,6 +984,9 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 	if len(s.lenRefs) > 0 {
 		result.lenRefs = make(map[constraint.PathKey]lenRefBound, len(s.lenRefs))
 	}
+	if len(s.lenBounds) > 0 {
+		result.lenBounds = make(map[constraint.PathKey]Interval, len(s.lenBounds))
+	}
 
 	// Remap bounds
 	for _, k := range constraint.SortedPathKeys(s.bounds) {
@@ -919,6 +1052,22 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 			continue
 		}
 		result.lenRefs[newK] = ref
+	}
+
+	// Remap length bounds.
+	for _, k := range constraint.SortedPathKeys(s.lenBounds) {
+		v := s.lenBounds[k]
+		newKey := k
+		if mapped, ok := remap[k]; ok {
+			newKey = mapped
+		}
+		if existing, ok := result.lenBounds[newKey]; ok {
+			v = intersectIntervals(existing, v)
+			if v.Lower > v.Upper {
+				return Bottom()
+			}
+		}
+		result.lenBounds[newKey] = v
 	}
 
 	return result

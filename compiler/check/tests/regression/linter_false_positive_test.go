@@ -356,6 +356,39 @@ end
 	}
 }
 
+func TestLinterFalsePositive_GraphLocalUnusedParamAllowsInternalAny(t *testing.T) {
+	source := `
+local function run_suite(name: string, tests: {any})
+    return #tests
+end
+
+local suite_name = nil :: any
+local tests: {any} = {}
+local count = run_suite(suite_name, tests)
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected unused local parameter not to reject internal any, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestLinterFalsePositive_GraphLocalObservedParamRejectsAny(t *testing.T) {
+	source := `
+local function run_suite(name: string, tests: {any})
+    local label = name .. ""
+    return label, #tests
+end
+
+local suite_name = nil :: any
+local tests: {any} = {}
+local label, count = run_suite(suite_name, tests)
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if !result.HasError() {
+		t.Fatal("expected observed string parameter to reject explicit any")
+	}
+}
+
 // TestLinterFalsePositive_TestRunnerWithTypedEntries tests with explicitly typed entries
 // to better match real-world usage where entries come from a typed registry.
 func TestLinterFalsePositive_TestRunnerWithTypedEntries(t *testing.T) {

@@ -182,17 +182,19 @@ func VisitConstraint[R any](c Constraint, v ConstraintVisitor[R]) R {
 // NumericConstraintVisitor dispatches on numeric constraint variants.
 // Nil handlers fall back to Default when provided; otherwise return zero.
 type NumericConstraintVisitor[R any] struct {
-	Le      func(Le) R
-	Lt      func(Lt) R
-	Ge      func(Ge) R
-	Gt      func(Gt) R
-	Eq      func(Eq) R
-	EqConst func(EqConst) R
-	LeConst func(LeConst) R
-	GeConst func(GeConst) R
-	ModEq   func(ModEq) R
-	LeLenOf func(LeLenOf) R
-	Default func(NumericConstraint) R
+	Le         func(Le) R
+	Lt         func(Lt) R
+	Ge         func(Ge) R
+	Gt         func(Gt) R
+	Eq         func(Eq) R
+	EqConst    func(EqConst) R
+	LeConst    func(LeConst) R
+	GeConst    func(GeConst) R
+	ModEq      func(ModEq) R
+	LeLenOf    func(LeLenOf) R
+	LenLeConst func(LenLeConst) R
+	LenGeConst func(LenGeConst) R
+	Default    func(NumericConstraint) R
 }
 
 // VisitNumericConstraint applies the first matching handler in v to c.
@@ -277,6 +279,22 @@ func VisitNumericConstraint[R any](c NumericConstraint, v NumericConstraintVisit
 	case *LeLenOf:
 		if v.LeLenOf != nil {
 			return v.LeLenOf(*cc)
+		}
+	case LenLeConst:
+		if v.LenLeConst != nil {
+			return v.LenLeConst(cc)
+		}
+	case *LenLeConst:
+		if v.LenLeConst != nil {
+			return v.LenLeConst(*cc)
+		}
+	case LenGeConst:
+		if v.LenGeConst != nil {
+			return v.LenGeConst(cc)
+		}
+	case *LenGeConst:
+		if v.LenGeConst != nil {
+			return v.LenGeConst(*cc)
 		}
 	}
 	if v.Default != nil {

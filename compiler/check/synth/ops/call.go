@@ -583,7 +583,7 @@ func computeExpectedArgs(ctx *db.QueryContext, query core.TypeOps, fn *typ.Funct
 	for i := 0; i < numArgs; i++ {
 		paramIdx := i + paramOffset
 		if paramIdx < len(fn.Params) {
-			expected[i] = fn.Params[paramIdx].Type
+			expected[i] = paramRuntimeType(fn.Params[paramIdx])
 			if isMethod && receiver != nil {
 				expected[i] = subst.Self(expected[i], receiver)
 			}
@@ -873,7 +873,7 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 	if methodHasReceiver {
 		var expectedReceiver typ.Type
 		if len(fn.Params) > 0 {
-			expectedReceiver = fn.Params[0].Type
+			expectedReceiver = paramRuntimeType(fn.Params[0])
 		} else if hasVariadic {
 			expectedReceiver = fn.Variadic
 		}
@@ -894,7 +894,7 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 		var expectedType typ.Type
 
 		if paramIdx < len(fn.Params) {
-			expectedType = fn.Params[paramIdx].Type
+			expectedType = paramRuntimeType(fn.Params[paramIdx])
 		} else if hasVariadic {
 			expectedType = fn.Variadic
 		} else {
@@ -927,6 +927,13 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 	}
 
 	return callResultFromReturns(returns, errors)
+}
+
+func paramRuntimeType(param typ.Param) typ.Type {
+	if param.Type == nil || !param.Optional || unwrap.IsOptionalLike(param.Type) {
+		return param.Type
+	}
+	return typ.NewOptional(param.Type)
 }
 
 func normalizedCallReturns(result CallResult) []typ.Type {

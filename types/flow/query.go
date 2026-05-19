@@ -308,6 +308,25 @@ func (s *Solution) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKe
 	return string(pathKey), off, true
 }
 
+// LengthBoundsAt returns numeric bounds for len(path) at a CFG point.
+func (s *Solution) LengthBoundsAt(p cfg.Point, path constraint.Path) (lower, upper int64, ok bool) {
+	if s == nil || s.numericStates == nil {
+		return 0, 0, false
+	}
+	state := s.numericStates[p]
+	if state == nil {
+		return 0, 0, false
+	}
+	if s.pkResolver == nil || path.IsEmpty() {
+		return 0, 0, false
+	}
+	key := s.pkResolver.KeyAt(p, path)
+	if key == "" {
+		return 0, 0, false
+	}
+	return state.LenBoundsFor(key)
+}
+
 // NarrowedTypeAt returns the type at point p for path, narrowed by the DNF condition.
 // This is a pure query that composes: baseTypeAt + ConditionAt + applyCondition.
 func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {

@@ -40,14 +40,20 @@ func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Func
 	builder := typ.Func()
 	for i, p := range sig.Params {
 		paramType := p.Type
+		optional := p.Optional
 		if i < len(evidence) && evidence[i] != nil {
 			srcIdx, hasSource := signatureSourceParamIndex(fn, sig, i)
 			annotated := hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil
-			if !annotated || typ.IsRefinableAnnotation(paramType) {
+			if !annotated {
 				paramType = evidence[i]
+				if !unwrap.IsOptionalLike(evidence[i]) {
+					optional = false
+				}
+			} else if typ.IsRefinableAnnotation(paramType) {
+				paramType = mergeEvidenceIntoAnnotatedParam(paramType, evidence[i])
 			}
 		}
-		if p.Optional {
+		if optional {
 			builder = builder.OptParam(p.Name, paramType)
 		} else {
 			builder = builder.Param(p.Name, paramType)
@@ -69,6 +75,20 @@ func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Func
 		builder = builder.WithRefinement(sig.Refinement)
 	}
 	return builder.Build()
+}
+
+func mergeEvidenceIntoAnnotatedParam(annotation, evidence typ.Type) typ.Type {
+	if annotation == nil || evidence == nil {
+		return annotation
+	}
+	if unwrap.IsOptionalLike(annotation) {
+		inner := unwrap.Optional(evidence)
+		if inner == nil || unwrap.IsNilType(unwrap.Alias(evidence)) {
+			return annotation
+		}
+		return typ.NewOptional(inner)
+	}
+	return evidence
 }
 
 func signatureSourceParamIndex(fn *ast.FunctionExpr, sig *typ.Function, paramIdx int) (int, bool) {

@@ -548,7 +548,7 @@ func TestMergeParameterEvidenceIntoSig_PreservesReturns(t *testing.T) {
 	}
 }
 
-func TestMergeParameterEvidenceIntoSig_PreservesOptionalParam(t *testing.T) {
+func TestMergeParameterEvidenceIntoSig_ClearsSyntheticOptionalParam(t *testing.T) {
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{
 			Names: []string{"x"},
@@ -565,7 +565,7 @@ func TestMergeParameterEvidenceIntoSig_PreservesOptionalParam(t *testing.T) {
 	if len(result.Params) != 1 {
 		t.Fatalf("expected 1 param, got %d", len(result.Params))
 	}
-	if !result.Params[0].Optional {
-		t.Error("expected param to remain optional")
+	if result.Params[0].Optional {
+		t.Error("expected non-nil evidence to clear synthetic optionality")
 	}
 }

@@ -63,6 +63,10 @@ type CallEnv struct {
 	// For type names (Number, Point): returns synthetic callable function type.
 	// Returns nil if the name is not a recognized function or type.
 	TypeLookup func(name string) typ.Type
+
+	// StableType resolves an expression to its graph-stable value shape when
+	// point-local synthesis is too early to see later field assignments.
+	StableType func(expr ast.Expr, current typ.Type) typ.Type
 }
 
 // CallIntercept handles AST-specific patterns in direct function calls.

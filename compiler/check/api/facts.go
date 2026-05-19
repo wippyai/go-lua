@@ -8,6 +8,7 @@ package api
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -68,6 +69,39 @@ func (facts FunctionFacts) NarrowSummary(sym cfg.SymbolID) []typ.Type {
 // FunctionType returns the canonical local function type for sym.
 func (facts FunctionFacts) FunctionType(sym cfg.SymbolID) typ.Type {
 	ff, ok := facts.Fact(sym)
+	if !ok {
+		return nil
+	}
+	return ff.Type
+}
+
+// FunctionFactSnapshotForSymbol returns the stable fact snapshot for sym.
+func FunctionFactSnapshotForSymbol(store StoreReader, sym cfg.SymbolID, defaultParent *scope.State) (FunctionFact, bool) {
+	if store == nil || sym == 0 {
+		return FunctionFact{}, false
+	}
+	ref := store.FunctionRefBySym(sym)
+	if ref == nil {
+		return FunctionFact{}, false
+	}
+	parentGraphID := ref.ParentGraphID
+	if parentGraphID == 0 {
+		parentGraphID = ref.GraphID
+	}
+	parentGraph := store.Graphs()[parentGraphID]
+	if parentGraph == nil {
+		return FunctionFact{}, false
+	}
+	parent := ParentScopeForGraph(store, parentGraph.ID(), defaultParent)
+	if parent == nil {
+		return FunctionFact{}, false
+	}
+	return store.GetFunctionFactsSnapshot(parentGraph, parent).Fact(sym)
+}
+
+// FunctionTypeSnapshotForSymbol returns the stable function type fact for sym.
+func FunctionTypeSnapshotForSymbol(store StoreReader, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
+	ff, ok := FunctionFactSnapshotForSymbol(store, sym, defaultParent)
 	if !ok {
 		return nil
 	}

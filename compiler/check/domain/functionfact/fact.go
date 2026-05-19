@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -45,6 +46,7 @@ func Join(existing, candidate api.FunctionFact) api.FunctionFact {
 		out.Type = MergeType(out.Type, candidate.Type)
 	}
 
+	summaryBeforeNarrow := out.Summary
 	if len(out.Narrow) > 0 {
 		if len(out.Summary) == 0 {
 			out.Summary = returnsummary.Canonical(out.Narrow)
@@ -54,11 +56,29 @@ func Join(existing, candidate api.FunctionFact) api.FunctionFact {
 	}
 
 	if fn := unwrap.Function(out.Type); fn != nil {
-		alignedSummary := out.Summary
-		if len(alignedSummary) > 0 {
-			if aligned, changed := returnsummary.AlignFunction(fn, alignedSummary); changed {
-				out.Type = aligned
-				fn = aligned
+		alignedReturns := out.Summary
+		usingNarrow := len(out.Narrow) > 0 && !returnsummary.AllNil(out.Narrow)
+		if usingNarrow {
+			repairBase := summaryBeforeNarrow
+			if len(repairBase) == 0 {
+				repairBase = out.Summary
+			}
+			alignedReturns = repairSummaryWithNarrow(repairBase, out.Narrow)
+		}
+		if len(alignedReturns) > 0 {
+			if usingNarrow {
+				if aligned := typjoin.WithReturns(fn, alignedReturns); aligned != nil {
+					if typ.IsAny(aligned.Variadic) {
+						aligned = stripVariadic(aligned)
+					}
+					out.Type = aligned
+					fn = aligned
+				}
+			} else {
+				if aligned, changed := returnsummary.AlignFunction(fn, alignedReturns); changed {
+					out.Type = aligned
+					fn = aligned
+				}
 			}
 		}
 		if len(out.Summary) == 0 && fn != nil && len(fn.Returns) > 0 {
@@ -109,6 +129,7 @@ func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 		Type:    WidenTypeForConvergence(prev.Type, next.Type),
 	}
 
+	summaryBeforeNarrow := out.Summary
 	// Narrow summaries can refine optional/non-nil returns, but a nil-only
 	// narrow observation must not erase an already-informative summary.
 	if len(out.Narrow) > 0 && !returnsummary.AllNil(out.Narrow) {
@@ -120,9 +141,27 @@ func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 	}
 
 	if fn := unwrap.Function(out.Type); fn != nil {
-		if len(out.Summary) > 0 {
-			if aligned, changed := returnsummary.AlignFunction(fn, out.Summary); changed {
-				out.Type = WidenTypeForConvergence(fn, aligned)
+		alignedReturns := out.Summary
+		usingNarrow := len(out.Narrow) > 0 && !returnsummary.AllNil(out.Narrow)
+		if usingNarrow {
+			repairBase := summaryBeforeNarrow
+			if len(repairBase) == 0 {
+				repairBase = out.Summary
+			}
+			alignedReturns = repairSummaryWithNarrow(repairBase, out.Narrow)
+		}
+		if len(alignedReturns) > 0 {
+			if usingNarrow {
+				if aligned := typjoin.WithReturns(fn, alignedReturns); aligned != nil {
+					if nextFn := unwrap.Function(next.Type); (nextFn != nil && nextFn.Variadic == nil) || typ.IsAny(aligned.Variadic) {
+						aligned = stripVariadic(aligned)
+					}
+					out.Type = value.WidenForConvergence(aligned)
+				}
+			} else {
+				if aligned, changed := returnsummary.AlignFunction(fn, alignedReturns); changed {
+					out.Type = WidenTypeForConvergence(fn, aligned)
+				}
 			}
 		} else if len(fn.Returns) > 0 {
 			out.Summary = returnsummary.WidenForConvergence(nil, fn.Returns)
@@ -130,6 +169,127 @@ func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 	}
 
 	return out
+}
+
+func repairSummaryWithNarrow(summary, narrow []typ.Type) []typ.Type {
+	if len(narrow) == 0 {
+		return summary
+	}
+	if len(summary) != len(narrow) || len(summary) == 0 {
+		return narrow
+	}
+	out := make([]typ.Type, len(summary))
+	for i := range summary {
+		out[i] = repairTypeWithNarrow(summary[i], narrow[i], 0)
+	}
+	return out
+}
+
+func stripVariadic(fn *typ.Function) *typ.Function {
+	if fn == nil || fn.Variadic == nil {
+		return fn
+	}
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, p := range fn.Params {
+		if p.Optional {
+			builder = builder.OptParam(p.Name, p.Type)
+		} else {
+			builder = builder.Param(p.Name, p.Type)
+		}
+	}
+	if len(fn.Returns) > 0 {
+		builder = builder.Returns(fn.Returns...)
+	}
+	if fn.Effects != nil {
+		builder = builder.Effects(fn.Effects)
+	}
+	if fn.Spec != nil {
+		builder = builder.Spec(fn.Spec)
+	}
+	if fn.Refinement != nil {
+		builder = builder.WithRefinement(fn.Refinement)
+	}
+	return builder.Build()
+}
+
+func repairTypeWithNarrow(summary, narrow typ.Type, depth int) typ.Type {
+	if summary == nil || narrow == nil || depth > typ.DefaultRecursionDepth {
+		return narrow
+	}
+	if typ.IsAny(summary) && !typ.IsAny(narrow) {
+		return narrow
+	}
+	summary = unwrap.Alias(summary)
+	narrow = unwrap.Alias(narrow)
+	switch s := summary.(type) {
+	case *typ.Union:
+		n, ok := narrow.(*typ.Union)
+		if !ok {
+			members := make([]typ.Type, len(s.Members))
+			for i, member := range s.Members {
+				members[i] = repairTypeWithNarrow(member, narrow, depth+1)
+			}
+			return typ.NewUnion(members...)
+		}
+		if len(s.Members) != len(n.Members) {
+			return summary
+		}
+		members := make([]typ.Type, len(s.Members))
+		for i, member := range s.Members {
+			members[i] = repairTypeWithNarrow(member, bestNarrowUnionMember(member, n.Members), depth+1)
+		}
+		return typ.NewUnion(members...)
+	case *typ.Record:
+		n, ok := narrow.(*typ.Record)
+		if !ok {
+			return narrow
+		}
+		builder := typ.NewRecord().SetOpen(s.Open)
+		if s.HasMapComponent() {
+			mapValue := s.MapValue
+			if n.HasMapComponent() {
+				mapValue = repairTypeWithNarrow(s.MapValue, n.MapValue, depth+1)
+			}
+			builder.MapComponent(s.MapKey, mapValue)
+		}
+		if s.Metatable != nil {
+			builder.Metatable(s.Metatable)
+		}
+		for _, field := range s.Fields {
+			fieldType := field.Type
+			if nf := n.GetField(field.Name); nf != nil {
+				fieldType = repairTypeWithNarrow(field.Type, nf.Type, depth+1)
+			}
+			switch {
+			case field.Optional && field.Readonly:
+				builder.OptReadonlyField(field.Name, fieldType)
+			case field.Optional:
+				builder.OptField(field.Name, fieldType)
+			case field.Readonly:
+				builder.ReadonlyField(field.Name, fieldType)
+			default:
+				builder.Field(field.Name, fieldType)
+			}
+		}
+		return builder.Build()
+	default:
+		return narrow
+	}
+}
+
+func bestNarrowUnionMember(summary typ.Type, members []typ.Type) typ.Type {
+	for _, member := range members {
+		if subtype.IsSubtype(member, summary) || subtype.IsSubtype(summary, member) {
+			return member
+		}
+	}
+	if len(members) > 0 {
+		return members[0]
+	}
+	return summary
 }
 
 // WidenTypeForConvergence merges function-type facts at a recursive fixpoint

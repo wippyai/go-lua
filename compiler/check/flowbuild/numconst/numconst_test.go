@@ -206,6 +206,32 @@ func TestNumericConstraintFromComparisonWithBindings_GePaths(t *testing.T) {
 	}
 }
 
+func TestNumericConstraintFromComparisonWithBindings_LenLowerBound(t *testing.T) {
+	lhs := &ast.UnaryLenOpExpr{Expr: &ast.IdentExpr{Value: "rows"}}
+	rhs := &ast.NumberExpr{Value: "0"}
+	result := numconst.NumericConstraintFromComparisonWithBindings(">", lhs, rhs, 0, nil, nil)
+	got, ok := result.(constraint.LenGeConst)
+	if !ok {
+		t.Fatalf("expected LenGeConst constraint, got %T", result)
+	}
+	if got.Array.Root != "rows" || got.C != 1 {
+		t.Fatalf("unexpected length lower bound: %#v", got)
+	}
+}
+
+func TestNumericConstraintFromComparisonWithBindings_LenUpperBound(t *testing.T) {
+	lhs := &ast.NumberExpr{Value: "0"}
+	rhs := &ast.UnaryLenOpExpr{Expr: &ast.IdentExpr{Value: "rows"}}
+	result := numconst.NumericConstraintFromComparisonWithBindings(">=", lhs, rhs, 0, nil, nil)
+	got, ok := result.(constraint.LenLeConst)
+	if !ok {
+		t.Fatalf("expected LenLeConst constraint, got %T", result)
+	}
+	if got.Array.Root != "rows" || got.C != 0 {
+		t.Fatalf("unexpected length upper bound: %#v", got)
+	}
+}
+
 func TestNumericConstraintFromComparisonWithBindings_UnknownOp(t *testing.T) {
 	lhs := &ast.IdentExpr{Value: "a"}
 	rhs := &ast.IdentExpr{Value: "b"}

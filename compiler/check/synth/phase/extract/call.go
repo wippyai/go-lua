@@ -1,7 +1,10 @@
 package extract
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	compcfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
@@ -141,6 +144,9 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 		Scope:      sc,
 		Recurse:    intercept.ExprSynth(recurse),
 		TypeLookup: s.declaredTypeLookup(sc),
+		StableType: func(expr ast.Expr, current typ.Type) typ.Type {
+			return s.stablePrototypeType(expr, p, sc, current, recurse)
+		},
 	}
 
 	chain := s.buildInterceptChain(sc)
@@ -204,17 +210,40 @@ func (s *Synthesizer) specializedLocalFunctionCalleeType(
 		return nil
 	}
 	info := graph.CallSiteAt(p, ex)
-	if info == nil {
-		return nil
-	}
-	for _, sym := range callsite.CallableCalleeSymbolCandidates(info, graph, bindings, nil) {
-		fn := callsite.FunctionLiteralForGraphSymbol(graph, sym)
-		if fn == nil {
-			continue
+	candidates := callsite.CallableCalleeSymbolCandidates(info, graph, bindings, nil)
+	if len(candidates) == 0 {
+		if sym := callsite.SymbolFromExpr(ex.Func, bindings); sym != 0 {
+			candidates = append(candidates, sym)
 		}
-		expectedFn, _ := unwrap.Optional(unwrap.Alias(current)).(*typ.Function)
-		if fnType := s.synthFunctionTypeWithCapturePoint(fn, sc, expectedFn, p, captureTypes); fnType != nil {
-			return fnType
+		if s.deps.ModuleBindings != nil && s.deps.ModuleBindings != bindings {
+			if sym := callsite.SymbolFromExpr(ex.Func, s.deps.ModuleBindings); sym != 0 {
+				candidates = append(candidates, sym)
+			}
+		}
+	}
+	for _, sym := range candidates {
+		fn := callsite.FunctionLiteralForGraphSymbol(graph, sym)
+		if fn != nil && !s.hasDominatingDirectFunctionRebind(sym, fn, p) {
+			factType := s.stableFunctionFactType(sym)
+			hasCallPointCaptureMutation := hasNonGlobalFunctionCaptures(bindings, fn) && s.hasDominatingCapturedMutation(fn, p)
+			if factType != nil && !hasCallPointCaptureMutation {
+				return factType
+			}
+			expectedFn, _ := unwrap.Optional(unwrap.Alias(current)).(*typ.Function)
+			if expectedFn == nil {
+				expectedFn, _ = unwrap.Optional(unwrap.Alias(factType)).(*typ.Function)
+			}
+			if fnType := s.synthFunctionTypeWithCapturePoint(fn, sc, expectedFn, p, captureTypes); fnType != nil {
+				return fnType
+			}
+			if factType != nil {
+				return factType
+			}
+		}
+		if typ.IsUnknownOrNil(current) {
+			if t := s.stableFunctionFactType(sym); t != nil {
+				return t
+			}
 		}
 	}
 	return nil
@@ -231,6 +260,9 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 		Scope:      sc,
 		Recurse:    intercept.ExprSynth(recurse),
 		TypeLookup: s.declaredTypeLookup(sc),
+		StableType: func(expr ast.Expr, current typ.Type) typ.Type {
+			return s.stablePrototypeType(expr, p, sc, current, recurse)
+		},
 	}
 
 	chain := s.buildInterceptChain(sc)
@@ -273,6 +305,9 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 		Scope:      sc,
 		Recurse:    intercept.ExprSynth(recurse),
 		TypeLookup: s.declaredTypeLookup(sc),
+		StableType: func(expr ast.Expr, current typ.Type) typ.Type {
+			return s.stablePrototypeType(expr, p, sc, current, recurse)
+		},
 	}
 
 	chain := s.buildInterceptChain(sc)
@@ -327,6 +362,194 @@ func (s *Synthesizer) declaredTypeLookup(sc *scope.State) func(string) typ.Type 
 		}
 		return nil
 	}
+}
+
+func (s *Synthesizer) stablePrototypeType(expr ast.Expr, p cfg.Point, sc *scope.State, current typ.Type, recurse ExprSynth) typ.Type {
+	if s == nil || expr == nil || s.deps.CheckCtx == nil {
+		return current
+	}
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok || ident.Value == "" {
+		return current
+	}
+	graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph)
+	if !ok || graph == nil {
+		return current
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		bindings = s.deps.ModuleBindings
+	}
+	if bindings == nil {
+		return current
+	}
+	sym, ok := bindings.SymbolOf(ident)
+	if !ok || sym == 0 {
+		return current
+	}
+
+	fields := s.stablePrototypeFields(graph, sym, sc, recurse)
+	if len(fields) == 0 {
+		return current
+	}
+
+	var base *typ.Record
+	if rec := unwrap.Record(current); rec != nil && !typ.IsUnknown(rec.Metatable) {
+		base = rec
+	}
+	builder := typ.NewRecord()
+	if base != nil {
+		for _, field := range base.Fields {
+			fields[field.Name] = typ.JoinPreferNonSoft(field.Type, fields[field.Name])
+		}
+		if base.Metatable != nil {
+			builder.Metatable(base.Metatable)
+		}
+		if base.HasMapComponent() {
+			builder.MapComponent(base.MapKey, base.MapValue)
+		}
+		builder.SetOpen(base.Open)
+	}
+
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		t := fields[name]
+		if t == nil {
+			t = typ.Unknown
+		}
+		builder.Field(name, t)
+	}
+	return builder.Build()
+}
+
+func (s *Synthesizer) stablePrototypeFields(graph *compcfg.Graph, sym compcfg.SymbolID, sc *scope.State, recurse ExprSynth) map[string]typ.Type {
+	if graph == nil || sym == 0 {
+		return nil
+	}
+	bindings := graph.Bindings()
+	functionFacts := s.currentFunctionFacts()
+	var fields map[string]typ.Type
+	addField := func(name string, t typ.Type) {
+		if name == "" {
+			return
+		}
+		if t == nil {
+			t = typ.Unknown
+		}
+		if fields == nil {
+			fields = make(map[string]typ.Type)
+		}
+		if existing := fields[name]; existing != nil {
+			fields[name] = typ.JoinPreferNonSoft(existing, t)
+		} else {
+			fields[name] = t
+		}
+	}
+	graph.EachAssign(func(p compcfg.Point, info *compcfg.AssignInfo) {
+		if info == nil {
+			return
+		}
+		sources := info.Sources
+		for i, target := range info.Targets {
+			fieldName := stablePrototypeFieldName(target, sym)
+			if fieldName == "" {
+				continue
+			}
+			var source ast.Expr
+			if i < len(sources) {
+				source = sources[i]
+			}
+			addField(fieldName, s.stablePrototypeFieldType(source, p, sc, bindings, functionFacts, recurse))
+		}
+	})
+	graph.EachFuncDef(func(p compcfg.Point, info *compcfg.FuncDefInfo) {
+		fieldName := stablePrototypeFuncDefFieldName(info, sym)
+		if fieldName == "" {
+			return
+		}
+		addField(fieldName, s.stablePrototypeFuncDefType(info, p, sc, bindings, functionFacts, recurse))
+	})
+	for _, field := range bindings.DirectFieldSymbols(sym) {
+		if field.Symbol == 0 {
+			continue
+		}
+		if t := functionFacts.FunctionType(field.Symbol); t != nil {
+			addField(field.Name, t)
+			continue
+		}
+		if fn, ok := bindings.FuncLitBySymbol(field.Symbol); ok {
+			addField(field.Name, s.stablePrototypeFieldType(fn, graph.Entry(), sc, bindings, functionFacts, recurse))
+		}
+	}
+	return fields
+}
+
+func stablePrototypeFieldName(target compcfg.AssignTarget, sym compcfg.SymbolID) string {
+	if target.BaseSymbol != sym {
+		return ""
+	}
+	switch target.Kind {
+	case compcfg.TargetField:
+		if len(target.FieldPath) == 1 {
+			return target.FieldPath[0]
+		}
+	case compcfg.TargetIndex:
+		if key, ok := target.Key.(*ast.StringExpr); ok {
+			return key.Value
+		}
+	}
+	return ""
+}
+
+func stablePrototypeFuncDefFieldName(info *compcfg.FuncDefInfo, sym compcfg.SymbolID) string {
+	if info == nil || info.ReceiverSymbol != sym || info.Name == "" {
+		return ""
+	}
+	switch info.TargetKind {
+	case compcfg.FuncDefField, compcfg.FuncDefMethod:
+		return info.Name
+	default:
+		return ""
+	}
+}
+
+func (s *Synthesizer) stablePrototypeFuncDefType(info *compcfg.FuncDefInfo, p compcfg.Point, sc *scope.State, bindings *bind.BindingTable, functionFacts api.FunctionFacts, recurse ExprSynth) typ.Type {
+	if info == nil {
+		return nil
+	}
+	if info.Symbol != 0 {
+		if t := functionFacts.FunctionType(info.Symbol); t != nil {
+			return t
+		}
+	}
+	return s.stablePrototypeFieldType(info.FuncExpr, p, sc, bindings, functionFacts, recurse)
+}
+
+func (s *Synthesizer) stablePrototypeFieldType(source ast.Expr, p compcfg.Point, sc *scope.State, bindings *bind.BindingTable, functionFacts api.FunctionFacts, recurse ExprSynth) typ.Type {
+	if source == nil {
+		return nil
+	}
+	if fn, ok := source.(*ast.FunctionExpr); ok && bindings != nil {
+		if sym, ok := bindings.FuncLitSymbol(fn); ok && sym != 0 {
+			if t := functionFacts.FunctionType(sym); t != nil {
+				return t
+			}
+		}
+		if s != nil {
+			expected := typ.Func().Param("self", typ.Self).Build()
+			if t := s.SynthFunctionTypeWithExpected(fn, sc, expected); t != nil {
+				return t
+			}
+		}
+	}
+	if recurse != nil {
+		return recurse(source)
+	}
+	return nil
 }
 
 // buildInterceptChain creates the intercept chain for call synthesis.

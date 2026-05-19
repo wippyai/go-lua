@@ -69,6 +69,30 @@ func TestState_ApplyBounds(t *testing.T) {
 	}
 }
 
+func TestState_ApplyLenBounds(t *testing.T) {
+	s := NewState()
+	s.ApplyLenGeConst("rows", 1)
+	s.ApplyLenLeConst("rows", 3)
+
+	lower, upper, ok := s.LenBoundsFor("rows")
+	if !ok {
+		t.Fatal("expected length bounds")
+	}
+	if lower != 1 || upper != 3 {
+		t.Fatalf("expected len bounds [1, 3], got [%d, %d]", lower, upper)
+	}
+}
+
+func TestState_ContradictoryLenBounds(t *testing.T) {
+	s := NewState()
+	s.ApplyLenGeConst("rows", 1)
+	s.ApplyLenLeConst("rows", 0)
+
+	if !s.IsUnsat() {
+		t.Fatal("contradictory length bounds should make state unsat")
+	}
+}
+
 func TestState_ContradictoryBounds(t *testing.T) {
 	s := NewState()
 	s.ApplyGeConst("x", 10)

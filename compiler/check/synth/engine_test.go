@@ -87,6 +87,10 @@ func (m mockFlowOps) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arr
 	return "", 0, false
 }
 
+func (m mockFlowOps) LengthBoundsAt(p cfg.Point, path constraint.Path) (lower, upper int64, ok bool) {
+	return 0, 0, false
+}
+
 func (m mockFlowOps) IsPointDead(p cfg.Point) bool {
 	return false
 }

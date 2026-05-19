@@ -86,6 +86,61 @@ return parsed, parse_err
 	}
 }
 
+func TestExternalLint_MethodSelectedOptionalResponseBodyDefaultIsStringAtCall(t *testing.T) {
+	jsonModule := testutil.CheckAndExport(`
+local json = {}
+function json.decode(raw: string): any
+	return {}
+end
+return json
+`, "json", testutil.WithStdlib())
+	if jsonModule.HasError() {
+		t.Fatalf("json module errors: %v", testutil.ErrorMessages(jsonModule.Errors))
+	}
+
+	httpModule := testutil.CheckAndExport(`
+local http = {}
+type Response = {status_code: number, body: string?}
+function http.get(url: string, options: {[string]: any}?): (Response?, string?)
+	return { status_code = 200, body = nil }, nil
+end
+function http.post(url: string, options: {[string]: any}?): (Response?, string?)
+	return { status_code = 200, body = nil }, nil
+end
+return http
+`, "http_client", testutil.WithStdlib())
+	if httpModule.HasError() {
+		t.Fatalf("http module errors: %v", testutil.ErrorMessages(httpModule.Errors))
+	}
+
+	source := `
+local json = require("json")
+local http_client = require("http_client")
+
+local function request(method: string)
+	local response, err
+	if method == "GET" then
+		response, err = http_client.get("https://example.test", {})
+	else
+		response, err = http_client.post("https://example.test", {})
+	end
+
+	if not response then
+		return nil, err
+	end
+
+	local parsed, parse_err = json.decode(response.body or "")
+	return parsed, parse_err
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib(),
+		testutil.WithModule("json", jsonModule),
+		testutil.WithModule("http_client", httpModule))
+	if result.HasError() {
+		t.Fatalf("expected selected HTTP method body fallback to feed string call argument, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestExternalLint_GuardedOptionsModelSurvivesProviderBranches(t *testing.T) {
 	source := `
 local models = {
@@ -374,6 +429,68 @@ return content, render_err
 	}
 }
 
+func TestExternalLint_ErrorGuardedImportedPageFieldCastFeedsMethodCall(t *testing.T) {
+	templatesModule := testutil.CheckAndExport(`
+local templates = {}
+function templates.get(id: string)
+	return {
+		render = function(self, name: string, context: table)
+			return name, nil
+		end,
+		release = function(self)
+		end,
+	}, nil
+end
+return templates
+`, "templates", testutil.WithStdlib())
+	if templatesModule.HasError() {
+		t.Fatalf("templates module errors: %v", testutil.ErrorMessages(templatesModule.Errors))
+	}
+
+	pageRegistryModule := testutil.CheckAndExport(`
+local pages = {}
+function pages.get(id: string)
+	if id == "" then
+		return nil, "missing"
+	end
+	return {
+		template_set = "main",
+		template_name = nil :: unknown,
+	}, nil
+end
+return pages
+`, "page_registry", testutil.WithStdlib())
+	if pageRegistryModule.HasError() {
+		t.Fatalf("page_registry module errors: %v", testutil.ErrorMessages(pageRegistryModule.Errors))
+	}
+
+	source := `
+local templates = require("templates")
+local page_registry = require("page_registry")
+
+local page, err = page_registry.get("home")
+if err then
+	return nil, err
+end
+
+local template_set: string = page.template_set
+local tmpl, tmpl_get_err = templates.get(template_set)
+if tmpl_get_err then
+	return nil, tmpl_get_err
+end
+
+local content, render_err = tmpl:render(page.template_name :: string, {})
+tmpl:release()
+return content, render_err
+`
+	result := testutil.Check(source, testutil.WithStdlib(),
+		testutil.WithModule("templates", templatesModule),
+		testutil.WithModule("page_registry", pageRegistryModule))
+	if result.HasError() {
+		t.Fatalf("expected error guard plus field cast to feed imported method call, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestExternalLint_InsertedSuiteShapeSurvivesIpairs(t *testing.T) {
 	source := `
 type Suite = {
@@ -593,6 +710,661 @@ end
 	}
 }
 
+func TestExternalLint_GuardedBodyUseDoesNotEraseOptionalParamBoundary(t *testing.T) {
+	source := `
+type Executor = {
+	with_context: (self: Executor, context: {[string]: any}) -> Executor,
+	call: (self: Executor, id: string, data: any) -> (any, string?),
+}
+
+local funcs = {
+	new = function(): Executor
+		return {
+			with_context = function(self: Executor, context: {[string]: any})
+				return self
+			end,
+			call = function(self: Executor, id: string, data: any)
+				return data, nil
+			end,
+		}
+	end,
+}
+
+local function call_func(func_id: string, data: any, context: {[string]: any}?)
+	local executor = funcs.new()
+	if context ~= nil then
+		executor = executor:with_context(context)
+	end
+	return executor:call(func_id, data)
+end
+
+local maybe_context = nil :: {[string]: any}?
+call_func("map", {}, maybe_context)
+call_func("filter", {}, nil)
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected guarded body use to preserve optional parameter boundary, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_LocalMetatableInstanceKeepsLaterMethods(t *testing.T) {
+	source := `
+local module = {}
+local Class = {}
+local class_mt = { __index = Class }
+
+function module.new()
+	return setmetatable({
+		nodes = {},
+	}, class_mt)
+end
+
+function Class:is_empty()
+	return next(self.nodes) == nil
+end
+
+function Class:has_cycles()
+	return false, nil
+end
+
+function module.build()
+	local graph = module.new()
+	if graph:is_empty() then
+		return graph, nil
+	end
+	local has_cycles, cycle_desc = graph:has_cycles()
+	if has_cycles then
+		return nil, cycle_desc
+	end
+	return graph, nil
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected local metatable instance to keep class methods, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_ImportedMetatableQueryLengthGuardNarrowsFirstElement(t *testing.T) {
+	sessionSource := `
+local session = {}
+
+local context_query = {}
+context_query.__index = context_query
+
+local session_reader = {}
+session_reader.__index = session_reader
+
+function session.open()
+	return setmetatable({}, session_reader), nil
+end
+
+function session_reader:contexts()
+	local query = setmetatable({}, context_query)
+	return query
+end
+
+function context_query:type(_context_type)
+	return self
+end
+
+function context_query:all()
+	local contexts, err = { { text = "summary", created_at = "now" } }, nil
+	if err then
+		return nil, err
+	end
+	return contexts or {}, nil
+end
+
+return session
+`
+	sessionModule := testutil.CheckAndExport(sessionSource, "session", testutil.WithStdlib())
+	if sessionModule.HasError() {
+		t.Fatalf("session module should export cleanly, got: %v", testutil.ErrorMessages(sessionModule.Errors))
+	}
+
+	source := `
+local session = require("session")
+
+local reader, open_err = session.open()
+if not reader then
+	return nil, open_err
+end
+
+local existing_summaries, ctx_err = reader:contexts():type("conversation_summary"):all()
+if ctx_err then
+	existing_summaries = {}
+end
+
+local existing_summary = nil
+if existing_summaries and #existing_summaries > 0 then
+	existing_summary = existing_summaries[1].text
+end
+
+return existing_summary
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("session", sessionModule))
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected imported query length guard to prove first element, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_LengthGuardEliminatesEmptyTableFallback(t *testing.T) {
+	source := `
+type Context = {
+	text: string,
+	created_at: string,
+}
+
+local repo = {}
+function repo.list_by_type(): ({Context}?, string?)
+	return { { text = "summary", created_at = "now" } }, nil
+end
+
+local query = {}
+function query:all()
+	local contexts, err = repo.list_by_type()
+	if err then
+		return nil, err
+	end
+	return contexts or {}, nil
+end
+
+local existing_summaries, err = query:all()
+if err then
+	existing_summaries = {}
+end
+
+local existing_summary = nil
+if existing_summaries and #existing_summaries > 0 then
+	existing_summary = existing_summaries[1].text
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected positive length guard to eliminate empty fallback before literal index, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_ImportedUntypedRepositoryFallbackEliminatesNil(t *testing.T) {
+	sessionSource := `
+local session = {}
+
+local executor = {}
+function executor:query(): any
+	return nil
+end
+
+local repo = {}
+function repo.list_by_type(_session_id, _context_type)
+	local contexts, err = executor:query()
+	if err then
+		return nil, err
+	end
+	return contexts
+end
+
+local context_query = {
+	_session_id = nil :: string?,
+	_type_filter = nil :: string?,
+	_error = nil :: string?,
+}
+context_query.__index = context_query
+
+local session_reader = {
+	session_id = nil :: string?,
+}
+session_reader.__index = session_reader
+
+function session.open(session_id)
+	return setmetatable({ session_id = session_id }, session_reader), nil
+end
+
+function session_reader:contexts()
+	local query = setmetatable({}, context_query)
+	query._session_id = self.session_id
+	query._type_filter = nil
+	query._error = nil
+	return query
+end
+
+function context_query:type(context_type)
+	if not context_type then
+		self._error = "Context type is required"
+		return self
+	end
+	self._type_filter = context_type
+	return self
+end
+
+function context_query:all()
+	if self._error then
+		return nil, self._error
+	end
+	local contexts, err = repo.list_by_type(self._session_id, self._type_filter)
+	if err then
+		return nil, err
+	end
+	return contexts or {}, nil
+end
+
+return session
+`
+	sessionModule := testutil.CheckAndExport(sessionSource, "session", testutil.WithStdlib())
+	if sessionModule.HasError() {
+		t.Fatalf("session module should export cleanly, got: %v", testutil.ErrorMessages(sessionModule.Errors))
+	}
+
+	source := `
+local session = require("session")
+
+local session_reader, session_err = session.open("s1")
+if not session_reader then
+	return nil, session_err
+end
+
+local existing_summaries, ctx_err = session_reader:contexts():type("conversation_summary"):all()
+if ctx_err then
+	existing_summaries = {}
+end
+
+if existing_summaries and #existing_summaries > 0 then
+	local first = existing_summaries[1]
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("session", sessionModule))
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected imported nil fallback and error repair to eliminate nil index, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_QueryBuilderReaderBackReferenceSurvivesMethodChain(t *testing.T) {
+	source := `
+local session = {}
+
+local message_query = {
+	_session_id = nil :: string?,
+	_reader = nil :: any,
+	_after_message_id = nil :: string?,
+	_error = nil :: string?,
+}
+message_query.__index = message_query
+
+local session_reader = {
+	session_id = nil :: string?,
+}
+session_reader.__index = session_reader
+
+function session.open(session_id)
+	return setmetatable({ session_id = session_id }, session_reader), nil
+end
+
+function session_reader:get_context(_key)
+	return "checkpoint", nil
+end
+
+function session_reader:messages()
+	local query = setmetatable({}, message_query)
+	query._session_id = self.session_id
+	query._reader = self
+	query._after_message_id = nil
+	query._error = nil
+	return query
+end
+
+function message_query:from_checkpoint()
+	if not self._reader then
+		self._error = "Reader reference missing"
+		return self
+	end
+	local checkpoint_id = self._reader:get_context("current_checkpoint")
+	if checkpoint_id then
+		self._after_message_id = checkpoint_id
+	end
+	return self
+end
+
+function message_query:all()
+	if self._error then
+		return nil, self._error
+	end
+	return {}, nil
+end
+
+local reader, err = session.open("s1")
+if not reader then
+	return nil, err
+end
+
+local messages_after_checkpoint, msg_err = reader:messages():from_checkpoint():all()
+if msg_err then
+	return nil, msg_err
+end
+
+local all_messages, all_err = reader:messages():all()
+if all_err then
+	return nil, all_err
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected query builder reader back-reference to survive method chains, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_ImportedQueryBuilderReaderBackReferenceSurvivesMethodChain(t *testing.T) {
+	sessionSource := `
+local session = {}
+
+local message_query = {
+	_session_id = nil :: string?,
+	_reader = nil :: any,
+	_after_message_id = nil :: string?,
+	_error = nil :: string?,
+}
+message_query.__index = message_query
+
+local session_reader = {
+	session_id = nil :: string?,
+}
+session_reader.__index = session_reader
+
+function session.open(session_id)
+	return setmetatable({ session_id = session_id }, session_reader), nil
+end
+
+function session_reader:get_context(_key)
+	return "checkpoint", nil
+end
+
+function session_reader:messages()
+	local query = setmetatable({}, message_query)
+	query._session_id = self.session_id
+	query._reader = self
+	query._after_message_id = nil
+	query._error = nil
+	return query
+end
+
+function message_query:from_checkpoint()
+	if not self._reader then
+		self._error = "Reader reference missing"
+		return self
+	end
+	local checkpoint_id = self._reader:get_context("current_checkpoint")
+	if checkpoint_id then
+		self._after_message_id = checkpoint_id
+	end
+	return self
+end
+
+function message_query:all()
+	if self._error then
+		return nil, self._error
+	end
+	return {}, nil
+end
+
+return session
+`
+	sessionModule := testutil.CheckAndExport(sessionSource, "session", testutil.WithStdlib())
+	if sessionModule.HasError() {
+		t.Fatalf("session module should export cleanly, got: %v", testutil.ErrorMessages(sessionModule.Errors))
+	}
+
+	source := `
+local session = require("session")
+
+local reader, err = session.open("s1")
+if not reader then
+	return nil, err
+end
+
+local messages_after_checkpoint, msg_err = reader:messages():from_checkpoint():all()
+if msg_err then
+	return nil, msg_err
+end
+
+local all_messages, all_err = reader:messages():all()
+if all_err then
+	return nil, all_err
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("session", sessionModule))
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected imported query builder reader back-reference to survive method chains, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_MultipleQueryBuilderPrototypesKeepMethodReceiversSeparate(t *testing.T) {
+	source := `
+local session = {}
+
+local message_query = {
+	_session_id = nil :: string?,
+	_reader = nil :: any,
+	_error = nil :: string?,
+}
+message_query.__index = message_query
+
+local artifact_query = {
+	_session_id = nil :: string?,
+	_error = nil :: string?,
+}
+artifact_query.__index = artifact_query
+
+local context_query = {
+	_session_id = nil :: string?,
+	_error = nil :: string?,
+}
+context_query.__index = context_query
+
+local session_reader = {
+	session_id = nil :: string?,
+	_session_data = nil :: any,
+	_primary_context_cache = nil :: any,
+}
+session_reader.__index = session_reader
+
+function session.open(session_id)
+	return setmetatable({
+		session_id = session_id,
+		_session_data = {},
+		_primary_context_cache = nil,
+	}, session_reader), nil
+end
+
+function session_reader:get_context(_key)
+	return "checkpoint", nil
+end
+
+function session_reader:messages()
+	local query = setmetatable({}, message_query)
+	query._session_id = self.session_id
+	query._reader = self
+	query._error = nil
+	return query
+end
+
+function session_reader:artifacts()
+	local query = setmetatable({}, artifact_query)
+	query._session_id = self.session_id
+	query._error = nil
+	return query
+end
+
+function session_reader:contexts()
+	local query = setmetatable({}, context_query)
+	query._session_id = self.session_id
+	query._error = nil
+	return query
+end
+
+function message_query:from_checkpoint()
+	if not self._reader then
+		self._error = "Reader reference missing"
+		return self
+	end
+	local checkpoint_id = self._reader:get_context("current_checkpoint")
+	return self
+end
+
+function message_query:all()
+	if self._error then
+		return nil, self._error
+	end
+	return {}, nil
+end
+
+function artifact_query:all()
+	if self._error then
+		return nil, self._error
+	end
+	return {}, nil
+end
+
+function context_query:all()
+	if self._error then
+		return nil, self._error
+	end
+	return {}, nil
+end
+
+local reader, err = session.open("s1")
+if not reader then
+	return nil, err
+end
+
+local messages_after_checkpoint, msg_err = reader:messages():from_checkpoint():all()
+if msg_err then
+	return nil, msg_err
+end
+
+local all_messages, all_err = reader:messages():all()
+if all_err then
+	return nil, all_err
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected multiple query builder prototypes to keep all() receiver facts separate, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_SessionReaderQueryBuilderRealShape(t *testing.T) {
+	source := `
+type Context = {
+	text: string,
+	created_at: string,
+	time: string?,
+}
+
+local session = {
+	_session_contexts_repo = {},
+}
+
+function session._session_contexts_repo.list_by_type(session_id: string?, context_type: string?): ({Context}?, string?)
+	return { { text = "summary", created_at = "now" } }, nil
+end
+
+local context_query = {
+	_session_id = nil :: string?,
+	_type_filter = nil :: string?,
+	_error = nil :: string?,
+}
+context_query.__index = context_query
+
+local session_reader = {
+	session_id = nil :: string?,
+}
+session_reader.__index = session_reader
+
+function session.open()
+	return setmetatable({ session_id = "s1" }, session_reader), nil
+end
+
+function session_reader:contexts()
+	local query = setmetatable({}, context_query)
+	query._session_id = self.session_id
+	query._type_filter = nil
+	query._error = nil
+	return query
+end
+
+function context_query:type(context_type)
+	if not context_type then
+		self._error = "Context type is required"
+		return self
+	end
+	self._type_filter = context_type
+	return self
+end
+
+function context_query:all()
+	if self._error then
+		return nil, self._error
+	end
+
+	local contexts, err
+	if self._type_filter then
+		contexts, err = session._session_contexts_repo.list_by_type(self._session_id, self._type_filter)
+	else
+		contexts, err = session._session_contexts_repo.list_by_type(self._session_id, self._type_filter)
+	end
+
+	if err then
+		return nil, "Failed to fetch contexts: " .. err
+	end
+
+	return contexts or {}, nil
+end
+
+local session_reader, session_err = session.open()
+if not session_reader then
+	return nil, session_err
+end
+
+local existing_summaries, ctx_err = session_reader:contexts():type("conversation_summary"):all()
+if ctx_err then
+	existing_summaries = {}
+end
+
+local existing_summary = nil
+if existing_summaries and #existing_summaries > 0 then
+	existing_summary = existing_summaries[1].text
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected real-shaped session query builder to preserve length-guarded element, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestExternalLint_TypeProbeAllowsOptionalDynamicFieldFallback(t *testing.T) {
 	source := `
 local page = {
@@ -771,5 +1543,38 @@ map_messages(nil :: any)
 			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
 		}
 		t.Fatalf("expected untyped discriminated source element to feed typed image helper, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_CapturedStateFieldMapPairsPreservesValueShape(t *testing.T) {
+	source := `
+type Time = {
+	after: (self: Time, other: Time) -> boolean,
+}
+
+type ActiveSession = {
+	pid: any,
+	created_at: Time,
+	last_activity: Time?,
+}
+
+local state = {
+	active_sessions = {} :: {[string]: ActiveSession},
+}
+
+local function check()
+	local most_recent_time: Time? = nil
+	for sid, session_info in pairs(state.active_sessions) do
+		local last_activity: Time = session_info.last_activity or session_info.created_at
+		if not most_recent_time or last_activity:after(most_recent_time) then
+			most_recent_time = last_activity
+		end
+	end
+	return most_recent_time
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected captured state field map pairs to preserve ActiveSession values, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }

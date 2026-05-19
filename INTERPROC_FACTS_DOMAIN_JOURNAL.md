@@ -5045,3 +5045,75 @@ If this is done as a flash migration, the codebase should become smaller because
 many helper clusters collapse into a few named domains. It should also become
 easier to reason about because every merge/refinement/widening decision will
 have one owner and one law-test suite.
+
+## 2026-05-19 Engine Verification And Classification Checkpoint
+
+This pass removed the remaining parameter-count heuristic in call diagnostics.
+The old shape was not a domain law: graph-local calls were relaxed based on
+source arity. The replacement is a semantic boundary:
+
+- function facts remain the call contract authority;
+- explicit `any` arguments are only ignored for graph-local parameter slots
+  whose value is never observed by the function body;
+- observed parameters still enforce their declared or inferred contract;
+- the unobserved-parameter mask is computed once per function symbol during the
+  call-check pass from binder symbol identity, so shadowing and captured uses are
+  handled by symbols, not names.
+
+Regression coverage added:
+
+- an internal `any` passed to an unobserved local parameter does not create a
+  false positive;
+- the same `any` passed to an observed `string` parameter remains an error;
+- imported/manifest call boundaries that require `string` still reject `any`;
+- the external-lint reductions now also cover selected HTTP response body
+  fallback, error-guarded imported page field casts, and captured state-field
+  map iteration.
+
+Verification from this checkpoint:
+
+```text
+go test ./... -count=1
+go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction -benchmem -count=3
+../scripts/verify-suite.sh
+```
+
+Results:
+
+- `go test ./... -count=1` passes.
+- `BenchmarkCheck_LargeFunction` is about 1.83-1.86 ms/op, about 1.05 MB/op,
+  and 10,695 allocs/op on this machine.
+- `../scripts/verify-suite.sh` passes go-lua checker tests and builds Wippy, but
+  the external lint section still exits non-zero because the script builds Wippy
+  against `github.com/wippyai/go-lua v1.5.16`, not this checkout.
+- A temporary Wippy binary built with a `/tmp` `go.mod` replacement pointed at
+  this checkout was used for classification without editing external Wippy code.
+
+Current external-lint classification:
+
+- The official pinned verify output cannot prove current go-lua regressions.
+  It reported `session` 8, `framework/src/agent/src` 13 during the script run
+  and 8 on direct replay, and `docker-demo` 21 errors / 2 warnings.
+- The local-replace replay is stricter than the pinned binary. It reports many
+  explicit `any` to concrete-contract errors. Those are soundness-preserving
+  external code or manifest contract issues unless reduced to a go-lua false
+  positive.
+- High-confidence engine candidates were reduced where possible. The current
+  reduced go-lua fixtures for response-body fallback, page-field casts,
+  captured state map iteration, length guards, setmetatable prototypes, query
+  builder back-references, and imported assertions pass.
+- Remaining unreduced candidates are mostly context-sensitive Wippy package
+  interactions: imported module manifests that expose `unknown`/`any`, generated
+  package cache shape, and real code paths that pass unchecked dynamic values
+  into concrete APIs. They should not be fixed by weakening `any` or erasing
+  `unknown`.
+
+Design rule retained for the next pass:
+
+- Do not add compatibility channels or fallback facts.
+- Do not make `any` silently assignable to concrete types.
+- If an external diagnostic is a false positive, first reduce it into a
+  go-lua regression that fails for the same semantic reason, then fix the
+  owning domain or transfer rule.
+- If a diagnostic is true external code, keep it classified and do not edit
+  external Wippy sources from this go-lua PR.

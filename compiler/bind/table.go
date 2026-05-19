@@ -97,6 +97,12 @@ type fieldPathKey struct {
 	path string
 }
 
+// FieldSymbolRef identifies a direct field symbol rooted at a base symbol.
+type FieldSymbolRef struct {
+	Name   string
+	Symbol cfg.SymbolID
+}
+
 // NewBindingTable creates an empty binding table with all maps initialized.
 func NewBindingTable() *BindingTable {
 	return NewBindingTableWithHint(0, 0)
@@ -407,6 +413,38 @@ func (t *BindingTable) FieldSymbol(baseSym cfg.SymbolID, path string) (cfg.Symbo
 	key := fieldPathKey{base: baseSym, path: canonicalPath}
 	sym, ok := t.fieldSymbols[key]
 	return sym, ok
+}
+
+// DirectFieldSymbols returns direct field symbols rooted at baseSym.
+//
+// Only one-segment string-like fields are returned; nested paths and numeric
+// indexes are intentionally excluded because they are not fields on the base
+// prototype itself.
+func (t *BindingTable) DirectFieldSymbols(baseSym cfg.SymbolID) []FieldSymbolRef {
+	if t == nil || baseSym == 0 || len(t.fieldSymbols) == 0 {
+		return nil
+	}
+	out := make([]FieldSymbolRef, 0)
+	for key, sym := range t.fieldSymbols {
+		if key.base != baseSym || sym == 0 {
+			continue
+		}
+		name, ok := DirectFieldNameFromKey(key.path)
+		if !ok {
+			continue
+		}
+		out = append(out, FieldSymbolRef{Name: name, Symbol: sym})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].Symbol < out[j].Symbol
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 // GetOrCreateFuncLitSymbol returns or creates a symbol for an anonymous function.

@@ -228,7 +228,7 @@ func TestNumKindValues(t *testing.T) {
 		t.Error("NumInvalid should be 0")
 	}
 
-	kinds := []NumKind{NumLe, NumLt, NumGe, NumGt, NumEq, NumEqConst, NumLeConst, NumGeConst, NumModEq, NumLeLenOf}
+	kinds := []NumKind{NumLe, NumLt, NumGe, NumGt, NumEq, NumEqConst, NumLeConst, NumGeConst, NumModEq, NumLeLenOf, NumLenLeConst, NumLenGeConst}
 	seen := make(map[NumKind]bool)
 
 	for _, k := range kinds {
@@ -281,6 +281,43 @@ func TestLeLenOf(t *testing.T) {
 	}
 }
 
+func TestLenConstBounds(t *testing.T) {
+	arr := Path{Root: "arr"}
+	le := LenLeConst{Array: arr, C: 3}
+	if le.NumKind() != NumLenLeConst {
+		t.Errorf("expected NumLenLeConst, got %v", le.NumKind())
+	}
+	if paths := le.Paths(); len(paths) != 1 || !paths[0].Equal(arr) {
+		t.Fatalf("unexpected LenLeConst paths: %#v", paths)
+	}
+	if le.Hash() == 0 {
+		t.Fatal("LenLeConst hash should be non-zero")
+	}
+	if !le.Equals(LenLeConst{Array: arr, C: 3}) {
+		t.Fatal("equal LenLeConst constraints should be equal")
+	}
+	if le.Equals(LenLeConst{Array: arr, C: 4}) {
+		t.Fatal("different LenLeConst constants should not be equal")
+	}
+
+	ge := LenGeConst{Array: arr, C: 1}
+	if ge.NumKind() != NumLenGeConst {
+		t.Errorf("expected NumLenGeConst, got %v", ge.NumKind())
+	}
+	if paths := ge.Paths(); len(paths) != 1 || !paths[0].Equal(arr) {
+		t.Fatalf("unexpected LenGeConst paths: %#v", paths)
+	}
+	if ge.Hash() == 0 {
+		t.Fatal("LenGeConst hash should be non-zero")
+	}
+	if !ge.Equals(LenGeConst{Array: arr, C: 1}) {
+		t.Fatal("equal LenGeConst constraints should be equal")
+	}
+	if ge.Equals(LenGeConst{Array: Path{Root: "other"}, C: 1}) {
+		t.Fatal("different LenGeConst arrays should not be equal")
+	}
+}
+
 func TestNumericPathsMethod(t *testing.T) {
 	x := Path{Root: "x"}
 	y := Path{Root: "y"}
@@ -300,6 +337,8 @@ func TestNumericPathsMethod(t *testing.T) {
 		{"GeConst", GeConst{X: x, C: 0}, 1},
 		{"ModEq", ModEq{X: x, M: 3, R: 1}, 1},
 		{"LeLenOf", LeLenOf{X: x, Array: y}, 2},
+		{"LenLeConst", LenLeConst{Array: y, C: 3}, 1},
+		{"LenGeConst", LenGeConst{Array: y, C: 1}, 1},
 	}
 
 	for _, tc := range tests {

@@ -90,3 +90,19 @@ func displayFieldPathKey(path string) string {
 
 	return path
 }
+
+// DirectFieldNameFromKey returns the field name for a one-segment string-like
+// field key. Numeric indexes and nested paths do not describe direct prototype
+// fields and are rejected.
+func DirectFieldNameFromKey(path string) (string, bool) {
+	segs := pathkey.ParseSuffix(path)
+	if len(segs) != 1 {
+		return "", false
+	}
+	switch segs[0].Kind {
+	case constraint.SegmentField, constraint.SegmentIndexString:
+		return segs[0].Name, segs[0].Name != ""
+	default:
+		return "", false
+	}
+}

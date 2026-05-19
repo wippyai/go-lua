@@ -179,6 +179,9 @@ type FlowOps interface {
 	// varName <= len(array) + offset.
 	ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool)
 
+	// LengthBoundsAt returns numeric bounds for len(path) at a point.
+	LengthBoundsAt(p cfg.Point, path constraint.Path) (lower, upper int64, ok bool)
+
 	// IsPointDead returns whether a CFG point is unreachable.
 	IsPointDead(p cfg.Point) bool
 

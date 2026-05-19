@@ -14,6 +14,7 @@ import "github.com/wippyai/go-lua/internal"
 //   - Constants: [EqConst] (x==c), [LeConst] (x≤c), [GeConst] (x≥c)
 //   - Modular: [ModEq] (x%m==r)
 //   - Symbolic: [LeLenOf] (x≤len(arr)+c)
+//   - Length bounds: [LenLeConst], [LenGeConst]
 //
 // # Usage with Theory Solvers
 //
@@ -27,17 +28,19 @@ import "github.com/wippyai/go-lua/internal"
 type NumKind uint8
 
 const (
-	NumInvalid NumKind = iota
-	NumLe              // x - y <= c
-	NumLt              // x < y
-	NumGe              // x >= y
-	NumGt              // x > y
-	NumEq              // x == y
-	NumEqConst         // x == c
-	NumLeConst         // x <= c
-	NumGeConst         // x >= c
-	NumModEq           // x % m == r
-	NumLeLenOf         // x <= len(arr) + offset
+	NumInvalid    NumKind = iota
+	NumLe                 // x - y <= c
+	NumLt                 // x < y
+	NumGe                 // x >= y
+	NumGt                 // x > y
+	NumEq                 // x == y
+	NumEqConst            // x == c
+	NumLeConst            // x <= c
+	NumGeConst            // x >= c
+	NumModEq              // x % m == r
+	NumLeLenOf            // x <= len(arr) + offset
+	NumLenLeConst         // len(arr) <= c
+	NumLenGeConst         // len(arr) >= c
 )
 
 // NumericConstraint is a marker interface for numeric constraints.
@@ -189,6 +192,34 @@ func (c LeLenOf) Hash() uint64     { return hashNumConstraint(c.NumKind(), c.X, 
 func (c LeLenOf) Equals(o NumericConstraint) bool {
 	other, ok := o.(LeLenOf)
 	return ok && c.X.Equal(other.X) && c.Array.Equal(other.Array) && c.Offset == other.Offset
+}
+
+// LenLeConst represents len(arr) <= c.
+type LenLeConst struct {
+	Array Path
+	C     int64
+}
+
+func (c LenLeConst) NumKind() NumKind { return NumLenLeConst }
+func (c LenLeConst) Paths() []Path    { return []Path{c.Array} }
+func (c LenLeConst) Hash() uint64     { return hashNumConstraint(c.NumKind(), c.Array, Path{}, c.C) }
+func (c LenLeConst) Equals(o NumericConstraint) bool {
+	other, ok := o.(LenLeConst)
+	return ok && c.Array.Equal(other.Array) && c.C == other.C
+}
+
+// LenGeConst represents len(arr) >= c.
+type LenGeConst struct {
+	Array Path
+	C     int64
+}
+
+func (c LenGeConst) NumKind() NumKind { return NumLenGeConst }
+func (c LenGeConst) Paths() []Path    { return []Path{c.Array} }
+func (c LenGeConst) Hash() uint64     { return hashNumConstraint(c.NumKind(), c.Array, Path{}, c.C) }
+func (c LenGeConst) Equals(o NumericConstraint) bool {
+	other, ok := o.(LenGeConst)
+	return ok && c.Array.Equal(other.Array) && c.C == other.C
 }
 
 func hashNumConstraint(kind NumKind, a, b Path, extra ...int64) uint64 {

@@ -43,6 +43,7 @@ func (b *ChainBuilder) Build() *Chain {
 	callIntercepts := []CallIntercept{
 		&SelectIntercept{VariadicResolver: b.variadicResolver},
 		&RequireIntercept{Manifests: b.manifests},
+		&SetMetatableIntercept{},
 		&TypeCastIntercept{},
 	}
 

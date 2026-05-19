@@ -28,12 +28,20 @@ func NegateConstraints(items []constraint.Constraint) []constraint.Constraint {
 func NumericConstraintFromComparisonWithBindings(op string, lhs, rhs ast.Expr, p cfg.Point, inputs *flow.Inputs, bindings *bind.BindingTable) constraint.NumericConstraint {
 	leftPath := path.FromExprWithBindings(lhs, nil, bindings)
 	rightPath := path.FromExprWithBindings(rhs, nil, bindings)
+	leftLenPath := lenPathFromExprWithBindings(lhs, bindings)
+	rightLenPath := lenPathFromExprWithBindings(rhs, bindings)
 
 	leftConst, leftIsConst := IntConstFromExpr(lhs)
 	rightConst, rightIsConst := IntConstFromExpr(rhs)
 
 	switch op {
 	case "<":
+		if !leftLenPath.IsEmpty() && rightIsConst {
+			return constraint.LenLeConst{Array: leftLenPath, C: rightConst - 1}
+		}
+		if leftIsConst && !rightLenPath.IsEmpty() {
+			return constraint.LenGeConst{Array: rightLenPath, C: leftConst + 1}
+		}
 		if !leftPath.IsEmpty() && !rightPath.IsEmpty() {
 			return constraint.Lt{X: leftPath, Y: rightPath}
 		}
@@ -44,6 +52,12 @@ func NumericConstraintFromComparisonWithBindings(op string, lhs, rhs ast.Expr, p
 			return constraint.GeConst{X: rightPath, C: leftConst + 1}
 		}
 	case ">":
+		if !leftLenPath.IsEmpty() && rightIsConst {
+			return constraint.LenGeConst{Array: leftLenPath, C: rightConst + 1}
+		}
+		if leftIsConst && !rightLenPath.IsEmpty() {
+			return constraint.LenLeConst{Array: rightLenPath, C: leftConst - 1}
+		}
 		if !leftPath.IsEmpty() && !rightPath.IsEmpty() {
 			return constraint.Gt{X: leftPath, Y: rightPath}
 		}
@@ -54,6 +68,12 @@ func NumericConstraintFromComparisonWithBindings(op string, lhs, rhs ast.Expr, p
 			return constraint.LeConst{X: rightPath, C: leftConst - 1}
 		}
 	case "<=":
+		if !leftLenPath.IsEmpty() && rightIsConst {
+			return constraint.LenLeConst{Array: leftLenPath, C: rightConst}
+		}
+		if leftIsConst && !rightLenPath.IsEmpty() {
+			return constraint.LenGeConst{Array: rightLenPath, C: leftConst}
+		}
 		if !leftPath.IsEmpty() && !rightPath.IsEmpty() {
 			return constraint.Le{X: leftPath, Y: rightPath, C: 0}
 		}
@@ -64,6 +84,12 @@ func NumericConstraintFromComparisonWithBindings(op string, lhs, rhs ast.Expr, p
 			return constraint.GeConst{X: rightPath, C: leftConst}
 		}
 	case ">=":
+		if !leftLenPath.IsEmpty() && rightIsConst {
+			return constraint.LenGeConst{Array: leftLenPath, C: rightConst}
+		}
+		if leftIsConst && !rightLenPath.IsEmpty() {
+			return constraint.LenLeConst{Array: rightLenPath, C: leftConst}
+		}
 		if !leftPath.IsEmpty() && !rightPath.IsEmpty() {
 			return constraint.Ge{X: leftPath, Y: rightPath}
 		}
@@ -75,6 +101,14 @@ func NumericConstraintFromComparisonWithBindings(op string, lhs, rhs ast.Expr, p
 		}
 	}
 	return nil
+}
+
+func lenPathFromExprWithBindings(expr ast.Expr, bindings *bind.BindingTable) constraint.Path {
+	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
+	if !ok || lenOp == nil {
+		return constraint.Path{}
+	}
+	return path.FromExprWithBindings(lenOp.Expr, nil, bindings)
 }
 
 // NegateNumericConstraint returns the negation of a numeric constraint.
@@ -95,6 +129,10 @@ func NegateNumericConstraint(c constraint.NumericConstraint) constraint.NumericC
 		return constraint.GeConst{X: v.X, C: v.C + 1}
 	case constraint.GeConst:
 		return constraint.LeConst{X: v.X, C: v.C - 1}
+	case constraint.LenLeConst:
+		return constraint.LenGeConst{Array: v.Array, C: v.C + 1}
+	case constraint.LenGeConst:
+		return constraint.LenLeConst{Array: v.Array, C: v.C - 1}
 	default:
 		return nil
 	}

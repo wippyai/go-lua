@@ -30,6 +30,7 @@ import (
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -49,12 +50,13 @@ func CheckCalls(
 	var diags []diag.Diagnostic
 	query := narrowSynth.CallQuery()
 	bindings := graph.Bindings()
+	unobservedLocalParams := make(map[cfg.SymbolID][]bool)
 
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
-		callDiags := checkSingleCall(p, info, scopes, narrowView, narrowSynth, query, sourceName, graph, bindings)
+		callDiags := checkSingleCall(p, info, scopes, narrowView, narrowSynth, query, sourceName, graph, bindings, unobservedLocalParams)
 		diags = append(diags, callDiags...)
 	})
 
@@ -71,6 +73,7 @@ func checkSingleCall(
 	sourceName string,
 	graph *cfg.Graph,
 	bindings *bind.BindingTable,
+	unobservedLocalParams map[cfg.SymbolID][]bool,
 ) []diag.Diagnostic {
 	if info.Method == "" && info.Callee != nil {
 		if t := narrowView.TypeOf(info.Callee, p); hasCallableTypeEffect(t) {
@@ -105,6 +108,7 @@ func checkSingleCall(
 		args[i] = narrowView.TypeOf(arg, p)
 	}
 
+	ctx := narrowSynth.Context()
 	def := ops.CallDef{
 		Args:  args,
 		Query: query,
@@ -117,9 +121,14 @@ func checkSingleCall(
 		def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, graph, info)
 	} else if info.Callee != nil {
 		def.Callee = narrowView.TypeOf(info.Callee, p)
+		if factType, unobservedParams := functionFactCalleeType(api.StoreFrom(ctx), info, graph, bindings, unobservedLocalParams); factType != nil {
+			if typ.IsUnknownOrNil(def.Callee) || canonicalFactHasWiderParams(def.Callee, factType) {
+				def.Callee = factType
+			} else if len(unobservedParams) > 0 {
+				def.Callee = callTypeWithUnobservedLocalAnyArgs(def.Callee, args, unobservedParams)
+			}
+		}
 	}
-
-	ctx := narrowSynth.Context()
 
 	pipeline := extract.NewCallPipeline(ctx, def, info.Args).
 		WithReSynth(extract.FullArgReSynth(
@@ -133,6 +142,106 @@ func checkSingleCall(
 		))
 	result := pipeline.Run()
 	return callErrorsToDiags(result.Errors, info, sourceName)
+}
+
+func functionFactCalleeType(
+	store api.StoreReader,
+	info *cfg.CallInfo,
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	unobservedLocalParams map[cfg.SymbolID][]bool,
+) (typ.Type, []bool) {
+	if store == nil || info == nil {
+		return nil, nil
+	}
+	moduleBindings := store.ModuleBindings()
+	for _, sym := range callsite.CallableCalleeSymbolCandidates(info, graph, bindings, moduleBindings) {
+		if ff, ok := api.FunctionFactSnapshotForSymbol(store, sym, nil); ok {
+			fn := callsite.FunctionLiteralForGraphSymbol(graph, sym)
+			graphLocal := fn != nil
+			t := ff.Type
+			var unobservedParams []bool
+			if graphLocal {
+				unobservedParams = unobservedLocalParamMask(store, sym, fn, unobservedLocalParams)
+			}
+			if t != nil {
+				return t, unobservedParams
+			}
+		}
+	}
+	return nil, nil
+}
+
+func callTypeWithUnobservedLocalAnyArgs(callee typ.Type, args []typ.Type, unobservedParams []bool) typ.Type {
+	fn := unwrap.Function(callee)
+	if fn == nil || len(args) == 0 || len(fn.Params) == 0 || len(unobservedParams) == 0 {
+		return callee
+	}
+	changed := false
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for i, p := range fn.Params {
+		paramType := p.Type
+		if i < len(args) && i < len(unobservedParams) && unobservedParams[i] && typ.IsAny(args[i]) && !typ.IsAny(paramType) {
+			paramType = typ.Any
+			changed = true
+		}
+		if p.Optional {
+			builder = builder.OptParam(p.Name, paramType)
+		} else {
+			builder = builder.Param(p.Name, paramType)
+		}
+	}
+	if !changed {
+		return callee
+	}
+	if fn.Variadic != nil {
+		builder = builder.Variadic(fn.Variadic)
+	}
+	if len(fn.Returns) > 0 {
+		builder = builder.Returns(fn.Returns...)
+	}
+	if fn.Effects != nil {
+		builder = builder.Effects(fn.Effects)
+	}
+	if fn.Spec != nil {
+		builder = builder.Spec(fn.Spec)
+	}
+	if fn.Refinement != nil {
+		builder = builder.WithRefinement(fn.Refinement)
+	}
+	return builder.Build()
+}
+
+func canonicalFactHasWiderParams(current, fact typ.Type) bool {
+	currentFn := unwrap.Function(current)
+	factFn := unwrap.Function(fact)
+	if currentFn == nil || factFn == nil || len(currentFn.Params) != len(factFn.Params) {
+		return false
+	}
+	wider := false
+	for i, currentParam := range currentFn.Params {
+		factParam := factFn.Params[i]
+		if currentParam.Optional != factParam.Optional {
+			if currentParam.Optional && !factParam.Optional {
+				return false
+			}
+			wider = true
+		}
+		if typ.TypeEquals(currentParam.Type, factParam.Type) {
+			continue
+		}
+		if typ.IsAny(factParam.Type) || typ.IsAny(unwrap.Optional(factParam.Type)) {
+			wider = true
+			continue
+		}
+		if subtype.IsSubtype(currentParam.Type, factParam.Type) {
+			wider = true
+		}
+	}
+	return wider
 }
 
 func hasCallableTypeEffect(t typ.Type) bool {
