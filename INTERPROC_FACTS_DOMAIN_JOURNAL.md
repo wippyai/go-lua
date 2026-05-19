@@ -176,6 +176,128 @@ The doctrine gives a direct review test:
 
 No rule should need to be implemented twice under different helper names.
 
+## Semantic Atoms
+
+The final design should use a small shared vocabulary. These words should have
+one meaning everywhere in the checker.
+
+### Value
+
+A `Value` is an abstract runtime Lua value.
+
+It can be concrete, literal, structural, function-like, `nil`, `unknown`, or
+`any`. It is not a source annotation and not a location. A value domain may say
+how values combine; it may not decide where a value came from.
+
+### Location
+
+A `Location` is an abstract program place where evidence can attach.
+
+Examples:
+
+- symbol at SSA version,
+- field path,
+- index path,
+- tuple slot,
+- receiver slot,
+- captured variable,
+- return slot,
+- graph/function identity.
+
+Locations are canonical before transfer. AST paths and SSA paths cannot both be
+authoritative.
+
+### Evidence
+
+`Evidence` is a value plus provenance and authority.
+
+Examples:
+
+- explicit annotation,
+- hard runtime proof,
+- body obligation,
+- call observation,
+- soft annotation,
+- unresolved observation,
+- imported dynamic value.
+
+Evidence is not automatically truth. Domains decide how evidence combines.
+
+### Fact
+
+A `Fact` is evidence that has been accepted into a domain state.
+
+Facts are persistent inside `AbstractState` or inside an immutable
+`InterprocDelta`. Raw observations are not facts until transfer/domain logic
+accepts them.
+
+### Constraint
+
+A `Constraint` restricts possible facts along a control-flow path.
+
+Examples:
+
+- truthy/falsy,
+- type test,
+- nil/non-nil,
+- has-field,
+- numeric bound,
+- relation branch.
+
+Constraints do not mutate storage by themselves. Transfer applies them to
+`AbstractState`; queries read the result.
+
+### Relation
+
+A `Relation` connects multiple locations.
+
+Examples:
+
+- return slot 1 being nil implies return slot 0 is non-nil,
+- assertion on one symbol narrows a sibling path,
+- method receiver relation to `self`,
+- callback argument relation to caller state.
+
+Relations are not encoded as special value types. They are first-class domain
+facts.
+
+### Effect
+
+An `Effect` describes what execution of a call or instruction can do.
+
+Examples:
+
+- mutate memory,
+- terminate,
+- refine an argument,
+- produce a tuple relation,
+- call a callback,
+- collect keys.
+
+Effects are applied by transfer. They do not rewrite types directly.
+
+### Delta
+
+A `Delta` is a completed analysis contribution to another scope or iteration.
+
+Examples:
+
+- function fact delta,
+- parameter evidence delta,
+- captured mutation delta,
+- constructor field delta,
+- relation summary delta.
+
+Deltas are immutable. The store never lets a producer mutate canonical state in
+place.
+
+### Snapshot
+
+A `Snapshot` is the immutable state observed by a query.
+
+Snapshots are cache inputs. If a snapshot changes, dependent queries must
+revalidate through Salsa or an explicitly documented cache invalidation rule.
+
 ## Canonical Dataflow Contract
 
 The final dataflow should have explicit boundary objects.
@@ -344,6 +466,19 @@ soft annotation > unresolved evidence
 `any` is not "very strong evidence." It is dynamic top. `unknown` is not "safe
 to ignore." It is unresolved evidence. These two facts must remain distinct in
 every domain.
+
+The authority order is partial, not a simple global priority. For example:
+
+- explicit annotation dominates inferred shape for assignment checking;
+- hard branch proof dominates soft annotation for narrowing;
+- body obligation dominates call observation for parameter contracts;
+- explicit `any` remains dynamic top and does not become concrete because a
+  later call expects concrete;
+- unresolved `unknown` can be refined by proof, but cannot be silently replaced
+  by unrelated precision.
+
+This should become an explicit `EvidenceOrder`, not a set of local `if`
+statements.
 
 ### Transferred
 
@@ -1292,6 +1427,115 @@ reasons. The design target is not to delete their semantics. The design target
 is to make them clients of the same domain objects instead of separate local
 machines.
 
+## Dataflow State Machine
+
+The checker should have one visible state machine.
+
+```text
+Unbuilt
+  -> GraphBuilt
+  -> IRBuilt
+  -> Solving
+  -> Solved
+  -> Inferred
+  -> Published
+  -> Snapshotted
+```
+
+### Unbuilt -> GraphBuilt
+
+Input:
+
+- source AST,
+- parent scope,
+- manifest environment.
+
+Output:
+
+- immutable graph bundle.
+
+No type-domain merge is allowed here.
+
+### GraphBuilt -> IRBuilt
+
+Input:
+
+- graph bundle,
+- declared type environment,
+- known effect specs.
+
+Output:
+
+- transfer program.
+
+This stage may observe syntax and produce instructions. It may not decide
+fixpoint policy.
+
+### IRBuilt -> Solving
+
+Input:
+
+- transfer program,
+- initial abstract state,
+- domain set.
+
+Output:
+
+- evolving abstract state.
+
+All state changes go through transfer and domain operations.
+
+### Solving -> Solved
+
+Input:
+
+- worklist convergence,
+- loop widening if needed.
+
+Output:
+
+- solved abstract state plus query view.
+
+No interproc publication happens before this state.
+
+### Solved -> Inferred
+
+Input:
+
+- query view,
+- function body,
+- relation/effect summaries.
+
+Output:
+
+- function result and interproc delta.
+
+Inference reads solved state. It does not create another path-sensitive solver.
+
+### Inferred -> Published
+
+Input:
+
+- immutable interproc delta.
+
+Output:
+
+- canonical fact product after join or widening.
+
+Only `FactsDomain` may combine this data.
+
+### Published -> Snapshotted
+
+Input:
+
+- canonical fact product.
+
+Output:
+
+- Salsa snapshot inputs and dependent query invalidation.
+
+No semantic repair is allowed here. Snapshotting is cache wiring only.
+
 ## Salsa And Cache Model
 
 Current good shape:
@@ -1863,6 +2107,24 @@ Required behavior suites:
 - local SCC parameter evidence,
 - interproc non-convergence fixtures,
 - external replay reductions.
+
+## Review Checklist Before Coding
+
+Before implementing the flash migration, each proposed package should answer:
+
+- What domain or boundary object does this package own?
+- What are the only mutable states in this package?
+- Which operation is transfer, join, meet, widen, normalize, query, or publish?
+- Which laws are tested at the package boundary?
+- Which edge-case matrix rows does it cover?
+- Which caches does it introduce, and what exact immutable inputs key them?
+- Which old helper clusters will be deleted when this lands?
+- Which production call sites will move directly to the final API?
+- What negative tests prevent broadening `any`, erasing `unknown`, or treating
+  absence as nil in the wrong domain?
+
+If any answer is "handled by a fallback during migration", the design is not
+ready. The next implementation must be flash migration, not coexistence.
 
 ## Current Conclusion
 
