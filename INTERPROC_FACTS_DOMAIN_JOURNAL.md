@@ -5117,3 +5117,54 @@ Design rule retained for the next pass:
   owning domain or transfer rule.
 - If a diagnostic is true external code, keep it classified and do not edit
   external Wippy sources from this go-lua PR.
+
+## 2026-05-19 External Replay Classification Follow-Up
+
+The local-replace Wippy binary still reports diagnostics in external packages,
+but the new reductions did not expose a go-lua engine regression. The important
+distinction is that the checker is now refusing to erase dynamic source shapes
+that are not proven by the Lua program.
+
+New regression coverage added in `external_lint_regression_test.go`:
+
+- optional numeric fields defaulted with `or` become non-nil before arithmetic;
+- exported model-card numeric defaults remain non-nil at a consumer;
+- imported modules stored in table fields preserve those numeric defaults;
+- registry-derived numeric defaults still feed arithmetic after the consumer
+  guards the optional return;
+- guarded string field values inserted into an accumulator retain a string
+  element type when iterated into a helper call;
+- a `type(x) == "table"` guard on an untyped value keeps dynamic field fallback
+  reads open.
+
+Classification of the remaining replay clusters:
+
+- `llm.lua` provider contract calls are true code issues under the current
+  soundness rule: `provider_info = model_card.providers[1] as any` explicitly
+  discards the proof that `provider_model` is `string`, then passes
+  `provider_info.provider_model` to contracts requiring `model: string`.
+- Artifact/message metadata field errors are true code issues unless external
+  code adds a table guard or guaranteed decode. The repositories decode JSON
+  into `meta`/`metadata` on success but leave the original string when decode
+  fails, then downstream code accesses fields after only a truthiness guard.
+- `json.decode(response.body or "")` and HTTP stream-read diagnostics are still
+  unreduced package-boundary candidates. The go-lua reductions for optional
+  response body fallback and guarded stream reads pass, so the observed replay
+  failures are not the simple `or` transfer rule.
+- Bedrock text-block parsing is not a reproduced accumulator regression. The
+  guarded string accumulator reduction passes; the replay source receives
+  response blocks from a dynamic API shape, so the value is `any` unless the
+  external package or manifest proves the field type.
+- Docker-demo fixture failures are mostly true fixture/source issues: examples
+  include `state.iteration_count` being initialized only on the first-iteration
+  branch before arithmetic, dynamic maps passed to stricter contracts, optional
+  method receivers called without guards, and generated/vendor stubs whose
+  contextual shapes do not declare fields they later read.
+
+Current rule:
+
+- Keep explicit `any` and `unknown` barriers sound.
+- Do not suppress these diagnostics in go-lua without a failing go-lua
+  reduction that proves the checker lost information it already had.
+- External Wippy fixes, if desired, should be explicit guards, casts at real
+  trust boundaries, or stronger manifests; they are outside this go-lua PR.

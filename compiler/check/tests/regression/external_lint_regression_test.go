@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestExternalLint_OptionalResponseBodyDefaultIsStringAtCall(t *testing.T) {
@@ -1576,5 +1577,264 @@ end
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected captured state field map pairs to preserve ActiveSession values, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_OptionalNumericFieldsDefaultBeforeArithmetic(t *testing.T) {
+	source := `
+local CONFIG = {
+	prompt_buffer_tokens = 256,
+	chars_per_token = 4,
+}
+
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * CONFIG.chars_per_token)
+end
+
+local function budget(model_card: {max_tokens: integer?, output_tokens: integer?})
+	local max_context_tokens = model_card.max_tokens or 8000
+	local max_output_tokens = model_card.output_tokens or 1000
+	local usable_input_tokens = max_context_tokens - max_output_tokens - CONFIG.prompt_buffer_tokens
+	return tokens_to_chars(usable_input_tokens)
+end
+
+return budget({ max_tokens = nil, output_tokens = nil })
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected numeric field defaults to remove nil before arithmetic, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_ExportedNumericDefaultsRemainNonNilAtConsumer(t *testing.T) {
+	modelsModule := testutil.CheckAndExport(`
+local models = {}
+
+function models._build_model_card(entry)
+	return {
+		max_tokens = entry.data and entry.data.max_tokens or 0,
+		output_tokens = entry.data and entry.data.output_tokens or 0,
+	}
+end
+
+function models.get_by_name(name)
+	if not name then
+		return nil, "name required"
+	end
+	return models._build_model_card({ data = {} }), nil
+end
+
+return models
+`, "models", testutil.WithStdlib())
+	if modelsModule.HasError() {
+		t.Fatalf("models module errors: %v", testutil.ErrorMessages(modelsModule.Errors))
+	}
+
+	source := `
+local models = require("models")
+
+local function budget(model_name)
+	local model_card, err = models.get_by_name(model_name)
+	if not model_card then
+		return nil, err
+	end
+
+	local max_context_tokens = model_card.max_tokens or 8000
+	local max_output_tokens = model_card.output_tokens or 1000
+	return max_context_tokens - max_output_tokens - 256
+end
+
+return budget("default")
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("models", modelsModule))
+	if result.HasError() {
+		t.Fatalf("expected exported numeric defaults to remain non-nil at consumer arithmetic, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_TableFieldModuleNumericDefaultsRemainNonNil(t *testing.T) {
+	modelsModule := testutil.CheckAndExport(`
+local models = {}
+
+function models._build_model_card(entry)
+	return {
+		max_tokens = entry.data and entry.data.max_tokens or 0,
+		output_tokens = entry.data and entry.data.output_tokens or 0,
+	}
+end
+
+function models.get_by_name(name)
+	if not name then
+		return nil, "name required"
+	end
+	return models._build_model_card({ data = {} }), nil
+end
+
+return models
+`, "models", testutil.WithStdlib())
+	if modelsModule.HasError() {
+		t.Fatalf("models module errors: %v", testutil.ErrorMessages(modelsModule.Errors))
+	}
+
+	source := `
+local models = require("models")
+
+local compress = {
+	_models = models,
+}
+
+local function budget(model_name)
+	local model_card, err = compress._models.get_by_name(model_name)
+	if not model_card then
+		return nil, err
+	end
+
+	local max_context_tokens = model_card.max_tokens or 8000
+	local max_output_tokens = model_card.output_tokens or 1000
+	return max_context_tokens - max_output_tokens - 256
+end
+
+return budget("default")
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("models", modelsModule))
+	if result.HasError() {
+		t.Fatalf("expected table-held imported module numeric defaults to remain non-nil at consumer arithmetic, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_RegistryDerivedNumericDefaultsRemainNonNil(t *testing.T) {
+	entryType := typ.NewRecord().
+		Field("data", typ.NewOptional(typ.NewRecord().
+			Field("max_tokens", typ.NewOptional(typ.Integer)).
+			Field("output_tokens", typ.NewOptional(typ.Integer)).
+			Build())).
+		Build()
+	registryType := typ.NewRecord().
+		Field("find", typ.Func().
+			Param("query", typ.NewMap(typ.String, typ.Any)).
+			Returns(typ.NewOptional(typ.NewArray(entryType)), typ.NewOptional(typ.String)).
+			Build()).
+		Build()
+
+	registryModule := testutil.CheckAndExport(`
+local registry = {}
+function registry.find(query)
+	return { { data = {} } }, nil
+end
+return registry
+`, "registry", testutil.WithStdlib(), testutil.WithTypes(map[string]typ.Type{
+		"registry": registryType,
+	}))
+	if registryModule.HasError() {
+		t.Fatalf("registry module errors: %v", testutil.ErrorMessages(registryModule.Errors))
+	}
+
+	modelsModule := testutil.CheckAndExport(`
+local registry = require("registry")
+local models = {}
+
+function models._build_model_card(entry)
+	return {
+		max_tokens = entry.data and entry.data.max_tokens or 0,
+		output_tokens = entry.data and entry.data.output_tokens or 0,
+	}
+end
+
+function models.get_by_name(name)
+	if not name then
+		return nil, "name required"
+	end
+	local entries, err = registry.find({ name = name })
+	if err then
+		return nil, err
+	end
+	if not entries or #entries == 0 then
+		return nil, "not found"
+	end
+	return models._build_model_card(entries[1])
+end
+
+return models
+`, "models", testutil.WithStdlib(), testutil.WithModule("registry", registryModule))
+	if modelsModule.HasError() {
+		t.Fatalf("models module errors: %v", testutil.ErrorMessages(modelsModule.Errors))
+	}
+
+	source := `
+local models = require("models")
+
+local compress = {
+	_models = models,
+}
+
+local function budget(model_name)
+	local model_card, err = compress._models.get_by_name(model_name)
+	if not model_card then
+		return nil, err
+	end
+
+	local max_context_tokens = model_card.max_tokens or 8000
+	local max_output_tokens = model_card.output_tokens or 1000
+	return max_context_tokens - max_output_tokens - 256
+end
+
+return budget("default")
+`
+	result := testutil.Check(source, testutil.WithStdlib(),
+		testutil.WithModule("registry", registryModule),
+		testutil.WithModule("models", modelsModule))
+	if result.HasError() {
+		t.Fatalf("expected registry-derived numeric defaults to remain non-nil at consumer arithmetic, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_GuardedStringFieldAccumulatorFeedsHelper(t *testing.T) {
+	source := `
+local function parse_text_tool_call(text: string?, tool_names)
+	if not text or not tool_names then
+		return nil
+	end
+	return { name = text }
+end
+
+local function extract(converse_response: {output: {message: {content: {{text: string?}}}}}, tool_names)
+	local text_blocks = {}
+	for _, block in ipairs(converse_response.output.message.content) do
+		if block.text then
+			table.insert(text_blocks, block.text)
+		end
+	end
+
+	for _, text in ipairs(text_blocks) do
+		local parsed = parse_text_tool_call(text, tool_names)
+		if parsed then
+			return parsed.name
+		end
+	end
+	return nil
+end
+
+return extract({ output = { message = { content = { { text = "call" } } } } }, {})
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected guarded string field accumulator to feed optional-string helper, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_TypeTableGuardKeepsDynamicFieldReadsOpen(t *testing.T) {
+	source := `
+local function run(stats_data)
+	if type(stats_data) == "table" then
+		return stats_data.sum or stats_data.count or 0
+	end
+	return 0
+end
+
+return run({})
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected type(table) guard on untyped value to allow dynamic field fallback reads, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
