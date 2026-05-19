@@ -5353,3 +5353,51 @@ git diff --check
 ```
 
 All checks pass.
+
+## 2026-05-19 Adversarial Gradual-Typing Regressions
+
+Added a dedicated gradual-typing regression suite and fixture. The goal is to
+prove the checker is permissive where the program supplies evidence, while
+remaining strict at dynamic boundaries where the evidence is incomplete.
+
+Added Go tests:
+
+- `TestGradualTyping_DecodesDynamicPayloadAfterStructuralProof`
+- `TestGradualTyping_DispatchesGuardedUnionThroughTypedRegistry`
+- `TestGradualTyping_GenericValidatedCollectionPreservesElementType`
+- `TestGradualTyping_ExplicitBoundaryCastProvidesPreciseLocalType`
+- `TestGradualTyping_RejectsUncheckedAnyRecordAssignment`
+- `TestGradualTyping_RejectsTruthyGuardAsStructuralProof`
+- `TestGradualTyping_RejectsPartiallyCheckedCollectionAsTypedArray`
+- `TestGradualTyping_RejectsDynamicCallbackAtTypedFunctionBoundary`
+- `TestGradualTyping_RejectsExtraFieldsAfterNarrowBoundaryCast`
+
+The positive cases cover dynamic payload decoding, discriminated command
+dispatch through typed registries, generic validation/traversal over `{any}`,
+and explicit boundary casts that produce a precise local type. The negative
+cases pin the soundness laws: `any` cannot be assigned to a precise record
+without proof, truthiness is not structural evidence, checking one array element
+does not prove the whole array, dynamic callbacks cannot satisfy typed callback
+contracts, and a narrowed cast type does not leak extra dynamic fields.
+
+Added fixture:
+
+- `testdata/fixtures/regression/gradual-typing-adversarial`
+
+The fixture exercises the same model through normal fixture checking and inline
+`expect-error` comments. One fixture detail is intentional: generic `ok({})`
+needs a typed empty-table cast (`{} :: {string}` or
+`{} :: {[string]: string}`) so the empty table does not instantiate the
+validation result as an unshaped table. This keeps inference strong without
+guessing structure that is not present in the literal.
+
+Verification:
+
+```text
+go test ./compiler/check/tests/regression -run 'TestGradualTyping' -count=1 -v
+go test . -run 'TestFixtures/regression/gradual-typing-adversarial/check' -count=1 -v
+go test ./... -count=1
+git diff --check
+```
+
+All checks pass.

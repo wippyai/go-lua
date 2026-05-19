@@ -1,0 +1,3 @@
+{
+  "description": "Adversarial gradual typing fixture: dynamic data becomes precise only after structural proof or explicit cast, while incomplete proofs remain rejected."
+}
