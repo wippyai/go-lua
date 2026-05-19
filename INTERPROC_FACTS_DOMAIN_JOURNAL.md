@@ -33,7 +33,8 @@ This is intentionally not a bridge. No production code reads a legacy
 Second cleanup slice in the same migration:
 
 - the local inference package was renamed from `infer/paramhints` to
-  `infer/paramevidence`;
+  `infer/paramevidence`, then the domain was moved to
+  `domain/paramevidence` when its lattice laws were consolidated;
 - `LocalFuncInfo.ParamHints` became `LocalFuncInfo.ParameterEvidence`;
 - phase input `ParamHintSignatures` became `ParameterEvidenceSignatures`;
 - local call-graph propagation now exposes `PropagateParameterEvidence`;
@@ -68,6 +69,60 @@ Remaining cleanup after this parameter-evidence slice:
   into concrete contracts); some still expose missing checker power, especially
   public functions that validate invalid input with `type(...)` guards and
   should infer a wider accepted input domain without weakening the guarded body.
+
+## 2026-05-19 Domain Rectification Checkpoint
+
+The next flash-migration slice moved parameter evidence out of inference/return
+orchestration and into a domain owner:
+
+- `compiler/check/infer/paramevidence` was moved to
+  `compiler/check/domain/paramevidence`;
+- shared value-shape predicates that were duplicated during the first move were
+  factored into `compiler/check/domain/value`;
+- parameter-evidence vector/map normalization, join, widening, table-top
+  absorption, nilability splitting, soft/concrete selection, and truthy-key
+  refinement now live under domain packages;
+- `returns` no longer owns parameter evidence merge helpers. Function-fact
+  parameter slots delegate to `paramevidence.JoinVectors`,
+  `paramevidence.FilterEmptyVector`, and `paramevidence.RefinesFunctionParam`;
+- return-summary and parameter-evidence code both call `domain/value` for
+  optional elision, truthy refinements, soft/concrete preference, recursive
+  structural scanning, and record-extension checks;
+- parameter-evidence law tests moved with the domain, so the tests describe the
+  owner instead of the old return package.
+
+This is not a compatibility bridge. The old package path and old
+`WidenParameterEvidence` API were deleted. Call sites moved directly to the
+domain package.
+
+Verification for this slice so far:
+
+- `go test ./compiler/check/domain/value` passes.
+- `go test ./compiler/check/domain/paramevidence` passes.
+- `go test ./compiler/check/returns` passes.
+- `go test ./compiler/check/...` passes.
+- `go test ./...` passes.
+- `git diff --check` passes.
+- Standard `../scripts/verify-suite.sh` passes the go-lua checker tests and
+  Wippy binary build, then exits non-zero on external lint targets while the
+  Wippy checkout is still using its pinned go-lua module: session 8 errors,
+  agent/src 8 errors, docker-demo 21 errors and 2 warnings.
+- Local-replace replay with
+  `WIPPY_DIR=/tmp/wippy-golua-local-replace GOFLAGS=-buildvcs=false` also
+  passes the go-lua checker tests and Wippy binary build, then exits non-zero
+  on known external diagnostics: tests/app 2 errors/4 warnings, session 20,
+  actor/test 3, agent/src 11, docker-demo 72, llm/src 9, llm/test 9,
+  migration 1, views 1.
+
+Design result:
+
+- orchestration still decides when evidence is collected from calls, body use,
+  post-flow observations, or signatures;
+- the parameter-evidence domain now decides how evidence combines;
+- the value domain owns shared structural predicates instead of duplicating them
+  under returns and parameter evidence;
+- helper names that encode parameter-specific lattice laws are no longer local
+  return-package predicates.
 
 ## Goal
 
@@ -3112,9 +3167,11 @@ type ParamSlotDomain struct {
 }
 ```
 
-The current `candidateRefinesFunctionParam`, `typeRefinesTableKeyByTruthiness`,
-`preferConcreteOverSoftType`, and related functions become methods or private
-support functions of this domain.
+The previous `candidateRefinesFunctionParam`,
+`typeRefinesTableKeyByTruthiness`, `preferConcreteOverSoftType`, and related
+return-package functions are being collapsed into domain-owned operations.
+Parameter-specific pieces now live in `domain/paramevidence`; the remaining
+function-fact merge should move to `domain/functionfact`.
 
 ### Return Summary Domain
 
@@ -3158,12 +3215,13 @@ Candidate home:
 compiler/check/domain/paramevidence
 ```
 
-Current split:
+Current state after the first domain slice:
 
-- some policy lives in `compiler/check/infer/paramevidence`,
-- some lives in `compiler/check/returns/widen.go`,
-- some lives in return SCC inference,
-- some lives in interproc postflow.
+- merge/canonicalization policy lives in `compiler/check/domain/paramevidence`;
+- return SCC inference and interproc postflow still collect observations, but
+  they call the domain to merge them;
+- remaining work is to separate collection orchestration from the pure domain
+  surface where it improves readability without adding a bridge.
 
 Final rule:
 
@@ -3210,10 +3268,10 @@ helper joins directly.
 |---|---|---|
 | `JoinFacts`, `WidenFacts`, fact equality | `compiler/check/returns` | `domain/interproc` |
 | function fact type merge | `compiler/check/returns/join.go` | `domain/functionfact` |
-| function param-slot refinement | `compiler/check/returns/join.go`, `widen.go` | `domain/functionfact.ParamSlotDomain` |
+| function param-slot refinement | `domain/paramevidence` plus `domain/value`, called by `returns/join.go`, `widen.go` | `domain/functionfact.ParamSlotDomain` delegating value refinements to `domain/paramevidence`/`domain/value` |
 | return-vector merge/repair | `compiler/check/returns/join.go` | `domain/returnsummary` |
-| table-top absorption | `infer/paramevidence`, `returns/widen.go` | `domain/paramevidence` plus value-domain classifier |
-| soft vs concrete evidence | `typ/soft.go`, `returns/widen.go`, return overlay | `domain/value` evidence policy |
+| table-top absorption | `domain/paramevidence` | `domain/paramevidence` plus value-domain classifier |
+| soft vs concrete evidence | `typ/soft.go`, `domain/value`, return overlay | `domain/value` evidence policy |
 | open-record row-tail merge | `types/typ/policy.go` | `domain/value` row-shape policy |
 | path/query/alias identity | `constraint`, `flowbuild/path`, `flow/pathkey` | `memory` |
 | table/container mutation replay | `nested`, `returns`, `flowbuild`, `flow` | `memory` mutation domain |
@@ -3226,7 +3284,7 @@ helper joins directly.
 
 ### Table-Key Truthiness Refinement
 
-Current smell:
+Previous smell:
 
 ```go
 candidateRefinesFunctionParam(candidate, baseline)

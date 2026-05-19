@@ -1,6 +1,8 @@
 package returns
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -72,20 +74,10 @@ func ReturnTypesExtendRecord(a, b []typ.Type) bool {
 		return false
 	}
 	for i := range a {
-		ar, ok := a[i].(*typ.Record)
-		if !ok {
+		if _, ok := a[i].(*typ.Record); !ok {
 			return false
 		}
-		switch br := b[i].(type) {
-		case *typ.Record:
-			if !recordSuperset(ar, br) {
-				return false
-			}
-		case *typ.Union:
-			if !recordSupersetUnion(ar, br) {
-				return false
-			}
-		default:
+		if !value.ExtendsRecord(a[i], b[i]) {
 			return false
 		}
 	}
@@ -101,7 +93,7 @@ func ReturnTypesElideOptional(a, b []typ.Type) bool {
 		return false
 	}
 	for i := range a {
-		if !typeElidesOptional(a[i], b[i]) {
+		if !value.ElidesOptional(a[i], b[i]) {
 			return false
 		}
 	}
@@ -216,7 +208,7 @@ func typeRefinesSoftContainer(candidate, baseline typ.Type) (bool, bool) {
 		return typeRefinesSoftContainerSlot(c.Element, b.Element)
 	case *typ.Map:
 		c, ok := candidate.(*typ.Map)
-		if !ok || !equivalentParamValueType(c.Key, b.Key) {
+		if !ok || !value.Equivalent(c.Key, b.Key) {
 			return false, false
 		}
 		return typeRefinesSoftContainerSlot(c.Value, b.Value)
@@ -228,7 +220,7 @@ func typeRefinesSoftContainer(candidate, baseline typ.Type) (bool, bool) {
 		if !c.HasMapComponent() && !b.HasMapComponent() {
 			return true, false
 		}
-		if !c.HasMapComponent() || !b.HasMapComponent() || !equivalentParamValueType(c.MapKey, b.MapKey) {
+		if !c.HasMapComponent() || !b.HasMapComponent() || !value.Equivalent(c.MapKey, b.MapKey) {
 			return false, false
 		}
 		return typeRefinesSoftContainerSlot(c.MapValue, b.MapValue)
@@ -241,10 +233,10 @@ func typeRefinesSoftContainerSlot(candidate, baseline typ.Type) (bool, bool) {
 	if typ.TypeEquals(candidate, baseline) {
 		return true, false
 	}
-	if (typ.IsAny(baseline) || typ.IsUnknown(baseline)) && typeCanSelfEmbed(candidate) {
+	if (typ.IsAny(baseline) || typ.IsUnknown(baseline)) && value.CanSelfEmbed(candidate) {
 		return false, false
 	}
-	preferred, ok := preferConcreteOverSoftType(baseline, candidate)
+	preferred, ok := value.PreferConcreteOverSoft(baseline, candidate)
 	return ok && typ.TypeEquals(preferred, candidate), ok
 }
 
@@ -365,7 +357,7 @@ func truthyElementRefinement(candidate, baseline typ.Type) (bool, bool) {
 	if typ.TypeEquals(candidate, baseline) {
 		return true, false
 	}
-	if typeIsTruthyRefinement(candidate, baseline) {
+	if value.IsTruthyRefinement(candidate, baseline) {
 		return true, true
 	}
 	return false, false
@@ -471,7 +463,7 @@ func ReturnTypesStopRecursiveStructuralGrowth(stable, growing []typ.Type) bool {
 		if typ.TypeEquals(s, g) {
 			continue
 		}
-		if typ.IsAbsentOrUnknown(s) || !typeCanSelfEmbed(s) {
+		if typ.IsAbsentOrUnknown(s) || !value.CanSelfEmbed(s) {
 			return false
 		}
 		if !shallowStructuralShapeEquals(g, s) {
@@ -741,7 +733,7 @@ func ReturnTypesFillNilSlots(a, b []typ.Type) bool {
 		if typ.TypeEquals(ai, bi) {
 			continue
 		}
-		if subtype.IsSubtype(ai, bi) || TypeExtendsRecord(ai, bi) || typeElidesOptional(ai, bi) {
+		if subtype.IsSubtype(ai, bi) || value.ExtendsRecord(ai, bi) || value.ElidesOptional(ai, bi) {
 			continue
 		}
 		return false
@@ -771,26 +763,6 @@ func ReturnTypesRepairNever(candidate, baseline []typ.Type) bool {
 		strict = true
 	}
 	return strict
-}
-
-// TypeExtendsRecord reports whether type a extends type b by adding record fields.
-// This treats record field supersets as refinements when b is a record or union of records.
-func TypeExtendsRecord(a, b typ.Type) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	ar, ok := a.(*typ.Record)
-	if !ok {
-		return false
-	}
-	switch br := b.(type) {
-	case *typ.Record:
-		return recordSuperset(ar, br)
-	case *typ.Union:
-		return recordSupersetUnion(ar, br)
-	default:
-		return false
-	}
 }
 
 func typeRepairsNever(candidate, baseline typ.Type) bool {
@@ -1075,83 +1047,6 @@ func typeContainsNeverMemo(t typ.Type, seen map[typ.Type]bool) bool {
 			return false
 		},
 	})
-}
-
-func typeElidesOptional(a, b typ.Type) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	nonNil := narrow.RemoveNil(b)
-	if nonNil == nil || typ.TypeEquals(nonNil, b) {
-		return false
-	}
-	return subtype.IsSubtype(a, nonNil)
-}
-
-func recordSuperset(newRec, oldRec *typ.Record) bool {
-	if newRec == nil || oldRec == nil {
-		return false
-	}
-	if oldRec.Metatable != nil {
-		if newRec.Metatable == nil || !subtype.IsSubtype(newRec.Metatable, oldRec.Metatable) {
-			return false
-		}
-	}
-	if oldRec.HasMapComponent() {
-		if !newRec.HasMapComponent() {
-			return false
-		}
-		if !subtype.IsSubtype(newRec.MapKey, oldRec.MapKey) || !subtype.IsSubtype(newRec.MapValue, oldRec.MapValue) {
-			return false
-		}
-	}
-	oldFields := make(map[string]typ.Field, len(oldRec.Fields))
-	for _, f := range oldRec.Fields {
-		oldFields[f.Name] = f
-	}
-	for _, nf := range newRec.Fields {
-		if of, ok := oldFields[nf.Name]; ok {
-			if of.Optional && !nf.Optional {
-				// ok: stronger requirement
-			} else if !of.Optional && nf.Optional {
-				return false
-			}
-			if of.Readonly && !nf.Readonly {
-				return false
-			}
-			if of.Type != nil {
-				if isOpenTopRecordType(nf.Type) && isStructuredTableShape(of.Type) {
-					// Open-top table placeholders must not dominate structured
-					// collection/record fields when selecting preferred summaries.
-					return false
-				}
-				if nf.Type == nil || !subtype.IsSubtype(nf.Type, of.Type) {
-					return false
-				}
-			}
-			delete(oldFields, nf.Name)
-		}
-	}
-	return len(oldFields) == 0
-}
-
-func recordSupersetUnion(newRec *typ.Record, oldUnion *typ.Union) bool {
-	if newRec == nil || oldUnion == nil {
-		return false
-	}
-	if len(oldUnion.Members) == 0 {
-		return false
-	}
-	for _, member := range oldUnion.Members {
-		oldRec, ok := member.(*typ.Record)
-		if !ok {
-			return false
-		}
-		if !recordSuperset(newRec, oldRec) {
-			return false
-		}
-	}
-	return true
 }
 
 // NormalizeReturnVector replaces nil slots with explicit nil types.
@@ -1456,7 +1351,7 @@ func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
 	if preferred, ok := preferStructuredRecordParam(existing, candidate); ok {
 		return preferred
 	}
-	if preferred, ok := preferConcreteOverSoftType(existing, candidate); ok {
+	if preferred, ok := value.PreferConcreteOverSoft(existing, candidate); ok {
 		return preferred
 	}
 	if typ.IsUnknown(existing) {
@@ -1477,10 +1372,10 @@ func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
 	if typ.TypeEquals(existing, candidate) {
 		return existing
 	}
-	if candidateRefinesFunctionParam(candidate, existing) {
+	if paramevidence.RefinesFunctionParam(candidate, existing) {
 		return candidate
 	}
-	if candidateRefinesFunctionParam(existing, candidate) {
+	if paramevidence.RefinesFunctionParam(existing, candidate) {
 		return existing
 	}
 	if subtype.IsSubtype(existing, candidate) && !subtype.IsSubtype(candidate, existing) {
@@ -1490,75 +1385,6 @@ func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
 		return existing
 	}
 	return typ.JoinPreferNonSoft(existing, candidate)
-}
-
-func candidateRefinesFunctionParam(candidate, baseline typ.Type) bool {
-	return typeElidesOptional(candidate, baseline) ||
-		typeIsTruthyRefinement(candidate, baseline) ||
-		typeRefinesTableKeyByTruthiness(candidate, baseline)
-}
-
-func typeRefinesTableKeyByTruthiness(candidate, baseline typ.Type) bool {
-	if candidate == nil || baseline == nil || typ.TypeEquals(candidate, baseline) {
-		return false
-	}
-	candidateInner, _ := splitNilableParameterEvidence(candidate)
-	baselineInner, _ := splitNilableParameterEvidence(baseline)
-	if candidateInner == nil || baselineInner == nil {
-		return false
-	}
-	return nonNilTypeRefinesTableKeyByTruthiness(candidateInner, baselineInner)
-}
-
-func nonNilTypeRefinesTableKeyByTruthiness(candidate, baseline typ.Type) bool {
-	candidate = unwrap.Alias(candidate)
-	baseline = unwrap.Alias(baseline)
-	switch b := baseline.(type) {
-	case *typ.Record:
-		c, ok := candidate.(*typ.Record)
-		if !ok {
-			return false
-		}
-		return recordRefinesTableKeyByTruthiness(c, b)
-	case *typ.Map:
-		c, ok := candidate.(*typ.Map)
-		if !ok {
-			return false
-		}
-		return typeIsTruthyRefinement(c.Key, b.Key) && equivalentParamValueType(c.Value, b.Value)
-	default:
-		return false
-	}
-}
-
-func recordRefinesTableKeyByTruthiness(candidate, baseline *typ.Record) bool {
-	if candidate == nil || baseline == nil || !candidate.HasMapComponent() || !baseline.HasMapComponent() {
-		return false
-	}
-	if candidate.Open != baseline.Open || len(candidate.Fields) != len(baseline.Fields) {
-		return false
-	}
-	if (candidate.Metatable == nil) != (baseline.Metatable == nil) {
-		return false
-	}
-	if candidate.Metatable != nil && !typ.TypeEquals(candidate.Metatable, baseline.Metatable) {
-		return false
-	}
-	for i, field := range candidate.Fields {
-		other := baseline.Fields[i]
-		if field.Name != other.Name || field.Optional != other.Optional || field.Readonly != other.Readonly {
-			return false
-		}
-		if !equivalentParamValueType(field.Type, other.Type) {
-			return false
-		}
-	}
-	return typeIsTruthyRefinement(candidate.MapKey, baseline.MapKey) &&
-		equivalentParamValueType(candidate.MapValue, baseline.MapValue)
-}
-
-func equivalentParamValueType(a, b typ.Type) bool {
-	return typ.TypeEquals(a, b) || (subtype.IsSubtype(a, b) && subtype.IsSubtype(b, a))
 }
 
 func preferStructuredRecordParam(existing, candidate typ.Type) (typ.Type, bool) {
@@ -1627,10 +1453,10 @@ func replaceOpenTopWithStructured(current, summary []typ.Type) ([]typ.Type, bool
 	out := append([]typ.Type(nil), current...)
 	changed := false
 	for i := range out {
-		if !isOpenTopRecordType(out[i]) {
+		if !value.IsOpenTopRecord(out[i]) {
 			continue
 		}
-		if !isStructuredTableShape(summary[i]) {
+		if !value.IsStructuredTableShape(summary[i]) {
 			continue
 		}
 		out[i] = summary[i]
@@ -1662,25 +1488,4 @@ func WithSummaryOrUnknown(fn *typ.Function, summary []typ.Type) *typ.Function {
 		return fn
 	}
 	return typjoin.WithReturns(fn, normalizeAndPruneReturnVector(summary))
-}
-
-func isOpenTopRecordType(t typ.Type) bool {
-	rec, ok := unwrap.Alias(t).(*typ.Record)
-	if !ok || rec == nil {
-		return false
-	}
-	return rec.Open && len(rec.Fields) == 0 && !rec.HasMapComponent()
-}
-
-func isStructuredTableShape(t typ.Type) bool {
-	switch v := unwrap.Alias(t).(type) {
-	case *typ.Array:
-		return true
-	case *typ.Map:
-		return true
-	case *typ.Record:
-		return v.HasMapComponent() || len(v.Fields) > 0
-	default:
-		return false
-	}
 }

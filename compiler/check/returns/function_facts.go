@@ -3,6 +3,7 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 )
 
 func collectCanonicalFunctionFactSymbols(factSets ...api.FunctionFacts) []cfg.SymbolID {
@@ -25,7 +26,7 @@ func markFunctionFactSymbols[T any](dst map[cfg.SymbolID]bool, src map[cfg.Symbo
 
 func NormalizeFunctionFact(ff api.FunctionFact) api.FunctionFact {
 	return api.FunctionFact{
-		Params:  filterEmptyParameterEvidenceVector(ff.Params),
+		Params:  paramevidence.FilterEmptyVector(ff.Params),
 		Summary: canonicalReturnVector(ff.Summary),
 		Narrow:  canonicalReturnVector(ff.Narrow),
 		Type:    normalizeInterprocValueType(ff.Type),

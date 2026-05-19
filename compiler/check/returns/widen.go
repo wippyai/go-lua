@@ -3,9 +3,8 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
-	"github.com/wippyai/go-lua/internal"
-	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -64,7 +63,7 @@ func JoinFacts(prev, next api.Facts) api.Facts {
 
 func widenFunctionFactForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 	out := api.FunctionFact{
-		Params:  joinParameterEvidenceVectors(prev.Params, next.Params),
+		Params:  paramevidence.JoinVectors(prev.Params, next.Params),
 		Summary: widenReturnSummaryForConvergence(prev.Summary, next.Summary),
 		Narrow:  widenReturnSummaryForConvergence(prev.Narrow, next.Narrow),
 		Type:    widenFunctionFactTypeForConvergence(prev.Type, next.Type),
@@ -111,7 +110,7 @@ func hasHigherOrderGrowthRisk(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	return scanType(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
+	return value.Scan(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
 		switch n := node.(type) {
 		case *typ.Function:
 			for _, ret := range n.Returns {
@@ -132,7 +131,7 @@ func typeContainsFunction(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	return scanType(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
+	return value.Scan(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
 		// Interface method signatures are behavioral contracts, not first-class
 		// returned function values. Ignore them for higher-order growth risk.
 		if _, ok := node.(*typ.Interface); ok {
@@ -164,7 +163,7 @@ func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
 	if t == nil || owner == nil {
 		return false
 	}
-	return scanType(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
+	return value.Scan(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
 		// Interface method signatures are behavioral contracts, not concrete
 		// record method bodies. Treating them as self-recursive growth risk
 		// over-applies monotone widening and blocks valid summary refinement.
@@ -180,114 +179,12 @@ func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
 				continue
 			}
 			if subtype.IsSubtype(ret, owner) || subtype.IsSubtype(owner, ret) ||
-				TypeExtendsRecord(ret, owner) || TypeExtendsRecord(owner, ret) {
+				value.ExtendsRecord(ret, owner) || value.ExtendsRecord(owner, ret) {
 				return true, false
 			}
 		}
 		return false, true
 	})
-}
-
-func scanType(
-	t typ.Type,
-	guard internal.RecursionGuard,
-	visit func(node typ.Type) (stop bool, descend bool),
-) bool {
-	if t == nil {
-		return false
-	}
-	next, ok := guard.Enter(t)
-	if !ok {
-		return false
-	}
-
-	node := t
-	for {
-		ann, ok := node.(*typ.Annotated)
-		if !ok || ann.Inner == nil || ann.Inner == node {
-			break
-		}
-		node = ann.Inner
-	}
-
-	if stop, descend := visit(node); stop {
-		return true
-	} else if !descend {
-		return false
-	}
-
-	switch n := node.(type) {
-	case *typ.Optional:
-		return scanType(n.Inner, next, visit)
-	case *typ.Union:
-		for _, m := range n.Members {
-			if scanType(m, next, visit) {
-				return true
-			}
-		}
-		return false
-	case *typ.Intersection:
-		for _, m := range n.Members {
-			if scanType(m, next, visit) {
-				return true
-			}
-		}
-		return false
-	case *typ.Array:
-		return scanType(n.Element, next, visit)
-	case *typ.Map:
-		return scanType(n.Key, next, visit) || scanType(n.Value, next, visit)
-	case *typ.Tuple:
-		for _, e := range n.Elements {
-			if scanType(e, next, visit) {
-				return true
-			}
-		}
-		return false
-	case *typ.Function:
-		for _, p := range n.Params {
-			if scanType(p.Type, next, visit) {
-				return true
-			}
-		}
-		for _, r := range n.Returns {
-			if scanType(r, next, visit) {
-				return true
-			}
-		}
-		return n.Variadic != nil && scanType(n.Variadic, next, visit)
-	case *typ.Record:
-		for _, f := range n.Fields {
-			if scanType(f.Type, next, visit) {
-				return true
-			}
-		}
-		if n.Metatable != nil && scanType(n.Metatable, next, visit) {
-			return true
-		}
-		if n.HasMapComponent() {
-			return scanType(n.MapKey, next, visit) || scanType(n.MapValue, next, visit)
-		}
-		return false
-	case *typ.Alias:
-		return scanType(n.Target, next, visit)
-	case *typ.Instantiated:
-		for _, a := range n.TypeArgs {
-			if scanType(a, next, visit) {
-				return true
-			}
-		}
-		return false
-	case *typ.Interface:
-		for _, m := range n.Methods {
-			if m.Type != nil && scanType(m.Type, next, visit) {
-				return true
-			}
-		}
-		return false
-	default:
-		return false
-	}
 }
 
 func joinReturnVectorsMonotone(a, b []typ.Type) []typ.Type {
@@ -326,10 +223,10 @@ func joinReturnTypeMonotone(a, b typ.Type) typ.Type {
 		return a
 	}
 	// Keep widening monotone: if one side is already an upper bound, keep it.
-	if subtype.IsSubtype(a, b) || TypeExtendsRecord(a, b) || typeElidesOptional(a, b) {
+	if subtype.IsSubtype(a, b) || value.ExtendsRecord(a, b) || value.ElidesOptional(a, b) {
 		return b
 	}
-	if subtype.IsSubtype(b, a) || TypeExtendsRecord(b, a) || typeElidesOptional(b, a) {
+	if subtype.IsSubtype(b, a) || value.ExtendsRecord(b, a) || value.ElidesOptional(b, a) {
 		return a
 	}
 	return typ.JoinPreferNonSoft(a, b)
@@ -368,7 +265,7 @@ func typeUnsafePrecisionDrop(prev, merged typ.Type) bool {
 	if prev == nil || merged == nil || typ.TypeEquals(prev, merged) {
 		return false
 	}
-	if typeElidesOptional(merged, prev) {
+	if value.ElidesOptional(merged, prev) {
 		return false
 	}
 	if refines, _ := typeRefinesFalsyMapKey(merged, prev); refines {
@@ -435,7 +332,7 @@ func typeUnsafePrecisionDrop(prev, merged typ.Type) bool {
 		}
 	}
 
-	if subtype.IsSubtype(merged, prev) && !subtype.IsSubtype(prev, merged) && !TypeExtendsRecord(merged, prev) {
+	if subtype.IsSubtype(merged, prev) && !subtype.IsSubtype(prev, merged) && !value.ExtendsRecord(merged, prev) {
 		return true
 	}
 	return false
@@ -476,502 +373,6 @@ func unionMembers(t typ.Type) []typ.Type {
 	default:
 		return nil
 	}
-}
-
-// WidenParameterEvidence merges two parameter evidence maps using the same
-// vector law used by canonical FunctionFacts.
-func WidenParameterEvidence(prev, next map[cfg.SymbolID][]typ.Type) map[cfg.SymbolID][]typ.Type {
-	if prev == nil && next == nil {
-		return nil
-	}
-	if prev == nil {
-		return filterEmptyParameterEvidence(next)
-	}
-	if next == nil {
-		return filterEmptyParameterEvidence(prev)
-	}
-	merged := make(map[cfg.SymbolID][]typ.Type, len(prev)+len(next))
-	for _, sym := range cfg.SortedSymbolIDs(prev) {
-		evidence := normalizeParameterEvidenceVector(prev[sym])
-		if hasNonNilEvidence(evidence) {
-			merged[sym] = evidence
-		}
-	}
-	for _, sym := range cfg.SortedSymbolIDs(next) {
-		evidence := normalizeParameterEvidenceVector(next[sym])
-		if !hasNonNilEvidence(evidence) {
-			continue
-		}
-		if existing := merged[sym]; existing != nil {
-			merged[sym] = joinParameterEvidenceVectors(existing, evidence)
-		} else {
-			merged[sym] = evidence
-		}
-	}
-	return merged
-}
-
-func filterEmptyParameterEvidence(evidence map[cfg.SymbolID][]typ.Type) map[cfg.SymbolID][]typ.Type {
-	if evidence == nil {
-		return nil
-	}
-	out := make(map[cfg.SymbolID][]typ.Type, len(evidence))
-	for _, sym := range cfg.SortedSymbolIDs(evidence) {
-		v := filterEmptyParameterEvidenceVector(evidence[sym])
-		if hasNonNilEvidence(v) {
-			out[sym] = v
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func filterEmptyParameterEvidenceVector(evidence []typ.Type) []typ.Type {
-	v := normalizeParameterEvidenceVector(evidence)
-	if !hasNonNilEvidence(v) {
-		return nil
-	}
-	return v
-}
-
-func normalizeParameterEvidenceVector(evidence []typ.Type) []typ.Type {
-	var out []typ.Type
-	for i, observed := range evidence {
-		normalized := paramevidence.NormalizeType(observed)
-		if out != nil {
-			out[i] = normalized
-			continue
-		}
-		if !typ.TypeEquals(observed, normalized) {
-			out = make([]typ.Type, len(evidence))
-			copy(out, evidence[:i])
-			out[i] = normalized
-		}
-	}
-	if out != nil {
-		return out
-	}
-	return evidence
-}
-
-func hasNonNilEvidence(evidence []typ.Type) bool {
-	for _, observed := range evidence {
-		if observed != nil {
-			return true
-		}
-	}
-	return false
-}
-
-// joinParameterEvidenceVectors joins two parameter evidence vectors element-wise.
-func joinParameterEvidenceVectors(a, b []typ.Type) []typ.Type {
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
-	maxLen := len(a)
-	if len(b) > maxLen {
-		maxLen = len(b)
-	}
-	result := make([]typ.Type, maxLen)
-	for i := 0; i < maxLen; i++ {
-		var ai, bi typ.Type
-		if i < len(a) {
-			ai = a[i]
-		}
-		if i < len(b) {
-			bi = b[i]
-		}
-		result[i] = joinParameterEvidence(ai, bi)
-	}
-	return result
-}
-
-func joinParameterEvidence(a, b typ.Type) typ.Type {
-	a = paramevidence.NormalizeType(a)
-	b = paramevidence.NormalizeType(b)
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
-	if unwrap.IsNilType(a) && !unwrap.IsNilType(b) {
-		return b
-	}
-	if unwrap.IsNilType(b) && !unwrap.IsNilType(a) {
-		return a
-	}
-	if joined, ok := joinNilableParameterEvidence(a, b); ok {
-		return joined
-	}
-	return joinNonNilParameterEvidence(a, b)
-}
-
-func joinNilableParameterEvidence(a, b typ.Type) (typ.Type, bool) {
-	ai, anil := splitNilableParameterEvidence(a)
-	bi, bnil := splitNilableParameterEvidence(b)
-	if !anil && !bnil {
-		return nil, false
-	}
-	if ai == nil && bi == nil {
-		return typ.Nil, true
-	}
-	if ai == nil {
-		return typ.NewOptional(bi), true
-	}
-	if bi == nil {
-		return typ.NewOptional(ai), true
-	}
-	return typ.NewOptional(joinNonNilParameterEvidence(ai, bi)), true
-}
-
-func splitNilableParameterEvidence(t typ.Type) (typ.Type, bool) {
-	t = unwrap.Alias(t)
-	switch v := t.(type) {
-	case nil:
-		return nil, false
-	case *typ.Optional:
-		return v.Inner, true
-	case *typ.Union:
-		members := make([]typ.Type, 0, len(v.Members))
-		nilable := false
-		for _, member := range v.Members {
-			member = unwrap.Alias(member)
-			if unwrap.IsNilType(member) {
-				nilable = true
-				continue
-			}
-			members = append(members, member)
-		}
-		if !nilable {
-			return t, false
-		}
-		return typ.NewUnion(members...), true
-	default:
-		if unwrap.IsNilType(t) {
-			return nil, true
-		}
-		return t, false
-	}
-}
-
-func joinNonNilParameterEvidence(a, b typ.Type) typ.Type {
-	if upper, ok := selectParameterEvidenceTableUpperBound(a, b); ok {
-		return upper
-	}
-	if preferred, ok := preferConcreteOverSoftType(a, b); ok {
-		return preferred
-	}
-	if typeCanSelfEmbed(a) && typeContainsEquivalent(b, a) && !typ.IsAbsentOrUnknown(a) {
-		if typeContainsUnion(a) {
-			return a
-		}
-		return typ.JoinPreferNonSoft(a, b)
-	}
-	if typeCanSelfEmbed(b) && typeContainsEquivalent(a, b) && !typ.IsAbsentOrUnknown(b) {
-		if typeContainsUnion(b) {
-			return b
-		}
-		return typ.JoinPreferNonSoft(a, b)
-	}
-	if typeIsTruthyRefinement(a, b) {
-		return a
-	}
-	if typeIsTruthyRefinement(b, a) {
-		return b
-	}
-	if joined, ok := typ.JoinCompatibleRecords(a, b); ok {
-		return joined
-	}
-	if joined, ok := joinParameterEvidenceMapRecord(a, b); ok {
-		return joined
-	}
-	if TypeExtendsRecord(a, b) {
-		return a
-	}
-	if TypeExtendsRecord(b, a) {
-		return b
-	}
-	if !typ.IsAbsentOrUnknown(a) && !typ.IsAbsentOrUnknown(b) {
-		if subtype.IsSubtype(a, b) {
-			return b
-		}
-		if subtype.IsSubtype(b, a) {
-			return a
-		}
-	}
-	return paramevidence.NormalizeType(typ.JoinPreferNonSoft(a, b))
-}
-
-func preferConcreteOverSoftType(a, b typ.Type) (typ.Type, bool) {
-	aSoft := typ.IsSoft(a, typ.SoftPlaceholderPolicy)
-	bSoft := typ.IsSoft(b, typ.SoftPlaceholderPolicy)
-	switch {
-	case aSoft && !bSoft && !unwrap.IsNilType(b):
-		return b, true
-	case bSoft && !aSoft && !unwrap.IsNilType(a):
-		return a, true
-	}
-	if preferred, ok := preferConcreteOverNilableSoftType(a, b); ok {
-		return preferred, true
-	}
-	return nil, false
-}
-
-func preferConcreteOverNilableSoftType(a, b typ.Type) (typ.Type, bool) {
-	if preferred, ok := preferConcreteOverNilableSoftTypeDirected(a, b); ok {
-		return preferred, true
-	}
-	return preferConcreteOverNilableSoftTypeDirected(b, a)
-}
-
-func preferConcreteOverNilableSoftTypeDirected(softMaybeNil, concrete typ.Type) (typ.Type, bool) {
-	inner, nilable := splitNilableParameterEvidence(softMaybeNil)
-	if !nilable || inner == nil || !typ.IsSoft(inner, typ.SoftPlaceholderPolicy) {
-		return nil, false
-	}
-	if concrete == nil || unwrap.IsNilType(concrete) {
-		return nil, false
-	}
-	concreteInner, concreteNilable := splitNilableParameterEvidence(concrete)
-	if concreteInner == nil {
-		return nil, false
-	}
-	if typ.IsSoft(concreteInner, typ.SoftPlaceholderPolicy) {
-		return nil, false
-	}
-	if concreteNilable {
-		return concrete, true
-	}
-	return typ.NewOptional(concrete), true
-}
-
-func joinParameterEvidenceMapRecord(a, b typ.Type) (typ.Type, bool) {
-	if joined, ok := joinParameterEvidenceMapRecordDirected(a, b); ok {
-		return joined, true
-	}
-	return joinParameterEvidenceMapRecordDirected(b, a)
-}
-
-func joinParameterEvidenceMapRecordDirected(mapType, recordType typ.Type) (typ.Type, bool) {
-	m, ok := unwrap.Alias(mapType).(*typ.Map)
-	if !ok || m == nil {
-		return nil, false
-	}
-	r, ok := unwrap.Alias(recordType).(*typ.Record)
-	if !ok || r == nil || !r.HasMapComponent() {
-		return nil, false
-	}
-
-	key := joinNonNilParameterEvidence(m.Key, r.MapKey)
-	value := joinNonNilParameterEvidence(m.Value, r.MapValue)
-	if len(r.Fields) == 0 && r.Metatable == nil {
-		return typ.NewMap(key, value), true
-	}
-	builder := typ.NewRecord()
-	if r.Open {
-		builder.SetOpen(true)
-	}
-	if r.Metatable != nil {
-		builder.Metatable(r.Metatable)
-	}
-	builder.MapComponent(key, value)
-	for _, field := range r.Fields {
-		fieldType := field.Type
-		optional := true
-		if subtype.IsSubtype(typ.LiteralString(field.Name), key) {
-			fieldType = joinNonNilParameterEvidence(field.Type, value)
-		} else {
-			optional = field.Optional
-		}
-		switch {
-		case optional && field.Readonly:
-			builder.OptReadonlyField(field.Name, fieldType)
-		case optional:
-			builder.OptField(field.Name, fieldType)
-		case field.Readonly:
-			builder.ReadonlyField(field.Name, fieldType)
-		default:
-			builder.Field(field.Name, fieldType)
-		}
-	}
-	return builder.Build(), true
-}
-
-func selectParameterEvidenceTableUpperBound(a, b typ.Type) (typ.Type, bool) {
-	if parameterEvidenceIsOnlyTableTop(a) && typ.IsAny(b) {
-		return a, true
-	}
-	if parameterEvidenceIsOnlyTableTop(b) && typ.IsAny(a) {
-		return b, true
-	}
-	if parameterEvidenceContainsTableTop(a) && parameterEvidenceCoveredByTableTop(b) && subtype.IsSubtype(b, a) {
-		return a, true
-	}
-	if parameterEvidenceContainsTableTop(b) && parameterEvidenceCoveredByTableTop(a) && subtype.IsSubtype(a, b) {
-		return b, true
-	}
-	return nil, false
-}
-
-func parameterEvidenceContainsTableTop(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	if unwrap.IsBuiltinTableTop(typ.UnwrapAnnotated(t)) {
-		return true
-	}
-	switch v := typ.UnwrapAnnotated(t).(type) {
-	case *typ.Alias:
-		return parameterEvidenceContainsTableTop(v.UnaliasedTarget())
-	case *typ.Optional:
-		return parameterEvidenceContainsTableTop(v.Inner)
-	case *typ.Union:
-		for _, member := range v.Members {
-			if parameterEvidenceContainsTableTop(member) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func parameterEvidenceIsOnlyTableTop(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	if unwrap.IsBuiltinTableTop(typ.UnwrapAnnotated(t)) {
-		return true
-	}
-	switch v := typ.UnwrapAnnotated(t).(type) {
-	case *typ.Alias:
-		return parameterEvidenceIsOnlyTableTop(v.UnaliasedTarget())
-	case *typ.Optional:
-		return parameterEvidenceIsOnlyTableTop(v.Inner)
-	case *typ.Union:
-		if len(v.Members) == 0 {
-			return false
-		}
-		hasTableTop := false
-		for _, member := range v.Members {
-			if unwrap.IsNilType(member) {
-				continue
-			}
-			if !parameterEvidenceIsOnlyTableTop(member) {
-				return false
-			}
-			hasTableTop = true
-		}
-		return hasTableTop
-	default:
-		return false
-	}
-}
-
-func parameterEvidenceCoveredByTableTop(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	if typ.IsAny(t) {
-		return true
-	}
-	if unwrap.IsNilType(t) || unwrap.IsBuiltinTableTop(typ.UnwrapAnnotated(t)) {
-		return true
-	}
-	switch v := typ.UnwrapAnnotated(t).(type) {
-	case *typ.Alias:
-		return parameterEvidenceCoveredByTableTop(v.UnaliasedTarget())
-	case *typ.Optional:
-		return parameterEvidenceCoveredByTableTop(v.Inner)
-	case *typ.Recursive:
-		return v.Body != nil && v.Body != v && parameterEvidenceCoveredByTableTop(v.Body)
-	case *typ.Union:
-		if len(v.Members) == 0 {
-			return false
-		}
-		for _, member := range v.Members {
-			if !parameterEvidenceCoveredByTableTop(member) {
-				return false
-			}
-		}
-		return true
-	case *typ.Record, *typ.Map, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Intersection:
-		return true
-	default:
-		return false
-	}
-}
-
-func typeIsTruthyRefinement(candidate, baseline typ.Type) bool {
-	if candidate == nil || baseline == nil || typ.TypeEquals(candidate, baseline) {
-		return false
-	}
-	refined := narrow.ToTruthy(baseline)
-	if refined == nil || refined.Kind().IsNever() || typ.TypeEquals(refined, baseline) {
-		return false
-	}
-	return typ.TypeEquals(candidate, refined) || subtype.IsSubtype(candidate, refined)
-}
-
-func typeCanSelfEmbed(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	switch v := t.(type) {
-	case *typ.Annotated:
-		return typeCanSelfEmbed(v.Inner)
-	case *typ.Alias:
-		return typeCanSelfEmbed(v.Target)
-	case *typ.Optional:
-		return typeCanSelfEmbed(v.Inner)
-	case *typ.Union:
-		for _, member := range v.Members {
-			if typeCanSelfEmbed(member) {
-				return true
-			}
-		}
-		return false
-	case *typ.Intersection:
-		for _, member := range v.Members {
-			if typeCanSelfEmbed(member) {
-				return true
-			}
-		}
-		return false
-	case *typ.Array, *typ.Map, *typ.Tuple, *typ.Record, *typ.Function:
-		return true
-	default:
-		return false
-	}
-}
-
-func typeContainsEquivalent(haystack, needle typ.Type) bool {
-	if haystack == nil || needle == nil {
-		return false
-	}
-	return scanType(haystack, typ.NewGuard(), func(node typ.Type) (bool, bool) {
-		if typ.TypeEquals(node, needle) {
-			return true, false
-		}
-		return false, true
-	})
-}
-
-func typeContainsUnion(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	return scanType(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
-		if _, ok := node.(*typ.Union); ok {
-			return true, false
-		}
-		return false, true
-	})
 }
 
 func canonicalInterprocValueType(t typ.Type) typ.Type {
@@ -1050,10 +451,10 @@ func widenValueTypeForConvergence(existing, candidate typ.Type) typ.Type {
 	if typ.IsAny(candidate) || typ.IsUnknown(candidate) {
 		return candidate
 	}
-	if typeElidesOptional(candidate, existing) {
+	if value.ElidesOptional(candidate, existing) {
 		return candidate
 	}
-	if TypeExtendsRecord(candidate, existing) && !typeContainsNestedStructuralShape(candidate, existing) {
+	if value.ExtendsRecord(candidate, existing) && !typeContainsNestedStructuralShape(candidate, existing) {
 		return candidate
 	}
 	if refines, _ := typeRefinesFalsyMapKey(candidate, existing); refines {
@@ -1158,13 +559,13 @@ func widenFunctionParamFactTypeForConvergence(existing, candidate typ.Type) typ.
 	if typ.IsAny(candidate) || typ.IsUnknown(candidate) {
 		return candidate
 	}
-	if preferred, ok := preferConcreteOverSoftType(existing, candidate); ok {
+	if preferred, ok := value.PreferConcreteOverSoft(existing, candidate); ok {
 		return preferred
 	}
-	if candidateRefinesFunctionParam(candidate, existing) {
+	if paramevidence.RefinesFunctionParam(candidate, existing) {
 		return candidate
 	}
-	if candidateRefinesFunctionParam(existing, candidate) {
+	if paramevidence.RefinesFunctionParam(existing, candidate) {
 		return existing
 	}
 	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {

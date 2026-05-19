@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	synthresolve "github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"

@@ -644,21 +644,6 @@ func TestWithSummaryOrUnknown_DefaultsToUnknownWhenMissing(t *testing.T) {
 	}
 }
 
-func TestTypeExtendsRecord_NilTypes(t *testing.T) {
-	if TypeExtendsRecord(nil, typ.String) {
-		t.Error("nil a should not extend")
-	}
-	if TypeExtendsRecord(typ.String, nil) {
-		t.Error("nil b should not extend")
-	}
-}
-
-func TestTypeExtendsRecord_NotRecord(t *testing.T) {
-	if TypeExtendsRecord(typ.String, typ.String) {
-		t.Error("non-record should not extend")
-	}
-}
-
 func TestNormalizeReturnVector_Empty(t *testing.T) {
 	result := NormalizeReturnVector(nil)
 	if result != nil {
@@ -850,17 +835,6 @@ func TestRecordSuperset_IncompatibleMapComponent(t *testing.T) {
 	b := []typ.Type{oldRec}
 	if ReturnTypesExtendRecord(a, b) {
 		t.Error("record with incompatible map component should not extend")
-	}
-}
-
-// Regression: recordSuperset should use && not || for map component check.
-// This test verifies the fix by checking that the code uses HasMapComponent semantics.
-func TestTypeExtendsRecord_MapComponentConsistency(t *testing.T) {
-	// When old has map component, new must have compatible map component
-	oldRec := typ.NewRecord().MapComponent(typ.String, typ.Number).Build()
-	newRec := typ.NewRecord().Field("x", typ.Number).Build()
-	if TypeExtendsRecord(newRec, oldRec) {
-		t.Error("record without map component should not extend record with map component")
 	}
 }
 

@@ -2,6 +2,7 @@ package returns
 
 import (
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -13,7 +14,7 @@ func JoinFunctionFact(existing, candidate api.FunctionFact) api.FunctionFact {
 	out := existing
 
 	if len(candidate.Params) > 0 {
-		out.Params = joinParameterEvidenceVectors(out.Params, candidate.Params)
+		out.Params = paramevidence.JoinVectors(out.Params, candidate.Params)
 	}
 	if len(candidate.Summary) > 0 {
 		out.Summary = MergeReturnSummary(out.Summary, candidate.Summary)
