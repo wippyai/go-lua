@@ -5250,5 +5250,59 @@ Updated classification:
   lint targets fail under the Wippy repo's pinned `github.com/wippyai/go-lua
   v1.5.16` build, but the go-lua checker tests and Wippy binary build pass.
   The external counts from that official path are currently `session` 8 errors,
-  `framework/src/agent/src` 6 errors, and `docker-demo` 21 errors plus
+  `framework/src/agent/src` 8 errors, and `docker-demo` 21 errors plus
   2 warnings.
+
+## 2026-05-19 Remaining External Error Classification Pass
+
+The remaining official lint failures were replayed with the exact failing
+targets and then reduced against the current go-lua checker. The purpose was to
+separate real checker regressions from external source/manifest obligations.
+
+Additional reductions added in this pass:
+
+- stdlib `json.decode(response.body or "")` accepts a `string?` body fallback;
+- a casted truthiness-guarded field feeds a method argument expecting `string`;
+- a casted table-literal field satisfies an annotated record field;
+- `#xs > 0` proves both `xs[1]` and `xs[#xs]` access in the reduced sequence
+  cases;
+- an error-return guard narrows the successful value before field access.
+
+These reductions pass, so the remaining package-level errors are not the
+generic transfer laws above. Current classification:
+
+- `json.decode(response.body or "")` diagnostics in the LLM packages are still
+  package-boundary issues. The local reductions for stdlib JSON, imported JSON,
+  and selected HTTP methods pass; the full packages depend on external
+  `http_client` response manifests and stream surfaces outside go-lua.
+- `response.stream:read(4096)` is a native/manifest arity issue, not a checker
+  flow regression.
+- `wippy.views:renderer` casted field calls and
+  `wippy.views.api:list_pages` casted table fields are covered by reductions.
+  Remaining full-package errors depend on the external page-registry export
+  shape and should be fixed with stronger manifests or source guards/casts in
+  the views package, not by weakening go-lua.
+- Metadata field errors on `meta`/`metadata` are real source-shape problems:
+  empty strings are truthy in Lua, so a truthiness guard alone does not prove a
+  decoded table.
+- Dynamic payload and provider diagnostics (`any`/`unknown` passed to string,
+  number, contract-argument, time, or typed-option APIs) remain true dynamic
+  boundary errors unless the external package provides a manifest, schema
+  decoder, guard, or cast.
+- Docker/webscout timeout and header diagnostics are source/manifest issues:
+  `options.timeout = options.timeout or 30` preserves an existing truthy string,
+  so a sound checker cannot turn that into `number`.
+
+Verification after adding these reductions:
+
+```text
+go test ./compiler/check/tests/regression -count=1
+go test ./... -count=1
+git diff --check
+../scripts/verify-suite.sh
+```
+
+The go-lua tests and diff check pass. The official verify suite still exits
+non-zero only on external lint targets: `session` 8 errors,
+`framework/src/agent/src` 8 errors, and `docker-demo` 21 errors plus
+2 warnings.

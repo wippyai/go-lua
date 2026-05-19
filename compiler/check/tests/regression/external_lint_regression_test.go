@@ -143,6 +143,23 @@ end
 	}
 }
 
+func TestExternalLint_StdlibJsonOptionalResponseBodyDefaultIsStringAtCall(t *testing.T) {
+	source := `
+local json = require("json")
+
+type Response = {
+	body: string?,
+}
+
+local response: Response = {}
+return json.decode(response.body or "")
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected stdlib json optional body fallback to feed string call argument, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestExternalLint_GuardedOptionsModelSurvivesProviderBranches(t *testing.T) {
 	source := `
 local models = {
@@ -490,6 +507,114 @@ return content, render_err
 		testutil.WithModule("page_registry", pageRegistryModule))
 	if result.HasError() {
 		t.Fatalf("expected error guard plus field cast to feed imported method call, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_TruthinessGuardedFieldCastFeedsMethodCall(t *testing.T) {
+	source := `
+local funcs = {}
+function funcs.new()
+	return {
+		call = function(self, id: string, context)
+			return context, nil
+		end,
+	}
+end
+
+local function get_page_data(page)
+	if not page or not page.data_func or page.data_func == "" then
+		return {}, nil
+	end
+	local executor = funcs.new()
+	return executor:call(page.data_func :: string, {})
+end
+
+return get_page_data({ data_func = true })
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected explicit cast of truthy guarded field to feed method argument checking, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_TableLiteralFieldCastSatisfiesRecordAssignment(t *testing.T) {
+	source := `
+type PageResponse = {
+	id: string,
+	configOverrides: {[string]: any}?,
+}
+
+local page = {
+	id = "home",
+	config_overrides = dynamic_config,
+}
+
+local page_info: PageResponse = {
+	id = type(page.id) == "string" and page.id or tostring(page.id),
+	configOverrides = page.config_overrides :: {[string]: any}?,
+}
+
+return page_info
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected casted table-literal field to satisfy record assignment, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_LengthGuardNarrowsLastElementIndex(t *testing.T) {
+	source := `
+type YieldResult = {
+	content: string,
+}
+
+local function latest_content(yield_result_data: {YieldResult}?)
+	if not yield_result_data or #yield_result_data == 0 then
+		return nil, "No yield result data found"
+	end
+	local latest_yield_result = yield_result_data[#yield_result_data]
+	return latest_yield_result.content
+end
+
+return latest_content({ { content = "ok" } })
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected positive length guard to prove last element index, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_ErrorReturnGuardNarrowsCurrentValue(t *testing.T) {
+	source := `
+type Content = {
+	metadata: {[string]: any}?,
+}
+
+local content_repo = {}
+function content_repo.get(content_id): (Content?, string?)
+	if content_id == "" then
+		return nil, "not found"
+	end
+	return { metadata = {} }, nil
+end
+
+local function update_metadata(content_id, metadata)
+	local current, err = content_repo.get(content_id)
+	if err then
+		return nil, "Failed to get current metadata: " .. err
+	end
+	local current_metadata = current.metadata or {}
+	for k, v in pairs(metadata) do
+		current_metadata[k] = v
+	end
+	return current_metadata
+end
+
+return update_metadata("id", { kind = "text" })
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected error-return guard to narrow current value before field access, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 
