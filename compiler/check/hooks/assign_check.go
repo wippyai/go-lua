@@ -33,12 +33,15 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
+	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/join"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -100,6 +103,12 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 		sc := scopes[p]
 
 		info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
+			if target.Kind != cfg.TargetIdent {
+				if d, ok := checkStructuredAssignmentTarget(target, source, p, narrowSynth, flowQ, graph, sourceName); ok {
+					diags = append(diags, d)
+				}
+				return
+			}
 			if target.Kind != cfg.TargetIdent || target.Name == "" {
 				return
 			}
@@ -255,6 +264,154 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 	return diags
 }
 
+func checkStructuredAssignmentTarget(target cfg.AssignTarget, source ast.Expr, p cfg.Point, synth api.Synth, flowQ api.FlowQuery, graph *cfg.Graph, sourceName string) (diag.Diagnostic, bool) {
+	if source == nil || synth == nil {
+		return diag.Diagnostic{}, false
+	}
+	expected := assignmentTargetWriteType(target, p, synth, flowQ)
+	if iteratorExpected := pairedIteratorWriteExpected(target, p, flowQ, graph); iteratorExpected != nil && nilOnlyType(expected) {
+		expected = iteratorExpected
+	}
+	if typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
+		return diag.Diagnostic{}, false
+	}
+
+	valueType := synth.SynthWithExpected(source, p, expected)
+	if valueType == nil {
+		valueType = synth.TypeOf(source, p)
+	}
+	if typ.IsAbsentOrUnknown(valueType) {
+		return diag.Diagnostic{}, false
+	}
+	if nilOnlyType(valueType) && assignmentTargetDeleteAllowed(target, p, synth) {
+		return diag.Diagnostic{}, false
+	}
+	if flowQ != nil {
+		sourcePath := extractSourcePath(source, graph, p)
+		if !sourcePath.IsEmpty() {
+			if narrowed := flowQ.NarrowedTypeAt(p, sourcePath); !typ.IsAbsentOrUnknown(narrowed) {
+				valueType = preferPreciseSourcePathType(valueType, narrowed)
+			}
+		}
+	}
+	if table, ok := source.(*ast.TableExpr); ok {
+		if result := tableCheck(table, expected, synth, p); result.Handled {
+			if result.Compatible {
+				return diag.Diagnostic{}, false
+			}
+			pos := diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()}
+			span := ast.SpanOf(source)
+			msg := formatAssignMismatchDetailed(valueType, expected, result.Reason)
+			_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
+			return diag.Diagnostic{
+				Severity: diag.SeverityError,
+				Code:     diag.ErrTypeMismatch,
+				Position: pos,
+				Span:     span,
+				Message:  msg,
+				Help:     help,
+			}, true
+		}
+	}
+	if fresh, ok := provenance.CurrentFreshTableLiteral(source, p, graph); ok {
+		if result := tableCheck(fresh.Table, expected, synth, fresh.Point); result.Handled && result.Compatible {
+			return diag.Diagnostic{}, false
+		}
+	}
+	if subtype.IsSubtype(valueType, expected) {
+		return diag.Diagnostic{}, false
+	}
+
+	pos := diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()}
+	span := ast.SpanOf(source)
+	msg := formatAssignMismatch(valueType, expected)
+	_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
+	return diag.Diagnostic{
+		Severity: diag.SeverityError,
+		Code:     diag.ErrTypeMismatch,
+		Position: pos,
+		Span:     span,
+		Message:  msg,
+		Help:     help,
+	}, true
+}
+
+func assignmentTargetWriteType(target cfg.AssignTarget, p cfg.Point, synth api.Synth, flowQ api.FlowQuery) typ.Type {
+	switch target.Kind {
+	case cfg.TargetIndex:
+		if target.Base == nil {
+			return nil
+		}
+		objType := synth.TypeOf(target.Base, p)
+		keyType := typ.Type(nil)
+		if target.Key != nil {
+			keyType = synth.TypeOf(target.Key, p)
+		}
+		if expected, ok := querycore.IndexWrite(objType, keyType); ok {
+			return expected
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
+func assignmentTargetDeleteAllowed(target cfg.AssignTarget, p cfg.Point, synth api.Synth) bool {
+	if target.Kind != cfg.TargetIndex || target.Base == nil || synth == nil {
+		return false
+	}
+	objType := synth.TypeOf(target.Base, p)
+	keyType := typ.Type(nil)
+	if target.Key != nil {
+		keyType = synth.TypeOf(target.Key, p)
+	}
+	return querycore.IndexDelete(objType, keyType)
+}
+
+func pairedIteratorWriteExpected(target cfg.AssignTarget, p cfg.Point, flowQ api.FlowQuery, graph *cfg.Graph) typ.Type {
+	if target.Kind != cfg.TargetIndex || target.Base == nil || flowQ == nil || graph == nil {
+		return nil
+	}
+	key, ok := target.Key.(*ast.IdentExpr)
+	if !ok {
+		return nil
+	}
+	pair, ok := iteration.FindKeyedPairValue(graph, target.Base, key)
+	if !ok {
+		return nil
+	}
+	valueType := flowQ.NarrowedTypeAt(p, pair.ValuePath)
+	if typ.IsAbsentOrUnknown(valueType) && pair.ValuePath.Symbol != 0 {
+		valueType = flowQ.EffectiveTypeAt(p, pair.ValuePath.Symbol).Type
+	}
+	if typ.IsAbsentOrUnknown(valueType) || typ.IsAny(valueType) {
+		return nil
+	}
+	return valueType
+}
+
+func nilOnlyType(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	switch v := typ.UnwrapAnnotated(t).(type) {
+	case *typ.Alias:
+		return nilOnlyType(v.Target)
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return false
+		}
+		for _, member := range v.Members {
+			if !nilOnlyType(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		return v != nil && v.Kind() == typ.Nil.Kind()
+	}
+}
+
 func preferPreciseSourcePathType(current, narrowed typ.Type) typ.Type {
 	if typ.IsAbsentOrUnknown(current) {
 		return narrowed
@@ -298,10 +455,6 @@ func formatAssignMismatchDetailed(value, declared typ.Type, reason string) strin
 	return msg + ": " + reason
 }
 
-type identBindingLookup interface {
-	SymbolOf(ident *ast.IdentExpr) (cfg.SymbolID, bool)
-}
-
 func sourceUsesTargetSymbol(expr ast.Expr, sym cfg.SymbolID, graph *cfg.Graph) bool {
 	if expr == nil || sym == 0 || graph == nil {
 		return false
@@ -310,61 +463,7 @@ func sourceUsesTargetSymbol(expr ast.Expr, sym cfg.SymbolID, graph *cfg.Graph) b
 	if bindings == nil {
 		return false
 	}
-	return exprReferencesSymbol(expr, sym, bindings)
-}
-
-func exprReferencesSymbol(expr ast.Expr, sym cfg.SymbolID, bindings identBindingLookup) bool {
-	if expr == nil || sym == 0 || bindings == nil {
-		return false
-	}
-
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		if bound, ok := bindings.SymbolOf(e); ok && bound == sym {
-			return true
-		}
-		return false
-	case *ast.AttrGetExpr:
-		return exprReferencesSymbol(e.Object, sym, bindings) || exprReferencesSymbol(e.Key, sym, bindings)
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			if exprReferencesSymbol(field.Key, sym, bindings) || exprReferencesSymbol(field.Value, sym, bindings) {
-				return true
-			}
-		}
-		return false
-	case *ast.FuncCallExpr:
-		if exprReferencesSymbol(e.Func, sym, bindings) || exprReferencesSymbol(e.Receiver, sym, bindings) {
-			return true
-		}
-		for _, arg := range e.Args {
-			if exprReferencesSymbol(arg, sym, bindings) {
-				return true
-			}
-		}
-		return false
-	case *ast.LogicalOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.RelationalOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.StringConcatOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.ArithmeticOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.UnaryMinusOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	case *ast.UnaryNotOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	case *ast.UnaryLenOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	case *ast.UnaryBNotOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	default:
-		return false
-	}
+	return provenance.ExprReferencesSymbol(expr, sym, bindings)
 }
 
 func preAssignmentExprTypeForAssign(expr ast.Expr, p cfg.Point, synth api.Synth, graph *cfg.Graph, expected typ.Type) typ.Type {

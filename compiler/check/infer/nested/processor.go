@@ -333,7 +333,18 @@ func (p *Processor) resolveSelfTypeForMethod(
 		}
 	}
 
-	// First try root result facts.
+	// Then ask the parent narrowed synthesizer for the receiver expression at
+	// the method definition point. This keeps prototype methods anchored to
+	// their receiver table even when later field evidence stores back-references
+	// to other objects inside that table.
+	if selfType == nil && info != nil && info.FuncDef != nil && info.FuncDef.Receiver != nil &&
+		parentResult != nil && parentResult.NarrowSynth != nil {
+		if t := parentResult.NarrowSynth.TypeOf(info.FuncDef.Receiver, info.NF.Point); t != nil {
+			selfType = t
+		}
+	}
+
+	// Then try root result facts.
 	if selfType == nil && rootResult != nil && rootResult.Facts != nil {
 		tv := rootResult.Facts.EffectiveTypeAt(info.NF.Point, sym)
 		if tv.Type != nil && tv.State == flow.StateResolved {

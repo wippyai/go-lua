@@ -277,7 +277,6 @@ func expectedFunctionFromResult(result *api.FuncResult) *typ.Function {
 	}
 	declared := result.FlowInputs.DeclaredTypes
 	builder := typ.Func()
-	hasUntypedSourceParam := false
 	sourceFn := result.Graph.Func()
 	for _, slot := range slots {
 		name := slot.Name
@@ -298,7 +297,6 @@ func expectedFunctionFromResult(result *api.FuncResult) *typ.Function {
 		optional := false
 		if slot.TypeAnnotation == nil {
 			optional = true
-			hasUntypedSourceParam = true
 		}
 		if _, ok := slot.TypeAnnotation.(*ast.OptionalTypeExpr); ok {
 			optional = true
@@ -311,9 +309,6 @@ func expectedFunctionFromResult(result *api.FuncResult) *typ.Function {
 	}
 
 	if sourceFn != nil && sourceFn.ParList != nil && sourceFn.ParList.HasVargs {
-		builder = builder.Variadic(typ.Any)
-	} else if hasUntypedSourceParam {
-		// Unannotated Lua functions accept extra positional arguments.
 		builder = builder.Variadic(typ.Any)
 	}
 	return builder.Build()

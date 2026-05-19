@@ -122,6 +122,11 @@ type CallDef struct {
 	// When set, the expected return type guides type parameter inference
 	// for generic functions (e.g., inferring T in `get<T>(): T?` from `local x: string? = get()`).
 	ExpectedReturn typ.Type
+
+	// AllowExtraArgs models Lua's source-level "surplus arguments are
+	// discarded" rule for unannotated local functions without pretending those
+	// functions expose an actual `...` value.
+	AllowExtraArgs bool
 }
 
 // InferKind identifies the type of callee after resolution.
@@ -291,7 +296,7 @@ func inferAndCall(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod 
 
 	instantiated := InstantiateFunction(fn, typeArgs)
 
-	return callFunction(ctx, def.Query, instantiated, def.Args, receiver, isMethod, def.ForceMethodReceiver, errors)
+	return callFunction(ctx, def.Query, instantiated, def.Args, receiver, isMethod, def.ForceMethodReceiver, def.AllowExtraArgs, errors)
 }
 
 // InferCall performs the first phase of call synthesis: callee resolution,
@@ -641,7 +646,7 @@ func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult
 		if fn == nil {
 			return singleValueCallResult(typ.Unknown, infer.Errors)
 		}
-		return callFunction(ctx, def.Query, fn, def.Args, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
+		return callFunction(ctx, def.Query, fn, def.Args, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, def.AllowExtraArgs, infer.Errors)
 	}
 
 	return singleValueCallResult(typ.Unknown, infer.Errors)
@@ -714,7 +719,7 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		}
 
 		seedErrors := append([]CallError(nil), baseErrors...)
-		result := callFunction(ctx, query, fn, args, receiver, isMethod, forceMethodReceiver, seedErrors)
+		result := callFunction(ctx, query, fn, args, receiver, isMethod, forceMethodReceiver, false, seedErrors)
 		if hasHardErrors(result.Errors[len(seedErrors):]) {
 			return result
 		}
@@ -760,7 +765,7 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 		seedErrors := append([]CallError(nil), baseErrors...)
 		var result CallResult
 		if len(fn.TypeParams) == 0 {
-			result = callFunction(ctx, def.Query, fn, def.Args, receiver, isMethod, forceMethodReceiver, seedErrors)
+			result = callFunction(ctx, def.Query, fn, def.Args, receiver, isMethod, forceMethodReceiver, def.AllowExtraArgs, seedErrors)
 		} else {
 			result = inferAndCall(ctx, fn, def, isMethod, receiver, seedErrors)
 		}
@@ -838,7 +843,7 @@ func methodConsumesReceiverSimple(fn *typ.Function, receiver typ.Type, isMethod 
 	return hasExplicitSelfSimple(fn, receiver)
 }
 
-func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool, errors []CallError) CallResult {
+func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool, allowExtraArgs bool, errors []CallError) CallResult {
 	if fn == nil {
 		return singleValueCallResult(typ.Unknown, append(errors, CallError{Kind: ErrNotCallable, Message: "nil function"}))
 	}
@@ -851,14 +856,14 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 
 	minArgs := typ.MinRequiredArgs(fn)
 	hasVariadic := fn.Variadic != nil
-	allowExtraArgs := len(fn.Params) == 0 && !hasVariadic
+	allowDiscardedExtraArgs := allowExtraArgs || (len(fn.Params) == 0 && !hasVariadic)
 
 	if argCount < minArgs {
 		errors = append(errors, CallError{
 			Kind:    ErrWrongArity,
 			Message: "not enough arguments",
 		})
-	} else if !hasVariadic && !allowExtraArgs && argCount > len(fn.Params) {
+	} else if !hasVariadic && !allowDiscardedExtraArgs && argCount > len(fn.Params) {
 		errors = append(errors, CallError{
 			Kind:    ErrWrongArity,
 			Message: "too many arguments",

@@ -121,7 +121,8 @@ func checkSingleCall(
 		def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, graph, info)
 	} else if info.Callee != nil {
 		def.Callee = narrowView.TypeOf(info.Callee, p)
-		if factType, unobservedParams := functionFactCalleeType(api.StoreFrom(ctx), info, graph, bindings, unobservedLocalParams); factType != nil {
+		if factType, unobservedParams, allowExtraArgs := functionFactCalleeType(api.StoreFrom(ctx), info, graph, bindings, unobservedLocalParams); factType != nil {
+			def.AllowExtraArgs = allowExtraArgs
 			if typ.IsUnknownOrNil(def.Callee) || canonicalFactHasWiderParams(def.Callee, factType) {
 				def.Callee = factType
 			} else if len(unobservedParams) > 0 {
@@ -150,9 +151,9 @@ func functionFactCalleeType(
 	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	unobservedLocalParams map[cfg.SymbolID][]bool,
-) (typ.Type, []bool) {
+) (typ.Type, []bool, bool) {
 	if store == nil || info == nil {
-		return nil, nil
+		return nil, nil, false
 	}
 	moduleBindings := store.ModuleBindings()
 	for _, sym := range callsite.CallableCalleeSymbolCandidates(info, graph, bindings, moduleBindings) {
@@ -161,15 +162,17 @@ func functionFactCalleeType(
 			graphLocal := fn != nil
 			t := ff.Type
 			var unobservedParams []bool
+			allowExtraArgs := false
 			if graphLocal {
 				unobservedParams = unobservedLocalParamMask(store, sym, fn, unobservedLocalParams)
+				allowExtraArgs = callsite.AllowsDiscardedExtraArgs(fn)
 			}
 			if t != nil {
-				return t, unobservedParams
+				return t, unobservedParams, allowExtraArgs
 			}
 		}
 	}
-	return nil, nil
+	return nil, nil, false
 }
 
 func callTypeWithUnobservedLocalAnyArgs(callee typ.Type, args []typ.Type, unobservedParams []bool) typ.Type {

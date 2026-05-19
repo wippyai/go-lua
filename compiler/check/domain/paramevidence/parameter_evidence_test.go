@@ -156,6 +156,43 @@ func TestMergeIntoSignature_ImplicitSelfUsesEffectiveHintSlots(t *testing.T) {
 	}
 }
 
+func TestMergeIntoSignature_SoftArrayAnnotationPreservesContainerShape(t *testing.T) {
+	fn := functionWithParams("responses")
+	fn.ParList.Types = []ast.TypeExpr{&ast.ArrayTypeExpr{
+		Element: &ast.PrimitiveTypeExpr{Name: "any"},
+	}}
+	sig := typ.Func().
+		Param("responses", typ.NewArray(typ.Any)).
+		Build()
+	evidence := typ.NewTuple(
+		typ.NewRecord().Field("ok", typ.Boolean).Build(),
+		typ.NewRecord().Field("ok", typ.Boolean).Build(),
+	)
+
+	got := MergeIntoSignature(fn, []typ.Type{evidence}, sig)
+	if got == nil || len(got.Params) != 1 {
+		t.Fatalf("unexpected merged signature: %v", got)
+	}
+	want := typ.NewArray(typ.NewRecord().Field("ok", typ.Boolean).Build())
+	if !typ.TypeEquals(got.Params[0].Type, want) {
+		t.Fatalf("soft {any} parameter annotation must refine element domain without becoming a tuple, got %v", got.Params[0].Type)
+	}
+}
+
+func TestMergeIntoSignature_HardAnyAnnotationRemainsAuthoritative(t *testing.T) {
+	fn := functionWithParams("value")
+	fn.ParList.Types = []ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "any"}}
+	sig := typ.Func().
+		Param("value", typ.Any).
+		Build()
+	evidence := typ.NewRecord().Field("id", typ.String).Build()
+
+	got := MergeIntoSignature(fn, []typ.Type{evidence}, sig)
+	if got != sig {
+		t.Fatalf("hard any annotation must stay authoritative, got %v", got)
+	}
+}
+
 func TestMergeIntoSignature_PreservesExplicitNilabilityOnOptionalSlot(t *testing.T) {
 	fn := functionWithParams("context")
 	context := typ.NewRecord().
@@ -584,4 +621,23 @@ func TestMergeAt(t *testing.T) {
 			t.Fatalf("expected normalized string evidence, got %v", got[0])
 		}
 	})
+}
+
+func TestMergeCallArgAt_PreservesExplicitNilArgument(t *testing.T) {
+	got, changed := MergeCallArgAt(nil, 0, typ.Nil, typ.JoinPreferNonSoft, true)
+	if !changed {
+		t.Fatal("expected nil argument to be recorded")
+	}
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Nil) {
+		t.Fatalf("expected nil evidence, got %v", got)
+	}
+
+	rec := typ.NewRecord().Field("id", typ.String).Build()
+	got, changed = MergeCallArgAt(got, 0, rec, typ.JoinPreferNonSoft, true)
+	if !changed {
+		t.Fatal("expected record call to merge with nil evidence")
+	}
+	if !typ.TypeEquals(got[0], typ.NewOptional(rec)) {
+		t.Fatalf("expected nil plus record calls to produce optional record evidence, got %v", got[0])
+	}
 }

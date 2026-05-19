@@ -7,14 +7,16 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 type JoinFn func(prev, next typ.Type) typ.Type
 
-// MergeIntoSignature replaces unannotated parameter slots (and refinable
-// top-like annotations) with call-site evidence.
+// MergeIntoSignature merges parameter evidence into a synthesized signature.
+// Hard annotations stay authoritative. Soft structural annotations keep their
+// container shape while evidence refines their element/value domain.
 func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Function) *typ.Function {
 	if sig == nil || fn == nil || fn.ParList == nil {
 		return sig
@@ -24,12 +26,17 @@ func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Func
 		if i >= len(evidence) || evidence[i] == nil {
 			continue
 		}
+		paramType := p.Type
+		optional := p.Optional
 		if srcIdx, hasSource := signatureSourceParamIndex(fn, sig, i); hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil {
-			if !typ.IsRefinableAnnotation(p.Type) {
-				continue
+			paramType = RefineAnnotationWithEvidence(p.Type, evidence[i])
+		} else {
+			paramType = evidence[i]
+			if !unwrap.IsOptionalLike(evidence[i]) {
+				optional = false
 			}
 		}
-		if !typ.TypeEquals(p.Type, evidence[i]) {
+		if !typ.TypeEquals(p.Type, paramType) || p.Optional != optional {
 			modified = true
 		}
 	}
@@ -44,13 +51,13 @@ func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Func
 		if i < len(evidence) && evidence[i] != nil {
 			srcIdx, hasSource := signatureSourceParamIndex(fn, sig, i)
 			annotated := hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil
-			if !annotated {
+			if annotated {
+				paramType = RefineAnnotationWithEvidence(p.Type, evidence[i])
+			} else {
 				paramType = evidence[i]
 				if !unwrap.IsOptionalLike(evidence[i]) {
 					optional = false
 				}
-			} else if typ.IsRefinableAnnotation(paramType) {
-				paramType = mergeEvidenceIntoAnnotatedParam(paramType, evidence[i])
 			}
 		}
 		if optional {
@@ -77,18 +84,215 @@ func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Func
 	return builder.Build()
 }
 
-func mergeEvidenceIntoAnnotatedParam(annotation, evidence typ.Type) typ.Type {
-	if annotation == nil || evidence == nil {
+// RefineAnnotationWithEvidence returns the function-body type produced when a
+// soft structural annotation receives harder evidence. Hard annotations and top
+// annotations (`any`, `unknown`) remain authoritative.
+func RefineAnnotationWithEvidence(annotation, evidence typ.Type) typ.Type {
+	if annotation == nil || evidence == nil || !typ.IsRefinableAnnotation(annotation) {
 		return annotation
 	}
-	if unwrap.IsOptionalLike(annotation) {
-		inner := unwrap.Optional(evidence)
-		if inner == nil || unwrap.IsNilType(unwrap.Alias(evidence)) {
-			return annotation
-		}
-		return typ.NewOptional(inner)
+	evidence = NormalizeType(evidence)
+	if !IsInformative(evidence) {
+		return annotation
 	}
-	return evidence
+	if refined, changed := refineAnnotationShape(annotation, evidence, typ.NewGuard()); changed {
+		return refined
+	}
+	return annotation
+}
+
+func refineAnnotationShape(annotation, evidence typ.Type, guard internal.RecursionGuard) (typ.Type, bool) {
+	if annotation == nil || evidence == nil {
+		return annotation, false
+	}
+	next, ok := guard.Enter(annotation)
+	if !ok {
+		return annotation, false
+	}
+	switch a := unwrap.Alias(annotation).(type) {
+	case *typ.Optional:
+		inner, changed := refineAnnotationShape(a.Inner, evidence, next)
+		if !changed {
+			return annotation, false
+		}
+		return typ.NewOptional(inner), true
+	case *typ.Array:
+		elem := arrayElementEvidence(evidence, next)
+		if elem == nil {
+			return annotation, false
+		}
+		refined := Join(a.Element, elem)
+		if typ.TypeEquals(refined, a.Element) {
+			return annotation, false
+		}
+		return typ.NewArray(refined), true
+	case *typ.Map:
+		key, value, ok := mapEvidence(evidence, a.Key, next)
+		if !ok {
+			return annotation, false
+		}
+		refinedKey := a.Key
+		if typ.IsAny(a.Key) || typ.IsUnknown(a.Key) {
+			refinedKey = Join(a.Key, key)
+		}
+		refinedValue := Join(a.Value, value)
+		if typ.TypeEquals(refinedKey, a.Key) && typ.TypeEquals(refinedValue, a.Value) {
+			return annotation, false
+		}
+		return typ.NewMap(refinedKey, refinedValue), true
+	case *typ.Record:
+		return refineRecordAnnotation(a, evidence, next)
+	case *typ.Union:
+		members := make([]typ.Type, len(a.Members))
+		changed := false
+		for i, member := range a.Members {
+			refined, memberChanged := refineAnnotationShape(member, evidence, next)
+			members[i] = refined
+			changed = changed || memberChanged
+		}
+		if !changed {
+			return annotation, false
+		}
+		return typ.NewUnion(members...), true
+	default:
+		return annotation, false
+	}
+}
+
+func refineRecordAnnotation(annotation *typ.Record, evidence typ.Type, guard internal.RecursionGuard) (typ.Type, bool) {
+	if annotation == nil {
+		return nil, false
+	}
+	if annotation.Open && len(annotation.Fields) == 0 && !annotation.HasMapComponent() && annotation.Metatable == nil {
+		return evidence, !typ.TypeEquals(annotation, evidence)
+	}
+	if !annotation.HasMapComponent() {
+		return annotation, false
+	}
+	key, value, ok := mapEvidence(evidence, annotation.MapKey, guard)
+	if !ok {
+		return annotation, false
+	}
+	refinedKey := annotation.MapKey
+	if typ.IsAny(annotation.MapKey) || typ.IsUnknown(annotation.MapKey) {
+		refinedKey = Join(annotation.MapKey, key)
+	}
+	refinedValue := Join(annotation.MapValue, value)
+	if typ.TypeEquals(refinedKey, annotation.MapKey) && typ.TypeEquals(refinedValue, annotation.MapValue) {
+		return annotation, false
+	}
+	builder := typ.NewRecord().SetOpen(annotation.Open)
+	if annotation.Metatable != nil {
+		builder.Metatable(annotation.Metatable)
+	}
+	builder.MapComponent(refinedKey, refinedValue)
+	for _, field := range annotation.Fields {
+		switch {
+		case field.Optional && field.Readonly:
+			builder.OptReadonlyField(field.Name, field.Type)
+		case field.Optional:
+			builder.OptField(field.Name, field.Type)
+		case field.Readonly:
+			builder.ReadonlyField(field.Name, field.Type)
+		default:
+			builder.Field(field.Name, field.Type)
+		}
+	}
+	return builder.Build(), true
+}
+
+func arrayElementEvidence(evidence typ.Type, guard internal.RecursionGuard) typ.Type {
+	if evidence == nil {
+		return nil
+	}
+	next, ok := guard.Enter(evidence)
+	if !ok {
+		return nil
+	}
+	switch e := unwrap.Alias(evidence).(type) {
+	case *typ.Array:
+		return e.Element
+	case *typ.Tuple:
+		var elem typ.Type
+		for _, slot := range e.Elements {
+			elem = Join(elem, slot)
+		}
+		return elem
+	case *typ.Union:
+		var elem typ.Type
+		for _, member := range e.Members {
+			memberElem := arrayElementEvidence(member, next)
+			if memberElem == nil {
+				continue
+			}
+			elem = Join(elem, memberElem)
+		}
+		return elem
+	case *typ.Optional:
+		return arrayElementEvidence(e.Inner, next)
+	default:
+		return nil
+	}
+}
+
+func mapEvidence(evidence, expectedKey typ.Type, guard internal.RecursionGuard) (typ.Type, typ.Type, bool) {
+	if evidence == nil {
+		return nil, nil, false
+	}
+	next, ok := guard.Enter(evidence)
+	if !ok {
+		return nil, nil, false
+	}
+	switch e := unwrap.Alias(evidence).(type) {
+	case *typ.Map:
+		if expectedKey != nil && !keyEvidenceCompatible(e.Key, expectedKey) {
+			return nil, nil, false
+		}
+		return e.Key, e.Value, true
+	case *typ.Record:
+		if e.HasMapComponent() {
+			if expectedKey != nil && !keyEvidenceCompatible(e.MapKey, expectedKey) {
+				return nil, nil, false
+			}
+			return e.MapKey, e.MapValue, true
+		}
+		if len(e.Fields) == 0 {
+			return nil, nil, false
+		}
+		var value typ.Type
+		for _, field := range e.Fields {
+			if expectedKey != nil && !keyEvidenceCompatible(typ.LiteralString(field.Name), expectedKey) {
+				return nil, nil, false
+			}
+			value = Join(value, field.Type)
+		}
+		return typ.String, value, true
+	case *typ.Union:
+		var key typ.Type
+		var value typ.Type
+		seen := false
+		for _, member := range e.Members {
+			memberKey, memberValue, ok := mapEvidence(member, expectedKey, next)
+			if !ok {
+				continue
+			}
+			key = Join(key, memberKey)
+			value = Join(value, memberValue)
+			seen = true
+		}
+		return key, value, seen
+	case *typ.Optional:
+		return mapEvidence(e.Inner, expectedKey, next)
+	default:
+		return nil, nil, false
+	}
+}
+
+func keyEvidenceCompatible(candidate, expected typ.Type) bool {
+	if candidate == nil || expected == nil {
+		return false
+	}
+	return subtype.IsSubtype(candidate, expected) || typ.IsAny(expected) || typ.IsUnknown(expected)
 }
 
 func signatureSourceParamIndex(fn *ast.FunctionExpr, sig *typ.Function, paramIdx int) (int, bool) {
@@ -396,7 +600,8 @@ func MergeCallArgAt(evidence []typ.Type, idx int, argType typ.Type, join JoinFn,
 	}
 
 	topLikeArg := typ.IsAny(argType) || typ.IsUnknown(argType)
-	if !topLikeArg && !IsInformative(argType) {
+	nilArg := unwrap.IsNilType(argType)
+	if !topLikeArg && !nilArg && !IsInformative(argType) {
 		return evidence, false
 	}
 

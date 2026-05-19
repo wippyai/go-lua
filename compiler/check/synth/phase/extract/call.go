@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/subst"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -167,6 +168,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 		TypeArgs:       typeArgs,
 		Query:          s.GetCallQuery(),
 		ExpectedReturn: expected,
+		AllowExtraArgs: s.localFunctionAllowsDiscardedExtraArgs(ex, p),
 	}
 
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
@@ -247,6 +249,32 @@ func (s *Synthesizer) specializedLocalFunctionCalleeType(
 		}
 	}
 	return nil
+}
+
+func (s *Synthesizer) localFunctionAllowsDiscardedExtraArgs(ex *ast.FuncCallExpr, p cfg.Point) bool {
+	if s == nil || ex == nil || s.deps.CheckCtx == nil {
+		return false
+	}
+	graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph)
+	if !ok || graph == nil {
+		return false
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		bindings = s.deps.ModuleBindings
+	}
+	info := graph.CallSiteAt(p, ex)
+	for _, sym := range callsite.CallableCalleeSymbolCandidates(info, graph, bindings, nil) {
+		if fn := callsite.FunctionLiteralForGraphSymbol(graph, sym); callsite.AllowsDiscardedExtraArgs(fn) {
+			return true
+		}
+	}
+	if bindings != nil {
+		if sym := callsite.SymbolFromExpr(ex.Func, bindings); sym != 0 {
+			return callsite.AllowsDiscardedExtraArgs(callsite.FunctionLiteralForGraphSymbol(graph, sym))
+		}
+	}
+	return false
 }
 
 // SynthCallCoreWithExpected synthesizes call with optional expected return type for generic inference.
@@ -521,10 +549,25 @@ func (s *Synthesizer) stablePrototypeFuncDefType(info *compcfg.FuncDefInfo, p co
 	if info == nil {
 		return nil
 	}
+	var factType typ.Type
 	if info.Symbol != 0 {
-		if t := functionFacts.FunctionType(info.Symbol); t != nil {
-			return t
+		factType = functionFacts.FunctionType(info.Symbol)
+	}
+	if info.TargetKind == compcfg.FuncDefMethod && info.FuncExpr != nil && s != nil {
+		expected := typ.Func().Param("self", typ.Self).Build()
+		if sourceType := s.SynthFunctionTypeWithExpected(info.FuncExpr, sc, expected); sourceType != nil {
+			if sourceFn := unwrap.Function(sourceType); sourceFn != nil {
+				if factFn := unwrap.Function(factType); factFn != nil && len(factFn.Returns) > 0 {
+					if aligned := typjoin.WithReturns(sourceFn, factFn.Returns); aligned != nil {
+						return aligned
+					}
+				}
+			}
+			return sourceType
 		}
+	}
+	if factType != nil {
+		return factType
 	}
 	return s.stablePrototypeFieldType(info.FuncExpr, p, sc, bindings, functionFacts, recurse)
 }

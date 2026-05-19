@@ -324,10 +324,14 @@ func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Recor
 			continue
 		}
 
-		if !subtype.IsSubtype(pf, ef.Type) {
+		expectedFieldType := ef.Type
+		if ef.Optional && !unwrap.IsOptionalLike(expectedFieldType) {
+			expectedFieldType = typ.NewOptional(expectedFieldType)
+		}
+		if !subtype.IsSubtype(pf, expectedFieldType) {
 			errors = append(errors, CheckError{
 				Message:  "field type mismatch",
-				Expected: ef.Type,
+				Expected: expectedFieldType,
 				Got:      pf,
 				Field:    ef.Name,
 			})

@@ -665,11 +665,13 @@ func (i *Inferencer) applyParameterEvidenceToOverlay(ctx *returnInferenceContext
 		if !paramevidence.IsInformative(evidence) {
 			continue
 		}
-		if slot.TypeAnnotation != nil && ctx.engine != nil {
+		if slot.TypeAnnotation != nil {
 			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
-			if resolved != nil && !typ.IsRefinableAnnotation(resolved) {
+			if resolved == nil || !typ.IsRefinableAnnotation(resolved) {
 				continue
 			}
+			overlay[slot.Symbol] = paramevidence.RefineAnnotationWithEvidence(resolved, evidence)
+			continue
 		}
 		overlay[slot.Symbol] = evidence
 	}
@@ -684,11 +686,8 @@ func (i *Inferencer) mergeParameterEvidenceFromOverlay(ctx *returnInferenceConte
 			continue
 		}
 		_, hasSource := slot.SourceParamIndex()
-		if hasSource && slot.TypeAnnotation != nil && ctx.engine != nil {
-			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
-			if resolved != nil && !typ.IsRefinableAnnotation(resolved) {
-				continue
-			}
+		if hasSource && hardParameterAnnotation(ctx, slot) {
+			continue
 		}
 		t := overlay[slot.Symbol]
 		if !paramevidence.IsInformative(t) {
@@ -716,11 +715,8 @@ func (i *Inferencer) mergeParameterEvidenceFromBodyUses(ctx *returnInferenceCont
 			continue
 		}
 		_, hasSource := slot.SourceParamIndex()
-		if hasSource && slot.TypeAnnotation != nil && ctx.engine != nil {
-			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
-			if resolved != nil && !typ.IsRefinableAnnotation(resolved) {
-				continue
-			}
+		if hasSource && hardParameterAnnotation(ctx, slot) {
+			continue
 		}
 		paramIndexBySym[slot.Symbol] = idx
 	}
@@ -1044,6 +1040,14 @@ func (i *Inferencer) mergeParameterEvidenceFromBodyUses(ctx *returnInferenceCont
 	for _, stmt := range ctx.info.Fn.Stmts {
 		visitStmt(stmt)
 	}
+}
+
+func hardParameterAnnotation(ctx *returnInferenceContext, slot cfg.ParamSlot) bool {
+	if ctx == nil || ctx.engine == nil || slot.TypeAnnotation == nil {
+		return false
+	}
+	resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
+	return resolved != nil && !typ.IsRefinableAnnotation(resolved)
 }
 
 func (i *Inferencer) receiverEvidenceForMethod(ctx *returnInferenceContext, method string) typ.Type {

@@ -68,9 +68,6 @@ func Join(existing, candidate api.FunctionFact) api.FunctionFact {
 		if len(alignedReturns) > 0 {
 			if usingNarrow {
 				if aligned := typjoin.WithReturns(fn, alignedReturns); aligned != nil {
-					if typ.IsAny(aligned.Variadic) {
-						aligned = stripVariadic(aligned)
-					}
 					out.Type = aligned
 					fn = aligned
 				}
@@ -153,9 +150,6 @@ func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 		if len(alignedReturns) > 0 {
 			if usingNarrow {
 				if aligned := typjoin.WithReturns(fn, alignedReturns); aligned != nil {
-					if nextFn := unwrap.Function(next.Type); (nextFn != nil && nextFn.Variadic == nil) || typ.IsAny(aligned.Variadic) {
-						aligned = stripVariadic(aligned)
-					}
 					out.Type = value.WidenForConvergence(aligned)
 				}
 			} else {
@@ -183,36 +177,6 @@ func repairSummaryWithNarrow(summary, narrow []typ.Type) []typ.Type {
 		out[i] = repairTypeWithNarrow(summary[i], narrow[i], 0)
 	}
 	return out
-}
-
-func stripVariadic(fn *typ.Function) *typ.Function {
-	if fn == nil || fn.Variadic == nil {
-		return fn
-	}
-	builder := typ.Func().ReserveParams(len(fn.Params))
-	for _, tp := range fn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
-	}
-	for _, p := range fn.Params {
-		if p.Optional {
-			builder = builder.OptParam(p.Name, p.Type)
-		} else {
-			builder = builder.Param(p.Name, p.Type)
-		}
-	}
-	if len(fn.Returns) > 0 {
-		builder = builder.Returns(fn.Returns...)
-	}
-	if fn.Effects != nil {
-		builder = builder.Effects(fn.Effects)
-	}
-	if fn.Spec != nil {
-		builder = builder.Spec(fn.Spec)
-	}
-	if fn.Refinement != nil {
-		builder = builder.WithRefinement(fn.Refinement)
-	}
-	return builder.Build()
 }
 
 func repairTypeWithNarrow(summary, narrow typ.Type, depth int) typ.Type {

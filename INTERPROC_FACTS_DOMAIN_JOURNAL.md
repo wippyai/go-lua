@@ -499,6 +499,236 @@ Verification for this pass:
   session 8 errors, agent/src 8 errors, docker-demo 21 errors and 2 warnings.
   The rest of the verify-suite lint targets report zero diagnostics.
 
+## 2026-05-19 Typed Write Boundary Reactualization
+
+The current validation pass found a real soundness gap while classifying
+external diagnostics:
+
+```lua
+local CONFIG = { chars_per_token = 4 }
+
+local function configure(new_config)
+    for key, value in pairs(new_config) do
+        if CONFIG[key] ~= nil then
+            CONFIG[key] = value
+        end
+    end
+end
+
+configure({ chars_per_token = "bad" })
+return 10 * CONFIG.chars_per_token
+```
+
+This is not a false positive. The write `CONFIG[key] = value` is a typed write
+boundary. The guard proves that the key names an existing slot; it does not
+prove that the incoming value is compatible with that slot. Accepting the write
+and only complaining later at arithmetic is weaker and can miss the real source
+of unsoundness.
+
+Correct abstract interpretation:
+
+```text
+Observation: CONFIG[key] = value
+Location:    dynamic index location under CONFIG with key evidence
+Evidence:    assignment value evidence plus key-domain evidence
+Domain:      memory/write projection asks the value domain for the target slot
+State:       write accepted only if value <= writable slot type
+Query:       later reads can trust unchanged numeric slots
+Diagnostic:  failed write compatibility, not arithmetic fallout
+```
+
+Wrong interpretation:
+
+```text
+dynamic key exists -> mutate CONFIG with value and hope later reads catch it
+```
+
+The final ownership must not be a local assignment-hook helper. A checker hook
+may format the diagnostic, but the semantic operation is a pure domain/query
+law:
+
+```text
+WriteProjection(containerType, keyType) -> writable value type
+```
+
+For the current codebase shape, the flash migration target is:
+
+- `types/query/core` owns pure read/write projection over structural types;
+- assignment checking asks that query for computed-index write targets;
+- ordinary field enrichment remains a memory/evidence operation, not a subtype
+  check against the current read projection;
+- numeric literal fields widen to their primitive numeric type for writes so
+  mutable defaults are not frozen as singleton slots;
+- `any` and `unknown` remain unresolved, not concrete proof.
+
+Implementation ownership was corrected accordingly:
+
+- `types/query/core.IndexWrite` is the pure write-side projection.
+- exact finite key domains use a write-side meet: a value must satisfy every
+  slot the key may denote.
+- broad dynamic keys only produce a projection when all possible slots have one
+  uniform writable type. Heterogeneous dynamic keys require memory/key-value
+  relation evidence; a type-only projection must not invent that relation.
+- mixed direct-field plus row-tail writes are projected only when the direct
+  slot and row-tail slot agree. Otherwise the write belongs to the memory
+  relation domain, not to a single structural slot.
+- mutable structural slots may widen singleton defaults for write projection,
+  but closed finite literal domains remain closed. A field declared as
+  `"queued" | "started"` must not become `string` just because the destination
+  is mutable.
+- the assignment hook now only asks the query for a target slot and checks the
+  source against it. It does not own the structural write law.
+
+This keeps the rule aligned with the abstract machine:
+
+```text
+Transfer observes a write.
+Type query projects the writable slot type.
+Assignability checks value evidence against that slot.
+Diagnostics project failure evidence.
+```
+
+Regression requirements for this class:
+
+- negative: untyped URL/resource/config data flowing into concrete contracts is
+  rejected;
+- positive: explicit `type(...) == "string"` guards feed string contracts;
+- positive: typed config updates preserve numeric reads;
+- negative: bad config updates fail at the write boundary;
+- law: write projection does not overwrite unrelated named fields for dynamic
+  keys.
+
+This also reclassifies the clean external replay:
+
+- `tests/app` overlay URL errors are source/contract issues because `args.url`
+  is untyped and may be truthy non-string.
+- `views` resource ID error is source/contract unless the source validates each
+  `entry.data.resources` element as string.
+- `llm` provider model and Bedrock text-block errors are source/contract unless
+  the source or manifest proves stringness.
+- `llm.util:compress` config mutation is a checker-design stressor: reads must
+  stay precise for valid typed config updates, and invalid dynamic writes must
+  be rejected at the write boundary.
+
+## 2026-05-19 Partial-Interpreter Architecture Diagnosis
+
+The recurring bug shape is not "one more missed helper". It is a split semantic
+authority problem. The checker still has several partial interpreters:
+
+- synthesis decides some expression meaning and some contextual typing;
+- flow transfer decides some path and mutation meaning;
+- narrowing queries decide some refined read meaning;
+- assignment/call/return hooks decide some compatibility and diagnostic meaning;
+- interprocedural inference decides some function-summary meaning;
+- query/subtype/value packages decide some structural laws.
+
+This split is why a local fix can look correct and still expose another nearby
+failure. The same evidence can pass through different semantic owners depending
+on whether it appears as a table literal, call argument, returned closure,
+dynamic write, field read, or interprocedural fact. That is the architectural
+issue two steps back.
+
+The current event-bus projector failure is in that class:
+
+```lua
+function Builder:build(): protocol.Projector
+    return function(state: protocol.BusState, event: protocol.Event, at)
+        state.projections[event.id] = { updated_at = at }
+    end
+end
+```
+
+The return annotation provides an expected function type
+`(BusState, Event, time.Time) -> ()`. That expected type must become contextual
+parameter evidence for the returned closure before the closure body is checked.
+If `at` remains `unknown` inside the closure, the abstract interpreter lost
+evidence at a phase boundary. The typed write check is then correctly strict:
+`unknown` cannot be assigned to `time.Time?`. The bug is not the write
+projection; the bug is missing canonical expected-function transfer into the
+nested function's environment.
+
+Correct abstract interpretation:
+
+```text
+Observation: return function(...) ... end
+Context:     enclosing function has expected return slot protocol.Projector
+Evidence:    returned expression is checked against that expected slot
+Transfer:    expected function params seed the closure parameter locations
+State:       closure body sees at: time.Time
+Query:       dynamic write projection accepts updated_at: time.Time?
+```
+
+Wrong interpretation:
+
+```text
+return expression type is checked after closure body synthesis
+closure parameter at defaults to unknown
+write boundary rejects table field using that unknown
+```
+
+The final architecture must make expected type context part of the same
+abstract-machine input as flow and facts. It cannot be a hook-local retry. The
+flash-migration rule for this class is:
+
+- expected types are contextual evidence at expression boundaries;
+- function-literal contextual evidence owns parameter seeding for the nested
+  function body;
+- table-literal contextual evidence owns field/value synthesis;
+- call-argument contextual evidence owns argument synthesis;
+- assignment/write contextual evidence owns source synthesis;
+- diagnostics are emitted after the canonical transfer/query has answered.
+
+No production code should grow another "if returned closure, then synth again"
+bridge. The implementation must route the expected function type into the
+existing function-literal type construction and nested-function analysis path so
+all returned callbacks, assigned callbacks, table-held callbacks, and call
+arguments use the same rule.
+
+## 2026-05-19 Remaining Architecture Tasks After Split-Authority Diagnosis
+
+The work is not complete until these items are true at the engine level:
+
+- `subtype` is a pure structural relation. It must not be the owner of
+  provenance-sensitive rules such as "this mutable record can widen because it
+  is fresh".
+- write-slot projection is a pure destination query. It may widen singleton
+  defaults for mutable local ergonomics, but it must preserve closed finite
+  literal domains such as `"queued" | "started"`; those domains are semantic
+  contracts, not incidental singleton defaults.
+- assignability is the single owner for checking a value against an expected
+  destination under a mode: call argument, return slot, local declaration,
+  structured write, and contextual literal checking.
+- freshness and escape state are represented by the abstract interpreter or by a
+  conservative provenance query over the solved graph. Syntax alone is not
+  proof; a direct table literal and an unescaped local whose current value is
+  that literal should be accepted for the same reason.
+- mutable record singleton-to-union widening is allowed only at a proven fresh
+  contextual boundary. A narrower alias must not be allowed to observe later
+  writes through a wider mutable slot.
+- callback contextual typing must seed nested function parameter locations
+  before body/write diagnostics are produced.
+- convergence must remain domain-owned: no iteration caps, no equality-time
+  repairs, no producer-specific fallback channels.
+- Salsa should cache immutable graph summaries, function results, type queries,
+  and eventually provenance/use summaries. It must not hide incomplete semantic
+  inputs.
+
+Immediate implementation checklist:
+
+- keep the `ApplyParamList` nil-annotation-slot fix, because it is the canonical
+  parameter-list law for contextual function parameters;
+- add the missing fresh-literal escape rule at the assignability/provenance
+  boundary, not by weakening global mutable record subtyping;
+- add a positive regression where a returned callback builds a local projection
+  literal and writes that local into a typed map;
+- add a negative regression where a narrower mutable alias is written through a
+  wider destination and then observed through the narrow alias;
+- do not enable full static field-path write diagnostics until class/metatable
+  self-reference assignments (`T.__index = T`) have a canonical self-type model;
+- replay the real event-bus fixture and local external lint cases before
+  claiming there are no false positives;
+- update this journal with the final owner names and verification output.
+
 ## Goal
 
 The checker should read as one abstract interpreter over a product domain.
@@ -5687,3 +5917,299 @@ Remaining verification boundary:
 - `tests/app` still reports an `E9999` internal-error diagnostic for
   `app.test.types:lib_inner_types`; that is an engine-facing item and should be
   investigated before claiming the global harness is clean.
+
+## 2026-05-19 Live Task Ledger: Finish the Checker Rectification
+
+This pass is not done until the remaining diagnostics are classified against the
+current engine and every checker false positive has a regression test. The
+previous "done" statement was premature: the no-cap convergence class was fixed,
+but the global replay still exposed finite diagnostics that must be separated
+into source/manifest issues versus engine precision bugs.
+
+Immediate tasks:
+
+- Re-run local-replace lint against clean replay targets where possible so dirty
+  external worktree changes do not get classified as go-lua behavior.
+- Classify every remaining diagnostic as one of:
+  - source/manifest issue: program supplies insufficient proof, external code is
+    genuinely relying on `any`, optional config fields, or untyped manifest data;
+  - checker false positive: the program supplies proof and the abstract
+    interpreter loses it;
+  - engine internal error: the checker fails to produce a normal diagnostic.
+- Reduce every checker false positive or internal error into a minimal go-lua
+  regression test before changing implementation.
+- Keep fixes at domain boundaries, not as per-case bridges:
+  - subtype remains a pure semantic relation;
+  - assignment/checking owns expected-type write validation;
+  - `IndexWrite` remains the pure write-side projection query;
+  - provenance/freshness proves local literal writes without weakening escaped
+    or aliased values;
+  - contextual callback typing seeds nested parameter facts before body
+    diagnostics;
+  - convergence is through finite domains, idempotent transfer, and widening,
+    never iteration caps.
+- Continue deferring broad static field-path write diagnostics until the
+  class/metatable self-reference model has a canonical self-type story. Dynamic
+  index writes are the current sound typed-write boundary.
+- Verify with:
+  - focused regression tests for each reduced issue;
+  - `go test ./...`;
+  - local-replace replay of the affected external targets;
+  - `git diff --check`;
+  - the stock verify-suite, with the existing pinned-module boundary documented
+    rather than hidden.
+
+Open concrete items from the latest checkpoint:
+
+- Re-check `framework/src/llm/src` local-replace diagnostics:
+  - `google/mapper.lua` dynamic recursive schema filtering;
+  - `util/compress.lua` optional numeric config arithmetic;
+  - `bedrock/mapper.lua` dynamic text-block parsing;
+  - `llm.lua` provider contract calls where `model` is currently `any`.
+- Re-check global local-replace counts for `tests/app`, `session`,
+  `actor/test`, `agent/src`, `docker-demo`, `views`, `relay/test`, and
+  `llm/test`, prioritizing internal errors and diagnostics that were previously
+  zero.
+- Resolve the `tests/app` `E9999` class before claiming the engine has no
+  replay-facing crashes.
+- Keep the implementation and journal aligned; no transitional bridge should
+  survive unless it is the named final owner of that semantic responsibility.
+
+## 2026-05-19 Open-Record Iterator Rectification
+
+The clean LLM replay exposed one remaining checker false positive in
+`google/mapper.lua`:
+
+```lua
+obj.multipleOf = nil
+obj.additionalProperties = nil
+for key, value in pairs(obj) do
+    if type(value) == "table" then
+        obj[key] = recursive_filter(value)
+    end
+end
+```
+
+The foundational bug was not Google-specific. After `type(obj) == "table"`,
+the abstract table is open: known field writes may refine visible fields, but
+they must not erase the unknown row tail. `KeyType` and `ValueType` for records
+were ignoring `Record.Open`, so an open table with two visible nil fields was
+decomposed for `pairs()` as if its only possible values were nil. That made the
+`type(value) == "table"` branch look impossible and made the same-key write
+target appear to accept only `nil`.
+
+Final-domain correction:
+
+- record key decomposition now returns `string` for open records;
+- record value decomposition includes `unknown` for the open row tail;
+- assignment checking has a small canonical iteration-provenance query for
+  `for key, value in pairs(table)`: when a dynamic write uses the same key and
+  the ordinary write projection has collapsed to a deleted/nil slot, the write
+  may use the paired loop value type as the expected slot type;
+- closed heterogeneous records and typed map elements remain protected by the
+  ordinary write projection, so this does not become a broad "dynamic key
+  accepts anything" escape hatch.
+
+Regression coverage added:
+
+- positive: recursive schema filtering can write `recursive_filter(value)` back
+  to `obj[key]` under a `type(value) == "table"` guard;
+- negative: a closed record cannot use a `pairs()` loop to rewrite a numeric
+  field through a dynamic key with `tostring(value)`;
+- negative: a typed map `{[string]: Item}` cannot write `{}` back to an
+  `Item` slot under a broad table guard;
+- query-level tests: open records decompose to `string` keys and include
+  `unknown` in value iteration.
+
+Clean replay result after rebuilding the local-replace Wippy binary:
+
+- `framework/src/llm/src`: 9 errors, down from 10. The Google recursive schema
+  filtering error is gone.
+- `framework/src/llm/test`: same 9 errors, inherited from the source package.
+- `framework/src/actor/test`: 0 errors.
+- `tests/app`: 2 errors, both untyped overlay URL values flowing into
+  `http.get(url: string, ...)`.
+- `framework/src/views`: 2 errors:
+  - `api/list_routes.lua` writes `page.id: any` into `{[string]: string}`;
+  - `page_registry.lua` passes untyped `resource_id: any` to a helper requiring
+    `string?`.
+
+Classification of remaining clean replay diagnostics:
+
+- LLM Bedrock text-block parsing: source/manifest proof gap. The provider
+  response shape gives `block.text` as `any`; truthiness alone does not prove a
+  string for `parse_text_tool_call(text: string?)`.
+- LLM `compress.lua` arithmetic: source/API proof gap. Exported
+  `configure(new_config)` accepts untyped external values, so numeric config
+  fields cannot be treated as permanently numeric without an annotation or
+  runtime guard.
+- LLM provider contract calls: source/manifest proof gap. `provider_info` is
+  cast to `any`, and `provider_info.provider_model` is not proven string before
+  calling contracts requiring `model: string`.
+- tests/app overlay URLs: source proof gap. `(args and args.url) or fallback`
+  is `any | string`; a string guard is required before `http.get`.
+- views route/resource diagnostics: source proof gaps. Dynamic registry data
+  needs guards before flowing into string maps or string helper parameters.
+
+Verification for this pass:
+
+```text
+go test ./compiler/check/tests/regression -run 'TestExternalLint_(PairsSchemaFilterWritesRecursiveValueBackToSameKey|RejectsPairsWriteThatChangesClosedFieldDomain|RejectsPairsWriteThatWeakensTypedMapElement|UntypedPageIDRequiresStringProofForAccessibleRoutes|GuardedPageIDFeedsAccessibleRoutes|DynamicResourceIDsRequireStringProof|GuardedResourceIDsFeedQualifier|DynamicResponseTextRequiresStringProof|AnyProviderModelRequiresStringProof|DynamicModelCardNumericFieldsRequireProof)' -count=1 -v
+go test ./types/query/core -run 'Test(KeyType|ValueType|IndexWrite)' -count=1
+go test ./compiler/check/domain/iteration ./compiler/check/hooks ./compiler/check/api -count=1
+go test ./... -count=1 -timeout 300s
+git diff --check
+../scripts/verify-suite.sh
+env GOFLAGS=-modfile=/tmp/wippy-local-replace.mod go build -o /tmp/wippy-local-replace-verify ./cmd/wippy
+timeout 90s /tmp/wippy-local-replace-verify lint --cache-reset --json
+```
+
+All go-lua tests pass. Clean local-replace replays terminate and the confirmed
+engine false positive is removed. The remaining replay diagnostics are strict
+dynamic-boundary errors unless later external code supplies stronger manifests
+or runtime guards.
+
+The stock verify script still exits non-zero at the same external module
+boundary:
+
+```text
+== go-lua checker tests ==
+... pass ...
+
+== build wippy binary ==
+runtime/lua/code/typecheck.go:397:29: undefined: hooks.WithExhaustiveness
+skip lint checks: failed to build /tmp/wippy-local
+```
+
+This is not a go-lua checker regression from this pass; the normal Wippy module
+graph still resolves a published go-lua version older than the local
+`hooks.WithExhaustiveness()` API.
+
+## 2026-05-19 Flash Rectification Continuation: Evidence, Writes, and Replay
+
+This continuation fixed the checker-suite regressions that appeared after the
+first "hard annotation authority" pass. The earlier rule was too blunt: it
+treated every source annotation as hard, which removed legitimate soft
+structural evidence from function bodies. The final rule is now:
+
+- hard top annotations such as `any` and `unknown` remain authoritative;
+- hard concrete annotations remain authoritative;
+- soft structural annotations keep their container shape while evidence refines
+  the element/value domain;
+- call evidence records explicit `nil` arguments, because nil is a real branch
+  fact, not absence of evidence;
+- public call contracts must not be specialized to tuple arity just because one
+  call passed a literal table.
+
+Concrete examples now covered by tests:
+
+- `param: {any}` plus a literal tuple call refines to an array element domain,
+  not a fixed tuple contract, so a later `{}` call still type-checks.
+- `merge_context(nil, {current_item = item, item_index = index})` records the
+  nil base argument, so the base-copy branch is unreachable for that observed
+  local call and the resulting map keeps a string key domain.
+- maps remain invariant for concrete value domains, but a map value may widen
+  to expected `any`, matching the existing record-field widening rule.
+
+Write-side and table-shape corrections in this continuation:
+
+- `IndexDelete` is the canonical write-query for `t[k] = nil`. Map nil writes
+  delete entries; required record fields still reject deletion.
+- optional record fields accept optional source values in table literals,
+  modeling Lua nil-as-absence for optional fields.
+- soft parameter evidence is applied to function-body overlays but hard
+  annotations remain annotated in flow.
+
+Additional regression coverage added:
+
+- dynamic runner IDs must be proven string before calling `short_name`;
+- guarded runner IDs feed the string contract;
+- string metadata cannot be indexed as a record without a table proof;
+- metadata table guards allow structured field access;
+- manifests without assertion summaries do not narrow nil-only locals;
+- untyped/variadic command handlers cannot enter typed handler maps through a
+  dynamic key;
+- typed command handlers can enter the same registry.
+
+Current clean local-replace replay matrix with
+`/tmp/wippy-clean-head-local-replace`:
+
+```text
+/tmp/wippy-clean-head/tests/app                 2 errors
+/tmp/session-clean-head                         45 errors
+/tmp/framework-clean-head/src/test              0 errors
+/tmp/framework-clean-head/src/actor/test        4 errors
+/tmp/framework-clean-head/src/agent/src         14 errors
+/tmp/framework-clean-head/src/bootloader/src    0 errors
+/tmp/framework-clean-head/src/bootloader/test   0 errors
+/tmp/framework-clean-head/src/llm/src           14 errors
+/tmp/framework-clean-head/src/llm/test          14 errors
+/tmp/framework-clean-head/src/migration         0 errors
+/tmp/framework-clean-head/src/relay/test        0 errors
+/tmp/framework-clean-head/src/views             2 errors
+```
+
+Classification of remaining clean replay diagnostics:
+
+- `tests/app` overlay URL errors are source proof gaps: URL values are `any`
+  unless guarded before `http.get(url: string, ...)`.
+- session `""` / `""?` metadata field errors are source/manifest proof gaps:
+  string defaults are truthy strings, not decoded metadata records.
+- session and actor `test.not_nil(...)` nil-index errors are locked
+  manifest/source-boundary cases. Source-exported assertion modules with
+  inferred summaries narrow correctly; a manifest without a summary does not
+  narrow nil-only locals by design.
+- session `message_repo` number error is a source proof gap: an untyped `limit`
+  flows to a numeric contract.
+- session `command_bus` handler error is a source proof gap: an untyped
+  variadic handler is assigned into a typed handler map; the typed adapter form
+  is covered and passes.
+- session `control_handlers` errors are dynamic `any` op payloads flowing into
+  typed handlers without proof.
+- session `start_tokens_test` is an intentional invalid negative call.
+- session `checkpoint` length-guarded query shape is already covered by
+  real-shaped go-lua regressions; the clean replay failure depends on external
+  package/manifest shape.
+- LLM Bedrock text-block parsing is a source/manifest proof gap: `block.text`
+  is `any` before the string contract.
+- LLM `compress.lua` arithmetic is a source/API proof gap: exported
+  `configure(new_config)` can mutate numeric config fields with untyped values.
+- LLM provider contract calls are source/manifest proof gaps:
+  `provider_info.provider_model` is `any` before contracts requiring `string`.
+- LLM and actor provider/test nil-index diagnostics are the same locked
+  assertion-summary boundary.
+- views route/resource diagnostics are source proof gaps: dynamic registry IDs
+  need string guards before flowing into string maps or string helper params.
+
+Verification for this continuation:
+
+```text
+go test ./compiler/check/... -count=1
+go test ./types/... -count=1
+go test ./... -count=1 -timeout 300s
+git diff --check
+../scripts/verify-suite.sh
+env GOFLAGS=-modfile=/tmp/wippy-local-replace.mod go build -buildvcs=false -o /tmp/wippy-clean-head-local-replace ./cmd/wippy
+clean local-replace replay matrix above
+go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction -benchmem -count=3
+```
+
+The stock verify suite still passes go-lua checker tests and then stops at the
+known external module boundary:
+
+```text
+runtime/lua/code/typecheck.go:397:29: undefined: hooks.WithExhaustiveness
+skip lint checks: failed to build /tmp/wippy-local
+```
+
+Benchmark sample:
+
+```text
+BenchmarkCheck_LargeFunction-32  753  1883468 ns/op  988835 B/op  10030 allocs/op
+BenchmarkCheck_LargeFunction-32  348  5596039 ns/op  989341 B/op  10030 allocs/op
+BenchmarkCheck_LargeFunction-32  174  6461779 ns/op  989461 B/op  10031 allocs/op
+```
+
+The wall-time variance is high on this host, but allocations are materially
+lower than the earlier recorded 1.44 MB / 20.5k allocs and the post-convergence
+3.2-3.4 ms / 1.08 MB / 10.9k allocs samples. No iteration cap was reintroduced.

@@ -74,7 +74,7 @@ func TestBuildSeedFunctionTypeWithBindings_UnannotatedParamsStayOptional(t *test
 	if !fnType.Params[0].Optional || !fnType.Params[1].Optional {
 		t.Fatalf("expected unannotated params to be optional, got %+v", fnType.Params)
 	}
-	if fnType.Variadic == nil || !typ.TypeEquals(fnType.Variadic, typ.Any) {
-		t.Fatalf("expected variadic any for unannotated seed function, got %v", fnType.Variadic)
+	if fnType.Variadic != nil {
+		t.Fatalf("unannotated params should not create a fake variadic seed slot, got %v", fnType.Variadic)
 	}
 }

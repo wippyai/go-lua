@@ -483,6 +483,28 @@ func TestFunctionVariadicSame(t *testing.T) {
 	}
 }
 
+func TestAnnotatedTypesAreTransparentForStructuralSubtyping(t *testing.T) {
+	array := typ.NewArray(typ.String)
+	annotatedArray := typ.NewAnnotated(array, []typ.Annotation{{Name: "min_len", Arg: int64(1)}})
+
+	if !IsSubtype(annotatedArray, array) {
+		t.Fatalf("annotated array should be a subtype of its structural array")
+	}
+	if !IsSubtype(array, annotatedArray) {
+		t.Fatalf("structural array should flow through runtime-transparent annotations")
+	}
+
+	record := typ.NewRecord().
+		Field("items", array).
+		Build()
+	annotatedRecord := typ.NewRecord().
+		Field("items", annotatedArray).
+		Build()
+	if !IsSubtype(record, annotatedRecord) || !IsSubtype(annotatedRecord, record) {
+		t.Fatalf("annotated nested fields should not panic or change structural subtyping")
+	}
+}
+
 func TestFunctionVariadicMismatch(t *testing.T) {
 	f1 := typ.Func().Param("x", typ.Number).Variadic(typ.Number).Returns(typ.Nil).Build()
 	f2 := typ.Func().Param("x", typ.Number).Variadic(typ.String).Returns(typ.Nil).Build()
@@ -1276,6 +1298,15 @@ func TestMapInvariance(t *testing.T) {
 	mapInt2 := typ.NewMap(typ.String, typ.Integer)
 	if !IsSubtype(mapInt, mapInt2) {
 		t.Error("identical maps should be subtypes")
+	}
+}
+
+func TestMapValueWidening_ToAny(t *testing.T) {
+	sub := typ.NewMap(typ.String, typ.NewUnion(typ.String, typ.Integer))
+	super := typ.NewMap(typ.String, typ.Any)
+
+	if !IsSubtype(sub, super) {
+		t.Error("map value should widen to any")
 	}
 }
 

@@ -105,3 +105,18 @@ func FunctionLiteralForGraphSymbol(graph *cfg.Graph, sym cfg.SymbolID) *ast.Func
 
 	return found
 }
+
+// AllowsDiscardedExtraArgs reports whether the source function has unannotated
+// positional parameters, where Lua accepts and discards surplus call arguments.
+// Explicit source varargs are represented by typ.Function.Variadic instead.
+func AllowsDiscardedExtraArgs(fn *ast.FunctionExpr) bool {
+	if fn == nil || fn.ParList == nil || fn.ParList.HasVargs {
+		return false
+	}
+	for i := range fn.ParList.Names {
+		if i >= len(fn.ParList.Types) || fn.ParList.Types[i] == nil {
+			return true
+		}
+	}
+	return false
+}

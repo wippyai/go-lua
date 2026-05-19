@@ -96,8 +96,8 @@ func TestApplyParamList_UntypedParams(t *testing.T) {
 			t.Errorf("param %d: expected optional (untyped params default to optional)", i)
 		}
 	}
-	if result.Variadic == nil {
-		t.Error("expected variadic type for untyped function")
+	if result.Variadic != nil {
+		t.Fatalf("untyped params should not create a fake variadic slot, got %v", result.Variadic)
 	}
 }
 
@@ -146,6 +146,55 @@ func TestApplyParamList_WithExpected(t *testing.T) {
 	}
 	if result.Params[1].Type != typ.String {
 		t.Errorf("expected second param type String, got %v", result.Params[1].Type)
+	}
+}
+
+func TestApplyParamList_NilAnnotationSlotUsesExpected(t *testing.T) {
+	sc := scope.New()
+	resolveType := func(expr ast.TypeExpr, _ *scope.State) typ.Type {
+		if ref, ok := expr.(*ast.TypeRefExpr); ok && len(ref.Path) == 1 {
+			switch ref.Path[0] {
+			case "State":
+				return typ.NewRecord().Field("id", typ.String).Build()
+			case "Event":
+				return typ.NewRecord().Field("kind", typ.String).Build()
+			}
+		}
+		return nil
+	}
+
+	expected := typ.Func().
+		Param("state", typ.Any).
+		Param("event", typ.Any).
+		Param("at", typ.Integer).
+		Build()
+	builder := typ.Func()
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{
+			Names: []string{"state", "event", "at"},
+			Types: []ast.TypeExpr{
+				&ast.TypeRefExpr{Path: []string{"State"}},
+				&ast.TypeRefExpr{Path: []string{"Event"}},
+				nil,
+			},
+		},
+	}
+
+	ApplyParamList(builder, fn, ParamListConfig{
+		ResolveType:  resolveType,
+		ResolveScope: sc,
+		Expected:     expected,
+	})
+
+	result := builder.Build()
+	if len(result.Params) != 3 {
+		t.Fatalf("expected 3 params, got %d", len(result.Params))
+	}
+	if result.Params[2].Type != typ.Integer {
+		t.Fatalf("expected nil annotation slot to use expected integer, got %v", result.Params[2].Type)
+	}
+	if result.Params[2].Optional {
+		t.Fatal("expected optional flag to come from expected parameter")
 	}
 }
 

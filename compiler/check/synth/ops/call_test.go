@@ -84,6 +84,25 @@ func TestCallWithGenericInference_ZeroParamAllowsExtraArgs(t *testing.T) {
 	}
 }
 
+func TestCallWithGenericInference_AllowDiscardedExtraArgs(t *testing.T) {
+	fn := typ.Func().
+		Param("x", typ.Integer).
+		Returns(typ.Boolean).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	def := CallDef{
+		Callee:         fn,
+		Args:           []typ.Type{typ.Integer, typ.String},
+		AllowExtraArgs: true,
+	}
+
+	result := CallWithGenericInference(ctx, def)
+	if len(result.Errors) > 0 {
+		t.Fatalf("source-discarded extra args should be allowed, got: %v", result.Errors)
+	}
+}
+
 func TestCallWithGenericInference_Variadic(t *testing.T) {
 	fn := typ.Func().
 		Param("x", typ.Integer).
@@ -553,6 +572,7 @@ func TestCallFunction_MethodOnLiteralReceiverConsumesSelf(t *testing.T) {
 		typ.LiteralString("abc"),
 		true,
 		false,
+		false,
 		nil,
 	)
 
@@ -571,7 +591,7 @@ func TestCallFunction_UnknownParamStillRequired(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, nil, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, nil, nil, false, false, false, nil)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected arity error for missing required unknown param")
@@ -586,7 +606,7 @@ func TestCallFunction_RequiredAfterOptionalStillRequiresPosition(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number}, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number}, nil, false, false, false, nil)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected arity error when required param appears after optional")
@@ -608,6 +628,7 @@ func TestCallFunction_MethodAlwaysConsumesReceiver(t *testing.T) {
 		typ.String,
 		true,
 		true,
+		false,
 		nil,
 	)
 
@@ -622,7 +643,7 @@ func TestCallFunction_ZeroParamAllowsExtraArgs(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number, typ.String}, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number, typ.String}, nil, false, false, false, nil)
 
 	if len(result.Errors) != 0 {
 		t.Fatalf("zero-param function should accept extra args, got: %v", result.Errors)

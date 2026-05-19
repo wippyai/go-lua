@@ -148,6 +148,14 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 		return c.check(sub, aa.UnaliasedTarget(), depth+1)
 	}
 
+	if aa, ok := sub.(*typ.Annotated); ok {
+		return c.check(aa.Inner, super, depth+1)
+	}
+
+	if aa, ok := super.(*typ.Annotated); ok {
+		return c.check(sub, aa.Inner, depth+1)
+	}
+
 	if rr, ok := sub.(*typ.Recursive); ok && super.Kind() != kind.Recursive && rr.Body != nil && rr.Body != rr {
 		return c.check(rr.Body, super, depth+1)
 	}
@@ -776,8 +784,10 @@ func (c *checker) checkMap(sub, super *typ.Map, depth int) bool {
 		return false
 	}
 	// Values must be equal (invariant)
-	return c.check(sub.Value, super.Value, depth+1) &&
-		c.check(super.Value, sub.Value, depth+1)
+	if !c.check(sub.Value, super.Value, depth+1) {
+		return false
+	}
+	return c.check(super.Value, sub.Value, depth+1) || typ.IsAny(super.Value)
 }
 
 // checkTuple implements tuple subtyping with covariant elements.

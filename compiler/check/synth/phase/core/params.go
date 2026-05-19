@@ -88,8 +88,9 @@ func HasUnannotatedSelfParam(fn *ast.FunctionExpr, bindings ParamSymbolLookup) b
 	return HasImplicitSelfParam(fn, bindings)
 }
 
-// ApplyParamList applies parameter and vararg rules to the builder.
-// Unannotated params are optional in Lua and unannotated functions accept extra args.
+// ApplyParamList applies parameter and source-vararg rules to the builder.
+// Unannotated params are optional in Lua; discarded extra-argument acceptance is
+// a call-site rule, not a fake variadic slot in the function type.
 func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg ParamListConfig) {
 	if builder == nil || fn == nil || fn.ParList == nil {
 		return
@@ -108,7 +109,6 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 		}
 	}
 
-	hasUntyped := false
 	for i, name := range fn.ParList.Names {
 		paramType := typ.Unknown
 		isOptional := false
@@ -117,19 +117,21 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 			expectedIdx = i + 1
 		}
 
+		var typeExpr ast.TypeExpr
 		if fn.ParList.Types != nil && i < len(fn.ParList.Types) {
-			if typeExpr := fn.ParList.Types[i]; typeExpr != nil {
-				if _, ok := typeExpr.(*ast.OptionalTypeExpr); ok {
-					isOptional = true
-				}
-				if cfg.ResolveType != nil && cfg.ResolveScope != nil {
-					if t := cfg.ResolveType(typeExpr, cfg.ResolveScope); t != nil {
-						paramType = t
-						// Soft annotations allow expected types to refine the parameter.
-						if cfg.Expected != nil && expectedIdx < len(cfg.Expected.Params) && typ.IsRefinableAnnotation(t) {
-							paramType = cfg.Expected.Params[expectedIdx].Type
-							isOptional = cfg.Expected.Params[expectedIdx].Optional
-						}
+			typeExpr = fn.ParList.Types[i]
+		}
+		if typeExpr != nil {
+			if _, ok := typeExpr.(*ast.OptionalTypeExpr); ok {
+				isOptional = true
+			}
+			if cfg.ResolveType != nil && cfg.ResolveScope != nil {
+				if t := cfg.ResolveType(typeExpr, cfg.ResolveScope); t != nil {
+					paramType = t
+					// Soft annotations allow expected types to refine the parameter.
+					if cfg.Expected != nil && expectedIdx < len(cfg.Expected.Params) && typ.IsRefinableAnnotation(t) {
+						paramType = cfg.Expected.Params[expectedIdx].Type
+						isOptional = cfg.Expected.Params[expectedIdx].Optional
 					}
 				}
 			}
@@ -142,7 +144,6 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 				paramType = cfg.UntypedParamType
 			}
 			isOptional = true
-			hasUntyped = true
 		}
 
 		if isOptional {
@@ -162,9 +163,6 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 			varargType = cfg.Expected.Variadic
 		}
 		builder.Variadic(varargType)
-	} else if hasUntyped {
-		// Unannotated functions accept extra args; treat as variadic any.
-		builder.Variadic(typ.Any)
 	}
 }
 

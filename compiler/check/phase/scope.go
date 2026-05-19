@@ -329,21 +329,18 @@ func ExtractParamTypes(
 		var isAnnotated bool
 		var hasExplicitAnnotation bool
 		if slot.TypeAnnotation != nil {
+			var resolved typ.Type
 			if typeExprResolver != nil {
-				paramType = typeExprResolver.ResolveType(slot.TypeAnnotation, base)
+				resolved = typeExprResolver.ResolveType(slot.TypeAnnotation, base)
 			} else {
-				paramType = typ.Unknown
+				resolved = typ.Unknown
 			}
-			if typ.IsRefinableAnnotation(paramType) {
-				if evidence != nil {
-					paramType = evidence
-				} else if synthSig != nil && paramIdx < len(synthSig.Params) && synthSig.Params[paramIdx].Type != nil {
-					paramType = synthSig.Params[paramIdx].Type
-				}
-			} else {
-				isAnnotated = true
-				hasExplicitAnnotation = true
+			paramType = resolved
+			if evidence != nil {
+				paramType = paramevidence.RefineAnnotationWithEvidence(resolved, evidence)
 			}
+			isAnnotated = resolved != nil && !typ.IsRefinableAnnotation(resolved)
+			hasExplicitAnnotation = true
 		} else if evidence != nil {
 			paramType = evidence
 		} else if synthSig != nil && paramIdx < len(synthSig.Params) && synthSig.Params[paramIdx].Type != nil {

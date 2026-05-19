@@ -76,6 +76,24 @@ func TestCheckTable_ExpectedRecord_OptionalField(t *testing.T) {
 	}
 }
 
+func TestCheckTable_ExpectedRecord_OptionalFieldAcceptsOptionalValue(t *testing.T) {
+	fields := []FieldDef{
+		{Name: "x", Type: typ.Integer},
+		{Name: "y", Type: typ.NewOptional(typ.String)},
+	}
+	expected := &typ.Record{
+		Fields: []typ.Field{
+			{Name: "x", Type: typ.Integer},
+			{Name: "y", Type: typ.String, Optional: true},
+		},
+	}
+
+	result := CheckTable(fields, nil, expected)
+	if len(result.Errors) > 0 {
+		t.Errorf("optional field should accept optional value expression: %v", result.Errors)
+	}
+}
+
 func TestCheckTable_ExpectedRecord_ExtraField(t *testing.T) {
 	fields := []FieldDef{
 		{Name: "x", Type: typ.Integer},

@@ -55,8 +55,8 @@ func TestExpectedFunctionFromResult_UnannotatedParamsRemainOptional(t *testing.T
 	if !got.Params[0].Optional || !got.Params[1].Optional {
 		t.Fatalf("expected both params optional, got %+v", got.Params)
 	}
-	if got.Variadic == nil || !typ.TypeEquals(got.Variadic, typ.Any) {
-		t.Fatalf("expected variadic any for unannotated expected function, got %v", got.Variadic)
+	if got.Variadic != nil {
+		t.Fatalf("unannotated expected function should not create a fake variadic slot, got %v", got.Variadic)
 	}
 }
 

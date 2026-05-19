@@ -645,6 +645,9 @@ func keyTypeDepth(t typ.Type, depth int) typ.Type {
 			return typ.Integer
 		},
 		Record: func(r *typ.Record) typ.Type {
+			if r.Open {
+				return typ.String
+			}
 			if r.HasMapComponent() {
 				if r.MapKey.Kind() == kind.String {
 					return typ.String
@@ -725,6 +728,9 @@ func valueTypeDepth(t typ.Type, depth int) typ.Type {
 			var types []typ.Type
 			for _, f := range r.Fields {
 				types = append(types, f.Type)
+			}
+			if r.Open {
+				types = append(types, typ.Unknown)
 			}
 			if r.HasMapComponent() {
 				types = append(types, r.MapValue)

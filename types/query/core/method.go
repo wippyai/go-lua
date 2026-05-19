@@ -53,7 +53,7 @@ func methodViaIndex(meta typ.Type, name string, depth int) (typ.Type, bool) {
 		Record: func(r *typ.Record) fieldResult {
 			// __index is a table - look for method there
 			if ft, ok := fieldDepth(r, name, depth+1); ok {
-				return fieldResult{t: ft, ok: true}
+				return fieldResult{t: normalizePrototypeMethodSelf(ft), ok: true}
 			}
 			// Continue walking the chain
 			if r.Metatable != nil {
@@ -120,7 +120,7 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 			}
 			// Look for method in metatable's fields
 			if ft, ok := fieldDepth(r.Metatable, name, depth+1); ok {
-				return fieldResult{t: ft, ok: true}
+				return fieldResult{t: normalizePrototypeMethodSelf(ft), ok: true}
 			}
 			// Check __index chain for inherited methods
 			if mt, ok := methodViaIndex(r.Metatable, name, depth+1); ok {
@@ -215,6 +215,48 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 		},
 	})
 	return res.t, res.ok
+}
+
+func normalizePrototypeMethodSelf(t typ.Type) typ.Type {
+	fn := unwrap.Function(t)
+	if fn == nil || len(fn.Params) == 0 {
+		return t
+	}
+	first := fn.Params[0]
+	if first.Name != "self" && first.Name != "Self" {
+		return t
+	}
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for i, p := range fn.Params {
+		paramType := p.Type
+		if i == 0 {
+			paramType = typ.Self
+		}
+		if p.Optional {
+			builder = builder.OptParam(p.Name, paramType)
+		} else {
+			builder = builder.Param(p.Name, paramType)
+		}
+	}
+	if fn.Variadic != nil {
+		builder = builder.Variadic(fn.Variadic)
+	}
+	if len(fn.Returns) > 0 {
+		builder = builder.Returns(fn.Returns...)
+	}
+	if fn.Effects != nil {
+		builder = builder.Effects(fn.Effects)
+	}
+	if fn.Spec != nil {
+		builder = builder.Spec(fn.Spec)
+	}
+	if fn.Refinement != nil {
+		builder = builder.WithRefinement(fn.Refinement)
+	}
+	return builder.Build()
 }
 
 // HasMethod returns true if a type has a method with the given name.
