@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/types/kind"
-	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
@@ -178,7 +177,7 @@ func ReturnTypesRefineSoftContainers(candidate, baseline []typ.Type) bool {
 	}
 	strict := false
 	for i := range candidate {
-		refines, changed := typeRefinesSoftContainer(candidate[i], baseline[i])
+		refines, changed := value.RefinesSoftContainer(candidate[i], baseline[i])
 		if !refines {
 			return false
 		}
@@ -187,79 +186,6 @@ func ReturnTypesRefineSoftContainers(candidate, baseline []typ.Type) bool {
 		}
 	}
 	return strict
-}
-
-func typeRefinesSoftContainer(candidate, baseline typ.Type) (bool, bool) {
-	candidate = unwrapStructuralShape(candidate)
-	baseline = unwrapStructuralShape(baseline)
-	if candidate == nil || baseline == nil {
-		return candidate == baseline, false
-	}
-	if typ.TypeEquals(candidate, baseline) {
-		return true, false
-	}
-
-	switch b := baseline.(type) {
-	case *typ.Array:
-		c, ok := candidate.(*typ.Array)
-		if !ok {
-			return false, false
-		}
-		return typeRefinesSoftContainerSlot(c.Element, b.Element)
-	case *typ.Map:
-		c, ok := candidate.(*typ.Map)
-		if !ok || !value.Equivalent(c.Key, b.Key) {
-			return false, false
-		}
-		return typeRefinesSoftContainerSlot(c.Value, b.Value)
-	case *typ.Record:
-		c, ok := candidate.(*typ.Record)
-		if !ok || !sameRecordFrame(c, b) {
-			return false, false
-		}
-		if !c.HasMapComponent() && !b.HasMapComponent() {
-			return true, false
-		}
-		if !c.HasMapComponent() || !b.HasMapComponent() || !value.Equivalent(c.MapKey, b.MapKey) {
-			return false, false
-		}
-		return typeRefinesSoftContainerSlot(c.MapValue, b.MapValue)
-	default:
-		return false, false
-	}
-}
-
-func typeRefinesSoftContainerSlot(candidate, baseline typ.Type) (bool, bool) {
-	if typ.TypeEquals(candidate, baseline) {
-		return true, false
-	}
-	if (typ.IsAny(baseline) || typ.IsUnknown(baseline)) && value.CanSelfEmbed(candidate) {
-		return false, false
-	}
-	preferred, ok := value.PreferConcreteOverSoft(baseline, candidate)
-	return ok && typ.TypeEquals(preferred, candidate), ok
-}
-
-func sameRecordFrame(a, b *typ.Record) bool {
-	if a == nil || b == nil || a.Open != b.Open || len(a.Fields) != len(b.Fields) {
-		return false
-	}
-	if (a.Metatable == nil) != (b.Metatable == nil) {
-		return false
-	}
-	if a.Metatable != nil && !typ.TypeEquals(a.Metatable, b.Metatable) {
-		return false
-	}
-	for i, field := range a.Fields {
-		other := b.Fields[i]
-		if field.Name != other.Name || field.Optional != other.Optional || field.Readonly != other.Readonly {
-			return false
-		}
-		if !typ.TypeEquals(field.Type, other.Type) {
-			return false
-		}
-	}
-	return true
 }
 
 // ReturnTypesRefineFalsyMapKeys reports whether candidate is the same
@@ -273,7 +199,7 @@ func ReturnTypesRefineFalsyMapKeys(candidate, baseline []typ.Type) bool {
 	}
 	strict := false
 	for i := range candidate {
-		refines, changed := typeRefinesFalsyMapKey(candidate[i], baseline[i])
+		refines, changed := value.RefinesFalsyMapKey(candidate[i], baseline[i])
 		if !refines {
 			return false
 		}
@@ -282,85 +208,6 @@ func ReturnTypesRefineFalsyMapKeys(candidate, baseline []typ.Type) bool {
 		}
 	}
 	return strict
-}
-
-func typeRefinesFalsyMapKey(candidate, baseline typ.Type) (bool, bool) {
-	candidate = unwrapStructuralShape(candidate)
-	baseline = unwrapStructuralShape(baseline)
-	if candidate == nil || baseline == nil {
-		return candidate == baseline, false
-	}
-	if typ.TypeEquals(candidate, baseline) {
-		return true, false
-	}
-
-	switch b := baseline.(type) {
-	case *typ.Array:
-		c, ok := candidate.(*typ.Array)
-		if !ok {
-			return false, false
-		}
-		return truthyElementRefinement(c.Element, b.Element)
-	case *typ.Map:
-		c, ok := candidate.(*typ.Map)
-		if !ok {
-			return false, false
-		}
-		return mapKeyTruthyRefinement(c.Key, c.Value, b.Key, b.Value)
-	case *typ.Record:
-		if c, ok := candidate.(*typ.Map); ok {
-			if len(b.Fields) != 0 || b.Metatable != nil || !b.HasMapComponent() {
-				return false, false
-			}
-			return mapKeyTruthyRefinement(c.Key, c.Value, b.MapKey, b.MapValue)
-		}
-		c, ok := candidate.(*typ.Record)
-		if !ok || !c.HasMapComponent() || !b.HasMapComponent() {
-			return false, false
-		}
-		if c.Open && !b.Open {
-			return false, false
-		}
-		if len(c.Fields) != len(b.Fields) {
-			return false, false
-		}
-		for _, bf := range b.Fields {
-			cf := c.GetField(bf.Name)
-			if cf == nil || cf.Optional != bf.Optional || cf.Readonly != bf.Readonly || !typ.TypeEquals(cf.Type, bf.Type) {
-				return false, false
-			}
-		}
-		if (c.Metatable == nil) != (b.Metatable == nil) || (c.Metatable != nil && !typ.TypeEquals(c.Metatable, b.Metatable)) {
-			return false, false
-		}
-		return mapKeyTruthyRefinement(c.MapKey, c.MapValue, b.MapKey, b.MapValue)
-	default:
-		return false, false
-	}
-}
-
-func mapKeyTruthyRefinement(candidateKey, candidateValue, baselineKey, baselineValue typ.Type) (bool, bool) {
-	if !typ.TypeEquals(candidateValue, baselineValue) {
-		return false, false
-	}
-	refinedKey := narrow.ToTruthy(baselineKey)
-	if refinedKey == nil || refinedKey.Kind().IsNever() || typ.TypeEquals(refinedKey, baselineKey) {
-		return false, false
-	}
-	if typ.TypeEquals(candidateKey, refinedKey) || subtype.IsSubtype(candidateKey, refinedKey) {
-		return true, true
-	}
-	return false, false
-}
-
-func truthyElementRefinement(candidate, baseline typ.Type) (bool, bool) {
-	if typ.TypeEquals(candidate, baseline) {
-		return true, false
-	}
-	if value.IsTruthyRefinement(candidate, baseline) {
-		return true, true
-	}
-	return false, false
 }
 
 // ReturnTypesNestedNilOnlyRegression reports whether candidate's apparent
@@ -372,71 +219,8 @@ func ReturnTypesNestedNilOnlyRegression(candidate, baseline []typ.Type) bool {
 		return false
 	}
 	for i := range candidate {
-		if typeNestedNilOnlyRegression(candidate[i], baseline[i]) {
+		if value.NestedNilOnlyRegression(candidate[i], baseline[i]) {
 			return true
-		}
-	}
-	return false
-}
-
-func typeNestedNilOnlyRegression(candidate, baseline typ.Type) bool {
-	candidate = unwrapStructuralShape(candidate)
-	baseline = unwrapStructuralShape(baseline)
-	if candidate == nil || baseline == nil || typ.TypeEquals(candidate, baseline) {
-		return false
-	}
-	if unwrap.IsNilType(candidate) {
-		return typ.IsAny(baseline) || typ.IsUnknown(baseline) || unwrap.IsOptionalLike(baseline)
-	}
-
-	switch c := candidate.(type) {
-	case *typ.Record:
-		b, ok := baseline.(*typ.Record)
-		if !ok {
-			return false
-		}
-		for _, cf := range c.Fields {
-			bf := b.GetField(cf.Name)
-			if bf == nil {
-				continue
-			}
-			if unwrap.IsNilType(cf.Type) && (bf.Optional || typ.IsAny(bf.Type) || typ.IsUnknown(bf.Type) || unwrap.IsOptionalLike(bf.Type)) {
-				return true
-			}
-			if typeNestedNilOnlyRegression(cf.Type, bf.Type) {
-				return true
-			}
-		}
-		if c.HasMapComponent() && b.HasMapComponent() {
-			return typeNestedNilOnlyRegression(c.MapValue, b.MapValue)
-		}
-	case *typ.Array:
-		if b, ok := baseline.(*typ.Array); ok {
-			return typeNestedNilOnlyRegression(c.Element, b.Element)
-		}
-	case *typ.Map:
-		if b, ok := baseline.(*typ.Map); ok {
-			return typeNestedNilOnlyRegression(c.Value, b.Value)
-		}
-	case *typ.Tuple:
-		b, ok := baseline.(*typ.Tuple)
-		if !ok || len(c.Elements) != len(b.Elements) {
-			return false
-		}
-		for i := range c.Elements {
-			if typeNestedNilOnlyRegression(c.Elements[i], b.Elements[i]) {
-				return true
-			}
-		}
-	case *typ.Function:
-		b, ok := baseline.(*typ.Function)
-		if !ok || len(c.Returns) != len(b.Returns) {
-			return false
-		}
-		for i := range c.Returns {
-			if typeNestedNilOnlyRegression(c.Returns[i], b.Returns[i]) {
-				return true
-			}
 		}
 	}
 	return false
@@ -466,229 +250,15 @@ func ReturnTypesStopRecursiveStructuralGrowth(stable, growing []typ.Type) bool {
 		if typ.IsAbsentOrUnknown(s) || !value.CanSelfEmbed(s) {
 			return false
 		}
-		if !shallowStructuralShapeEquals(g, s) {
+		if !value.ShallowStructuralShapeEquals(g, s) {
 			return false
 		}
-		if !typeContainsNestedStructuralShape(g, s) {
+		if !value.ContainsNestedStructuralShape(g, s) {
 			return false
 		}
 		strict = true
 	}
 	return strict
-}
-
-func typeContainsNestedStructuralShape(haystack, needle typ.Type) bool {
-	return typeContainsNestedStructuralShapeDepth(haystack, needle, make(map[typ.Type]bool), false)
-}
-
-func typeContainsNestedStructuralShapeDepth(haystack, needle typ.Type, seen map[typ.Type]bool, belowContainer bool) bool {
-	if haystack == nil || needle == nil {
-		return false
-	}
-	if seen[haystack] {
-		return false
-	}
-	seen[haystack] = true
-
-	node := unwrapStructuralShape(haystack)
-	if node == nil {
-		return false
-	}
-	if belowContainer && shallowStructuralShapeEquals(node, needle) {
-		return true
-	}
-
-	descend := func(child typ.Type, childBelowContainer bool) bool {
-		return typeContainsNestedStructuralShapeDepth(child, needle, seen, childBelowContainer)
-	}
-
-	switch n := node.(type) {
-	case *typ.Optional:
-		return descend(n.Inner, belowContainer)
-	case *typ.Union:
-		for _, member := range n.Members {
-			if descend(member, belowContainer) {
-				return true
-			}
-		}
-		return false
-	case *typ.Intersection:
-		for _, member := range n.Members {
-			if descend(member, belowContainer) {
-				return true
-			}
-		}
-		return false
-	case *typ.Array:
-		return descend(n.Element, true)
-	case *typ.Map:
-		return descend(n.Key, true) || descend(n.Value, true)
-	case *typ.Tuple:
-		for _, elem := range n.Elements {
-			if descend(elem, true) {
-				return true
-			}
-		}
-		return false
-	case *typ.Record:
-		for _, field := range n.Fields {
-			if descend(field.Type, true) {
-				return true
-			}
-		}
-		if n.Metatable != nil && descend(n.Metatable, true) {
-			return true
-		}
-		if n.HasMapComponent() {
-			return descend(n.MapKey, true) || descend(n.MapValue, true)
-		}
-		return false
-	case *typ.Function:
-		for _, param := range n.Params {
-			if descend(param.Type, true) {
-				return true
-			}
-		}
-		if n.Variadic != nil && descend(n.Variadic, true) {
-			return true
-		}
-		for _, ret := range n.Returns {
-			if descend(ret, true) {
-				return true
-			}
-		}
-		return false
-	case *typ.Instantiated:
-		for _, arg := range n.TypeArgs {
-			if descend(arg, belowContainer) {
-				return true
-			}
-		}
-		return false
-	case *typ.Interface:
-		for _, method := range n.Methods {
-			if method.Type != nil && descend(method.Type, true) {
-				return true
-			}
-		}
-		return false
-	default:
-		return false
-	}
-}
-
-func shallowStructuralShapeEquals(a, b typ.Type) bool {
-	a = unwrapStructuralShape(a)
-	b = unwrapStructuralShape(b)
-	if a == nil || b == nil {
-		return a == b
-	}
-
-	switch av := a.(type) {
-	case *typ.Union:
-		for _, member := range av.Members {
-			if shallowStructuralShapeEquals(member, b) {
-				return true
-			}
-		}
-		return false
-	case *typ.Intersection:
-		for _, member := range av.Members {
-			if shallowStructuralShapeEquals(member, b) {
-				return true
-			}
-		}
-		return false
-	}
-	switch bv := b.(type) {
-	case *typ.Union:
-		for _, member := range bv.Members {
-			if shallowStructuralShapeEquals(a, member) {
-				return true
-			}
-		}
-		return false
-	case *typ.Intersection:
-		for _, member := range bv.Members {
-			if shallowStructuralShapeEquals(a, member) {
-				return true
-			}
-		}
-		return false
-	}
-
-	switch av := a.(type) {
-	case *typ.Array:
-		_, ok := b.(*typ.Array)
-		return ok
-	case *typ.Map:
-		bv, ok := b.(*typ.Map)
-		return ok && shallowMapKeyShapeEquals(av.Key, bv.Key)
-	case *typ.Tuple:
-		bv, ok := b.(*typ.Tuple)
-		return ok && len(av.Elements) == len(bv.Elements)
-	case *typ.Record:
-		bv, ok := b.(*typ.Record)
-		return ok && shallowRecordShapeEquals(av, bv)
-	default:
-		return typ.TypeEquals(a, b)
-	}
-}
-
-func unwrapStructuralShape(t typ.Type) typ.Type {
-	for t != nil {
-		switch v := t.(type) {
-		case *typ.Annotated:
-			if v.Inner == nil || v.Inner == t {
-				return t
-			}
-			t = v.Inner
-		case *typ.Alias:
-			if v.Target == nil || v.Target == t {
-				return t
-			}
-			t = v.Target
-		case *typ.Optional:
-			if v.Inner == nil || v.Inner == t {
-				return t
-			}
-			t = v.Inner
-		default:
-			return t
-		}
-	}
-	return nil
-}
-
-func shallowMapKeyShapeEquals(a, b typ.Type) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	if typ.TypeEquals(a, b) {
-		return true
-	}
-	return typ.IsAny(a) || typ.IsAny(b) || typ.IsUnknown(a) || typ.IsUnknown(b)
-}
-
-func shallowRecordShapeEquals(a, b *typ.Record) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	if a.HasMapComponent() != b.HasMapComponent() {
-		return false
-	}
-	if a.HasMapComponent() && !shallowMapKeyShapeEquals(a.MapKey, b.MapKey) {
-		return false
-	}
-	if len(a.Fields) != len(b.Fields) {
-		return false
-	}
-	for _, field := range a.Fields {
-		if b.GetField(field.Name) == nil {
-			return false
-		}
-	}
-	return true
 }
 
 // SelectRefiningReturnVector prefers candidate only when it is a directional

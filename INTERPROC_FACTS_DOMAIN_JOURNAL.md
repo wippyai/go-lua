@@ -124,6 +124,43 @@ Design result:
 - helper names that encode parameter-specific lattice laws are no longer local
   return-package predicates.
 
+## 2026-05-19 Value Shape Domain Checkpoint
+
+The follow-up rectification removed another cluster of domain laws from
+`returns` and moved it into `compiler/check/domain/value`.
+
+Moved value-shape laws:
+
+- soft container refinement;
+- stale falsy map-key refinement;
+- nested nil-only regression detection;
+- recursive structural-growth detection;
+- structural-shape unwrapping and shallow shape equality;
+- union member extraction after structural unwrapping.
+
+`returns` now keeps return-vector orchestration, but it asks `domain/value` for
+value-shape facts. This preserves the current behavior while making the mental
+model cleaner:
+
+```text
+returns          = return-vector policy and function-summary alignment
+domain/value     = reusable structural value relations
+domain/paramevidence = parameter evidence lattice and parameter-slot refinement
+```
+
+This is a direct ownership move, not a bridge. The old local helpers were
+deleted from `returns`.
+
+Verification for this slice so far:
+
+- `go test ./compiler/check/domain/value ./compiler/check/returns` passes.
+- `go test ./compiler/check/...` passes.
+- `go test ./...` passes.
+- `git diff --check` passes.
+- Standard `../scripts/verify-suite.sh` passes the go-lua checker tests and
+  Wippy binary build, then exits non-zero on the existing external lint targets:
+  session 8 errors, agent/src 8 errors, docker-demo 21 errors and 2 warnings.
+
 ## Goal
 
 The checker should read as one abstract interpreter over a product domain.

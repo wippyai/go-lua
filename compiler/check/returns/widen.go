@@ -268,14 +268,14 @@ func typeUnsafePrecisionDrop(prev, merged typ.Type) bool {
 	if value.ElidesOptional(merged, prev) {
 		return false
 	}
-	if refines, _ := typeRefinesFalsyMapKey(merged, prev); refines {
+	if refines, _ := value.RefinesFalsyMapKey(merged, prev); refines {
 		return false
 	}
 	if typ.IsAny(prev) || typ.IsUnknown(prev) {
 		return true
 	}
 
-	switch p := unwrapStructuralShape(prev).(type) {
+	switch p := value.UnwrapStructuralShape(prev).(type) {
 	case *typ.Union:
 		if unionStrictMemberSubset(merged, p) {
 			return true
@@ -284,7 +284,7 @@ func typeUnsafePrecisionDrop(prev, merged typ.Type) bool {
 			return true
 		}
 	case *typ.Record:
-		m, ok := unwrapStructuralShape(merged).(*typ.Record)
+		m, ok := value.UnwrapStructuralShape(merged).(*typ.Record)
 		if !ok {
 			break
 		}
@@ -298,15 +298,15 @@ func typeUnsafePrecisionDrop(prev, merged typ.Type) bool {
 			return true
 		}
 	case *typ.Array:
-		if m, ok := unwrapStructuralShape(merged).(*typ.Array); ok {
+		if m, ok := value.UnwrapStructuralShape(merged).(*typ.Array); ok {
 			return typeUnsafePrecisionDrop(p.Element, m.Element)
 		}
 	case *typ.Map:
-		if m, ok := unwrapStructuralShape(merged).(*typ.Map); ok {
+		if m, ok := value.UnwrapStructuralShape(merged).(*typ.Map); ok {
 			return typeUnsafePrecisionDrop(p.Key, m.Key) || typeUnsafePrecisionDrop(p.Value, m.Value)
 		}
 	case *typ.Tuple:
-		m, ok := unwrapStructuralShape(merged).(*typ.Tuple)
+		m, ok := value.UnwrapStructuralShape(merged).(*typ.Tuple)
 		if !ok || len(p.Elements) != len(m.Elements) {
 			break
 		}
@@ -316,7 +316,7 @@ func typeUnsafePrecisionDrop(prev, merged typ.Type) bool {
 			}
 		}
 	case *typ.Function:
-		m, ok := unwrapStructuralShape(merged).(*typ.Function)
+		m, ok := value.UnwrapStructuralShape(merged).(*typ.Function)
 		if !ok {
 			break
 		}
@@ -342,7 +342,7 @@ func unionStrictMemberSubset(candidate typ.Type, baseline *typ.Union) bool {
 	if baseline == nil {
 		return false
 	}
-	candidateMembers := unionMembers(candidate)
+	candidateMembers := value.UnionMembers(candidate)
 	if len(candidateMembers) == 0 {
 		candidateMembers = []typ.Type{candidate}
 	}
@@ -362,17 +362,6 @@ func unionStrictMemberSubset(candidate typ.Type, baseline *typ.Union) bool {
 		}
 	}
 	return true
-}
-
-func unionMembers(t typ.Type) []typ.Type {
-	switch v := unwrapStructuralShape(t).(type) {
-	case *typ.Union:
-		return v.Members
-	case *typ.Optional:
-		return append([]typ.Type{typ.Nil}, unionMembers(v.Inner)...)
-	default:
-		return nil
-	}
 }
 
 func canonicalInterprocValueType(t typ.Type) typ.Type {
@@ -454,10 +443,10 @@ func widenValueTypeForConvergence(existing, candidate typ.Type) typ.Type {
 	if value.ElidesOptional(candidate, existing) {
 		return candidate
 	}
-	if value.ExtendsRecord(candidate, existing) && !typeContainsNestedStructuralShape(candidate, existing) {
+	if value.ExtendsRecord(candidate, existing) && !value.ContainsNestedStructuralShape(candidate, existing) {
 		return candidate
 	}
-	if refines, _ := typeRefinesFalsyMapKey(candidate, existing); refines {
+	if refines, _ := value.RefinesFalsyMapKey(candidate, existing); refines {
 		return candidate
 	}
 	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {
