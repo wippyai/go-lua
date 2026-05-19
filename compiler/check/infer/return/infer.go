@@ -22,12 +22,12 @@
 //   - Types can only grow (become more general), never shrink
 //   - Bounded iteration with widening to unknown on non-convergence
 //
-// # PARAM HINTS
+// # PARAMETER EVIDENCE
 //
-// Parameter type hints are collected from call sites:
-//   - When a() calls b(10), b's first param gets hint "number"
-//   - Hints from multiple call sites are joined
-//   - Hints propagate through the call graph (if a() calls b(), b() calls c())
+// Parameter evidence is collected from call sites:
+//   - When a() calls b(10), b's first param records number evidence.
+//   - Multiple call sites are joined.
+//   - Evidence propagates through the call graph (if a() calls b(), b() calls c()).
 //
 // # SEED PROPAGATION
 //
@@ -44,7 +44,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -220,15 +220,15 @@ func (i *Inferencer) ComputeForGraph(
 		return nil, nil
 	}
 
-	// Apply param hints from the stable snapshot (deterministic order).
-	if hints := i.store.GetParamHintsSnapshot(graph, parentScope); len(hints) > 0 {
+	// Apply parameter evidence from the stable canonical function facts.
+	if facts := i.store.GetFunctionFactsSnapshot(graph, parentScope); len(facts) > 0 {
 		for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 			info := localFuncs[sym]
 			if info == nil {
 				continue
 			}
-			if hintVec, ok := hints[sym]; ok && len(hintVec) > 0 {
-				info.ParamHints = paramhints.ProjectHintsToParamUse(info.Graph, info.Fn, hintVec)
+			if hintVec := facts.Params(sym); len(hintVec) > 0 {
+				info.ParameterEvidence = paramevidence.ProjectToParameterUse(info.Graph, info.Fn, hintVec)
 			}
 		}
 	}
@@ -242,7 +242,7 @@ func (i *Inferencer) ComputeForGraph(
 	}
 	returnVectors, diags := i.computeReturnVectorsForGroup(run, parentScope.GroupHash(), localFuncs, seed)
 	functionTypes := i.buildLocalFunctionTypes(localFuncs, returnVectors, engine, parentScope)
-	return assembleFunctionFacts(returnVectors, functionTypes), diags
+	return assembleFunctionFacts(localFuncs, returnVectors, functionTypes), diags
 }
 
 func (i *Inferencer) buildLocalFunctionTypes(
@@ -279,8 +279,8 @@ func (i *Inferencer) buildLocalFunctionTypes(
 		if fnType == nil {
 			continue
 		}
-		if len(info.ParamHints) > 0 {
-			if merged := paramhints.MergeIntoSignature(info.Fn, info.ParamHints, fnType); merged != nil {
+		if len(info.ParameterEvidence) > 0 {
+			if merged := paramevidence.MergeIntoSignature(info.Fn, info.ParameterEvidence, fnType); merged != nil {
 				fnType = merged
 			}
 		}
@@ -298,14 +298,20 @@ func (i *Inferencer) buildLocalFunctionTypes(
 }
 
 func assembleFunctionFacts(
+	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	returnVectors map[cfg.SymbolID][]typ.Type,
 	funcs map[cfg.SymbolID]typ.Type,
 ) api.FunctionFacts {
-	total := len(returnVectors) + len(funcs)
+	total := len(localFuncs) + len(returnVectors) + len(funcs)
 	if total == 0 {
 		return nil
 	}
 	symbols := make(map[cfg.SymbolID]bool, total)
+	for sym := range localFuncs {
+		if sym != 0 {
+			symbols[sym] = true
+		}
+	}
 	for sym := range returnVectors {
 		if sym != 0 {
 			symbols[sym] = true
@@ -321,11 +327,16 @@ func assembleFunctionFacts(
 	}
 	out := make(api.FunctionFacts, len(symbols))
 	for _, sym := range cfg.SortedSymbolIDs(symbols) {
+		var params []typ.Type
+		if info := localFuncs[sym]; info != nil {
+			params = info.ParameterEvidence
+		}
 		ff := returns.JoinFunctionFact(api.FunctionFact{}, api.FunctionFact{
+			Params:  params,
 			Summary: returnVectors[sym],
 			Type:    funcs[sym],
 		})
-		if len(ff.Summary) == 0 && ff.Type == nil && len(ff.Narrow) == 0 {
+		if len(ff.Params) == 0 && len(ff.Summary) == 0 && ff.Type == nil && len(ff.Narrow) == 0 {
 			continue
 		}
 		out[sym] = ff
@@ -388,7 +399,7 @@ type returnInferenceContext struct {
 }
 
 // buildParameterOverlay creates the initial type overlay with parameter types.
-// Parameters are typed from annotations, hints, or default to unknown.
+// Parameters are typed from annotations, parameter evidence, or default to unknown.
 func collectReturnTypes(
 	fnGraph *cfg.Graph,
 	synthEngine api.Synth,
@@ -540,7 +551,7 @@ func (i *Inferencer) skipUnresolvedLocalReturnCall(ctx *returnInferenceContext) 
 //
 // Phase 1 (Preliminary): Collect inferred types for local variables within the function.
 // This uses a preliminary synthesis engine with:
-//   - Parameter types (from annotations or param hints)
+//   - Parameter types (from annotations or parameter evidence)
 //   - Sibling function types (from return vectors)
 //   - Captured variable types (from parent function result)
 //
@@ -632,30 +643,30 @@ func (i *Inferencer) inferReturnForFunction(
 	// in the same function. For example, a helper call may prove that a parameter
 	// field is string?, which then makes `param.field or "default"` synthesize as
 	// string without relying on a value-level fallback shortcut.
-	i.mergeParamHintsFromBodyUses(ctx, overlay)
-	i.applyParamHintsToOverlay(ctx, overlay)
+	i.mergeParameterEvidenceFromBodyUses(ctx, overlay)
+	i.applyParameterEvidenceToOverlay(ctx, overlay)
 
 	// Phase 1: Infer local variable types.
 	inferred, _, synthAdapter := i.inferLocalVariableTypes(ctx, overlay, localValueSeeds)
 
 	// Collect field/indexer assignments and apply mutations.
 	finalOverlay := i.collectAndApplyMutations(ctx, overlay, inferred, synthAdapter, localValueSeeds)
-	i.mergeParamHintsFromOverlay(ctx, finalOverlay)
+	i.mergeParameterEvidenceFromOverlay(ctx, finalOverlay)
 
 	// Phase 2: Infer return types from body.
 	return i.inferReturnTypesFromBody(ctx, finalOverlay)
 }
 
-func (i *Inferencer) applyParamHintsToOverlay(ctx *returnInferenceContext, overlay map[cfg.SymbolID]typ.Type) {
-	if ctx == nil || ctx.info == nil || ctx.info.Graph == nil || len(ctx.info.ParamHints) == 0 || overlay == nil {
+func (i *Inferencer) applyParameterEvidenceToOverlay(ctx *returnInferenceContext, overlay map[cfg.SymbolID]typ.Type) {
+	if ctx == nil || ctx.info == nil || ctx.info.Graph == nil || len(ctx.info.ParameterEvidence) == 0 || overlay == nil {
 		return
 	}
 	for idx, slot := range ctx.info.Graph.ParamSlotsReadOnly() {
-		if slot.Symbol == 0 || idx >= len(ctx.info.ParamHints) {
+		if slot.Symbol == 0 || idx >= len(ctx.info.ParameterEvidence) {
 			continue
 		}
-		hint := ctx.info.ParamHints[idx]
-		if !paramhints.IsInformativeHintType(hint) {
+		evidence := ctx.info.ParameterEvidence[idx]
+		if !paramevidence.IsInformative(evidence) {
 			continue
 		}
 		if slot.TypeAnnotation != nil && ctx.engine != nil {
@@ -664,11 +675,11 @@ func (i *Inferencer) applyParamHintsToOverlay(ctx *returnInferenceContext, overl
 				continue
 			}
 		}
-		overlay[slot.Symbol] = hint
+		overlay[slot.Symbol] = evidence
 	}
 }
 
-func (i *Inferencer) mergeParamHintsFromOverlay(ctx *returnInferenceContext, overlay map[cfg.SymbolID]typ.Type) {
+func (i *Inferencer) mergeParameterEvidenceFromOverlay(ctx *returnInferenceContext, overlay map[cfg.SymbolID]typ.Type) {
 	if ctx == nil || ctx.info == nil || ctx.info.Graph == nil || ctx.info.Fn == nil || len(overlay) == 0 {
 		return
 	}
@@ -684,18 +695,18 @@ func (i *Inferencer) mergeParamHintsFromOverlay(ctx *returnInferenceContext, ove
 			}
 		}
 		t := overlay[slot.Symbol]
-		if !paramhints.IsInformativeHintType(t) {
+		if !paramevidence.IsInformative(t) {
 			continue
 		}
-		next, merged := paramhints.MergeHintAt(ctx.info.ParamHints, idx, t, typ.JoinPreferNonSoft)
+		next, merged := paramevidence.MergeAt(ctx.info.ParameterEvidence, idx, t, typ.JoinPreferNonSoft)
 		if merged {
-			ctx.info.ParamHints = next
+			ctx.info.ParameterEvidence = next
 		}
 	}
-	i.mergeParamHintsFromBodyUses(ctx, overlay)
+	i.mergeParameterEvidenceFromBodyUses(ctx, overlay)
 }
 
-func (i *Inferencer) mergeParamHintsFromBodyUses(ctx *returnInferenceContext, overlay map[cfg.SymbolID]typ.Type) {
+func (i *Inferencer) mergeParameterEvidenceFromBodyUses(ctx *returnInferenceContext, overlay map[cfg.SymbolID]typ.Type) {
 	if i == nil || ctx == nil || ctx.info == nil || ctx.info.Graph == nil || ctx.info.Fn == nil {
 		return
 	}
@@ -739,17 +750,17 @@ func (i *Inferencer) mergeParamHintsFromBodyUses(ctx *returnInferenceContext, ov
 		if !ok {
 			return
 		}
-		hint := i.receiverHintForMethod(ctx, method)
-		if !paramhints.IsInformativeHintType(hint) {
+		evidence := i.receiverEvidenceForMethod(ctx, method)
+		if !paramevidence.IsInformative(evidence) {
 			return
 		}
-		next, merged := paramhints.MergeHintAt(ctx.info.ParamHints, idx, hint, typ.JoinPreferNonSoft)
+		next, merged := paramevidence.MergeAt(ctx.info.ParameterEvidence, idx, evidence, typ.JoinPreferNonSoft)
 		if merged {
-			ctx.info.ParamHints = next
+			ctx.info.ParameterEvidence = next
 		}
 	}
-	mergeParamFieldHint := func(sym cfg.SymbolID, field string, hint typ.Type, required bool) {
-		if sym == 0 || field == "" || !paramhints.IsInformativeHintType(hint) {
+	mergeParamFieldEvidence := func(sym cfg.SymbolID, field string, evidence typ.Type, required bool) {
+		if sym == 0 || field == "" || !paramevidence.IsInformative(evidence) {
 			return
 		}
 		idx, ok := paramIndexBySym[sym]
@@ -758,14 +769,14 @@ func (i *Inferencer) mergeParamHintsFromBodyUses(ctx *returnInferenceContext, ov
 		}
 		builder := typ.NewRecord()
 		if required {
-			builder.Field(field, hint)
+			builder.Field(field, evidence)
 		} else {
-			builder.OptField(field, hint)
+			builder.OptField(field, evidence)
 		}
 		rec := builder.Build()
-		next, merged := paramhints.MergeHintAt(ctx.info.ParamHints, idx, rec, typ.JoinPreferNonSoft)
+		next, merged := paramevidence.MergeAt(ctx.info.ParameterEvidence, idx, rec, typ.JoinPreferNonSoft)
 		if merged {
-			ctx.info.ParamHints = next
+			ctx.info.ParameterEvidence = next
 		}
 	}
 	bodyContractJoin := func(prev, next typ.Type) typ.Type {
@@ -774,17 +785,17 @@ func (i *Inferencer) mergeParamHintsFromBodyUses(ctx *returnInferenceContext, ov
 		}
 		return prev
 	}
-	mergeParamHint := func(sym cfg.SymbolID, hint typ.Type) {
-		if sym == 0 || !paramhints.IsInformativeHintType(hint) {
+	mergeParameterEvidence := func(sym cfg.SymbolID, evidence typ.Type) {
+		if sym == 0 || !paramevidence.IsInformative(evidence) {
 			return
 		}
 		idx, ok := paramIndexBySym[sym]
 		if !ok {
 			return
 		}
-		next, merged := paramhints.MergeHintAt(ctx.info.ParamHints, idx, hint, bodyContractJoin)
+		next, merged := paramevidence.MergeAt(ctx.info.ParameterEvidence, idx, evidence, bodyContractJoin)
 		if merged {
-			ctx.info.ParamHints = next
+			ctx.info.ParameterEvidence = next
 		}
 	}
 	paramSymbol := func(expr ast.Expr) (cfg.SymbolID, bool) {
@@ -849,20 +860,20 @@ func (i *Inferencer) mergeParamHintsFromBodyUses(ctx *returnInferenceContext, ov
 		return false
 	}
 	var bodyParamContracts map[cfg.SymbolID]typ.Type
-	mergeParamContract := func(sym cfg.SymbolID, hint typ.Type) {
-		if sym == 0 || !paramhints.IsInformativeHintType(hint) {
+	mergeParamContract := func(sym cfg.SymbolID, evidence typ.Type) {
+		if sym == 0 || !paramevidence.IsInformative(evidence) {
 			return
 		}
 		if bodyParamContracts == nil {
 			bodyParamContracts = make(map[cfg.SymbolID]typ.Type)
 		}
 		if prev := bodyParamContracts[sym]; prev != nil {
-			bodyParamContracts[sym] = subtype.NormalizeIntersection(prev, hint)
+			bodyParamContracts[sym] = subtype.NormalizeIntersection(prev, evidence)
 			return
 		}
-		bodyParamContracts[sym] = hint
+		bodyParamContracts[sym] = evidence
 	}
-	mergeCallExpectedFieldHints := func(p cfg.Point, info *cfg.CallInfo) {
+	mergeExpectedFieldEvidence := func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || i.types == nil {
 			return
 		}
@@ -888,7 +899,7 @@ func (i *Inferencer) mergeParamHintsFromBodyUses(ctx *returnInferenceContext, ov
 		inferredCall := ops.InferCall(ctx.run.Ctx, def)
 		for idx, arg := range info.Args {
 			expected := inferredCall.ExpectedArgType(idx)
-			if !paramhints.IsInformativeHintType(expected) {
+			if !paramevidence.IsInformative(expected) {
 				continue
 			}
 			if sym, ok := paramSymbol(arg); ok {
@@ -896,16 +907,16 @@ func (i *Inferencer) mergeParamHintsFromBodyUses(ctx *returnInferenceContext, ov
 				continue
 			}
 			if sym, field, ok := paramFieldPath(arg); ok {
-				mergeParamFieldHint(sym, field, expected, true)
+				mergeParamFieldEvidence(sym, field, expected, true)
 				continue
 			}
 		}
 	}
 	ctx.info.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		mergeCallExpectedFieldHints(p, info)
+		mergeExpectedFieldEvidence(p, info)
 	})
 	for _, sym := range cfg.SortedSymbolIDs(bodyParamContracts) {
-		mergeParamHint(sym, bodyParamContracts[sym])
+		mergeParameterEvidence(sym, bodyParamContracts[sym])
 	}
 	defaultLiteralType := func(expr ast.Expr) typ.Type {
 		switch expr.(type) {
@@ -942,7 +953,7 @@ func (i *Inferencer) mergeParamHintsFromBodyUses(ctx *returnInferenceContext, ov
 		case *ast.LogicalOpExpr:
 			if e.Operator == "or" {
 				if sym, field, ok := paramFieldPath(e.Lhs); ok {
-					mergeParamFieldHint(sym, field, defaultLiteralType(e.Rhs), false)
+					mergeParamFieldEvidence(sym, field, defaultLiteralType(e.Rhs), false)
 				}
 			}
 			visitExpr(e.Lhs)
@@ -1039,7 +1050,7 @@ func (i *Inferencer) mergeParamHintsFromBodyUses(ctx *returnInferenceContext, ov
 	}
 }
 
-func (i *Inferencer) receiverHintForMethod(ctx *returnInferenceContext, method string) typ.Type {
+func (i *Inferencer) receiverEvidenceForMethod(ctx *returnInferenceContext, method string) typ.Type {
 	if i == nil || i.types == nil || method == "" {
 		return nil
 	}

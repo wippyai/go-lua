@@ -15,13 +15,13 @@
 //   - Synthesis engine for expression type computation
 //   - Flow solver for control flow analysis
 //   - Effect propagation for side effect tracking
-//   - Parameter hint inference from call sites
+//   - Parameter evidence inference from call sites
 package pipeline
 
 import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -106,8 +106,8 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		setter.SetGraphParentHash(graph.ID(), key.ParentHash)
 	}
 
-	paramHintSigs := paramhints.BuildParamHintSignatures(store, graph, parent, r.stdlib)
-	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, paramHintSigs)
+	parameterEvidenceSigs := paramevidence.BuildSignatureMap(store, graph, parent, r.stdlib)
+	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, parameterEvidenceSigs)
 
 	functionFacts := store.GetFunctionFactsSnapshot(graph, parent)
 
@@ -138,14 +138,14 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 
 	// Phase B: Build scopes and extract declared types.
 	scopeOut := phase.RunScope(phase.ScopeInput{
-		PhaseEnv:                  env,
-		Parent:                    parent,
-		MaxScopeDepth:             r.maxScopeDepth,
-		Resolve:                   resolveOut,
-		SynthesizedFunctionSig:    synthSig,
-		FunctionLiteralSignatures: literalSigs,
-		ParamHintSignatures:       paramHintSigs,
-		FunctionFacts:             functionFacts,
+		PhaseEnv:                    env,
+		Parent:                      parent,
+		MaxScopeDepth:               r.maxScopeDepth,
+		Resolve:                     resolveOut,
+		SynthesizedFunctionSig:      synthSig,
+		FunctionLiteralSignatures:   literalSigs,
+		ParameterEvidenceSignatures: parameterEvidenceSigs,
+		FunctionFacts:               functionFacts,
 	})
 	// Declared is the default phase for scope/extract and interproc reads.
 

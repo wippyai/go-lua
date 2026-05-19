@@ -11,9 +11,6 @@ func FactsEqual(a, b api.Facts) bool {
 	if !FunctionFactsEqual(a.FunctionFacts, b.FunctionFacts) {
 		return false
 	}
-	if !symbolTypeVectorMapEqual(a.ParamHints, b.ParamHints) {
-		return false
-	}
 	if !LiteralSigsEqual(a.LiteralSigs, b.LiteralSigs) {
 		return false
 	}
@@ -43,6 +40,9 @@ func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 		if !ok {
 			return false
 		}
+		if !ReturnTypesEqual(af.Params, bf.Params) {
+			return false
+		}
 		if !ReturnTypesEqual(af.Summary, bf.Summary) {
 			return false
 		}
@@ -64,20 +64,6 @@ func LiteralSigsEqual(a, b api.LiteralSigs) bool {
 	for fn, sig := range a {
 		other, ok := b[fn]
 		if !ok || !typ.TypeEquals(sig, other) {
-			return false
-		}
-	}
-	return true
-}
-
-func symbolTypeVectorMapEqual(a map[cfg.SymbolID][]typ.Type, b map[cfg.SymbolID][]typ.Type) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for _, sym := range cfg.SortedSymbolIDs(a) {
-		left := a[sym]
-		right, ok := b[sym]
-		if !ok || !ReturnTypesEqual(left, right) {
 			return false
 		}
 	}

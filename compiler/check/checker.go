@@ -29,8 +29,7 @@
 //
 // The checker supports interprocedural analysis through a unified interproc snapshot:
 //
-//   - FunctionFacts: Canonical return/narrow/signature facts for local functions
-//   - ParamHints: Inferred parameter types from call sites
+//   - FunctionFacts: Canonical parameter/return/narrow/signature facts
 //   - LiteralSigs: Synthesized signatures for function literals
 //   - Refinements: Function refinement summaries, stored per symbol
 //

@@ -13,9 +13,6 @@ func TestFacts_Zero(t *testing.T) {
 	if f.FunctionFacts != nil {
 		t.Error("zero Facts should have nil FunctionFacts")
 	}
-	if f.ParamHints != nil {
-		t.Error("zero Facts should have nil ParamHints")
-	}
 	if f.LiteralSigs != nil {
 		t.Error("zero Facts should have nil LiteralSigs")
 	}
@@ -41,17 +38,14 @@ func TestFunctionFacts_Summary(t *testing.T) {
 	}
 }
 
-func TestParamHints_Basic(t *testing.T) {
-	hints := make(ParamHints)
+func TestFunctionFacts_Params(t *testing.T) {
+	facts := make(FunctionFacts)
 	sym := cfg.SymbolID(1)
-	hints[sym] = []typ.Type{typ.Number, typ.String}
+	facts[sym] = FunctionFact{Params: []typ.Type{typ.Number, typ.String}}
 
-	params, ok := hints[sym]
-	if !ok {
-		t.Fatal("expected symbol to be in hints")
-	}
+	params := facts.Params(sym)
 	if len(params) != 2 {
-		t.Errorf("expected 2 param hints, got %d", len(params))
+		t.Errorf("expected 2 params, got %d", len(params))
 	}
 }
 
@@ -161,20 +155,15 @@ func TestFacts_WithData(t *testing.T) {
 	f := Facts{
 		FunctionFacts: FunctionFacts{
 			4: {
+				Params:  []typ.Type{typ.Number},
 				Summary: []typ.Type{typ.Boolean},
 				Narrow:  []typ.Type{typ.Boolean},
 				Type:    typ.Func().Returns(typ.Boolean).Build(),
 			},
 		},
-		ParamHints: ParamHints{
-			2: []typ.Type{typ.Number},
-		},
 	}
 
 	if len(f.FunctionFacts) != 1 {
 		t.Error("expected 1 function fact")
-	}
-	if len(f.ParamHints) != 1 {
-		t.Error("expected 1 param hint")
 	}
 }

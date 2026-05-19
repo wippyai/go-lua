@@ -173,9 +173,9 @@ type ScopeInput struct {
 	// Read-only - populated from LiteralSigs channel during iteration.
 	// Can be a map or LiteralSigsProvider interface for lazy lookup.
 	FunctionLiteralSignatures LiteralSigsProvider
-	// ParamHintSignatures contains inferred param types from call sites.
-	// Read-only - populated from ParamHints channel during iteration.
-	ParamHintSignatures map[*ast.FunctionExpr][]typ.Type
+	// ParameterEvidenceSignatures contains function-expression keyed parameter evidence.
+	// Read-only - projected from canonical FunctionFacts during iteration.
+	ParameterEvidenceSignatures map[*ast.FunctionExpr][]typ.Type
 	// FunctionFacts contains canonical facts for functions in this graph
 	// context. Explicit input - not looked up from store during phase execution.
 	FunctionFacts api.FunctionFacts

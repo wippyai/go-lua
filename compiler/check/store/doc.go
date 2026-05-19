@@ -10,7 +10,7 @@
 // The store holds:
 //   - Built CFGs indexed by graph ID
 //   - Analysis results (types, flow facts, diagnostics) per function
-//   - Interprocedural facts (canonical function facts, parameter hints)
+//   - Interprocedural facts (canonical function facts, parameter evidence)
 //   - Module-level bindings and alias maps
 //   - Query-tracked interprocedural snapshot inputs for precise function-result
 //     cache revalidation

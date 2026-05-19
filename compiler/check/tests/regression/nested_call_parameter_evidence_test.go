@@ -7,8 +7,8 @@ import (
 )
 
 // Regression guard: nested calls used as arguments must still contribute
-// parameter hints to local helper functions.
-func TestNestedCall_ParamHintsFlowIntoLocalHelper(t *testing.T) {
+// parameter evidence to local helper functions.
+func TestNestedCall_ParameterEvidenceFlowIntoLocalHelper(t *testing.T) {
 	source := `
 		type Entry = { id: string, kind: string }
 

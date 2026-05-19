@@ -30,8 +30,7 @@
 // The [Facts] type bundles interprocedural analysis results for a single
 // function graph:
 //
-//   - [FunctionFacts]: Canonical per-function return/signature facts
-//   - [ParamHints]: Effective parameter types inferred from call sites
+//   - [FunctionFacts]: Canonical per-function parameter/return/signature facts
 //   - [LiteralSigs]: Signatures for anonymous function literals
 //   - [CapturedTypes]: Flow-derived types for captured variables
 //   - [CapturedFieldAssigns]: Field assignments to captured variables

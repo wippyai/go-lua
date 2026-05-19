@@ -10,29 +10,29 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestPropagateParamHintsFromCallGraph_Empty(t *testing.T) {
-	PropagateParamHintsFromCallGraph(nil)
-	PropagateParamHintsFromCallGraph(map[cfg.SymbolID]*LocalFuncInfo{})
+func TestPropagateParameterEvidence_Empty(t *testing.T) {
+	PropagateParameterEvidence(nil)
+	PropagateParameterEvidence(map[cfg.SymbolID]*LocalFuncInfo{})
 }
 
-func TestPropagateParamHintsFromCallGraph_NilGraph(t *testing.T) {
+func TestPropagateParameterEvidence_NilGraph(t *testing.T) {
 	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{
 		1: {Sym: 1, Graph: nil},
 	}
-	PropagateParamHintsFromCallGraph(localFuncs)
+	PropagateParameterEvidence(localFuncs)
 }
 
-func TestPropagateParamHintsFromCallGraph_SingleFuncNoArgs(t *testing.T) {
+func TestPropagateParameterEvidence_SingleFuncNoArgs(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"x"}}}
 	graph := cfg.Build(fn)
 
 	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{
 		1: {Sym: 1, Fn: fn, Graph: graph},
 	}
-	PropagateParamHintsFromCallGraph(localFuncs)
+	PropagateParameterEvidence(localFuncs)
 
-	if localFuncs[1].ParamHints != nil {
-		t.Error("expected nil ParamHints for function with no callers")
+	if localFuncs[1].ParameterEvidence != nil {
+		t.Error("expected nil ParameterEvidence for function with no callers")
 	}
 }
 
@@ -76,7 +76,7 @@ func TestBuildLocalCallGraph_SingleFunc(t *testing.T) {
 	}
 }
 
-func TestPropagateParamHintsFromCallGraph_LiteralArgTypes(t *testing.T) {
+func TestPropagateParameterEvidence_LiteralArgTypes(t *testing.T) {
 	// Test that literal arguments (number, string, bool, nil) are typed correctly
 	tests := []struct {
 		name     string
@@ -126,7 +126,7 @@ func TestPropagateParamHintsFromCallGraph_LiteralArgTypes(t *testing.T) {
 	}
 }
 
-func TestPropagateParamHintsFromCallGraph_UnknownArgSkipped(t *testing.T) {
+func TestPropagateParameterEvidence_UnknownArgSkipped(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"x"}}}
 	graph := cfg.Build(fn)
 
@@ -136,9 +136,9 @@ func TestPropagateParamHintsFromCallGraph_UnknownArgSkipped(t *testing.T) {
 		Graph: graph,
 	}
 
-	// Unknown type args should be skipped (not create hints)
-	if info.ParamHints != nil {
-		t.Error("ParamHints should be nil initially")
+	// Unknown type args should be skipped (not create evidence)
+	if info.ParameterEvidence != nil {
+		t.Error("ParameterEvidence should be nil initially")
 	}
 }
 
@@ -153,44 +153,44 @@ func TestLocalFuncInfo_ZeroValue(t *testing.T) {
 	if info.Graph != nil {
 		t.Error("Graph should be nil")
 	}
-	if info.ParamHints != nil {
-		t.Error("ParamHints should be nil")
+	if info.ParameterEvidence != nil {
+		t.Error("ParameterEvidence should be nil")
 	}
 }
 
-func TestLocalFuncInfo_ParamHintsExpansion(t *testing.T) {
-	// Test that ParamHints array expands correctly
+func TestLocalFuncInfo_ParameterEvidenceExpansion(t *testing.T) {
+	// Test that ParameterEvidence array expands correctly
 	info := &LocalFuncInfo{
-		Sym:        1,
-		ParamHints: []typ.Type{typ.Number},
+		Sym:               1,
+		ParameterEvidence: []typ.Type{typ.Number},
 	}
 
 	// Verify initial state
-	if len(info.ParamHints) != 1 {
-		t.Fatalf("expected 1 hint, got %d", len(info.ParamHints))
+	if len(info.ParameterEvidence) != 1 {
+		t.Fatalf("expected 1 evidence, got %d", len(info.ParameterEvidence))
 	}
-	if info.ParamHints[0] != typ.Number {
-		t.Errorf("expected Number, got %v", info.ParamHints[0])
+	if info.ParameterEvidence[0] != typ.Number {
+		t.Errorf("expected Number, got %v", info.ParameterEvidence[0])
 	}
 
-	// Simulate expansion like PropagateParamHintsFromCallGraph does
+	// Simulate expansion like PropagateParameterEvidence does
 	i := 2
-	if i >= len(info.ParamHints) {
+	if i >= len(info.ParameterEvidence) {
 		expanded := make([]typ.Type, i+1)
-		copy(expanded, info.ParamHints)
-		info.ParamHints = expanded
+		copy(expanded, info.ParameterEvidence)
+		info.ParameterEvidence = expanded
 	}
 
-	if len(info.ParamHints) != 3 {
-		t.Fatalf("expected 3 hints after expansion, got %d", len(info.ParamHints))
+	if len(info.ParameterEvidence) != 3 {
+		t.Fatalf("expected 3 evidence after expansion, got %d", len(info.ParameterEvidence))
 	}
-	if info.ParamHints[0] != typ.Number {
-		t.Error("original hint should be preserved")
+	if info.ParameterEvidence[0] != typ.Number {
+		t.Error("original evidence should be preserved")
 	}
-	if info.ParamHints[1] != nil {
+	if info.ParameterEvidence[1] != nil {
 		t.Error("gap should be nil")
 	}
-	if info.ParamHints[2] != nil {
+	if info.ParameterEvidence[2] != nil {
 		t.Error("new slot should be nil")
 	}
 }
@@ -264,7 +264,7 @@ func TestBuildLocalCallGraph_AddsCallbackFunctionEdges(t *testing.T) {
 	}
 }
 
-func TestPropagateParamHintsFromCallGraph_MethodRuntimeIndexing(t *testing.T) {
+func TestPropagateParameterEvidence_MethodRuntimeIndexing(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local function callee(self, x)
 			return x
@@ -314,17 +314,17 @@ func TestPropagateParamHintsFromCallGraph_MethodRuntimeIndexing(t *testing.T) {
 		t.Fatalf("expected symbols for callee/caller, got callee=%d caller=%d", calleeSym, callerSym)
 	}
 
-	PropagateParamHintsFromCallGraph(localFuncs)
+	PropagateParameterEvidence(localFuncs)
 
-	hints := localFuncs[calleeSym].ParamHints
-	if len(hints) < 2 {
-		t.Fatalf("expected at least 2 param hints for callee(self,x), got %d", len(hints))
+	evidence := localFuncs[calleeSym].ParameterEvidence
+	if len(evidence) < 2 {
+		t.Fatalf("expected at least 2 parameter evidence for callee(self,x), got %d", len(evidence))
 	}
-	if !typ.TypeEquals(hints[1], typ.Number) {
-		t.Fatalf("expected hint for x at index 1 to be number, got %v", hints[1])
+	if !typ.TypeEquals(evidence[1], typ.Number) {
+		t.Fatalf("expected evidence for x at index 1 to be number, got %v", evidence[1])
 	}
-	if hints[0] != nil {
-		t.Fatalf("expected no informative hint for receiver at index 0, got %v", hints[0])
+	if evidence[0] != nil {
+		t.Fatalf("expected no informative evidence for receiver at index 0, got %v", evidence[0])
 	}
 }
 

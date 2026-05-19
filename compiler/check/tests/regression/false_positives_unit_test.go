@@ -363,7 +363,7 @@ func TestFalsePositive_ErrorReturnSuccessWithImplicitNilErrorNarrowsSibling(t *t
 	}
 }
 
-func TestFalsePositive_MethodReceiverParamHintInfersCapturedSelfFields(t *testing.T) {
+func TestFalsePositive_MethodReceiverParameterEvidenceInfersCapturedSelfFields(t *testing.T) {
 	source := `
 		type Output = {
 			kind: "rendered",
@@ -421,7 +421,7 @@ func TestFalsePositive_MethodReceiverParamHintInfersCapturedSelfFields(t *testin
 	`
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
-		t.Errorf("expected method receiver hints to type captured builder fields, got: %v", testutil.ErrorMessages(result.Diagnostics))
+		t.Errorf("expected method receiver evidence to type captured builder fields, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 

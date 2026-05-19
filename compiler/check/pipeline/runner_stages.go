@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -22,19 +22,19 @@ func (r *Runner) resolveSynthesizedSignature(
 	graph *cfg.Graph,
 	fn *ast.FunctionExpr,
 	parent *scope.State,
-	paramHintSigs map[*ast.FunctionExpr][]typ.Type,
+	parameterEvidenceSigs map[*ast.FunctionExpr][]typ.Type,
 ) *typ.Function {
 	if graph == nil || fn == nil {
 		return nil
 	}
 
-	factSig := paramhints.ProjectSignatureToParamUse(graph, fn, r.functionFactSignatureForFunction(store, graph, fn))
+	factSig := paramevidence.ProjectSignatureToParamUse(graph, fn, r.functionFactSignatureForFunction(store, graph, fn))
 	synthSig := r.literalSignatureForFunction(store, graph, fn)
-	if paramHintSigs == nil {
+	if parameterEvidenceSigs == nil {
 		return mergeSynthesizedSignatureFact(synthSig, factSig)
 	}
-	hints := paramHintSigs[fn]
-	if len(hints) == 0 {
+	evidence := parameterEvidenceSigs[fn]
+	if len(evidence) == 0 {
 		return mergeSynthesizedSignatureFact(synthSig, factSig)
 	}
 	if synthSig == nil {
@@ -53,7 +53,7 @@ func (r *Runner) resolveSynthesizedSignature(
 	if synthSig == nil {
 		return factSig
 	}
-	return mergeSynthesizedSignatureFact(paramhints.MergeIntoSignature(fn, hints, synthSig), factSig)
+	return mergeSynthesizedSignatureFact(paramevidence.MergeIntoSignature(fn, evidence, synthSig), factSig)
 }
 
 func mergeSynthesizedSignatureFact(seed, fact *typ.Function) *typ.Function {

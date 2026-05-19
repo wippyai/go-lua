@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/typ"
@@ -29,10 +29,10 @@ func (i *Inferencer) iterateSCCFixpoint(
 }
 
 func (i *Inferencer) planLocalFunctionSCCs(localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo) [][]cfg.SymbolID {
-	// Propagate inter-procedural parameter hints across local call edges before
+	// Propagate inter-procedural parameter evidence across local call edges before
 	// SCC return inference so unannotated params get stable callsite-driven seeds.
-	returns.PropagateParamHintsFromCallGraph(localFuncs)
-	projectLocalFunctionParamHints(localFuncs)
+	returns.PropagateParameterEvidence(localFuncs)
+	projectLocalParameterEvidence(localFuncs)
 
 	var moduleBindings *bind.BindingTable
 	if i != nil && i.store != nil {
@@ -42,13 +42,13 @@ func (i *Inferencer) planLocalFunctionSCCs(localFuncs map[cfg.SymbolID]*returns.
 	return returns.ComputeSymbolSCCs(adj)
 }
 
-func projectLocalFunctionParamHints(localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo) {
+func projectLocalParameterEvidence(localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo) {
 	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		info := localFuncs[sym]
-		if info == nil || len(info.ParamHints) == 0 {
+		if info == nil || len(info.ParameterEvidence) == 0 {
 			continue
 		}
-		info.ParamHints = paramhints.ProjectHintsToParamUse(info.Graph, info.Fn, info.ParamHints)
+		info.ParameterEvidence = paramevidence.ProjectToParameterUse(info.Graph, info.Fn, info.ParameterEvidence)
 	}
 }
 

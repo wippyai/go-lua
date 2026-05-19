@@ -12,6 +12,9 @@ func JoinFunctionFact(existing, candidate api.FunctionFact) api.FunctionFact {
 	candidate = NormalizeFunctionFact(candidate)
 	out := existing
 
+	if len(candidate.Params) > 0 {
+		out.Params = joinParameterEvidenceVectors(out.Params, candidate.Params)
+	}
 	if len(candidate.Summary) > 0 {
 		out.Summary = MergeReturnSummary(out.Summary, candidate.Summary)
 	}

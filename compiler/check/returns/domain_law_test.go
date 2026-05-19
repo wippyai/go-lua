@@ -19,10 +19,7 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 	fn := typ.Func().Param("name", typ.String).Returns(typ.String).Build()
 	raw := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			fnSym: {Summary: []typ.Type{typ.String}, Narrow: []typ.Type{typ.String}, Type: fn},
-		},
-		ParamHints: api.ParamHints{
-			fnSym: []typ.Type{typ.String},
+			fnSym: {Params: []typ.Type{typ.String}, Summary: []typ.Type{typ.String}, Narrow: []typ.Type{typ.String}, Type: fn},
 		},
 		LiteralSigs: api.LiteralSigs{
 			lit: typ.Func().Param("name", typ.String).Returns(typ.String).Build(),

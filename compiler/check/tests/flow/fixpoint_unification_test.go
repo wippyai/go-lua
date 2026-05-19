@@ -108,10 +108,10 @@ local result: string = tbl:process(42)
 	// Literal signatures channel removed in canonical query architecture.
 }
 
-// TestFixpointUnification_ParamHintPropagation verifies that parameter hints
+// TestFixpointUnification_ParameterEvidencePropagation verifies that parameter evidence
 // from call sites propagate across iterations. In a chain A -> B -> C, where
-// A calls B with a number and B calls C, param hints should stabilize.
-func TestFixpointUnification_ParamHintPropagation(t *testing.T) {
+// A calls B with a number and B calls C, parameter evidence should stabilize.
+func TestFixpointUnification_ParameterEvidencePropagation(t *testing.T) {
 	source := `
 local function c(x)
 	return x + 1
@@ -404,12 +404,12 @@ func TestFixpointUnification_EffectRowLabels(t *testing.T) {
 	}
 }
 
-// TestFixpointUnification_ParamHintNestedPropagation verifies that parameter
-// hints propagate correctly through nested function calls within function bodies.
-// This is a regression test for the early break bug where PropagateParamHintsFromCallGraph
+// TestFixpointUnification_ParameterEvidenceNestedPropagation verifies that parameter
+// evidence propagate correctly through nested function calls within function bodies.
+// This is a regression test for the early break bug where PropagateParameterEvidence
 // would fail to resolve callee symbols from identifiers when CalleeSymbol was zero.
-func TestFixpointUnification_ParamHintNestedPropagation(t *testing.T) {
-	// d calls c, c calls b, b has parameter x. Hints should flow d->c->b.
+func TestFixpointUnification_ParameterEvidenceNestedPropagation(t *testing.T) {
+	// d calls c, c calls b, b has parameter x. Evidence should flow d->c->b.
 	// The key is that inner calls (c calling b) need identifier resolution.
 	source := `
 local function b(x)
@@ -456,18 +456,21 @@ local result: number = d()
 				continue
 			}
 			if typ.TypeEquals(fact.Summary[0], typ.Unknown) {
-				t.Errorf("return type for %q is unknown, expected number (hints didn't propagate)", name)
+				t.Errorf("return type for %q is unknown, expected number (evidence didn't propagate)", name)
 			}
 		}
 	}
 
-	// Verify that param hints were propagated to inner functions.
-	paramHintsFound := false
-	if hints := sess.Store.GetParamHintsSnapshot(sess.RootResult.Graph, parent); len(hints) > 0 {
-		paramHintsFound = true
+	// Verify that parameter evidence was propagated to inner functions.
+	parameterEvidenceFound := false
+	for _, fact := range functionFacts {
+		if len(fact.Params) > 0 {
+			parameterEvidenceFound = true
+			break
+		}
 	}
-	if !paramHintsFound {
-		t.Log("no param hints found in ParamHintsPrev (propagation may have converged)")
+	if !parameterEvidenceFound {
+		t.Log("no parameter evidence found in canonical function facts (propagation may have converged)")
 	}
 }
 

@@ -8,6 +8,67 @@ flash migration: design the final shape, migrate directly to it, delete the old
 helper clusters, and do not leave compatibility wrappers or fallback layers in
 the production checker.
 
+## 2026-05-19 Implementation Checkpoint
+
+First flash-migration slice landed for parameter evidence ownership.
+
+Changed production shape:
+
+- `api.FunctionFact` now owns canonical parameter evidence in `Params`.
+- `api.Facts.ParamHints` was removed.
+- `api.SnapshotStore.GetParamHintsSnapshot` was removed.
+- same-iteration merge and interproc widening now combine parameter evidence
+  through `FunctionFacts`.
+- post-flow call observation publication now emits `FunctionFacts` deltas with
+  `Params` instead of writing a side channel.
+- return inference seeds local function parameter evidence from canonical
+  `FunctionFacts`.
+- Salsa snapshot facts now track one canonical fact product for parameters,
+  returns, narrow returns, and function type projection.
+
+This is intentionally not a bridge. No production code reads a legacy
+`ParamHints` fact channel and no compatibility writer reconstructs it from
+`FunctionFacts`.
+
+Second cleanup slice in the same migration:
+
+- the local inference package was renamed from `infer/paramhints` to
+  `infer/paramevidence`;
+- `LocalFuncInfo.ParamHints` became `LocalFuncInfo.ParameterEvidence`;
+- phase input `ParamHintSignatures` became `ParameterEvidenceSignatures`;
+- local call-graph propagation now exposes `PropagateParameterEvidence`;
+- helper files and regression fixtures were renamed to parameter-evidence
+  terminology;
+- production checker code no longer contains `ParamHint` or `paramhints`
+  identifiers.
+- parameter-use projection now treats builtin `type(param)` checks and
+  `param = param or {}` self-default assignments as shape-neutral guard/default
+  operations instead of whole-parameter escapes. Those operations must not turn
+  a call-site record observation into a closed public contract.
+
+Verification notes:
+
+- `go test ./...` passes.
+- `git diff --check` passes.
+- `../scripts/verify-suite.sh` passes go-lua checker tests and builds the Wippy
+  binary, then exits non-zero in external lint targets while building Wippy
+  against `github.com/wippyai/go-lua v1.5.16`.
+- A temp local-replace replay under `/tmp/wippy-golua-local-replace` builds
+  Wippy against this checkout without editing external code. It reduced the
+  projection-related false positives, but the full external sweep is still not
+  clean: tests/app 2 errors/4 warnings, session 20, actor/test 3, agent/src 12,
+  docker-demo 72, llm/src 10, llm/test 9, migration 1, views 1.
+
+Remaining cleanup after this parameter-evidence slice:
+
+- return/narrow/type projections still need the same treatment: read-only views
+  over the canonical function summary product, not separate authorities.
+- Remaining local-replace external diagnostics must be classified in the next
+  engine slice. Some are soundness-preserving real-code issues (`any` flowing
+  into concrete contracts); some still expose missing checker power, especially
+  public functions that validate invalid input with `type(...)` guards and
+  should infer a wider accepted input domain without weakening the guarded body.
+
 ## Goal
 
 The checker should read as one abstract interpreter over a product domain.
@@ -60,7 +121,7 @@ The checker is a multi-phase abstract interpreter:
 5. Narrowing queries are demand-side interpretation: read solved facts at a
    point, apply propagated constraints, and answer refined path/type questions.
 6. Return inference and local function SCC solving use the flow result plus
-   interprocedural snapshots to infer return vectors, parameter hints, function
+   interprocedural snapshots to infer return vectors, parameter evidence, function
    facts, captured fields, and captured container mutations.
 7. The interprocedural store combines same-iteration deltas with a precise join
    and combines recursive fixpoint boundaries with widening.
@@ -1532,7 +1593,7 @@ The flash migration should add focused tests for:
 
 A function boundary is where local abstract state becomes reusable evidence for
 callers. This boundary must have one product-domain object. It should not be
-spread across parameter hints, return summaries, narrow summaries, function
+spread across parameter evidence, return summaries, narrow summaries, function
 types, captured fields, captured containers, literal signatures, and effect
 maps as independent authorities.
 
@@ -1816,7 +1877,7 @@ Allowed derived views:
 
 Forbidden stored authority:
 
-- param hints as separate merge truth;
+- parameter evidence as separate merge truth;
 - return summaries as separate merge truth;
 - narrow returns as separate merge truth;
 - function type cache as separate merge truth;
@@ -2224,7 +2285,7 @@ checker. These are the invariants that should guide the flash migration.
 - source annotations remain authoritative;
 - soft annotations can refine but not override hard proof;
 - recursive parameter evidence widens at SCC/interproc boundaries only;
-- function-fact params and param hints use the same evidence order.
+- function-fact params and parameter evidence use the same evidence order.
 
 ### Return Summary Invariants
 
@@ -2645,7 +2706,7 @@ Rules:
 - soft annotations refine only when hard evidence proves the refinement;
 - recursive parameter evidence must join/widen through the parameter domain.
 
-There should be no separate ad hoc policy for "param hints" versus "function
+There should be no separate ad hoc policy for "parameter evidence" versus "function
 fact params". Both are parameter evidence with different provenance and merge
 mode.
 
@@ -2823,7 +2884,7 @@ Current scattered concepts:
 - value-type joins,
 - return-slot joins,
 - function-param fact joins,
-- param-hint joins,
+- parameter-evidence joins,
 - table-top absorption,
 - soft-placeholder replacement,
 - open-record row-tail merging,
@@ -2837,7 +2898,7 @@ Current scattered concepts:
 - signature projection to body use.
 
 These concepts are real. The problem is not that they exist. The problem is that
-they appear as local helpers in `returns`, `paramhints`, `flow`, `synth`, and
+they appear as local helpers in `returns`, `paramevidence`, `flow`, `synth`, and
 `typ`, with overlapping responsibilities.
 
 That creates the "guacamole" feeling: behavior is strong, but the mental model
@@ -3099,7 +3160,7 @@ compiler/check/domain/paramevidence
 
 Current split:
 
-- some policy lives in `compiler/check/infer/paramhints`,
+- some policy lives in `compiler/check/infer/paramevidence`,
 - some lives in `compiler/check/returns/widen.go`,
 - some lives in return SCC inference,
 - some lives in interproc postflow.
@@ -3151,7 +3212,7 @@ helper joins directly.
 | function fact type merge | `compiler/check/returns/join.go` | `domain/functionfact` |
 | function param-slot refinement | `compiler/check/returns/join.go`, `widen.go` | `domain/functionfact.ParamSlotDomain` |
 | return-vector merge/repair | `compiler/check/returns/join.go` | `domain/returnsummary` |
-| table-top absorption | `infer/paramhints`, `returns/widen.go` | `domain/paramevidence` plus value-domain classifier |
+| table-top absorption | `infer/paramevidence`, `returns/widen.go` | `domain/paramevidence` plus value-domain classifier |
 | soft vs concrete evidence | `typ/soft.go`, `returns/widen.go`, return overlay | `domain/value` evidence policy |
 | open-record row-tail merge | `types/typ/policy.go` | `domain/value` row-shape policy |
 | path/query/alias identity | `constraint`, `flowbuild/path`, `flow/pathkey` | `memory` |
@@ -3732,7 +3793,7 @@ incremental boundaries and no hidden semantic cache.
 | `snapshotInputs.constructorFields` | constructor field snapshot | Salsa input | memory/constructor boundary |
 | `types/query/core.Engine` | pure type operations | query engine cache | type-query layer |
 | `types/flow.ProductDomain` | branch-local narrowing algebra | ephemeral domain state | abstract state / flow domain |
-| `paramhints.collectParamUses` | body-demand summary | graph-derived Salsa query | graph summary layer |
+| `paramevidence.collectParamUses` | body-demand summary | graph-derived Salsa query | graph summary layer |
 | `ProjectHintsToParamUse` | parameter evidence projection | domain operation over cached body summary | parameter domain |
 | `PreCache` / `NarrowCache` | repeated expression synthesis inside one solve | per-function local cache | transfer/query phase |
 | `FunctionTypeCache` | local function specialization during one solve | per-function local cache unless key is immutable | function analysis |
@@ -3900,7 +3961,7 @@ The checker has laws such as:
 - `unknown` in return summaries is unresolved runtime behavior,
 - open record absent field means row-tail, not nil,
 - nil field can satisfy optional absence in record subtyping,
-- table-top can absorb precise table evidence in parameter hints,
+- table-top can absorb precise table evidence in parameter evidence,
 - truthy refinement can remove falsy key alternatives.
 
 Today many of these appear as function names buried in unrelated packages. They
@@ -3943,7 +4004,7 @@ Parameter evidence currently comes from:
 
 The final design needs one `ParameterEvidence` lattice with evidence provenance
 and merge mode. The implementation should not need separate helpers for
-"param hints" and "function param facts" that rediscover the same truthiness,
+"parameter evidence" and "function param facts" that rediscover the same truthiness,
 softness, and table-key laws.
 
 ### 5. Relation Facts Are Under-Modeled

@@ -254,10 +254,10 @@ func TestReturnFieldMerge_ModuleImport(t *testing.T) {
 	}
 }
 
-// TestParamHintsSeesEnrichedReturns verifies that param hints are computed
+// TestParameterEvidenceSeesEnrichedReturns verifies that parameter evidence is computed
 // using enriched return types (with field merges applied), not raw returns.
-// This test fails with the timing bug (param hints see {} instead of {value: number}).
-func TestParamHintsSeesEnrichedReturns(t *testing.T) {
+// This test fails with the timing bug (parameter evidence sees {} instead of {value: number}).
+func TestParameterEvidenceSeesEnrichedReturns(t *testing.T) {
 	code := `
 		local function make_obj()
 			local obj = {}
@@ -277,8 +277,8 @@ func TestParamHintsSeesEnrichedReturns(t *testing.T) {
 	}
 }
 
-// TestParamHintsSeesEnrichedReturns_Method verifies method calls work through param hints.
-func TestParamHintsSeesEnrichedReturns_Method(t *testing.T) {
+// TestParameterEvidenceSeesEnrichedReturns_Method verifies method calls work through parameter evidence.
+func TestParameterEvidenceSeesEnrichedReturns_Method(t *testing.T) {
 	code := `
 		local function make_obj()
 			local obj = {}

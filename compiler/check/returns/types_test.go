@@ -12,13 +12,13 @@ import (
 func TestLocalFuncInfoStructure(t *testing.T) {
 	t.Run("struct fields are accessible", func(t *testing.T) {
 		info := LocalFuncInfo{
-			Sym:        cfg.SymbolID(1),
-			Fn:         &ast.FunctionExpr{},
-			DefScope:   scope.New(),
-			Graph:      &cfg.Graph{},
-			ParentFn:   nil,
-			DefPoint:   cfg.Point(0),
-			ParamHints: []typ.Type{typ.String, typ.Number},
+			Sym:               cfg.SymbolID(1),
+			Fn:                &ast.FunctionExpr{},
+			DefScope:          scope.New(),
+			Graph:             &cfg.Graph{},
+			ParentFn:          nil,
+			DefPoint:          cfg.Point(0),
+			ParameterEvidence: []typ.Type{typ.String, typ.Number},
 		}
 
 		if info.Sym != cfg.SymbolID(1) {
@@ -39,8 +39,8 @@ func TestLocalFuncInfoStructure(t *testing.T) {
 		if info.DefPoint != cfg.Point(0) {
 			t.Fatalf("expected DefPoint=0, got %v", info.DefPoint)
 		}
-		if len(info.ParamHints) != 2 {
-			t.Fatalf("expected 2 ParamHints, got %d", len(info.ParamHints))
+		if len(info.ParameterEvidence) != 2 {
+			t.Fatalf("expected 2 ParameterEvidence, got %d", len(info.ParameterEvidence))
 		}
 	})
 
@@ -52,8 +52,8 @@ func TestLocalFuncInfoStructure(t *testing.T) {
 		if info.Fn != nil {
 			t.Fatal("expected nil Fn")
 		}
-		if info.ParamHints != nil {
-			t.Fatal("expected nil ParamHints")
+		if info.ParameterEvidence != nil {
+			t.Fatal("expected nil ParameterEvidence")
 		}
 	})
 }

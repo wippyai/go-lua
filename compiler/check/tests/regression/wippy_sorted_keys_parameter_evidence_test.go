@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// Regression: call-site param hints must keep informative soft map shapes.
+// Regression: call-site parameter evidence must keep informative soft map shapes.
 // If {[string]: any[]} is dropped as "soft", sorted key iteration degrades to
 // `name: any`, which then breaks suites[name] and downstream run_test(entry.id).
 func TestWippyRunner_SortedKeysRetainsMapKeyHints(t *testing.T) {
@@ -99,7 +99,7 @@ func TestWippyRunner_SortedKeysRetainsMapKeyHints(t *testing.T) {
 		for _, d := range result.Errors {
 			t.Logf("error: %s", d.Message)
 		}
-		t.Fatal("expected no errors for sorted_keys/group_by_suite hint propagation")
+		t.Fatal("expected no errors for sorted_keys/group_by_suite evidence propagation")
 	}
 }
 
@@ -392,15 +392,14 @@ func TestWippyRunner_NearLiteralTestRunnerFlow(t *testing.T) {
 			parentHash := result.Session.Store.GraphParentHashOf(root.ID())
 			parent := result.Session.Store.Parents()[parentHash]
 			functionFacts := result.Session.Store.GetFunctionFactsSnapshot(root, parent)
-			hints := result.Session.Store.GetParamHintsSnapshot(root, parent)
 			if bindings := result.Session.Store.ModuleBindings(); bindings != nil {
 				for sym, fact := range functionFacts {
 					name := bindings.Name(sym)
 					if name == "sorted_keys" || name == "run_suite" || name == "run_test" || name == "group_by_suite" {
 						fnType := fact.Type
 						t.Logf("local-fn %q sym=%d type=%s", name, sym, typ.Format(fnType, typ.DefaultFormatOptions))
-						if hv := hints[sym]; len(hv) > 0 {
-							t.Logf("param-hints %q: %v", name, hv)
+						if hv := fact.Params; len(hv) > 0 {
+							t.Logf("parameter-evidence %q: %v", name, hv)
 						}
 					}
 				}

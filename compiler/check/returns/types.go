@@ -29,11 +29,11 @@
 // to avoid circular dependence, while canonical function facts are used for
 // functions outside the SCC (whose types are already known).
 //
-// # Parameter Hint Propagation
+// # Parameter Evidence Propagation
 //
-// For unannotated parameters, the system propagates type hints from call sites.
-// If function `f` is called as `f(42)`, the first parameter of `f` is hinted
-// as `number`. Hints are joined across all call sites and propagated through
+// For unannotated parameters, the system propagates evidence from call sites.
+// If function `f` is called as `f(42)`, the first parameter of `f` records
+// number evidence. Evidence is joined across all call sites and propagated through
 // the call graph until fixpoint.
 package returns
 
@@ -48,7 +48,7 @@ import (
 //
 // Each LocalFuncInfo represents a function that may participate in mutual
 // recursion with other local functions. The info includes the function's
-// AST, CFG, definition context, and any parameter hints inferred from
+// AST, CFG, definition context, and any parameter evidence inferred from
 // call sites.
 type LocalFuncInfo struct {
 	Sym      cfg.SymbolID
@@ -56,13 +56,13 @@ type LocalFuncInfo struct {
 	DefScope *scope.State
 	Graph    *cfg.Graph
 	// ParentGraph is the graph where this local function is defined.
-	// Used for parent-scope callsite hint propagation.
+	// Used for parent-scope callsite evidence propagation.
 	ParentGraph *cfg.Graph
 	ParentFn    *ast.FunctionExpr
 	DefPoint    cfg.Point
-	// ParamHints holds inferred effective-parameter types from call sites in the
+	// ParameterEvidence holds inferred effective-parameter types from call sites in the
 	// parent graph. For methods, index 0 is self.
-	ParamHints []typ.Type
+	ParameterEvidence []typ.Type
 }
 
 // MaxReturnSummaryIterations limits fixpoint iterations for return-vector inference.

@@ -50,16 +50,16 @@ func TestInterprocFactWriter_MergeParentFactsForSymbol(t *testing.T) {
 	writer := newInterprocFactWriter(stub)
 
 	ok := writer.mergeParentFactsForSymbol(3, api.Facts{
-		ParamHints: map[cfg.SymbolID][]typ.Type{
-			3: {typ.String},
+		FunctionFacts: api.FunctionFacts{
+			3: {Params: []typ.Type{typ.String}},
 		},
 	})
 	if !ok {
 		t.Fatal("expected update to succeed")
 	}
 	got := stub.factsByGraphKeyNext[key]
-	if len(got.ParamHints[3]) != 1 || !typ.TypeEquals(got.ParamHints[3][0], typ.String) {
-		t.Fatalf("unexpected parent facts update: %#v", got.ParamHints)
+	if params := got.FunctionFacts.Params(3); len(params) != 1 || !typ.TypeEquals(params[0], typ.String) {
+		t.Fatalf("unexpected parent facts update: %#v", got.FunctionFacts)
 	}
 
 	if writer.mergeParentFactsForSymbol(99, api.Facts{}) {

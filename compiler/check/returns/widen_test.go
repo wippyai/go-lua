@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -176,7 +177,7 @@ func TestMergeReturnSummary_KeepsNonRecursiveContainerRefinement(t *testing.T) {
 	}
 }
 
-func TestWidenParamHints_StopsSelfEmbeddingRecordGrowth(t *testing.T) {
+func TestWidenParameterEvidence_StopsSelfEmbeddingRecordGrowth(t *testing.T) {
 	prevHint := typ.NewUnion(
 		typ.Number,
 		typ.NewRecord().
@@ -189,18 +190,18 @@ func TestWidenParamHints_StopsSelfEmbeddingRecordGrowth(t *testing.T) {
 		SetOpen(true).
 		Build()
 
-	merged := WidenParamHints(
-		api.ParamHints{1: []typ.Type{prevHint}},
-		api.ParamHints{1: []typ.Type{nextHint}},
+	merged := WidenParameterEvidence(
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{prevHint}},
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{nextHint}},
 	)
 
 	got := merged[1][0]
 	if !typ.TypeEquals(got, prevHint) {
-		t.Fatalf("expected stable previous hint, got %v", got)
+		t.Fatalf("expected stable previous evidence, got %v", got)
 	}
 }
 
-func TestWidenParamHints_StopsSelfEmbeddingContainerGrowth(t *testing.T) {
+func TestWidenParameterEvidence_StopsSelfEmbeddingContainerGrowth(t *testing.T) {
 	prevHint := typ.NewUnion(
 		typ.Number,
 		typ.NewRecord().
@@ -243,28 +244,28 @@ func TestWidenParamHints_StopsSelfEmbeddingContainerGrowth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			merged := WidenParamHints(
-				api.ParamHints{1: []typ.Type{prevHint}},
-				api.ParamHints{1: []typ.Type{tt.next}},
+			merged := WidenParameterEvidence(
+				map[cfg.SymbolID][]typ.Type{1: []typ.Type{prevHint}},
+				map[cfg.SymbolID][]typ.Type{1: []typ.Type{tt.next}},
 			)
 
 			got := merged[1][0]
 			if !typ.TypeEquals(got, prevHint) {
-				t.Fatalf("expected stable previous hint, got %v", got)
+				t.Fatalf("expected stable previous evidence, got %v", got)
 			}
 		})
 	}
 }
 
-func TestWidenParamHints_KeepsFirstRecordWrapperObservation(t *testing.T) {
+func TestWidenParameterEvidence_KeepsFirstRecordWrapperObservation(t *testing.T) {
 	nextHint := typ.NewRecord().
 		Field("limit", typ.Number).
 		SetOpen(true).
 		Build()
 
-	merged := WidenParamHints(
-		api.ParamHints{1: []typ.Type{typ.Number}},
-		api.ParamHints{1: []typ.Type{nextHint}},
+	merged := WidenParameterEvidence(
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{typ.Number}},
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{nextHint}},
 	)
 
 	got := merged[1][0]
@@ -272,11 +273,11 @@ func TestWidenParamHints_KeepsFirstRecordWrapperObservation(t *testing.T) {
 		t.Fatalf("expected wrapper observation to be preserved, got %v", got)
 	}
 	if !typ.TypeEquals(got, typ.NewUnion(typ.Number, nextHint)) {
-		t.Fatalf("expected number | wrapper hint, got %v", got)
+		t.Fatalf("expected number | wrapper evidence, got %v", got)
 	}
 }
 
-func TestWidenParamHints_JoinsNestedRecordObservations(t *testing.T) {
+func TestWidenParameterEvidence_JoinsNestedRecordObservations(t *testing.T) {
 	nested := typ.NewRecord().
 		Field("routes", typ.NewRecord().Field("users", typ.Boolean).SetOpen(true).Build()).
 		SetOpen(true).
@@ -286,9 +287,9 @@ func TestWidenParamHints_JoinsNestedRecordObservations(t *testing.T) {
 		SetOpen(true).
 		Build()
 
-	merged := WidenParamHints(
-		api.ParamHints{1: []typ.Type{outer}},
-		api.ParamHints{1: []typ.Type{nested}},
+	merged := WidenParameterEvidence(
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{outer}},
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{nested}},
 	)
 
 	got := merged[1][0]
@@ -298,22 +299,22 @@ func TestWidenParamHints_JoinsNestedRecordObservations(t *testing.T) {
 	}
 }
 
-func TestWidenParamHints_ReplacesStaleBroadHintWithCurrentRefinement(t *testing.T) {
+func TestWidenParameterEvidence_ReplacesStaleBroadHintWithCurrentRefinement(t *testing.T) {
 	stale := typ.NewUnion(typ.String, typ.False)
 	current := typ.String
 
-	merged := WidenParamHints(
-		api.ParamHints{1: []typ.Type{stale}},
-		api.ParamHints{1: []typ.Type{current}},
+	merged := WidenParameterEvidence(
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{stale}},
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{current}},
 	)
 
 	got := merged[1][0]
 	if !typ.TypeEquals(got, current) {
-		t.Fatalf("expected current refined hint %v to replace stale broad hint, got %v", current, got)
+		t.Fatalf("expected current refined evidence %v to replace stale broad evidence, got %v", current, got)
 	}
 }
 
-func TestWidenParamHints_ReplacesSoftContainerPlaceholderWithConcreteElementShape(t *testing.T) {
+func TestWidenParameterEvidence_ReplacesSoftContainerPlaceholderWithConcreteElementShape(t *testing.T) {
 	entry := typ.NewRecord().Field("id", typ.String).Build()
 	stale := typ.NewUnion(
 		typ.NewArray(typ.Any),
@@ -321,63 +322,63 @@ func TestWidenParamHints_ReplacesSoftContainerPlaceholderWithConcreteElementShap
 	)
 	current := typ.NewArray(entry)
 
-	merged := WidenParamHints(
-		api.ParamHints{1: []typ.Type{stale}},
-		api.ParamHints{1: []typ.Type{current}},
+	merged := WidenParameterEvidence(
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{stale}},
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{current}},
 	)
 
 	got := merged[1][0]
 	if !typ.TypeEquals(got, current) {
-		t.Fatalf("expected concrete array hint %v to replace soft stale hint, got %v", current, got)
+		t.Fatalf("expected concrete array evidence %v to replace soft stale evidence, got %v", current, got)
 	}
 }
 
-func TestWidenParamHints_PreservesStructuredHintOverNilOnlyObservation(t *testing.T) {
+func TestWidenParameterEvidence_PreservesStructuredHintOverNilOnlyObservation(t *testing.T) {
 	context := typ.NewMap(typ.String, typ.Any)
 
-	merged := WidenParamHints(
-		api.ParamHints{1: []typ.Type{typ.String, typ.Any, context}},
-		api.ParamHints{1: []typ.Type{typ.String, typ.Any, typ.Nil}},
+	merged := WidenParameterEvidence(
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{typ.String, typ.Any, context}},
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{typ.String, typ.Any, typ.Nil}},
 	)
 
 	got := merged[1][2]
 	if !typ.TypeEquals(got, context) {
-		t.Fatalf("expected nil-only observation to preserve structured hint %v, got %v", context, got)
+		t.Fatalf("expected nil-only observation to preserve structured evidence %v, got %v", context, got)
 	}
 
-	again := WidenParamHints(merged, api.ParamHints{1: []typ.Type{typ.String, typ.Any, typ.Nil}})
-	if !symbolTypeVectorMapEqual(merged, again) {
+	again := WidenParameterEvidence(merged, map[cfg.SymbolID][]typ.Type{1: []typ.Type{typ.String, typ.Any, typ.Nil}})
+	if !parameterEvidenceEqual(merged, again) {
 		t.Fatalf("expected idempotent nil-only observation widening, got %v then %v", merged, again)
 	}
 }
 
-func TestWidenParamHints_PreservesMapHintOverOptionalOpenRecordObservation(t *testing.T) {
+func TestWidenParameterEvidence_PreservesMapHintOverOptionalOpenRecordObservation(t *testing.T) {
 	context := typ.NewMap(typ.String, typ.Any)
 	optionalContextRecord := typ.NewOptional(typ.NewRecord().
 		MapComponent(typ.String, typ.Any).
 		SetOpen(true).
 		Build())
 
-	merged := WidenParamHints(
-		api.ParamHints{1: []typ.Type{typ.String, typ.Any, context}},
-		api.ParamHints{1: []typ.Type{typ.String, typ.Any, optionalContextRecord}},
+	merged := WidenParameterEvidence(
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{typ.String, typ.Any, context}},
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{typ.String, typ.Any, optionalContextRecord}},
 	)
 
 	got := merged[1][2]
 	if got == nil || typ.TypeEquals(got, typ.Nil) {
-		t.Fatalf("expected optional structured observation to preserve context hint, got %v", got)
+		t.Fatalf("expected optional structured observation to preserve context evidence, got %v", got)
 	}
 	if !typ.TypeEquals(got, typ.NewOptional(context)) {
 		t.Fatalf("expected pure map observation to stay canonical, got %v", got)
 	}
 
-	again := WidenParamHints(merged, api.ParamHints{1: []typ.Type{typ.String, typ.Any, optionalContextRecord}})
-	if !symbolTypeVectorMapEqual(merged, again) {
+	again := WidenParameterEvidence(merged, map[cfg.SymbolID][]typ.Type{1: []typ.Type{typ.String, typ.Any, optionalContextRecord}})
+	if !parameterEvidenceEqual(merged, again) {
 		t.Fatalf("expected idempotent optional structured observation widening, got %v then %v", merged, again)
 	}
 }
 
-func TestWidenParamHints_CollapsesPureOpenRecordMapToCanonicalMap(t *testing.T) {
+func TestWidenParameterEvidence_CollapsesPureOpenRecordMapToCanonicalMap(t *testing.T) {
 	entry := typ.NewRecord().Field("id", typ.String).Build()
 	canonical := typ.NewMap(typ.String, typ.NewArray(entry))
 	staleRecordView := typ.NewRecord().
@@ -385,18 +386,18 @@ func TestWidenParamHints_CollapsesPureOpenRecordMapToCanonicalMap(t *testing.T) 
 		SetOpen(true).
 		Build()
 
-	merged := WidenParamHints(
-		api.ParamHints{1: []typ.Type{staleRecordView}},
-		api.ParamHints{1: []typ.Type{canonical}},
+	merged := WidenParameterEvidence(
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{staleRecordView}},
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{canonical}},
 	)
 
 	got := merged[1][0]
 	if !typ.TypeEquals(got, canonical) {
-		t.Fatalf("expected pure keyed table hint to canonicalize to %v, got %v", canonical, got)
+		t.Fatalf("expected pure keyed table evidence to canonicalize to %v, got %v", canonical, got)
 	}
 }
 
-func TestWidenParamHints_TableTopUpperBoundAbsorbsRecordUnion(t *testing.T) {
+func TestWidenParameterEvidence_TableTopUpperBoundAbsorbsRecordUnion(t *testing.T) {
 	tableTop := typ.NewOptional(typ.NewInterface("table", nil))
 	strategySpec := typ.NewRecord().
 		Field("kind", typ.LiteralString("strategy")).
@@ -408,9 +409,9 @@ func TestWidenParamHints_TableTopUpperBoundAbsorbsRecordUnion(t *testing.T) {
 		Build()
 	nextHint := typ.NewUnion(strategySpec, contextSpec)
 
-	merged := WidenParamHints(
-		api.ParamHints{1: []typ.Type{tableTop}},
-		api.ParamHints{1: []typ.Type{nextHint}},
+	merged := WidenParameterEvidence(
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{tableTop}},
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{nextHint}},
 	)
 
 	got := merged[1][0]
@@ -418,18 +419,18 @@ func TestWidenParamHints_TableTopUpperBoundAbsorbsRecordUnion(t *testing.T) {
 		t.Fatalf("expected table top upper bound %v, got %v", tableTop, got)
 	}
 
-	again := WidenParamHints(merged, api.ParamHints{1: []typ.Type{nextHint}})
-	if !symbolTypeVectorMapEqual(merged, again) {
+	again := WidenParameterEvidence(merged, map[cfg.SymbolID][]typ.Type{1: []typ.Type{nextHint}})
+	if !parameterEvidenceEqual(merged, again) {
 		t.Fatalf("expected idempotent table-top widening, got %v then %v", merged, again)
 	}
 }
 
-func TestWidenParamHints_TableTopUpperBoundAbsorbsAnyObservation(t *testing.T) {
+func TestWidenParameterEvidence_TableTopUpperBoundAbsorbsAnyObservation(t *testing.T) {
 	tableTop := typ.NewOptional(typ.NewInterface("table", nil))
 
-	merged := WidenParamHints(
-		api.ParamHints{1: []typ.Type{tableTop}},
-		api.ParamHints{1: []typ.Type{typ.Any}},
+	merged := WidenParameterEvidence(
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{tableTop}},
+		map[cfg.SymbolID][]typ.Type{1: []typ.Type{typ.Any}},
 	)
 
 	got := merged[1][0]
@@ -437,10 +438,23 @@ func TestWidenParamHints_TableTopUpperBoundAbsorbsAnyObservation(t *testing.T) {
 		t.Fatalf("expected dynamic observation to preserve table top upper bound %v, got %v", tableTop, got)
 	}
 
-	again := WidenParamHints(merged, api.ParamHints{1: []typ.Type{typ.Any}})
-	if !symbolTypeVectorMapEqual(merged, again) {
+	again := WidenParameterEvidence(merged, map[cfg.SymbolID][]typ.Type{1: []typ.Type{typ.Any}})
+	if !parameterEvidenceEqual(merged, again) {
 		t.Fatalf("expected idempotent table-top/any widening, got %v then %v", merged, again)
 	}
+}
+
+func parameterEvidenceEqual(a, b map[cfg.SymbolID][]typ.Type) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, sym := range cfg.SortedSymbolIDs(a) {
+		right, ok := b[sym]
+		if !ok || !ReturnTypesEqual(a[sym], right) {
+			return false
+		}
+	}
+	return true
 }
 
 func TestWidenCapturedFieldAssigns_NormalizesOptionalFunctionValues(t *testing.T) {

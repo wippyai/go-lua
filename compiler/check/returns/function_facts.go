@@ -25,6 +25,7 @@ func markFunctionFactSymbols[T any](dst map[cfg.SymbolID]bool, src map[cfg.Symbo
 
 func NormalizeFunctionFact(ff api.FunctionFact) api.FunctionFact {
 	return api.FunctionFact{
+		Params:  filterEmptyParameterEvidenceVector(ff.Params),
 		Summary: canonicalReturnVector(ff.Summary),
 		Narrow:  canonicalReturnVector(ff.Narrow),
 		Type:    normalizeInterprocValueType(ff.Type),
@@ -32,7 +33,7 @@ func NormalizeFunctionFact(ff api.FunctionFact) api.FunctionFact {
 }
 
 func functionFactEmpty(ff api.FunctionFact) bool {
-	return len(ff.Summary) == 0 && len(ff.Narrow) == 0 && ff.Type == nil
+	return len(ff.Params) == 0 && len(ff.Summary) == 0 && len(ff.Narrow) == 0 && ff.Type == nil
 }
 
 func readFunctionFactFromFacts(facts *api.Facts, sym cfg.SymbolID) api.FunctionFact {

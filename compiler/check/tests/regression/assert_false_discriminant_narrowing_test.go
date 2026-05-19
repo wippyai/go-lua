@@ -665,7 +665,7 @@ return mapper
 	}
 }
 
-func TestRegression_PartialRecordParamHintsBecomeOptionalFields(t *testing.T) {
+func TestRegression_PartialRecordParameterEvidenceBecomeOptionalFields(t *testing.T) {
 	source := `
 local mapper = {}
 
@@ -692,7 +692,7 @@ mapper.map_tokens({ thoughtsTokenCount = 40 })
 	}
 }
 
-func TestRegression_NestedPartialRecordParamHintsBecomeOptionalFields(t *testing.T) {
+func TestRegression_NestedPartialRecordParameterEvidenceBecomeOptionalFields(t *testing.T) {
 	source := `
 local mapper = {}
 

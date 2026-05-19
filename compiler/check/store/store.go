@@ -542,7 +542,6 @@ func (s *SessionStore) ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, 
 
 func factsEmpty(f api.Facts) bool {
 	return len(f.FunctionFacts) == 0 &&
-		len(f.ParamHints) == 0 &&
 		len(f.LiteralSigs) == 0 &&
 		len(f.CapturedTypes) == 0 &&
 		len(f.CapturedFields) == 0 &&
@@ -805,15 +804,6 @@ func (s *SessionStore) GetInterprocFactsSnapshot(
 		return api.Facts{}
 	}
 	return s.currentInterprocFacts(key)
-}
-
-// GetParamHintsSnapshot returns param hints from the stable interproc snapshot.
-func (s *SessionStore) GetParamHintsSnapshot(
-	graph *cfg.Graph,
-	parent *scope.State,
-) map[cfg.SymbolID][]typ.Type {
-	s.requirePhase(api.PhaseScopeCompute)
-	return s.GetInterprocFactsSnapshot(graph, parent).ParamHints
 }
 
 // GetFunctionFactsSnapshot returns canonical function facts from the stable

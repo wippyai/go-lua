@@ -3,7 +3,7 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -14,7 +14,6 @@ import (
 // WidenFacts merges two interproc fact bundles.
 func WidenFacts(prev, next api.Facts) api.Facts {
 	out := api.Facts{
-		ParamHints:         WidenParamHints(prev.ParamHints, next.ParamHints),
 		LiteralSigs:        WidenLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:      WidenCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
 		CapturedFields:     WidenCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
@@ -44,7 +43,6 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 // inside one analysis round. Recursive fixpoint boundaries must use WidenFacts.
 func JoinFacts(prev, next api.Facts) api.Facts {
 	out := api.Facts{
-		ParamHints:         JoinParamHints(prev.ParamHints, next.ParamHints),
 		LiteralSigs:        JoinLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:      JoinCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
 		CapturedFields:     JoinCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
@@ -66,6 +64,7 @@ func JoinFacts(prev, next api.Facts) api.Facts {
 
 func widenFunctionFactForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 	out := api.FunctionFact{
+		Params:  joinParameterEvidenceVectors(prev.Params, next.Params),
 		Summary: widenReturnSummaryForConvergence(prev.Summary, next.Summary),
 		Narrow:  widenReturnSummaryForConvergence(prev.Narrow, next.Narrow),
 		Type:    widenFunctionFactTypeForConvergence(prev.Type, next.Type),
@@ -479,46 +478,47 @@ func unionMembers(t typ.Type) []typ.Type {
 	}
 }
 
-// WidenParamHints merges two param hint maps using monotone union.
-func WidenParamHints(prev, next api.ParamHints) api.ParamHints {
+// WidenParameterEvidence merges two parameter evidence maps using the same
+// vector law used by canonical FunctionFacts.
+func WidenParameterEvidence(prev, next map[cfg.SymbolID][]typ.Type) map[cfg.SymbolID][]typ.Type {
 	if prev == nil && next == nil {
 		return nil
 	}
 	if prev == nil {
-		return filterEmptyParamHints(next)
+		return filterEmptyParameterEvidence(next)
 	}
 	if next == nil {
-		return filterEmptyParamHints(prev)
+		return filterEmptyParameterEvidence(prev)
 	}
-	merged := make(api.ParamHints, len(prev)+len(next))
+	merged := make(map[cfg.SymbolID][]typ.Type, len(prev)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(prev) {
-		hints := normalizeParamHintVector(prev[sym])
-		if hasNonNilHint(hints) {
-			merged[sym] = hints
+		evidence := normalizeParameterEvidenceVector(prev[sym])
+		if hasNonNilEvidence(evidence) {
+			merged[sym] = evidence
 		}
 	}
 	for _, sym := range cfg.SortedSymbolIDs(next) {
-		hints := normalizeParamHintVector(next[sym])
-		if !hasNonNilHint(hints) {
+		evidence := normalizeParameterEvidenceVector(next[sym])
+		if !hasNonNilEvidence(evidence) {
 			continue
 		}
 		if existing := merged[sym]; existing != nil {
-			merged[sym] = joinParamHintVectors(existing, hints)
+			merged[sym] = joinParameterEvidenceVectors(existing, evidence)
 		} else {
-			merged[sym] = hints
+			merged[sym] = evidence
 		}
 	}
 	return merged
 }
 
-func filterEmptyParamHints(hints api.ParamHints) api.ParamHints {
-	if hints == nil {
+func filterEmptyParameterEvidence(evidence map[cfg.SymbolID][]typ.Type) map[cfg.SymbolID][]typ.Type {
+	if evidence == nil {
 		return nil
 	}
-	out := make(api.ParamHints, len(hints))
-	for _, sym := range cfg.SortedSymbolIDs(hints) {
-		v := normalizeParamHintVector(hints[sym])
-		if hasNonNilHint(v) {
+	out := make(map[cfg.SymbolID][]typ.Type, len(evidence))
+	for _, sym := range cfg.SortedSymbolIDs(evidence) {
+		v := filterEmptyParameterEvidenceVector(evidence[sym])
+		if hasNonNilEvidence(v) {
 			out[sym] = v
 		}
 	}
@@ -528,37 +528,45 @@ func filterEmptyParamHints(hints api.ParamHints) api.ParamHints {
 	return out
 }
 
-func normalizeParamHintVector(hints []typ.Type) []typ.Type {
+func filterEmptyParameterEvidenceVector(evidence []typ.Type) []typ.Type {
+	v := normalizeParameterEvidenceVector(evidence)
+	if !hasNonNilEvidence(v) {
+		return nil
+	}
+	return v
+}
+
+func normalizeParameterEvidenceVector(evidence []typ.Type) []typ.Type {
 	var out []typ.Type
-	for i, hint := range hints {
-		normalized := paramhints.NormalizeHintType(hint)
+	for i, observed := range evidence {
+		normalized := paramevidence.NormalizeType(observed)
 		if out != nil {
 			out[i] = normalized
 			continue
 		}
-		if !typ.TypeEquals(hint, normalized) {
-			out = make([]typ.Type, len(hints))
-			copy(out, hints[:i])
+		if !typ.TypeEquals(observed, normalized) {
+			out = make([]typ.Type, len(evidence))
+			copy(out, evidence[:i])
 			out[i] = normalized
 		}
 	}
 	if out != nil {
 		return out
 	}
-	return hints
+	return evidence
 }
 
-func hasNonNilHint(hints []typ.Type) bool {
-	for _, h := range hints {
-		if h != nil {
+func hasNonNilEvidence(evidence []typ.Type) bool {
+	for _, observed := range evidence {
+		if observed != nil {
 			return true
 		}
 	}
 	return false
 }
 
-// joinParamHintVectors joins two parameter hint vectors element-wise.
-func joinParamHintVectors(a, b []typ.Type) []typ.Type {
+// joinParameterEvidenceVectors joins two parameter evidence vectors element-wise.
+func joinParameterEvidenceVectors(a, b []typ.Type) []typ.Type {
 	if len(a) == 0 {
 		return b
 	}
@@ -578,14 +586,14 @@ func joinParamHintVectors(a, b []typ.Type) []typ.Type {
 		if i < len(b) {
 			bi = b[i]
 		}
-		result[i] = joinParamHint(ai, bi)
+		result[i] = joinParameterEvidence(ai, bi)
 	}
 	return result
 }
 
-func joinParamHint(a, b typ.Type) typ.Type {
-	a = paramhints.NormalizeHintType(a)
-	b = paramhints.NormalizeHintType(b)
+func joinParameterEvidence(a, b typ.Type) typ.Type {
+	a = paramevidence.NormalizeType(a)
+	b = paramevidence.NormalizeType(b)
 	if a == nil {
 		return b
 	}
@@ -598,15 +606,15 @@ func joinParamHint(a, b typ.Type) typ.Type {
 	if unwrap.IsNilType(b) && !unwrap.IsNilType(a) {
 		return a
 	}
-	if joined, ok := joinNilableParamHint(a, b); ok {
+	if joined, ok := joinNilableParameterEvidence(a, b); ok {
 		return joined
 	}
-	return joinNonNilParamHint(a, b)
+	return joinNonNilParameterEvidence(a, b)
 }
 
-func joinNilableParamHint(a, b typ.Type) (typ.Type, bool) {
-	ai, anil := splitNilableParamHint(a)
-	bi, bnil := splitNilableParamHint(b)
+func joinNilableParameterEvidence(a, b typ.Type) (typ.Type, bool) {
+	ai, anil := splitNilableParameterEvidence(a)
+	bi, bnil := splitNilableParameterEvidence(b)
 	if !anil && !bnil {
 		return nil, false
 	}
@@ -619,10 +627,10 @@ func joinNilableParamHint(a, b typ.Type) (typ.Type, bool) {
 	if bi == nil {
 		return typ.NewOptional(ai), true
 	}
-	return typ.NewOptional(joinNonNilParamHint(ai, bi)), true
+	return typ.NewOptional(joinNonNilParameterEvidence(ai, bi)), true
 }
 
-func splitNilableParamHint(t typ.Type) (typ.Type, bool) {
+func splitNilableParameterEvidence(t typ.Type) (typ.Type, bool) {
 	t = unwrap.Alias(t)
 	switch v := t.(type) {
 	case nil:
@@ -652,8 +660,8 @@ func splitNilableParamHint(t typ.Type) (typ.Type, bool) {
 	}
 }
 
-func joinNonNilParamHint(a, b typ.Type) typ.Type {
-	if upper, ok := selectParamHintTableUpperBound(a, b); ok {
+func joinNonNilParameterEvidence(a, b typ.Type) typ.Type {
+	if upper, ok := selectParameterEvidenceTableUpperBound(a, b); ok {
 		return upper
 	}
 	if preferred, ok := preferConcreteOverSoftType(a, b); ok {
@@ -680,7 +688,7 @@ func joinNonNilParamHint(a, b typ.Type) typ.Type {
 	if joined, ok := typ.JoinCompatibleRecords(a, b); ok {
 		return joined
 	}
-	if joined, ok := joinParamHintMapRecord(a, b); ok {
+	if joined, ok := joinParameterEvidenceMapRecord(a, b); ok {
 		return joined
 	}
 	if TypeExtendsRecord(a, b) {
@@ -697,7 +705,7 @@ func joinNonNilParamHint(a, b typ.Type) typ.Type {
 			return a
 		}
 	}
-	return paramhints.NormalizeHintType(typ.JoinPreferNonSoft(a, b))
+	return paramevidence.NormalizeType(typ.JoinPreferNonSoft(a, b))
 }
 
 func preferConcreteOverSoftType(a, b typ.Type) (typ.Type, bool) {
@@ -723,14 +731,14 @@ func preferConcreteOverNilableSoftType(a, b typ.Type) (typ.Type, bool) {
 }
 
 func preferConcreteOverNilableSoftTypeDirected(softMaybeNil, concrete typ.Type) (typ.Type, bool) {
-	inner, nilable := splitNilableParamHint(softMaybeNil)
+	inner, nilable := splitNilableParameterEvidence(softMaybeNil)
 	if !nilable || inner == nil || !typ.IsSoft(inner, typ.SoftPlaceholderPolicy) {
 		return nil, false
 	}
 	if concrete == nil || unwrap.IsNilType(concrete) {
 		return nil, false
 	}
-	concreteInner, concreteNilable := splitNilableParamHint(concrete)
+	concreteInner, concreteNilable := splitNilableParameterEvidence(concrete)
 	if concreteInner == nil {
 		return nil, false
 	}
@@ -743,14 +751,14 @@ func preferConcreteOverNilableSoftTypeDirected(softMaybeNil, concrete typ.Type) 
 	return typ.NewOptional(concrete), true
 }
 
-func joinParamHintMapRecord(a, b typ.Type) (typ.Type, bool) {
-	if joined, ok := joinParamHintMapRecordDirected(a, b); ok {
+func joinParameterEvidenceMapRecord(a, b typ.Type) (typ.Type, bool) {
+	if joined, ok := joinParameterEvidenceMapRecordDirected(a, b); ok {
 		return joined, true
 	}
-	return joinParamHintMapRecordDirected(b, a)
+	return joinParameterEvidenceMapRecordDirected(b, a)
 }
 
-func joinParamHintMapRecordDirected(mapType, recordType typ.Type) (typ.Type, bool) {
+func joinParameterEvidenceMapRecordDirected(mapType, recordType typ.Type) (typ.Type, bool) {
 	m, ok := unwrap.Alias(mapType).(*typ.Map)
 	if !ok || m == nil {
 		return nil, false
@@ -760,8 +768,8 @@ func joinParamHintMapRecordDirected(mapType, recordType typ.Type) (typ.Type, boo
 		return nil, false
 	}
 
-	key := joinNonNilParamHint(m.Key, r.MapKey)
-	value := joinNonNilParamHint(m.Value, r.MapValue)
+	key := joinNonNilParameterEvidence(m.Key, r.MapKey)
+	value := joinNonNilParameterEvidence(m.Value, r.MapValue)
 	if len(r.Fields) == 0 && r.Metatable == nil {
 		return typ.NewMap(key, value), true
 	}
@@ -777,7 +785,7 @@ func joinParamHintMapRecordDirected(mapType, recordType typ.Type) (typ.Type, boo
 		fieldType := field.Type
 		optional := true
 		if subtype.IsSubtype(typ.LiteralString(field.Name), key) {
-			fieldType = joinNonNilParamHint(field.Type, value)
+			fieldType = joinNonNilParameterEvidence(field.Type, value)
 		} else {
 			optional = field.Optional
 		}
@@ -795,23 +803,23 @@ func joinParamHintMapRecordDirected(mapType, recordType typ.Type) (typ.Type, boo
 	return builder.Build(), true
 }
 
-func selectParamHintTableUpperBound(a, b typ.Type) (typ.Type, bool) {
-	if paramHintIsOnlyTableTop(a) && typ.IsAny(b) {
+func selectParameterEvidenceTableUpperBound(a, b typ.Type) (typ.Type, bool) {
+	if parameterEvidenceIsOnlyTableTop(a) && typ.IsAny(b) {
 		return a, true
 	}
-	if paramHintIsOnlyTableTop(b) && typ.IsAny(a) {
+	if parameterEvidenceIsOnlyTableTop(b) && typ.IsAny(a) {
 		return b, true
 	}
-	if paramHintContainsTableTop(a) && paramHintCoveredByTableTop(b) && subtype.IsSubtype(b, a) {
+	if parameterEvidenceContainsTableTop(a) && parameterEvidenceCoveredByTableTop(b) && subtype.IsSubtype(b, a) {
 		return a, true
 	}
-	if paramHintContainsTableTop(b) && paramHintCoveredByTableTop(a) && subtype.IsSubtype(a, b) {
+	if parameterEvidenceContainsTableTop(b) && parameterEvidenceCoveredByTableTop(a) && subtype.IsSubtype(a, b) {
 		return b, true
 	}
 	return nil, false
 }
 
-func paramHintContainsTableTop(t typ.Type) bool {
+func parameterEvidenceContainsTableTop(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
@@ -820,12 +828,12 @@ func paramHintContainsTableTop(t typ.Type) bool {
 	}
 	switch v := typ.UnwrapAnnotated(t).(type) {
 	case *typ.Alias:
-		return paramHintContainsTableTop(v.UnaliasedTarget())
+		return parameterEvidenceContainsTableTop(v.UnaliasedTarget())
 	case *typ.Optional:
-		return paramHintContainsTableTop(v.Inner)
+		return parameterEvidenceContainsTableTop(v.Inner)
 	case *typ.Union:
 		for _, member := range v.Members {
-			if paramHintContainsTableTop(member) {
+			if parameterEvidenceContainsTableTop(member) {
 				return true
 			}
 		}
@@ -833,7 +841,7 @@ func paramHintContainsTableTop(t typ.Type) bool {
 	return false
 }
 
-func paramHintIsOnlyTableTop(t typ.Type) bool {
+func parameterEvidenceIsOnlyTableTop(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
@@ -842,9 +850,9 @@ func paramHintIsOnlyTableTop(t typ.Type) bool {
 	}
 	switch v := typ.UnwrapAnnotated(t).(type) {
 	case *typ.Alias:
-		return paramHintIsOnlyTableTop(v.UnaliasedTarget())
+		return parameterEvidenceIsOnlyTableTop(v.UnaliasedTarget())
 	case *typ.Optional:
-		return paramHintIsOnlyTableTop(v.Inner)
+		return parameterEvidenceIsOnlyTableTop(v.Inner)
 	case *typ.Union:
 		if len(v.Members) == 0 {
 			return false
@@ -854,7 +862,7 @@ func paramHintIsOnlyTableTop(t typ.Type) bool {
 			if unwrap.IsNilType(member) {
 				continue
 			}
-			if !paramHintIsOnlyTableTop(member) {
+			if !parameterEvidenceIsOnlyTableTop(member) {
 				return false
 			}
 			hasTableTop = true
@@ -865,7 +873,7 @@ func paramHintIsOnlyTableTop(t typ.Type) bool {
 	}
 }
 
-func paramHintCoveredByTableTop(t typ.Type) bool {
+func parameterEvidenceCoveredByTableTop(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
@@ -877,17 +885,17 @@ func paramHintCoveredByTableTop(t typ.Type) bool {
 	}
 	switch v := typ.UnwrapAnnotated(t).(type) {
 	case *typ.Alias:
-		return paramHintCoveredByTableTop(v.UnaliasedTarget())
+		return parameterEvidenceCoveredByTableTop(v.UnaliasedTarget())
 	case *typ.Optional:
-		return paramHintCoveredByTableTop(v.Inner)
+		return parameterEvidenceCoveredByTableTop(v.Inner)
 	case *typ.Recursive:
-		return v.Body != nil && v.Body != v && paramHintCoveredByTableTop(v.Body)
+		return v.Body != nil && v.Body != v && parameterEvidenceCoveredByTableTop(v.Body)
 	case *typ.Union:
 		if len(v.Members) == 0 {
 			return false
 		}
 		for _, member := range v.Members {
-			if !paramHintCoveredByTableTop(member) {
+			if !parameterEvidenceCoveredByTableTop(member) {
 				return false
 			}
 		}
@@ -1166,11 +1174,6 @@ func widenFunctionParamFactTypeForConvergence(existing, candidate typ.Type) typ.
 		return candidate
 	}
 	return typ.JoinPreferNonSoft(existing, candidate)
-}
-
-// JoinParamHints merges parameter hints inside one analysis iteration.
-func JoinParamHints(prev, next api.ParamHints) api.ParamHints {
-	return WidenParamHints(prev, next)
 }
 
 // WidenLiteralSigs merges two literal signature maps.

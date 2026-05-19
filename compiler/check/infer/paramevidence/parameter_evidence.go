@@ -1,4 +1,4 @@
-package paramhints
+package paramevidence
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -11,17 +11,17 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-type HintJoinFn func(prev, next typ.Type) typ.Type
+type JoinFn func(prev, next typ.Type) typ.Type
 
 // MergeIntoSignature replaces unannotated parameter slots (and refinable
-// top-like annotations) with call-site hints.
-func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Function) *typ.Function {
+// top-like annotations) with call-site evidence.
+func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Function) *typ.Function {
 	if sig == nil || fn == nil || fn.ParList == nil {
 		return sig
 	}
 	modified := false
 	for i, p := range sig.Params {
-		if i >= len(hints) || hints[i] == nil {
+		if i >= len(evidence) || evidence[i] == nil {
 			continue
 		}
 		if srcIdx, hasSource := signatureSourceParamIndex(fn, sig, i); hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil {
@@ -29,7 +29,7 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 				continue
 			}
 		}
-		if !typ.TypeEquals(p.Type, hints[i]) {
+		if !typ.TypeEquals(p.Type, evidence[i]) {
 			modified = true
 		}
 	}
@@ -40,11 +40,11 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 	builder := typ.Func()
 	for i, p := range sig.Params {
 		paramType := p.Type
-		if i < len(hints) && hints[i] != nil {
+		if i < len(evidence) && evidence[i] != nil {
 			srcIdx, hasSource := signatureSourceParamIndex(fn, sig, i)
 			annotated := hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil
 			if !annotated || typ.IsRefinableAnnotation(paramType) {
-				paramType = hints[i]
+				paramType = evidence[i]
 			}
 		}
 		if p.Optional {
@@ -98,7 +98,7 @@ func signatureHasImplicitSelf(fn *ast.FunctionExpr, sig *typ.Function) bool {
 	return len(sig.Params) == len(fn.ParList.Names)+1
 }
 
-func WidenParamHintType(t typ.Type) typ.Type {
+func WidenType(t typ.Type) typ.Type {
 	if t == nil {
 		return nil
 	}
@@ -115,19 +115,19 @@ func WidenParamHintType(t typ.Type) typ.Type {
 			return typ.String
 		}
 	case *typ.Optional:
-		inner := WidenParamHintType(v.Inner)
+		inner := WidenType(v.Inner)
 		if inner != v.Inner && inner != nil {
 			return typ.NewOptional(inner)
 		}
 	case *typ.Alias:
 		if v.Target != nil {
-			return WidenParamHintType(v.Target)
+			return WidenType(v.Target)
 		}
 	case *typ.Union:
 		changed := false
 		members := make([]typ.Type, 0, len(v.Members))
 		for _, m := range v.Members {
-			wm := WidenParamHintType(m)
+			wm := WidenType(m)
 			if wm != m {
 				changed = true
 			}
@@ -143,7 +143,7 @@ func WidenParamHintType(t typ.Type) typ.Type {
 			builder.SetOpen(true)
 		}
 		for _, f := range v.Fields {
-			ft := WidenParamHintType(f.Type)
+			ft := WidenType(f.Type)
 			if ft != f.Type {
 				changed = true
 			}
@@ -154,8 +154,8 @@ func WidenParamHintType(t typ.Type) typ.Type {
 			}
 		}
 		if v.MapKey != nil && v.MapValue != nil {
-			k := WidenParamHintType(v.MapKey)
-			val := WidenParamHintType(v.MapValue)
+			k := WidenType(v.MapKey)
+			val := WidenType(v.MapValue)
 			if k != v.MapKey || val != v.MapValue {
 				changed = true
 			}
@@ -171,24 +171,24 @@ func WidenParamHintType(t typ.Type) typ.Type {
 	return t
 }
 
-// NormalizeHintType applies canonical widening and soft-member pruning.
-func NormalizeHintType(t typ.Type) typ.Type {
-	return collapseTableTopHint(typ.PruneSoftUnionMembers(WidenParamHintType(t)))
+// NormalizeType applies canonical widening and soft-member pruning.
+func NormalizeType(t typ.Type) typ.Type {
+	return collapseTableTopEvidence(typ.PruneSoftUnionMembers(WidenType(t)))
 }
 
-func collapseTableTopHint(t typ.Type) typ.Type {
+func collapseTableTopEvidence(t typ.Type) typ.Type {
 	if t == nil {
 		return nil
 	}
 	switch v := t.(type) {
 	case *typ.Alias:
-		target := collapseTableTopHint(v.Target)
+		target := collapseTableTopEvidence(v.Target)
 		if target != nil && !typ.TypeEquals(target, v.Target) {
 			return typ.NewAlias(v.Name, target)
 		}
 		return t
 	case *typ.Optional:
-		inner := collapseTableTopHint(v.Inner)
+		inner := collapseTableTopEvidence(v.Inner)
 		if inner != nil && !typ.TypeEquals(inner, v.Inner) {
 			return typ.NewOptional(inner)
 		}
@@ -210,7 +210,7 @@ func collapseTableTopUnion(u *typ.Union) typ.Type {
 
 	if tableTop == nil {
 		for _, member := range u.Members {
-			collapsed := collapseTableTopHint(member)
+			collapsed := collapseTableTopEvidence(member)
 			if !typ.TypeEquals(collapsed, member) {
 				changed = true
 			}
@@ -231,8 +231,8 @@ func collapseTableTopUnion(u *typ.Union) typ.Type {
 			members = append(members, member)
 			continue
 		}
-		collapsed := collapseTableTopHint(member)
-		if tableTopCoversHintMember(collapsed) {
+		collapsed := collapseTableTopEvidence(member)
+		if tableTopCoversEvidenceMember(collapsed) {
 			if !tableAdded {
 				members = append(members, tableTop)
 				tableAdded = true
@@ -255,35 +255,35 @@ func collapseTableTopUnion(u *typ.Union) typ.Type {
 
 func firstTableTopMember(members []typ.Type) typ.Type {
 	for _, member := range members {
-		if isBuiltinTableTopHint(member) {
+		if isBuiltinTableTopEvidence(member) {
 			return member
 		}
 	}
 	return nil
 }
 
-func isBuiltinTableTopHint(t typ.Type) bool {
+func isBuiltinTableTopEvidence(t typ.Type) bool {
 	return unwrap.IsBuiltinTableTop(typ.UnwrapAnnotated(t))
 }
 
-func tableTopCoversHintMember(t typ.Type) bool {
+func tableTopCoversEvidenceMember(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	if isBuiltinTableTopHint(t) {
+	if isBuiltinTableTopEvidence(t) {
 		return true
 	}
 	switch v := typ.UnwrapAnnotated(t).(type) {
 	case *typ.Alias:
-		return tableTopCoversHintMember(v.UnaliasedTarget())
+		return tableTopCoversEvidenceMember(v.UnaliasedTarget())
 	case *typ.Recursive:
-		return v.Body != nil && v.Body != v && tableTopCoversHintMember(v.Body)
+		return v.Body != nil && v.Body != v && tableTopCoversEvidenceMember(v.Body)
 	case *typ.Union:
 		if len(v.Members) == 0 {
 			return false
 		}
 		for _, member := range v.Members {
-			if member == nil || typ.UnwrapAnnotated(member).Kind() == kind.Nil || !tableTopCoversHintMember(member) {
+			if member == nil || typ.UnwrapAnnotated(member).Kind() == kind.Nil || !tableTopCoversEvidenceMember(member) {
 				return false
 			}
 		}
@@ -295,65 +295,65 @@ func tableTopCoversHintMember(t typ.Type) bool {
 	}
 }
 
-// EnsureHintCapacity grows hint vector to at least size.
-func EnsureHintCapacity(hints []typ.Type, size int) []typ.Type {
-	if size <= len(hints) {
-		return hints
+// EnsureCapacity grows evidence vector to at least size.
+func EnsureCapacity(evidence []typ.Type, size int) []typ.Type {
+	if size <= len(evidence) {
+		return evidence
 	}
 	expanded := make([]typ.Type, size)
-	copy(expanded, hints)
+	copy(expanded, evidence)
 	return expanded
 }
 
-// MergeHintAt normalizes and joins one hint into vector slot idx.
-func MergeHintAt(hints []typ.Type, idx int, hint typ.Type, join HintJoinFn) ([]typ.Type, bool) {
+// MergeAt normalizes and joins one observation into vector slot idx.
+func MergeAt(vec []typ.Type, idx int, observed typ.Type, join JoinFn) ([]typ.Type, bool) {
 	if idx < 0 {
-		return hints, false
+		return vec, false
 	}
-	hint = NormalizeHintType(hint)
-	if !IsInformativeHintType(hint) {
-		return hints, false
+	observed = NormalizeType(observed)
+	if !IsInformative(observed) {
+		return vec, false
 	}
-	hints = EnsureHintCapacity(hints, idx+1)
+	vec = EnsureCapacity(vec, idx+1)
 
 	joinFn := join
 	if joinFn == nil {
 		joinFn = typ.JoinPreferNonSoft
 	}
-	prev := hints[idx]
-	merged := joinFn(prev, hint)
+	prev := vec[idx]
+	merged := joinFn(prev, observed)
 	if typ.TypeEquals(prev, merged) {
-		return hints, false
+		return vec, false
 	}
-	hints[idx] = merged
-	return hints, true
+	vec[idx] = merged
+	return vec, true
 }
 
-// MergeCallArgHintAt merges a call-argument observation into a parameter hint
-// slot. Unlike MergeHintAt, unresolved/top-like argument observations are
+// MergeCallArgAt merges a call-argument observation into a parameter evidence
+// slot. Unlike MergeAt, unresolved/top-like argument observations are
 // preserved as uncertainty evidence so later literal calls cannot over-specialize
 // unannotated parameters.
-func MergeCallArgHintAt(hints []typ.Type, idx int, argType typ.Type, join HintJoinFn, unknownOnNil bool) ([]typ.Type, bool) {
+func MergeCallArgAt(evidence []typ.Type, idx int, argType typ.Type, join JoinFn, unknownOnNil bool) ([]typ.Type, bool) {
 	if idx < 0 {
-		return hints, false
+		return evidence, false
 	}
-	argType = NormalizeHintType(argType)
+	argType = NormalizeType(argType)
 	if argType == nil {
 		if !unknownOnNil {
-			return hints, false
+			return evidence, false
 		}
 		argType = typ.Unknown
 	}
-	hints = EnsureHintCapacity(hints, idx+1)
+	evidence = EnsureCapacity(evidence, idx+1)
 
 	joinFn := join
 	if joinFn == nil {
 		joinFn = typ.JoinPreferNonSoft
 	}
 
-	prev := NormalizeHintType(hints[idx])
+	prev := NormalizeType(evidence[idx])
 	if prev == nil {
-		prev = hints[idx]
+		prev = evidence[idx]
 	}
 
 	mergeTopAware := func(a, b typ.Type) typ.Type {
@@ -376,29 +376,29 @@ func MergeCallArgHintAt(hints []typ.Type, idx int, argType typ.Type, join HintJo
 	}
 
 	topLikeArg := typ.IsAny(argType) || typ.IsUnknown(argType)
-	if !topLikeArg && !IsInformativeHintType(argType) {
-		return hints, false
+	if !topLikeArg && !IsInformative(argType) {
+		return evidence, false
 	}
 
 	merged := mergeTopAware(prev, argType)
-	if typ.TypeEquals(hints[idx], merged) {
-		return hints, false
+	if typ.TypeEquals(evidence[idx], merged) {
+		return evidence, false
 	}
-	hints[idx] = merged
-	return hints, true
+	evidence[idx] = merged
+	return evidence, true
 }
 
-// IsInformativeHintType reports whether a type carries useful call-site
-// information for parameter hint propagation.
+// IsInformative reports whether a type carries useful call-site
+// information for parameter evidence propagation.
 //
 // It intentionally rejects top-like and empty placeholder shapes that tend to
-// poison hints, while preserving structured hints such as maps/arrays with
+// poison evidence, while preserving structured evidence such as maps/arrays with
 // partial information (for example `{[string]: any[]}`).
-func IsInformativeHintType(t typ.Type) bool {
-	return isInformativeHintType(t, typ.NewGuard())
+func IsInformative(t typ.Type) bool {
+	return isInformativeEvidenceType(t, typ.NewGuard())
 }
 
-func isInformativeHintType(t typ.Type, guard internal.RecursionGuard) bool {
+func isInformativeEvidenceType(t typ.Type, guard internal.RecursionGuard) bool {
 	if t == nil {
 		return false
 	}
@@ -418,10 +418,10 @@ func isInformativeHintType(t typ.Type, guard internal.RecursionGuard) bool {
 
 	switch v := t.(type) {
 	case *typ.Optional:
-		return isInformativeHintType(v.Inner, next)
+		return isInformativeEvidenceType(v.Inner, next)
 	case *typ.Union:
 		for _, m := range v.Members {
-			if isInformativeHintType(m, next) {
+			if isInformativeEvidenceType(m, next) {
 				return true
 			}
 		}
@@ -430,7 +430,7 @@ func isInformativeHintType(t typ.Type, guard internal.RecursionGuard) bool {
 		if v.Target == nil {
 			return false
 		}
-		return isInformativeHintType(v.Target, next)
+		return isInformativeEvidenceType(v.Target, next)
 	}
 
 	if r, ok := t.(*typ.Record); ok {
@@ -442,10 +442,9 @@ func isInformativeHintType(t typ.Type, guard internal.RecursionGuard) bool {
 	return true
 }
 
-// BuildParamHintSignatures builds a function-expression keyed hint map for this graph.
-// It merges per-iteration scratch hints with symbol-based hints from the store.
-// Scratch hints take precedence over symbol-derived hints.
-func BuildParamHintSignatures(
+// BuildSignatureMap builds a function-expression keyed parameter evidence
+// map for this graph from canonical FunctionFacts.
+func BuildSignatureMap(
 	store api.StoreReader,
 	graph *cfg.Graph,
 	parent *scope.State,
@@ -455,25 +454,24 @@ func BuildParamHintSignatures(
 		return nil
 	}
 
-	// Use stable snapshot param hints during analysis.
-	symHints := store.GetParamHintsSnapshot(graph, parent)
+	functionFacts := store.GetFunctionFactsSnapshot(graph, parent)
 
 	out := make(map[*ast.FunctionExpr][]typ.Type)
 
-	if len(symHints) > 0 {
-		for _, sym := range cfg.SortedSymbolIDs(symHints) {
-			hints := symHints[sym]
-			if len(hints) == 0 {
+	if len(functionFacts) > 0 {
+		for _, sym := range cfg.SortedSymbolIDs(functionFacts) {
+			vec := functionFacts.Params(sym)
+			if len(vec) == 0 {
 				continue
 			}
-			hasHint := false
-			for _, hint := range hints {
-				if hint != nil {
-					hasHint = true
+			hasEvidence := false
+			for _, observed := range vec {
+				if observed != nil {
+					hasEvidence = true
 					break
 				}
 			}
-			if !hasHint {
+			if !hasEvidence {
 				continue
 			}
 			fn := store.FuncForSymbol(sym)
@@ -481,13 +479,13 @@ func BuildParamHintSignatures(
 				continue
 			}
 			if _, exists := out[fn]; !exists {
-				out[fn] = hints
+				out[fn] = vec
 			}
 		}
 	}
 
-	// If this graph is a nested function, pull param hints from the parent graph
-	// and apply them to the current function signature.
+	// If this graph is a nested function, pull parameter evidence from the
+	// parent graph and apply it to the current function signature.
 	if meta, ok := store.NestedMetaFor(graph.ID()); ok {
 		parentGraph := store.Graphs()[meta.ParentGraphID]
 		if parentGraph != nil {
@@ -497,16 +495,16 @@ func BuildParamHintSignatures(
 			}
 			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), defaultScope)
 			if parentScope != nil {
-				parentHints := store.GetParamHintsSnapshot(parentGraph, parentScope)
-				if len(parentHints) > 0 {
+				parentFacts := store.GetFunctionFactsSnapshot(parentGraph, parentScope)
+				if len(parentFacts) > 0 {
 					fn := store.FuncForGraph(graph)
 					if fn == nil {
 						fn = graph.Func()
 					}
 					if fn != nil {
 						if sym, ok := store.SymbolForFunc(fn); ok {
-							if hints := parentHints[sym]; len(hints) > 0 {
-								out[fn] = hints
+							if evidence := parentFacts.Params(sym); len(evidence) > 0 {
+								out[fn] = evidence
 							}
 						}
 					}

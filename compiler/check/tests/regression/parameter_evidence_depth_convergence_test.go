@@ -18,7 +18,7 @@ func numericAliasChain(depth int) string {
 	return b.String()
 }
 
-func TestParamHints_DeepAliasChain_NoInterprocNonConvergenceWarning(t *testing.T) {
+func TestParameterEvidence_DeepAliasChain_NoInterprocNonConvergenceWarning(t *testing.T) {
 	code := numericAliasChain(32) + `
 		local function g(x)
 			return x + 1
@@ -43,7 +43,7 @@ func TestParamHints_DeepAliasChain_NoInterprocNonConvergenceWarning(t *testing.T
 	}
 }
 
-func TestParamHints_RecordWrapperFeedback_NoInterprocNonConvergenceWarning(t *testing.T) {
+func TestParameterEvidence_RecordWrapperFeedback_NoInterprocNonConvergenceWarning(t *testing.T) {
 	code := `
 		local repo = require("kb_repo")
 
@@ -92,7 +92,7 @@ func TestParamHints_RecordWrapperFeedback_NoInterprocNonConvergenceWarning(t *te
 	}
 }
 
-func TestParamHints_NestedWrapperFeedback_NoInterprocNonConvergenceWarning(t *testing.T) {
+func TestParameterEvidence_NestedWrapperFeedback_NoInterprocNonConvergenceWarning(t *testing.T) {
 	code := `
 		local repo = require("kb_repo")
 
@@ -146,7 +146,7 @@ func TestParamHints_NestedWrapperFeedback_NoInterprocNonConvergenceWarning(t *te
 	}
 }
 
-func TestParamHints_OptionalContextTableFeedback_NoInterprocNonConvergenceWarning(t *testing.T) {
+func TestParameterEvidence_OptionalContextTableFeedback_NoInterprocNonConvergenceWarning(t *testing.T) {
 	code := `
 		local function merge_context(base, additions)
 			local out = {}

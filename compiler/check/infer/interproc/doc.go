@@ -7,7 +7,7 @@
 //
 // After flow analysis completes for a function, this package:
 //   - Extracts return type summaries
-//   - Computes parameter type hints from call sites
+//   - Computes parameter evidence from call sites
 //   - Identifies captured variable assignments
 //   - Propagates effect information
 //

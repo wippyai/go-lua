@@ -13,7 +13,6 @@ func cloneFacts(f api.Facts) api.Facts {
 	}
 	return api.Facts{
 		FunctionFacts:      cloneFunctionFacts(f.FunctionFacts),
-		ParamHints:         cloneParamHints(f.ParamHints),
 		LiteralSigs:        cloneLiteralSigs(f.LiteralSigs),
 		CapturedTypes:      cloneCapturedTypes(f.CapturedTypes),
 		CapturedFields:     cloneCapturedFieldAssigns(f.CapturedFields),
@@ -28,20 +27,10 @@ func cloneFunctionFacts(src api.FunctionFacts) api.FunctionFacts {
 	}
 	out := make(api.FunctionFacts, len(src))
 	for sym, fact := range src {
+		fact.Params = cloneTypeSlice(fact.Params)
 		fact.Summary = cloneTypeSlice(fact.Summary)
 		fact.Narrow = cloneTypeSlice(fact.Narrow)
 		out[sym] = fact
-	}
-	return out
-}
-
-func cloneParamHints(src api.ParamHints) api.ParamHints {
-	if len(src) == 0 {
-		return nil
-	}
-	out := make(api.ParamHints, len(src))
-	for sym, hints := range src {
-		out[sym] = cloneTypeSlice(hints)
 	}
 	return out
 }

@@ -1,4 +1,4 @@
-package paramhints
+package paramevidence
 
 import (
 	"testing"
@@ -8,64 +8,64 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestWidenParamHintType_Nil(t *testing.T) {
-	result := WidenParamHintType(nil)
+func TestWidenType_Nil(t *testing.T) {
+	result := WidenType(nil)
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
 	}
 }
 
-func TestWidenParamHintType_BooleanLiteral(t *testing.T) {
+func TestWidenType_BooleanLiteral(t *testing.T) {
 	lit := typ.LiteralBool(true)
-	result := WidenParamHintType(lit)
+	result := WidenType(lit)
 	if result != typ.Boolean {
 		t.Errorf("expected Boolean, got %v", result)
 	}
 }
 
-func TestWidenParamHintType_IntegerLiteral(t *testing.T) {
+func TestWidenType_IntegerLiteral(t *testing.T) {
 	lit := typ.LiteralInt(42)
-	result := WidenParamHintType(lit)
+	result := WidenType(lit)
 	if result != typ.Integer {
 		t.Errorf("expected Integer, got %v", result)
 	}
 }
 
-func TestWidenParamHintType_NumberLiteral(t *testing.T) {
+func TestWidenType_NumberLiteral(t *testing.T) {
 	lit := typ.LiteralNumber(3.14)
-	result := WidenParamHintType(lit)
+	result := WidenType(lit)
 	if result != typ.Number {
 		t.Errorf("expected Number, got %v", result)
 	}
 }
 
-func TestWidenParamHintType_StringLiteral(t *testing.T) {
+func TestWidenType_StringLiteral(t *testing.T) {
 	lit := typ.LiteralString("hello")
-	result := WidenParamHintType(lit)
+	result := WidenType(lit)
 	if result != typ.String {
 		t.Errorf("expected String, got %v", result)
 	}
 }
 
-func TestWidenParamHintType_NonLiteral(t *testing.T) {
-	result := WidenParamHintType(typ.String)
+func TestWidenType_NonLiteral(t *testing.T) {
+	result := WidenType(typ.String)
 	if result != typ.String {
 		t.Errorf("expected String unchanged, got %v", result)
 	}
 }
 
-func TestWidenParamHintType_Alias(t *testing.T) {
+func TestWidenType_Alias(t *testing.T) {
 	alias := typ.NewAlias("NumAlias", typ.Number)
-	result := WidenParamHintType(alias)
+	result := WidenType(alias)
 	if result != typ.Number {
 		t.Errorf("expected alias to widen to Number, got %v", result)
 	}
 }
 
-func TestWidenParamHintType_Optional(t *testing.T) {
+func TestWidenType_Optional(t *testing.T) {
 	lit := typ.LiteralString("hello")
 	opt := typ.NewOptional(lit)
-	result := WidenParamHintType(opt)
+	result := WidenType(opt)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -78,45 +78,45 @@ func TestWidenParamHintType_Optional(t *testing.T) {
 	}
 }
 
-func TestWidenParamHintType_Union(t *testing.T) {
+func TestWidenType_Union(t *testing.T) {
 	lit1 := typ.LiteralString("a")
 	lit2 := typ.LiteralNumber(1.0)
 	union := typ.NewUnion(lit1, lit2)
-	result := WidenParamHintType(union)
+	result := WidenType(union)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
 }
 
-func TestNormalizeHintType_TableTopAbsorbsPreciseTableMembers(t *testing.T) {
+func TestNormalizeType_TableTopAbsorbsPreciseTableMembers(t *testing.T) {
 	tableTop := typ.NewInterface("table", nil)
 	preciseA := typ.NewRecord().
 		Field("name", typ.String).
 		Field("tools", typ.NewArray(typ.String)).
 		Build()
 	preciseB := typ.NewMap(typ.String, typ.Integer)
-	hint := typ.NewUnion(typ.NewOptional(tableTop), preciseA, preciseB, typ.String)
+	evidence := typ.NewUnion(typ.NewOptional(tableTop), preciseA, preciseB, typ.String)
 
-	got := NormalizeHintType(hint)
+	got := NormalizeType(evidence)
 	want := typ.NewUnion(typ.NewOptional(tableTop), typ.String)
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("expected table top to absorb precise table members as %v, got %v", want, got)
 	}
 }
 
-func TestWidenParamHintType_RecordPreservesClosedShape(t *testing.T) {
+func TestWidenType_RecordPreservesClosedShape(t *testing.T) {
 	rec := typ.NewRecord().
 		Field("pid", typ.LiteralString("abc")).
 		Field("topic", typ.LiteralString("test:update")).
 		Build()
 
-	result := WidenParamHintType(rec)
+	result := WidenType(rec)
 	widened, ok := result.(*typ.Record)
 	if !ok {
 		t.Fatalf("expected record result, got %T", result)
 	}
 	if widened.Open {
-		t.Fatalf("expected param hint to preserve closed call-site shape, got open: %v", widened)
+		t.Fatalf("expected parameter evidence to preserve closed call-site shape, got open: %v", widened)
 	}
 
 	pid := widened.GetField("pid")
@@ -129,8 +129,8 @@ func TestWidenParamHintType_RecordPreservesClosedShape(t *testing.T) {
 	}
 }
 
-func TestBuildParamHintSignatures_NilInputs(t *testing.T) {
-	result := BuildParamHintSignatures(nil, nil, nil, nil)
+func TestBuildSignatureMap_NilInputs(t *testing.T) {
+	result := BuildSignatureMap(nil, nil, nil, nil)
 	if result != nil {
 		t.Errorf("expected nil for nil inputs, got %v", result)
 	}
@@ -149,10 +149,10 @@ func TestMergeIntoSignature_ImplicitSelfUsesEffectiveHintSlots(t *testing.T) {
 		t.Fatalf("unexpected merged signature: %v", got)
 	}
 	if !typ.TypeEquals(got.Params[0].Type, selfType) {
-		t.Fatalf("self hint should use effective slot 0, got %v", got.Params[0].Type)
+		t.Fatalf("self evidence should use effective slot 0, got %v", got.Params[0].Type)
 	}
 	if !typ.TypeEquals(got.Params[1].Type, typ.String) {
-		t.Fatalf("source parameter hint should use effective slot 1, got %v", got.Params[1].Type)
+		t.Fatalf("source parameter evidence should use effective slot 1, got %v", got.Params[1].Type)
 	}
 }
 
@@ -177,7 +177,7 @@ func TestMergeIntoSignature_PreservesExplicitNilabilityOnOptionalSlot(t *testing
 	}
 }
 
-func TestProjectHintsToParamUse_KeepsDemandedRecordFields(t *testing.T) {
+func TestProjectToParameterUse_KeepsDemandedRecordFields(t *testing.T) {
 	fn := functionWithParams("client", "model_id")
 	fn.Stmts = []ast.Stmt{
 		&ast.ReturnStmt{Exprs: []ast.Expr{
@@ -202,25 +202,25 @@ func TestProjectHintsToParamUse_KeepsDemandedRecordFields(t *testing.T) {
 		Field("_credentials", typ.String).
 		Build()
 
-	got := ProjectHintsToParamUse(graph, fn, []typ.Type{client, typ.String})
+	got := ProjectToParameterUse(graph, fn, []typ.Type{client, typ.String})
 	rec, ok := got[0].(*typ.Record)
 	if !ok {
-		t.Fatalf("projected client hint = %T, want record (%v)", got[0], got[0])
+		t.Fatalf("projected client evidence = %T, want record (%v)", got[0], got[0])
 	}
 	if rec.GetField("invoke") == nil {
-		t.Fatalf("projected client hint lost demanded invoke field: %v", rec)
+		t.Fatalf("projected client evidence lost demanded invoke field: %v", rec)
 	}
 	for _, unused := range []string{"process_converse_stream", "_credentials"} {
 		if rec.GetField(unused) != nil {
-			t.Fatalf("projected client hint kept unused field %q: %v", unused, rec)
+			t.Fatalf("projected client evidence kept unused field %q: %v", unused, rec)
 		}
 	}
 	if !typ.TypeEquals(got[1], typ.String) {
-		t.Fatalf("directly used scalar hint should stay intact, got %v", got[1])
+		t.Fatalf("directly used scalar evidence should stay intact, got %v", got[1])
 	}
 }
 
-func TestProjectHintsToParamUse_KeepsDemandedAbsentRecordFieldsAsNil(t *testing.T) {
+func TestProjectToParameterUse_KeepsDemandedAbsentRecordFieldsAsNil(t *testing.T) {
 	fn := functionWithParams("options")
 	fn.Stmts = []ast.Stmt{
 		&ast.IfStmt{
@@ -243,14 +243,14 @@ func TestProjectHintsToParamUse_KeepsDemandedAbsentRecordFieldsAsNil(t *testing.
 		},
 	}
 	graph := cfg.Build(fn)
-	hint := typ.NewRecord().
+	evidence := typ.NewRecord().
 		Field("headers", typ.NewRecord().Build()).
 		Build()
 
-	got := ProjectHintsToParamUse(graph, fn, []typ.Type{hint})
+	got := ProjectToParameterUse(graph, fn, []typ.Type{evidence})
 	rec, ok := got[0].(*typ.Record)
 	if !ok {
-		t.Fatalf("projected options hint = %T, want record (%v)", got[0], got[0])
+		t.Fatalf("projected options evidence = %T, want record (%v)", got[0], got[0])
 	}
 	stream := rec.GetField("stream")
 	if stream == nil || !typ.TypeEquals(stream.Type, typ.Nil) {
@@ -258,7 +258,7 @@ func TestProjectHintsToParamUse_KeepsDemandedAbsentRecordFieldsAsNil(t *testing.
 	}
 	headers := rec.GetField("headers")
 	if headers == nil {
-		t.Fatalf("projected options hint lost demanded headers field: %v", rec)
+		t.Fatalf("projected options evidence lost demanded headers field: %v", rec)
 	}
 }
 
@@ -312,7 +312,100 @@ func TestProjectSignatureToParamUse_CompletesDemandedAbsentFields(t *testing.T) 
 	}
 }
 
-func TestProjectHintsToParamUse_DedupsUnionAfterProjection(t *testing.T) {
+func TestProjectToParameterUse_TypeGuardDoesNotKeepWholeRecord(t *testing.T) {
+	fn := functionWithParams("params")
+	fn.Stmts = []ast.Stmt{
+		&ast.IfStmt{
+			Condition: &ast.RelationalOpExpr{
+				Operator: "~=",
+				Lhs: &ast.FuncCallExpr{
+					Func: &ast.IdentExpr{Value: "type"},
+					Args: []ast.Expr{&ast.IdentExpr{Value: "params"}},
+				},
+				Rhs: &ast.StringExpr{Value: "table"},
+			},
+		},
+		&ast.IfStmt{
+			Condition: &ast.UnaryNotOpExpr{
+				Expr: &ast.AttrGetExpr{
+					Object: &ast.IdentExpr{Value: "params"},
+					Key:    &ast.StringExpr{Value: "agent"},
+				},
+			},
+		},
+		&ast.ReturnStmt{Exprs: []ast.Expr{
+			&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "params"},
+				Key:    &ast.StringExpr{Value: "kind"},
+			},
+		}},
+	}
+	graph := cfg.Build(fn)
+	evidence := typ.NewRecord().
+		OptField("kind", typ.String).
+		Build()
+
+	got := ProjectToParameterUse(graph, fn, []typ.Type{evidence})
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("projected params evidence = %T, want record (%v)", got[0], got[0])
+	}
+	if rec.GetField("kind") == nil {
+		t.Fatalf("projected params evidence lost demanded kind field: %v", rec)
+	}
+	agent := rec.GetField("agent")
+	if agent == nil || !typ.TypeEquals(agent.Type, typ.Nil) {
+		t.Fatalf("type(params) should not force whole-record evidence; agent = %v in %v", agent, rec)
+	}
+}
+
+func TestProjectToParameterUse_SelfDefaultDoesNotKeepWholeRecord(t *testing.T) {
+	fn := functionWithParams("options")
+	optionsIdent := &ast.IdentExpr{Value: "options"}
+	fn.Stmts = []ast.Stmt{
+		&ast.AssignStmt{
+			Lhs: []ast.Expr{optionsIdent},
+			Rhs: []ast.Expr{&ast.LogicalOpExpr{
+				Operator: "or",
+				Lhs:      &ast.IdentExpr{Value: "options"},
+				Rhs:      &ast.TableExpr{},
+			}},
+		},
+		&ast.LocalAssignStmt{
+			Names: []string{"method"},
+			Exprs: []ast.Expr{&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "options"},
+				Key:    &ast.StringExpr{Value: "method"},
+			}},
+		},
+		&ast.LocalAssignStmt{
+			Names: []string{"timeout"},
+			Exprs: []ast.Expr{&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "options"},
+				Key:    &ast.StringExpr{Value: "timeout"},
+			}},
+		},
+	}
+	graph := cfg.Build(fn)
+	evidence := typ.NewRecord().
+		OptField("method", typ.String).
+		Build()
+
+	got := ProjectToParameterUse(graph, fn, []typ.Type{evidence})
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("projected options evidence = %T, want record (%v)", got[0], got[0])
+	}
+	if rec.GetField("method") == nil {
+		t.Fatalf("projected options evidence lost demanded method field: %v", rec)
+	}
+	timeout := rec.GetField("timeout")
+	if timeout == nil || !typ.TypeEquals(timeout.Type, typ.Nil) {
+		t.Fatalf("self-default assignment should not force whole-record evidence; timeout = %v in %v", timeout, rec)
+	}
+}
+
+func TestProjectToParameterUse_DedupsUnionAfterProjection(t *testing.T) {
 	fn := functionWithParams("client")
 	fn.Stmts = []ast.Stmt{
 		&ast.ReturnStmt{Exprs: []ast.Expr{
@@ -335,17 +428,17 @@ func TestProjectHintsToParamUse_DedupsUnionAfterProjection(t *testing.T) {
 		Field("stream", typ.Func().Returns(typ.LiteralString("invalid")).Build()).
 		Build()
 
-	got := ProjectHintsToParamUse(graph, fn, []typ.Type{typ.NewUnion(broad, narrow)})
+	got := ProjectToParameterUse(graph, fn, []typ.Type{typ.NewUnion(broad, narrow)})
 	rec, ok := got[0].(*typ.Record)
 	if !ok {
-		t.Fatalf("projected union hint = %T, want coalesced record (%v)", got[0], got[0])
+		t.Fatalf("projected union evidence = %T, want coalesced record (%v)", got[0], got[0])
 	}
 	if rec.GetField("invoke") == nil || rec.GetField("stream") != nil {
 		t.Fatalf("projected union should keep only invoke, got %v", rec)
 	}
 }
 
-func TestProjectHintsToParamUse_WholeParameterUseKeepsHint(t *testing.T) {
+func TestProjectToParameterUse_WholeParameterUseKeepsEvidence(t *testing.T) {
 	fn := functionWithParams("client")
 	fn.Stmts = []ast.Stmt{
 		&ast.ReturnStmt{Exprs: []ast.Expr{
@@ -358,13 +451,13 @@ func TestProjectHintsToParamUse_WholeParameterUseKeepsHint(t *testing.T) {
 	graph := cfg.Build(fn, "use_client")
 	client := typ.NewRecord().Field("invoke", typ.Func().Returns(typ.Unknown).Build()).Build()
 
-	got := ProjectHintsToParamUse(graph, fn, []typ.Type{client})
+	got := ProjectToParameterUse(graph, fn, []typ.Type{client})
 	if !typ.TypeEquals(got[0], client) {
-		t.Fatalf("whole-parameter use should keep full hint, got %v", got[0])
+		t.Fatalf("whole-parameter use should keep full evidence, got %v", got[0])
 	}
 }
 
-func TestProjectHintsToParamUse_RecursiveForwardingDoesNotKeepWholeHint(t *testing.T) {
+func TestProjectToParameterUse_RecursiveForwardingDoesNotKeepWholeEvidence(t *testing.T) {
 	recursiveIdent := &ast.IdentExpr{Value: "visit"}
 	selfIdent := &ast.IdentExpr{Value: "self"}
 	valueIdent := &ast.IdentExpr{Value: "value"}
@@ -401,18 +494,18 @@ func TestProjectHintsToParamUse_RecursiveForwardingDoesNotKeepWholeHint(t *testi
 	if sym, ok := graph.Bindings().SymbolOf(recursiveIdent); ok {
 		graph.Bindings().SetFuncLitSymbol(fn, sym)
 	}
-	selfHint := typ.NewRecord().
+	selfEvidence := typ.NewRecord().
 		Field("id", typ.String).
 		Field("command", typ.Func().Returns(typ.Nil, typ.String).Build()).
 		Build()
 
-	got := ProjectHintsToParamUse(graph, fn, []typ.Type{selfHint, typ.NewRecord().Field("next", typ.Any).Build()})
+	got := ProjectToParameterUse(graph, fn, []typ.Type{selfEvidence, typ.NewRecord().Field("next", typ.Any).Build()})
 	rec, ok := got[0].(*typ.Record)
 	if !ok {
-		t.Fatalf("projected self hint = %T, want record (%v)", got[0], got[0])
+		t.Fatalf("projected self evidence = %T, want record (%v)", got[0], got[0])
 	}
 	if rec.GetField("id") == nil {
-		t.Fatalf("projected self hint lost demanded id field: %v", rec)
+		t.Fatalf("projected self evidence lost demanded id field: %v", rec)
 	}
 	if rec.GetField("command") != nil {
 		t.Fatalf("recursive forwarding should not keep unused command field: %v", rec)
@@ -423,7 +516,7 @@ func functionWithParams(names ...string) *ast.FunctionExpr {
 	return &ast.FunctionExpr{ParList: &ast.ParList{Names: names}}
 }
 
-func TestIsInformativeHintType(t *testing.T) {
+func TestIsInformative(t *testing.T) {
 	tests := []struct {
 		name string
 		in   typ.Type
@@ -448,31 +541,31 @@ func TestIsInformativeHintType(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := IsInformativeHintType(tt.in); got != tt.want {
+		if got := IsInformative(tt.in); got != tt.want {
 			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }
 
-func TestEnsureHintCapacity(t *testing.T) {
+func TestEnsureCapacity(t *testing.T) {
 	base := []typ.Type{typ.String}
-	got := EnsureHintCapacity(base, 3)
+	got := EnsureCapacity(base, 3)
 	if len(got) != 3 {
-		t.Fatalf("EnsureHintCapacity len = %d, want 3", len(got))
+		t.Fatalf("EnsureCapacity len = %d, want 3", len(got))
 	}
 	if got[0] != typ.String {
-		t.Fatalf("EnsureHintCapacity preserved value = %v, want string", got[0])
+		t.Fatalf("EnsureCapacity preserved value = %v, want string", got[0])
 	}
 }
 
-func TestMergeHintAt(t *testing.T) {
+func TestMergeAt(t *testing.T) {
 	join := func(prev, next typ.Type) typ.Type { return typ.JoinPreferNonSoft(prev, next) }
 
 	t.Run("filters non-informative", func(t *testing.T) {
-		hints := []typ.Type{typ.String}
-		got, changed := MergeHintAt(hints, 1, typ.Unknown, join)
+		evidence := []typ.Type{typ.String}
+		got, changed := MergeAt(evidence, 1, typ.Unknown, join)
 		if changed {
-			t.Fatal("expected no change for unknown hint")
+			t.Fatal("expected no change for unknown evidence")
 		}
 		if len(got) != 1 {
 			t.Fatalf("expected unchanged slice len 1, got %d", len(got))
@@ -480,15 +573,15 @@ func TestMergeHintAt(t *testing.T) {
 	})
 
 	t.Run("normalizes literal and merges", func(t *testing.T) {
-		got, changed := MergeHintAt(nil, 0, typ.LiteralString("x"), join)
+		got, changed := MergeAt(nil, 0, typ.LiteralString("x"), join)
 		if !changed {
 			t.Fatal("expected merge change for informative literal")
 		}
 		if len(got) != 1 {
-			t.Fatalf("expected one hint, got %d", len(got))
+			t.Fatalf("expected one evidence, got %d", len(got))
 		}
 		if !typ.TypeEquals(got[0], typ.String) {
-			t.Fatalf("expected normalized string hint, got %v", got[0])
+			t.Fatalf("expected normalized string evidence, got %v", got[0])
 		}
 	})
 }

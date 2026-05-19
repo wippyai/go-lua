@@ -269,7 +269,7 @@ call_two()
 		for _, e := range result.Errors {
 			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
 		}
-		t.Fatal("expected body contract to dominate compatible multi-call http option hints")
+		t.Fatal("expected body contract to dominate compatible multi-call http option evidence")
 	}
 }
 

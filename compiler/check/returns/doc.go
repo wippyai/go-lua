@@ -41,6 +41,6 @@
 //
 // # Signature Inference
 //
-// [InferSignature] combines parameter hints and return types to produce
+// [InferSignature] combines parameter evidence and return types to produce
 // complete function signatures for functions without annotations.
 package returns

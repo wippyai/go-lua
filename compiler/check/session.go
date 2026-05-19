@@ -15,7 +15,7 @@
 //     cached function analysis when facts/effects actually change.
 //
 //   - IterationScratch: Single-iteration state cleared at each boundary.
-//     Tracks which literals have been analyzed, pending parameter hints,
+//     Tracks which literals have been analyzed, pending parameter evidence,
 //     and change detection flags.
 //
 // # SNAPSHOT PROTOCOL

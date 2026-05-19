@@ -27,7 +27,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
@@ -116,12 +116,12 @@ func RunScope(input ScopeInput) ScopeOutput {
 		synthSig = input.SynthesizedFunctionSig
 	}
 
-	var hints []typ.Type
-	if input.ParamHintSignatures != nil && input.Fn != nil {
-		hints = input.ParamHintSignatures[input.Fn]
-		hints = paramhints.ProjectHintsToParamUse(input.Graph, input.Fn, hints)
+	var parameterEvidence []typ.Type
+	if input.ParameterEvidenceSignatures != nil && input.Fn != nil {
+		parameterEvidence = input.ParameterEvidenceSignatures[input.Fn]
+		parameterEvidence = paramevidence.ProjectToParameterUse(input.Graph, input.Fn, parameterEvidence)
 	}
-	paramTypes, paramAnnotated := ExtractParamTypes(input.Graph, input.Fn, typeExprResolver, synthSig, base, hints)
+	paramTypes, paramAnnotated := ExtractParamTypes(input.Graph, input.Fn, typeExprResolver, synthSig, base, parameterEvidence)
 
 	// Inject synthesized self type into base scope only if base doesn't already
 	// have a more specific self type (set by processNestedFunctions from field assignment context).
@@ -192,15 +192,15 @@ func RunScope(input ScopeInput) ScopeOutput {
 	exprSynth := func(expr ast.Expr, p cfg.Point, sc *scope.State) typ.Type {
 		return typeResolutionEngine.SynthExprAt(expr, p, sc)
 	}
-	paramHintSignatures := input.ParamHintSignatures
-	if input.Fn != nil && hints != nil && input.ParamHintSignatures != nil {
-		paramHintSignatures = make(map[*ast.FunctionExpr][]typ.Type, len(input.ParamHintSignatures))
-		for fn, hintVec := range input.ParamHintSignatures {
-			paramHintSignatures[fn] = hintVec
+	parameterEvidenceSignatures := input.ParameterEvidenceSignatures
+	if input.Fn != nil && parameterEvidence != nil && input.ParameterEvidenceSignatures != nil {
+		parameterEvidenceSignatures = make(map[*ast.FunctionExpr][]typ.Type, len(input.ParameterEvidenceSignatures))
+		for fn, evidence := range input.ParameterEvidenceSignatures {
+			parameterEvidenceSignatures[fn] = evidence
 		}
-		paramHintSignatures[input.Fn] = hints
+		parameterEvidenceSignatures[input.Fn] = parameterEvidence
 	}
-	fnSignatureResolver := buildFnSignatureResolver(input.FunctionLiteralSignatures, paramHintSignatures, typeResolutionEngine)
+	fnSignatureResolver := buildFnSignatureResolver(input.FunctionLiteralSignatures, parameterEvidenceSignatures, typeResolutionEngine)
 
 	callMutator := buildCallMutator(input.Types, input.Ctx, exprSynth)
 	services := ScopeServicesFuncs{
@@ -251,10 +251,10 @@ func normalizeBaseImplicitSelf(graph *cfg.Graph, base *scope.State) *scope.State
 }
 
 // buildFnSignatureResolver creates a function signature resolver that combines
-// pre-computed literal signatures, parameter hints, and annotation-based resolution.
+// pre-computed literal signatures, parameter evidence, and annotation-based resolution.
 func buildFnSignatureResolver(
 	literalSigs LiteralSigsProvider,
-	paramHints map[*ast.FunctionExpr][]typ.Type,
+	parameterEvidence map[*ast.FunctionExpr][]typ.Type,
 	engine *synth.Engine,
 ) FunctionSignatureResolver {
 	return FunctionSignatureResolverFunc(func(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
@@ -270,14 +270,14 @@ func buildFnSignatureResolver(
 		if sig == nil {
 			return nil
 		}
-		if paramHints == nil {
+		if parameterEvidence == nil {
 			return sig
 		}
-		hints := paramHints[fn]
-		if len(hints) == 0 {
+		evidence := parameterEvidence[fn]
+		if len(evidence) == 0 {
 			return sig
 		}
-		return paramhints.MergeIntoSignature(fn, hints, sig)
+		return paramevidence.MergeIntoSignature(fn, evidence, sig)
 	})
 }
 
@@ -289,7 +289,7 @@ func ExtractParamTypes(
 	typeExprResolver TypeResolver,
 	synthSig *typ.Function,
 	base *scope.State,
-	paramHints []typ.Type,
+	parameterEvidence []typ.Type,
 ) (types map[cfg.SymbolID]typ.Type, annotated map[cfg.SymbolID]bool) {
 	if fn == nil || fn.ParList == nil || graph == nil {
 		return nil, nil
@@ -306,17 +306,17 @@ func ExtractParamTypes(
 
 		// Binder/CFG-injected implicit self parameter has no source annotation.
 		_, hasSource := slot.SourceParamIndex()
-		var hint typ.Type
-		if paramHints != nil && paramIdx < len(paramHints) {
-			hint = paramHints[paramIdx]
+		var evidence typ.Type
+		if parameterEvidence != nil && paramIdx < len(parameterEvidence) {
+			evidence = parameterEvidence[paramIdx]
 		}
 		if !hasSource {
 			if base != nil && base.SelfType() != nil {
 				types[slot.Symbol] = base.SelfType()
 			} else if synthSig != nil && paramIdx < len(synthSig.Params) && synthSig.Params[paramIdx].Type != nil {
 				types[slot.Symbol] = synthSig.Params[paramIdx].Type
-			} else if hint != nil {
-				types[slot.Symbol] = hint
+			} else if evidence != nil {
+				types[slot.Symbol] = evidence
 			} else {
 				types[slot.Symbol] = typ.Unknown
 			}
@@ -335,8 +335,8 @@ func ExtractParamTypes(
 				paramType = typ.Unknown
 			}
 			if typ.IsRefinableAnnotation(paramType) {
-				if hint != nil {
-					paramType = hint
+				if evidence != nil {
+					paramType = evidence
 				} else if synthSig != nil && paramIdx < len(synthSig.Params) && synthSig.Params[paramIdx].Type != nil {
 					paramType = synthSig.Params[paramIdx].Type
 				}
@@ -344,8 +344,8 @@ func ExtractParamTypes(
 				isAnnotated = true
 				hasExplicitAnnotation = true
 			}
-		} else if hint != nil {
-			paramType = hint
+		} else if evidence != nil {
+			paramType = evidence
 		} else if synthSig != nil && paramIdx < len(synthSig.Params) && synthSig.Params[paramIdx].Type != nil {
 			paramType = synthSig.Params[paramIdx].Type
 		} else if slot.Name == "self" && base != nil && base.SelfType() != nil {

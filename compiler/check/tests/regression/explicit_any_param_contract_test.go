@@ -7,7 +7,7 @@ import (
 )
 
 // Explicit `any` parameter annotations are contracts and must not be rewritten
-// by call-site param hints. This mirrors wippy.test:runner wait_for(ch: any).
+// by call-site parameter evidence. This mirrors wippy.test:runner wait_for(ch: any).
 func TestExplicitAnyParamAnnotation_IsNotRewrittenByHints(t *testing.T) {
 	source := `
 		local function wait_for(ch: any, timeout: any)

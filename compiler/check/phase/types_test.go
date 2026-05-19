@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -103,8 +103,8 @@ func TestScopeInput_Fields(t *testing.T) {
 	if input.FunctionLiteralSignatures != nil {
 		t.Error("FunctionLiteralSignatures should be nil by default")
 	}
-	if input.ParamHintSignatures != nil {
-		t.Error("ParamHintSignatures should be nil by default")
+	if input.ParameterEvidenceSignatures != nil {
+		t.Error("ParameterEvidenceSignatures should be nil by default")
 	}
 	if input.FunctionFacts != nil {
 		t.Error("FunctionFacts should be nil by default")
@@ -419,60 +419,60 @@ func TestContextBuilder_Phases(t *testing.T) {
 	})
 }
 
-func TestMergeParamHintsIntoSig_NilSig(t *testing.T) {
+func TestMergeParameterEvidenceIntoSig_NilSig(t *testing.T) {
 	fn := &ast.FunctionExpr{}
-	hints := []typ.Type{typ.Number}
+	evidence := []typ.Type{typ.Number}
 
-	result := paramhints.MergeIntoSignature(fn, hints, nil)
+	result := paramevidence.MergeIntoSignature(fn, evidence, nil)
 	if result != nil {
 		t.Error("expected nil when sig is nil")
 	}
 }
 
-func TestMergeParamHintsIntoSig_NilFn(t *testing.T) {
+func TestMergeParameterEvidenceIntoSig_NilFn(t *testing.T) {
 	sig := typ.Func().Param("x", typ.Any).Build()
-	hints := []typ.Type{typ.Number}
+	evidence := []typ.Type{typ.Number}
 
-	result := paramhints.MergeIntoSignature(nil, hints, sig)
+	result := paramevidence.MergeIntoSignature(nil, evidence, sig)
 	if result != sig {
 		t.Error("expected original sig when fn is nil")
 	}
 }
 
-func TestMergeParamHintsIntoSig_NilParList(t *testing.T) {
+func TestMergeParameterEvidenceIntoSig_NilParList(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: nil}
 	sig := typ.Func().Param("x", typ.Any).Build()
-	hints := []typ.Type{typ.Number}
+	evidence := []typ.Type{typ.Number}
 
-	result := paramhints.MergeIntoSignature(fn, hints, sig)
+	result := paramevidence.MergeIntoSignature(fn, evidence, sig)
 	if result != sig {
 		t.Error("expected original sig when ParList is nil")
 	}
 }
 
-func TestMergeParamHintsIntoSig_EmptyHints(t *testing.T) {
+func TestMergeParameterEvidenceIntoSig_EmptyHints(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
 	sig := typ.Func().Param("x", typ.Any).Build()
-	var hints []typ.Type
+	var evidence []typ.Type
 
-	result := paramhints.MergeIntoSignature(fn, hints, sig)
+	result := paramevidence.MergeIntoSignature(fn, evidence, sig)
 	if result != sig {
-		t.Error("expected original sig when hints are empty")
+		t.Error("expected original sig when evidence is empty")
 	}
 }
 
-func TestMergeParamHintsIntoSig_NilHintElement(t *testing.T) {
+func TestMergeParameterEvidenceIntoSig_NilHintElement(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
 	sig := typ.Func().Param("x", typ.Any).Build()
-	hints := []typ.Type{nil}
+	evidence := []typ.Type{nil}
 
-	result := paramhints.MergeIntoSignature(fn, hints, sig)
+	result := paramevidence.MergeIntoSignature(fn, evidence, sig)
 	if result != sig {
-		t.Error("expected original sig when hint element is nil")
+		t.Error("expected original sig when evidence element is nil")
 	}
 }
 
-func TestMergeParamHintsIntoSig_AppliesHint(t *testing.T) {
+func TestMergeParameterEvidenceIntoSig_AppliesHint(t *testing.T) {
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{
 			Names: []string{"x"},
@@ -480,9 +480,9 @@ func TestMergeParamHintsIntoSig_AppliesHint(t *testing.T) {
 		},
 	}
 	sig := typ.Func().Param("x", typ.Any).Build()
-	hints := []typ.Type{typ.Number}
+	evidence := []typ.Type{typ.Number}
 
-	result := paramhints.MergeIntoSignature(fn, hints, sig)
+	result := paramevidence.MergeIntoSignature(fn, evidence, sig)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -494,7 +494,7 @@ func TestMergeParamHintsIntoSig_AppliesHint(t *testing.T) {
 	}
 }
 
-func TestMergeParamHintsIntoSig_PreservesAnnotatedParam(t *testing.T) {
+func TestMergeParameterEvidenceIntoSig_PreservesAnnotatedParam(t *testing.T) {
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{
 			Names: []string{"x"},
@@ -502,15 +502,15 @@ func TestMergeParamHintsIntoSig_PreservesAnnotatedParam(t *testing.T) {
 		},
 	}
 	sig := typ.Func().Param("x", typ.String).Build()
-	hints := []typ.Type{typ.Number}
+	evidence := []typ.Type{typ.Number}
 
-	result := paramhints.MergeIntoSignature(fn, hints, sig)
+	result := paramevidence.MergeIntoSignature(fn, evidence, sig)
 	if result != sig {
 		t.Error("expected original sig when param is annotated")
 	}
 }
 
-func TestMergeParamHintsIntoSig_PreservesVariadic(t *testing.T) {
+func TestMergeParameterEvidenceIntoSig_PreservesVariadic(t *testing.T) {
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{
 			Names: []string{"x"},
@@ -518,9 +518,9 @@ func TestMergeParamHintsIntoSig_PreservesVariadic(t *testing.T) {
 		},
 	}
 	sig := typ.Func().Param("x", typ.Any).Variadic(typ.String).Build()
-	hints := []typ.Type{typ.Number}
+	evidence := []typ.Type{typ.Number}
 
-	result := paramhints.MergeIntoSignature(fn, hints, sig)
+	result := paramevidence.MergeIntoSignature(fn, evidence, sig)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -529,7 +529,7 @@ func TestMergeParamHintsIntoSig_PreservesVariadic(t *testing.T) {
 	}
 }
 
-func TestMergeParamHintsIntoSig_PreservesReturns(t *testing.T) {
+func TestMergeParameterEvidenceIntoSig_PreservesReturns(t *testing.T) {
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{
 			Names: []string{"x"},
@@ -537,9 +537,9 @@ func TestMergeParamHintsIntoSig_PreservesReturns(t *testing.T) {
 		},
 	}
 	sig := typ.Func().Param("x", typ.Any).Returns(typ.Boolean).Build()
-	hints := []typ.Type{typ.Number}
+	evidence := []typ.Type{typ.Number}
 
-	result := paramhints.MergeIntoSignature(fn, hints, sig)
+	result := paramevidence.MergeIntoSignature(fn, evidence, sig)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -548,7 +548,7 @@ func TestMergeParamHintsIntoSig_PreservesReturns(t *testing.T) {
 	}
 }
 
-func TestMergeParamHintsIntoSig_PreservesOptionalParam(t *testing.T) {
+func TestMergeParameterEvidenceIntoSig_PreservesOptionalParam(t *testing.T) {
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{
 			Names: []string{"x"},
@@ -556,9 +556,9 @@ func TestMergeParamHintsIntoSig_PreservesOptionalParam(t *testing.T) {
 		},
 	}
 	sig := typ.Func().OptParam("x", typ.Any).Build()
-	hints := []typ.Type{typ.Number}
+	evidence := []typ.Type{typ.Number}
 
-	result := paramhints.MergeIntoSignature(fn, hints, sig)
+	result := paramevidence.MergeIntoSignature(fn, evidence, sig)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}

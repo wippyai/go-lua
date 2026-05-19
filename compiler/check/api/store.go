@@ -73,7 +73,6 @@ type NestedMetaStore interface {
 
 // SnapshotStore exposes stable interproc fact snapshots.
 type SnapshotStore interface {
-	GetParamHintsSnapshot(graph *cfg.Graph, parent *scope.State) ParamHints
 	GetFunctionFactsSnapshot(graph *cfg.Graph, parent *scope.State) FunctionFacts
 	GetCapturedTypesSnapshot(graph *cfg.Graph, parent *scope.State) CapturedTypes
 	GetCapturedFieldAssignsSnapshot(graph *cfg.Graph, parent *scope.State) CapturedFieldAssigns

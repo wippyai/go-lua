@@ -1502,8 +1502,8 @@ func typeRefinesTableKeyByTruthiness(candidate, baseline typ.Type) bool {
 	if candidate == nil || baseline == nil || typ.TypeEquals(candidate, baseline) {
 		return false
 	}
-	candidateInner, _ := splitNilableParamHint(candidate)
-	baselineInner, _ := splitNilableParamHint(baseline)
+	candidateInner, _ := splitNilableParameterEvidence(candidate)
+	baselineInner, _ := splitNilableParameterEvidence(baseline)
 	if candidateInner == nil || baselineInner == nil {
 		return false
 	}

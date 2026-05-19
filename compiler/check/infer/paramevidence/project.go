@@ -1,4 +1,4 @@
-package paramhints
+package paramevidence
 
 import (
 	"sort"
@@ -17,48 +17,48 @@ type paramUse struct {
 	fields map[string]struct{}
 }
 
-// ProjectHintsToParamUse trims structured call-site hints to the surface the
-// function body actually reads from each unannotated parameter. Hints are
-// evidence for analyzing a helper, not a promise that every unused field on the
+// ProjectToParameterUse trims structured call-site evidence to the surface the
+// function body actually reads from each unannotated parameter. It is evidence
+// for analyzing a helper, not a promise that every unused field on the
 // first argument shape is part of that helper's public contract.
-func ProjectHintsToParamUse(graph *cfg.Graph, fn *ast.FunctionExpr, hints []typ.Type) []typ.Type {
-	if graph == nil || fn == nil || len(hints) == 0 {
-		return hints
+func ProjectToParameterUse(graph *cfg.Graph, fn *ast.FunctionExpr, vec []typ.Type) []typ.Type {
+	if graph == nil || fn == nil || len(vec) == 0 {
+		return vec
 	}
 
 	uses := collectParamUses(graph, fn)
 	if len(uses) == 0 {
-		return hints
+		return vec
 	}
 
 	var out []typ.Type
 	for idx, slot := range graph.ParamSlotsReadOnly() {
-		if slot.Symbol == 0 || idx < 0 || idx >= len(hints) {
+		if slot.Symbol == 0 || idx < 0 || idx >= len(vec) {
 			continue
 		}
-		hint := hints[idx]
-		if hint == nil {
+		observed := vec[idx]
+		if observed == nil {
 			continue
 		}
-		projected := projectHintToUse(hint, uses[slot.Symbol])
-		if typ.TypeEquals(hint, projected) {
+		projected := projectEvidenceToUse(observed, uses[slot.Symbol])
+		if typ.TypeEquals(observed, projected) {
 			continue
 		}
 		if out == nil {
-			out = make([]typ.Type, len(hints))
-			copy(out, hints)
+			out = make([]typ.Type, len(vec))
+			copy(out, vec)
 		}
 		out[idx] = projected
 	}
 
 	if out == nil {
-		return hints
+		return vec
 	}
 	return out
 }
 
 // ProjectSignatureToParamUse completes a function signature's parameter slots
-// against the fields the function body reads. Unlike ProjectHintsToParamUse it
+// against the fields the function body reads. Unlike ProjectToParameterUse it
 // does not trim unused fields: a function fact is already a canonical signature
 // observation, and same-body analysis only needs to ensure demanded fields are
 // present even when the parameter is also used as a whole value.
@@ -250,10 +250,23 @@ type paramUseCollector struct {
 func (c *paramUseCollector) stmt(stmt ast.Stmt) {
 	switch s := stmt.(type) {
 	case *ast.AssignStmt:
-		for _, lhs := range s.Lhs {
+		var skipRHS map[int]struct{}
+		for i, lhs := range s.Lhs {
+			if i < len(s.Rhs) && c.isParamSelfDefault(lhs, s.Rhs[i]) {
+				if skipRHS == nil {
+					skipRHS = make(map[int]struct{}, 1)
+				}
+				skipRHS[i] = struct{}{}
+				continue
+			}
 			c.lvalue(lhs)
 		}
-		for _, rhs := range s.Rhs {
+		for i, rhs := range s.Rhs {
+			if skipRHS != nil {
+				if _, skip := skipRHS[i]; skip {
+					continue
+				}
+			}
 			c.expr(rhs)
 		}
 	case *ast.LocalAssignStmt:
@@ -410,8 +423,28 @@ func (c *paramUseCollector) call(call *ast.FuncCallExpr) {
 		if recursive && c.isParamExpr(arg) {
 			continue
 		}
+		if c.isBuiltinTypeCall(call) && c.isParamExpr(arg) {
+			continue
+		}
 		c.expr(arg)
 	}
+}
+
+func (c *paramUseCollector) isBuiltinTypeCall(call *ast.FuncCallExpr) bool {
+	if call == nil || call.Method != "" {
+		return false
+	}
+	ident, ok := call.Func.(*ast.IdentExpr)
+	if !ok || ident == nil || ident.Value != "type" {
+		return false
+	}
+	if c.bindings != nil {
+		if sym, ok := c.bindings.SymbolOf(ident); ok && sym != 0 {
+			kind, hasKind := c.bindings.Kind(sym)
+			return hasKind && kind == cfg.SymbolGlobal
+		}
+	}
+	return true
 }
 
 func (c *paramUseCollector) isDirectRecursiveCall(call *ast.FuncCallExpr) bool {
@@ -428,6 +461,8 @@ func (c *paramUseCollector) isDirectRecursiveCall(call *ast.FuncCallExpr) bool {
 
 func (c *paramUseCollector) lvalue(expr ast.Expr) {
 	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		return
 	case *ast.AttrGetExpr:
 		if c.pathUse(expr) {
 			return
@@ -437,6 +472,23 @@ func (c *paramUseCollector) lvalue(expr ast.Expr) {
 	default:
 		c.expr(expr)
 	}
+}
+
+func (c *paramUseCollector) isParamSelfDefault(lhs, rhs ast.Expr) bool {
+	lhsIdent, ok := lhs.(*ast.IdentExpr)
+	if !ok || !c.isParamIdent(lhsIdent) {
+		return false
+	}
+	op, ok := rhs.(*ast.LogicalOpExpr)
+	if !ok || op.Operator != "or" {
+		return false
+	}
+	rhsIdent, ok := op.Lhs.(*ast.IdentExpr)
+	if !ok || !c.sameParamIdent(lhsIdent, rhsIdent) {
+		return false
+	}
+	_, ok = op.Rhs.(*ast.TableExpr)
+	return ok
 }
 
 func (c *paramUseCollector) pathUse(expr ast.Expr) bool {
@@ -484,6 +536,19 @@ func (c *paramUseCollector) isParamIdent(ident *ast.IdentExpr) bool {
 		return false
 	}
 	_, ok = c.paramSymbols[sym]
+	return ok
+}
+
+func (c *paramUseCollector) sameParamIdent(a, b *ast.IdentExpr) bool {
+	if c.bindings == nil || a == nil || b == nil {
+		return false
+	}
+	asym, aok := c.bindings.SymbolOf(a)
+	bsym, bok := c.bindings.SymbolOf(b)
+	if !aok || !bok || asym == 0 || bsym == 0 || asym != bsym {
+		return false
+	}
+	_, ok := c.paramSymbols[asym]
 	return ok
 }
 
@@ -561,16 +626,16 @@ func segmentFieldName(seg constraint.Segment) string {
 	}
 }
 
-func projectHintToUse(hint typ.Type, use paramUse) typ.Type {
-	if hint == nil || use.whole {
-		return hint
+func projectEvidenceToUse(observed typ.Type, use paramUse) typ.Type {
+	if observed == nil || use.whole {
+		return observed
 	}
 	if len(use.fields) == 0 {
 		return nil
 	}
-	projected, ok := projectTypeToFields(hint, use.fields)
+	projected, ok := projectTypeToFields(observed, use.fields)
 	if !ok {
-		return hint
+		return observed
 	}
 	return projected
 }

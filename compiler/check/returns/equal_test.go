@@ -95,37 +95,25 @@ func TestFactsEqual_DifferentCanonicalFunctionFacts(t *testing.T) {
 	}
 }
 
-func TestTypeVectorMapEqual_Empty(t *testing.T) {
-	if !symbolTypeVectorMapEqual(nil, nil) {
-		t.Error("nil summaries should be equal")
-	}
-}
-
-func TestTypeVectorMapEqual_DifferentLength(t *testing.T) {
-	a := map[cfg.SymbolID][]typ.Type{1: {typ.String}}
-	b := map[cfg.SymbolID][]typ.Type{}
-	if symbolTypeVectorMapEqual(a, b) {
-		t.Error("summaries with different lengths should not be equal")
-	}
-}
-
-func TestParamHintsEqual_Empty(t *testing.T) {
-	if !symbolTypeVectorMapEqual(nil, nil) {
-		t.Error("nil param hints should be equal")
-	}
-}
-
-func TestParamHintsEqual_Same(t *testing.T) {
-	a := api.ParamHints{1: []typ.Type{typ.String}}
-	b := api.ParamHints{1: []typ.Type{typ.String}}
-	if !symbolTypeVectorMapEqual(a, b) {
-		t.Error("same param hints should be equal")
-	}
-}
-
 func TestSymbolTypeMapEqual_Empty(t *testing.T) {
 	if !symbolTypeMapEqual(nil, nil) {
 		t.Error("nil func types should be equal")
+	}
+}
+
+func TestFunctionFactsEqual_Params(t *testing.T) {
+	a := api.FunctionFacts{1: {Params: []typ.Type{typ.String}}}
+	b := api.FunctionFacts{1: {Params: []typ.Type{typ.String}}}
+	if !FunctionFactsEqual(a, b) {
+		t.Error("same canonical parameter evidence should be equal")
+	}
+}
+
+func TestFunctionFactsEqual_DifferentParams(t *testing.T) {
+	a := api.FunctionFacts{1: {Params: []typ.Type{typ.String}}}
+	b := api.FunctionFacts{1: {Params: []typ.Type{typ.Number}}}
+	if FunctionFactsEqual(a, b) {
+		t.Error("different canonical parameter evidence should not be equal")
 	}
 }
 

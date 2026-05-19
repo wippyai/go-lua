@@ -12,14 +12,12 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// ParamHints maps function symbols to effective-parameter type hints inferred
-// from call sites. For method calls, slot 0 is the receiver/self argument and
-// the remaining slots are the source arguments.
-type ParamHints = map[cfg.SymbolID][]typ.Type
-
 // FunctionFact is the canonical function-related interproc fact for one symbol.
 // All return and local-function type evidence for a function converges here.
 type FunctionFact struct {
+	// Params is the canonical parameter evidence vector. For method calls, slot
+	// 0 is the receiver/self argument and the remaining slots are source args.
+	Params []typ.Type
 	// Summary is the declared/pre-flow return vector.
 	Summary []typ.Type
 	// Narrow is the post-flow return vector.
@@ -38,6 +36,15 @@ func (facts FunctionFacts) Fact(sym cfg.SymbolID) (FunctionFact, bool) {
 	}
 	ff, ok := facts[sym]
 	return ff, ok
+}
+
+// Params returns the canonical parameter evidence vector for sym.
+func (facts FunctionFacts) Params(sym cfg.SymbolID) []typ.Type {
+	ff, ok := facts.Fact(sym)
+	if !ok {
+		return nil
+	}
+	return ff.Params
 }
 
 // Summary returns the declared/pre-flow return vector for sym.
@@ -136,7 +143,6 @@ type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
 // These facts are computed during analysis and stored per (graph, parent) pair.
 type Facts struct {
 	FunctionFacts      FunctionFacts
-	ParamHints         ParamHints
 	LiteralSigs        LiteralSigs
 	CapturedTypes      CapturedTypes
 	CapturedFields     CapturedFieldAssigns

@@ -281,21 +281,22 @@ func TestGetInterprocFactsSnapshot_ReturnsImmutableFactContainers(t *testing.T) 
 	key := api.KeyForGraph(graph, parent.Hash())
 	sym := cfg.SymbolID(7)
 	s.InterprocPrev.Facts[key] = api.Facts{
-		ParamHints: api.ParamHints{
-			sym: []typ.Type{typ.String, typ.NewMap(typ.String, typ.Any)},
-		},
 		FunctionFacts: api.FunctionFacts{
-			sym: {Summary: []typ.Type{typ.String}},
+			sym: {
+				Params:  []typ.Type{typ.String, typ.NewMap(typ.String, typ.Any)},
+				Summary: []typ.Type{typ.String},
+			},
 		},
 	}
 
 	snapshot := s.GetInterprocFactsSnapshot(graph, parent)
-	snapshot.ParamHints[sym][1] = typ.Nil
+	snapshotFact := snapshot.FunctionFacts[sym]
+	snapshotFact.Params[1] = typ.Nil
 	snapshot.FunctionFacts[sym] = api.FunctionFact{Summary: []typ.Type{typ.Number}}
 
 	again := s.GetInterprocFactsSnapshot(graph, parent)
-	if got := again.ParamHints[sym][1]; !typ.TypeEquals(got, typ.NewMap(typ.String, typ.Any)) {
-		t.Fatalf("snapshot param hint mutation leaked into store: %v", got)
+	if got := again.FunctionFacts.Params(sym)[1]; !typ.TypeEquals(got, typ.NewMap(typ.String, typ.Any)) {
+		t.Fatalf("snapshot parameter evidence mutation leaked into store: %v", got)
 	}
 	if got := again.FunctionFacts.Summary(sym); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
 		t.Fatalf("snapshot function fact mutation leaked into store: %v", got)

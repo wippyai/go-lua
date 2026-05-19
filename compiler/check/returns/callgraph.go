@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
 	synthresolve "github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -81,23 +81,23 @@ func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo) fun
 	}
 }
 
-// PropagateParamHintsFromCallGraph propagates parameter type hints through
+// PropagateParameterEvidence propagates parameter evidence through
 // inner function call graphs.
 //
 // This function implements inter-procedural parameter type inference. For each
 // local function, it scans call sites to identify argument types:
 //
-//   - Literal arguments (numbers, strings, booleans, nil) provide direct type hints
-//   - Identifier arguments that reference caller parameters with known hints
-//     propagate those hints transitively
+//   - Literal arguments (numbers, strings, booleans, nil) provide direct evidence.
+//   - Identifier arguments that reference caller parameters with known evidence
+//     propagate that evidence transitively.
 //
 // The algorithm iterates to fixpoint, bounded by the number of local functions.
 // This ensures that chains like f(x) -> g(x) -> h(x) are fully resolved even
 // if functions are processed in arbitrary order.
 //
-// Hints are accumulated using typ.JoinPreferNonSoft, producing union types when a parameter
-// is called with multiple different types across call sites.
-func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo) {
+// Evidence is accumulated with typ.JoinPreferNonSoft, producing union types when
+// a parameter is called with multiple different types across call sites.
+func PropagateParameterEvidence(localFuncs map[cfg.SymbolID]*LocalFuncInfo) {
 	if len(localFuncs) == 0 {
 		return
 	}
@@ -182,13 +182,13 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 				}
 
 				// For identifiers, check if the ident refers to a caller
-				// parameter with a known hint.
+				// parameter with known evidence.
 				if argType == nil {
 					if ident, ok := arg.(*ast.IdentExpr); ok && bindings != nil {
 						if sym, found := bindings.SymbolOf(ident); found {
 							if ref, isParam := paramOwner[sym]; isParam {
-								if ref.index < len(ref.owner.ParamHints) {
-									argType = ref.owner.ParamHints[ref.index]
+								if ref.index < len(ref.owner.ParameterEvidence) {
+									argType = ref.owner.ParameterEvidence[ref.index]
 								}
 							}
 						}
@@ -197,13 +197,13 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 
 				// If a local function is passed as an argument and the callee has
 				// a function-typed parameter annotation at this position, propagate
-				// those parameter types as hints to the passed local function.
+				// those parameter types as evidence to the passed local function.
 				if calleeSig != nil && i < len(calleeSig.Params) {
 					if expectedFn := unwrap.Function(calleeSig.Params[i].Type); expectedFn != nil {
 						argSym := canonicalLocalSymbol(localFuncs, graph, moduleBindings, bindings, arg, 0)
 						if argSym != 0 {
 							if argLocal := localFuncs[argSym]; argLocal != nil {
-								if mergeFunctionParamHints(argLocal, expectedFn) {
+								if mergeExpectedFunctionEvidence(argLocal, expectedFn) {
 									changed = true
 								}
 							}
@@ -211,8 +211,8 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 					}
 				}
 
-				nextHints, merged := paramhints.MergeHintAt(callee.ParamHints, i, argType, typ.JoinPreferNonSoft)
-				callee.ParamHints = nextHints
+				nextEvidence, merged := paramevidence.MergeAt(callee.ParameterEvidence, i, argType, typ.JoinPreferNonSoft)
+				callee.ParameterEvidence = nextEvidence
 				if merged {
 					changed = true
 				}
@@ -220,7 +220,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 		}
 
 		// Parent-graph calls (e.g. chunk-level calls to local/nested functions)
-		// provide the first wave of hints into local function params.
+		// provide the first wave of evidence into local function params.
 		for _, graphID := range parentGraphIDs {
 			g := parentGraphs[graphID]
 			if g == nil {
@@ -249,22 +249,22 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 	}
 }
 
-func mergeFunctionParamHints(target *LocalFuncInfo, expectedFn *typ.Function) bool {
+func mergeExpectedFunctionEvidence(target *LocalFuncInfo, expectedFn *typ.Function) bool {
 	if target == nil || expectedFn == nil || len(expectedFn.Params) == 0 {
 		return false
 	}
 	changed := false
-	if target.ParamHints == nil {
-		target.ParamHints = make([]typ.Type, len(expectedFn.Params))
-	} else if len(expectedFn.Params) > len(target.ParamHints) {
+	if target.ParameterEvidence == nil {
+		target.ParameterEvidence = make([]typ.Type, len(expectedFn.Params))
+	} else if len(expectedFn.Params) > len(target.ParameterEvidence) {
 		expanded := make([]typ.Type, len(expectedFn.Params))
-		copy(expanded, target.ParamHints)
-		target.ParamHints = expanded
+		copy(expanded, target.ParameterEvidence)
+		target.ParameterEvidence = expanded
 	}
 
 	for i, param := range expectedFn.Params {
-		nextHints, merged := paramhints.MergeHintAt(target.ParamHints, i, param.Type, typ.JoinPreferNonSoft)
-		target.ParamHints = nextHints
+		nextEvidence, merged := paramevidence.MergeAt(target.ParameterEvidence, i, param.Type, typ.JoinPreferNonSoft)
+		target.ParameterEvidence = nextEvidence
 		if merged {
 			changed = true
 		}

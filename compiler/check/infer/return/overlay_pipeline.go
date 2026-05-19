@@ -9,7 +9,7 @@ import (
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -35,8 +35,8 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 		if !hasSource {
 			if selfType := ctx.resolveScope.SelfType(); selfType != nil {
 				overlay[slot.Symbol] = selfType
-			} else if ctx.info.ParamHints != nil && paramIdx < len(ctx.info.ParamHints) && ctx.info.ParamHints[paramIdx] != nil {
-				overlay[slot.Symbol] = ctx.info.ParamHints[paramIdx]
+			} else if ctx.info.ParameterEvidence != nil && paramIdx < len(ctx.info.ParameterEvidence) && ctx.info.ParameterEvidence[paramIdx] != nil {
+				overlay[slot.Symbol] = ctx.info.ParameterEvidence[paramIdx]
 			} else {
 				overlay[slot.Symbol] = typ.Unknown
 			}
@@ -50,8 +50,8 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 			}
 		}
 		if typ.IsAbsentOrUnknown(paramType) {
-			if ctx.info.ParamHints != nil && paramIdx < len(ctx.info.ParamHints) && ctx.info.ParamHints[paramIdx] != nil {
-				paramType = ctx.info.ParamHints[paramIdx]
+			if ctx.info.ParameterEvidence != nil && paramIdx < len(ctx.info.ParameterEvidence) && ctx.info.ParameterEvidence[paramIdx] != nil {
+				paramType = ctx.info.ParameterEvidence[paramIdx]
 			}
 		}
 		if typ.IsAbsentOrUnknown(paramType) && slot.TypeAnnotation == nil {
@@ -130,8 +130,8 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 				}
 				seed := returns.BuildSeedFunctionTypeWithBindings(fn, ctx.engine, ctx.resolveScope, bindings)
 				fnType, _ := seed.(*typ.Function)
-				if localInfo != nil && len(localInfo.ParamHints) > 0 && fnType != nil {
-					return paramhints.MergeIntoSignature(fn, localInfo.ParamHints, fnType)
+				if localInfo != nil && len(localInfo.ParameterEvidence) > 0 && fnType != nil {
+					return paramevidence.MergeIntoSignature(fn, localInfo.ParameterEvidence, fnType)
 				}
 				return seed
 			},
@@ -256,8 +256,8 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 			}
 			returnVector := i.resolveLocalFunctionReturns(ctx, allReturnVectors, target.Symbol)
 			sig := ctx.engine.ResolveFunctionSignature(fnExpr, ctx.resolveScope)
-			if localInfo := ctx.localFuncs[target.Symbol]; localInfo != nil && len(localInfo.ParamHints) > 0 && sig != nil {
-				sig = paramhints.MergeIntoSignature(fnExpr, localInfo.ParamHints, sig)
+			if localInfo := ctx.localFuncs[target.Symbol]; localInfo != nil && len(localInfo.ParameterEvidence) > 0 && sig != nil {
+				sig = paramevidence.MergeIntoSignature(fnExpr, localInfo.ParameterEvidence, sig)
 			}
 			if fnType := returns.WithSummaryOrUnknown(sig, returnVector); fnType != nil {
 				overlay[target.Symbol] = fnType
@@ -646,7 +646,7 @@ func mergeInferredIntoOverlay(
 ) {
 	for sym, inferredType := range inferred {
 		baseType := finalOverlay[sym]
-		// Parameter domains are seeded from annotations/hints and must not be
+		// Parameter domains are seeded from annotations/evidence and must not be
 		// rewritten by local variable inference artifacts.
 		if paramSyms[sym] {
 			if typ.IsAbsentOrUnknown(baseType) {

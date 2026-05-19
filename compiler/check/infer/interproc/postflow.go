@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -53,8 +53,8 @@ func StoreFactsFromResult(
 			fnSym = resolvedSym
 		}
 	}
-	// Collect parameter hints regardless of whether the function has a symbol.
-	CollectParamHintsFromResult(store, result, parent)
+	// Collect parameter evidence regardless of whether the function has a symbol.
+	CollectParameterEvidenceFromResult(store, result, parent)
 
 	if fnSym == 0 {
 		return
@@ -75,8 +75,8 @@ func StoreFactsFromResult(
 	summaryFromSnapshot := returnSummarySnapshotForSymbol(store, result, parent, fnSym)
 
 	candidateFunc := fnType
-	if hints := store.GetParamHintsSnapshot(result.Graph, parent); len(hints) > 0 {
-		if hinted := paramhints.MergeIntoSignature(fn, hints[fnSym], unwrap.Function(candidateFunc)); hinted != nil {
+	if facts := store.GetFunctionFactsSnapshot(result.Graph, parent); len(facts) > 0 {
+		if hinted := paramevidence.MergeIntoSignature(fn, facts.Params(fnSym), unwrap.Function(candidateFunc)); hinted != nil {
 			candidateFunc = hinted
 		}
 	}
@@ -281,9 +281,9 @@ func expectedFunctionFromResult(result *api.FuncResult) *typ.Function {
 	return builder.Build()
 }
 
-// CollectParamHintsFromResult records parameter hints based on call sites
+// CollectParameterEvidenceFromResult records parameter evidence based on call sites
 // within the current function's graph using narrowed expression types.
-func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *scope.State) {
+func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, parent *scope.State) {
 	if store == nil || result == nil || result.Graph == nil || result.NarrowSynth == nil {
 		return
 	}
@@ -298,7 +298,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 	hasFunctionRef := func(sym cfg.SymbolID) bool {
 		return sym != 0 && store.FunctionRefBySym(sym) != nil
 	}
-	collectCallHints := func(p cfg.Point, info *cfg.CallInfo) {
+	collectCallEvidence := func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || checkcallsite.RuntimeArgCount(info) == 0 {
 			return
 		}
@@ -388,9 +388,9 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 			return
 		}
 
-		deltaHints := make(api.ParamHints)
+		deltaFacts := make(api.FunctionFacts)
 		runtimeArgCount := checkcallsite.RuntimeArgCount(info)
-		hints := paramhints.EnsureHintCapacity(nil, runtimeArgCount)
+		evidence := paramevidence.EnsureCapacity(nil, runtimeArgCount)
 		for runtimeIdx := 0; runtimeIdx < runtimeArgCount; runtimeIdx++ {
 			arg := checkcallsite.RuntimeArgAt(info, runtimeIdx)
 			if arg == nil {
@@ -411,7 +411,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 			if argType == nil {
 				argType = result.NarrowSynth.TypeOf(arg, p)
 			}
-			hints, _ = paramhints.MergeCallArgHintAt(hints, runtimeIdx, argType, typ.JoinPreferNonSoft, true)
+			evidence, _ = paramevidence.MergeCallArgAt(evidence, runtimeIdx, argType, typ.JoinPreferNonSoft, true)
 		}
 		for i, arg := range info.Args {
 			if arg == nil {
@@ -427,26 +427,26 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 					hasFunctionRef,
 				)
 				if argSym != 0 && hasFunctionRef(argSym) {
-					hintsForFn := deltaHints[argSym]
+					fnEvidence := deltaFacts.Params(argSym)
 					for j, param := range expectedFn.Params {
-						hintsForFn, _ = paramhints.MergeHintAt(hintsForFn, j, param.Type, typ.JoinPreferNonSoft)
+						fnEvidence, _ = paramevidence.MergeAt(fnEvidence, j, param.Type, typ.JoinPreferNonSoft)
 					}
-					if len(hintsForFn) > 0 {
-						deltaHints[argSym] = hintsForFn
+					if len(fnEvidence) > 0 {
+						deltaFacts[argSym] = returns.JoinFunctionFact(deltaFacts[argSym], api.FunctionFact{Params: fnEvidence})
 					}
 				}
 			}
 		}
-		if len(hints) > 0 {
-			deltaHints[calleeSym] = hints
+		if len(evidence) > 0 {
+			deltaFacts[calleeSym] = returns.JoinFunctionFact(deltaFacts[calleeSym], api.FunctionFact{Params: evidence})
 		}
-		if len(deltaHints) > 0 {
-			store.MergeInterprocFactsNext(parentKey, api.Facts{ParamHints: deltaHints})
+		if len(deltaFacts) > 0 {
+			store.MergeInterprocFactsNext(parentKey, api.Facts{FunctionFacts: deltaFacts})
 		}
 	}
 
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		collectCallHints(p, info)
+		collectCallEvidence(p, info)
 
 		seenNested := make(map[*ast.FuncCallExpr]struct{})
 		for _, arg := range info.Args {
@@ -457,7 +457,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 			if nestedInfo == nil {
 				nestedInfo = synthCallInfoFromExpr(nested, bindings)
 			}
-			collectCallHints(p, nestedInfo)
+			collectCallEvidence(p, nestedInfo)
 		}
 	})
 }
