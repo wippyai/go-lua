@@ -1,4 +1,4 @@
-package returns
+package factproduct
 
 import (
 	"testing"

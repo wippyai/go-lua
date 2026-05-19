@@ -3,7 +3,7 @@ package store
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/returns"
+	"github.com/wippyai/go-lua/compiler/check/domain/factproduct"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
@@ -82,7 +82,7 @@ func (in *snapshotInputs) setFacts(key api.GraphKey, facts api.Facts) {
 		return
 	}
 	next := cloneFacts(facts)
-	if prev, ok := in.factValues[key]; ok && returns.FactsEqual(prev, next) {
+	if prev, ok := in.factValues[key]; ok && factproduct.FactsEqual(prev, next) {
 		return
 	}
 	in.factValues[key] = next
@@ -160,7 +160,7 @@ func constructorFieldMapsEqual(sym cfg.SymbolID, a, b map[string]typ.Type) bool 
 	if len(a) == 0 && len(b) == 0 {
 		return true
 	}
-	return returns.ConstructorFieldsEqual(
+	return factproduct.ConstructorFieldsEqual(
 		api.ConstructorFields{sym: a},
 		api.ConstructorFields{sym: b},
 	)
@@ -193,7 +193,7 @@ func (s *SessionStore) currentInterprocFacts(key api.GraphKey) api.Facts {
 			if factsEmpty(next) {
 				return cloneFacts(prev)
 			}
-			return cloneFacts(returns.JoinFacts(prev, next))
+			return cloneFacts(factproduct.JoinFacts(prev, next))
 		}
 	}
 	return cloneFacts(prev)

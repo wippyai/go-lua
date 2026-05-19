@@ -38,6 +38,17 @@ func TestFunctionFacts_Summary(t *testing.T) {
 	}
 }
 
+func TestFunctionFacts_NarrowSummary(t *testing.T) {
+	facts := make(FunctionFacts)
+	sym := cfg.SymbolID(1)
+	facts[sym] = FunctionFact{Narrow: []typ.Type{typ.String}}
+
+	rets := facts.NarrowSummary(sym)
+	if len(rets) != 1 || !typ.TypeEquals(rets[0], typ.String) {
+		t.Fatalf("expected narrow string return, got %v", rets)
+	}
+}
+
 func TestFunctionFacts_Params(t *testing.T) {
 	facts := make(FunctionFacts)
 	sym := cfg.SymbolID(1)

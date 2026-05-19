@@ -1,15 +1,16 @@
-// Package returns orchestrates local return inference and interprocedural fact
-// products.
+// Package returns orchestrates local return inference.
 //
 // It does not own the lattice laws for individual fact slots. Those live in
 // domain packages:
 //   - domain/paramevidence owns parameter evidence;
 //   - domain/returnsummary owns return vectors and function-return alignment;
 //   - domain/functionfact owns one api.FunctionFact at a time;
+//   - domain/factproduct owns whole api.Facts products;
 //   - domain/value owns reusable structural value relations.
 //
-// This package owns when those domains are applied across maps, SCCs, overlays,
-// captured mutations, and recursive interprocedural fixpoint boundaries.
+// This package owns local call graph traversal, SCC iteration, return overlays,
+// signature seeding, and nested-call mutation replay. The interprocedural store
+// applies product joins and widening through domain/factproduct.
 //
 // # SCC-Based Analysis
 //
@@ -26,13 +27,12 @@
 //   - Collect return expressions from all return statements
 //   - Synthesize types for return expressions
 //   - Merge candidate return vectors through domain/returnsummary
-//   - Apply product-level widening for recursive convergence
+//   - Publish per-function facts through domain/functionfact
 //
-// # Type Widening
+// # Convergence
 //
-// To ensure termination in recursive cases, types are widened:
-//   - After N iterations, recursive types are approximated
-//   - Widening preserves soundness while ensuring convergence
+// Local SCC iteration has a bounded return-summary loop. Cross-graph
+// interprocedural convergence is handled by the store through domain/factproduct.
 //
 // # Overlay System
 //

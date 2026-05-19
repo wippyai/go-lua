@@ -1,11 +1,10 @@
-package returns
+package factproduct
 
 import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -278,24 +277,6 @@ func TestMergeFunctionReturnsIfSameShape_GenericTypeParamsMustMatch(t *testing.T
 	}
 }
 
-func TestFunctionFactMergeType_DoesNotRegressToNarrowerNilReturn(t *testing.T) {
-	prev := typ.Func().
-		Returns(typ.NewOptional(typ.Integer)).
-		Build()
-	next := typ.Func().
-		Returns(typ.Nil).
-		Build()
-
-	merged := functionfact.MergeType(prev, next)
-	fn, ok := merged.(*typ.Function)
-	if !ok || len(fn.Returns) != 1 {
-		t.Fatalf("expected merged function return, got %T", merged)
-	}
-	if !typ.TypeEquals(fn.Returns[0], typ.NewOptional(typ.Integer)) {
-		t.Fatalf("expected integer? return after merge, got %v", fn.Returns[0])
-	}
-}
-
 func TestMergeFunctionReturnsIfSameShape_NormalizesLeakedTypeParams(t *testing.T) {
 	prev := typ.Func().
 		Returns(typ.NewTypeParam("T", nil)).
@@ -314,69 +295,6 @@ func TestMergeFunctionReturnsIfSameShape_NormalizesLeakedTypeParams(t *testing.T
 	}
 	if !typ.TypeEquals(merged.Returns[0], typ.Integer) {
 		t.Fatalf("expected leaked type param to normalize to integer, got %v", merged.Returns[0])
-	}
-}
-
-func TestFunctionFactMergeType_PrefersWiderSupertypeOnSubtypeRelation(t *testing.T) {
-	merged := functionfact.MergeType(typ.Integer, typ.Number)
-	if !typ.TypeEquals(merged, typ.Number) {
-		t.Fatalf("expected wider supertype number, got %v", merged)
-	}
-
-	merged = functionfact.MergeType(typ.Number, typ.Integer)
-	if !typ.TypeEquals(merged, typ.Number) {
-		t.Fatalf("expected wider supertype number, got %v", merged)
-	}
-}
-
-func TestFunctionFactMergeType_IsCommutativeForIncomparableSignatures(t *testing.T) {
-	coarse := typ.Func().
-		Param("entries", typ.Any).
-		Returns(typ.Integer).
-		Build()
-	refined := typ.Func().
-		Param("entries", typ.NewArray(typ.String)).
-		Returns(typ.Integer).
-		Build()
-
-	forward := functionfact.MergeType(coarse, refined)
-	reverse := functionfact.MergeType(refined, coarse)
-	if !typ.TypeEquals(forward, reverse) {
-		t.Fatalf("expected commutative merge result, got forward=%v reverse=%v", forward, reverse)
-	}
-}
-
-func TestFunctionFactMergeType_AliasInputsUseCanonicalJoin(t *testing.T) {
-	coarse := typ.NewAlias("CoarseFn", typ.Func().
-		Param("entries", typ.Any).
-		Returns(typ.Integer).
-		Build())
-	refined := typ.NewAlias("RefinedFn", typ.Func().
-		Param("entries", typ.NewArray(typ.String)).
-		Returns(typ.Integer).
-		Build())
-
-	forward := functionfact.MergeType(coarse, refined)
-	reverse := functionfact.MergeType(refined, coarse)
-	if !typ.TypeEquals(forward, reverse) {
-		t.Fatalf("expected commutative alias merge result, got forward=%v reverse=%v", forward, reverse)
-	}
-}
-
-func TestFunctionFactMergeType_MapVsOpenRecordUsesCanonicalJoin(t *testing.T) {
-	coarse := typ.Func().
-		Param("t", typ.NewRecord().SetOpen(true).Build()).
-		Returns(typ.String).
-		Build()
-	refined := typ.Func().
-		Param("t", typ.NewMap(typ.String, typ.NewArray(typ.String))).
-		Returns(typ.String).
-		Build()
-
-	forward := functionfact.MergeType(coarse, refined)
-	reverse := functionfact.MergeType(refined, coarse)
-	if !typ.TypeEquals(forward, reverse) {
-		t.Fatalf("expected commutative map/open-record merge result, got forward=%v reverse=%v", forward, reverse)
 	}
 }
 

@@ -279,6 +279,72 @@ Verification for this slice so far:
   targets: session 8 errors, agent/src 10 errors, docker-demo 21 errors and
   2 warnings.
 
+## 2026-05-19 Fact Product Domain Checkpoint
+
+The next rectification slice moved the whole interprocedural fact product out of
+`compiler/check/returns` and into `compiler/check/domain/factproduct`.
+
+Moved product laws:
+
+- `api.Facts` equality;
+- same-iteration product join;
+- recursive-boundary product widening;
+- function-fact map canonicalization and deterministic symbol enumeration;
+- literal signature join/widen;
+- captured type join/widen;
+- captured field assignment join/widen;
+- captured container mutation join/widen;
+- constructor-field join/widen;
+- deterministic captured field/container equality and merge helpers.
+
+Production callers now import `domain/factproduct` directly. The old
+`returns.WidenFacts`, `returns.JoinFacts`, `returns.FactsEqual`,
+`returns.ConstructorFieldsEqual`, `returns.WidenLiteralSigs`,
+`returns.JoinLiteralSigs`, captured-fact join/widen/equality helpers, and
+captured merge helpers were deleted from `returns` instead of wrapped.
+
+Test ownership was rectified at the same time:
+
+- return-vector and return-summary law tests moved to `domain/returnsummary`;
+- one-function fact join/type-merge tests moved to `domain/functionfact`;
+- whole-product tests moved to `domain/factproduct`;
+- `returns` keeps only local return orchestration tests.
+
+Current package ownership:
+
+```text
+domain/value         = reusable structural value relations
+domain/paramevidence = parameter evidence lattice, equality, and parameter-slot refinement
+domain/returnsummary = return-vector lattice and function-return alignment
+domain/functionfact  = one-function fact normalization, join, and type projection
+domain/factproduct   = whole api.Facts product join, widening, equality, and map domains
+returns              = local return SCC orchestration, call graph, overlays, signature seeding
+store                = snapshot/Salsa wiring and fixpoint publication
+```
+
+This separates the abstract interpreter more cleanly:
+
+1. local inference produces function and mutation deltas;
+2. `domain/functionfact` and the other slot domains define one-slot meaning;
+3. `domain/factproduct` defines how the whole interprocedural product combines;
+4. the store decides when to apply join or widening and when to publish Salsa
+   snapshot inputs;
+5. `returns` no longer owns cross-graph product laws.
+
+Verification for this slice so far:
+
+- `go test ./compiler/check/domain/factproduct ./compiler/check/store
+  ./compiler/check/returns ./compiler/check/...` passes.
+- `go test ./...` passes.
+- `git diff --check` passes.
+- `go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction
+  -benchmem -count=3` reports 1.17-1.19 ms/op, 881 KB/op, and 9390 allocs/op
+  on this machine.
+- Standard `../scripts/verify-suite.sh` passes go-lua checker tests and builds
+  the Wippy binary, then exits non-zero on the known external pinned lint
+  targets: session 8 errors, agent/src 10 errors, docker-demo 21 errors and
+  2 warnings.
+
 ## Goal
 
 The checker should read as one abstract interpreter over a product domain.

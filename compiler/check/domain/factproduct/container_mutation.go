@@ -1,4 +1,4 @@
-package returns
+package factproduct
 
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"

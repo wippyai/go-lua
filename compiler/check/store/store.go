@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/returns"
+	"github.com/wippyai/go-lua/compiler/check/domain/factproduct"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -131,7 +131,7 @@ func interprocFactsMapEqual(a, b map[api.GraphKey]api.Facts) bool {
 		return false
 	}
 	for _, key := range api.SortedGraphKeys(a) {
-		if !returns.FactsEqual(a[key], b[key]) {
+		if !factproduct.FactsEqual(a[key], b[key]) {
 			return false
 		}
 	}
@@ -150,9 +150,9 @@ func widenInterprocFacts(prev, next map[api.GraphKey]api.Facts) map[api.GraphKey
 	for _, key := range api.SortedGraphKeys(next) {
 		facts := next[key]
 		if existing, ok := out[key]; ok {
-			out[key] = returns.WidenFacts(existing, facts)
+			out[key] = factproduct.WidenFacts(existing, facts)
 		} else {
-			out[key] = returns.WidenFacts(api.Facts{}, facts)
+			out[key] = factproduct.WidenFacts(api.Facts{}, facts)
 		}
 	}
 	return out
@@ -334,7 +334,7 @@ func (s *SessionStore) swapInterprocChannels() []string {
 					func(_prev, next api.ConstructorFields) api.ConstructorFields {
 						return next
 					},
-					returns.ConstructorFieldsEqual,
+					factproduct.ConstructorFieldsEqual,
 					func() api.ConstructorFields {
 						return make(api.ConstructorFields)
 					},
@@ -557,7 +557,7 @@ func (s *SessionStore) MergeInterprocFactsNext(key api.GraphKey, delta api.Facts
 	}
 	s.ensureInterprocStates()
 	existing := s.InterprocNext.Facts[key]
-	facts := returns.JoinFacts(existing, delta)
+	facts := factproduct.JoinFacts(existing, delta)
 	if factsEmpty(facts) {
 		if factsEmpty(existing) {
 			return
@@ -566,7 +566,7 @@ func (s *SessionStore) MergeInterprocFactsNext(key api.GraphKey, delta api.Facts
 		s.syncFactsInput(key)
 		return
 	}
-	if returns.FactsEqual(existing, facts) {
+	if factproduct.FactsEqual(existing, facts) {
 		return
 	}
 	s.InterprocNext.Facts[key] = facts
