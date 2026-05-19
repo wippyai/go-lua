@@ -262,6 +262,126 @@ Owns facts emitted by a completed function analysis:
 
 The delta is immutable. The store combines it through `FactsDomain` only.
 
+## Inference Model
+
+Inference is not a separate magical subsystem. It is the process of solving for
+unknown slots in the product domain under the evidence produced by transfer.
+
+The final model should distinguish these inference layers:
+
+### Local Value Inference
+
+Scope:
+
+- local variables,
+- field/index reads,
+- table literals,
+- expression results,
+- branch-local values,
+- loop-carried values.
+
+Authority:
+
+```text
+AbstractState.ValueFacts + MemoryState + RelationFacts
+```
+
+Rules:
+
+- local value inference reads declared types, transfer assignments, and
+  constraints;
+- it never writes interprocedural facts directly;
+- it must preserve the distinction between `unknown` and `any`;
+- table literal contextualization is a transfer/type-domain operation, not a
+  one-off hook;
+- logical `and`/`or` inference must preserve actual Lua branch values.
+
+### Parameter Inference
+
+Scope:
+
+- call-site argument observations,
+- body-derived obligations,
+- source annotations,
+- soft annotations,
+- current function facts,
+- function literal expectations.
+
+Authority:
+
+```text
+ParameterEvidenceDomain
+```
+
+Rules:
+
+- call-site observations are evidence, not contracts;
+- body obligations are contracts only when the function body proves it requires
+  that shape;
+- explicit source annotations dominate inferred hints;
+- soft annotations refine only when hard evidence proves the refinement;
+- recursive parameter evidence must join/widen through the parameter domain.
+
+There should be no separate ad hoc policy for "param hints" versus "function
+fact params". Both are parameter evidence with different provenance and merge
+mode.
+
+### Return Inference
+
+Scope:
+
+- return statements,
+- tuple/multivalue expansion,
+- nil padding,
+- recursive return vectors,
+- summary and narrow summary slots,
+- wrapper forwarding.
+
+Authority:
+
+```text
+ReturnSummaryDomain
+RelationDomain
+```
+
+Rules:
+
+- return arity is part of the tuple domain;
+- `unknown` return evidence is unresolved runtime behavior, not bottom;
+- recursive return vectors widen only at the SCC/fixpoint boundary;
+- relation facts such as `(value, err)` attach to return tuples explicitly;
+- wrapper forwarding propagates tuple and relation facts together.
+
+### Function Type Inference
+
+Scope:
+
+- local function literals,
+- method receiver `self`,
+- higher-order callbacks,
+- literal signatures,
+- exported functions,
+- imported module functions.
+
+Authority:
+
+```text
+FunctionFactDomain
+ParameterEvidenceDomain
+ReturnSummaryDomain
+RelationDomain
+```
+
+Rules:
+
+- function type inference is a product of parameter evidence, return summary,
+  and relation/effect summaries;
+- a same-body function fact may seed analysis only through non-narrowing domain
+  merge;
+- higher-order signatures must use variance-aware merge rules;
+- literal signatures are facts in the interproc product, not a second function
+  authority.
+
 ## Phase Responsibility Table
 
 | Phase | May Create | May Combine | May Widen | May Query | Forbidden |
@@ -432,6 +552,48 @@ type TupleRelation struct {
 The current `(value, err)` convention is then one predefined relation, not a
 special checker behavior.
 
+### Effect Domain
+
+Owns facts about what a function or call can do:
+
+- termination,
+- error-return relation attachment,
+- path refinements caused by assertions/predicates,
+- table/container mutation effects,
+- callback effects,
+- key-collector effects,
+- external contract effects.
+
+Candidate home:
+
+```text
+compiler/check/domain/effect
+```
+
+Effect inference must be a normal abstract-interpretation output:
+
+```text
+CallSite + CalleeSummary + AbstractState -> EffectDelta
+```
+
+The effect delta is then applied by transfer or stored in function facts. It
+must not be an after-the-fact patch that rewrites types without going through
+the memory/relation/effect domains.
+
+Effect summaries should be explicit:
+
+```go
+type EffectSummary struct {
+    Mutations []memory.Mutation
+    Relations []relation.TupleRelation
+    Refinements []relation.PathRelation
+    Terminates TerminationEffect
+}
+```
+
+Current effects such as error-return correlation, captured container mutation,
+and key-collector propagation become instances of this summary.
+
 ### Function Fact Domain
 
 Owns all interprocedural facts about functions.
@@ -539,6 +701,7 @@ type FactsDomain struct {
     LiteralSigs   LiteralSignatureDomain
     Captures      CaptureDomain
     Constructors  ConstructorDomain
+    Effects       EffectDomain
 }
 ```
 
@@ -575,6 +738,7 @@ helper joins directly.
 | path/query/alias identity | `constraint`, `flowbuild/path`, `flow/pathkey` | `memory` |
 | table/container mutation replay | `nested`, `returns`, `flowbuild`, `flow` | `memory` mutation domain |
 | error-return convention | `erreffect`, call/return inference | `domain/relation` |
+| effect inference | `effects`, `erreffect`, `flowbuild`, `nested`, `returns` | `domain/effect` |
 | body parameter contracts | `infer/return`, `flowbuild/assign` | `domain/paramevidence` |
 | Salsa snapshot inputs | `store/snapshot_inputs.go` | keep in store, but document as cache boundary |
 
@@ -893,7 +1057,22 @@ The final design should model tuple/path relations directly. `(value, err)` is
 then one relation instance. This keeps the system extensible without hardcoded
 branch helpers or return-slot checks.
 
-### 6. Tests Are Too Positive-Heavy
+### 6. Effect Inference Is Too Distributed
+
+Effects are currently inferred and replayed from several places:
+
+- call specs,
+- error-return inference,
+- captured field/container mutation collection,
+- nested mutator replay,
+- key collector detection,
+- predicate/assertion refinements.
+
+Those are all effect facts. They need one summary model and one application path
+through transfer. Otherwise each new effect creates its own mini analysis and
+its own invalidation/caching risks.
+
+### 7. Tests Are Too Positive-Heavy
 
 Many external-lint regressions are "this must type-check" tests. Those are
 useful, but insufficient. They can pass through accidental broadening.
@@ -925,6 +1104,7 @@ design is not complete until each row below has an owner domain and tests.
 | functions | optional function values, union of function signatures, method `self`, varargs, higher-order callbacks, recursive locals |
 | returns | zero returns, one return, two returns, more than two returns, tuple expansion, nil padding, recursive containers |
 | relations | `(value, err)`, custom error record, multiple independent relations, swapped slots, relation through wrapper, relation through any |
+| effects | termination, assertion refinements, callback effects, captured mutation effects, key collection, external contract effects |
 | interproc | parent scope change, module boundary, literal signatures, captured fields, constructor fields, sibling overlay, stale snapshots |
 | caching | stale query after fact change, query reuse after no-op fact change, cache key missing parent scope, cache key missing graph identity |
 | performance | recursive structural scan, repeated AST projection, repeated map allocation, query dependency overhead, equality-time canonicalization |
