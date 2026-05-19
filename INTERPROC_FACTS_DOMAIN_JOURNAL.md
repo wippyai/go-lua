@@ -348,6 +348,223 @@ The implementation should preserve these laws:
 These laws should become test names. A regression that violates one of them is a
 design regression, not a local bug.
 
+## Ownership Ledger
+
+Every semantic object should have one home. This table is the fastest review
+tool for the future flash migration.
+
+| Object | Born In | Canonical State | Transformed By | Queried By | Published As | Cache Boundary |
+|---|---|---|---|---|---|---|
+| symbol identity | graph build | graph bundle | never semantically transformed | location resolver | graph key/symbol key | graph input |
+| parent scope | scope build | immutable scope state | never semantically transformed | analysis key lookup | parent hash | `FuncKey`/`GraphKey` |
+| field/index path | IR/path lowering | `Location` / `MemoryState` | memory transfer | query view | captured path/mutation delta | location interning |
+| local value fact | transfer | `AbstractState.Values` | value domain | type-at query | return/param/capture delta when exported | per-function state |
+| table shape fact | literal/assignment transfer | value + memory domains | value/memory domains | field/index query | function/captured/container delta | type query + local state |
+| branch truthiness | condition transfer | relation/value constraints | relation/value domains | query view | relation summary if it crosses boundary | per-function state |
+| nil/absent evidence | assignment/field transfer | memory + value domains | memory/value domains | field query | return/param/capture delta | per-function state |
+| parameter observation | call transfer | parameter evidence domain | parameter domain | function summary query | function fact delta | interproc facts input |
+| body obligation | body transfer | parameter evidence domain | parameter domain | function summary query | function fact delta | graph summary + state |
+| return tuple | return transfer | return summary domain | return domain | return query | function fact delta | interproc facts input |
+| tuple/path relation | predicate/effect/return transfer | relation domain | relation domain | relation query | relation summary delta | local state / interproc facts |
+| table mutation | assignment/effect transfer | memory domain | memory domain | iteration/field query | captured container delta | local state / interproc facts |
+| call effect | effect resolution | effect domain | effect domain | transfer/query view | refinement/effect delta | effect snapshot input |
+| termination fact | transfer/effect transfer | termination domain | termination domain | reachability query | function effect delta | per-function state |
+| diagnostic evidence | failed constraint transfer/query | diagnostics evidence state | diagnostic projection only | diagnostics pass | no semantic delta | result only |
+| constructor field | constructor transfer/publication | constructor field domain | memory/value domains | constructor query | constructor snapshot | constructor input |
+| external dynamic value | manifest/effect transfer | value evidence with provenance | value/domain checks | assignability query | only if exported with provenance | manifest/type input |
+
+Design rule:
+
+```text
+If a row needs two canonical states, the model is split incorrectly.
+If a row has no cache boundary, the implementation will invent one locally.
+If a row has two publishers, legacy mirror channels are coming back.
+```
+
+## Dataflow Moral Rules
+
+The checker should be easy to explain because the direction of information never
+reverses.
+
+### Syntax To Evidence
+
+Syntax can create observations. It cannot create authority by itself.
+
+Examples:
+
+- a table literal observes fields;
+- a call observes arguments;
+- a guard observes a branch condition;
+- a return observes tuple slots.
+
+These observations become evidence only through transfer and domain
+qualification.
+
+### Evidence To Fact
+
+Evidence becomes a fact when the owning domain accepts it into state.
+
+Examples:
+
+- a field observation becomes a memory fact at a canonical location;
+- a truthy guard becomes a relation/value constraint;
+- a body use becomes a parameter obligation;
+- a call argument becomes a parameter observation.
+
+No producer decides global precedence. The evidence order belongs to the domain.
+
+### Fact To Answer
+
+Answers are read-only projections.
+
+Examples:
+
+- "what is the type here?",
+- "does this path exclude nil?",
+- "what does this function return?",
+- "does this call terminate?",
+- "which diagnostic should be emitted?".
+
+An answer cannot become a fact unless a later transfer explicitly observes it
+and routes it through the owning domain. This prevents query-time analysis.
+
+### Fact To Delta
+
+Only solved facts that cross a function or module boundary become deltas.
+
+Examples:
+
+- local temporary narrowing does not publish;
+- body obligation publishes as parameter evidence;
+- return tuple publishes as return summary and relation summary;
+- captured mutation publishes as memory/effect summary;
+- external contract application does not rewrite the contract.
+
+The publisher emits a delta; `FactsDomain` combines it.
+
+### Delta To Snapshot
+
+Snapshots are cache inputs, not semantic repair points.
+
+Examples:
+
+- changed canonical facts update snapshot inputs;
+- unchanged canonical facts do not invalidate queries;
+- empty canonical facts clear stale inputs;
+- compatibility projections are not written.
+
+This keeps incremental revalidation honest: Salsa tracks dependencies, domains
+track meaning.
+
+## Boundary Invariants
+
+Every boundary in the dataflow should have a small invariant that can be tested
+or reviewed directly.
+
+### Graph Boundary
+
+Invariant:
+
+```text
+Graph identity changes only when syntax/binding identity changes.
+```
+
+This boundary may cache syntax summaries. It may not depend on interproc facts,
+solved flow state, or expected call types.
+
+### IR Boundary
+
+Invariant:
+
+```text
+Checker IR contains operations, not answers.
+```
+
+The IR may say "apply this call effect" or "assign this value to this
+location". It may not pre-decide the result type of an operation whose answer
+depends on flow/interproc state.
+
+### Transfer Boundary
+
+Invariant:
+
+```text
+Transfer is the only state-writing semantics inside a function.
+```
+
+All writes to memory, value, relation, effect, and termination state must be
+visible as transfer operations. A helper that writes state outside transfer is a
+hidden interpreter.
+
+### Join Boundary
+
+Invariant:
+
+```text
+Branch merge uses domain Join and nothing else.
+```
+
+A branch-specific merge helper is allowed only if it is the domain's exported
+join/meet/refine operation. If it knows about AST shape, it is in the wrong
+layer.
+
+### Widen Boundary
+
+Invariant:
+
+```text
+Widen happens only at named recursive boundaries.
+```
+
+Loop widening, local function SCC widening, and interproc widening may have
+different schedules, but they must call the same domain-level widening laws for
+the same fact family.
+
+### Query Boundary
+
+Invariant:
+
+```text
+Query answers cannot become stored evidence.
+```
+
+Query caches are permitted only for answers. They must not publish facts or
+change future convergence.
+
+### Publication Boundary
+
+Invariant:
+
+```text
+Publication emits immutable deltas and never merges them.
+```
+
+The same solved state must always produce the same delta. If publication reads
+previous facts to decide how to shape the delta, it is doing merge work in the
+wrong layer.
+
+### Snapshot Boundary
+
+Invariant:
+
+```text
+Snapshot updates are semantic no-ops except for dependency invalidation.
+```
+
+Setting a snapshot input can make queries rerun. It cannot normalize, widen,
+infer, or delete evidence except by reflecting the already-canonical facts.
+
+### Diagnostic Boundary
+
+Invariant:
+
+```text
+Diagnostics observe proof failure; they do not define type behavior.
+```
+
+A diagnostic pass may ask why a check failed. It may not make the check pass or
+fail by changing evidence.
+
 ## Semantic Atoms
 
 The final design should use a small shared vocabulary. These words should have
