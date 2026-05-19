@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
+	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -231,73 +232,6 @@ func TestWidenCapturedFieldAssigns_MergesSameShapeFunctionValues(t *testing.T) {
 	}
 }
 
-func TestMergeFunctionReturnsIfSameShape_GenericFunctions(t *testing.T) {
-	prev := typ.Func().
-		TypeParam("T", nil).
-		Returns(typ.String).
-		Build()
-	next := typ.Func().
-		TypeParam("T", nil).
-		Returns(typ.Integer).
-		Build()
-
-	mergedType, ok := mergeFunctionReturnsIfSameShape(prev, next)
-	if !ok {
-		t.Fatal("expected generic same-shape functions to merge")
-	}
-	merged, ok := mergedType.(*typ.Function)
-	if !ok {
-		t.Fatalf("expected merged function type, got %T", mergedType)
-	}
-	if len(merged.TypeParams) != 1 || merged.TypeParams[0] == nil || merged.TypeParams[0].Name != "T" {
-		t.Fatalf("expected merged generic type parameter T, got %+v", merged.TypeParams)
-	}
-	if len(merged.Returns) != 1 {
-		t.Fatalf("expected one return, got %d", len(merged.Returns))
-	}
-	want := typ.NewUnion(typ.String, typ.Integer)
-	if !typ.TypeEquals(merged.Returns[0], want) {
-		t.Fatalf("expected merged return %v, got %v", want, merged.Returns[0])
-	}
-}
-
-func TestMergeFunctionReturnsIfSameShape_GenericTypeParamsMustMatch(t *testing.T) {
-	prev := typ.Func().
-		TypeParam("T", nil).
-		Returns(typ.String).
-		Build()
-	next := typ.Func().
-		TypeParam("U", nil).
-		Returns(typ.Integer).
-		Build()
-
-	_, ok := mergeFunctionReturnsIfSameShape(prev, next)
-	if ok {
-		t.Fatal("expected mismatched generic params not to merge")
-	}
-}
-
-func TestMergeFunctionReturnsIfSameShape_NormalizesLeakedTypeParams(t *testing.T) {
-	prev := typ.Func().
-		Returns(typ.NewTypeParam("T", nil)).
-		Build()
-	next := typ.Func().
-		Returns(typ.Integer).
-		Build()
-
-	mergedType, ok := mergeFunctionReturnsIfSameShape(prev, next)
-	if !ok {
-		t.Fatal("expected same-shape functions to merge")
-	}
-	merged, ok := mergedType.(*typ.Function)
-	if !ok || len(merged.Returns) != 1 {
-		t.Fatalf("expected merged function return, got %T", mergedType)
-	}
-	if !typ.TypeEquals(merged.Returns[0], typ.Integer) {
-		t.Fatalf("expected leaked type param to normalize to integer, got %v", merged.Returns[0])
-	}
-}
-
 func TestWidenLiteralSigs_DoesNotNarrowComparableSignature(t *testing.T) {
 	lit := &ast.FunctionExpr{}
 
@@ -359,7 +293,7 @@ func TestWidenLiteralSigs_NormalizesNilBranch(t *testing.T) {
 
 	merged := WidenLiteralSigs(nil, api.LiteralSigs{lit: sig})
 	got := merged[lit]
-	want := maybeWidenFunctionForConvergence(sig)
+	want := value.WidenFunctionForConvergence(sig)
 	if got == nil || !typ.TypeEquals(got, want) {
 		t.Fatalf("expected nil-branch literal signature %v to be normalized to %v, got %v", sig, want, got)
 	}

@@ -1,4 +1,4 @@
-package returnsummary
+package value
 
 import (
 	"testing"

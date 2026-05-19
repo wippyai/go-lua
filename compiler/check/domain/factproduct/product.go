@@ -4,8 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
-	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -31,7 +29,7 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 	for _, sym := range symbols {
 		prevFact := readFunctionFactFromFacts(&prev, sym)
 		nextFact := readFunctionFactFromFacts(&next, sym)
-		writeNormalizedFunctionFactToFacts(&out, sym, widenFunctionFactForConvergence(prevFact, nextFact))
+		writeNormalizedFunctionFactToFacts(&out, sym, functionfact.WidenForConvergence(prevFact, nextFact))
 	}
 	if len(out.FunctionFacts) == 0 {
 		out.FunctionFacts = nil
@@ -63,177 +61,14 @@ func JoinFacts(prev, next api.Facts) api.Facts {
 	return out
 }
 
-func widenFunctionFactForConvergence(prev, next api.FunctionFact) api.FunctionFact {
-	out := api.FunctionFact{
-		Params:  paramevidence.JoinVectors(prev.Params, next.Params),
-		Summary: widenReturnSummaryForConvergence(prev.Summary, next.Summary),
-		Narrow:  widenReturnSummaryForConvergence(prev.Narrow, next.Narrow),
-		Type:    widenFunctionFactTypeForConvergence(prev.Type, next.Type),
-	}
-
-	// Narrow summaries can refine optional/non-nil returns, but a nil-only
-	// narrow observation must not erase an already-informative summary.
-	if len(out.Narrow) > 0 && !returnsummary.AllNil(out.Narrow) {
-		if len(out.Summary) == 0 {
-			out.Summary = returnsummary.Canonical(out.Narrow)
-		} else {
-			out.Summary = widenReturnSummaryForConvergence(out.Summary, out.Narrow)
-		}
-	}
-
-	if fn := unwrap.Function(out.Type); fn != nil {
-		if len(out.Summary) > 0 {
-			if aligned, changed := returnsummary.AlignFunction(fn, out.Summary); changed {
-				out.Type = widenFunctionFactTypeForConvergence(fn, aligned)
-			}
-		} else if len(fn.Returns) > 0 {
-			out.Summary = widenReturnSummaryForConvergence(nil, fn.Returns)
-		}
-	}
-
-	return out
-}
-
-func widenReturnSummaryForConvergence(prev, next []typ.Type) []typ.Type {
-	prev = returnsummary.NormalizeAndPrune(prev)
-	next = returnsummary.NormalizeAndPrune(next)
-	if len(prev) == 0 {
-		return widenReturnVectorForConvergence(next)
-	}
-	if len(next) == 0 {
-		return widenReturnVectorForConvergence(prev)
-	}
-
-	merged := returnsummary.Merge(prev, next)
-	if returnVectorUnsafePrecisionDrop(prev, merged) {
-		merged = prev
-	}
-	return widenReturnVectorForConvergence(returnsummary.NormalizeAndPrune(merged))
-}
-
-func returnVectorUnsafePrecisionDrop(prev, merged []typ.Type) bool {
-	if len(prev) == 0 || len(merged) == 0 || len(prev) != len(merged) {
-		return false
-	}
-	for i := range prev {
-		if typeUnsafePrecisionDrop(prev[i], merged[i]) {
-			return true
-		}
-	}
-	return false
-}
-
-func typeUnsafePrecisionDrop(prev, merged typ.Type) bool {
-	if prev == nil || merged == nil || typ.TypeEquals(prev, merged) {
-		return false
-	}
-	if value.ElidesOptional(merged, prev) {
-		return false
-	}
-	if refines, _ := value.RefinesFalsyMapKey(merged, prev); refines {
-		return false
-	}
-	if typ.IsAny(prev) || typ.IsUnknown(prev) {
-		return true
-	}
-
-	switch p := value.UnwrapStructuralShape(prev).(type) {
-	case *typ.Union:
-		if unionStrictMemberSubset(merged, p) {
-			return true
-		}
-		if subtype.IsSubtype(merged, p) && !subtype.IsSubtype(p, merged) {
-			return true
-		}
-	case *typ.Record:
-		m, ok := value.UnwrapStructuralShape(merged).(*typ.Record)
-		if !ok {
-			break
-		}
-		for _, pf := range p.Fields {
-			mf := m.GetField(pf.Name)
-			if mf != nil && typeUnsafePrecisionDrop(pf.Type, mf.Type) {
-				return true
-			}
-		}
-		if p.HasMapComponent() && m.HasMapComponent() && typeUnsafePrecisionDrop(p.MapValue, m.MapValue) {
-			return true
-		}
-	case *typ.Array:
-		if m, ok := value.UnwrapStructuralShape(merged).(*typ.Array); ok {
-			return typeUnsafePrecisionDrop(p.Element, m.Element)
-		}
-	case *typ.Map:
-		if m, ok := value.UnwrapStructuralShape(merged).(*typ.Map); ok {
-			return typeUnsafePrecisionDrop(p.Key, m.Key) || typeUnsafePrecisionDrop(p.Value, m.Value)
-		}
-	case *typ.Tuple:
-		m, ok := value.UnwrapStructuralShape(merged).(*typ.Tuple)
-		if !ok || len(p.Elements) != len(m.Elements) {
-			break
-		}
-		for i := range p.Elements {
-			if typeUnsafePrecisionDrop(p.Elements[i], m.Elements[i]) {
-				return true
-			}
-		}
-	case *typ.Function:
-		m, ok := value.UnwrapStructuralShape(merged).(*typ.Function)
-		if !ok {
-			break
-		}
-		for i := 0; i < len(p.Params) && i < len(m.Params); i++ {
-			if typeUnsafePrecisionDrop(p.Params[i].Type, m.Params[i].Type) {
-				return true
-			}
-		}
-		for i := 0; i < len(p.Returns) && i < len(m.Returns); i++ {
-			if typeUnsafePrecisionDrop(p.Returns[i], m.Returns[i]) {
-				return true
-			}
-		}
-	}
-
-	if subtype.IsSubtype(merged, prev) && !subtype.IsSubtype(prev, merged) && !value.ExtendsRecord(merged, prev) {
-		return true
-	}
-	return false
-}
-
-func unionStrictMemberSubset(candidate typ.Type, baseline *typ.Union) bool {
-	if baseline == nil {
-		return false
-	}
-	candidateMembers := value.UnionMembers(candidate)
-	if len(candidateMembers) == 0 {
-		candidateMembers = []typ.Type{candidate}
-	}
-	if len(candidateMembers) >= len(baseline.Members) {
-		return false
-	}
-	for _, member := range candidateMembers {
-		found := false
-		for _, baseMember := range baseline.Members {
-			if typ.TypeEquals(member, baseMember) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
 func canonicalInterprocValueType(t typ.Type) typ.Type {
 	if t == nil {
 		return nil
 	}
 	if fn := unwrap.Function(t); fn != nil {
-		return maybeWidenTypeForConvergence(fn)
+		return value.WidenForConvergence(fn)
 	}
-	return maybeWidenTypeForConvergence(t)
+	return value.WidenForConvergence(t)
 }
 
 func mergeInterprocValueType(existing, candidate typ.Type) typ.Type {
@@ -246,19 +81,13 @@ func mergeInterprocValueType(existing, candidate typ.Type) typ.Type {
 		return existing
 	}
 	if unwrap.Function(existing) != nil || unwrap.Function(candidate) != nil {
-		return maybeWidenTypeForConvergence(widenFunctionFactTypeForConvergence(existing, candidate))
+		return value.WidenForConvergence(functionfact.WidenTypeForConvergence(existing, candidate))
 	}
-	return maybeWidenTypeForConvergence(widenValueTypeForConvergence(existing, candidate))
+	return value.WidenForConvergence(value.MergeForConvergence(existing, candidate))
 }
 
 func normalizeInterprocValueType(t typ.Type) typ.Type {
-	if t == nil {
-		return nil
-	}
-	if fn := unwrap.Function(t); fn != nil {
-		return fn
-	}
-	return typ.PruneSoftUnionMembers(t)
+	return value.NormalizeFactType(t)
 }
 
 func joinInterprocValueType(existing, candidate typ.Type) typ.Type {
@@ -273,159 +102,7 @@ func joinInterprocValueType(existing, candidate typ.Type) typ.Type {
 	if unwrap.Function(existing) != nil || unwrap.Function(candidate) != nil {
 		return functionfact.MergeType(existing, candidate)
 	}
-	return typ.JoinPreferNonSoft(existing, candidate)
-}
-
-func widenValueTypeForConvergence(existing, candidate typ.Type) typ.Type {
-	existing = normalizeInterprocValueType(existing)
-	candidate = normalizeInterprocValueType(candidate)
-	if existing == nil {
-		return maybeWidenTypeForConvergence(candidate)
-	}
-	if candidate == nil {
-		return maybeWidenTypeForConvergence(existing)
-	}
-	existing = maybeWidenTypeForConvergence(existing)
-	candidate = maybeWidenTypeForConvergence(candidate)
-	if typ.TypeEquals(existing, candidate) {
-		return existing
-	}
-	if unwrap.IsNilType(existing) && !unwrap.IsNilType(candidate) {
-		return candidate
-	}
-	if unwrap.IsNilType(candidate) && !unwrap.IsNilType(existing) {
-		return existing
-	}
-	if typ.IsAny(existing) || typ.IsUnknown(existing) {
-		return existing
-	}
-	if typ.IsAny(candidate) || typ.IsUnknown(candidate) {
-		return candidate
-	}
-	if value.ElidesOptional(candidate, existing) {
-		return candidate
-	}
-	if value.ExtendsRecord(candidate, existing) && !value.ContainsNestedStructuralShape(candidate, existing) {
-		return candidate
-	}
-	if refines, _ := value.RefinesFalsyMapKey(candidate, existing); refines {
-		return candidate
-	}
-	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {
-		return existing
-	}
-	if subtype.IsSubtype(existing, candidate) && !subtype.IsSubtype(candidate, existing) {
-		return candidate
-	}
-	return typ.JoinPreferNonSoft(existing, candidate)
-}
-
-func widenFunctionFactTypeForConvergence(existing, candidate typ.Type) typ.Type {
-	existing = normalizeInterprocValueType(existing)
-	candidate = normalizeInterprocValueType(candidate)
-	if existing == nil {
-		return maybeWidenTypeForConvergence(candidate)
-	}
-	if candidate == nil {
-		return maybeWidenTypeForConvergence(existing)
-	}
-	existingFn := unwrap.Function(existing)
-	candidateFn := unwrap.Function(candidate)
-	if existingFn != nil && candidateFn != nil && functionfact.SameShape(existingFn, candidateFn) {
-		return maybeWidenTypeForConvergence(widenFunctionFactsByShape(existingFn, candidateFn))
-	}
-	return widenValueTypeForConvergence(existing, candidate)
-}
-
-func widenFunctionFactsByShape(existing, candidate *typ.Function) typ.Type {
-	if existing == nil {
-		return candidate
-	}
-	if candidate == nil {
-		return existing
-	}
-
-	builder := typ.Func()
-	for _, tp := range existing.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
-	}
-	for i, p := range existing.Params {
-		paramType := widenFunctionParamFactTypeForConvergence(p.Type, candidate.Params[i].Type)
-		name := p.Name
-		if name == "" {
-			name = candidate.Params[i].Name
-		}
-		if p.Optional || candidate.Params[i].Optional {
-			builder = builder.OptParam(name, paramType)
-		} else {
-			builder = builder.Param(name, paramType)
-		}
-	}
-	if existing.Variadic != nil || candidate.Variadic != nil {
-		builder = builder.Variadic(widenFunctionParamFactTypeForConvergence(existing.Variadic, candidate.Variadic))
-	}
-	if returns := widenReturnSummaryForConvergence(existing.Returns, candidate.Returns); len(returns) > 0 {
-		builder = builder.Returns(returns...)
-	}
-
-	effects := existing.Effects
-	if effects == nil {
-		effects = candidate.Effects
-	}
-	if effects != nil {
-		builder = builder.Effects(effects)
-	}
-	spec := existing.Spec
-	if spec == nil {
-		spec = candidate.Spec
-	}
-	if spec != nil {
-		builder = builder.Spec(spec)
-	}
-	refinement := existing.Refinement
-	if refinement == nil {
-		refinement = candidate.Refinement
-	}
-	if refinement != nil {
-		builder = builder.WithRefinement(refinement)
-	}
-	return builder.Build()
-}
-
-func widenFunctionParamFactTypeForConvergence(existing, candidate typ.Type) typ.Type {
-	existing = normalizeInterprocValueType(existing)
-	candidate = normalizeInterprocValueType(candidate)
-	if existing == nil {
-		return candidate
-	}
-	if candidate == nil {
-		return existing
-	}
-	if typ.TypeEquals(existing, candidate) {
-		return existing
-	}
-	if typ.IsAny(existing) || typ.IsUnknown(existing) {
-		return existing
-	}
-	if typ.IsAny(candidate) || typ.IsUnknown(candidate) {
-		return candidate
-	}
-	if preferred, ok := value.PreferConcreteOverSoft(existing, candidate); ok {
-		return preferred
-	}
-	if paramevidence.RefinesFunctionParam(candidate, existing) {
-		return candidate
-	}
-	if paramevidence.RefinesFunctionParam(existing, candidate) {
-		return existing
-	}
-	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {
-		return existing
-	}
-	if subtype.IsSubtype(existing, candidate) && !subtype.IsSubtype(candidate, existing) {
-		return candidate
-	}
-	return typ.JoinPreferNonSoft(existing, candidate)
+	return value.JoinPrecise(existing, candidate)
 }
 
 // WidenLiteralSigs merges two literal signature maps.
@@ -441,13 +118,13 @@ func WidenLiteralSigs(prev, next api.LiteralSigs) api.LiteralSigs {
 	}
 	merged := make(api.LiteralSigs, len(prev)+len(next))
 	for fn, sig := range prev {
-		merged[fn] = maybeWidenFunctionForConvergence(sig)
+		merged[fn] = value.WidenFunctionForConvergence(sig)
 	}
 	for fn, sig := range next {
 		if existing := merged[fn]; existing != nil {
-			merged[fn] = maybeWidenFunctionForConvergence(mergeLiteralSigForConvergence(existing, sig))
+			merged[fn] = value.WidenFunctionForConvergence(mergeLiteralSigForConvergence(existing, sig))
 		} else {
-			merged[fn] = maybeWidenFunctionForConvergence(sig)
+			merged[fn] = value.WidenFunctionForConvergence(sig)
 		}
 	}
 	return merged
@@ -459,7 +136,7 @@ func normalizeLiteralSigs(sigs api.LiteralSigs) api.LiteralSigs {
 	}
 	out := make(api.LiteralSigs, len(sigs))
 	for fn, sig := range sigs {
-		out[fn] = maybeWidenFunctionForConvergence(sig)
+		out[fn] = value.WidenFunctionForConvergence(sig)
 	}
 	return out
 }
@@ -477,13 +154,13 @@ func JoinLiteralSigs(prev, next api.LiteralSigs) api.LiteralSigs {
 	}
 	merged := make(api.LiteralSigs, len(prev)+len(next))
 	for fn, sig := range prev {
-		merged[fn] = maybeWidenFunctionForConvergence(sig)
+		merged[fn] = value.WidenFunctionForConvergence(sig)
 	}
 	for fn, sig := range next {
 		if existing := merged[fn]; existing != nil {
-			merged[fn] = maybeWidenFunctionForConvergence(mergeLiteralSig(existing, sig))
+			merged[fn] = value.WidenFunctionForConvergence(mergeLiteralSig(existing, sig))
 		} else {
-			merged[fn] = maybeWidenFunctionForConvergence(sig)
+			merged[fn] = value.WidenFunctionForConvergence(sig)
 		}
 	}
 	return merged
@@ -496,7 +173,7 @@ func mergeLiteralSig(prev, next *typ.Function) *typ.Function {
 	if next == nil {
 		return prev
 	}
-	if merged, ok := mergeFunctionReturnsIfSameShape(prev, next); ok {
+	if merged, ok := functionfact.MergeReturnsForSameSignature(prev, next); ok {
 		if fn, ok := merged.(*typ.Function); ok {
 			return fn
 		}
@@ -513,7 +190,7 @@ func mergeLiteralSig(prev, next *typ.Function) *typ.Function {
 }
 
 func mergeLiteralSigForConvergence(prev, next *typ.Function) *typ.Function {
-	merged := widenFunctionFactTypeForConvergence(prev, next)
+	merged := functionfact.WidenTypeForConvergence(prev, next)
 	if fn := unwrap.Function(merged); fn != nil {
 		return fn
 	}
@@ -734,7 +411,7 @@ func WidenCapturedContainerMutations(prev, next api.CapturedContainerMutations) 
 			if prev != nil {
 				next.ValueType = mergeInterprocValueType(prev.ValueType, next.ValueType)
 			} else {
-				next.ValueType = maybeWidenTypeForConvergence(next.ValueType)
+				next.ValueType = value.WidenForConvergence(next.ValueType)
 			}
 			return next
 		})
@@ -871,7 +548,7 @@ func WidenConstructorFields(prev, next api.ConstructorFields) api.ConstructorFie
 			if prevType := out[name]; prevType != nil {
 				out[name] = mergeInterprocValueType(prevType, t)
 			} else {
-				out[name] = maybeWidenTypeForConvergence(t)
+				out[name] = value.WidenForConvergence(t)
 			}
 		}
 		merged[sym] = out
@@ -960,180 +637,4 @@ func normalizeConstructorFieldMapForJoin(fields map[string]typ.Type) map[string]
 		out[name] = normalizeInterprocValueType(fields[name])
 	}
 	return out
-}
-
-func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bool) {
-	if prevFn == nil || nextFn == nil {
-		return nil, false
-	}
-	if len(prevFn.TypeParams) != len(nextFn.TypeParams) {
-		return nil, false
-	}
-	if !typeParamsEqual(prevFn.TypeParams, nextFn.TypeParams) {
-		return nil, false
-	}
-	if len(prevFn.Params) != len(nextFn.Params) {
-		return nil, false
-	}
-	if (prevFn.Variadic == nil) != (nextFn.Variadic == nil) {
-		return nil, false
-	}
-	if prevFn.Variadic != nil && !typ.TypeEquals(prevFn.Variadic, nextFn.Variadic) {
-		return nil, false
-	}
-	for i := range prevFn.Params {
-		if prevFn.Params[i].Optional != nextFn.Params[i].Optional {
-			return nil, false
-		}
-		if !typ.TypeEquals(prevFn.Params[i].Type, nextFn.Params[i].Type) {
-			return nil, false
-		}
-	}
-	if len(prevFn.Returns) == 0 && len(nextFn.Returns) == 0 {
-		return prevFn, true
-	}
-	if len(prevFn.Returns) != len(nextFn.Returns) || len(prevFn.Returns) == 0 {
-		return nil, false
-	}
-
-	allowedTypeParams := make(map[string]bool, len(prevFn.TypeParams))
-	for _, tp := range prevFn.TypeParams {
-		if tp != nil && tp.Name != "" {
-			allowedTypeParams[tp.Name] = true
-		}
-	}
-	normalizeReturn := func(t typ.Type) (typ.Type, bool) {
-		if t == nil {
-			return nil, false
-		}
-		leaked := false
-		return typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
-			tp, ok := node.(*typ.TypeParam)
-			if !ok {
-				return node, false
-			}
-			if allowedTypeParams[tp.Name] {
-				return node, false
-			}
-			// Free type params in non-generic function returns are unstable placeholders.
-			leaked = true
-			return typ.Unknown, true
-		}), leaked
-	}
-	normalizedPrev := make([]typ.Type, len(prevFn.Returns))
-	normalizedNext := make([]typ.Type, len(nextFn.Returns))
-	leakedPrev := make([]bool, len(prevFn.Returns))
-	leakedNext := make([]bool, len(nextFn.Returns))
-	for i := range prevFn.Returns {
-		normalizedPrev[i], leakedPrev[i] = normalizeReturn(prevFn.Returns[i])
-		normalizedNext[i], leakedNext[i] = normalizeReturn(nextFn.Returns[i])
-	}
-
-	mergedReturns := make([]typ.Type, len(normalizedPrev))
-	for i := range mergedReturns {
-		switch {
-		case leakedPrev[i] && !leakedNext[i]:
-			mergedReturns[i] = normalizedNext[i]
-		case leakedNext[i] && !leakedPrev[i]:
-			mergedReturns[i] = normalizedPrev[i]
-		default:
-			mergedReturns[i] = typ.JoinReturnSlot(normalizedPrev[i], normalizedNext[i])
-		}
-	}
-	if returnsummary.Equal(prevFn.Returns, mergedReturns) {
-		return prevFn, true
-	}
-	if returnsummary.Equal(nextFn.Returns, mergedReturns) {
-		return nextFn, true
-	}
-
-	effects := prevFn.Effects
-	if effects == nil {
-		effects = nextFn.Effects
-	}
-	spec := prevFn.Spec
-	if spec == nil {
-		spec = nextFn.Spec
-	}
-	refinement := prevFn.Refinement
-	if refinement == nil {
-		refinement = nextFn.Refinement
-	}
-
-	builder := typ.Func().
-		Effects(effects).
-		Spec(spec).
-		WithRefinement(refinement)
-	for _, tp := range prevFn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
-	}
-	for _, p := range prevFn.Params {
-		if p.Optional {
-			builder = builder.OptParam(p.Name, p.Type)
-		} else {
-			builder = builder.Param(p.Name, p.Type)
-		}
-	}
-	if prevFn.Variadic != nil {
-		builder = builder.Variadic(prevFn.Variadic)
-	}
-	builder = builder.Returns(mergedReturns...)
-	return builder.Build(), true
-}
-
-func typeParamsEqual(a, b []*typ.TypeParam) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] == nil || b[i] == nil {
-			if a[i] != b[i] {
-				return false
-			}
-			continue
-		}
-		if !a[i].Equals(b[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func widenReturnVectorForConvergence(rets []typ.Type) []typ.Type {
-	if len(rets) == 0 {
-		return rets
-	}
-	out := make([]typ.Type, len(rets))
-	changed := false
-	for i, t := range rets {
-		wt := maybeWidenTypeForConvergence(t)
-		out[i] = wt
-		if wt != t {
-			changed = true
-		}
-	}
-	if !changed {
-		return rets
-	}
-	return out
-}
-
-func maybeWidenTypeForConvergence(t typ.Type) typ.Type {
-	if t == nil {
-		return nil
-	}
-	if !returnsummary.HasHigherOrderGrowthRisk(t) {
-		return t
-	}
-	return subtype.WidenForInference(t)
-}
-
-func maybeWidenFunctionForConvergence(fn *typ.Function) *typ.Function {
-	if fn == nil {
-		return nil
-	}
-	if widened, ok := maybeWidenTypeForConvergence(fn).(*typ.Function); ok {
-		return widened
-	}
-	return fn
 }

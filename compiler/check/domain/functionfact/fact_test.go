@@ -492,6 +492,73 @@ func TestMergeType_MapVsOpenRecordUsesCanonicalJoin(t *testing.T) {
 	}
 }
 
+func TestMergeReturnsForSameSignature_GenericFunctions(t *testing.T) {
+	prev := typ.Func().
+		TypeParam("T", nil).
+		Returns(typ.String).
+		Build()
+	next := typ.Func().
+		TypeParam("T", nil).
+		Returns(typ.Integer).
+		Build()
+
+	mergedType, ok := MergeReturnsForSameSignature(prev, next)
+	if !ok {
+		t.Fatal("expected generic same-shape functions to merge")
+	}
+	merged, ok := mergedType.(*typ.Function)
+	if !ok {
+		t.Fatalf("expected merged function type, got %T", mergedType)
+	}
+	if len(merged.TypeParams) != 1 || merged.TypeParams[0] == nil || merged.TypeParams[0].Name != "T" {
+		t.Fatalf("expected merged generic type parameter T, got %+v", merged.TypeParams)
+	}
+	if len(merged.Returns) != 1 {
+		t.Fatalf("expected one return, got %d", len(merged.Returns))
+	}
+	want := typ.NewUnion(typ.String, typ.Integer)
+	if !typ.TypeEquals(merged.Returns[0], want) {
+		t.Fatalf("expected merged return %v, got %v", want, merged.Returns[0])
+	}
+}
+
+func TestMergeReturnsForSameSignature_GenericTypeParamsMustMatch(t *testing.T) {
+	prev := typ.Func().
+		TypeParam("T", nil).
+		Returns(typ.String).
+		Build()
+	next := typ.Func().
+		TypeParam("U", nil).
+		Returns(typ.Integer).
+		Build()
+
+	_, ok := MergeReturnsForSameSignature(prev, next)
+	if ok {
+		t.Fatal("expected mismatched generic params not to merge")
+	}
+}
+
+func TestMergeReturnsForSameSignature_NormalizesLeakedTypeParams(t *testing.T) {
+	prev := typ.Func().
+		Returns(typ.NewTypeParam("T", nil)).
+		Build()
+	next := typ.Func().
+		Returns(typ.Integer).
+		Build()
+
+	mergedType, ok := MergeReturnsForSameSignature(prev, next)
+	if !ok {
+		t.Fatal("expected same-shape functions to merge")
+	}
+	merged, ok := mergedType.(*typ.Function)
+	if !ok || len(merged.Returns) != 1 {
+		t.Fatalf("expected merged function return, got %T", mergedType)
+	}
+	if !typ.TypeEquals(merged.Returns[0], typ.Integer) {
+		t.Fatalf("expected leaked type param to normalize to integer, got %v", merged.Returns[0])
+	}
+}
+
 func TestNormalize_CanonicalizesStoredFunctionFact(t *testing.T) {
 	fn := typ.Func().Returns(typ.Number).Build()
 	got := Normalize(api.FunctionFact{

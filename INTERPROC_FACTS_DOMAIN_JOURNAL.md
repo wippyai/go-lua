@@ -345,6 +345,58 @@ Verification for this slice so far:
   targets: session 8 errors, agent/src 10 errors, docker-demo 21 errors and
   2 warnings.
 
+## 2026-05-19 Convergence Law Ownership Checkpoint
+
+The next rectification slice removed convergence and structural value laws from
+`domain/factproduct`. The fact-product domain now composes slot domains instead
+of carrying private copies of their logic.
+
+Moved laws:
+
+- higher-order recursive-growth detection moved to `domain/value`;
+- convergence widening for one `typ.Type` moved to `domain/value`;
+- unsafe precision-drop detection moved to `domain/value`;
+- return-vector convergence widening moved to `domain/returnsummary`;
+- one-function fact convergence widening moved to `domain/functionfact`;
+- same-signature return-slot merging for function literals moved to
+  `domain/functionfact`;
+- related tests moved to the packages that own the laws.
+
+The old local helper names are gone from production code:
+
+```text
+mergeFunctionReturnsIfSameShape
+widenFunctionFactTypeForConvergence
+widenReturnSummaryForConvergence
+maybeWidenTypeForConvergence
+widenValueTypeForConvergence
+typeUnsafePrecisionDrop
+returnsummary.HasHigherOrderGrowthRisk
+```
+
+Current convergence flow:
+
+1. `domain/value` defines structural type relations and finite-height
+   convergence approximations.
+2. `domain/returnsummary` widens return vectors using the value domain.
+3. `domain/functionfact` widens one `api.FunctionFact` using parameter evidence,
+   return summaries, and value relations.
+4. `domain/factproduct` widens maps and fact slots only by delegating to those
+   owners.
+
+Verification for this slice so far:
+
+- `go test ./...` passes.
+- `git diff --check` passes.
+- `go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction
+  -benchmem -count=3` reports 1.14-1.16 ms/op, 881 KB/op, and 9390 allocs/op
+  on this machine.
+- Standard `../scripts/verify-suite.sh` passes go-lua checker tests and builds
+  the Wippy binary, then exits non-zero on the known external pinned lint
+  targets: session 8 errors, agent/src 10 errors, docker-demo 21 errors and
+  2 warnings. One first run printed agent/src 12 errors; direct replay of that
+  target and a full rerun both returned 10.
+
 ## Goal
 
 The checker should read as one abstract interpreter over a product domain.

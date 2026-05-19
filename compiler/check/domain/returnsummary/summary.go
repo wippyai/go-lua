@@ -719,93 +719,69 @@ func Merge(existing, candidate []typ.Type) []typ.Type {
 	return NormalizeAndPrune(typjoin.ReturnVectors(existing, candidate))
 }
 
-func shouldUseMonotoneJoin(a, b []typ.Type) bool {
-	for _, t := range a {
-		if HasHigherOrderGrowthRisk(t) {
-			return true
+// WidenForConvergence merges return vectors at a recursive fixpoint boundary.
+func WidenForConvergence(prev, next []typ.Type) []typ.Type {
+	prev = NormalizeAndPrune(prev)
+	next = NormalizeAndPrune(next)
+	if len(prev) == 0 {
+		return WidenVectorForConvergence(next)
+	}
+	if len(next) == 0 {
+		return WidenVectorForConvergence(prev)
+	}
+
+	merged := Merge(prev, next)
+	if UnsafePrecisionDrop(prev, merged) {
+		merged = prev
+	}
+	return WidenVectorForConvergence(NormalizeAndPrune(merged))
+}
+
+// WidenVectorForConvergence applies element-wise convergence widening.
+func WidenVectorForConvergence(rets []typ.Type) []typ.Type {
+	if len(rets) == 0 {
+		return rets
+	}
+	out := make([]typ.Type, len(rets))
+	changed := false
+	for i, t := range rets {
+		wt := value.WidenForConvergence(t)
+		out[i] = wt
+		if wt != t {
+			changed = true
 		}
 	}
-	for _, t := range b {
-		if HasHigherOrderGrowthRisk(t) {
+	if !changed {
+		return rets
+	}
+	return out
+}
+
+// UnsafePrecisionDrop reports whether a merged vector lost prior evidence.
+func UnsafePrecisionDrop(prev, merged []typ.Type) bool {
+	if len(prev) == 0 || len(merged) == 0 || len(prev) != len(merged) {
+		return false
+	}
+	for i := range prev {
+		if value.UnsafePrecisionDrop(prev[i], merged[i]) {
 			return true
 		}
 	}
 	return false
 }
 
-// HasHigherOrderGrowthRisk reports whether a type can produce non-monotone
-// higher-order structural growth across summary iterations.
-func HasHigherOrderGrowthRisk(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	return value.Scan(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
-		switch n := node.(type) {
-		case *typ.Function:
-			for _, ret := range n.Returns {
-				if containsFunction(ret) {
-					return true, false
-				}
-			}
-		case *typ.Record:
-			if recordHasSelfRecursiveMethod(n) {
-				return true, false
-			}
-		}
-		return false, true
-	})
-}
-
-func containsFunction(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	return value.Scan(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
-		if _, ok := node.(*typ.Interface); ok {
-			return false, false
-		}
-		if _, ok := node.(*typ.Function); ok {
-			return true, false
-		}
-		return false, true
-	})
-}
-
-func recordHasSelfRecursiveMethod(r *typ.Record) bool {
-	if r == nil {
-		return false
-	}
-	for _, f := range r.Fields {
-		if methodTypeHasSelfRecursiveReturn(f.Type, r) {
+func shouldUseMonotoneJoin(a, b []typ.Type) bool {
+	for _, t := range a {
+		if value.HasHigherOrderGrowthRisk(t) {
 			return true
 		}
 	}
-	return r.HasMapComponent() && methodTypeHasSelfRecursiveReturn(r.MapValue, r)
-}
-
-func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
-	if t == nil || owner == nil {
-		return false
+	for _, t := range b {
+		if value.HasHigherOrderGrowthRisk(t) {
+			return true
+		}
 	}
-	return value.Scan(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
-		if _, ok := node.(*typ.Interface); ok {
-			return false, false
-		}
-		fn, ok := node.(*typ.Function)
-		if !ok {
-			return false, true
-		}
-		for _, ret := range fn.Returns {
-			if ret == nil {
-				continue
-			}
-			if subtype.IsSubtype(ret, owner) || subtype.IsSubtype(owner, ret) ||
-				value.ExtendsRecord(ret, owner) || value.ExtendsRecord(owner, ret) {
-				return true, false
-			}
-		}
-		return false, true
-	})
+	return false
 }
 
 func joinMonotone(a, b []typ.Type) []typ.Type {

@@ -16,7 +16,7 @@ func Normalize(ff api.FunctionFact) api.FunctionFact {
 		Params:  paramevidence.FilterEmptyVector(ff.Params),
 		Summary: returnsummary.Canonical(ff.Summary),
 		Narrow:  returnsummary.Canonical(ff.Narrow),
-		Type:    normalizeType(ff.Type),
+		Type:    value.NormalizeFactType(ff.Type),
 	}
 }
 
@@ -69,16 +69,6 @@ func Join(existing, candidate api.FunctionFact) api.FunctionFact {
 	return out
 }
 
-func normalizeType(t typ.Type) typ.Type {
-	if t == nil {
-		return nil
-	}
-	if fn := unwrap.Function(t); fn != nil {
-		return fn
-	}
-	return typ.PruneSoftUnionMembers(t)
-}
-
 // MergeType merges function-type facts through the canonical per-function fact
 // policy.
 func MergeType(existing, candidate typ.Type) typ.Type {
@@ -107,6 +97,58 @@ func MergeType(existing, candidate typ.Type) typ.Type {
 		return existing
 	}
 	return typ.JoinPreferNonSoft(existing, candidate)
+}
+
+// WidenForConvergence merges one function fact at a recursive fixpoint
+// boundary.
+func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
+	out := api.FunctionFact{
+		Params:  paramevidence.JoinVectors(prev.Params, next.Params),
+		Summary: returnsummary.WidenForConvergence(prev.Summary, next.Summary),
+		Narrow:  returnsummary.WidenForConvergence(prev.Narrow, next.Narrow),
+		Type:    WidenTypeForConvergence(prev.Type, next.Type),
+	}
+
+	// Narrow summaries can refine optional/non-nil returns, but a nil-only
+	// narrow observation must not erase an already-informative summary.
+	if len(out.Narrow) > 0 && !returnsummary.AllNil(out.Narrow) {
+		if len(out.Summary) == 0 {
+			out.Summary = returnsummary.Canonical(out.Narrow)
+		} else {
+			out.Summary = returnsummary.WidenForConvergence(out.Summary, out.Narrow)
+		}
+	}
+
+	if fn := unwrap.Function(out.Type); fn != nil {
+		if len(out.Summary) > 0 {
+			if aligned, changed := returnsummary.AlignFunction(fn, out.Summary); changed {
+				out.Type = WidenTypeForConvergence(fn, aligned)
+			}
+		} else if len(fn.Returns) > 0 {
+			out.Summary = returnsummary.WidenForConvergence(nil, fn.Returns)
+		}
+	}
+
+	return out
+}
+
+// WidenTypeForConvergence merges function-type facts at a recursive fixpoint
+// boundary.
+func WidenTypeForConvergence(existing, candidate typ.Type) typ.Type {
+	existing = value.NormalizeFactType(existing)
+	candidate = value.NormalizeFactType(candidate)
+	if existing == nil {
+		return value.WidenForConvergence(candidate)
+	}
+	if candidate == nil {
+		return value.WidenForConvergence(existing)
+	}
+	existingFn := unwrap.Function(existing)
+	candidateFn := unwrap.Function(candidate)
+	if existingFn != nil && candidateFn != nil && SameShape(existingFn, candidateFn) {
+		return value.WidenForConvergence(widenByShapeForConvergence(existingFn, candidateFn))
+	}
+	return value.MergeForConvergence(existing, candidate)
 }
 
 type variants struct {
@@ -247,6 +289,61 @@ func mergeByShape(existing, candidate *typ.Function) typ.Type {
 	return builder.Build()
 }
 
+func widenByShapeForConvergence(existing, candidate *typ.Function) typ.Type {
+	if existing == nil {
+		return candidate
+	}
+	if candidate == nil {
+		return existing
+	}
+
+	builder := typ.Func()
+	for _, tp := range existing.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for i, p := range existing.Params {
+		paramType := widenParamTypeForConvergence(p.Type, candidate.Params[i].Type)
+		name := p.Name
+		if name == "" {
+			name = candidate.Params[i].Name
+		}
+		if p.Optional || candidate.Params[i].Optional {
+			builder = builder.OptParam(name, paramType)
+		} else {
+			builder = builder.Param(name, paramType)
+		}
+	}
+	if existing.Variadic != nil || candidate.Variadic != nil {
+		builder = builder.Variadic(widenParamTypeForConvergence(existing.Variadic, candidate.Variadic))
+	}
+	if returns := returnsummary.WidenForConvergence(existing.Returns, candidate.Returns); len(returns) > 0 {
+		builder = builder.Returns(returns...)
+	}
+
+	effects := existing.Effects
+	if effects == nil {
+		effects = candidate.Effects
+	}
+	if effects != nil {
+		builder = builder.Effects(effects)
+	}
+	spec := existing.Spec
+	if spec == nil {
+		spec = candidate.Spec
+	}
+	if spec != nil {
+		builder = builder.Spec(spec)
+	}
+	refinement := existing.Refinement
+	if refinement == nil {
+		refinement = candidate.Refinement
+	}
+	if refinement != nil {
+		builder = builder.WithRefinement(refinement)
+	}
+	return builder.Build()
+}
+
 func mergeParamType(existing, candidate typ.Type) typ.Type {
 	if existing == nil {
 		return candidate
@@ -302,6 +399,42 @@ func mergeParamType(existing, candidate typ.Type) typ.Type {
 	return typ.JoinPreferNonSoft(existing, candidate)
 }
 
+func widenParamTypeForConvergence(existing, candidate typ.Type) typ.Type {
+	existing = value.NormalizeFactType(existing)
+	candidate = value.NormalizeFactType(candidate)
+	if existing == nil {
+		return candidate
+	}
+	if candidate == nil {
+		return existing
+	}
+	if typ.TypeEquals(existing, candidate) {
+		return existing
+	}
+	if typ.IsAny(existing) || typ.IsUnknown(existing) {
+		return existing
+	}
+	if typ.IsAny(candidate) || typ.IsUnknown(candidate) {
+		return candidate
+	}
+	if preferred, ok := value.PreferConcreteOverSoft(existing, candidate); ok {
+		return preferred
+	}
+	if paramevidence.RefinesFunctionParam(candidate, existing) {
+		return candidate
+	}
+	if paramevidence.RefinesFunctionParam(existing, candidate) {
+		return existing
+	}
+	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {
+		return existing
+	}
+	if subtype.IsSubtype(existing, candidate) && !subtype.IsSubtype(candidate, existing) {
+		return candidate
+	}
+	return typ.JoinPreferNonSoft(existing, candidate)
+}
+
 func preferStructuredRecord(existing, candidate typ.Type) (typ.Type, bool) {
 	existingRec, okExisting := unwrap.Alias(existing).(*typ.Record)
 	candidateRec, okCandidate := unwrap.Alias(candidate).(*typ.Record)
@@ -325,6 +458,127 @@ func preferStructuredRecord(existing, candidate typ.Type) (typ.Type, bool) {
 		}
 	}
 	return nil, false
+}
+
+// MergeReturnsForSameSignature merges return slots for function signatures that
+// already have identical call shapes.
+func MergeReturnsForSameSignature(prevFn, nextFn *typ.Function) (typ.Type, bool) {
+	if prevFn == nil || nextFn == nil {
+		return nil, false
+	}
+	if len(prevFn.TypeParams) != len(nextFn.TypeParams) {
+		return nil, false
+	}
+	if !typeParamsEqual(prevFn.TypeParams, nextFn.TypeParams) {
+		return nil, false
+	}
+	if len(prevFn.Params) != len(nextFn.Params) {
+		return nil, false
+	}
+	if (prevFn.Variadic == nil) != (nextFn.Variadic == nil) {
+		return nil, false
+	}
+	if prevFn.Variadic != nil && !typ.TypeEquals(prevFn.Variadic, nextFn.Variadic) {
+		return nil, false
+	}
+	for i := range prevFn.Params {
+		if prevFn.Params[i].Optional != nextFn.Params[i].Optional {
+			return nil, false
+		}
+		if !typ.TypeEquals(prevFn.Params[i].Type, nextFn.Params[i].Type) {
+			return nil, false
+		}
+	}
+	if len(prevFn.Returns) == 0 && len(nextFn.Returns) == 0 {
+		return prevFn, true
+	}
+	if len(prevFn.Returns) != len(nextFn.Returns) || len(prevFn.Returns) == 0 {
+		return nil, false
+	}
+
+	allowedTypeParams := make(map[string]bool, len(prevFn.TypeParams))
+	for _, tp := range prevFn.TypeParams {
+		if tp != nil && tp.Name != "" {
+			allowedTypeParams[tp.Name] = true
+		}
+	}
+	normalizeReturn := func(t typ.Type) (typ.Type, bool) {
+		if t == nil {
+			return nil, false
+		}
+		leaked := false
+		return typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+			tp, ok := node.(*typ.TypeParam)
+			if !ok {
+				return node, false
+			}
+			if allowedTypeParams[tp.Name] {
+				return node, false
+			}
+			// Free type params in non-generic function returns are unstable placeholders.
+			leaked = true
+			return typ.Unknown, true
+		}), leaked
+	}
+	normalizedPrev := make([]typ.Type, len(prevFn.Returns))
+	normalizedNext := make([]typ.Type, len(nextFn.Returns))
+	leakedPrev := make([]bool, len(prevFn.Returns))
+	leakedNext := make([]bool, len(nextFn.Returns))
+	for i := range prevFn.Returns {
+		normalizedPrev[i], leakedPrev[i] = normalizeReturn(prevFn.Returns[i])
+		normalizedNext[i], leakedNext[i] = normalizeReturn(nextFn.Returns[i])
+	}
+
+	mergedReturns := make([]typ.Type, len(normalizedPrev))
+	for i := range mergedReturns {
+		switch {
+		case leakedPrev[i] && !leakedNext[i]:
+			mergedReturns[i] = normalizedNext[i]
+		case leakedNext[i] && !leakedPrev[i]:
+			mergedReturns[i] = normalizedPrev[i]
+		default:
+			mergedReturns[i] = typ.JoinReturnSlot(normalizedPrev[i], normalizedNext[i])
+		}
+	}
+	if returnsummary.Equal(prevFn.Returns, mergedReturns) {
+		return prevFn, true
+	}
+	if returnsummary.Equal(nextFn.Returns, mergedReturns) {
+		return nextFn, true
+	}
+
+	effects := prevFn.Effects
+	if effects == nil {
+		effects = nextFn.Effects
+	}
+	spec := prevFn.Spec
+	if spec == nil {
+		spec = nextFn.Spec
+	}
+	refinement := prevFn.Refinement
+	if refinement == nil {
+		refinement = nextFn.Refinement
+	}
+
+	builder := typ.Func().
+		Effects(effects).
+		Spec(spec).
+		WithRefinement(refinement)
+	for _, tp := range prevFn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, p := range prevFn.Params {
+		if p.Optional {
+			builder = builder.OptParam(p.Name, p.Type)
+		} else {
+			builder = builder.Param(p.Name, p.Type)
+		}
+	}
+	if prevFn.Variadic != nil {
+		builder = builder.Variadic(prevFn.Variadic)
+	}
+	builder = builder.Returns(mergedReturns...)
+	return builder.Build(), true
 }
 
 func typeParamsEqual(a, b []*typ.TypeParam) bool {
