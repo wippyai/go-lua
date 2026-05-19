@@ -565,6 +565,257 @@ Diagnostics observe proof failure; they do not define type behavior.
 A diagnostic pass may ask why a check failed. It may not make the check pass or
 fail by changing evidence.
 
+## Evidence Authority Model
+
+The checker should be precise because it carries proof, not because it guesses.
+Authority is therefore part of evidence. It is not a global total order; it is a
+domain-specific partial order over a specific question.
+
+Canonical evidence shape:
+
+```text
+Evidence =
+  Location
+  + Value/Predicate/Effect
+  + Provenance
+  + Authority
+  + Scope
+  + Phase
+  + SourceSpan
+```
+
+`SourceSpan` may be absent for synthetic or imported evidence, but provenance
+must not be absent.
+
+### Authority Classes
+
+The final design should name these authority classes explicitly.
+
+| Authority | Meaning | Can Prove Concrete Contract? | Can Be Weakened By Join? | Can Publish? |
+|---|---|---|---|---|
+| explicit contract | user/API annotation or manifest contract | yes | only through declared variance/summary abstraction | yes |
+| hard runtime proof | guard, assertion, dominance-proven assignment | yes | yes at control-flow join | if it crosses boundary |
+| relation proof | fact derived from tuple/path relation | yes for related locations | yes when relation path is lost | if relation crosses boundary |
+| effect proof | applied call/effect summary | yes if effect declares it | yes at join/widen | yes as effect/summary |
+| body obligation | function body requires a shape | yes for parameter contract inference | yes at recursive widen | yes |
+| call observation | caller passed a shape | no by itself | yes | yes as weak evidence |
+| contextual literal evidence | expected type applied at literal boundary | yes for that literal | yes | yes if literal escapes |
+| soft annotation | low-authority annotation hint | no without compatible proof | yes | only as soft evidence |
+| unresolved observation | `unknown` | no | yes but not erased silently | yes as unknown |
+| dynamic top | `any` | no without explicit cast/contract | yes as dynamic top | yes as any |
+
+This table prevents the common mistake of treating all useful evidence as the
+same. A call observation is useful for inference, but it is not proof that the
+callee accepts that shape. An explicit `any` is useful information, but it is
+not proof of a concrete field.
+
+### Conflict Resolution
+
+Conflicts should be resolved by the owning domain, not by producer preference.
+
+| Conflict | Owner | Correct Resolution |
+|---|---|---|
+| hard proof vs soft annotation | evidence/value domain | hard proof wins for the proven path |
+| explicit `any` vs expected concrete param | assignability/value domain | reject unless cast/contract proves concrete |
+| unknown return vs concrete return | return domain | preserve unresolved behavior unless domain law proves refinement |
+| call observation vs body obligation | parameter domain | body obligation is stronger contract evidence |
+| parent table shape vs child-path write | memory domain | child-path fact wins for that path |
+| closed missing field vs open row tail | value/memory domain | closed absence and open unknown tail stay distinct |
+| relation proof vs unrelated assignment | relation/memory domain | relation survives only if location identity is preserved |
+| widening precision loss vs later query | owning domain | query observes widened state; no post-widen repair |
+
+Conflict policy must be testable as a domain law. If the test has to construct a
+whole checker to decide the conflict, the domain boundary is still too implicit.
+
+### Proof-Carrying Facts
+
+Every persistent fact should be explainable as:
+
+```text
+fact = domain.accept(observation, provenance, authority, location)
+```
+
+Queries should be able to answer both:
+
+- the abstract answer, such as "this value is string";
+- the proof route, such as "truthy guard on this location removed nil".
+
+The proof route does not need to be exposed in normal diagnostics, but it must
+exist in the design. Without it, the checker cannot distinguish real precision
+from accidental broadening.
+
+### Precision And Soundness Contract
+
+Precision can increase only by proof.
+
+Allowed precision gains:
+
+- guard removes nil/false from the exact guarded location;
+- assertion effect narrows the declared target relation;
+- body obligation records a parameter shape the body actually reads;
+- table literal contextual typing applies at the literal boundary;
+- relation summary narrows linked tuple slots after a predicate.
+
+Forbidden precision gains:
+
+- callee expected type rewrites caller evidence;
+- repeated callers vote a parameter into a concrete contract;
+- `any` becomes a concrete record because a later field is used;
+- closed missing field becomes open unknown tail to avoid an error;
+- cached answer is reused after an untracked dependency changed.
+
+Precision can decrease only at named abstraction boundaries:
+
+- branch join,
+- loop widening,
+- local function SCC widening,
+- interproc widening,
+- published summary abstraction.
+
+Precision must not decrease at:
+
+- equality,
+- snapshot update,
+- diagnostics,
+- compatibility projection,
+- query cache lookup.
+
+This is the soundness/performance contract. Faster analysis is valid only if it
+computes the same evidence or a documented domain approximation at a named
+boundary.
+
+### Absence Of Evidence
+
+Absence is not a proof.
+
+Rules:
+
+- no field evidence does not mean field is nil;
+- no relation evidence does not mean slots are independent if a relation was
+  dropped by a bug;
+- no return evidence does not mean zero returns unless arity is known;
+- no effect evidence does not mean pure call unless the effect row is closed;
+- no param evidence does not mean `any`; it means unresolved until declared or
+  inferred evidence exists.
+
+This is where many false positives and false negatives start. The final domains
+should model absence explicitly instead of using nil maps as semantic answers.
+
+## Dataflow Proof Traces
+
+Every important inference should have a trace format. This is not a logging
+requirement for the first implementation. It is the mental model for proving the
+checker did the right thing.
+
+Trace skeleton:
+
+```text
+Observation
+  -> Location
+  -> Evidence
+  -> Domain acceptance
+  -> State fact
+  -> Join/Widen if any
+  -> Query answer
+  -> Publication if any
+```
+
+### Guarded Field Trace
+
+```text
+Observation: if options.model then
+Location:    Location(options).field("model")
+Evidence:    truthy predicate, hard runtime proof
+Domain:      RelationDomain + ValueDomain
+State:       path excludes nil/false on true branch
+Query:       provider.open argument reads non-nil field type
+Publish:     none unless the relation escapes through a summary
+```
+
+Wrong trace:
+
+```text
+provider.open expects string -> options.model becomes string
+```
+
+The wrong trace reverses dataflow.
+
+### Error Return Trace
+
+```text
+Observation: local value, err = f()
+Location:    return tuple slots assigned to local locations
+Evidence:    f publishes tuple relation
+Domain:      RelationDomain accepts slot correlation
+State:       err nil branch relates value slot to success case
+Query:       value.field sees success-side value evidence
+Publish:     wrapper republishes tuple relation only if slot identity is preserved
+```
+
+Wrong trace:
+
+```text
+function has two returns -> assume value/error convention
+```
+
+The wrong trace invents relation evidence from arity.
+
+### Dynamic Payload Trace
+
+```text
+Observation: payload = json.decode(raw)
+Location:    payload
+Evidence:    imported dynamic value
+Domain:      ValueDomain records any/unknown with provenance
+State:       payload.name remains dynamic/unresolved
+Query:       needs_string(payload.name) requires proof
+Publish:     dynamic evidence only if exported
+```
+
+Wrong trace:
+
+```text
+needs_string expects string -> payload.name becomes string
+```
+
+The wrong trace treats expected type as evidence.
+
+### Captured Mutation Trace
+
+```text
+Observation: nested function inserts into state.items
+Location:    canonical location for state.items
+Evidence:    mutation effect with captured provenance
+Domain:      EffectDomain applies MemoryDomain mutation
+State:       array element fact at state.items
+Query:       ipairs reads element fact if dominance/escape permits it
+Publish:     captured container mutation delta if it crosses function boundary
+```
+
+Wrong trace:
+
+```text
+captured mutation replay builds a new parent table shape
+```
+
+The wrong trace loses operator kind and child-path authority.
+
+### Trace Review Rule
+
+For any new inference, a reviewer should be able to ask:
+
+- What was observed?
+- What is the canonical location?
+- What authority does the evidence have?
+- Which domain accepted it?
+- Where can it lose precision?
+- Which query read it?
+- Does it publish, and if so as which delta?
+- Which cache boundary owns reuse?
+
+If the answer starts with "this helper checks whether...", the design likely
+needs another domain operation instead of another helper.
+
 ## Semantic Atoms
 
 The final design should use a small shared vocabulary. These words should have
