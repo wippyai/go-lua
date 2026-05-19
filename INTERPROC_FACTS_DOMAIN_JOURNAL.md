@@ -5401,3 +5401,43 @@ git diff --check
 ```
 
 All checks pass.
+
+## 2026-05-19 Loop-Carried Gradual Refinement Regressions
+
+Extended the adversarial gradual-typing coverage with loop-shaped programs
+where precision is earned over several steps and then carried through typed
+accumulators or loop state.
+
+Added Go cases:
+
+- `TestGradualTyping_LoopRefinesDynamicRecordsIntoTypedArray` validates a
+  dynamic array by stages (`table` guard, field guards, nested tag-loop guard)
+  before inserting precise `Item` records into a typed array.
+- `TestGradualTyping_PairsLoopRefinesDynamicMapValuesInStages` validates
+  dynamic map keys, dynamic record values, nested header maps, and then stores
+  precise `Endpoint` records in a typed string-keyed map.
+- `TestGradualTyping_WhileLoopCarriesOptionalRefinementThroughState` exercises
+  loop-carried optional state: a discriminated event loop writes `state.name`
+  and arithmetic state separately, then a post-loop nil guard proves the final
+  name before string use.
+- `TestGradualTyping_NestedLoopsRefineMatrixCellsBeforeAggregation` covers
+  nested `ipairs` loops where row/column/value evidence builds precise cell
+  records.
+- `TestGradualTyping_RejectsExistentialLoopProofAsSpecificElementProof` pins a
+  soundness boundary: seeing some string somewhere in a loop does not prove
+  that `raw.items[1]` is a string.
+
+The fixture `testdata/fixtures/regression/gradual-typing-adversarial` now
+mirrors the staged `pairs` map refinement, nested matrix refinement, and
+existential-loop negative case with inline `expect-error` coverage.
+
+Verification:
+
+```text
+go test ./compiler/check/tests/regression -run 'TestGradualTyping' -count=1 -v
+go test . -run 'TestFixtures/regression/gradual-typing-adversarial/check' -count=1 -v
+go test ./... -count=1
+git diff --check
+```
+
+All checks pass.

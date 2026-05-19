@@ -5,6 +5,18 @@ type Config = {
     metadata: {[string]: string},
 }
 
+type Endpoint = {
+    url: string,
+    weight: number,
+    headers: {[string]: string},
+}
+
+type Cell = {
+    row: number,
+    col: number,
+    value: string,
+}
+
 type Validation<T> = {ok: true, value: T} | {ok: false, error: string}
 
 local function ok<T>(value: T): Validation<T>
@@ -113,5 +125,89 @@ local callback: any = function(config)
 end
 
 local typed_callback: (Config) -> string = callback -- expect-error
+
+local function collect_endpoints(raw: any): {[string]: Endpoint}
+    local endpoints: {[string]: Endpoint} = {}
+    if type(raw) ~= "table" then
+        return endpoints
+    end
+    for key, value in pairs(raw) do
+        if type(key) == "string" and type(value) == "table" then
+            local url = value.url
+            if type(url) == "string" then
+                local weight = value.weight
+                if type(weight) == "number" then
+                    local headers: {[string]: string} = {}
+                    if type(value.headers) == "table" then
+                        for header_name, header_value in pairs(value.headers) do
+                            if type(header_name) == "string" and type(header_value) == "string" then
+                                headers[header_name] = header_value
+                            end
+                        end
+                    end
+                    endpoints[key] = {url = url, weight = weight, headers = headers}
+                end
+            end
+        end
+    end
+    return endpoints
+end
+
+local endpoints = collect_endpoints({
+    primary = {url = "https://example.test", weight = 1, headers = {Accept = "application/json"}},
+    bad = {url = false, weight = "heavy"},
+})
+
+local primary = endpoints.primary
+if primary then
+    local accept = primary.headers.Accept
+    if accept then
+        local endpoint_url: string = primary.url
+        local endpoint_weight: number = primary.weight + 1
+        local endpoint_accept: string = accept
+    end
+end
+
+local function collect_cells(raw_rows: any): {Cell}
+    local out: {Cell} = {}
+    if type(raw_rows) ~= "table" then
+        return out
+    end
+    for row_index, row in ipairs(raw_rows) do
+        if type(row) == "table" then
+            for col_index, value in ipairs(row) do
+                if type(value) == "string" then
+                    table.insert(out, {row = row_index, col = col_index, value = value})
+                end
+            end
+        end
+    end
+    return out
+end
+
+local cells = collect_cells({
+    {"a", false},
+    {"b", "c"},
+})
+
+local first_cell = cells[1]
+if first_cell then
+    local position: number = first_cell.row + first_cell.col
+    local value: string = first_cell.value
+end
+
+local raw_loop: any = {items = {42, "safe"}}
+local saw_string = false
+if type(raw_loop.items) == "table" then
+    for _, item in ipairs(raw_loop.items) do
+        if type(item) == "string" then
+            saw_string = true
+        end
+    end
+end
+
+if saw_string then
+    local first_string: string = raw_loop.items[1] -- expect-error
+end
 
 return "ok"

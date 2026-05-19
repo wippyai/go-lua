@@ -243,6 +243,207 @@ return metric.name .. ":" .. route_name .. ":" .. tostring(next_count)
 	assertNoGradualTypingErrors(t, source)
 }
 
+func TestGradualTyping_LoopRefinesDynamicRecordsIntoTypedArray(t *testing.T) {
+	source := `
+type Item = {id: string, score: number, tags: {string}}
+
+local function read_tags(value): {string}?
+	if type(value) ~= "table" then
+		return nil
+	end
+	local tags: {string} = {}
+	for _, tag in ipairs(value) do
+		if type(tag) ~= "string" then
+			return nil
+		end
+		table.insert(tags, tag)
+	end
+	return tags
+end
+
+local function collect(raw_items: any): {Item}
+	local out: {Item} = {}
+	if type(raw_items) ~= "table" then
+		return out
+	end
+	for _, raw in ipairs(raw_items) do
+		if type(raw) == "table" then
+			local id = raw.id
+			if type(id) == "string" then
+				local score = raw.score
+				if type(score) == "number" then
+					local tags = read_tags(raw.tags)
+					if tags then
+						table.insert(out, { id = id, score = score, tags = tags })
+					end
+				end
+			end
+		end
+	end
+	return out
+end
+
+local items = collect({
+	{ id = "a", score = 10, tags = { "hot", "new" } },
+	{ id = false, score = "bad", tags = { 1 } },
+	{ id = "b", score = 20, tags = { "ok" } },
+})
+
+local first = items[1]
+if not first then
+	return "empty"
+end
+local label: string = first.id .. ":" .. first.tags[1]
+local score: number = first.score + 1
+return label .. ":" .. tostring(score)
+`
+	assertNoGradualTypingErrors(t, source)
+}
+
+func TestGradualTyping_PairsLoopRefinesDynamicMapValuesInStages(t *testing.T) {
+	source := `
+type Endpoint = {url: string, weight: number, headers: {[string]: string}}
+
+local function collect(raw: any): {[string]: Endpoint}
+	local endpoints: {[string]: Endpoint} = {}
+	if type(raw) ~= "table" then
+		return endpoints
+	end
+	for key, value in pairs(raw) do
+		if type(key) == "string" and type(value) == "table" then
+			local url = value.url
+			if type(url) == "string" then
+				local weight = value.weight
+				if type(weight) == "number" then
+					local headers: {[string]: string} = {}
+					if type(value.headers) == "table" then
+						for header_name, header_value in pairs(value.headers) do
+							if type(header_name) == "string" and type(header_value) == "string" then
+								headers[header_name] = header_value
+							end
+						end
+					end
+					endpoints[key] = { url = url, weight = weight, headers = headers }
+				end
+			end
+		end
+	end
+	return endpoints
+end
+
+local endpoints = collect({
+	primary = { url = "https://example.test", weight = 1, headers = { Accept = "application/json" } },
+	secondary = { url = false, weight = "heavy" },
+})
+
+local primary = endpoints.primary
+if not primary then
+	return "missing"
+end
+local accept = primary.headers.Accept
+if not accept then
+	return primary.url
+end
+local url: string = primary.url
+local weight: number = primary.weight + 1
+return url .. ":" .. accept .. ":" .. tostring(weight)
+`
+	assertNoGradualTypingErrors(t, source)
+}
+
+func TestGradualTyping_WhileLoopCarriesOptionalRefinementThroughState(t *testing.T) {
+	source := `
+type Event = {kind: "name", value: string} | {kind: "count", value: number}
+type State = {name: string?, total: number}
+
+local events: {Event} = {
+	{ kind = "count", value = 2 },
+	{ kind = "name", value = "worker" },
+	{ kind = "count", value = 3 },
+}
+
+local state: State = { total = 0 }
+local i = 1
+while i <= #events do
+	local event = events[i]
+	if event.kind == "name" then
+		state.name = event.value
+	else
+		state.total = state.total + event.value
+	end
+	i = i + 1
+end
+
+local name = state.name
+if not name then
+	return "missing"
+end
+local final_name: string = name
+local final_total: number = state.total
+return final_name .. ":" .. tostring(final_total)
+`
+	assertNoGradualTypingErrors(t, source)
+}
+
+func TestGradualTyping_NestedLoopsRefineMatrixCellsBeforeAggregation(t *testing.T) {
+	source := `
+type Cell = {row: number, col: number, value: string}
+
+local function cells(raw_rows: any): {Cell}
+	local out: {Cell} = {}
+	if type(raw_rows) ~= "table" then
+		return out
+	end
+	for row_index, row in ipairs(raw_rows) do
+		if type(row) == "table" then
+			for col_index, value in ipairs(row) do
+				if type(value) == "string" then
+					table.insert(out, { row = row_index, col = col_index, value = value })
+				end
+			end
+		end
+	end
+	return out
+end
+
+local out = cells({
+	{ "a", false },
+	{ "b", "c" },
+})
+
+local first = out[1]
+if not first then
+	return "empty"
+end
+local pos: number = first.row + first.col
+local value: string = first.value
+return value .. ":" .. tostring(pos)
+`
+	assertNoGradualTypingErrors(t, source)
+}
+
+func TestGradualTyping_RejectsExistentialLoopProofAsSpecificElementProof(t *testing.T) {
+	source := `
+local raw: any = { items = { 42, "safe" } }
+local saw_string = false
+
+if type(raw.items) == "table" then
+	for _, item in ipairs(raw.items) do
+		if type(item) == "string" then
+			saw_string = true
+		end
+	end
+end
+
+if saw_string then
+	local first: string = raw.items[1]
+	return first
+end
+return "missing"
+`
+	assertGradualTypingErrorContains(t, source, "cannot assign")
+}
+
 func TestGradualTyping_RejectsUncheckedAnyRecordAssignment(t *testing.T) {
 	source := `
 type User = {id: string, name: string}
