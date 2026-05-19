@@ -1681,6 +1681,81 @@ func TestSolver_ApplyToSingle_HasType(t *testing.T) {
 	}
 }
 
+func TestSolver_ApplyToSingle_HasTypeOnFieldNarrowsParent(t *testing.T) {
+	parent := constraint.Path{Root: "op"}
+	field := constraint.Path{Root: "op", Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "from_pid"}}}
+	resolve := func(p constraint.Path) constraint.PathKey {
+		if p.Root == "op" && len(p.Segments) == 0 {
+			return "op@1"
+		}
+		if p.Root == "op" && len(p.Segments) == 1 && p.Segments[0].Name == "from_pid" {
+			return "op@1.from_pid"
+		}
+		return p.Key()
+	}
+	resolver := func(k narrow.TypeKey) typ.Type {
+		if k.Kind == narrow.TypeKeyBuiltin && k.Name == "string" {
+			return typ.String
+		}
+		return nil
+	}
+	s := constraint.Solver{Env: constraint.Env{
+		ResolveType: resolver,
+		Resolver: &core.FuncResolver{FieldFunc: func(t typ.Type, name string) (typ.Type, bool) {
+			if rec, ok := t.(*typ.Record); ok {
+				if f := rec.GetField(name); f != nil {
+					return f.Type, true
+				}
+				if rec.Open {
+					return typ.Unknown, true
+				}
+			}
+			return nil, false
+		}},
+	}}
+	set := constraint.NewConjunction(constraint.HasType{Path: field, Type: narrow.BuiltinTypeKey("string")})
+
+	got := s.ApplyToSingle(set, resolve(parent), typ.Any, resolve)
+	want := typ.NewRecord().Field("from_pid", typ.String).SetOpen(true).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("ApplyToSingle field HasType: expected %v, got %v", want, got)
+	}
+}
+
+func TestSolver_ApplyToSingle_IsNilOnFieldNarrowsParent(t *testing.T) {
+	parent := constraint.Path{Root: "raw"}
+	field := constraint.Path{Root: "raw", Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "kind"}}}
+	resolve := func(p constraint.Path) constraint.PathKey {
+		if p.Root == "raw" && len(p.Segments) == 0 {
+			return "raw@1"
+		}
+		if p.Root == "raw" && len(p.Segments) == 1 && p.Segments[0].Name == "kind" {
+			return "raw@1.kind"
+		}
+		return p.Key()
+	}
+	s := constraint.Solver{Env: constraint.Env{
+		Resolver: &core.FuncResolver{FieldFunc: func(t typ.Type, name string) (typ.Type, bool) {
+			if rec, ok := t.(*typ.Record); ok {
+				if f := rec.GetField(name); f != nil {
+					return f.Type, true
+				}
+				if rec.Open {
+					return typ.Unknown, true
+				}
+			}
+			return nil, false
+		}},
+	}}
+	set := constraint.NewConjunction(constraint.IsNil{Path: field})
+
+	got := s.ApplyToSingle(set, resolve(parent), typ.Any, resolve)
+	want := typ.NewRecord().Field("kind", typ.Nil).SetOpen(true).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("ApplyToSingle field IsNil: expected %v, got %v", want, got)
+	}
+}
+
 func TestSolver_ApplyToSingle_MultipleConstraints(t *testing.T) {
 	path := constraint.Path{Root: "x"}
 	resolve := func(p constraint.Path) constraint.PathKey {

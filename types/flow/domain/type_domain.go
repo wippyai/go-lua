@@ -132,6 +132,19 @@ func (d *TypeDomain) ApplyAtom(atom constraint.Atom) bool {
 
 func (d *TypeDomain) applyHasType(atom constraint.Atom) bool {
 	key := atom.Left.Path
+	if parent, field, ok := SplitPathKey(key); ok {
+		if parentType := d.TypeAt(parent); parentType != nil {
+			parentNarrowed := narrow.ByFieldTypeKey(parentType, field, atom.TypeKey, &d.Env, d.Env.ResolveType)
+			if parentNarrowed == nil || parentNarrowed.Kind().IsNever() {
+				d.Unsat = true
+				return false
+			}
+			if !typ.TypeEquals(parentNarrowed, parentType) {
+				d.Narrowed[parent] = parentNarrowed
+			}
+		}
+	}
+
 	base := d.TypeAt(key)
 	if base == nil {
 		return true
@@ -228,6 +241,19 @@ func (d *TypeDomain) applyFalsy(atom constraint.Atom) bool {
 
 func (d *TypeDomain) applyIsNil(atom constraint.Atom) bool {
 	key := atom.Left.Path
+	if parent, field, ok := SplitPathKey(key); ok {
+		if parentType := d.TypeAt(parent); parentType != nil {
+			parentNarrowed := narrow.ByFieldTypeKey(parentType, field, narrow.BuiltinTypeKey("nil"), &d.Env, d.Env.ResolveType)
+			if parentNarrowed == nil || parentNarrowed.Kind().IsNever() {
+				d.Unsat = true
+				return false
+			}
+			if !typ.TypeEquals(parentNarrowed, parentType) {
+				d.Narrowed[parent] = parentNarrowed
+			}
+		}
+	}
+
 	base := d.TypeAt(key)
 	if base == nil {
 		return true

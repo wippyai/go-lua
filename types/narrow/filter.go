@@ -48,6 +48,117 @@ func ByFieldFalsy(t typ.Type, field string, resolver Resolver) typ.Type {
 	}, false)
 }
 
+// ByFieldTypeKey narrows a table-like type by a runtime type guard on one of
+// its fields, such as type(x.name) == "string".
+func ByFieldTypeKey(t typ.Type, field string, key TypeKey, resolver Resolver, resolve TypeResolver) typ.Type {
+	if t == nil || field == "" || key.IsZero() || resolver == nil {
+		return t
+	}
+	if lit, ok := LiteralFromTypeKey(key, resolve); ok {
+		return ByFieldLiteral(t, field, lit, resolver)
+	}
+	return refineByFieldTypeKey(t, field, key, resolver, resolve)
+}
+
+func refineByFieldTypeKey(t typ.Type, field string, key TypeKey, resolver Resolver, resolve TypeResolver) typ.Type {
+	if t == nil {
+		return t
+	}
+	if a, ok := t.(*typ.Alias); ok {
+		return refineByFieldTypeKey(a.Target, field, key, resolver, resolve)
+	}
+	if expanded := unwrap.Instantiated(t); expanded != t {
+		return refineByFieldTypeKey(expanded, field, key, resolver, resolve)
+	}
+	if t.Kind().IsPlaceholder() || unwrap.IsBuiltinTableTop(t) {
+		fieldType := ByTypeKey(typ.Any, key, resolve)
+		if fieldType == nil || fieldType.Kind().IsNever() {
+			return t
+		}
+		return typ.NewRecord().Field(field, fieldType).SetOpen(true).Build()
+	}
+
+	switch v := t.(type) {
+	case *typ.Optional:
+		return refineByFieldTypeKey(v.Inner, field, key, resolver, resolve)
+	case *typ.Union:
+		kept := make([]typ.Type, 0, len(v.Members))
+		for _, m := range v.Members {
+			refined := refineByFieldTypeKey(m, field, key, resolver, resolve)
+			if refined != nil && !refined.Kind().IsNever() {
+				kept = append(kept, refined)
+			}
+		}
+		if len(kept) == 0 {
+			return typ.Never
+		}
+		return typ.NewUnion(kept...)
+	case *typ.Record:
+		return refineRecordByFieldTypeKey(v, field, key, resolver, resolve)
+	case *typ.Map:
+		return refineMapByFieldTypeKey(v, field, key, resolver, resolve)
+	case *typ.Intersection:
+		if fieldMatchesTypeKey(v, field, key, resolver, resolve) {
+			return v
+		}
+		return typ.Never
+	default:
+		if fieldMatchesTypeKey(t, field, key, resolver, resolve) {
+			return t
+		}
+		return typ.Never
+	}
+}
+
+func refineRecordByFieldTypeKey(r *typ.Record, field string, key TypeKey, resolver Resolver, resolve TypeResolver) typ.Type {
+	if r == nil {
+		return typ.Never
+	}
+	if f := r.GetField(field); f != nil {
+		narrowed := ByTypeKey(f.Type, key, resolve)
+		if narrowed == nil || narrowed.Kind().IsNever() {
+			return typ.Never
+		}
+		return typ.ExtendRecordWithField(r, field, narrowed)
+	}
+	fieldType, ok := resolver.Field(r, field)
+	if !ok || fieldType == nil {
+		return typ.Never
+	}
+	narrowed := ByTypeKey(fieldType, key, resolve)
+	if narrowed == nil || narrowed.Kind().IsNever() {
+		return typ.Never
+	}
+	return typ.ExtendRecordWithField(r, field, narrowed)
+}
+
+func refineMapByFieldTypeKey(m *typ.Map, field string, key TypeKey, resolver Resolver, resolve TypeResolver) typ.Type {
+	if m == nil {
+		return typ.Never
+	}
+	fieldType, ok := resolver.Field(m, field)
+	if !ok || fieldType == nil {
+		return typ.Never
+	}
+	narrowed := ByTypeKey(fieldType, key, resolve)
+	if narrowed == nil || narrowed.Kind().IsNever() {
+		return typ.Never
+	}
+	return typ.NewRecord().
+		Field(field, narrowed).
+		MapComponent(m.Key, m.Value).
+		Build()
+}
+
+func fieldMatchesTypeKey(t typ.Type, field string, key TypeKey, resolver Resolver, resolve TypeResolver) bool {
+	fieldType, ok := resolver.Field(t, field)
+	if !ok || fieldType == nil {
+		return false
+	}
+	narrowed := ByTypeKey(fieldType, key, resolve)
+	return narrowed != nil && !narrowed.Kind().IsNever()
+}
+
 // FilterByMatch filters a type by applying a matcher predicate with configurable
 // polarity (narrow vs exclude).
 //

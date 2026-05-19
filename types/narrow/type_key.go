@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // TypeKey identifies a type for narrowing operations using either a built-in
@@ -154,3 +155,17 @@ func (k TypeKey) Equal(other TypeKey) bool {
 //
 // Returns nil if the key cannot be resolved (unknown type).
 type TypeResolver func(TypeKey) typ.Type
+
+// LiteralFromTypeKey resolves a type key to a literal singleton when the key
+// denotes one. Hash keys for literal aliases are used for exact discriminants.
+func LiteralFromTypeKey(key TypeKey, resolve TypeResolver) (*typ.Literal, bool) {
+	if resolve == nil || key.IsZero() {
+		return nil, false
+	}
+	resolved := resolve(key)
+	if resolved == nil {
+		return nil, false
+	}
+	lit, ok := unwrap.Alias(resolved).(*typ.Literal)
+	return lit, ok && lit != nil
+}

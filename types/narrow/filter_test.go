@@ -423,6 +423,62 @@ func TestByFieldLiteral_UnionRefinesOpenMembers(t *testing.T) {
 	}
 }
 
+func TestByFieldTypeKey_PlaceholderMaterializesRecord(t *testing.T) {
+	resolver := newMockResolver()
+
+	result := ByFieldTypeKey(typ.Any, "from_pid", BuiltinTypeKey("string"), resolver, nil)
+	want := typ.NewRecord().Field("from_pid", typ.String).SetOpen(true).Build()
+	if !typ.TypeEquals(result, want) {
+		t.Errorf("ByFieldTypeKey(any, from_pid, string) = %v, want %v", result, want)
+	}
+}
+
+func TestByFieldTypeKey_NilMaterializesAbsentFieldProof(t *testing.T) {
+	resolver := newMockResolver()
+
+	result := ByFieldTypeKey(typ.Any, "kind", BuiltinTypeKey("nil"), resolver, nil)
+	want := typ.NewRecord().Field("kind", typ.Nil).SetOpen(true).Build()
+	if !typ.TypeEquals(result, want) {
+		t.Errorf("ByFieldTypeKey(any, kind, nil) = %v, want %v", result, want)
+	}
+}
+
+func TestByFieldTypeKey_OpenRecordMissingFieldMaterializesType(t *testing.T) {
+	resolver := newMockResolver()
+	base := typ.NewRecord().Field("kind", typ.String).SetOpen(true).Build()
+
+	result := ByFieldTypeKey(base, "from_pid", BuiltinTypeKey("string"), resolver, nil)
+	want := typ.NewRecord().
+		Field("kind", typ.String).
+		Field("from_pid", typ.String).
+		SetOpen(true).
+		Build()
+	if !typ.TypeEquals(result, want) {
+		t.Errorf("ByFieldTypeKey(open record, from_pid, string) = %v, want %v", result, want)
+	}
+}
+
+func TestByFieldTypeKey_RecordFieldRefinesUnion(t *testing.T) {
+	resolver := newMockResolver()
+	base := typ.NewRecord().Field("value", typ.NewUnion(typ.String, typ.Number)).Build()
+
+	result := ByFieldTypeKey(base, "value", BuiltinTypeKey("string"), resolver, nil)
+	want := typ.NewRecord().Field("value", typ.String).Build()
+	if !typ.TypeEquals(result, want) {
+		t.Errorf("ByFieldTypeKey(record, value, string) = %v, want %v", result, want)
+	}
+}
+
+func TestByFieldTypeKey_ClosedRecordMissingFieldIsNever(t *testing.T) {
+	resolver := newMockResolver()
+	base := typ.NewRecord().Field("kind", typ.String).Build()
+
+	result := ByFieldTypeKey(base, "from_pid", BuiltinTypeKey("string"), resolver, nil)
+	if result == nil || !result.Kind().IsNever() {
+		t.Errorf("ByFieldTypeKey(closed record missing field) = %v, want never", result)
+	}
+}
+
 func TestExcludeByFieldLiteral_EmptyField(t *testing.T) {
 	resolver := newMockResolver()
 	rec := typ.NewRecord().Field("kind", typ.LiteralString("a")).Build()

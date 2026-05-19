@@ -6213,3 +6213,133 @@ BenchmarkCheck_LargeFunction-32  174  6461779 ns/op  989461 B/op  10031 allocs/o
 The wall-time variance is high on this host, but allocations are materially
 lower than the earlier recorded 1.44 MB / 20.5k allocs and the post-convergence
 3.2-3.4 ms / 1.08 MB / 10.9k allocs samples. No iteration cap was reintroduced.
+
+### 2026-05-19 field-path type guard parent materialization
+
+The latest false-positive class was not an interproc fact problem. It was a
+local abstract-domain shape problem: a proven fact about a field path was not
+being reflected back into the parent container. The concrete failing shape was:
+
+```lua
+if type(op) == "table" and type(op.from_pid) == "string" then
+    handle(op) -- handle expects {from_pid: string}
+end
+```
+
+The checker knew `op.from_pid` was a string, but the parent value `op` still
+looked like unstructured `any/table` at the function-call boundary. That made
+the call look like an unproved `any` to record-contract flow.
+
+The design correction is a canonical narrowing operator, not a checker-side
+special case:
+
+- `types/narrow.ByFieldTypeKey` owns positive runtime type guards on fields;
+- `types/flow/domain.TypeDomain` uses it when applying path facts to flow state;
+- `types/constraint.Solver` uses the same operator when applying constraints;
+- `types/narrow.LiteralFromTypeKey` is the single literal-key decoder used by
+  both field-literal and type-key paths.
+
+Soundness rules:
+
+- `type(t.k) == "string"` in a table-proven branch materializes/refines `t` to
+  an open record containing `k: string`.
+- `t.k == nil` materializes/refines `t` to an open record containing `k: nil`.
+  This is the Lua absence proof required by optional record fields.
+- Hash keys that resolve to literal singletons still route through
+  `ByFieldLiteral`, so discriminated unions remain exact.
+- Broad builtin type-key refinement must not be used as a literal-discriminant
+  replacement. That avoids impossible intersections such as `true & false`.
+- Closed records without the proven field remain unsatisfiable; no open-field
+  escape is invented.
+
+This is the intended abstract-interpreter mental model:
+
+1. leaf-path facts are first-class facts;
+2. when a leaf fact proves a field value, the parent shape must be updated in
+   the same product domain;
+3. contract checking reads the parent shape from that domain;
+4. no legacy bridge, fallback channel, or post-hoc compatibility projection is
+   involved.
+
+Regression coverage added in this pass:
+
+- `ByFieldTypeKey(any, "from_pid", string)` materializes
+  `{from_pid: string, ...}`;
+- nil field proofs materialize optional-field absence;
+- open records refine missing fields;
+- unions refine existing field domains;
+- closed records with missing fields become `never`;
+- flow-domain `HasType(parent.field)` and `IsNil(parent.field)` update
+  `parent`;
+- constraint-solver `HasType(parent.field)` and `IsNil(parent.field)` update
+  `parent`;
+- untyped limit/control/start-option cases still fail without proof;
+- guarded limit/control/start-option cases pass with proof.
+
+Verification after this correction:
+
+```text
+go test ./types/narrow ./types/flow/domain ./types/constraint \
+  -run 'Test(ByFieldTypeKey|TypeDomain_Apply(IsNil|HasType)OnField|Solver_ApplyToSingle_(HasType|IsNil)OnField)' \
+  -count=1 -v
+
+go test ./compiler/check/tests/regression \
+  -run 'TestExternalLint_(UntypedLimitRequiresNumberProof|GuardedLimitFeedsNumberContract|DynamicControlPayloadRequiresTypedProof|GuardedControlPayloadFeedsTypedHandler|StartOptionsRejectsPlainString|GuardedStartOptionsFeedsOptionalRecord)' \
+  -count=1 -v
+
+go test ./... -count=1 -timeout 300s
+git diff --check
+go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction \
+  -benchmem -count=3
+```
+
+All of the above passed.
+
+Benchmark sample:
+
+```text
+BenchmarkCheck_LargeFunction-32  819  1436389 ns/op  988745 B/op  10034 allocs/op
+BenchmarkCheck_LargeFunction-32  830  1480187 ns/op  988940 B/op  10034 allocs/op
+BenchmarkCheck_LargeFunction-32  816  1495422 ns/op  988964 B/op  10034 allocs/op
+```
+
+The stock `../scripts/verify-suite.sh` result is not a clean verdict on this
+checkout. It builds `/tmp/wippy-local` from `/home/wolfy-j/wippy/wippy`, whose
+module graph is still pinned to `github.com/wippyai/go-lua v1.5.16`:
+
+```text
+dep github.com/wippyai/go-lua v1.5.16
+```
+
+That pinned-binary run passed go-lua checker tests and built the binary, then
+exited non-zero on external lint targets:
+
+```text
+/home/wolfy-j/wippy/session                  errors=8  warnings=0
+/home/wolfy-j/wippy/framework/src/agent/src  errors=8  warnings=0
+/home/wolfy-j/wippy/docker-demo              errors=21 warnings=2
+```
+
+The current-PR local-replace binary was rebuilt with:
+
+```text
+dep github.com/wippyai/go-lua v1.5.16 => /home/wolfy-j/wippy/go-lua (devel)
+```
+
+Local-replace sampling still reports external diagnostics, but the remaining
+classes are source or manifest proof gaps:
+
+- untyped `any` values passed to `string`, `number`, `Time`, or record
+  contracts;
+- string defaults such as `""` indexed as metadata records;
+- manifest-only assertion helpers without assertion-effect summaries;
+- dynamic provider/model/config values passed to typed LLM contracts;
+- exported config mutation that can invalidate numeric reads;
+- intentional negative tests such as passing `"not a table"` to a record
+  contract.
+
+No current engine false-positive class remains from this pass. If a later
+external diagnostic is reclassified as an engine issue, the rule is unchanged:
+first reduce it into a go-lua regression, then fix the canonical domain or query
+owner. Do not widen `any` into typed contracts, do not assume assertion effects
+from names, and do not add bridge/fallback facts.

@@ -91,6 +91,49 @@ func TestTypeDomain_ApplyHasType(t *testing.T) {
 	}
 }
 
+func TestTypeDomain_ApplyHasTypeOnFieldMaterializesParentShape(t *testing.T) {
+	parentKey := constraint.PathKey("op")
+	fieldKey := constraint.PathKey("op.from_pid")
+	env := makeTestEnv(map[constraint.PathKey]typ.Type{
+		parentKey: typ.Any,
+		fieldKey:  typ.Any,
+	})
+
+	d := NewTypeDomain(env)
+	atom := constraint.AtomHasType(constraint.TermVar(fieldKey), narrow.BuiltinTypeKey("string"))
+
+	if ok := d.ApplyAtom(atom); !ok {
+		t.Fatal("ApplyAtom should succeed")
+	}
+
+	wantParent := typ.NewRecord().Field("from_pid", typ.String).SetOpen(true).Build()
+	if got := d.TypeAt(parentKey); !typ.TypeEquals(got, wantParent) {
+		t.Fatalf("parent type = %v, want %v", got, wantParent)
+	}
+	if got := d.TypeAt(fieldKey); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("field type = %v, want string", got)
+	}
+}
+
+func TestTypeDomain_ApplyHasTypeOnClosedMissingFieldIsUnsat(t *testing.T) {
+	parentKey := constraint.PathKey("op")
+	fieldKey := constraint.PathKey("op.from_pid")
+	env := makeTestEnv(map[constraint.PathKey]typ.Type{
+		parentKey: typ.NewRecord().Field("kind", typ.String).Build(),
+		fieldKey:  typ.Any,
+	})
+
+	d := NewTypeDomain(env)
+	atom := constraint.AtomHasType(constraint.TermVar(fieldKey), narrow.BuiltinTypeKey("string"))
+
+	if ok := d.ApplyAtom(atom); ok {
+		t.Fatal("ApplyAtom should reject impossible field type guard")
+	}
+	if !d.IsUnsat() {
+		t.Fatal("domain should be unsat")
+	}
+}
+
 func TestTypeDomain_ApplyIsNil(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
@@ -108,6 +151,30 @@ func TestTypeDomain_ApplyIsNil(t *testing.T) {
 	result := d.TypeAt(key)
 	if result != typ.Nil {
 		t.Fatalf("expected nil, got %v", result)
+	}
+}
+
+func TestTypeDomain_ApplyIsNilOnFieldMaterializesParentShape(t *testing.T) {
+	parentKey := constraint.PathKey("raw")
+	fieldKey := constraint.PathKey("raw.kind")
+	env := makeTestEnv(map[constraint.PathKey]typ.Type{
+		parentKey: typ.Any,
+		fieldKey:  typ.Any,
+	})
+
+	d := NewTypeDomain(env)
+	atom := constraint.AtomEq(constraint.TermVar(fieldKey), constraint.TermNil())
+
+	if ok := d.ApplyAtom(atom); !ok {
+		t.Fatal("ApplyAtom should succeed")
+	}
+
+	wantParent := typ.NewRecord().Field("kind", typ.Nil).SetOpen(true).Build()
+	if got := d.TypeAt(parentKey); !typ.TypeEquals(got, wantParent) {
+		t.Fatalf("parent type = %v, want %v", got, wantParent)
+	}
+	if got := d.TypeAt(fieldKey); !typ.TypeEquals(got, typ.Nil) {
+		t.Fatalf("field type = %v, want nil", got)
 	}
 }
 

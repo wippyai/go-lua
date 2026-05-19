@@ -644,6 +644,133 @@ handlers[name] = handler_func
 	}
 }
 
+func TestExternalLint_UntypedLimitRequiresNumberProof(t *testing.T) {
+	result := testutil.Check(`
+local repo = {
+	list = function(limit: number)
+		return limit
+	end,
+}
+
+local function load(args: any)
+	return repo.list(args.limit)
+end
+
+return load
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected number")
+}
+
+func TestExternalLint_GuardedLimitFeedsNumberContract(t *testing.T) {
+	result := testutil.Check(`
+local repo = {
+	list = function(limit: number)
+		return limit
+	end,
+}
+
+local function load(args)
+	local limit = 100
+	if type(args.limit) == "number" then
+		limit = args.limit
+	end
+	return repo.list(limit)
+end
+
+return load
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected guarded numeric limit to satisfy number contract, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_DynamicControlPayloadRequiresTypedProof(t *testing.T) {
+	result := testutil.Check(`
+type ControlOp = {
+	from_pid: string,
+}
+
+local function handle(op: ControlOp)
+	return op.from_pid
+end
+
+local function dispatch(op: any)
+	return handle(op)
+end
+
+return dispatch
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected")
+}
+
+func TestExternalLint_GuardedControlPayloadFeedsTypedHandler(t *testing.T) {
+	result := testutil.Check(`
+type ControlOp = {
+	from_pid: string,
+}
+
+local function handle(op: ControlOp)
+	return op.from_pid
+end
+
+local function dispatch(op: any)
+	if type(op) == "table" and type(op.from_pid) == "string" then
+		return handle(op)
+	end
+	return nil
+end
+
+return dispatch
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected guarded control payload to satisfy handler contract, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_StartOptionsRejectsPlainString(t *testing.T) {
+	result := testutil.Check(`
+type StartOptions = {
+	kind?: string,
+}
+
+local function start(opts: StartOptions?)
+	return opts
+end
+
+start("not a table")
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected")
+}
+
+func TestExternalLint_GuardedStartOptionsFeedsOptionalRecord(t *testing.T) {
+	result := testutil.Check(`
+type StartOptions = {
+	kind?: string,
+}
+
+local function start(opts: StartOptions?)
+	return opts
+end
+
+local function run(raw: any)
+	if raw == nil then
+		return start(nil)
+	end
+	if type(raw) == "table" then
+		if raw.kind == nil or type(raw.kind) == "string" then
+			return start(raw)
+		end
+	end
+	return nil
+end
+
+return run
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected guarded start options to satisfy optional record contract, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestExternalLint_ReturnedCallbackUsesExpectedParameterTypesInBody(t *testing.T) {
 	result := testutil.Check(`
 type Time = { unix: integer }

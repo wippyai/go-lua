@@ -317,6 +317,9 @@ func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, 
 			if resolve(v.Path) == target {
 				return narrow.FilterByKind(t, kind.Nil)
 			}
+			if parent, field, hasField := SplitFieldPath(v.Path); hasField && resolve(parent) == target {
+				return narrow.ByFieldTypeKey(t, field, narrow.BuiltinTypeKey("nil"), &s.Env, s.Env.ResolveType)
+			}
 			return t
 		},
 		NotNil: func(v NotNil) typ.Type {
@@ -329,10 +332,8 @@ func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, 
 			if resolve(v.Path) == target {
 				return narrow.ByTypeKey(t, v.Type, s.Env.ResolveType)
 			}
-			if lit, ok := literalFromTypeKey(v.Type, s.Env.ResolveType); ok {
-				if parent, field, hasField := SplitFieldPath(v.Path); hasField && resolve(parent) == target {
-					return narrow.ByFieldLiteral(t, field, lit, &s.Env)
-				}
+			if parent, field, hasField := SplitFieldPath(v.Path); hasField && resolve(parent) == target {
+				return narrow.ByFieldTypeKey(t, field, v.Type, &s.Env, s.Env.ResolveType)
 			}
 			return t
 		},
@@ -340,7 +341,7 @@ func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, 
 			if resolve(v.Path) == target {
 				return narrow.ExcludeByTypeKey(t, v.Type, s.Env.ResolveType)
 			}
-			if lit, ok := literalFromTypeKey(v.Type, s.Env.ResolveType); ok {
+			if lit, ok := narrow.LiteralFromTypeKey(v.Type, s.Env.ResolveType); ok {
 				if parent, field, hasField := SplitFieldPath(v.Path); hasField && resolve(parent) == target {
 					return narrow.ExcludeByFieldLiteral(t, field, lit, &s.Env)
 				}
@@ -517,9 +518,15 @@ func applyConstraint(out *map[PathKey]typ.Type, env Env, c Constraint) bool {
 			return changed
 		},
 		IsNil: func(v IsNil) bool {
-			return applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
+			changed := applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
 				return narrow.FilterByKind(t, kind.Nil)
 			})
+			if parent, field, hasField := SplitFieldPath(v.Path); hasField {
+				changed = applySinglePath(out, parent, func(t typ.Type) typ.Type {
+					return narrow.ByFieldTypeKey(t, field, narrow.BuiltinTypeKey("nil"), &env, env.ResolveType)
+				}) || changed
+			}
+			return changed
 		},
 		NotNil: func(v NotNil) bool {
 			return applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
@@ -530,12 +537,10 @@ func applyConstraint(out *map[PathKey]typ.Type, env Env, c Constraint) bool {
 			changed := applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
 				return narrow.ByTypeKey(t, v.Type, env.ResolveType)
 			})
-			if lit, ok := literalFromTypeKey(v.Type, env.ResolveType); ok {
-				if parent, field, hasField := SplitFieldPath(v.Path); hasField {
-					changed = applySinglePath(out, parent, func(t typ.Type) typ.Type {
-						return narrow.ByFieldLiteral(t, field, lit, &env)
-					}) || changed
-				}
+			if parent, field, hasField := SplitFieldPath(v.Path); hasField {
+				changed = applySinglePath(out, parent, func(t typ.Type) typ.Type {
+					return narrow.ByFieldTypeKey(t, field, v.Type, &env, env.ResolveType)
+				}) || changed
 			}
 			return changed
 		},
@@ -543,7 +548,7 @@ func applyConstraint(out *map[PathKey]typ.Type, env Env, c Constraint) bool {
 			changed := applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
 				return narrow.ExcludeByTypeKey(t, v.Type, env.ResolveType)
 			})
-			if lit, ok := literalFromTypeKey(v.Type, env.ResolveType); ok {
+			if lit, ok := narrow.LiteralFromTypeKey(v.Type, env.ResolveType); ok {
 				if parent, field, hasField := SplitFieldPath(v.Path); hasField {
 					changed = applySinglePath(out, parent, func(t typ.Type) typ.Type {
 						return narrow.ExcludeByFieldLiteral(t, field, lit, &env)
@@ -1475,21 +1480,6 @@ func IsBooleanDiscriminantField(parentType typ.Type, field string, resolver narr
 	}
 
 	return hasBoolLiteral
-}
-
-func literalFromTypeKey(key narrow.TypeKey, resolve narrow.TypeResolver) (*typ.Literal, bool) {
-	if resolve == nil || key.IsZero() {
-		return nil, false
-	}
-	resolved := resolve(key)
-	if resolved == nil {
-		return nil, false
-	}
-	lit, ok := unwrap.Alias(resolved).(*typ.Literal)
-	if !ok || lit == nil {
-		return nil, false
-	}
-	return lit, true
 }
 
 // SplitFieldPath splits a path into its parent path and field name.
