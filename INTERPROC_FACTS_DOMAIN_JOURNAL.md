@@ -5306,3 +5306,50 @@ The go-lua tests and diff check pass. The official verify suite still exits
 non-zero only on external lint targets: `session` 8 errors,
 `framework/src/agent/src` 8 errors, and `docker-demo` 21 errors plus
 2 warnings.
+
+## 2026-05-19 Advanced Type-System Stress Regressions
+
+Added a focused regression suite and a real-world fixture whose purpose is to
+stress the current abstract-interpreter model without weakening soundness.
+
+The Go regression suite covers:
+
+- dynamic decode into a discriminated `Event` union after explicit `type(...)`
+  guards, followed by variant-specific field access;
+- `(value?, err?)` multi-return correlation through higher-order callbacks;
+- fluent builder state preservation through explicit self-typed methods;
+- manifest/module export of tagged results and callback parameter shapes;
+- generic `Result<T>` combinators that preserve payload type parameters across
+  `map`, `and_then`, nested callbacks, and discriminant narrowing;
+- nested config builders with typed arrays and string maps;
+- negative soundness cases where truthy string fallbacks must not become
+  numbers, and a truthiness guard over `string | record` must not prove record
+  field access because Lua strings are truthy.
+
+Added fixture:
+
+- `testdata/fixtures/realworld/advanced-type-system-stress`
+
+The fixture runs the same laws through the repository fixture harness with
+separate modules for event decoding, session creation, a metatable-style
+request builder, and pipeline config. The entrypoint validates cross-module
+manifest exports and includes inline `expect-error` checks for the two
+soundness boundaries.
+
+One attempted fixture assertion was intentionally tightened: assigning
+`first.config.level` directly to `string` from a `{[string]: any}` config is not
+sound. The fixture now proves the local value with `type(level) == "string"`
+before claiming it. This is the right model boundary: the checker should infer
+what is proven by control flow and manifests, not invent structure out of
+dynamic `any`.
+
+Verification:
+
+```text
+go test ./compiler/check/tests/regression -run 'TestAdvancedTypeSystem' -count=1 -v
+go test . -run 'TestFixtures/realworld/advanced-type-system-stress/check' -count=1 -v
+go test ./... -count=1
+git diff --check
+```
+
+All checks pass.
