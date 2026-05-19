@@ -847,6 +847,290 @@ Examples:
 Locations are canonical before transfer. AST paths and SSA paths cannot both be
 authoritative.
 
+## Location And Memory Calculus
+
+The final checker needs one answer to the question:
+
+```text
+Are these two pieces of evidence about the same runtime place?
+```
+
+If that answer is local to each helper, precision will stay fragile. Guarded
+fields, captured mutations, alias replay, tuple relations, and table-key
+refinements all depend on the same location calculus.
+
+### Location Shape
+
+A location should be a canonical structured value, not a string path and not an
+AST node.
+
+```text
+Location =
+  Root
+  + Version
+  + PathSegments
+  + ScopeIdentity
+  + ProvenanceClass
+```
+
+Roots:
+
+- local symbol root,
+- parameter root,
+- receiver `self` root,
+- upvalue/captured root,
+- return tuple root,
+- temporary tuple result root,
+- module export root,
+- constructor instance root,
+- external/imported value root.
+
+Segments:
+
+- named field,
+- literal index,
+- dynamic index with key evidence,
+- array element,
+- map value,
+- tuple slot,
+- metatable/member access when modeled,
+- synthetic effect target.
+
+`Version` belongs to the root or to a versioned location identity. It should not
+be smuggled into a string suffix. `ScopeIdentity` is required for parent-scoped
+facts so two equal-looking symbols in different parent scopes do not collide.
+
+### Canonicalization Laws
+
+Location canonicalization should obey these laws:
+
+- resolving the same symbol/path at the same CFG point returns the same
+  canonical location;
+- resolving different lexical symbols never collides, even when names match;
+- aliases are explicit equivalence/forwarding facts, not path rewrites;
+- field and index segments are interned/normalized before storage;
+- dynamic index evidence is preserved and not collapsed to `string` unless a
+  proof refines it;
+- tuple slots remain tuple slots until assignment or forwarding gives them a
+  concrete destination;
+- captured locations retain lexical owner identity;
+- module/export locations retain module identity;
+- open row-tail access and closed missing-field access produce different
+  locations/evidence.
+
+These laws should be tested without a whole checker. A location unit test should
+be able to prove whether two references alias, differ, or are unknown.
+
+### Memory State Shape
+
+Memory state should be the product of several maps with one owner:
+
+```text
+MemoryState =
+  ValueAt(Location)
+  + PresenceAt(Location)
+  + Children(Location)
+  + AliasFacts
+  + MutationLog
+  + DominanceFacts
+  + EscapeFacts
+```
+
+`ValueAt` says what value evidence is known at a location.
+`PresenceAt` distinguishes present, absent, nil value, unknown presence, and
+open row-tail unknown.
+`Children` records known child facts without forcing a parent table rewrite.
+`AliasFacts` records location identity relations and their dominance.
+`MutationLog` records effectful writes with operator kind.
+`DominanceFacts` tells whether a write/guard reaches a query point.
+`EscapeFacts` tells whether a local fact can publish across a boundary.
+
+None of these should be represented by "map missing means nil". Absence of a map
+entry means no stored fact for that component.
+
+### Read Law
+
+A memory read answers by ordered evidence, not by helper preference.
+
+Read order for a path should be:
+
+1. exact dominated location fact;
+2. exact relation-refined fact for the same location;
+3. exact child-path mutation fact;
+4. alias-forwarded fact whose alias is valid at the query point;
+5. declared/constructed parent shape projected through the path;
+6. open row-tail evidence;
+7. unresolved evidence.
+
+Forbidden read behavior:
+
+- expected callee type becomes read evidence;
+- parent table shape overwrites explicit child mutation;
+- closed missing field becomes open row-tail unknown;
+- dynamic index write broadens every named field without proof;
+- stale query cache answers for a different location version.
+
+This read law is where many current helper clusters should collapse.
+
+### Write And Mutation Law
+
+A write is not just "join this type into a table".
+
+Write shape:
+
+```text
+Write =
+  Target Location
+  + OperatorKind
+  + ValueEvidence
+  + Dominance
+  + Provenance
+```
+
+Operator kinds:
+
+- assignment,
+- field write,
+- nil overwrite,
+- deletion/absence write if Lua semantics or API effect establishes deletion,
+- dynamic index write,
+- array element insert,
+- map value update,
+- container send/receive,
+- captured mutation replay.
+
+The operator kind is semantic. `table.insert(x, v)`, `x[k] = v`, and
+`x.field = v` may all affect a table, but they do not have the same path law.
+Captured replay must preserve the original operator kind.
+
+### Alias And Dominance Law
+
+Alias facts are valid only over a control-flow region.
+
+Rules:
+
+- alias created by assignment is valid until reassignment or invalidating
+  mutation;
+- field alias preserves the exact field path it came from;
+- dynamic index alias preserves key evidence;
+- branch-local alias facts do not leak unless dominance proves they reach the
+  query point;
+- loop-carried aliases widen at the loop boundary;
+- captured aliases include lexical owner and escape information.
+
+Relation facts must reference canonical locations, not syntactic expressions.
+If assignment preserves location identity, relations can transfer. If it copies
+only a value and loses tuple/path identity, relation facts must not silently
+survive.
+
+### Tuple Slot Law
+
+Tuple slots are locations, not just positions in a slice.
+
+Rules:
+
+- return arity is part of tuple identity;
+- nil padding is explicit;
+- wrapper forwarding preserves tuple-slot relation only when forwarding is
+  identity-preserving;
+- assignment from tuple slot to local location records a relation edge from slot
+  to local;
+- swapped or reordered returns update relation mapping explicitly;
+- vararg expansion has its own location/evidence policy and cannot be treated
+  as fixed tuple identity without proof.
+
+This prevents the `(value, err)` convention from becoming an arity heuristic.
+
+### Presence Law
+
+Presence is separate from value type.
+
+States:
+
+- present with value evidence,
+- present with nil value,
+- absent from closed structure,
+- optional in declared structure,
+- unknown via open row tail,
+- unknown via dynamic table top.
+
+Important distinctions:
+
+- `field = nil` is not automatically the same as absent unless the domain rule
+  for that context says so;
+- optional declared field is not the same as proven absence;
+- open record tail gives unknown evidence, not nil evidence;
+- map value may be nil even when key presence is unknown;
+- table top preserves that a value is table-like without proving named fields.
+
+Presence should be tested as its own domain law. It is too important to hide in
+record subtyping or field lookup helpers.
+
+### Publication Law
+
+Only memory facts that escape the local function become interproc deltas.
+
+Publishable memory evidence:
+
+- captured variable type,
+- captured field assignment,
+- captured container mutation,
+- constructor field,
+- return value/tuple slot,
+- parameter obligation/effect,
+- module export field.
+
+Non-publishable memory evidence:
+
+- branch-local narrowing,
+- local alias that does not escape,
+- temporary tuple slot after assignment unless relation summary requires it,
+- diagnostic-only failure evidence,
+- query cache answer.
+
+Publication should project from memory state. It should not reconstruct memory
+facts by rescanning AST or replaying helper-specific summaries.
+
+### Performance Consequences
+
+The location calculus is also a performance boundary.
+
+Expected wins:
+
+- interned locations make map keys cheap and stable;
+- path parsing disappears from hot query paths;
+- child-path facts avoid rebuilding whole parent tables;
+- alias and dominance checks become graph-indexed facts;
+- relation queries compare location IDs instead of syntactic paths;
+- captured mutation replay reuses the same mutation operator.
+
+Rejected performance shapes:
+
+- stringifying paths to compare them in hot loops;
+- reparsing path suffixes during every narrowed query;
+- rebuilding parent records for each child write;
+- using object pools before ownership of locations and memory facts is proven;
+- caching read answers without a solved-state/location-version key.
+
+### Location Law Tests
+
+The flash migration should add focused tests for:
+
+- same expression at same point resolves to same location;
+- same name in different scopes resolves to different locations;
+- alias validity ends at reassignment;
+- branch-local alias does not leak;
+- dynamic index write does not overwrite unrelated named field;
+- child field write outranks parent shape at that child;
+- closed missing field differs from open row-tail field;
+- tuple relation survives identity forwarding;
+- tuple relation dies on reorder unless remapped;
+- captured mutation preserves operator kind and target location;
+- nil value and absence remain distinguishable.
+
+These tests are foundational. If they pass, many higher-level inference tests
+become much simpler because they no longer need to encode location policy.
+
 ### Evidence
 
 `Evidence` is a value plus provenance and authority.
