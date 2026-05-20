@@ -24,6 +24,155 @@ local decoded = json.decode(response.body or "")
 	}
 }
 
+func TestExternalLint_ManifestHTTPBodyFallbackFeedsManifestJsonDecode(t *testing.T) {
+	jsonManifest := io.NewManifest("json")
+	jsonManifest.SetExport(typ.NewInterface("json", []typ.Method{
+		{
+			Name: "decode",
+			Type: typ.Func().
+				Param("str", typ.String).
+				Returns(typ.Any, typ.NewOptional(typ.LuaError)).
+				Build(),
+		},
+	}))
+
+	streamReaderType := typ.NewInterface("http_client.StreamReader", []typ.Method{
+		{
+			Name: "read",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Param("size", typ.Number).
+				Returns(typ.String, typ.NewOptional(typ.LuaError)).
+				Build(),
+		},
+	})
+	responseType := typ.NewRecord().
+		Field("status_code", typ.Number).
+		Field("headers", typ.NewMap(typ.String, typ.String)).
+		OptField("body", typ.String).
+		OptField("stream", streamReaderType).
+		Build()
+	optionsType := typ.NewRecord().
+		OptField("headers", typ.NewMap(typ.String, typ.String)).
+		OptField("body", typ.String).
+		OptField("stream", typ.Boolean).
+		OptField("timeout", typ.NewUnion(typ.Number, typ.String)).
+		Build()
+	httpMethodType := typ.Func().
+		Param("url", typ.String).
+		OptParam("opts", optionsType).
+		Returns(responseType, typ.NewOptional(typ.LuaError)).
+		Build()
+	httpManifest := io.NewManifest("http_client")
+	httpManifest.SetExport(typ.NewInterface("http_client", []typ.Method{
+		{Name: "get", Type: httpMethodType},
+		{Name: "post", Type: httpMethodType},
+	}))
+
+	result := testutil.Check(`
+local json = require("json")
+local http_client = require("http_client")
+
+local function request(method: string, options)
+	options = options or {}
+	local http_options = {
+		headers = {},
+		timeout = tonumber(options.timeout) or 600,
+	}
+	if options.stream then
+		http_options.stream = true
+	end
+
+	local response, err
+	if method == "GET" then
+		response, err = http_client.get("https://example.test", http_options)
+	else
+		response, err = http_client.post("https://example.test", http_options)
+	end
+
+	if not response then
+		return nil, err
+	end
+
+	if options.stream and response.stream then
+		return {
+			stream = response.stream,
+			status_code = response.status_code,
+			headers = response.headers,
+		}
+	end
+
+	local parsed, parse_err = json.decode(response.body or "")
+	return parsed, parse_err
+end
+`, testutil.WithStdlib(), testutil.WithManifest("json", jsonManifest), testutil.WithManifest("http_client", httpManifest))
+	if result.HasError() {
+		t.Fatalf("expected manifest HTTP response body fallback to feed manifest json.decode, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_OptionalResponseBodyWithoutFallbackRequiresStringProof(t *testing.T) {
+	jsonManifest := io.NewManifest("json")
+	jsonManifest.SetExport(typ.NewInterface("json", []typ.Method{
+		{
+			Name: "decode",
+			Type: typ.Func().
+				Param("str", typ.String).
+				Returns(typ.Any, typ.NewOptional(typ.LuaError)).
+				Build(),
+		},
+	}))
+
+	result := testutil.Check(`
+local json = require("json")
+
+type Response = {
+	body: string?,
+}
+
+local response: Response = {}
+local decoded = json.decode(response.body)
+`, testutil.WithStdlib(), testutil.WithManifest("json", jsonManifest))
+	requireExternalLintErrorContaining(t, result, "expected string")
+}
+
+func TestExternalLint_TruthyEmptyStringMetadataDoesNotBecomeRecord(t *testing.T) {
+	result := testutil.Check(`
+type Artifact = {
+	meta: "" | {content_type: string},
+}
+
+local artifact: Artifact = { meta = "" }
+if artifact.meta then
+	local content_type: string = artifact.meta.content_type
+end
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "cannot assign string?")
+}
+
+func TestExternalLint_DynamicContextMergeDoesNotInventStringKeys(t *testing.T) {
+	result := testutil.Check(`
+local function use_context(ctx: {[string]: any}?)
+	return ctx
+end
+
+local function merge_context(base: {[any]: any}): {[any]: any}
+	local merged = {}
+	for key, value in pairs(base) do
+		merged[key] = value
+	end
+	return merged
+end
+
+local step: {context: {[any]: any}?} = {}
+if step.context ~= nil then
+	local ctx = merge_context(step.context)
+	use_context(ctx)
+end
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected {[string]: any}?")
+}
+
 func TestExternalLint_ConstantTableNumericFieldStaysNonNil(t *testing.T) {
 	result := testutil.Check(`
 local CONFIG = {
@@ -1204,4 +1353,206 @@ local still_queued: "queued" = alias.status
 return still_queued
 	`, testutil.WithStdlib())
 	requireExternalLintErrorContaining(t, result, "cannot assign")
+}
+
+func TestExternalLint_NarrowedMissingMapSlotStillUsesContainerWriteType(t *testing.T) {
+	result := testutil.Check(`
+type ProcessEntry = {
+	proc: any?,
+}
+
+local active: {[string]: ProcessEntry} = {}
+local cid: string = "container"
+
+if not active[cid] then
+	active[cid] = {}
+	active[cid] = { proc = {} }
+end
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected missing slot initialization to use map element type, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_NarrowedMissingMapSlotRejectsInvalidWrite(t *testing.T) {
+	result := testutil.Check(`
+type ProcessEntry = {
+	proc: number?,
+}
+
+local active: {[string]: ProcessEntry} = {}
+local cid: string = "container"
+
+if not active[cid] then
+	active[cid] = { proc = "not a number" }
+end
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "cannot assign")
+}
+
+func TestExternalLint_InferredMapParamSupportsGuardedSlotWrite(t *testing.T) {
+	result := testutil.Check(`
+local function run_interactive(active, cid, proc)
+	if active then
+		active[cid] = { proc = proc }
+	end
+end
+
+local function claim_and_run(active)
+	local cid: string = "container"
+	if not active[cid] then
+		active[cid] = {}
+		run_interactive(active, cid, {})
+	end
+end
+
+local active: {[string]: {proc: any?}} = {}
+claim_and_run(active)
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected inferred active parameter to preserve caller map write type, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_CapturedInferredMapParamSupportsAsyncGuardedSlotWrite(t *testing.T) {
+	result := testutil.Check(`
+type Process = {
+	start: (self: Process) -> (boolean?, string?),
+}
+type Executor = {
+	exec: (self: Executor, command: string) -> Process,
+}
+
+local function run_interactive(executor, db, c, active, root_pid)
+	local cid: string = tostring(c.id)
+	local proc: Process = executor:exec(tostring(c.command))
+	if active then
+		active[cid] = { proc = proc }
+	end
+end
+
+local function claim_and_run(db, docker, exec_images, active, root_pid)
+	local pending = {
+		{ id = "container", command = "echo ok", image = "demo", config = { interactive = true } },
+	}
+	for _, c in ipairs(pending) do
+	local cid: string = tostring(c.id)
+	if not active[cid] then
+		active[cid] = {}
+		coroutine.spawn(function()
+			local executor: Executor = {
+				exec = function(_self, _command: string): Process
+					return {
+						start = function(_proc)
+							return true, nil
+						end,
+					}
+				end,
+			}
+			run_interactive(executor, db, c, active, root_pid)
+			active[cid] = nil
+		end)
+	end
+	end
+end
+
+local active: {[string]: {proc: any?}} = {}
+claim_and_run({}, {}, {}, active, nil)
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected captured inferred active parameter to preserve caller map write type, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_EmptyOutputMapWidensAcrossNamedAndRootWrites(t *testing.T) {
+	result := testutil.Check(`
+local function decode_outputs(output_data: {any})
+	local outputs = {}
+	local root_output = nil
+
+	for _, data in ipairs(output_data) do
+		local key = data.key or ""
+		local content = data.content
+		if type(content) == "string" and data.content_type == "application/json" then
+			content = content
+		end
+
+		if key == "" then
+			root_output = content
+		else
+			outputs[key] = content
+		end
+	end
+
+	if root_output then
+		outputs[""] = root_output
+	end
+
+	return outputs
+end
+
+local decoded = decode_outputs({
+	({ key = "named", content = "value", content_type = "text/plain" } :: any),
+	({ key = "", content = "root", content_type = "text/plain" } :: any),
+})
+	`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected empty output map to widen from dynamic writes, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_ObjectMethodResponseBodyFallbackFeedsDecode(t *testing.T) {
+	result := testutil.Check(`
+local json = {
+	decode = function(value: string): any
+		return value
+	end,
+}
+
+type HttpResponse = {
+	status_code: number,
+	body: string?,
+	stream: any?,
+	headers: {[string]: string}?,
+}
+type HttpClient = {
+	get: (self: HttpClient, url: string, options: {[string]: any}) -> (HttpResponse?, string?),
+	post: (self: HttpClient, url: string, options: {[string]: any}) -> (HttpResponse?, string?),
+}
+
+local client = {
+	_http_client = nil :: HttpClient?,
+}
+client._http_client = {
+	get = function(_self, _url, _options)
+		return { status_code = 200, body = "{}" }, nil
+	end,
+	post = function(_self, _url, _options)
+		return { status_code = 200, body = "{}" }, nil
+	end,
+}
+
+function client.request(method, url, options)
+	local response, err
+	if method == "GET" then
+		response, err = client._http_client:get(url, options)
+	else
+		response, err = client._http_client:post(url, options)
+	end
+	if not response then
+		return nil, err
+	end
+	if response.status_code < 200 or response.status_code >= 300 then
+		return nil, "bad status"
+	end
+	if options.stream and response.stream then
+		return { stream = response.stream, status_code = response.status_code }
+	end
+	local parsed = json.decode(response.body or "")
+	return parsed, nil
+end
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected response.body fallback to feed decode through method return union, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
 }

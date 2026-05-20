@@ -682,11 +682,13 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 				// Determine static key segment from the key expression.
 				var keySeg constraint.Segment
+				hasStaticKeySeg := false
 				var keyType typ.Type
 				switch k := target.Key.(type) {
 				case *ast.StringExpr:
 					if seg, ok := path.StaticKeySegment(k); ok {
 						keySeg = seg
+						hasStaticKeySeg = true
 					}
 				case *ast.IdentExpr:
 					// Variable key - try const resolution
@@ -696,6 +698,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 							case flow.ConstString:
 								if seg, ok := path.StaticKeySegment(&ast.StringExpr{Value: val.Str}); ok {
 									keySeg = seg
+									hasStaticKeySeg = true
 								}
 							case flow.ConstInt:
 								keyType = typ.Integer
@@ -737,7 +740,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				}
 
 				// For non-const keys, emit an IndexerAssignment to widen the table
-				if keySeg.Name == "" {
+				if !hasStaticKeySeg {
 					// Extract key variable name and symbol using bindings.
 					var keyVar string
 					var keySym cfg.SymbolID

@@ -9,9 +9,6 @@ import (
 func segmentFromStringOrNumber(key ast.Expr) (constraint.Segment, bool) {
 	switch k := key.(type) {
 	case *ast.StringExpr:
-		if k.Value == "" {
-			return constraint.Segment{}, false
-		}
 		if pathkey.IsIdentName(k.Value) {
 			return constraint.Segment{Kind: constraint.SegmentField, Name: k.Value}, true
 		}

@@ -94,6 +94,14 @@ func TestLogicalOrTyped_LeftOptional(t *testing.T) {
 	}
 }
 
+func TestLogicalOrTyped_NestedOptionalFallback(t *testing.T) {
+	nested := &typ.Optional{Inner: typ.NewOptional(typ.String)}
+	result := LogicalOrTyped(nested, typ.LiteralString(""))
+	if !typ.TypeEquals(result, typ.String) {
+		t.Fatalf("nested optional string fallback = %v, want string", result)
+	}
+}
+
 func TestLogicalOrTyped_SoftOptionalPreservesLeftRuntimeAlternative(t *testing.T) {
 	left := typ.NewOptional(typ.NewArray(typ.Any))
 	right := typ.NewArray(typ.Number)

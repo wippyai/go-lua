@@ -27,6 +27,26 @@ func TestStaticAttrKeySegment_StringNonIdentifier(t *testing.T) {
 	}
 }
 
+func TestStaticAttrKeySegment_EmptyString(t *testing.T) {
+	seg, ok := StaticAttrKeySegment(&ast.StringExpr{Value: ""})
+	if !ok {
+		t.Fatal("expected empty string to be a static index segment")
+	}
+	if seg != (constraint.Segment{Kind: constraint.SegmentIndexString, Name: ""}) {
+		t.Fatalf("unexpected segment: %+v", seg)
+	}
+}
+
+func TestStaticTableFieldKeySegment_EmptyString(t *testing.T) {
+	seg, ok := StaticTableFieldKeySegment(&ast.StringExpr{Value: ""})
+	if !ok {
+		t.Fatal("expected empty string table key to be a static index segment")
+	}
+	if seg != (constraint.Segment{Kind: constraint.SegmentIndexString, Name: ""}) {
+		t.Fatalf("unexpected segment: %+v", seg)
+	}
+}
+
 func TestStaticAttrKeySegment_Number(t *testing.T) {
 	seg, ok := StaticAttrKeySegment(&ast.NumberExpr{Value: "7"})
 	if !ok {

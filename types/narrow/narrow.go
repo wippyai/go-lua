@@ -122,8 +122,8 @@ func RemoveNil(t typ.Type) typ.Type {
 		return typ.Never
 	}
 	return narrowType(t, narrowConfig{
-		handleOptional: func(opt *typ.Optional, _ func(typ.Type) typ.Type) typ.Type {
-			return opt.Inner
+		handleOptional: func(opt *typ.Optional, recurse func(typ.Type) typ.Type) typ.Type {
+			return recurse(opt.Inner)
 		},
 		handleUnion: func(u *typ.Union, _ func(typ.Type) typ.Type) typ.Type {
 			var kept []typ.Type

@@ -416,6 +416,22 @@ func TestRemoveNil_NestedOptionalInUnion(t *testing.T) {
 	}
 }
 
+func TestRemoveNil_NestedOptional(t *testing.T) {
+	nested := &typ.Optional{Inner: typ.NewOptional(typ.String)}
+	got := narrow.RemoveNil(nested)
+	if !typ.TypeEquals(got, typ.String) {
+		t.Errorf("RemoveNil(string??) = %v, want string", got)
+	}
+}
+
+func TestToTruthy_NestedOptional(t *testing.T) {
+	nested := &typ.Optional{Inner: typ.NewOptional(typ.String)}
+	got := narrow.ToTruthy(nested)
+	if !typ.TypeEquals(got, typ.String) {
+		t.Errorf("ToTruthy(string??) = %v, want string", got)
+	}
+}
+
 func TestExcludeType_Records(t *testing.T) {
 	rec1 := typ.NewRecord().Field("channel", typ.String).Field("value", typ.String).Build()
 	rec2 := typ.NewRecord().Field("channel", typ.Number).Field("value", typ.Number).Build()

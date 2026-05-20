@@ -6484,7 +6484,7 @@ wippy/tests/app: 0
 session: 8 errors
 framework/src/test: 0
 framework/src/actor/test: 0
-framework/src/agent/src: 9 errors
+framework/src/agent/src: 11 errors
 framework/src/bootloader: 0
 docker-demo: 21 errors, 2 warnings
 framework/src/llm/src: 0
@@ -6498,3 +6498,251 @@ The script still exits non-zero because those external lint targets are part of
 the Wippy checkout, not because go-lua tests or binary build failed. This is the
 same pinned-suite caveat recorded above: use local-replace replay for this
 checkout's checker behavior and official verify for the repository gate shape.
+
+## 2026-05-19 Table Mutation And Static-Key Rectification
+
+The next local-replace replay found two real engine false positives after the
+predicate/effect checkpoint. Both were domain-boundary bugs, not reasons to add
+new fact channels or compatibility bridges.
+
+### Deletion Is Not Element Evidence
+
+`userspace.docker.service:worker` failed after a table slot was initialized,
+used, and later removed:
+
+```lua
+if not active[cid] then
+  active[cid] = {}
+  run_interactive(active, cid, c)
+  active[cid] = nil
+end
+```
+
+The old overlay merge treated `active[cid] = nil` as a value assignment and
+merged `nil` into the map element domain. That polluted later writes and
+produced an impossible element requirement. In Lua, `t[k] = nil` deletes the
+slot; map reads are already optional because a key can be absent. Therefore the
+write-side effect lattice is:
+
+```text
+index write with non-nil value -> element evidence
+index write with nil-only value -> deletion effect, no element evidence
+```
+
+The canonical implementation now drops nil-only indexer mutations when building
+return/overlay map evidence. This keeps deletion semantics local to the table
+mutation domain instead of encoding absence as a stored value type.
+
+Regression coverage:
+
+- nil-only indexer writes do not create map evidence;
+- mixed delete/write effects keep only the non-nil write value;
+- guarded map-slot initialization still accepts valid element writes;
+- invalid element writes to typed maps still fail;
+- captured/async map parameter writes stay precise while later deletes do not
+  poison the parameter evidence.
+
+### Empty String Is A Static Key
+
+`userspace.dataflow:client` failed on the root-output merge:
+
+```lua
+local outputs = {}
+...
+outputs[key] = content
+...
+outputs[""] = root_output
+```
+
+The extractor was using `keySeg.Name == ""` as the sentinel for "not a static
+key". That is not a valid discriminator because `""` is a valid Lua table key.
+The result was a bogus dynamic indexer assignment for `outputs[""]`, which
+created `{[string]: never}` evidence and then rejected the real write as
+`any -> never`.
+
+The corrected model is explicit:
+
+```text
+static-key extraction returns (segment, ok)
+ok=false means dynamic/unknown key
+segment payload may be empty because [""] is a valid static key
+```
+
+The assignment extractor now tracks a separate `hasStaticKeySeg` boolean, and
+the shared path segment helper accepts empty string indexes as
+`SegmentIndexString{Name: ""}`. This keeps path identity canonical and prevents
+empty string keys from falling into the dynamic map-widening path.
+
+Regression coverage:
+
+- `StaticAttrKeySegment("")` and `StaticTableFieldKeySegment("")` produce a
+  static string-index segment;
+- a dataflow-style output map can receive dynamic named outputs and then the
+  root output at `[""]` without producing `never`;
+- the same fixture keeps dynamic row content as `any`, proving the fix is not a
+  narrow literal-only special case.
+
+### Truthiness Must Remove All Nil Layers
+
+One more precision repair was kept in the core narrowing library: `RemoveNil`
+now recurses through optional wrappers. Constructors normally canonicalize nested
+optionals, but imported/derived field shapes can still present equivalent
+nil-capable layers. Truthy narrowing and `or` fallback must produce the non-nil
+payload, not leave one optional layer behind.
+
+Regression coverage uses deliberately non-canonical optional wrappers so the
+test protects the narrowing algorithm rather than the constructor normalizer.
+
+### Replay Classification After These Fixes
+
+Targeted local-replace replay with `/tmp/wippy-golua-current-verify`:
+
+```text
+docker-demo userspace.docker.service: 0 errors, 0 warnings
+docker-demo userspace.dataflow:        0 errors, 0 warnings
+docker-demo full replay:              63 errors, 0 warnings
+```
+
+Official `../scripts/verify-suite.sh` after this correction:
+
+```text
+go-lua checker tests: pass
+wippy binary build: pass
+wippy/tests/app: 0
+session: 8 errors
+framework/src/test: 0
+framework/src/actor/test: 0
+framework/src/agent/src: 8 errors
+framework/src/bootloader: 0
+docker-demo: 21 errors, 2 warnings
+framework/src/llm/src: 0
+framework/src/llm/test: 0
+framework/src/migration: 0
+framework/src/views: 0
+framework/src/relay/test: 0
+```
+
+The two fixed namespaces were engine false positives and are now clean.
+Remaining sampled diagnostics remain source/proof-boundary issues, not current
+engine regressions:
+
+- `wippy.llm.util:compress` exposes an untyped public `compress.configure`
+  method that can write arbitrary values into numeric `CONFIG` fields. The
+  regression suite already has both the negative untyped-config case and the
+  positive typed-config case.
+- `wippy.llm.claude:client` in docker-demo calls `json.decode(response.body)`
+  where the vendored response body is `string?`; unlike other copies, that
+  source has no `or ""` fallback or cast at the decode site.
+- the remaining full-replay classes are dynamic `any` values crossing typed
+  contracts, stale/vendor source shapes, intentionally string metadata used as a
+  record, or manifest/source proof gaps already represented by negative
+  regressions.
+
+The design rule remains unchanged: reduce every suspected false positive to a
+go-lua test first, then fix the owning abstract domain. Do not add fallback fact
+channels, bridge projections, or name-specific repairs.
+
+## 2026-05-19 Replay Reclassification And Soundness Guardrails
+
+After the table-mutation/static-key fixes, I replayed the current local
+checker through `/tmp/wippy-golua-current-verify`. `go version -m` confirms the
+binary is built with:
+
+```text
+github.com/wippyai/go-lua v1.5.16 => /home/wolfy-j/wippy/go-lua (devel)
+```
+
+The current go-lua suite passes:
+
+```text
+env GOCACHE=/tmp/go-build go test ./... -count=1 -timeout 300s
+```
+
+Official `../scripts/verify-suite.sh` after the final regression additions:
+
+```text
+go-lua checker tests: pass
+wippy binary build: pass
+wippy/tests/app: 0
+session: 8 errors
+framework/src/test: 0
+framework/src/actor/test: 0
+framework/src/agent/src: 11 errors
+framework/src/bootloader: 0
+docker-demo: 21 errors, 2 warnings
+framework/src/llm/src: 0
+framework/src/llm/test: 0
+framework/src/migration: 0
+framework/src/views: 0
+framework/src/relay/test: 0
+```
+
+The script still exits non-zero because those external lint diagnostics are
+part of the pinned Wippy verification target set. The go-lua checker suite and
+binary build pass.
+
+Focused local-replace external lint results:
+
+```text
+/home/wolfy-j/wippy/session                 37 errors, 0 warnings
+/home/wolfy-j/wippy/framework/src/agent/src 11 errors, 0 warnings
+/home/wolfy-j/wippy/docker-demo             63 errors, 0 warnings
+```
+
+These are not the fixed table-mutation/static-key false-positive classes. The
+remaining sampled classes classify as source, manifest, or dynamic-boundary
+issues unless a smaller go-lua-only reduction later proves otherwise.
+
+Important source/version detail: the lint targets do not always use the live
+framework checkout. The lock files point at vendored modules and packed `.wapp`
+dependencies. For example, docker-demo uses vendored `wippy/llm 0.4.8`, whose
+Claude client contains:
+
+```lua
+json.decode(response.body)
+```
+
+The live framework source has the safer fallback, but that is not the source
+being linted by docker-demo. The checker must reject the vendored direct
+nullable-body call, and must accept the current-source fallback:
+
+```lua
+json.decode(response.body or "")
+```
+
+Regression coverage now protects both sides:
+
+- manifest-provided `http_client.Response.body: string?` plus
+  `json.decode(response.body or "")` is accepted;
+- direct `json.decode(response.body)` with `body: string?` is rejected;
+- explicit method-call casts still satisfy parameter contracts;
+- constant numeric table fields stay non-nil when no untyped mutator can poison
+  them;
+- untyped config mutation can invalidate numeric config fields and is rejected;
+- truthy `"" | record` metadata does not become a guaranteed record, because
+  empty strings are truthy in Lua;
+- arbitrary-key dynamic maps are not accepted as string-key maps once numeric
+  key evidence exists.
+
+Representative classifications:
+
+- `wippy.llm.util:compress` remains soundly rejected in vendored packages when
+  public untyped `configure(new_config)` can write arbitrary values into
+  numeric `CONFIG` fields. The typed-config positive case still passes.
+- `wippy.llm.*:client` nullable-body diagnostics in older vendored packages
+  are source/version issues when the call has no fallback.
+- `wippy.views:renderer` in older vendored packages calls
+  `tmpl:render(page.template_name, ...)` without the current-source cast; the
+  explicit-cast reduction passes.
+- `userspace.dataflow.node.parallel` context-map diagnostics come from dynamic
+  `step.context` / arbitrary key copying into APIs requiring `{[string]: any}?`;
+  the checker must not invent string keys.
+- `session` artifact metadata diagnostics are source-boundary issues: decoded
+  JSON metadata and SQL/string metadata need explicit shape proof. Lua truthiness
+  does not turn an empty string into a metadata record.
+
+The design invariant is unchanged and is now covered more directly: the
+abstract interpreter may refine values only from semantic evidence in the
+canonical domains. It must not use optimistic compatibility bridges, call-site
+wishful typing, or old fallback fact projections to hide nullable values,
+dynamic keys, or untyped mutation.

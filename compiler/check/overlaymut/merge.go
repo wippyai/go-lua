@@ -116,14 +116,17 @@ func ApplyIndexerMergeToOverlay(
 
 		var keyType, valType typ.Type
 		for _, info := range infos {
+			if indexerAssignmentDeletesSlot(info.ValType) {
+				continue
+			}
 			keyType = typ.JoinPreferNonSoft(keyType, info.KeyType)
 			valType = JoinValueTypes(valType, info.ValType)
 		}
+		if valType == nil {
+			continue
+		}
 		if keyType == nil {
 			keyType = typ.String
-		}
-		if valType == nil {
-			valType = typ.Unknown
 		}
 
 		baseType := overlay[sym]
@@ -164,6 +167,30 @@ func JoinValueTypes(a, b typ.Type) typ.Type {
 	}
 
 	return typ.JoinPreferNonSoft(a, b)
+}
+
+func indexerAssignmentDeletesSlot(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	switch v := typ.UnwrapAnnotated(t).(type) {
+	case *typ.Alias:
+		return indexerAssignmentDeletesSlot(v.Target)
+	case *typ.Optional:
+		return indexerAssignmentDeletesSlot(v.Inner)
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return false
+		}
+		for _, member := range v.Members {
+			if !indexerAssignmentDeletesSlot(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		return unwrap.IsNilType(v)
+	}
 }
 
 // MergeMapComponentIntoType adds a map component to a base type.
