@@ -166,6 +166,7 @@ func (i *Inferencer) newReturnInferenceEngine(
 	scopes map[cfg.Point]*scope.State,
 	ctx api.DeclaredEnv,
 	evidence api.FlowEvidence,
+	functionFacts api.FunctionFacts,
 ) *synth.Engine {
 	return synth.New(synth.Config{
 		Ctx:            run.Ctx,
@@ -173,6 +174,7 @@ func (i *Inferencer) newReturnInferenceEngine(
 		Scopes:         scopes,
 		Manifests:      i.manifests,
 		Env:            ctx,
+		FunctionFacts:  functionFacts,
 		Phase:          api.PhaseScopeCompute,
 		Evidence:       evidence,
 		ModuleBindings: i.store.ModuleBindings(),
@@ -459,6 +461,7 @@ func (i *Inferencer) inferReturnTypesFromBody(
 		uniformFunctionScopes(fnGraph, ctx.resolveScope),
 		declCheckCtx,
 		ctx.info.Evidence,
+		phaseFunctionFacts,
 	)
 	declared := collectReturnTypes(ctx.info.Evidence.Returns, declSynth, nil, skipUnresolvedLocalCall)
 

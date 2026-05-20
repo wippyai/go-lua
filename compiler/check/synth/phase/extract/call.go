@@ -914,6 +914,7 @@ func (s *Synthesizer) withEnvOverlay(overlay map[string]typ.Type) *Synthesizer {
 		Scopes:                 s.deps.Scopes,
 		Manifests:              s.deps.Manifests,
 		CheckCtx:               overlaidCtx,
+		FunctionFacts:          s.deps.FunctionFacts,
 		Graphs:                 s.deps.Graphs,
 		Flow:                   s.deps.Flow,
 		Paths:                  s.deps.Paths,

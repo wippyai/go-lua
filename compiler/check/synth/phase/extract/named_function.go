@@ -230,7 +230,7 @@ func (s *Synthesizer) functionFactType(sym compcfg.SymbolID) typ.Type {
 	if s == nil || sym == 0 {
 		return nil
 	}
-	if t := functionfact.TypeFromMap(s.currentFunctionFacts(), sym); t != nil {
+	if t := functionfact.TypeFromMap(s.functionFactsInput(), sym); t != nil {
 		return t
 	}
 	if s.deps == nil || s.deps.Ctx == nil {

@@ -443,6 +443,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 
 	fnScopes := uniformFunctionScopes(fnGraph, ctx.resolveScope)
 
+	phaseFunctionFacts := functionfact.FromSummaries(ctx.returnVectors)
 	prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
 		Graph:         fnGraph,
 		Bindings:      ctx.bindings,
@@ -450,10 +451,10 @@ func (i *Inferencer) inferLocalVariableTypes(
 		DeclaredTypes: inferenceOverlay,
 		GlobalTypes:   i.globalTypes,
 		ModuleAliases: ctx.moduleAliases,
-		FunctionFacts: functionfact.FromSummaries(ctx.returnVectors),
+		FunctionFacts: phaseFunctionFacts,
 	})
 
-	prelimEngine := i.newReturnInferenceEngine(ctx.run, fnScopes, prelimCtx, ctx.info.Evidence)
+	prelimEngine := i.newReturnInferenceEngine(ctx.run, fnScopes, prelimCtx, ctx.info.Evidence, phaseFunctionFacts)
 
 	synthAdapter := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return prelimEngine.TypeOf(expr, p)
@@ -960,7 +961,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		FunctionFacts: phaseFunctionFacts,
 	})
 	return phase2InferenceState{
-		synth:      i.newReturnInferenceEngine(ctx.run, fnScopes, fnCheckCtx, ctx.info.Evidence),
+		synth:      i.newReturnInferenceEngine(ctx.run, fnScopes, fnCheckCtx, ctx.info.Evidence, phaseFunctionFacts),
 		deadPoints: deadPoints,
 	}
 }

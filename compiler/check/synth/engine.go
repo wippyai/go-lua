@@ -51,6 +51,7 @@ type Config struct {
 	Scopes         api.ScopeMap
 	Manifests      io.ManifestQuerier
 	Env            api.BaseEnv
+	FunctionFacts  api.FunctionFacts
 	Flow           api.FlowOps
 	Paths          api.PathFromExprFunc
 	Evidence       api.FlowEvidence
@@ -118,6 +119,7 @@ func New(cfg Config) *Engine {
 		Scopes:         cfg.Scopes,
 		Manifests:      cfg.Manifests,
 		CheckCtx:       cfg.Env,
+		FunctionFacts:  cfg.FunctionFacts,
 		Graphs:         graphs,
 		Flow:           cfg.Flow,
 		Paths:          cfg.Paths,

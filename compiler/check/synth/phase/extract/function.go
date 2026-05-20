@@ -100,15 +100,11 @@ func (s *Synthesizer) getOrBuildFunctionGraph(fn *ast.FunctionExpr) *cfg.Graph {
 	return cfg.Build(fn)
 }
 
-func (s *Synthesizer) currentFunctionFacts() api.FunctionFacts {
-	if s == nil || s.deps.CheckCtx == nil {
+func (s *Synthesizer) functionFactsInput() api.FunctionFacts {
+	if s == nil || s.deps == nil {
 		return nil
 	}
-	ctx, ok := s.deps.CheckCtx.(interface{ FunctionFacts() api.FunctionFacts })
-	if !ok {
-		return nil
-	}
-	return ctx.FunctionFacts()
+	return s.deps.FunctionFacts
 }
 
 func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
@@ -251,7 +247,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		return nil, false
 	}
 
-	functionFacts := s.currentFunctionFacts()
+	functionFacts := s.functionFactsInput()
 
 	var fnSym cfg.SymbolID
 	if s.deps.CheckCtx != nil {
@@ -422,6 +418,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			DefaultScope:           resolveScope,
 			Manifests:              s.deps.Manifests,
 			CheckCtx:               prelimCtx,
+			FunctionFacts:          functionFacts,
 			Graphs:                 s.deps.Graphs,
 			Evidence:               graphEvidence,
 			FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
@@ -570,6 +567,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		DefaultScope:           resolveScope,
 		Manifests:              s.deps.Manifests,
 		CheckCtx:               fnCheckCtx,
+		FunctionFacts:          functionFacts,
 		Graphs:                 s.deps.Graphs,
 		Evidence:               graphEvidence,
 		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
@@ -805,7 +803,7 @@ func (s *Synthesizer) buildFunctionTypeFromAvailableFacts(
 	if expected != nil && len(sig.Returns) == 0 && len(expected.Returns) > 0 {
 		sig = join.WithReturns(sig, expected.Returns)
 	}
-	functionFacts := s.currentFunctionFacts()
+	functionFacts := s.functionFactsInput()
 	var fnSym cfg.SymbolID
 	if s.deps.CheckCtx != nil {
 		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && pg != nil {
@@ -881,7 +879,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 	synthExpr := func(expr ast.Expr, p cfg.Point) typ.Type {
 		if tempSynth == nil {
 			overlay := s.buildParamOverlay(fnGraph, sc, expected)
-			functionFacts := s.currentFunctionFacts()
+			functionFacts := s.functionFactsInput()
 
 			var globalTypes map[string]typ.Type
 			var moduleAliases map[cfg.SymbolID]string
@@ -908,6 +906,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 				DefaultScope:      sc,
 				Manifests:         s.deps.Manifests,
 				CheckCtx:          fnCheckCtx,
+				FunctionFacts:     functionFacts,
 				Graphs:            s.deps.Graphs,
 				Evidence:          s.graphEvidence(fnGraph),
 				FunctionFactCache: s.deps.FunctionFactCache,

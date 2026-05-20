@@ -9243,3 +9243,55 @@ Result:
 - focused projection/API/typefacts/interproc/nested/regression packages: pass.
 - full go-lua suite with an explicit writable build cache: pass.
 - diff check: pass.
+
+## 2026-05-20 Flash Migration: Function Facts Are Explicit Synth Inputs
+
+Problem:
+
+```text
+After deleting the public `api.FunctionFacts` selector methods, synthesis still
+retrieved the fact map through `FunctionFacts()` on declared/narrow
+environments. That kept function-fact storage hidden behind the environment
+interface even though the environment itself is not the function-fact domain.
+```
+
+Migration performed:
+
+- Removed `FunctionFacts()` from `api.DeclaredEnv` and `api.NarrowEnv`.
+- Removed the stored `functionFacts` field from concrete API environments.
+- Added `FunctionFacts api.FunctionFacts` to `synth.Config` and
+  `extract.Deps`.
+- Changed synthesis to read the fact map from explicit dependencies via
+  `functionFactsInput`.
+- Propagated function facts through phase construction, narrowed synthesis,
+  flow extraction, return-inference temporary synthesizers, environment overlays,
+  and captured-mutator synthesis.
+
+Invariant:
+
+```text
+The environment answers phase-local type queries. Function facts are a separate
+canonical interproc product input. Synthesis may consume that input, but it must
+not recover it through an environment-side bridge.
+```
+
+Why this is a flash migration step, not a bridge:
+
+- The environment accessor was deleted.
+- No replacement interface was added to `api`.
+- Synth dependencies now name the product input directly.
+- Slot interpretation still goes through `domain/functionfact` projections.
+
+Validation status:
+
+```text
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/api ./compiler/check/synth ./compiler/check/synth/phase/extract ./compiler/check/phase ./compiler/check/pipeline ./compiler/check/infer/return ./compiler/check/tests/regression -count=1
+env GOCACHE=/tmp/go-build-cache go test ./... -count=1
+git diff --check
+```
+
+Result:
+
+- focused API/synth/phase/pipeline/return/regression packages: pass.
+- full go-lua suite with an explicit writable build cache: pass.
+- diff check: pass.

@@ -31,10 +31,11 @@ type Deps struct {
 	Scopes api.ScopeMap
 	// DefaultScope is used when a point has no explicit scope entry.
 	// This allows sparse scope maps for transient inference passes.
-	DefaultScope *scope.State
-	Manifests    io.ManifestQuerier
-	CheckCtx     api.BaseEnv
-	Graphs       api.GraphProvider
+	DefaultScope  *scope.State
+	Manifests     io.ManifestQuerier
+	CheckCtx      api.BaseEnv
+	FunctionFacts api.FunctionFacts
+	Graphs        api.GraphProvider
 
 	Flow  api.FlowOps
 	Paths api.PathFromExprFunc

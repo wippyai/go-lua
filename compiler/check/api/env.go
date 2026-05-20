@@ -54,16 +54,14 @@ type BaseEnv interface {
 	WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv
 }
 
-// DeclaredEnv provides canonical function facts in declared phase.
+// DeclaredEnv is the declared-phase synthesis environment.
 type DeclaredEnv interface {
 	BaseEnv
-	FunctionFacts() FunctionFacts
 }
 
-// NarrowEnv provides canonical function facts in narrowing phase.
+// NarrowEnv is the narrowing-phase synthesis environment.
 type NarrowEnv interface {
 	BaseEnv
-	FunctionFacts() FunctionFacts
 }
 
 type envBase struct {
@@ -211,13 +209,11 @@ func (c *envCommon) GlobalTypes() map[string]typ.Type {
 // DeclaredEnvImpl is the concrete declared-phase environment.
 type DeclaredEnvImpl struct {
 	envCommon
-	functionFacts FunctionFacts
 }
 
 // NarrowEnvImpl is the concrete narrowing-phase environment.
 type NarrowEnvImpl struct {
 	envCommon
-	functionFacts FunctionFacts
 }
 
 var _ BaseEnv = (*DeclaredEnvImpl)(nil)
@@ -427,22 +423,6 @@ func (e *NarrowEnvImpl) WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv {
 	return &next
 }
 
-// FunctionFacts returns canonical function facts for sibling functions.
-func (e *DeclaredEnvImpl) FunctionFacts() FunctionFacts {
-	if e == nil {
-		return nil
-	}
-	return e.functionFacts
-}
-
-// FunctionFacts returns canonical function facts for sibling functions.
-func (e *NarrowEnvImpl) FunctionFacts() FunctionFacts {
-	if e == nil {
-		return nil
-	}
-	return e.functionFacts
-}
-
 // DeclaredEnvConfig holds inputs for building a declared-phase Env.
 type DeclaredEnvConfig struct {
 	Graph         cfg.VersionedGraph
@@ -517,7 +497,7 @@ func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
 	)
-	return &DeclaredEnvImpl{envCommon: envCommon{base: base}, functionFacts: cfg.FunctionFacts}
+	return &DeclaredEnvImpl{envCommon: envCommon{base: base}}
 }
 
 // NewNarrowEnv creates a narrowing-phase Env.
@@ -542,7 +522,7 @@ func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
 	)
-	return &NarrowEnvImpl{envCommon: envCommon{base: base}, functionFacts: cfg.FunctionFacts}
+	return &NarrowEnvImpl{envCommon: envCommon{base: base}}
 }
 
 // ReturnInferenceEnvConfig holds inputs for return type inference.
@@ -575,7 +555,7 @@ func NewReturnInferenceEnv(cfg ReturnInferenceEnvConfig) *DeclaredEnvImpl {
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
 	)
-	return &DeclaredEnvImpl{envCommon: envCommon{base: base}, functionFacts: cfg.FunctionFacts}
+	return &DeclaredEnvImpl{envCommon: envCommon{base: base}}
 }
 
 func refinementFactsOrNil(f RefinementFacts) RefinementFacts {

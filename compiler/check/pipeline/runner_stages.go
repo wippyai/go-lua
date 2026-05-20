@@ -135,6 +135,7 @@ func (r *Runner) appendCapturedMutatorAssignments(
 		Scopes:         scopeOut.Scopes,
 		Manifests:      env.Manifests,
 		Env:            declaredEnv,
+		FunctionFacts:  functionFacts,
 		Phase:          api.PhaseScopeCompute,
 		Evidence:       env.Evidence,
 		ModuleBindings: env.ModuleBindings,
