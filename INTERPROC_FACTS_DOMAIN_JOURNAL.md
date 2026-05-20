@@ -7631,6 +7631,84 @@ go test ./compiler/check/abstract/trace ./compiler/check/pipeline \
 
 The command passed.
 
+## 2026-05-20 Flash Migration: Value Domain Owns Structural Shape Laws
+
+The next non-canonical helper cluster was in parameter evidence. Parameter
+evidence was not only merging parameter vectors; it also carried local
+implementations for:
+
+- table-top collapse and table-top upper-bound selection;
+- map/record structural reconstruction;
+- soft structural annotation refinement from evidence;
+- table-key truthiness refinement for parameter facts.
+
+That was the wrong ownership boundary. Those rules are value-shape laws, not
+parameter-vector laws. Keeping them in `paramevidence` created a second partial
+shape lattice and made it too easy for later work to patch parameter facts
+instead of improving the abstract value domain.
+
+Canonical rule:
+
+```text
+domain/value           = structural type-shape laws
+domain/paramevidence   = parameter evidence vector normalization and slot join
+domain/functionfact    = function fact product law
+```
+
+Implementation shape:
+
+- `domain/value/table.go` owns table-top collapse, table-top upper-bound
+  selection, map/record reconstruction, and table-key truthiness refinement.
+- `domain/value/annotation.go` owns structural annotation refinement from
+  evidence. It accepts the caller's slot join function, so the value domain
+  owns traversal/reconstruction while parameter evidence keeps its merge law.
+- `domain/paramevidence` now calls these value-domain operations and no longer
+  defines local table-top, map/record, annotation-shape, or table-key
+  truthiness helpers.
+
+This is not a bridge. The old helper bodies were deleted from parameter
+evidence. There is still one parameter-specific public decision,
+`RefinesFunctionParam`, but it is now a small composition of value-domain
+relations:
+
+```text
+optional elision | truthy refinement | table-key truthiness refinement
+```
+
+Proof invariant:
+
+```text
+rg "refineAnnotationShape|arrayElementEvidence|mapEvidence|keyEvidenceCompatible|selectTableUpperBound|tableTopCoversEvidenceMember|collapseTableTopEvidence|joinMapRecordDirected|refinesTableKeyByTruthiness" \
+  compiler/check/domain/paramevidence -n
+```
+
+The scan returns no matches.
+
+Regression protection added in `domain/value`:
+
+- table-top evidence absorbs precise table members;
+- table-top upper bound absorbs a record-union observation;
+- map/record shape reconstruction canonicalizes a pure map-component record
+  back into a map;
+- structural annotation refinement derives a map value from record evidence;
+- table-key truthiness refinement covers maps, records with map components,
+  nilable unions, and a negative value-change case.
+
+Verification:
+
+```text
+go test ./compiler/check/domain/value ./compiler/check/domain/paramevidence \
+  ./compiler/check/domain/functionfact ./compiler/check/domain/interproc -count=1
+
+go test ./compiler/check/... ./types/flow/... -count=1
+
+go test ./... -count=1
+
+git diff --check
+```
+
+All commands passed.
+
 ## 2026-05-20 Flash Migration: Graph Evidence Is Module-Cached
 
 After reducer-local evidence reconstruction was removed, the remaining

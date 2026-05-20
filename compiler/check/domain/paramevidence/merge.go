@@ -181,7 +181,7 @@ func joinNilable(a, b typ.Type) (typ.Type, bool) {
 }
 
 func joinNonNil(a, b typ.Type) typ.Type {
-	if upper, ok := selectTableUpperBound(a, b); ok {
+	if upper, ok := value.SelectTableUpperBound(a, b); ok {
 		return upper
 	}
 	if preferred, ok := value.PreferConcreteOverSoft(a, b); ok {
@@ -208,7 +208,7 @@ func joinNonNil(a, b typ.Type) typ.Type {
 	if joined, ok := typ.JoinCompatibleRecords(a, b); ok {
 		return joined
 	}
-	if joined, ok := joinMapRecord(a, b); ok {
+	if joined, ok := value.JoinMapRecordShape(a, b, joinNonNil); ok {
 		return joined
 	}
 	if value.ExtendsRecord(a, b) {
@@ -228,225 +228,10 @@ func joinNonNil(a, b typ.Type) typ.Type {
 	return NormalizeType(typ.JoinPreferNonSoft(a, b))
 }
 
-func joinMapRecord(a, b typ.Type) (typ.Type, bool) {
-	if joined, ok := joinMapRecordDirected(a, b); ok {
-		return joined, true
-	}
-	return joinMapRecordDirected(b, a)
-}
-
-func joinMapRecordDirected(mapType, recordType typ.Type) (typ.Type, bool) {
-	m, ok := unwrap.Alias(mapType).(*typ.Map)
-	if !ok || m == nil {
-		return nil, false
-	}
-	r, ok := unwrap.Alias(recordType).(*typ.Record)
-	if !ok || r == nil || !r.HasMapComponent() {
-		return nil, false
-	}
-
-	key := joinNonNil(m.Key, r.MapKey)
-	value := joinNonNil(m.Value, r.MapValue)
-	if len(r.Fields) == 0 && r.Metatable == nil {
-		return typ.NewMap(key, value), true
-	}
-	builder := typ.NewRecord()
-	if r.Open {
-		builder.SetOpen(true)
-	}
-	if r.Metatable != nil {
-		builder.Metatable(r.Metatable)
-	}
-	builder.MapComponent(key, value)
-	for _, field := range r.Fields {
-		fieldType := field.Type
-		optional := true
-		if subtype.IsSubtype(typ.LiteralString(field.Name), key) {
-			fieldType = joinNonNil(field.Type, value)
-		} else {
-			optional = field.Optional
-		}
-		switch {
-		case optional && field.Readonly:
-			builder.OptReadonlyField(field.Name, fieldType)
-		case optional:
-			builder.OptField(field.Name, fieldType)
-		case field.Readonly:
-			builder.ReadonlyField(field.Name, fieldType)
-		default:
-			builder.Field(field.Name, fieldType)
-		}
-	}
-	return builder.Build(), true
-}
-
-func selectTableUpperBound(a, b typ.Type) (typ.Type, bool) {
-	if isOnlyTableTop(a) && typ.IsAny(b) {
-		return a, true
-	}
-	if isOnlyTableTop(b) && typ.IsAny(a) {
-		return b, true
-	}
-	if containsTableTop(a) && coveredByTableTop(b) && subtype.IsSubtype(b, a) {
-		return a, true
-	}
-	if containsTableTop(b) && coveredByTableTop(a) && subtype.IsSubtype(a, b) {
-		return b, true
-	}
-	return nil, false
-}
-
-func containsTableTop(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	if unwrap.IsBuiltinTableTop(typ.UnwrapAnnotated(t)) {
-		return true
-	}
-	switch v := typ.UnwrapAnnotated(t).(type) {
-	case *typ.Alias:
-		return containsTableTop(v.UnaliasedTarget())
-	case *typ.Optional:
-		return containsTableTop(v.Inner)
-	case *typ.Union:
-		for _, member := range v.Members {
-			if containsTableTop(member) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func isOnlyTableTop(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	if unwrap.IsBuiltinTableTop(typ.UnwrapAnnotated(t)) {
-		return true
-	}
-	switch v := typ.UnwrapAnnotated(t).(type) {
-	case *typ.Alias:
-		return isOnlyTableTop(v.UnaliasedTarget())
-	case *typ.Optional:
-		return isOnlyTableTop(v.Inner)
-	case *typ.Union:
-		if len(v.Members) == 0 {
-			return false
-		}
-		hasTableTop := false
-		for _, member := range v.Members {
-			if unwrap.IsNilType(member) {
-				continue
-			}
-			if !isOnlyTableTop(member) {
-				return false
-			}
-			hasTableTop = true
-		}
-		return hasTableTop
-	default:
-		return false
-	}
-}
-
-func coveredByTableTop(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	if typ.IsAny(t) {
-		return true
-	}
-	if unwrap.IsNilType(t) || unwrap.IsBuiltinTableTop(typ.UnwrapAnnotated(t)) {
-		return true
-	}
-	switch v := typ.UnwrapAnnotated(t).(type) {
-	case *typ.Alias:
-		return coveredByTableTop(v.UnaliasedTarget())
-	case *typ.Optional:
-		return coveredByTableTop(v.Inner)
-	case *typ.Recursive:
-		return v.Body != nil && v.Body != v && coveredByTableTop(v.Body)
-	case *typ.Union:
-		if len(v.Members) == 0 {
-			return false
-		}
-		for _, member := range v.Members {
-			if !coveredByTableTop(member) {
-				return false
-			}
-		}
-		return true
-	case *typ.Record, *typ.Map, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Intersection:
-		return true
-	default:
-		return false
-	}
-}
-
 // RefinesFunctionParam reports whether candidate is a valid directional
 // refinement of baseline for parameter-slot facts.
 func RefinesFunctionParam(candidate, baseline typ.Type) bool {
 	return value.ElidesOptional(candidate, baseline) ||
 		value.IsTruthyRefinement(candidate, baseline) ||
-		refinesTableKeyByTruthiness(candidate, baseline)
-}
-
-func refinesTableKeyByTruthiness(candidate, baseline typ.Type) bool {
-	if candidate == nil || baseline == nil || typ.TypeEquals(candidate, baseline) {
-		return false
-	}
-	candidateInner, _ := value.SplitNilable(candidate)
-	baselineInner, _ := value.SplitNilable(baseline)
-	if candidateInner == nil || baselineInner == nil {
-		return false
-	}
-	return nonNilRefinesTableKeyByTruthiness(candidateInner, baselineInner)
-}
-
-func nonNilRefinesTableKeyByTruthiness(candidate, baseline typ.Type) bool {
-	candidate = unwrap.Alias(candidate)
-	baseline = unwrap.Alias(baseline)
-	switch b := baseline.(type) {
-	case *typ.Record:
-		c, ok := candidate.(*typ.Record)
-		if !ok {
-			return false
-		}
-		return recordRefinesTableKeyByTruthiness(c, b)
-	case *typ.Map:
-		c, ok := candidate.(*typ.Map)
-		if !ok {
-			return false
-		}
-		return value.IsTruthyRefinement(c.Key, b.Key) && value.Equivalent(c.Value, b.Value)
-	default:
-		return false
-	}
-}
-
-func recordRefinesTableKeyByTruthiness(candidate, baseline *typ.Record) bool {
-	if candidate == nil || baseline == nil || !candidate.HasMapComponent() || !baseline.HasMapComponent() {
-		return false
-	}
-	if candidate.Open != baseline.Open || len(candidate.Fields) != len(baseline.Fields) {
-		return false
-	}
-	if (candidate.Metatable == nil) != (baseline.Metatable == nil) {
-		return false
-	}
-	if candidate.Metatable != nil && !typ.TypeEquals(candidate.Metatable, baseline.Metatable) {
-		return false
-	}
-	for i, field := range candidate.Fields {
-		other := baseline.Fields[i]
-		if field.Name != other.Name || field.Optional != other.Optional || field.Readonly != other.Readonly {
-			return false
-		}
-		if !value.Equivalent(field.Type, other.Type) {
-			return false
-		}
-	}
-	return value.IsTruthyRefinement(candidate.MapKey, baseline.MapKey) &&
-		value.Equivalent(candidate.MapValue, baseline.MapValue)
+		value.RefinesTableKeyByTruthiness(candidate, baseline)
 }
