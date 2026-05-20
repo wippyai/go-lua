@@ -8268,3 +8268,98 @@ go test ./compiler/check/overlaymut ./compiler/check/abstract/transfer/mutator \
 ```
 
 The command passed.
+
+## 2026-05-20 Flash Migration: Call Effects Are Domain-Owned
+
+`abstract/transfer/mutator` still mixed two responsibilities: resolving a
+call's callee contract to discover table/container mutation effects, and
+lowering those effects into flow input assignments. Return inference and
+function synthesis also needed the same call-effect interpretation, which made
+them reach sideways into transfer mutator code.
+
+Canonical rule:
+
+```text
+domain/calleffect    = contract/effect interpretation at concrete call sites
+overlaymut           = overlay mutation data and merge/apply laws
+abstract/transfer/mutator = transfer reducers that emit flow mutator assignments
+infer/synth          = consumers of domain call effects and overlaymut facts
+```
+
+The effect interpreters moved to `compiler/check/domain/calleffect`:
+
+- `TableMutatorFromCall`
+- `ContainerMutatorFromCall`
+- `ContainerElementReturnFromCall`
+- table-insert call-evidence reductions used by return/function overlays
+
+The transfer mutator package now only consumes `domain/calleffect` while
+emitting `flow.TableMutatorAssignment` and
+`flow.ContainerMutatorAssignment`. The old call-effect functions and
+table-insert overlay collectors were deleted from transfer/mutator.
+
+Proof invariant:
+
+```text
+rg "mutator\\.(CollectTableInsert|TableMutatorFromCall|ContainerMutatorFromCall|ContainerElementReturnFromCall)" \
+  compiler/check -n
+```
+
+The scan returns no matches. Production imports of
+`compiler/check/abstract/transfer/mutator` are now limited to the transfer
+orchestrator that runs mutator reducers.
+
+Verification:
+
+```text
+go test ./compiler/check/domain/calleffect ./compiler/check/abstract/transfer/mutator \
+  ./compiler/check/abstract/assign ./compiler/check/infer/return \
+  ./compiler/check/synth/phase/extract -count=1
+```
+
+The focused command passed.
+
+## 2026-05-20 Flash Migration: Assignment Interpreter Is Not A Transfer Subpackage
+
+The assignment package had also become a shared abstract-interpreter component,
+not just a private transfer reducer. It owns local assignment SCC inference,
+RHS overlay synthesis, structured-write visibility, call-argument expectation
+inference, and assignment-flow input emission. Return inference was previously
+forced to construct a fake `transfer/core.FlowContext` only to call
+`CollectInferredTypes`, which encoded the wrong mental model.
+
+Canonical rule:
+
+```text
+abstract/assign      = assignment abstract interpreter and assignment reducers
+abstract/transfer    = whole-flow transfer orchestration and reducer sequencing
+infer/return         = calls abstract/assign local inference with explicit evidence/config
+```
+
+The package moved from `compiler/check/abstract/transfer/assign` to
+`compiler/check/abstract/assign`. The old `CollectInferredTypes(*FlowContext,
+...)` API was deleted. Shared local inference now enters through
+`assign.InferLocalTypes(assign.LocalInferenceConfig{...})`, which names the
+real inputs: graph, evidence, scopes, synthesis services, seed types,
+annotations, optional flow inputs, and optional preflow branch solution.
+
+This is a direct shape correction, not a wrapper: the old package path is gone,
+and return inference no longer fabricates a transfer context.
+
+Proof invariant:
+
+```text
+rg "compiler/check/abstract/transfer/assign|CollectInferredTypes" compiler/check -n
+```
+
+The scan returns no matches.
+
+Verification:
+
+```text
+go test ./compiler/check/abstract/assign ./compiler/check/abstract/transfer \
+  ./compiler/check/infer/return ./compiler/check/synth/phase/extract \
+  ./compiler/check/domain/calleffect -count=1
+```
+
+The focused command passed.

@@ -6,10 +6,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/predicate"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -108,7 +108,7 @@ func ExtractCapturedContainerEvidence(
 			continue
 		}
 
-		if ceu := mutator.ContainerMutatorFromCall(
+		if ceu := calleffect.ContainerMutatorFromCall(
 			info,
 			p,
 			derivedSynth(fc),
@@ -123,7 +123,7 @@ func ExtractCapturedContainerEvidence(
 			out = appendCapturedContainerEvidence(out, fc.Graph, bindings, constResolverAt(p), capturedSyms, target, value, p, api.ContainerMutationContainerElement)
 		}
 
-		if tm := mutator.TableMutatorFromCall(
+		if tm := calleffect.TableMutatorFromCall(
 			info,
 			p,
 			derivedSynth(fc),

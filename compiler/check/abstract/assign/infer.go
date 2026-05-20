@@ -51,10 +51,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/predicate"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
 	"github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -105,21 +105,47 @@ func mergeSpecTypesSoft(base, override api.SpecTypes) api.SpecTypes {
 	return mergeSpecTypesSoftInto(nil, base, override)
 }
 
-// CollectInferredTypes is the exported entry point for collectInferredTypes.
-// Used by return inference to resolve local variable types before synthesizing return expressions.
-func CollectInferredTypes(fc *fbcore.FlowContext, specTypes api.SpecTypes, annotated map[cfg.SymbolID]bool, inputs *flow.Inputs) api.SpecTypes {
-	var synth func(ast.Expr, cfg.Point) typ.Type
-	if fc.API != nil {
-		synth = fc.API.TypeOf
-	}
-	var symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool)
-	if fc.Derived != nil {
-		symResolver = fc.Derived.SymResolver
-	}
-	preflowBranchSolution := buildPreflowBranchSolution(fc, inputs)
+// LocalInferenceConfig is the data needed by the local assignment abstract
+// interpreter. It is intentionally not a FlowContext: callers that only need
+// local type inference should pass evidence and services directly instead of
+// pretending to run a transfer phase.
+type LocalInferenceConfig struct {
+	Graph          *cfg.Graph
+	Evidence       api.FlowEvidence
+	Scopes         map[cfg.Point]*scope.State
+	Synth          func(ast.Expr, cfg.Point) typ.Type
+	SynthAPI       api.SynthAPI
+	SymResolver    func(cfg.Point, cfg.SymbolID) (typ.Type, bool)
+	SeedTypes      api.SpecTypes
+	Annotated      map[cfg.SymbolID]bool
+	Inputs         *flow.Inputs
+	ModuleBindings *bind.BindingTable
+	CallCtx        *db.QueryContext
+	TypeOps        core.TypeOps
+	Preflow        *flow.Solution
+	Services       fbcore.FlowServices
+}
+
+// InferLocalTypes computes extraction-time local variable types using the
+// canonical SCC/fixpoint assignment interpreter.
+func InferLocalTypes(config LocalInferenceConfig) api.SpecTypes {
 	return collectInferredTypes(
-		fc.Graph, fc.Evidence.Assignments, fc.Evidence.Calls, fc.Evidence.FunctionDefinitions, fc.Scopes, synth, fc.API, symResolver,
-		specTypes, annotated, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution, fc.Services,
+		config.Graph,
+		config.Evidence.Assignments,
+		config.Evidence.Calls,
+		config.Evidence.FunctionDefinitions,
+		config.Scopes,
+		config.Synth,
+		config.SynthAPI,
+		config.SymResolver,
+		config.SeedTypes,
+		config.Annotated,
+		config.Inputs,
+		config.ModuleBindings,
+		config.CallCtx,
+		config.TypeOps,
+		config.Preflow,
+		config.Services,
 	)
 }
 
@@ -399,7 +425,7 @@ func collectInferredTypes(
 			continue
 		}
 
-		tm := mutator.TableMutatorFromCall(info, p, synth, symResolver, graph, bindings, moduleBindings)
+		tm := calleffect.TableMutatorFromCall(info, p, synth, symResolver, graph, bindings, moduleBindings)
 		if tm == nil {
 			continue
 		}
@@ -940,7 +966,7 @@ func collectInferredTypes(
 				entry := calls[idx]
 				p := entry.p
 				info := entry.info
-				tm := mutator.TableMutatorFromCall(info, p, wrappedSynth, symResolver, graph, bindings, moduleBindings)
+				tm := calleffect.TableMutatorFromCall(info, p, wrappedSynth, symResolver, graph, bindings, moduleBindings)
 				if tm == nil {
 					continue
 				}

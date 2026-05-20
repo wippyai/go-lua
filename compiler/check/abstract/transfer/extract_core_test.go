@@ -6,8 +6,8 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/assign"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/assign"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/decl"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/tblutil"

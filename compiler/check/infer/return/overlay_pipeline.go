@@ -4,10 +4,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/assign"
-	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
+	"github.com/wippyai/go-lua/compiler/check/abstract/assign"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
@@ -473,18 +472,19 @@ func (i *Inferencer) inferLocalVariableTypes(
 		return nil, false
 	}
 
-	inferred := assign.CollectInferredTypes(&fbcore.FlowContext{
+	inferred := assign.InferLocalTypes(assign.LocalInferenceConfig{
 		Graph:          fnGraph,
+		Evidence:       ctx.info.Evidence,
 		Scopes:         fnScopes,
-		API:            prelimEngine,
+		Synth:          synthAdapter,
+		SynthAPI:       prelimEngine,
+		SymResolver:    symResolver,
+		SeedTypes:      inferenceOverlay,
+		Annotated:      annotated,
+		ModuleBindings: ctx.bindings,
 		CallCtx:        ctx.run.Ctx,
 		TypeOps:        i.types,
-		ModuleBindings: ctx.bindings,
-		Evidence:       ctx.info.Evidence,
-		Derived: &fbcore.Derived{
-			SymResolver: symResolver,
-		},
-	}, inferenceOverlay, annotated, nil)
+	})
 
 	return inferred, prelimEngine, synthAdapter
 }
@@ -850,7 +850,7 @@ func (i *Inferencer) applyIndexerMutations(ctx *returnInferenceContext, stage *o
 		indexerBindings = i.store.ModuleBindings()
 	}
 	indexerAssignments := overlaymut.CollectIndexerAssignments(ctx.info.Evidence.Assignments, stage.enrichedSynthAdapter, indexerBindings, nil)
-	tableMutations := mutator.CollectTableInsertMutations(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
+	tableMutations := calleffect.CollectTableInsertMutations(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
 	overlaymut.MergeIndexerMutations(indexerAssignments, tableMutations)
 	overlaymut.ApplyIndexerMergeToOverlay(stage.finalOverlay, indexerAssignments)
 }
@@ -863,7 +863,7 @@ func (i *Inferencer) applyDirectMutations(ctx *returnInferenceContext, stage *ov
 	if indexerBindings == nil {
 		indexerBindings = i.store.ModuleBindings()
 	}
-	directMutations := mutator.CollectTableInsertOnDirect(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
+	directMutations := calleffect.CollectTableInsertOnDirect(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
 	overlaymut.ApplyDirectMutationsToOverlay(stage.finalOverlay, directMutations)
 }
 

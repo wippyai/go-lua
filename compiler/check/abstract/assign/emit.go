@@ -38,14 +38,14 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/constprop"
 	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/decl"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/predicate"
-	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/tblutil"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
 	"github.com/wippyai/go-lua/compiler/check/domain/path"
+	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	checkscope "github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -88,7 +88,22 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	preflowBranchSolution := buildPreflowBranchSolution(fc, inputs)
 	inferenceSeeds := mergeSpecTypesInto(nil, inputs.DeclaredTypes)
 	inferenceSeeds = mergeSpecTypesInto(inferenceSeeds, specNarrowed)
-	inferredTypes := collectInferredTypes(fc.Graph, fc.Evidence.Assignments, fc.Evidence.Calls, fc.Evidence.FunctionDefinitions, fc.Scopes, synth, fc.API, symResolver, inferenceSeeds, inputs.AnnotatedVars, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution, fc.Services)
+	inferredTypes := InferLocalTypes(LocalInferenceConfig{
+		Graph:          fc.Graph,
+		Evidence:       fc.Evidence,
+		Scopes:         fc.Scopes,
+		Synth:          synth,
+		SynthAPI:       fc.API,
+		SymResolver:    symResolver,
+		SeedTypes:      inferenceSeeds,
+		Annotated:      inputs.AnnotatedVars,
+		Inputs:         inputs,
+		ModuleBindings: fc.ModuleBindings,
+		CallCtx:        fc.CallCtx,
+		TypeOps:        fc.TypeOps,
+		Preflow:        preflowBranchSolution,
+		Services:       fc.Services,
+	})
 	// Promote inferred parameter types into DeclaredTypes for unannotated params.
 	// This enables bidirectional inference at call sites (e.g., custom assert helpers).
 	if inputs.DeclaredTypes != nil {
@@ -543,7 +558,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				var containerElemSrc *flow.ContainerElementSource
 				if call, retIndex := info.CallForTarget(i); call != nil {
 					assignmentTypesResolver := resolve.BuildAssignmentTypeResolver(inputs)
-					if elemInfo := mutator.ContainerElementReturnFromCall(call, p, wrappedSynth, resolverWithSpec, assignmentTypesResolver, fc.Graph, bindings, fc.ModuleBindings); elemInfo != nil {
+					if elemInfo := calleffect.ContainerElementReturnFromCall(call, p, wrappedSynth, resolverWithSpec, assignmentTypesResolver, fc.Graph, bindings, fc.ModuleBindings); elemInfo != nil {
 						// Check if this return index matches
 						if elemInfo.ReturnIndex == retIndex {
 							// For method calls, index 0 is self (receiver)

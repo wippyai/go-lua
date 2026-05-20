@@ -39,8 +39,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -548,11 +548,11 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		overlaymut.ApplyFieldMergeToOverlay(overlay, fieldAssignments)
 
 		indexerAssignments := overlaymut.CollectIndexerAssignments(graphEvidence.Assignments, enrichedSynth, mutationBindings, nil)
-		tableMutations := mutator.CollectTableInsertMutations(graphEvidence.Calls, fnGraph, enrichedSynth, mutationBindings)
+		tableMutations := calleffect.CollectTableInsertMutations(graphEvidence.Calls, fnGraph, enrichedSynth, mutationBindings)
 		overlaymut.MergeIndexerMutations(indexerAssignments, tableMutations)
 		overlaymut.ApplyIndexerMergeToOverlay(overlay, indexerAssignments)
 
-		directMutations := mutator.CollectTableInsertOnDirect(graphEvidence.Calls, fnGraph, enrichedSynth, mutationBindings)
+		directMutations := calleffect.CollectTableInsertOnDirect(graphEvidence.Calls, fnGraph, enrichedSynth, mutationBindings)
 		overlaymut.ApplyDirectMutationsToOverlay(overlay, directMutations)
 	}
 

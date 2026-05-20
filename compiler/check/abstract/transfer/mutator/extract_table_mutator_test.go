@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/literal"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -57,7 +58,7 @@ func TestRootNameFromBindings_TableMutator_ZeroSymbol(t *testing.T) {
 }
 
 func TestTableMutatorFromCall_NilInfo(t *testing.T) {
-	result := mutator.TableMutatorFromCall(nil, 0, nil, nil, nil, nil, nil)
+	result := calleffect.TableMutatorFromCall(nil, 0, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil info")
 	}
@@ -65,7 +66,7 @@ func TestTableMutatorFromCall_NilInfo(t *testing.T) {
 
 func TestTableMutatorFromCall_NoCallee(t *testing.T) {
 	info := &cfg.CallInfo{}
-	result := mutator.TableMutatorFromCall(info, 0, nil, nil, nil, nil, nil)
+	result := calleffect.TableMutatorFromCall(info, 0, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for info without callee")
 	}
@@ -76,7 +77,7 @@ func TestTableMutatorFromCall_MethodCall(t *testing.T) {
 		Method:   "insert",
 		Receiver: &ast.IdentExpr{Value: "table"},
 	}
-	result := mutator.TableMutatorFromCall(info, 0, nil, nil, nil, nil, nil)
+	result := calleffect.TableMutatorFromCall(info, 0, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for method call (not plain function)")
 	}
@@ -89,7 +90,7 @@ func TestTableMutatorFromCall_NonFunction(t *testing.T) {
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return typ.String // Not a function
 	}
-	result := mutator.TableMutatorFromCall(info, 0, synth, nil, nil, nil, nil)
+	result := calleffect.TableMutatorFromCall(info, 0, synth, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for non-function type")
 	}
@@ -102,7 +103,7 @@ func TestTableMutatorFromCall_FunctionWithoutSpec(t *testing.T) {
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return &typ.Function{} // No spec
 	}
-	result := mutator.TableMutatorFromCall(info, 0, synth, nil, nil, nil, nil)
+	result := calleffect.TableMutatorFromCall(info, 0, synth, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for function without spec")
 	}

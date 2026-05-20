@@ -1,4 +1,4 @@
-package mutator
+package calleffect
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -11,9 +11,9 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// CollectTableInsertMutations reduces transfer call evidence for table mutator calls on indexed expressions.
-// For table.insert(t[k], v), returns mutations grouped by the base symbol of t.
-// Uses the effect-based detection via TableMutatorFromCall.
+// CollectTableInsertMutations reduces call evidence for table mutator calls on
+// indexed expressions. For table.insert(t[k], v), it returns mutations grouped
+// by the base symbol of t.
 func CollectTableInsertMutations(
 	calls []api.CallEvidence,
 	graph *cfg.Graph,
@@ -43,7 +43,6 @@ func CollectTableInsertMutations(
 			continue
 		}
 
-		// Check if target is an indexed expression: t[k]
 		targetAttr, ok := targetExpr.(*ast.AttrGetExpr)
 		if !ok {
 			continue
@@ -54,7 +53,6 @@ func CollectTableInsertMutations(
 			continue
 		}
 
-		// Get key type from the index key
 		var keyType typ.Type
 		switch k := targetAttr.Key.(type) {
 		case *ast.IdentExpr:
@@ -74,13 +72,11 @@ func CollectTableInsertMutations(
 			keyType = typ.String
 		}
 
-		// Strip falsy types from key types
 		keyType = narrow.ToTruthy(keyType)
 		if keyType == nil {
 			keyType = typ.String
 		}
 
-		// Get value type from the inserted element
 		var elemType typ.Type
 		if synth != nil && valueExpr != nil {
 			elemType = synth(valueExpr, p)
@@ -89,21 +85,18 @@ func CollectTableInsertMutations(
 			elemType = typ.Unknown
 		}
 
-		// The value type is an array of the element type
-		valType := typ.NewArray(elemType)
-
 		result[baseSym] = append(result[baseSym], overlaymut.IndexerInfo{
 			KeyType: keyType,
-			ValType: valType,
+			ValType: typ.NewArray(elemType),
 		})
 	}
 
 	return result
 }
 
-// CollectTableInsertOnDirect reduces transfer call evidence for table mutator calls on direct variables.
-// For table.insert(t, v), returns mutations grouped by the symbol of t.
-// Uses the effect-based detection via TableMutatorFromCall.
+// CollectTableInsertOnDirect reduces call evidence for table mutator calls on
+// direct variables. For table.insert(t, v), it returns element mutations grouped
+// by the symbol of t.
 func CollectTableInsertOnDirect(
 	calls []api.CallEvidence,
 	graph *cfg.Graph,
@@ -133,13 +126,11 @@ func CollectTableInsertOnDirect(
 			continue
 		}
 
-		// Check if target resolves to a direct symbol (identifier or static field path).
 		sym := callsite.SymbolOrCreateFieldFromExpr(targetExpr, bindings)
 		if sym == 0 {
 			continue
 		}
 
-		// Get value type from the inserted element
 		var elemType typ.Type
 		if synth != nil && valueExpr != nil {
 			elemType = synth(valueExpr, p)
@@ -148,7 +139,6 @@ func CollectTableInsertOnDirect(
 			elemType = typ.Unknown
 		}
 
-		// Join with existing element type
 		if existing := result[sym]; existing != nil {
 			result[sym] = typ.JoinPreferNonSoft(existing, elemType)
 		} else {

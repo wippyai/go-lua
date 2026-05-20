@@ -2,17 +2,14 @@ package mutator
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/bind"
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/literal"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/predicate"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/contract"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -32,7 +29,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 		if info == nil {
 			continue
 		}
-		tm := TableMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Graph, bindings, fc.ModuleBindings)
+		tm := calleffect.TableMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Graph, bindings, fc.ModuleBindings)
 		if tm == nil {
 			continue
 		}
@@ -113,29 +110,4 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 
 		inputs.TableMutatorAssignments = append(inputs.TableMutatorAssignments, assign)
 	}
-}
-
-func TableMutatorFromCall(
-	info *cfg.CallInfo,
-	p cfg.Point,
-	synth func(ast.Expr, cfg.Point) typ.Type,
-	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	graph *cfg.Graph,
-	bindings *bind.BindingTable,
-	moduleBindings *bind.BindingTable,
-) *effect.TableMutator {
-	if info == nil {
-		return nil
-	}
-
-	fnType := resolve.CalleeType(info, p, synth, symResolver, nil, graph, bindings, moduleBindings)
-	if fnType == nil {
-		return nil
-	}
-
-	spec := contract.ExtractSpec(fnType)
-	if spec == nil {
-		return nil
-	}
-	return spec.GetTableMutator()
 }

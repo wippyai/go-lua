@@ -5,8 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/assign"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/assign"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/cond"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/constprop"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
@@ -118,8 +118,8 @@ func TestLinkKey(t *testing.T) {
 	}
 }
 
-func TestCollectInferredTypes_NilGraph(t *testing.T) {
-	result := assign.CollectInferredTypes(&core.FlowContext{}, nil, nil, nil)
+func TestInferLocalTypes_NilGraph(t *testing.T) {
+	result := assign.InferLocalTypes(assign.LocalInferenceConfig{})
 	if result == nil {
 		t.Error("expected non-nil map")
 	}

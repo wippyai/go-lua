@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/literal"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
@@ -33,7 +34,7 @@ func TestExtractTableMutatorAssignments_NilInputs(t *testing.T) {
 }
 
 func TestTableMutatorFromCall_NilInfo(t *testing.T) {
-	result := TableMutatorFromCall(nil, 0, nil, nil, nil, nil, nil)
+	result := calleffect.TableMutatorFromCall(nil, 0, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil info")
 	}
@@ -131,7 +132,7 @@ func TestTableMutatorFromCall_MethodCallWithCalleeSymbol(t *testing.T) {
 		CalleeSymbol: 42,
 	}
 
-	got := TableMutatorFromCall(
+	got := calleffect.TableMutatorFromCall(
 		info,
 		0,
 		nil,

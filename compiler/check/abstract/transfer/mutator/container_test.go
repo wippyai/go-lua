@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
@@ -32,7 +33,7 @@ func TestExtractContainerMutatorAssignments_NilInputs(t *testing.T) {
 }
 
 func TestContainerElementReturnInfo(t *testing.T) {
-	info := ContainerElementReturnInfo{
+	info := calleffect.ContainerElementReturnInfo{
 		ReturnIndex: 1,
 	}
 	if info.ReturnIndex != 1 {
@@ -41,7 +42,7 @@ func TestContainerElementReturnInfo(t *testing.T) {
 }
 
 func TestContainerElementReturnFromCall_NilInfo(t *testing.T) {
-	result := ContainerElementReturnFromCall(nil, 0, nil, nil, nil, nil, nil, nil)
+	result := calleffect.ContainerElementReturnFromCall(nil, 0, nil, nil, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil info")
 	}

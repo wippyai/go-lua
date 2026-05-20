@@ -45,7 +45,7 @@ import (
 	"slices"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/assign"
+	"github.com/wippyai/go-lua/compiler/check/abstract/assign"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/cond"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/constprop"
 	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"

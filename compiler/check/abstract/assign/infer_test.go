@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/db"
@@ -16,9 +15,8 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestCollectInferredTypes_NilGraph(t *testing.T) {
-	fc := &core.FlowContext{}
-	result := CollectInferredTypes(fc, nil, nil, nil)
+func TestInferLocalTypes_NilGraph(t *testing.T) {
+	result := InferLocalTypes(LocalInferenceConfig{})
 	if result == nil {
 		t.Error("expected non-nil result for nil graph")
 	}
@@ -27,34 +25,31 @@ func TestCollectInferredTypes_NilGraph(t *testing.T) {
 	}
 }
 
-func TestCollectInferredTypes_EmptySpecTypes(t *testing.T) {
-	fc := &core.FlowContext{}
+func TestInferLocalTypes_EmptySpecTypes(t *testing.T) {
 	specTypes := make(api.SpecTypes)
-	result := CollectInferredTypes(fc, specTypes, nil, nil)
+	result := InferLocalTypes(LocalInferenceConfig{SeedTypes: specTypes})
 	if result == nil {
 		t.Error("expected non-nil result")
 	}
 }
 
-func TestCollectInferredTypes_WithAnnotated(t *testing.T) {
-	fc := &core.FlowContext{}
+func TestInferLocalTypes_WithAnnotated(t *testing.T) {
 	specTypes := make(api.SpecTypes)
 	annotated := make(map[cfg.SymbolID]bool)
 	annotated[1] = true
-	result := CollectInferredTypes(fc, specTypes, annotated, nil)
+	result := InferLocalTypes(LocalInferenceConfig{SeedTypes: specTypes, Annotated: annotated})
 	if result == nil {
 		t.Error("expected non-nil result")
 	}
 }
 
-func TestCollectInferredTypes_WithInputs(t *testing.T) {
-	fc := &core.FlowContext{}
+func TestInferLocalTypes_WithInputs(t *testing.T) {
 	specTypes := make(api.SpecTypes)
 	inputs := &flow.Inputs{
 		DeclaredTypes: make(map[cfg.SymbolID]typ.Type),
 		AnnotatedVars: make(map[cfg.SymbolID]bool),
 	}
-	result := CollectInferredTypes(fc, specTypes, nil, inputs)
+	result := InferLocalTypes(LocalInferenceConfig{SeedTypes: specTypes, Inputs: inputs})
 	if result == nil {
 		t.Error("expected non-nil result")
 	}
@@ -283,7 +278,7 @@ func TestMergeSpecTypesSoft_IgnoresUnknownAndNilOverrides(t *testing.T) {
 	}
 }
 
-func TestCollectInferredTypes_UsesModuleCalleeCandidatesForExpectedArgs(t *testing.T) {
+func TestInferLocalTypes_UsesModuleCalleeCandidatesForExpectedArgs(t *testing.T) {
 	body, err := parse.ParseString(`external_fn(x)`, "infer_module_candidates.lua")
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
@@ -319,15 +314,11 @@ func TestCollectInferredTypes_UsesModuleCalleeCandidatesForExpectedArgs(t *testi
 	moduleBindings.SetName(moduleCalleeSym, "external_fn")
 
 	evidence := trace.GraphEvidence(graph, graph.Bindings())
-	inferred := collectInferredTypes(
-		graph,
-		evidence.Assignments,
-		evidence.Calls,
-		evidence.FunctionDefinitions,
-		nil,
-		func(ast.Expr, cfg.Point) typ.Type { return typ.Unknown },
-		nil,
-		func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+	inferred := InferLocalTypes(LocalInferenceConfig{
+		Graph:    graph,
+		Evidence: evidence,
+		Synth:    func(ast.Expr, cfg.Point) typ.Type { return typ.Unknown },
+		SymResolver: func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
 			if sym == globalCalleeSym {
 				return nil, false
 			}
@@ -336,15 +327,10 @@ func TestCollectInferredTypes_UsesModuleCalleeCandidatesForExpectedArgs(t *testi
 			}
 			return nil, false
 		},
-		nil,
-		nil,
-		nil,
-		moduleBindings,
-		db.NewQueryContext(db.New()),
-		querycore.NewEngine(),
-		nil,
-		nil,
-	)
+		ModuleBindings: moduleBindings,
+		CallCtx:        db.NewQueryContext(db.New()),
+		TypeOps:        querycore.NewEngine(),
+	})
 
 	got := inferred[xSym]
 	if !typ.TypeEquals(got, typ.Number) {
