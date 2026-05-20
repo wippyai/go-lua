@@ -8852,3 +8852,66 @@ projection semantics. The function-fact domain owns both storage joins and
 call-site projection from canonical facts, which is the correct abstract
 interpreter boundary for this part of the migration.
 ```
+
+## 2026-05-20 Flash Migration: Function-Fact Map Construction Owner
+
+Problem:
+
+```text
+Return inference still rebuilt `api.FunctionFacts` from provisional return
+vectors in local helpers. That meant the canonical map shape existed both in
+the function-fact domain and in return-inference consumer code.
+```
+
+Migration performed:
+
+- Added `compiler/check/domain/functionfact/map.go`.
+- Added canonical constructors:
+  - `functionfact.FromParts`
+  - `functionfact.FromMaps`
+  - `functionfact.FromSummaries`
+  - `functionfact.FromSummariesExcept`
+- Removed return-inference local builders:
+  - `functionFactsFromReturnVectors`
+  - `functionFactsExcludingCurrent`
+- Replaced local assembly logic with `functionfact.FromMaps`.
+- Added function-fact-domain tests for canonical map construction.
+
+Invariant:
+
+```text
+Return inference may own provisional SCC return vectors, but it must not own
+the shape or normalization policy of published `api.FunctionFacts`.
+```
+
+Why this is a flash migration step, not a bridge:
+
+- No compatibility facts were introduced.
+- No old builder was wrapped.
+- Consumer-local map construction was deleted.
+- The published shape now goes through the same `functionfact.Join` and
+  `functionfact.Empty` policy used by the domain.
+
+Validation:
+
+```text
+go test ./compiler/check/domain/functionfact ./compiler/check/infer/return -count=1
+go test ./compiler/check/tests/regression -run 'TestImportedTypeAssertion|TestAnnotatedImportedTypeAssertion|TestLinterFalsePositive_TestRunnerExact|TestLinterFalsePositive_GraphLocalUnusedParamAllowsInternalAny|TestLinterFalsePositive_GraphLocalObservedParamRejectsAny|TestSessionPlugin_UntypedSessionIDGuardStillRejectsStringAPI|ExternalLint|Gradual|Advanced' -count=1
+go test ./... -count=1
+git diff --check
+```
+
+Results:
+
+- function-fact and return-inference package tests: pass.
+- targeted regression suite: pass.
+- full go-lua suite: pass.
+- diff check: pass.
+
+Structural result:
+
+```text
+The function-fact domain now owns both per-symbol fact normalization and
+canonical map construction. Return inference publishes facts through that
+domain instead of reconstructing the product shape locally.
+```

@@ -281,49 +281,13 @@ func assembleFunctionFacts(
 	returnVectors map[cfg.SymbolID][]typ.Type,
 	funcs map[cfg.SymbolID]typ.Type,
 ) api.FunctionFacts {
-	total := len(localFuncs) + len(returnVectors) + len(funcs)
-	if total == 0 {
-		return nil
-	}
-	symbols := make(map[cfg.SymbolID]bool, total)
-	for sym := range localFuncs {
-		if sym != 0 {
-			symbols[sym] = true
+	params := make(map[cfg.SymbolID][]typ.Type, len(localFuncs))
+	for sym, info := range localFuncs {
+		if sym != 0 && info != nil && len(info.ParameterEvidence) > 0 {
+			params[sym] = info.ParameterEvidence
 		}
 	}
-	for sym := range returnVectors {
-		if sym != 0 {
-			symbols[sym] = true
-		}
-	}
-	for sym := range funcs {
-		if sym != 0 {
-			symbols[sym] = true
-		}
-	}
-	if len(symbols) == 0 {
-		return nil
-	}
-	out := make(api.FunctionFacts, len(symbols))
-	for _, sym := range cfg.SortedSymbolIDs(symbols) {
-		var params []typ.Type
-		if info := localFuncs[sym]; info != nil {
-			params = info.ParameterEvidence
-		}
-		ff := functionfact.Join(api.FunctionFact{}, api.FunctionFact{
-			Params:  params,
-			Summary: returnVectors[sym],
-			Type:    funcs[sym],
-		})
-		if len(ff.Params) == 0 && len(ff.Summary) == 0 && ff.Type == nil && len(ff.Narrow) == 0 {
-			continue
-		}
-		out[sym] = ff
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return functionfact.FromMaps(params, returnVectors, funcs)
 }
 
 // computeReturnVectorsForGroup computes return type vectors for a scope group
@@ -480,7 +444,7 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	if fnGraph == nil {
 		return narrowed
 	}
-	phaseFunctionFacts := functionFactsExcludingCurrent(ctx.returnVectors, ctx.info)
+	phaseFunctionFacts := functionfact.FromSummariesExcept(ctx.returnVectors, ctx.info.Sym)
 	declCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
 		Graph:         fnGraph,
 		Bindings:      ctx.bindings,

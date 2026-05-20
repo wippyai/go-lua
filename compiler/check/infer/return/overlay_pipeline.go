@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/assign"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
@@ -450,7 +451,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 		DeclaredTypes: inferenceOverlay,
 		GlobalTypes:   i.globalTypes,
 		ModuleAliases: ctx.moduleAliases,
-		FunctionFacts: functionFactsFromReturnVectors(ctx.returnVectors),
+		FunctionFacts: functionfact.FromSummaries(ctx.returnVectors),
 	})
 
 	prelimEngine := i.newReturnInferenceEngine(ctx.run, fnScopes, prelimCtx, ctx.info.Evidence)
@@ -907,7 +908,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 			return ctx.engine.ResolveFunctionSignature(fn, sc)
 		}),
 	}
-	phaseFunctionFacts := functionFactsExcludingCurrent(ctx.returnVectors, ctx.info)
+	phaseFunctionFacts := functionfact.FromSummariesExcept(ctx.returnVectors, ctx.info.Sym)
 
 	extractOut := phase.RunExtract(phase.FlowExtractInput{
 		PhaseEnv:      phaseEnv,
@@ -963,47 +964,6 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		synth:      i.newReturnInferenceEngine(ctx.run, fnScopes, fnCheckCtx, ctx.info.Evidence),
 		deadPoints: deadPoints,
 	}
-}
-
-func functionFactsExcludingCurrent(
-	returnVectors map[cfg.SymbolID][]typ.Type,
-	info *returns.LocalFuncInfo,
-) api.FunctionFacts {
-	if len(returnVectors) == 0 || info == nil || info.Sym == 0 {
-		return functionFactsFromReturnVectors(returnVectors)
-	}
-	if _, ok := returnVectors[info.Sym]; !ok {
-		return functionFactsFromReturnVectors(returnVectors)
-	}
-	out := make(map[cfg.SymbolID][]typ.Type, len(returnVectors)-1)
-	for _, sym := range cfg.SortedSymbolIDs(returnVectors) {
-		if sym == info.Sym {
-			continue
-		}
-		out[sym] = returnVectors[sym]
-	}
-	return functionFactsFromReturnVectors(out)
-}
-
-func functionFactsFromReturnVectors(returnVectors map[cfg.SymbolID][]typ.Type) api.FunctionFacts {
-	if len(returnVectors) == 0 {
-		return nil
-	}
-	out := make(api.FunctionFacts, len(returnVectors))
-	for _, sym := range cfg.SortedSymbolIDs(returnVectors) {
-		if sym == 0 {
-			continue
-		}
-		returnVector := returnsummary.NormalizeOwned(returnVectors[sym])
-		if len(returnVector) == 0 {
-			continue
-		}
-		out[sym] = api.FunctionFact{Summary: returnVector}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func uniformFunctionScopes(graph *cfg.Graph, base *scope.State) map[cfg.Point]*scope.State {
