@@ -13,5 +13,5 @@ func TestProcessNestedFunctions_NilResult(t *testing.T) {
 
 func TestProcessNestedFunctions_NilScopes(t *testing.T) {
 	p := New(Config{})
-	p.ProcessNestedFunctions(nil, &api.FuncResultSnapshot{})
+	p.ProcessNestedFunctions(nil, &api.FuncAnalysisView{})
 }

@@ -83,7 +83,7 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 		}
 		if assign.IterSource != nil {
 			if iterType := s.iterVarTypeAt(p, assign.IterSource); iterType != nil {
-				assignedType = iterType
+				assignedType = mergeIteratorAssignedType(assign.Type, iterType)
 			}
 		}
 		// Derive type from container element type if ContainerElementSource is set
@@ -173,6 +173,31 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 	}
 
 	return changedKeys
+}
+
+func mergeIteratorAssignedType(extracted, derived typ.Type) typ.Type {
+	if extracted == nil {
+		return derived
+	}
+	if derived == nil {
+		return extracted
+	}
+	if derived.Kind().IsPlaceholder() {
+		if !extracted.Kind().IsPlaceholder() {
+			return extracted
+		}
+		return derived
+	}
+	if extracted.Kind().IsPlaceholder() {
+		return derived
+	}
+	if subtype.IsSubtype(extracted, derived) {
+		return extracted
+	}
+	if subtype.IsSubtype(derived, extracted) {
+		return derived
+	}
+	return derived
 }
 
 func (s *Solution) assignmentSourceTypeAt(p cfg.Point, assign UnifiedAssignment) typ.Type {

@@ -51,7 +51,7 @@ func RunResolve(input ResolveInput) ResolveOutput {
 		Env:            globalCtx,
 		Phase:          api.PhaseTypeResolution,
 		ModuleBindings: firstNonNilBindings(input.ModuleBindings, input.Bindings),
-		ModuleAliases:  firstNonNilAliases(input.ModuleAliases, modules.CollectAliases(input.Graph)),
+		ModuleAliases:  firstNonNilAliases(input.ModuleAliases, graphModuleAliases(input.Graph, input.Evidence)),
 	})
 
 	return ResolveOutput{
@@ -68,10 +68,15 @@ func CreateTypeResolutionEngine(
 	base *scope.State,
 	types core.TypeOps,
 	manifests io.ManifestQuerier,
+	moduleAliases map[cfg.SymbolID]string,
 ) *synth.Engine {
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
 	checkCtx := api.NewDeclaredEnv(api.DeclaredEnvConfig{
 		Graph:         graph,
-		Bindings:      graph.Bindings(),
+		Bindings:      bindings,
 		DeclaredTypes: BuildDeclaredTypesForResolve(graph, globalTypes, paramTypes),
 		BaseScope:     base,
 		GlobalTypes:   globalTypes,
@@ -82,8 +87,8 @@ func CreateTypeResolutionEngine(
 		Manifests:      manifests,
 		Env:            checkCtx,
 		Phase:          api.PhaseTypeResolution,
-		ModuleBindings: graph.Bindings(),
-		ModuleAliases:  modules.CollectAliases(graph),
+		ModuleBindings: bindings,
+		ModuleAliases:  moduleAliases,
 	})
 }
 
@@ -99,6 +104,10 @@ func firstNonNilAliases(primary, fallback map[cfg.SymbolID]string) map[cfg.Symbo
 		return primary
 	}
 	return fallback
+}
+
+func graphModuleAliases(graph *cfg.Graph, evidence api.FlowEvidence) map[cfg.SymbolID]string {
+	return modules.AliasesFromAssignments(evidence.Assignments, graph)
 }
 
 // BuildInitialSymbolTypes creates SymbolTypes for globals and parameters at all CFG points.

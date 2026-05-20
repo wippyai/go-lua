@@ -3,11 +3,8 @@ package paramevidence
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
-	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -21,18 +18,18 @@ type paramUse struct {
 // function body actually reads from each unannotated parameter. It is evidence
 // for analyzing a helper, not a promise that every unused field on the
 // first argument shape is part of that helper's public contract.
-func ProjectToParameterUse(graph *cfg.Graph, fn *ast.FunctionExpr, vec []typ.Type) []typ.Type {
-	if graph == nil || fn == nil || len(vec) == 0 {
+func ProjectToParameterUse(slots []cfg.ParamSlot, evidence []api.ParameterUseEvidence, vec []typ.Type) []typ.Type {
+	if len(slots) == 0 || len(vec) == 0 {
 		return vec
 	}
 
-	uses := collectParamUses(graph, fn)
+	uses := parameterUseMap(evidence)
 	if len(uses) == 0 {
 		return vec
 	}
 
 	var out []typ.Type
-	for idx, slot := range graph.ParamSlotsReadOnly() {
+	for idx, slot := range slots {
 		if slot.Symbol == 0 || idx < 0 || idx >= len(vec) {
 			continue
 		}
@@ -62,17 +59,17 @@ func ProjectToParameterUse(graph *cfg.Graph, fn *ast.FunctionExpr, vec []typ.Typ
 // does not trim unused fields: a function fact is already a canonical signature
 // observation, and same-body analysis only needs to ensure demanded fields are
 // present even when the parameter is also used as a whole value.
-func ProjectSignatureToParamUse(graph *cfg.Graph, fn *ast.FunctionExpr, sig *typ.Function) *typ.Function {
+func ProjectSignatureToParamUse(slots []cfg.ParamSlot, evidence []api.ParameterUseEvidence, sig *typ.Function) *typ.Function {
 	if sig == nil || len(sig.Params) == 0 {
 		return sig
 	}
-	uses := collectParamUses(graph, fn)
+	uses := parameterUseMap(evidence)
 	if len(uses) == 0 {
 		return sig
 	}
 	projected := make([]typ.Type, len(sig.Params))
 	changed := false
-	for idx, slot := range graph.ParamSlotsReadOnly() {
+	for idx, slot := range slots {
 		if idx < 0 || idx >= len(sig.Params) || slot.Symbol == 0 {
 			continue
 		}
@@ -216,422 +213,78 @@ func completeRecordWithFields(r *typ.Record, fields map[string]struct{}) typ.Typ
 	return builder.Build()
 }
 
-func collectParamUses(graph *cfg.Graph, fn *ast.FunctionExpr) map[cfg.SymbolID]paramUse {
-	paramSymbols := make(map[cfg.SymbolID]struct{})
-	for _, slot := range graph.ParamSlotsReadOnly() {
+// UnobservedParameterMask reports parameter slots whose values are not demanded
+// by the function body. Nil means every slot is observed or no parameter-use
+// information is available.
+func UnobservedParameterMask(slots []cfg.ParamSlot, evidence []api.ParameterUseEvidence) []bool {
+	if len(slots) == 0 {
+		return nil
+	}
+	uses := parameterUseMap(evidence)
+	var mask []bool
+	for i, slot := range slots {
 		if slot.Symbol == 0 {
 			continue
 		}
-		paramSymbols[slot.Symbol] = struct{}{}
-	}
-	if len(paramSymbols) == 0 {
-		return nil
-	}
-
-	collector := paramUseCollector{
-		bindings:               graph.Bindings(),
-		paramSymbols:           paramSymbols,
-		currentFunctionSymbols: currentFunctionSymbols(graph, fn),
-		uses:                   make(map[cfg.SymbolID]paramUse),
-	}
-	for _, stmt := range fn.Stmts {
-		collector.stmt(stmt)
-	}
-	return collector.uses
-}
-
-type paramUseCollector struct {
-	bindings               *bind.BindingTable
-	paramSymbols           map[cfg.SymbolID]struct{}
-	currentFunctionSymbols map[cfg.SymbolID]struct{}
-	uses                   map[cfg.SymbolID]paramUse
-}
-
-func (c *paramUseCollector) stmt(stmt ast.Stmt) {
-	switch s := stmt.(type) {
-	case *ast.AssignStmt:
-		var skipRHS map[int]struct{}
-		for i, lhs := range s.Lhs {
-			if i < len(s.Rhs) && c.isParamSelfDefault(lhs, s.Rhs[i]) {
-				if skipRHS == nil {
-					skipRHS = make(map[int]struct{}, 1)
-				}
-				skipRHS[i] = struct{}{}
-				continue
-			}
-			c.lvalue(lhs)
-		}
-		for i, rhs := range s.Rhs {
-			if skipRHS != nil {
-				if _, skip := skipRHS[i]; skip {
-					continue
-				}
-			}
-			c.expr(rhs)
-		}
-	case *ast.LocalAssignStmt:
-		for _, expr := range s.Exprs {
-			c.expr(expr)
-		}
-	case *ast.FuncCallStmt:
-		c.expr(s.Expr)
-	case *ast.DoBlockStmt:
-		c.stmts(s.Stmts)
-	case *ast.WhileStmt:
-		c.condition(s.Condition)
-		c.stmts(s.Stmts)
-	case *ast.RepeatStmt:
-		c.stmts(s.Stmts)
-		c.condition(s.Condition)
-	case *ast.IfStmt:
-		c.condition(s.Condition)
-		c.stmts(s.Then)
-		c.stmts(s.Else)
-	case *ast.NumberForStmt:
-		c.expr(s.Init)
-		c.expr(s.Limit)
-		c.expr(s.Step)
-		c.stmts(s.Stmts)
-	case *ast.GenericForStmt:
-		for _, expr := range s.Exprs {
-			c.expr(expr)
-		}
-		c.stmts(s.Stmts)
-	case *ast.FuncDefStmt:
-		if s.Name != nil {
-			c.expr(s.Name.Func)
-			c.expr(s.Name.Receiver)
-		}
-		if s.Func != nil {
-			c.stmts(s.Func.Stmts)
-		}
-	case *ast.ReturnStmt:
-		for _, expr := range s.Exprs {
-			c.expr(expr)
-		}
-	}
-}
-
-func (c *paramUseCollector) stmts(stmts []ast.Stmt) {
-	for _, stmt := range stmts {
-		c.stmt(stmt)
-	}
-}
-
-func (c *paramUseCollector) condition(expr ast.Expr) {
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		if c.isParamIdent(e) {
-			return
-		}
-	case *ast.UnaryNotOpExpr:
-		if ident, ok := e.Expr.(*ast.IdentExpr); ok && c.isParamIdent(ident) {
-			return
-		}
-		c.condition(e.Expr)
-		return
-	case *ast.RelationalOpExpr:
-		if isNilLiteral(e.Lhs) && c.isParamExpr(e.Rhs) {
-			return
-		}
-		if isNilLiteral(e.Rhs) && c.isParamExpr(e.Lhs) {
-			return
-		}
-	case *ast.LogicalOpExpr:
-		c.condition(e.Lhs)
-		c.condition(e.Rhs)
-		return
-	}
-	c.expr(expr)
-}
-
-func (c *paramUseCollector) expr(expr ast.Expr) {
-	if expr == nil {
-		return
-	}
-
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		c.whole(e)
-	case *ast.AttrGetExpr:
-		if c.pathUse(expr) {
-			return
-		}
-		c.expr(e.Object)
-		c.expr(e.Key)
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			c.expr(field.Key)
-			c.expr(field.Value)
-		}
-	case *ast.FuncCallExpr:
-		c.call(e)
-	case *ast.LogicalOpExpr:
-		c.expr(e.Lhs)
-		c.expr(e.Rhs)
-	case *ast.RelationalOpExpr:
-		c.expr(e.Lhs)
-		c.expr(e.Rhs)
-	case *ast.StringConcatOpExpr:
-		c.expr(e.Lhs)
-		c.expr(e.Rhs)
-	case *ast.ArithmeticOpExpr:
-		c.expr(e.Lhs)
-		c.expr(e.Rhs)
-	case *ast.UnaryMinusOpExpr:
-		c.expr(e.Expr)
-	case *ast.UnaryNotOpExpr:
-		c.expr(e.Expr)
-	case *ast.UnaryLenOpExpr:
-		c.expr(e.Expr)
-	case *ast.UnaryBNotOpExpr:
-		c.expr(e.Expr)
-	case *ast.FunctionExpr:
-		c.stmts(e.Stmts)
-	case *ast.CastExpr:
-		c.expr(e.Expr)
-	case *ast.NonNilAssertExpr:
-		c.expr(e.Expr)
-	}
-}
-
-func (c *paramUseCollector) call(call *ast.FuncCallExpr) {
-	if call == nil {
-		return
-	}
-	recursive := c.isDirectRecursiveCall(call)
-	if call.Method != "" {
-		if recv := flowpath.FromExprWithBindings(call.Receiver, nil, c.bindings); c.isParamPath(recv) {
-			c.field(recv.Symbol, firstFieldOrMethod(recv, call.Method))
-		} else {
-			c.expr(call.Receiver)
-		}
-	} else if callee := flowpath.FromExprWithBindings(call.Func, nil, c.bindings); c.isParamPath(callee) {
-		if len(callee.Segments) == 0 {
-			c.markWhole(callee.Symbol)
-		} else {
-			c.field(callee.Symbol, segmentFieldName(callee.Segments[0]))
-		}
-	} else {
-		c.expr(call.Func)
-	}
-
-	for _, arg := range call.Args {
-		if recursive && c.isParamExpr(arg) {
+		use, observed := uses[slot.Symbol]
+		if observed && (use.whole || len(use.fields) > 0) {
 			continue
 		}
-		if c.isBuiltinTypeCall(call) && c.isParamExpr(arg) {
+		if mask == nil {
+			mask = make([]bool, len(slots))
+		}
+		mask[i] = true
+	}
+	return mask
+}
+
+func parameterUseMap(evidence []api.ParameterUseEvidence) map[cfg.SymbolID]paramUse {
+	if len(evidence) == 0 {
+		return nil
+	}
+	out := make(map[cfg.SymbolID]paramUse, len(evidence))
+	for _, ev := range evidence {
+		if ev.Symbol == 0 {
 			continue
 		}
-		c.expr(arg)
-	}
-}
-
-func (c *paramUseCollector) isBuiltinTypeCall(call *ast.FuncCallExpr) bool {
-	if call == nil || call.Method != "" {
-		return false
-	}
-	ident, ok := call.Func.(*ast.IdentExpr)
-	if !ok || ident == nil || ident.Value != "type" {
-		return false
-	}
-	if c.bindings != nil {
-		if sym, ok := c.bindings.SymbolOf(ident); ok && sym != 0 {
-			kind, hasKind := c.bindings.Kind(sym)
-			return hasKind && kind == cfg.SymbolGlobal
+		use := out[ev.Symbol]
+		if ev.Whole {
+			use.whole = true
 		}
-	}
-	return true
-}
-
-func (c *paramUseCollector) isDirectRecursiveCall(call *ast.FuncCallExpr) bool {
-	if call == nil || call.Method != "" || len(c.currentFunctionSymbols) == 0 {
-		return false
-	}
-	callee := flowpath.FromExprWithBindings(call.Func, nil, c.bindings)
-	if callee.Symbol == 0 || len(callee.Segments) != 0 {
-		return false
-	}
-	_, ok := c.currentFunctionSymbols[callee.Symbol]
-	return ok
-}
-
-func (c *paramUseCollector) lvalue(expr ast.Expr) {
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		return
-	case *ast.AttrGetExpr:
-		if c.pathUse(expr) {
-			return
+		if len(ev.Fields) > 0 {
+			if use.fields == nil {
+				use.fields = make(map[string]struct{}, len(ev.Fields))
+			}
+			for _, field := range ev.Fields {
+				if field != "" {
+					use.fields[field] = struct{}{}
+				}
+			}
 		}
-		c.expr(e.Object)
-		c.expr(e.Key)
-	default:
-		c.expr(expr)
+		out[ev.Symbol] = use
 	}
-}
-
-func (c *paramUseCollector) isParamSelfDefault(lhs, rhs ast.Expr) bool {
-	lhsIdent, ok := lhs.(*ast.IdentExpr)
-	if !ok || !c.isParamIdent(lhsIdent) {
-		return false
-	}
-	op, ok := rhs.(*ast.LogicalOpExpr)
-	if !ok || op.Operator != "or" {
-		return false
-	}
-	rhsIdent, ok := op.Lhs.(*ast.IdentExpr)
-	if !ok || !c.sameParamIdent(lhsIdent, rhsIdent) {
-		return false
-	}
-	_, ok = op.Rhs.(*ast.TableExpr)
-	return ok
-}
-
-func (c *paramUseCollector) pathUse(expr ast.Expr) bool {
-	p := flowpath.FromExprWithBindings(expr, nil, c.bindings)
-	if !c.isParamPath(p) {
-		return false
-	}
-	if len(p.Segments) == 0 {
-		c.markWhole(p.Symbol)
-		return true
-	}
-	c.field(p.Symbol, segmentFieldName(p.Segments[0]))
-	return true
-}
-
-func (c *paramUseCollector) whole(expr ast.Expr) {
-	if c.bindings == nil || expr == nil {
-		return
-	}
-	ident, ok := expr.(*ast.IdentExpr)
-	if !ok {
-		return
-	}
-	sym, ok := c.bindings.SymbolOf(ident)
-	if !ok || sym == 0 {
-		return
-	}
-	if _, isParam := c.paramSymbols[sym]; !isParam {
-		return
-	}
-	c.markWhole(sym)
-}
-
-func (c *paramUseCollector) isParamExpr(expr ast.Expr) bool {
-	ident, ok := expr.(*ast.IdentExpr)
-	return ok && c.isParamIdent(ident)
-}
-
-func (c *paramUseCollector) isParamIdent(ident *ast.IdentExpr) bool {
-	if c.bindings == nil || ident == nil {
-		return false
-	}
-	sym, ok := c.bindings.SymbolOf(ident)
-	if !ok || sym == 0 {
-		return false
-	}
-	_, ok = c.paramSymbols[sym]
-	return ok
-}
-
-func (c *paramUseCollector) sameParamIdent(a, b *ast.IdentExpr) bool {
-	if c.bindings == nil || a == nil || b == nil {
-		return false
-	}
-	asym, aok := c.bindings.SymbolOf(a)
-	bsym, bok := c.bindings.SymbolOf(b)
-	if !aok || !bok || asym == 0 || bsym == 0 || asym != bsym {
-		return false
-	}
-	_, ok := c.paramSymbols[asym]
-	return ok
-}
-
-func isNilLiteral(expr ast.Expr) bool {
-	_, ok := expr.(*ast.NilExpr)
-	return ok
-}
-
-func (c *paramUseCollector) isParamPath(p constraint.Path) bool {
-	if p.IsEmpty() || p.Symbol == 0 {
-		return false
-	}
-	_, ok := c.paramSymbols[p.Symbol]
-	return ok
-}
-
-func (c *paramUseCollector) markWhole(sym cfg.SymbolID) {
-	use := c.uses[sym]
-	use.whole = true
-	c.uses[sym] = use
-}
-
-func (c *paramUseCollector) field(sym cfg.SymbolID, name string) {
-	if name == "" {
-		c.markWhole(sym)
-		return
-	}
-	use := c.uses[sym]
-	if use.fields == nil {
-		use.fields = make(map[string]struct{}, 1)
-	}
-	use.fields[name] = struct{}{}
-	c.uses[sym] = use
-}
-
-func firstFieldOrMethod(p constraint.Path, method string) string {
-	if len(p.Segments) == 0 {
-		return method
-	}
-	return segmentFieldName(p.Segments[0])
-}
-
-func currentFunctionSymbols(graph *cfg.Graph, fn *ast.FunctionExpr) map[cfg.SymbolID]struct{} {
-	if graph == nil || fn == nil {
+	if len(out) == 0 {
 		return nil
 	}
-	syms := make(map[cfg.SymbolID]struct{}, 1)
-	if bindings := graph.Bindings(); bindings != nil {
-		if sym, ok := bindings.FuncLitSymbol(fn); ok && sym != 0 {
-			syms[sym] = struct{}{}
-		}
-	}
-	for _, localFn := range graph.LocalFunctionAssignments() {
-		if localFn.Func == fn && localFn.Symbol != 0 {
-			syms[localFn.Symbol] = struct{}{}
-		}
-	}
-	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-		if info != nil && info.FuncExpr == fn && info.Symbol != 0 {
-			syms[info.Symbol] = struct{}{}
-		}
-	})
-	if len(syms) == 0 {
-		return nil
-	}
-	return syms
-}
-
-func segmentFieldName(seg constraint.Segment) string {
-	switch seg.Kind {
-	case constraint.SegmentField, constraint.SegmentIndexString:
-		return seg.Name
-	default:
-		return ""
-	}
+	return out
 }
 
 func projectEvidenceToUse(observed typ.Type, use paramUse) typ.Type {
-	if observed == nil || use.whole {
+	if observed == nil {
 		return observed
 	}
 	if len(use.fields) == 0 {
+		if use.whole {
+			return observed
+		}
 		return nil
+	}
+	if use.whole {
+		completed, ok := completeTypeWithFields(observed, use.fields)
+		if !ok {
+			return observed
+		}
+		return completed
 	}
 	projected, ok := projectTypeToFields(observed, use.fields)
 	if !ok {

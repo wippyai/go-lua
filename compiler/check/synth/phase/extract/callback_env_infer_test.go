@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -44,15 +46,22 @@ func TestParamCall(t *testing.T) {
 	}
 }
 
+func evidenceForGraph(graph *cfg.Graph) api.FlowEvidence {
+	if graph == nil {
+		return api.FlowEvidence{}
+	}
+	return trace.GraphEvidence(graph, graph.Bindings())
+}
+
 func TestInferCallbackEnvOverlays_NilGraph(t *testing.T) {
-	result := inferCallbackEnvOverlays(nil, nil, nil, nil)
+	result := inferCallbackEnvOverlays(nil, api.FlowEvidence{}, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil result for nil graph")
 	}
 }
 
 func TestInferCallbackEnvOverlays_EmptyParams(t *testing.T) {
-	result := inferCallbackEnvOverlays(nil, []cfg.ParamSlot{}, nil, nil)
+	result := inferCallbackEnvOverlays(nil, api.FlowEvidence{}, []cfg.ParamSlot{}, nil, nil)
 	if result != nil {
 		t.Error("expected nil result for empty params")
 	}
@@ -62,7 +71,7 @@ func TestInferCallbackEnvOverlays_NilSynthExpr(t *testing.T) {
 	synthExpr := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return nil
 	}
-	result := inferCallbackEnvOverlays(nil, []cfg.ParamSlot{
+	result := inferCallbackEnvOverlays(nil, api.FlowEvidence{}, []cfg.ParamSlot{
 		{
 			Symbol:      cfg.SymbolID(1),
 			SourceIndex: 0,
@@ -105,7 +114,7 @@ func TestInferCallbackEnvOverlays_AssignmentCallSite(t *testing.T) {
 		return typ.Unknown
 	}
 
-	result := inferCallbackEnvOverlays(graph, paramSlots, synthExpr, nil)
+	result := inferCallbackEnvOverlays(graph, evidenceForGraph(graph), paramSlots, synthExpr, nil)
 	if result == nil {
 		t.Fatal("expected callback overlay result")
 	}
@@ -158,7 +167,7 @@ func TestInferCallbackEnvOverlays_UsesCanonicalCandidatesWhenRawCallSymbolMissin
 		return typ.Unknown
 	}
 
-	result := inferCallbackEnvOverlays(graph, paramSlots, synthExpr, nil)
+	result := inferCallbackEnvOverlays(graph, evidenceForGraph(graph), paramSlots, synthExpr, nil)
 	if result == nil {
 		t.Fatal("expected callback overlay result")
 	}
@@ -215,7 +224,7 @@ func TestInferCallbackEnvOverlays_UsesModuleBindingNameResolution(t *testing.T) 
 		return typ.Unknown
 	}
 
-	result := inferCallbackEnvOverlays(graph, paramSlots, synthExpr, moduleBindings)
+	result := inferCallbackEnvOverlays(graph, evidenceForGraph(graph), paramSlots, synthExpr, moduleBindings)
 	if result == nil {
 		t.Fatal("expected callback overlay result")
 	}
@@ -261,7 +270,7 @@ func TestInferCallbackEnvOverlays_UsesDirectAliasCandidate(t *testing.T) {
 		return typ.Unknown
 	}
 
-	result := inferCallbackEnvOverlays(graph, paramSlots, synthExpr, nil)
+	result := inferCallbackEnvOverlays(graph, evidenceForGraph(graph), paramSlots, synthExpr, nil)
 	if result == nil {
 		t.Fatal("expected callback overlay result")
 	}

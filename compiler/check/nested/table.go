@@ -3,6 +3,7 @@ package nested
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 )
 
 // This file provides utilities for finding table literals and their relationships
@@ -13,15 +14,20 @@ import (
 //
 // This is used to find the table literal that defines a class or object,
 // enabling self-type resolution for methods defined on that table.
-func FindTableLiteralForSymbol(graph *cfg.Graph, sym cfg.SymbolID) (*ast.TableExpr, cfg.Point) {
-	if graph == nil || sym == 0 {
+func FindTableLiteralForSymbol(assignments []api.AssignmentEvidence, sym cfg.SymbolID) (*ast.TableExpr, cfg.Point) {
+	if len(assignments) == 0 || sym == 0 {
 		return nil, 0
 	}
 	var result *ast.TableExpr
 	var resultPoint cfg.Point
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range assignments {
 		if result != nil {
-			return
+			break
+		}
+		p := assign.Point
+		info := assign.Info
+		if info == nil {
+			continue
 		}
 		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
 			if target.Symbol != sym {
@@ -32,7 +38,7 @@ func FindTableLiteralForSymbol(graph *cfg.Graph, sym cfg.SymbolID) (*ast.TableEx
 				resultPoint = p
 			}
 		})
-	})
+	}
 	return result, resultPoint
 }
 
@@ -41,8 +47,8 @@ func FindTableLiteralForSymbol(graph *cfg.Graph, sym cfg.SymbolID) (*ast.TableEx
 // For patterns like `obj.method = function(self) ... end`, this function finds
 // the base object (obj) so that self can be typed as the object's type. Also
 // returns the table literal assigned to that symbol, if any.
-func FindFieldAssignmentBase(graph *cfg.Graph, fn *ast.FunctionExpr, point cfg.Point) (cfg.SymbolID, *ast.TableExpr, cfg.Point) {
-	if graph == nil || fn == nil {
+func FindFieldAssignmentBase(assignments []api.AssignmentEvidence, fn *ast.FunctionExpr, point cfg.Point) (cfg.SymbolID, *ast.TableExpr, cfg.Point) {
+	if len(assignments) == 0 || fn == nil {
 		return 0, nil, 0
 	}
 	var baseSym cfg.SymbolID
@@ -66,7 +72,7 @@ func FindFieldAssignmentBase(graph *cfg.Graph, fn *ast.FunctionExpr, point cfg.P
 
 	// Prefer the assignment at the function's definition point.
 	if point != 0 {
-		if info := graph.Assign(point); info != nil {
+		if info := assignmentInfoAt(assignments, point); info != nil {
 			info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
 				if !matchFunc(src) {
 					return
@@ -83,9 +89,13 @@ func FindFieldAssignmentBase(graph *cfg.Graph, fn *ast.FunctionExpr, point cfg.P
 		}
 	}
 
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range assignments {
 		if baseSym != 0 {
-			return
+			break
+		}
+		info := assign.Info
+		if info == nil {
+			continue
 		}
 		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
 			if !matchFunc(src) {
@@ -100,12 +110,12 @@ func FindFieldAssignmentBase(graph *cfg.Graph, fn *ast.FunctionExpr, point cfg.P
 				return
 			}
 		})
-	})
+	}
 	if baseSym == 0 {
 		return 0, nil, 0
 	}
 	// Find the table literal assigned to the base symbol.
-	tbl, p := FindTableLiteralForSymbol(graph, baseSym)
+	tbl, p := FindTableLiteralForSymbol(assignments, baseSym)
 	if p != 0 {
 		tblPoint = p
 	}
@@ -117,15 +127,19 @@ func FindFieldAssignmentBase(graph *cfg.Graph, fn *ast.FunctionExpr, point cfg.P
 // For patterns like `local obj = { method = function(self) ... }`, this function
 // finds the containing table so that self can be typed as the table's type.
 // Returns both the TableExpr and its assigned symbol.
-func FindTableLiteralOwner(graph *cfg.Graph, fn *ast.FunctionExpr) (*ast.TableExpr, cfg.SymbolID) {
-	if graph == nil || fn == nil {
+func FindTableLiteralOwner(assignments []api.AssignmentEvidence, fn *ast.FunctionExpr) (*ast.TableExpr, cfg.SymbolID) {
+	if len(assignments) == 0 || fn == nil {
 		return nil, 0
 	}
 	var resultTbl *ast.TableExpr
 	var resultSym cfg.SymbolID
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range assignments {
 		if resultTbl != nil {
-			return
+			break
+		}
+		info := assign.Info
+		if info == nil {
+			continue
 		}
 		info.EachSource(func(i int, src ast.Expr) {
 			if resultTbl != nil {
@@ -145,6 +159,15 @@ func FindTableLiteralOwner(graph *cfg.Graph, fn *ast.FunctionExpr) (*ast.TableEx
 				}
 			}
 		})
-	})
+	}
 	return resultTbl, resultSym
+}
+
+func assignmentInfoAt(assignments []api.AssignmentEvidence, point cfg.Point) *cfg.AssignInfo {
+	for _, assign := range assignments {
+		if assign.Point == point {
+			return assign.Info
+		}
+	}
+	return nil
 }

@@ -297,7 +297,7 @@ return main
 
 func TestExternalLint_DynamicResourceIDsRequireStringProof(t *testing.T) {
 	result := testutil.Check(`
-local function qualify_id(entry_id: string, relative_id: string?)
+local function qualify_id(entry_id: string, relative_id: string)
 	if relative_id:find(":") then
 		return relative_id
 	end
@@ -306,7 +306,7 @@ end
 
 local function collect(entry)
 	local resources = {}
-	if entry.data.resources then
+	if entry.data and entry.data.resources then
 		for i, resource_id in ipairs(entry.data.resources) do
 			resources[i] = qualify_id(entry.id, resource_id)
 		end
@@ -321,7 +321,7 @@ return collect
 
 func TestExternalLint_GuardedResourceIDsFeedQualifier(t *testing.T) {
 	result := testutil.Check(`
-local function qualify_id(entry_id: string, relative_id: string?)
+local function qualify_id(entry_id: string, relative_id: string)
 	if relative_id:find(":") then
 		return relative_id
 	end
@@ -330,7 +330,7 @@ end
 
 local function collect(entry)
 	local resources = {}
-	if entry.data.resources then
+	if entry.data and entry.data.resources then
 		for i, resource_id in ipairs(entry.data.resources) do
 			if type(resource_id) == "string" then
 				resources[i] = qualify_id(entry.id, resource_id)
@@ -340,7 +340,7 @@ local function collect(entry)
 	return resources
 end
 
-return collect
+	return collect
 `, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected guarded resource ids to feed string qualifier, got: %v", testutil.ErrorMessages(result.Diagnostics))
@@ -546,8 +546,8 @@ local function filter_tool_schema(schema)
 	return recursive_filter(schema)
 end
 
-return filter_tool_schema
-`, testutil.WithStdlib())
+	return filter_tool_schema
+	`, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected recursive schema filter to write table value back to same pairs key, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}

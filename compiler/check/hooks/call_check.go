@@ -22,8 +22,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	abstractfacts "github.com/wippyai/go-lua/compiler/check/abstract/facts"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
@@ -38,6 +41,7 @@ import (
 // CheckCalls validates function call arguments against parameter types.
 func CheckCalls(
 	graph *cfg.Graph,
+	evidence api.FlowEvidence,
 	scopes map[cfg.Point]*scope.State,
 	narrowSynth api.Synth,
 	narrowView api.BaseSynth,
@@ -52,13 +56,18 @@ func CheckCalls(
 	bindings := graph.Bindings()
 	unobservedLocalParams := make(map[cfg.SymbolID][]bool)
 
-	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		if info == nil {
-			return
+	for _, call := range evidence.Calls {
+		if call.Origin == api.CallOriginExpression {
+			continue
 		}
-		callDiags := checkSingleCall(p, info, scopes, narrowView, narrowSynth, query, sourceName, graph, bindings, unobservedLocalParams)
+		p := call.Point
+		info := call.Info
+		if info == nil {
+			continue
+		}
+		callDiags := checkSingleCall(p, info, scopes, narrowView, narrowSynth, query, sourceName, graph, evidence, bindings, unobservedLocalParams)
 		diags = append(diags, callDiags...)
-	})
+	}
 
 	return diags
 }
@@ -72,6 +81,7 @@ func checkSingleCall(
 	query core.TypeOps,
 	sourceName string,
 	graph *cfg.Graph,
+	evidence api.FlowEvidence,
 	bindings *bind.BindingTable,
 	unobservedLocalParams map[cfg.SymbolID][]bool,
 ) []diag.Diagnostic {
@@ -118,10 +128,10 @@ func checkSingleCall(
 		def.IsMethod = true
 		def.MethodName = info.Method
 		def.Receiver = narrowView.TypeOf(info.Receiver, p)
-		def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, graph, info)
+		def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, graph, evidence, info)
 	} else if info.Callee != nil {
 		def.Callee = narrowView.TypeOf(info.Callee, p)
-		if factType, unobservedParams, allowExtraArgs := functionFactCalleeType(api.StoreFrom(ctx), info, graph, bindings, unobservedLocalParams); factType != nil {
+		if factType, unobservedParams, allowExtraArgs := functionFactCalleeType(api.StoreFrom(ctx), info, graph, evidence, bindings, unobservedLocalParams); factType != nil {
 			def.AllowExtraArgs = allowExtraArgs
 			if typ.IsUnknownOrNil(def.Callee) || canonicalFactHasWiderParams(def.Callee, factType) {
 				def.Callee = factType
@@ -149,6 +159,7 @@ func functionFactCalleeType(
 	store api.StoreReader,
 	info *cfg.CallInfo,
 	graph *cfg.Graph,
+	evidence api.FlowEvidence,
 	bindings *bind.BindingTable,
 	unobservedLocalParams map[cfg.SymbolID][]bool,
 ) (typ.Type, []bool, bool) {
@@ -157,22 +168,49 @@ func functionFactCalleeType(
 	}
 	moduleBindings := store.ModuleBindings()
 	for _, sym := range callsite.CallableCalleeSymbolCandidates(info, graph, bindings, moduleBindings) {
-		if ff, ok := api.FunctionFactSnapshotForSymbol(store, sym, nil); ok {
-			fn := callsite.FunctionLiteralForGraphSymbol(graph, sym)
-			graphLocal := fn != nil
-			t := ff.Type
-			var unobservedParams []bool
-			allowExtraArgs := false
-			if graphLocal {
-				unobservedParams = unobservedLocalParamMask(store, sym, fn, unobservedLocalParams)
-				allowExtraArgs = callsite.AllowsDiscardedExtraArgs(fn)
-			}
-			if t != nil {
-				return t, unobservedParams, allowExtraArgs
-			}
+		ff, ok := abstractfacts.FunctionFactForSymbol(store, sym, nil)
+		if !ok {
+			continue
+		}
+		fn := callsite.FunctionLiteralForGraphSymbol(evidence, sym)
+		graphLocal := fn != nil
+		var unobservedParams []bool
+		allowExtraArgs := false
+		if graphLocal {
+			unobservedParams = unobservedLocalParamMask(store, sym, fn, unobservedLocalParams)
+			allowExtraArgs = callsite.AllowsDiscardedExtraArgs(fn)
+		}
+		if ff.Type != nil {
+			return ff.Type, unobservedParams, allowExtraArgs
 		}
 	}
 	return nil, nil, false
+}
+
+func unobservedLocalParamMask(
+	store api.StoreReader,
+	sym cfg.SymbolID,
+	fn *ast.FunctionExpr,
+	cache map[cfg.SymbolID][]bool,
+) []bool {
+	if sym == 0 || fn == nil {
+		return nil
+	}
+	if cache != nil {
+		if mask, ok := cache[sym]; ok {
+			return mask
+		}
+	}
+	ref := store.FunctionRefBySym(sym)
+	if ref == nil || ref.GraphID == 0 {
+		return nil
+	}
+	graph := store.Graphs()[ref.GraphID]
+	mask := paramevidence.UnobservedParameterMask(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn))
+	if cache != nil {
+		cache[sym] = mask
+	}
+	return mask
 }
 
 func callTypeWithUnobservedLocalAnyArgs(callee typ.Type, args []typ.Type, unobservedParams []bool) typ.Type {

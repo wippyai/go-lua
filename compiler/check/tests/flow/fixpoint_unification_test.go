@@ -140,7 +140,7 @@ local result: number = a()
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent)
+	functionFacts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts
 	if len(functionFacts) == 0 {
 		t.Error("expected non-empty return summaries for the call chain")
 	}
@@ -217,7 +217,7 @@ end
 
 	// Verify effects exist and A's effect has Terminates == true.
 	foundA := false
-	for sym, eff := range sess.Store.InterprocPrev.Refinements {
+	for sym, eff := range sess.RefinementsForExport() {
 		if eff == nil {
 			continue
 		}
@@ -267,7 +267,7 @@ end
 	}
 
 	foundA := false
-	for sym, eff := range sess.Store.InterprocPrev.Refinements {
+	for sym, eff := range sess.RefinementsForExport() {
 		if eff == nil {
 			continue
 		}
@@ -307,7 +307,7 @@ end
 	}
 
 	foundA := false
-	for sym, eff := range sess.Store.InterprocPrev.Refinements {
+	for sym, eff := range sess.RefinementsForExport() {
 		if eff == nil {
 			continue
 		}
@@ -351,7 +351,7 @@ end
 	}
 
 	foundA := false
-	for sym, eff := range sess.Store.InterprocPrev.Refinements {
+	for sym, eff := range sess.RefinementsForExport() {
 		if eff == nil {
 			continue
 		}
@@ -446,7 +446,7 @@ local result: number = d()
 	checkedFunctions := make(map[string]bool)
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent)
+	functionFacts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts
 	for sym, fact := range functionFacts {
 		name := graph.NameOf(sym)
 		if name == "b" || name == "c" || name == "d" {

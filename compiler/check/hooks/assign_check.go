@@ -32,10 +32,10 @@ package hooks
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
 	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
@@ -47,16 +47,18 @@ import (
 )
 
 // CheckAssignments validates assignment type annotations.
-func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narrowSynth api.Synth, flowQ api.FlowQuery, sourceName string) []diag.Diagnostic {
+func CheckAssignments(graph *cfg.Graph, evidence api.FlowEvidence, scopes map[cfg.Point]*scope.State, narrowSynth api.Synth, flowQ api.FlowQuery, sourceName string) []diag.Diagnostic {
 	if graph == nil || narrowSynth == nil {
 		return nil
 	}
 
 	annotated := make(map[cfg.SymbolID]typ.Type)
 	assigned := make(map[cfg.SymbolID]bool)
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range evidence.Assignments {
+		p := assign.Point
+		info := assign.Info
 		if info == nil {
-			return
+			continue
 		}
 		sc := scopes[p]
 		if info.IsLocal {
@@ -89,22 +91,26 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 				assigned[target.Symbol] = true
 			}
 		})
-	})
-	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-		if info == nil || info.Symbol == 0 {
-			return
+	}
+	for _, def := range evidence.FunctionDefinitions {
+		if def.Symbol != 0 {
+			assigned[def.Symbol] = true
 		}
-		assigned[info.Symbol] = true
-	})
+	}
 
 	var diags []diag.Diagnostic
 
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range evidence.Assignments {
+		p := assign.Point
+		info := assign.Info
+		if info == nil {
+			continue
+		}
 		sc := scopes[p]
 
 		info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent {
-				if d, ok := checkStructuredAssignmentTarget(target, source, p, narrowSynth, flowQ, graph, sourceName); ok {
+				if d, ok := checkStructuredAssignmentTarget(target, source, p, narrowSynth, flowQ, graph, evidence, sourceName); ok {
 					diags = append(diags, d)
 				}
 				return
@@ -259,17 +265,17 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 				})
 			}
 		})
-	})
+	}
 
 	return diags
 }
 
-func checkStructuredAssignmentTarget(target cfg.AssignTarget, source ast.Expr, p cfg.Point, synth api.Synth, flowQ api.FlowQuery, graph *cfg.Graph, sourceName string) (diag.Diagnostic, bool) {
+func checkStructuredAssignmentTarget(target cfg.AssignTarget, source ast.Expr, p cfg.Point, synth api.Synth, flowQ api.FlowQuery, graph *cfg.Graph, evidence api.FlowEvidence, sourceName string) (diag.Diagnostic, bool) {
 	if source == nil || synth == nil {
 		return diag.Diagnostic{}, false
 	}
 	expected := assignmentTargetWriteType(target, p, synth, flowQ)
-	if iteratorExpected := pairedIteratorWriteExpected(target, p, flowQ, graph); iteratorExpected != nil && nilOnlyType(expected) {
+	if iteratorExpected := pairedIteratorWriteExpected(target, p, flowQ, graph, evidence.Assignments); iteratorExpected != nil && nilOnlyType(expected) {
 		expected = iteratorExpected
 	}
 	if typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
@@ -313,7 +319,11 @@ func checkStructuredAssignmentTarget(target cfg.AssignTarget, source ast.Expr, p
 			}, true
 		}
 	}
-	if fresh, ok := provenance.CurrentFreshTableLiteral(source, p, graph); ok {
+	var bindings provenance.IdentBindingLookup
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
+	if fresh, ok := provenance.CurrentFreshTableLiteral(source, p, bindings, evidence.FreshTableLiterals); ok {
 		if result := tableCheck(fresh.Table, expected, synth, fresh.Point); result.Handled && result.Compatible {
 			return diag.Diagnostic{}, false
 		}
@@ -368,7 +378,7 @@ func assignmentTargetDeleteAllowed(target cfg.AssignTarget, p cfg.Point, synth a
 	return querycore.IndexDelete(objType, keyType)
 }
 
-func pairedIteratorWriteExpected(target cfg.AssignTarget, p cfg.Point, flowQ api.FlowQuery, graph *cfg.Graph) typ.Type {
+func pairedIteratorWriteExpected(target cfg.AssignTarget, p cfg.Point, flowQ api.FlowQuery, graph *cfg.Graph, assignments []api.AssignmentEvidence) typ.Type {
 	if target.Kind != cfg.TargetIndex || target.Base == nil || flowQ == nil || graph == nil {
 		return nil
 	}
@@ -376,7 +386,7 @@ func pairedIteratorWriteExpected(target cfg.AssignTarget, p cfg.Point, flowQ api
 	if !ok {
 		return nil
 	}
-	pair, ok := iteration.FindKeyedPairValue(graph, target.Base, key)
+	pair, ok := iteration.FindKeyedPairValue(graph, assignments, target.Base, key)
 	if !ok {
 		return nil
 	}

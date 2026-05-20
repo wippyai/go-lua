@@ -57,7 +57,7 @@ return { f = f }
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	snap := sess.Store.GetInterprocFactsSnapshot(sess.RootResult.Graph, parent)
+	snap := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent)
 
 	if got := snap.FunctionFacts.Summary(sym); len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("summary contains never artifact: %v", got)

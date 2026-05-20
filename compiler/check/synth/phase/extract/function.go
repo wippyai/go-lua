@@ -37,10 +37,11 @@ package extract
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
@@ -254,7 +255,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	var fnSym cfg.SymbolID
 	if s.deps.CheckCtx != nil {
 		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && pg != nil {
-			fnSym = localFunctionSymbol(pg, fn)
+			fnSym = localFunctionSymbol(pg, s.graphEvidence(pg), fn)
 		}
 	}
 
@@ -304,10 +305,15 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	// Collect local function types from assignments using canonical function facts.
 	// Uses annotations for params and looks up return types from the product fact.
 
-	for _, localFn := range fnGraph.LocalFunctionAssignments() {
-		fnType := s.buildLocalFunctionTypeFromFacts(localFn.Func, resolveScope, localFn.Symbol, functionFacts)
+	graphEvidence := s.graphEvidence(fnGraph)
+
+	for _, def := range graphEvidence.FunctionDefinitions {
+		if !def.IsLocal || def.Symbol == 0 || def.Nested.Func == nil {
+			continue
+		}
+		fnType := s.buildLocalFunctionTypeFromFacts(def.Nested.Func, resolveScope, def.Symbol, functionFacts)
 		if fnType != nil {
-			overlay[localFn.Symbol] = fnType
+			overlay[def.Symbol] = fnType
 		}
 	}
 
@@ -351,29 +357,30 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	// Uses canonical function facts for return types instead of recursive inference.
 	if s.deps.CheckCtx != nil {
 		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && pg != nil {
+			parentEvidence := s.graphEvidence(pg)
 			var defPoint cfg.Point
-			for _, nf := range pg.NestedFunctions() {
-				if nf.Func == fn {
-					defPoint = nf.Point
+			for _, def := range parentEvidence.FunctionDefinitions {
+				if def.Nested.Func == fn {
+					defPoint = def.Nested.Point
 					break
 				}
 			}
 			if defPoint != 0 {
 				visible := pg.AllSymbolsAt(defPoint)
 				if len(visible) > 0 {
-					for _, localFn := range pg.LocalFunctionAssignments() {
-						if localFn.Func == fn || localFn.Name == "" {
+					for _, def := range parentEvidence.FunctionDefinitions {
+						if !def.IsLocal || def.Nested.Func == fn || def.Name == "" || def.Symbol == 0 || def.Nested.Func == nil {
 							continue
 						}
-						if visibleSym, ok := visible[localFn.Name]; !ok || visibleSym != localFn.Symbol {
+						if visibleSym, ok := visible[def.Name]; !ok || visibleSym != def.Symbol {
 							continue
 						}
-						if _, ok := overlay[localFn.Symbol]; ok {
+						if _, ok := overlay[def.Symbol]; ok {
 							continue
 						}
-						fnType := s.buildLocalFunctionTypeFromFacts(localFn.Func, parentScope, localFn.Symbol, functionFacts)
+						fnType := s.buildLocalFunctionTypeFromFacts(def.Nested.Func, parentScope, def.Symbol, functionFacts)
 						if fnType != nil {
-							overlay[localFn.Symbol] = fnType
+							overlay[def.Symbol] = fnType
 						}
 					}
 				}
@@ -383,7 +390,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 
 	// Infer basic ordered-comparison hints (x > 0, name <= "zz") so unannotated
 	// params don't stay unknown when return typing depends on guarded branches.
-	enrichOverlayWithOrderedComparisonHints(fnGraph, overlay)
+	enrichOverlayWithOrderedComparisonHints(graphEvidence.Branches, fnGraph.Bindings(), overlay)
 
 	var globalTypes map[string]typ.Type
 	var moduleAliases map[cfg.SymbolID]string
@@ -420,6 +427,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			Manifests:              s.deps.Manifests,
 			CheckCtx:               prelimCtx,
 			Graphs:                 s.deps.Graphs,
+			Evidence:               graphEvidence,
 			FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
 			ModuleBindings:         s.deps.ModuleBindings,
 			ModuleAliases:          moduleAliases,
@@ -442,9 +450,11 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		localInferred = make(map[cfg.SymbolID]typ.Type, capHint)
 		return localInferred
 	}
-	fnGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range graphEvidence.Assignments {
+		p := assign.Point
+		info := assign.Info
 		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-			return
+			continue
 		}
 		needsInference := false
 		for _, target := range info.Targets {
@@ -457,7 +467,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			}
 		}
 		if !needsInference {
-			return
+			continue
 		}
 		if len(info.Targets) == 1 && len(info.Sources) == 1 {
 			target := info.Targets[0]
@@ -491,7 +501,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 						if t != nil {
 							ensureLocalInferred()[target.Symbol] = t
 						}
-						return
+						continue
 					}
 				}
 			}
@@ -508,7 +518,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 				ensureLocalInferred()[target.Symbol] = values[i]
 			}
 		})
-	})
+	}
 	for sym, t := range localInferred {
 		if _, exists := overlay[sym]; !exists {
 			overlay[sym] = t
@@ -534,15 +544,15 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			return ensurePrelimSynth().SynthExpr(expr, p, nil)
 		}
 
-		fieldAssignments := overlaymut.CollectFieldAssignments(fnGraph, enrichedSynth, nil)
+		fieldAssignments := overlaymut.CollectFieldAssignments(graphEvidence.Assignments, enrichedSynth, nil)
 		overlaymut.ApplyFieldMergeToOverlay(overlay, fieldAssignments)
 
-		indexerAssignments := overlaymut.CollectIndexerAssignments(fnGraph, enrichedSynth, mutationBindings, nil)
-		tableMutations := mutator.CollectTableInsertMutations(fnGraph, enrichedSynth, mutationBindings)
+		indexerAssignments := overlaymut.CollectIndexerAssignments(graphEvidence.Assignments, enrichedSynth, mutationBindings, nil)
+		tableMutations := mutator.CollectTableInsertMutations(graphEvidence.Calls, fnGraph, enrichedSynth, mutationBindings)
 		mutator.MergeIndexerMutations(indexerAssignments, tableMutations)
 		overlaymut.ApplyIndexerMergeToOverlay(overlay, indexerAssignments)
 
-		directMutations := mutator.CollectTableInsertOnDirect(fnGraph, enrichedSynth, mutationBindings)
+		directMutations := mutator.CollectTableInsertOnDirect(graphEvidence.Calls, fnGraph, enrichedSynth, mutationBindings)
 		overlaymut.ApplyDirectMutationsToOverlay(overlay, directMutations)
 	}
 
@@ -564,6 +574,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		Manifests:              s.deps.Manifests,
 		CheckCtx:               fnCheckCtx,
 		Graphs:                 s.deps.Graphs,
+		Evidence:               graphEvidence,
 		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
 		ModuleBindings:         s.deps.ModuleBindings,
 		ModuleAliases:          moduleAliases,
@@ -578,13 +589,15 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 
 	var returnTypes []typ.Type
 	seenReturn := false
-	fnGraph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+	for _, ret := range graphEvidence.Returns {
+		p := ret.Point
+		info := ret.Info
 		if info == nil {
-			return
+			continue
 		}
 		if tempDeps.Flow != nil {
 			if tempDeps.Flow.IsPointDead(p) {
-				return
+				continue
 			}
 		}
 		types := tempSynth.inferReturnExprTypes(info.Exprs, p)
@@ -592,7 +605,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		if !seenReturn {
 			seenReturn = true
 			returnTypes = types
-			return
+			continue
 		}
 
 		// Extend returnTypes for new positions: previous returns contributed nil there.
@@ -610,7 +623,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			}
 			returnTypes[i] = typ.JoinReturnSlot(returnTypes[i], t)
 		}
-	})
+	}
 
 	// Normalize nil elements to typ.Unknown so downstream builders never see nil.
 	for i, t := range returnTypes {
@@ -627,14 +640,13 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	if !convention.CanClassifyReturns(returnTypes) {
 		return returnTypes, false
 	}
-	return returnTypes, convention.HasStrictInversePattern(fnGraph, nil, tempSynth)
+	return returnTypes, convention.HasStrictInversePattern(graphEvidence.Returns, nil, tempSynth)
 }
 
-func enrichOverlayWithOrderedComparisonHints(fnGraph *cfg.Graph, overlay map[cfg.SymbolID]typ.Type) {
-	if fnGraph == nil || len(overlay) == 0 {
+func enrichOverlayWithOrderedComparisonHints(branches []api.BranchEvidence, bindings *bind.BindingTable, overlay map[cfg.SymbolID]typ.Type) {
+	if len(branches) == 0 || len(overlay) == 0 {
 		return
 	}
-	bindings := fnGraph.Bindings()
 	if bindings == nil {
 		return
 	}
@@ -674,12 +686,13 @@ func enrichOverlayWithOrderedComparisonHints(fnGraph *cfg.Graph, overlay map[cfg
 		}
 	}
 
-	fnGraph.EachBranch(func(_ cfg.Point, info *cfg.BranchInfo) {
+	for _, branch := range branches {
+		info := branch.Info
 		if info == nil || info.Condition == nil {
-			return
+			continue
 		}
 		visit(info.Condition)
-	})
+	}
 }
 
 func orderedLiteralType(expr ast.Expr) typ.Type {
@@ -693,7 +706,7 @@ func orderedLiteralType(expr ast.Expr) typ.Type {
 	}
 }
 
-func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
+func localFunctionSymbol(graph *cfg.Graph, evidence api.FlowEvidence, fn *ast.FunctionExpr) cfg.SymbolID {
 	if graph == nil || fn == nil {
 		return 0
 	}
@@ -704,25 +717,13 @@ func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
 			}
 		}
 	}
-	var fnSym cfg.SymbolID
-	for _, localFn := range graph.LocalFunctionAssignments() {
-		if localFn.Func == fn {
-			fnSym = localFn.Symbol
-			break
+	for _, def := range evidence.FunctionDefinitions {
+		if def.Symbol == 0 || def.Nested.Func != fn {
+			continue
 		}
+		return def.Symbol
 	}
-	if fnSym != 0 {
-		return fnSym
-	}
-	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-		if fnSym != 0 || info == nil || info.Symbol == 0 {
-			return
-		}
-		if info.FuncExpr == fn {
-			fnSym = info.Symbol
-		}
-	})
-	return fnSym
+	return 0
 }
 
 // inferReturnExprTypes synthesizes types from return expressions using CFG point.
@@ -810,7 +811,7 @@ func (s *Synthesizer) buildFunctionTypeFromAvailableFacts(
 	var fnSym cfg.SymbolID
 	if s.deps.CheckCtx != nil {
 		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && pg != nil {
-			fnSym = localFunctionSymbol(pg, fn)
+			fnSym = localFunctionSymbol(pg, s.graphEvidence(pg), fn)
 		}
 	}
 	if fnSym != 0 {
@@ -915,6 +916,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 				Manifests:      s.deps.Manifests,
 				CheckCtx:       fnCheckCtx,
 				Graphs:         s.deps.Graphs,
+				Evidence:       s.graphEvidence(fnGraph),
 				ModuleBindings: s.deps.ModuleBindings,
 				ModuleAliases:  moduleAliases,
 			}
@@ -923,7 +925,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		return tempSynth.SynthExpr(expr, p, nil)
 	}
 
-	overlays := inferCallbackEnvOverlays(fnGraph, paramSlots, synthExpr, s.deps.ModuleBindings)
+	overlays := inferCallbackEnvOverlays(fnGraph, s.graphEvidence(fnGraph), paramSlots, synthExpr, s.deps.ModuleBindings)
 	if len(overlays) == 0 {
 		return nil
 	}

@@ -4,13 +4,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 type factsWriteStore interface {
 	MergeInterprocFactsNext(key api.GraphKey, delta api.Facts)
-	StoreLiteralSigs(graphID uint64, sigs map[*ast.FunctionExpr]*typ.Function)
 	GraphKeyFor(graph *cfg.Graph, parent *scope.State) (api.GraphKey, bool)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
 }
@@ -43,7 +43,6 @@ func (w interprocFactWriter) writeLiteralSignatures(
 	if w.store == nil || graph == nil || len(sigs) == 0 {
 		return
 	}
-	w.store.StoreLiteralSigs(graph.ID(), sigs)
 	if key, ok := w.store.GraphKeyFor(graph, parent); ok {
 		delta := api.LiteralSigs{}
 		for fnExpr, sig := range sigs {
@@ -52,7 +51,7 @@ func (w interprocFactWriter) writeLiteralSignatures(
 			}
 		}
 		if len(delta) > 0 {
-			w.store.MergeInterprocFactsNext(key, api.Facts{LiteralSigs: delta})
+			w.store.MergeInterprocFactsNext(key, interprocdomain.LiteralSigsDelta(delta))
 		}
 	}
 }

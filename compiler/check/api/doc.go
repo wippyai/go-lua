@@ -11,7 +11,7 @@
 //   - [ModuleStore]: Module-level bindings and alias maps
 //   - [GraphStore]: Access to built CFGs by ID
 //   - [ParentScopes]: Parent scope lookup for nested functions
-//   - [SnapshotStore]: Stable interprocedural fact snapshots
+//   - [InterprocFactReader]: Visible interprocedural fact products
 //   - [StoreReader]: Read contract combining the immutable stores above
 //   - [IterationStore]: Adds mutation for fixpoint iteration
 //
@@ -27,8 +27,7 @@
 //
 // # Interprocedural Facts
 //
-// The [Facts] type bundles interprocedural analysis results for a single
-// function graph:
+// The [Facts] type bundles one interprocedural product slice:
 //
 //   - [FunctionFacts]: Canonical per-function parameter/return/signature facts
 //   - [LiteralSigs]: Signatures for anonymous function literals
@@ -37,8 +36,8 @@
 //   - [CapturedContainerMutations]: Container writes to captured variables
 //   - [ConstructorFields]: Instance fields collected from constructors
 //
-// Facts are emitted as canonical deltas and stored per (graph, parent-scope) pair.
-// The [GraphKey] type provides the canonical key for this lookup.
+// Facts are emitted as canonical deltas. Function-local products are keyed by a
+// (graph, parent-scope) [GraphKey]; module-wide products use [ModuleFactsKey].
 //
 // # Function References
 //

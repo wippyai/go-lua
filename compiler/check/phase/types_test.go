@@ -40,8 +40,8 @@ func TestPhaseEnv_Fields(t *testing.T) {
 	if env.ModuleBindings != nil {
 		t.Error("ModuleBindings should be nil by default")
 	}
-	if env.RefinementStore != nil {
-		t.Error("RefinementStore should be nil by default")
+	if env.Refinements != nil {
+		t.Error("Refinements should be nil by default")
 	}
 	if env.Scopes != nil {
 		t.Error("Scopes should be nil by default")

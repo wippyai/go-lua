@@ -42,12 +42,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
+	flowpath "github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
-	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -107,66 +108,44 @@ type RunContext struct {
 	EffectLookup constraint.RefinementLookupBySym
 }
 
-// collectLocalFunctions gathers local function definitions from assignments and FuncDef nodes.
+// collectLocalFunctions gathers function definitions from transfer evidence.
 func (i *Inferencer) collectLocalFunctions(
 	graph *cfg.Graph,
 	pointScopes map[cfg.Point]*scope.State,
 	parentFn *ast.FunctionExpr,
 ) map[cfg.SymbolID]*returns.LocalFuncInfo {
 	localFuncs := make(map[cfg.SymbolID]*returns.LocalFuncInfo)
+	parentEvidence := transferEvidenceForGraph(graph)
 
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-			return
+	for _, def := range parentEvidence.FunctionDefinitions {
+		if def.Symbol == 0 || def.Nested.Func == nil {
+			continue
 		}
-		info.EachTargetSource(func(idx int, target cfg.AssignTarget, source ast.Expr) {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				return
-			}
-			fnExpr, ok := source.(*ast.FunctionExpr)
-			if !ok {
-				return
-			}
-
-			fnGraph := (*cfg.Graph)(nil)
-			if i.graphs != nil {
-				fnGraph = i.graphs.GetOrBuildCFG(fnExpr)
-			}
-			localFuncs[target.Symbol] = &returns.LocalFuncInfo{
-				Sym:         target.Symbol,
-				Fn:          fnExpr,
-				DefScope:    pointScopes[p],
-				Graph:       fnGraph,
-				ParentGraph: graph,
-				ParentFn:    parentFn,
-				DefPoint:    p,
-			}
-		})
-	})
-
-	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
-		if info == nil || info.Symbol == 0 || info.FuncExpr == nil {
-			return
-		}
-		if _, exists := localFuncs[info.Symbol]; exists {
-			return
+		if _, exists := localFuncs[def.Symbol]; exists {
+			continue
 		}
 		fnGraph := (*cfg.Graph)(nil)
 		if i.graphs != nil {
-			fnGraph = i.graphs.GetOrBuildCFG(info.FuncExpr)
+			fnGraph = i.graphs.GetOrBuildCFG(def.Nested.Func)
 		}
-		localFuncs[info.Symbol] = &returns.LocalFuncInfo{
-			Sym:         info.Symbol,
-			Fn:          info.FuncExpr,
-			DefScope:    pointScopes[p],
-			Graph:       fnGraph,
-			ParentGraph: graph,
-			ParentFn:    parentFn,
-			DefPoint:    p,
+		localFuncs[def.Symbol] = &returns.LocalFuncInfo{
+			Sym:            def.Symbol,
+			Fn:             def.Nested.Func,
+			DefScope:       pointScopes[def.Nested.Point],
+			Graph:          fnGraph,
+			ParentGraph:    graph,
+			ParentFn:       parentFn,
+			DefPoint:       def.Nested.Point,
+			Evidence:       transferEvidenceForGraph(fnGraph),
+			ParentEvidence: parentEvidence,
 		}
-	})
+	}
 
 	return localFuncs
+}
+
+func transferEvidenceForGraph(graph *cfg.Graph) api.FlowEvidence {
+	return trace.GraphEvidence(graph, graph.Bindings())
 }
 
 // newReturnInferenceEngine creates a synthesis engine configured for return type
@@ -184,6 +163,7 @@ func (i *Inferencer) newReturnInferenceEngine(
 	run RunContext,
 	scopes map[cfg.Point]*scope.State,
 	ctx api.DeclaredEnv,
+	evidence api.FlowEvidence,
 ) *synth.Engine {
 	return synth.New(synth.Config{
 		Ctx:            run.Ctx,
@@ -192,6 +172,7 @@ func (i *Inferencer) newReturnInferenceEngine(
 		Manifests:      i.manifests,
 		Env:            ctx,
 		Phase:          api.PhaseScopeCompute,
+		Evidence:       evidence,
 		ModuleBindings: i.store.ModuleBindings(),
 		ModuleAliases:  i.store.ModuleAliases(),
 	})
@@ -209,7 +190,7 @@ func (i *Inferencer) ComputeForGraph(
 
 	parentScope := api.ParentScopeForGraph(i.store, graph.ID(), parent)
 
-	engine := phase.CreateTypeResolutionEngine(run.Ctx, graph, i.globalTypes, nil, parentScope, i.types, i.manifests)
+	engine := phase.CreateTypeResolutionEngine(run.Ctx, graph, i.globalTypes, nil, parentScope, i.types, i.manifests, i.store.ModuleAliases())
 	pointScopes := scope.BuildTypeDefScopes(graph, parentScope, engine.ResolveTypeDef)
 	localFuncs := i.collectLocalFunctions(graph, pointScopes, graph.Func())
 	if len(localFuncs) == 0 {
@@ -217,19 +198,19 @@ func (i *Inferencer) ComputeForGraph(
 	}
 
 	// Apply parameter evidence from the stable canonical function facts.
-	if facts := i.store.GetFunctionFactsSnapshot(graph, parentScope); len(facts) > 0 {
+	if facts := i.store.GetInterprocFacts(graph, parentScope).FunctionFacts; len(facts) > 0 {
 		for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 			info := localFuncs[sym]
 			if info == nil {
 				continue
 			}
 			if hintVec := facts.Params(sym); len(hintVec) > 0 {
-				info.ParameterEvidence = paramevidence.ProjectToParameterUse(info.Graph, info.Fn, hintVec)
+				info.ParameterEvidence = paramevidence.ProjectToParameterUse(info.Graph.ParamSlotsReadOnly(), trace.ParameterUses(info.Graph, info.Fn), hintVec)
 			}
 		}
 	}
 
-	seedFacts := i.store.GetFunctionFactsSnapshot(graph, parentScope)
+	seedFacts := i.store.GetInterprocFacts(graph, parentScope).FunctionFacts
 	seed := make(map[cfg.SymbolID][]typ.Type, len(seedFacts))
 	for sym, fact := range seedFacts {
 		if len(fact.Summary) > 0 {
@@ -397,35 +378,37 @@ type returnInferenceContext struct {
 // buildParameterOverlay creates the initial type overlay with parameter types.
 // Parameters are typed from annotations, parameter evidence, or default to unknown.
 func collectReturnTypes(
-	fnGraph *cfg.Graph,
+	returns []api.ReturnEvidence,
 	synthEngine api.Synth,
 	deadPoints map[cfg.Point]bool,
 	skipReturnExpr func(ast.Expr) bool,
 ) []typ.Type {
-	if fnGraph == nil || synthEngine == nil {
+	if len(returns) == 0 || synthEngine == nil {
 		return nil
 	}
 	var returnTypes []typ.Type
 	seenReturn := false
 
-	fnGraph.EachReturn(func(p cfg.Point, retInfo *cfg.ReturnInfo) {
+	for _, ret := range returns {
+		p := ret.Point
+		retInfo := ret.Info
 		if retInfo == nil {
-			return
+			continue
 		}
 		_ = deadPoints
 
 		if len(retInfo.Exprs) == 1 && skipReturnExpr != nil && skipReturnExpr(retInfo.Exprs[0]) {
-			return
+			continue
 		}
 		types := synthesizeReturnExprs(synthEngine, retInfo, p, skipReturnExpr)
 		if !seenReturn {
 			seenReturn = true
 			returnTypes = types
-			return
+			continue
 		}
 
 		returnTypes = joinReturnTypes(returnTypes, types)
-	})
+	}
 
 	return returnsummary.NormalizeOwned(returnTypes)
 }
@@ -489,7 +472,7 @@ func (i *Inferencer) inferReturnTypesFromBody(
 ) []typ.Type {
 	state := i.runPhase2FlowNarrowing(ctx, finalOverlay)
 	skipUnresolvedLocalCall := i.skipUnresolvedLocalReturnCall(ctx)
-	narrowed := collectReturnTypes(ctx.info.Graph, state.synth, state.deadPoints, skipUnresolvedLocalCall)
+	narrowed := collectReturnTypes(ctx.info.Evidence.Returns, state.synth, state.deadPoints, skipUnresolvedLocalCall)
 
 	fnGraph := ctx.info.Graph
 	if fnGraph == nil {
@@ -509,8 +492,9 @@ func (i *Inferencer) inferReturnTypesFromBody(
 		ctx.run,
 		uniformFunctionScopes(fnGraph, ctx.resolveScope),
 		declCheckCtx,
+		ctx.info.Evidence,
 	)
-	declared := collectReturnTypes(fnGraph, declSynth, nil, skipUnresolvedLocalCall)
+	declared := collectReturnTypes(ctx.info.Evidence.Returns, declSynth, nil, skipUnresolvedLocalCall)
 
 	return returnsummary.Merge(declared, narrowed)
 }
@@ -575,9 +559,9 @@ func (i *Inferencer) inferReturnForFunction(
 	fn := info.Fn
 	fnGraph := info.Graph
 	parentScope := info.DefScope
-	moduleAliases := modules.MergeAliases(i.store.ModuleAliases(), modules.CollectAliases(fnGraph))
+	moduleAliases := modules.MergeAliases(i.store.ModuleAliases(), modules.AliasesFromAssignments(info.Evidence.Assignments, fnGraph))
 
-	engine := phase.CreateTypeResolutionEngine(run.Ctx, fnGraph, i.globalTypes, nil, parentScope, i.types, i.manifests)
+	engine := phase.CreateTypeResolutionEngine(run.Ctx, fnGraph, i.globalTypes, nil, parentScope, i.types, i.manifests, moduleAliases)
 
 	resolveScope := parentScope
 	if len(fn.TypeParams) > 0 {
@@ -647,7 +631,6 @@ func (i *Inferencer) inferReturnForFunction(
 
 	// Collect field/indexer assignments and apply mutations.
 	finalOverlay := i.collectAndApplyMutations(ctx, overlay, inferred, synthAdapter, localValueSeeds)
-	i.mergeParameterEvidenceFromOverlay(ctx, finalOverlay)
 
 	// Phase 2: Infer return types from body.
 	return i.inferReturnTypesFromBody(ctx, finalOverlay)
@@ -677,30 +660,6 @@ func (i *Inferencer) applyParameterEvidenceToOverlay(ctx *returnInferenceContext
 	}
 }
 
-func (i *Inferencer) mergeParameterEvidenceFromOverlay(ctx *returnInferenceContext, overlay map[cfg.SymbolID]typ.Type) {
-	if ctx == nil || ctx.info == nil || ctx.info.Graph == nil || ctx.info.Fn == nil || len(overlay) == 0 {
-		return
-	}
-	for idx, slot := range ctx.info.Graph.ParamSlotsReadOnly() {
-		if slot.Symbol == 0 {
-			continue
-		}
-		_, hasSource := slot.SourceParamIndex()
-		if hasSource && hardParameterAnnotation(ctx, slot) {
-			continue
-		}
-		t := overlay[slot.Symbol]
-		if !paramevidence.IsInformative(t) {
-			continue
-		}
-		next, merged := paramevidence.MergeAt(ctx.info.ParameterEvidence, idx, t, typ.JoinPreferNonSoft)
-		if merged {
-			ctx.info.ParameterEvidence = next
-		}
-	}
-	i.mergeParameterEvidenceFromBodyUses(ctx, overlay)
-}
-
 func (i *Inferencer) mergeParameterEvidenceFromBodyUses(ctx *returnInferenceContext, overlay map[cfg.SymbolID]typ.Type) {
 	if i == nil || ctx == nil || ctx.info == nil || ctx.info.Graph == nil || ctx.info.Fn == nil {
 		return
@@ -724,8 +683,6 @@ func (i *Inferencer) mergeParameterEvidenceFromBodyUses(ctx *returnInferenceCont
 		return
 	}
 
-	var visitStmt func(ast.Stmt)
-	var visitExpr func(ast.Expr)
 	mergeReceiver := func(receiver ast.Expr, method string) {
 		if receiver == nil || method == "" {
 			return
@@ -884,7 +841,7 @@ func (i *Inferencer) mergeParameterEvidenceFromBodyUses(ctx *returnInferenceCont
 			def.IsMethod = true
 			def.MethodName = info.Method
 			def.Receiver = typeAt(info.Receiver, p)
-			def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, ctx.info.Graph, info)
+			def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, ctx.info.Graph, ctx.info.Evidence, info)
 		} else {
 			def.Callee = typeAt(info.Callee, p)
 		}
@@ -904,9 +861,9 @@ func (i *Inferencer) mergeParameterEvidenceFromBodyUses(ctx *returnInferenceCont
 			}
 		}
 	}
-	ctx.info.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		mergeExpectedFieldEvidence(p, info)
-	})
+	for _, ev := range ctx.info.Evidence.Calls {
+		mergeExpectedFieldEvidence(ev.Point, ev.Info)
+	}
 	for _, sym := range cfg.SortedSymbolIDs(bodyParamContracts) {
 		mergeParameterEvidence(sym, bodyParamContracts[sym])
 	}
@@ -922,123 +879,13 @@ func (i *Inferencer) mergeParameterEvidenceFromBodyUses(ctx *returnInferenceCont
 			return nil
 		}
 	}
-	visitExpr = func(expr ast.Expr) {
-		switch e := expr.(type) {
-		case *ast.FuncCallExpr:
-			mergeReceiver(e.Receiver, e.Method)
-			visitExpr(e.Func)
-			visitExpr(e.Receiver)
-			for _, arg := range e.Args {
-				visitExpr(arg)
-			}
-		case *ast.AttrGetExpr:
-			visitExpr(e.Object)
-			visitExpr(e.Key)
-		case *ast.TableExpr:
-			for _, f := range e.Fields {
-				if f == nil {
-					continue
-				}
-				visitExpr(f.Key)
-				visitExpr(f.Value)
-			}
-		case *ast.LogicalOpExpr:
-			if e.Operator == "or" {
-				if sym, field, ok := paramFieldPath(e.Lhs); ok {
-					mergeParamFieldEvidence(sym, field, defaultLiteralType(e.Rhs), false)
-				}
-			}
-			visitExpr(e.Lhs)
-			visitExpr(e.Rhs)
-		case *ast.RelationalOpExpr:
-			visitExpr(e.Lhs)
-			visitExpr(e.Rhs)
-		case *ast.StringConcatOpExpr:
-			visitExpr(e.Lhs)
-			visitExpr(e.Rhs)
-		case *ast.ArithmeticOpExpr:
-			visitExpr(e.Lhs)
-			visitExpr(e.Rhs)
-		case *ast.UnaryMinusOpExpr:
-			visitExpr(e.Expr)
-		case *ast.UnaryNotOpExpr:
-			visitExpr(e.Expr)
-		case *ast.UnaryLenOpExpr:
-			visitExpr(e.Expr)
-		case *ast.UnaryBNotOpExpr:
-			visitExpr(e.Expr)
-		case *ast.CastExpr:
-			visitExpr(e.Expr)
-		case *ast.NonNilAssertExpr:
-			visitExpr(e.Expr)
-		case *ast.FunctionExpr:
-			return
+	for _, ev := range ctx.info.Evidence.Calls {
+		if ev.Info != nil {
+			mergeReceiver(ev.Info.Receiver, ev.Info.Method)
 		}
 	}
-	visitStmt = func(stmt ast.Stmt) {
-		switch s := stmt.(type) {
-		case *ast.AssignStmt:
-			for _, expr := range s.Lhs {
-				visitExpr(expr)
-			}
-			for _, expr := range s.Rhs {
-				visitExpr(expr)
-			}
-		case *ast.LocalAssignStmt:
-			for _, expr := range s.Exprs {
-				visitExpr(expr)
-			}
-		case *ast.FuncCallStmt:
-			visitExpr(s.Expr)
-		case *ast.DoBlockStmt:
-			for _, child := range s.Stmts {
-				visitStmt(child)
-			}
-		case *ast.WhileStmt:
-			visitExpr(s.Condition)
-			for _, child := range s.Stmts {
-				visitStmt(child)
-			}
-		case *ast.RepeatStmt:
-			for _, child := range s.Stmts {
-				visitStmt(child)
-			}
-			visitExpr(s.Condition)
-		case *ast.IfStmt:
-			visitExpr(s.Condition)
-			for _, child := range s.Then {
-				visitStmt(child)
-			}
-			for _, child := range s.Else {
-				visitStmt(child)
-			}
-		case *ast.NumberForStmt:
-			visitExpr(s.Init)
-			visitExpr(s.Limit)
-			visitExpr(s.Step)
-			for _, child := range s.Stmts {
-				visitStmt(child)
-			}
-		case *ast.GenericForStmt:
-			for _, expr := range s.Exprs {
-				visitExpr(expr)
-			}
-			for _, child := range s.Stmts {
-				visitStmt(child)
-			}
-		case *ast.FuncDefStmt:
-			if s.Name != nil {
-				visitExpr(s.Name.Func)
-				visitExpr(s.Name.Receiver)
-			}
-		case *ast.ReturnStmt:
-			for _, expr := range s.Exprs {
-				visitExpr(expr)
-			}
-		}
-	}
-	for _, stmt := range ctx.info.Fn.Stmts {
-		visitStmt(stmt)
+	for _, ev := range ctx.info.Evidence.FieldDefaults {
+		mergeParamFieldEvidence(ev.Target, ev.Field, defaultLiteralType(ev.Value), false)
 	}
 }
 

@@ -10,6 +10,16 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+func commandLineIOManifest() *io.Manifest {
+	manifest := io.NewManifest("io")
+	manifest.SetExport(typ.NewRecord().
+		Field("args", typ.Func().
+			Returns(typ.NewArray(typ.String)).
+			Build()).
+		Build())
+	return manifest
+}
+
 // Regression: call-site parameter evidence must keep informative soft map shapes.
 // If {[string]: any[]} is dropped as "soft", sorted key iteration degrades to
 // `name: any`, which then breaks suites[name] and downstream run_test(entry.id).
@@ -201,7 +211,8 @@ func TestWippyRunner_SortedKeysWithFilterBranch(t *testing.T) {
 
 	result := testutil.Check(source, testutil.WithStdlib(),
 		testutil.WithManifest("registry", registryManifest),
-		testutil.WithManifest("funcs", funcsManifest))
+		testutil.WithManifest("funcs", funcsManifest),
+		testutil.WithManifest("io", commandLineIOManifest()))
 	if result.HasError() {
 		for _, d := range result.Errors {
 			t.Logf("error: %s", d.Message)
@@ -382,7 +393,8 @@ func TestWippyRunner_NearLiteralTestRunnerFlow(t *testing.T) {
 	result := testutil.Check(source, testutil.WithStdlib(),
 		testutil.WithManifest("registry", registryManifest),
 		testutil.WithManifest("funcs", funcsManifest),
-		testutil.WithManifest("time", timeManifest))
+		testutil.WithManifest("time", timeManifest),
+		testutil.WithManifest("io", commandLineIOManifest()))
 	if result.HasError() {
 		for _, d := range result.Errors {
 			t.Logf("error: %s", d.Message)
@@ -391,7 +403,7 @@ func TestWippyRunner_NearLiteralTestRunnerFlow(t *testing.T) {
 			root := result.Session.RootResult.Graph
 			parentHash := result.Session.Store.GraphParentHashOf(root.ID())
 			parent := result.Session.Store.Parents()[parentHash]
-			functionFacts := result.Session.Store.GetFunctionFactsSnapshot(root, parent)
+			functionFacts := result.Session.Store.GetInterprocFacts(root, parent).FunctionFacts
 			if bindings := result.Session.Store.ModuleBindings(); bindings != nil {
 				for sym, fact := range functionFacts {
 					name := bindings.Name(sym)

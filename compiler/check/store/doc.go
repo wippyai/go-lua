@@ -12,7 +12,7 @@
 //   - Analysis results (types, flow facts, diagnostics) per function
 //   - Interprocedural facts (canonical function facts, parameter evidence)
 //   - Module-level bindings and alias maps
-//   - Query-tracked interprocedural snapshot inputs for precise function-result
+//   - Query-tracked interprocedural fact inputs for precise function-result
 //     cache revalidation
 //
 // # Session Integration
@@ -20,9 +20,9 @@
 // The store implements [api.StoreReader] and [api.IterationStore] interfaces,
 // providing read access for queries and write access for the fixpoint driver.
 //
-// # Snapshot Isolation
+// # Product Visibility
 //
-// During fixpoint iteration, the store provides stable snapshots of
-// interprocedural facts while allowing incremental updates. This ensures
-// consistent reads during a single iteration pass.
+// During fixpoint iteration, the store exposes the visible product: the stable
+// product from completed iterations overlaid with facts already produced in the
+// current iteration. Query inputs track that visible product per graph key.
 package store

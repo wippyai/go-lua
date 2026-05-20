@@ -5103,7 +5103,7 @@ compiler/check/flowstate
 Existing packages remain as orchestration:
 
 ```text
-compiler/check/flowbuild
+compiler/check/abstract/transfer
 compiler/check/synth
 compiler/check/infer/return
 compiler/check/infer/interproc
@@ -6950,3 +6950,621 @@ and the Wippy binary builds, then external lint exits non-zero with:
 Those pinned counts are useful for monitoring but are not the proof surface for
 this go-lua patch. The proof surface for this patch is the local-replace replay
 above plus the go-lua regression suite.
+
+## 2026-05-20 Flash Migration: Abstract Transfer Evidence Boundary
+
+Current migration state after the latest flash slice:
+
+- `compiler/check/flowbuild` is gone. The final transfer owner is
+  `compiler/check/abstract/transfer`.
+- `compiler/check/domain/factproduct` is gone. The final interprocedural
+  product owner is `compiler/check/domain/interproc`.
+- `abstract.RunTransfer` returns one `TransferResult`: flow inputs plus
+  transfer-owned evidence.
+- `api.FuncResult` stores `Evidence api.FlowEvidence`, not a separate call side
+  channel.
+- `api.FuncAnalysisView` replaced the misleading `FuncResultSnapshot` name. It
+  is a nested-processing view, not a fact snapshot authority.
+- `FunctionFacts` remains the only authority for params, return summary, narrow
+  return summary, function type, and refinement.
+- `LiteralSigs`, captured types, captured field writes, captured container
+  mutations, and constructor fields are product slots under `api.Facts`.
+- Production publishers use `domain/interproc` delta constructors. Direct
+  `api.Facts{...}` construction outside tests is now limited to product-domain
+  internals and store cloning/empty values.
+
+Evidence ownership after this slice:
+
+- call discovery is centralized in `abstract/transfer`.
+- `x.field or default` expression evidence is centralized in
+  `abstract/transfer`.
+- captured field writes and captured container mutations are discovered in
+  `abstract/transfer`.
+- postflow interproc publication no longer rescans nested bodies for captured
+  writes; it reduces transfer evidence with narrowed expression types.
+- local return SCC propagation no longer scans local-function call sites; it
+  consumes `LocalFuncInfo.Evidence.Calls`.
+- parent-call parameter evidence and nested mutation replay no longer scan
+  parent call sites; they consume parent `FlowEvidence.Calls`.
+
+Important invariant:
+
+```text
+CFG/AST event discovery belongs to abstract transfer.
+Later phases may reduce transfer evidence with solved/narrowed types.
+Later phases must not rediscover call/body evidence by walking the AST again.
+```
+
+This is the flash migration shape, not a compatibility bridge. The old
+`FunctionTypesFromFacts`, return-summary mirrors, per-slice fact snapshot
+getters, scratch literal signatures, and captured-write nested rescans are not
+present in production checker code.
+
+Remaining non-interproc graph walks are classified as follows:
+
+- `abstract/transfer/*`: canonical event discovery and flow-input lowering.
+- `hooks/*`: validation passes over already-built analysis results.
+- `effects/propagate.go`: effect validation/propagation, not a fact authority.
+- `synth/*`: expression synthesis helpers, not interproc fact publication.
+- `infer/return` assignment and return walks: local return-vector construction
+  and overlay mutation synthesis. These are still part of return inference, not
+  a second interproc fact channel. If they start publishing cross-function facts
+  directly, they must be moved behind transfer evidence first.
+- `nested/constructor.go` and `nested/table.go`: constructor/self-shape pattern
+  recognition. Constructor publication already goes through the module
+  `ConstructorFields` product slot, but the pattern recognizer itself is still a
+  specialized structural recognizer. This is the next design area to collapse if
+  constructor/self inference expands.
+
+Verification for this checkpoint:
+
+```text
+go test ./compiler/check/returns ./compiler/check/infer/return ./compiler/check/pipeline ./compiler/check/tests/flow ./compiler/check/tests/inference ./compiler/check -count=1
+
+go test ./compiler/check/api ./compiler/check/store ./compiler/check/infer/interproc ./compiler/check/infer/nested ./compiler/check/infer/return ./compiler/check/pipeline ./compiler/check/domain/... ./compiler/check/abstract/... ./compiler/check/synth/phase/extract ./compiler/check/returns ./compiler/check/nested ./compiler/check ./compiler/check/tests/flow ./compiler/check/tests/errors ./compiler/check/tests/modules ./compiler/check/tests/inference -count=1
+```
+
+Both passed.
+
+No external replay or global lint classification was performed in this
+checkpoint because the active instruction was to finish the migration boundary
+before returning to regression classification.
+
+## 2026-05-20 Flash Migration: Transfer Event Trace Collapse
+
+This slice completed the abstract-transfer boundary for the return/nested
+checker path. The checker now has one canonical event source for the structural
+events that downstream inference needs:
+
+```text
+CFG/AST -> abstract/transfer -> flow.Inputs + FlowEvidence
+FlowEvidence + solved/narrowed types -> reducers/publishers
+FunctionFacts/api.Facts -> only persisted interprocedural product
+```
+
+Directly migrated event ownership:
+
+- `FlowEvidence` now carries assignment, return, call, field-default,
+  function-definition, function-escape, captured-field, and captured-container
+  events discovered by `abstract/transfer`.
+- return inference no longer scans assignments to find local functions; it
+  consumes `FlowEvidence.FunctionDefinitions`.
+- return inference no longer scans returns to build return vectors; it consumes
+  `FlowEvidence.Returns`.
+- return overlay construction no longer scans assignments for local function
+  values, local declaration seeds, local annotations, or captured parent
+  annotations; it consumes local or parent `FlowEvidence.Assignments`.
+- nested processing no longer calls `nested.GatherChildren` or
+  `ResolveNestedFuncIdentity`; those helpers were deleted. Function identity is
+  resolved once by transfer evidence.
+- constructor/self pattern helpers no longer scan parent/nested graphs for
+  assignments or returns; they consume `AssignmentEvidence` and `ReturnEvidence`.
+- session graph hierarchy registration no longer has separate assignment,
+  funcdef, and nested-function registration loops; it consumes
+  `FunctionDefinitionEvidence`.
+- module export no longer scans return nodes; it consumes result return
+  evidence.
+
+The invariant is now stronger:
+
+```text
+Production phases after transfer may inspect solved state, synthesize expression
+types, and reduce transfer events. They must not rediscover transfer-owned
+events by walking the CFG/AST in return/nested/interproc orchestration.
+```
+
+Proof scan for the migrated boundary:
+
+```text
+rg "EachAssign|EachCallSite|EachFuncDef|EachReturn|EachBranch|for _, stmt := range" \
+  compiler/check/infer/return compiler/check/infer/nested compiler/check/returns \
+  compiler/check/pipeline compiler/check/nested compiler/check/session.go \
+  compiler/check/modules/export.go -g '!**/*_test.go' -n
+```
+
+The scan returns no production matches.
+
+Legacy/fallback scan:
+
+```text
+rg "flowbuild|factproduct|FunctionTypesFromFacts|Get.*Snapshot|StoreLiteralSigs|ScratchLiteralSigs|legacy|bridge" \
+  compiler/check -g '!**/*_test.go' -n
+```
+
+The scan returns no production matches.
+
+Verification for this slice:
+
+```text
+go test ./compiler/check/abstract/transfer ./compiler/check/infer/return \
+  ./compiler/check/infer/nested ./compiler/check/nested ./compiler/check/returns \
+  ./compiler/check/pipeline ./compiler/check ./compiler/check/modules -count=1
+
+git diff --check
+```
+
+Both passed.
+
+Broader checker verification currently still fails in regression fixtures:
+
+```text
+go test ./compiler/check/... -count=1
+```
+
+Known failing fixtures at this checkpoint:
+
+- `TestExternalLint_SessionReaderQueryBuilderRealShape`
+- `TestExternalLint_CompressModelInfoNumericHelpersStayNonNil`
+- `TestLinterFalsePositive_TestRunnerPattern`
+- `TestLinterFalsePositive_TestRunnerExact`
+- `TestLinterFalsePositive_GraphLocalUnusedParamAllowsInternalAny`
+
+Those failures are not classified here because the active work was the flash
+migration to the abstract-transfer event boundary, not the false-positive
+repair pass. They remain the next correctness proof obligations after this
+structural migration.
+
+## 2026-05-20 Correction: Event Boundary Was Still Too Loose
+
+The broad scan after the previous checkpoint found real remaining slop. The
+earlier statement that the event boundary was clean was too strong.
+
+Real unresolved migration seams:
+
+- module alias extraction still called `modules.CollectAliases(graph)` from
+  resolve, runner, driver, transfer declarations, and return inference;
+- overlay mutation collection still scanned assignment nodes through
+  `overlaymut`/`transfer/assign` wrappers;
+- function-type synthesis still walked assignments, returns, and branches for
+  local return inference and ordered-comparison hints;
+- error-return inverse-pattern proof still walks return nodes directly;
+- `synth/phase/extract` still has several local discovery scans for named
+  functions and callback environments.
+
+The corrected invariant is stricter:
+
+```text
+Graph/AST event discovery has one owner: abstract transfer.
+Consumers may request transfer-owned graph evidence, then reduce that evidence
+with the type state they own. Consumers must not run their own CFG event scans
+for aliases, assignment mutations, returns, branches, calls, or function defs.
+```
+
+The immediate flash migration target is therefore not another compatibility
+layer. It is one canonical graph evidence object:
+
+```text
+cfg.Graph -> transfer.ExtractGraphEvidence -> api.FlowEvidence
+api.FlowEvidence + flow/product state -> phase reducers and publishers
+```
+
+Direct migration steps for this correction:
+
+- `modules` becomes a reducer over `[]api.AssignmentEvidence`; it no longer
+  scans a graph.
+- overlay mutation collection becomes a reducer over
+  `[]api.AssignmentEvidence`; it no longer scans a graph.
+- `abstract.RunTransfer` seeds `FlowContext` with graph evidence before
+  lowering so declaration extraction and post-transfer evidence use the same
+  trace.
+- runner/driver/resolve/return/synth callers use transfer graph evidence as
+  their event source instead of reconstructing assignment scans locally.
+
+This still leaves larger design work after the direct event collapse:
+
+- synthesis should become a structural expression evaluator over a product
+  query interface, rather than owning its own precedence rules;
+- error-return inverse proof should consume return evidence;
+- remaining named-function/callback discovery in `synth/phase/extract` should
+  be converted to transfer evidence or a stable graph summary;
+- store/query APIs still expose some slice-shaped projections of the canonical
+  product and need a separate product-query cleanup.
+
+## 2026-05-20 Correction: Canonical Trace Cutover
+
+The corrective flash migration now has a concrete owner for event discovery:
+
+```text
+compiler/check/abstract/trace
+```
+
+`trace` is the only non-transfer package that walks CFG/AST structure to build
+semantic evidence. `abstract/transfer` consumes that trace and may still walk
+the CFG internally while lowering flow inputs. Other phases reduce trace
+evidence; they do not rediscover the same events.
+
+Moved to the canonical trace/reducer shape:
+
+- module alias inference reduces `[]api.AssignmentEvidence`;
+- overlay field/index mutation inference reduces `[]api.AssignmentEvidence`;
+- table mutator overlay inference reduces `[]api.CallEvidence`;
+- constructor/self field inference reduces `[]api.AssignmentEvidence`;
+- literal function types/signatures consume trace assignments, function
+  definitions, calls, and returns;
+- synth local-function rebinding/captured-mutation checks consume trace
+  assignments and function definitions;
+- error-return inverse proof consumes `[]api.ReturnEvidence`;
+- parameter-use projection now gets `[]api.ParameterUseEvidence` from
+  `abstract/trace` instead of scanning bodies inside `domain/paramevidence`;
+- iterator pair provenance consumes assignment evidence instead of scanning
+  inside `domain/iteration`;
+- phase/synth dependencies carry `api.FlowEvidence`, so temporary synthesizers
+  reuse the same trace when they are analyzing the same graph.
+
+Correct boundary after this slice:
+
+```text
+abstract/trace    = graph/body event discovery and semantic trace records
+abstract/transfer = flow-input lowering plus solved-state-dependent evidence
+domain/*          = lattice/reducer laws over already-lowered evidence
+synth             = expression evaluator over product/query state and trace
+hooks             = diagnostics over product state and trace
+```
+
+The broad production scan now classifies as:
+
+- `abstract/trace/*`: canonical event discovery;
+- `abstract/transfer/*`: canonical transfer lowering;
+- `hooks/lspindex.go`: editor index, not type/effect fact authority;
+- `hooks/control_check.go`: syntax/control validation;
+- `hooks/exhaustiveness_check.go`: syntactic `if`/`elseif` shape walk for
+  discriminated-union exhaustiveness after branch evidence indexing.
+
+The scan no longer shows event rediscovery in `modules`, `overlaymut`,
+`domain/paramevidence`, `domain/iteration`, `infer/*`, `returns`, `nested`,
+`pipeline`, or `synth`.
+
+Verification for this correction:
+
+```text
+go test ./compiler/check/... -run '^$'
+
+go test ./compiler/check/abstract/trace ./compiler/check/abstract/transfer \
+  ./compiler/check/domain/paramevidence ./compiler/check/domain/iteration \
+  ./compiler/check/synth ./compiler/check/synth/phase/extract \
+  ./compiler/check/hooks ./compiler/check/infer/return \
+  ./compiler/check/pipeline -count=1
+```
+
+Both passed.
+
+This is a design correction, not a file shuffle. The reason for the move is to
+make semantic event discovery single-owner and cacheable. Later work can now
+optimize around one trace instead of chasing assignments/calls/returns through
+several helper clusters.
+
+## 2026-05-20 Abstract Interpreter Evidence Closure
+
+Follow-up flash migration tightened the boundary again. Several consumers still
+looked harmless because they were diagnostics or synthesis helpers, but they
+were still reconstructing semantic facts from CFG nodes. Those are now explicit
+evidence lanes in the abstract interpreter trace:
+
+- `api.IdentifierUseEvidence`: identifier reads are discovered once by
+  `abstract/trace`; `hooks.CheckIdents` consumes that evidence instead of
+  walking `graph.RPO()` and reopening node payloads.
+- `api.FreshTableLiteralEvidence`: fresh table provenance for structured
+  assignment checks is proven in `abstract/trace` at only the assignment sites
+  that need it. `domain/provenance` now only matches source identifiers to this
+  canonical proof; it no longer walks predecessors or reinterprets CFG events.
+- `api.NormalExitEvidence`: termination reachability now checks return evidence
+  plus the canonical normal-exit point. `effects.TerminatesFromReachability`
+  no longer scans CFG nodes looking for returns.
+- call-on-return extraction now receives the current `api.FlowEvidence`
+  explicitly; condition extraction no longer builds an ad-hoc trace when it
+  needs local predicate evidence.
+- literal synthesis and keys/callback helpers no longer silently rebuild
+  evidence when callers pass an empty trace. Production callers must pass the
+  canonical trace; tests now build trace evidence explicitly.
+
+This confirms the intended abstract-interpreter shape:
+
+```text
+CFG/AST -> abstract/trace.FlowEvidence
+FlowEvidence + declared state -> abstract/transfer.Inputs
+Inputs -> flow.Solution in DNF/path-sensitive form
+FlowEvidence + flow/product state -> synth, effects, hooks, interproc facts
+FunctionFacts/interproc product -> monotone SCC/fixpoint publication
+```
+
+DNF is already the checker's path-condition representation. It is not being
+replaced here. The optional future SMT tier would sit after this architecture as
+an obligation solver for formulas outside the current domain-specific DNF and
+numeric/refinement reducers. The flash migration goal is to make that extension
+possible without adding another scattered helper layer.
+
+Current allowed direct CFG users:
+
+- `abstract/trace`: canonical event/provenance discovery;
+- `abstract/transfer`: graph topology, SSA versions, loop preheaders, edge
+  conditions, and transfer lowering;
+- `phase/scope` and `scope/typedefs`: lexical/type-scope construction before
+  transfer facts exist;
+- `phase/resolve`: initial symbol/type seeding for declared environments;
+- `hooks/lspindex`: editor symbol/reference index, not checker fact authority.
+
+Everything else should either consume `api.FlowEvidence`, consume solved flow
+state, or move its missing fact into `abstract/trace` as a named evidence lane.
+
+## 2026-05-20 Evidence Projection And Iterator Transfer Corrections
+
+This checkpoint records the latest engine-level corrections after rechecking the
+remaining focused false positives.
+
+Canonical design clarifications:
+
+- DNF is already the current path-condition language. It remains the core
+  representation for path-sensitive flow and refinement constraints. A future
+  SMT/refinement tier would be an optional solver behind this same evidence
+  model, not a replacement for DNF and not a new scattered fact layer.
+- Parameter evidence has two separate body-demand modes:
+  - whole-parameter use preserves the full observed call-site shape;
+  - direct field use completes demanded absent fields on that preserved shape.
+  Whole forwarding therefore must not erase local field demands such as
+  `options.stream`; it only prevents trimming unrelated observed fields.
+- Generic-for transfer has two evidence sources:
+  - the solved iterator source type;
+  - the abstract interpreter's extracted assignment type for the loop target.
+  If iterator derivation is top-like (`any`/`unknown`) and the interpreter has a
+  concrete local refinement from sound evidence, the concrete interpreter
+  evidence is authoritative. Concrete iterator derivation still remains
+  authoritative when it proves a real element type.
+- Explicit dynamic `any` is not silently specialized by a callee's expected
+  argument type. Unknown or soft unresolved locals may be refined by use, but
+  `any` remains a dynamic boundary unless a typed source or guard proves the
+  concrete type.
+
+Corrections made:
+
+- `ProjectToParameterUse` now completes demanded fields even when the parameter
+  is also forwarded as a whole value. This fixed the callback-local
+  `client.request(..., {headers = {}})` regression where `http_options.stream`
+  was falsely reported missing.
+- Generic loop targets are now recorded as real value definitions for inference
+  visibility. Loop variables are not treated as invisible just because their
+  value comes from `IterExprs` instead of a normal RHS expression.
+- Assignment extraction now lets the SCC-refined loop target type repair
+  top-like iterator output before emitting flow inputs.
+- Flow transfer now reconciles iterator-derived type with the extracted loop
+  assignment type so `ipairs(any)` cannot erase a proven local call-expected
+  refinement. The sorted-test-runner fixtures now model `io.args()` with a
+  manifest returning `string[]`, which is the actual proof that `pattern` is
+  `string`.
+- The intentionally unsafe dynamic-resource fixture still requires a string
+  proof for `resource_id`; this protects the soundness boundary that arbitrary
+  `any` values from untyped input cannot be accepted as strings merely because a
+  downstream function expects `string`.
+
+Regression protection added or confirmed:
+
+- `TestProjectToParameterUse_WholeForwardingCompletesDemandedFields` covers
+  whole forwarding plus direct demanded absent field completion.
+- `TestMergeIteratorAssignedType_PreservesPreciseExtractedAgainstDynamicDerived`
+  covers iterator transfer reconciliation.
+- Existing high-level regressions now pass:
+  - `TestFalsePositive_CallbackLocalDelegatedErrorReturnNarrowsSibling`
+  - `TestWippyRunner_SortedKeysWithFilterBranch`
+  - `TestWippyRunner_NearLiteralTestRunnerFlow`
+
+Verification for this correction:
+
+```text
+go test ./compiler/check/domain/paramevidence ./types/flow \
+  ./compiler/check/tests/regression \
+  -run 'TestProjectToParameterUse_WholeForwardingCompletesDemandedFields|TestMergeIteratorAssignedType_PreservesPreciseExtractedAgainstDynamicDerived|TestFalsePositive_CallbackLocalDelegatedErrorReturnNarrowsSibling|TestWippyRunner_SortedKeysWithFilterBranch|TestWippyRunner_NearLiteralTestRunnerFlow' \
+  -count=1
+
+go test ./compiler/check/tests/regression \
+  -run 'TestFalsePositive_CallbackLocalDelegatedErrorReturnNarrowsSibling|TestWippyRunner_SortedKeysWithFilterBranch|TestWippyRunner_NearLiteralTestRunnerFlow' \
+  -count=1
+
+go test ./types/flow ./compiler/check/abstract/transfer/assign \
+  ./compiler/check/domain/paramevidence -count=1
+```
+
+All commands passed.
+
+## 2026-05-20 Correction: Field Probes Are Nil-Producing Queries
+
+The `deadlock-compiler-lua` fixture exposed a remaining mismatch between the
+abstract interpreter and Lua table semantics. A field read used only as a
+truthiness/existence probe was still validated as a required value read:
+
+```lua
+if edge.target_node_id or edge.is_workflow_terminal then
+```
+
+When `edge` is an inferred closed record that lacks `is_workflow_terminal`,
+the runtime result of `edge.is_workflow_terminal` is nil. That probe is safe;
+what remains unsafe is using the absent field as a real value. The canonical
+rule is now:
+
+```text
+value read              = declared field required on closed records
+truthiness/nil probe    = missing table field may read as nil
+primitive/non-table read = still an indexing error
+```
+
+The implementation keeps this distinction at the checker boundary instead of
+weakening field lookup globally. `types/query/core.MissingFieldReadsNil` is the
+single query for "does absent field access produce nil rather than an indexing
+error"; union field lookup already needed the same fact to add nil for table
+variants that do not carry a field.
+
+Regression protection:
+
+- `TestGuards_FieldTruthyNarrowsUnion/closed_record_missing_field_is_nil_in_truthiness_probe`
+  covers `or` and `not` guards on absent table fields.
+- `TestGuards_FieldTruthyNarrowsUnion/closed_record_missing_field_nil_comparison_is_existence_probe`
+  covers `field == nil` existence probes.
+- `TestStrictTypeChecks_FieldAndReturn/truthiness_probe_on_primitive_still_rejects_indexing`
+  keeps primitive indexing errors intact.
+- `TestStrictTypeChecks_FieldAndReturn/missing_closed_record_field_still_rejects_value_read`
+  keeps strict value-read diagnostics intact.
+
+Fixture classification:
+
+- `regression/deadlock-compiler-lua/check` is now clean; the
+  `is_workflow_terminal` diagnostic was a checker false positive.
+- `regression/non-dominating-field-defined-wrapper-return/check` still reports
+  the intended soundness error (`cannot assign unknown to string`). Its
+  manifest was corrected from two expected diagnostics to one because the extra
+  diagnostic was only duplicate/noisy reporting, not an independent proof
+  obligation.
+
+## 2026-05-20 Correction: Parameter Evidence Is Pre-State Only
+
+The recursive schema regression exposed a foundational ownership leak in return
+inference. `FunctionFact.Params` is the accepted input contract for a function,
+but return inference was merging the post-body overlay back into parameter
+evidence after applying body mutations. That let writes such as:
+
+```lua
+obj.multipleOf = nil
+obj.additionalProperties = nil
+```
+
+become required fields on the public parameter type of `recursive_filter(obj)`.
+The result was a false positive at the first valid call with a schema shape that
+did not already contain fields created inside the callee body.
+
+Correct invariant:
+
+```text
+FunctionFact.Params = accepted pre-state input evidence
+body writes         = local abstract-interpreter state and return/output shape
+FunctionFact.Type   = callable view over Params + return summaries/effects
+```
+
+Therefore:
+
+- call-site observations and body-read/precondition evidence may refine
+  `FunctionFact.Params`;
+- field defaults such as `param.field or "x"` may add optional input evidence;
+- helper-call expected arguments may add body-demand evidence when the parameter
+  or a parameter field is read and passed onward;
+- final overlay state after assignments must not be merged into
+  `FunctionFact.Params`;
+- body mutation state may still affect the return summary and local flow state.
+
+The implementation removed the post-mutation overlay-to-parameter-evidence
+merge from return inference. This is not a bridge or a special case: it restores
+the abstract-interpreter product separation. The interpreter owns mutable value
+state; the function-fact parameter slot owns the accepted pre-state contract.
+
+Regression protection:
+
+- `TestExternalLint_PairsSchemaFilterWritesRecursiveValueBackToSameKey`
+  protects the positive recursive-schema case where body writes create fields
+  before returning the object.
+- `TestExternalLint_RejectsPairsWriteThatChangesClosedFieldDomain` protects the
+  negative closed-record case so table write soundness is not weakened.
+- `TestExternalLint_DynamicResourceIDsRequireStringProof` protects the dynamic
+  `any` boundary: expected string parameters cannot silently specialize unknown
+  external data.
+
+Verification:
+
+```text
+go test ./compiler/check/tests/regression \
+  -run 'TestExternalLint_PairsSchemaFilterWritesRecursiveValueBackToSameKey|TestExternalLint_RejectsPairsWriteThatChangesClosedFieldDomain|TestExternalLint_DynamicResourceIDsRequireStringProof|TestWippyRunner_SortedKeysWithFilterBranch|TestWippyRunner_NearLiteralTestRunnerFlow|TestFalsePositive_CallbackLocalDelegatedErrorReturnNarrowsSibling|TestExternalLint_BodyCallExpectationInfersWholeParameter|TestExternalLint_GuardedBodyUseDoesNotEraseOptionalParamBoundary' \
+  -count=1
+
+go test ./compiler/check/infer/return ./compiler/check/domain/paramevidence \
+  ./compiler/check/abstract/transfer/assign ./types/flow -count=1
+
+go test ./compiler/check/... -count=1
+```
+
+All commands passed.
+
+## 2026-05-20 Correction: Table-Like Probes Include Arrays And Tuples
+
+The local-replace framework replay exposed two `wippy.agent:context` diagnostics
+on agent-style untyped probe code:
+
+```lua
+if type(tool_specs) == "string" or
+   (type(tool_specs) == "table" and tool_specs.id) then
+```
+
+The previous correction made record/map/interface field probes nil-producing,
+but left arrays and tuples out of the central query. That was inconsistent with
+the existing type-kind model: `type(x) == "table"` maps to records, maps,
+arrays, tuples, interfaces, and intersections. All of those are Lua table-like
+values, so a missing named field used only as a truthiness/existence probe reads
+nil rather than raising an indexing error.
+
+Canonical rule:
+
+```text
+table-like value read of missing field   = strict diagnostic for value use
+table-like field existence/truth probe   = nil-producing, no diagnostic
+primitive/function/nil field probe       = still an indexing diagnostic
+```
+
+This is not a tuple-packaging workaround. It aligns
+`types/query/core.MissingFieldReadsNil` with the same table-kind lattice used by
+DNF/path-sensitive `type(x) == "table"` narrowing. Value reads remain strict, so
+the checker still reports likely typos on precise table shapes.
+
+Regression protection:
+
+- `TestMissingFieldReadsNil_TableLikeContainers` covers record, map, array,
+  tuple, interface, and primitive boundaries in the canonical query.
+- `TestFieldProbeSemantics_UntypedTableGuardAllowsExistenceProbe` covers the
+  agent-style untyped rewrap/probe pattern that previously produced
+  `field 'id' does not exist on type ((any))`.
+- Existing strict-field tests still protect primitive probes and direct missing
+  field value reads.
+
+Local-replace classification after the fix:
+
+- `framework/src/agent/src` dropped from eight to six diagnostics; the two
+  `context.lua` field-probe diagnostics were checker false positives and are
+  fixed.
+- Remaining inspected diagnostics are source/proof obligations, not abstract
+  interpreter regressions:
+  - untyped `any` passed to string APIs (`tool_id`, Bedrock parsed text,
+    test network URLs/error fields, page resource ids);
+  - optional HTTP bodies passed to `json.decode` without a fallback at that
+    source version;
+  - untyped mutable config writes that can invalidate numeric config fields;
+  - manifest/source mismatches such as stream `read` arity and metadata modeled
+    as string while code treats it as a table.
+
+Verification for this correction:
+
+```text
+go test ./types/query/core \
+  -run TestMissingFieldReadsNil_TableLikeContainers -count=1 -v
+
+go test ./compiler/check/tests/regression \
+  -run 'TestFieldProbeSemantics_UntypedTableGuardAllowsExistenceProbe|TestFieldProbeSemantics_InterfaceMissingFieldIsNilOnlyInProbe' \
+  -count=1 -v
+
+go test ./compiler/check/hooks ./compiler/check/tests/flow \
+  ./compiler/check/tests/errors ./types/query/core -count=1
+```
+
+All commands passed.

@@ -3,7 +3,8 @@ package iteration
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
@@ -21,8 +22,8 @@ type KeyedPairValue struct {
 // The relation is pure provenance. Callers decide how much type evidence to
 // take from the paired value; this query only proves that the key symbol was
 // introduced by the same iterator as the value symbol.
-func FindKeyedPairValue(graph *cfg.Graph, table ast.Expr, key *ast.IdentExpr) (KeyedPairValue, bool) {
-	if graph == nil || table == nil || key == nil {
+func FindKeyedPairValue(graph *cfg.Graph, assignments []api.AssignmentEvidence, table ast.Expr, key *ast.IdentExpr) (KeyedPairValue, bool) {
+	if graph == nil || len(assignments) == 0 || table == nil || key == nil {
 		return KeyedPairValue{}, false
 	}
 	bindings := graph.Bindings()
@@ -41,23 +42,24 @@ func FindKeyedPairValue(graph *cfg.Graph, table ast.Expr, key *ast.IdentExpr) (K
 
 	var result KeyedPairValue
 	found := false
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range assignments {
+		info := assign.Info
 		if found || info == nil || len(info.IterExprs) == 0 || len(info.Targets) < 2 {
-			return
+			continue
 		}
 		keyTarget := info.Targets[0]
 		valueTarget := info.Targets[1]
 		if keyTarget.Kind != cfg.TargetIdent || keyTarget.Symbol != keySym ||
 			valueTarget.Kind != cfg.TargetIdent || valueTarget.Symbol == 0 {
-			return
+			continue
 		}
 		source, ok := builtinPairsSource(info.IterExprs[0], bindings)
 		if !ok {
-			return
+			continue
 		}
 		sourcePath := path.FromExprWithBindings(source, nil, bindings)
 		if !sourcePath.Equal(tablePath) {
-			return
+			continue
 		}
 		result = KeyedPairValue{
 			TablePath: tablePath,
@@ -71,7 +73,7 @@ func FindKeyedPairValue(graph *cfg.Graph, table ast.Expr, key *ast.IdentExpr) (K
 			},
 		}
 		found = true
-	})
+	}
 
 	return result, found
 }

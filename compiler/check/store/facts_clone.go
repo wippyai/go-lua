@@ -4,11 +4,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 func cloneFacts(f api.Facts) api.Facts {
-	if factsEmpty(f) {
+	if interproc.Empty(f) {
 		return api.Facts{}
 	}
 	return api.Facts{

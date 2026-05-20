@@ -14,24 +14,18 @@ type factsWriteStoreStub struct {
 	graphKeyFor         api.GraphKey
 	graphKeyForOK       bool
 	parentKeyBySymbol   map[cfg.SymbolID]api.GraphKey
-	literalSigsByGraph  map[uint64]map[*ast.FunctionExpr]*typ.Function
 	factsByGraphKeyNext map[api.GraphKey]api.Facts
 }
 
 func newFactsWriteStoreStub() *factsWriteStoreStub {
 	return &factsWriteStoreStub{
 		parentKeyBySymbol:   make(map[cfg.SymbolID]api.GraphKey),
-		literalSigsByGraph:  make(map[uint64]map[*ast.FunctionExpr]*typ.Function),
 		factsByGraphKeyNext: make(map[api.GraphKey]api.Facts),
 	}
 }
 
 func (s *factsWriteStoreStub) MergeInterprocFactsNext(key api.GraphKey, delta api.Facts) {
 	s.factsByGraphKeyNext[key] = delta
-}
-
-func (s *factsWriteStoreStub) StoreLiteralSigs(graphID uint64, sigs map[*ast.FunctionExpr]*typ.Function) {
-	s.literalSigsByGraph[graphID] = sigs
 }
 
 func (s *factsWriteStoreStub) GraphKeyFor(_ *cfg.Graph, _ *scope.State) (api.GraphKey, bool) {
@@ -83,16 +77,13 @@ func TestInterprocFactWriter_WriteLiteralSignatures(t *testing.T) {
 
 	writer.writeLiteralSignatures(graph, scope.New(), sigs)
 
-	if len(stub.literalSigsByGraph[graph.ID()]) != 1 || stub.literalSigsByGraph[graph.ID()][fn] != sig {
-		t.Fatalf("expected literal sigs stored for graph %d", graph.ID())
-	}
 	gotFacts := stub.factsByGraphKeyNext[key]
 	if gotFacts.LiteralSigs == nil || gotFacts.LiteralSigs[fn] != sig {
 		t.Fatalf("expected literal sig in facts update, got %#v", gotFacts.LiteralSigs)
 	}
 }
 
-func TestInterprocFactWriter_WriteLiteralSignatures_StoresScratchWithoutGraphKey(t *testing.T) {
+func TestInterprocFactWriter_WriteLiteralSignatures_RequiresGraphKey(t *testing.T) {
 	stub := newFactsWriteStoreStub()
 	stub.graphKeyForOK = false
 	writer := newInterprocFactWriter(stub)
@@ -104,9 +95,6 @@ func TestInterprocFactWriter_WriteLiteralSignatures_StoresScratchWithoutGraphKey
 	sig := typ.Func().Returns(typ.Number).Build()
 	writer.writeLiteralSignatures(graph, scope.New(), map[*ast.FunctionExpr]*typ.Function{fn: sig})
 
-	if len(stub.literalSigsByGraph[graph.ID()]) != 1 || stub.literalSigsByGraph[graph.ID()][fn] != sig {
-		t.Fatalf("expected literal sigs stored even without graph key")
-	}
 	if len(stub.factsByGraphKeyNext) != 0 {
 		t.Fatalf("expected no facts writes without graph key, got %#v", stub.factsByGraphKeyNext)
 	}

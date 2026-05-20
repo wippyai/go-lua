@@ -104,6 +104,29 @@ func TestFieldUnion(t *testing.T) {
 	})
 }
 
+func TestMissingFieldReadsNil_TableLikeContainers(t *testing.T) {
+	tests := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{"record", typ.NewRecord().Build(), true},
+		{"map", typ.NewMap(typ.String, typ.Any), true},
+		{"array", typ.NewArray(typ.Any), true},
+		{"tuple", typ.NewTuple(typ.Any), true},
+		{"interface", typ.NewInterface("table", nil), true},
+		{"primitive", typ.String, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MissingFieldReadsNil(tt.t); got != tt.want {
+				t.Fatalf("MissingFieldReadsNil(%v) = %v, want %v", tt.t, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFieldIntersection(t *testing.T) {
 	rec1 := typ.NewRecord().Field("a", typ.String).Build()
 	rec2 := typ.NewRecord().Field("b", typ.Integer).Build()

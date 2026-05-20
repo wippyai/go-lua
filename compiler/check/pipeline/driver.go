@@ -7,7 +7,7 @@
 //  3. Execute the memoized function analysis pipeline
 //  4. Propagate effects and interprocedural facts
 //  5. Process nested functions recursively
-//  6. Repeat until fixpoint (no channel changes)
+//  6. Repeat until the interproc product reaches fixpoint
 //
 // The driver coordinates several inference subsystems:
 //   - Return inference: Computes return types for local functions
@@ -22,7 +22,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/effects"
 	interprocinfer "github.com/wippyai/go-lua/compiler/check/infer/interproc"
 	nestedinfer "github.com/wippyai/go-lua/compiler/check/infer/nested"
@@ -80,7 +82,8 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	if chunkGraph != nil {
 		sess.RegisterGraphHierarchy(chunkGraph)
 		if store != nil {
-			store.SetModuleAliases(modules.CollectAliases(chunkGraph))
+			evidence := trace.GraphEvidence(chunkGraph, store.ModuleBindings())
+			store.SetModuleAliases(modules.AliasesFromAssignments(evidence.Assignments, chunkGraph))
 			if d.cfg.Stdlib != nil {
 				store.SetGraphParentHash(chunkGraph.ID(), d.cfg.Stdlib.Hash())
 			}
@@ -161,15 +164,15 @@ func (d *Driver) processNestedFunctions(
 		Check: func(fn *ast.FunctionExpr, parent *scope.State) {
 			d.checkFunctionFixpoint(sess, fn, parent)
 		},
-		ResultForFunc: func(fn *ast.FunctionExpr) *api.FuncResultSnapshot {
+		ResultForFunc: func(fn *ast.FunctionExpr) *api.FuncAnalysisView {
 			if results == nil {
 				return nil
 			}
-			return api.SnapshotFromResult(results[fn])
+			return api.ViewFromResult(results[fn])
 		},
-		RootResult: api.SnapshotFromResult(sess.RootResultValue()),
+		RootResult: api.ViewFromResult(sess.RootResultValue()),
 	})
-	nestedProc.ProcessNestedFunctions(graph, api.SnapshotFromResult(result))
+	nestedProc.ProcessNestedFunctions(graph, api.ViewFromResult(result))
 }
 
 func (d *Driver) registerParentScope(store api.IterationStore, graphID uint64, parent *scope.State) uint64 {
@@ -200,9 +203,10 @@ func (d *Driver) runReturnInference(
 		SourceName:  sess.Source(),
 	})
 
+	refinementFacts := refinementFactsFrom(store)
 	var refinementLookup constraint.RefinementLookupBySym
-	if es := store.RefinementStore(); es != nil {
-		refinementLookup = es.LookupRefinementBySym
+	if refinementFacts != nil {
+		refinementLookup = refinementFacts.LookupBySym
 	}
 
 	functionFacts, diags := inferencer.ComputeForGraph(returninfer.RunContext{
@@ -217,9 +221,7 @@ func (d *Driver) runReturnInference(
 		return
 	}
 	if key, ok := store.GraphKeyFor(graph, parent); ok {
-		store.MergeInterprocFactsNext(key, api.Facts{
-			FunctionFacts: functionFacts,
-		})
+		store.MergeInterprocFactsNext(key, interprocdomain.FunctionFactsDelta(functionFacts))
 	}
 }
 
@@ -316,14 +318,19 @@ func (d *Driver) storeFunctionRefinement(store api.IterationStore, result *api.F
 	if result == nil || store == nil || funcSym == 0 {
 		return
 	}
+	refinementFacts := refinementFactsFrom(store)
 	lookup := func(sym cfg.SymbolID) *constraint.FunctionRefinement {
-		return effects.LookupRefinementBySym(store.RefinementStore(), store.ModuleBindings(), d.cfg.GlobalTypes, sym)
+		return effects.ResolveRefinementBySym(refinementFacts, store.ModuleBindings(), d.cfg.GlobalTypes, sym)
 	}
 	fnEffect := effects.Propagate(result, lookup)
 	if fnEffect == nil {
 		return
 	}
-	store.StoreFunctionRefinement(funcSym, fnEffect)
+	key, ok := store.ParentGraphKeyForSymbol(funcSym)
+	if !ok {
+		return
+	}
+	store.MergeInterprocFactsNext(key, interprocdomain.FunctionFactDelta(funcSym, api.FunctionFact{Refinement: fnEffect}))
 }
 
 func collectGlobalNames(globalTypes map[string]typ.Type) []string {

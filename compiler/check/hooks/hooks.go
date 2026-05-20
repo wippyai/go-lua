@@ -62,7 +62,7 @@ func WithAssign() check.Option {
 		if result.NarrowSynth == nil || result.Graph == nil {
 			return nil
 		}
-		return CheckAssignments(result.Graph, result.Scopes, result.NarrowSynth, result, sess.SourceName)
+		return CheckAssignments(result.Graph, result.Evidence, result.Scopes, result.NarrowSynth, result, sess.SourceName)
 	})
 }
 
@@ -73,7 +73,7 @@ func WithReturn() check.Option {
 			return nil
 		}
 		narrowView := result.NarrowSynth.Narrow()
-		return CheckReturns(fn, result.Graph, result.Scopes, result.BaseScope, result.NarrowSynth, narrowView, sess.SourceName)
+		return CheckReturns(fn, result.Graph, result.Evidence, result.Scopes, result.BaseScope, result.NarrowSynth, narrowView, sess.SourceName)
 	})
 }
 
@@ -84,7 +84,7 @@ func WithCall() check.Option {
 			return nil
 		}
 		narrowView := result.NarrowSynth.Narrow()
-		return CheckCalls(result.Graph, result.Scopes, result.NarrowSynth, narrowView, sess.SourceName)
+		return CheckCalls(result.Graph, result.Evidence, result.Scopes, result.NarrowSynth, narrowView, sess.SourceName)
 	})
 }
 
@@ -95,7 +95,7 @@ func WithField() check.Option {
 			return nil
 		}
 		narrowView := result.NarrowSynth.Narrow()
-		return CheckFields(result.Graph, result.NarrowSynth, narrowView, sess.SourceName)
+		return CheckFields(result.Graph, result.Evidence, result.NarrowSynth, narrowView, sess.SourceName)
 	})
 }
 
@@ -115,7 +115,7 @@ func WithExhaustiveness() check.Option {
 		if fn == nil || result.Graph == nil || result.NarrowSynth == nil {
 			return nil
 		}
-		return CheckExhaustiveness(fn, result.Graph, result.NarrowSynth.Narrow(), sess.SourceName)
+		return CheckExhaustiveness(fn, result.Graph, result.Evidence, result.NarrowSynth.Narrow(), sess.SourceName)
 	})
 }
 
@@ -125,6 +125,6 @@ func WithIdent() check.Option {
 		if result.Graph == nil {
 			return nil
 		}
-		return CheckIdents(result.Graph, result.Scopes, sess.SourceName)
+		return CheckIdents(result.Graph, result.Evidence, result.Scopes, sess.SourceName)
 	})
 }

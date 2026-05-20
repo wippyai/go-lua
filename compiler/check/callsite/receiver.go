@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	compcfg "github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	typecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 )
@@ -15,7 +16,7 @@ import (
 //   - only method syntax calls (`obj:method(...)`) are considered
 //   - calls to statically known function-literal-backed symbols force receiver
 //   - function definition symbols with field/method targets force receiver
-func ForceMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, info *compcfg.CallInfo) bool {
+func ForceMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, evidence api.FlowEvidence, info *compcfg.CallInfo) bool {
 	if info == nil || info.Method == "" {
 		return false
 	}
@@ -23,11 +24,11 @@ func ForceMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, info
 	sym := SelectPreferredSymbol(
 		CallableCalleeSymbolCandidates(info, graph, bindings, nil),
 		func(candidate typecfg.SymbolID) bool {
-			return symbolForcesMethodReceiver(bindings, graph, candidate)
+			return symbolForcesMethodReceiver(bindings, evidence, candidate)
 		},
 	)
 
-	if sym != 0 && symbolForcesMethodReceiver(bindings, graph, sym) {
+	if sym != 0 && symbolForcesMethodReceiver(bindings, evidence, sym) {
 		return true
 	}
 
@@ -40,19 +41,19 @@ func ForceMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, info
 		return false
 	}
 
-	return symbolForcesMethodReceiver(bindings, graph, sym)
+	return symbolForcesMethodReceiver(bindings, evidence, sym)
 }
 
 // ForceMethodReceiverAtPoint resolves callsite info at a CFG point and applies
 // the canonical receiver-forcing policy.
-func ForceMethodReceiverAtPoint(bindings *bind.BindingTable, graph *compcfg.Graph, p typecfg.Point, ex *ast.FuncCallExpr) bool {
+func ForceMethodReceiverAtPoint(bindings *bind.BindingTable, graph *compcfg.Graph, evidence api.FlowEvidence, p typecfg.Point, ex *ast.FuncCallExpr) bool {
 	if ex == nil || ex.Method == "" {
 		return false
 	}
 
 	if graph != nil {
 		if info := graph.CallSiteAt(p, ex); info != nil {
-			return ForceMethodReceiver(bindings, graph, info)
+			return ForceMethodReceiver(bindings, graph, evidence, info)
 		}
 	}
 
@@ -63,10 +64,10 @@ func ForceMethodReceiverAtPoint(bindings *bind.BindingTable, graph *compcfg.Grap
 	if !ok || sym == 0 {
 		return false
 	}
-	return symbolForcesMethodReceiver(bindings, graph, sym)
+	return symbolForcesMethodReceiver(bindings, evidence, sym)
 }
 
-func symbolForcesMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Graph, sym typecfg.SymbolID) bool {
+func symbolForcesMethodReceiver(bindings *bind.BindingTable, evidence api.FlowEvidence, sym typecfg.SymbolID) bool {
 	if sym == 0 {
 		return false
 	}
@@ -75,22 +76,14 @@ func symbolForcesMethodReceiver(bindings *bind.BindingTable, graph *compcfg.Grap
 			return true
 		}
 	}
-	if graph == nil {
-		return false
+	for _, def := range evidence.FunctionDefinitions {
+		info := def.FuncDef
+		if info == nil || info.Symbol == 0 || info.Symbol != sym {
+			continue
+		}
+		return info.TargetKind == compcfg.FuncDefField || info.TargetKind == compcfg.FuncDefMethod
 	}
-
-	forced := false
-	graph.EachFuncDef(func(_ typecfg.Point, info *compcfg.FuncDefInfo) {
-		if forced || info == nil || info.Symbol == 0 {
-			return
-		}
-		if info.Symbol != sym {
-			return
-		}
-		forced = info.TargetKind == compcfg.FuncDefField || info.TargetKind == compcfg.FuncDefMethod
-	})
-
-	return forced
+	return false
 }
 
 func methodCalleeSymbolFromCall(bindings *bind.BindingTable, graph *compcfg.Graph, info *compcfg.CallInfo) (typecfg.SymbolID, bool) {

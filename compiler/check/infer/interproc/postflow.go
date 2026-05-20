@@ -2,18 +2,19 @@ package interproc
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
-	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -28,7 +29,6 @@ type Store interface {
 	api.StoreReader
 
 	MergeInterprocFactsNext(key api.GraphKey, delta api.Facts)
-	StoreLiteralSigs(graphID uint64, sigs map[*ast.FunctionExpr]*typ.Function)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
 }
 
@@ -68,13 +68,13 @@ func StoreFactsFromResult(
 		return
 	}
 	narrowSummary := returnsummary.Normalize(fnType.Returns)
-	if snapNarrow := narrowSummarySnapshotForSymbol(store, result, parent, fnSym); len(snapNarrow) > 0 {
-		narrowSummary = returnsummary.Merge(narrowSummary, snapNarrow)
+	if factNarrow := narrowSummaryFactForSymbol(store, result, parent, fnSym); len(factNarrow) > 0 {
+		narrowSummary = returnsummary.Merge(narrowSummary, factNarrow)
 		if aligned, changed := returnsummary.AlignFunction(fnType, narrowSummary); changed {
 			fnType = aligned
 		}
 	}
-	summaryFromSnapshot := returnSummarySnapshotForSymbol(store, result, parent, fnSym)
+	summaryFromFacts := returnSummaryFactForSymbol(store, result, parent, fnSym)
 
 	candidateFunc := fnType
 	if len(narrowSummary) > 0 && !returnsummary.AllNil(narrowSummary) {
@@ -82,19 +82,20 @@ func StoreFactsFromResult(
 			candidateFunc = aligned
 		}
 	}
-	if facts := store.GetFunctionFactsSnapshot(result.Graph, parent); len(facts) > 0 {
+	if facts := store.GetInterprocFacts(result.Graph, parent).FunctionFacts; len(facts) > 0 {
 		if hinted := paramevidence.MergeIntoSignature(fn, facts.Params(fnSym), unwrap.Function(candidateFunc)); hinted != nil {
 			candidateFunc = hinted
 		}
 	}
 	candidateFunc = stripSyntheticVariadic(fn, unwrap.Function(candidateFunc))
-	delta := api.Facts{FunctionFacts: api.FunctionFacts{
-		fnSym: functionfact.Join(api.FunctionFact{}, api.FunctionFact{
-			Summary: summaryFromSnapshot,
+	delta := interprocdomain.FunctionFactDelta(
+		fnSym,
+		functionfact.Join(api.FunctionFact{}, api.FunctionFact{
+			Summary: summaryFromFacts,
 			Narrow:  narrowSummary,
 			Type:    candidateFunc,
 		}),
-	}}
+	)
 	writer.mergeParentFactsForSymbol(fnSym, delta)
 }
 
@@ -108,32 +109,88 @@ func storeCapturedFactsFromResult(
 	if store == nil || fn == nil || fnSym == 0 || result == nil || result.Graph == nil || result.NarrowSynth == nil {
 		return
 	}
-	bindings := bindingsForGraphOrModule(result.Graph, store)
-	if bindings == nil {
-		return
-	}
-	capturedSet := capturedSymbolSet(bindings, fn)
-	if len(capturedSet) == 0 {
-		return
-	}
 
-	fields := nested.CollectCapturedFieldAssignments(result.Graph, capturedSet, result.NarrowSynth.TypeOf)
+	fields := capturedFieldFactsFromEvidence(result.Evidence.CapturedFields, result.NarrowSynth.TypeOf)
 	if len(fields) > 0 {
-		writer.mergeParentFactsForSymbol(fnSym, api.Facts{
-			CapturedFields: api.CapturedFieldAssigns{
-				fnSym: fields,
-			},
-		})
+		writer.mergeParentFactsForSymbol(fnSym, interprocdomain.CapturedFieldAssignsDelta(fnSym, fields))
 	}
 
-	mutations := nested.CollectCapturedContainerMutations(result.Graph, capturedSet, result.NarrowSynth.TypeOf)
+	mutations := capturedContainerFactsFromEvidence(result.Evidence.CapturedContainers, result.NarrowSynth.TypeOf)
 	if len(mutations) > 0 {
-		writer.mergeParentFactsForSymbol(fnSym, api.Facts{
-			CapturedContainers: api.CapturedContainerMutations{
-				fnSym: mutations,
-			},
+		writer.mergeParentFactsForSymbol(fnSym, interprocdomain.CapturedContainerMutationsDelta(fnSym, mutations))
+	}
+}
+
+func capturedFieldFactsFromEvidence(
+	evidence []api.CapturedFieldEvidence,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+) map[cfg.SymbolID]map[string]typ.Type {
+	if len(evidence) == 0 {
+		return nil
+	}
+	fields := make(map[cfg.SymbolID]map[string]typ.Type)
+	for _, ev := range evidence {
+		if ev.Target == 0 || ev.Field == "" {
+			continue
+		}
+		fieldType := typ.Unknown
+		if synth != nil && ev.Value != nil {
+			if t := synth(ev.Value, ev.Point); t != nil {
+				fieldType = t
+			}
+		}
+		if fields[ev.Target] == nil {
+			fields[ev.Target] = make(map[string]typ.Type)
+		}
+		if existing := fields[ev.Target][ev.Field]; existing != nil {
+			fields[ev.Target][ev.Field] = typ.JoinPreferNonSoft(existing, fieldType)
+		} else {
+			fields[ev.Target][ev.Field] = fieldType
+		}
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
+func capturedContainerFactsFromEvidence(
+	evidence []api.CapturedContainerEvidence,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+) map[cfg.SymbolID][]api.ContainerMutation {
+	if len(evidence) == 0 {
+		return nil
+	}
+	mutations := make(map[cfg.SymbolID][]api.ContainerMutation)
+	for _, ev := range evidence {
+		if ev.Target == 0 || ev.Value == nil {
+			continue
+		}
+		valueType := typ.Unknown
+		if synth != nil {
+			if t := synth(ev.Value, ev.Point); t != nil {
+				valueType = t
+			}
+		}
+		mutations[ev.Target] = append(mutations[ev.Target], api.ContainerMutation{
+			Kind:      ev.Kind,
+			Segments:  cloneSegments(ev.Segments),
+			ValueType: subtype.WidenForInference(valueType),
 		})
 	}
+	if len(mutations) == 0 {
+		return nil
+	}
+	return mutations
+}
+
+func cloneSegments(segments []constraint.Segment) []constraint.Segment {
+	if len(segments) == 0 {
+		return nil
+	}
+	out := make([]constraint.Segment, len(segments))
+	copy(out, segments)
+	return out
 }
 
 func stripSyntheticVariadic(fn *ast.FunctionExpr, sig *typ.Function) *typ.Function {
@@ -166,40 +223,6 @@ func stripSyntheticVariadic(fn *ast.FunctionExpr, sig *typ.Function) *typ.Functi
 	return builder.Build()
 }
 
-func bindingsForGraphOrModule(graph *cfg.Graph, store Store) *bind.BindingTable {
-	if graph == nil {
-		return nil
-	}
-	bindings := graph.Bindings()
-	if bindings != nil {
-		return bindings
-	}
-	if store != nil {
-		return store.ModuleBindings()
-	}
-	return nil
-}
-
-func capturedSymbolSet(bindings *bind.BindingTable, fn *ast.FunctionExpr) map[cfg.SymbolID]bool {
-	if bindings == nil || fn == nil {
-		return nil
-	}
-	captured := bindings.CapturedSymbols(fn)
-	if len(captured) == 0 {
-		return nil
-	}
-	set := make(map[cfg.SymbolID]bool, len(captured))
-	for _, sym := range captured {
-		if sym != 0 {
-			set[sym] = true
-		}
-	}
-	if len(set) == 0 {
-		return nil
-	}
-	return set
-}
-
 func narrowFunctionTypeFromResult(result *api.FuncResult, fn *ast.FunctionExpr) *typ.Function {
 	if result == nil || result.NarrowSynth == nil || fn == nil {
 		return nil
@@ -212,10 +235,10 @@ func narrowFunctionTypeFromResult(result *api.FuncResult, fn *ast.FunctionExpr) 
 			}
 		}
 	}
-	return erreffect.AttachInferredErrorReturnSpec(fnType, result.Graph, result.FlowSolution, result.NarrowSynth)
+	return erreffect.AttachInferredErrorReturnSpec(fnType, result.Evidence, result.FlowSolution, result.NarrowSynth)
 }
 
-func returnSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent *scope.State, sym cfg.SymbolID) []typ.Type {
+func returnSummaryFactForSymbol(store Store, result *api.FuncResult, parent *scope.State, sym cfg.SymbolID) []typ.Type {
 	if store == nil || result == nil || result.Graph == nil || sym == 0 {
 		return nil
 	}
@@ -229,14 +252,14 @@ func returnSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent 
 			}
 		}
 	}
-	facts := store.GetFunctionFactsSnapshot(summaryGraph, summaryScope)
+	facts := store.GetInterprocFacts(summaryGraph, summaryScope).FunctionFacts
 	if len(facts) == 0 {
 		return nil
 	}
 	return facts.Summary(sym)
 }
 
-func narrowSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent *scope.State, sym cfg.SymbolID) []typ.Type {
+func narrowSummaryFactForSymbol(store Store, result *api.FuncResult, parent *scope.State, sym cfg.SymbolID) []typ.Type {
 	if store == nil || result == nil || result.Graph == nil || sym == 0 {
 		return nil
 	}
@@ -256,10 +279,10 @@ func narrowSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent 
 		WithPhase(api.Phase, func())
 	}); ok {
 		phaser.WithPhase(api.PhaseNarrowing, func() {
-			facts = store.GetFunctionFactsSnapshot(summaryGraph, summaryScope)
+			facts = store.GetInterprocFacts(summaryGraph, summaryScope).FunctionFacts
 		})
 	} else {
-		facts = store.GetFunctionFactsSnapshot(summaryGraph, summaryScope)
+		facts = store.GetInterprocFacts(summaryGraph, summaryScope).FunctionFacts
 	}
 	if len(facts) == 0 {
 		return nil
@@ -314,8 +337,8 @@ func expectedFunctionFromResult(result *api.FuncResult) *typ.Function {
 	return builder.Build()
 }
 
-// CollectParameterEvidenceFromResult records parameter evidence based on call sites
-// within the current function's graph using narrowed expression types.
+// CollectParameterEvidenceFromResult reduces transfer-discovered call evidence
+// into canonical parameter facts using narrowed expression types.
 func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, parent *scope.State) {
 	if store == nil || result == nil || result.Graph == nil || result.NarrowSynth == nil {
 		return
@@ -327,7 +350,7 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 	if bindings == nil {
 		bindings = moduleBindings
 	}
-	preAssignTargets := checkcallsite.PreAssignmentTargetsByCall(graph)
+	preAssignTargets := checkcallsite.PreAssignmentTargetsByCall(result.Evidence.Assignments)
 	hasFunctionRef := func(sym cfg.SymbolID) bool {
 		return sym != 0 && store.FunctionRefBySym(sym) != nil
 	}
@@ -474,125 +497,13 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 			deltaFacts[calleeSym] = functionfact.Join(deltaFacts[calleeSym], api.FunctionFact{Params: evidence})
 		}
 		if len(deltaFacts) > 0 {
-			store.MergeInterprocFactsNext(parentKey, api.Facts{FunctionFacts: deltaFacts})
+			store.MergeInterprocFactsNext(parentKey, interprocdomain.FunctionFactsDelta(deltaFacts))
 		}
 	}
 
-	var collectExprCall func(cfg.Point, ast.Expr)
-	collectExprCalls := func(p cfg.Point, exprs []ast.Expr) {
-		if len(exprs) == 0 {
-			return
-		}
-		for _, expr := range exprs {
-			collectExprCall(p, expr)
-		}
+	for _, evidence := range result.Evidence.Calls {
+		collectCallEvidence(evidence.Point, evidence.Info)
 	}
-	collectCallExpr := func(p cfg.Point, call *ast.FuncCallExpr) {
-		if call == nil {
-			return
-		}
-		callInfo := graph.CallSiteAt(p, call)
-		if callInfo == nil {
-			callInfo = synthCallInfoFromExpr(call, bindings)
-		}
-		collectCallEvidence(p, callInfo)
-		collectExprCall(p, call.Func)
-		collectExprCall(p, call.Receiver)
-		collectExprCalls(p, call.Args)
-	}
-	collectExprCall = func(p cfg.Point, expr ast.Expr) {
-		if expr == nil {
-			return
-		}
-		switch e := expr.(type) {
-		case *ast.FuncCallExpr:
-			collectCallExpr(p, e)
-		case *ast.AttrGetExpr:
-			collectExprCall(p, e.Object)
-			collectExprCall(p, e.Key)
-		case *ast.TableExpr:
-			for _, field := range e.Fields {
-				if field == nil {
-					continue
-				}
-				collectExprCall(p, field.Key)
-				collectExprCall(p, field.Value)
-			}
-		case *ast.LogicalOpExpr:
-			collectExprCall(p, e.Lhs)
-			collectExprCall(p, e.Rhs)
-		case *ast.RelationalOpExpr:
-			collectExprCall(p, e.Lhs)
-			collectExprCall(p, e.Rhs)
-		case *ast.StringConcatOpExpr:
-			collectExprCall(p, e.Lhs)
-			collectExprCall(p, e.Rhs)
-		case *ast.ArithmeticOpExpr:
-			collectExprCall(p, e.Lhs)
-			collectExprCall(p, e.Rhs)
-		case *ast.UnaryMinusOpExpr:
-			collectExprCall(p, e.Expr)
-		case *ast.UnaryNotOpExpr:
-			collectExprCall(p, e.Expr)
-		case *ast.UnaryLenOpExpr:
-			collectExprCall(p, e.Expr)
-		case *ast.UnaryBNotOpExpr:
-			collectExprCall(p, e.Expr)
-		case *ast.CastExpr:
-			collectExprCall(p, e.Expr)
-		case *ast.NonNilAssertExpr:
-			collectExprCall(p, e.Expr)
-		}
-	}
-
-	graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
-		if info == nil {
-			return
-		}
-		collectCallExpr(p, info.Call)
-	})
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info != nil {
-			collectExprCalls(p, info.Sources)
-			collectExprCalls(p, info.IterExprs)
-			if info.NumericFor != nil {
-				collectExprCall(p, info.NumericFor.Init)
-				collectExprCall(p, info.NumericFor.Limit)
-				collectExprCall(p, info.NumericFor.Step)
-			}
-		}
-	})
-	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
-		if info != nil {
-			collectExprCalls(p, info.Exprs)
-		}
-	})
-	graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
-		if info != nil {
-			collectExprCall(p, info.Condition)
-		}
-	})
-}
-
-func synthCallInfoFromExpr(ex *ast.FuncCallExpr, bindings *bind.BindingTable) *cfg.CallInfo {
-	if ex == nil {
-		return nil
-	}
-	info := cfg.BuildCallInfo(ex, false)
-	if bindings != nil {
-		info.CalleeSymbol = checkcallsite.SymbolFromExpr(ex.Func, bindings)
-		if ex.Receiver != nil {
-			info.ReceiverSymbol = checkcallsite.SymbolFromExpr(ex.Receiver, bindings)
-			if id, ok := ex.Receiver.(*ast.IdentExpr); ok {
-				info.ReceiverName = id.Value
-			}
-		}
-		info.ArgSymbols = make([]cfg.SymbolID, len(ex.Args))
-		for i, arg := range ex.Args {
-			info.ArgSymbols[i] = checkcallsite.SymbolFromExpr(arg, bindings)
-		}
-	}
-	return info
 }
 
 func parentGraphKeyForCallee(store Store, result *api.FuncResult, parent *scope.State, calleeSym cfg.SymbolID) (api.GraphKey, bool) {

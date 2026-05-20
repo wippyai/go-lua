@@ -22,9 +22,14 @@ func ExportType(result *api.FuncResult, refinementsBySym map[cfg.SymbolID]*const
 	var exportRootName string
 	var exportRootSet bool
 
-	result.Graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+	for _, ret := range result.Evidence.Returns {
+		p := ret.Point
+		info := ret.Info
+		if info == nil {
+			continue
+		}
 		if result.FlowInputs != nil && result.FlowInputs.DeadPoints[p] {
-			return
+			continue
 		}
 		if len(info.Exprs) == 0 {
 			if export == nil {
@@ -32,7 +37,7 @@ func ExportType(result *api.FuncResult, refinementsBySym map[cfg.SymbolID]*const
 			} else {
 				export = typ.NewUnion(export, typ.Nil)
 			}
-			return
+			continue
 		}
 
 		valueType := synth.TypeOf(info.Exprs[0], p)
@@ -57,7 +62,7 @@ func ExportType(result *api.FuncResult, refinementsBySym map[cfg.SymbolID]*const
 		} else if !typ.TypeEquals(export, valueType) {
 			export = typ.NewUnion(export, valueType)
 		}
-	})
+	}
 
 	if export != nil && len(refinementsBySym) > 0 && result.Graph != nil {
 		export = effects.EnrichExportWithEffects(export, exportRootName, refinementsBySym, result.Graph)

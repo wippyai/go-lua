@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -239,7 +240,7 @@ func TestProjectToParameterUse_KeepsDemandedRecordFields(t *testing.T) {
 		Field("_credentials", typ.String).
 		Build()
 
-	got := ProjectToParameterUse(graph, fn, []typ.Type{client, typ.String})
+	got := ProjectToParameterUse(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn), []typ.Type{client, typ.String})
 	rec, ok := got[0].(*typ.Record)
 	if !ok {
 		t.Fatalf("projected client evidence = %T, want record (%v)", got[0], got[0])
@@ -284,7 +285,7 @@ func TestProjectToParameterUse_KeepsDemandedAbsentRecordFieldsAsNil(t *testing.T
 		Field("headers", typ.NewRecord().Build()).
 		Build()
 
-	got := ProjectToParameterUse(graph, fn, []typ.Type{evidence})
+	got := ProjectToParameterUse(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn), []typ.Type{evidence})
 	rec, ok := got[0].(*typ.Record)
 	if !ok {
 		t.Fatalf("projected options evidence = %T, want record (%v)", got[0], got[0])
@@ -296,6 +297,66 @@ func TestProjectToParameterUse_KeepsDemandedAbsentRecordFieldsAsNil(t *testing.T
 	headers := rec.GetField("headers")
 	if headers == nil {
 		t.Fatalf("projected options evidence lost demanded headers field: %v", rec)
+	}
+}
+
+func TestProjectToParameterUse_WholeForwardingCompletesDemandedFields(t *testing.T) {
+	fn := functionWithParams("options")
+	fn.Stmts = []ast.Stmt{
+		&ast.IfStmt{
+			Condition: &ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "options"},
+				Key:    &ast.StringExpr{Value: "stream"},
+			},
+		},
+		&ast.ReturnStmt{Exprs: []ast.Expr{
+			&ast.FuncCallExpr{
+				Func: &ast.IdentExpr{Value: "forward"},
+				Args: []ast.Expr{&ast.IdentExpr{Value: "options"}},
+			},
+		}},
+	}
+	graph := cfg.Build(fn, "forward")
+	evidence := typ.NewRecord().
+		Field("headers", typ.NewRecord().Build()).
+		Build()
+
+	got := ProjectToParameterUse(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn), []typ.Type{evidence})
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("projected options evidence = %T, want record (%v)", got[0], got[0])
+	}
+	if rec.GetField("headers") == nil {
+		t.Fatalf("whole forwarding should retain existing evidence fields: %v", rec)
+	}
+	stream := rec.GetField("stream")
+	if stream == nil || !typ.TypeEquals(stream.Type, typ.Nil) {
+		t.Fatalf("direct field demand should complete forwarded evidence with stream:nil, got %v in %v", stream, rec)
+	}
+}
+
+func TestProjectToParameterUse_SingleFieldWriteDoesNotDemandInputField(t *testing.T) {
+	fn := functionWithParams("schema")
+	fn.Stmts = []ast.Stmt{
+		&ast.AssignStmt{
+			Lhs: []ast.Expr{&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "schema"},
+				Key:    &ast.StringExpr{Value: "examples"},
+			}},
+			Rhs: []ast.Expr{&ast.NilExpr{}},
+		},
+		&ast.ReturnStmt{Exprs: []ast.Expr{&ast.IdentExpr{Value: "schema"}}},
+	}
+	graph := cfg.Build(fn)
+	evidence := typ.NewRecord().Build()
+
+	got := ProjectToParameterUse(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn), []typ.Type{evidence})
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("projected schema evidence = %T, want record (%v)", got[0], got[0])
+	}
+	if field := rec.GetField("examples"); field != nil {
+		t.Fatalf("single-segment field write must not become a caller requirement, got %v in %v", field, rec)
 	}
 }
 
@@ -332,7 +393,7 @@ func TestProjectSignatureToParamUse_CompletesDemandedAbsentFields(t *testing.T) 
 		Returns(typ.String).
 		Build()
 
-	got := ProjectSignatureToParamUse(graph, fn, sig)
+	got := ProjectSignatureToParamUse(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn), sig)
 	rec, ok := got.Params[0].Type.(*typ.Record)
 	if !ok {
 		t.Fatalf("projected param = %T, want record (%v)", got.Params[0].Type, got.Params[0].Type)
@@ -382,7 +443,7 @@ func TestProjectToParameterUse_TypeGuardDoesNotKeepWholeRecord(t *testing.T) {
 		OptField("kind", typ.String).
 		Build()
 
-	got := ProjectToParameterUse(graph, fn, []typ.Type{evidence})
+	got := ProjectToParameterUse(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn), []typ.Type{evidence})
 	rec, ok := got[0].(*typ.Record)
 	if !ok {
 		t.Fatalf("projected params evidence = %T, want record (%v)", got[0], got[0])
@@ -428,7 +489,7 @@ func TestProjectToParameterUse_SelfDefaultDoesNotKeepWholeRecord(t *testing.T) {
 		OptField("method", typ.String).
 		Build()
 
-	got := ProjectToParameterUse(graph, fn, []typ.Type{evidence})
+	got := ProjectToParameterUse(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn), []typ.Type{evidence})
 	rec, ok := got[0].(*typ.Record)
 	if !ok {
 		t.Fatalf("projected options evidence = %T, want record (%v)", got[0], got[0])
@@ -465,7 +526,7 @@ func TestProjectToParameterUse_DedupsUnionAfterProjection(t *testing.T) {
 		Field("stream", typ.Func().Returns(typ.LiteralString("invalid")).Build()).
 		Build()
 
-	got := ProjectToParameterUse(graph, fn, []typ.Type{typ.NewUnion(broad, narrow)})
+	got := ProjectToParameterUse(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn), []typ.Type{typ.NewUnion(broad, narrow)})
 	rec, ok := got[0].(*typ.Record)
 	if !ok {
 		t.Fatalf("projected union evidence = %T, want coalesced record (%v)", got[0], got[0])
@@ -488,7 +549,7 @@ func TestProjectToParameterUse_WholeParameterUseKeepsEvidence(t *testing.T) {
 	graph := cfg.Build(fn, "use_client")
 	client := typ.NewRecord().Field("invoke", typ.Func().Returns(typ.Unknown).Build()).Build()
 
-	got := ProjectToParameterUse(graph, fn, []typ.Type{client})
+	got := ProjectToParameterUse(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn), []typ.Type{client})
 	if !typ.TypeEquals(got[0], client) {
 		t.Fatalf("whole-parameter use should keep full evidence, got %v", got[0])
 	}
@@ -536,7 +597,7 @@ func TestProjectToParameterUse_RecursiveForwardingDoesNotKeepWholeEvidence(t *te
 		Field("command", typ.Func().Returns(typ.Nil, typ.String).Build()).
 		Build()
 
-	got := ProjectToParameterUse(graph, fn, []typ.Type{selfEvidence, typ.NewRecord().Field("next", typ.Any).Build()})
+	got := ProjectToParameterUse(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn), []typ.Type{selfEvidence, typ.NewRecord().Field("next", typ.Any).Build()})
 	rec, ok := got[0].(*typ.Record)
 	if !ok {
 		t.Fatalf("projected self evidence = %T, want record (%v)", got[0], got[0])

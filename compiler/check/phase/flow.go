@@ -3,10 +3,10 @@ package phase
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -40,11 +40,13 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		Manifests:      input.Manifests,
 		Env:            extractionCtx,
 		Phase:          api.PhaseScopeCompute,
+		Evidence:       input.Evidence,
 		ModuleBindings: input.ModuleBindings,
 		ModuleAliases:  moduleAliases,
 	})
 
-	inputs := flowbuild.Run(&core.FlowContext{
+	transferOut := abstract.RunTransfer(&core.FlowContext{
+		Fn:       input.Fn,
 		Graph:    input.Graph,
 		Scopes:   input.Scope.Scopes,
 		CheckCtx: extractionCtx,
@@ -62,18 +64,20 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		LiteralTypes:         input.LiteralTypes,
 		ModuleAliases:        moduleAliases,
 		ModuleBindings:       input.ModuleBindings,
+		Evidence:             input.Evidence,
 	})
+	inputs := transferOut.Inputs
 
 	applyModuleAliasTypes(inputs, input.Manifests)
 
 	params := ExtractParams(input.Fn, input.Scope.DeclaredTypes, input.Graph)
 	// Return inference is performed in the return inference pass; flow uses Unknown here.
 	returnType := typ.Unknown
-
 	return FlowExtractOutput{
 		Inputs:     inputs,
 		Params:     params,
 		ReturnType: returnType,
+		Evidence:   transferOut.Evidence,
 	}
 }
 
@@ -98,11 +102,12 @@ func RunLiteral(input LiteralInput) LiteralOutput {
 		Manifests:      input.Manifests,
 		Env:            initialCtx,
 		Phase:          api.PhaseScopeCompute,
+		Evidence:       input.Evidence,
 		ModuleBindings: input.ModuleBindings,
 		ModuleAliases:  input.ModuleAliases,
 	})
 
-	fnLiteralTypes := synth.FunctionLiteralTypes(input.Graph, func(expr ast.Expr, p cfg.Point) typ.Type {
+	fnLiteralTypes := synth.FunctionLiteralTypes(input.Graph, input.Evidence, func(expr ast.Expr, p cfg.Point) typ.Type {
 		return engine.TypeOf(expr, p)
 	})
 
@@ -116,7 +121,7 @@ func RunLiteral(input LiteralInput) LiteralOutput {
 		}
 	}
 
-	signatures := synth.FunctionLiteralSignatures(input.Graph, engine, declaredReturns)
+	signatures := synth.FunctionLiteralSignatures(input.Graph, input.Evidence, engine, declaredReturns)
 
 	return LiteralOutput{
 		LiteralTypes: fnLiteralTypes,
@@ -178,12 +183,12 @@ func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, g
 // EnrichWithKeysCollector detects if a function is a "keys collector"
 // (returns keys of a parameter) and adds KeyOf constraint to OnReturn.
 // This enables cross-module key-provenance tracking.
-func EnrichWithKeysCollector(eff *constraint.FunctionRefinement, graph *cfg.Graph) *constraint.FunctionRefinement {
+func EnrichWithKeysCollector(eff *constraint.FunctionRefinement, graph *cfg.Graph, evidence api.FlowEvidence) *constraint.FunctionRefinement {
 	if graph == nil {
 		return eff
 	}
 
-	info := keyscoll.DetectKeysCollector(graph)
+	info := keyscoll.DetectKeysCollector(graph, evidence)
 	if info == nil {
 		return eff
 	}

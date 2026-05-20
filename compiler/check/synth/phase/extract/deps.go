@@ -37,15 +37,18 @@ type Deps struct {
 
 	Flow  api.FlowOps
 	Paths api.PathFromExprFunc
+	// Evidence is the transfer-owned event trace for CheckCtx.Graph when
+	// available. Synth reducers use it instead of rediscovering CFG events.
+	Evidence api.FlowEvidence
 
 	PreCache    api.Cache
 	NarrowCache api.Cache
 
 	// FunctionTypeInProgress guards call-point local function specialization
 	// against recursion across temporary synthesizers.
-	FunctionTypeInProgress map[functionTypeProgressKey]bool
-	FunctionTypeCache      map[functionTypeCacheKey]*typ.Function
-	StableFunctionSnapshot map[stableFunctionSnapshotKey]typ.Type
+	FunctionTypeInProgress  map[functionTypeProgressKey]bool
+	FunctionTypeCache       map[functionTypeCacheKey]*typ.Function
+	StableFunctionFactCache map[stableFunctionFactKey]typ.Type
 
 	// Module-level bindings for nested function CFG building.
 	ModuleBindings *bind.BindingTable
@@ -67,7 +70,7 @@ type functionTypeCacheKey struct {
 	Phase        api.Phase
 }
 
-type stableFunctionSnapshotKey struct {
+type stableFunctionFactKey struct {
 	GraphID uint64
 	Parent  *scope.State
 	Sym     cfg.SymbolID
@@ -76,17 +79,17 @@ type stableFunctionSnapshotKey struct {
 // NewDeps creates a new Deps instance.
 func NewDeps(ctx *db.QueryContext, types core.TypeOps, scopes api.ScopeMap, manifests io.ManifestQuerier, checkCtx api.BaseEnv) *Deps {
 	return &Deps{
-		Ctx:                    ctx,
-		Types:                  types,
-		Scopes:                 scopes,
-		Manifests:              manifests,
-		CheckCtx:               checkCtx,
-		Graphs:                 api.GraphsFrom(ctx),
-		PreCache:               make(api.Cache),
-		NarrowCache:            make(api.Cache),
-		FunctionTypeInProgress: make(map[functionTypeProgressKey]bool),
-		FunctionTypeCache:      make(map[functionTypeCacheKey]*typ.Function),
-		StableFunctionSnapshot: make(map[stableFunctionSnapshotKey]typ.Type),
+		Ctx:                     ctx,
+		Types:                   types,
+		Scopes:                  scopes,
+		Manifests:               manifests,
+		CheckCtx:                checkCtx,
+		Graphs:                  api.GraphsFrom(ctx),
+		PreCache:                make(api.Cache),
+		NarrowCache:             make(api.Cache),
+		FunctionTypeInProgress:  make(map[functionTypeProgressKey]bool),
+		FunctionTypeCache:       make(map[functionTypeCacheKey]*typ.Function),
+		StableFunctionFactCache: make(map[stableFunctionFactKey]typ.Type),
 	}
 }
 

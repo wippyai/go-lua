@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/cfg/analysis"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -33,6 +34,7 @@ type paramCall struct {
 // Returns map[paramIndex]map[globalName]typ.Type, or nil if no pattern detected.
 func inferCallbackEnvOverlays(
 	graph *cfg.Graph,
+	evidence api.FlowEvidence,
 	paramSlots []cfg.ParamSlot,
 	synthExpr func(ast.Expr, cfg.Point) typ.Type,
 	moduleBindings *bind.BindingTable,
@@ -51,11 +53,12 @@ func inferCallbackEnvOverlays(
 	var setups []globalSetup
 	var clears []globalClear
 	var calls []paramCall
-
 	// Collect global setups and clears from assignments.
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range evidence.Assignments {
+		p := assign.Point
+		info := assign.Info
 		if info == nil || info.IsLocal {
-			return
+			continue
 		}
 		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
 			if target.Kind != cfg.TargetField {
@@ -74,12 +77,14 @@ func inferCallbackEnvOverlays(
 				setups = append(setups, globalSetup{point: p, name: name, expr: src})
 			}
 		})
-	})
+	}
 
 	// Collect parameter calls.
-	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+	for _, call := range evidence.Calls {
+		p := call.Point
+		info := call.Info
 		if info == nil {
-			return
+			continue
 		}
 		sym := callsite.SelectPreferredSymbol(
 			callsite.CallableCalleeSymbolCandidates(info, graph, graph.Bindings(), moduleBindings),
@@ -91,7 +96,7 @@ func inferCallbackEnvOverlays(
 		if idx, ok := paramSet[sym]; ok {
 			calls = append(calls, paramCall{point: p, paramIndex: idx})
 		}
-	})
+	}
 
 	if len(setups) == 0 || len(clears) == 0 || len(calls) == 0 {
 		return nil

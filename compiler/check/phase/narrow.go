@@ -4,8 +4,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -66,10 +66,11 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 		narrowingCtx,
 		input.ModuleBindings,
 		input.ModuleAliases,
+		input.Extract.Evidence,
 	)
 
 	fnEffect := InferRefinement(input.Graph, input.Solve.Solution, input.Extract.Params, input.Extract.ReturnType)
-	fnEffect = EnrichWithKeysCollector(fnEffect, input.Graph)
+	fnEffect = EnrichWithKeysCollector(fnEffect, input.Graph, input.Extract.Evidence)
 
 	return NarrowOutput{
 		Facts:      narrowingCtx.Types(),
@@ -87,6 +88,7 @@ func createNarrowedEngine(
 	checkCtx api.NarrowEnv,
 	moduleBindings *bind.BindingTable,
 	moduleAliases map[cfg.SymbolID]string,
+	evidence api.FlowEvidence,
 ) *synth.Engine {
 	var bindings *bind.BindingTable
 	if checkCtx != nil {
@@ -104,6 +106,7 @@ func createNarrowedEngine(
 		Manifests:      manifests,
 		Env:            checkCtx,
 		Phase:          api.PhaseNarrowing,
+		Evidence:       evidence,
 		ModuleBindings: moduleBindings,
 		ModuleAliases:  moduleAliases,
 	})

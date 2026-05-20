@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/typ"
@@ -231,13 +232,15 @@ func TestBuildLocalCallGraph_AddsCallbackFunctionEdges(t *testing.T) {
 				return
 			}
 			symbolsByName[target.Name] = target.Symbol
+			fnGraph := cfg.Build(fn)
 			localFuncs[target.Symbol] = &LocalFuncInfo{
 				Sym:         target.Symbol,
 				Fn:          fn,
 				DefScope:    baseScope,
-				Graph:       cfg.Build(fn),
+				Graph:       fnGraph,
 				ParentGraph: chunkGraph,
 				DefPoint:    p,
+				Evidence:    api.FlowEvidence{Calls: callEvidenceForGraph(fnGraph)},
 			}
 		})
 	})
@@ -288,13 +291,15 @@ func TestPropagateParameterEvidence_MethodRuntimeIndexing(t *testing.T) {
 				return
 			}
 			symbolsByName[target.Name] = target.Symbol
+			fnGraph := cfg.Build(fn)
 			localFuncs[target.Symbol] = &LocalFuncInfo{
 				Sym:         target.Symbol,
 				Fn:          fn,
 				DefScope:    baseScope,
-				Graph:       cfg.Build(fn),
+				Graph:       fnGraph,
 				ParentGraph: chunkGraph,
 				DefPoint:    p,
+				Evidence:    api.FlowEvidence{Calls: callEvidenceForGraph(fnGraph)},
 			}
 		})
 	})

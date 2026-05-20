@@ -3,12 +3,11 @@ package returns
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/resolve"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
@@ -19,9 +18,9 @@ import (
 // called nested functions that target symbols from the parent graph (captured variables).
 //
 // When a nested function assigns fields to a captured variable, those assignments
-// affect the type of the variable in the parent scope. This function scans nested
-// functions that are called from the parent graph and collects field assignments
-// that target parent-scope variables.
+// affect the type of the variable in the parent scope. This function consumes
+// transfer call evidence and reduces the already-recorded captured assignments
+// for callees that are proven to run from the parent graph.
 //
 // Example:
 //
@@ -36,6 +35,7 @@ import (
 func CollectCalledNestedFieldAssignments(
 	parent *cfg.Graph,
 	bindings *bind.BindingTable,
+	calls []api.CallEvidence,
 	capturedByCallee map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type,
 	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
 ) map[cfg.SymbolID]map[string]typ.Type {
@@ -47,19 +47,19 @@ func CollectCalledNestedFieldAssignments(
 	// Gather all symbols known in the parent graph (avoid per-point merges).
 	parentSymbols := parent.AllSymbolIDs()
 
-	// Find which local functions are called in the parent graph.
+	// Find which local functions are called according to transfer evidence.
 	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedByCallee))
 	for calleeSym := range capturedByCallee {
 		trackedCallees[calleeSym] = true
 	}
 	calledSyms := make(map[cfg.SymbolID]bool)
-	parent.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		for sym := range calledSymbolsFromCall(info, p, parent, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
+	for _, call := range calls {
+		for sym := range calledSymbolsFromCall(call.Info, call.Point, parent, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
 			return trackedCallees[sym]
 		}) {
 			calledSyms[sym] = true
 		}
-	})
+	}
 
 	// Collect field assignments from called nested functions and merge into result.
 	if len(calledSyms) == 0 {
@@ -101,7 +101,7 @@ type CalledNestedMutatorAssignments struct {
 
 // CollectNestedMutatorAssignments collects captured mutations recorded for
 // parent-visible nested functions and replays them through the matching flow
-// operator.
+// operator. Direct invocation is driven by transfer call evidence.
 //
 // This supports cases where a nested function mutates a captured table
 // (table.insert) or generic container (channel.send) and the nested function is:
@@ -112,6 +112,8 @@ type CalledNestedMutatorAssignments struct {
 func CollectNestedMutatorAssignments(
 	parent *cfg.Graph,
 	bindings *bind.BindingTable,
+	calls []api.CallEvidence,
+	escapes []api.FunctionEscapeEvidence,
 	capturedByCallee api.CapturedContainerMutations,
 	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
 ) CalledNestedMutatorAssignments {
@@ -140,25 +142,28 @@ func CollectNestedMutatorAssignments(
 		}
 	}
 
-	parent.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		if info == nil {
-			return
+	for _, call := range calls {
+		if call.Info == nil {
+			continue
 		}
 
-		calledSyms := calledSymbolsFromCall(info, p, parent, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
+		calledSyms := calledSymbolsFromCall(call.Info, call.Point, parent, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
 			return trackedCallees[sym]
 		})
 		if len(calledSyms) == 0 {
-			return
+			continue
 		}
 
 		for _, sym := range cfg.SortedSymbolIDs(calledSyms) {
-			emitForCallee(p, sym)
+			emitForCallee(call.Point, sym)
 		}
-	})
+	}
 
-	for _, trigger := range escapedNestedMutationTriggers(parent, bindings, trackedCallees) {
-		emitForCallee(trigger.Point, trigger.Symbol)
+	for _, escape := range escapes {
+		if escape.Symbol == 0 || !trackedCallees[escape.Symbol] {
+			continue
+		}
+		emitForCallee(escape.Point, escape.Symbol)
 	}
 
 	return assignments
@@ -197,92 +202,6 @@ func appendNestedMutatorAssignments(
 			})
 		}
 	}
-}
-
-type nestedMutationTrigger struct {
-	Point  cfg.Point
-	Symbol cfg.SymbolID
-}
-
-func escapedNestedMutationTriggers(
-	parent *cfg.Graph,
-	bindings *bind.BindingTable,
-	trackedCallees map[cfg.SymbolID]bool,
-) []nestedMutationTrigger {
-	if parent == nil || len(trackedCallees) == 0 {
-		return nil
-	}
-	var triggers []nestedMutationTrigger
-	seen := make(map[nestedMutationTrigger]bool)
-	appendTrigger := func(p cfg.Point, sym cfg.SymbolID) {
-		if sym == 0 || !trackedCallees[sym] {
-			return
-		}
-		trigger := nestedMutationTrigger{Point: p, Symbol: sym}
-		if seen[trigger] {
-			return
-		}
-		seen[trigger] = true
-		triggers = append(triggers, trigger)
-	}
-
-	parent.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
-		if info == nil || !funcDefEscapesParent(info.TargetKind) {
-			return
-		}
-		appendTrigger(p, info.Symbol)
-	})
-
-	parent.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil {
-			return
-		}
-		info.EachTargetSource(func(i int, target cfg.AssignTarget, src ast.Expr) {
-			if !assignmentTargetEscapesFunction(target) {
-				return
-			}
-			appendTrigger(p, assignmentSourceFunctionSymbol(info, i, src, bindings))
-		})
-	})
-
-	return triggers
-}
-
-func funcDefEscapesParent(kind cfg.FuncDefTargetKind) bool {
-	switch kind {
-	case cfg.FuncDefGlobal, cfg.FuncDefField, cfg.FuncDefMethod:
-		return true
-	default:
-		return false
-	}
-}
-
-func assignmentTargetEscapesFunction(target cfg.AssignTarget) bool {
-	switch target.Kind {
-	case cfg.TargetField, cfg.TargetIndex:
-		return true
-	default:
-		return false
-	}
-}
-
-func assignmentSourceFunctionSymbol(
-	info *cfg.AssignInfo,
-	i int,
-	src ast.Expr,
-	bindings *bind.BindingTable,
-) cfg.SymbolID {
-	if info != nil && i >= 0 && i < len(info.SourceSymbols) {
-		if sym := info.SourceSymbols[i]; sym != 0 {
-			return sym
-		}
-	}
-	if fn, ok := src.(*ast.FunctionExpr); ok && bindings != nil {
-		if sym, found := bindings.FuncLitSymbol(fn); found {
-			return sym
-		}
-	}
-	return 0
 }
 
 func calledSymbolsFromCall(

@@ -275,7 +275,7 @@ func TestLocalFunctionShadowsModule_BindingDiagnostic(t *testing.T) {
 	if sess != nil && sess.Store != nil && sess.RootResult != nil && sess.RootResult.BaseScope != nil && sess.RootResult.Graph != nil {
 		parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 		parent := sess.Store.Parents()[parentHash]
-		functionFacts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent)
+		functionFacts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts
 		t.Logf("FunctionFacts has %d symbols", len(functionFacts))
 		for sym, fact := range functionFacts {
 			name := ""

@@ -1,6 +1,6 @@
 // Package api defines canonical interfaces for the type synthesis subsystem.
 // These interfaces decouple the synthesis engine implementation (synth.Engine)
-// from its consumers (hooks, flowbuild, phase runners, etc.).
+// from its consumers (hooks, abstract transfer, phase runners, etc.).
 //
 // # INTERFACE HIERARCHY
 //

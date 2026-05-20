@@ -15,7 +15,7 @@ import (
 
 func TestCollectCalledNestedFieldAssignments(t *testing.T) {
 	t.Run("nil graph returns empty map", func(t *testing.T) {
-		result := CollectCalledNestedFieldAssignments(nil, nil, nil, nil)
+		result := CollectCalledNestedFieldAssignments(nil, nil, nil, nil, nil)
 		if len(result) != 0 {
 			t.Error("expected empty result")
 		}
@@ -24,7 +24,7 @@ func TestCollectCalledNestedFieldAssignments(t *testing.T) {
 
 func TestCollectNestedMutatorAssignments(t *testing.T) {
 	t.Run("nil graph returns empty slice", func(t *testing.T) {
-		result := CollectNestedMutatorAssignments(nil, nil, nil, nil)
+		result := CollectNestedMutatorAssignments(nil, nil, nil, nil, nil, nil)
 		if len(result.Table) != 0 || len(result.Container) != 0 {
 			t.Error("expected empty result")
 		}
@@ -76,7 +76,8 @@ func TestCollectNestedMutatorAssignments_SplitsOperatorKinds(t *testing.T) {
 		},
 	}
 
-	got := CollectNestedMutatorAssignments(graph, bindings, captured, nil)
+	calls := callEvidenceForGraph(graph)
+	got := CollectNestedMutatorAssignments(graph, bindings, calls, nil, captured, nil)
 	if len(got.Table) != 1 {
 		t.Fatalf("table assignments = %d, want 1", len(got.Table))
 	}
@@ -89,6 +90,17 @@ func TestCollectNestedMutatorAssignments_SplitsOperatorKinds(t *testing.T) {
 	if got.Container[0].Target.Symbol != stateSym || len(got.Container[0].Target.Segments) != 1 || got.Container[0].Target.Segments[0].Name != "channel" {
 		t.Fatalf("unexpected container target: %#v", got.Container[0].Target)
 	}
+}
+
+func callEvidenceForGraph(graph *cfg.Graph) []api.CallEvidence {
+	if graph == nil {
+		return nil
+	}
+	var calls []api.CallEvidence
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		calls = append(calls, api.CallEvidence{Point: p, Info: info})
+	})
+	return calls
 }
 
 func TestCollectNestedMutatorAssignments_ReplaysExportedFieldFunction(t *testing.T) {
@@ -139,7 +151,8 @@ func TestCollectNestedMutatorAssignments_ReplaysExportedFieldFunction(t *testing
 		},
 	}
 
-	got := CollectNestedMutatorAssignments(graph, bindings, captured, nil)
+	escapes := []api.FunctionEscapeEvidence{{Point: addPoint, Symbol: addSym}}
+	got := CollectNestedMutatorAssignments(graph, bindings, nil, escapes, captured, nil)
 	if len(got.Table) != 1 {
 		t.Fatalf("table assignments = %d, want 1", len(got.Table))
 	}

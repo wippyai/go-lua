@@ -3,7 +3,7 @@ package api
 import "github.com/wippyai/go-lua/compiler/check/scope"
 
 // ParentScopeForGraph resolves the canonical parent scope for a graph.
-// It prefers the stable parent-scope snapshot recorded in store and uses
+// It prefers the canonical parent-scope hash recorded in store and uses
 // defaultScope only when no stable parent is available.
 func ParentScopeForGraph(store ParentScopes, graphID uint64, defaultScope *scope.State) *scope.State {
 	if store == nil || graphID == 0 {

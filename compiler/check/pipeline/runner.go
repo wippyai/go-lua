@@ -19,6 +19,7 @@
 package pipeline
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
@@ -77,9 +78,9 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		return nil
 	}
 	if tracker, ok := store.(interface {
-		PushSnapshotReadContext(*db.QueryContext) func()
+		PushFactReadContext(*db.QueryContext) func()
 	}); ok {
-		pop := tracker.PushSnapshotReadContext(ctx)
+		pop := tracker.PushFactReadContext(ctx)
 		defer pop()
 	}
 	withPhase := func(_ api.Phase, fn func()) { fn() }
@@ -109,21 +110,24 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	parameterEvidenceSigs := paramevidence.BuildSignatureMap(store, graph, parent, r.stdlib)
 	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, parameterEvidenceSigs)
 
-	functionFacts := store.GetFunctionFactsSnapshot(graph, parent)
+	graphFacts := store.GetInterprocFacts(graph, parent)
+	functionFacts := graphFacts.FunctionFacts
 
-	// Build shared phase environment once.
-	localAliases := modules.CollectAliases(graph)
+	// Build shared transfer evidence and phase environment once.
+	graphEvidence := trace.GraphEvidence(graph, graph.Bindings())
+	localAliases := modules.AliasesFromAssignments(graphEvidence.Assignments, graph)
 	mergedAliases := modules.MergeAliases(store.ModuleAliases(), localAliases)
 	env := phase.PhaseEnv{
-		Ctx:             ctx,
-		Graph:           graph,
-		Fn:              fn,
-		Types:           r.types,
-		Manifests:       r.manifests,
-		GlobalTypes:     r.globalTypes,
-		ModuleAliases:   mergedAliases,
-		ModuleBindings:  store.ModuleBindings(),
-		RefinementStore: effectStoreFrom(store),
+		Ctx:            ctx,
+		Graph:          graph,
+		Fn:             fn,
+		Types:          r.types,
+		Manifests:      r.manifests,
+		GlobalTypes:    r.globalTypes,
+		ModuleAliases:  mergedAliases,
+		ModuleBindings: store.ModuleBindings(),
+		Refinements:    refinementFactsFrom(store),
+		Evidence:       graphEvidence,
 	}
 
 	// Phase A: Resolve type annotations.
@@ -133,7 +137,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		BaseScope: parent,
 	})
 
-	// Literal signatures are provided by the stable snapshot.
+	// Literal signatures are provided by the visible interproc product.
 	literalSigs := r.literalSigProvider(store, graph, parent)
 
 	// Phase B: Build scopes and extract declared types.
@@ -149,7 +153,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	})
 	// Declared is the default phase for scope/extract and interproc reads.
 
-	if capturedTypes := store.GetCapturedTypesSnapshot(graph, parent); len(capturedTypes) > 0 {
+	if capturedTypes := graphFacts.CapturedTypes; len(capturedTypes) > 0 {
 		scopeOut.DeclaredTypes = captured.MergeCapturedTypes(scopeOut.DeclaredTypes, capturedTypes)
 	}
 	r.mergeCapturedParentFunctionTypes(store, graph, fn, &scopeOut)
@@ -215,6 +219,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		Facts:              narrowOut.Facts,
 		FlowInputs:         extractOut.Inputs,
 		FlowSolution:       solveOut.Solution,
+		Evidence:           extractOut.Evidence,
 		FnRefinement:       narrowOut.Refinement,
 		NarrowSynth:        narrowOut.Synth,
 		LiteralSignatures:  literalOut.Signatures,

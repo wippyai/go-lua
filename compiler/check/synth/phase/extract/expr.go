@@ -25,7 +25,7 @@ package extract
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/guard"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/guard"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/cfg"

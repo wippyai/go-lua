@@ -42,9 +42,11 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionRe
 	// Start with the function's own Terminates value.
 	terminates := fnEffect.Terminates
 
-	result.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+	for _, call := range result.Evidence.Calls {
+		p := call.Point
+		info := call.Info
 		if info == nil {
-			return
+			continue
 		}
 		var synthFn func(ast.Expr, cfg.Point) typ.Type
 		if result.NarrowSynth != nil {
@@ -63,14 +65,14 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionRe
 		)
 
 		if calleeEffect == nil {
-			return
+			continue
 		}
 		if calleeEffect.Row != nil {
 			if calleeRow, ok := calleeEffect.Row.(effect.Row); ok {
 				row = effect.Union(row, calleeRow)
 			}
 		}
-	})
+	}
 
 	// Compute Terminates from flow reachability.
 	if !terminates && result.FlowSolution != nil && result.Graph.CFG() != nil {
@@ -91,18 +93,21 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionRe
 	}
 }
 
-// LookupRefinementBySym resolves effects from the store or global type information.
-func LookupRefinementBySym(
-	store api.RefinementStore,
+// ResolveRefinementBySym resolves effects from canonical function facts or global
+// type information.
+func ResolveRefinementBySym(
+	facts api.RefinementFacts,
 	bindings *bind.BindingTable,
 	globalTypes map[string]typ.Type,
 	sym cfg.SymbolID,
 ) *constraint.FunctionRefinement {
-	if store == nil || sym == 0 {
+	if sym == 0 {
 		return nil
 	}
-	if eff := store.LookupRefinementBySym(sym); eff != nil {
-		return eff
+	if facts != nil {
+		if eff := facts.LookupBySym(sym); eff != nil {
+			return eff
+		}
 	}
 	if bindings != nil && globalTypes != nil {
 		if name := bindings.Name(sym); name != "" {
@@ -117,26 +122,20 @@ func LookupRefinementBySym(
 // TerminatesFromReachability determines if a function never returns normally
 // by checking reachability of all return and exit points via flow analysis.
 func TerminatesFromReachability(result *api.FuncResult) bool {
-	if result == nil || result.FlowSolution == nil || result.Graph == nil || result.Graph.CFG() == nil {
+	if result == nil || result.FlowSolution == nil || !result.Evidence.NormalExit.Valid {
 		return false
 	}
 
-	g := result.Graph.CFG()
-
 	// Check if any return node is reachable.
-	for _, p := range g.RPO() {
-		node := g.Node(p)
-		if node == nil || node.Kind != cfg.NodeReturn {
-			continue
-		}
-		cond := result.FlowSolution.ConditionAt(p)
+	for _, ret := range result.Evidence.Returns {
+		cond := result.FlowSolution.ConditionAt(ret.Point)
 		if !cond.IsFalse() {
 			return false
 		}
 	}
 
 	// Check if exit node is reachable.
-	exitCond := result.FlowSolution.ConditionAt(g.Exit())
+	exitCond := result.FlowSolution.ConditionAt(result.Evidence.NormalExit.Point)
 	return exitCond.IsFalse()
 }
 

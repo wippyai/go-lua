@@ -395,50 +395,78 @@ func TestAttachStore_NilStore(t *testing.T) {
 	}
 }
 
-func TestSessionStore_EffectMaps(t *testing.T) {
+func TestSessionStore_ProductMaps(t *testing.T) {
 	store := store.NewSessionStore()
 
-	if store.InterprocPrev == nil || store.InterprocPrev.Refinements == nil {
-		t.Error("InterprocPrev effects not initialized")
+	if store.InterprocPrev == nil || store.InterprocPrev.Facts == nil {
+		t.Error("InterprocPrev facts not initialized")
 	}
-	if store.InterprocNext == nil || store.InterprocNext.Refinements == nil {
-		t.Error("InterprocNext effects not initialized")
+	if store.InterprocNext == nil || store.InterprocNext.Facts == nil {
+		t.Error("InterprocNext facts not initialized")
 	}
 }
 
-func TestFixpointChannelDiffs_IsolatedBetweenStores(t *testing.T) {
+func TestFixpointDiffs_IsolatedBetweenStores(t *testing.T) {
 	storeA := store.NewSessionStore()
 	storeB := store.NewSessionStore()
 
-	storeA.StoreFunctionRefinement(cfg.SymbolID(42), &constraint.FunctionRefinement{})
-	storeB.StoreFunctionRefinement(cfg.SymbolID(42), &constraint.FunctionRefinement{})
+	keyA := registerSessionFunctionForRefinementTest(t, storeA, cfg.SymbolID(42))
+	keyB := registerSessionFunctionForRefinementTest(t, storeB, cfg.SymbolID(42))
+	storeA.MergeInterprocFactsNext(keyA, api.Facts{
+		FunctionFacts: api.FunctionFacts{cfg.SymbolID(42): {Refinement: &constraint.FunctionRefinement{Terminates: true}}},
+	})
+	storeB.MergeInterprocFactsNext(keyB, api.Facts{
+		FunctionFacts: api.FunctionFacts{cfg.SymbolID(42): {Refinement: &constraint.FunctionRefinement{Terminates: true}}},
+	})
 
 	if !storeA.FixpointSwap() {
 		t.Fatal("expected storeA FixpointSwap to report change")
 	}
-	if diffs := storeA.FixpointChannelDiffs(); len(diffs) == 0 {
+	if diffs := storeA.FixpointDiffs(); len(diffs) == 0 {
 		t.Fatal("expected storeA diffs to be non-empty")
 	}
 
-	if diffs := storeB.FixpointChannelDiffs(); len(diffs) != 0 {
+	if diffs := storeB.FixpointDiffs(); len(diffs) != 0 {
 		t.Fatalf("expected storeB diffs to be empty, got %v", diffs)
 	}
 }
 
-func TestSessionStore_ClearIterationChannels(t *testing.T) {
+func registerSessionFunctionForRefinementTest(t *testing.T, st *store.SessionStore, sym cfg.SymbolID) api.GraphKey {
+	t.Helper()
+	fn := &ast.FunctionExpr{}
+	graph := cfg.Build(fn)
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	parent := scope.New()
+	st.RegisterGraph(graph, fn)
+	st.RegisterFunctionRef(sym, fn, graph, graph.ID(), 1)
+	st.SetGraphParentHash(graph.ID(), parent.Hash())
+	st.SetParentScope(parent.Hash(), parent)
+	return api.KeyForGraph(graph, parent.Hash())
+}
+
+func TestSessionStore_ClearInterprocState(t *testing.T) {
 	store := store.NewSessionStore()
 
-	store.StoreConstructorFields(cfg.SymbolID(2), map[string]typ.Type{"name": typ.String})
-	store.InterprocPrev.Refinements[cfg.SymbolID(4)] = &constraint.FunctionRefinement{}
-	store.StoreFunctionRefinement(cfg.SymbolID(5), &constraint.FunctionRefinement{})
-
-	store.ClearIterationChannels()
-
-	if store.InterprocNext == nil || len(store.InterprocNext.ConstructorFields) != 0 {
-		t.Fatal("expected constructor fields to be cleared")
+	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
+		ConstructorFields: api.ConstructorFields{
+			cfg.SymbolID(2): {"name": typ.String},
+		},
+	})
+	store.InterprocPrev.Facts[api.GraphKey{GraphID: 1, ParentHash: 1}] = api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(4): {Refinement: &constraint.FunctionRefinement{Terminates: true}},
+		},
 	}
-	if len(store.InterprocPrev.Refinements) != 0 || len(store.InterprocNext.Refinements) != 0 {
-		t.Fatal("expected effects to be cleared")
+
+	store.ClearInterprocState()
+
+	if store.InterprocPrev == nil || len(store.InterprocPrev.Facts) != 0 {
+		t.Fatal("expected previous product facts to be cleared")
+	}
+	if store.InterprocNext == nil || len(store.InterprocNext.Facts) != 0 {
+		t.Fatal("expected next product facts to be cleared")
 	}
 }
 
@@ -504,74 +532,85 @@ func TestSession_Release_Nil(t *testing.T) {
 	sess.Release() // should not panic
 }
 
-func TestStoreConstructorFields_ZeroSymbol(t *testing.T) {
+func TestModuleConstructorFacts_EmptyDelta(t *testing.T) {
 	store := store.NewSessionStore()
-	store.StoreConstructorFields(0, map[string]typ.Type{"x": typ.Number})
-	if store.InterprocNext == nil || len(store.InterprocNext.ConstructorFields) != 0 {
-		t.Error("zero symbol should not store fields")
+	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{})
+	if store.InterprocNext == nil || len(store.InterprocNext.Facts) != 0 {
+		t.Error("empty product delta should not store facts")
 	}
 }
 
-func TestStoreConstructorFields_EmptyFields(t *testing.T) {
+func TestModuleConstructorFacts_EmptyFields(t *testing.T) {
 	store := store.NewSessionStore()
-	store.StoreConstructorFields(1, nil)
-	if store.InterprocNext == nil || len(store.InterprocNext.ConstructorFields) != 0 {
-		t.Error("empty fields should not store")
+	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
+		ConstructorFields: api.ConstructorFields{1: nil},
+	})
+	got := store.GetModuleFacts().ConstructorFields[1]
+	if len(got) != 0 {
+		t.Fatalf("empty constructor field map should stay empty, got %#v", got)
 	}
 }
 
-func TestStoreConstructorFields_Basic(t *testing.T) {
+func TestModuleConstructorFacts_Basic(t *testing.T) {
 	store := store.NewSessionStore()
 	fields := map[string]typ.Type{"x": typ.Number, "y": typ.String}
-	store.StoreConstructorFields(1, fields)
+	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
+		ConstructorFields: api.ConstructorFields{1: fields},
+	})
 
 	next := store.InterprocNext
-	if next == nil || next.ConstructorFields == nil {
-		t.Fatal("ConstructorFieldsNext should be initialized")
+	if next == nil || next.Facts == nil {
+		t.Fatal("next product facts should be initialized")
 	}
-	if len(next.ConstructorFields[1]) != 2 {
-		t.Errorf("expected 2 fields, got %d", len(next.ConstructorFields[1]))
+	gotFields := next.Facts[api.ModuleFactsKey()].ConstructorFields[1]
+	if len(gotFields) != 2 {
+		t.Errorf("expected 2 fields, got %d", len(gotFields))
 	}
 }
 
-func TestStoreConstructorFields_Join(t *testing.T) {
+func TestModuleConstructorFacts_Join(t *testing.T) {
 	store := store.NewSessionStore()
-	store.StoreConstructorFields(1, map[string]typ.Type{"x": typ.Number})
-	store.StoreConstructorFields(1, map[string]typ.Type{"x": typ.String})
+	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
+		ConstructorFields: api.ConstructorFields{1: {"x": typ.Number}},
+	})
+	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
+		ConstructorFields: api.ConstructorFields{1: {"x": typ.String}},
+	})
 
 	next := store.InterprocNext
-	if next == nil || next.ConstructorFields == nil || next.ConstructorFields[1]["x"] == typ.Number {
+	fields := next.Facts[api.ModuleFactsKey()].ConstructorFields[1]
+	if next == nil || fields == nil || fields["x"] == typ.Number {
 		t.Error("field should be joined")
 	}
 }
 
-func TestLookupConstructorFields_ZeroSymbol(t *testing.T) {
+func TestGetModuleFacts_AbsentConstructorClass(t *testing.T) {
 	store := store.NewSessionStore()
-	result := store.LookupConstructorFields(0)
+	result := store.GetModuleFacts().ConstructorFields[0]
 	if result != nil {
-		t.Error("zero symbol should return nil")
+		t.Error("absent constructor class should return nil")
 	}
 }
 
-func TestLookupConstructorFields_FromNext(t *testing.T) {
+func TestGetModuleFacts_ConstructorFieldsFromNext(t *testing.T) {
 	store := store.NewSessionStore()
 	setConstructorFieldsNextForTest(store, map[cfg.SymbolID]map[string]typ.Type{
 		1: {"x": typ.Number},
 	})
-	result := store.LookupConstructorFields(1)
-	if result != nil {
-		t.Fatal("should not read constructor fields from Next snapshot")
+	result := store.GetModuleFacts().ConstructorFields[1]
+	if result == nil {
+		t.Fatal("should find same-iteration constructor fields from product overlay")
 	}
 }
 
-func TestLookupConstructorFields_FromPrev(t *testing.T) {
+func TestGetModuleFacts_ConstructorFieldsFromPrev(t *testing.T) {
 	store := store.NewSessionStore()
 	setConstructorFieldsPrevForTest(store, map[cfg.SymbolID]map[string]typ.Type{
 		1: {"y": typ.String},
 	})
-	result := store.LookupConstructorFields(1)
+	result := store.GetModuleFacts().ConstructorFields[1]
 	if result == nil {
-		t.Fatal("should find fields from snapshot")
+		t.Fatal("should find fields from stable product")
 	}
 	if result["y"] != typ.String {
 		t.Error("wrong field type")

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/hooks"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 )
@@ -18,7 +19,7 @@ func TestHooksRequireNarrowSynth_CallHook(t *testing.T) {
 	}
 	graph := cfg.Build(fn)
 
-	diags := hooks.CheckCalls(graph, nil, nil, nil, "test.lua")
+	diags := hooks.CheckCalls(graph, api.FlowEvidence{}, nil, nil, nil, "test.lua")
 
 	if len(diags) != 0 {
 		t.Errorf("call hook should return empty diagnostics when NarrowSynth is nil, got %d", len(diags))
@@ -35,7 +36,7 @@ func TestHooksRequireNarrowSynth_ReturnHook(t *testing.T) {
 	graph := cfg.Build(fn)
 	baseScope := scope.New()
 
-	diags := hooks.CheckReturns(fn, graph, map[cfg.Point]*scope.State{}, baseScope, nil, nil, "test.lua")
+	diags := hooks.CheckReturns(fn, graph, api.FlowEvidence{}, map[cfg.Point]*scope.State{}, baseScope, nil, nil, "test.lua")
 
 	if len(diags) != 0 {
 		t.Errorf("return hook should return empty diagnostics when declared synth is nil, got %d", len(diags))
@@ -48,7 +49,7 @@ func TestHooksRequireNarrowSynth_FieldHook(t *testing.T) {
 	}
 	graph := cfg.Build(fn)
 
-	diags := hooks.CheckFields(graph, nil, nil, "test.lua")
+	diags := hooks.CheckFields(graph, api.FlowEvidence{}, nil, nil, "test.lua")
 
 	if len(diags) != 0 {
 		t.Errorf("field hook should return empty diagnostics when NarrowSynth is nil, got %d", len(diags))
@@ -61,7 +62,7 @@ func TestHooksRequireNarrowSynth_AssignHook(t *testing.T) {
 	}
 	graph := cfg.Build(fn)
 
-	diags := hooks.CheckAssignments(graph, map[cfg.Point]*scope.State{}, nil, nil, "test.lua")
+	diags := hooks.CheckAssignments(graph, api.FlowEvidence{}, map[cfg.Point]*scope.State{}, nil, nil, "test.lua")
 
 	if len(diags) != 0 {
 		t.Errorf("assign hook should return empty diagnostics when NarrowSynth is nil, got %d", len(diags))

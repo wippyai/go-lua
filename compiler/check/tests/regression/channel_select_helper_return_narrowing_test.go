@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -23,7 +25,7 @@ func TestChannelSelectHelperReturnNarrowing(t *testing.T) {
 		{Name: "unix", Type: typ.Func().Param("self", typ.Self).Returns(typ.Integer).Build()},
 	})
 
-	chManifest := testutil.ChannelManifest()
+	chManifest := channelManifestWithReturnEffect()
 	channelGen, ok := chManifest.LookupType("Channel")
 	if !ok {
 		t.Fatal("missing channel.Channel generic")
@@ -85,7 +87,7 @@ end
 	root := sess.RootResult.Graph
 	parentHash := sess.Store.GraphParentHashOf(root.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.GetFunctionFactsSnapshot(root, parent)
+	functionFacts := sess.Store.GetInterprocFacts(root, parent).FunctionFacts
 
 	var helperFn *typ.Function
 	for sym, fact := range functionFacts {
@@ -102,6 +104,147 @@ end
 	nonNil := narrow.RemoveNil(helperFn.Returns[0])
 	if typ.IsNever(nonNil) {
 		t.Fatalf("expected non-nil helper return to remain usable, got %v", nonNil)
+	}
+}
+
+func channelManifestWithReturnEffect() *io.Manifest {
+	m := io.NewManifest("channel")
+
+	selectCaseType := typ.NewInterface("channel.SelectCase", nil)
+	selectCaseChannel := typ.NewTypeParam("C", nil)
+	selectCaseValue := typ.NewTypeParam("T", nil)
+	selectCaseGeneric := typ.NewGeneric("channel.SelectCase", []*typ.TypeParam{selectCaseChannel, selectCaseValue}, selectCaseType)
+
+	channelElem := typ.NewTypeParam("T", nil)
+	channelType := typ.NewInterface("channel.Channel", []typ.Method{
+		{
+			Name: "case_receive",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.Instantiate(selectCaseGeneric, typ.Self, channelElem)).
+				Build(),
+		},
+	})
+	channelGeneric := typ.NewGeneric("channel.Channel", []*typ.TypeParam{channelElem}, channelType)
+
+	selectResultType := typ.NewRecord().
+		Field("channel", typ.Any).
+		Field("value", typ.Unknown).
+		Field("ok", typ.Boolean).
+		OptField("default", typ.Boolean).
+		Build()
+
+	m.DefineType("Channel", channelGeneric)
+	m.DefineType("SelectCase", selectCaseGeneric)
+	m.DefineType("SelectResult", selectResultType)
+
+	selectFunc := typ.Func().
+		Param("cases", typ.Any).
+		OptParam("default", typ.Boolean).
+		Returns(selectResultType).
+		Spec(contract.NewSpec().WithEffects(effect.Return{
+			ReturnIndex: 0,
+			Transform: effect.SelectResultOfCases{
+				Cases:   effect.ParamRef{Index: 0},
+				Default: effect.ParamRef{Index: 1},
+			},
+		})).
+		Build()
+
+	m.SetExport(typ.NewInterface("channel", []typ.Method{
+		{Name: "select", Type: selectFunc},
+	}))
+	return m
+}
+
+// Regression guard for temporal wait helpers that test event.from before
+// event.kind. The timeout branch return must exclude the time channel before
+// field diagnostics validate the loop body condition.
+func TestChannelSelectHelperReturnNarrowingAllowsEventFromFirstCondition(t *testing.T) {
+	eventRecordType := typ.NewRecord().
+		Field("kind", typ.String).
+		OptField("from", typ.String).
+		OptField("result", typ.Any).
+		Build()
+	eventMethodsType := typ.NewInterface("process.EventMethods", []typ.Method{
+		{Name: "payload", Type: typ.Func().
+			Param("self", typ.Self).
+			Returns(typ.NewOptional(typ.Any)).
+			Build()},
+	})
+	eventType := typ.NewAlias("process.Event", typ.NewIntersection(eventRecordType, eventMethodsType))
+	timeType := typ.NewInterface("time.Time", []typ.Method{
+		{Name: "unix", Type: typ.Func().Param("self", typ.Self).Returns(typ.Integer).Build()},
+	})
+
+	chManifest := channelManifestWithReturnEffect()
+	channelGen, ok := chManifest.LookupType("Channel")
+	if !ok {
+		t.Fatal("missing channel.Channel generic")
+	}
+	channelGeneric, ok := channelGen.(*typ.Generic)
+	if !ok {
+		t.Fatalf("channel.Channel is not generic: %T", channelGen)
+	}
+	eventChannelType := typ.Instantiate(channelGeneric, eventType)
+	timeChannelType := typ.Instantiate(channelGeneric, timeType)
+
+	processManifest := io.NewManifest("process")
+	processManifest.SetExport(typ.NewIntersection(
+		typ.NewInterface("process", []typ.Method{
+			{Name: "events", Type: typ.Func().Returns(eventChannelType).Build()},
+		}),
+		typ.NewRecord().
+			Field("event", typ.NewRecord().Field("EXIT", typ.String).Build()).
+			Build(),
+	))
+
+	timeManifest := io.NewManifest("time")
+	timeManifest.SetExport(typ.NewInterface("time", []typ.Method{
+		{Name: "after", Type: typ.Func().Param("duration", typ.String).Returns(timeChannelType).Build()},
+	}))
+
+	source := `
+local time = require("time")
+
+local function wait_for_exit(events_ch, pid, timeout)
+	local deadline = time.after(timeout or "10s")
+	while true do
+		local result = channel.select {
+			events_ch:case_receive(),
+			deadline:case_receive(),
+		}
+		if result.channel == deadline then
+			return nil, "timeout waiting for exit"
+		end
+		local event = result.value
+		local event_kind: string = event.kind
+		local event_from: string? = event.from
+		if event.from == pid and event.kind == process.event.EXIT then
+			return event, nil
+		end
+	end
+end
+
+local events_ch = process.events()
+local event, err = wait_for_exit(events_ch, "pid", "10s")
+if err ~= nil then
+	return false
+end
+if event == nil then
+	return false
+end
+return event.kind
+`
+
+	result := testutil.Check(source,
+		testutil.WithStdlib(),
+		testutil.WithManifest("channel", chManifest),
+		testutil.WithManifest("process", processManifest),
+		testutil.WithManifest("time", timeManifest),
+	)
+	if result.HasError() {
+		t.Fatalf("expected no errors for event.from-first select narrowing, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 

@@ -83,7 +83,7 @@ end
 	root := result.Session.RootResult.Graph
 	parentHash := result.Session.Store.GraphParentHashOf(root.ID())
 	parent := result.Session.Store.Parents()[parentHash]
-	functionFacts := result.Session.Store.GetFunctionFactsSnapshot(root, parent)
+	functionFacts := result.Session.Store.GetInterprocFacts(root, parent).FunctionFacts
 
 	sym, ok := root.SymbolAt(root.Exit(), "get_tracker")
 	if !ok || sym == 0 {

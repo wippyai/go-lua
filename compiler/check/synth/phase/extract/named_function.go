@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	compcfg "github.com/wippyai/go-lua/compiler/cfg"
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
+	abstractfacts "github.com/wippyai/go-lua/compiler/check/abstract/facts"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -33,16 +34,17 @@ func (s *Synthesizer) functionLiteralForIdent(ident *ast.IdentExpr) *ast.Functio
 		bindings = graph.Bindings()
 	}
 	moduleBindings := s.deps.ModuleBindings
+	evidence := s.graphEvidence(graph)
 
 	hasFunctionLiteral := func(sym compcfg.SymbolID) bool {
 		if sym == 0 {
 			return false
 		}
-		if fn := callsite.FunctionLiteralForSymbol(graph, bindings, sym); fn != nil {
+		if fn := callsite.FunctionLiteralForSymbol(bindings, evidence, sym); fn != nil {
 			return true
 		}
 		if moduleBindings != nil && moduleBindings != bindings {
-			return callsite.FunctionLiteralForSymbol(graph, moduleBindings, sym) != nil
+			return callsite.FunctionLiteralForSymbol(moduleBindings, evidence, sym) != nil
 		}
 		return false
 	}
@@ -51,11 +53,11 @@ func (s *Synthesizer) functionLiteralForIdent(ident *ast.IdentExpr) *ast.Functio
 	if sym == 0 {
 		return nil
 	}
-	if fn := callsite.FunctionLiteralForSymbol(graph, bindings, sym); fn != nil {
+	if fn := callsite.FunctionLiteralForSymbol(bindings, evidence, sym); fn != nil {
 		return fn
 	}
 	if moduleBindings != nil && moduleBindings != bindings {
-		if fn := callsite.FunctionLiteralForSymbol(graph, moduleBindings, sym); fn != nil {
+		if fn := callsite.FunctionLiteralForSymbol(moduleBindings, evidence, sym); fn != nil {
 			return fn
 		}
 	}
@@ -86,9 +88,10 @@ func (s *Synthesizer) graphLocalFunctionForExpr(expr ast.Expr) (compcfg.SymbolID
 		bindings = s.deps.ModuleBindings
 	}
 	moduleBindings := s.deps.ModuleBindings
+	evidence := s.graphEvidence(graph)
 
 	hasGraphLocalLiteral := func(sym compcfg.SymbolID) bool {
-		return callsite.FunctionLiteralForGraphSymbol(graph, sym) != nil
+		return callsite.FunctionLiteralForGraphSymbol(evidence, sym) != nil
 	}
 
 	raw := callsite.SymbolFromExpr(expr, bindings)
@@ -108,7 +111,7 @@ func (s *Synthesizer) graphLocalFunctionForExpr(expr ast.Expr) (compcfg.SymbolID
 		return 0, nil, false
 	}
 
-	fn := callsite.FunctionLiteralForGraphSymbol(graph, sym)
+	fn := callsite.FunctionLiteralForGraphSymbol(evidence, sym)
 	if fn == nil {
 		return 0, nil, false
 	}
@@ -160,11 +163,14 @@ func (s *Synthesizer) hasDominatingDirectFunctionRebind(sym compcfg.SymbolID, st
 	}
 
 	idom := cfganalysis.ComputeImmediateDominators(graph.CFG())
+	evidence := s.graphEvidence(graph)
 	rebound := false
 
-	graph.EachAssign(func(assignPoint cfg.Point, info *compcfg.AssignInfo) {
+	for _, assign := range evidence.Assignments {
+		assignPoint := assign.Point
+		info := assign.Info
 		if rebound || info == nil || assignPoint == p || !cfganalysis.StrictlyDominates(idom, assignPoint, p) {
-			return
+			continue
 		}
 
 		info.EachTarget(func(_ int, target compcfg.AssignTarget) {
@@ -175,23 +181,25 @@ func (s *Synthesizer) hasDominatingDirectFunctionRebind(sym compcfg.SymbolID, st
 				rebound = true
 			}
 		})
-	})
+	}
 
 	if rebound {
 		return true
 	}
 
-	graph.EachFuncDef(func(defPoint cfg.Point, info *compcfg.FuncDefInfo) {
+	for _, def := range evidence.FunctionDefinitions {
+		defPoint := def.Nested.Point
+		info := def.FuncDef
 		if rebound || info == nil || info.Symbol != sym || info.FuncExpr == nil || info.FuncExpr == stableFn {
-			return
+			continue
 		}
 		if !cfganalysis.StrictlyDominates(idom, defPoint, p) {
-			return
+			continue
 		}
 		if info.TargetKind == compcfg.FuncDefField || info.TargetKind == compcfg.FuncDefGlobal {
 			rebound = true
 		}
-	})
+	}
 
 	return rebound
 }
@@ -218,7 +226,7 @@ func (s *Synthesizer) expectedGraphLocalFunctionValueType(
 	return s.synthFunctionTypeWithCapturePoint(fn, sc, expected, p, captureTypes)
 }
 
-func (s *Synthesizer) stableGraphLocalFunctionSnapshotType(sym compcfg.SymbolID) typ.Type {
+func (s *Synthesizer) stableGraphLocalFunctionFactType(sym compcfg.SymbolID) typ.Type {
 	if s == nil || sym == 0 || s.deps == nil || s.deps.Ctx == nil || s.deps.CheckCtx == nil {
 		return nil
 	}
@@ -242,16 +250,16 @@ func (s *Synthesizer) stableGraphLocalFunctionSnapshotType(sym compcfg.SymbolID)
 		return nil
 	}
 
-	cacheKey := stableFunctionSnapshotKey{GraphID: graph.ID(), Parent: parent, Sym: sym}
-	if s.deps.StableFunctionSnapshot != nil {
-		if cached, ok := s.deps.StableFunctionSnapshot[cacheKey]; ok {
+	cacheKey := stableFunctionFactKey{GraphID: graph.ID(), Parent: parent, Sym: sym}
+	if s.deps.StableFunctionFactCache != nil {
+		if cached, ok := s.deps.StableFunctionFactCache[cacheKey]; ok {
 			return cached
 		}
 	}
 
 	var facts api.FunctionFacts
 	load := func() {
-		facts = store.GetFunctionFactsSnapshot(graph, parent)
+		facts = store.GetInterprocFacts(graph, parent).FunctionFacts
 	}
 	if phaser, ok := store.(interface{ WithPhase(api.Phase, func()) }); ok {
 		phaser.WithPhase(api.PhaseScopeCompute, load)
@@ -259,19 +267,19 @@ func (s *Synthesizer) stableGraphLocalFunctionSnapshotType(sym compcfg.SymbolID)
 		load()
 	}
 	if len(facts) == 0 {
-		if s.deps.StableFunctionSnapshot == nil {
-			s.deps.StableFunctionSnapshot = make(map[stableFunctionSnapshotKey]typ.Type)
+		if s.deps.StableFunctionFactCache == nil {
+			s.deps.StableFunctionFactCache = make(map[stableFunctionFactKey]typ.Type)
 		}
-		s.deps.StableFunctionSnapshot[cacheKey] = nil
+		s.deps.StableFunctionFactCache[cacheKey] = nil
 		return nil
 	}
 
-	snapshotType := facts.FunctionType(sym)
-	if s.deps.StableFunctionSnapshot == nil {
-		s.deps.StableFunctionSnapshot = make(map[stableFunctionSnapshotKey]typ.Type)
+	factType := facts.FunctionType(sym)
+	if s.deps.StableFunctionFactCache == nil {
+		s.deps.StableFunctionFactCache = make(map[stableFunctionFactKey]typ.Type)
 	}
-	s.deps.StableFunctionSnapshot[cacheKey] = snapshotType
-	return snapshotType
+	s.deps.StableFunctionFactCache[cacheKey] = factType
+	return factType
 }
 
 func (s *Synthesizer) stableFunctionFactType(sym compcfg.SymbolID) typ.Type {
@@ -292,7 +300,7 @@ func (s *Synthesizer) stableFunctionFactType(sym compcfg.SymbolID) typ.Type {
 	if defaultParent == nil && s.deps.CheckCtx != nil {
 		defaultParent = s.deps.CheckCtx.TypeNames()
 	}
-	return api.FunctionTypeSnapshotForSymbol(store, sym, defaultParent)
+	return abstractfacts.FunctionTypeForSymbol(store, sym, defaultParent)
 }
 
 func (s *Synthesizer) stableLocalFunctionValueType(
@@ -329,8 +337,8 @@ func (s *Synthesizer) stableLocalFunctionValueType(
 		}
 	}
 	if !hasContextFact {
-		if snapshot := s.stableGraphLocalFunctionSnapshotType(sym); snapshot != nil {
-			authoritative = snapshot
+		if factType := s.stableGraphLocalFunctionFactType(sym); factType != nil {
+			authoritative = factType
 		}
 	}
 	if !hasCaptures && authoritative != nil {
@@ -371,23 +379,32 @@ func (s *Synthesizer) hasDominatingCapturedMutation(fn *ast.FunctionExpr, p cfg.
 	}
 
 	var defPoint cfg.Point
-	graph.EachFuncDef(func(point cfg.Point, info *compcfg.FuncDefInfo) {
-		if defPoint != 0 || info == nil || info.FuncExpr != fn {
-			return
+	evidence := s.graphEvidence(graph)
+	for _, def := range evidence.FunctionDefinitions {
+		if defPoint != 0 {
+			break
 		}
-		defPoint = point
-	})
+		info := def.FuncDef
+		if info != nil && info.FuncExpr == fn {
+			defPoint = def.Nested.Point
+		}
+	}
 	if defPoint == 0 {
-		graph.EachAssign(func(point cfg.Point, info *compcfg.AssignInfo) {
-			if defPoint != 0 || info == nil {
-				return
+		for _, assign := range evidence.Assignments {
+			if defPoint != 0 {
+				break
+			}
+			point := assign.Point
+			info := assign.Info
+			if info == nil {
+				continue
 			}
 			info.EachTargetSource(func(_ int, _ compcfg.AssignTarget, source ast.Expr) {
 				if defPoint == 0 && source == fn {
 					defPoint = point
 				}
 			})
-		})
+		}
 	}
 	if defPoint == 0 {
 		return false
@@ -395,12 +412,14 @@ func (s *Synthesizer) hasDominatingCapturedMutation(fn *ast.FunctionExpr, p cfg.
 
 	idom := cfganalysis.ComputeImmediateDominators(graph.CFG())
 	mutated := false
-	graph.EachAssign(func(point cfg.Point, info *compcfg.AssignInfo) {
+	for _, assign := range evidence.Assignments {
+		point := assign.Point
+		info := assign.Info
 		if mutated || info == nil || point == defPoint {
-			return
+			continue
 		}
 		if !cfganalysis.StrictlyDominates(idom, defPoint, point) || !cfganalysis.StrictlyDominates(idom, point, p) {
-			return
+			continue
 		}
 		info.EachTarget(func(_ int, target compcfg.AssignTarget) {
 			if mutated {
@@ -414,7 +433,7 @@ func (s *Synthesizer) hasDominatingCapturedMutation(fn *ast.FunctionExpr, p cfg.
 				mutated = true
 			}
 		})
-	})
+	}
 	return mutated
 }
 

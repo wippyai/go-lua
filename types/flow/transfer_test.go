@@ -48,6 +48,18 @@ func TestProcessAssignmentReturnChangedKeys_SingleAssignment(t *testing.T) {
 	}
 }
 
+func TestMergeIteratorAssignedType_PreservesPreciseExtractedAgainstDynamicDerived(t *testing.T) {
+	if got := mergeIteratorAssignedType(typ.String, typ.Any); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("dynamic iterator derivation should not erase extracted string, got %v", got)
+	}
+	if got := mergeIteratorAssignedType(typ.Any, typ.String); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("concrete iterator derivation should refine extracted any, got %v", got)
+	}
+	if got := mergeIteratorAssignedType(typ.String, typ.Number); !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("incompatible concrete iterator derivation should remain authoritative, got %v", got)
+	}
+}
+
 func TestProcessAssignmentReturnChangedKeys_FieldNilUsesDeclaredFieldType(t *testing.T) {
 	c := cfg.New()
 	g := newMockSSAGraph(c)

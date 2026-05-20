@@ -3,12 +3,7 @@ package nested
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/parse"
-	"github.com/wippyai/go-lua/types/contract"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -26,35 +21,15 @@ func TestEnrichTableTypeWithFunctionLookup_NilRecord(t *testing.T) {
 	}
 }
 
-func TestCollectCapturedFieldAssignments_NilGraph(t *testing.T) {
-	result := CollectCapturedFieldAssignments(nil, nil, nil)
-	if result == nil {
-		t.Error("expected empty map, got nil")
-	}
-	if len(result) != 0 {
-		t.Errorf("expected empty map, got %v", result)
-	}
-}
-
-func TestCollectCapturedFieldAssignments_EmptyCapturedSyms(t *testing.T) {
-	result := CollectCapturedFieldAssignments(&cfg.Graph{}, map[cfg.SymbolID]bool{}, nil)
-	if result == nil {
-		t.Error("expected empty map, got nil")
-	}
-	if len(result) != 0 {
-		t.Errorf("expected empty map, got %v", result)
-	}
-}
-
 func TestEnrichSelfTypeWithConstructorFields_NilInputs(t *testing.T) {
-	result := EnrichSelfTypeWithConstructorFields(nil, 0, nil)
+	result := EnrichSelfTypeWithConstructorFields(nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil inputs")
 	}
 }
 
 func TestEnrichSelfTypeWithConstructorFields_NilSelfType(t *testing.T) {
-	result := EnrichSelfTypeWithConstructorFields(nil, 1, nil)
+	result := EnrichSelfTypeWithConstructorFields(nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil selfType")
 	}
@@ -74,135 +49,5 @@ func TestMergeFieldsIntoSelfType_NonRecordNonInterface(t *testing.T) {
 	result := mergeFieldsIntoSelfType(selfType, fields)
 	if result != selfType {
 		t.Errorf("expected original selfType for non-record/interface, got %v", result)
-	}
-}
-
-func TestCollectCapturedContainerMutations_AssignmentCallSite(t *testing.T) {
-	code := `
-		local c = {}
-		local _ = send(c, 1)
-	`
-	stmts, err := parse.ParseString(code, "test.lua")
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{HasVargs: true},
-		Stmts:   stmts,
-	}
-	graph := cfg.Build(fn, "send")
-	if graph == nil {
-		t.Fatal("expected graph")
-	}
-	symC, ok := graph.SymbolAt(graph.Exit(), "c")
-	if !ok || symC == 0 {
-		t.Fatal("expected symbol for c")
-	}
-
-	captured := map[cfg.SymbolID]bool{symC: true}
-	result := CollectCapturedContainerMutations(graph, captured, nestedContainerSendSynth())
-	muts := result[symC]
-	if len(muts) != 1 {
-		t.Fatalf("expected 1 container mutation for c, got %d", len(muts))
-	}
-	if muts[0].Kind != api.ContainerMutationContainerElement {
-		t.Fatalf("expected generic container mutation kind, got %v", muts[0].Kind)
-	}
-	if !typ.TypeEquals(muts[0].ValueType, typ.Integer) {
-		t.Fatalf("expected integer mutation value, got %v", muts[0].ValueType)
-	}
-}
-
-func TestCollectCapturedContainerMutations_TableInsertCallSite(t *testing.T) {
-	code := `
-		local c = {}
-		local _ = table.insert(c.items, 1)
-	`
-	stmts, err := parse.ParseString(code, "test.lua")
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{HasVargs: true},
-		Stmts:   stmts,
-	}
-	graph := cfg.Build(fn, "table")
-	if graph == nil {
-		t.Fatal("expected graph")
-	}
-	symC, ok := graph.SymbolAt(graph.Exit(), "c")
-	if !ok || symC == 0 {
-		t.Fatal("expected symbol for c")
-	}
-
-	captured := map[cfg.SymbolID]bool{symC: true}
-	result := CollectCapturedContainerMutations(graph, captured, nestedTableInsertSynth())
-	muts := result[symC]
-	if len(muts) != 1 {
-		t.Fatalf("expected 1 table mutation for c, got %d", len(muts))
-	}
-	if muts[0].Kind != api.ContainerMutationTableElement {
-		t.Fatalf("expected table mutation kind, got %v", muts[0].Kind)
-	}
-	if len(muts[0].Segments) != 1 || muts[0].Segments[0].Name != "items" {
-		t.Fatalf("expected .items mutation path, got %#v", muts[0].Segments)
-	}
-	if !typ.TypeEquals(muts[0].ValueType, typ.Integer) {
-		t.Fatalf("expected integer mutation value, got %v", muts[0].ValueType)
-	}
-}
-
-func nestedContainerSendSynth() func(ast.Expr, cfg.Point) typ.Type {
-	spec := contract.NewSpec().WithEffects(effect.Mutate{
-		Target: effect.ParamRef{Index: 0},
-		Transform: effect.ContainerElementUnion{
-			Container: effect.ParamRef{Index: 0},
-			Value:     effect.ParamRef{Index: 1},
-		},
-	})
-	send := typ.Func().
-		Param("container", typ.Any).
-		Param("value", typ.Any).
-		Returns(typ.Nil).
-		Spec(spec).
-		Build()
-
-	return func(expr ast.Expr, _ cfg.Point) typ.Type {
-		switch v := expr.(type) {
-		case *ast.IdentExpr:
-			if v.Value == "send" {
-				return send
-			}
-		case *ast.NumberExpr:
-			return typ.Integer
-		}
-		return typ.Unknown
-	}
-}
-
-func nestedTableInsertSynth() func(ast.Expr, cfg.Point) typ.Type {
-	spec := contract.NewSpec().WithEffects(effect.TableMutator{
-		Target: effect.ParamRef{Index: 0},
-		Value:  effect.ParamRef{Index: 1},
-	})
-	insert := typ.Func().
-		Param("target", typ.Any).
-		Param("value", typ.Any).
-		Returns(typ.Nil).
-		Spec(spec).
-		Build()
-
-	return func(expr ast.Expr, _ cfg.Point) typ.Type {
-		switch v := expr.(type) {
-		case *ast.AttrGetExpr:
-			obj, objOK := v.Object.(*ast.IdentExpr)
-			key, keyOK := v.Key.(*ast.StringExpr)
-			if objOK && keyOK && obj.Value == "table" && key.Value == "insert" {
-				return insert
-			}
-		case *ast.NumberExpr:
-			return typ.Integer
-		}
-		return typ.Unknown
 	}
 }

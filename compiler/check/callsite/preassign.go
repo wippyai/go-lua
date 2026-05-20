@@ -2,6 +2,7 @@ package callsite
 
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -12,14 +13,15 @@ type SymbolTypeAtPoint func(cfg.Point, cfg.SymbolID) (typ.Type, bool)
 // For calls used as assignment RHS at point p (x = f(...)), the returned target
 // set captures symbols that must be typed from predecessor state when computing
 // argument evidence at that call site.
-func PreAssignmentTargetsByCall(graph *cfg.Graph) map[*cfg.CallInfo]map[cfg.SymbolID]bool {
-	if graph == nil {
+func PreAssignmentTargetsByCall(assignments []api.AssignmentEvidence) map[*cfg.CallInfo]map[cfg.SymbolID]bool {
+	if len(assignments) == 0 {
 		return nil
 	}
 	out := make(map[*cfg.CallInfo]map[cfg.SymbolID]bool)
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range assignments {
+		info := assign.Info
 		if info == nil || len(info.Targets) == 0 || len(info.SourceCalls) == 0 {
-			return
+			continue
 		}
 		targets := make(map[cfg.SymbolID]bool, len(info.Targets))
 		for _, target := range info.Targets {
@@ -28,7 +30,7 @@ func PreAssignmentTargetsByCall(graph *cfg.Graph) map[*cfg.CallInfo]map[cfg.Symb
 			}
 		}
 		if len(targets) == 0 {
-			return
+			continue
 		}
 		for _, call := range info.SourceCalls {
 			if call == nil {
@@ -43,7 +45,7 @@ func PreAssignmentTargetsByCall(graph *cfg.Graph) map[*cfg.CallInfo]map[cfg.Symb
 				existing[sym] = true
 			}
 		}
-	})
+	}
 	return out
 }
 

@@ -197,6 +197,35 @@ func TestGuards_FieldTruthyNarrowsUnion(t *testing.T) {
 			WantError: false,
 			Stdlib:    true,
 		},
+		{
+			Name: "closed record missing field is nil in truthiness probe",
+			Code: `
+				function f(edge: {target_node_id: string?}): boolean
+					if edge.target_node_id or edge.is_workflow_terminal then
+						return true
+					end
+					if not edge.is_workflow_terminal then
+						return false
+					end
+					return true
+				end
+			`,
+			WantError: false,
+			Stdlib:    true,
+		},
+		{
+			Name: "closed record missing field nil comparison is existence probe",
+			Code: `
+				function f(edge: {target_node_id: string?}): boolean
+					if edge.is_workflow_terminal == nil then
+						return false
+					end
+					return true
+				end
+			`,
+			WantError: false,
+			Stdlib:    true,
+		},
 	}
 	testutil.RunCases(t, tests)
 }

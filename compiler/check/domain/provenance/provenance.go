@@ -3,6 +3,7 @@ package provenance
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 )
 
 // IdentBindingLookup resolves identifier expressions to graph symbols.
@@ -17,131 +18,33 @@ type FreshTableLiteral struct {
 	Point cfg.Point
 }
 
-// CurrentFreshTableLiteral returns the dominating fresh table literal for source
-// when the source is an identifier whose current value is still the literal and
-// has not escaped through another alias, call, return, or structured mutation.
-func CurrentFreshTableLiteral(source ast.Expr, at cfg.Point, graph *cfg.Graph) (FreshTableLiteral, bool) {
-	if source == nil || graph == nil {
+// CurrentFreshTableLiteral returns the transfer-proven fresh table literal for
+// source at a point. The freshness proof is produced by trace.GraphEvidence;
+// this reducer only matches the identifier use to canonical evidence.
+func CurrentFreshTableLiteral(
+	source ast.Expr,
+	at cfg.Point,
+	bindings IdentBindingLookup,
+	freshTables []api.FreshTableLiteralEvidence,
+) (FreshTableLiteral, bool) {
+	if source == nil || bindings == nil || len(freshTables) == 0 {
 		return FreshTableLiteral{}, false
 	}
 	ident, ok := source.(*ast.IdentExpr)
 	if !ok {
 		return FreshTableLiteral{}, false
 	}
-	bindings := graph.Bindings()
-	if bindings == nil {
-		return FreshTableLiteral{}, false
-	}
 	sym, ok := bindings.SymbolOf(ident)
 	if !ok || sym == 0 {
 		return FreshTableLiteral{}, false
 	}
-	version := graph.VisibleVersion(at, sym)
-	if version.Symbol == 0 || version.ID == 0 {
-		return FreshTableLiteral{}, false
+	for _, ev := range freshTables {
+		if ev.Point != at || ev.Symbol != sym || ev.Table == nil {
+			continue
+		}
+		return FreshTableLiteral{Table: ev.Table, Point: ev.AssignmentPoint}, true
 	}
-
-	current := at
-	seen := make(map[cfg.Point]struct{}, 4)
-	for {
-		preds := graph.PredecessorsReadOnly(current)
-		if len(preds) != 1 {
-			return FreshTableLiteral{}, false
-		}
-		pred := preds[0]
-		if _, ok := seen[pred]; ok {
-			return FreshTableLiteral{}, false
-		}
-		seen[pred] = struct{}{}
-
-		switch info := graph.Info(pred).(type) {
-		case *cfg.AssignInfo:
-			if fresh, found, ok := freshTableAssignment(info, pred, sym, version, graph); found {
-				return fresh, ok
-			}
-			if assignmentInvalidatesFreshness(info, sym, bindings) {
-				return FreshTableLiteral{}, false
-			}
-		case *cfg.CallInfo:
-			return FreshTableLiteral{}, false
-		case *cfg.ReturnInfo:
-			if returnInvalidatesFreshness(info, sym, bindings) {
-				return FreshTableLiteral{}, false
-			}
-		case *cfg.FuncDefInfo:
-			return FreshTableLiteral{}, false
-		}
-
-		current = pred
-	}
-}
-
-func freshTableAssignment(info *cfg.AssignInfo, p cfg.Point, sym cfg.SymbolID, version cfg.Version, graph *cfg.Graph) (FreshTableLiteral, bool, bool) {
-	if info == nil {
-		return FreshTableLiteral{}, false, false
-	}
-	var fresh FreshTableLiteral
-	found := false
-	ok := false
-	info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
-		if found || target.Kind != cfg.TargetIdent || target.Symbol != sym {
-			return
-		}
-		found = true
-		if graph == nil {
-			return
-		}
-		assignedVersion := graph.VisibleVersion(p, sym)
-		if assignedVersion.Symbol != version.Symbol || assignedVersion.ID != version.ID {
-			return
-		}
-		table, isTable := src.(*ast.TableExpr)
-		if !isTable || table == nil {
-			return
-		}
-		fresh = FreshTableLiteral{Table: table, Point: p}
-		ok = true
-	})
-	return fresh, found, ok
-}
-
-func assignmentInvalidatesFreshness(info *cfg.AssignInfo, sym cfg.SymbolID, bindings IdentBindingLookup) bool {
-	if info == nil {
-		return false
-	}
-	for _, call := range info.SourceCalls {
-		if call != nil {
-			return true
-		}
-	}
-	for i, target := range info.Targets {
-		if target.Kind != cfg.TargetIdent {
-			if target.BaseSymbol == sym || ExprReferencesSymbol(target.Expr, sym, bindings) {
-				return true
-			}
-		}
-		if ExprMayExposeSymbolValue(info.SourceAt(i), sym, bindings) {
-			return true
-		}
-	}
-	return false
-}
-
-func returnInvalidatesFreshness(info *cfg.ReturnInfo, sym cfg.SymbolID, bindings IdentBindingLookup) bool {
-	if info == nil {
-		return false
-	}
-	for _, call := range info.SourceCalls {
-		if call != nil {
-			return true
-		}
-	}
-	for _, expr := range info.Exprs {
-		if ExprMayExposeSymbolValue(expr, sym, bindings) {
-			return true
-		}
-	}
-	return false
+	return FreshTableLiteral{}, false
 }
 
 // ExprMayExposeSymbolValue reports whether evaluating expr may publish the

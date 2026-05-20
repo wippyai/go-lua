@@ -7,8 +7,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	flowpath "github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -18,15 +18,15 @@ import (
 
 // CheckExhaustiveness warns when a match-like if/elseif chain misses variants
 // from a provably closed discriminated union.
-func CheckExhaustiveness(fn *ast.FunctionExpr, graph *cfg.Graph, synth api.BaseSynth, sourceName string) []diag.Diagnostic {
+func CheckExhaustiveness(fn *ast.FunctionExpr, graph *cfg.Graph, evidence api.FlowEvidence, synth api.BaseSynth, sourceName string) []diag.Diagnostic {
 	if fn == nil || graph == nil || synth == nil {
 		return nil
 	}
 	checker := exhaustivenessChecker{
-		branchPoint: branchPointsByCondition(graph),
+		branchPoint: branchPointsByCondition(evidence.Branches),
 		graph:       graph,
 		bindings:    graph.Bindings(),
-		selectCases: selectCasesByResult(graph),
+		selectCases: selectCasesByResult(graph, evidence.Assignments),
 		synth:       synth,
 		sourceName:  sourceName,
 	}
@@ -66,13 +66,15 @@ type selectCase struct {
 	name string
 }
 
-func branchPointsByCondition(graph *cfg.Graph) map[ast.Expr]cfg.Point {
+func branchPointsByCondition(branches []api.BranchEvidence) map[ast.Expr]cfg.Point {
 	points := make(map[ast.Expr]cfg.Point)
-	graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
+	for _, branch := range branches {
+		p := branch.Point
+		info := branch.Info
 		if info != nil && info.Condition != nil {
 			points[info.Condition] = p
 		}
-	})
+	}
 	return points
 }
 
@@ -407,31 +409,36 @@ func formatMissingNames(missing []string) string {
 	return "cases: " + strings.Join(missing, ", ")
 }
 
-func selectCasesByResult(graph *cfg.Graph) map[string]selectCaseDomain {
+func selectCasesByResult(graph *cfg.Graph, assignments []api.AssignmentEvidence) map[string]selectCaseDomain {
 	if graph == nil || graph.Bindings() == nil {
 		return nil
 	}
 	bindings := graph.Bindings()
 	domains := make(map[string]selectCaseDomain)
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range assignments {
+		p := assign.Point
+		info := assign.Info
+		if info == nil {
+			continue
+		}
 		target, ok := info.FirstTarget()
 		if !ok || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-			return
+			continue
 		}
 		call := info.SingleSourceCall()
 		if !isChannelSelectCall(call) || len(call.Args) == 0 {
-			return
+			continue
 		}
 		cases, ok := selectCaseChannels(call.Args[0], p, graph, bindings)
 		if !ok || len(cases) < 2 {
-			return
+			continue
 		}
 		resultPath := constraint.Path{Root: target.Name, Symbol: target.Symbol}
 		if len(info.TargetVersions) > 0 && !info.TargetVersions[0].IsZero() {
 			resultPath.Version = info.TargetVersions[0].ID
 		}
 		domains[pathKey(resultPath)] = selectCaseDomain{cases: cases}
-	})
+	}
 	return domains
 }
 

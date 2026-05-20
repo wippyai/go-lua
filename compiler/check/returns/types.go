@@ -40,6 +40,7 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -60,6 +61,10 @@ type LocalFuncInfo struct {
 	ParentGraph *cfg.Graph
 	ParentFn    *ast.FunctionExpr
 	DefPoint    cfg.Point
+	// Evidence is the transfer-owned expression evidence for this function.
+	Evidence api.FlowEvidence
+	// ParentEvidence is the transfer-owned expression evidence for ParentGraph.
+	ParentEvidence api.FlowEvidence
 	// ParameterEvidence holds inferred effective-parameter types from call sites in the
 	// parent graph. For methods, index 0 is self.
 	ParameterEvidence []typ.Type

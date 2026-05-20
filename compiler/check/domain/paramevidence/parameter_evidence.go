@@ -675,15 +675,14 @@ func BuildSignatureMap(
 	parent *scope.State,
 	stdlib *scope.State,
 ) map[*ast.FunctionExpr][]typ.Type {
-	if store == nil || graph == nil || parent == nil {
+	if store == nil || graph == nil {
 		return nil
 	}
 
-	functionFacts := store.GetFunctionFactsSnapshot(graph, parent)
-
 	out := make(map[*ast.FunctionExpr][]typ.Type)
 
-	if len(functionFacts) > 0 {
+	if parent != nil {
+		functionFacts := store.GetInterprocFacts(graph, parent).FunctionFacts
 		for _, sym := range cfg.SortedSymbolIDs(functionFacts) {
 			vec := functionFacts.Params(sym)
 			if len(vec) == 0 {
@@ -720,7 +719,7 @@ func BuildSignatureMap(
 			}
 			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), defaultScope)
 			if parentScope != nil {
-				parentFacts := store.GetFunctionFactsSnapshot(parentGraph, parentScope)
+				parentFacts := store.GetInterprocFacts(parentGraph, parentScope).FunctionFacts
 				if len(parentFacts) > 0 {
 					fn := store.FuncForGraph(graph)
 					if fn == nil {

@@ -5,12 +5,12 @@
 //   - domain/paramevidence owns parameter evidence;
 //   - domain/returnsummary owns return vectors and function-return alignment;
 //   - domain/functionfact owns one api.FunctionFact at a time;
-//   - domain/factproduct owns whole api.Facts products;
+//   - domain/interproc owns whole api.Facts products;
 //   - domain/value owns reusable structural value relations.
 //
 // This package owns local call graph traversal, SCC iteration, return overlays,
 // signature seeding, and nested-call mutation replay. The interprocedural store
-// applies product joins and widening through domain/factproduct.
+// applies product joins and widening through domain/interproc.
 //
 // # SCC-Based Analysis
 //
@@ -31,8 +31,8 @@
 //
 // # Convergence
 //
-// Local SCC iteration has a bounded return-summary loop. Cross-graph
-// interprocedural convergence is handled by the store through domain/factproduct.
+// Local SCC iteration runs to domain convergence. Cross-graph interprocedural
+// convergence is handled by the store through domain/interproc.
 //
 // # Overlay System
 //

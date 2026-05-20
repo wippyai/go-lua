@@ -98,8 +98,8 @@ func applyTypeDefAtPoint(graph *cfg.Graph, p cfg.Point, current *State, resolver
 //
 // CFG stores type parameters in a simplified form (TypeParamInfo) that captures
 // name and constraint. The AST representation (TypeParamExpr) is needed for
-// type resolution, which operates on AST nodes. This function bridges the two
-// representations.
+// type resolution, which operates on AST nodes. This function converts between
+// the two representations.
 func ToTypeParamExprs(params []cfg.TypeParamInfo) []ast.TypeParamExpr {
 	if len(params) == 0 {
 		return nil

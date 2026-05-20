@@ -217,7 +217,7 @@ func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
 	for _, m := range u.Members {
 		ft, ok := fieldDepth(m, name, depth+1)
 		if !ok {
-			if allowsMissingFieldAsNil(m, depth+1) {
+			if missingFieldReadsNilDepth(m, depth+1) {
 				missingFromSome = true
 				continue
 			}
@@ -294,30 +294,68 @@ func fieldOnSpecial(t typ.Type, name string) (typ.Type, bool) {
 	return nil, false
 }
 
-// allowsMissingFieldAsNil reports whether missing fields are safely interpreted
-// as nil for this member when resolving a field on a union.
-func allowsMissingFieldAsNil(t typ.Type, depth int) bool {
+// MissingFieldReadsNil reports whether a missing field read on t has defined
+// Lua table semantics: it produces nil instead of raising an indexing error.
+// Field still returns false for a missing field on precise table shapes so
+// strict value reads can report likely typos; union field lookup and probe
+// diagnostics use this to treat absent fields as nil for table variants.
+func MissingFieldReadsNil(t typ.Type) bool {
+	return missingFieldReadsNilDepth(t, 0)
+}
+
+func missingFieldReadsNilDepth(t typ.Type, depth int) bool {
 	if stopDepth(t, depth) || t == nil {
 		return false
 	}
 	return typ.Visit(t, typ.Visitor[bool]{
 		Alias: func(a *typ.Alias) bool {
-			return allowsMissingFieldAsNil(a.Target, depth+1)
+			return missingFieldReadsNilDepth(a.Target, depth+1)
 		},
 		Instantiated: func(inst *typ.Instantiated) bool {
 			resolved, err := ResolveInstantiated(inst)
 			if err != nil {
 				return false
 			}
-			return allowsMissingFieldAsNil(resolved, depth+1)
+			return missingFieldReadsNilDepth(resolved, depth+1)
 		},
 		Generic: func(g *typ.Generic) bool {
-			return allowsMissingFieldAsNil(g.Body, depth+1)
+			return missingFieldReadsNilDepth(g.Body, depth+1)
+		},
+		TypeParam: func(tp *typ.TypeParam) bool {
+			return tp.Constraint != nil && missingFieldReadsNilDepth(tp.Constraint, depth+1)
+		},
+		Recursive: func(rec *typ.Recursive) bool {
+			return rec.Body != nil && rec.Body != rec && missingFieldReadsNilDepth(rec.Body, depth+1)
+		},
+		Union: func(u *typ.Union) bool {
+			for _, m := range u.Members {
+				if !missingFieldReadsNilDepth(m, depth+1) {
+					return false
+				}
+			}
+			return len(u.Members) > 0
+		},
+		Intersection: func(i *typ.Intersection) bool {
+			for _, m := range i.Members {
+				if missingFieldReadsNilDepth(m, depth+1) {
+					return true
+				}
+			}
+			return false
 		},
 		Record: func(*typ.Record) bool {
 			return true
 		},
 		Map: func(*typ.Map) bool {
+			return true
+		},
+		Array: func(*typ.Array) bool {
+			return true
+		},
+		Tuple: func(*typ.Tuple) bool {
+			return true
+		},
+		Interface: func(*typ.Interface) bool {
 			return true
 		},
 		Default: func(typ.Type) bool {

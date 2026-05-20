@@ -31,15 +31,21 @@ import (
 // types before applying any narrowing from control flow.
 //
 // Returns nil if graph or synth is nil, or if no literals are found.
-func FunctionLiteralTypes(graph *cfg.Graph, synth api.ExprSynth) flow.DeclaredTypes {
+func FunctionLiteralTypes(graph *cfg.Graph, evidence api.FlowEvidence, synth api.ExprSynth) flow.DeclaredTypes {
 	if graph == nil || synth == nil {
 		return nil
 	}
 
 	types := make(flow.DeclaredTypes)
 
+	assignmentsByPoint := make(map[cfg.Point]*cfg.AssignInfo, len(evidence.Assignments))
+	for _, assign := range evidence.Assignments {
+		if assign.Info != nil {
+			assignmentsByPoint[assign.Point] = assign.Info
+		}
+	}
 	for _, p := range graph.RPO() {
-		info := graph.Assign(p)
+		info := assignmentsByPoint[p]
 		if info == nil || !info.IsLocal {
 			continue
 		}
@@ -69,28 +75,30 @@ func FunctionLiteralTypes(graph *cfg.Graph, synth api.ExprSynth) flow.DeclaredTy
 		})
 	}
 
-	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
+	for _, def := range evidence.FunctionDefinitions {
+		p := def.Nested.Point
+		info := def.FuncDef
 		if info == nil {
-			return
+			continue
 		}
 		if info.TargetKind == cfg.FuncDefGlobal {
 			if info.Symbol == 0 || info.FuncExpr == nil || len(info.FuncExpr.ReturnTypes) > 0 {
-				return
+				continue
 			}
 			if t := synth(info.FuncExpr, p); t != nil {
 				types[info.Symbol] = t
 			}
-			return
+			continue
 		}
 		if info.TargetKind != cfg.FuncDefField && info.TargetKind != cfg.FuncDefMethod {
-			return
+			continue
 		}
 		if info.Name == "" {
-			return
+			continue
 		}
 		receiverSym := info.ReceiverSymbol
 		if receiverSym == 0 {
-			return
+			continue
 		}
 		fnType := typ.Unknown
 		if info.FuncExpr != nil {
@@ -103,7 +111,7 @@ func FunctionLiteralTypes(graph *cfg.Graph, synth api.ExprSynth) flow.DeclaredTy
 			baseType = synth(info.Receiver, p)
 		}
 		types[receiverSym] = typ.ExtendRecordWithField(baseType, info.Name, fnType)
-	})
+	}
 
 	if len(types) == 0 {
 		return nil
@@ -130,7 +138,7 @@ func FunctionLiteralTypes(graph *cfg.Graph, synth api.ExprSynth) flow.DeclaredTy
 //   - For return expressions, uses declared return types as expected types
 //
 // Returns nil if graph or engine is nil, or if no function literals found.
-func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredReturns []typ.Type) map[*ast.FunctionExpr]*typ.Function {
+func FunctionLiteralSignatures(graph *cfg.Graph, evidence api.FlowEvidence, engine LiteralSynth, declaredReturns []typ.Type) map[*ast.FunctionExpr]*typ.Function {
 	if graph == nil || engine == nil {
 		return nil
 	}
@@ -254,8 +262,14 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 		}
 	}
 
+	assignmentsByPoint := make(map[cfg.Point]*cfg.AssignInfo, len(evidence.Assignments))
+	for _, assign := range evidence.Assignments {
+		if assign.Info != nil {
+			assignmentsByPoint[assign.Point] = assign.Info
+		}
+	}
 	for _, p := range graph.RPO() {
-		info := graph.Assign(p)
+		info := assignmentsByPoint[p]
 		if info == nil || !info.IsLocal {
 			continue
 		}
@@ -269,9 +283,11 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 		})
 	}
 
-	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
+	for _, def := range evidence.FunctionDefinitions {
+		p := def.Nested.Point
+		info := def.FuncDef
 		if info == nil || info.FuncExpr == nil {
-			return
+			continue
 		}
 		var expectedFn *typ.Function
 		if info.TargetKind == cfg.FuncDefField || info.TargetKind == cfg.FuncDefMethod {
@@ -283,12 +299,14 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 			}
 		}
 		addSig(info.FuncExpr, p, expectedFn)
-	})
+	}
 
-	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		expectedArgs, expectedVariadic := expectedArgsForDirectCallbackLiteral(callCtx, engine, graph, info, p)
+	for _, call := range evidence.Calls {
+		p := call.Point
+		info := call.Info
+		expectedArgs, expectedVariadic := expectedArgsForDirectCallbackLiteral(callCtx, engine, graph, evidence, info, p)
 		if len(expectedArgs) == 0 && expectedVariadic == nil {
-			return
+			continue
 		}
 		for i, arg := range info.Args {
 			fn, ok := arg.(*ast.FunctionExpr)
@@ -305,12 +323,14 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 				addSig(fn, p, expectedFn)
 			}
 		}
-	})
+	}
 
 	if len(declaredReturns) > 0 {
-		graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		for _, ret := range evidence.Returns {
+			p := ret.Point
+			info := ret.Info
 			if info == nil {
-				return
+				continue
 			}
 			for i, expr := range info.Exprs {
 				if i >= len(declaredReturns) {
@@ -319,7 +339,7 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 				expected := declaredReturns[i]
 				collectExpr(expr, p, expected)
 			}
-		})
+		}
 	}
 
 	if len(out) == 0 {
@@ -336,6 +356,7 @@ func expectedArgsForDirectCallbackLiteral(
 	ctx *db.QueryContext,
 	engine LiteralSynth,
 	graph *cfg.Graph,
+	evidence api.FlowEvidence,
 	info *cfg.CallInfo,
 	p cfg.Point,
 ) ([]typ.Type, typ.Type) {
@@ -351,7 +372,7 @@ func expectedArgsForDirectCallbackLiteral(
 	def := ops.CallDef{
 		Args:                shallowCallArgTypes(engine, info.Args, p),
 		Query:               query,
-		ForceMethodReceiver: callsite.ForceMethodReceiverAtPoint(graph.Bindings(), graph, p, info.Call),
+		ForceMethodReceiver: callsite.ForceMethodReceiverAtPoint(graph.Bindings(), graph, evidence, p, info.Call),
 	}
 	if callsite.IsMethodCallInfo(info) {
 		def.IsMethod = true

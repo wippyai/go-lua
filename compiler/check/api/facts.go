@@ -8,7 +8,6 @@ package api
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -25,6 +24,8 @@ type FunctionFact struct {
 	Narrow []typ.Type
 	// Type is the canonical local function type evidence.
 	Type typ.Type
+	// Refinement is the canonical effect/refinement summary for the function.
+	Refinement *constraint.FunctionRefinement
 }
 
 // FunctionFacts maps function symbols to their canonical function facts.
@@ -75,37 +76,13 @@ func (facts FunctionFacts) FunctionType(sym cfg.SymbolID) typ.Type {
 	return ff.Type
 }
 
-// FunctionFactSnapshotForSymbol returns the stable fact snapshot for sym.
-func FunctionFactSnapshotForSymbol(store StoreReader, sym cfg.SymbolID, defaultParent *scope.State) (FunctionFact, bool) {
-	if store == nil || sym == 0 {
-		return FunctionFact{}, false
-	}
-	ref := store.FunctionRefBySym(sym)
-	if ref == nil {
-		return FunctionFact{}, false
-	}
-	parentGraphID := ref.ParentGraphID
-	if parentGraphID == 0 {
-		parentGraphID = ref.GraphID
-	}
-	parentGraph := store.Graphs()[parentGraphID]
-	if parentGraph == nil {
-		return FunctionFact{}, false
-	}
-	parent := ParentScopeForGraph(store, parentGraph.ID(), defaultParent)
-	if parent == nil {
-		return FunctionFact{}, false
-	}
-	return store.GetFunctionFactsSnapshot(parentGraph, parent).Fact(sym)
-}
-
-// FunctionTypeSnapshotForSymbol returns the stable function type fact for sym.
-func FunctionTypeSnapshotForSymbol(store StoreReader, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
-	ff, ok := FunctionFactSnapshotForSymbol(store, sym, defaultParent)
+// Refinement returns the canonical function refinement for sym.
+func (facts FunctionFacts) Refinement(sym cfg.SymbolID) *constraint.FunctionRefinement {
+	ff, ok := facts.Fact(sym)
 	if !ok {
 		return nil
 	}
-	return ff.Type
+	return ff.Refinement
 }
 
 // LiteralSigs maps anonymous function literal expressions to their signatures.
@@ -173,8 +150,8 @@ type CapturedContainerMutations = map[cfg.SymbolID]map[cfg.SymbolID][]ContainerM
 // Structure: classSymbol -> fieldName -> fieldType.
 type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
 
-// Facts bundles all interprocedural analysis results for a single function graph.
-// These facts are computed during analysis and stored per (graph, parent) pair.
+// Facts bundles one canonical interprocedural product slice. Most slices are
+// stored per (graph, parent) pair; module-wide facts use ModuleFactsKey.
 type Facts struct {
 	FunctionFacts      FunctionFacts
 	LiteralSigs        LiteralSigs

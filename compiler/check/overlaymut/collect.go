@@ -4,27 +4,30 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// CollectFieldAssignments scans the graph for field assignments and groups them by base symbol.
+// CollectFieldAssignments reduces transfer assignment evidence into field assignments grouped by base symbol.
 // Returns a map: symbolID -> map[fieldName]typ.Type representing fields assigned to each symbol.
 // The synth function is used to synthesize field value types.
 // If filterSyms is non-nil, only symbols in the filter are collected.
 func CollectFieldAssignments(
-	graph *cfg.Graph,
+	assignments []api.AssignmentEvidence,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	filterSyms map[cfg.SymbolID]bool,
 ) map[cfg.SymbolID]map[string]typ.Type {
 	result := make(map[cfg.SymbolID]map[string]typ.Type)
-	if graph == nil {
+	if len(assignments) == 0 {
 		return result
 	}
 
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range assignments {
+		p := assign.Point
+		info := assign.Info
 		if info == nil {
-			return
+			continue
 		}
 		sources := info.Sources
 		for i, target := range info.Targets {
@@ -74,27 +77,29 @@ func CollectFieldAssignments(
 				result[sym][fieldName] = fieldType
 			}
 		}
-	})
+	}
 
 	return result
 }
 
-// CollectIndexerAssignments scans the graph for dynamic index assignments (t[k] = v where k is non-const).
+// CollectIndexerAssignments reduces transfer assignment evidence for dynamic index writes.
 // Returns a map: symbolID -> []IndexerInfo representing index assignments to each symbol.
 func CollectIndexerAssignments(
-	graph *cfg.Graph,
+	assignments []api.AssignmentEvidence,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	bindings *bind.BindingTable,
 	filterSyms map[cfg.SymbolID]bool,
 ) map[cfg.SymbolID][]mutator.IndexerInfo {
 	result := make(map[cfg.SymbolID][]mutator.IndexerInfo)
-	if graph == nil {
+	if len(assignments) == 0 {
 		return result
 	}
 
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range assignments {
+		p := assign.Point
+		info := assign.Info
 		if info == nil {
-			return
+			continue
 		}
 		sources := info.Sources
 		for i, target := range info.Targets {
@@ -146,7 +151,7 @@ func CollectIndexerAssignments(
 				ValType: valType,
 			})
 		}
-	})
+	}
 
 	return result
 }

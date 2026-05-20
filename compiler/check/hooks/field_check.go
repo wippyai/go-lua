@@ -18,9 +18,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/guard"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/guard"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	checksynth "github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
@@ -36,7 +36,7 @@ import (
 )
 
 // CheckFields validates field accesses on narrowed types.
-func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+func CheckFields(graph *cfg.Graph, evidence api.FlowEvidence, narrowSynth api.Synth, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
 	if graph == nil || narrowSynth == nil || narrowView == nil {
 		return nil
 	}
@@ -47,7 +47,12 @@ func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSyn
 	var diags []diag.Diagnostic
 	seen := make(map[ast.Expr]bool)
 
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range evidence.Assignments {
+		p := assign.Point
+		info := assign.Info
+		if info == nil {
+			continue
+		}
 		assignView, assignResolver := applyAssignPreStateNarrowing(graph, info, p, narrowView, resolver)
 		info.EachSource(func(_ int, source ast.Expr) {
 			diags = append(diags, checkFieldExpr(source, p, assignView, assignResolver, seen, sourceName)...)
@@ -55,11 +60,16 @@ func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSyn
 		if info.NumericFor != nil {
 			diags = append(diags, checkNumericFor(info.NumericFor, p, narrowView, sourceName)...)
 		}
-	})
+	}
 
-	graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
+	for _, call := range evidence.Calls {
+		if call.Origin != api.CallOriginStatement {
+			continue
+		}
+		p := call.Point
+		info := call.Info
 		if info == nil {
-			return
+			continue
 		}
 		if info.Callee != nil {
 			diags = append(diags, checkFieldExpr(info.Callee, p, narrowView, resolver, seen, sourceName)...)
@@ -70,16 +80,27 @@ func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSyn
 		for _, arg := range info.Args {
 			diags = append(diags, checkFieldExpr(arg, p, narrowView, resolver, seen, sourceName)...)
 		}
-	})
+	}
 
-	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+	for _, ret := range evidence.Returns {
+		p := ret.Point
+		info := ret.Info
 		if info == nil {
-			return
+			continue
 		}
 		for _, expr := range info.Exprs {
 			diags = append(diags, checkFieldExpr(expr, p, narrowView, resolver, seen, sourceName)...)
 		}
-	})
+	}
+
+	for _, branch := range evidence.Branches {
+		p := branch.Point
+		info := branch.Info
+		if info == nil {
+			continue
+		}
+		diags = append(diags, checkFieldProbe(info.Condition, p, narrowView, resolver, seen, sourceName)...)
+	}
 
 	return diags
 }
@@ -169,7 +190,22 @@ func (v *localNarrowView) ResolveReturnTypes(types []ast.TypeExpr, sc *scope.Sta
 	return v.base.ResolveReturnTypes(types, sc)
 }
 
+type fieldUse uint8
+
+const (
+	fieldUseValue fieldUse = iota
+	fieldUseProbe
+)
+
 func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolver fieldResolverImpl, seen map[ast.Expr]bool, sourceName string) []diag.Diagnostic {
+	return checkFieldExprUse(expr, p, narrowView, resolver, seen, sourceName, fieldUseValue)
+}
+
+func checkFieldProbe(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolver fieldResolverImpl, seen map[ast.Expr]bool, sourceName string) []diag.Diagnostic {
+	return checkFieldExprUse(expr, p, narrowView, resolver, seen, sourceName, fieldUseProbe)
+}
+
+func checkFieldExprUse(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolver fieldResolverImpl, seen map[ast.Expr]bool, sourceName string, use fieldUse) []diag.Diagnostic {
 	if expr == nil || seen[expr] {
 		return nil
 	}
@@ -179,7 +215,7 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 
 	switch e := expr.(type) {
 	case *ast.AttrGetExpr:
-		diags = append(diags, checkAttrGet(e, p, narrowView, resolver, seen, sourceName)...)
+		diags = append(diags, checkAttrGet(e, p, narrowView, resolver, seen, sourceName, use)...)
 	case *ast.FuncCallExpr:
 		diags = append(diags, checkFieldExpr(e.Func, p, narrowView, resolver, seen, sourceName)...)
 		for _, arg := range e.Args {
@@ -207,12 +243,12 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 						overrideType: probeType,
 					}
 					localResolver := fieldResolverImpl{view: localView, synth: resolver.synth, bindings: resolver.bindings}
-					diags = append(diags, checkFieldExpr(e.Rhs, p, localView, localResolver, seen, sourceName)...)
+					diags = append(diags, checkFieldExprUse(e.Rhs, p, localView, localResolver, seen, sourceName, use)...)
 					return diags
 				}
 			}
 		}
-		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
+		diags = append(diags, checkFieldExprUse(e.Lhs, p, narrowView, resolver, seen, sourceName, use)...)
 		lhsType := narrowView.TypeOf(e.Lhs, p)
 		if e.Operator == "and" && ops.IsFalsy(lhsType) {
 			return diags
@@ -221,10 +257,14 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 			return diags
 		}
 		rhsView, rhsResolver := applyLogicalOpNarrowing(e, p, narrowView, resolver)
-		diags = append(diags, checkFieldExpr(e.Rhs, p, rhsView, rhsResolver, seen, sourceName)...)
+		diags = append(diags, checkFieldExprUse(e.Rhs, p, rhsView, rhsResolver, seen, sourceName, use)...)
 	case *ast.RelationalOpExpr:
-		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
-		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
+		operandUse := fieldUseValue
+		if use == fieldUseProbe && relationalIsEquality(e) {
+			operandUse = fieldUseProbe
+		}
+		diags = append(diags, checkFieldExprUse(e.Lhs, p, narrowView, resolver, seen, sourceName, operandUse)...)
+		diags = append(diags, checkFieldExprUse(e.Rhs, p, narrowView, resolver, seen, sourceName, operandUse)...)
 		diags = append(diags, checkRelational(e, p, narrowView, sourceName)...)
 	case *ast.ArithmeticOpExpr:
 		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
@@ -243,7 +283,7 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
 		diags = append(diags, checkUnaryBNot(e, p, narrowView, sourceName)...)
 	case *ast.UnaryNotOpExpr:
-		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
+		diags = append(diags, checkFieldExprUse(e.Expr, p, narrowView, resolver, seen, sourceName, fieldUseProbe)...)
 	}
 
 	return diags
@@ -553,7 +593,7 @@ func checkNumericFor(info *cfg.NumericForInfo, p cfg.Point, narrowView api.BaseS
 	return diags
 }
 
-func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, resolver fieldResolverImpl, seen map[ast.Expr]bool, sourceName string) []diag.Diagnostic {
+func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, resolver fieldResolverImpl, seen map[ast.Expr]bool, sourceName string, use fieldUse) []diag.Diagnostic {
 	var diags []diag.Diagnostic
 
 	diags = append(diags, checkFieldExpr(e.Object, p, narrowView, resolver, seen, sourceName)...)
@@ -597,6 +637,9 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 	}
 
 	if !result.Found {
+		if use == fieldUseProbe && querycore.MissingFieldReadsNil(objType) {
+			return diags
+		}
 		pos := diag.Position{File: sourceName, Line: e.Line(), Column: e.Column()}
 		span := ast.SpanOf(e)
 		if e.Key != nil && e.Key.Line() > 0 {
@@ -617,6 +660,17 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 	}
 
 	return diags
+}
+
+func relationalIsEquality(e *ast.RelationalOpExpr) bool {
+	if e == nil {
+		return false
+	}
+	switch e.Operator {
+	case "==", "~=":
+		return true
+	}
+	return false
 }
 
 func checkTypeProbeArg(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolver fieldResolverImpl, seen map[ast.Expr]bool, sourceName string) []diag.Diagnostic {

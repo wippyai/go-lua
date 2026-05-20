@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	ccfg "github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
 	typecfg "github.com/wippyai/go-lua/types/cfg"
 )
@@ -21,10 +22,11 @@ func TestForceMethodReceiver_DotDefinedFieldFunction(t *testing.T) {
 	`
 	graph, bindings, call, point := parseGraphAndMethodCall(t, src)
 
-	if !ForceMethodReceiver(bindings, graph, call) {
+	evidence := testReceiverEvidence(graph)
+	if !ForceMethodReceiver(bindings, graph, evidence, call) {
 		t.Fatal("expected ForceMethodReceiver to be true for dot-defined field function")
 	}
-	if !ForceMethodReceiverAtPoint(bindings, graph, point, call.Call) {
+	if !ForceMethodReceiverAtPoint(bindings, graph, evidence, point, call.Call) {
 		t.Fatal("expected ForceMethodReceiverAtPoint to be true for dot-defined field function")
 	}
 }
@@ -39,10 +41,11 @@ func TestForceMethodReceiver_FieldAssignedFunctionLiteral(t *testing.T) {
 	`
 	graph, bindings, call, point := parseGraphAndMethodCall(t, src)
 
-	if !ForceMethodReceiver(bindings, graph, call) {
+	evidence := testReceiverEvidence(graph)
+	if !ForceMethodReceiver(bindings, graph, evidence, call) {
 		t.Fatal("expected ForceMethodReceiver to be true for field-assigned function literal")
 	}
-	if !ForceMethodReceiverAtPoint(bindings, graph, point, call.Call) {
+	if !ForceMethodReceiverAtPoint(bindings, graph, evidence, point, call.Call) {
 		t.Fatal("expected ForceMethodReceiverAtPoint to be true for field-assigned function literal")
 	}
 }
@@ -60,7 +63,8 @@ func TestForceMethodReceiver_UsesCalleePathWhenReceiverExprMissing(t *testing.T)
 	callCopy.Receiver = nil
 	callCopy.CalleeSymbol = 0
 
-	if !ForceMethodReceiver(bindings, graph, &callCopy) {
+	evidence := testReceiverEvidence(graph)
+	if !ForceMethodReceiver(bindings, graph, evidence, &callCopy) {
 		t.Fatal("expected ForceMethodReceiver to resolve method symbol via CalleePath")
 	}
 }
@@ -83,7 +87,8 @@ func TestForceMethodReceiver_PrefersCanonicalCandidateOverStaleRawSymbol(t *test
 	callCopy := *call
 	callCopy.CalleeSymbol = staleSym
 
-	if !ForceMethodReceiver(bindings, graph, &callCopy) {
+	evidence := testReceiverEvidence(graph)
+	if !ForceMethodReceiver(bindings, graph, evidence, &callCopy) {
 		t.Fatal("expected ForceMethodReceiver to ignore stale raw symbol and use canonical method candidate")
 	}
 }
@@ -99,12 +104,36 @@ func TestForceMethodReceiver_UsesAliasReceiverBase(t *testing.T) {
 	`
 	graph, bindings, call, point := parseGraphAndMethodCall(t, src)
 
-	if !ForceMethodReceiver(bindings, graph, call) {
+	evidence := testReceiverEvidence(graph)
+	if !ForceMethodReceiver(bindings, graph, evidence, call) {
 		t.Fatal("expected ForceMethodReceiver to resolve method symbol through alias receiver base")
 	}
-	if !ForceMethodReceiverAtPoint(bindings, graph, point, call.Call) {
+	if !ForceMethodReceiverAtPoint(bindings, graph, evidence, point, call.Call) {
 		t.Fatal("expected ForceMethodReceiverAtPoint to resolve method symbol through alias receiver base")
 	}
+}
+
+func testReceiverEvidence(graph *ccfg.Graph) api.FlowEvidence {
+	if graph == nil {
+		return api.FlowEvidence{}
+	}
+	var defs []api.FunctionDefinitionEvidence
+	for _, nf := range graph.NestedFunctions() {
+		if nf.Func == nil {
+			continue
+		}
+		info := graph.FuncDef(nf.Point)
+		sym := nf.Symbol
+		if info != nil && info.Symbol != 0 {
+			sym = info.Symbol
+		}
+		defs = append(defs, api.FunctionDefinitionEvidence{
+			Nested:  nf,
+			FuncDef: info,
+			Symbol:  sym,
+		})
+	}
+	return api.FlowEvidence{FunctionDefinitions: defs}
 }
 
 func parseGraphAndMethodCall(t *testing.T, src string) (*ccfg.Graph, *bind.BindingTable, *ccfg.CallInfo, typecfg.Point) {

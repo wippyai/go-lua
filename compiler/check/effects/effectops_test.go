@@ -40,15 +40,15 @@ func TestPropagate_WithLocalEffect(t *testing.T) {
 	}
 }
 
-func TestLookupRefinementBySym_NilStore(t *testing.T) {
-	result := LookupRefinementBySym(nil, nil, nil, 1)
+func TestResolveRefinementBySym_NilFacts(t *testing.T) {
+	result := ResolveRefinementBySym(nil, nil, nil, 1)
 	if result != nil {
-		t.Errorf("expected nil for nil store, got %v", result)
+		t.Errorf("expected nil for nil facts, got %v", result)
 	}
 }
 
-func TestLookupRefinementBySym_ZeroSym(t *testing.T) {
-	result := LookupRefinementBySym(nil, nil, nil, 0)
+func TestResolveRefinementBySym_ZeroSym(t *testing.T) {
+	result := ResolveRefinementBySym(nil, nil, nil, 0)
 	if result != nil {
 		t.Errorf("expected nil for zero symbol, got %v", result)
 	}
@@ -256,6 +256,7 @@ func TestPropagate_CollectsEffectFromAssignmentCallSite(t *testing.T) {
 
 	result := Propagate(&api.FuncResult{
 		Graph:        graph,
+		Evidence:     evidenceForEffects(graph),
 		FnRefinement: &constraint.FunctionRefinement{},
 	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == symF {
@@ -284,6 +285,7 @@ func TestPropagate_CollectsEffectFromReturnCallSite(t *testing.T) {
 
 	result := Propagate(&api.FuncResult{
 		Graph:        graph,
+		Evidence:     evidenceForEffects(graph),
 		FnRefinement: &constraint.FunctionRefinement{},
 	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == symF {
@@ -321,6 +323,7 @@ func TestPropagate_UsesCanonicalCandidatesWhenRawSymbolMissing(t *testing.T) {
 
 	result := Propagate(&api.FuncResult{
 		Graph:        graph,
+		Evidence:     evidenceForEffects(graph),
 		FnRefinement: &constraint.FunctionRefinement{},
 	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == symF {
@@ -359,6 +362,7 @@ func TestPropagate_UsesModuleBindingNameFallback(t *testing.T) {
 	result := Propagate(&api.FuncResult{
 		Graph:          graph,
 		ModuleBindings: moduleBindings,
+		Evidence:       evidenceForEffects(graph),
 		FnRefinement:   &constraint.FunctionRefinement{},
 	}, func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		if sym == fallbackSym {
@@ -373,6 +377,19 @@ func TestPropagate_UsesModuleBindingNameFallback(t *testing.T) {
 	if !ok || !row.HasIO() {
 		t.Fatalf("expected propagated IO effect via module-binding name fallback, got %#v", result.Row)
 	}
+}
+
+func evidenceForEffects(graph *cfg.Graph) api.FlowEvidence {
+	if graph == nil {
+		return api.FlowEvidence{}
+	}
+	var evidence api.FlowEvidence
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info != nil {
+			evidence.Calls = append(evidence.Calls, api.CallEvidence{Point: p, Info: info})
+		}
+	})
+	return evidence
 }
 
 func buildGraphForEffects(t *testing.T, code string, globals ...string) *cfg.Graph {

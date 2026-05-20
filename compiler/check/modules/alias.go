@@ -3,12 +3,14 @@ package modules
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 )
 
-// CollectAliases extracts module alias mappings from require() assignments in a graph.
+// AliasesFromAssignments extracts module alias mappings from transfer-owned
+// assignment evidence.
 //
-// This scans the graph for patterns like:
+// It recognizes patterns like:
 //
 //	local json = require("json")
 //
@@ -20,18 +22,19 @@ import (
 // It does not require the assignment to be local, since module aliases can be
 // introduced via re-assignments or outer scope bindings.
 //
-// This is called once per graph; nested functions merge their local aliases
-// with the session-level alias map.
-func CollectAliases(graph *cfg.Graph) map[cfg.SymbolID]string {
-	if graph == nil {
+// Nested functions merge their local aliases with the session-level alias map.
+func AliasesFromAssignments(assignments []api.AssignmentEvidence, graph *cfg.Graph) map[cfg.SymbolID]string {
+	if len(assignments) == 0 {
 		return nil
 	}
 
 	aliases := make(map[cfg.SymbolID]string)
 
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range assignments {
+		p := assign.Point
+		info := assign.Info
 		if info == nil || len(info.Targets) == 0 {
-			return
+			continue
 		}
 		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind != cfg.TargetIdent {
@@ -57,7 +60,7 @@ func CollectAliases(graph *cfg.Graph) map[cfg.SymbolID]string {
 			}
 
 			sym := target.Symbol
-			if sym == 0 && target.Name != "" {
+			if sym == 0 && target.Name != "" && graph != nil {
 				var symOk bool
 				sym, symOk = graph.SymbolAt(p, target.Name)
 				if !symOk {
@@ -69,7 +72,7 @@ func CollectAliases(graph *cfg.Graph) map[cfg.SymbolID]string {
 			}
 			aliases[sym] = strLit.Value
 		})
-	})
+	}
 
 	if len(aliases) == 0 {
 		return nil

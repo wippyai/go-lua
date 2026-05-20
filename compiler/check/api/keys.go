@@ -14,6 +14,13 @@ type GraphKey struct {
 	ParentHash uint64 // Parent scope hash from SessionStore.Parents()
 }
 
+// ModuleFactsKey identifies module-wide interprocedural facts that are not tied
+// to one function graph, such as constructor field summaries keyed by class
+// symbol.
+func ModuleFactsKey() GraphKey {
+	return GraphKey{}
+}
+
 // SymbolKey uniquely identifies a symbol within a parent scope.
 type SymbolKey struct {
 	Symbol     cfg.SymbolID
@@ -21,8 +28,8 @@ type SymbolKey struct {
 }
 
 // FuncKey uniquely identifies a function analysis request for memoization.
-// Snapshot dependencies are tracked by the query database as the function result
-// reads interprocedural facts, refinements, and constructor fields.
+// Fact dependencies are tracked by the query database as the function result
+// reads canonical interprocedural products.
 //
 //   - GraphID: Unique identifier for the function's control flow graph. Each CFG
 //     receives a monotonically increasing ID during construction, ensuring distinct

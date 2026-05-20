@@ -691,7 +691,7 @@ func NormalizeAndPrune(rets []typ.Type) []typ.Type {
 }
 
 // Merge applies the canonical return-summary merge policy shared by iterative
-// channels.
+// product facts.
 func Merge(existing, candidate []typ.Type) []typ.Type {
 	existing = NormalizeAndPrune(existing)
 	candidate = NormalizeAndPrune(candidate)

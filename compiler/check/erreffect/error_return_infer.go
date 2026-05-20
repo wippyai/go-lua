@@ -52,14 +52,14 @@ func (c ErrorReturnConvention) canClassifyFunction(fn *typ.Function) bool {
 
 // HasStrictInversePattern proves this convention from the function body.
 func (c ErrorReturnConvention) HasStrictInversePattern(
-	graph *cfg.Graph,
+	returns []api.ReturnEvidence,
 	solution *flow.Solution,
 	synth api.BaseSynth,
 ) bool {
 	if !c.valid() {
 		return false
 	}
-	return HasStrictInverseReturnPattern(graph, solution, synth, c.ValueIndex, c.ErrorIndex)
+	return HasStrictInverseReturnPattern(returns, solution, synth, c.ValueIndex, c.ErrorIndex)
 }
 
 // Attach enriches fn with this convention's ErrorReturn effect.
@@ -74,12 +74,12 @@ func (c ErrorReturnConvention) Attach(fn *typ.Function) *typ.Function {
 // ErrorReturn effect when the function body proves the `(value, err)` pattern.
 func AttachInferredErrorReturnSpec(
 	fn *typ.Function,
-	graph *cfg.Graph,
+	evidence api.FlowEvidence,
 	solution *flow.Solution,
 	synth api.Synth,
 ) *typ.Function {
 	convention := CanonicalLuaValueErrorConvention()
-	if graph == nil || synth == nil || !convention.canClassifyFunction(fn) {
+	if len(evidence.Returns) == 0 || synth == nil || !convention.canClassifyFunction(fn) {
 		return fn
 	}
 	if HasErrorReturnLabel(fn) {
@@ -89,7 +89,7 @@ func AttachInferredErrorReturnSpec(
 	if base == nil {
 		base = synth
 	}
-	if !convention.HasStrictInversePattern(graph, solution, base) {
+	if !convention.HasStrictInversePattern(evidence.Returns, solution, base) {
 		return fn
 	}
 
@@ -110,13 +110,13 @@ func HasErrorReturnLabel(fn *typ.Function) bool {
 }
 
 func HasStrictInverseReturnPattern(
-	graph *cfg.Graph,
+	returns []api.ReturnEvidence,
 	solution *flow.Solution,
 	synth api.BaseSynth,
 	valueIdx int,
 	errorIdx int,
 ) bool {
-	if graph == nil || synth == nil {
+	if len(returns) == 0 || synth == nil {
 		return false
 	}
 	needed := requiredReturnSlots(valueIdx, errorIdx)
@@ -128,30 +128,32 @@ func HasStrictInverseReturnPattern(
 	var incompatible bool
 	var classified bool
 
-	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+	for _, ret := range returns {
+		p := ret.Point
+		info := ret.Info
 		if incompatible || info == nil {
-			return
+			continue
 		}
 		if solution != nil && solution.IsPointDead(p) {
-			return
+			continue
 		}
 		// Skip synthetic implicit return nodes; explicit `return` without values
 		// is a real nil,nil return and should block inference.
 		if len(info.Exprs) == 0 && info.Stmt == nil {
-			return
+			continue
 		}
 
 		if delegatesErrorReturn(info, p, synth, valueIdx, errorIdx) {
 			classified = true
 			sawSuccess = true
 			sawFailure = true
-			return
+			continue
 		}
 
 		values := synth.ExpandValues(info.Exprs, needed, p)
 		if valueIdx >= len(values) || errorIdx >= len(values) {
 			incompatible = true
-			return
+			continue
 		}
 
 		valueState, okValue := classifyNilState(values[valueIdx])
@@ -164,7 +166,7 @@ func HasStrictInverseReturnPattern(
 		}
 		if !okValue || !okError {
 			incompatible = true
-			return
+			continue
 		}
 		classified = true
 
@@ -176,7 +178,7 @@ func HasStrictInverseReturnPattern(
 		default:
 			incompatible = true
 		}
-	})
+	}
 
 	return classified && !incompatible && sawSuccess && sawFailure
 }

@@ -20,150 +20,6 @@ func TestNewInterprocState(t *testing.T) {
 	if state.Facts == nil {
 		t.Error("Facts map should be initialized")
 	}
-	if state.Refinements == nil {
-		t.Error("Refinements map should be initialized")
-	}
-	if state.ConstructorFields == nil {
-		t.Error("ConstructorFields map should be initialized")
-	}
-}
-
-func TestEffectsEqual_BothNil(t *testing.T) {
-	if !effectsEqual(nil, nil) {
-		t.Error("two nils should be equal")
-	}
-}
-
-func TestEffectsEqual_OneNil(t *testing.T) {
-	eff := &constraint.FunctionRefinement{}
-	if effectsEqual(eff, nil) {
-		t.Error("non-nil and nil should not be equal")
-	}
-	if effectsEqual(nil, eff) {
-		t.Error("nil and non-nil should not be equal")
-	}
-}
-
-func TestEffectsEqual_Same(t *testing.T) {
-	eff := &constraint.FunctionRefinement{Terminates: true}
-	if !effectsEqual(eff, eff) {
-		t.Error("same reference should be equal")
-	}
-}
-
-func TestEffectsMapEqual_Empty(t *testing.T) {
-	if !effectsMapEqual(nil, nil) {
-		t.Error("two nils should be equal")
-	}
-	if !effectsMapEqual(map[cfg.SymbolID]*constraint.FunctionRefinement{}, map[cfg.SymbolID]*constraint.FunctionRefinement{}) {
-		t.Error("two empty maps should be equal")
-	}
-}
-
-func TestEffectsMapEqual_DifferentLength(t *testing.T) {
-	a := map[cfg.SymbolID]*constraint.FunctionRefinement{1: {}}
-	b := map[cfg.SymbolID]*constraint.FunctionRefinement{}
-	if effectsMapEqual(a, b) {
-		t.Error("maps of different length should not be equal")
-	}
-}
-
-func TestInterprocFactsMapEqual_Empty(t *testing.T) {
-	if !interprocFactsMapEqual(nil, nil) {
-		t.Error("two nils should be equal")
-	}
-	if !interprocFactsMapEqual(map[api.GraphKey]api.Facts{}, map[api.GraphKey]api.Facts{}) {
-		t.Error("two empty maps should be equal")
-	}
-}
-
-func TestInterprocFactsMapEqual_DifferentLength(t *testing.T) {
-	a := map[api.GraphKey]api.Facts{{GraphID: 1}: {}}
-	b := map[api.GraphKey]api.Facts{}
-	if interprocFactsMapEqual(a, b) {
-		t.Error("maps of different length should not be equal")
-	}
-}
-
-func TestWidenInterprocFacts_Empty(t *testing.T) {
-	result := widenInterprocFacts(nil, nil)
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if len(result) != 0 {
-		t.Error("expected empty map")
-	}
-}
-
-func TestWidenInterprocFacts_OnlyPrev(t *testing.T) {
-	prev := map[api.GraphKey]api.Facts{
-		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.String}},
-			},
-		},
-	}
-	result := widenInterprocFacts(prev, nil)
-	if len(result) != 1 {
-		t.Errorf("expected 1 entry, got %d", len(result))
-	}
-}
-
-func TestWidenInterprocFacts_OnlyNext(t *testing.T) {
-	next := map[api.GraphKey]api.Facts{
-		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.Number}},
-			},
-		},
-	}
-	result := widenInterprocFacts(nil, next)
-	if len(result) != 1 {
-		t.Errorf("expected 1 entry, got %d", len(result))
-	}
-}
-
-func TestWidenInterprocFacts_NormalizesNewFacts(t *testing.T) {
-	fn := typ.Func().Param("value", typ.Unknown).Build()
-	key := api.GraphKey{GraphID: 1, ParentHash: 2}
-	next := map[api.GraphKey]api.Facts{
-		key: {
-			CapturedFields: api.CapturedFieldAssigns{
-				cfg.SymbolID(10): {
-					cfg.SymbolID(20): {
-						"after_all": typ.NewOptional(fn),
-					},
-				},
-			},
-		},
-	}
-
-	result := widenInterprocFacts(nil, next)
-	got := result[key].CapturedFields[cfg.SymbolID(10)][cfg.SymbolID(20)]["after_all"]
-	if !typ.TypeEquals(got, fn) {
-		t.Fatalf("expected new facts to be normalized through WidenFacts, got %v", got)
-	}
-}
-
-func TestWidenInterprocFacts_Merge(t *testing.T) {
-	prev := map[api.GraphKey]api.Facts{
-		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.String}},
-			},
-		},
-	}
-	next := map[api.GraphKey]api.Facts{
-		{GraphID: 2}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.Number}},
-			},
-		},
-	}
-	result := widenInterprocFacts(prev, next)
-	if len(result) != 2 {
-		t.Errorf("expected 2 entries, got %d", len(result))
-	}
 }
 
 func TestFunctionFactsSummaryAccessor(t *testing.T) {
@@ -209,7 +65,7 @@ func TestFunctionFactsTypeAccessor(t *testing.T) {
 	}
 }
 
-func TestGetInterprocFactsSnapshot_UsesStoredGraphParentHash(t *testing.T) {
+func TestGetInterprocFacts_UsesStoredGraphParentHash(t *testing.T) {
 	graph := cfg.Build(&ast.FunctionExpr{})
 	if graph == nil || graph.ID() == 0 {
 		t.Fatal("expected graph with stable ID")
@@ -231,14 +87,14 @@ func TestGetInterprocFactsSnapshot_UsesStoredGraphParentHash(t *testing.T) {
 		},
 	}
 
-	got := s.GetInterprocFactsSnapshot(graph, currentParent)
+	got := s.GetInterprocFacts(graph, currentParent)
 	summary := got.FunctionFacts.Summary(cfg.SymbolID(1))
 	if len(summary) != 1 || !typ.TypeEquals(summary[0], typ.String) {
-		t.Fatalf("expected snapshot from stored parent hash, got %#v", summary)
+		t.Fatalf("expected facts from stored parent hash, got %#v", summary)
 	}
 }
 
-func TestGetInterprocFactsSnapshot_OverlaysCurrentIterationFacts(t *testing.T) {
+func TestGetInterprocFacts_OverlaysCurrentIterationFacts(t *testing.T) {
 	graph := cfg.Build(&ast.FunctionExpr{})
 	if graph == nil || graph.ID() == 0 {
 		t.Fatal("expected graph with stable ID")
@@ -260,15 +116,15 @@ func TestGetInterprocFactsSnapshot_OverlaysCurrentIterationFacts(t *testing.T) {
 		},
 	}
 
-	got := s.GetInterprocFactsSnapshot(graph, parent)
+	got := s.GetInterprocFacts(graph, parent)
 	summary := got.FunctionFacts.Summary(cfg.SymbolID(1))
 	want := typ.NewUnion(typ.String, typ.Number)
 	if len(summary) != 1 || !typ.TypeEquals(summary[0], want) {
-		t.Fatalf("expected widened current snapshot %v, got %#v", want, summary)
+		t.Fatalf("expected widened visible facts %v, got %#v", want, summary)
 	}
 }
 
-func TestGetInterprocFactsSnapshot_ReturnsImmutableFactContainers(t *testing.T) {
+func TestGetInterprocFacts_ReturnsImmutableFactContainers(t *testing.T) {
 	graph := cfg.Build(&ast.FunctionExpr{})
 	if graph == nil || graph.ID() == 0 {
 		t.Fatal("expected graph with stable ID")
@@ -289,17 +145,17 @@ func TestGetInterprocFactsSnapshot_ReturnsImmutableFactContainers(t *testing.T) 
 		},
 	}
 
-	snapshot := s.GetInterprocFactsSnapshot(graph, parent)
-	snapshotFact := snapshot.FunctionFacts[sym]
-	snapshotFact.Params[1] = typ.Nil
-	snapshot.FunctionFacts[sym] = api.FunctionFact{Summary: []typ.Type{typ.Number}}
+	facts := s.GetInterprocFacts(graph, parent)
+	fact := facts.FunctionFacts[sym]
+	fact.Params[1] = typ.Nil
+	facts.FunctionFacts[sym] = api.FunctionFact{Summary: []typ.Type{typ.Number}}
 
-	again := s.GetInterprocFactsSnapshot(graph, parent)
+	again := s.GetInterprocFacts(graph, parent)
 	if got := again.FunctionFacts.Params(sym)[1]; !typ.TypeEquals(got, typ.NewMap(typ.String, typ.Any)) {
-		t.Fatalf("snapshot parameter evidence mutation leaked into store: %v", got)
+		t.Fatalf("fact parameter evidence mutation leaked into store: %v", got)
 	}
 	if got := again.FunctionFacts.Summary(sym); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
-		t.Fatalf("snapshot function fact mutation leaked into store: %v", got)
+		t.Fatalf("function fact mutation leaked into store: %v", got)
 	}
 }
 
@@ -324,7 +180,7 @@ func TestMergeInterprocFactsNext_ReconcilesDeltasWithinIteration(t *testing.T) {
 	}
 }
 
-func TestSnapshotInputs_RevalidateFactQueries(t *testing.T) {
+func TestFactInputs_RevalidateFactQueries(t *testing.T) {
 	database := db.New()
 	ctx := db.NewQueryContext(database)
 	s := NewSessionStoreWithDB(database)
@@ -334,7 +190,7 @@ func TestSnapshotInputs_RevalidateFactQueries(t *testing.T) {
 	calls := 0
 	q := db.NewQuery("trackedFactsTest", func(ctx *db.QueryContext, key api.GraphKey) int {
 		calls++
-		facts, _ := s.snapshotInputs.factsFor(ctx, key)
+		facts, _ := s.factInputs.factsFor(ctx, key)
 		if len(facts.FunctionFacts.Summary(sym)) == 0 {
 			return 0
 		}
@@ -395,90 +251,94 @@ func TestFunctionRegistry_Fields(t *testing.T) {
 	}
 }
 
-func TestIterationScratch_Fields(t *testing.T) {
-	s := &IterationScratch{
-		LiteralSigsByGraphID: make(map[uint64]map[*ast.FunctionExpr]*typ.Function),
-	}
-	if s.LiteralSigsByGraphID == nil {
-		t.Error("LiteralSigsByGraphID should be initialized")
-	}
-}
-
 func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	s := NewSessionStore()
 
-	s.InterprocNext.Refinements[1] = &constraint.FunctionRefinement{Terminates: true}
-	s.InterprocNext.Facts[api.GraphKey{GraphID: 7, ParentHash: 11}] = api.Facts{
+	key := api.GraphKey{GraphID: 7, ParentHash: 11}
+	s.InterprocNext.Facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+			1: {
+				Summary:    []typ.Type{typ.String},
+				Refinement: &constraint.FunctionRefinement{Terminates: true},
+			},
 		},
 	}
-	s.InterprocNext.ConstructorFields[3] = map[string]typ.Type{
-		"v": typ.Number,
+	s.InterprocNext.Facts[api.ModuleFactsKey()] = api.Facts{
+		ConstructorFields: api.ConstructorFields{
+			3: {"v": typ.Number},
+		},
 	}
 
 	if !s.FixpointSwap() {
 		t.Fatal("expected fixpoint swap to report changes")
 	}
 
-	diffs := s.FixpointChannelDiffs()
-	if len(diffs) != 3 {
-		t.Fatalf("expected 3 channel diffs, got %v", diffs)
+	diffs := s.FixpointDiffs()
+	if len(diffs) != 1 {
+		t.Fatalf("expected one product diff, got %v", diffs)
 	}
-	if diffs[0] != "Refinements" || diffs[1] != "InterprocFacts" || diffs[2] != "ConstructorFields" {
+	if diffs[0] != "InterprocFacts" {
 		t.Fatalf("unexpected diff order/content: %v", diffs)
 	}
 
-	if len(s.InterprocPrev.Refinements) != 1 || s.InterprocPrev.Refinements[1] == nil {
-		t.Fatalf("expected prev effects populated, got %#v", s.InterprocPrev.Refinements)
-	}
-	if len(s.InterprocNext.Refinements) != 0 {
-		t.Fatalf("expected next effects reset, got %#v", s.InterprocNext.Refinements)
-	}
-	if len(s.InterprocPrev.Facts) != 1 {
+	if len(s.InterprocPrev.Facts) != 2 {
 		t.Fatalf("expected prev facts populated, got %#v", s.InterprocPrev.Facts)
 	}
 	if len(s.InterprocNext.Facts) != 0 {
 		t.Fatalf("expected next facts reset, got %#v", s.InterprocNext.Facts)
 	}
-	if len(s.InterprocPrev.ConstructorFields) != 1 {
-		t.Fatalf("expected prev constructor fields populated, got %#v", s.InterprocPrev.ConstructorFields)
+	if s.InterprocPrev.Facts[key].FunctionFacts.Refinement(1) == nil {
+		t.Fatalf("expected function refinement in product fact, got %#v", s.InterprocPrev.Facts[key])
 	}
-	if len(s.InterprocNext.ConstructorFields) != 0 {
-		t.Fatalf("expected next constructor fields reset, got %#v", s.InterprocNext.ConstructorFields)
+	if len(s.InterprocPrev.Facts[api.ModuleFactsKey()].ConstructorFields[3]) != 1 {
+		t.Fatalf("expected constructor fields in module product fact, got %#v", s.InterprocPrev.Facts[api.ModuleFactsKey()])
 	}
 }
 
-func TestClearIterationChannels_InitializesMissingState(t *testing.T) {
+func TestClearInterprocState_InitializesMissingState(t *testing.T) {
 	s := &SessionStore{}
-	s.ClearIterationChannels()
+	s.ClearInterprocState()
 
-	if s.Scratch == nil {
-		t.Fatal("expected scratch to be initialized")
-	}
 	if s.InterprocPrev == nil || s.InterprocNext == nil {
 		t.Fatal("expected interproc states to be initialized")
 	}
-	if s.Scratch.LiteralSigsByGraphID == nil {
-		t.Fatal("expected scratch literal signatures map to be initialized")
-	}
 }
 
-func TestFixpointChannelDiffs_ReturnsCopy(t *testing.T) {
+func TestFixpointDiffs_ReturnsCopy(t *testing.T) {
 	s := NewSessionStore()
-	s.StoreFunctionRefinement(1, &constraint.FunctionRefinement{Terminates: true})
+	key := registerFunctionForRefinementTest(t, s, 1)
+	s.MergeInterprocFactsNext(key, api.Facts{
+		FunctionFacts: api.FunctionFacts{
+			1: {Refinement: &constraint.FunctionRefinement{Terminates: true}},
+		},
+	})
 	if !s.FixpointSwap() {
 		t.Fatal("expected change from effect swap")
 	}
 
-	diffs := s.FixpointChannelDiffs()
+	diffs := s.FixpointDiffs()
 	if len(diffs) == 0 {
 		t.Fatal("expected non-empty diffs")
 	}
 	diffs[0] = "MUTATED"
 
-	diffs2 := s.FixpointChannelDiffs()
+	diffs2 := s.FixpointDiffs()
 	if len(diffs2) == 0 || diffs2[0] == "MUTATED" {
 		t.Fatalf("expected defensive copy, got %v", diffs2)
 	}
+}
+
+func registerFunctionForRefinementTest(t *testing.T, s *SessionStore, sym cfg.SymbolID) api.GraphKey {
+	t.Helper()
+	fn := &ast.FunctionExpr{}
+	graph := cfg.Build(fn)
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	parent := scope.New()
+	s.RegisterGraph(graph, fn)
+	s.RegisterFunctionRef(sym, fn, graph, graph.ID(), 1)
+	s.SetGraphParentHash(graph.ID(), parent.Hash())
+	s.SetParentScope(parent.Hash(), parent)
+	return api.KeyForGraph(graph, parent.Hash())
 }

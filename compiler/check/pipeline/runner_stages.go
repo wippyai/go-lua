@@ -3,10 +3,12 @@ package pipeline
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	abstractfacts "github.com/wippyai/go-lua/compiler/check/abstract/facts"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/resolve"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -29,7 +31,7 @@ func (r *Runner) resolveSynthesizedSignature(
 		return nil
 	}
 
-	factSig := paramevidence.ProjectSignatureToParamUse(graph, fn, r.functionFactSignatureForFunction(store, graph, fn))
+	factSig := paramevidence.ProjectSignatureToParamUse(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn), r.functionFactSignatureForFunction(store, graph, fn))
 	synthSig := r.literalSignatureForFunction(store, graph, fn)
 	if parameterEvidenceSigs == nil {
 		return mergeSynthesizedSignatureFact(synthSig, factSig)
@@ -94,7 +96,7 @@ func (r *Runner) functionFactSignatureForFunction(
 	if parentScope == nil {
 		return nil
 	}
-	facts := store.GetFunctionFactsSnapshot(parentGraph, parentScope)
+	facts := store.GetInterprocFacts(parentGraph, parentScope).FunctionFacts
 	return unwrap.Function(facts.FunctionType(sym))
 }
 
@@ -112,7 +114,7 @@ func (r *Runner) appendCapturedMutatorAssignments(
 		return
 	}
 
-	capturedContainers := store.GetCapturedContainerMutationsSnapshot(graph, parent)
+	capturedContainers := store.GetInterprocFacts(graph, parent).CapturedContainers
 	if len(capturedContainers) == 0 {
 		return
 	}
@@ -135,6 +137,7 @@ func (r *Runner) appendCapturedMutatorAssignments(
 		Manifests:      env.Manifests,
 		Env:            declaredEnv,
 		Phase:          api.PhaseScopeCompute,
+		Evidence:       env.Evidence,
 		ModuleBindings: env.ModuleBindings,
 		ModuleAliases:  env.ModuleAliases,
 	})
@@ -145,7 +148,14 @@ func (r *Runner) appendCapturedMutatorAssignments(
 		return resolve.CalleeType(info, p, synthEngine.TypeOf, symResolver, assignmentTypes, graph, bindings, env.ModuleBindings)
 	}
 
-	extra := returns.CollectNestedMutatorAssignments(graph, bindings, capturedContainers, calleeTypeResolver)
+	extra := returns.CollectNestedMutatorAssignments(
+		graph,
+		bindings,
+		extractOut.Evidence.Calls,
+		extractOut.Evidence.EscapedFunctions,
+		capturedContainers,
+		calleeTypeResolver,
+	)
 	if len(extra.Table) > 0 {
 		extractOut.Inputs.TableMutatorAssignments = append(extractOut.Inputs.TableMutatorAssignments, extra.Table...)
 	}
@@ -178,17 +188,11 @@ func (r *Runner) literalSignatureForFunction(store api.StoreReader, graph *cfg.G
 		return nil
 	}
 
-	if sigs := scratchLiteralSigs(store, parentGraph.ID()); len(sigs) > 0 {
-		if sig := sigs[fn]; sig != nil {
-			return sig
-		}
-	}
-
 	parentScope := r.parentScopeForGraph(store, parentGraph)
 	if parentScope == nil {
 		return nil
 	}
-	if sigs := store.GetLiteralSigsSnapshot(parentGraph, parentScope); len(sigs) > 0 {
+	if sigs := store.GetInterprocFacts(parentGraph, parentScope).LiteralSigs; len(sigs) > 0 {
 		if sig := sigs[fn]; sig != nil {
 			return sig
 		}
@@ -201,7 +205,7 @@ func (r *Runner) literalSigProvider(store api.StoreReader, graph *cfg.Graph, par
 		return nil
 	}
 	var literalSigMap map[*ast.FunctionExpr]*typ.Function
-	if sigs := store.GetLiteralSigsSnapshot(graph, parent); len(sigs) > 0 {
+	if sigs := store.GetInterprocFacts(graph, parent).LiteralSigs; len(sigs) > 0 {
 		literalSigMap = mergeLiteralSignatures(nil, sigs, true)
 	}
 	if meta, ok := store.NestedMetaFor(graph.ID()); ok {
@@ -209,12 +213,9 @@ func (r *Runner) literalSigProvider(store api.StoreReader, graph *cfg.Graph, par
 		if parentGraph != nil {
 			parentScope := r.parentScopeForGraph(store, parentGraph)
 			if parentScope != nil {
-				if sigs := store.GetLiteralSigsSnapshot(parentGraph, parentScope); len(sigs) > 0 {
+				if sigs := store.GetInterprocFacts(parentGraph, parentScope).LiteralSigs; len(sigs) > 0 {
 					literalSigMap = mergeLiteralSignatures(literalSigMap, sigs, false)
 				}
-			}
-			if sigs := scratchLiteralSigs(store, parentGraph.ID()); len(sigs) > 0 {
-				literalSigMap = mergeLiteralSignatures(literalSigMap, sigs, false)
 			}
 		}
 	}
@@ -224,32 +225,8 @@ func (r *Runner) literalSigProvider(store api.StoreReader, graph *cfg.Graph, par
 	return nil
 }
 
-type effectStoreProvider interface {
-	RefinementStore() api.RefinementStore
-}
-
-func effectStoreFrom(store api.StoreReader) api.RefinementStore {
-	if store == nil {
-		return nil
-	}
-	if provider, ok := store.(effectStoreProvider); ok {
-		return provider.RefinementStore()
-	}
-	return nil
-}
-
-type scratchLiteralStore interface {
-	ScratchLiteralSigs(graphID uint64) map[*ast.FunctionExpr]*typ.Function
-}
-
-func scratchLiteralSigs(store api.StoreReader, graphID uint64) map[*ast.FunctionExpr]*typ.Function {
-	if store == nil {
-		return nil
-	}
-	if provider, ok := store.(scratchLiteralStore); ok {
-		return provider.ScratchLiteralSigs(graphID)
-	}
-	return nil
+func refinementFactsFrom(store api.StoreReader) api.RefinementFacts {
+	return abstractfacts.RefinementsFromFunctionFacts(store, nil)
 }
 
 func (r *Runner) parentScopeForGraph(store api.StoreReader, graph *cfg.Graph) *scope.State {
@@ -286,7 +263,7 @@ func (r *Runner) mergeCapturedParentFunctionTypes(
 	if parentScope == nil {
 		return
 	}
-	parentFacts := store.GetFunctionFactsSnapshot(parentGraph, parentScope)
+	parentFacts := store.GetInterprocFacts(parentGraph, parentScope).FunctionFacts
 	if len(parentFacts) == 0 {
 		return
 	}

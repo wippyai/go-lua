@@ -4,9 +4,8 @@
 //
 // The checker performs interprocedural type analysis through a fixpoint iteration loop
 // that processes all functions until inter-function information stabilizes. Interproc
-// facts are produced during analysis and captured in a stable snapshot at iteration
-// boundaries. Effect facts are accumulated during analysis and swapped into a stable
-// snapshot at the boundary alongside constructor field facts.
+// facts are produced during analysis and merged into one canonical product at
+// iteration boundaries.
 //
 // # PHASE PIPELINE
 //
@@ -27,11 +26,11 @@
 //
 // # INTERPROCEDURAL ANALYSIS
 //
-// The checker supports interprocedural analysis through a unified interproc snapshot:
+// The checker supports interprocedural analysis through a unified interproc product:
 //
 //   - FunctionFacts: Canonical parameter/return/narrow/signature facts
 //   - LiteralSigs: Synthesized signatures for function literals
-//   - Refinements: Function refinement summaries, stored per symbol
+//   - Function refinements, captured writes, and constructor fields as product lanes
 //
 // # DETERMINISTIC ORDERING
 //
@@ -43,13 +42,12 @@
 // # MEMOIZATION
 //
 // Function analysis results are memoized by (GraphID, ParentHash). Interprocedural
-// facts, refinements, and constructor fields are tracked as query inputs, so
-// cached results are revalidated precisely when the snapshots they read change.
+// fact products are tracked as query inputs, so cached results are revalidated
+// precisely when the products they read change.
 //
 // # CONVERGENCE
 //
-// The fixpoint loop terminates when interproc facts and effect/constructor snapshots
-// stabilize. Maximum iteration count is bounded to detect non-convergent analysis.
+// The fixpoint loop terminates when the interproc product stabilizes.
 package check
 
 import (
@@ -233,14 +231,14 @@ func WithScopeDepthDiagnostics(enabled bool) Option {
 // The returned Session contains:
 //   - Results: Per-function analysis results (types, flow facts, effects)
 //   - Diagnostics: Type errors, warnings, and suggestions
-//   - Store: Inter-function channel data for advanced introspection
+//   - Store: Interprocedural fact products for advanced introspection
 func (c *Checker) Check(source, name string) *Session {
 	ctx := db.NewQueryContext(c.db)
 	sess := New(ctx, name)
-	// Ensure each top-level Check starts from clean inter-function channel state.
+	// Ensure each top-level Check starts from clean interprocedural fact state.
 	// These are iteration-stable caches and must not persist across separate runs.
 	if sess.Store != nil {
-		sess.Store.ClearIterationChannels()
+		sess.Store.ClearInterprocState()
 	}
 
 	chunk, err := parse.ParseString(source, name)
@@ -287,7 +285,7 @@ func (c *Checker) CheckChunk(chunk []ast.Stmt, name string) *Session {
 	sess := New(ctx, name)
 	// Attach store accessor and compute context for interproc queries
 	if sess.Store != nil {
-		sess.Store.ClearIterationChannels()
+		sess.Store.ClearInterprocState()
 	}
 	c.checkChunk(sess, chunk)
 	return sess

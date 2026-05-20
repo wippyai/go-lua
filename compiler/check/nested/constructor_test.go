@@ -4,17 +4,18 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 )
 
 func TestDetectConstructorPattern_NilInputs(t *testing.T) {
-	classSym, selfSym := DetectConstructorPattern(nil, nil, nil, nil)
+	classSym, selfSym := DetectConstructorPattern(api.FlowEvidence{}, api.FlowEvidence{}, nil, nil)
 	if classSym != 0 || selfSym != 0 {
 		t.Errorf("expected (0, 0) for nil inputs, got (%d, %d)", classSym, selfSym)
 	}
 }
 
 func TestDetectConstructorPattern_NilGraph(t *testing.T) {
-	classSym, selfSym := DetectConstructorPattern(nil, &cfg.Graph{}, nil, nil)
+	classSym, selfSym := DetectConstructorPattern(api.FlowEvidence{}, api.FlowEvidence{}, nil, nil)
 	if classSym != 0 || selfSym != 0 {
 		t.Errorf("expected (0, 0) for nil nestedGraph, got (%d, %d)", classSym, selfSym)
 	}
@@ -35,7 +36,7 @@ func TestIsSymbolReturned_NilGraph(t *testing.T) {
 }
 
 func TestIsSymbolReturned_ZeroSymbol(t *testing.T) {
-	result := isSymbolReturned(&cfg.Graph{}, 0)
+	result := isSymbolReturned(nil, 0)
 	if result {
 		t.Error("expected false for zero symbol")
 	}
@@ -49,15 +50,15 @@ func TestCollectConstructorFields_NilInputs(t *testing.T) {
 }
 
 func TestCollectConstructorFields_ZeroSymbol(t *testing.T) {
-	result := CollectConstructorFields(&cfg.Graph{}, 0, nil)
+	result := CollectConstructorFields(nil, 0, nil)
 	if result != nil {
 		t.Errorf("expected nil for zero symbol, got %v", result)
 	}
 }
 
-func TestCollectConstructorFields_NilGraph(t *testing.T) {
+func TestCollectConstructorFields_NilEvidence(t *testing.T) {
 	result := CollectConstructorFields(nil, cfg.SymbolID(1), nil)
 	if result != nil {
-		t.Errorf("expected nil for nil graph, got %v", result)
+		t.Errorf("expected nil for nil evidence, got %v", result)
 	}
 }

@@ -4,17 +4,16 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 )
 
 // FunctionLiteralForSymbol resolves a function symbol to its function literal.
 //
 // Resolution order:
 //  1. Binding table reverse lookup for literal symbols.
-//  2. Function definition nodes in the graph.
-//  3. Assignment sources in the graph (target symbol = function literal).
 func FunctionLiteralForSymbol(
-	graph *cfg.Graph,
 	bindings *bind.BindingTable,
+	evidence api.FlowEvidence,
 	sym cfg.SymbolID,
 ) *ast.FunctionExpr {
 	if sym == 0 {
@@ -25,41 +24,10 @@ func FunctionLiteralForSymbol(
 			return fn
 		}
 	}
-	if graph == nil {
-		return nil
+	if fn := functionLiteralFromDefinitions(evidence, sym, true); fn != nil {
+		return fn
 	}
-
-	var found *ast.FunctionExpr
-	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-		if found != nil || info == nil {
-			return
-		}
-		if info.Symbol == sym {
-			found = info.FuncExpr
-		}
-	})
-	if found != nil {
-		return found
-	}
-
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if found != nil || info == nil {
-			return
-		}
-		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
-			if found != nil {
-				return
-			}
-			if target.Symbol != sym {
-				return
-			}
-			if fn, ok := source.(*ast.FunctionExpr); ok {
-				found = fn
-			}
-		})
-	})
-
-	return found
+	return nil
 }
 
 // FunctionLiteralForGraphSymbol resolves only graph-local stable function
@@ -70,40 +38,41 @@ func FunctionLiteralForSymbol(
 //   - include local identifier assignments of function literals
 //   - exclude mutable field-path symbols, whose current callable type must come
 //     from value flow at the call site rather than binder symbol backtracking
-func FunctionLiteralForGraphSymbol(graph *cfg.Graph, sym cfg.SymbolID) *ast.FunctionExpr {
-	if sym == 0 || graph == nil {
+func FunctionLiteralForGraphSymbol(evidence api.FlowEvidence, sym cfg.SymbolID) *ast.FunctionExpr {
+	if sym == 0 {
 		return nil
 	}
 
-	var found *ast.FunctionExpr
-	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-		if found != nil || info == nil || info.Symbol != sym {
-			return
+	return functionLiteralFromDefinitions(evidence, sym, false)
+}
+
+func functionLiteralFromDefinitions(evidence api.FlowEvidence, sym cfg.SymbolID, includeMutableTargets bool) *ast.FunctionExpr {
+	for _, def := range evidence.FunctionDefinitions {
+		if def.Nested.Func == nil {
+			continue
 		}
-		found = info.FuncExpr
-	})
-	if found != nil {
-		return found
+		if includeMutableTargets && def.Nested.Symbol == sym {
+			return def.Nested.Func
+		}
+		if def.Symbol == sym {
+			if includeMutableTargets || stableGraphFunctionDefinition(def) {
+				return def.Nested.Func
+			}
+		}
+		if def.FuncDef != nil && def.FuncDef.Symbol == sym {
+			if includeMutableTargets || def.FuncDef.TargetKind == cfg.FuncDefGlobal {
+				return def.FuncDef.FuncExpr
+			}
+		}
 	}
+	return nil
+}
 
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if found != nil || info == nil {
-			return
-		}
-		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
-			if found != nil {
-				return
-			}
-			if target.Kind != cfg.TargetIdent || target.Symbol != sym {
-				return
-			}
-			if fn, ok := source.(*ast.FunctionExpr); ok {
-				found = fn
-			}
-		})
-	})
-
-	return found
+func stableGraphFunctionDefinition(def api.FunctionDefinitionEvidence) bool {
+	if def.FuncDef == nil {
+		return def.IsLocal && def.Name != ""
+	}
+	return true
 }
 
 // AllowsDiscardedExtraArgs reports whether the source function has unannotated

@@ -22,9 +22,10 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/assign"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
+	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -40,7 +41,7 @@ import (
 type CheckFunc func(fn *ast.FunctionExpr, parent *scope.State)
 
 // ResultFunc returns the analysis result for a function literal.
-type ResultFunc func(fn *ast.FunctionExpr) *api.FuncResultSnapshot
+type ResultFunc func(fn *ast.FunctionExpr) *api.FuncAnalysisView
 
 // Config holds dependencies for nested processing.
 type Config struct {
@@ -49,7 +50,7 @@ type Config struct {
 	Graphs        api.GraphProvider
 	Check         CheckFunc
 	ResultForFunc ResultFunc
-	RootResult    *api.FuncResultSnapshot
+	RootResult    *api.FuncAnalysisView
 }
 
 // Processor analyzes nested functions for a parent graph.
@@ -59,7 +60,7 @@ type Processor struct {
 	graphs        api.GraphProvider
 	check         CheckFunc
 	resultForFunc ResultFunc
-	rootResult    *api.FuncResultSnapshot
+	rootResult    *api.FuncAnalysisView
 }
 
 // New creates a nested processor.
@@ -75,7 +76,7 @@ func New(cfg Config) *Processor {
 }
 
 // ProcessNestedFunctions analyzes all nested function definitions within a parent graph.
-func (p *Processor) ProcessNestedFunctions(graph *cfg.Graph, parentResult *api.FuncResultSnapshot) {
+func (p *Processor) ProcessNestedFunctions(graph *cfg.Graph, parentResult *api.FuncAnalysisView) {
 	if parentResult == nil {
 		return
 	}
@@ -85,8 +86,8 @@ func (p *Processor) ProcessNestedFunctions(graph *cfg.Graph, parentResult *api.F
 		return
 	}
 
-	// Gather nested function definitions.
-	gathered := nested.GatherChildren(graph, scopes, p.stdlib)
+	// Gather nested function definitions from transfer-owned evidence.
+	gathered := p.childrenFromEvidence(parentResult.Evidence.FunctionDefinitions, scopes)
 	if len(gathered) == 0 {
 		return
 	}
@@ -104,6 +105,34 @@ func (p *Processor) ProcessNestedFunctions(graph *cfg.Graph, parentResult *api.F
 	for _, group := range groups {
 		p.processNestedGroup(graph, scopes, group, parentResult, parentFunc)
 	}
+}
+
+func (p *Processor) childrenFromEvidence(
+	defs []api.FunctionDefinitionEvidence,
+	scopes map[cfg.Point]*scope.State,
+) []nested.Child {
+	if len(defs) == 0 {
+		return nil
+	}
+	children := make([]nested.Child, 0, len(defs))
+	for _, def := range defs {
+		if def.Nested.Func == nil {
+			continue
+		}
+		defScope := scopes[def.Nested.Point]
+		if defScope == nil {
+			defScope = p.stdlib
+		}
+		children = append(children, nested.Child{
+			NF:       def.Nested,
+			DefScope: defScope,
+			FuncDef:  def.FuncDef,
+			FuncName: def.Name,
+			FuncSym:  def.Symbol,
+			IsLocal:  def.IsLocal,
+		})
+	}
+	return children
 }
 
 // nestedGroup holds a group of functions sharing the same parent scope.
@@ -156,7 +185,7 @@ func (p *Processor) processNestedGroup(
 	graph *cfg.Graph,
 	scopes map[cfg.Point]*scope.State,
 	group *nestedGroup,
-	parentResult *api.FuncResultSnapshot,
+	parentResult *api.FuncAnalysisView,
 	parentFunc *ast.FunctionExpr,
 ) {
 	// Build sibling function types for this group.
@@ -177,7 +206,7 @@ func (p *Processor) processNestedFunction(
 	scopes map[cfg.Point]*scope.State,
 	info *nested.FuncInfo,
 	siblingFunctionTypes map[cfg.SymbolID]typ.Type,
-	parentResult *api.FuncResultSnapshot,
+	parentResult *api.FuncAnalysisView,
 	parentFunc *ast.FunctionExpr,
 ) {
 	baseParentScope := scopes[info.NF.Point]
@@ -207,7 +236,7 @@ func (p *Processor) processNestedFunction(
 					}
 				}
 				if len(capturedSet) > 0 {
-					fields := assign.CollectFieldAssignments(parentResult.Graph, parentResult.NarrowSynth.TypeOf, capturedSet)
+					fields := assign.CollectFieldAssignments(parentResult.Evidence.Assignments, parentResult.NarrowSynth.TypeOf, capturedSet)
 					if len(fields) > 0 {
 						if capturedTypes == nil {
 							capturedTypes = make(map[cfg.SymbolID]typ.Type, len(fields))
@@ -247,7 +276,7 @@ func (p *Processor) processNestedFunction(
 		if phasecore.HasUnannotatedSelfParam(fn, graph.Bindings()) {
 			selfType, tblSym := p.resolveSelfTypeForImplicitSelf(info, siblingFunctionTypes, graph, parentResult, capturedTypes)
 			if selfType != nil && tblSym != 0 && p.store != nil {
-				selfType = nested.EnrichSelfTypeWithConstructorFields(selfType, tblSym, &nestedStoreAdapter{store: p.store})
+				selfType = nested.EnrichSelfTypeWithConstructorFields(selfType, p.constructorFieldsForClass(tblSym))
 			}
 			if selfType != nil {
 				parentScope = parentScope.WithSelf(selfType).WithLocalName("self")
@@ -265,7 +294,7 @@ func (p *Processor) processNestedFunction(
 	}
 
 	// Get the result for constructor detection and sibling updates.
-	result := (*api.FuncResultSnapshot)(nil)
+	result := (*api.FuncAnalysisView)(nil)
 	if p.resultForFunc != nil {
 		result = p.resultForFunc(info.NF.Func)
 	}
@@ -275,7 +304,7 @@ func (p *Processor) processNestedFunction(
 
 	// Detect constructor pattern and store instance fields.
 	if result.Graph != nil && p.store != nil {
-		classSym, selfSym := nested.DetectConstructorPattern(result.Graph, graph, info.NF.Func, info.FuncDef)
+		classSym, selfSym := nested.DetectConstructorPattern(result.Evidence, parentResult.Evidence, info.NF.Func, info.FuncDef)
 		if classSym != 0 && selfSym != 0 {
 			var synthFn func(ast.Expr, cfg.Point) typ.Type
 			if result.NarrowSynth != nil {
@@ -299,9 +328,9 @@ func (p *Processor) processNestedFunction(
 					}
 				}
 			}
-			fields := nested.CollectConstructorFields(result.Graph, selfSym, synthFn)
+			fields := nested.CollectConstructorFields(result.Evidence.Assignments, selfSym, synthFn)
 			if len(fields) > 0 {
-				p.store.StoreConstructorFields(classSym, fields)
+				p.store.MergeInterprocFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(classSym, fields))
 			}
 		}
 	}
@@ -319,8 +348,8 @@ func (p *Processor) resolveSelfTypeForMethod(
 	info *nested.FuncInfo,
 	sym cfg.SymbolID,
 	graph *cfg.Graph,
-	parentResult *api.FuncResultSnapshot,
-	rootResult *api.FuncResultSnapshot,
+	parentResult *api.FuncAnalysisView,
+	rootResult *api.FuncAnalysisView,
 ) typ.Type {
 	var selfType typ.Type
 
@@ -362,7 +391,7 @@ func (p *Processor) resolveSelfTypeForMethod(
 
 	// Enrich self-type with constructor instance fields.
 	if selfType != nil && p.store != nil {
-		selfType = nested.EnrichSelfTypeWithConstructorFields(selfType, sym, &nestedStoreAdapter{store: p.store})
+		selfType = nested.EnrichSelfTypeWithConstructorFields(selfType, p.constructorFieldsForClass(sym))
 	}
 
 	return selfType
@@ -398,7 +427,7 @@ func (p *Processor) persistCapturedTypesForNestedGraph(
 	if len(nextCaptured) == 0 {
 		return
 	}
-	p.store.MergeInterprocFactsNext(key, api.Facts{CapturedTypes: nextCaptured})
+	p.store.MergeInterprocFactsNext(key, interprocdomain.CapturedTypesDelta(nextCaptured))
 }
 
 // resolveSelfTypeForImplicitSelf resolves the self-type for methods with implicit self parameter.
@@ -406,16 +435,20 @@ func (p *Processor) resolveSelfTypeForImplicitSelf(
 	info *nested.FuncInfo,
 	siblingFunctionTypes map[cfg.SymbolID]typ.Type,
 	graph *cfg.Graph,
-	parentResult *api.FuncResultSnapshot,
+	parentResult *api.FuncAnalysisView,
 	capturedTypes map[cfg.SymbolID]typ.Type,
 ) (typ.Type, cfg.SymbolID) {
 	fn := info.NF.Func
 	var selfType typ.Type
 	var tblSym cfg.SymbolID
 	var tbl *ast.TableExpr
+	var assignments []api.AssignmentEvidence
+	if parentResult != nil {
+		assignments = parentResult.Evidence.Assignments
+	}
 
 	// Pattern 1: Table literal methods {m = function(self)...}
-	if tbl, tblSym = nested.FindTableLiteralOwner(graph, fn); tbl != nil && tblSym != 0 {
+	if tbl, tblSym = nested.FindTableLiteralOwner(assignments, fn); tbl != nil && tblSym != 0 {
 		selfType = siblingFunctionTypes[tblSym]
 		// Use table literal type when available.
 		if selfType == nil && parentResult != nil && parentResult.NarrowSynth != nil {
@@ -442,7 +475,7 @@ func (p *Processor) resolveSelfTypeForImplicitSelf(
 
 	// Pattern 2: Field assignment methods obj.m = function(self)...
 	if selfType == nil {
-		baseSym, baseTbl, baseTblPoint := nested.FindFieldAssignmentBase(graph, fn, info.NF.Point)
+		baseSym, baseTbl, baseTblPoint := nested.FindFieldAssignmentBase(assignments, fn, info.NF.Point)
 		if baseSym != 0 {
 			tblSym = baseSym
 			selfType = siblingFunctionTypes[baseSym]
@@ -479,16 +512,11 @@ func (p *Processor) resolveSelfTypeForImplicitSelf(
 	return selfType, tblSym
 }
 
-// nestedStoreAdapter implements nested.Store for the enrich functions.
-type nestedStoreAdapter struct {
-	store api.NestedStore
-}
-
-func (s *nestedStoreAdapter) LookupConstructorFields(classSym cfg.SymbolID) map[string]typ.Type {
-	if s.store == nil {
+func (p *Processor) constructorFieldsForClass(classSym cfg.SymbolID) map[string]typ.Type {
+	if p == nil || p.store == nil || classSym == 0 {
 		return nil
 	}
-	return s.store.LookupConstructorFields(classSym)
+	return p.store.GetModuleFacts().ConstructorFields[classSym]
 }
 
 // buildSiblingTypesForGroup computes sibling function types for a scope group.
@@ -497,7 +525,7 @@ func (p *Processor) buildSiblingTypesForGroup(
 	scopes map[cfg.Point]*scope.State,
 	groupHash uint64,
 	funcs []*nested.FuncInfo,
-	parentResult *api.FuncResultSnapshot,
+	parentResult *api.FuncAnalysisView,
 ) map[cfg.SymbolID]typ.Type {
 	if p.store == nil || graph == nil || len(funcs) == 0 {
 		return nil
@@ -524,7 +552,7 @@ func (p *Processor) buildSiblingTypesForGroup(
 	if len(funcs) > 0 {
 		parentScope = funcs[0].DefScope
 	}
-	buildCfg.FunctionFacts = p.store.GetFunctionFactsSnapshot(graph, parentScope)
+	buildCfg.FunctionFacts = p.store.GetInterprocFacts(graph, parentScope).FunctionFacts
 
 	buildCfg.Services = siblings.BuildServicesFuncs{
 		CapturedSymbolsFn: func(fn *ast.FunctionExpr) []cfg.SymbolID {
@@ -556,7 +584,10 @@ func (p *Processor) buildSiblingTypesForGroup(
 			return chosen
 		},
 		EnrichRecordFn: func(rec *typ.Record, sym cfg.SymbolID) typ.Type {
-			if tbl, _ := nested.FindTableLiteralForSymbol(graph, sym); tbl != nil {
+			if parentResult == nil {
+				return nil
+			}
+			if tbl, _ := nested.FindTableLiteralForSymbol(parentResult.Evidence.Assignments, sym); tbl != nil {
 				return nested.EnrichTableTypeWithFunctionLookup(rec, tbl, graph, buildCfg.FunctionFacts.FunctionType)
 			}
 			return nil

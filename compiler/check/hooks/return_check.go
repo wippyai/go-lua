@@ -51,6 +51,7 @@ type synthForReturn interface {
 func CheckReturns(
 	fn *ast.FunctionExpr,
 	graph *cfg.Graph,
+	evidence api.FlowEvidence,
 	scopes map[cfg.Point]*scope.State,
 	baseScope *scope.State,
 	declared api.Synth,
@@ -128,15 +129,17 @@ func CheckReturns(
 		return nil
 	}
 
-	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+	for _, ret := range evidence.Returns {
+		p := ret.Point
+		info := ret.Info
 		if info == nil {
-			return
+			continue
 		}
 		if len(info.Exprs) == 0 {
 			if idx, decl := missingRequired(0); idx >= 0 {
 				missingReturnDiag(returnPosNode(info), idx, decl)
 			}
-			return
+			continue
 		}
 
 		for i, expr := range info.Exprs {
@@ -175,7 +178,7 @@ func CheckReturns(
 				missingReturnDiag(returnPosNode(info), idx, decl)
 			}
 		}
-	})
+	}
 
 	return diags
 }

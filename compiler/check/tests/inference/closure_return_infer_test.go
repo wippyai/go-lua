@@ -801,7 +801,7 @@ end
 	var summary []typ.Type
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if facts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent); facts != nil {
+	if facts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts; facts != nil {
 		for sym, fact := range facts {
 			if sess.RootResult.Graph.NameOf(sym) == "get_db" {
 				summary = fact.Summary
@@ -873,7 +873,7 @@ end
 	var summary []typ.Type
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if facts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent); facts != nil {
+	if facts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts; facts != nil {
 		for sym, fact := range facts {
 			if sess.RootResult.Graph.NameOf(sym) == "get_db" {
 				summary = fact.Summary
@@ -931,7 +931,7 @@ local y: string = b
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if facts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent); facts != nil {
+	if facts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts; facts != nil {
 		for sym, fact := range facts {
 			name := sess.RootResult.Graph.NameOf(sym)
 			for i, slot := range fact.Summary {
@@ -965,7 +965,7 @@ end
 	found := 0
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if facts := sess.Store.GetFunctionFactsSnapshot(sess.RootResult.Graph, parent); facts != nil {
+	if facts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts; facts != nil {
 		for sym, fact := range facts {
 			if len(fact.Summary) == 0 {
 				name := ""

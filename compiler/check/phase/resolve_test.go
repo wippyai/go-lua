@@ -287,7 +287,7 @@ func TestBuildDeclaredTypesFromSymbolTypes_EntryOverridesAndElseUsesLowestPoint(
 }
 
 func TestCreateTypeResolutionEngine_NilGraph(t *testing.T) {
-	result := CreateTypeResolutionEngine(nil, nil, nil, nil, nil, nil, nil)
+	result := CreateTypeResolutionEngine(nil, nil, nil, nil, nil, nil, nil, nil)
 	if result == nil {
 		t.Error("expected non-nil engine even with nil graph")
 	}
@@ -296,7 +296,7 @@ func TestCreateTypeResolutionEngine_NilGraph(t *testing.T) {
 func TestCreateTypeResolutionEngine_EmptyGraph(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
 	graph := cfg.Build(fn)
-	result := CreateTypeResolutionEngine(nil, graph, nil, nil, nil, nil, nil)
+	result := CreateTypeResolutionEngine(nil, graph, nil, nil, nil, nil, nil, nil)
 	if result == nil {
 		t.Error("expected non-nil engine")
 	}

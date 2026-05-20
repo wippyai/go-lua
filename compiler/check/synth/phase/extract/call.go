@@ -220,6 +220,7 @@ func (s *Synthesizer) specializedLocalFunctionCalleeType(
 	if bindings == nil {
 		return nil
 	}
+	evidence := s.graphEvidence(graph)
 	info := graph.CallSiteAt(p, ex)
 	candidates := callsite.CallableCalleeSymbolCandidates(info, graph, bindings, nil)
 	if len(candidates) == 0 {
@@ -233,7 +234,7 @@ func (s *Synthesizer) specializedLocalFunctionCalleeType(
 		}
 	}
 	for _, sym := range candidates {
-		fn := callsite.FunctionLiteralForGraphSymbol(graph, sym)
+		fn := callsite.FunctionLiteralForGraphSymbol(evidence, sym)
 		if fn != nil && !s.hasDominatingDirectFunctionRebind(sym, fn, p) {
 			factType := s.stableFunctionFactType(sym)
 			hasCallPointCaptureMutation := hasNonGlobalFunctionCaptures(bindings, fn) && s.hasDominatingCapturedMutation(fn, p)
@@ -272,15 +273,16 @@ func (s *Synthesizer) localFunctionAllowsDiscardedExtraArgs(ex *ast.FuncCallExpr
 	if bindings == nil {
 		bindings = s.deps.ModuleBindings
 	}
+	evidence := s.graphEvidence(graph)
 	info := graph.CallSiteAt(p, ex)
 	for _, sym := range callsite.CallableCalleeSymbolCandidates(info, graph, bindings, nil) {
-		if fn := callsite.FunctionLiteralForGraphSymbol(graph, sym); callsite.AllowsDiscardedExtraArgs(fn) {
+		if fn := callsite.FunctionLiteralForGraphSymbol(evidence, sym); callsite.AllowsDiscardedExtraArgs(fn) {
 			return true
 		}
 	}
 	if bindings != nil {
 		if sym := callsite.SymbolFromExpr(ex.Func, bindings); sym != 0 {
-			return callsite.AllowsDiscardedExtraArgs(callsite.FunctionLiteralForGraphSymbol(graph, sym))
+			return callsite.AllowsDiscardedExtraArgs(callsite.FunctionLiteralForGraphSymbol(evidence, sym))
 		}
 	}
 	return false
@@ -486,6 +488,7 @@ func (s *Synthesizer) stablePrototypeFields(graph *compcfg.Graph, sym compcfg.Sy
 	}
 	bindings := graph.Bindings()
 	functionFacts := s.currentFunctionFacts()
+	evidence := s.graphEvidence(graph)
 	var fields map[string]typ.Type
 	addField := func(name string, t typ.Type) {
 		if name == "" {
@@ -503,9 +506,11 @@ func (s *Synthesizer) stablePrototypeFields(graph *compcfg.Graph, sym compcfg.Sy
 			fields[name] = t
 		}
 	}
-	graph.EachAssign(func(p compcfg.Point, info *compcfg.AssignInfo) {
+	for _, assign := range evidence.Assignments {
+		p := assign.Point
+		info := assign.Info
 		if info == nil {
-			return
+			continue
 		}
 		sources := info.Sources
 		for i, target := range info.Targets {
@@ -519,14 +524,16 @@ func (s *Synthesizer) stablePrototypeFields(graph *compcfg.Graph, sym compcfg.Sy
 			}
 			addField(fieldName, s.stablePrototypeFieldType(source, p, sc, bindings, functionFacts, recurse))
 		}
-	})
-	graph.EachFuncDef(func(p compcfg.Point, info *compcfg.FuncDefInfo) {
+	}
+	for _, def := range evidence.FunctionDefinitions {
+		p := def.Nested.Point
+		info := def.FuncDef
 		fieldName := stablePrototypeFuncDefFieldName(info, sym)
 		if fieldName == "" {
-			return
+			continue
 		}
 		addField(fieldName, s.stablePrototypeFuncDefType(info, p, sc, bindings, functionFacts, recurse))
-	})
+	}
 	for _, field := range bindings.DirectFieldSymbols(sym) {
 		if field.Symbol == 0 {
 			continue
@@ -735,7 +742,7 @@ func (s *Synthesizer) forceMethodReceiverAtPoint(p cfg.Point, ex *ast.FuncCallEx
 	if s.deps.CheckCtx != nil {
 		graph, _ = s.deps.CheckCtx.Graph().(*compcfg.Graph)
 	}
-	return callsite.ForceMethodReceiverAtPoint(bindings, graph, p, ex)
+	return callsite.ForceMethodReceiverAtPoint(bindings, graph, s.graphEvidence(graph), p, ex)
 }
 
 // Method looks up a method type on a receiver type.

@@ -5,6 +5,7 @@ package api
 
 import (
 	"github.com/wippyai/go-lua/compiler/bind"
+	"github.com/wippyai/go-lua/compiler/check/abstract/query"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/flow"
@@ -444,31 +445,31 @@ func (e *NarrowEnvImpl) FunctionFacts() FunctionFacts {
 
 // DeclaredEnvConfig holds inputs for building a declared-phase Env.
 type DeclaredEnvConfig struct {
-	Graph           cfg.VersionedGraph
-	Bindings        *bind.BindingTable
-	DeclaredTypes   flow.DeclaredTypes
-	AnnotatedVars   map[cfg.SymbolID]bool
-	BaseScope       *scope.State
-	RefinementStore RefinementStore
-	ModuleAliases   map[cfg.SymbolID]string
-	GlobalTypes     map[string]typ.Type
-	LiteralTypes    flow.DeclaredTypes
-	FunctionFacts   FunctionFacts
+	Graph         cfg.VersionedGraph
+	Bindings      *bind.BindingTable
+	DeclaredTypes flow.DeclaredTypes
+	AnnotatedVars map[cfg.SymbolID]bool
+	BaseScope     *scope.State
+	Refinements   RefinementFacts
+	ModuleAliases map[cfg.SymbolID]string
+	GlobalTypes   map[string]typ.Type
+	LiteralTypes  flow.DeclaredTypes
+	FunctionFacts FunctionFacts
 }
 
 // NarrowEnvConfig holds inputs for building a narrowing-phase Env.
 type NarrowEnvConfig struct {
-	Graph           cfg.VersionedGraph
-	Bindings        *bind.BindingTable
-	DeclaredTypes   flow.DeclaredTypes
-	AnnotatedVars   map[cfg.SymbolID]bool
-	Solution        *flow.Solution
-	BaseScope       *scope.State
-	RefinementStore RefinementStore
-	ModuleAliases   map[cfg.SymbolID]string
-	GlobalTypes     map[string]typ.Type
-	LiteralTypes    flow.DeclaredTypes
-	FunctionFacts   FunctionFacts
+	Graph         cfg.VersionedGraph
+	Bindings      *bind.BindingTable
+	DeclaredTypes flow.DeclaredTypes
+	AnnotatedVars map[cfg.SymbolID]bool
+	Solution      *flow.Solution
+	BaseScope     *scope.State
+	Refinements   RefinementFacts
+	ModuleAliases map[cfg.SymbolID]string
+	GlobalTypes   map[string]typ.Type
+	LiteralTypes  flow.DeclaredTypes
+	FunctionFacts FunctionFacts
 }
 
 func newEnvBase(
@@ -504,9 +505,14 @@ func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 		PhaseScopeCompute,
 		cfg.Graph,
 		cfg.Bindings,
-		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.FunctionFacts, cfg.LiteralTypes, cfg.AnnotatedVars, nil),
+		query.NewTypeFacts(query.TypeFactsConfig{
+			Declared:      cfg.DeclaredTypes,
+			Functions:     cfg.FunctionFacts,
+			Literals:      cfg.LiteralTypes,
+			AnnotatedVars: cfg.AnnotatedVars,
+		}),
 		nil,
-		NewRefinementFacts(cfg.RefinementStore),
+		refinementFactsOrNil(cfg.Refinements),
 		cfg.BaseScope,
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
@@ -523,9 +529,15 @@ func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 		PhaseNarrowing,
 		cfg.Graph,
 		cfg.Bindings,
-		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.FunctionFacts, cfg.LiteralTypes, cfg.AnnotatedVars, cfg.Solution),
+		query.NewTypeFacts(query.TypeFactsConfig{
+			Declared:      cfg.DeclaredTypes,
+			Functions:     cfg.FunctionFacts,
+			Literals:      cfg.LiteralTypes,
+			AnnotatedVars: cfg.AnnotatedVars,
+			Solution:      cfg.Solution,
+		}),
 		cfg.Solution,
-		NewRefinementFacts(cfg.RefinementStore),
+		refinementFactsOrNil(cfg.Refinements),
 		cfg.BaseScope,
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
@@ -553,9 +565,12 @@ func NewReturnInferenceEnv(cfg ReturnInferenceEnvConfig) *DeclaredEnvImpl {
 		PhaseScopeCompute,
 		cfg.Graph,
 		cfg.Bindings,
-		newUnifiedTypeFacts(cfg.Graph, cfg.DeclaredTypes, cfg.FunctionFacts, nil, nil, nil),
+		query.NewTypeFacts(query.TypeFactsConfig{
+			Declared:  cfg.DeclaredTypes,
+			Functions: cfg.FunctionFacts,
+		}),
 		nil,
-		NewRefinementFacts(nil),
+		nilRefinementFacts{},
 		cfg.BaseScope,
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
@@ -563,104 +578,9 @@ func NewReturnInferenceEnv(cfg ReturnInferenceEnvConfig) *DeclaredEnvImpl {
 	return &DeclaredEnvImpl{envCommon: envCommon{base: base}, functionFacts: cfg.FunctionFacts}
 }
 
-// unifiedTypeFacts implements flow.TypeFacts with layered type source lookup.
-type unifiedTypeFacts struct {
-	graph         cfg.VersionedGraph
-	declaredTypes flow.DeclaredTypes
-	functionFacts FunctionFacts
-	literalTypes  flow.DeclaredTypes
-	annotatedVars map[cfg.SymbolID]bool
-	solution      *flow.Solution
-}
-
-func newUnifiedTypeFacts(
-	graph cfg.VersionedGraph,
-	declared flow.DeclaredTypes,
-	functionFacts FunctionFacts,
-	literals flow.DeclaredTypes,
-	annotated map[cfg.SymbolID]bool,
-	solution *flow.Solution,
-) flow.TypeFacts {
-	return &unifiedTypeFacts{
-		graph:         graph,
-		declaredTypes: declared,
-		functionFacts: functionFacts,
-		literalTypes:  literals,
-		annotatedVars: annotated,
-		solution:      solution,
+func refinementFactsOrNil(f RefinementFacts) RefinementFacts {
+	if f == nil {
+		return nilRefinementFacts{}
 	}
-}
-
-// DeclaredAt returns the declared type for a symbol at a CFG point.
-// Searches: literal types, sibling function types, then declared types.
-func (f *unifiedTypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
-	if sym == 0 {
-		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
-	}
-	// For explicitly annotated symbols, prefer the declared type over literal overlays.
-	if f.annotatedVars != nil && f.annotatedVars[sym] {
-		if f.declaredTypes != nil {
-			if t, ok := f.declaredTypes[sym]; ok && t != nil {
-				return f.toTypedValue(t)
-			}
-		}
-	}
-	if f.functionFacts != nil {
-		if t := f.functionFacts.FunctionType(sym); t != nil {
-			return f.toTypedValue(t)
-		}
-	}
-	if f.declaredTypes != nil {
-		if t, ok := f.declaredTypes[sym]; ok && t != nil {
-			return f.toTypedValue(t)
-		}
-	}
-	// Literal overlays are synthesized from function/table literals and can lag
-	// behind canonical declared/sibling symbol types during fixpoint iterations.
-	// Use them only after canonical symbol facts and declared types are absent.
-	if f.literalTypes != nil {
-		if f.annotatedVars == nil || !f.annotatedVars[sym] {
-			if t, ok := f.literalTypes[sym]; ok && t != nil {
-				return f.toTypedValue(t)
-			}
-		}
-	}
-	return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
-}
-
-// RefinedAt returns the flow-refined type for a symbol at a CFG point.
-// Returns nil type if no solution is available or symbol is unknown.
-func (f *unifiedTypeFacts) RefinedAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
-	if f == nil || sym == 0 {
-		return flow.TypedValue{Type: nil, State: flow.StateUnknown}
-	}
-	if f.solution == nil {
-		return flow.TypedValue{Type: nil, State: flow.StateUnknown}
-	}
-	return f.solution.RefinedAt(p, sym)
-}
-
-// EffectiveTypeAt returns the effective type for a symbol at a CFG point.
-// Prefers refined (narrowed) type if available, otherwise falls back to declared.
-func (f *unifiedTypeFacts) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
-	refined := f.RefinedAt(p, sym)
-	if refined.Type != nil && refined.State == flow.StateResolved {
-		return refined
-	}
-	return f.DeclaredAt(p, sym)
-}
-
-// IsAnnotated returns true if the symbol has an explicit type annotation.
-func (f *unifiedTypeFacts) IsAnnotated(sym cfg.SymbolID) bool {
-	if f.annotatedVars == nil {
-		return false
-	}
-	return f.annotatedVars[sym]
-}
-
-func (f *unifiedTypeFacts) toTypedValue(t typ.Type) flow.TypedValue {
-	if typ.IsUnknown(t) {
-		return flow.TypedValue{Type: t, State: flow.StateUnknown}
-	}
-	return flow.TypedValue{Type: t, State: flow.StateResolved}
+	return f
 }

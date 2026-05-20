@@ -10,29 +10,23 @@ type RefinementFacts interface {
 	LookupBySym(sym cfg.SymbolID) *constraint.FunctionRefinement
 }
 
-// RefinementStore provides methods for storing and retrieving function refinements.
-type RefinementStore interface {
-	LookupRefinementBySym(sym cfg.SymbolID) *constraint.FunctionRefinement
-}
+// RefinementLookup adapts canonical function-fact projections into refinement
+// facts used by flow transfer and call-effect propagation.
+type RefinementLookup func(sym cfg.SymbolID) *constraint.FunctionRefinement
 
-// storeRefinementFacts implements RefinementFacts backed by a RefinementStore.
-type storeRefinementFacts struct {
-	store RefinementStore
-}
-
-// NewRefinementFacts creates RefinementFacts backed by a RefinementStore.
-func NewRefinementFacts(store RefinementStore) RefinementFacts {
-	if store == nil {
+// NewRefinementFacts creates RefinementFacts from a canonical lookup function.
+func NewRefinementFacts(lookup RefinementLookup) RefinementFacts {
+	if lookup == nil {
 		return nilRefinementFacts{}
 	}
-	return &storeRefinementFacts{store: store}
+	return lookup
 }
 
-func (f *storeRefinementFacts) LookupBySym(sym cfg.SymbolID) *constraint.FunctionRefinement {
-	if f.store == nil || sym == 0 {
+func (f RefinementLookup) LookupBySym(sym cfg.SymbolID) *constraint.FunctionRefinement {
+	if f == nil || sym == 0 {
 		return nil
 	}
-	return f.store.LookupRefinementBySym(sym)
+	return f(sym)
 }
 
 // nilRefinementFacts is a no-op RefinementFacts implementation.

@@ -100,8 +100,11 @@ type PhaseEnv struct {
 	// ModuleBindings is the binding table for the entire module.
 	ModuleBindings *bind.BindingTable
 
-	// RefinementStore provides function refinement lookups for callee analysis.
-	RefinementStore api.RefinementStore
+	// Refinements provides canonical function refinement lookups for callee analysis.
+	Refinements api.RefinementFacts
+
+	// Evidence is the transfer-owned graph event trace for this function.
+	Evidence api.FlowEvidence
 
 	// Scopes maps CFG points to scope states (populated after scope phase).
 	Scopes map[cfg.Point]*scope.State
@@ -233,6 +236,7 @@ type FlowExtractOutput struct {
 	Inputs     *flow.Inputs
 	Params     []flow.ParamInfo
 	ReturnType typ.Type
+	Evidence   api.FlowEvidence
 }
 
 // FlowSolveInput contains inputs for the flow solve phase.
@@ -354,32 +358,32 @@ func (b *ContextBuilder) WithLiteralTypes(lt flow.DeclaredTypes) *ContextBuilder
 // BuildDeclared constructs a declared-phase Env from accumulated fields.
 func (b *ContextBuilder) BuildDeclared() *api.DeclaredEnvImpl {
 	return api.NewDeclaredEnv(api.DeclaredEnvConfig{
-		Graph:           b.env.Graph,
-		Bindings:        b.bindings,
-		DeclaredTypes:   b.declaredTypes,
-		LiteralTypes:    b.literalTypes,
-		AnnotatedVars:   b.annotatedVars,
-		BaseScope:       b.baseScope,
-		RefinementStore: b.env.RefinementStore,
-		ModuleAliases:   b.env.ModuleAliases,
-		GlobalTypes:     b.env.GlobalTypes,
-		FunctionFacts:   b.functionFacts,
+		Graph:         b.env.Graph,
+		Bindings:      b.bindings,
+		DeclaredTypes: b.declaredTypes,
+		LiteralTypes:  b.literalTypes,
+		AnnotatedVars: b.annotatedVars,
+		BaseScope:     b.baseScope,
+		Refinements:   b.env.Refinements,
+		ModuleAliases: b.env.ModuleAliases,
+		GlobalTypes:   b.env.GlobalTypes,
+		FunctionFacts: b.functionFacts,
 	})
 }
 
 // BuildNarrow constructs a narrowing-phase Env from accumulated fields.
 func (b *ContextBuilder) BuildNarrow() *api.NarrowEnvImpl {
 	return api.NewNarrowEnv(api.NarrowEnvConfig{
-		Graph:           b.env.Graph,
-		Bindings:        b.bindings,
-		DeclaredTypes:   b.declaredTypes,
-		LiteralTypes:    b.literalTypes,
-		AnnotatedVars:   b.annotatedVars,
-		Solution:        b.solution,
-		BaseScope:       b.baseScope,
-		RefinementStore: b.env.RefinementStore,
-		ModuleAliases:   b.env.ModuleAliases,
-		GlobalTypes:     b.env.GlobalTypes,
-		FunctionFacts:   b.functionFacts,
+		Graph:         b.env.Graph,
+		Bindings:      b.bindings,
+		DeclaredTypes: b.declaredTypes,
+		LiteralTypes:  b.literalTypes,
+		AnnotatedVars: b.annotatedVars,
+		Solution:      b.solution,
+		BaseScope:     b.baseScope,
+		Refinements:   b.env.Refinements,
+		ModuleAliases: b.env.ModuleAliases,
+		GlobalTypes:   b.env.GlobalTypes,
+		FunctionFacts: b.functionFacts,
 	})
 }

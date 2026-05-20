@@ -4,13 +4,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/assign"
+	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/resolve"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
-	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -159,7 +159,7 @@ func (i *Inferencer) collectAllReturnVectors(ctx *returnInferenceContext) map[cf
 	return allReturnVectors
 }
 
-func (i *Inferencer) returnVectorFromSnapshot(
+func (i *Inferencer) returnVectorFromFacts(
 	graph *cfg.Graph,
 	parentScope *scope.State,
 	sym cfg.SymbolID,
@@ -167,7 +167,7 @@ func (i *Inferencer) returnVectorFromSnapshot(
 	if i == nil || i.store == nil || graph == nil || parentScope == nil || sym == 0 {
 		return nil
 	}
-	facts := i.store.GetFunctionFactsSnapshot(graph, parentScope)
+	facts := i.store.GetInterprocFacts(graph, parentScope).FunctionFacts
 	if len(facts) == 0 {
 		return nil
 	}
@@ -197,14 +197,14 @@ func (i *Inferencer) resolveLocalFunctionReturns(
 		return returnVector
 	}
 
-	// Snapshot recovery path: current graph under the current resolve scope.
+	// Product fact recovery path: current graph under the current resolve scope.
 	if ctx.info != nil && ctx.info.Graph != nil && ctx.resolveScope != nil {
-		if snapVector := i.returnVectorFromSnapshot(ctx.info.Graph, ctx.resolveScope, sym); len(snapVector) > 0 {
-			return snapVector
+		if factVector := i.returnVectorFromFacts(ctx.info.Graph, ctx.resolveScope, sym); len(factVector) > 0 {
+			return factVector
 		}
 	}
 
-	// Snapshot recovery path: parent graph for the function symbol, if known.
+	// Product fact recovery path: parent graph for the function symbol, if known.
 	ref := i.store.FunctionRefBySym(sym)
 	if ref == nil || ref.ParentGraphID == 0 {
 		return returnVector
@@ -217,8 +217,8 @@ func (i *Inferencer) resolveLocalFunctionReturns(
 	if parentScope == nil {
 		return returnVector
 	}
-	if snapVector := i.returnVectorFromSnapshot(parentGraph, parentScope, sym); len(snapVector) > 0 {
-		return snapVector
+	if factVector := i.returnVectorFromFacts(parentGraph, parentScope, sym); len(factVector) > 0 {
+		return factVector
 	}
 	return returnVector
 }
@@ -229,9 +229,11 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 	overlay map[cfg.SymbolID]typ.Type,
 	allReturnVectors map[cfg.SymbolID][]typ.Type,
 ) {
-	ctx.info.Graph.EachAssign(func(p cfg.Point, assignInfo *cfg.AssignInfo) {
+	for _, assign := range ctx.info.Evidence.Assignments {
+		p := assign.Point
+		assignInfo := assign.Info
 		if assignInfo == nil || !assignInfo.IsLocal || len(assignInfo.Targets) == 0 || len(assignInfo.Sources) == 0 {
-			return
+			continue
 		}
 		for idx, target := range assignInfo.Targets {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
@@ -261,7 +263,7 @@ func (i *Inferencer) enrichOverlayWithLocalFunctions(
 				overlay[target.Symbol] = fnType
 			}
 		}
-	})
+	}
 }
 
 // enrichOverlayWithCaptured adds captured variable types from parent function result.
@@ -282,7 +284,7 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 	}
 	if i.store != nil && ctx.info.DefScope != nil {
 		parentScope := api.ParentScopeForGraph(i.store, ctx.info.Graph.ID(), ctx.info.DefScope)
-		if capturedTypes := i.store.GetCapturedTypesSnapshot(ctx.info.Graph, parentScope); len(capturedTypes) > 0 {
+		if capturedTypes := i.store.GetInterprocFacts(ctx.info.Graph, parentScope).CapturedTypes; len(capturedTypes) > 0 {
 			for _, sym := range cfg.SortedSymbolIDs(capturedTypes) {
 				t := capturedTypes[sym]
 				if sym == 0 || t == nil {
@@ -299,14 +301,14 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 		return
 	}
 	resolveCapturedAnnotation := func(sym cfg.SymbolID) typ.Type {
-		parentGraph := ctx.info.ParentGraph
-		if parentGraph == nil || sym == 0 {
+		if sym == 0 {
 			return nil
 		}
 		var annType typ.Type
-		parentGraph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		for _, assign := range ctx.info.ParentEvidence.Assignments {
+			info := assign.Info
 			if annType != nil || info == nil || !info.IsLocal || len(info.Targets) == 0 {
-				return
+				continue
 			}
 			info.EachTarget(func(i int, target cfg.AssignTarget) {
 				if annType != nil || target.Kind != cfg.TargetIdent || target.Symbol != sym {
@@ -322,7 +324,7 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 				}
 				annType = ctx.engine.ResolveType(ann, resolveScope)
 			})
-		})
+		}
 		return annType
 	}
 	for _, sym := range localBindings.CapturedSymbols(ctx.info.Fn) {
@@ -368,7 +370,7 @@ func (i *Inferencer) capturedFunctionFactType(ctx *returnInferenceContext, sym c
 			parentScope = scoped
 		}
 	}
-	facts := i.store.GetFunctionFactsSnapshot(parentGraph, parentScope)
+	facts := i.store.GetInterprocFacts(parentGraph, parentScope).FunctionFacts
 	return facts.FunctionType(sym)
 }
 
@@ -408,9 +410,10 @@ func (i *Inferencer) inferLocalVariableTypes(
 		}
 	}
 
-	fnGraph.EachAssign(func(_ cfg.Point, assignInfo *cfg.AssignInfo) {
+	for _, assign := range ctx.info.Evidence.Assignments {
+		assignInfo := assign.Info
 		if assignInfo == nil || len(assignInfo.TypeAnnotations) == 0 {
-			return
+			continue
 		}
 		for idx, target := range assignInfo.Targets {
 			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
@@ -428,7 +431,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 				}
 			}
 		}
-	})
+	}
 
 	inferenceOverlay := overlay
 	if len(localValueSeeds) > 0 {
@@ -450,7 +453,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 		FunctionFacts: functionFactsFromReturnVectors(ctx.returnVectors),
 	})
 
-	prelimEngine := i.newReturnInferenceEngine(ctx.run, fnScopes, prelimCtx)
+	prelimEngine := i.newReturnInferenceEngine(ctx.run, fnScopes, prelimCtx, ctx.info.Evidence)
 
 	synthAdapter := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return prelimEngine.TypeOf(expr, p)
@@ -470,11 +473,13 @@ func (i *Inferencer) inferLocalVariableTypes(
 	}
 
 	inferred := assign.CollectInferredTypes(&fbcore.FlowContext{
-		Graph:   fnGraph,
-		Scopes:  fnScopes,
-		API:     prelimEngine,
-		CallCtx: ctx.run.Ctx,
-		TypeOps: i.types,
+		Graph:          fnGraph,
+		Scopes:         fnScopes,
+		API:            prelimEngine,
+		CallCtx:        ctx.run.Ctx,
+		TypeOps:        i.types,
+		ModuleBindings: ctx.bindings,
+		Evidence:       ctx.info.Evidence,
 		Derived: &fbcore.Derived{
 			SymResolver: symResolver,
 		},
@@ -493,15 +498,17 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 	}
 
 	localValueSeeds := make(map[cfg.SymbolID]bool)
-	fnGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range ctx.info.Evidence.Assignments {
+		p := assign.Point
+		info := assign.Info
 		if info == nil || !info.IsLocal {
-			return
+			continue
 		}
 
 		if info.NumericFor != nil {
 			target, ok := info.FirstTarget()
 			if !ok {
-				return
+				continue
 			}
 			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
 				if _, exists := overlay[target.Symbol]; !exists {
@@ -549,7 +556,7 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 				}
 			}
 		})
-	})
+	}
 
 	if len(localValueSeeds) == 0 {
 		return nil
@@ -584,8 +591,8 @@ func (i *Inferencer) collectAndApplyMutations(
 	stage.enrichedSynthAdapter = buildEnrichedSynthAdapter(stage.fnGraph.Bindings(), stage.inferred, stage.finalOverlay, stage.localValueSeeds, i.types, ctx.run.Ctx, stage.synthAdapter)
 
 	i.applyFieldMutations(ctx, &stage)
-	i.applyIndexerMutations(&stage)
-	i.applyDirectMutations(&stage)
+	i.applyIndexerMutations(ctx, &stage)
+	i.applyDirectMutations(ctx, &stage)
 
 	return stage.finalOverlay
 }
@@ -813,7 +820,7 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 	if i == nil || ctx == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynthAdapter == nil {
 		return
 	}
-	fieldAssignments := assign.CollectFieldAssignments(stage.fnGraph, stage.enrichedSynthAdapter, nil)
+	fieldAssignments := assign.CollectFieldAssignments(ctx.info.Evidence.Assignments, stage.enrichedSynthAdapter, nil)
 
 	nestedBindings := stage.fnGraph.Bindings()
 	if nestedBindings == nil {
@@ -822,40 +829,40 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 	var capturedByCallee map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type
 	if i.store != nil {
 		capturedParent := api.ParentScopeForGraph(i.store, stage.fnGraph.ID(), ctx.info.DefScope)
-		capturedByCallee = i.store.GetCapturedFieldAssignsSnapshot(stage.fnGraph, capturedParent)
+		capturedByCallee = i.store.GetInterprocFacts(stage.fnGraph, capturedParent).CapturedFields
 	}
 	calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
 		return resolve.CalleeType(info, p, stage.enrichedSynthAdapter, nil, nil, stage.fnGraph, nestedBindings, i.store.ModuleBindings())
 	}
-	nestedFieldAssignments := returns.CollectCalledNestedFieldAssignments(stage.fnGraph, nestedBindings, capturedByCallee, calleeTypeResolver)
+	nestedFieldAssignments := returns.CollectCalledNestedFieldAssignments(stage.fnGraph, nestedBindings, ctx.info.Evidence.Calls, capturedByCallee, calleeTypeResolver)
 	returns.MergeFieldAssignments(fieldAssignments, nestedFieldAssignments)
 
 	returns.ApplyFieldMergeToOverlay(stage.finalOverlay, fieldAssignments)
 }
 
-func (i *Inferencer) applyIndexerMutations(stage *overlayMutationStage) {
-	if i == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynthAdapter == nil {
+func (i *Inferencer) applyIndexerMutations(ctx *returnInferenceContext, stage *overlayMutationStage) {
+	if i == nil || ctx == nil || ctx.info == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynthAdapter == nil {
 		return
 	}
 	indexerBindings := stage.fnGraph.Bindings()
 	if indexerBindings == nil {
 		indexerBindings = i.store.ModuleBindings()
 	}
-	indexerAssignments := assign.CollectIndexerAssignments(stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings, nil)
-	tableMutations := mutator.CollectTableInsertMutations(stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
+	indexerAssignments := assign.CollectIndexerAssignments(ctx.info.Evidence.Assignments, stage.enrichedSynthAdapter, indexerBindings, nil)
+	tableMutations := mutator.CollectTableInsertMutations(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
 	mutator.MergeIndexerMutations(indexerAssignments, tableMutations)
 	returns.ApplyIndexerMergeToOverlay(stage.finalOverlay, indexerAssignments)
 }
 
-func (i *Inferencer) applyDirectMutations(stage *overlayMutationStage) {
-	if i == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynthAdapter == nil {
+func (i *Inferencer) applyDirectMutations(ctx *returnInferenceContext, stage *overlayMutationStage) {
+	if i == nil || ctx == nil || ctx.info == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynthAdapter == nil {
 		return
 	}
 	indexerBindings := stage.fnGraph.Bindings()
 	if indexerBindings == nil {
 		indexerBindings = i.store.ModuleBindings()
 	}
-	directMutations := mutator.CollectTableInsertOnDirect(stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
+	directMutations := mutator.CollectTableInsertOnDirect(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
 	returns.ApplyDirectMutationsToOverlay(stage.finalOverlay, directMutations)
 }
 
@@ -887,6 +894,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		GlobalTypes:    i.globalTypes,
 		ModuleAliases:  ctx.moduleAliases,
 		ModuleBindings: i.store.ModuleBindings(),
+		Evidence:       ctx.info.Evidence,
 		Scopes:         fnScopes,
 	}
 
@@ -926,11 +934,11 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 
 	deadPoints := map[cfg.Point]bool{}
 	if solveOut.Solution != nil {
-		fnGraph.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
-			if solveOut.Solution.IsPointDead(p) {
-				deadPoints[p] = true
+		for _, ret := range extractOut.Evidence.Returns {
+			if solveOut.Solution.IsPointDead(ret.Point) {
+				deadPoints[ret.Point] = true
 			}
-		})
+		}
 	}
 
 	if narrowOut.Synth != nil {
@@ -951,7 +959,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		FunctionFacts: phaseFunctionFacts,
 	})
 	return phase2InferenceState{
-		synth:      i.newReturnInferenceEngine(ctx.run, fnScopes, fnCheckCtx),
+		synth:      i.newReturnInferenceEngine(ctx.run, fnScopes, fnCheckCtx, ctx.info.Evidence),
 		deadPoints: deadPoints,
 	}
 }

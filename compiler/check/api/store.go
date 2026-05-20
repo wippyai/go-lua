@@ -9,10 +9,10 @@
 //	GraphStore      - CFG graph lookup by ID
 //	ParentScopes    - Parent scope lookup for nested functions
 //	NestedMetaStore - Nested function metadata
-//	SnapshotStore   - Stable interproc fact snapshots
+//	InterprocFactReader   - Visible interproc fact products
 //	FunctionRefs    - Symbol/function bidirectional lookup
 //	StoreReader     - Read-only combination of above
-//	NestedStore     - StoreReader + constructor field storage
+//	NestedStore     - StoreReader + canonical fact product writes
 //	IterationStore  - Full mutation capability for fixpoint
 package api
 
@@ -21,8 +21,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // FunctionRef is the canonical mapping for a function symbol.
@@ -71,13 +69,10 @@ type NestedMetaStore interface {
 	NestedMetaFor(graphID uint64) (NestedMeta, bool)
 }
 
-// SnapshotStore exposes stable interproc fact snapshots.
-type SnapshotStore interface {
-	GetFunctionFactsSnapshot(graph *cfg.Graph, parent *scope.State) FunctionFacts
-	GetCapturedTypesSnapshot(graph *cfg.Graph, parent *scope.State) CapturedTypes
-	GetCapturedFieldAssignsSnapshot(graph *cfg.Graph, parent *scope.State) CapturedFieldAssigns
-	GetCapturedContainerMutationsSnapshot(graph *cfg.Graph, parent *scope.State) CapturedContainerMutations
-	GetLiteralSigsSnapshot(graph *cfg.Graph, parent *scope.State) LiteralSigs
+// InterprocFactReader exposes visible interproc fact products.
+type InterprocFactReader interface {
+	GetModuleFacts() Facts
+	GetInterprocFacts(graph *cfg.Graph, parent *scope.State) Facts
 }
 
 // FunctionRefs provides symbol/function lookup for function graphs.
@@ -95,14 +90,8 @@ type StoreReader interface {
 	GraphStore
 	ParentScopes
 	NestedMetaStore
-	SnapshotStore
+	InterprocFactReader
 	FunctionRefs
-}
-
-// ConstructorFieldStore provides constructor field storage.
-type ConstructorFieldStore interface {
-	StoreConstructorFields(classSym cfg.SymbolID, fields map[string]typ.Type)
-	LookupConstructorFields(classSym cfg.SymbolID) map[string]typ.Type
 }
 
 // InterprocFactSink provides write access to per-iteration interproc facts.
@@ -113,31 +102,16 @@ type InterprocFactSink interface {
 // NestedStore is the store interface required by nested processing.
 type NestedStore interface {
 	StoreReader
-	ConstructorFieldStore
 	InterprocFactSink
-}
-
-// LiteralSigSource is used by phase runners to supply literal signatures.
-type LiteralSigSource interface {
-	GetLiteralSigsSnapshot(graph *cfg.Graph, parent *scope.State) LiteralSigs
-}
-
-// LiteralSigSink accepts literal signature results from analysis.
-type LiteralSigSink interface {
-	StoreLiteralSigs(graphID uint64, sigs map[*ast.FunctionExpr]*typ.Function)
 }
 
 // IterationStore provides mutation operations required by the fixpoint driver.
 type IterationStore interface {
 	NestedStore
-	LiteralSigSink
 
-	ClearIterationChannels()
+	ClearInterprocState()
 	FixpointSwap() bool
-	FixpointChannelDiffs() []string
-
-	RefinementStore() RefinementStore
-	StoreFunctionRefinement(sym cfg.SymbolID, eff *constraint.FunctionRefinement)
+	FixpointDiffs() []string
 
 	SetModuleBindings(bindings *bind.BindingTable)
 	SetModuleAliases(aliases map[cfg.SymbolID]string)

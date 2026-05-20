@@ -3,7 +3,8 @@ package nested
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
+	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/assign"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -35,10 +36,15 @@ import (
 // 2. Creates self via setmetatable({}, T) or setmetatable({}, {__index = T})
 // 3. Returns the self variable
 //
-// The nestedGraph is the CFG of the function being analyzed.
-// The parentGraph is the CFG where the function is defined (needed for T.new = function() pattern).
-func DetectConstructorPattern(nestedGraph, parentGraph *cfg.Graph, fn *ast.FunctionExpr, funcDef *cfg.FuncDefInfo) (classSymbol, selfSymbol cfg.SymbolID) {
-	if nestedGraph == nil || fn == nil {
+// The nested evidence belongs to the function being analyzed. The parent
+// evidence belongs to the graph where it is defined, for `T.new = function()`.
+func DetectConstructorPattern(
+	nestedEvidence api.FlowEvidence,
+	parentEvidence api.FlowEvidence,
+	fn *ast.FunctionExpr,
+	funcDef *cfg.FuncDefInfo,
+) (classSymbol, selfSymbol cfg.SymbolID) {
+	if fn == nil {
 		return 0, 0
 	}
 
@@ -56,12 +62,16 @@ func DetectConstructorPattern(nestedGraph, parentGraph *cfg.Graph, fn *ast.Funct
 	}
 
 	// Also check for T.new = function(...) pattern in the parent graph
-	if receiverSymbol == 0 && parentGraph != nil {
+	if receiverSymbol == 0 {
 		var found cfg.SymbolID
 		var foundName string
-		parentGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		for _, assign := range parentEvidence.Assignments {
 			if found != 0 {
-				return
+				break
+			}
+			info := assign.Info
+			if info == nil {
+				continue
 			}
 			info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
 				fnExpr, ok := src.(*ast.FunctionExpr)
@@ -73,7 +83,7 @@ func DetectConstructorPattern(nestedGraph, parentGraph *cfg.Graph, fn *ast.Funct
 					foundName = target.BaseName
 				}
 			})
-		})
+		}
 		receiverSymbol = found
 		receiverName = foundName
 	}
@@ -83,53 +93,57 @@ func DetectConstructorPattern(nestedGraph, parentGraph *cfg.Graph, fn *ast.Funct
 	}
 
 	// Find setmetatable call that creates self
-	selfSym := findSetmetatablePatternByName(nestedGraph, receiverName)
+	selfSym := findSetmetatablePatternByName(nestedEvidence.Assignments, receiverName)
 	if selfSym == 0 {
 		return 0, 0
 	}
 
 	// Check that self is returned
-	if !isSymbolReturned(nestedGraph, selfSym) {
+	if !isSymbolReturned(nestedEvidence.Returns, selfSym) {
 		return 0, 0
 	}
 
 	return receiverSymbol, selfSym
 }
 
-func findSetmetatablePatternByName(graph *cfg.Graph, expectedClassName string) cfg.SymbolID {
-	if graph == nil {
+func findSetmetatablePatternByName(assignments []api.AssignmentEvidence, expectedClassName string) cfg.SymbolID {
+	if len(assignments) == 0 {
 		return 0
 	}
 
 	var selfSym cfg.SymbolID
 
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+	for _, assign := range assignments {
 		if selfSym != 0 {
-			return
+			break
+		}
+		info := assign.Info
+		if info == nil {
+			continue
 		}
 		if !info.IsLocal || len(info.Targets) == 0 {
-			return
+			continue
 		}
 
 		// Look for setmetatable call
 		call, ok := info.SourceAt(0).(*ast.FuncCallExpr)
 		if !ok {
-			return
+			continue
 		}
 
 		// Check if it's a setmetatable call
 		ident, ok := call.Func.(*ast.IdentExpr)
 		if !ok || ident.Value != "setmetatable" {
-			return
+			continue
 		}
 
 		if len(call.Args) < 2 {
-			return
+			continue
 		}
 
 		// First arg should be an empty table literal or table with initial values
 		if _, ok := call.Args[0].(*ast.TableExpr); !ok {
-			return
+			continue
 		}
 
 		// Second arg is the metatable - check for T or {__index = T}
@@ -155,7 +169,7 @@ func findSetmetatablePatternByName(graph *cfg.Graph, expectedClassName string) c
 
 		// Validate class name if expected
 		if expectedClassName != "" && foundClassName != expectedClassName {
-			return
+			continue
 		}
 
 		if target, ok := info.FirstTarget(); ok {
@@ -163,65 +177,58 @@ func findSetmetatablePatternByName(graph *cfg.Graph, expectedClassName string) c
 				selfSym = target.Symbol
 			}
 		}
-	})
+	}
 
 	return selfSym
 }
 
 // isSymbolReturnedOnAllPaths checks if a symbol is returned on ALL return paths.
 // Returns false if any return path returns something other than the symbol.
-func isSymbolReturned(graph *cfg.Graph, sym cfg.SymbolID) bool {
-	if graph == nil || sym == 0 {
-		return false
-	}
-
-	bindings := graph.Bindings()
-	if bindings == nil {
+func isSymbolReturned(returns []api.ReturnEvidence, sym cfg.SymbolID) bool {
+	if len(returns) == 0 || sym == 0 {
 		return false
 	}
 
 	hasReturn := false
 	allReturnSym := true
-	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+	for _, ret := range returns {
 		if !allReturnSym {
-			return
+			break
+		}
+		info := ret.Info
+		if info == nil {
+			continue
 		}
 		hasReturn = true
 
 		// Empty return or return with no expressions doesn't return self.
 		if len(info.Exprs) == 0 {
 			allReturnSym = false
-			return
+			break
 		}
 
 		// Check if first return expression is the symbol.
-		ident, ok := info.Exprs[0].(*ast.IdentExpr)
-		if !ok {
-			allReturnSym = false
-			return
-		}
-		retSym, ok := bindings.SymbolOf(ident)
-		if !ok || retSym != sym {
+		if len(info.Symbols) == 0 || info.Symbols[0] != sym {
 			allReturnSym = false
 		}
-	})
+	}
 
 	return hasReturn && allReturnSym
 }
 
 // CollectConstructorFields collects field assignments to a self symbol in a constructor.
 //
-// This scans the constructor's CFG for statements like `self.field = value` and
-// builds a map of field names to their types. These fields become part of the
-// class's instance type, enabling the type checker to validate field access
-// on instances created by this constructor.
-func CollectConstructorFields(graph *cfg.Graph, selfSym cfg.SymbolID, synth func(ast.Expr, cfg.Point) typ.Type) map[string]typ.Type {
-	if graph == nil || selfSym == 0 {
+// This reduces transfer assignment evidence for statements like
+// `self.field = value` and builds a map of field names to their types.
+// These fields become part of the class's instance type, enabling the type
+// checker to validate field access on instances created by this constructor.
+func CollectConstructorFields(assignments []api.AssignmentEvidence, selfSym cfg.SymbolID, synth func(ast.Expr, cfg.Point) typ.Type) map[string]typ.Type {
+	if len(assignments) == 0 || selfSym == 0 {
 		return nil
 	}
 
 	filterSyms := map[cfg.SymbolID]bool{selfSym: true}
-	fields := assign.CollectFieldAssignments(graph, synth, filterSyms)
+	fields := assign.CollectFieldAssignments(assignments, synth, filterSyms)
 
 	if selfFields, ok := fields[selfSym]; ok && len(selfFields) > 0 {
 		filtered := make(map[string]typ.Type, len(selfFields))

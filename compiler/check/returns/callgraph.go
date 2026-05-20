@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	synthresolve "github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
@@ -124,6 +125,7 @@ func PropagateParameterEvidence(localFuncs map[cfg.SymbolID]*LocalFuncInfo) {
 	resolveLocalSignature := buildLocalSignatureResolver(localFuncs)
 
 	parentGraphs := make(map[uint64]*cfg.Graph)
+	parentCalls := make(map[uint64][]api.CallEvidence)
 	moduleBindings := (*bind.BindingTable)(nil)
 	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		info := localFuncs[sym]
@@ -131,6 +133,7 @@ func PropagateParameterEvidence(localFuncs map[cfg.SymbolID]*LocalFuncInfo) {
 			continue
 		}
 		parentGraphs[info.ParentGraph.ID()] = info.ParentGraph
+		parentCalls[info.ParentGraph.ID()] = info.ParentEvidence.Calls
 		if moduleBindings == nil {
 			moduleBindings = info.ParentGraph.Bindings()
 		}
@@ -227,9 +230,9 @@ func PropagateParameterEvidence(localFuncs map[cfg.SymbolID]*LocalFuncInfo) {
 				continue
 			}
 			bindings := g.Bindings()
-			g.EachCallSite(func(_ cfg.Point, ci *cfg.CallInfo) {
-				processCall(ci, g, bindings)
-			})
+			for _, call := range parentCalls[graphID] {
+				processCall(call.Info, g, bindings)
+			}
 		}
 
 		for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
@@ -238,9 +241,9 @@ func PropagateParameterEvidence(localFuncs map[cfg.SymbolID]*LocalFuncInfo) {
 				continue
 			}
 			bindings := info.Graph.Bindings()
-			info.Graph.EachCallSite(func(_ cfg.Point, ci *cfg.CallInfo) {
-				processCall(ci, info.Graph, bindings)
-			})
+			for _, call := range info.Evidence.Calls {
+				processCall(call.Info, info.Graph, bindings)
+			}
 		}
 
 		if !changed {
@@ -347,9 +350,9 @@ func BuildLocalCallGraph(
 		seen := make(map[cfg.SymbolID]bool)
 		bindings := info.Graph.Bindings()
 
-		info.Graph.EachCallSite(func(_ cfg.Point, callInfo *cfg.CallInfo) {
-			addEdgesFromCall(seen, &callees, callInfo, info.Graph, bindings)
-		})
+		for _, call := range info.Evidence.Calls {
+			addEdgesFromCall(seen, &callees, call.Info, info.Graph, bindings)
+		}
 
 		if len(callees) > 1 {
 			sort.Slice(callees, func(i, j int) bool {

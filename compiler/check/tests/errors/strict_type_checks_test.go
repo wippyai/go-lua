@@ -43,6 +43,26 @@ local y = x.field
 			contains: "cannot index type number",
 		},
 		{
+			name: "truthiness probe on primitive still rejects indexing",
+			code: `
+local x: number = 42
+if x.field then
+	return
+end
+`,
+			wantCode: diag.ErrTypeMismatch,
+			contains: "cannot index type number",
+		},
+		{
+			name: "missing closed record field still rejects value read",
+			code: `
+local p: {name: string} = {name = "a"}
+local missing = p.missing
+`,
+			wantCode: diag.ErrNoField,
+			contains: "missing",
+		},
+		{
 			name: "type name shadowed by local value does not resolve Type:is",
 			code: `
 type Point = {x: number, y: number}

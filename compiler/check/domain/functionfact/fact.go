@@ -5,6 +5,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/domain/value"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
@@ -14,16 +16,21 @@ import (
 // Normalize canonicalizes one stored function fact.
 func Normalize(ff api.FunctionFact) api.FunctionFact {
 	return api.FunctionFact{
-		Params:  paramevidence.FilterEmptyVector(ff.Params),
-		Summary: returnsummary.Canonical(ff.Summary),
-		Narrow:  returnsummary.Canonical(ff.Narrow),
-		Type:    value.NormalizeFactType(ff.Type),
+		Params:     paramevidence.FilterEmptyVector(ff.Params),
+		Summary:    returnsummary.Canonical(ff.Summary),
+		Narrow:     returnsummary.Canonical(ff.Narrow),
+		Type:       value.NormalizeFactType(ff.Type),
+		Refinement: NormalizeRefinement(ff.Refinement),
 	}
 }
 
 // Empty reports whether a canonical function fact contains no information.
 func Empty(ff api.FunctionFact) bool {
-	return len(ff.Params) == 0 && len(ff.Summary) == 0 && len(ff.Narrow) == 0 && ff.Type == nil
+	return len(ff.Params) == 0 &&
+		len(ff.Summary) == 0 &&
+		len(ff.Narrow) == 0 &&
+		ff.Type == nil &&
+		NormalizeRefinement(ff.Refinement) == nil
 }
 
 // Join precisely merges two observations for one local function during a single
@@ -45,6 +52,7 @@ func Join(existing, candidate api.FunctionFact) api.FunctionFact {
 	if candidate.Type != nil {
 		out.Type = MergeType(out.Type, candidate.Type)
 	}
+	out.Refinement = MergeRefinement(out.Refinement, candidate.Refinement)
 
 	summaryBeforeNarrow := out.Summary
 	if len(out.Narrow) > 0 {
@@ -120,10 +128,11 @@ func MergeType(existing, candidate typ.Type) typ.Type {
 // boundary.
 func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 	out := api.FunctionFact{
-		Params:  paramevidence.JoinVectors(prev.Params, next.Params),
-		Summary: returnsummary.WidenForConvergence(prev.Summary, next.Summary),
-		Narrow:  returnsummary.WidenForConvergence(prev.Narrow, next.Narrow),
-		Type:    WidenTypeForConvergence(prev.Type, next.Type),
+		Params:     paramevidence.JoinVectors(prev.Params, next.Params),
+		Summary:    returnsummary.WidenForConvergence(prev.Summary, next.Summary),
+		Narrow:     returnsummary.WidenForConvergence(prev.Narrow, next.Narrow),
+		Type:       WidenTypeForConvergence(prev.Type, next.Type),
+		Refinement: MergeRefinement(prev.Refinement, next.Refinement),
 	}
 
 	summaryBeforeNarrow := out.Summary
@@ -163,6 +172,76 @@ func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 	}
 
 	return out
+}
+
+// NormalizeRefinement canonicalizes empty function refinements away.
+func NormalizeRefinement(refinement *constraint.FunctionRefinement) *constraint.FunctionRefinement {
+	if refinement == nil || refinement.IsEmpty() {
+		return nil
+	}
+	return refinement
+}
+
+// MergeRefinement returns the least imprecise sound fact that covers both
+// refinement observations.
+func MergeRefinement(existing, candidate *constraint.FunctionRefinement) *constraint.FunctionRefinement {
+	existing = NormalizeRefinement(existing)
+	candidate = NormalizeRefinement(candidate)
+	switch {
+	case existing == nil:
+		return candidate
+	case candidate == nil:
+		return existing
+	case existing.Equals(candidate):
+		return existing
+	}
+
+	merged := &constraint.FunctionRefinement{
+		Row:        mergeEffectRows(existing.Row, candidate.Row),
+		OnReturn:   mergeGuaranteeCondition(existing.OnReturn, candidate.OnReturn),
+		OnTrue:     mergeGuaranteeCondition(existing.OnTrue, candidate.OnTrue),
+		OnFalse:    mergeGuaranteeCondition(existing.OnFalse, candidate.OnFalse),
+		Terminates: existing.Terminates && candidate.Terminates,
+	}
+	return NormalizeRefinement(merged)
+}
+
+func mergeGuaranteeCondition(existing, candidate constraint.Condition) constraint.Condition {
+	if existing.Equals(candidate) {
+		return existing
+	}
+	if !existing.HasConstraints() || !candidate.HasConstraints() {
+		return constraint.Condition{}
+	}
+	return constraint.Or(existing, candidate)
+}
+
+func mergeEffectRows(existing, candidate typ.EffectInfo) typ.EffectInfo {
+	switch {
+	case existing == nil:
+		return candidate
+	case candidate == nil:
+		return existing
+	case effectInfoEqual(existing, candidate):
+		return existing
+	}
+	left, leftOK := existing.(effect.Row)
+	right, rightOK := candidate.(effect.Row)
+	if leftOK && rightOK {
+		row := effect.Union(left, right)
+		if row.Pure() && !row.IsOpen() {
+			return nil
+		}
+		return row
+	}
+	return effect.Unknown
+}
+
+func effectInfoEqual(a, b typ.EffectInfo) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equals(b)
 }
 
 func repairSummaryWithNarrow(summary, narrow []typ.Type) []typ.Type {

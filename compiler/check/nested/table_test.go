@@ -2,8 +2,6 @@ package nested
 
 import (
 	"testing"
-
-	"github.com/wippyai/go-lua/compiler/cfg"
 )
 
 func TestFindTableLiteralForSymbol_NilGraph(t *testing.T) {
@@ -14,7 +12,7 @@ func TestFindTableLiteralForSymbol_NilGraph(t *testing.T) {
 }
 
 func TestFindTableLiteralForSymbol_ZeroSymbol(t *testing.T) {
-	tbl, point := FindTableLiteralForSymbol(&cfg.Graph{}, 0)
+	tbl, point := FindTableLiteralForSymbol(nil, 0)
 	if tbl != nil || point != 0 {
 		t.Error("expected nil result for zero symbol")
 	}

@@ -2,14 +2,7 @@ package nested
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/callsite"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
-	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -88,96 +81,6 @@ func EnrichTableTypeWithFunctionLookup(
 	return builder.SetOpen(rec.Open).Build()
 }
 
-// CollectCapturedFieldAssignments scans a nested function's graph for field assignments
-// to captured variables.
-//
-// When a nested function assigns fields to a captured variable (e.g., `parent.field = v`),
-// those assignments affect the type visible in the parent scope. This function collects
-// such assignments for propagation back to the parent.
-func CollectCapturedFieldAssignments(
-	graph *cfg.Graph,
-	capturedSyms map[cfg.SymbolID]bool,
-	synth func(ast.Expr, cfg.Point) typ.Type,
-) map[cfg.SymbolID]map[string]typ.Type {
-	if graph == nil || len(capturedSyms) == 0 {
-		return make(map[cfg.SymbolID]map[string]typ.Type)
-	}
-	return assign.CollectFieldAssignments(graph, synth, capturedSyms)
-}
-
-// CollectCapturedContainerMutations scans a nested function's graph for container mutations
-// (e.g., channel.send) that target captured variables.
-func CollectCapturedContainerMutations(
-	graph *cfg.Graph,
-	capturedSyms map[cfg.SymbolID]bool,
-	synth func(ast.Expr, cfg.Point) typ.Type,
-) map[cfg.SymbolID][]api.ContainerMutation {
-	result := make(map[cfg.SymbolID][]api.ContainerMutation)
-	if graph == nil || len(capturedSyms) == 0 {
-		return result
-	}
-
-	bindings := graph.Bindings()
-	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		if info == nil {
-			return
-		}
-
-		if ceu := mutator.ContainerMutatorFromCall(info, p, synth, nil, nil, graph, bindings, nil); ceu != nil {
-			targetExpr := callsite.RuntimeArgAt(info, ceu.Container.Index)
-			valueExpr := callsite.RuntimeArgAt(info, ceu.Value.Index)
-			collectCapturedContainerMutation(result, bindings, capturedSyms, targetExpr, valueExpr, p, synth, api.ContainerMutationContainerElement)
-		}
-
-		if tm := mutator.TableMutatorFromCall(info, p, synth, nil, graph, bindings, nil); tm != nil {
-			targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
-			valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
-			collectCapturedContainerMutation(result, bindings, capturedSyms, targetExpr, valueExpr, p, synth, api.ContainerMutationTableElement)
-		}
-	})
-
-	return result
-}
-
-func collectCapturedContainerMutation(
-	result map[cfg.SymbolID][]api.ContainerMutation,
-	bindings *bind.BindingTable,
-	capturedSyms map[cfg.SymbolID]bool,
-	targetExpr ast.Expr,
-	valueExpr ast.Expr,
-	p cfg.Point,
-	synth func(ast.Expr, cfg.Point) typ.Type,
-	kind api.ContainerMutationKind,
-) {
-	if result == nil || targetExpr == nil || valueExpr == nil {
-		return
-	}
-	targetPath := flowpath.FromExprWithBindings(targetExpr, nil, bindings)
-	if targetPath.IsEmpty() || targetPath.Symbol == 0 {
-		return
-	}
-	if !capturedSyms[targetPath.Symbol] {
-		return
-	}
-
-	var valueType typ.Type
-	if synth != nil {
-		valueType = synth(valueExpr, p)
-	}
-	if valueType == nil {
-		valueType = typ.Unknown
-	}
-	valueType = subtype.WidenForInference(valueType)
-
-	segs := make([]constraint.Segment, len(targetPath.Segments))
-	copy(segs, targetPath.Segments)
-	result[targetPath.Symbol] = append(result[targetPath.Symbol], api.ContainerMutation{
-		Kind:      kind,
-		Segments:  segs,
-		ValueType: valueType,
-	})
-}
-
 // EnrichSelfTypeWithConstructorFields merges constructor instance fields into a self-type.
 //
 // When a method is defined on a class that has a constructor, the self-type should
@@ -194,16 +97,10 @@ func collectCapturedContainerMutation(
 //	function T:greet()
 //	    print(self.name)  -- self.name is recognized because of constructor fields
 //	end
-func EnrichSelfTypeWithConstructorFields(selfType typ.Type, classSymbol cfg.SymbolID, store Store) typ.Type {
-	if selfType == nil || store == nil || classSymbol == 0 {
+func EnrichSelfTypeWithConstructorFields(selfType typ.Type, fields map[string]typ.Type) typ.Type {
+	if selfType == nil || len(fields) == 0 {
 		return selfType
 	}
-
-	fields := store.LookupConstructorFields(classSymbol)
-	if len(fields) == 0 {
-		return selfType
-	}
-
 	return mergeFieldsIntoSelfType(selfType, fields)
 }
 

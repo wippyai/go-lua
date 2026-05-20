@@ -5,6 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
@@ -17,6 +19,13 @@ func TestExtractParams_NilParList(t *testing.T) {
 	if result != nil {
 		t.Errorf("expected nil for nil ParList, got %v", result)
 	}
+}
+
+func testEvidence(graph *cfg.Graph) api.FlowEvidence {
+	if graph == nil {
+		return api.FlowEvidence{}
+	}
+	return trace.GraphEvidence(graph, graph.Bindings())
 }
 
 func TestExtractParams_NilFunction(t *testing.T) {
@@ -83,7 +92,7 @@ func TestInferRefinement_NilSolution(t *testing.T) {
 }
 
 func TestEnrichWithKeysCollector_NilFn(t *testing.T) {
-	result := EnrichWithKeysCollector(nil, nil)
+	result := EnrichWithKeysCollector(nil, nil, api.FlowEvidence{})
 	if result != nil {
 		t.Errorf("expected nil for nil fn, got %v", result)
 	}
@@ -91,7 +100,8 @@ func TestEnrichWithKeysCollector_NilFn(t *testing.T) {
 
 func TestEnrichWithKeysCollector_NonKeysCollector(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
-	result := EnrichWithKeysCollector(nil, cfg.Build(fn))
+	graph := cfg.Build(fn)
+	result := EnrichWithKeysCollector(nil, graph, testEvidence(graph))
 	if result != nil {
 		t.Errorf("expected nil for non-keys-collector fn, got %v", result)
 	}
@@ -113,7 +123,8 @@ func TestEnrichWithKeysCollector_UsesDetectedReturnIndex(t *testing.T) {
 		Stmts:   body,
 	}
 
-	result := EnrichWithKeysCollector(nil, cfg.Build(fn))
+	graph := cfg.Build(fn)
+	result := EnrichWithKeysCollector(nil, graph, testEvidence(graph))
 	if result == nil {
 		t.Fatal("expected non-nil enriched effect")
 	}
@@ -150,7 +161,8 @@ func TestEnrichWithKeysCollector_AppendsToExistingOnReturn(t *testing.T) {
 	existing := &constraint.FunctionRefinement{
 		OnReturn: constraint.FromConstraints(constraint.NotNil{Path: constraint.RetPath(0)}),
 	}
-	result := EnrichWithKeysCollector(existing, cfg.Build(fn))
+	graph := cfg.Build(fn)
+	result := EnrichWithKeysCollector(existing, graph, testEvidence(graph))
 	if result == nil {
 		t.Fatal("expected non-nil enriched effect")
 	}

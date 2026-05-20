@@ -1,7 +1,7 @@
 // session.go defines the Session type that holds per-run state for type checking.
 // Session is the primary interface for accessing analysis results. SessionStore
 // lives in compiler/check/store and manages fixpoint iteration state and interproc
-// snapshots.
+// products.
 //
 // # LIFECYCLE SEPARATION
 //
@@ -11,24 +11,19 @@
 //     Contains binding tables, CFG graphs, and module aliases. Never modified
 //     during fixpoint iteration.
 //
-//   - Snapshot inputs: query-tracked interprocedural snapshots used to revalidate
-//     cached function analysis when facts/effects actually change.
+//   - Fact inputs: query-tracked interprocedural products used to revalidate
+//     cached function analysis when facts change.
 //
-//   - IterationScratch: Single-iteration state cleared at each boundary.
-//     Tracks which literals have been analyzed, pending parameter evidence,
-//     and change detection flags.
+// # PRODUCT PROTOCOL
 //
-// # SNAPSHOT PROTOCOL
+// Interproc facts follow a product protocol:
 //
-// Interproc facts and effects follow a snapshot protocol:
+//   - During iteration: functions read the visible product
+//   - At boundary: accumulated facts widen into the stable product
+//   - Convergence: iteration stops when the product is unchanged
 //
-//   - During iteration: Functions read from the previous snapshot
-//   - At boundary: New facts/effects replace the snapshot
-//   - Convergence: Iteration stops when snapshots are unchanged
-//
-// This protocol ensures all functions within an iteration see consistent
-// cross-function information, enabling deterministic analysis regardless
-// of function processing order.
+// The visible product supports deterministic Gauss-Seidel propagation because
+// function scheduling is deterministic.
 //
 // # PARALLELIZATION
 //
@@ -41,6 +36,7 @@ package check
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/store"
@@ -53,7 +49,7 @@ import (
 
 // Session holds all state and results for analyzing a single Lua module.
 // One Session is created per Check call and contains the complete analysis output
-// including per-function results, diagnostics, and inter-function channel data.
+// including per-function results, diagnostics, and interprocedural fact products.
 //
 // USAGE PATTERN:
 //
@@ -66,7 +62,7 @@ import (
 // CONCURRENCY: db.QueryContext is NOT safe for concurrent access. For parallel
 // analysis, create one Session per worker with independent QueryContexts, then
 // merge results. Functions within a single fixpoint iteration read from shared
-// snapshots and write to independent per-iteration maps, enabling future parallelization.
+// products and write to independent per-iteration maps, enabling future parallelization.
 //
 // MEMORY MANAGEMENT: Call Release() after extracting Manifest data to free heavy
 // allocations (CFGs, scopes, flow data). The Session remains valid for Diagnostics
@@ -276,56 +272,24 @@ func (s *Session) RegisterGraphHierarchy(root *cfg.Graph) {
 				}
 			}
 		}
-		// Register local function assignments within this graph.
-		g.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-			if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-				return
-			}
-			info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
-				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-					return
-				}
-				if fnExpr, ok := source.(*ast.FunctionExpr); ok && fnExpr != nil {
-					child := s.GetOrBuildCFG(fnExpr)
-					if child == nil {
-						return
-					}
-					s.Store.RegisterGraph(child, fnExpr)
-					s.Store.RegisterNestedMeta(child.ID(), g.ID(), p)
-					s.Store.RegisterFunctionRef(target.Symbol, fnExpr, child, g.ID(), p)
-				}
-			})
-		})
-		g.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
-			if info == nil || info.Symbol == 0 || info.FuncExpr == nil {
-				return
-			}
-			child := s.GetOrBuildCFG(info.FuncExpr)
-			if child == nil {
-				return
-			}
-			s.Store.RegisterGraph(child, info.FuncExpr)
-			s.Store.RegisterNestedMeta(child.ID(), g.ID(), p)
-			s.Store.RegisterFunctionRef(info.Symbol, info.FuncExpr, child, g.ID(), p)
-		})
-		for _, nf := range g.NestedFunctions() {
-			if nf.Func == nil {
+		for _, def := range trace.FunctionDefinitions(g) {
+			if def.Nested.Func == nil {
 				continue
 			}
-			child := s.GetOrBuildCFG(nf.Func)
+			child := s.GetOrBuildCFG(def.Nested.Func)
 			if child == nil {
 				continue
 			}
-			s.Store.RegisterGraph(child, nf.Func)
-			s.Store.RegisterNestedMeta(child.ID(), g.ID(), nf.Point)
-			nestedSym := nf.Symbol
+			s.Store.RegisterGraph(child, def.Nested.Func)
+			s.Store.RegisterNestedMeta(child.ID(), g.ID(), def.Nested.Point)
+			nestedSym := def.Symbol
 			if nestedSym == 0 && child.Bindings() != nil {
-				if sym, ok := child.Bindings().FuncLitSymbol(nf.Func); ok {
+				if sym, ok := child.Bindings().FuncLitSymbol(def.Nested.Func); ok {
 					nestedSym = sym
 				}
 			}
 			if nestedSym != 0 {
-				s.Store.RegisterFunctionRef(nestedSym, nf.Func, child, g.ID(), nf.Point)
+				s.Store.RegisterFunctionRef(nestedSym, def.Nested.Func, child, g.ID(), def.Nested.Point)
 			}
 			walk(child)
 		}
@@ -377,10 +341,8 @@ func (s *Session) ExportType() typ.Type {
 		return typ.Nil
 	}
 	var refinements map[cfg.SymbolID]*constraint.FunctionRefinement
-	if s.Store != nil {
-		if s.Store.InterprocPrev != nil {
-			refinements = s.Store.InterprocPrev.Refinements
-		}
+	if s.Store != nil && s.Store.InterprocPrev != nil {
+		refinements = s.RefinementsForExport()
 	}
 	return modules.ExportType(s.RootResult, refinements)
 }
@@ -391,7 +353,7 @@ func (s *Session) ExportType() typ.Type {
 // WHAT IS FREED:
 //   - CFG graphs and binding tables
 //   - Scope states and flow solutions
-//   - Inter-function channel data
+//   - Interprocedural fact products
 //   - Synthesis engines
 //
 // WHAT REMAINS VALID:
@@ -417,20 +379,14 @@ func (s *Session) Release() {
 			clear(s.Store.Module.ModuleAliases)
 		}
 
-		// Clear interproc snapshots
+		// Clear interproc products
 		if s.Store.InterprocPrev != nil {
 			clear(s.Store.InterprocPrev.Facts)
-			clear(s.Store.InterprocPrev.Refinements)
-			clear(s.Store.InterprocPrev.ConstructorFields)
 		}
 		if s.Store.InterprocNext != nil {
 			clear(s.Store.InterprocNext.Facts)
-			clear(s.Store.InterprocNext.Refinements)
-			clear(s.Store.InterprocNext.ConstructorFields)
 		}
 
-		// Clear iteration scratch (empty placeholder)
-		_ = s.Store.Scratch
 	}
 
 	// Clear per-function results
@@ -500,7 +456,7 @@ func (s *Session) ExportManifest(modulePath string) *io.Manifest {
 }
 
 // RefinementsForExport extracts computed function refinements for manifest generation.
-// Returns refinements from the final converged interproc snapshot.
+// Returns refinements from the final converged interproc product.
 //
 // The returned map associates each function's SymbolID with its computed refinement,
 // including IO effects (row), termination status, and conditional effects.
@@ -512,7 +468,16 @@ func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRe
 	if s.Store.InterprocPrev == nil {
 		return nil
 	}
-	return modules.CopyRefinementsForExport(s.Store.InterprocPrev.Refinements)
+	refinements := make(map[cfg.SymbolID]*constraint.FunctionRefinement)
+	for _, key := range api.SortedGraphKeys(s.Store.InterprocPrev.Facts) {
+		facts := s.Store.InterprocPrev.Facts[key]
+		for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
+			if refinement := facts.FunctionFacts.Refinement(sym); refinement != nil {
+				refinements[sym] = refinement
+			}
+		}
+	}
+	return modules.CopyRefinementsForExport(refinements)
 }
 
 // RootGraph returns the root function's control flow graph.

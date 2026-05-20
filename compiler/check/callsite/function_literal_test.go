@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
@@ -15,7 +16,7 @@ func TestFunctionLiteralForSymbol_BindingTableLiteral(t *testing.T) {
 	sym := cfg.SymbolID(41)
 	bindings.SetFuncLitSymbol(fn, sym)
 
-	got := FunctionLiteralForSymbol(nil, bindings, sym)
+	got := FunctionLiteralForSymbol(bindings, api.FlowEvidence{}, sym)
 	if got != fn {
 		t.Fatalf("FunctionLiteralForSymbol() = %v, want %v", got, fn)
 	}
@@ -49,7 +50,8 @@ func TestFunctionLiteralForSymbol_FuncDefSymbol(t *testing.T) {
 		t.Fatal("expected callsite callee symbol")
 	}
 
-	fn := FunctionLiteralForSymbol(graph, graph.Bindings(), calleeSym)
+	evidence := testFunctionEvidence(graph)
+	fn := FunctionLiteralForSymbol(graph.Bindings(), evidence, calleeSym)
 	if fn == nil {
 		t.Fatal("expected function literal for local function symbol")
 	}
@@ -83,7 +85,8 @@ func TestFunctionLiteralForSymbol_AssignedFunctionLiteral(t *testing.T) {
 		t.Fatal("expected callsite callee symbol")
 	}
 
-	fn := FunctionLiteralForSymbol(graph, graph.Bindings(), calleeSym)
+	evidence := testFunctionEvidence(graph)
+	fn := FunctionLiteralForSymbol(graph.Bindings(), evidence, calleeSym)
 	if fn == nil {
 		t.Fatal("expected function literal for assigned symbol")
 	}
@@ -118,7 +121,8 @@ func TestFunctionLiteralForGraphSymbol_FuncDefSymbol(t *testing.T) {
 		t.Fatal("expected callsite callee symbol")
 	}
 
-	fn := FunctionLiteralForGraphSymbol(graph, calleeSym)
+	evidence := testFunctionEvidence(graph)
+	fn := FunctionLiteralForGraphSymbol(evidence, calleeSym)
 	if fn == nil {
 		t.Fatal("expected graph-local function literal for field definition")
 	}
@@ -161,10 +165,34 @@ func TestFunctionLiteralForGraphSymbol_IgnoresMutableFieldPathBinding(t *testing
 		t.Fatal("expected callsite callee symbol")
 	}
 
-	if fn := FunctionLiteralForGraphSymbol(graph, calleeSym); fn != nil {
+	evidence := testFunctionEvidence(graph)
+	if fn := FunctionLiteralForGraphSymbol(evidence, calleeSym); fn != nil {
 		t.Fatalf("expected mutable field-path symbol to stay unresolved in graph-local resolver, got %v", fn)
 	}
-	if fn := FunctionLiteralForSymbol(graph, graph.Bindings(), calleeSym); fn == nil {
+	if fn := FunctionLiteralForSymbol(graph.Bindings(), evidence, calleeSym); fn == nil {
 		t.Fatal("expected binder-level symbol resolver to still find a literal for the shared field symbol")
 	}
+}
+
+func testFunctionEvidence(graph *cfg.Graph) api.FlowEvidence {
+	if graph == nil {
+		return api.FlowEvidence{}
+	}
+	var defs []api.FunctionDefinitionEvidence
+	for _, nf := range graph.NestedFunctions() {
+		if nf.Func == nil {
+			continue
+		}
+		info := graph.FuncDef(nf.Point)
+		sym := nf.Symbol
+		if info != nil && info.Symbol != 0 {
+			sym = info.Symbol
+		}
+		defs = append(defs, api.FunctionDefinitionEvidence{
+			Nested:  nf,
+			FuncDef: info,
+			Symbol:  sym,
+		})
+	}
+	return api.FlowEvidence{FunctionDefinitions: defs}
 }

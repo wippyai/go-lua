@@ -48,6 +48,9 @@ type FuncResult struct {
 	// Provides reachability conditions and exclusion facts for narrowing.
 	FlowSolution *flow.Solution
 
+	// Evidence records events discovered during abstract transfer.
+	Evidence FlowEvidence
+
 	// FnRefinement captures the function's inferred refinement summary.
 	// It includes propagated effect rows and branch-specific narrowing facts.
 	FnRefinement *constraint.FunctionRefinement
@@ -109,26 +112,28 @@ func (r *FuncResult) ExcludesTypeAt(p cfg.Point, path constraint.Path, declared 
 	return r.FlowSolution.ExcludesTypeAt(p, path, declared)
 }
 
-// FuncResultSnapshot is the stable slice of a function analysis result
+// FuncAnalysisView is the stable slice of a function analysis result
 // required by nested processing and interprocedural helpers.
-type FuncResultSnapshot struct {
+type FuncAnalysisView struct {
 	Graph        *cfg.Graph
 	Scopes       map[cfg.Point]*scope.State
 	Facts        flow.TypeFacts
 	FlowSolution *flow.Solution
+	Evidence     FlowEvidence
 	NarrowSynth  Synth
 }
 
-// SnapshotFromResult constructs a stable snapshot from a full function result.
-func SnapshotFromResult(r *FuncResult) *FuncResultSnapshot {
+// ViewFromResult constructs the nested-processing view from a full result.
+func ViewFromResult(r *FuncResult) *FuncAnalysisView {
 	if r == nil {
 		return nil
 	}
-	return &FuncResultSnapshot{
+	return &FuncAnalysisView{
 		Graph:        r.Graph,
 		Scopes:       r.Scopes,
 		Facts:        r.Facts,
 		FlowSolution: r.FlowSolution,
+		Evidence:     r.Evidence,
 		NarrowSynth:  r.NarrowSynth,
 	}
 }
