@@ -9188,3 +9188,58 @@ Result:
 - local return/parameter propagation package tests: pass.
 - full go-lua suite: pass.
 - diff check: pass.
+
+## 2026-05-20 Flash Migration: API Function-Fact Selectors Removed
+
+Problem:
+
+```text
+`api.FunctionFacts` still exposed selector methods for parameter evidence,
+return summaries, narrow summaries, function types, and refinements. Even after
+the projection cache moved into `domain/functionfact`, these methods left a
+second public projection surface in the storage package.
+```
+
+Migration performed:
+
+- Removed exported selector methods from `api.FunctionFacts`.
+- Added the missing domain-owned refinement projection:
+  `functionfact.RefinementFromMap`.
+- Updated production code and tests to use `domain/functionfact` map
+  projections.
+- Changed `domain/typefacts` to receive a function-type lookup closure instead
+  of an interface implemented by `api.FunctionFacts`.
+- Kept the remaining package-cycle boundary private in `api/env.go`: environment
+  construction can project the stored type slot for `typefacts`, but that
+  projection is not an exported compatibility API and cannot be used by checker
+  consumers as a second function-fact reader.
+
+Invariant:
+
+```text
+`api.FunctionFacts` is storage. `domain/functionfact` is the semantic projection
+owner. A phase may carry the storage map as input, but it must ask the domain to
+interpret slots.
+```
+
+Why this is a flash migration step, not a bridge:
+
+- The old selector API was deleted, not wrapped.
+- No mirror fact channel was introduced.
+- Production reads now go through domain projections.
+- The only non-domain projection left is a private package-cycle adapter at the
+  environment/typefacts boundary; it is not a checker-facing semantic API.
+
+Validation status:
+
+```text
+go test ./compiler/check/domain/functionfact ./compiler/check/domain/typefacts ./compiler/check/api ./compiler/check/store ./compiler/check/domain/interproc ./compiler/check/infer/interproc ./compiler/check/infer/nested ./compiler/check/tests/modules ./compiler/check/tests/errors ./compiler/check/tests/regression -count=1
+env GOCACHE=/tmp/go-build-cache go test ./... -count=1
+git diff --check
+```
+
+Result:
+
+- focused projection/API/typefacts/interproc/nested/regression packages: pass.
+- full go-lua suite with an explicit writable build cache: pass.
+- diff check: pass.

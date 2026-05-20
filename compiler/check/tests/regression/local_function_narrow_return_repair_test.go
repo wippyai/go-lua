@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -59,13 +60,13 @@ return { f = f }
 	parent := sess.Store.Parents()[parentHash]
 	snap := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent)
 
-	if got := snap.FunctionFacts.Summary(sym); len(got) != 1 || containsNever(got[0]) {
+	if got := functionfact.ReturnSummaryFromMap(snap.FunctionFacts, sym); len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("summary contains never artifact: %v", got)
 	}
-	if got := snap.FunctionFacts.NarrowSummary(sym); len(got) != 1 || containsNever(got[0]) {
+	if got := functionfact.NarrowSummaryFromMap(snap.FunctionFacts, sym); len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("narrow contains never artifact: %v", got)
 	}
-	if got := snap.FunctionFacts.FunctionType(sym); got == nil || containsNever(got) {
+	if got := functionfact.TypeFromMap(snap.FunctionFacts, sym); got == nil || containsNever(got) {
 		t.Fatalf("function fact contains never artifact: %v", got)
 	}
 

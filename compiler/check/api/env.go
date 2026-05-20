@@ -507,7 +507,7 @@ func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 		cfg.Bindings,
 		typefacts.New(typefacts.Config{
 			Declared:      cfg.DeclaredTypes,
-			Functions:     cfg.FunctionFacts,
+			FunctionType:  functionTypeLookup(cfg.FunctionFacts),
 			Literals:      cfg.LiteralTypes,
 			AnnotatedVars: cfg.AnnotatedVars,
 		}),
@@ -531,7 +531,7 @@ func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 		cfg.Bindings,
 		typefacts.New(typefacts.Config{
 			Declared:      cfg.DeclaredTypes,
-			Functions:     cfg.FunctionFacts,
+			FunctionType:  functionTypeLookup(cfg.FunctionFacts),
 			Literals:      cfg.LiteralTypes,
 			AnnotatedVars: cfg.AnnotatedVars,
 			Solution:      cfg.Solution,
@@ -566,8 +566,8 @@ func NewReturnInferenceEnv(cfg ReturnInferenceEnvConfig) *DeclaredEnvImpl {
 		cfg.Graph,
 		cfg.Bindings,
 		typefacts.New(typefacts.Config{
-			Declared:  cfg.DeclaredTypes,
-			Functions: cfg.FunctionFacts,
+			Declared:     cfg.DeclaredTypes,
+			FunctionType: functionTypeLookup(cfg.FunctionFacts),
 		}),
 		nil,
 		nilRefinementFacts{},
@@ -583,4 +583,19 @@ func refinementFactsOrNil(f RefinementFacts) RefinementFacts {
 		return nilRefinementFacts{}
 	}
 	return f
+}
+
+// functionTypeLookup is the private package-cycle boundary between api-owned
+// environment construction and domain/typefacts. Checker consumers must use
+// domain/functionfact for semantic projection from FunctionFacts.
+func functionTypeLookup(facts FunctionFacts) typefacts.FunctionTypeLookup {
+	if len(facts) == 0 {
+		return nil
+	}
+	return func(sym cfg.SymbolID) typ.Type {
+		if sym == 0 {
+			return nil
+		}
+		return facts[sym].Type
+	}
 }

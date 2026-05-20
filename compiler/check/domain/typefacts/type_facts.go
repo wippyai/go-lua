@@ -11,15 +11,13 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// FunctionFacts projects canonical function summaries into the type-fact query.
-type FunctionFacts interface {
-	FunctionType(sym cfg.SymbolID) typ.Type
-}
+// FunctionTypeLookup projects canonical function summaries into the type-fact query.
+type FunctionTypeLookup func(sym cfg.SymbolID) typ.Type
 
 // Config contains the immutable and solved inputs visible to a query.
 type Config struct {
 	Declared      flow.DeclaredTypes
-	Functions     FunctionFacts
+	FunctionType  FunctionTypeLookup
 	Literals      flow.DeclaredTypes
 	AnnotatedVars map[cfg.SymbolID]bool
 	Solution      *flow.Solution
@@ -28,7 +26,7 @@ type Config struct {
 // TypeFacts implements flow.TypeFacts over the checker product state.
 type TypeFacts struct {
 	declared      flow.DeclaredTypes
-	functions     FunctionFacts
+	functionType  FunctionTypeLookup
 	literals      flow.DeclaredTypes
 	annotatedVars map[cfg.SymbolID]bool
 	solution      *flow.Solution
@@ -40,7 +38,7 @@ var _ flow.TypeFacts = (*TypeFacts)(nil)
 func New(cfg Config) *TypeFacts {
 	return &TypeFacts{
 		declared:      cfg.Declared,
-		functions:     cfg.Functions,
+		functionType:  cfg.FunctionType,
 		literals:      cfg.Literals,
 		annotatedVars: cfg.AnnotatedVars,
 		solution:      cfg.Solution,
@@ -57,8 +55,8 @@ func (f *TypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 			return tv
 		}
 	}
-	if f != nil && f.functions != nil {
-		if t := f.functions.FunctionType(sym); t != nil {
+	if f != nil && f.functionType != nil {
+		if t := f.functionType(sym); t != nil {
 			return typedValue(t)
 		}
 	}

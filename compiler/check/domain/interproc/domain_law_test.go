@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
@@ -60,13 +61,13 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 		t.Fatalf("Join must be idempotent across the product domain")
 	}
 
-	if got := normalized.FunctionFacts.Summary(fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
+	if got := functionfact.ReturnSummaryFromMap(normalized.FunctionFacts, fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary must come from canonical FunctionFacts, got %v", got)
 	}
-	if got := normalized.FunctionFacts.NarrowSummary(fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
+	if got := functionfact.NarrowSummaryFromMap(normalized.FunctionFacts, fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("narrow summary must come from canonical FunctionFacts, got %v", got)
 	}
-	if got := normalized.FunctionFacts.FunctionType(fnSym); got == nil {
+	if got := functionfact.TypeFromMap(normalized.FunctionFacts, fnSym); got == nil {
 		t.Fatalf("function type must come from canonical FunctionFacts")
 	}
 }
@@ -122,7 +123,7 @@ func TestFactsDomain_WidenFunctionParamsIsVarianceAware(t *testing.T) {
 		t.Fatalf("Widen must be idempotent for function param facts")
 	}
 
-	fn := unwrapFunctionForDomainTest(t, widened.FunctionFacts.FunctionType(sym))
+	fn := unwrapFunctionForDomainTest(t, functionfact.TypeFromMap(widened.FunctionFacts, sym))
 	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, typ.Any) {
 		t.Fatalf("expected widening to preserve broad parameter upper bound, got %v", fn)
 	}
@@ -141,7 +142,7 @@ func TestFactsDomain_PreservesArityAndNilabilityAsSeparateParamAxes(t *testing.T
 	}
 
 	widened := WidenFacts(api.Facts{}, raw)
-	fn := unwrapFunctionForDomainTest(t, widened.FunctionFacts.FunctionType(sym))
+	fn := unwrapFunctionForDomainTest(t, functionfact.TypeFromMap(widened.FunctionFacts, sym))
 	if len(fn.Params) != 1 || !fn.Params[0].Optional {
 		t.Fatalf("expected optional parameter slot, got %v", fn)
 	}

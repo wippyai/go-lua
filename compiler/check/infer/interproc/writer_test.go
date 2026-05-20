@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -52,7 +53,7 @@ func TestInterprocFactWriter_MergeParentFactsForSymbol(t *testing.T) {
 		t.Fatal("expected update to succeed")
 	}
 	got := stub.factsByGraphKeyNext[key]
-	if params := got.FunctionFacts.Params(3); len(params) != 1 || !typ.TypeEquals(params[0], typ.String) {
+	if params := functionfact.ParameterEvidenceFromMap(got.FunctionFacts, 3); len(params) != 1 || !typ.TypeEquals(params[0], typ.String) {
 		t.Fatalf("unexpected parent facts update: %#v", got.FunctionFacts)
 	}
 

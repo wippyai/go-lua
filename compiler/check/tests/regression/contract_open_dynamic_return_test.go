@@ -3,6 +3,7 @@ package regression
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/io"
@@ -89,9 +90,10 @@ end
 	if !ok || sym == 0 {
 		t.Fatal("missing symbol get_tracker")
 	}
-	fn := unwrap.Function(functionFacts.FunctionType(sym))
+	functionType := functionfact.TypeFromMap(functionFacts, sym)
+	fn := unwrap.Function(functionType)
 	if fn == nil || len(fn.Returns) == 0 || fn.Returns[0] == nil {
-		t.Fatalf("expected get_tracker function return type, got %v", functionFacts.FunctionType(sym))
+		t.Fatalf("expected get_tracker function return type, got %v", functionType)
 	}
 	if fn.Returns[0].Kind() == kind.Nil {
 		t.Fatalf("expected get_tracker return not to collapse to nil, got %v", fn.Returns[0])

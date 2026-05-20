@@ -174,6 +174,15 @@ func NarrowSummaryFromMap(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type 
 	return ff.Narrow
 }
 
+// RefinementFromMap returns the canonical refinement projection from a fact map.
+func RefinementFromMap(facts api.FunctionFacts, sym cfg.SymbolID) *constraint.FunctionRefinement {
+	ff, ok := FactFromMap(facts, sym)
+	if !ok {
+		return nil
+	}
+	return ff.Refinement
+}
+
 // FactFromMap returns the canonical stored function fact for sym from facts.
 func FactFromMap(facts api.FunctionFacts, sym cfg.SymbolID) (api.FunctionFact, bool) {
 	if len(facts) == 0 || sym == 0 {

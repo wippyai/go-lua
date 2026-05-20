@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/io"
@@ -210,11 +211,12 @@ func TestManifest_SoftLocalAnnotations(t *testing.T) {
 	if groupFn == nil || len(groupFn.Returns) != 2 || !typ.TypeEquals(groupFn.Returns[0], suiteMap) || !typ.TypeEquals(groupFn.Returns[1], entryArray) {
 		t.Fatalf("expected group_by_suite function returns (%v, %v), got %v", suiteMap, entryArray, groupFact.Type)
 	}
-	runSuiteFn := unwrap.Function(functionFacts.FunctionType(runSuiteSym))
+	runSuiteType := functionfact.TypeFromMap(functionFacts, runSuiteSym)
+	runSuiteFn := unwrap.Function(runSuiteType)
 	if runSuiteFn == nil || len(runSuiteFn.Params) < 2 || !typ.TypeEquals(runSuiteFn.Params[1].Type, entryArray) {
-		t.Fatalf("expected run_suite tests param to refine to %v, got %v", entryArray, functionFacts.FunctionType(runSuiteSym))
+		t.Fatalf("expected run_suite tests param to refine to %v, got %v", entryArray, runSuiteType)
 	}
-	if evidence := functionFacts.Params(runSuiteSym); len(evidence) < 2 || !typ.TypeEquals(evidence[1], entryArray) {
+	if evidence := functionfact.ParameterEvidenceFromMap(functionFacts, runSuiteSym); len(evidence) < 2 || !typ.TypeEquals(evidence[1], entryArray) {
 		t.Fatalf("expected run_suite parameter evidence %v, got %v", entryArray, evidence)
 	}
 }

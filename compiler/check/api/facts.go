@@ -31,60 +31,6 @@ type FunctionFact struct {
 // FunctionFacts maps function symbols to their canonical function facts.
 type FunctionFacts map[cfg.SymbolID]FunctionFact
 
-// Fact returns the canonical fact for sym.
-func (facts FunctionFacts) Fact(sym cfg.SymbolID) (FunctionFact, bool) {
-	if len(facts) == 0 || sym == 0 {
-		return FunctionFact{}, false
-	}
-	ff, ok := facts[sym]
-	return ff, ok
-}
-
-// Params returns the canonical parameter evidence vector for sym.
-func (facts FunctionFacts) Params(sym cfg.SymbolID) []typ.Type {
-	ff, ok := facts.Fact(sym)
-	if !ok {
-		return nil
-	}
-	return ff.Params
-}
-
-// Summary returns the declared/pre-flow return vector for sym.
-func (facts FunctionFacts) Summary(sym cfg.SymbolID) []typ.Type {
-	ff, ok := facts.Fact(sym)
-	if !ok {
-		return nil
-	}
-	return ff.Summary
-}
-
-// NarrowSummary returns the post-flow return vector for sym.
-func (facts FunctionFacts) NarrowSummary(sym cfg.SymbolID) []typ.Type {
-	ff, ok := facts.Fact(sym)
-	if !ok {
-		return nil
-	}
-	return ff.Narrow
-}
-
-// FunctionType returns the canonical local function type for sym.
-func (facts FunctionFacts) FunctionType(sym cfg.SymbolID) typ.Type {
-	ff, ok := facts.Fact(sym)
-	if !ok {
-		return nil
-	}
-	return ff.Type
-}
-
-// Refinement returns the canonical function refinement for sym.
-func (facts FunctionFacts) Refinement(sym cfg.SymbolID) *constraint.FunctionRefinement {
-	ff, ok := facts.Fact(sym)
-	if !ok {
-		return nil
-	}
-	return ff.Refinement
-}
-
 // LiteralSigs maps anonymous function literal expressions to their signatures.
 // Used when function literals are passed as arguments or assigned to variables
 // without explicit type annotations.

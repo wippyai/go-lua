@@ -37,6 +37,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -480,7 +481,7 @@ func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRe
 	for _, key := range api.SortedGraphKeys(s.Store.InterprocPrev.Facts) {
 		facts := s.Store.InterprocPrev.Facts[key]
 		for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
-			if refinement := facts.FunctionFacts.Refinement(sym); refinement != nil {
+			if refinement := functionfact.RefinementFromMap(facts.FunctionFacts, sym); refinement != nil {
 				refinements[sym] = refinement
 			}
 		}

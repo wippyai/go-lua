@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -22,7 +23,7 @@ func TestNewInterprocState(t *testing.T) {
 	}
 }
 
-func TestFunctionFactsSummaryAccessor(t *testing.T) {
+func TestFunctionFactsSummaryProjection(t *testing.T) {
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {
@@ -30,13 +31,13 @@ func TestFunctionFactsSummaryAccessor(t *testing.T) {
 			},
 		},
 	}
-	got := facts.FunctionFacts.Summary(cfg.SymbolID(1))
+	got := functionfact.ReturnSummaryFromMap(facts.FunctionFacts, cfg.SymbolID(1))
 	if len(got) != 1 || got[0] != typ.String {
 		t.Fatalf("unexpected summary: %#v", got)
 	}
 }
 
-func TestFunctionFactsNarrowAccessor(t *testing.T) {
+func TestFunctionFactsNarrowProjection(t *testing.T) {
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(2): {
@@ -44,13 +45,13 @@ func TestFunctionFactsNarrowAccessor(t *testing.T) {
 			},
 		},
 	}
-	got := facts.FunctionFacts.NarrowSummary(cfg.SymbolID(2))
+	got := functionfact.NarrowSummaryFromMap(facts.FunctionFacts, cfg.SymbolID(2))
 	if len(got) != 1 || got[0] != typ.Number {
 		t.Fatalf("unexpected narrow summary: %#v", got)
 	}
 }
 
-func TestFunctionFactsTypeAccessor(t *testing.T) {
+func TestFunctionFactsTypeProjection(t *testing.T) {
 	fn := typ.Func().Returns(typ.Boolean).Build()
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
@@ -59,7 +60,7 @@ func TestFunctionFactsTypeAccessor(t *testing.T) {
 			},
 		},
 	}
-	got := facts.FunctionFacts.FunctionType(cfg.SymbolID(3))
+	got := functionfact.TypeFromMap(facts.FunctionFacts, cfg.SymbolID(3))
 	if !typ.TypeEquals(got, fn) {
 		t.Fatalf("unexpected function type: %#v", got)
 	}
@@ -88,7 +89,7 @@ func TestGetInterprocFacts_UsesStoredGraphParentHash(t *testing.T) {
 	}
 
 	got := s.GetInterprocFacts(graph, currentParent)
-	summary := got.FunctionFacts.Summary(cfg.SymbolID(1))
+	summary := functionfact.ReturnSummaryFromMap(got.FunctionFacts, cfg.SymbolID(1))
 	if len(summary) != 1 || !typ.TypeEquals(summary[0], typ.String) {
 		t.Fatalf("expected facts from stored parent hash, got %#v", summary)
 	}
@@ -117,7 +118,7 @@ func TestGetInterprocFacts_OverlaysCurrentIterationFacts(t *testing.T) {
 	}
 
 	got := s.GetInterprocFacts(graph, parent)
-	summary := got.FunctionFacts.Summary(cfg.SymbolID(1))
+	summary := functionfact.ReturnSummaryFromMap(got.FunctionFacts, cfg.SymbolID(1))
 	want := typ.NewUnion(typ.String, typ.Number)
 	if len(summary) != 1 || !typ.TypeEquals(summary[0], want) {
 		t.Fatalf("expected widened visible facts %v, got %#v", want, summary)
@@ -151,10 +152,10 @@ func TestGetInterprocFacts_ReturnsImmutableFactContainers(t *testing.T) {
 	facts.FunctionFacts[sym] = api.FunctionFact{Summary: []typ.Type{typ.Number}}
 
 	again := s.GetInterprocFacts(graph, parent)
-	if got := again.FunctionFacts.Params(sym)[1]; !typ.TypeEquals(got, typ.NewMap(typ.String, typ.Any)) {
+	if got := functionfact.ParameterEvidenceFromMap(again.FunctionFacts, sym)[1]; !typ.TypeEquals(got, typ.NewMap(typ.String, typ.Any)) {
 		t.Fatalf("fact parameter evidence mutation leaked into store: %v", got)
 	}
-	if got := again.FunctionFacts.Summary(sym); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+	if got := functionfact.ReturnSummaryFromMap(again.FunctionFacts, sym); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
 		t.Fatalf("function fact mutation leaked into store: %v", got)
 	}
 }
@@ -174,7 +175,7 @@ func TestMergeInterprocFactsNext_ReconcilesDeltasWithinIteration(t *testing.T) {
 		},
 	})
 
-	got := s.InterprocNext.Facts[key].FunctionFacts.FunctionType(sym)
+	got := functionfact.TypeFromMap(s.InterprocNext.Facts[key].FunctionFacts, sym)
 	if !typ.TypeEquals(got, refined) {
 		t.Fatalf("expected update boundary to keep canonical refined function fact, got %v", got)
 	}
@@ -191,7 +192,7 @@ func TestFactInputs_RevalidateFactQueries(t *testing.T) {
 	q := db.NewQuery("trackedFactsTest", func(ctx *db.QueryContext, key api.GraphKey) int {
 		calls++
 		facts, _ := s.factInputs.factsFor(ctx, key)
-		if len(facts.FunctionFacts.Summary(sym)) == 0 {
+		if len(functionfact.ReturnSummaryFromMap(facts.FunctionFacts, sym)) == 0 {
 			return 0
 		}
 		return 1
@@ -311,7 +312,7 @@ func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	if len(s.InterprocNext.Facts) != 0 {
 		t.Fatalf("expected next facts reset, got %#v", s.InterprocNext.Facts)
 	}
-	if s.InterprocPrev.Facts[key].FunctionFacts.Refinement(1) == nil {
+	if functionfact.RefinementFromMap(s.InterprocPrev.Facts[key].FunctionFacts, 1) == nil {
 		t.Fatalf("expected function refinement in product fact, got %#v", s.InterprocPrev.Facts[key])
 	}
 	if len(s.InterprocPrev.Facts[api.ModuleFactsKey()].ConstructorFields[3]) != 1 {

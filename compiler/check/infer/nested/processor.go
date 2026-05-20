@@ -587,7 +587,9 @@ func (p *Processor) buildSiblingTypesForGroup(
 				return nil
 			}
 			if tbl, _ := nested.FindTableLiteralForSymbol(parentResult.Evidence.Assignments, sym); tbl != nil {
-				return nested.EnrichTableTypeWithFunctionLookup(rec, tbl, graph, buildCfg.FunctionFacts.FunctionType)
+				return nested.EnrichTableTypeWithFunctionLookup(rec, tbl, graph, func(fnSym cfg.SymbolID) typ.Type {
+					return functionfact.TypeFromMap(buildCfg.FunctionFacts, fnSym)
+				})
 			}
 			return nil
 		},

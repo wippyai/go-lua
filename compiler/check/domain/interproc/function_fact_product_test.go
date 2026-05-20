@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -29,13 +30,13 @@ func TestJoinFacts_BatchMergeFunctionFacts(t *testing.T) {
 		},
 	)
 
-	if got := facts.FunctionFacts.Summary(symSummary); !returnsummary.Equal(got, []typ.Type{typ.String}) {
+	if got := functionfact.ReturnSummaryFromMap(facts.FunctionFacts, symSummary); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary mismatch: got %v", got)
 	}
-	if got := facts.FunctionFacts.NarrowSummary(symNarrow); !returnsummary.Equal(got, []typ.Type{typ.Number}) {
+	if got := functionfact.NarrowSummaryFromMap(facts.FunctionFacts, symNarrow); !returnsummary.Equal(got, []typ.Type{typ.Number}) {
 		t.Fatalf("narrow mismatch: got %v", got)
 	}
-	if got := facts.FunctionFacts.FunctionType(symFunc); !typ.TypeEquals(got, funcType) {
+	if got := functionfact.TypeFromMap(facts.FunctionFacts, symFunc); !typ.TypeEquals(got, funcType) {
 		t.Fatalf("func mismatch: got %v", got)
 	}
 }

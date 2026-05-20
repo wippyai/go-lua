@@ -27,51 +27,6 @@ func TestFacts_Zero(t *testing.T) {
 	}
 }
 
-func TestFunctionFacts_Summary(t *testing.T) {
-	facts := make(FunctionFacts)
-	sym := cfg.SymbolID(1)
-	facts[sym] = FunctionFact{Summary: []typ.Type{typ.String, typ.Nil}}
-
-	rets := facts.Summary(sym)
-	if len(rets) != 2 {
-		t.Errorf("expected 2 return types, got %d", len(rets))
-	}
-}
-
-func TestFunctionFacts_NarrowSummary(t *testing.T) {
-	facts := make(FunctionFacts)
-	sym := cfg.SymbolID(1)
-	facts[sym] = FunctionFact{Narrow: []typ.Type{typ.String}}
-
-	rets := facts.NarrowSummary(sym)
-	if len(rets) != 1 || !typ.TypeEquals(rets[0], typ.String) {
-		t.Fatalf("expected narrow string return, got %v", rets)
-	}
-}
-
-func TestFunctionFacts_Params(t *testing.T) {
-	facts := make(FunctionFacts)
-	sym := cfg.SymbolID(1)
-	facts[sym] = FunctionFact{Params: []typ.Type{typ.Number, typ.String}}
-
-	params := facts.Params(sym)
-	if len(params) != 2 {
-		t.Errorf("expected 2 params, got %d", len(params))
-	}
-}
-
-func TestFunctionFacts_FunctionType(t *testing.T) {
-	facts := make(FunctionFacts)
-	sym := cfg.SymbolID(1)
-	fn := typ.Func().Param("x", typ.Number).Returns(typ.String).Build()
-	facts[sym] = FunctionFact{Type: fn}
-
-	retrieved := facts.FunctionType(sym)
-	if retrieved == nil {
-		t.Error("expected non-nil function type")
-	}
-}
-
 func TestCapturedTypes_Basic(t *testing.T) {
 	captured := make(CapturedTypes)
 	sym := cfg.SymbolID(1)

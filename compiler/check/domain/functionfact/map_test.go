@@ -19,7 +19,7 @@ func TestFromSummaries_NormalizesAndSkipsEmpty(t *testing.T) {
 	if len(facts) != 1 {
 		t.Fatalf("facts len = %d, want 1: %#v", len(facts), facts)
 	}
-	if got := facts.Summary(1); !returnsummary.Equal(got, []typ.Type{typ.String, typ.Nil}) {
+	if got := ReturnSummaryFromMap(facts, 1); !returnsummary.Equal(got, []typ.Type{typ.String, typ.Nil}) {
 		t.Fatalf("summary = %v, want string,nil", got)
 	}
 }
@@ -30,10 +30,10 @@ func TestFromSummariesExcept_ExcludesCurrent(t *testing.T) {
 		2: {typ.Number},
 	}, 1)
 
-	if _, ok := facts.Fact(1); ok {
+	if _, ok := FactFromMap(facts, 1); ok {
 		t.Fatalf("excluded symbol was published: %#v", facts)
 	}
-	if got := facts.Summary(2); !returnsummary.Equal(got, []typ.Type{typ.Number}) {
+	if got := ReturnSummaryFromMap(facts, 2); !returnsummary.Equal(got, []typ.Type{typ.Number}) {
 		t.Fatalf("summary = %v, want number", got)
 	}
 }
@@ -46,7 +46,7 @@ func TestFromMaps_JoinsParamSummaryAndTypeEvidence(t *testing.T) {
 		map[cfg.SymbolID]typ.Type{1: fn},
 	)
 
-	ff, ok := facts.Fact(1)
+	ff, ok := FactFromMap(facts, 1)
 	if !ok {
 		t.Fatal("expected function fact for symbol 1")
 	}
@@ -72,7 +72,7 @@ func TestFromPart_CanonicalizesAllFunctionFactSlots(t *testing.T) {
 		Refinement: refinement,
 	})
 
-	ff, ok := facts.Fact(1)
+	ff, ok := FactFromMap(facts, 1)
 	if !ok {
 		t.Fatal("expected function fact for symbol 1")
 	}

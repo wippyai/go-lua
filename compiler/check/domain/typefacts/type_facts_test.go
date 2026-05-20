@@ -8,9 +8,9 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-type functionFactMap map[cfg.SymbolID]typ.Type
+type functionTypeMap map[cfg.SymbolID]typ.Type
 
-func (m functionFactMap) FunctionType(sym cfg.SymbolID) typ.Type {
+func (m functionTypeMap) lookup(sym cfg.SymbolID) typ.Type {
 	return m[sym]
 }
 
@@ -18,7 +18,7 @@ func TestTypeFactsDeclaredAtPrefersAnnotatedDeclaration(t *testing.T) {
 	const sym cfg.SymbolID = 1
 	facts := New(Config{
 		Declared:      flow.DeclaredTypes{sym: typ.String},
-		Functions:     functionFactMap{sym: typ.Number},
+		FunctionType:  functionTypeMap{sym: typ.Number}.lookup,
 		Literals:      flow.DeclaredTypes{sym: typ.Boolean},
 		AnnotatedVars: map[cfg.SymbolID]bool{sym: true},
 	})
@@ -33,8 +33,8 @@ func TestTypeFactsDeclaredAtUsesFunctionBeforeDeclaration(t *testing.T) {
 	const sym cfg.SymbolID = 2
 	fn := typ.Func().Returns(typ.String).Build()
 	facts := New(Config{
-		Declared:  flow.DeclaredTypes{sym: typ.Number},
-		Functions: functionFactMap{sym: fn},
+		Declared:     flow.DeclaredTypes{sym: typ.Number},
+		FunctionType: functionTypeMap{sym: fn}.lookup,
 	})
 
 	got := facts.DeclaredAt(0, sym)

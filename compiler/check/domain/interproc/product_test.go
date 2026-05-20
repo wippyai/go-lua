@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -24,7 +25,7 @@ func TestWidenFacts_DoesNotOverrideSummaryWithNilNarrow(t *testing.T) {
 	}
 
 	merged := WidenFacts(prev, next)
-	got := merged.FunctionFacts.Summary(1)
+	got := functionfact.ReturnSummaryFromMap(merged.FunctionFacts, 1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected summary[1]=integer, got %v", got)
 	}
@@ -43,7 +44,7 @@ func TestWidenFacts_ElidesOptionalFromNarrowFunctionFact(t *testing.T) {
 	}
 
 	merged := WidenFacts(prev, next)
-	got := merged.FunctionFacts.Summary(1)
+	got := functionfact.ReturnSummaryFromMap(merged.FunctionFacts, 1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected summary[1]=integer, got %v", got)
 	}
@@ -58,7 +59,7 @@ func TestWidenFacts_RefinesOptionalForFirstOrderFunctionSummary(t *testing.T) {
 	}}
 
 	merged := WidenFacts(prev, next)
-	got := merged.FunctionFacts.Summary(1)
+	got := functionfact.ReturnSummaryFromMap(merged.FunctionFacts, 1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected integer after first-order refinement, got %v", got)
 	}
@@ -87,7 +88,7 @@ func TestWidenFacts_UsesMonotoneJoinForHigherOrderFunctionSummary(t *testing.T) 
 	}}
 
 	merged := WidenFacts(prev, next)
-	got := merged.FunctionFacts.Summary(1)
+	got := functionfact.ReturnSummaryFromMap(merged.FunctionFacts, 1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], base) {
 		t.Fatalf("expected stable upper bound for higher-order return, got %v", got)
 	}
@@ -112,7 +113,7 @@ func TestWidenFacts_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
 	}}
 
 	merged := WidenFacts(prev, next)
-	got := merged.FunctionFacts.Summary(1)
+	got := functionfact.ReturnSummaryFromMap(merged.FunctionFacts, 1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], dbType) {
 		t.Fatalf("expected optional elision for interface return, got %v", got)
 	}
