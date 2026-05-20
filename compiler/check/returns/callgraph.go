@@ -92,9 +92,9 @@ func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo) fun
 //   - Identifier arguments that reference caller parameters with known evidence
 //     propagate that evidence transitively.
 //
-// The algorithm iterates to fixpoint, bounded by the number of local functions.
-// This ensures that chains like f(x) -> g(x) -> h(x) are fully resolved even
-// if functions are processed in arbitrary order.
+// The algorithm iterates to the parameter-evidence fixed point. This ensures
+// that chains like f(x) -> g(x) -> h(x) are fully resolved even if functions are
+// processed in arbitrary order.
 //
 // Evidence is accumulated with typ.JoinPreferNonSoft, producing union types when
 // a parameter is called with multiple different types across call sites.
@@ -144,7 +144,7 @@ func PropagateParameterEvidence(localFuncs map[cfg.SymbolID]*LocalFuncInfo) {
 	}
 	sort.Slice(parentGraphIDs, func(i, j int) bool { return parentGraphIDs[i] < parentGraphIDs[j] })
 
-	for round := 0; round < len(localFuncs); round++ {
+	for {
 		changed := false
 		processCall := func(ci *cfg.CallInfo, graph *cfg.Graph, bindings *bind.BindingTable) {
 			if ci == nil {

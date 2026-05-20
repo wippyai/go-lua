@@ -9150,3 +9150,41 @@ Result:
 - function-fact, parameter-evidence, and pipeline packages: pass.
 - full go-lua suite: pass.
 - diff check: pass.
+
+## 2026-05-20 Flash Migration: Unbounded Local Parameter-Evidence Fixpoint
+
+Problem:
+
+```text
+Local parameter-evidence propagation used `round < len(localFuncs)` as a
+convergence cap. Even if that cap is mathematically expected to be enough for
+simple call chains, the abstract-interpreter model should stop because the
+domain state reached a fixed point, not because a counter expired.
+```
+
+Migration performed:
+
+- Replaced the bounded round loop in `returns.PropagateParameterEvidence` with
+  a direct fixed-point loop.
+- Updated the comment to state the actual convergence condition.
+
+Invariant:
+
+```text
+Local propagation runs until parameter evidence is stable. The stopping
+condition is domain equality/no-change, not an iteration budget.
+```
+
+Validation so far:
+
+```text
+go test ./compiler/check/returns -count=1
+go test ./... -count=1
+git diff --check
+```
+
+Result:
+
+- local return/parameter propagation package tests: pass.
+- full go-lua suite: pass.
+- diff check: pass.
