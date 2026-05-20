@@ -8783,3 +8783,72 @@ The remaining external diagnostics are still not a reason to weaken go-lua.
 They are dynamic-boundary/source-proof gaps unless a reduced fixture shows that
 the abstract interpreter missed an actual local proof.
 ```
+
+## 2026-05-20 Flash Migration: Function-Fact Call Projection Owner
+
+Problem:
+
+```text
+Call checking still owned part of the function-fact semantics. It selected
+stable function facts, recovered source functions, projected refinement-proven
+dynamic arguments, projected unobserved local parameters, and compared current
+callee signatures against fact signatures. That kept the abstract-interpreter
+meaning split between `hooks/call_check.go` and `domain/functionfact`.
+```
+
+Migration performed:
+
+- Added `compiler/check/domain/functionfact/call_projection.go`.
+- Moved stable function-fact call projection into `functionfact.ProjectCall`.
+- Kept `hooks/call_check.go` as orchestration only: it now gathers local call
+  evidence and asks the function-fact domain for the effective callee.
+- Collapsed duplicate function-type rewriting into one private
+  `rewriteFunctionParams` helper inside the function-fact domain.
+- Removed hook-local helpers:
+  - `functionFactCalleeType`
+  - `callTypeWithRefinementProvenAnyArgs`
+  - `callTypeWithUnobservedLocalAnyArgs`
+  - `canonicalFactHasWiderParams`
+  - hook-local unobserved-parameter mask handling
+
+Invariant:
+
+```text
+The hook may decide when a call must be checked, but it must not encode what a
+canonical function fact means. Function-fact projection is part of the
+function-fact abstract domain.
+```
+
+Why this is a flash migration step, not a bridge:
+
+- No compatibility channel was added.
+- No external/source-specific case was added.
+- No broad `any` relaxation was added.
+- The old hook implementation was deleted, not wrapped.
+- The only public surface is the canonical projection entry point:
+  `functionfact.ProjectCall`.
+
+Validation:
+
+```text
+go test ./compiler/check/domain/functionfact ./compiler/check/hooks -count=1
+go test ./compiler/check/tests/regression -run 'TestImportedTypeAssertion|TestAnnotatedImportedTypeAssertion|TestLinterFalsePositive_TestRunnerExact|TestLinterFalsePositive_GraphLocalUnusedParamAllowsInternalAny|TestLinterFalsePositive_GraphLocalObservedParamRejectsAny|TestSessionPlugin_UntypedSessionIDGuardStillRejectsStringAPI|ExternalLint|Gradual|Advanced' -count=1
+go test ./... -count=1
+git diff --check
+```
+
+Results:
+
+- function-fact and hooks package tests: pass.
+- targeted regression suite: pass.
+- full go-lua suite: pass.
+- diff check: pass.
+
+Structural result:
+
+```text
+`compiler/check/hooks/call_check.go` no longer contains function-fact
+projection semantics. The function-fact domain owns both storage joins and
+call-site projection from canonical facts, which is the correct abstract
+interpreter boundary for this part of the migration.
+```
