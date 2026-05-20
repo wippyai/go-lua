@@ -9516,6 +9516,20 @@ Current classification:
     `if artifact.meta then artifact.meta.content_type end` can index a string.
   - Bedrock `text_blocks` collects `block.text` from an untyped response; a
     truthiness guard does not prove it is a string.
+- Likely dependency/source-version replay issues, not current-source go-lua
+  proof failures:
+  - `wippy.llm.claude/openai/google:client` nullable `response.body` diagnostics
+    appear in `session`/`docker-demo` dependency replays, while current
+    `framework/src/llm/src` does not report them and reduced go-lua fixtures for
+    `response.body or ""` pass. Do not classify these as current engine failures
+    unless reproduced from the current local source.
+- Still-suspect engine/inference gap:
+  - `wippy.llm.util:compress` in current `framework/src/llm/src` still reports
+    `integer?` arithmetic after `or` defaults. Reduced numeric-default fixtures
+    pass, so the likely missing case is full-module interaction: exported module
+    mutation/test mocks or inter-entry fact joining are optionalizing numeric
+    model-card fields. This must be reduced and fixed or classified before
+    claiming zero false positives.
 - Still-open validation work:
   - The remaining lint classes must each get a reduced go-lua fixture or a
     source-proof classification before the branch can honestly claim a clean
