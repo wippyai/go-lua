@@ -9,8 +9,9 @@
 //   - domain/value owns reusable structural value relations.
 //
 // This package owns local call graph traversal, SCC iteration, return overlays,
-// signature seeding, and nested-call mutation replay. The interprocedural store
-// applies product joins and widening through domain/interproc.
+// and signature seeding. Call/effect replay lives in domain/calleffect, and the
+// interprocedural store applies product joins and widening through
+// domain/interproc.
 //
 // # SCC-Based Analysis
 //

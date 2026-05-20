@@ -836,7 +836,7 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 	calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
 		return resolve.CalleeType(info, p, stage.enrichedSynthAdapter, nil, nil, stage.fnGraph, nestedBindings, i.store.ModuleBindings())
 	}
-	nestedFieldAssignments := returns.CollectCalledNestedFieldAssignments(stage.fnGraph, nestedBindings, ctx.info.Evidence.Calls, capturedByCallee, calleeTypeResolver)
+	nestedFieldAssignments := calleffect.CollectCalledNestedFieldAssignments(stage.fnGraph, nestedBindings, ctx.info.Evidence.Calls, capturedByCallee, calleeTypeResolver)
 	overlaymut.MergeFieldAssignments(fieldAssignments, nestedFieldAssignments)
 
 	overlaymut.ApplyFieldMergeToOverlay(stage.finalOverlay, fieldAssignments)

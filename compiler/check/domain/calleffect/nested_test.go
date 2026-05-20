@@ -1,4 +1,4 @@
-package returns
+package calleffect
 
 import (
 	"testing"

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
@@ -148,7 +149,7 @@ func (r *Runner) appendCapturedMutatorAssignments(
 		return resolve.CalleeType(info, p, synthEngine.TypeOf, symResolver, assignmentTypes, graph, bindings, env.ModuleBindings)
 	}
 
-	extra := returns.CollectNestedMutatorAssignments(
+	extra := calleffect.CollectNestedMutatorAssignments(
 		graph,
 		bindings,
 		extractOut.Evidence.Calls,

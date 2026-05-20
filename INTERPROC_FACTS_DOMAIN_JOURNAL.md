@@ -9377,3 +9377,62 @@ A clean temporary `HEAD` worktree measured the same range
 (3.75-5.06 ms/op, 1.089 MB/op, 10593-10594 allocs/op), so this slice did not
 add the current benchmark cost. The older 1.15 ms journal number is not the
 current branch baseline.
+
+## 2026-05-20 Flash Migration: Nested Call-Effect Replay Owner
+
+Problem:
+
+```text
+`compiler/check/returns` still owned helpers that reduce call evidence and
+captured mutation facts into parent-visible field/container replay. That is not
+return-vector inference. It is call-effect interpretation over transfer
+evidence, and keeping it in `returns` made the package own one more abstract
+interpreter side path.
+```
+
+Migration performed:
+
+- Moved nested call-effect replay from `returns` to
+  `domain/calleffect`:
+  - `CollectCalledNestedFieldAssignments`
+  - `CollectNestedMutatorAssignments`
+  - `CalledNestedMutatorAssignments`
+  - the call-symbol selection helper used by those reducers
+- Moved the associated regression tests to `domain/calleffect`.
+- Added a small returns test helper for local call evidence, because return
+  call-graph tests still need that fixture but should not depend on call-effect
+  replay helpers.
+- Updated return inference and pipeline replay callers to use
+  `calleffect.Collect...`.
+- Updated package docs: `returns` owns SCC/return/signature orchestration;
+  `domain/calleffect` owns call/effect projection over transfer evidence.
+
+Final ownership:
+
+```text
+returns            = local return SCCs, parameter evidence propagation,
+                     return overlays, seed signatures
+domain/calleffect  = concrete call-site effect projection and replay payloads
+overlaymut         = overlay field/index mutation merge/apply laws
+flow inputs        = consumer of replayed table/container assignments
+```
+
+Invariant:
+
+```text
+If code interprets a call contract/effect or determines which nested function
+call may replay captured mutations, it belongs to `domain/calleffect`, not to
+return-summary orchestration.
+```
+
+Validation status:
+
+```text
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/domain/calleffect ./compiler/check/returns ./compiler/check/pipeline ./compiler/check/infer/return -count=1
+env GOCACHE=/tmp/go-build-cache go test ./... -count=1
+```
+
+Result:
+
+- focused calleffect/returns/pipeline/return packages: pass.
+- full go-lua suite with an explicit writable build cache: pass.
