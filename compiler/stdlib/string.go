@@ -13,6 +13,18 @@ var stringUnpackSpec = contract.NewSpec().WithEffects(
 	},
 )
 
+var stringGsubReplacementReturn = typ.NewOptional(typ.NewUnion(typ.String, typ.Number, typ.False))
+
+var stringGsubReplacement = typ.NewUnion(
+	typ.String,
+	typ.NewMap(typ.String, typ.NewUnion(typ.String, typ.Number, typ.False)),
+	typ.Func().
+		Param("match", typ.String).
+		Variadic(typ.NewOptional(typ.String)).
+		Returns(stringGsubReplacementReturn).
+		Build(),
+)
+
 var stringMethods = typ.NewRecord().
 	Field("byte", typ.Func().
 		Param("s", typ.String).
@@ -48,7 +60,7 @@ var stringMethods = typ.NewRecord().
 	Field("gsub", typ.Func().
 		Param("s", typ.String).
 		Param("pattern", typ.String).
-		Param("repl", typ.Any).
+		Param("repl", stringGsubReplacement).
 		OptParam("n", typ.Integer).
 		Returns(typ.String, typ.Integer).Build()).
 	Field("len", typ.Func().

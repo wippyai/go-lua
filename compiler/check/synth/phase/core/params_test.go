@@ -149,6 +149,33 @@ func TestApplyParamList_WithExpected(t *testing.T) {
 	}
 }
 
+func TestApplyParamList_WithExpectedVariadicTypesNamedParams(t *testing.T) {
+	expected := typ.Func().
+		Param("first", typ.String).
+		Variadic(typ.Number).
+		Build()
+
+	builder := typ.Func()
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{
+			Names: []string{"first", "extra"},
+		},
+	}
+	ApplyParamList(builder, fn, ParamListConfig{
+		Expected: expected,
+	})
+	result := builder.Build()
+	if len(result.Params) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(result.Params))
+	}
+	if result.Params[0].Type != typ.String || result.Params[0].Optional {
+		t.Fatalf("expected required string first param, got %+v", result.Params[0])
+	}
+	if result.Params[1].Type != typ.Number || !result.Params[1].Optional {
+		t.Fatalf("expected optional number variadic-derived second param, got %+v", result.Params[1])
+	}
+}
+
 func TestApplyParamList_NilAnnotationSlotUsesExpected(t *testing.T) {
 	sc := scope.New()
 	resolveType := func(expr ast.TypeExpr, _ *scope.State) typ.Type {

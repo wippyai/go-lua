@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/contract"
@@ -159,8 +160,16 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	if specialized := s.specializedLocalFunctionCalleeType(ex, p, sc, calleeType, captureTypes); specialized != nil {
 		calleeType = specialized
 	}
-	args := synthArgs(ex.Args, recurse)
 	typeArgs := s.resolveTypeArgs(ex.TypeArgs, sc)
+	allowExtraArgs := s.localFunctionAllowsDiscardedExtraArgs(ex, p)
+	probeDef := ops.CallDef{
+		Callee:         calleeType,
+		TypeArgs:       typeArgs,
+		Query:          s.GetCallQuery(),
+		ExpectedReturn: expected,
+		AllowExtraArgs: allowExtraArgs,
+	}
+	args := s.synthArgsWithCallContext(ex.Args, p, sc, recurse, probeDef)
 
 	def := ops.CallDef{
 		Callee:         calleeType,
@@ -168,7 +177,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 		TypeArgs:       typeArgs,
 		Query:          s.GetCallQuery(),
 		ExpectedReturn: expected,
-		AllowExtraArgs: s.localFunctionAllowsDiscardedExtraArgs(ex, p),
+		AllowExtraArgs: allowExtraArgs,
 	}
 
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
@@ -299,8 +308,17 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 	}
 
 	recvType := recurse(ex.Receiver)
-	args := synthArgs(ex.Args, recurse)
 	calleeType := s.resolveMethodCallee(recvType, ex.Method)
+	forceReceiver := s.forceMethodReceiverAtPoint(p, ex)
+	probeDef := ops.CallDef{
+		IsMethod:            true,
+		Receiver:            recvType,
+		MethodName:          ex.Method,
+		Query:               s.GetCallQuery(),
+		ExpectedReturn:      expected,
+		ForceMethodReceiver: forceReceiver,
+	}
+	args := s.synthArgsWithCallContext(ex.Args, p, sc, recurse, probeDef)
 
 	def := ops.CallDef{
 		IsMethod:            true,
@@ -309,7 +327,7 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 		Args:                args,
 		Query:               s.GetCallQuery(),
 		ExpectedReturn:      expected,
-		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
+		ForceMethodReceiver: forceReceiver,
 	}
 
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
@@ -343,8 +361,16 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 		return result.Types
 	}
 
-	args := synthArgs(ex.Args, recurse)
 	calleeType := s.resolveMethodCallee(recvType, ex.Method)
+	forceReceiver := s.forceMethodReceiverAtPoint(p, ex)
+	probeDef := ops.CallDef{
+		IsMethod:            true,
+		Receiver:            recvType,
+		MethodName:          ex.Method,
+		Query:               s.GetCallQuery(),
+		ForceMethodReceiver: forceReceiver,
+	}
+	args := s.synthArgsWithCallContext(ex.Args, p, sc, recurse, probeDef)
 
 	def := ops.CallDef{
 		IsMethod:            true,
@@ -352,7 +378,7 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 		MethodName:          ex.Method,
 		Args:                args,
 		Query:               s.GetCallQuery(),
-		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
+		ForceMethodReceiver: forceReceiver,
 	}
 
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
@@ -619,6 +645,61 @@ func synthArgs(exprs []ast.Expr, recurse ExprSynth) []typ.Type {
 	return args
 }
 
+func (s *Synthesizer) synthArgsWithCallContext(
+	exprs []ast.Expr,
+	p cfg.Point,
+	sc *scope.State,
+	recurse ExprSynth,
+	def ops.CallDef,
+) []typ.Type {
+	if len(exprs) == 0 {
+		return nil
+	}
+	if !hasDirectFunctionLiteralArg(exprs) {
+		return synthArgs(exprs, recurse)
+	}
+	shallow := synthShallowFunctionArgs(exprs, recurse)
+	def.Args = shallow
+	inferred := ops.InferCall(s.deps.Ctx, def)
+
+	args := make([]typ.Type, len(exprs))
+	for i, arg := range exprs {
+		if fn, ok := arg.(*ast.FunctionExpr); ok {
+			if expectedFn := phasecore.ExpectedFunctionLiteralSignature(fn, inferred.ExpectedArgType(i)); expectedFn != nil {
+				if t := s.SynthFunctionTypeWithExpected(fn, sc, expectedFn); t != nil {
+					args[i] = t
+					continue
+				}
+			}
+			args[i] = recurse(arg)
+			continue
+		}
+		args[i] = shallow[i]
+	}
+	return args
+}
+
+func hasDirectFunctionLiteralArg(exprs []ast.Expr) bool {
+	for _, arg := range exprs {
+		if _, ok := arg.(*ast.FunctionExpr); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func synthShallowFunctionArgs(exprs []ast.Expr, recurse ExprSynth) []typ.Type {
+	args := make([]typ.Type, len(exprs))
+	for i, arg := range exprs {
+		if fn, ok := arg.(*ast.FunctionExpr); ok {
+			args[i] = phasecore.ShallowFunctionLiteralSignature(fn)
+			continue
+		}
+		args[i] = recurse(arg)
+	}
+	return args
+}
+
 // resolveTypeArgs resolves explicit type arguments.
 func (s *Synthesizer) resolveTypeArgs(typeExprs []ast.TypeExpr, sc *scope.State) []typ.Type {
 	if len(typeExprs) == 0 || sc == nil {
@@ -766,21 +847,13 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 // synthesizer's context so they are visible inside the callback body only.
 func (s *Synthesizer) callbackAwareReSynth(calleeType typ.Type, sc *scope.State) ArgReSynth {
 	return func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
-		expectedFn, ok := unwrap.Alias(expected).(*typ.Function)
-		if !ok {
+		fnExpr := functionExprForCallbackArg(s, arg)
+		if fnExpr == nil {
 			return nil
 		}
-
-		fnExpr, ok := arg.(*ast.FunctionExpr)
-		if !ok {
-			ident, isIdent := arg.(*ast.IdentExpr)
-			if !isIdent {
-				return nil
-			}
-			fnExpr = s.functionLiteralForIdent(ident)
-			if fnExpr == nil {
-				return nil
-			}
+		expectedFn := phasecore.ExpectedFunctionLiteralSignature(fnExpr, expected)
+		if expectedFn == nil {
+			return nil
 		}
 
 		synthFn := s.SynthFunctionTypeWithExpected
@@ -793,6 +866,17 @@ func (s *Synthesizer) callbackAwareReSynth(calleeType typ.Type, sc *scope.State)
 		}
 		return ft
 	}
+}
+
+func functionExprForCallbackArg(s *Synthesizer, arg ast.Expr) *ast.FunctionExpr {
+	if fnExpr, ok := arg.(*ast.FunctionExpr); ok {
+		return fnExpr
+	}
+	ident, ok := arg.(*ast.IdentExpr)
+	if !ok || s == nil {
+		return nil
+	}
+	return s.functionLiteralForIdent(ident)
 }
 
 // callbackEnvOverlay extracts the EnvOverlay for a callback at the given parameter index.

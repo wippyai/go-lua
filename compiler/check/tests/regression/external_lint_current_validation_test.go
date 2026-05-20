@@ -173,6 +173,55 @@ end
 	requireExternalLintErrorContaining(t, result, "expected {[string]: any}?")
 }
 
+func TestExternalLint_StringGsubCallbackCaptureIsString(t *testing.T) {
+	result := testutil.Check(`
+local function split_string(str: string, sep: string): {string}
+	local fields: {string} = {}
+	local pattern = string.format("([^%s]+)", sep)
+	str:gsub(pattern, function(c)
+		fields[#fields + 1] = c
+	end)
+	return fields
+end
+
+return split_string("a,b", ",")
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected string.gsub callback capture to be typed as string, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_StringGsubReplacementForms(t *testing.T) {
+	result := testutil.Check(`
+local direct = ("a,b"):gsub(",", "|")
+local mapped = ("a,b"):gsub("([ab])", { a = "x", b = "y" })
+local callback_string = ("a,b"):gsub("([^,]+)", function(c)
+	return c
+end)
+local callback_number = ("a,b"):gsub("([^,]+)", function(c)
+	return #c
+end)
+local callback_false = ("a,b"):gsub("([^,]+)", function(c)
+	return false
+end)
+local callback_nil = ("a,b"):gsub("([^,]+)", function(c)
+	return nil
+end)
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected valid string.gsub replacement forms to type-check, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_StringGsubCallbackRejectsInvalidReplacementReturn(t *testing.T) {
+	result := testutil.Check(`
+local out = ("a,b"):gsub("([^,]+)", function(c)
+	return true
+end)
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected")
+}
+
 func TestExternalLint_ConstantTableNumericFieldStaysNonNil(t *testing.T) {
 	result := testutil.Check(`
 local CONFIG = {

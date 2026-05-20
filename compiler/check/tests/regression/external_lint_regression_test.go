@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -972,6 +973,9 @@ end
 
 local existing_summary = nil
 if existing_summaries and #existing_summaries > 0 then
+	table.sort(existing_summaries, function(a, b)
+		return (a.time or a.created_at or "") > (b.time or b.created_at or "")
+	end)
 	existing_summary = existing_summaries[1].text
 end
 
@@ -1095,7 +1099,12 @@ return session
 	source := `
 local session = require("session")
 
-local session_reader, session_err = session.open("s1")
+local function handle(args)
+if not args.session_id then
+	return nil, "session_id is required"
+end
+
+local session_reader, session_err = session.open(args.session_id)
 if not session_reader then
 	return nil, session_err
 end
@@ -1106,8 +1115,16 @@ if ctx_err then
 end
 
 if existing_summaries and #existing_summaries > 0 then
-	local first = existing_summaries[1]
+	table.sort(existing_summaries, function(a, b)
+		return (a.time or a.created_at or "") > (b.time or b.created_at or "")
+	end)
+	local first = existing_summaries[1].text
 end
+
+return true
+end
+
+return handle
 `
 	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("session", sessionModule))
 	if result.HasError() {
@@ -1115,6 +1132,290 @@ end
 			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
 		}
 		t.Fatalf("expected imported nil fallback and error repair to eliminate nil index, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_MultiModuleSessionQueryLengthGuardEliminatesNil(t *testing.T) {
+	repoModule := testutil.CheckAndExport(`
+local executor = {}
+function executor:query(): any
+	return nil
+end
+
+local repo = {}
+
+function repo.list_by_type(_session_id, _context_type)
+	local contexts, err = executor:query()
+	if err then
+		return nil, err
+	end
+	return contexts
+end
+
+return repo
+`, "session_contexts_repo", testutil.WithStdlib())
+	if repoModule.HasError() {
+		t.Fatalf("repo module should export cleanly, got: %v", testutil.ErrorMessages(repoModule.Errors))
+	}
+
+	readerModule := testutil.CheckAndExport(`
+local session_contexts_repo = require("session_contexts_repo")
+
+local session = {}
+
+local context_query = {
+	_session_id = nil :: string?,
+	_type_filter = nil :: string?,
+	_error = nil :: string?,
+}
+context_query.__index = context_query
+
+local session_reader = {
+	session_id = nil :: string?,
+}
+session_reader.__index = session_reader
+
+function session.open(session_id)
+	return setmetatable({ session_id = session_id }, session_reader), nil
+end
+
+function session_reader:contexts()
+	local query = setmetatable({}, context_query)
+	query._session_id = self.session_id
+	query._type_filter = nil
+	query._error = nil
+	return query
+end
+
+function context_query:type(context_type)
+	if not context_type then
+		self._error = "Context type is required"
+		return self
+	end
+	self._type_filter = context_type
+	return self
+end
+
+function context_query:all()
+	if self._error then
+		return nil, self._error
+	end
+
+	local contexts, err = session_contexts_repo.list_by_type(self._session_id, self._type_filter)
+	if err then
+		return nil, err
+	end
+
+	return contexts or {}, nil
+end
+
+return session
+`, "session", testutil.WithStdlib(), testutil.WithModule("session_contexts_repo", repoModule))
+	if readerModule.HasError() {
+		t.Fatalf("reader module should export cleanly, got: %v", testutil.ErrorMessages(readerModule.Errors))
+	}
+
+	result := testutil.Check(`
+local session = require("session")
+
+local function handle(args)
+if not args.session_id then
+	return nil, "session_id is required"
+end
+
+local session_reader, session_err = session.open(args.session_id)
+if not session_reader then
+	return nil, session_err
+end
+
+local existing_summaries, ctx_err = session_reader:contexts():type("conversation_summary"):all()
+if ctx_err then
+	existing_summaries = {}
+end
+
+local existing_summary = nil
+if existing_summaries and #existing_summaries > 0 then
+	table.sort(existing_summaries, function(a, b)
+		return (a.time or a.created_at or "") > (b.time or b.created_at or "")
+	end)
+	existing_summary = existing_summaries[1].text
+end
+
+return existing_summary
+end
+
+return handle
+`, testutil.WithStdlib(), testutil.WithModule("session", readerModule))
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected multi-module query fallback and length guard to eliminate nil index, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_SQLBuilderRowsKeepSessionQueryLengthGuard(t *testing.T) {
+	queryRowType := typ.NewMap(typ.String, typ.Any)
+	queryExecutorType := typ.NewInterface("sql.QueryExecutor", []typ.Method{
+		{
+			Name: "query",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.NewArray(queryRowType), typ.NewOptional(typ.LuaError)).
+				Build(),
+		},
+	})
+	selectBuilderType := typ.NewInterface("sql.SelectBuilder", []typ.Method{
+		{Name: "from", Type: typ.Func().Param("self", typ.Self).Param("table", typ.String).Returns(typ.Self).Build()},
+		{Name: "where", Type: typ.Func().Param("self", typ.Self).Param("condition", typ.Any).Returns(typ.Self).Build()},
+		{Name: "order_by", Type: typ.Func().Param("self", typ.Self).Variadic(typ.String).Returns(typ.Self).Build()},
+		{Name: "run_with", Type: typ.Func().Param("self", typ.Self).Param("runner", typ.Any).Returns(queryExecutorType).Build()},
+	})
+	builderType := typ.NewRecord().
+		Field("select", typ.Func().Variadic(typ.String).Returns(selectBuilderType).Build()).
+		Field("expr", typ.Func().Param("expr", typ.String).Variadic(typ.Any).Returns(typ.Any).Build()).
+		Field("and_", typ.Func().Variadic(typ.Any).Returns(typ.Any).Build()).
+		Build()
+	sqlManifest := io.NewManifest("sql")
+	sqlManifest.SetExport(typ.NewRecord().
+		Field("get", typ.Func().Param("dsn", typ.String).Returns(typ.Any, typ.NewOptional(typ.LuaError)).Build()).
+		Field("builder", builderType).
+		Build())
+
+	repoModule := testutil.CheckAndExport(`
+local sql = require("sql")
+
+local repo = {}
+
+function repo.list_by_type(session_id, context_type)
+	if not session_id or session_id == "" then
+		return nil, "Session ID is required"
+	end
+	if not context_type or context_type == "" then
+		return nil, "Context type is required"
+	end
+
+	local db, err = sql.get("app:db")
+	if err then
+		return nil, err
+	end
+
+	local query = sql.builder.select("id", "session_id", "type", "text", "time")
+		:from("session_contexts")
+		:where(sql.builder.and_({
+			sql.builder.expr("session_id = ?", session_id),
+			sql.builder.expr("type = ?", context_type)
+		}))
+		:order_by("id ASC")
+
+	local executor = query:run_with(db)
+	local contexts, query_err = executor:query()
+	if query_err then
+		return nil, "Failed to list session contexts by type: " .. query_err
+	end
+
+	return contexts
+end
+
+return repo
+`, "session_contexts_repo", testutil.WithStdlib(), testutil.WithManifest("sql", sqlManifest))
+	if repoModule.HasError() {
+		t.Fatalf("repo module should export cleanly, got: %v", testutil.ErrorMessages(repoModule.Errors))
+	}
+
+	readerModule := testutil.CheckAndExport(`
+local session_contexts_repo = require("session_contexts_repo")
+
+local session = {}
+
+local context_query = {
+	_session_id = nil :: string?,
+	_type_filter = nil :: string?,
+	_error = nil :: string?,
+}
+context_query.__index = context_query
+
+local session_reader = {
+	session_id = nil :: string?,
+}
+session_reader.__index = session_reader
+
+function session.open(session_id)
+	return setmetatable({ session_id = session_id }, session_reader), nil
+end
+
+function session_reader:contexts()
+	local query = setmetatable({}, context_query)
+	query._session_id = self.session_id
+	query._type_filter = nil
+	query._error = nil
+	return query
+end
+
+function context_query:type(context_type)
+	if not context_type then
+		self._error = "Context type is required"
+		return self
+	end
+	self._type_filter = context_type
+	return self
+end
+
+function context_query:all()
+	if self._error then
+		return nil, self._error
+	end
+
+	local contexts, err = session_contexts_repo.list_by_type(self._session_id, self._type_filter)
+	if err then
+		return nil, "Failed to fetch contexts: " .. err
+	end
+
+	return contexts or {}, nil
+end
+
+return session
+`, "session", testutil.WithStdlib(), testutil.WithModule("session_contexts_repo", repoModule))
+	if readerModule.HasError() {
+		t.Fatalf("reader module should export cleanly, got: %v", testutil.ErrorMessages(readerModule.Errors))
+	}
+
+	result := testutil.Check(`
+local session = require("session")
+
+local function handle(args)
+	if not args.session_id then
+		return nil, "session_id is required"
+	end
+
+	local session_reader, session_err = session.open(args.session_id)
+	if not session_reader then
+		return nil, session_err
+	end
+
+	local existing_summaries, ctx_err = session_reader:contexts():type("conversation_summary"):all()
+	if ctx_err then
+		existing_summaries = {}
+	end
+
+	local existing_summary = nil
+	if existing_summaries and #existing_summaries > 0 then
+		table.sort(existing_summaries, function(a, b)
+			return (a.time or a.created_at or "") > (b.time or b.created_at or "")
+		end)
+		existing_summary = existing_summaries[1].text
+	end
+
+	return existing_summary
+end
+
+return handle
+`, testutil.WithStdlib(), testutil.WithModule("session", readerModule))
+	if result.HasError() {
+		for _, e := range result.Errors {
+			t.Logf("error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
+		}
+		t.Fatalf("expected SQL builder row array to preserve length-guarded first-element proof, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 

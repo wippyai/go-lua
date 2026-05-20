@@ -129,15 +129,17 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 				if t := cfg.ResolveType(typeExpr, cfg.ResolveScope); t != nil {
 					paramType = t
 					// Soft annotations allow expected types to refine the parameter.
-					if cfg.Expected != nil && expectedIdx < len(cfg.Expected.Params) && typ.IsRefinableAnnotation(t) {
-						paramType = cfg.Expected.Params[expectedIdx].Type
-						isOptional = cfg.Expected.Params[expectedIdx].Optional
+					if typ.IsRefinableAnnotation(t) {
+						if expectedType, expectedOptional, ok := expectedParamTypeAt(cfg.Expected, expectedIdx); ok {
+							paramType = expectedType
+							isOptional = expectedOptional
+						}
 					}
 				}
 			}
-		} else if cfg.Expected != nil && expectedIdx < len(cfg.Expected.Params) {
-			paramType = cfg.Expected.Params[expectedIdx].Type
-			isOptional = cfg.Expected.Params[expectedIdx].Optional
+		} else if expectedType, expectedOptional, ok := expectedParamTypeAt(cfg.Expected, expectedIdx); ok {
+			paramType = expectedType
+			isOptional = expectedOptional
 		} else {
 			// Unannotated params are optional in Lua (missing args become nil).
 			if cfg.UntypedParamType != nil {
@@ -164,6 +166,20 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 		}
 		builder.Variadic(varargType)
 	}
+}
+
+func expectedParamTypeAt(expected *typ.Function, idx int) (typ.Type, bool, bool) {
+	if expected == nil || idx < 0 {
+		return nil, false, false
+	}
+	if idx < len(expected.Params) {
+		p := expected.Params[idx]
+		return p.Type, p.Optional, true
+	}
+	if expected.Variadic != nil {
+		return expected.Variadic, true, true
+	}
+	return nil, false, false
 }
 
 func paramListCapacity(fn *ast.FunctionExpr, implicitSelf bool) int {

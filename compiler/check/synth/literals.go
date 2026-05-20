@@ -4,7 +4,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
 	querycore "github.com/wippyai/go-lua/types/query/core"
@@ -135,6 +138,7 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 	out := make(map[*ast.FunctionExpr]*typ.Function)
 	scopes := engine.Scopes()
 	entry := engine.Entry()
+	callCtx := db.NewQueryContext(db.New())
 
 	addSig := func(fn *ast.FunctionExpr, p cfg.Point, expected *typ.Function) {
 		if fn == nil {
@@ -171,10 +175,7 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 		}
 		switch v := expr.(type) {
 		case *ast.FunctionExpr:
-			var expectedFn *typ.Function
-			if expected != nil {
-				expectedFn, _ = unwrap.Alias(expected).(*typ.Function)
-			}
+			expectedFn := phasecore.ExpectedFunctionLiteralSignature(v, expected)
 			addSig(v, p, expectedFn)
 		case *ast.TableExpr:
 			collectTable(v, p, expected)
@@ -284,6 +285,28 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 		addSig(info.FuncExpr, p, expectedFn)
 	})
 
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		expectedArgs, expectedVariadic := expectedArgsForDirectCallbackLiteral(callCtx, engine, graph, info, p)
+		if len(expectedArgs) == 0 && expectedVariadic == nil {
+			return
+		}
+		for i, arg := range info.Args {
+			fn, ok := arg.(*ast.FunctionExpr)
+			if !ok {
+				continue
+			}
+			var expected typ.Type
+			if i < len(expectedArgs) {
+				expected = expectedArgs[i]
+			} else {
+				expected = expectedVariadic
+			}
+			if expectedFn := phasecore.ExpectedFunctionLiteralSignature(fn, expected); expectedFn != nil {
+				addSig(fn, p, expectedFn)
+			}
+		}
+	})
+
 	if len(declaredReturns) > 0 {
 		graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
 			if info == nil {
@@ -301,6 +324,57 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+type callQueryProvider interface {
+	GetCallQuery() querycore.TypeOps
+}
+
+func expectedArgsForDirectCallbackLiteral(
+	ctx *db.QueryContext,
+	engine LiteralSynth,
+	graph *cfg.Graph,
+	info *cfg.CallInfo,
+	p cfg.Point,
+) ([]typ.Type, typ.Type) {
+	provider, ok := engine.(callQueryProvider)
+	if !ok || provider == nil || graph == nil || info == nil {
+		return nil, nil
+	}
+	query := provider.GetCallQuery()
+	if query == nil {
+		return nil, nil
+	}
+
+	def := ops.CallDef{
+		Args:                shallowCallArgTypes(engine, info.Args, p),
+		Query:               query,
+		ForceMethodReceiver: callsite.ForceMethodReceiverAtPoint(graph.Bindings(), graph, p, info.Call),
+	}
+	if callsite.IsMethodCallInfo(info) {
+		def.IsMethod = true
+		def.Receiver = engine.TypeOf(info.Receiver, p)
+		def.MethodName = info.Method
+	} else {
+		def.Callee = engine.TypeOf(info.Callee, p)
+	}
+	inferred := ops.InferCall(ctx, def)
+	return inferred.ExpectedArgs, inferred.ExpectedVariadic
+}
+
+func shallowCallArgTypes(engine LiteralSynth, args []ast.Expr, p cfg.Point) []typ.Type {
+	if len(args) == 0 {
+		return nil
+	}
+	out := make([]typ.Type, len(args))
+	for i, arg := range args {
+		if fn, ok := arg.(*ast.FunctionExpr); ok {
+			out[i] = phasecore.ShallowFunctionLiteralSignature(fn)
+			continue
+		}
+		out[i] = engine.TypeOf(arg, p)
 	}
 	return out
 }

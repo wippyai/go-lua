@@ -6746,3 +6746,207 @@ abstract interpreter may refine values only from semantic evidence in the
 canonical domains. It must not use optimistic compatibility bridges, call-site
 wishful typing, or old fallback fact projections to hide nullable values,
 dynamic keys, or untyped mutation.
+
+## 2026-05-20 Replay Boundary: No Heuristic Row-Shape Magic
+
+I rechecked the current local-replace replay with
+`/tmp/wippy-golua-fb0238a7`, which is built as:
+
+```text
+github.com/wippyai/go-lua v1.5.16 => /home/wolfy-j/wippy/go-lua (devel)
+```
+
+Current local-replace external lint remains:
+
+```text
+/home/wolfy-j/wippy/session                 37 errors, 0 warnings
+/home/wolfy-j/wippy/framework/src/agent/src 11 errors, 0 warnings
+/home/wolfy-j/wippy/docker-demo             63 errors, 0 warnings
+```
+
+The important convergence result still holds: the current local-replace
+docker-demo replay has zero non-convergence warnings. The old
+`inter-function fixpoint did not converge; unstable channels:
+[InterprocFacts]` class was from the pinned verification binary, not this
+checkout.
+
+I reduced the session checkpoint diagnostic again because it is the easiest
+place to accidentally justify a hack. The protected cases now include:
+
+- imported fluent metatable query builders;
+- repository fallback `contexts or {}` after an error-return pair;
+- a separate repository module feeding a separate reader module;
+- SQL-builder-shaped rows where `executor:query()` returns
+  `{[string]: any}[]`;
+- `table.sort` before reading `existing_summaries[1].text`;
+- an untyped tool argument guarded only by `if not args.session_id then`.
+
+All of those reduced go-lua tests pass. Therefore this is not evidence for a
+new compatibility bridge, special-case length rule, or checkpoint-specific
+repair.
+
+The SOTA boundary is:
+
+- The abstract interpreter may use length guards to prove indexed array
+  presence.
+- It may use error-return correlation and nil repair to remove impossible nil
+  paths.
+- It may propagate those facts through exported function summaries and fluent
+  metatable receivers.
+- It must not infer structured SQL row records from arbitrary SQL strings or
+  dynamic database results unless the boundary provides a typed effect or typed
+  manifest.
+
+If we ever want SQL-builder row-shape inference, the final design is not an
+ad-hoc checker heuristic over `sql.builder.select(...)`. It is a typed external
+effect owned by the manifest/builtin boundary, for example:
+
+```text
+select("id", "text") -> SelectBuilder<Row{id: any, text: any}>
+run_with(db)         -> QueryExecutor<Row>
+query()              -> ({Row}, error?)
+```
+
+That effect would be a normal abstract-domain input, cached through the same
+Salsa/query boundary as other builtin facts. It would not add another fact
+channel and would not bypass canonical product-domain convergence.
+
+Current classification rule for the replay:
+
+- keep adding go-lua reductions for any diagnostic that looks like a precision
+  regression;
+- implement an engine fix only when the reduced case fails;
+- otherwise record the external diagnostic as source, manifest, version, or
+  dynamic-boundary proof debt;
+- do not hide real dynamic-boundary errors with casts, fallbacks, compatibility
+  projections, iteration caps, or source-specific helpers.
+
+## 2026-05-20 Contextual Callback Rectification
+
+The docker-demo replay exposed a real checker gap in:
+
+```lua
+str:gsub(pattern, function(c)
+    fields[#fields + 1] = c
+end)
+```
+
+The old stdlib type for `string.gsub` accepted `repl: any`. That was soundly
+permissive for call acceptance but it erased the callback contract, so the
+capture parameter was checked as `any` and assigning it into `{string}` became
+a false positive. Lua's semantics give us a real contract here: replacement
+callbacks receive the full match/captures as strings and may return
+string/number/false/nil.
+
+The first attempted shape was too broad: collecting contextual signatures for
+all call arguments, including nested table callbacks, increased
+`framework/src/agent/src` from 11 to 24 local-replace errors. That was a design
+mistake, not an acceptable migration step. It globally stored too much
+call-site context and over-constrained test harness callback tables.
+
+Final shape:
+
+- `string.gsub` now has a precise replacement union:
+  string, string-key replacement table, or replacement callback.
+- direct function-literal callback arguments are probed with a shallow
+  signature only to discover the callee's expected callback contract;
+- the actual callback body is then synthesized with that expected parameter
+  type, while its body still contributes return types for generic inference;
+- nested table callbacks are not globally context-typed from arbitrary call
+  schemas;
+- contextual callback signatures are stored only for direct callback literals
+  whose callee provides a real callback function type.
+
+This keeps the final model bidirectional and call-local instead of adding a
+new fact channel. The compatibility view is not another fact source: the call
+checker derives expected argument types from the canonical function type, and
+the function-literal checker uses that expected type for the one literal at
+that call site.
+
+Regression protection now covers:
+
+- `string.gsub` callback captures flowing into `{string}`;
+- valid `gsub` replacement forms: string, table, callback returning
+  string/number/false/nil;
+- invalid callback replacement returns;
+- generic result combinators where callback returns infer type parameters;
+- the existing iterator/result fixtures that require callback return inference.
+
+Local-replace replay with `/tmp/wippy-golua-narrow-callback`:
+
+```text
+/home/wolfy-j/wippy/session                 37 errors, 0 warnings
+/home/wolfy-j/wippy/framework/src/agent/src 11 errors, 0 warnings
+/home/wolfy-j/wippy/docker-demo             61 errors, 0 warnings
+```
+
+The two docker-demo errors removed from the previous 63-error baseline are the
+`string.gsub` callback capture false positives in `agents_by_name.lua` and
+`models_by_name.lua`. The 24-error spike in the agent replay is gone.
+
+Performance note from `BenchmarkCheck_LargeFunction` after the callback fix:
+
+```text
+~2.0-3.35 ms/op, ~1.00 MB/op, 10223 allocs/op
+```
+
+Time is noisy on this machine, but allocations remain much lower than the
+earlier ~20.5k alloc/op benchmark shape. The callback fix should not be
+expanded into whole-program call-argument signature collection; that is both
+slower and less precise.
+
+## 2026-05-20 Callback Helper Consolidation And Degradation Audit
+
+After the degradation report I reran both sides of the local-replace checkpoint
+on the same external worktrees.
+
+Saved checkpoint binary `/tmp/wippy-golua-fb0238a7`:
+
+```text
+/home/wolfy-j/wippy/session                 37 errors, 0 warnings
+/home/wolfy-j/wippy/framework/src/agent/src 11 errors, 0 warnings
+/home/wolfy-j/wippy/docker-demo             63 errors, 0 warnings
+```
+
+Current rebuilt binary `/tmp/wippy-golua-current-callback`:
+
+```text
+/home/wolfy-j/wippy/session                 37 errors, 0 warnings
+/home/wolfy-j/wippy/framework/src/agent/src 11 errors, 0 warnings
+/home/wolfy-j/wippy/docker-demo             61 errors, 0 warnings
+```
+
+So the active code is not the 11-to-24 agent regression. That spike belonged to
+the rejected broad call-site-signature collection. The final patch removes that
+shape and preserves only the direct callback contract needed by `string.gsub`.
+
+I also collapsed the duplicated contextual-function helper into
+`phase/core.ExpectedFunctionLiteralSignature`. That is now the single local
+rule for turning an expected type into a function-literal signature, including
+arity-compatible function members inside a union. The call synthesizer now
+skips the contextual probe entirely when a call has no direct function literal
+arguments, and it reuses already-synthesized non-callback argument types during
+the probe path. That keeps the hot path simpler and avoids double synthesis of
+ordinary arguments.
+
+Current benchmark:
+
+```text
+BenchmarkCheck_LargeFunction-32  658  1764196 ns/op  1001938 B/op  10188 allocs/op
+BenchmarkCheck_LargeFunction-32  694  1800709 ns/op  1002041 B/op  10188 allocs/op
+BenchmarkCheck_LargeFunction-32  651  1716371 ns/op  1001966 B/op  10188 allocs/op
+```
+
+Official `../scripts/verify-suite.sh` still builds Wippy without the local
+go-lua replacement. In that pinned-dependency mode, go-lua checker tests pass
+and the Wippy binary builds, then external lint exits non-zero with:
+
+```text
+/home/wolfy-j/wippy/session                 8 errors, 0 warnings
+/home/wolfy-j/wippy/framework/src/agent/src 7 errors, 0 warnings
+/home/wolfy-j/wippy/docker-demo             21 errors, 2 warnings
+```
+
+Those pinned counts are useful for monitoring but are not the proof surface for
+this go-lua patch. The proof surface for this patch is the local-replace replay
+above plus the go-lua regression suite.

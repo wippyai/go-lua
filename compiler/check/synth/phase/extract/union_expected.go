@@ -3,6 +3,7 @@ package extract
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -30,11 +31,7 @@ func (s *Synthesizer) synthExprWithUnionExpected(
 	}
 
 	if fn, ok := expr.(*ast.FunctionExpr); ok {
-		paramCount := 0
-		if fn.ParList != nil {
-			paramCount = len(fn.ParList.Names)
-		}
-		if compatible := core.CompatibleFunctionFromUnion(paramCount, expected); compatible != nil {
+		if compatible := phasecore.ExpectedFunctionLiteralSignature(fn, expected); compatible != nil {
 			return s.SynthFunctionTypeWithExpected(fn, sc, compatible)
 		}
 	}
