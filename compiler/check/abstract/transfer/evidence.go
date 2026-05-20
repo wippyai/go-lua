@@ -26,9 +26,6 @@ func ExtractEvidence(fc *core.FlowContext, inputs *flow.Inputs) api.FlowEvidence
 	}
 	bindings := graphBindings(fc.Graph, fc.ModuleBindings)
 	out := fc.Evidence
-	if flowEvidenceEmpty(out) {
-		out = trace.GraphEvidence(fc.Graph, bindings)
-	}
 	fc.Evidence = out
 	captured := capturedSymbolSet(bindings, fc.Fn)
 	out.CapturedFields = ExtractCapturedFieldEvidence(out.Assignments, captured)
@@ -36,34 +33,17 @@ func ExtractEvidence(fc *core.FlowContext, inputs *flow.Inputs) api.FlowEvidence
 	return out
 }
 
-// EnsureGraphEvidence returns the canonical transfer-owned graph event trace
+// MaterializeGraphEvidence returns the canonical transfer-owned graph event trace
 // for this flow context and stores it on the context for later reducers.
-func EnsureGraphEvidence(fc *core.FlowContext) api.FlowEvidence {
+func MaterializeGraphEvidence(fc *core.FlowContext) api.FlowEvidence {
 	if fc == nil || fc.Graph == nil {
 		return api.FlowEvidence{}
 	}
-	if !flowEvidenceEmpty(fc.Evidence) {
+	if !fc.Evidence.IsZero() {
 		return fc.Evidence
 	}
 	fc.Evidence = trace.GraphEvidence(fc.Graph, graphBindings(fc.Graph, fc.ModuleBindings))
 	return fc.Evidence
-}
-
-func flowEvidenceEmpty(e api.FlowEvidence) bool {
-	return len(e.Calls) == 0 &&
-		len(e.Returns) == 0 &&
-		len(e.Assignments) == 0 &&
-		len(e.Branches) == 0 &&
-		!e.NormalExit.Valid &&
-		len(e.IdentifierUses) == 0 &&
-		len(e.FieldDefaults) == 0 &&
-		len(e.ParameterUses) == 0 &&
-		len(e.FreshTableLiterals) == 0 &&
-		len(e.FunctionDefinitions) == 0 &&
-		len(e.EscapedFunctions) == 0 &&
-		len(e.LocalTypePredicates) == 0 &&
-		len(e.CapturedFields) == 0 &&
-		len(e.CapturedContainers) == 0
 }
 
 // ExtractCapturedFieldEvidence records direct field writes to captured symbols.
@@ -112,7 +92,6 @@ func ExtractCapturedContainerEvidence(
 	if fc == nil || fc.Graph == nil || len(capturedSyms) == 0 {
 		return nil
 	}
-	EnsureGraphEvidence(fc)
 
 	var out []api.CapturedContainerEvidence
 	assignmentTypes := resolve.BuildAssignmentTypeResolver(inputs)

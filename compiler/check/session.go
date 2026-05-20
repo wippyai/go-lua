@@ -272,7 +272,8 @@ func (s *Session) RegisterGraphHierarchy(root *cfg.Graph) {
 				}
 			}
 		}
-		for _, def := range trace.FunctionDefinitions(g) {
+		evidence := trace.GraphEvidence(g, g.Bindings())
+		for _, def := range evidence.FunctionDefinitions {
 			if def.Nested.Func == nil {
 				continue
 			}

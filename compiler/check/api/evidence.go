@@ -25,6 +25,25 @@ type FlowEvidence struct {
 	CapturedContainers  []CapturedContainerEvidence
 }
 
+// IsZero reports whether no abstract-interpreter event evidence has been
+// materialized for a graph.
+func (e FlowEvidence) IsZero() bool {
+	return len(e.Calls) == 0 &&
+		len(e.Returns) == 0 &&
+		len(e.Assignments) == 0 &&
+		len(e.Branches) == 0 &&
+		!e.NormalExit.Valid &&
+		len(e.IdentifierUses) == 0 &&
+		len(e.FieldDefaults) == 0 &&
+		len(e.ParameterUses) == 0 &&
+		len(e.FreshTableLiterals) == 0 &&
+		len(e.FunctionDefinitions) == 0 &&
+		len(e.EscapedFunctions) == 0 &&
+		len(e.LocalTypePredicates) == 0 &&
+		len(e.CapturedFields) == 0 &&
+		len(e.CapturedContainers) == 0
+}
+
 // CallOrigin classifies the graph event that owns a call expression.
 type CallOrigin uint8
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/literal"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
@@ -170,7 +171,8 @@ func TestExtractTableMutatorAssignments_AssignmentCallSite(t *testing.T) {
 	}
 
 	ExtractTableMutatorAssignments(&core.FlowContext{
-		Graph: graph,
+		Graph:    graph,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
 		Derived: &core.Derived{
 			Synth: tableInsertSynth(),
 		},

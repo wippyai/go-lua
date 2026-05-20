@@ -233,7 +233,8 @@ func TestExtractAssignments_ContainerElementSourceFromTrailingCall(t *testing.T)
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
-		Graph: graph,
+		Graph:    graph,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
 		Derived: &core.Derived{
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown
@@ -290,7 +291,8 @@ func TestExtractAssignments_KeysCollectorEffectFallbackIgnoresNonCollectorEffect
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
-		Graph: graph,
+		Graph:    graph,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
 		Derived: &core.Derived{
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown
@@ -332,8 +334,9 @@ func TestExtractAssignments_PrefersPreciseDirectTypeOverExpandedAnyForLogicalOr(
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
-		Graph: graph,
-		API:   synthAPI,
+		Graph:    graph,
+		API:      synthAPI,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
 		Derived: &core.Derived{
 			Synth: synthAPI.TypeOf,
 			SymResolver: func(cfg.Point, cfg.SymbolID) (typ.Type, bool) {
@@ -388,7 +391,8 @@ func TestExtractAssignments_KeysCollectorEffectFallbackRespectsReturnIndex(t *te
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
-		Graph: graph,
+		Graph:    graph,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
 		Derived: &core.Derived{
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown
@@ -447,6 +451,7 @@ func TestExtractAssignments_KeysCollectorEffectFallback_TriesAllNameCandidates(t
 	ExtractAssignments(&core.FlowContext{
 		Graph:          graph,
 		ModuleBindings: moduleBindings,
+		Evidence:       trace.GraphEvidence(graph, moduleBindings),
 		Derived: &core.Derived{
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown
@@ -576,7 +581,8 @@ func TestExtractAssignments_IndexAssign_NonIdentifierStringKey_UsesIndexStringSe
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
-		Graph: graph,
+		Graph:    graph,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
 		Derived: &core.Derived{
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown
@@ -638,7 +644,8 @@ func TestExtractAssignments_NestedDynamicIndex_LiftsToRootIndexer(t *testing.T) 
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
-		Graph: graph,
+		Graph:    graph,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
 		Derived: &core.Derived{
 			Synth: func(ast.Expr, cfg.Point) typ.Type {
 				return typ.Unknown

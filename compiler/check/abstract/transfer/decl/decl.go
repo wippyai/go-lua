@@ -3,7 +3,6 @@ package decl
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/resolve"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/tblutil"
@@ -83,9 +82,6 @@ func AddTypeKey(inputs *flow.Inputs, t typ.Type) {
 func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 	if fc.Graph == nil {
 		return
-	}
-	if len(fc.Evidence.Assignments) == 0 && len(fc.Evidence.FunctionDefinitions) == 0 {
-		fc.Evidence = trace.GraphEvidence(fc.Graph, fc.ModuleBindings)
 	}
 
 	entry := fc.Graph.Entry()

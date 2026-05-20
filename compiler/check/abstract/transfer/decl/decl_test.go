@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -181,8 +182,9 @@ func TestExtractDeclaredTypes_SoftAnnotationNotAnnotated(t *testing.T) {
 	}
 
 	fc := &core.FlowContext{
-		Graph:  graph,
-		Scopes: scopes,
+		Graph:    graph,
+		Scopes:   scopes,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
 		Services: core.FlowServicesFuncs{
 			TypeExprResolver: func(ast.TypeExpr, *scope.State) typ.Type {
 				return typ.NewMap(typ.String, typ.NewArray(typ.Any))
@@ -240,8 +242,9 @@ func TestExtractDeclaredTypes_UnannotatedLocalFunctionStaysUnannotated(t *testin
 	}
 
 	fc := &core.FlowContext{
-		Graph:  graph,
-		Scopes: scopes,
+		Graph:    graph,
+		Scopes:   scopes,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
 		Services: core.FlowServicesFuncs{
 			// Simulate return-summary-enriched signature from upstream phases.
 			FnSigResolver: func(*ast.FunctionExpr, *scope.State) *typ.Function {
@@ -296,8 +299,9 @@ func TestExtractDeclaredTypes_ExplicitAnyMarksAnnotated(t *testing.T) {
 	}
 
 	fc := &core.FlowContext{
-		Graph:  graph,
-		Scopes: scopes,
+		Graph:    graph,
+		Scopes:   scopes,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
 		Services: core.FlowServicesFuncs{
 			TypeExprResolver: func(ast.TypeExpr, *scope.State) typ.Type {
 				return typ.Any

@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	flowpath "github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/predicate"
@@ -22,9 +21,6 @@ import (
 func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 	if fc.Graph == nil || inputs == nil {
 		return
-	}
-	if len(fc.Evidence.Calls) == 0 {
-		fc.Evidence = trace.GraphEvidence(fc.Graph, fc.ModuleBindings)
 	}
 
 	bindings := fc.Graph.Bindings()

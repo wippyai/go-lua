@@ -16,7 +16,6 @@ type TransferResult struct {
 
 // RunTransfer lowers CFG events into flow inputs and evidence streams.
 func RunTransfer(ctx *transfercore.FlowContext) TransferResult {
-	transfer.EnsureGraphEvidence(ctx)
 	inputs := transfer.Run(ctx)
 	return TransferResult{
 		Inputs:   inputs,

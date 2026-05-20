@@ -46,7 +46,8 @@ local _ = table.insert(c.items, 2)
 `)
 	symC := mustSymbol(t, graph, "c")
 	got := transfer.ExtractCapturedContainerEvidence(&core.FlowContext{
-		Graph: graph,
+		Graph:    graph,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
 		Derived: &core.Derived{
 			Synth: capturedMutationSynth(),
 		},

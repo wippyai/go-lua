@@ -67,9 +67,6 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	if inputs == nil {
 		return
 	}
-	if len(fc.Evidence.Assignments) == 0 && len(fc.Evidence.Calls) == 0 && len(fc.Evidence.FunctionDefinitions) == 0 {
-		fc.Evidence = trace.GraphEvidence(fc.Graph, fc.ModuleBindings)
-	}
 	derived := fc.Derived
 	if derived == nil {
 		derived = &fbcore.Derived{}

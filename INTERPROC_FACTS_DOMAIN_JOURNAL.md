@@ -7630,3 +7630,62 @@ go test ./compiler/check/abstract/trace ./compiler/check/pipeline \
 ```
 
 The command passed.
+
+## 2026-05-20 Flash Migration: Evidence Materialization Is Single-Entry
+
+The next evidence seam was not a type rule; it was ownership. Several transfer
+reducers had their own local branch of the form "if this evidence slice is
+empty, rebuild `trace.GraphEvidence` here". That made missing evidence look
+valid and scattered the abstract-interpreter entry protocol across reducers.
+
+Canonical rule:
+
+```text
+trace.GraphEvidence             = event discovery constructor
+transfer.MaterializeGraphEvidence = transfer entry materializer
+reducers                         = pure reducers over FlowContext.Evidence
+api.FlowEvidence.IsZero          = only zero-product predicate
+```
+
+The implementation added `api.FlowEvidence.IsZero` and removed duplicate
+`flowEvidenceEmpty` helpers. Transfer reducers for declarations, assignments,
+table mutators, container mutators, and captured-container evidence no longer
+rebuild graph evidence locally. `transfer.Run` materializes graph evidence once
+before reducer execution. Standalone reducer tests now pass explicit
+`trace.GraphEvidence` through `core.FlowContext`, matching the production
+contract instead of relying on hidden reducer behavior.
+
+The session hierarchy registration also stopped calling the partial
+`trace.FunctionDefinitions` discovery function directly. It now obtains
+function definitions from the canonical `GraphEvidence` product for that graph.
+
+Proof invariant:
+
+```text
+rg "flowEvidenceEmpty|fc\\.Evidence = trace\\.GraphEvidence|trace\\.FunctionDefinitions|EnsureGraphEvidence" \
+  compiler/check -g '!**/*_test.go'
+```
+
+The only remaining production graph-evidence assignment is the central transfer
+materializer:
+
+```text
+compiler/check/abstract/transfer/evidence.go
+```
+
+Regression protection:
+
+- `TestFlowEvidenceIsZero` covers the shared zero-product predicate, including
+  parameter-demand evidence.
+- Existing reducer tests now construct canonical evidence explicitly, proving
+  reducers no longer depend on local rediscovery.
+
+Verification:
+
+```text
+go test ./compiler/check/api ./compiler/check/abstract \
+  ./compiler/check/abstract/transfer/... ./compiler/check/synth/phase/extract \
+  ./compiler/check -count=1
+```
+
+The command passed.

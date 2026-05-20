@@ -81,7 +81,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	if fc.Graph == nil || fc.Graph.CFG() == nil {
 		return nil
 	}
-	EnsureGraphEvidence(fc)
+	MaterializeGraphEvidence(fc)
 
 	inputs := initInputsFromContext(fc)
 
