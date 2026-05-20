@@ -8443,3 +8443,87 @@ The commands passed.
 
 Benchmark sanity after the package removal stayed in the same allocation shape:
 about 3.9-4.9 ms/op, 1.08 MB/op, and 10435-10436 allocs/op on this machine.
+
+## 2026-05-20 Validation Boundary: Soundness vs. External Lint Counts
+
+Current validation result:
+
+- The go-lua tree is clean on `go test ./... -count=1`.
+- The flash-migration residue scan is clean: no `abstract/transfer`,
+  `RunTransfer`, `TransferResult`, `package transfer`, or `fbcore` production
+  references remain under `compiler/check`.
+- The official `../scripts/verify-suite.sh` is not a proof of this checkout's
+  Wippy lint behavior because `/home/wolfy-j/wippy/wippy/go.mod` still pins
+  `github.com/wippyai/go-lua v1.5.16`.
+- A temporary local-replace Wippy binary built against this checkout still
+  reports external diagnostics in several Wippy projects. Therefore the honest
+  statement is not "all external lint errors are gone"; the correct next proof
+  is classification: real unsound source/manifest use vs. checker false
+  positive.
+
+Canonical validation rule:
+
+```text
+Do not make go-lua accept unproven any/unknown/optional values just to reduce
+external counts. A remaining diagnostic is only a checker regression when the
+program has a local proof that the value satisfies the contract and the
+abstract interpreter fails to use that proof.
+```
+
+Representative local-replace diagnostics classified as soundness-expected:
+
+- `app.test.network:*`: `(args and args.url) or "..."`
+  can be non-string when `args.url` is truthy non-string. This is covered by
+  `TestExternalLint_UntypedOverlayURLRequiresStringProof`; the guarded variant
+  is `TestExternalLint_GuardedOverlayURLFeedsStringContract`.
+- `wippy.llm.util:compress`: untyped `configure(new_config)` can write
+  non-numeric values into numeric `CONFIG` fields before arithmetic reads.
+  This is covered by `TestExternalLint_UntypedConfigMutationCanInvalidateNumericReads`;
+  the typed-update variant is
+  `TestExternalLint_TypedConfigMutationPreservesNumericReads`.
+- `wippy.session.api:get_artifact*`: `artifact.meta` can be non-table, so
+  `if artifact.meta then artifact.meta.content_type end` is not enough proof.
+  This is covered by `TestExternalLint_StringMetadataRequiresStructuredProof`;
+  the table-guarded variant is
+  `TestExternalLint_GuardedStructuredMetadataAllowsFieldAccess`.
+- `wippy.session.process:command_bus`: a `fun(...any) -> any` handler is not a
+  proof of the typed registry contract `(any, any) -> (any, string?)`. This is
+  covered by `TestExternalLint_UntypedCommandHandlerCannotEnterTypedRegistry`;
+  the typed-handler variant is
+  `TestExternalLint_TypedCommandHandlerCanEnterTypedRegistry`.
+- `wippy.session.process:control_handlers`: dynamic `any` control payloads do
+  not satisfy typed handler records without field/type guards. This is covered
+  by `TestExternalLint_DynamicControlPayloadRequiresTypedProof`; the guarded
+  variant is `TestExternalLint_GuardedControlPayloadFeedsTypedHandler`.
+- `wippy.session:start_tokens_test`: passing `"not a table"` to an optional
+  record parameter is a real static contract violation even when the runtime
+  test expects validation to reject it. This is covered by
+  `TestExternalLint_StartOptionsRejectsPlainString`.
+
+Engine capabilities that remain regression-protected and must stay hack-free:
+
+- optional fallback to concrete strings:
+  `TestExternalLint_OptionalStringFallbackIsConcreteString` and
+  `TestExternalLint_ManifestHTTPBodyFallbackFeedsManifestJsonDecode`.
+- imported assertion summaries and non-nil narrowing:
+  `TestExternalLint_ImportedNotNilNarrowsNilInitializedCapturedLocal`,
+  `TestExternalLint_ImportedNotNilMakesNilOnlyPathUnreachable`, and
+  `TestExternalLint_ImportedNotNilNarrowsCapturedTableMethodWriteLocal`.
+- local predicate/effect inference through control flow and loops:
+  `TestExternalLint_LocalPredicateGuardNarrowsNumberAfterEarlyReturn`,
+  `TestExternalLint_DirectPredicateTrueBranchNarrowsArgument`,
+  `TestExternalLint_AssignedPredicateTrueBranchNarrowsArgument`, and
+  `TestExternalLint_LogicalPredicateTruePathNarrowsThroughLoop`.
+- expected function context for returned callbacks:
+  `TestExternalLint_ReturnedCallbackUsesExpectedParameterTypesInBody`,
+  `TestExternalLint_ReturnedMethodCallbackUsesExpectedParameterTypesInBody`,
+  and `TestExternalLint_ReturnedCallbackContextFlowsThroughLocalProjectionWrite`.
+
+Open proof obligation before claiming "no false positives":
+
+```text
+Run the local-replace Wippy lint harness, classify every remaining diagnostic,
+and for any diagnostic whose source has a real proof, add a minimal go-lua
+regression and fix the abstract interpreter. For diagnostics that are real
+source/manifest issues, do not weaken the checker.
+```
