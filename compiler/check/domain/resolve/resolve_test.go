@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/resolve"
+	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"

@@ -4,13 +4,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestApplyIndexerMergeToOverlay_TreatsNilWriteAsDeletion(t *testing.T) {
 	overlay := make(map[cfg.SymbolID]typ.Type)
-	ApplyIndexerMergeToOverlay(overlay, map[cfg.SymbolID][]mutator.IndexerInfo{
+	ApplyIndexerMergeToOverlay(overlay, map[cfg.SymbolID][]IndexerInfo{
 		1: {
 			{KeyType: typ.String, ValType: typ.Nil},
 		},
@@ -23,7 +22,7 @@ func TestApplyIndexerMergeToOverlay_TreatsNilWriteAsDeletion(t *testing.T) {
 func TestApplyIndexerMergeToOverlay_DeletionDoesNotPoisonWriteValue(t *testing.T) {
 	entry := typ.NewRecord().OptField("proc", typ.Any).Build()
 	overlay := make(map[cfg.SymbolID]typ.Type)
-	ApplyIndexerMergeToOverlay(overlay, map[cfg.SymbolID][]mutator.IndexerInfo{
+	ApplyIndexerMergeToOverlay(overlay, map[cfg.SymbolID][]IndexerInfo{
 		1: {
 			{KeyType: typ.String, ValType: typ.Nil},
 			{KeyType: typ.String, ValType: entry},

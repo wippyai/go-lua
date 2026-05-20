@@ -32,9 +32,9 @@ package hooks
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
+	"github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"

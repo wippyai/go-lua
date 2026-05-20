@@ -5,9 +5,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	compcfg "github.com/wippyai/go-lua/compiler/cfg"
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
-	abstractfacts "github.com/wippyai/go-lua/compiler/check/abstract/facts"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/flow"
@@ -300,7 +300,7 @@ func (s *Synthesizer) stableFunctionFactType(sym compcfg.SymbolID) typ.Type {
 	if defaultParent == nil && s.deps.CheckCtx != nil {
 		defaultParent = s.deps.CheckCtx.TypeNames()
 	}
-	return abstractfacts.FunctionTypeForSymbol(store, sym, defaultParent)
+	return functionfact.TypeForSymbol(store, sym, defaultParent)
 }
 
 func (s *Synthesizer) stableLocalFunctionValueType(

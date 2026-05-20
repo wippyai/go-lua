@@ -3,8 +3,8 @@ package iteration
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 )
 

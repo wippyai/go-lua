@@ -6,15 +6,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-// IndexerInfo holds key and value types for dynamic index assignments.
-type IndexerInfo struct {
-	KeyType typ.Type
-	ValType typ.Type
-}
 
 // CollectTableInsertMutations reduces transfer call evidence for table mutator calls on indexed expressions.
 // For table.insert(t[k], v), returns mutations grouped by the base symbol of t.
@@ -24,8 +19,8 @@ func CollectTableInsertMutations(
 	graph *cfg.Graph,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	bindings *bind.BindingTable,
-) map[cfg.SymbolID][]IndexerInfo {
-	result := make(map[cfg.SymbolID][]IndexerInfo)
+) map[cfg.SymbolID][]overlaymut.IndexerInfo {
+	result := make(map[cfg.SymbolID][]overlaymut.IndexerInfo)
 	if len(calls) == 0 || graph == nil {
 		return result
 	}
@@ -97,7 +92,7 @@ func CollectTableInsertMutations(
 		// The value type is an array of the element type
 		valType := typ.NewArray(elemType)
 
-		result[baseSym] = append(result[baseSym], IndexerInfo{
+		result[baseSym] = append(result[baseSym], overlaymut.IndexerInfo{
 			KeyType: keyType,
 			ValType: valType,
 		})
@@ -162,14 +157,4 @@ func CollectTableInsertOnDirect(
 	}
 
 	return result
-}
-
-// MergeIndexerMutations merges table mutator mutations into indexer assignments.
-func MergeIndexerMutations(
-	indexers map[cfg.SymbolID][]IndexerInfo,
-	mutations map[cfg.SymbolID][]IndexerInfo,
-) {
-	for sym, infos := range mutations {
-		indexers[sym] = append(indexers[sym], infos...)
-	}
 }

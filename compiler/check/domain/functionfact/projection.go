@@ -1,5 +1,4 @@
-// Package facts projects stable interprocedural facts from the product state.
-package facts
+package functionfact
 
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
@@ -9,8 +8,8 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// FunctionFactForSymbol returns the canonical stable function fact for sym.
-func FunctionFactForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) (api.FunctionFact, bool) {
+// ForSymbol returns the canonical stable function fact for sym.
+func ForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) (api.FunctionFact, bool) {
 	if store == nil || sym == 0 {
 		return api.FunctionFact{}, false
 	}
@@ -33,22 +32,22 @@ func FunctionFactForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParen
 	return store.GetInterprocFacts(parentGraph, parent).FunctionFacts.Fact(sym)
 }
 
-// FunctionTypeForSymbol returns the canonical stable function type fact for sym.
-func FunctionTypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
-	ff, ok := FunctionFactForSymbol(store, sym, defaultParent)
+// TypeForSymbol returns the canonical stable function type fact for sym.
+func TypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
+	ff, ok := ForSymbol(store, sym, defaultParent)
 	if !ok {
 		return nil
 	}
 	return ff.Type
 }
 
-// RefinementsFromFunctionFacts projects canonical function facts as refinement facts.
-func RefinementsFromFunctionFacts(store api.StoreReader, defaultParent *scope.State) api.RefinementFacts {
+// RefinementsFromStore projects canonical function facts as refinement facts.
+func RefinementsFromStore(store api.StoreReader, defaultParent *scope.State) api.RefinementFacts {
 	if store == nil {
 		return nil
 	}
 	return api.NewRefinementFacts(func(sym cfg.SymbolID) *constraint.FunctionRefinement {
-		ff, ok := FunctionFactForSymbol(store, sym, defaultParent)
+		ff, ok := ForSymbol(store, sym, defaultParent)
 		if !ok {
 			return nil
 		}

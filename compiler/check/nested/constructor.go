@@ -3,8 +3,8 @@ package nested
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/assign"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -228,7 +228,7 @@ func CollectConstructorFields(assignments []api.AssignmentEvidence, selfSym cfg.
 	}
 
 	filterSyms := map[cfg.SymbolID]bool{selfSym: true}
-	fields := assign.CollectFieldAssignments(assignments, synth, filterSyms)
+	fields := overlaymut.CollectFieldAssignments(assignments, synth, filterSyms)
 
 	if selfFields, ok := fields[selfSym]; ok && len(selfFields) > 0 {
 		filtered := make(map[string]typ.Type, len(selfFields))

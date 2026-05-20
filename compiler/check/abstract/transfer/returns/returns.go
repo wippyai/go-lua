@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/cond"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/predicate"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/resolve"
+	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/types/flow"
 )
 

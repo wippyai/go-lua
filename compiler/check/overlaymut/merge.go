@@ -2,7 +2,6 @@ package overlaymut
 
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
 	"github.com/wippyai/go-lua/types/flow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -106,7 +105,7 @@ func MergeFieldsIntoType(baseType typ.Type, fields map[string]typ.Type) typ.Type
 // ApplyIndexerMergeToOverlay adds map components to symbol types based on dynamic index assignments.
 func ApplyIndexerMergeToOverlay(
 	overlay map[cfg.SymbolID]typ.Type,
-	indexerAssignments map[cfg.SymbolID][]mutator.IndexerInfo,
+	indexerAssignments map[cfg.SymbolID][]IndexerInfo,
 ) {
 	for _, sym := range cfg.SortedSymbolIDs(indexerAssignments) {
 		infos := indexerAssignments[sym]

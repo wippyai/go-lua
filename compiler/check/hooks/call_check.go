@@ -22,9 +22,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	abstractfacts "github.com/wippyai/go-lua/compiler/check/abstract/facts"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
@@ -170,7 +170,7 @@ func functionFactCalleeType(
 	}
 	moduleBindings := store.ModuleBindings()
 	for _, sym := range callsite.CallableCalleeSymbolCandidates(info, graph, bindings, moduleBindings) {
-		ff, ok := abstractfacts.FunctionFactForSymbol(store, sym, nil)
+		ff, ok := functionfact.ForSymbol(store, sym, nil)
 		if !ok {
 			continue
 		}

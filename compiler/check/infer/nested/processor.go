@@ -22,13 +22,12 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/assign"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/nested"
-	"github.com/wippyai/go-lua/compiler/check/returns"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/siblings"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
@@ -236,7 +235,7 @@ func (p *Processor) processNestedFunction(
 					}
 				}
 				if len(capturedSet) > 0 {
-					fields := assign.CollectFieldAssignments(parentResult.Evidence.Assignments, parentResult.NarrowSynth.TypeOf, capturedSet)
+					fields := overlaymut.CollectFieldAssignments(parentResult.Evidence.Assignments, parentResult.NarrowSynth.TypeOf, capturedSet)
 					if len(fields) > 0 {
 						if capturedTypes == nil {
 							capturedTypes = make(map[cfg.SymbolID]typ.Type, len(fields))
@@ -247,7 +246,7 @@ func (p *Processor) processNestedFunction(
 								continue
 							}
 							base := capturedTypes[sym]
-							capturedTypes[sym] = returns.MergeFieldsIntoType(base, fieldMap)
+							capturedTypes[sym] = overlaymut.MergeFieldsIntoType(base, fieldMap)
 						}
 					}
 				}

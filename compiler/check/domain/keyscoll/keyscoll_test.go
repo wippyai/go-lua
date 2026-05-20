@@ -7,9 +7,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/keyscoll"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 

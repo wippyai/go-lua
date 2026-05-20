@@ -7,10 +7,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/assign"
 	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/resolve"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -702,7 +703,7 @@ func extractMapComponentType(t typ.Type) (typ.Type, typ.Type, bool) {
 				continue
 			}
 			key = typ.JoinPreferNonSoft(key, k)
-			val = returns.JoinValueTypes(val, vv)
+			val = overlaymut.JoinValueTypes(val, vv)
 		}
 		if ok {
 			return key, val, true
@@ -820,7 +821,7 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 	if i == nil || ctx == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynthAdapter == nil {
 		return
 	}
-	fieldAssignments := assign.CollectFieldAssignments(ctx.info.Evidence.Assignments, stage.enrichedSynthAdapter, nil)
+	fieldAssignments := overlaymut.CollectFieldAssignments(ctx.info.Evidence.Assignments, stage.enrichedSynthAdapter, nil)
 
 	nestedBindings := stage.fnGraph.Bindings()
 	if nestedBindings == nil {
@@ -835,9 +836,9 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 		return resolve.CalleeType(info, p, stage.enrichedSynthAdapter, nil, nil, stage.fnGraph, nestedBindings, i.store.ModuleBindings())
 	}
 	nestedFieldAssignments := returns.CollectCalledNestedFieldAssignments(stage.fnGraph, nestedBindings, ctx.info.Evidence.Calls, capturedByCallee, calleeTypeResolver)
-	returns.MergeFieldAssignments(fieldAssignments, nestedFieldAssignments)
+	overlaymut.MergeFieldAssignments(fieldAssignments, nestedFieldAssignments)
 
-	returns.ApplyFieldMergeToOverlay(stage.finalOverlay, fieldAssignments)
+	overlaymut.ApplyFieldMergeToOverlay(stage.finalOverlay, fieldAssignments)
 }
 
 func (i *Inferencer) applyIndexerMutations(ctx *returnInferenceContext, stage *overlayMutationStage) {
@@ -848,10 +849,10 @@ func (i *Inferencer) applyIndexerMutations(ctx *returnInferenceContext, stage *o
 	if indexerBindings == nil {
 		indexerBindings = i.store.ModuleBindings()
 	}
-	indexerAssignments := assign.CollectIndexerAssignments(ctx.info.Evidence.Assignments, stage.enrichedSynthAdapter, indexerBindings, nil)
+	indexerAssignments := overlaymut.CollectIndexerAssignments(ctx.info.Evidence.Assignments, stage.enrichedSynthAdapter, indexerBindings, nil)
 	tableMutations := mutator.CollectTableInsertMutations(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
-	mutator.MergeIndexerMutations(indexerAssignments, tableMutations)
-	returns.ApplyIndexerMergeToOverlay(stage.finalOverlay, indexerAssignments)
+	overlaymut.MergeIndexerMutations(indexerAssignments, tableMutations)
+	overlaymut.ApplyIndexerMergeToOverlay(stage.finalOverlay, indexerAssignments)
 }
 
 func (i *Inferencer) applyDirectMutations(ctx *returnInferenceContext, stage *overlayMutationStage) {
@@ -863,7 +864,7 @@ func (i *Inferencer) applyDirectMutations(ctx *returnInferenceContext, stage *ov
 		indexerBindings = i.store.ModuleBindings()
 	}
 	directMutations := mutator.CollectTableInsertOnDirect(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
-	returns.ApplyDirectMutationsToOverlay(stage.finalOverlay, directMutations)
+	overlaymut.ApplyDirectMutationsToOverlay(stage.finalOverlay, directMutations)
 }
 
 // phase2InferenceState holds narrowed synthesis and dead return points.

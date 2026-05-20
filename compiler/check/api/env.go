@@ -5,7 +5,7 @@ package api
 
 import (
 	"github.com/wippyai/go-lua/compiler/bind"
-	"github.com/wippyai/go-lua/compiler/check/abstract/query"
+	"github.com/wippyai/go-lua/compiler/check/domain/typefacts"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/flow"
@@ -505,7 +505,7 @@ func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 		PhaseScopeCompute,
 		cfg.Graph,
 		cfg.Bindings,
-		query.NewTypeFacts(query.TypeFactsConfig{
+		typefacts.New(typefacts.Config{
 			Declared:      cfg.DeclaredTypes,
 			Functions:     cfg.FunctionFacts,
 			Literals:      cfg.LiteralTypes,
@@ -529,7 +529,7 @@ func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 		PhaseNarrowing,
 		cfg.Graph,
 		cfg.Bindings,
-		query.NewTypeFacts(query.TypeFactsConfig{
+		typefacts.New(typefacts.Config{
 			Declared:      cfg.DeclaredTypes,
 			Functions:     cfg.FunctionFacts,
 			Literals:      cfg.LiteralTypes,
@@ -565,7 +565,7 @@ func NewReturnInferenceEnv(cfg ReturnInferenceEnvConfig) *DeclaredEnvImpl {
 		PhaseScopeCompute,
 		cfg.Graph,
 		cfg.Bindings,
-		query.NewTypeFacts(query.TypeFactsConfig{
+		typefacts.New(typefacts.Config{
 			Declared:  cfg.DeclaredTypes,
 			Functions: cfg.FunctionFacts,
 		}),

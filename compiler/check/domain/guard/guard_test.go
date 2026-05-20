@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/guard"
+	"github.com/wippyai/go-lua/compiler/check/domain/guard"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )

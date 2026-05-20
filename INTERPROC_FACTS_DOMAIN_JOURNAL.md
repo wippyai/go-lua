@@ -7916,3 +7916,355 @@ go test ./compiler/check/api ./compiler/check/abstract \
 ```
 
 The command passed.
+
+## 2026-05-20 Flash Migration: Function Fact Projection Is Domain-Owned
+
+The `compiler/check/abstract/facts` package was a misleading boundary. It did
+not implement abstract transfer semantics; it projected stable function facts
+from the interprocedural product stored in the checker store. Keeping that
+projection under `abstract` made the mental model look like transfer owned a
+second fact channel.
+
+Canonical rule:
+
+```text
+domain/functionfact   = meaning, merge, widening, and store projection for one function fact
+abstract/transfer     = graph-local abstract interpretation over explicit flow evidence
+store                 = cached module products and graph evidence provider
+```
+
+The projection helpers now live beside the rest of the function-fact domain:
+
+- `functionfact.ForSymbol` reads the canonical stable function fact for a
+  symbol;
+- `functionfact.TypeForSymbol` projects its callable type;
+- `functionfact.RefinementsFromStore` exposes refinement facts as a store view.
+
+This is not a bridge or compatibility layer. The old `abstract/facts` package
+was deleted, and callers now name the domain that owns the data they consume.
+
+Proof invariant:
+
+```text
+rg "abstract/facts|abstractfacts|FunctionFactForSymbol|FunctionTypeForSymbol|RefinementsFromFunctionFacts|package facts" \
+  compiler/check -n
+```
+
+The scan returns no matches.
+
+Verification:
+
+```text
+go test ./compiler/check/domain/functionfact ./compiler/check/hooks \
+  ./compiler/check/pipeline ./compiler/check/synth/phase/extract -count=1
+```
+
+The command passed.
+
+## 2026-05-20 Flash Migration: Product Type Facts Are Domain-Owned
+
+The second package-boundary inversion was `compiler/check/api` importing
+`compiler/check/abstract/query`. The implementation in that package was not an
+abstract-transfer reducer; it was the canonical `flow.TypeFacts` view over the
+checker product state: declared types, canonical function facts, literal types,
+annotation markers, and the optional solved flow state.
+
+Canonical rule:
+
+```text
+api/env              = phase-typed environment contract and constructors
+domain/typefacts     = product-state query implementing flow.TypeFacts
+abstract/trace       = event discovery
+abstract/transfer    = graph-local abstract transfer
+```
+
+The product query now lives in `compiler/check/domain/typefacts` as
+`typefacts.New(typefacts.Config{...})`. The old `abstract/query` package was
+deleted, so the API layer no longer depends on an abstract implementation
+package.
+
+This keeps the abstract-interpreter model direct:
+
+- product domains own product queries;
+- transfer owns event reduction;
+- API environment construction no longer reaches into abstract packages.
+
+Proof invariant:
+
+```text
+rg "compiler/check/abstract/(facts|query)|abstractfacts|FunctionFactForSymbol|FunctionTypeForSymbol|RefinementsFromFunctionFacts|package facts|package query|NewTypeFacts|TypeFactsConfig" \
+  compiler/check -n
+```
+
+The scan returns no matches.
+
+Verification:
+
+```text
+go test ./compiler/check/domain/typefacts ./compiler/check/api -count=1
+```
+
+The command passed.
+
+## 2026-05-20 Flash Migration: Constraint Path Extraction Is Domain-Owned
+
+`abstract/transfer/path` was another sideways dependency. It did not lower flow
+inputs by itself; it converted AST expressions plus binding identity into
+canonical `constraint.Path` values. That path identity is consumed by trace,
+transfer reducers, hooks, return inference, and iteration helpers. Keeping it
+under `abstract/transfer` made non-transfer packages import transfer internals
+for a shared semantic operation.
+
+Canonical rule:
+
+```text
+domain/path          = AST/binding -> constraint.Path identity
+abstract/trace       = event discovery using domain paths where needed
+abstract/transfer    = reducers that consume paths and produce flow inputs
+hooks/infer          = validators/reducers that may also consume canonical paths
+```
+
+The package moved to `compiler/check/domain/path`. No behavior changed; all
+callers now import the domain owner directly, and `abstract/transfer/path` was
+deleted.
+
+Proof invariant:
+
+```text
+rg "compiler/check/abstract/transfer/path" compiler/check -n
+```
+
+The scan returns no matches.
+
+Verification:
+
+```text
+go test ./compiler/check/domain/path ./compiler/check/abstract/transfer/... \
+  ./compiler/check/abstract/trace ./compiler/check/hooks \
+  ./compiler/check/infer/return ./compiler/check/domain/iteration -count=1
+```
+
+The command passed.
+
+## 2026-05-20 Flash Migration: Guard Extraction Is Domain-Owned
+
+`abstract/transfer/guard` was shared by transfer reducers, field validation, and
+expression synthesis. The package owns guard semantics: builtin `type(expr)`
+probes, truthy path keys, and propagation of branch guard facts. That is a
+domain law over AST/binding identity and branch evidence, not an implementation
+detail of assignment transfer.
+
+Canonical rule:
+
+```text
+domain/guard         = guard/probe extraction and guard-key semantics
+abstract/transfer    = reducers that consume guard facts while building flow inputs
+hooks/synth          = consumers of the same guard domain for validation and synthesis
+```
+
+The package moved to `compiler/check/domain/guard`, and
+`abstract/transfer/guard` was deleted. This removes another sideways transfer
+import without changing guard behavior.
+
+Proof invariant:
+
+```text
+rg "compiler/check/abstract/transfer/guard" compiler/check -n
+```
+
+The scan returns no matches.
+
+Verification:
+
+```text
+go test ./compiler/check/domain/guard ./compiler/check/abstract/transfer/assign \
+  ./compiler/check/hooks ./compiler/check/synth/phase/extract -count=1
+```
+
+The command passed.
+
+## 2026-05-20 Flash Migration: Symbol Resolution Is Domain-Owned
+
+`abstract/transfer/resolve` had become a shared resolution utility package:
+symbol display names, product-state type selection, input/global lookups,
+context symbol resolvers, type-key lookup, and call-refinement lookup. Transfer
+reducers need those operations, but they are not themselves transfer reducers.
+Return inference, return callsite analysis, and pipeline captured-mutator replay
+also consumed them directly.
+
+Canonical rule:
+
+```text
+domain/resolve       = checker symbol/type/refinement resolution helpers
+domain/path          = path identity construction
+abstract/transfer    = reducers that call domain resolution while lowering evidence
+infer/pipeline       = consumers of the same resolution domain
+```
+
+The package moved to `compiler/check/domain/resolve`, and
+`abstract/transfer/resolve` was deleted. This removes another non-reducer
+package from the transfer tree.
+
+Proof invariant:
+
+```text
+rg "compiler/check/abstract/transfer/resolve" compiler/check -n
+```
+
+The scan returns no matches.
+
+Verification:
+
+```text
+go test ./compiler/check/domain/resolve ./compiler/check/abstract/transfer/... \
+  ./compiler/check/returns ./compiler/check/pipeline \
+  ./compiler/check/infer/return -count=1
+```
+
+The command passed.
+
+## 2026-05-20 Flash Migration: Overlay Mutation Collectors Have One Owner
+
+`abstract/transfer/assign/collect.go` was a pure forwarding bridge to
+`overlaymut.CollectFieldAssignments` and `overlaymut.CollectIndexerAssignments`.
+That was exactly the kind of non-final shape the migration is removing: callers
+could name assignment transfer while actually using overlay mutation collection.
+
+Canonical rule:
+
+```text
+overlaymut           = collect and apply overlay field/indexer mutation evidence
+abstract/transfer/assign = assignment transfer reducers, not overlay collector aliases
+infer/nested/returns = consume overlaymut directly when they need overlay mutation facts
+```
+
+The forwarding file was deleted. Return inference, nested inference, and
+constructor detection now call `overlaymut` directly. The former wrapper tests
+moved to the owning package.
+
+Proof invariant:
+
+```text
+rg "assign\\.Collect(Field|Indexer)Assignments" compiler/check -n
+```
+
+The scan returns no matches.
+
+Verification:
+
+```text
+go test ./compiler/check/overlaymut ./compiler/check/abstract/transfer/assign \
+  ./compiler/check/nested ./compiler/check/infer/nested \
+  ./compiler/check/infer/return -count=1
+```
+
+The command passed.
+
+## 2026-05-20 Flash Migration: Return Overlay Facade Removed
+
+`compiler/check/returns/overlay.go` was another facade over `overlaymut`. It
+re-exported field/indexer/direct mutation merge operations while adding no
+return-specific semantics. That made return inference look like it had its own
+overlay mutation domain.
+
+Canonical rule:
+
+```text
+overlaymut           = overlay mutation collection and application
+returns              = return graph/call/summary inference only
+infer/return         = consumes returns for return SCCs and overlaymut for overlay mutation
+```
+
+The facade was deleted. Return inference and nested inference now call
+`overlaymut` directly, and the former return-overlay tests moved to the
+overlay mutation package.
+
+Proof invariant:
+
+```text
+rg "returns\\.(MergeFieldAssignments|ApplyFieldMergeToOverlay|MergeFieldsIntoType|ApplyIndexerMergeToOverlay|JoinValueTypes|MergeMapComponentIntoType|ApplyDirectMutationsToOverlay)" \
+  compiler/check -n
+```
+
+The scan returns no matches.
+
+Verification:
+
+```text
+go test ./compiler/check/overlaymut ./compiler/check/returns \
+  ./compiler/check/infer/nested ./compiler/check/infer/return -count=1
+```
+
+The command passed.
+
+## 2026-05-20 Flash Migration: Keys-Collector Detection Is Domain-Owned
+
+`abstract/transfer/keyscoll` detected the "collect keys from table parameter"
+function pattern over graph evidence. Assignment transfer consumes that
+detector, but the detector itself is a semantic domain over calls, assignments,
+returns, function identity, and graph evidence. Phase-level signature projection
+also needs it.
+
+Canonical rule:
+
+```text
+domain/keyscoll      = keys-collector body/call classification
+abstract/transfer    = assignment reducer consuming the detector result
+phase                = signature projection consuming the same detector domain
+```
+
+The package moved to `compiler/check/domain/keyscoll`, and
+`abstract/transfer/keyscoll` was deleted.
+
+Proof invariant:
+
+```text
+rg "compiler/check/abstract/transfer/keyscoll" compiler/check -n
+```
+
+The scan returns no matches.
+
+Verification:
+
+```text
+go test ./compiler/check/domain/keyscoll ./compiler/check/abstract/transfer \
+  ./compiler/check/abstract/transfer/assign ./compiler/check/phase -count=1
+```
+
+The command passed.
+
+## 2026-05-20 Flash Migration: Indexer Overlay Facts Are Overlay-Owned
+
+The dynamic-index overlay shape `IndexerInfo` and the merge operation for
+table-insert-derived indexer mutations still lived in transfer/mutator. That
+forced `overlaymut` to import transfer just to name the data it owned.
+
+Canonical rule:
+
+```text
+overlaymut           = overlay mutation data shapes and overlay merge/apply laws
+abstract/transfer/mutator = call-pattern detection for table/container mutators
+infer/synth          = combine transfer mutator observations with overlaymut facts
+```
+
+`overlaymut.IndexerInfo` and `overlaymut.MergeIndexerMutations` are now the
+canonical APIs. Transfer mutator detection returns that overlay-owned shape;
+the old `mutator.IndexerInfo` and `mutator.MergeIndexerMutations` names were
+deleted.
+
+Proof invariant:
+
+```text
+rg "mutator\\.IndexerInfo|mutator\\.MergeIndexerMutations" compiler/check -n
+```
+
+The scan returns no matches.
+
+Verification:
+
+```text
+go test ./compiler/check/overlaymut ./compiler/check/abstract/transfer/mutator \
+  ./compiler/check/infer/return ./compiler/check/synth/phase/extract -count=1
+```
+
+The command passed.

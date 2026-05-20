@@ -4,10 +4,15 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+// IndexerInfo holds key and value types for dynamic index assignments.
+type IndexerInfo struct {
+	KeyType typ.Type
+	ValType typ.Type
+}
 
 // CollectFieldAssignments reduces transfer assignment evidence into field assignments grouped by base symbol.
 // Returns a map: symbolID -> map[fieldName]typ.Type representing fields assigned to each symbol.
@@ -89,8 +94,8 @@ func CollectIndexerAssignments(
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	bindings *bind.BindingTable,
 	filterSyms map[cfg.SymbolID]bool,
-) map[cfg.SymbolID][]mutator.IndexerInfo {
-	result := make(map[cfg.SymbolID][]mutator.IndexerInfo)
+) map[cfg.SymbolID][]IndexerInfo {
+	result := make(map[cfg.SymbolID][]IndexerInfo)
 	if len(assignments) == 0 {
 		return result
 	}
@@ -146,7 +151,7 @@ func CollectIndexerAssignments(
 				valType = typ.Unknown
 			}
 
-			result[sym] = append(result[sym], mutator.IndexerInfo{
+			result[sym] = append(result[sym], IndexerInfo{
 				KeyType: keyType,
 				ValType: valType,
 			})
@@ -161,4 +166,14 @@ func canonicalDynamicKeyType(keyType typ.Type) typ.Type {
 		return typ.String
 	}
 	return keyType
+}
+
+// MergeIndexerMutations merges table mutator mutations into indexer assignments.
+func MergeIndexerMutations(
+	indexers map[cfg.SymbolID][]IndexerInfo,
+	mutations map[cfg.SymbolID][]IndexerInfo,
+) {
+	for sym, infos := range mutations {
+		indexers[sym] = append(indexers[sym], infos...)
+	}
 }

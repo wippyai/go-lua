@@ -549,7 +549,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 
 		indexerAssignments := overlaymut.CollectIndexerAssignments(graphEvidence.Assignments, enrichedSynth, mutationBindings, nil)
 		tableMutations := mutator.CollectTableInsertMutations(graphEvidence.Calls, fnGraph, enrichedSynth, mutationBindings)
-		mutator.MergeIndexerMutations(indexerAssignments, tableMutations)
+		overlaymut.MergeIndexerMutations(indexerAssignments, tableMutations)
 		overlaymut.ApplyIndexerMergeToOverlay(overlay, indexerAssignments)
 
 		directMutations := mutator.CollectTableInsertOnDirect(graphEvidence.Calls, fnGraph, enrichedSynth, mutationBindings)

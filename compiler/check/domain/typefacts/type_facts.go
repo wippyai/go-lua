@@ -1,9 +1,9 @@
-// Package abstract owns the checker's product-state query surface.
+// Package typefacts owns the checker product-state query surface.
 //
 // Synthesis and transfer code should ask this package for semantic facts rather
 // than rebuilding precedence rules from stores, product overlays, or phase-local
 // fallbacks.
-package query
+package typefacts
 
 import (
 	"github.com/wippyai/go-lua/types/cfg"
@@ -11,13 +11,13 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// FunctionFacts projects canonical function summaries into the type fact query.
+// FunctionFacts projects canonical function summaries into the type-fact query.
 type FunctionFacts interface {
 	FunctionType(sym cfg.SymbolID) typ.Type
 }
 
-// TypeFactsConfig contains the immutable and solved inputs visible to a query.
-type TypeFactsConfig struct {
+// Config contains the immutable and solved inputs visible to a query.
+type Config struct {
 	Declared      flow.DeclaredTypes
 	Functions     FunctionFacts
 	Literals      flow.DeclaredTypes
@@ -36,8 +36,8 @@ type TypeFacts struct {
 
 var _ flow.TypeFacts = (*TypeFacts)(nil)
 
-// NewTypeFacts returns the canonical type-fact query for a checker phase.
-func NewTypeFacts(cfg TypeFactsConfig) *TypeFacts {
+// New returns the canonical type-fact query for a checker phase.
+func New(cfg Config) *TypeFacts {
 	return &TypeFacts{
 		declared:      cfg.Declared,
 		functions:     cfg.Functions,

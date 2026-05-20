@@ -1,4 +1,4 @@
-package query
+package typefacts
 
 import (
 	"testing"
@@ -16,7 +16,7 @@ func (m functionFactMap) FunctionType(sym cfg.SymbolID) typ.Type {
 
 func TestTypeFactsDeclaredAtPrefersAnnotatedDeclaration(t *testing.T) {
 	const sym cfg.SymbolID = 1
-	facts := NewTypeFacts(TypeFactsConfig{
+	facts := New(Config{
 		Declared:      flow.DeclaredTypes{sym: typ.String},
 		Functions:     functionFactMap{sym: typ.Number},
 		Literals:      flow.DeclaredTypes{sym: typ.Boolean},
@@ -32,7 +32,7 @@ func TestTypeFactsDeclaredAtPrefersAnnotatedDeclaration(t *testing.T) {
 func TestTypeFactsDeclaredAtUsesFunctionBeforeDeclaration(t *testing.T) {
 	const sym cfg.SymbolID = 2
 	fn := typ.Func().Returns(typ.String).Build()
-	facts := NewTypeFacts(TypeFactsConfig{
+	facts := New(Config{
 		Declared:  flow.DeclaredTypes{sym: typ.Number},
 		Functions: functionFactMap{sym: fn},
 	})
@@ -45,7 +45,7 @@ func TestTypeFactsDeclaredAtUsesFunctionBeforeDeclaration(t *testing.T) {
 
 func TestTypeFactsDeclaredAtUsesLiteralLast(t *testing.T) {
 	const sym cfg.SymbolID = 3
-	facts := NewTypeFacts(TypeFactsConfig{
+	facts := New(Config{
 		Literals: flow.DeclaredTypes{sym: typ.Boolean},
 	})
 
@@ -57,7 +57,7 @@ func TestTypeFactsDeclaredAtUsesLiteralLast(t *testing.T) {
 
 func TestTypeFactsDeclaredAtUnknownIsUnknownState(t *testing.T) {
 	const sym cfg.SymbolID = 4
-	facts := NewTypeFacts(TypeFactsConfig{
+	facts := New(Config{
 		Declared: flow.DeclaredTypes{sym: typ.Unknown},
 	})
 

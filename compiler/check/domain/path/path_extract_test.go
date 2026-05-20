@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
+	"github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 )

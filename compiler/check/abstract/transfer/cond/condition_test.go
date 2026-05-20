@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/resolve"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"

@@ -3,11 +3,10 @@ package pipeline
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	abstractfacts "github.com/wippyai/go-lua/compiler/check/abstract/facts"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/resolve"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -226,7 +225,7 @@ func (r *Runner) literalSigProvider(store api.StoreReader, graph *cfg.Graph, par
 }
 
 func refinementFactsFrom(store api.StoreReader) api.RefinementFacts {
-	return abstractfacts.RefinementsFromFunctionFacts(store, nil)
+	return functionfact.RefinementsFromStore(store, nil)
 }
 
 func (r *Runner) parentScopeForGraph(store api.StoreReader, graph *cfg.Graph) *scope.State {

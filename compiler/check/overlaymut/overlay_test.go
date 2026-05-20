@@ -1,10 +1,9 @@
-package returns
+package overlaymut
 
 import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -247,7 +246,7 @@ func TestMergeMapComponentIntoType(t *testing.T) {
 func TestApplyIndexerMergeToOverlay(t *testing.T) {
 	t.Run("empty infos are skipped", func(t *testing.T) {
 		overlay := make(map[cfg.SymbolID]typ.Type)
-		indexerAssignments := map[cfg.SymbolID][]mutator.IndexerInfo{
+		indexerAssignments := map[cfg.SymbolID][]IndexerInfo{
 			1: {},
 		}
 		ApplyIndexerMergeToOverlay(overlay, indexerAssignments)
@@ -258,7 +257,7 @@ func TestApplyIndexerMergeToOverlay(t *testing.T) {
 
 	t.Run("indexer info is merged", func(t *testing.T) {
 		overlay := make(map[cfg.SymbolID]typ.Type)
-		indexerAssignments := map[cfg.SymbolID][]mutator.IndexerInfo{
+		indexerAssignments := map[cfg.SymbolID][]IndexerInfo{
 			1: {{KeyType: typ.String, ValType: typ.Number}},
 		}
 		ApplyIndexerMergeToOverlay(overlay, indexerAssignments)
