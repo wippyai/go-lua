@@ -7649,6 +7649,9 @@ trace.GraphEvidence = constructor used only by canonical materializers/tests
 Implementation shape:
 
 - `api.GraphProvider` now includes `EvidenceForGraph`.
+- the old separate `GraphEvidenceProvider` capability name is gone; store
+  readers declare the evidence method directly instead of embedding a second
+  provider abstraction.
 - `check.Session` already satisfied that shape through its store-backed
   evidence cache.
 - Synth extraction no longer imports `abstract/trace` in production and returns
@@ -7660,10 +7663,13 @@ Implementation shape:
 Proof invariant:
 
 ```text
+rg "GraphEvidenceProvider" compiler/check -n
+
 rg "trace\\.GraphEvidence" compiler/check -g '!**/*_test.go' -n
 ```
 
-The remaining production matches are canonical constructor/materializer sites:
+The first scan returns no matches. The second scan's remaining production
+matches are canonical constructor/materializer sites:
 
 ```text
 compiler/check/store/store.go
