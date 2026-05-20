@@ -2,10 +2,7 @@ package paramevidence
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/value"
-	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
@@ -352,80 +349,4 @@ func isInformativeEvidenceType(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 
 	return true
-}
-
-// BuildSignatureMap builds a function-expression keyed parameter evidence
-// map for this graph from canonical FunctionFacts.
-func BuildSignatureMap(
-	store api.StoreReader,
-	graph *cfg.Graph,
-	parent *scope.State,
-	stdlib *scope.State,
-) map[*ast.FunctionExpr][]typ.Type {
-	if store == nil || graph == nil {
-		return nil
-	}
-
-	out := make(map[*ast.FunctionExpr][]typ.Type)
-
-	if parent != nil {
-		functionFacts := store.GetInterprocFacts(graph, parent).FunctionFacts
-		for _, sym := range cfg.SortedSymbolIDs(functionFacts) {
-			vec := functionFacts.Params(sym)
-			if len(vec) == 0 {
-				continue
-			}
-			hasEvidence := false
-			for _, observed := range vec {
-				if observed != nil {
-					hasEvidence = true
-					break
-				}
-			}
-			if !hasEvidence {
-				continue
-			}
-			fn := store.FuncForSymbol(sym)
-			if fn == nil {
-				continue
-			}
-			if _, exists := out[fn]; !exists {
-				out[fn] = vec
-			}
-		}
-	}
-
-	// If this graph is a nested function, pull parameter evidence from the
-	// parent graph and apply it to the current function signature.
-	if meta, ok := store.NestedMetaFor(graph.ID()); ok {
-		parentGraph := store.Graphs()[meta.ParentGraphID]
-		if parentGraph != nil {
-			defaultScope := (*scope.State)(nil)
-			if _, isNestedParent := store.NestedMetaFor(parentGraph.ID()); !isNestedParent {
-				defaultScope = stdlib
-			}
-			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), defaultScope)
-			if parentScope != nil {
-				parentFacts := store.GetInterprocFacts(parentGraph, parentScope).FunctionFacts
-				if len(parentFacts) > 0 {
-					fn := store.FuncForGraph(graph)
-					if fn == nil {
-						fn = graph.Func()
-					}
-					if fn != nil {
-						if sym, ok := store.SymbolForFunc(fn); ok {
-							if evidence := parentFacts.Params(sym); len(evidence) > 0 {
-								out[fn] = evidence
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }

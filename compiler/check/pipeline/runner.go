@@ -20,7 +20,7 @@ package pipeline
 
 import (
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
@@ -108,7 +108,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 
 	// Build shared transfer evidence and phase environment once.
 	graphEvidence := store.EvidenceForGraph(graph)
-	parameterEvidenceSigs := paramevidence.BuildSignatureMap(store, graph, parent, r.stdlib)
+	parameterEvidenceSigs := functionfact.ParameterEvidenceSignatures(store, graph, parent, r.stdlib)
 	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, graphEvidence, parameterEvidenceSigs)
 
 	graphFacts := store.GetInterprocFacts(graph, parent)

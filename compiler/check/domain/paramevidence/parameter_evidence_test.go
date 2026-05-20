@@ -130,13 +130,6 @@ func TestWidenType_RecordPreservesClosedShape(t *testing.T) {
 	}
 }
 
-func TestBuildSignatureMap_NilInputs(t *testing.T) {
-	result := BuildSignatureMap(nil, nil, nil, nil)
-	if result != nil {
-		t.Errorf("expected nil for nil inputs, got %v", result)
-	}
-}
-
 func TestMergeIntoSignature_ImplicitSelfUsesEffectiveHintSlots(t *testing.T) {
 	fn := functionWithParams("name")
 	sig := typ.Func().

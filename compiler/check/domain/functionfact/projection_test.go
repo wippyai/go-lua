@@ -86,6 +86,36 @@ func TestReturnsForPhase_SelectsNarrowingProjection(t *testing.T) {
 	}
 }
 
+func TestParameterEvidenceSignatures_NilInputs(t *testing.T) {
+	if got := functionfact.ParameterEvidenceSignatures(nil, nil, nil, nil); got != nil {
+		t.Fatalf("ParameterEvidenceSignatures() = %v, want nil", got)
+	}
+}
+
+func TestParameterEvidenceSignatures_ProjectsCurrentGraphFacts(t *testing.T) {
+	st := store.NewSessionStore()
+	fn := &ast.FunctionExpr{}
+	graph := cfg.Build(fn)
+	st.RegisterGraph(graph, fn)
+	parent := scope.New().WithType("parent", typ.String)
+	registerGraphParent(t, st, graph, parent)
+
+	sym := cfg.SymbolID(21)
+	st.RegisterFunctionRef(sym, fn, graph, 0, 0)
+	key := api.KeyForGraph(graph, parent.Hash())
+	st.InterprocPrev.Facts[key] = api.Facts{
+		FunctionFacts: functionfact.FromPart(sym, functionfact.Parts{
+			Params: []typ.Type{typ.String},
+		}),
+	}
+
+	got := functionfact.ParameterEvidenceSignatures(st, graph, parent, nil)
+	evidence := got[fn]
+	if len(evidence) != 1 || !typ.TypeEquals(evidence[0], typ.String) {
+		t.Fatalf("signature evidence = %v, want string", evidence)
+	}
+}
+
 func registerGraphParent(t *testing.T, st *store.SessionStore, graph *cfg.Graph, parent *scope.State) {
 	t.Helper()
 	if graph == nil || graph.ID() == 0 {

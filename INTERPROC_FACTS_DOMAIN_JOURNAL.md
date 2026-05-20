@@ -9105,3 +9105,48 @@ Result:
 - focused projection and consumer packages: pass.
 - full go-lua suite: pass.
 - diff check: pass.
+
+## 2026-05-20 Flash Migration: Parameter Evidence Signature Projection Owner
+
+Problem:
+
+```text
+`domain/paramevidence` still contained a store-backed `BuildSignatureMap`
+helper that read canonical FunctionFacts directly. That forced the parameter
+evidence lattice package to understand graph ownership, nested parent lookup,
+and FunctionFacts storage projection.
+```
+
+Migration performed:
+
+- Moved function-expression keyed parameter-evidence signature projection to
+  `functionfact.ParameterEvidenceSignatures`.
+- Deleted `paramevidence.BuildSignatureMap`.
+- Updated the pipeline runner to request parameter-evidence signatures from the
+  function-fact domain.
+- Kept `domain/paramevidence` focused on vector/signature lattice operations
+  such as `MergeIntoSignature`, `JoinVectors`, and parameter-use projection.
+- Added function-fact-domain tests for nil inputs and current-graph signature
+  projection.
+
+Invariant:
+
+```text
+Parameter evidence decides how parameter vectors combine. Function facts decide
+where those vectors are stored, how graph ownership is resolved, and how stored
+vectors are projected into phase inputs.
+```
+
+Validation so far:
+
+```text
+go test ./compiler/check/domain/functionfact ./compiler/check/domain/paramevidence ./compiler/check/pipeline -count=1
+go test ./... -count=1
+git diff --check
+```
+
+Result:
+
+- function-fact, parameter-evidence, and pipeline packages: pass.
+- full go-lua suite: pass.
+- diff check: pass.
