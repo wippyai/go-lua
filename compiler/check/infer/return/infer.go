@@ -42,7 +42,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	flowpath "github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
@@ -115,7 +114,7 @@ func (i *Inferencer) collectLocalFunctions(
 	parentFn *ast.FunctionExpr,
 ) map[cfg.SymbolID]*returns.LocalFuncInfo {
 	localFuncs := make(map[cfg.SymbolID]*returns.LocalFuncInfo)
-	parentEvidence := transferEvidenceForGraph(graph)
+	parentEvidence := i.transferEvidenceForGraph(graph)
 
 	for _, def := range parentEvidence.FunctionDefinitions {
 		if def.Symbol == 0 || def.Nested.Func == nil {
@@ -136,7 +135,7 @@ func (i *Inferencer) collectLocalFunctions(
 			ParentGraph:    graph,
 			ParentFn:       parentFn,
 			DefPoint:       def.Nested.Point,
-			Evidence:       transferEvidenceForGraph(fnGraph),
+			Evidence:       i.transferEvidenceForGraph(fnGraph),
 			ParentEvidence: parentEvidence,
 		}
 	}
@@ -144,8 +143,11 @@ func (i *Inferencer) collectLocalFunctions(
 	return localFuncs
 }
 
-func transferEvidenceForGraph(graph *cfg.Graph) api.FlowEvidence {
-	return trace.GraphEvidence(graph, graph.Bindings())
+func (i *Inferencer) transferEvidenceForGraph(graph *cfg.Graph) api.FlowEvidence {
+	if i != nil && i.store != nil {
+		return i.store.EvidenceForGraph(graph)
+	}
+	return api.FlowEvidence{}
 }
 
 // newReturnInferenceEngine creates a synthesis engine configured for return type

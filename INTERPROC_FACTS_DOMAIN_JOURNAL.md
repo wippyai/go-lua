@@ -7631,6 +7631,59 @@ go test ./compiler/check/abstract/trace ./compiler/check/pipeline \
 
 The command passed.
 
+## 2026-05-20 Flash Migration: Graph Evidence Is Module-Cached
+
+After reducer-local evidence reconstruction was removed, the remaining
+non-canonical shape was repeated graph-evidence construction by orchestration
+and helper layers. The pipeline runner, driver, session hierarchy registration,
+return inference, and nested helper consumers each knew how to call
+`trace.GraphEvidence` directly.
+
+Canonical rule:
+
+```text
+trace.GraphEvidence          = low-level constructor
+store.EvidenceForGraph       = module-wide canonical evidence product/cache
+pipeline/session/inference   = consumers of the evidence provider
+```
+
+The implementation added `api.GraphEvidenceProvider` and made
+`store.SessionStore` the module-wide evidence cache. `Session` exposes the same
+provider method because it already owns graph construction. Pipeline setup,
+function analysis, session hierarchy registration, and return inference now ask
+the provider instead of rebuilding graph evidence independently.
+
+This is a structural simplification, not a compatibility bridge:
+
+- graph evidence is computed at most once per registered graph ID in the module
+  store;
+- callers no longer choose bindings or re-run event discovery themselves;
+- the graph provider can also provide evidence to nested analyses such as
+  keys-collector detection and synthesis helper paths.
+
+Remaining direct constructor calls are intentionally narrow:
+
+- `store.SessionStore.EvidenceForGraph` is the canonical module cache fill;
+- `transfer.MaterializeGraphEvidence` is the standalone transfer entry fill
+  when a `FlowContext` is used without a store-backed provider;
+- isolated utility/test paths may still construct evidence when no provider is
+  available.
+
+Regression protection:
+
+- `TestSessionStore_EvidenceForGraph` proves the store materializes
+  parameter-use evidence and returns the cached product on later reads.
+
+Verification:
+
+```text
+go test ./compiler/check/store ./compiler/check/api ./compiler/check/pipeline \
+  ./compiler/check/infer/return ./compiler/check/abstract/transfer/keyscoll \
+  ./compiler/check/synth/phase/extract ./compiler/check -count=1
+```
+
+The command passed.
+
 ## 2026-05-20 Flash Migration: Keys-Collector Detection Owns Callee Body Classification
 
 Assignment extraction still contained a duplicate keys-collector recovery path:

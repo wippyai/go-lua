@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -63,6 +64,8 @@ type ModuleStore struct {
 	GraphToFunc map[*cfg.Graph]*ast.FunctionExpr
 	// FuncToGraph maps FunctionExpr nodes to their CFG graphs for O(1) lookup.
 	FuncToGraph map[*ast.FunctionExpr]*cfg.Graph
+	// Evidence maps graph IDs to canonical abstract-interpreter event evidence.
+	Evidence map[uint64]api.FlowEvidence
 	// Functions stores canonical mappings between symbols and function graphs.
 	Functions *FunctionRegistry
 
@@ -156,6 +159,7 @@ func NewModuleStore() *ModuleStore {
 		Funcs:         make(map[uint64]*ast.FunctionExpr),
 		GraphToFunc:   make(map[*cfg.Graph]*ast.FunctionExpr),
 		FuncToGraph:   make(map[*ast.FunctionExpr]*cfg.Graph),
+		Evidence:      make(map[uint64]api.FlowEvidence),
 		Functions:     newFunctionRegistry(),
 		Parents:       make(map[uint64]*scope.State),
 		ModuleAliases: make(map[cfg.SymbolID]string),
@@ -288,6 +292,41 @@ func (s *SessionStore) SetModuleBindings(bindings *bind.BindingTable) {
 // Graphs returns the graph map.
 func (s *SessionStore) Graphs() map[uint64]*cfg.Graph {
 	return s.Module.Graphs
+}
+
+// EvidenceForGraph returns the canonical abstract-interpreter evidence for graph.
+func (s *SessionStore) EvidenceForGraph(graph *cfg.Graph) api.FlowEvidence {
+	if graph == nil {
+		return api.FlowEvidence{}
+	}
+	if s == nil || s.Module == nil {
+		return trace.GraphEvidence(graph, graph.Bindings())
+	}
+	if s.Module.Evidence == nil {
+		s.Module.Evidence = make(map[uint64]api.FlowEvidence)
+	}
+	graphID := graph.ID()
+	if evidence, ok := s.Module.Evidence[graphID]; ok {
+		return evidence
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		bindings = s.Module.ModuleBindings
+	}
+	evidence := trace.GraphEvidence(graph, bindings)
+	s.Module.Evidence[graphID] = evidence
+	return evidence
+}
+
+// SetEvidenceForGraph records canonical abstract-interpreter evidence for graph.
+func (s *SessionStore) SetEvidenceForGraph(graph *cfg.Graph, evidence api.FlowEvidence) {
+	if s == nil || s.Module == nil || graph == nil {
+		return
+	}
+	if s.Module.Evidence == nil {
+		s.Module.Evidence = make(map[uint64]api.FlowEvidence)
+	}
+	s.Module.Evidence[graph.ID()] = evidence
 }
 
 // GraphKeyFor returns the interproc graph key for a graph and parent scope.

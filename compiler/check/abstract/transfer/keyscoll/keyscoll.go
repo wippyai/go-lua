@@ -321,7 +321,11 @@ func BuildKeysCollectorDetector(
 			fnGraph := functionGraph(fn, graph, graphs)
 			fnEvidence := evidence
 			if fnGraph != graph {
-				fnEvidence = trace.GraphEvidence(fnGraph, graphBindings(fnGraph, moduleBindings))
+				if provider, ok := graphs.(api.GraphEvidenceProvider); ok {
+					fnEvidence = provider.EvidenceForGraph(fnGraph)
+				} else {
+					fnEvidence = trace.GraphEvidence(fnGraph, graphBindings(fnGraph, moduleBindings))
+				}
 			}
 			info := DetectKeysCollector(fnGraph, fnEvidence)
 			cache[calleeSym] = info

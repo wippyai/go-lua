@@ -36,7 +36,6 @@ package check
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/store"
@@ -247,6 +246,14 @@ func (s *Session) GetOrBuildCFG(fn *ast.FunctionExpr) *cfg.Graph {
 	return g
 }
 
+// EvidenceForGraph returns canonical graph evidence through the session store.
+func (s *Session) EvidenceForGraph(graph *cfg.Graph) api.FlowEvidence {
+	if s == nil || s.Store == nil {
+		return api.FlowEvidence{}
+	}
+	return s.Store.EvidenceForGraph(graph)
+}
+
 // RegisterGraphHierarchy registers the root graph and all nested graphs.
 // This populates graph/function maps and nested metadata for query lookups.
 func (s *Session) RegisterGraphHierarchy(root *cfg.Graph) {
@@ -272,7 +279,7 @@ func (s *Session) RegisterGraphHierarchy(root *cfg.Graph) {
 				}
 			}
 		}
-		evidence := trace.GraphEvidence(g, g.Bindings())
+		evidence := s.Store.EvidenceForGraph(g)
 		for _, def := range evidence.FunctionDefinitions {
 			if def.Nested.Func == nil {
 				continue

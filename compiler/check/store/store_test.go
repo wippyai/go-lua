@@ -234,9 +234,33 @@ func TestModuleStore_Fields(t *testing.T) {
 		Graphs:        make(map[uint64]*cfg.Graph),
 		Parents:       make(map[uint64]*scope.State),
 		ModuleAliases: map[cfg.SymbolID]string{1: "test"},
+		Evidence:      make(map[uint64]api.FlowEvidence),
 	}
 	if m.ModuleAliases[1] != "test" {
 		t.Error("ModuleAliases not set correctly")
+	}
+}
+
+func TestSessionStore_EvidenceForGraph(t *testing.T) {
+	s := NewSessionStore()
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"x"}},
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{Exprs: []ast.Expr{&ast.IdentExpr{Value: "x"}}},
+		},
+	}
+	graph := cfg.Build(fn)
+	evidence := s.EvidenceForGraph(graph)
+	if len(evidence.ParameterUses) != 1 {
+		t.Fatalf("expected parameter-use evidence, got %#v", evidence.ParameterUses)
+	}
+
+	overridden := api.FlowEvidence{
+		NormalExit: api.NormalExitEvidence{Point: cfg.Point(99), Valid: true},
+	}
+	s.SetEvidenceForGraph(graph, overridden)
+	if got := s.EvidenceForGraph(graph); got.NormalExit.Point != cfg.Point(99) || !got.NormalExit.Valid {
+		t.Fatalf("expected cached override, got %#v", got.NormalExit)
 	}
 }
 

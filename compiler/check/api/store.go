@@ -7,6 +7,7 @@
 //
 //	ModuleStore     - Module-level bindings and aliases
 //	GraphStore      - CFG graph lookup by ID
+//	GraphEvidenceProvider - canonical abstract-interpreter evidence by graph
 //	ParentScopes    - Parent scope lookup for nested functions
 //	NestedMetaStore - Nested function metadata
 //	InterprocFactReader   - Visible interproc fact products
@@ -44,6 +45,11 @@ type NestedMeta struct {
 // GraphProvider maps function literals to CFGs.
 type GraphProvider interface {
 	GetOrBuildCFG(fn *ast.FunctionExpr) *cfg.Graph
+}
+
+// GraphEvidenceProvider returns canonical abstract-interpreter evidence for a graph.
+type GraphEvidenceProvider interface {
+	EvidenceForGraph(graph *cfg.Graph) FlowEvidence
 }
 
 // ModuleStore provides module-level bindings and alias maps.
@@ -88,6 +94,7 @@ type FunctionRefs interface {
 type StoreReader interface {
 	ModuleStore
 	GraphStore
+	GraphEvidenceProvider
 	ParentScopes
 	NestedMetaStore
 	InterprocFactReader

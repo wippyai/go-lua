@@ -17,5 +17,10 @@ func (s *Synthesizer) graphEvidence(graph *compcfg.Graph) api.FlowEvidence {
 			}
 		}
 	}
+	if s != nil && s.deps != nil {
+		if provider, ok := s.deps.Graphs.(api.GraphEvidenceProvider); ok {
+			return provider.EvidenceForGraph(graph)
+		}
+	}
 	return trace.GraphEvidence(graph, graph.Bindings())
 }

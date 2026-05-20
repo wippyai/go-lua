@@ -22,7 +22,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/effects"
@@ -82,7 +81,7 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	if chunkGraph != nil {
 		sess.RegisterGraphHierarchy(chunkGraph)
 		if store != nil {
-			evidence := trace.GraphEvidence(chunkGraph, store.ModuleBindings())
+			evidence := store.EvidenceForGraph(chunkGraph)
 			store.SetModuleAliases(modules.AliasesFromAssignments(evidence.Assignments, chunkGraph))
 			if d.cfg.Stdlib != nil {
 				store.SetGraphParentHash(chunkGraph.ID(), d.cfg.Stdlib.Hash())
