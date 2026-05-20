@@ -454,7 +454,7 @@ func (i *Inferencer) inferReturnTypesFromBody(
 		DeclaredTypes: finalOverlay,
 		GlobalTypes:   i.globalTypes,
 		ModuleAliases: ctx.moduleAliases,
-		FunctionFacts: phaseFunctionFacts,
+		FunctionType:  functionfact.TypeLookup(phaseFunctionFacts),
 	})
 	declSynth := i.newReturnInferenceEngine(
 		ctx.run,

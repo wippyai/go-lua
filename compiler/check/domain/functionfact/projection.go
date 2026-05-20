@@ -3,6 +3,7 @@ package functionfact
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
@@ -142,6 +143,23 @@ func TypeFromMap(facts api.FunctionFacts, sym cfg.SymbolID) typ.Type {
 		return nil
 	}
 	return ff.Type
+}
+
+// TypeLookup returns a canonical type projection function for a fact map.
+func TypeLookup(facts api.FunctionFacts) func(cfg.SymbolID) typ.Type {
+	if len(facts) == 0 {
+		return nil
+	}
+	return func(sym cfg.SymbolID) typ.Type {
+		if sym == 0 {
+			return nil
+		}
+		ff, ok := facts[sym]
+		if !ok {
+			return nil
+		}
+		return value.NormalizeFactType(ff.Type)
+	}
 }
 
 // ParameterEvidenceFromMap returns the canonical parameter evidence projection

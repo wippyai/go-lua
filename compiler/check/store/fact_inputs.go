@@ -7,8 +7,8 @@ import (
 )
 
 // factInputs are the Salsa-style source inputs for interprocedural reads.
-// They mirror the store's visible fact product, so FuncResult queries depend on
-// the exact graph fact products they read.
+// They snapshot the store's visible fact product so FuncResult queries depend
+// on the exact graph fact products they read.
 type factInputs struct {
 	database *db.DB
 

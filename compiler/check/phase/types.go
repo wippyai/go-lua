@@ -44,6 +44,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -367,7 +368,7 @@ func (b *ContextBuilder) BuildDeclared() *api.DeclaredEnvImpl {
 		Refinements:   b.env.Refinements,
 		ModuleAliases: b.env.ModuleAliases,
 		GlobalTypes:   b.env.GlobalTypes,
-		FunctionFacts: b.functionFacts,
+		FunctionType:  functionfact.TypeLookup(b.functionFacts),
 	})
 }
 
@@ -384,6 +385,6 @@ func (b *ContextBuilder) BuildNarrow() *api.NarrowEnvImpl {
 		Refinements:   b.env.Refinements,
 		ModuleAliases: b.env.ModuleAliases,
 		GlobalTypes:   b.env.GlobalTypes,
-		FunctionFacts: b.functionFacts,
+		FunctionType:  functionfact.TypeLookup(b.functionFacts),
 	})
 }

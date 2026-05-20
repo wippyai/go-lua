@@ -434,7 +434,7 @@ type DeclaredEnvConfig struct {
 	ModuleAliases map[cfg.SymbolID]string
 	GlobalTypes   map[string]typ.Type
 	LiteralTypes  flow.DeclaredTypes
-	FunctionFacts FunctionFacts
+	FunctionType  typefacts.FunctionTypeLookup
 }
 
 // NarrowEnvConfig holds inputs for building a narrowing-phase Env.
@@ -449,7 +449,7 @@ type NarrowEnvConfig struct {
 	ModuleAliases map[cfg.SymbolID]string
 	GlobalTypes   map[string]typ.Type
 	LiteralTypes  flow.DeclaredTypes
-	FunctionFacts FunctionFacts
+	FunctionType  typefacts.FunctionTypeLookup
 }
 
 func newEnvBase(
@@ -487,7 +487,7 @@ func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 		cfg.Bindings,
 		typefacts.New(typefacts.Config{
 			Declared:      cfg.DeclaredTypes,
-			FunctionType:  functionTypeLookup(cfg.FunctionFacts),
+			FunctionType:  cfg.FunctionType,
 			Literals:      cfg.LiteralTypes,
 			AnnotatedVars: cfg.AnnotatedVars,
 		}),
@@ -511,7 +511,7 @@ func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 		cfg.Bindings,
 		typefacts.New(typefacts.Config{
 			Declared:      cfg.DeclaredTypes,
-			FunctionType:  functionTypeLookup(cfg.FunctionFacts),
+			FunctionType:  cfg.FunctionType,
 			Literals:      cfg.LiteralTypes,
 			AnnotatedVars: cfg.AnnotatedVars,
 			Solution:      cfg.Solution,
@@ -533,7 +533,7 @@ type ReturnInferenceEnvConfig struct {
 	DeclaredTypes flow.DeclaredTypes
 	GlobalTypes   map[string]typ.Type
 	ModuleAliases map[cfg.SymbolID]string
-	FunctionFacts FunctionFacts
+	FunctionType  typefacts.FunctionTypeLookup
 }
 
 // NewReturnInferenceEnv creates a declared-phase Env for return inference.
@@ -547,7 +547,7 @@ func NewReturnInferenceEnv(cfg ReturnInferenceEnvConfig) *DeclaredEnvImpl {
 		cfg.Bindings,
 		typefacts.New(typefacts.Config{
 			Declared:     cfg.DeclaredTypes,
-			FunctionType: functionTypeLookup(cfg.FunctionFacts),
+			FunctionType: cfg.FunctionType,
 		}),
 		nil,
 		nilRefinementFacts{},
@@ -563,19 +563,4 @@ func refinementFactsOrNil(f RefinementFacts) RefinementFacts {
 		return nilRefinementFacts{}
 	}
 	return f
-}
-
-// functionTypeLookup is the private package-cycle boundary between api-owned
-// environment construction and domain/typefacts. Checker consumers must use
-// domain/functionfact for semantic projection from FunctionFacts.
-func functionTypeLookup(facts FunctionFacts) typefacts.FunctionTypeLookup {
-	if len(facts) == 0 {
-		return nil
-	}
-	return func(sym cfg.SymbolID) typ.Type {
-		if sym == 0 {
-			return nil
-		}
-		return facts[sym].Type
-	}
 }

@@ -451,7 +451,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 		DeclaredTypes: inferenceOverlay,
 		GlobalTypes:   i.globalTypes,
 		ModuleAliases: ctx.moduleAliases,
-		FunctionFacts: phaseFunctionFacts,
+		FunctionType:  functionfact.TypeLookup(phaseFunctionFacts),
 	})
 
 	prelimEngine := i.newReturnInferenceEngine(ctx.run, fnScopes, prelimCtx, ctx.info.Evidence, phaseFunctionFacts)
@@ -958,7 +958,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		DeclaredTypes: finalOverlay,
 		GlobalTypes:   i.globalTypes,
 		ModuleAliases: ctx.moduleAliases,
-		FunctionFacts: phaseFunctionFacts,
+		FunctionType:  functionfact.TypeLookup(phaseFunctionFacts),
 	})
 	return phase2InferenceState{
 		synth:      i.newReturnInferenceEngine(ctx.run, fnScopes, fnCheckCtx, ctx.info.Evidence, phaseFunctionFacts),

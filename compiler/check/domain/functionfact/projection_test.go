@@ -86,6 +86,26 @@ func TestReturnsForPhase_SelectsNarrowingProjection(t *testing.T) {
 	}
 }
 
+func TestTypeLookup_ProjectsCanonicalFunctionTypes(t *testing.T) {
+	sym := cfg.SymbolID(3)
+	fnType := typ.Func().Returns(typ.String).Build()
+	facts := api.FunctionFacts{
+		sym: {Type: fnType},
+		4:   {Params: []typ.Type{typ.String}},
+	}
+
+	lookup := functionfact.TypeLookup(facts)
+	if lookup == nil {
+		t.Fatal("TypeLookup() returned nil")
+	}
+	if got := lookup(sym); !typ.TypeEquals(got, fnType) {
+		t.Fatalf("lookup(%d) = %v, want %v", sym, got, fnType)
+	}
+	if got := lookup(4); got != nil {
+		t.Fatalf("lookup for param-only fact = %v, want nil", got)
+	}
+}
+
 func TestParameterEvidenceSignatures_NilInputs(t *testing.T) {
 	if got := functionfact.ParameterEvidenceSignatures(nil, nil, nil, nil); got != nil {
 		t.Fatalf("ParameterEvidenceSignatures() = %v, want nil", got)

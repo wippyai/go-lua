@@ -409,7 +409,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			DeclaredTypes: overlay,
 			GlobalTypes:   globalTypes,
 			ModuleAliases: moduleAliases,
-			FunctionFacts: functionFacts,
+			FunctionType:  functionfact.TypeLookup(functionFacts),
 		})
 
 		prelimDeps := &Deps{
@@ -558,7 +558,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		DeclaredTypes: overlay,
 		GlobalTypes:   globalTypes,
 		ModuleAliases: moduleAliases,
-		FunctionFacts: functionFacts,
+		FunctionType:  functionfact.TypeLookup(functionFacts),
 	})
 
 	tempDeps := &Deps{
@@ -898,7 +898,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 				DeclaredTypes: overlay,
 				GlobalTypes:   globalTypes,
 				ModuleAliases: moduleAliases,
-				FunctionFacts: functionFacts,
+				FunctionType:  functionfact.TypeLookup(functionFacts),
 			})
 			tempDeps := &Deps{
 				Ctx:               s.deps.Ctx,

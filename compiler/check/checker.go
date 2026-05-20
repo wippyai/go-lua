@@ -318,17 +318,6 @@ func funcResultEqual(a, b *api.FuncResult) bool {
 	return a == b
 }
 
-// ClearCache removes all memoized function analysis results from the query cache.
-//
-// Call this between Check calls when analyzing unrelated files to prevent stale
-// cache entries and reduce memory usage. The cache is automatically cleared at
-// each fixpoint iteration boundary, so this is primarily useful for batch
-// processing scenarios where the checker analyzes many independent files.
-func (c *Checker) ClearCache() {
-	// Function-result memoization is session-local and discarded at the end of Check.
-	// Kept for API compatibility.
-}
-
 // Database returns the checker's type database for connecting external manifests.
 func (c *Checker) Database() *db.DB {
 	return c.db

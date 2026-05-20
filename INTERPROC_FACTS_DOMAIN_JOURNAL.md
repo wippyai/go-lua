@@ -9209,10 +9209,9 @@ Migration performed:
   projections.
 - Changed `domain/typefacts` to receive a function-type lookup closure instead
   of an interface implemented by `api.FunctionFacts`.
-- Kept the remaining package-cycle boundary private in `api/env.go`: environment
-  construction can project the stored type slot for `typefacts`, but that
-  projection is not an exported compatibility API and cannot be used by checker
-  consumers as a second function-fact reader.
+- At this checkpoint a private package-cycle adapter still existed in
+  `api/env.go`. That caveat is resolved by the later "API Fact Projection
+  Removed" checkpoint below.
 
 Invariant:
 
@@ -9227,8 +9226,8 @@ Why this is a flash migration step, not a bridge:
 - The old selector API was deleted, not wrapped.
 - No mirror fact channel was introduced.
 - Production reads now go through domain projections.
-- The only non-domain projection left is a private package-cycle adapter at the
-  environment/typefacts boundary; it is not a checker-facing semantic API.
+- The private environment/typefacts adapter noted at this checkpoint was removed
+  in the later API fact projection slice.
 
 Validation status:
 
@@ -9295,3 +9294,86 @@ Result:
 - focused API/synth/phase/pipeline/return/regression packages: pass.
 - full go-lua suite with an explicit writable build cache: pass.
 - diff check: pass.
+
+## 2026-05-20 Flash Migration: API Fact Projection Removed
+
+Problem:
+
+```text
+`api.NewDeclaredEnv`, `api.NewNarrowEnv`, and `api.NewReturnInferenceEnv`
+still accepted raw `FunctionFacts` and projected `facts[sym].Type` inside the
+API package. That was not an exported selector anymore, but it was still a
+second semantic projection owner.
+```
+
+Migration performed:
+
+- Removed raw `FunctionFacts` from declared, narrow, and return-inference env
+  configs.
+- Removed the private `api.functionTypeLookup` adapter.
+- Added `functionfact.TypeLookup` as the domain-owned function-type query
+  projection.
+- Changed phase and return-inference callers to pass
+  `functionfact.TypeLookup(functionFacts)` into `typefacts`.
+- Removed the dead `Checker.ClearCache` API-compatibility no-op; function-result
+  memoization is session-local and not controlled by that method.
+- Clarified Salsa fact inputs as query snapshots of the visible interproc
+  product, not another mirror authority.
+- Added a domain test for `functionfact.TypeLookup`.
+
+Final dataflow:
+
+```text
+FunctionFacts storage
+  -> domain/functionfact.TypeLookup
+  -> domain/typefacts.TypeFacts
+  -> api.Env.Types()
+```
+
+Invariant:
+
+```text
+`api` stores environment wiring. It does not interpret function facts.
+`domain/functionfact` owns function-fact slot projection. `domain/typefacts`
+owns product-state type queries.
+```
+
+Why this is a flash migration step, not a bridge:
+
+- The private adapter was deleted, not wrapped.
+- Env constructors now receive a typed query input instead of storage.
+- No compatibility selector or mirror fact channel remains.
+- The production scan now has no function-fact projection hook in `api`.
+
+Validation status:
+
+```text
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/domain/functionfact ./compiler/check/api ./compiler/check/phase ./compiler/check/synth/phase/extract ./compiler/check/infer/return ./compiler/check -count=1
+env GOCACHE=/tmp/go-build-cache go test ./... -count=1
+git diff --check
+rg -n "functionTypeLookup|FunctionFacts FunctionFacts|ClearCache|Kept for API compatibility|legacy|bridge|mirror" compiler/check --glob '*.go' --glob '!**/*_test.go'
+```
+
+Result:
+
+- focused domain/API/phase/synth/return/check packages: pass.
+- full go-lua suite with an explicit writable build cache: pass.
+- diff check: pass.
+- production bridge/legacy scan: no matches.
+
+Performance note:
+
+```text
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction -benchmem -count=5
+```
+
+Current checkout:
+
+- 3.94-4.72 ms/op
+- 1.088-1.090 MB/op
+- 10593-10594 allocs/op
+
+A clean temporary `HEAD` worktree measured the same range
+(3.75-5.06 ms/op, 1.089 MB/op, 10593-10594 allocs/op), so this slice did not
+add the current benchmark cost. The older 1.15 ms journal number is not the
+current branch baseline.
