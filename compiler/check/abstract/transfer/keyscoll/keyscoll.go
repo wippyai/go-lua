@@ -307,8 +307,12 @@ func BuildKeysCollectorDetector(
 				return callsite.SymbolOrCreateFieldFromExpr(callsite.RuntimeArgAt(callInfo, info.ParamIndex), bindings)
 			}
 
-			// Try to resolve callee to function literal
+			// Resolve callee to a function literal through the graph evidence
+			// and the available binding tables before classifying its body.
 			fn := resolve.ResolveSymbolToFunctionLiteral(evidence, bindings, calleeSym)
+			if fn == nil && moduleBindings != nil && moduleBindings != bindings {
+				fn = resolve.ResolveSymbolToFunctionLiteral(evidence, moduleBindings, calleeSym)
+			}
 			if fn == nil {
 				cache[calleeSym] = nil
 				continue

@@ -34,13 +34,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/cond"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/constprop"
 	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/decl"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/guard"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/mutator"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/path"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/predicate"
@@ -519,29 +517,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						tableSym = keysCollector(call, p, retIndex)
 					}
 
-					// Fallback: resolve function literal via module bindings.
-					if tableSym == 0 && fc.ModuleBindings != nil {
-						for _, calleeSym := range calleeSymbols {
-							fn, ok := fc.ModuleBindings.FuncLitBySymbol(calleeSym)
-							if !ok || fn == nil {
-								continue
-							}
-							var fnGraph *cfg.Graph
-							if fc.Graphs != nil {
-								fnGraph = fc.Graphs.GetOrBuildCFG(fn)
-							}
-							if fnGraph == nil {
-								fnGraph = cfg.BuildWithBindings(fn, fc.ModuleBindings)
-							}
-							fnEvidence := trace.GraphEvidence(fnGraph, fc.ModuleBindings)
-							if info := keyscoll.DetectKeysCollector(fnGraph, fnEvidence); info != nil && info.ReturnIndex == retIndex {
-								tableSym = callsite.SymbolOrCreateFieldFromExpr(callsite.RuntimeArgAt(call, info.ParamIndex), bindings)
-								break
-							}
-						}
-					}
-
-					// Fallback: check function refinement for KeyOf-based keys collector.
+					// Check function refinement for KeyOf-based keys collectors.
 					if tableSym == 0 && derived.RefinementBySym != nil {
 						for _, calleeSym := range calleeSymbols {
 							eff := derived.RefinementBySym(calleeSym)

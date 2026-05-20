@@ -7631,6 +7631,41 @@ go test ./compiler/check/abstract/trace ./compiler/check/pipeline \
 
 The command passed.
 
+## 2026-05-20 Flash Migration: Keys-Collector Detection Owns Callee Body Classification
+
+Assignment extraction still contained a duplicate keys-collector recovery path:
+after calling the dedicated `keyscoll.BuildKeysCollectorDetector`, it performed
+another module-binding function-literal lookup, built a nested CFG, rebuilt
+graph evidence, and called `keyscoll.DetectKeysCollector` itself. That was a
+local reimplementation of the detector's responsibility.
+
+Canonical rule:
+
+```text
+assign.ExtractAssignments    = emits assignment products
+keyscoll.BuildKeysCollectorDetector = resolves candidate callees and classifies keys collectors
+```
+
+The detector now resolves function literals through both graph-local bindings
+and module bindings before classifying the callee body. Assignment extraction no
+longer imports `keyscoll` for nested body classification and no longer builds
+nested graph evidence for that case. It only consumes the detector callback and
+the refinement product.
+
+This removes one more reducer-local path that knew how to open a callee body.
+The body classifier is centralized in `keyscoll`, where its cache and return
+index logic already live.
+
+Verification:
+
+```text
+go test ./compiler/check/abstract/transfer/assign \
+  ./compiler/check/abstract/transfer/keyscoll \
+  ./compiler/check/abstract/transfer/... -count=1
+```
+
+The command passed.
+
 ## 2026-05-20 Flash Migration: Evidence Materialization Is Single-Entry
 
 The next evidence seam was not a type rule; it was ownership. Several transfer
