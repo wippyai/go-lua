@@ -34,12 +34,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/cond"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/constprop"
-	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/decl"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/predicate"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/tblutil"
+	"github.com/wippyai/go-lua/compiler/check/abstract/cond"
+	"github.com/wippyai/go-lua/compiler/check/abstract/constprop"
+	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
+	"github.com/wippyai/go-lua/compiler/check/abstract/decl"
+	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
+	"github.com/wippyai/go-lua/compiler/check/abstract/tblutil"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
@@ -1304,7 +1304,7 @@ func isTopLikeResolvedAssignType(t typ.Type) bool {
 
 // extractCallCorrelations extracts ErrorReturn and CorrelatedReturn correlations from the callee's spec.
 // Callee type resolution is delegated to resolve.CalleeType to keep call semantics
-// canonical across abstract transfer passes.
+// canonical across abstract interpreter passes.
 func extractCallCorrelations(
 	callInfo *cfg.CallInfo,
 	synth func(ast.Expr, cfg.Point) typ.Type,

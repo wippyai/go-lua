@@ -8363,3 +8363,79 @@ go test ./compiler/check/abstract/assign ./compiler/check/abstract/transfer \
 ```
 
 The focused command passed.
+
+Current note: the next entry supersedes this package-boundary statement by
+removing `abstract/transfer` entirely. The surviving design is the root
+`abstract` interpreter plus direct reducer packages.
+
+## 2026-05-20 Flash Migration: `abstract/transfer` Package Removed
+
+The previous slices exposed the remaining non-final shape: `abstract/assign`
+was no longer a transfer subpackage, but it still depended on
+`abstract/transfer/core`, `abstract/transfer/cond`,
+`abstract/transfer/predicate`, and related reducer packages. That meant the
+mental model was still split between "the abstract interpreter" and a legacy
+"transfer" namespace.
+
+Canonical rule:
+
+```text
+abstract             = top-level abstract interpreter entrypoint
+abstract/core        = interpreter context, services, and derived resolvers
+abstract/trace       = canonical graph event materialization
+abstract/{assign,cond,constprop,decl,mutator,returns,...}
+                     = interpreter reducers over one FlowEvidence stream
+domain/*             = reusable semantic domains not tied to interpreter lowering
+```
+
+The old package `compiler/check/abstract/transfer` was removed. Its root
+orchestrator moved into `compiler/check/abstract`:
+
+- `abstract.Run(*core.FlowContext) abstract.Result` is the full interpreter
+  entrypoint used by phase extraction.
+- `abstract.BuildInputs(*core.FlowContext) *flow.Inputs` is the lower-level
+  flow-input construction step.
+- `abstract.ExtractEvidence` remains in the interpreter root and records the
+  interpreter-owned event stream after input construction.
+
+Reducer packages moved directly under `compiler/check/abstract`:
+
+- `core`
+- `cond`
+- `constprop`
+- `decl`
+- `literal`
+- `mutator`
+- `numconst`
+- `predicate`
+- `returns`
+- `sibling`
+- `tblutil`
+
+This is a flash migration, not a bridge. There is no `abstract/transfer`
+package, no `RunTransfer`, and no `TransferResult`.
+
+Proof invariant:
+
+```text
+rg "compiler/check/abstract/transfer|\\btransfer\\.|RunTransfer|TransferResult|package transfer" \
+  compiler/check -n
+```
+
+The scan returns no matches.
+
+Verification:
+
+```text
+go test ./compiler/check/abstract/... ./compiler/check/phase \
+  ./compiler/check/infer/return -count=1
+go test ./compiler/check/... ./types/flow/... -count=1
+go test ./... -count=1
+git diff --check
+go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction -benchmem -count=3
+```
+
+The commands passed.
+
+Benchmark sanity after the package removal stayed in the same allocation shape:
+about 3.9-4.9 ms/op, 1.08 MB/op, and 10435-10436 allocs/op on this machine.

@@ -105,7 +105,7 @@ type CapturedTypes = map[cfg.SymbolID]typ.Type
 type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type
 
 // ContainerMutationKind describes the operator used for a captured container
-// mutation. Different operators have different abstract transfer functions in
+// mutation. Different operators have different abstract interpreter effects in
 // the parent flow.
 type ContainerMutationKind uint8
 

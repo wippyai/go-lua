@@ -48,7 +48,7 @@ type FuncResult struct {
 	// Provides reachability conditions and exclusion facts for narrowing.
 	FlowSolution *flow.Solution
 
-	// Evidence records events discovered during abstract transfer.
+	// Evidence records events discovered during abstract interpretation.
 	Evidence FlowEvidence
 
 	// FnRefinement captures the function's inferred refinement summary.

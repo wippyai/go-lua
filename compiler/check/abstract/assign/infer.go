@@ -50,8 +50,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
-	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/predicate"
+	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
+	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
@@ -108,7 +108,7 @@ func mergeSpecTypesSoft(base, override api.SpecTypes) api.SpecTypes {
 // LocalInferenceConfig is the data needed by the local assignment abstract
 // interpreter. It is intentionally not a FlowContext: callers that only need
 // local type inference should pass evidence and services directly instead of
-// pretending to run a transfer phase.
+// pretending to run a full interpreter pass.
 type LocalInferenceConfig struct {
 	Graph          *cfg.Graph
 	Evidence       api.FlowEvidence

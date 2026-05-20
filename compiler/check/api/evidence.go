@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
-// FlowEvidence is the abstract-transfer evidence stream that later checker
+// FlowEvidence is the abstract-interpreter event stream that later checker
 // phases reduce with solved, narrowed expression types.
 type FlowEvidence struct {
 	Calls               []CallEvidence
@@ -55,27 +55,27 @@ const (
 	CallOriginBranch
 )
 
-// CallEvidence records a call site discovered by abstract transfer.
+// CallEvidence records a call site discovered by the abstract interpreter.
 type CallEvidence struct {
 	Point  cfg.Point
 	Info   *cfg.CallInfo
 	Origin CallOrigin
 }
 
-// ReturnEvidence records a return point discovered by abstract transfer.
+// ReturnEvidence records a return point discovered by the abstract interpreter.
 type ReturnEvidence struct {
 	Point cfg.Point
 	Info  *cfg.ReturnInfo
 }
 
-// AssignmentEvidence records an assignment point discovered by abstract
-// transfer.
+// AssignmentEvidence records an assignment point discovered by the abstract
+// interpreter.
 type AssignmentEvidence struct {
 	Point cfg.Point
 	Info  *cfg.AssignInfo
 }
 
-// BranchEvidence records a branch point discovered by abstract transfer.
+// BranchEvidence records a branch point discovered by the abstract interpreter.
 type BranchEvidence struct {
 	Point cfg.Point
 	Info  *cfg.BranchInfo

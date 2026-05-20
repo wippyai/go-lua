@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract"
-	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/core"
+	"github.com/wippyai/go-lua/compiler/check/abstract/core"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -45,7 +45,7 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		ModuleAliases:  moduleAliases,
 	})
 
-	transferOut := abstract.RunTransfer(&core.FlowContext{
+	abstractOut := abstract.Run(&core.FlowContext{
 		Fn:       input.Fn,
 		Graph:    input.Graph,
 		Scopes:   input.Scope.Scopes,
@@ -66,7 +66,7 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		ModuleBindings:       input.ModuleBindings,
 		Evidence:             input.Evidence,
 	})
-	inputs := transferOut.Inputs
+	inputs := abstractOut.Inputs
 
 	applyModuleAliasTypes(inputs, input.Manifests)
 
@@ -77,7 +77,7 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		Inputs:     inputs,
 		Params:     params,
 		ReturnType: returnType,
-		Evidence:   transferOut.Evidence,
+		Evidence:   abstractOut.Evidence,
 	}
 }
 
