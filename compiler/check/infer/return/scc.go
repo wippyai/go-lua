@@ -3,7 +3,6 @@ package infer
 import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -48,7 +47,7 @@ func projectLocalParameterEvidence(localFuncs map[cfg.SymbolID]*returns.LocalFun
 		if info == nil || info.Graph == nil || len(info.ParameterEvidence) == 0 {
 			continue
 		}
-		info.ParameterEvidence = paramevidence.ProjectToParameterUse(info.Graph.ParamSlotsReadOnly(), trace.ParameterUses(info.Graph, info.Fn), info.ParameterEvidence)
+		info.ParameterEvidence = paramevidence.ProjectToParameterUse(info.Graph.ParamSlotsReadOnly(), info.Evidence.ParameterUses, info.ParameterEvidence)
 	}
 }
 

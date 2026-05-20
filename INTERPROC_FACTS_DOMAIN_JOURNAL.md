@@ -7568,3 +7568,65 @@ go test ./compiler/check/hooks ./compiler/check/tests/flow \
 ```
 
 All commands passed.
+
+## 2026-05-20 Flash Migration: Parameter Demand Is Flow Evidence
+
+The next remaining non-canonical seam was parameter-use demand. Several
+consumers were independently asking the old tracer to walk a function body and
+rediscover which parameter surface was actually demanded. That made parameter
+evidence a side channel instead of part of the abstract-interpreter product.
+
+Canonical rule:
+
+```text
+CFG/AST event discovery = trace.GraphEvidence
+consumer phases         = reducers over api.FlowEvidence
+parameter demand        = FlowEvidence.ParameterUses
+```
+
+After this correction, `api.FlowEvidence` carries `ParameterUses` alongside
+calls, returns, assignments, branches, field defaults, function definitions,
+escapes, and captures. `trace.GraphEvidence` is the only production builder for
+that lane. Scope construction, synthesized signature projection, return
+inference, and call checking now consume the evidence lane directly.
+
+The important design point is that this is not a fallback or compatibility
+bridge. Production code does not recompute parameter use on demand. If a phase
+needs to know whether call-site or fact evidence should narrow a whole
+parameter, a field-only surface, or an unobserved parameter, it reduces the
+already-built evidence product for that function.
+
+Call checking also stopped rewalking nested callees. The pass now receives the
+session result map and reads the callee result's `FlowEvidence.ParameterUses`.
+That keeps nested local-call validation on the same product-domain data as the
+rest of the checker instead of opening the callee AST again during diagnostics.
+
+Proof invariant:
+
+```text
+rg "ParameterUses\\(" compiler/check -g '!**/*_test.go'
+```
+
+The only production matches are:
+
+```text
+compiler/check/abstract/trace/paramuse.go
+compiler/check/abstract/trace/trace.go
+```
+
+Regression protection:
+
+- `TestGraphEvidenceIncludesParameterUses` proves `GraphEvidence` carries
+  whole-parameter and field-only demand in the canonical evidence product.
+- Existing parameter-evidence projection tests still exercise the reducer logic
+  directly, but production consumers no longer invoke that discovery path.
+
+Verification:
+
+```text
+go test ./compiler/check/abstract/trace ./compiler/check/pipeline \
+  ./compiler/check/phase ./compiler/check/hooks ./compiler/check/infer/return \
+  ./compiler/check/tests/narrowing -count=1
+```
+
+The command passed.

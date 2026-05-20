@@ -84,7 +84,7 @@ func WithCall() check.Option {
 			return nil
 		}
 		narrowView := result.NarrowSynth.Narrow()
-		return CheckCalls(result.Graph, result.Evidence, result.Scopes, result.NarrowSynth, narrowView, sess.SourceName)
+		return CheckCalls(result.Graph, result.Evidence, result.Scopes, result.NarrowSynth, narrowView, sess.ResultsMap(), sess.SourceName)
 	})
 }
 

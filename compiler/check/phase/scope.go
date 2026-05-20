@@ -25,7 +25,6 @@ package phase
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
@@ -120,7 +119,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 	var parameterEvidence []typ.Type
 	if input.ParameterEvidenceSignatures != nil && input.Fn != nil && input.Graph != nil {
 		parameterEvidence = input.ParameterEvidenceSignatures[input.Fn]
-		parameterEvidence = paramevidence.ProjectToParameterUse(input.Graph.ParamSlotsReadOnly(), trace.ParameterUses(input.Graph, input.Fn), parameterEvidence)
+		parameterEvidence = paramevidence.ProjectToParameterUse(input.Graph.ParamSlotsReadOnly(), input.Evidence.ParameterUses, parameterEvidence)
 	}
 	paramTypes, paramAnnotated := ExtractParamTypes(input.Graph, input.Fn, typeExprResolver, synthSig, base, parameterEvidence)
 

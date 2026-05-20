@@ -29,6 +29,7 @@ func GraphEvidence(graph *cfg.Graph, bindings *bind.BindingTable) api.FlowEviden
 		NormalExit:          NormalExitEvidence(graph),
 		IdentifierUses:      expressions.IdentifierUses,
 		FieldDefaults:       expressions.FieldDefaults,
+		ParameterUses:       ParameterUses(graph, graph.Func()),
 		FreshTableLiterals:  FreshTableLiterals(graph, expressions.Assignments, bindings),
 		FunctionDefinitions: functions,
 		EscapedFunctions:    FunctionEscapes(graph, bindings),

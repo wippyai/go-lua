@@ -23,7 +23,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	abstractfacts "github.com/wippyai/go-lua/compiler/check/abstract/facts"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
@@ -45,6 +44,7 @@ func CheckCalls(
 	scopes map[cfg.Point]*scope.State,
 	narrowSynth api.Synth,
 	narrowView api.BaseSynth,
+	results map[*ast.FunctionExpr]*api.FuncResult,
 	sourceName string,
 ) []diag.Diagnostic {
 	if graph == nil || narrowSynth == nil || narrowView == nil {
@@ -65,7 +65,7 @@ func CheckCalls(
 		if info == nil {
 			continue
 		}
-		callDiags := checkSingleCall(p, info, scopes, narrowView, narrowSynth, query, sourceName, graph, evidence, bindings, unobservedLocalParams)
+		callDiags := checkSingleCall(p, info, scopes, narrowView, narrowSynth, query, sourceName, graph, evidence, bindings, results, unobservedLocalParams)
 		diags = append(diags, callDiags...)
 	}
 
@@ -83,6 +83,7 @@ func checkSingleCall(
 	graph *cfg.Graph,
 	evidence api.FlowEvidence,
 	bindings *bind.BindingTable,
+	results map[*ast.FunctionExpr]*api.FuncResult,
 	unobservedLocalParams map[cfg.SymbolID][]bool,
 ) []diag.Diagnostic {
 	if info.Method == "" && info.Callee != nil {
@@ -131,7 +132,7 @@ func checkSingleCall(
 		def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, graph, evidence, info)
 	} else if info.Callee != nil {
 		def.Callee = narrowView.TypeOf(info.Callee, p)
-		if factType, unobservedParams, allowExtraArgs := functionFactCalleeType(api.StoreFrom(ctx), info, graph, evidence, bindings, unobservedLocalParams); factType != nil {
+		if factType, unobservedParams, allowExtraArgs := functionFactCalleeType(api.StoreFrom(ctx), info, graph, evidence, bindings, results, unobservedLocalParams); factType != nil {
 			def.AllowExtraArgs = allowExtraArgs
 			if typ.IsUnknownOrNil(def.Callee) || canonicalFactHasWiderParams(def.Callee, factType) {
 				def.Callee = factType
@@ -161,6 +162,7 @@ func functionFactCalleeType(
 	graph *cfg.Graph,
 	evidence api.FlowEvidence,
 	bindings *bind.BindingTable,
+	results map[*ast.FunctionExpr]*api.FuncResult,
 	unobservedLocalParams map[cfg.SymbolID][]bool,
 ) (typ.Type, []bool, bool) {
 	if store == nil || info == nil {
@@ -177,7 +179,7 @@ func functionFactCalleeType(
 		var unobservedParams []bool
 		allowExtraArgs := false
 		if graphLocal {
-			unobservedParams = unobservedLocalParamMask(store, sym, fn, unobservedLocalParams)
+			unobservedParams = unobservedLocalParamMask(store, sym, fn, results, unobservedLocalParams)
 			allowExtraArgs = callsite.AllowsDiscardedExtraArgs(fn)
 		}
 		if ff.Type != nil {
@@ -191,6 +193,7 @@ func unobservedLocalParamMask(
 	store api.StoreReader,
 	sym cfg.SymbolID,
 	fn *ast.FunctionExpr,
+	results map[*ast.FunctionExpr]*api.FuncResult,
 	cache map[cfg.SymbolID][]bool,
 ) []bool {
 	if sym == 0 || fn == nil {
@@ -206,7 +209,14 @@ func unobservedLocalParamMask(
 		return nil
 	}
 	graph := store.Graphs()[ref.GraphID]
-	mask := paramevidence.UnobservedParameterMask(graph.ParamSlotsReadOnly(), trace.ParameterUses(graph, fn))
+	if graph == nil {
+		return nil
+	}
+	result := results[fn]
+	if result == nil {
+		return nil
+	}
+	mask := paramevidence.UnobservedParameterMask(graph.ParamSlotsReadOnly(), result.Evidence.ParameterUses)
 	if cache != nil {
 		cache[sym] = mask
 	}

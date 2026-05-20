@@ -107,14 +107,14 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		setter.SetGraphParentHash(graph.ID(), key.ParentHash)
 	}
 
+	// Build shared transfer evidence and phase environment once.
+	graphEvidence := trace.GraphEvidence(graph, graph.Bindings())
 	parameterEvidenceSigs := paramevidence.BuildSignatureMap(store, graph, parent, r.stdlib)
-	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, parameterEvidenceSigs)
+	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, graphEvidence, parameterEvidenceSigs)
 
 	graphFacts := store.GetInterprocFacts(graph, parent)
 	functionFacts := graphFacts.FunctionFacts
 
-	// Build shared transfer evidence and phase environment once.
-	graphEvidence := trace.GraphEvidence(graph, graph.Bindings())
 	localAliases := modules.AliasesFromAssignments(graphEvidence.Assignments, graph)
 	mergedAliases := modules.MergeAliases(store.ModuleAliases(), localAliases)
 	env := phase.PhaseEnv{

@@ -16,6 +16,7 @@ type FlowEvidence struct {
 	NormalExit          NormalExitEvidence
 	IdentifierUses      []IdentifierUseEvidence
 	FieldDefaults       []FieldDefaultEvidence
+	ParameterUses       []ParameterUseEvidence
 	FreshTableLiterals  []FreshTableLiteralEvidence
 	FunctionDefinitions []FunctionDefinitionEvidence
 	EscapedFunctions    []FunctionEscapeEvidence

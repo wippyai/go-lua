@@ -57,6 +57,7 @@ func flowEvidenceEmpty(e api.FlowEvidence) bool {
 		!e.NormalExit.Valid &&
 		len(e.IdentifierUses) == 0 &&
 		len(e.FieldDefaults) == 0 &&
+		len(e.ParameterUses) == 0 &&
 		len(e.FreshTableLiterals) == 0 &&
 		len(e.FunctionDefinitions) == 0 &&
 		len(e.EscapedFunctions) == 0 &&
