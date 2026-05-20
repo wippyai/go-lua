@@ -8675,3 +8675,111 @@ proof that go-lua should weaken contracts. Each remaining item must be
 classified as source/manifest proof gap vs. checker regression before changing
 engine semantics.
 ```
+
+## 2026-05-20 Validation: No Assertion-Refinement Regression Remains
+
+Validated head: `ff27b721`.
+
+Changed-code design scan:
+
+```text
+rg "hack|temporary|transitional|legacy|bridge|compat|fallback|TODO|FIXME|any shortcut|any-to" \
+  compiler/check/domain/functionfact/refinement.go \
+  compiler/check/domain/functionfact/fact.go \
+  compiler/check/hooks/call_check.go \
+  compiler/check/tests/regression/imported_type_assertion_refinement_test.go
+```
+
+Result: no matches. The refinement fix is not implemented as a fallback,
+bridge, name special case, or blanket `any` relaxation.
+
+Legacy fact-channel scan:
+
+```text
+rg "FunctionTypesFromFacts|ReturnSummaries|NarrowReturns|FuncTypes|NormalizeFacts|NormalizeFunctionFactChannels|legacy fact|compatibility view|compatibility bridge" \
+  compiler/check types
+```
+
+Result: no production matches.
+
+Regression proof rerun:
+
+```text
+go test ./compiler/check/domain/functionfact -count=1
+go test ./compiler/check/tests/regression -run 'TestImportedTypeAssertion|TestAnnotatedImportedTypeAssertion|TestLinterFalsePositive_TestRunnerExact|TestLinterFalsePositive_GraphLocalUnusedParamAllowsInternalAny|TestLinterFalsePositive_GraphLocalObservedParamRejectsAny|TestSessionPlugin_UntypedSessionIDGuardStillRejectsStringAPI|ExternalLint|Gradual|Advanced' -count=1
+go test ./... -count=1
+git diff --check
+```
+
+Results:
+
+- function-fact package: pass.
+- targeted regression suite: pass.
+- full go-lua suite: pass.
+- diff check: pass.
+
+Local-replace replay:
+
+```text
+env GOFLAGS=-buildvcs=false go build -o /tmp/wippy-local-replace-validate ./cmd/wippy
+/tmp/wippy-local-replace-validate lint --cache-reset --json
+env WIPPY_DIR=/tmp/wippy-golua-validate WIPPY_BIN=/tmp/wippy-local-replace-validate GOFLAGS=-buildvcs=false ../scripts/verify-suite.sh
+```
+
+Results:
+
+- local-replace binary build: pass.
+- `tests/app`: 2 errors, 0 warnings, 0 hints.
+- full local-replace verify: checker tests and binary build pass, then external
+  lint exits non-zero.
+
+Current local-replace nonzero targets from detailed JSON:
+
+- `/tmp/wippy-golua-validate/tests/app`: 2 errors.
+- `/home/wolfy-j/wippy/session`: 33 errors.
+- `/home/wolfy-j/wippy/framework/src/agent/src`: 6 errors.
+- `/home/wolfy-j/wippy/docker-demo`: 68 errors in standalone JSON replay
+  (`verify-suite.sh` printed 67 on the same validation pass).
+- `/home/wolfy-j/wippy/framework/src/llm/src`: 3 errors.
+- `/home/wolfy-j/wippy/framework/src/llm/test`: 3 errors.
+- `/home/wolfy-j/wippy/framework/src/views`: 2 errors.
+
+Assertion-regression check:
+
+```text
+jq '.diagnostics[] | select(.entry_id|test("denied_explicit|assert"))'
+```
+
+Result: no matching diagnostics in the replayed targets. The
+`denied_explicit` false positives remain fixed.
+
+Representative remaining diagnostics inspected:
+
+- `app.test.network:overlay_*`: `(args and args.url) or default` does not prove
+  `url:string` when `args.url` is truthy non-string.
+- `wippy.llm.util:compress`: `compress.configure(new_config)` writes arbitrary
+  values into numeric `CONFIG` fields, so arithmetic on those fields is not
+  statically proven.
+- `wippy.session.api:get_artifact*`: `artifact.meta` is truthy but not proven to
+  be a table before field reads.
+- `wippy.session.process:command_bus`: assigning `fun(...any) -> any` into a
+  typed `(any, any) -> (any, string?)` handler table is a real contract gap.
+- `wippy.views.api:list_pages`: `config_overrides` is cast to a string-keyed map
+  without proving the incoming map key shape.
+- `wippy.agent.compiler:compiler`: `string.gmatch(tool_id, ...)` receives an
+  unproven dynamic `tool_id`.
+- `wippy.llm.bedrock:mapper`: fallback text-tool parsing receives dynamic text
+  without proving `string?`.
+
+Conclusion:
+
+```text
+No go-lua regression is reproduced by the validation suite, and the
+assertion-refined dynamic argument regression is absent from local-replace
+diagnostics. The implementation is proof-gated by normal-return refinements and
+source annotations, not by hacks or broad compatibility.
+
+The remaining external diagnostics are still not a reason to weaken go-lua.
+They are dynamic-boundary/source-proof gaps unless a reduced fixture shows that
+the abstract interpreter missed an actual local proof.
+```
