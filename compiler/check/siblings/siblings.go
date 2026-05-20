@@ -179,7 +179,7 @@ func Build(c BuildConfig) map[cfg.SymbolID]typ.Type {
 		if !entry.IsLocal || entry.Symbol == 0 {
 			continue
 		}
-		fnType := c.FunctionFacts.FunctionType(entry.Symbol)
+		fnType := functionfact.TypeFromMap(c.FunctionFacts, entry.Symbol)
 		if fnType == nil {
 			continue
 		}

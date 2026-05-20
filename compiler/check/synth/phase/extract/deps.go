@@ -49,7 +49,7 @@ type Deps struct {
 	// against recursion across temporary synthesizers.
 	FunctionTypeInProgress map[functionTypeProgressKey]bool
 	FunctionTypeCache      map[functionTypeCacheKey]*typ.Function
-	FunctionFactTypeCache  functionfact.TypeCache
+	FunctionFactCache      *functionfact.Cache
 
 	// Module-level bindings for nested function CFG building.
 	ModuleBindings *bind.BindingTable
@@ -84,7 +84,7 @@ func NewDeps(ctx *db.QueryContext, types core.TypeOps, scopes api.ScopeMap, mani
 		NarrowCache:            make(api.Cache),
 		FunctionTypeInProgress: make(map[functionTypeProgressKey]bool),
 		FunctionTypeCache:      make(map[functionTypeCacheKey]*typ.Function),
-		FunctionFactTypeCache:  make(functionfact.TypeCache),
+		FunctionFactCache:      functionfact.NewCache(),
 	}
 }
 

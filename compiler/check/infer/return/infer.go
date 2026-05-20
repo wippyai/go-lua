@@ -206,7 +206,7 @@ func (i *Inferencer) ComputeForGraph(
 			if info == nil {
 				continue
 			}
-			if hintVec := facts.Params(sym); len(hintVec) > 0 {
+			if hintVec := functionfact.ParameterEvidenceFromMap(facts, sym); len(hintVec) > 0 {
 				info.ParameterEvidence = paramevidence.ProjectToParameterUse(info.Graph.ParamSlotsReadOnly(), info.Evidence.ParameterUses, hintVec)
 			}
 		}

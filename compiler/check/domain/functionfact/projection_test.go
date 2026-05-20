@@ -27,7 +27,7 @@ func TestTypeForGraph_UsesCanonicalParentAndCache(t *testing.T) {
 	second := typ.Func().Returns(typ.Number).Build()
 	writeFunctionFactType(st, graph, storedParent, sym, first)
 
-	cache := functionfact.TypeCache{}
+	cache := functionfact.NewCache()
 	if got := functionfact.TypeForGraph(st, graph, sym, defaultParent, cache); !typ.TypeEquals(got, first) {
 		t.Fatalf("TypeForGraph() = %v, want %v", got, first)
 	}
@@ -58,8 +58,31 @@ func TestTypeForSymbol_ResolvesOwningParentGraph(t *testing.T) {
 	st.RegisterFunctionRef(sym, childFn, childGraph, parentGraph.ID(), 0)
 	writeFunctionFactType(st, parentGraph, parent, sym, fnType)
 
-	if got := functionfact.TypeForSymbol(st, sym, nil, functionfact.TypeCache{}); !typ.TypeEquals(got, fnType) {
+	if got := functionfact.TypeForSymbol(st, sym, nil, functionfact.NewCache()); !typ.TypeEquals(got, fnType) {
 		t.Fatalf("TypeForSymbol() = %v, want %v", got, fnType)
+	}
+	key, ok := functionfact.GraphKeyForSymbol(st, sym, nil)
+	if !ok {
+		t.Fatal("GraphKeyForSymbol() did not resolve key")
+	}
+	if key.GraphID != parentGraph.ID() || key.ParentHash != parent.Hash() {
+		t.Fatalf("GraphKeyForSymbol() = %#v, want graph %d parent %d", key, parentGraph.ID(), parent.Hash())
+	}
+}
+
+func TestReturnsForPhase_SelectsNarrowingProjection(t *testing.T) {
+	facts := api.FunctionFacts{
+		1: {
+			Summary: []typ.Type{typ.Nil},
+			Narrow:  []typ.Type{typ.String},
+		},
+	}
+
+	if got := functionfact.ReturnsForPhase(facts, 1, api.PhaseScopeCompute); len(got) != 1 || !typ.TypeEquals(got[0], typ.Nil) {
+		t.Fatalf("scope returns = %v, want nil summary", got)
+	}
+	if got := functionfact.ReturnsForPhase(facts, 1, api.PhaseNarrowing); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+		t.Fatalf("narrow returns = %v, want string narrow summary", got)
 	}
 }
 

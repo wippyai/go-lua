@@ -230,7 +230,7 @@ func (s *Synthesizer) functionFactType(sym compcfg.SymbolID) typ.Type {
 	if s == nil || sym == 0 {
 		return nil
 	}
-	if t := s.currentFunctionFacts().FunctionType(sym); t != nil {
+	if t := functionfact.TypeFromMap(s.currentFunctionFacts(), sym); t != nil {
 		return t
 	}
 	if s.deps == nil || s.deps.Ctx == nil {
@@ -246,12 +246,12 @@ func (s *Synthesizer) functionFactType(sym compcfg.SymbolID) typ.Type {
 	}
 	if s.deps.CheckCtx != nil {
 		if graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph); ok {
-			if t := functionfact.TypeForGraph(store, graph, sym, defaultParent, s.deps.FunctionFactTypeCache); t != nil {
+			if t := functionfact.TypeForGraph(store, graph, sym, defaultParent, s.deps.FunctionFactCache); t != nil {
 				return t
 			}
 		}
 	}
-	return functionfact.TypeForSymbol(store, sym, defaultParent, s.deps.FunctionFactTypeCache)
+	return functionfact.TypeForSymbol(store, sym, defaultParent, s.deps.FunctionFactCache)
 }
 
 func (s *Synthesizer) stableLocalFunctionValueType(

@@ -96,7 +96,7 @@ func (r *Runner) functionFactSignatureForFunction(
 		return nil
 	}
 	facts := store.GetInterprocFacts(parentGraph, parentScope).FunctionFacts
-	return unwrap.Function(facts.FunctionType(sym))
+	return unwrap.Function(functionfact.TypeFromMap(facts, sym))
 }
 
 func (r *Runner) appendCapturedMutatorAssignments(
@@ -267,7 +267,7 @@ func (r *Runner) mergeCapturedParentFunctionTypes(
 		return
 	}
 	for _, sym := range graph.Bindings().CapturedSymbols(fn) {
-		ft := parentFacts.FunctionType(sym)
+		ft := functionfact.TypeFromMap(parentFacts, sym)
 		if sym == 0 || ft == nil {
 			continue
 		}

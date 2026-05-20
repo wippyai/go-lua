@@ -68,13 +68,13 @@ func StoreFactsFromResult(
 		return
 	}
 	narrowSummary := returnsummary.Normalize(fnType.Returns)
-	if factNarrow := narrowSummaryFactForSymbol(store, result, parent, fnSym); len(factNarrow) > 0 {
+	if factNarrow := functionfact.NarrowSummaryForSymbol(store, fnSym, parent, nil); len(factNarrow) > 0 {
 		narrowSummary = returnsummary.Merge(narrowSummary, factNarrow)
 		if aligned, changed := returnsummary.AlignFunction(fnType, narrowSummary); changed {
 			fnType = aligned
 		}
 	}
-	summaryFromFacts := returnSummaryFactForSymbol(store, result, parent, fnSym)
+	summaryFromFacts := functionfact.ReturnSummaryForSymbol(store, fnSym, parent, nil)
 
 	candidateFunc := fnType
 	if len(narrowSummary) > 0 && !returnsummary.AllNil(narrowSummary) {
@@ -83,7 +83,7 @@ func StoreFactsFromResult(
 		}
 	}
 	if facts := store.GetInterprocFacts(result.Graph, parent).FunctionFacts; len(facts) > 0 {
-		if hinted := paramevidence.MergeIntoSignature(fn, facts.Params(fnSym), unwrap.Function(candidateFunc)); hinted != nil {
+		if hinted := paramevidence.MergeIntoSignature(fn, functionfact.ParameterEvidenceFromMap(facts, fnSym), unwrap.Function(candidateFunc)); hinted != nil {
 			candidateFunc = hinted
 		}
 	}
@@ -235,58 +235,6 @@ func narrowFunctionTypeFromResult(result *api.FuncResult, fn *ast.FunctionExpr) 
 	return erreffect.AttachInferredErrorReturnSpec(fnType, result.Evidence, result.FlowSolution, result.NarrowSynth)
 }
 
-func returnSummaryFactForSymbol(store Store, result *api.FuncResult, parent *scope.State, sym cfg.SymbolID) []typ.Type {
-	if store == nil || result == nil || result.Graph == nil || sym == 0 {
-		return nil
-	}
-	summaryGraph := result.Graph
-	summaryScope := api.ParentScopeForGraph(store, result.Graph.ID(), parent)
-	if parentKey, ok := store.ParentGraphKeyForSymbol(sym); ok {
-		if g := store.Graphs()[parentKey.GraphID]; g != nil {
-			summaryGraph = g
-			if scopedParent, ok := store.Parents()[parentKey.ParentHash]; ok {
-				summaryScope = scopedParent
-			}
-		}
-	}
-	facts := store.GetInterprocFacts(summaryGraph, summaryScope).FunctionFacts
-	if len(facts) == 0 {
-		return nil
-	}
-	return facts.Summary(sym)
-}
-
-func narrowSummaryFactForSymbol(store Store, result *api.FuncResult, parent *scope.State, sym cfg.SymbolID) []typ.Type {
-	if store == nil || result == nil || result.Graph == nil || sym == 0 {
-		return nil
-	}
-	summaryGraph := result.Graph
-	summaryScope := api.ParentScopeForGraph(store, result.Graph.ID(), parent)
-	if parentKey, ok := store.ParentGraphKeyForSymbol(sym); ok {
-		if g := store.Graphs()[parentKey.GraphID]; g != nil {
-			summaryGraph = g
-			if scopedParent, ok := store.Parents()[parentKey.ParentHash]; ok {
-				summaryScope = scopedParent
-			}
-		}
-	}
-
-	var facts api.FunctionFacts
-	if phaser, ok := any(store).(interface {
-		WithPhase(api.Phase, func())
-	}); ok {
-		phaser.WithPhase(api.PhaseNarrowing, func() {
-			facts = store.GetInterprocFacts(summaryGraph, summaryScope).FunctionFacts
-		})
-	} else {
-		facts = store.GetInterprocFacts(summaryGraph, summaryScope).FunctionFacts
-	}
-	if len(facts) == 0 {
-		return nil
-	}
-	return facts.NarrowSummary(sym)
-}
-
 func expectedFunctionFromResult(result *api.FuncResult) *typ.Function {
 	if result == nil || result.Graph == nil || result.FlowInputs == nil {
 		return nil
@@ -432,11 +380,7 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 		if calleeSym == 0 {
 			return
 		}
-		ref := store.FunctionRefBySym(calleeSym)
-		if ref == nil {
-			return
-		}
-		parentKey, ok := parentGraphKeyForCallee(store, result, parent, calleeSym)
+		parentKey, ok := functionfact.GraphKeyForSymbol(store, calleeSym, parent)
 		if !ok {
 			return
 		}
@@ -501,26 +445,4 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 	for _, evidence := range result.Evidence.Calls {
 		collectCallEvidence(evidence.Point, evidence.Info)
 	}
-}
-
-func parentGraphKeyForCallee(store Store, result *api.FuncResult, parent *scope.State, calleeSym cfg.SymbolID) (api.GraphKey, bool) {
-	if store == nil || result == nil || result.Graph == nil || calleeSym == 0 {
-		return api.GraphKey{}, false
-	}
-	if key, ok := store.ParentGraphKeyForSymbol(calleeSym); ok {
-		return key, true
-	}
-
-	ref := store.FunctionRefBySym(calleeSym)
-	if ref == nil {
-		return api.GraphKey{}, false
-	}
-	parentGraphID := ref.ParentGraphID
-	if parentGraphID == 0 {
-		parentGraphID = ref.GraphID
-	}
-	if parentGraphID != result.Graph.ID() {
-		return api.GraphKey{}, false
-	}
-	return store.GraphKeyFor(result.Graph, parent)
 }

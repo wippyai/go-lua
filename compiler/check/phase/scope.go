@@ -27,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -455,7 +456,7 @@ func buildDeclaredTypes(
 		if fn == nil || len(functionFacts) == 0 || sym == 0 {
 			return fn
 		}
-		if summary := functionFacts.Summary(sym); len(summary) > 0 {
+		if summary := functionfact.ReturnSummaryFromMap(functionFacts, sym); len(summary) > 0 {
 			return returnsummary.ApplyToFunctionType(fn, summary)
 		}
 		return fn
@@ -536,7 +537,7 @@ func buildDeclaredTypes(
 				}
 
 				if fnExpr, ok := source.(*ast.FunctionExpr); ok && fnExpr != nil {
-					if siblingFn := functionFacts.FunctionType(sym); siblingFn != nil {
+					if siblingFn := functionfact.TypeFromMap(functionFacts, sym); siblingFn != nil {
 						out[sym] = siblingFn
 						return
 					}
@@ -575,7 +576,7 @@ func buildDeclaredTypes(
 			if _, exists := out[sym]; exists {
 				continue
 			}
-			if siblingFn := functionFacts.FunctionType(sym); siblingFn != nil {
+			if siblingFn := functionfact.TypeFromMap(functionFacts, sym); siblingFn != nil {
 				out[sym] = siblingFn
 				continue
 			}

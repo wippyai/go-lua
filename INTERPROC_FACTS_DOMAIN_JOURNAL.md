@@ -8933,10 +8933,10 @@ Migration performed:
 - Added canonical lookup surfaces:
   - `functionfact.TypeForGraph`
   - `functionfact.TypeForSymbol`
-  - `functionfact.TypeCache`
+  - `functionfact.Cache`
 - Deleted extract-local `stableFunctionFactKey`.
 - Replaced `Deps.StableFunctionFactCache` with
-  `Deps.FunctionFactTypeCache`, typed by the function-fact domain.
+  `Deps.FunctionFactCache`, typed by the function-fact domain.
 - Collapsed `stableGraphLocalFunctionFactType` and `stableFunctionFactType`
   into one extract orchestration helper that only chooses the local context and
   delegates lookup semantics to the domain.
@@ -9032,5 +9032,76 @@ Result:
 
 - function-fact, interproc domain, interproc inference, and pipeline package
   tests: pass.
+- full go-lua suite: pass.
+- diff check: pass.
+
+## 2026-05-20 Flash Migration: Whole-Fact Projection Cache
+
+Problem:
+
+```text
+The previous projection slice centralized type lookup, but its cache was still
+typed as a function-type cache. That made return-summary projection and
+parameter-evidence projection continue to leak through raw `api.FunctionFacts`
+selectors in synthesis, postflow, scope construction, runner staging, and
+return inference.
+```
+
+Migration performed:
+
+- Replaced the type-only `functionfact.TypeCache` with a whole-fact
+  `functionfact.Cache`.
+- Made cache keys include graph, parent scope, symbol, and checker phase.
+- Added domain projection functions for:
+  - `FactForGraph`
+  - `TypeForGraph`
+  - `TypeForSymbol`
+  - `ReturnSummaryForSymbol`
+  - `NarrowSummaryForSymbol`
+  - `GraphKeyForSymbol`
+  - `ReturnsForPhase`
+  - `TypeFromMap`
+  - `ParameterEvidenceFromMap`
+  - `ReturnSummaryFromMap`
+  - `NarrowSummaryFromMap`
+- Deleted postflow-local `returnSummaryFactForSymbol` and
+  `narrowSummaryFactForSymbol`.
+- Deleted postflow-local `parentGraphKeyForCallee`.
+- Changed synth extraction, postflow, return inference, scope construction,
+  runner staging, and sibling construction to use function-fact-domain
+  projections instead of raw selectors.
+- Shared the domain projection cache across temporary synthesizers created for
+  overlays and nested return inference.
+
+Invariant:
+
+```text
+The canonical function-fact map is a stored abstract domain. Callers may carry
+the map as an input, but projection of its semantic slots belongs to
+`domain/functionfact`, not to phase-local helper code.
+```
+
+Boundary note:
+
+```text
+`domain/typefacts` still receives an interface with `FunctionType` because
+`api` currently constructs type-fact environments and `functionfact` imports
+`api`; importing `functionfact` from `typefacts` would create a cycle. That is a
+real package-boundary issue, not a compatibility bridge. It should be addressed
+only by moving environment construction out of `api` or splitting the storage
+types from the environment constructors.
+```
+
+Validation so far:
+
+```text
+go test ./compiler/check/domain/functionfact ./compiler/check/synth/phase/extract ./compiler/check/infer/interproc ./compiler/check/infer/return ./compiler/check/phase ./compiler/check/pipeline ./compiler/check/domain/typefacts ./compiler/check/siblings -count=1
+go test ./... -count=1
+git diff --check
+```
+
+Result:
+
+- focused projection and consumer packages: pass.
 - full go-lua suite: pass.
 - diff check: pass.

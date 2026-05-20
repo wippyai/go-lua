@@ -172,7 +172,7 @@ func (i *Inferencer) returnVectorFromFacts(
 	if len(facts) == 0 {
 		return nil
 	}
-	normalized := returnsummary.Normalize(facts.Summary(sym))
+	normalized := returnsummary.Normalize(functionfact.ReturnSummaryFromMap(facts, sym))
 	if len(normalized) == 0 {
 		return nil
 	}
@@ -371,8 +371,7 @@ func (i *Inferencer) capturedFunctionFactType(ctx *returnInferenceContext, sym c
 			parentScope = scoped
 		}
 	}
-	facts := i.store.GetInterprocFacts(parentGraph, parentScope).FunctionFacts
-	return facts.FunctionType(sym)
+	return functionfact.TypeForGraph(i.store, parentGraph, sym, parentScope, nil)
 }
 
 // inferLocalVariableTypes runs phase 1 synthesis to infer local variable types.

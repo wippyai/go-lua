@@ -41,6 +41,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -264,12 +265,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	// predicates can refine the pre-flow fact.
 	var canonicalReturns []typ.Type
 	if len(functionFacts) > 0 && fnSym != 0 {
-		rt := functionFacts.Summary(fnSym)
-		if s.IsNarrowing() {
-			if narrow := functionFacts.NarrowSummary(fnSym); len(narrow) > 0 {
-				rt = narrow
-			}
-		}
+		rt := functionfact.ReturnsForPhase(functionFacts, fnSym, s.phase)
 		if len(rt) > 0 {
 			if typ.HasKnownType(rt) {
 				canonicalReturns = rt
@@ -429,6 +425,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			Graphs:                 s.deps.Graphs,
 			Evidence:               graphEvidence,
 			FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
+			FunctionFactCache:      s.deps.FunctionFactCache,
 			ModuleBindings:         s.deps.ModuleBindings,
 			ModuleAliases:          moduleAliases,
 			Paths:                  s.deps.Paths,
@@ -576,6 +573,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		Graphs:                 s.deps.Graphs,
 		Evidence:               graphEvidence,
 		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
+		FunctionFactCache:      s.deps.FunctionFactCache,
 		ModuleBindings:         s.deps.ModuleBindings,
 		ModuleAliases:          moduleAliases,
 		Paths:                  s.deps.Paths,
@@ -786,7 +784,7 @@ func (s *Synthesizer) buildLocalFunctionTypeFromFacts(
 
 	var returnTypes []typ.Type
 	if functionFacts != nil && sym != 0 {
-		returnTypes = functionFacts.Summary(sym)
+		returnTypes = functionfact.ReturnsForPhase(functionFacts, sym, api.PhaseScopeCompute)
 	}
 
 	return join.WithReturnsOrUnknown(sig, returnTypes)
@@ -815,12 +813,7 @@ func (s *Synthesizer) buildFunctionTypeFromAvailableFacts(
 		}
 	}
 	if fnSym != 0 {
-		rets := functionFacts.Summary(fnSym)
-		if s.IsNarrowing() {
-			if narrow := functionFacts.NarrowSummary(fnSym); len(narrow) > 0 {
-				rets = narrow
-			}
-		}
+		rets := functionfact.ReturnsForPhase(functionFacts, fnSym, s.phase)
 		return join.WithReturnsOrUnknown(sig, rets)
 	}
 	return join.WithReturnsOrUnknown(sig, nil)
@@ -910,15 +903,16 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 				FunctionFacts: functionFacts,
 			})
 			tempDeps := &Deps{
-				Ctx:            s.deps.Ctx,
-				Types:          s.deps.Types,
-				DefaultScope:   sc,
-				Manifests:      s.deps.Manifests,
-				CheckCtx:       fnCheckCtx,
-				Graphs:         s.deps.Graphs,
-				Evidence:       s.graphEvidence(fnGraph),
-				ModuleBindings: s.deps.ModuleBindings,
-				ModuleAliases:  moduleAliases,
+				Ctx:               s.deps.Ctx,
+				Types:             s.deps.Types,
+				DefaultScope:      sc,
+				Manifests:         s.deps.Manifests,
+				CheckCtx:          fnCheckCtx,
+				Graphs:            s.deps.Graphs,
+				Evidence:          s.graphEvidence(fnGraph),
+				FunctionFactCache: s.deps.FunctionFactCache,
+				ModuleBindings:    s.deps.ModuleBindings,
+				ModuleAliases:     moduleAliases,
 			}
 			tempSynth = NewSynthesizer(tempDeps, api.PhaseTypeResolution)
 		}

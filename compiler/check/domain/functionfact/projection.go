@@ -8,14 +8,27 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// TypeCache memoizes canonical function-fact type projections for one check.
-type TypeCache map[TypeCacheKey]typ.Type
+// Cache memoizes canonical function-fact projections for one check.
+type Cache struct {
+	facts map[CacheKey]cachedFact
+}
 
-// TypeCacheKey identifies a canonical function-fact type projection.
-type TypeCacheKey struct {
+// CacheKey identifies a canonical function-fact projection.
+type CacheKey struct {
 	GraphID uint64
 	Parent  *scope.State
 	Sym     cfg.SymbolID
+	Phase   api.Phase
+}
+
+type cachedFact struct {
+	Fact  api.FunctionFact
+	Found bool
+}
+
+// NewCache creates an empty function-fact projection cache.
+func NewCache() *Cache {
+	return &Cache{facts: make(map[CacheKey]cachedFact)}
 }
 
 // ForSymbol returns the canonical stored function fact for sym.
@@ -27,19 +40,11 @@ func ForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.Sta
 	if ref == nil {
 		return api.FunctionFact{}, false
 	}
-	parentGraph := graphForRef(store, ref)
-	if parentGraph == nil {
-		return api.FunctionFact{}, false
-	}
-	parent := api.ParentScopeForGraph(store, parentGraph.ID(), defaultParent)
-	if parent == nil {
-		return api.FunctionFact{}, false
-	}
-	return store.GetInterprocFacts(parentGraph, parent).FunctionFacts.Fact(sym)
+	return FactForGraph(store, graphForRef(store, ref), sym, defaultParent, nil)
 }
 
 // TypeForSymbol returns the canonical stored function type fact for sym.
-func TypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, cache TypeCache) typ.Type {
+func TypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) typ.Type {
 	if store == nil || sym == 0 {
 		return nil
 	}
@@ -50,28 +55,175 @@ func TypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope
 	return TypeForGraph(store, graphForRef(store, ref), sym, defaultParent, cache)
 }
 
-// TypeForGraph returns the canonical function type fact for sym from graph's
-// function-fact product.
-func TypeForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, cache TypeCache) typ.Type {
-	if store == nil || graph == nil || sym == 0 {
+// ReturnSummaryForSymbol returns the canonical declared/pre-flow return summary
+// for sym from its owning function-fact product.
+func ReturnSummaryForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) []typ.Type {
+	ff, ok := factForSymbolInPhase(store, sym, defaultParent, api.PhaseScopeCompute, cache)
+	if !ok {
 		return nil
+	}
+	return ff.Summary
+}
+
+// NarrowSummaryForSymbol returns the canonical post-flow return summary for sym
+// from its owning function-fact product.
+func NarrowSummaryForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) []typ.Type {
+	ff, ok := factForSymbolInPhase(store, sym, defaultParent, api.PhaseNarrowing, cache)
+	if !ok {
+		return nil
+	}
+	return ff.Narrow
+}
+
+// GraphKeyForSymbol returns the canonical parent graph key that owns sym's
+// function-fact product.
+func GraphKeyForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) (api.GraphKey, bool) {
+	if store == nil || sym == 0 {
+		return api.GraphKey{}, false
+	}
+	ref := store.FunctionRefBySym(sym)
+	if ref == nil {
+		return api.GraphKey{}, false
+	}
+	graph := graphForRef(store, ref)
+	if graph == nil {
+		return api.GraphKey{}, false
 	}
 	parent := api.ParentScopeForGraph(store, graph.ID(), defaultParent)
 	if parent == nil {
+		return api.GraphKey{}, false
+	}
+	return store.GraphKeyFor(graph, parent)
+}
+
+// TypeForGraph returns the canonical function type fact for sym from graph's
+// function-fact product.
+func TypeForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) typ.Type {
+	ff, ok := FactForGraph(store, graph, sym, defaultParent, cache)
+	if !ok {
 		return nil
 	}
-	key := TypeCacheKey{GraphID: graph.ID(), Parent: parent, Sym: sym}
+	return ff.Type
+}
+
+// ReturnSummaryForGraph returns the canonical declared/pre-flow return summary
+// for sym from graph's function-fact product.
+func ReturnSummaryForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) []typ.Type {
+	ff, ok := factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseScopeCompute, cache)
+	if !ok {
+		return nil
+	}
+	return ff.Summary
+}
+
+// NarrowSummaryForGraph returns the canonical post-flow return summary for sym
+// from graph's function-fact product.
+func NarrowSummaryForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) []typ.Type {
+	ff, ok := factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseNarrowing, cache)
+	if !ok {
+		return nil
+	}
+	return ff.Narrow
+}
+
+// ReturnsForPhase returns the return projection visible in phase.
+func ReturnsForPhase(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) []typ.Type {
+	ff, ok := FactFromMap(facts, sym)
+	if !ok {
+		return nil
+	}
+	return returnsForPhase(ff, phase)
+}
+
+// TypeFromMap returns the canonical function type projection from a fact map.
+func TypeFromMap(facts api.FunctionFacts, sym cfg.SymbolID) typ.Type {
+	ff, ok := FactFromMap(facts, sym)
+	if !ok {
+		return nil
+	}
+	return ff.Type
+}
+
+// ParameterEvidenceFromMap returns the canonical parameter evidence projection
+// from a fact map.
+func ParameterEvidenceFromMap(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
+	ff, ok := FactFromMap(facts, sym)
+	if !ok {
+		return nil
+	}
+	return ff.Params
+}
+
+// ReturnSummaryFromMap returns the canonical declared/pre-flow return summary
+// projection from a fact map.
+func ReturnSummaryFromMap(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
+	ff, ok := FactFromMap(facts, sym)
+	if !ok {
+		return nil
+	}
+	return ff.Summary
+}
+
+// NarrowSummaryFromMap returns the canonical post-flow return summary
+// projection from a fact map.
+func NarrowSummaryFromMap(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
+	ff, ok := FactFromMap(facts, sym)
+	if !ok {
+		return nil
+	}
+	return ff.Narrow
+}
+
+// FactFromMap returns the canonical stored function fact for sym from facts.
+func FactFromMap(facts api.FunctionFacts, sym cfg.SymbolID) (api.FunctionFact, bool) {
+	if len(facts) == 0 || sym == 0 {
+		return api.FunctionFact{}, false
+	}
+	ff, ok := facts[sym]
+	if !ok {
+		return api.FunctionFact{}, false
+	}
+	ff = Normalize(ff)
+	return ff, !Empty(ff)
+}
+
+// FactForGraph returns the canonical stored function fact for sym from graph's
+// function-fact product.
+func FactForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) (api.FunctionFact, bool) {
+	return factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseScopeCompute, cache)
+}
+
+func factForSymbolInPhase(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, phase api.Phase, cache *Cache) (api.FunctionFact, bool) {
+	if store == nil || sym == 0 {
+		return api.FunctionFact{}, false
+	}
+	ref := store.FunctionRefBySym(sym)
+	if ref == nil {
+		return api.FunctionFact{}, false
+	}
+	return factForGraphInPhase(store, graphForRef(store, ref), sym, defaultParent, phase, cache)
+}
+
+func factForGraphInPhase(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, phase api.Phase, cache *Cache) (api.FunctionFact, bool) {
+	if store == nil || graph == nil || sym == 0 {
+		return api.FunctionFact{}, false
+	}
+	parent := api.ParentScopeForGraph(store, graph.ID(), defaultParent)
+	if parent == nil {
+		return api.FunctionFact{}, false
+	}
+	key := CacheKey{GraphID: graph.ID(), Parent: parent, Sym: sym, Phase: phase}
 	if cache != nil {
-		if cached, ok := cache[key]; ok {
-			return cached
+		if cached, ok := cache.get(key); ok {
+			return cached.Fact, cached.Found
 		}
 	}
-	facts := functionFactsForGraph(store, graph, parent)
-	factType := facts.FunctionType(sym)
+	facts := functionFactsForGraph(store, graph, parent, phase)
+	ff, found := FactFromMap(facts, sym)
 	if cache != nil {
-		cache[key] = factType
+		cache.set(key, ff, found)
 	}
-	return factType
+	return ff, found
 }
 
 // RefinementsFromStore projects canonical function facts as refinement facts.
@@ -88,6 +240,31 @@ func RefinementsFromStore(store api.StoreReader, defaultParent *scope.State) api
 	})
 }
 
+func returnsForPhase(ff api.FunctionFact, phase api.Phase) []typ.Type {
+	if phase == api.PhaseNarrowing && len(ff.Narrow) > 0 {
+		return ff.Narrow
+	}
+	return ff.Summary
+}
+
+func (c *Cache) get(key CacheKey) (cachedFact, bool) {
+	if c == nil || c.facts == nil {
+		return cachedFact{}, false
+	}
+	cached, ok := c.facts[key]
+	return cached, ok
+}
+
+func (c *Cache) set(key CacheKey, fact api.FunctionFact, found bool) {
+	if c == nil {
+		return
+	}
+	if c.facts == nil {
+		c.facts = make(map[CacheKey]cachedFact)
+	}
+	c.facts[key] = cachedFact{Fact: fact, Found: found}
+}
+
 func graphForRef(store api.StoreReader, ref *api.FunctionRef) *cfg.Graph {
 	if store == nil || ref == nil {
 		return nil
@@ -99,7 +276,7 @@ func graphForRef(store api.StoreReader, ref *api.FunctionRef) *cfg.Graph {
 	return store.Graphs()[parentGraphID]
 }
 
-func functionFactsForGraph(store api.StoreReader, graph *cfg.Graph, parent *scope.State) api.FunctionFacts {
+func functionFactsForGraph(store api.StoreReader, graph *cfg.Graph, parent *scope.State, phase api.Phase) api.FunctionFacts {
 	if store == nil || graph == nil || parent == nil {
 		return nil
 	}
@@ -108,7 +285,7 @@ func functionFactsForGraph(store api.StoreReader, graph *cfg.Graph, parent *scop
 		facts = store.GetInterprocFacts(graph, parent).FunctionFacts
 	}
 	if phaser, ok := store.(interface{ WithPhase(api.Phase, func()) }); ok {
-		phaser.WithPhase(api.PhaseScopeCompute, load)
+		phaser.WithPhase(phase, load)
 	} else {
 		load()
 	}

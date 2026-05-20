@@ -920,6 +920,7 @@ func (s *Synthesizer) withEnvOverlay(overlay map[string]typ.Type) *Synthesizer {
 		PreCache:               make(api.Cache),
 		NarrowCache:            make(api.Cache),
 		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
+		FunctionFactCache:      s.deps.FunctionFactCache,
 		ModuleBindings:         s.deps.ModuleBindings,
 		ModuleAliases:          s.deps.ModuleAliases,
 	}
