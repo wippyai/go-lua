@@ -5,6 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
+	ccfg "github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
@@ -109,12 +111,40 @@ func (m mockGraph) SymbolKind(sym cfg.SymbolID) (cfg.SymbolKind, bool) {
 	return cfg.SymbolUnknown, false
 }
 
+type testGraphProvider struct {
+	cache map[*ast.FunctionExpr]*ccfg.Graph
+}
+
+func newTestGraphProvider() *testGraphProvider {
+	return &testGraphProvider{cache: make(map[*ast.FunctionExpr]*ccfg.Graph)}
+}
+
+func (p *testGraphProvider) GetOrBuildCFG(fn *ast.FunctionExpr) *ccfg.Graph {
+	if fn == nil {
+		return nil
+	}
+	if graph := p.cache[fn]; graph != nil {
+		return graph
+	}
+	graph := ccfg.Build(fn)
+	p.cache[fn] = graph
+	return graph
+}
+
+func (p *testGraphProvider) EvidenceForGraph(graph *ccfg.Graph) api.FlowEvidence {
+	if graph == nil {
+		return api.FlowEvidence{}
+	}
+	return trace.GraphEvidence(graph, graph.Bindings())
+}
+
 func newTestSynthesizer() *Synthesizer {
 	deps := &Deps{
 		Ctx:      db.NewQueryContext(db.New()),
 		Types:    mockTypeQuerier{},
 		Scopes:   make(api.ScopeMap),
 		PreCache: make(api.Cache),
+		Graphs:   newTestGraphProvider(),
 	}
 	return NewSynthesizer(deps, api.PhaseTypeResolution)
 }

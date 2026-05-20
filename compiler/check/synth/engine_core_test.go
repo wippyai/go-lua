@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	ccfg "github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
@@ -15,11 +16,39 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+type testGraphProvider struct {
+	cache map[*ast.FunctionExpr]*ccfg.Graph
+}
+
+func newTestGraphProvider() *testGraphProvider {
+	return &testGraphProvider{cache: make(map[*ast.FunctionExpr]*ccfg.Graph)}
+}
+
+func (p *testGraphProvider) GetOrBuildCFG(fn *ast.FunctionExpr) *ccfg.Graph {
+	if fn == nil {
+		return nil
+	}
+	if graph := p.cache[fn]; graph != nil {
+		return graph
+	}
+	graph := ccfg.Build(fn)
+	p.cache[fn] = graph
+	return graph
+}
+
+func (p *testGraphProvider) EvidenceForGraph(graph *ccfg.Graph) api.FlowEvidence {
+	if graph == nil {
+		return api.FlowEvidence{}
+	}
+	return trace.GraphEvidence(graph, graph.Bindings())
+}
+
 func newTestEngine() *Engine {
 	return New(Config{
 		Ctx:    db.NewQueryContext(db.New()),
 		Types:  mockTypeQuerier{},
 		Scopes: make(api.ScopeMap),
+		Graphs: newTestGraphProvider(),
 	})
 }
 
@@ -30,6 +59,7 @@ func newTestEngineWithScope(sc *scope.State) *Engine {
 		Ctx:    db.NewQueryContext(db.New()),
 		Types:  mockTypeQuerier{},
 		Scopes: scopes,
+		Graphs: newTestGraphProvider(),
 	})
 }
 
@@ -52,6 +82,7 @@ func newTestEngineWithSymbol(name string, t typ.Type) (*Engine, *ast.IdentExpr) 
 		Types:  mockTypeQuerier{},
 		Scopes: make(api.ScopeMap),
 		Env:    checkCtx,
+		Graphs: newTestGraphProvider(),
 	}), ident
 }
 

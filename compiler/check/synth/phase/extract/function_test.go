@@ -21,6 +21,10 @@ func (p *countingGraphProvider) GetOrBuildCFG(*ast.FunctionExpr) *ccfg.Graph {
 	return p.graph
 }
 
+func (p *countingGraphProvider) EvidenceForGraph(*ccfg.Graph) api.FlowEvidence {
+	return api.FlowEvidence{}
+}
+
 func TestSynthFunctionType_Nil(t *testing.T) {
 	s := newTestSynthesizer()
 	result := s.FunctionType(nil, nil)

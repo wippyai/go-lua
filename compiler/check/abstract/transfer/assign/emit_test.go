@@ -23,6 +23,42 @@ type preciseSourceSynthStub struct {
 	preciseType typ.Type
 }
 
+type testGraphProvider struct {
+	bindings *bind.BindingTable
+	cache    map[*ast.FunctionExpr]*cfg.Graph
+}
+
+func newTestGraphProvider(bindings *bind.BindingTable) *testGraphProvider {
+	return &testGraphProvider{
+		bindings: bindings,
+		cache:    make(map[*ast.FunctionExpr]*cfg.Graph),
+	}
+}
+
+func (p *testGraphProvider) GetOrBuildCFG(fn *ast.FunctionExpr) *cfg.Graph {
+	if fn == nil {
+		return nil
+	}
+	if graph := p.cache[fn]; graph != nil {
+		return graph
+	}
+	var graph *cfg.Graph
+	if p.bindings != nil {
+		graph = cfg.BuildWithBindings(fn, p.bindings)
+	} else {
+		graph = cfg.Build(fn)
+	}
+	p.cache[fn] = graph
+	return graph
+}
+
+func (p *testGraphProvider) EvidenceForGraph(graph *cfg.Graph) api.FlowEvidence {
+	if graph == nil {
+		return api.FlowEvidence{}
+	}
+	return trace.GraphEvidence(graph, graph.Bindings())
+}
+
 func (s *preciseSourceSynthStub) TypeOf(expr ast.Expr, _ cfg.Point) typ.Type {
 	switch expr.(type) {
 	case *ast.LogicalOpExpr:
@@ -550,7 +586,7 @@ func TestExtractAssignments_KeysCollector_WithFilterBranch(t *testing.T) {
 				return typ.Unknown
 			},
 		},
-	}, inputs, keyscoll.BuildKeysCollectorDetector(graph, evidence, nil, nil))
+	}, inputs, keyscoll.BuildKeysCollectorDetector(graph, evidence, nil, newTestGraphProvider(graph.Bindings())))
 
 	src, ok := inputs.KeysProvenance[suiteNamesSym]
 	if !ok || src != suitesSym {

@@ -35,6 +35,39 @@ func evidenceForGraph(graph *cfg.Graph) api.FlowEvidence {
 	return trace.GraphEvidence(graph, graph.Bindings())
 }
 
+type testGraphProvider struct {
+	bindings *bind.BindingTable
+	cache    map[*ast.FunctionExpr]*cfg.Graph
+}
+
+func newTestGraphProvider(bindings *bind.BindingTable) *testGraphProvider {
+	return &testGraphProvider{
+		bindings: bindings,
+		cache:    make(map[*ast.FunctionExpr]*cfg.Graph),
+	}
+}
+
+func (p *testGraphProvider) GetOrBuildCFG(fn *ast.FunctionExpr) *cfg.Graph {
+	if fn == nil {
+		return nil
+	}
+	if graph := p.cache[fn]; graph != nil {
+		return graph
+	}
+	var graph *cfg.Graph
+	if p.bindings != nil {
+		graph = cfg.BuildWithBindings(fn, p.bindings)
+	} else {
+		graph = cfg.Build(fn)
+	}
+	p.cache[fn] = graph
+	return graph
+}
+
+func (p *testGraphProvider) EvidenceForGraph(graph *cfg.Graph) api.FlowEvidence {
+	return evidenceForGraph(graph)
+}
+
 func TestDetectKeysCollector_NilFunction(t *testing.T) {
 	result := keyscoll.DetectKeysCollector(nil, api.FlowEvidence{})
 	if result != nil {
@@ -94,7 +127,7 @@ func TestBuildKeysCollectorDetector_NilCallInfo(t *testing.T) {
 		Stmts: []ast.Stmt{&ast.ReturnStmt{}},
 	}
 	graph := cfg.Build(fn)
-	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, newTestGraphProvider(graph.Bindings()))
 	if detector == nil {
 		t.Fatal("expected non-nil detector")
 	}
@@ -109,7 +142,7 @@ func TestBuildKeysCollectorDetector_MethodCall(t *testing.T) {
 		Stmts: []ast.Stmt{&ast.ReturnStmt{}},
 	}
 	graph := cfg.Build(fn)
-	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, newTestGraphProvider(graph.Bindings()))
 	callInfo := &cfg.CallInfo{
 		Method:   "someMethod",
 		Receiver: &ast.IdentExpr{Value: "obj"},
@@ -125,7 +158,7 @@ func TestBuildKeysCollectorDetector_NoCalleeSymbol(t *testing.T) {
 		Stmts: []ast.Stmt{&ast.ReturnStmt{}},
 	}
 	graph := cfg.Build(fn)
-	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, newTestGraphProvider(graph.Bindings()))
 	callInfo := &cfg.CallInfo{
 		Callee:       &ast.IdentExpr{Value: "fn"},
 		CalleeSymbol: 0,
@@ -199,7 +232,7 @@ func TestBuildKeysCollectorDetector_NestedFieldArgument(t *testing.T) {
 	}
 	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, newTestGraphProvider(graph.Bindings()))
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sorted_keys" {
@@ -275,7 +308,7 @@ func TestBuildKeysCollectorDetector_RespectsReturnIndex(t *testing.T) {
 	}
 	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, newTestGraphProvider(graph.Bindings()))
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sorted_keys" {
@@ -328,7 +361,7 @@ func TestBuildKeysCollectorDetector_UsesCanonicalCandidatesWhenRawSymbolMissing(
 	}
 	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, newTestGraphProvider(graph.Bindings()))
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sorted_keys" {
@@ -382,7 +415,7 @@ func TestBuildKeysCollectorDetector_UsesModuleBindingNameFallback(t *testing.T) 
 
 	moduleBindings := bind.NewBindingTable()
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), moduleBindings, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), moduleBindings, newTestGraphProvider(graph.Bindings()))
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sorted_keys" {
@@ -441,7 +474,7 @@ func TestBuildKeysCollectorDetector_UsesDirectAliasCandidate(t *testing.T) {
 	}
 	want := bindings.GetOrCreateFieldSymbol(stateSym, "users")
 
-	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, nil)
+	detector := keyscoll.BuildKeysCollectorDetector(graph, evidenceForGraph(graph), nil, newTestGraphProvider(graph.Bindings()))
 	found := false
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || info.CalleeName != "sk" {

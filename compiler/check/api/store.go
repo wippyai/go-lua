@@ -42,9 +42,11 @@ type NestedMeta struct {
 	DefPoint      cfg.Point
 }
 
-// GraphProvider maps function literals to CFGs.
+// GraphProvider maps function literals to CFGs and exposes the canonical
+// abstract-interpreter evidence for each graph.
 type GraphProvider interface {
 	GetOrBuildCFG(fn *ast.FunctionExpr) *cfg.Graph
+	EvidenceForGraph(graph *cfg.Graph) FlowEvidence
 }
 
 // GraphEvidenceProvider returns canonical abstract-interpreter evidence for a graph.

@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/abstract/transfer/resolve"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
@@ -14,11 +13,6 @@ import (
 type KeysCollectorInfo struct {
 	ParamIndex  int // Which parameter the keys come from (0-based)
 	ReturnIndex int // Which return slot carries the keys table (0-based)
-}
-
-// GraphProvider resolves canonical CFGs for function literals.
-type GraphProvider interface {
-	GetOrBuildCFG(fn *ast.FunctionExpr) *cfg.Graph
 }
 
 // DetectKeysCollector analyzes a function graph to detect if it follows the
@@ -261,7 +255,7 @@ func isTableInsertCall(info *cfg.CallInfo) bool {
 	return true
 }
 
-func functionGraph(fn *ast.FunctionExpr, owner *cfg.Graph, graphs GraphProvider) *cfg.Graph {
+func functionGraph(fn *ast.FunctionExpr, owner *cfg.Graph, graphs api.GraphProvider) *cfg.Graph {
 	if fn == nil {
 		return nil
 	}
@@ -285,7 +279,7 @@ func BuildKeysCollectorDetector(
 	graph *cfg.Graph,
 	evidence api.FlowEvidence,
 	moduleBindings *bind.BindingTable,
-	graphs GraphProvider,
+	graphs api.GraphProvider,
 ) func(*cfg.CallInfo, cfg.Point, int) cfg.SymbolID {
 	cache := make(map[cfg.SymbolID]*KeysCollectorInfo)
 	bindings := graph.Bindings()
@@ -321,11 +315,11 @@ func BuildKeysCollectorDetector(
 			fnGraph := functionGraph(fn, graph, graphs)
 			fnEvidence := evidence
 			if fnGraph != graph {
-				if provider, ok := graphs.(api.GraphEvidenceProvider); ok {
-					fnEvidence = provider.EvidenceForGraph(fnGraph)
-				} else {
-					fnEvidence = trace.GraphEvidence(fnGraph, graphBindings(fnGraph, moduleBindings))
+				if graphs == nil {
+					cache[calleeSym] = nil
+					continue
 				}
+				fnEvidence = graphs.EvidenceForGraph(fnGraph)
 			}
 			info := DetectKeysCollector(fnGraph, fnEvidence)
 			cache[calleeSym] = info
@@ -339,11 +333,4 @@ func BuildKeysCollectorDetector(
 		}
 		return 0
 	}
-}
-
-func graphBindings(graph *cfg.Graph, fallback *bind.BindingTable) *bind.BindingTable {
-	if graph != nil && graph.Bindings() != nil {
-		return graph.Bindings()
-	}
-	return fallback
 }

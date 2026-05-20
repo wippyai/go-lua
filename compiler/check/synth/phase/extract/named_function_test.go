@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	ccfg "github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -90,6 +91,7 @@ func TestFunctionLiteralForIdent_ResolvesAliasChainLiteral(t *testing.T) {
 	})
 	synth := NewSynthesizer(&Deps{
 		CheckCtx:       checkCtx,
+		Evidence:       trace.GraphEvidence(graph, localBindings),
 		ModuleBindings: localBindings,
 		PreCache:       make(api.Cache),
 		NarrowCache:    make(api.Cache),
@@ -143,6 +145,7 @@ func TestGraphLocalFunctionLiteralForExpr_ResolvesFieldDefinitionAttr(t *testing
 	})
 	synth := NewSynthesizer(&Deps{
 		CheckCtx:       checkCtx,
+		Evidence:       trace.GraphEvidence(graph, localBindings),
 		ModuleBindings: localBindings,
 		PreCache:       make(api.Cache),
 		NarrowCache:    make(api.Cache),
@@ -209,6 +212,7 @@ func TestGraphLocalFunctionLiteralForExpr_IgnoresMutableFieldPathAttr(t *testing
 	})
 	synth := NewSynthesizer(&Deps{
 		CheckCtx:       checkCtx,
+		Evidence:       trace.GraphEvidence(graph, localBindings),
 		ModuleBindings: localBindings,
 		PreCache:       make(api.Cache),
 		NarrowCache:    make(api.Cache),
@@ -268,6 +272,7 @@ func TestHasDominatingDirectFunctionRebind_FalseWhenOnlyCapturedFieldChanges(t *
 	})
 	synth := NewSynthesizer(&Deps{
 		CheckCtx:       checkCtx,
+		Evidence:       trace.GraphEvidence(graph, localBindings),
 		ModuleBindings: localBindings,
 		PreCache:       make(api.Cache),
 		NarrowCache:    make(api.Cache),
@@ -333,6 +338,7 @@ func TestHasDominatingDirectFunctionRebind_TrueWhenFieldIsReassigned(t *testing.
 	})
 	synth := NewSynthesizer(&Deps{
 		CheckCtx:       checkCtx,
+		Evidence:       trace.GraphEvidence(graph, localBindings),
 		ModuleBindings: localBindings,
 		PreCache:       make(api.Cache),
 		NarrowCache:    make(api.Cache),

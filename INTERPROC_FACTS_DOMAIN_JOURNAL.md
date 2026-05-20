@@ -7631,6 +7631,61 @@ go test ./compiler/check/abstract/trace ./compiler/check/pipeline \
 
 The command passed.
 
+## 2026-05-20 Flash Migration: Graph Provider Carries Evidence
+
+After the value-domain consolidation, the remaining graph-evidence ownership
+leak was in nested helper consumers. The synthesizer and keys-collector detector
+could still rebuild `trace.GraphEvidence` when their graph provider did not
+also provide canonical evidence. That was a fallback path in consumer code.
+
+Canonical rule:
+
+```text
+api.GraphProvider = canonical CFG provider + canonical FlowEvidence provider
+consumer helpers   = ask the provider or use the current function's evidence
+trace.GraphEvidence = constructor used only by canonical materializers/tests
+```
+
+Implementation shape:
+
+- `api.GraphProvider` now includes `EvidenceForGraph`.
+- `check.Session` already satisfied that shape through its store-backed
+  evidence cache.
+- Synth extraction no longer imports `abstract/trace` in production and returns
+  no hidden rebuilt evidence when no provider is attached.
+- Keys-collector classification no longer has a consumer-side graph-evidence
+  rebuild fallback. Tests now provide an explicit graph/evidence provider when
+  they exercise nested callee classification.
+
+Proof invariant:
+
+```text
+rg "trace\\.GraphEvidence" compiler/check -g '!**/*_test.go' -n
+```
+
+The remaining production matches are canonical constructor/materializer sites:
+
+```text
+compiler/check/store/store.go
+compiler/check/abstract/transfer/evidence.go
+```
+
+Verification:
+
+```text
+go test ./compiler/check/abstract/transfer/keyscoll \
+  ./compiler/check/synth/phase/extract ./compiler/check/api \
+  ./compiler/check/pipeline -count=1
+
+go test ./compiler/check/... ./types/flow/... -count=1
+
+go test ./... -count=1
+
+git diff --check
+```
+
+All commands passed.
+
 ## 2026-05-20 Flash Migration: Value Domain Owns Structural Shape Laws
 
 The next non-canonical helper cluster was in parameter evidence. Parameter

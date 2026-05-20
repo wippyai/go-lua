@@ -2,7 +2,6 @@ package extract
 
 import (
 	compcfg "github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 )
 
@@ -18,9 +17,9 @@ func (s *Synthesizer) graphEvidence(graph *compcfg.Graph) api.FlowEvidence {
 		}
 	}
 	if s != nil && s.deps != nil {
-		if provider, ok := s.deps.Graphs.(api.GraphEvidenceProvider); ok {
-			return provider.EvidenceForGraph(graph)
+		if s.deps.Graphs != nil {
+			return s.deps.Graphs.EvidenceForGraph(graph)
 		}
 	}
-	return trace.GraphEvidence(graph, graph.Bindings())
+	return api.FlowEvidence{}
 }

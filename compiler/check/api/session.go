@@ -15,6 +15,7 @@ type AnalysisSession interface {
 	StoreHandle() IterationStore
 
 	GetOrBuildCFG(fn *ast.FunctionExpr) *cfg.Graph
+	EvidenceForGraph(graph *cfg.Graph) FlowEvidence
 	RegisterGraphHierarchy(root *cfg.Graph)
 
 	ResultsMap() map[*ast.FunctionExpr]*FuncResult
