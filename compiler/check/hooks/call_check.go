@@ -29,6 +29,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -132,7 +133,8 @@ func checkSingleCall(
 		def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, graph, evidence, info)
 	} else if info.Callee != nil {
 		def.Callee = narrowView.TypeOf(info.Callee, p)
-		if factType, unobservedParams, allowExtraArgs := functionFactCalleeType(api.StoreFrom(ctx), info, graph, evidence, bindings, results, unobservedLocalParams); factType != nil {
+		if factType, refinement, localFn, unobservedParams, allowExtraArgs := functionFactCalleeType(api.StoreFrom(ctx), info, graph, evidence, bindings, results, unobservedLocalParams); factType != nil {
+			factType = callTypeWithRefinementProvenAnyArgs(factType, args, localFn, refinement)
 			def.AllowExtraArgs = allowExtraArgs
 			if typ.IsUnknownOrNil(def.Callee) || canonicalFactHasWiderParams(def.Callee, factType) {
 				def.Callee = factType
@@ -164,9 +166,9 @@ func functionFactCalleeType(
 	bindings *bind.BindingTable,
 	results map[*ast.FunctionExpr]*api.FuncResult,
 	unobservedLocalParams map[cfg.SymbolID][]bool,
-) (typ.Type, []bool, bool) {
+) (typ.Type, *constraint.FunctionRefinement, *ast.FunctionExpr, []bool, bool) {
 	if store == nil || info == nil {
-		return nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	moduleBindings := store.ModuleBindings()
 	for _, sym := range callsite.CallableCalleeSymbolCandidates(info, graph, bindings, moduleBindings) {
@@ -174,19 +176,35 @@ func functionFactCalleeType(
 		if !ok {
 			continue
 		}
-		fn := callsite.FunctionLiteralForGraphSymbol(evidence, sym)
-		graphLocal := fn != nil
+		localFn := callsite.FunctionLiteralForGraphSymbol(evidence, sym)
+		refinementFn := localFn
+		if refinementFn == nil {
+			if ref := store.FunctionRefBySym(sym); ref != nil && ref.GraphID != 0 {
+				if g := store.Graphs()[ref.GraphID]; g != nil {
+					refinementFn = g.Func()
+				}
+			}
+		}
+		graphLocal := localFn != nil
 		var unobservedParams []bool
 		allowExtraArgs := false
 		if graphLocal {
-			unobservedParams = unobservedLocalParamMask(store, sym, fn, results, unobservedLocalParams)
-			allowExtraArgs = callsite.AllowsDiscardedExtraArgs(fn)
+			unobservedParams = unobservedLocalParamMask(store, sym, localFn, results, unobservedLocalParams)
+			allowExtraArgs = callsite.AllowsDiscardedExtraArgs(localFn)
 		}
 		if ff.Type != nil {
-			return ff.Type, unobservedParams, allowExtraArgs
+			refinement := ff.Refinement
+			if refinement == nil {
+				if fnType := unwrap.Function(ff.Type); fnType != nil {
+					if typed, ok := fnType.Refinement.(*constraint.FunctionRefinement); ok {
+						refinement = typed
+					}
+				}
+			}
+			return ff.Type, refinement, refinementFn, unobservedParams, allowExtraArgs
 		}
 	}
-	return nil, nil, false
+	return nil, nil, nil, nil, false
 }
 
 func unobservedLocalParamMask(
@@ -221,6 +239,64 @@ func unobservedLocalParamMask(
 		cache[sym] = mask
 	}
 	return mask
+}
+
+func callTypeWithRefinementProvenAnyArgs(
+	callee typ.Type,
+	args []typ.Type,
+	fn *ast.FunctionExpr,
+	refinement *constraint.FunctionRefinement,
+) typ.Type {
+	base := unwrap.Function(callee)
+	if base == nil || refinement == nil || fn == nil || fn.ParList == nil || len(args) == 0 {
+		return callee
+	}
+	changed := false
+	builder := typ.Func().ReserveParams(len(base.Params))
+	for _, tp := range base.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for i, p := range base.Params {
+		paramType := p.Type
+		if i < len(args) &&
+			typ.IsAny(args[i]) &&
+			sourceParamUnannotated(fn, i) &&
+			functionfact.RefinementGuaranteesParamType(refinement, i, p.Type) {
+			paramType = typ.Any
+			changed = true
+		}
+		if p.Optional {
+			builder = builder.OptParam(p.Name, paramType)
+		} else {
+			builder = builder.Param(p.Name, paramType)
+		}
+	}
+	if !changed {
+		return callee
+	}
+	if base.Variadic != nil {
+		builder = builder.Variadic(base.Variadic)
+	}
+	if len(base.Returns) > 0 {
+		builder = builder.Returns(base.Returns...)
+	}
+	if base.Effects != nil {
+		builder = builder.Effects(base.Effects)
+	}
+	if base.Spec != nil {
+		builder = builder.Spec(base.Spec)
+	}
+	if base.Refinement != nil {
+		builder = builder.WithRefinement(base.Refinement)
+	}
+	return builder.Build()
+}
+
+func sourceParamUnannotated(fn *ast.FunctionExpr, idx int) bool {
+	if fn == nil || fn.ParList == nil || idx < 0 || idx >= len(fn.ParList.Names) {
+		return false
+	}
+	return fn.ParList.Types == nil || idx >= len(fn.ParList.Types) || fn.ParList.Types[idx] == nil
 }
 
 func callTypeWithUnobservedLocalAnyArgs(callee typ.Type, args []typ.Type, unobservedParams []bool) typ.Type {

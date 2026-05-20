@@ -53,6 +53,7 @@ func Join(existing, candidate api.FunctionFact) api.FunctionFact {
 		out.Type = MergeType(out.Type, candidate.Type)
 	}
 	out.Refinement = MergeRefinement(out.Refinement, candidate.Refinement)
+	out.Params = preserveDynamicParamsProvenByRefinement(existing.Params, candidate.Params, out.Params, out.Refinement)
 
 	summaryBeforeNarrow := out.Summary
 	if len(out.Narrow) > 0 {
@@ -134,6 +135,7 @@ func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 		Type:       WidenTypeForConvergence(prev.Type, next.Type),
 		Refinement: MergeRefinement(prev.Refinement, next.Refinement),
 	}
+	out.Params = preserveDynamicParamsProvenByRefinement(prev.Params, next.Params, out.Params, out.Refinement)
 
 	summaryBeforeNarrow := out.Summary
 	// Narrow summaries can refine optional/non-nil returns, but a nil-only

@@ -5,7 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -28,6 +30,42 @@ func TestJoin_InitialObservation(t *testing.T) {
 	}
 	if !typ.TypeEquals(got.Type, fn) {
 		t.Fatalf("func mismatch: got %v", got.Type)
+	}
+}
+
+func TestJoin_RefinementProvenParamDoesNotBecomePrecondition(t *testing.T) {
+	refinement := constraint.NewRefinement([]constraint.Constraint{
+		constraint.HasType{Path: constraint.ParamPath(1), Type: narrow.BuiltinTypeKey("string")},
+	}, nil, nil)
+	out := Join(
+		api.FunctionFact{Params: []typ.Type{typ.String, typ.Any}},
+		api.FunctionFact{
+			Params:     []typ.Type{typ.String, typ.String},
+			Refinement: refinement,
+			Type: typ.Func().
+				Param("label", typ.String).
+				Param("msg", typ.String).
+				Returns(typ.Unknown).
+				Build(),
+		},
+	)
+
+	if len(out.Params) != 2 || !typ.TypeEquals(out.Params[1], typ.Any) {
+		t.Fatalf("expected dynamic call evidence to survive refinement-proven body use, got %v", out.Params)
+	}
+}
+
+func TestJoin_UnprovenDynamicParamUseRemainsPrecondition(t *testing.T) {
+	out := Join(
+		api.FunctionFact{Params: []typ.Type{typ.Any}},
+		api.FunctionFact{
+			Params: []typ.Type{typ.String},
+			Type:   typ.Func().Param("value", typ.String).Returns(typ.Unknown).Build(),
+		},
+	)
+
+	if len(out.Params) != 1 || !typ.TypeEquals(out.Params[0], typ.String) {
+		t.Fatalf("expected unproven string demand to remain a precondition, got %v", out.Params)
 	}
 }
 

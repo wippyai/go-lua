@@ -8577,3 +8577,101 @@ The remaining local-replace diagnostics must stay classified individually.
 The checker must not add compatibility fallbacks or any-to-contract shortcuts
 to hide diagnostics that are real soundness findings.
 ```
+
+## 2026-05-20 Revalidation: Assertion Refinement Regression Fixed Without Contract Weakening
+
+Current base before this patch: `cd46937b`.
+
+Regression class:
+
+```text
+An unannotated assertion-style helper can accept a dynamic argument, prove a
+more specific type on normal return, and then use that refined value internally.
+That proven internal use is an effect/refinement, not a public parameter
+precondition. Merging the body observation into `FunctionFact.Params` made the
+helper look like `msg: string`, so callers passing `any` got false positives
+even though the helper itself proved `msg:string` before string operations.
+```
+
+Canonical rule implemented:
+
+```text
+FunctionFact.Params stores caller obligations only.
+If a dynamic call observation merges with a concrete body observation, and the
+normal-return refinement proves that same concrete type for the parameter, keep
+the parameter dynamic in the public function fact.
+```
+
+Call checking applies the same rule only when all of these are true:
+
+- the actual argument is `any`;
+- the source parameter is unannotated;
+- the callee has a normal-return refinement proving the expected parameter type;
+- the function AST is available from the canonical graph/evidence store.
+
+This is not an `any` shortcut. Annotated parameters remain authoritative, and
+unproven concrete demands remain preconditions.
+
+Implementation shape:
+
+- `compiler/check/domain/functionfact/refinement.go` owns the refinement-proof
+  predicate and the join/widen parameter preservation rule.
+- `compiler/check/domain/functionfact/fact.go` calls that rule from `Join` and
+  `WidenForConvergence`.
+- `compiler/check/hooks/call_check.go` uses the same proof predicate when
+  checking function facts at a call site, so imported assertion summaries and
+  local graph facts have the same semantics.
+
+Regression coverage:
+
+- `TestJoin_RefinementProvenParamDoesNotBecomePrecondition`
+- `TestJoin_UnprovenDynamicParamUseRemainsPrecondition`
+- `TestImportedTypeAssertionNarrowsArgumentInPlace`
+- `TestImportedTypeAssertionNarrowsLocalBeforeStringUse`
+- `TestAnnotatedImportedTypeAssertionKeepsPrecondition`
+
+Validation commands run:
+
+```text
+go test ./compiler/check/domain/functionfact -count=1
+go test ./compiler/check/tests/regression -run 'TestImportedTypeAssertion|TestAnnotatedImportedTypeAssertion|TestLinterFalsePositive_TestRunnerExact|TestLinterFalsePositive_GraphLocalUnusedParamAllowsInternalAny|TestLinterFalsePositive_GraphLocalObservedParamRejectsAny|TestSessionPlugin_UntypedSessionIDGuardStillRejectsStringAPI' -count=1
+go test ./... -count=1
+git diff --check
+env GOFLAGS=-buildvcs=false go build -o /tmp/wippy-local-replace-validate ./cmd/wippy
+/tmp/wippy-local-replace-validate lint --cache-reset --json
+env WIPPY_DIR=/tmp/wippy-golua-validate WIPPY_BIN=/tmp/wippy-local-replace-validate GOFLAGS=-buildvcs=false ../scripts/verify-suite.sh
+```
+
+Results:
+
+- focused function-fact tests: pass.
+- focused regression tests: pass.
+- full go-lua test suite: pass.
+- diff whitespace check: pass.
+- local-replace Wippy binary build: pass.
+- local-replace `tests/app` replay: 2 errors, 0 warnings, 0 hints.
+  The prior `denied_explicit` assertion false positives are gone.
+- full local-replace verify suite: checker tests and binary build pass, then
+  external lint exits non-zero with:
+  - `/tmp/wippy-golua-validate/tests/app`: 2 errors
+  - `/home/wolfy-j/wippy/session`: 33 errors
+  - `/home/wolfy-j/wippy/framework/src/agent/src`: 6 errors
+  - `/home/wolfy-j/wippy/docker-demo`: 66 errors
+  - `/home/wolfy-j/wippy/framework/src/llm/src`: 3 errors
+  - `/home/wolfy-j/wippy/framework/src/llm/test`: 3 errors
+  - `/home/wolfy-j/wippy/framework/src/views`: 2 errors
+  - all other listed targets: 0 errors
+
+Current classification boundary:
+
+```text
+The fixed regression is the assertion-refined dynamic argument case. The two
+remaining `tests/app` overlay diagnostics are soundness-expected: `(args and
+args.url) or "..."` proves a string only when `args.url` is nil/false; a truthy
+non-string dynamic value still reaches `http.get`.
+
+The broader external local-replace counts remain integration diagnostics, not
+proof that go-lua should weaken contracts. Each remaining item must be
+classified as source/manifest proof gap vs. checker regression before changing
+engine semantics.
+```
