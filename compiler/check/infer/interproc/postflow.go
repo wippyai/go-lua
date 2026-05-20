@@ -88,14 +88,11 @@ func StoreFactsFromResult(
 		}
 	}
 	candidateFunc = stripSyntheticVariadic(fn, unwrap.Function(candidateFunc))
-	delta := interprocdomain.FunctionFactDelta(
-		fnSym,
-		functionfact.Join(api.FunctionFact{}, api.FunctionFact{
-			Summary: summaryFromFacts,
-			Narrow:  narrowSummary,
-			Type:    candidateFunc,
-		}),
-	)
+	delta := interprocdomain.FunctionFactsDelta(functionfact.FromPart(fnSym, functionfact.Parts{
+		Summary: summaryFromFacts,
+		Narrow:  narrowSummary,
+		Type:    candidateFunc,
+	}))
 	writer.mergeParentFactsForSymbol(fnSym, delta)
 }
 
@@ -444,7 +441,7 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 			return
 		}
 
-		deltaFacts := make(api.FunctionFacts)
+		paramFacts := make(map[cfg.SymbolID][]typ.Type)
 		runtimeArgCount := checkcallsite.RuntimeArgCount(info)
 		evidence := paramevidence.EnsureCapacity(nil, runtimeArgCount)
 		for runtimeIdx := 0; runtimeIdx < runtimeArgCount; runtimeIdx++ {
@@ -483,21 +480,21 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 					hasFunctionRef,
 				)
 				if argSym != 0 && hasFunctionRef(argSym) {
-					fnEvidence := deltaFacts.Params(argSym)
+					fnEvidence := paramFacts[argSym]
 					for j, param := range expectedFn.Params {
 						fnEvidence, _ = paramevidence.MergeAt(fnEvidence, j, param.Type, typ.JoinPreferNonSoft)
 					}
 					if len(fnEvidence) > 0 {
-						deltaFacts[argSym] = functionfact.Join(deltaFacts[argSym], api.FunctionFact{Params: fnEvidence})
+						paramFacts[argSym] = fnEvidence
 					}
 				}
 			}
 		}
 		if len(evidence) > 0 {
-			deltaFacts[calleeSym] = functionfact.Join(deltaFacts[calleeSym], api.FunctionFact{Params: evidence})
+			paramFacts[calleeSym] = paramevidence.JoinVectors(paramFacts[calleeSym], evidence)
 		}
-		if len(deltaFacts) > 0 {
-			store.MergeInterprocFactsNext(parentKey, interprocdomain.FunctionFactsDelta(deltaFacts))
+		if facts := functionfact.FromMaps(paramFacts, nil, nil); len(facts) > 0 {
+			store.MergeInterprocFactsNext(parentKey, interprocdomain.FunctionFactsDelta(facts))
 		}
 	}
 

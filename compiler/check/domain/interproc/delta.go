@@ -6,14 +6,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// FunctionFactDelta returns a canonical product delta for one function fact.
-func FunctionFactDelta(sym cfg.SymbolID, fact api.FunctionFact) api.Facts {
-	if sym == 0 {
-		return api.Facts{}
-	}
-	return FunctionFactsDelta(api.FunctionFacts{sym: fact})
-}
-
 // FunctionFactsDelta returns a canonical product delta for function facts.
 func FunctionFactsDelta(facts api.FunctionFacts) api.Facts {
 	if len(facts) == 0 {

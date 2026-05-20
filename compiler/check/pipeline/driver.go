@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/effects"
 	interprocinfer "github.com/wippyai/go-lua/compiler/check/infer/interproc"
@@ -329,7 +330,9 @@ func (d *Driver) storeFunctionRefinement(store api.IterationStore, result *api.F
 	if !ok {
 		return
 	}
-	store.MergeInterprocFactsNext(key, interprocdomain.FunctionFactDelta(funcSym, api.FunctionFact{Refinement: fnEffect}))
+	store.MergeInterprocFactsNext(key, interprocdomain.FunctionFactsDelta(functionfact.FromPart(funcSym, functionfact.Parts{
+		Refinement: fnEffect,
+	})))
 }
 
 func collectGlobalNames(globalTypes map[string]typ.Type) []string {

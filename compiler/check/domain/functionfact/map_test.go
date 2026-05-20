@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -57,5 +58,34 @@ func TestFromMaps_JoinsParamSummaryAndTypeEvidence(t *testing.T) {
 	}
 	if !typ.TypeEquals(ff.Type, fn) {
 		t.Fatalf("type = %v, want %v", ff.Type, fn)
+	}
+}
+
+func TestFromPart_CanonicalizesAllFunctionFactSlots(t *testing.T) {
+	refinement := &constraint.FunctionRefinement{Terminates: true}
+	fn := typ.Func().Returns(typ.String).Build()
+	facts := FromPart(1, Parts{
+		Params:     []typ.Type{typ.String},
+		Summary:    []typ.Type{typ.Nil},
+		Narrow:     []typ.Type{typ.String},
+		Type:       fn,
+		Refinement: refinement,
+	})
+
+	ff, ok := facts.Fact(1)
+	if !ok {
+		t.Fatal("expected function fact for symbol 1")
+	}
+	if len(ff.Params) != 1 || !typ.TypeEquals(ff.Params[0], typ.String) {
+		t.Fatalf("params = %v, want string", ff.Params)
+	}
+	if !returnsummary.Equal(ff.Narrow, []typ.Type{typ.String}) {
+		t.Fatalf("narrow = %v, want string", ff.Narrow)
+	}
+	if !typ.TypeEquals(ff.Type, fn) {
+		t.Fatalf("type = %v, want %v", ff.Type, fn)
+	}
+	if ff.Refinement == nil || !ff.Refinement.Terminates {
+		t.Fatalf("refinement = %#v, want terminating refinement", ff.Refinement)
 	}
 }

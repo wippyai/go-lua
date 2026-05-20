@@ -226,63 +226,7 @@ func (s *Synthesizer) expectedGraphLocalFunctionValueType(
 	return s.synthFunctionTypeWithCapturePoint(fn, sc, expected, p, captureTypes)
 }
 
-func (s *Synthesizer) stableGraphLocalFunctionFactType(sym compcfg.SymbolID) typ.Type {
-	if s == nil || sym == 0 || s.deps == nil || s.deps.Ctx == nil || s.deps.CheckCtx == nil {
-		return nil
-	}
-
-	store := api.StoreFrom(s.deps.Ctx)
-	if store == nil {
-		return nil
-	}
-
-	graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph)
-	if !ok || graph == nil {
-		return nil
-	}
-
-	defaultParent := s.deps.DefaultScope
-	if defaultParent == nil {
-		defaultParent = s.deps.CheckCtx.TypeNames()
-	}
-	parent := api.ParentScopeForGraph(store, graph.ID(), defaultParent)
-	if parent == nil {
-		return nil
-	}
-
-	cacheKey := stableFunctionFactKey{GraphID: graph.ID(), Parent: parent, Sym: sym}
-	if s.deps.StableFunctionFactCache != nil {
-		if cached, ok := s.deps.StableFunctionFactCache[cacheKey]; ok {
-			return cached
-		}
-	}
-
-	var facts api.FunctionFacts
-	load := func() {
-		facts = store.GetInterprocFacts(graph, parent).FunctionFacts
-	}
-	if phaser, ok := store.(interface{ WithPhase(api.Phase, func()) }); ok {
-		phaser.WithPhase(api.PhaseScopeCompute, load)
-	} else {
-		load()
-	}
-	if len(facts) == 0 {
-		if s.deps.StableFunctionFactCache == nil {
-			s.deps.StableFunctionFactCache = make(map[stableFunctionFactKey]typ.Type)
-		}
-		s.deps.StableFunctionFactCache[cacheKey] = nil
-		return nil
-	}
-
-	factType := facts.FunctionType(sym)
-	if s.deps.StableFunctionFactCache == nil {
-		s.deps.StableFunctionFactCache = make(map[stableFunctionFactKey]typ.Type)
-	}
-	s.deps.StableFunctionFactCache[cacheKey] = factType
-	return factType
-}
-
-func (s *Synthesizer) stableFunctionFactType(sym compcfg.SymbolID) typ.Type {
+func (s *Synthesizer) functionFactType(sym compcfg.SymbolID) typ.Type {
 	if s == nil || sym == 0 {
 		return nil
 	}
@@ -300,7 +244,14 @@ func (s *Synthesizer) stableFunctionFactType(sym compcfg.SymbolID) typ.Type {
 	if defaultParent == nil && s.deps.CheckCtx != nil {
 		defaultParent = s.deps.CheckCtx.TypeNames()
 	}
-	return functionfact.TypeForSymbol(store, sym, defaultParent)
+	if s.deps.CheckCtx != nil {
+		if graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph); ok {
+			if t := functionfact.TypeForGraph(store, graph, sym, defaultParent, s.deps.FunctionFactTypeCache); t != nil {
+				return t
+			}
+		}
+	}
+	return functionfact.TypeForSymbol(store, sym, defaultParent, s.deps.FunctionFactTypeCache)
 }
 
 func (s *Synthesizer) stableLocalFunctionValueType(
@@ -326,20 +277,8 @@ func (s *Synthesizer) stableLocalFunctionValueType(
 			}
 		}
 	}
-	hasContextFact := false
-	if s.deps != nil && s.deps.CheckCtx != nil {
-		if ctx, ok := s.deps.CheckCtx.(interface{ FunctionFacts() api.FunctionFacts }); ok {
-			facts := ctx.FunctionFacts()
-			if factType := facts.FunctionType(sym); factType != nil {
-				hasContextFact = true
-				authoritative = factType
-			}
-		}
-	}
-	if !hasContextFact {
-		if factType := s.stableGraphLocalFunctionFactType(sym); factType != nil {
-			authoritative = factType
-		}
+	if factType := s.functionFactType(sym); factType != nil {
+		authoritative = factType
 	}
 	if !hasCaptures && authoritative != nil {
 		return authoritative

@@ -236,7 +236,7 @@ func (s *Synthesizer) specializedLocalFunctionCalleeType(
 	for _, sym := range candidates {
 		fn := callsite.FunctionLiteralForGraphSymbol(evidence, sym)
 		if fn != nil && !s.hasDominatingDirectFunctionRebind(sym, fn, p) {
-			factType := s.stableFunctionFactType(sym)
+			factType := s.functionFactType(sym)
 			hasCallPointCaptureMutation := hasNonGlobalFunctionCaptures(bindings, fn) && s.hasDominatingCapturedMutation(fn, p)
 			if factType != nil && !hasCallPointCaptureMutation {
 				return factType
@@ -253,7 +253,7 @@ func (s *Synthesizer) specializedLocalFunctionCalleeType(
 			}
 		}
 		if typ.IsUnknownOrNil(current) {
-			if t := s.stableFunctionFactType(sym); t != nil {
+			if t := s.functionFactType(sym); t != nil {
 				return t
 			}
 		}
@@ -487,7 +487,6 @@ func (s *Synthesizer) stablePrototypeFields(graph *compcfg.Graph, sym compcfg.Sy
 		return nil
 	}
 	bindings := graph.Bindings()
-	functionFacts := s.currentFunctionFacts()
 	evidence := s.graphEvidence(graph)
 	var fields map[string]typ.Type
 	addField := func(name string, t typ.Type) {
@@ -522,7 +521,7 @@ func (s *Synthesizer) stablePrototypeFields(graph *compcfg.Graph, sym compcfg.Sy
 			if i < len(sources) {
 				source = sources[i]
 			}
-			addField(fieldName, s.stablePrototypeFieldType(source, p, sc, bindings, functionFacts, recurse))
+			addField(fieldName, s.stablePrototypeFieldType(source, p, sc, bindings, recurse))
 		}
 	}
 	for _, def := range evidence.FunctionDefinitions {
@@ -532,18 +531,18 @@ func (s *Synthesizer) stablePrototypeFields(graph *compcfg.Graph, sym compcfg.Sy
 		if fieldName == "" {
 			continue
 		}
-		addField(fieldName, s.stablePrototypeFuncDefType(info, p, sc, bindings, functionFacts, recurse))
+		addField(fieldName, s.stablePrototypeFuncDefType(info, p, sc, bindings, recurse))
 	}
 	for _, field := range bindings.DirectFieldSymbols(sym) {
 		if field.Symbol == 0 {
 			continue
 		}
-		if t := functionFacts.FunctionType(field.Symbol); t != nil {
+		if t := s.functionFactType(field.Symbol); t != nil {
 			addField(field.Name, t)
 			continue
 		}
 		if fn, ok := bindings.FuncLitBySymbol(field.Symbol); ok {
-			addField(field.Name, s.stablePrototypeFieldType(fn, graph.Entry(), sc, bindings, functionFacts, recurse))
+			addField(field.Name, s.stablePrototypeFieldType(fn, graph.Entry(), sc, bindings, recurse))
 		}
 	}
 	return fields
@@ -578,13 +577,13 @@ func stablePrototypeFuncDefFieldName(info *compcfg.FuncDefInfo, sym compcfg.Symb
 	}
 }
 
-func (s *Synthesizer) stablePrototypeFuncDefType(info *compcfg.FuncDefInfo, p compcfg.Point, sc *scope.State, bindings *bind.BindingTable, functionFacts api.FunctionFacts, recurse ExprSynth) typ.Type {
+func (s *Synthesizer) stablePrototypeFuncDefType(info *compcfg.FuncDefInfo, p compcfg.Point, sc *scope.State, bindings *bind.BindingTable, recurse ExprSynth) typ.Type {
 	if info == nil {
 		return nil
 	}
 	var factType typ.Type
 	if info.Symbol != 0 {
-		factType = functionFacts.FunctionType(info.Symbol)
+		factType = s.functionFactType(info.Symbol)
 	}
 	if info.TargetKind == compcfg.FuncDefMethod && info.FuncExpr != nil && s != nil {
 		expected := typ.Func().Param("self", typ.Self).Build()
@@ -602,16 +601,16 @@ func (s *Synthesizer) stablePrototypeFuncDefType(info *compcfg.FuncDefInfo, p co
 	if factType != nil {
 		return factType
 	}
-	return s.stablePrototypeFieldType(info.FuncExpr, p, sc, bindings, functionFacts, recurse)
+	return s.stablePrototypeFieldType(info.FuncExpr, p, sc, bindings, recurse)
 }
 
-func (s *Synthesizer) stablePrototypeFieldType(source ast.Expr, p compcfg.Point, sc *scope.State, bindings *bind.BindingTable, functionFacts api.FunctionFacts, recurse ExprSynth) typ.Type {
+func (s *Synthesizer) stablePrototypeFieldType(source ast.Expr, p compcfg.Point, sc *scope.State, bindings *bind.BindingTable, recurse ExprSynth) typ.Type {
 	if source == nil {
 		return nil
 	}
 	if fn, ok := source.(*ast.FunctionExpr); ok && bindings != nil {
 		if sym, ok := bindings.FuncLitSymbol(fn); ok && sym != 0 {
-			if t := functionFacts.FunctionType(sym); t != nil {
+			if t := s.functionFactType(sym); t != nil {
 				return t
 			}
 		}

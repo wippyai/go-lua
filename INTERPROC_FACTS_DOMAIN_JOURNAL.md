@@ -8915,3 +8915,122 @@ The function-fact domain now owns both per-symbol fact normalization and
 canonical map construction. Return inference publishes facts through that
 domain instead of reconstructing the product shape locally.
 ```
+
+## 2026-05-20 Flash Migration: Function-Fact Type Lookup Owner
+
+Problem:
+
+```text
+The synthesizer still owned a stable function-fact type cache, graph/parent
+resolution, and phase-safe fact reads. That made a consumer responsible for
+part of the canonical fact projection model.
+```
+
+Migration performed:
+
+- Moved graph-local function-fact type lookup into
+  `compiler/check/domain/functionfact`.
+- Added canonical lookup surfaces:
+  - `functionfact.TypeForGraph`
+  - `functionfact.TypeForSymbol`
+  - `functionfact.TypeCache`
+- Deleted extract-local `stableFunctionFactKey`.
+- Replaced `Deps.StableFunctionFactCache` with
+  `Deps.FunctionFactTypeCache`, typed by the function-fact domain.
+- Collapsed `stableGraphLocalFunctionFactType` and `stableFunctionFactType`
+  into one extract orchestration helper that only chooses the local context and
+  delegates lookup semantics to the domain.
+- Removed prototype-method side reads of raw `api.FunctionFacts`; prototype
+  synthesis now uses the same domain-backed function-fact type lookup as call
+  synthesis.
+- Added regression tests proving canonical parent-scope resolution, owning
+  parent-graph resolution, and per-check memoized projection.
+
+Invariant:
+
+```text
+Consumers may decide when they need a function-fact type, but they must not own
+how graph-local facts are resolved, how parent scope is canonized, how phase-safe
+reads happen, or how those projections are memoized.
+```
+
+Why this is a flash migration step, not a bridge:
+
+- No old cache/key type remains in extract.
+- No compatibility fallback was added.
+- The phase-safe read logic moved out of the consumer and into the
+  function-fact domain.
+- The synthesizer now carries only a domain-owned cache instance.
+
+Validation so far:
+
+```text
+go test ./compiler/check/domain/functionfact ./compiler/check/synth/phase/extract -count=1
+go test ./compiler/check/synth/phase/extract -count=1
+```
+
+Result:
+
+- function-fact and extract synthesizer package tests: pass.
+
+## 2026-05-20 Flash Migration: Slot-Complete Function-Fact Publication
+
+Problem:
+
+```text
+Postflow and effect propagation still hand-built raw api.FunctionFact or
+api.FunctionFacts values. The function-fact domain owned joins and some map
+construction, but publication was not slot-complete: narrow summaries and
+refinements could still be assembled outside the domain.
+```
+
+Migration performed:
+
+- Extended `functionfact.Parts` to cover every canonical slot:
+  - parameter evidence
+  - return summary
+  - narrow return summary
+  - function type projection
+  - refinement/effect summary
+- Added `functionfact.FromPart` for complete single-symbol publication.
+- Changed postflow return/type publication to publish through
+  `functionfact.FromPart`.
+- Changed call-observed parameter evidence publication to accumulate raw
+  parameter vectors and publish through `functionfact.FromMaps`.
+- Changed effect propagation to publish refinement facts through
+  `functionfact.FromPart`.
+- Deleted the unused single raw-fact interproc delta helper after all production
+  publishers moved to canonical `functionfact` constructors.
+- Added domain tests proving that `FromPart` canonicalizes all function-fact
+  slots.
+
+Invariant:
+
+```text
+Production code outside the function-fact domain may collect evidence, but it
+must not construct the canonical function-fact storage shape by hand.
+```
+
+Why this is a flash migration step, not a bridge:
+
+- No compatibility writer was introduced.
+- No legacy fact channel was reintroduced.
+- The producer-local raw fact/map construction was deleted from production
+  postflow and effect code.
+- The old raw single-fact delta entry point was deleted.
+- The canonical publication API now covers the complete function-fact product.
+
+Validation:
+
+```text
+go test ./compiler/check/domain/functionfact ./compiler/check/domain/interproc ./compiler/check/infer/interproc ./compiler/check/pipeline -count=1
+go test ./... -count=1
+git diff --check
+```
+
+Result:
+
+- function-fact, interproc domain, interproc inference, and pipeline package
+  tests: pass.
+- full go-lua suite: pass.
+- diff check: pass.
