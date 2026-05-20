@@ -8527,3 +8527,53 @@ and for any diagnostic whose source has a real proof, add a minimal go-lua
 regression and fix the abstract interpreter. For diagnostics that are real
 source/manifest issues, do not weaken the checker.
 ```
+
+## 2026-05-20 Revalidation: Current Head Still Has Integration Diagnostics
+
+Current head: `3cb32729`.
+
+Commands rerun:
+
+```text
+rg "compiler/check/abstract/transfer|RunTransfer|TransferResult|package transfer|fbcore" compiler/check -n
+go test ./compiler/check/tests/regression -run 'ExternalLint|Gradual|Advanced' -count=1
+go test ./... -count=1
+../scripts/verify-suite.sh
+env WIPPY_DIR=/tmp/wippy-golua-validate \
+    WIPPY_BIN=/tmp/wippy-local-replace-validate \
+    GOFLAGS=-buildvcs=false \
+    ../scripts/verify-suite.sh
+```
+
+Results:
+
+- migration-residue scan: no matches.
+- targeted regression suite: pass.
+- full go-lua suite: pass.
+- official verify suite: checker tests and Wippy binary build pass, then the
+  script exits non-zero on pinned external lint targets:
+  - `/home/wolfy-j/wippy/wippy/tests/app`: 0 errors
+  - `/home/wolfy-j/wippy/session`: 8 errors
+  - `/home/wolfy-j/wippy/framework/src/agent/src`: 11 errors
+  - `/home/wolfy-j/wippy/docker-demo`: 21 errors, 2 warnings
+  - all other listed targets: 0 errors
+- local-replace verify suite against this checkout: checker tests and Wippy
+  binary build pass, then external lint reports:
+  - `/tmp/wippy-golua-validate/tests/app`: 4 errors
+  - `/home/wolfy-j/wippy/session`: 33 errors
+  - `/home/wolfy-j/wippy/framework/src/agent/src`: 6 errors
+  - `/home/wolfy-j/wippy/docker-demo`: 68 errors
+  - `/home/wolfy-j/wippy/framework/src/llm/src`: 3 errors
+  - `/home/wolfy-j/wippy/framework/src/llm/test`: 3 errors
+  - `/home/wolfy-j/wippy/framework/src/views`: 2 errors
+  - all other listed targets: 0 errors
+
+Conclusion:
+
+```text
+The flash migration is structurally clean and the go-lua regression suite
+passes, but "all regressions are solved" is not proven by integration lint.
+The remaining local-replace diagnostics must stay classified individually.
+The checker must not add compatibility fallbacks or any-to-contract shortcuts
+to hide diagnostics that are real soundness findings.
+```
