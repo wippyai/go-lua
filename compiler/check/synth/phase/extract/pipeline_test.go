@@ -195,6 +195,31 @@ func TestCallPipeline_ReSynthAndReInfer_NoArgs(t *testing.T) {
 	}
 }
 
+func TestCallPipeline_ReSynthAndReInfer_UnchangedArgDoesNotReInfer(t *testing.T) {
+	ctx := db.NewQueryContext(db.New())
+	fn := typ.Func().Param("value", typ.String).Returns(typ.Any).Build()
+	arg := &ast.IdentExpr{Value: "value"}
+	def := ops.CallDef{
+		Callee: fn,
+		Args:   []typ.Type{typ.String},
+	}
+	pipeline := NewCallPipeline(ctx, def, []ast.Expr{arg}).
+		WithReSynth(func(idx int, got ast.Expr, expected typ.Type) typ.Type {
+			if idx != 0 || got != arg {
+				t.Fatalf("unexpected re-synth arg idx=%d expr=%T", idx, got)
+			}
+			if expected != typ.String {
+				t.Fatalf("expected arg type = %v, want string", expected)
+			}
+			return typ.String
+		})
+	pipeline.Infer()
+
+	if changed := pipeline.ReSynthAndReInfer(); changed {
+		t.Fatal("unchanged contextual type should not force re-inference")
+	}
+}
+
 func TestCallPipeline_Finish(t *testing.T) {
 	ctx := db.NewQueryContext(db.New())
 	fn := typ.Func().Returns(typ.String).Build()

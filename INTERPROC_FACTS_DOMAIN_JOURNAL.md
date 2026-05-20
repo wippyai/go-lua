@@ -9315,8 +9315,10 @@ Migration performed:
   projection.
 - Changed phase and return-inference callers to pass
   `functionfact.TypeLookup(functionFacts)` into `typefacts`.
-- Removed the dead `Checker.ClearCache` API-compatibility no-op; function-result
-  memoization is session-local and not controlled by that method.
+- Reworked `Checker.ClearCache` from the old no-op compatibility method into an
+  explicit Salsa revision boundary. Function-result memoization remains
+  session-local; hosts that call the public method now advance the checker
+  database revision instead of relying on a hidden checker-owned cache.
 - Clarified Salsa fact inputs as query snapshots of the visible interproc
   product, not another mirror authority.
 - Added a domain test for `functionfact.TypeLookup`.
@@ -9351,7 +9353,7 @@ Validation status:
 env GOCACHE=/tmp/go-build-cache go test ./compiler/check/domain/functionfact ./compiler/check/api ./compiler/check/phase ./compiler/check/synth/phase/extract ./compiler/check/infer/return ./compiler/check -count=1
 env GOCACHE=/tmp/go-build-cache go test ./... -count=1
 git diff --check
-rg -n "functionTypeLookup|FunctionFacts FunctionFacts|ClearCache|Kept for API compatibility|legacy|bridge|mirror" compiler/check --glob '*.go' --glob '!**/*_test.go'
+rg -n "functionTypeLookup|FunctionFacts FunctionFacts|Kept for API compatibility|legacy|bridge|mirror" compiler/check --glob '*.go' --glob '!**/*_test.go'
 ```
 
 Result:
@@ -9436,3 +9438,88 @@ Result:
 
 - focused calleffect/returns/pipeline/return packages: pass.
 - full go-lua suite with an explicit writable build cache: pass.
+
+## 2026-05-20 Validation Correction: Public Revision Boundary And Call Context
+
+Problem:
+
+```text
+The previous API-projection cleanup removed `Checker.ClearCache` as if it were
+only a dead compatibility no-op. Local-replace Wippy validation proved that was
+incorrect: the host still calls the public method. Keeping the public API is not
+a bridge if the implementation is the correct incremental operation.
+
+The local-replace replay also showed that call-site contextual typing must be
+wired as a single call pipeline concern. Callback re-synthesis was already in
+the pipeline, but non-callback value arguments that are context-sensitive
+(`x or default`, non-nil assertions, identifiers/fields with unresolved evidence)
+were not using the expected parameter type computed by call inference.
+```
+
+Correction:
+
+- Restored `Checker.ClearCache` as an explicit Salsa revision boundary:
+  `Checker.ClearCache -> db.Bump()`.
+- Kept function-analysis memoization session-local; no checker-owned cache or
+  legacy compatibility cache was reintroduced.
+- Added `TestChecker_ClearCacheBumpsRevision`.
+- Added a unified call-site re-synthesis hook:
+  callback function arguments still get spec environment overlays, and safe
+  value arguments are re-synthesized with the expected parameter type.
+- Fixed `CallPipeline.reSynthArgs` so unchanged argument types do not force a
+  second inference pass. This protects generic expected-return constraints and
+  avoids unnecessary work.
+- Added `TestCallPipeline_ReSynthAndReInfer_UnchangedArgDoesNotReInfer`.
+
+Important non-hack boundary:
+
+```text
+Contextual re-synthesis must not rewrite explicit casts or arbitrary nested
+function calls. Casts are programmer-supplied dynamic boundaries. Nested calls
+run their own inference pipeline; forcing the outer expected type into them can
+erase generic payload precision.
+```
+
+Validation:
+
+```text
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/synth/phase/extract ./compiler/check/tests/regression -count=1
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/... -count=1
+env GOCACHE=/tmp/go-build-cache go test ./... -count=1
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction -benchmem -count=3
+env GOWORK=/tmp/wippy-golua-validate-work/go.work WIPPY_BIN=/tmp/wippy-golua-validate-local GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache ../scripts/verify-suite.sh
+```
+
+Result:
+
+- focused synth/regression tests: pass.
+- full checker suite: pass.
+- full go-lua module suite: pass.
+- large-function benchmark: 4.25-5.24 ms/op, about 1.091 MB/op, 10627-10628
+  allocs/op.
+- local-replace Wippy binary build: pass.
+- local-replace Wippy lint replay remains nonzero:
+  - `wippy/tests/app`: 2 errors.
+  - `session`: 33 errors.
+  - `framework/src/agent/src`: 6 errors.
+  - `docker-demo`: 69 errors.
+  - `framework/src/llm/src`: 3 errors.
+  - `framework/src/llm/test`: 3 errors.
+  - `framework/src/views`: 2 errors.
+
+Current classification:
+
+- Real source/proof gaps, not sound false positives:
+  - `(args and args.url) or fallback` can return a truthy non-string `any`;
+    passing it to `http.get(string, ...)` is not provable.
+  - `artifact.meta` can remain `""`; Lua treats empty string as truthy, so
+    `if artifact.meta then artifact.meta.content_type end` can index a string.
+  - Bedrock `text_blocks` collects `block.text` from an untyped response; a
+    truthiness guard does not prove it is a string.
+- Still-open validation work:
+  - The remaining lint classes must each get a reduced go-lua fixture or a
+    source-proof classification before the branch can honestly claim a clean
+    local-replace global replay.
+  - The journal must not claim "all regressions solved" until that replay is
+    clean or every diagnostic is documented as a real source issue with a
+    regression fixture proving the engine behavior.

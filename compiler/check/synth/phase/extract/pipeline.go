@@ -103,8 +103,10 @@ func (p *CallPipeline) reSynthArgs() ([]typ.Type, bool) {
 
 		reSynthed := p.reSynth(i, arg, expected)
 		if reSynthed != nil {
-			result[i] = reSynthed
-			changed = true
+			if !typ.TypeEquals(result[i], reSynthed) {
+				result[i] = reSynthed
+				changed = true
+			}
 		}
 	}
 
@@ -129,7 +131,11 @@ func FunctionLiteralReSynth(synthFn func(fn *ast.FunctionExpr, expected *typ.Fun
 // TableCompatChecker checks if a table literal is compatible with an expected type.
 type TableCompatChecker func(table *ast.TableExpr, expected typ.Type, p cfg.Point) bool
 
-// FullArgReSynth creates an ArgReSynth that re-synthesizes function and table literals.
+// FullArgReSynth creates an ArgReSynth for arguments whose type can safely use
+// the callee's expected parameter type as local context. It deliberately avoids
+// arbitrary nested function calls: those calls run their own inference pipeline,
+// and forcing an outer expected type into them can erase generic payload
+// precision before the inner call has completed.
 func FullArgReSynth(
 	synthWithExpected func(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type,
 	tableChecker TableCompatChecker,
@@ -156,7 +162,7 @@ func FullArgReSynth(
 				return expected
 			}
 			return inferred
-		case *ast.CastExpr, *ast.LogicalOpExpr, *ast.FuncCallExpr, *ast.NonNilAssertExpr:
+		case *ast.CastExpr, *ast.LogicalOpExpr, *ast.NonNilAssertExpr:
 			return synthWithExpected(a, p, expected)
 		}
 		return nil

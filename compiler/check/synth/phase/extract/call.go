@@ -181,7 +181,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	}
 
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
+		WithReSynth(s.contextualArgReSynth(calleeType, sc, p))
 
 	if expected != nil {
 		pipeline = pipeline.WithExpected(expected)
@@ -333,7 +333,7 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 	}
 
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
+		WithReSynth(s.contextualArgReSynth(calleeType, sc, p))
 
 	if expected != nil {
 		pipeline = pipeline.WithExpected(expected)
@@ -384,7 +384,7 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 	}
 
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
+		WithReSynth(s.contextualArgReSynth(calleeType, sc, p))
 
 	result := pipeline.Run()
 	returns := unwrapCallResult(result)
@@ -846,6 +846,39 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 	}
 
 	return returns
+}
+
+// contextualArgReSynth creates the canonical call-site re-synthesizer.
+//
+// Calls are checked in two phases: first infer the callee and expected
+// parameter types, then re-synthesize arguments that are sensitive to expected
+// type context. Callback function literals additionally need spec-provided
+// environment overlays, so they are handled before the general argument path.
+func (s *Synthesizer) contextualArgReSynth(calleeType typ.Type, sc *scope.State, p cfg.Point) ArgReSynth {
+	callbacks := s.callbackAwareReSynth(calleeType, sc)
+	return func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
+		if callbacks != nil {
+			if t := callbacks(idx, arg, expected); t != nil {
+				return t
+			}
+		}
+		return s.valueArgReSynth(arg, p, expected)
+	}
+}
+
+func (s *Synthesizer) valueArgReSynth(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type {
+	switch a := arg.(type) {
+	case *ast.IdentExpr, *ast.AttrGetExpr:
+		inferred := s.TypeOfWithExpected(a, p, expected)
+		if shouldRefineCallArgWithExpected(inferred, expected) {
+			return expected
+		}
+		return inferred
+	case *ast.LogicalOpExpr, *ast.NonNilAssertExpr:
+		return s.TypeOfWithExpected(a, p, expected)
+	default:
+		return nil
+	}
 }
 
 // callbackAwareReSynth creates an ArgReSynth that applies EnvOverlay from callback specs.

@@ -318,6 +318,19 @@ func funcResultEqual(a, b *api.FuncResult) bool {
 	return a == b
 }
 
+// ClearCache establishes a fresh incremental-query revision boundary.
+//
+// Function analysis memoization is session-local and discarded at the end of
+// each Check call. Advancing the database revision keeps the public cache-clear
+// operation meaningful for hosts that retain query contexts around a reused
+// Checker without reintroducing a checker-owned compatibility cache.
+func (c *Checker) ClearCache() {
+	if c == nil || c.db == nil {
+		return
+	}
+	c.db.Bump()
+}
+
 // Database returns the checker's type database for connecting external manifests.
 func (c *Checker) Database() *db.DB {
 	return c.db

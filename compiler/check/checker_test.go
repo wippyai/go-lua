@@ -48,6 +48,18 @@ func TestChecker_WithMaxScopeDepth(t *testing.T) {
 	}
 }
 
+func TestChecker_ClearCacheBumpsRevision(t *testing.T) {
+	database := db.New()
+	c := NewChecker(database, Deps{Types: core.NewEngine()})
+	before := database.Revision()
+
+	c.ClearCache()
+
+	if after := database.Revision(); after <= before {
+		t.Fatalf("revision after ClearCache = %d, want > %d", after, before)
+	}
+}
+
 func TestChecker_ScopeDepthDiagnostic(t *testing.T) {
 	c := NewChecker(db.New(), Deps{Types: core.NewEngine()}, WithMaxScopeDepth(1), WithScopeDepthDiagnostics(true))
 	source := `
