@@ -8414,15 +8414,19 @@ Reducer packages moved directly under `compiler/check/abstract`:
 
 This is a flash migration, not a bridge. There is no `abstract/transfer`
 package, no `RunTransfer`, and no `TransferResult`.
+Residual code comments and import aliases were also normalized so production
+checker code no longer talks about a transfer namespace or `fbcore`.
 
 Proof invariant:
 
 ```text
 rg "compiler/check/abstract/transfer|\\btransfer\\.|RunTransfer|TransferResult|package transfer" \
   compiler/check -n
+rg "fbcore|abstract transfer|abstract-transfer|transfer-owned|transfer context|\\bTransfer\\b|\\btransfer\\b" \
+  compiler/check/abstract compiler/check/api compiler/check/phase/flow.go -n
 ```
 
-The scan returns no matches.
+Both scans return no matches.
 
 Verification:
 

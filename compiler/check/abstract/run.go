@@ -48,7 +48,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/assign"
 	"github.com/wippyai/go-lua/compiler/check/abstract/cond"
 	"github.com/wippyai/go-lua/compiler/check/abstract/constprop"
-	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
+	abstractcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/decl"
 	"github.com/wippyai/go-lua/compiler/check/abstract/mutator"
 	"github.com/wippyai/go-lua/compiler/check/abstract/returns"
@@ -77,7 +77,7 @@ func (coreDecomposer) ValueType(t typ.Type) typ.Type   { return core.ValueType(t
 // can use information from previous stages (e.g., const values in branches).
 //
 // Returns nil if the graph or its CFG is nil.
-func BuildInputs(fc *fbcore.FlowContext) *flow.Inputs {
+func BuildInputs(fc *abstractcore.FlowContext) *flow.Inputs {
 	if fc.Graph == nil || fc.Graph.CFG() == nil {
 		return nil
 	}
@@ -91,7 +91,7 @@ func BuildInputs(fc *fbcore.FlowContext) *flow.Inputs {
 	decl.ExtractModuleAliases(fc, inputs)
 
 	// Compute derived resolvers and store in a separate derived bundle.
-	derived := &fbcore.Derived{
+	derived := &abstractcore.Derived{
 		SymResolver:     resolve.BuildInputSymbolResolver(fc.CheckCtx, inputs),
 		TypeKeyRes:      resolve.BuildContextTypeKeyResolver(fc.CheckCtx),
 		RefinementBySym: resolve.BuildRefinementLookup(fc.CheckCtx),
@@ -154,7 +154,7 @@ func BuildInputs(fc *fbcore.FlowContext) *flow.Inputs {
 }
 
 // initInputsFromContext creates and seeds the Inputs struct from FlowContext.
-func initInputsFromContext(fc *fbcore.FlowContext) *flow.Inputs {
+func initInputsFromContext(fc *abstractcore.FlowContext) *flow.Inputs {
 	initialTypes := make(map[cfg.SymbolID]typ.Type)
 	for sym, t := range fc.InitialDeclaredTypes {
 		if sym != 0 && t != nil {

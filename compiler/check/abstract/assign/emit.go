@@ -36,7 +36,7 @@ import (
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/abstract/cond"
 	"github.com/wippyai/go-lua/compiler/check/abstract/constprop"
-	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
+	abstractcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/decl"
 	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
 	"github.com/wippyai/go-lua/compiler/check/abstract/tblutil"
@@ -58,7 +58,7 @@ import (
 )
 
 // ExtractAssignments extracts assignment info from graph.
-func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollector KeysCollectorFunc) {
+func ExtractAssignments(fc *abstractcore.FlowContext, inputs *flow.Inputs, keysCollector KeysCollectorFunc) {
 	if fc == nil || fc.Graph == nil {
 		return
 	}
@@ -67,7 +67,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	}
 	derived := fc.Derived
 	if derived == nil {
-		derived = &fbcore.Derived{}
+		derived = &abstractcore.Derived{}
 	}
 	synth := derived.Synth
 	if synth == nil {
@@ -1147,7 +1147,7 @@ func inferSymbolTypeFromVisibleDef(
 // - Local/global function definitions: local function foo() ... end
 // - Table field definitions: function M.add() ... end
 // - Method definitions: function M:add() ... end
-func ExtractFuncDefAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs) {
+func ExtractFuncDefAssignments(fc *abstractcore.FlowContext, inputs *flow.Inputs) {
 	for _, def := range fc.Evidence.FunctionDefinitions {
 		p := def.Nested.Point
 		info := def.FuncDef

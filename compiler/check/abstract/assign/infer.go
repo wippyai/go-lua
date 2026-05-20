@@ -50,7 +50,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
-	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
+	abstractcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
@@ -123,7 +123,7 @@ type LocalInferenceConfig struct {
 	CallCtx        *db.QueryContext
 	TypeOps        core.TypeOps
 	Preflow        *flow.Solution
-	Services       fbcore.FlowServices
+	Services       abstractcore.FlowServices
 }
 
 // InferLocalTypes computes extraction-time local variable types using the
@@ -171,7 +171,7 @@ func collectInferredTypes(
 	callCtx *db.QueryContext,
 	typeOps core.TypeOps,
 	preflowBranchSolution *flow.Solution,
-	services fbcore.FlowServices,
+	services abstractcore.FlowServices,
 ) api.SpecTypes {
 	inferred := make(api.SpecTypes)
 	if graph == nil {

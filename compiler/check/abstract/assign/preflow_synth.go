@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/cond"
-	fbcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
+	abstractcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
 	fbpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
@@ -53,7 +53,7 @@ func mapOverlayTypeAt(overlay map[cfg.SymbolID]typ.Type) overlayTypeAt {
 // This gives local inference access to canonical branch narrowing such as
 // discriminant checks on parameters, without depending on later assignment-
 // derived facts or full post-extraction solve.
-func buildPreflowBranchSolution(fc *fbcore.FlowContext, inputs *flow.Inputs) *flow.Solution {
+func buildPreflowBranchSolution(fc *abstractcore.FlowContext, inputs *flow.Inputs) *flow.Solution {
 	if fc == nil || inputs == nil || inputs.Graph == nil || fc.TypeOps == nil {
 		return nil
 	}

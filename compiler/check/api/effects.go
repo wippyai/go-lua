@@ -11,7 +11,7 @@ type RefinementFacts interface {
 }
 
 // RefinementLookup adapts canonical function-fact projections into refinement
-// facts used by flow transfer and call-effect propagation.
+// facts used by flow interpretation and call-effect propagation.
 type RefinementLookup func(sym cfg.SymbolID) *constraint.FunctionRefinement
 
 // NewRefinementFacts creates RefinementFacts from a canonical lookup function.

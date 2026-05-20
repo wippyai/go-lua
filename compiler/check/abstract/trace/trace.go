@@ -11,9 +11,9 @@ import (
 )
 
 // GraphEvidence records graph-local events that do not require a solved flow
-// state. This is the single event discovery entry point used by transfer and
-// consumers that need aliases, assignments, calls, returns, branches, or
-// function definitions before the full transfer result is available.
+// state. This is the single event discovery entry point used by the interpreter
+// and consumers that need aliases, assignments, calls, returns, branches, or
+// function definitions before the full interpreter result is available.
 func GraphEvidence(graph *cfg.Graph, bindings *bind.BindingTable) api.FlowEvidence {
 	if graph == nil {
 		return api.FlowEvidence{}
@@ -248,8 +248,8 @@ func FunctionEscapes(graph *cfg.Graph, bindings *bind.BindingTable) []api.Functi
 }
 
 // LocalTypePredicates records local functions whose return value is a builtin
-// type(param) predicate. Transfer consumes this to lower predicate-call guards
-// without reopening function bodies.
+// type(param) predicate. The interpreter consumes this to lower predicate-call
+// guards without reopening function bodies.
 func LocalTypePredicates(functions []api.FunctionDefinitionEvidence) []api.LocalTypePredicateEvidence {
 	if len(functions) == 0 {
 		return nil
