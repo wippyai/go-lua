@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
-func TestSessionPlugin_UntypedSessionIDGuardStillRejectsStringAPI(t *testing.T) {
+func TestSessionPlugin_UntypedSessionIDWithoutPresenceProofRejectsStringAPI(t *testing.T) {
 	result := testutil.Check(`
 type ActiveSession = {
 	pid: any,
@@ -30,9 +30,7 @@ local function handle_session_close(payload_data)
 	end
 
 	local session_info = active_sessions[session_id]
-	if session_info then
-		graceful_terminate_session(session_id, session_info, "user_closed")
-	end
+	graceful_terminate_session(session_id, session_info, "user_closed")
 end
 
 return handle_session_close

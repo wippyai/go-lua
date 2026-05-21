@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
@@ -188,5 +189,40 @@ func TestExtractTableMutatorAssignments_AssignmentCallSite(t *testing.T) {
 	}
 	if inputs.TableMutatorAssignments[0].Target.Symbol != symT {
 		t.Fatalf("expected target symbol %d, got %d", symT, inputs.TableMutatorAssignments[0].Target.Symbol)
+	}
+}
+
+func TestExtractTableMutatorAssignments_StaticSiblingFieldPath(t *testing.T) {
+	code := `
+		local self = { nodes = {}, queued_commands = {} }
+		table.insert(self.queued_commands, { type = "UPDATE_NODE" })
+	`
+	graph := buildGraph(t, code, "table")
+	inputs := &flow.Inputs{
+		Graph: graph,
+	}
+
+	ExtractTableMutatorAssignments(&core.FlowContext{
+		Graph:    graph,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
+		Derived: &core.Derived{
+			Synth: tableInsertSynth(),
+		},
+	}, inputs)
+
+	if len(inputs.TableMutatorAssignments) != 1 {
+		t.Fatalf("expected 1 table mutator assignment, got %d", len(inputs.TableMutatorAssignments))
+	}
+	selfSym, ok := graph.SymbolAt(graph.Exit(), "self")
+	if !ok || selfSym == 0 {
+		t.Fatal("expected symbol for self")
+	}
+	got := inputs.TableMutatorAssignments[0].Target
+	if got.Symbol != selfSym || len(got.Segments) != 1 {
+		t.Fatalf("expected target self.queued_commands, got %+v", got)
+	}
+	seg := got.Segments[0]
+	if seg.Kind != constraint.SegmentField || seg.Name != "queued_commands" {
+		t.Fatalf("expected queued_commands field target, got %+v", got)
 	}
 }

@@ -95,6 +95,7 @@ func CollectCalledNestedFieldAssignments(
 // CalledNestedMutatorAssignments is the flow replay payload for captured
 // mutations made by called nested functions.
 type CalledNestedMutatorAssignments struct {
+	Indexer   []flow.IndexerAssignment
 	Table     []flow.TableMutatorAssignment
 	Container []flow.ContainerMutatorAssignment
 }
@@ -188,6 +189,15 @@ func appendNestedMutatorAssignments(
 			Segments: segs,
 		}
 		switch mutation.Kind {
+		case api.ContainerMutationMapElement:
+			assignments.Indexer = append(assignments.Indexer, flow.IndexerAssignment{
+				Point:    p,
+				Root:     root,
+				Symbol:   targetSym,
+				Segments: segs,
+				KeyType:  mutation.KeyType,
+				ValType:  mutation.ValueType,
+			})
 		case api.ContainerMutationTableElement:
 			assignments.Table = append(assignments.Table, flow.TableMutatorAssignment{
 				Point:     p,

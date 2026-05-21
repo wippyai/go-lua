@@ -25,7 +25,7 @@ func TestContainsFunction_IgnoresInterfaceMethodSignatures(t *testing.T) {
 				Build(),
 		},
 	})
-	if containsFunction(iface) {
+	if newGrowthScanState().containsFunction(iface, typ.NewGuard()) {
 		t.Fatalf("expected interface method signatures to be ignored, got true")
 	}
 }
@@ -41,7 +41,7 @@ func TestMethodTypeHasSelfRecursiveReturn_IgnoresInterfaceMethods(t *testing.T) 
 				Build(),
 		},
 	})
-	if methodTypeHasSelfRecursiveReturn(methodType, owner) {
+	if newGrowthScanState().methodTypeHasSelfRecursiveReturn(methodType, owner, typ.NewGuard()) {
 		t.Fatalf("expected interface method signatures to be ignored for self-recursive detection")
 	}
 }

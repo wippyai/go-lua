@@ -90,13 +90,13 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 		}
 	}
 
-	d.runFixpoint(sess, fn, d.cfg.Stdlib)
+	d.runFixpoint(sess, fn, d.cfg.Stdlib, api.AnalysisContext{})
 }
 
-func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State) {
+func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State, ctx api.AnalysisContext) {
 	for {
 		d.prepareIterationState(sess)
-		d.checkFunctionFixpoint(sess, fn, parent)
+		d.checkFunctionFixpoint(sess, fn, parent, ctx)
 		if d.advanceFixpoint(sess.StoreHandle()) {
 			return
 		}
@@ -119,16 +119,16 @@ func (d *Driver) advanceFixpoint(store api.IterationStore) bool {
 	return !store.FixpointSwap()
 }
 
-func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State) {
+func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State, ctx api.AnalysisContext) {
 	graph := sess.GetOrBuildCFG(fn)
 	if graph == nil {
 		return
 	}
 
 	store := sess.StoreHandle()
-	parentHash := d.registerParentScope(store, graph.ID(), parent)
+	parentHash := d.registerParentScope(store, graph.ID(), parent, ctx)
 
-	d.runReturnInference(sess, graph, parent, store)
+	d.runReturnInference(sess, graph, parent, store, ctx)
 
 	result := d.loadFunctionResult(sess, graph.ID(), parentHash, store)
 	if result == nil {
@@ -161,8 +161,8 @@ func (d *Driver) processNestedFunctions(
 		Stdlib: d.cfg.Stdlib,
 		Store:  store,
 		Graphs: sess,
-		Check: func(fn *ast.FunctionExpr, parent *scope.State) {
-			d.checkFunctionFixpoint(sess, fn, parent)
+		Check: func(fn *ast.FunctionExpr, parent *scope.State, ctx api.AnalysisContext) {
+			d.checkFunctionFixpoint(sess, fn, parent, ctx)
 		},
 		ResultForFunc: func(fn *ast.FunctionExpr) *api.FuncAnalysisView {
 			if results == nil {
@@ -175,10 +175,24 @@ func (d *Driver) processNestedFunctions(
 	nestedProc.ProcessNestedFunctions(graph, api.ViewFromResult(result))
 }
 
-func (d *Driver) registerParentScope(store api.IterationStore, graphID uint64, parent *scope.State) uint64 {
-	parentHash := api.ParentHashForGraph(store, graphID, parent)
+func (d *Driver) registerParentScope(store api.IterationStore, graphID uint64, parent *scope.State, ctx api.AnalysisContext) uint64 {
+	parentHash := uint64(0)
+	if parent != nil {
+		parentHash = parent.Hash()
+	} else {
+		parentHash = api.ParentHashForGraph(store, graphID, parent)
+	}
+	parentHash = ctx.ParentHash(parentHash)
 	if store != nil && parentHash != 0 {
 		store.SetParentScope(parentHash, parent)
+		store.SetGraphParentHash(graphID, parentHash)
+		if !ctx.Empty() {
+			if contextual, ok := store.(interface {
+				SetGraphAnalysisContext(api.GraphKey, api.AnalysisContext)
+			}); ok {
+				contextual.SetGraphAnalysisContext(api.GraphKey{GraphID: graphID, ParentHash: parentHash}, ctx)
+			}
+		}
 	}
 	return parentHash
 }
@@ -188,6 +202,7 @@ func (d *Driver) runReturnInference(
 	graph *cfg.Graph,
 	parent *scope.State,
 	store api.IterationStore,
+	ctx api.AnalysisContext,
 ) {
 	if store == nil || graph == nil {
 		return
@@ -195,7 +210,7 @@ func (d *Driver) runReturnInference(
 
 	inferencer := returninfer.New(returninfer.Config{
 		Types:       d.cfg.Types,
-		GlobalTypes: d.cfg.GlobalTypes,
+		GlobalTypes: mergeGlobalOverlay(d.cfg.GlobalTypes, ctx.GlobalOverlay),
 		Manifests:   d.cfg.Manifests,
 		Stdlib:      d.cfg.Stdlib,
 		Store:       store,

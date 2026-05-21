@@ -326,6 +326,35 @@ func TestProductDomain_ApplyConjunction(t *testing.T) {
 	}
 }
 
+func TestProductDomain_ContradictoryAliasWithoutResolver(t *testing.T) {
+	pathX := constraint.Path{Root: "x"}
+	pathY := constraint.Path{Root: "y"}
+
+	env := constraint.Env{
+		PathTypeAt: func(key constraint.PathKey) typ.Type {
+			switch key {
+			case pathX.Key(), pathY.Key():
+				return typ.Unknown
+			default:
+				return nil
+			}
+		},
+	}
+	d := NewProductDomain(env)
+
+	ok := d.ApplyConjunction([]constraint.Constraint{
+		constraint.NewEqPath(pathX, pathY),
+		constraint.Truthy{Path: pathX},
+		constraint.Falsy{Path: pathY},
+	})
+	if ok {
+		t.Fatal("ApplyConjunction should reject truthy/falsy contradiction across aliased paths")
+	}
+	if !d.IsUnsat() {
+		t.Fatal("ApplyConjunction should mark the domain unsat")
+	}
+}
+
 func TestProductDomain_IsUnsat(t *testing.T) {
 	key := constraint.PathKey("x")
 

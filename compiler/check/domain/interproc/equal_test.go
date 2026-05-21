@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -114,6 +115,47 @@ func TestFunctionFactsEqual_DifferentParams(t *testing.T) {
 	b := api.FunctionFacts{1: {Params: []typ.Type{typ.Number}}}
 	if FunctionFactsEqual(a, b) {
 		t.Error("different canonical parameter evidence should not be equal")
+	}
+}
+
+func TestFunctionFactsEqual_FunctionSpecIsCanonicalFactState(t *testing.T) {
+	callback := typ.Func().Param("value", typ.String).Build()
+	spec := contract.NewSpec().WithCallback(0, (&contract.CallbackSpec{}).WithEnvOverlay(map[string]typ.Type{
+		"up": callback,
+	}))
+	withoutSpec := typ.Func().Param("fn", callback).Build()
+	withSpec := typ.Func().Param("fn", callback).Spec(spec).Build()
+
+	if !typ.TypeEquals(withoutSpec, withSpec) {
+		t.Fatal("ordinary type equality should ignore function specs")
+	}
+
+	a := api.FunctionFacts{1: {Type: withoutSpec}}
+	b := api.FunctionFacts{1: {Type: withSpec}}
+	if FunctionFactsEqual(a, b) {
+		t.Fatal("function fact equality must include function specs")
+	}
+}
+
+func TestWidenFacts_PreservesFunctionSpecChange(t *testing.T) {
+	callback := typ.Func().Param("value", typ.String).Build()
+	spec := contract.NewSpec().WithCallback(0, (&contract.CallbackSpec{}).WithEnvOverlay(map[string]typ.Type{
+		"up": callback,
+	}))
+	withoutSpec := typ.Func().Param("fn", callback).Build()
+	withSpec := typ.Func().Param("fn", callback).Spec(spec).Build()
+	sym := cfg.SymbolID(7)
+	prev := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Type: withoutSpec}}}
+	next := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Type: withSpec}}}
+
+	widened := WidenFacts(prev, next)
+	got := widened.FunctionFacts[sym].Type
+	gotSpec := contract.ExtractSpec(got)
+	if gotSpec == nil || !gotSpec.Equals(spec) {
+		t.Fatalf("expected widened fact type to preserve callback spec, got %v", got)
+	}
+	if FactsEqual(prev, widened) {
+		t.Fatal("fact equality must observe a newly inferred function spec")
 	}
 }
 

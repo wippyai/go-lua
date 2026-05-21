@@ -8,6 +8,7 @@ import (
 	abstractcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
 	fbpath "github.com/wippyai/go-lua/compiler/check/domain/path"
+	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
@@ -104,6 +105,11 @@ func synthWithOverlayAndPreflow(
 			if path := fbpath.FromExprWithBindings(expr, constResolver, bindings); !path.IsEmpty() {
 				if narrowed := preflow.NarrowedTypeAt(p, path); !typ.IsAbsentOrUnknown(narrowed) {
 					if attr, ok := expr.(*ast.AttrGetExpr); ok && typeOps != nil {
+						if objType := synth(attr.Object, p); !typ.IsAbsentOrUnknown(objType) {
+							if refined := refinePreflowLengthIndex(attr, objType, narrowed, p, bindings, inputs, preflow); refined != nil {
+								return refined
+							}
+						}
 						if declared := declaredAttrReadType(attr, p, synth, callCtx, typeOps); declared != nil {
 							refined, ok := refinePathFactWithDeclaredType(narrowed, declared, callCtx, typeOps)
 							if !ok {
@@ -134,6 +140,9 @@ func synthWithOverlayAndPreflow(
 					keyType := synth(attr.Key, p)
 					if !typ.IsAbsentOrUnknown(keyType) {
 						if it, ok := typeOps.Index(callCtx, objType, keyType); ok && !typ.IsAbsentOrUnknown(it) {
+							if refined := refinePreflowLengthIndex(attr, objType, it, p, bindings, inputs, preflow); refined != nil {
+								return refined
+							}
 							return it
 						}
 					}
@@ -142,7 +151,7 @@ func synthWithOverlayAndPreflow(
 		}
 
 		if call, ok := expr.(*ast.FuncCallExpr); ok && typeOps != nil {
-			if result := synthCallWithOverlay(call, p, synth, callCtx, typeOps); !typ.IsAbsentOrUnknown(result) {
+			if result := evalOverlayCallFirstResult(call, p, synth, callCtx, typeOps); !typ.IsAbsentOrUnknown(result) {
 				return result
 			}
 			if base != nil {
@@ -182,7 +191,31 @@ func synthWithOverlayAndPreflow(
 	return synth
 }
 
-func synthCallWithOverlay(
+func refinePreflowLengthIndex(attr *ast.AttrGetExpr, objType, indexResult typ.Type, p cfg.Point, bindings *bind.BindingTable, inputs *flow.Inputs, preflow *flow.Solution) typ.Type {
+	if attr == nil || bindings == nil || inputs == nil || preflow == nil {
+		return nil
+	}
+	constResolver := predicate.BuildConstResolver(inputs, p)
+	tablePath := fbpath.FromExprWithBindings(attr.Object, constResolver, bindings)
+	if tablePath.IsEmpty() {
+		return nil
+	}
+	lenPath, offset, ok := lengthIndexPathFromExpr(attr.Key, constResolver, bindings)
+	if !ok || !lenPath.Equal(tablePath) {
+		return nil
+	}
+	lower, _, ok := preflow.LengthBoundsAt(p, tablePath)
+	if !ok {
+		return nil
+	}
+	return narrow.RefineLengthIndex(objType, indexResult, lower, offset)
+}
+
+// evalOverlayCallFirstResult evaluates a call expression inside assignment
+// transfer using the shared call domain. It is a local value evaluator only:
+// facts and diagnostics are still published by the canonical call/evidence
+// consumers after the abstract state is solved.
+func evalOverlayCallFirstResult(
 	call *ast.FuncCallExpr,
 	p cfg.Point,
 	synth func(ast.Expr, cfg.Point) typ.Type,
@@ -207,11 +240,26 @@ func synthCallWithOverlay(
 	} else {
 		def.Callee = synth(call.Func, p)
 	}
-	result := ops.CallWithGenericInference(callCtx, def)
+	result := ops.NewCallPipeline(callCtx, def, len(call.Args)).
+		WithReSynth(assignmentCallArgReSynth(call.Args, synth, p)).
+		Run()
 	if len(result.Returns) > 0 {
 		return result.Returns[0]
 	}
 	return ops.ExtractFirstValue(result.Type)
+}
+
+func assignmentCallArgReSynth(args []ast.Expr, synth func(ast.Expr, cfg.Point) typ.Type, p cfg.Point) ops.ArgReSynth {
+	if synth == nil {
+		return nil
+	}
+	return callarg.ForArgs(args, callarg.Full(
+		func(arg ast.Expr, _ cfg.Point, _ typ.Type) typ.Type {
+			return synth(arg, p)
+		},
+		nil,
+		p,
+	))
 }
 
 func declaredAttrReadType(

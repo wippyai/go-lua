@@ -920,6 +920,575 @@ end
 	}
 }
 
+func TestExternalLint_SplitMetatableMethodTableKeepsInstanceFields(t *testing.T) {
+	source := `
+local workflow_state = {}
+local methods = {}
+local workflow_state_mt = { __index = methods }
+
+function workflow_state.new(dataflow_id)
+	if not dataflow_id or dataflow_id == "" then
+		return nil, "Dataflow ID is required"
+	end
+
+	local instance = {
+		dataflow_id = dataflow_id,
+		nodes = {},
+		active_yields = {},
+		queued_commands = {},
+	}
+
+	return setmetatable(instance, workflow_state_mt), nil
+end
+
+function methods:load_state()
+	self.nodes["root"] = {
+		status = "failed",
+		parent_node_id = "parent",
+	}
+	self.active_yields["parent"] = {
+		pending_children = {},
+		results = {},
+	}
+	return self, nil
+end
+
+function methods:get_failed_node_errors()
+	local failed_nodes = {}
+	for node_id, node_data in pairs(self.nodes) do
+		if node_data.status == "failed" then
+			table.insert(failed_nodes, node_id)
+		end
+	end
+	return table.concat(failed_nodes, "; ")
+end
+
+function methods:handle_process_exit(node_id, result_id)
+	local new_status = "completed"
+	if self.nodes[node_id] then
+		self.nodes[node_id].status = new_status
+	end
+	table.insert(self.queued_commands, {
+		type = "UPDATE_NODE",
+		payload = {
+			node_id = node_id,
+			status = new_status,
+		},
+	})
+
+	local node_data = self.nodes[node_id]
+	if node_data and node_data.parent_node_id then
+		local yield_info = self.active_yields[node_data.parent_node_id]
+		if yield_info and yield_info.pending_children and yield_info.pending_children[node_id] then
+			yield_info.results[node_id] = result_id
+		end
+	end
+end
+
+function methods:is_node_active(node_id)
+	for _, yield_info in pairs(self.active_yields) do
+		if yield_info.pending_children and yield_info.pending_children[node_id] == "pending" then
+			return true
+		end
+	end
+	return false
+end
+
+local state, err = workflow_state.new("df")
+if err then return nil, err end
+state:load_state()
+state:get_failed_node_errors()
+state:handle_process_exit("root", "result")
+return state:is_node_active("root")
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected split metatable method table to keep instance fields, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_LastArrayElementAfterNonZeroLengthGuardIsPresent(t *testing.T) {
+	source := `
+local messages = {}
+table.insert(messages, {
+	role = "user",
+	content = {
+		{
+			type = "tool_result",
+			tool_use_id = "tool",
+			content = "ok",
+		},
+	},
+})
+
+if #messages == 0 then
+	return nil
+else
+	local last_msg = messages[#messages]
+	if last_msg.role == "user" and last_msg.content and last_msg.content[1] and
+		last_msg.content[1].type == "tool_result" then
+		return last_msg.content[1].tool_use_id
+	end
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected last array element after non-zero length guard to be present, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_LastUnionArrayElementAfterNonZeroLengthGuardIsPresent(t *testing.T) {
+	source := `
+local messages = {}
+
+local function add_message(kind)
+	if kind == "tool" then
+		table.insert(messages, {
+			role = "user",
+			content = {
+				{
+					type = "tool_result",
+					tool_use_id = "tool",
+					content = "ok",
+				},
+			},
+		})
+	elseif kind == "assistant" then
+		table.insert(messages, {
+			role = "assistant",
+			content = {
+				{
+					type = "text",
+					text = "ok",
+				},
+			},
+		})
+	else
+		table.insert(messages, {
+			role = "user",
+			content = {
+				{
+					type = "text",
+					text = "ok",
+				},
+			},
+		})
+	end
+end
+
+add_message("tool")
+
+if #messages == 0 then
+	return nil
+else
+	local last_msg = messages[#messages]
+	if last_msg.role == "user" and last_msg.content and last_msg.content[1] and
+		last_msg.content[1].type == "tool_result" then
+		return last_msg.content[1].tool_use_id
+	end
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected last union array element after non-zero length guard to be present, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_LastLoopBuiltUnionArrayElementAfterNonZeroLengthGuardIsPresent(t *testing.T) {
+	source := `
+local prompt = {
+	ROLE = {
+		SYSTEM = "system",
+		DEVELOPER = "developer",
+		FUNCTION_RESULT = "function_result",
+		FUNCTION_CALL = "function_call",
+		ASSISTANT = "assistant",
+	},
+}
+
+local function sanitize_tool_id(id)
+	return tostring(id or "")
+end
+
+local function process_content_array(content)
+	return content or ""
+end
+
+local function normalize_tool_arguments(args)
+	return args or {}
+end
+
+local function map_messages(contract_messages)
+	local claude_messages = {}
+	local in_system_phase = true
+
+	for _, msg in ipairs(contract_messages) do
+		if msg.role == prompt.ROLE.SYSTEM then
+			if type(msg.content) == "string" then
+				in_system_phase = true
+			end
+		elseif msg.role == "cache_marker" then
+			in_system_phase = in_system_phase
+		elseif msg.role == prompt.ROLE.DEVELOPER then
+			in_system_phase = false
+			local dev_text = type(msg.content) == "string" and msg.content or
+				(type(msg.content) == "table" and msg.content[1] and msg.content[1].text) or ""
+
+			if dev_text ~= "" then
+				local should_create_new_message = false
+
+				if #claude_messages == 0 then
+					should_create_new_message = true
+				else
+					local last_msg = claude_messages[#claude_messages]
+					if last_msg.role == "user" and last_msg.content and last_msg.content[1] and
+						last_msg.content[1].type == "tool_result" then
+						should_create_new_message = true
+					end
+				end
+
+				if should_create_new_message then
+					table.insert(claude_messages, {
+						role = "user",
+						content = {
+							{
+								type = "text",
+								text = dev_text,
+							},
+						},
+					})
+				else
+					local last_msg = claude_messages[#claude_messages]
+					for j = #last_msg.content, 1, -1 do
+						local part = last_msg.content[j] :: any
+						if part.type == "text" then
+							part.text = part.text .. dev_text
+							break
+						end
+					end
+				end
+			end
+		elseif msg.role == prompt.ROLE.FUNCTION_RESULT then
+			in_system_phase = false
+			table.insert(claude_messages, {
+				role = "user",
+				content = {
+					{
+						type = "tool_result",
+						tool_use_id = sanitize_tool_id(msg.function_call_id),
+						content = "ok",
+					},
+				},
+			})
+		elseif msg.role == prompt.ROLE.FUNCTION_CALL then
+			in_system_phase = false
+			local content_blocks = {}
+			table.insert(content_blocks, {
+				type = "tool_use",
+				id = sanitize_tool_id(msg.function_call.id),
+				name = msg.function_call.name,
+				input = normalize_tool_arguments(msg.function_call.arguments),
+			})
+			table.insert(claude_messages, {
+				role = "assistant",
+				content = content_blocks,
+			})
+		elseif msg.role == prompt.ROLE.ASSISTANT then
+			in_system_phase = false
+			table.insert(claude_messages, {
+				role = msg.role,
+				content = {},
+			})
+		else
+			in_system_phase = false
+			local content = process_content_array(msg.content)
+			if type(content) == "string" then
+				content = {
+					{
+						type = "text",
+						text = content,
+					},
+				}
+			end
+			table.insert(claude_messages, {
+				role = msg.role,
+				content = content,
+			})
+		end
+	end
+
+	return claude_messages
+end
+
+return map_messages({
+	{
+		role = "function_result",
+		function_call_id = "tool",
+		content = "ok",
+	},
+	{
+		role = "developer",
+		content = "merge",
+	},
+})
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected loop-built union array element after non-zero length guard to be present, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_ExportedLoopBuiltUnionArrayElementAfterNonZeroLengthGuardIsPresent(t *testing.T) {
+	source := `
+local prompt = {
+	ROLE = {
+		SYSTEM = "system",
+		DEVELOPER = "developer",
+		FUNCTION_RESULT = "function_result",
+		FUNCTION_CALL = "function_call",
+		ASSISTANT = "assistant",
+	},
+}
+
+local mapper = {}
+
+local function sanitize_tool_id(original_id)
+	if not original_id then
+		return "tool"
+	end
+	return tostring(original_id)
+end
+
+local function convert_image_content(content_part)
+	return content_part
+end
+
+local function process_content_array(content)
+	if type(content) == "string" then
+		return content
+	elseif type(content) == "table" then
+		local processed = {}
+		for _, part in ipairs(content) do
+			table.insert(processed, convert_image_content(part))
+		end
+		return processed
+	end
+	return content
+end
+
+local function normalize_tool_arguments(raw_arguments)
+	local arguments = raw_arguments
+	if not arguments or type(arguments) ~= "table" then
+		arguments = { run = true }
+	end
+	return arguments
+end
+
+function mapper.map_messages(contract_messages)
+	if not contract_messages or #contract_messages == 0 then
+		return {
+			messages = {},
+			system = nil,
+		}
+	end
+
+	local claude_messages = {}
+	local system_blocks = {}
+	local system_cache_positions = {}
+	local message_cache_positions = {}
+	local in_system_phase = true
+
+	for _, msg in ipairs(contract_messages) do
+		if msg.role == prompt.ROLE.SYSTEM then
+			if type(msg.content) == "string" then
+				table.insert(system_blocks, {
+					type = "text",
+					text = msg.content,
+				})
+			elseif type(msg.content) == "table" then
+				for _, part in ipairs(msg.content) do
+					table.insert(system_blocks, convert_image_content(part))
+				end
+			end
+		elseif msg.role == "cache_marker" then
+			if in_system_phase then
+				table.insert(system_cache_positions, #system_blocks)
+			else
+				table.insert(message_cache_positions, #claude_messages)
+			end
+		elseif msg.role == prompt.ROLE.DEVELOPER then
+			in_system_phase = false
+			local dev_text = type(msg.content) == "string" and msg.content or
+				(type(msg.content) == "table" and msg.content[1] and msg.content[1].text) or ""
+
+			if dev_text ~= "" then
+				local should_create_new_message = false
+
+				if #claude_messages == 0 then
+					should_create_new_message = true
+				else
+					local last_msg = claude_messages[#claude_messages]
+					if last_msg.role == "user" and last_msg.content and last_msg.content[1] and
+						last_msg.content[1].type == "tool_result" then
+						should_create_new_message = true
+					end
+				end
+
+				if should_create_new_message then
+					table.insert(claude_messages, {
+						role = "user",
+						content = {
+							{
+								type = "text",
+								text = dev_text,
+							},
+						},
+					})
+				else
+					local last_msg = claude_messages[#claude_messages]
+					for j = #last_msg.content, 1, -1 do
+						local part = last_msg.content[j] :: any
+						if part.type == "text" then
+							part.text = part.text .. dev_text
+							break
+						end
+					end
+				end
+			end
+		elseif msg.role == prompt.ROLE.FUNCTION_RESULT then
+			in_system_phase = false
+			local result_text = type(msg.content) == "string" and msg.content or
+				(type(msg.content) == "table" and msg.content[1] and msg.content[1].text) or ""
+			table.insert(claude_messages, {
+				role = "user",
+				content = {
+					{
+						type = "tool_result",
+						tool_use_id = sanitize_tool_id(msg.function_call_id),
+						content = result_text,
+					},
+				},
+			})
+		elseif msg.role == prompt.ROLE.FUNCTION_CALL then
+			in_system_phase = false
+			local arguments = normalize_tool_arguments(msg.function_call.arguments)
+			local content_blocks = {}
+			table.insert(content_blocks, {
+				type = "tool_use",
+				id = sanitize_tool_id(msg.function_call.id),
+				name = msg.function_call.name,
+				input = arguments,
+			})
+			table.insert(claude_messages, {
+				role = "assistant",
+				content = content_blocks,
+			})
+		elseif msg.role == prompt.ROLE.ASSISTANT then
+			in_system_phase = false
+			local content_blocks = {}
+			local regular_content = process_content_array(msg.content)
+			if type(regular_content) == "string" and regular_content ~= "" then
+				table.insert(content_blocks, {
+					type = "text",
+					text = regular_content,
+				})
+			elseif type(regular_content) == "table" then
+				for _, part in ipairs(regular_content) do
+					if part.type == "function_call" then
+						local arguments = normalize_tool_arguments(part.arguments)
+						table.insert(content_blocks, {
+							type = "tool_use",
+							id = sanitize_tool_id(part.id),
+							name = part.name,
+							input = arguments,
+						})
+					elseif part.type == "text" and part.text and part.text ~= "" then
+						table.insert(content_blocks, part)
+					elseif part.type ~= "text" then
+						table.insert(content_blocks, part)
+					end
+				end
+			end
+			table.insert(claude_messages, {
+				role = msg.role,
+				content = content_blocks,
+			})
+		else
+			in_system_phase = false
+			local content = process_content_array(msg.content)
+			if type(content) == "string" then
+				content = {
+					{
+						type = "text",
+						text = content,
+					},
+				}
+			end
+			table.insert(claude_messages, {
+				role = msg.role,
+				content = content,
+			})
+		end
+	end
+
+	return {
+		messages = claude_messages,
+		system = #system_blocks > 0 and system_blocks or nil,
+	}
+end
+
+return mapper
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected exported loop-built union array element after non-zero length guard to be present, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_LoopLocalLastElementAfterNonZeroLengthGuardIsPresent(t *testing.T) {
+	source := `
+local mapper = {}
+
+function mapper.map_messages(items)
+	local messages = {}
+	for _, item in ipairs(items) do
+		if item.kind == "user" then
+			table.insert(messages, {
+				role = "user",
+				content = {
+					{
+						type = "text",
+						text = "ok",
+					},
+				},
+			})
+		elseif item.kind == "assistant" then
+			table.insert(messages, {
+				role = "assistant",
+				content = {},
+			})
+		end
+
+		if #messages == 0 then
+			item.empty = true
+		else
+			local last_msg = messages[#messages]
+			if last_msg.role == "user" and last_msg.content and last_msg.content[1] then
+				return last_msg.content[1].text
+			end
+		end
+	end
+	return nil
+end
+
+return mapper
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected loop-local last element after non-zero length guard to be present, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestExternalLint_ImportedMetatableQueryLengthGuardNarrowsFirstElement(t *testing.T) {
 	sessionSource := `
 local session = {}
@@ -2007,6 +2576,829 @@ end
 	}
 }
 
+func TestExternalLint_CapturedMapMutationFeedsPairsIteratorValue(t *testing.T) {
+	source := `
+type Time = {
+	before: (self: Time, other: Time) -> boolean,
+}
+
+local time = {
+	now = function(): Time
+		return {
+			before = function(self: Time, other: Time)
+				return false
+			end,
+		}
+	end,
+}
+
+local state = {
+	active_sessions = {},
+	session_count = 0,
+}
+
+local function graceful_terminate_session(session_id, session_info, reason)
+	if not session_info or not session_info.pid then
+		return
+	end
+	if session_info.terminating then
+		return
+	end
+	session_info.terminating = true
+	session_info.terminate_reason = reason
+	return session_id
+end
+
+local function create_session(session_id, session_pid)
+	local now = time.now()
+	state.active_sessions[session_id] = {
+		pid = session_pid,
+		created_at = now,
+		last_activity = now,
+		terminating = false,
+		terminate_reason = nil,
+	}
+	state.session_count = state.session_count + 1
+end
+
+create_session("one", "pid")
+
+for session_id, session_info in pairs(state.active_sessions) do
+	graceful_terminate_session(session_id, session_info, "shutdown")
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected captured map mutation to feed pairs iterator value, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_LoopCarriedCapturedMapMutationFeedsSiblingBranchPairs(t *testing.T) {
+	source := `
+local state = {
+	active_sessions = {},
+}
+
+local function graceful_terminate_session(session_id, session_info, reason)
+	if not session_info or not session_info.pid then
+		return
+	end
+	if session_info.terminating then
+		return
+	end
+	session_info.terminating = true
+	session_info.terminate_reason = reason
+	return session_id
+end
+
+local function create_session(payload_data)
+	local session_id = payload_data.session_id
+	if not session_id then
+		session_id = "generated"
+	end
+	local session_pid = payload_data.pid
+	if session_pid then
+		state.active_sessions[session_id] = {
+			pid = session_pid,
+			terminating = false,
+			terminate_reason = nil,
+		}
+	end
+end
+
+local function update_session_activity(session_id)
+	if state.active_sessions[session_id] then
+		state.active_sessions[session_id].last_activity = unknown_time
+	end
+end
+
+local running = unknown_running
+while running do
+	local result = unknown_result
+	if not result.ok then
+		break
+	end
+	if result.channel == "inbox" then
+		local event = result.value
+		if event.topic == "open" then
+			create_session(event.payload)
+		elseif event.topic == "activity" then
+			update_session_activity(event.session_id)
+		elseif event.topic == "shutdown" then
+			for session_id, session_info in pairs(state.active_sessions) do
+				graceful_terminate_session(session_id, session_info, "shutdown")
+			end
+		end
+	end
+	running = false
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected loop-carried captured map mutation to feed sibling branch pairs, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_TruthyDynamicMapReadNarrowsKeyForCall(t *testing.T) {
+	source := `
+local state = {
+	active_sessions = {},
+}
+
+local function create_session(session_id: string)
+	state.active_sessions[session_id] = {
+		pid = "pid",
+		terminating = false,
+	}
+end
+
+local function graceful_terminate_session(session_id: string, session_info, reason: string)
+	if not session_info or not session_info.pid then
+		return
+	end
+	return session_id .. reason
+end
+
+local function handle_session_close(payload_data)
+	local session_id = payload_data.session_id
+	if not session_id then
+		return
+	end
+	local session_info = state.active_sessions[session_id]
+	if session_info then
+		graceful_terminate_session(session_id, session_info, "user_closed")
+	end
+end
+
+create_session("s1")
+handle_session_close({ session_id = "s1" })
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected truthy dynamic map read to refine key type for call, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_CapturedMapTimeFieldsSurviveActivityUpdate(t *testing.T) {
+	source := `
+type Duration = {
+	seconds: (self: Duration) -> number,
+}
+
+type Time = {
+	sub: (self: Time, other: Time) -> Duration,
+}
+
+type ActiveSession = {
+	pid: any,
+	created_at: any,
+	last_activity: any,
+	terminating: boolean,
+}
+
+local time = {
+	now = function(): Time
+		return {
+			sub = function(self: Time, other: Time): Duration
+				return {
+					seconds = function(self: Duration): number
+						return 0
+					end,
+				}
+			end,
+		}
+	end,
+}
+
+local state = {
+	active_sessions = {},
+}
+
+local function create_session(session_id: string)
+	local now = time.now()
+	state.active_sessions[session_id] = {
+		pid = "pid",
+		created_at = now,
+		last_activity = now,
+		terminating = false,
+	}
+end
+
+local function update_session_activity(session_id)
+	if state.active_sessions[session_id] then
+		state.active_sessions[session_id].last_activity = time.now()
+	end
+end
+
+local function check_inactive_sessions()
+	local now = time.now()
+	for _, session_info in pairs(state.active_sessions) do
+		local last_activity = session_info.last_activity or session_info.created_at
+		local elapsed = now:sub(last_activity)
+		local seconds: number = elapsed:seconds()
+	end
+end
+
+create_session("s1")
+update_session_activity("s1")
+check_inactive_sessions()
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected captured map time fields to survive sibling activity update, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_CapturedMapTimeFieldsSurviveUntypedPayloadKey(t *testing.T) {
+	source := `
+type Duration = {
+	seconds: (self: Duration) -> number,
+}
+
+type Time = {
+	sub: (self: Time, other: Time) -> Duration,
+}
+
+local time = {
+	now = function(): Time
+		return {
+			sub = function(self: Time, other: Time): Duration
+				return {
+					seconds = function(self: Duration): number
+						return 0
+					end,
+				}
+			end,
+		}
+	end,
+}
+
+local uuid = {
+	v7 = function(): (string, string?)
+		return "generated", nil
+	end,
+}
+
+local state = {
+	active_sessions = {},
+}
+
+local function create_session(payload_data)
+	local session_id = payload_data.session_id
+	if not session_id then
+		local id, err = uuid.v7()
+		if err then
+			return nil, err
+		end
+		session_id = id
+	end
+
+	local now = time.now()
+	state.active_sessions[session_id] = {
+		pid = "pid",
+		created_at = now,
+		last_activity = now,
+		terminating = false,
+	}
+	return session_id, nil
+end
+
+local function update_session_activity(session_id)
+	if state.active_sessions[session_id] then
+		state.active_sessions[session_id].last_activity = time.now()
+	end
+end
+
+local function check_inactive_sessions()
+	local now = time.now()
+	for _, session_info in pairs(state.active_sessions) do
+		local last_activity = session_info.last_activity or session_info.created_at
+		local elapsed = now:sub(last_activity)
+		local seconds: number = elapsed:seconds()
+	end
+end
+
+create_session({})
+update_session_activity("generated")
+check_inactive_sessions()
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected captured map time fields to survive untyped payload key, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_CapturedMapStdlibTimeFieldsSurviveUntypedPayloadKey(t *testing.T) {
+	durationType := typ.NewInterface("time.Duration", []typ.Method{
+		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
+	})
+	timeType := typ.NewInterface("time.Time", []typ.Method{
+		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("other", typ.Self).Returns(durationType).Build()},
+	})
+	timeManifest := io.NewManifest("time")
+	timeManifest.DefineType("Time", timeType)
+	timeManifest.DefineType("Duration", durationType)
+	timeManifest.SetExport(typ.NewInterface("time", []typ.Method{
+		{Name: "now", Type: typ.Func().Returns(timeType).Build()},
+		{Name: "parse_duration", Type: typ.Func().Param("s", typ.Any).Returns(durationType, typ.NewOptional(typ.LuaError)).Build()},
+	}))
+
+	source := `
+local time = require("time")
+
+type ActiveSession = {
+	pid: any,
+	created_at: any,
+	last_activity: any,
+	terminating: boolean,
+}
+
+local uuid = {
+	v7 = function(): (string, string?)
+		return "generated", nil
+	end,
+}
+
+local state = {
+	active_sessions = {},
+}
+
+local function create_session(payload_data)
+	local session_id = payload_data.session_id
+	if not session_id then
+		local id, err = uuid.v7()
+		if err then
+			return nil, err
+		end
+		session_id = id
+	end
+
+	local now = time.now()
+	state.active_sessions[session_id] = {
+		pid = "pid",
+		created_at = now,
+		last_activity = now,
+		terminating = false,
+	}
+	return session_id, nil
+end
+
+local function update_session_activity(session_id)
+	if state.active_sessions[session_id] then
+		state.active_sessions[session_id].last_activity = time.now()
+	end
+end
+
+local function check_inactive_sessions()
+	local now = time.now()
+	for _, session_info in pairs(state.active_sessions) do
+		local last_activity = session_info.last_activity or session_info.created_at
+		local elapsed = now:sub(last_activity)
+		local seconds: number = elapsed:seconds()
+	end
+end
+
+create_session({})
+update_session_activity("generated")
+check_inactive_sessions()
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("time", timeManifest))
+	if result.HasError() {
+		t.Fatalf("expected captured map stdlib time fields to survive untyped payload key, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_CapturedMapPreWriteReadsDoNotEraseTimeFields(t *testing.T) {
+	durationType := typ.NewInterface("time.Duration", []typ.Method{
+		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
+	})
+	timeType := typ.NewInterface("time.Time", []typ.Method{
+		{Name: "before", Type: typ.Func().Param("self", typ.Self).Param("other", typ.Self).Returns(typ.Boolean).Build()},
+		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("other", typ.Self).Returns(durationType).Build()},
+	})
+	timeManifest := io.NewManifest("time")
+	timeManifest.DefineType("Time", timeType)
+	timeManifest.DefineType("Duration", durationType)
+	timeManifest.SetExport(typ.NewInterface("time", []typ.Method{
+		{Name: "now", Type: typ.Func().Returns(timeType).Build()},
+		{Name: "parse_duration", Type: typ.Func().Param("s", typ.Any).Returns(durationType, typ.NewOptional(typ.LuaError)).Build()},
+	}))
+
+	source := `
+local time = require("time")
+
+type ActiveSession = {
+	pid: any,
+	created_at: any,
+	last_activity: any,
+	terminating: boolean,
+}
+
+local uuid = {
+	v7 = function(): (string, string?)
+		return "generated", nil
+	end,
+}
+
+local state = {
+	active_sessions = {},
+	session_count = 0,
+}
+
+local function get_oldest_session()
+	local oldest_time = nil
+	for _, session_info in pairs(state.active_sessions) do
+		if not session_info.terminating then
+			local last_activity = session_info.last_activity or session_info.created_at
+			if not oldest_time or last_activity:before(oldest_time) then
+				oldest_time = last_activity
+			end
+		end
+	end
+	return oldest_time
+end
+
+local function enforce_session_limit()
+	while state.session_count > 10 do
+		if not get_oldest_session() then
+			break
+		end
+		state.session_count = state.session_count - 1
+	end
+end
+
+local function create_session(payload_data)
+	enforce_session_limit()
+	local session_id = payload_data.session_id
+	if not session_id then
+		local id, err = uuid.v7()
+		if err then
+			return nil, err
+		end
+		session_id = id
+	end
+
+	if state.active_sessions[session_id] then
+		return session_id, nil
+	end
+
+	local now = time.now()
+	state.active_sessions[session_id] = {
+		pid = "pid",
+		created_at = now,
+		last_activity = now,
+		terminating = false,
+	}
+	state.session_count = state.session_count + 1
+	return session_id, nil
+end
+
+local function update_session_activity(session_id)
+	if state.active_sessions[session_id] then
+		state.active_sessions[session_id].last_activity = time.now()
+	end
+end
+
+local function check_inactive_sessions()
+	local now = time.now()
+	for session_id, session_info in pairs(state.active_sessions) do
+		local last_activity = session_info.last_activity or session_info.created_at
+		local elapsed = now:sub(last_activity)
+		if elapsed:seconds() > 10 then
+			state.active_sessions[session_id] = nil
+		end
+	end
+end
+
+create_session({})
+update_session_activity("generated")
+check_inactive_sessions()
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("time", timeManifest))
+	if result.HasError() {
+		t.Fatalf("expected pre-write reads not to erase captured map time fields, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_NestedCapturedMapPreWriteReadsDoNotEraseTimeFields(t *testing.T) {
+	durationType := typ.NewInterface("time.Duration", []typ.Method{
+		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
+	})
+	timeType := typ.NewInterface("time.Time", []typ.Method{
+		{Name: "before", Type: typ.Func().Param("self", typ.Self).Param("other", typ.Self).Returns(typ.Boolean).Build()},
+		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("other", typ.Self).Returns(durationType).Build()},
+	})
+	timeManifest := io.NewManifest("time")
+	timeManifest.DefineType("Time", timeType)
+	timeManifest.DefineType("Duration", durationType)
+	timeManifest.SetExport(typ.NewInterface("time", []typ.Method{
+		{Name: "now", Type: typ.Func().Returns(timeType).Build()},
+		{Name: "parse_duration", Type: typ.Func().Param("s", typ.Any).Returns(durationType, typ.NewOptional(typ.LuaError)).Build()},
+	}))
+
+	source := `
+local time = require("time")
+
+local uuid = {
+	v7 = function(): (string, string?)
+		return "generated", nil
+	end,
+}
+
+local function run(args)
+	local state = {
+		active_sessions = {},
+		session_count = 0,
+	}
+
+	local function get_oldest_session()
+		local oldest_time = nil
+		for _, session_info in pairs(state.active_sessions) do
+			if not session_info.terminating then
+				local last_activity = session_info.last_activity or session_info.created_at
+				if not oldest_time or last_activity:before(oldest_time) then
+					oldest_time = last_activity
+				end
+			end
+		end
+		return oldest_time
+	end
+
+	local function enforce_session_limit()
+		while state.session_count > 10 do
+			if not get_oldest_session() then
+				break
+			end
+			state.session_count = state.session_count - 1
+		end
+	end
+
+	local function create_session(payload_data)
+		enforce_session_limit()
+		local session_id = payload_data.session_id
+		if not session_id then
+			local id, err = uuid.v7()
+			if err then
+				return nil, err
+			end
+			session_id = id
+		end
+
+		if state.active_sessions[session_id] then
+			return session_id, nil
+		end
+
+		local now = time.now()
+		state.active_sessions[session_id] = {
+			pid = "pid",
+			created_at = now,
+			last_activity = now,
+			terminating = false,
+		}
+		state.session_count = state.session_count + 1
+		return session_id, nil
+	end
+
+	local function update_session_activity(session_id)
+		if state.active_sessions[session_id] then
+			state.active_sessions[session_id].last_activity = time.now()
+		end
+	end
+
+	local function check_inactive_sessions()
+		local now = time.now()
+		local inactivity_duration, _ = time.parse_duration("10s")
+		for session_id, session_info in pairs(state.active_sessions) do
+			local last_activity = session_info.last_activity or session_info.created_at
+			local elapsed = now:sub(last_activity)
+			if elapsed:seconds() > inactivity_duration:seconds() then
+				state.active_sessions[session_id] = nil
+			end
+		end
+	end
+
+	create_session(args)
+	update_session_activity("generated")
+	check_inactive_sessions()
+end
+
+run({})
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("time", timeManifest))
+	if result.HasError() {
+		t.Fatalf("expected nested pre-write reads not to erase captured map time fields, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_LoopSiblingCapturedMapTimeFieldsConverge(t *testing.T) {
+	durationType := typ.NewInterface("time.Duration", []typ.Method{
+		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
+	})
+	timeType := typ.NewInterface("time.Time", []typ.Method{
+		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("other", typ.Self).Returns(durationType).Build()},
+	})
+	timeManifest := io.NewManifest("time")
+	timeManifest.DefineType("Time", timeType)
+	timeManifest.DefineType("Duration", durationType)
+	timeManifest.SetExport(typ.NewRecord().
+		Field("now", typ.Func().Returns(timeType).Build()).
+		Field("parse_duration", typ.Func().Param("s", typ.Any).Returns(durationType, typ.NewOptional(typ.LuaError)).Build()).
+		Build())
+
+	source := `
+local time = require("time")
+
+type ActiveSession = {
+	pid: any,
+	created_at: any,
+	last_activity: any,
+	terminating: boolean,
+}
+
+local uuid = {
+	v7 = function(): (string, string?)
+		return "generated", nil
+	end,
+}
+
+local function run()
+	local state = {
+		active_sessions = {},
+		session_count = 0,
+	}
+
+	local function create_session(payload_data)
+		local session_id = payload_data.session_id
+		if not session_id then
+			local id, err = uuid.v7()
+			if err then
+				return nil, err
+			end
+			session_id = id
+		end
+
+		local now = time.now()
+		state.active_sessions[session_id] = {
+			pid = "pid",
+			created_at = now,
+			last_activity = now,
+			terminating = false,
+		}
+		state.session_count = state.session_count + 1
+		return session_id, nil
+	end
+
+	local function update_session_activity(session_id)
+		if state.active_sessions[session_id] then
+			state.active_sessions[session_id].last_activity = time.now()
+		end
+	end
+
+	local function check_inactive_sessions()
+		local now = time.now()
+		local inactivity_duration, _ = time.parse_duration("10s")
+		for session_id, session_info in pairs(state.active_sessions) do
+			local last_activity = session_info.last_activity or session_info.created_at
+			local elapsed = now:sub(last_activity)
+			if elapsed:seconds() > inactivity_duration:seconds() then
+				state.active_sessions[session_id] = nil
+			end
+		end
+	end
+
+	while true do
+		local result = unknown_result
+		if result.channel == "inbox" then
+			local payload_data = result.value
+			if payload_data.kind == "create" then
+				create_session(payload_data)
+			elseif payload_data.kind == "activity" then
+				update_session_activity(payload_data.session_id)
+			end
+		elseif result.channel == "gc" then
+			check_inactive_sessions()
+		end
+		break
+	end
+end
+
+run()
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("time", timeManifest))
+	if result.HasError() {
+		t.Fatalf("expected loop sibling captured map time fields to converge, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_MethodSelfMapReadPreservesDeclaredValueAfterFieldWrite(t *testing.T) {
+	source := `
+type Time = {}
+
+type Snapshot = {
+	id: string,
+	opened_at: Time,
+	last_seen: Time,
+	last_value: string?,
+	flags: {[string]: boolean},
+}
+
+type Store = {
+	sessions: {[string]: Snapshot},
+	open: (self: Store, id: string, now: Time) -> Snapshot,
+}
+
+local Store = {}
+Store.__index = Store
+
+function Store:open(id: string, now: Time): Snapshot
+	local existing = self.sessions[id]
+	if existing then
+		existing.last_seen = now
+		return existing
+	end
+
+	local created: Snapshot = {
+		id = id,
+		opened_at = now,
+		last_seen = now,
+		last_value = nil,
+		flags = {},
+	}
+	self.sessions[id] = created
+	return created
+end
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected method self map read to preserve declared value after field write, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_TableCreateFreshArrayShapeSurvivesConstructorMethodBoundary(t *testing.T) {
+	source := `
+local FlowGraph = {}
+FlowGraph.__index = FlowGraph
+
+function FlowGraph.new()
+	return setmetatable({
+		node_order = table.create(16, 0),
+	}, FlowGraph)
+end
+
+function FlowGraph:add_node(node_id: string)
+	table.insert(self.node_order, node_id)
+end
+
+function FlowGraph:compute_auto_chain()
+	for i = 1, #self.node_order - 1 do
+		local current_node_id = self.node_order[i]
+		local next_node_id = self.node_order[i + 1]
+		if current_node_id and next_node_id then
+			local pair = current_node_id .. ":" .. next_node_id
+		end
+	end
+end
+
+local graph = FlowGraph.new()
+graph:add_node("a")
+graph:add_node("b")
+graph:compute_auto_chain()
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected table.create array allocation evidence to survive constructor/method boundary, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_TableCreateFreshHashShapeAcceptsDynamicWrites(t *testing.T) {
+	source := `
+local Store = {}
+Store.__index = Store
+
+function Store.new()
+	return setmetatable({
+		values = table.create(0, 16),
+	}, Store)
+end
+
+function Store:set(id: string, value: number)
+	self.values[id] = value
+end
+
+function Store:get(id: string): number
+	return self.values[id] or 0
+end
+
+local store = Store.new()
+store:set("a", 1)
+return store:get("a")
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected table.create hash allocation evidence to accept dynamic writes, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestExternalLint_OptionalNumericFieldsDefaultBeforeArithmetic(t *testing.T) {
 	source := `
 local CONFIG = {
@@ -2706,6 +4098,159 @@ return test.run_cases(define_tests)
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected test DSL mutable model mocks not to pollute numeric helper, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_TestDslAfterEachModelResetDoesNotPolluteNumericHelper(t *testing.T) {
+	source := `
+local test = {}
+function test.describe(_name: string, fn: fun()) fn() end
+function test.it(_name: string, fn: fun()) fn() end
+function test.after_each(fn: fun()) fn() end
+function test.run_cases(define_cases_fn: fun())
+	return function()
+		_G.describe = test.describe
+		_G.it = test.it
+		_G.after_each = test.after_each
+		define_cases_fn()
+		_G.describe = nil
+		_G.it = nil
+		_G.after_each = nil
+	end
+end
+
+local models = {
+	get_by_name = function(model_name)
+		return {
+			max_tokens = 8000,
+			output_tokens = 1000,
+		}, nil
+	end,
+}
+
+local compress = {
+	_models = models,
+}
+
+local CONFIG = {
+	chars_per_token = 4,
+	prompt_buffer_tokens = 500,
+	context_safety_margin = 0.1,
+	output_buffer_tokens = 200,
+	default_temperature = 0.2,
+}
+
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * CONFIG.chars_per_token)
+end
+
+local function chars_to_tokens(chars)
+	return math.floor((tonumber(chars) or 0) / CONFIG.chars_per_token)
+end
+
+local function get_model_info(model_name, mock_model_info)
+	if mock_model_info then
+		return mock_model_info, nil
+	end
+
+	local model_card, err = compress._models.get_by_name(model_name)
+	if not model_card then
+		return nil, err
+	end
+
+	local max_context_tokens = model_card.max_tokens or 8000
+	local max_output_tokens = model_card.output_tokens or 1000
+	local usable_input_tokens = max_context_tokens - max_output_tokens - CONFIG.prompt_buffer_tokens
+	local usable_input_chars = tokens_to_chars(usable_input_tokens)
+	local safe_input_chars = math.floor(usable_input_chars * (1 - CONFIG.context_safety_margin))
+	local safe_output_chars = tokens_to_chars(max_output_tokens)
+
+	return {
+		max_context_tokens = max_context_tokens,
+		max_output_tokens = max_output_tokens,
+		usable_input_chars = safe_input_chars,
+		usable_input_tokens = chars_to_tokens(safe_input_chars),
+		max_output_chars = safe_output_chars,
+	}, nil
+end
+
+local function calculate_safe_max_tokens(target_chars, model_info)
+	local needed_tokens = chars_to_tokens(target_chars) + CONFIG.output_buffer_tokens
+	return math.min(needed_tokens, tonumber(model_info.max_output_tokens) or 1000)
+end
+
+function compress.to_size(model_name: string, content: string, target_chars: number, options, mock_model_info)
+	options = options or {}
+	local model_info, err = get_model_info(model_name, mock_model_info)
+	if err then
+		return nil, err
+	end
+	model_info = assert(model_info)
+	return calculate_safe_max_tokens(target_chars, model_info)
+end
+
+function compress.get_stats(model_name: string, content: string, target_chars: number, mock_model_info)
+	local model_info, err = get_model_info(model_name, mock_model_info)
+	if err then
+		return nil, err
+	end
+	local content_chars = #content
+	return {
+		model_max_context_tokens = model_info.max_context_tokens,
+		model_max_output_tokens = model_info.max_output_tokens,
+		model_usable_input_chars = model_info.usable_input_chars,
+		model_max_output_chars = model_info.max_output_chars,
+		fits_in_context = content_chars <= model_info.usable_input_chars,
+		safe_max_tokens_for_target = calculate_safe_max_tokens(target_chars, model_info),
+	}
+end
+
+local function define_tests()
+	describe("compress", function()
+		after_each(function()
+			compress._models = models
+		end)
+
+		it("uses a large model", function()
+			compress._models = {
+				get_by_name = function(model_name)
+					return {
+						max_tokens = 128000,
+						output_tokens = 16384,
+					}, nil
+				end,
+			}
+			return compress.to_size("gpt-4o-mini", "content", 100)
+		end)
+
+		it("handles model not found", function()
+			compress._models = {
+				get_by_name = function(model_name)
+					return nil, "Model not found"
+				end,
+			}
+			return compress.to_size("unknown-model", "content", 100)
+		end)
+
+		it("uses stats", function()
+			compress._models = {
+				get_by_name = function(model_name)
+					return {
+						max_tokens = 1000,
+						output_tokens = 200,
+					}, nil
+				end,
+			}
+			return compress.get_stats("small-model", "content", 500)
+		end)
+	end)
+end
+
+return test.run_cases(define_tests)
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected test DSL after_each model resets not to pollute numeric helper, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 

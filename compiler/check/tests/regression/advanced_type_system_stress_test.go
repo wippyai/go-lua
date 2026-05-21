@@ -344,6 +344,30 @@ return view.error.code .. ":" .. view.error.message
 	assertNoAdvancedStressErrors(t, source)
 }
 
+func TestAdvancedTypeSystem_ExpressionLocalTypeGuardRefinesExpectedTableField(t *testing.T) {
+	source := `
+type Box = {attempts: number}
+
+local function wrap(value: Box): Box
+	return value
+end
+
+local function decode(raw: any): Box
+	if type(raw) ~= "table" then
+		return { attempts = 0 }
+	end
+	return wrap({
+		attempts = type(raw.attempts) == "number" and raw.attempts or 0,
+	})
+end
+
+local box = decode({ attempts = 2 })
+local attempts: number = box.attempts
+return tostring(attempts)
+`
+	assertNoAdvancedStressErrors(t, source)
+}
+
 func TestAdvancedTypeSystem_NestedConfigBuilderKeepsPreciseMapAndArrayShapes(t *testing.T) {
 	source := `
 type Plugin = {id: string, enabled: boolean, config: {[string]: any}}

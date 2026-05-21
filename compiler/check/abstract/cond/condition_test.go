@@ -118,10 +118,63 @@ func TestResolveClassifyReturnExpr_FalseExpr(t *testing.T) {
 	}
 }
 
-func TestNumericConstraintsFromExpr_NilExpr(t *testing.T) {
-	result := NumericConstraintsFromExpr(nil, 0, nil)
-	if len(result) != 0 {
-		t.Error("nil expr should return empty slice")
+func TestNumericBranchConstraintsFromExpr_NilExpr(t *testing.T) {
+	result := NumericBranchConstraintsFromExpr(nil, 0, nil)
+	if len(result.OnTrue) != 0 || len(result.OnFalse) != 0 {
+		t.Error("nil expr should return empty branch constraints")
+	}
+}
+
+func TestNumericBranchConstraintsFromExpr_LenEqualsZero(t *testing.T) {
+	expr := &ast.RelationalOpExpr{
+		Operator: "==",
+		Lhs:      &ast.UnaryLenOpExpr{Expr: &ast.IdentExpr{Value: "rows"}},
+		Rhs:      &ast.NumberExpr{Value: "0"},
+	}
+
+	result := NumericBranchConstraintsFromExpr(expr, 0, nil)
+	if len(result.OnTrue) != 2 {
+		t.Fatalf("true edge should get exact zero length, got %d constraints", len(result.OnTrue))
+	}
+	if _, ok := result.OnTrue[0].(constraint.LenGeConst); !ok {
+		t.Fatalf("true edge first constraint = %T, want LenGeConst", result.OnTrue[0])
+	}
+	if _, ok := result.OnTrue[1].(constraint.LenLeConst); !ok {
+		t.Fatalf("true edge second constraint = %T, want LenLeConst", result.OnTrue[1])
+	}
+	if len(result.OnFalse) != 1 {
+		t.Fatalf("false edge should get non-empty length, got %d constraints", len(result.OnFalse))
+	}
+	got, ok := result.OnFalse[0].(constraint.LenGeConst)
+	if !ok {
+		t.Fatalf("false edge constraint = %T, want LenGeConst", result.OnFalse[0])
+	}
+	if got.Array.Root != "rows" || got.C != 1 {
+		t.Fatalf("unexpected false-edge non-empty length constraint: %#v", got)
+	}
+}
+
+func TestNumericBranchConstraintsFromExpr_AndFalseEdgeIsNotApproximatedAsConjunction(t *testing.T) {
+	expr := &ast.LogicalOpExpr{
+		Operator: "and",
+		Lhs: &ast.RelationalOpExpr{
+			Operator: ">",
+			Lhs:      &ast.IdentExpr{Value: "x"},
+			Rhs:      &ast.NumberExpr{Value: "0"},
+		},
+		Rhs: &ast.RelationalOpExpr{
+			Operator: ">",
+			Lhs:      &ast.IdentExpr{Value: "y"},
+			Rhs:      &ast.NumberExpr{Value: "0"},
+		},
+	}
+
+	result := NumericBranchConstraintsFromExpr(expr, 0, nil)
+	if len(result.OnTrue) != 2 {
+		t.Fatalf("true edge should combine both comparisons, got %d constraints", len(result.OnTrue))
+	}
+	if len(result.OnFalse) != 0 {
+		t.Fatalf("false edge is a disjunction and must not be approximated as %d constraints", len(result.OnFalse))
 	}
 }
 

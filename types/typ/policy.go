@@ -1,10 +1,6 @@
 package typ
 
-import (
-	"sort"
-
-	"github.com/wippyai/go-lua/types/kind"
-)
+import "github.com/wippyai/go-lua/types/kind"
 
 // JoinPreferNonSoft joins two types while preferring non-soft placeholders.
 // This centralizes the "soft placeholder" policy used across inference and flow.
@@ -42,6 +38,44 @@ func JoinPreferNonSoft(a, b Type) Type {
 // is unknown and another is explicit nil, keep unknown so summaries do not
 // collapse to nil-only.
 func JoinReturnSlot(a, b Type) Type {
+	return newReturnJoinState().joinReturnSlot(a, b)
+}
+
+type returnJoinKey struct {
+	aHash uint64
+	bHash uint64
+	aKind kind.Kind
+	bKind kind.Kind
+}
+
+type recordJoinResult struct {
+	t  Type
+	ok bool
+}
+
+type returnJoinState struct {
+	returnSlots map[returnJoinKey]Type
+	records     map[returnJoinKey]recordJoinResult
+}
+
+func newReturnJoinState() *returnJoinState {
+	return &returnJoinState{}
+}
+
+func joinKey(a, b Type) returnJoinKey {
+	if a == nil || b == nil {
+		return returnJoinKey{}
+	}
+	ah, bh := a.Hash(), b.Hash()
+	ak, bk := a.Kind(), b.Kind()
+	if ah > bh || (ah == bh && ak > bk) {
+		ah, bh = bh, ah
+		ak, bk = bk, ak
+	}
+	return returnJoinKey{aHash: ah, bHash: bh, aKind: ak, bKind: bk}
+}
+
+func (s *returnJoinState) joinReturnSlot(a, b Type) Type {
 	if a == nil {
 		return b
 	}
@@ -50,19 +84,35 @@ func JoinReturnSlot(a, b Type) Type {
 	}
 	a = PruneSoftUnionMembers(a)
 	b = PruneSoftUnionMembers(b)
+	if a == b || (a.Hash() == b.Hash() && TypeEquals(a, b)) {
+		return a
+	}
+	key := joinKey(a, b)
+	if s != nil && s.returnSlots != nil {
+		if cached, ok := s.returnSlots[key]; ok {
+			return cached
+		}
+	}
+
+	var result Type
 	if preferred, ok := preferArrayOverEmptyRecord(a, b); ok {
-		return preferred
+		result = preferred
+	} else if merged, ok := s.joinCompatibleRecords(a, b); ok {
+		result = merged
+	} else if (IsAny(a) && b.Kind() == kind.Nil) || (IsAny(b) && a.Kind() == kind.Nil) {
+		result = Any
+	} else if IsUnknown(a) || IsUnknown(b) {
+		result = Unknown
+	} else {
+		result = s.coalesceCompatibleRecordMembers(JoinPreferNonSoft(a, b))
 	}
-	if merged, ok := JoinCompatibleRecords(a, b); ok {
-		return merged
+	if s != nil {
+		if s.returnSlots == nil {
+			s.returnSlots = make(map[returnJoinKey]Type)
+		}
+		s.returnSlots[key] = result
 	}
-	if (IsAny(a) && b.Kind() == kind.Nil) || (IsAny(b) && a.Kind() == kind.Nil) {
-		return Any
-	}
-	if IsUnknown(a) || IsUnknown(b) {
-		return Unknown
-	}
-	return coalesceCompatibleRecordMembers(JoinPreferNonSoft(a, b))
+	return result
 }
 
 func preferArrayOverEmptyRecord(a, b Type) (Type, bool) {
@@ -103,97 +153,120 @@ func isArrayLike(t Type) bool {
 // This preserves discriminated unions by refusing joins when required literal
 // fields conflict across the two records.
 func JoinCompatibleRecords(a, b Type) (Type, bool) {
+	return newReturnJoinState().joinCompatibleRecords(a, b)
+}
+
+func (s *returnJoinState) joinCompatibleRecords(a, b Type) (Type, bool) {
 	ar := unaliasRecord(a)
 	br := unaliasRecord(b)
 	if ar == nil || br == nil {
 		return nil, false
 	}
+	if ar == br || (ar.Hash() == br.Hash() && TypeEquals(ar, br)) {
+		return ar, true
+	}
+	key := joinKey(ar, br)
+	if s != nil && s.records != nil {
+		if cached, ok := s.records[key]; ok {
+			return cached.t, cached.ok
+		}
+	}
 
 	// Keep discriminated unions intact when required literal tags conflict.
 	if hasConflictingRequiredLiteralField(ar, br) {
+		if s != nil {
+			s.cacheRecordJoin(key, nil, false)
+		}
 		return nil, false
 	}
 
 	// Mixing map and non-map record slots can be semantically distinct.
 	if ar.HasMapComponent() != br.HasMapComponent() {
+		if s != nil {
+			s.cacheRecordJoin(key, nil, false)
+		}
 		return nil, false
 	}
 
-	builder := NewRecord()
-	if ar.Open || br.Open {
-		builder.SetOpen(true)
-	}
+	open := ar.Open || br.Open
+	metatable := Type(nil)
 	if ar.Metatable != nil && br.Metatable != nil && TypeEquals(ar.Metatable, br.Metatable) {
-		builder.Metatable(ar.Metatable)
+		metatable = ar.Metatable
 	}
+	mapKey := Type(nil)
+	mapValue := Type(nil)
 	if ar.HasMapComponent() && br.HasMapComponent() {
-		builder.MapComponent(
-			JoinPreferNonSoft(ar.MapKey, br.MapKey),
-			JoinPreferNonSoft(ar.MapValue, br.MapValue),
-		)
+		mapKey = JoinPreferNonSoft(ar.MapKey, br.MapKey)
+		mapValue = JoinPreferNonSoft(ar.MapValue, br.MapValue)
 	}
 
-	fieldsA := recordFieldsByName(ar)
-	fieldsB := recordFieldsByName(br)
-	names := make(map[string]struct{}, len(fieldsA)+len(fieldsB))
-	for name := range fieldsA {
-		names[name] = struct{}{}
-	}
-	for name := range fieldsB {
-		names[name] = struct{}{}
-	}
-	sortedNames := make([]string, 0, len(names))
-	for name := range names {
-		sortedNames = append(sortedNames, name)
-	}
-	sort.Strings(sortedNames)
-
-	for _, name := range sortedNames {
-		fa, oka := fieldsA[name]
-		fb, okb := fieldsB[name]
-
-		fieldType := Type(nil)
-		optional := true
-		readonly := false
+	fields := make([]Field, 0, len(ar.Fields)+len(br.Fields))
+	i, j := 0, 0
+	for i < len(ar.Fields) || j < len(br.Fields) {
 		switch {
-		case oka && okb:
-			// Record coalescing is used from JoinReturnSlot; keep field-level merge
-			// on the same return-slot policy so empty-collection paths and nil/unknown
-			// interactions are handled consistently in nested return records.
-			fieldType = JoinReturnSlot(fa.Type, fb.Type)
-			optional = fa.Optional || fb.Optional
-			readonly = fa.Readonly && fb.Readonly
-		case oka:
-			fieldType = fa.Type
-			optional = true
-			readonly = fa.Readonly
-			if tail, ok := recordTailFieldType(br, name); ok {
-				fieldType, optional = normalizeMergedRecordField(JoinReturnSlot(fa.Type, tail))
-				readonly = false
-			}
-		case okb:
-			fieldType = fb.Type
-			optional = true
-			readonly = fb.Readonly
-			if tail, ok := recordTailFieldType(ar, name); ok {
-				fieldType, optional = normalizeMergedRecordField(JoinReturnSlot(tail, fb.Type))
-				readonly = false
-			}
-		}
-
-		switch {
-		case optional && readonly:
-			builder.OptReadonlyField(name, fieldType)
-		case optional:
-			builder.OptField(name, fieldType)
-		case readonly:
-			builder.ReadonlyField(name, fieldType)
+		case j >= len(br.Fields):
+			fields = append(fields, s.mergeRecordField(ar.Fields[i].Name, ar.Fields[i], true, Field{}, false, ar, br))
+			i++
+		case i >= len(ar.Fields):
+			fields = append(fields, s.mergeRecordField(br.Fields[j].Name, Field{}, false, br.Fields[j], true, ar, br))
+			j++
+		case ar.Fields[i].Name == br.Fields[j].Name:
+			fields = append(fields, s.mergeRecordField(ar.Fields[i].Name, ar.Fields[i], true, br.Fields[j], true, ar, br))
+			i++
+			j++
+		case ar.Fields[i].Name < br.Fields[j].Name:
+			fields = append(fields, s.mergeRecordField(ar.Fields[i].Name, ar.Fields[i], true, Field{}, false, ar, br))
+			i++
 		default:
-			builder.Field(name, fieldType)
+			fields = append(fields, s.mergeRecordField(br.Fields[j].Name, Field{}, false, br.Fields[j], true, ar, br))
+			j++
 		}
 	}
 
-	return builder.Build(), true
+	merged := buildRecordType(fields, metatable, mapKey, mapValue, open, true)
+	if s != nil {
+		s.cacheRecordJoin(key, merged, true)
+	}
+	return merged, true
+}
+
+func (s *returnJoinState) cacheRecordJoin(key returnJoinKey, t Type, ok bool) {
+	if s.records == nil {
+		s.records = make(map[returnJoinKey]recordJoinResult)
+	}
+	s.records[key] = recordJoinResult{t: t, ok: ok}
+}
+
+func (s *returnJoinState) mergeRecordField(name string, fa Field, oka bool, fb Field, okb bool, ar, br *Record) Field {
+	fieldType := Type(nil)
+	optional := true
+	readonly := false
+	switch {
+	case oka && okb:
+		// Record coalescing is used from JoinReturnSlot; keep field-level merge
+		// on the same return-slot policy so empty-collection paths and nil/unknown
+		// interactions are handled consistently in nested return records.
+		fieldType = s.joinReturnSlot(fa.Type, fb.Type)
+		optional = fa.Optional || fb.Optional
+		readonly = fa.Readonly && fb.Readonly
+	case oka:
+		fieldType = fa.Type
+		optional = true
+		readonly = fa.Readonly
+		if tail, ok := recordTailFieldType(br, name); ok {
+			fieldType, optional = normalizeMergedRecordField(s.joinReturnSlot(fa.Type, tail))
+			readonly = false
+		}
+	case okb:
+		fieldType = fb.Type
+		optional = true
+		readonly = fb.Readonly
+		if tail, ok := recordTailFieldType(ar, name); ok {
+			fieldType, optional = normalizeMergedRecordField(s.joinReturnSlot(tail, fb.Type))
+			readonly = false
+		}
+	}
+	return Field{Name: name, Type: fieldType, Optional: optional, Readonly: readonly}
 }
 
 func normalizeMergedRecordField(t Type) (Type, bool) {
@@ -264,7 +337,7 @@ func unaliasUnion(t Type) *Union {
 	return u
 }
 
-func coalesceCompatibleRecordMembers(t Type) Type {
+func (s *returnJoinState) coalesceCompatibleRecordMembers(t Type) Type {
 	u := unaliasUnion(t)
 	if u == nil || len(u.Members) < 2 {
 		return t
@@ -284,7 +357,7 @@ func coalesceCompatibleRecordMembers(t Type) Type {
 			if right == nil {
 				continue
 			}
-			merged, ok := JoinCompatibleRecords(left, right)
+			merged, ok := s.joinCompatibleRecords(left, right)
 			if !ok {
 				continue
 			}
@@ -302,36 +375,41 @@ func coalesceCompatibleRecordMembers(t Type) Type {
 	return NewUnion(members...)
 }
 
-func recordFieldsByName(r *Record) map[string]Field {
-	fields := make(map[string]Field, len(r.Fields))
-	for _, field := range r.Fields {
-		fields[field.Name] = field
-	}
-	return fields
-}
-
 func hasConflictingRequiredLiteralField(a, b *Record) bool {
-	fieldsA := recordFieldsByName(a)
-	fieldsB := recordFieldsByName(b)
-	for name, fa := range fieldsA {
-		fb, ok := fieldsB[name]
-		if !ok {
+	i, j := 0, 0
+	for i < len(a.Fields) && j < len(b.Fields) {
+		fa := a.Fields[i]
+		fb := b.Fields[j]
+		switch {
+		case fa.Name < fb.Name:
+			i++
+			continue
+		case fa.Name > fb.Name:
+			j++
 			continue
 		}
 		if fa.Optional || fb.Optional {
+			i++
+			j++
 			continue
 		}
 		la, oka := literalType(fa.Type)
 		lb, okb := literalType(fb.Type)
 		if !oka || !okb {
+			i++
+			j++
 			continue
 		}
-		if !isDiscriminantLiteralField(name) {
+		if !isDiscriminantLiteralField(fa.Name) {
+			i++
+			j++
 			continue
 		}
 		if !TypeEquals(la, lb) {
 			return true
 		}
+		i++
+		j++
 	}
 	return false
 }

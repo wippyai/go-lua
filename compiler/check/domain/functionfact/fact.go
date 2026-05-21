@@ -549,6 +549,12 @@ func widenByShapeForConvergence(existing, candidate *typ.Function) typ.Type {
 	return builder.Build()
 }
 
+// MergeParamType merges one function parameter type using the same evidence
+// policy as canonical function-fact merging.
+func MergeParamType(existing, candidate typ.Type) typ.Type {
+	return mergeParamType(existing, candidate)
+}
+
 func mergeParamType(existing, candidate typ.Type) typ.Type {
 	if existing == nil {
 		return candidate
@@ -586,6 +592,12 @@ func mergeParamType(existing, candidate typ.Type) typ.Type {
 	if typ.IsAny(candidate) {
 		return existing
 	}
+	if value.FactTypeEqual(existing, candidate) {
+		return existing
+	}
+	if unwrap.Function(existing) != nil || unwrap.Function(candidate) != nil {
+		return MergeType(existing, candidate)
+	}
 	if typ.TypeEquals(existing, candidate) {
 		return existing
 	}
@@ -612,6 +624,12 @@ func widenParamTypeForConvergence(existing, candidate typ.Type) typ.Type {
 	}
 	if candidate == nil {
 		return existing
+	}
+	if value.FactTypeEqual(existing, candidate) {
+		return existing
+	}
+	if unwrap.Function(existing) != nil || unwrap.Function(candidate) != nil {
+		return WidenTypeForConvergence(existing, candidate)
 	}
 	if typ.TypeEquals(existing, candidate) {
 		return existing

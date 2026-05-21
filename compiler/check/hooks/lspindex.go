@@ -102,7 +102,7 @@ func (idx *LSPIndexer) extractParameters(file string, graph *cfg.Graph, result *
 			continue
 		}
 
-		// Use function span as best available fallback (parameter names have no AST nodes).
+		// Use function span when parameter names have no AST nodes.
 		span := astSpan(fn)
 		if !span.Valid() {
 			continue

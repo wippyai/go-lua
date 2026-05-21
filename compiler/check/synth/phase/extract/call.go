@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
@@ -180,8 +181,8 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 		AllowExtraArgs: allowExtraArgs,
 	}
 
-	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.contextualArgReSynth(calleeType, sc, p))
+	pipeline := ops.NewCallPipeline(s.deps.Ctx, def, len(ex.Args)).
+		WithReSynth(s.contextualArgReSynth(calleeType, ex.Args, sc, p))
 
 	if expected != nil {
 		pipeline = pipeline.WithExpected(expected)
@@ -332,8 +333,8 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 		ForceMethodReceiver: forceReceiver,
 	}
 
-	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.contextualArgReSynth(calleeType, sc, p))
+	pipeline := ops.NewCallPipeline(s.deps.Ctx, def, len(ex.Args)).
+		WithReSynth(s.contextualArgReSynth(calleeType, ex.Args, sc, p))
 
 	if expected != nil {
 		pipeline = pipeline.WithExpected(expected)
@@ -383,8 +384,8 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 		ForceMethodReceiver: forceReceiver,
 	}
 
-	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.contextualArgReSynth(calleeType, sc, p))
+	pipeline := ops.NewCallPipeline(s.deps.Ctx, def, len(ex.Args)).
+		WithReSynth(s.contextualArgReSynth(calleeType, ex.Args, sc, p))
 
 	result := pipeline.Run()
 	returns := unwrapCallResult(result)
@@ -854,37 +855,29 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 // parameter types, then re-synthesize arguments that are sensitive to expected
 // type context. Callback function literals additionally need spec-provided
 // environment overlays, so they are handled before the general argument path.
-func (s *Synthesizer) contextualArgReSynth(calleeType typ.Type, sc *scope.State, p cfg.Point) ArgReSynth {
+func (s *Synthesizer) contextualArgReSynth(calleeType typ.Type, args []ast.Expr, sc *scope.State, p cfg.Point) ops.ArgReSynth {
 	callbacks := s.callbackAwareReSynth(calleeType, sc)
-	return func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
+	values := callarg.Full(
+		func(arg ast.Expr, pt cfg.Point, expected typ.Type) typ.Type {
+			return s.TypeOfWithExpected(arg, pt, expected)
+		},
+		nil,
+		p,
+	)
+	return callarg.ForArgs(args, func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
 		if callbacks != nil {
 			if t := callbacks(idx, arg, expected); t != nil {
 				return t
 			}
 		}
-		return s.valueArgReSynth(arg, p, expected)
-	}
-}
-
-func (s *Synthesizer) valueArgReSynth(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type {
-	switch a := arg.(type) {
-	case *ast.IdentExpr, *ast.AttrGetExpr:
-		inferred := s.TypeOfWithExpected(a, p, expected)
-		if shouldRefineCallArgWithExpected(inferred, expected) {
-			return expected
-		}
-		return inferred
-	case *ast.LogicalOpExpr, *ast.NonNilAssertExpr:
-		return s.TypeOfWithExpected(a, p, expected)
-	default:
-		return nil
-	}
+		return values(idx, arg, expected)
+	})
 }
 
 // callbackAwareReSynth creates an ArgReSynth that applies EnvOverlay from callback specs.
 // For callback parameters with an EnvOverlay, the overlay globals are merged into the
 // synthesizer's context so they are visible inside the callback body only.
-func (s *Synthesizer) callbackAwareReSynth(calleeType typ.Type, sc *scope.State) ArgReSynth {
+func (s *Synthesizer) callbackAwareReSynth(calleeType typ.Type, sc *scope.State) callarg.ReSynth {
 	return func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
 		fnExpr := functionExprForCallbackArg(s, arg)
 		if fnExpr == nil {

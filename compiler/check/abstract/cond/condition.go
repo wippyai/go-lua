@@ -69,6 +69,13 @@ type BranchConditions struct {
 	OnFalse constraint.Condition // Constraints when condition is falsy
 }
 
+// NumericBranchConstraints is the numeric product-domain evidence emitted by a
+// boolean expression for each outgoing branch.
+type NumericBranchConstraints struct {
+	OnTrue  []constraint.NumericConstraint
+	OnFalse []constraint.NumericConstraint
+}
+
 // ConditionExtractor holds shared context for recursive condition extraction.
 // It processes AST condition expressions and emits type constraints for both
 // true and false control flow edges.
@@ -88,7 +95,7 @@ type ConditionExtractor struct {
 	TypeKeyRes      func(string, *scope.State) (narrow.TypeKey, bool) // Type name resolution
 	ConstResolver   func(string) *flow.ConstValue                     // Constant value lookup
 	RefinementBySym constraint.RefinementLookupBySym                  // Function refinement lookup
-	ModuleBindings  *bind.BindingTable                                // Module-level fallback bindings for callee resolution
+	ModuleBindings  *bind.BindingTable                                // Module-level bindings used as secondary callee identity source
 	Evidence        api.FlowEvidence                                  // Canonical graph event trace
 }
 
@@ -252,6 +259,12 @@ func (ce *ConditionExtractor) branchConditionsFromExpr(expr ast.Expr) BranchCond
 	case *ast.AttrGetExpr:
 		path := ce.pathFromExpr(e)
 		if path.IsEmpty() {
+			if keyOf := ce.keyOfConstraintsFromDynamicIndex(e); len(keyOf) > 0 {
+				return BranchConditions{
+					OnTrue:  constraint.FromConstraints(keyOf...),
+					OnFalse: constraint.TrueCondition(),
+				}
+			}
 			return BranchConditions{
 				OnTrue:  constraint.TrueCondition(),
 				OnFalse: constraint.TrueCondition(),
@@ -349,8 +362,10 @@ func (ce *ConditionExtractor) branchConditionsFromIdent(ident *ast.IdentExpr) Br
 	onTrue := constraint.TrueCondition()
 	onFalse := constraint.TrueCondition()
 	if !path.IsEmpty() {
-		onTrue = constraint.FromConstraints(append([]constraint.Constraint{constraint.Truthy{Path: path}},
-			versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)...)...)
+		trueConstraints := append([]constraint.Constraint{constraint.Truthy{Path: path}},
+			versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)...)
+		trueConstraints = append(trueConstraints, ce.keyOfConstraintsForTruthyValue(path)...)
+		onTrue = constraint.FromConstraints(trueConstraints...)
 		onFalse = constraint.FromConstraints(append([]constraint.Constraint{constraint.Falsy{Path: path}},
 			versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)...)...)
 	}
@@ -363,6 +378,78 @@ func (ce *ConditionExtractor) branchConditionsFromIdent(ident *ast.IdentExpr) Br
 		}
 	}
 	return BranchConditions{OnTrue: onTrue, OnFalse: onFalse}
+}
+
+func (ce *ConditionExtractor) keyOfConstraintsForTruthyValue(valuePath constraint.Path) []constraint.Constraint {
+	if ce == nil || ce.Inputs == nil || valuePath.IsEmpty() || valuePath.Symbol == 0 {
+		return nil
+	}
+	var out []constraint.Constraint
+	for _, assign := range ce.Inputs.Assignments {
+		if assign.MapElementSource == nil || assign.TargetPath.IsEmpty() {
+			continue
+		}
+		targetPath := flowpath.WithVersion(assign.TargetPath, ce.graph(), ce.P)
+		if !targetPath.Equal(valuePath) {
+			continue
+		}
+		if keyOf := ce.keyOfConstraintFromMapElementSource(assign.MapElementSource); keyOf != nil {
+			out = append(out, *keyOf)
+		}
+	}
+	return out
+}
+
+func (ce *ConditionExtractor) keyOfConstraintsFromDynamicIndex(attr *ast.AttrGetExpr) []constraint.Constraint {
+	if ce == nil || attr == nil {
+		return nil
+	}
+	basePath := ce.pathFromExpr(attr.Object)
+	if basePath.IsEmpty() {
+		return nil
+	}
+	keyIdent, ok := attr.Key.(*ast.IdentExpr)
+	if !ok || keyIdent == nil {
+		return nil
+	}
+	bindings := ce.bindings()
+	if bindings == nil {
+		return nil
+	}
+	keySym, ok := bindings.SymbolOf(keyIdent)
+	if !ok || keySym == 0 {
+		return nil
+	}
+	keyPath := flowpath.WithVersion(constraint.Path{
+		Root:   resolve.RootNameFromBindings(bindings, keySym, keyIdent.Value),
+		Symbol: keySym,
+	}, ce.graph(), ce.P)
+	if keyPath.IsEmpty() {
+		return nil
+	}
+	return []constraint.Constraint{constraint.KeyOf{Table: basePath, Key: keyPath}}
+}
+
+func (ce *ConditionExtractor) keyOfConstraintFromMapElementSource(src *flow.MapElementSource) *constraint.KeyOf {
+	if ce == nil || src == nil || src.MapPath.IsEmpty() || src.KeySymbol == 0 {
+		return nil
+	}
+	tablePath := flowpath.WithVersion(src.MapPath, ce.graph(), ce.P)
+	if tablePath.IsEmpty() {
+		return nil
+	}
+	keyRoot := src.KeyVar
+	if keyRoot == "" {
+		keyRoot = src.MapPath.Root
+	}
+	keyPath := flowpath.WithVersion(constraint.Path{
+		Root:   keyRoot,
+		Symbol: src.KeySymbol,
+	}, ce.graph(), ce.P)
+	if keyPath.IsEmpty() {
+		return nil
+	}
+	return &constraint.KeyOf{Table: tablePath, Key: keyPath}
 }
 
 func (ce *ConditionExtractor) branchConditionsFromPredicateCall(expr *ast.FuncCallExpr) (BranchConditions, bool) {
@@ -751,7 +838,7 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 		return constraint.FromConstraints(c...)
 	}
 
-	// Fallback: negate equality constraints
+	// Equality negation covers constraints without a specialized inverse.
 	eq := ce.ConditionFromEquality(lhs, rhs)
 	if !eq.HasConstraints() {
 		return constraint.TrueCondition()
@@ -910,50 +997,142 @@ func typeKeyFromStringExpr(expr ast.Expr) (narrow.TypeKey, bool) {
 	return narrow.KnownBuiltinTypeKey(s.Value)
 }
 
-// NumericConstraintsFromExpr extracts numeric constraints from an expression.
-func NumericConstraintsFromExpr(expr ast.Expr, p cfg.Point, inputs *flow.Inputs) []constraint.NumericConstraint {
+// NumericBranchConstraintsFromExpr extracts numeric facts from a branch
+// expression. Facts are emitted per edge only when that edge is representable as
+// a conjunction in the numeric domain; unrepresentable disjunctions are dropped
+// instead of being approximated unsoundly.
+func NumericBranchConstraintsFromExpr(expr ast.Expr, p cfg.Point, inputs *flow.Inputs) NumericBranchConstraints {
 	bindings := resolve.GetBindings(inputs)
-	return numericConstraintsFromExprInternal(expr, p, inputs, bindings)
+	return numericBranchConstraintsFromExprInternal(expr, p, inputs, bindings)
 }
 
-func numericConstraintsFromExprInternal(expr ast.Expr, p cfg.Point, inputs *flow.Inputs, bindings *bind.BindingTable) []constraint.NumericConstraint {
+func numericBranchConstraintsFromExprInternal(expr ast.Expr, p cfg.Point, inputs *flow.Inputs, bindings *bind.BindingTable) NumericBranchConstraints {
 	switch e := expr.(type) {
 	case *ast.UnaryNotOpExpr:
-		inner := numericConstraintsFromExprInternal(e.Expr, p, inputs, bindings)
-		var negated []constraint.NumericConstraint
-		for _, nc := range inner {
-			if neg := numconst.NegateNumericConstraint(nc); neg != nil {
-				negated = append(negated, neg)
-			}
-		}
-		return negated
+		inner := numericBranchConstraintsFromExprInternal(e.Expr, p, inputs, bindings)
+		return NumericBranchConstraints{OnTrue: inner.OnFalse, OnFalse: inner.OnTrue}
 	case *ast.LogicalOpExpr:
-		return numericConstraintsFromLogicalExprInternal(e, p, inputs, bindings)
+		return numericBranchConstraintsFromLogicalExprInternal(e, p, inputs, bindings)
 	case *ast.RelationalOpExpr:
-		if nc := numconst.NumericConstraintFromComparisonWithBindings(e.Operator, e.Lhs, e.Rhs, p, inputs, bindings); nc != nil {
-			return []constraint.NumericConstraint{nc}
-		}
+		return numericBranchConstraintsFromRelationalExpr(e, p, inputs, bindings)
 	}
-	return nil
+	return NumericBranchConstraints{}
 }
 
-func numericConstraintsFromLogicalExprInternal(expr *ast.LogicalOpExpr, p cfg.Point, inputs *flow.Inputs, bindings *bind.BindingTable) []constraint.NumericConstraint {
+func numericBranchConstraintsFromLogicalExprInternal(expr *ast.LogicalOpExpr, p cfg.Point, inputs *flow.Inputs, bindings *bind.BindingTable) NumericBranchConstraints {
 	switch expr.Operator {
 	case "and":
-		left := numericConstraintsFromExprInternal(expr.Lhs, p, inputs, bindings)
-		right := numericConstraintsFromExprInternal(expr.Rhs, p, inputs, bindings)
-		if len(left) == 0 {
-			return right
+		left := numericBranchConstraintsFromExprInternal(expr.Lhs, p, inputs, bindings)
+		right := numericBranchConstraintsFromExprInternal(expr.Rhs, p, inputs, bindings)
+		return NumericBranchConstraints{
+			OnTrue: appendNumericConstraints(left.OnTrue, right.OnTrue),
 		}
-		if len(right) == 0 {
-			return left
+	case "or":
+		left := numericBranchConstraintsFromExprInternal(expr.Lhs, p, inputs, bindings)
+		right := numericBranchConstraintsFromExprInternal(expr.Rhs, p, inputs, bindings)
+		return NumericBranchConstraints{
+			OnFalse: appendNumericConstraints(left.OnFalse, right.OnFalse),
 		}
-		out := make([]constraint.NumericConstraint, 0, len(left)+len(right))
-		out = append(out, left...)
-		out = append(out, right...)
+	}
+	return NumericBranchConstraints{}
+}
+
+func numericBranchConstraintsFromRelationalExpr(expr *ast.RelationalOpExpr, p cfg.Point, inputs *flow.Inputs, bindings *bind.BindingTable) NumericBranchConstraints {
+	if expr == nil {
+		return NumericBranchConstraints{}
+	}
+	switch expr.Operator {
+	case "<", "<=", ">", ">=":
+		nc := numconst.NumericConstraintFromComparisonWithBindings(expr.Operator, expr.Lhs, expr.Rhs, p, inputs, bindings)
+		if nc == nil {
+			return NumericBranchConstraints{}
+		}
+		out := NumericBranchConstraints{OnTrue: []constraint.NumericConstraint{nc}}
+		if neg := numconst.NegateNumericConstraint(nc); neg != nil {
+			out.OnFalse = []constraint.NumericConstraint{neg}
+		}
+		return out
+	case "==":
+		return numericBranchConstraintsFromEquality(expr.Lhs, expr.Rhs, bindings)
+	case "~=":
+		eq := numericBranchConstraintsFromEquality(expr.Lhs, expr.Rhs, bindings)
+		return NumericBranchConstraints{OnTrue: eq.OnFalse, OnFalse: eq.OnTrue}
+	default:
+		return NumericBranchConstraints{}
+	}
+}
+
+func numericBranchConstraintsFromEquality(lhs, rhs ast.Expr, bindings *bind.BindingTable) NumericBranchConstraints {
+	if path, c, ok := lenConstComparison(lhs, rhs, bindings); ok {
+		out := NumericBranchConstraints{
+			OnTrue: []constraint.NumericConstraint{
+				constraint.LenGeConst{Array: path, C: c},
+				constraint.LenLeConst{Array: path, C: c},
+			},
+		}
+		if c == 0 {
+			out.OnFalse = []constraint.NumericConstraint{constraint.LenGeConst{Array: path, C: 1}}
+		}
 		return out
 	}
-	return nil
+	if path, c, ok := pathConstComparison(lhs, rhs, bindings); ok {
+		return NumericBranchConstraints{
+			OnTrue: []constraint.NumericConstraint{
+				constraint.GeConst{X: path, C: c},
+				constraint.LeConst{X: path, C: c},
+			},
+		}
+	}
+	return NumericBranchConstraints{}
+}
+
+func lenConstComparison(lhs, rhs ast.Expr, bindings *bind.BindingTable) (constraint.Path, int64, bool) {
+	if path := lenPathFromExpr(lhs, bindings); !path.IsEmpty() {
+		if c, ok := numconst.IntConstFromExpr(rhs); ok {
+			return path, c, true
+		}
+	}
+	if path := lenPathFromExpr(rhs, bindings); !path.IsEmpty() {
+		if c, ok := numconst.IntConstFromExpr(lhs); ok {
+			return path, c, true
+		}
+	}
+	return constraint.Path{}, 0, false
+}
+
+func pathConstComparison(lhs, rhs ast.Expr, bindings *bind.BindingTable) (constraint.Path, int64, bool) {
+	if path := flowpath.FromExprWithBindings(lhs, nil, bindings); !path.IsEmpty() {
+		if c, ok := numconst.IntConstFromExpr(rhs); ok {
+			return path, c, true
+		}
+	}
+	if path := flowpath.FromExprWithBindings(rhs, nil, bindings); !path.IsEmpty() {
+		if c, ok := numconst.IntConstFromExpr(lhs); ok {
+			return path, c, true
+		}
+	}
+	return constraint.Path{}, 0, false
+}
+
+func lenPathFromExpr(expr ast.Expr, bindings *bind.BindingTable) constraint.Path {
+	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
+	if !ok || lenOp == nil {
+		return constraint.Path{}
+	}
+	return flowpath.FromExprWithBindings(lenOp.Expr, nil, bindings)
+}
+
+func appendNumericConstraints(left, right []constraint.NumericConstraint) []constraint.NumericConstraint {
+	if len(left) == 0 {
+		return right
+	}
+	if len(right) == 0 {
+		return left
+	}
+	out := make([]constraint.NumericConstraint, 0, len(left)+len(right))
+	out = append(out, left...)
+	out = append(out, right...)
+	return out
 }
 
 // ExtractReturnExprConstraints extracts constraints from a return expression.

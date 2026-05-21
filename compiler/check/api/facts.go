@@ -62,6 +62,9 @@ const (
 	// ContainerMutationTableElement widens Lua table array/map-array element
 	// types, such as table.insert(t, value).
 	ContainerMutationTableElement
+	// ContainerMutationMapElement widens Lua table map values from dynamic
+	// assignments such as t[k] = value.
+	ContainerMutationMapElement
 )
 
 // ContainerMutation records a container element mutation on a captured variable.
@@ -69,16 +72,29 @@ const (
 type ContainerMutation struct {
 	Kind      ContainerMutationKind
 	Segments  []constraint.Segment
+	KeyType   typ.Type
 	ValueType typ.Type
 }
 
 // ContainerMutationKey returns the canonical path key for a container mutation.
 func ContainerMutationKey(m ContainerMutation) string {
-	return containerMutationKindKey(m.Kind) + ":" + constraint.FormatSegments(m.Segments)
+	return containerMutationKindKey(m.Kind) + containerMutationKeyMode(m) + ":" + constraint.FormatSegments(m.Segments)
+}
+
+func containerMutationKeyMode(m ContainerMutation) string {
+	if m.Kind != ContainerMutationTableElement && m.Kind != ContainerMutationMapElement {
+		return ""
+	}
+	if m.KeyType != nil {
+		return ":keyed"
+	}
+	return ":append"
 }
 
 func containerMutationKindKey(kind ContainerMutationKind) string {
 	switch kind {
+	case ContainerMutationMapElement:
+		return "map"
 	case ContainerMutationTableElement:
 		return "table"
 	default:

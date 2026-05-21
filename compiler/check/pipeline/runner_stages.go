@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -33,14 +34,15 @@ func (r *Runner) resolveSynthesizedSignature(
 
 	factSig := paramevidence.ProjectSignatureToParamUse(graph.ParamSlotsReadOnly(), flowEvidence.ParameterUses, r.functionFactSignatureForFunction(store, graph, fn))
 	synthSig := r.literalSignatureForFunction(store, graph, fn)
+	baseSig := mergeSynthesizedSignatureFact(synthSig, factSig)
 	if parameterEvidenceSigs == nil {
-		return mergeSynthesizedSignatureFact(synthSig, factSig)
+		return baseSig
 	}
 	paramEvidence := parameterEvidenceSigs[fn]
 	if len(paramEvidence) == 0 {
-		return mergeSynthesizedSignatureFact(synthSig, factSig)
+		return baseSig
 	}
-	if synthSig == nil {
+	if baseSig == nil {
 		engine := synth.New(synth.Config{
 			Ctx:       ctx,
 			Types:     r.types,
@@ -48,15 +50,15 @@ func (r *Runner) resolveSynthesizedSignature(
 			Phase:     api.PhaseTypeResolution,
 		})
 		if sig := engine.ResolveFunctionSignature(fn, parent); sig != nil {
-			synthSig = sig
+			baseSig = sig
 		} else if seedFn, ok := returns.BuildSeedFunctionTypeWithBindings(fn, engine, parent, graph.Bindings()).(*typ.Function); ok {
-			synthSig = seedFn
+			baseSig = seedFn
 		}
 	}
-	if synthSig == nil {
-		return factSig
+	if baseSig == nil {
+		return nil
 	}
-	return mergeSynthesizedSignatureFact(paramevidence.MergeIntoSignature(fn, paramEvidence, synthSig), factSig)
+	return paramevidence.MergeIntoSignature(fn, paramEvidence, baseSig)
 }
 
 func mergeSynthesizedSignatureFact(seed, fact *typ.Function) *typ.Function {
@@ -70,6 +72,147 @@ func mergeSynthesizedSignatureFact(seed, fact *typ.Function) *typ.Function {
 		return merged
 	}
 	return seed
+}
+
+func mergeSynthesizedSignatureContext(seed, expected *typ.Function) *typ.Function {
+	if seed == nil {
+		return expected
+	}
+	if expected == nil {
+		return seed
+	}
+	if typ.TypeEquals(seed, expected) {
+		return seed
+	}
+
+	builder := typ.Func().ReserveParams(maxInt(len(seed.Params), len(expected.Params)))
+	if sameFunctionTypeParams(seed, expected) {
+		for _, tp := range seed.TypeParams {
+			builder = builder.TypeParam(tp.Name, tp.Constraint)
+		}
+	}
+
+	paramCount := maxInt(len(seed.Params), len(expected.Params))
+	for i := 0; i < paramCount; i++ {
+		name := ""
+		var paramType typ.Type
+		optional := true
+		if i < len(seed.Params) {
+			p := seed.Params[i]
+			name = p.Name
+			paramType = p.Type
+			optional = p.Optional
+		}
+		if i < len(expected.Params) {
+			p := expected.Params[i]
+			if name == "" {
+				name = p.Name
+			}
+			paramType = mergeContextParamType(paramType, p.Type, p.Optional)
+			optional = p.Optional
+		} else if expected.Variadic != nil {
+			paramType = functionfact.MergeParamType(paramType, expected.Variadic)
+			optional = true
+		} else if i >= len(expected.Params) {
+			paramType = functionfact.MergeParamType(paramType, typ.Nil)
+			optional = true
+		}
+		if optional {
+			builder = builder.OptParam(name, paramType)
+		} else {
+			builder = builder.Param(name, paramType)
+		}
+	}
+
+	if seed.Variadic != nil || expected.Variadic != nil {
+		builder = builder.Variadic(functionfact.MergeParamType(seed.Variadic, expected.Variadic))
+	}
+
+	if returns := mergeSignatureReturns(seed.Returns, expected.Returns); len(returns) > 0 {
+		builder = builder.Returns(returns...)
+	}
+	if seed.Effects != nil {
+		builder = builder.Effects(seed.Effects)
+	} else if expected.Effects != nil {
+		builder = builder.Effects(expected.Effects)
+	}
+	if seed.Spec != nil {
+		builder = builder.Spec(seed.Spec)
+	} else if expected.Spec != nil {
+		builder = builder.Spec(expected.Spec)
+	}
+	if seed.Refinement != nil {
+		builder = builder.WithRefinement(seed.Refinement)
+	} else if expected.Refinement != nil {
+		builder = builder.WithRefinement(expected.Refinement)
+	}
+	return builder.Build()
+}
+
+func mergeContextParamType(seed, expected typ.Type, expectedOptional bool) typ.Type {
+	if expected == nil {
+		return seed
+	}
+	if seed == nil || typ.IsAny(seed) || typ.IsUnknown(seed) {
+		return expected
+	}
+	if !expectedOptional {
+		if inner, nilable := typ.SplitNilableFieldType(seed); nilable {
+			if typ.TypeEquals(inner, expected) || subtype.IsSubtype(expected, inner) {
+				return expected
+			}
+		}
+		if subtype.IsSubtype(expected, seed) && !subtype.IsSubtype(seed, expected) {
+			return expected
+		}
+	}
+	return functionfact.MergeParamType(seed, expected)
+}
+
+func mergeSignatureReturns(a, b []typ.Type) []typ.Type {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	out := make([]typ.Type, maxInt(len(a), len(b)))
+	for i := range out {
+		var left, right typ.Type
+		if i < len(a) {
+			left = a[i]
+		}
+		if i < len(b) {
+			right = b[i]
+		}
+		out[i] = typ.JoinPreferNonSoft(left, right)
+	}
+	return out
+}
+
+func sameFunctionTypeParams(a, b *typ.Function) bool {
+	if a == nil || b == nil || len(a.TypeParams) != len(b.TypeParams) {
+		return false
+	}
+	for i := range a.TypeParams {
+		if a.TypeParams[i] == nil || b.TypeParams[i] == nil {
+			if a.TypeParams[i] != b.TypeParams[i] {
+				return false
+			}
+			continue
+		}
+		if a.TypeParams[i].Name != b.TypeParams[i].Name || !typ.TypeEquals(a.TypeParams[i].Constraint, b.TypeParams[i].Constraint) {
+			return false
+		}
+	}
+	return true
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (r *Runner) functionFactSignatureForFunction(
@@ -157,6 +300,9 @@ func (r *Runner) appendCapturedMutatorAssignments(
 		capturedContainers,
 		calleeTypeResolver,
 	)
+	if len(extra.Indexer) > 0 {
+		extractOut.Inputs.IndexerAssignments = append(extractOut.Inputs.IndexerAssignments, extra.Indexer...)
+	}
 	if len(extra.Table) > 0 {
 		extractOut.Inputs.TableMutatorAssignments = append(extractOut.Inputs.TableMutatorAssignments, extra.Table...)
 	}

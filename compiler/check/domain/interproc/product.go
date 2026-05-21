@@ -409,8 +409,10 @@ func WidenCapturedContainerMutations(prev, next api.CapturedContainerMutations) 
 		existing := merged[sym]
 		merged[sym] = MergeCapturedContainerMutationMaps(existing, muts, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
+				next.KeyType = widenContainerMutationValueType(prev.KeyType, next.KeyType)
 				next.ValueType = widenContainerMutationValueType(prev.ValueType, next.ValueType)
 			} else {
+				next.KeyType = value.WidenForConvergence(next.KeyType)
 				next.ValueType = value.WidenForConvergence(next.ValueType)
 			}
 			return next
@@ -442,8 +444,10 @@ func normalizeCapturedContainerMutationMap(muts map[cfg.SymbolID][]api.Container
 		}
 		normalized := MergeContainerMutationSlices(nil, entries, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
+				next.KeyType = widenContainerMutationValueType(prev.KeyType, next.KeyType)
 				next.ValueType = widenContainerMutationValueType(prev.ValueType, next.ValueType)
 			} else {
+				next.KeyType = value.WidenForConvergence(next.KeyType)
 				next.ValueType = value.WidenForConvergence(next.ValueType)
 			}
 			return next
@@ -476,8 +480,10 @@ func JoinCapturedContainerMutations(prev, next api.CapturedContainerMutations) a
 		existing := merged[sym]
 		merged[sym] = MergeCapturedContainerMutationMaps(existing, muts, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
+				next.KeyType = joinContainerMutationValueType(prev.KeyType, next.KeyType)
 				next.ValueType = joinContainerMutationValueType(prev.ValueType, next.ValueType)
 			} else {
+				next.KeyType = normalizeInterprocValueType(next.KeyType)
 				next.ValueType = normalizeInterprocValueType(next.ValueType)
 			}
 			return next
@@ -509,8 +515,10 @@ func normalizeCapturedContainerMutationMapForJoin(muts map[cfg.SymbolID][]api.Co
 		}
 		normalized := MergeContainerMutationSlices(nil, entries, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
+				next.KeyType = joinContainerMutationValueType(prev.KeyType, next.KeyType)
 				next.ValueType = joinContainerMutationValueType(prev.ValueType, next.ValueType)
 			} else {
+				next.KeyType = normalizeInterprocValueType(next.KeyType)
 				next.ValueType = normalizeInterprocValueType(next.ValueType)
 			}
 			return next

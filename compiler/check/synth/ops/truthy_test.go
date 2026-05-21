@@ -100,6 +100,18 @@ func TestIsFalsy(t *testing.T) {
 		t.Error("false literal should be falsy")
 	}
 
+	if !IsFalsy(typ.NewOptional(typ.LiteralBool(false))) {
+		t.Error("false? should be definitely falsy")
+	}
+
+	if !IsFalsy(typ.NewUnion(typ.Nil, typ.LiteralBool(false))) {
+		t.Error("nil | false should be definitely falsy")
+	}
+
+	if IsFalsy(typ.NewOptional(typ.Boolean)) {
+		t.Error("boolean? can be truthy and should not be definitely falsy")
+	}
+
 	if IsFalsy(typ.Integer) {
 		t.Error("integer should not be falsy")
 	}

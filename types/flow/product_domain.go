@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow/domain"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -193,8 +194,12 @@ func (d *ProductDomain) ApplyConjunction(constraints []constraint.Constraint) bo
 	// Use canonical key resolver for path→key conversion
 	result := constraint.ToAtomsWithResolver(constraints, d.env.ResolvePath)
 
-	// Build congruence closure from EqPath constraints
+	// Build congruence closure before consistency checks so aliases share facts.
 	d.buildCongruenceClosure(result.Atoms, constraints)
+	if atomsContainContradiction(result.Atoms, d.EGraph) {
+		d.Type.Unsat = true
+		return false
+	}
 
 	// Apply atoms (Type + Numeric)
 	for _, atom := range result.Atoms {
@@ -204,6 +209,14 @@ func (d *ProductDomain) ApplyConjunction(constraints []constraint.Constraint) bo
 	}
 
 	// Propagate Type domain narrowings across equivalence classes
+	d.propagateTypeNarrowingsCC()
+	if d.Type.IsUnsat() {
+		return false
+	}
+
+	if !d.applyRelationalTypeNarrowings(result.Leftover) {
+		return false
+	}
 	d.propagateTypeNarrowingsCC()
 	if d.Type.IsUnsat() {
 		return false
@@ -236,11 +249,170 @@ func (d *ProductDomain) ApplyConjunction(constraints []constraint.Constraint) bo
 	return true
 }
 
-// buildCongruenceClosure builds the E-graph from EqPath constraints.
+func (d *ProductDomain) applyRelationalTypeNarrowings(constraints []constraint.Constraint) bool {
+	for _, c := range constraints {
+		keyOf, ok := c.(constraint.KeyOf)
+		if !ok {
+			continue
+		}
+		if !d.applyKeyOfTypeNarrowing(keyOf) {
+			return false
+		}
+	}
+	return true
+}
+
+func (d *ProductDomain) applyKeyOfTypeNarrowing(keyOf constraint.KeyOf) bool {
+	tableKey := d.resolvePathKey(keyOf.Table)
+	keyKey := d.resolvePathKey(keyOf.Key)
+	if tableKey == "" || keyKey == "" {
+		return true
+	}
+	tableType := d.TypeAt(tableKey)
+	if tableType == nil {
+		return true
+	}
+	keyDomain := core.KeyType(tableType)
+	if keyDomain == nil || keyDomain.Kind().IsPlaceholder() {
+		return true
+	}
+
+	base := d.TypeAt(keyKey)
+	narrowed := keyDomain
+	if base != nil {
+		narrowed = narrow.Intersect(base, keyDomain)
+	}
+	if narrowed == nil || narrowed.Kind().IsNever() {
+		d.Type.Unsat = true
+		return false
+	}
+	if base == nil || !typ.TypeEquals(base, narrowed) {
+		d.Type.Narrowed[keyKey] = narrowed
+	}
+	return true
+}
+
+func (d *ProductDomain) resolvePathKey(path constraint.Path) constraint.PathKey {
+	if path.IsEmpty() {
+		return ""
+	}
+	if d.env.ResolvePath != nil {
+		return d.env.ResolvePath(path)
+	}
+	return path.Key()
+}
+
+func atomsContainContradiction(atoms []constraint.Atom, equalities *theory.EGraph) bool {
+	if len(atoms) < 2 {
+		return false
+	}
+
+	type truthState uint8
+	const (
+		seenTruthy truthState = 1 << iota
+		seenFalsy
+		seenNil
+		seenNotNil
+	)
+	var truth map[constraint.PathKey]truthState
+
+	type typeStateKey struct {
+		path constraint.PathKey
+		key  narrow.TypeKey
+	}
+	var hasType map[typeStateKey]bool
+	var notType map[typeStateKey]bool
+
+	canonical := func(path constraint.PathKey) constraint.PathKey {
+		if path == "" || equalities == nil {
+			return path
+		}
+		return equalities.Find(path)
+	}
+
+	addTruth := func(path constraint.PathKey, state truthState) bool {
+		path = canonical(path)
+		if path == "" {
+			return false
+		}
+		if truth == nil {
+			truth = make(map[constraint.PathKey]truthState)
+		}
+		next := truth[path] | state
+		if next&seenTruthy != 0 && (next&seenFalsy != 0 || next&seenNil != 0) {
+			return true
+		}
+		if next&seenNil != 0 && next&seenNotNil != 0 {
+			return true
+		}
+		truth[path] = next
+		return false
+	}
+
+	for _, atom := range atoms {
+		switch atom.Kind {
+		case constraint.AtomKindTruthy:
+			if atom.Left.IsVar() && addTruth(atom.Left.Path, seenTruthy) {
+				return true
+			}
+		case constraint.AtomKindFalsy:
+			if atom.Left.IsVar() && addTruth(atom.Left.Path, seenFalsy) {
+				return true
+			}
+		case constraint.AtomKindEq:
+			if atom.Left.IsVar() && atom.Right.IsNil() && addTruth(atom.Left.Path, seenNil) {
+				return true
+			}
+			if atom.Right.IsVar() && atom.Left.IsNil() && addTruth(atom.Right.Path, seenNil) {
+				return true
+			}
+		case constraint.AtomKindNe:
+			if atom.Left.IsVar() && atom.Right.IsNil() && addTruth(atom.Left.Path, seenNotNil) {
+				return true
+			}
+			if atom.Right.IsVar() && atom.Left.IsNil() && addTruth(atom.Right.Path, seenNotNil) {
+				return true
+			}
+		case constraint.AtomKindHasType:
+			if atom.Left.IsVar() {
+				path := canonical(atom.Left.Path)
+				if path == "" {
+					continue
+				}
+				k := typeStateKey{path: path, key: atom.TypeKey}
+				if notType != nil && notType[k] {
+					return true
+				}
+				if hasType == nil {
+					hasType = make(map[typeStateKey]bool)
+				}
+				hasType[k] = true
+			}
+		case constraint.AtomKindNotHasType:
+			if atom.Left.IsVar() {
+				path := canonical(atom.Left.Path)
+				if path == "" {
+					continue
+				}
+				k := typeStateKey{path: path, key: atom.TypeKey}
+				if hasType != nil && hasType[k] {
+					return true
+				}
+				if notType == nil {
+					notType = make(map[typeStateKey]bool)
+				}
+				notType[k] = true
+			}
+		}
+	}
+	return false
+}
+
+// buildCongruenceClosure builds the E-graph from equality constraints.
 //
 // The E-graph implements congruence closure, a fundamental algorithm for
-// reasoning about equality. When constraints include EqPath(x, y) assertions,
-// this method records that paths x and y refer to the same value.
+// reasoning about equality. When constraints include x == y assertions, this
+// method records that paths x and y refer to the same value.
 //
 // The algorithm proceeds in two phases:
 //
@@ -248,12 +420,12 @@ func (d *ProductDomain) ApplyConjunction(constraints []constraint.Constraint) bo
 //     in the E-graph. This ensures every path has an entry even if not
 //     involved in an equality.
 //
-//  2. Union: For each EqPath constraint, the left and right paths are
+//  2. Union: For each path-equality atom, the left and right paths are
 //     unified in the E-graph. After union, Find(left) == Find(right).
 //
-// Paths are converted to canonical keys via env.ResolvePath before
-// registration. If ResolvePath is nil, no E-graph is built and path
-// equality constraints are ignored.
+// Paths are converted to canonical keys via env.ResolvePath when available.
+// Atom keys are still registered directly, so equality reasoning remains
+// available in resolver-free callers that already use stable path keys.
 //
 // The resulting E-graph is used by propagateTypeNarrowingsCC and
 // propagateShapeNarrowingsCC to share narrowings across equivalent paths.
@@ -263,28 +435,41 @@ func (d *ProductDomain) ApplyConjunction(constraints []constraint.Constraint) bo
 //  2. Union a and b (now Find(a) == Find(b))
 //  3. When Type domain narrows a to string, propagation narrows b to string
 func (d *ProductDomain) buildCongruenceClosure(atoms []constraint.Atom, constraints []constraint.Constraint) {
-	if d.env.ResolvePath == nil {
-		return
-	}
 	resolve := d.env.ResolvePath
 
-	for _, c := range constraints {
-		constraint.VisitPaths(c, func(path constraint.Path) bool {
-			key := resolve(path)
-			if key != "" {
-				d.EGraph.RegisterKey(key)
+	if resolve != nil {
+		for _, c := range constraints {
+			constraint.VisitPaths(c, func(path constraint.Path) bool {
+				key := resolve(path)
+				if key != "" {
+					d.EGraph.RegisterKey(key)
+				}
+				return false
+			})
+		}
+
+		for _, c := range constraints {
+			if eq, ok := c.(constraint.EqPath); ok {
+				leftKey := resolve(eq.Left)
+				rightKey := resolve(eq.Right)
+				if leftKey != "" && rightKey != "" {
+					d.EGraph.Union(leftKey, rightKey)
+				}
 			}
-			return false
-		})
+		}
 	}
 
-	for _, c := range constraints {
-		if eq, ok := c.(constraint.EqPath); ok {
-			leftKey := resolve(eq.Left)
-			rightKey := resolve(eq.Right)
-			if leftKey != "" && rightKey != "" {
-				d.EGraph.Union(leftKey, rightKey)
+	for _, atom := range atoms {
+		for _, path := range atom.Paths() {
+			if path != "" {
+				d.EGraph.RegisterKey(path)
 			}
+		}
+		if atom.Kind != constraint.AtomKindEq || !atom.Left.IsVar() || !atom.Right.IsVar() {
+			continue
+		}
+		if atom.Left.Path != "" && atom.Right.Path != "" {
+			d.EGraph.Union(atom.Left.Path, atom.Right.Path)
 		}
 	}
 }
@@ -511,7 +696,7 @@ func (d *ProductDomain) ApplyCondition(cond constraint.Condition) bool {
 //  3. Combined narrowing: If both domains have narrowings, computes their
 //     intersection. A value must satisfy both type and shape constraints.
 //
-//  4. Base type fallback: If no narrowings exist, falls back to env.PathTypeAt
+//  4. Base type query: If no narrowings exist, asks env.PathTypeAt
 //     to retrieve the original declared or inferred type.
 //
 // Returns nil if the path has no type information in any source.

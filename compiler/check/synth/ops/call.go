@@ -1172,11 +1172,9 @@ func resolveSelf(returns []typ.Type, receiver typ.Type) []typ.Type {
 }
 
 // CallWithGenericInference synthesizes a call result with generic type inference.
-// Wraps InferCall + FinishCall for cases where contextual re-synthesis is not needed.
-// For the full two-phase flow with re-synthesis, use InferCall -> ReInfer -> FinishCall.
+// It runs the canonical call pipeline without contextual argument re-synthesis.
 func CallWithGenericInference(ctx *db.QueryContext, def CallDef) CallResult {
-	infer := InferCall(ctx, def)
-	return FinishCall(ctx, def, infer)
+	return NewCallPipeline(ctx, def, len(def.Args)).Run()
 }
 
 // formatUnionMethodError creates a detailed error message for method access on union types.

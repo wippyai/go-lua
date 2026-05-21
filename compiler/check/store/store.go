@@ -33,6 +33,8 @@ type SessionStore struct {
 	factInputs *factInputs
 	factCtx    *db.QueryContext
 
+	analysisContexts map[api.GraphKey]api.AnalysisContext
+
 	phase api.Phase
 }
 
@@ -98,12 +100,13 @@ func NewSessionStore() *SessionStore {
 // iteration revision key.
 func NewSessionStoreWithDB(database *db.DB) *SessionStore {
 	return &SessionStore{
-		Module:          NewModuleStore(),
-		InterprocPrev:   NewInterprocState(),
-		InterprocNext:   NewInterprocState(),
-		GraphParentHash: make(map[uint64]uint64),
-		factInputs:      newFactInputs(database),
-		phase:           api.PhaseScopeCompute,
+		Module:           NewModuleStore(),
+		InterprocPrev:    NewInterprocState(),
+		InterprocNext:    NewInterprocState(),
+		GraphParentHash:  make(map[uint64]uint64),
+		analysisContexts: make(map[api.GraphKey]api.AnalysisContext),
+		factInputs:       newFactInputs(database),
+		phase:            api.PhaseScopeCompute,
 	}
 }
 
@@ -274,6 +277,7 @@ func (s *SessionStore) ClearInterprocState() {
 	if s.factInputs != nil {
 		s.factInputs.reset()
 	}
+	clear(s.analysisContexts)
 }
 
 // ModuleBindings returns the module binding table.
@@ -582,6 +586,25 @@ func (s *SessionStore) SetParentScope(parentHash uint64, parent *scope.State) {
 		return
 	}
 	s.Module.Parents[parentHash] = parent
+}
+
+// SetGraphAnalysisContext records execution context for a graph analysis key.
+func (s *SessionStore) SetGraphAnalysisContext(key api.GraphKey, ctx api.AnalysisContext) {
+	if s == nil || key.GraphID == 0 || ctx.Empty() {
+		return
+	}
+	if s.analysisContexts == nil {
+		s.analysisContexts = make(map[api.GraphKey]api.AnalysisContext)
+	}
+	s.analysisContexts[key] = api.MergeAnalysisContext(s.analysisContexts[key], ctx)
+}
+
+// GraphAnalysisContext returns the execution context for a graph analysis key.
+func (s *SessionStore) GraphAnalysisContext(key api.GraphKey) api.AnalysisContext {
+	if s == nil || len(s.analysisContexts) == 0 {
+		return api.AnalysisContext{}
+	}
+	return api.MergeAnalysisContext(api.AnalysisContext{}, s.analysisContexts[key])
 }
 
 // ModuleAliases returns the module aliases map.

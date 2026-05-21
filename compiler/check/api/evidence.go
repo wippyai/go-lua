@@ -163,6 +163,7 @@ type CapturedContainerEvidence struct {
 	Point    cfg.Point
 	Target   cfg.SymbolID
 	Segments []constraint.Segment
+	Key      ast.Expr
 	Value    ast.Expr
 	Kind     ContainerMutationKind
 }

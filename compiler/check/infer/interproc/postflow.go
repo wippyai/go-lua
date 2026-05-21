@@ -12,7 +12,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	synthextract "github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -169,9 +171,19 @@ func capturedContainerFactsFromEvidence(
 				valueType = t
 			}
 		}
+		var keyType typ.Type
+		if ev.Key != nil {
+			keyType = typ.Unknown
+			if synth != nil {
+				if t := synth(ev.Key, ev.Point); t != nil {
+					keyType = subtype.WidenForInference(t)
+				}
+			}
+		}
 		mutations[ev.Target] = append(mutations[ev.Target], api.ContainerMutation{
 			Kind:      ev.Kind,
 			Segments:  cloneSegments(ev.Segments),
+			KeyType:   keyType,
 			ValueType: subtype.WidenForInference(valueType),
 		})
 	}
@@ -232,7 +244,122 @@ func narrowFunctionTypeFromResult(result *api.FuncResult, fn *ast.FunctionExpr) 
 			}
 		}
 	}
+	fnType = attachSolvedCallbackOverlaySpec(fnType, result)
 	return erreffect.AttachInferredErrorReturnSpec(fnType, result.Evidence, result.FlowSolution, result.NarrowSynth)
+}
+
+func attachSolvedCallbackOverlaySpec(fnType *typ.Function, result *api.FuncResult) *typ.Function {
+	if fnType == nil || result == nil || result.Graph == nil || result.NarrowSynth == nil {
+		return fnType
+	}
+	overlays := synthextract.InferCallbackEnvOverlays(
+		result.Graph,
+		result.Evidence,
+		result.Graph.ParamSlotsReadOnly(),
+		result.NarrowSynth.TypeOf,
+		result.ModuleBindings,
+	)
+	if len(overlays) == 0 {
+		return fnType
+	}
+
+	spec := cloneContractSpecForCallbacks(fnType)
+	for paramIdx, overlay := range overlays {
+		if len(overlay) == 0 {
+			continue
+		}
+		cb := spec.GetCallback(paramIdx).Clone()
+		if cb == nil {
+			cb = &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce}
+		}
+		cb.EnvOverlay = mergeCallbackEnvOverlay(cb.EnvOverlay, overlay)
+		spec.WithCallback(paramIdx, cb)
+	}
+	return cloneFunctionWithSpec(fnType, spec)
+}
+
+func cloneContractSpecForCallbacks(fnType *typ.Function) *contract.Spec {
+	if fnType == nil || fnType.Spec == nil {
+		return contract.NewSpec()
+	}
+	spec, ok := fnType.Spec.(*contract.Spec)
+	if !ok || spec == nil {
+		return contract.NewSpec()
+	}
+	clone := contract.NewSpec()
+	clone.Requires = spec.Requires
+	clone.Ensures = spec.Ensures
+	if len(spec.ExprRequires) > 0 {
+		clone.ExprRequires = append([]constraint.ExprCompare(nil), spec.ExprRequires...)
+	}
+	if len(spec.ExprEnsures) > 0 {
+		clone.ExprEnsures = append([]constraint.ExprCompare(nil), spec.ExprEnsures...)
+	}
+	clone.Effects = spec.Effects
+	if len(spec.Callbacks) > 0 {
+		clone.Callbacks = make(map[int]*contract.CallbackSpec, len(spec.Callbacks))
+		for idx, cb := range spec.Callbacks {
+			clone.Callbacks[idx] = cb.Clone()
+		}
+	}
+	clone.Return = spec.Return
+	return clone
+}
+
+func mergeCallbackEnvOverlay(base, overlay map[string]typ.Type) map[string]typ.Type {
+	if len(base) == 0 && len(overlay) == 0 {
+		return nil
+	}
+	out := make(map[string]typ.Type, len(base)+len(overlay))
+	for name, t := range base {
+		if name != "" && t != nil {
+			out[name] = t
+		}
+	}
+	for name, candidate := range overlay {
+		if name == "" || candidate == nil {
+			continue
+		}
+		if existing := out[name]; existing != nil {
+			out[name] = typ.JoinPreferNonSoft(existing, candidate)
+		} else {
+			out[name] = candidate
+		}
+	}
+	return out
+}
+
+func cloneFunctionWithSpec(fn *typ.Function, spec *contract.Spec) *typ.Function {
+	if fn == nil {
+		return nil
+	}
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, p := range fn.Params {
+		if p.Optional {
+			builder = builder.OptParam(p.Name, p.Type)
+		} else {
+			builder = builder.Param(p.Name, p.Type)
+		}
+	}
+	if fn.Variadic != nil {
+		builder = builder.Variadic(fn.Variadic)
+	}
+	if len(fn.Returns) > 0 {
+		builder = builder.Returns(fn.Returns...)
+	}
+	if fn.Effects != nil {
+		builder = builder.Effects(fn.Effects)
+	}
+	if spec != nil {
+		builder = builder.Spec(spec)
+	}
+	if fn.Refinement != nil {
+		builder = builder.WithRefinement(fn.Refinement)
+	}
+	return builder.Build()
 }
 
 func expectedFunctionFromResult(result *api.FuncResult) *typ.Function {

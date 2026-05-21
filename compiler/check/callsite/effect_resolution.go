@@ -61,7 +61,7 @@ func ResolveCalleeEffect(
 	info *cfg.CallInfo,
 	p cfg.Point,
 	graph *cfg.Graph,
-	primary, fallback *bind.BindingTable,
+	primary, secondary *bind.BindingTable,
 	lookup func(sym cfg.SymbolID) *constraint.FunctionRefinement,
 	synth func(expr ast.Expr, p cfg.Point) typ.Type,
 	resolveBySym func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool),
@@ -70,7 +70,7 @@ func ResolveCalleeEffect(
 	if info == nil {
 		return nil
 	}
-	candidates := ResolverCalleeSymbolCandidates(info, graph, primary, fallback)
+	candidates := ResolverCalleeSymbolCandidates(info, graph, primary, secondary)
 	if lookup != nil {
 		for _, sym := range candidates {
 			if eff := lookup(sym); eff != nil {
@@ -101,7 +101,7 @@ func ResolveCalleeType(
 	info *cfg.CallInfo,
 	p cfg.Point,
 	graph *cfg.Graph,
-	primary, fallback *bind.BindingTable,
+	primary, secondary *bind.BindingTable,
 	synth func(expr ast.Expr, p cfg.Point) typ.Type,
 	resolveBySym func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool),
 ) typ.Type {
@@ -112,7 +112,7 @@ func ResolveCalleeType(
 		return t
 	}
 	return resolveCalleeTypeBySymbolCandidates(
-		ResolverCalleeSymbolCandidates(info, graph, primary, fallback),
+		ResolverCalleeSymbolCandidates(info, graph, primary, secondary),
 		p,
 		resolveBySym,
 	)

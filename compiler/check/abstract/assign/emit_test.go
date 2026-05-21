@@ -647,6 +647,58 @@ func TestExtractAssignments_IndexAssign_NonIdentifierStringKey_UsesIndexStringSe
 	}
 }
 
+func TestExtractAssignments_LengthIndexReadCarriesSemanticSource(t *testing.T) {
+	code := `
+		local messages = {}
+		if #messages > 0 then
+			local last = messages[#messages]
+		end
+	`
+	chunk, err := parse.ParseString(code, "emit_length_index_read.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk}, "emit_length_index_read")
+	exit := graph.Exit()
+	messagesSym, ok := graph.SymbolAt(exit, "messages")
+	if !ok || messagesSym == 0 {
+		t.Fatal("expected symbol for messages")
+	}
+
+	inputs := &flow.Inputs{
+		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks:     make(map[string]flow.PredicateLink),
+		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+	}
+	ExtractAssignments(&core.FlowContext{
+		Graph:    graph,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
+		Derived: &core.Derived{
+			Synth: func(ast.Expr, cfg.Point) typ.Type {
+				return typ.Unknown
+			},
+		},
+	}, inputs, nil)
+
+	for i := range inputs.Assignments {
+		assign := inputs.Assignments[i]
+		if assign.TargetPath.Root != "last" {
+			continue
+		}
+		if assign.LengthIndexSource == nil {
+			t.Fatalf("expected length-index source for last assignment, got %#v", assign)
+		}
+		if assign.LengthIndexSource.ContainerPath.Symbol != messagesSym {
+			t.Fatalf("length-index container symbol = %d, want %d", assign.LengthIndexSource.ContainerPath.Symbol, messagesSym)
+		}
+		if assign.LengthIndexSource.Offset != 0 {
+			t.Fatalf("length-index offset = %d, want 0", assign.LengthIndexSource.Offset)
+		}
+		return
+	}
+	t.Fatalf("expected assignment to last, got %#v", inputs.Assignments)
+}
+
 func TestExtractAssignments_NestedDynamicIndex_LiftsToRootIndexer(t *testing.T) {
 	code := `
 		local subscribers = {}
@@ -702,6 +754,78 @@ func TestExtractAssignments_NestedDynamicIndex_LiftsToRootIndexer(t *testing.T) 
 	}
 	if lifted == nil {
 		t.Fatalf("expected lifted indexer assignment for nested dynamic write, got %#v", inputs.IndexerAssignments)
+	}
+}
+
+func TestExtractAssignments_NestedDynamicFieldAndSiblingMutatorStayOnSeparatePaths(t *testing.T) {
+	code := `
+		local self = { nodes = {}, queued_commands = {} }
+		local node_id = "root"
+		self.nodes[node_id].status = "completed"
+		table.insert(self.queued_commands, { type = "UPDATE_NODE" })
+		local node_data = self.nodes[node_id]
+	`
+
+	chunk, err := parse.ParseString(code, "emit_nested_dynamic_sibling_paths.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk}, "emit_nested_dynamic_sibling_paths")
+	exit := graph.Exit()
+	selfSym, ok := graph.SymbolAt(exit, "self")
+	if !ok || selfSym == 0 {
+		t.Fatal("expected symbol for self")
+	}
+
+	inputs := &flow.Inputs{
+		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks:     make(map[string]flow.PredicateLink),
+		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+	}
+	ExtractAssignments(&core.FlowContext{
+		Graph:    graph,
+		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
+		Derived: &core.Derived{
+			Synth: func(ast.Expr, cfg.Point) typ.Type {
+				return typ.Unknown
+			},
+		},
+	}, inputs, nil)
+
+	var sawNodesWrite bool
+	for i := range inputs.IndexerAssignments {
+		assign := inputs.IndexerAssignments[i]
+		if assign.Symbol != selfSym || len(assign.Segments) != 1 {
+			continue
+		}
+		seg := assign.Segments[0]
+		if seg.Kind == constraint.SegmentField && seg.Name == "nodes" {
+			if rec, ok := assign.ValType.(*typ.Record); !ok || rec.GetField("status") == nil {
+				t.Fatalf("expected nested dynamic write value to preserve .status field, got %#v", assign.ValType)
+			}
+			if !assign.ValuePath.IsEmpty() {
+				t.Fatalf("expected shaped nested write not to use raw source value path, got %+v", assign.ValuePath)
+			}
+			sawNodesWrite = true
+		}
+	}
+	if !sawNodesWrite {
+		t.Fatalf("expected nested dynamic write under self.nodes, got %#v", inputs.IndexerAssignments)
+	}
+
+	var sawNodeRead bool
+	for i := range inputs.Assignments {
+		assign := inputs.Assignments[i]
+		if assign.MapElementSource == nil || assign.MapElementSource.MapPath.Symbol != selfSym {
+			continue
+		}
+		segs := assign.MapElementSource.MapPath.Segments
+		if len(segs) == 1 && segs[0].Kind == constraint.SegmentField && segs[0].Name == "nodes" {
+			sawNodeRead = true
+		}
+	}
+	if !sawNodeRead {
+		t.Fatalf("expected dynamic read from self.nodes, got %#v", inputs.Assignments)
 	}
 }
 

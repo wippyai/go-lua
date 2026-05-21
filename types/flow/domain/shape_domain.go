@@ -29,7 +29,7 @@ import (
 // required structure.
 //
 // The domain maintains a Narrowed map from path keys to narrowed types.
-// Missing keys fall back to env.PathTypeAt for base types.
+// Missing keys are read from env.PathTypeAt for base types.
 type ShapeDomain struct {
 	Narrowed map[constraint.PathKey]typ.Type
 	Solver   constraint.Solver

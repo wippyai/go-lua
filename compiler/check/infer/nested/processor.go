@@ -21,8 +21,10 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
@@ -30,14 +32,16 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/siblings"
+	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 // CheckFunc analyzes a nested function with a given parent scope.
-type CheckFunc func(fn *ast.FunctionExpr, parent *scope.State)
+type CheckFunc func(fn *ast.FunctionExpr, parent *scope.State, ctx api.AnalysisContext)
 
 // ResultFunc returns the analysis result for a function literal.
 type ResultFunc func(fn *ast.FunctionExpr) *api.FuncAnalysisView
@@ -132,6 +136,156 @@ func (p *Processor) childrenFromEvidence(
 		})
 	}
 	return children
+}
+
+func (p *Processor) callbackAnalysisContext(
+	fn *ast.FunctionExpr,
+	parentResult *api.FuncAnalysisView,
+) api.AnalysisContext {
+	if fn == nil || parentResult == nil || parentResult.Graph == nil || parentResult.NarrowSynth == nil {
+		return api.AnalysisContext{}
+	}
+	var targetSym cfg.SymbolID
+	if p.store != nil {
+		if sym, ok := p.store.SymbolForFunc(fn); ok {
+			targetSym = sym
+		}
+	}
+
+	bindings := parentResult.Graph.Bindings()
+	moduleBindings := bindings
+	if p.store != nil {
+		if mb := p.store.ModuleBindings(); mb != nil {
+			moduleBindings = mb
+		}
+	}
+	if bindings == nil {
+		bindings = moduleBindings
+	}
+
+	preferTarget := func(sym cfg.SymbolID) bool {
+		return targetSym != 0 && sym == targetSym
+	}
+
+	var ctx api.AnalysisContext
+	for _, ev := range parentResult.Evidence.Calls {
+		if parentResult.FlowSolution != nil && parentResult.FlowSolution.IsPointDead(ev.Point) {
+			continue
+		}
+		info := ev.Info
+		if info == nil {
+			continue
+		}
+		for idx, arg := range info.Args {
+			if !callbackArgMatchesFunction(arg, fn, targetSym, parentResult.Graph, bindings, moduleBindings, preferTarget) {
+				continue
+			}
+			calleeType := callbackCalleeType(parentResult.NarrowSynth, info, ev.Point)
+			if expected := callbackExpectedFunction(parentResult.NarrowSynth, calleeType, info, ev.Point, idx, arg); expected != nil {
+				ctx = api.MergeAnalysisContext(ctx, api.AnalysisContext{ExpectedFunction: expected})
+			}
+			spec := contract.ExtractSpec(calleeType)
+			if spec == nil {
+				continue
+			}
+			cb := spec.GetCallback(idx)
+			if cb == nil || len(cb.EnvOverlay) == 0 {
+				continue
+			}
+			ctx = api.MergeAnalysisContext(ctx, api.AnalysisContext{GlobalOverlay: cb.EnvOverlay})
+		}
+	}
+	return ctx
+}
+
+func callbackExpectedFunction(
+	synth api.Synth,
+	calleeType typ.Type,
+	info *cfg.CallInfo,
+	p cfg.Point,
+	idx int,
+	arg ast.Expr,
+) *typ.Function {
+	if synth == nil || info == nil || idx < 0 || arg == nil {
+		return nil
+	}
+	fnArg, ok := arg.(*ast.FunctionExpr)
+	if !ok {
+		return nil
+	}
+	query := synth.CallQuery()
+	if query == nil {
+		return nil
+	}
+	def := ops.CallDef{
+		Callee: calleeType,
+		Args:   shallowCallbackArgTypes(synth, info.Args, p),
+		Query:  query,
+	}
+	if callsite.IsMethodCallInfo(info) {
+		def.IsMethod = true
+		def.Receiver = synth.TypeOf(info.Receiver, p)
+		def.MethodName = info.Method
+		def.Callee = nil
+	}
+	inferred := ops.InferCall(synth.Context(), def)
+	var expected typ.Type
+	if idx < len(inferred.ExpectedArgs) {
+		expected = inferred.ExpectedArgs[idx]
+	} else {
+		expected = inferred.ExpectedVariadic
+	}
+	return phasecore.ExpectedFunctionLiteralSignature(fnArg, expected)
+}
+
+func shallowCallbackArgTypes(synth api.Synth, args []ast.Expr, p cfg.Point) []typ.Type {
+	if len(args) == 0 {
+		return nil
+	}
+	out := make([]typ.Type, len(args))
+	for i, arg := range args {
+		if fn, ok := arg.(*ast.FunctionExpr); ok {
+			out[i] = phasecore.ShallowFunctionLiteralSignature(fn)
+			continue
+		}
+		out[i] = synth.TypeOf(arg, p)
+	}
+	return out
+}
+
+func callbackArgMatchesFunction(
+	arg ast.Expr,
+	fn *ast.FunctionExpr,
+	targetSym cfg.SymbolID,
+	graph *cfg.Graph,
+	bindings, moduleBindings *bind.BindingTable,
+	prefer func(cfg.SymbolID) bool,
+) bool {
+	if arg == nil || fn == nil {
+		return false
+	}
+	if arg == fn {
+		return true
+	}
+	if targetSym == 0 {
+		return false
+	}
+	sym := callsite.CanonicalSymbolFromExprWithAliases(arg, 0, graph, bindings, moduleBindings, prefer)
+	return sym != 0 && sym == targetSym
+}
+
+func callbackCalleeType(synth api.Synth, info *cfg.CallInfo, p cfg.Point) typ.Type {
+	if synth == nil || info == nil {
+		return nil
+	}
+	if callsite.IsMethodCallInfo(info) {
+		recv := synth.TypeOf(info.Receiver, p)
+		if method, ok := synth.Method(recv, info.Method); ok {
+			return method
+		}
+		return nil
+	}
+	return synth.TypeOf(info.Callee, p)
 }
 
 // nestedGroup holds a group of functions sharing the same parent scope.
@@ -289,7 +443,7 @@ func (p *Processor) processNestedFunction(
 
 	// Check the function.
 	if p.check != nil {
-		p.check(info.NF.Func, parentScope)
+		p.check(info.NF.Func, parentScope, p.callbackAnalysisContext(info.NF.Func, parentResult))
 	}
 
 	// Get the result for constructor detection and sibling updates.
@@ -303,35 +457,8 @@ func (p *Processor) processNestedFunction(
 
 	// Detect constructor pattern and store instance fields.
 	if result.Graph != nil && p.store != nil {
-		classSym, selfSym := nested.DetectConstructorPattern(result.Evidence, parentResult.Evidence, info.NF.Func, info.FuncDef)
-		if classSym != 0 && selfSym != 0 {
-			var synthFn func(ast.Expr, cfg.Point) typ.Type
-			if result.NarrowSynth != nil {
-				synthFn = result.NarrowSynth.TypeOf
-				if result.Graph != nil {
-					if bindings := result.Graph.Bindings(); bindings != nil {
-						baseSynth := synthFn
-						synthFn = func(expr ast.Expr, p cfg.Point) typ.Type {
-							if ident, ok := expr.(*ast.IdentExpr); ok {
-								if sym, found := bindings.SymbolOf(ident); found && sym != 0 {
-									if result.Facts != nil {
-										tv := result.Facts.EffectiveTypeAt(p, sym)
-										if tv.State == flow.StateResolved && !typ.IsAbsentOrUnknown(tv.Type) {
-											return tv.Type
-										}
-									}
-								}
-							}
-							return baseSynth(expr, p)
-						}
-					}
-				}
-			}
-			fields := nested.CollectConstructorFields(result.Evidence.Assignments, selfSym, synthFn)
-			if len(fields) > 0 {
-				p.store.MergeInterprocFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(classSym, fields))
-			}
-		}
+		pattern := nested.DetectConstructorPatternInfo(result.Evidence, parentResult.Evidence, info.NF.Func, info.FuncDef)
+		p.persistConstructorFields(pattern, result)
 	}
 
 	// Update sibling types with the fully-inferred function type.
@@ -339,6 +466,48 @@ func (p *Processor) processNestedFunction(
 		if inferredType := result.NarrowSynth.FunctionType(info.NF.Func, parentScope); inferredType != nil {
 			siblingFunctionTypes[info.FuncSym] = functionfact.MergeType(siblingFunctionTypes[info.FuncSym], inferredType)
 		}
+	}
+}
+
+func (p *Processor) persistConstructorFields(pattern nested.ConstructorPattern, result *api.FuncAnalysisView) {
+	if p.store == nil || result == nil || pattern.ClassSymbol == 0 {
+		return
+	}
+	synthFn := constructorFieldSynth(result)
+	fields := nested.CollectConstructorFields(result.Evidence.Assignments, pattern.SelfSymbol, synthFn)
+	fields = nested.MergeConstructorFieldMaps(fields,
+		nested.CollectConstructorLiteralFields(pattern.InstanceLiteral, pattern.InstancePoint, synthFn))
+	if len(fields) == 0 {
+		return
+	}
+	p.store.MergeInterprocFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.ClassSymbol, fields))
+	if pattern.PrototypeSymbol != 0 && pattern.PrototypeSymbol != pattern.ClassSymbol {
+		p.store.MergeInterprocFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.PrototypeSymbol, fields))
+	}
+}
+
+func constructorFieldSynth(result *api.FuncAnalysisView) func(ast.Expr, cfg.Point) typ.Type {
+	if result == nil || result.NarrowSynth == nil {
+		return nil
+	}
+	synthFn := result.NarrowSynth.TypeOf
+	if result.Graph == nil {
+		return synthFn
+	}
+	bindings := result.Graph.Bindings()
+	if bindings == nil {
+		return synthFn
+	}
+	return func(expr ast.Expr, p cfg.Point) typ.Type {
+		if ident, ok := expr.(*ast.IdentExpr); ok {
+			if sym, found := bindings.SymbolOf(ident); found && sym != 0 && result.Facts != nil {
+				tv := result.Facts.EffectiveTypeAt(p, sym)
+				if tv.State == flow.StateResolved && !typ.IsAbsentOrUnknown(tv.Type) {
+					return tv.Type
+				}
+			}
+		}
+		return synthFn(expr, p)
 	}
 }
 

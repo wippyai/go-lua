@@ -21,6 +21,8 @@ var tableInsertSpec = contract.NewSpec().
 		},
 	)
 
+var createdTableType = typ.NewRecord().SetOpen(true).Build()
+
 var tableMethods = typ.NewRecord().
 	Field("remove", func() typ.Type {
 		elem := typ.NewTypeParam("T", nil)
@@ -43,7 +45,7 @@ var tableMethods = typ.NewRecord().
 	Field("create", typ.Func().
 		Param("narray", typ.Integer).
 		OptParam("nhash", typ.Integer).
-		Returns(typ.NewRecord().Build()).
+		Returns(createdTableType).
 		Build()).
 	Field("freeze", func() typ.Type {
 		tp := typ.NewTypeParam("T", nil)

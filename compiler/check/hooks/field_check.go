@@ -36,7 +36,7 @@ import (
 )
 
 // CheckFields validates field accesses on narrowed types.
-func CheckFields(graph *cfg.Graph, evidence api.FlowEvidence, narrowSynth api.Synth, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+func CheckFields(graph *cfg.Graph, evidence api.FlowEvidence, narrowSynth api.Synth, narrowView api.BaseSynth, flowOps api.FlowOps, sourceName string) []diag.Diagnostic {
 	if graph == nil || narrowSynth == nil || narrowView == nil {
 		return nil
 	}
@@ -45,17 +45,18 @@ func CheckFields(graph *cfg.Graph, evidence api.FlowEvidence, narrowSynth api.Sy
 	resolver := fieldResolverImpl{view: narrowView, synth: narrowSynth, bindings: bindings}
 
 	var diags []diag.Diagnostic
-	seen := make(map[ast.Expr]bool)
-
 	for _, assign := range evidence.Assignments {
 		p := assign.Point
+		if fieldPointIsDead(flowOps, p) {
+			continue
+		}
 		info := assign.Info
 		if info == nil {
 			continue
 		}
 		assignView, assignResolver := applyAssignPreStateNarrowing(graph, info, p, narrowView, resolver)
 		info.EachSource(func(_ int, source ast.Expr) {
-			diags = append(diags, checkFieldExpr(source, p, assignView, assignResolver, seen, sourceName)...)
+			diags = append(diags, checkFieldExpr(source, p, assignView, assignResolver, make(map[ast.Expr]bool), sourceName)...)
 		})
 		if info.NumericFor != nil {
 			diags = append(diags, checkNumericFor(info.NumericFor, p, narrowView, sourceName)...)
@@ -67,42 +68,87 @@ func CheckFields(graph *cfg.Graph, evidence api.FlowEvidence, narrowSynth api.Sy
 			continue
 		}
 		p := call.Point
+		if fieldPointIsDead(flowOps, p) {
+			continue
+		}
 		info := call.Info
 		if info == nil {
 			continue
 		}
 		if info.Callee != nil {
-			diags = append(diags, checkFieldExpr(info.Callee, p, narrowView, resolver, seen, sourceName)...)
+			diags = append(diags, checkFieldExpr(info.Callee, p, narrowView, resolver, make(map[ast.Expr]bool), sourceName)...)
 		}
 		if info.Receiver != nil {
-			diags = append(diags, checkFieldExpr(info.Receiver, p, narrowView, resolver, seen, sourceName)...)
+			diags = append(diags, checkFieldExpr(info.Receiver, p, narrowView, resolver, make(map[ast.Expr]bool), sourceName)...)
 		}
 		for _, arg := range info.Args {
-			diags = append(diags, checkFieldExpr(arg, p, narrowView, resolver, seen, sourceName)...)
+			diags = append(diags, checkFieldExpr(arg, p, narrowView, resolver, make(map[ast.Expr]bool), sourceName)...)
 		}
 	}
 
 	for _, ret := range evidence.Returns {
 		p := ret.Point
+		if fieldPointIsDead(flowOps, p) {
+			continue
+		}
 		info := ret.Info
 		if info == nil {
 			continue
 		}
 		for _, expr := range info.Exprs {
-			diags = append(diags, checkFieldExpr(expr, p, narrowView, resolver, seen, sourceName)...)
+			diags = append(diags, checkFieldExpr(expr, p, narrowView, resolver, make(map[ast.Expr]bool), sourceName)...)
 		}
 	}
 
 	for _, branch := range evidence.Branches {
 		p := branch.Point
+		if fieldPointIsDead(flowOps, p) {
+			continue
+		}
 		info := branch.Info
 		if info == nil {
 			continue
 		}
-		diags = append(diags, checkFieldProbe(info.Condition, p, narrowView, resolver, seen, sourceName)...)
+		diags = append(diags, checkFieldProbe(info.Condition, p, narrowView, resolver, make(map[ast.Expr]bool), sourceName)...)
 	}
 
-	return diags
+	return dedupeFieldDiagnostics(diags)
+}
+
+func fieldPointIsDead(flowOps api.FlowOps, p cfg.Point) bool {
+	return flowOps != nil && flowOps.IsPointDead(p)
+}
+
+func dedupeFieldDiagnostics(diags []diag.Diagnostic) []diag.Diagnostic {
+	if len(diags) < 2 {
+		return diags
+	}
+	type key struct {
+		file     string
+		line     int
+		column   int
+		code     diag.Code
+		severity diag.Severity
+		message  string
+	}
+	seen := make(map[key]struct{}, len(diags))
+	out := diags[:0]
+	for _, d := range diags {
+		k := key{
+			file:     d.Position.File,
+			line:     d.Position.Line,
+			column:   d.Position.Column,
+			code:     d.Code,
+			severity: d.Severity,
+			message:  d.Message,
+		}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, d)
+	}
+	return out
 }
 
 type fieldResolverImpl struct {
@@ -127,16 +173,20 @@ type localNarrowView struct {
 	bindings     *bind.BindingTable
 	overridePath constraint.Path
 	overrideType typ.Type
+	overrides    []fieldLocalOverride
+}
+
+type fieldLocalOverride struct {
+	path constraint.Path
+	t    typ.Type
 }
 
 func (v *localNarrowView) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
 	if v == nil || v.base == nil {
 		return typ.Unknown
 	}
-	if v.overrideType != nil && v.bindings != nil {
-		if p := path.FromExprWithBindings(expr, nil, v.bindings); !p.IsEmpty() && p.Equal(v.overridePath) {
-			return v.overrideType
-		}
+	if t, ok := v.overrideForExpr(expr); ok {
+		return t
 	}
 	return v.base.TypeOf(expr, p)
 }
@@ -145,7 +195,29 @@ func (v *localNarrowView) TypeOfWithExpected(expr ast.Expr, p cfg.Point, expecte
 	if v == nil || v.base == nil {
 		return typ.Unknown
 	}
+	if t, ok := v.overrideForExpr(expr); ok {
+		return t
+	}
 	return v.base.TypeOfWithExpected(expr, p, expected)
+}
+
+func (v *localNarrowView) overrideForExpr(expr ast.Expr) (typ.Type, bool) {
+	if v == nil || v.bindings == nil {
+		return nil, false
+	}
+	exprPath := path.FromExprWithBindings(expr, nil, v.bindings)
+	if exprPath.IsEmpty() {
+		return nil, false
+	}
+	if v.overrideType != nil && exprPath.Equal(v.overridePath) {
+		return v.overrideType, true
+	}
+	for i := len(v.overrides) - 1; i >= 0; i-- {
+		if exprPath.Equal(v.overrides[i].path) {
+			return v.overrides[i].t, true
+		}
+	}
+	return nil, false
 }
 
 func (v *localNarrowView) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
@@ -309,6 +381,27 @@ func applyLogicalOpNarrowing(
 		return view, resolver
 	}
 
+	if expr.Operator == "and" {
+		if overrides := collectFieldLocalOverrides(expr.Lhs, p, view, resolver, true); len(overrides) > 0 {
+			localView := &localNarrowView{
+				base:      view,
+				bindings:  resolver.bindings,
+				overrides: overrides,
+			}
+			return localView, fieldResolverImpl{view: localView, synth: resolver.synth, bindings: resolver.bindings}
+		}
+	}
+	if expr.Operator == "or" {
+		if overrides := collectFieldLocalOverrides(expr.Lhs, p, view, resolver, false); len(overrides) > 0 {
+			localView := &localNarrowView{
+				base:      view,
+				bindings:  resolver.bindings,
+				overrides: overrides,
+			}
+			return localView, fieldResolverImpl{view: localView, synth: resolver.synth, bindings: resolver.bindings}
+		}
+	}
+
 	lhsType := view.TypeOf(expr.Lhs, p)
 	if lhsType == nil || !ops.CanBeFalsy(lhsType) {
 		return view, resolver
@@ -337,6 +430,80 @@ func applyLogicalOpNarrowing(
 		overrideType: narrowed,
 	}
 
+	return localView, fieldResolverImpl{view: localView, synth: resolver.synth, bindings: resolver.bindings}
+}
+
+func collectFieldLocalOverrides(
+	expr ast.Expr,
+	p cfg.Point,
+	view api.BaseSynth,
+	resolver fieldResolverImpl,
+	truthy bool,
+) []fieldLocalOverride {
+	if expr == nil || view == nil || resolver.bindings == nil {
+		return nil
+	}
+	if logical, ok := expr.(*ast.LogicalOpExpr); ok {
+		switch {
+		case truthy && logical.Operator == "and":
+			left := collectFieldLocalOverrides(logical.Lhs, p, view, resolver, true)
+			leftView, leftResolver := composeFieldLocalView(view, resolver, left)
+			right := collectFieldLocalOverrides(logical.Rhs, p, leftView, leftResolver, true)
+			return append(left, right...)
+		case !truthy && logical.Operator == "or":
+			left := collectFieldLocalOverrides(logical.Lhs, p, view, resolver, false)
+			leftView, leftResolver := composeFieldLocalView(view, resolver, left)
+			right := collectFieldLocalOverrides(logical.Rhs, p, leftView, leftResolver, false)
+			return append(left, right...)
+		}
+	}
+	if truthy {
+		if probe, ok := guard.ExtractTypeEqualityProbe(expr); ok {
+			probePath := path.FromExprWithBindings(probe.Expr, nil, resolver.bindings)
+			if !probePath.IsEmpty() {
+				return []fieldLocalOverride{{
+					path: probePath,
+					t:    guard.TypeForTypeKey(probe.Key),
+				}}
+			}
+		}
+	}
+	exprPath := path.FromExprWithBindings(expr, nil, resolver.bindings)
+	if exprPath.IsEmpty() {
+		return nil
+	}
+	exprType := view.TypeOf(expr, p)
+	if exprType == nil {
+		return nil
+	}
+	var narrowed typ.Type
+	if truthy {
+		narrowed = narrow.ToTruthy(exprType)
+	} else {
+		narrowed = narrow.ToFalsy(exprType)
+	}
+	if narrowed == nil || narrowed.Kind().IsNever() || typ.TypeEquals(narrowed, exprType) {
+		return nil
+	}
+	return []fieldLocalOverride{{
+		path: exprPath,
+		t:    narrowed,
+	}}
+}
+
+func composeFieldLocalView(
+	view api.BaseSynth,
+	resolver fieldResolverImpl,
+	overrides []fieldLocalOverride,
+) (api.BaseSynth, fieldResolverImpl) {
+	if len(overrides) == 0 {
+		return view, resolver
+	}
+	localView := &localNarrowView{
+		base:      view,
+		bindings:  resolver.bindings,
+		overrides: overrides,
+	}
 	return localView, fieldResolverImpl{view: localView, synth: resolver.synth, bindings: resolver.bindings}
 }
 
@@ -691,6 +858,13 @@ func localViewOverridesExpr(view api.BaseSynth, expr ast.Expr) bool {
 			exprPath := path.FromExprWithBindings(expr, nil, localView.bindings)
 			if !exprPath.IsEmpty() && exprPath.Equal(localView.overridePath) {
 				return true
+			}
+			if !exprPath.IsEmpty() {
+				for i := len(localView.overrides) - 1; i >= 0; i-- {
+					if exprPath.Equal(localView.overrides[i].path) {
+						return true
+					}
+				}
 			}
 		}
 		view = localView.base

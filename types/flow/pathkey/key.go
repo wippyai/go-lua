@@ -43,7 +43,7 @@ func SegmentsSuffix(segs []constraint.Segment) string {
 //   - ".field" -> SegmentField{Name: "field"}
 //   - "[0]" -> SegmentIndexInt{Index: 0}
 //   - "[\"key\"]" -> SegmentIndexString{Name: "key"}
-//   - "[key]" -> SegmentIndexString{Name: "key"} (legacy form)
+//   - "[key]" -> SegmentIndexString{Name: "key"}
 //
 // The parser handles multiple chained segments: ".foo[0].bar" produces
 // [SegmentField{foo}, SegmentIndexInt{0}, SegmentField{bar}].
@@ -163,7 +163,7 @@ func parseSuffixSlow(suffix string) []constraint.Segment {
 // is related to path x (constraint might narrow x) and to path x.foo.bar
 // (constraint directly applies).
 //
-// Strictly requires symbol matching - no name-based fallback. If one path has
+// Strictly requires symbol matching. If one path has
 // a symbol and the other doesn't, they are not related. This prevents unsound
 // constraint propagation across different scopes.
 //
@@ -187,7 +187,7 @@ func PathRelated(target constraint.Path, other constraint.Path) bool {
 			return false
 		}
 	} else {
-		// One has symbol, one doesn't - NOT related (no name fallback)
+		// One has symbol, one doesn't - NOT related.
 		return false
 	}
 

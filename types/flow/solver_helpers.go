@@ -21,7 +21,7 @@ import (
 // Fields:
 //   - types: The source map from SymbolID to Type to initialize from.
 //   - tryDeclPoint: If true and the entry point key is empty, try the symbol's
-//     declaration point as a fallback. Used for local variables that aren't
+//     declaration point as declared evidence. Used for local variables that aren't
 //     visible at function entry.
 //   - skipIfExists: If true, don't overwrite existing entries in the values map.
 //     Used to establish priority ordering (DeclaredTypes > SiblingTypes > LiteralTypes).
@@ -188,6 +188,7 @@ func (s *Solution) buildPhiDependencies() dependencyMap {
 //   - Table mutator value paths (e.g., table.insert(t, value))
 //   - Map element sources (e.g., v = t[k] with dynamic key)
 //   - Container element sources (e.g., v = ch:receive())
+//   - Length-index sources (e.g., v = t[#t])
 //
 // This enables incremental re-evaluation during worklist iteration.
 func (s *Solution) buildAssignmentDependencies() dependencyMap {
@@ -213,6 +214,11 @@ func (s *Solution) buildAssignmentDependencies() dependencyMap {
 			srcKey := s.pkResolver.KeyAt(assign.Point, assign.ContainerElementSource.ContainerPath)
 			deps.register(srcKey, assign.Point)
 			deps.registerSymbol(assign.ContainerElementSource.ContainerPath.Symbol, assign.Point)
+		}
+		if assign.LengthIndexSource != nil && assign.LengthIndexSource.ContainerPath.Symbol != 0 {
+			srcKey := s.pkResolver.KeyAt(assign.Point, assign.LengthIndexSource.ContainerPath)
+			deps.register(srcKey, assign.Point)
+			deps.registerSymbol(assign.LengthIndexSource.ContainerPath.Symbol, assign.Point)
 		}
 	}
 

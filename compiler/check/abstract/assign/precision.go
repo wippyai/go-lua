@@ -85,6 +85,11 @@ func mergeUnannotatedParamType(current, inferred typ.Type) typ.Type {
 	if current == nil || current.Kind().IsPlaceholder() || typ.IsUnknown(current) {
 		return inferred
 	}
+	if inner, nilable := typ.SplitNilableFieldType(inferred); nilable {
+		if typ.TypeEquals(current, inner) || subtype.IsSubtype(current, inner) {
+			return current
+		}
+	}
 	if typ.IsAny(current) || subtype.IsSubtype(current, inferred) {
 		return current
 	}

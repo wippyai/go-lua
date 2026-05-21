@@ -50,38 +50,38 @@ type symbolNamer interface {
 	NameOf(sym cfg.SymbolID) string
 }
 
-func rootNameFromSymbolSource(source symbolNamer, sym cfg.SymbolID, fallback string) string {
+func rootNameFromSymbolSource(source symbolNamer, sym cfg.SymbolID, displayName string) string {
 	if sym == 0 || source == nil {
-		return fallback
+		return displayName
 	}
 	if name := source.NameOf(sym); name != "" {
 		return name
 	}
-	return fallback
+	return displayName
 }
 
 // RootName returns the display name for a symbol, using NameOf when available.
-func RootName(graph *cfg.Graph, sym cfg.SymbolID, fallback string) string {
-	return rootNameFromSymbolSource(graph, sym, fallback)
+func RootName(graph *cfg.Graph, sym cfg.SymbolID, displayName string) string {
+	return rootNameFromSymbolSource(graph, sym, displayName)
 }
 
 // RootNameFromBindings returns the display name for a symbol using bindings.
-func RootNameFromBindings(bindings *bind.BindingTable, sym cfg.SymbolID, fallback string) string {
+func RootNameFromBindings(bindings *bind.BindingTable, sym cfg.SymbolID, displayName string) string {
 	if sym != 0 && bindings != nil {
 		if name := bindings.Name(sym); name != "" {
 			return name
 		}
 	}
-	return fallback
+	return displayName
 }
 
-// RootNameFromGraphAndBindings resolves display name with binding-first, graph-second fallback.
-func RootNameFromGraphAndBindings(graph *cfg.Graph, bindings *bind.BindingTable, sym cfg.SymbolID, fallback string) string {
+// RootNameFromGraphAndBindings resolves display name with binding-first, then graph.
+func RootNameFromGraphAndBindings(graph *cfg.Graph, bindings *bind.BindingTable, sym cfg.SymbolID, displayName string) string {
 	name := RootNameFromBindings(bindings, sym, "")
 	if name != "" {
 		return name
 	}
-	return RootName(graph, sym, fallback)
+	return RootName(graph, sym, displayName)
 }
 
 // GetBindings returns the binding table from inputs.
@@ -96,12 +96,12 @@ func GetBindings(inputs *flow.Inputs) *bind.BindingTable {
 	return nil
 }
 
-// RootFromSymbol returns the display name for a symbol, falling back to the provided name.
-func RootFromSymbol(inputs *flow.Inputs, sym cfg.SymbolID, fallback string) string {
+// RootFromSymbol returns the display name for a symbol.
+func RootFromSymbol(inputs *flow.Inputs, sym cfg.SymbolID, displayName string) string {
 	if inputs == nil {
-		return fallback
+		return displayName
 	}
-	return rootNameFromSymbolSource(inputs.Graph, sym, fallback)
+	return rootNameFromSymbolSource(inputs.Graph, sym, displayName)
 }
 
 // ClassifyReturnExpr determines if a return expression returns true, false, or unknown.
@@ -146,21 +146,22 @@ func Ref(t typ.Type, sc *scope.State) typ.Type {
 }
 
 // selectConcreteOrPlaceholder applies canonical symbol-resolver preference:
-// return concrete types immediately, and keep placeholders as fallback.
-func selectConcreteOrPlaceholder(candidate typ.Type, fallback *typ.Type) (typ.Type, bool) {
+// return concrete types immediately, and remember placeholders for unresolved
+// global symbols.
+func selectConcreteOrPlaceholder(candidate typ.Type, placeholder *typ.Type) (typ.Type, bool) {
 	if candidate == nil {
 		return nil, false
 	}
 	if candidate.Kind().IsPlaceholder() {
-		if fallback != nil {
-			*fallback = candidate
+		if placeholder != nil {
+			*placeholder = candidate
 		}
 		return nil, false
 	}
 	return candidate, true
 }
 
-func selectFromTypeMap(types map[cfg.SymbolID]typ.Type, sym cfg.SymbolID, fallback *typ.Type) (typ.Type, bool) {
+func selectFromTypeMap(types map[cfg.SymbolID]typ.Type, sym cfg.SymbolID, placeholder *typ.Type) (typ.Type, bool) {
 	if types == nil {
 		return nil, false
 	}
@@ -168,30 +169,30 @@ func selectFromTypeMap(types map[cfg.SymbolID]typ.Type, sym cfg.SymbolID, fallba
 	if !ok {
 		return nil, false
 	}
-	return selectConcreteOrPlaceholder(candidate, fallback)
+	return selectConcreteOrPlaceholder(candidate, placeholder)
 }
 
 // selectFromTypeMaps returns the first non-placeholder type for sym across maps,
-// preserving the last placeholder as fallback when no concrete type exists.
-func selectFromTypeMaps(sym cfg.SymbolID, fallback *typ.Type, maps ...map[cfg.SymbolID]typ.Type) (typ.Type, bool) {
+// preserving the last placeholder for unresolved global-symbol lookup.
+func selectFromTypeMaps(sym cfg.SymbolID, placeholder *typ.Type, maps ...map[cfg.SymbolID]typ.Type) (typ.Type, bool) {
 	for _, m := range maps {
-		if selected, ok := selectFromTypeMap(m, sym, fallback); ok {
+		if selected, ok := selectFromTypeMap(m, sym, placeholder); ok {
 			return selected, true
 		}
 	}
 	return nil, false
 }
 
-// resolveGlobalOrFallback finalizes symbol resolution by preferring global type
-// bindings and otherwise returning the placeholder fallback (if any).
-func resolveGlobalOrFallback(ctx api.BaseEnv, sym cfg.SymbolID, fallback typ.Type) (typ.Type, bool) {
+// resolveGlobalOrPlaceholder finalizes symbol resolution by preferring global
+// type bindings and otherwise returning the remembered placeholder, if any.
+func resolveGlobalOrPlaceholder(ctx api.BaseEnv, sym cfg.SymbolID, placeholder typ.Type) (typ.Type, bool) {
 	if ctx != nil {
 		if t, ok := ctx.GlobalType(sym); ok && t != nil {
 			return t, true
 		}
 	}
-	if fallback != nil {
-		return fallback, true
+	if placeholder != nil {
+		return placeholder, true
 	}
 	return nil, false
 }
@@ -204,35 +205,35 @@ func BuildContextSymbolResolver(ctx api.BaseEnv) func(cfg.Point, cfg.SymbolID) (
 		}
 	}
 	return func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-		var fallback typ.Type
+		var placeholder typ.Type
 		tv := ctx.Types().EffectiveTypeAt(p, sym)
 		if tv.State == flow.StateResolved {
-			if selected, ok := selectConcreteOrPlaceholder(tv.Type, &fallback); ok {
+			if selected, ok := selectConcreteOrPlaceholder(tv.Type, &placeholder); ok {
 				return selected, true
 			}
 		}
-		return resolveGlobalOrFallback(ctx, sym, fallback)
+		return resolveGlobalOrPlaceholder(ctx, sym, placeholder)
 	}
 }
 
 // BuildInputSymbolResolver creates a symbol type resolver that prefers flow inputs
-// (literal/sibling/declared types) before falling back to globals.
+// (literal/sibling/declared types) before querying globals.
 func BuildInputSymbolResolver(ctx api.BaseEnv, inputs *flow.Inputs) func(cfg.Point, cfg.SymbolID) (typ.Type, bool) {
 	if inputs == nil {
 		return BuildContextSymbolResolver(ctx)
 	}
 	return func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-		var fallback typ.Type
+		var placeholder typ.Type
 		if selected, ok := selectFromTypeMaps(
 			sym,
-			&fallback,
+			&placeholder,
 			inputs.LiteralTypes,
 			inputs.SiblingTypes,
 			inputs.DeclaredTypes,
 		); ok {
 			return selected, true
 		}
-		return resolveGlobalOrFallback(ctx, sym, fallback)
+		return resolveGlobalOrPlaceholder(ctx, sym, placeholder)
 	}
 }
 
@@ -421,7 +422,7 @@ func ExtractIteratorSource(
 // For method calls, resolves the receiver type (via CalleePath.Symbol, assignmentTypes,
 // symResolver, synth) and looks up the method. For non-method calls, synthesizes the
 // callee directly. Symbol resolver lookup uses canonical callsite candidates with
-// binding-table fallback.
+// secondary binding table.
 func CalleeType(
 	info *cfg.CallInfo,
 	p cfg.Point,

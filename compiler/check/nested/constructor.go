@@ -44,8 +44,33 @@ func DetectConstructorPattern(
 	fn *ast.FunctionExpr,
 	funcDef *cfg.FuncDefInfo,
 ) (classSymbol, selfSymbol cfg.SymbolID) {
+	pattern := DetectConstructorPatternInfo(nestedEvidence, parentEvidence, fn, funcDef)
+	return pattern.ClassSymbol, pattern.SelfSymbol
+}
+
+// ConstructorPattern describes the instance/prototype relation discovered for a
+// Lua setmetatable-backed constructor.
+type ConstructorPattern struct {
+	ClassSymbol             cfg.SymbolID
+	PrototypeSymbol         cfg.SymbolID
+	SelfSymbol              cfg.SymbolID
+	InstanceLiteral         *ast.TableExpr
+	InstancePoint           cfg.Point
+	ReturnedViaSetmetatable bool
+}
+
+// DetectConstructorPatternInfo detects constructors and identifies the prototype
+// table that owns instance methods. In the common T.__index = T case the class
+// and prototype are the same symbol; in split-prototype code such as
+// `local mt = { __index = methods }`, the prototype is the method table.
+func DetectConstructorPatternInfo(
+	nestedEvidence api.FlowEvidence,
+	parentEvidence api.FlowEvidence,
+	fn *ast.FunctionExpr,
+	funcDef *cfg.FuncDefInfo,
+) ConstructorPattern {
 	if fn == nil {
-		return 0, 0
+		return ConstructorPattern{}
 	}
 
 	// Check if function is T.new pattern
@@ -89,21 +114,25 @@ func DetectConstructorPattern(
 	}
 
 	if receiverSymbol == 0 {
-		return 0, 0
+		return ConstructorPattern{}
 	}
 
-	// Find setmetatable call that creates self
-	selfSym := findSetmetatablePatternByName(nestedEvidence.Assignments, receiverName)
-	if selfSym == 0 {
-		return 0, 0
+	pattern := findSetmetatableConstructorPattern(nestedEvidence, parentEvidence, receiverName, receiverSymbol)
+	if pattern.SelfSymbol == 0 && pattern.InstanceLiteral == nil {
+		return ConstructorPattern{}
+	}
+	pattern.ClassSymbol = receiverSymbol
+	if pattern.PrototypeSymbol == 0 {
+		pattern.PrototypeSymbol = receiverSymbol
 	}
 
-	// Check that self is returned
-	if !isSymbolReturned(nestedEvidence.Returns, selfSym) {
-		return 0, 0
+	if pattern.SelfSymbol != 0 &&
+		!pattern.ReturnedViaSetmetatable &&
+		!isConstructorSymbolReturned(nestedEvidence.Returns, pattern.SelfSymbol) {
+		return ConstructorPattern{}
 	}
 
-	return receiverSymbol, selfSym
+	return pattern
 }
 
 func findSetmetatablePatternByName(assignments []api.AssignmentEvidence, expectedClassName string) cfg.SymbolID {
@@ -182,6 +211,177 @@ func findSetmetatablePatternByName(assignments []api.AssignmentEvidence, expecte
 	return selfSym
 }
 
+func findSetmetatableConstructorPattern(
+	nestedEvidence api.FlowEvidence,
+	parentEvidence api.FlowEvidence,
+	receiverName string,
+	receiverSym cfg.SymbolID,
+) ConstructorPattern {
+	for _, assign := range nestedEvidence.Assignments {
+		info := assign.Info
+		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
+			continue
+		}
+		call, ok := setmetatableCall(info.SourceAt(0))
+		if !ok {
+			continue
+		}
+		tableArg, ok := call.Args[0].(*ast.TableExpr)
+		if !ok || tableArg == nil {
+			continue
+		}
+		target, ok := info.FirstTarget()
+		if !ok || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+			continue
+		}
+		return ConstructorPattern{
+			PrototypeSymbol: prototypeSymbolFromMetatableArg(call.Args[1], parentEvidence, receiverName, receiverSym),
+			SelfSymbol:      target.Symbol,
+			InstanceLiteral: tableArg,
+			InstancePoint:   assign.Point,
+		}
+	}
+
+	for _, ret := range nestedEvidence.Returns {
+		if ret.Info == nil || len(ret.Info.Exprs) == 0 {
+			continue
+		}
+		call, ok := setmetatableCall(ret.Info.Exprs[0])
+		if !ok {
+			continue
+		}
+		selfSym, tableArg := constructorInstanceFromSetmetatableArg(call.Args[0], nestedEvidence.Assignments)
+		if selfSym == 0 && tableArg == nil {
+			continue
+		}
+		return ConstructorPattern{
+			PrototypeSymbol:         prototypeSymbolFromMetatableArg(call.Args[1], parentEvidence, receiverName, receiverSym),
+			SelfSymbol:              selfSym,
+			InstanceLiteral:         tableArg,
+			InstancePoint:           ret.Point,
+			ReturnedViaSetmetatable: true,
+		}
+	}
+
+	return ConstructorPattern{}
+}
+
+func setmetatableCall(expr ast.Expr) (*ast.FuncCallExpr, bool) {
+	call, ok := expr.(*ast.FuncCallExpr)
+	if !ok || call == nil || len(call.Args) < 2 {
+		return nil, false
+	}
+	ident, ok := call.Func.(*ast.IdentExpr)
+	if !ok || ident.Value != "setmetatable" {
+		return nil, false
+	}
+	return call, true
+}
+
+func constructorInstanceFromSetmetatableArg(
+	arg ast.Expr,
+	assignments []api.AssignmentEvidence,
+) (cfg.SymbolID, *ast.TableExpr) {
+	switch inst := arg.(type) {
+	case *ast.TableExpr:
+		return 0, inst
+	case *ast.IdentExpr:
+		if inst.Value == "" {
+			return 0, nil
+		}
+		for _, assign := range assignments {
+			info := assign.Info
+			if info == nil {
+				continue
+			}
+			target, ok := info.FirstTarget()
+			if !ok || target.Kind != cfg.TargetIdent || target.Name != inst.Value {
+				continue
+			}
+			if tbl, ok := info.SourceAt(0).(*ast.TableExpr); ok {
+				return target.Symbol, tbl
+			}
+		}
+	}
+	return 0, nil
+}
+
+func prototypeSymbolFromMetatableArg(arg ast.Expr, parentEvidence api.FlowEvidence, receiverName string, receiverSym cfg.SymbolID) cfg.SymbolID {
+	switch mt := arg.(type) {
+	case *ast.TableExpr:
+		if name := indexPrototypeName(mt); name != "" {
+			if sym := symbolForAssignedName(parentEvidence.Assignments, name); sym != 0 {
+				return sym
+			}
+			if name == receiverName {
+				return receiverSym
+			}
+		}
+	case *ast.IdentExpr:
+		if mt.Value == receiverName {
+			return receiverSym
+		}
+		for _, assign := range parentEvidence.Assignments {
+			info := assign.Info
+			if info == nil || len(info.Targets) == 0 {
+				continue
+			}
+			target, ok := info.FirstTarget()
+			if !ok || target.Kind != cfg.TargetIdent || target.Name != mt.Value {
+				continue
+			}
+			if tbl, ok := info.SourceAt(0).(*ast.TableExpr); ok {
+				if name := indexPrototypeName(tbl); name != "" {
+					if sym := symbolForAssignedName(parentEvidence.Assignments, name); sym != 0 {
+						return sym
+					}
+					if name == receiverName {
+						return receiverSym
+					}
+				}
+			}
+			if target.Symbol != 0 {
+				return target.Symbol
+			}
+		}
+	}
+	return 0
+}
+
+func indexPrototypeName(tbl *ast.TableExpr) string {
+	if tbl == nil {
+		return ""
+	}
+	for _, field := range tbl.Fields {
+		key, ok := field.Key.(*ast.StringExpr)
+		if !ok || key.Value != "__index" {
+			continue
+		}
+		if ident, ok := field.Value.(*ast.IdentExpr); ok {
+			return ident.Value
+		}
+	}
+	return ""
+}
+
+func symbolForAssignedName(assignments []api.AssignmentEvidence, name string) cfg.SymbolID {
+	if name == "" {
+		return 0
+	}
+	for _, assign := range assignments {
+		info := assign.Info
+		if info == nil {
+			continue
+		}
+		for _, target := range info.Targets {
+			if target.Kind == cfg.TargetIdent && target.Name == name && target.Symbol != 0 {
+				return target.Symbol
+			}
+		}
+	}
+	return 0
+}
+
 // isSymbolReturnedOnAllPaths checks if a symbol is returned on ALL return paths.
 // Returns false if any return path returns something other than the symbol.
 func isSymbolReturned(returns []api.ReturnEvidence, sym cfg.SymbolID) bool {
@@ -216,6 +416,22 @@ func isSymbolReturned(returns []api.ReturnEvidence, sym cfg.SymbolID) bool {
 	return hasReturn && allReturnSym
 }
 
+func isConstructorSymbolReturned(returns []api.ReturnEvidence, sym cfg.SymbolID) bool {
+	if len(returns) == 0 || sym == 0 {
+		return false
+	}
+	for _, ret := range returns {
+		info := ret.Info
+		if info == nil || len(info.Symbols) == 0 {
+			continue
+		}
+		if info.Symbols[0] == sym {
+			return true
+		}
+	}
+	return false
+}
+
 // CollectConstructorFields collects field assignments to a self symbol in a constructor.
 //
 // This reduces transfer assignment evidence for statements like
@@ -243,4 +459,54 @@ func CollectConstructorFields(assignments []api.AssignmentEvidence, selfSym cfg.
 		}
 	}
 	return nil
+}
+
+// CollectConstructorLiteralFields collects fields declared directly in the
+// instance table passed to setmetatable.
+func CollectConstructorLiteralFields(table *ast.TableExpr, point cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type) map[string]typ.Type {
+	if table == nil {
+		return nil
+	}
+	fields := make(map[string]typ.Type)
+	for _, field := range table.Fields {
+		key, ok := field.Key.(*ast.StringExpr)
+		if !ok || key.Value == "" || field.Value == nil {
+			continue
+		}
+		var fieldType typ.Type
+		if synth != nil {
+			fieldType = synth(field.Value, point)
+		}
+		if typ.IsAbsentOrUnknown(fieldType) {
+			fieldType = typ.Any
+		}
+		fields[key.Value] = fieldType
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
+// MergeConstructorFieldMaps joins constructor field maps from assignment and
+// literal sources.
+func MergeConstructorFieldMaps(a, b map[string]typ.Type) map[string]typ.Type {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	out := make(map[string]typ.Type, len(a)+len(b))
+	for k, v := range a {
+		out[k] = v
+	}
+	for k, v := range b {
+		if prev := out[k]; prev != nil {
+			out[k] = typ.JoinPreferNonSoft(prev, v)
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }

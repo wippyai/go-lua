@@ -19,7 +19,7 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	// Get canonical key for this path at this point
 	fullKey := s.pkResolver.KeyAt(p, path)
 	if fullKey == "" {
-		// No version available - fall back to declared type
+		// No visible version exists; use declared evidence.
 		declaredType := s.lookupDeclaredType(path)
 		if declaredType != nil {
 			if len(path.Segments) == 0 {
@@ -99,10 +99,10 @@ func (s *Solution) ConditionAt(p cfg.Point) constraint.Condition {
 	if cond, ok := s.pointConditions[p]; ok {
 		return cond
 	}
-	return s.conditionAtFallback(p, 0)
+	return s.conditionAtLinearPredecessor(p, 0)
 }
 
-func (s *Solution) conditionAtFallback(p cfg.Point, depth int) constraint.Condition {
+func (s *Solution) conditionAtLinearPredecessor(p cfg.Point, depth int) constraint.Condition {
 	if typ.DepthExceeded(depth) {
 		return constraint.TrueCondition()
 	}
@@ -119,10 +119,10 @@ func (s *Solution) conditionAtFallback(p cfg.Point, depth int) constraint.Condit
 		if c, ok := s.pointConditions[pred]; ok {
 			predCond = c
 		} else {
-			predCond = s.conditionAtFallback(pred, depth+1)
+			predCond = s.conditionAtLinearPredecessor(pred, depth+1)
 		}
 	} else {
-		predCond = s.conditionAtFallback(pred, depth+1)
+		predCond = s.conditionAtLinearPredecessor(pred, depth+1)
 	}
 
 	edgeCond := constraint.TrueCondition()
@@ -349,6 +349,14 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		}
 	}
 
+	condition := s.ConditionAt(p)
+	if condition.IsFalse() {
+		if cacheable {
+			s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: typ.Never, ok: true}
+		}
+		return typ.Never
+	}
+
 	baseType := s.baseTypeAt(p, path)
 	if baseType == nil {
 		if cacheable {
@@ -357,7 +365,7 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		return nil
 	}
 	// For annotated symbols, ensure base type does not drop required structure.
-	// If the base type is not a subtype of the declared type, fall back to declared.
+	// If the base type is not a subtype of the declared type, use declared evidence.
 	if s.inputs != nil && len(path.Segments) == 0 && path.Symbol != 0 {
 		if s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[path.Symbol] {
 			if declared := s.lookupDeclaredType(path); declared != nil {
@@ -368,7 +376,6 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		}
 	}
 
-	condition := s.ConditionAt(p)
 	if !condition.HasConstraints() {
 		if cacheable {
 			s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: baseType, ok: true}
@@ -421,9 +428,13 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		return explicit
 	}
 
+	if childEvidenceIsLessInformativeThanParent(explicit, derived) {
+		return derived
+	}
+
 	// Direct child-path facts are the product-domain authority for that path.
-	// Parent-derived facts are a fallback: they describe the container shape, but
-	// may be stale after a direct field/index assignment or table mutator.
+	// Parent-derived facts describe container shape, but may be stale after a
+	// direct field/index assignment or table mutator.
 	if !explicit.Kind().IsPlaceholder() {
 		return explicit
 	}
@@ -454,6 +465,29 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	}
 
 	return derived
+}
+
+func childEvidenceIsLessInformativeThanParent(explicit, derived typ.Type) bool {
+	if explicit == nil || derived == nil || derived.Kind().IsPlaceholder() {
+		return false
+	}
+	if isEmptyRecordNoMapType(explicit) {
+		return typeCarriesContainerShape(derived)
+	}
+	return false
+}
+
+func typeCarriesContainerShape(t typ.Type) bool {
+	switch v := t.(type) {
+	case *typ.Alias:
+		return typeCarriesContainerShape(v.Target)
+	case *typ.Array, *typ.Map:
+		return true
+	case *typ.Record:
+		return len(v.Fields) > 0 || v.HasMapComponent()
+	default:
+		return false
+	}
 }
 
 // derivedTypeAt derives a child path's type from the narrowed parent.
@@ -744,9 +778,9 @@ func (s *Solution) filterByChildNarrowings(baseType typ.Type, parentPath constra
 // IsPointDead returns true if the given CFG point is unreachable due to divergence.
 func (s *Solution) IsPointDead(p cfg.Point) bool {
 	if s == nil || s.inputs == nil || s.inputs.DeadPoints == nil {
-		return false
+		return s != nil && s.ConditionAt(p).IsFalse()
 	}
-	return s.inputs.DeadPoints[p]
+	return s.inputs.DeadPoints[p] || s.ConditionAt(p).IsFalse()
 }
 
 // HasKeyOf checks if a KeyOf constraint exists at point p for the given table and key paths.

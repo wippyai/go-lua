@@ -2,7 +2,7 @@
 //
 // Synthesis and transfer code should ask this package for semantic facts rather
 // than rebuilding precedence rules from stores, product overlays, or phase-local
-// fallbacks.
+// snapshots.
 package typefacts
 
 import (

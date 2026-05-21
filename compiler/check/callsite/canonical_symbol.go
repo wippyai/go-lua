@@ -14,11 +14,11 @@ func CanonicalSymbolFromExprWithAliases(
 	raw cfg.SymbolID,
 	graph *cfg.Graph,
 	primary *bind.BindingTable,
-	fallback *bind.BindingTable,
+	secondary *bind.BindingTable,
 	prefer func(cfg.SymbolID) bool,
 ) cfg.SymbolID {
 	selector := preferredSymbolSelector{prefer: prefer}
-	visitExprSymbolCandidates(expr, raw, primary, fallback, func(sym cfg.SymbolID) bool {
+	visitExprSymbolCandidates(expr, raw, primary, secondary, func(sym cfg.SymbolID) bool {
 		return visitAliasExpansion(graph, sym, selector.Add)
 	})
 	return selector.selected

@@ -591,7 +591,7 @@ func (i *Inferencer) inferReturnForFunction(
 	// Body-derived parameter contracts are needed by local assignment inference
 	// in the same function. For example, a helper call may prove that a parameter
 	// field is string?, which then makes `param.field or "default"` synthesize as
-	// string without relying on a value-level fallback shortcut.
+	// string without a value-level shortcut.
 	i.mergeParameterEvidenceFromBodyUses(ctx, overlay)
 	i.applyParameterEvidenceToOverlay(ctx, overlay)
 
@@ -600,6 +600,12 @@ func (i *Inferencer) inferReturnForFunction(
 
 	// Collect field/indexer assignments and apply mutations.
 	finalOverlay := i.collectAndApplyMutations(ctx, overlay, inferred, synthAdapter, localValueSeeds)
+
+	// Re-harvest call obligations after local assignment inference. The early pass
+	// catches direct calls; this pass catches builder/receiver chains whose method
+	// contracts are only visible once local variables have precise types.
+	i.mergeParameterEvidenceFromBodyUses(ctx, finalOverlay)
+	i.applyParameterEvidenceToOverlay(ctx, finalOverlay)
 
 	// Phase 2: Infer return types from body.
 	return i.inferReturnTypesFromBody(ctx, finalOverlay)
@@ -625,7 +631,12 @@ func (i *Inferencer) applyParameterEvidenceToOverlay(ctx *returnInferenceContext
 			overlay[slot.Symbol] = paramevidence.RefineAnnotationWithEvidence(resolved, evidence)
 			continue
 		}
-		overlay[slot.Symbol] = evidence
+		if current := overlay[slot.Symbol]; current != nil {
+			merged, _ := paramevidence.MergeUnannotatedParam(typ.Param{Name: slot.Name, Type: current}, evidence)
+			overlay[slot.Symbol] = merged
+		} else {
+			overlay[slot.Symbol] = evidence
+		}
 	}
 }
 

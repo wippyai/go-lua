@@ -59,6 +59,9 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 		if typ.IsAbsentOrUnknown(paramType) && slot.TypeAnnotation == nil {
 			paramType = typ.Any
 		}
+		if slot.TypeAnnotation == nil && ctx.info.ParameterEvidence != nil && paramIdx < len(ctx.info.ParameterEvidence) && ctx.info.ParameterEvidence[paramIdx] != nil {
+			paramType, _ = paramevidence.MergeUnannotatedParam(typ.Param{Name: slot.Name, Type: paramType}, ctx.info.ParameterEvidence[paramIdx])
+		}
 		if slot.TypeAnnotation != nil {
 			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
 			if resolved != nil {

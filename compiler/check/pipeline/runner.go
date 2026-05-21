@@ -109,7 +109,18 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	// Build shared transfer evidence and phase environment once.
 	graphEvidence := store.EvidenceForGraph(graph)
 	parameterEvidenceSigs := functionfact.ParameterEvidenceSignatures(store, graph, parent, r.stdlib)
+	analysisCtx := api.AnalysisContext{}
+	globalTypes := r.globalTypes
+	if contextual, ok := store.(interface {
+		GraphAnalysisContext(api.GraphKey) api.AnalysisContext
+	}); ok {
+		analysisCtx = contextual.GraphAnalysisContext(api.GraphKey{GraphID: key.GraphID, ParentHash: key.ParentHash})
+		globalTypes = mergeGlobalOverlay(globalTypes, analysisCtx.GlobalOverlay)
+	}
 	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, graphEvidence, parameterEvidenceSigs)
+	if analysisCtx.ExpectedFunction != nil {
+		synthSig = mergeSynthesizedSignatureContext(synthSig, analysisCtx.ExpectedFunction)
+	}
 
 	graphFacts := store.GetInterprocFacts(graph, parent)
 	functionFacts := graphFacts.FunctionFacts
@@ -122,7 +133,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		Fn:             fn,
 		Types:          r.types,
 		Manifests:      r.manifests,
-		GlobalTypes:    r.globalTypes,
+		GlobalTypes:    globalTypes,
 		ModuleAliases:  mergedAliases,
 		ModuleBindings: store.ModuleBindings(),
 		Refinements:    refinementFactsFrom(store),
@@ -225,4 +236,20 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		Extras:             extras,
 		DepthLimitExceeded: scopeOut.DepthLimitExceeded,
 	}
+}
+
+func mergeGlobalOverlay(base map[string]typ.Type, overlay map[string]typ.Type) map[string]typ.Type {
+	if len(overlay) == 0 {
+		return base
+	}
+	out := make(map[string]typ.Type, len(base)+len(overlay))
+	for name, t := range base {
+		out[name] = t
+	}
+	for name, t := range overlay {
+		if name != "" && t != nil {
+			out[name] = t
+		}
+	}
+	return out
 }

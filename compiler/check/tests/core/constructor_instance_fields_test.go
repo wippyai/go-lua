@@ -227,7 +227,7 @@ end
 			Stdlib:    true,
 		},
 		{
-			Name: "constructor with early return nil does not propagate fields",
+			Name: "constructor with early return nil propagates successful instance fields",
 			Code: `
 local session_writer = {}
 session_writer.__index = session_writer
@@ -245,7 +245,7 @@ function session_writer:get_session_id(): string
     return self.session_id
 end
 `,
-			WantError: true,
+			WantError: false,
 			Stdlib:    true,
 		},
 	}

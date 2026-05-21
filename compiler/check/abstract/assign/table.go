@@ -60,7 +60,7 @@ func EmitTableLiteralFieldAssignments(
 			continue
 		}
 
-		// Synthesize field value type as fallback
+		// Synthesize field value type from the expression.
 		var fieldType typ.Type
 		if synth != nil {
 			fieldType = synth(field.Value, p)

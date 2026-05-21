@@ -203,33 +203,20 @@ func ExtractNumericConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 			continue
 		}
 
-		numConstraints := NumericConstraintsFromExpr(info.Condition, p, inputs)
-		if len(numConstraints) == 0 {
-			continue
-		}
-
-		if trueEdge != 0 {
+		numConstraints := NumericBranchConstraintsFromExpr(info.Condition, p, inputs)
+		if trueEdge != 0 && len(numConstraints.OnTrue) > 0 {
 			inputs.EdgeNumericConstraints = append(inputs.EdgeNumericConstraints, flow.EdgeNumericConstraint{
 				From:        p,
 				To:          trueEdge,
-				Constraints: numConstraints,
+				Constraints: numConstraints.OnTrue,
 			})
 		}
-
-		if falseEdge != 0 {
-			var negated []constraint.NumericConstraint
-			for _, nc := range numConstraints {
-				if neg := numconst.NegateNumericConstraint(nc); neg != nil {
-					negated = append(negated, neg)
-				}
-			}
-			if len(negated) > 0 {
-				inputs.EdgeNumericConstraints = append(inputs.EdgeNumericConstraints, flow.EdgeNumericConstraint{
-					From:        p,
-					To:          falseEdge,
-					Constraints: negated,
-				})
-			}
+		if falseEdge != 0 && len(numConstraints.OnFalse) > 0 {
+			inputs.EdgeNumericConstraints = append(inputs.EdgeNumericConstraints, flow.EdgeNumericConstraint{
+				From:        p,
+				To:          falseEdge,
+				Constraints: numConstraints.OnFalse,
+			})
 		}
 	}
 }
@@ -514,28 +501,28 @@ func ConstraintsFromCallOnReturn(
 		switch v := c.(type) {
 		case constraint.Falsy:
 			if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(callArgs)); ok && argPaths[idx].IsEmpty() {
-				fallback := ce.ConditionFromExpr(callArgs[idx])
-				if fallback.HasConstraints() {
-					must = append(must, constraint.Not(fallback).MustConstraints()...)
+				reconstructed := ce.ConditionFromExpr(callArgs[idx])
+				if reconstructed.HasConstraints() {
+					must = append(must, constraint.Not(reconstructed).MustConstraints()...)
 				}
 				continue
 			}
 		case constraint.Truthy:
 			if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(callArgs)); ok && argPaths[idx].IsEmpty() {
-				fallback := ce.ConditionFromExpr(callArgs[idx])
-				if fallback.HasConstraints() {
-					must = append(must, fallback.MustConstraints()...)
+				reconstructed := ce.ConditionFromExpr(callArgs[idx])
+				if reconstructed.HasConstraints() {
+					must = append(must, reconstructed.MustConstraints()...)
 				}
 				continue
 			}
 		case constraint.EqPath:
-			if fallback, ok := callConstraintFallbackFromArgs(ce, callArgs, argPaths, v, true); ok {
-				must = append(must, fallback...)
+			if reconstructed, ok := callConstraintFromOriginalArgs(ce, callArgs, argPaths, v, true); ok {
+				must = append(must, reconstructed...)
 				continue
 			}
 		case constraint.NotEqPath:
-			if fallback, ok := callConstraintFallbackFromArgs(ce, callArgs, argPaths, v, false); ok {
-				must = append(must, fallback...)
+			if reconstructed, ok := callConstraintFromOriginalArgs(ce, callArgs, argPaths, v, false); ok {
+				must = append(must, reconstructed...)
 				continue
 			}
 		}
@@ -789,11 +776,11 @@ func normalizePathConstraint(c constraint.Constraint) constraint.Constraint {
 	return c
 }
 
-// callConstraintFallbackFromArgs canonicalizes EqPath/NotEqPath placeholder
+// callConstraintFromOriginalArgs canonicalizes EqPath/NotEqPath placeholder
 // constraints when one argument is non-path (for example literals or #expr).
-// In these cases direct path substitution drops the constraint; we recover by
-// re-extracting equivalent condition constraints from the original call args.
-func callConstraintFallbackFromArgs(
+// Direct path substitution cannot encode that relation, so the extractor
+// rebuilds the equivalent condition from the original call arguments.
+func callConstraintFromOriginalArgs(
 	ce *ConditionExtractor,
 	args []ast.Expr,
 	argPaths []constraint.Path,

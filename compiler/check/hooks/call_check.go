@@ -9,8 +9,8 @@
 //   - Generic calls: infers type arguments and validates against instantiated params
 //   - Type constructors: TypeName(x) - special handling for callable type effects
 //
-// For each call, the CallPipeline from synth/phase/extract handles the two-phase
-// synthesis process, allowing contextual typing for callback arguments.
+// For each call, the shared ops.CallPipeline handles the two-phase synthesis
+// process, allowing contextual typing for callback arguments.
 //
 // Errors are mapped from ops.CallError to diag.Diagnostic with appropriate
 // source positions (pointing to the problematic argument when possible).
@@ -26,8 +26,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
-	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -146,8 +146,8 @@ func checkSingleCall(
 		}
 	}
 
-	pipeline := extract.NewCallPipeline(ctx, def, info.Args).
-		WithReSynth(extract.FullArgReSynth(
+	pipeline := ops.NewCallPipeline(ctx, def, len(info.Args)).
+		WithReSynth(callarg.ForArgs(info.Args, callarg.Full(
 			func(arg ast.Expr, pt cfg.Point, expected typ.Type) typ.Type {
 				return narrowView.TypeOfWithExpected(arg, pt, expected)
 			},
@@ -155,7 +155,7 @@ func checkSingleCall(
 				return tableCompatible(table, expected, narrowSynth, pt)
 			},
 			p,
-		))
+		)))
 	result := pipeline.Run()
 	return callErrorsToDiags(result.Errors, info, sourceName)
 }

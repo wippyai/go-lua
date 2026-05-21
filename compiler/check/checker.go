@@ -323,7 +323,7 @@ func funcResultEqual(a, b *api.FuncResult) bool {
 // Function analysis memoization is session-local and discarded at the end of
 // each Check call. Advancing the database revision keeps the public cache-clear
 // operation meaningful for hosts that retain query contexts around a reused
-// Checker without reintroducing a checker-owned compatibility cache.
+// Checker without reintroducing a checker-owned cache.
 func (c *Checker) ClearCache() {
 	if c == nil || c.db == nil {
 		return

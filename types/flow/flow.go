@@ -157,6 +157,11 @@ type UnifiedAssignment struct {
 	// At solve time, the type is derived from the map's value type instead of
 	// using the statically extracted Type field.
 	MapElementSource *MapElementSource
+
+	// LengthIndexSource tracks reads of the form t[#t + k]. At solve time, the
+	// numeric length domain can prove presence for the exact Lua length border
+	// and for sequence-shaped offsets.
+	LengthIndexSource *LengthIndexSource
 }
 
 // EdgeCondition ties a DNF condition to a control-flow edge.
@@ -334,7 +339,7 @@ type IndexerAssignment struct {
 	KeySymbol cfg.SymbolID         // Symbol ID for the key variable (for SSA-aware lookup)
 	KeyType   typ.Type             // Optional explicit key type (overrides KeySymbol lookup)
 	ValuePath constraint.Path      // Path to value expression for flow-resolved type lookup
-	ValType   typ.Type             // Fallback type when ValuePath is unavailable
+	ValType   typ.Type             // Static value type when ValuePath is unavailable
 }
 
 // TableMutatorAssignment describes table.insert-like mutations that widen
@@ -347,7 +352,7 @@ type TableMutatorAssignment struct {
 	KeySymbol cfg.SymbolID    // Symbol ID for the key variable (for SSA-aware lookup)
 	KeyType   typ.Type        // Optional explicit key type (overrides KeySymbol lookup)
 	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
-	ValueType typ.Type        // Fallback type if ValuePath doesn't resolve
+	ValueType typ.Type        // Static value type if ValuePath doesn't resolve
 }
 
 // ContainerMutatorAssignment describes container mutations (channel.send, etc.)
@@ -356,7 +361,7 @@ type ContainerMutatorAssignment struct {
 	Point     cfg.Point
 	Target    constraint.Path // Container path (symbol-only, e.g., channel variable)
 	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
-	ValueType typ.Type        // Fallback type if ValuePath doesn't resolve
+	ValueType typ.Type        // Static value type if ValuePath doesn't resolve
 }
 
 // ContainerElementSource tracks that an assignment's type should be derived
@@ -374,6 +379,12 @@ type MapElementSource struct {
 	MapPath   constraint.Path // Path to the map/table being indexed
 	KeySymbol cfg.SymbolID    // Symbol for key variable (SSA lookup)
 	KeyVar    string          // Key variable name (display)
+}
+
+// LengthIndexSource tracks that an assignment was read from t[#t + Offset].
+type LengthIndexSource struct {
+	ContainerPath constraint.Path
+	Offset        int64
 }
 
 // TypeState tracks the resolution progress of a type during fixed-point iteration.

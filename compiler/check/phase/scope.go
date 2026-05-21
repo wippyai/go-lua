@@ -344,7 +344,7 @@ func ExtractParamTypes(
 			isAnnotated = resolved != nil && !typ.IsRefinableAnnotation(resolved)
 			hasExplicitAnnotation = true
 		} else if evidence != nil {
-			paramType = evidence
+			paramType = mergeParamEvidenceWithSynthSignature(evidence, synthSig, paramIdx)
 		} else if synthSig != nil && paramIdx < len(synthSig.Params) && synthSig.Params[paramIdx].Type != nil {
 			paramType = synthSig.Params[paramIdx].Type
 		} else if slot.Name == "self" && base != nil && base.SelfType() != nil {
@@ -374,6 +374,21 @@ func ExtractParamTypes(
 		return nil, nil
 	}
 	return types, annotated
+}
+
+func mergeParamEvidenceWithSynthSignature(evidence typ.Type, synthSig *typ.Function, paramIdx int) typ.Type {
+	if synthSig == nil || paramIdx < 0 || paramIdx >= len(synthSig.Params) {
+		return evidence
+	}
+	param := synthSig.Params[paramIdx]
+	if param.Type == nil {
+		return evidence
+	}
+	if evidence == nil {
+		return param.Type
+	}
+	merged, _ := paramevidence.MergeUnannotatedParam(param, evidence)
+	return merged
 }
 
 func widenImplicitSelfState(t typ.Type) typ.Type {

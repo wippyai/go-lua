@@ -13,8 +13,8 @@ import (
 //   - Placeholder roots: $<index>
 //   - Return roots: ret[<index>]
 //
-// For legacy keys that don't match the canonical forms, the function falls
-// back to splitting at the first '.' or '[' and returns that prefix as root.
+// Keys that do not match the canonical forms are split at the first '.' or '['
+// and that prefix is returned as root.
 func ParseRootAndSuffix(key constraint.PathKey) (root string, suffix string, ok bool) {
 	if sym, version, suffix, ok := ParseKey(key); ok {
 		if version != 0 {

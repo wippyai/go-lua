@@ -140,7 +140,7 @@ func visitExprSymbolCandidates(
 	expr ast.Expr,
 	raw cfg.SymbolID,
 	primary *bind.BindingTable,
-	fallback *bind.BindingTable,
+	secondary *bind.BindingTable,
 	visit func(cfg.SymbolID) bool,
 ) bool {
 	if visit == nil {
@@ -152,8 +152,8 @@ func visitExprSymbolCandidates(
 	if visit(SymbolFromExpr(expr, primary)) {
 		return true
 	}
-	if fallback != primary {
-		return visit(SymbolFromExpr(expr, fallback))
+	if secondary != primary {
+		return visit(SymbolFromExpr(expr, secondary))
 	}
 	return false
 }
@@ -163,12 +163,12 @@ func addExprSymbolCandidates(
 	expr ast.Expr,
 	raw cfg.SymbolID,
 	primary *bind.BindingTable,
-	fallback *bind.BindingTable,
+	secondary *bind.BindingTable,
 ) {
 	if set == nil {
 		return
 	}
-	visitExprSymbolCandidates(expr, raw, primary, fallback, func(sym cfg.SymbolID) bool {
+	visitExprSymbolCandidates(expr, raw, primary, secondary, func(sym cfg.SymbolID) bool {
 		set.Add(sym)
 		return false
 	})
@@ -228,9 +228,9 @@ func exprSymbolCandidates(
 	expr ast.Expr,
 	raw cfg.SymbolID,
 	primary *bind.BindingTable,
-	fallback *bind.BindingTable,
+	secondary *bind.BindingTable,
 ) []cfg.SymbolID {
 	set := newSymbolSet(3)
-	addExprSymbolCandidates(set, expr, raw, primary, fallback)
+	addExprSymbolCandidates(set, expr, raw, primary, secondary)
 	return set.Slice()
 }

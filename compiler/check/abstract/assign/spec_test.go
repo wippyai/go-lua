@@ -15,11 +15,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func buildEmptyGraph() *cfg.Graph {
-	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{}}
-	return cfg.Build(fn)
-}
-
 func TestCollectSpecNarrowedTypes_NilGraph(t *testing.T) {
 	result := CollectSpecNarrowedTypes(nil, nil, nil, nil, nil, nil, nil)
 	if result == nil {

@@ -89,25 +89,58 @@ func canBeFalsyGuard(t typ.Type, guard internal.RecursionGuard) bool {
 
 // IsFalsy reports whether a type is definitely falsy (always nil or false).
 //
-// Returns true only for:
-//   - typ.Nil
-//   - Literal false
-//
-// For types that may or may not be falsy (like boolean or optional),
-// returns false. Use CanBeFalsy for that check.
+// Lua has exactly two falsy values. A compound type is definitely falsy only
+// when every runtime value it can represent is nil or false, for example
+// `false?` (`nil | false`). For types that may or may not be falsy, like
+// boolean or string?, this returns false. Use CanBeFalsy for that check.
 func IsFalsy(t typ.Type) bool {
+	return isFalsyGuard(t, typ.NewGuard())
+}
+
+func isFalsyGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	if t == nil {
 		return false
 	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
 
+	t = typ.UnwrapAnnotated(t)
 	if t.Kind() == kind.Nil {
 		return true
 	}
+	if t.Kind() == kind.Never {
+		return true
+	}
 
-	if lit, ok := t.(*typ.Literal); ok {
-		if b, isBool := lit.Value.(bool); isBool && !b {
+	switch v := t.(type) {
+	case *typ.Literal:
+		b, isBool := v.Value.(bool)
+		return isBool && !b
+	case *typ.Optional:
+		return isFalsyGuard(v.Inner, next)
+	case *typ.Union:
+		if len(v.Members) == 0 {
 			return true
 		}
+		for _, m := range v.Members {
+			if !isFalsyGuard(m, next) {
+				return false
+			}
+		}
+		return true
+	case *typ.Intersection:
+		for _, m := range v.Members {
+			if isFalsyGuard(m, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Alias:
+		return v.Target != nil && isFalsyGuard(v.Target, next)
+	case *typ.TypeParam:
+		return v.Constraint != nil && isFalsyGuard(v.Constraint, next)
 	}
 
 	return false

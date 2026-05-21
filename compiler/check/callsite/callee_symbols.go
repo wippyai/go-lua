@@ -10,21 +10,21 @@ import (
 // Candidate order:
 //  1. raw call callee symbol
 //  2. symbol resolved from primary bindings using call expression
-//  3. symbol resolved from fallback bindings using call expression
+//  3. symbol resolved from secondary bindings using call expression
 //  4. method symbol resolved from primary bindings (receiver + method)
-//  5. method symbol resolved from fallback bindings (receiver + method)
-//  6. binding symbols with matching callee name (primary, then fallback)
-func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingTable) []cfg.SymbolID {
+//  5. method symbol resolved from secondary bindings (receiver + method)
+//  6. binding symbols with matching callee name (primary, then secondary)
+func CalleeSymbolCandidates(info *cfg.CallInfo, primary, secondary *bind.BindingTable) []cfg.SymbolID {
 	if info == nil {
 		return nil
 	}
 	set := newSymbolSet(4)
-	addExprSymbolCandidates(set, info.Callee, info.CalleeSymbol, primary, fallback)
+	addExprSymbolCandidates(set, info.Callee, info.CalleeSymbol, primary, secondary)
 	if methodSym, ok := methodCalleeSymbolFromCall(primary, nil, info); ok {
 		set.Add(methodSym)
 	}
-	if fallback != nil && fallback != primary {
-		if methodSym, ok := methodCalleeSymbolFromCall(fallback, nil, info); ok {
+	if secondary != nil && secondary != primary {
+		if methodSym, ok := methodCalleeSymbolFromCall(secondary, nil, info); ok {
 			set.Add(methodSym)
 		}
 	}
@@ -34,8 +34,8 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 				set.Add(sym)
 			}
 		}
-		if fallback != nil && fallback != primary {
-			for _, sym := range fallback.SymbolsByNameReadOnly(info.CalleeName) {
+		if secondary != nil && secondary != primary {
+			for _, sym := range secondary.SymbolsByNameReadOnly(info.CalleeName) {
 				set.Add(sym)
 			}
 		}
@@ -50,9 +50,9 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 func CallableCalleeSymbolCandidates(
 	info *cfg.CallInfo,
 	graph *cfg.Graph,
-	primary, fallback *bind.BindingTable,
+	primary, secondary *bind.BindingTable,
 ) []cfg.SymbolID {
-	base := CalleeSymbolCandidates(info, primary, fallback)
+	base := CalleeSymbolCandidates(info, primary, secondary)
 	if graph == nil {
 		return base
 	}
@@ -66,8 +66,8 @@ func CallableCalleeSymbolCandidates(
 	if methodSym, ok := methodCalleeSymbolFromCall(primary, graph, info); ok {
 		addAliasExpansion(set, graph, methodSym)
 	}
-	if fallback != nil && fallback != primary {
-		if methodSym, ok := methodCalleeSymbolFromCall(fallback, graph, info); ok {
+	if secondary != nil && secondary != primary {
+		if methodSym, ok := methodCalleeSymbolFromCall(secondary, graph, info); ok {
 			addAliasExpansion(set, graph, methodSym)
 		}
 	}
@@ -89,20 +89,20 @@ func CallableCalleeSymbolCandidates(
 // Order is deterministic and candidates are deduplicated.
 //
 // NOTE: this intentionally includes the base callee-path symbol (often receiver
-// identity for method calls). Use this for resolver-style fallback lookups that
+// identity for method calls). Use this for resolver-style symbol lookups that
 // can tolerate non-callable intermediate symbols; for strict callable lookup
 // paths, prefer CallableCalleeSymbolCandidates.
 func ResolverCalleeSymbolCandidates(
 	info *cfg.CallInfo,
 	graph *cfg.Graph,
-	primary, fallback *bind.BindingTable,
+	primary, secondary *bind.BindingTable,
 ) []cfg.SymbolID {
 	if info == nil {
 		return nil
 	}
 	set := newSymbolSet(4)
 	set.Add(info.CalleePath.Symbol)
-	for _, sym := range CallableCalleeSymbolCandidates(info, graph, primary, fallback) {
+	for _, sym := range CallableCalleeSymbolCandidates(info, graph, primary, secondary) {
 		set.Add(sym)
 	}
 	return set.Slice()

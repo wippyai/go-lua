@@ -240,7 +240,7 @@ func TestExtractLenOfPath_LenOfIdent(t *testing.T) {
 	}
 }
 
-func TestNumericConstraintsFromExpr(t *testing.T) {
+func TestNumericBranchConstraintsFromExpr(t *testing.T) {
 	// Test basic comparison extraction
 	expr := &ast.RelationalOpExpr{
 		Operator: "<",
@@ -250,16 +250,16 @@ func TestNumericConstraintsFromExpr(t *testing.T) {
 	inputs := &flow.Inputs{
 		ConstValues: make(map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue),
 	}
-	result := cond.NumericConstraintsFromExpr(expr, 0, inputs)
-	if len(result) == 0 {
-		t.Error("expected numeric constraints from comparison")
+	result := cond.NumericBranchConstraintsFromExpr(expr, 0, inputs)
+	if len(result.OnTrue) == 0 {
+		t.Error("expected true-edge numeric constraints from comparison")
 	}
 }
 
-func TestNumericConstraintsFromExpr_NilExpr(t *testing.T) {
+func TestNumericBranchConstraintsFromExpr_NilExpr(t *testing.T) {
 	inputs := &flow.Inputs{}
-	result := cond.NumericConstraintsFromExpr(nil, 0, inputs)
-	if len(result) != 0 {
+	result := cond.NumericBranchConstraintsFromExpr(nil, 0, inputs)
+	if len(result.OnTrue) != 0 || len(result.OnFalse) != 0 {
 		t.Error("expected no constraints for nil expr")
 	}
 }

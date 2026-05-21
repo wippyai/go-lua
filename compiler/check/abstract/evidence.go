@@ -137,6 +137,23 @@ func ExtractCapturedContainerEvidence(
 			out = appendCapturedContainerEvidence(out, fc.Graph, bindings, constResolverAt(p), capturedSyms, target, value, p, api.ContainerMutationTableElement)
 		}
 	}
+	for _, assign := range fc.Evidence.Assignments {
+		p := assign.Point
+		info := assign.Info
+		if info == nil {
+			continue
+		}
+		for i, target := range info.Targets {
+			if target.Kind != cfg.TargetIndex || target.Base == nil || target.Key == nil {
+				continue
+			}
+			var value ast.Expr
+			if i < len(info.Sources) {
+				value = info.Sources[i]
+			}
+			out = appendCapturedIndexAssignmentEvidence(out, fc.Graph, bindings, constResolverAt(p), capturedSyms, target.Base, target.Key, value, p)
+		}
+	}
 	return out
 }
 
@@ -166,6 +183,36 @@ func appendCapturedContainerEvidence(
 		Segments: segments,
 		Value:    value,
 		Kind:     kind,
+	})
+}
+
+func appendCapturedIndexAssignmentEvidence(
+	out []api.CapturedContainerEvidence,
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	constResolver func(string) *flow.ConstValue,
+	capturedSyms map[cfg.SymbolID]bool,
+	base ast.Expr,
+	key ast.Expr,
+	value ast.Expr,
+	p cfg.Point,
+) []api.CapturedContainerEvidence {
+	if base == nil || key == nil || value == nil {
+		return out
+	}
+	path := flowpath.FromExprWithBindingsAt(base, constResolver, bindings, graph, p)
+	if path.IsEmpty() || path.Symbol == 0 || !capturedSyms[path.Symbol] {
+		return out
+	}
+	segments := make([]constraint.Segment, len(path.Segments))
+	copy(segments, path.Segments)
+	return append(out, api.CapturedContainerEvidence{
+		Point:    p,
+		Target:   path.Symbol,
+		Segments: segments,
+		Key:      key,
+		Value:    value,
+		Kind:     api.ContainerMutationMapElement,
 	})
 }
 

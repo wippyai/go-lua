@@ -309,10 +309,7 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 		}
 		return typ.Nil
 	case *ast.LogicalOpExpr:
-		if s.IsNarrowing() && narrower != nil {
-			return s.synthLogicalOpWithNarrowing(ex, p, sc, narrower, recurse)
-		}
-		return s.synthLogicalOpCore(ex, recurse)
+		return s.synthLogicalOpWithNarrowing(ex, p, sc, narrower, recurse)
 	case *ast.ArithmeticOpExpr:
 		return s.synthArithmeticOpCore(ex, recurse)
 	case *ast.UnaryMinusOpExpr:

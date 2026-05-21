@@ -41,7 +41,7 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 		}
 	}
 
-	// Prefer graph bindings for local symbol resolution; fall back to module bindings.
+	// Prefer graph bindings for local symbol resolution, then module bindings.
 	bindings := input.Graph.Bindings()
 	if bindings == nil {
 		bindings = input.ModuleBindings

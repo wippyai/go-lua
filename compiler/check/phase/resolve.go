@@ -92,18 +92,18 @@ func CreateTypeResolutionEngine(
 	})
 }
 
-func firstNonNilBindings(primary, fallback *bind.BindingTable) *bind.BindingTable {
+func firstNonNilBindings(primary, secondary *bind.BindingTable) *bind.BindingTable {
 	if primary != nil {
 		return primary
 	}
-	return fallback
+	return secondary
 }
 
-func firstNonNilAliases(primary, fallback map[cfg.SymbolID]string) map[cfg.SymbolID]string {
+func firstNonNilAliases(primary, secondary map[cfg.SymbolID]string) map[cfg.SymbolID]string {
 	if len(primary) > 0 {
 		return primary
 	}
-	return fallback
+	return secondary
 }
 
 func graphModuleAliases(graph *cfg.Graph, evidence api.FlowEvidence) map[cfg.SymbolID]string {

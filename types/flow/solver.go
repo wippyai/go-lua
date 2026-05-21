@@ -652,7 +652,7 @@ func (s *Solution) addDependentPointsBatch(
 //   - SiblingTypes: captured variables from parent scopes
 //   - LiteralTypes: function literals defined in current scope
 func (s *Solution) initializeDeclarations() {
-	// DeclaredTypes: try entry, fall back to declaration point
+	// DeclaredTypes: seed entry first, then declaration point when needed.
 	s.initSymbolTypes(symbolTypeSource{
 		types:        s.inputs.DeclaredTypes,
 		tryDeclPoint: true,
@@ -666,7 +666,7 @@ func (s *Solution) initializeDeclarations() {
 		skipIfExists: true,
 	})
 
-	// LiteralTypes: try entry, fall back to declaration point, skip if already set
+	// LiteralTypes: seed entry first, then declaration point; keep existing slots.
 	s.initSymbolTypes(symbolTypeSource{
 		types:        s.inputs.LiteralTypes,
 		tryDeclPoint: true,
@@ -718,7 +718,7 @@ func (s *Solution) deriveTypeFrom(base typ.Type, segs []constraint.Segment) (typ
 		switch seg.Kind {
 		case constraint.SegmentField:
 			next, ok := s.resolver.Field(current, seg.Name)
-			if ok && !isOpenRecordFallback(current, next) {
+			if ok && !isOpenRecordFieldMiss(current, next) {
 				current = next
 				break
 			}
@@ -733,7 +733,7 @@ func (s *Solution) deriveTypeFrom(base typ.Type, segs []constraint.Segment) (typ
 			}
 			current = next
 		case constraint.SegmentIndexString:
-			if next, ok := s.resolver.Field(current, seg.Name); ok && !isOpenRecordFallback(current, next) {
+			if next, ok := s.resolver.Field(current, seg.Name); ok && !isOpenRecordFieldMiss(current, next) {
 				current = next
 				break
 			}
@@ -760,12 +760,12 @@ func (s *Solution) deriveTypeFrom(base typ.Type, segs []constraint.Segment) (typ
 	return current, true
 }
 
-// isOpenRecordFallback detects when field lookup failed on an open record.
+// isOpenRecordFieldMiss detects when field lookup failed on an open record.
 //
 // Open records return unknown for missing fields. This function identifies
-// that case so callers can try index-based access as a fallback, which may
-// succeed if the record has a map component.
-func isOpenRecordFallback(base typ.Type, result typ.Type) bool {
+// that case so callers can try index-based access, which may succeed if the
+// record has a map component.
+func isOpenRecordFieldMiss(base typ.Type, result typ.Type) bool {
 	if !typ.IsUnknown(result) {
 		return false
 	}

@@ -597,7 +597,7 @@ func collectInferredTypes(
 					}
 					return rhsResolver(point, sym)
 				})
-				callOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, callOverlay, rhsResolver, wrappedSynth)
+				callOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, callOverlay, callRefSymbols(info, bindings), rhsResolver, wrappedSynth)
 
 				return synthWithOverlayAndPreflow(mapOverlayTypeAt(callOverlay), bindings, inputs, callCtx, typeOps, preflowBranchSolution, wrappedBaseForInference(bindings, paramSet, annotated, synth))
 			}
@@ -783,7 +783,7 @@ func collectInferredTypes(
 									}
 									return rhsResolver(point, sym)
 								})
-								rhsOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, rhsOverlay, rhsResolver, wrappedSynth)
+								rhsOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, rhsOverlay, assignmentSourceSymbols(info, bindings), rhsResolver, wrappedSynth)
 								values = expandedAssignValues(synthAPI, info, p, rhsOverlay)
 								valuesComputed = true
 							}
@@ -833,7 +833,7 @@ func collectInferredTypes(
 								}
 								return rhsResolver(point, sym)
 							})
-							rhsOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, rhsOverlay, rhsResolver, wrappedSynth)
+							rhsOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, rhsOverlay, assignmentSourceSymbols(info, bindings), rhsResolver, wrappedSynth)
 							values = expandedAssignValues(synthAPI, info, p, rhsOverlay)
 							valuesComputed = true
 						}
@@ -1145,6 +1145,24 @@ func callRefSymbols(info *cfg.CallInfo, bindings *bind.BindingTable) []cfg.Symbo
 	}
 
 	return out
+}
+
+func assignmentSourceSymbols(info *cfg.AssignInfo, bindings *bind.BindingTable) []cfg.SymbolID {
+	if info == nil || bindings == nil {
+		return nil
+	}
+
+	var refs []cfg.SymbolID
+	info.EachSource(func(_ int, src ast.Expr) {
+		collectExprSymbols(src, bindings, &refs)
+	})
+	for _, iter := range info.IterExprs {
+		collectExprSymbols(iter, bindings, &refs)
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	return dedupeSymbolIDs(refs)
 }
 
 func dedupeSymbolIDs(refs []cfg.SymbolID) []cfg.SymbolID {

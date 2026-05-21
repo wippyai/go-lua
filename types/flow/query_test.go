@@ -114,6 +114,282 @@ func TestConditionAt_WithEdgeCondition(t *testing.T) {
 	}
 }
 
+func TestNarrowedTypeAt_FalseConditionIsNever(t *testing.T) {
+	c := cfg.New()
+	deadNode := c.AddNode(cfg.NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), deadNode, true)
+	c.AddEdge(deadNode, c.Exit(), true)
+
+	g := newMockSSAGraph(c)
+	symX := setupSymbol(g, "x", []cfg.Point{c.Entry(), deadNode})
+	ver := cfg.Version{Root: "x", Symbol: symX, ID: 1}
+	setVersion(g, c.Entry(), symX, ver)
+	setVersion(g, deadNode, symX, ver)
+
+	pathX := constraint.Path{Root: "x", Symbol: symX}
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symX] = typ.String
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From:      c.Entry(),
+			To:        deadNode,
+			Condition: constraint.FalseCondition(),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+	if cond := s.ConditionAt(deadNode); !cond.IsFalse() {
+		t.Fatalf("ConditionAt(deadNode) = %v, want false", cond)
+	}
+	if !s.IsPointDead(deadNode) {
+		t.Fatalf("IsPointDead(deadNode) = false, want true")
+	}
+	if got := s.NarrowedTypeAt(deadNode, pathX); got != typ.Never {
+		t.Fatalf("NarrowedTypeAt(deadNode, x) = %v, want never", got)
+	}
+}
+
+func TestNarrowedTypeAt_TruthyFalseOptionalIsNever(t *testing.T) {
+	c := cfg.New()
+	branch := c.AddNode(cfg.NodeBranch, 0, "")
+	thenNode := c.AddNode(cfg.NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), branch, true)
+	c.AddEdge(branch, thenNode, true)
+	c.AddEdge(thenNode, c.Exit(), true)
+
+	g := newMockSSAGraph(c)
+	symX := setupSymbol(g, "x", []cfg.Point{c.Entry(), branch, thenNode})
+	ver := cfg.Version{Root: "x", Symbol: symX, ID: 1}
+	setVersion(g, c.Entry(), symX, ver)
+	setVersion(g, branch, symX, ver)
+	setVersion(g, thenNode, symX, ver)
+
+	pathX := constraint.Path{Root: "x", Symbol: symX}
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symX] = typ.NewOptional(typ.LiteralBool(false))
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From:      branch,
+			To:        thenNode,
+			Condition: constraint.FromConstraints(constraint.Truthy{Path: pathX}),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+	if got := s.NarrowedTypeAt(thenNode, pathX); got != typ.Never {
+		t.Fatalf("NarrowedTypeAt(thenNode, x) = %v, want never", got)
+	}
+}
+
+func TestNarrowedTypeAt_TruthyFalseOptionalFieldIsNever(t *testing.T) {
+	c := cfg.New()
+	branch := c.AddNode(cfg.NodeBranch, 0, "")
+	thenNode := c.AddNode(cfg.NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), branch, true)
+	c.AddEdge(branch, thenNode, true)
+	c.AddEdge(thenNode, c.Exit(), true)
+
+	g := newMockSSAGraph(c)
+	symX := setupSymbol(g, "x", []cfg.Point{c.Entry(), branch, thenNode})
+	ver := cfg.Version{Root: "x", Symbol: symX, ID: 1}
+	setVersion(g, c.Entry(), symX, ver)
+	setVersion(g, branch, symX, ver)
+	setVersion(g, thenNode, symX, ver)
+
+	fieldType := typ.NewOptional(typ.LiteralBool(false))
+	pathX := constraint.Path{Root: "x", Symbol: symX}
+	pathField := pathX.Field("flag")
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symX] = typ.NewRecord().Field("flag", fieldType).Build()
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From:      branch,
+			To:        thenNode,
+			Condition: constraint.FromConstraints(constraint.Truthy{Path: pathField}),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+	if got := s.NarrowedTypeAt(thenNode, pathField); got != typ.Never {
+		t.Fatalf("NarrowedTypeAt(thenNode, x.flag) = %v, want never", got)
+	}
+}
+
+func TestNarrowedTypeAt_TruthyFalseOptionalFieldDNFIsNever(t *testing.T) {
+	c := cfg.New()
+	branch := c.AddNode(cfg.NodeBranch, 0, "")
+	thenNode := c.AddNode(cfg.NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), branch, true)
+	c.AddEdge(branch, thenNode, true)
+	c.AddEdge(thenNode, c.Exit(), true)
+
+	g := newMockSSAGraph(c)
+	symX := setupSymbol(g, "x", []cfg.Point{c.Entry(), branch, thenNode})
+	ver := cfg.Version{Root: "x", Symbol: symX, ID: 1}
+	setVersion(g, c.Entry(), symX, ver)
+	setVersion(g, branch, symX, ver)
+	setVersion(g, thenNode, symX, ver)
+
+	fieldType := typ.NewOptional(typ.LiteralBool(false))
+	pathX := constraint.Path{Root: "x", Symbol: symX}
+	pathField := pathX.Field("flag")
+	pathOther := pathX.Field("other")
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symX] = typ.NewRecord().Field("flag", fieldType).Field("other", typ.String).Build()
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From: branch,
+			To:   thenNode,
+			Condition: constraint.FromDisjuncts([][]constraint.Constraint{
+				{
+					constraint.HasField{Path: pathX, Field: "flag"},
+					constraint.Truthy{Path: pathField},
+					constraint.Falsy{Path: pathOther},
+				},
+				{
+					constraint.HasField{Path: pathX, Field: "flag"},
+					constraint.Truthy{Path: pathField},
+					constraint.Falsy{Path: pathField},
+				},
+			}),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+	if got := s.NarrowedTypeAt(thenNode, pathField); got != typ.Never {
+		t.Fatalf("NarrowedTypeAt(thenNode, x.flag) = %v, want never", got)
+	}
+}
+
+func TestNarrowedTypeAt_ContradictoryTruthyFalsyUnknownIsNever(t *testing.T) {
+	c := cfg.New()
+	branch := c.AddNode(cfg.NodeBranch, 0, "")
+	thenNode := c.AddNode(cfg.NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), branch, true)
+	c.AddEdge(branch, thenNode, true)
+	c.AddEdge(thenNode, c.Exit(), true)
+
+	g := newMockSSAGraph(c)
+	symX := setupSymbol(g, "x", []cfg.Point{c.Entry(), branch, thenNode})
+	ver := cfg.Version{Root: "x", Symbol: symX, ID: 1}
+	setVersion(g, c.Entry(), symX, ver)
+	setVersion(g, branch, symX, ver)
+	setVersion(g, thenNode, symX, ver)
+
+	pathX := constraint.Path{Root: "x", Symbol: symX}
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symX] = typ.Unknown
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From: branch,
+			To:   thenNode,
+			Condition: constraint.FromConstraints(
+				constraint.Truthy{Path: pathX},
+				constraint.Falsy{Path: pathX},
+			),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+	if got := s.NarrowedTypeAt(thenNode, pathX); got != typ.Never {
+		t.Fatalf("NarrowedTypeAt(thenNode, x) = %v, want never", got)
+	}
+}
+
+func TestNarrowedTypeAt_DNFPrunesContradictoryTruthyFalsyUnknown(t *testing.T) {
+	c := cfg.New()
+	branch := c.AddNode(cfg.NodeBranch, 0, "")
+	thenNode := c.AddNode(cfg.NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), branch, true)
+	c.AddEdge(branch, thenNode, true)
+	c.AddEdge(thenNode, c.Exit(), true)
+
+	g := newMockSSAGraph(c)
+	symX := setupSymbol(g, "x", []cfg.Point{c.Entry(), branch, thenNode})
+	symY := setupSymbol(g, "y", []cfg.Point{c.Entry(), branch, thenNode})
+	ver := cfg.Version{Root: "x", Symbol: symX, ID: 1}
+	verY := cfg.Version{Root: "y", Symbol: symY, ID: 1}
+	setVersion(g, c.Entry(), symX, ver)
+	setVersion(g, branch, symX, ver)
+	setVersion(g, thenNode, symX, ver)
+	setVersion(g, c.Entry(), symY, verY)
+	setVersion(g, branch, symY, verY)
+	setVersion(g, thenNode, symY, verY)
+
+	pathX := constraint.Path{Root: "x", Symbol: symX}
+	pathY := constraint.Path{Root: "y", Symbol: symY}.Field("other")
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symX] = typ.Unknown
+	inputs.DeclaredTypes[symY] = typ.Unknown
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From: branch,
+			To:   thenNode,
+			Condition: constraint.FromDisjuncts([][]constraint.Constraint{
+				{
+					constraint.Truthy{Path: pathX},
+					constraint.Falsy{Path: pathX},
+				},
+				{
+					constraint.Truthy{Path: pathX},
+					constraint.Falsy{Path: pathY},
+				},
+			}),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+	if got := s.NarrowedTypeAt(thenNode, pathX); got != typ.Unknown {
+		t.Fatalf("NarrowedTypeAt(thenNode, x) = %v, want unknown", got)
+	}
+}
+
+func TestNarrowedTypeAt_ContradictoryTruthyFalsyAliasIsNever(t *testing.T) {
+	c := cfg.New()
+	branch := c.AddNode(cfg.NodeBranch, 0, "")
+	thenNode := c.AddNode(cfg.NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), branch, true)
+	c.AddEdge(branch, thenNode, true)
+	c.AddEdge(thenNode, c.Exit(), true)
+
+	g := newMockSSAGraph(c)
+	symX := setupSymbol(g, "x", []cfg.Point{c.Entry(), branch, thenNode})
+	symY := setupSymbol(g, "y", []cfg.Point{c.Entry(), branch, thenNode})
+	verX := cfg.Version{Root: "x", Symbol: symX, ID: 1}
+	verY := cfg.Version{Root: "y", Symbol: symY, ID: 1}
+	setVersion(g, c.Entry(), symX, verX)
+	setVersion(g, branch, symX, verX)
+	setVersion(g, thenNode, symX, verX)
+	setVersion(g, c.Entry(), symY, verY)
+	setVersion(g, branch, symY, verY)
+	setVersion(g, thenNode, symY, verY)
+
+	pathX := constraint.Path{Root: "x", Symbol: symX}
+	pathY := constraint.Path{Root: "y", Symbol: symY}
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symX] = typ.Unknown
+	inputs.DeclaredTypes[symY] = typ.Unknown
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From: branch,
+			To:   thenNode,
+			Condition: constraint.FromConstraints(
+				constraint.NewEqPath(pathX, pathY),
+				constraint.Truthy{Path: pathX},
+				constraint.Falsy{Path: pathY},
+			),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+	if got := s.NarrowedTypeAt(thenNode, pathX); got != typ.Never {
+		t.Fatalf("NarrowedTypeAt(thenNode, x) = %v, want never", got)
+	}
+	if got := s.NarrowedTypeAt(thenNode, pathY); got != typ.Never {
+		t.Fatalf("NarrowedTypeAt(thenNode, y) = %v, want never", got)
+	}
+}
+
 func TestBaseTypeAt_NoSegments(t *testing.T) {
 	c := cfg.New()
 	g := newMockSSAGraph(c)

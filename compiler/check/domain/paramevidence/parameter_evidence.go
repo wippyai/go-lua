@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -28,10 +29,7 @@ func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Func
 		if srcIdx, hasSource := signatureSourceParamIndex(fn, sig, i); hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil {
 			paramType = RefineAnnotationWithEvidence(p.Type, evidence[i])
 		} else {
-			paramType = evidence[i]
-			if !unwrap.IsOptionalLike(evidence[i]) {
-				optional = false
-			}
+			paramType, optional = MergeUnannotatedParam(p, evidence[i])
 		}
 		if !typ.TypeEquals(p.Type, paramType) || p.Optional != optional {
 			modified = true
@@ -51,10 +49,7 @@ func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Func
 			if annotated {
 				paramType = RefineAnnotationWithEvidence(p.Type, evidence[i])
 			} else {
-				paramType = evidence[i]
-				if !unwrap.IsOptionalLike(evidence[i]) {
-					optional = false
-				}
+				paramType, optional = MergeUnannotatedParam(p, evidence[i])
 			}
 		}
 		if optional {
@@ -79,6 +74,50 @@ func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Func
 		builder = builder.WithRefinement(sig.Refinement)
 	}
 	return builder.Build()
+}
+
+// MergeUnannotatedParam merges call/body evidence into an unannotated parameter.
+// Concrete synthesized demands dominate stale nilable seeds: nil remains a valid
+// call-boundary arity concern, but it must not poison the specialized body type
+// once all observed/demanded uses require a non-nil value.
+func MergeUnannotatedParam(param typ.Param, evidence typ.Type) (typ.Type, bool) {
+	if evidence == nil {
+		return param.Type, param.Optional
+	}
+	if concreteParamTypeDominatesNilableEvidence(param.Type, evidence) {
+		return param.Type, false
+	}
+	paramType := evidence
+	optional := param.Optional
+	if hasConcreteParamType(param.Type) {
+		paramType = Join(param.Type, evidence)
+		if concreteParamTypeDominatesNilableEvidence(param.Type, paramType) {
+			return param.Type, false
+		}
+	}
+	if !unwrap.IsOptionalLike(paramType) {
+		optional = false
+	}
+	return paramType, optional
+}
+
+func concreteParamTypeDominatesNilableEvidence(paramType, evidence typ.Type) bool {
+	if !hasConcreteParamType(paramType) || evidence == nil {
+		return false
+	}
+	inner, nilable := typ.SplitNilableFieldType(evidence)
+	if !nilable || inner == nil {
+		return false
+	}
+	return typ.TypeEquals(paramType, inner) || subtype.IsSubtype(paramType, inner)
+}
+
+func hasConcreteParamType(t typ.Type) bool {
+	return t != nil &&
+		!typ.IsAny(t) &&
+		!typ.IsUnknown(t) &&
+		!t.Kind().IsPlaceholder() &&
+		!unwrap.IsOptionalLike(t)
 }
 
 // RefineAnnotationWithEvidence returns the function-body type produced when a

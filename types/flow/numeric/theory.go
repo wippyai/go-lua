@@ -1,6 +1,6 @@
 // theory.go provides SMT-style theory solving for numeric constraints.
 //
-// The TheorySolver bridges the compact State representation to more sophisticated
+// The TheorySolver connects the compact State representation to more sophisticated
 // theory solvers that can perform transitive inference and consistency checking.
 // It wraps two solvers:
 //
@@ -24,7 +24,7 @@ import (
 // Chosen as 2^62 - 1 to avoid overflow in arithmetic operations.
 const maxWeight = 1<<62 - 1
 
-// TheorySolver bridges State to SMT-style theory solvers.
+// TheorySolver connects State to SMT-style theory solvers.
 //
 // The solver maintains two components:
 //   - diff: DifferenceGraph for inequality reasoning (x - y <= c)

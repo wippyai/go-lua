@@ -174,7 +174,7 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 
 	// Build CFG once, shared between overlay inference and return inference.
 	var fnGraph *cfg.Graph
-	if fn.Stmts != nil && len(fn.Stmts) > 0 {
+	if len(fn.Stmts) > 0 {
 		fnGraph = s.getOrBuildFunctionGraph(fn)
 	}
 
@@ -918,7 +918,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		return tempSynth.SynthExpr(expr, p, nil)
 	}
 
-	overlays := inferCallbackEnvOverlays(fnGraph, s.graphEvidence(fnGraph), paramSlots, synthExpr, s.deps.ModuleBindings)
+	overlays := InferCallbackEnvOverlays(fnGraph, s.graphEvidence(fnGraph), paramSlots, synthExpr, s.deps.ModuleBindings)
 	if len(overlays) == 0 {
 		return nil
 	}

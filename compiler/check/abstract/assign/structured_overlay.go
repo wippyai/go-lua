@@ -45,25 +45,30 @@ func indexStructuredWrites(graph *cfg.Graph, assignments []api.AssignmentEvidenc
 	return result
 }
 
-// enrichStructuredOverlayAtPoint applies dominating visible field writes for the
-// current symbol version into a point-specific identifier overlay.
+// enrichStructuredOverlayAtPoint composes dominating visible field writes for
+// the symbols read by the current expression into a point-specific overlay.
 func enrichStructuredOverlayAtPoint(
 	graph *cfg.Graph,
 	idom map[cfg.Point]cfg.Point,
 	writes map[cfg.SymbolID][]structuredWrite,
 	p cfg.Point,
 	overlay api.SpecTypes,
+	symbols []cfg.SymbolID,
 	resolveSym func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
 	synth func(ast.Expr, cfg.Point) typ.Type,
 ) api.SpecTypes {
-	if graph == nil || len(writes) == 0 {
+	if graph == nil || len(writes) == 0 || len(symbols) == 0 {
 		return overlay
 	}
 
 	out := overlay
 	copied := false
-	for sym, symWrites := range writes {
-		if sym == 0 || len(symWrites) == 0 {
+	for _, sym := range dedupeSymbolIDs(symbols) {
+		if sym == 0 {
+			continue
+		}
+		symWrites := writes[sym]
+		if len(symWrites) == 0 {
 			continue
 		}
 

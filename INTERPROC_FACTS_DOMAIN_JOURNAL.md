@@ -9537,3 +9537,1416 @@ Current classification:
   - The journal must not claim "all regressions solved" until that replay is
     clean or every diagnostic is documented as a real source issue with a
     regression fixture proving the engine behavior.
+
+## 2026-05-20 Validation Correction: Replay Errors Are Source-Proof Classes
+
+Problem:
+
+```text
+The previous entry left `wippy.llm.util:compress` as a suspect engine gap. That
+was too vague. The real replay error only appears on the Wippy export path
+(`CheckParsed -> ExportManifest`), where exported function bodies are forced
+through manifest/signature synthesis. Plain `testutil.Check` did not reproduce
+it, which made the class look like a flaky inter-entry fact issue.
+```
+
+Reduction:
+
+- Added `TestExternalLint_DynamicRegistryModelCardRequiresNumericProofAcrossModule`.
+- The reduced model mirrors `wippy.llm.discovery:models`: registry entries have
+  `data: any`, the model-card builder reads `entry.data.max_tokens` and
+  `entry.data.output_tokens`, then the consumer performs token arithmetic after
+  fallback defaults.
+- This is a real source/API proof gap, not a false positive. With `data: any`,
+  `entry.data.max_tokens or 0` can still return a truthy non-number. The later
+  arithmetic is not provable unless the source checks/coerces the field or the
+  registry/model manifest gives a numeric schema.
+- Added the positive boundary `TestExternalLint_PublicTypedConfigSetterPreservesNumericReads`
+  to preserve the intended strong case: a typed config update contract keeps
+  captured numeric reads stable.
+
+Additional current-source classifications now covered by reductions:
+
+- `wippy/tests/app` overlay URL diagnostics are real:
+  `TestExternalLint_UntypedOverlayURLRequiresStringProof` rejects
+  `(args and args.url) or fallback` because the truthy branch can be non-string,
+  and `TestExternalLint_GuardedOverlayURLFeedsStringContract` proves the guarded
+  shape.
+- `wippy.views:page_registry` resource diagnostics are real:
+  `TestExternalLint_DynamicResourceIDsRequireStringProof` rejects untyped
+  registry resource IDs, and `TestExternalLint_GuardedResourceIDsFeedQualifier`
+  proves the guarded shape.
+- `wippy.llm.bedrock:mapper` text-block diagnostics are real:
+  `TestExternalLint_DynamicResponseTextRequiresStringProof` rejects truthy
+  `block.text` as a string proof, and
+  `TestExternalLint_GuardedStringFieldAccumulatorFeedsHelper` proves the typed
+  guard.
+- `wippy.agent.compiler:compiler` `string.gmatch(tool_id, ...)` is real:
+  `TestExternalLint_UntypedToolIDRequiresStringBeforeGmatch` captures that
+  `tool_id: any` is not a string proof.
+- `wippy.llm.google:integration_test` tool-location diagnostics are real:
+  `TestExternalLint_NotNilDoesNotProveStringMethodReceiver` captures that
+  `test.not_nil(x)` proves non-nil, not string-ness, before string-typed test
+  helpers.
+- The test-DSL mock/reset path remains protected by
+  `TestExternalLint_TestDslAfterEachModelResetDoesNotPolluteNumericHelper`;
+  model mocks and `after_each` resets are not the cause of the `compress`
+  replay diagnostics.
+
+Validation:
+
+```text
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/tests/regression -count=1
+```
+
+Result:
+
+- regression package: pass.
+
+Current status:
+
+```text
+The focused current-source classes above are classified as source/proof errors
+with regression coverage. They are allowed to keep the external replay non-clean
+until the external Lua sources or manifests add the missing proof. They are not
+evidence of an unsound checker workaround.
+```
+
+## 2026-05-20 Instability Correction: Product-Domain Conjunction Consistency
+
+Problem:
+
+```text
+`userspace.uploads:upload_repo` was nondeterministic under repeated
+`--cache-reset` lint runs. The bad runs reported missing fields on
+`options.filters.created_after` and `options.filters.created_before`; good runs
+did not. The source pattern was a normal Lua short-circuit guard:
+
+if options.filters and options.filters.created_after then ... end
+```
+
+Root cause:
+
+- A DNF disjunct could contain contradictory atoms for the same logical value:
+  `truthy(options.filters)` and `falsy(options.filters)`.
+- Over `unknown`, `truthy(x)` was a no-op while `falsy(x)` could narrow to
+  `nil | false`, so the result depended on atom/disjunct order.
+- That let an impossible disjunct contribute a partial narrowed type to the DNF
+  join, which then leaked into field validation as a false positive.
+
+Correction:
+
+- `ProductDomain.ApplyConjunction` now builds the equality graph first, then
+  rejects contradictory atom sets before any type, numeric, or shape domain is
+  applied.
+- Rejected contradictory conjunctions mark the product domain unsat, so direct
+  domain callers and DNF branch pruning observe the same state.
+- The contradiction check is equality-class aware: `x == y and x and not y` is
+  unsat for the same reason as `x and not x`.
+- The check is lazy in the hot path: one-atom conjunctions return immediately,
+  and maps are allocated only when a relevant truth/type atom appears.
+- `Solution.NarrowedTypeAt` returns `never` for syntactically false point
+  conditions, and `IsPointDead` treats those points as unreachable.
+- The field hook now receives `FlowOps` and skips dead CFG points instead of
+  validating unreachable evidence.
+
+Non-hack boundary:
+
+```text
+This is not an upload-specific or field-specific workaround. The law belongs to
+the product abstract domain: an impossible conjunction must not contribute to a
+disjunction join. Field diagnostics only observe the corrected abstract state.
+```
+
+Regression coverage:
+
+- false point condition is `never` and dead;
+- truthy guard over `false?` is impossible;
+- truthy field guard over `false?` is impossible;
+- contradictory DNF disjuncts over `unknown` are pruned;
+- alias/equality contradictions are pruned through congruence closure;
+- resolver-free product-domain callers still get equality-aware contradiction
+  pruning from atom keys;
+- external reduced regressions for repeated truthy field guards and optional
+  request filter forwarding stay deterministic.
+
+Validation:
+
+```text
+env GOCACHE=/tmp/go-build-cache go test ./types/flow -run 'TestNarrowedTypeAt_(FalseConditionIsNever|TruthyFalseOptional.*|ContradictoryTruthyFalsyUnknownIsNever|DNFPrunesContradictoryTruthyFalsyUnknown|ContradictoryTruthyFalsyAliasIsNever)' -count=1 -v
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/... -count=1
+env GOCACHE=/tmp/go-build-cache go test ./... -count=1
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check -run '^$' -bench BenchmarkCheck_LargeFunction -benchmem -count=3
+env GOWORK=/tmp/wippy-golua-validate-work/go.work GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache go build -o /tmp/wippy-golua-validate-local ./cmd/wippy
+for i in 1..15: /tmp/wippy-golua-validate-local lint --cache-reset --json --ns userspace.uploads
+env GOWORK=/tmp/wippy-golua-validate-work/go.work WIPPY_BIN=/tmp/wippy-golua-validate-local GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache ../scripts/verify-suite.sh
+```
+
+Result:
+
+- focused flow instability tests: pass.
+- full checker suite: pass.
+- full go-lua module suite: pass.
+- large-function benchmark: about 1.58-1.59 ms/op, 1.091 MB/op, and 10627
+  allocs/op.
+- local Wippy binary against this checkout: builds.
+- `userspace.uploads` replay is stable for 15 cache-reset runs:
+  `errors=2 total=11 upload_repo=0` on every run.
+- The two remaining `userspace.uploads` diagnostics are separate `any` proof
+  errors in `pipeline` and `upload_type`; they are not the nondeterministic
+  short-circuit/field-access regression.
+- local-replace verify suite passes go-lua checker tests and Wippy build, then
+  exits non-zero on external lint targets: `tests/app=2`, `session=33`,
+  `agent/src=6`, `docker-demo=66`, `llm/src=3`, `llm/test=3`, `views=2`.
+  Those remaining counts are classification work for source/proof diagnostics,
+  not evidence that the fixed `upload_repo` instability remains.
+
+## 2026-05-20 Callback Execution Context: DSL Globals Reach Real Body Analysis
+
+Problem:
+
+```text
+A typed migration-style DSL can say:
+
+migration_lib.define(function()
+  database("postgres", function()
+    up(function(db)
+      db:type()
+    end)
+  end)
+end)
+
+where `define` and `database` inject callback-scoped globals and `up` expects a
+transaction callback. The call synthesizer could use those callback specs while
+checking one call expression, but the nested callback body itself was still
+analyzed under only `(graph, parent-scope)`. That meant callback-scoped globals
+were not part of the function-analysis request, so the `up` callback parameter
+could collapse to `any`.
+```
+
+Root cause:
+
+- Contextual callback typing was transient in call synthesis.
+- The function-result query key represented lexical parent scope but not dynamic
+  callback execution context.
+- Without the DSL global overlay in the nested function analysis, the parent
+  callback could not type the nested `up(...)` call, so expected transaction
+  parameter evidence was never produced for the innermost callback.
+
+Correction:
+
+- Added `api.AnalysisContext` as the canonical execution-context component for a
+  function analysis.
+- Callback env overlays now contribute to the function-analysis parent hash, so
+  Salsa/query memoization separates plain lexical analysis from callback-context
+  analysis.
+- The session store records analysis context by graph key; the runner merges the
+  context's global overlay into `GlobalTypes` before every phase.
+- Nested processing derives callback execution context from the parent abstract
+  interpreter evidence and callee contract specs before analyzing a child
+  function.
+- Dead parent callsites do not contribute callback execution context.
+- Parameter evidence still flows through canonical `FunctionFacts`; no
+  migration-specific rule was added.
+
+Real migration source check:
+
+- `/home/wolfy-j/wippy/framework/src/migration/core.lua` still declares
+  `create_up_fn`, `create_after_fn`, and `create_down_fn` as returning functions
+  that accept `fn: any`.
+- Runtime `migration.lua` begins a SQL transaction and calls migration
+  implementations with `tx`, so the callback argument is a transaction adapter,
+  not the raw SQL service.
+- Therefore the external migration package still needs a real DSL/manifest
+  contract for the checker to reject `db:type()` in actual migration callbacks.
+  The engine can now enforce it when the contract exists.
+
+Regression coverage:
+
+- `TestEnvOverlay_MigrationDSLTypedTransactionRejectsServiceTypeMethod` proves
+  nested DSL callback context reaches the real body analysis and rejects a
+  service-only `type()` method on a transaction callback parameter.
+- `TestEnvOverlay_MigrationDSLTypedTransactionAllowsQueryAndExecute` proves the
+  transaction operations remain accepted.
+- `TestEnvOverlay_RuntimeSQLServiceDBAllowsTypeMethod` proves normal
+  `sql.get(...):type()` remains accepted for service DB values.
+
+Validation:
+
+```text
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/tests/core -run 'TestEnvOverlay_(MigrationDSLTypedTransactionRejectsServiceTypeMethod|MigrationDSLTypedTransactionAllowsQueryAndExecute|RuntimeSQLServiceDBAllowsTypeMethod)' -count=1 -v
+```
+
+Result:
+
+- focused callback execution-context tests: pass.
+
+## 2026-05-20 Current Blocker: Higher-Order Factory Return Assigned To Local Loses Callback Shape
+
+Status:
+
+```text
+The flash migration is not complete while this class remains. The abstract
+interpreter can now carry callback execution context into nested body analysis,
+but unannotated local assignment of a function-valued call result still loses
+higher-order callback parameter evidence.
+```
+
+Observed probes:
+
+- Direct callback contract works:
+
+```lua
+local function up(fn: (sql.Transaction) -> any) end
+
+up(function(db)
+  local result, err = db:execute("CREATE TABLE users(id TEXT)")
+  if err then return end
+  local changed: integer = result.rows_affected
+end)
+```
+
+- Type-alias callback contract works:
+
+```lua
+type MigrationStep = (sql.Transaction) -> any
+local function up(fn: MigrationStep) end
+```
+
+- Immediate higher-order factory call works:
+
+```lua
+type MigrationStep = (sql.Transaction) -> any
+
+local function create_up_fn(): (MigrationStep) -> ()
+  return function(fn: MigrationStep) end
+end
+
+create_up_fn()(function(db)
+  local result, err = db:execute("CREATE TABLE users(id TEXT)")
+  if err then return end
+  local changed: integer = result.rows_affected
+end)
+```
+
+- Explicitly typed local assignment works:
+
+```lua
+type MigrationStep = (sql.Transaction) -> any
+type UpFn = (MigrationStep) -> ()
+
+local up: UpFn = create_up_fn()
+```
+
+- Unannotated local assignment fails:
+
+```lua
+local up = create_up_fn()
+up(function(db)
+  local result, err = db:execute("CREATE TABLE users(id TEXT)")
+  if err then return end
+  local changed: integer = result.rows_affected
+end)
+```
+
+The same failure reproduces with a plain callback type:
+
+```lua
+type Step = (number) -> any
+local step = create_step_fn()
+step(function(value)
+  local n: number = value
+end)
+```
+
+So this is not a SQL manifest problem, not a method `self` problem, and not a
+module-qualified type problem. It is a higher-order local-assignment propagation
+problem.
+
+Current failing diagnostics:
+
+```text
+TestEnvOverlay_FactoryReturnCallbackUsesImportedModuleType:
+  cannot assign any to integer
+
+TestEnvOverlay_FactoryReturnCallbackUsesPlainCallbackType:
+  cannot assign any to number
+
+TestEnvOverlay_InferredGlobalCallbackUsesImportedModuleType:
+  cannot assign any to integer
+
+TestEnvOverlay_InferredGlobalCallbackImportedTransactionRejectsServiceDBMethod:
+  missing expected rejection because callback parameter collapsed to any
+```
+
+Root-cause boundary:
+
+- Call synthesis can compute the factory call result correctly when the returned
+  function is invoked immediately.
+- Assignment checking can preserve the shape when the target local has an
+  explicit type annotation.
+- The weak point is the abstract interpreter's local assignment product for
+  `local up = create_up_fn()`: the function-valued call result enters local
+  inferred state with less evidence than the canonical call result.
+- The later callback call `up(function(db) ... end)` then reads `up` from local
+  inferred state, not from the direct call expression, so the expected callback
+  parameter type is gone.
+
+Canonical design requirement:
+
+```text
+Function-valued values are first-class abstract values. Assignment transfer must
+preserve their full function shape, including higher-order parameter and return
+types, exactly as produced by canonical call synthesis. A local variable holding
+a returned function must be indistinguishable from the returned function for
+subsequent call-site contextual typing.
+```
+
+Correct owner:
+
+- Not the migration DSL.
+- Not `EnvOverlay` inference.
+- Not a call-site special case for names like `up`.
+- Not an external framework manifest workaround.
+- The owner is assignment abstract interpretation:
+  `abstract/assign` must publish the canonical function-valued call result into
+  the local inferred type product without widening callback parameters to `any`
+  or losing alias/module-resolved structure.
+
+Implementation rule:
+
+```text
+Do not add a compatibility bridge or fallback lookup for this case. Fix the
+single canonical assignment transfer path so every consumer that reads a local
+function value observes the same function type the call expression produced.
+```
+
+The likely correction is to make assignment inference prefer the canonical
+single-expression call synthesis result for function-valued call results when
+tuple expansion or local SCC widening has produced a top-like or less-evidenced
+function shape. This must be expressed as a general precision law for
+function-valued assignments, not as a migration-specific recognizer.
+
+Rejection criteria:
+
+- Any helper that says "if target name is up/down/after" is invalid.
+- Any helper that guesses `sql.Transaction` from migration source shape is
+  invalid.
+- Any path that only fixes `_G` overlays while leaving `local step =
+  create_step_fn()` broken is invalid.
+- Any change that preserves the failing tests by weakening diagnostics is
+  invalid.
+
+Required regression coverage before claiming completion:
+
+- direct module-qualified callback parameter;
+- direct module-qualified callback alias;
+- higher-order factory immediate invocation;
+- higher-order factory assigned to unannotated local;
+- higher-order factory assigned to explicitly typed local;
+- plain non-module callback factory assigned to unannotated local;
+- `_G` callback env overlay installed from a factory-returned function;
+- negative transaction test proving a service-only method is still rejected.
+
+Required validation:
+
+```text
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/tests/core -run 'TestEnvOverlay_(CallbackParameter|FactoryReturn|InferredGlobalCallback|MigrationDSLTypedTransaction|RuntimeSQLServiceDB)' -count=1 -v
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/tests/core -count=1
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/... -count=1
+env GOCACHE=/tmp/go-build-cache go test ./... -count=1
+```
+
+## 2026-05-20 Canonicalization Audit: Abstract Interpreter Is Improved But Not Fully Canonized
+
+Question:
+
+```text
+Can we verify that the abstract interpreter is no longer scattered logic and is
+properly canonicalized?
+```
+
+Verdict:
+
+```text
+No. The core shape is much closer to the intended model, but the flash migration
+is not complete. The current checkout has a real canonical event stream and a
+canonical function-fact product, but higher-order value propagation is still
+split between the main call synthesizer and assignment-local synthesis/merge
+logic. That split is observable in the factory-returned callback regression.
+```
+
+What is canonical now:
+
+- `api.FlowEvidence` is the abstract-interpreter event stream. It owns calls,
+  returns, assignments, branches, normal exit, identifier uses, field defaults,
+  parameter uses, fresh table literals, function definitions, escaped
+  functions, local type predicates, and captured mutation evidence.
+- `abstract.MaterializeGraphEvidence` is the materialization boundary for graph
+  event evidence.
+- `store.SessionStore.EvidenceForGraph` caches graph evidence instead of asking
+  downstream consumers to rebuild it.
+- `hooks.CheckIdents` now consumes `evidence.IdentifierUses` instead of walking
+  CFG nodes itself.
+- `effects.TerminatesFromReachability` consumes `evidence.NormalExit` plus the
+  flow solution, not a raw return-node scan.
+- `api.FunctionFact` is the canonical function interproc product:
+  `Params`, `Summary`, `Narrow`, `Type`, and `Refinement`.
+- The old production names `ReturnSummaries`, `NarrowReturns`, `FuncTypes`,
+  `ParamHints`, `NormalizeFacts`, and `FunctionTypesFromFacts` do not appear in
+  production checker code.
+- `api.AnalysisContext` is now part of the function-analysis key: callback
+  global overlays affect parent hash, are stored by graph key, and are merged
+  into runner `GlobalTypes` before analysis.
+
+Audit commands:
+
+```text
+rg -n 'ReturnSummaries|NarrowReturns|FuncTypes|ParamHints|NormalizeFacts|NormalizeFunctionFactChannels|FunctionTypesFromFacts|legacy|compatibility bridge|transition' compiler/check types/flow -g'*.go' -g'!*_test.go'
+rg -n 'trace\.GraphEvidence|GraphEvidence\(|EachCallSite|EachStmtCall|graph\.RPO\(|graph\.Info\(|cfg\.BuildCallInfo|cfg\.BuildWithBindings|cfg\.Build\(|FunctionLiteralForGraphSymbol|FunctionLiteralForSymbol|CurrentFreshTableLiteral|DetectKeysCollector|ExtractCapturedContainerEvidence' compiler/check types/flow -g'*.go' -g'!*_test.go'
+```
+
+Remaining non-canonical seams:
+
+1. Assignment inference has its own call-synthesis path:
+
+```text
+compiler/check/abstract/assign/preflow_synth.go
+  synthCallWithOverlay -> ops.CallWithGenericInference
+```
+
+The main call synthesizer uses the full contextual call pipeline:
+
+```text
+compiler/check/synth/phase/extract/call.go
+  synthArgsWithCallContext
+  NewCallPipeline(...).WithReSynth(contextualArgReSynth(...))
+```
+
+This means assignment transfer can observe a weaker call result than the
+canonical expression/call synthesizer. That is exactly the wrong shape for
+first-class function values.
+
+2. Local assignment SCC merge is a separate function-valued state law:
+
+```text
+compiler/check/abstract/assign/infer.go
+  assignedType = expandedAssignValues(...)
+  assignedType = preferPreciseDirectSourceType(...)
+  joined := joinInferredType(old, assignedType)
+```
+
+This is the path for:
+
+```lua
+local up = create_up_fn()
+```
+
+It currently loses callback parameter evidence even though:
+
+```lua
+create_up_fn()(function(db) ... end)
+local up: UpFn = create_up_fn()
+```
+
+both work. Therefore the canonical call result exists, but assignment inference
+does not preserve it as a first-class function value.
+
+3. Named/local function resolution still has multiple consumers:
+
+```text
+compiler/check/callsite/function_literal.go
+compiler/check/synth/phase/extract/named_function.go
+compiler/check/synth/phase/extract/call.go
+compiler/check/domain/functionfact/call_projection.go
+```
+
+Most of this is evidence-backed, not raw CFG rediscovery, but the policy is not
+yet single-owned. Stable function identity, extra-arg source leniency, and
+function-fact projection should read as one canonical projection surface.
+
+4. `domain/keyscoll` remains a specialized recognizer:
+
+```text
+compiler/check/domain/keyscoll/keyscoll.go
+```
+
+It consumes `FlowEvidence`, so it is not the old scattered transfer helper, but
+it is still a hard-coded semantic pattern. The final design should express this
+as function refinement/effect inference over evidence, not a standalone
+keys-collector recognizer.
+
+5. Some direct graph walks are acceptable, but they must stay classified:
+
+- `abstract/trace` may inspect CFG/AST. It is the event materializer.
+- `abstract/cond`, `abstract/assign`, `abstract/decl`, `abstract/mutator`, and
+  `abstract/returns` may lower canonical evidence and graph topology into
+  `flow.Inputs`.
+- `phase/scope`, `phase/resolve`, and `scope/typedefs` may walk graph order for
+  lexical scope/type-declaration construction.
+- Semantic consumers outside those categories should consume `FlowEvidence`,
+  `FunctionFacts`, or `FlowSolution`, not rediscover graph events.
+
+Design blocker proven by tests:
+
+```text
+TestEnvOverlay_FactoryReturnCallbackUsesPlainCallbackType
+TestEnvOverlay_FactoryReturnCallbackUsesImportedModuleType
+TestEnvOverlay_InferredGlobalCallbackUsesImportedModuleType
+TestEnvOverlay_InferredGlobalCallbackImportedTransactionRejectsServiceDBMethod
+```
+
+The direct and immediate-call tests pass. The assigned-local tests fail. This is
+not a framework contract issue and not a SQL type issue. It is a first-class
+function-value preservation issue in assignment abstract interpretation.
+
+Required flash-migration correction:
+
+```text
+Collapse assignment call-result synthesis onto the canonical call pipeline, or
+move the relevant call-result projection into one shared abstract operation used
+by both expression synthesis and assignment inference. A function-valued call
+result must enter local inferred state with the exact same higher-order shape
+that the call expression produced.
+```
+
+Do not implement:
+
+- a migration/up/down/after name rule;
+- a SQL transaction guess;
+- a local fallback lookup that only helps `_G` overlays;
+- a compatibility bridge that keeps both assignment-call synthesis and canonical
+  call synthesis with different precision laws.
+
+Proof needed before declaring the migration complete:
+
+- the factory-return callback tests above pass;
+- the regression remains negative where `sql.Transaction` rejects `sql.DB:type`;
+- `rg` confirms no old fact channels or compatibility projections returned;
+- targeted and full go-lua suites pass;
+- the journal section is updated with the actual correction and validation.
+
+## 2026-05-20 Correction Target: Callback Expected Signature Is Analysis Context
+
+Additional verification split the failing higher-order callback case:
+
+```text
+local step = create_step_fn()
+step(function(value) ... end)
+```
+
+The parent abstract interpreter already infers the local value:
+
+```text
+step : fun(Step)
+```
+
+at the call point. The loss happens later, when the nested callback body is
+checked. Its graph is analyzed with callback global overlays in
+`api.AnalysisContext`, but the expected callback function signature from the
+parent callsite is not part of that context. Therefore the callback parameter
+falls back to `any` even though the parent narrowed call evidence can prove the
+expected signature.
+
+Canonical correction:
+
+```text
+The function-analysis key must include the dynamic callsite function context:
+contract-provided globals and expected callback signature. Nested callback
+analysis must derive that expected signature from the parent narrowed call
+pipeline/effective callee type, then run the child graph under that context.
+```
+
+This is the direct abstract-interpreter model:
+
+- parent graph solves first-class value flow;
+- parent callsite projects an expected callback function type;
+- child graph analysis key includes that expected function type;
+- scope/parameter extraction for the child uses that expected function type.
+
+Rejected alternatives:
+
+- no `up`/`down`/`migration` name rule;
+- no SQL transaction guess;
+- no weakening of assignment diagnostics;
+- no local fallback that bypasses the canonical call pipeline.
+
+## 2026-05-20 Canonicalization Verification: Fact Equality Includes Function Contracts
+
+Verification result after the callback-context correction:
+
+```text
+The assigned-local higher-order callback cases passed, but the `_G` overlay
+factory cases still failed. The parent abstract interpreter solved the overlay
+and `InferCallbackEnvOverlays` produced the expected callback environment
+spec. The spec was not reaching later callback analysis because the fact product
+treated a function with a newly inferred `Spec` as equal to the old function
+without that `Spec`.
+```
+
+Root cause:
+
+```text
+typ.TypeEquals intentionally compares function call shape and ignores
+Effects/Spec/Refinement. That relation is correct for ordinary structural
+typing, but it is too weak for interprocedural fact equality. In the fact
+product, a function contract is part of the abstract value. Using
+typ.TypeEquals there made same-shaped function facts look unchanged, so the
+newly solved callback overlay contract could be skipped from InterprocNext and
+from Salsa fact inputs.
+```
+
+Canonical correction:
+
+- Added `domain/value.FactTypeEqual`.
+- `FactTypeEqual` first requires ordinary structural type equality, then checks
+  function metadata recursively: effects, contract specs, refinements, and
+  nested function metadata inside records/maps/tuples/unions/interfaces/etc.
+- `domain/interproc` fact equality now uses `FactTypeEqual` for function facts,
+  literal signatures, captured types, captured fields, captured container
+  mutations, and constructor fields.
+- `domain/functionfact` parameter merge/widen paths now use `FactTypeEqual`
+  before the weaker structural `typ.TypeEquals`, so nested callback metadata is
+  preserved instead of erased by same-shape parameter merging.
+- Removed the unexported callback-overlay wrapper; production and tests call
+  `InferCallbackEnvOverlays` directly.
+- Renamed the assignment preflow call helper to `evalOverlayCallFirstResult`
+  and documented it as a transfer-local evaluator over the shared call domain.
+  It does not publish facts, run compatibility channels, or own an independent
+  fact merge law.
+
+Why this is canonical:
+
+```text
+There are now two explicit equality relations:
+
+typ.TypeEquals       = ordinary structural type equality for type checking
+value.FactTypeEqual  = abstract fact equality for stored checker facts
+
+The stored fact product no longer depends on a structural equality relation
+that deliberately erases contract/effect/refinement metadata. This keeps the
+abstract interpreter model honest: solved evidence becomes canonical fact state,
+fact equality observes that state, and Salsa inputs are invalidated only when
+the actual fact product changes.
+```
+
+Current verification:
+
+```text
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/domain/value ./compiler/check/domain/interproc ./compiler/check/domain/functionfact -count=1
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/synth/phase/extract ./compiler/check/domain/value ./compiler/check/domain/interproc ./compiler/check/domain/functionfact -count=1
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/tests/core -run 'TestEnvOverlay_(CallbackParameterUsesImportedModuleType|CallbackParameterUsesImportedModuleTypeAlias|CallbackParameterImportedTransactionRejectsServiceDBMethod|FactoryReturnCallbackUsesImportedModuleType|FactoryReturnCallbackUsesPlainCallbackType|FactoryReturnCallbackWithExplicitLocalType|FactoryReturnCallbackImmediateCallUsesImportedModuleType|InferredGlobalCallbackUsesImportedModuleType|InferredGlobalCallbackImportedTransactionRejectsServiceDBMethod)' -count=1 -v
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/abstract/assign ./compiler/check/tests/core -count=1
+env GOCACHE=/tmp/go-build-cache go test ./compiler/check/... -count=1
+env GOCACHE=/tmp/go-build-cache go test ./... -count=1
+```
+
+All commands above pass.
+
+External verify-suite status:
+
+```text
+../scripts/verify-suite.sh
+```
+
+Result on 2026-05-20:
+
+- go-lua checker tests pass;
+- Wippy binary build passes;
+- framework `llm/src`, `llm/test`, `migration`, `views`, `relay/test`,
+  `test`, `actor/test`, `bootloader`, and `wippy/tests/app` lint targets are
+  clean;
+- the suite still exits non-zero on external lint targets outside go-lua:
+  `session` 8 errors, `framework/src/agent/src` 9 errors, `docker-demo`
+  21 errors and 2 warnings.
+
+Those remaining external diagnostics are not edited in this go-lua migration
+checkpoint. They must be classified separately before claiming the global
+Wippy lint surface is clean.
+
+Production cleanup scans:
+
+```text
+rg -n "synthCallWithOverlay|inferCallbackEnvOverlays|NormalizeFacts|FunctionTypesFromFacts|ReturnSummaries|NarrowReturns|FuncTypes|ParamHints|NormalizeFunctionFactChannels|functionTypeLookup|Kept for API compatibility|compatibility bridge|legacy fact|transitional" compiler/check types/flow --glob '*.go' --glob '!**/*_test.go'
+```
+
+Result: no matches.
+
+Canonicalization verdict for this checkpoint:
+
+- The fact system is now one canonical function-fact product, not legacy mirror
+  channels.
+- Function contract/effect/refinement metadata is part of fact equality and
+  convergence, not an ignored side attachment.
+- Callback expected signatures are analysis context, keyed into graph analysis,
+  not guessed from names or framework-specific syntax.
+- Callback environment overlays are solved from `FlowEvidence` and published as
+  contract specs, not as a separate fallback fact channel.
+- Remaining overlay-aware expression evaluation in assignment transfer is
+  classified as local abstract interpretation over the shared call operation.
+  It is not a stored fact authority. If it ever starts producing diagnostics,
+  facts, or merge policy, that would be a regression back into scattered logic.
+
+## 2026-05-20 External Engine-Gap Classification
+
+Local-replace replay with the current go-lua checkout:
+
+```text
+/tmp/wippy-golua-engine-gap-check/wippy-local-current lint --cache-reset --json
+```
+
+Observed remaining external diagnostics:
+
+- `framework/src/llm/src`: 3 errors;
+- `framework/src/views`: 2 errors;
+- `framework/src/agent/src`: 6 errors, all inherited from agent/llm sources;
+- `session`: 33 errors;
+- `docker-demo`: 66 errors, mostly inherited from app/dataflow/session/llm/views
+  sources.
+
+Classification principle:
+
+```text
+The checker must prove from Lua source facts, annotations, manifests, or
+contract specs. It must not infer concrete string/number/record shapes from
+`any`, from raw SQL row maps, from untyped registry entries, or from runtime
+tests such as type(fn) == "function" that do not prove arity and returns.
+```
+
+Session findings:
+
+- `wippy.session.api:get_artifact`,
+  `wippy.session.api:get_artifact_content`,
+  `wippy.session.persist:artifact_repo_test`, and
+  `wippy.session.persist:message_repo_test` metadata field errors are real
+  source/contract issues. Repository code can leave `meta`/`metadata` as the raw
+  database string (`""` or a failed JSON decode path). Lua treats `""` as truthy,
+  so `if artifact.meta then artifact.meta.content_type end` is not safe unless
+  the value is normalized to a table/nil or guarded by `type(meta) == "table"`.
+- `wippy.session.process:command_bus` is a real source/contract issue. The
+  registry requires `(any, any) -> (any, string?)`; `type(handler_func) ==
+  "function"` proves only callability, not parameter arity or return shape.
+- `wippy.session.persist:message_repo` line 286 is a real source/contract issue.
+  `limit = limit or 500` does not prove that an untyped caller supplied a
+  number; `limit + 1` is only safe after annotation or numeric normalization.
+- `wippy.session.process:control_handlers` errors are real source/contract
+  issues unless the operation payload is typed before dispatch. Reading
+  `op.action` from `any` does not prove that the payload satisfies the narrower
+  context write/delete contracts.
+- `wippy.session:start_tokens_test` intentionally calls a typed API with a
+  string to test runtime validation. That is a real static type error, not a
+  checker false positive.
+- `wippy.session.funcs:checkpoint` is a boundary proof issue, not a local
+  length-guard engine gap. Reduced go-lua fixtures already prove that
+  `xs and #xs > 0` makes `xs[1]` non-nil for typed arrays, including imported
+  query-builder chains and `table.sort`. The real source reaches the checkpoint
+  through SQL row/manifest boundaries that do not expose `{SessionContext}` as
+  the return contract. The checker is correct to refuse to derive
+  `existing_summaries[1].text` from an untyped row source.
+
+Other external findings:
+
+- `wippy.llm.util:compress` arithmetic errors are real source/contract issues.
+  A public untyped `compress.configure(new_config)` can write non-numeric values
+  into numeric `CONFIG` fields, and dynamic model-card fields such as
+  `max_tokens`/`output_tokens` are not numeric just because they are truthy.
+- `wippy.llm.bedrock:mapper` text-block accumulation is only safe when the
+  response shape says `block.text: string?` or the code uses a string guard.
+  Existing go-lua tests prove the guarded/typed accumulator case; the current
+  external diagnostic is a missing source/manifest contract at the any boundary.
+- `wippy.views:page_registry` and `wippy.views.api:list_routes` are real
+  source/manifest boundary issues. Registry entries are dynamic; assigning
+  `entry.id`, `entry.data.resources[i]`, or `page.id` to string contracts
+  requires normalization or string guards. Existing tests intentionally reject
+  untyped ids and accept guarded ids.
+
+Regression coverage already present:
+
+```text
+TestExternalLint_LengthGuardEliminatesEmptyTableFallback
+TestExternalLint_ImportedUntypedRepositoryFallbackEliminatesNil
+TestExternalLint_MultiModuleSessionQueryLengthGuardEliminatesNil
+TestExternalLint_SQLBuilderRowsKeepSessionQueryLengthGuard
+TestExternalLint_DynamicModelCardNumericFieldsRequireProof
+TestExternalLint_PublicTypedConfigSetterPreservesNumericReads
+TestExternalLint_DynamicResponseTextRequiresStringProof
+TestExternalLint_GuardedStringFieldAccumulatorFeedsHelper
+TestExternalLint_UntypedPageIDRequiresStringProofForAccessibleRoutes
+TestExternalLint_GuardedPageIDFeedsAccessibleRoutes
+TestExternalLint_UntypedCommandHandlerCannotEnterTypedRegistry
+TestExternalLint_TypedCommandHandlerCanEnterTypedRegistry
+```
+
+Current conclusion:
+
+```text
+The remaining checked external classes are not evidence of a scattered fact
+system or failed abstract-interpreter convergence. They are dynamic source or
+manifest boundaries where no canonical proof exists. Fixing them requires typed
+source contracts, normalization at repository/registry boundaries, or richer
+domain-specific manifests such as SQL row-shape effects. go-lua must not paper
+over them by inventing facts from any.
+```
+
+## 2026-05-20 Canonical Product-Domain Cleanup: No Secondary Fact Paths
+
+The latest cleanup pass addressed the specific design problem that caused drift:
+some production names still described ordinary domain queries as recovery paths.
+That language was not harmless, because it made it too easy to add consumer-side
+repairs instead of fixing the owning abstract domain.
+
+Canonical corrections made in this pass:
+
+- iterator variable typing now goes through one product-domain query,
+  `iterationElementEvidenceAt`, in this order:
+  point-local flow/narrowing state, same-symbol path-domain facts from visible
+  versions, and declared template evidence;
+- condition reconstruction for linear predecessor points is named as
+  predecessor composition, not as a separate recovery mechanism;
+- call-effect argument relations that involve literals or `#expr` are named as
+  original-argument constraint reconstruction, not a compatibility path;
+- callee identity uses primary and secondary binding tables with one
+  deterministic candidate order;
+- symbol-type resolution preserves placeholders only for unresolved global
+  lookup and no longer presents that as an alternative fact authority;
+- open-record field misses are named as field misses before index lookup, not
+  as a type-system repair path.
+
+Production scan after the cleanup:
+
+```text
+rg -n "conditionAtFallback|callConstraintFallbackFromArgs|resolveGlobalOrFallback|isOpenRecordFallback|fallback \\*bind|fallback \\*typ|fallback typ|fallback string|FunctionTypesFromFacts|NormalizeFacts|ReturnSummaries|NarrowReturns|FuncTypes|ParamHints" compiler/check types/flow -g'*.go' -g'!*_test.go'
+```
+
+Result: no matches.
+
+The remaining `compat*`/`incompatible` words in production are ordinary
+type-checking vocabulary, for example "table not compatible with expected
+type". They are not legacy fact channels or bridge layers.
+
+## 2026-05-20 Relational Map-Key Narrowing And Captured Map Effects
+
+The session plugin false positive at `graceful_terminate_session(session_id, ...)`
+exposed a missing relation in the abstract interpreter:
+
+```lua
+local session_info = active_sessions[session_id]
+if session_info then
+  graceful_terminate_session(session_id, session_info, "user_closed")
+end
+```
+
+The truthy branch proves that `session_id` belongs to the key domain of
+`active_sessions`. The canonical representation is `constraint.KeyOf(table,
+key)`, consumed by `ProductDomain.ApplyConjunction`. It narrows the key path to
+`core.KeyType(tableType)` using intersection and marks the branch unsatisfiable
+when the intersection is empty.
+
+This is a product-domain relation, not a function-specific special case:
+
+- direct dynamic-index truthiness, `if t[k] then`, emits `KeyOf(t, k)`;
+- truthiness of a local assigned from a dynamic index emits the same relation
+  through `MapElementSource`;
+- the type domain owns the key narrowing and re-propagates congruence closure
+  after applying it.
+
+Captured map/index writes are also represented canonically:
+
+- `CapturedContainerEvidence` records the written key expression;
+- `ContainerMutation` carries `KeyType`;
+- nested call effects publish `ContainerMutationMapElement`;
+- flow transfer applies those effects as index assignments, so `pairs(map)` sees
+  the map value type produced by writes in nested functions and sibling loop
+  branches.
+
+Regression protection added or maintained in this area:
+
+```text
+TestExternalLint_CapturedMapMutationFeedsPairsIteratorValue
+TestExternalLint_LoopCarriedCapturedMapMutationFeedsSiblingBranchPairs
+TestExternalLint_TruthyDynamicMapReadNarrowsKeyForCall
+TestSessionPlugin_UntypedSessionIDWithoutPresenceProofRejectsStringAPI
+TestExternalLint_CapturedMapTimeFieldsSurviveActivityUpdate
+TestExternalLint_CapturedMapTimeFieldsSurviveUntypedPayloadKey
+TestExternalLint_CapturedMapStdlibTimeFieldsSurviveUntypedPayloadKey
+TestExternalLint_CapturedMapPreWriteReadsDoNotEraseTimeFields
+TestExternalLint_NestedCapturedMapPreWriteReadsDoNotEraseTimeFields
+TestExternalLint_LoopSiblingCapturedMapTimeFieldsConverge
+```
+
+Current verification:
+
+```text
+go test ./compiler/check/tests/regression -run 'TestExternalLint_(CapturedMap.*TimeFields|CapturedMapPreWriteReads|NestedCapturedMapPreWriteReads|LoopSiblingCapturedMapTimeFields|TruthyDynamicMapReadNarrowsKeyForCall)|TestSessionPlugin_' -count=1
+go test ./compiler/check/... ./types/flow/... -count=1
+```
+
+Both commands pass.
+
+## 2026-05-20 Local-Replace Replay: Session Process
+
+The correct replay binary is built from `/tmp/wippy-golua-engine-gap-check`,
+whose `go.mod` replaces `github.com/wippyai/go-lua` with this checkout. The
+official Wippy checkout under `/home/wolfy-j/wippy/wippy` still records the
+pinned module version in `go.mod`, so it must not be used to claim current
+go-lua behavior.
+
+Binary proof:
+
+```text
+go version -m /tmp/wippy-golua-engine-gap-check/wippy-local-current
+```
+
+Relevant line:
+
+```text
+github.com/wippyai/go-lua v1.5.16 => /home/wolfy-j/wippy/go-lua (devel)
+```
+
+Focused replay:
+
+```text
+/tmp/wippy-golua-engine-gap-check/wippy-local-current lint --cache-reset --json --ns wippy.session.process
+```
+
+Current result: 4 errors, 0 warnings.
+
+Fixed by the abstract-domain work:
+
+- `wippy.session.process:plugin` line 370, where a truthy map read now proves
+  the dynamic key is a string before passing it to a string-keyed session API.
+
+Remaining diagnostics:
+
+- `wippy.session.process:command_bus` line 50:
+  assigning `fun(...any) -> any` into a registry typed as
+  `fun(any, any) -> (any, string?)`. A `type(fn) == "function"` guard proves
+  callability only; it does not prove arity or return shape.
+- `wippy.session.process:control_handlers` lines 29 and 31:
+  untyped operation payloads are passed to handlers that require `from_pid:
+  string`. The checker cannot soundly derive that contract from `op:any`.
+- `wippy.session.process:plugin` line 480:
+  `now:sub(last_activity)` still sees the argument as `any` in the full Wippy
+  source. The reduced engine regressions above prove the canonical engine
+  handles captured map writes, pre-write reads, nested function captures,
+  sibling loop branches, and `time.Time` manifests. The live source also defines
+  `ActiveSession.created_at` and `ActiveSession.last_activity` as `any`, so this
+  remains classified as a source/contract boundary unless a smaller reduced
+  checker case proves otherwise.
+
+Rule for the next pass:
+
+```text
+If a live diagnostic has no reduced go-lua fixture that fails, do not mutate the
+engine for it. First build the reduced proof. Only engine-level false positives
+get checker changes; source/manifest contract gaps remain diagnostics.
+```
+
+## 2026-05-20 Canonical Allocation Evidence: `table.create`
+
+The deadlock compiler fixture exposed a non-canonical allocation boundary:
+
+```lua
+node_order = table.create(16, 0)
+```
+
+The old stdlib contract returned a closed empty record, `{}`. That made the
+constructed object publish `node_order: {}` across the constructor/method
+boundary, so a later method saw:
+
+```lua
+self.node_order[i]
+```
+
+as numeric indexing into a closed record. Fixing that in field/index checking
+would have been another consumer-side exception. The canonical ownership is the
+stdlib contract: `table.create` allocates a fresh mutable table whose shape is
+not yet committed. It now returns the existing soft open-table representation:
+
+```text
+{}
+```
+
+with the record open flag set. Flow then specializes the same value through the
+normal product-domain evidence:
+
+- `table.insert(t, v)` uses the table mutator effect and widens the fresh table
+  into `v[]`;
+- `t[k] = v` uses indexer assignment evidence and widens it into a map/table
+  row;
+- constructor summaries carry that allocation evidence to method `self` without
+  method-specific checker rules.
+
+Regression coverage added:
+
+```text
+TestExternalLint_TableCreateFreshArrayShapeSurvivesConstructorMethodBoundary
+TestExternalLint_TableCreateFreshHashShapeAcceptsDynamicWrites
+```
+
+The path-sensitive field-write regression remains covered by:
+
+```text
+TestExternalLint_MethodSelfMapReadPreservesDeclaredValueAfterFieldWrite
+```
+
+That fix is also canonical: when assigning through a sub-path, the new SSA
+version is seeded from predecessor abstract snapshots, then the field write is
+applied. The transfer step does not recursively re-enter `NarrowedTypeAt`; it
+uses the predecessor base type plus predecessor edge condition directly, keeping
+the solve monotone.
+
+Verification:
+
+```text
+go test ./compiler/check/tests/regression -run 'TestExternalLint_(MethodSelfMapReadPreservesDeclaredValueAfterFieldWrite|TableCreateFresh)' -count=1 -v -timeout 60s
+go test . -run TestFixtures -count=1 -timeout 120s
+go test ./compiler/check/... ./types/flow/... ./compiler/stdlib/... -count=1 -timeout 180s
+go test ./... -count=1 -timeout 240s
+```
+
+All four commands pass in this checkout.
+
+## 2026-05-20 Rejected Cache Shape: No Unowned Domain `sync.Map`s
+
+During the performance pass, a tempting but wrong shape appeared: package-level
+`sync.Map` caches around higher-order growth predicates. That is not canonical
+for this checker.
+
+Rejected design:
+
+```text
+compiler/check/domain/value/growth.go package globals:
+  higherOrderGrowthRiskCache
+  functionContainmentCache
+  selfRecursiveMethodCache
+  methodReturnCache
+```
+
+Reason:
+
+- These caches are not owned by the abstract interpreter state.
+- They are not invalidated by a Salsa revision or check session.
+- They add a second hidden memory of domain facts beside the canonical product
+  domain.
+- They make performance better by hiding repeated work, but make the mental
+  model worse.
+
+Canonical rule:
+
+```text
+Pure type-domain operations may use operation-local memoization.
+Cross-query reuse must be owned by the analysis context / Salsa query graph.
+No package-global cache may become an implicit fact authority.
+```
+
+Current retained shape:
+
+- `growthScanState` is local to one `HasHigherOrderGrowthRisk` call.
+- `returnJoinState` is local to one return-slot join operation.
+- The next real performance step must wire reusable expensive predicates
+  through the existing per-check analysis context/Salsa boundary, or not cache
+  them beyond one operation.
+
+Verification after removing the unowned caches:
+
+```text
+go test ./compiler/check/domain/value ./compiler/check/domain/interproc ./compiler/check/domain/returnsummary ./compiler/check/domain/functionfact -count=1 -timeout 60s
+go test ./compiler/check/... ./types/flow/... ./types/typ/... -count=1 -timeout 180s
+```
+
+Both commands pass in this checkout.
+
+## 2026-05-20 Flash Migration: Canonical Call Pipeline Ownership
+
+The remaining split in assignment-local expression evaluation was the call
+operation itself. The main synthesizer and call diagnostic hook already used a
+two-phase call pipeline, but the assignment preflow evaluator still called the
+one-shot helper directly. That meant a local assignment SCC could observe a
+different call-result machine than normal expression synthesis.
+
+Canonical ownership after this migration:
+
+```text
+compiler/check/synth/ops
+  owns the pure call abstract machine:
+    InferCall -> optional ReInfer -> FinishCall
+
+compiler/check/synth/callarg
+  owns the AST argument re-synthesis policy:
+    function literals, table literals, identifiers, attributes, casts,
+    logical expressions, and non-nil assertions
+
+compiler/check/synth/phase/extract
+  owns only phase-local callback environment overlays, then delegates to
+  callarg.Full for ordinary contextual argument re-synthesis
+
+compiler/check/abstract/assign
+  evaluates preflow call results through ops.NewCallPipeline; it no longer has
+  an independent direct call-result path
+
+compiler/check/hooks
+  checks diagnostics through the same ops.NewCallPipeline and callarg policy
+```
+
+Important boundary enforced by test:
+
+```text
+ops must not import compiler/ast
+```
+
+The first attempted shape violated that boundary. The corrected shape keeps the
+domain operation pure and puts syntax-sensitive argument selection in one shared
+compiler-level package. `CallWithGenericInference` remains only as a convenience
+entrypoint; it now runs `NewCallPipeline(...).Run()` and is not a separate call
+implementation.
+
+This is a flash migration, not a bridge:
+
+- `phase/extract/pipeline.go` and `phase/extract/pipeline_test.go` were removed.
+- `ops.NewCallPipeline` is the only pipeline implementation.
+- Production code no longer calls `CallWithGenericInference`; tests keep it as
+  coverage for the compatibility entrypoint.
+- Assignment preflow, expression synthesis, and call diagnostics now share the
+  same call machine.
+
+Verification:
+
+```text
+go test ./compiler/check/synth/ops ./compiler/check/synth/callarg ./compiler/check/synth/phase/extract ./compiler/check/hooks ./compiler/check/abstract/assign -count=1 -timeout 120s
+```
+
+This command passes in this checkout.
+
+### Phase-2 Argument Evidence Is Refinement-Only
+
+The first full-suite run after moving the call pipeline exposed a precision
+regression in the advanced generic result stress fixture:
+
+```text
+cannot return Result<{attrs: {...} | {[string]: string}, id: string, nested: {attempts: unknown}}>,
+expected Result<Envelope>
+```
+
+Root cause: contextual argument re-synthesis could replace a precise first-pass
+argument with a broader second-pass shape. That is not a sound abstract
+interpreter transfer law. The second pass may refine an argument, or fill an
+unknown/any argument with stronger evidence, but it must not erase already
+proved evidence.
+
+Canonical rule added to `ops.CallPipeline`:
+
+```text
+existing argument evidence wins when the contextual candidate is wider;
+contextual candidate wins only when it is a refinement, fills unknown/any, or is
+otherwise the only comparable candidate.
+```
+
+Regression coverage:
+
+```text
+TestCallPipeline_ReSynthAndReInfer_DoesNotWeakenExistingArg
+TestCallPipeline_ReSynthAndReInfer_FillsUnknownArg
+```
+
+### Expression-Local Guards Are Part Of Expression Interpretation
+
+The same stress fixture also exposed a separate weak point: expression-local
+logical guards such as:
+
+```lua
+type(raw.attempts) == "number" and raw.attempts or 0
+```
+
+were only using the local guard narrowing path when an outer flow narrower was
+already present. That is the wrong mental model. `and`/`or` short-circuit guards
+are expression semantics; they do not require a prior solved flow fact.
+
+Canonical correction:
+
+```text
+Logical expression synthesis always enters the local guard-aware transfer.
+The transfer composes with an outer flow solution when one exists, and otherwise
+uses an expression-local narrow state with no outer parent.
+```
+
+Regression coverage:
+
+```text
+TestAdvancedTypeSystem_ExpressionLocalTypeGuardRefinesExpectedTableField
+TestAdvancedTypeSystem_GenericResultCombinatorsPreserveDiscriminantsAndPayloads
+```
+
+## 2026-05-20 Verification Checkpoint After Call Pipeline Migration
+
+Go-lua verification is clean:
+
+```text
+go test ./compiler/check/... ./types/flow/... ./types/typ/... -count=1 -timeout 180s
+go test ./... -count=1 -timeout 240s
+git diff --check
+env GOCACHE=/tmp/go-build-cache staticcheck ./compiler/check/synth/ops ./compiler/check/synth/callarg ./compiler/check/synth/phase/extract ./compiler/check/hooks ./compiler/check/abstract/assign
+```
+
+All four commands pass in this checkout.
+
+Dead-code scan on the touched checker packages:
+
+```text
+env GOCACHE=/tmp/go-build-cache deadcode -test -filter='github.com/wippyai/go-lua/compiler/check/(synth|hooks|abstract/assign)' ./compiler/check/...
+```
+
+The command completes successfully but reports existing test-interface mock
+methods and one test-only helper pattern. The new `callarg` and `ops` pipeline
+code does not appear in that report.
+
+Parent verify-suite status:
+
+```text
+../scripts/verify-suite.sh
+```
+
+The go-lua checker tests and parent `wippy` binary build pass. The script still
+exits non-zero on parent lint targets. Important caveat: the parent module's
+normal `go.mod` resolves `github.com/wippyai/go-lua v1.5.16`, so the default
+verify-suite lint counts are not a proof about this checkout.
+
+Local checkout verification without editing the parent repo:
+
+```text
+go work init /home/wolfy-j/wippy/wippy /home/wolfy-j/wippy/go-lua
+GOWORK=/tmp/go-lua-local-verify.work go build -o /tmp/wippy-local-golua ./cmd/wippy
+```
+
+That temporary binary does use this local go-lua checkout. It still reports
+external lint diagnostics in parent projects (`session`, `framework/src/agent/src`,
+`docker-demo`, and `framework/src/llm/src`). Those are not yet classified as
+source issues versus remaining engine false positives. No external code was
+edited.
+
+Current rule for the next pass:
+
+```text
+Do not weaken the engine to make the parent harness green.
+Classify each remaining external diagnostic by reduced go-lua fixture. Only
+engine-level false positives get go-lua changes; real source/manifest contract
+issues remain external diagnostics.
+```
+
+## 2026-05-20 Length-Indexed Reads Are Canonical Flow Sources
+
+External replay exposed a real engine false positive in the Claude mapper shape:
+
+```lua
+if #claude_messages == 0 then
+  ...
+else
+  local last_msg = claude_messages[#claude_messages]
+  if last_msg.role == "user" then
+    ...
+  end
+end
+```
+
+The branch numeric domain already proved `#claude_messages >= 1` on the else
+edge, and assignment extraction had synthesized a non-nil RHS type. The solver
+still re-read the RHS as a generic dynamic index source and overwrote the
+assignment with `nil | element`. That was a product-domain transfer bug: the
+semantic source of the assignment was not represented in solver inputs, so
+presence evidence lived only in checker-side synthesis.
+
+Canonical correction:
+
+```text
+AST extraction records reads of the form t[#t + k] as flow.LengthIndexSource.
+The flow solver consumes LengthIndexSource during assignment transfer.
+The numeric length domain supplies the lower bound.
+The shared types/narrow presence proof removes nil only when the proof is valid.
+```
+
+The presence proof moved from compiler synthesis into `types/narrow`, so both
+expression synthesis and the solver use one type-domain implementation:
+
+```text
+RefineLengthIndex(container, indexResult, lower, offset)
+  offset == 0: #t > 0 proves the exact Lua length-border element is present.
+  offset != 0: require sequence-shaped container proof before removing nil.
+```
+
+This is not a fallback. It is the final product-domain shape for this class:
+numeric facts prove length, assignment sources carry semantic read form, and the
+abstract transfer function performs the refinement.
+
+Regression coverage added:
+
+```text
+TestExtractAssignments_LengthIndexReadCarriesSemanticSource
+TestExternalLint_LastLoopBuiltUnionArrayElementAfterNonZeroLengthGuardIsPresent
+TestExternalLint_ExportedLoopBuiltUnionArrayElementAfterNonZeroLengthGuardIsPresent
+TestExternalLint_LoopLocalLastElementAfterNonZeroLengthGuardIsPresent
+TestRefineLengthIndex_RemovesNilForPositiveExactLengthIndex
+TestRefineLengthIndex_RequiresSequenceForOffsetIndex
+TestRefineSequenceIndex_UsesTupleLength
+```
+
+Related numeric-domain correction:
+
+```text
+Numeric branch extraction now computes true and false branch constraints
+directly. It no longer mechanically negates a whole true-branch constraint set,
+which was unsound for expressions such as a and b because false(a and b) is not
+equivalent to false(a) and false(b).
+```
+
+Verification after this correction:
+
+```text
+go test ./types/flow/... ./types/narrow ./compiler/check/... -count=1 -timeout 180s
+go test ./... -count=1 -timeout 240s
+git diff --check
+env GOCACHE=/tmp/go-build-cache staticcheck ./types/narrow ./types/flow/... ./compiler/check/abstract/assign ./compiler/check/synth/phase/extract ./compiler/check/tests/regression
+```
+
+All four commands pass in this checkout.
+
+Local parent replay with a temporary go.work and rebuilt `/tmp/wippy-local-golua`:
+
+```text
+/tmp/wippy-local-golua lint --json --level error --limit 0 --lock-file ../test/wippy.lock
+```
+
+Run from `/home/wolfy-j/wippy/framework/src/llm/src`, this now reports three
+errors. The previous `wippy.llm.claude:mapper` false positive is gone. Remaining
+diagnostics are classified as source/manifest contract issues, not engine
+regressions:
+
+```text
+wippy.llm.bedrock:mapper line 503: untyped API block.text flows to a string parser.
+wippy.llm.util:compress line 109: untyped CONFIG mutation can invalidate numeric reads.
+wippy.llm.util:compress line 128: same CONFIG numeric contract issue.
+```
+
+Regression coverage for the Bedrock classification:
+
+```text
+TestExternalLint_UntypedBedrockTextBlockRequiresStringContract
+```
+
+Official verify-suite status:
+
+```text
+../scripts/verify-suite.sh
+```
+
+The go-lua checker tests and parent binary build pass. The script still exits
+non-zero because parent lint targets outside go-lua report:
+
+```text
+/home/wolfy-j/wippy/session: 8 errors
+/home/wolfy-j/wippy/framework/src/agent/src: 9 errors
+/home/wolfy-j/wippy/docker-demo: 21 errors, 2 warnings
+```
+
+The same script reports zero errors for `framework/src/llm/src` because it
+builds the parent binary from the parent module's normal dependency graph. The
+temporary local-replace binary remains the relevant proof for this checkout.

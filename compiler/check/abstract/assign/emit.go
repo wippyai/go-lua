@@ -365,7 +365,7 @@ func ExtractAssignments(fc *abstractcore.FlowContext, inputs *flow.Inputs, keysC
 			// Use pre-assignment symbol overlays for assignment targets so RHS
 			// synthesis follows Lua evaluation order (`x = f(x, ...)`).
 			rhsOverlay := rhsSpecTypesAtAssignPoint(fc.Graph, info, p, overlayTypesAt(p), resolverWithSpec)
-			rhsOverlay = enrichStructuredOverlayAtPoint(fc.Graph, idom, structuredWrites, p, rhsOverlay, resolverWithSpec, wrappedSynth)
+			rhsOverlay = enrichStructuredOverlayAtPoint(fc.Graph, idom, structuredWrites, p, rhsOverlay, assignmentSourceSymbols(info, bindings), resolverWithSpec, wrappedSynth)
 			values = expandedAssignValues(fc.API, info, p, rhsOverlay)
 			valuesComputed = true
 		}
@@ -401,7 +401,7 @@ func ExtractAssignments(fc *abstractcore.FlowContext, inputs *flow.Inputs, keysC
 						}
 					}
 				}
-				// Fall back to expression synthesis if no declared/known type
+				// Use expression synthesis if no declared or known type exists.
 				if typ.IsAbsentOrUnknown(assignedType) {
 					ensureValues()
 					if value := assignValueAt(values, i); value != nil {
@@ -451,6 +451,7 @@ func ExtractAssignments(fc *abstractcore.FlowContext, inputs *flow.Inputs, keysC
 				// so solve-time propagation can derive the value type from map flow facts.
 				var sourcePath constraint.Path
 				var mapElementSource *flow.MapElementSource
+				var lengthIndexSource *flow.LengthIndexSource
 				if source != nil {
 					if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
 						sourcePath = constraint.Path{
@@ -459,6 +460,9 @@ func ExtractAssignments(fc *abstractcore.FlowContext, inputs *flow.Inputs, keysC
 							Segments: sp.Segments,
 						}
 					} else if attr, ok := source.(*ast.AttrGetExpr); ok {
+						if src, ok := lengthIndexSourceFromAttr(attr, constResolver, bindings); ok {
+							lengthIndexSource = src
+						}
 						if _, isStatic := staticSegmentForAttrKey(attr.Key, constResolver); !isStatic {
 							if mp := path.FromExprWithBindings(attr.Object, constResolver, bindings); !mp.IsEmpty() && mp.Symbol != 0 {
 								mp = constraint.Path{
@@ -585,6 +589,7 @@ func ExtractAssignments(fc *abstractcore.FlowContext, inputs *flow.Inputs, keysC
 					Type:                   resolve.Ref(assignedType, sc),
 					ContainerElementSource: containerElemSrc,
 					MapElementSource:       mapElementSource,
+					LengthIndexSource:      lengthIndexSource,
 				})
 
 				// Emit per-field assignments for table literals to enable flow narrowing
@@ -936,12 +941,14 @@ func buildLiftedDynamicIndexerAssignment(
 		valType = typ.Unknown
 	}
 
+	wrappedValue := false
 	for i := len(steps) - 1; i > firstDynamic; i-- {
 		valType = wrapStepValue(steps[i], valType, graph, assignments, bindings, synth, symResolver, p)
+		wrappedValue = true
 	}
 
 	valuePath := constraint.Path{}
-	if source != nil {
+	if source != nil && !wrappedValue {
 		if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
 			valuePath = constraint.Path{
 				Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
@@ -1194,7 +1201,8 @@ func ExtractFuncDefAssignments(fc *abstractcore.FlowContext, inputs *flow.Inputs
 			continue
 		}
 		sym := info.ReceiverSymbol
-		// ReceiverSymbol should be populated by the binder. Fallback to bindings lookup
+		// ReceiverSymbol should be populated by the binder. Consult bindings when
+		// older call metadata lacks it.
 		// if not set (for receivers that are simple identifiers).
 		if sym == 0 {
 			if bindings := fc.Graph.Bindings(); bindings != nil {

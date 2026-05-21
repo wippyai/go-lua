@@ -29,10 +29,10 @@ type paramCall struct {
 	paramIndex int
 }
 
-// inferCallbackEnvOverlays detects the "setup -> param call -> cleanup" pattern
+// InferCallbackEnvOverlays detects the "setup -> param call -> cleanup" pattern
 // using dominance and post-dominance to bracket the callback call.
 // Returns map[paramIndex]map[globalName]typ.Type, or nil if no pattern detected.
-func inferCallbackEnvOverlays(
+func InferCallbackEnvOverlays(
 	graph *cfg.Graph,
 	evidence api.FlowEvidence,
 	paramSlots []cfg.ParamSlot,

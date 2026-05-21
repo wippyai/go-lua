@@ -1,6 +1,7 @@
 package regression
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
@@ -169,8 +170,122 @@ if step.context ~= nil then
 	local ctx = merge_context(step.context)
 	use_context(ctx)
 end
-`, testutil.WithStdlib())
+	`, testutil.WithStdlib())
 	requireExternalLintErrorContaining(t, result, "expected {[string]: any}?")
+}
+
+func TestExternalLint_RepeatedTruthyFieldGuardsAreDeterministic(t *testing.T) {
+	source := `
+local sql = {
+	builder = {
+		select = function(...)
+			local query = {}
+			function query:from(_table) return self end
+			function query:where(_clause, _arg) return self end
+			return query
+		end,
+	}
+}
+
+local function list_with_filters(options)
+	options = options or {}
+	local query = sql.builder.select("uuid"):from("uploads")
+
+	if options.filters and options.filters.content_types and #options.filters.content_types > 0 then
+		for _, content_type in ipairs(options.filters.content_types) do
+			query = query:where("mime_type = ?", content_type)
+		end
+	end
+
+	if options.filters and options.filters.created_after then
+		query = query:where("created_at >= ?", options.filters.created_after)
+	end
+
+	if options.filters and options.filters.created_before then
+		query = query:where("created_at <= ?", options.filters.created_before)
+	end
+
+	return query
+end
+
+return list_with_filters
+`
+	for i := 0; i < 25; i++ {
+		result := testutil.Check(source, testutil.WithStdlib())
+		if result.HasError() {
+			t.Fatalf("run %d: expected repeated truthy field guards to be deterministic and clean, got: %v", i, testutil.ErrorMessages(result.Diagnostics))
+		}
+	}
+}
+
+func TestExternalLint_OptionalRequestFilterForwardingIsDeterministic(t *testing.T) {
+	source := `
+local sql = {
+	builder = {
+		select = function(...)
+			local query = {}
+			function query:from(_table) return self end
+			function query:where(_clause, _arg) return self end
+			return query
+		end,
+	}
+}
+
+local upload_repo = {}
+
+function upload_repo.list_with_filters(options)
+	options = options or {}
+	local query = sql.builder.select("uuid"):from("uploads")
+
+	if options.filters and options.filters.content_types and #options.filters.content_types > 0 then
+		for _, content_type in ipairs(options.filters.content_types) do
+			query = query:where("mime_type = ?", content_type)
+		end
+	end
+
+	if options.filters and options.filters.created_after then
+		query = query:where("created_at >= ?", options.filters.created_after)
+	end
+
+	if options.filters and options.filters.created_before then
+		query = query:where("created_at <= ?", options.filters.created_before)
+	end
+
+	return query
+end
+
+local function handle(args)
+	args = args or {}
+	local filters = args.filters or {}
+	local request = {}
+	if next(filters) then
+		request.filters = filters
+	end
+	return upload_repo.list_with_filters(request)
+end
+
+return { handle = handle }
+`
+	for i := 0; i < 25; i++ {
+		result := testutil.Check(source, testutil.WithStdlib())
+		if result.HasError() {
+			t.Fatalf("run %d: expected optional filter forwarding to be deterministic and clean, got: %v", i, testutil.ErrorMessages(result.Diagnostics))
+		}
+	}
+}
+
+func TestExternalLint_DefinitelyFalsyGuardDoesNotEvaluateRightHandField(t *testing.T) {
+	result := testutil.Check(`
+type Filters = false?
+
+local filters: Filters = false
+if filters and filters.created_after then
+	return filters.created_after
+end
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected definitely falsy left side of and to suppress RHS field diagnostics, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
 }
 
 func TestExternalLint_StringGsubCallbackCaptureIsString(t *testing.T) {
@@ -441,6 +556,29 @@ run_suite({ { id = "suite:test" } })
 	}
 }
 
+func TestExternalLint_UntypedBedrockTextBlockRequiresStringContract(t *testing.T) {
+	result := testutil.Check(`
+local function parse_text_tool_call(text: string, tool_names: {[string]: boolean})
+	return text, tool_names
+end
+
+local function map_response(blocks: {any}, tool_names: {[string]: boolean})
+	local text_blocks = {}
+	for _, block in ipairs(blocks) do
+		if block.text then
+			table.insert(text_blocks, block.text)
+		end
+	end
+	for _, text in ipairs(text_blocks) do
+		parse_text_tool_call(text, tool_names)
+	end
+end
+
+map_response({ { text = 42 } }, { run = true })
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected string")
+}
+
 func TestExternalLint_UntypedConfigMutationCanInvalidateNumericReads(t *testing.T) {
 	result := testutil.Check(`
 local CONFIG = {
@@ -493,6 +631,237 @@ return tokens_to_chars(10)
 	if result.HasError() {
 		t.Fatalf("expected typed config update to preserve numeric reads, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
+}
+
+func TestExternalLint_PublicTypedConfigSetterPreservesNumericReads(t *testing.T) {
+	result := testutil.Check(`
+type ConfigUpdate = {
+	chars_per_token: integer?,
+	prompt_buffer_tokens: integer?,
+}
+
+local compress = {}
+
+local CONFIG = {
+	chars_per_token = 4,
+	prompt_buffer_tokens = 500,
+}
+
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * CONFIG.chars_per_token)
+end
+
+local function get_model_info()
+	local usable_input_tokens = 8000 - 1000 - CONFIG.prompt_buffer_tokens
+	return tokens_to_chars(usable_input_tokens)
+end
+
+function compress.configure(new_config: ConfigUpdate)
+	for key, value in pairs(new_config) do
+		if CONFIG[key] ~= nil then
+			CONFIG[key] = value
+		end
+	end
+	return compress
+end
+
+function compress.run()
+	return get_model_info()
+end
+
+return compress
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected typed public config setter to preserve numeric reads, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_DynamicRegistryModelCardRequiresNumericProofAcrossModule(t *testing.T) {
+	entryType := typ.NewRecord().
+		Field("id", typ.String).
+		Field("kind", typ.String).
+		Field("meta", typ.NewMap(typ.String, typ.Any)).
+		Field("data", typ.Any).
+		Build()
+	registryType := typ.NewRecord().
+		Field("find", typ.Func().
+			Param("query", typ.Any).
+			Returns(typ.NewArray(entryType), typ.NewOptional(typ.LuaError)).
+			Build()).
+		Build()
+
+	registryManifest := io.NewManifest("registry")
+	registryManifest.SetExport(registryType)
+
+	modelsModule := testutil.CheckAndExport(`
+local registry = require("registry")
+local models = {}
+
+function models._build_model_card(entry)
+	if not entry then
+		return nil
+	end
+	local dimensions: number? = nil
+	if type(entry.data) == "table" then
+		local parsed_dimensions = tonumber(entry.data.dimensions)
+		if type(parsed_dimensions) == "number" then
+			dimensions = parsed_dimensions
+		end
+	end
+	return {
+		id = entry.id or "",
+		name = entry.meta and entry.meta.name or "",
+		title = entry.meta and entry.meta.title or "",
+		description = entry.meta and entry.meta.comment or "",
+		capabilities = entry.meta and entry.meta.capabilities or {},
+		class = entry.meta and entry.meta.class or {},
+		priority = entry.meta and entry.meta.priority or 0,
+		max_tokens = entry.data and entry.data.max_tokens or 0,
+		output_tokens = entry.data and entry.data.output_tokens or 0,
+		pricing = entry.data and entry.data.pricing or {},
+		providers = entry.data and entry.data.providers or {},
+		dimensions = dimensions,
+	}
+end
+
+function models.get_by_name(name)
+	local entries, err = registry.find({ name = name })
+	if err then
+		return nil, err
+	end
+	if not entries or #entries == 0 then
+		return nil, "not found"
+	end
+	return models._build_model_card(entries[1])
+end
+
+return models
+`, "models", testutil.WithStdlib(), testutil.WithManifest("registry", registryManifest))
+	if modelsModule.HasError() {
+		t.Fatalf("models module errors: %v", testutil.ErrorMessages(modelsModule.Errors))
+	}
+
+	compressModule := testutil.CheckAndExport(`
+local models = require("models")
+
+local compress = { _models = models }
+
+local CONFIG = {
+	chars_per_token = 4,
+	prompt_buffer_tokens = 500,
+	context_safety_margin = 0.1,
+	output_buffer_tokens = 200,
+}
+
+local function tokens_to_chars(tokens)
+	return math.floor(tokens * CONFIG.chars_per_token)
+end
+
+local function chars_to_tokens(chars)
+	return math.floor((tonumber(chars) or 0) / CONFIG.chars_per_token)
+end
+
+local function get_model_info(model_name, mock_model_info)
+	if mock_model_info then
+		return mock_model_info, nil
+	end
+
+	local model_card, err = compress._models.get_by_name(model_name)
+	if not model_card then
+		return nil, err
+	end
+
+	local max_context_tokens = model_card.max_tokens or 8000
+	local max_output_tokens = model_card.output_tokens or 1000
+	local usable_input_tokens = max_context_tokens - max_output_tokens - CONFIG.prompt_buffer_tokens
+	local usable_input_chars = tokens_to_chars(usable_input_tokens)
+	local safe_input_chars = math.floor(usable_input_chars * (1 - CONFIG.context_safety_margin))
+	local safe_output_chars = tokens_to_chars(max_output_tokens)
+
+	return {
+		max_context_tokens = max_context_tokens,
+		max_output_tokens = max_output_tokens,
+		usable_input_chars = safe_input_chars,
+		usable_input_tokens = chars_to_tokens(safe_input_chars),
+		max_output_chars = safe_output_chars,
+	}, nil
+end
+
+local function calculate_safe_max_tokens(target_chars, model_info)
+	local needed_tokens = chars_to_tokens(target_chars) + CONFIG.output_buffer_tokens
+	return math.min(needed_tokens, tonumber(model_info.max_output_tokens) or 1000)
+end
+
+function compress.to_size(model_name, content, target_chars, options, mock_model_info)
+	local model_info, err = get_model_info(model_name, mock_model_info)
+	if err then
+		return nil, err
+	end
+	model_info = assert(model_info)
+	return calculate_safe_max_tokens(target_chars, model_info)
+end
+
+function compress.get_stats(model_name, content, target_chars, mock_model_info)
+	local model_info, err = get_model_info(model_name, mock_model_info)
+	if err then
+		return nil, err
+	end
+	local content_chars = #content
+	return {
+		model_max_context_tokens = model_info.max_context_tokens,
+		model_max_output_tokens = model_info.max_output_tokens,
+		model_usable_input_chars = model_info.usable_input_chars,
+		model_max_output_chars = model_info.max_output_chars,
+		fits_in_context = content_chars <= model_info.usable_input_chars,
+		safe_max_tokens_for_target = calculate_safe_max_tokens(target_chars, model_info),
+	}, nil
+end
+
+return compress
+`, "compress", testutil.WithStdlib(), testutil.WithModule("models", modelsModule))
+	if !compressModule.HasError() {
+		t.Fatalf("expected exported compress-style module to require numeric proof, got no errors")
+	}
+	messages := strings.Join(testutil.ErrorMessages(compressModule.Errors), " | ")
+	if !strings.Contains(messages, "cannot perform arithmetic") {
+		t.Fatalf("expected arithmetic proof diagnostic, got: %s", messages)
+	}
+}
+
+func TestExternalLint_UntypedToolIDRequiresStringBeforeGmatch(t *testing.T) {
+	result := testutil.Check(`
+local function canonical_tool_name(tool_id: any)
+	local parts = {}
+	for part in string.gmatch(tool_id, "[^:]+") do
+		table.insert(parts, part)
+	end
+	return #parts >= 2 and parts[#parts] or tool_id
+end
+
+return canonical_tool_name
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected string")
+}
+
+func TestExternalLint_NotNilDoesNotProveStringMethodReceiver(t *testing.T) {
+	result := testutil.Check(`
+local test = {}
+function test.not_nil(val: any, msg: string?): any
+	if val == nil then
+		error(msg or "nil")
+	end
+	return val
+end
+function test.contains(str: string, substr: string)
+	return string.find(str, substr, 1, true) ~= nil
+end
+
+local response = unknown_response
+local location = response.result.tool_calls[1].arguments.location
+test.not_nil(location, "Missing location argument")
+return test.contains(location:lower(), "london")
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected string")
 }
 
 func TestExternalLint_StringMetadataRequiresStructuredProof(t *testing.T) {

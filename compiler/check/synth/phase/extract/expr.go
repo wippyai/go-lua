@@ -40,16 +40,28 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// localNarrowOps wraps a api.FlowOps and overrides NarrowedTypeAt for one path.
+type localTypeOverride struct {
+	path constraint.Path
+	t    typ.Type
+}
+
+// localNarrowOps wraps a api.FlowOps and overrides NarrowedTypeAt for
+// expression-local facts proven by short-circuit evaluation.
 type localNarrowOps struct {
 	inner        api.FlowOps
 	overridePath constraint.Path
 	overrideType typ.Type
+	overrides    []localTypeOverride
 }
 
 func (n *localNarrowOps) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
-	if path.Equal(n.overridePath) {
+	if !n.overridePath.IsEmpty() && path.Equal(n.overridePath) {
 		return n.overrideType
+	}
+	for i := len(n.overrides) - 1; i >= 0; i-- {
+		if path.Equal(n.overrides[i].path) {
+			return n.overrides[i].t
+		}
 	}
 	if n.inner != nil {
 		return n.inner.NarrowedTypeAt(p, path)
@@ -108,8 +120,11 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 		if !path.IsEmpty() {
 			narrowed := narrower.NarrowedTypeAt(p, path)
 			if narrowed != nil {
-				if key, ok := ex.Key.(*ast.NumberExpr); ok && nilPresenceIsOnlyFlowUncertainty(narrowed) && s.literalLengthBoundProvesIndex(objType, ex.Object, key.Value, p, sc, narrower) {
+				if key, ok := ex.Key.(*ast.NumberExpr); ok && narrow.NilPresenceIsOnlyFlowUncertainty(narrowed) && s.literalLengthBoundProvesIndex(objType, ex.Object, key.Value, p, sc, narrower) {
 					goto skipNarrowedAttr
+				}
+				if refined := s.narrowArrayIndexByLengthExpr(objType, narrowed, ex.Object, ex.Key, p, sc, narrower); refined != nil {
+					return refined
 				}
 				if specialized := s.stableLocalFunctionValueType(ex, p, sc, narrowed, nil); specialized != nil {
 					return specialized
@@ -188,7 +203,7 @@ skipNarrowedAttr:
 				if narrowedResult := s.narrowTupleIndex(objType, key.Value, it, p, narrower); narrowedResult != nil {
 					return narrowedResult
 				}
-				if narrowedResult := s.narrowArrayIndexByLenBound(it, ex.Object, key.Value, 0, p, sc, narrower); narrowedResult != nil {
+				if narrowedResult := s.narrowArrayIndexByLenBound(objType, it, ex.Object, key.Value, 0, p, sc, narrower); narrowedResult != nil {
 					return narrowedResult
 				}
 				// Check for KeyOf constraint to unwrap optional on map index
@@ -240,9 +255,12 @@ skipNarrowedAttr:
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, keyType); ok {
 			if narrower != nil {
 				if varName, offset, ok := indexVarOffsetFromExpr(ex.Key); ok {
-					if narrowedResult := s.narrowArrayIndexByLenBound(it, ex.Object, varName, offset, p, sc, narrower); narrowedResult != nil {
+					if narrowedResult := s.narrowArrayIndexByLenBound(objType, it, ex.Object, varName, offset, p, sc, narrower); narrowedResult != nil {
 						return narrowedResult
 					}
+				}
+				if narrowedResult := s.narrowArrayIndexByLengthExpr(objType, it, ex.Object, ex.Key, p, sc, narrower); narrowedResult != nil {
+					return narrowedResult
 				}
 			}
 			if specialized := s.stableLocalFunctionValueType(ex, p, sc, it, nil); specialized != nil {
@@ -375,9 +393,8 @@ func (s *Synthesizer) narrowTupleIndex(objType typ.Type, varName string, indexRe
 	return nil
 }
 
-func (s *Synthesizer) narrowArrayIndexByLenBound(indexResult typ.Type, objExpr ast.Expr, varName string, offset int64, p cfg.Point, sc *scope.State, narrower api.FlowOps) typ.Type {
-	opt, ok := indexResult.(*typ.Optional)
-	if !ok || narrower == nil || s == nil || s.deps.Paths == nil {
+func (s *Synthesizer) narrowArrayIndexByLenBound(objType, indexResult typ.Type, objExpr ast.Expr, varName string, offset int64, p cfg.Point, sc *scope.State, narrower api.FlowOps) typ.Type {
+	if narrower == nil || s == nil || s.deps.Paths == nil {
 		return nil
 	}
 	lower, _, hasBounds := narrower.BoundsAt(p, varName)
@@ -401,18 +418,62 @@ func (s *Synthesizer) narrowArrayIndexByLenBound(indexResult typ.Type, objExpr a
 	if lenOffset > -offset {
 		return nil
 	}
-	return opt.Inner
+	return narrow.RefineSequenceIndex(objType, indexResult, lower+offset)
 }
 
 func (s *Synthesizer) narrowArrayIndexByLiteralLenBound(objType, indexResult typ.Type, objExpr ast.Expr, indexLiteral string, p cfg.Point, sc *scope.State, narrower api.FlowOps) typ.Type {
+	index, ok := numparse.ParseIntegerLiteral(indexLiteral)
+	if !ok {
+		return nil
+	}
 	if !s.literalLengthBoundProvesIndex(objType, objExpr, indexLiteral, p, sc, narrower) {
 		return nil
 	}
-	narrowed := narrow.RemoveNil(indexResult)
-	if typ.IsNever(narrowed) || typ.TypeEquals(narrowed, indexResult) {
+	return narrow.RefineSequenceIndex(objType, indexResult, index)
+}
+
+func (s *Synthesizer) narrowArrayIndexByLengthExpr(objType, indexResult typ.Type, objExpr, keyExpr ast.Expr, p cfg.Point, sc *scope.State, narrower api.FlowOps) typ.Type {
+	if narrower == nil || s == nil || s.deps.Paths == nil {
 		return nil
 	}
-	return narrowed
+	tablePath := s.deps.Paths(p, objExpr, sc)
+	if tablePath.IsEmpty() {
+		return nil
+	}
+	lenPath, offset, ok := lenIndexPathFromExpr(keyExpr, p, s.deps.Paths, sc)
+	if !ok || !lenPath.Equal(tablePath) {
+		return nil
+	}
+	lower, _, ok := narrower.LengthBoundsAt(p, tablePath)
+	if !ok {
+		return nil
+	}
+	return narrow.RefineLengthIndex(objType, indexResult, lower, offset)
+}
+
+func lenIndexPathFromExpr(expr ast.Expr, p cfg.Point, paths func(cfg.Point, ast.Expr, *scope.State) constraint.Path, sc *scope.State) (constraint.Path, int64, bool) {
+	switch e := expr.(type) {
+	case *ast.UnaryLenOpExpr:
+		path := paths(p, e.Expr, sc)
+		return path, 0, !path.IsEmpty()
+	case *ast.ArithmeticOpExpr:
+		if e.Operator != "+" && e.Operator != "-" {
+			return constraint.Path{}, 0, false
+		}
+		path, offset, ok := lenIndexPathFromExpr(e.Lhs, p, paths, sc)
+		if !ok {
+			return constraint.Path{}, 0, false
+		}
+		k, ok := intConstFromExpr(e.Rhs)
+		if !ok {
+			return constraint.Path{}, 0, false
+		}
+		if e.Operator == "-" {
+			k = -k
+		}
+		return path, offset + k, true
+	}
+	return constraint.Path{}, 0, false
 }
 
 func (s *Synthesizer) literalLengthBoundProvesIndex(objType typ.Type, objExpr ast.Expr, indexLiteral string, p cfg.Point, sc *scope.State, narrower api.FlowOps) bool {
@@ -428,134 +489,7 @@ func (s *Synthesizer) literalLengthBoundProvesIndex(objType typ.Type, objExpr as
 		return false
 	}
 	lower, _, ok := narrower.LengthBoundsAt(p, tablePath)
-	return ok && lower >= index && lengthBoundProvesSequenceIndex(objType, index)
-}
-
-func nilPresenceIsOnlyFlowUncertainty(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	if t.Kind() == kind.Nil {
-		return true
-	}
-	narrowed := narrow.RemoveNil(t)
-	return !typ.IsNever(narrowed) && !typ.TypeEquals(narrowed, t)
-}
-
-func lengthBoundProvesSequenceIndex(t typ.Type, index int64) bool {
-	return lengthBoundProvesSequenceIndexDepth(t, index, 0)
-}
-
-func lengthBoundProvesSequenceIndexDepth(t typ.Type, index int64, depth int) bool {
-	if t == nil || typ.DepthExceeded(depth) {
-		return false
-	}
-	t = unwrap.Alias(t)
-	if inst, ok := t.(*typ.Instantiated); ok {
-		if resolved, err := querycore.ResolveInstantiated(inst); err == nil {
-			return lengthBoundProvesSequenceIndexDepth(resolved, index, depth+1)
-		}
-	}
-	return typ.Visit(t, typ.Visitor[bool]{
-		Array: func(*typ.Array) bool {
-			return true
-		},
-		Tuple: func(tuple *typ.Tuple) bool {
-			return tuple != nil && int64(len(tuple.Elements)) >= index
-		},
-		Optional: func(o *typ.Optional) bool {
-			return lengthBoundProvesSequenceIndexDepth(o.Inner, index, depth+1)
-		},
-		Union: func(u *typ.Union) bool {
-			found := false
-			for _, m := range u.Members {
-				if m == nil || m.Kind() == kind.Nil {
-					continue
-				}
-				if lengthBoundProvesSequenceIndexDepth(m, index, depth+1) {
-					found = true
-					continue
-				}
-				if typeMaxLenLessThanIndex(m, index, depth+1) {
-					continue
-				}
-				return false
-			}
-			return found
-		},
-		Intersection: func(in *typ.Intersection) bool {
-			for _, m := range in.Members {
-				if lengthBoundProvesSequenceIndexDepth(m, index, depth+1) {
-					return true
-				}
-			}
-			return false
-		},
-		Recursive: func(r *typ.Recursive) bool {
-			if r.Body == nil || r.Body == r {
-				return false
-			}
-			return lengthBoundProvesSequenceIndexDepth(r.Body, index, depth+1)
-		},
-		Default: func(typ.Type) bool {
-			return false
-		},
-	})
-}
-
-func typeMaxLenLessThanIndex(t typ.Type, index int64, depth int) bool {
-	if t == nil || typ.DepthExceeded(depth) {
-		return false
-	}
-	t = unwrap.Alias(t)
-	if inst, ok := t.(*typ.Instantiated); ok {
-		if resolved, err := querycore.ResolveInstantiated(inst); err == nil {
-			return typeMaxLenLessThanIndex(resolved, index, depth+1)
-		}
-	}
-	return typ.Visit(t, typ.Visitor[bool]{
-		Tuple: func(tuple *typ.Tuple) bool {
-			return tuple == nil || int64(len(tuple.Elements)) < index
-		},
-		Record: func(rec *typ.Record) bool {
-			return rec != nil &&
-				!rec.Open &&
-				!rec.HasMapComponent() &&
-				rec.Metatable == nil &&
-				index > 0
-		},
-		Optional: func(o *typ.Optional) bool {
-			return o == nil || typeMaxLenLessThanIndex(o.Inner, index, depth+1)
-		},
-		Union: func(u *typ.Union) bool {
-			for _, m := range u.Members {
-				if m == nil || m.Kind() == kind.Nil {
-					continue
-				}
-				if !typeMaxLenLessThanIndex(m, index, depth+1) {
-					return false
-				}
-			}
-			return true
-		},
-		Intersection: func(in *typ.Intersection) bool {
-			for _, m := range in.Members {
-				if typeMaxLenLessThanIndex(m, index, depth+1) {
-					return true
-				}
-			}
-			return false
-		},
-		Recursive: func(r *typ.Recursive) bool {
-			if r.Body == nil || r.Body == r {
-				return false
-			}
-			return typeMaxLenLessThanIndex(r.Body, index, depth+1)
-		},
-		Default: func(typ.Type) bool {
-			return false
-		},
-	})
+	return ok && lower >= index && narrow.LengthBoundProvesSequenceIndex(objType, index)
 }
 
 func indexVarOffsetFromExpr(expr ast.Expr) (string, int64, bool) {
@@ -692,6 +626,27 @@ func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.P
 		}
 	}
 
+	if ex.Operator == "and" {
+		if overrides := s.truthyLocalOverrides(ex.Lhs, p, sc, narrower); len(overrides) > 0 {
+			wrapped := &localNarrowOps{
+				inner:     narrower,
+				overrides: overrides,
+			}
+			right := s.SynthExpr(ex.Rhs, p, wrapped)
+			return ops.LogicalAndTyped(left, right)
+		}
+	}
+	if ex.Operator == "or" {
+		if overrides := s.falsyLocalOverrides(ex.Lhs, p, sc, narrower); len(overrides) > 0 {
+			wrapped := &localNarrowOps{
+				inner:     narrower,
+				overrides: overrides,
+			}
+			right := s.SynthExpr(ex.Rhs, p, wrapped)
+			return ops.LogicalOrTyped(left, right)
+		}
+	}
+
 	// Extract path for LHS expression
 	lhsPath := s.logicalNarrowPath(p, ex.Lhs, sc)
 
@@ -724,6 +679,76 @@ func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.P
 	}
 
 	return s.synthLogicalOpCore(ex, recurse)
+}
+
+func (s *Synthesizer) truthyLocalOverrides(expr ast.Expr, p cfg.Point, sc *scope.State, narrower api.FlowOps) []localTypeOverride {
+	return s.logicalLocalOverrides(expr, p, sc, narrower, true)
+}
+
+func (s *Synthesizer) falsyLocalOverrides(expr ast.Expr, p cfg.Point, sc *scope.State, narrower api.FlowOps) []localTypeOverride {
+	return s.logicalLocalOverrides(expr, p, sc, narrower, false)
+}
+
+func (s *Synthesizer) logicalLocalOverrides(expr ast.Expr, p cfg.Point, sc *scope.State, narrower api.FlowOps, truthy bool) []localTypeOverride {
+	if expr == nil {
+		return nil
+	}
+	if logical, ok := expr.(*ast.LogicalOpExpr); ok {
+		switch {
+		case truthy && logical.Operator == "and":
+			left := s.logicalLocalOverrides(logical.Lhs, p, sc, narrower, true)
+			leftNarrower := composeLocalNarrower(narrower, left)
+			right := s.logicalLocalOverrides(logical.Rhs, p, sc, leftNarrower, true)
+			return append(left, right...)
+		case !truthy && logical.Operator == "or":
+			left := s.logicalLocalOverrides(logical.Lhs, p, sc, narrower, false)
+			leftNarrower := composeLocalNarrower(narrower, left)
+			right := s.logicalLocalOverrides(logical.Rhs, p, sc, leftNarrower, false)
+			return append(left, right...)
+		}
+	}
+	if truthy {
+		if probe, ok := guard.ExtractTypeEqualityProbe(expr); ok {
+			probePath := s.logicalNarrowPath(p, probe.Expr, sc)
+			if !probePath.IsEmpty() {
+				return []localTypeOverride{{
+					path: probePath,
+					t:    guard.TypeForTypeKey(probe.Key),
+				}}
+			}
+		}
+	}
+	path := s.logicalNarrowPath(p, expr, sc)
+	if path.IsEmpty() {
+		return nil
+	}
+	t := s.SynthExpr(expr, p, narrower)
+	if t == nil {
+		return nil
+	}
+	var narrowed typ.Type
+	if truthy {
+		narrowed = narrow.ToTruthy(t)
+	} else {
+		narrowed = narrow.ToFalsy(t)
+	}
+	if typ.IsNever(narrowed) || typ.TypeEquals(narrowed, t) {
+		return nil
+	}
+	return []localTypeOverride{{
+		path: path,
+		t:    narrowed,
+	}}
+}
+
+func composeLocalNarrower(inner api.FlowOps, overrides []localTypeOverride) api.FlowOps {
+	if len(overrides) == 0 {
+		return inner
+	}
+	return &localNarrowOps{
+		inner:     inner,
+		overrides: overrides,
+	}
 }
 
 func (s *Synthesizer) logicalNarrowPath(p cfg.Point, expr ast.Expr, sc *scope.State) constraint.Path {

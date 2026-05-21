@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
+	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -51,7 +52,7 @@ func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 		if !returnsummary.Equal(af.Narrow, bf.Narrow) {
 			return false
 		}
-		if !typ.TypeEquals(af.Type, bf.Type) {
+		if !value.FactTypeEqual(af.Type, bf.Type) {
 			return false
 		}
 		if !RefinementEqual(af.Refinement, bf.Refinement) {
@@ -68,7 +69,7 @@ func LiteralSigsEqual(a, b api.LiteralSigs) bool {
 	}
 	for fn, sig := range a {
 		other, ok := b[fn]
-		if !ok || !typ.TypeEquals(sig, other) {
+		if !ok || !value.FactTypeEqual(sig, other) {
 			return false
 		}
 	}
@@ -83,7 +84,7 @@ func symbolTypeMapEqual(a map[cfg.SymbolID]typ.Type, b map[cfg.SymbolID]typ.Type
 		left := canonicalInterprocValueType(a[sym])
 		right, ok := b[sym]
 		right = canonicalInterprocValueType(right)
-		if !ok || !typ.TypeEquals(left, right) {
+		if !ok || !value.FactTypeEqual(left, right) {
 			return false
 		}
 	}
@@ -110,7 +111,7 @@ func CapturedFieldAssignsEqual(a, b api.CapturedFieldAssigns) bool {
 			for _, name := range cfg.SortedFieldNames(fields) {
 				left := canonicalInterprocValueType(fields[name])
 				right := canonicalInterprocValueType(otherFields[name])
-				if !typ.TypeEquals(left, right) {
+				if !value.FactTypeEqual(left, right) {
 					return false
 				}
 			}
@@ -155,7 +156,9 @@ func containerMutationSlicesEqual(a, b []api.ContainerMutation) bool {
 	for _, m := range b {
 		key := api.ContainerMutationKey(m)
 		other, ok := index[key]
-		if !ok || !typ.TypeEquals(canonicalInterprocValueType(other.ValueType), canonicalInterprocValueType(m.ValueType)) {
+		if !ok ||
+			!value.FactTypeEqual(canonicalInterprocValueType(other.KeyType), canonicalInterprocValueType(m.KeyType)) ||
+			!value.FactTypeEqual(canonicalInterprocValueType(other.ValueType), canonicalInterprocValueType(m.ValueType)) {
 			return false
 		}
 	}
@@ -176,7 +179,7 @@ func ConstructorFieldsEqual(a, b api.ConstructorFields) bool {
 		for _, name := range cfg.SortedFieldNames(fields) {
 			left := canonicalInterprocValueType(fields[name])
 			right := canonicalInterprocValueType(other[name])
-			if !typ.TypeEquals(left, right) {
+			if !value.FactTypeEqual(left, right) {
 				return false
 			}
 		}

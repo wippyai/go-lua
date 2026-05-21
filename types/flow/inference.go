@@ -292,8 +292,8 @@ func isBooleanReturnType(t typ.Type) bool {
 // reference only local variables or globals are filtered out since they cannot be
 // used at call sites for argument narrowing.
 //
-// Uses Symbol-based identity (SSA) as primary lookup, with name-based fallback for
-// constraints that only have Root names (e.g., from pre-flow extraction).
+// Uses Symbol-based identity first, and root-name identity only for constraints
+// emitted before symbols were attached.
 func filterParamConstraints(set []constraint.Constraint, paramIndex map[cfg.SymbolID]int, paramNameIndex map[string]int) []constraint.Constraint {
 	if len(set) == 0 {
 		return nil
@@ -338,7 +338,8 @@ func filterParamConstraints(set []constraint.Constraint, paramIndex map[cfg.Symb
 // This substitution enables effect instantiation: at a call site, $0 is replaced
 // with the actual first argument's path, $1 with the second, etc.
 //
-// Uses Symbol-based identity (SSA) as primary lookup, with name-based fallback.
+// Uses Symbol-based identity first, and root-name identity only for pre-symbol
+// constraints.
 func substituteToPlaceholders(set []constraint.Constraint, paramIndex map[cfg.SymbolID]int, paramNameIndex map[string]int) []constraint.Constraint {
 	if len(set) == 0 {
 		return nil
