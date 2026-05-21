@@ -90,7 +90,11 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 		}
 	}
 
-	d.runFixpoint(sess, fn, d.cfg.Stdlib, api.AnalysisContext{})
+	parent := d.cfg.Stdlib
+	if parent == nil {
+		parent = scope.New()
+	}
+	d.runFixpoint(sess, fn, parent, api.AnalysisContext{})
 }
 
 func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State, ctx api.AnalysisContext) {

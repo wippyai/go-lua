@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"github.com/wippyai/go-lua/types/io"
 )
 
 func TestLocalReplaceHarness_DecisionPayloadDefaultNarrowsByDiscriminant(t *testing.T) {
@@ -83,6 +84,30 @@ end
 	}
 }
 
+func TestLocalReplaceHarness_RootLocalReturnInferenceWithoutStdlib(t *testing.T) {
+	source := `
+local function make_value()
+	return {
+		payload = {
+			parent_id = "parent",
+		},
+	}
+end
+
+local function handle(payload)
+	return payload.parent_id
+end
+
+local decision = make_value()
+handle(decision.payload)
+`
+
+	result := testutil.Check(source)
+	if result.HasError() {
+		t.Fatalf("expected root local return inference without stdlib parent, got: %v", result.Errors)
+	}
+}
+
 func TestLocalReplaceHarness_HeterogeneousConstantKeyHandlerTable(t *testing.T) {
 	source := `
 local COMMAND_TYPES = {
@@ -125,5 +150,101 @@ return result and result.changes_made
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected constant-key handler table to preserve callable join, got: %v", result.Errors)
+	}
+}
+
+func TestLocalReplaceHarness_ImportedSchedulerDecisionPayload(t *testing.T) {
+	scheduler := testutil.CheckAndExport(`
+local scheduler = {}
+
+local DECISION_TYPE = {
+	EXECUTE_NODES = "execute_nodes",
+	SATISFY_YIELD = "satisfy_yield",
+	COMPLETE_WORKFLOW = "complete_workflow",
+	NO_WORK = "no_work",
+}
+
+local function create_decision(decision_type, payload)
+	return {
+		type = decision_type,
+		payload = payload or {},
+	}
+end
+
+local function find_yield_driven_work(state)
+	for parent_id, yield_info in pairs(state.active_yields) do
+		return create_decision(DECISION_TYPE.SATISFY_YIELD, {
+			parent_id = parent_id,
+			yield_id = yield_info.yield_id,
+			reply_to = yield_info.reply_to,
+			results = yield_info.results or {},
+		})
+	end
+	return nil
+end
+
+function scheduler.find_next_work(state)
+	local decision = find_yield_driven_work(state)
+	if decision then
+		return decision
+	end
+	return create_decision(DECISION_TYPE.NO_WORK, {
+		message = "No work available",
+	})
+end
+
+scheduler.DECISION_TYPE = DECISION_TYPE
+
+return scheduler
+`, "scheduler", testutil.WithStdlib())
+	if scheduler.HasError() {
+		t.Fatalf("unexpected scheduler export errors: %v", testutil.ErrorMessages(scheduler.Errors))
+	}
+
+	encoded, err := io.EncodeManifest(scheduler.Manifest)
+	if err != nil {
+		t.Fatalf("EncodeManifest failed: %v", err)
+	}
+	decoded, err := io.DecodeManifest(encoded)
+	if err != nil {
+		t.Fatalf("DecodeManifest failed: %v", err)
+	}
+
+	result := testutil.Check(`
+local scheduler = require("scheduler")
+
+local function handle_satisfy_yield(payload)
+	local parent_id = payload.parent_id
+	local yield_id = payload.yield_id
+	local reply_to = payload.reply_to
+	local results = payload.results or {}
+	if type(parent_id) ~= "string" then
+		return true
+	end
+	if type(results) ~= "table" then
+		results = {}
+	end
+	return yield_id ~= nil or reply_to ~= nil
+end
+
+local decision = scheduler.find_next_work({
+	active_yields = {
+		parent = {
+			yield_id = "yield",
+			reply_to = "pid",
+			results = {},
+		},
+	},
+})
+
+if decision.type == scheduler.DECISION_TYPE.SATISFY_YIELD then
+	handle_satisfy_yield(decision.payload)
+end
+`,
+		testutil.WithStdlib(),
+		testutil.WithManifest("scheduler", decoded),
+	)
+	if result.HasError() {
+		t.Fatalf("expected imported scheduler payload to remain non-nil, got: %v", result.Errors)
 	}
 }

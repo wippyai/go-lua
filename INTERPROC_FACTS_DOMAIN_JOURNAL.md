@@ -6437,6 +6437,82 @@ env GOCACHE=/tmp/go-build go test ./compiler/check -run '^$' \
 
 All passed.
 
+## 2026-05-20 Root Scope Canonicalization
+
+The local harness reductions exposed one real checker edge case outside the
+parent lint environment: when the checker was constructed without stdlib or any
+other root scope, the root graph used a nil parent. That meant
+`returninfer.ComputeForGraph` skipped root local-function fact computation
+because there was no parent scope to key the canonical product.
+
+Production lint normally has a stdlib scope, so this did not explain the
+local-replace parent diagnostics. It was still a design inconsistency: the root
+abstract interpreter should always have a canonical scope key, even when that
+scope is empty.
+
+The driver now creates an explicit empty root scope when no stdlib/root scope is
+configured:
+
+```text
+compiler/check/pipeline/driver.go
+```
+
+This is not a fallback layer. It removes a nil special case and makes root
+analysis use the same product-domain protocol as every other graph:
+
+```text
+root scope -> parent hash -> GraphKey -> FunctionFacts product
+```
+
+Regression coverage was extended in:
+
+```text
+compiler/check/tests/regression/local_replace_harness_precision_test.go
+```
+
+New/updated coverage:
+
+- no-stdlib root local-function return inference now propagates table fields to
+  helper calls;
+- imported scheduler decision payload contracts survive manifest export/import;
+- local scheduler-like payload narrowing and heterogeneous handler tables remain
+  protected.
+
+Verification:
+
+```text
+go test ./compiler/check/tests/regression -run 'TestLocalReplaceHarness' -count=1 -timeout 120s
+go test ./compiler/check/pipeline ./compiler/check -count=1 -timeout 120s
+go test ./... -count=1 -timeout 240s
+env GOCACHE=/tmp/go-build-cache staticcheck ./compiler/check/... ./types/flow/... ./types/narrow
+env GOWORK=off GOCACHE=/tmp/go-build-cache go build -modfile=/tmp/go-lua-current-verify/wippy.replace.mod -o /tmp/wippy-current-golua ./cmd/wippy
+```
+
+All passed.
+
+The local-replace parent harness was rerun after the rebuild. The split remained
+unchanged:
+
+```text
+/home/wolfy-j/wippy/wippy/tests/app: 2 errors
+/home/wolfy-j/wippy/session: 33 errors
+/home/wolfy-j/wippy/framework/src/test: 0 errors
+/home/wolfy-j/wippy/framework/src/actor/test: 1 error
+/home/wolfy-j/wippy/framework/src/agent/src: 6 errors
+/home/wolfy-j/wippy/framework/src/bootloader: 0 errors
+/home/wolfy-j/wippy/docker-demo: 61 errors
+/home/wolfy-j/wippy/framework/src/llm/src: 3 errors
+/home/wolfy-j/wippy/framework/src/llm/test: 3 errors
+/home/wolfy-j/wippy/framework/src/migration: 0 errors
+/home/wolfy-j/wippy/framework/src/views: 2 errors
+/home/wolfy-j/wippy/framework/src/relay/test: 0 errors
+```
+
+Current conclusion: go-lua verification is clean, and the remaining
+local-replace parent diagnostics are still source/manifest contract issues or
+soundness-required dynamic-shape rejections. They are not explained by the root
+scope edge case fixed here.
+
 Benchmark sample:
 
 ```text
