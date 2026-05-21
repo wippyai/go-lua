@@ -17,11 +17,10 @@ import (
 //
 // The returned Path has Symbol=0 and MUST NOT be used for value identity in
 // the flow solver. For identity-aware path resolution that binds to SSA versions,
-// use the pathkey.Resolver or binding-aware extractors in abstract/transfer/path.
+// use PathFromExprFull with a SymbolResolver or pathkey.Resolver directly.
 //
 // Returns (Path, true) on successful parse, or (empty Path, false) on error.
 // The returned Path has Symbol=0 and MUST NOT be used for value identity in the solver.
-// For identity-aware paths, use PathFromExprFull with a SymbolResolver.
 func parsePath(path string) (constraint.Path, bool) {
 	if path == "" {
 		return constraint.Path{}, false

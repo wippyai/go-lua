@@ -10950,3 +10950,92 @@ non-zero because parent lint targets outside go-lua report:
 The same script reports zero errors for `framework/src/llm/src` because it
 builds the parent binary from the parent module's normal dependency graph. The
 temporary local-replace binary remains the relevant proof for this checkout.
+
+## 2026-05-20 Residual Drift Audit After Canonical Migration
+
+After the flash migration, I re-ran a production scan for the old fact channels,
+transfer package names, bridge/fallback vocabulary, debug hooks, and temporary
+files. Production code had no remaining old fact API:
+
+```text
+FunctionTypesFromFacts
+NormalizeFacts
+NormalizeFunctionFactChannels
+ReturnSummaries
+NarrowReturns
+FuncTypes
+ParamHints
+functionTypeLookup
+legacy fact
+compatibility bridge
+transitional
+```
+
+Two real residues were found and removed:
+
+```text
+types/flow/path.go
+```
+
+The comment still pointed identity-aware path users at the deleted
+`abstract/transfer/path` package. It now names the canonical owners:
+`PathFromExprFull` for expression extraction and `pathkey.Resolver` for path-key
+resolution.
+
+```text
+compiler/check/abstract/assign/emit.go
+```
+
+Named field/method function assignment lowering still had a defensive lookup for
+"older call metadata" when `FuncDefInfo.ReceiverSymbol` was missing. That is not
+the final design. CFG construction owns `FuncDefInfo` receiver identity, and the
+abstract assignment extractor now consumes that canonical field directly. If the
+CFG invariant is broken, this layer will not silently rebuild the metadata from
+bindings.
+
+This keeps the ownership line clear:
+
+```text
+compiler/cfg          = symbol identity for CFG facts
+compiler/check/domain = reusable semantic domains
+abstract/assign       = assignment transfer extraction over canonical CFG facts
+types/flow            = product-domain solving and path-key resolution
+```
+
+The change is intentionally small because the migration worktree was already
+clean; this pass removes drift, not semantics.
+
+Verification for this cleanup:
+
+```text
+rg -n "FunctionTypesFromFacts|NormalizeFacts|NormalizeFunctionFactChannels|ReturnSummaries|NarrowReturns|FuncTypes|ParamHints|functionTypeLookup|legacy fact|compatibility bridge|transitional|TODO|FIXME|HACK|debug numeric|debug assignment|debug effective|temporary local|abstract/transfer|flowbuild|factproduct|facts_bridge|shim|older call metadata|Kept for API compatibility" compiler/check types/flow types/narrow --glob '*.go' --glob '!**/*_test.go'
+rg -n "fallback|Fallback|legacy|Legacy|bridge|Bridge|transitional|compatibility view|older call metadata" compiler/check types/flow types/narrow --glob '*.go' --glob '!**/*_test.go'
+find . -maxdepth 5 -type f \( -name '*.tmp' -o -name '*.bak' -o -name '*~' -o -name '*.orig' -o -name '*.rej' -o -name '*.prof' -o -name 'coverage.out' \) -print
+go test ./compiler/check/abstract/assign ./compiler/cfg ./types/flow -count=1 -timeout 120s
+go test ./types/flow/... ./types/narrow ./compiler/check/... -count=1 -timeout 180s
+go test ./... -count=1 -timeout 240s
+env GOCACHE=/tmp/go-build-cache staticcheck ./types/flow ./compiler/check/abstract/assign ./compiler/cfg
+git diff --check
+```
+
+All commands passed. The two `rg` scans and scratch-file `find` produced no
+matches.
+
+Official verify-suite:
+
+```text
+../scripts/verify-suite.sh
+```
+
+The go-lua checker tests and parent binary build passed. The script still exits
+non-zero on parent lint targets outside go-lua:
+
+```text
+/home/wolfy-j/wippy/session: 8 errors
+/home/wolfy-j/wippy/framework/src/agent/src: 9 errors
+/home/wolfy-j/wippy/docker-demo: 21 errors, 2 warnings
+```
+
+All other listed targets were clean, including `framework/src/llm/src`,
+`framework/src/llm/test`, `framework/src/migration`, `framework/src/views`, and
+`framework/src/relay/test`.

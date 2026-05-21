@@ -1200,21 +1200,10 @@ func ExtractFuncDefAssignments(fc *abstractcore.FlowContext, inputs *flow.Inputs
 		if info.ReceiverName == "" {
 			continue
 		}
-		sym := info.ReceiverSymbol
-		// ReceiverSymbol should be populated by the binder. Consult bindings when
-		// older call metadata lacks it.
-		// if not set (for receivers that are simple identifiers).
-		if sym == 0 {
-			if bindings := fc.Graph.Bindings(); bindings != nil {
-				if recvIdent, ok := info.Receiver.(*ast.IdentExpr); ok {
-					sym, _ = bindings.SymbolOf(recvIdent)
-				}
-			}
-		}
-		if sym == 0 {
+		if info.ReceiverSymbol == 0 {
 			continue
 		}
-		root := resolve.RootNameFromBindings(fc.Graph.Bindings(), sym, info.ReceiverName)
+		root := resolve.RootNameFromBindings(fc.Graph.Bindings(), info.ReceiverSymbol, info.ReceiverName)
 
 		// Synthesize the function type
 		var fnType typ.Type
@@ -1230,7 +1219,7 @@ func ExtractFuncDefAssignments(fc *abstractcore.FlowContext, inputs *flow.Inputs
 			Point: p,
 			TargetPath: constraint.Path{
 				Root:     root,
-				Symbol:   sym,
+				Symbol:   info.ReceiverSymbol,
 				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: info.Name}},
 			},
 			Type: resolve.Ref(fnType, sc),
