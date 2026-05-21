@@ -11280,3 +11280,76 @@ env GOWORK=off GOCACHE=/tmp/go-build-cache go build -modfile=/tmp/go-lua-current
 
 The modfile proof reports `Replace.Path: /home/wolfy-j/wippy/go-lua`, and the
 local-replace build passed.
+
+## 2026-05-20 Local-Replace Harness Recheck
+
+After the broad staticcheck cleanup, I rebuilt the parent binary through the
+temporary local-replace modfile:
+
+```text
+env GOWORK=off GOCACHE=/tmp/go-build-cache go build -modfile=/tmp/go-lua-current-verify/wippy.replace.mod -o /tmp/wippy-current-golua ./cmd/wippy
+```
+
+Then I reran the parent lint target split with `/tmp/wippy-current-golua`. This
+uses the current go-lua checkout without editing parent repos.
+
+Current local-replace harness split:
+
+```text
+/home/wolfy-j/wippy/wippy/tests/app: 2 errors
+/home/wolfy-j/wippy/session: 33 errors
+/home/wolfy-j/wippy/framework/src/test: 0 errors
+/home/wolfy-j/wippy/framework/src/actor/test: 1 error
+/home/wolfy-j/wippy/framework/src/agent/src: 6 errors
+/home/wolfy-j/wippy/framework/src/bootloader: 0 errors
+/home/wolfy-j/wippy/docker-demo: 61 errors
+/home/wolfy-j/wippy/framework/src/llm/src: 3 errors
+/home/wolfy-j/wippy/framework/src/llm/test: 3 errors
+/home/wolfy-j/wippy/framework/src/migration: 0 errors
+/home/wolfy-j/wippy/framework/src/views: 2 errors
+/home/wolfy-j/wippy/framework/src/relay/test: 0 errors
+```
+
+The split is not clean, so it must not be described as "no harness errors".
+The representative classification remains source/manifest contract issues:
+
+- untyped overlay args passed to `http.get(string, ...)`;
+- explicit `:: any` values used for string methods;
+- optional/dynamic LLM config/model-card arithmetic;
+- provider response `any` fields passed to string/parser contracts;
+- dynamic registry/page/config maps passed where string-keyed maps are required;
+- SQL/result rows and JSON-decoded values used without shape normalization;
+- parent code relying on cross-map invariants that the type system cannot infer
+  soundly without a declared dependent invariant.
+
+I reduced the two suspicious docker-demo classes that looked like possible
+engine precision gaps and added regression coverage:
+
+```text
+compiler/check/tests/regression/local_replace_harness_precision_test.go
+```
+
+The reductions cover:
+
+- local function returning a table whose field is passed to another helper;
+- a decision helper returning `{type = ..., payload = payload or {}}`, followed
+  by discriminant-based branch use of `decision.payload`;
+- a heterogeneous constant-key handler table where each handler returns a
+  compatible callable result shape.
+
+These reductions pass under `testutil.WithStdlib()`, which is the relevant
+analysis environment for the parent harness. The same snippets fail only without
+a parent/std-lib scope because root local-function return inference is not run
+when the root parent scope is nil; that is a test-harness setup issue, not a
+production local-replace harness issue.
+
+Verification:
+
+```text
+go test ./compiler/check/tests/regression -run 'TestLocalReplaceHarness' -count=1 -timeout 120s
+go test ./compiler/check/tests/regression -count=1 -timeout 180s
+go test ./... -count=1 -timeout 240s
+env GOCACHE=/tmp/go-build-cache staticcheck ./compiler/check/... ./types/flow/... ./types/narrow
+```
+
+All passed.
