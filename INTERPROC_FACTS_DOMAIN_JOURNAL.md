@@ -11193,3 +11193,90 @@ These are not old fact-channel regressions. They are soundness diagnostics from
 using this checker against parent code that still has broad `any`/optional
 contracts. Fixing them requires parent source/manifest contracts, not go-lua
 compatibility bridges.
+
+## 2026-05-20 Broad Staticcheck Cleanup
+
+After the canonical naming cleanup was pushed, a wider implementation audit used
+staticcheck across the checker and flow packages:
+
+```text
+env GOCACHE=/tmp/go-build-cache staticcheck ./compiler/check/... ./types/flow/... ./types/narrow
+```
+
+It found five concrete go-lua cleanup items:
+
+```text
+compiler/check/callsite/candidates.go: expandAliasCandidates was unused
+compiler/check/domain/paramevidence/parameter_evidence.go: duplicated parameter-evidence merge path
+compiler/check/pipeline/runner.go: FuncKey should convert directly to GraphKey
+compiler/check/session_test.go: test dereferenced InterprocNext before nil guard
+compiler/check/store/store.go: SessionStore.requirePhase was unused
+```
+
+The fix was direct deletion/simplification, not another compatibility layer:
+
+- removed the unused alias-expansion helper;
+- removed the unused store phase guard;
+- collapsed synthesized parameter-evidence merging into `mergeSignatureParam`;
+- converted `api.FuncKey` to `api.GraphKey` directly where the query key enters
+  graph-context lookup;
+- moved the test nil guard before the dereference.
+
+Verification after the cleanup:
+
+```text
+env GOCACHE=/tmp/go-build-cache staticcheck ./compiler/check/... ./types/flow/... ./types/narrow
+go test ./compiler/check/callsite ./compiler/check/domain/paramevidence ./compiler/check/pipeline ./compiler/check/store ./compiler/check -count=1 -timeout 180s
+go test ./... -count=1 -timeout 240s
+git diff --check
+rg -n "FunctionTypesFromFacts|NormalizeFacts|NormalizeFunctionFactChannels|ReturnSummaries|NarrowReturns|FuncTypes|ParamHints|functionTypeLookup|legacy fact|compatibility bridge|compatibility view|transitional|older call metadata|flowbuild|paramhints|abstract/transfer|factproduct|adapter|Adapter|fallback|Fallback|legacy|Legacy|bridge|Bridge|mirror|Mirror|TODO|FIXME|HACK|debug numeric|debug assignment|temporary local" compiler/check types/flow types/narrow -g '!**/*_test.go' -g '!compiler/check/tests/**'
+git ls-files --others --exclude-standard
+```
+
+Results:
+
+```text
+staticcheck: pass
+focused go tests: pass
+go test ./...: pass
+git diff --check: pass
+production residue scan: no matches
+untracked files: none
+```
+
+The full text residue scan still finds intentional test fixture names such as
+Lua `or fallback` patterns and explicit regression-test descriptions. Those are
+not implementation bridges or old fact-channel code.
+
+The official parent verification was also rerun:
+
+```text
+../scripts/verify-suite.sh
+```
+
+It passed go-lua checker tests and built the parent binary, then exited nonzero
+on parent lint targets:
+
+```text
+/home/wolfy-j/wippy/session: 8 errors
+/home/wolfy-j/wippy/framework/src/agent/src: 11 errors
+/home/wolfy-j/wippy/docker-demo: 21 errors, 2 warnings
+```
+
+That script still builds parent `wippy` against its normal dependency graph:
+
+```text
+go list -m -json github.com/wippyai/go-lua
+```
+
+reports `Version: v1.5.16`. The local-replace proof remains the authoritative
+way to verify this checkout against parent `wippy` without editing external
+code:
+
+```text
+env GOWORK=off go list -modfile=/tmp/go-lua-current-verify/wippy.replace.mod -m -json github.com/wippyai/go-lua
+env GOWORK=off GOCACHE=/tmp/go-build-cache go build -modfile=/tmp/go-lua-current-verify/wippy.replace.mod -o /tmp/wippy-current-golua ./cmd/wippy
+```
+
+The modfile proof reports `Replace.Path: /home/wolfy-j/wippy/go-lua`, and the
+local-replace build passed.

@@ -21,16 +21,7 @@ func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Func
 	}
 	modified := false
 	for i, p := range sig.Params {
-		if i >= len(evidence) || evidence[i] == nil {
-			continue
-		}
-		paramType := p.Type
-		optional := p.Optional
-		if srcIdx, hasSource := signatureSourceParamIndex(fn, sig, i); hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil {
-			paramType = RefineAnnotationWithEvidence(p.Type, evidence[i])
-		} else {
-			paramType, optional = MergeUnannotatedParam(p, evidence[i])
-		}
+		paramType, optional := mergeSignatureParam(fn, sig, evidence, i, p)
 		if !typ.TypeEquals(p.Type, paramType) || p.Optional != optional {
 			modified = true
 		}
@@ -41,17 +32,7 @@ func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Func
 
 	builder := typ.Func()
 	for i, p := range sig.Params {
-		paramType := p.Type
-		optional := p.Optional
-		if i < len(evidence) && evidence[i] != nil {
-			srcIdx, hasSource := signatureSourceParamIndex(fn, sig, i)
-			annotated := hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil
-			if annotated {
-				paramType = RefineAnnotationWithEvidence(p.Type, evidence[i])
-			} else {
-				paramType, optional = MergeUnannotatedParam(p, evidence[i])
-			}
-		}
+		paramType, optional := mergeSignatureParam(fn, sig, evidence, i, p)
 		if optional {
 			builder = builder.OptParam(p.Name, paramType)
 		} else {
@@ -74,6 +55,17 @@ func MergeIntoSignature(fn *ast.FunctionExpr, evidence []typ.Type, sig *typ.Func
 		builder = builder.WithRefinement(sig.Refinement)
 	}
 	return builder.Build()
+}
+
+func mergeSignatureParam(fn *ast.FunctionExpr, sig *typ.Function, evidence []typ.Type, idx int, param typ.Param) (typ.Type, bool) {
+	if idx >= len(evidence) || evidence[idx] == nil {
+		return param.Type, param.Optional
+	}
+	srcIdx, hasSource := signatureSourceParamIndex(fn, sig, idx)
+	if hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil {
+		return RefineAnnotationWithEvidence(param.Type, evidence[idx]), param.Optional
+	}
+	return MergeUnannotatedParam(param, evidence[idx])
 }
 
 // MergeUnannotatedParam merges call/body evidence into an unannotated parameter.

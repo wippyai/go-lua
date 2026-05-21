@@ -114,7 +114,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	if contextual, ok := store.(interface {
 		GraphAnalysisContext(api.GraphKey) api.AnalysisContext
 	}); ok {
-		analysisCtx = contextual.GraphAnalysisContext(api.GraphKey{GraphID: key.GraphID, ParentHash: key.ParentHash})
+		analysisCtx = contextual.GraphAnalysisContext(api.GraphKey(key))
 		globalTypes = mergeGlobalOverlay(globalTypes, analysisCtx.GlobalOverlay)
 	}
 	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, graphEvidence, parameterEvidenceSigs)

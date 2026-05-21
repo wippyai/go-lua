@@ -126,18 +126,6 @@ func (s *SessionStore) Phase() api.Phase {
 	return s.phase
 }
 
-func (s *SessionStore) requirePhase(allowed ...api.Phase) {
-	if s == nil {
-		return
-	}
-	for _, phase := range allowed {
-		if s.phase == phase {
-			return
-		}
-	}
-	panic("store: interproc facts accessed in wrong phase")
-}
-
 // WithPhase runs fn with a temporary phase, restoring the prior phase afterward.
 func (s *SessionStore) WithPhase(phase api.Phase, fn func()) {
 	if fn == nil {

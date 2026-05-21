@@ -578,8 +578,11 @@ func TestModuleConstructorFacts_Join(t *testing.T) {
 	})
 
 	next := store.InterprocNext
+	if next == nil {
+		t.Fatal("next product facts should be initialized")
+	}
 	fields := next.Facts[api.ModuleFactsKey()].ConstructorFields[1]
-	if next == nil || fields == nil || fields["x"] == typ.Number {
+	if fields == nil || fields["x"] == typ.Number {
 		t.Error("field should be joined")
 	}
 }
