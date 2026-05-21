@@ -114,7 +114,7 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 		}
 
 		// Track alias provenance for path assignments: t.cur = s
-		// so writes through t.cur.* can be mirrored to s.*.
+		// so writes through t.cur.* propagate to s.*.
 		if len(assign.TargetPath.Segments) > 0 {
 			targetKeyStr := string(targetKey)
 			if assign.SourcePath.HasSymbol() {
@@ -143,7 +143,7 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 				changedKeys = append(changedKeys, targetKeyStr)
 			}
 			if len(assign.TargetPath.Segments) > 0 {
-				changedKeys = append(changedKeys, s.mirrorAliasedFieldWrite(p, assign.TargetPath, assignedType)...)
+				changedKeys = append(changedKeys, s.propagateAliasedFieldWrite(p, assign.TargetPath, assignedType)...)
 			}
 		}
 	}
@@ -263,7 +263,7 @@ func (s *Solution) preAssignmentNarrowedTypeAt(p cfg.Point, path constraint.Path
 	return join.Types(joined...)
 }
 
-func (s *Solution) mirrorAliasedFieldWrite(p cfg.Point, targetPath constraint.Path, assignedType typ.Type) []string {
+func (s *Solution) propagateAliasedFieldWrite(p cfg.Point, targetPath constraint.Path, assignedType typ.Type) []string {
 	if s == nil || s.pkResolver == nil || assignedType == nil || targetPath.Symbol == 0 {
 		return nil
 	}

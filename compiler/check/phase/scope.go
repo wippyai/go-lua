@@ -68,7 +68,7 @@ type ScopeServices interface {
 	MutateCall(info *cfg.CallInfo, p cfg.Point, sc *scope.State) *scope.State
 }
 
-// ScopeServicesFuncs is a simple adapter for providing ScopeServices via functions.
+// ScopeServicesFuncs provides ScopeServices via functions.
 // Use this in tests or when wiring phase inputs without creating a dedicated type.
 type ScopeServicesFuncs struct {
 	TypeResolver scopeTypeResolver

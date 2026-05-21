@@ -459,7 +459,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 
 	prelimEngine := i.newReturnInferenceEngine(ctx.run, fnScopes, prelimCtx, ctx.info.Evidence, phaseFunctionFacts)
 
-	synthAdapter := func(expr ast.Expr, p cfg.Point) typ.Type {
+	prelimSynth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return prelimEngine.TypeOf(expr, p)
 	}
 	symResolver := func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
@@ -480,7 +480,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 		Graph:          fnGraph,
 		Evidence:       ctx.info.Evidence,
 		Scopes:         fnScopes,
-		Synth:          synthAdapter,
+		Synth:          prelimSynth,
 		SynthAPI:       prelimEngine,
 		SymResolver:    symResolver,
 		SeedTypes:      inferenceOverlay,
@@ -490,7 +490,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 		TypeOps:        i.types,
 	})
 
-	return inferred, prelimEngine, synthAdapter
+	return inferred, prelimEngine, prelimSynth
 }
 
 func (i *Inferencer) enrichOverlayWithLocalDeclarations(
@@ -569,18 +569,14 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 	return localValueSeeds
 }
 
-type localSymbolLookup interface {
-	SymbolOf(expr *ast.IdentExpr) (cfg.SymbolID, bool)
-}
-
 type overlayMutationStage struct {
-	fnGraph              *cfg.Graph
-	paramSyms            map[cfg.SymbolID]bool
-	localValueSeeds      map[cfg.SymbolID]bool
-	finalOverlay         map[cfg.SymbolID]typ.Type
-	inferred             map[cfg.SymbolID]typ.Type
-	synthAdapter         func(ast.Expr, cfg.Point) typ.Type
-	enrichedSynthAdapter func(ast.Expr, cfg.Point) typ.Type
+	fnGraph         *cfg.Graph
+	paramSyms       map[cfg.SymbolID]bool
+	localValueSeeds map[cfg.SymbolID]bool
+	finalOverlay    map[cfg.SymbolID]typ.Type
+	inferred        map[cfg.SymbolID]typ.Type
+	baseSynth       func(ast.Expr, cfg.Point) typ.Type
+	enrichedSynth   func(ast.Expr, cfg.Point) typ.Type
 }
 
 // collectAndApplyMutations collects field/indexer assignments and applies mutations to overlay.
@@ -588,12 +584,12 @@ func (i *Inferencer) collectAndApplyMutations(
 	ctx *returnInferenceContext,
 	overlay map[cfg.SymbolID]typ.Type,
 	inferred map[cfg.SymbolID]typ.Type,
-	synthAdapter func(ast.Expr, cfg.Point) typ.Type,
+	baseSynth func(ast.Expr, cfg.Point) typ.Type,
 	localValueSeeds map[cfg.SymbolID]bool,
 ) map[cfg.SymbolID]typ.Type {
-	stage := newOverlayMutationStage(ctx, overlay, inferred, synthAdapter, localValueSeeds)
+	stage := newOverlayMutationStage(ctx, overlay, inferred, baseSynth, localValueSeeds)
 	mergeInferredIntoOverlay(stage.finalOverlay, stage.inferred, stage.paramSyms, stage.localValueSeeds)
-	stage.enrichedSynthAdapter = buildEnrichedSynthAdapter(stage.fnGraph.Bindings(), stage.inferred, stage.finalOverlay, stage.localValueSeeds, i.types, ctx.run.Ctx, stage.synthAdapter)
+	stage.enrichedSynth = buildEnrichedSynth(stage.fnGraph.Bindings(), stage.inferred, stage.finalOverlay, stage.localValueSeeds, i.types, ctx.run.Ctx, stage.baseSynth)
 
 	i.applyFieldMutations(ctx, &stage)
 	i.applyIndexerMutations(ctx, &stage)
@@ -606,7 +602,7 @@ func newOverlayMutationStage(
 	ctx *returnInferenceContext,
 	overlay map[cfg.SymbolID]typ.Type,
 	inferred map[cfg.SymbolID]typ.Type,
-	synthAdapter func(ast.Expr, cfg.Point) typ.Type,
+	baseSynth func(ast.Expr, cfg.Point) typ.Type,
 	localValueSeeds map[cfg.SymbolID]bool,
 ) overlayMutationStage {
 	fnGraph := (*cfg.Graph)(nil)
@@ -619,7 +615,7 @@ func newOverlayMutationStage(
 		localValueSeeds: localValueSeeds,
 		finalOverlay:    cloneOverlay(overlay, len(inferred)),
 		inferred:        inferred,
-		synthAdapter:    synthAdapter,
+		baseSynth:       baseSynth,
 	}
 }
 
@@ -791,14 +787,14 @@ func reconcileSoftAnnotatedInference(baseType, inferredType typ.Type) typ.Type {
 	return inferredType
 }
 
-func buildEnrichedSynthAdapter(
+func buildEnrichedSynth(
 	bindings *bind.BindingTable,
 	inferred map[cfg.SymbolID]typ.Type,
 	finalOverlay map[cfg.SymbolID]typ.Type,
 	localValueSeeds map[cfg.SymbolID]bool,
 	typeOps core.TypeOps,
 	queryCtx *db.QueryContext,
-	baseAdapter func(ast.Expr, cfg.Point) typ.Type,
+	baseSynth func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
 	return func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
@@ -817,15 +813,15 @@ func buildEnrichedSynthAdapter(
 		if t, ok := overlayPathType(expr, finalOverlay, bindings, typeOps, queryCtx); ok && !typ.IsAbsentOrUnknown(t) {
 			return t
 		}
-		return baseAdapter(expr, p)
+		return baseSynth(expr, p)
 	}
 }
 
 func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *overlayMutationStage) {
-	if i == nil || ctx == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynthAdapter == nil {
+	if i == nil || ctx == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynth == nil {
 		return
 	}
-	fieldAssignments := overlaymut.CollectFieldAssignments(ctx.info.Evidence.Assignments, stage.enrichedSynthAdapter, nil)
+	fieldAssignments := overlaymut.CollectFieldAssignments(ctx.info.Evidence.Assignments, stage.enrichedSynth, nil)
 
 	nestedBindings := stage.fnGraph.Bindings()
 	if nestedBindings == nil {
@@ -837,7 +833,7 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 		capturedByCallee = i.store.GetInterprocFacts(stage.fnGraph, capturedParent).CapturedFields
 	}
 	calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
-		return resolve.CalleeType(info, p, stage.enrichedSynthAdapter, nil, nil, stage.fnGraph, nestedBindings, i.store.ModuleBindings())
+		return resolve.CalleeType(info, p, stage.enrichedSynth, nil, nil, stage.fnGraph, nestedBindings, i.store.ModuleBindings())
 	}
 	nestedFieldAssignments := calleffect.CollectCalledNestedFieldAssignments(stage.fnGraph, nestedBindings, ctx.info.Evidence.Calls, capturedByCallee, calleeTypeResolver)
 	overlaymut.MergeFieldAssignments(fieldAssignments, nestedFieldAssignments)
@@ -846,28 +842,28 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 }
 
 func (i *Inferencer) applyIndexerMutations(ctx *returnInferenceContext, stage *overlayMutationStage) {
-	if i == nil || ctx == nil || ctx.info == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynthAdapter == nil {
+	if i == nil || ctx == nil || ctx.info == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynth == nil {
 		return
 	}
 	indexerBindings := stage.fnGraph.Bindings()
 	if indexerBindings == nil {
 		indexerBindings = i.store.ModuleBindings()
 	}
-	indexerAssignments := overlaymut.CollectIndexerAssignments(ctx.info.Evidence.Assignments, stage.enrichedSynthAdapter, indexerBindings, nil)
-	tableMutations := calleffect.CollectTableInsertMutations(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
+	indexerAssignments := overlaymut.CollectIndexerAssignments(ctx.info.Evidence.Assignments, stage.enrichedSynth, indexerBindings, nil)
+	tableMutations := calleffect.CollectTableInsertMutations(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynth, indexerBindings)
 	overlaymut.MergeIndexerMutations(indexerAssignments, tableMutations)
 	overlaymut.ApplyIndexerMergeToOverlay(stage.finalOverlay, indexerAssignments)
 }
 
 func (i *Inferencer) applyDirectMutations(ctx *returnInferenceContext, stage *overlayMutationStage) {
-	if i == nil || ctx == nil || ctx.info == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynthAdapter == nil {
+	if i == nil || ctx == nil || ctx.info == nil || stage == nil || stage.fnGraph == nil || stage.enrichedSynth == nil {
 		return
 	}
 	indexerBindings := stage.fnGraph.Bindings()
 	if indexerBindings == nil {
 		indexerBindings = i.store.ModuleBindings()
 	}
-	directMutations := calleffect.CollectTableInsertOnDirect(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynthAdapter, indexerBindings)
+	directMutations := calleffect.CollectTableInsertOnDirect(ctx.info.Evidence.Calls, stage.fnGraph, stage.enrichedSynth, indexerBindings)
 	overlaymut.ApplyDirectMutationsToOverlay(stage.finalOverlay, directMutations)
 }
 

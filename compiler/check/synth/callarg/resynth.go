@@ -12,7 +12,7 @@ import (
 // ReSynth is called to re-synthesize an AST argument with contextual typing.
 type ReSynth func(idx int, arg ast.Expr, expected typ.Type) typ.Type
 
-// ForArgs adapts an AST-aware re-synthesizer to the pure call pipeline.
+// ForArgs binds AST arguments to the pure call pipeline re-synthesis hook.
 func ForArgs(args []ast.Expr, reSynth ReSynth) ops.ArgReSynth {
 	if reSynth == nil || len(args) == 0 {
 		return nil

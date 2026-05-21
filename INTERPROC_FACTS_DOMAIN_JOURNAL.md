@@ -11039,3 +11039,157 @@ non-zero on parent lint targets outside go-lua:
 All other listed targets were clean, including `framework/src/llm/src`,
 `framework/src/llm/test`, `framework/src/migration`, `framework/src/views`, and
 `framework/src/relay/test`.
+
+## 2026-05-20 Canonical Naming Pass: Resolver/Synth Hooks
+
+I ran another production audit for migration residue and found no old fact
+channels, fallback/bridge terms, or deleted package names. The only remaining
+non-canonical wording was generic "adapter" naming on live, final hooks:
+
+```text
+compiler/check/abstract/assign/preflow_synth.go
+compiler/check/infer/return/infer.go
+compiler/check/infer/return/overlay_pipeline.go
+compiler/check/phase/scope.go
+compiler/check/synth/callarg/resynth.go
+```
+
+Those hooks are not compatibility shims. They are canonical resolver/synthesis
+functions used to connect product-domain flow solving, TypeOps field/index
+resolution, and return-overlay mutation inference. I renamed them to the domain
+role they actually play:
+
+```text
+narrowResolverAdapter -> typeOpsNarrowResolver
+synthAdapter          -> prelimSynth / baseSynth
+enrichedSynthAdapter  -> enrichedSynth
+buildEnrichedSynthAdapter -> buildEnrichedSynth
+```
+
+Comments that described "adapting" were also rewritten to describe binding or
+function-backed implementations. This is behavior-preserving cleanup, but it
+matters for the design invariant: production names should explain the canonical
+abstract interpreter data flow, not imply transitional glue.
+
+I also renamed flow alias write wording from "mirror" to "propagate":
+
+```text
+mirrorAliasedFieldWrite -> propagateAliasedFieldWrite
+```
+
+This makes the solver term match the actual domain operation. The map records
+path alias provenance, and a write through one alias propagates to the canonical
+source path key. It is not a second fact channel.
+
+Staticcheck then found a real dead interface in return-overlay mutation
+inference:
+
+```text
+compiler/check/infer/return/overlay_pipeline.go: localSymbolLookup
+```
+
+That interface was unused after the resolver/synth hook cleanup and was deleted.
+
+Verification for this pass:
+
+```text
+rg -n "mirror|Mirror|adapter|Adapter|fallback|Fallback|legacy|Legacy|bridge|Bridge|transitional|compatibility view|older call metadata|FunctionTypesFromFacts|NormalizeFacts|ReturnSummaries|NarrowReturns|FuncTypes|ParamHints|flowbuild|paramhints|abstract/transfer|factproduct" compiler/check types/flow types/narrow --glob '*.go' --glob '!**/*_test.go'
+go test ./compiler/check/abstract/assign ./compiler/check/infer/return ./compiler/check/phase ./compiler/check/synth/callarg -count=1 -timeout 120s
+go test ./types/flow -count=1 -timeout 120s
+go test ./types/flow/... ./types/narrow ./compiler/check/... -count=1 -timeout 180s
+go test ./... -count=1 -timeout 240s
+env GOCACHE=/tmp/go-build-cache staticcheck ./types/flow ./compiler/check/abstract/assign ./compiler/check/infer/return ./compiler/check/phase ./compiler/check/synth/callarg
+git diff --check
+```
+
+All commands passed. The residue scan produced no matches.
+
+## 2026-05-20 Proper Local Replace Verification
+
+The official `../scripts/verify-suite.sh` still builds parent `wippy` from its
+normal dependency graph. Direct proof:
+
+```text
+cd /home/wolfy-j/wippy/wippy
+go list -m -json github.com/wippyai/go-lua
+```
+
+reported:
+
+```text
+"Version": "v1.5.16"
+```
+
+So the official parent lint split is useful for baseline drift, but it is not a
+proof of this checkout's checker behavior. I rebuilt `wippy` with an explicit
+temporary replace modfile outside the parent repo:
+
+```text
+cp /home/wolfy-j/wippy/wippy/go.mod /tmp/go-lua-current-verify/wippy.replace.mod
+cp /home/wolfy-j/wippy/wippy/go.sum /tmp/go-lua-current-verify/wippy.replace.sum
+go mod edit -modfile=/tmp/go-lua-current-verify/wippy.replace.mod -replace=github.com/wippyai/go-lua=/home/wolfy-j/wippy/go-lua
+env GOWORK=off go list -modfile=/tmp/go-lua-current-verify/wippy.replace.mod -m -json github.com/wippyai/go-lua
+env GOWORK=off go build -modfile=/tmp/go-lua-current-verify/wippy.replace.mod -o /tmp/wippy-current-golua ./cmd/wippy
+```
+
+The replace proof reported:
+
+```text
+"Replace": {
+  "Path": "/home/wolfy-j/wippy/go-lua",
+  "Dir": "/home/wolfy-j/wippy/go-lua"
+}
+```
+
+No parent repo files were edited.
+
+Local-replace lint target split with `/tmp/wippy-current-golua`:
+
+```text
+/home/wolfy-j/wippy/wippy/tests/app: 2 errors
+/home/wolfy-j/wippy/session: 33 errors
+/home/wolfy-j/wippy/framework/src/test: 0 errors
+/home/wolfy-j/wippy/framework/src/actor/test: 1 error
+/home/wolfy-j/wippy/framework/src/agent/src: 6 errors
+/home/wolfy-j/wippy/framework/src/bootloader: 0 errors
+/home/wolfy-j/wippy/docker-demo: 61 errors
+/home/wolfy-j/wippy/framework/src/llm/src: 3 errors
+/home/wolfy-j/wippy/framework/src/llm/test: 3 errors
+/home/wolfy-j/wippy/framework/src/migration: 0 errors
+/home/wolfy-j/wippy/framework/src/views: 2 errors
+/home/wolfy-j/wippy/framework/src/relay/test: 0 errors
+```
+
+Representative classifications from the local-replace diagnostics:
+
+```text
+app.test.network:overlay_callee / overlay_worker
+  args is untyped; (args and args.url) can be any truthy value, not necessarily string.
+  Passing it to http.get(string, ...) is a source/contract issue.
+
+wippy.actor:actor
+  channel_to_id[result.channel] proves only that a parallel map contains a key.
+  It does not prove registered_channels[channel_id] is non-nil without a guard or
+  dependent map invariant. The checker must not invent that invariant.
+
+wippy.agent.compiler:compiler
+  tool_id is annotated any and flows to string.gmatch. The caller often passes a
+  string, but the function's declared contract permits non-string.
+
+wippy.llm.bedrock:mapper
+  block.text is untyped any from provider response shape and flows to a parser
+  expecting string?.
+
+wippy.llm.google:integration_test
+  test.not_nil proves presence, not that dynamic tool-call arguments.location is
+  a string. Calling :lower() on unknown/dynamic data needs a contract or runtime
+  type check.
+
+wippy.llm.util:compress
+  CONFIG/model-card fields remain optional/dynamic at arithmetic sites.
+```
+
+These are not old fact-channel regressions. They are soundness diagnostics from
+using this checker against parent code that still has broad `any`/optional
+contracts. Fixing them requires parent source/manifest contracts, not go-lua
+compatibility bridges.

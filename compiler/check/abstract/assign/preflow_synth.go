@@ -18,21 +18,21 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-type narrowResolverAdapter struct {
+type typeOpsNarrowResolver struct {
 	ctx *db.QueryContext
 	ops core.TypeOps
 }
 
-var _ narrow.Resolver = (*narrowResolverAdapter)(nil)
+var _ narrow.Resolver = (*typeOpsNarrowResolver)(nil)
 
-func (r narrowResolverAdapter) Field(t typ.Type, name string) (typ.Type, bool) {
+func (r typeOpsNarrowResolver) Field(t typ.Type, name string) (typ.Type, bool) {
 	if r.ops == nil {
 		return nil, false
 	}
 	return r.ops.Field(r.ctx, t, name)
 }
 
-func (r narrowResolverAdapter) Index(t typ.Type, key typ.Type) (typ.Type, bool) {
+func (r typeOpsNarrowResolver) Index(t typ.Type, key typ.Type) (typ.Type, bool) {
 	if r.ops == nil {
 		return nil, false
 	}
@@ -66,7 +66,7 @@ func buildPreflowBranchSolution(fc *abstractcore.FlowContext, inputs *flow.Input
 	cond.ExtractEdgeConstraints(fc, &temp)
 	cond.ExtractNumericConstraints(fc, &temp)
 
-	return flow.Solve(&temp, narrowResolverAdapter{ctx: fc.CallCtx, ops: fc.TypeOps})
+	return flow.Solve(&temp, typeOpsNarrowResolver{ctx: fc.CallCtx, ops: fc.TypeOps})
 }
 
 // synthWithOverlayAndPreflow wraps base synthesis with overlay lookup and a

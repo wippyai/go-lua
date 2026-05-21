@@ -596,10 +596,10 @@ func (i *Inferencer) inferReturnForFunction(
 	i.applyParameterEvidenceToOverlay(ctx, overlay)
 
 	// Phase 1: Infer local variable types.
-	inferred, _, synthAdapter := i.inferLocalVariableTypes(ctx, overlay, localValueSeeds)
+	inferred, _, prelimSynth := i.inferLocalVariableTypes(ctx, overlay, localValueSeeds)
 
 	// Collect field/indexer assignments and apply mutations.
-	finalOverlay := i.collectAndApplyMutations(ctx, overlay, inferred, synthAdapter, localValueSeeds)
+	finalOverlay := i.collectAndApplyMutations(ctx, overlay, inferred, prelimSynth, localValueSeeds)
 
 	// Re-harvest call obligations after local assignment inference. The early pass
 	// catches direct calls; this pass catches builder/receiver chains whose method
