@@ -41,6 +41,14 @@ type Solution struct {
 	fieldOverlayIndex map[string]map[string]typ.Type
 	mutableValues     map[cfg.Point]map[string]product.AbstractValue
 	mutablePresence   map[cfg.Point]map[string]pathPresence
+	// mutableSelfCarry is the private termination-only carry for keys whose value
+	// lives only in p's own post-state (a for..pairs self write-back, t[k] = v on a
+	// loop-carried map). It seeds p's mutator so the prior self-written slot remains
+	// a widening/no-op fixpoint seed and the worklist drains. It is NOT public state:
+	// no projection (valueAtPoint/projectedValueAtPoint/rootBaseTypeAt/field overlays/
+	// point value envs) and no interproc summary ever reads it. Only the mutator
+	// transfer reads it, and only when the public slot is absent.
+	mutableSelfCarry map[cfg.Point]map[string]product.AbstractValue
 	edgeConditions    map[edgeKey]constraint.Condition
 	declaredSyms      []cfg.SymbolID
 

@@ -1315,6 +1315,7 @@ func (s *Solution) evaluateMapMutation(p cfg.Point, mm MapMutatorAssignment) (ma
 	if currentType == nil {
 		currentType = s.joinPredecessorPathTypes(p, mm.Target)
 	}
+	currentType = s.carryWidenedMutatorSeed(p, pathKeyStr, currentType)
 	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(mm.Target))
 
 	return mapMutationEvaluation{
@@ -1324,6 +1325,37 @@ func (s *Solution) evaluateMapMutation(p cfg.Point, mm MapMutatorAssignment) (ma
 		existingType: existingAtCurrentKey,
 		pathKey:      pathKeyStr,
 	}, true
+}
+
+// carryWidenedMutatorSeed folds the private loop-carry into the mutator's current
+// seed so the self write-back is monotone across iterations. The carry holds p's
+// prior post-state value for this exact self-written key; the public predecessor
+// join can drop or partially re-supply it from pass to pass (a back-edge lag),
+// which would otherwise toggle the key present/absent and spin the worklist. Merging
+// the carry as a convergence-widening seed makes the mutator output depend only on
+// the monotone closure of p's own writes, never on the oscillating join membership.
+// The carry is private: it is read only here, and the public store still receives
+// only the mutator's admitted result (setMutableValue), so no retained value leaks
+// to projections or interproc summaries.
+func (s *Solution) carryWidenedMutatorSeed(p cfg.Point, key string, current typ.Type) typ.Type {
+	if zzNoSeed {
+		return current
+	}
+	carried := s.mutableSelfCarryAt(p, key)
+	if carried == nil {
+		return current
+	}
+	if current == nil {
+		return carried
+	}
+	merged := value.MergeForConvergence(current, carried)
+	if merged != nil {
+		if zzSeedDbg && !sameFlowValue(current, merged) {
+			zzLog("ZZSEED key=%s current=%s carry=%s merged=%s", key, current.String(), carried.String(), merged.String())
+		}
+		return merged
+	}
+	return current
 }
 
 // IndexWriteAdmission returns the value admitted by the solved dynamic
@@ -1582,6 +1614,7 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 	if currentType == nil {
 		currentType = s.joinPredecessorPathTypes(p, tm.Target)
 	}
+	currentType = s.carryWidenedMutatorSeed(p, pathKeyStr, currentType)
 	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(tm.Target))
 
 	var newType typ.Type
@@ -1654,6 +1687,7 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 	if currentType == nil {
 		currentType = s.joinPredecessorPathTypes(p, cm.Target)
 	}
+	currentType = s.carryWidenedMutatorSeed(p, pathKeyStr, currentType)
 	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(cm.Target))
 	newType := widenContainerElementType(currentType, valueType)
 	if newType != nil {

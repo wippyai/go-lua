@@ -159,6 +159,7 @@ func (s *Solution) beginPointMutableState(p cfg.Point) map[string]product.Abstra
 		s.mutableValues = make(map[cfg.Point]map[string]product.AbstractValue)
 	}
 	old := cloneValueMap(s.mutableValues[p])
+	s.seedPointMutableSelfCarry(p, old)
 	incoming := s.joinPredecessorMutableState(p)
 	if sameFlowValueMap(old, incoming) {
 		return old
@@ -207,14 +208,48 @@ func (s *Solution) mutableStateChangedKeys(old map[string]product.AbstractValue,
 	for key := range seen {
 		oldAV, oldOK := old[key]
 		curAV, curOK := current[key]
-		if oldOK != curOK || !oldAV.Equal(curAV) ||
-			pathPresenceFromType(projectFlowValue(oldAV)) != pathPresenceFromType(projectFlowValue(curAV)) {
-			zzSlotDelta(p, key, old, current, oldOK, curOK)
-			keys = append(keys, key)
+		changed := oldOK != curOK || !oldAV.Equal(curAV) ||
+			pathPresenceFromType(projectFlowValue(oldAV)) != pathPresenceFromType(projectFlowValue(curAV))
+		if !changed {
+			continue
 		}
+		if s.isStableCarryMembershipFlap(p, key, oldAV, oldOK, curAV, curOK) {
+			continue
+		}
+		zzSlotDelta(p, key, old, current, oldOK, curOK)
+		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// isStableCarryMembershipFlap reports whether the change for key at p is only the
+// loop-carried slot flapping present/absent at a stable value. The public predecessor
+// join drops a self write-back slot whose value lives only in p's own post-state, so
+// the public store toggles the key's membership across iterations even though the
+// value never moves. Propagating that membership flap re-queues the SCC forever; the
+// private carry holds the stable value, so a membership-only delta whose present side
+// equals the carry is not a public value change and must not drive propagation. A real
+// value change (present side differs from the carry) still propagates, keeping the
+// fixpoint sound. The base slot stays addressable via s.values, so suppressing the
+// redundant mutable-store entry does not lose a path fact.
+func (s *Solution) isStableCarryMembershipFlap(p cfg.Point, key string, oldAV product.AbstractValue, oldOK bool, curAV product.AbstractValue, curOK bool) bool {
+	if s == nil || s.mutableSelfCarry == nil || oldOK == curOK {
+		return false
+	}
+	carry := s.mutableSelfCarry[p]
+	if carry == nil {
+		return false
+	}
+	carried, ok := carry[key]
+	if !ok || carried.IsZero() {
+		return false
+	}
+	present := curAV
+	if !curOK {
+		present = oldAV
+	}
+	return present.Equal(carried)
 }
 
 // joinPredecessorMutableState merges the post-state of each predecessor into the
@@ -222,14 +257,12 @@ func (s *Solution) mutableStateChangedKeys(old map[string]product.AbstractValue,
 // value-domain convergence-widening merge lifted onto AbstractValue), so the store
 // fixpoint compares product identity and converges on recursive families.
 //
-// Beyond the predecessor merge, the key universe is seeded with the prior
-// post-state slots that the point's own transfer writes back to themselves
-// (a for..pairs self write-back, t[k] = v on a loop-carried map). Those keys live
-// only in p's post-state - no predecessor edge supplies them - so a partial-map
-// join drops them and the point's mutator re-adds them every iteration, toggling
-// the key's presence and never converging. Retaining only the self-written keys
-// keeps the discovered slot set monotone for the loop carry without disturbing
-// keys a predecessor or a new symbol version legitimately kills.
+// The result is the public incoming post-state and nothing else: every key comes
+// from a predecessor edge. Keys whose value lives only in p's own post-state (a
+// for..pairs self write-back, t[k] = v on a loop-carried map) are intentionally
+// dropped here - their loop-carried presence is preserved separately by the private
+// mutableSelfCarry seed (see seedPointMutableSelfCarry), so the public projection
+// never observes the loop-widened slot, and the mutator still converges.
 func (s *Solution) joinPredecessorMutableState(p cfg.Point) map[string]product.AbstractValue {
 	if s == nil || s.inputs == nil || s.inputs.Graph == nil || len(s.mutableValues) == 0 {
 		return nil
@@ -239,12 +272,9 @@ func (s *Solution) joinPredecessorMutableState(p cfg.Point) map[string]product.A
 		return nil
 	}
 
-	selfWritten := s.selfRetainedMutableKeys(p)
-
 	var out map[string]product.AbstractValue
 	if len(preds) == 1 {
-		// Single-predecessor edges carry the predecessor post-state verbatim, the
-		// exact prior semantics; the self-written retention is layered on after.
+		// Single-predecessor edges carry the predecessor post-state verbatim.
 		out = cloneValueMap(s.mutableValues[preds[0]])
 	} else {
 		keySet := make(map[string]struct{})
@@ -287,55 +317,82 @@ func (s *Solution) joinPredecessorMutableState(p cfg.Point) map[string]product.A
 		}
 	}
 
-	// Retain self-written keys whose value lives only in p's prior post-state.
-	// When no predecessor re-supplies the key, the prior value is kept so its
-	// presence is monotone across iterations; when a predecessor also supplies it,
-	// the values converge via CarryForward. This keeps the loop self write-back
-	// from toggling the key present/absent without re-deriving keys a predecessor
-	// already carries verbatim.
-	for key := range selfWritten {
-		prior, ok := s.mutableValues[p][key]
-		if !ok {
-			continue
-		}
-		if out == nil {
-			out = make(map[string]product.AbstractValue, len(selfWritten))
-		}
-		if existing, ok := out[key]; ok {
-			out[key] = product.CarryForward(existing, prior)
-		} else {
-			out[key] = prior
-		}
-	}
-
 	if len(out) == 0 {
 		return nil
 	}
 	return out
 }
 
-// selfRetainedMutableKeys returns the subset of the point's self-written mutable
-// keys that are present in p's prior post-state, i.e. the loop-carried keys whose
-// value lives only in p's own post-state and so must survive the join.
-func (s *Solution) selfRetainedMutableKeys(p cfg.Point) map[string]struct{} {
+// seedPointMutableSelfCarry records the prior self-written post-state of p into the
+// private termination-only carry. The keys are exactly the loop-carried slots whose
+// value lives only in p's own post-state (a for..pairs self write-back, t[k] = v on
+// a loop-carried map); they are dropped by the public predecessor join, so without a
+// seed the mutator re-admits each iteration from nil and the key toggles present/
+// absent forever. The carry is consumed only by the mutator transfer (mutableSelfCarryAt)
+// as a widening/no-op seed - it never reaches a public projection or interproc summary.
+func (s *Solution) seedPointMutableSelfCarry(p cfg.Point, prior map[string]product.AbstractValue) {
+	if s == nil {
+		return
+	}
+	if zzNoCarry {
+		if s.mutableSelfCarry != nil {
+			delete(s.mutableSelfCarry, p)
+		}
+		return
+	}
+	if len(prior) == 0 {
+		if s.mutableSelfCarry != nil {
+			delete(s.mutableSelfCarry, p)
+		}
+		return
+	}
 	written := s.selfWrittenMutableKeys(p)
 	if len(written) == 0 {
-		return nil
-	}
-	prior := s.mutableValues[p]
-	if len(prior) == 0 {
-		return nil
-	}
-	out := make(map[string]struct{}, len(written))
-	for key := range written {
-		if _, ok := prior[key]; ok {
-			out[key] = struct{}{}
+		if s.mutableSelfCarry != nil {
+			delete(s.mutableSelfCarry, p)
 		}
+		return
 	}
-	if len(out) == 0 {
+	var carry map[string]product.AbstractValue
+	for key := range written {
+		av, ok := prior[key]
+		if !ok {
+			continue
+		}
+		if carry == nil {
+			carry = make(map[string]product.AbstractValue, len(written))
+		}
+		carry[key] = av
+	}
+	if len(carry) == 0 {
+		if s.mutableSelfCarry != nil {
+			delete(s.mutableSelfCarry, p)
+		}
+		return
+	}
+	if s.mutableSelfCarry == nil {
+		s.mutableSelfCarry = make(map[cfg.Point]map[string]product.AbstractValue, 1)
+	}
+	s.mutableSelfCarry[p] = carry
+}
+
+// mutableSelfCarryAt returns the private termination-only carry value for key at p,
+// projected to a typ.Type. It is the loop-carry seed the mutator reads when the
+// public slot is absent so the self write-back converges. No public projection or
+// interproc summary calls this.
+func (s *Solution) mutableSelfCarryAt(p cfg.Point, key string) typ.Type {
+	if s == nil || key == "" || s.mutableSelfCarry == nil {
 		return nil
 	}
-	return out
+	carry := s.mutableSelfCarry[p]
+	if carry == nil {
+		return nil
+	}
+	av, ok := carry[key]
+	if !ok {
+		return nil
+	}
+	return projectFlowValue(av)
 }
 
 // selfWrittenMutableKeys returns the mutable-store keys that the point's own

@@ -15,6 +15,17 @@ import (
 // interpreter fully converges; removed only in the final de-scatter pass.
 var zzSlotDbg = os.Getenv("ZZSLOT") != ""
 
+// zzNoCarry disables the private mutable self-carry seed for A/B isolation of the
+// loop-carry termination mechanism against the interproc precision regressions.
+var zzNoCarry = os.Getenv("ZZNOCARRY") != ""
+
+// zzNoSeed disables only the mutator carry-widen seed (keeping carry recording and the
+// membership-flap suppression) to isolate whether the mutator widening drives the leak.
+var zzNoSeed = os.Getenv("ZZNOSEED") != ""
+
+// zzSeedDbg traces the mutator carry-widen seed inputs/output for the leak analysis.
+var zzSeedDbg = os.Getenv("ZZSEED") != ""
+
 var (
 	zzFileOnce sync.Once
 	zzFile     *os.File
