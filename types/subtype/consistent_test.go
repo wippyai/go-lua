@@ -6,71 +6,105 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// TestConsistent_FreshArrayTarget verifies a fresh {} target accepts any array
-// value, while remaining a non-subtype direction under <:.
-func TestConsistent_FreshArrayTarget(t *testing.T) {
-	fresh := typ.NewFreshArray()
-	numbers := typ.NewArray(typ.Number)
+// TestConsistent_FreshEmptyRecordSource verifies the fresh `{}` seed, as an
+// assignment SOURCE, satisfies any target an empty table can satisfy.
+func TestConsistent_FreshEmptyRecordSource(t *testing.T) {
+	fresh := typ.NewFreshEmptyRecord()
 
-	if !Consistent(numbers, fresh) {
-		t.Fatalf("Consistent(number[], freshArray) = false, want true (fresh target accepts any array)")
+	cases := []struct {
+		name  string
+		super typ.Type
+		want  bool
+	}{
+		{"array", typ.NewArray(typ.Number), true},
+		{"map", typ.NewMap(typ.String, typ.Number), true},
+		{"optional-only record", typ.NewRecord().OptField("x", typ.Number).Build(), true},
+		{"required-field record", typ.NewRecord().Field("x", typ.Number).Build(), false},
+		{"empty tuple", typ.NewTuple(), true},
+		{"non-empty tuple", typ.NewTuple(typ.Number), false},
+		{"scalar", typ.Number, false},
 	}
-	if !Consistent(fresh, numbers) {
-		t.Fatalf("Consistent(freshArray, number[]) = false, want true (fresh source is never[] <: number[])")
+	for _, c := range cases {
+		if got := Consistent(fresh, c.super); got != c.want {
+			t.Errorf("Consistent(fresh{}, %s) = %v, want %v", c.name, got, c.want)
+		}
 	}
 }
 
-// TestConsistent_AnnotatedNeverArrayStaysStrict verifies a genuine never[]
-// target stays strict under Consistency: only the Fresh seed is lenient.
-func TestConsistent_AnnotatedNeverArrayStaysStrict(t *testing.T) {
+// TestConsistent_FreshArraySource verifies a fresh empty array seed satisfies an
+// array target both via IsSubtype (never[] <: T[]) and the gradual disjunct.
+func TestConsistent_FreshArraySource(t *testing.T) {
+	fresh := typ.NewFreshArray()
 	numbers := typ.NewArray(typ.Number)
-	annotatedNever := typ.NewArray(typ.Never)
 
-	if Consistent(numbers, annotatedNever) {
-		t.Fatalf("Consistent(number[], never[]) = true, want false (genuine never[] target stays strict)")
+	if !Consistent(fresh, numbers) {
+		t.Fatalf("Consistent(freshArray, number[]) = false, want true")
+	}
+}
+
+// TestConsistent_FreshTargetIsNotAdmitted verifies the fresh-TARGET direction is
+// NOT a Consistency rule: assigning a concrete table into a fresh `{}` target is
+// a flow widening concern, not gradual assignability.
+func TestConsistent_FreshTargetIsNotAdmitted(t *testing.T) {
+	fresh := typ.NewFreshEmptyRecord()
+	numbers := typ.NewArray(typ.Number)
+
+	if Consistent(numbers, fresh) {
+		t.Fatalf("Consistent(number[], fresh{}) = true, want false (fresh-target is a flow concern)")
+	}
+}
+
+// TestConsistent_AnnotatedEmptyStaysStrict verifies a genuine (non-fresh) empty
+// record target stays strict: only the Fresh seed is lenient.
+func TestConsistent_AnnotatedEmptyStaysStrict(t *testing.T) {
+	numbers := typ.NewArray(typ.Number)
+	annotatedEmpty := typ.NewRecord().Build()
+
+	if Consistent(numbers, annotatedEmpty) {
+		t.Fatalf("Consistent(number[], {}) = true, want false (genuine empty record target stays strict)")
 	}
 }
 
 // TestSubtype_FreshnessInvisible verifies Fresh is invisible to IsSubtype: a
-// fresh array behaves exactly as never[] under the subtype order.
+// fresh empty record behaves exactly as a closed empty record under <:.
 func TestSubtype_FreshnessInvisible(t *testing.T) {
-	fresh := typ.NewFreshArray()
-	numbers := typ.NewArray(typ.Number)
+	fresh := typ.NewFreshEmptyRecord()
+	empty := typ.NewRecord().Build()
 
-	if !IsSubtype(fresh, numbers) {
-		t.Fatalf("IsSubtype(freshArray, number[]) = false, want true (fresh = never[], never[] <: number[])")
+	if !IsSubtype(fresh, empty) {
+		t.Fatalf("IsSubtype(fresh{}, {}) = false, want true (freshness invisible to <:)")
 	}
-	if IsSubtype(numbers, fresh) {
-		t.Fatalf("IsSubtype(number[], freshArray) = true, want false (number[] not <: never[])")
-	}
-}
-
-// TestFreshArray_DistinctFromAnnotatedNever verifies the Fresh field is folded
-// into hash/equals so a fresh never[] is not equal to an annotated never[].
-func TestFreshArray_DistinctFromAnnotatedNever(t *testing.T) {
-	fresh := typ.NewFreshArray()
-	annotatedNever := typ.NewArray(typ.Never)
-
-	if typ.TypeEquals(fresh, annotatedNever) {
-		t.Fatalf("TypeEquals(freshArray, never[]) = true, want false (Fresh must distinguish them)")
-	}
-	if fresh.Hash() == annotatedNever.Hash() {
-		t.Fatalf("freshArray.Hash() == never[].Hash(); Fresh must fold into hash")
+	if !IsSubtype(empty, fresh) {
+		t.Fatalf("IsSubtype({}, fresh{}) = false, want true (freshness invisible to <:)")
 	}
 }
 
-// TestNewArray_FreshIsNoOp verifies NewArray never sets Fresh and that ordinary
-// arrays compare equal as before (additive Fresh=false is a pure no-op).
-func TestNewArray_FreshIsNoOp(t *testing.T) {
-	a := typ.NewArray(typ.Number)
-	b := typ.NewArray(typ.Number)
+// TestFreshEmptyRecord_DistinctFromAnnotated verifies Fresh is folded into
+// hash/equals so a fresh empty record is not equal to an ordinary empty record.
+func TestFreshEmptyRecord_DistinctFromAnnotated(t *testing.T) {
+	fresh := typ.NewFreshEmptyRecord()
+	empty := typ.NewRecord().Build()
+
+	if typ.TypeEquals(fresh, empty) {
+		t.Fatalf("TypeEquals(fresh{}, {}) = true, want false (Fresh must distinguish them)")
+	}
+	if fresh.Hash() == empty.Hash() {
+		t.Fatalf("fresh{}.Hash() == {}.Hash(); Fresh must fold into hash")
+	}
+}
+
+// TestNewRecord_FreshIsNoOp verifies NewRecord().Build() never sets Fresh and
+// that ordinary empty records compare equal (additive Fresh=false is a no-op).
+func TestNewRecord_FreshIsNoOp(t *testing.T) {
+	a := typ.NewRecord().Build()
+	b := typ.NewRecord().Build()
 	if a.Fresh {
-		t.Fatalf("NewArray sets Fresh=true, want false")
+		t.Fatalf("NewRecord().Build() sets Fresh=true, want false")
 	}
 	if !typ.TypeEquals(a, b) {
-		t.Fatalf("TypeEquals(number[], number[]) = false, want true")
+		t.Fatalf("TypeEquals({}, {}) = false, want true")
 	}
 	if a.Hash() != b.Hash() {
-		t.Fatalf("number[] hashes differ across NewArray calls")
+		t.Fatalf("{} hashes differ across NewRecord calls")
 	}
 }

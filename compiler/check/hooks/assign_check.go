@@ -137,7 +137,7 @@ func CheckAssignments(graph *cfg.Graph, evidence api.FlowEvidence, declared flow
 				if sym != 0 && assigned[sym] {
 					return
 				}
-				if !subtype.IsSubtype(typ.Nil, declaredType) {
+				if !subtype.Consistent(typ.Nil, declaredType) {
 					var posNode ast.PositionHolder
 					if target.Expr != nil {
 						posNode = target.Expr
@@ -208,7 +208,7 @@ func CheckAssignments(graph *cfg.Graph, evidence api.FlowEvidence, declared flow
 				return
 			}
 
-			if !subtype.IsSubtype(valueType, declaredType) {
+			if !subtype.Consistent(valueType, declaredType) {
 				pos := diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()}
 				span := ast.SpanOf(source)
 				msg := formatAssignMismatch(valueType, declaredType)
@@ -272,7 +272,7 @@ func checkStructuredAssignmentTarget(target cfg.AssignTarget, source ast.Expr, p
 			return diag.Diagnostic{}, false
 		}
 	}
-	if subtype.IsSubtype(valueType, expected) {
+	if subtype.Consistent(valueType, expected) {
 		return diag.Diagnostic{}, false
 	}
 

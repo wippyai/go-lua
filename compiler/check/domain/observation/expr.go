@@ -470,7 +470,7 @@ func (p Projector) tableType(expr *ast.TableExpr, point cfg.Point, expected typ.
 		if expectedTable(expected) {
 			return expected
 		}
-		return typ.NewRecord().Build()
+		return typ.NewFreshEmptyRecord()
 	}
 	fields, elems, fieldCount, _ := p.tableFields(expr, expected, point, false)
 	if expected != nil {

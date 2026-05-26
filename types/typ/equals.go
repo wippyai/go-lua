@@ -147,7 +147,7 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 			typeEqualsGuard(va.Value, vb.Value, next, seen)
 	case *Record:
 		vb, ok := b.(*Record)
-		if !ok || va.Open != vb.Open || len(va.Fields) != len(vb.Fields) {
+		if !ok || va.Open != vb.Open || va.Fresh != vb.Fresh || len(va.Fields) != len(vb.Fields) {
 			return false
 		}
 		for i, f := range va.Fields {

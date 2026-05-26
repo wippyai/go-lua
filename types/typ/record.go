@@ -32,6 +32,12 @@ type Record struct {
 	MapKey                Type // Map component key type (nil if no map component)
 	MapValue              Type // Map component value type (nil if no map component)
 	Open                  bool // Allow access to undefined fields
+	// Fresh marks a transient empty-table-literal seed ({}). It is the gradual
+	// bottom of the table lattice: invisible to IsSubtype (a Fresh empty record
+	// behaves exactly as a closed empty record under <:) but admitted by
+	// subtype.Consistent against any table-like target. Fresh is set only via
+	// NewFreshEmptyRecord; rebuilt/merged records drop it.
+	Fresh                 bool
 	sorted                bool
 	hash                  uint64
 	softPrunable          bool
@@ -122,7 +128,18 @@ func (b *RecordBuilder) MapComponent(key, value Type) *RecordBuilder {
 
 // Build creates the record type.
 func (b *RecordBuilder) Build() *Record {
-	return buildRecordType(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, false)
+	return buildRecordType(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, false, false)
+}
+
+// NewFreshEmptyRecord creates the transient empty-table-literal seed ({}).
+//
+// It is a zero-field record (so under IsSubtype it is exactly the closed empty
+// record), but Fresh is folded into hash/equals so it is distinct from an
+// ordinary empty record. As the gradual bottom of the table lattice it is
+// admitted by subtype.Consistent against any table-like target an empty table
+// can satisfy (see emptyTableSatisfies).
+func NewFreshEmptyRecord() *Record {
+	return buildRecordType(nil, nil, nil, nil, false, true, true)
 }
 
 func (r *Record) Kind() kind.Kind { return kind.Record }

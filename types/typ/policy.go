@@ -268,7 +268,7 @@ func (s *returnJoinState) joinClosedCompatibleRecordSet(records []*Record) (Type
 			Readonly: acc.readonly,
 		})
 	}
-	return buildRecordType(mergedFields, nil, nil, nil, false, false), true
+	return buildRecordType(mergedFields, nil, nil, nil, false, false, false), true
 }
 
 // CoalesceCompatibleRecords merges compatible record alternatives before a
@@ -1067,7 +1067,7 @@ func (s *returnJoinState) joinCompatibleRecords(a, b Type) (Type, bool) {
 		}
 	}
 
-	merged := buildRecordType(fields, metatable, mapKey, mapValue, open, true)
+	merged := buildRecordType(fields, metatable, mapKey, mapValue, open, true, false)
 	if s != nil {
 		s.cacheRecordJoin(key, merged, true)
 	}

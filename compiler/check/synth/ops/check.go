@@ -118,7 +118,7 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 	default:
 		// Try synthesis and check compatibility
 		synthesized := tableConstructor(fields, arrayElems)
-		if subtype.IsSubtype(synthesized, expected) {
+		if subtype.Consistent(synthesized, expected) {
 			return CheckResult{Type: synthesized}
 		}
 
@@ -167,7 +167,7 @@ func checkTableAsArray(fields []FieldDef, elems []typ.Type, expected *typ.Array)
 
 	// Check each element against expected element type
 	for i, elem := range elems {
-		if !subtype.IsSubtype(elem, expected.Element) {
+		if !subtype.Consistent(elem, expected.Element) {
 			errors = append(errors, CheckError{
 				Message:  "element type mismatch",
 				Expected: expected.Element,
@@ -194,7 +194,7 @@ func checkTableAsMap(fields []FieldDef, elems []typ.Type, expected *typ.Map) Che
 			})
 			continue
 		}
-		if !subtype.IsSubtype(f.Type, slot) {
+		if !subtype.Consistent(f.Type, slot) {
 			errors = append(errors, CheckError{
 				Message:  "field value type mismatch",
 				Expected: slot,
@@ -214,7 +214,7 @@ func checkTableAsMap(fields []FieldDef, elems []typ.Type, expected *typ.Map) Che
 			})
 			continue
 		}
-		if !subtype.IsSubtype(elem, slot) {
+		if !subtype.Consistent(elem, slot) {
 			errors = append(errors, CheckError{
 				Message:  "element type mismatch",
 				Expected: slot,
@@ -318,7 +318,7 @@ func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Recor
 			})
 			continue
 		}
-		if !subtype.IsSubtype(elem, slot) {
+		if !subtype.Consistent(elem, slot) {
 			errors = append(errors, CheckError{
 				Message:  "element type mismatch",
 				Expected: slot,
@@ -360,7 +360,7 @@ func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Recor
 			})
 			continue
 		}
-		if !subtype.IsSubtype(f.Type, expectedFieldType) {
+		if !subtype.Consistent(f.Type, expectedFieldType) {
 			errors = append(errors, CheckError{
 				Message:  "field type mismatch",
 				Expected: expectedFieldType,
@@ -390,7 +390,7 @@ func checkTableAsTuple(elems []typ.Type, expected *typ.Tuple) CheckResult {
 
 	// Check each element
 	for i := 0; i < len(elems) && i < len(expected.Elements); i++ {
-		if !subtype.IsSubtype(elems[i], expected.Elements[i]) {
+		if !subtype.Consistent(elems[i], expected.Elements[i]) {
 			errors = append(errors, CheckError{
 				Message:  "element type mismatch",
 				Expected: expected.Elements[i],

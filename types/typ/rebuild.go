@@ -10,6 +10,7 @@ import (
 var (
 	recordMapKeyHash   = internal.FnvString("$mapKey")
 	recordMapValueHash = internal.FnvString("$mapValue")
+	freshRecordHash    = internal.FnvString("$freshEmptyTable")
 )
 
 func buildFunctionType(
@@ -95,7 +96,7 @@ func buildFunctionType(
 	}
 }
 
-func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool, assumeSorted bool) *Record {
+func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool, assumeSorted bool, fresh bool) *Record {
 	sorted := make([]Field, len(fields))
 	copy(sorted, fields)
 	if !assumeSorted || !fieldsSortedByName(sorted) {
@@ -148,6 +149,9 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		h = internal.HashCombine(h, recordMapValueHash)
 		h = internal.HashCombine(h, mapValue.Hash())
 	}
+	if fresh {
+		h = internal.HashCombine(h, freshRecordHash)
+	}
 	softPrunable := softPruneFields(sorted) || softPruneAny(metatable, mapKey, mapValue)
 	containsAny := knownAnyFields(sorted) || knownAny(metatable, mapKey, mapValue)
 	containsNever := knownNeverFields(sorted) || knownNever(metatable, mapKey, mapValue)
@@ -163,6 +167,7 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		MapKey:                mapKey,
 		MapValue:              mapValue,
 		Open:                  open,
+		Fresh:                 fresh,
 		sorted:                true,
 		hash:                  h,
 		softPrunable:          softPrunable,

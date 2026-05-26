@@ -82,7 +82,7 @@ func CheckReturns(
 			if declaredType == nil {
 				continue
 			}
-			if !subtype.IsSubtype(typ.Nil, declaredType) {
+			if !subtype.Consistent(typ.Nil, declaredType) {
 				return i, declaredType
 			}
 		}
@@ -176,7 +176,7 @@ func CheckReturns(
 }
 
 func returnTypeCompatible(actual, declared typ.Type) bool {
-	if subtype.IsSubtype(actual, declared) {
+	if subtype.Consistent(actual, declared) {
 		return true
 	}
 	_, ok := value.ReconcilePathFactWithDeclaredRead(actual, declared)

@@ -9,50 +9,92 @@ import (
 // type super under gradual-typing Consistency (a.k.a. Assignability).
 //
 // Consistency is the user-facing assignment relation (assignment, return,
-// argument, field-write). Unlike IsSubtype, which is a strict partial order
-// (reflexive, transitive, antisymmetric) that the internal type algebra relies
-// on, Consistency is reflexive and symmetric on the dynamic component and is
-// NON-transitive. The dynamic/fresh citizens live here, not in IsSubtype.
+// argument, field-write). IsSubtype is a strict order the internal type algebra
+// relies on; Consistency admits the gradual citizens on top of it. The
+// dynamic/fresh members live here, not in IsSubtype, so the subtype order stays
+// clean.
 //
-// Definition:
-//
-//	Consistent(sub, super) = IsSubtype(sub, super) || freshTargetConsistent(sub, super)
-//
-// The IsSubtype disjunct already covers the fresh-SOURCE case: a fresh array is
-// never[] under <:, and never[] <: T[], so passing a fresh {} to a typed target
-// is admitted by IsSubtype. The freshTargetConsistent disjunct adds the
-// fresh-TARGET case: a fresh {} target accepts any array value.
+//	Consistent(sub, super) = IsSubtype(sub, super) || ConsistentBeyondSubtype(sub, super)
 func Consistent(sub, super typ.Type) bool {
 	if sub == nil || super == nil {
 		return false
 	}
-	if IsSubtype(sub, super) {
-		return true
-	}
-	return freshTargetConsistent(sub, super)
+	return IsSubtype(sub, super) || ConsistentBeyondSubtype(sub, super)
 }
 
-// freshTargetConsistent reports whether super (after unwrapping alias/optional as
-// IsSubtype would) is a fresh array target and sub is an array/sequence-like
-// value. A fresh-{} target is the array analogue of the dynamic seed: it accepts
-// any array value. This relation is array-scoped by design.
-func freshTargetConsistent(sub, super typ.Type) bool {
-	superArr, ok := unwrap.Optional(super).(*typ.Array)
-	if !ok || !superArr.Fresh {
+// ConsistentBeyondSubtype reports the gradual admissions Consistency adds on top
+// of IsSubtype, without re-running IsSubtype. Call sites that already have a
+// memoized subtype check use `isSubtype(...) || ConsistentBeyondSubtype(...)` to
+// preserve memoization.
+//
+// The sole gradual admission today is the fresh empty-table seed as a SOURCE: a
+// fresh `{}` (the gradual bottom of the table lattice) satisfies any target an
+// empty table can satisfy. The fresh-TARGET direction (`local t = {}; t = v`) is
+// a flow widening/rebinding concern handled in inference, not here.
+func ConsistentBeyondSubtype(sub, super typ.Type) bool {
+	if sub == nil || super == nil {
 		return false
 	}
-	return isArrayLike(unwrap.Optional(sub))
+	return isFreshEmptyTable(sub) && emptyTableSatisfies(super)
 }
 
-// isArrayLike reports whether t is an array/sequence-like value acceptable to a
-// fresh-array target: an array, a tuple, or never (the empty/bottom value).
-func isArrayLike(t typ.Type) bool {
-	if t == nil {
+// isFreshEmptyTable reports whether t is a fresh empty-table-literal seed: a
+// Fresh empty record (the `{}` seed) or a Fresh empty array. Both are only ever
+// produced by typ.NewFreshEmptyRecord / typ.NewFreshArray.
+func isFreshEmptyTable(t typ.Type) bool {
+	switch tt := t.(type) {
+	case *typ.Record:
+		return tt.Fresh
+	case *typ.Array:
+		return tt.Fresh
+	}
+	return false
+}
+
+// emptyTableSatisfies reports whether an empty table value can satisfy super.
+// It mirrors ops.CheckTable's empty-literal case exactly: an empty `{}` is
+// compatible with an array or map (no required structure), a record only when
+// every field is optional, a tuple only at arity zero, a union when some member
+// is satisfied, and an intersection only when every member is satisfied. super
+// is unwrapped through alias and optional first.
+func emptyTableSatisfies(super typ.Type) bool {
+	u := unwrap.Optional(super)
+	if u == nil {
 		return false
 	}
-	switch t.(type) {
-	case *typ.Array, *typ.Tuple:
+	switch t := u.(type) {
+	case *typ.Array:
 		return true
+	case *typ.Map:
+		return true
+	case *typ.Record:
+		return recordAcceptsEmptyTable(t)
+	case *typ.Tuple:
+		return len(t.Elements) == 0
+	case *typ.Union:
+		for _, m := range t.Members {
+			if emptyTableSatisfies(m) {
+				return true
+			}
+		}
+	case *typ.Intersection:
+		for _, m := range t.Members {
+			if !emptyTableSatisfies(m) {
+				return false
+			}
+		}
+		return len(t.Members) > 0
 	}
-	return typ.IsNever(t)
+	return false
+}
+
+// recordAcceptsEmptyTable reports whether an empty `{}` satisfies a record
+// target: it does iff the record declares no required (non-optional) field.
+func recordAcceptsEmptyTable(r *typ.Record) bool {
+	for _, f := range r.Fields {
+		if !f.Optional {
+			return false
+		}
+	}
+	return true
 }

@@ -43,7 +43,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, p cfg.Point, sc 
 		if result := emptyTableExpectedResult(expected); result != nil {
 			return result
 		}
-		return typ.NewRecord().Build()
+		return typ.NewFreshEmptyRecord()
 	}
 
 	if _, isUnion := unwrap.Alias(expected).(*typ.Union); isUnion {

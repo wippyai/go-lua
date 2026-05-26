@@ -369,5 +369,5 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard inter
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, v.Open, true)
+	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, v.Open, true, false)
 }

@@ -35,3 +35,4 @@ qodana-report/
 # Local agent/workspace config and generated state
 .codex/
 .agents/
+.codex-consult-*.txt

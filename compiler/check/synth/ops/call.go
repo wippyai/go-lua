@@ -999,7 +999,7 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 		}
 		if expectedReceiver != nil {
 			expectedReceiver = subst.Self(expectedReceiver, receiver)
-			if !isSubtypeCheck(ctx, query, receiver, expectedReceiver) {
+			if !consistentCheck(ctx, query, receiver, expectedReceiver) {
 				errors = append(errors, CallError{
 					Kind:     ErrTypeMismatch,
 					Subject:  "method receiver",
@@ -1028,7 +1028,7 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 		}
 
 		if expectedType != nil && arg != nil {
-			if !isSubtypeCheck(ctx, query, arg, expectedType) {
+			if !consistentCheck(ctx, query, arg, expectedType) {
 				errors = append(errors, CallError{
 					Kind:     ErrTypeMismatch,
 					Subject:  fmt.Sprintf("argument %d", i+1),
@@ -1203,6 +1203,13 @@ func isSubtypeCheck(ctx *db.QueryContext, query core.TypeOps, sub, super typ.Typ
 		return query.IsSubtype(ctx, sub, super)
 	}
 	return subtype.IsSubtype(sub, super)
+}
+
+// consistentCheck is the user-facing argument/receiver acceptance gate: the
+// memoized subtype check plus the gradual admissions Consistency adds (a fresh
+// `{}` source). It preserves IsSubtype memoization via isSubtypeCheck.
+func consistentCheck(ctx *db.QueryContext, query core.TypeOps, sub, super typ.Type) bool {
+	return isSubtypeCheck(ctx, query, sub, super) || subtype.ConsistentBeyondSubtype(sub, super)
 }
 
 // hasExplicitSelfSimple is a non-memoized version for use in contexts without QueryContext.
