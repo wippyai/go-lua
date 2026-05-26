@@ -47,6 +47,12 @@ func ReconcilePathFactWithDeclaredRead(narrowed, declared typ.Type) (typ.Type, b
 			return narrowed, true
 		}
 		if samePathFactFamily(declaredNonNil, narrowed) {
+			// The declared read permits nil; when the narrowed flow value itself
+			// carries nil, that presence is authoritative and must survive the
+			// reconciliation rather than collapsing to the non-nil family core.
+			if _, narrowedNilable := SplitNilable(narrowed); narrowedNilable {
+				return declared, true
+			}
 			return declaredNonNil, true
 		}
 		if unwrap.Function(declaredNonNil) != nil && unwrap.Function(narrowed) != nil {
