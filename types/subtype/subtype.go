@@ -212,14 +212,17 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	if subIsInst {
 		expanded := subst.ExpandInstantiated(subInst)
 		if expanded != nil && expanded != sub {
-			return c.check(expanded, super, depth+1)
+			// Expansion resolves the body's Self to subInst; bind the comparison
+			// partner's Self to the same instantiated type so a Self-receiver method
+			// on super matches the expanded concrete receiver.
+			return c.check(expanded, subst.Self(super, subInst), depth+1)
 		}
 	}
 
 	if superIsInst {
 		expanded := subst.ExpandInstantiated(superInst)
 		if expanded != nil && expanded != super {
-			return c.check(sub, expanded, depth+1)
+			return c.check(subst.Self(sub, superInst), expanded, depth+1)
 		}
 	}
 
