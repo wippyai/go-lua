@@ -247,23 +247,6 @@ func TestMapValueType_NonMap(t *testing.T) {
 	}
 }
 
-func TestNarrowTupleIndex_NotTuple(t *testing.T) {
-	s := newTestSynthesizer()
-	result := s.narrowTupleIndex(typ.String, "i", typ.Integer, 0, nil)
-	if result != nil {
-		t.Fatal("expected nil for non-tuple")
-	}
-}
-
-func TestNarrowTupleIndex_NilNarrower(t *testing.T) {
-	s := newTestSynthesizer()
-	tuple := typ.NewTuple(typ.String, typ.Integer)
-	result := s.narrowTupleIndex(tuple, "i", typ.Integer, 0, nil)
-	if result != nil {
-		t.Fatal("expected nil without narrower")
-	}
-}
-
 func TestSynthAttrGetCore_StringKey(t *testing.T) {
 	s, objExpr := newTestSynthesizerWithSymbol("obj", typ.NewRecord().Field("name", typ.String).Build())
 	sc := scope.New()

@@ -17,6 +17,20 @@ func (p Projector) AssignmentSourceType(source ast.Expr, point cfg.Point, expect
 	if source == nil {
 		return nil
 	}
+	// A stored source type that still carries a type parameter is a generic call
+	// synthesized bottom-up without its expected return, so the parameter was never
+	// bound. When an expected type is available, re-synthesize the source with it so
+	// bidirectional inference instantiates the parameter (e.g. registry.get<T>(): T?
+	// assigned to a number? annotation resolves T to number).
+	if expected != nil {
+		if t, ok := p.assignmentSourceProductType(point, targetSym); ok && !typ.ContainsTypeParam(t) {
+			return t
+		}
+		if t, ok := p.assignmentPathSourceType(source, point, targetSym); ok && !typ.ContainsTypeParam(t) {
+			return t
+		}
+		return p.assignmentSourceProjector(source, targetSym).TypeOfWithExpected(source, point, expected)
+	}
 	if t, ok := p.assignmentSourceProductType(point, targetSym); ok {
 		return t
 	}

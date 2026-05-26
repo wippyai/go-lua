@@ -929,7 +929,7 @@ func synthAssignmentSourceWithExpected(synthAPI api.SynthAPI, source ast.Expr, p
 		return nil
 	}
 	switch source.(type) {
-	case *ast.TableExpr, *ast.FunctionExpr, *ast.LogicalOpExpr:
+	case *ast.TableExpr, *ast.FunctionExpr, *ast.LogicalOpExpr, *ast.FuncCallExpr:
 	default:
 		return nil
 	}
