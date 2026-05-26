@@ -46,6 +46,8 @@
 package subtype
 
 import (
+	"reflect"
+
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
@@ -54,12 +56,6 @@ import (
 
 // isSubtype is the internal implementation of IsSubtype.
 func isSubtype(sub, super typ.Type) bool {
-	if sub != nil {
-		sub = typ.PruneSoftUnionMembers(sub)
-	}
-	if super != nil {
-		super = typ.PruneSoftUnionMembers(super)
-	}
 	c := &checker{}
 	return c.check(sub, super, 0)
 }
@@ -82,10 +78,23 @@ func IsSubtype(sub, super typ.Type) bool {
 	return isSubtype(sub, super)
 }
 
+// isOptionalTop reports whether t is an optional wrapping a top type. Such a
+// type (unknown?/any?) accepts every value including nil, so it behaves as a
+// top type and is a supertype of all types.
+func isOptionalTop(t typ.Type) bool {
+	opt, ok := unwrap.Alias(t).(*typ.Optional)
+	if !ok || opt == nil {
+		return false
+	}
+	inner := unwrap.Alias(opt.Inner)
+	return typ.IsAny(inner) || typ.IsUnknown(inner)
+}
+
 // checker holds mutable state for a single subtype derivation.
 // It tracks seen type pairs to handle recursive types via coinduction.
 type checker struct {
-	seen map[typePair]bool
+	inProgress map[typePair]bool
+	memo       map[typePair]bool
 }
 
 // check performs the recursive subtype check with depth tracking.
@@ -95,14 +104,40 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 	if stopDepthPair(sub, super, depth) {
 		return false
 	}
-
-	// Reflexivity: T <: T
 	if sub == super {
 		return true
 	}
 
-	// Hash equality fast path
-	if sub.Hash() == super.Hash() && sub.Equals(super) {
+	if needsCycleGuard(sub.Kind()) && needsCycleGuard(super.Kind()) {
+		if pair, ok := newTypePair(sub, super); ok {
+			if c.memo != nil {
+				if result, ok := c.memo[pair]; ok {
+					return result
+				}
+			}
+			if c.inProgress == nil {
+				c.inProgress = make(map[typePair]bool)
+			}
+			if c.inProgress[pair] {
+				return true // coinductive assumption for an active cycle
+			}
+			c.inProgress[pair] = true
+			result := c.checkCore(sub, super, depth)
+			delete(c.inProgress, pair)
+			if c.memo == nil {
+				c.memo = make(map[typePair]bool)
+			}
+			c.memo[pair] = result
+			return result
+		}
+	}
+
+	return c.checkCore(sub, super, depth)
+}
+
+func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
+	// Reflexivity: T <: T
+	if sub == super {
 		return true
 	}
 
@@ -127,16 +162,12 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 		}
 	}
 
-	// Cycle detection using interface identity (non-commutative, co-inductive).
-	if needsCycleGuard(sub.Kind()) && needsCycleGuard(super.Kind()) {
-		pair := typePair{sub: sub, super: super}
-		if c.seen == nil {
-			c.seen = make(map[typePair]bool)
-		}
-		if c.seen[pair] {
-			return true // coinductive assumption
-		}
-		c.seen[pair] = true
+	// Hash equality fast path. Recursive roots are checked structurally through
+	// the coinductive pair guard above; hashing their bodies here repeats the
+	// same derivation work and can dominate convergence on inferred recursive
+	// collection shapes.
+	if !isRecursiveRoot(sub) && !isRecursiveRoot(super) && sub.Hash() == super.Hash() && sub.Equals(super) {
+		return true
 	}
 
 	// Unwrap aliases
@@ -210,12 +241,38 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 	if typ.IsUnknown(super) {
 		return true
 	}
+	// Optional wrapping a top type (unknown?/any?) is itself a top type: it
+	// admits every value, nil included. T <: top? is true for all T, so it
+	// must be settled before the any/unknown sub rejections below.
+	if isOptionalTop(super) {
+		return true
+	}
 	// Any is NOT assignable to specific types; only to Any itself (Unknown handled above).
 	if typ.IsAny(sub) {
 		// Builtin table-top marker is a dynamic table boundary; explicit `any`
 		// values are permitted to flow through it.
 		if unwrap.IsBuiltinTableTop(super) {
 			return true
+		}
+		// A union or intersection super decomposes structurally: any is a
+		// subtype of an intersection when it satisfies every member, and of a
+		// union when it satisfies some member. Each recursion re-enters the
+		// top-type fast paths, so any <: (unknown & unknown?) holds.
+		if i, ok := super.(*typ.Intersection); ok {
+			for _, m := range i.Members {
+				if !c.check(sub, m, depth+1) {
+					return false
+				}
+			}
+			return true
+		}
+		if u, ok := super.(*typ.Union); ok {
+			for _, m := range u.Members {
+				if c.check(sub, m, depth+1) {
+					return true
+				}
+			}
+			return false
 		}
 		return false
 	}
@@ -310,6 +367,11 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 	if r, ok := sub.(*typ.Record); ok {
 		if m, ok := super.(*typ.Map); ok {
 			return c.checkRecordToMap(r, m, depth+1)
+		}
+	}
+	if m, ok := sub.(*typ.Map); ok {
+		if r, ok := super.(*typ.Record); ok {
+			return c.checkMapToRecord(m, r, depth+1)
 		}
 	}
 
@@ -417,8 +479,9 @@ func (c *checker) checkNil(super typ.Type, depth int) bool {
 //     the corresponding sub param type (sub accepts wider input)
 //   - Returns are covariant: each sub return type must be a subtype of the
 //     corresponding super return type (sub provides narrower output)
-//   - Arity: sub must accept at least as many arguments as super requires,
-//     and sub must return at least as many values as super promises
+//   - Arity: sub must accept at least as many arguments as super requires.
+//     Missing observed return slots are Lua nils, so they satisfy only
+//     promised return slots that admit nil.
 //   - Variadic: checked contravariantly like regular parameters
 func (c *checker) checkFunction(sub, super *typ.Function, depth int) bool {
 	subReq := typ.MinRequiredArgs(sub)
@@ -474,14 +537,15 @@ func (c *checker) checkFunction(sub, super *typ.Function, depth int) bool {
 		}
 	}
 
-	// Check returns: covariant
-	// sub must provide at least as many returns as super promises
-	if len(sub.Returns) < len(super.Returns) {
-		return false
-	}
-
+	// Check returns: covariant. Lua pads missing observed return slots with nil,
+	// so a shorter-returning function can satisfy only the promised slots that
+	// explicitly accept nil/unknown/any.
 	for i := 0; i < len(super.Returns); i++ {
-		if !c.check(sub.Returns[i], super.Returns[i], depth+1) {
+		subReturn := typ.Nil
+		if i < len(sub.Returns) {
+			subReturn = sub.Returns[i]
+		}
+		if !c.check(subReturn, super.Returns[i], depth+1) {
 			return false
 		}
 	}
@@ -538,7 +602,7 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 			}
 			// Reverse check with widening: allow literal/refinement types to widen
 			// This is sound for fresh record literals where no narrower-typed alias exists
-			if !c.check(sf.Type, subField.Type, depth+1) && !canWidenTo(subField.Type, sf.Type) {
+			if !c.check(sf.Type, subField.Type, depth+1) && !c.canWidenTo(subField.Type, sf.Type, depth+1) {
 				return false
 			}
 		}
@@ -582,6 +646,15 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 // This is sound because it only applies to fresh values where no narrower-typed
 // alias can exist to observe the widening.
 func canWidenTo(narrow, wide typ.Type) bool {
+	c := &checker{}
+	return c.canWidenTo(narrow, wide, 0)
+}
+
+func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
+	if stopDepthPair(narrow, wide, depth) {
+		return false
+	}
+
 	// Unwrap aliases to get the underlying types
 	wide = unwrap.Alias(wide)
 	narrow = unwrap.Alias(narrow)
@@ -608,7 +681,11 @@ func canWidenTo(narrow, wide typ.Type) bool {
 
 	// Allow widening into optional types when narrow fits the inner type.
 	if opt, ok := wide.(*typ.Optional); ok {
-		if isSubtype(narrow, opt.Inner) {
+		if narrowOpt, ok := narrow.(*typ.Optional); ok {
+			return c.check(narrowOpt.Inner, opt.Inner, depth+1) ||
+				c.canWidenTo(narrowOpt.Inner, opt.Inner, depth+1)
+		}
+		if c.check(narrow, opt.Inner, depth+1) {
 			return true
 		}
 	}
@@ -620,7 +697,7 @@ func canWidenTo(narrow, wide typ.Type) bool {
 			return false
 		}
 		for _, m := range u.Members {
-			if isSubtype(m, wide) || canWidenTo(m, wide) {
+			if c.check(m, wide, depth+1) || c.canWidenTo(m, wide, depth+1) {
 				continue
 			}
 			return false
@@ -636,7 +713,7 @@ func canWidenTo(narrow, wide typ.Type) bool {
 			if m.Kind() == kind.Literal {
 				continue
 			}
-			if isSubtype(narrow, m) || canWidenTo(narrow, m) {
+			if c.check(narrow, m, depth+1) || c.canWidenTo(narrow, m, depth+1) {
 				return true
 			}
 		}
@@ -670,8 +747,30 @@ func canWidenTo(narrow, wide typ.Type) bool {
 	// Nested records: check if all fields can widen
 	if subRec, ok := narrow.(*typ.Record); ok {
 		if supRec, ok := wide.(*typ.Record); ok {
-			return canWidenRecordTo(subRec, supRec)
+			return c.canWidenRecordTo(subRec, supRec, depth+1)
 		}
+	}
+
+	if subMap, ok := narrow.(*typ.Map); ok {
+		if supMap, ok := wide.(*typ.Map); ok {
+			return c.canWidenMapTo(subMap, supMap, depth+1)
+		}
+	}
+
+	if subArray, ok := narrow.(*typ.Array); ok {
+		if supArray, ok := wide.(*typ.Array); ok {
+			return c.check(subArray.Element, supArray.Element, depth+1) ||
+				c.canWidenTo(subArray.Element, supArray.Element, depth+1)
+		}
+		if supMap, ok := wide.(*typ.Map); ok {
+			return c.check(typ.Integer, supMap.Key, depth+1) &&
+				(c.check(subArray.Element, supMap.Value, depth+1) ||
+					c.canWidenTo(subArray.Element, supMap.Value, depth+1))
+		}
+	}
+
+	if rec, ok := narrow.(*typ.Recursive); ok && rec.Body != nil && rec.Body != rec {
+		return c.check(rec.Body, wide, depth+1) || c.canWidenTo(rec.Body, wide, depth+1)
 	}
 
 	// Tuples: allow element-wise widening for fresh tuple literals.
@@ -681,8 +780,8 @@ func canWidenTo(narrow, wide typ.Type) bool {
 				return false
 			}
 			for i := range subTuple.Elements {
-				if isSubtype(subTuple.Elements[i], supTuple.Elements[i]) ||
-					canWidenTo(subTuple.Elements[i], supTuple.Elements[i]) {
+				if c.check(subTuple.Elements[i], supTuple.Elements[i], depth+1) ||
+					c.canWidenTo(subTuple.Elements[i], supTuple.Elements[i], depth+1) {
 					continue
 				}
 				return false
@@ -694,14 +793,15 @@ func canWidenTo(narrow, wide typ.Type) bool {
 	// Functions: allow widening when params are equivalent and returns can widen.
 	if subFn, ok := narrow.(*typ.Function); ok {
 		if supFn, ok := wide.(*typ.Function); ok {
-			if !functionParamsEquivalent(subFn, supFn) {
-				return false
-			}
-			if len(subFn.Returns) < len(supFn.Returns) {
+			if !c.functionParamsEquivalent(subFn, supFn, depth+1) {
 				return false
 			}
 			for i := 0; i < len(supFn.Returns); i++ {
-				if isSubtype(subFn.Returns[i], supFn.Returns[i]) || canWidenTo(subFn.Returns[i], supFn.Returns[i]) {
+				subReturn := typ.Nil
+				if i < len(subFn.Returns) {
+					subReturn = subFn.Returns[i]
+				}
+				if c.check(subReturn, supFn.Returns[i], depth+1) || c.canWidenTo(subReturn, supFn.Returns[i], depth+1) {
 					continue
 				}
 				return false
@@ -713,10 +813,21 @@ func canWidenTo(narrow, wide typ.Type) bool {
 	return false
 }
 
+func (c *checker) canWidenMapTo(narrow, wide *typ.Map, depth int) bool {
+	if narrow == nil || wide == nil {
+		return false
+	}
+	if !c.check(narrow.Key, wide.Key, depth+1) || !c.check(wide.Key, narrow.Key, depth+1) {
+		return false
+	}
+	return c.check(narrow.Value, wide.Value, depth+1) ||
+		c.canWidenTo(narrow.Value, wide.Value, depth+1)
+}
+
 // functionParamsEquivalent reports whether two functions have equivalent parameter
 // signatures. Used by canWidenTo to allow function widening only when parameters
 // match exactly (no contravariance in widening context).
-func functionParamsEquivalent(a, b *typ.Function) bool {
+func (c *checker) functionParamsEquivalent(a, b *typ.Function, depth int) bool {
 	if a == nil || b == nil {
 		return false
 	}
@@ -729,7 +840,7 @@ func functionParamsEquivalent(a, b *typ.Function) bool {
 		if ap.Optional != bp.Optional {
 			return false
 		}
-		if !isSubtype(ap.Type, bp.Type) || !isSubtype(bp.Type, ap.Type) {
+		if !c.check(ap.Type, bp.Type, depth+1) || !c.check(bp.Type, ap.Type, depth+1) {
 			return false
 		}
 	}
@@ -739,13 +850,13 @@ func functionParamsEquivalent(a, b *typ.Function) bool {
 	if a.Variadic == nil || b.Variadic == nil {
 		return false
 	}
-	return isSubtype(a.Variadic, b.Variadic) && isSubtype(b.Variadic, a.Variadic)
+	return c.check(a.Variadic, b.Variadic, depth+1) && c.check(b.Variadic, a.Variadic, depth+1)
 }
 
 // canWidenRecordTo reports whether all fields in narrow can widen to their
 // corresponding fields in wide. This is the recursive helper for canWidenTo
 // when both types are records.
-func canWidenRecordTo(narrow, wide *typ.Record) bool {
+func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
 	for _, wf := range wide.Fields {
 		nf := narrow.GetField(wf.Name)
 		if nf == nil {
@@ -753,7 +864,7 @@ func canWidenRecordTo(narrow, wide *typ.Record) bool {
 		}
 		// Forward direction must hold (already checked by main subtype check)
 		// Check if reverse direction can be satisfied by widening
-		if !isSubtype(wf.Type, nf.Type) && !canWidenTo(nf.Type, wf.Type) {
+		if !c.check(wf.Type, nf.Type, depth+1) && !c.canWidenTo(nf.Type, wf.Type, depth+1) {
 			return false
 		}
 	}
@@ -885,6 +996,36 @@ func (c *checker) checkRecordToMap(sub *typ.Record, super *typ.Map, depth int) b
 		}
 	}
 
+	return true
+}
+
+// checkMapToRecord checks if a homogeneous map can satisfy a record with a
+// compatible map component and only optional literal fields covered by the map.
+func (c *checker) checkMapToRecord(sub *typ.Map, super *typ.Record, depth int) bool {
+	if sub == nil || super == nil || !super.HasMapComponent() {
+		return false
+	}
+	if !c.checkMap(sub, typ.NewMap(super.MapKey, super.MapValue), depth+1) {
+		return false
+	}
+	for _, sf := range super.Fields {
+		if !sf.Optional && !unwrap.IsOptionalLike(sf.Type) {
+			return false
+		}
+		if !c.check(typ.LiteralString(sf.Name), sub.Key, depth+1) {
+			continue
+		}
+		expectedFieldType := sf.Type
+		if sf.Optional && !unwrap.IsOptionalLike(expectedFieldType) {
+			expectedFieldType = typ.NewOptional(expectedFieldType)
+		}
+		if !c.check(sub.Value, expectedFieldType, depth+1) {
+			return false
+		}
+		if !c.check(expectedFieldType, sub.Value, depth+1) && !c.canWidenTo(sub.Value, expectedFieldType, depth+1) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -1023,12 +1164,38 @@ func isTableLikeType(t typ.Type) bool {
 	}
 }
 
-// typePair stores a non-commutative pair of types for cycle detection.
-// Interface identity (pointer equality for compound types) serves as key,
-// matching the seen-map pattern in typ/equals.go.
+func isRecursiveRoot(t typ.Type) bool {
+	_, ok := t.(*typ.Recursive)
+	return ok
+}
+
+// typePair stores a non-commutative pair of immutable type node identities for
+// cycle detection. It intentionally avoids typ.Type interface keys: subtype
+// coinduction is about graph-node identity, not structural comparison through
+// Go's interface-key machinery.
 type typePair struct {
-	sub   typ.Type
-	super typ.Type
+	sub   uintptr
+	super uintptr
+}
+
+func newTypePair(sub, super typ.Type) (typePair, bool) {
+	subPtr := typeNodePointer(sub)
+	superPtr := typeNodePointer(super)
+	if subPtr == 0 || superPtr == 0 {
+		return typePair{}, false
+	}
+	return typePair{sub: subPtr, super: superPtr}, true
+}
+
+func typeNodePointer(t typ.Type) uintptr {
+	if t == nil {
+		return 0
+	}
+	v := reflect.ValueOf(t)
+	if v.Kind() != reflect.Pointer || v.IsNil() {
+		return 0
+	}
+	return v.Pointer()
 }
 
 // needsCycleGuard returns true for types that are pointer-backed and could

@@ -14,7 +14,7 @@ import (
 
 // EmitTableLiteralFieldAssignments emits per-field assignments for a table literal.
 // This enables flow narrowing to propagate through table construction.
-// For `local t = {from = obj.from}`, emits `t.from` with SourcePath=obj.from.
+// For `local t = {from = obj.from}`, emits `t.from` with source path obj.from.
 func EmitTableLiteralFieldAssignments(
 	table *ast.TableExpr,
 	targetSym cfg.SymbolID,
@@ -45,7 +45,9 @@ func EmitTableLiteralFieldAssignments(
 			continue
 		}
 
-		// Build source path from field value expression
+		// Build source path from field value expression when one exists. Literal
+		// and constructed values are still structural table evidence and are
+		// emitted with their synthesized type below.
 		var sourcePath constraint.Path
 		if sp := path.FromExprWithBindings(field.Value, constResolver, bindings); !sp.IsEmpty() && sp.Symbol != 0 {
 			sourcePath = constraint.Path{
@@ -55,21 +57,26 @@ func EmitTableLiteralFieldAssignments(
 			}
 		}
 
-		// Skip if no source path (literals don't need narrowing)
-		if sourcePath.IsEmpty() {
-			continue
-		}
-
-		// Synthesize field value type from the expression.
 		var fieldType typ.Type
 		if synth != nil {
 			fieldType = synth(field.Value, p)
+		}
+		if sourcePath.IsEmpty() && typ.IsAbsentOrUnknown(fieldType) {
+			continue
 		}
 		if fieldType == nil {
 			fieldType = typ.Unknown
 		}
 
-		// Emit field assignment: t.fieldName = <source>
+		source := flow.AssignmentSource{}
+		if !sourcePath.IsEmpty() {
+			source = flow.AssignmentSource{
+				Kind: flow.AssignmentSourcePath,
+				Path: sourcePath,
+			}
+		}
+
+		// Emit field assignment: t.fieldName = <source or structural value>
 		inputs.Assignments = append(inputs.Assignments, flow.UnifiedAssignment{
 			Point: p,
 			TargetPath: constraint.Path{
@@ -77,8 +84,8 @@ func EmitTableLiteralFieldAssignments(
 				Symbol:   targetSym,
 				Segments: []constraint.Segment{seg},
 			},
-			SourcePath: sourcePath,
-			Type:       resolve.Ref(fieldType, sc),
+			Source: source,
+			Type:   resolve.Ref(fieldType, sc),
 		})
 	}
 }

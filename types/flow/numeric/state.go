@@ -325,11 +325,15 @@ func Widen(prev, next *State) *State {
 		}
 	}
 	for k, pv := range prev.lenBounds {
-		if nv, ok := next.lenBounds[k]; ok && pv == nv {
+		if nv, ok := next.lenBounds[k]; ok {
+			widened := widenLengthInterval(pv, nv)
+			if widened == unboundedInterval {
+				continue
+			}
 			if result.lenBounds == nil {
 				result.lenBounds = make(map[constraint.PathKey]Interval)
 			}
-			result.lenBounds[k] = pv
+			result.lenBounds[k] = widened
 		}
 	}
 	if result.isTop() {
@@ -350,6 +354,18 @@ func intersectIntervals(a, b Interval) Interval {
 		Lower: maxInt64(a.Lower, b.Lower),
 		Upper: minInt64(a.Upper, b.Upper),
 	}
+}
+
+func widenLengthInterval(prev, next Interval) Interval {
+	lower := prev.Lower
+	if next.Lower < lower {
+		lower = next.Lower
+	}
+	upper := prev.Upper
+	if next.Upper > prev.Upper {
+		upper = math.MaxInt64
+	}
+	return Interval{Lower: lower, Upper: upper}
 }
 
 func minMapLen(a, b int) int {
@@ -724,6 +740,25 @@ func (s *State) LenBoundsFor(key constraint.PathKey) (lower, upper int64, ok boo
 	return interval.Lower, interval.Upper, true
 }
 
+// ForEachLenBound visits all tracked length bounds in deterministic key order.
+// The callback receives bounds for len(key); returning false stops iteration.
+func (s *State) ForEachLenBound(fn func(key constraint.PathKey, lower, upper int64) bool) {
+	if s == nil || len(s.lenBounds) == 0 || fn == nil {
+		return
+	}
+	keys := make([]constraint.PathKey, 0, len(s.lenBounds))
+	for key := range s.lenBounds {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	for _, key := range keys {
+		bounds := s.lenBounds[key]
+		if !fn(key, bounds.Lower, bounds.Upper) {
+			return
+		}
+	}
+}
+
 // LenRefFor returns the array key if variable has a symbolic length bound.
 //
 // A length reference means "key <= #arrKey" (variable is bounded by array length).
@@ -1032,114 +1067,13 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 	if s == nil || len(remap) == 0 {
 		return s
 	}
-
 	if s.unsat {
 		return Bottom()
 	}
 	if s.isTop() {
 		return s
 	}
-
-	result := &State{}
-	if len(s.bounds) > 0 {
-		result.bounds = make(map[constraint.PathKey]Interval, len(s.bounds))
-	}
-	if len(s.modular) > 0 {
-		result.modular = make(map[constraint.PathKey]ModResidue, len(s.modular))
-	}
-	if len(s.relations) > 0 {
-		result.relations = make(map[relationKey]int64, len(s.relations))
-	}
-	if len(s.lenRefs) > 0 {
-		result.lenRefs = make(map[constraint.PathKey]lenRefBound, len(s.lenRefs))
-	}
-	if len(s.lenBounds) > 0 {
-		result.lenBounds = make(map[constraint.PathKey]Interval, len(s.lenBounds))
-	}
-
-	// Remap bounds
-	for _, k := range constraint.SortedPathKeys(s.bounds) {
-		v := s.bounds[k]
-		newKey := k
-		if mapped, ok := remap[k]; ok {
-			newKey = mapped
-		}
-		if existing, ok := result.bounds[newKey]; ok {
-			v = intersectIntervals(existing, v)
-			if v.Lower > v.Upper {
-				return Bottom()
-			}
-		}
-		result.bounds[newKey] = v
-	}
-
-	// Remap modular constraints
-	for _, k := range constraint.SortedPathKeys(s.modular) {
-		v := s.modular[k]
-		newKey := k
-		if mapped, ok := remap[k]; ok {
-			newKey = mapped
-		}
-		if existing, ok := result.modular[newKey]; ok && existing != v {
-			return Bottom()
-		}
-		result.modular[newKey] = v
-	}
-
-	// Remap relations (both X and Y)
-	for _, rel := range sortedRelationKeys(s.relations) {
-		c := s.relations[rel]
-		newX := rel.X
-		newY := rel.Y
-		if mapped, ok := remap[rel.X]; ok {
-			newX = mapped
-		}
-		if mapped, ok := remap[rel.Y]; ok {
-			newY = mapped
-		}
-		newRel := relationKey{X: newX, Y: newY}
-		if existing, ok := result.relations[newRel]; ok {
-			c = minInt64(existing, c)
-		}
-		result.relations[newRel] = c
-	}
-
-	// Remap length references (both variable and array keys)
-	for _, k := range constraint.SortedPathKeys(s.lenRefs) {
-		ref := s.lenRefs[k]
-		newK := k
-		newArr := ref.Array
-		if mapped, ok := remap[k]; ok {
-			newK = mapped
-		}
-		if mapped, ok := remap[ref.Array]; ok {
-			newArr = mapped
-		}
-		ref.Array = newArr
-		if existing, ok := result.lenRefs[newK]; ok && existing != ref {
-			delete(result.lenRefs, newK)
-			continue
-		}
-		result.lenRefs[newK] = ref
-	}
-
-	// Remap length bounds.
-	for _, k := range constraint.SortedPathKeys(s.lenBounds) {
-		v := s.lenBounds[k]
-		newKey := k
-		if mapped, ok := remap[k]; ok {
-			newKey = mapped
-		}
-		if existing, ok := result.lenBounds[newKey]; ok {
-			v = intersectIntervals(existing, v)
-			if v.Lower > v.Upper {
-				return Bottom()
-			}
-		}
-		result.lenBounds[newKey] = v
-	}
-
-	return result
+	return rekeyState(s, remap)
 }
 
 func sortedRelationKeys(m map[relationKey]int64) []relationKey {

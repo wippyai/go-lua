@@ -80,7 +80,7 @@ func ExportFunctionSummaries(manifest *io.Manifest, exportType typ.Type, graph *
 	}
 	for _, sym := range cfg.SortedSymbolIDs(refinementsBySym) {
 		refinement := refinementsBySym[sym]
-		if refinement == nil || !refinement.OnReturn.HasConstraints() {
+		if refinement == nil || !functionSummaryHasRefinement(refinement) {
 			continue
 		}
 
@@ -114,6 +114,19 @@ func ExportFunctionSummaries(manifest *io.Manifest, exportType typ.Type, graph *
 		}
 		manifest.DefineSummary(fieldName, ioSummary)
 	}
+}
+
+func functionSummaryHasRefinement(refinement *constraint.FunctionRefinement) bool {
+	if refinement == nil {
+		return false
+	}
+	if refinement.OnReturn.HasConstraints() || refinement.OnTrue.HasConstraints() || refinement.OnFalse.HasConstraints() {
+		return true
+	}
+	if row, ok := refinement.Row.(effect.Row); ok {
+		return !row.Pure() || row.IsOpen()
+	}
+	return refinement.Terminates
 }
 
 // exportFieldNameFromSymbolName resolves a symbol name to an exported record field.

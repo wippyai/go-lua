@@ -34,8 +34,9 @@ func NewQueryContext(db *DB) *QueryContext {
 	return &QueryContext{
 		db: db,
 		tracker: &tracker{
-			inProgress: make(map[cycleKey]bool),
-			cycle:      make(map[cycleKey]bool),
+			inProgress:   make(map[cycleKey]bool),
+			cycle:        make(map[cycleKey]bool),
+			revalidating: make(map[cycleKey]bool),
 		},
 	}
 }
@@ -66,8 +67,9 @@ func (c *QueryContext) validationContext() *QueryContext {
 		c.validation = &QueryContext{
 			db: c.db,
 			tracker: &tracker{
-				inProgress: c.tracker.inProgress,
-				cycle:      c.tracker.cycle,
+				inProgress:   c.tracker.inProgress,
+				cycle:        c.tracker.cycle,
+				revalidating: c.tracker.revalidating,
 			},
 			attachments: c.attachments,
 		}
@@ -77,6 +79,7 @@ func (c *QueryContext) validationContext() *QueryContext {
 	validationTracker := c.validation.tracker
 	validationTracker.inProgress = c.tracker.inProgress
 	validationTracker.cycle = c.tracker.cycle
+	validationTracker.revalidating = c.tracker.revalidating
 	if len(validationTracker.stack) > 0 {
 		validationTracker.stack = validationTracker.stack[:0]
 	}
@@ -86,9 +89,10 @@ func (c *QueryContext) validationContext() *QueryContext {
 }
 
 type tracker struct {
-	stack      []frame
-	inProgress map[cycleKey]bool // tracks queries currently being computed to detect cycles
-	cycle      map[cycleKey]bool // tracks queries that detected a cycle
+	stack        []frame
+	inProgress   map[cycleKey]bool // tracks queries currently being computed to detect cycles
+	cycle        map[cycleKey]bool // tracks queries that detected a cycle
+	revalidating map[cycleKey]bool // tracks dependency validation to avoid recursive cache checks
 }
 
 type frame struct {
@@ -169,14 +173,15 @@ func (c *QueryContext) recordDep(d dep) {
 //
 // Thread safety: Query is safe for concurrent use via internal locking.
 type Query[K comparable, V any] struct {
-	name        string
-	compute     func(*QueryContext, K) V
-	equal       func(a, b V) bool
-	widen       func(prev, next V) V
-	alwaysWiden bool
-	seed        func() V
-	mu          sync.RWMutex
-	cache       map[K]*MemoEntry
+	name                string
+	compute             func(*QueryContext, K) V
+	equal               func(a, b V) bool
+	widen               func(prev, next V) V
+	alwaysWiden         bool
+	revisionInvalidated bool
+	seed                func(*QueryContext, K) V
+	mu                  sync.RWMutex
+	cache               map[K]*MemoEntry
 }
 
 // NewQuery constructs a memoized query.
@@ -193,6 +198,23 @@ func NewQuery[K comparable, V any](
 	equal func(a, b V) bool,
 ) *Query[K, V] {
 	return NewQueryWithWiden(name, compute, equal, nil)
+}
+
+// NewRevisionQuery constructs a query invalidated by the whole DB revision.
+//
+// This is a coarse dependency policy for hot pure computations where capturing
+// fine-grained input dependencies costs more than recomputation. It still uses
+// the standard Query cache and query-dependency edges: parent queries depend on
+// this query's projected value, and downstream recomputation happens only when
+// that value changes.
+func NewRevisionQuery[K comparable, V any](
+	name string,
+	compute func(*QueryContext, K) V,
+	equal func(a, b V) bool,
+) *Query[K, V] {
+	q := NewQuery(name, compute, equal)
+	q.revisionInvalidated = true
+	return q
 }
 
 // NewQueryWithWiden constructs a query with a widening function for cycles.
@@ -212,12 +234,36 @@ func NewQueryWithWiden[K comparable, V any](
 ) *Query[K, V] {
 	var zero V
 
+	return NewQueryWithSeedAndWiden(name, compute, equal, func(*QueryContext, K) V {
+		return zero
+	}, widen)
+}
+
+// NewQueryWithSeedAndWiden constructs a query with a key-aware cycle seed and
+// optional widening. The seed is the semantic bottom/initial approximation
+// returned when the same query key is reached recursively before a cached value
+// exists. Use this for recursive analyses whose safe approximation depends on
+// the requested key.
+func NewQueryWithSeedAndWiden[K comparable, V any](
+	name string,
+	compute func(*QueryContext, K) V,
+	equal func(a, b V) bool,
+	seed func(*QueryContext, K) V,
+	widen func(prev, next V) V,
+) *Query[K, V] {
+	var zero V
+	if seed == nil {
+		seed = func(*QueryContext, K) V {
+			return zero
+		}
+	}
+
 	return &Query[K, V]{
 		name:    name,
 		compute: compute,
 		equal:   equal,
 		widen:   widen,
-		seed:    func() V { return zero },
+		seed:    seed,
 		cache:   make(map[K]*MemoEntry),
 	}
 }
@@ -255,6 +301,10 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 		return q.compute(ctx, key)
 	}
 
+	if q.revisionInvalidated {
+		return q.getRevisionInvalidated(ctx, key)
+	}
+
 	// Cycle detection: if in progress, return current approximation.
 	ck := cycleKey{query: q, key: key}
 	if ctx.tracker.inProgress[ck] {
@@ -267,7 +317,7 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 
 		if q.seed != nil {
 			q.recordQueryDep(ctx, key, q.updatedAt(key))
-			return q.seed()
+			return q.seed(ctx, key)
 		}
 
 		var zero V
@@ -353,6 +403,33 @@ func (q *Query[K, V]) Get(ctx *QueryContext, key K) V {
 	}
 }
 
+func (q *Query[K, V]) getRevisionInvalidated(ctx *QueryContext, key K) V {
+	rev := ctx.db.Revision()
+
+	var cachedValue V
+
+	var cachedDeps []dep
+
+	var cachedUpdatedAt Revision
+
+	var cachedVerifiedAt Revision
+	hasEntry := q.readCacheEntry(key, &cachedValue, &cachedDeps, &cachedUpdatedAt, &cachedVerifiedAt)
+	if hasEntry && cachedVerifiedAt == rev {
+		q.recordQueryDep(ctx, key, cachedUpdatedAt)
+		return cachedValue
+	}
+
+	value := q.compute(ctx.validationContext(), key)
+	equalFn := q.equal
+	if equalFn == nil {
+		equalFn = anyEqual[V]
+	}
+
+	value, updatedAt := q.updateCacheEntry(key, value, nil, rev, equalFn, false)
+	q.recordQueryDep(ctx, key, updatedAt)
+	return value
+}
+
 func (q *Query[K, V]) recordQueryDep(ctx *QueryContext, key K, last Revision) {
 	if !ctx.hasActiveFrame() {
 		return
@@ -375,6 +452,14 @@ func (q *Query[K, V]) revalidateAny(ctx *QueryContext, key any) Revision {
 }
 
 func (q *Query[K, V]) revalidate(ctx *QueryContext, key K) Revision {
+	if ctx != nil && ctx.tracker != nil {
+		ck := cycleKey{query: q, key: key}
+		if ctx.tracker.revalidating[ck] {
+			return q.updatedAt(key)
+		}
+		ctx.tracker.revalidating[ck] = true
+		defer delete(ctx.tracker.revalidating, ck)
+	}
 	_ = q.Get(ctx, key)
 	return q.updatedAt(key)
 }
@@ -475,9 +560,9 @@ func (q *Query[K, V]) updateCacheEntry(
 	} else {
 		existing := entry.Value.(V)
 		if !equalFn(existing, value) {
-			entry.Value = value
 			entry.UpdatedAt = rev
 		}
+		entry.Value = value
 	}
 
 	return value, entry.UpdatedAt

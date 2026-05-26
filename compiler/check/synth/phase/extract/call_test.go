@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -32,10 +33,9 @@ func TestCallQuery_NilSynthesizer(t *testing.T) {
 
 func TestCallQuery_NilTypes(t *testing.T) {
 	deps := &Deps{
-		Ctx:      db.NewQueryContext(db.New()),
-		Types:    nil,
-		Scopes:   make(api.ScopeMap),
-		PreCache: make(api.Cache),
+		Ctx:    db.NewQueryContext(db.New()),
+		Types:  nil,
+		Scopes: make(api.ScopeMap),
 	}
 	s := NewSynthesizer(deps, api.PhaseTypeResolution)
 	q := CallQuery{s: s}
@@ -53,10 +53,9 @@ func TestCallQuery_NilTypes(t *testing.T) {
 
 func TestCallQuery_WithMock(t *testing.T) {
 	deps := &Deps{
-		Ctx:      db.NewQueryContext(db.New()),
-		Types:    mockTypeQuerier{},
-		Scopes:   make(api.ScopeMap),
-		PreCache: make(api.Cache),
+		Ctx:    db.NewQueryContext(db.New()),
+		Types:  mockTypeQuerier{},
+		Scopes: make(api.ScopeMap),
 	}
 	s := NewSynthesizer(deps, api.PhaseTypeResolution)
 	q := CallQuery{s: s}
@@ -127,6 +126,33 @@ func TestCopyTypes_Empty(t *testing.T) {
 	}
 }
 
+func TestApplyPostCallTransforms_MethodEffectsUseRuntimeReceiverSlot(t *testing.T) {
+	s := newTestSynthesizer()
+	receiver := typ.NewRecord().
+		Field("all", typ.Func().Param("self", typ.Self).Returns(typ.Nil).Build()).
+		Build()
+	callee := typ.Func().
+		Param("self", typ.Self).
+		Param("kind", typ.String).
+		Returns(typ.Self).
+		Effects(effect.Row{Labels: []effect.Label{
+			effect.FlowInto{ParamIndex: 0, ReturnIndex: 0},
+		}}).
+		Build()
+
+	got := s.applyPostCallTransforms(
+		callee,
+		[]typ.Type{typ.LiteralString("conversation_summary")},
+		[]typ.Type{receiver},
+		receiver,
+		true,
+		false,
+	)
+	if len(got) != 1 || !typ.TypeEquals(got[0], receiver) {
+		t.Fatalf("method effect transform = %v, want receiver %v", got, receiver)
+	}
+}
+
 func TestResolveMethodCallee_Nil(t *testing.T) {
 	s := newTestSynthesizer()
 	result := s.resolveMethodCallee(nil, "foo")
@@ -137,10 +163,9 @@ func TestResolveMethodCallee_Nil(t *testing.T) {
 
 func TestMethod_NilTypes(t *testing.T) {
 	deps := &Deps{
-		Ctx:      db.NewQueryContext(db.New()),
-		Types:    nil,
-		Scopes:   make(api.ScopeMap),
-		PreCache: make(api.Cache),
+		Ctx:    db.NewQueryContext(db.New()),
+		Types:  nil,
+		Scopes: make(api.ScopeMap),
 	}
 	s := NewSynthesizer(deps, api.PhaseTypeResolution)
 
@@ -151,10 +176,9 @@ func TestMethod_NilTypes(t *testing.T) {
 
 func TestField_NilTypes(t *testing.T) {
 	deps := &Deps{
-		Ctx:      db.NewQueryContext(db.New()),
-		Types:    nil,
-		Scopes:   make(api.ScopeMap),
-		PreCache: make(api.Cache),
+		Ctx:    db.NewQueryContext(db.New()),
+		Types:  nil,
+		Scopes: make(api.ScopeMap),
 	}
 	s := NewSynthesizer(deps, api.PhaseTypeResolution)
 

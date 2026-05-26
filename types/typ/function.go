@@ -21,16 +21,22 @@ type Param struct {
 // The Spec field holds Hoare-style contracts (pre/post conditions).
 // The Refinement field holds type narrowing constraints for predicate functions.
 type Function struct {
-	TypeParams   []*TypeParam   // Generic type parameters (empty for non-generic)
-	Params       []Param        // Positional parameters
-	Variadic     Type           // Variadic element type (nil if not variadic)
-	Returns      []Type         // Return types (empty for void functions)
-	Effects      EffectInfo     // Effect row (effect.Row) for mutation/throw/io tracking
-	Spec         SpecInfo       // Contract specification (*contract.Spec)
-	Refinement   RefinementInfo // Type refinement effect (*constraint.FunctionRefinement)
-	hash         uint64
-	softPrunable bool
-	strCache     stringCache
+	TypeParams            []*TypeParam   // Generic type parameters (empty for non-generic)
+	Params                []Param        // Positional parameters
+	Variadic              Type           // Variadic element type (nil if not variadic)
+	Returns               []Type         // Return types (empty for void functions)
+	Effects               EffectInfo     // Effect row (effect.Row) for mutation/throw/io tracking
+	Spec                  SpecInfo       // Contract specification (*contract.Spec)
+	Refinement            RefinementInfo // Type refinement effect (*constraint.FunctionRefinement)
+	hash                  uint64
+	softPrunable          bool
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
 }
 
 // FunctionBuilder provides a fluent API for constructing function types.

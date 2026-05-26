@@ -293,7 +293,10 @@ func TestIndexPresence_JoinedInstallOnBothBranches_IsDefiniteAfterJoin(t *testin
 		}
 
 		local messages: {[string]: Message} = {}
-		local cond = true
+		local function dynamic_cond(): boolean
+			return math.random() > 0.5
+		end
+		local cond = dynamic_cond()
 		if cond then
 			messages["root"] = {
 				_topic = "a",
@@ -353,7 +356,10 @@ func TestIndexPresence_JoinedInstallOnlyOnOneBranch_DirectLookupMustFail(t *test
 		}
 
 		local messages: {[string]: Message} = {}
-		local cond = true
+		local function dynamic_cond(): boolean
+			return math.random() > 0.5
+		end
+		local cond = dynamic_cond()
 		if cond then
 			messages["root"] = {
 				_topic = "a",
@@ -380,7 +386,10 @@ func TestIndexPresence_JoinedInstallOnlyOnOneBranch_GuardedLookupSucceeds(t *tes
 		}
 
 		local messages: {[string]: Message} = {}
-		local cond = true
+		local function dynamic_cond(): boolean
+			return math.random() > 0.5
+		end
+		local cond = dynamic_cond()
 		if cond then
 			messages["root"] = {
 				_topic = "a",
@@ -415,7 +424,10 @@ func TestIndexPresence_JoinedNilOnOneBranch_DirectLookupMustFail(t *testing.T) {
 				return self._topic
 			end,
 		}
-		local cond = true
+		local function dynamic_cond(): boolean
+			return math.random() > 0.5
+		end
+		local cond = dynamic_cond()
 		if cond then
 			messages["root"] = nil
 		end

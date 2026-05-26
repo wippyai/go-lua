@@ -17,7 +17,7 @@ suites["b"] = { 2 }
 for name in pairs(suites) do
     local v: {any} = suites[name]
 end
-`
+	`
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
@@ -62,7 +62,7 @@ local names = sorted_keys(suites)
 for _, name in ipairs(names) do
     local v: number = suites[name].value
 end
-`
+	`
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))

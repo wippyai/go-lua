@@ -6,43 +6,60 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
+
+func projectFunctionForTest(t *testing.T, ff api.FunctionFact) *typ.Function {
+	t.Helper()
+	return projectFunctionForPhaseForTest(t, ff, api.PhaseScopeCompute)
+}
+
+func projectFunctionForPhaseForTest(t *testing.T, ff api.FunctionFact, phase api.Phase) *typ.Function {
+	t.Helper()
+	fn := unwrap.Function(ProjectType(ff, ProjectionSibling, phase))
+	if fn == nil {
+		t.Fatalf("expected function projection, got %v", ProjectType(ff, ProjectionSibling, phase))
+	}
+	return fn
+}
 
 func TestJoin_InitialObservation(t *testing.T) {
 	fn := typ.Func().Returns(typ.String).Build()
 
 	got := Join(api.FunctionFact{}, api.FunctionFact{
-		Summary: []typ.Type{typ.String},
-		Narrow:  []typ.Type{typ.String},
-		Type:    fn,
+		Summary:   product.LiftVector([]typ.Type{typ.String}),
+		Narrow:    product.LiftVector([]typ.Type{typ.String}),
+		Signature: fn,
 	})
 
-	if !returnsummary.Equal(got.Summary, []typ.Type{typ.String}) {
+	if !returnsummary.Equal(product.ProjectVector(got.Summary), []typ.Type{typ.String}) {
 		t.Fatalf("summary mismatch: got %v", got.Summary)
 	}
-	if !returnsummary.Equal(got.Narrow, []typ.Type{typ.String}) {
+	if !returnsummary.Equal(product.ProjectVector(got.Narrow), []typ.Type{typ.String}) {
 		t.Fatalf("narrow mismatch: got %v", got.Narrow)
 	}
-	if !typ.TypeEquals(got.Type, fn) {
-		t.Fatalf("func mismatch: got %v", got.Type)
+	if !typ.TypeEquals(got.Signature, fn) {
+		t.Fatalf("signature mismatch: got %v", got.Signature)
 	}
 }
 
-func TestJoin_RefinementProvenParamDoesNotBecomePrecondition(t *testing.T) {
+func TestJoin_BodyPreconditionRemainsPublicContractEvenWithRefinement(t *testing.T) {
 	refinement := constraint.NewRefinement([]constraint.Constraint{
 		constraint.HasType{Path: constraint.ParamPath(1), Type: narrow.BuiltinTypeKey("string")},
 	}, nil, nil)
 	out := Join(
-		api.FunctionFact{Params: []typ.Type{typ.String, typ.Any}},
+		api.FunctionFact{Params: product.LiftVector([]typ.Type{typ.String, typ.Any})},
 		api.FunctionFact{
-			Params:     []typ.Type{typ.String, typ.String},
+			Params:     product.LiftVector([]typ.Type{typ.String, typ.String}),
 			Refinement: refinement,
-			Type: typ.Func().
+			Signature: typ.Func().
 				Param("label", typ.String).
 				Param("msg", typ.String).
 				Returns(typ.Unknown).
@@ -50,22 +67,563 @@ func TestJoin_RefinementProvenParamDoesNotBecomePrecondition(t *testing.T) {
 		},
 	)
 
-	if len(out.Params) != 2 || !typ.TypeEquals(out.Params[1], typ.Any) {
-		t.Fatalf("expected dynamic call evidence to survive refinement-proven body use, got %v", out.Params)
+	if len(out.Params) != 2 || !typ.TypeEquals(out.Params[1].ProjectValue(), typ.String) {
+		t.Fatalf("expected hard body precondition to remain public, got %v", out.Params)
 	}
 }
 
-func TestJoin_UnprovenDynamicParamUseRemainsPrecondition(t *testing.T) {
+func TestJoin_PublicContractEvidenceDominatesDynamicSeed(t *testing.T) {
 	out := Join(
-		api.FunctionFact{Params: []typ.Type{typ.Any}},
+		api.FunctionFact{Params: product.LiftVector([]typ.Type{typ.Any})},
 		api.FunctionFact{
-			Params: []typ.Type{typ.String},
-			Type:   typ.Func().Param("value", typ.String).Returns(typ.Unknown).Build(),
+			Params:    product.LiftVector([]typ.Type{typ.String}),
+			Signature: typ.Func().Param("value", typ.String).Returns(typ.Unknown).Build(),
 		},
 	)
 
-	if len(out.Params) != 1 || !typ.TypeEquals(out.Params[0], typ.String) {
-		t.Fatalf("expected unproven string demand to remain a precondition, got %v", out.Params)
+	if len(out.Params) != 1 || !typ.TypeEquals(out.Params[0].ProjectValue(), typ.String) {
+		t.Fatalf("expected public contract evidence to dominate dynamic seed, got %v", out.Params)
+	}
+}
+
+func TestMergeExpectedSignature_ContextRequiredParamDropsSeedNilability(t *testing.T) {
+	seed := typ.Func().
+		OptParam("db", typ.NewOptional(typ.String)).
+		Returns(typ.Unknown).
+		Build()
+	expected := typ.Func().
+		Param("db", typ.String).
+		Returns(typ.String).
+		Build()
+
+	got := MergeExpectedSignature(seed, expected)
+	if got == nil || len(got.Params) != 1 || got.Params[0].Optional || !typ.TypeEquals(got.Params[0].Type, typ.String) {
+		t.Fatalf("MergeExpectedSignature() param = %#v, want required string", got)
+	}
+	if len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], typ.String) {
+		t.Fatalf("MergeExpectedSignature() returns = %v, want string", got.Returns)
+	}
+}
+
+func TestMergeExpectedSignature_ReturnsUseValueConvergenceLaw(t *testing.T) {
+	base := typ.NewRecord().Field("x", typ.Number).Build()
+	grown := typ.NewRecord().
+		Field("x", typ.Number).
+		Field("next", typ.NewRecord().Field("value", base).Build()).
+		Build()
+	seed := typ.Func().Returns(base).Build()
+	expected := typ.Func().Returns(grown).Build()
+
+	got := MergeExpectedSignature(seed, expected)
+	if got == nil || len(got.Returns) != 1 {
+		t.Fatalf("MergeExpectedSignature() returns = %v, want one return", got)
+	}
+	if _, ok := got.Returns[0].(*typ.Recursive); !ok {
+		t.Fatalf("MergeExpectedSignature() return = %T %[1]v, want value-domain recursive convergence", got.Returns[0])
+	}
+}
+
+func TestCanonicalPostflowSignature_UsesPublicParamsAndOmitsInferredReturns(t *testing.T) {
+	observed := typ.Func().
+		Param("value", typ.Any).
+		Variadic(typ.Any).
+		Returns(typ.Integer).
+		Build()
+	publicSeed := typ.Func().
+		Param("value", typ.String).
+		Build()
+
+	got := CanonicalPostflowSignature(observed, publicSeed, []typ.Type{typ.Integer}, false, false)
+	if got == nil {
+		t.Fatal("CanonicalPostflowSignature() = nil")
+	}
+	if len(got.Params) != 1 || !typ.TypeEquals(got.Params[0].Type, typ.String) {
+		t.Fatalf("params = %v, want public string param", got.Params)
+	}
+	if got.Variadic != nil {
+		t.Fatalf("variadic = %v, want synthetic variadic omitted", got.Variadic)
+	}
+	if len(got.Returns) != 0 {
+		t.Fatalf("returns = %v, want inferred returns omitted from source signature", got.Returns)
+	}
+}
+
+type panicHashType struct{}
+
+func (panicHashType) Kind() kind.Kind { return kind.Unknown }
+func (panicHashType) String() string  { return "panic-hash" }
+func (panicHashType) Hash() uint64 {
+	panic("undeclared inferred return was normalized into source signature")
+}
+func (panicHashType) Equals(typ.Type) bool { return false }
+
+func TestCanonicalPostflowSignature_DoesNotHashUndeclaredInferredReturns(t *testing.T) {
+	observed := typ.Func().
+		Param("value", typ.String).
+		Build()
+
+	got := CanonicalPostflowSignature(observed, nil, []typ.Type{panicHashType{}}, false, false)
+	if got == nil {
+		t.Fatal("CanonicalPostflowSignature() = nil")
+	}
+	if len(got.Returns) != 0 {
+		t.Fatalf("returns = %v, want undeclared inferred returns outside signature authority", got.Returns)
+	}
+}
+
+func TestCanonicalPostflowSignature_PreservesDeclaredReturnsAndSourceVariadic(t *testing.T) {
+	observed := typ.Func().
+		Param("value", typ.Any).
+		Variadic(typ.String).
+		Returns(typ.Unknown).
+		Build()
+
+	got := CanonicalPostflowSignature(observed, nil, []typ.Type{typ.Integer}, true, true)
+	if got == nil {
+		t.Fatal("CanonicalPostflowSignature() = nil")
+	}
+	if got.Variadic == nil || !typ.TypeEquals(got.Variadic, typ.String) {
+		t.Fatalf("variadic = %v, want source string variadic", got.Variadic)
+	}
+	if len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], typ.Integer) {
+		t.Fatalf("returns = %v, want declared integer return", got.Returns)
+	}
+}
+
+func TestJoin_BodyParamsDoNotRewritePublicParams(t *testing.T) {
+	bodyParam := typ.NewRecord().OptField("message", typ.String).Build()
+	out := Join(
+		api.FunctionFact{Params: product.LiftVector([]typ.Type{typ.Any})},
+		api.FunctionFact{
+			BodyParams: product.LiftVector([]typ.Type{bodyParam}),
+			Signature:  typ.Func().Param("info", bodyParam).Returns(typ.String).Build(),
+		},
+	)
+
+	if len(out.Params) != 1 || !typ.TypeEquals(out.Params[0].ProjectValue(), typ.Any) {
+		t.Fatalf("public params = %v, want any", out.Params)
+	}
+	if len(out.BodyParams) != 1 || !typ.TypeEquals(out.BodyParams[0].ProjectValue(), bodyParam) {
+		t.Fatalf("body params = %v, want %v", out.BodyParams, bodyParam)
+	}
+}
+
+func TestJoin_NarrowSummaryDoesNotEraseDynamicReturnSlot(t *testing.T) {
+	stream := typ.NewRecord().Field("candidates", typ.NewArray(typ.NewRecord().Build())).Build()
+	out := Join(api.FunctionFact{}, api.FunctionFact{
+		Summary: product.LiftVector([]typ.Type{typ.Unknown, typ.NewOptional(typ.NewRecord().Field("message", typ.String).Build())}),
+		Narrow:  product.LiftVector([]typ.Type{typ.NewOptional(stream), typ.Nil}),
+		Signature: typ.Func().
+			Param("method", typ.Any).
+			Returns(typ.Unknown, typ.NewOptional(typ.NewRecord().Field("message", typ.String).Build())).
+			Build(),
+	})
+
+	fn := projectFunctionForTest(t, out)
+	if !typ.TypeEquals(fn.Returns[0], typ.Unknown) {
+		t.Fatalf("dynamic return slot collapsed to %v, want unknown", fn.Returns[0])
+	}
+}
+
+func TestNormalize_InferredPlaceholderAnyRepairsFromNarrowProof(t *testing.T) {
+	out := Normalize(api.FunctionFact{
+		Summary:   product.LiftVector([]typ.Type{typ.Any}),
+		Narrow:    product.LiftVector([]typ.Type{typ.Integer}),
+		Signature: typ.Func().Param("x", typ.Any).Build(),
+	})
+
+	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{typ.Integer}) {
+		t.Fatalf("summary mismatch: got %v want integer", out.Summary)
+	}
+}
+
+func TestNormalize_DeclaredAnyReturnPreservesGradualContract(t *testing.T) {
+	out := Normalize(api.FunctionFact{
+		Summary:   product.LiftVector([]typ.Type{typ.Any}),
+		Narrow:    product.LiftVector([]typ.Type{typ.Integer}),
+		Signature: typ.Func().Param("x", typ.Any).Returns(typ.Any).Build(),
+	})
+
+	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{typ.Any}) {
+		t.Fatalf("summary mismatch: got %v want any", out.Summary)
+	}
+}
+
+func TestNormalize_NilOnlyNarrowDoesNotCreateSummary(t *testing.T) {
+	out := Normalize(api.FunctionFact{Narrow: product.LiftVector([]typ.Type{typ.Nil})})
+	if len(out.Summary) != 0 {
+		t.Fatalf("summary mismatch: got %v want empty", out.Summary)
+	}
+	if !returnsummary.Equal(product.ProjectVector(out.Narrow), []typ.Type{typ.Nil}) {
+		t.Fatalf("narrow mismatch: got %v want nil", out.Narrow)
+	}
+}
+
+func TestNormalize_MixedArityNarrowDoesNotTruncateSummaryProduct(t *testing.T) {
+	dbType := typ.NewRecord().Field("query", typ.Func().Returns(typ.Any).Build()).Build()
+	summary := []typ.Type{typ.NewOptional(dbType), typ.NewOptional(typ.LuaError)}
+	out := Normalize(api.FunctionFact{
+		Summary:   product.LiftVector(summary),
+		Narrow:    product.LiftVector([]typ.Type{dbType}),
+		Signature: typ.Func().Returns(typ.Unknown).Build(),
+	})
+
+	if !returnsummary.Equal(product.ProjectVector(out.Summary), summary) {
+		t.Fatalf("summary mismatch: got %v want %v", out.Summary, summary)
+	}
+	if !returnsummary.Equal(product.ProjectVector(out.Narrow), []typ.Type{dbType}) {
+		t.Fatalf("narrow mismatch: got %v want %v", out.Narrow, []typ.Type{dbType})
+	}
+}
+
+func TestWidenForConvergence_MixedArityNarrowDoesNotTruncateSummaryProduct(t *testing.T) {
+	dbType := typ.NewRecord().Field("query", typ.Func().Returns(typ.Any).Build()).Build()
+	prevSummary := []typ.Type{typ.NewOptional(dbType), typ.NewOptional(typ.LuaError)}
+	out := WidenForConvergence(
+		api.FunctionFact{Summary: product.LiftVector(prevSummary), Narrow: product.LiftVector(prevSummary)},
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{dbType}), Narrow: product.LiftVector([]typ.Type{dbType})},
+	)
+
+	if len(out.Summary) != 2 {
+		t.Fatalf("summary arity mismatch: got %v want two slots", out.Summary)
+	}
+	if !unwrap.IsOptionalLike(out.Summary[0].ProjectValue()) {
+		t.Fatalf("first slot should remain nilable across return paths, got %v", out.Summary[0].ProjectValue())
+	}
+	if !unwrap.IsOptionalLike(out.Summary[1].ProjectValue()) {
+		t.Fatalf("second slot should remain nil-padded, got %v", out.Summary[1].ProjectValue())
+	}
+}
+
+func TestWidenForConvergence_ValueErrorProductAdmitsLaterSuccessBranch(t *testing.T) {
+	value := typ.NewRecord().Field("y", typ.Integer).Build()
+	err := typ.LiteralString("missing")
+	next := []typ.Type{typ.NewOptional(value), typ.NewOptional(err)}
+
+	out := WidenForConvergence(
+		api.FunctionFact{
+			Summary: product.LiftVector([]typ.Type{typ.Nil, err}),
+			Narrow:  product.LiftVector([]typ.Type{typ.Nil, err}),
+		},
+		api.FunctionFact{
+			Summary:   product.LiftVector(next),
+			Narrow:    product.LiftVector(next),
+			Signature: typ.Func().Param("name", typ.Any).Returns(next...).Build(),
+		},
+	)
+
+	if !returnsummary.Equal(product.ProjectVector(out.Summary), next) {
+		t.Fatalf("summary = %v, want %v", out.Summary, next)
+	}
+	if !returnsummary.Equal(product.ProjectVector(out.Narrow), next) {
+		t.Fatalf("narrow = %v, want %v", out.Narrow, next)
+	}
+}
+
+func TestWidenForConvergence_EquivalentAliasAndStructuralNarrowConverges(t *testing.T) {
+	eventStruct := typ.NewUnion(
+		typ.NewRecord().Field("kind", typ.LiteralString("message")).Field("id", typ.String).Build(),
+		typ.NewRecord().Field("kind", typ.LiteralString("tool")).Field("id", typ.String).Build(),
+	)
+	eventAlias := typ.NewAlias("Event", eventStruct)
+	aliasReturn := typ.NewOptional(eventAlias)
+	structReturn := typ.NewOptional(eventStruct)
+
+	out := WidenForConvergence(
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{aliasReturn}), Narrow: product.LiftVector([]typ.Type{structReturn})},
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{structReturn}), Narrow: product.LiftVector([]typ.Type{aliasReturn})},
+	)
+
+	if !returnsummary.Equal(product.ProjectVector(out.Summary), product.ProjectVector(out.Narrow)) {
+		t.Fatalf("summary/narrow equivalent representatives diverged:\nsummary=%v\nnarrow=%v", out.Summary, out.Narrow)
+	}
+	if len(out.Summary) != 1 || !returnSlotHasAliasSurface(out.Summary[0].ProjectValue()) {
+		t.Fatalf("expected alias surface to be the canonical representative, got %v", out.Summary)
+	}
+
+	next := WidenForConvergence(out, api.FunctionFact{Summary: product.LiftVector([]typ.Type{structReturn}), Narrow: product.LiftVector([]typ.Type{aliasReturn})})
+	if !returnsummary.Equal(product.ProjectVector(next.Summary), product.ProjectVector(out.Summary)) || !returnsummary.Equal(product.ProjectVector(next.Narrow), product.ProjectVector(out.Narrow)) {
+		t.Fatalf("equivalent alias/struct repair must be idempotent:\nout=%v/%v\nnext=%v/%v", out.Summary, out.Narrow, next.Summary, next.Narrow)
+	}
+}
+
+func TestWidenForConvergence_RecursiveSummaryNarrowRepairIsCoinductive(t *testing.T) {
+	summaryNode := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("id", typ.String).
+			Field("children", typ.NewArray(self)).
+			MapComponent(typ.String, typ.NewOptional(self)).
+			Build()
+	})
+	narrowNode := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("id", typ.String).
+			Field("children", typ.NewArray(self)).
+			MapComponent(typ.String, typ.NewOptional(self)).
+			Build()
+	})
+	aliasReturn := typ.NewOptional(typ.NewAlias("Suite", summaryNode))
+	structReturn := typ.NewOptional(narrowNode)
+
+	out := WidenForConvergence(
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{aliasReturn}), Narrow: product.LiftVector([]typ.Type{structReturn})},
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{structReturn}), Narrow: product.LiftVector([]typ.Type{aliasReturn})},
+	)
+
+	if !returnsummary.Equal(product.ProjectVector(out.Summary), product.ProjectVector(out.Narrow)) {
+		t.Fatalf("recursive summary/narrow repair diverged:\nsummary=%v\nnarrow=%v", out.Summary, out.Narrow)
+	}
+	if len(out.Summary) != 1 || !returnSlotHasAliasSurface(out.Summary[0].ProjectValue()) {
+		t.Fatalf("expected alias surface to remain canonical, got %v", out.Summary)
+	}
+}
+
+func returnSlotHasAliasSurface(ret typ.Type) bool {
+	switch v := typ.UnwrapAnnotated(ret).(type) {
+	case *typ.Alias:
+		return true
+	case *typ.Optional:
+		return returnSlotHasAliasSurface(v.Inner)
+	case *typ.Union:
+		for _, member := range v.Members {
+			if returnSlotHasAliasSurface(member) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestNormalize_NarrowRequiredFieldRepairsOptionalPresence(t *testing.T) {
+	summary := typ.NewUnion(
+		typ.NewRecord().
+			Field("success", typ.True).
+			Field("result", typ.NewRecord().OptField("data", typ.Never).Build()).
+			Build(),
+		typ.NewRecord().
+			Field("success", typ.False).
+			Field("error", typ.LiteralString("missing")).
+			Build(),
+	)
+	narrow := typ.NewUnion(
+		typ.NewRecord().
+			Field("success", typ.True).
+			Field("result", typ.NewRecord().Field("data", typ.Unknown).Build()).
+			Build(),
+		typ.NewRecord().
+			Field("success", typ.False).
+			Field("error", typ.LiteralString("missing")).
+			Build(),
+	)
+	want := typ.NewUnion(
+		typ.NewRecord().
+			Field("success", typ.True).
+			Field("result", typ.NewRecord().Field("data", typ.Unknown).Build()).
+			Build(),
+		typ.NewRecord().
+			Field("success", typ.False).
+			Field("error", typ.LiteralString("missing")).
+			Build(),
+	)
+
+	out := Normalize(api.FunctionFact{
+		Summary: product.LiftVector([]typ.Type{summary}),
+		Narrow:  product.LiftVector([]typ.Type{narrow}),
+	})
+	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{want}) {
+		t.Fatalf("summary mismatch: got %v want %v", out.Summary, []typ.Type{want})
+	}
+}
+
+func TestWidenForConvergence_PreservesBodyStructuralParamPrecision(t *testing.T) {
+	publicParam := typ.NewOptional(typ.NewTuple(
+		typ.NewRecord().
+			Field("role", typ.String).
+			Field("content", typ.String).
+			Field("function_call_id", typ.String).
+			Build(),
+		typ.NewRecord().
+			Field("role", typ.String).
+			Field("content", typ.String).
+			Build(),
+	))
+	bodyContract := typ.NewTuple(
+		typ.NewRecord().
+			Field("role", typ.String).
+			Field("content", typ.String).
+			Field("function_call_id", typ.String).
+			Build(),
+		typ.NewRecord().
+			Field("role", typ.String).
+			Field("content", typ.String).
+			Build(),
+	)
+	entryParam := typ.NewTuple(
+		typ.NewRecord().
+			Field("role", typ.LiteralString("function_result")).
+			Field("content", typ.LiteralString("ok")).
+			Field("function_call_id", typ.LiteralString("tool")).
+			Build(),
+		typ.NewRecord().
+			Field("role", typ.LiteralString("developer")).
+			Field("content", typ.LiteralString("merge")).
+			Build(),
+	)
+	ret := typ.NewArray(typ.NewRecord().Field("role", typ.LiteralString("user")).Build())
+
+	out := WidenForConvergence(
+		api.FunctionFact{
+			Params:    product.LiftVector([]typ.Type{publicParam}),
+			Summary:   product.LiftVector([]typ.Type{ret}),
+			Narrow:    product.LiftVector([]typ.Type{ret}),
+			Signature: typ.Func().Param("messages", publicParam).Returns(ret).Build(),
+		},
+		api.FunctionFact{
+			Params:      product.LiftVector([]typ.Type{publicParam}),
+			BodyParams:  product.LiftVector([]typ.Type{bodyContract}),
+			EntryParams: product.LiftVector([]typ.Type{entryParam}),
+			Summary:     product.LiftVector([]typ.Type{ret}),
+			Narrow:      product.LiftVector([]typ.Type{ret}),
+			Signature:   typ.Func().Param("messages", publicParam).Returns(ret).Build(),
+		},
+	)
+
+	bodyFn := unwrap.Function(ProjectType(out, ProjectionBody, api.PhaseScopeCompute))
+	if bodyFn == nil || !typ.TypeEquals(bodyFn.Params[0].Type, entryParam) {
+		t.Fatalf("expected body-effective function type to preserve entry %v, got %v", entryParam, bodyFn)
+	}
+	if len(out.Params) != 1 || !typ.TypeEquals(out.Params[0].ProjectValue(), publicParam) {
+		t.Fatalf("expected public call-boundary params to remain %v, got %v", publicParam, out.Params)
+	}
+	if len(out.BodyParams) != 1 || !typ.TypeEquals(out.BodyParams[0].ProjectValue(), bodyContract) {
+		t.Fatalf("expected body contract to remain %v, got %v", bodyContract, out.BodyParams)
+	}
+	if len(out.EntryParams) != 1 || !typ.TypeEquals(out.EntryParams[0].ProjectValue(), entryParam) {
+		t.Fatalf("expected entry params to remain %v, got %v", entryParam, out.EntryParams)
+	}
+}
+
+func TestWidenForConvergence_SelfEmbeddingTupleParamTerminates(t *testing.T) {
+	record := typ.NewRecord().Field("id", typ.String).Build()
+	tuple := typ.NewTuple(record)
+	nested := typ.NewTuple(tuple)
+
+	out := WidenForConvergence(
+		api.FunctionFact{
+			Signature: typ.Func().Param("specs", tuple).Returns(typ.Unknown).Build(),
+		},
+		api.FunctionFact{
+			Signature: typ.Func().Param("specs", nested).Returns(typ.Unknown).Build(),
+		},
+	)
+
+	fn := projectFunctionForTest(t, out)
+	if _, ok := fn.Params[0].Type.(*typ.Recursive); !ok {
+		t.Fatalf("expected recursive self-embedding upper bound, got %v", fn.Params[0].Type)
+	}
+}
+
+func TestWidenForConvergence_CurrentNarrowRepairsStaleInferredMapKey(t *testing.T) {
+	stale := typ.NewMap(typ.Any, typ.Any)
+	solved := typ.NewMap(typ.String, typ.Any)
+
+	out := WidenForConvergence(
+		api.FunctionFact{
+			Summary:   product.LiftVector([]typ.Type{stale}),
+			Narrow:    product.LiftVector([]typ.Type{stale}),
+			Signature: typ.Func().Build(),
+		},
+		api.FunctionFact{
+			Summary:   product.LiftVector([]typ.Type{solved}),
+			Narrow:    product.LiftVector([]typ.Type{solved}),
+			Signature: typ.Func().Build(),
+		},
+	)
+
+	if !returnsummary.Equal(product.ProjectVector(out.Narrow), []typ.Type{solved}) {
+		t.Fatalf("narrow mismatch: got %v want %v", out.Narrow, []typ.Type{solved})
+	}
+	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{solved}) {
+		t.Fatalf("summary mismatch: got %v want %v", out.Summary, []typ.Type{solved})
+	}
+}
+
+func TestWidenForConvergence_DeclaredDynamicMapReturnPreserved(t *testing.T) {
+	declared := typ.NewMap(typ.Any, typ.Any)
+	solved := typ.NewMap(typ.String, typ.Any)
+
+	out := WidenForConvergence(
+		api.FunctionFact{
+			Summary:   product.LiftVector([]typ.Type{declared}),
+			Narrow:    product.LiftVector([]typ.Type{declared}),
+			Signature: typ.Func().Returns(declared).Build(),
+		},
+		api.FunctionFact{
+			Summary:   product.LiftVector([]typ.Type{solved}),
+			Narrow:    product.LiftVector([]typ.Type{solved}),
+			Signature: typ.Func().Returns(declared).Build(),
+		},
+	)
+
+	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{declared}) {
+		t.Fatalf("declared summary mismatch: got %v want %v", out.Summary, []typ.Type{declared})
+	}
+	fn := projectFunctionForPhaseForTest(t, out, api.PhaseNarrowing)
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], declared) {
+		t.Fatalf("declared projection return = %v, want %v", fn.Returns, []typ.Type{declared})
+	}
+}
+
+func TestProjectionExport_UnannotatedDynamicAnyReturnFieldsBecomeUnknown(t *testing.T) {
+	stale := typ.NewOptional(typ.NewRecord().
+		Field("max_tokens", typ.Any).
+		Field("output_tokens", typ.Any).
+		Build())
+	observed := typ.NewRecord().
+		Field("max_tokens", typ.Any).
+		Field("output_tokens", typ.Any).
+		Field("dimensions", typ.Number).
+		Build()
+
+	out := WidenForConvergence(
+		api.FunctionFact{
+			Summary:   product.LiftVector([]typ.Type{stale}),
+			Narrow:    product.LiftVector([]typ.Type{stale}),
+			Signature: typ.Func().Build(),
+		},
+		api.FunctionFact{
+			Summary:   product.LiftVector([]typ.Type{observed}),
+			Narrow:    product.LiftVector([]typ.Type{observed}),
+			Signature: typ.Func().Build(),
+		},
+	)
+
+	sibling := unwrap.Function(ProjectType(out, ProjectionSibling, api.PhaseNarrowing))
+	if sibling == nil || len(sibling.Returns) != 1 {
+		t.Fatalf("sibling projection = %v, want one return", sibling)
+	}
+	siblingRec, ok := unwrap.Optional(sibling.Returns[0]).(*typ.Record)
+	if !ok {
+		t.Fatalf("sibling return = %v, want record", sibling.Returns)
+	}
+	if field := siblingRec.GetField("max_tokens"); field == nil || !typ.TypeEquals(field.Type, typ.Any) {
+		t.Fatalf("sibling max_tokens = %v, want any", field)
+	}
+
+	exported := unwrap.Function(ProjectType(out, ProjectionExport, api.PhaseNarrowing))
+	if exported == nil || len(exported.Returns) != 1 {
+		t.Fatalf("export projection = %v, want one return", exported)
+	}
+	ret := unwrap.Optional(exported.Returns[0])
+	rec, ok := ret.(*typ.Record)
+	if !ok {
+		t.Fatalf("summary return = %T %[1]v, want record", ret)
+	}
+	for _, name := range []string{"max_tokens", "output_tokens"} {
+		field := rec.GetField(name)
+		if field == nil || !typ.TypeEquals(field.Type, typ.Unknown) {
+			t.Fatalf("field %s = %v, want unknown", name, field)
+		}
 	}
 }
 
@@ -76,17 +634,14 @@ func TestJoin_NarrowSummaryReplacesOpenTopPlaceholder(t *testing.T) {
 	narrow := []typ.Type{typ.NewArray(typ.Unknown)}
 
 	out := Join(
-		api.FunctionFact{Summary: []typ.Type{openTop}, Type: existingFunc},
-		api.FunctionFact{Summary: []typ.Type{openTop}, Narrow: narrow, Type: candidateFunc},
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{openTop}), Signature: existingFunc},
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{openTop}), Narrow: product.LiftVector(narrow), Signature: candidateFunc},
 	)
 
-	if !returnsummary.Equal(returnsummary.NormalizeAndPrune(out.Summary), returnsummary.NormalizeAndPrune(narrow)) {
+	if !returnsummary.Equal(returnsummary.NormalizeAndPrune(product.ProjectVector(out.Summary)), returnsummary.NormalizeAndPrune(narrow)) {
 		t.Fatalf("summary mismatch: got %v want %v", out.Summary, narrow)
 	}
-	fn, ok := out.Type.(*typ.Function)
-	if !ok {
-		t.Fatalf("expected function fact, got %T", out.Type)
-	}
+	fn := projectFunctionForTest(t, out)
 	if !returnsummary.Equal(returnsummary.NormalizeAndPrune(fn.Returns), returnsummary.NormalizeAndPrune(narrow)) {
 		t.Fatalf("func returns mismatch: got %v want %v", fn.Returns, narrow)
 	}
@@ -119,20 +674,17 @@ func TestJoin_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
 	}
 
 	out := Join(
-		api.FunctionFact{Summary: bad, Type: typ.Func().Returns(bad...).Build()},
-		api.FunctionFact{Narrow: good},
+		api.FunctionFact{Summary: product.LiftVector(bad), Signature: typ.Func().Returns(bad...).Build()},
+		api.FunctionFact{Narrow: product.LiftVector(good)},
 	)
 
-	if !returnsummary.Equal(out.Summary, good) {
+	if !returnsummary.Equal(product.ProjectVector(out.Summary), good) {
 		t.Fatalf("summary mismatch: got %v want %v", out.Summary, good)
 	}
-	if !returnsummary.Equal(out.Narrow, good) {
+	if !returnsummary.Equal(product.ProjectVector(out.Narrow), good) {
 		t.Fatalf("narrow mismatch: got %v want %v", out.Narrow, good)
 	}
-	fn, ok := out.Type.(*typ.Function)
-	if !ok {
-		t.Fatalf("expected function fact, got %T", out.Type)
-	}
+	fn := projectFunctionForTest(t, out)
 	if !returnsummary.Equal(fn.Returns, good) {
 		t.Fatalf("func returns mismatch: got %v want %v", fn.Returns, good)
 	}
@@ -142,25 +694,25 @@ func TestJoin_MergesExistingAndCandidate(t *testing.T) {
 	existingFn := typ.Func().Returns(typ.Number).Build()
 	candidateFn := typ.Func().Returns(typ.String).Build()
 	existing := api.FunctionFact{
-		Summary: []typ.Type{typ.Number},
-		Narrow:  []typ.Type{typ.Number},
-		Type:    existingFn,
+		Summary:   product.LiftVector([]typ.Type{typ.Number}),
+		Narrow:    product.LiftVector([]typ.Type{typ.Number}),
+		Signature: existingFn,
 	}
 	candidate := api.FunctionFact{
-		Summary: []typ.Type{typ.String},
-		Narrow:  []typ.Type{typ.String},
-		Type:    candidateFn,
+		Summary:   product.LiftVector([]typ.Type{typ.String}),
+		Narrow:    product.LiftVector([]typ.Type{typ.String}),
+		Signature: candidateFn,
 	}
 	got := Join(existing, candidate)
 
-	if !returnsummary.Equal(got.Summary, []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
+	if !returnsummary.Equal(product.ProjectVector(got.Summary), []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
 		t.Fatalf("summary mismatch: got %v", got.Summary)
 	}
-	if !returnsummary.Equal(got.Narrow, []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
+	if !returnsummary.Equal(product.ProjectVector(got.Narrow), []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
 		t.Fatalf("narrow mismatch: got %v", got.Narrow)
 	}
-	if got.Type == nil {
-		t.Fatal("expected merged function type")
+	if got.Signature == nil {
+		t.Fatal("expected merged function signature")
 	}
 }
 
@@ -175,19 +727,69 @@ func TestJoin_DoesNotAlignFunctionToNarrowFieldRegression(t *testing.T) {
 	existingFunc := typ.Func().Returns(flowOnly).Build()
 
 	out := Join(
-		api.FunctionFact{Summary: []typ.Type{withCapturedMethod}, Narrow: []typ.Type{flowOnly}, Type: existingFunc},
-		api.FunctionFact{Summary: []typ.Type{withCapturedMethod}, Narrow: []typ.Type{flowOnly}, Type: existingFunc},
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{withCapturedMethod}), Narrow: product.LiftVector([]typ.Type{flowOnly}), Signature: existingFunc},
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{withCapturedMethod}), Narrow: product.LiftVector([]typ.Type{flowOnly}), Signature: existingFunc},
 	)
 
-	if !returnsummary.Equal(out.Summary, []typ.Type{withCapturedMethod}) {
+	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{withCapturedMethod}) {
 		t.Fatalf("summary mismatch: got %v want %v", out.Summary, []typ.Type{withCapturedMethod})
 	}
-	fn, ok := out.Type.(*typ.Function)
-	if !ok {
-		t.Fatalf("expected function fact, got %T", out.Type)
-	}
+	fn := projectFunctionForTest(t, out)
 	if !returnsummary.Equal(fn.Returns, []typ.Type{withCapturedMethod}) {
 		t.Fatalf("func returns should preserve captured method summary, got %v", fn.Returns)
+	}
+}
+
+func TestBestNarrowUnionMember_AlignsRecursiveEvidenceFamily(t *testing.T) {
+	summarySuite := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	narrowSuite := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	other := typ.NewRecursive("Registry", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("items", typ.NewArray(self)).
+			Build()
+	})
+
+	members := []typ.Type{other, narrowSuite}
+	state := newRepairTypeState()
+	got := state.bestNarrowUnionMember(summarySuite, members, state.newRepairUnionMemberIndex(members))
+	if got != narrowSuite {
+		t.Fatalf("bestNarrowUnionMember() = %v, want recursive Suite family", got)
+	}
+}
+
+func TestBestNarrowUnionMember_NoFamilyMatchPreservesSummary(t *testing.T) {
+	summary := typ.NewRecord().Field("role", typ.LiteralString("developer")).Build()
+	narrowMember := typ.NewRecord().Field("role", typ.LiteralString("user")).Build()
+
+	members := []typ.Type{narrowMember}
+	state := newRepairTypeState()
+	got := state.bestNarrowUnionMember(summary, members, state.newRepairUnionMemberIndex(members))
+	if got != summary {
+		t.Fatalf("bestNarrowUnionMember() = %v, want original summary branch", got)
+	}
+}
+
+func TestRepairUnionFamilyComparisonTerminatesOnRecursiveKey(t *testing.T) {
+	left := typ.NewRecursive("Key", func(self typ.Type) typ.Type {
+		return typ.NewOptional(self)
+	})
+	right := typ.NewRecursive("Key", func(self typ.Type) typ.Type {
+		return typ.NewOptional(self)
+	})
+
+	state := newRepairTypeState()
+	if !state.sameRepairUnionFamily(left, right) {
+		t.Fatal("equivalent recursive repair family should compare without unbounded descent")
 	}
 }
 
@@ -208,6 +810,70 @@ func TestMergeType_MergesSameShapeReturnsCanonically(t *testing.T) {
 	}
 	if !typ.TypeEquals(fn.Returns[0], typ.Integer) {
 		t.Fatalf("expected refined return integer, got %v", fn.Returns[0])
+	}
+}
+
+func TestMergeType_ReplacesUnsolvedFunctionSeed(t *testing.T) {
+	seed := typ.Func().Build()
+	solved := typ.Func().Param("self", typ.Unknown).Returns(typ.Number).Build()
+
+	merged := MergeType(seed, solved)
+	if !typ.TypeEquals(merged, solved) {
+		t.Fatalf("MergeType(seed, solved) = %v, want %v", merged, solved)
+	}
+	merged = WidenTypeForConvergence(seed, solved)
+	if !typ.TypeEquals(merged, solved) {
+		t.Fatalf("WidenTypeForConvergence(seed, solved) = %v, want %v", merged, solved)
+	}
+}
+
+func TestWidenForConvergence_ReplacesReturnFieldFunctionSeed(t *testing.T) {
+	seed := typ.Func().Build()
+	solved := typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()
+	weak := typ.NewRecord().
+		Field("x", typ.Integer).
+		Field("get_x", seed).
+		Build()
+	strong := typ.NewRecord().
+		Field("x", typ.Integer).
+		Field("get_x", solved).
+		Build()
+
+	got := WidenForConvergence(
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{weak}), Narrow: product.LiftVector([]typ.Type{weak})},
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{strong}), Narrow: product.LiftVector([]typ.Type{strong})},
+	)
+
+	if !returnsummary.Equal(product.ProjectVector(got.Summary), []typ.Type{strong}) {
+		t.Fatalf("summary mismatch: got %v want %v", got.Summary, []typ.Type{strong})
+	}
+	if !returnsummary.Equal(product.ProjectVector(got.Narrow), []typ.Type{strong}) {
+		t.Fatalf("narrow mismatch: got %v want %v", got.Narrow, []typ.Type{strong})
+	}
+}
+
+func TestMergeType_MergesCallbackEnvOverlaySpec(t *testing.T) {
+	coarseSpec := contract.NewSpec().WithCallback(0, (&contract.CallbackSpec{}).WithEnvOverlay(map[string]typ.Type{
+		"up": typ.Unknown,
+	}))
+	preciseUp := typ.Func().Param("fn", typ.Func().Param("db", typ.String).Build()).Build()
+	preciseSpec := contract.NewSpec().WithCallback(0, (&contract.CallbackSpec{}).WithEnvOverlay(map[string]typ.Type{
+		"up": preciseUp,
+	}))
+	coarse := typ.Func().Param("fn", typ.Func().Build()).Spec(coarseSpec).Build()
+	precise := typ.Func().Param("fn", typ.Func().Build()).Spec(preciseSpec).Build()
+
+	merged, ok := MergeType(coarse, precise).(*typ.Function)
+	if !ok {
+		t.Fatalf("MergeType() = %T, want function", merged)
+	}
+	spec := contract.ExtractSpec(merged)
+	if spec == nil {
+		t.Fatal("merged spec missing")
+	}
+	cb := spec.GetCallback(0)
+	if cb == nil || !typ.TypeEquals(cb.EnvOverlay["up"], preciseUp) {
+		t.Fatalf("merged callback overlay = %v, want precise up", cb)
 	}
 }
 
@@ -349,6 +1015,168 @@ func TestMergeType_DoesNotDropNonFunctionUnionMembers(t *testing.T) {
 	if !hasNumber {
 		t.Fatalf("expected merged union to retain non-function member, got %v", merged)
 	}
+}
+
+func TestRepairSummaryWithNarrowHasNoDepthCap(t *testing.T) {
+	depth := typ.DefaultRecursionDepth + 4
+	summary := nestedFieldType(depth, typ.Any)
+	narrow := nestedFieldType(depth, typ.String)
+
+	got := repairSummaryWithNarrow([]typ.Type{summary}, []typ.Type{narrow})
+	if len(got) != 1 {
+		t.Fatalf("expected one repaired slot, got %d", len(got))
+	}
+	leaf := nestedFieldLeaf(t, got[0], depth)
+	if !typ.TypeEquals(leaf, typ.Any) {
+		t.Fatalf("deep repair leaf = %v, want any preserved beyond default depth", leaf)
+	}
+}
+
+func TestRepairSummaryWithNarrowPreservesUnchangedRecordNode(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("name", typ.String).
+		Field("count", typ.Integer).
+		Build()
+
+	got := repairSummaryWithNarrow([]typ.Type{rec}, []typ.Type{rec})
+	if len(got) != 1 {
+		t.Fatalf("expected one repaired slot, got %d", len(got))
+	}
+	if got[0] != rec {
+		t.Fatalf("unchanged repair rebuilt record node")
+	}
+}
+
+func TestRepairSummaryWithNarrowRefinesMetatableSlot(t *testing.T) {
+	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
+	prototype := typ.NewRecord().Field("ready", method).Build()
+	metatable := typ.NewRecord().Field("__index", prototype).Build()
+	summary := typ.NewRecord().Metatable(typ.Unknown).Build()
+	narrow := typ.NewRecord().Metatable(metatable).Build()
+
+	got := repairSummaryWithNarrow([]typ.Type{summary}, []typ.Type{narrow})
+	if len(got) != 1 {
+		t.Fatalf("expected one repaired slot, got %d", len(got))
+	}
+	if mt, ok := querycore.Method(got[0], "ready"); !ok {
+		t.Fatalf("repaired metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got[0])
+	}
+}
+
+func TestWidenForConvergence_RefinesUnknownReturnMetatableEvidence(t *testing.T) {
+	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
+	prototype := typ.NewRecord().Field("ready", method).Build()
+	metatable := typ.NewRecord().Field("__index", prototype).Build()
+	weak := typ.NewRecord().Metatable(typ.Unknown).Build()
+	strong := typ.NewRecord().Metatable(metatable).Build()
+
+	got := WidenForConvergence(
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{weak}), Narrow: product.LiftVector([]typ.Type{weak})},
+		api.FunctionFact{Summary: product.LiftVector([]typ.Type{strong}), Narrow: product.LiftVector([]typ.Type{strong})},
+	)
+	if mt, ok := querycore.Method(got.Summary[0].ProjectValue(), "ready"); !ok {
+		t.Fatalf("widened summary metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got.Summary[0].ProjectValue())
+	}
+	if mt, ok := querycore.Method(got.Narrow[0].ProjectValue(), "ready"); !ok {
+		t.Fatalf("widened narrow metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got.Narrow[0].ProjectValue())
+	}
+}
+
+func TestRepairSummaryWithNarrowPreservesUnchangedRecursiveRecordNode(t *testing.T) {
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("next", typ.NewOptional(self)).
+			Build()
+	})
+	rec := typ.NewRecord().
+		Field("root", node).
+		Field("items", typ.NewArray(node)).
+		Build()
+
+	got := repairSummaryWithNarrow([]typ.Type{rec}, []typ.Type{rec})
+	if len(got) != 1 {
+		t.Fatalf("expected one repaired slot, got %d", len(got))
+	}
+	if got[0] != rec {
+		t.Fatalf("unchanged recursive repair rebuilt record node")
+	}
+}
+
+func TestRepairSummaryWithNarrowPreservesSemanticallyEqualUnionProducts(t *testing.T) {
+	summaryRecord := typ.NewRecord().Field("id", typ.String).Build()
+	summaryArray := typ.NewArray(summaryRecord)
+	summaryMap := typ.NewMap(typ.String, typ.NewOptional(summaryRecord))
+	summary := typ.NewUnion(summaryArray, summaryMap)
+
+	narrowRecord := typ.NewRecord().Field("id", typ.String).Build()
+	narrowArray := typ.NewArray(narrowRecord)
+	narrowMap := typ.NewMap(typ.String, typ.NewOptional(narrowRecord))
+	narrow := typ.NewUnion(narrowArray, narrowMap)
+
+	got := repairSummaryWithNarrow([]typ.Type{summary}, []typ.Type{narrow})
+	if len(got) != 1 {
+		t.Fatalf("expected one repaired slot, got %d", len(got))
+	}
+	if got[0] != summary {
+		t.Fatalf("semantically equal repair rebuilt union: got %v, want original %v", got[0], summary)
+	}
+}
+
+func TestRepairSummaryWithNarrowFoldsSelfEmbeddingBeforeDescent(t *testing.T) {
+	summary := typ.NewRecord().
+		Field("name", typ.String).
+		Build()
+	narrow := typ.NewRecord().
+		Field("name", typ.String).
+		Field("parent", summary).
+		Build()
+
+	got := repairSummaryWithNarrow([]typ.Type{summary}, []typ.Type{narrow})
+	if len(got) != 1 {
+		t.Fatalf("expected one repaired slot, got %d", len(got))
+	}
+	if _, ok := got[0].(*typ.Recursive); !ok {
+		t.Fatalf("repair result = %T, want recursive upper bound", got[0])
+	}
+}
+
+func TestRepairSummaryWithNarrowFoldsMapUnionSelfEmbeddingBeforeDescent(t *testing.T) {
+	summary := typ.NewMap(typ.String, typ.Any)
+	narrow := typ.NewMap(typ.String, typ.NewUnion(typ.String, summary))
+
+	got := repairSummaryWithNarrow([]typ.Type{summary}, []typ.Type{narrow})
+	if len(got) != 1 {
+		t.Fatalf("expected one repaired slot, got %d", len(got))
+	}
+	if _, ok := got[0].(*typ.Recursive); !ok {
+		t.Fatalf("repair result = %T, want recursive upper bound", got[0])
+	}
+}
+
+func nestedFieldType(depth int, leaf typ.Type) typ.Type {
+	out := leaf
+	for i := 0; i < depth; i++ {
+		out = typ.NewRecord().Field("next", out).Build()
+	}
+	return out
+}
+
+func nestedFieldLeaf(t *testing.T, ty typ.Type, depth int) typ.Type {
+	t.Helper()
+	out := ty
+	for i := 0; i < depth; i++ {
+		rec, ok := out.(*typ.Record)
+		if !ok {
+			t.Fatalf("depth %d: got %T, want record", i, out)
+		}
+		field := rec.GetField("next")
+		if field == nil {
+			t.Fatalf("depth %d: missing next field in %v", i, rec)
+		}
+		out = field.Type
+	}
+	return out
 }
 
 func TestMergeType_CollapsesCompatibleFunctionVariants(t *testing.T) {
@@ -600,18 +1428,77 @@ func TestMergeReturnsForSameSignature_NormalizesLeakedTypeParams(t *testing.T) {
 func TestNormalize_CanonicalizesStoredFunctionFact(t *testing.T) {
 	fn := typ.Func().Returns(typ.Number).Build()
 	got := Normalize(api.FunctionFact{
-		Summary: []typ.Type{nil},
-		Narrow:  []typ.Type{typ.Number},
-		Type:    fn,
+		Summary:   product.LiftVector([]typ.Type{nil}),
+		Narrow:    product.LiftVector([]typ.Type{typ.Number}),
+		Signature: fn,
 	})
 
-	if !returnsummary.Equal(got.Summary, []typ.Type{typ.Nil}) {
+	if !returnsummary.Equal(product.ProjectVector(got.Summary), []typ.Type{typ.Nil}) {
 		t.Fatalf("summary mismatch: got %v", got.Summary)
 	}
-	if !returnsummary.Equal(got.Narrow, []typ.Type{typ.Number}) {
+	if !returnsummary.Equal(product.ProjectVector(got.Narrow), []typ.Type{typ.Number}) {
 		t.Fatalf("narrow mismatch: got %v", got.Narrow)
 	}
-	if !typ.TypeEquals(got.Type, fn) {
-		t.Fatalf("func mismatch: got %v", got.Type)
+	if !typ.TypeEquals(got.Signature, fn) {
+		t.Fatalf("signature mismatch: got %v", got.Signature)
+	}
+}
+
+func TestMergeType_JoinsTupleAndArrayParamsAsSequence(t *testing.T) {
+	node := typ.NewRecord().Field("node_id", typ.String).Build()
+	left := typ.Func().Param("nodes", typ.NewTuple(node)).Build()
+	right := typ.Func().Param("nodes", typ.NewArray(node)).Build()
+
+	merged, ok := MergeType(left, right).(*typ.Function)
+	if !ok || len(merged.Params) != 1 {
+		t.Fatalf("expected merged function, got %T", merged)
+	}
+	want := typ.NewArray(node)
+	if !typ.TypeEquals(merged.Params[0].Type, want) {
+		t.Fatalf("expected sequence parameter %v, got %v", want, merged.Params[0].Type)
+	}
+}
+
+func TestMergeType_RecordParamFieldsUseFunctionFactJoin(t *testing.T) {
+	leftNode := typ.NewRecord().
+		Field("node_id", typ.Any).
+		Field("node_type", typ.Unknown).
+		Build()
+	rightNode := typ.NewRecord().
+		Field("node_id", typ.Any).
+		Field("node_type", typ.Any).
+		Build()
+	left := typ.Func().Param("node", leftNode).Build()
+	right := typ.Func().Param("node", rightNode).Build()
+
+	merged, ok := MergeType(left, right).(*typ.Function)
+	if !ok || len(merged.Params) != 1 {
+		t.Fatalf("expected merged function, got %T", merged)
+	}
+	want := typ.NewRecord().
+		Field("node_id", typ.Any).
+		Field("node_type", typ.Any).
+		Build()
+	if !typ.TypeEquals(merged.Params[0].Type, want) {
+		t.Fatalf("expected parameter-domain record join %v, got %v", want, merged.Params[0].Type)
+	}
+}
+
+func TestMergeType_DisjointPartialRecordParamsBecomeOptionalFields(t *testing.T) {
+	leftUsage := typ.NewRecord().Field("promptTokenCount", typ.Integer).Build()
+	rightUsage := typ.NewRecord().Field("candidatesTokenCount", typ.Integer).Build()
+	left := typ.Func().Param("usage", leftUsage).Build()
+	right := typ.Func().Param("usage", rightUsage).Build()
+
+	merged, ok := MergeType(left, right).(*typ.Function)
+	if !ok || len(merged.Params) != 1 {
+		t.Fatalf("expected merged function, got %T", merged)
+	}
+	want := typ.NewRecord().
+		OptField("candidatesTokenCount", typ.Integer).
+		OptField("promptTokenCount", typ.Integer).
+		Build()
+	if !typ.TypeEquals(merged.Params[0].Type, want) {
+		t.Fatalf("expected optional-field parameter shape %v, got %v", want, merged.Params[0].Type)
 	}
 }

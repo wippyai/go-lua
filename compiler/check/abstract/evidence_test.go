@@ -10,8 +10,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
-	"github.com/wippyai/go-lua/types/contract"
-	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -23,7 +23,11 @@ c["count"] = 1
 `)
 	symC := mustSymbol(t, graph, "c")
 	evidence := trace.GraphEvidence(graph, graph.Bindings())
-	got := abstract.ExtractCapturedFieldEvidence(evidence.Assignments, map[cfg.SymbolID]bool{symC: true})
+	inputs := abstract.BuildInputs(&core.FlowContext{
+		Graph:    graph,
+		Evidence: evidence,
+	})
+	got := abstract.ExtractCapturedFieldEvidence(inputs, map[cfg.SymbolID]bool{symC: true})
 
 	fields := make(map[string]bool)
 	for _, ev := range got {
@@ -38,20 +42,56 @@ c["count"] = 1
 	}
 }
 
+func TestExtractCapturedFieldEvidence_UsesLoweredNestedFunctionDefinitionPath(t *testing.T) {
+	graph := graphFromSource(t, `
+local c = { repo = {} }
+function c.repo.list()
+	return {}
+end
+`)
+	symC := mustSymbol(t, graph, "c")
+	evidence := trace.GraphEvidence(graph, graph.Bindings())
+	inputs := abstract.BuildInputs(&core.FlowContext{
+		Graph:    graph,
+		Evidence: evidence,
+	})
+	got := abstract.ExtractCapturedFieldEvidence(inputs, map[cfg.SymbolID]bool{symC: true})
+
+	for _, ev := range got {
+		if ev.Target != symC || ev.Field != "repo" || len(ev.TargetPath.Segments) != 2 {
+			continue
+		}
+		if ev.TargetPath.Segments[0].Name == "repo" && ev.TargetPath.Segments[1].Name == "list" {
+			return
+		}
+	}
+	t.Fatalf("missing captured nested function-definition path; all=%#v", got)
+}
+
 func TestExtractCapturedContainerEvidence(t *testing.T) {
 	graph := graphFromSource(t, `
 local c = {}
-local _ = send(c, 1)
-local _ = table.insert(c.items, 2)
 `)
 	symC := mustSymbol(t, graph, "c")
-	got := abstract.ExtractCapturedContainerEvidence(&core.FlowContext{
-		Graph:    graph,
-		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
-		Derived: &core.Derived{
-			Synth: capturedMutationSynth(),
+	inputs := &flow.Inputs{
+		ContainerMutatorAssignments: []flow.ContainerMutatorAssignment{
+			{
+				Point:     graph.Exit(),
+				Target:    constraint.NewPath(symC, "c"),
+				ValueType: typ.Number,
+			},
 		},
-	}, nil, graph.Bindings(), map[cfg.SymbolID]bool{symC: true})
+		TableMutatorAssignments: []flow.TableMutatorAssignment{
+			{
+				Point:     graph.Exit(),
+				Target:    constraint.NewPath(symC, "c").Field("items"),
+				ValueType: typ.Number,
+			},
+		},
+	}
+	got := abstract.ExtractCapturedContainerEvidence(&core.FlowContext{
+		Graph: graph,
+	}, inputs, map[cfg.SymbolID]bool{symC: true})
 
 	var sawContainer, sawTable bool
 	for _, ev := range got {
@@ -70,6 +110,44 @@ local _ = table.insert(c.items, 2)
 	}
 	if !sawTable {
 		t.Fatalf("missing captured table mutation evidence with .items path; all=%#v", got)
+	}
+}
+
+func TestExtractCapturedContainerEvidence_UsesLoweredMapMutatorAssignments(t *testing.T) {
+	graph := graphFromSource(t, `
+local c = {}
+`)
+	symC := mustSymbol(t, graph, "c")
+	valueType := typ.NewRecord().Field("last_activity", typ.String).Build()
+	inputs := &flow.Inputs{
+		MapMutatorAssignments: []flow.MapMutatorAssignment{
+			{
+				Point: graph.Exit(),
+				Target: constraint.Path{
+					Root:     "c",
+					Symbol:   symC,
+					Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "sessions"}},
+				},
+				KeyType:   typ.String,
+				ValueType: valueType,
+			},
+		},
+	}
+
+	got := abstract.ExtractCapturedContainerEvidence(&core.FlowContext{
+		Graph: graph,
+	}, inputs, map[cfg.SymbolID]bool{symC: true})
+
+	if len(got) != 1 {
+		t.Fatalf("captured container evidence = %#v, want one", got)
+	}
+	if got[0].Kind != api.ContainerMutationMapElement ||
+		got[0].Target != symC ||
+		len(got[0].Segments) != 1 ||
+		got[0].Segments[0].Name != "sessions" ||
+		!typ.TypeEquals(got[0].KeyType, typ.String) ||
+		!typ.TypeEquals(got[0].ValueType, valueType) {
+		t.Fatalf("unexpected lowered map mutator evidence: %#v", got[0])
 	}
 }
 
@@ -177,47 +255,4 @@ func mustSymbol(t *testing.T, graph *cfg.Graph, name string) cfg.SymbolID {
 		t.Fatalf("expected symbol for %s", name)
 	}
 	return sym
-}
-
-func capturedMutationSynth() func(ast.Expr, cfg.Point) typ.Type {
-	sendSpec := contract.NewSpec().WithEffects(effect.Mutate{
-		Target: effect.ParamRef{Index: 0},
-		Transform: effect.ContainerElementUnion{
-			Container: effect.ParamRef{Index: 0},
-			Value:     effect.ParamRef{Index: 1},
-		},
-	})
-	send := typ.Func().
-		Param("container", typ.Any).
-		Param("value", typ.Any).
-		Returns(typ.Nil).
-		Spec(sendSpec).
-		Build()
-
-	insertSpec := contract.NewSpec().WithEffects(effect.TableMutator{
-		Target: effect.ParamRef{Index: 0},
-		Value:  effect.ParamRef{Index: 1},
-	})
-	insert := typ.Func().
-		Param("target", typ.Any).
-		Param("value", typ.Any).
-		Returns(typ.Nil).
-		Spec(insertSpec).
-		Build()
-
-	return func(expr ast.Expr, _ cfg.Point) typ.Type {
-		switch v := expr.(type) {
-		case *ast.IdentExpr:
-			if v.Value == "send" {
-				return send
-			}
-		case *ast.AttrGetExpr:
-			obj, objOK := v.Object.(*ast.IdentExpr)
-			key, keyOK := v.Key.(*ast.StringExpr)
-			if objOK && keyOK && obj.Value == "table" && key.Value == "insert" {
-				return insert
-			}
-		}
-		return typ.Unknown
-	}
 }

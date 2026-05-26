@@ -3,8 +3,6 @@ package regression
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
@@ -107,7 +105,7 @@ func TestWippyRunner_SortedKeysRetainsMapKeyHints(t *testing.T) {
 
 	if result.HasError() {
 		for _, d := range result.Errors {
-			t.Logf("error: %s", d.Message)
+			t.Logf("error at %d:%d: %s", d.Position.Line, d.Position.Column, d.Message)
 		}
 		t.Fatal("expected no errors for sorted_keys/group_by_suite evidence propagation")
 	}
@@ -398,96 +396,6 @@ func TestWippyRunner_NearLiteralTestRunnerFlow(t *testing.T) {
 	if result.HasError() {
 		for _, d := range result.Errors {
 			t.Logf("error: %s", d.Message)
-		}
-		if result.Session != nil && result.Session.Store != nil && result.Session.RootResult != nil {
-			root := result.Session.RootResult.Graph
-			parentHash := result.Session.Store.GraphParentHashOf(root.ID())
-			parent := result.Session.Store.Parents()[parentHash]
-			functionFacts := result.Session.Store.GetInterprocFacts(root, parent).FunctionFacts
-			if bindings := result.Session.Store.ModuleBindings(); bindings != nil {
-				for sym, fact := range functionFacts {
-					name := bindings.Name(sym)
-					if name == "sorted_keys" || name == "run_suite" || name == "run_test" || name == "group_by_suite" {
-						fnType := fact.Type
-						t.Logf("local-fn %q sym=%d type=%s", name, sym, typ.Format(fnType, typ.DefaultFormatOptions))
-						if hv := fact.Params; len(hv) > 0 {
-							t.Logf("parameter-evidence %q: %v", name, hv)
-						}
-					}
-				}
-			}
-			for _, fr := range result.Session.ResultsMap() {
-				if fr == nil || fr.Graph == nil || fr.NarrowSynth == nil {
-					continue
-				}
-				funcName := ""
-				if fn := result.Session.Store.FuncForGraph(fr.Graph); fn != nil {
-					if sym, ok := result.Session.Store.SymbolForFunc(fn); ok {
-						if b := result.Session.Store.ModuleBindings(); b != nil {
-							funcName = b.Name(sym)
-						}
-					}
-				}
-				if funcName == "" {
-					funcName = "<anon>"
-				}
-				t.Logf("graph id=%d func=%q", fr.Graph.ID(), funcName)
-				fr.Graph.EachCallSite(func(p cfg.Point, ci *cfg.CallInfo) {
-					if ci == nil {
-						return
-					}
-					calleeName := ci.CalleeName
-					if calleeName == "" {
-						if ident, ok := ci.Callee.(*ast.IdentExpr); ok {
-							calleeName = ident.Value
-						}
-					}
-					if funcName == "run_tests" {
-						var a0, a1 string
-						if len(ci.Args) > 0 {
-							a0 = typ.FormatShort(fr.NarrowSynth.TypeOf(ci.Args[0], p))
-						}
-						if len(ci.Args) > 1 {
-							a1 = typ.FormatShort(fr.NarrowSynth.TypeOf(ci.Args[1], p))
-						}
-						t.Logf("run_tests call callee=%q method=%q args=%d a0=%s a1=%s", calleeName, ci.Method, len(ci.Args), a0, a1)
-					}
-					if calleeName == "sorted_keys" && len(ci.Args) > 0 {
-						argType := fr.NarrowSynth.TypeOf(ci.Args[0], p)
-						t.Logf("graph=%q call sorted_keys arg0 type=%s kind=%v", funcName, typ.Format(argType, typ.FormatOptions{
-							MaxDepth:        20,
-							MaxNodes:        2000,
-							MaxUnionMembers: 20,
-							MaxRecordFields: 50,
-							MaxTupleElems:   20,
-							MaxTypeParams:   20,
-							MaxParams:       20,
-							MaxReturns:      20,
-							MaxBytes:        4000,
-						}), argType.Kind())
-						if rec, ok := argType.(*typ.Record); ok {
-							t.Logf("graph=%q call sorted_keys arg0 record fields=%d open=%v map=%v mapKey=%s mapVal=%s", funcName, len(rec.Fields), rec.Open, rec.HasMapComponent(), typ.FormatShort(rec.MapKey), typ.FormatShort(rec.MapValue))
-						}
-					}
-					if calleeName == "run_suite" && len(ci.Args) > 1 {
-						argType := fr.NarrowSynth.TypeOf(ci.Args[1], p)
-						t.Logf("graph=%q call run_suite arg1 type=%s kind=%v", funcName, typ.Format(argType, typ.FormatOptions{
-							MaxDepth:        20,
-							MaxNodes:        2000,
-							MaxUnionMembers: 20,
-							MaxRecordFields: 50,
-							MaxTupleElems:   20,
-							MaxTypeParams:   20,
-							MaxParams:       20,
-							MaxReturns:      20,
-							MaxBytes:        4000,
-						}), argType.Kind())
-						if rec, ok := argType.(*typ.Record); ok {
-							t.Logf("graph=%q call run_suite arg1 record fields=%d open=%v map=%v mapKey=%s mapVal=%s", funcName, len(rec.Fields), rec.Open, rec.HasMapComponent(), typ.FormatShort(rec.MapKey), typ.FormatShort(rec.MapValue))
-						}
-					}
-				})
-			}
 		}
 		t.Fatal("expected no errors for near-literal app:test_runner flow")
 	}

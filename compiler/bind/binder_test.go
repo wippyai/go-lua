@@ -300,6 +300,48 @@ func TestBind_ImplicitGlobal(t *testing.T) {
 	if !ok || kind != cfg.SymbolGlobal {
 		t.Error("foo should have kind SymbolGlobal (implicit)")
 	}
+	if table.IsImplicitGlobalUse(fooIdent) {
+		t.Error("global assignment target should not be marked as unresolved read")
+	}
+}
+
+func TestBind_ImplicitGlobalReadProvenance(t *testing.T) {
+	missingIdent := &ast.IdentExpr{Value: "missing"}
+	fn := &ast.FunctionExpr{
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"x"},
+				Exprs: []ast.Expr{missingIdent},
+			},
+		},
+	}
+
+	table := Bind(fn, nil)
+	if _, ok := table.SymbolOf(missingIdent); !ok {
+		t.Fatal("missing ident not bound")
+	}
+	if !table.IsImplicitGlobalUse(missingIdent) {
+		t.Fatal("unresolved value read should be marked as implicit global use")
+	}
+}
+
+func TestBind_PredeclaredGlobalReadIsNotImplicit(t *testing.T) {
+	printIdent := &ast.IdentExpr{Value: "print"}
+	fn := &ast.FunctionExpr{
+		Stmts: []ast.Stmt{
+			&ast.FuncCallStmt{
+				Expr: &ast.FuncCallExpr{Func: printIdent},
+			},
+		},
+	}
+
+	table := Bind(fn, []string{"print"})
+	if _, ok := table.SymbolOf(printIdent); !ok {
+		t.Fatal("print ident not bound")
+	}
+	if table.IsImplicitGlobalUse(printIdent) {
+		t.Fatal("predeclared global read should not be marked implicit")
+	}
 }
 
 func TestBind_NumberFor(t *testing.T) {
@@ -748,6 +790,56 @@ func TestBind_LocalsBeforeExprs(t *testing.T) {
 	// But the declared local should be different
 	if innerSyms[0] == outerSyms[0] {
 		t.Error("LHS of 'local x = x' should create new symbol")
+	}
+}
+
+func TestBind_LocalInitializerClosureSeesDeclaredLocal(t *testing.T) {
+	// local t = { f = function() return t.g() end }
+	// The immediate initializer still sees the outer scope, but closure bodies
+	// nested inside the initializer capture the declared local.
+	captured := &ast.IdentExpr{Value: "t"}
+	localStmt := &ast.LocalAssignStmt{
+		Names: []string{"t"},
+		Exprs: []ast.Expr{
+			&ast.TableExpr{
+				Fields: []*ast.Field{
+					{
+						Key: &ast.IdentExpr{Value: "f"},
+						Value: &ast.FunctionExpr{
+							Stmts: []ast.Stmt{
+								&ast.ReturnStmt{
+									Exprs: []ast.Expr{
+										&ast.FuncCallExpr{
+											Func: &ast.AttrGetExpr{
+												Object: captured,
+												Key:    &ast.IdentExpr{Value: "g"},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{localStmt}}
+
+	table := Bind(fn, nil)
+	localSyms := table.LocalSymbols(localStmt)
+	if len(localSyms) != 1 {
+		t.Fatalf("expected one declared local, got %v", localSyms)
+	}
+	got, ok := table.SymbolOf(captured)
+	if !ok {
+		t.Fatal("captured local use was not bound")
+	}
+	if got != localSyms[0] {
+		t.Fatalf("initializer closure captured symbol %d, want declared local %d", got, localSyms[0])
+	}
+	if table.IsImplicitGlobalUse(captured) {
+		t.Fatal("initializer closure capture must not be marked as implicit global")
 	}
 }
 

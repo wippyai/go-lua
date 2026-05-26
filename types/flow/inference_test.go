@@ -81,6 +81,22 @@ func TestConstraintPropagation_SinglePath(t *testing.T) {
 	}
 }
 
+func TestParameterCondition_RewritesParameterPathsAndDropsLocalState(t *testing.T) {
+	paramSym := cfg.SymbolID(17)
+	localSym := cfg.SymbolID(23)
+	cond := constraint.FromConstraints(
+		constraint.Truthy{Path: constraint.Path{Root: "args", Symbol: paramSym}.Field("bad")},
+		constraint.Truthy{Path: constraint.Path{Root: "tmp", Symbol: localSym}},
+	)
+
+	got := ParameterCondition(cond, []ParamInfo{{Name: "args", Symbol: paramSym}})
+	want := constraint.FromConstraints(constraint.Truthy{Path: constraint.ParamPath(0).Field("bad")})
+
+	if !got.Equals(want) {
+		t.Fatalf("ParameterCondition() = %v, want %v", got, want)
+	}
+}
+
 func TestConstraintPropagation_JoinIntersection(t *testing.T) {
 	// CFG: entry -> branch -> path1 -> join -> return
 	//                     -> path2 -> join

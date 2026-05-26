@@ -386,6 +386,24 @@ func TestBuildAssignmentTypeResolver_FallbackDeclaredType(t *testing.T) {
 	}
 }
 
+func TestBuildAssignmentTypeResolver_UnknownAssignmentDoesNotHideDeclaredType(t *testing.T) {
+	inputs := &flow.Inputs{
+		Assignments: []flow.UnifiedAssignment{
+			{TargetPath: constraint.Path{Symbol: 9}, Type: typ.Unknown},
+		},
+		DeclaredTypes: flow.DeclaredTypes{
+			9: typ.Boolean,
+		},
+	}
+	resolver := resolve.BuildAssignmentTypeResolver(inputs)
+	if resolver == nil {
+		t.Fatal("expected non-nil resolver")
+	}
+	if got := resolver(9); !typ.TypeEquals(got, typ.Boolean) {
+		t.Fatalf("resolver(9) = %v, want boolean", got)
+	}
+}
+
 func TestIteratorSourceInfo_Kind(t *testing.T) {
 	info := &resolve.IteratorSourceInfo{
 		Kind: flow.IterateIndexed,
@@ -412,6 +430,84 @@ func TestExtractIteratorSource_NonCallExpr(t *testing.T) {
 	result := resolve.ExtractIteratorSource(exprs, 0, nil, nil, nil, nil)
 	if result != nil {
 		t.Error("expected nil for non-call expr")
+	}
+}
+
+func TestExtractIteratorSource_BuiltinIpairsWithoutSynthType(t *testing.T) {
+	ipairsIdent := &ast.IdentExpr{Value: "ipairs"}
+	src := &ast.IdentExpr{Value: "items"}
+	call := &ast.FuncCallExpr{
+		Func: ipairsIdent,
+		Args: []ast.Expr{src},
+	}
+
+	bindings := bind.NewBindingTable()
+	bindings.Bind(ipairsIdent, 1)
+	bindings.SetName(1, "ipairs")
+	bindings.SetKind(1, cfg.SymbolGlobal)
+	bindings.Bind(src, 2)
+	bindings.SetName(2, "items")
+	bindings.SetKind(2, cfg.SymbolLocal)
+
+	got := resolve.ExtractIteratorSource([]ast.Expr{call}, 0, nil, nil, nil, bindings)
+	if got == nil {
+		t.Fatal("expected builtin ipairs source info")
+	}
+	if got.Kind != flow.IterateIndexed {
+		t.Fatalf("kind = %v, want IterateIndexed", got.Kind)
+	}
+	if got.Path.Symbol != 2 {
+		t.Fatalf("source symbol = %d, want 2", got.Path.Symbol)
+	}
+}
+
+func TestExtractIteratorSource_BuiltinPairsWithoutSynthType(t *testing.T) {
+	pairsIdent := &ast.IdentExpr{Value: "pairs"}
+	src := &ast.IdentExpr{Value: "items"}
+	call := &ast.FuncCallExpr{
+		Func: pairsIdent,
+		Args: []ast.Expr{src},
+	}
+
+	bindings := bind.NewBindingTable()
+	bindings.Bind(pairsIdent, 1)
+	bindings.SetName(1, "pairs")
+	bindings.SetKind(1, cfg.SymbolGlobal)
+	bindings.Bind(src, 2)
+	bindings.SetName(2, "items")
+	bindings.SetKind(2, cfg.SymbolLocal)
+
+	got := resolve.ExtractIteratorSource([]ast.Expr{call}, 0, nil, nil, nil, bindings)
+	if got == nil {
+		t.Fatal("expected builtin pairs source info")
+	}
+	if got.Kind != flow.IterateKeyed {
+		t.Fatalf("kind = %v, want IterateKeyed", got.Kind)
+	}
+	if got.Path.Symbol != 2 {
+		t.Fatalf("source symbol = %d, want 2", got.Path.Symbol)
+	}
+}
+
+func TestExtractIteratorSource_LocalIpairsShadowDoesNotUseBuiltinEffect(t *testing.T) {
+	ipairsIdent := &ast.IdentExpr{Value: "ipairs"}
+	src := &ast.IdentExpr{Value: "items"}
+	call := &ast.FuncCallExpr{
+		Func: ipairsIdent,
+		Args: []ast.Expr{src},
+	}
+
+	bindings := bind.NewBindingTable()
+	bindings.Bind(ipairsIdent, 1)
+	bindings.SetName(1, "ipairs")
+	bindings.SetKind(1, cfg.SymbolLocal)
+	bindings.Bind(src, 2)
+	bindings.SetName(2, "items")
+	bindings.SetKind(2, cfg.SymbolLocal)
+
+	got := resolve.ExtractIteratorSource([]ast.Expr{call}, 0, nil, nil, nil, bindings)
+	if got != nil {
+		t.Fatalf("expected nil for locally shadowed ipairs, got %+v", got)
 	}
 }
 

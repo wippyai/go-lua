@@ -4,6 +4,8 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -13,7 +15,7 @@ import (
 // checker context that also changes the meaning of a function body, such as
 // contract-provided callback globals and callsite-provided callback signatures.
 type AnalysisContext struct {
-	GlobalOverlay    map[string]typ.Type
+	GlobalOverlay    map[string]product.AbstractValue
 	ExpectedFunction *typ.Function
 }
 
@@ -32,14 +34,14 @@ func (c AnalysisContext) ParentHash(parentHash uint64) uint64 {
 		h = internal.HashCombine(h, internal.FnvString("globals"))
 		for _, name := range sortedContextNames(c.GlobalOverlay) {
 			h = internal.HashCombine(h, internal.FnvString(name))
-			if t := c.GlobalOverlay[name]; t != nil {
+			if t := c.GlobalOverlay[name]; !t.IsZero() {
 				h = internal.HashCombine(h, t.Hash())
 			}
 		}
 	}
 	if c.ExpectedFunction != nil {
 		h = internal.HashCombine(h, internal.FnvString("expected-function"))
-		h = internal.HashCombine(h, c.ExpectedFunction.Hash())
+		h = internal.HashCombine(h, expectedFunctionContextHash(c.ExpectedFunction))
 	}
 	return h
 }
@@ -55,15 +57,15 @@ func MergeAnalysisContext(a, b AnalysisContext) AnalysisContext {
 	out := cloneAnalysisContext(a)
 	if len(b.GlobalOverlay) > 0 {
 		if out.GlobalOverlay == nil {
-			out.GlobalOverlay = make(map[string]typ.Type, len(b.GlobalOverlay))
+			out.GlobalOverlay = make(map[string]product.AbstractValue, len(b.GlobalOverlay))
 		}
 		for _, name := range sortedContextNames(b.GlobalOverlay) {
 			candidate := b.GlobalOverlay[name]
-			if candidate == nil {
+			if candidate.IsZero() {
 				continue
 			}
-			if existing := out.GlobalOverlay[name]; existing != nil {
-				out.GlobalOverlay[name] = typ.JoinPreferNonSoft(existing, candidate)
+			if existing := out.GlobalOverlay[name]; !existing.IsZero() {
+				out.GlobalOverlay[name] = product.CarryForward(existing, candidate)
 			} else {
 				out.GlobalOverlay[name] = candidate
 			}
@@ -79,24 +81,24 @@ func cloneAnalysisContext(ctx AnalysisContext) AnalysisContext {
 	}
 	out := AnalysisContext{}
 	if len(ctx.GlobalOverlay) > 0 {
-		out.GlobalOverlay = make(map[string]typ.Type, len(ctx.GlobalOverlay))
+		out.GlobalOverlay = make(map[string]product.AbstractValue, len(ctx.GlobalOverlay))
 		for name, t := range ctx.GlobalOverlay {
 			out.GlobalOverlay[name] = t
 		}
 	}
-	out.ExpectedFunction = ctx.ExpectedFunction
+	out.ExpectedFunction = normalizeExpectedFunctionContext(ctx.ExpectedFunction)
 	return out
 }
 
 func mergeContextExpectedFunction(a, b *typ.Function) *typ.Function {
 	if a == nil {
-		return b
+		return normalizeExpectedFunctionContext(b)
 	}
 	if b == nil {
-		return a
+		return normalizeExpectedFunctionContext(a)
 	}
-	if typ.TypeEquals(a, b) {
-		return a
+	if value.FactTypeEqual(a, b) {
+		return normalizeExpectedFunctionContext(a)
 	}
 
 	builder := typ.Func().ReserveParams(maxInt(len(a.Params), len(b.Params)))
@@ -174,7 +176,28 @@ func mergeContextExpectedFunction(a, b *typ.Function) *typ.Function {
 		builder = builder.WithRefinement(b.Refinement)
 	}
 
-	return builder.Build()
+	return normalizeExpectedFunctionContext(builder.Build())
+}
+
+func normalizeExpectedFunctionContext(fn *typ.Function) *typ.Function {
+	if fn == nil {
+		return nil
+	}
+	return value.WidenFunctionForConvergence(fn)
+}
+
+func expectedFunctionContextHash(fn *typ.Function) uint64 {
+	if fn == nil {
+		return 0
+	}
+	normalized := normalizeExpectedFunctionContext(fn)
+	if normalized == nil {
+		return 0
+	}
+	if typ.ContainsRecursive(normalized) {
+		return typ.ProductFamilyHash(normalized)
+	}
+	return normalized.Hash()
 }
 
 func joinContextType(a, b typ.Type) typ.Type {
@@ -186,10 +209,10 @@ func joinContextType(a, b typ.Type) typ.Type {
 		return b
 	case b == nil:
 		return a
-	case typ.TypeEquals(a, b):
+	case value.FactTypeEqual(a, b):
 		return a
 	default:
-		return typ.JoinPreferNonSoft(a, b)
+		return value.MergeForConvergence(a, b)
 	}
 }
 
@@ -204,7 +227,7 @@ func sameTypeParams(a, b []*typ.TypeParam) bool {
 			}
 			continue
 		}
-		if a[i].Name != b[i].Name || !typ.TypeEquals(a[i].Constraint, b[i].Constraint) {
+		if a[i].Name != b[i].Name || !value.FactTypeEqual(a[i].Constraint, b[i].Constraint) {
 			return false
 		}
 	}
@@ -218,7 +241,7 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func sortedContextNames(m map[string]typ.Type) []string {
+func sortedContextNames(m map[string]product.AbstractValue) []string {
 	if len(m) == 0 {
 		return nil
 	}

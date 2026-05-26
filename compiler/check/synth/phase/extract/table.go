@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
+	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -20,8 +21,8 @@ import (
 //   - Maps: (via type annotations on expected type)
 //
 // Delegates to SynthTableWithExpected without contextual typing.
-func (s *Synthesizer) SynthTableCore(ex *ast.TableExpr, sc *scope.State, recurse ExprSynth) typ.Type {
-	return s.SynthTableWithExpected(ex, sc, recurse, nil)
+func (s *Synthesizer) SynthTableCore(ex *ast.TableExpr, p cfg.Point, sc *scope.State, recurse ExprSynth) typ.Type {
+	return s.SynthTableWithExpected(ex, p, sc, recurse, nil)
 }
 
 // SynthTableWithExpected synthesizes a table type with bidirectional type checking.
@@ -35,138 +36,157 @@ func (s *Synthesizer) SynthTableCore(ex *ast.TableExpr, sc *scope.State, recurse
 // Self-type inference: For tables with function fields that have a "self" first
 // parameter, infers self type from either expected type or synthesized table type.
 //
-// Empty tables return an open record (can have any additional fields assigned).
-func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State, recurse ExprSynth, expected typ.Type) typ.Type {
+// Empty tables start as the finite fresh-table bottom shape. Transfer widens
+// that shape through field writes, indexed writes, and table mutators.
+func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, p cfg.Point, sc *scope.State, recurse ExprSynth, expected typ.Type) typ.Type {
 	if len(ex.Fields) == 0 {
 		if result := emptyTableExpectedResult(expected); result != nil {
 			return result
 		}
-		return typ.NewRecord().SetOpen(true).Build()
+		return typ.NewRecord().Build()
 	}
 
 	if _, isUnion := unwrap.Alias(expected).(*typ.Union); isUnion {
 		if match := querycore.TryDiscriminatedUnionMember(ex, expected); match != nil {
-			return s.SynthTableWithExpected(ex, sc, recurse, match.Member)
+			return s.SynthTableWithExpected(ex, p, sc, recurse, match.Member)
 		}
 	}
 
-	expectedFields := s.resolveExpectedFields(expected)
-	selfType := expected
-	if selfType == nil {
-		selfBuilder := typ.NewRecord()
-		fieldCount := 0
-		for _, field := range ex.Fields {
-			if field.Key == nil {
-				continue
-			}
-			if _, ok := field.Value.(*ast.FunctionExpr); ok {
-				continue
-			}
-			switch k := field.Key.(type) {
-			case *ast.StringExpr:
-				ft := recurse(field.Value)
-				if ft == nil {
-					ft = typ.Unknown
-				}
-				if inner, optional := typ.SplitNilableFieldType(ft); optional {
-					selfBuilder.OptField(k.Value, inner)
-				} else {
-					selfBuilder.Field(k.Value, ft)
-				}
-				fieldCount++
-			case *ast.IdentExpr:
-				ft := recurse(field.Value)
-				if ft == nil {
-					ft = typ.Unknown
-				}
-				if inner, optional := typ.SplitNilableFieldType(ft); optional {
-					selfBuilder.OptField(k.Value, inner)
-				} else {
-					selfBuilder.Field(k.Value, ft)
-				}
-				fieldCount++
-			}
-		}
-		if fieldCount > 0 {
-			selfType = selfBuilder.Build()
-		}
-	}
+	selfType := s.tableSelfType(ex, recurse, expected)
+	table := s.collectTableFields(ex, p, sc, recurse, expected, selfType)
 
-	builder := typ.NewRecord()
-	var fieldDefs []ops.FieldDef
-	var arrayElements []typ.Type
-	hasVararg := false
-	fieldCount := 0
-
-	for _, field := range ex.Fields {
-		if field.Key == nil {
-			if _, ok := field.Value.(*ast.Comma3Expr); ok {
-				hasVararg = true
-			}
-			elemExpected := ops.ExpectedTableElementType(expected, len(arrayElements))
-			elemType := s.synthFieldValueWithExpected(field.Value, sc, recurse, elemExpected, selfType)
-			if elemType == nil {
-				elemType = typ.Unknown
-			}
-			arrayElements = append(arrayElements, elemType)
-			continue
-		}
-
-		switch k := field.Key.(type) {
-		case *ast.StringExpr:
-			ft := s.synthFieldValueWithExpected(field.Value, sc, recurse, expectedFields[k.Value], selfType)
-			if ft == nil {
-				ft = typ.Unknown
-			}
-			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft})
-			if inner, optional := typ.SplitNilableFieldType(ft); optional {
-				builder.OptField(k.Value, inner)
-			} else {
-				builder.Field(k.Value, ft)
-			}
-			fieldCount++
-		case *ast.IdentExpr:
-			ft := s.synthFieldValueWithExpected(field.Value, sc, recurse, expectedFields[k.Value], selfType)
-			if ft == nil {
-				ft = typ.Unknown
-			}
-			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft})
-			if inner, optional := typ.SplitNilableFieldType(ft); optional {
-				builder.OptField(k.Value, inner)
-			} else {
-				builder.Field(k.Value, ft)
-			}
-			fieldCount++
-		case *ast.NumberExpr:
-			elemExpected := ops.ExpectedTableElementType(expected, len(arrayElements))
-			elemType := s.synthFieldValueWithExpected(field.Value, sc, recurse, elemExpected, selfType)
-			if elemType == nil {
-				elemType = typ.Unknown
-			}
-			arrayElements = append(arrayElements, elemType)
-		}
-	}
-
-	if len(arrayElements) > 0 && fieldCount == 0 {
-		var result typ.Type
-		if hasVararg {
-			result = typ.NewArray(typ.NewUnion(arrayElements...))
-		} else if querycore.IsArrayLike(expected) {
-			result = typ.NewArray(typ.NewUnion(arrayElements...))
-		} else {
-			result = typ.NewTuple(arrayElements...)
-		}
-		if useExpectedTableResult(expected) && len(ops.CheckTable(nil, arrayElements, expected).Errors) == 0 {
+	if len(table.arrayElements) > 0 && table.fieldCount == 0 {
+		result := table.arrayResult(expected)
+		if useExpectedTableResult(expected) && len(ops.CheckTable(nil, table.arrayElements, expected).Errors) == 0 {
 			return expected
 		}
 		return result
 	}
 
-	result := builder.Build()
-	if useExpectedTableResult(expected) && len(ops.CheckTable(fieldDefs, arrayElements, expected).Errors) == 0 {
+	result := table.builder.Build()
+	if useExpectedTableResult(expected) && len(ops.CheckTable(table.fieldDefs, table.arrayElements, expected).Errors) == 0 {
 		return expected
 	}
 	return result
+}
+
+type tableSynthesis struct {
+	builder       *typ.RecordBuilder
+	fieldDefs     []ops.FieldDef
+	arrayElements []typ.Type
+	hasVararg     bool
+	fieldCount    int
+}
+
+func (s *Synthesizer) tableSelfType(ex *ast.TableExpr, recurse ExprSynth, expected typ.Type) typ.Type {
+	if expected != nil {
+		return expected
+	}
+	selfBuilder := typ.NewRecord()
+	fieldCount := 0
+	for _, field := range ex.Fields {
+		name, ok := staticTableFieldName(field)
+		if !ok {
+			continue
+		}
+		if _, ok := field.Value.(*ast.FunctionExpr); ok {
+			continue
+		}
+		ft := recurse(field.Value)
+		if ft == nil {
+			ft = typ.Unknown
+		}
+		addRecordField(selfBuilder, name, ft)
+		fieldCount++
+	}
+	if fieldCount == 0 {
+		return nil
+	}
+	return selfBuilder.Build()
+}
+
+func (s *Synthesizer) collectTableFields(
+	ex *ast.TableExpr,
+	p cfg.Point,
+	sc *scope.State,
+	recurse ExprSynth,
+	expected typ.Type,
+	selfType typ.Type,
+) tableSynthesis {
+	table := tableSynthesis{builder: typ.NewRecord()}
+	for _, field := range ex.Fields {
+		if field.Key == nil {
+			table.addArrayElement(s.tableElementType(field.Value, p, sc, recurse, expected, len(table.arrayElements), selfType))
+			if _, ok := field.Value.(*ast.Comma3Expr); ok {
+				table.hasVararg = true
+			}
+			continue
+		}
+		if name, ok := staticTableFieldName(field); ok {
+			table.addNamedField(name, s.tableFieldType(field.Value, p, sc, recurse, ops.ExpectedTableFieldType(expected, name), selfType))
+			continue
+		}
+		if _, ok := field.Key.(*ast.NumberExpr); ok {
+			table.addArrayElement(s.tableElementType(field.Value, p, sc, recurse, expected, len(table.arrayElements), selfType))
+		}
+	}
+	return table
+}
+
+func staticTableFieldName(field *ast.Field) (string, bool) {
+	if field == nil {
+		return "", false
+	}
+	switch k := field.Key.(type) {
+	case *ast.StringExpr:
+		return k.Value, true
+	case *ast.IdentExpr:
+		return k.Value, true
+	default:
+		return "", false
+	}
+}
+
+func (s *Synthesizer) tableFieldType(value ast.Expr, p cfg.Point, sc *scope.State, recurse ExprSynth, expected typ.Type, selfType typ.Type) typ.Type {
+	ft := s.synthFieldValueWithExpected(value, p, sc, recurse, expected, selfType)
+	if ft == nil {
+		return typ.Unknown
+	}
+	return ft
+}
+
+func (s *Synthesizer) tableElementType(value ast.Expr, p cfg.Point, sc *scope.State, recurse ExprSynth, expected typ.Type, idx int, selfType typ.Type) typ.Type {
+	elemExpected := ops.ExpectedTableElementType(expected, idx)
+	elemType := s.synthFieldValueWithExpected(value, p, sc, recurse, elemExpected, selfType)
+	if elemType == nil {
+		return typ.Unknown
+	}
+	return elemType
+}
+
+func (t *tableSynthesis) addNamedField(name string, ft typ.Type) {
+	t.fieldDefs = append(t.fieldDefs, ops.FieldDef{Name: name, Type: ft})
+	addRecordField(t.builder, name, ft)
+	t.fieldCount++
+}
+
+func addRecordField(builder *typ.RecordBuilder, name string, ft typ.Type) {
+	if inner, optional := typ.SplitNilableFieldType(ft); optional {
+		builder.OptField(name, inner)
+		return
+	}
+	builder.Field(name, ft)
+}
+
+func (t *tableSynthesis) addArrayElement(elem typ.Type) {
+	t.arrayElements = append(t.arrayElements, elem)
+}
+
+func (t tableSynthesis) arrayResult(expected typ.Type) typ.Type {
+	if t.hasVararg || querycore.IsArrayLike(expected) {
+		return typ.NewArray(typ.NewUnion(t.arrayElements...))
+	}
+	return typ.NewTuple(t.arrayElements...)
 }
 
 func emptyTableExpectedResult(expected typ.Type) typ.Type {
@@ -198,9 +218,9 @@ func useExpectedTableResult(expected typ.Type) bool {
 }
 
 // synthFieldValueWithExpected synthesizes type for a table field value with optional expected type.
-func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, sc *scope.State, recurse ExprSynth, expected typ.Type, selfType typ.Type) typ.Type {
+func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, p cfg.Point, sc *scope.State, recurse ExprSynth, expected typ.Type, selfType typ.Type) typ.Type {
 	if tbl, ok := value.(*ast.TableExpr); ok {
-		return s.SynthTableWithExpected(tbl, sc, recurse, expected)
+		return s.SynthTableWithExpected(tbl, p, sc, recurse, expected)
 	}
 	if fn, ok := value.(*ast.FunctionExpr); ok {
 		var expectedFn *typ.Function
@@ -216,42 +236,8 @@ func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, sc *scope.Stat
 		}
 		return s.SynthFunctionTypeWithExpected(fn, sc, expectedFn)
 	}
+	if expected != nil {
+		return s.SynthExprWithExpectedCore(value, sc, p, recurse, expected)
+	}
 	return recurse(value)
-}
-
-// resolveExpectedFields extracts expected field types from the expected type.
-func (s *Synthesizer) resolveExpectedFields(expected typ.Type) map[string]typ.Type {
-	if expected == nil {
-		return nil
-	}
-
-	if _, isUnion := unwrap.Alias(expected).(*typ.Union); !isUnion {
-		return querycore.AllFieldTypesResolved(expected)
-	}
-
-	union := unwrap.Alias(expected).(*typ.Union)
-	result := make(map[string]typ.Type)
-
-	fieldNames := make(map[string]struct{})
-	for _, member := range union.Members {
-		memberFields := querycore.AllFieldTypesResolved(member)
-		for name := range memberFields {
-			fieldNames[name] = struct{}{}
-		}
-	}
-
-	for name := range fieldNames {
-		var fieldTypes []typ.Type
-		for _, member := range union.Members {
-			memberFields := querycore.AllFieldTypesResolved(member)
-			if ft, ok := memberFields[name]; ok {
-				fieldTypes = append(fieldTypes, ft)
-			}
-		}
-		if len(fieldTypes) > 0 {
-			result[name] = typ.NewUnion(fieldTypes...)
-		}
-	}
-
-	return result
 }

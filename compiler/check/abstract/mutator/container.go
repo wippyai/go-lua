@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // ExtractContainerMutatorAssignments extracts container mutator assignments (channel.send-like)
@@ -45,12 +44,7 @@ func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Input
 		}
 
 		sc := fc.Scopes[p]
-		valueType := typ.Unknown
-		if fc.Derived != nil && fc.Derived.Synth != nil {
-			if t := fc.Derived.Synth(valueExpr, p); t != nil {
-				valueType = t
-			}
-		}
+		valueType := synthMutationValue(fc, valueExpr, p)
 		valueType = resolve.Ref(valueType, sc)
 
 		var valuePath constraint.Path
@@ -74,6 +68,7 @@ func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Input
 				},
 				ValuePath: valuePath,
 				ValueType: valueType,
+				Value:     mutationValueTemplate(fc, valueExpr),
 			})
 		}
 	}

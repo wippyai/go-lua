@@ -154,3 +154,13 @@ func TestResolveFieldAccess_EmptyFieldTypeParam(t *testing.T) {
 		t.Fatal("expected SkipCheck for type param with empty field")
 	}
 }
+
+func TestResolveFieldAccess_UnexpandedRecursivePlaceholder(t *testing.T) {
+	e := newTestEngine()
+	rec := typ.NewRecursivePlaceholder("Inferred")
+
+	result := e.ResolveFieldAccess(nil, rec, "field", cfg.Point(0))
+	if !result.SkipCheck {
+		t.Fatal("expected SkipCheck for unexpanded recursive placeholder")
+	}
+}

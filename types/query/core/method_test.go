@@ -69,16 +69,45 @@ func TestMethodUnion(t *testing.T) {
 		}
 	})
 
-	t.Run("union with different method signatures", func(t *testing.T) {
+	t.Run("union with different method signatures returns callable union", func(t *testing.T) {
 		differentMeta := typ.NewRecord().Field("show", typ.Func().Returns(typ.Integer).Build()).Build()
 		rec3 := typ.NewRecord().Metatable(differentMeta).Build()
 		mixedUnion := typ.NewUnion(rec1, rec3)
 
-		_, ok := Method(mixedUnion, "show")
-		if ok {
-			t.Error("expected not to find method with different signatures")
+		got, ok := Method(mixedUnion, "show")
+		if !ok {
+			t.Fatal("expected to find method union with different signatures")
+		}
+		union, ok := got.(*typ.Union)
+		if !ok || len(union.Members) != 2 {
+			t.Fatalf("expected callable union, got %v", got)
 		}
 	})
+}
+
+func TestMethodUnion_RecursiveMetatableVariants(t *testing.T) {
+	makeReader := func() typ.Type {
+		var self *typ.Recursive
+		self = typ.NewRecursivePlaceholder("Reader")
+		method := typ.Func().Param("self", typ.Self).Returns(self).Build()
+		self.SetBody(typ.NewRecord().
+			Metatable(typ.NewRecord().Field("get_full_context", method).Build()).
+			Build())
+		return self
+	}
+	readerA := makeReader()
+	readerB := makeReader()
+	union := typ.NewUnion(readerA, readerB)
+
+	got, ok := Method(union, "get_full_context")
+	if !ok {
+		t.Fatal("expected method lookup across recursive metatable variants")
+	}
+	if unwrap.Function(got) == nil {
+		if u, ok := got.(*typ.Union); !ok || len(u.Members) != 2 {
+			t.Fatalf("expected function or function union, got %v", got)
+		}
+	}
 }
 
 func TestMethodIntersection(t *testing.T) {
@@ -132,6 +161,165 @@ func TestMethodOpenRecordFallback(t *testing.T) {
 	}
 	if unwrap.Function(mt) == nil {
 		t.Fatalf("expected open record fallback to be callable, got %v", mt)
+	}
+}
+
+func TestMethodPrototypeLookupNormalizesInheritedSelf(t *testing.T) {
+	prototypeMethod := typ.Func().
+		Param("self", typ.Unknown).
+		Param("kind", typ.String).
+		Returns(typ.Self).
+		Build()
+	prototype := typ.NewRecord().
+		Field("type", prototypeMethod).
+		Build()
+	instance := typ.NewRecord().
+		Metatable(typ.NewRecord().Field("__index", prototype).Build()).
+		SetOpen(true).
+		Build()
+
+	mt, ok := Method(instance, "type")
+	if !ok {
+		t.Fatal("expected inherited prototype method")
+	}
+	fn := unwrap.Function(mt)
+	if fn == nil {
+		t.Fatalf("expected function method, got %v", mt)
+	}
+	if len(fn.Params) == 0 || fn.Params[0].Type != typ.Self {
+		t.Fatalf("expected inherited self param to normalize to Self, got %v", fn.Params)
+	}
+	if len(fn.Returns) != 1 || fn.Returns[0] != typ.Self {
+		t.Fatalf("expected fluent return to stay Self, got %v", fn.Returns)
+	}
+}
+
+func TestMethodDirectRecordLookupNormalizesReceiverSelf(t *testing.T) {
+	receiverShape := typ.NewRecord().Field("value", typ.String).Build()
+	method := typ.Func().
+		Param("self", receiverShape).
+		Param("suffix", typ.String).
+		Returns(receiverShape).
+		Build()
+	rec := typ.NewRecord().
+		Field("append", method).
+		Build()
+
+	mt, ok := Method(rec, "append")
+	if !ok {
+		t.Fatal("expected direct method")
+	}
+	fn := unwrap.Function(mt)
+	if fn == nil {
+		t.Fatalf("expected function method, got %v", mt)
+	}
+	if len(fn.Params) == 0 || fn.Params[0].Type != typ.Self {
+		t.Fatalf("expected direct method self param to normalize to Self, got %v", fn.Params)
+	}
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], receiverShape) {
+		t.Fatalf("expected non-Self return to remain concrete, got %v", fn.Returns)
+	}
+}
+
+func TestMethodDirectRecordLookupKeepsNonSelfFirstParam(t *testing.T) {
+	method := typ.Func().
+		Param("name", typ.String).
+		Returns(typ.String).
+		Build()
+	rec := typ.NewRecord().
+		Field("format", method).
+		Build()
+
+	mt, ok := Method(rec, "format")
+	if !ok {
+		t.Fatal("expected direct function field")
+	}
+	fn := unwrap.Function(mt)
+	if fn == nil {
+		t.Fatalf("expected function method, got %v", mt)
+	}
+	if len(fn.Params) == 0 || fn.Params[0].Type != typ.String {
+		t.Fatalf("non-self first param must not normalize to Self, got %v", fn.Params)
+	}
+}
+
+func TestMethodDirectRecordLookupAllowsDynamicMethodField(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("dispatch", typ.Any).
+		Build()
+
+	mt, ok := Method(rec, "dispatch")
+	if !ok {
+		t.Fatal("expected dynamic method field to be callable under gradual typing")
+	}
+	if mt != typ.Any {
+		t.Fatalf("dynamic method field = %v, want any", mt)
+	}
+}
+
+func TestMethodDirectRecordLookupPreservesOptionalCallableField(t *testing.T) {
+	method := typ.Func().
+		Param("self", typ.Self).
+		Returns(typ.String).
+		Build()
+	rec := typ.NewRecord().
+		OptField("maybe", method).
+		Build()
+
+	mt, ok := Method(rec, "maybe")
+	if !ok {
+		t.Fatal("expected optional callable method field")
+	}
+	opt, ok := mt.(*typ.Optional)
+	if !ok {
+		t.Fatalf("expected optional method result to preserve nilability, got %T %v", mt, mt)
+	}
+	if unwrap.Function(opt.Inner) == nil {
+		t.Fatalf("expected optional inner function, got %v", opt.Inner)
+	}
+}
+
+func TestMethodDirectRecordLookupNormalizesOwnerTypedReceiver(t *testing.T) {
+	var owner typ.Type
+	owner = typ.NewRecursive("Builder", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("append", typ.Func().Param("", self).Returns(self).Build()).
+			Build()
+	})
+
+	mt, ok := Method(owner, "append")
+	if !ok {
+		t.Fatal("expected recursive owner method")
+	}
+	fn := unwrap.Function(mt)
+	if fn == nil {
+		t.Fatalf("expected function method, got %v", mt)
+	}
+	if len(fn.Params) == 0 || fn.Params[0].Type != typ.Self {
+		t.Fatalf("owner-typed receiver should normalize to Self, got %v", fn.Params)
+	}
+}
+
+func TestMethodMetatableIndexLookupNormalizesOwnerTypedReceiver(t *testing.T) {
+	methods := typ.NewRecursive("Methods", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("load", typ.Func().Param("", self).Returns(self).Build()).
+			Build()
+	})
+	instance := typ.NewRecord().
+		Metatable(typ.NewRecord().Field("__index", methods).Build()).
+		Build()
+
+	mt, ok := Method(instance, "load")
+	if !ok {
+		t.Fatal("expected inherited method through __index")
+	}
+	fn := unwrap.Function(mt)
+	if fn == nil {
+		t.Fatalf("expected function method, got %v", mt)
+	}
+	if len(fn.Params) == 0 || fn.Params[0].Type != typ.Self {
+		t.Fatalf("inherited owner-typed receiver should normalize to Self, got %v", fn.Params)
 	}
 }
 

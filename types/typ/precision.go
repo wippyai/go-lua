@@ -1,0 +1,857 @@
+package typ
+
+import (
+	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/kind"
+)
+
+// MorePrecise reports whether candidate carries strictly more type information
+// than baseline under the gradual-typing precision relation.
+//
+// Precision is not subtyping: a type can be more precise because it replaces
+// any/unknown with concrete structure in the same product shape. This is used
+// when two analyses describe the same runtime expression and the checker must
+// keep the proof with the most evidence.
+func MorePrecise(candidate, baseline Type) bool {
+	strict, comparable := ComparePrecision(candidate, baseline)
+	return comparable && strict
+}
+
+// PruneLessPreciseRefinableUnionMembers removes refinable structural
+// placeholder members from a union when another member carries comparable,
+// strictly more precise evidence for the same runtime shape.
+func PruneLessPreciseRefinableUnionMembers(t Type) Type {
+	u, ok := t.(*Union)
+	if !ok || len(u.Members) < 2 {
+		return t
+	}
+	keep := make([]Type, 0, len(u.Members))
+	for i, member := range u.Members {
+		if member == nil {
+			continue
+		}
+		if !IsRefinableAnnotation(member) {
+			keep = append(keep, member)
+			continue
+		}
+		dominated := false
+		for j, candidate := range u.Members {
+			if i == j || candidate == nil {
+				continue
+			}
+			if MorePrecise(candidate, member) {
+				dominated = true
+				break
+			}
+		}
+		if !dominated {
+			keep = append(keep, member)
+		}
+	}
+	if len(keep) == 0 {
+		return t
+	}
+	if len(keep) == len(u.Members) {
+		return t
+	}
+	if len(keep) == 1 {
+		return keep[0]
+	}
+	return NewUnion(keep...)
+}
+
+// ComparePrecision compares two same-expression type descriptions.
+//
+// The first return value is true when candidate is strictly more precise than
+// baseline. The second return value is true when the two shapes are comparable
+// in the precision relation. Equal types are comparable but not strict.
+func ComparePrecision(candidate, baseline Type) (bool, bool) {
+	return comparePrecision(candidate, baseline, 0, &precisionSeen{})
+}
+
+// ProductFamilyHash returns a stable structural family hash for product-domain
+// relations that must compare recursive products coinductively without
+// unfolding them by concrete node identity.
+func ProductFamilyHash(t Type) uint64 {
+	return precisionFamilyHash(t, nil)
+}
+
+// SameProductFamily reports whether two recursive product observations describe
+// the same fixed-point family with equal precision. It is the canonical
+// recursive-product equality relation for union/member dedupe and convergence
+// checks; generic TypeEquals remains exact structural equality.
+func SameProductFamily(a, b Type) bool {
+	if SameNodeOrAcyclicEqual(a, b) {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if !ContainsRecursive(a) && !ContainsRecursive(b) {
+		return false
+	}
+	if ProductFamilyHash(a) != ProductFamilyHash(b) {
+		return false
+	}
+	aStrict, aComparable := ComparePrecision(a, b)
+	if !aComparable || aStrict {
+		return false
+	}
+	bStrict, bComparable := ComparePrecision(b, a)
+	return bComparable && !bStrict
+}
+
+func comparePrecision(candidate, baseline Type, depth int, seen *precisionSeen) (strict bool, comparable bool) {
+	if candidate == baseline {
+		return false, true
+	}
+	if baseline == nil {
+		return false, false
+	}
+	if IsAbsentOrUnknown(baseline) || baseline.Kind().IsPlaceholder() {
+		return candidate != nil && !IsAbsentOrUnknown(candidate) && !candidate.Kind().IsPlaceholder(), true
+	}
+	if candidate == nil || IsAbsentOrUnknown(candidate) || candidate.Kind().IsPlaceholder() {
+		return false, false
+	}
+	if candidate.Kind() == kind.Integer && baseline.Kind() == kind.Number {
+		return true, true
+	}
+
+	if equivalentLocalRefAlias(candidate, baseline) {
+		return false, true
+	}
+
+	cacheKey, cacheOK := precisionFamilyPairKey(candidate, baseline, seen)
+	if cacheOK && seen != nil && seen.results != nil {
+		if cached, ok := seen.results[cacheKey]; ok {
+			return cached.strict, cached.comparable
+		}
+	}
+
+	var repeated bool
+	var leave func()
+	seen, repeated, leave = enterPrecisionPair(candidate, baseline, seen, cacheKey, cacheOK)
+	if repeated {
+		return false, true
+	}
+	if leave != nil {
+		defer leave()
+	}
+	if cacheOK && seen != nil {
+		defer func() {
+			if seen.results == nil {
+				seen.results = make(map[precisionFamilyPair]precisionResult)
+			}
+			seen.results[cacheKey] = precisionResult{strict: strict, comparable: comparable}
+		}()
+	}
+
+	if c, ok := candidate.(*Alias); ok {
+		return comparePrecision(c.UnaliasedTarget(), baseline, depth+1, seen)
+	}
+	if b, ok := baseline.(*Alias); ok {
+		return comparePrecision(candidate, b.UnaliasedTarget(), depth+1, seen)
+	}
+
+	if normalized, ok := normalizePrecisionUnion(candidate, seen); ok {
+		return comparePrecision(normalized, baseline, depth+1, seen)
+	}
+	if normalized, ok := normalizePrecisionUnion(baseline, seen); ok {
+		return comparePrecision(candidate, normalized, depth+1, seen)
+	}
+
+	if precisionCanUseAcyclicEquality(candidate, baseline) && TypeEquals(candidate, baseline) {
+		return false, true
+	}
+
+	if c, ok := candidate.(*Union); ok {
+		if b, ok := baseline.(*Union); ok {
+			return compareUnionToUnionPrecision(c, b, depth+1, seen)
+		}
+	}
+
+	switch b := baseline.(type) {
+	case *Union:
+		return comparePrecisionAgainstUnion(candidate, b, depth+1, seen)
+	case *Recursive:
+		if b.Body == nil {
+			return false, false
+		}
+		return comparePrecision(candidate, b.Body, depth+1, seen)
+	}
+
+	switch c := candidate.(type) {
+	case *Union:
+		return compareUnionPrecision(c, baseline, depth+1, seen)
+	case *Literal:
+		return compareLiteralPrecision(c, baseline)
+	case *Record:
+		b, ok := baseline.(*Record)
+		if !ok {
+			return false, false
+		}
+		return compareRecordPrecision(c, b, depth+1, seen)
+	case *Optional:
+		b, ok := baseline.(*Optional)
+		if !ok {
+			return false, false
+		}
+		return comparePrecision(c.Inner, b.Inner, depth+1, seen)
+	case *Tuple:
+		b, ok := baseline.(*Tuple)
+		if !ok || len(c.Elements) != len(b.Elements) {
+			return false, false
+		}
+		return comparePrecisionSlices(c.Elements, b.Elements, depth+1, seen)
+	case *Array:
+		b, ok := baseline.(*Array)
+		if !ok {
+			return false, false
+		}
+		return comparePrecision(c.Element, b.Element, depth+1, seen)
+	case *Map:
+		switch b := baseline.(type) {
+		case *Map:
+			keyStrict, ok := comparePrecision(c.Key, b.Key, depth+1, seen)
+			if !ok {
+				return false, false
+			}
+			valueStrict, ok := comparePrecision(c.Value, b.Value, depth+1, seen)
+			if !ok {
+				return false, false
+			}
+			return keyStrict || valueStrict, true
+		case *Record:
+			return compareMapRecordPrecision(c, b, depth+1, seen)
+		default:
+			return false, false
+		}
+	case *Instantiated:
+		b, ok := baseline.(*Instantiated)
+		if !ok || c.Generic == nil || b.Generic == nil || !TypeEquals(c.Generic, b.Generic) || len(c.TypeArgs) != len(b.TypeArgs) {
+			return false, false
+		}
+		return compareGenericTypeArgsPrecision(c.TypeArgs, b.TypeArgs, depth+1, seen)
+	case *Function:
+		b, ok := baseline.(*Function)
+		if !ok || len(c.Params) != len(b.Params) || len(c.Returns) != len(b.Returns) || (c.Variadic == nil) != (b.Variadic == nil) {
+			return false, false
+		}
+		strict := false
+		for i := range c.Params {
+			if c.Params[i].Optional != b.Params[i].Optional {
+				return false, false
+			}
+			paramStrict, ok := comparePrecision(c.Params[i].Type, b.Params[i].Type, depth+1, seen)
+			if !ok {
+				return false, false
+			}
+			strict = strict || paramStrict
+		}
+		returnStrict, ok := comparePrecisionSlices(c.Returns, b.Returns, depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		strict = strict || returnStrict
+		if c.Variadic != nil {
+			variadicStrict, ok := comparePrecision(c.Variadic, b.Variadic, depth+1, seen)
+			if !ok {
+				return false, false
+			}
+			strict = strict || variadicStrict
+		}
+		return strict, true
+	case *Recursive:
+		if c.Body == nil {
+			return false, false
+		}
+		if b, ok := baseline.(*Recursive); ok {
+			if c.Name != b.Name || b.Body == nil {
+				return false, false
+			}
+			return comparePrecision(c.Body, b.Body, depth+1, seen)
+		}
+		return comparePrecision(c.Body, baseline, depth+1, seen)
+	default:
+		return false, false
+	}
+}
+
+func precisionCanUseAcyclicEquality(candidate, baseline Type) bool {
+	return !ContainsRecursive(candidate) && !ContainsRecursive(baseline)
+}
+
+func normalizePrecisionUnion(t Type, seen *precisionSeen) (normalized Type, changed bool) {
+	u, ok := t.(*Union)
+	if !ok || u == nil || len(u.Members) < 2 {
+		return nil, false
+	}
+	if ContainsRecursive(u) {
+		return nil, false
+	}
+	if seen != nil {
+		if seen.normalizedUnions != nil {
+			if cached, ok := seen.normalizedUnions[t]; ok {
+				return cached.typ, cached.changed
+			}
+		}
+		if seen.normalizingUnions != nil && seen.normalizingUnions[t] {
+			return nil, false
+		}
+		if seen.normalizingUnions == nil {
+			seen.normalizingUnions = make(map[Type]bool)
+		}
+		seen.normalizingUnions[t] = true
+		defer func() {
+			delete(seen.normalizingUnions, t)
+			if seen.normalizedUnions == nil {
+				seen.normalizedUnions = make(map[Type]precisionUnionNormalization)
+			}
+			seen.normalizedUnions[t] = precisionUnionNormalization{typ: normalized, changed: changed}
+		}()
+	}
+	members := coalescePrecisionUnionMembers(u.Members)
+	if !sameTypeSlice(u.Members, members) {
+		return NewUnion(members...), true
+	}
+	candidate := CoalesceCompatibleRecordAlternatives(u)
+	if candidate == nil || candidate == t {
+		return nil, false
+	}
+	return candidate, true
+}
+
+func coalescePrecisionUnionMembers(types []Type) []Type {
+	state := newReturnJoinState()
+	state.recursiveFamilyFold = true
+	return state.coalesceProductUnionMembers(types)
+}
+
+type precisionSeen struct {
+	nodes             map[typePair]int
+	families          map[precisionFamilyPair]int
+	results           map[precisionFamilyPair]precisionResult
+	familyHashes      map[Type]uint64
+	normalizedUnions  map[Type]precisionUnionNormalization
+	normalizingUnions map[Type]bool
+}
+
+type precisionFamilyPair struct {
+	candidate uint64
+	baseline  uint64
+}
+
+type precisionResult struct {
+	strict     bool
+	comparable bool
+}
+
+type precisionUnionNormalization struct {
+	typ     Type
+	changed bool
+}
+
+func enterPrecisionPair(candidate, baseline Type, seen *precisionSeen, familyPair precisionFamilyPair, hasFamilyPair bool) (*precisionSeen, bool, func()) {
+	if seen == nil {
+		seen = &precisionSeen{}
+	}
+	releaseNodes := false
+	releaseFamilies := false
+
+	cp := typePointer(candidate)
+	bp := typePointer(baseline)
+	if cp != 0 || bp != 0 {
+		if seen.nodes == nil {
+			seen.nodes = make(map[typePair]int)
+		}
+		pair := typePair{a: cp, b: bp}
+		if seen.nodes[pair] > 0 {
+			return seen, true, nil
+		}
+		seen.nodes[pair]++
+		releaseNodes = true
+	}
+
+	if hasFamilyPair {
+		if seen.families == nil {
+			seen.families = make(map[precisionFamilyPair]int)
+		}
+		if seen.families[familyPair] > 0 {
+			if releaseNodes {
+				seen.nodes[typePair{a: cp, b: bp}]--
+			}
+			return seen, true, nil
+		}
+		seen.families[familyPair]++
+		releaseFamilies = true
+	}
+
+	if !releaseNodes && !releaseFamilies {
+		return seen, false, nil
+	}
+	return seen, false, func() {
+		if releaseNodes {
+			pair := typePair{a: cp, b: bp}
+			if seen.nodes[pair] <= 1 {
+				delete(seen.nodes, pair)
+			} else {
+				seen.nodes[pair]--
+			}
+		}
+		if releaseFamilies {
+			if seen.families[familyPair] <= 1 {
+				delete(seen.families, familyPair)
+			} else {
+				seen.families[familyPair]--
+			}
+		}
+	}
+}
+
+func precisionFamilyPairKey(candidate, baseline Type, seen *precisionSeen) (precisionFamilyPair, bool) {
+	if !ContainsRecursive(candidate) && !ContainsRecursive(baseline) {
+		return precisionFamilyPair{}, false
+	}
+	candidateHash := precisionFamilyHash(candidate, seen)
+	baselineHash := precisionFamilyHash(baseline, seen)
+	return precisionFamilyPair{candidate: candidateHash, baseline: baselineHash}, true
+}
+
+func precisionFamilyHash(t Type, seen *precisionSeen) uint64 {
+	return precisionFamilyHashSeen(t, make(map[uintptr]bool), seen)
+}
+
+func precisionFamilyHashSeen(t Type, active map[uintptr]bool, seen *precisionSeen) (out uint64) {
+	t = normalizeNilType(t)
+	if t == nil {
+		return 0
+	}
+	t = UnwrapAnnotated(t)
+	if t == nil {
+		return 0
+	}
+	if alias, ok := t.(*Alias); ok {
+		return precisionFamilyHashSeen(alias.UnaliasedTarget(), active, seen)
+	}
+	if rec, ok := t.(*Recursive); ok {
+		return internal.HashCombine(uint64(kind.Recursive), internal.FnvString(rec.Name))
+	}
+	if seen != nil {
+		if seen.familyHashes != nil {
+			if cached, ok := seen.familyHashes[t]; ok {
+				return cached
+			}
+		}
+		defer func() {
+			if seen.familyHashes == nil {
+				seen.familyHashes = make(map[Type]uint64)
+			}
+			seen.familyHashes[t] = out
+		}()
+	}
+
+	ptr := typePointer(t)
+	if ptr != 0 {
+		if active[ptr] {
+			return internal.HashCombine(uint64(kind.Recursive), internal.FnvString("$cycle"))
+		}
+		active[ptr] = true
+		defer delete(active, ptr)
+	}
+
+	switch v := t.(type) {
+	case *Optional:
+		return internal.HashCombine(uint64(kind.Optional), precisionFamilyMemberHash(v.Inner, active, seen))
+	case *Union:
+		h := internal.HashCombine(uint64(kind.Union), uint64(len(v.Members)))
+		for _, member := range v.Members {
+			h = internal.HashCombine(h, precisionFamilyMemberHash(member, active, seen))
+		}
+		return h
+	case *Intersection:
+		h := internal.HashCombine(uint64(kind.Intersection), uint64(len(v.Members)))
+		for _, member := range v.Members {
+			h = internal.HashCombine(h, precisionFamilyMemberHash(member, active, seen))
+		}
+		return h
+	case *Record:
+		h := internal.HashCombine(uint64(kind.Record), boolPrecisionHash(v.Open))
+		h = internal.HashCombine(h, boolPrecisionHash(v.HasMapComponent()))
+		if v.HasMapComponent() {
+			h = internal.HashCombine(h, precisionFamilyMemberHash(v.MapKey, active, seen))
+			h = internal.HashCombine(h, precisionFamilyMemberHash(v.MapValue, active, seen))
+		}
+		if v.Metatable != nil {
+			h = internal.HashCombine(h, precisionFamilyMemberHash(v.Metatable, active, seen))
+		}
+		h = internal.HashCombine(h, uint64(len(v.Fields)))
+		for _, field := range v.Fields {
+			h = internal.HashCombine(h, internal.FnvString(field.Name))
+			h = internal.HashCombine(h, boolPrecisionHash(field.Optional))
+			h = internal.HashCombine(h, boolPrecisionHash(field.Readonly))
+			h = internal.HashCombine(h, precisionFamilyTerminalHash(field.Type, seen))
+		}
+		return h
+	case *Array:
+		return internal.HashCombine(uint64(kind.Array), precisionFamilyMemberHash(v.Element, active, seen))
+	case *Map:
+		h := internal.HashCombine(uint64(kind.Map), precisionFamilyMemberHash(v.Key, active, seen))
+		return internal.HashCombine(h, precisionFamilyMemberHash(v.Value, active, seen))
+	case *Tuple:
+		h := internal.HashCombine(uint64(kind.Tuple), uint64(len(v.Elements)))
+		for _, elem := range v.Elements {
+			h = internal.HashCombine(h, precisionFamilyMemberHash(elem, active, seen))
+		}
+		return h
+	case *Function:
+		h := internal.HashCombine(uint64(kind.Function), uint64(len(v.TypeParams)))
+		for _, param := range v.TypeParams {
+			h = internal.HashCombine(h, precisionFamilyMemberHash(param, active, seen))
+		}
+		h = internal.HashCombine(h, uint64(len(v.Params)))
+		for _, param := range v.Params {
+			h = internal.HashCombine(h, boolPrecisionHash(param.Optional))
+			h = internal.HashCombine(h, precisionFamilyMemberHash(param.Type, active, seen))
+		}
+		if v.Variadic != nil {
+			h = internal.HashCombine(h, 1)
+			h = internal.HashCombine(h, precisionFamilyMemberHash(v.Variadic, active, seen))
+		}
+		h = internal.HashCombine(h, uint64(len(v.Returns)))
+		for _, ret := range v.Returns {
+			h = internal.HashCombine(h, precisionFamilyMemberHash(ret, active, seen))
+		}
+		return h
+	case *Instantiated:
+		h := internal.HashCombine(uint64(kind.Instantiated), precisionFamilyMemberHash(v.Generic, active, seen))
+		for _, arg := range v.TypeArgs {
+			h = internal.HashCombine(h, precisionFamilyMemberHash(arg, active, seen))
+		}
+		return h
+	case *Generic:
+		h := internal.HashCombine(uint64(kind.Generic), internal.FnvString(v.Name))
+		for _, param := range v.TypeParams {
+			h = internal.HashCombine(h, precisionFamilyMemberHash(param, active, seen))
+		}
+		if v.Name == "" && v.Body != nil {
+			h = internal.HashCombine(h, precisionFamilyMemberHash(v.Body, active, seen))
+		}
+		return h
+	case *TypeParam:
+		h := internal.HashCombine(uint64(kind.TypeParam), internal.FnvString(v.Name))
+		if v.Constraint != nil {
+			h = internal.HashCombine(h, precisionFamilyMemberHash(v.Constraint, active, seen))
+		}
+		return h
+	case *FieldAccess:
+		h := internal.HashCombine(uint64(kind.FieldAccess), precisionFamilyMemberHash(v.Base, active, seen))
+		return internal.HashCombine(h, internal.FnvString(v.Field))
+	case *IndexAccess:
+		h := internal.HashCombine(uint64(kind.IndexAccess), precisionFamilyMemberHash(v.Base, active, seen))
+		return internal.HashCombine(h, precisionFamilyMemberHash(v.Index, active, seen))
+	case *Meta:
+		return internal.HashCombine(uint64(kind.Meta), precisionFamilyMemberHash(v.Of, active, seen))
+	case *Sum:
+		h := internal.HashCombine(uint64(kind.Sum), internal.FnvString(v.Name))
+		for _, variant := range v.Variants {
+			h = internal.HashCombine(h, internal.FnvString(variant.Tag))
+			for _, vt := range variant.Types {
+				h = internal.HashCombine(h, precisionFamilyMemberHash(vt, active, seen))
+			}
+		}
+		return h
+	case *Interface:
+		h := internal.HashCombine(uint64(kind.Interface), internal.FnvString(v.Name))
+		for _, method := range v.Methods {
+			h = internal.HashCombine(h, internal.FnvString(method.Name))
+			h = internal.HashCombine(h, precisionFamilyMemberHash(method.Type, active, seen))
+		}
+		return h
+	default:
+		return t.Hash()
+	}
+}
+
+func precisionFamilyMemberHash(t Type, active map[uintptr]bool, seen *precisionSeen) (out uint64) {
+	t = normalizeNilType(t)
+	if t == nil {
+		return 0
+	}
+	t = UnwrapAnnotated(t)
+	if t == nil {
+		return 0
+	}
+	if alias, ok := t.(*Alias); ok {
+		return precisionFamilyMemberHash(alias.UnaliasedTarget(), active, seen)
+	}
+	if rec, ok := t.(*Recursive); ok {
+		return internal.HashCombine(uint64(kind.Recursive), internal.FnvString(rec.Name))
+	}
+	if seen != nil {
+		if seen.familyHashes != nil {
+			if cached, ok := seen.familyHashes[t]; ok {
+				return cached
+			}
+		}
+		defer func() {
+			if seen.familyHashes == nil {
+				seen.familyHashes = make(map[Type]uint64)
+			}
+			seen.familyHashes[t] = out
+		}()
+	}
+	if !ContainsRecursive(t) {
+		return typeEqualityHash(t)
+	}
+	return precisionFamilyTerminalHash(t, seen)
+}
+
+func precisionFamilyTerminalHash(t Type, seen *precisionSeen) (out uint64) {
+	t = normalizeNilType(t)
+	if t == nil {
+		return 0
+	}
+	t = UnwrapAnnotated(t)
+	if t == nil {
+		return 0
+	}
+	if alias, ok := t.(*Alias); ok {
+		return precisionFamilyTerminalHash(alias.UnaliasedTarget(), seen)
+	}
+	if rec, ok := t.(*Recursive); ok {
+		return internal.HashCombine(uint64(kind.Recursive), internal.FnvString(rec.Name))
+	}
+	if seen != nil {
+		if seen.familyHashes != nil {
+			if cached, ok := seen.familyHashes[t]; ok {
+				return cached
+			}
+		}
+		defer func() {
+			if seen.familyHashes == nil {
+				seen.familyHashes = make(map[Type]uint64)
+			}
+			seen.familyHashes[t] = out
+		}()
+	}
+	if !ContainsRecursive(t) {
+		return typeEqualityHash(t)
+	}
+	return internal.HashCombine(uint64(t.Kind()), internal.FnvString("$recursive-family"))
+}
+
+func boolPrecisionHash(v bool) uint64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func comparePrecisionSlices(candidate, baseline []Type, depth int, seen *precisionSeen) (bool, bool) {
+	if len(candidate) != len(baseline) {
+		return false, false
+	}
+	strict := false
+	for i := range candidate {
+		memberStrict, ok := comparePrecision(candidate[i], baseline[i], depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		strict = strict || memberStrict
+	}
+	return strict, true
+}
+
+func compareGenericTypeArgsPrecision(candidate, baseline []Type, depth int, seen *precisionSeen) (bool, bool) {
+	if len(candidate) != len(baseline) {
+		return false, false
+	}
+	strict := false
+	for i := range candidate {
+		memberStrict, ok := compareGenericTypeArgPrecision(candidate[i], baseline[i], depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		strict = strict || memberStrict
+	}
+	return strict, true
+}
+
+func compareGenericTypeArgPrecision(candidate, baseline Type, depth int, seen *precisionSeen) (bool, bool) {
+	if TypeEquals(candidate, baseline) {
+		return false, true
+	}
+	if b, ok := baseline.(*TypeParam); ok {
+		if _, ok := candidate.(*TypeParam); ok {
+			return false, false
+		}
+		if b.Constraint == nil {
+			return true, true
+		}
+		_, comparable := comparePrecision(candidate, b.Constraint, depth+1, seen)
+		return comparable, comparable
+	}
+	if _, ok := candidate.(*TypeParam); ok {
+		return false, false
+	}
+	return comparePrecision(candidate, baseline, depth+1, seen)
+}
+
+func compareRecordPrecision(candidate, baseline *Record, depth int, seen *precisionSeen) (bool, bool) {
+	if candidate == nil || baseline == nil {
+		return false, false
+	}
+	if candidate.Open && !baseline.Open {
+		return false, false
+	}
+	strict := baseline.Open && !candidate.Open
+
+	if baseline.HasMapComponent() {
+		if !candidate.HasMapComponent() {
+			return false, false
+		}
+		keyStrict, ok := comparePrecision(candidate.MapKey, baseline.MapKey, depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		valueStrict, ok := comparePrecision(candidate.MapValue, baseline.MapValue, depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		strict = strict || keyStrict || valueStrict
+	} else if candidate.HasMapComponent() {
+		strict = true
+	}
+
+	// Metatables drive __index field resolution, so records with divergent
+	// metatables are not the same product family even when their direct fields
+	// match. A baseline without a metatable is comparable to any candidate; a
+	// candidate metatable then refines it. When both carry a metatable, compare
+	// them structurally so metatable-divergent records stay distinct.
+	switch {
+	case baseline.Metatable == nil:
+		if candidate.Metatable != nil {
+			strict = true
+		}
+	case candidate.Metatable == nil:
+		return false, false
+	default:
+		metaStrict, ok := comparePrecision(candidate.Metatable, baseline.Metatable, depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		strict = strict || metaStrict
+	}
+
+	for _, baselineField := range baseline.Fields {
+		candidateField := candidate.GetField(baselineField.Name)
+		if candidateField == nil {
+			if baselineField.Optional {
+				strict = true
+				continue
+			}
+			return false, false
+		}
+		if candidateField.Readonly != baselineField.Readonly {
+			return false, false
+		}
+		if candidateField.Optional && !baselineField.Optional {
+			return false, false
+		}
+		if baselineField.Optional && !candidateField.Optional {
+			strict = true
+		}
+		fieldStrict, ok := comparePrecision(candidateField.Type, baselineField.Type, depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		strict = strict || fieldStrict
+	}
+	if len(candidate.Fields) > len(baseline.Fields) {
+		strict = true
+	}
+	return strict, true
+}
+
+func compareMapRecordPrecision(candidate *Map, baseline *Record, depth int, seen *precisionSeen) (bool, bool) {
+	if candidate == nil || baseline == nil || !baseline.HasMapComponent() || len(baseline.Fields) != 0 || baseline.Metatable != nil {
+		return false, false
+	}
+	keyStrict, ok := comparePrecision(candidate.Key, baseline.MapKey, depth+1, seen)
+	if !ok {
+		return false, false
+	}
+	valueStrict, ok := comparePrecision(candidate.Value, baseline.MapValue, depth+1, seen)
+	if !ok {
+		return false, false
+	}
+	return baseline.Open || keyStrict || valueStrict, true
+}
+
+func compareUnionPrecision(candidate *Union, baseline Type, depth int, seen *precisionSeen) (bool, bool) {
+	if candidate == nil || len(candidate.Members) == 0 {
+		return false, false
+	}
+	strict := false
+	for _, member := range candidate.Members {
+		memberStrict, ok := comparePrecision(member, baseline, depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		strict = strict || memberStrict
+	}
+	return strict, true
+}
+
+func compareUnionToUnionPrecision(candidate, baseline *Union, depth int, seen *precisionSeen) (bool, bool) {
+	if candidate == nil || baseline == nil || len(candidate.Members) == 0 || len(baseline.Members) == 0 {
+		return false, false
+	}
+	strict := len(candidate.Members) < len(baseline.Members)
+	for _, member := range candidate.Members {
+		memberStrict, ok := comparePrecisionAgainstUnion(member, baseline, depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		strict = strict || memberStrict
+	}
+	return strict, true
+}
+
+func comparePrecisionAgainstUnion(candidate Type, baseline *Union, depth int, seen *precisionSeen) (bool, bool) {
+	if baseline == nil || len(baseline.Members) == 0 {
+		return false, false
+	}
+	for _, member := range baseline.Members {
+		if _, ok := comparePrecision(candidate, member, depth+1, seen); ok {
+			return true, true
+		}
+	}
+	return false, false
+}
+
+func compareLiteralPrecision(candidate *Literal, baseline Type) (bool, bool) {
+	if candidate == nil || baseline == nil {
+		return false, false
+	}
+	switch baseline.Kind() {
+	case candidate.Base:
+		return true, true
+	case kind.Number:
+		return candidate.Base == kind.Integer, true
+	default:
+		return false, false
+	}
+}
+
+func equivalentLocalRefAlias(candidate, baseline Type) bool {
+	cRef, cIsRef := candidate.(*Ref)
+	bAlias, bIsAlias := baseline.(*Alias)
+	if cIsRef && bIsAlias && cRef.Module == "" && cRef.Name == bAlias.Name {
+		return true
+	}
+	cAlias, cIsAlias := candidate.(*Alias)
+	bRef, bIsRef := baseline.(*Ref)
+	return cIsAlias && bIsRef && bRef.Module == "" && bRef.Name == cAlias.Name
+}

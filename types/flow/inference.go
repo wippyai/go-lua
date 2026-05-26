@@ -100,6 +100,15 @@ func InferFunctionRefinementFromInputs(
 	return inferFunctionRefinementCore(src, g, params, returnType)
 }
 
+// ParameterCondition keeps only parameter-dependent constraints from cond and
+// rewrites those paths to parameter placeholders ($0, $1, ...). This is the
+// canonical flow-level representation for exporting path-sensitive facts
+// through contracts or function products.
+func ParameterCondition(cond constraint.Condition, params []ParamInfo) constraint.Condition {
+	paramIndex, paramNameIndex := parameterIndexes(params)
+	return substituteToPlaceholdersCondition(filterParamCondition(cond, paramIndex, paramNameIndex), paramIndex, paramNameIndex)
+}
+
 // refinementSource abstracts the data sources for refinement inference.
 //
 // This struct allows the same inference algorithm to work with both pre-flow
@@ -143,17 +152,7 @@ func inferFunctionRefinementCore(
 	params []ParamInfo,
 	returnType typ.Type,
 ) *constraint.FunctionRefinement {
-	// Build param Symbol -> index and name -> index maps
-	paramIndex := make(map[cfg.SymbolID]int)
-	paramNameIndex := make(map[string]int)
-	for i, p := range params {
-		if p.Symbol != 0 {
-			paramIndex[p.Symbol] = i
-		}
-		if p.Name != "" {
-			paramNameIndex[p.Name] = i
-		}
-	}
+	paramIndex, paramNameIndex := parameterIndexes(params)
 
 	// Count return nodes to detect terminating functions
 	hasReturnNode := false
@@ -259,6 +258,20 @@ func inferFunctionRefinementCore(
 		return nil
 	}
 	return eff
+}
+
+func parameterIndexes(params []ParamInfo) (map[cfg.SymbolID]int, map[string]int) {
+	paramIndex := make(map[cfg.SymbolID]int)
+	paramNameIndex := make(map[string]int)
+	for i, p := range params {
+		if p.Symbol != 0 {
+			paramIndex[p.Symbol] = i
+		}
+		if p.Name != "" {
+			paramNameIndex[p.Name] = i
+		}
+	}
+	return paramIndex, paramNameIndex
 }
 
 // isBooleanReturnType checks if the return type is boolean.
@@ -382,175 +395,7 @@ func substituteToPlaceholders(set []constraint.Constraint, paramIndex map[cfg.Sy
 // Returns nil if no parameter reference is found (constraint references only
 // locals/globals), causing the constraint to be filtered out of the effect.
 func substitutePathsInConstraint(c constraint.Constraint, placeholders map[cfg.SymbolID]string, placeholdersByName map[string]string) constraint.Constraint {
-	return constraint.VisitConstraint(c, constraint.ConstraintVisitor[constraint.Constraint]{
-		Truthy: func(v constraint.Truthy) constraint.Constraint {
-			if newRoot, ok := lookupPlaceholder(v.Path, placeholders, placeholdersByName); ok {
-				return constraint.Truthy{Path: pathWithNewRoot(v.Path, newRoot)}
-			}
-			return nil
-		},
-		Falsy: func(v constraint.Falsy) constraint.Constraint {
-			if newRoot, ok := lookupPlaceholder(v.Path, placeholders, placeholdersByName); ok {
-				return constraint.Falsy{Path: pathWithNewRoot(v.Path, newRoot)}
-			}
-			return nil
-		},
-		IsNil: func(v constraint.IsNil) constraint.Constraint {
-			if newRoot, ok := lookupPlaceholder(v.Path, placeholders, placeholdersByName); ok {
-				return constraint.IsNil{Path: pathWithNewRoot(v.Path, newRoot)}
-			}
-			return nil
-		},
-		NotNil: func(v constraint.NotNil) constraint.Constraint {
-			if newRoot, ok := lookupPlaceholder(v.Path, placeholders, placeholdersByName); ok {
-				return constraint.NotNil{Path: pathWithNewRoot(v.Path, newRoot)}
-			}
-			return nil
-		},
-		HasType: func(v constraint.HasType) constraint.Constraint {
-			if newRoot, ok := lookupPlaceholder(v.Path, placeholders, placeholdersByName); ok {
-				return constraint.HasType{Path: pathWithNewRoot(v.Path, newRoot), Type: v.Type}
-			}
-			return nil
-		},
-		NotHasType: func(v constraint.NotHasType) constraint.Constraint {
-			if newRoot, ok := lookupPlaceholder(v.Path, placeholders, placeholdersByName); ok {
-				return constraint.NotHasType{Path: pathWithNewRoot(v.Path, newRoot), Type: v.Type}
-			}
-			return nil
-		},
-		HasField: func(v constraint.HasField) constraint.Constraint {
-			if newRoot, ok := lookupPlaceholder(v.Path, placeholders, placeholdersByName); ok {
-				return constraint.HasField{Path: pathWithNewRoot(v.Path, newRoot), Field: v.Field}
-			}
-			return nil
-		},
-		FieldEquals: func(v constraint.FieldEquals) constraint.Constraint {
-			if newRoot, ok := lookupPlaceholder(v.Target, placeholders, placeholdersByName); ok {
-				return constraint.FieldEquals{Target: pathWithNewRoot(v.Target, newRoot), Field: v.Field, Value: v.Value}
-			}
-			return nil
-		},
-		FieldNotEquals: func(v constraint.FieldNotEquals) constraint.Constraint {
-			if newRoot, ok := lookupPlaceholder(v.Target, placeholders, placeholdersByName); ok {
-				return constraint.FieldNotEquals{Target: pathWithNewRoot(v.Target, newRoot), Field: v.Field, Value: v.Value}
-			}
-			return nil
-		},
-		IndexEquals: func(v constraint.IndexEquals) constraint.Constraint {
-			if newRoot, ok := lookupPlaceholder(v.Target, placeholders, placeholdersByName); ok {
-				return constraint.IndexEquals{Target: pathWithNewRoot(v.Target, newRoot), Key: v.Key, Value: v.Value}
-			}
-			return nil
-		},
-		IndexNotEquals: func(v constraint.IndexNotEquals) constraint.Constraint {
-			if newRoot, ok := lookupPlaceholder(v.Target, placeholders, placeholdersByName); ok {
-				return constraint.IndexNotEquals{Target: pathWithNewRoot(v.Target, newRoot), Key: v.Key, Value: v.Value}
-			}
-			return nil
-		},
-		EqPath: func(v constraint.EqPath) constraint.Constraint {
-			leftRoot, leftOk := lookupPlaceholder(v.Left, placeholders, placeholdersByName)
-			rightRoot, rightOk := lookupPlaceholder(v.Right, placeholders, placeholdersByName)
-			if leftOk && rightOk {
-				return constraint.NewEqPath(
-					pathWithNewRoot(v.Left, leftRoot),
-					pathWithNewRoot(v.Right, rightRoot),
-				)
-			}
-			if leftOk {
-				return constraint.NewEqPath(pathWithNewRoot(v.Left, leftRoot), v.Right)
-			}
-			if rightOk {
-				return constraint.NewEqPath(v.Left, pathWithNewRoot(v.Right, rightRoot))
-			}
-			return nil
-		},
-		NotEqPath: func(v constraint.NotEqPath) constraint.Constraint {
-			leftRoot, leftOk := lookupPlaceholder(v.Left, placeholders, placeholdersByName)
-			rightRoot, rightOk := lookupPlaceholder(v.Right, placeholders, placeholdersByName)
-			if leftOk && rightOk {
-				return constraint.NewNotEqPath(
-					pathWithNewRoot(v.Left, leftRoot),
-					pathWithNewRoot(v.Right, rightRoot),
-				)
-			}
-			if leftOk {
-				return constraint.NewNotEqPath(pathWithNewRoot(v.Left, leftRoot), v.Right)
-			}
-			if rightOk {
-				return constraint.NewNotEqPath(v.Left, pathWithNewRoot(v.Right, rightRoot))
-			}
-			return nil
-		},
-		FieldEqualsPath: func(v constraint.FieldEqualsPath) constraint.Constraint {
-			targetRoot, targetOk := lookupPlaceholder(v.Target, placeholders, placeholdersByName)
-			valueRoot, valueOk := lookupPlaceholder(v.Value, placeholders, placeholdersByName)
-			if !targetOk && !valueOk {
-				return nil
-			}
-			target := v.Target
-			value := v.Value
-			if targetOk {
-				target = pathWithNewRoot(v.Target, targetRoot)
-			}
-			if valueOk {
-				value = pathWithNewRoot(v.Value, valueRoot)
-			}
-			return constraint.FieldEqualsPath{Target: target, Field: v.Field, Value: value}
-		},
-		FieldNotEqualsPath: func(v constraint.FieldNotEqualsPath) constraint.Constraint {
-			targetRoot, targetOk := lookupPlaceholder(v.Target, placeholders, placeholdersByName)
-			valueRoot, valueOk := lookupPlaceholder(v.Value, placeholders, placeholdersByName)
-			if !targetOk && !valueOk {
-				return nil
-			}
-			target := v.Target
-			value := v.Value
-			if targetOk {
-				target = pathWithNewRoot(v.Target, targetRoot)
-			}
-			if valueOk {
-				value = pathWithNewRoot(v.Value, valueRoot)
-			}
-			return constraint.FieldNotEqualsPath{Target: target, Field: v.Field, Value: value}
-		},
-		IndexEqualsPath: func(v constraint.IndexEqualsPath) constraint.Constraint {
-			targetRoot, targetOk := lookupPlaceholder(v.Target, placeholders, placeholdersByName)
-			valueRoot, valueOk := lookupPlaceholder(v.Value, placeholders, placeholdersByName)
-			if !targetOk && !valueOk {
-				return nil
-			}
-			target := v.Target
-			value := v.Value
-			if targetOk {
-				target = pathWithNewRoot(v.Target, targetRoot)
-			}
-			if valueOk {
-				value = pathWithNewRoot(v.Value, valueRoot)
-			}
-			return constraint.IndexEqualsPath{Target: target, Key: v.Key, Value: value}
-		},
-		IndexNotEqualsPath: func(v constraint.IndexNotEqualsPath) constraint.Constraint {
-			targetRoot, targetOk := lookupPlaceholder(v.Target, placeholders, placeholdersByName)
-			valueRoot, valueOk := lookupPlaceholder(v.Value, placeholders, placeholdersByName)
-			if !targetOk && !valueOk {
-				return nil
-			}
-			target := v.Target
-			value := v.Value
-			if targetOk {
-				target = pathWithNewRoot(v.Target, targetRoot)
-			}
-			if valueOk {
-				value = pathWithNewRoot(v.Value, valueRoot)
-			}
-			return constraint.IndexNotEqualsPath{Target: target, Key: v.Key, Value: value}
-		},
-		Default: func(constraint.Constraint) constraint.Constraint {
-			return nil
-		},
-	})
+	return newParameterPathSubstituter(placeholders, placeholdersByName).constraint(c)
 }
 
 // lookupPlaceholder returns the placeholder for a path if it references a parameter.

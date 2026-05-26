@@ -651,6 +651,25 @@ func TestElementTypeUnion(t *testing.T) {
 	}
 }
 
+func TestContainerDecompositionRecursiveMapProduct(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	product := typ.NewRecursive("Flow", func(self typ.Type) typ.Type {
+		return typ.NewMap(typ.String, typ.NewArray(entry))
+	})
+
+	if got := KeyType(product); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("KeyType(recursive map product) = %v, want string", got)
+	}
+	value := ValueType(product)
+	wantValue := typ.NewArray(entry)
+	if !typ.TypeEquals(value, wantValue) {
+		t.Fatalf("ValueType(recursive map product) = %v, want %v", value, wantValue)
+	}
+	if got := ElementType(value); !typ.TypeEquals(got, entry) {
+		t.Fatalf("ElementType(ValueType(recursive map product)) = %v, want %v", got, entry)
+	}
+}
+
 func TestKeyType(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -696,6 +715,50 @@ func TestKeyTypeUnion(t *testing.T) {
 	}
 	if len(u.Members) != 2 {
 		t.Errorf("expected 2 members, got %d", len(u.Members))
+	}
+}
+
+func TestEntryKeyType(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  typ.Type
+		expect typ.Type
+	}{
+		{"closed empty record", typ.NewRecord().Build(), nil},
+		{"map with present values", typ.NewMap(typ.String, typ.Integer), typ.String},
+		{"map with nil values", typ.NewMap(typ.String, typ.Nil), nil},
+		{"record fields", typ.NewRecord().Field("a", typ.String).OptField("b", typ.Integer).Build(), typ.NewUnion(typ.LiteralString("a"), typ.LiteralString("b"))},
+		{"open record", typ.NewRecord().SetOpen(true).Build(), typ.String},
+		{"tuple present slots", typ.NewTuple(typ.String, typ.Integer), typ.NewUnion(typ.LiteralInt(1), typ.LiteralInt(2))},
+		{"optional map", typ.NewOptional(typ.NewMap(typ.Number, typ.Boolean)), typ.Number},
+		{"primitive", typ.String, nil},
+		{"unknown", typ.Unknown, typ.Unknown},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := EntryKeyType(tt.input)
+			if tt.expect == nil {
+				if result != nil {
+					t.Errorf("expected nil, got %v", result)
+				}
+				return
+			}
+			if result == nil {
+				t.Fatalf("expected %v, got nil", tt.expect)
+			}
+			if !typ.TypeEquals(result, tt.expect) {
+				t.Errorf("expected %v, got %v", tt.expect, result)
+			}
+		})
+	}
+}
+
+func TestEntryKeyTypeUnionSkipsEmptyRecord(t *testing.T) {
+	value := typ.NewRecord().Field("id", typ.String).Build()
+	union := typ.NewUnion(typ.NewRecord().Build(), typ.NewMap(typ.String, value))
+	if got := EntryKeyType(union); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("EntryKeyType(empty|map) = %v, want string", got)
 	}
 }
 
@@ -746,5 +809,21 @@ func TestValueTypeUnion(t *testing.T) {
 	}
 	if len(u.Members) != 2 {
 		t.Errorf("expected 2 members, got %d", len(u.Members))
+	}
+}
+
+func TestEntryValueType_RemovesNilabilityFromPresentIteratorEntries(t *testing.T) {
+	rec := typ.NewRecord().
+		OptField("chars_per_token", typ.Integer).
+		OptField("prompt_buffer_tokens", typ.Integer).
+		Build()
+
+	if got := EntryValueType(rec); !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("EntryValueType(record optional integer fields) = %v, want integer", got)
+	}
+
+	mapType := typ.NewMap(typ.String, typ.NewOptional(typ.Number))
+	if got := EntryValueType(mapType); !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("EntryValueType(map optional number values) = %v, want number", got)
 	}
 }

@@ -315,7 +315,7 @@ func (c *Checker) runPasses(sess *Session) {
 }
 
 func funcResultEqual(a, b *api.FuncResult) bool {
-	return a == b
+	return funcResultDependencyEqual(a, b)
 }
 
 // ClearCache establishes a fresh incremental-query revision boundary.

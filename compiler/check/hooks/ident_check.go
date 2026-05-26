@@ -24,10 +24,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // CheckIdents validates that all identifier expressions are defined at their use point.
-func CheckIdents(graph *cfg.Graph, evidence api.FlowEvidence, scopes map[cfg.Point]*scope.State, sourceName string) []diag.Diagnostic {
+func CheckIdents(graph *cfg.Graph, evidence api.FlowEvidence, scopes map[cfg.Point]*scope.State, declared map[cfg.SymbolID]typ.Type, sourceName string) []diag.Diagnostic {
 	if graph == nil {
 		return nil
 	}
@@ -36,6 +37,7 @@ func CheckIdents(graph *cfg.Graph, evidence api.FlowEvidence, scopes map[cfg.Poi
 	checker := &identChecker{
 		graph:      graph,
 		scopes:     scopes,
+		declared:   declared,
 		sourceName: sourceName,
 		diags:      &diags,
 	}
@@ -55,6 +57,7 @@ func CheckIdents(graph *cfg.Graph, evidence api.FlowEvidence, scopes map[cfg.Poi
 type identChecker struct {
 	graph      *cfg.Graph
 	scopes     map[cfg.Point]*scope.State
+	declared   map[cfg.SymbolID]typ.Type
 	sourceName string
 	point      cfg.Point
 	scope      *scope.State
@@ -69,15 +72,21 @@ func (c *identChecker) checkIdent(ident *ast.IdentExpr) {
 		return
 	}
 
-	if bindings := c.graph.Bindings(); bindings != nil {
-		if _, ok := bindings.SymbolOf(ident); ok {
+	if c.scope != nil {
+		if _, isType := c.scope.LookupType(ident.Value); isType {
 			return
 		}
 	}
 
-	if c.scope != nil {
-		if _, isType := c.scope.LookupType(ident.Value); isType {
-			return
+	if bindings := c.graph.Bindings(); bindings != nil {
+		if sym, ok := bindings.SymbolOf(ident); ok {
+			if kind, found := bindings.Kind(sym); found && kind == cfg.SymbolGlobal {
+				if c.declared[sym] != nil {
+					return
+				}
+			} else if !bindings.IsImplicitGlobalUse(ident) {
+				return
+			}
 		}
 	}
 

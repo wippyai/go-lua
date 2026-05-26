@@ -108,6 +108,29 @@ func TestSelf(t *testing.T) {
 	})
 }
 
+func TestSelfValueStopsAtNestedCallableBinders(t *testing.T) {
+	selfType := typ.NewRecord().Field("id", typ.String).Build()
+	nestedMethod := typ.Func().Param("self", typ.Self).Returns(typ.Self).Build()
+	value := typ.NewRecord().
+		Field("owner", typ.Self).
+		Field("method", nestedMethod).
+		Build()
+
+	result := SelfValue(value, selfType)
+	rec, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record, got %T", result)
+	}
+	owner := rec.GetField("owner")
+	if owner == nil || owner.Type != selfType {
+		t.Fatalf("expected free Self field to become receiver type, got %v", owner)
+	}
+	method := rec.GetField("method")
+	if method == nil || method.Type != nestedMethod {
+		t.Fatalf("expected nested function Self binder to be preserved, got %v", method)
+	}
+}
+
 func TestExpandInstantiated(t *testing.T) {
 	t.Run("nil", func(t *testing.T) {
 		if ExpandInstantiated(nil) != nil {
@@ -118,6 +141,19 @@ func TestExpandInstantiated(t *testing.T) {
 	t.Run("non-instantiated", func(t *testing.T) {
 		if ExpandInstantiated(typ.String) != typ.String {
 			t.Error("non-instantiated should return original")
+		}
+	})
+
+	t.Run("non-instantiated structural product", func(t *testing.T) {
+		concrete := typ.Func().
+			Param("ctx", typ.NewRecord().
+				Field("id", typ.String).
+				Field("items", typ.NewArray(typ.NewRecord().Field("name", typ.String).Build())).
+				Build()).
+			Returns(typ.NewRecord().Field("ok", typ.Boolean).Build()).
+			Build()
+		if ExpandInstantiated(concrete) != concrete {
+			t.Error("concrete structural product should return original")
 		}
 	})
 

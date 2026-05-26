@@ -567,6 +567,7 @@ func (w *typeWriter) writeContractSpec(spec *contract.Spec) {
 		w.writeEffectRow(effect.Empty)
 		w.writeUint32(0)
 		w.writeBool(false)
+		w.writeUint32(0)
 
 		return
 	}
@@ -591,6 +592,7 @@ func (w *typeWriter) writeContractSpec(spec *contract.Spec) {
 	}
 
 	w.writeReturnSpec(spec.Return)
+	w.writeEnvReturnSpecs(spec.EnvReturns)
 }
 
 func (w *typeWriter) writeReturnSpec(rs *contract.ReturnSpec) {
@@ -611,5 +613,33 @@ func (w *typeWriter) writeReturnSpec(rs *contract.ReturnSpec) {
 
 	if rs.Default != nil {
 		w.writeType(rs.Default)
+	}
+}
+
+func (w *typeWriter) writeEnvReturnSpecs(specs []contract.EnvReturnSpec) {
+	w.writeUint32(uint32(len(specs)))
+	for _, spec := range specs {
+		w.writeCondition(spec.When)
+		w.writeUint32(uint32(int32(spec.ReturnIndex)))
+		w.writeUint32(uint32(int32(spec.ResultIndex)))
+		w.writeSegments(spec.Path)
+		w.writeString(spec.Method)
+		w.writeUint32(uint32(len(spec.Args)))
+		for _, arg := range spec.Args {
+			w.writeType(arg)
+		}
+	}
+}
+
+func (w *typeWriter) writeSegments(segs []constraint.Segment) {
+	w.writeUint32(uint32(len(segs)))
+	for _, seg := range segs {
+		w.writeByte(byte(seg.Kind))
+		switch seg.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			w.writeString(seg.Name)
+		case constraint.SegmentIndexInt:
+			w.writeUint32(uint32(int32(seg.Index)))
+		}
 	}
 }

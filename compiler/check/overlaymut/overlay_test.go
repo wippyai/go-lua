@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -243,24 +243,24 @@ func TestMergeMapComponentIntoType(t *testing.T) {
 	})
 }
 
-func TestApplyIndexerMergeToOverlay(t *testing.T) {
+func TestApplyMapMutatorMergeToOverlay(t *testing.T) {
 	t.Run("empty infos are skipped", func(t *testing.T) {
 		overlay := make(map[cfg.SymbolID]typ.Type)
-		indexerAssignments := map[cfg.SymbolID][]IndexerInfo{
+		mapMutatorAssignments := map[cfg.SymbolID][]MapMutatorInfo{
 			1: {},
 		}
-		ApplyIndexerMergeToOverlay(overlay, indexerAssignments)
+		ApplyMapMutatorMergeToOverlay(overlay, mapMutatorAssignments)
 		if _, ok := overlay[1]; ok {
 			t.Fatal("expected symbol 1 to not be in overlay")
 		}
 	})
 
-	t.Run("indexer info is merged", func(t *testing.T) {
+	t.Run("mapMutator info is merged", func(t *testing.T) {
 		overlay := make(map[cfg.SymbolID]typ.Type)
-		indexerAssignments := map[cfg.SymbolID][]IndexerInfo{
-			1: {{KeyType: typ.String, ValType: typ.Number}},
+		mapMutatorAssignments := map[cfg.SymbolID][]MapMutatorInfo{
+			1: {{KeyType: typ.String, ValueType: typ.Number}},
 		}
-		ApplyIndexerMergeToOverlay(overlay, indexerAssignments)
+		ApplyMapMutatorMergeToOverlay(overlay, mapMutatorAssignments)
 		if overlay[1] == nil {
 			t.Fatal("expected overlay[1] to be set")
 		}
@@ -297,9 +297,9 @@ func TestApplyDirectMutationsToOverlay(t *testing.T) {
 	})
 }
 
-func TestWidenArrayElement(t *testing.T) {
+func TestAdmitArrayElementMutation(t *testing.T) {
 	t.Run("nil base creates array", func(t *testing.T) {
-		result := flow.WidenArrayElementType(nil, typ.Number, typ.JoinPreferNonSoft)
+		result := value.AdmitArrayElementMutation(nil, typ.Number, typ.JoinPreferNonSoft)
 		arr, ok := result.(*typ.Array)
 		if !ok {
 			t.Fatalf("expected array, got %T", result)
@@ -311,7 +311,7 @@ func TestWidenArrayElement(t *testing.T) {
 
 	t.Run("array base widens element", func(t *testing.T) {
 		base := typ.NewArray(typ.Number)
-		result := flow.WidenArrayElementType(base, typ.String, typ.JoinPreferNonSoft)
+		result := value.AdmitArrayElementMutation(base, typ.String, typ.JoinPreferNonSoft)
 		arr, ok := result.(*typ.Array)
 		if !ok {
 			t.Fatalf("expected array, got %T", result)
@@ -323,7 +323,7 @@ func TestWidenArrayElement(t *testing.T) {
 
 	t.Run("empty record becomes array", func(t *testing.T) {
 		base := typ.NewRecord().Build()
-		result := flow.WidenArrayElementType(base, typ.Number, typ.JoinPreferNonSoft)
+		result := value.AdmitArrayElementMutation(base, typ.Number, typ.JoinPreferNonSoft)
 		if _, ok := result.(*typ.Array); !ok {
 			t.Fatalf("expected array, got %T", result)
 		}
@@ -331,7 +331,7 @@ func TestWidenArrayElement(t *testing.T) {
 
 	t.Run("non-empty record unchanged", func(t *testing.T) {
 		base := typ.NewRecord().Field("x", typ.Number).Build()
-		result := flow.WidenArrayElementType(base, typ.String, typ.JoinPreferNonSoft)
+		result := value.AdmitArrayElementMutation(base, typ.String, typ.JoinPreferNonSoft)
 		if result != base {
 			t.Fatal("expected base to be unchanged")
 		}

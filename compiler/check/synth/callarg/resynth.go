@@ -48,13 +48,13 @@ func Full(
 			}
 			return synthWithExpected(a, p, expected)
 		case *ast.IdentExpr:
-			inferred := synthWithExpected(a, p, expected)
+			inferred := synthWithExpected(a, p, nil)
 			if shouldRefineWithExpected(inferred, expected) {
 				return expected
 			}
 			return inferred
 		case *ast.AttrGetExpr:
-			inferred := synthWithExpected(a, p, expected)
+			inferred := synthWithExpected(a, p, nil)
 			if shouldRefineWithExpected(inferred, expected) {
 				return expected
 			}
@@ -72,9 +72,6 @@ func shouldRefineWithExpected(inferred, expected typ.Type) bool {
 	}
 	if typ.IsAny(inferred) || typ.IsAny(expected) || expected.Kind().IsPlaceholder() {
 		return false
-	}
-	if typ.IsUnknown(unwrap.Alias(inferred)) {
-		return true
 	}
 	if subtype.IsSubtype(inferred, expected) {
 		return true

@@ -23,6 +23,18 @@ func TestApplyEffectTransform_ErrorReturnOptionalizes(t *testing.T) {
 	}
 }
 
+func TestApplyEffectTransform_ShapeOnlyErrorReturnDoesNotOptionalize(t *testing.T) {
+	fn := typ.Func().
+		Returns(typ.String, typ.NewOptional(typ.LuaError)).
+		Build()
+
+	got := ApplyEffectTransform(fn, nil, 0, typ.String)
+
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("ApplyEffectTransform shape-only error return: got %v, want string", got)
+	}
+}
+
 func TestBuildSelectResultUnion_ResolvesNegativeCasesIndex(t *testing.T) {
 	chParam := typ.NewTypeParam("Ch", typ.Any)
 	valParam := typ.NewTypeParam("T", typ.Any)
@@ -172,6 +184,82 @@ func TestApplyEffectTransform_ArrayOfCallbackReturn(t *testing.T) {
 	want := typ.NewArray(typ.String)
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("expected array(callback return) transform to produce %v, got %v", want, got)
+	}
+}
+
+func TestApplyEffectTransform_FlowIntoParameterField(t *testing.T) {
+	fn := typ.Func().
+		Param("info", typ.Any).
+		Returns(typ.NewRecord().Field("error_message", typ.Any).Build()).
+		Effects(effect.Row{Labels: []effect.Label{
+			effect.FlowInto{
+				ParamIndex:  0,
+				SourcePath:  "message",
+				ReturnIndex: 0,
+				TargetPath:  "error_message",
+				Remainder:   typ.String,
+			},
+		}}).
+		Build()
+	args := []typ.Type{
+		typ.NewRecord().Field("message", typ.String).Build(),
+	}
+
+	got := ApplyEffectTransform(fn, args, 0, fn.Returns[0])
+	want := typ.NewRecord().Field("error_message", typ.String).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected field flow transform to produce %v, got %v", want, got)
+	}
+}
+
+func TestApplyEffectTransform_FlowIntoOnlyRefinesMatchingUnionMember(t *testing.T) {
+	errorCase := typ.NewRecord().
+		Field("success", typ.LiteralBool(false)).
+		Field("error_message", typ.Any).
+		Build()
+	successCase := typ.NewRecord().
+		Field("success", typ.LiteralBool(true)).
+		Field("result", typ.String).
+		Build()
+	base := typ.NewUnion(errorCase, successCase)
+	fn := typ.Func().
+		Param("info", typ.Any).
+		Returns(base).
+		Effects(effect.Row{Labels: []effect.Label{
+			effect.FlowInto{ParamIndex: 0, SourcePath: "message", ReturnIndex: 0, TargetPath: "error_message"},
+		}}).
+		Build()
+	args := []typ.Type{
+		typ.NewRecord().Field("message", typ.String).Build(),
+	}
+
+	got := ApplyEffectTransform(fn, args, 0, base)
+	gotUnion, ok := got.(*typ.Union)
+	if !ok {
+		t.Fatalf("expected union, got %T: %v", got, got)
+	}
+	foundError := false
+	foundSuccess := false
+	for _, member := range gotUnion.Members {
+		rec, ok := member.(*typ.Record)
+		if !ok {
+			continue
+		}
+		if field := rec.GetField("error_message"); field != nil {
+			foundError = true
+			if !typ.TypeEquals(field.Type, typ.String) {
+				t.Fatalf("error_message field = %v, want string", field.Type)
+			}
+		}
+		if field := rec.GetField("result"); field != nil {
+			foundSuccess = true
+			if rec.GetField("error_message") != nil {
+				t.Fatalf("success variant was poisoned with error_message: %v", rec)
+			}
+		}
+	}
+	if !foundError || !foundSuccess {
+		t.Fatalf("expected both variants after transform, got %v", got)
 	}
 }
 

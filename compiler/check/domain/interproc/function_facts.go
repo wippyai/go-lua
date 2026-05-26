@@ -35,9 +35,8 @@ func readFunctionFactFromFacts(facts *api.Facts, sym cfg.SymbolID) api.FunctionF
 	if !ok {
 		return api.FunctionFact{}
 	}
-	canonical := functionfact.Normalize(ff)
-	if !functionfact.Empty(canonical) {
-		return canonical
+	if !functionfact.Empty(ff) {
+		return ff
 	}
 	return api.FunctionFact{}
 }
@@ -46,6 +45,7 @@ func writeNormalizedFunctionFactToFacts(facts *api.Facts, sym cfg.SymbolID, ff a
 	if facts == nil || sym == 0 {
 		return
 	}
+	ff = functionfact.Normalize(ff)
 
 	if functionfact.Empty(ff) {
 		if facts.FunctionFacts != nil {

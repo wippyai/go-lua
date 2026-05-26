@@ -124,7 +124,7 @@ func TestManifest_SoftAnnotationParameterEvidence(t *testing.T) {
 }
 
 // TestManifest_SoftLocalAnnotations ensures soft local annotations are refined
-// by table mutations and indexer assignments in return inference.
+// by table mutations and map-write assignments in return inference.
 func TestManifest_SoftLocalAnnotations(t *testing.T) {
 	registryManifest := io.NewManifest("registry")
 	metaType := typ.NewMap(typ.String, typ.Any)
@@ -193,7 +193,7 @@ func TestManifest_SoftLocalAnnotations(t *testing.T) {
 	root := result.Session.RootResult.Graph
 	parentHash := result.Session.Store.GraphParentHashOf(root.ID())
 	parent := result.Session.Store.Parents()[parentHash]
-	functionFacts := result.Session.Store.GetInterprocFacts(root, parent).FunctionFacts
+	functionFacts := result.Session.Store.InterprocFacts(root, parent).FunctionFacts()
 
 	groupSym := localFunctionSymbolByName(t, root, functionFacts, "group_by_suite")
 	runSuiteSym := localFunctionSymbolByName(t, root, functionFacts, "run_suite")
@@ -201,23 +201,27 @@ func TestManifest_SoftLocalAnnotations(t *testing.T) {
 	suiteMap := typ.NewMap(typ.String, entryArray)
 
 	groupFact := functionFacts[groupSym]
-	if len(groupFact.Summary) != 2 || !typ.TypeEquals(groupFact.Summary[0], suiteMap) || !typ.TypeEquals(groupFact.Summary[1], entryArray) {
+	if len(groupFact.Summary) != 2 || !typ.TypeEquals(groupFact.Summary[0].ProjectValue(), suiteMap) || !typ.TypeEquals(groupFact.Summary[1].ProjectValue(), entryArray) {
 		t.Fatalf("expected group_by_suite summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Summary)
 	}
-	if len(groupFact.Narrow) != 2 || !typ.TypeEquals(groupFact.Narrow[0], suiteMap) || !typ.TypeEquals(groupFact.Narrow[1], entryArray) {
+	if len(groupFact.Narrow) != 2 || !typ.TypeEquals(groupFact.Narrow[0].ProjectValue(), suiteMap) || !typ.TypeEquals(groupFact.Narrow[1].ProjectValue(), entryArray) {
 		t.Fatalf("expected group_by_suite narrow summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Narrow)
 	}
-	groupFn := unwrap.Function(groupFact.Type)
+	groupType := functionfact.SiblingTypeProjection(functionFacts, groupSym, api.PhaseScopeCompute)
+	groupFn := unwrap.Function(groupType)
 	if groupFn == nil || len(groupFn.Returns) != 2 || !typ.TypeEquals(groupFn.Returns[0], suiteMap) || !typ.TypeEquals(groupFn.Returns[1], entryArray) {
-		t.Fatalf("expected group_by_suite function returns (%v, %v), got %v", suiteMap, entryArray, groupFact.Type)
+		t.Fatalf("expected group_by_suite function returns (%v, %v), got %v", suiteMap, entryArray, groupType)
 	}
-	runSuiteType := functionfact.TypeFromMap(functionFacts, runSuiteSym)
+	runSuiteType := functionfact.SiblingTypeProjection(functionFacts, runSuiteSym, api.PhaseScopeCompute)
 	runSuiteFn := unwrap.Function(runSuiteType)
 	if runSuiteFn == nil || len(runSuiteFn.Params) < 2 || !typ.TypeEquals(runSuiteFn.Params[1].Type, entryArray) {
 		t.Fatalf("expected run_suite tests param to refine to %v, got %v", entryArray, runSuiteType)
 	}
-	if evidence := functionfact.ParameterEvidenceFromMap(functionFacts, runSuiteSym); len(evidence) < 2 || !typ.TypeEquals(evidence[1], entryArray) {
-		t.Fatalf("expected run_suite parameter evidence %v, got %v", entryArray, evidence)
+	if siblingEvidence := functionfact.SiblingParameterEvidence(functionFacts[runSuiteSym]); len(siblingEvidence) < 2 || !typ.TypeEquals(siblingEvidence[1], entryArray) {
+		t.Fatalf("expected run_suite sibling entry evidence %v, got %v", entryArray, siblingEvidence)
+	}
+	if publicEvidence := functionfact.PublicParameterEvidence(functionFacts, runSuiteSym); len(publicEvidence) != 0 {
+		t.Fatalf("run_suite entry evidence leaked into public evidence: %v", publicEvidence)
 	}
 }
 

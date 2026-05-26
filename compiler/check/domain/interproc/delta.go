@@ -3,6 +3,7 @@ package interproc
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -39,8 +40,17 @@ func CapturedFieldAssignsDelta(
 	if fnSym == 0 || len(fields) == 0 {
 		return api.Facts{}
 	}
+	lifted := make(map[cfg.SymbolID]map[string]product.AbstractValue, len(fields))
+	for sym, byName := range fields {
+		if m := product.LiftFieldMap(byName); m != nil {
+			lifted[sym] = m
+		}
+	}
+	if len(lifted) == 0 {
+		return api.Facts{}
+	}
 	return JoinFacts(api.Facts{}, api.Facts{
-		CapturedFields: api.CapturedFieldAssigns{fnSym: fields},
+		CapturedFields: api.CapturedFieldAssigns{fnSym: lifted},
 	})
 }
 
@@ -63,7 +73,11 @@ func ConstructorFieldsDelta(classSym cfg.SymbolID, fields map[string]typ.Type) a
 	if classSym == 0 || len(fields) == 0 {
 		return api.Facts{}
 	}
+	lifted := product.LiftFieldMap(fields)
+	if len(lifted) == 0 {
+		return api.Facts{}
+	}
 	return JoinFacts(api.Facts{}, api.Facts{
-		ConstructorFields: api.ConstructorFields{classSym: fields},
+		ConstructorFields: api.ConstructorFields{classSym: lifted},
 	})
 }

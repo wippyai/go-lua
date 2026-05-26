@@ -3,6 +3,8 @@ package regression
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
@@ -87,14 +89,14 @@ end
 	root := sess.RootResult.Graph
 	parentHash := sess.Store.GraphParentHashOf(root.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.GetInterprocFacts(root, parent).FunctionFacts
+	functionFacts := sess.Store.InterprocFacts(root, parent).FunctionFacts()
 
 	var helperFn *typ.Function
-	for sym, fact := range functionFacts {
+	for sym := range functionFacts {
 		if root.NameOf(sym) != "wait_for_exit" {
 			continue
 		}
-		helperFn = unwrap.Function(fact.Type)
+		helperFn = unwrap.Function(functionfact.SiblingTypeProjection(functionFacts, sym, api.PhaseScopeCompute))
 		break
 	}
 	if helperFn == nil || len(helperFn.Returns) == 0 {
@@ -104,6 +106,72 @@ end
 	nonNil := narrow.RemoveNil(helperFn.Returns[0])
 	if typ.IsNever(nonNil) {
 		t.Fatalf("expected non-nil helper return to remain usable, got %v", nonNil)
+	}
+}
+
+func TestChannelSelectGenericCaseReceiveKeepsPayloadAfterTimeoutReturn(t *testing.T) {
+	eventType := typ.NewRecord().
+		Field("kind", typ.String).
+		OptField("payload", typ.String).
+		Build()
+	timeType := typ.NewRecord().
+		Field("sec", typ.Number).
+		Field("nsec", typ.Number).
+		Build()
+
+	chManifest := channelManifestWithReturnEffect()
+	channelGen, ok := chManifest.LookupType("Channel")
+	if !ok {
+		t.Fatal("missing channel.Channel generic")
+	}
+	channelGeneric, ok := channelGen.(*typ.Generic)
+	if !ok {
+		t.Fatalf("channel.Channel is not generic: %T", channelGen)
+	}
+
+	processManifest := io.NewManifest("process")
+	processManifest.SetExport(typ.NewInterface("process", []typ.Method{
+		{Name: "events", Type: typ.Func().
+			Returns(typ.Instantiate(channelGeneric, eventType)).
+			Build()},
+	}))
+
+	timeManifest := io.NewManifest("time")
+	timeManifest.SetExport(typ.NewInterface("time", []typ.Method{
+		{Name: "after", Type: typ.Func().
+			Param("duration", typ.String).
+			Returns(typ.Instantiate(channelGeneric, timeType)).
+			Build()},
+	}))
+
+	source := `
+local events_ch = process.events()
+local deadline = time.after("5s")
+local result = channel.select {
+	events_ch:case_receive(),
+	deadline:case_receive(),
+}
+if result.channel == deadline then
+	return nil, "timeout"
+end
+
+local event = result.value
+local kind: string = event.kind
+local payload: string = event.payload!
+return kind, payload
+`
+
+	result := testutil.Check(source,
+		testutil.WithStdlib(),
+		testutil.WithManifest("channel", chManifest),
+		testutil.WithManifest("process", processManifest),
+		testutil.WithManifest("time", timeManifest),
+	)
+	if result.HasError() {
+		for _, d := range result.Diagnostics {
+			t.Logf("diagnostic at line %d: %s", d.Position.Line, d.Message)
+		}
+		t.Fatalf("expected no errors for generic case_receive select narrowing, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 
@@ -244,6 +312,9 @@ return event.kind
 		testutil.WithManifest("time", timeManifest),
 	)
 	if result.HasError() {
+		for _, d := range result.Diagnostics {
+			t.Logf("diagnostic at line %d: %s", d.Position.Line, d.Message)
+		}
 		t.Fatalf("expected no errors for event.from-first select narrowing, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }

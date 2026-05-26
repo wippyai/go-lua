@@ -545,6 +545,7 @@ type PageResponse = {
 	configOverrides: {[string]: any}?,
 }
 
+local dynamic_config = nil :: any
 local page = {
 	id = "home",
 	config_overrides = dynamic_config,
@@ -1091,6 +1092,38 @@ end
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected last union array element after non-zero length guard to be present, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_IpairsPreservesDiscriminatedElementVariants(t *testing.T) {
+	source := `
+local function walk(items)
+	for _, item in ipairs(items) do
+		if item.role == "function_call" then
+			return item.function_call.id
+		elseif item.role == "function_result" then
+			return item.function_call_id
+		else
+			return item.content
+		end
+	end
+	return ""
+end
+
+return walk({
+	{
+		role = "function_result",
+		function_call_id = "tool",
+	},
+	{
+		role = "developer",
+		content = "merge",
+	},
+})
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected ipairs to preserve discriminated element variants, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 
@@ -2639,6 +2672,10 @@ local state = {
 	active_sessions = {},
 }
 
+local unknown_time: any = nil
+local unknown_running: any = nil
+local unknown_result: any = nil
+
 local function graceful_terminate_session(session_id, session_info, reason)
 	if not session_info or not session_info.pid then
 		return
@@ -3267,6 +3304,7 @@ local function run()
 	end
 
 	while true do
+		local unknown_result: any = nil
 		local result = unknown_result
 		if result.channel == "inbox" then
 			local payload_data = result.value
@@ -3717,6 +3755,7 @@ return compress.to_size("model", "content", 1000, nil, nil)
 
 func TestExternalLint_UnionModelResolverGuardKeepsNumericDefaultsNonNil(t *testing.T) {
 	source := `
+local unknown_condition = nil :: any
 local resolver
 if unknown_condition then
 	resolver = {
@@ -3756,6 +3795,7 @@ return get_model_info("model")
 
 func TestExternalLint_MutableModelResolverFieldGuardKeepsNumericDefaultsNonNil(t *testing.T) {
 	source := `
+local unknown_condition = nil :: any
 local compress = {
 	_models = {
 		get_by_name = function(model_name)

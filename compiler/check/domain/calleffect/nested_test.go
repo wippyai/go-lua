@@ -10,28 +10,69 @@ import (
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestCollectCalledNestedFieldAssignments(t *testing.T) {
+func TestCollectNestedAssignments(t *testing.T) {
 	t.Run("nil graph returns empty map", func(t *testing.T) {
-		result := CollectCalledNestedFieldAssignments(nil, nil, nil, nil, nil)
-		if len(result) != 0 {
+		result := CollectNestedAssignments(nil, nil, nil, nil, nil, nil, nil)
+		if len(result.Fields) != 0 || len(result.Map) != 0 || len(result.Table) != 0 || len(result.Container) != 0 {
 			t.Error("expected empty result")
 		}
 	})
 }
 
-func TestCollectNestedMutatorAssignments(t *testing.T) {
-	t.Run("nil graph returns empty slice", func(t *testing.T) {
-		result := CollectNestedMutatorAssignments(nil, nil, nil, nil, nil, nil)
-		if len(result.Table) != 0 || len(result.Container) != 0 {
-			t.Error("expected empty result")
-		}
-	})
+func TestCollectNestedAssignments_ReplaysFieldWrites(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local state = {}
+		local function setup()
+			return nil
+		end
+		setup()
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+	stateSym, ok := graph.SymbolAt(graph.Exit(), "state")
+	if !ok || stateSym == 0 {
+		t.Fatal("expected symbol for state")
+	}
+	setupSym, ok := graph.SymbolAt(graph.Exit(), "setup")
+	if !ok || setupSym == 0 {
+		t.Fatal("expected symbol for setup")
+	}
+
+	captured := api.CapturedFieldAssigns{
+		setupSym: {
+			stateSym: {
+				"ready": product.FromType(typ.Boolean),
+			},
+		},
+	}
+
+	calls := callEvidenceForGraph(graph)
+	got := CollectNestedAssignments(graph, bindings, calls, nil, captured, nil, nil)
+	if len(got.Fields) != 1 {
+		t.Fatalf("field assignments = %d, want 1", len(got.Fields))
+	}
+	if got.Fields[0].TargetPath.Symbol != stateSym ||
+		len(got.Fields[0].TargetPath.Segments) != 1 ||
+		got.Fields[0].TargetPath.Segments[0].Name != "ready" ||
+		!typ.TypeEquals(got.Fields[0].Type, typ.Boolean) {
+		t.Fatalf("unexpected field assignment: %#v", got.Fields[0])
+	}
 }
 
-func TestCollectNestedMutatorAssignments_SplitsOperatorKinds(t *testing.T) {
+func TestCollectNestedAssignments_SplitsOperatorKinds(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local state = {}
 		local function setup()
@@ -65,21 +106,30 @@ func TestCollectNestedMutatorAssignments_SplitsOperatorKinds(t *testing.T) {
 				{
 					Kind:      api.ContainerMutationTableElement,
 					Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}},
-					ValueType: typ.String,
+					ValueType: product.FromType(typ.String),
+				},
+				{
+					Kind:      api.ContainerMutationMapElement,
+					Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "by_id"}},
+					KeyType:   product.FromType(typ.String),
+					ValueType: product.FromType(typ.Boolean),
 				},
 				{
 					Kind:      api.ContainerMutationContainerElement,
 					Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "channel"}},
-					ValueType: typ.Number,
+					ValueType: product.FromType(typ.Number),
 				},
 			},
 		},
 	}
 
 	calls := callEvidenceForGraph(graph)
-	got := CollectNestedMutatorAssignments(graph, bindings, calls, nil, captured, nil)
+	got := CollectNestedAssignments(graph, bindings, calls, nil, nil, captured, nil)
 	if len(got.Table) != 1 {
 		t.Fatalf("table assignments = %d, want 1", len(got.Table))
+	}
+	if len(got.Map) != 1 {
+		t.Fatalf("map assignments = %d, want 1", len(got.Map))
 	}
 	if len(got.Container) != 1 {
 		t.Fatalf("container assignments = %d, want 1", len(got.Container))
@@ -89,6 +139,13 @@ func TestCollectNestedMutatorAssignments_SplitsOperatorKinds(t *testing.T) {
 	}
 	if got.Container[0].Target.Symbol != stateSym || len(got.Container[0].Target.Segments) != 1 || got.Container[0].Target.Segments[0].Name != "channel" {
 		t.Fatalf("unexpected container target: %#v", got.Container[0].Target)
+	}
+	if got.Map[0].Target.Symbol != stateSym ||
+		len(got.Map[0].Target.Segments) != 1 ||
+		got.Map[0].Target.Segments[0].Name != "by_id" ||
+		!typ.TypeEquals(got.Map[0].KeyType, typ.String) ||
+		!typ.TypeEquals(got.Map[0].ValueType, typ.Boolean) {
+		t.Fatalf("unexpected map assignment: %#v", got.Map[0])
 	}
 }
 
@@ -103,7 +160,7 @@ func callEvidenceForGraph(graph *cfg.Graph) []api.CallEvidence {
 	return calls
 }
 
-func TestCollectNestedMutatorAssignments_ReplaysExportedFieldFunction(t *testing.T) {
+func TestCollectNestedAssignments_ReplaysExportedFieldFunction(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local api = {}
 		local state = {}
@@ -145,14 +202,14 @@ func TestCollectNestedMutatorAssignments_ReplaysExportedFieldFunction(t *testing
 				{
 					Kind:      api.ContainerMutationTableElement,
 					Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}},
-					ValueType: typ.String,
+					ValueType: product.FromType(typ.String),
 				},
 			},
 		},
 	}
 
 	escapes := []api.FunctionEscapeEvidence{{Point: addPoint, Symbol: addSym}}
-	got := CollectNestedMutatorAssignments(graph, bindings, nil, escapes, captured, nil)
+	got := CollectNestedAssignments(graph, bindings, nil, escapes, nil, captured, nil)
 	if len(got.Table) != 1 {
 		t.Fatalf("table assignments = %d, want 1", len(got.Table))
 	}

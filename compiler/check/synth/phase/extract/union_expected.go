@@ -2,6 +2,7 @@ package extract
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/cfg"
@@ -16,17 +17,18 @@ func (s *Synthesizer) synthExprWithUnionExpected(
 	expr ast.Expr,
 	sc *scope.State,
 	p cfg.Point,
+	narrower api.FlowOps,
 	recurse ExprSynth,
 	expected typ.Type,
 ) typ.Type {
 	union, ok := unwrap.Alias(expected).(*typ.Union)
 	if !ok {
-		return s.synthExprWithExpectedSingle(expr, sc, p, recurse, expected)
+		return s.synthExprWithExpectedSingle(expr, sc, p, narrower, recurse, expected)
 	}
 
 	if table, ok := expr.(*ast.TableExpr); ok {
 		if match := core.TryDiscriminatedUnionMember(table, expected); match != nil {
-			return s.SynthTableWithExpected(table, sc, recurse, match.Member)
+			return s.SynthTableWithExpected(table, p, sc, recurse, match.Member)
 		}
 	}
 
@@ -38,14 +40,14 @@ func (s *Synthesizer) synthExprWithUnionExpected(
 
 	var results []typ.Type
 	for _, member := range union.Members {
-		result := s.synthExprWithExpectedSingle(expr, sc, p, recurse, member)
+		result := s.synthExprWithExpectedSingle(expr, sc, p, narrower, recurse, member)
 		if result != nil && s.isSubtype(result, member) {
 			results = append(results, result)
 		}
 	}
 
 	if len(results) == 0 {
-		return s.synthExprCore(expr, sc, p, s.deps.Flow, recurse)
+		return s.synthExprCore(expr, sc, p, narrower, recurse)
 	}
 
 	return typ.NewUnion(results...)
@@ -64,12 +66,13 @@ func (s *Synthesizer) synthExprWithExpectedSingle(
 	expr ast.Expr,
 	sc *scope.State,
 	p cfg.Point,
+	narrower api.FlowOps,
 	recurse ExprSynth,
 	expected typ.Type,
 ) typ.Type {
 	switch ex := expr.(type) {
 	case *ast.TableExpr:
-		return s.SynthTableWithExpected(ex, sc, recurse, expected)
+		return s.SynthTableWithExpected(ex, p, sc, recurse, expected)
 	case *ast.FunctionExpr:
 		var expectedFn *typ.Function
 		if expected != nil {
@@ -83,14 +86,14 @@ func (s *Synthesizer) synthExprWithExpectedSingle(
 		}
 		return types[0]
 	case *ast.LogicalOpExpr:
-		return s.synthLogicalOpWithExpected(ex, sc, p, recurse, expected)
+		return s.synthLogicalOpWithExpected(ex, sc, p, narrower, recurse, expected)
 	case *ast.IdentExpr:
 		if expectedFn, ok := unwrap.Alias(expected).(*typ.Function); ok {
 			if fnExpr := s.functionLiteralForIdent(ex); fnExpr != nil {
 				return s.SynthFunctionTypeWithExpected(fnExpr, sc, expectedFn)
 			}
 		}
-		inferred := s.synthExprCore(expr, sc, p, s.deps.Flow, recurse)
+		inferred := s.synthExprCore(expr, sc, p, narrower, recurse)
 		if shouldRefineIdentWithExpected(inferred, expected) {
 			return expected
 		}
@@ -101,9 +104,9 @@ func (s *Synthesizer) synthExprWithExpectedSingle(
 				return fnType
 			}
 		}
-		return s.synthExprCore(expr, sc, p, s.deps.Flow, recurse)
+		return s.synthExprCore(expr, sc, p, narrower, recurse)
 	default:
-		return s.synthExprCore(expr, sc, p, s.deps.Flow, recurse)
+		return s.synthExprCore(expr, sc, p, narrower, recurse)
 	}
 }
 

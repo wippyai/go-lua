@@ -4,6 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/pathkey"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestDependencyMap_Register(t *testing.T) {
@@ -114,6 +117,64 @@ func TestSymbolTypeSource(t *testing.T) {
 	}
 	if src.types != nil {
 		t.Error("types should default to nil")
+	}
+}
+
+func TestSetValueInvalidatesNarrowedTypeCache(t *testing.T) {
+	s := &Solution{
+		values: liftFlowValues(nil),
+		narrowedTypeCache: map[narrowedTypeCacheKey]narrowedTypeCacheValue{
+			{point: 1, path: constraint.PathKey("sym1@1")}: {t: typ.String, ok: true},
+		},
+	}
+
+	s.setValue("sym1@1", typ.Number)
+
+	if len(s.narrowedTypeCache) != 0 {
+		t.Fatalf("setValue left %d stale narrowed-type cache entries", len(s.narrowedTypeCache))
+	}
+}
+
+func TestBuildPointValueMapUsesCurrentStateIndependentOfQueryCache(t *testing.T) {
+	c := cfg.New()
+	g := newMockSSAGraph(c)
+	entry := c.Entry()
+
+	symX := setupSymbol(g, "x", []cfg.Point{entry})
+	symY := setupSymbol(g, "y", []cfg.Point{entry})
+	symZ := setupSymbol(g, "z", []cfg.Point{entry})
+	setVersion(g, entry, symX, cfg.Version{Root: "x", Symbol: symX, ID: 1})
+	setVersion(g, entry, symY, cfg.Version{Root: "y", Symbol: symY, ID: 1})
+	setVersion(g, entry, symZ, cfg.Version{Root: "z", Symbol: symZ, ID: 1})
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symX] = typ.Boolean
+	inputs.DeclaredTypes[symY] = typ.Any
+	inputs.DeclaredTypes[symZ] = typ.Number
+
+	s := &Solution{
+		inputs:     inputs,
+		resolver:   testResolver(),
+		pkResolver: pathkey.NewResolver(g),
+		values: liftFlowValues(nil),
+	}
+	pathX := constraint.Path{Root: "x", Symbol: symX}
+	pathY := constraint.Path{Root: "y", Symbol: symY}
+	yKey := s.pkResolver.KeyAt(entry, pathY)
+	zKey := s.pkResolver.KeyAt(entry, constraint.Path{Root: "z", Symbol: symZ})
+	s.setValue(string(yKey), typ.String)
+
+	for _, cacheEnabled := range []bool{false, true} {
+		s.queryCacheEnabled = cacheEnabled
+		values := s.buildPointValueMap(entry, pathX, typ.Boolean, []constraint.Constraint{
+			constraint.NotNil{Path: pathY},
+		})
+		if got := values[yKey]; got != typ.String {
+			t.Fatalf("queryCacheEnabled=%v: y value = %v, want current state string", cacheEnabled, got)
+		}
+		if _, ok := values[zKey]; ok {
+			t.Fatalf("queryCacheEnabled=%v: unreferenced z was materialized in point value map", cacheEnabled)
+		}
 	}
 }
 

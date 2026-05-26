@@ -4,6 +4,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // FlowEvidence is the abstract-interpreter event stream that later checker
@@ -57,9 +59,23 @@ const (
 
 // CallEvidence records a call site discovered by the abstract interpreter.
 type CallEvidence struct {
-	Point  cfg.Point
-	Info   *cfg.CallInfo
-	Origin CallOrigin
+	Point            cfg.Point
+	Info             *cfg.CallInfo
+	Origin           CallOrigin
+	CalleeType       typ.Type
+	ExpectedArgs     []typ.Type
+	ExpectedVariadic typ.Type
+}
+
+// ExpectedArgType returns the contextual type inferred for argument idx.
+func (e CallEvidence) ExpectedArgType(idx int) typ.Type {
+	if idx < 0 {
+		return nil
+	}
+	if idx < len(e.ExpectedArgs) {
+		return e.ExpectedArgs[idx]
+	}
+	return e.ExpectedVariadic
 }
 
 // ReturnEvidence records a return point discovered by the abstract interpreter.
@@ -152,18 +168,25 @@ type ParameterUseEvidence struct {
 
 // CapturedFieldEvidence records a direct field write to a captured symbol.
 type CapturedFieldEvidence struct {
-	Point  cfg.Point
-	Target cfg.SymbolID
-	Field  string
-	Value  ast.Expr
+	Point       cfg.Point
+	Target      cfg.SymbolID
+	Field       string
+	TargetPath  constraint.Path
+	Value       ast.Expr
+	ValueType   typ.Type
+	ValueSource flow.AssignmentSource
 }
 
 // CapturedContainerEvidence records an element mutation on a captured symbol.
 type CapturedContainerEvidence struct {
-	Point    cfg.Point
-	Target   cfg.SymbolID
-	Segments []constraint.Segment
-	Key      ast.Expr
-	Value    ast.Expr
-	Kind     ContainerMutationKind
+	Point         cfg.Point
+	Target        cfg.SymbolID
+	Segments      []constraint.Segment
+	KeyPath       constraint.Path
+	KeyType       typ.Type
+	ValueMode     flow.MapMutationValueMode
+	ValuePath     constraint.Path
+	ValueType     typ.Type
+	ValueTemplate flow.ValueTemplate
+	Kind          ContainerMutationKind
 }

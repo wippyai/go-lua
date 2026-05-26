@@ -1,9 +1,12 @@
 package returnsummary
 
 import (
+	"testing"
+
+	"github.com/wippyai/go-lua/types/contract"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
-	"testing"
 )
 
 func TestJoinReturnVectors_Empty(t *testing.T) {
@@ -62,6 +65,303 @@ func TestReturnSummaryAllNil(t *testing.T) {
 	}
 }
 
+func TestReturnSummaryEqual_UsesRecursiveConvergenceEquality(t *testing.T) {
+	left := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("kind", typ.LiteralString("suite")).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	right := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("kind", typ.LiteralString("suite")).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	different := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("kind", typ.LiteralString("case")).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+
+	if !Equal([]typ.Type{left}, []typ.Type{right}) {
+		t.Fatal("equivalent recursive return summaries should compare equal")
+	}
+	if Equal([]typ.Type{left}, []typ.Type{different}) {
+		t.Fatal("recursive return summary equality must still distinguish facts")
+	}
+}
+
+func TestReturnSummaryMerge_ExplicitNilBranchStaysOptional(t *testing.T) {
+	got := Merge([]typ.Type{typ.Nil}, []typ.Type{typ.String})
+	want := []typ.Type{typ.NewOptional(typ.String)}
+	if !Equal(got, want) {
+		t.Fatalf("Merge([nil], [string]) = %v, want %v", got, want)
+	}
+}
+
+func TestReturnSummaryMerge_EmptyTableBranchDoesNotHideSequenceReturn(t *testing.T) {
+	empty := typ.NewRecord().Build()
+	array := typ.NewArray(typ.Any)
+
+	got := Merge([]typ.Type{empty}, []typ.Type{array})
+	want := []typ.Type{array}
+	if !Equal(got, want) {
+		t.Fatalf("Merge([{}], [any[]]) = %v, want %v", got, want)
+	}
+
+	got = Merge([]typ.Type{array}, []typ.Type{empty})
+	if !Equal(got, want) {
+		t.Fatalf("Merge([any[]], [{}]) = %v, want %v", got, want)
+	}
+}
+
+func TestReturnSummaryMerge_MixedArityPadsMissingSlotsWithNil(t *testing.T) {
+	dbType := typ.NewRecord().Field("query", typ.Func().Returns(typ.Any).Build()).Build()
+	got := Merge([]typ.Type{dbType}, []typ.Type{typ.Nil, typ.LuaError})
+	want := []typ.Type{typ.NewOptional(dbType), typ.NewOptional(typ.LuaError)}
+	if !Equal(got, want) {
+		t.Fatalf("Merge([db], [nil, err]) = %v, want %v", got, want)
+	}
+}
+
+func TestReturnSummaryMerge_ShorterRefinementKeepsExistingNilability(t *testing.T) {
+	dbType := typ.NewRecord().Field("query", typ.Func().Returns(typ.Any).Build()).Build()
+	baseline := []typ.Type{typ.NewOptional(dbType), typ.NewOptional(typ.LuaError)}
+	got := Merge(baseline, []typ.Type{dbType})
+	if !Equal(got, baseline) {
+		t.Fatalf("Merge([db?, err?], [db]) = %v, want %v", got, baseline)
+	}
+}
+
+func TestReturnSummaryMerge_RecursiveProductJoinKeepsBranchFieldsOptional(t *testing.T) {
+	base := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	withProc := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Field("proc", typ.Any).
+			Build()
+	})
+
+	got := Merge([]typ.Type{base}, []typ.Type{withProc})
+	if len(got) != 1 {
+		t.Fatalf("Merge returned %d slots, want 1: %v", len(got), got)
+	}
+	if _, ok := got[0].(*typ.Union); ok {
+		t.Fatalf("recursive return merge produced raw union: %v", got[0])
+	}
+	rec, ok := got[0].(*typ.Recursive)
+	if !ok {
+		t.Fatalf("recursive return merge = %T %[1]v, want recursive product", got[0])
+	}
+	body, ok := rec.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("recursive body = %T %[1]v, want record", rec.Body)
+	}
+	proc := body.GetField("proc")
+	if proc == nil || !proc.Optional {
+		t.Fatalf("proc must stay optional because only one branch returned it: %v", body)
+	}
+}
+
+func TestReturnSummaryMerge_ReplacesUnsolvedFunctionSeed(t *testing.T) {
+	seed := typ.Func().Build()
+	solved := typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()
+
+	got := Merge([]typ.Type{seed}, []typ.Type{solved})
+	if len(got) != 1 || !typ.TypeEquals(got[0], solved) {
+		t.Fatalf("Merge(function seed, solved function) = %v, want [%v]", got, solved)
+	}
+
+	got = Merge([]typ.Type{solved}, []typ.Type{seed})
+	if len(got) != 1 || !typ.TypeEquals(got[0], solved) {
+		t.Fatalf("Merge(solved function, function seed) = %v, want [%v]", got, solved)
+	}
+}
+
+func TestReturnSummaryMerge_ReplacesUnsolvedFunctionSeedInsideRecordField(t *testing.T) {
+	seed := typ.Func().Build()
+	solved := typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()
+	weak := typ.NewRecord().
+		Field("x", typ.Integer).
+		Field("get_x", seed).
+		Build()
+	strong := typ.NewRecord().
+		Field("x", typ.Integer).
+		Field("get_x", solved).
+		Build()
+
+	got := Merge([]typ.Type{weak}, []typ.Type{strong})
+	if len(got) != 1 {
+		t.Fatalf("Merge returned %d slots, want 1: %v", len(got), got)
+	}
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("Merge(record seed, record solved) = %T %[1]v, want record", got[0])
+	}
+	field := rec.GetField("get_x")
+	if field == nil || !typ.TypeEquals(field.Type, solved) {
+		t.Fatalf("merged get_x = %v, want %v", field, solved)
+	}
+}
+
+func TestReturnSummaryMerge_RefinesUnknownMetatableEvidence(t *testing.T) {
+	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
+	prototype := typ.NewRecord().Field("ready", method).Build()
+	metatable := typ.NewRecord().Field("__index", prototype).Build()
+	weak := typ.NewRecord().Metatable(typ.Unknown).Build()
+	strong := typ.NewRecord().Metatable(metatable).Build()
+
+	got := Merge([]typ.Type{weak}, []typ.Type{strong})
+	if len(got) != 1 {
+		t.Fatalf("Merge returned %d slots, want 1: %v", len(got), got)
+	}
+	if mt, ok := querycore.Method(got[0], "ready"); !ok {
+		t.Fatalf("merged metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got[0])
+	}
+
+	got = Merge([]typ.Type{strong}, []typ.Type{weak})
+	if len(got) != 1 {
+		t.Fatalf("reverse Merge returned %d slots, want 1: %v", len(got), got)
+	}
+	if mt, ok := querycore.Method(got[0], "ready"); !ok {
+		t.Fatalf("reverse merged metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got[0])
+	}
+}
+
+func TestReturnSummaryWiden_RefinesUnknownMetatableEvidence(t *testing.T) {
+	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
+	prototype := typ.NewRecord().Field("ready", method).Build()
+	metatable := typ.NewRecord().Field("__index", prototype).Build()
+	weak := typ.NewRecord().Metatable(typ.Unknown).Build()
+	strong := typ.NewRecord().Metatable(metatable).Build()
+
+	got := WidenForConvergence([]typ.Type{weak}, []typ.Type{strong})
+	if len(got) != 1 {
+		t.Fatalf("WidenForConvergence returned %d slots, want 1: %v", len(got), got)
+	}
+	if mt, ok := querycore.Method(got[0], "ready"); !ok {
+		t.Fatalf("widened metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got[0])
+	}
+
+	got = WidenForConvergence([]typ.Type{strong}, []typ.Type{weak})
+	if len(got) != 1 {
+		t.Fatalf("reverse WidenForConvergence returned %d slots, want 1: %v", len(got), got)
+	}
+	if mt, ok := querycore.Method(got[0], "ready"); !ok {
+		t.Fatalf("reverse widened metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got[0])
+	}
+}
+
+func TestReturnSummaryWiden_ReplacesEmptySeedWithMetatableEvidence(t *testing.T) {
+	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
+	prototype := typ.NewRecord().Field("ready", method).Build()
+	metatable := typ.NewRecord().Field("__index", prototype).Build()
+	seed := typ.NewRecord().Build()
+	observed := typ.NewRecord().Metatable(metatable).Build()
+
+	got := WidenForConvergence([]typ.Type{seed, typ.Nil}, []typ.Type{observed, typ.Nil})
+	if len(got) != 2 {
+		t.Fatalf("WidenForConvergence returned %d slots, want 2: %v", len(got), got)
+	}
+	if mt, ok := querycore.Method(got[0], "ready"); !ok {
+		t.Fatalf("widened metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got[0])
+	}
+}
+
+func TestReturnSummaryWiden_RefinesUnknownMetatableWithSelfReturningPrototype(t *testing.T) {
+	weak := typ.NewRecord().Metatable(typ.Unknown).Build()
+	query := typ.NewRecord().Build()
+	contexts := typ.Func().Param("self", typ.Unknown).Returns(query).Build()
+	prototype := typ.NewRecord().Field("contexts", contexts).Build()
+	metatable := typ.NewRecord().
+		Field("__index", prototype).
+		Field("contexts", contexts).
+		Build()
+	strong := typ.NewRecord().Metatable(metatable).Build()
+
+	got := WidenForConvergence([]typ.Type{weak, typ.Nil}, []typ.Type{strong, typ.Nil})
+	if len(got) != 2 {
+		t.Fatalf("WidenForConvergence returned %d slots, want 2: %v", len(got), got)
+	}
+	if mt, ok := querycore.Method(got[0], "contexts"); !ok {
+		t.Fatalf("widened metatable method contexts = %v ok=%v, want inherited method on %v", mt, ok, got[0])
+	}
+}
+
+func TestReturnSummaryWiden_ReplacesUnsolvedFunctionSeedInsideRecordField(t *testing.T) {
+	seed := typ.Func().Build()
+	solved := typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()
+	weak := typ.NewRecord().
+		Field("x", typ.Integer).
+		Field("get_x", seed).
+		Build()
+	strong := typ.NewRecord().
+		Field("x", typ.Integer).
+		Field("get_x", solved).
+		Build()
+
+	got := WidenForConvergence([]typ.Type{weak}, []typ.Type{strong})
+	if len(got) != 1 {
+		t.Fatalf("WidenForConvergence returned %d slots, want 1: %v", len(got), got)
+	}
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("WidenForConvergence(record seed, record solved) = %T %[1]v, want record", got[0])
+	}
+	field := rec.GetField("get_x")
+	if field == nil || !typ.TypeEquals(field.Type, solved) {
+		t.Fatalf("widened get_x = %v, want %v", field, solved)
+	}
+}
+
+func TestReturnSummaryMerge_RecursiveEquivalenceUsesWideningNotDeepEquality(t *testing.T) {
+	left := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	right := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+
+	if !typ.TypeEquals(left, right) {
+		t.Fatalf("test setup expected structurally equivalent recursive products")
+	}
+	if sameReturnSlotWithoutRecursiveDescent(left, right) {
+		t.Fatalf("recursive return slots must enter convergence widening instead of deep equality")
+	}
+	if !sameReturnSlotWithoutRecursiveDescent(typ.NewArray(typ.String), typ.NewArray(typ.String)) {
+		t.Fatalf("non-recursive equal return slots should still use the cheap equality gate")
+	}
+}
+
+func TestReturnSummaryWiden_NoReturnNilRefinesUnknownSeed(t *testing.T) {
+	got := WidenForConvergence([]typ.Type{typ.Unknown}, []typ.Type{typ.Nil})
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Nil) {
+		t.Fatalf("WidenForConvergence([unknown], [nil]) = %v, want [nil]", got)
+	}
+}
+
+func TestReturnSummaryWiden_ConcreteEvidenceReplacesUnknownSeed(t *testing.T) {
+	obj := typ.NewRecord().Field("x", typ.Number).Build()
+	got := WidenForConvergence([]typ.Type{typ.Unknown}, []typ.Type{obj})
+	if len(got) != 1 || !typ.TypeEquals(got[0], obj) {
+		t.Fatalf("WidenForConvergence([unknown], [record]) = %v, want [%v]", got, obj)
+	}
+}
+
 func TestJoinReturnVectors_DifferentLengths(t *testing.T) {
 	a := []typ.Type{typ.String, typ.Number}
 	b := []typ.Type{typ.Boolean}
@@ -99,6 +399,28 @@ func TestReturnSummaryEqual_Different(t *testing.T) {
 	if Equal(a, b) {
 		t.Error("different types should not be equal")
 	}
+}
+
+func TestReturnSummaryEqual_IncludesMetatableFactState(t *testing.T) {
+	withoutSpec := returnSummaryMetatabledRecord(false)
+	withSpec := returnSummaryMetatabledRecord(true)
+	if !typ.TypeEquals(withoutSpec, withSpec) {
+		t.Fatal("ordinary type equality should ignore method spec inside metatable")
+	}
+	if Equal([]typ.Type{withoutSpec}, []typ.Type{withSpec}) {
+		t.Fatal("return-summary equality must include metatable fact state")
+	}
+}
+
+func returnSummaryMetatabledRecord(withSpec bool) typ.Type {
+	method := typ.Func().Returns(typ.String)
+	if withSpec {
+		method = method.Spec(contract.NewSpec().WithCallback(0, &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce}))
+	}
+	metatable := typ.NewRecord().
+		Field("__index", typ.NewRecord().Field("run", method.Build()).Build()).
+		Build()
+	return typ.NewRecord().Metatable(metatable).Build()
 }
 
 func TestReturnSummaryRefines_EmptyA(t *testing.T) {
@@ -201,6 +523,26 @@ func TestReturnSummarySelectPreferred_RejectsStaleNilOnly(t *testing.T) {
 	}
 }
 
+func TestReturnSummaryWiden_NilValueErrorBranchDoesNotEraseValueBranch(t *testing.T) {
+	value := typ.NewRecord().Field("y", typ.Integer).Build()
+	err := typ.LiteralString("missing")
+
+	got := WidenForConvergence(
+		[]typ.Type{typ.Nil, err},
+		[]typ.Type{typ.NewOptional(value), typ.NewOptional(err)},
+	)
+
+	want := []typ.Type{typ.NewOptional(value), typ.NewOptional(err)}
+	if len(got) != len(want) {
+		t.Fatalf("WidenForConvergence returned %d slots, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if !typ.TypeEquals(got[i], want[i]) {
+			t.Fatalf("slot %d = %v, want %v; full vector %v", i, got[i], want[i], got)
+		}
+	}
+}
+
 func TestReturnSummarySelectPreferred_RecordExtension(t *testing.T) {
 	oldRec := typ.NewRecord().Field("x", typ.Number).Build()
 	newRec := typ.NewRecord().Field("x", typ.Number).Field("y", typ.String).Build()
@@ -211,6 +553,31 @@ func TestReturnSummarySelectPreferred_RecordExtension(t *testing.T) {
 	}
 	if len(preferred) != 1 || !typ.TypeEquals(preferred[0], newRec) {
 		t.Fatalf("expected record extension to be preferred, got %v", preferred)
+	}
+}
+
+func TestReturnSummaryMerge_FoldsSelfEmbeddingBeforeRecordExtension(t *testing.T) {
+	base := typ.NewRecord().Field("x", typ.Number).Build()
+	grown := typ.NewRecord().
+		Field("x", typ.Number).
+		Field("next", typ.NewRecord().Field("value", base).Build()).
+		Build()
+
+	got := Merge([]typ.Type{base}, []typ.Type{grown})
+	if len(got) != 1 {
+		t.Fatalf("Merge() returned %d slots, want 1: %v", len(got), got)
+	}
+	if _, ok := got[0].(*typ.Recursive); !ok {
+		t.Fatalf("Merge() slot = %T %[1]v, want recursive convergence upper bound", got[0])
+	}
+}
+
+func TestReturnSummarySelectPreferred_RecordExtensionDoesNotEraseOptionalEvidence(t *testing.T) {
+	baseline := typ.NewRecord().OptField("name", typ.String).Build()
+	candidate := typ.NewRecord().Field("name", typ.String).Field("ready", typ.Boolean).Build()
+
+	if preferred, ok := SelectPreferred([]typ.Type{candidate}, []typ.Type{baseline}); ok {
+		t.Fatalf("SelectPreferred() = %v, want structural merge to preserve optional absence evidence", preferred)
 	}
 }
 
@@ -252,6 +619,38 @@ func TestReturnSummaryMerge_PrefersCandidateRefinement(t *testing.T) {
 	merged := Merge(existing, candidate)
 	if len(merged) != 1 || !typ.TypeEquals(merged[0], typ.String) {
 		t.Fatalf("expected refined candidate return, got %v", merged)
+	}
+}
+
+func TestReturnSummaryMerge_PreservesWholeSlotAnyRuntimeOutcome(t *testing.T) {
+	existing := []typ.Type{typ.Any}
+	candidate := []typ.Type{typ.NewRecord().
+		Field("candidates", typ.NewArray(typ.Unknown)).
+		Build()}
+
+	merged := Merge(existing, candidate)
+	if len(merged) != 1 || !typ.TypeEquals(merged[0], typ.Any) {
+		t.Fatalf("expected whole-slot any to remain the return outcome, got %v", merged)
+	}
+}
+
+func TestReturnSummaryMerge_PreservesDynamicAnyTableOutcome(t *testing.T) {
+	dynamicTable := typ.NewMap(typ.Any, typ.Any)
+	concrete := typ.NewRecord().Field("raw", typ.String).Build()
+
+	merged := Merge([]typ.Type{dynamicTable}, []typ.Type{concrete})
+	if len(merged) != 1 || !typ.TypeEquals(merged[0], dynamicTable) {
+		t.Fatalf("expected dynamic table outcome to remain, got %v", merged)
+	}
+}
+
+func TestReturnSummaryMerge_ReplacesUnknownPlaceholderWithConcreteProof(t *testing.T) {
+	existing := []typ.Type{typ.Unknown}
+	candidate := []typ.Type{typ.NewRecord().Field("data", typ.String).Build()}
+
+	merged := Merge(existing, candidate)
+	if len(merged) != 1 || !typ.TypeEquals(merged[0], candidate[0]) {
+		t.Fatalf("expected concrete interpreter proof to replace unknown placeholder, got %v", merged)
 	}
 }
 
@@ -366,6 +765,87 @@ func TestReturnSummaryApplyToFunctionType_AppliesSummaryToPlaceholderReturns(t *
 	}
 	if !typ.TypeEquals(got.Returns[0], typ.Integer) {
 		t.Fatalf("expected summary return integer, got %v", got.Returns[0])
+	}
+}
+
+func TestReturnSummaryAlignFunction_NoopsWhenSummaryAlreadyApplied(t *testing.T) {
+	event := typ.NewUnion(
+		typ.NewRecord().Field("kind", typ.LiteralString("message")).Field("id", typ.String).Build(),
+		typ.NewRecord().Field("kind", typ.LiteralString("tool")).Field("id", typ.String).Build(),
+	)
+	fn := typ.Func().
+		Param("raw", typ.Any).
+		Returns(typ.NewOptional(event), typ.NewOptional(typ.String)).
+		Build()
+	summary := []typ.Type{typ.NewOptional(event), typ.NewOptional(typ.String)}
+
+	aligned, changed := AlignFunction(fn, summary)
+	if changed {
+		t.Fatalf("expected already-aligned function to be unchanged, got %v", aligned)
+	}
+	if aligned != fn {
+		t.Fatalf("expected AlignFunction to preserve the existing function node")
+	}
+}
+
+func TestReturnSummaryAlignFunction_NoopsForEquivalentRecursiveEvidence(t *testing.T) {
+	base := typ.NewRecord().Field("x", typ.Number).Build()
+	grown := typ.NewRecord().
+		Field("x", typ.Number).
+		Field("next", typ.NewRecord().Field("value", base).Build()).
+		Build()
+	stable := Merge([]typ.Type{base}, []typ.Type{grown})[0]
+	observation := typ.NewRecord().
+		Field("x", typ.Number).
+		Field("next", typ.NewRecord().Field("value", stable).Build()).
+		Build()
+	fn := typ.Func().Returns(stable).Build()
+
+	aligned, changed := AlignFunction(fn, []typ.Type{observation})
+	if changed {
+		t.Fatalf("equivalent recursive evidence should not rebuild function returns: %v", aligned)
+	}
+	if aligned != fn {
+		t.Fatalf("expected AlignFunction to preserve the existing function node")
+	}
+}
+
+func TestReturnSummaryMerge_MutualRefinementPrefersAliasSurface(t *testing.T) {
+	eventStruct := typ.NewUnion(
+		typ.NewRecord().Field("kind", typ.LiteralString("message")).Field("id", typ.String).Build(),
+		typ.NewRecord().Field("kind", typ.LiteralString("tool")).Field("id", typ.String).Build(),
+	)
+	eventAlias := typ.NewAlias("Event", eventStruct)
+	aliasSummary := []typ.Type{typ.NewOptional(eventAlias), typ.NewOptional(typ.String)}
+	structSummary := []typ.Type{typ.NewOptional(eventStruct), typ.NewOptional(typ.String)}
+
+	left := Merge(aliasSummary, structSummary)
+	right := Merge(structSummary, aliasSummary)
+	if !Equal(left, right) {
+		t.Fatalf("equivalent alias/struct summaries must merge commutatively:\nleft=%v\nright=%v", left, right)
+	}
+	if len(left) != 2 || !typ.TypeEquals(left[0], aliasSummary[0]) {
+		t.Fatalf("expected named alias surface to be the canonical representative, got %v", left)
+	}
+}
+
+func TestReturnSummaryAlignFunction_ReplacesUnknownSlotEvenWithStructuredSibling(t *testing.T) {
+	placeholderRecord := typ.NewRecord().SetOpen(true).Build()
+	fn := typ.Func().
+		Param("items", typ.Any).
+		Returns(typ.Unknown, placeholderRecord).
+		Build()
+	summary := []typ.Type{typ.Integer, placeholderRecord}
+
+	aligned, changed := AlignFunction(fn, summary)
+	if !changed {
+		t.Fatal("expected summary to replace unknown return slot")
+	}
+	if aligned == nil || len(aligned.Returns) != 2 {
+		t.Fatalf("expected two returns, got %v", aligned)
+	}
+	if !typ.TypeEquals(aligned.Returns[0], typ.Integer) {
+		t.Fatalf("expected integer first return, got %v", aligned.Returns[0])
 	}
 }
 
@@ -522,6 +1002,45 @@ func TestReturnSummaryMerge_PrefersRuntimePossibleSummaryOverNeverArtifact(t *te
 	}
 }
 
+func TestReturnSummaryMerge_NeverScanUsesCanonicalUncappedTypeTraversal(t *testing.T) {
+	badPayload := typ.Never
+	goodPayload := typ.Unknown
+	for i := 0; i < typ.DefaultRecursionDepth+8; i++ {
+		badPayload = typ.NewRecord().Field("next", badPayload).Build()
+		goodPayload = typ.NewRecord().Field("next", goodPayload).Build()
+	}
+	bad := []typ.Type{
+		typ.NewRecord().
+			Field("success", typ.True).
+			Field("payload", badPayload).
+			Build(),
+	}
+	good := []typ.Type{
+		typ.NewRecord().
+			Field("success", typ.True).
+			Field("payload", goodPayload).
+			Build(),
+	}
+
+	got := Merge(bad, good)
+	if !Equal(got, good) {
+		t.Fatalf("Merge() = %v, want %v", got, good)
+	}
+}
+
+func TestReturnSummaryRepairsNeverRequiresBaselineNever(t *testing.T) {
+	candidate := typ.NewRecord().Field("payload", typ.String).Build()
+	baseline := typ.NewRecord().Field("payload", typ.Unknown).Build()
+	for i := 0; i < typ.DefaultRecursionDepth+8; i++ {
+		candidate = typ.NewRecord().Field("next", candidate).Build()
+		baseline = typ.NewRecord().Field("next", baseline).Build()
+	}
+
+	if RepairsNever([]typ.Type{candidate}, []typ.Type{baseline}) {
+		t.Fatal("RepairsNever should be false when baseline contains no never artifact")
+	}
+}
+
 func TestReturnSummaryAlignFunction_RepairsNestedNeverArtifact(t *testing.T) {
 	bad := typ.NewUnion(
 		typ.NewRecord().
@@ -551,6 +1070,72 @@ func TestReturnSummaryAlignFunction_RepairsNestedNeverArtifact(t *testing.T) {
 	}
 	if aligned == nil || len(aligned.Returns) != 1 || !typ.TypeEquals(aligned.Returns[0], good) {
 		t.Fatalf("aligned returns = %v, want %v", aligned, good)
+	}
+}
+
+func TestMerge_RefinesRecordFieldsFromDynamicEvidence(t *testing.T) {
+	baseline := []typ.Type{
+		typ.NewOptional(typ.NewRecord().
+			Field("max_tokens", typ.Any).
+			Field("output_tokens", typ.Any).
+			Build()),
+		typ.NewUnion(typ.Nil, typ.LiteralString("not found")),
+	}
+	candidate := []typ.Type{
+		typ.NewUnion(
+			typ.NewRecord().
+				Field("max_tokens", typ.Integer).
+				Field("output_tokens", typ.Integer).
+				Build(),
+			typ.NewRecord().
+				Field("max_tokens", typ.LiteralInt(0)).
+				Field("output_tokens", typ.LiteralInt(0)).
+				Build(),
+		),
+		typ.NewUnion(typ.Nil, typ.LiteralString("not found")),
+	}
+
+	got := Merge(baseline, candidate)
+	wantFirst := typ.NewOptional(typ.NewRecord().
+		Field("max_tokens", typ.Integer).
+		Field("output_tokens", typ.Integer).
+		Build())
+	if !typ.TypeEquals(got[0], wantFirst) {
+		t.Fatalf("Merge() first slot = %v, want %v", got[0], wantFirst)
+	}
+}
+
+func TestMerge_RefinesRecordFieldsWhenCandidateHasFewerReturnSlots(t *testing.T) {
+	baseline := []typ.Type{
+		typ.NewOptional(typ.NewRecord().
+			Field("max_tokens", typ.Any).
+			Field("output_tokens", typ.Any).
+			Build()),
+		typ.NewUnion(typ.Nil, typ.String),
+	}
+	candidate := []typ.Type{
+		typ.NewOptional(typ.NewUnion(
+			typ.NewRecord().
+				Field("max_tokens", typ.Integer).
+				Field("output_tokens", typ.Integer).
+				Build(),
+			typ.NewRecord().
+				Field("max_tokens", typ.LiteralInt(0)).
+				Field("output_tokens", typ.LiteralInt(0)).
+				Build(),
+		)),
+	}
+
+	got := Merge(baseline, candidate)
+	wantFirst := typ.NewOptional(typ.NewRecord().
+		Field("max_tokens", typ.Integer).
+		Field("output_tokens", typ.Integer).
+		Build())
+	if !typ.TypeEquals(got[0], wantFirst) {
+		t.Fatalf("Merge() first slot = %v, want %v", got[0], wantFirst)
+	}
+	if !typ.TypeEquals(got[1], baseline[1]) {
+		t.Fatalf("Merge() second slot = %v, want %v", got[1], baseline[1])
 	}
 }
 

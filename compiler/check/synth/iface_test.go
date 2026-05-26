@@ -134,6 +134,10 @@ func (m *mockSynth) Narrow() api.BaseSynth {
 	return &m.mockBaseSynth
 }
 
+func (m *mockSynth) WithFlow(api.FlowOps) api.BaseSynth {
+	return &m.mockBaseSynth
+}
+
 func (m *mockSynth) Method(t typ.Type, name string) (typ.Type, bool) {
 	return nil, false
 }

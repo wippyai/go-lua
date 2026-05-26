@@ -75,55 +75,7 @@ func (d *Domain) ApplyAtom(atom constraint.Atom) bool {
 	if d.state == nil || d.state.IsUnsat() {
 		return false
 	}
-
-	switch atom.Kind {
-	case constraint.AtomKindLt:
-		if atom.Left.IsVar() && atom.Right.IsVar() {
-			d.state.ApplyLt(atom.Left.Path, atom.Right.Path)
-			d.theory.AddDifferenceConstraint(atom.Left.Path, atom.Right.Path, -1)
-		}
-	case constraint.AtomKindLe:
-		if atom.Left.IsVar() && atom.Right.IsConst() {
-			d.state.ApplyLeConst(atom.Left.Path, atom.Right.Const)
-			d.theory.AddBounds(atom.Left.Path, -maxWeight, atom.Right.Const)
-		} else if atom.Left.IsVar() && atom.Right.IsLen() {
-			d.state.ApplyLeLenOf(atom.Left.Path, atom.Right.Path)
-		} else if atom.Left.IsLen() && atom.Right.IsConst() {
-			d.state.ApplyLenLeConst(atom.Left.Path, atom.Right.Const)
-		} else if atom.Left.IsVar() && atom.Right.IsVar() {
-			d.state.ApplyLe(atom.Left.Path, atom.Right.Path)
-			d.theory.AddDifferenceConstraint(atom.Left.Path, atom.Right.Path, 0)
-		}
-	case constraint.AtomKindGe:
-		if atom.Left.IsVar() && atom.Right.IsConst() {
-			d.state.ApplyGeConst(atom.Left.Path, atom.Right.Const)
-			d.theory.AddBounds(atom.Left.Path, atom.Right.Const, maxWeight)
-		} else if atom.Left.IsLen() && atom.Right.IsConst() {
-			d.state.ApplyLenGeConst(atom.Left.Path, atom.Right.Const)
-		} else if atom.Left.IsVar() && atom.Right.IsVar() {
-			d.state.ApplyGe(atom.Left.Path, atom.Right.Path)
-			d.theory.AddDifferenceConstraint(atom.Right.Path, atom.Left.Path, 0)
-		}
-	case constraint.AtomKindGt:
-		if atom.Left.IsVar() && atom.Right.IsVar() {
-			d.state.ApplyGt(atom.Left.Path, atom.Right.Path)
-			d.theory.AddDifferenceConstraint(atom.Right.Path, atom.Left.Path, -1)
-		}
-	case constraint.AtomKindEq:
-		if atom.Left.IsVar() && atom.Right.IsConst() {
-			d.state.ApplyEqConst(atom.Left.Path, atom.Right.Const)
-			d.theory.AddBounds(atom.Left.Path, atom.Right.Const, atom.Right.Const)
-		} else if atom.Left.IsVar() && atom.Right.IsVar() {
-			d.state.ApplyEq(atom.Left.Path, atom.Right.Path)
-			d.theory.AddDifferenceConstraint(atom.Left.Path, atom.Right.Path, 0)
-			d.theory.AddDifferenceConstraint(atom.Right.Path, atom.Left.Path, 0)
-		}
-	case constraint.AtomKindModEq:
-		if atom.Left.IsVar() {
-			d.state.ApplyModEq(atom.Left.Path, atom.Mod, atom.Rem)
-			d.theory.AddModular(atom.Left.Path, atom.Mod, atom.Rem)
-		}
-	}
+	numericAtomApplier{domain: d, atom: atom}.apply()
 
 	// Check theory solver for early UNSAT detection
 	if !d.theory.CheckSatisfiability() {
@@ -137,6 +89,11 @@ func (d *Domain) ApplyAtom(atom constraint.Atom) bool {
 // IsUnsat returns true if numeric constraints are unsatisfiable.
 func (d *Domain) IsUnsat() bool {
 	return d.state != nil && d.state.IsUnsat()
+}
+
+// IsTop reports whether the numeric domain carries no constraints.
+func (d *Domain) IsTop() bool {
+	return d == nil || d.state == nil || d.state.IsTop()
 }
 
 // Clone creates a deep copy of the Domain for speculative evaluation.

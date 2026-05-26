@@ -3,34 +3,37 @@ package functionfact
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/domain/value"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
+	typejoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
-// Cache memoizes canonical function-fact projections for one check.
-type Cache struct {
-	facts map[CacheKey]cachedFact
-}
+// Projection names the semantic function view requested from the product.
+type Projection uint8
 
-// CacheKey identifies a canonical function-fact projection.
-type CacheKey struct {
-	GraphID uint64
-	Parent  *scope.State
-	Sym     cfg.SymbolID
-	Phase   api.Phase
-}
-
-type cachedFact struct {
-	Fact  api.FunctionFact
-	Found bool
-}
-
-// NewCache creates an empty function-fact projection cache.
-func NewCache() *Cache {
-	return &Cache{facts: make(map[CacheKey]cachedFact)}
-}
+const (
+	// ProjectionBody initializes/interprets a function body from source
+	// annotations and observed entry evidence. Body contracts are obligations,
+	// not assumptions for the same body.
+	ProjectionBody Projection = iota
+	// ProjectionFlowInput types function values while extracting abstract
+	// interpreter inputs. It is a caller view with pre-flow returns; body,
+	// entry, and narrowed evidence are deliberately invisible.
+	ProjectionFlowInput
+	// ProjectionPublic checks a caller against a public callable contract.
+	ProjectionPublic
+	// ProjectionExport exposes a module boundary contract.
+	ProjectionExport
+	// ProjectionSibling types same-scope sibling function values. It is a
+	// closed-world local caller view: observed entry states are visible, while
+	// body-only contracts remain caller obligations.
+	ProjectionSibling
+)
 
 // ForSymbol returns the canonical stored function fact for sym.
 func ForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) (api.FunctionFact, bool) {
@@ -41,11 +44,11 @@ func ForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.Sta
 	if ref == nil {
 		return api.FunctionFact{}, false
 	}
-	return FactForGraph(store, graphForRef(store, ref), sym, defaultParent, nil)
+	return FactForGraph(store, graphForRef(store, ref), sym, defaultParent)
 }
 
-// TypeForSymbol returns the canonical stored function type fact for sym.
-func TypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) typ.Type {
+// BodyTypeForSymbol returns the body-view function projection for sym.
+func BodyTypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
 	if store == nil || sym == 0 {
 		return nil
 	}
@@ -53,27 +56,61 @@ func TypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope
 	if ref == nil {
 		return nil
 	}
-	return TypeForGraph(store, graphForRef(store, ref), sym, defaultParent, cache)
+	return BodyTypeForGraph(store, graphForRef(store, ref), sym, defaultParent)
+}
+
+// SiblingTypeForSymbol returns the same-scope sibling function projection for sym.
+func SiblingTypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
+	if store == nil || sym == 0 {
+		return nil
+	}
+	ref := store.FunctionRefBySym(sym)
+	if ref == nil {
+		return nil
+	}
+	return SiblingTypeForGraph(store, graphForRef(store, ref), sym, defaultParent)
+}
+
+// StoreProjectionLookup returns a store-backed function projection lookup for
+// solved-state observers.
+func StoreProjectionLookup(store api.StoreReader, projection Projection, phase api.Phase, defaultParent *scope.State) func(cfg.SymbolID) typ.Type {
+	if store == nil {
+		return nil
+	}
+	return func(sym cfg.SymbolID) typ.Type {
+		if sym == 0 {
+			return nil
+		}
+		ref := store.FunctionRefBySym(sym)
+		if ref == nil {
+			return nil
+		}
+		ff, ok := FactForGraph(store, graphForRef(store, ref), sym, defaultParent)
+		if !ok {
+			return nil
+		}
+		return ProjectType(ff, projection, phase)
+	}
 }
 
 // ReturnSummaryForSymbol returns the canonical declared/pre-flow return summary
 // for sym from its owning function-fact product.
-func ReturnSummaryForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) []typ.Type {
-	ff, ok := factForSymbolInPhase(store, sym, defaultParent, api.PhaseScopeCompute, cache)
+func ReturnSummaryForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
+	ff, ok := factForSymbolInPhase(store, sym, defaultParent, api.PhaseScopeCompute)
 	if !ok {
 		return nil
 	}
-	return ff.Summary
+	return summaryTypes(ff)
 }
 
 // NarrowSummaryForSymbol returns the canonical post-flow return summary for sym
 // from its owning function-fact product.
-func NarrowSummaryForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) []typ.Type {
-	ff, ok := factForSymbolInPhase(store, sym, defaultParent, api.PhaseNarrowing, cache)
+func NarrowSummaryForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
+	ff, ok := factForSymbolInPhase(store, sym, defaultParent, api.PhaseNarrowing)
 	if !ok {
 		return nil
 	}
-	return ff.Narrow
+	return narrowTypes(ff)
 }
 
 // GraphKeyForSymbol returns the canonical parent graph key that owns sym's
@@ -97,56 +134,125 @@ func GraphKeyForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *s
 	return store.GraphKeyFor(graph, parent)
 }
 
-// TypeForGraph returns the canonical function type fact for sym from graph's
-// function-fact product.
-func TypeForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) typ.Type {
-	ff, ok := FactForGraph(store, graph, sym, defaultParent, cache)
+// BodyTypeForGraph returns the body-view function projection for sym from
+// graph's function-fact product.
+func BodyTypeForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
+	ff, ok := FactForGraph(store, graph, sym, defaultParent)
 	if !ok {
 		return nil
 	}
-	return ff.Type
+	return ProjectType(ff, ProjectionBody, api.PhaseScopeCompute)
+}
+
+// SiblingTypeForGraph returns the same-scope sibling function projection for
+// sym from graph's function-fact product.
+func SiblingTypeForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
+	ff, ok := FactForGraph(store, graph, sym, defaultParent)
+	if !ok {
+		return nil
+	}
+	return ProjectType(ff, ProjectionSibling, api.PhaseScopeCompute)
 }
 
 // ReturnSummaryForGraph returns the canonical declared/pre-flow return summary
 // for sym from graph's function-fact product.
-func ReturnSummaryForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) []typ.Type {
-	ff, ok := factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseScopeCompute, cache)
+func ReturnSummaryForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
+	ff, ok := factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseScopeCompute)
 	if !ok {
 		return nil
 	}
-	return ff.Summary
+	return summaryTypes(ff)
 }
 
 // NarrowSummaryForGraph returns the canonical post-flow return summary for sym
 // from graph's function-fact product.
-func NarrowSummaryForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) []typ.Type {
-	ff, ok := factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseNarrowing, cache)
+func NarrowSummaryForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
+	ff, ok := factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseNarrowing)
 	if !ok {
 		return nil
 	}
-	return ff.Narrow
+	return narrowTypes(ff)
 }
 
-// ReturnsForPhase returns the return projection visible in phase.
-func ReturnsForPhase(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) []typ.Type {
-	ff, ok := FactFromMap(facts, sym)
+// ReturnProjection returns the return vector visible in phase.
+func ReturnProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) []typ.Type {
+	ff, ok := Lookup(facts, sym)
 	if !ok {
 		return nil
 	}
 	return returnsForPhase(ff, phase)
 }
 
-// TypeFromMap returns the canonical function type projection from a fact map.
-func TypeFromMap(facts api.FunctionFacts, sym cfg.SymbolID) typ.Type {
-	ff, ok := FactFromMap(facts, sym)
+// BodyTypeProjection returns the body-view function type projection.
+func BodyTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
+	ff, ok := lookupStored(facts, sym)
 	if !ok {
 		return nil
 	}
-	return ff.Type
+	return projectTypeNormalized(ff, ProjectionBody, phase)
 }
 
-// TypeLookup returns a canonical type projection function for a fact map.
-func TypeLookup(facts api.FunctionFacts) func(cfg.SymbolID) typ.Type {
+// FlowInputTypeProjection returns the function view allowed while extracting
+// abstract-interpreter inputs.
+func FlowInputTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
+	ff, ok := lookupStored(facts, sym)
+	if !ok {
+		return nil
+	}
+	return projectTypeNormalized(ff, ProjectionFlowInput, phase)
+}
+
+// PublicTypeProjection returns the caller-facing public function type projection.
+func PublicTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
+	ff, ok := lookupStored(facts, sym)
+	if !ok {
+		return nil
+	}
+	return projectTypeNormalized(ff, ProjectionPublic, phase)
+}
+
+// ExportTypeProjection returns the module-boundary function type projection.
+func ExportTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
+	ff, ok := lookupStored(facts, sym)
+	if !ok {
+		return nil
+	}
+	return projectTypeNormalized(ff, ProjectionExport, phase)
+}
+
+// SiblingTypeProjection returns the same-scope sibling function type projection.
+func SiblingTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
+	ff, ok := lookupStored(facts, sym)
+	if !ok {
+		return nil
+	}
+	return projectTypeNormalized(ff, ProjectionSibling, phase)
+}
+
+// SynthesisTypeProjection is the default function-fact projection for expression
+// synthesis in a pipeline phase.
+func SynthesisTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
+	if phase == api.PhaseNarrowing {
+		return SiblingTypeProjection(facts, sym, phase)
+	}
+	return FlowInputTypeProjection(facts, sym, phase)
+}
+
+// SignatureWithReturnSummary applies the canonical pre-flow return projection
+// for sym to fn when that summary exists.
+func SignatureWithReturnSummary(facts api.FunctionFacts, sym cfg.SymbolID, fn *typ.Function) *typ.Function {
+	if fn == nil || len(facts) == 0 || sym == 0 {
+		return fn
+	}
+	summary := ReturnSummary(facts, sym)
+	if len(summary) == 0 {
+		return fn
+	}
+	return returnsummary.ApplyToFunctionType(fn, summary)
+}
+
+// ProjectionLookup returns a named function type projection function.
+func ProjectionLookup(facts api.FunctionFacts, projection Projection, phase api.Phase) func(cfg.SymbolID) typ.Type {
 	if len(facts) == 0 {
 		return nil
 	}
@@ -154,55 +260,236 @@ func TypeLookup(facts api.FunctionFacts) func(cfg.SymbolID) typ.Type {
 		if sym == 0 {
 			return nil
 		}
-		ff, ok := facts[sym]
+		ff, ok := lookupStored(facts, sym)
 		if !ok {
 			return nil
 		}
-		return value.NormalizeFactType(ff.Type)
+		return projectTypeNormalized(ff, projection, phase)
 	}
 }
 
-// ParameterEvidenceFromMap returns the canonical parameter evidence projection
-// from a fact map.
-func ParameterEvidenceFromMap(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
-	ff, ok := FactFromMap(facts, sym)
+// RecursiveTypeProjection returns the read-only function projection used when
+// function type synthesis re-enters the same function equation. It composes the
+// source signature, contextual expected returns, and current FunctionFact return
+// product without analyzing the body or writing any fact channel.
+func RecursiveTypeProjection(
+	signature *typ.Function,
+	expected *typ.Function,
+	facts api.FunctionFacts,
+	sym cfg.SymbolID,
+	phase api.Phase,
+) *typ.Function {
+	if signature == nil {
+		return nil
+	}
+	fn := BodyInputProjection(signature, expected, nil)
+	if expected != nil {
+		if len(fn.Returns) == 0 && len(expected.Returns) > 0 {
+			fn = typejoin.WithReturns(fn, expected.Returns)
+		}
+	}
+	if sym != 0 {
+		return typejoin.WithReturnsOrUnknown(fn, ReturnProjection(facts, sym, phase))
+	}
+	return typejoin.WithReturnsOrUnknown(fn, nil)
+}
+
+func expectedParameterEvidence(expected *typ.Function) []typ.Type {
+	if expected == nil || len(expected.Params) == 0 {
+		return nil
+	}
+	out := make([]typ.Type, len(expected.Params))
+	for i, param := range expected.Params {
+		out[i] = param.Type
+	}
+	return out
+}
+
+// BodyInputProjection derives the function signature used to initialize a
+// function body's abstract state. Source annotations, contextual expected
+// parameter types, and observed entry evidence are composed here so body
+// interpretation has one owner for parameter precision.
+func BodyInputProjection(signature *typ.Function, expected *typ.Function, entryEvidence []typ.Type) *typ.Function {
+	if signature == nil {
+		return nil
+	}
+	fn := signature
+	if expected != nil {
+		fn = ApplyBodySignatureEvidence(fn, expectedParameterEvidence(expected))
+	}
+	if len(entryEvidence) > 0 {
+		fn = ApplyBodySignatureEvidence(fn, entryEvidence)
+	}
+	return fn
+}
+
+// ProjectType derives a phase-specific function type from one canonical product.
+func ProjectType(ff api.FunctionFact, projection Projection, phase api.Phase) typ.Type {
+	ff = Normalize(ff)
+	return projectTypeNormalized(ff, projection, phase)
+}
+
+func projectTypeNormalized(ff api.FunctionFact, projection Projection, phase api.Phase) typ.Type {
+	fn := ff.Signature
+	if fn == nil {
+		return nil
+	}
+	switch projection {
+	case ProjectionBody:
+		fn = ApplyBodySignatureEvidence(fn, bodyEntryEvidenceNormalized(ff))
+	case ProjectionSibling:
+		fn = ApplyBodySignatureEvidence(fn, siblingParameterEvidenceNormalized(ff))
+	case ProjectionFlowInput, ProjectionPublic, ProjectionExport:
+		fn = ApplyPublicSignatureEvidence(fn, paramevidence.PublicSignatureVector(paramsTypes(ff)))
+	}
+	returns := returnsForPhase(ff, phase)
+	if len(returns) == 0 {
+		returns = returnsummary.Canonical(fn.Returns)
+	}
+	if len(returns) > 0 {
+		if projectionDemotesInferredDynamicReturns(projection, fn) {
+			returns = returnsummary.DemoteInferredDynamicAny(returns)
+		}
+		returns = preserveDeclaredDynamicReturns(fn.Returns, returns)
+		if withReturns := returnsummary.ApplyToFunctionType(fn, returns); withReturns != nil {
+			fn = withReturns
+		}
+	}
+	if projection != ProjectionBody && len(ff.EnvReturns) > 0 {
+		fn = withEnvReturns(fn, ff.EnvReturns)
+	}
+	if ff.Refinement != nil {
+		fn = withRefinement(fn, ff.Refinement)
+	}
+	return fn
+}
+
+func projectionDemotesInferredDynamicReturns(projection Projection, fn *typ.Function) bool {
+	switch projection {
+	case ProjectionPublic, ProjectionExport:
+	default:
+		return false
+	}
+	return fn == nil || len(fn.Returns) == 0
+}
+
+func preserveDeclaredDynamicReturns(declared, projected []typ.Type) []typ.Type {
+	if len(declared) == 0 || len(projected) == 0 {
+		return projected
+	}
+	maxLen := len(declared)
+	if len(projected) < maxLen {
+		maxLen = len(projected)
+	}
+	var out []typ.Type
+	for i := 0; i < maxLen; i++ {
+		if !typ.IsUnknown(declared[i]) || projected[i] == nil || typ.IsUnknown(projected[i]) {
+			continue
+		}
+		if out == nil {
+			out = make([]typ.Type, len(projected))
+			copy(out, projected)
+		}
+		out[i] = declared[i]
+	}
+	if out != nil {
+		return out
+	}
+	return projected
+}
+
+// PublicParameterEvidence returns the public caller parameter evidence.
+func PublicParameterEvidence(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
+	ff, ok := Lookup(facts, sym)
 	if !ok {
 		return nil
 	}
-	return ff.Params
+	return paramsTypes(ff)
 }
 
-// ReturnSummaryFromMap returns the canonical declared/pre-flow return summary
-// projection from a fact map.
-func ReturnSummaryFromMap(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
-	ff, ok := FactFromMap(facts, sym)
+// BodyEntryEvidence returns the observed entry state used to interpret a
+// function body. Body contracts are obligations and are intentionally excluded
+// to avoid treating consumer requirements as producer proof.
+func BodyEntryEvidence(ff api.FunctionFact) []typ.Type {
+	ff = Normalize(ff)
+	return bodyEntryEvidenceNormalized(ff)
+}
+
+func bodyEntryEvidenceNormalized(ff api.FunctionFact) []typ.Type {
+	return entryParamsTypes(ff)
+}
+
+// SiblingParameterEvidence returns the same-scope caller parameter view:
+// public caller obligations applied to observed local entry states. This keeps
+// public/export projections broad while letting local closed-world calls use
+// the entry shapes they proved.
+func SiblingParameterEvidence(ff api.FunctionFact) []typ.Type {
+	ff = Normalize(ff)
+	return siblingParameterEvidenceNormalized(ff)
+}
+
+func siblingParameterEvidenceNormalized(ff api.FunctionFact) []typ.Type {
+	return paramevidence.ApplyBodyContractsToEntries(paramsTypes(ff), entryParamsTypes(ff))
+}
+
+// BodyEntryEvidenceForSymbol returns the observed entry evidence used to
+// interpret sym's body.
+func BodyEntryEvidenceForSymbol(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
+	ff, ok := Lookup(facts, sym)
 	if !ok {
 		return nil
 	}
-	return ff.Summary
+	return BodyEntryEvidence(ff)
 }
 
-// NarrowSummaryFromMap returns the canonical post-flow return summary
-// projection from a fact map.
-func NarrowSummaryFromMap(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
-	ff, ok := FactFromMap(facts, sym)
+// BodyContractEvidence returns body contract evidence without observed
+// call-entry specialization.
+func BodyContractEvidence(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
+	ff, ok := Lookup(facts, sym)
 	if !ok {
 		return nil
 	}
-	return ff.Narrow
+	return bodyParamsTypes(ff)
 }
 
-// RefinementFromMap returns the canonical refinement projection from a fact map.
-func RefinementFromMap(facts api.FunctionFacts, sym cfg.SymbolID) *constraint.FunctionRefinement {
-	ff, ok := FactFromMap(facts, sym)
+// ReturnSummary returns the canonical declared/pre-flow return summary
+// projection.
+func ReturnSummary(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
+	ff, ok := Lookup(facts, sym)
+	if !ok {
+		return nil
+	}
+	return summaryTypes(ff)
+}
+
+// NarrowSummary returns the canonical post-flow return summary projection.
+func NarrowSummary(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
+	ff, ok := Lookup(facts, sym)
+	if !ok {
+		return nil
+	}
+	return narrowTypes(ff)
+}
+
+// Refinement returns the canonical refinement projection.
+func Refinement(facts api.FunctionFacts, sym cfg.SymbolID) *constraint.FunctionRefinement {
+	ff, ok := Lookup(facts, sym)
 	if !ok {
 		return nil
 	}
 	return ff.Refinement
 }
 
-// FactFromMap returns the canonical stored function fact for sym from facts.
-func FactFromMap(facts api.FunctionFacts, sym cfg.SymbolID) (api.FunctionFact, bool) {
+// Lookup returns the canonical stored function fact for sym from facts.
+func Lookup(facts api.FunctionFacts, sym cfg.SymbolID) (api.FunctionFact, bool) {
+	ff, ok := lookupStored(facts, sym)
+	if !ok {
+		return api.FunctionFact{}, false
+	}
+	return ff, !Empty(ff)
+}
+
+func lookupStored(facts api.FunctionFacts, sym cfg.SymbolID) (api.FunctionFact, bool) {
 	if len(facts) == 0 || sym == 0 {
 		return api.FunctionFact{}, false
 	}
@@ -210,17 +497,16 @@ func FactFromMap(facts api.FunctionFacts, sym cfg.SymbolID) (api.FunctionFact, b
 	if !ok {
 		return api.FunctionFact{}, false
 	}
-	ff = Normalize(ff)
 	return ff, !Empty(ff)
 }
 
 // FactForGraph returns the canonical stored function fact for sym from graph's
 // function-fact product.
-func FactForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, cache *Cache) (api.FunctionFact, bool) {
-	return factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseScopeCompute, cache)
+func FactForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) (api.FunctionFact, bool) {
+	return factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseScopeCompute)
 }
 
-func factForSymbolInPhase(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, phase api.Phase, cache *Cache) (api.FunctionFact, bool) {
+func factForSymbolInPhase(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, phase api.Phase) (api.FunctionFact, bool) {
 	if store == nil || sym == 0 {
 		return api.FunctionFact{}, false
 	}
@@ -228,10 +514,10 @@ func factForSymbolInPhase(store api.StoreReader, sym cfg.SymbolID, defaultParent
 	if ref == nil {
 		return api.FunctionFact{}, false
 	}
-	return factForGraphInPhase(store, graphForRef(store, ref), sym, defaultParent, phase, cache)
+	return factForGraphInPhase(store, graphForRef(store, ref), sym, defaultParent, phase)
 }
 
-func factForGraphInPhase(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, phase api.Phase, cache *Cache) (api.FunctionFact, bool) {
+func factForGraphInPhase(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, phase api.Phase) (api.FunctionFact, bool) {
 	if store == nil || graph == nil || sym == 0 {
 		return api.FunctionFact{}, false
 	}
@@ -239,18 +525,20 @@ func factForGraphInPhase(store api.StoreReader, graph *cfg.Graph, sym cfg.Symbol
 	if parent == nil {
 		return api.FunctionFact{}, false
 	}
-	key := CacheKey{GraphID: graph.ID(), Parent: parent, Sym: sym, Phase: phase}
-	if cache != nil {
-		if cached, ok := cache.get(key); ok {
-			return cached.Fact, cached.Found
-		}
+	var ff api.FunctionFact
+	var found bool
+	load := func() {
+		ff, found = store.InterprocFacts(graph, parent).FunctionFact(sym)
 	}
-	facts := functionFactsForGraph(store, graph, parent, phase)
-	ff, found := FactFromMap(facts, sym)
-	if cache != nil {
-		cache.set(key, ff, found)
+	if phaser, ok := store.(interface{ WithPhase(api.Phase, func()) }); ok {
+		phaser.WithPhase(phase, load)
+	} else {
+		load()
 	}
-	return ff, found
+	if !found || Empty(ff) {
+		return api.FunctionFact{}, false
+	}
+	return ff, true
 }
 
 // RefinementsFromStore projects canonical function facts as refinement facts.
@@ -269,27 +557,147 @@ func RefinementsFromStore(store api.StoreReader, defaultParent *scope.State) api
 
 func returnsForPhase(ff api.FunctionFact, phase api.Phase) []typ.Type {
 	if phase == api.PhaseNarrowing && len(ff.Narrow) > 0 {
-		return ff.Narrow
+		return repairSummaryWithNarrow(summaryTypes(ff), narrowTypes(ff))
 	}
-	return ff.Summary
+	return summaryTypes(ff)
 }
 
-func (c *Cache) get(key CacheKey) (cachedFact, bool) {
-	if c == nil || c.facts == nil {
-		return cachedFact{}, false
+func withRefinement(fn *typ.Function, refinement *constraint.FunctionRefinement) *typ.Function {
+	if fn == nil || refinement == nil {
+		return fn
 	}
-	cached, ok := c.facts[key]
-	return cached, ok
+	if fn.Refinement == refinement && functionEffectsIncludeRefinementRow(fn, refinement) {
+		return fn
+	}
+	appliedRefinement := typ.RefinementInfo(refinement)
+	if fn.Refinement != nil && fn.Refinement != refinement {
+		appliedRefinement = fn.Refinement
+		if functionEffectsIncludeRefinementRow(fn, refinement) {
+			return fn
+		}
+	}
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, p := range fn.Params {
+		if p.Optional {
+			builder = builder.OptParam(p.Name, p.Type)
+		} else {
+			builder = builder.Param(p.Name, p.Type)
+		}
+	}
+	if fn.Variadic != nil {
+		builder = builder.Variadic(fn.Variadic)
+	}
+	if len(fn.Returns) > 0 {
+		builder = builder.Returns(fn.Returns...)
+	}
+	if effects := mergeFunctionEffects(fn.Effects, refinement.Row); effects != nil {
+		builder = builder.Effects(effects)
+	}
+	if fn.Spec != nil {
+		builder = builder.Spec(fn.Spec)
+	}
+	return builder.WithRefinement(appliedRefinement).Build()
 }
 
-func (c *Cache) set(key CacheKey, fact api.FunctionFact, found bool) {
-	if c == nil {
-		return
+func functionEffectsIncludeRefinementRow(fn *typ.Function, refinement *constraint.FunctionRefinement) bool {
+	if fn == nil || refinement == nil || refinement.Row == nil {
+		return true
 	}
-	if c.facts == nil {
-		c.facts = make(map[CacheKey]cachedFact)
+	base, ok := fn.Effects.(effect.Row)
+	if !ok {
+		return false
 	}
-	c.facts[key] = cachedFact{Fact: fact, Found: found}
+	row, ok := refinement.Row.(effect.Row)
+	return ok && effect.Union(base, row).Equals(base)
+}
+
+func mergeFunctionEffects(left, right typ.EffectInfo) typ.EffectInfo {
+	base, _ := left.(effect.Row)
+	if row, ok := right.(effect.Row); ok {
+		base = effect.Union(base, row)
+	}
+	if base.Pure() && !base.IsOpen() {
+		return left
+	}
+	return base
+}
+
+func withEnvReturns(fn *typ.Function, envReturns []contract.EnvReturnSpec) *typ.Function {
+	if fn == nil || len(envReturns) == 0 {
+		return fn
+	}
+	spec := cloneContractSpec(fn)
+	merged := JoinEnvReturns(spec.EnvReturns, envReturns)
+	if EnvReturnsEqual(spec.EnvReturns, merged) {
+		return fn
+	}
+	spec.EnvReturns = merged
+	return rebuildFunctionWithSpec(fn, spec)
+}
+
+func cloneContractSpec(fn *typ.Function) *contract.Spec {
+	if fn == nil || fn.Spec == nil {
+		return contract.NewSpec()
+	}
+	spec, ok := fn.Spec.(*contract.Spec)
+	if !ok || spec == nil {
+		return contract.NewSpec()
+	}
+	clone := contract.NewSpec()
+	clone.Requires = spec.Requires
+	clone.Ensures = spec.Ensures
+	if len(spec.ExprRequires) > 0 {
+		clone.ExprRequires = append([]constraint.ExprCompare(nil), spec.ExprRequires...)
+	}
+	if len(spec.ExprEnsures) > 0 {
+		clone.ExprEnsures = append([]constraint.ExprCompare(nil), spec.ExprEnsures...)
+	}
+	clone.Effects = spec.Effects
+	if len(spec.Callbacks) > 0 {
+		clone.Callbacks = make(map[int]*contract.CallbackSpec, len(spec.Callbacks))
+		for idx, cb := range spec.Callbacks {
+			clone.Callbacks[idx] = cb.Clone()
+		}
+	}
+	clone.Return = spec.Return
+	clone.EnvReturns = NormalizeEnvReturns(spec.EnvReturns)
+	return clone
+}
+
+func rebuildFunctionWithSpec(fn *typ.Function, spec *contract.Spec) *typ.Function {
+	if fn == nil {
+		return nil
+	}
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, p := range fn.Params {
+		if p.Optional {
+			builder = builder.OptParam(p.Name, p.Type)
+		} else {
+			builder = builder.Param(p.Name, p.Type)
+		}
+	}
+	if fn.Variadic != nil {
+		builder = builder.Variadic(fn.Variadic)
+	}
+	if len(fn.Returns) > 0 {
+		builder = builder.Returns(fn.Returns...)
+	}
+	if fn.Effects != nil {
+		builder = builder.Effects(fn.Effects)
+	}
+	if spec != nil {
+		builder = builder.Spec(spec)
+	}
+	if fn.Refinement != nil {
+		builder = builder.WithRefinement(fn.Refinement)
+	}
+	return builder.Build()
 }
 
 func graphForRef(store api.StoreReader, ref *api.FunctionRef) *cfg.Graph {
@@ -301,20 +709,4 @@ func graphForRef(store api.StoreReader, ref *api.FunctionRef) *cfg.Graph {
 		parentGraphID = ref.GraphID
 	}
 	return store.Graphs()[parentGraphID]
-}
-
-func functionFactsForGraph(store api.StoreReader, graph *cfg.Graph, parent *scope.State, phase api.Phase) api.FunctionFacts {
-	if store == nil || graph == nil || parent == nil {
-		return nil
-	}
-	var facts api.FunctionFacts
-	load := func() {
-		facts = store.GetInterprocFacts(graph, parent).FunctionFacts
-	}
-	if phaser, ok := store.(interface{ WithPhase(api.Phase, func()) }); ok {
-		phaser.WithPhase(phase, load)
-	} else {
-		load()
-	}
-	return facts
 }

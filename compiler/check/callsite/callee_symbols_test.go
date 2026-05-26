@@ -105,6 +105,26 @@ func TestCalleeSymbolCandidates_IncludeMethodSymbolFromReceiver(t *testing.T) {
 	}
 }
 
+func TestCallableCalleeSymbolCandidates_PrefersMethodSymbolForMethodCall(t *testing.T) {
+	primary := bind.NewBindingTable()
+	receiver := &ast.IdentExpr{Value: "client"}
+	const receiverSym cfg.SymbolID = 83
+	primary.Bind(receiver, receiverSym)
+	methodSym := primary.GetOrCreateFieldSymbol(receiverSym, "get")
+
+	candidates := CallableCalleeSymbolCandidates(&cfg.CallInfo{
+		Method:       "get",
+		Receiver:     receiver,
+		CalleeSymbol: receiverSym,
+	}, nil, primary, nil)
+	if len(candidates) < 2 {
+		t.Fatalf("expected method and receiver candidates, got %v", candidates)
+	}
+	if candidates[0] != methodSym || candidates[1] != receiverSym {
+		t.Fatalf("callable candidates = %v, want prefix [%d %d]", candidates, methodSym, receiverSym)
+	}
+}
+
 func TestResolverCalleeSymbolCandidates_PrefersCalleePathSymbol(t *testing.T) {
 	callee := &ast.IdentExpr{Value: "f"}
 	primary := bind.NewBindingTable()

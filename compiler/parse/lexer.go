@@ -243,7 +243,7 @@ func (e *Error) Render() string {
 		b.WriteString("|\n")
 
 		// Source line with right-aligned line number
-		b.WriteString(fmt.Sprintf("%*d | ", gutterWidth-1, e.Pos.Line))
+		fmt.Fprintf(&b, "%*d | ", gutterWidth-1, e.Pos.Line)
 		b.WriteString(line)
 		b.WriteString("\n")
 

@@ -38,6 +38,50 @@ func TestIsNumeric_Primitives(t *testing.T) {
 	}
 }
 
+func TestProvesNumeric_DynamicPlaceholdersRequireProof(t *testing.T) {
+	tests := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{"integer", typ.Integer, true},
+		{"number", typ.Number, true},
+		{"number literal", typ.LiteralInt(42), true},
+		{"any", typ.Any, false},
+		{"unknown", typ.Unknown, false},
+		{"mixed with any", typ.NewUnion(typ.Number, typ.Any), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ProvesNumeric(tt.t); got != tt.want {
+				t.Fatalf("ProvesNumeric(%s) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAllowsNumericOperand_ExplicitAnyIsGradualEscape(t *testing.T) {
+	tests := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{"integer", typ.Integer, true},
+		{"any", typ.Any, true},
+		{"unknown", typ.Unknown, false},
+		{"optional any normalizes to any", typ.NewOptional(typ.Any), true},
+		{"optional unknown", typ.NewOptional(typ.Unknown), false},
+		{"string", typ.String, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := AllowsNumericOperand(tt.t); got != tt.want {
+				t.Fatalf("AllowsNumericOperand(%s) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsNumeric_Union(t *testing.T) {
 	numUnion := typ.NewUnion(typ.Integer, typ.Number)
 	if !IsNumeric(numUnion) {

@@ -1,7 +1,6 @@
 package ops
 
 import (
-	"github.com/wippyai/go-lua/types/kind"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -9,10 +8,18 @@ import (
 // ExpectedTableElementType returns the contextual expected type for the element
 // at index in a table literal used in array-like position.
 func ExpectedTableElementType(expected typ.Type, index int) typ.Type {
-	return expectedTableElementType(expected, index)
+	return expectedTableKeyType(expected, typ.LiteralInt(int64(index+1)))
 }
 
-func expectedTableElementType(expected typ.Type, index int) typ.Type {
+// ExpectedTableFieldType returns the contextual expected type for a named
+// field in a table literal. It uses write-side slot projection: table literals
+// provide a value for the key, while ordinary reads may be nilable because Lua
+// returns nil for absent keys.
+func ExpectedTableFieldType(expected typ.Type, name string) typ.Type {
+	return expectedTableKeyType(expected, typ.LiteralString(name))
+}
+
+func expectedTableKeyType(expected typ.Type, key typ.Type) typ.Type {
 	if expected == nil {
 		return nil
 	}
@@ -21,45 +28,18 @@ func expectedTableElementType(expected typ.Type, index int) typ.Type {
 
 	switch v := expected.(type) {
 	case *typ.Alias:
-		return expectedTableElementType(v.Target, index)
+		return expectedTableKeyType(v.Target, key)
 	case *typ.Optional:
-		return expectedTableElementType(v.Inner, index)
+		return expectedTableKeyType(v.Inner, key)
 	case *typ.Instantiated:
 		if resolved, err := querycore.ResolveInstantiated(v); err == nil {
-			return expectedTableElementType(resolved, index)
+			return expectedTableKeyType(resolved, key)
 		}
 		return nil
-	case *typ.Array:
-		return v.Element
-	case *typ.Tuple:
-		if index < 0 || index >= len(v.Elements) {
-			return nil
-		}
-		return v.Elements[index]
-	case *typ.Map:
-		if v.Key == nil {
-			return nil
-		}
-		switch v.Key.Kind() {
-		case kind.Integer, kind.Number:
-			return v.Value
-		default:
-			return nil
-		}
-	case *typ.Record:
-		if !v.HasMapComponent() || v.MapKey == nil {
-			return nil
-		}
-		switch v.MapKey.Kind() {
-		case kind.Integer, kind.Number:
-			return v.MapValue
-		default:
-			return nil
-		}
 	case *typ.Union:
 		var members []typ.Type
 		for _, member := range v.Members {
-			if elem := expectedTableElementType(member, index); elem != nil {
+			if elem := expectedTableKeyType(member, key); elem != nil {
 				members = append(members, elem)
 			}
 		}
@@ -70,7 +50,7 @@ func expectedTableElementType(expected typ.Type, index int) typ.Type {
 	case *typ.Intersection:
 		var members []typ.Type
 		for _, member := range v.Members {
-			if elem := expectedTableElementType(member, index); elem != nil {
+			if elem := expectedTableKeyType(member, key); elem != nil {
 				members = append(members, elem)
 			}
 		}
@@ -79,6 +59,9 @@ func expectedTableElementType(expected typ.Type, index int) typ.Type {
 		}
 		return typ.NewIntersection(members...)
 	default:
+		if slot, ok := querycore.IndexWrite(expected, key); ok {
+			return slot
+		}
 		return nil
 	}
 }

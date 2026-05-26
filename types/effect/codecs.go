@@ -25,6 +25,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 func init() {
@@ -840,7 +841,19 @@ func (flowIntoCodec) Encode(l Label, w Writer) error {
 		return err
 	}
 
-	return w.WriteString(f.Path)
+	if err := w.WriteString(f.TargetPath); err != nil {
+		return err
+	}
+	if err := w.WriteString(f.SourcePath); err != nil {
+		return err
+	}
+	if f.Remainder == nil {
+		return w.WriteByte(0)
+	}
+	if err := w.WriteByte(1); err != nil {
+		return err
+	}
+	return w.WriteType(f.Remainder)
 }
 
 func (flowIntoCodec) Decode(r Reader) (Label, error) {
@@ -859,7 +872,28 @@ func (flowIntoCodec) Decode(r Reader) (Label, error) {
 		return nil, err
 	}
 
-	return FlowInto{ParamIndex: int(param), ReturnIndex: int(ret), Path: path}, nil
+	sourcePath, err := r.ReadString()
+	if err != nil {
+		return nil, err
+	}
+	hasRemainder, err := r.ReadByte()
+	if err != nil {
+		return nil, err
+	}
+	var remainder typ.Type
+	if hasRemainder != 0 {
+		raw, err := r.ReadType()
+		if err != nil {
+			return nil, err
+		}
+		t, ok := raw.(typ.Type)
+		if !ok {
+			return nil, fmt.Errorf("flowinto remainder type: %T", raw)
+		}
+		remainder = t
+	}
+
+	return FlowInto{ParamIndex: int(param), ReturnIndex: int(ret), TargetPath: path, SourcePath: sourcePath, Remainder: remainder}, nil
 }
 
 // sendCodec handles Send effect serialization.

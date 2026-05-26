@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -27,11 +28,11 @@ func TestFunctionFactsSummaryProjection(t *testing.T) {
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {
-				Summary: []typ.Type{typ.String},
+				Summary: product.LiftVector([]typ.Type{typ.String}),
 			},
 		},
 	}
-	got := functionfact.ReturnSummaryFromMap(facts.FunctionFacts, cfg.SymbolID(1))
+	got := functionfact.ReturnSummary(facts.FunctionFacts, cfg.SymbolID(1))
 	if len(got) != 1 || got[0] != typ.String {
 		t.Fatalf("unexpected summary: %#v", got)
 	}
@@ -41,32 +42,32 @@ func TestFunctionFactsNarrowProjection(t *testing.T) {
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(2): {
-				Narrow: []typ.Type{typ.Number},
+				Narrow: product.LiftVector([]typ.Type{typ.Number}),
 			},
 		},
 	}
-	got := functionfact.NarrowSummaryFromMap(facts.FunctionFacts, cfg.SymbolID(2))
+	got := functionfact.NarrowSummary(facts.FunctionFacts, cfg.SymbolID(2))
 	if len(got) != 1 || got[0] != typ.Number {
 		t.Fatalf("unexpected narrow summary: %#v", got)
 	}
 }
 
-func TestFunctionFactsTypeProjection(t *testing.T) {
+func TestFunctionFactsSiblingProjection(t *testing.T) {
 	fn := typ.Func().Returns(typ.Boolean).Build()
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(3): {
-				Type: fn,
+				Signature: fn,
 			},
 		},
 	}
-	got := functionfact.TypeFromMap(facts.FunctionFacts, cfg.SymbolID(3))
+	got := functionfact.SiblingTypeProjection(facts.FunctionFacts, cfg.SymbolID(3), api.PhaseScopeCompute)
 	if !typ.TypeEquals(got, fn) {
 		t.Fatalf("unexpected function type: %#v", got)
 	}
 }
 
-func TestGetInterprocFacts_UsesStoredGraphParentHash(t *testing.T) {
+func TestInterprocFacts_UsesStoredGraphParentHash(t *testing.T) {
 	graph := cfg.Build(&ast.FunctionExpr{})
 	if graph == nil || graph.ID() == 0 {
 		t.Fatal("expected graph with stable ID")
@@ -84,18 +85,18 @@ func TestGetInterprocFacts_UsesStoredGraphParentHash(t *testing.T) {
 	key := api.KeyForGraph(graph, storedParent.Hash())
 	s.InterprocPrev.Facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(1): {Summary: []typ.Type{typ.String}},
+			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.String})},
 		},
 	}
 
-	got := s.GetInterprocFacts(graph, currentParent)
-	summary := functionfact.ReturnSummaryFromMap(got.FunctionFacts, cfg.SymbolID(1))
+	functionFacts := s.InterprocFacts(graph, currentParent).FunctionFacts()
+	summary := functionfact.ReturnSummary(functionFacts, cfg.SymbolID(1))
 	if len(summary) != 1 || !typ.TypeEquals(summary[0], typ.String) {
 		t.Fatalf("expected facts from stored parent hash, got %#v", summary)
 	}
 }
 
-func TestGetInterprocFacts_OverlaysCurrentIterationFacts(t *testing.T) {
+func TestInterprocFacts_OverlaysCurrentIterationFacts(t *testing.T) {
 	graph := cfg.Build(&ast.FunctionExpr{})
 	if graph == nil || graph.ID() == 0 {
 		t.Fatal("expected graph with stable ID")
@@ -108,24 +109,24 @@ func TestGetInterprocFacts_OverlaysCurrentIterationFacts(t *testing.T) {
 	key := api.KeyForGraph(graph, parent.Hash())
 	s.InterprocPrev.Facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(1): {Summary: []typ.Type{typ.String}},
+			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.String})},
 		},
 	}
 	s.InterprocNext.Facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(1): {Summary: []typ.Type{typ.Number}},
+			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.Number})},
 		},
 	}
 
-	got := s.GetInterprocFacts(graph, parent)
-	summary := functionfact.ReturnSummaryFromMap(got.FunctionFacts, cfg.SymbolID(1))
+	functionFacts := s.InterprocFacts(graph, parent).FunctionFacts()
+	summary := functionfact.ReturnSummary(functionFacts, cfg.SymbolID(1))
 	want := typ.NewUnion(typ.String, typ.Number)
 	if len(summary) != 1 || !typ.TypeEquals(summary[0], want) {
 		t.Fatalf("expected widened visible facts %v, got %#v", want, summary)
 	}
 }
 
-func TestGetInterprocFacts_ReturnsImmutableFactContainers(t *testing.T) {
+func TestInterprocFacts_ReturnsImmutableFactContainers(t *testing.T) {
 	graph := cfg.Build(&ast.FunctionExpr{})
 	if graph == nil || graph.ID() == 0 {
 		t.Fatal("expected graph with stable ID")
@@ -140,22 +141,22 @@ func TestGetInterprocFacts_ReturnsImmutableFactContainers(t *testing.T) {
 	s.InterprocPrev.Facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
-				Params:  []typ.Type{typ.String, typ.NewMap(typ.String, typ.Any)},
-				Summary: []typ.Type{typ.String},
+				Params:  product.LiftVector([]typ.Type{typ.String, typ.NewMap(typ.String, typ.Any)}),
+				Summary: product.LiftVector([]typ.Type{typ.String}),
 			},
 		},
 	}
 
-	facts := s.GetInterprocFacts(graph, parent)
-	fact := facts.FunctionFacts[sym]
-	fact.Params[1] = typ.Nil
-	facts.FunctionFacts[sym] = api.FunctionFact{Summary: []typ.Type{typ.Number}}
+	facts := s.InterprocFacts(graph, parent).FunctionFacts()
+	fact := facts[sym]
+	fact.Params[1] = product.FromType(typ.Nil)
+	facts[sym] = api.FunctionFact{Summary: product.LiftVector([]typ.Type{typ.Number})}
 
-	again := s.GetInterprocFacts(graph, parent)
-	if got := functionfact.ParameterEvidenceFromMap(again.FunctionFacts, sym)[1]; !typ.TypeEquals(got, typ.NewMap(typ.String, typ.Any)) {
+	again := s.InterprocFacts(graph, parent).FunctionFacts()
+	if got := functionfact.PublicParameterEvidence(again, sym)[1]; !typ.TypeEquals(got, typ.NewMap(typ.String, typ.Any)) {
 		t.Fatalf("fact parameter evidence mutation leaked into store: %v", got)
 	}
-	if got := functionfact.ReturnSummaryFromMap(again.FunctionFacts, sym); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+	if got := functionfact.ReturnSummary(again, sym); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
 		t.Fatalf("function fact mutation leaked into store: %v", got)
 	}
 }
@@ -167,15 +168,15 @@ func TestMergeInterprocFactsNext_ReconcilesDeltasWithinIteration(t *testing.T) {
 	broad := typ.Func().Param("path", typ.Any).Returns(typ.String).Build()
 
 	s := NewSessionStore()
-	first := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Type: refined}}}
+	first := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Signature: refined}}}
 	s.MergeInterprocFactsNext(key, first)
 	s.MergeInterprocFactsNext(key, api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Type: broad},
+			sym: {Signature: broad},
 		},
 	})
 
-	got := functionfact.TypeFromMap(s.InterprocNext.Facts[key].FunctionFacts, sym)
+	got := functionfact.SiblingTypeProjection(s.InterprocNext.Facts[key].FunctionFacts, sym, api.PhaseScopeCompute)
 	if !typ.TypeEquals(got, refined) {
 		t.Fatalf("expected update boundary to keep canonical refined function fact, got %v", got)
 	}
@@ -191,8 +192,8 @@ func TestFactInputs_RevalidateFactQueries(t *testing.T) {
 	calls := 0
 	q := db.NewQuery("trackedFactsTest", func(ctx *db.QueryContext, key api.GraphKey) int {
 		calls++
-		facts, _ := s.factInputs.factsFor(ctx, key)
-		if len(functionfact.ReturnSummaryFromMap(facts.FunctionFacts, sym)) == 0 {
+		functionFacts, _ := s.factInputs.functionFactsFor(ctx, key)
+		if len(functionfact.ReturnSummary(functionFacts, sym)) == 0 {
 			return 0
 		}
 		return 1
@@ -206,16 +207,162 @@ func TestFactInputs_RevalidateFactQueries(t *testing.T) {
 	}
 
 	delta := api.Facts{FunctionFacts: api.FunctionFacts{
-		sym: {Summary: []typ.Type{typ.String}},
+		sym: {Summary: product.LiftVector([]typ.Type{typ.String})},
 	}}
 	s.MergeInterprocFactsNext(key, delta)
+	if got := q.Get(ctx, key); got != 0 || calls != 1 {
+		t.Fatalf("same-iteration write query = %d calls=%d, want stable 0/1 before swap", got, calls)
+	}
+	s.FixpointSwap()
 	if got := q.Get(ctx, key); got != 1 || calls != 2 {
 		t.Fatalf("changed query = %d calls=%d, want 1/2", got, calls)
 	}
 
 	s.MergeInterprocFactsNext(key, delta)
+	s.FixpointSwap()
 	if got := q.Get(ctx, key); got != 1 || calls != 2 {
 		t.Fatalf("equal update query = %d calls=%d, want 1/2", got, calls)
+	}
+}
+
+func TestFactInputs_FunctionFactProjectionTracksOneSymbol(t *testing.T) {
+	database := db.New()
+	ctx := db.NewQueryContext(database)
+	s := NewSessionStoreWithDB(database)
+	key := api.GraphKey{GraphID: 1, ParentHash: 2}
+	sym7 := cfg.SymbolID(7)
+	sym8 := cfg.SymbolID(8)
+
+	calls := 0
+	q := db.NewQuery("trackedFunctionFactProjectionTest", func(ctx *db.QueryContext, key api.FunctionFactKey) int {
+		calls++
+		ff, ok := s.factInputs.functionFactFor(ctx, key)
+		if !ok {
+			return 0
+		}
+		return len(ff.Summary)
+	}, func(a, b int) bool { return a == b })
+	queryKey := api.FunctionFactKey{GraphKey: key, Symbol: sym7}
+
+	if got := q.Get(ctx, queryKey); got != 0 || calls != 1 {
+		t.Fatalf("initial projection = %d calls=%d, want 0/1", got, calls)
+	}
+
+	s.MergeInterprocFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+		sym7: {Summary: product.LiftVector([]typ.Type{typ.String})},
+		sym8: {Summary: product.LiftVector([]typ.Type{typ.Number})},
+	}})
+	s.FixpointSwap()
+	if got := q.Get(ctx, queryKey); got != 1 || calls != 2 {
+		t.Fatalf("changed projection = %d calls=%d, want 1/2", got, calls)
+	}
+
+	s.MergeInterprocFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+		sym8: {Summary: product.LiftVector([]typ.Type{typ.Number, typ.String})},
+	}})
+	s.FixpointSwap()
+	if got := q.Get(ctx, queryKey); got != 1 || calls != 2 {
+		t.Fatalf("unrelated symbol changed projection = %d calls=%d, want cached 1/2", got, calls)
+	}
+
+	s.MergeInterprocFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+		sym7: {Summary: product.LiftVector([]typ.Type{typ.String, typ.Number})},
+	}})
+	s.FixpointSwap()
+	if got := q.Get(ctx, queryKey); got != 2 || calls != 3 {
+		t.Fatalf("tracked symbol changed projection = %d calls=%d, want 2/3", got, calls)
+	}
+}
+
+func TestFactInputs_CapturedTypesUseRecursiveFactEquality(t *testing.T) {
+	database := db.New()
+	ctx := db.NewQueryContext(database)
+	s := NewSessionStoreWithDB(database)
+	key := api.GraphKey{GraphID: 1, ParentHash: 2}
+	sym := cfg.SymbolID(7)
+	left := typ.NewRecursive("Builder", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("add", typ.Func().Param("self", self).Returns(self).Build()).
+			Build()
+	})
+	right := typ.NewRecursive("Builder", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("add", typ.Func().Param("self", self).Returns(self).Build()).
+			Build()
+	})
+
+	calls := 0
+	q := db.NewQuery("trackedCapturedTypeProjectionTest", func(ctx *db.QueryContext, key api.CapturedTypeKey) int {
+		calls++
+		t, ok := s.factInputs.capturedTypeFor(ctx, key)
+		if !ok || t == nil {
+			return 0
+		}
+		return len(t.String())
+	}, func(a, b int) bool { return a == b })
+	queryKey := api.CapturedTypeKey{GraphKey: key, Symbol: sym}
+
+	if got := q.Get(ctx, queryKey); got != 0 || calls != 1 {
+		t.Fatalf("initial projection = %d calls=%d, want 0/1", got, calls)
+	}
+	s.MergeInterprocFactsNext(key, api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(left)}})
+	s.FixpointSwap()
+	if got := q.Get(ctx, queryKey); got == 0 || calls != 2 {
+		t.Fatalf("changed projection = %d calls=%d, want nonzero/2", got, calls)
+	}
+	s.MergeInterprocFactsNext(key, api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(right)}})
+	s.FixpointSwap()
+	if got := q.Get(ctx, queryKey); got == 0 || calls != 2 {
+		t.Fatalf("equivalent recursive projection = %d calls=%d, want cached nonzero/2", got, calls)
+	}
+}
+
+func TestFactInputs_PublishOnlyAtFixpointBoundary(t *testing.T) {
+	database := db.New()
+	ctx := db.NewQueryContext(database)
+	s := NewSessionStoreWithDB(database)
+	key := api.GraphKey{GraphID: 1, ParentHash: 2}
+
+	calls := 0
+	q := db.NewQuery("batchedTrackedFactsTest", func(ctx *db.QueryContext, key api.GraphKey) int {
+		calls++
+		functionFacts, _ := s.factInputs.functionFactsFor(ctx, key)
+		return len(functionFacts)
+	}, func(a, b int) bool { return a == b })
+
+	if got := q.Get(ctx, key); got != 0 || calls != 1 {
+		t.Fatalf("initial query = %d calls=%d, want 0/1", got, calls)
+	}
+
+	beforeWrites := database.Revision()
+	s.MergeInterprocFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+		cfg.SymbolID(7): {Summary: product.LiftVector([]typ.Type{typ.String})},
+	}})
+	s.MergeInterprocFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+		cfg.SymbolID(8): {Summary: product.LiftVector([]typ.Type{typ.Number})},
+	}})
+	if got := database.Revision(); got != beforeWrites {
+		t.Fatalf("next-product writes bumped query revision: got %d want %d", got, beforeWrites)
+	}
+	if got := q.Get(ctx, key); got != 0 || calls != 1 {
+		t.Fatalf("pre-swap query = %d calls=%d, want stable 0/1", got, calls)
+	}
+
+	s.FixpointSwap()
+	if got := database.Revision(); got != beforeWrites+1 {
+		t.Fatalf("fixpoint swap bumped revision %d times, got %d want %d", got-beforeWrites, got, beforeWrites+1)
+	}
+	if got := q.Get(ctx, key); got != 2 || calls != 2 {
+		t.Fatalf("synced query = %d calls=%d, want 2/2", got, calls)
+	}
+
+	afterSync := database.Revision()
+	s.FixpointSwap()
+	if got := database.Revision(); got != afterSync {
+		t.Fatalf("clean swap bumped revision: got %d want %d", got, afterSync)
+	}
+	if got := q.Get(ctx, key); got != 2 || calls != 2 {
+		t.Fatalf("clean query = %d calls=%d, want 2/2", got, calls)
 	}
 }
 
@@ -283,14 +430,14 @@ func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	s.InterprocNext.Facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {
-				Summary:    []typ.Type{typ.String},
+				Summary:    product.LiftVector([]typ.Type{typ.String}),
 				Refinement: &constraint.FunctionRefinement{Terminates: true},
 			},
 		},
 	}
 	s.InterprocNext.Facts[api.ModuleFactsKey()] = api.Facts{
 		ConstructorFields: api.ConstructorFields{
-			3: {"v": typ.Number},
+			3: {"v": product.FromType(typ.Number)},
 		},
 	}
 
@@ -312,7 +459,7 @@ func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	if len(s.InterprocNext.Facts) != 0 {
 		t.Fatalf("expected next facts reset, got %#v", s.InterprocNext.Facts)
 	}
-	if functionfact.RefinementFromMap(s.InterprocPrev.Facts[key].FunctionFacts, 1) == nil {
+	if functionfact.Refinement(s.InterprocPrev.Facts[key].FunctionFacts, 1) == nil {
 		t.Fatalf("expected function refinement in product fact, got %#v", s.InterprocPrev.Facts[key])
 	}
 	if len(s.InterprocPrev.Facts[api.ModuleFactsKey()].ConstructorFields[3]) != 1 {

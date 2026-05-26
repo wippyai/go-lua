@@ -16,7 +16,7 @@ import (
 // Manifest file format constants.
 const (
 	manifestMagic   = 0x4D414E49 // "MANI" - identifies valid manifest files
-	manifestVersion = 8          // v8: encode function type params + record open/map components
+	manifestVersion = 11         // v11: path-sensitive FlowInto effects
 )
 
 // Manifest decoding errors.
@@ -606,7 +606,7 @@ func ApplyFunctionSummary(fn *typ.Function, summary *FunctionSummary) *typ.Funct
 	// Build spec from summary constraints, fall back to fn's spec
 	if summary.Requires.HasConstraints() || summary.Ensures.HasConstraints() ||
 		len(summary.ExprRequires) > 0 || len(summary.ExprEnsures) > 0 {
-		spec := contract.NewSpec()
+		spec := cloneContractSpecForSummary(fn.Spec)
 		spec.Requires = constraint.And(spec.Requires, summary.Requires)
 		spec.Ensures = constraint.And(spec.Ensures, summary.Ensures)
 
@@ -634,6 +634,32 @@ func ApplyFunctionSummary(fn *typ.Function, summary *FunctionSummary) *typ.Funct
 	}
 
 	return builder.Build()
+}
+
+func cloneContractSpecForSummary(info typ.SpecInfo) *contract.Spec {
+	spec, ok := info.(*contract.Spec)
+	if !ok || spec == nil {
+		return contract.NewSpec()
+	}
+	clone := contract.NewSpec()
+	clone.Requires = spec.Requires
+	clone.Ensures = spec.Ensures
+	if len(spec.ExprRequires) > 0 {
+		clone.ExprRequires = append([]constraint.ExprCompare(nil), spec.ExprRequires...)
+	}
+	if len(spec.ExprEnsures) > 0 {
+		clone.ExprEnsures = append([]constraint.ExprCompare(nil), spec.ExprEnsures...)
+	}
+	clone.Effects = spec.Effects
+	if len(spec.Callbacks) > 0 {
+		clone.Callbacks = make(map[int]*contract.CallbackSpec, len(spec.Callbacks))
+		for idx, cb := range spec.Callbacks {
+			clone.Callbacks[idx] = cb.Clone()
+		}
+	}
+	clone.Return = spec.Return
+	clone.EnvReturns = spec.GetEnvReturns()
+	return clone
 }
 
 type summaryIndex struct {

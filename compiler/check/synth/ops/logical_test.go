@@ -112,6 +112,16 @@ func TestLogicalOrTyped_SoftOptionalPreservesLeftRuntimeAlternative(t *testing.T
 	}
 }
 
+func TestLogicalOrTyped_PreservesTupleTableValue(t *testing.T) {
+	elem := typ.NewRecord().Field("text", typ.String).Build()
+	left := typ.NewTuple(elem)
+	right := typ.NewRecord().SetOpen(true).Build()
+	result := LogicalOrTyped(left, right)
+	if !typ.TypeEquals(result, left) {
+		t.Fatalf("logical or extracted tuple element: got %v, want %v", result, left)
+	}
+}
+
 func TestLogicalOrTyped_Never(t *testing.T) {
 	result := LogicalOrTyped(typ.Never, typ.String)
 	if result.Kind() != kind.Never {

@@ -184,31 +184,43 @@ func checkTableAsArray(fields []FieldDef, elems []typ.Type, expected *typ.Array)
 func checkTableAsMap(fields []FieldDef, elems []typ.Type, expected *typ.Map) CheckResult {
 	var errors []CheckError
 
-	// Check named fields (string keys)
-	if expected.Key.Kind() == kind.String {
-		for _, f := range fields {
-			if !subtype.IsSubtype(f.Type, expected.Value) {
-				errors = append(errors, CheckError{
-					Message:  "field value type mismatch",
-					Expected: expected.Value,
-					Got:      f.Type,
-					Field:    f.Name,
-				})
-			}
+	for _, f := range fields {
+		slot := ExpectedTableFieldType(expected, f.Name)
+		if slot == nil {
+			errors = append(errors, CheckError{
+				Message: "named field not allowed in map context",
+				Got:     f.Type,
+				Field:   f.Name,
+			})
+			continue
+		}
+		if !subtype.IsSubtype(f.Type, slot) {
+			errors = append(errors, CheckError{
+				Message:  "field value type mismatch",
+				Expected: slot,
+				Got:      f.Type,
+				Field:    f.Name,
+			})
 		}
 	}
 
-	// Check array elements (integer keys)
-	if expected.Key.Kind() == kind.Integer || expected.Key.Kind() == kind.Number {
-		for i, elem := range elems {
-			if !subtype.IsSubtype(elem, expected.Value) {
-				errors = append(errors, CheckError{
-					Message:  "element type mismatch",
-					Expected: expected.Value,
-					Got:      elem,
-					Field:    string(rune('0' + i + 1)),
-				})
-			}
+	for i, elem := range elems {
+		slot := ExpectedTableElementType(expected, i)
+		if slot == nil {
+			errors = append(errors, CheckError{
+				Message: "array element not allowed in map context",
+				Got:     elem,
+				Field:   string(rune('0' + i + 1)),
+			})
+			continue
+		}
+		if !subtype.IsSubtype(elem, slot) {
+			errors = append(errors, CheckError{
+				Message:  "element type mismatch",
+				Expected: slot,
+				Got:      elem,
+				Field:    string(rune('0' + i + 1)),
+			})
 		}
 	}
 
@@ -296,11 +308,24 @@ func findBestUnionMember(fields []FieldDef, members []typ.Type) typ.Type {
 func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Record) CheckResult {
 	var errors []CheckError
 
-	// Array elements not allowed in record context (unless record has integer fields)
-	if len(elems) > 0 {
-		errors = append(errors, CheckError{
-			Message: "array elements not allowed in record context",
-		})
+	for i, elem := range elems {
+		slot := ExpectedTableElementType(expected, i)
+		if slot == nil {
+			errors = append(errors, CheckError{
+				Message: "array element not allowed in record context",
+				Got:     elem,
+				Field:   string(rune('0' + i + 1)),
+			})
+			continue
+		}
+		if !subtype.IsSubtype(elem, slot) {
+			errors = append(errors, CheckError{
+				Message:  "element type mismatch",
+				Expected: slot,
+				Got:      elem,
+				Field:    string(rune('0' + i + 1)),
+			})
+		}
 	}
 
 	// Build a map of provided fields
@@ -311,7 +336,7 @@ func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Recor
 
 	// Check each expected field
 	for _, ef := range expected.Fields {
-		pf, ok := provided[ef.Name]
+		_, ok := provided[ef.Name]
 		if !ok {
 			if !ef.Optional {
 				errors = append(errors, CheckError{
@@ -323,28 +348,24 @@ func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Recor
 
 			continue
 		}
-
-		expectedFieldType := ef.Type
-		if ef.Optional && !unwrap.IsOptionalLike(expectedFieldType) {
-			expectedFieldType = typ.NewOptional(expectedFieldType)
-		}
-		if !subtype.IsSubtype(pf, expectedFieldType) {
-			errors = append(errors, CheckError{
-				Message:  "field type mismatch",
-				Expected: expectedFieldType,
-				Got:      pf,
-				Field:    ef.Name,
-			})
-		}
 	}
 
-	// Check for extra fields not in expected
 	for _, f := range fields {
-		if expected.GetField(f.Name) == nil {
+		expectedFieldType := ExpectedTableFieldType(expected, f.Name)
+		if expectedFieldType == nil {
 			errors = append(errors, CheckError{
 				Message: "unexpected field",
 				Got:     f.Type,
 				Field:   f.Name,
+			})
+			continue
+		}
+		if !subtype.IsSubtype(f.Type, expectedFieldType) {
+			errors = append(errors, CheckError{
+				Message:  "field type mismatch",
+				Expected: expectedFieldType,
+				Got:      f.Type,
+				Field:    f.Name,
 			})
 		}
 	}

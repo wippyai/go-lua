@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -73,6 +74,35 @@ func (m mockFlowOps) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type 
 		return nil
 	}
 	return m.narrowed[path.Symbol]
+}
+
+func (m mockFlowOps) NarrowedTypeAtWithCondition(p cfg.Point, path constraint.Path, condition constraint.Condition) typ.Type {
+	t := m.NarrowedTypeAt(p, path)
+	if condition.IsFalse() {
+		return typ.Never
+	}
+	if t == nil || !condition.HasConstraints() {
+		return t
+	}
+	for i := 0; i < condition.NumDisjuncts(); i++ {
+		for _, c := range condition.DisjunctConstraints(i) {
+			switch v := c.(type) {
+			case constraint.Truthy:
+				if v.Path.Equal(path) {
+					return narrow.ToTruthy(t)
+				}
+			case constraint.Falsy:
+				if v.Path.Equal(path) {
+					return narrow.ToFalsy(t)
+				}
+			}
+		}
+	}
+	return t
+}
+
+func (m mockFlowOps) PreStateTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	return m.NarrowedTypeAt(p, path)
 }
 
 func (m mockFlowOps) BoundsAt(p cfg.Point, name string) (lower, upper int64, ok bool) {
@@ -200,40 +230,35 @@ func TestEngine_Narrow_NonNilWithFlow(t *testing.T) {
 	}
 }
 
-func TestEngine_CachesInitialized(t *testing.T) {
+func TestEngine_QueryMemoizationInitialized(t *testing.T) {
 	engine := New(Config{
 		Ctx:    db.NewQueryContext(db.New()),
 		Types:  mockTypeQuerier{},
 		Scopes: make(api.ScopeMap),
 	})
 
-	// Verify caches work by synthesizing same expression twice
 	expr := &ast.NumberExpr{Value: "42"}
 	t1 := engine.TypeOf(expr, 0)
 	t2 := engine.TypeOf(expr, 0)
 	if t1 != t2 {
-		t.Fatal("caching not working")
+		t.Fatal("query memoization changed expression type")
 	}
 }
 
-func TestEngine_UsesProvidedCaches(t *testing.T) {
-	preCache := make(api.Cache)
-	narrowCache := make(api.Cache)
-
+func TestEngine_NarrowQueryMemoizationInitialized(t *testing.T) {
 	engine := New(Config{
-		Ctx:         db.NewQueryContext(db.New()),
-		Types:       mockTypeQuerier{},
-		Scopes:      make(api.ScopeMap),
-		PreCache:    preCache,
-		NarrowCache: narrowCache,
+		Ctx:    db.NewQueryContext(db.New()),
+		Types:  mockTypeQuerier{},
+		Scopes: make(api.ScopeMap),
+		Flow:   mockFlowOps{},
+		Phase:  api.PhaseNarrowing,
 	})
 
-	// Verify caches work by synthesizing same expression twice
 	expr := &ast.NumberExpr{Value: "42"}
 	t1 := engine.TypeOf(expr, 0)
 	t2 := engine.TypeOf(expr, 0)
 	if t1 != t2 {
-		t.Fatal("caching not working with provided caches")
+		t.Fatal("narrow query memoization changed expression type")
 	}
 }
 

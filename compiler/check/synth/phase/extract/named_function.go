@@ -162,14 +162,14 @@ func (s *Synthesizer) hasDominatingDirectFunctionRebind(sym compcfg.SymbolID, st
 		return false
 	}
 
-	idom := cfganalysis.ComputeImmediateDominators(graph.CFG())
+	dom := cfganalysis.ImmediateDominatorsFor(s.deps.Ctx, graph.CFG())
 	evidence := s.graphEvidence(graph)
 	rebound := false
 
 	for _, assign := range evidence.Assignments {
 		assignPoint := assign.Point
 		info := assign.Info
-		if rebound || info == nil || assignPoint == p || !cfganalysis.StrictlyDominates(idom, assignPoint, p) {
+		if rebound || info == nil || assignPoint == p || !dom.StrictlyDominates(assignPoint, p) {
 			continue
 		}
 
@@ -193,7 +193,7 @@ func (s *Synthesizer) hasDominatingDirectFunctionRebind(sym compcfg.SymbolID, st
 		if rebound || info == nil || info.Symbol != sym || info.FuncExpr == nil || info.FuncExpr == stableFn {
 			continue
 		}
-		if !cfganalysis.StrictlyDominates(idom, defPoint, p) {
+		if !dom.StrictlyDominates(defPoint, p) {
 			continue
 		}
 		if info.TargetKind == compcfg.FuncDefField || info.TargetKind == compcfg.FuncDefGlobal {
@@ -222,6 +222,9 @@ func (s *Synthesizer) expectedGraphLocalFunctionValueType(
 	if s.hasDominatingDirectFunctionRebind(sym, fn, p) {
 		return nil
 	}
+	if projected := s.activeRecursiveFunctionType(fn, sc, expected); projected != nil {
+		return projected
+	}
 
 	return s.synthFunctionTypeWithCapturePoint(fn, sc, expected, p, captureTypes)
 }
@@ -230,28 +233,14 @@ func (s *Synthesizer) functionFactType(sym compcfg.SymbolID) typ.Type {
 	if s == nil || sym == 0 {
 		return nil
 	}
-	if t := functionfact.TypeFromMap(s.functionFactsInput(), sym); t != nil {
-		return t
-	}
-	if s.deps == nil || s.deps.Ctx == nil {
+	return functionfact.SiblingTypeProjection(s.functionFactsInput(), sym, s.phase)
+}
+
+func (s *Synthesizer) functionFactValueType(sym compcfg.SymbolID) typ.Type {
+	if s == nil || sym == 0 {
 		return nil
 	}
-	store := api.StoreFrom(s.deps.Ctx)
-	if store == nil {
-		return nil
-	}
-	defaultParent := s.deps.DefaultScope
-	if defaultParent == nil && s.deps.CheckCtx != nil {
-		defaultParent = s.deps.CheckCtx.TypeNames()
-	}
-	if s.deps.CheckCtx != nil {
-		if graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph); ok {
-			if t := functionfact.TypeForGraph(store, graph, sym, defaultParent, s.deps.FunctionFactCache); t != nil {
-				return t
-			}
-		}
-	}
-	return functionfact.TypeForSymbol(store, sym, defaultParent, s.deps.FunctionFactCache)
+	return functionfact.SynthesisTypeProjection(s.functionFactsInput(), sym, s.phase)
 }
 
 func (s *Synthesizer) stableLocalFunctionValueType(
@@ -277,19 +266,22 @@ func (s *Synthesizer) stableLocalFunctionValueType(
 			}
 		}
 	}
-	if factType := s.functionFactType(sym); factType != nil {
+	if factType := s.functionFactValueType(sym); factType != nil {
 		authoritative = factType
+	}
+	expectedFn, _ := unwrap.Optional(unwrap.Alias(authoritative)).(*typ.Function)
+	if projected := s.activeRecursiveFunctionType(fn, sc, expectedFn); projected != nil {
+		return projected
 	}
 	if !hasCaptures && authoritative != nil {
 		return authoritative
 	}
 
 	hasCallPointCaptureMutation := hasCaptures && s.hasDominatingCapturedMutation(fn, p)
-	if !hasCallPointCaptureMutation && authoritative != nil && !functionTypeNeedsBodyRepair(authoritative) {
+	if !hasCallPointCaptureMutation && authoritative != nil {
 		return authoritative
 	}
 
-	expectedFn, _ := unwrap.Optional(unwrap.Alias(authoritative)).(*typ.Function)
 	specialized := s.synthFunctionTypeWithCapturePoint(fn, sc, expectedFn, p, captureTypes)
 	if specialized != nil {
 		return specialized
@@ -304,138 +296,115 @@ func (s *Synthesizer) hasDominatingCapturedMutation(fn *ast.FunctionExpr, p cfg.
 	if s == nil || fn == nil || p == 0 || s.deps == nil || s.deps.CheckCtx == nil {
 		return false
 	}
-	graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph)
-	if !ok || graph == nil {
+	graph, bindings, ok := s.capturedMutationGraph()
+	if !ok {
 		return false
-	}
-	bindings := graph.Bindings()
-	if bindings == nil {
-		bindings = s.deps.ModuleBindings
 	}
 	captures := nonGlobalFunctionCaptures(bindings, fn)
 	if len(captures) == 0 {
 		return false
 	}
 
-	var defPoint cfg.Point
 	evidence := s.graphEvidence(graph)
-	for _, def := range evidence.FunctionDefinitions {
-		if defPoint != 0 {
-			break
-		}
-		info := def.FuncDef
-		if info != nil && info.FuncExpr == fn {
-			defPoint = def.Nested.Point
-		}
-	}
-	if defPoint == 0 {
-		for _, assign := range evidence.Assignments {
-			if defPoint != 0 {
-				break
-			}
-			point := assign.Point
-			info := assign.Info
-			if info == nil {
-				continue
-			}
-			info.EachTargetSource(func(_ int, _ compcfg.AssignTarget, source ast.Expr) {
-				if defPoint == 0 && source == fn {
-					defPoint = point
-				}
-			})
-		}
-	}
+	defPoint := capturedFunctionDefinitionPoint(evidence, fn)
 	if defPoint == 0 {
 		return false
 	}
 
-	idom := cfganalysis.ComputeImmediateDominators(graph.CFG())
-	mutated := false
+	dom := cfganalysis.ImmediateDominatorsFor(s.deps.Ctx, graph.CFG())
 	for _, assign := range evidence.Assignments {
-		point := assign.Point
-		info := assign.Info
-		if mutated || info == nil || point == defPoint {
+		if !assignmentBetweenDefinitionAndCall(assign, defPoint, p, dom) {
 			continue
 		}
-		if !cfganalysis.StrictlyDominates(idom, defPoint, point) || !cfganalysis.StrictlyDominates(idom, point, p) {
-			continue
-		}
-		info.EachTarget(func(_ int, target compcfg.AssignTarget) {
-			if mutated {
-				return
-			}
-			if _, ok := captures[target.Symbol]; ok && target.Symbol != 0 {
-				mutated = true
-				return
-			}
-			if _, ok := captures[target.BaseSymbol]; ok && target.BaseSymbol != 0 {
-				mutated = true
-			}
-		})
-	}
-	return mutated
-}
-
-func functionTypeNeedsBodyRepair(t typ.Type) bool {
-	fn := unwrap.Function(t)
-	if fn == nil {
-		return false
-	}
-	if typeContainsAny(fn.Variadic, 0) {
-		return true
-	}
-	for _, ret := range fn.Returns {
-		if typeContainsAny(ret, 0) {
+		if assignmentMutatesCapturedSymbol(assign.Info, captures) {
 			return true
 		}
 	}
 	return false
 }
 
-func typeContainsAny(t typ.Type, depth int) bool {
-	if t == nil || depth > typ.DefaultRecursionDepth {
+func (s *Synthesizer) capturedMutationGraph() (*compcfg.Graph, *bind.BindingTable, bool) {
+	graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph)
+	if !ok || graph == nil {
+		return nil, nil, false
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		bindings = s.deps.ModuleBindings
+	}
+	return graph, bindings, true
+}
+
+func capturedFunctionDefinitionPoint(evidence api.FlowEvidence, fn *ast.FunctionExpr) cfg.Point {
+	if p := definitionPointFromFunctionDefinitions(evidence.FunctionDefinitions, fn); p != 0 {
+		return p
+	}
+	return definitionPointFromAssignments(evidence.Assignments, fn)
+}
+
+func definitionPointFromFunctionDefinitions(defs []api.FunctionDefinitionEvidence, fn *ast.FunctionExpr) cfg.Point {
+	for _, def := range defs {
+		info := def.FuncDef
+		if info != nil && info.FuncExpr == fn {
+			return def.Nested.Point
+		}
+	}
+	return 0
+}
+
+func definitionPointFromAssignments(assignments []api.AssignmentEvidence, fn *ast.FunctionExpr) cfg.Point {
+	for _, assign := range assignments {
+		if assignmentDefinesFunction(assign, fn) {
+			return assign.Point
+		}
+	}
+	return 0
+}
+
+func assignmentDefinesFunction(assign api.AssignmentEvidence, fn *ast.FunctionExpr) bool {
+	if assign.Info == nil {
 		return false
 	}
-	t = unwrap.Alias(t)
-	if typ.IsAny(t) {
-		return true
+	found := false
+	assign.Info.EachTargetSource(func(_ int, _ compcfg.AssignTarget, source ast.Expr) {
+		if !found && source == fn {
+			found = true
+		}
+	})
+	return found
+}
+
+func assignmentBetweenDefinitionAndCall(assign api.AssignmentEvidence, defPoint cfg.Point, callPoint cfg.Point, dom *cfganalysis.ImmediateDominators) bool {
+	return assign.Info != nil &&
+		assign.Point != defPoint &&
+		dom.StrictlyDominates(defPoint, assign.Point) &&
+		dom.StrictlyDominates(assign.Point, callPoint)
+}
+
+func assignmentMutatesCapturedSymbol(info *compcfg.AssignInfo, captures map[cfg.SymbolID]struct{}) bool {
+	if info == nil || len(captures) == 0 {
+		return false
 	}
-	switch v := t.(type) {
-	case *typ.Optional:
-		return typeContainsAny(v.Inner, depth+1)
-	case *typ.Union:
-		for _, member := range v.Members {
-			if typeContainsAny(member, depth+1) {
-				return true
-			}
+	mutated := false
+	info.EachTarget(func(_ int, target compcfg.AssignTarget) {
+		if mutated {
+			return
 		}
-	case *typ.Intersection:
-		for _, member := range v.Members {
-			if typeContainsAny(member, depth+1) {
-				return true
-			}
-		}
-	case *typ.Array:
-		return typeContainsAny(v.Element, depth+1)
-	case *typ.Map:
-		return typeContainsAny(v.Key, depth+1) || typeContainsAny(v.Value, depth+1)
-	case *typ.Tuple:
-		for _, elem := range v.Elements {
-			if typeContainsAny(elem, depth+1) {
-				return true
-			}
-		}
-	case *typ.Record:
-		if typeContainsAny(v.MapKey, depth+1) || typeContainsAny(v.MapValue, depth+1) || typeContainsAny(v.Metatable, depth+1) {
+		mutated = targetTouchesCapture(target, captures)
+	})
+	return mutated
+}
+
+func targetTouchesCapture(target compcfg.AssignTarget, captures map[cfg.SymbolID]struct{}) bool {
+	if target.Symbol != 0 {
+		if _, ok := captures[target.Symbol]; ok {
 			return true
 		}
-		for _, field := range v.Fields {
-			if typeContainsAny(field.Type, depth+1) {
-				return true
-			}
+	}
+	if target.BaseSymbol != 0 {
+		if _, ok := captures[target.BaseSymbol]; ok {
+			return true
 		}
-	case *typ.Function:
-		return functionTypeNeedsBodyRepair(v)
 	}
 	return false
 }

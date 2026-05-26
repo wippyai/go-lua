@@ -140,7 +140,7 @@ local result: number = a()
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts
+	functionFacts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts()
 	if len(functionFacts) == 0 {
 		t.Error("expected non-empty return summaries for the call chain")
 	}
@@ -158,7 +158,7 @@ local result: number = a()
 				t.Errorf("empty return summary for %q", name)
 				continue
 			}
-			if typ.TypeEquals(fact.Summary[0], typ.Unknown) {
+			if typ.TypeEquals(fact.Summary[0].ProjectValue(), typ.Unknown) {
 				t.Errorf("return type for %q is unknown, expected number", name)
 			}
 		}
@@ -406,8 +406,8 @@ func TestFixpointUnification_EffectRowLabels(t *testing.T) {
 
 // TestFixpointUnification_ParameterEvidenceNestedPropagation verifies that parameter
 // evidence propagate correctly through nested function calls within function bodies.
-// This is a regression test for the early break bug where PropagateParameterEvidence
-// would fail to resolve callee symbols from identifiers when CalleeSymbol was zero.
+// This is a regression test for the identifier-resolution path that feeds
+// canonical interprocedural FunctionFact evidence when CalleeSymbol is zero.
 func TestFixpointUnification_ParameterEvidenceNestedPropagation(t *testing.T) {
 	// d calls c, c calls b, b has parameter x. Evidence should flow d->c->b.
 	// The key is that inner calls (c calling b) need identifier resolution.
@@ -446,7 +446,7 @@ local result: number = d()
 	checkedFunctions := make(map[string]bool)
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts
+	functionFacts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts()
 	for sym, fact := range functionFacts {
 		name := graph.NameOf(sym)
 		if name == "b" || name == "c" || name == "d" {
@@ -455,7 +455,7 @@ local result: number = d()
 				t.Errorf("empty return summary for %q", name)
 				continue
 			}
-			if typ.TypeEquals(fact.Summary[0], typ.Unknown) {
+			if typ.TypeEquals(fact.Summary[0].ProjectValue(), typ.Unknown) {
 				t.Errorf("return type for %q is unknown, expected number (evidence didn't propagate)", name)
 			}
 		}

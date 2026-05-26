@@ -199,6 +199,13 @@ func TestUnaryOp(t *testing.T) {
 		}
 	})
 
+	t.Run("length of optional array", func(t *testing.T) {
+		result := UnaryOp("#", typ.NewOptional(typ.NewArray(typ.Number)))
+		if result != typ.Integer {
+			t.Errorf("expected integer, got %v", result)
+		}
+	})
+
 	t.Run("length of boolean returns nil", func(t *testing.T) {
 		result := UnaryOp("#", typ.Boolean)
 		if result != nil {
@@ -638,6 +645,13 @@ func TestBinaryOp_Any(t *testing.T) {
 }
 
 func TestBinaryOp_Unknown(t *testing.T) {
+	t.Run("unknown equality returns boolean", func(t *testing.T) {
+		result := BinaryOp(typ.Unknown, "==", typ.Boolean)
+		if result != typ.Boolean {
+			t.Errorf("expected boolean, got %v", result)
+		}
+	})
+
 	t.Run("unknown + number keeps numeric type", func(t *testing.T) {
 		result := BinaryOp(typ.Unknown, "+", typ.Number)
 		if result != typ.Number {

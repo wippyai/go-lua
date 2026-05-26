@@ -43,8 +43,12 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, secondary *bind.Binding
 	return set.Slice()
 }
 
-// CallableCalleeSymbolCandidates expands callee candidates through direct-alias
-// chains and includes method symbols resolvable through alias receiver bases.
+// CallableCalleeSymbolCandidates returns deterministic callable symbols for a
+// callsite, expanded through direct-alias chains.
+//
+// For method calls, the resolved method symbol is the callable authority and is
+// emitted before receiver-path symbols. Resolver paths that need the receiver
+// identity should use ResolverCalleeSymbolCandidates instead.
 //
 // Candidate order is preserved and symbols are deduplicated.
 func CallableCalleeSymbolCandidates(
@@ -53,23 +57,27 @@ func CallableCalleeSymbolCandidates(
 	primary, secondary *bind.BindingTable,
 ) []cfg.SymbolID {
 	base := CalleeSymbolCandidates(info, primary, secondary)
-	if graph == nil {
-		return base
-	}
 	set := newSymbolSet(len(base)*2 + 2)
+	if IsMethodCallInfo(info) {
+		addCallableMethodSymbolCandidates(set, info, graph, primary, secondary)
+	}
+	if graph == nil {
+		if len(set.order) == 0 {
+			return base
+		}
+		for _, sym := range base {
+			set.Add(sym)
+		}
+		return set.Slice()
+	}
 	for _, sym := range base {
 		addAliasExpansion(set, graph, sym)
 	}
 
 	// Method calls may resolve method symbol only through an alias receiver base
 	// (for example, Alias:run() where Alias = T and T.run is defined).
-	if methodSym, ok := methodCalleeSymbolFromCall(primary, graph, info); ok {
-		addAliasExpansion(set, graph, methodSym)
-	}
-	if secondary != nil && secondary != primary {
-		if methodSym, ok := methodCalleeSymbolFromCall(secondary, graph, info); ok {
-			addAliasExpansion(set, graph, methodSym)
-		}
+	if !IsMethodCallInfo(info) {
+		addCallableMethodSymbolCandidates(set, info, graph, primary, secondary)
 	}
 
 	candidates := set.Slice()
@@ -77,6 +85,30 @@ func CallableCalleeSymbolCandidates(
 		return base
 	}
 	return candidates
+}
+
+func addCallableMethodSymbolCandidates(
+	set *symbolSet,
+	info *cfg.CallInfo,
+	graph *cfg.Graph,
+	primary, secondary *bind.BindingTable,
+) {
+	if methodSym, ok := methodCalleeSymbolFromCall(primary, graph, info); ok {
+		addCallableSymbolCandidate(set, graph, methodSym)
+	}
+	if secondary != nil && secondary != primary {
+		if methodSym, ok := methodCalleeSymbolFromCall(secondary, graph, info); ok {
+			addCallableSymbolCandidate(set, graph, methodSym)
+		}
+	}
+}
+
+func addCallableSymbolCandidate(set *symbolSet, graph *cfg.Graph, sym cfg.SymbolID) {
+	if graph == nil {
+		set.Add(sym)
+		return
+	}
+	addAliasExpansion(set, graph, sym)
 }
 
 // ResolverCalleeSymbolCandidates returns canonical callee candidates for

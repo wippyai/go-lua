@@ -3,6 +3,7 @@ package erreffect
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	abstractreturns "github.com/wippyai/go-lua/compiler/check/abstract/returns"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
@@ -54,7 +55,7 @@ func (c ErrorReturnConvention) canClassifyFunction(fn *typ.Function) bool {
 func (c ErrorReturnConvention) HasStrictInversePattern(
 	returns []api.ReturnEvidence,
 	solution *flow.Solution,
-	synth api.BaseSynth,
+	synth abstractreturns.ExprSynth,
 ) bool {
 	if !c.valid() {
 		return false
@@ -76,7 +77,7 @@ func AttachInferredErrorReturnSpec(
 	fn *typ.Function,
 	evidence api.FlowEvidence,
 	solution *flow.Solution,
-	synth api.Synth,
+	synth abstractreturns.ExprSynth,
 ) *typ.Function {
 	convention := CanonicalLuaValueErrorConvention()
 	if len(evidence.Returns) == 0 || synth == nil || !convention.canClassifyFunction(fn) {
@@ -85,11 +86,7 @@ func AttachInferredErrorReturnSpec(
 	if HasErrorReturnLabel(fn) {
 		return fn
 	}
-	base := synth.Narrow()
-	if base == nil {
-		base = synth
-	}
-	if !convention.HasStrictInversePattern(evidence.Returns, solution, base) {
+	if !convention.HasStrictInversePattern(evidence.Returns, solution, synth) {
 		return fn
 	}
 
@@ -112,7 +109,7 @@ func HasErrorReturnLabel(fn *typ.Function) bool {
 func HasStrictInverseReturnPattern(
 	returns []api.ReturnEvidence,
 	solution *flow.Solution,
-	synth api.BaseSynth,
+	synth abstractreturns.ExprSynth,
 	valueIdx int,
 	errorIdx int,
 ) bool {
@@ -150,7 +147,7 @@ func HasStrictInverseReturnPattern(
 			continue
 		}
 
-		values := synth.ExpandValues(info.Exprs, needed, p)
+		values := abstractreturns.ExpandValues(info.Exprs, needed, p, synth)
 		if valueIdx >= len(values) || errorIdx >= len(values) {
 			incompatible = true
 			continue
@@ -186,7 +183,7 @@ func HasStrictInverseReturnPattern(
 func delegatesErrorReturn(
 	info *cfg.ReturnInfo,
 	p cfg.Point,
-	synth api.BaseSynth,
+	synth abstractreturns.ExprSynth,
 	valueIdx int,
 	errorIdx int,
 ) bool {

@@ -6,6 +6,42 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 )
 
+type countingHashType struct {
+	name  string
+	hash  uint64
+	calls *int
+}
+
+func (c *countingHashType) Kind() kind.Kind { return kind.Record }
+func (c *countingHashType) String() string  { return c.name }
+func (c *countingHashType) Hash() uint64 {
+	*c.calls = *c.calls + 1
+	return c.hash
+}
+func (c *countingHashType) Equals(other Type) bool {
+	o, ok := other.(*countingHashType)
+	return ok && c.name == o.name && c.hash == o.hash
+}
+
+type countingProjectType struct {
+	name        string
+	hash        uint64
+	hashCalls   *int
+	equalsCalls *int
+}
+
+func (c *countingProjectType) Kind() kind.Kind { return kind.Record }
+func (c *countingProjectType) String() string  { return c.name }
+func (c *countingProjectType) Hash() uint64 {
+	*c.hashCalls = *c.hashCalls + 1
+	return c.hash
+}
+func (c *countingProjectType) Equals(other Type) bool {
+	*c.equalsCalls = *c.equalsCalls + 1
+	o, ok := other.(*countingProjectType)
+	return ok && c.name == o.name && c.hash == o.hash
+}
+
 func TestUnionEmpty(t *testing.T) {
 	u := NewUnion()
 	if u != Never {
@@ -17,6 +53,16 @@ func TestUnionSingle(t *testing.T) {
 	u := NewUnion(Number)
 	if u != Number {
 		t.Error("single-member union should unwrap to member")
+	}
+}
+
+func TestUnionDeduplicatesTransparentAlias(t *testing.T) {
+	u := NewUnion(NewAlias("AliasNumber", Number), Number)
+	if _, ok := u.(*Union); ok {
+		t.Fatalf("transparent alias should dedupe with target, got union %v", u)
+	}
+	if !TypeEquals(u, Number) {
+		t.Fatalf("deduped alias result should remain structurally equal to target, got %v", u)
 	}
 }
 
@@ -354,5 +400,337 @@ func TestUnionAnnotatedUnionMember(t *testing.T) {
 
 	if u == nil {
 		t.Fatal("union should not be nil")
+	}
+}
+
+func TestUnionConstructionHashesEachMemberOnce(t *testing.T) {
+	calls := 0
+	members := []Type{
+		&countingHashType{name: "third", hash: 30, calls: &calls},
+		&countingHashType{name: "first", hash: 10, calls: &calls},
+		&countingHashType{name: "second", hash: 20, calls: &calls},
+	}
+
+	u := NewUnion(members...)
+	if _, ok := u.(*Union); !ok {
+		t.Fatalf("NewUnion() = %T, want union", u)
+	}
+	if calls != len(members) {
+		t.Fatalf("Hash calls = %d, want %d", calls, len(members))
+	}
+}
+
+func TestUnionWithoutNilPreservesRecursiveMemberHashes(t *testing.T) {
+	recA := NewRecursive("Node", func(self Type) Type {
+		return NewRecord().Field("next", NewOptional(self)).Build()
+	})
+	recB := NewRecursive("Node", func(self Type) Type {
+		return NewRecord().Field("next", NewOptional(self)).Field("name", String).Build()
+	})
+	u, ok := NewUnion(Nil, recA, recB).(*Union)
+	if !ok {
+		t.Fatalf("expected union")
+	}
+
+	got := UnionWithoutNil(u)
+	want := NewUnion(recA, recB)
+	if !TypeEquals(got, want) {
+		t.Fatalf("UnionWithoutNil = %v, want %v", got, want)
+	}
+	if got.Hash() != want.Hash() {
+		t.Fatalf("hash = %d, want %d", got.Hash(), want.Hash())
+	}
+}
+
+func TestProjectUnionMembersFilterPreservesMemberHashes(t *testing.T) {
+	calls := 0
+	keep := &countingHashType{name: "keep", hash: 10, calls: &calls}
+	drop := &countingHashType{name: "drop", hash: 20, calls: &calls}
+	u, ok := NewUnion(keep, drop).(*Union)
+	if !ok {
+		t.Fatalf("expected union")
+	}
+	if calls != 2 {
+		t.Fatalf("NewUnion Hash calls = %d, want 2", calls)
+	}
+
+	got := ProjectUnionMembers(u, func(member Type) Type {
+		if member == drop {
+			return Never
+		}
+		return member
+	})
+	if got != keep {
+		t.Fatalf("ProjectUnionMembers = %v, want keep member", got)
+	}
+	if calls != 2 {
+		t.Fatalf("ProjectUnionMembers Hash calls = %d, want no additional calls beyond 2", calls)
+	}
+}
+
+func TestProjectUnionMembersFlatRewritePreservesMemberHashes(t *testing.T) {
+	calls := 0
+	first := &countingHashType{name: "first", hash: 10, calls: &calls}
+	second := &countingHashType{name: "second", hash: 30, calls: &calls}
+	u, ok := NewUnion(first, Boolean, second).(*Union)
+	if !ok {
+		t.Fatalf("expected union")
+	}
+	if calls != 2 {
+		t.Fatalf("NewUnion Hash calls = %d, want 2", calls)
+	}
+
+	got := ProjectUnionMembers(u, func(member Type) Type {
+		if member == Boolean {
+			return True
+		}
+		return member
+	})
+	if calls != 2 {
+		t.Fatalf("ProjectUnionMembers Hash calls = %d, want no additional calls beyond 2", calls)
+	}
+	want := NewUnion(first, True, second)
+	if !TypeEquals(got, want) {
+		t.Fatalf("ProjectUnionMembers = %v, want %v", got, want)
+	}
+}
+
+func TestProjectUnionMembersScalarRewriteDoesNotCompareCompoundMembers(t *testing.T) {
+	hashCalls := 0
+	equalsCalls := 0
+	first := &countingProjectType{name: "first", hash: 10, hashCalls: &hashCalls, equalsCalls: &equalsCalls}
+	second := &countingProjectType{name: "second", hash: 30, hashCalls: &hashCalls, equalsCalls: &equalsCalls}
+	u, ok := NewUnion(first, Boolean, second).(*Union)
+	if !ok {
+		t.Fatalf("expected union")
+	}
+	if hashCalls != 2 {
+		t.Fatalf("NewUnion Hash calls = %d, want 2", hashCalls)
+	}
+
+	got := ProjectUnionMembers(u, func(member Type) Type {
+		if member == Boolean {
+			return True
+		}
+		return member
+	})
+	if hashCalls != 2 {
+		t.Fatalf("ProjectUnionMembers Hash calls = %d, want no additional compound hashing", hashCalls)
+	}
+	if equalsCalls != 0 {
+		t.Fatalf("ProjectUnionMembers Equals calls = %d, want no compound equality checks", equalsCalls)
+	}
+	want := NewUnion(first, True, second)
+	if !TypeEquals(got, want) {
+		t.Fatalf("ProjectUnionMembers = %v, want %v", got, want)
+	}
+}
+
+func TestProjectUnionMembersCoalescesRecursiveFamiliesAfterScalarRewrite(t *testing.T) {
+	base := NewRecursive("SuiteA", func(self Type) Type {
+		return NewRecord().
+			Field("name", String).
+			Field("children", NewArray(self)).
+			Build()
+	})
+	withPath := NewRecursive("SuiteB", func(self Type) Type {
+		return NewRecord().
+			Field("name", String).
+			Field("children", NewArray(self)).
+			Field("full_path", String).
+			Build()
+	})
+	u, ok := NewUnion(base, Boolean, withPath).(*Union)
+	if !ok {
+		t.Fatalf("expected union")
+	}
+
+	got := ProjectUnionMembers(u, func(member Type) Type {
+		if member == Boolean {
+			return True
+		}
+		return member
+	})
+	union, ok := got.(*Union)
+	if !ok {
+		t.Fatalf("projected recursive family union = %T %v, want union", got, got)
+	}
+	recursiveCount := 0
+	for _, member := range union.Members {
+		if _, ok := member.(*Recursive); ok {
+			recursiveCount++
+		}
+	}
+	if recursiveCount != 1 {
+		t.Fatalf("projected union kept %d recursive family members, want 1: %v", recursiveCount, got)
+	}
+}
+
+func TestOptionalFieldKeepsProductCoalescingAtPolicyBoundaryAfterNilRemoval(t *testing.T) {
+	base := NewRecursive("SuiteA", func(self Type) Type {
+		return NewRecord().
+			Field("name", String).
+			Field("children", NewArray(self)).
+			Build()
+	})
+	withPath := NewRecursive("SuiteB", func(self Type) Type {
+		return NewRecord().
+			Field("name", String).
+			Field("children", NewArray(self)).
+			Field("full_path", String).
+			Build()
+	})
+	record := NewRecord().
+		OptField("parent", NewUnion(Nil, base, withPath)).
+		Build()
+	field := record.GetField("parent")
+	if field == nil {
+		t.Fatal("missing parent field")
+	}
+	if _, ok := field.Type.(*Union); !ok {
+		t.Fatalf("optional recursive family field = %T %v, want explicit union before policy coalescing", field.Type, field.Type)
+	}
+	if _, ok := CoalesceProductUnion(field.Type).(*Recursive); !ok {
+		t.Fatalf("explicit recursive family coalescing = %T %v, want recursive product", field.Type, field.Type)
+	}
+}
+
+func TestNewOptionalUnionPreservesRecursiveMemberHashes(t *testing.T) {
+	recA := NewRecursive("Node", func(self Type) Type {
+		return NewRecord().Field("next", NewOptional(self)).Build()
+	})
+	recB := NewRecursive("Node", func(self Type) Type {
+		return NewRecord().Field("next", NewOptional(self)).Field("name", String).Build()
+	})
+	u := NewUnion(recA, recB)
+
+	got := NewOptional(u)
+	want := NewUnion(Nil, recA, recB)
+	if !TypeEquals(got, want) {
+		t.Fatalf("NewOptional(union) = %v, want %v", got, want)
+	}
+	if got.Hash() != want.Hash() {
+		t.Fatalf("hash = %d, want %d", got.Hash(), want.Hash())
+	}
+}
+
+func TestIntersectionConstructionHashesEachMemberOnce(t *testing.T) {
+	calls := 0
+	members := []Type{
+		&countingHashType{name: "third", hash: 30, calls: &calls},
+		&countingHashType{name: "first", hash: 10, calls: &calls},
+		&countingHashType{name: "second", hash: 20, calls: &calls},
+	}
+
+	i := NewIntersection(members...)
+	if _, ok := i.(*Intersection); !ok {
+		t.Fatalf("NewIntersection() = %T, want intersection", i)
+	}
+	if calls != len(members) {
+		t.Fatalf("Hash calls = %d, want %d", calls, len(members))
+	}
+}
+
+func TestUnionCallableSurfaceFlag(t *testing.T) {
+	dataMembers := make([]Type, 0, 1024)
+	for i := 0; i < cap(dataMembers); i++ {
+		dataMembers = append(dataMembers, NewRecord().Field("id", LiteralInt(int64(i))).Build())
+	}
+	data := NewUnion(dataMembers...)
+	if HasCallableSurface(data) {
+		t.Fatalf("data-only union reported callable surface: %v", data)
+	}
+
+	callable := NewUnion(data, NewOptional(Func().Returns(String).Build()))
+	if !HasCallableSurface(callable) {
+		t.Fatalf("union with optional function did not report callable surface: %v", callable)
+	}
+}
+
+func TestNewUnionRecursiveMembersUseNodeIdentityDedup(t *testing.T) {
+	left := NewRecursive("Suite", func(self Type) Type {
+		return NewRecord().
+			Field("children", NewArray(self)).
+			Build()
+	})
+	right := NewRecursive("Suite", func(self Type) Type {
+		return NewRecord().
+			Field("children", NewArray(self)).
+			Field("full_path", String).
+			Build()
+	})
+
+	if got := NewUnion(left, left); got != left {
+		t.Fatalf("same recursive node should dedupe by identity, got %T %[1]v", got)
+	}
+	union, ok := NewUnion(left, right).(*Union)
+	if !ok {
+		t.Fatalf("distinct recursive nodes should remain a union")
+	}
+	if len(union.Members) != 2 {
+		t.Fatalf("recursive union members = %d, want 2", len(union.Members))
+	}
+	if !union.Contains(left) || !union.Contains(right) {
+		t.Fatalf("recursive union does not contain both identity members: %v", union)
+	}
+}
+
+func TestNewUnionRecursiveMembersDoNotStructuralDedupeEquivalentFamilies(t *testing.T) {
+	left := NewRecursive("Suite", func(self Type) Type {
+		return NewRecord().
+			Field("children", NewArray(self)).
+			Build()
+	})
+	right := NewRecursive("Suite", func(self Type) Type {
+		return NewRecord().
+			Field("children", NewArray(self)).
+			Build()
+	})
+
+	union, ok := NewUnion(left, right).(*Union)
+	if !ok {
+		t.Fatalf("distinct recursive nodes must remain explicit union members")
+	}
+	if len(union.Members) != 2 {
+		t.Fatalf("recursive union members = %d, want 2", len(union.Members))
+	}
+	if !union.Contains(left) || !union.Contains(right) {
+		t.Fatalf("recursive union does not contain both identity members: %v", union)
+	}
+}
+
+func TestRecordCallableSurfaceFlag(t *testing.T) {
+	data := NewRecord().
+		Field("id", String).
+		Field("items", NewArray(Func().Returns(String).Build())).
+		Build()
+	if RecordHasCallableSurface(data) {
+		t.Fatalf("callable inside data container should not be a record callable surface")
+	}
+
+	methodRecord := NewRecord().
+		Field("build", Func().Returns(String).Build()).
+		Build()
+	if !RecordHasCallableSurface(methodRecord) {
+		t.Fatalf("direct function field should be a record callable surface")
+	}
+
+	mapRecord := NewRecord().
+		MapComponent(String, NewOptional(Func().Returns(String).Build())).
+		Build()
+	if !RecordHasCallableSurface(mapRecord) {
+		t.Fatalf("callable map value should be a record callable surface")
+	}
+}
+
+func TestHasCallableSurfaceFastPathDoesNotAllocateForDataShapes(t *testing.T) {
+	record := NewRecord().Field("id", String).Build()
+	data := NewUnion(record, NewArray(Integer), NewMap(String, Number))
+
+	if got := testing.AllocsPerRun(100, func() {
+		_ = HasCallableSurface(record)
+		_ = HasCallableSurface(data)
+	}); got != 0 {
+		t.Fatalf("HasCallableSurface data-shape allocations = %v, want 0", got)
 	}
 }

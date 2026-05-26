@@ -1377,6 +1377,16 @@ func sameTypeInstance(a, b typ.Type) bool {
 	if ob, ok := b.(*typ.Optional); ok {
 		return sameTypeInstance(a, ob.Inner)
 	}
+	// Named interfaces have nominal identity: the named type IS the instance, so
+	// equal name + method structure denote the same path even when interning
+	// returns a canonical instance whose pointer differs from the declaration.
+	// Other kinds keep strict pointer identity, since two structurally equal but
+	// distinct instances (e.g. records) are distinct runtime paths.
+	if ai, ok := a.(*typ.Interface); ok {
+		if bi, ok := b.(*typ.Interface); ok {
+			return ai.Equals(bi)
+		}
+	}
 	return false
 }
 
@@ -1396,21 +1406,27 @@ func indexMatchesTypeExact(t typ.Type, key typ.Type, other typ.Type, resolver na
 }
 
 // typesEquivalent checks if two types are equivalent for field/index matching.
-// For named interfaces, requires pointer identity (not structural equivalence).
-// For instantiated generics, uses bidirectional subtype to handle
-// structurally identical types that may have different hashes.
+// For named interfaces, requires nominal identity (name + method structure) so
+// the relation survives structural interning, which returns a canonical instance
+// whose pointer differs from the original declaration. For instantiated generics,
+// uses bidirectional subtype to handle structurally identical types that may have
+// different hashes.
 func typesEquivalent(a, b typ.Type) bool {
 	if a == nil || b == nil {
 		return false
 	}
 
-	// Named interfaces require pointer identity, not structural equivalence.
-	// Two interfaces with the same name/structure from different declarations
-	// are not equivalent. Check this first to avoid hash collision issues.
-	_, aIsInterface := a.(*typ.Interface)
-	_, bIsInterface := b.(*typ.Interface)
+	// Named interfaces compare by nominal identity (name + method structure), not
+	// raw pointer identity. Interface.Equals encodes that identity: same name and
+	// method set are the same nominal type, distinct names stay distinct. Pointer
+	// identity implies nominal identity, so this is behavior-preserving for a
+	// single canonical declaration instance while also matching the equal-but-
+	// distinct instances that interning produces. Check this first to avoid
+	// structural cross-kind equivalence with non-interface types.
+	ai, aIsInterface := a.(*typ.Interface)
+	bi, bIsInterface := b.(*typ.Interface)
 	if aIsInterface || bIsInterface {
-		return a == b
+		return aIsInterface && bIsInterface && ai.Equals(bi)
 	}
 
 	// Structural equality check via Equals.

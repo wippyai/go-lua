@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // mockWriter implements effect.Writer for testing
@@ -14,6 +15,7 @@ type mockWriter struct {
 	buf   *bytes.Buffer
 	err   error
 	calls []string
+	types []any
 }
 
 func newMockWriter() *mockWriter {
@@ -67,18 +69,21 @@ func (w *mockWriter) WriteType(t any) error {
 	}
 
 	w.calls = append(w.calls, fmt.Sprintf("WriteType(%v)", t))
+	w.types = append(w.types, t)
 
 	return nil
 }
 
 // mockReader implements effect.Reader for testing
 type mockReader struct {
-	buf *bytes.Buffer
-	err error
+	buf       *bytes.Buffer
+	err       error
+	types     []any
+	typeIndex int
 }
 
-func newMockReader(data []byte) *mockReader {
-	return &mockReader{buf: bytes.NewBuffer(data)}
+func newMockReader(data []byte, types ...any) *mockReader {
+	return &mockReader{buf: bytes.NewBuffer(data), types: types}
 }
 
 func (r *mockReader) ReadByte() (byte, error) {
@@ -129,7 +134,12 @@ func (r *mockReader) ReadType() (any, error) {
 		return nil, r.err
 	}
 
-	return nil, nil
+	if r.typeIndex >= len(r.types) {
+		return nil, nil
+	}
+	t := r.types[r.typeIndex]
+	r.typeIndex++
+	return t, nil
 }
 
 func TestThrowCodec_Key(t *testing.T) {
@@ -2247,9 +2257,10 @@ func TestFlowIntoCodec_RoundTrip(t *testing.T) {
 		name string
 		fi   FlowInto
 	}{
-		{"simple path", FlowInto{ParamIndex: 0, ReturnIndex: 0, Path: "inner"}},
-		{"nested path", FlowInto{ParamIndex: 1, ReturnIndex: 0, Path: "data.value"}},
-		{"empty path", FlowInto{ParamIndex: 0, ReturnIndex: 1, Path: ""}},
+		{"simple path", FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: "inner"}},
+		{"nested path", FlowInto{ParamIndex: 1, SourcePath: "payload", ReturnIndex: 0, TargetPath: "data.value"}},
+		{"empty path", FlowInto{ParamIndex: 0, ReturnIndex: 1}},
+		{"remainder", FlowInto{ParamIndex: 0, SourcePath: "message", ReturnIndex: 0, TargetPath: "message", Remainder: typ.String}},
 	}
 
 	codec := flowIntoCodec{}
@@ -2261,7 +2272,7 @@ func TestFlowIntoCodec_RoundTrip(t *testing.T) {
 				t.Fatalf("Encode() error = %v", err)
 			}
 
-			r := newMockReader(w.buf.Bytes())
+			r := newMockReader(w.buf.Bytes(), w.types...)
 
 			decoded, err := codec.Decode(r)
 			if err != nil {
@@ -2281,8 +2292,16 @@ func TestFlowIntoCodec_RoundTrip(t *testing.T) {
 				t.Errorf("ReturnIndex = %d, want %d", fi.ReturnIndex, tt.fi.ReturnIndex)
 			}
 
-			if fi.Path != tt.fi.Path {
-				t.Errorf("Path = %q, want %q", fi.Path, tt.fi.Path)
+			if fi.TargetPath != tt.fi.TargetPath {
+				t.Errorf("TargetPath = %q, want %q", fi.TargetPath, tt.fi.TargetPath)
+			}
+
+			if fi.SourcePath != tt.fi.SourcePath {
+				t.Errorf("SourcePath = %q, want %q", fi.SourcePath, tt.fi.SourcePath)
+			}
+
+			if !typ.TypeEquals(fi.Remainder, tt.fi.Remainder) {
+				t.Errorf("Remainder = %v, want %v", fi.Remainder, tt.fi.Remainder)
 			}
 		})
 	}

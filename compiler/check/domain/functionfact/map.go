@@ -3,17 +3,147 @@ package functionfact
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// Parts is the per-symbol evidence used to publish canonical function facts.
-type Parts struct {
-	Params     []typ.Type
-	Summary    []typ.Type
-	Narrow     []typ.Type
-	Type       typ.Type
-	Refinement *constraint.FunctionRefinement
+// Evidence is the per-symbol evidence admitted into canonical function facts.
+type Evidence struct {
+	Params      []typ.Type
+	BodyParams  []typ.Type
+	EntryParams []typ.Type
+	Summary     []typ.Type
+	Narrow      []typ.Type
+	Signature   *typ.Function
+	Refinement  *constraint.FunctionRefinement
+	EnvReturns  []contract.EnvReturnSpec
+}
+
+// Builder admits per-symbol evidence into canonical function-fact products.
+type Builder struct {
+	evidence map[cfg.SymbolID]Evidence
+}
+
+// NewBuilder creates an empty FunctionFact evidence builder.
+func NewBuilder() *Builder {
+	return &Builder{}
+}
+
+func (b *Builder) update(sym cfg.SymbolID, update func(*Evidence)) {
+	if b == nil || sym == 0 || update == nil {
+		return
+	}
+	if b.evidence == nil {
+		b.evidence = make(map[cfg.SymbolID]Evidence)
+	}
+	part := b.evidence[sym]
+	update(&part)
+	b.evidence[sym] = part
+}
+
+// AddPublicParams admits public caller-obligation parameter evidence.
+func (b *Builder) AddPublicParams(sym cfg.SymbolID, params []typ.Type) {
+	if len(params) == 0 {
+		return
+	}
+	b.update(sym, func(part *Evidence) {
+		part.Params = paramevidence.JoinCallVectors(part.Params, params)
+	})
+}
+
+// AddBodyParams admits body-contract parameter evidence.
+func (b *Builder) AddBodyParams(sym cfg.SymbolID, params []typ.Type) {
+	if len(params) == 0 {
+		return
+	}
+	b.update(sym, func(part *Evidence) {
+		part.BodyParams = paramevidence.JoinBodyVectors(part.BodyParams, params)
+	})
+}
+
+// AddEntryParams admits observed call-entry parameter evidence.
+func (b *Builder) AddEntryParams(sym cfg.SymbolID, params []typ.Type) {
+	if len(params) == 0 {
+		return
+	}
+	b.update(sym, func(part *Evidence) {
+		part.EntryParams = paramevidence.JoinEntryVectors(part.EntryParams, params)
+	})
+}
+
+// EntryParamsFacts converts call-entry evidence vectors into canonical
+// FunctionFacts.
+func EntryParamsFacts(entries map[cfg.SymbolID][]typ.Type) api.FunctionFacts {
+	if len(entries) == 0 {
+		return nil
+	}
+	builder := NewBuilder()
+	for _, sym := range cfg.SortedSymbolIDs(entries) {
+		builder.AddEntryParams(sym, entries[sym])
+	}
+	return builder.Build()
+}
+
+// AddSummary admits declared/pre-flow return summary evidence.
+func (b *Builder) AddSummary(sym cfg.SymbolID, summary []typ.Type) {
+	if len(summary) == 0 {
+		return
+	}
+	b.update(sym, func(part *Evidence) {
+		part.Summary = returnsummary.Merge(part.Summary, summary)
+	})
+}
+
+// AddNarrow admits post-flow return summary evidence.
+func (b *Builder) AddNarrow(sym cfg.SymbolID, narrow []typ.Type) {
+	if len(narrow) == 0 {
+		return
+	}
+	b.update(sym, func(part *Evidence) {
+		part.Narrow = returnsummary.Merge(part.Narrow, narrow)
+	})
+}
+
+// AddSignature admits a source signature.
+func (b *Builder) AddSignature(sym cfg.SymbolID, sig *typ.Function) {
+	if sig == nil {
+		return
+	}
+	b.update(sym, func(part *Evidence) {
+		part.Signature = MergeSignature(part.Signature, sig)
+	})
+}
+
+// AddRefinement admits function refinement evidence.
+func (b *Builder) AddRefinement(sym cfg.SymbolID, refinement *constraint.FunctionRefinement) {
+	if refinement == nil {
+		return
+	}
+	b.update(sym, func(part *Evidence) {
+		part.Refinement = MergeRefinement(part.Refinement, refinement)
+	})
+}
+
+// AddEnvReturns admits environment-parameterized return evidence.
+func (b *Builder) AddEnvReturns(sym cfg.SymbolID, envReturns []contract.EnvReturnSpec) {
+	if len(envReturns) == 0 {
+		return
+	}
+	b.update(sym, func(part *Evidence) {
+		part.EnvReturns = JoinEnvReturns(part.EnvReturns, envReturns)
+	})
+}
+
+// Build returns the admitted canonical function facts.
+func (b *Builder) Build() api.FunctionFacts {
+	if b == nil || len(b.evidence) == 0 {
+		return nil
+	}
+	return Build(b.evidence)
 }
 
 func fromFact(sym cfg.SymbolID, fact api.FunctionFact) api.FunctionFacts {
@@ -27,13 +157,13 @@ func fromFact(sym cfg.SymbolID, fact api.FunctionFact) api.FunctionFacts {
 	return api.FunctionFacts{sym: ff}
 }
 
-// FromPart builds canonical function facts from one per-symbol evidence part.
-func FromPart(sym cfg.SymbolID, part Parts) api.FunctionFacts {
-	return fromFact(sym, factFromPart(part))
+// BuildOne builds canonical function facts from one per-symbol evidence value.
+func BuildOne(sym cfg.SymbolID, evidence Evidence) api.FunctionFacts {
+	return fromFact(sym, factFromEvidence(evidence))
 }
 
-// FromParts builds canonical function facts from per-symbol evidence.
-func FromParts(parts map[cfg.SymbolID]Parts) api.FunctionFacts {
+// Build builds canonical function facts from per-symbol evidence.
+func Build(parts map[cfg.SymbolID]Evidence) api.FunctionFacts {
 	if len(parts) == 0 {
 		return nil
 	}
@@ -42,7 +172,7 @@ func FromParts(parts map[cfg.SymbolID]Parts) api.FunctionFacts {
 		if sym == 0 {
 			continue
 		}
-		ff := Join(api.FunctionFact{}, factFromPart(parts[sym]))
+		ff := Join(api.FunctionFact{}, factFromEvidence(parts[sym]))
 		if Empty(ff) {
 			continue
 		}
@@ -54,68 +184,15 @@ func FromParts(parts map[cfg.SymbolID]Parts) api.FunctionFacts {
 	return out
 }
 
-// FromMaps builds canonical function facts from parallel evidence maps.
-func FromMaps(
-	params map[cfg.SymbolID][]typ.Type,
-	summaries map[cfg.SymbolID][]typ.Type,
-	types map[cfg.SymbolID]typ.Type,
-) api.FunctionFacts {
-	total := len(params) + len(summaries) + len(types)
-	if total == 0 {
-		return nil
-	}
-	parts := make(map[cfg.SymbolID]Parts, total)
-	addParts(params, parts, func(part *Parts, v []typ.Type) { part.Params = v })
-	addParts(summaries, parts, func(part *Parts, v []typ.Type) { part.Summary = v })
-	for sym, t := range types {
-		if sym == 0 {
-			continue
-		}
-		part := parts[sym]
-		part.Type = t
-		parts[sym] = part
-	}
-	return FromParts(parts)
-}
-
-// FromSummaries builds canonical function facts from return summaries.
-func FromSummaries(summaries map[cfg.SymbolID][]typ.Type) api.FunctionFacts {
-	return FromSummariesExcept(summaries, 0)
-}
-
-// FromSummariesExcept builds canonical function facts from return summaries,
-// excluding one symbol when exclude is nonzero.
-func FromSummariesExcept(summaries map[cfg.SymbolID][]typ.Type, exclude cfg.SymbolID) api.FunctionFacts {
-	if len(summaries) == 0 {
-		return nil
-	}
-	parts := make(map[cfg.SymbolID]Parts, len(summaries))
-	for sym, summary := range summaries {
-		if sym == 0 || sym == exclude {
-			continue
-		}
-		parts[sym] = Parts{Summary: summary}
-	}
-	return FromParts(parts)
-}
-
-func addParts(src map[cfg.SymbolID][]typ.Type, dst map[cfg.SymbolID]Parts, set func(*Parts, []typ.Type)) {
-	for sym, value := range src {
-		if sym == 0 {
-			continue
-		}
-		part := dst[sym]
-		set(&part, value)
-		dst[sym] = part
-	}
-}
-
-func factFromPart(part Parts) api.FunctionFact {
+func factFromEvidence(part Evidence) api.FunctionFact {
 	return api.FunctionFact{
-		Params:     part.Params,
-		Summary:    part.Summary,
-		Narrow:     part.Narrow,
-		Type:       part.Type,
-		Refinement: part.Refinement,
+		Params:      product.LiftVector(part.Params),
+		BodyParams:  product.LiftVector(part.BodyParams),
+		EntryParams: product.LiftVector(part.EntryParams),
+		Summary:     product.LiftVector(part.Summary),
+		Narrow:      product.LiftVector(part.Narrow),
+		Signature:   part.Signature,
+		Refinement:  part.Refinement,
+		EnvReturns:  part.EnvReturns,
 	}
 }

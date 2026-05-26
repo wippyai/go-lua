@@ -1,6 +1,9 @@
 package core
 
-import "github.com/wippyai/go-lua/types/typ"
+import (
+	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/typ"
+)
 
 // FuncResolver adapts field and index lookup functions to a resolver interface.
 //
@@ -47,4 +50,34 @@ func Resolver() *FuncResolver {
 		FieldFunc: Field,
 		IndexFunc: Index,
 	}
+}
+
+// QueryResolver adapts memoized TypeOps to the context-free resolver interface
+// used by flow/narrowing domains inside a single query evaluation.
+type QueryResolver struct {
+	ctx *db.QueryContext
+	ops TypeOps
+}
+
+// NewQueryResolver returns a resolver that routes pure field/index queries
+// through the shared query system for the current analysis context.
+func NewQueryResolver(ctx *db.QueryContext, ops TypeOps) *QueryResolver {
+	if ctx == nil || ops == nil {
+		return nil
+	}
+	return &QueryResolver{ctx: ctx, ops: ops}
+}
+
+func (r *QueryResolver) Field(t typ.Type, name string) (typ.Type, bool) {
+	if r == nil || r.ops == nil || r.ctx == nil {
+		return nil, false
+	}
+	return r.ops.Field(r.ctx, t, name)
+}
+
+func (r *QueryResolver) Index(t typ.Type, key typ.Type) (typ.Type, bool) {
+	if r == nil || r.ops == nil || r.ctx == nil {
+		return nil, false
+	}
+	return r.ops.Index(r.ctx, t, key)
 }

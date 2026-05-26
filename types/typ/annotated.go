@@ -18,10 +18,16 @@ type Annotation struct {
 // The underlying type determines structural typing while annotations
 // add runtime constraints like @min(0), @max(100), @pattern("^.+$").
 type Annotated struct {
-	Inner       Type
-	Annotations []Annotation
-	hash        uint64
-	strCache    stringCache
+	Inner                 Type
+	Annotations           []Annotation
+	hash                  uint64
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
 }
 
 // NewAnnotated creates an annotated type wrapper.
@@ -38,9 +44,15 @@ func NewAnnotated(inner Type, annotations []Annotation) Type {
 		h = internal.HashCombine(h, internal.FnvString(ann.Name))
 	}
 	return &Annotated{
-		Inner:       inner,
-		Annotations: annotations,
-		hash:        h,
+		Inner:                 inner,
+		Annotations:           annotations,
+		hash:                  h,
+		containsAny:           knownContainsAny(inner),
+		containsNever:         knownContainsNever(inner),
+		containsTypeParam:     knownContainsTypeParam(inner),
+		containsInstantiated:  knownContainsInstantiated(inner),
+		containsRecursive:     knownContainsRecursive(inner),
+		containsOpenRecursive: knownContainsOpenRecursive(inner),
 	}
 }
 

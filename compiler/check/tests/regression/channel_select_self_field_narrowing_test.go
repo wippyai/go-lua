@@ -60,7 +60,7 @@ func TestChannelSelectSelfFieldNarrowing_DoesNotPoisonSiblingFields(t *testing.T
 		b:run()
 	`
 
-	result := testutil.Check(source, testutil.WithStdlib())
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("channel", ChannelManifestWithSend()))
 	if result.HasError() {
 		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}

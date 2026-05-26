@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // ExtractTableMutatorAssignments extracts table mutator assignments (table.insert-like)
@@ -41,12 +40,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 		}
 
 		sc := fc.Scopes[p]
-		valueType := typ.Unknown
-		if fc.Derived != nil && fc.Derived.Synth != nil {
-			if t := fc.Derived.Synth(valueExpr, p); t != nil {
-				valueType = t
-			}
-		}
+		valueType := synthMutationValue(fc, valueExpr, p)
 		valueType = resolve.Ref(valueType, sc)
 
 		// Build value path for flow-resolved lookup at solve time
@@ -73,6 +67,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 				},
 				ValuePath: valuePath,
 				ValueType: valueType,
+				Value:     mutationValueTemplate(fc, valueExpr),
 			})
 			continue
 		}
@@ -95,6 +90,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 			},
 			ValuePath: valuePath,
 			ValueType: valueType,
+			Value:     mutationValueTemplate(fc, valueExpr),
 		}
 
 		if ident, ok := attr.Key.(*ast.IdentExpr); ok && ident.Value != "" {

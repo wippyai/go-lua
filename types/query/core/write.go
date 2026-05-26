@@ -13,7 +13,18 @@ import (
 // because missing Lua table keys produce nil. Writes target the slot itself:
 // a value must be compatible with every possible slot the key may denote.
 func IndexWrite(t typ.Type, keyType typ.Type) (typ.Type, bool) {
-	return indexWriteDepth(t, keyType, 0)
+	return indexWriteDepth(t, keyType, writeProjection, 0)
+}
+
+// IndexWriteObligation resolves the universal value obligation for t[key] = v.
+//
+// IndexWrite returns a reusable slot projection only when the possible write
+// targets have one stable projection. This query is stricter: it returns the
+// type that a write value must satisfy for every possible slot the key may
+// denote. Heterogeneous dynamic record keys therefore produce an intersection
+// obligation instead of disappearing into "no projection".
+func IndexWriteObligation(t typ.Type, keyType typ.Type) (typ.Type, bool) {
+	return indexWriteDepth(t, keyType, writeObligation, 0)
 }
 
 // IndexDelete reports whether t[key] = nil is a valid table deletion.
@@ -26,7 +37,14 @@ func IndexDelete(t typ.Type, keyType typ.Type) bool {
 	return indexDeleteDepth(t, keyType, 0)
 }
 
-func indexWriteDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
+type writeQueryMode uint8
+
+const (
+	writeProjection writeQueryMode = iota
+	writeObligation
+)
+
+func indexWriteDepth(t, keyType typ.Type, mode writeQueryMode, depth int) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
 	}
@@ -64,12 +82,12 @@ func indexWriteDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			return indexResult{}
 		},
 		Record: func(r *typ.Record) indexResult {
-			return recordIndexWriteType(r, keyType, depth+1)
+			return recordIndexWriteType(r, keyType, mode, depth+1)
 		},
 		Union: func(u *typ.Union) indexResult {
 			var slots []typ.Type
 			for _, member := range u.Members {
-				slot, ok := indexWriteDepth(member, keyType, depth+1)
+				slot, ok := indexWriteDepth(member, keyType, mode, depth+1)
 				if !ok {
 					return indexResult{}
 				}
@@ -80,25 +98,25 @@ func indexWriteDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 		Intersection: func(in *typ.Intersection) indexResult {
 			var slots []typ.Type
 			for _, member := range in.Members {
-				if slot, ok := indexWriteDepth(member, keyType, depth+1); ok {
+				if slot, ok := indexWriteDepth(member, keyType, mode, depth+1); ok {
 					slots = append(slots, slot)
 				}
 			}
 			return meetWritableTypes(slots)
 		},
 		Optional: func(o *typ.Optional) indexResult {
-			slot, ok := indexWriteDepth(o.Inner, keyType, depth+1)
+			slot, ok := indexWriteDepth(o.Inner, keyType, mode, depth+1)
 			return indexResult{t: slot, ok: ok}
 		},
 		Recursive: func(rec *typ.Recursive) indexResult {
 			if rec.Body == nil || rec.Body == rec {
 				return indexResult{}
 			}
-			slot, ok := indexWriteDepth(rec.Body, keyType, depth+1)
+			slot, ok := indexWriteDepth(rec.Body, keyType, mode, depth+1)
 			return indexResult{t: slot, ok: ok}
 		},
 		Alias: func(a *typ.Alias) indexResult {
-			slot, ok := indexWriteDepth(a.Target, keyType, depth+1)
+			slot, ok := indexWriteDepth(a.Target, keyType, mode, depth+1)
 			return indexResult{t: slot, ok: ok}
 		},
 		Instantiated: func(inst *typ.Instantiated) indexResult {
@@ -106,14 +124,14 @@ func indexWriteDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			if err != nil {
 				return indexResult{}
 			}
-			slot, ok := indexWriteDepth(resolved, keyType, depth+1)
+			slot, ok := indexWriteDepth(resolved, keyType, mode, depth+1)
 			return indexResult{t: slot, ok: ok}
 		},
 		TypeParam: func(tp *typ.TypeParam) indexResult {
 			if tp.Constraint == nil {
 				return indexResult{}
 			}
-			slot, ok := indexWriteDepth(tp.Constraint, keyType, depth+1)
+			slot, ok := indexWriteDepth(tp.Constraint, keyType, mode, depth+1)
 			return indexResult{t: slot, ok: ok}
 		},
 		Default: func(t typ.Type) indexResult {
@@ -185,7 +203,7 @@ func indexDeleteDepth(t, keyType typ.Type, depth int) bool {
 	})
 }
 
-func recordIndexWriteType(r *typ.Record, keyType typ.Type, depth int) indexResult {
+func recordIndexWriteType(r *typ.Record, keyType typ.Type, mode writeQueryMode, depth int) indexResult {
 	if r == nil || keyType == nil {
 		return indexResult{}
 	}
@@ -200,7 +218,7 @@ func recordIndexWriteType(r *typ.Record, keyType typ.Type, depth int) indexResul
 			}
 			return indexResult{}
 		}
-		if source == writeSlotMixed {
+		if source == writeSlotMixed && mode == writeProjection {
 			return uniformWritableType(slots)
 		}
 		return meetWritableTypes(slots)
@@ -213,7 +231,10 @@ func recordIndexWriteType(r *typ.Record, keyType typ.Type, depth int) indexResul
 		if r.HasMapComponent() && keyMatchesIndex(keyType, r.MapKey) {
 			slots = append(slots, r.MapValue)
 		}
-		return uniformWritableType(slots)
+		if mode == writeProjection {
+			return uniformWritableType(slots)
+		}
+		return meetWritableTypes(slots)
 	}
 	if r.HasMapComponent() && keyMatchesIndex(keyType, r.MapKey) {
 		return indexResult{t: r.MapValue, ok: r.MapValue != nil}

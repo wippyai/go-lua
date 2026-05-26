@@ -104,6 +104,180 @@ func TestFieldUnion(t *testing.T) {
 	})
 }
 
+func TestFieldUnionDeduplicatesEquivalentFieldResultsBeforeJoin(t *testing.T) {
+	members := make([]typ.Type, 0, 4096)
+	for i := 0; i < cap(members); i++ {
+		members = append(members, typ.NewRecord().
+			Field("child", typ.NewRecord().Field("id", typ.String).Build()).
+			Build())
+	}
+	union := &typ.Union{Members: members}
+
+	got, ok := Field(union, "child")
+	if !ok {
+		t.Fatal("expected duplicate union field to resolve")
+	}
+	want := typ.NewRecord().Field("id", typ.String).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("Field(union, child) = %v, want %v", got, want)
+	}
+}
+
+func TestFieldAliasDiscriminatedUnionCommonField(t *testing.T) {
+	typeA := typ.NewAlias("A", typ.NewRecord().
+		Field("tag", typ.LiteralString("a")).
+		Field("value", typ.String).
+		Build())
+	typeB := typ.NewAlias("B", typ.NewRecord().
+		Field("tag", typ.LiteralString("b")).
+		Field("value", typ.Number).
+		Build())
+	union := typ.NewUnion(typeA, typeB)
+
+	got, ok := Field(union, "value")
+	if !ok {
+		t.Fatal("expected alias union common field to resolve")
+	}
+	want := typ.NewUnion(typ.Number, typ.String)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("Field(A|B, value) = %v, want %v", got, want)
+	}
+}
+
+func TestFieldUnionCoalescesNonDiscriminantLiteralRecordResults(t *testing.T) {
+	members := make([]typ.Type, 0, 512)
+	for i := 0; i < cap(members); i++ {
+		members = append(members, typ.NewRecord().
+			Field("child", typ.NewRecord().
+				Field("name", typ.LiteralString("suite")).
+				Field("full_path", typ.LiteralString("suite")).
+				Field("index", typ.LiteralInt(int64(i))).
+				Build()).
+			Build())
+	}
+	union := &typ.Union{Members: members}
+
+	got, ok := Field(union, "child")
+	if !ok {
+		t.Fatal("expected duplicate union field to resolve")
+	}
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("Field(union, child) = %T %[1]v, want coalesced record", got)
+	}
+	index := rec.GetField("index")
+	if index == nil || !typ.TypeEquals(index.Type, typ.Integer) {
+		t.Fatalf("coalesced index field = %v, want integer", index)
+	}
+}
+
+func TestFieldUnionCoalescesNonDiscriminantLiteralFieldResults(t *testing.T) {
+	members := make([]typ.Type, 0, 512)
+	for i := 0; i < cap(members); i++ {
+		members = append(members, typ.NewRecord().
+			Field("full_path", typ.LiteralString("suite")).
+			Field("index", typ.LiteralInt(int64(i))).
+			Build())
+	}
+	union := &typ.Union{Members: members}
+
+	got, ok := Field(union, "index")
+	if !ok {
+		t.Fatal("expected union field to resolve")
+	}
+	if !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("Field(union, index) = %v, want integer", got)
+	}
+}
+
+func TestFieldUnionJoinsArrayFieldResultsPointwise(t *testing.T) {
+	members := make([]typ.Type, 0, 512)
+	for i := 0; i < cap(members); i++ {
+		child := typ.NewRecord().
+			Field("name", typ.LiteralString("suite")).
+			Field("line", typ.LiteralInt(int64(i))).
+			Build()
+		members = append(members, typ.NewRecord().
+			Field("children", typ.NewArray(child)).
+			Build())
+	}
+	union := &typ.Union{Members: members}
+
+	got, ok := Field(union, "children")
+	if !ok {
+		t.Fatal("expected children field to resolve")
+	}
+	arr, ok := got.(*typ.Array)
+	if !ok {
+		t.Fatalf("Field(union, children) = %T %[1]v, want array", got)
+	}
+	elem, ok := arr.Element.(*typ.Record)
+	if !ok {
+		t.Fatalf("children element = %T %[1]v, want record", arr.Element)
+	}
+	line := elem.GetField("line")
+	if line == nil || !typ.TypeEquals(line.Type, typ.Integer) {
+		t.Fatalf("children line field = %v, want integer", line)
+	}
+}
+
+func TestFieldUnionFlattensNestedUnionFieldResults(t *testing.T) {
+	child := typ.NewUnion(typ.String, typ.Integer)
+	members := make([]typ.Type, 0, 512)
+	for i := 0; i < cap(members); i++ {
+		members = append(members, typ.NewRecord().Field("child", child).Build())
+	}
+	union := &typ.Union{Members: members}
+
+	got, ok := Field(union, "child")
+	if !ok {
+		t.Fatal("expected nested union field to resolve")
+	}
+	if !typ.TypeEquals(got, child) {
+		t.Fatalf("Field(union, child) = %v, want %v", got, child)
+	}
+}
+
+func TestFieldUnionAggregatesMapComponentNilabilityOnce(t *testing.T) {
+	payloadMembers := make([]typ.Type, 0, 256)
+	for i := 0; i < cap(payloadMembers); i++ {
+		payloadMembers = append(payloadMembers, typ.NewRecord().
+			Field("index", typ.LiteralInt(int64(i))).
+			Field("name", typ.LiteralString("case")).
+			Build())
+	}
+	payload := typ.NewUnion(payloadMembers...)
+
+	members := make([]typ.Type, 0, 1024)
+	for i := 0; i < cap(members); i++ {
+		members = append(members, typ.NewRecord().
+			MapComponent(typ.String, payload).
+			Build())
+	}
+	union := &typ.Union{Members: members}
+
+	got, ok := Field(union, "dynamic")
+	if !ok {
+		t.Fatal("expected map-component field lookup to resolve")
+	}
+	inner, nilable := typ.SplitNilableFieldType(got)
+	if !nilable {
+		t.Fatalf("Field(union, dynamic) = %v, want nilable map value", got)
+	}
+	rec, ok := inner.(*typ.Record)
+	if !ok {
+		t.Fatalf("Field(union, dynamic) inner = %T %[1]v, want coalesced payload record", inner)
+	}
+	index := rec.GetField("index")
+	if index == nil || !typ.TypeEquals(index.Type, typ.Integer) {
+		t.Fatalf("coalesced dynamic index field = %v, want integer", index)
+	}
+	name := rec.GetField("name")
+	if name == nil || !typ.TypeEquals(name.Type, typ.LiteralString("case")) {
+		t.Fatalf("coalesced dynamic name field = %v, want literal case", name)
+	}
+}
+
 func TestMissingFieldReadsNil_TableLikeContainers(t *testing.T) {
 	tests := []struct {
 		name string

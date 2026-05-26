@@ -178,14 +178,14 @@ func TestMapJoin_UnionNotExpected(t *testing.T) {
 // {} with {[K]: nil}. When both branches assign via variable key,
 // the result should be {[K]: V?}.
 func TestMapJoin_EmptyRecordAndMapOfNil(t *testing.T) {
-	// Use variable key to trigger indexer widening (not field assignment)
+	// Use variable key to trigger map-write widening (not field assignment)
 	source := `
 		local function f(flag: boolean, key: string)
 			local t = {}
 			if flag then
-				t[key] = {value = 1}  -- widening via indexer
+				t[key] = {value = 1}  -- widening via map write
 			else
-				t[key] = nil  -- widening via indexer
+				t[key] = nil  -- widening via map write
 			end
 			-- At join: should be {[string]: {value: number}?}
 			local v = t["any"]

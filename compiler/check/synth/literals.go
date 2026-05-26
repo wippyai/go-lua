@@ -360,6 +360,9 @@ func expectedArgsForDirectCallbackLiteral(
 	info *cfg.CallInfo,
 	p cfg.Point,
 ) ([]typ.Type, typ.Type) {
+	if !callHasDirectFunctionLiteralArg(info) {
+		return nil, nil
+	}
 	provider, ok := engine.(callQueryProvider)
 	if !ok || provider == nil || graph == nil || info == nil {
 		return nil, nil
@@ -383,6 +386,18 @@ func expectedArgsForDirectCallbackLiteral(
 	}
 	inferred := ops.InferCall(ctx, def)
 	return inferred.ExpectedArgs, inferred.ExpectedVariadic
+}
+
+func callHasDirectFunctionLiteralArg(info *cfg.CallInfo) bool {
+	if info == nil {
+		return false
+	}
+	for _, arg := range info.Args {
+		if _, ok := arg.(*ast.FunctionExpr); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func shallowCallArgTypes(engine LiteralSynth, args []ast.Expr, p cfg.Point) []typ.Type {

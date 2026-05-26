@@ -474,6 +474,7 @@ func ConstraintsFromCallOnReturn(
 	argPaths := make([]constraint.Path, len(callArgs))
 	for i, arg := range callArgs {
 		argPaths[i] = path.FromExprWithBindingsAt(arg, constResolver, bindings, graph, p)
+		argPaths[i] = fillCallArgPathSymbol(info, i, argPaths[i], graph)
 	}
 
 	ce := &ConditionExtractor{
@@ -498,6 +499,9 @@ func ConstraintsFromCallOnReturn(
 	must := make([]constraint.Constraint, 0, len(templateMust))
 	retTargets := callReturnTargets(info, p, graph)
 	for _, c := range templateMust {
+		if returnKeyCollectionConstraint(c) {
+			continue
+		}
 		switch v := c.(type) {
 		case constraint.Falsy:
 			if idx, ok := constraint.PlaceholderArgIndex(v.Path, len(callArgs)); ok && argPaths[idx].IsEmpty() {
@@ -543,6 +547,29 @@ func ConstraintsFromCallOnReturn(
 		return constraint.Condition{}
 	}
 	return cond
+}
+
+func returnKeyCollectionConstraint(c constraint.Constraint) bool {
+	keyOf, ok := c.(constraint.KeyOf)
+	return ok && keyOf.Table.IsPlaceholder() && constraint.IsReturnPath(keyOf.Key)
+}
+
+func fillCallArgPathSymbol(info *cfg.CallInfo, runtimeIdx int, p constraint.Path, graph *cfg.Graph) constraint.Path {
+	if info == nil || p.Symbol != 0 || callsite.IsMethodCallInfo(info) {
+		return p
+	}
+	if runtimeIdx < 0 || runtimeIdx >= len(info.ArgSymbols) {
+		return p
+	}
+	sym := info.ArgSymbols[runtimeIdx]
+	if sym == 0 {
+		return p
+	}
+	p.Symbol = sym
+	if p.Root == "" && graph != nil {
+		p.Root = graph.NameOf(sym)
+	}
+	return p
 }
 
 func runtimeCallArgs(info *cfg.CallInfo) []ast.Expr {

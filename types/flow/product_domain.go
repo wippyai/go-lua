@@ -272,24 +272,66 @@ func (d *ProductDomain) applyKeyOfTypeNarrowing(keyOf constraint.KeyOf) bool {
 	if tableType == nil {
 		return true
 	}
-	keyDomain := core.KeyType(tableType)
-	if keyDomain == nil || keyDomain.Kind().IsPlaceholder() {
+
+	keyBase := d.TypeAt(keyKey)
+	tableNarrowed := refineTableByPresentEntryKey(tableType, keyBase)
+	if tableNarrowed == nil || tableNarrowed.Kind().IsNever() {
+		d.Type.Unsat = true
+		return false
+	}
+	if !typ.TypeEquals(tableType, tableNarrowed) {
+		d.Type.Narrowed[tableKey] = tableNarrowed
+		tableType = tableNarrowed
+	}
+
+	keyDomain := core.EntryKeyType(tableType)
+	if keyDomain == nil {
+		d.Type.Unsat = true
+		return false
+	}
+	if keyDomain.Kind().IsPlaceholder() {
 		return true
 	}
 
-	base := d.TypeAt(keyKey)
 	narrowed := keyDomain
-	if base != nil {
-		narrowed = narrow.Intersect(base, keyDomain)
+	if keyBase != nil {
+		if !keyTypesOverlap(keyBase, keyDomain) {
+			d.Type.Unsat = true
+			return false
+		}
+		narrowed = narrow.Intersect(keyBase, keyDomain)
 	}
 	if narrowed == nil || narrowed.Kind().IsNever() {
 		d.Type.Unsat = true
 		return false
 	}
-	if base == nil || !typ.TypeEquals(base, narrowed) {
+	if keyBase == nil || !typ.TypeEquals(keyBase, narrowed) {
 		d.Type.Narrowed[keyKey] = narrowed
 	}
 	return true
+}
+
+func refineTableByPresentEntryKey(tableType, keyType typ.Type) typ.Type {
+	return narrow.FilterByMatch(tableType, func(member typ.Type) bool {
+		entryKey := core.EntryKeyType(member)
+		if entryKey == nil {
+			return false
+		}
+		if keyType == nil || keyType.Kind().IsPlaceholder() || entryKey.Kind().IsPlaceholder() {
+			return true
+		}
+		return keyTypesOverlap(keyType, entryKey)
+	}, false)
+}
+
+func keyTypesOverlap(a, b typ.Type) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Kind().IsPlaceholder() || b.Kind().IsPlaceholder() {
+		return true
+	}
+	return narrow.TypesOverlap(a, b)
 }
 
 func (d *ProductDomain) resolvePathKey(path constraint.Path) constraint.PathKey {
@@ -306,103 +348,10 @@ func atomsContainContradiction(atoms []constraint.Atom, equalities *theory.EGrap
 	if len(atoms) < 2 {
 		return false
 	}
-
-	type truthState uint8
-	const (
-		seenTruthy truthState = 1 << iota
-		seenFalsy
-		seenNil
-		seenNotNil
-	)
-	var truth map[constraint.PathKey]truthState
-
-	type typeStateKey struct {
-		path constraint.PathKey
-		key  narrow.TypeKey
-	}
-	var hasType map[typeStateKey]bool
-	var notType map[typeStateKey]bool
-
-	canonical := func(path constraint.PathKey) constraint.PathKey {
-		if path == "" || equalities == nil {
-			return path
-		}
-		return equalities.Find(path)
-	}
-
-	addTruth := func(path constraint.PathKey, state truthState) bool {
-		path = canonical(path)
-		if path == "" {
-			return false
-		}
-		if truth == nil {
-			truth = make(map[constraint.PathKey]truthState)
-		}
-		next := truth[path] | state
-		if next&seenTruthy != 0 && (next&seenFalsy != 0 || next&seenNil != 0) {
-			return true
-		}
-		if next&seenNil != 0 && next&seenNotNil != 0 {
-			return true
-		}
-		truth[path] = next
-		return false
-	}
-
+	tracker := newAtomContradictionTracker(equalities)
 	for _, atom := range atoms {
-		switch atom.Kind {
-		case constraint.AtomKindTruthy:
-			if atom.Left.IsVar() && addTruth(atom.Left.Path, seenTruthy) {
-				return true
-			}
-		case constraint.AtomKindFalsy:
-			if atom.Left.IsVar() && addTruth(atom.Left.Path, seenFalsy) {
-				return true
-			}
-		case constraint.AtomKindEq:
-			if atom.Left.IsVar() && atom.Right.IsNil() && addTruth(atom.Left.Path, seenNil) {
-				return true
-			}
-			if atom.Right.IsVar() && atom.Left.IsNil() && addTruth(atom.Right.Path, seenNil) {
-				return true
-			}
-		case constraint.AtomKindNe:
-			if atom.Left.IsVar() && atom.Right.IsNil() && addTruth(atom.Left.Path, seenNotNil) {
-				return true
-			}
-			if atom.Right.IsVar() && atom.Left.IsNil() && addTruth(atom.Right.Path, seenNotNil) {
-				return true
-			}
-		case constraint.AtomKindHasType:
-			if atom.Left.IsVar() {
-				path := canonical(atom.Left.Path)
-				if path == "" {
-					continue
-				}
-				k := typeStateKey{path: path, key: atom.TypeKey}
-				if notType != nil && notType[k] {
-					return true
-				}
-				if hasType == nil {
-					hasType = make(map[typeStateKey]bool)
-				}
-				hasType[k] = true
-			}
-		case constraint.AtomKindNotHasType:
-			if atom.Left.IsVar() {
-				path := canonical(atom.Left.Path)
-				if path == "" {
-					continue
-				}
-				k := typeStateKey{path: path, key: atom.TypeKey}
-				if hasType != nil && hasType[k] {
-					return true
-				}
-				if notType == nil {
-					notType = make(map[typeStateKey]bool)
-				}
-				notType[k] = true
-			}
+		if tracker.add(atom) {
+			return true
 		}
 	}
 	return false
@@ -682,6 +631,44 @@ func (d *ProductDomain) ApplyCondition(cond constraint.Condition) bool {
 	return true
 }
 
+// CanSatisfyCondition reports whether at least one DNF disjunct is satisfiable
+// under the current product state.
+//
+// This is the proof-only sibling of ApplyCondition. It intentionally does not
+// join satisfiable disjunct products because callers such as reachability only
+// need a boolean witness, not the merged post-condition state.
+func (d *ProductDomain) CanSatisfyCondition(cond constraint.Condition) bool {
+	if d == nil || d.IsUnsat() {
+		return false
+	}
+	if cond.IsFalse() {
+		return false
+	}
+	if cond.IsTrue() {
+		return true
+	}
+
+	for _, disjunct := range cond.Disjuncts {
+		if newProductSatisfiabilityProof(d).CanSatisfyConjunction(disjunct) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsTop reports whether the product carries no already-applied facts. Top
+// domains can check DNF satisfiability with fresh witnesses instead of cloning
+// empty subdomains for every disjunct.
+func (d *ProductDomain) IsTop() bool {
+	if d == nil {
+		return true
+	}
+	return (d.Type == nil || (!d.Type.Unsat && len(d.Type.Narrowed) == 0)) &&
+		(d.Numeric == nil || d.Numeric.IsTop()) &&
+		(d.Shape == nil || (!d.Shape.Unsat && len(d.Shape.Narrowed) == 0)) &&
+		(d.EGraph == nil || d.EGraph.IsEmpty())
+}
+
 // TypeAt returns the narrowed type for a PathKey, combining all domain information.
 //
 // This is the primary query method for retrieving type information after
@@ -717,7 +704,7 @@ func (d *ProductDomain) TypeAt(key constraint.PathKey) typ.Type {
 	shapeNarrowed := d.Shape.NarrowedTypeAt(key)
 
 	if typeNarrowed != nil && shapeNarrowed != nil {
-		return narrow.Intersect(typeNarrowed, shapeNarrowed)
+		return meetTypeAndShapeFacts(typeNarrowed, shapeNarrowed, d.env.Resolver)
 	}
 
 	if typeNarrowed != nil {
@@ -842,13 +829,13 @@ func (d *ProductDomain) Join(other domain.Domain) domain.Domain {
 			joinedEG.Union(k, rootD)
 		}
 	}
-	return &ProductDomain{
+	return (&ProductDomain{
 		Type:    d.Type.Join(o.Type).(*domain.TypeDomain),
 		Numeric: d.Numeric.Join(o.Numeric).(*numeric.Domain),
 		Shape:   d.Shape.Join(o.Shape).(*domain.ShapeDomain),
 		EGraph:  joinedEG,
 		env:     d.env,
-	}
+	}).withProjectedJoinFacts(d, o)
 }
 
 // NarrowedChildPaths returns all narrowed paths that are children of the given parent key.

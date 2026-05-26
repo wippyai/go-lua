@@ -10,20 +10,21 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 )
 
-func lengthIndexSourceFromAttr(attr *ast.AttrGetExpr, constResolver func(string) *flow.ConstValue, bindings *bind.BindingTable) (*flow.LengthIndexSource, bool) {
+func lengthIndexSourceFromAttr(attr *ast.AttrGetExpr, constResolver func(string) *flow.ConstValue, bindings *bind.BindingTable) (flow.AssignmentSource, bool) {
 	if attr == nil {
-		return nil, false
+		return flow.AssignmentSource{}, false
 	}
 	container := fbpath.FromExprWithBindings(attr.Object, constResolver, bindings)
 	if container.IsEmpty() || container.Symbol == 0 {
-		return nil, false
+		return flow.AssignmentSource{}, false
 	}
 	indexedPath, offset, ok := lengthIndexPathFromExpr(attr.Key, constResolver, bindings)
 	if !ok || !indexedPath.Equal(container) {
-		return nil, false
+		return flow.AssignmentSource{}, false
 	}
 	container.Root = resolve.RootNameFromBindings(bindings, container.Symbol, container.Root)
-	return &flow.LengthIndexSource{
+	return flow.AssignmentSource{
+		Kind:          flow.AssignmentSourceLengthIndex,
 		ContainerPath: container,
 		Offset:        offset,
 	}, true

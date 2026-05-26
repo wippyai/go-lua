@@ -8,8 +8,9 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestDNFCap_ExceedsLimit_NoPanic(t *testing.T) {
-	// Create 100 disjuncts (exceeds DefaultMaxDisjuncts = 32)
+func TestDNFExact_ExceedsFormerLimit_NoPanic(t *testing.T) {
+	// Create 100 disjuncts. The condition domain must preserve them exactly;
+	// callers that need cheaper views must explicitly project MustConstraints.
 	var disjuncts [][]Constraint
 	for i := 0; i < 100; i++ {
 		disjuncts = append(disjuncts, []Constraint{
@@ -28,14 +29,14 @@ func TestDNFCap_ExceedsLimit_NoPanic(t *testing.T) {
 		t.Error("condition should not be false")
 	}
 
-	if cond.NumDisjuncts() > DefaultMaxDisjuncts {
-		t.Errorf("expected at most %d disjuncts after cap, got %d", DefaultMaxDisjuncts, cond.NumDisjuncts())
+	if cond.NumDisjuncts() != 100 {
+		t.Errorf("expected all 100 disjuncts after normalization, got %d", cond.NumDisjuncts())
 	}
 
 	t.Logf("100 input disjuncts -> %d after normalization", cond.NumDisjuncts())
 }
 
-func TestDNFCap_ANDExplosion_Capped(t *testing.T) {
+func TestDNFExact_ANDProductPreserved(t *testing.T) {
 	// Create two conditions with many disjuncts each
 	// AND would normally create 10 * 10 = 100 disjuncts
 	var disjuncts1, disjuncts2 [][]Constraint
@@ -57,14 +58,14 @@ func TestDNFCap_ANDExplosion_Capped(t *testing.T) {
 		t.Error("AND result should not be false")
 	}
 
-	if result.NumDisjuncts() > DefaultMaxDisjuncts {
-		t.Errorf("AND explosion not capped: got %d disjuncts, max is %d", result.NumDisjuncts(), DefaultMaxDisjuncts)
+	if result.NumDisjuncts() != 100 {
+		t.Errorf("AND product should preserve 100 disjuncts, got %d", result.NumDisjuncts())
 	}
 
 	t.Logf("10x10 AND -> %d disjuncts", result.NumDisjuncts())
 }
 
-func TestDNFCap_Stable(t *testing.T) {
+func TestDNFExact_Stable(t *testing.T) {
 	var disjuncts [][]Constraint
 	for i := 0; i < 50; i++ {
 		disjuncts = append(disjuncts, []Constraint{
@@ -84,7 +85,7 @@ func TestDNFCap_Stable(t *testing.T) {
 	}
 }
 
-func TestDNFCap_MustConstraintsPreserved(t *testing.T) {
+func TestDNFExact_MustConstraintsPreserved(t *testing.T) {
 	// Create disjuncts that all share a common constraint
 	path := Path{Root: "x", Symbol: 1}
 	var disjuncts [][]Constraint
@@ -233,9 +234,10 @@ func TestLargeUnion_TypeKeyResolution(t *testing.T) {
 
 	cond := FromDisjuncts(disjuncts)
 
-	// Should be capped
-	if cond.NumDisjuncts() > DefaultMaxDisjuncts {
-		t.Errorf("expected capped disjuncts, got %d", cond.NumDisjuncts())
+	// Builtin keys repeat every 26 entries above, so exact normalization keeps
+	// one disjunct per unique type key.
+	if cond.NumDisjuncts() != 26 {
+		t.Errorf("expected 26 unique disjuncts, got %d", cond.NumDisjuncts())
 	}
 }
 

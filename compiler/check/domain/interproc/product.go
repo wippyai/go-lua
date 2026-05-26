@@ -4,7 +4,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
-	"github.com/wippyai/go-lua/compiler/check/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -12,12 +13,16 @@ import (
 
 // WidenFacts merges two interproc fact bundles.
 func WidenFacts(prev, next api.Facts) api.Facts {
+	if FactsEqual(prev, next) {
+		return prev
+	}
+	widening := value.NewConvergenceWidening()
 	out := api.Facts{
-		LiteralSigs:        WidenLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
-		CapturedTypes:      WidenCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
-		CapturedFields:     WidenCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
-		CapturedContainers: WidenCapturedContainerMutations(prev.CapturedContainers, next.CapturedContainers),
-		ConstructorFields:  WidenConstructorFields(prev.ConstructorFields, next.ConstructorFields),
+		LiteralSigs:        widenLiteralSigsWith(widening, prev.LiteralSigs, next.LiteralSigs),
+		CapturedTypes:      widenCapturedTypesWith(widening, prev.CapturedTypes, next.CapturedTypes),
+		CapturedFields:     widenCapturedFieldAssignsWith(widening, prev.CapturedFields, next.CapturedFields),
+		CapturedContainers: widenCapturedContainerMutationsWith(widening, prev.CapturedContainers, next.CapturedContainers),
+		ConstructorFields:  widenConstructorFieldsWith(widening, prev.ConstructorFields, next.ConstructorFields),
 	}
 
 	symbols := collectCanonicalFunctionFactSymbols(prev.FunctionFacts, next.FunctionFacts)
@@ -41,8 +46,9 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 // Unlike WidenFacts, this may keep directional refinements that are useful
 // inside one analysis round. Recursive fixpoint boundaries must use WidenFacts.
 func JoinFacts(prev, next api.Facts) api.Facts {
+	widening := value.NewConvergenceWidening()
 	out := api.Facts{
-		LiteralSigs:        JoinLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
+		LiteralSigs:        joinLiteralSigsWith(widening, prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:      JoinCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
 		CapturedFields:     JoinCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
 		CapturedContainers: JoinCapturedContainerMutations(prev.CapturedContainers, next.CapturedContainers),
@@ -56,24 +62,32 @@ func JoinFacts(prev, next api.Facts) api.Facts {
 	for _, sym := range symbols {
 		prevFact := readFunctionFactFromFacts(&prev, sym)
 		nextFact := readFunctionFactFromFacts(&next, sym)
-		writeNormalizedFunctionFactToFacts(&out, sym, functionfact.Join(prevFact, nextFact))
+		writeNormalizedFunctionFactToFacts(&out, sym, functionfact.JoinCanonical(prevFact, nextFact))
 	}
 	return out
 }
 
 func canonicalInterprocValueType(t typ.Type) typ.Type {
+	return canonicalInterprocValueTypeWith(value.NewConvergenceWidening(), t)
+}
+
+func canonicalInterprocValueTypeWith(widening *value.ConvergenceWidening, t typ.Type) typ.Type {
 	if t == nil {
 		return nil
 	}
 	if fn := unwrap.Function(t); fn != nil {
-		return value.WidenForConvergence(fn)
+		return widening.Function(fn)
 	}
-	return value.WidenForConvergence(t)
+	return widening.Type(t)
 }
 
 func mergeInterprocValueType(existing, candidate typ.Type) typ.Type {
-	existing = canonicalInterprocValueType(existing)
-	candidate = canonicalInterprocValueType(candidate)
+	return mergeInterprocValueTypeWith(value.NewConvergenceWidening(), existing, candidate)
+}
+
+func mergeInterprocValueTypeWith(widening *value.ConvergenceWidening, existing, candidate typ.Type) typ.Type {
+	existing = canonicalInterprocValueTypeWith(widening, existing)
+	candidate = canonicalInterprocValueTypeWith(widening, candidate)
 	if existing == nil {
 		return candidate
 	}
@@ -81,9 +95,9 @@ func mergeInterprocValueType(existing, candidate typ.Type) typ.Type {
 		return existing
 	}
 	if unwrap.Function(existing) != nil || unwrap.Function(candidate) != nil {
-		return value.WidenForConvergence(functionfact.WidenTypeForConvergence(existing, candidate))
+		return widening.Type(functionfact.WidenTypeForConvergence(existing, candidate))
 	}
-	return value.WidenForConvergence(value.MergeForConvergence(existing, candidate))
+	return widening.Merge(existing, candidate)
 }
 
 func normalizeInterprocValueType(t typ.Type) typ.Type {
@@ -107,60 +121,82 @@ func joinInterprocValueType(existing, candidate typ.Type) typ.Type {
 
 // WidenLiteralSigs merges two literal signature maps.
 func WidenLiteralSigs(prev, next api.LiteralSigs) api.LiteralSigs {
+	return widenLiteralSigsWith(value.NewConvergenceWidening(), prev, next)
+}
+
+func widenLiteralSigsWith(widening *value.ConvergenceWidening, prev, next api.LiteralSigs) api.LiteralSigs {
 	if prev == nil && next == nil {
 		return nil
 	}
 	if prev == nil {
-		return normalizeLiteralSigs(next)
+		return normalizeLiteralSigsWith(widening, next)
 	}
 	if next == nil {
-		return normalizeLiteralSigs(prev)
+		return normalizeLiteralSigsWith(widening, prev)
 	}
 	merged := make(api.LiteralSigs, len(prev)+len(next))
 	for fn, sig := range prev {
-		merged[fn] = value.WidenFunctionForConvergence(sig)
+		merged[fn] = sig
 	}
 	for fn, sig := range next {
 		if existing := merged[fn]; existing != nil {
-			merged[fn] = value.WidenFunctionForConvergence(mergeLiteralSigForConvergence(existing, sig))
+			mergedSig := mergeLiteralSigForConvergence(existing, sig)
+			if typ.TypeEquals(existing, mergedSig) {
+				merged[fn] = existing
+			} else {
+				merged[fn] = widening.Function(mergedSig)
+			}
 		} else {
-			merged[fn] = value.WidenFunctionForConvergence(sig)
+			merged[fn] = widening.Function(sig)
 		}
 	}
 	return merged
 }
 
 func normalizeLiteralSigs(sigs api.LiteralSigs) api.LiteralSigs {
+	return normalizeLiteralSigsWith(value.NewConvergenceWidening(), sigs)
+}
+
+func normalizeLiteralSigsWith(widening *value.ConvergenceWidening, sigs api.LiteralSigs) api.LiteralSigs {
 	if sigs == nil {
 		return nil
 	}
 	out := make(api.LiteralSigs, len(sigs))
 	for fn, sig := range sigs {
-		out[fn] = value.WidenFunctionForConvergence(sig)
+		out[fn] = widening.Function(sig)
 	}
 	return out
 }
 
 // JoinLiteralSigs merges literal signatures precisely inside one iteration.
 func JoinLiteralSigs(prev, next api.LiteralSigs) api.LiteralSigs {
+	return joinLiteralSigsWith(value.NewConvergenceWidening(), prev, next)
+}
+
+func joinLiteralSigsWith(widening *value.ConvergenceWidening, prev, next api.LiteralSigs) api.LiteralSigs {
 	if prev == nil && next == nil {
 		return nil
 	}
 	if prev == nil {
-		return normalizeLiteralSigs(next)
+		return normalizeLiteralSigsWith(widening, next)
 	}
 	if next == nil {
-		return normalizeLiteralSigs(prev)
+		return normalizeLiteralSigsWith(widening, prev)
 	}
 	merged := make(api.LiteralSigs, len(prev)+len(next))
 	for fn, sig := range prev {
-		merged[fn] = value.WidenFunctionForConvergence(sig)
+		merged[fn] = sig
 	}
 	for fn, sig := range next {
 		if existing := merged[fn]; existing != nil {
-			merged[fn] = value.WidenFunctionForConvergence(mergeLiteralSig(existing, sig))
+			mergedSig := mergeLiteralSig(existing, sig)
+			if typ.TypeEquals(existing, mergedSig) {
+				merged[fn] = existing
+			} else {
+				merged[fn] = widening.Function(mergedSig)
+			}
 		} else {
-			merged[fn] = value.WidenFunctionForConvergence(sig)
+			merged[fn] = widening.Function(sig)
 		}
 	}
 	return merged
@@ -199,25 +235,32 @@ func mergeLiteralSigForConvergence(prev, next *typ.Function) *typ.Function {
 
 // WidenCapturedTypes merges two captured type maps using monotone join.
 func WidenCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
+	return widenCapturedTypesWith(value.NewConvergenceWidening(), prev, next)
+}
+
+func widenCapturedTypesWith(widening *value.ConvergenceWidening, prev, next api.CapturedTypes) api.CapturedTypes {
 	if prev == nil && next == nil {
 		return nil
 	}
+	if symbolTypeMapEqual(prev, next) {
+		return prev
+	}
 	if prev == nil {
-		return normalizeCapturedTypes(next)
+		return normalizeCapturedTypesWith(widening, next)
 	}
 	if next == nil {
-		return normalizeCapturedTypes(prev)
+		return normalizeCapturedTypesWith(widening, prev)
 	}
 	merged := make(api.CapturedTypes, len(prev)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(prev) {
-		merged[sym] = canonicalInterprocValueType(prev[sym])
+		merged[sym] = liftCarrier(canonicalInterprocValueTypeWith(widening, projectCarrier(prev[sym])))
 	}
 	for _, sym := range cfg.SortedSymbolIDs(next) {
-		t := next[sym]
-		if existing := merged[sym]; existing != nil {
-			merged[sym] = mergeInterprocValueType(existing, t)
+		t := projectCarrier(next[sym])
+		if existing, ok := merged[sym]; ok && !existing.IsZero() {
+			merged[sym] = liftCarrier(mergeCapturedTypeWith(widening, existing.ProjectValue(), t))
 		} else {
-			merged[sym] = canonicalInterprocValueType(t)
+			merged[sym] = liftCarrier(canonicalInterprocValueTypeWith(widening, t))
 		}
 	}
 	return merged
@@ -236,58 +279,121 @@ func JoinCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
 	}
 	merged := make(api.CapturedTypes, len(prev)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(prev) {
-		merged[sym] = normalizeInterprocValueType(prev[sym])
+		merged[sym] = liftCarrier(normalizeInterprocValueType(projectCarrier(prev[sym])))
 	}
 	for _, sym := range cfg.SortedSymbolIDs(next) {
-		t := next[sym]
-		if existing := merged[sym]; existing != nil {
-			merged[sym] = joinInterprocValueType(existing, t)
+		t := projectCarrier(next[sym])
+		if existing, ok := merged[sym]; ok && !existing.IsZero() {
+			merged[sym] = liftCarrier(joinCapturedType(existing.ProjectValue(), t))
 		} else {
-			merged[sym] = normalizeInterprocValueType(t)
+			merged[sym] = liftCarrier(normalizeInterprocValueType(t))
 		}
 	}
 	return merged
 }
 
+func mergeCapturedType(existing, candidate typ.Type) typ.Type {
+	return mergeCapturedTypeWith(value.NewConvergenceWidening(), existing, candidate)
+}
+
+func mergeCapturedTypeWith(widening *value.ConvergenceWidening, existing, candidate typ.Type) typ.Type {
+	existing = canonicalInterprocValueTypeWith(widening, existing)
+	candidate = canonicalInterprocValueTypeWith(widening, candidate)
+	if replacement, ok := capturedPrecisionReplacement(existing, candidate); ok {
+		return widening.Type(replacement)
+	}
+	return mergeInterprocValueTypeWith(widening, existing, candidate)
+}
+
+func joinCapturedType(existing, candidate typ.Type) typ.Type {
+	existing = normalizeInterprocValueType(existing)
+	candidate = normalizeInterprocValueType(candidate)
+	if replacement, ok := capturedPrecisionReplacement(existing, candidate); ok {
+		return normalizeInterprocValueType(replacement)
+	}
+	return joinInterprocValueType(existing, candidate)
+}
+
+func capturedPrecisionReplacement(existing, candidate typ.Type) (typ.Type, bool) {
+	switch {
+	case capturedTopSeed(existing) && capturedConcreteSnapshot(candidate):
+		return candidate, true
+	case capturedTopSeed(candidate) && capturedConcreteSnapshot(existing):
+		return existing, true
+	default:
+		return nil, false
+	}
+}
+
+func capturedTopSeed(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	if typ.IsAny(t) || typ.IsUnknown(t) || t.Kind().IsPlaceholder() {
+		return true
+	}
+	inner := unwrap.Optional(t)
+	return inner != t && (typ.IsAny(inner) || typ.IsUnknown(inner) || inner.Kind().IsPlaceholder())
+}
+
+func capturedConcreteSnapshot(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	if typ.IsAny(t) || typ.IsUnknown(t) || t.Kind().IsPlaceholder() {
+		return false
+	}
+	inner := unwrap.Optional(t)
+	return inner == t || (!typ.IsAny(inner) && !typ.IsUnknown(inner) && !inner.Kind().IsPlaceholder())
+}
+
 // WidenCapturedFieldAssigns merges captured field assignment maps using monotone union.
 func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.CapturedFieldAssigns {
+	return widenCapturedFieldAssignsWith(value.NewConvergenceWidening(), prev, next)
+}
+
+func widenCapturedFieldAssignsWith(widening *value.ConvergenceWidening, prev, next api.CapturedFieldAssigns) api.CapturedFieldAssigns {
 	if prev == nil && next == nil {
 		return nil
 	}
 	if prev == nil {
-		return normalizeCapturedFieldAssigns(next)
+		return normalizeCapturedFieldAssignsWith(widening, next)
 	}
 	if next == nil {
-		return normalizeCapturedFieldAssigns(prev)
+		return normalizeCapturedFieldAssignsWith(widening, prev)
 	}
 	merged := make(api.CapturedFieldAssigns, len(prev)+len(next))
 	for _, callee := range cfg.SortedSymbolIDs(prev) {
-		merged[callee] = normalizeCapturedFieldSymbolMap(prev[callee])
+		merged[callee] = normalizeCapturedFieldSymbolMapWith(widening, prev[callee])
 	}
 	for _, callee := range cfg.SortedSymbolIDs(next) {
 		captured := next[callee]
 		existing := merged[callee]
 		if existing == nil {
-			merged[callee] = normalizeCapturedFieldSymbolMap(captured)
+			merged[callee] = normalizeCapturedFieldSymbolMapWith(widening, captured)
 			continue
 		}
 		merged[callee] = MergeCapturedFieldSymbolMaps(existing, captured, func(prev typ.Type, next typ.Type) typ.Type {
 			if prev != nil {
-				return mergeInterprocValueType(prev, next)
+				return mergeInterprocValueTypeWith(widening, prev, next)
 			}
-			return canonicalInterprocValueType(next)
+			return canonicalInterprocValueTypeWith(widening, next)
 		})
 	}
 	return merged
 }
 
 func normalizeCapturedTypes(types api.CapturedTypes) api.CapturedTypes {
+	return normalizeCapturedTypesWith(value.NewConvergenceWidening(), types)
+}
+
+func normalizeCapturedTypesWith(widening *value.ConvergenceWidening, types api.CapturedTypes) api.CapturedTypes {
 	if types == nil {
 		return nil
 	}
 	out := make(api.CapturedTypes, len(types))
 	for _, sym := range cfg.SortedSymbolIDs(types) {
-		out[sym] = canonicalInterprocValueType(types[sym])
+		out[sym] = liftCarrier(canonicalInterprocValueTypeWith(widening, projectCarrier(types[sym])))
 	}
 	return out
 }
@@ -298,32 +404,40 @@ func normalizeCapturedTypesForJoin(types api.CapturedTypes) api.CapturedTypes {
 	}
 	out := make(api.CapturedTypes, len(types))
 	for _, sym := range cfg.SortedSymbolIDs(types) {
-		out[sym] = normalizeInterprocValueType(types[sym])
+		out[sym] = liftCarrier(normalizeInterprocValueType(projectCarrier(types[sym])))
 	}
 	return out
 }
 
 func normalizeCapturedFieldAssigns(fields api.CapturedFieldAssigns) api.CapturedFieldAssigns {
+	return normalizeCapturedFieldAssignsWith(value.NewConvergenceWidening(), fields)
+}
+
+func normalizeCapturedFieldAssignsWith(widening *value.ConvergenceWidening, fields api.CapturedFieldAssigns) api.CapturedFieldAssigns {
 	if fields == nil {
 		return nil
 	}
 	out := make(api.CapturedFieldAssigns, len(fields))
 	for _, callee := range cfg.SortedSymbolIDs(fields) {
-		out[callee] = normalizeCapturedFieldSymbolMap(fields[callee])
+		out[callee] = normalizeCapturedFieldSymbolMapWith(widening, fields[callee])
 	}
 	return out
 }
 
-func normalizeCapturedFieldSymbolMap(fieldsBySym map[cfg.SymbolID]map[string]typ.Type) map[cfg.SymbolID]map[string]typ.Type {
+func normalizeCapturedFieldSymbolMap(fieldsBySym map[cfg.SymbolID]map[string]product.AbstractValue) map[cfg.SymbolID]map[string]product.AbstractValue {
+	return normalizeCapturedFieldSymbolMapWith(value.NewConvergenceWidening(), fieldsBySym)
+}
+
+func normalizeCapturedFieldSymbolMapWith(widening *value.ConvergenceWidening, fieldsBySym map[cfg.SymbolID]map[string]product.AbstractValue) map[cfg.SymbolID]map[string]product.AbstractValue {
 	if fieldsBySym == nil {
 		return nil
 	}
-	out := make(map[cfg.SymbolID]map[string]typ.Type, len(fieldsBySym))
+	out := make(map[cfg.SymbolID]map[string]product.AbstractValue, len(fieldsBySym))
 	for _, sym := range cfg.SortedSymbolIDs(fieldsBySym) {
 		fields := fieldsBySym[sym]
-		fieldOut := make(map[string]typ.Type, len(fields))
+		fieldOut := make(map[string]product.AbstractValue, len(fields))
 		for _, name := range cfg.SortedFieldNames(fields) {
-			fieldOut[name] = canonicalInterprocValueType(fields[name])
+			fieldOut[name] = liftCarrier(canonicalInterprocValueTypeWith(widening, projectCarrier(fields[name])))
 		}
 		out[sym] = fieldOut
 	}
@@ -373,16 +487,16 @@ func normalizeCapturedFieldAssignsForJoin(fields api.CapturedFieldAssigns) api.C
 	return out
 }
 
-func normalizeCapturedFieldSymbolMapForJoin(fieldsBySym map[cfg.SymbolID]map[string]typ.Type) map[cfg.SymbolID]map[string]typ.Type {
+func normalizeCapturedFieldSymbolMapForJoin(fieldsBySym map[cfg.SymbolID]map[string]product.AbstractValue) map[cfg.SymbolID]map[string]product.AbstractValue {
 	if fieldsBySym == nil {
 		return nil
 	}
-	out := make(map[cfg.SymbolID]map[string]typ.Type, len(fieldsBySym))
+	out := make(map[cfg.SymbolID]map[string]product.AbstractValue, len(fieldsBySym))
 	for _, sym := range cfg.SortedSymbolIDs(fieldsBySym) {
 		fields := fieldsBySym[sym]
-		fieldOut := make(map[string]typ.Type, len(fields))
+		fieldOut := make(map[string]product.AbstractValue, len(fields))
 		for _, name := range cfg.SortedFieldNames(fields) {
-			fieldOut[name] = normalizeInterprocValueType(fields[name])
+			fieldOut[name] = liftCarrier(normalizeInterprocValueType(projectCarrier(fields[name])))
 		}
 		out[sym] = fieldOut
 	}
@@ -391,29 +505,33 @@ func normalizeCapturedFieldSymbolMapForJoin(fieldsBySym map[cfg.SymbolID]map[str
 
 // WidenCapturedContainerMutations merges captured container mutation maps using monotone union.
 func WidenCapturedContainerMutations(prev, next api.CapturedContainerMutations) api.CapturedContainerMutations {
+	return widenCapturedContainerMutationsWith(value.NewConvergenceWidening(), prev, next)
+}
+
+func widenCapturedContainerMutationsWith(widening *value.ConvergenceWidening, prev, next api.CapturedContainerMutations) api.CapturedContainerMutations {
 	if prev == nil && next == nil {
 		return nil
 	}
 	if prev == nil {
-		return normalizeCapturedContainerMutations(next)
+		return normalizeCapturedContainerMutationsWith(widening, next)
 	}
 	if next == nil {
-		return normalizeCapturedContainerMutations(prev)
+		return normalizeCapturedContainerMutationsWith(widening, prev)
 	}
 	merged := make(api.CapturedContainerMutations, len(prev)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(prev) {
-		merged[sym] = normalizeCapturedContainerMutationMap(prev[sym])
+		merged[sym] = normalizeCapturedContainerMutationMapWith(widening, prev[sym])
 	}
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		muts := next[sym]
 		existing := merged[sym]
 		merged[sym] = MergeCapturedContainerMutationMaps(existing, muts, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
-				next.KeyType = widenContainerMutationValueType(prev.KeyType, next.KeyType)
-				next.ValueType = widenContainerMutationValueType(prev.ValueType, next.ValueType)
+				next.KeyType = liftCarrier(widenContainerMutationValueTypeWith(widening, projectCarrier(prev.KeyType), projectCarrier(next.KeyType)))
+				next.ValueType = liftCarrier(widenContainerMutationValueTypeWith(widening, projectCarrier(prev.ValueType), projectCarrier(next.ValueType)))
 			} else {
-				next.KeyType = value.WidenForConvergence(next.KeyType)
-				next.ValueType = value.WidenForConvergence(next.ValueType)
+				next.KeyType = liftCarrier(widening.Type(projectCarrier(next.KeyType)))
+				next.ValueType = liftCarrier(widening.Type(projectCarrier(next.ValueType)))
 			}
 			return next
 		})
@@ -422,17 +540,25 @@ func WidenCapturedContainerMutations(prev, next api.CapturedContainerMutations) 
 }
 
 func normalizeCapturedContainerMutations(muts api.CapturedContainerMutations) api.CapturedContainerMutations {
+	return normalizeCapturedContainerMutationsWith(value.NewConvergenceWidening(), muts)
+}
+
+func normalizeCapturedContainerMutationsWith(widening *value.ConvergenceWidening, muts api.CapturedContainerMutations) api.CapturedContainerMutations {
 	if muts == nil {
 		return nil
 	}
 	out := make(api.CapturedContainerMutations, len(muts))
 	for _, sym := range cfg.SortedSymbolIDs(muts) {
-		out[sym] = normalizeCapturedContainerMutationMap(muts[sym])
+		out[sym] = normalizeCapturedContainerMutationMapWith(widening, muts[sym])
 	}
 	return out
 }
 
 func normalizeCapturedContainerMutationMap(muts map[cfg.SymbolID][]api.ContainerMutation) map[cfg.SymbolID][]api.ContainerMutation {
+	return normalizeCapturedContainerMutationMapWith(value.NewConvergenceWidening(), muts)
+}
+
+func normalizeCapturedContainerMutationMapWith(widening *value.ConvergenceWidening, muts map[cfg.SymbolID][]api.ContainerMutation) map[cfg.SymbolID][]api.ContainerMutation {
 	if muts == nil {
 		return nil
 	}
@@ -444,11 +570,11 @@ func normalizeCapturedContainerMutationMap(muts map[cfg.SymbolID][]api.Container
 		}
 		normalized := MergeContainerMutationSlices(nil, entries, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
-				next.KeyType = widenContainerMutationValueType(prev.KeyType, next.KeyType)
-				next.ValueType = widenContainerMutationValueType(prev.ValueType, next.ValueType)
+				next.KeyType = liftCarrier(widenContainerMutationValueTypeWith(widening, projectCarrier(prev.KeyType), projectCarrier(next.KeyType)))
+				next.ValueType = liftCarrier(widenContainerMutationValueTypeWith(widening, projectCarrier(prev.ValueType), projectCarrier(next.ValueType)))
 			} else {
-				next.KeyType = value.WidenForConvergence(next.KeyType)
-				next.ValueType = value.WidenForConvergence(next.ValueType)
+				next.KeyType = liftCarrier(widening.Type(projectCarrier(next.KeyType)))
+				next.ValueType = liftCarrier(widening.Type(projectCarrier(next.ValueType)))
 			}
 			return next
 		})
@@ -480,11 +606,11 @@ func JoinCapturedContainerMutations(prev, next api.CapturedContainerMutations) a
 		existing := merged[sym]
 		merged[sym] = MergeCapturedContainerMutationMaps(existing, muts, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
-				next.KeyType = joinContainerMutationValueType(prev.KeyType, next.KeyType)
-				next.ValueType = joinContainerMutationValueType(prev.ValueType, next.ValueType)
+				next.KeyType = liftCarrier(joinContainerMutationValueType(projectCarrier(prev.KeyType), projectCarrier(next.KeyType)))
+				next.ValueType = liftCarrier(joinContainerMutationValueType(projectCarrier(prev.ValueType), projectCarrier(next.ValueType)))
 			} else {
-				next.KeyType = normalizeInterprocValueType(next.KeyType)
-				next.ValueType = normalizeInterprocValueType(next.ValueType)
+				next.KeyType = liftCarrier(normalizeInterprocValueType(projectCarrier(next.KeyType)))
+				next.ValueType = liftCarrier(normalizeInterprocValueType(projectCarrier(next.ValueType)))
 			}
 			return next
 		})
@@ -515,11 +641,11 @@ func normalizeCapturedContainerMutationMapForJoin(muts map[cfg.SymbolID][]api.Co
 		}
 		normalized := MergeContainerMutationSlices(nil, entries, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
-				next.KeyType = joinContainerMutationValueType(prev.KeyType, next.KeyType)
-				next.ValueType = joinContainerMutationValueType(prev.ValueType, next.ValueType)
+				next.KeyType = liftCarrier(joinContainerMutationValueType(projectCarrier(prev.KeyType), projectCarrier(next.KeyType)))
+				next.ValueType = liftCarrier(joinContainerMutationValueType(projectCarrier(prev.ValueType), projectCarrier(next.ValueType)))
 			} else {
-				next.KeyType = normalizeInterprocValueType(next.KeyType)
-				next.ValueType = normalizeInterprocValueType(next.ValueType)
+				next.KeyType = liftCarrier(normalizeInterprocValueType(projectCarrier(next.KeyType)))
+				next.ValueType = liftCarrier(normalizeInterprocValueType(projectCarrier(next.ValueType)))
 			}
 			return next
 		})
@@ -532,67 +658,53 @@ func normalizeCapturedContainerMutationMapForJoin(muts map[cfg.SymbolID][]api.Co
 }
 
 func widenContainerMutationValueType(prev, next typ.Type) typ.Type {
-	prev = canonicalInterprocValueType(prev)
-	next = canonicalInterprocValueType(next)
-	if prev == nil {
-		return value.WidenForConvergence(next)
-	}
-	if next == nil {
-		return value.WidenForConvergence(prev)
-	}
-	if typ.TypeEquals(prev, next) {
-		return prev
-	}
-	return value.WidenForConvergence(typ.JoinReturnSlot(prev, next))
+	return widenContainerMutationValueTypeWith(value.NewConvergenceWidening(), prev, next)
+}
+
+func widenContainerMutationValueTypeWith(widening *value.ConvergenceWidening, prev, next typ.Type) typ.Type {
+	return mergeInterprocValueTypeWith(widening, prev, next)
 }
 
 func joinContainerMutationValueType(prev, next typ.Type) typ.Type {
-	prev = normalizeInterprocValueType(prev)
-	next = normalizeInterprocValueType(next)
-	if prev == nil {
-		return next
-	}
-	if next == nil {
-		return prev
-	}
-	if typ.TypeEquals(prev, next) {
-		return prev
-	}
-	return normalizeInterprocValueType(typ.JoinReturnSlot(prev, next))
+	return joinInterprocValueType(prev, next)
 }
 
 // WidenConstructorFields merges constructor field maps using monotone join.
 func WidenConstructorFields(prev, next api.ConstructorFields) api.ConstructorFields {
+	return widenConstructorFieldsWith(value.NewConvergenceWidening(), prev, next)
+}
+
+func widenConstructorFieldsWith(widening *value.ConvergenceWidening, prev, next api.ConstructorFields) api.ConstructorFields {
 	if prev == nil && next == nil {
 		return nil
 	}
 	if prev == nil {
-		return normalizeConstructorFields(next)
+		return normalizeConstructorFieldsWith(widening, next)
 	}
 	if next == nil {
-		return normalizeConstructorFields(prev)
+		return normalizeConstructorFieldsWith(widening, prev)
 	}
 	merged := make(api.ConstructorFields, len(prev)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(prev) {
-		merged[sym] = normalizeConstructorFieldMap(prev[sym])
+		merged[sym] = normalizeConstructorFieldMapWith(widening, prev[sym])
 	}
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		fields := next[sym]
 		existing := merged[sym]
 		if existing == nil {
-			merged[sym] = normalizeConstructorFieldMap(fields)
+			merged[sym] = normalizeConstructorFieldMapWith(widening, fields)
 			continue
 		}
-		out := make(map[string]typ.Type, len(existing)+len(fields))
+		out := make(map[string]product.AbstractValue, len(existing)+len(fields))
 		for _, name := range cfg.SortedFieldNames(existing) {
 			out[name] = existing[name]
 		}
 		for _, name := range cfg.SortedFieldNames(fields) {
-			t := fields[name]
-			if prevType := out[name]; prevType != nil {
-				out[name] = mergeInterprocValueType(prevType, t)
+			t := projectCarrier(fields[name])
+			if prevType := projectCarrier(out[name]); prevType != nil {
+				out[name] = liftCarrier(mergeInterprocValueTypeWith(widening, prevType, t))
 			} else {
-				out[name] = value.WidenForConvergence(t)
+				out[name] = liftCarrier(widening.Type(t))
 			}
 		}
 		merged[sym] = out
@@ -601,23 +713,31 @@ func WidenConstructorFields(prev, next api.ConstructorFields) api.ConstructorFie
 }
 
 func normalizeConstructorFields(fields api.ConstructorFields) api.ConstructorFields {
+	return normalizeConstructorFieldsWith(value.NewConvergenceWidening(), fields)
+}
+
+func normalizeConstructorFieldsWith(widening *value.ConvergenceWidening, fields api.ConstructorFields) api.ConstructorFields {
 	if fields == nil {
 		return nil
 	}
 	out := make(api.ConstructorFields, len(fields))
 	for _, sym := range cfg.SortedSymbolIDs(fields) {
-		out[sym] = normalizeConstructorFieldMap(fields[sym])
+		out[sym] = normalizeConstructorFieldMapWith(widening, fields[sym])
 	}
 	return out
 }
 
-func normalizeConstructorFieldMap(fields map[string]typ.Type) map[string]typ.Type {
+func normalizeConstructorFieldMap(fields map[string]product.AbstractValue) map[string]product.AbstractValue {
+	return normalizeConstructorFieldMapWith(value.NewConvergenceWidening(), fields)
+}
+
+func normalizeConstructorFieldMapWith(widening *value.ConvergenceWidening, fields map[string]product.AbstractValue) map[string]product.AbstractValue {
 	if fields == nil {
 		return nil
 	}
-	out := make(map[string]typ.Type, len(fields))
+	out := make(map[string]product.AbstractValue, len(fields))
 	for _, name := range cfg.SortedFieldNames(fields) {
-		out[name] = canonicalInterprocValueType(fields[name])
+		out[name] = liftCarrier(canonicalInterprocValueTypeWith(widening, projectCarrier(fields[name])))
 	}
 	return out
 }
@@ -644,16 +764,16 @@ func JoinConstructorFields(prev, next api.ConstructorFields) api.ConstructorFiel
 			merged[sym] = normalizeConstructorFieldMapForJoin(fields)
 			continue
 		}
-		out := make(map[string]typ.Type, len(existing)+len(fields))
+		out := make(map[string]product.AbstractValue, len(existing)+len(fields))
 		for _, name := range cfg.SortedFieldNames(existing) {
 			out[name] = existing[name]
 		}
 		for _, name := range cfg.SortedFieldNames(fields) {
-			t := fields[name]
-			if prevType := out[name]; prevType != nil {
-				out[name] = joinInterprocValueType(prevType, t)
+			t := projectCarrier(fields[name])
+			if prevType := projectCarrier(out[name]); prevType != nil {
+				out[name] = liftCarrier(joinInterprocValueType(prevType, t))
 			} else {
-				out[name] = normalizeInterprocValueType(t)
+				out[name] = liftCarrier(normalizeInterprocValueType(t))
 			}
 		}
 		merged[sym] = out
@@ -672,13 +792,13 @@ func normalizeConstructorFieldsForJoin(fields api.ConstructorFields) api.Constru
 	return out
 }
 
-func normalizeConstructorFieldMapForJoin(fields map[string]typ.Type) map[string]typ.Type {
+func normalizeConstructorFieldMapForJoin(fields map[string]product.AbstractValue) map[string]product.AbstractValue {
 	if fields == nil {
 		return nil
 	}
-	out := make(map[string]typ.Type, len(fields))
+	out := make(map[string]product.AbstractValue, len(fields))
 	for _, name := range cfg.SortedFieldNames(fields) {
-		out[name] = normalizeInterprocValueType(fields[name])
+		out[name] = liftCarrier(normalizeInterprocValueType(projectCarrier(fields[name])))
 	}
 	return out
 }

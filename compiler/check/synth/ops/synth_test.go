@@ -35,6 +35,9 @@ func TestTableConstructor_Empty(t *testing.T) {
 	if len(rec.Fields) != 0 {
 		t.Errorf("expected 0 fields, got %d", len(rec.Fields))
 	}
+	if rec.Open {
+		t.Fatal("expected empty table constructor to be fresh finite record")
+	}
 }
 
 func TestTableConstructor_PureArray(t *testing.T) {

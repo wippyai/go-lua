@@ -349,11 +349,11 @@ func TestStress_LargeUnion_SoundNarrowing(t *testing.T) {
 }
 
 // =============================================================================
-// DNF Cap Safety Tests
+// DNF Precision Safety Tests
 // =============================================================================
 
-func TestStress_DNFCap_NoParnic(t *testing.T) {
-	// Create condition that exceeds DefaultMaxDisjuncts (32)
+func TestStress_DNFExact_NoPanic(t *testing.T) {
+	// Create a large exact condition.
 	var disjuncts [][]constraint.Constraint
 	for i := 0; i < 100; i++ {
 		disjuncts = append(disjuncts, []constraint.Constraint{
@@ -375,8 +375,8 @@ func TestStress_DNFCap_NoParnic(t *testing.T) {
 	t.Logf("100 disjuncts -> %d after normalization", cond.NumDisjuncts())
 }
 
-func TestStress_DNFCap_SoundWidening(t *testing.T) {
-	// Create large union and DNF that would explode
+func TestStress_DNFExact_SoundNarrowing(t *testing.T) {
+	// Create large union and DNF.
 	variants := make([]typ.Type, 40)
 	for i := 0; i < 40; i++ {
 		variants[i] = typ.NewRecord().Field("id", typ.LiteralInt(int64(i))).Build()
@@ -417,14 +417,13 @@ func TestStress_DNFCap_SoundWidening(t *testing.T) {
 		t.Fatal("narrowing should not return nil")
 	}
 
-	// Soundness: widened result must include all valid values
-	// The narrowed type should be a subtype of the original
+	// Soundness: the narrowed type should be a subtype of the original.
 	if !subtype.IsSubtype(got, union) {
-		t.Errorf("widened type %v is not subtype of original %v", got, union)
+		t.Errorf("narrowed type %v is not subtype of original %v", got, union)
 	}
 }
 
-func TestStress_DNFCap_StableAcrossRuns(t *testing.T) {
+func TestStress_DNFExact_StableAcrossRuns(t *testing.T) {
 	var disjuncts [][]constraint.Constraint
 	for i := 0; i < 50; i++ {
 		disjuncts = append(disjuncts, []constraint.Constraint{

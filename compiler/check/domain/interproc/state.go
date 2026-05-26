@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 )
 
 // Empty reports whether a canonical interprocedural fact product carries no
@@ -52,7 +52,9 @@ func WidenFactMap(prev, next map[api.GraphKey]api.Facts) map[api.GraphKey]api.Fa
 }
 
 // OverlayFacts returns the canonical facts visible during an iteration from a
-// stable previous product and same-iteration next facts.
+// stable previous product and same-iteration next facts. The visible product
+// crosses an SCC iteration boundary, so it uses the same finite-height
+// convergence law as the boundary swap rather than the precise delta join.
 func OverlayFacts(prev, next api.Facts) api.Facts {
 	switch {
 	case Empty(prev):
@@ -60,7 +62,7 @@ func OverlayFacts(prev, next api.Facts) api.Facts {
 	case Empty(next):
 		return prev
 	default:
-		return JoinFacts(prev, next)
+		return WidenFacts(prev, next)
 	}
 }
 
@@ -76,7 +78,7 @@ func RefinementEqual(a, b *constraint.FunctionRefinement) bool {
 }
 
 // ConstructorFieldMapEqual compares one class-symbol constructor field map.
-func ConstructorFieldMapEqual(sym cfg.SymbolID, a, b map[string]typ.Type) bool {
+func ConstructorFieldMapEqual(sym cfg.SymbolID, a, b map[string]product.AbstractValue) bool {
 	if len(a) == 0 && len(b) == 0 {
 		return true
 	}

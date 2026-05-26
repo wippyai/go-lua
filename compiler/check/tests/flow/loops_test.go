@@ -207,10 +207,10 @@ func TestLoops_TableMutation(t *testing.T) {
 		{
 			Name: "insert then call methods via metatable",
 			Code: `
-				local Resource = {}
+				local Resource = { close = function(self) end }
 
 				local function createResource()
-					return setmetatable({}, {__index = Resource})
+					return setmetatable({ close = Resource.close }, {__index = Resource})
 				end
 
 				local resources = {}

@@ -6,7 +6,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/types/constraint"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 func TestBuild_Empty(t *testing.T) {
@@ -23,7 +26,7 @@ func TestBuild_WithFuncs(t *testing.T) {
 		Funcs: []FuncEntry{
 			{Symbol: 1, IsLocal: true},
 		},
-		FunctionFacts: api.FunctionFacts{1: {Type: fnType}},
+		FunctionFacts: api.FunctionFacts{1: {Signature: fnType}},
 	}
 	result := Build(conf)
 	if result == nil {
@@ -39,7 +42,7 @@ func TestBuild_WithPrev(t *testing.T) {
 		Funcs: []FuncEntry{
 			{Symbol: 1, IsLocal: true},
 		},
-		FunctionFacts: api.FunctionFacts{1: {Type: typ.Func().Build()}},
+		FunctionFacts: api.FunctionFacts{1: {Signature: typ.Func().Build()}},
 		SiblingTypesPrev: map[cfg.SymbolID]typ.Type{
 			2: typ.String,
 		},
@@ -47,6 +50,120 @@ func TestBuild_WithPrev(t *testing.T) {
 	result := Build(conf)
 	if result[2] != typ.String {
 		t.Error("should include prev types")
+	}
+}
+
+func TestBuild_FieldFunctionDefinitionsContributeToOwnerSurface(t *testing.T) {
+	const (
+		ownerSym cfg.SymbolID = 10
+		fnSym    cfg.SymbolID = 11
+	)
+	methodType := typ.Func().Param("self", typ.Any).Returns(typ.String).Build()
+	conf := BuildConfig{
+		Funcs: []FuncEntry{
+			{
+				Symbol:  fnSym,
+				Point:   20,
+				IsLocal: false,
+				TargetPath: constraint.Path{
+					Symbol: ownerSym,
+					Segments: []constraint.Segment{
+						{Kind: constraint.SegmentField, Name: "name"},
+					},
+				},
+			},
+		},
+		FunctionFacts: api.FunctionFacts{fnSym: {Signature: methodType}},
+		Services: BuildServicesFuncs{
+			TypeAtPointFn: func(point cfg.Point, sym cfg.SymbolID) typ.Type {
+				if sym == ownerSym {
+					return typ.NewRecord().Field("__index", typ.Any).Build()
+				}
+				return nil
+			},
+		},
+	}
+
+	result := Build(conf)
+	owner := result[ownerSym]
+	got, ok := querycore.Field(owner, "name")
+	if !ok {
+		t.Fatalf("owner surface missing field-defined method: %s", typ.FormatShort(owner))
+	}
+	if !typ.TypeEquals(got, methodType) {
+		t.Fatalf("owner method type = %v, want %v", got, methodType)
+	}
+}
+
+func TestBuild_FieldFunctionSurfaceUsesDeclaredSeedBeforeSolvedFacts(t *testing.T) {
+	const (
+		ownerSym cfg.SymbolID = 10
+		fnSym    cfg.SymbolID = 11
+	)
+	seed := typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()
+	conf := BuildConfig{
+		Funcs: []FuncEntry{
+			{
+				Symbol: fnSym,
+				Point:  20,
+				TargetPath: constraint.Path{
+					Symbol: ownerSym,
+					Segments: []constraint.Segment{
+						{Kind: constraint.SegmentField, Name: "get"},
+					},
+				},
+			},
+		},
+		Services: BuildServicesFuncs{
+			TypeAtPointFn: func(point cfg.Point, sym cfg.SymbolID) typ.Type {
+				switch sym {
+				case ownerSym:
+					return typ.NewRecord().Build()
+				case fnSym:
+					return seed
+				default:
+					return nil
+				}
+			},
+		},
+	}
+
+	result := Build(conf)
+	owner := result[ownerSym]
+	got, ok := querycore.Field(owner, "get")
+	if !ok {
+		t.Fatalf("owner surface missing declared method seed: %s", typ.FormatShort(owner))
+	}
+	if !typ.TypeEquals(got, seed) {
+		t.Fatalf("owner method seed = %v, want %v", got, seed)
+	}
+}
+
+func TestReceiverSelfType_ComposesBaseWithSiblingMethodSurface(t *testing.T) {
+	base := typ.NewRecord().
+		Field("__index", typ.Any).
+		Field("id", typ.String).
+		Build()
+	method := typ.Func().
+		Param("self", base).
+		Param("payload", typ.Any).
+		Returns(typ.Boolean, typ.NewOptional(typ.String)).
+		Build()
+	surface := typ.NewRecord().
+		Field("dispatch", method).
+		Build()
+
+	selfType := ReceiverSelfType(base, surface)
+	if _, ok := querycore.Field(selfType, "id"); !ok {
+		t.Fatalf("receiver self lost base field: %s", typ.FormatShort(selfType))
+	}
+	mt, ok := querycore.Method(selfType, "dispatch")
+	if !ok {
+		t.Fatalf("receiver self missing sibling method surface: %s", typ.FormatShort(selfType))
+	}
+	fn := unwrap.Function(mt)
+	if fn == nil || len(fn.Returns) == 0 || !typ.TypeEquals(fn.Returns[0], typ.Boolean) {
+		t.Fatalf("dispatch method = %s, want boolean first return", typ.FormatShort(mt))
 	}
 }
 

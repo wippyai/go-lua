@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -20,12 +21,12 @@ func TestFactsEqual_Empty(t *testing.T) {
 func TestFactsEqual_FunctionFactSummary(t *testing.T) {
 	a := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+			1: {Summary: product.LiftVector([]typ.Type{typ.String})},
 		},
 	}
 	b := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+			1: {Summary: product.LiftVector([]typ.Type{typ.String})},
 		},
 	}
 	if !FactsEqual(a, b) {
@@ -36,12 +37,12 @@ func TestFactsEqual_FunctionFactSummary(t *testing.T) {
 func TestFactsEqual_DifferentFunctionFactSummary(t *testing.T) {
 	a := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+			1: {Summary: product.LiftVector([]typ.Type{typ.String})},
 		},
 	}
 	b := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.Number}},
+			1: {Summary: product.LiftVector([]typ.Type{typ.Number})},
 		},
 	}
 	if FactsEqual(a, b) {
@@ -56,18 +57,18 @@ func TestFactsEqual_UsesCanonicalFunctionFactsOnly(t *testing.T) {
 	a := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
-				Summary: []typ.Type{typ.String},
-				Narrow:  []typ.Type{typ.String},
-				Type:    fn,
+				Summary:   product.LiftVector([]typ.Type{typ.String}),
+				Narrow:    product.LiftVector([]typ.Type{typ.String}),
+				Signature: fn,
 			},
 		},
 	}
 	b := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
-				Summary: []typ.Type{typ.String},
-				Narrow:  []typ.Type{typ.String},
-				Type:    fn,
+				Summary:   product.LiftVector([]typ.Type{typ.String}),
+				Narrow:    product.LiftVector([]typ.Type{typ.String}),
+				Signature: fn,
 			},
 		},
 	}
@@ -82,12 +83,12 @@ func TestFactsEqual_DifferentCanonicalFunctionFacts(t *testing.T) {
 
 	a := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Summary: []typ.Type{typ.String}, Type: typ.Func().Returns(typ.String).Build()},
+			sym: {Summary: product.LiftVector([]typ.Type{typ.String}), Signature: typ.Func().Returns(typ.String).Build()},
 		},
 	}
 	b := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Summary: []typ.Type{typ.Number}, Type: typ.Func().Returns(typ.Number).Build()},
+			sym: {Summary: product.LiftVector([]typ.Type{typ.Number}), Signature: typ.Func().Returns(typ.Number).Build()},
 		},
 	}
 
@@ -103,16 +104,16 @@ func TestSymbolTypeMapEqual_Empty(t *testing.T) {
 }
 
 func TestFunctionFactsEqual_Params(t *testing.T) {
-	a := api.FunctionFacts{1: {Params: []typ.Type{typ.String}}}
-	b := api.FunctionFacts{1: {Params: []typ.Type{typ.String}}}
+	a := api.FunctionFacts{1: {Params: product.LiftVector([]typ.Type{typ.String})}}
+	b := api.FunctionFacts{1: {Params: product.LiftVector([]typ.Type{typ.String})}}
 	if !FunctionFactsEqual(a, b) {
 		t.Error("same canonical parameter evidence should be equal")
 	}
 }
 
 func TestFunctionFactsEqual_DifferentParams(t *testing.T) {
-	a := api.FunctionFacts{1: {Params: []typ.Type{typ.String}}}
-	b := api.FunctionFacts{1: {Params: []typ.Type{typ.Number}}}
+	a := api.FunctionFacts{1: {Params: product.LiftVector([]typ.Type{typ.String})}}
+	b := api.FunctionFacts{1: {Params: product.LiftVector([]typ.Type{typ.Number})}}
 	if FunctionFactsEqual(a, b) {
 		t.Error("different canonical parameter evidence should not be equal")
 	}
@@ -130,10 +131,36 @@ func TestFunctionFactsEqual_FunctionSpecIsCanonicalFactState(t *testing.T) {
 		t.Fatal("ordinary type equality should ignore function specs")
 	}
 
-	a := api.FunctionFacts{1: {Type: withoutSpec}}
-	b := api.FunctionFacts{1: {Type: withSpec}}
+	a := api.FunctionFacts{1: {Signature: withoutSpec}}
+	b := api.FunctionFacts{1: {Signature: withSpec}}
 	if FunctionFactsEqual(a, b) {
 		t.Fatal("function fact equality must include function specs")
+	}
+}
+
+func TestFunctionFactsEqual_MetatableFactStateIsCanonical(t *testing.T) {
+	spec := contract.NewSpec().WithCallback(0, &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce})
+	method := typ.Func().Returns(typ.String).Build()
+	methodWithSpec := typ.Func().Returns(typ.String).Spec(spec).Build()
+	withoutMetaSpec := typ.NewRecord().
+		Metatable(typ.NewRecord().
+			Field("__index", typ.NewRecord().Field("run", method).Build()).
+			Build()).
+		Build()
+	withMetaSpec := typ.NewRecord().
+		Metatable(typ.NewRecord().
+			Field("__index", typ.NewRecord().Field("run", methodWithSpec).Build()).
+			Build()).
+		Build()
+
+	if !typ.TypeEquals(withoutMetaSpec, withMetaSpec) {
+		t.Fatal("ordinary type equality should ignore nested function specs in metatables")
+	}
+
+	a := api.FunctionFacts{1: {Signature: typ.Func().Returns(withoutMetaSpec).Build()}}
+	b := api.FunctionFacts{1: {Signature: typ.Func().Returns(withMetaSpec).Build()}}
+	if FunctionFactsEqual(a, b) {
+		t.Fatal("function fact equality must include metatable fact state")
 	}
 }
 
@@ -145,11 +172,11 @@ func TestWidenFacts_PreservesFunctionSpecChange(t *testing.T) {
 	withoutSpec := typ.Func().Param("fn", callback).Build()
 	withSpec := typ.Func().Param("fn", callback).Spec(spec).Build()
 	sym := cfg.SymbolID(7)
-	prev := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Type: withoutSpec}}}
-	next := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Type: withSpec}}}
+	prev := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Signature: withoutSpec}}}
+	next := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Signature: withSpec}}}
 
 	widened := WidenFacts(prev, next)
-	got := widened.FunctionFacts[sym].Type
+	got := widened.FunctionFacts[sym].Signature
 	gotSpec := contract.ExtractSpec(got)
 	if gotSpec == nil || !gotSpec.Equals(spec) {
 		t.Fatalf("expected widened fact type to preserve callback spec, got %v", got)
@@ -161,8 +188,8 @@ func TestWidenFacts_PreservesFunctionSpecChange(t *testing.T) {
 
 func TestSymbolTypeMapEqual_Same(t *testing.T) {
 	fn := typ.Func().Returns(typ.String).Build()
-	a := map[cfg.SymbolID]typ.Type{1: fn}
-	b := map[cfg.SymbolID]typ.Type{1: fn}
+	a := map[cfg.SymbolID]product.AbstractValue{1: product.FromType(fn)}
+	b := map[cfg.SymbolID]product.AbstractValue{1: product.FromType(fn)}
 	if !symbolTypeMapEqual(a, b) {
 		t.Error("same func types should be equal")
 	}
@@ -181,8 +208,8 @@ func TestCapturedTypesEqual_Empty(t *testing.T) {
 }
 
 func TestCapturedTypesEqual_Same(t *testing.T) {
-	a := api.CapturedTypes{cfg.SymbolID(1): typ.String}
-	b := api.CapturedTypes{cfg.SymbolID(1): typ.String}
+	a := api.CapturedTypes{cfg.SymbolID(1): product.FromType(typ.String)}
+	b := api.CapturedTypes{cfg.SymbolID(1): product.FromType(typ.String)}
 	if !symbolTypeMapEqual(a, b) {
 		t.Error("same captured types should be equal")
 	}
@@ -196,10 +223,10 @@ func TestCapturedFieldAssignsEqual_Empty(t *testing.T) {
 
 func TestCapturedFieldAssignsEqual_DifferentCallee(t *testing.T) {
 	a := api.CapturedFieldAssigns{
-		cfg.SymbolID(1): {cfg.SymbolID(2): {"foo": typ.String}},
+		cfg.SymbolID(1): {cfg.SymbolID(2): {"foo": product.FromType(typ.String)}},
 	}
 	b := api.CapturedFieldAssigns{
-		cfg.SymbolID(3): {cfg.SymbolID(2): {"foo": typ.String}},
+		cfg.SymbolID(3): {cfg.SymbolID(2): {"foo": product.FromType(typ.String)}},
 	}
 	if CapturedFieldAssignsEqual(a, b) {
 		t.Error("different callee symbols should not be equal")
@@ -210,14 +237,14 @@ func TestCapturedContainerMutationsEqual_Basic(t *testing.T) {
 	a := api.CapturedContainerMutations{
 		cfg.SymbolID(1): {
 			cfg.SymbolID(2): {
-				{Segments: nil, ValueType: typ.Number},
+				{Segments: nil, ValueType: product.FromType(typ.Number)},
 			},
 		},
 	}
 	b := api.CapturedContainerMutations{
 		cfg.SymbolID(1): {
 			cfg.SymbolID(2): {
-				{Segments: nil, ValueType: typ.Number},
+				{Segments: nil, ValueType: product.FromType(typ.Number)},
 			},
 		},
 	}
@@ -230,14 +257,14 @@ func TestCapturedContainerMutationsEqual_DifferentOperatorKind(t *testing.T) {
 	a := api.CapturedContainerMutations{
 		cfg.SymbolID(1): {
 			cfg.SymbolID(2): {
-				{Kind: api.ContainerMutationContainerElement, ValueType: typ.Number},
+				{Kind: api.ContainerMutationContainerElement, ValueType: product.FromType(typ.Number)},
 			},
 		},
 	}
 	b := api.CapturedContainerMutations{
 		cfg.SymbolID(1): {
 			cfg.SymbolID(2): {
-				{Kind: api.ContainerMutationTableElement, ValueType: typ.Number},
+				{Kind: api.ContainerMutationTableElement, ValueType: product.FromType(typ.Number)},
 			},
 		},
 	}
@@ -246,11 +273,11 @@ func TestCapturedContainerMutationsEqual_DifferentOperatorKind(t *testing.T) {
 	}
 }
 
-func TestCapturedFieldAssignsEqual_CanonicalizesOptionalFunctionValues(t *testing.T) {
+func TestCapturedFieldAssignsEqual_DoesNotRepairOptionalFunctionValues(t *testing.T) {
 	fn := typ.Func().Param("fn", typ.Unknown).Build()
-	left := api.CapturedFieldAssigns{1: {2: {"after_all": typ.NewOptional(fn)}}}
-	right := api.CapturedFieldAssigns{1: {2: {"after_all": fn}}}
-	if !CapturedFieldAssignsEqual(left, right) {
-		t.Fatal("expected optional function captured field to equal canonical function value")
+	left := api.CapturedFieldAssigns{1: {2: {"after_all": product.FromType(typ.NewOptional(fn))}}}
+	right := api.CapturedFieldAssigns{1: {2: {"after_all": product.FromType(fn)}}}
+	if CapturedFieldAssignsEqual(left, right) {
+		t.Fatal("equality must compare stored canonical products, not repair non-canonical optional function values")
 	}
 }

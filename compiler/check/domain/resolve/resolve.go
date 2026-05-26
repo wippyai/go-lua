@@ -296,7 +296,7 @@ func BuildAssignmentTypeResolver(inputs *flow.Inputs) func(cfg.SymbolID) typ.Typ
 	for i := len(inputs.Assignments) - 1; i >= 0; i-- {
 		a := inputs.Assignments[i]
 		sym := a.TargetPath.Symbol
-		if sym == 0 || a.Type == nil {
+		if sym == 0 || typ.IsAbsentOrUnknown(a.Type) {
 			continue
 		}
 		if _, exists := latestBySymbol[sym]; !exists {
@@ -354,9 +354,6 @@ func ExtractIteratorSource(
 			}
 		}
 	}
-	if fnType == nil {
-		return nil
-	}
 
 	spec := contract.ExtractSpec(fnType)
 	var iterKind flow.IteratorKind
@@ -380,23 +377,9 @@ func ExtractIteratorSource(
 			return nil
 		}
 	} else {
-		ident, ok := call.Func.(*ast.IdentExpr)
-		if !ok || ident == nil {
-			return nil
-		}
-		if bindings != nil {
-			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-				if symKind, ok := bindings.Kind(sym); ok && symKind != cfg.SymbolGlobal {
-					return nil
-				}
-			}
-		}
-		switch ident.Value {
-		case "ipairs":
-			iterKind = flow.IterateIndexed
-		case "pairs":
-			iterKind = flow.IterateKeyed
-		default:
+		var ok bool
+		iterKind, ok = builtinIteratorKind(call, bindings)
+		if !ok {
 			return nil
 		}
 		idx = 0
@@ -416,6 +399,35 @@ func ExtractIteratorSource(
 	}
 
 	return &IteratorSourceInfo{Path: sourcePath, Kind: iterKind}
+}
+
+func builtinIteratorKind(call *ast.FuncCallExpr, bindings *bind.BindingTable) (flow.IteratorKind, bool) {
+	if call == nil || call.Method != "" || call.Receiver != nil {
+		return 0, false
+	}
+	ident, ok := call.Func.(*ast.IdentExpr)
+	if !ok || ident == nil {
+		return 0, false
+	}
+	if bindings != nil {
+		if sym, found := bindings.SymbolOf(ident); found && sym != 0 {
+			symKind, ok := bindings.Kind(sym)
+			if !ok || symKind != cfg.SymbolGlobal {
+				return 0, false
+			}
+			if name := bindings.Name(sym); name != "" && name != ident.Value {
+				return 0, false
+			}
+		}
+	}
+	switch ident.Value {
+	case "ipairs":
+		return flow.IterateIndexed, true
+	case "pairs":
+		return flow.IterateKeyed, true
+	default:
+		return 0, false
+	}
 }
 
 // CalleeType resolves the function type for a call site.

@@ -11,6 +11,10 @@ import (
 // False branch of is_table(v) must not collapse v to nil.
 func TestCallPredicate_FalseBranchDoesNotNegateToNil(t *testing.T) {
 	source := `
+		local function unknown_value(): any
+			return nil
+		end
+
 		local function is_table(v: any): boolean
 			return type(v) == "table"
 		end

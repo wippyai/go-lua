@@ -261,6 +261,57 @@ func TestNarrowTableFieldsByGuard_MatchingNestedPath(t *testing.T) {
 	if !typ.TypeEquals(out.Fields[0].Type, typ.String) {
 		t.Fatalf("expected narrowed string field, got %s", out.Fields[0].Type.String())
 	}
+	if out.Fields[0].Optional {
+		t.Fatalf("truthy source guard should make table literal field required")
+	}
+}
+
+func TestNarrowTableFieldsByGuard_FieldOptionalityIsARecordShapeChange(t *testing.T) {
+	valueExpr := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "event"},
+		Key:    &ast.StringExpr{Value: "from"},
+	}
+	rec := typ.NewRecord().OptField("from", typ.String).Build()
+	tbl := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{
+				Key:   &ast.StringExpr{Value: "from"},
+				Value: valueExpr,
+			},
+		},
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"event"}},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"x"},
+				Exprs: []ast.Expr{tbl},
+			},
+		},
+	}
+	bindings := bind.Bind(fn, nil)
+	eventSym, _ := bindings.SymbolOf(valueExpr.Object.(*ast.IdentExpr))
+	guards := map[cfg.Point]map[guard.TruthyPathKey]bool{
+		1: {
+			{Symbol: eventSym, Field: "from"}: true,
+		},
+	}
+
+	result := guard.NarrowTableFieldsByGuard(rec, tbl, 1, bindings, guards, nil)
+	out, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record result, got %T", result)
+	}
+	field := out.GetField("from")
+	if field == nil {
+		t.Fatal("missing from field")
+	}
+	if field.Optional {
+		t.Fatalf("truthy source guard should make field required, got %s", out.String())
+	}
+	if !typ.TypeEquals(field.Type, typ.String) {
+		t.Fatalf("expected string field, got %s", field.Type.String())
+	}
 }
 
 func TestCollectTypeGuards_TypeNotEqReturnPropagatesFallthrough(t *testing.T) {
@@ -346,6 +397,55 @@ func TestExtractTypeEqualityProbe(t *testing.T) {
 	if got := guard.TypeForTypeKey(probe.Key); !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("probe type = %v, want string", got)
 	}
+}
+
+func TestEvaluateTypeProbeComparison_ProvesDisjointFalse(t *testing.T) {
+	cmp := typeProbeComparison("==", &ast.StringExpr{Value: "merge"}, "table")
+	got := guard.EvaluateTypeProbeComparison(typ.LiteralString("merge"), cmp)
+	if got != typ.False {
+		t.Fatalf("type(\"merge\") == \"table\" = %v, want false", got)
+	}
+}
+
+func TestEvaluateTypeProbeComparison_ProvesSubtypeTrue(t *testing.T) {
+	cmp := typeProbeComparison("==", &ast.StringExpr{Value: "merge"}, "string")
+	got := guard.EvaluateTypeProbeComparison(typ.LiteralString("merge"), cmp)
+	if got != typ.True {
+		t.Fatalf("type(\"merge\") == \"string\" = %v, want true", got)
+	}
+}
+
+func TestEvaluateTypeProbeComparison_KeepsUnionUncertain(t *testing.T) {
+	cmp := typeProbeComparison("==", &ast.IdentExpr{Value: "content"}, "table")
+	observed := typ.NewUnion(typ.String, typ.NewRecord().Field("text", typ.String).Build())
+	got := guard.EvaluateTypeProbeComparison(observed, cmp)
+	if got != typ.Boolean {
+		t.Fatalf("type(string|table) == \"table\" = %v, want boolean", got)
+	}
+}
+
+func TestEvaluateTypeProbeComparison_ProvesNotEqualTrue(t *testing.T) {
+	cmp := typeProbeComparison("~=", &ast.StringExpr{Value: "merge"}, "table")
+	got := guard.EvaluateTypeProbeComparison(typ.LiteralString("merge"), cmp)
+	if got != typ.True {
+		t.Fatalf("type(\"merge\") ~= \"table\" = %v, want true", got)
+	}
+}
+
+func typeProbeComparison(op string, target ast.Expr, typeName string) guard.TypeProbeComparison {
+	expr := &ast.RelationalOpExpr{
+		Operator: op,
+		Lhs: &ast.FuncCallExpr{
+			Func: &ast.IdentExpr{Value: "type"},
+			Args: []ast.Expr{target},
+		},
+		Rhs: &ast.StringExpr{Value: typeName},
+	}
+	cmp, ok := guard.ExtractTypeProbeComparison(expr)
+	if !ok {
+		panic("test constructed invalid type probe")
+	}
+	return cmp
 }
 
 func TestNarrowTableFieldsByGuard_TypeGuardNarrowsAny(t *testing.T) {

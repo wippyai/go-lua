@@ -3,9 +3,11 @@ package interproc
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -50,7 +52,7 @@ func TestWidenFactMap_OnlyPrev(t *testing.T) {
 	prev := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
 			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.String}},
+				1: {Summary: product.LiftVector([]typ.Type{typ.String})},
 			},
 		},
 	}
@@ -64,7 +66,7 @@ func TestWidenFactMap_OnlyNext(t *testing.T) {
 	next := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
 			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.Number}},
+				1: {Summary: product.LiftVector([]typ.Type{typ.Number})},
 			},
 		},
 	}
@@ -82,7 +84,7 @@ func TestWidenFactMap_NormalizesNewFacts(t *testing.T) {
 			CapturedFields: api.CapturedFieldAssigns{
 				cfg.SymbolID(10): {
 					cfg.SymbolID(20): {
-						"after_all": typ.NewOptional(fn),
+						"after_all": product.FromType(typ.NewOptional(fn)),
 					},
 				},
 			},
@@ -90,7 +92,7 @@ func TestWidenFactMap_NormalizesNewFacts(t *testing.T) {
 	}
 
 	result := WidenFactMap(nil, next)
-	got := result[key].CapturedFields[cfg.SymbolID(10)][cfg.SymbolID(20)]["after_all"]
+	got := result[key].CapturedFields[cfg.SymbolID(10)][cfg.SymbolID(20)]["after_all"].ProjectValue()
 	if !typ.TypeEquals(got, fn) {
 		t.Fatalf("expected new facts to be normalized through WidenFacts, got %v", got)
 	}
@@ -100,19 +102,45 @@ func TestWidenFactMap_Merge(t *testing.T) {
 	prev := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
 			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.String}},
+				1: {Summary: product.LiftVector([]typ.Type{typ.String})},
 			},
 		},
 	}
 	next := map[api.GraphKey]api.Facts{
 		{GraphID: 2}: {
 			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.Number}},
+				1: {Summary: product.LiftVector([]typ.Type{typ.Number})},
 			},
 		},
 	}
 	result := WidenFactMap(prev, next)
 	if len(result) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(result))
+	}
+}
+
+func TestOverlayFacts_UsesConvergenceLawForVisibleProduct(t *testing.T) {
+	lit := &ast.FunctionExpr{}
+	prevReturn := typ.NewRecord().
+		Field("next", typ.Func().Returns(typ.Unknown).Build()).
+		Build()
+	nextReturn := typ.NewRecord().
+		Field("next", typ.Func().Returns(typ.String).Build()).
+		Build()
+	prev := api.Facts{
+		LiteralSigs: api.LiteralSigs{
+			lit: typ.Func().Returns(prevReturn).Build(),
+		},
+	}
+	next := api.Facts{
+		LiteralSigs: api.LiteralSigs{
+			lit: typ.Func().Returns(nextReturn).Build(),
+		},
+	}
+
+	got := OverlayFacts(prev, next)
+	want := WidenFacts(prev, next)
+	if !FactsEqual(got, want) {
+		t.Fatalf("visible overlay must use convergence product law:\ngot=%#v\nwant=%#v", got, want)
 	}
 }

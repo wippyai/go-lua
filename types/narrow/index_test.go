@@ -35,3 +35,21 @@ func TestRefineSequenceIndex_UsesTupleLength(t *testing.T) {
 		t.Fatalf("RefineSequenceIndex past tuple end = %v, want nil", got)
 	}
 }
+
+func TestRefineByLengthLowerBound_FiltersFreshEmptyBranch(t *testing.T) {
+	item := typ.NewRecord().Field("text", typ.String).Build()
+	arr := typ.NewArray(item)
+	base := typ.NewUnion(typ.NewRecord().Build(), arr)
+
+	got := RefineByLengthLowerBound(base, 1)
+	if !typ.TypeEquals(got, arr) {
+		t.Fatalf("RefineByLengthLowerBound({}|array, 1) = %v, want %v", got, arr)
+	}
+}
+
+func TestRefineByLengthLowerBound_RejectsClosedEmptyShape(t *testing.T) {
+	got := RefineByLengthLowerBound(typ.NewRecord().Build(), 1)
+	if !typ.IsNever(got) {
+		t.Fatalf("RefineByLengthLowerBound({}, 1) = %v, want never", got)
+	}
+}

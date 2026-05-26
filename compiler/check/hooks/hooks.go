@@ -38,9 +38,14 @@ package hooks
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // All returns all standard analysis passes.
@@ -59,10 +64,15 @@ func All() []check.Option {
 // WithAssign enables assignment type checking.
 func WithAssign() check.Option {
 	return check.WithPass(func(sess *check.Session, _ *ast.FunctionExpr, result *api.FuncResult) []diag.Diagnostic {
-		if result.NarrowSynth == nil || result.Graph == nil {
+		if result.Graph == nil {
 			return nil
 		}
-		return CheckAssignments(result.Graph, result.Evidence, result.Scopes, result.NarrowSynth, result, sess.SourceName)
+		observer := solvedObservation(result)
+		var declared flow.DeclaredTypes
+		if result.FlowInputs != nil {
+			declared = result.FlowInputs.DeclaredTypes
+		}
+		return CheckAssignments(result.Graph, result.Evidence, declared, observer, result.FlowSolution, sess.SourceName)
 	})
 }
 
@@ -72,30 +82,27 @@ func WithReturn() check.Option {
 		if result.NarrowSynth == nil {
 			return nil
 		}
-		narrowView := result.NarrowSynth.Narrow()
-		return CheckReturns(fn, result.Graph, result.Evidence, result.Scopes, result.BaseScope, result.NarrowSynth, narrowView, sess.SourceName)
+		return CheckReturns(fn, result.Graph, result.Evidence, result.Scopes, result.BaseScope, result.NarrowSynth, solvedObservation(result), sess.SourceName)
 	})
 }
 
 // WithCall enables function call argument type checking.
 func WithCall() check.Option {
 	return check.WithPass(func(sess *check.Session, _ *ast.FunctionExpr, result *api.FuncResult) []diag.Diagnostic {
-		if result.NarrowSynth == nil {
+		if result.TypeOps == nil {
 			return nil
 		}
-		narrowView := result.NarrowSynth.Narrow()
-		return CheckCalls(result.Graph, result.Evidence, result.Scopes, result.NarrowSynth, narrowView, sess.ResultsMap(), sess.SourceName)
+		return CheckCalls(result.Graph, result.Evidence, solvedObservation(result), result.QueryContext, result.TypeOps, sess.ResultsMap(), sess.SourceName)
 	})
 }
 
 // WithField enables field access checking.
 func WithField() check.Option {
 	return check.WithPass(func(sess *check.Session, _ *ast.FunctionExpr, result *api.FuncResult) []diag.Diagnostic {
-		if result.NarrowSynth == nil || result.Graph == nil {
+		if result.Graph == nil {
 			return nil
 		}
-		narrowView := result.NarrowSynth.Narrow()
-		return CheckFields(result.Graph, result.Evidence, result.NarrowSynth, narrowView, result.FlowSolution, sess.SourceName)
+		return CheckFields(result.Graph, result.Evidence, solvedObservation(result), result.FlowSolution, sess.SourceName)
 	})
 }
 
@@ -125,6 +132,19 @@ func WithIdent() check.Option {
 		if result.Graph == nil {
 			return nil
 		}
-		return CheckIdents(result.Graph, result.Evidence, result.Scopes, sess.SourceName)
+		var declared map[cfg.SymbolID]typ.Type
+		if result.FlowInputs != nil {
+			declared = result.FlowInputs.DeclaredTypes
+		}
+		return CheckIdents(result.Graph, result.Evidence, result.Scopes, declared, sess.SourceName)
 	})
+}
+
+func solvedObservation(result *api.FuncResult) observation.Projector {
+	if result == nil {
+		return observation.New(observation.Config{})
+	}
+	store := api.StoreFrom(result.QueryContext)
+	lookup := functionfact.StoreProjectionLookup(store, functionfact.ProjectionSibling, api.PhaseScopeCompute, result.BaseScope)
+	return observation.FromFuncResult(result, lookup).WithProofValues()
 }

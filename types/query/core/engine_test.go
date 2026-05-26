@@ -51,12 +51,92 @@ func TestEngine_Field_Record(t *testing.T) {
 	}
 }
 
+func TestEngine_Field_AliasDiscriminatedUnionCommonField(t *testing.T) {
+	e := NewEngine()
+	ctx := db.NewQueryContext(db.New())
+	typeA := typ.NewAlias("A", typ.NewRecord().
+		Field("tag", typ.LiteralString("a")).
+		Field("value", typ.String).
+		Build())
+	typeB := typ.NewAlias("B", typ.NewRecord().
+		Field("tag", typ.LiteralString("b")).
+		Field("value", typ.Number).
+		Build())
+	union := typ.NewUnion(typeA, typeB)
+
+	got, ok := e.Field(ctx, union, "value")
+	if !ok {
+		t.Fatal("expected alias union common field to resolve through query engine")
+	}
+	want := typ.NewUnion(typ.Number, typ.String)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("Engine.Field(A|B, value) = %v, want %v", got, want)
+	}
+}
+
 func TestEngine_Field_NotFound(t *testing.T) {
 	e := NewEngine()
 	rec := typ.NewRecord().Field("x", typ.Number).Build()
 	_, ok := e.Field(nil, rec, "y")
 	if ok {
 		t.Error("Field should not find 'y'")
+	}
+}
+
+func TestEngine_Field_RecursiveAliasResolvesLikeFreeFunction(t *testing.T) {
+	e := NewEngine()
+	ctx := db.NewQueryContext(db.New())
+
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("status_code", typ.Number).
+			OptField("next", self).
+			Build()
+	})
+	alias := typ.NewAlias("Response", node)
+	if !typ.ContainsRecursive(alias) {
+		t.Fatal("setup invalid: recursive alias expected")
+	}
+
+	if _, ok := Field(alias, "status_code"); !ok {
+		t.Fatal("querycore.Field(recursive alias, status_code) = false, want true")
+	}
+	if _, ok := e.Field(ctx, alias, "status_code"); !ok {
+		t.Fatal("Engine.Field(recursive alias, status_code) = false, want true")
+	}
+}
+
+func TestEngine_Field_MetatableDivergentOpenRecordsDoNotShareInternRef(t *testing.T) {
+	e := NewEngine()
+	ctx := db.NewQueryContext(db.New())
+
+	readerMeta := typ.NewRecord().
+		Field("__index", typ.NewRecord().OptField("session_id", typ.String).Build()).
+		Build()
+	reader := typ.NewRecord().SetOpen(true).Metatable(readerMeta).Build()
+
+	queryMeta := typ.NewRecord().
+		Field("__index", typ.NewRecord().
+			OptField("_error", typ.String).
+			OptField("_session_id", typ.String).
+			OptField("_type_filter", typ.String).
+			Build()).
+		Build()
+	query := typ.NewRecord().SetOpen(true).Metatable(queryMeta).Build()
+
+	if typ.SameProductFamily(reader, query) {
+		t.Fatal("records with divergent metatables must not be the same product family")
+	}
+
+	// Interning the reader first must not poison the query record's field cache.
+	if _, ok := e.Field(ctx, reader, "session_id"); !ok {
+		t.Fatal("Engine.Field(reader, session_id) = false, want true")
+	}
+	if _, ok := Field(query, "_error"); !ok {
+		t.Fatal("querycore.Field(query, _error) = false, want true")
+	}
+	if _, ok := e.Field(ctx, query, "_error"); !ok {
+		t.Fatal("Engine.Field(query, _error) = false, want true")
 	}
 }
 
@@ -81,6 +161,93 @@ func TestEngine_Index_Map(t *testing.T) {
 	}
 	if valType == nil {
 		t.Error("expected non-nil value type")
+	}
+}
+
+func TestQueryTypeRefsCanonicalizeStructuralTypesForMapKeys(t *testing.T) {
+	ctx := db.NewQueryContext(db.New())
+	left := typ.NewRecord().
+		Field("items", typ.NewArray(typ.NewRecord().Field("id", typ.String).Build())).
+		Build()
+	right := typ.NewRecord().
+		Field("items", typ.NewArray(typ.NewRecord().Field("id", typ.String).Build())).
+		Build()
+
+	leftRef := internTypeRef(ctx, left)
+	rightRef := internTypeRef(ctx, right)
+	if leftRef == nil || rightRef == nil || leftRef != rightRef {
+		t.Fatalf("expected equal structural types to share query ref, got %p and %p", leftRef, rightRef)
+	}
+
+	keys := map[fieldKey]bool{{t: leftRef, name: "items"}: true}
+	if !keys[fieldKey{t: rightRef, name: "items"}] {
+		t.Fatal("expected boxed type refs to be usable as stable query keys")
+	}
+}
+
+func TestQueryTypeRefsKeepAliasWrapperDistinctFromTarget(t *testing.T) {
+	ctx := db.NewQueryContext(db.New())
+	target := typ.NewRecord().Field("value", typ.String).Build()
+	alias := typ.NewAlias("A", target)
+
+	aliasRef := internTypeRef(ctx, alias)
+	targetRef := internTypeRef(ctx, target)
+	if aliasRef == nil || targetRef == nil {
+		t.Fatal("expected query refs")
+	}
+	if aliasRef == targetRef {
+		t.Fatal("alias and target must not share a query ref; wrapper lookup delegates to target")
+	}
+}
+
+func TestQueryTypeRefsUseProductFamilyForRecursiveProducts(t *testing.T) {
+	ctx := db.NewQueryContext(db.New())
+	left := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	right := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("children", typ.NewArray(self)).
+			Field("full_path", typ.String).
+			Build()
+	})
+
+	leftRef := internTypeRef(ctx, left)
+	leftAgain := internTypeRef(ctx, left)
+	rightRef := internTypeRef(ctx, right)
+	if leftRef == nil || leftAgain == nil || rightRef == nil {
+		t.Fatal("expected query refs")
+	}
+	if leftRef != leftAgain {
+		t.Fatal("same recursive node should share a query ref")
+	}
+	if leftRef == rightRef {
+		t.Fatal("distinct recursive product families must not be interned together")
+	}
+}
+
+func TestQueryTypeRefsShareEquivalentRecursiveProductFamilies(t *testing.T) {
+	ctx := db.NewQueryContext(db.New())
+	left := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	right := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+
+	leftRef := internTypeRef(ctx, left)
+	rightRef := internTypeRef(ctx, right)
+	if leftRef == nil || rightRef == nil {
+		t.Fatal("expected query refs")
+	}
+	if leftRef != rightRef {
+		t.Fatalf("equivalent recursive product families should share a query ref, got %p and %p", leftRef, rightRef)
 	}
 }
 

@@ -19,9 +19,15 @@ import (
 //
 // Members are sorted by hash for deterministic comparison.
 type Intersection struct {
-	Members  []Type
-	hash     uint64
-	strCache stringCache
+	Members               []Type
+	hash                  uint64
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
 }
 
 // NewIntersection creates a normalized intersection type.
@@ -88,18 +94,23 @@ func NewIntersection(members ...Type) Type {
 	}
 
 	// Deduplicate by hash + structural equality (collision-safe).
-	unique := deduplicateTypes(flat)
+	unique, uniqueHashes := deduplicateTypesWithHashes(flat)
 
-	sort.Slice(unique, func(i, j int) bool {
-		hi := unique[i].Hash()
-		hj := unique[j].Hash()
-
-		if hi != hj {
-			return hi < hj
+	slots := make([]hashedType, len(unique))
+	for i, m := range unique {
+		slots[i] = hashedType{typ: m, hash: uniqueHashes[i]}
+	}
+	sort.Slice(slots, func(i, j int) bool {
+		if slots[i].hash != slots[j].hash {
+			return slots[i].hash < slots[j].hash
 		}
 
-		return unique[i].String() < unique[j].String()
+		return slots[i].typ.String() < slots[j].typ.String()
 	})
+	for i, slot := range slots {
+		unique[i] = slot.typ
+		uniqueHashes[i] = slot.hash
+	}
 
 	if len(unique) == 0 {
 		return Any
@@ -110,11 +121,44 @@ func NewIntersection(members ...Type) Type {
 	}
 
 	h := uint64(kind.Intersection)
-	for _, m := range unique {
-		h = internal.HashCombine(h, m.Hash())
+	containsAny := false
+	containsNever := false
+	containsTypeParam := false
+	containsInstantiated := false
+	containsRecursive := false
+	containsOpenRecursive := false
+	for i, m := range unique {
+		h = internal.HashCombine(h, uniqueHashes[i])
+		if !containsAny && knownContainsAny(m) {
+			containsAny = true
+		}
+		if !containsNever && knownContainsNever(m) {
+			containsNever = true
+		}
+		if !containsTypeParam && knownContainsTypeParam(m) {
+			containsTypeParam = true
+		}
+		if !containsInstantiated && knownContainsInstantiated(m) {
+			containsInstantiated = true
+		}
+		if !containsRecursive && knownContainsRecursive(m) {
+			containsRecursive = true
+		}
+		if !containsOpenRecursive && knownContainsOpenRecursive(m) {
+			containsOpenRecursive = true
+		}
 	}
 
-	return &Intersection{Members: unique, hash: h}
+	return &Intersection{
+		Members:               unique,
+		hash:                  h,
+		containsAny:           containsAny,
+		containsNever:         containsNever,
+		containsTypeParam:     containsTypeParam,
+		containsInstantiated:  containsInstantiated,
+		containsRecursive:     containsRecursive,
+		containsOpenRecursive: containsOpenRecursive,
+	}
 }
 
 func (i *Intersection) Kind() kind.Kind { return kind.Intersection }

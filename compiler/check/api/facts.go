@@ -9,23 +9,49 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 // FunctionFact is the canonical function-related interproc fact for one symbol.
 // All return and local-function type evidence for a function converges here.
 type FunctionFact struct {
-	// Params is the canonical parameter evidence vector. For method calls, slot
-	// 0 is the receiver/self argument and the remaining slots are source args.
-	Params []typ.Type
+	// Params is the public call-boundary parameter evidence vector. For method
+	// calls, slot 0 is the receiver/self argument and the remaining slots are
+	// source args. This vector is used to project callable contracts to callers.
+	//
+	// The carrier holds interned product.AbstractValue per slot: producers lift
+	// their computed typ.Type evidence through product.FromType at admission and
+	// consumers project it back through product.ProjectValue at egress. The
+	// per-slot semantic merge keeps its precise typ.Type logic at the merge
+	// boundary; only the carrier and the convergence equality are value-domain.
+	Params []product.AbstractValue
+	// BodyParams is the body contract vector inferred from the function body.
+	// It records semantic requirements that the body imposes on its parameters.
+	// It is not call-entry evidence and must not initialize the same body's
+	// abstract state; callers and diagnostics consume it as an obligation.
+	BodyParams []product.AbstractValue
+	// EntryParams is observed call-entry parameter evidence for interpreting
+	// this function's body. It preserves structural discriminants used by
+	// path-sensitive flow and is never projected as a public caller contract.
+	EntryParams []product.AbstractValue
 	// Summary is the declared/pre-flow return vector.
-	Summary []typ.Type
+	Summary []product.AbstractValue
 	// Narrow is the post-flow return vector.
-	Narrow []typ.Type
-	// Type is the canonical local function type evidence.
-	Type typ.Type
+	Narrow []product.AbstractValue
+	// Signature is the source-level function shape: source annotations, arity,
+	// variadic information, effects/specs, and refinement metadata. Inferred
+	// parameter and return facts are projected into a function type from the
+	// product channels; they are not stored here as an independent authority.
+	Signature *typ.Function
 	// Refinement is the canonical effect/refinement summary for the function.
 	Refinement *constraint.FunctionRefinement
+	// EnvReturns records exported closure return dependencies on caller-visible
+	// module environment paths. It is projected into contract specs at export
+	// and consumed by the abstract interpreter at call sites.
+	EnvReturns []contract.EnvReturnSpec
 }
 
 // FunctionFacts maps function symbols to their canonical function facts.
@@ -39,7 +65,9 @@ type LiteralSigs = map[*ast.FunctionExpr]*typ.Function
 // CapturedTypes maps captured symbols to their flow-derived types for a graph.
 // These are computed from the parent function's flow facts at the definition
 // point of the nested function and used as type hints for captured variables.
-type CapturedTypes = map[cfg.SymbolID]typ.Type
+// The carrier holds interned product.AbstractValue lifted at admission and
+// projected at egress.
+type CapturedTypes = map[cfg.SymbolID]product.AbstractValue
 
 // CapturedFieldAssigns maps nested function symbols to field assignments
 // they make to captured variables from parent scopes.
@@ -47,8 +75,9 @@ type CapturedTypes = map[cfg.SymbolID]typ.Type
 // Structure: nestedFuncSymbol -> capturedVarSymbol -> fieldName -> fieldType
 //
 // This enables the parent scope to see which fields a nested function assigns
-// to its captured variables, supporting constructor inference patterns.
-type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type
+// to its captured variables, supporting constructor inference patterns. The
+// field type carrier holds interned product.AbstractValue.
+type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]map[string]product.AbstractValue
 
 // ContainerMutationKind describes the operator used for a captured container
 // mutation. Different operators have different abstract interpreter effects in
@@ -72,8 +101,9 @@ const (
 type ContainerMutation struct {
 	Kind      ContainerMutationKind
 	Segments  []constraint.Segment
-	KeyType   typ.Type
-	ValueType typ.Type
+	KeyType   product.AbstractValue
+	ValueMode flow.MapMutationValueMode
+	ValueType product.AbstractValue
 }
 
 // ContainerMutationKey returns the canonical path key for a container mutation.
@@ -85,7 +115,10 @@ func containerMutationKeyMode(m ContainerMutation) string {
 	if m.Kind != ContainerMutationTableElement && m.Kind != ContainerMutationMapElement {
 		return ""
 	}
-	if m.KeyType != nil {
+	if m.Kind == ContainerMutationMapElement && m.ValueMode == flow.MapMutationValueUpdate {
+		return ":update"
+	}
+	if !m.KeyType.IsZero() {
 		return ":keyed"
 	}
 	return ":append"
@@ -109,8 +142,9 @@ func containerMutationKindKey(kind ContainerMutationKind) string {
 type CapturedContainerMutations = map[cfg.SymbolID]map[cfg.SymbolID][]ContainerMutation
 
 // ConstructorFields maps class symbols to field assignments captured in constructors.
-// Structure: classSymbol -> fieldName -> fieldType.
-type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
+// Structure: classSymbol -> fieldName -> fieldType. The field type carrier holds
+// interned product.AbstractValue.
+type ConstructorFields = map[cfg.SymbolID]map[string]product.AbstractValue
 
 // Facts bundles one canonical interprocedural product slice. Most slices are
 // stored per (graph, parent) pair; module-wide facts use ModuleFactsKey.

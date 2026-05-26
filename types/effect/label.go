@@ -311,6 +311,18 @@ func (s SelectCaseOfParam) String() string {
 	return fmt.Sprintf("select_case(%s)", s.Source)
 }
 
+const (
+	// SelectResultChannelField is the canonical field name for the channel that
+	// won a select result.
+	SelectResultChannelField = "channel"
+	// SelectResultValueField is the canonical field name for the received value
+	// in a select result.
+	SelectResultValueField = "value"
+	// SelectResultCaseIDField is the hidden discriminator emitted for each
+	// select case variant. It is internal proof evidence, not user API surface.
+	SelectResultCaseIDField = "__select_case_id"
+)
+
 // SelectResultOfCases builds a select result from a cases parameter.
 type SelectResultOfCases struct {
 	Cases   ParamRef

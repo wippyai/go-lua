@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -32,6 +33,55 @@ func TestEnrichSelfTypeWithConstructorFields_NilSelfType(t *testing.T) {
 	result := EnrichSelfTypeWithConstructorFields(nil, nil)
 	if result != nil {
 		t.Error("expected nil for nil selfType")
+	}
+}
+
+func TestMethodSelfTypeFromReceiverSurface_UsesReceiverAsPrototype(t *testing.T) {
+	receiver := typ.NewRecord().
+		Field("__index", typ.Any).
+		Field("run", typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()).
+		Build()
+
+	selfType := MethodSelfTypeFromReceiverSurface(receiver)
+	if _, ok := querycore.Method(selfType, "run"); !ok {
+		t.Fatalf("instance self should resolve prototype method, got %s", typ.FormatShort(selfType))
+	}
+}
+
+func TestNormalizeMethodSelfType_FoldsSelfReturningReceiverFamily(t *testing.T) {
+	seed := typ.NewRecord().
+		Field("new", typ.Func().Returns(typ.Unknown).Build()).
+		Field("add", typ.Func().Returns(typ.Unknown).Build()).
+		Field("value", typ.Integer).
+		Build()
+	selfType := typ.NewRecord().
+		Field("new", typ.Func().Returns(seed).Build()).
+		Field("add", typ.Func().Param("self", seed).Returns(seed).Build()).
+		Field("value", typ.Integer).
+		Build()
+
+	normalized := NormalizeMethodSelfType(selfType)
+	rec, ok := normalized.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("NormalizeMethodSelfType() = %T, want recursive receiver product", normalized)
+	}
+	body, ok := rec.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("recursive receiver body = %T, want record", rec.Body)
+	}
+	add := body.GetField("add")
+	if add == nil {
+		t.Fatal("recursive receiver lost add method")
+	}
+	method, ok := add.Type.(*typ.Function)
+	if !ok {
+		t.Fatalf("add method = %T, want function", add.Type)
+	}
+	if len(method.Params) != 1 || !typ.IsRecursiveRef(method.Params[0].Type, rec) {
+		t.Fatalf("method self param should be recursive receiver ref, got %#v", method.Params)
+	}
+	if len(method.Returns) != 1 || !typ.IsRecursiveRef(method.Returns[0], rec) {
+		t.Fatalf("method return should be recursive receiver ref, got %#v", method.Returns)
 	}
 }
 

@@ -11,6 +11,10 @@ import (
 // values to nil before a second predicate check.
 func TestPredicateFalseBranch_DoesNotCollapseUnknownToNil(t *testing.T) {
 	source := `
+		local function unknown_value(): any
+			return nil
+		end
+
 		local function is_exit(result: any): boolean
 			return type(result) == "table" and result._actor_exit == true
 		end

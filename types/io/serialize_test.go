@@ -1674,3 +1674,40 @@ func TestEncodeDecode_CallbackEmptyEnvOverlay(t *testing.T) {
 		t.Errorf("EnvOverlay should be empty, got %d entries", len(cb.EnvOverlay))
 	}
 }
+
+func TestEncodeDecode_EnvReturnSpecPreservesGuard(t *testing.T) {
+	guard := constraint.FromConstraints(constraint.Truthy{Path: constraint.ParamPath(0).Field("bad")})
+	spec := contract.NewSpec().WithEnvReturns(contract.EnvReturnSpec{
+		When:        guard,
+		ReturnIndex: 0,
+		ResultIndex: 0,
+		Path:        []constraint.Segment{{Kind: constraint.SegmentField, Name: "_mapper"}},
+		Method:      "map_error_response",
+		Args:        []typ.Type{typ.NewRecord().Field("message", typ.String).Build()},
+	})
+	original := typ.Func().Param("args", typ.Any).Returns(typ.Any).Spec(spec).Build()
+
+	data, err := Encode(original)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	decoded, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	fn, ok := decoded.(*typ.Function)
+	if !ok || fn.Spec == nil {
+		t.Fatalf("decoded type = %T, want function with spec", decoded)
+	}
+	decodedSpec, ok := fn.Spec.(*contract.Spec)
+	if !ok {
+		t.Fatalf("decoded spec = %T, want *contract.Spec", fn.Spec)
+	}
+	envReturns := decodedSpec.GetEnvReturns()
+	if len(envReturns) != 1 {
+		t.Fatalf("env returns len = %d, want 1", len(envReturns))
+	}
+	if !envReturns[0].When.Equals(guard) {
+		t.Fatalf("env return guard = %v, want %v", envReturns[0].When, guard)
+	}
+}

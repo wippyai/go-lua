@@ -18,6 +18,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -103,10 +104,6 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 	}
 }
 
-// EnrichExportWithFunctionFacts reconciles exported function fields against the
-// converged interproc channels for the same symbols. This keeps exported module
-// signatures consistent even when return-summary and function-type channels
-// temporarily diverge during fixpoint.
 // exportFieldNameFromEffectSymbol resolves a graph symbol name to a top-level
 // export field name.
 //
@@ -180,12 +177,23 @@ func applyFunctionRefinement(fn *typ.Function, eff *constraint.FunctionRefinemen
 		builder.Variadic(fn.Variadic)
 	}
 	builder.Returns(fn.Returns...)
-	if fn.Effects != nil {
-		builder.Effects(fn.Effects)
+	if effects := mergeExportFunctionEffects(fn.Effects, eff.Row); effects != nil {
+		builder.Effects(effects)
 	}
 	if fn.Spec != nil {
 		builder.Spec(fn.Spec)
 	}
 	builder.WithRefinement(eff)
 	return builder.Build()
+}
+
+func mergeExportFunctionEffects(left, right typ.EffectInfo) typ.EffectInfo {
+	base, _ := left.(effect.Row)
+	if row, ok := right.(effect.Row); ok {
+		base = effect.Union(base, row)
+	}
+	if base.Pure() && !base.IsOpen() {
+		return left
+	}
+	return base
 }

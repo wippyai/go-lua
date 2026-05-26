@@ -148,7 +148,7 @@ if artifact.meta then
 	local content_type: string = artifact.meta.content_type
 end
 `, testutil.WithStdlib())
-	requireExternalLintErrorContaining(t, result, "cannot assign string?")
+	requireExternalLintErrorContaining(t, result, "field 'content_type' does not exist")
 }
 
 func TestExternalLint_DynamicContextMergeDoesNotInventStringKeys(t *testing.T) {
@@ -447,7 +447,7 @@ local function collect(entry)
 	local resources = {}
 	if entry.data and entry.data.resources then
 		for i, resource_id in ipairs(entry.data.resources) do
-			if type(resource_id) == "string" then
+			if type(entry.id) == "string" and type(resource_id) == "string" then
 				resources[i] = qualify_id(entry.id, resource_id)
 			end
 		end
@@ -460,6 +460,29 @@ end
 	if result.HasError() {
 		t.Fatalf("expected guarded resource ids to feed string qualifier, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
+}
+
+func TestExternalLint_GuardedResourceIDStillRequiresEntryIDProof(t *testing.T) {
+	result := testutil.Check(`
+local function qualify_id(entry_id: string, relative_id: string)
+	return entry_id .. ":" .. relative_id
+end
+
+local function collect(entry)
+	local resources = {}
+	if entry.data and entry.data.resources then
+		for i, resource_id in ipairs(entry.data.resources) do
+			if type(resource_id) == "string" then
+				resources[i] = qualify_id(entry.id, resource_id)
+			end
+		end
+	end
+	return resources
+end
+
+return collect
+`, testutil.WithStdlib())
+	requireExternalLintErrorContaining(t, result, "expected string")
 }
 
 func TestExternalLint_UntypedPageIDRequiresStringProofForAccessibleRoutes(t *testing.T) {
@@ -515,6 +538,101 @@ return accessible
 `, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected guarded page id to feed accessible route map, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_ImportedPageRegistryPreservesPageIDForRoutes(t *testing.T) {
+	entryType := typ.NewRecord().
+		Field("id", typ.String).
+		Field("kind", typ.String).
+		Field("meta", typ.NewMap(typ.String, typ.Any)).
+		Field("data", typ.Any).
+		Build()
+	registryType := typ.NewRecord().
+		Field("find", typ.Func().
+			Param("query", typ.Any).
+			Returns(typ.NewArray(entryType), typ.NewOptional(typ.LuaError)).
+			Build()).
+		Build()
+	registryManifest := io.NewManifest("registry")
+	registryManifest.SetExport(registryType)
+
+	pageRegistry := testutil.CheckAndExport(`
+local registry = require("registry")
+local pages = {}
+
+local function extract_page_info(entry)
+	return {
+		id = entry.id,
+		mount_route = entry.meta.mountRoute,
+		secure = entry.meta.secure or false,
+	}
+end
+
+function pages.find_all()
+	local entries, err = registry.find({["meta.type"] = "view.page"})
+	if err then
+		return nil, err
+	end
+	if not entries or #entries == 0 then
+		return {}
+	end
+
+	local pages_list = {}
+	for _, entry in ipairs(entries) do
+		if entry.meta then
+			table.insert(pages_list, extract_page_info(entry))
+		end
+	end
+	return pages_list
+end
+
+function pages.validate_mount_routes(all_pages)
+	local routes_map: {[string]: string} = {}
+	for _, page in ipairs(all_pages) do
+		local mr = page.mount_route
+		if type(mr) == "string" and mr ~= "" and type(page.id) == "string" then
+			routes_map[mr] = page.id
+		end
+	end
+	return routes_map, {}
+end
+
+function pages.can_access(_page)
+	return true
+end
+
+return pages
+`, "page_registry", testutil.WithStdlib(), testutil.WithManifest("registry", registryManifest))
+	if pageRegistry.HasError() {
+		t.Fatalf("page registry module errors: %v", testutil.ErrorMessages(pageRegistry.Errors))
+	}
+
+	result := testutil.Check(`
+local page_registry = require("page_registry")
+
+local all_pages, list_err = page_registry.find_all()
+if list_err then
+	return nil, list_err
+end
+
+local routes_map, issues = page_registry.validate_mount_routes(all_pages or {})
+if #issues > 0 then
+	return nil, table.concat(issues, "\n")
+end
+
+local accessible: {[string]: string} = {}
+for _, page in ipairs(all_pages) do
+	local mr = page.mount_route
+	if mr and routes_map[mr] == page.id and (not page.secure or page_registry.can_access(page)) then
+		accessible[mr] = page.id
+	end
+end
+
+return accessible
+`, testutil.WithStdlib(), testutil.WithModule("page_registry", pageRegistry))
+	if result.HasError() {
+		t.Fatalf("expected imported page registry to preserve string page IDs for routes, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 
@@ -823,8 +941,8 @@ return compress
 		t.Fatalf("expected exported compress-style module to require numeric proof, got no errors")
 	}
 	messages := strings.Join(testutil.ErrorMessages(compressModule.Errors), " | ")
-	if !strings.Contains(messages, "cannot perform arithmetic") {
-		t.Fatalf("expected arithmetic proof diagnostic, got: %s", messages)
+	if !strings.Contains(messages, "expected number") {
+		t.Fatalf("expected numeric proof diagnostic, got: %s", messages)
 	}
 }
 
@@ -937,6 +1055,26 @@ local count: number = item.count
 return count
 `, testutil.WithStdlib())
 	requireExternalLintErrorContaining(t, result, "cannot assign")
+}
+
+func TestExternalLint_PairsSelfWritePreservesClosedFieldDomain(t *testing.T) {
+	result := testutil.Check(`
+local item = {
+	count = 1,
+	name = "ready",
+}
+
+for key, value in pairs(item) do
+	item[key] = value
+end
+
+local count: number = item.count
+local name: string = item.name
+return count, name
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected same pairs key/value write to preserve closed record fields, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
 }
 
 func TestExternalLint_RejectsPairsWriteThatWeakensTypedMapElement(t *testing.T) {
@@ -1179,13 +1317,30 @@ return validate
 	}
 }
 
-func TestExternalLint_UntypedCommandHandlerCannotEnterTypedRegistry(t *testing.T) {
+func TestExternalLint_UntypedCommandHandlerCanEnterTypedRegistryWithNilPaddedErrorReturn(t *testing.T) {
 	result := testutil.Check(`
 type Handler = (any, any) -> (any, string?)
 
 local handlers: {[string]: Handler} = {}
 local handler_func: (...any) -> any = function(...)
 	return nil
+end
+
+local name = "stop"
+handlers[name] = handler_func
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected missing error return to be nil-padded, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func TestExternalLint_HandlerRegistryRejectsKnownWrongErrorReturn(t *testing.T) {
+	result := testutil.Check(`
+type Handler = (any, any) -> (any, string?)
+
+local handlers: {[string]: Handler} = {}
+local handler_func: (...any) -> (any, number) = function(...)
+	return nil, 123
 end
 
 local name = "stop"

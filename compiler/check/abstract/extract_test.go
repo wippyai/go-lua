@@ -1284,7 +1284,7 @@ local x = getValue()
 	}
 }
 
-// TestSourcePathUsesSymbolID verifies that SourcePath resolves SymbolID correctly.
+// TestSourcePathUsesSymbolID verifies that assignment source paths resolve SymbolID correctly.
 func TestSourcePathUsesSymbolID(t *testing.T) {
 	code := `
 local a = 1
@@ -1327,17 +1327,17 @@ local b = a
 		t.Fatal("a or b not found")
 	}
 
-	// b's assignment should have SourcePath with a's SymbolID
+	// b's assignment should have a path source with a's SymbolID
 	var foundBWithSource bool
 	for _, a := range inputs.Assignments {
 		if a.TargetPath.Symbol == symB {
-			if a.SourcePath.Symbol == symA {
+			if a.Source.Kind == flow.AssignmentSourcePath && a.Source.Path.Symbol == symA {
 				foundBWithSource = true
 			}
 		}
 	}
 	if !foundBWithSource {
-		t.Error("b's assignment should have SourcePath with a's SymbolID")
+		t.Error("b's assignment should have path source with a's SymbolID")
 	}
 }
 

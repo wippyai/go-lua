@@ -14,6 +14,7 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -107,7 +108,7 @@ func (s *Solution) RefinedAt(p cfg.Point, sym cfg.SymbolID) TypedValue {
 	}
 
 	// Check if we have a narrowed value for this version
-	if t := s.values[string(key)]; t != nil {
+	if t := s.valueAtPoint(p, string(key)); t != nil {
 		narrowed := s.NarrowedTypeAt(p, path)
 		if narrowed != nil {
 			return TypedValue{Type: narrowed, State: StateResolved}
@@ -122,10 +123,15 @@ func (s *Solution) RefinedAt(p cfg.Point, sym cfg.SymbolID) TypedValue {
 func (s *Solution) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) TypedValue {
 	refined := s.RefinedAt(p, sym)
 	if refined.Type != nil {
+		declared := s.DeclaredAt(p, sym)
+		if declared.Type != nil && declared.State == StateResolved && !typ.IsUnknown(refined.Type) {
+			if reconciled, ok := value.ReconcilePathFactWithDeclaredRead(refined.Type, declared.Type); ok && reconciled != nil {
+				return TypedValue{Type: reconciled, State: StateResolved}
+			}
+		}
 		// For annotated symbols, only accept refinements that are subtypes of the declared type.
 		// This prevents unsound narrowing that drops required fields from annotated records.
 		if s != nil && s.inputs != nil && s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[sym] {
-			declared := s.DeclaredAt(p, sym)
 			if declared.Type != nil && declared.State == StateResolved {
 				if !subtype.IsSubtype(refined.Type, declared.Type) {
 					return declared

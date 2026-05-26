@@ -61,8 +61,10 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 		input.Ctx,
 		input.Types,
 		input.Manifests,
+		input.Graph,
 		input.Scope.Scopes,
 		input.Solve.Solution,
+		input.Extract.Inputs,
 		narrowingCtx,
 		input.FunctionFacts,
 		input.ModuleBindings,
@@ -74,9 +76,11 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 	fnEffect = EnrichWithKeysCollector(fnEffect, input.Graph, input.Extract.Evidence)
 
 	return NarrowOutput{
-		Facts:      narrowingCtx.Types(),
-		Refinement: fnEffect,
-		Synth:      engine,
+		Facts:        narrowingCtx.Types(),
+		Refinement:   fnEffect,
+		Synth:        engine,
+		QueryContext: input.Ctx,
+		TypeOps:      engine.CallQuery(),
 	}
 }
 
@@ -84,8 +88,10 @@ func createNarrowedEngine(
 	ctx *db.QueryContext,
 	types core.TypeOps,
 	manifests io.ManifestQuerier,
+	graph *cfg.Graph,
 	scopes map[cfg.Point]*scope.State,
 	solution *flow.Solution,
+	inputs *flow.Inputs,
 	checkCtx api.NarrowEnv,
 	functionFacts api.FunctionFacts,
 	moduleBindings *bind.BindingTable,
@@ -104,7 +110,8 @@ func createNarrowedEngine(
 		Types:          types,
 		Scopes:         scopes,
 		Flow:           solution,
-		Paths:          newPathFromExprFunc(solution, bindings),
+		Inputs:         inputs,
+		Paths:          newPathFromExprFunc(solution, bindings, graph),
 		Manifests:      manifests,
 		Env:            checkCtx,
 		FunctionFacts:  functionFacts,
@@ -115,8 +122,9 @@ func createNarrowedEngine(
 	})
 }
 
-// newPathFromExprFunc returns a PathFromExprFunc using bindings-based path extraction.
-func newPathFromExprFunc(solution *flow.Solution, bindings *bind.BindingTable) api.PathFromExprFunc {
+// newPathFromExprFunc returns a PathFromExprFunc using bindings-based,
+// SSA-versioned path extraction.
+func newPathFromExprFunc(solution *flow.Solution, bindings *bind.BindingTable, graph *cfg.Graph) api.PathFromExprFunc {
 	return func(p cfg.Point, expr ast.Expr, _ *scope.State) constraint.Path {
 		if solution == nil {
 			return constraint.Path{}
@@ -127,6 +135,6 @@ func newPathFromExprFunc(solution *flow.Solution, bindings *bind.BindingTable) a
 			}
 			return solution.ConstValueAt(p, name)
 		}
-		return path.FromExprWithBindings(expr, constResolver, bindings)
+		return path.FromExprWithBindingsAt(expr, constResolver, bindings, graph, p)
 	}
 }

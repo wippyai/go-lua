@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	ccfg "github.com/wippyai/go-lua/compiler/cfg"
+	abstractreturns "github.com/wippyai/go-lua/compiler/check/abstract/returns"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/db"
@@ -65,6 +66,30 @@ func TestSynthFunctionType_WithParams(t *testing.T) {
 	}
 	if result.Params[0].Type != typ.String {
 		t.Fatalf("got %v, want string", result.Params[0].Type)
+	}
+}
+
+func TestBuildParamOverlayUsesBodyInputProjectionForSoftAnnotation(t *testing.T) {
+	s := newTestSynthesizer()
+	sc := scope.New()
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{
+			Names: []string{"tests"},
+			Types: []ast.TypeExpr{
+				&ast.ArrayTypeExpr{Element: &ast.PrimitiveTypeExpr{Name: "any"}},
+			},
+		},
+	}
+	graph := ccfg.Build(fn)
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	overlay := s.buildParamOverlay(graph, sc, nil, []typ.Type{typ.NewArray(entry)})
+	slots := graph.ParamSlotsReadOnly()
+	if len(slots) != 1 {
+		t.Fatalf("param slots = %d, want 1", len(slots))
+	}
+	want := typ.NewArray(entry)
+	if got := overlay[slots[0].Symbol]; !typ.TypeEquals(got, want) {
+		t.Fatalf("body overlay param = %v, want %v", got, want)
 	}
 }
 
@@ -206,11 +231,10 @@ func TestSynthFunctionType_UsesAttachedGraphProvider(t *testing.T) {
 	api.AttachGraphs(ctx, provider)
 
 	s := NewSynthesizer(&Deps{
-		Ctx:      ctx,
-		Types:    mockTypeQuerier{},
-		Scopes:   make(api.ScopeMap),
-		Graphs:   provider,
-		PreCache: make(api.Cache),
+		Ctx:    ctx,
+		Types:  mockTypeQuerier{},
+		Scopes: make(api.ScopeMap),
+		Graphs: provider,
 	}, api.PhaseTypeResolution)
 
 	result := s.FunctionType(fn, scope.New())
@@ -292,16 +316,16 @@ func TestJoinTwo_Different(t *testing.T) {
 
 func TestInferReturnExprTypes_Empty(t *testing.T) {
 	s := newTestSynthesizer()
-	result := s.inferReturnExprTypes(nil, 0)
-	if result != nil {
-		t.Fatal("expected nil for empty exprs")
+	result := abstractreturns.ReturnVector(nil, nil, 0, returnVectorSynth{synth: s})
+	if len(result) != 1 || result[0] != typ.Nil {
+		t.Fatalf("got %v, want [nil]", result)
 	}
 }
 
 func TestInferReturnExprTypes_Single(t *testing.T) {
 	s := newTestSynthesizer()
 	exprs := []ast.Expr{&ast.StringExpr{Value: "hello"}}
-	result := s.inferReturnExprTypes(exprs, 0)
+	result := abstractreturns.ReturnVector(nil, exprs, 0, returnVectorSynth{synth: s})
 	if len(result) != 1 {
 		t.Fatalf("got %d types, want 1", len(result))
 	}

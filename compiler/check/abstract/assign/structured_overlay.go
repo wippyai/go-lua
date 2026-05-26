@@ -12,6 +12,7 @@ import (
 
 type structuredWrite struct {
 	point     cfg.Point
+	versioned bool
 	versionID int
 	segments  []constraint.Segment
 	source    ast.Expr
@@ -134,12 +135,10 @@ func structuredWriteForTarget(graph *cfg.Graph, p cfg.Point, source ast.Expr, ta
 	}
 
 	version := graph.VisibleVersion(p, target.BaseSymbol)
-	if version.ID == 0 {
-		return structuredWrite{}, 0, false
-	}
 
 	return structuredWrite{
 		point:     p,
+		versioned: version.ID != 0,
 		versionID: version.ID,
 		segments:  segments,
 		source:    source,
@@ -160,13 +159,14 @@ func mergeVisibleStructuredWrites(
 	}
 
 	currentVersion := graph.VisibleVersion(at, sym)
-	if currentVersion.ID == 0 {
-		return baseType
-	}
+	currentVersioned := currentVersion.ID != 0
 
 	current := baseType
 	for _, write := range writes {
-		if write.versionID != currentVersion.ID {
+		if write.versioned != currentVersioned {
+			continue
+		}
+		if write.versioned && write.versionID != currentVersion.ID {
 			continue
 		}
 		if write.point == at || !cfganalysis.StrictlyDominates(idom, write.point, at) {

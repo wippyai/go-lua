@@ -21,26 +21,66 @@ type Variant struct {
 //
 // Example: Option<T> = Some(T) | None
 type Sum struct {
-	Name     string    // Type name for display
-	Variants []Variant // Possible cases
-	hash     uint64
-	strCache stringCache
+	Name                  string    // Type name for display
+	Variants              []Variant // Possible cases
+	hash                  uint64
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
 }
 
 // NewSum creates a sum type.
 func NewSum(name string, variants []Variant) *Sum {
 	h := internal.HashCombine(uint64(kind.Sum), internal.FnvString(name))
+	containsAny := false
+	containsNever := false
+	containsTypeParam := false
+	containsInstantiated := false
+	containsRecursive := false
+	containsOpenRecursive := false
 	for _, v := range variants {
 		h = internal.HashCombine(h, internal.FnvString(v.Tag))
 		for _, t := range v.Types {
 			h = internal.HashCombine(h, t.Hash())
+			if !containsAny && knownContainsAny(t) {
+				containsAny = true
+			}
+			if !containsNever && knownContainsNever(t) {
+				containsNever = true
+			}
+			if !containsTypeParam && knownContainsTypeParam(t) {
+				containsTypeParam = true
+			}
+			if !containsInstantiated && knownContainsInstantiated(t) {
+				containsInstantiated = true
+			}
+			if !containsRecursive && knownContainsRecursive(t) {
+				containsRecursive = true
+			}
+			if !containsOpenRecursive && knownContainsOpenRecursive(t) {
+				containsOpenRecursive = true
+			}
 		}
 	}
 	// Defensive copy to prevent external mutation
 	copied := make([]Variant, len(variants))
 	copy(copied, variants)
 
-	return &Sum{Name: name, Variants: copied, hash: h}
+	return &Sum{
+		Name:                  name,
+		Variants:              copied,
+		hash:                  h,
+		containsAny:           containsAny,
+		containsNever:         containsNever,
+		containsTypeParam:     containsTypeParam,
+		containsInstantiated:  containsInstantiated,
+		containsRecursive:     containsRecursive,
+		containsOpenRecursive: containsOpenRecursive,
+	}
 }
 
 func (s *Sum) Kind() kind.Kind { return kind.Sum }
@@ -124,24 +164,64 @@ type Method struct {
 // Named interfaces (Name != "") use nominal identity for marker interfaces
 // (interfaces with no methods, like Channel<T>).
 type Interface struct {
-	Name     string   // Interface name (empty for anonymous)
-	Methods  []Method // Required methods
-	hash     uint64
-	strCache stringCache
+	Name                  string   // Interface name (empty for anonymous)
+	Methods               []Method // Required methods
+	hash                  uint64
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
 }
 
 // NewInterface creates an interface type.
 func NewInterface(name string, methods []Method) *Interface {
 	h := internal.HashCombine(uint64(kind.Interface), internal.FnvString(name))
+	containsAny := false
+	containsNever := false
+	containsTypeParam := false
+	containsInstantiated := false
+	containsRecursive := false
+	containsOpenRecursive := false
 	for _, m := range methods {
 		h = internal.HashCombine(h, internal.FnvString(m.Name))
 		h = internal.HashCombine(h, m.Type.Hash())
+		if !containsAny && knownContainsAny(m.Type) {
+			containsAny = true
+		}
+		if !containsNever && knownContainsNever(m.Type) {
+			containsNever = true
+		}
+		if !containsTypeParam && knownContainsTypeParam(m.Type) {
+			containsTypeParam = true
+		}
+		if !containsInstantiated && knownContainsInstantiated(m.Type) {
+			containsInstantiated = true
+		}
+		if !containsRecursive && knownContainsRecursive(m.Type) {
+			containsRecursive = true
+		}
+		if !containsOpenRecursive && knownContainsOpenRecursive(m.Type) {
+			containsOpenRecursive = true
+		}
 	}
 	// Defensive copy to prevent external mutation
 	copied := make([]Method, len(methods))
 	copy(copied, methods)
 
-	return &Interface{Name: name, Methods: copied, hash: h}
+	return &Interface{
+		Name:                  name,
+		Methods:               copied,
+		hash:                  h,
+		containsAny:           containsAny,
+		containsNever:         containsNever,
+		containsTypeParam:     containsTypeParam,
+		containsInstantiated:  containsInstantiated,
+		containsRecursive:     containsRecursive,
+		containsOpenRecursive: containsOpenRecursive,
+	}
 }
 
 func (i *Interface) Kind() kind.Kind { return kind.Interface }

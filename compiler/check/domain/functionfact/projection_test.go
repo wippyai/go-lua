@@ -9,10 +9,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/store"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestTypeForGraph_UsesCanonicalParentAndCache(t *testing.T) {
+func TestSiblingTypeForGraph_UsesCanonicalParent(t *testing.T) {
 	st := store.NewSessionStore()
 	fn := &ast.FunctionExpr{}
 	graph := cfg.Build(fn)
@@ -27,21 +28,17 @@ func TestTypeForGraph_UsesCanonicalParentAndCache(t *testing.T) {
 	second := typ.Func().Returns(typ.Number).Build()
 	writeFunctionFactType(st, graph, storedParent, sym, first)
 
-	cache := functionfact.NewCache()
-	if got := functionfact.TypeForGraph(st, graph, sym, defaultParent, cache); !typ.TypeEquals(got, first) {
-		t.Fatalf("TypeForGraph() = %v, want %v", got, first)
+	if got := functionfact.SiblingTypeForGraph(st, graph, sym, defaultParent); !typ.TypeEquals(got, first) {
+		t.Fatalf("SiblingTypeForGraph() = %v, want %v", got, first)
 	}
 
 	writeFunctionFactType(st, graph, storedParent, sym, second)
-	if got := functionfact.TypeForGraph(st, graph, sym, defaultParent, cache); !typ.TypeEquals(got, first) {
-		t.Fatalf("cached TypeForGraph() = %v, want %v", got, first)
-	}
-	if got := functionfact.TypeForGraph(st, graph, sym, defaultParent, nil); !typ.TypeEquals(got, second) {
-		t.Fatalf("uncached TypeForGraph() = %v, want %v", got, second)
+	if got := functionfact.SiblingTypeForGraph(st, graph, sym, defaultParent); !typ.TypeEquals(got, second) {
+		t.Fatalf("SiblingTypeForGraph() after update = %v, want %v", got, second)
 	}
 }
 
-func TestTypeForSymbol_ResolvesOwningParentGraph(t *testing.T) {
+func TestSiblingTypeForSymbol_ResolvesOwningParentGraph(t *testing.T) {
 	st := store.NewSessionStore()
 	parentFn := &ast.FunctionExpr{}
 	childFn := &ast.FunctionExpr{}
@@ -58,8 +55,8 @@ func TestTypeForSymbol_ResolvesOwningParentGraph(t *testing.T) {
 	st.RegisterFunctionRef(sym, childFn, childGraph, parentGraph.ID(), 0)
 	writeFunctionFactType(st, parentGraph, parent, sym, fnType)
 
-	if got := functionfact.TypeForSymbol(st, sym, nil, functionfact.NewCache()); !typ.TypeEquals(got, fnType) {
-		t.Fatalf("TypeForSymbol() = %v, want %v", got, fnType)
+	if got := functionfact.SiblingTypeForSymbol(st, sym, nil); !typ.TypeEquals(got, fnType) {
+		t.Fatalf("SiblingTypeForSymbol() = %v, want %v", got, fnType)
 	}
 	key, ok := functionfact.GraphKeyForSymbol(st, sym, nil)
 	if !ok {
@@ -70,39 +67,326 @@ func TestTypeForSymbol_ResolvesOwningParentGraph(t *testing.T) {
 	}
 }
 
-func TestReturnsForPhase_SelectsNarrowingProjection(t *testing.T) {
+func TestReturnProjection_SelectsNarrowingProjection(t *testing.T) {
 	facts := api.FunctionFacts{
 		1: {
-			Summary: []typ.Type{typ.Nil},
-			Narrow:  []typ.Type{typ.String},
+			Summary: product.LiftVector([]typ.Type{typ.Nil}),
+			Narrow:  product.LiftVector([]typ.Type{typ.String}),
 		},
 	}
 
-	if got := functionfact.ReturnsForPhase(facts, 1, api.PhaseScopeCompute); len(got) != 1 || !typ.TypeEquals(got[0], typ.Nil) {
+	if got := functionfact.ReturnProjection(facts, 1, api.PhaseScopeCompute); len(got) != 1 || !typ.TypeEquals(got[0], typ.Nil) {
 		t.Fatalf("scope returns = %v, want nil summary", got)
 	}
-	if got := functionfact.ReturnsForPhase(facts, 1, api.PhaseNarrowing); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+	if got := functionfact.ReturnProjection(facts, 1, api.PhaseNarrowing); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
 		t.Fatalf("narrow returns = %v, want string narrow summary", got)
 	}
 }
 
-func TestTypeLookup_ProjectsCanonicalFunctionTypes(t *testing.T) {
+func TestReturnProjection_NarrowingRepairsWithoutDroppingSummaryTop(t *testing.T) {
+	sym := cfg.SymbolID(1)
+	dynamic := []typ.Type{typ.Any}
+	narrow := []typ.Type{typ.NewRecord().Field("data", typ.String).Build()}
+	facts := api.FunctionFacts{
+		sym: {
+			Signature: typ.Func().Returns(typ.Any).Build(),
+			Summary:   product.LiftVector(dynamic),
+			Narrow:    product.LiftVector(narrow),
+		},
+	}
+
+	if got := functionfact.ReturnProjection(facts, sym, api.PhaseNarrowing); len(got) != 1 || !typ.TypeEquals(got[0], typ.Any) {
+		t.Fatalf("narrowing returns = %v, want whole-slot any summary", got)
+	}
+
+	projected := functionfact.ProjectType(facts[sym], functionfact.ProjectionExport, api.PhaseNarrowing)
+	fn, ok := projected.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.Any) {
+		t.Fatalf("export projection = %v, want any return", projected)
+	}
+}
+
+func TestProjectionLookup_ProjectsCanonicalFunctionTypes(t *testing.T) {
 	sym := cfg.SymbolID(3)
 	fnType := typ.Func().Returns(typ.String).Build()
 	facts := api.FunctionFacts{
-		sym: {Type: fnType},
-		4:   {Params: []typ.Type{typ.String}},
+		sym: {Signature: fnType},
+		4:   {Params: product.LiftVector([]typ.Type{typ.String})},
 	}
 
-	lookup := functionfact.TypeLookup(facts)
+	lookup := functionfact.ProjectionLookup(facts, functionfact.ProjectionSibling, api.PhaseScopeCompute)
 	if lookup == nil {
-		t.Fatal("TypeLookup() returned nil")
+		t.Fatal("ProjectionLookup() returned nil")
 	}
 	if got := lookup(sym); !typ.TypeEquals(got, fnType) {
 		t.Fatalf("lookup(%d) = %v, want %v", sym, got, fnType)
 	}
 	if got := lookup(4); got != nil {
 		t.Fatalf("lookup for param-only fact = %v, want nil", got)
+	}
+}
+
+func TestStoreProjectionLookup_UsesOwningFunctionFactProduct(t *testing.T) {
+	st := store.NewSessionStore()
+	parentFn := &ast.FunctionExpr{}
+	childFn := &ast.FunctionExpr{}
+	parentGraph := cfg.Build(parentFn)
+	childGraph := cfg.Build(childFn)
+	st.RegisterGraph(parentGraph, parentFn)
+	st.RegisterGraph(childGraph, childFn)
+
+	parent := scope.New().WithType("parent", typ.String)
+	registerGraphParent(t, st, parentGraph, parent)
+
+	sym := cfg.SymbolID(13)
+	fnType := typ.Func().Returns(typ.Boolean).Build()
+	st.RegisterFunctionRef(sym, childFn, childGraph, parentGraph.ID(), 0)
+	writeFunctionFactType(st, parentGraph, parent, sym, fnType)
+
+	lookup := functionfact.StoreProjectionLookup(st, functionfact.ProjectionSibling, api.PhaseScopeCompute, nil)
+	if lookup == nil {
+		t.Fatal("StoreProjectionLookup() returned nil")
+	}
+	if got := lookup(sym); !typ.TypeEquals(got, fnType) {
+		t.Fatalf("lookup(%d) = %v, want %v", sym, got, fnType)
+	}
+	if got := lookup(0); got != nil {
+		t.Fatalf("lookup(0) = %v, want nil", got)
+	}
+}
+
+func TestRecursiveTypeProjection_ReadsCurrentReturnProduct(t *testing.T) {
+	sym := cfg.SymbolID(7)
+	sig := typ.Func().Param("x", typ.String).Build()
+	facts := api.FunctionFacts{
+		sym: {
+			Signature: sig,
+			Summary:   product.LiftVector([]typ.Type{typ.Integer}),
+		},
+	}
+
+	got := functionfact.RecursiveTypeProjection(sig, nil, facts, sym, api.PhaseScopeCompute)
+	if got == nil || len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], typ.Integer) {
+		t.Fatalf("RecursiveTypeProjection() = %v, want integer return from product", got)
+	}
+}
+
+func TestRecursiveTypeProjection_UsesExpectedReturnsWithoutProduct(t *testing.T) {
+	sig := typ.Func().Param("x", typ.String).Build()
+	expected := typ.Func().Param("x", typ.String).Returns(typ.Boolean).Build()
+
+	got := functionfact.RecursiveTypeProjection(sig, expected, nil, 0, api.PhaseScopeCompute)
+	if got == nil || len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], typ.Boolean) {
+		t.Fatalf("RecursiveTypeProjection() = %v, want expected boolean return", got)
+	}
+}
+
+func TestSignatureWithReturnSummary_AppliesProductReturnProjection(t *testing.T) {
+	sym := cfg.SymbolID(9)
+	sig := typ.Func().Returns(typ.Unknown).Build()
+	facts := api.FunctionFacts{
+		sym: {
+			Signature: sig,
+			Summary:   product.LiftVector([]typ.Type{typ.String}),
+		},
+	}
+
+	got := functionfact.SignatureWithReturnSummary(facts, sym, sig)
+	if got == nil || len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], typ.String) {
+		t.Fatalf("SignatureWithReturnSummary() = %v, want string return", got)
+	}
+}
+
+func TestProjectionBodyDoesNotAssumeBodyContractAsEntryProof(t *testing.T) {
+	sig := typ.Func().Param("value", typ.Any).Returns(typ.Boolean).Build()
+	ff := api.FunctionFact{
+		Signature:  sig,
+		BodyParams: product.LiftVector([]typ.Type{typ.String}),
+	}
+
+	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.PhaseScopeCompute)
+	bodyFn, ok := body.(*typ.Function)
+	if !ok || len(bodyFn.Params) != 1 || !typ.TypeEquals(bodyFn.Params[0].Type, typ.Any) {
+		t.Fatalf("body projection = %v, want source any parameter", body)
+	}
+
+	sibling := functionfact.ProjectType(ff, functionfact.ProjectionSibling, api.PhaseScopeCompute)
+	siblingFn, ok := sibling.(*typ.Function)
+	if !ok || len(siblingFn.Params) != 1 || !typ.TypeEquals(siblingFn.Params[0].Type, typ.Any) {
+		t.Fatalf("sibling projection = %v, want caller-facing any parameter", sibling)
+	}
+}
+
+func TestProjectionSiblingUsesEntryEvidenceWithoutLeakingToPublic(t *testing.T) {
+	entry := typ.NewArray(typ.NewRecord().Field("id", typ.String).Build())
+	publicParam := typ.NewArray(typ.Any)
+	ff := api.FunctionFact{
+		Signature:   typ.Func().Param("tests", publicParam).Build(),
+		EntryParams: product.LiftVector([]typ.Type{entry}),
+	}
+
+	sibling := functionfact.ProjectType(ff, functionfact.ProjectionSibling, api.PhaseScopeCompute)
+	siblingFn, ok := sibling.(*typ.Function)
+	if !ok || len(siblingFn.Params) != 1 || !typ.TypeEquals(siblingFn.Params[0].Type, entry) {
+		t.Fatalf("sibling projection = %v, want entry parameter %v", sibling, entry)
+	}
+
+	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.PhaseScopeCompute)
+	publicFn, ok := public.(*typ.Function)
+	if !ok || len(publicFn.Params) != 1 || !typ.TypeEquals(publicFn.Params[0].Type, publicParam) {
+		t.Fatalf("public projection = %v, want public parameter %v", public, publicParam)
+	}
+
+	exported := functionfact.ProjectType(ff, functionfact.ProjectionExport, api.PhaseScopeCompute)
+	exportFn, ok := exported.(*typ.Function)
+	if !ok || len(exportFn.Params) != 1 || !typ.TypeEquals(exportFn.Params[0].Type, publicParam) {
+		t.Fatalf("export projection = %v, want public parameter %v", exported, publicParam)
+	}
+}
+
+func TestProjectionFlowInputExcludesEntryAndBodyEvidence(t *testing.T) {
+	entry := typ.NewArray(typ.NewRecord().Field("id", typ.String).Build())
+	body := typ.NewArray(typ.NewRecord().Field("id", typ.String).Field("name", typ.String).Build())
+	publicParam := typ.NewArray(typ.Any)
+	ff := api.FunctionFact{
+		Signature:   typ.Func().Param("tests", publicParam).Build(),
+		Params:      product.LiftVector([]typ.Type{publicParam}),
+		BodyParams:  product.LiftVector([]typ.Type{body}),
+		EntryParams: product.LiftVector([]typ.Type{entry}),
+		Summary:     product.LiftVector([]typ.Type{typ.Boolean}),
+	}
+
+	projected := functionfact.ProjectType(ff, functionfact.ProjectionFlowInput, api.PhaseScopeCompute)
+	fn, ok := projected.(*typ.Function)
+	if !ok || len(fn.Params) != 1 || len(fn.Returns) != 1 {
+		t.Fatalf("flow-input projection = %v, want one-param one-return function", projected)
+	}
+	if !typ.TypeEquals(fn.Params[0].Type, publicParam) {
+		t.Fatalf("flow-input projection parameter = %v, want public %v", fn.Params[0].Type, publicParam)
+	}
+	if !typ.TypeEquals(fn.Returns[0], typ.Boolean) {
+		t.Fatalf("flow-input projection return = %v, want summary boolean", fn.Returns[0])
+	}
+}
+
+func TestSynthesisTypeProjectionUsesFlowInputBeforeNarrowing(t *testing.T) {
+	sym := cfg.SymbolID(21)
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	publicParam := typ.Any
+	facts := api.FunctionFacts{
+		sym: {
+			Signature:   typ.Func().Param("value", publicParam).Build(),
+			EntryParams: product.LiftVector([]typ.Type{entry}),
+		},
+	}
+
+	scopeType := functionfact.SynthesisTypeProjection(facts, sym, api.PhaseScopeCompute)
+	scopeFn, ok := scopeType.(*typ.Function)
+	if !ok || len(scopeFn.Params) != 1 || !typ.TypeEquals(scopeFn.Params[0].Type, publicParam) {
+		t.Fatalf("scope synthesis projection = %v, want public parameter", scopeType)
+	}
+
+	narrowType := functionfact.SynthesisTypeProjection(facts, sym, api.PhaseNarrowing)
+	narrowFn, ok := narrowType.(*typ.Function)
+	if !ok || len(narrowFn.Params) != 1 || !typ.TypeEquals(narrowFn.Params[0].Type, entry) {
+		t.Fatalf("narrow synthesis projection = %v, want entry parameter", narrowType)
+	}
+}
+
+func TestProjectionBodyPreservesNilEntryStateForUnannotatedParam(t *testing.T) {
+	ff := api.FunctionFact{
+		Signature:   typ.Func().Param("base", typ.Any).Build(),
+		EntryParams: product.LiftVector([]typ.Type{typ.Nil}),
+	}
+
+	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.PhaseScopeCompute)
+	bodyFn, ok := body.(*typ.Function)
+	if !ok || len(bodyFn.Params) != 1 || !typ.TypeEquals(bodyFn.Params[0].Type, typ.Nil) {
+		t.Fatalf("body projection = %v, want nil entry state", body)
+	}
+
+	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.PhaseScopeCompute)
+	publicFn, ok := public.(*typ.Function)
+	if !ok || len(publicFn.Params) != 1 || !typ.TypeEquals(publicFn.Params[0].Type, typ.Any) {
+		t.Fatalf("public projection = %v, want public any", public)
+	}
+}
+
+func TestProjectionPublicKeepsExplicitSoftAnnotationBroad(t *testing.T) {
+	publicParam := typ.NewArray(typ.Any)
+	observed := typ.NewTuple(
+		typ.NewRecord().Field("ok", typ.Boolean).Field("value", typ.String).Build(),
+		typ.NewRecord().Field("ok", typ.Boolean).Build(),
+	)
+	ff := api.FunctionFact{
+		Signature: typ.Func().Param("responses", publicParam).Returns(typ.Any).Build(),
+		Params:    product.LiftVector([]typ.Type{observed}),
+	}
+
+	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.PhaseScopeCompute)
+	publicFn, ok := public.(*typ.Function)
+	if !ok || len(publicFn.Params) != 1 {
+		t.Fatalf("public projection = %v, want one-param function", public)
+	}
+	if !typ.TypeEquals(publicFn.Params[0].Type, publicParam) {
+		t.Fatalf("public projection narrowed explicit {any}: got %v, want %v", publicFn.Params[0].Type, publicParam)
+	}
+
+	body := functionfact.ProjectType(api.FunctionFact{
+		Signature:   ff.Signature,
+		EntryParams: product.LiftVector([]typ.Type{observed}),
+	}, functionfact.ProjectionBody, api.PhaseScopeCompute)
+	bodyFn, ok := body.(*typ.Function)
+	if !ok || len(bodyFn.Params) != 1 {
+		t.Fatalf("body projection = %v, want one-param function", body)
+	}
+	if typ.TypeEquals(bodyFn.Params[0].Type, publicParam) {
+		t.Fatalf("body projection should refine soft annotation from observed evidence")
+	}
+}
+
+func TestProjectionBodyRefinesSoftArrayAnnotationWithEntryEvidence(t *testing.T) {
+	entry := typ.NewRecord().
+		Field("id", typ.String).
+		Field("name", typ.String).
+		Build()
+	publicParam := typ.NewArray(typ.Any)
+	ff := api.FunctionFact{
+		Signature:   typ.Func().Param("tests", publicParam).Build(),
+		EntryParams: product.LiftVector([]typ.Type{typ.NewOptional(typ.NewArray(entry))}),
+	}
+
+	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.PhaseScopeCompute)
+	bodyFn, ok := body.(*typ.Function)
+	if !ok || len(bodyFn.Params) != 1 {
+		t.Fatalf("body projection = %v, want one-param function", body)
+	}
+	want := typ.NewArray(entry)
+	if !typ.TypeEquals(bodyFn.Params[0].Type, want) {
+		t.Fatalf("body projection = %v, want %v", bodyFn.Params[0].Type, want)
+	}
+
+	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.PhaseScopeCompute)
+	publicFn, ok := public.(*typ.Function)
+	if !ok || len(publicFn.Params) != 1 {
+		t.Fatalf("public projection = %v, want one-param function", public)
+	}
+	if !typ.TypeEquals(publicFn.Params[0].Type, publicParam) {
+		t.Fatalf("entry/body evidence leaked into public projection: got %v, want %v", publicFn.Params[0].Type, publicParam)
+	}
+}
+
+func TestBodyInputProjectionRefinesSoftAnnotationWithEntryEvidence(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	publicParam := typ.NewArray(typ.Any)
+	signature := typ.Func().Param("tests", publicParam).Build()
+
+	body := functionfact.BodyInputProjection(signature, nil, []typ.Type{typ.NewArray(entry)})
+	if body == nil || len(body.Params) != 1 {
+		t.Fatalf("body input projection = %v, want one-param function", body)
+	}
+	if want := typ.NewArray(entry); !typ.TypeEquals(body.Params[0].Type, want) {
+		t.Fatalf("body input projection param = %v, want %v", body.Params[0].Type, want)
 	}
 }
 
@@ -124,8 +408,8 @@ func TestParameterEvidenceSignatures_ProjectsCurrentGraphFacts(t *testing.T) {
 	st.RegisterFunctionRef(sym, fn, graph, 0, 0)
 	key := api.KeyForGraph(graph, parent.Hash())
 	st.InterprocPrev.Facts[key] = api.Facts{
-		FunctionFacts: functionfact.FromPart(sym, functionfact.Parts{
-			Params: []typ.Type{typ.String},
+		FunctionFacts: functionfact.BuildOne(sym, functionfact.Evidence{
+			EntryParams: []typ.Type{typ.String},
 		}),
 	}
 
@@ -133,6 +417,77 @@ func TestParameterEvidenceSignatures_ProjectsCurrentGraphFacts(t *testing.T) {
 	evidence := got[fn]
 	if len(evidence) != 1 || !typ.TypeEquals(evidence[0], typ.String) {
 		t.Fatalf("signature evidence = %v, want string", evidence)
+	}
+}
+
+func TestParameterEvidenceSignatures_UsesEntryParamsNotPublicOrBodyContracts(t *testing.T) {
+	st := store.NewSessionStore()
+	fn := &ast.FunctionExpr{}
+	graph := cfg.Build(fn)
+	st.RegisterGraph(graph, fn)
+	parent := scope.New().WithType("parent", typ.String)
+	registerGraphParent(t, st, graph, parent)
+
+	sym := cfg.SymbolID(22)
+	st.RegisterFunctionRef(sym, fn, graph, 0, 0)
+	key := api.KeyForGraph(graph, parent.Hash())
+	entryParam := typ.NewRecord().OptField("message", typ.String).Build()
+	bodyParam := typ.NewRecord().Field("message", typ.String).Build()
+	st.InterprocPrev.Facts[key] = api.Facts{
+		FunctionFacts: functionfact.BuildOne(sym, functionfact.Evidence{
+			Params:      []typ.Type{typ.Any},
+			BodyParams:  []typ.Type{bodyParam},
+			EntryParams: []typ.Type{entryParam},
+		}),
+	}
+
+	got := functionfact.ParameterEvidenceSignatures(st, graph, parent, nil)
+	evidence := got[fn]
+	if len(evidence) != 1 || !typ.TypeEquals(evidence[0], entryParam) {
+		t.Fatalf("signature evidence = %v, want entry param %v", evidence, entryParam)
+	}
+	if public := functionfact.PublicParameterEvidence(st.InterprocPrev.Facts[key].FunctionFacts, sym); len(public) != 1 || !typ.TypeEquals(public[0], typ.Any) {
+		t.Fatalf("public evidence = %v, want any", public)
+	}
+}
+
+func TestVisibleFactsForGraph_ProjectsParentScopeFunctionFacts(t *testing.T) {
+	st := store.NewSessionStore()
+	parentFn := &ast.FunctionExpr{}
+	childFn := &ast.FunctionExpr{}
+	siblingFn := &ast.FunctionExpr{}
+	parentGraph := cfg.Build(parentFn)
+	childGraph := cfg.Build(childFn)
+	st.RegisterGraph(parentGraph, parentFn)
+	st.RegisterGraph(childGraph, childFn)
+	parent := scope.New().WithType("parent", typ.String)
+	registerGraphParent(t, st, parentGraph, parent)
+
+	sym := cfg.SymbolID(23)
+	siblingSym := cfg.SymbolID(24)
+	st.RegisterFunctionRef(sym, childFn, childGraph, parentGraph.ID(), 1)
+	st.RegisterFunctionRef(siblingSym, siblingFn, parentGraph, parentGraph.ID(), 2)
+	st.RegisterNestedMeta(childGraph.ID(), parentGraph.ID(), 1)
+	key := api.KeyForGraph(parentGraph, parent.Hash())
+	st.InterprocPrev.Facts[key] = api.Facts{
+		FunctionFacts: functionfact.Build(map[cfg.SymbolID]functionfact.Evidence{
+			sym: {
+				EntryParams: []typ.Type{typ.String},
+			},
+			siblingSym: {
+				EntryParams: []typ.Type{typ.Number},
+			},
+		}),
+	}
+
+	got := functionfact.VisibleFactsForGraph(st, childGraph, nil, parent)
+	evidence := functionfact.BodyEntryEvidenceForSymbol(got, sym)
+	if len(evidence) != 1 || !typ.TypeEquals(evidence[0], typ.String) {
+		t.Fatalf("visible entry evidence = %v, want string", evidence)
+	}
+	siblingEvidence := functionfact.BodyEntryEvidenceForSymbol(got, siblingSym)
+	if len(siblingEvidence) != 1 || !typ.TypeEquals(siblingEvidence[0], typ.Number) {
+		t.Fatalf("visible sibling entry evidence = %v, want number", siblingEvidence)
 	}
 }
 
@@ -148,11 +503,11 @@ func registerGraphParent(t *testing.T, st *store.SessionStore, graph *cfg.Graph,
 	st.SetGraphParentHash(graph.ID(), parent.Hash())
 }
 
-func writeFunctionFactType(st *store.SessionStore, graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID, fnType typ.Type) {
+func writeFunctionFactType(st *store.SessionStore, graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID, fnType *typ.Function) {
 	key := api.KeyForGraph(graph, parent.Hash())
 	st.InterprocPrev.Facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Type: fnType},
+			sym: {Signature: fnType},
 		},
 	}
 }

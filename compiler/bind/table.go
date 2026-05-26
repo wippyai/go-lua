@@ -51,6 +51,10 @@ type BindingTable struct {
 	// symbols maps identifier references to their resolved symbols
 	symbols map[*ast.IdentExpr]cfg.SymbolID
 
+	// implicitGlobalUses marks identifier reads that created a global because
+	// no lexical or predeclared binding existed at the use point.
+	implicitGlobalUses map[*ast.IdentExpr]bool
+
 	// kind stores the declaration kind for each symbol
 	kind map[cfg.SymbolID]cfg.SymbolKind
 
@@ -129,18 +133,19 @@ func NewBindingTableWithHint(symbolHint, stmtHint int) *BindingTable {
 	}
 
 	return &BindingTable{
-		symbols:           make(map[*ast.IdentExpr]cfg.SymbolID, identHint),
-		kind:              make(map[cfg.SymbolID]cfg.SymbolKind, symbolHint),
-		names:             make(map[cfg.SymbolID]string, symbolHint),
-		paramSymbols:      make(map[*ast.FunctionExpr][]cfg.SymbolID),
-		localSymbolSingle: make(map[*ast.LocalAssignStmt]cfg.SymbolID, localSingleHint),
-		localSymbolsMulti: make(map[*ast.LocalAssignStmt][]cfg.SymbolID),
-		numForSymbols:     make(map[*ast.NumberForStmt]cfg.SymbolID),
-		genericForSymbols: make(map[*ast.GenericForStmt][]cfg.SymbolID),
-		fieldSymbols:      make(map[fieldPathKey]cfg.SymbolID),
-		funcLitSymbols:    make(map[*ast.FunctionExpr]cfg.SymbolID),
-		funcLitBySymbol:   make(map[cfg.SymbolID]*ast.FunctionExpr),
-		capturedCache:     make(map[*ast.FunctionExpr][]cfg.SymbolID),
+		symbols:            make(map[*ast.IdentExpr]cfg.SymbolID, identHint),
+		implicitGlobalUses: make(map[*ast.IdentExpr]bool, identHint),
+		kind:               make(map[cfg.SymbolID]cfg.SymbolKind, symbolHint),
+		names:              make(map[cfg.SymbolID]string, symbolHint),
+		paramSymbols:       make(map[*ast.FunctionExpr][]cfg.SymbolID),
+		localSymbolSingle:  make(map[*ast.LocalAssignStmt]cfg.SymbolID, localSingleHint),
+		localSymbolsMulti:  make(map[*ast.LocalAssignStmt][]cfg.SymbolID),
+		numForSymbols:      make(map[*ast.NumberForStmt]cfg.SymbolID),
+		genericForSymbols:  make(map[*ast.GenericForStmt][]cfg.SymbolID),
+		fieldSymbols:       make(map[fieldPathKey]cfg.SymbolID),
+		funcLitSymbols:     make(map[*ast.FunctionExpr]cfg.SymbolID),
+		funcLitBySymbol:    make(map[cfg.SymbolID]*ast.FunctionExpr),
+		capturedCache:      make(map[*ast.FunctionExpr][]cfg.SymbolID),
 	}
 }
 
@@ -160,6 +165,24 @@ func (t *BindingTable) Bind(ident *ast.IdentExpr, sym cfg.SymbolID) {
 		return
 	}
 	t.symbols[ident] = sym
+}
+
+// MarkImplicitGlobalUse records that ident resolved by creating an implicit
+// global during a value read rather than by finding a declared/predeclared name.
+func (t *BindingTable) MarkImplicitGlobalUse(ident *ast.IdentExpr) {
+	if t == nil || ident == nil {
+		return
+	}
+	t.implicitGlobalUses[ident] = true
+}
+
+// IsImplicitGlobalUse reports whether ident was an unresolved read that the
+// binder represented as an implicit global symbol.
+func (t *BindingTable) IsImplicitGlobalUse(ident *ast.IdentExpr) bool {
+	if t == nil || ident == nil {
+		return false
+	}
+	return t.implicitGlobalUses[ident]
 }
 
 // SetKind records whether a symbol is a global, local, or parameter.

@@ -95,6 +95,10 @@ type Spec struct {
 	// Return describes conditional return type refinements.
 	// Enables different return types based on argument conditions.
 	Return *ReturnSpec
+	// EnvReturns describes return slots derived by replaying calls through
+	// caller-visible module environment paths. It is used for exported closures
+	// that read mutable module fields after crossing a manifest boundary.
+	EnvReturns []EnvReturnSpec
 }
 
 // NewSpec creates an empty spec.
@@ -282,6 +286,46 @@ func (s *Spec) GetReturnDefault() typ.Type {
 	return s.Return.Default
 }
 
+// EnvReturnSpec describes one return slot produced by a call through an
+// environment path relative to the exported owner value.
+type EnvReturnSpec struct {
+	// When is the parameter-relative condition under which this return path is
+	// reachable. Placeholder paths ($0, $1, ...) refer to exported function
+	// parameters, matching ReturnSpec case conditions.
+	When constraint.Condition
+	// ReturnIndex is the exported function return slot to refine.
+	ReturnIndex int
+	// ResultIndex is the callee result slot used for ReturnIndex.
+	ResultIndex int
+	// Path is the callable path relative to the exported owner value. For a
+	// method call, Path is the receiver path and Method names the method.
+	Path []constraint.Segment
+	// Method names a method call on Path. Empty means Path itself is callable.
+	Method string
+	// Args are the producer-proven argument types used to replay the call.
+	Args []typ.Type
+}
+
+// WithEnvReturns appends environment-return specifications.
+func (s *Spec) WithEnvReturns(specs ...EnvReturnSpec) *Spec {
+	for _, spec := range specs {
+		normalized, ok := normalizeEnvReturnSpec(spec)
+		if !ok {
+			continue
+		}
+		s.EnvReturns = append(s.EnvReturns, normalized)
+	}
+	return s
+}
+
+// GetEnvReturns returns a copy of environment-return specifications.
+func (s *Spec) GetEnvReturns() []EnvReturnSpec {
+	if s == nil || len(s.EnvReturns) == 0 {
+		return nil
+	}
+	return cloneEnvReturnSpecs(s.EnvReturns)
+}
+
 // Equals returns true if two Specs are structurally equal.
 // Implements internal.Equaler interface for use in typ.Function.
 func (s *Spec) Equals(other any) bool {
@@ -328,6 +372,10 @@ func (s *Spec) Equals(other any) bool {
 	}
 
 	if !returnSpecEquals(s.Return, o.Return) {
+		return false
+	}
+
+	if !envReturnSpecsEqual(s.EnvReturns, o.EnvReturns) {
 		return false
 	}
 
@@ -382,6 +430,87 @@ func returnSpecEquals(a, b *ReturnSpec) bool {
 	return a.Equals(b)
 }
 
+func normalizeEnvReturnSpec(spec EnvReturnSpec) (EnvReturnSpec, bool) {
+	if spec.ReturnIndex < 0 || spec.ResultIndex < 0 {
+		return EnvReturnSpec{}, false
+	}
+	out := EnvReturnSpec{
+		When:        spec.When,
+		ReturnIndex: spec.ReturnIndex,
+		ResultIndex: spec.ResultIndex,
+		Method:      spec.Method,
+	}
+	if len(out.When.Disjuncts) == 0 {
+		out.When = constraint.TrueCondition()
+	}
+	if len(spec.Path) > 0 {
+		out.Path = make([]constraint.Segment, len(spec.Path))
+		copy(out.Path, spec.Path)
+	}
+	if len(spec.Args) > 0 {
+		out.Args = make([]typ.Type, len(spec.Args))
+		copy(out.Args, spec.Args)
+	}
+	return out, true
+}
+
+func cloneEnvReturnSpecs(specs []EnvReturnSpec) []EnvReturnSpec {
+	if len(specs) == 0 {
+		return nil
+	}
+	out := make([]EnvReturnSpec, 0, len(specs))
+	for _, spec := range specs {
+		if normalized, ok := normalizeEnvReturnSpec(spec); ok {
+			out = append(out, normalized)
+		}
+	}
+	return out
+}
+
+func envReturnSpecsEqual(a, b []EnvReturnSpec) bool {
+	a = cloneEnvReturnSpecs(a)
+	b = cloneEnvReturnSpecs(b)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !envReturnSpecEqual(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func envReturnSpecEqual(a, b EnvReturnSpec) bool {
+	if !a.When.Equals(b.When) {
+		return false
+	}
+	if a.ReturnIndex != b.ReturnIndex || a.ResultIndex != b.ResultIndex || a.Method != b.Method {
+		return false
+	}
+	if len(a.Path) != len(b.Path) || len(a.Args) != len(b.Args) {
+		return false
+	}
+	for i := range a.Path {
+		if a.Path[i] != b.Path[i] {
+			return false
+		}
+	}
+	for i := range a.Args {
+		if !typeEqual(a.Args[i], b.Args[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func typeEqual(a, b typ.Type) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equals(b)
+}
+
 // String returns a string representation.
 func (s *Spec) String() string {
 	if s == nil {
@@ -394,8 +523,8 @@ func (s *Spec) String() string {
 		returnCases = len(s.Return.Cases)
 	}
 
-	return fmt.Sprintf("Spec{requires=%d, ensures=%d, effects=%s, callbacks=%d, returns=%d}",
-		len(s.Requires.AllConstraints()), len(s.Ensures.AllConstraints()), s.Effects, len(s.Callbacks), returnCases)
+	return fmt.Sprintf("Spec{requires=%d, ensures=%d, effects=%s, callbacks=%d, returns=%d, env_returns=%d}",
+		len(s.Requires.AllConstraints()), len(s.Ensures.AllConstraints()), s.Effects, len(s.Callbacks), returnCases, len(s.EnvReturns))
 }
 
 // EffectRow returns the effect row.

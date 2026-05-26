@@ -15,9 +15,15 @@ import (
 //
 // Example: In Array<T>, T is a TypeParam with Name="T" and Constraint=nil.
 type TypeParam struct {
-	Name       string
-	Constraint Type // Upper bound (nil means any type)
-	hash       uint64
+	Name                  string
+	Constraint            Type // Upper bound (nil means any type)
+	hash                  uint64
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
 }
 
 // NewTypeParam creates a type parameter.
@@ -27,7 +33,17 @@ func NewTypeParam(name string, constraint Type) *TypeParam {
 		h = internal.HashCombine(h, constraint.Hash())
 	}
 
-	return &TypeParam{Name: name, Constraint: constraint, hash: h}
+	return &TypeParam{
+		Name:                  name,
+		Constraint:            constraint,
+		hash:                  h,
+		containsAny:           knownContainsAny(constraint),
+		containsNever:         knownContainsNever(constraint),
+		containsTypeParam:     true,
+		containsInstantiated:  knownContainsInstantiated(constraint),
+		containsRecursive:     knownContainsRecursive(constraint),
+		containsOpenRecursive: knownContainsOpenRecursive(constraint),
+	}
 }
 
 func (t *TypeParam) Kind() kind.Kind { return kind.TypeParam }
@@ -69,11 +85,17 @@ func (t *TypeParam) Equals(other Type) bool {
 //   - Named generics use nominal identity (name + params, ignoring body)
 //   - Anonymous generics use structural identity (includes body in hash)
 type Generic struct {
-	Name       string       // Type name (empty for anonymous generics)
-	TypeParams []*TypeParam // Type parameters to be substituted
-	Body       Type         // Template type with TypeParam references
-	hash       uint64
-	strCache   stringCache
+	Name                  string       // Type name (empty for anonymous generics)
+	TypeParams            []*TypeParam // Type parameters to be substituted
+	Body                  Type         // Template type with TypeParam references
+	hash                  uint64
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
 }
 
 // NewGeneric creates a generic type definition.
@@ -93,7 +115,18 @@ func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
 	copied := make([]*TypeParam, len(params))
 	copy(copied, params)
 
-	return &Generic{Name: name, TypeParams: copied, Body: body, hash: h}
+	return &Generic{
+		Name:                  name,
+		TypeParams:            copied,
+		Body:                  body,
+		hash:                  h,
+		containsAny:           knownAnyTypeParams(copied) || knownContainsAny(body),
+		containsNever:         knownNeverTypeParams(copied) || knownContainsNever(body),
+		containsTypeParam:     knownTypeParamTypeParams(copied) || knownContainsTypeParam(body),
+		containsInstantiated:  knownInstantiatedTypeParams(copied) || knownContainsInstantiated(body),
+		containsRecursive:     knownRecursiveTypeParams(copied) || knownContainsRecursive(body),
+		containsOpenRecursive: knownOpenRecursiveTypeParams(copied) || knownContainsOpenRecursive(body),
+	}
 }
 
 func (g *Generic) Kind() kind.Kind { return kind.Generic }
@@ -128,25 +161,66 @@ func (g *Generic) Equals(other Type) bool {
 // type is created with Generic=Array and TypeArgs=[number]. The body can
 // be expanded by substituting type parameters with arguments.
 type Instantiated struct {
-	Generic      *Generic // The generic being instantiated
-	TypeArgs     []Type   // Concrete types for each type parameter
-	hash         uint64
-	softPrunable bool
-	strCache     stringCache
+	Generic               *Generic // The generic being instantiated
+	TypeArgs              []Type   // Concrete types for each type parameter
+	hash                  uint64
+	softPrunable          bool
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
 }
 
 // Instantiate creates an instantiated generic type with the given arguments.
 func Instantiate(g *Generic, args ...Type) *Instantiated {
 	h := internal.HashCombine(uint64(kind.Instantiated), g.Hash())
 	softPrunable := false
+	containsAny := knownContainsAny(g)
+	containsNever := knownContainsNever(g)
+	containsTypeParam := knownContainsTypeParam(g)
+	containsInstantiated := true
+	containsRecursive := knownContainsRecursive(g)
+	containsOpenRecursive := knownContainsOpenRecursive(g)
 	for _, a := range args {
 		h = internal.HashCombine(h, a.Hash())
 		if !softPrunable && softPruneMayRewrite(a) {
 			softPrunable = true
 		}
+		if !containsAny && knownContainsAny(a) {
+			containsAny = true
+		}
+		if !containsNever && knownContainsNever(a) {
+			containsNever = true
+		}
+		if !containsTypeParam && knownContainsTypeParam(a) {
+			containsTypeParam = true
+		}
+		if !containsInstantiated && knownContainsInstantiated(a) {
+			containsInstantiated = true
+		}
+		if !containsRecursive && knownContainsRecursive(a) {
+			containsRecursive = true
+		}
+		if !containsOpenRecursive && knownContainsOpenRecursive(a) {
+			containsOpenRecursive = true
+		}
 	}
 
-	return &Instantiated{Generic: g, TypeArgs: args, hash: h, softPrunable: softPrunable}
+	return &Instantiated{
+		Generic:               g,
+		TypeArgs:              args,
+		hash:                  h,
+		softPrunable:          softPrunable,
+		containsAny:           containsAny,
+		containsNever:         containsNever,
+		containsTypeParam:     containsTypeParam,
+		containsInstantiated:  containsInstantiated,
+		containsRecursive:     containsRecursive,
+		containsOpenRecursive: containsOpenRecursive,
+	}
 }
 
 func (i *Instantiated) Kind() kind.Kind { return kind.Instantiated }

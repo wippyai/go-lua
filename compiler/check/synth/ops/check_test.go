@@ -263,3 +263,36 @@ func TestExpectedTableElementType_NumericMap(t *testing.T) {
 		t.Fatalf("got %v, want boolean", got)
 	}
 }
+
+func TestExpectedTableFieldType_StringMapUsesWriteSlot(t *testing.T) {
+	expected := typ.NewMap(typ.String, typ.Boolean)
+	got := ExpectedTableFieldType(expected, "ready")
+	if got != typ.Boolean {
+		t.Fatalf("got %v, want boolean", got)
+	}
+}
+
+func TestExpectedTableFieldType_RecordMapComponentUsesLiteralKey(t *testing.T) {
+	expected := typ.NewRecord().
+		Field("fixed", typ.String).
+		MapComponent(typ.String, typ.Integer).
+		Build()
+
+	if got := ExpectedTableFieldType(expected, "fixed"); got != typ.String {
+		t.Fatalf("fixed field got %v, want string", got)
+	}
+	if got := ExpectedTableFieldType(expected, "dynamic"); got != typ.Integer {
+		t.Fatalf("dynamic field got %v, want integer", got)
+	}
+}
+
+func TestExpectedTableFieldType_UnionCollectsPossibleSlots(t *testing.T) {
+	expected := typ.NewUnion(
+		typ.NewRecord().Field("value", typ.String).Build(),
+		typ.NewRecord().Field("value", typ.Integer).Build(),
+	)
+	got := ExpectedTableFieldType(expected, "value")
+	if !typ.TypeEquals(got, typ.NewUnion(typ.String, typ.Integer)) {
+		t.Fatalf("got %v, want string|integer", got)
+	}
+}

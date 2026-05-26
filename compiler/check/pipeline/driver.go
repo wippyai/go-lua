@@ -6,7 +6,7 @@
 //  2. Run pre-flow return type inference for local functions
 //  3. Execute the memoized function analysis pipeline
 //  4. Propagate effects and interprocedural facts
-//  5. Process nested functions recursively
+//  5. Process nested functions with the current parent context
 //  6. Repeat until the interproc product reaches fixpoint
 //
 // The driver coordinates several inference subsystems:
@@ -28,13 +28,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/effects"
 	interprocinfer "github.com/wippyai/go-lua/compiler/check/infer/interproc"
 	nestedinfer "github.com/wippyai/go-lua/compiler/check/infer/nested"
-	returninfer "github.com/wippyai/go-lua/compiler/check/infer/return"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -98,9 +96,19 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 }
 
 func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State, ctx api.AnalysisContext) {
+	zzIter := 0
 	for {
 		d.prepareIterationState(sess)
 		d.checkFunctionFixpoint(sess, fn, parent, ctx)
+		zzIter++
+		if zzIter > 40 {
+			if st := sess.StoreHandle(); st != nil {
+				println("ZZFIX iter", zzIter, "diffs", fmt.Sprint(st.FixpointDiffs()))
+			}
+		}
+		if zzIter > 60 {
+			panic("ZZFIX non-convergence aborted")
+		}
 		if d.advanceFixpoint(sess.StoreHandle()) {
 			return
 		}
@@ -131,8 +139,6 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 
 	store := sess.StoreHandle()
 	parentHash := d.registerParentScope(store, graph.ID(), parent, ctx)
-
-	d.runReturnInference(sess, graph, parent, store, ctx)
 
 	result := d.loadFunctionResult(sess, graph.ID(), parentHash, store)
 	if result == nil {
@@ -199,80 +205,6 @@ func (d *Driver) registerParentScope(store api.IterationStore, graphID uint64, p
 		}
 	}
 	return parentHash
-}
-
-func (d *Driver) runReturnInference(
-	sess api.AnalysisSession,
-	graph *cfg.Graph,
-	parent *scope.State,
-	store api.IterationStore,
-	ctx api.AnalysisContext,
-) {
-	if store == nil || graph == nil {
-		return
-	}
-
-	inferencer := returninfer.New(returninfer.Config{
-		Types:       d.cfg.Types,
-		GlobalTypes: mergeGlobalOverlay(d.cfg.GlobalTypes, ctx.GlobalOverlay),
-		Manifests:   d.cfg.Manifests,
-		Stdlib:      d.cfg.Stdlib,
-		Store:       store,
-		Graphs:      sess,
-		SourceName:  sess.Source(),
-	})
-
-	refinementFacts := refinementFactsFrom(store)
-	var refinementLookup constraint.RefinementLookupBySym
-	if refinementFacts != nil {
-		refinementLookup = refinementFacts.LookupBySym
-	}
-
-	functionFacts, diags := inferencer.ComputeForGraph(returninfer.RunContext{
-		Ctx:          sess.Context(),
-		ParentFacts:  d.parentFactsForGraph(sess, store, graph.ID()),
-		EffectLookup: refinementLookup,
-	}, graph, parent)
-	if len(diags) > 0 {
-		sess.AppendDiagnostics(diags...)
-	}
-	if len(functionFacts) == 0 {
-		return
-	}
-	if key, ok := store.GraphKeyFor(graph, parent); ok {
-		store.MergeInterprocFactsNext(key, interprocdomain.FunctionFactsDelta(functionFacts))
-	}
-}
-
-func (d *Driver) parentFactsForGraph(
-	sess api.AnalysisSession,
-	store api.IterationStore,
-	graphID uint64,
-) flow.TypeFacts {
-	if store == nil || graphID == 0 {
-		return nil
-	}
-	meta, ok := store.NestedMetaFor(graphID)
-	if !ok || meta.ParentGraphID == 0 {
-		return nil
-	}
-	results := sess.ResultsMap()
-	if results == nil {
-		return nil
-	}
-	parentGraph := store.Graphs()[meta.ParentGraphID]
-	if parentGraph == nil {
-		return nil
-	}
-	parentFn := store.FuncForGraph(parentGraph)
-	if parentFn == nil {
-		return nil
-	}
-	parentResult := results[parentFn]
-	if parentResult == nil {
-		return nil
-	}
-	return parentResult.Facts
 }
 
 func (d *Driver) loadFunctionResult(
@@ -349,9 +281,9 @@ func (d *Driver) storeFunctionRefinement(store api.IterationStore, result *api.F
 	if !ok {
 		return
 	}
-	store.MergeInterprocFactsNext(key, interprocdomain.FunctionFactsDelta(functionfact.FromPart(funcSym, functionfact.Parts{
-		Refinement: fnEffect,
-	})))
+	builder := functionfact.NewBuilder()
+	builder.AddRefinement(funcSym, fnEffect)
+	store.MergeInterprocFactsNext(key, interprocdomain.FunctionFactsDelta(builder.Build()))
 }
 
 func collectGlobalNames(globalTypes map[string]typ.Type) []string {

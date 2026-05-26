@@ -20,10 +20,12 @@
 //
 //	FlowQuery: Flow-narrowed type queries at CFG points
 //	  - EffectiveTypeAt: Narrowed type for symbol at point
+//	  - PreStateTypeAt: Path type before point-local transfer effects
 //	  - ExcludesTypeAt: Type exclusion from flow analysis
 //
 //	FlowOps: Advanced flow operations for constraint solving
 //	  - NarrowedTypeAt: Path-based narrowed type
+//	  - PreStateTypeAt: Path type before point-local transfer effects
 //	  - BoundsAt: Numeric bounds from flow analysis
 //	  - IsPointDead: Reachability check
 //
@@ -122,6 +124,11 @@ type Synth interface {
 	// Narrowed synthesis uses flow-refined types when available.
 	Narrow() BaseSynth
 
+	// WithFlow returns a BaseSynth using the provided flow projection.
+	// This is used for canonical views such as pre-state synthesis at
+	// assignment/call boundaries without diagnostics reconstructing CFG facts.
+	WithFlow(flow FlowOps) BaseSynth
+
 	// Method returns the type of a method on a type, if it exists.
 	// Handles records, interfaces, classes, and metatable __index methods.
 	Method(t typ.Type, name string) (typ.Type, bool)
@@ -155,6 +162,10 @@ type FlowQuery interface {
 	// Used when diagnostics need the solved path-sensitive type, not just symbol-level facts.
 	NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type
 
+	// PreStateTypeAt returns the path type at the entry side of point p,
+	// before transfer effects attached to p have been applied.
+	PreStateTypeAt(p cfg.Point, path constraint.Path) typ.Type
+
 	// ExcludesTypeAt checks if flow analysis excludes a type at a point.
 	// Used for narrowing union types when branches eliminate possibilities.
 	ExcludesTypeAt(p cfg.Point, path constraint.Path, declared typ.Type) bool
@@ -166,6 +177,15 @@ type FlowOps interface {
 	// NarrowedTypeAt returns the narrowed type for a path at a point.
 	// Paths may include field accesses (e.g., x.y.z).
 	NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type
+
+	// NarrowedTypeAtWithCondition returns the narrowed type for a path at a
+	// point under an additional expression-local condition. The flow solution
+	// remains the owner of condition application and product-domain projection;
+	// callers must not materialize local override maps for short-circuit scopes.
+	NarrowedTypeAtWithCondition(p cfg.Point, path constraint.Path, condition constraint.Condition) typ.Type
+
+	// PreStateTypeAt returns the path type at the entry side of point p.
+	PreStateTypeAt(p cfg.Point, path constraint.Path) typ.Type
 
 	// BoundsAt returns numeric bounds for a variable at a point.
 	// Used for array length inference and index bounds checking.

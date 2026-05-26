@@ -353,7 +353,11 @@ func (s *Session) ExportType() typ.Type {
 	if s.Store != nil && s.Store.InterprocPrev != nil {
 		refinements = s.RefinementsForExport()
 	}
-	return modules.ExportType(s.RootResult, refinements)
+	export := modules.ExportType(s.RootResult, refinements)
+	if facts := s.rootFunctionFactsForExport(); len(facts) > 0 {
+		export = functionfact.ProjectExportType(export, "", facts, s.RootGraph())
+	}
+	return export
 }
 
 // Release frees heavy allocations to reduce memory pressure after analysis.
@@ -464,6 +468,13 @@ func (s *Session) ExportManifest(modulePath string) *io.Manifest {
 	return manifest
 }
 
+func (s *Session) rootFunctionFactsForExport() api.FunctionFacts {
+	if s == nil || s.Store == nil || s.RootResult == nil || s.RootResult.Graph == nil || s.RootResult.BaseScope == nil {
+		return nil
+	}
+	return s.Store.InterprocFacts(s.RootResult.Graph, s.RootResult.BaseScope).FunctionFacts()
+}
+
 // RefinementsForExport extracts computed function refinements for manifest generation.
 // Returns refinements from the final converged interproc product.
 //
@@ -481,7 +492,7 @@ func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRe
 	for _, key := range api.SortedGraphKeys(s.Store.InterprocPrev.Facts) {
 		facts := s.Store.InterprocPrev.Facts[key]
 		for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
-			if refinement := functionfact.RefinementFromMap(facts.FunctionFacts, sym); refinement != nil {
+			if refinement := functionfact.Refinement(facts.FunctionFacts, sym); refinement != nil {
 				refinements[sym] = refinement
 			}
 		}
@@ -497,8 +508,14 @@ func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRe
 //
 // Use for advanced introspection or manifest generation that needs CFG access.
 func (s *Session) RootGraph() *cfg.Graph {
-	if s == nil || s.RootResult == nil {
+	if s == nil {
 		return nil
 	}
-	return s.RootResult.Graph
+	if s.RootResult != nil {
+		return s.RootResult.Graph
+	}
+	if s.RootFunc != nil {
+		return s.GetOrBuildCFG(s.RootFunc)
+	}
+	return nil
 }

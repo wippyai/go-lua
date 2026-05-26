@@ -273,11 +273,11 @@ func (ce *ConditionExtractor) branchConditionsFromExpr(expr ast.Expr) BranchCond
 		result := []constraint.Constraint{constraint.Truthy{Path: path}}
 		basePath := ce.pathFromExpr(e.Object)
 		if !basePath.IsEmpty() {
-			if fieldName := ast.KeyName(e.Key); fieldName != "" {
+			if seg, ok := flowpath.StaticAttrKeySegmentWithConst(e.Key, ce.ConstResolver); ok && seg.Kind == constraint.SegmentField {
 				cpath := basePath
 				result = append(result, constraint.HasField{
 					Path:  cpath,
-					Field: fieldName,
+					Field: seg.Name,
 				})
 			}
 		}
@@ -339,9 +339,10 @@ func (ce *ConditionExtractor) branchConditionsFromRelationalExpr(expr *ast.Relat
 			OnFalse: ce.ConditionFromEquality(expr.Lhs, expr.Rhs),
 		}
 	case "<", "<=", ">", ">=":
+		ordered := ce.conditionFromOrderedComparison(expr.Lhs, expr.Rhs)
 		return BranchConditions{
-			OnTrue:  ce.conditionFromOrderedComparison(expr.Lhs, expr.Rhs),
-			OnFalse: constraint.TrueCondition(),
+			OnTrue:  ordered,
+			OnFalse: ordered,
 		}
 	default:
 		return BranchConditions{
@@ -386,14 +387,14 @@ func (ce *ConditionExtractor) keyOfConstraintsForTruthyValue(valuePath constrain
 	}
 	var out []constraint.Constraint
 	for _, assign := range ce.Inputs.Assignments {
-		if assign.MapElementSource == nil || assign.TargetPath.IsEmpty() {
+		if assign.Source.Kind != flow.AssignmentSourceMapElement || assign.TargetPath.IsEmpty() {
 			continue
 		}
 		targetPath := flowpath.WithVersion(assign.TargetPath, ce.graph(), ce.P)
 		if !targetPath.Equal(valuePath) {
 			continue
 		}
-		if keyOf := ce.keyOfConstraintFromMapElementSource(assign.MapElementSource); keyOf != nil {
+		if keyOf := ce.keyOfConstraintFromMapElementSource(assign.Source); keyOf != nil {
 			out = append(out, *keyOf)
 		}
 	}
@@ -430,8 +431,8 @@ func (ce *ConditionExtractor) keyOfConstraintsFromDynamicIndex(attr *ast.AttrGet
 	return []constraint.Constraint{constraint.KeyOf{Table: basePath, Key: keyPath}}
 }
 
-func (ce *ConditionExtractor) keyOfConstraintFromMapElementSource(src *flow.MapElementSource) *constraint.KeyOf {
-	if ce == nil || src == nil || src.MapPath.IsEmpty() || src.KeySymbol == 0 {
+func (ce *ConditionExtractor) keyOfConstraintFromMapElementSource(src flow.AssignmentSource) *constraint.KeyOf {
+	if ce == nil || src.Kind != flow.AssignmentSourceMapElement || src.MapPath.IsEmpty() || src.KeySymbol == 0 {
 		return nil
 	}
 	tablePath := flowpath.WithVersion(src.MapPath, ce.graph(), ce.P)
@@ -568,6 +569,19 @@ func (ce *ConditionExtractor) typeKeyFromOrderedOperand(expr ast.Expr) (narrow.T
 	}
 }
 
+// OrderedLiteralType returns the concrete operand family proven by comparing
+// against a literal with Lua's ordered operators.
+func OrderedLiteralType(expr ast.Expr) typ.Type {
+	switch expr.(type) {
+	case *ast.NumberExpr:
+		return typ.Number
+	case *ast.StringExpr:
+		return typ.String
+	default:
+		return nil
+	}
+}
+
 // conditionFromEquality handles == comparisons.
 func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constraint.Condition {
 	// type(x) == "string"
@@ -659,10 +673,14 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 		return constraint.TrueCondition()
 	}
 	if target, field, ok := constraint.SplitFieldPath(left); ok {
-		return constraint.FromConstraints(constraint.FieldEqualsPath{Target: target, Field: field, Value: right})
+		constraints := []constraint.Constraint{constraint.FieldEqualsPath{Target: target, Field: field, Value: right}}
+		constraints = append(constraints, ce.variantFieldOriginConstraints(target, field, right, true)...)
+		return constraint.FromConstraints(constraints...)
 	}
 	if target, field, ok := constraint.SplitFieldPath(right); ok {
-		return constraint.FromConstraints(constraint.FieldEqualsPath{Target: target, Field: field, Value: left})
+		constraints := []constraint.Constraint{constraint.FieldEqualsPath{Target: target, Field: field, Value: left}}
+		constraints = append(constraints, ce.variantFieldOriginConstraints(target, field, left, true)...)
+		return constraint.FromConstraints(constraints...)
 	}
 	if target, key, ok := flowpath.SplitIndexPath(left); ok {
 		return constraint.FromConstraints(constraint.IndexEqualsPath{Target: target, Key: key, Value: right})
@@ -838,12 +856,82 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 		return constraint.FromConstraints(c...)
 	}
 
+	left := ce.pathFromExpr(lhs)
+	right := ce.pathFromExpr(rhs)
+	if !left.IsEmpty() && !right.IsEmpty() {
+		if target, field, ok := constraint.SplitFieldPath(left); ok {
+			constraints := []constraint.Constraint{constraint.FieldNotEqualsPath{Target: target, Field: field, Value: right}}
+			constraints = append(constraints, ce.variantFieldOriginConstraints(target, field, right, false)...)
+			return constraint.FromConstraints(constraints...)
+		}
+		if target, field, ok := constraint.SplitFieldPath(right); ok {
+			constraints := []constraint.Constraint{constraint.FieldNotEqualsPath{Target: target, Field: field, Value: left}}
+			constraints = append(constraints, ce.variantFieldOriginConstraints(target, field, left, false)...)
+			return constraint.FromConstraints(constraints...)
+		}
+	}
+
 	// Equality negation covers constraints without a specialized inverse.
 	eq := ce.ConditionFromEquality(lhs, rhs)
 	if !eq.HasConstraints() {
 		return constraint.TrueCondition()
 	}
 	return constraint.Not(eq)
+}
+
+func (ce *ConditionExtractor) variantFieldOriginConstraints(target constraint.Path, field string, source constraint.Path, equals bool) []constraint.Constraint {
+	if ce == nil || ce.Inputs == nil || target.IsEmpty() || source.IsEmpty() || field == "" {
+		return nil
+	}
+	var out []constraint.Constraint
+	for _, origin := range ce.Inputs.VariantFieldOrigins {
+		if origin.Field != field ||
+			origin.DiscriminatorField == "" ||
+			origin.DiscriminatorValue == nil ||
+			!pathsCompatibleForOrigin(origin.Target, target) ||
+			!pathsCompatibleForOrigin(origin.Source, source) {
+			continue
+		}
+		if equals {
+			out = append(out, constraint.FieldEquals{
+				Target: origin.Target,
+				Field:  origin.DiscriminatorField,
+				Value:  origin.DiscriminatorValue,
+			})
+			continue
+		}
+		out = append(out, constraint.FieldNotEquals{
+			Target: origin.Target,
+			Field:  origin.DiscriminatorField,
+			Value:  origin.DiscriminatorValue,
+		})
+	}
+	return out
+}
+
+func pathsCompatibleForOrigin(origin, actual constraint.Path) bool {
+	if origin.IsEmpty() || actual.IsEmpty() {
+		return false
+	}
+	if origin.Symbol != 0 || actual.Symbol != 0 {
+		if origin.Symbol != actual.Symbol {
+			return false
+		}
+		if origin.Version != 0 && actual.Version != 0 && origin.Version != actual.Version {
+			return false
+		}
+	} else if origin.Root != actual.Root {
+		return false
+	}
+	if len(origin.Segments) != len(actual.Segments) {
+		return false
+	}
+	for i := range origin.Segments {
+		if origin.Segments[i] != actual.Segments[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // constraintsFromPathLiteral handles path == literal for static paths.
@@ -1053,17 +1141,17 @@ func numericBranchConstraintsFromRelationalExpr(expr *ast.RelationalOpExpr, p cf
 		}
 		return out
 	case "==":
-		return numericBranchConstraintsFromEquality(expr.Lhs, expr.Rhs, bindings)
+		return numericBranchConstraintsFromEquality(expr.Lhs, expr.Rhs, p, inputs, bindings)
 	case "~=":
-		eq := numericBranchConstraintsFromEquality(expr.Lhs, expr.Rhs, bindings)
+		eq := numericBranchConstraintsFromEquality(expr.Lhs, expr.Rhs, p, inputs, bindings)
 		return NumericBranchConstraints{OnTrue: eq.OnFalse, OnFalse: eq.OnTrue}
 	default:
 		return NumericBranchConstraints{}
 	}
 }
 
-func numericBranchConstraintsFromEquality(lhs, rhs ast.Expr, bindings *bind.BindingTable) NumericBranchConstraints {
-	if path, c, ok := lenConstComparison(lhs, rhs, bindings); ok {
+func numericBranchConstraintsFromEquality(lhs, rhs ast.Expr, p cfg.Point, inputs *flow.Inputs, bindings *bind.BindingTable) NumericBranchConstraints {
+	if path, c, ok := lenConstComparison(lhs, rhs, p, inputs, bindings); ok {
 		out := NumericBranchConstraints{
 			OnTrue: []constraint.NumericConstraint{
 				constraint.LenGeConst{Array: path, C: c},
@@ -1075,7 +1163,7 @@ func numericBranchConstraintsFromEquality(lhs, rhs ast.Expr, bindings *bind.Bind
 		}
 		return out
 	}
-	if path, c, ok := pathConstComparison(lhs, rhs, bindings); ok {
+	if path, c, ok := pathConstComparison(lhs, rhs, p, inputs, bindings); ok {
 		return NumericBranchConstraints{
 			OnTrue: []constraint.NumericConstraint{
 				constraint.GeConst{X: path, C: c},
@@ -1086,13 +1174,13 @@ func numericBranchConstraintsFromEquality(lhs, rhs ast.Expr, bindings *bind.Bind
 	return NumericBranchConstraints{}
 }
 
-func lenConstComparison(lhs, rhs ast.Expr, bindings *bind.BindingTable) (constraint.Path, int64, bool) {
-	if path := lenPathFromExpr(lhs, bindings); !path.IsEmpty() {
+func lenConstComparison(lhs, rhs ast.Expr, p cfg.Point, inputs *flow.Inputs, bindings *bind.BindingTable) (constraint.Path, int64, bool) {
+	if path := lenPathFromExpr(lhs, p, inputs, bindings); !path.IsEmpty() {
 		if c, ok := numconst.IntConstFromExpr(rhs); ok {
 			return path, c, true
 		}
 	}
-	if path := lenPathFromExpr(rhs, bindings); !path.IsEmpty() {
+	if path := lenPathFromExpr(rhs, p, inputs, bindings); !path.IsEmpty() {
 		if c, ok := numconst.IntConstFromExpr(lhs); ok {
 			return path, c, true
 		}
@@ -1100,13 +1188,14 @@ func lenConstComparison(lhs, rhs ast.Expr, bindings *bind.BindingTable) (constra
 	return constraint.Path{}, 0, false
 }
 
-func pathConstComparison(lhs, rhs ast.Expr, bindings *bind.BindingTable) (constraint.Path, int64, bool) {
-	if path := flowpath.FromExprWithBindings(lhs, nil, bindings); !path.IsEmpty() {
+func pathConstComparison(lhs, rhs ast.Expr, p cfg.Point, inputs *flow.Inputs, bindings *bind.BindingTable) (constraint.Path, int64, bool) {
+	graph := numericConstraintGraph(inputs)
+	if path := flowpath.FromExprWithBindingsAt(lhs, nil, bindings, graph, p); !path.IsEmpty() {
 		if c, ok := numconst.IntConstFromExpr(rhs); ok {
 			return path, c, true
 		}
 	}
-	if path := flowpath.FromExprWithBindings(rhs, nil, bindings); !path.IsEmpty() {
+	if path := flowpath.FromExprWithBindingsAt(rhs, nil, bindings, graph, p); !path.IsEmpty() {
 		if c, ok := numconst.IntConstFromExpr(lhs); ok {
 			return path, c, true
 		}
@@ -1114,12 +1203,21 @@ func pathConstComparison(lhs, rhs ast.Expr, bindings *bind.BindingTable) (constr
 	return constraint.Path{}, 0, false
 }
 
-func lenPathFromExpr(expr ast.Expr, bindings *bind.BindingTable) constraint.Path {
+func lenPathFromExpr(expr ast.Expr, p cfg.Point, inputs *flow.Inputs, bindings *bind.BindingTable) constraint.Path {
 	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
 	if !ok || lenOp == nil {
 		return constraint.Path{}
 	}
-	return flowpath.FromExprWithBindings(lenOp.Expr, nil, bindings)
+	return flowpath.FromExprWithBindingsAt(lenOp.Expr, nil, bindings, numericConstraintGraph(inputs), p)
+}
+
+func numericConstraintGraph(inputs *flow.Inputs) interface {
+	VisibleVersion(cfg.Point, cfg.SymbolID) cfg.Version
+} {
+	if inputs == nil {
+		return nil
+	}
+	return inputs.Graph
 }
 
 func appendNumericConstraints(left, right []constraint.NumericConstraint) []constraint.NumericConstraint {

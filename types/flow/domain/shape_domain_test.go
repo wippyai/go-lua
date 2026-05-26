@@ -152,6 +152,43 @@ func TestShapeDomain_Join(t *testing.T) {
 	}
 }
 
+func TestShapeDomain_JoinCoalescesRecursiveFamilies(t *testing.T) {
+	env := constraint.Env{}
+	key := constraint.PathKey("node")
+	base := typ.NewRecursive("FlowA", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	withParent := typ.NewRecursive("FlowB", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Field("parent", typ.NewOptional(self)).
+			Build()
+	})
+
+	a := NewShapeDomain(env)
+	a.Narrowed[key] = base
+	b := NewShapeDomain(env)
+	b.Narrowed[key] = withParent
+
+	joined := a.Join(b).(*ShapeDomain).NarrowedTypeAt(key)
+	rec, ok := joined.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("joined recursive family = %T %[1]v, want recursive", joined)
+	}
+	body, ok := rec.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("recursive body = %T, want record", rec.Body)
+	}
+	parent := body.GetField("parent")
+	if parent == nil || !parent.Optional {
+		t.Fatalf("parent field = %v, want optional recursive field", parent)
+	}
+}
+
 func TestShapeDomain_Join_DropsNonCommonKeys(t *testing.T) {
 	env := constraint.Env{}
 

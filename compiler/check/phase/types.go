@@ -268,9 +268,11 @@ type NarrowInput struct {
 // NarrowOutput contains outputs from the narrowing phase.
 // Phase D outputs: TypeFacts and the inferred function refinement.
 type NarrowOutput struct {
-	Facts      flow.TypeFacts
-	Refinement *constraint.FunctionRefinement
-	Synth      synth.Synth
+	Facts        flow.TypeFacts
+	Refinement   *constraint.FunctionRefinement
+	Synth        synth.Synth
+	QueryContext *db.QueryContext
+	TypeOps      core.TypeOps
 }
 
 // ContextBuilder constructs Env instances from phase outputs.
@@ -358,6 +360,17 @@ func (b *ContextBuilder) WithLiteralTypes(lt flow.DeclaredTypes) *ContextBuilder
 
 // BuildDeclared constructs a declared-phase Env from accumulated fields.
 func (b *ContextBuilder) BuildDeclared() *api.DeclaredEnvImpl {
+	return b.buildDeclaredWithProjection(functionfact.ProjectionSibling)
+}
+
+// BuildFlowInput constructs the declared-phase Env used by abstract
+// interpreter input extraction. It excludes body/entry parameter evidence from
+// function-value projections; extraction must not consume solved body state.
+func (b *ContextBuilder) BuildFlowInput() *api.DeclaredEnvImpl {
+	return b.buildDeclaredWithProjection(functionfact.ProjectionFlowInput)
+}
+
+func (b *ContextBuilder) buildDeclaredWithProjection(projection functionfact.Projection) *api.DeclaredEnvImpl {
 	return api.NewDeclaredEnv(api.DeclaredEnvConfig{
 		Graph:         b.env.Graph,
 		Bindings:      b.bindings,
@@ -368,7 +381,7 @@ func (b *ContextBuilder) BuildDeclared() *api.DeclaredEnvImpl {
 		Refinements:   b.env.Refinements,
 		ModuleAliases: b.env.ModuleAliases,
 		GlobalTypes:   b.env.GlobalTypes,
-		FunctionType:  functionfact.TypeLookup(b.functionFacts),
+		FunctionType:  functionfact.ProjectionLookup(b.functionFacts, projection, api.PhaseScopeCompute),
 	})
 }
 
@@ -385,6 +398,6 @@ func (b *ContextBuilder) BuildNarrow() *api.NarrowEnvImpl {
 		Refinements:   b.env.Refinements,
 		ModuleAliases: b.env.ModuleAliases,
 		GlobalTypes:   b.env.GlobalTypes,
-		FunctionType:  functionfact.TypeLookup(b.functionFacts),
+		FunctionType:  functionfact.ProjectionLookup(b.functionFacts, functionfact.ProjectionSibling, api.PhaseNarrowing),
 	})
 }

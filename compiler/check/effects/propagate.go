@@ -38,6 +38,7 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionRe
 			row = r
 		}
 	}
+	row = effect.Union(row, inferLocalReturnFlowRow(result))
 
 	// Start with the function's own Terminates value.
 	terminates := fnEffect.Terminates

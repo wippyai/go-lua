@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -417,6 +418,80 @@ func TestContextBuilder_Phases(t *testing.T) {
 			t.Errorf("Phase() = %v, want PhaseNarrowing", ctx.Phase())
 		}
 	})
+}
+
+func TestContextBuilder_DeclaredUsesSiblingProjection(t *testing.T) {
+	graph := cfg.Build(&ast.FunctionExpr{})
+	sym := cfg.SymbolID(17)
+	entryParam := typ.NewRecord().Field("id", typ.String).Build()
+
+	ctx := NewContextBuilder(PhaseEnv{Graph: graph}).
+		WithFunctionFacts(api.FunctionFacts{
+			sym: {
+				Signature:   typ.Func().Param("value", typ.Any).Build(),
+				EntryParams: product.LiftVector([]typ.Type{entryParam}),
+			},
+		}).
+		BuildDeclared()
+
+	tv := ctx.Types().DeclaredAt(0, sym)
+	fn, ok := tv.Type.(*typ.Function)
+	if tv.State != flow.StateResolved || !ok || len(fn.Params) != 1 {
+		t.Fatalf("declared type = %#v, want function", tv)
+	}
+	if !typ.TypeEquals(fn.Params[0].Type, entryParam) {
+		t.Fatalf("declared projection parameter = %v, want entry %v", fn.Params[0].Type, entryParam)
+	}
+}
+
+func TestContextBuilder_FlowInputUsesFlowInputProjection(t *testing.T) {
+	graph := cfg.Build(&ast.FunctionExpr{})
+	sym := cfg.SymbolID(19)
+	entryParam := typ.NewRecord().Field("id", typ.String).Build()
+	publicParam := typ.Any
+
+	ctx := NewContextBuilder(PhaseEnv{Graph: graph}).
+		WithFunctionFacts(api.FunctionFacts{
+			sym: {
+				Signature:   typ.Func().Param("value", publicParam).Build(),
+				EntryParams: product.LiftVector([]typ.Type{entryParam}),
+			},
+		}).
+		BuildFlowInput()
+
+	tv := ctx.Types().DeclaredAt(0, sym)
+	fn, ok := tv.Type.(*typ.Function)
+	if tv.State != flow.StateResolved || !ok || len(fn.Params) != 1 {
+		t.Fatalf("flow-input type = %#v, want function", tv)
+	}
+	if !typ.TypeEquals(fn.Params[0].Type, publicParam) {
+		t.Fatalf("flow-input projection parameter = %v, want public %v", fn.Params[0].Type, publicParam)
+	}
+}
+
+func TestContextBuilder_NarrowUsesSiblingProjection(t *testing.T) {
+	graph := cfg.Build(&ast.FunctionExpr{})
+	sym := cfg.SymbolID(18)
+	entryParam := typ.NewRecord().Field("id", typ.String).Build()
+
+	ctx := NewContextBuilder(PhaseEnv{Graph: graph}).
+		WithFunctionFacts(api.FunctionFacts{
+			sym: {
+				Signature:   typ.Func().Param("value", typ.Any).Build(),
+				EntryParams: product.LiftVector([]typ.Type{entryParam}),
+			},
+		}).
+		WithSolution(&flow.Solution{}).
+		BuildNarrow()
+
+	tv := ctx.Types().DeclaredAt(0, sym)
+	fn, ok := tv.Type.(*typ.Function)
+	if tv.State != flow.StateResolved || !ok || len(fn.Params) != 1 {
+		t.Fatalf("narrow declared type = %#v, want function", tv)
+	}
+	if !typ.TypeEquals(fn.Params[0].Type, entryParam) {
+		t.Fatalf("narrow projection parameter = %v, want entry %v", fn.Params[0].Type, entryParam)
+	}
 }
 
 func TestMergeParameterEvidenceIntoSig_NilSig(t *testing.T) {

@@ -73,6 +73,10 @@ func TestIndex(t *testing.T) {
 			return ContainsNil(t)
 		}},
 		{"empty record with string", typ.NewRecord().Build(), typ.String, true, func(t typ.Type) bool { return t == typ.Nil }},
+		{"empty open record with string", typ.NewRecord().SetOpen(true).Build(), typ.String, true, func(t typ.Type) bool { return t == typ.Unknown }},
+		{"empty open record with literal string", typ.NewRecord().SetOpen(true).Build(), typ.LiteralString("missing"), true, func(t typ.Type) bool {
+			return t == typ.Unknown
+		}},
 		{"builtin table marker", typ.NewInterface("table", nil), typ.String, true, func(t typ.Type) bool { return t == typ.Unknown }},
 		{"any type", typ.Any, typ.String, true, func(t typ.Type) bool { return t == typ.Any }},
 		{"unknown type", typ.Unknown, typ.String, true, func(t typ.Type) bool { return t == typ.Unknown }},
@@ -142,6 +146,32 @@ func TestIndex_RecordWithMapComponent_GenericStringIncludesFieldAndMap(t *testin
 	}
 	if !subtype.IsSubtype(typ.String, got) || !subtype.IsSubtype(typ.Number, got) {
 		t.Fatalf("expected optional(string|number), got %v", got)
+	}
+}
+
+func TestIndex_OpenRecordWithMapComponent_GenericStringUsesMapContract(t *testing.T) {
+	user := typ.NewRecord().
+		Field("id", typ.String).
+		Field("name", typ.String).
+		Build()
+	rec := typ.NewRecord().
+		SetOpen(true).
+		Field("u1", user).
+		MapComponent(typ.String, user).
+		Build()
+
+	got, ok := Index(rec, typ.String)
+	if !ok {
+		t.Fatal("expected generic string index to resolve")
+	}
+	if typ.IsUnknown(got) {
+		t.Fatalf("open record map component should constrain string index, got %v", got)
+	}
+	if !ContainsNil(got) {
+		t.Fatalf("expected optional result, got %v", got)
+	}
+	if !subtype.IsSubtype(user, got) {
+		t.Fatalf("expected User value to survive string map contract, got %v", got)
 	}
 }
 

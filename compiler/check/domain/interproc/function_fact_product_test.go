@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -19,24 +20,24 @@ func TestJoinFacts_BatchMergeFunctionFacts(t *testing.T) {
 	facts := JoinFacts(
 		api.Facts{
 			FunctionFacts: api.FunctionFacts{
-				symSummary: {Summary: []typ.Type{typ.String}},
-				symNarrow:  {Narrow: []typ.Type{typ.Number}},
+				symSummary: {Summary: product.LiftVector([]typ.Type{typ.String})},
+				symNarrow:  {Narrow: product.LiftVector([]typ.Type{typ.Number})},
 			},
 		},
 		api.Facts{
 			FunctionFacts: api.FunctionFacts{
-				symFunc: {Type: funcType},
+				symFunc: {Signature: funcType},
 			},
 		},
 	)
 
-	if got := functionfact.ReturnSummaryFromMap(facts.FunctionFacts, symSummary); !returnsummary.Equal(got, []typ.Type{typ.String}) {
+	if got := functionfact.ReturnSummary(facts.FunctionFacts, symSummary); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary mismatch: got %v", got)
 	}
-	if got := functionfact.NarrowSummaryFromMap(facts.FunctionFacts, symNarrow); !returnsummary.Equal(got, []typ.Type{typ.Number}) {
+	if got := functionfact.NarrowSummary(facts.FunctionFacts, symNarrow); !returnsummary.Equal(got, []typ.Type{typ.Number}) {
 		t.Fatalf("narrow mismatch: got %v", got)
 	}
-	if got := functionfact.TypeFromMap(facts.FunctionFacts, symFunc); !typ.TypeEquals(got, funcType) {
+	if got := functionfact.SiblingTypeProjection(facts.FunctionFacts, symFunc, api.PhaseScopeCompute); !typ.TypeEquals(got, funcType) {
 		t.Fatalf("func mismatch: got %v", got)
 	}
 }

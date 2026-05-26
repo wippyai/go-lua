@@ -6,7 +6,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -27,6 +29,10 @@ type FuncResult struct {
 	// ModuleBindings is the module-level binding table used when graph-local
 	// bindings are insufficient for canonical symbol resolution.
 	ModuleBindings *bind.BindingTable
+
+	// AnalysisContext is the analysis-sensitive dynamic context for this
+	// function key, including callback-scoped globals and expected signatures.
+	AnalysisContext AnalysisContext
 
 	// BaseScope is the function's entry scope containing parameters,
 	// type definitions, and inherited context from the parent scope.
@@ -55,9 +61,28 @@ type FuncResult struct {
 	// It includes propagated effect rows and branch-specific narrowing facts.
 	FnRefinement *constraint.FunctionRefinement
 
+	// SourceSignature is the annotation-only function signature resolved during
+	// phase execution.
+	SourceSignature *typ.Function
+
+	// PublicSeedSignature is the source-declared public seed used when
+	// canonicalizing post-flow FunctionFact signatures.
+	PublicSeedSignature *typ.Function
+
 	// NarrowSynth is the narrowed-phase synthesis engine for this function.
 	// Use TypeOf to query expression types with flow-based narrowing applied.
 	NarrowSynth Synth
+
+	// QueryContext is the immutable query context used by pure type operations.
+	QueryContext *db.QueryContext
+
+	// TypeOps is the canonical type-operation surface for solved-state reads.
+	TypeOps core.TypeOps
+
+	// GlobalTypes is the immutable value namespace visible to this function,
+	// including callback/global overlays from its analysis context.
+	GlobalTypes map[string]typ.Type
+
 	// LiteralSignatures holds synthesized signatures for function literals in this graph.
 	LiteralSignatures map[*ast.FunctionExpr]*typ.Function
 
@@ -93,6 +118,14 @@ func (r *FuncResult) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type 
 	return r.FlowSolution.NarrowedTypeAt(p, path)
 }
 
+// PreStateTypeAt returns the path-sensitive type before point-local transfer effects.
+func (r *FuncResult) PreStateTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	if r == nil || r.FlowSolution == nil {
+		return nil
+	}
+	return r.FlowSolution.PreStateTypeAt(p, path)
+}
+
 // ExcludesTypeAt checks if the flow solution proves a type is excluded at a CFG point.
 // Used for type narrowing when control flow eliminates certain type possibilities.
 //
@@ -115,12 +148,20 @@ func (r *FuncResult) ExcludesTypeAt(p cfg.Point, path constraint.Path, declared 
 // FuncAnalysisView is the stable slice of a function analysis result
 // required by nested processing and interprocedural helpers.
 type FuncAnalysisView struct {
-	Graph        *cfg.Graph
-	Scopes       map[cfg.Point]*scope.State
-	Facts        flow.TypeFacts
-	FlowSolution *flow.Solution
-	Evidence     FlowEvidence
-	NarrowSynth  Synth
+	Graph               *cfg.Graph
+	AnalysisContext     AnalysisContext
+	Scopes              map[cfg.Point]*scope.State
+	Facts               flow.TypeFacts
+	FlowInputs          *flow.Inputs
+	FlowSolution        *flow.Solution
+	Evidence            FlowEvidence
+	NarrowSynth         Synth
+	SourceSignature     *typ.Function
+	PublicSeedSignature *typ.Function
+	LiteralSignatures   map[*ast.FunctionExpr]*typ.Function
+	QueryContext        *db.QueryContext
+	TypeOps             core.TypeOps
+	GlobalTypes         map[string]typ.Type
 }
 
 // ViewFromResult constructs the nested-processing view from a full result.
@@ -129,11 +170,19 @@ func ViewFromResult(r *FuncResult) *FuncAnalysisView {
 		return nil
 	}
 	return &FuncAnalysisView{
-		Graph:        r.Graph,
-		Scopes:       r.Scopes,
-		Facts:        r.Facts,
-		FlowSolution: r.FlowSolution,
-		Evidence:     r.Evidence,
-		NarrowSynth:  r.NarrowSynth,
+		Graph:               r.Graph,
+		AnalysisContext:     r.AnalysisContext,
+		Scopes:              r.Scopes,
+		Facts:               r.Facts,
+		FlowInputs:          r.FlowInputs,
+		FlowSolution:        r.FlowSolution,
+		Evidence:            r.Evidence,
+		NarrowSynth:         r.NarrowSynth,
+		SourceSignature:     r.SourceSignature,
+		PublicSeedSignature: r.PublicSeedSignature,
+		LiteralSignatures:   r.LiteralSignatures,
+		QueryContext:        r.QueryContext,
+		TypeOps:             r.TypeOps,
+		GlobalTypes:         r.GlobalTypes,
 	}
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/typ"
@@ -58,15 +59,15 @@ return { f = f }
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	snap := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent)
+	functionFacts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts()
 
-	if got := functionfact.ReturnSummaryFromMap(snap.FunctionFacts, sym); len(got) != 1 || containsNever(got[0]) {
+	if got := functionfact.ReturnSummary(functionFacts, sym); len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("summary contains never artifact: %v", got)
 	}
-	if got := functionfact.NarrowSummaryFromMap(snap.FunctionFacts, sym); len(got) != 1 || containsNever(got[0]) {
+	if got := functionfact.NarrowSummary(functionFacts, sym); len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("narrow contains never artifact: %v", got)
 	}
-	if got := functionfact.TypeFromMap(snap.FunctionFacts, sym); got == nil || containsNever(got) {
+	if got := functionfact.SiblingTypeProjection(functionFacts, sym, api.PhaseScopeCompute); got == nil || containsNever(got) {
 		t.Fatalf("function fact contains never artifact: %v", got)
 	}
 

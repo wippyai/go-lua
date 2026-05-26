@@ -414,7 +414,7 @@ func TestDynamicTable_WhileTrueServicePattern(t *testing.T) {
 	}
 }
 
-func TestOpenRecord_DefaultEmptyTable(t *testing.T) {
+func TestFreshEmptyTable_FieldAssignment(t *testing.T) {
 	source := `
 		local t = {}
 		t.x = 1
@@ -422,11 +422,11 @@ func TestOpenRecord_DefaultEmptyTable(t *testing.T) {
 	`
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
-		t.Errorf("expected no errors for open empty table with field assignment, got: %v", testutil.ErrorMessages(result.Diagnostics))
+		t.Errorf("expected no errors for fresh empty table with field assignment, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 
-func TestOpenRecord_FieldPreservation(t *testing.T) {
+func TestFreshEmptyTable_FieldPreservation(t *testing.T) {
 	source := `
 		local t = {}
 		t.name = "foo"
@@ -436,19 +436,19 @@ func TestOpenRecord_FieldPreservation(t *testing.T) {
 	`
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
-		t.Errorf("expected no errors for field preservation on open table, got: %v", testutil.ErrorMessages(result.Diagnostics))
+		t.Errorf("expected no errors for field preservation on fresh table, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 
-func TestOpenRecord_UnknownFieldAccess(t *testing.T) {
+func TestFreshEmptyTable_UnknownFieldAccessErrors(t *testing.T) {
 	source := `
 		local t = {}
 		t.x = 1
 		local v = t.y
 	`
 	result := testutil.Check(source, testutil.WithStdlib())
-	if result.HasError() {
-		t.Errorf("expected no errors for unknown field access on open table, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	if !result.HasError() {
+		t.Fatal("expected unknown field access on fresh finite table to fail")
 	}
 }
 

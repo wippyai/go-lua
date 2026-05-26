@@ -49,7 +49,7 @@ func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
 	case *Array:
 		return isSoft(tt.Element, next, policy)
 	case *Map:
-		return isSoft(tt.Value, next, policy)
+		return isSoft(tt.Key, next, policy) && isSoft(tt.Value, next, policy)
 	case *Record:
 		if tt.Open && len(tt.Fields) == 0 && !tt.HasMapComponent() {
 			return true
@@ -58,7 +58,7 @@ func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
 			return policy.AllowEmptyRecord
 		}
 		if tt.HasMapComponent() && len(tt.Fields) == 0 {
-			return isSoft(tt.MapValue, next, policy)
+			return isSoft(tt.MapKey, next, policy) && isSoft(tt.MapValue, next, policy)
 		}
 		return false
 	case *Union:

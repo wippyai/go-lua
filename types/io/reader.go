@@ -721,6 +721,7 @@ func (r *typeReader) readContractSpec() *contract.Spec {
 	}
 
 	spec.Return = r.readReturnSpec()
+	spec.EnvReturns = r.readEnvReturnSpecs()
 
 	return spec
 }
@@ -756,6 +757,61 @@ func (r *typeReader) readReturnSpec() *contract.ReturnSpec {
 	}
 
 	return rs
+}
+
+func (r *typeReader) readEnvReturnSpecs() []contract.EnvReturnSpec {
+	count := r.readUint32()
+	if !r.checkSliceLen(count) {
+		return nil
+	}
+	if count == 0 {
+		return nil
+	}
+	specs := make([]contract.EnvReturnSpec, 0, count)
+	for i := uint32(0); i < count; i++ {
+		spec := contract.EnvReturnSpec{
+			When:        r.readCondition(),
+			ReturnIndex: int(int32(r.readUint32())),
+			ResultIndex: int(int32(r.readUint32())),
+			Path:        r.readSegments(),
+			Method:      r.readString(),
+		}
+		argCount := r.readUint32()
+		if !r.checkSliceLen(argCount) {
+			return nil
+		}
+		if argCount > 0 {
+			spec.Args = make([]typ.Type, 0, argCount)
+			for j := uint32(0); j < argCount; j++ {
+				spec.Args = append(spec.Args, r.readTypeNonNil())
+			}
+		}
+		specs = append(specs, spec)
+	}
+	return specs
+}
+
+func (r *typeReader) readSegments() []constraint.Segment {
+	count := r.readUint32()
+	if !r.checkSliceLen(count) {
+		return nil
+	}
+	if count == 0 {
+		return nil
+	}
+	segs := make([]constraint.Segment, 0, count)
+	for i := uint32(0); i < count; i++ {
+		segKind := constraint.SegmentKind(r.readByte())
+		seg := constraint.Segment{Kind: segKind}
+		switch segKind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			seg.Name = r.readString()
+		case constraint.SegmentIndexInt:
+			seg.Index = int(int32(r.readUint32()))
+		}
+		segs = append(segs, seg)
+	}
+	return segs
 }
 
 func (r *typeReader) readEffectRow() effect.Row {

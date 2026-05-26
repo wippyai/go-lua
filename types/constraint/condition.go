@@ -23,9 +23,6 @@ var disjunctPool = sync.Pool{
 	},
 }
 
-// DefaultMaxDisjuncts caps the number of disjuncts kept in a Condition.
-const DefaultMaxDisjuncts = 32
-
 // NewConjunction creates a canonicalized conjunction (AND) of constraints.
 func NewConjunction(items ...Constraint) []Constraint {
 	if len(items) == 0 {
@@ -63,7 +60,8 @@ func FromConjunction(items []Constraint) Condition {
 //   - Constraints within each disjunct are sorted by hash for determinism
 //   - Duplicate constraints and disjuncts are removed
 //   - Subsumed disjuncts are eliminated (if A subsumes B, B is removed)
-//   - If disjuncts exceed [DefaultMaxDisjuncts], they are collapsed to common constraints
+//   - Disjunctive facts are preserved exactly; callers that need a cheaper view
+//     must explicitly ask for a projection such as MustConstraints.
 //
 // # Example
 //
@@ -218,14 +216,6 @@ func And(a, b Condition) Condition {
 		return Condition{Disjuncts: [][]Constraint{merged}}
 	}
 
-	if len(a.Disjuncts)*len(b.Disjuncts) > DefaultMaxDisjuncts {
-		common := mergeConjunctions(a.MustConstraints(), b.MustConstraints())
-		if len(common) == 0 {
-			return TrueCondition()
-		}
-		return Condition{Disjuncts: [][]Constraint{common}}
-	}
-
 	out := make([][]Constraint, 0, len(a.Disjuncts)*len(b.Disjuncts))
 	for _, da := range a.Disjuncts {
 		for _, db := range b.Disjuncts {
@@ -259,14 +249,6 @@ func Or(a, b Condition) Condition {
 	out := make([][]Constraint, 0, len(a.Disjuncts)+len(b.Disjuncts))
 	out = append(out, a.Disjuncts...)
 	out = append(out, b.Disjuncts...)
-
-	if len(out) > DefaultMaxDisjuncts {
-		common := intersectConjunctions(a.MustConstraints(), b.MustConstraints())
-		if len(common) == 0 {
-			return TrueCondition()
-		}
-		return Condition{Disjuncts: [][]Constraint{common}}
-	}
 
 	return normalizeCondition(Condition{Disjuncts: out})
 }
@@ -645,22 +627,6 @@ func compareConstraints(a Constraint, aHash uint64, b Constraint, bHash uint64) 
 		return 1
 	}
 	return 0
-}
-
-func intersectConjunctions(a, b []Constraint) []Constraint {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	if len(a) > len(b) {
-		a, b = b, a
-	}
-	var common []Constraint
-	for _, ct := range a {
-		if ConjunctionContains(b, ct) {
-			common = append(common, ct)
-		}
-	}
-	return common
 }
 
 // SubstituteConjunction replaces placeholder paths in a conjunction.
@@ -1042,22 +1008,6 @@ func normalizeCondition(c Condition) Condition {
 			continue
 		}
 		kept = append(kept, dh)
-	}
-
-	if len(kept) > DefaultMaxDisjuncts {
-		disjuncts := make([][]Constraint, len(kept))
-		for i, kh := range kept {
-			disjuncts[i] = kh.conj
-		}
-		// Return to pool
-		*withHashPtr = withHash[:0]
-		disjunctPool.Put(withHashPtr)
-
-		must := Condition{Disjuncts: disjuncts}.MustConstraints()
-		if len(must) == 0 {
-			return TrueCondition()
-		}
-		return Condition{Disjuncts: [][]Constraint{must}}
 	}
 
 	// Extract final disjuncts

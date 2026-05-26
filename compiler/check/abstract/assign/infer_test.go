@@ -6,9 +6,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	abstractcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
@@ -37,7 +40,12 @@ func TestInferLocalTypes_WithAnnotated(t *testing.T) {
 	specTypes := make(api.SpecTypes)
 	annotated := make(map[cfg.SymbolID]bool)
 	annotated[1] = true
-	result := InferLocalTypes(LocalInferenceConfig{SeedTypes: specTypes, Annotated: annotated})
+	result := InferLocalTypes(LocalInferenceConfig{
+		SeedTypes: specTypes,
+		Inputs: &flow.Inputs{
+			AnnotatedVars: annotated,
+		},
+	})
 	if result == nil {
 		t.Error("expected non-nil result")
 	}
@@ -52,6 +60,68 @@ func TestInferLocalTypes_WithInputs(t *testing.T) {
 	result := InferLocalTypes(LocalInferenceConfig{SeedTypes: specTypes, Inputs: inputs})
 	if result == nil {
 		t.Error("expected non-nil result")
+	}
+}
+
+func TestFunctionSignatureSeed_PrefersLiteralProductProjection(t *testing.T) {
+	sym := cfg.SymbolID(42)
+	fn := &ast.FunctionExpr{}
+	preciseOverlay := map[string]typ.Type{
+		"up": typ.Func().Param("cb", typ.Func().Param("value", typ.Number).Build()).Build(),
+	}
+	staleOverlay := map[string]typ.Type{
+		"up": typ.Unknown,
+	}
+	precise := typ.Func().
+		Param("fn", typ.Func().Returns(typ.Nil).Build()).
+		Spec(contract.NewSpec().WithCallback(0, (&contract.CallbackSpec{}).WithEnvOverlay(preciseOverlay))).
+		Build()
+	stale := typ.Func().
+		Param("fn", typ.Func().Returns(typ.Nil).Build()).
+		Spec(contract.NewSpec().WithCallback(0, (&contract.CallbackSpec{}).WithEnvOverlay(staleOverlay))).
+		Build()
+
+	got := functionSignatureSeed(signatureSeedInput{
+		inputs: &flow.Inputs{
+			DeclaredTypes: map[cfg.SymbolID]typ.Type{sym: stale},
+			LiteralTypes:  map[cfg.SymbolID]typ.Type{sym: precise},
+		},
+		services: abstractcore.FlowServicesFuncs{
+			FnSigResolver: func(*ast.FunctionExpr, *scope.State) *typ.Function {
+				return stale
+			},
+		},
+		sym: sym,
+		fn:  fn,
+	})
+
+	if !typ.TypeEquals(got, precise) {
+		t.Fatalf("functionSignatureSeed() = %v, want literal FunctionFact projection %v", got, precise)
+	}
+}
+
+func TestFunctionSignatureSeed_LiteralProjectionCarriesAnnotatedFunctionFacts(t *testing.T) {
+	sym := cfg.SymbolID(43)
+	declared := typ.Func().Param("value", typ.String).Build()
+	literal := typ.Func().Param("value", typ.Number).Build()
+
+	got := functionSignatureSeed(signatureSeedInput{
+		inputs: &flow.Inputs{
+			DeclaredTypes: map[cfg.SymbolID]typ.Type{sym: declared},
+			LiteralTypes:  map[cfg.SymbolID]typ.Type{sym: literal},
+			AnnotatedVars: map[cfg.SymbolID]bool{sym: true},
+		},
+		services: abstractcore.FlowServicesFuncs{
+			FnSigResolver: func(*ast.FunctionExpr, *scope.State) *typ.Function {
+				return literal
+			},
+		},
+		sym: sym,
+		fn:  &ast.FunctionExpr{},
+	})
+
+	if !typ.TypeEquals(got, literal) {
+		t.Fatalf("functionSignatureSeed() = %v, want canonical literal projection %v", got, literal)
 	}
 }
 
@@ -220,44 +290,44 @@ func TestJoinInferredType_TreatsAnyAsTop(t *testing.T) {
 	if !typ.TypeEquals(got, typ.Any) {
 		t.Fatalf("joinInferredType(Suite, any) = %v, want any", got)
 	}
+}
 
-	got = mergeCallExpectation(typ.Any, suite, true)
-	if !typ.TypeEquals(got, typ.Any) {
-		t.Fatalf("mergeCallExpectation(any, Suite) = %v, want any", got)
+func TestJoinInferredType_IsMonotoneForUnionCandidate(t *testing.T) {
+	candidate := typ.NewUnion(typ.String, typ.Number)
+	got := joinInferredType(typ.String, candidate)
+	if !typ.TypeEquals(got, candidate) {
+		t.Fatalf("joinInferredType(string, string|number) = %v, want %v", got, candidate)
 	}
 }
 
-func TestMergeCallExpectation_ParamDominatesCompatibleBodyEvidence(t *testing.T) {
-	headerMap := typ.NewMap(typ.String, typ.String)
-	bodyHeaderEvidence := typ.NewRecord().
-		SetOpen(true).
-		OptField("Accept", typ.String).
-		Build()
-	old := typ.NewRecord().
-		SetOpen(true).
-		OptField("headers", typ.NewUnion(headerMap, bodyHeaderEvidence)).
-		OptField("stream", typ.Unknown).
-		Build()
-	expected := typ.NewRecord().
-		Field("headers", headerMap).
-		OptField("stream", typ.Boolean).
-		Build()
+func TestLocalInferenceStability_UsesConvergenceEqualityForRecursiveProducts(t *testing.T) {
+	left := recursiveBuilderProduct()
+	right := recursiveBuilderProduct()
+	sym := cfg.SymbolID(77)
 
-	got := mergeCallExpectation(old, expected, true)
-	if !typ.TypeEquals(got, expected) {
-		t.Fatalf("mergeCallExpectation(body evidence, expected param) = %v, want %v", got, expected)
+	if !localInferenceValueEqual(left, right) {
+		t.Fatalf("recursive products from same value-domain family should be stable")
+	}
+	if !sccTypesStable([]typ.Type{left}, api.SpecTypes{sym: right}, []cfg.SymbolID{sym}) {
+		t.Fatalf("SCC stability must use value-domain convergence equality")
 	}
 }
 
-func TestTypeContains(t *testing.T) {
-	base := typ.NewArray(typ.Unknown)
-	outer := typ.NewArray(base)
-	if !typeContains(outer, base) {
-		t.Fatal("expected typeContains(any[][], any[]) to be true")
-	}
-	if typeContains(typ.Number, base) {
-		t.Fatal("expected typeContains(number, any[]) to be false")
-	}
+func recursiveBuilderProduct() typ.Type {
+	return typ.NewRecursive("Builder", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("value", typ.Number).
+			Field("add", typ.Func().
+				Param("self", self).
+				Param("n", typ.Number).
+				Returns(self).
+				Build()).
+			Field("result", typ.Func().
+				Param("self", self).
+				Returns(typ.Number).
+				Build()).
+			Build()
+	})
 }
 
 func TestMergeSpecTypesSoft_IgnoresUnknownAndNilOverrides(t *testing.T) {
@@ -315,26 +385,36 @@ func TestInferLocalTypes_UsesModuleCalleeCandidatesForExpectedArgs(t *testing.T)
 
 	evidence := trace.GraphEvidence(graph, graph.Bindings())
 	inferred := InferLocalTypes(LocalInferenceConfig{
-		Graph:    graph,
-		Evidence: evidence,
-		Synth:    func(ast.Expr, cfg.Point) typ.Type { return typ.Unknown },
-		SymResolver: func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-			if sym == globalCalleeSym {
-				return nil, false
-			}
-			if sym == moduleCalleeSym {
-				return typ.Func().Param("n", typ.Number).Returns(typ.Nil).Build(), true
-			}
-			return nil, false
+		Context: &abstractcore.FlowContext{
+			Graph:          graph,
+			Evidence:       evidence,
+			ModuleBindings: moduleBindings,
+			CallCtx:        db.NewQueryContext(db.New()),
+			TypeOps:        querycore.NewEngine(),
+			Derived: &abstractcore.Derived{
+				Synth: func(ast.Expr, cfg.Point) typ.Type { return typ.Unknown },
+				SymResolver: func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+					if sym == globalCalleeSym {
+						return nil, false
+					}
+					if sym == moduleCalleeSym {
+						return typ.Func().Param("n", typ.Number).Returns(typ.Nil).Build(), true
+					}
+					return nil, false
+				},
+			},
 		},
-		ModuleBindings: moduleBindings,
-		CallCtx:        db.NewQueryContext(db.New()),
-		TypeOps:        querycore.NewEngine(),
 	})
 
 	got := inferred[xSym]
 	if !typ.TypeEquals(got, typ.Number) {
 		t.Fatalf("inferred param type = %v, want number", got)
+	}
+	if len(evidence.Calls) != 1 {
+		t.Fatalf("expected one call evidence entry, got %d", len(evidence.Calls))
+	}
+	if expected := evidence.Calls[0].ExpectedArgType(0); !typ.TypeEquals(expected, typ.Number) {
+		t.Fatalf("materialized expected arg = %v, want number", expected)
 	}
 }
 
@@ -363,7 +443,7 @@ func TestNormalizedCallArgSymbols_UsesBindingsFallback(t *testing.T) {
 	}
 }
 
-func TestCallRefSymbols_CollectsAndDeduplicates(t *testing.T) {
+func TestCallBoundarySymbols_CollectsAndDeduplicates(t *testing.T) {
 	bindings := bind.NewBindingTable()
 	callee := &ast.IdentExpr{Value: "f"}
 	recv := &ast.IdentExpr{Value: "recv"}
@@ -390,9 +470,77 @@ func TestCallRefSymbols_CollectsAndDeduplicates(t *testing.T) {
 		Args:     []ast.Expr{arg, attr, arg},
 	}
 
-	refs := callRefSymbols(info, bindings)
+	refs := callBoundarySymbols(info, bindings)
 	if !hasSymbol(refs, calleeSym) || !hasSymbol(refs, recvSym) || !hasSymbol(refs, argSym) || !hasSymbol(refs, objSym) || !hasSymbol(refs, fieldSym) {
 		t.Fatalf("expected refs to include callee/receiver/arg/object/field symbols, got %v", refs)
+	}
+}
+
+func TestCallBoundarySymbols_TreatsNestedCallsAsSolvedEvents(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	obj := &ast.IdentExpr{Value: "obj"}
+	arg := &ast.IdentExpr{Value: "x"}
+	objSym := cfg.SymbolID(111)
+	argSym := cfg.SymbolID(112)
+	bindings.Bind(obj, objSym)
+	bindings.Bind(arg, argSym)
+
+	nested := &ast.FuncCallExpr{
+		Receiver: obj,
+		Method:   "make",
+	}
+	info := &cfg.CallInfo{
+		Receiver: nested,
+		Method:   "use",
+		Args:     []ast.Expr{arg},
+	}
+
+	refs := callBoundarySymbols(info, bindings)
+	if hasSymbol(refs, objSym) {
+		t.Fatalf("nested receiver call internals must not be outer call dependencies, got %v", refs)
+	}
+	if !hasSymbol(refs, argSym) {
+		t.Fatalf("direct argument symbol should remain a call boundary dependency, got %v", refs)
+	}
+}
+
+func TestDeferredCallbackExpectationProjection_IsCallbackOnly(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	solver := &localInferenceSolver{
+		ctx:            &abstractcore.FlowContext{},
+		bindings:       bindings,
+		moduleBindings: bindings,
+	}
+
+	plain := localCallEntry{info: &cfg.CallInfo{
+		Receiver: &ast.FuncCallExpr{Method: "builder"},
+		Method:   "add",
+		Args:     []ast.Expr{&ast.NumberExpr{Value: "1"}},
+	}}
+	if solver.callNeedsDeferredCallbackExpectation(plain) {
+		t.Fatalf("plain method chains should not request deferred callback expectation projection")
+	}
+
+	direct := localCallEntry{info: &cfg.CallInfo{
+		Callee: &ast.IdentExpr{Value: "register"},
+		Args:   []ast.Expr{&ast.FunctionExpr{}},
+	}}
+	if !solver.callNeedsDeferredCallbackExpectation(direct) {
+		t.Fatalf("direct callback literal should request deferred expectation projection")
+	}
+
+	cbIdent := &ast.IdentExpr{Value: "cb"}
+	cbSym := cfg.SymbolID(2201)
+	cbFn := &ast.FunctionExpr{}
+	bindings.Bind(cbIdent, cbSym)
+	bindings.SetFuncLitSymbol(cbFn, cbSym)
+	named := localCallEntry{info: &cfg.CallInfo{
+		Callee:     &ast.IdentExpr{Value: "register"},
+		Args:       []ast.Expr{cbIdent},
+		ArgSymbols: []cfg.SymbolID{cbSym},
+	}}
+	if !solver.callNeedsDeferredCallbackExpectation(named) {
+		t.Fatalf("named callback literal should request deferred expectation projection")
 	}
 }
 

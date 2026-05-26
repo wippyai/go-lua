@@ -31,7 +31,7 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		WithScope(input.Scope).
 		WithFunctionFacts(input.FunctionFacts).
 		WithLiteralTypes(input.LiteralTypes).
-		BuildDeclared()
+		BuildFlowInput()
 
 	engine := synth.New(synth.Config{
 		Ctx:            input.Ctx,
@@ -63,11 +63,15 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		},
 		InitialDeclaredTypes: input.Scope.DeclaredTypes,
 		LiteralTypes:         input.LiteralTypes,
+		FunctionFacts:        input.FunctionFacts,
 		ModuleAliases:        moduleAliases,
 		ModuleBindings:       input.ModuleBindings,
 		Evidence:             input.Evidence,
 	})
 	inputs := abstractOut.Inputs
+	if inputs != nil {
+		inputs.DeclaredTypes = reconcileSelfParamTypesWithBase(input.Graph, inputs.DeclaredTypes, input.Scope.BaseScope)
+	}
 
 	applyModuleAliasTypes(inputs, input.Manifests)
 

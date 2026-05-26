@@ -67,6 +67,9 @@ type coreDecomposer struct{}
 func (coreDecomposer) ElementType(t typ.Type) typ.Type { return core.ElementType(t) }
 func (coreDecomposer) KeyType(t typ.Type) typ.Type     { return core.KeyType(t) }
 func (coreDecomposer) ValueType(t typ.Type) typ.Type   { return core.ValueType(t) }
+func (coreDecomposer) EntryValueType(t typ.Type) typ.Type {
+	return core.EntryValueType(t)
+}
 
 // BuildInputs executes the complete flow constraint extraction pipeline.
 // It processes the CFG to extract all type constraints that the flow solver
@@ -116,6 +119,9 @@ func BuildInputs(fc *abstractcore.FlowContext) *flow.Inputs {
 
 	// Function definitions on table fields (function M.add()).
 	assign.ExtractFuncDefAssignments(fc, inputs)
+
+	// Call contracts refine arguments on the normal-return edge of the call.
+	assign.ExtractCallContractAssignments(fc, inputs)
 
 	// Return classification.
 	returns.ExtractReturnKinds(fc, inputs)

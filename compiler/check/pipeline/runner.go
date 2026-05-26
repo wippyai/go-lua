@@ -19,18 +19,23 @@
 package pipeline
 
 import (
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
+	productpkg "github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // RunnerConfig configures a pipeline runner.
@@ -119,11 +124,10 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	}
 	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, graphEvidence, parameterEvidenceSigs)
 	if analysisCtx.ExpectedFunction != nil {
-		synthSig = mergeSynthesizedSignatureContext(synthSig, analysisCtx.ExpectedFunction)
+		synthSig = functionfact.MergeExpectedSignature(synthSig, analysisCtx.ExpectedFunction)
 	}
 
-	graphFacts := store.GetInterprocFacts(graph, parent)
-	functionFacts := graphFacts.FunctionFacts
+	functionFacts := functionfact.VisibleFactsForGraph(store, graph, parent, r.stdlib)
 
 	localAliases := modules.AliasesFromAssignments(graphEvidence.Assignments, graph)
 	mergedAliases := modules.MergeAliases(store.ModuleAliases(), localAliases)
@@ -163,7 +167,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	})
 	// Declared is the default phase for scope/extract and interproc reads.
 
-	if capturedTypes := graphFacts.CapturedTypes; len(capturedTypes) > 0 {
+	if capturedTypes := capturedTypesForFunction(store.InterprocFacts(graph, parent), graph, fn); len(capturedTypes) > 0 {
 		scopeOut.DeclaredTypes = captured.MergeCapturedTypes(scopeOut.DeclaredTypes, capturedTypes)
 	}
 	r.mergeCapturedParentFunctionTypes(store, graph, fn, &scopeOut)
@@ -182,11 +186,12 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		if literalOut.LiteralTypes == nil {
 			literalOut.LiteralTypes = make(flow.DeclaredTypes, len(functionFacts))
 		}
-		for sym, fact := range functionFacts {
-			if fact.Type == nil {
+		for sym := range functionFacts {
+			projected := functionfact.SiblingTypeProjection(functionFacts, sym, api.PhaseScopeCompute)
+			if projected == nil {
 				continue
 			}
-			literalOut.LiteralTypes[sym] = fact.Type
+			literalOut.LiteralTypes[sym] = projected
 		}
 	}
 
@@ -198,13 +203,17 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		FunctionFacts: functionFacts,
 		LiteralTypes:  literalOut.LiteralTypes,
 	})
-	r.appendCapturedMutatorAssignments(store, graph, parent, env, scopeOut, literalOut, functionFacts, &extractOut)
+	r.appendCapturedCallEffectAssignments(store, graph, parent, env, scopeOut, literalOut, functionFacts, &extractOut)
 
 	// Phase C: Solve flow system.
+	solveResolver := r.resolver
+	if queryResolver := core.NewQueryResolver(ctx, r.types); queryResolver != nil {
+		solveResolver = queryResolver
+	}
 	solveOut := phase.RunSolve(phase.FlowSolveInput{
 		PhaseEnv: env,
 		Extract:  extractOut,
-		Resolver: r.resolver,
+		Resolver: solveResolver,
 	})
 	// Phase D: Narrowing and effect inference.
 	var narrowOut phase.NarrowOutput
@@ -220,25 +229,48 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	})
 
 	extras := r.runComputePasses(graph, scopeOut.Scopes)
+	sourceSignature, publicSeedSignature := postflowSignatures(fn, graph, scopeOut.BaseScope, narrowOut.Synth)
+	sourceSignature = functionfact.MergeSignatureContracts(sourceSignature, synthSig)
 
 	return &api.FuncResult{
-		Graph:              graph,
-		ModuleBindings:     env.ModuleBindings,
-		BaseScope:          scopeOut.BaseScope,
-		Scopes:             scopeOut.Scopes,
-		Facts:              narrowOut.Facts,
-		FlowInputs:         extractOut.Inputs,
-		FlowSolution:       solveOut.Solution,
-		Evidence:           extractOut.Evidence,
-		FnRefinement:       narrowOut.Refinement,
-		NarrowSynth:        narrowOut.Synth,
-		LiteralSignatures:  literalOut.Signatures,
-		Extras:             extras,
-		DepthLimitExceeded: scopeOut.DepthLimitExceeded,
+		Graph:               graph,
+		ModuleBindings:      env.ModuleBindings,
+		AnalysisContext:     analysisCtx,
+		BaseScope:           scopeOut.BaseScope,
+		Scopes:              scopeOut.Scopes,
+		Facts:               narrowOut.Facts,
+		FlowInputs:          extractOut.Inputs,
+		FlowSolution:        solveOut.Solution,
+		Evidence:            extractOut.Evidence,
+		FnRefinement:        narrowOut.Refinement,
+		SourceSignature:     sourceSignature,
+		PublicSeedSignature: publicSeedSignature,
+		NarrowSynth:         narrowOut.Synth,
+		QueryContext:        narrowOut.QueryContext,
+		TypeOps:             narrowOut.TypeOps,
+		GlobalTypes:         globalTypes,
+		LiteralSignatures:   literalOut.Signatures,
+		Extras:              extras,
+		DepthLimitExceeded:  scopeOut.DepthLimitExceeded,
 	}
 }
 
-func mergeGlobalOverlay(base map[string]typ.Type, overlay map[string]typ.Type) map[string]typ.Type {
+func postflowSignatures(fn *ast.FunctionExpr, graph *cfg.Graph, base *scope.State, synth api.Synth) (*typ.Function, *typ.Function) {
+	if fn == nil || synth == nil {
+		return nil, nil
+	}
+	var bindings interface {
+		ParamSymbols(*ast.FunctionExpr) []cfg.SymbolID
+		Name(cfg.SymbolID) string
+	}
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
+	return synth.ResolveFunctionSignature(fn, base),
+		unwrap.Function(returns.BuildSeedFunctionTypeWithBindings(fn, synth, base, bindings))
+}
+
+func mergeGlobalOverlay(base map[string]typ.Type, overlay map[string]productpkg.AbstractValue) map[string]typ.Type {
 	if len(overlay) == 0 {
 		return base
 	}
@@ -246,10 +278,31 @@ func mergeGlobalOverlay(base map[string]typ.Type, overlay map[string]typ.Type) m
 	for name, t := range base {
 		out[name] = t
 	}
-	for name, t := range overlay {
-		if name != "" && t != nil {
-			out[name] = t
+	for name, v := range overlay {
+		if name != "" && !v.IsZero() {
+			out[name] = v.ProjectValue()
 		}
+	}
+	return out
+}
+
+func capturedTypesForFunction(product api.InterprocFactProduct, graph *cfg.Graph, fn *ast.FunctionExpr) map[cfg.SymbolID]typ.Type {
+	if product == nil || graph == nil || fn == nil || graph.Bindings() == nil {
+		return nil
+	}
+	var out map[cfg.SymbolID]typ.Type
+	for _, sym := range graph.Bindings().CapturedSymbols(fn) {
+		if sym == 0 {
+			continue
+		}
+		t, ok := product.CapturedType(sym)
+		if !ok || t == nil {
+			continue
+		}
+		if out == nil {
+			out = make(map[cfg.SymbolID]typ.Type)
+		}
+		out[sym] = t
 	}
 	return out
 }

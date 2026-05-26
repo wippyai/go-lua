@@ -20,9 +20,6 @@ import (
 //   - `nil and x` -> nil
 //   - `string? and number` -> nil | number
 func LogicalAndTyped(left, right typ.Type) typ.Type {
-	left = ExtractFirstValue(left)
-	right = ExtractFirstValue(right)
-
 	// Unknown left type: cannot determine result
 	if left == nil {
 		return typ.Unknown
@@ -76,9 +73,6 @@ func LogicalAndTyped(left, right typ.Type) typ.Type {
 // Canonical policy: merge via typ.JoinBranchOutcome to preserve runtime
 // uncertainty while still preferring concrete alternatives over soft placeholders.
 func LogicalOrTyped(left, right typ.Type) typ.Type {
-	left = ExtractFirstValue(left)
-	right = ExtractFirstValue(right)
-
 	// Unknown left type: cannot determine result
 	if left == nil {
 		return typ.Unknown

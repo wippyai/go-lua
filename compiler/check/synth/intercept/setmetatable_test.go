@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/types/kind"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -45,7 +46,7 @@ func TestSetMetatableIntercept_OptionalMetatableKeepsNilVariantSound(t *testing.
 	prototype := typ.NewRecord().Field("has_cycles", method).Build()
 	meta := typ.NewRecord().Field("__index", prototype).Build()
 
-	got := withMetatable(table, typ.NewOptional(meta))
+	got := metatable.With(table, typ.NewOptional(meta))
 	union, ok := got.(*typ.Union)
 	if !ok || len(union.Members) != 2 {
 		t.Fatalf("expected optional metatable to produce two variants, got %s", typ.FormatShort(got))
@@ -79,7 +80,7 @@ func TestSetMetatableIntercept_RemovesMetatableForNil(t *testing.T) {
 	meta := typ.NewRecord().Field("has_cycles", method).Build()
 	table := typ.NewRecord().Metatable(meta).Build()
 
-	got := withMetatable(table, typ.Nil)
+	got := metatable.With(table, typ.Nil)
 	rec, ok := got.(*typ.Record)
 	if !ok {
 		t.Fatalf("expected record, got %T", got)

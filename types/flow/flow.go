@@ -44,9 +44,8 @@
 //
 // The solver handles several special assignment patterns:
 //
-//   - IteratorSource: Derives iterator variable types from the iterated container
-//   - ContainerElementSource: Derives types from container methods (channel:receive())
-//   - MapElementSource: Derives types from dynamic map index reads (t[k])
+//   - AssignmentSource: Derives RHS values from paths, iterators, calls, map reads,
+//     length-index reads, and container element returns
 //   - SiblingAssignment: Correlates multi-return values (result, err patterns)
 //
 // # Subpackages
@@ -133,35 +132,88 @@ const (
 	IterateKeyed                       // pairs-style: (key, value)
 )
 
-// IteratorSource stores info for deriving iterator variable types from flow solution.
-type IteratorSource struct {
-	Path     constraint.Path // Path to iterator source (e.g., array being iterated)
-	Kind     IteratorKind    // Type of iteration
-	VarIndex int             // 0=key/index, 1=value
+// AssignmentSourceKind names the canonical RHS evidence source for an assignment.
+type AssignmentSourceKind uint8
+
+const (
+	// AssignmentSourceStatic means the assignment uses the pre-extracted Type.
+	AssignmentSourceStatic AssignmentSourceKind = iota
+	// AssignmentSourcePath reads another flow path at the assignment point.
+	AssignmentSourcePath
+	// AssignmentSourceIterator derives a for-loop variable from its iterator source.
+	AssignmentSourceIterator
+	// AssignmentSourceContainerElement derives a returned container element.
+	AssignmentSourceContainerElement
+	// AssignmentSourceMapElement derives a dynamic table index read.
+	AssignmentSourceMapElement
+	// AssignmentSourceLengthIndex derives a t[#t + offset] read under length proof.
+	AssignmentSourceLengthIndex
+	// AssignmentSourceCallReturn derives a call return from a flow-resolved callee.
+	AssignmentSourceCallReturn
+)
+
+// AssignmentSourceProjectionKind classifies same-source projection evidence
+// attached to an assignment source.
+type AssignmentSourceProjectionKind uint8
+
+const (
+	// AssignmentSourceProjectionNone means transfer should use only the source
+	// algebra and target static type.
+	AssignmentSourceProjectionNone AssignmentSourceProjectionKind = iota
+	// AssignmentSourceProjectionCallable is a callpoint function-value
+	// projection, e.g. a graph-local wrapper whose captures are visible at the
+	// assignment point.
+	AssignmentSourceProjectionCallable
+	// AssignmentSourceProjectionCallReturn is a callpoint return-slot
+	// projection from the same call expression.
+	AssignmentSourceProjectionCallReturn
+)
+
+// AssignmentSource is the flow-owned RHS source algebra for assignments.
+//
+// AST extraction lowers syntax into exactly one source. Transfer evaluates that
+// source against the current abstract state, so new solve-time facts do not grow
+// extra fields on UnifiedAssignment.
+type AssignmentSource struct {
+	Kind AssignmentSourceKind
+
+	// ProjectedType is source-owned expression evidence for higher-order values
+	// whose meaning depends on callpoint/capture state that a plain path read
+	// cannot encode. It is never target annotation evidence.
+	ProjectionKind AssignmentSourceProjectionKind
+	ProjectedType  typ.Type
+
+	Path constraint.Path
+
+	IteratorKind IteratorKind
+	VarIndex     int
+
+	ContainerPath constraint.Path
+	MapPath       constraint.Path
+	KeySymbol     cfg.SymbolID
+	KeyVar        string
+	Offset        int64
+
+	CalleePath   constraint.Path
+	ReceiverPath constraint.Path
+	Method       string
+	ReturnIndex  int
+}
+
+func (s AssignmentSource) IsZero() bool {
+	return s.Kind == AssignmentSourceStatic
+}
+
+func (s AssignmentSource) HasPath() bool {
+	return s.Kind == AssignmentSourcePath && s.Path.HasSymbol()
 }
 
 // UnifiedAssignment describes an assignment in the CFG with typed info.
 type UnifiedAssignment struct {
 	Point      cfg.Point
 	TargetPath constraint.Path
-	SourcePath constraint.Path
 	Type       typ.Type
-	IterSource *IteratorSource // For iterator vars, derives type from source at solve time
-
-	// ContainerElementSource tracks assignments from container methods (e.g., channel:receive())
-	// that return element types. At solve time, the type is derived from the container's
-	// widened element type instead of using the statically extracted Type field.
-	ContainerElementSource *ContainerElementSource
-
-	// MapElementSource tracks assignments from dynamic map index reads (t[k]).
-	// At solve time, the type is derived from the map's value type instead of
-	// using the statically extracted Type field.
-	MapElementSource *MapElementSource
-
-	// LengthIndexSource tracks reads of the form t[#t + k]. At solve time, the
-	// numeric length domain can prove presence for the exact Lua length border
-	// and for sequence-shaped offsets.
-	LengthIndexSource *LengthIndexSource
+	Source     AssignmentSource
 }
 
 // EdgeCondition ties a DNF condition to a control-flow edge.
@@ -185,6 +237,7 @@ type TypeDecomposer interface {
 	ElementType(t typ.Type) typ.Type
 	KeyType(t typ.Type) typ.Type
 	ValueType(t typ.Type) typ.Type
+	EntryValueType(t typ.Type) typ.Type
 }
 
 // Inputs bundles all data needed by the flow solver for type propagation.
@@ -234,9 +287,17 @@ type Inputs struct {
 	// Used for error return pattern where checking err narrows result.
 	SiblingAssignments map[SiblingKey]*SiblingAssignment
 
-	// IndexerAssignments tracks dynamic index assignments: t[k] = v with non-const k.
-	// Used to widen {} to {[K]: V} based on key/value types.
-	IndexerAssignments []IndexerAssignment
+	// VariantFieldOrigins records path-origin evidence for discriminated
+	// variants produced by effectful calls. For example, a select result variant
+	// can state that result.channel aliases timeout and is identified by
+	// result.__select_case_id == 1. Branch extraction uses this product to turn
+	// runtime identity tests into ordinary discriminator constraints.
+	VariantFieldOrigins []VariantFieldOrigin
+
+	// MapMutatorAssignments tracks Lua map writes such as t[k] = v.
+	// Direct syntax and replayed interprocedural captured effects both lower to
+	// this operator before transfer applies the indexed-write domain law.
+	MapMutatorAssignments []MapMutatorAssignment
 
 	// TableMutatorAssignments tracks table.insert-like mutations that widen
 	// array element types (including map values that are arrays).
@@ -326,20 +387,54 @@ type SiblingKey struct {
 	VersionID int
 }
 
-// IndexerAssignment describes an assignment via dynamic index: t[k] = v
-// where k is non-const. Used to widen empty tables to maps.
+// VariantFieldOrigin links a variant field value to the source path it aliases.
+// Target.Field aliases Source when Target.DiscriminatorField equals
+// DiscriminatorValue. The abstract interpreter owns this relational evidence;
+// the constraint solver consumes the lowered discriminator constraints.
+type VariantFieldOrigin struct {
+	Target             constraint.Path
+	Field              string
+	Source             constraint.Path
+	DiscriminatorField string
+	DiscriminatorValue *typ.Literal
+}
+
+// MapMutationValueMode describes how a map mutation affects the value slot.
+type MapMutationValueMode uint8
+
+const (
+	// MapMutationValueWrite models t[k] = v: the observed slot value can be v.
+	MapMutationValueWrite MapMutationValueMode = iota
+	// MapMutationValueUpdate models t[k].field = v: v updates the existing
+	// slot shape instead of replacing the whole slot.
+	MapMutationValueUpdate
+)
+
+// MapMutatorAssignment describes a Lua map write t[k] = v.
 // KeyVar stores the variable name if key is an identifier; KeyType is resolved
-// during flow solving when we have flow-narrowed types.
-type IndexerAssignment struct {
+// during flow solving when flow-narrowed key evidence is available.
+type MapMutatorAssignment struct {
 	Point     cfg.Point
-	Root      string               // Variable name (for display)
-	Symbol    cfg.SymbolID         // Unique symbol ID for the root variable
-	Segments  []constraint.Segment // Field/index segments for nested tables
-	KeyVar    string               // Variable name if key is an identifier
-	KeySymbol cfg.SymbolID         // Symbol ID for the key variable (for SSA-aware lookup)
-	KeyType   typ.Type             // Optional explicit key type (overrides KeySymbol lookup)
-	ValuePath constraint.Path      // Path to value expression for flow-resolved type lookup
-	ValType   typ.Type             // Static value type when ValuePath is unavailable
+	Target    constraint.Path // Map path being mutated
+	ValueMode MapMutationValueMode
+	KeyVar    string          // Variable name if key is an identifier
+	KeySymbol cfg.SymbolID    // Symbol ID for the key variable (for SSA-aware lookup)
+	KeyType   typ.Type        // Optional explicit key type (overrides KeySymbol lookup)
+	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
+	ValueType typ.Type        // Static value type if ValuePath doesn't resolve
+	Value     ValueTemplate   // Flow-resolved slots inside a static table value
+}
+
+// IndexWriteQuery identifies the solved transfer proof for a dynamic index
+// write. The query is AST-free; syntax lowering records MapMutatorAssignment
+// products, and diagnostics/projectors consume this product instead of
+// reconstructing write provenance.
+type IndexWriteQuery struct {
+	Point     cfg.Point
+	Target    constraint.Path
+	KeySymbol cfg.SymbolID
+	KeyType   typ.Type
+	ValuePath constraint.Path
 }
 
 // TableMutatorAssignment describes table.insert-like mutations that widen
@@ -353,6 +448,7 @@ type TableMutatorAssignment struct {
 	KeyType   typ.Type        // Optional explicit key type (overrides KeySymbol lookup)
 	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
 	ValueType typ.Type        // Static value type if ValuePath doesn't resolve
+	Value     ValueTemplate   // Flow-resolved slots inside a static table value
 }
 
 // ContainerMutatorAssignment describes container mutations (channel.send, etc.)
@@ -362,29 +458,22 @@ type ContainerMutatorAssignment struct {
 	Target    constraint.Path // Container path (symbol-only, e.g., channel variable)
 	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
 	ValueType typ.Type        // Static value type if ValuePath doesn't resolve
+	Value     ValueTemplate   // Flow-resolved slots inside a static table value
 }
 
-// ContainerElementSource tracks that an assignment's type should be derived
-// from a container's element type at solve time. Used for methods like
-// channel:receive() where the return type depends on the widened container type.
-type ContainerElementSource struct {
-	ContainerPath constraint.Path // Path to the container (e.g., channel variable)
-	ReturnIndex   int             // Which return value (0-based)
+// ValueTemplate records flow-owned source slots inside an extracted value.
+//
+// Extraction lowers syntax to a static ValueType plus these AST-free source
+// slots. Transfer evaluates the slots against the current abstract state, so
+// table literals embedded in mutator calls do not freeze pre-solve types for
+// fields that come from locals, parameters, or other flow paths.
+type ValueTemplate struct {
+	Slots []ValueTemplateSlot
 }
 
-// MapElementSource tracks that an assignment's type should be derived from
-// a map/table's value type at solve time. Used for dynamic index reads like
-// t[k] where k is a non-const variable and the path cannot be statically built.
-type MapElementSource struct {
-	MapPath   constraint.Path // Path to the map/table being indexed
-	KeySymbol cfg.SymbolID    // Symbol for key variable (SSA lookup)
-	KeyVar    string          // Key variable name (display)
-}
-
-// LengthIndexSource tracks that an assignment was read from t[#t + Offset].
-type LengthIndexSource struct {
-	ContainerPath constraint.Path
-	Offset        int64
+type ValueTemplateSlot struct {
+	Segments []constraint.Segment
+	Source   AssignmentSource
 }
 
 // TypeState tracks the resolution progress of a type during fixed-point iteration.

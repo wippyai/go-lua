@@ -57,7 +57,10 @@ func (s *synthImpl) ResolveFunctionSignature(fn *ast.FunctionExpr, sc *scope.Sta
 func (s *synthImpl) ResolveTypeDef(name string, typeExpr ast.TypeExpr, typeParams []ast.TypeParamExpr, sc *scope.State) typ.Type {
 	return nil
 }
-func (s *synthImpl) Narrow() api.BaseSynth       { return nil }
+func (s *synthImpl) Narrow() api.BaseSynth { return nil }
+func (s *synthImpl) WithFlow(api.FlowOps) api.BaseSynth {
+	return nil
+}
 func (s *synthImpl) AllowReturnTransforms() bool { return false }
 
 type baseSynthImpl struct{}
@@ -87,6 +90,9 @@ func (f *flowQueryImpl) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.Type
 	return flow.TypedValue{}
 }
 func (f *flowQueryImpl) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type { return nil }
+func (f *flowQueryImpl) PreStateTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	return nil
+}
 func (f *flowQueryImpl) ExcludesTypeAt(p cfg.Point, path constraint.Path, declared typ.Type) bool {
 	return false
 }

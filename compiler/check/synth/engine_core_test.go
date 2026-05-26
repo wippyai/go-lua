@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
@@ -185,6 +186,49 @@ func TestSynthExpr_IdentExpr_Narrowed(t *testing.T) {
 	result := e.Narrow().TypeOf(ident, 0)
 	if result != typ.String {
 		t.Fatalf("got %v, want string (narrowed)", result)
+	}
+}
+
+func TestSynthExpr_IdentExpr_LocalFlowOverrideUsesResolvedPath(t *testing.T) {
+	const symX = cfg.SymbolID(100)
+	ident := &ast.IdentExpr{Value: "x"}
+
+	bindings := bind.NewBindingTable()
+	bindings.Bind(ident, symX)
+
+	baseFlow := mockFlowOps{narrowed: map[cfg.SymbolID]typ.Type{symX: typ.NewOptional(typ.Integer)}}
+	graph := mockGraph{symbols: map[string]cfg.SymbolID{"x": symX}}
+	declared := flow.DeclaredTypes{symX: typ.NewOptional(typ.Integer)}
+	checkCtx := api.NewNarrowEnv(api.NarrowEnvConfig{
+		Graph:         graph,
+		Bindings:      bindings,
+		DeclaredTypes: declared,
+	})
+	resolvedPath := constraint.Path{Root: "x", Symbol: symX, Version: 7}
+
+	e := New(Config{
+		Ctx:    db.NewQueryContext(db.New()),
+		Types:  mockTypeQuerier{},
+		Scopes: make(api.ScopeMap),
+		Flow:   baseFlow,
+		Env:    checkCtx,
+		Phase:  api.PhaseNarrowing,
+		Paths: func(_ cfg.Point, expr ast.Expr, _ *scope.State) constraint.Path {
+			if expr == ident {
+				return resolvedPath
+			}
+			return constraint.Path{}
+		},
+	})
+
+	local := api.ConditionFlow(baseFlow, constraint.FromConstraints(constraint.Truthy{Path: resolvedPath}))
+	view := e.WithFlow(local)
+	if view == nil {
+		t.Fatal("expected local flow view")
+	}
+	result := view.TypeOf(ident, 0)
+	if result != typ.Integer {
+		t.Fatalf("local override result = %v, want integer", result)
 	}
 }
 

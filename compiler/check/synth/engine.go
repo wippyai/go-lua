@@ -22,8 +22,8 @@
 //   - Type definition resolution (ResolveTypeDef)
 //   - Field and method lookup (Field, Method)
 //
-// The engine maintains separate caches for pre-flow (PreCache) and post-flow
-// (NarrowCache) synthesis results to avoid redundant computation.
+// Repeated pure expression synthesis runs through db.Query/QueryContext so cache
+// hits are observationally equivalent to recomputation.
 package synth
 
 import (
@@ -35,6 +35,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -53,10 +54,9 @@ type Config struct {
 	Env            api.BaseEnv
 	FunctionFacts  api.FunctionFacts
 	Flow           api.FlowOps
+	Inputs         *flow.Inputs
 	Paths          api.PathFromExprFunc
 	Evidence       api.FlowEvidence
-	PreCache       api.Cache
-	NarrowCache    api.Cache
 	Graphs         api.GraphProvider
 	Phase          api.Phase
 	ModuleBindings *bind.BindingTable
@@ -70,15 +70,19 @@ type Config struct {
 // that automatically routes synthesis requests through the appropriate
 // code paths for declared vs narrowed phases.
 //
-// The engine caches synthesis results to avoid redundant computation:
-//   - PreCache: Results from declared phase (type annotations only)
-//   - NarrowCache: Results from narrowed phase (flow-refined types)
+// The engine delegates pure memoization to db.Query/QueryContext.
 //
 // Thread safety: Engine instances are not thread-safe. Create separate
 // instances for concurrent synthesis operations.
 type Engine struct {
 	*extract.Synthesizer
-	deps *extract.Deps
+	deps            *extract.Deps
+	narrowTypeQuery *db.Query[exprTypeQueryKey, typ.Type]
+}
+
+type exprTypeQueryKey struct {
+	Expr  ast.Expr
+	Point cfg.Point
 }
 
 // New creates a synthesis engine configured for the requested phase.
@@ -100,14 +104,6 @@ func New(cfg Config) *Engine {
 		}
 	}
 
-	preCache := cfg.PreCache
-	if preCache == nil {
-		preCache = make(api.Cache)
-	}
-	narrowCache := cfg.NarrowCache
-	if narrowCache == nil && isNarrowing {
-		narrowCache = make(api.Cache)
-	}
 	graphs := cfg.Graphs
 	if graphs == nil {
 		graphs = api.GraphsFrom(cfg.Ctx)
@@ -122,18 +118,32 @@ func New(cfg Config) *Engine {
 		FunctionFacts:  cfg.FunctionFacts,
 		Graphs:         graphs,
 		Flow:           cfg.Flow,
+		Inputs:         cfg.Inputs,
 		Paths:          cfg.Paths,
 		Evidence:       cfg.Evidence,
-		PreCache:       preCache,
-		NarrowCache:    narrowCache,
 		ModuleBindings: cfg.ModuleBindings,
 		ModuleAliases:  cfg.ModuleAliases,
 	}
 
-	return &Engine{
+	engine := &Engine{
 		Synthesizer: extract.NewSynthesizer(deps, phase),
 		deps:        deps,
 	}
+	engine.narrowTypeQuery = db.NewQuery("check.synth.narrow-type-of", func(ctx *db.QueryContext, key exprTypeQueryKey) typ.Type {
+		queryEngine := engine.withQueryContext(ctx)
+		return queryEngine.SynthExpr(key.Expr, key.Point, queryEngine.deps.Flow)
+	}, typ.TypeEquals)
+	return engine
+}
+
+func (e *Engine) withQueryContext(ctx *db.QueryContext) *Engine {
+	if e == nil || e.deps == nil || e.Synthesizer == nil || e.deps.Ctx == ctx {
+		return e
+	}
+	next := *e
+	next.Synthesizer = e.Synthesizer.WithQueryContext(ctx)
+	next.deps = next.Synthesizer.Deps()
+	return &next
 }
 
 // TypeOf returns the synthesized type of an expression at a CFG point.
@@ -145,12 +155,13 @@ func New(cfg Config) *Engine {
 // Returns typ.Nil for nil expressions. Returns typ.Unknown if synthesis fails.
 func (e *Engine) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
 	if e.IsNarrowing() {
-		if cached, ok := e.deps.NarrowCache.Get(expr, p); ok {
-			return cached
+		if expr == nil {
+			return typ.Nil
 		}
-		t := e.SynthExpr(expr, p, e.deps.Flow)
-		e.deps.NarrowCache.Put(expr, p, t)
-		return t
+		if e.narrowTypeQuery == nil {
+			return e.SynthExpr(expr, p, e.deps.Flow)
+		}
+		return e.narrowTypeQuery.Get(e.deps.Ctx, exprTypeQueryKey{Expr: expr, Point: p})
 	}
 	return e.Synthesizer.TypeOf(expr, p)
 }

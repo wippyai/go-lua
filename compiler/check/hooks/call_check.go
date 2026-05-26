@@ -25,35 +25,31 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
-	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // CheckCalls validates function call arguments against parameter types.
 func CheckCalls(
 	graph *cfg.Graph,
 	evidence api.FlowEvidence,
-	scopes map[cfg.Point]*scope.State,
-	narrowSynth api.Synth,
-	narrowView api.BaseSynth,
+	observer observation.Projector,
+	ctx *db.QueryContext,
+	query core.TypeOps,
 	results map[*ast.FunctionExpr]*api.FuncResult,
 	sourceName string,
 ) []diag.Diagnostic {
-	if graph == nil || narrowSynth == nil || narrowView == nil {
+	if graph == nil || query == nil {
 		return nil
 	}
 
 	var diags []diag.Diagnostic
-	query := narrowSynth.CallQuery()
 	bindings := graph.Bindings()
-	unobservedLocalParams := make(map[cfg.SymbolID][]bool)
-
 	for _, call := range evidence.Calls {
 		if call.Origin == api.CallOriginExpression {
 			continue
@@ -63,7 +59,7 @@ func CheckCalls(
 		if info == nil {
 			continue
 		}
-		callDiags := checkSingleCall(p, info, scopes, narrowView, narrowSynth, query, sourceName, graph, evidence, bindings, results, unobservedLocalParams)
+		callDiags := checkSingleCall(p, info, observer, ctx, query, sourceName, graph, evidence, bindings, results)
 		diags = append(diags, callDiags...)
 	}
 
@@ -73,51 +69,32 @@ func CheckCalls(
 func checkSingleCall(
 	p cfg.Point,
 	info *cfg.CallInfo,
-	scopes map[cfg.Point]*scope.State,
-	narrowView api.BaseSynth,
-	narrowSynth api.Synth,
+	observer observation.Projector,
+	ctx *db.QueryContext,
 	query core.TypeOps,
 	sourceName string,
 	graph *cfg.Graph,
 	evidence api.FlowEvidence,
 	bindings *bind.BindingTable,
 	results map[*ast.FunctionExpr]*api.FuncResult,
-	unobservedLocalParams map[cfg.SymbolID][]bool,
 ) []diag.Diagnostic {
 	if info.Method == "" && info.Callee != nil {
-		if t := narrowView.TypeOf(info.Callee, p); hasCallableTypeEffect(t) {
+		if observer.HasCallableTypeEffect(info.Callee, p) {
 			return nil
-		}
-		if ident, ok := info.Callee.(*ast.IdentExpr); ok {
-			if sc := scopes[p]; sc != nil {
-				if meta := sc.MetaForName(ident.Value); meta != nil {
-					fn := typ.Func().
-						Param("value", typ.Any).
-						Returns(meta.Of).
-						Effects(effect.WithCallableType()).
-						Build()
-					if hasCallableTypeEffect(fn) {
-						return nil
-					}
-				}
-			}
 		}
 	}
 
 	if callsite.IsMethodCallInfo(info) {
-		if recvType := narrowView.TypeOf(info.Receiver, p); recvType != nil {
-			if hasTypeValueMethodEffect(recvType, info.Method) {
-				return nil
-			}
+		if observer.HasTypeValueMethodEffect(info.Receiver, p, info.Method) {
+			return nil
 		}
 	}
 
 	args := make([]typ.Type, len(info.Args))
 	for i, arg := range info.Args {
-		args[i] = narrowView.TypeOf(arg, p)
+		args[i] = observer.TypeOf(arg, p)
 	}
 
-	ctx := narrowSynth.Context()
 	def := ops.CallDef{
 		Args:  args,
 		Query: query,
@@ -126,20 +103,19 @@ func checkSingleCall(
 	if callsite.IsMethodCallInfo(info) {
 		def.IsMethod = true
 		def.MethodName = info.Method
-		def.Receiver = narrowView.TypeOf(info.Receiver, p)
+		def.Receiver = observer.TypeOf(info.Receiver, p)
 		def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, graph, evidence, info)
 	} else if info.Callee != nil {
-		def.Callee = narrowView.TypeOf(info.Callee, p)
+		def.Callee = observer.TypeOf(info.Callee, p)
 		if projection, ok := functionfact.ProjectCall(functionfact.CallProjectionInput{
-			Store:                 api.StoreFrom(ctx),
-			Info:                  info,
-			Graph:                 graph,
-			Evidence:              evidence,
-			Bindings:              bindings,
-			Results:               results,
-			Args:                  args,
-			Current:               def.Callee,
-			UnobservedLocalParams: unobservedLocalParams,
+			Store:    api.StoreFrom(ctx),
+			Info:     info,
+			Graph:    graph,
+			Evidence: evidence,
+			Bindings: bindings,
+			Results:  results,
+			Args:     args,
+			Current:  def.Callee,
 		}); ok {
 			def.Callee = projection.Callee
 			def.AllowExtraArgs = projection.AllowExtraArgs
@@ -149,40 +125,15 @@ func checkSingleCall(
 	pipeline := ops.NewCallPipeline(ctx, def, len(info.Args)).
 		WithReSynth(callarg.ForArgs(info.Args, callarg.Full(
 			func(arg ast.Expr, pt cfg.Point, expected typ.Type) typ.Type {
-				return narrowView.TypeOfWithExpected(arg, pt, expected)
+				return observer.TypeOfWithExpected(arg, pt, expected)
 			},
 			func(table *ast.TableExpr, expected typ.Type, pt cfg.Point) bool {
-				return tableCompatible(table, expected, narrowSynth, pt)
+				return observer.TableCompatible(table, pt, expected)
 			},
 			p,
 		)))
 	result := pipeline.Run()
 	return callErrorsToDiags(result.Errors, info, sourceName)
-}
-
-func hasCallableTypeEffect(t typ.Type) bool {
-	fn := unwrap.Function(t)
-	if fn == nil {
-		return false
-	}
-	row, ok := fn.Effects.(effect.Row)
-	return ok && row.HasCallableType()
-}
-
-func hasTypeValueMethodEffect(receiver typ.Type, method string) bool {
-	if receiver == nil || method == "" {
-		return false
-	}
-	mt, ok := core.Method(receiver, method)
-	if !ok {
-		return false
-	}
-	fn := unwrap.Function(mt)
-	if fn == nil {
-		return false
-	}
-	row, ok := fn.Effects.(effect.Row)
-	return ok && row.HasTypeValueMethod()
 }
 
 func getCallPosition(info *cfg.CallInfo, sourceName string) diag.Position {
@@ -206,6 +157,7 @@ func callErrorsToDiags(errors []ops.CallError, info *cfg.CallInfo, sourceName st
 	callPos := getCallPosition(info, sourceName)
 
 	for _, err := range errors {
+		message := err.DiagnosticMessage()
 		pos := callPos
 		span := ast.SpanOf(info.Callee)
 		if !span.Valid() && info.Receiver != nil {
@@ -225,7 +177,7 @@ func callErrorsToDiags(errors []ops.CallError, info *cfg.CallInfo, sourceName st
 		case ops.ErrWrongArity:
 			code = diag.ErrWrongArity
 		case ops.ErrNotCallable:
-			if strings.HasPrefix(err.Message, "no method") {
+			if strings.HasPrefix(message, "no method") {
 				code = diag.ErrNoMethod
 			} else {
 				code = diag.ErrNotCallable
@@ -234,13 +186,13 @@ func callErrorsToDiags(errors []ops.CallError, info *cfg.CallInfo, sourceName st
 			code = diag.ErrOptionalCall
 		}
 
-		_, help := diag.ContextualHelp(code, err.Message, "")
+		_, help := diag.ContextualHelp(code, message, "")
 		diags = append(diags, diag.Diagnostic{
 			Severity: diag.SeverityError,
 			Code:     code,
 			Position: pos,
 			Span:     span,
-			Message:  err.Message,
+			Message:  message,
 			Help:     help,
 		})
 	}

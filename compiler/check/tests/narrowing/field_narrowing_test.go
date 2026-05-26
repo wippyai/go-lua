@@ -3,8 +3,6 @@ package narrowing
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/io"
@@ -706,48 +704,6 @@ func TestNonNilAssertOnNarrowedFieldAccess(t *testing.T) {
 		testutil.WithManifest("websocket", wsManifest),
 		testutil.WithManifest("time", timeManifest),
 	)
-
-	if result.Session != nil && result.Session.RootResult != nil {
-		graph := result.Session.RootResult.Graph
-		synth := result.Session.RootResult.NarrowSynth
-		scopes := result.Session.RootResult.Scopes
-		if graph != nil && synth != nil {
-			graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-				if info == nil {
-					return
-				}
-				for i, src := range info.Sources {
-					if attr, ok := src.(*ast.AttrGetExpr); ok {
-						if key, ok := attr.Key.(*ast.StringExpr); ok && key.Value == "data" {
-							t.Logf("debug: attr-only object type=%v", synth.TypeOf(attr.Object, p))
-							t.Logf("debug: attr-only get type=%v (point=%d)", synth.TypeOf(attr, p), p)
-						}
-					}
-
-					nn, ok := src.(*ast.NonNilAssertExpr)
-					if !ok {
-						continue
-					}
-					attr, ok := nn.Expr.(*ast.AttrGetExpr)
-					if !ok {
-						continue
-					}
-					key, ok := attr.Key.(*ast.StringExpr)
-					if !ok || key.Value != "data" {
-						continue
-					}
-					t.Logf("debug: attr object type=%v", synth.TypeOf(attr.Object, p))
-					t.Logf("debug: attr get type=%v", synth.TypeOf(nn.Expr, p))
-					t.Logf("debug: non-nil assert type=%v (point=%d)", synth.TypeOf(src, p), p)
-					if info.IsLocal && i < len(info.TypeAnnotations) && info.TypeAnnotations[i] != nil {
-						sc := scopes[p]
-						expected := synth.ResolveType(info.TypeAnnotations[i], sc)
-						t.Logf("debug: expected=%v, withExpected=%v", expected, synth.SynthWithExpected(src, p, expected))
-					}
-				}
-			})
-		}
-	}
 
 	for _, d := range result.Diagnostics {
 		if d.Severity == diag.SeverityError {

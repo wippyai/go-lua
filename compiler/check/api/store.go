@@ -21,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // FunctionRef is the canonical mapping for a function symbol.
@@ -71,10 +72,25 @@ type NestedMetaStore interface {
 	NestedMetaFor(graphID uint64) (NestedMeta, bool)
 }
 
+// InterprocFactProduct is the typed view over one visible interprocedural fact
+// product. Consumers read the slot they own; there is no public whole-product
+// snapshot path.
+type InterprocFactProduct interface {
+	// FunctionFacts returns the visible function-fact slot for export and
+	// assertions. Hot symbol reads must use FunctionFact.
+	FunctionFacts() FunctionFacts
+	FunctionFact(sym cfg.SymbolID) (FunctionFact, bool)
+	LiteralSig(fn *ast.FunctionExpr) (*typ.Function, bool)
+	CapturedType(sym cfg.SymbolID) (typ.Type, bool)
+	CapturedFieldAssigns() CapturedFieldAssigns
+	CapturedContainerMutations() CapturedContainerMutations
+	ConstructorFields(classSym cfg.SymbolID) (map[string]typ.Type, bool)
+}
+
 // InterprocFactReader exposes visible interproc fact products.
 type InterprocFactReader interface {
-	GetModuleFacts() Facts
-	GetInterprocFacts(graph *cfg.Graph, parent *scope.State) Facts
+	ModuleFacts() InterprocFactProduct
+	InterprocFacts(graph *cfg.Graph, parent *scope.State) InterprocFactProduct
 }
 
 // FunctionRefs provides symbol/function lookup for function graphs.
@@ -84,6 +100,7 @@ type FunctionRefs interface {
 	FuncForSymbol(sym cfg.SymbolID) *ast.FunctionExpr
 	FuncForGraph(graph *cfg.Graph) *ast.FunctionExpr
 	SymbolForFunc(fn *ast.FunctionExpr) (cfg.SymbolID, bool)
+	FunctionRefsByParentGraph(parentGraphID uint64) []FunctionRef
 }
 
 // StoreReader is the read contract shared by checker phases.

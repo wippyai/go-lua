@@ -20,10 +20,24 @@ import (
 // Optional types are NOT numeric - they must be narrowed first.
 // Placeholder types (any, unknown) are considered numeric for flexibility.
 func IsNumeric(t typ.Type) bool {
-	return isNumericGuard(t, typ.NewGuard())
+	return isNumericGuard(t, typ.NewGuard(), true)
 }
 
-func isNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
+// ProvesNumeric reports whether the static type proves arithmetic is valid
+// without relying on the dynamic placeholder top.
+func ProvesNumeric(t typ.Type) bool {
+	return isNumericGuard(t, typ.NewGuard(), false)
+}
+
+// AllowsNumericOperand reports whether a checker diagnostic should accept a
+// numeric operand. Concrete numeric types prove safety; explicit any is the
+// gradual escape hatch documented by typ.Any. Unknown remains rejected because
+// it represents missing analysis, not an intentional opt-out.
+func AllowsNumericOperand(t typ.Type) bool {
+	return ProvesNumeric(t) || typ.IsAny(unwrap.Alias(t))
+}
+
+func isNumericGuard(t typ.Type, guard internal.RecursionGuard, allowPlaceholder bool) bool {
 	if t == nil {
 		return false
 	}
@@ -35,7 +49,7 @@ func isNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	switch v := t.(type) {
 	case *typ.Union:
 		for _, m := range v.Members {
-			if !isNumericGuard(m, next) {
+			if !isNumericGuard(m, next, allowPlaceholder) {
 				return false
 			}
 		}
@@ -44,7 +58,7 @@ func isNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
 
 	case *typ.Intersection:
 		for _, m := range v.Members {
-			if !isNumericGuard(m, next) {
+			if !isNumericGuard(m, next, allowPlaceholder) {
 				return false
 			}
 		}
@@ -56,7 +70,7 @@ func isNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
 			return false
 		}
 
-		return isNumericGuard(v.Target, next)
+		return isNumericGuard(v.Target, next, allowPlaceholder)
 
 	case *typ.Optional:
 		// Optional types are NOT numeric - must be narrowed first
@@ -72,14 +86,14 @@ func isNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
 
 	case *typ.TypeParam:
 		if v.Constraint != nil {
-			return isNumericGuard(v.Constraint, next)
+			return isNumericGuard(v.Constraint, next, allowPlaceholder)
 		}
 
 		return false
 
 	default:
 		k := t.Kind()
-		return k == kind.Number || k == kind.Integer || k.IsPlaceholder()
+		return k == kind.Number || k == kind.Integer || (allowPlaceholder && k.IsPlaceholder())
 	}
 }
 
@@ -217,6 +231,88 @@ func mayBeOrderableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 
 	k := t.Kind()
 	return k == kind.String || k == kind.Number || k == kind.Integer || k.IsPlaceholder()
+}
+
+const (
+	orderedFamilyNumber = 1 << iota
+	orderedFamilyString
+)
+
+// MayBeSameOrderedFamily reports whether an ordered comparison can be valid for
+// all statically possible operand families. Lua orders numbers with numbers and
+// strings with strings; it does not coerce between those families.
+func MayBeSameOrderedFamily(left, right typ.Type) bool {
+	leftMask, leftDynamic := orderedFamilyMask(left, typ.NewGuard())
+	rightMask, rightDynamic := orderedFamilyMask(right, typ.NewGuard())
+	if leftDynamic || rightDynamic {
+		return true
+	}
+	if leftMask == 0 || rightMask == 0 {
+		return false
+	}
+	return singleOrderedFamily(leftMask) && leftMask == rightMask && singleOrderedFamily(rightMask)
+}
+
+func orderedFamilyMask(t typ.Type, guard internal.RecursionGuard) (int, bool) {
+	if t == nil {
+		return 0, false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return 0, false
+	}
+
+	switch v := t.(type) {
+	case *typ.Union:
+		mask := 0
+		dynamic := false
+		for _, m := range v.Members {
+			mm, md := orderedFamilyMask(m, next)
+			mask |= mm
+			dynamic = dynamic || md
+		}
+		return mask, dynamic
+	case *typ.Intersection:
+		mask := 0
+		dynamic := false
+		for _, m := range v.Members {
+			mm, md := orderedFamilyMask(m, next)
+			mask |= mm
+			dynamic = dynamic || md
+		}
+		return mask, dynamic
+	case *typ.Alias:
+		return orderedFamilyMask(v.Target, next)
+	case *typ.Optional:
+		return orderedFamilyMask(v.Inner, next)
+	case *typ.Literal:
+		switch v.Value.(type) {
+		case float64, int64:
+			return orderedFamilyNumber, false
+		case string:
+			return orderedFamilyString, false
+		default:
+			return 0, false
+		}
+	case *typ.TypeParam:
+		return orderedFamilyMask(v.Constraint, next)
+	default:
+		k := t.Kind()
+		switch {
+		case k == kind.Number || k == kind.Integer:
+			return orderedFamilyNumber, false
+		case k == kind.String:
+			return orderedFamilyString, false
+		case k.IsPlaceholder():
+			return 0, true
+		default:
+			return 0, false
+		}
+	}
+}
+
+func singleOrderedFamily(mask int) bool {
+	return mask == orderedFamilyNumber || mask == orderedFamilyString
 }
 
 // IsStringable checks if a type can be used with string concatenation (..).
@@ -545,10 +641,22 @@ func IsStringOnly(t typ.Type) bool {
 // Only integer and number types (and placeholders) support bitwise operations.
 // Optional types are rejected until narrowed.
 func IsBitwiseNumeric(t typ.Type) bool {
-	return isBitwiseNumericGuard(t, typ.NewGuard())
+	return isBitwiseNumericGuard(t, typ.NewGuard(), true)
 }
 
-func isBitwiseNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
+// ProvesBitwiseNumeric reports whether the static type proves bitwise numeric
+// validity without relying on placeholder top.
+func ProvesBitwiseNumeric(t typ.Type) bool {
+	return isBitwiseNumericGuard(t, typ.NewGuard(), false)
+}
+
+// AllowsBitwiseNumericOperand is the bitwise analogue of
+// AllowsNumericOperand.
+func AllowsBitwiseNumericOperand(t typ.Type) bool {
+	return ProvesBitwiseNumeric(t) || typ.IsAny(unwrap.Alias(t))
+}
+
+func isBitwiseNumericGuard(t typ.Type, guard internal.RecursionGuard, allowPlaceholder bool) bool {
 	if t == nil {
 		return false
 	}
@@ -560,7 +668,7 @@ func isBitwiseNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	switch v := t.(type) {
 	case *typ.Union:
 		for _, m := range v.Members {
-			if !isBitwiseNumericGuard(m, next) {
+			if !isBitwiseNumericGuard(m, next, allowPlaceholder) {
 				return false
 			}
 		}
@@ -568,7 +676,7 @@ func isBitwiseNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
 
 	case *typ.Intersection:
 		for _, m := range v.Members {
-			if !isBitwiseNumericGuard(m, next) {
+			if !isBitwiseNumericGuard(m, next, allowPlaceholder) {
 				return false
 			}
 		}
@@ -578,7 +686,7 @@ func isBitwiseNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
 		if v.Target == nil {
 			return false
 		}
-		return isBitwiseNumericGuard(v.Target, next)
+		return isBitwiseNumericGuard(v.Target, next, allowPlaceholder)
 
 	case *typ.Optional:
 		return false
@@ -588,5 +696,5 @@ func isBitwiseNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 
 	k := t.Kind()
-	return k == kind.Integer || k == kind.Number || k.IsPlaceholder()
+	return k == kind.Integer || k == kind.Number || (allowPlaceholder && k.IsPlaceholder())
 }

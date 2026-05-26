@@ -13,10 +13,16 @@ import (
 // describes what each element contains. Arrays support ipairs iteration
 // and length operator (#).
 type Array struct {
-	Element      Type
-	hash         uint64
-	softPrunable bool
-	strCache     stringCache
+	Element               Type
+	hash                  uint64
+	softPrunable          bool
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
 }
 
 // NewArray creates an array type.
@@ -25,7 +31,17 @@ func NewArray(elem Type) *Array {
 		elem = Unknown
 	}
 	h := internal.HashCombine(uint64(kind.Array), elem.Hash())
-	return &Array{Element: elem, hash: h, softPrunable: softPruneMayRewrite(elem)}
+	return &Array{
+		Element:               elem,
+		hash:                  h,
+		softPrunable:          softPruneMayRewrite(elem),
+		containsAny:           knownContainsAny(elem),
+		containsNever:         knownContainsNever(elem),
+		containsTypeParam:     knownContainsTypeParam(elem),
+		containsInstantiated:  knownContainsInstantiated(elem),
+		containsRecursive:     knownContainsRecursive(elem),
+		containsOpenRecursive: knownContainsOpenRecursive(elem),
+	}
 }
 
 func (a *Array) Kind() kind.Kind { return kind.Array }
@@ -48,11 +64,17 @@ func (a *Array) Equals(o Type) bool {
 // Unlike Records, Maps have uniform types for all entries rather than
 // named fields with potentially different types.
 type Map struct {
-	Key          Type
-	Value        Type
-	hash         uint64
-	softPrunable bool
-	strCache     stringCache
+	Key                   Type
+	Value                 Type
+	hash                  uint64
+	softPrunable          bool
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
 }
 
 // NewMap creates a map type.
@@ -67,7 +89,18 @@ func NewMap(key, value Type) *Map {
 	h := internal.HashCombine(uint64(kind.Map), key.Hash())
 	h = internal.HashCombine(h, value.Hash())
 
-	return &Map{Key: key, Value: value, hash: h, softPrunable: softPruneAny(key, value)}
+	return &Map{
+		Key:                   key,
+		Value:                 value,
+		hash:                  h,
+		softPrunable:          softPruneAny(key, value),
+		containsAny:           knownAny(key, value),
+		containsNever:         knownNever(key, value),
+		containsTypeParam:     knownTypeParam(key, value),
+		containsInstantiated:  knownInstantiated(key, value),
+		containsRecursive:     knownRecursive(key, value),
+		containsOpenRecursive: knownOpenRecursive(key, value),
+	}
 }
 
 func (m *Map) Kind() kind.Kind { return kind.Map }
@@ -94,10 +127,16 @@ func (m *Map) Equals(o Type) bool {
 // Unlike Arrays, each position can have a different type and the length
 // is fixed at compile time.
 type Tuple struct {
-	Elements     []Type
-	hash         uint64
-	softPrunable bool
-	strCache     stringCache
+	Elements              []Type
+	hash                  uint64
+	softPrunable          bool
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
 }
 
 // NewTuple creates a tuple type.
@@ -105,6 +144,12 @@ func NewTuple(elems ...Type) *Tuple {
 	h := uint64(kind.Tuple)
 	cleaned := make([]Type, len(elems))
 	softPrunable := false
+	containsAny := false
+	containsNever := false
+	containsTypeParam := false
+	containsInstantiated := false
+	containsRecursive := false
+	containsOpenRecursive := false
 	for i, e := range elems {
 		if e == nil {
 			e = Unknown
@@ -114,9 +159,37 @@ func NewTuple(elems ...Type) *Tuple {
 		if !softPrunable && softPruneMayRewrite(e) {
 			softPrunable = true
 		}
+		if !containsAny && knownContainsAny(e) {
+			containsAny = true
+		}
+		if !containsNever && knownContainsNever(e) {
+			containsNever = true
+		}
+		if !containsTypeParam && knownContainsTypeParam(e) {
+			containsTypeParam = true
+		}
+		if !containsInstantiated && knownContainsInstantiated(e) {
+			containsInstantiated = true
+		}
+		if !containsRecursive && knownContainsRecursive(e) {
+			containsRecursive = true
+		}
+		if !containsOpenRecursive && knownContainsOpenRecursive(e) {
+			containsOpenRecursive = true
+		}
 	}
 
-	return &Tuple{Elements: cleaned, hash: h, softPrunable: softPrunable}
+	return &Tuple{
+		Elements:              cleaned,
+		hash:                  h,
+		softPrunable:          softPrunable,
+		containsAny:           containsAny,
+		containsNever:         containsNever,
+		containsTypeParam:     containsTypeParam,
+		containsInstantiated:  containsInstantiated,
+		containsRecursive:     containsRecursive,
+		containsOpenRecursive: containsOpenRecursive,
+	}
 }
 
 func (t *Tuple) Kind() kind.Kind { return kind.Tuple }

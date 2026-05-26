@@ -30,6 +30,8 @@
 package typ
 
 import (
+	"reflect"
+
 	"github.com/wippyai/go-lua/types/kind"
 )
 
@@ -40,6 +42,21 @@ type Type interface {
 	String() string
 	Hash() uint64
 	Equals(other Type) bool
+}
+
+// SameNode reports whether two Type interface values point at the same
+// immutable type node. It is intentionally not structural equality; callers use
+// it to detect no-op rewrites without walking recursive products.
+func SameNode(a, b Type) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	va := reflect.ValueOf(a)
+	vb := reflect.ValueOf(b)
+	if va.Type() != vb.Type() || !va.Type().Comparable() {
+		return false
+	}
+	return a == b
 }
 
 // Primitives are singletons.

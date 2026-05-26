@@ -121,26 +121,15 @@ func RemoveNil(t typ.Type) typ.Type {
 	if t == nil || t == typ.Nil {
 		return typ.Never
 	}
+	if !mayContainNilValue(t) {
+		return t
+	}
 	return narrowType(t, narrowConfig{
 		handleOptional: func(opt *typ.Optional, recurse func(typ.Type) typ.Type) typ.Type {
 			return recurse(opt.Inner)
 		},
 		handleUnion: func(u *typ.Union, _ func(typ.Type) typ.Type) typ.Type {
-			var kept []typ.Type
-			for _, m := range u.Members {
-				if m == nil || m.Kind() == kind.Nil {
-					continue
-				}
-				if opt, ok := m.(*typ.Optional); ok {
-					kept = append(kept, opt.Inner)
-					continue
-				}
-				kept = append(kept, m)
-			}
-			if len(kept) == 0 {
-				return typ.Never
-			}
-			return typ.NewUnion(kept...)
+			return typ.UnionWithoutNil(u)
 		},
 		handleLeaf: func(t typ.Type) typ.Type {
 			if t.Kind() == kind.Nil {
@@ -174,6 +163,9 @@ func RemoveFalse(t typ.Type) typ.Type {
 	if t == nil {
 		return typ.Never
 	}
+	if !mayContainFalseValue(t) {
+		return t
+	}
 	return narrowType(t, narrowConfig{
 		handleOptional: func(opt *typ.Optional, recurse func(typ.Type) typ.Type) typ.Type {
 			inner := recurse(opt.Inner)
@@ -183,16 +175,7 @@ func RemoveFalse(t typ.Type) typ.Type {
 			return typ.NewOptional(inner)
 		},
 		handleUnion: func(u *typ.Union, recurse func(typ.Type) typ.Type) typ.Type {
-			var kept []typ.Type
-			for _, m := range u.Members {
-				if rm := recurse(m); rm != nil && !rm.Kind().IsNever() {
-					kept = append(kept, rm)
-				}
-			}
-			if len(kept) == 0 {
-				return typ.Never
-			}
-			return typ.NewUnion(kept...)
+			return typ.ProjectUnionMembers(u, recurse)
 		},
 		handleLeaf: func(t typ.Type) typ.Type {
 			if lit, ok := t.(*typ.Literal); ok {
@@ -206,6 +189,77 @@ func RemoveFalse(t typ.Type) typ.Type {
 			return t
 		},
 	})
+}
+
+func mayContainNilValue(t typ.Type) bool {
+	t = typ.UnwrapAnnotated(t)
+	if t == nil {
+		return false
+	}
+	switch n := t.(type) {
+	case *typ.Optional:
+		return true
+	case *typ.Union:
+		for _, member := range n.Members {
+			if mayContainNilValue(member) {
+				return true
+			}
+		}
+		return false
+	case *typ.Intersection:
+		for _, member := range n.Members {
+			if mayContainNilValue(member) {
+				return true
+			}
+		}
+		return false
+	case *typ.Alias:
+		return mayContainNilValue(n.Target)
+	case *typ.Instantiated:
+		if expanded := unwrap.Instantiated(n); expanded != n {
+			return mayContainNilValue(expanded)
+		}
+		return false
+	default:
+		return t.Kind() == kind.Nil
+	}
+}
+
+func mayContainFalseValue(t typ.Type) bool {
+	t = typ.UnwrapAnnotated(t)
+	if t == nil {
+		return false
+	}
+	switch n := t.(type) {
+	case *typ.Literal:
+		value, ok := n.Value.(bool)
+		return ok && !value
+	case *typ.Optional:
+		return mayContainFalseValue(n.Inner)
+	case *typ.Union:
+		for _, member := range n.Members {
+			if mayContainFalseValue(member) {
+				return true
+			}
+		}
+		return false
+	case *typ.Intersection:
+		for _, member := range n.Members {
+			if mayContainFalseValue(member) {
+				return true
+			}
+		}
+		return false
+	case *typ.Alias:
+		return mayContainFalseValue(n.Target)
+	case *typ.Instantiated:
+		if expanded := unwrap.Instantiated(n); expanded != n {
+			return mayContainFalseValue(expanded)
+		}
+		return false
+	default:
+		return t.Kind() == kind.Boolean
+	}
 }
 
 // ToTruthy narrows a type to its truthy subset by removing nil and false.
@@ -266,16 +320,7 @@ func ToFalsy(t typ.Type) typ.Type {
 			return typ.NewUnion(typ.Nil, inner)
 		},
 		handleUnion: func(u *typ.Union, recurse func(typ.Type) typ.Type) typ.Type {
-			var falsy []typ.Type
-			for _, m := range u.Members {
-				if f := recurse(m); f != nil && !f.Kind().IsNever() {
-					falsy = append(falsy, f)
-				}
-			}
-			if len(falsy) == 0 {
-				return typ.Never
-			}
-			return typ.NewUnion(falsy...)
+			return typ.ProjectUnionMembers(u, recurse)
 		},
 		handleLeaf: func(t typ.Type) typ.Type {
 			return typ.Visit(t, typ.Visitor[typ.Type]{
@@ -326,7 +371,7 @@ func TypesOverlap(a, b typ.Type) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return subtype.IsSubtype(a, b) || subtype.IsSubtype(b, a)
+	return mayOverlap(a, b, nil)
 }
 
 // ExcludeType removes union members that overlap with the excluded type.
@@ -481,6 +526,12 @@ func KindMatches(t typ.Type, target kind.Kind) bool {
 	if t == nil {
 		return false
 	}
+	if lit, ok := t.(*typ.Literal); ok {
+		if lit.Base == target {
+			return true
+		}
+		return target == kind.Number && lit.Base == kind.Integer
+	}
 	k := t.Kind()
 	if k == target {
 		return true
@@ -565,13 +616,6 @@ func Intersect(a, b typ.Type) typ.Type {
 		return typ.NewIntersection(members...)
 	}
 
-	if subtype.IsSubtype(a, b) {
-		return a
-	}
-	if subtype.IsSubtype(b, a) {
-		return b
-	}
-
 	if ua, ok := a.(*typ.Union); ok {
 		filtered := filterUnionByOverlap(ua, b)
 		if filtered != nil {
@@ -583,6 +627,13 @@ func Intersect(a, b typ.Type) typ.Type {
 		if filtered != nil {
 			return filtered
 		}
+	}
+
+	if subtype.IsSubtype(a, b) {
+		return a
+	}
+	if subtype.IsSubtype(b, a) {
+		return b
 	}
 
 	return typ.NewIntersection(a, b)
@@ -634,7 +685,7 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 		return nil
 	}
 	if t.Kind().IsPlaceholder() {
-		return TypeForKind(target)
+		return placeholderTypeForKind(t, target)
 	}
 	return narrowType(t, narrowConfig{
 		handleOptional: func(opt *typ.Optional, recurse func(typ.Type) typ.Type) typ.Type {
@@ -665,7 +716,7 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 		},
 		handleLeaf: func(t typ.Type) typ.Type {
 			if t.Kind().IsPlaceholder() {
-				return TypeForKind(target)
+				return placeholderTypeForKind(t, target)
 			}
 			if KindMatches(t, target) {
 				return t
@@ -673,6 +724,13 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 			return typ.Never
 		},
 	})
+}
+
+func placeholderTypeForKind(t typ.Type, target kind.Kind) typ.Type {
+	if typ.IsAny(t) && target == kind.Record {
+		return typ.NewMap(typ.Any, typ.Any)
+	}
+	return TypeForKind(target)
 }
 
 // TypeForKind returns the canonical type for a Lua typeof kind.

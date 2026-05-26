@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
@@ -366,8 +367,8 @@ func TestJoinTwo_Different(t *testing.T) {
 	}
 }
 
-func TestWidenArrayElementType_NilArray(t *testing.T) {
-	result := flow.WidenArrayElementType(nil, typ.String, typ.JoinPreferNonSoft)
+func TestAdmitArrayElementMutation_NilArray(t *testing.T) {
+	result := value.AdmitArrayElementMutation(nil, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("expected Array, got %T", result)
@@ -377,17 +378,17 @@ func TestWidenArrayElementType_NilArray(t *testing.T) {
 	}
 }
 
-func TestWidenArrayElementType_NilElement(t *testing.T) {
+func TestAdmitArrayElementMutation_NilElement(t *testing.T) {
 	arr := typ.NewArray(typ.String)
-	result := flow.WidenArrayElementType(arr, nil, typ.JoinPreferNonSoft)
+	result := value.AdmitArrayElementMutation(arr, nil, typ.JoinPreferNonSoft)
 	if result != arr {
 		t.Error("expected unchanged array for nil element")
 	}
 }
 
-func TestWidenArrayElementType_Array(t *testing.T) {
+func TestAdmitArrayElementMutation_Array(t *testing.T) {
 	arr := typ.NewArray(typ.String)
-	result := flow.WidenArrayElementType(arr, typ.Integer, typ.JoinPreferNonSoft)
+	result := value.AdmitArrayElementMutation(arr, typ.Integer, typ.JoinPreferNonSoft)
 	resultArr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("expected Array, got %T", result)
@@ -397,9 +398,9 @@ func TestWidenArrayElementType_Array(t *testing.T) {
 	}
 }
 
-func TestWidenArrayElementType_EmptyRecord(t *testing.T) {
+func TestAdmitArrayElementMutation_EmptyRecord(t *testing.T) {
 	rec := typ.NewRecord().Build()
-	result := flow.WidenArrayElementType(rec, typ.String, typ.JoinPreferNonSoft)
+	result := value.AdmitArrayElementMutation(rec, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("expected Array, got %T", result)
@@ -409,16 +410,16 @@ func TestWidenArrayElementType_EmptyRecord(t *testing.T) {
 	}
 }
 
-func TestWidenArrayElementType_NonEmptyRecord(t *testing.T) {
+func TestAdmitArrayElementMutation_NonEmptyRecord(t *testing.T) {
 	rec := typ.NewRecord().Field("a", typ.Integer).Build()
-	result := flow.WidenArrayElementType(rec, typ.String, typ.JoinPreferNonSoft)
+	result := value.AdmitArrayElementMutation(rec, typ.String, typ.JoinPreferNonSoft)
 	if result != rec {
 		t.Error("expected unchanged record")
 	}
 }
 
-func TestWidenArrayElementType_Unknown(t *testing.T) {
-	result := flow.WidenArrayElementType(typ.Unknown, typ.String, typ.JoinPreferNonSoft)
+func TestAdmitArrayElementMutation_Unknown(t *testing.T) {
+	result := value.AdmitArrayElementMutation(typ.Unknown, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("expected Array, got %T", result)
@@ -428,8 +429,8 @@ func TestWidenArrayElementType_Unknown(t *testing.T) {
 	}
 }
 
-func TestWidenArrayElementType_Any(t *testing.T) {
-	result := flow.WidenArrayElementType(typ.Any, typ.String, typ.JoinPreferNonSoft)
+func TestAdmitArrayElementMutation_Any(t *testing.T) {
+	result := value.AdmitArrayElementMutation(typ.Any, typ.String, typ.JoinPreferNonSoft)
 	arr, ok := result.(*typ.Array)
 	if !ok {
 		t.Fatalf("expected Array, got %T", result)

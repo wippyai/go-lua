@@ -60,6 +60,25 @@ func Self(t typ.Type, selfType typ.Type) typ.Type {
 	})
 }
 
+// SelfValue replaces free Self references in a runtime value type. Nested
+// function and interface types bind their own Self, so substitution stops at
+// those boundaries.
+func SelfValue(t typ.Type, selfType typ.Type) typ.Type {
+	if t == nil || selfType == nil {
+		return t
+	}
+	return typ.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
+		if n.Kind() == kind.Self {
+			return selfType, true
+		}
+		switch n.(type) {
+		case *typ.Function, *typ.Interface:
+			return n, true
+		}
+		return nil, false
+	})
+}
+
 // ExpandInstantiated expands generic instantiations to their structural form.
 //
 // For Instantiated{Generic: Array<T>, TypeArgs: [number]}, returns the Array
@@ -68,7 +87,7 @@ func Self(t typ.Type, selfType typ.Type) typ.Type {
 //
 // Does not enforce generic constraints; use subtype checking for that.
 func ExpandInstantiated(t typ.Type) typ.Type {
-	if t == nil || !expandInstantiatedCanDescend(t) {
+	if t == nil || !typ.ContainsInstantiated(t) {
 		return t
 	}
 	memo := getExpandMemo()
@@ -98,18 +117,8 @@ func putExpandMemo(m map[typ.Type]typ.Type) {
 	expandMemoPool.Put(m)
 }
 
-func expandInstantiatedWithDepth(t typ.Type, maxDepth int) typ.Type {
-	if t == nil || !expandInstantiatedCanDescend(t) {
-		return t
-	}
-	memo := getExpandMemo()
-	defer putExpandMemo(memo)
-	guard := typ.GuardForDepth(maxDepth)
-	return expandInstantiatedGuard(t, guard, memo)
-}
-
 func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard, memo map[typ.Type]typ.Type) typ.Type {
-	if t == nil || !expandInstantiatedCanDescend(t) {
+	if t == nil || !typ.ContainsInstantiated(t) {
 		return t
 	}
 
@@ -403,24 +412,5 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard internal.RecursionG
 		return orig
 	default:
 		return orig
-	}
-}
-
-func expandInstantiatedCanDescend(t typ.Type) bool {
-	switch t.Kind() {
-	case kind.Optional,
-		kind.Union,
-		kind.Intersection,
-		kind.Array,
-		kind.Map,
-		kind.Tuple,
-		kind.Function,
-		kind.Record,
-		kind.Alias,
-		kind.Interface,
-		kind.Instantiated:
-		return true
-	default:
-		return false
 	}
 }

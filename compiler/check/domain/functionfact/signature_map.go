@@ -31,9 +31,18 @@ func ParameterEvidenceSignatures(
 	}
 
 	if parent != nil {
-		functionFacts := store.GetInterprocFacts(graph, parent).FunctionFacts
-		for _, sym := range cfg.SortedSymbolIDs(functionFacts) {
-			add(store.FuncForSymbol(sym), ParameterEvidenceFromMap(functionFacts, sym))
+		product := store.InterprocFacts(graph, parent)
+		if fn := graphFunction(store, graph); fn != nil {
+			if sym, ok := store.SymbolForFunc(fn); ok {
+				if ff, found := product.FunctionFact(sym); found {
+					add(fn, BodyEntryEvidence(ff))
+				}
+			}
+		}
+		for _, ref := range store.FunctionRefsByParentGraph(graph.ID()) {
+			if ff, ok := product.FunctionFact(ref.Sym); ok {
+				add(store.FuncForSymbol(ref.Sym), BodyEntryEvidence(ff))
+			}
 		}
 	}
 
@@ -46,10 +55,75 @@ func ParameterEvidenceSignatures(
 			}
 			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), defaultScope)
 			if parentScope != nil {
-				parentFacts := store.GetInterprocFacts(parentGraph, parentScope).FunctionFacts
 				if fn := graphFunction(store, graph); fn != nil {
 					if sym, ok := store.SymbolForFunc(fn); ok {
-						add(fn, ParameterEvidenceFromMap(parentFacts, sym))
+						if ff, ok := store.InterprocFacts(parentGraph, parentScope).FunctionFact(sym); ok {
+							add(fn, BodyEntryEvidence(ff))
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// VisibleFactsForGraph returns the canonical function-fact product visible to
+// graph analysis. For nested function graphs, same-scope function facts live in
+// the lexical parent graph product; this projection makes those facts available
+// to body analysis without duplicating storage.
+func VisibleFactsForGraph(
+	store api.StoreReader,
+	graph *cfg.Graph,
+	parent *scope.State,
+	stdlib *scope.State,
+) api.FunctionFacts {
+	if store == nil || graph == nil {
+		return nil
+	}
+
+	var out api.FunctionFacts
+	add := func(sym cfg.SymbolID, ff api.FunctionFact) {
+		if sym == 0 || Empty(ff) {
+			return
+		}
+		if out == nil {
+			out = make(api.FunctionFacts)
+		}
+		out[sym] = ff
+	}
+
+	current := store.InterprocFacts(graph, parent)
+	if fn := graphFunction(store, graph); fn != nil {
+		if sym, ok := store.SymbolForFunc(fn); ok {
+			if ff, found := current.FunctionFact(sym); found {
+				add(sym, ff)
+			}
+		}
+	}
+	for _, ref := range store.FunctionRefsByParentGraph(graph.ID()) {
+		if ff, ok := current.FunctionFact(ref.Sym); ok {
+			add(ref.Sym, ff)
+		}
+	}
+
+	if meta, ok := store.NestedMetaFor(graph.ID()); ok {
+		parentGraph := store.Graphs()[meta.ParentGraphID]
+		if parentGraph != nil {
+			defaultScope := (*scope.State)(nil)
+			if _, isNestedParent := store.NestedMetaFor(parentGraph.ID()); !isNestedParent {
+				defaultScope = stdlib
+			}
+			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), defaultScope)
+			if parentScope != nil {
+				parentProduct := store.InterprocFacts(parentGraph, parentScope)
+				for _, ref := range store.FunctionRefsByParentGraph(parentGraph.ID()) {
+					if ff, ok := parentProduct.FunctionFact(ref.Sym); ok {
+						add(ref.Sym, ff)
 					}
 				}
 			}

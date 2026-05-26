@@ -37,15 +37,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-type synthForReturn interface {
-	TypeOfWithExpected(expr ast.Expr, p cfg.Point, expected typ.Type) typ.Type
-}
 
 // CheckReturns validates return statements against declared return types.
 func CheckReturns(
@@ -55,7 +53,7 @@ func CheckReturns(
 	scopes map[cfg.Point]*scope.State,
 	baseScope *scope.State,
 	declared api.Synth,
-	narrowView api.BaseSynth,
+	observer observation.Projector,
 	sourceName string,
 ) []diag.Diagnostic {
 	if fn == nil || graph == nil {
@@ -68,15 +66,6 @@ func CheckReturns(
 
 	declaredReturns := resolveDeclaredReturns(fn.ReturnTypes, baseScope, declared)
 	if len(declaredReturns) == 0 {
-		return nil
-	}
-
-	var synthToUse synthForReturn
-	if narrowView != nil {
-		synthToUse = narrowView
-	} else if declared != nil {
-		synthToUse = declared
-	} else {
 		return nil
 	}
 
@@ -152,12 +141,12 @@ func CheckReturns(
 				continue
 			}
 
-			actual := synthToUse.TypeOfWithExpected(expr, p, declaredType)
+			actual := observer.TypeOfWithExpected(expr, p, declaredType)
 			if actual == nil {
 				actual = typ.Unknown
 			}
 
-			if !subtype.IsSubtype(actual, declaredType) {
+			if !returnTypeCompatible(actual, declaredType) {
 				pos := diag.Position{File: sourceName, Line: expr.Line(), Column: expr.Column()}
 				span := ast.SpanOf(expr)
 				msg := formatReturnMismatch(actual, declaredType, i)
@@ -181,6 +170,14 @@ func CheckReturns(
 	}
 
 	return diags
+}
+
+func returnTypeCompatible(actual, declared typ.Type) bool {
+	if subtype.IsSubtype(actual, declared) {
+		return true
+	}
+	_, ok := value.ReconcilePathFactWithDeclaredRead(actual, declared)
+	return ok
 }
 
 func resolveDeclaredReturns(returnTypes []ast.TypeExpr, baseScope *scope.State, s api.Synth) []typ.Type {

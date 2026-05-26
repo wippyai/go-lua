@@ -5,13 +5,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/core"
-	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/callsite"
-	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
-	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
-	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -28,8 +23,8 @@ func ExtractEvidence(fc *core.FlowContext, inputs *flow.Inputs) api.FlowEvidence
 	out := fc.Evidence
 	fc.Evidence = out
 	captured := capturedSymbolSet(bindings, fc.Fn)
-	out.CapturedFields = ExtractCapturedFieldEvidence(out.Assignments, captured)
-	out.CapturedContainers = ExtractCapturedContainerEvidence(fc, inputs, bindings, captured)
+	out.CapturedFields = ExtractCapturedFieldEvidence(inputs, captured)
+	out.CapturedContainers = ExtractCapturedContainerEvidence(fc, inputs, captured)
 	return out
 }
 
@@ -46,190 +41,106 @@ func MaterializeGraphEvidence(fc *core.FlowContext) api.FlowEvidence {
 	return fc.Evidence
 }
 
-// ExtractCapturedFieldEvidence records direct field writes to captured symbols.
-func ExtractCapturedFieldEvidence(
-	assignments []api.AssignmentEvidence,
-	capturedSyms map[cfg.SymbolID]bool,
-) []api.CapturedFieldEvidence {
-	if len(assignments) == 0 || len(capturedSyms) == 0 {
+// ExtractCapturedFieldEvidence records lowered field writes to captured symbols.
+func ExtractCapturedFieldEvidence(inputs *flow.Inputs, capturedSyms map[cfg.SymbolID]bool) []api.CapturedFieldEvidence {
+	if inputs == nil || len(inputs.Assignments) == 0 || len(capturedSyms) == 0 {
 		return nil
 	}
 	var out []api.CapturedFieldEvidence
-	for _, assign := range assignments {
-		p := assign.Point
-		info := assign.Info
-		if info == nil {
+	for _, assign := range inputs.Assignments {
+		sym, field, ok := capturedFieldPathRoot(assign.TargetPath)
+		if !ok || !capturedSyms[sym] {
 			continue
 		}
-		for i, target := range info.Targets {
-			sym, field := capturedFieldTarget(target)
-			if sym == 0 || field == "" || !capturedSyms[sym] {
-				continue
-			}
-			var value ast.Expr
-			if i < len(info.Sources) {
-				value = info.Sources[i]
-			}
-			out = append(out, api.CapturedFieldEvidence{
-				Point:  p,
-				Target: sym,
-				Field:  field,
-				Value:  value,
-			})
-		}
+		out = append(out, api.CapturedFieldEvidence{
+			Point:       assign.Point,
+			Target:      sym,
+			Field:       field,
+			TargetPath:  assign.TargetPath,
+			ValueType:   assign.Type,
+			ValueSource: assign.Source,
+		})
 	}
 	return out
 }
 
-// ExtractCapturedContainerEvidence records table/container mutator calls that
-// target captured symbols.
+func capturedFieldPathRoot(path constraint.Path) (cfg.SymbolID, string, bool) {
+	if path.Symbol == 0 || len(path.Segments) == 0 {
+		return 0, "", false
+	}
+	seg := path.Segments[0]
+	switch seg.Kind {
+	case constraint.SegmentField, constraint.SegmentIndexString:
+		if seg.Name != "" {
+			return path.Symbol, seg.Name, true
+		}
+	default:
+	}
+	return 0, "", false
+}
+
+// ExtractCapturedContainerEvidence records lowered table/container/map mutator
+// transfer operators that target captured symbols.
 func ExtractCapturedContainerEvidence(
 	fc *core.FlowContext,
 	inputs *flow.Inputs,
-	bindings *bind.BindingTable,
 	capturedSyms map[cfg.SymbolID]bool,
 ) []api.CapturedContainerEvidence {
 	if fc == nil || fc.Graph == nil || len(capturedSyms) == 0 {
 		return nil
 	}
-
 	var out []api.CapturedContainerEvidence
-	assignmentTypes := resolve.BuildAssignmentTypeResolver(inputs)
-	constResolverAt := func(p cfg.Point) func(string) *flow.ConstValue {
-		if inputs == nil {
-			return nil
+	if inputs != nil {
+		for _, mutation := range inputs.ContainerMutatorAssignments {
+			out = appendCapturedMutatorEvidence(out, capturedSyms, mutation.Point, mutation.Target, constraint.Path{}, nil, 0, mutation.ValuePath, mutation.ValueType, mutation.Value, api.ContainerMutationContainerElement)
 		}
-		return predicate.BuildConstResolver(inputs, p)
-	}
-	for _, call := range fc.Evidence.Calls {
-		p := call.Point
-		info := call.Info
-		if info == nil {
-			continue
+		for _, mutation := range inputs.TableMutatorAssignments {
+			out = appendCapturedMutatorEvidence(out, capturedSyms, mutation.Point, mutation.Target, mutatorKeyPath(mutation.KeyVar, mutation.KeySymbol), mutation.KeyType, 0, mutation.ValuePath, mutation.ValueType, mutation.Value, api.ContainerMutationTableElement)
 		}
-
-		if ceu := calleffect.ContainerMutatorFromCall(
-			info,
-			p,
-			derivedSynth(fc),
-			derivedSymResolver(fc),
-			assignmentTypes,
-			fc.Graph,
-			bindings,
-			fc.ModuleBindings,
-		); ceu != nil {
-			target := callsite.RuntimeArgAt(info, ceu.Container.Index)
-			value := callsite.RuntimeArgAt(info, ceu.Value.Index)
-			out = appendCapturedContainerEvidence(out, fc.Graph, bindings, constResolverAt(p), capturedSyms, target, value, p, api.ContainerMutationContainerElement)
-		}
-
-		if tm := calleffect.TableMutatorFromCall(
-			info,
-			p,
-			derivedSynth(fc),
-			derivedSymResolver(fc),
-			fc.Graph,
-			bindings,
-			fc.ModuleBindings,
-		); tm != nil {
-			target := callsite.RuntimeArgAt(info, tm.Target.Index)
-			value := callsite.RuntimeArgAt(info, tm.Value.Index)
-			out = appendCapturedContainerEvidence(out, fc.Graph, bindings, constResolverAt(p), capturedSyms, target, value, p, api.ContainerMutationTableElement)
-		}
-	}
-	for _, assign := range fc.Evidence.Assignments {
-		p := assign.Point
-		info := assign.Info
-		if info == nil {
-			continue
-		}
-		for i, target := range info.Targets {
-			if target.Kind != cfg.TargetIndex || target.Base == nil || target.Key == nil {
-				continue
-			}
-			var value ast.Expr
-			if i < len(info.Sources) {
-				value = info.Sources[i]
-			}
-			out = appendCapturedIndexAssignmentEvidence(out, fc.Graph, bindings, constResolverAt(p), capturedSyms, target.Base, target.Key, value, p)
+		for _, mutation := range inputs.MapMutatorAssignments {
+			out = appendCapturedMutatorEvidence(out, capturedSyms, mutation.Point, mutation.Target, mutatorKeyPath(mutation.KeyVar, mutation.KeySymbol), mutation.KeyType, mutation.ValueMode, mutation.ValuePath, mutation.ValueType, mutation.Value, api.ContainerMutationMapElement)
 		}
 	}
 	return out
 }
 
-func appendCapturedContainerEvidence(
+func appendCapturedMutatorEvidence(
 	out []api.CapturedContainerEvidence,
-	graph *cfg.Graph,
-	bindings *bind.BindingTable,
-	constResolver func(string) *flow.ConstValue,
 	capturedSyms map[cfg.SymbolID]bool,
-	target ast.Expr,
-	value ast.Expr,
-	p cfg.Point,
+	point cfg.Point,
+	target constraint.Path,
+	keyPath constraint.Path,
+	keyType typ.Type,
+	valueMode flow.MapMutationValueMode,
+	valuePath constraint.Path,
+	valueType typ.Type,
+	valueTemplate flow.ValueTemplate,
 	kind api.ContainerMutationKind,
 ) []api.CapturedContainerEvidence {
-	if target == nil || value == nil {
+	if target.Symbol == 0 || !capturedSyms[target.Symbol] {
 		return out
 	}
-	path := flowpath.FromExprWithBindingsAt(target, constResolver, bindings, graph, p)
-	if path.IsEmpty() || path.Symbol == 0 || !capturedSyms[path.Symbol] {
-		return out
-	}
-	segments := make([]constraint.Segment, len(path.Segments))
-	copy(segments, path.Segments)
+	segments := make([]constraint.Segment, len(target.Segments))
+	copy(segments, target.Segments)
 	return append(out, api.CapturedContainerEvidence{
-		Point:    p,
-		Target:   path.Symbol,
-		Segments: segments,
-		Value:    value,
-		Kind:     kind,
+		Point:         point,
+		Target:        target.Symbol,
+		Segments:      segments,
+		KeyPath:       keyPath,
+		KeyType:       keyType,
+		ValueMode:     valueMode,
+		ValuePath:     valuePath,
+		ValueType:     valueType,
+		ValueTemplate: valueTemplate,
+		Kind:          kind,
 	})
 }
 
-func appendCapturedIndexAssignmentEvidence(
-	out []api.CapturedContainerEvidence,
-	graph *cfg.Graph,
-	bindings *bind.BindingTable,
-	constResolver func(string) *flow.ConstValue,
-	capturedSyms map[cfg.SymbolID]bool,
-	base ast.Expr,
-	key ast.Expr,
-	value ast.Expr,
-	p cfg.Point,
-) []api.CapturedContainerEvidence {
-	if base == nil || key == nil || value == nil {
-		return out
+func mutatorKeyPath(root string, sym cfg.SymbolID) constraint.Path {
+	if sym == 0 {
+		return constraint.Path{}
 	}
-	path := flowpath.FromExprWithBindingsAt(base, constResolver, bindings, graph, p)
-	if path.IsEmpty() || path.Symbol == 0 || !capturedSyms[path.Symbol] {
-		return out
-	}
-	segments := make([]constraint.Segment, len(path.Segments))
-	copy(segments, path.Segments)
-	return append(out, api.CapturedContainerEvidence{
-		Point:    p,
-		Target:   path.Symbol,
-		Segments: segments,
-		Key:      key,
-		Value:    value,
-		Kind:     api.ContainerMutationMapElement,
-	})
-}
-
-func capturedFieldTarget(target cfg.AssignTarget) (cfg.SymbolID, string) {
-	switch target.Kind {
-	case cfg.TargetField:
-		if target.BaseSymbol != 0 && len(target.FieldPath) == 1 {
-			return target.BaseSymbol, target.FieldPath[0]
-		}
-	case cfg.TargetIndex:
-		if target.BaseSymbol != 0 && target.Key != nil {
-			if key, ok := target.Key.(*ast.StringExpr); ok && key.Value != "" {
-				return target.BaseSymbol, key.Value
-			}
-		}
-	}
-	return 0, ""
+	return constraint.Path{Root: root, Symbol: sym}
 }
 
 func capturedSymbolSet(bindings *bind.BindingTable, fn *ast.FunctionExpr) map[cfg.SymbolID]bool {
@@ -259,18 +170,4 @@ func graphBindings(graph *cfg.Graph, module *bind.BindingTable) *bind.BindingTab
 		}
 	}
 	return module
-}
-
-func derivedSynth(fc *core.FlowContext) func(ast.Expr, cfg.Point) typ.Type {
-	if fc == nil || fc.Derived == nil {
-		return nil
-	}
-	return fc.Derived.Synth
-}
-
-func derivedSymResolver(fc *core.FlowContext) func(cfg.Point, cfg.SymbolID) (typ.Type, bool) {
-	if fc == nil || fc.Derived == nil {
-		return nil
-	}
-	return fc.Derived.SymResolver
 }

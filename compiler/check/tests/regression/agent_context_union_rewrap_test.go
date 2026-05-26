@@ -72,3 +72,21 @@ func TestAgentStyleUnionRewrapAssignmentInlineUnion(t *testing.T) {
 		t.Fatalf("expected no checker errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
+
+func TestSelfReferentialTableAssignmentUsesNarrowedPreState(t *testing.T) {
+	source := `
+		type Entry = string | { id: string }
+
+		local function wrap(entry: Entry | Entry[])
+			if type(entry) == "string" or (type(entry) == "table" and entry.id) then
+				entry = { entry }
+			end
+			return entry
+		end
+	`
+
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected no checker errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}

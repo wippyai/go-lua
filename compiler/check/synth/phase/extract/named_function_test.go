@@ -8,7 +8,12 @@ import (
 	ccfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/db"
+	querycore "github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 func newNamedFunctionSynth(localBindings, moduleBindings *bind.BindingTable) *Synthesizer {
@@ -20,8 +25,6 @@ func newNamedFunctionSynth(localBindings, moduleBindings *bind.BindingTable) *Sy
 	return NewSynthesizer(&Deps{
 		CheckCtx:       checkCtx,
 		ModuleBindings: moduleBindings,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
 	}, api.PhaseTypeResolution)
 }
 
@@ -93,8 +96,6 @@ func TestFunctionLiteralForIdent_ResolvesAliasChainLiteral(t *testing.T) {
 		CheckCtx:       checkCtx,
 		Evidence:       trace.GraphEvidence(graph, localBindings),
 		ModuleBindings: localBindings,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
 	}, api.PhaseTypeResolution)
 
 	var (
@@ -147,8 +148,6 @@ func TestGraphLocalFunctionLiteralForExpr_ResolvesFieldDefinitionAttr(t *testing
 		CheckCtx:       checkCtx,
 		Evidence:       trace.GraphEvidence(graph, localBindings),
 		ModuleBindings: localBindings,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
 	}, api.PhaseTypeResolution)
 
 	var (
@@ -214,8 +213,6 @@ func TestGraphLocalFunctionLiteralForExpr_IgnoresMutableFieldPathAttr(t *testing
 		CheckCtx:       checkCtx,
 		Evidence:       trace.GraphEvidence(graph, localBindings),
 		ModuleBindings: localBindings,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
 	}, api.PhaseTypeResolution)
 
 	var attr *ast.AttrGetExpr
@@ -274,8 +271,6 @@ func TestHasDominatingDirectFunctionRebind_FalseWhenOnlyCapturedFieldChanges(t *
 		CheckCtx:       checkCtx,
 		Evidence:       trace.GraphEvidence(graph, localBindings),
 		ModuleBindings: localBindings,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
 	}, api.PhaseTypeResolution)
 
 	var (
@@ -340,8 +335,6 @@ func TestHasDominatingDirectFunctionRebind_TrueWhenFieldIsReassigned(t *testing.
 		CheckCtx:       checkCtx,
 		Evidence:       trace.GraphEvidence(graph, localBindings),
 		ModuleBindings: localBindings,
-		PreCache:       make(api.Cache),
-		NarrowCache:    make(api.Cache),
 	}, api.PhaseTypeResolution)
 
 	var (
@@ -372,5 +365,93 @@ func TestHasDominatingDirectFunctionRebind_TrueWhenFieldIsReassigned(t *testing.
 	}
 	if !synth.hasDominatingDirectFunctionRebind(sym, stableFn, at) {
 		t.Fatal("direct dominating field reassignment should invalidate field-defined wrapper value")
+	}
+}
+
+func TestSynthExprWithSpec_ProjectsFieldDefinedFunctionWithCapturedPathOverlay(t *testing.T) {
+	stmts, err := parse.ParseString(`
+		local M = {
+			dep = {
+				get = function()
+					return nil
+				end,
+			},
+		}
+		function M.run()
+			return M.dep.get()
+		end
+		M.dep = {
+			get = function()
+				return { answer = "ok" }
+			end,
+		}
+		local f = M.run
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{Stmts: stmts}
+	localBindings := bind.Bind(fn, nil)
+	graph := ccfg.BuildWithBindings(fn, localBindings)
+
+	var (
+		attr  *ast.AttrGetExpr
+		at    ccfg.Point
+		runFn *ast.FunctionExpr
+	)
+	graph.EachAssign(func(p ccfg.Point, info *ccfg.AssignInfo) {
+		if attr != nil || info == nil {
+			return
+		}
+		info.EachTargetSource(func(_ int, target ccfg.AssignTarget, source ast.Expr) {
+			if attr != nil || target.Name != "f" {
+				return
+			}
+			if candidate, ok := source.(*ast.AttrGetExpr); ok {
+				attr = candidate
+				at = p
+			}
+		})
+	})
+	graph.EachFuncDef(func(_ ccfg.Point, info *ccfg.FuncDefInfo) {
+		if info != nil && info.Name == "run" {
+			runFn = info.FuncExpr
+		}
+	})
+	mSym, _ := graph.SymbolAt(at, "M")
+	if attr == nil || at == 0 || runFn == nil || mSym == 0 {
+		t.Fatalf("missing test coordinates attr=%v at=%d runFn=%v mSym=%d", attr, at, runFn, mSym)
+	}
+
+	res := typ.NewRecord().Field("answer", typ.String).Build()
+	staleRun := typ.Func().Returns(typ.Nil).Build()
+	currentGet := typ.Func().Returns(res).Build()
+	currentM := typ.NewRecord().
+		Field("dep", typ.NewRecord().Field("get", currentGet).Build()).
+		Field("run", staleRun).
+		Build()
+
+	checkCtx := api.NewDeclaredEnv(api.DeclaredEnvConfig{
+		Graph:    graph,
+		Bindings: localBindings,
+	})
+	baseScope := scope.New()
+	graphs := newTestGraphProvider()
+	childGraph := ccfg.BuildWithBindings(runFn, localBindings)
+	graphs.cache[runFn] = childGraph
+	synth := NewSynthesizer(&Deps{
+		Ctx:            db.NewQueryContext(db.New()),
+		Types:          querycore.NewEngine(),
+		Scopes:         api.ScopeMap{at: baseScope},
+		DefaultScope:   baseScope,
+		CheckCtx:       checkCtx,
+		Evidence:       trace.GraphEvidence(graph, localBindings),
+		ModuleBindings: localBindings,
+		Graphs:         graphs,
+	}, api.PhaseScopeCompute)
+
+	got := unwrap.Function(synth.synthExprWithSpec(attr, at, api.SpecTypes{mSym: currentM}))
+	if got == nil || len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], res) {
+		t.Fatalf("synthExprWithSpec(M.run) = %v, want callable returning %v; stmts=%d returns=%d", got, res, len(runFn.Stmts), len(trace.GraphEvidence(childGraph, localBindings).Returns))
 	}
 }

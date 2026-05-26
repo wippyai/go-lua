@@ -169,6 +169,38 @@ func TestInput_RevisionBumps(t *testing.T) {
 	}
 }
 
+func TestInputBatch_SharesOneRevisionAcrossInputs(t *testing.T) {
+	db := New()
+	left := NewInput[string, int](db)
+	right := NewInput[int, string](db)
+
+	before := db.Revision()
+	batch := db.NewInputBatch()
+	left.SetInBatch(batch, "a", 1)
+	right.SetInBatch(batch, 2, "b")
+
+	after := db.Revision()
+	if after != before+1 {
+		t.Fatalf("batch revision = %d, want %d", after, before+1)
+	}
+	if got := left.revision("a"); got != after {
+		t.Fatalf("left input revision = %d, want %d", got, after)
+	}
+	if got := right.revision(2); got != after {
+		t.Fatalf("right input revision = %d, want %d", got, after)
+	}
+}
+
+func TestInputBatch_LazyEmptyBatchDoesNotBump(t *testing.T) {
+	db := New()
+
+	before := db.Revision()
+	_ = db.NewInputBatch()
+	if got := db.Revision(); got != before {
+		t.Fatalf("empty batch bumped revision: got %d want %d", got, before)
+	}
+}
+
 func TestInput_WithContext(t *testing.T) {
 	db := New()
 	input := NewInput[string, int](db)

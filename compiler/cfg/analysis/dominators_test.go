@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	basecfg "github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/db"
 )
 
 // buildStraightLine creates a simple linear CFG:
@@ -576,6 +577,64 @@ func TestStrictlyDominates(t *testing.T) {
 		} else {
 			if !StrictlyDominates(idom, entry, p) {
 				t.Errorf("entry should strictly dominate %d", p)
+			}
+		}
+	}
+}
+
+func TestImmediateDominatorsForUsesQueryContext(t *testing.T) {
+	database := db.New()
+	ctx := db.NewQueryContext(database)
+	g := buildIfElse()
+
+	first := ImmediateDominatorsFor(ctx, g)
+	second := ImmediateDominatorsFor(ctx, g)
+	if first == nil || second == nil {
+		t.Fatal("expected dominator info")
+	}
+	if first != second {
+		t.Fatal("expected repeated dominator lookup to use the query cache")
+	}
+
+	database.Bump()
+	afterRevision := ImmediateDominatorsFor(ctx, g)
+	if afterRevision != first {
+		t.Fatal("immutable graph dominance should stay cached across unrelated DB revisions")
+	}
+
+	entry := g.Entry()
+	if !afterRevision.Dominates(entry, g.Exit()) {
+		t.Fatal("entry should dominate exit")
+	}
+	if afterRevision.StrictlyDominates(entry, entry) {
+		t.Fatal("strict dominance should reject identical points")
+	}
+
+	postFirst := ImmediatePostDominatorsFor(ctx, g)
+	postSecond := ImmediatePostDominatorsFor(ctx, g)
+	if postFirst == nil || postSecond == nil {
+		t.Fatal("expected post-dominator info")
+	}
+	if postFirst != postSecond {
+		t.Fatal("expected repeated post-dominator lookup to use the query cache")
+	}
+	if !postFirst.Dominates(g.Exit(), entry) {
+		t.Fatal("exit should post-dominate entry")
+	}
+}
+
+func TestImmediateDominatorInfoMatchesMapPredicates(t *testing.T) {
+	g := buildNestedIf()
+	info := ComputeImmediateDominatorInfo(g)
+	idom := ComputeImmediateDominators(g)
+
+	for _, a := range g.RPO() {
+		for _, b := range g.RPO() {
+			if got, want := info.Dominates(a, b), Dominates(idom, a, b); got != want {
+				t.Fatalf("Dominates(%d, %d) = %v, want %v", a, b, got, want)
+			}
+			if got, want := info.StrictlyDominates(a, b), StrictlyDominates(idom, a, b); got != want {
+				t.Fatalf("StrictlyDominates(%d, %d) = %v, want %v", a, b, got, want)
 			}
 		}
 	}

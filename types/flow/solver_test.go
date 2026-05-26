@@ -10,6 +10,7 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -254,13 +255,13 @@ func TestSolutionResolveTypeKey_UnknownBuiltin(t *testing.T) {
 
 func TestMergeFieldAssignments_IncludesCanonicalStringIndexKeys(t *testing.T) {
 	s := &Solution{
-		values: map[string]typ.Type{
+		values: liftFlowValues(map[string]typ.Type{
 			`sym1@1["meta.type"]`:   typ.String,
 			`sym1@1.name`:           typ.Number,
 			`sym1@1["meta.type"].x`: typ.Boolean,
 			`sym1@2["meta.type"]`:   typ.Integer,
 			`sym2@1["meta.type"]`:   typ.Nil,
-		},
+		}),
 	}
 
 	base := typ.NewRecord().Field("id", typ.String).Build()
@@ -281,7 +282,72 @@ func TestMergeFieldAssignments_IncludesCanonicalStringIndexKeys(t *testing.T) {
 	}
 }
 
-func TestWidenWithIndexer_CoalescesPartialRecordElementUpdates(t *testing.T) {
+func TestMergeFieldAssignments_PreservesOpenRecordTail(t *testing.T) {
+	s := &Solution{
+		values: liftFlowValues(map[string]typ.Type{
+			`sym1@1.x`: typ.Integer,
+		}),
+	}
+
+	base := typ.NewRecord().SetOpen(true).Build()
+	got := s.mergeFieldAssignments(base, "sym1@1")
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
+	}
+	if !rec.Open {
+		t.Fatalf("merged record lost open tail: %v", rec)
+	}
+	if f := rec.GetField("x"); f == nil || !typ.TypeEquals(f.Type, typ.Integer) {
+		t.Fatalf("expected x=integer, got %v", f)
+	}
+}
+
+func TestStructuredFieldWritePreservesDeclaredReceiverProduct(t *testing.T) {
+	c := cfg.New()
+	assign := c.AddNode(cfg.NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), assign, true)
+	c.AddEdge(assign, c.Exit(), true)
+	g := newMockSSAGraph(c)
+
+	points := []cfg.Point{c.Entry(), assign, c.Exit()}
+	selfSym := setupSymbol(g, "self", points)
+	ver := cfg.Version{Root: "self", Symbol: selfSym, ID: 1}
+	for _, p := range points {
+		setVersion(g, p, selfSym, ver)
+	}
+
+	declared := typ.NewRecord().
+		Field("build", typ.Func().Param("self", typ.Self).Returns(typ.String).Build()).
+		OptField("prefix", typ.String).
+		Build()
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[selfSym] = declared
+	inputs.Assignments = []UnifiedAssignment{{
+		Point: assign,
+		TargetPath: constraint.Path{
+			Root:     "self",
+			Symbol:   selfSym,
+			Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "prefix"}},
+		},
+		Type: typ.String,
+	}}
+
+	s := Solve(inputs, testResolver())
+	got := s.NarrowedTypeAt(assign, constraint.Path{Root: "self", Symbol: selfSym})
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("receiver root after child write = %T %v, want record", got, got)
+	}
+	if build := rec.GetField("build"); build == nil {
+		t.Fatalf("receiver root lost declared method surface after child write: %v", rec)
+	}
+	if prefix := rec.GetField("prefix"); prefix == nil || prefix.Optional || !typ.TypeEquals(prefix.Type, typ.String) {
+		t.Fatalf("receiver prefix field = %v, want required string", prefix)
+	}
+}
+
+func TestAdmitIndexedWrite_CoalescesPartialRecordElementUpdates(t *testing.T) {
 	full := typ.NewRecord().
 		Field("type", typ.LiteralString("thinking")).
 		Field("thinking", typ.Any).
@@ -290,12 +356,12 @@ func TestWidenWithIndexer_CoalescesPartialRecordElementUpdates(t *testing.T) {
 	thinkingOnly := typ.NewRecord().Field("thinking", typ.String).Build()
 	signatureOnly := typ.NewRecord().Field("signature", typ.String).Build()
 
-	got := widenWithIndexer(typ.NewMap(typ.Integer, full), typ.Integer, thinkingOnly)
-	got = widenWithIndexer(got, typ.Integer, signatureOnly)
+	got := value.AdmitIndexedWrite(typ.NewMap(typ.Integer, full), typ.Integer, thinkingOnly)
+	got = value.AdmitIndexedWrite(got, typ.Integer, signatureOnly)
 
 	mp, ok := got.(*typ.Map)
 	if !ok {
-		t.Fatalf("widenWithIndexer returned %T, want *typ.Map", got)
+		t.Fatalf("AdmitIndexedWrite returned %T, want *typ.Map", got)
 	}
 	rec, ok := mp.Value.(*typ.Record)
 	if !ok {
@@ -308,7 +374,7 @@ func TestWidenWithIndexer_CoalescesPartialRecordElementUpdates(t *testing.T) {
 	}
 }
 
-func TestWidenWithIndexer_KeepsConflictingRecordElementsDiscriminated(t *testing.T) {
+func TestAdmitIndexedWrite_KeepsConflictingRecordElementsDiscriminated(t *testing.T) {
 	thinking := typ.NewRecord().
 		Field("type", typ.LiteralString("thinking")).
 		Field("thinking", typ.String).
@@ -318,18 +384,18 @@ func TestWidenWithIndexer_KeepsConflictingRecordElementsDiscriminated(t *testing
 		Field("partial_json", typ.String).
 		Build()
 
-	got := widenWithIndexer(typ.NewMap(typ.Integer, thinking), typ.Integer, tool)
+	got := value.AdmitIndexedWrite(typ.NewMap(typ.Integer, thinking), typ.Integer, tool)
 
 	mp, ok := got.(*typ.Map)
 	if !ok {
-		t.Fatalf("widenWithIndexer returned %T, want *typ.Map", got)
+		t.Fatalf("AdmitIndexedWrite returned %T, want *typ.Map", got)
 	}
 	if _, ok := mp.Value.(*typ.Union); !ok {
 		t.Fatalf("conflicting discriminant records should remain a union, got %T (%v)", mp.Value, mp.Value)
 	}
 }
 
-func TestWidenWithIndexer_CoalescesRecordMapComponentValues(t *testing.T) {
+func TestAdmitIndexedWrite_CoalescesRecordMapComponentValues(t *testing.T) {
 	full := typ.NewRecord().
 		Field("type", typ.LiteralString("thinking")).
 		Field("thinking", typ.Any).
@@ -341,11 +407,11 @@ func TestWidenWithIndexer_CoalescesRecordMapComponentValues(t *testing.T) {
 		MapComponent(typ.Integer, full).
 		Build()
 
-	got := widenWithIndexer(base, typ.Integer, partial)
+	got := value.AdmitIndexedWrite(base, typ.Integer, partial)
 
 	rec, ok := got.(*typ.Record)
 	if !ok {
-		t.Fatalf("widenWithIndexer returned %T, want *typ.Record", got)
+		t.Fatalf("AdmitIndexedWrite returned %T, want *typ.Record", got)
 	}
 	mapValue, ok := rec.MapValue.(*typ.Record)
 	if !ok {
@@ -358,7 +424,7 @@ func TestWidenWithIndexer_CoalescesRecordMapComponentValues(t *testing.T) {
 	}
 }
 
-func TestWidenMapValueArray_CoalescesPartialRecordElements(t *testing.T) {
+func TestAdmitMapArrayElementMutation_CoalescesPartialRecordElements(t *testing.T) {
 	full := typ.NewRecord().
 		Field("type", typ.LiteralString("thinking")).
 		Field("thinking", typ.Any).
@@ -366,11 +432,11 @@ func TestWidenMapValueArray_CoalescesPartialRecordElements(t *testing.T) {
 		Build()
 	partial := typ.NewRecord().Field("signature", typ.String).Build()
 
-	got := WidenMapValueArray(typ.NewMap(typ.String, typ.NewArray(full)), typ.String, partial)
+	got := value.AdmitMapArrayElementMutation(typ.NewMap(typ.String, typ.NewArray(full)), typ.String, partial)
 
 	mp, ok := got.(*typ.Map)
 	if !ok {
-		t.Fatalf("WidenMapValueArray returned %T, want *typ.Map", got)
+		t.Fatalf("AdmitMapArrayElementMutation returned %T, want *typ.Map", got)
 	}
 	arr, ok := mp.Value.(*typ.Array)
 	if !ok {
@@ -389,9 +455,9 @@ func TestWidenMapValueArray_CoalescesPartialRecordElements(t *testing.T) {
 
 func TestMergeFieldAssignments_IncludesEscapedStringIndexKey(t *testing.T) {
 	s := &Solution{
-		values: map[string]typ.Type{
+		values: liftFlowValues(map[string]typ.Type{
 			`sym7@3["a\"b"]`: typ.Boolean,
-		},
+		}),
 	}
 
 	got := s.mergeFieldAssignments(nil, "sym7@3")
@@ -406,9 +472,9 @@ func TestMergeFieldAssignments_IncludesEscapedStringIndexKey(t *testing.T) {
 
 func TestMergeFieldAssignments_InvalidBaseKey_NoChange(t *testing.T) {
 	s := &Solution{
-		values: map[string]typ.Type{
+		values: liftFlowValues(map[string]typ.Type{
 			`sym1@1["meta.type"]`: typ.String,
-		},
+		}),
 	}
 
 	base := typ.NewRecord().Field("id", typ.String).Build()
@@ -420,9 +486,9 @@ func TestMergeFieldAssignments_InvalidBaseKey_NoChange(t *testing.T) {
 
 func TestMergeFieldAssignments_PreservesExistingFieldQualifiers(t *testing.T) {
 	s := &Solution{
-		values: map[string]typ.Type{
+		values: liftFlowValues(map[string]typ.Type{
 			`sym3@2.new_field`: typ.Number,
-		},
+		}),
 	}
 
 	base := typ.NewRecord().
@@ -462,9 +528,9 @@ func TestMergeFieldAssignments_PreservesAliasFieldType(t *testing.T) {
 				Build()).
 			Build())
 	s := &Solution{
-		values: map[string]typ.Type{
+		values: liftFlowValues(map[string]typ.Type{
 			`sym9@1.tx`: txAlias,
-		},
+		}),
 	}
 
 	got := s.mergeFieldAssignments(nil, "sym9@1")
@@ -488,9 +554,9 @@ func TestMergeFieldAssignments_PreservesAliasFieldType(t *testing.T) {
 func TestMergeFieldAssignments_PreservesAliasRootType(t *testing.T) {
 	builderAlias := typ.NewAlias("Builder", typ.NewRecord().Field("_messages", typ.NewArray(typ.String)).Build())
 	s := &Solution{
-		values: map[string]typ.Type{
+		values: liftFlowValues(map[string]typ.Type{
 			`sym11@1._messages`: typ.NewArray(typ.NewUnion(typ.String, typ.Integer)),
-		},
+		}),
 	}
 
 	got := s.mergeFieldAssignments(builderAlias, "sym11@1")
@@ -532,9 +598,9 @@ func TestMergeFieldAssignments_PreservesRecursiveAliasRootType(t *testing.T) {
 	builderAlias := typ.NewAlias("Builder", rec)
 
 	s := &Solution{
-		values: map[string]typ.Type{
+		values: liftFlowValues(map[string]typ.Type{
 			`sym12@1._messages`: typ.NewArray(typ.LiteralString("x")),
-		},
+		}),
 	}
 
 	got := s.mergeFieldAssignments(builderAlias, "sym12@1")
@@ -582,10 +648,10 @@ func TestMergeFieldAssignments_PreservesRecursiveAliasRootType(t *testing.T) {
 
 func TestFieldAssignmentsForRoot_InvalidatesCachedRootOnFieldWrite(t *testing.T) {
 	s := &Solution{
-		values: map[string]typ.Type{
+		values: liftFlowValues(map[string]typ.Type{
 			`sym21@1.name`: typ.String,
-		},
-		fieldOverlayCache: make(map[string][]mergedField),
+		}),
+		fieldOverlayCache: make(map[fieldOverlayCacheKey][]mergedField),
 	}
 
 	first := s.fieldAssignmentsForRoot("sym21@1")
@@ -598,6 +664,135 @@ func TestFieldAssignmentsForRoot_InvalidatesCachedRootOnFieldWrite(t *testing.T)
 	second := s.fieldAssignmentsForRoot("sym21@1")
 	if len(second) != 1 || second[0].Name != "name" || !typ.TypeEquals(second[0].Type, typ.Integer) {
 		t.Fatalf("second field overlay = %v, want name:integer", second)
+	}
+}
+
+func TestFieldAssignmentsForRoot_UsesRootOverlayIndex(t *testing.T) {
+	s := &Solution{
+		values: liftFlowValues(map[string]typ.Type{
+			`sym30@1.name`:     typ.String,
+			`sym30@1.child.id`: typ.Integer,
+			`sym31@1.name`:     typ.Boolean,
+		}),
+	}
+
+	fields := s.fieldAssignmentsForRoot("sym30@1")
+	if len(fields) != 1 || fields[0].Name != "name" || !typ.TypeEquals(fields[0].Type, typ.String) {
+		t.Fatalf("field overlay = %v, want only direct name:string", fields)
+	}
+	if len(s.fieldOverlayIndex) == 0 {
+		t.Fatal("expected root overlay index to be built")
+	}
+
+	s.setValue(`sym30@1.age`, typ.Integer)
+	fields = s.fieldAssignmentsForRoot("sym30@1")
+	if len(fields) != 2 {
+		t.Fatalf("field overlay after indexed write = %v, want two direct fields", fields)
+	}
+	if fields[0].Name != "age" || !typ.TypeEquals(fields[0].Type, typ.Integer) {
+		t.Fatalf("first field = %v, want age:integer", fields[0])
+	}
+	if fields[1].Name != "name" || !typ.TypeEquals(fields[1].Type, typ.String) {
+		t.Fatalf("second field = %v, want name:string", fields[1])
+	}
+}
+
+func TestMergeFieldAssignmentsAt_CachesMergedRootAndInvalidatesOnFieldWrite(t *testing.T) {
+	s := &Solution{
+		values: liftFlowValues(map[string]typ.Type{
+			`sym22@1.name`: typ.String,
+		}),
+	}
+	base := typ.NewRecord().Build()
+
+	first := s.mergeFieldAssignmentsAt(5, base, "sym22@1")
+	if len(s.fieldMergeCache) == 0 {
+		t.Fatal("expected merged field cache to record the root merge")
+	}
+	second := s.mergeFieldAssignmentsAt(5, base, "sym22@1")
+	if second != first {
+		t.Fatalf("expected second root merge to reuse cached result")
+	}
+
+	s.setValue(`sym22@1.name`, typ.Integer)
+	third := s.mergeFieldAssignmentsAt(5, base, "sym22@1")
+	rec, ok := third.(*typ.Record)
+	if !ok {
+		t.Fatalf("merged root = %T, want record", third)
+	}
+	field := rec.GetField("name")
+	if field == nil || !typ.TypeEquals(field.Type, typ.Integer) {
+		t.Fatalf("merged field after invalidation = %v, want integer", field)
+	}
+}
+
+func TestMergeFieldAssignmentsAt_CoinductiveRecursiveBodyOverlay(t *testing.T) {
+	rec := typ.NewRecursivePlaceholder("Suite")
+	rec.SetBody(typ.NewUnion(
+		typ.NewRecord().Field("children", typ.NewArray(rec)).Build(),
+		typ.NewRecord().Build(),
+	))
+	s := &Solution{
+		values: liftFlowValues(map[string]typ.Type{
+			`sym41@1.name`: typ.String,
+		}),
+	}
+
+	got := s.mergeFieldAssignmentsAt(7, rec, "sym41@1")
+	if got == nil {
+		t.Fatal("recursive field overlay returned nil")
+	}
+	if _, ok := got.(*typ.Recursive); !ok {
+		t.Fatalf("recursive field overlay = %T %[1]v, want recursive product", got)
+	}
+}
+
+func TestMergeFieldAssignments_RecursiveUnionUsesSingleOverlayProduct(t *testing.T) {
+	var members []typ.Type
+	for i := 0; i < typ.DefaultRecursionDepth+12; i++ {
+		rec := typ.NewRecursivePlaceholder("Suite")
+		rec.SetBody(
+			typ.NewRecord().
+				Field("name", typ.String).
+				Field("children", typ.NewArray(rec)).
+				Build(),
+		)
+		members = append(members, rec)
+	}
+	baseMembers := append(append([]typ.Type{}, members...), typ.String)
+	base := typ.NewUnion(baseMembers...)
+	s := &Solution{
+		values: liftFlowValues(map[string]typ.Type{
+			`sym40@1.name`:     typ.LiteralString("suite"),
+			`sym40@1.children`: typ.NewArray(members[0]),
+		}),
+	}
+
+	got := s.mergeFieldAssignmentsAt(7, base, "sym40@1")
+	union, ok := got.(*typ.Union)
+	if !ok {
+		t.Fatalf("recursive union overlay = %T, want residual union", got)
+	}
+	var rec *typ.Record
+	for _, member := range union.Members {
+		if r, ok := member.(*typ.Record); ok {
+			rec = r
+			break
+		}
+	}
+	if rec == nil {
+		t.Fatalf("recursive union overlay = %v, want finite record overlay member", got)
+	}
+	if !rec.Open {
+		t.Fatalf("recursive union overlay should remain open to preserve skipped recursive family alternatives")
+	}
+	name := rec.GetField("name")
+	if name == nil || !typ.TypeEquals(name.Type, typ.LiteralString("suite")) {
+		t.Fatalf("name field = %v, want literal suite", name)
+	}
+	children := rec.GetField("children")
+	if children == nil || !typ.TypeEquals(children.Type, typ.NewArray(members[0])) {
+		t.Fatalf("children field = %v, want current child-path array fact", children)
 	}
 }
 
@@ -2937,7 +3132,7 @@ func TestPhiJoin_StoresTargetVersion(t *testing.T) {
 
 	// Verify v3 (phi target) is stored and contains the joined type
 	ver3Key := canonicalVersionKey(ver3)
-	storedType := s.values[ver3Key]
+	storedType := storedFlowType(s, ver3Key)
 	if storedType == nil {
 		t.Fatalf("phi target version %q not stored in values map", ver3Key)
 	}
@@ -3051,7 +3246,7 @@ func TestPhiJoin_NilInitConditionalAssign_Scheduling(t *testing.T) {
 
 	// v@3 (phi target) must be stored with joined type nil | Version
 	ver3Key := canonicalVersionKey(ver3)
-	storedType := s.values[ver3Key]
+	storedType := storedFlowType(s, ver3Key)
 	if storedType == nil {
 		t.Fatalf("phi target version %q not stored in values map; phi scheduling failed", ver3Key)
 	}

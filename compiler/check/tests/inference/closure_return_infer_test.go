@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -801,10 +802,10 @@ end
 	var summary []typ.Type
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if facts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts; facts != nil {
+	if facts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts(); facts != nil {
 		for sym, fact := range facts {
 			if sess.RootResult.Graph.NameOf(sym) == "get_db" {
-				summary = fact.Summary
+				summary = product.ProjectVector(fact.Summary)
 				break
 			}
 		}
@@ -873,10 +874,10 @@ end
 	var summary []typ.Type
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if facts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts; facts != nil {
+	if facts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts(); facts != nil {
 		for sym, fact := range facts {
 			if sess.RootResult.Graph.NameOf(sym) == "get_db" {
-				summary = fact.Summary
+				summary = product.ProjectVector(fact.Summary)
 				break
 			}
 		}
@@ -931,11 +932,11 @@ local y: string = b
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if facts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts; facts != nil {
+	if facts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts(); facts != nil {
 		for sym, fact := range facts {
 			name := sess.RootResult.Graph.NameOf(sym)
 			for i, slot := range fact.Summary {
-				if slot == nil {
+				if slot.IsZero() {
 					t.Errorf("nil slot at index %d in return summary for %q", i, name)
 				}
 			}
@@ -965,7 +966,7 @@ end
 	found := 0
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	if facts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts; facts != nil {
+	if facts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts(); facts != nil {
 		for sym, fact := range facts {
 			if len(fact.Summary) == 0 {
 				name := ""

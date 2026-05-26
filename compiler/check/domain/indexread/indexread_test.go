@@ -1,0 +1,141 @@
+package indexread
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/typ"
+)
+
+type fakeFlow struct {
+	bounds    map[string][2]int64
+	lenBounds map[string][2]int64
+	lenRefs   map[string]lenRef
+	keyOf     bool
+}
+
+type lenRef struct {
+	key    string
+	offset int64
+}
+
+func (f fakeFlow) BoundsAt(_ cfg.Point, name string) (int64, int64, bool) {
+	if f.bounds == nil {
+		return 0, 0, false
+	}
+	b, ok := f.bounds[name]
+	return b[0], b[1], ok
+}
+
+func (f fakeFlow) ArrayLenBoundWithOffsetAt(_ cfg.Point, name string) (string, int64, bool) {
+	if f.lenRefs == nil {
+		return "", 0, false
+	}
+	ref, ok := f.lenRefs[name]
+	return ref.key, ref.offset, ok
+}
+
+func (f fakeFlow) LengthBoundsAt(_ cfg.Point, path constraint.Path) (int64, int64, bool) {
+	if f.lenBounds == nil {
+		return 0, 0, false
+	}
+	b, ok := f.lenBounds[string(path.Key())]
+	return b[0], b[1], ok
+}
+
+func (f fakeFlow) HasKeyOf(_ cfg.Point, tablePath, keyPath constraint.Path) bool {
+	return f.keyOf && !tablePath.IsEmpty() && !keyPath.IsEmpty()
+}
+
+func TestRefine_TupleIndexBoundedByNumericForRemovesNil(t *testing.T) {
+	obj := &ast.IdentExpr{Value: "values"}
+	key := &ast.IdentExpr{Value: "i"}
+	result := typ.NewOptional(typ.NewUnion(typ.LiteralInt(10), typ.LiteralInt(20), typ.LiteralInt(30)))
+
+	refined, ok := Refine(Query{
+		Point:     7,
+		Container: typ.NewTuple(typ.LiteralInt(10), typ.LiteralInt(20), typ.LiteralInt(30)),
+		Result:    result,
+		Object:    obj,
+		Key:       key,
+		Flow:      fakeFlow{bounds: map[string][2]int64{"i": {1, 3}}},
+	})
+
+	want := typ.NewUnion(typ.LiteralInt(10), typ.LiteralInt(20), typ.LiteralInt(30))
+	if !ok || !typ.TypeEquals(refined, want) {
+		t.Fatalf("Refine(tuple[i]) = %v, %v; want %v, true", refined, ok, want)
+	}
+}
+
+func TestRefine_TupleIndexOutOfRangeKeepsNil(t *testing.T) {
+	result := typ.NewOptional(typ.Number)
+
+	refined, ok := Refine(Query{
+		Point:     7,
+		Container: typ.NewTuple(typ.Number, typ.Number, typ.Number),
+		Result:    result,
+		Key:       &ast.IdentExpr{Value: "i"},
+		Flow:      fakeFlow{bounds: map[string][2]int64{"i": {1, 4}}},
+	})
+
+	if ok || refined != nil {
+		t.Fatalf("Refine(tuple[i]) = %v, %v; want no refinement", refined, ok)
+	}
+}
+
+func TestRefine_LengthBoundedLiteralIndexRemovesNil(t *testing.T) {
+	obj := &ast.IdentExpr{Value: "rows"}
+	objPath := constraint.Path{Root: "rows", Symbol: 41}
+	result := typ.NewOptional(typ.String)
+
+	refined, ok := Refine(Query{
+		Point:     9,
+		Container: typ.NewArray(typ.String),
+		Result:    result,
+		Object:    obj,
+		Key:       &ast.NumberExpr{Value: "1"},
+		Flow:      fakeFlow{lenBounds: map[string][2]int64{string(objPath.Key()): {1, 1}}},
+		PathOf: func(expr ast.Expr) constraint.Path {
+			if expr == obj {
+				return objPath
+			}
+			return constraint.Path{}
+		},
+	})
+
+	if !ok || !typ.TypeEquals(refined, typ.String) {
+		t.Fatalf("Refine(rows[1]) = %v, %v; want string, true", refined, ok)
+	}
+}
+
+func TestRefine_KeyPresenceRemovesNil(t *testing.T) {
+	obj := &ast.IdentExpr{Value: "map"}
+	key := &ast.IdentExpr{Value: "name"}
+	objPath := constraint.Path{Root: "map", Symbol: 51}
+	keyPath := constraint.Path{Root: "name", Symbol: 52}
+
+	refined, ok := Refine(Query{
+		Point:     5,
+		Container: typ.NewMap(typ.String, typ.Number),
+		Result:    typ.NewOptional(typ.Number),
+		Object:    obj,
+		Key:       key,
+		Flow:      fakeFlow{keyOf: true},
+		PathOf: func(expr ast.Expr) constraint.Path {
+			switch expr {
+			case obj:
+				return objPath
+			case key:
+				return keyPath
+			default:
+				return constraint.Path{}
+			}
+		},
+	})
+
+	if !ok || !typ.TypeEquals(refined, typ.Number) {
+		t.Fatalf("Refine(map[name]) = %v, %v; want number, true", refined, ok)
+	}
+}

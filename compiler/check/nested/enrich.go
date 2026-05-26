@@ -3,7 +3,7 @@ package nested
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/types/subtype"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -104,13 +104,24 @@ func EnrichSelfTypeWithConstructorFields(selfType typ.Type, fields map[string]ty
 	return mergeFieldsIntoSelfType(selfType, fields)
 }
 
+// MethodSelfTypeFromReceiverSurface constructs the instance-side self contract
+// for an unannotated colon method. The receiver expression in `function T:m`
+// names the prototype/class table, while calls pass an instance whose metatable
+// delegates to that table.
+func MethodSelfTypeFromReceiverSurface(receiver typ.Type) typ.Type {
+	if receiver == nil {
+		return nil
+	}
+	return typ.NewRecord().SetOpen(true).Metatable(receiver).Build()
+}
+
 // NormalizeMethodSelfType widens literal-heavy self shapes so method-local
 // flow constraints do not treat mutable receiver state as compile-time constants.
 func NormalizeMethodSelfType(selfType typ.Type) typ.Type {
 	if selfType == nil {
 		return nil
 	}
-	return subtype.WidenForInference(selfType)
+	return value.WidenForConvergence(selfType)
 }
 
 func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.Type {

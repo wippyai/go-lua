@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/compiler/stdlib"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -356,6 +357,60 @@ func TestConstraintsFromEquality_FieldEqualsPath(t *testing.T) {
 	}
 }
 
+func TestConstraintsFromEquality_SelectVariantOriginEmitsDiscriminator(t *testing.T) {
+	lhs := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "result"},
+		Key:    &ast.StringExpr{Value: effect.SelectResultChannelField},
+	}
+	rhs := &ast.IdentExpr{Value: "timeout"}
+
+	ce := &cond.ConditionExtractor{Inputs: &flow.Inputs{
+		VariantFieldOrigins: []flow.VariantFieldOrigin{{
+			Target:             constraint.Path{Root: "result"},
+			Field:              effect.SelectResultChannelField,
+			Source:             constraint.Path{Root: "timeout"},
+			DiscriminatorField: effect.SelectResultCaseIDField,
+			DiscriminatorValue: typ.LiteralInt(1),
+		}},
+	}}
+	c := ce.ConditionFromEquality(lhs, rhs)
+	constraints := c.MustConstraints()
+
+	if !hasFieldEqualsPathConstraint(constraints, "result", effect.SelectResultChannelField, "timeout") {
+		t.Fatalf("missing field/path equality in %v", constraints)
+	}
+	if !hasFieldEqualsConstraint(constraints, "result", effect.SelectResultCaseIDField, typ.LiteralInt(1)) {
+		t.Fatalf("missing select discriminator equality in %v", constraints)
+	}
+}
+
+func TestConstraintsFromInequality_SelectVariantOriginEmitsDiscriminatorExclusion(t *testing.T) {
+	lhs := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "result"},
+		Key:    &ast.StringExpr{Value: effect.SelectResultChannelField},
+	}
+	rhs := &ast.IdentExpr{Value: "timeout"}
+
+	ce := &cond.ConditionExtractor{Inputs: &flow.Inputs{
+		VariantFieldOrigins: []flow.VariantFieldOrigin{{
+			Target:             constraint.Path{Root: "result"},
+			Field:              effect.SelectResultChannelField,
+			Source:             constraint.Path{Root: "timeout"},
+			DiscriminatorField: effect.SelectResultCaseIDField,
+			DiscriminatorValue: typ.LiteralInt(1),
+		}},
+	}}
+	c := ce.ConditionFromInequality(lhs, rhs)
+	constraints := c.MustConstraints()
+
+	if !hasFieldNotEqualsPathConstraint(constraints, "result", effect.SelectResultChannelField, "timeout") {
+		t.Fatalf("missing field/path inequality in %v", constraints)
+	}
+	if !hasFieldNotEqualsConstraint(constraints, "result", effect.SelectResultCaseIDField, typ.LiteralInt(1)) {
+		t.Fatalf("missing select discriminator exclusion in %v", constraints)
+	}
+}
+
 func TestConstraintsFromDynamicIndex_LiteralKeyLiteralValue(t *testing.T) {
 	// Test: if x[y] == "foo" where y has type "kind" (literal string)
 	// Without bindings, dynamic index extraction requires bindings to resolve symbols.
@@ -373,6 +428,46 @@ func TestConstraintsFromDynamicIndex_LiteralKeyLiteralValue(t *testing.T) {
 	if len(constraints) != 0 {
 		t.Fatalf("constraintsFromEquality returned %d constraints, want 0 (no bindings)", len(constraints))
 	}
+}
+
+func hasFieldEqualsPathConstraint(constraints []constraint.Constraint, targetRoot, field, valueRoot string) bool {
+	for _, c := range constraints {
+		v, ok := c.(constraint.FieldEqualsPath)
+		if ok && v.Target.Root == targetRoot && v.Field == field && v.Value.Root == valueRoot {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFieldNotEqualsPathConstraint(constraints []constraint.Constraint, targetRoot, field, valueRoot string) bool {
+	for _, c := range constraints {
+		v, ok := c.(constraint.FieldNotEqualsPath)
+		if ok && v.Target.Root == targetRoot && v.Field == field && v.Value.Root == valueRoot {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFieldEqualsConstraint(constraints []constraint.Constraint, targetRoot, field string, value *typ.Literal) bool {
+	for _, c := range constraints {
+		v, ok := c.(constraint.FieldEquals)
+		if ok && v.Target.Root == targetRoot && v.Field == field && typ.TypeEquals(v.Value, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFieldNotEqualsConstraint(constraints []constraint.Constraint, targetRoot, field string, value *typ.Literal) bool {
+	for _, c := range constraints {
+		v, ok := c.(constraint.FieldNotEquals)
+		if ok && v.Target.Root == targetRoot && v.Field == field && typ.TypeEquals(v.Value, value) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestConstraintsFromDynamicIndex_StringKeyPathValue(t *testing.T) {

@@ -1,16 +1,14 @@
 package extract
 
 import (
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Deps aggregates all dependencies needed by the Synthesizer.
@@ -23,7 +21,6 @@ import (
 //   - Type checking environment with diagnostics (CheckCtx)
 //   - Flow analysis results for narrowing (Flow, optional)
 //   - Path extraction for constraint tracking (Paths, optional)
-//   - Caches for synthesis memoization (PreCache, NarrowCache)
 //   - Module-level bindings and aliases for cross-function synthesis
 type Deps struct {
 	Ctx    *db.QueryContext
@@ -37,20 +34,12 @@ type Deps struct {
 	FunctionFacts api.FunctionFacts
 	Graphs        api.GraphProvider
 
-	Flow  api.FlowOps
-	Paths api.PathFromExprFunc
+	Flow   api.FlowOps
+	Inputs *flow.Inputs
+	Paths  api.PathFromExprFunc
 	// Evidence is the transfer-owned event trace for CheckCtx.Graph when
 	// available. Synth reducers use it instead of rediscovering CFG events.
 	Evidence api.FlowEvidence
-
-	PreCache    api.Cache
-	NarrowCache api.Cache
-
-	// FunctionTypeInProgress guards call-point local function specialization
-	// against recursion across temporary synthesizers.
-	FunctionTypeInProgress map[functionTypeProgressKey]bool
-	FunctionTypeCache      map[functionTypeCacheKey]*typ.Function
-	FunctionFactCache      *functionfact.Cache
 
 	// Module-level bindings for nested function CFG building.
 	ModuleBindings *bind.BindingTable
@@ -59,34 +48,28 @@ type Deps struct {
 	ModuleAliases map[cfg.SymbolID]string
 }
 
-type functionTypeProgressKey struct {
-	Func         *ast.FunctionExpr
-	CapturePoint cfg.Point
-}
-
-type functionTypeCacheKey struct {
-	Func         *ast.FunctionExpr
-	Scope        *scope.State
-	Expected     *typ.Function
-	CapturePoint cfg.Point
-	Phase        api.Phase
-}
-
 // NewDeps creates a new Deps instance.
 func NewDeps(ctx *db.QueryContext, types core.TypeOps, scopes api.ScopeMap, manifests io.ManifestQuerier, checkCtx api.BaseEnv) *Deps {
 	return &Deps{
-		Ctx:                    ctx,
-		Types:                  types,
-		Scopes:                 scopes,
-		Manifests:              manifests,
-		CheckCtx:               checkCtx,
-		Graphs:                 api.GraphsFrom(ctx),
-		PreCache:               make(api.Cache),
-		NarrowCache:            make(api.Cache),
-		FunctionTypeInProgress: make(map[functionTypeProgressKey]bool),
-		FunctionTypeCache:      make(map[functionTypeCacheKey]*typ.Function),
-		FunctionFactCache:      functionfact.NewCache(),
+		Ctx:       ctx,
+		Types:     types,
+		Scopes:    scopes,
+		Manifests: manifests,
+		CheckCtx:  checkCtx,
+		Graphs:    api.GraphsFrom(ctx),
 	}
+}
+
+// WithQueryContext returns a shallow dependency view bound to ctx. Query-backed
+// synthesis uses this so dependency tracking follows the active query frame
+// instead of a coarse database revision.
+func (d *Deps) WithQueryContext(ctx *db.QueryContext) *Deps {
+	if d == nil || d.Ctx == ctx {
+		return d
+	}
+	next := *d
+	next.Ctx = ctx
+	return &next
 }
 
 // Graph returns the versioned graph from checkCtx.

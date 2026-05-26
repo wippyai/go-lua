@@ -15,13 +15,36 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow/join"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/join"
+	"github.com/wippyai/go-lua/types/typ/subst"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
+
+type phiJoinKey struct {
+	point cfg.Point
+	key   string
+}
+
+type phiJoinValue struct {
+	operands []typ.Type
+	joined   typ.Type
+}
+
+type mapMutationEvaluation struct {
+	keyType      typ.Type
+	valueType    typ.Type
+	currentType  typ.Type
+	existingType typ.Type
+	pathKey      string
+}
 
 // processPointReturnChangedKeys processes all type-changing operations at a CFG point.
 //
@@ -39,6 +62,10 @@ func (s *Solution) processPointReturnChangedKeys(p cfg.Point) []string {
 	}
 
 	var changedKeys []string
+	oldMutableState := s.beginPointMutableState(p)
+	if !s.transferPointReachable(p) {
+		return s.clearPointTransferState(p, oldMutableState)
+	}
 
 	// Process phi nodes at this point
 	phiKeys := s.processJoinReturnChangedKeys(p)
@@ -46,6 +73,7 @@ func (s *Solution) processPointReturnChangedKeys(p cfg.Point) []string {
 
 	assignKeys := s.processAssignmentReturnChangedKeys(p)
 	changedKeys = append(changedKeys, assignKeys...)
+	changedKeys = append(changedKeys, s.mutableStateChangedKeys(oldMutableState, p)...)
 
 	return changedKeys
 }
@@ -53,13 +81,11 @@ func (s *Solution) processPointReturnChangedKeys(p cfg.Point) []string {
 // processAssignmentReturnChangedKeys processes all assignments at a CFG point.
 //
 // For each assignment targeting this point, computes the assigned type by:
-//  1. Looking up source path type via NarrowedTypeAt (for flow propagation)
-//  2. Deriving iterator variable types from IteratorSource
-//  3. Deriving container element types from ContainerElementSource
-//  4. Falling back to the statically extracted type
+//  1. Evaluating the canonical AssignmentSource against current flow state
+//  2. Reconciling that evidence with the statically extracted type
 //
 // Also handles special assignment types:
-//   - IndexerAssignments: Dynamic index (t[k] = v) widening empty tables to maps
+//   - MapMutatorAssignments: Lua map writes (t[k] = v) through indexed-write admission
 //   - TableMutatorAssignments: table.insert-like array element widening
 //   - ContainerMutatorAssignments: channel.send-like element type widening
 //
@@ -67,46 +93,14 @@ func (s *Solution) processPointReturnChangedKeys(p cfg.Point) []string {
 func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 	var changedKeys []string
 
-	for _, assign := range s.inputs.Assignments {
-		if assign.Point != p {
-			continue
-		}
-
+	for _, assign := range s.assignmentsAt(p) {
 		// Field/index writes create a new symbol version. Carry forward unchanged
 		// base/suffix facts from predecessor versions so sibling fields remain stable.
 		if len(assign.TargetPath.Segments) > 0 {
 			changedKeys = append(changedKeys, s.carryForwardStructuredVersionFacts(p, assign.TargetPath)...)
 		}
 
-		var assignedType typ.Type
-		if assign.SourcePath.HasSymbol() {
-			assignedType = s.assignmentSourceTypeAt(p, assign)
-		}
-		if assign.IterSource != nil {
-			if iterType := s.iterVarTypeAt(p, assign.IterSource); iterType != nil {
-				assignedType = mergeIteratorAssignedType(assign.Type, iterType)
-			}
-		}
-		// Derive type from container element type if ContainerElementSource is set
-		if assign.ContainerElementSource != nil {
-			if elemType := s.containerElementTypeAt(p, assign.ContainerElementSource); elemType != nil {
-				assignedType = elemType
-			}
-		}
-		// Derive type from dynamic map index read if MapElementSource is set.
-		if assign.MapElementSource != nil {
-			if elemType := s.mapElementTypeAt(p, assign.MapElementSource); elemType != nil {
-				assignedType = elemType
-			}
-		}
-		if assignedType == nil {
-			assignedType = assign.Type
-		}
-		if assign.LengthIndexSource != nil {
-			if refined := s.lengthIndexTypeAt(p, assign.LengthIndexSource, assignedType); refined != nil {
-				assignedType = refined
-			}
-		}
+		assignedType := assignmentEvidenceType(assign.Type, s.assignmentSourceTypeAt(p, assign))
 
 		targetKey := s.pkResolver.KeyAt(p, assign.TargetPath)
 		if targetKey == "" {
@@ -117,8 +111,8 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 		// so writes through t.cur.* propagate to s.*.
 		if len(assign.TargetPath.Segments) > 0 {
 			targetKeyStr := string(targetKey)
-			if assign.SourcePath.HasSymbol() {
-				sourceKey := s.pkResolver.KeyAt(p, assign.SourcePath)
+			if assign.Source.Kind == AssignmentSourcePath && assign.Source.Path.HasSymbol() {
+				sourceKey := s.pkResolver.KeyAt(p, assign.Source.Path)
 				if sourceKey != "" && sourceKey != targetKey {
 					if s.pathAliases == nil {
 						s.pathAliases = make(map[string]string)
@@ -134,51 +128,356 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 
 		if assignedType != nil {
 			targetKeyStr := string(targetKey)
-			old := s.values[targetKeyStr]
+			old := s.valueAtPoint(p, targetKeyStr)
 			if len(assign.TargetPath.Segments) > 0 && assignedType.Kind() == kind.Nil {
 				assignedType = s.normalizeNilFieldAssignmentType(p, assign.TargetPath, old)
 			}
-			if !typ.TypeEquals(old, assignedType) {
-				s.setValue(targetKeyStr, assignedType)
-				changedKeys = append(changedKeys, targetKeyStr)
+			if !sameFlowValue(old, assignedType) {
+				if len(assign.TargetPath.Segments) > 0 {
+					s.setMutableValue(p, targetKeyStr, assignedType)
+				} else {
+					s.setValue(targetKeyStr, assignedType)
+					changedKeys = append(changedKeys, targetKeyStr)
+				}
 			}
+			changedKeys = append(changedKeys, s.clearMutableDescendantsAtPoint(p, targetKeyStr)...)
 			if len(assign.TargetPath.Segments) > 0 {
 				changedKeys = append(changedKeys, s.propagateAliasedFieldWrite(p, assign.TargetPath, assignedType)...)
+				changedKeys = append(changedKeys, s.propagateSourceFieldWriteToAliases(p, assign.TargetPath, assignedType)...)
 			}
 		}
 	}
 
-	// Process indexer assignments to widen tables
-	for _, ia := range s.inputs.IndexerAssignments {
-		if ia.Point != p {
-			continue
-		}
-		if key := s.processIndexerAssignmentReturnKey(p, ia); key != "" {
+	// Process map writes through the canonical indexed-write domain law.
+	for _, mm := range s.mapMutatorAssignmentsAt(p) {
+		if key := s.processMapMutatorAssignmentReturnKey(p, mm); key != "" {
 			changedKeys = append(changedKeys, key)
 		}
 	}
 
 	// Process table mutator assignments (table.insert-like)
-	for _, tm := range s.inputs.TableMutatorAssignments {
-		if tm.Point != p {
-			continue
-		}
+	for _, tm := range s.tableMutatorAssignmentsAt(p) {
 		if key := s.processTableMutatorAssignmentReturnKey(p, tm); key != "" {
 			changedKeys = append(changedKeys, key)
 		}
 	}
 
 	// Process container mutator assignments (channel.send-like)
-	for _, cm := range s.inputs.ContainerMutatorAssignments {
-		if cm.Point != p {
-			continue
-		}
+	for _, cm := range s.containerMutatorAssignmentsAt(p) {
 		if key := s.processContainerMutatorAssignmentReturnKey(p, cm); key != "" {
 			changedKeys = append(changedKeys, key)
 		}
 	}
 
 	return changedKeys
+}
+
+func assignmentEvidenceType(staticType, sourceType typ.Type) typ.Type {
+	if sourceType == nil {
+		return staticType
+	}
+	if staticType == nil || typ.TypeEquals(sourceType, staticType) {
+		return sourceType
+	}
+	if typ.MorePrecise(staticType, sourceType) {
+		return staticType
+	}
+	if typ.ContainsTypeParam(sourceType) && !typ.ContainsTypeParam(staticType) {
+		return staticType
+	}
+	if typ.ContainsTypeParam(staticType) && !typ.ContainsTypeParam(sourceType) {
+		return sourceType
+	}
+	if sourceType.Kind().IsPlaceholder() && !staticType.Kind().IsPlaceholder() {
+		return staticType
+	}
+	if staticType.Kind().IsPlaceholder() {
+		return sourceType
+	}
+	return sourceType
+}
+
+func (s *Solution) mutationValueTypeAt(p cfg.Point, valuePath constraint.Path, staticType typ.Type, template ValueTemplate) typ.Type {
+	valueType := staticType
+	if valuePath.HasSymbol() {
+		if resolved := s.NarrowedTypeAt(p, valuePath); !typ.IsAbsentOrUnknown(resolved) {
+			valueType = resolved
+		}
+	}
+	if len(template.Slots) == 0 {
+		return valueType
+	}
+	return s.applyValueTemplate(p, valueType, template)
+}
+
+// MutatorValueTypeAt evaluates the canonical mutator value algebra against the
+// solved abstract state. Postflow evidence reducers use this instead of
+// re-reading AST expressions after flow has already lowered map/table/container
+// mutations.
+func (s *Solution) MutatorValueTypeAt(p cfg.Point, valuePath constraint.Path, staticType typ.Type, template ValueTemplate) typ.Type {
+	if s == nil {
+		return staticType
+	}
+	return s.mutationValueTypeAt(p, valuePath, staticType, template)
+}
+
+// MutatorKeyTypeAt evaluates the canonical mutator key algebra against the
+// solved abstract state. Postflow reducers use this to store the same widened
+// key domain that transfer used when applying map/table mutator operators.
+func (s *Solution) MutatorKeyTypeAt(p cfg.Point, keyPath constraint.Path, staticType typ.Type) typ.Type {
+	if staticType == nil && !keyPath.HasSymbol() {
+		return nil
+	}
+	if s == nil {
+		return normalizeDynamicKeyType(staticType)
+	}
+	keyType := staticType
+	if keyPath.HasSymbol() {
+		if narrowed := s.NarrowedTypeAt(p, keyPath); !typ.IsAbsentOrUnknown(narrowed) {
+			keyType = narrowed
+		}
+	}
+	return normalizeDynamicKeyType(keyType)
+}
+
+func (s *Solution) applyValueTemplate(p cfg.Point, base typ.Type, template ValueTemplate) typ.Type {
+	out := base
+	for _, slot := range template.Slots {
+		if len(slot.Segments) == 0 || slot.Source.Kind == AssignmentSourceStatic {
+			continue
+		}
+		slotType := s.assignmentSourceTypeAt(p, UnifiedAssignment{
+			Point:  p,
+			Type:   nil,
+			Source: slot.Source,
+		})
+		if typ.IsAbsentOrUnknown(slotType) {
+			continue
+		}
+		out = setValueTemplateSlot(out, slot.Segments, slotType)
+	}
+	return out
+}
+
+func setValueTemplateSlot(base typ.Type, segments []constraint.Segment, valueType typ.Type) typ.Type {
+	if len(segments) == 0 || valueType == nil {
+		return base
+	}
+	seg := segments[0]
+	switch v := typ.UnwrapAnnotated(base).(type) {
+	case *typ.Alias:
+		updated := setValueTemplateSlot(v.Target, segments, valueType)
+		if updated == nil || typ.TypeEquals(updated, v.Target) {
+			return base
+		}
+		return typ.NewAlias(v.Name, updated)
+	case *typ.Optional:
+		updated := setValueTemplateSlot(v.Inner, segments, valueType)
+		if updated == nil || typ.TypeEquals(updated, v.Inner) {
+			return base
+		}
+		return typ.NewOptional(updated)
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(v.Members))
+		changed := false
+		for _, member := range v.Members {
+			updated := setValueTemplateSlot(member, segments, valueType)
+			if updated == nil {
+				updated = member
+			}
+			if !sameFlowValue(member, updated) {
+				changed = true
+			}
+			members = append(members, updated)
+		}
+		if !changed {
+			return base
+		}
+		return typ.NewUnion(members...)
+	case *typ.Record:
+		field, ok := valueTemplateFieldSegment(seg)
+		if !ok {
+			return base
+		}
+		child := typ.Type(nil)
+		optional := false
+		if existing := v.GetField(field); existing != nil {
+			child = existing.Type
+			optional = existing.Optional
+		} else if v.HasMapComponent() {
+			child = v.MapValue
+			optional = true
+		}
+		updated := setValueTemplateSlot(child, segments[1:], valueType)
+		if updated == nil {
+			return base
+		}
+		return rebuildValueTemplateRecord(v, field, updated, optional)
+	case *typ.Tuple:
+		if seg.Kind != constraint.SegmentIndexInt || seg.Index < 1 || int(seg.Index) > len(v.Elements) {
+			return base
+		}
+		idx := int(seg.Index) - 1
+		updated := setValueTemplateSlot(v.Elements[idx], segments[1:], valueType)
+		if updated == nil || typ.TypeEquals(updated, v.Elements[idx]) {
+			return base
+		}
+		elements := make([]typ.Type, len(v.Elements))
+		copy(elements, v.Elements)
+		elements[idx] = updated
+		return typ.NewTuple(elements...)
+	case *typ.Array:
+		if seg.Kind != constraint.SegmentIndexInt {
+			return base
+		}
+		updated := setValueTemplateSlot(v.Element, segments[1:], valueType)
+		if updated == nil || typ.TypeEquals(updated, v.Element) {
+			return base
+		}
+		return typ.NewArray(updated)
+	default:
+		return base
+	}
+}
+
+func valueTemplateFieldSegment(seg constraint.Segment) (string, bool) {
+	switch seg.Kind {
+	case constraint.SegmentField, constraint.SegmentIndexString:
+		return seg.Name, seg.Name != ""
+	default:
+		return "", false
+	}
+}
+
+func rebuildValueTemplateRecord(rec *typ.Record, field string, fieldType typ.Type, optional bool) typ.Type {
+	builder := typ.NewRecord()
+	if rec.Open {
+		builder.SetOpen(true)
+	}
+	if rec.Metatable != nil {
+		builder.Metatable(rec.Metatable)
+	}
+	if rec.HasMapComponent() {
+		builder.MapComponent(rec.MapKey, rec.MapValue)
+	}
+	added := false
+	for _, f := range rec.Fields {
+		if f.Name != field {
+			addValueTemplateRecordField(builder, f.Name, f.Type, f.Optional, f.Readonly)
+			continue
+		}
+		addValueTemplateRecordField(builder, f.Name, fieldType, optional || f.Optional, f.Readonly)
+		added = true
+	}
+	if !added {
+		addValueTemplateRecordField(builder, field, fieldType, optional, false)
+	}
+	return builder.Build()
+}
+
+func addValueTemplateRecordField(builder *typ.RecordBuilder, name string, fieldType typ.Type, optional, readonly bool) {
+	switch {
+	case optional && readonly:
+		builder.OptReadonlyField(name, fieldType)
+	case optional:
+		builder.OptField(name, fieldType)
+	case readonly:
+		builder.ReadonlyField(name, fieldType)
+	default:
+		builder.Field(name, fieldType)
+	}
+}
+
+func (s *Solution) clearPointTransferState(p cfg.Point, oldMutableState map[string]product.AbstractValue) []string {
+	if s == nil || s.inputs == nil || s.pkResolver == nil {
+		return nil
+	}
+
+	changed := s.clearPointScalarTransferState(p)
+	if len(s.mutableValues[p]) > 0 {
+		delete(s.mutableValues, p)
+	}
+	changed = append(changed, s.mutableStateChangedKeys(oldMutableState, p)...)
+	if len(changed) <= 1 {
+		return changed
+	}
+	sort.Strings(changed)
+	out := changed[:0]
+	for _, key := range changed {
+		if len(out) == 0 || out[len(out)-1] != key {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
+func (s *Solution) clearPointScalarTransferState(p cfg.Point) []string {
+	var changed []string
+	for _, assign := range s.assignmentsAt(p) {
+		targetRoot := assign.TargetPath
+		targetRoot.Segments = nil
+		if key := s.pkResolver.KeyAt(p, targetRoot); key != "" {
+			if s.deleteValueKey(string(key)) {
+				changed = append(changed, string(key))
+			}
+			s.deletePathAliasesWithPrefix(string(key))
+		}
+		if len(assign.TargetPath.Segments) > 0 {
+			if key := s.pkResolver.KeyAt(p, assign.TargetPath); key != "" {
+				delete(s.pathAliases, string(key))
+			}
+		}
+	}
+	for _, phi := range s.phisAt(p) {
+		key := s.pkResolver.KeyAtVersion(phi.Target.Symbol, phi.Target.ID, nil)
+		if key == "" {
+			continue
+		}
+		if s.deleteValueKey(string(key)) {
+			changed = append(changed, string(key))
+		}
+		s.deletePathAliasesWithPrefix(string(key))
+	}
+	return changed
+}
+
+func (s *Solution) deleteValueKey(key string) bool {
+	if s == nil || key == "" || s.values == nil {
+		return false
+	}
+	if _, ok := s.values[key]; !ok {
+		return false
+	}
+	delete(s.values, key)
+	if s.presence != nil {
+		delete(s.presence, key)
+	}
+	s.removeValueSuffix(key)
+	s.invalidateQueryCachesForWrite(key)
+	return true
+}
+
+func (s *Solution) deletePathAliasesWithPrefix(prefix string) {
+	if s == nil || prefix == "" || len(s.pathAliases) == 0 {
+		return
+	}
+	for key := range s.pathAliases {
+		if key == prefix || pathKeyHasPrefix(key, prefix) {
+			delete(s.pathAliases, key)
+		}
+	}
+}
+
+func pathKeyHasPrefix(key, prefix string) bool {
+	if len(key) <= len(prefix) || key[:len(prefix)] != prefix {
+		return false
+	}
+	switch key[len(prefix)] {
+	case '.', '[':
+		return true
+	default:
+		return false
+	}
 }
 
 func mergeIteratorAssignedType(extracted, derived typ.Type) typ.Type {
@@ -207,27 +506,82 @@ func mergeIteratorAssignedType(extracted, derived typ.Type) typ.Type {
 }
 
 func (s *Solution) assignmentSourceTypeAt(p cfg.Point, assign UnifiedAssignment) typ.Type {
-	if !assign.SourcePath.HasSymbol() {
+	var sourceType typ.Type
+	switch assign.Source.Kind {
+	case AssignmentSourcePath:
+		if !assign.Source.Path.HasSymbol() {
+			return nil
+		}
+		// Lua evaluates RHS before writing assignment targets. For self-related
+		// assignments, source reads must come from predecessor state.
+		if s.assignmentNeedsPreState(assign) {
+			if pre := s.preAssignmentNarrowedTypeAt(p, assign.Source.Path); pre != nil {
+				sourceType = pre
+				break
+			}
+		}
+		sourceType = s.NarrowedTypeAt(p, assign.Source.Path)
+	case AssignmentSourceIterator:
+		if iterType := s.iterVarTypeAt(p, assign.Source); iterType != nil {
+			sourceType = mergeIteratorAssignedType(assign.Type, iterType)
+		}
+	case AssignmentSourceContainerElement:
+		sourceType = s.containerElementTypeAt(p, assign.Source)
+	case AssignmentSourceMapElement:
+		sourceType = s.mapElementTypeAt(p, assign.Source)
+	case AssignmentSourceLengthIndex:
+		sourceType = s.lengthIndexTypeAt(p, assign.Source, assign.Type)
+	case AssignmentSourceCallReturn:
+		sourceType = s.callReturnTypeAt(p, assign.Source)
+	}
+	return assignmentSourceProjectionType(sourceType, assign.Source)
+}
+
+func assignmentSourceProjectionType(sourceType typ.Type, source AssignmentSource) typ.Type {
+	if source.ProjectionKind == AssignmentSourceProjectionNone {
+		return sourceType
+	}
+	return value.SelectSourceProjection(sourceType, source.ProjectedType)
+}
+
+// AssignedValueTypeAt evaluates the canonical assignment-source algebra against
+// the solved abstract state and reconciles it with the static extraction type.
+// Postflow reducers use this instead of re-reading AST expressions.
+func (s *Solution) AssignedValueTypeAt(p cfg.Point, target constraint.Path, static typ.Type, source AssignmentSource) typ.Type {
+	if s == nil {
+		return static
+	}
+	return assignmentEvidenceType(static, s.assignmentSourceTypeAt(p, UnifiedAssignment{
+		Point:      p,
+		TargetPath: target,
+		Type:       static,
+		Source:     source,
+	}))
+}
+
+// AssignmentSourceValueAt evaluates source-owned assignment evidence without
+// reconciling it against the target/static slot type. Diagnostics and postflow
+// projection use this to consume the same canonical RHS algebra as transfer
+// without treating target annotations as source facts.
+func (s *Solution) AssignmentSourceValueAt(p cfg.Point, target constraint.Path, source AssignmentSource) typ.Type {
+	if s == nil {
 		return nil
 	}
-	// Lua evaluates RHS before writing assignment targets. For self-related
-	// assignments, source reads must come from predecessor state.
-	if s.assignmentNeedsPreState(assign) {
-		if pre := s.preAssignmentNarrowedTypeAt(p, assign.SourcePath); pre != nil {
-			return pre
-		}
-	}
-	return s.NarrowedTypeAt(p, assign.SourcePath)
+	return s.assignmentSourceTypeAt(p, UnifiedAssignment{
+		Point:      p,
+		TargetPath: target,
+		Source:     source,
+	})
 }
 
 func (s *Solution) assignmentNeedsPreState(assign UnifiedAssignment) bool {
-	if assign.TargetPath.Symbol == 0 || assign.SourcePath.Symbol == 0 {
+	if assign.TargetPath.Symbol == 0 || assign.Source.Kind != AssignmentSourcePath || assign.Source.Path.Symbol == 0 {
 		return false
 	}
-	if assign.TargetPath.Symbol != assign.SourcePath.Symbol {
+	if assign.TargetPath.Symbol != assign.Source.Path.Symbol {
 		return false
 	}
-	return pathkey.PathRelated(assign.TargetPath, assign.SourcePath)
+	return pathkey.PathRelated(assign.TargetPath, assign.Source.Path)
 }
 
 func (s *Solution) preAssignmentNarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
@@ -296,7 +650,7 @@ func (s *Solution) propagateAliasedFieldWrite(p cfg.Point, targetPath constraint
 		}
 
 		keyStr := string(destKey)
-		old := s.values[keyStr]
+		old := s.valueAtPoint(p, keyStr)
 		newType := assignedType
 		if len(destSegs) > 0 && assignedType.Kind() == kind.Nil {
 			newType = s.normalizeNilFieldAssignmentType(p, constraint.Path{
@@ -305,14 +659,76 @@ func (s *Solution) propagateAliasedFieldWrite(p cfg.Point, targetPath constraint
 				Segments: destSegs,
 			}, old)
 		}
-		if typ.TypeEquals(old, newType) {
+		if sameFlowValue(old, newType) {
 			return nil
 		}
-		s.setValue(keyStr, newType)
-		return []string{keyStr}
+		s.setMutableValue(p, keyStr, newType)
+		return nil
 	}
 
 	return nil
+}
+
+func (s *Solution) propagateSourceFieldWriteToAliases(p cfg.Point, sourcePath constraint.Path, assignedType typ.Type) []string {
+	if s == nil || s.pkResolver == nil || assignedType == nil || sourcePath.Symbol == 0 || len(sourcePath.Segments) == 0 || len(s.pathAliases) == 0 {
+		return nil
+	}
+	sourceKey := s.pkResolver.KeyAt(p, sourcePath)
+	if sourceKey == "" {
+		return nil
+	}
+	sourceSym, sourceVersion, sourceSuffix, ok := pathkey.ParseKeyUnchecked(sourceKey)
+	if !ok || sourceSym == 0 || sourceVersion == 0 {
+		return nil
+	}
+	sourceSegs := pathkey.ParseSuffix(sourceSuffix)
+	for aliasKey, aliasSourceKey := range s.pathAliases {
+		aliasSourceSym, aliasSourceVersion, aliasSourceSuffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(aliasSourceKey))
+		if !ok || aliasSourceSym != sourceSym || aliasSourceVersion != sourceVersion {
+			continue
+		}
+		aliasSourceSegs := pathkey.ParseSuffix(aliasSourceSuffix)
+		if !segmentsPrefix(aliasSourceSegs, sourceSegs) {
+			continue
+		}
+		aliasSym, aliasVersion, aliasSuffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(aliasKey))
+		if !ok || aliasSym == 0 || aliasVersion == 0 {
+			continue
+		}
+		aliasSegs := pathkey.ParseSuffix(aliasSuffix)
+		destSegs := append(append([]constraint.Segment{}, aliasSegs...), sourceSegs[len(aliasSourceSegs):]...)
+		destKey := s.pkResolver.KeyAtVersion(aliasSym, aliasVersion, destSegs)
+		if destKey == "" {
+			continue
+		}
+		keyStr := string(destKey)
+		old := s.valueAtPoint(p, keyStr)
+		newType := assignedType
+		if len(destSegs) > 0 && assignedType.Kind() == kind.Nil {
+			newType = s.normalizeNilFieldAssignmentType(p, constraint.Path{
+				Symbol:   aliasSym,
+				Version:  aliasVersion,
+				Segments: destSegs,
+			}, old)
+		}
+		if sameFlowValue(old, newType) {
+			continue
+		}
+		s.setMutableValue(p, keyStr, newType)
+	}
+	return nil
+}
+
+func segmentsPrefix(prefix, full []constraint.Segment) bool {
+	if len(prefix) > len(full) {
+		return false
+	}
+	for i := range prefix {
+		if prefix[i] != full[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Solution) aliasSourceKeyAt(p cfg.Point, path constraint.Path) string {
@@ -374,94 +790,7 @@ func (s *Solution) hasRootAssignmentAtPoint(p cfg.Point, sym cfg.SymbolID) bool 
 // carryForwardStructuredVersionFacts seeds the current version with predecessor
 // root/suffix facts for structured values when assigning through a sub-path.
 func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath constraint.Path) []string {
-	if s == nil || s.inputs == nil || s.inputs.Graph == nil || s.pkResolver == nil {
-		return nil
-	}
-	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
-		return nil
-	}
-
-	currentBase := constraint.Path{
-		Root:    targetPath.Root,
-		Symbol:  targetPath.Symbol,
-		Version: targetPath.Version,
-	}
-	currentBaseKey := s.pkResolver.KeyAt(p, currentBase)
-	if currentBaseKey == "" {
-		return nil
-	}
-
-	preds := graphPredecessors(s.inputs.Graph, p)
-	if len(preds) == 0 {
-		return nil
-	}
-
-	predBaseKeys := make([]string, 0, len(preds))
-	seenPredBase := make(map[string]struct{}, len(preds))
-	for _, pred := range preds {
-		ver := s.inputs.Graph.VisibleVersion(pred, targetPath.Symbol)
-		if ver.Symbol == 0 || ver.ID == 0 {
-			continue
-		}
-		predBaseKey := s.pkResolver.KeyAtVersion(ver.Symbol, ver.ID, nil)
-		if predBaseKey == "" {
-			continue
-		}
-		key := string(predBaseKey)
-		if _, seen := seenPredBase[key]; seen {
-			continue
-		}
-		seenPredBase[key] = struct{}{}
-		predBaseKeys = append(predBaseKeys, key)
-	}
-	if len(predBaseKeys) == 0 {
-		return nil
-	}
-
-	var changedKeys []string
-	currentBaseKeyStr := string(currentBaseKey)
-
-	baseTypes := s.predecessorNarrowedRootTypes(p, targetPath, predBaseKeys)
-	if len(baseTypes) > 0 && s.values[currentBaseKeyStr] == nil {
-		joinedBase := join.Types(baseTypes...)
-		if !typ.TypeEquals(s.values[currentBaseKeyStr], joinedBase) {
-			s.setValue(currentBaseKeyStr, joinedBase)
-			changedKeys = append(changedKeys, currentBaseKeyStr)
-		}
-	}
-
-	// Seed suffix values from predecessor versions when missing on current version.
-	suffixTypes := make(map[string][]typ.Type)
-	for _, predBaseKey := range predBaseKeys {
-		prefixLen := len(predBaseKey)
-		for key, t := range s.values {
-			if t == nil || len(key) <= prefixLen || key[:prefixLen] != predBaseKey {
-				continue
-			}
-			suffix := key[prefixLen:]
-			if len(suffix) == 0 || (suffix[0] != '.' && suffix[0] != '[') {
-				continue
-			}
-			suffixTypes[suffix] = append(suffixTypes[suffix], t)
-		}
-	}
-
-	for suffix, types := range suffixTypes {
-		if len(types) == 0 {
-			continue
-		}
-		key := currentBaseKeyStr + suffix
-		if s.values[key] != nil {
-			continue
-		}
-		joined := join.Types(types...)
-		if !typ.TypeEquals(s.values[key], joined) {
-			s.setValue(key, joined)
-			changedKeys = append(changedKeys, key)
-		}
-	}
-
-	return changedKeys
+	return newStructuredCarryForward(s, p, targetPath).apply()
 }
 
 func (s *Solution) predecessorNarrowedRootTypes(
@@ -483,8 +812,10 @@ func (s *Solution) predecessorNarrowedRootTypes(
 
 	baseTypes = make([]typ.Type, 0, len(predBaseKeys))
 	for _, predBaseKey := range predBaseKeys {
-		if t := s.values[predBaseKey]; t != nil && !typ.IsNever(t) {
-			baseTypes = append(baseTypes, t)
+		if av, ok := s.values[predBaseKey]; ok {
+			if t := projectFlowValue(av); t != nil && !typ.IsNever(t) {
+				baseTypes = append(baseTypes, t)
+			}
 		}
 	}
 	return baseTypes
@@ -503,27 +834,7 @@ func (s *Solution) predecessorNarrowedRootType(p cfg.Point, path constraint.Path
 }
 
 func (s *Solution) normalizeNilFieldAssignmentType(p cfg.Point, targetPath constraint.Path, old typ.Type) typ.Type {
-	if !typ.IsAbsentOrUnknown(old) {
-		return typ.JoinPreferNonSoft(old, typ.Nil)
-	}
-	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
-		return typ.Nil
-	}
-
-	rootPath := constraint.Path{
-		Root:    targetPath.Root,
-		Symbol:  targetPath.Symbol,
-		Version: targetPath.Version,
-	}
-	rootType := s.TypeAt(p, rootPath)
-	if rootType == nil {
-		return typ.Nil
-	}
-	derived, ok := s.deriveTypeFrom(rootType, targetPath.Segments)
-	if !ok || typ.IsAbsentOrUnknown(derived) {
-		return typ.Nil
-	}
-	return typ.JoinPreferNonSoft(derived, typ.Nil)
+	return typ.Nil
 }
 
 // iterVarTypeAt derives iterator variable type from the iterator source at point p.
@@ -538,22 +849,22 @@ func (s *Solution) normalizeNilFieldAssignmentType(p cfg.Point, targetPath const
 // that holds sorted keys of another table (via sorted_keys() or similar), the
 // element type is derived from the original table's key type rather than the
 // intermediate array.
-func (s *Solution) iterVarTypeAt(p cfg.Point, iter *IteratorSource) typ.Type {
-	if iter == nil || iter.Path.IsEmpty() {
+func (s *Solution) iterVarTypeAt(p cfg.Point, src AssignmentSource) typ.Type {
+	if src.Kind != AssignmentSourceIterator || src.Path.IsEmpty() {
 		return nil
 	}
 
 	// Index variable for ipairs-style iteration is always integer.
-	if iter.Kind == IterateIndexed && iter.VarIndex == 0 {
+	if src.IteratorKind == IterateIndexed && src.VarIndex == 0 {
 		return typ.Integer
 	}
 
 	// For indexed iteration (ipairs) over keys-provenance variables,
 	// reconcile the original table key type with the keys-array element type.
 	// Pattern: local keys = sorted_keys(t); for _, k in ipairs(keys) do
-	if iter.Kind == IterateIndexed && iter.VarIndex == 1 {
-		if origTableSym := s.keysProvenanceSource(iter.Path.Symbol); origTableSym != 0 {
-			sourceElem, _ := s.iterationElementEvidenceAt(p, iter)
+	if src.IteratorKind == IterateIndexed && src.VarIndex == 1 {
+		if origTableSym := s.keysProvenanceSource(src.Path.Symbol); origTableSym != 0 {
+			sourceElem, _ := s.iterationElementEvidenceAt(p, src)
 			origPath := constraint.Path{Root: s.inputs.Graph.NameOf(origTableSym), Symbol: origTableSym}
 			if origType := s.NarrowedTypeAt(p, origPath); origType != nil {
 				if keyType := s.inputs.Decomposer.KeyType(origType); keyType != nil {
@@ -565,7 +876,7 @@ func (s *Solution) iterVarTypeAt(p cfg.Point, iter *IteratorSource) typ.Type {
 		}
 	}
 
-	if elem, placeholderSource := s.iterationElementEvidenceAt(p, iter); elem != nil {
+	if elem, placeholderSource := s.iterationElementEvidenceAt(p, src); elem != nil {
 		return elem
 	} else if placeholderSource {
 		return typ.Any
@@ -587,16 +898,16 @@ func usableIteratorElementType(t typ.Type) bool {
 //
 // The query returns the first usable iterator decomposition. A placeholder
 // result means the source exists but carries no concrete element evidence.
-func (s *Solution) iterationElementEvidenceAt(p cfg.Point, iter *IteratorSource) (typ.Type, bool) {
-	if iter == nil || iter.Path.IsEmpty() {
+func (s *Solution) iterationElementEvidenceAt(p cfg.Point, src AssignmentSource) (typ.Type, bool) {
+	if src.Kind != AssignmentSourceIterator || src.Path.IsEmpty() {
 		return nil, false
 	}
 
 	placeholderSource := false
 	for _, srcType := range [...]typ.Type{
-		s.pointLocalPathTypeAt(p, iter.Path),
-		s.pathDomainJoinedType(iter.Path),
-		s.lookupDeclaredType(iter.Path),
+		s.pointLocalPathTypeAt(p, src.Path),
+		s.pathDomainJoinedType(src.Path),
+		s.lookupDeclaredType(src.Path),
 	} {
 		if srcType == nil {
 			continue
@@ -605,7 +916,7 @@ func (s *Solution) iterationElementEvidenceAt(p cfg.Point, iter *IteratorSource)
 			placeholderSource = true
 			continue
 		}
-		if elem := s.elementTypeForIter(srcType, iter); usableIteratorElementType(elem) {
+		if elem := s.elementTypeForIter(srcType, src); usableIteratorElementType(elem) {
 			return elem, false
 		} else if elem != nil && elem.Kind().IsPlaceholder() {
 			placeholderSource = true
@@ -682,19 +993,19 @@ func (s *Solution) keysProvenanceSource(sym cfg.SymbolID) cfg.SymbolID {
 //	  VarIndex 1: ValueType (map/record value)
 //
 // Uses TypeDecomposer for extraction to support various container types.
-func (s *Solution) elementTypeForIter(srcType typ.Type, iter *IteratorSource) typ.Type {
+func (s *Solution) elementTypeForIter(srcType typ.Type, src AssignmentSource) typ.Type {
 	d := s.inputs.Decomposer
-	switch iter.Kind {
+	switch src.IteratorKind {
 	case IterateIndexed:
-		if iter.VarIndex == 1 {
+		if src.VarIndex == 1 {
 			return d.ElementType(srcType)
 		}
 	case IterateKeyed:
-		switch iter.VarIndex {
+		switch src.VarIndex {
 		case 0:
 			return d.KeyType(srcType)
 		case 1:
-			return d.ValueType(srcType)
+			return d.EntryValueType(srcType)
 		}
 	}
 	return nil
@@ -711,8 +1022,8 @@ func (s *Solution) elementTypeForIter(srcType typ.Type, iter *IteratorSource) ty
 //
 // This enables accurate return type inference for generic container methods
 // even when the container was widened during flow analysis.
-func (s *Solution) containerElementTypeAt(p cfg.Point, src *ContainerElementSource) typ.Type {
-	if src == nil || src.ContainerPath.IsEmpty() {
+func (s *Solution) containerElementTypeAt(p cfg.Point, src AssignmentSource) typ.Type {
+	if src.Kind != AssignmentSourceContainerElement || src.ContainerPath.IsEmpty() {
 		return nil
 	}
 
@@ -735,9 +1046,9 @@ func (s *Solution) containerElementTypeAt(p cfg.Point, src *ContainerElementSour
 // mapElementTypeAt derives the value type from a dynamic map index read source.
 //
 // For assignments like `local v = t[k]` where the key is non-const, extraction
-// records MapElementSource so solve-time flow can derive `v` from current map type.
-func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type {
-	if src == nil || src.MapPath.IsEmpty() {
+// records AssignmentSourceMapElement so solve-time flow can derive `v` from current map type.
+func (s *Solution) mapElementTypeAt(p cfg.Point, src AssignmentSource) typ.Type {
+	if src.Kind != AssignmentSourceMapElement || src.MapPath.IsEmpty() {
 		return nil
 	}
 
@@ -773,12 +1084,12 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 	keyType = normalizeDynamicKeyType(keyType)
 	if s.resolver != nil {
 		if valueType, ok := s.resolver.Index(mapType, keyType); ok {
-			return valueType
+			return s.mapElementPresenceTypeAt(p, src, valueType)
 		}
 	}
 	if s.inputs.Decomposer != nil {
 		if valueType := s.inputs.Decomposer.ValueType(mapType); valueType != nil {
-			return valueType
+			return s.mapElementPresenceTypeAt(p, src, valueType)
 		}
 	}
 	if mapType.Kind().IsPlaceholder() {
@@ -790,8 +1101,33 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 	return typ.Nil
 }
 
-func (s *Solution) lengthIndexTypeAt(p cfg.Point, src *LengthIndexSource, indexResult typ.Type) typ.Type {
-	if src == nil || src.ContainerPath.IsEmpty() || indexResult == nil {
+func (s *Solution) mapElementPresenceTypeAt(p cfg.Point, src AssignmentSource, valueType typ.Type) typ.Type {
+	if valueType == nil || s == nil || src.Kind != AssignmentSourceMapElement {
+		return valueType
+	}
+	keyPath := s.mapElementKeyPath(src)
+	if keyPath.IsEmpty() || src.MapPath.IsEmpty() {
+		return valueType
+	}
+	if s.HasKeyOf(p, src.MapPath, keyPath) {
+		return narrow.RemoveNil(valueType)
+	}
+	return valueType
+}
+
+func (s *Solution) mapElementKeyPath(src AssignmentSource) constraint.Path {
+	if src.KeySymbol == 0 {
+		return constraint.Path{}
+	}
+	root := src.KeyVar
+	if root == "" && s != nil && s.inputs != nil && s.inputs.Graph != nil {
+		root = s.inputs.Graph.NameOf(src.KeySymbol)
+	}
+	return constraint.Path{Root: root, Symbol: src.KeySymbol}
+}
+
+func (s *Solution) lengthIndexTypeAt(p cfg.Point, src AssignmentSource, indexResult typ.Type) typ.Type {
+	if src.Kind != AssignmentSourceLengthIndex || src.ContainerPath.IsEmpty() {
 		return nil
 	}
 	containerType := s.NarrowedTypeAt(p, src.ContainerPath)
@@ -812,17 +1148,101 @@ func (s *Solution) lengthIndexTypeAt(p cfg.Point, src *LengthIndexSource, indexR
 	if !ok {
 		return nil
 	}
-	return narrow.RefineLengthIndex(containerType, indexResult, lower, src.Offset)
+	readType := indexResult
+	if lengthIndexNeedsSolvedRead(readType) {
+		readType = s.lengthIndexReadType(containerType)
+	}
+	if readType == nil {
+		return nil
+	}
+	if refined := narrow.RefineLengthIndex(containerType, readType, lower, src.Offset); refined != nil {
+		return refined
+	}
+	if lengthIndexNeedsSolvedRead(indexResult) && lengthIndexPresenceProven(containerType, lower, src.Offset) {
+		return readType
+	}
+	return nil
 }
 
-// processIndexerAssignmentReturnKey handles dynamic index assignments like t[k] = v.
+func lengthIndexNeedsSolvedRead(t typ.Type) bool {
+	return typ.IsAbsentOrUnknown(t) || (t != nil && t.Kind() == kind.Nil)
+}
+
+func (s *Solution) lengthIndexReadType(containerType typ.Type) typ.Type {
+	if containerType == nil {
+		return nil
+	}
+	if s.resolver != nil {
+		if valueType, ok := s.resolver.Index(containerType, typ.Integer); ok {
+			return valueType
+		}
+	}
+	if s.inputs != nil && s.inputs.Decomposer != nil {
+		return s.inputs.Decomposer.ValueType(containerType)
+	}
+	return nil
+}
+
+func lengthIndexPresenceProven(containerType typ.Type, lower, offset int64) bool {
+	index := lower + offset
+	if index < 1 {
+		return false
+	}
+	if offset == 0 {
+		return true
+	}
+	return narrow.LengthBoundProvesSequenceIndex(containerType, index)
+}
+
+func (s *Solution) callReturnTypeAt(p cfg.Point, src AssignmentSource) typ.Type {
+	if src.Kind != AssignmentSourceCallReturn || src.ReturnIndex < 0 {
+		return nil
+	}
+	var callee typ.Type
+	var receiver typ.Type
+	if !src.ReceiverPath.IsEmpty() && src.Method != "" {
+		receiver = s.pointLocalPathTypeAt(p, src.ReceiverPath)
+		if receiver == nil || unwrap.IsOptionalLike(receiver) {
+			return nil
+		}
+		if s.resolver == nil {
+			return nil
+		}
+		if method, ok := s.resolver.Field(receiver, src.Method); ok {
+			callee = method
+		}
+	} else if !src.CalleePath.IsEmpty() {
+		callee = s.pointLocalPathTypeAt(p, src.CalleePath)
+	}
+	fn := unwrap.Function(callee)
+	if fn == nil || src.ReturnIndex >= len(fn.Returns) {
+		return nil
+	}
+	return callReturnSlotType(fn, src.ReturnIndex, receiver)
+}
+
+func callReturnSlotType(fn *typ.Function, returnIndex int, receiver typ.Type) typ.Type {
+	if fn == nil || returnIndex < 0 || returnIndex >= len(fn.Returns) {
+		return nil
+	}
+	base := fn.Returns[returnIndex]
+	if receiver != nil {
+		base = subst.SelfValue(base, receiver)
+	}
+	if er := contract.ErrorReturnForValue(fn, returnIndex); er != nil && !unwrap.IsOptionalLike(base) {
+		return typ.NewOptional(base)
+	}
+	return base
+}
+
+// processMapMutatorAssignmentReturnKey handles dynamic index assignments like t[k] = v.
 //
 // When a table is indexed with a non-constant key (t[k] = v), the table may need
 // widening to accommodate dynamic keys. This method:
 //
-//  1. Skips annotated variables (explicit types are preserved)
-//  2. Resolves key type from flow state or explicit override
-//  3. Calls widenWithIndexer to expand the table type
+//  1. Resolves key type from flow state or explicit override
+//  2. Preserves sealed annotations while allowing refinable structural slots
+//  3. Applies the value-domain indexed-write admission law
 //
 // Widening rules:
 //   - Empty record {} becomes map {[K]: V}
@@ -830,58 +1250,175 @@ func (s *Solution) lengthIndexTypeAt(p cfg.Point, src *LengthIndexSource, indexR
 //   - Existing map widens key/value types via union
 //
 // Returns the changed key if widening occurred, empty string otherwise.
-func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssignment) string {
-	if ia.Symbol == 0 {
+func (s *Solution) processMapMutatorAssignmentReturnKey(p cfg.Point, mm MapMutatorAssignment) string {
+	if mm.Target.Symbol == 0 {
 		return ""
 	}
 
-	// Skip widening for variables with explicit type annotations
-	if s.inputs.AnnotatedVars != nil {
-		if s.inputs.AnnotatedVars[ia.Symbol] {
-			return ""
+	if s.annotationSealsMutableTarget(mm.Target) {
+		return ""
+	}
+	eval, ok := s.evaluateMapMutation(p, mm)
+	if !ok {
+		return ""
+	}
+	if s.mapMutationWritesPairedIteratorValue(mm) {
+		if eval.existingType == nil && eval.currentType != nil {
+			s.setMutableValue(p, eval.pathKey, eval.currentType)
 		}
+		return ""
+	}
+	if !mapMutationAdmits(eval.currentType, eval.keyType, eval.valueType, mm.ValueMode) {
+		return ""
 	}
 
-	// Resolve key type from flow state or explicit override
-	keyType := ia.KeyType
+	var newType typ.Type
+	if mm.ValueMode == MapMutationValueUpdate {
+		newType = value.AdmitIndexedValueMutation(eval.currentType, eval.keyType, eval.valueType)
+	} else {
+		newType = value.AdmitIndexedWrite(eval.currentType, eval.keyType, eval.valueType)
+	}
+	newType = value.MergeForConvergence(eval.currentType, newType)
+	if newType == nil || sameFlowValue(eval.currentType, newType) {
+		if eval.existingType == nil && eval.currentType != nil {
+			s.setMutableValue(p, eval.pathKey, eval.currentType)
+		}
+		return ""
+	}
+
+	s.setMutableValue(p, eval.pathKey, newType)
+	return eval.pathKey
+}
+
+func (s *Solution) evaluateMapMutation(p cfg.Point, mm MapMutatorAssignment) (mapMutationEvaluation, bool) {
+	if s == nil || s.pkResolver == nil || mm.Target.Symbol == 0 {
+		return mapMutationEvaluation{}, false
+	}
+	keyType := mm.KeyType
 	if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
-		keyType = s.resolveSymbolKeyType(p, ia.KeySymbol, ia.KeyVar)
+		keyType = s.resolveSymbolKeyType(p, mm.KeySymbol, mm.KeyVar)
 	}
 	keyType = normalizeDynamicKeyType(keyType)
 
-	// Resolve value type from flow state or static extraction.
-	valueType := ia.ValType
-	if ia.ValuePath.HasSymbol() {
-		if resolved := s.NarrowedTypeAt(p, ia.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
-			valueType = resolved
-		}
-	}
+	valueType := s.mutationValueTypeAt(p, mm.ValuePath, mm.ValueType, mm.Value)
 	if valueType == nil {
-		return ""
+		return mapMutationEvaluation{}, false
 	}
 
-	// Get canonical key for the root variable
-	iaPath := constraint.Path{Root: ia.Root, Symbol: ia.Symbol, Segments: ia.Segments}
-	pathKey := s.pkResolver.KeyAt(p, iaPath)
+	pathKey := s.pkResolver.KeyAt(p, mm.Target)
 	if pathKey == "" {
-		return ""
+		return mapMutationEvaluation{}, false
 	}
-
-	// Get current type of the root
-	currentType := s.values[string(pathKey)]
+	pathKeyStr := string(pathKey)
+	existingAtCurrentKey := s.valueAtPoint(p, pathKeyStr)
+	currentType := existingAtCurrentKey
 	if currentType == nil {
-		currentType = s.joinPredecessorPathTypes(p, iaPath)
+		currentType = s.joinPredecessorPathTypes(p, mm.Target)
 	}
-	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(iaPath))
+	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(mm.Target))
 
-	// Compute the widened type
-	newType := widenWithIndexer(currentType, keyType, valueType)
-	if newType == nil || typ.TypeEquals(currentType, newType) {
-		return ""
+	return mapMutationEvaluation{
+		keyType:      keyType,
+		valueType:    valueType,
+		currentType:  currentType,
+		existingType: existingAtCurrentKey,
+		pathKey:      pathKeyStr,
+	}, true
+}
+
+// IndexWriteAdmission returns the value admitted by the solved dynamic
+// indexed-write transfer product at q. Diagnostics use this as proof that
+// t[k] = v was accepted by the abstract interpreter, rather than rebuilding
+// iterator/key provenance locally.
+func (s *Solution) IndexWriteAdmission(q IndexWriteQuery) (typ.Type, bool) {
+	if s == nil || q.Target.IsEmpty() {
+		return nil, false
 	}
+	q.Target = unversionedTransferPath(q.Target)
+	q.ValuePath = unversionedTransferPath(q.ValuePath)
+	for _, mm := range s.mapMutatorAssignmentsAt(q.Point) {
+		if !mapMutationMatchesQuery(mm, q) {
+			continue
+		}
+		if mm.ValueMode != MapMutationValueWrite || s.annotationSealsMutableTarget(mm.Target) {
+			return nil, false
+		}
+		eval, ok := s.evaluateMapMutation(q.Point, mm)
+		if !ok {
+			return nil, false
+		}
+		if s.mapMutationWritesPairedIteratorValue(mm) {
+			return eval.valueType, true
+		}
+		if !mapMutationAdmits(eval.currentType, eval.keyType, eval.valueType, mm.ValueMode) {
+			return nil, false
+		}
+		return eval.valueType, true
+	}
+	return nil, false
+}
 
-	s.setValue(string(pathKey), newType)
-	return string(pathKey)
+func mapMutationAdmits(currentType, keyType, valueType typ.Type, mode MapMutationValueMode) bool {
+	if mode == MapMutationValueUpdate {
+		return value.IndexedValueMutationAdmits(currentType, keyType, valueType)
+	}
+	return value.IndexedWriteAdmits(currentType, keyType, valueType)
+}
+
+func (s *Solution) mapMutationWritesPairedIteratorValue(mm MapMutatorAssignment) bool {
+	if s == nil || s.inputs == nil || mm.ValueMode != MapMutationValueWrite {
+		return false
+	}
+	if mm.Target.IsEmpty() || mm.KeySymbol == 0 || !mm.ValuePath.HasSymbol() || len(mm.ValuePath.Segments) != 0 {
+		return false
+	}
+	keySrc, keyPoint, ok := s.iteratorSourceForSymbol(mm.KeySymbol, IterateKeyed, 0)
+	if !ok || !sameTransferPath(keySrc.Path, mm.Target) {
+		return false
+	}
+	valueSrc, valuePoint, ok := s.iteratorSourceForSymbol(mm.ValuePath.Symbol, IterateKeyed, 1)
+	if !ok || keyPoint != valuePoint || !sameTransferPath(valueSrc.Path, mm.Target) {
+		return false
+	}
+	return true
+}
+
+func (s *Solution) iteratorSourceForSymbol(sym cfg.SymbolID, kind IteratorKind, index int) (AssignmentSource, cfg.Point, bool) {
+	if s == nil || s.inputs == nil || sym == 0 {
+		return AssignmentSource{}, 0, false
+	}
+	for _, assign := range s.inputs.Assignments {
+		if assign.TargetPath.Symbol != sym || assign.Source.Kind != AssignmentSourceIterator {
+			continue
+		}
+		if assign.Source.IteratorKind != kind || assign.Source.VarIndex != index {
+			continue
+		}
+		return assign.Source, assign.Point, true
+	}
+	return AssignmentSource{}, 0, false
+}
+
+func mapMutationMatchesQuery(mm MapMutatorAssignment, q IndexWriteQuery) bool {
+	if mm.Point != q.Point || !sameTransferPath(mm.Target, q.Target) {
+		return false
+	}
+	if q.KeySymbol != 0 && mm.KeySymbol != 0 && q.KeySymbol != mm.KeySymbol {
+		return false
+	}
+	if q.ValuePath.HasSymbol() && mm.ValuePath.HasSymbol() && !sameTransferPath(q.ValuePath, mm.ValuePath) {
+		return false
+	}
+	return true
+}
+
+func sameTransferPath(a, b constraint.Path) bool {
+	return unversionedTransferPath(a).Equal(unversionedTransferPath(b))
+}
+
+func unversionedTransferPath(path constraint.Path) constraint.Path {
+	path.Version = 0
+	return path
 }
 
 func (s *Solution) joinPredecessorPathTypes(p cfg.Point, path constraint.Path) typ.Type {
@@ -908,7 +1445,7 @@ func (s *Solution) joinPredecessorPathTypes(p cfg.Point, path constraint.Path) t
 				continue
 			}
 			seen[keyStr] = struct{}{}
-			t = s.values[keyStr]
+			t = s.valueAtPoint(pred, keyStr)
 		}
 		if t == nil && len(path.Segments) > 0 {
 			rootKey := s.pkResolver.KeyAtVersion(ver.Symbol, ver.ID, nil)
@@ -917,9 +1454,9 @@ func (s *Solution) joinPredecessorPathTypes(p cfg.Point, path constraint.Path) t
 				if _, ok := seen[rootKeyStr]; ok {
 					continue
 				}
-				if root := s.values[rootKeyStr]; root != nil {
+				if root := s.valueAtPoint(pred, rootKeyStr); root != nil {
 					seen[rootKeyStr] = struct{}{}
-					if derived, ok := s.deriveTypeFrom(root, path.Segments); ok {
+					if derived, ok := deriveTypeFrom(s.resolver, root, path.Segments); ok {
 						t = derived
 					}
 				}
@@ -941,7 +1478,8 @@ func (s *Solution) joinKnownRootTypes(sym cfg.SymbolID) typ.Type {
 	}
 
 	var types []typ.Type
-	for key, t := range s.values {
+	for key, av := range s.values {
+		t := projectFlowValue(av)
 		if t == nil {
 			continue
 		}
@@ -966,7 +1504,8 @@ func (s *Solution) pathDomainJoinedType(path constraint.Path) typ.Type {
 	}
 	suffix := constraint.FormatSegments(path.Segments)
 	var types []typ.Type
-	for key, t := range s.values {
+	for key, av := range s.values {
+		t := projectFlowValue(av)
 		if t == nil {
 			continue
 		}
@@ -978,7 +1517,7 @@ func (s *Solution) pathDomainJoinedType(path constraint.Path) typ.Type {
 		case suffix:
 			types = append(types, t)
 		case "":
-			if derived, ok := s.deriveTypeFrom(t, path.Segments); ok {
+			if derived, ok := deriveTypeFrom(s.resolver, t, path.Segments); ok {
 				types = append(types, derived)
 			}
 		}
@@ -1013,7 +1552,7 @@ func (s *Solution) resolveSymbolKeyType(p cfg.Point, sym cfg.SymbolID, varName s
 // type may need widening. This method:
 //
 //  1. Resolves value type from flow state or static extraction
-//  2. Skips annotated variables (explicit types are preserved)
+//  2. Preserves sealed annotations while allowing refinable structural slots
 //  3. For keyed targets (suites[name]), widens the map value's array element
 //  4. For direct targets, widens the array element type
 //
@@ -1023,22 +1562,13 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 		return ""
 	}
 
-	// Resolve value type from flow state or static extraction
-	valueType := tm.ValueType
-	if tm.ValuePath.HasSymbol() {
-		if resolved := s.NarrowedTypeAt(p, tm.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
-			valueType = resolved
-		}
-	}
+	valueType := s.mutationValueTypeAt(p, tm.ValuePath, tm.ValueType, tm.Value)
 	if valueType == nil {
 		return ""
 	}
 
-	// Skip widening for variables with explicit type annotations
-	if s.inputs.AnnotatedVars != nil {
-		if s.inputs.AnnotatedVars[tm.Target.Symbol] {
-			return ""
-		}
+	if s.annotationSealsMutableTarget(tm.Target) {
+		return ""
 	}
 
 	pathKey := s.pkResolver.KeyAt(p, tm.Target)
@@ -1046,7 +1576,12 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 		return ""
 	}
 
-	currentType := s.values[string(pathKey)]
+	pathKeyStr := string(pathKey)
+	existingAtCurrentKey := s.valueAtPoint(p, pathKeyStr)
+	currentType := existingAtCurrentKey
+	if currentType == nil {
+		currentType = s.joinPredecessorPathTypes(p, tm.Target)
+	}
 	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(tm.Target))
 
 	var newType typ.Type
@@ -1056,17 +1591,21 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 			keyType = s.resolveSymbolKeyType(p, tm.KeySymbol, tm.KeyVar)
 		}
 		keyType = normalizeDynamicKeyType(keyType)
-		newType = WidenMapValueArray(currentType, keyType, valueType)
+		newType = value.AdmitMapArrayElementMutation(currentType, keyType, valueType)
 	} else {
-		newType = WidenArrayElementType(currentType, valueType, typ.JoinPreferNonSoft)
+		newType = value.AdmitArrayElementMutation(currentType, valueType, typ.JoinPreferNonSoft)
 	}
+	newType = value.MergeForConvergence(currentType, newType)
 
-	if newType == nil || typ.TypeEquals(currentType, newType) {
+	if newType == nil || sameFlowValue(currentType, newType) {
+		if existingAtCurrentKey == nil && currentType != nil {
+			s.setMutableValue(p, pathKeyStr, currentType)
+		}
 		return ""
 	}
 
-	s.setValue(string(pathKey), newType)
-	return string(pathKey)
+	s.setMutableValue(p, pathKeyStr, newType)
+	return pathKeyStr
 }
 
 func normalizeDynamicKeyType(keyType typ.Type) typ.Type {
@@ -1085,7 +1624,7 @@ func normalizeDynamicKeyType(keyType typ.Type) typ.Type {
 // The method:
 //  1. Resolves value type from flow state (using ValuePath) or static extraction
 //  2. Applies WidenForInference to normalize the value type
-//  3. Skips annotated variables (explicit types are preserved)
+//  3. Preserves sealed annotations while allowing refinable structural slots
 //  4. Widens the container's element type via union
 //
 // Returns the changed key if widening occurred, empty string otherwise.
@@ -1094,23 +1633,14 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 		return ""
 	}
 
-	// Resolve value type from flow state or static extraction
-	valueType := cm.ValueType
-	if cm.ValuePath.HasSymbol() {
-		if resolved := s.NarrowedTypeAt(p, cm.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
-			valueType = resolved
-		}
-	}
+	valueType := s.mutationValueTypeAt(p, cm.ValuePath, cm.ValueType, cm.Value)
 	if valueType == nil {
 		return ""
 	}
 	valueType = subtype.WidenForInference(valueType)
 
-	// Skip widening for variables with explicit type annotations
-	if s.inputs.AnnotatedVars != nil {
-		if s.inputs.AnnotatedVars[cm.Target.Symbol] {
-			return ""
-		}
+	if s.annotationSealsMutableTarget(cm.Target) {
+		return ""
 	}
 
 	pathKey := s.pkResolver.KeyAt(p, cm.Target)
@@ -1118,15 +1648,27 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 		return ""
 	}
 
-	currentType := s.values[string(pathKey)]
+	pathKeyStr := string(pathKey)
+	existingAtCurrentKey := s.valueAtPoint(p, pathKeyStr)
+	currentType := existingAtCurrentKey
+	if currentType == nil {
+		currentType = s.joinPredecessorPathTypes(p, cm.Target)
+	}
+	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(cm.Target))
 	newType := widenContainerElementType(currentType, valueType)
+	if newType != nil {
+		newType = value.AdmitObservation(newType)
+	}
 
 	if newType == nil || typ.TypeEquals(currentType, newType) {
+		if existingAtCurrentKey == nil && currentType != nil {
+			s.setMutableValue(p, pathKeyStr, currentType)
+		}
 		return ""
 	}
 
-	s.setValue(string(pathKey), newType)
-	return string(pathKey)
+	s.setMutableValue(p, pathKeyStr, newType)
+	return pathKeyStr
 }
 
 // widenContainerElementType widens a container's element type by unioning with a new value type.
@@ -1222,196 +1764,31 @@ func widenContainerElementType(containerType typ.Type, valueType typ.Type) typ.T
 	})
 }
 
-// WidenArrayElementType widens an array type by joining a new element type.
-//
-// This function handles the common pattern of widening arrays as elements are
-// added. The join function controls how types are combined:
-//
-//   - For union: joinFn = join.Two (creates union types)
-//   - For intersection: joinFn = narrow.Intersect (narrows types)
-//
-// Type handling:
-//   - Array: Joins element type with new type
-//   - Empty record: Converts to array with new element type
-//   - Union: Widens first array member found
-//   - nil/placeholder: Creates new array with element type
-//   - Other types: Returns unchanged (not an array)
-//
-// Returns the widened type.
-func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func(a, b typ.Type) typ.Type) typ.Type {
-	if elementType == nil {
-		return arrayType
-	}
-
-	if arrayType == nil {
-		return typ.NewArray(elementType)
-	}
-
-	return typ.Visit(arrayType, typ.Visitor[typ.Type]{
-		Alias: func(a *typ.Alias) typ.Type {
-			widened := WidenArrayElementType(a.Target, elementType, joinFn)
-			if widened == nil || typ.TypeEquals(widened, a.Target) {
-				return arrayType
-			}
-			return typ.NewAlias(a.Name, widened)
-		},
-		Array: func(arr *typ.Array) typ.Type {
-			joined := joinFn(arr.Element, elementType)
-			if joined == nil || typ.TypeEquals(joined, arr.Element) {
-				return arrayType
-			}
-			return typ.NewArray(joined)
-		},
-		Record: func(rec *typ.Record) typ.Type {
-			if len(rec.Fields) == 0 {
-				return typ.NewArray(elementType)
-			}
-			return arrayType
-		},
-		Union: func(u *typ.Union) typ.Type {
-			var updated []typ.Type
-			found := false
-			changed := false
-			for _, m := range u.Members {
-				if arr, ok := m.(*typ.Array); ok && !found {
-					joined := joinFn(arr.Element, elementType)
-					if joined == nil || typ.TypeEquals(joined, arr.Element) {
-						updated = append(updated, m)
-					} else {
-						updated = append(updated, typ.NewArray(joined))
-						changed = true
-					}
-					found = true
-				} else {
-					updated = append(updated, m)
-				}
-			}
-			if found && changed {
-				return typ.NewUnion(updated...)
-			}
-			return arrayType
-		},
-		Default: func(t typ.Type) typ.Type {
-			if arrayType.Kind().IsPlaceholder() {
-				return typ.NewArray(elementType)
-			}
-			return arrayType
-		},
-	})
-}
-
-// WidenMapValueArray widens a map's value type by adding an element to its array component.
-//
-// This handles the pattern: suites[name] = suites[name] or {}; table.insert(suites[name], test)
-// where suites is {[string]: Test[]} and we need to widen the array element type.
-//
-// Type handling:
-//   - Map: Widens key type and array element of value type
-//   - Empty record: Converts to map with array value
-//   - Union: Widens first map member found
-//   - Placeholder types: Creates new map with array value
-//   - Other types: Returns unchanged
-//
-// Returns the widened type.
-func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Type {
-	if mapType == nil {
-		return typ.NewMap(keyType, typ.NewArray(elementType))
-	}
-
-	return typ.Visit(mapType, typ.Visitor[typ.Type]{
-		Alias: func(a *typ.Alias) typ.Type {
-			widened := WidenMapValueArray(a.Target, keyType, elementType)
-			if widened == nil || typ.TypeEquals(widened, a.Target) {
-				return mapType
-			}
-			return typ.NewAlias(a.Name, widened)
-		},
-		Map: func(m *typ.Map) typ.Type {
-			newKey := mergeMapKeyDomain(m.Key, keyType)
-			newVal := WidenArrayElementType(m.Value, elementType, joinContainerValueTypes)
-			if newVal == nil {
-				return mapType
-			}
-			if typ.TypeEquals(m.Key, newKey) && typ.TypeEquals(m.Value, newVal) {
-				return mapType
-			}
-			return typ.NewMap(newKey, newVal)
-		},
-		Record: func(r *typ.Record) typ.Type {
-			if len(r.Fields) == 0 {
-				return typ.NewMap(keyType, typ.NewArray(elementType))
-			}
-			return mapType
-		},
-		Union: func(u *typ.Union) typ.Type {
-			var updated []typ.Type
-			found := false
-			changed := false
-			for _, m := range u.Members {
-				if mp, ok := m.(*typ.Map); ok && !found {
-					newKey := mergeMapKeyDomain(mp.Key, keyType)
-					newVal := WidenArrayElementType(mp.Value, elementType, joinContainerValueTypes)
-					if newVal == nil {
-						updated = append(updated, m)
-					} else if typ.TypeEquals(mp.Key, newKey) && typ.TypeEquals(mp.Value, newVal) {
-						updated = append(updated, m)
-					} else {
-						updated = append(updated, typ.NewMap(newKey, newVal))
-						changed = true
-					}
-					found = true
-				} else {
-					updated = append(updated, m)
-				}
-			}
-			if found && changed {
-				return typ.NewUnion(updated...)
-			}
-			return mapType
-		},
-		Default: func(t typ.Type) typ.Type {
-			if mapType.Kind().IsPlaceholder() {
-				return typ.NewMap(keyType, typ.NewArray(elementType))
-			}
-			return mapType
-		},
-	})
-}
-
-func mergeMapKeyDomain(existing, incoming typ.Type) typ.Type {
-	if existing == nil {
-		return incoming
-	}
-	if incoming == nil {
-		return existing
-	}
-	// Placeholder evidence (any/unknown) is non-informative for key domains.
-	// Preserve an existing concrete domain instead of widening it.
-	if incoming.Kind().IsPlaceholder() && !existing.Kind().IsPlaceholder() {
-		return existing
-	}
-	if existing.Kind().IsPlaceholder() && !incoming.Kind().IsPlaceholder() {
-		return incoming
-	}
-	return typ.JoinPreferNonSoft(existing, incoming)
-}
-
-func joinContainerValueTypes(existing, incoming typ.Type) typ.Type {
-	joined := typ.JoinPreferNonSoft(existing, incoming)
-	if union, ok := joined.(*typ.Union); ok {
-		return join.Types(union.Members...)
-	}
-	return joined
-}
-
 func preferDeclaredTemplateForWiden(current, declared typ.Type) typ.Type {
 	if declared == nil {
+		return current
+	}
+	if isEmptyRecordNoMapType(current) && typ.IsRefinableAnnotation(declared) {
 		return current
 	}
 	if current == nil || current.Kind().IsPlaceholder() || isEmptyRecordNoMapType(current) {
 		return declared
 	}
 	return current
+}
+
+func (s *Solution) annotationSealsMutableTarget(path constraint.Path) bool {
+	if s == nil || s.inputs == nil || path.Symbol == 0 {
+		return false
+	}
+	if s.inputs.AnnotatedVars == nil || !s.inputs.AnnotatedVars[path.Symbol] {
+		return false
+	}
+	declared := s.declaredTemplateForPath(path)
+	if declared == nil {
+		declared = s.inputs.DeclaredTypes[path.Symbol]
+	}
+	return !typ.IsRefinableAnnotation(declared)
 }
 
 func (s *Solution) declaredTemplateForPath(path constraint.Path) typ.Type {
@@ -1422,7 +1799,7 @@ func (s *Solution) declaredTemplateForPath(path constraint.Path) typ.Type {
 	if root == nil || len(path.Segments) == 0 {
 		return root
 	}
-	if t, ok := s.deriveTypeFrom(root, path.Segments); ok {
+	if t, ok := deriveTypeFrom(s.resolver, root, path.Segments); ok {
 		return t
 	}
 	return nil
@@ -1437,116 +1814,6 @@ func isEmptyRecordNoMapType(t typ.Type) bool {
 	default:
 		return false
 	}
-}
-
-// widenWithIndexer widens a type based on dynamic index assignment (t[k] = v).
-//
-// Dynamic indexing (non-constant keys) indicates the type needs a map component.
-// This function transforms types to accommodate dynamic access:
-//
-//   - nil base: Creates map {[K]: V}
-//   - Empty record {}: Converts to map {[K]: V}
-//   - Record with fields: Adds or widens map component
-//   - Existing map: Widens key/value types via union
-//   - Placeholder types: Creates map {[K]: V}
-//   - Other types: Returns unchanged
-//
-// Nil values are skipped: In Lua, t[k] = nil deletes the key rather than storing nil.
-// Map access already returns Optional to represent potentially missing keys.
-func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
-	if valType != nil && valType.Kind() == kind.Nil {
-		return t
-	}
-
-	if t == nil {
-		return typ.NewMap(keyType, valType)
-	}
-
-	return typ.Visit(t, typ.Visitor[typ.Type]{
-		Alias: func(a *typ.Alias) typ.Type {
-			widened := widenWithIndexer(a.Target, keyType, valType)
-			if widened == nil || typ.TypeEquals(widened, a.Target) {
-				return t
-			}
-			return typ.NewAlias(a.Name, widened)
-		},
-		Tuple: func(tp *typ.Tuple) typ.Type {
-			elemType := valType
-			for _, elem := range tp.Elements {
-				elemType = typ.JoinPreferNonSoft(elemType, elem)
-			}
-			// Numeric tuple indexing indicates array-like mutation; widen to array.
-			if subtype.IsSubtype(keyType, typ.Integer) || subtype.IsSubtype(keyType, typ.Number) {
-				return typ.NewArray(elemType)
-			}
-			return typ.NewMap(keyType, elemType)
-		},
-		Record: func(r *typ.Record) typ.Type {
-			// Empty record {} with no map component becomes a map.
-			if len(r.Fields) == 0 && !r.HasMapComponent() {
-				return typ.NewMap(keyType, valType)
-			}
-			// Record with fields: add or widen map component
-			if r.HasMapComponent() {
-				newKey := mergeMapKeyDomain(r.MapKey, keyType)
-				newVal := joinContainerValueTypes(r.MapValue, valType)
-				if typ.TypeEquals(r.MapKey, newKey) && typ.TypeEquals(r.MapValue, newVal) {
-					return t
-				}
-				return rebuildRecordWithMapComponent(r, newKey, newVal)
-			}
-			// Record with fields but no map component: add map component
-			return rebuildRecordWithMapComponent(r, keyType, valType)
-		},
-		Map: func(m *typ.Map) typ.Type {
-			// Widen existing map by unioning key/value types, preferring non-soft.
-			newKey := mergeMapKeyDomain(m.Key, keyType)
-			newVal := joinContainerValueTypes(m.Value, valType)
-			if typ.TypeEquals(m.Key, newKey) && typ.TypeEquals(m.Value, newVal) {
-				return t
-			}
-			return typ.NewMap(newKey, newVal)
-		},
-		Default: func(t typ.Type) typ.Type {
-			// For other types (unknown, any), create a map
-			if t.Kind().IsPlaceholder() {
-				return typ.NewMap(keyType, valType)
-			}
-			return t
-		},
-	})
-}
-
-// rebuildRecordWithMapComponent creates a new record with an added or updated map component.
-//
-// Lua tables can have both named fields (record component) and dynamic keys
-// (map component). This function preserves all fields, flags (optional, readonly),
-// and metatable from the original record while adding or replacing the map component.
-//
-// The resulting type represents a table that can be accessed both by known field
-// names and by dynamic keys of type mapKey.
-func rebuildRecordWithMapComponent(rec *typ.Record, mapKey, mapVal typ.Type) typ.Type {
-	builder := typ.NewRecord()
-	if rec.Open {
-		builder.SetOpen(true)
-	}
-	for _, f := range rec.Fields {
-		switch {
-		case f.Optional && f.Readonly:
-			builder.OptReadonlyField(f.Name, f.Type)
-		case f.Optional:
-			builder.OptField(f.Name, f.Type)
-		case f.Readonly:
-			builder.ReadonlyField(f.Name, f.Type)
-		default:
-			builder.Field(f.Name, f.Type)
-		}
-	}
-	if rec.Metatable != nil {
-		builder.Metatable(rec.Metatable)
-	}
-	builder.MapComponent(mapKey, mapVal)
-	return builder.Build()
 }
 
 // processJoinReturnChangedKeys processes phi nodes at point p.
@@ -1572,11 +1839,7 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 
 	var changedKeys []string
 
-	for _, phi := range s.inputs.Graph.PhiNodes() {
-		if phi.Point != p {
-			continue
-		}
-
+	for _, phi := range s.phisAt(p) {
 		// Collect types from operands, applying edge conditions
 		types := s.scratchTypes[:0]
 		for _, op := range phi.Operands {
@@ -1591,14 +1854,15 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 			continue
 		}
 
-		// Join and store under phi target canonical key
-		joined := join.Types(types...)
 		targetKey := s.pkResolver.KeyAtVersion(phi.Target.Symbol, phi.Target.ID, nil)
 		if targetKey == "" {
 			continue
 		}
-		old := s.values[string(targetKey)]
-		if !typ.TypeEquals(old, joined) {
+		// Join and store under phi target canonical key
+		joined := s.joinPhiEquation(p, string(targetKey), types)
+		old := projectFlowValue(s.values[string(targetKey)])
+		joined = stabilizePhiJoin(old, joined)
+		if !sameFlowValue(old, joined) {
 			s.setValue(string(targetKey), joined)
 			changedKeys = append(changedKeys, string(targetKey))
 		}
@@ -1617,6 +1881,9 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 			}
 			types = types[:0]
 			for _, op := range phi.Operands {
+				if !s.transferPointReachable(op.From) {
+					continue
+				}
 				opType := s.phiOperandTypeAt(p, op, segments)
 				if opType == nil {
 					opType = typ.Nil
@@ -1626,12 +1893,12 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 			if len(types) == 0 {
 				continue
 			}
-			joined = join.Types(types...)
 			fullKey := string(targetKey) + suffix
-			old = s.values[fullKey]
-			if !typ.TypeEquals(old, joined) {
-				s.setValue(fullKey, joined)
-				changedKeys = append(changedKeys, fullKey)
+			joined = s.joinPhiEquation(p, fullKey, types)
+			old = s.valueAtPoint(p, fullKey)
+			joined = stabilizePhiJoin(old, joined)
+			if !sameFlowValue(old, joined) {
+				s.setMutableValue(p, fullKey, joined)
 			}
 		}
 	}
@@ -1639,8 +1906,61 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 	return changedKeys
 }
 
+// stabilizePhiJoin keeps the existing stored fact when the freshly joined
+// candidate is the same point in the product lattice, so a recursive product
+// family that re-derives to a different typ.Type instance but the same canonical
+// product node reports no change and the worklist drains. The comparison is
+// product identity (sameFlowValue / product.Equal), not a typ.Type precision
+// comparison, which is what the convergence proof depends on.
+func stabilizePhiJoin(existing, candidate typ.Type) typ.Type {
+	if existing == nil || candidate == nil {
+		return candidate
+	}
+	if sameFlowValue(existing, candidate) {
+		return existing
+	}
+	return candidate
+}
+
+// joinPhiEquation joins phi operands. The join itself stays the precise
+// control-flow join (join.Types) so phi nil/optional handling is exact: a branch
+// that does not assign keeps nil in the merged type. Recursive-growth convergence
+// is owned by the store no-op check, not the join: the abstract-state carrier
+// holds product.AbstractValue and sameFlowValue compares product identity, where
+// the interner collapses converged recursive families to one canonical node. So a
+// self-similar phi result that grows structurally each iteration still reaches a
+// product-Equal fixed point and the worklist drains.
+func (s *Solution) joinPhiEquation(p cfg.Point, key string, operands []typ.Type) typ.Type {
+	if len(operands) == 0 {
+		return nil
+	}
+	if len(operands) == 1 {
+		return operands[0]
+	}
+	if s.phiJoinState == nil {
+		s.phiJoinState = make(map[phiJoinKey]phiJoinValue, 8)
+	}
+	cacheKey := phiJoinKey{point: p, key: key}
+	if prev, ok := s.phiJoinState[cacheKey]; ok && sameFlowValueVector(prev.operands, operands) {
+		return prev.joined
+	}
+	joined := join.Types(operands...)
+	s.phiJoinState[cacheKey] = phiJoinValue{
+		operands: append([]typ.Type(nil), operands...),
+		joined:   joined,
+	}
+	return joined
+}
+
+func typeVectorsEqual(a, b []typ.Type) bool {
+	return sameFlowValueVector(a, b)
+}
+
 func (s *Solution) phiOperandTypeAt(joinPoint cfg.Point, op cfg.PhiOperand, segments []constraint.Segment) typ.Type {
 	if s == nil {
+		return nil
+	}
+	if !s.transferPointReachable(op.From) {
 		return nil
 	}
 	path := constraint.Path{
@@ -1696,21 +2016,30 @@ func (s *Solution) collectPhiOperandSuffixes(phi cfg.PhiNode) map[string]struct{
 			continue
 		}
 		baseKeyStr := string(baseKey)
-		baseLen := len(baseKeyStr)
-		for key := range s.values {
-			if len(key) <= baseLen {
-				continue
-			}
-			// Check prefix match
-			if key[:baseLen] != baseKeyStr {
-				continue
-			}
-			// Extract suffix (must start with . or [)
-			suffix := key[baseLen:]
-			if len(suffix) > 0 && (suffix[0] == '.' || suffix[0] == '[') {
-				out[suffix] = struct{}{}
-			}
+		for _, suffix := range s.valueSuffixesForRoot(baseKeyStr) {
+			out[suffix] = struct{}{}
+		}
+		for _, suffix := range s.mutableSuffixesForRoot(op.From, baseKeyStr) {
+			out[suffix] = struct{}{}
 		}
 	}
 	return out
+}
+
+func (s *Solution) valueSuffixesForRoot(baseKey string) []string {
+	if s == nil || baseKey == "" || len(s.values) == 0 {
+		return nil
+	}
+	s.ensureValueSuffixIndex()
+	return s.valueSuffixIndex[baseKey]
+}
+
+func (s *Solution) mutableSuffixesForRoot(p cfg.Point, baseKey string) []string {
+	if s == nil || baseKey == "" || len(s.mutableValues[p]) == 0 {
+		return nil
+	}
+	if s.mutableSuffixIndexed == nil || !s.mutableSuffixIndexed[p] {
+		s.indexMutableSuffixesForPoint(p)
+	}
+	return s.mutableSuffixIndex[pointRootKey{point: p, root: baseKey}]
 }

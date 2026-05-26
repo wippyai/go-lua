@@ -23,17 +23,59 @@ type versionedGraph interface {
 	VisibleVersion(p cfg.Point, sym cfg.SymbolID) cfg.Version
 }
 
-// StaticKeySegment converts a syntactically static key expression into a path segment.
+// StaticKeySegment converts a syntactically static table-constructor key
+// expression into a path segment.
 //
-// Supported static keys:
-//   - identifier key: foo        -> SegmentField("foo")
-//   - string key: "foo"          -> SegmentField("foo")
-//   - string key: "x-y"          -> SegmentIndexString("x-y")
-//   - number key: 1              -> SegmentIndexInt(1)
+// Table-constructor semantics:
+//   - identifier field: {foo = v}  -> SegmentField("foo")
+//   - string key: {["foo"] = v}    -> SegmentField("foo")
+//   - string key: {["x-y"] = v}    -> SegmentIndexString("x-y")
+//   - number key: {[1] = v}        -> SegmentIndexInt(1)
 //
 // Returns false for unsupported or empty keys.
 func StaticKeySegment(key ast.Expr) (constraint.Segment, bool) {
 	return pathseg.StaticTableFieldKeySegment(key)
+}
+
+// StaticAttrKeySegment converts a syntactically static attribute/index key into
+// a path segment.
+//
+// Attribute semantics:
+//   - dot field: obj.foo            -> SegmentField("foo")
+//   - string key: obj["foo"]        -> SegmentField("foo")
+//   - string key: obj["x-y"]        -> SegmentIndexString("x-y")
+//   - number key: obj[1]            -> SegmentIndexInt(1)
+//   - dynamic identifier: obj[key]  -> rejected
+func StaticAttrKeySegment(key ast.Expr) (constraint.Segment, bool) {
+	return pathseg.StaticAttrKeySegment(key)
+}
+
+// StaticAttrKeySegmentWithConst resolves compile-time constant attribute/index
+// keys before applying StaticAttrKeySegment. Non-constant identifier keys remain
+// dynamic and are rejected.
+func StaticAttrKeySegmentWithConst(key ast.Expr, constResolver func(string) *flow.ConstValue) (constraint.Segment, bool) {
+	if seg, ok := StaticAttrKeySegment(key); ok {
+		return seg, true
+	}
+	ident, ok := key.(*ast.IdentExpr)
+	if !ok || constResolver == nil {
+		return constraint.Segment{}, false
+	}
+	val := constResolver(ident.Value)
+	if val == nil {
+		return constraint.Segment{}, false
+	}
+	switch val.Kind {
+	case flow.ConstString:
+		return StaticAttrKeySegment(&ast.StringExpr{Value: val.Str})
+	case flow.ConstInt:
+		return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(val.Int)}, true
+	case flow.ConstFloat:
+		if idx, ok := pathkey.FloatToSafeInt(val.Float); ok {
+			return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx}, true
+		}
+	}
+	return constraint.Segment{}, false
 }
 
 // WithVersion binds a path to the SSA version visible at point p.
@@ -74,40 +116,8 @@ func FromExprWithBindings(expr ast.Expr, constResolver func(string) *flow.ConstV
 		if base.IsEmpty() {
 			return constraint.Path{}
 		}
-		switch key := e.Key.(type) {
-		case *ast.StringExpr:
-			seg, ok := StaticKeySegment(key)
-			if !ok {
-				return constraint.Path{}
-			}
+		if seg, ok := StaticAttrKeySegmentWithConst(e.Key, constResolver); ok {
 			return base.Append(seg)
-		case *ast.NumberExpr:
-			if idx, ok := pathkey.ParseIntLiteral(key.Value); ok {
-				return base.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})
-			}
-		case *ast.IdentExpr:
-			if constResolver == nil {
-				return constraint.Path{}
-			}
-			if val := constResolver(key.Value); val != nil {
-				switch val.Kind {
-				case flow.ConstString:
-					if seg, ok := StaticKeySegment(&ast.StringExpr{Value: val.Str}); ok {
-						return base.Append(seg)
-					}
-					return constraint.Path{}
-				case flow.ConstInt:
-					return base.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(val.Int)})
-				case flow.ConstFloat:
-					if idx, ok := pathkey.FloatToSafeInt(val.Float); ok {
-						return base.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})
-					}
-					return constraint.Path{}
-				case flow.ConstBool, flow.ConstNil, flow.ConstUnknown:
-					return constraint.Path{}
-				}
-			}
-			return constraint.Path{}
 		}
 	}
 	return constraint.Path{}

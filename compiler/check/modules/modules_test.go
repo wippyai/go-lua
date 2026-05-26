@@ -3,9 +3,11 @@ package modules
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -57,6 +59,34 @@ func TestExportFunctionSummaries_EmptyEffects(t *testing.T) {
 func TestExportFunctionSummaries_NonRecordExportType(t *testing.T) {
 	manifest := io.NewManifest("test")
 	ExportFunctionSummaries(manifest, typ.String, nil, nil)
+}
+
+func TestExportFunctionSummaries_ExportsRowOnlyEffects(t *testing.T) {
+	fnSym := cfg.SymbolID(42)
+	graph := cfg.Build(&ast.FunctionExpr{}, "M")
+	if graph == nil || graph.Bindings() == nil {
+		t.Fatal("expected graph with bindings")
+	}
+	graph.Bindings().SetName(fnSym, "M.map")
+	exportType := typ.NewRecord().
+		Field("map", typ.Func().Param("info", typ.Any).Returns(typ.Any).Build()).
+		Build()
+	row := effect.Row{Labels: []effect.Label{
+		effect.FlowInto{ParamIndex: 0, SourcePath: "message", ReturnIndex: 0, TargetPath: "error_message"},
+	}}
+	manifest := io.NewManifest("test")
+
+	ExportFunctionSummaries(manifest, exportType, graph, map[cfg.SymbolID]*constraint.FunctionRefinement{
+		fnSym: {Row: row},
+	})
+
+	summary, ok := manifest.LookupSummary("map")
+	if !ok {
+		t.Fatal("expected row-only summary to be exported")
+	}
+	if !summary.Effects.Equals(row) {
+		t.Fatalf("summary effects = %#v, want %#v", summary.Effects, row)
+	}
 }
 
 func TestExportFieldNameFromSymbolName(t *testing.T) {

@@ -87,6 +87,80 @@ func TestSynthLogicalOpCore_Unknown(t *testing.T) {
 	}
 }
 
+func TestSynthRelationalOpCore_TypeProbeKnownFalse(t *testing.T) {
+	s := newTestSynthesizer()
+	recurse := func(ex ast.Expr) typ.Type { return s.TypeOf(ex, 0) }
+
+	result := s.synthRelationalOpCore(&ast.RelationalOpExpr{
+		Operator: "==",
+		Lhs: &ast.FuncCallExpr{
+			Func: &ast.IdentExpr{Value: "type"},
+			Args: []ast.Expr{&ast.StringExpr{Value: "merge"}},
+		},
+		Rhs: &ast.StringExpr{Value: "table"},
+	}, recurse)
+
+	if result != typ.False {
+		t.Fatalf("got %v, want false", result)
+	}
+}
+
+func TestSynthRelationalOpCore_TypeProbeUnionStaysBoolean(t *testing.T) {
+	s := newTestSynthesizer()
+	probeExpr := &ast.IdentExpr{Value: "content"}
+	recurse := func(ex ast.Expr) typ.Type {
+		if ex == probeExpr {
+			return typ.NewUnion(typ.String, typ.NewRecord().Field("text", typ.String).Build())
+		}
+		return s.TypeOf(ex, 0)
+	}
+
+	result := s.synthRelationalOpCore(&ast.RelationalOpExpr{
+		Operator: "==",
+		Lhs: &ast.FuncCallExpr{
+			Func: &ast.IdentExpr{Value: "type"},
+			Args: []ast.Expr{probeExpr},
+		},
+		Rhs: &ast.StringExpr{Value: "table"},
+	}, recurse)
+
+	if result != typ.Boolean {
+		t.Fatalf("got %v, want boolean", result)
+	}
+}
+
+func TestSynthLogicalOpWithNarrowing_SkipsRHSWhenTypeProbeFalse(t *testing.T) {
+	s := newTestSynthesizer()
+	lhs := &ast.RelationalOpExpr{
+		Operator: "==",
+		Lhs: &ast.FuncCallExpr{
+			Func: &ast.IdentExpr{Value: "type"},
+			Args: []ast.Expr{&ast.StringExpr{Value: "merge"}},
+		},
+		Rhs: &ast.StringExpr{Value: "table"},
+	}
+	rhs := &ast.IdentExpr{Value: "rhs"}
+	recurse := func(ex ast.Expr) typ.Type {
+		if ex == lhs {
+			return typ.False
+		}
+		if ex == rhs {
+			t.Fatal("RHS should not be synthesized for a definitely false and-guard")
+		}
+		return s.TypeOf(ex, 0)
+	}
+
+	result := s.synthLogicalOpWithNarrowing(&ast.LogicalOpExpr{
+		Operator: "and",
+		Lhs:      lhs,
+		Rhs:      rhs,
+	}, 0, nil, nil, recurse)
+
+	if result != typ.False {
+		t.Fatalf("got %v, want false", result)
+	}
+}
+
 func TestSynthArithmeticOpCore(t *testing.T) {
 	s := newTestSynthesizer()
 	recurse := func(ex ast.Expr) typ.Type { return s.TypeOf(ex, 0) }
@@ -173,35 +247,6 @@ func TestMapValueType_NonMap(t *testing.T) {
 	}
 }
 
-func TestFieldOnPartialUnion_NotUnion(t *testing.T) {
-	result := fieldOnPartialUnion(typ.String, "foo", mockTypeQuerier{}, nil)
-	if result != nil {
-		t.Fatal("expected nil for non-union")
-	}
-}
-
-func TestFieldOnPartialUnion_WithField(t *testing.T) {
-	rec1 := typ.NewRecord().Field("name", typ.String).Build()
-	rec2 := typ.NewRecord().Build()
-	union := typ.NewUnion(rec1, rec2)
-
-	result := fieldOnPartialUnion(union, "name", mockTypeQuerier{}, nil)
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-}
-
-func TestFieldOnPartialUnion_NoField(t *testing.T) {
-	rec1 := typ.NewRecord().Build()
-	rec2 := typ.NewRecord().Build()
-	union := typ.NewUnion(rec1, rec2)
-
-	result := fieldOnPartialUnion(union, "name", mockTypeQuerier{}, nil)
-	if result != nil {
-		t.Fatal("expected nil when no member has field")
-	}
-}
-
 func TestNarrowTupleIndex_NotTuple(t *testing.T) {
 	s := newTestSynthesizer()
 	result := s.narrowTupleIndex(typ.String, "i", typ.Integer, 0, nil)
@@ -220,13 +265,9 @@ func TestNarrowTupleIndex_NilNarrower(t *testing.T) {
 }
 
 func TestSynthAttrGetCore_StringKey(t *testing.T) {
-	s := newTestSynthesizer()
+	s, objExpr := newTestSynthesizerWithSymbol("obj", typ.NewRecord().Field("name", typ.String).Build())
 	sc := scope.New()
 	recurse := func(ex ast.Expr) typ.Type { return s.TypeOf(ex, 0) }
-
-	rec := typ.NewRecord().Field("name", typ.String).Build()
-	objExpr := &ast.TableExpr{}
-	s.deps.PreCache.Put(objExpr, 0, rec)
 
 	result := s.synthAttrGetCore(&ast.AttrGetExpr{
 		Object: objExpr,

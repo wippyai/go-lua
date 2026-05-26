@@ -97,6 +97,10 @@ func TestSynthTableLiteralWithWrapper_EmptyTable(t *testing.T) {
 	if result.Kind() != kind.Record {
 		t.Errorf("expected record kind, got %v", result.Kind())
 	}
+	rec := result.(*typ.Record)
+	if !rec.Open {
+		t.Fatal("expected empty table wrapper result to be open")
+	}
 }
 
 func TestSynthTableLiteralWithWrapper_RecordFields(t *testing.T) {

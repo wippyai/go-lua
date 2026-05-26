@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -102,17 +103,70 @@ func (s *Solution) setValue(key string, t typ.Type) {
 		return
 	}
 	if s.values == nil {
-		s.values = make(map[string]typ.Type, 1)
+		s.values = make(map[string]product.AbstractValue, 1)
 	}
-	s.values[key] = t
-	if s.fieldOverlayCache == nil {
+	// Admission boundary: a typ.Type fact enters the abstract-state carrier as a
+	// product.AbstractValue. This is the only ingress for the stable values store.
+	s.values[key] = liftFlowValue(t)
+	s.setValuePresence(key, t)
+	s.indexFieldOverlayValue(key, t)
+	s.indexValueSuffix(key)
+	s.invalidateQueryCachesForWrite(key)
+}
+
+// liftFlowValue is the admission boundary that lifts a typ.Type transfer fact
+// into the product.AbstractValue carrier. A nil fact lifts to Bottom so the
+// stored handle is always a valid interned value.
+func liftFlowValue(t typ.Type) product.AbstractValue {
+	if t == nil {
+		return product.Bottom()
+	}
+	return product.FromType(t)
+}
+
+func (s *Solution) invalidateQueryCachesForWrite(key string) {
+	if s == nil {
 		return
 	}
-	_, _, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
-	if !ok || suffix == "" {
+	s.bumpStateEpoch()
+	s.invalidateReachabilityForWrite(key)
+	if s.narrowedTypeCache != nil {
+		clear(s.narrowedTypeCache)
+	}
+	if s.childTypesCache != nil {
+		clear(s.childTypesCache)
+	}
+	if s.fieldOverlayCache != nil {
+		clear(s.fieldOverlayCache)
+	}
+	if s.fieldMergeCache != nil {
+		clear(s.fieldMergeCache)
+	}
+}
+
+func (s *Solution) invalidateReachabilityForWrite(key string) {
+	if s == nil || key == "" || len(s.reachabilityCache) == 0 {
 		return
 	}
-	delete(s.fieldOverlayCache, key[:len(key)-len(suffix)])
+	invalidate := func(depKey string) {
+		for _, point := range s.reachabilityDeps[depKey] {
+			delete(s.reachabilityCache, point)
+		}
+	}
+	invalidate(key)
+	if sym := pathkey.KeySymbolUnchecked(constraint.PathKey(key)); sym != 0 {
+		invalidate(symbolDependencyKey(sym))
+	}
+}
+
+func (s *Solution) bumpStateEpoch() {
+	s.stateEpoch++
+	if s.stateEpoch == 0 {
+		s.stateEpoch = 1
+		if s.reachabilityCache != nil {
+			clear(s.reachabilityCache)
+		}
+	}
 }
 
 // dependencyMap tracks which CFG points depend on a given canonical key.
@@ -125,6 +179,11 @@ func (s *Solution) setValue(key string, t typ.Type) {
 // a key's value changes. Keys are canonical path keys (e.g., "sym1@1.field"),
 // and values are slices of CFG points that read from that key.
 type dependencyMap map[string][]cfg.Point
+
+type reachabilityPointDep struct {
+	key   string
+	point cfg.Point
+}
 
 func symbolDependencyKey(sym cfg.SymbolID) string {
 	return "$sym:" + strconv.FormatUint(uint64(sym), 10)
@@ -174,6 +233,7 @@ func (s *Solution) buildPhiDependencies() dependencyMap {
 		for _, op := range phi.Operands {
 			opKey := s.pkResolver.KeyAtVersion(op.Version.Symbol, op.Version.ID, nil)
 			deps.register(opKey, phi.Point)
+			deps.registerSymbol(op.Version.Symbol, phi.Point)
 		}
 	}
 	return deps
@@ -196,41 +256,111 @@ func (s *Solution) buildAssignmentDependencies() dependencyMap {
 
 	// Regular assignments
 	for _, assign := range s.inputs.Assignments {
-		if assign.SourcePath.Symbol != 0 {
-			srcKey := s.pkResolver.KeyAt(assign.Point, assign.SourcePath)
+		switch assign.Source.Kind {
+		case AssignmentSourcePath:
+			srcKey := s.pkResolver.KeyAt(assign.Point, assign.Source.Path)
 			deps.register(srcKey, assign.Point)
-		}
-		if assign.IterSource != nil && assign.IterSource.Path.Symbol != 0 {
-			srcKey := s.pkResolver.KeyAt(assign.Point, assign.IterSource.Path)
+		case AssignmentSourceIterator:
+			srcKey := s.pkResolver.KeyAt(assign.Point, assign.Source.Path)
 			deps.register(srcKey, assign.Point)
-			deps.registerSymbol(assign.IterSource.Path.Symbol, assign.Point)
-		}
-		if assign.MapElementSource != nil && assign.MapElementSource.MapPath.Symbol != 0 {
-			srcKey := s.pkResolver.KeyAt(assign.Point, assign.MapElementSource.MapPath)
+			deps.registerSymbol(assign.Source.Path.Symbol, assign.Point)
+		case AssignmentSourceMapElement:
+			srcKey := s.pkResolver.KeyAt(assign.Point, assign.Source.MapPath)
 			deps.register(srcKey, assign.Point)
-			deps.registerSymbol(assign.MapElementSource.MapPath.Symbol, assign.Point)
-		}
-		if assign.ContainerElementSource != nil && assign.ContainerElementSource.ContainerPath.Symbol != 0 {
-			srcKey := s.pkResolver.KeyAt(assign.Point, assign.ContainerElementSource.ContainerPath)
+			deps.registerSymbol(assign.Source.MapPath.Symbol, assign.Point)
+			deps.registerSymbol(assign.Source.KeySymbol, assign.Point)
+		case AssignmentSourceContainerElement:
+			srcKey := s.pkResolver.KeyAt(assign.Point, assign.Source.ContainerPath)
 			deps.register(srcKey, assign.Point)
-			deps.registerSymbol(assign.ContainerElementSource.ContainerPath.Symbol, assign.Point)
-		}
-		if assign.LengthIndexSource != nil && assign.LengthIndexSource.ContainerPath.Symbol != 0 {
-			srcKey := s.pkResolver.KeyAt(assign.Point, assign.LengthIndexSource.ContainerPath)
+			deps.registerSymbol(assign.Source.ContainerPath.Symbol, assign.Point)
+		case AssignmentSourceLengthIndex:
+			srcKey := s.pkResolver.KeyAt(assign.Point, assign.Source.ContainerPath)
 			deps.register(srcKey, assign.Point)
-			deps.registerSymbol(assign.LengthIndexSource.ContainerPath.Symbol, assign.Point)
+			deps.registerSymbol(assign.Source.ContainerPath.Symbol, assign.Point)
+		case AssignmentSourceCallReturn:
+			if assign.Source.ReceiverPath.Symbol != 0 {
+				srcKey := s.pkResolver.KeyAt(assign.Point, assign.Source.ReceiverPath)
+				deps.register(srcKey, assign.Point)
+				deps.registerSymbol(assign.Source.ReceiverPath.Symbol, assign.Point)
+			}
+			if assign.Source.CalleePath.Symbol != 0 {
+				srcKey := s.pkResolver.KeyAt(assign.Point, assign.Source.CalleePath)
+				deps.register(srcKey, assign.Point)
+				deps.registerSymbol(assign.Source.CalleePath.Symbol, assign.Point)
+			}
 		}
 	}
 
-	// Table mutator value paths
+	// Mutator value paths and embedded value-template source slots.
+	for _, mm := range s.inputs.MapMutatorAssignments {
+		if mm.ValuePath.Symbol != 0 {
+			srcKey := s.pkResolver.KeyAt(mm.Point, mm.ValuePath)
+			deps.register(srcKey, mm.Point)
+		}
+		s.registerValueTemplateDependencies(deps, mm.Point, mm.Value)
+	}
 	for _, tm := range s.inputs.TableMutatorAssignments {
 		if tm.ValuePath.Symbol != 0 {
 			srcKey := s.pkResolver.KeyAt(tm.Point, tm.ValuePath)
 			deps.register(srcKey, tm.Point)
 		}
+		s.registerValueTemplateDependencies(deps, tm.Point, tm.Value)
+	}
+	for _, cm := range s.inputs.ContainerMutatorAssignments {
+		if cm.ValuePath.Symbol != 0 {
+			srcKey := s.pkResolver.KeyAt(cm.Point, cm.ValuePath)
+			deps.register(srcKey, cm.Point)
+		}
+		s.registerValueTemplateDependencies(deps, cm.Point, cm.Value)
 	}
 
 	return deps
+}
+
+func (s *Solution) registerValueTemplateDependencies(deps dependencyMap, point cfg.Point, template ValueTemplate) {
+	if len(template.Slots) == 0 {
+		return
+	}
+	for _, slot := range template.Slots {
+		s.registerAssignmentSourceDependencies(deps, point, slot.Source)
+	}
+}
+
+func (s *Solution) registerAssignmentSourceDependencies(deps dependencyMap, point cfg.Point, source AssignmentSource) {
+	switch source.Kind {
+	case AssignmentSourcePath:
+		srcKey := s.pkResolver.KeyAt(point, source.Path)
+		deps.register(srcKey, point)
+		deps.registerSymbol(source.Path.Symbol, point)
+	case AssignmentSourceIterator:
+		srcKey := s.pkResolver.KeyAt(point, source.Path)
+		deps.register(srcKey, point)
+		deps.registerSymbol(source.Path.Symbol, point)
+	case AssignmentSourceMapElement:
+		srcKey := s.pkResolver.KeyAt(point, source.MapPath)
+		deps.register(srcKey, point)
+		deps.registerSymbol(source.MapPath.Symbol, point)
+		deps.registerSymbol(source.KeySymbol, point)
+	case AssignmentSourceContainerElement:
+		srcKey := s.pkResolver.KeyAt(point, source.ContainerPath)
+		deps.register(srcKey, point)
+		deps.registerSymbol(source.ContainerPath.Symbol, point)
+	case AssignmentSourceLengthIndex:
+		srcKey := s.pkResolver.KeyAt(point, source.ContainerPath)
+		deps.register(srcKey, point)
+		deps.registerSymbol(source.ContainerPath.Symbol, point)
+	case AssignmentSourceCallReturn:
+		if source.ReceiverPath.Symbol != 0 {
+			srcKey := s.pkResolver.KeyAt(point, source.ReceiverPath)
+			deps.register(srcKey, point)
+			deps.registerSymbol(source.ReceiverPath.Symbol, point)
+		}
+		if source.CalleePath.Symbol != 0 {
+			srcKey := s.pkResolver.KeyAt(point, source.CalleePath)
+			deps.register(srcKey, point)
+			deps.registerSymbol(source.CalleePath.Symbol, point)
+		}
+	}
 }
 
 // buildEdgeConditionDependencies constructs a map from keys to edge condition source points.
@@ -276,6 +406,96 @@ func (s *Solution) buildEdgeConditionDependencies() dependencyMap {
 	}
 
 	return deps
+}
+
+func (s *Solution) buildReachabilityDependencies() dependencyMap {
+	deps := make(dependencyMap)
+	if s == nil || s.pkResolver == nil {
+		return deps
+	}
+
+	seen := make(map[reachabilityPointDep]bool)
+	for point, cond := range s.pointConditions {
+		if !cond.HasConstraints() {
+			continue
+		}
+		for i := 0; i < cond.NumDisjuncts(); i++ {
+			for _, c := range cond.DisjunctConstraints(i) {
+				for _, path := range c.Paths() {
+					if path.Symbol == 0 {
+						continue
+					}
+					key := s.pkResolver.KeyAt(point, path)
+					if key == "" {
+						continue
+					}
+					dep := reachabilityPointDep{key: string(key), point: point}
+					if seen[dep] {
+						continue
+					}
+					seen[dep] = true
+					deps.register(key, point)
+					s.registerReachabilityAncestorDeps(deps, seen, point, path)
+				}
+			}
+		}
+	}
+	s.registerNumericShapeReachabilityDeps(deps, seen)
+	return deps
+}
+
+func (s *Solution) registerNumericShapeReachabilityDeps(deps dependencyMap, seen map[reachabilityPointDep]bool) {
+	if s == nil || s.numericStates == nil {
+		return
+	}
+	for point, state := range s.numericStates {
+		if state == nil {
+			continue
+		}
+		state.ForEachLenBound(func(key constraint.PathKey, lower, _ int64) bool {
+			if lower <= 0 || key == "" {
+				return true
+			}
+			dep := reachabilityPointDep{key: string(key), point: point}
+			if !seen[dep] {
+				seen[dep] = true
+				deps.register(key, point)
+			}
+			if path, ok := s.pathFromCanonicalKeyAtPoint(point, key); ok {
+				s.registerReachabilityAncestorDeps(deps, seen, point, path)
+			}
+			return true
+		})
+	}
+}
+
+func (s *Solution) registerReachabilityAncestorDeps(
+	deps dependencyMap,
+	seen map[reachabilityPointDep]bool,
+	point cfg.Point,
+	path constraint.Path,
+) {
+	if len(path.Segments) == 0 {
+		return
+	}
+	for cut := len(path.Segments) - 1; cut >= 0; cut-- {
+		ancestor := path
+		if cut == 0 {
+			ancestor.Segments = nil
+		} else {
+			ancestor.Segments = path.Segments[:cut]
+		}
+		key := s.pkResolver.KeyAt(point, ancestor)
+		if key == "" {
+			continue
+		}
+		dep := reachabilityPointDep{key: string(key), point: point}
+		if seen[dep] {
+			continue
+		}
+		seen[dep] = true
+		deps.register(key, point)
+	}
 }
 
 // addDependentPoints adds CFG points that depend on changed keys to the worklist.

@@ -51,9 +51,11 @@ type scopeFrame struct {
 //	table := bind.Bind(functionAST, predeclaredGlobals)
 //	sym, ok := table.SymbolOf(someIdentifier)
 type Binder struct {
-	table   *BindingTable
-	stack   []scopeFrame
-	globals map[string]cfg.SymbolID
+	table                    *BindingTable
+	stack                    []scopeFrame
+	globals                  map[string]cfg.SymbolID
+	deferredInitializerStack []map[string]cfg.SymbolID
+	captureDeferredLocals    int
 }
 
 // NewBinder creates a binder initialized with predeclared global names.
@@ -305,6 +307,13 @@ func (b *Binder) lookup(name string) (cfg.SymbolID, bool) {
 			return sym, true
 		}
 	}
+	if b.captureDeferredLocals > 0 {
+		for i := len(b.deferredInitializerStack) - 1; i >= 0; i-- {
+			if sym, ok := b.deferredInitializerStack[i][name]; ok {
+				return sym, true
+			}
+		}
+	}
 	return 0, false
 }
 
@@ -320,7 +329,18 @@ func (b *Binder) declareParam(name string) cfg.SymbolID {
 // declareLocal creates a new local variable symbol in the current scope.
 func (b *Binder) declareLocal(name string) cfg.SymbolID {
 	sym := cfg.NextSymbolID()
+	b.bindLocalSymbol(name, sym)
+	b.table.SetKind(sym, cfg.SymbolLocal)
+	b.table.SetName(sym, name)
+	return sym
+}
+
+func (b *Binder) bindLocalSymbol(name string, sym cfg.SymbolID) {
 	b.stack[len(b.stack)-1].locals[name] = sym
+}
+
+func (b *Binder) newLocalSymbol(name string) cfg.SymbolID {
+	sym := cfg.NextSymbolID()
 	b.table.SetKind(sym, cfg.SymbolLocal)
 	b.table.SetName(sym, name)
 	return sym
@@ -349,6 +369,7 @@ func (b *Binder) bindIdent(ident *ast.IdentExpr) {
 	sym, ok := b.lookup(ident.Value)
 	if !ok {
 		sym = b.declareGlobal(ident.Value)
+		b.table.MarkImplicitGlobalUse(ident)
 	}
 	b.table.Bind(ident, sym)
 }
@@ -510,20 +531,22 @@ func (b *Binder) bindLocalAssignStmt(s *ast.LocalAssignStmt) {
 		return
 	}
 
+	deferred := make(map[string]cfg.SymbolID, len(s.Names))
+	syms := make([]cfg.SymbolID, len(s.Names))
+	for i, name := range s.Names {
+		sym := b.newLocalSymbol(name)
+		syms[i] = sym
+		deferred[name] = sym
+	}
+	b.table.SetLocalSymbols(s, syms)
+	b.deferredInitializerStack = append(b.deferredInitializerStack, deferred)
 	for _, expr := range s.Exprs {
 		b.bindExpr(expr)
 	}
-	if len(s.Names) == 1 {
-		b.table.SetLocalSymbol(s, b.declareLocal(s.Names[0]))
-
-		return
-	}
-
-	syms := make([]cfg.SymbolID, len(s.Names))
 	for i, name := range s.Names {
-		syms[i] = b.declareLocal(name)
+		b.bindLocalSymbol(name, syms[i])
 	}
-	b.table.SetLocalSymbols(s, syms)
+	b.deferredInitializerStack = b.deferredInitializerStack[:len(b.deferredInitializerStack)-1]
 }
 
 // bindFuncDefStmt processes a function definition statement.
@@ -581,7 +604,9 @@ func (b *Binder) bindFunctionWithImplicitSelf(fn *ast.FunctionExpr, hasImplicitS
 		b.table.SetParamSymbols(fn, syms)
 	}
 
+	b.captureDeferredLocals++
 	b.bindStmts(fn.Stmts)
+	b.captureDeferredLocals--
 	b.exitScope()
 }
 

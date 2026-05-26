@@ -7,6 +7,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	typecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // ForceMethodReceiver reports whether method-call receiver injection must be
@@ -65,6 +68,31 @@ func ForceMethodReceiverAtPoint(bindings *bind.BindingTable, graph *compcfg.Grap
 		return false
 	}
 	return symbolForcesMethodReceiver(bindings, evidence, sym)
+}
+
+// ExpectedReceiverTypeForMethod returns a receiver contract implied by a known
+// builtin method. It is used as body evidence for method calls such as
+// `s:lower()`, where successful execution proves `s` has the receiver type.
+func ExpectedReceiverTypeForMethod(ctx *db.QueryContext, typeOps core.TypeOps, method string) typ.Type {
+	if method == "" || typeOps == nil {
+		return nil
+	}
+	methodType, ok := typeOps.Method(ctx, typ.String, method)
+	if !ok || methodType == nil {
+		return nil
+	}
+	fn, ok := methodType.(*typ.Function)
+	if !ok || len(fn.Params) == 0 || !typ.TypeEquals(fn.Params[0].Type, typ.String) {
+		return nil
+	}
+	return typ.String
+}
+
+// ReceiverIsScopedSelf reports whether a method receiver is the lexical method
+// self parameter whose contract is already owned by the surrounding method
+// scope. Builtin receiver-name evidence must not override this owner.
+func ReceiverIsScopedSelf(info *compcfg.CallInfo, selfType typ.Type) bool {
+	return info != nil && info.Method != "" && info.ReceiverName == "self" && selfType != nil
 }
 
 func symbolForcesMethodReceiver(bindings *bind.BindingTable, evidence api.FlowEvidence, sym typecfg.SymbolID) bool {

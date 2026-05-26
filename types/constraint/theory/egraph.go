@@ -75,6 +75,15 @@ func NewEGraph() *EGraph {
 	}
 }
 
+// IsEmpty reports whether the e-graph carries no equality facts.
+func (e *EGraph) IsEmpty() bool {
+	return e == nil ||
+		(len(e.parent) == 0 &&
+			len(e.rank) == 0 &&
+			len(e.children) == 0 &&
+			len(e.parentOf) == 0)
+}
+
 // Clone creates a deep copy of the E-graph.
 func (e *EGraph) Clone() *EGraph {
 	c := &EGraph{

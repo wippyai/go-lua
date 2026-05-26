@@ -35,6 +35,36 @@ type inputEntry[V any] struct {
 	revision Revision
 }
 
+// InputBatch publishes a group of input writes at one database revision.
+//
+// The revision is allocated lazily on the first SetInBatch call, so creating an
+// empty batch does not invalidate queries.
+type InputBatch struct {
+	db  *DB
+	mu  sync.Mutex
+	rev Revision
+}
+
+// NewInputBatch creates a lazy input publication batch.
+func (db *DB) NewInputBatch() *InputBatch {
+	if db == nil {
+		return nil
+	}
+	return &InputBatch{db: db}
+}
+
+func (b *InputBatch) revision() Revision {
+	if b == nil || b.db == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.rev == 0 {
+		b.rev = b.db.Bump()
+	}
+	return b.rev
+}
+
 // NewInput creates a new input table bound to a DB.
 func NewInput[K comparable, V any](db *DB) *Input[K, V] {
 	return &Input[K, V]{
@@ -51,10 +81,25 @@ func (i *Input[K, V]) Set(key K, value V) {
 	if i == nil {
 		return
 	}
+	i.setAtRevision(key, value, i.db.Bump())
+}
 
+// SetInBatch updates the input value using the batch publication revision.
+// If the batch belongs to another DB, SetInBatch falls back to a normal Set.
+func (i *Input[K, V]) SetInBatch(batch *InputBatch, key K, value V) {
+	if i == nil {
+		return
+	}
+	if batch == nil || batch.db != i.db {
+		i.Set(key, value)
+		return
+	}
+	i.setAtRevision(key, value, batch.revision())
+}
+
+func (i *Input[K, V]) setAtRevision(key K, value V, rev Revision) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	rev := i.db.Bump()
 	i.values[key] = inputEntry[V]{value: value, revision: rev}
 }
 

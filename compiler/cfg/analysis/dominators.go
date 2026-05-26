@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	basecfg "github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/db"
 )
 
 // DomInfo holds dominator tree and dominance frontier information.
@@ -38,6 +39,41 @@ type immediateDominatorData struct {
 	rpoNum      []int
 	idomByPoint []basecfg.Point
 	hasIDom     []bool
+}
+
+// ImmediateDominators is a point-indexed dominance view for one immutable CFG.
+type ImmediateDominators struct {
+	data immediateDominatorData
+}
+
+type dominatorQueries struct {
+	immediate     *db.Query[basecfg.Graph, *ImmediateDominators]
+	postImmediate *db.Query[basecfg.Graph, *ImmediateDominators]
+}
+
+var dominatorQueriesKey = db.NewAttachmentKey[*dominatorQueries]("cfg.analysis.dominators")
+
+func newDominatorQueries() *dominatorQueries {
+	return &dominatorQueries{
+		immediate: db.NewQuery("cfg.immediate-dominators", func(_ *db.QueryContext, graph basecfg.Graph) *ImmediateDominators {
+			return ComputeImmediateDominatorInfo(graph)
+		}, func(a, b *ImmediateDominators) bool { return a == b }),
+		postImmediate: db.NewQuery("cfg.immediate-post-dominators", func(_ *db.QueryContext, graph basecfg.Graph) *ImmediateDominators {
+			return ComputeImmediateDominatorInfo(&reversedGraph{g: graph})
+		}, func(a, b *ImmediateDominators) bool { return a == b }),
+	}
+}
+
+func dominatorQueriesFor(ctx *db.QueryContext) *dominatorQueries {
+	if ctx == nil {
+		return nil
+	}
+	if queries, ok := db.Attached(ctx, dominatorQueriesKey); ok && queries != nil {
+		return queries
+	}
+	queries := newDominatorQueries()
+	db.Attach(ctx, dominatorQueriesKey, queries)
+	return queries
 }
 
 func predecessorsOf(g basecfg.Graph, point basecfg.Point) []basecfg.Point {
@@ -181,12 +217,88 @@ func (d immediateDominatorData) asMap() map[basecfg.Point]basecfg.Point {
 	return idom
 }
 
+// ComputeImmediateDominatorInfo computes a dense dominance view.
+func ComputeImmediateDominatorInfo(g basecfg.Graph) *ImmediateDominators {
+	if g == nil {
+		return &ImmediateDominators{}
+	}
+	return &ImmediateDominators{data: computeImmediateDominatorData(g)}
+}
+
+// ImmediateDominatorsFor returns the query-context-owned dominance view for g.
+func ImmediateDominatorsFor(ctx *db.QueryContext, g basecfg.Graph) *ImmediateDominators {
+	if g == nil {
+		return &ImmediateDominators{}
+	}
+	queries := dominatorQueriesFor(ctx)
+	if queries == nil || queries.immediate == nil {
+		return ComputeImmediateDominatorInfo(g)
+	}
+	return queries.immediate.Get(ctx, g)
+}
+
+// ImmediatePostDominatorsFor returns the query-context-owned post-dominance view for g.
+func ImmediatePostDominatorsFor(ctx *db.QueryContext, g basecfg.Graph) *ImmediateDominators {
+	if g == nil {
+		return &ImmediateDominators{}
+	}
+	queries := dominatorQueriesFor(ctx)
+	if queries == nil || queries.postImmediate == nil {
+		return ComputeImmediateDominatorInfo(&reversedGraph{g: g})
+	}
+	return queries.postImmediate.Get(ctx, g)
+}
+
+// Map materializes the map view used by callers that need map-shaped idoms.
+func (d *ImmediateDominators) Map() map[basecfg.Point]basecfg.Point {
+	if d == nil {
+		return make(map[basecfg.Point]basecfg.Point)
+	}
+	return d.data.asMap()
+}
+
+// Dominates reports whether pointA dominates pointB.
+func (d *ImmediateDominators) Dominates(pointA, pointB basecfg.Point) bool {
+	if pointA == pointB {
+		return true
+	}
+	if d == nil {
+		return false
+	}
+
+	runner := pointB
+	for {
+		idx := int(runner)
+		if idx >= len(d.data.hasIDom) || !d.data.hasIDom[idx] {
+			return false
+		}
+
+		dom := d.data.idomByPoint[idx]
+		if dom == runner {
+			return false
+		}
+		if dom == pointA {
+			return true
+		}
+
+		runner = dom
+	}
+}
+
+// StrictlyDominates reports whether pointA dominates pointB and the points differ.
+func (d *ImmediateDominators) StrictlyDominates(pointA, pointB basecfg.Point) bool {
+	if pointA == pointB {
+		return false
+	}
+	return d.Dominates(pointA, pointB)
+}
+
 // ComputeImmediateDominators computes only the immediate-dominator map.
 //
 // Use this when callers only need dominance predicates. It avoids building the
 // dominator tree, which is meaningful allocation in hot type-checking paths.
 func ComputeImmediateDominators(g basecfg.Graph) map[basecfg.Point]basecfg.Point {
-	return computeImmediateDominatorData(g).asMap()
+	return ComputeImmediateDominatorInfo(g).Map()
 }
 
 // ComputeDominators computes immediate dominators and the dominator tree.
@@ -618,7 +730,7 @@ func ComputePostDominators(graph basecfg.Graph) (map[basecfg.Point]basecfg.Point
 
 // ComputeImmediatePostDominators computes only the immediate post-dominator map.
 func ComputeImmediatePostDominators(graph basecfg.Graph) map[basecfg.Point]basecfg.Point {
-	return ComputeImmediateDominators(&reversedGraph{g: graph})
+	return ComputeImmediateDominatorInfo(&reversedGraph{g: graph}).Map()
 }
 
 // PostDominates returns true if a post-dominates b (a is on every path from b to exit).

@@ -375,7 +375,7 @@ func (d *TypeDomain) Join(other Domain) Domain {
 	for _, key := range constraint.SortedPathKeys(d.Narrowed) {
 		dt := d.Narrowed[key]
 		if ot, ok := o.Narrowed[key]; ok {
-			result.Narrowed[key] = typ.JoinPreferNonSoft(dt, ot)
+			result.Narrowed[key] = joinNarrowedTypes(dt, ot)
 		}
 		// Keys only in one side are dropped
 	}

@@ -1,6 +1,10 @@
 package effect
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/wippyai/go-lua/types/typ"
+)
 
 // PassThrough indicates a parameter flows directly to a return position.
 //
@@ -39,39 +43,61 @@ func (p PassThrough) Equals(other Label) bool {
 	return false
 }
 
-// FlowInto indicates a parameter flows into a field of a returned table.
+// FlowInto indicates a parameter path flows into a field of a returned table.
 //
-// When a function wraps a parameter into a record field, FlowInto enables
-// the type checker to derive the record's field type from the parameter type.
+// When a function wraps a parameter or one of its fields into a record field,
+// FlowInto enables the type checker to derive the record's field type from the
+// caller's argument type.
 //
 // Example:
 //
 //	function wrap(val) return {inner = val} end
-//	-- FlowInto{ParamIndex: 0, ReturnIndex: 0, Path: "inner"}
+//	-- FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: "inner"}
+//
+//	function map(info) return {message = info.message or "fallback"} end
+//	-- FlowInto{ParamIndex: 0, SourcePath: "message", ReturnIndex: 0, TargetPath: "message", Remainder: string}
 //
 // At the call site:
 //
 //	local wrapped = wrap(42)  -- wrapped has type {inner: integer}
 //	local wrapped2 = wrap("hello")  -- wrapped2 has type {inner: string}
 //
-// The Path field supports dotted paths for nested fields: "data.inner.value".
+// SourcePath and TargetPath support dotted paths for nested fields. SourcePath
+// is empty when the whole parameter flows. Remainder is an optional static type
+// for non-parameter alternatives in the expression, e.g. the fallback side of
+// a Lua "or" expression.
 type FlowInto struct {
-	ParamIndex  int    // Which parameter (0-based)
-	ReturnIndex int    // Which return position (0-based)
-	Path        string // Field path, e.g., "inner" or "data.value"
+	ParamIndex  int      // Which parameter (0-based)
+	SourcePath  string   // Field path under the parameter, empty means the whole parameter
+	ReturnIndex int      // Which return position (0-based)
+	TargetPath  string   // Field path under the return, e.g. "inner" or "data.value"
+	Remainder   typ.Type // Static non-parameter alternatives that may also reach the target
 }
 
 func (FlowInto) label() {}
 
 func (f FlowInto) String() string {
-	return fmt.Sprintf("flowinto(param[%d]→ret[%d].%s)", f.ParamIndex, f.ReturnIndex, f.Path)
+	source := fmt.Sprintf("param[%d]", f.ParamIndex)
+	if f.SourcePath != "" {
+		source += "." + f.SourcePath
+	}
+	target := fmt.Sprintf("ret[%d]", f.ReturnIndex)
+	if f.TargetPath != "" {
+		target += "." + f.TargetPath
+	}
+	if f.Remainder != nil {
+		return fmt.Sprintf("flowinto(%s→%s | %s)", source, target, f.Remainder)
+	}
+	return fmt.Sprintf("flowinto(%s→%s)", source, target)
 }
 
 func (f FlowInto) Equals(other Label) bool {
 	if o, ok := other.(FlowInto); ok {
 		return f.ParamIndex == o.ParamIndex &&
 			f.ReturnIndex == o.ReturnIndex &&
-			f.Path == o.Path
+			f.SourcePath == o.SourcePath &&
+			f.TargetPath == o.TargetPath &&
+			typ.TypeEquals(f.Remainder, o.Remainder)
 	}
 
 	return false

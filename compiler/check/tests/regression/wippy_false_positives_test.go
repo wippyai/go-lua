@@ -3,6 +3,8 @@ package regression
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/io"
@@ -275,14 +277,14 @@ func TestLocalFunctionShadowsModule_BindingDiagnostic(t *testing.T) {
 	if sess != nil && sess.Store != nil && sess.RootResult != nil && sess.RootResult.BaseScope != nil && sess.RootResult.Graph != nil {
 		parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 		parent := sess.Store.Parents()[parentHash]
-		functionFacts := sess.Store.GetInterprocFacts(sess.RootResult.Graph, parent).FunctionFacts
+		functionFacts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts()
 		t.Logf("FunctionFacts has %d symbols", len(functionFacts))
-		for sym, fact := range functionFacts {
+		for sym := range functionFacts {
 			name := ""
 			if sess.Store.ModuleBindings() != nil {
 				name = sess.Store.ModuleBindings().Name(sym)
 			}
-			ty := fact.Type
+			ty := functionfact.SiblingTypeProjection(functionFacts, sym, api.PhaseScopeCompute)
 			if ty != nil {
 				t.Logf("  sym %d (%s): %s", sym, name, ty.String())
 			}

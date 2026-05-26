@@ -94,27 +94,18 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			return indexResult{}
 		},
 		Record: func(r *typ.Record) indexResult {
-			if len(r.Fields) == 0 && !r.HasMapComponent() {
-				return indexResult{t: typ.Nil, ok: true}
-			}
 			if keySet, ok := exactStringKeyDomain(keyType, depth+1); ok {
 				return indexRecordByExactStringKeyDomain(r, keySet, depth+1)
 			}
+			if len(r.Fields) == 0 && !r.HasMapComponent() {
+				if r.Open {
+					return indexResult{t: typ.Unknown, ok: true}
+				}
+				return indexResult{t: typ.Nil, ok: true}
+			}
 			// Unknown string returns optional union of all field types
 			if keyType.Kind() == kind.String {
-				var types []typ.Type
-				for _, f := range r.Fields {
-					types = append(types, f.Type)
-				}
-				if r.HasMapComponent() {
-					types = append(types, r.MapValue)
-				}
-
-				if len(types) == 0 {
-					return indexResult{t: typ.Nil, ok: true}
-				}
-
-				return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
+				return indexRecordByGenericStringKey(r, keyType)
 			}
 			// Placeholder/unknown keys may still resolve to string fields at runtime.
 			// Keep this sound by returning an optional union of field types.
@@ -214,6 +205,33 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 		},
 	})
 	return res.t, res.ok
+}
+
+func indexRecordByGenericStringKey(r *typ.Record, keyType typ.Type) indexResult {
+	if r == nil {
+		return indexResult{}
+	}
+	var types []typ.Type
+	for _, f := range r.Fields {
+		types = append(types, f.Type)
+	}
+	if r.HasMapComponent() && subtype.IsSubtype(keyType, r.MapKey) {
+		types = append(types, r.MapValue)
+		if len(types) == 0 {
+			return indexResult{t: typ.Nil, ok: true}
+		}
+		return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
+	}
+	if r.Open {
+		return indexResult{t: typ.Unknown, ok: true}
+	}
+	if r.HasMapComponent() {
+		types = append(types, r.MapValue)
+	}
+	if len(types) == 0 {
+		return indexResult{t: typ.Nil, ok: true}
+	}
+	return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
 }
 
 // containsNilOrOptional returns true if the type already contains nil or Optional.

@@ -58,30 +58,46 @@ func (r *Ref) Equals(other Type) bool {
 //
 // Example: type UserId = number creates Alias{Name: "UserId", Target: number}
 type Alias struct {
-	Name         string // Alias name
-	Target       Type   // Underlying type
-	unaliased    Type
-	hash         uint64
-	softPrunable bool
+	Name                  string // Alias name
+	Target                Type   // Underlying type
+	unaliased             Type
+	hash                  uint64
+	softPrunable          bool
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
 }
 
 // NewAlias creates a type alias.
 func NewAlias(name string, target Type) *Alias {
-	h := internal.HashCombine(uint64(kind.Alias), internal.FnvString(name))
-	h = internal.HashCombine(h, target.Hash())
+	h := typeEqualityHash(target)
 
 	return &Alias{
-		Name:         name,
-		Target:       target,
-		unaliased:    flattenAliasTarget(target),
-		hash:         h,
-		softPrunable: softPruneMayRewrite(target),
+		Name:                  name,
+		Target:                target,
+		unaliased:             flattenAliasTarget(target),
+		hash:                  h,
+		softPrunable:          softPruneMayRewrite(target),
+		containsAny:           knownContainsAny(target),
+		containsNever:         knownContainsNever(target),
+		containsTypeParam:     knownContainsTypeParam(target),
+		containsInstantiated:  knownContainsInstantiated(target),
+		containsRecursive:     knownContainsRecursive(target),
+		containsOpenRecursive: knownContainsOpenRecursive(target),
 	}
 }
 
 func (a *Alias) Kind() kind.Kind { return kind.Alias }
 func (a *Alias) String() string  { return a.Name }
-func (a *Alias) Hash() uint64    { return a.hash }
+func (a *Alias) Hash() uint64 {
+	if a == nil {
+		return 0
+	}
+	return typeEqualityHash(a.UnaliasedTarget())
+}
 
 func (a *Alias) UnaliasedTarget() Type {
 	if a == nil || a.unaliased == nil {
@@ -151,15 +167,30 @@ func (p *Platform) Equals(other Type) bool {
 //
 // Example: typeof(Point) has type Meta{Of: Point}
 type Meta struct {
-	Of       Type // The type being wrapped
-	hash     uint64
-	strCache stringCache
+	Of                    Type // The type being wrapped
+	hash                  uint64
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
 }
 
 // NewMeta creates a metatype.
 func NewMeta(of Type) *Meta {
 	h := internal.HashCombine(uint64(kind.Meta), of.Hash())
-	return &Meta{Of: of, hash: h}
+	return &Meta{
+		Of:                    of,
+		hash:                  h,
+		containsAny:           knownContainsAny(of),
+		containsNever:         knownContainsNever(of),
+		containsTypeParam:     knownContainsTypeParam(of),
+		containsInstantiated:  knownContainsInstantiated(of),
+		containsRecursive:     knownContainsRecursive(of),
+		containsOpenRecursive: knownContainsOpenRecursive(of),
+	}
 }
 
 func (m *Meta) Kind() kind.Kind { return kind.Meta }

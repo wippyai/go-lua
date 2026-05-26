@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -349,6 +350,49 @@ func TestCallErrorKind_Constants(t *testing.T) {
 	if ErrOptionalCall != 3 {
 		t.Error("ErrOptionalCall should be 3")
 	}
+}
+
+func TestCallError_DiagnosticMessageFormatsStructuredTypeEvidence(t *testing.T) {
+	err := CallError{
+		Kind:     ErrTypeMismatch,
+		Subject:  "argument 1",
+		Expected: typ.Integer,
+		Got:      typ.String,
+		ArgIdx:   1,
+	}
+
+	if err.Message != "" {
+		t.Fatalf("structured call errors should not eagerly render messages, got %q", err.Message)
+	}
+	want := "argument 1: expected integer, got string"
+	if got := err.DiagnosticMessage(); got != want {
+		t.Fatalf("DiagnosticMessage() = %q, want %q", got, want)
+	}
+}
+
+func TestUniqueCallErrorsDoesNotFormatStructuredTypes(t *testing.T) {
+	got := &panicCallErrorType{}
+	err := CallError{
+		Kind:     ErrTypeMismatch,
+		Subject:  "argument 1",
+		Expected: typ.String,
+		Got:      got,
+		ArgIdx:   1,
+	}
+
+	unique := uniqueCallErrors([]CallError{err, err})
+	if len(unique) != 1 {
+		t.Fatalf("expected duplicate structured call errors to collapse without formatting, got %d", len(unique))
+	}
+}
+
+type panicCallErrorType struct{}
+
+func (*panicCallErrorType) Kind() kind.Kind { return kind.String }
+func (*panicCallErrorType) String() string  { panic("call error identity formatted type") }
+func (*panicCallErrorType) Hash() uint64    { panic("call error identity hashed type") }
+func (*panicCallErrorType) Equals(typ.Type) bool {
+	panic("call error identity compared type")
 }
 
 func TestCallWithGenericInference_OptionalCallee(t *testing.T) {

@@ -453,6 +453,72 @@ func TestSolver_FieldNotEqualsPath_ExcludesMatchingVariant(t *testing.T) {
 	}
 }
 
+// Named-interface variants must be excluded by nominal identity, not raw pointer
+// identity. A value that is a distinct interface instance but the same nominal
+// type (same name + structure) as one variant's field, as produced when a type
+// round-trips through structural interning, must still exclude that variant.
+func TestSolver_FieldNotEqualsPath_ExcludesNamedInterfaceVariantByNominalIdentity(t *testing.T) {
+	target := constraint.Path{Root: "result"}
+	value := constraint.Path{Root: "excludeValue"}
+
+	method := []typ.Method{{Name: "recv", Type: typ.Func().Returns(typ.String).Build()}}
+	eventChan := typ.NewInterface("channel.EventChannel", method)
+	timeoutChan := typ.NewInterface("channel.TimeoutChannel", method)
+	// A distinct instance of the same nominal interface as timeoutChan, modeling
+	// the canonical instance a structural interner returns for the same decl.
+	timeoutChanInterned := typ.NewInterface("channel.TimeoutChannel", method)
+	if timeoutChan == timeoutChanInterned {
+		t.Fatalf("test precondition: instances must be distinct pointers")
+	}
+
+	resultMatch := typ.NewRecord().Field("channel", eventChan).Field("value", typ.String).Build()
+	resultExclude := typ.NewRecord().Field("channel", timeoutChan).Field("value", typ.Number).Build()
+
+	base := map[constraint.PathKey]typ.Type{
+		target.Key(): typ.NewUnion(resultMatch, resultExclude),
+		value.Key():  timeoutChanInterned,
+	}
+
+	s := constraint.Solver{Env: constraint.Env{Resolver: &core.FuncResolver{FieldFunc: unionQueryField}}}
+	set := constraint.NewConjunction(constraint.FieldNotEqualsPath{Target: target, Field: "channel", Value: value})
+
+	out := s.Apply(set, base)
+	if got := out[target.Key()]; !typ.TypeEquals(got, resultMatch) {
+		t.Fatalf("expected result narrowed to match case (timeout variant excluded by nominal identity), got %v", got)
+	}
+}
+
+// Distinct nominal interfaces (different names) must not be treated as equivalent,
+// so a value typed as one named interface must not exclude a variant whose field is
+// a different named interface, even when their method structure is identical.
+func TestSolver_FieldNotEqualsPath_DistinctNamedInterfacesStayDistinct(t *testing.T) {
+	target := constraint.Path{Root: "result"}
+	value := constraint.Path{Root: "excludeValue"}
+
+	method := []typ.Method{{Name: "recv", Type: typ.Func().Returns(typ.String).Build()}}
+	eventChan := typ.NewInterface("channel.EventChannel", method)
+	timeoutChan := typ.NewInterface("channel.TimeoutChannel", method)
+	// Same structure as eventChan but a third, unrelated nominal type.
+	otherChan := typ.NewInterface("channel.OtherChannel", method)
+
+	resultEvent := typ.NewRecord().Field("channel", eventChan).Field("value", typ.String).Build()
+	resultTimeout := typ.NewRecord().Field("channel", timeoutChan).Field("value", typ.Number).Build()
+
+	base := map[constraint.PathKey]typ.Type{
+		target.Key(): typ.NewUnion(resultEvent, resultTimeout),
+		value.Key():  otherChan,
+	}
+
+	s := constraint.Solver{Env: constraint.Env{Resolver: &core.FuncResolver{FieldFunc: unionQueryField}}}
+	set := constraint.NewConjunction(constraint.FieldNotEqualsPath{Target: target, Field: "channel", Value: value})
+
+	out := s.Apply(set, base)
+	// otherChan matches neither variant nominally, so nothing is excluded.
+	if got := out[target.Key()]; !typ.TypeEquals(got, typ.NewUnion(resultEvent, resultTimeout)) {
+		t.Fatalf("expected union unchanged (no nominal match), got %v", got)
+	}
+}
+
 // FieldNotEqualsPath should NOT exclude when field or value are non-singleton.
 func TestSolver_FieldNotEqualsPath_NoExclusion(t *testing.T) {
 	variantStr := typ.NewRecord().Field("role", typ.String).Build()

@@ -402,101 +402,86 @@ func (s *pathSet) visit(fn func(constraint.Path)) {
 }
 
 func shouldDropAsymmetricNotEquals(c constraint.Constraint, target constraint.Path) bool {
-	return constraint.VisitConstraint(c, constraint.ConstraintVisitor[bool]{
-		FieldNotEqualsPath: func(v constraint.FieldNotEqualsPath) bool {
-			valueRelated := PathRelated(target, v.Value)
-			targetRelated := PathRelated(target, v.Target)
-			return valueRelated && !targetRelated
-		},
-		IndexNotEqualsPath: func(v constraint.IndexNotEqualsPath) bool {
-			valueRelated := PathRelated(target, v.Value)
-			targetRelated := PathRelated(target, v.Target)
-			return valueRelated && !targetRelated
-		},
-		Default: func(constraint.Constraint) bool {
-			return false
-		},
-	})
+	switch v := c.(type) {
+	case constraint.FieldNotEqualsPath:
+		valueRelated := PathRelated(target, v.Value)
+		targetRelated := PathRelated(target, v.Target)
+		return valueRelated && !targetRelated
+	case constraint.IndexNotEqualsPath:
+		valueRelated := PathRelated(target, v.Value)
+		targetRelated := PathRelated(target, v.Target)
+		return valueRelated && !targetRelated
+	default:
+		return false
+	}
 }
 
 func constraintAnyPathMatches(c constraint.Constraint, match func(constraint.Path) bool) bool {
-	return constraint.VisitConstraint(c, constraint.ConstraintVisitor[bool]{
-		Truthy: func(v constraint.Truthy) bool {
-			if match(v.Path) {
-				return true
-			}
-			return matchParentFieldPath(v.Path, match)
-		},
-		Falsy: func(v constraint.Falsy) bool {
-			if match(v.Path) {
-				return true
-			}
-			return matchParentFieldPath(v.Path, match)
-		},
-		IsNil: func(v constraint.IsNil) bool {
-			return match(v.Path)
-		},
-		NotNil: func(v constraint.NotNil) bool {
-			return match(v.Path)
-		},
-		HasType: func(v constraint.HasType) bool {
-			return match(v.Path)
-		},
-		NotHasType: func(v constraint.NotHasType) bool {
-			return match(v.Path)
-		},
-		HasField: func(v constraint.HasField) bool {
-			return match(v.Path)
-		},
-		FieldEquals: func(v constraint.FieldEquals) bool {
-			if match(v.Target) {
-				return true
-			}
-			return matchParentFieldPath(v.Target, match)
-		},
-		FieldNotEquals: func(v constraint.FieldNotEquals) bool {
-			if match(v.Target) {
-				return true
-			}
-			return matchParentFieldPath(v.Target, match)
-		},
-		IndexEquals: func(v constraint.IndexEquals) bool {
-			return match(v.Target)
-		},
-		IndexNotEquals: func(v constraint.IndexNotEquals) bool {
-			return match(v.Target)
-		},
-		EqPath: func(v constraint.EqPath) bool {
-			return match(v.Left) || match(v.Right)
-		},
-		NotEqPath: func(v constraint.NotEqPath) bool {
-			return match(v.Left) || match(v.Right)
-		},
-		FieldEqualsPath: func(v constraint.FieldEqualsPath) bool {
-			if match(v.Target) || match(v.Value) {
-				return true
-			}
-			return matchParentFieldPath(v.Target, match)
-		},
-		FieldNotEqualsPath: func(v constraint.FieldNotEqualsPath) bool {
-			if match(v.Target) || match(v.Value) {
-				return true
-			}
-			return matchParentFieldPath(v.Target, match)
-		},
-		IndexEqualsPath: func(v constraint.IndexEqualsPath) bool {
-			return match(v.Target) || match(v.Value)
-		},
-		IndexNotEqualsPath: func(v constraint.IndexNotEqualsPath) bool {
-			return match(v.Target) || match(v.Value)
-		},
-		KeyOf: func(v constraint.KeyOf) bool {
-			return match(v.Table) || match(v.Key)
-		},
-		Default: func(constraint.Constraint) bool {
-			return false
-		},
-	})
+	matcher := constraintPathMatcher{match: match}
+	return matcher.constraint(c)
+}
+
+type constraintPathMatcher struct {
+	match func(constraint.Path) bool
+}
+
+func (m constraintPathMatcher) constraint(c constraint.Constraint) bool {
+	switch v := c.(type) {
+	case constraint.Truthy:
+		return m.pathOrParentField(v.Path)
+	case constraint.Falsy:
+		return m.pathOrParentField(v.Path)
+	case constraint.IsNil:
+		return m.path(v.Path)
+	case constraint.NotNil:
+		return m.path(v.Path)
+	case constraint.HasType:
+		return m.path(v.Path)
+	case constraint.NotHasType:
+		return m.path(v.Path)
+	case constraint.HasField:
+		return m.path(v.Path)
+	case constraint.FieldEquals:
+		return m.pathOrParentField(v.Target)
+	case constraint.FieldNotEquals:
+		return m.pathOrParentField(v.Target)
+	case constraint.IndexEquals:
+		return m.path(v.Target)
+	case constraint.IndexNotEquals:
+		return m.path(v.Target)
+	case constraint.EqPath:
+		return m.pathPair(v.Left, v.Right)
+	case constraint.NotEqPath:
+		return m.pathPair(v.Left, v.Right)
+	case constraint.FieldEqualsPath:
+		return m.pathPair(v.Target, v.Value) || m.parentField(v.Target)
+	case constraint.FieldNotEqualsPath:
+		return m.pathPair(v.Target, v.Value) || m.parentField(v.Target)
+	case constraint.IndexEqualsPath:
+		return m.pathPair(v.Target, v.Value)
+	case constraint.IndexNotEqualsPath:
+		return m.pathPair(v.Target, v.Value)
+	case constraint.KeyOf:
+		return m.pathPair(v.Table, v.Key)
+	default:
+		return false
+	}
+}
+
+func (m constraintPathMatcher) path(path constraint.Path) bool {
+	return m.match(path)
+}
+
+func (m constraintPathMatcher) pathPair(left, right constraint.Path) bool {
+	return m.path(left) || m.path(right)
+}
+
+func (m constraintPathMatcher) pathOrParentField(path constraint.Path) bool {
+	return m.path(path) || m.parentField(path)
+}
+
+func (m constraintPathMatcher) parentField(path constraint.Path) bool {
+	return matchParentFieldPath(path, m.match)
 }
 
 func matchParentFieldPath(path constraint.Path, match func(constraint.Path) bool) bool {

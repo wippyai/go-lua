@@ -51,17 +51,47 @@ func buildFunctionType(
 	returnsCopy := make([]Type, len(returns))
 	copy(returnsCopy, returns)
 	softPrunable := softPruneParams(paramsCopy) || softPruneAny(variadic) || softPruneAny(returnsCopy...)
+	containsAny := knownAnyTypeParams(typeParamsCopy) ||
+		knownAnyParams(paramsCopy) ||
+		knownContainsAny(variadic) ||
+		knownAny(returnsCopy...)
+	containsNever := knownNeverTypeParams(typeParamsCopy) ||
+		knownNeverParams(paramsCopy) ||
+		knownContainsNever(variadic) ||
+		knownNever(returnsCopy...)
+	containsTypeParam := knownTypeParamTypeParams(typeParamsCopy) ||
+		knownTypeParamParams(paramsCopy) ||
+		knownContainsTypeParam(variadic) ||
+		knownTypeParam(returnsCopy...)
+	containsInstantiated := knownInstantiatedTypeParams(typeParamsCopy) ||
+		knownInstantiatedParams(paramsCopy) ||
+		knownContainsInstantiated(variadic) ||
+		knownInstantiated(returnsCopy...)
+	containsRecursive := knownRecursiveTypeParams(typeParamsCopy) ||
+		knownRecursiveParams(paramsCopy) ||
+		knownContainsRecursive(variadic) ||
+		knownRecursive(returnsCopy...)
+	containsOpenRecursive := knownOpenRecursiveTypeParams(typeParamsCopy) ||
+		knownOpenRecursiveParams(paramsCopy) ||
+		knownContainsOpenRecursive(variadic) ||
+		knownOpenRecursive(returnsCopy...)
 
 	return &Function{
-		TypeParams:   typeParamsCopy,
-		Params:       paramsCopy,
-		Variadic:     variadic,
-		Returns:      returnsCopy,
-		Effects:      effects,
-		Spec:         spec,
-		Refinement:   refinement,
-		hash:         h,
-		softPrunable: softPrunable,
+		TypeParams:            typeParamsCopy,
+		Params:                paramsCopy,
+		Variadic:              variadic,
+		Returns:               returnsCopy,
+		Effects:               effects,
+		Spec:                  spec,
+		Refinement:            refinement,
+		hash:                  h,
+		softPrunable:          softPrunable,
+		containsAny:           containsAny,
+		containsNever:         containsNever,
+		containsTypeParam:     containsTypeParam,
+		containsInstantiated:  containsInstantiated,
+		containsRecursive:     containsRecursive,
+		containsOpenRecursive: containsOpenRecursive,
 	}
 }
 
@@ -119,17 +149,40 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		h = internal.HashCombine(h, mapValue.Hash())
 	}
 	softPrunable := softPruneFields(sorted) || softPruneAny(metatable, mapKey, mapValue)
+	containsAny := knownAnyFields(sorted) || knownAny(metatable, mapKey, mapValue)
+	containsNever := knownNeverFields(sorted) || knownNever(metatable, mapKey, mapValue)
+	containsTypeParam := knownTypeParamFields(sorted) || knownTypeParam(metatable, mapKey, mapValue)
+	containsInstantiated := knownInstantiatedFields(sorted) || knownInstantiated(metatable, mapKey, mapValue)
+	containsRecursive := knownRecursiveFields(sorted) || knownRecursive(metatable, mapKey, mapValue)
+	containsOpenRecursive := knownOpenRecursiveFields(sorted) || knownOpenRecursive(metatable, mapKey, mapValue)
+	containsCallableSurf := knownCallableSurfaceFields(sorted) || HasCallableSurface(metatable) || HasCallableSurface(mapValue)
 
 	return &Record{
-		Fields:       sorted,
-		Metatable:    metatable,
-		MapKey:       mapKey,
-		MapValue:     mapValue,
-		Open:         open,
-		sorted:       true,
-		hash:         h,
-		softPrunable: softPrunable,
+		Fields:                sorted,
+		Metatable:             metatable,
+		MapKey:                mapKey,
+		MapValue:              mapValue,
+		Open:                  open,
+		sorted:                true,
+		hash:                  h,
+		softPrunable:          softPrunable,
+		containsAny:           containsAny,
+		containsNever:         containsNever,
+		containsTypeParam:     containsTypeParam,
+		containsInstantiated:  containsInstantiated,
+		containsRecursive:     containsRecursive,
+		containsOpenRecursive: containsOpenRecursive,
+		containsCallableSurf:  containsCallableSurf,
 	}
+}
+
+func knownCallableSurfaceFields(fields []Field) bool {
+	for _, f := range fields {
+		if HasCallableSurface(f.Type) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeOptionalFieldType(t Type) Type {
@@ -151,19 +204,49 @@ func normalizeOptionalFieldType(t Type) Type {
 		}
 		return v.Inner
 	case *Union:
-		kept := make([]Type, 0, len(v.Members))
-		for _, member := range v.Members {
-			if member == nil || member.Kind() == kind.Nil || member.Kind() == kind.Never {
-				continue
-			}
-			kept = append(kept, member)
-		}
-		if len(kept) == 0 {
+		nonNil := optionalFieldUnionWithoutNil(v)
+		if nonNil == nil || nonNil.Kind() == kind.Never {
 			return t
 		}
-		return NewUnion(kept...)
+		return nonNil
 	default:
 		return t
+	}
+}
+
+func optionalFieldUnionWithoutNil(u *Union) Type {
+	if u == nil {
+		return nil
+	}
+	kept := make([]Type, 0, len(u.Members))
+	for _, member := range u.Members {
+		kept = appendOptionalFieldNonNilMember(kept, member)
+	}
+	if len(kept) == 0 {
+		return Never
+	}
+	return NewUnion(kept...)
+}
+
+func appendOptionalFieldNonNilMember(out []Type, t Type) []Type {
+	if t == nil {
+		return out
+	}
+	switch v := UnwrapAnnotated(t).(type) {
+	case nil:
+		return out
+	case *Optional:
+		return appendOptionalFieldNonNilMember(out, v.Inner)
+	case *Union:
+		for _, member := range v.Members {
+			out = appendOptionalFieldNonNilMember(out, member)
+		}
+		return out
+	default:
+		if v.Kind() == kind.Nil || v.Kind() == kind.Never {
+			return out
+		}
+		return append(out, t)
 	}
 }
 

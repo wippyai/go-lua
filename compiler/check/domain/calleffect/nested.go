@@ -10,131 +10,75 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// CollectCalledNestedFieldAssignments collects field assignments recorded for
-// called nested functions that target symbols from the parent graph (captured variables).
-//
-// When a nested function assigns fields to a captured variable, those assignments
-// affect the type of the variable in the parent scope. This function consumes
-// transfer call evidence and reduces the already-recorded captured assignments
-// for callees that are proven to run from the parent graph.
-//
-// Example:
-//
-//	local t = {}
-//	local function setup()
-//	    t.name = "hello"  -- This assignment is collected
-//	end
-//	setup()  -- Because setup() is called, t gains field "name"
-//
-// The result maps symbols to their assigned field types, which can be merged
-// into the symbol's type in the parent scope.
-func CollectCalledNestedFieldAssignments(
-	parent *cfg.Graph,
-	bindings *bind.BindingTable,
-	calls []api.CallEvidence,
-	capturedByCallee map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type,
-	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
-) map[cfg.SymbolID]map[string]typ.Type {
-	result := make(map[cfg.SymbolID]map[string]typ.Type)
-	if parent == nil || len(capturedByCallee) == 0 {
-		return result
+// projectCarrierField projects a captured-effect carrier slot to its structural
+// type at the flow-replay egress boundary. The zero AbstractValue (an absent
+// slot) projects to nil so the flow assignment defaulting is unchanged.
+func projectCarrierField(av product.AbstractValue) typ.Type {
+	if av.IsZero() {
+		return nil
 	}
-
-	// Gather all symbols known in the parent graph (avoid per-point merges).
-	parentSymbols := parent.AllSymbolIDs()
-
-	// Find which local functions are called according to transfer evidence.
-	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedByCallee))
-	for calleeSym := range capturedByCallee {
-		trackedCallees[calleeSym] = true
-	}
-	calledSyms := make(map[cfg.SymbolID]bool)
-	for _, call := range calls {
-		for sym := range calledSymbolsFromCall(call.Info, call.Point, parent, bindings, resolveCalleeType, func(sym cfg.SymbolID) bool {
-			return trackedCallees[sym]
-		}) {
-			calledSyms[sym] = true
-		}
-	}
-
-	// Collect field assignments from called nested functions and merge into result.
-	if len(calledSyms) == 0 {
-		return result
-	}
-	for _, sym := range cfg.SortedSymbolIDs(calledSyms) {
-		nestedFields := capturedByCallee[sym]
-		if len(nestedFields) == 0 {
-			continue
-		}
-		for _, baseSym := range cfg.SortedSymbolIDs(nestedFields) {
-			fields := nestedFields[baseSym]
-			if !parentSymbols[baseSym] {
-				continue
-			}
-			if result[baseSym] == nil {
-				result[baseSym] = make(map[string]typ.Type)
-			}
-			for _, fieldName := range cfg.SortedFieldNames(fields) {
-				fieldType := fields[fieldName]
-				if existing := result[baseSym][fieldName]; existing != nil {
-					result[baseSym][fieldName] = typ.JoinPreferNonSoft(existing, fieldType)
-				} else {
-					result[baseSym][fieldName] = fieldType
-				}
-			}
-		}
-	}
-
-	return result
+	return av.ProjectValue()
 }
 
-// CalledNestedMutatorAssignments is the flow replay payload for captured
-// mutations made by called nested functions.
-type CalledNestedMutatorAssignments struct {
-	Indexer   []flow.IndexerAssignment
+// CalledNestedAssignments is the flow replay payload for captured effects made
+// by nested functions that are proven to run from the parent graph.
+type CalledNestedAssignments struct {
+	Fields    []flow.UnifiedAssignment
+	Map       []flow.MapMutatorAssignment
 	Table     []flow.TableMutatorAssignment
 	Container []flow.ContainerMutatorAssignment
 }
 
-// CollectNestedMutatorAssignments collects captured mutations recorded for
-// parent-visible nested functions and replays them through the matching flow
-// operator. Direct invocation is driven by transfer call evidence.
+// CollectNestedAssignments collects captured field writes and mutator effects
+// recorded for parent-visible nested functions and replays each effect through
+// its matching flow operator. Direct invocation is driven by transfer call
+// evidence.
 //
-// This supports cases where a nested function mutates a captured table
-// (table.insert) or generic container (channel.send) and the nested function is:
+// This supports cases where a nested function writes fields, mutates a captured
+// table map (t[k] = v), mutates a table array (table.insert), or mutates a
+// generic container (channel.send), and the nested function is:
 //   - invoked directly,
 //   - passed as a callback to a function with a callback spec, or
 //   - stored in a field/global position that can be called outside the parent
 //     graph before another exported function reads the captured state.
-func CollectNestedMutatorAssignments(
+func CollectNestedAssignments(
 	parent *cfg.Graph,
 	bindings *bind.BindingTable,
 	calls []api.CallEvidence,
 	escapes []api.FunctionEscapeEvidence,
-	capturedByCallee api.CapturedContainerMutations,
+	capturedFields api.CapturedFieldAssigns,
+	capturedContainers api.CapturedContainerMutations,
 	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
-) CalledNestedMutatorAssignments {
-	if parent == nil || len(capturedByCallee) == 0 {
-		return CalledNestedMutatorAssignments{}
+) CalledNestedAssignments {
+	if parent == nil || (len(capturedFields) == 0 && len(capturedContainers) == 0) {
+		return CalledNestedAssignments{}
 	}
 
 	parentSymbols := parent.AllSymbolIDs()
-	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedByCallee))
-	for calleeSym := range capturedByCallee {
+	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedFields)+len(capturedContainers))
+	for calleeSym := range capturedFields {
 		trackedCallees[calleeSym] = true
 	}
-	assignments := CalledNestedMutatorAssignments{}
+	for calleeSym := range capturedContainers {
+		trackedCallees[calleeSym] = true
+	}
+	assignments := CalledNestedAssignments{}
 	emitForCallee := func(p cfg.Point, sym cfg.SymbolID) {
-		nestedMutations := capturedByCallee[sym]
-		if len(nestedMutations) == 0 {
-			return
+		for _, targetSym := range cfg.SortedSymbolIDs(capturedFields[sym]) {
+			fields := capturedFields[sym][targetSym]
+			if !parentSymbols[targetSym] {
+				continue
+			}
+			root := resolve.RootNameFromGraphAndBindings(parent, bindings, targetSym, "")
+			appendNestedFieldAssignments(&assignments, p, root, targetSym, fields)
 		}
-		for _, targetSym := range cfg.SortedSymbolIDs(nestedMutations) {
-			mutations := nestedMutations[targetSym]
+		for _, targetSym := range cfg.SortedSymbolIDs(capturedContainers[sym]) {
+			mutations := capturedContainers[sym][targetSym]
 			if !parentSymbols[targetSym] {
 				continue
 			}
@@ -170,8 +114,38 @@ func CollectNestedMutatorAssignments(
 	return assignments
 }
 
+func appendNestedFieldAssignments(
+	assignments *CalledNestedAssignments,
+	p cfg.Point,
+	root string,
+	targetSym cfg.SymbolID,
+	fields map[string]product.AbstractValue,
+) {
+	if assignments == nil || targetSym == 0 || len(fields) == 0 {
+		return
+	}
+	for _, fieldName := range cfg.SortedFieldNames(fields) {
+		fieldType := projectCarrierField(fields[fieldName])
+		if fieldType == nil {
+			fieldType = typ.Unknown
+		}
+		assignments.Fields = append(assignments.Fields, flow.UnifiedAssignment{
+			Point: p,
+			TargetPath: constraint.Path{
+				Root:   root,
+				Symbol: targetSym,
+				Segments: []constraint.Segment{{
+					Kind: constraint.SegmentField,
+					Name: fieldName,
+				}},
+			},
+			Type: fieldType,
+		})
+	}
+}
+
 func appendNestedMutatorAssignments(
-	assignments *CalledNestedMutatorAssignments,
+	assignments *CalledNestedAssignments,
 	p cfg.Point,
 	root string,
 	targetSym cfg.SymbolID,
@@ -190,25 +164,25 @@ func appendNestedMutatorAssignments(
 		}
 		switch mutation.Kind {
 		case api.ContainerMutationMapElement:
-			assignments.Indexer = append(assignments.Indexer, flow.IndexerAssignment{
-				Point:    p,
-				Root:     root,
-				Symbol:   targetSym,
-				Segments: segs,
-				KeyType:  mutation.KeyType,
-				ValType:  mutation.ValueType,
+			assignments.Map = append(assignments.Map, flow.MapMutatorAssignment{
+				Point:     p,
+				Target:    target,
+				ValueMode: mutation.ValueMode,
+				KeyType:   projectCarrierField(mutation.KeyType),
+				ValueType: projectCarrierField(mutation.ValueType),
 			})
 		case api.ContainerMutationTableElement:
 			assignments.Table = append(assignments.Table, flow.TableMutatorAssignment{
 				Point:     p,
 				Target:    target,
-				ValueType: mutation.ValueType,
+				KeyType:   projectCarrierField(mutation.KeyType),
+				ValueType: projectCarrierField(mutation.ValueType),
 			})
 		default:
 			assignments.Container = append(assignments.Container, flow.ContainerMutatorAssignment{
 				Point:     p,
 				Target:    target,
-				ValueType: mutation.ValueType,
+				ValueType: projectCarrierField(mutation.ValueType),
 			})
 		}
 	}

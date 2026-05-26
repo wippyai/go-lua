@@ -515,6 +515,8 @@ func unaryLength(operand typ.Type) typ.Type {
 		return typ.Integer
 	case kind.Map:
 		return typ.Integer
+	case kind.Optional:
+		return unaryLength(operand.(*typ.Optional).Inner)
 	case kind.Literal:
 		if operand.(*typ.Literal).Base == kind.String {
 			return typ.Integer
@@ -597,6 +599,8 @@ func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool)
 	// For arithmetic operators, unknown + numeric preserves numeric result shape.
 	if leftUnknown || rightUnknown {
 		switch op {
+		case "==", "~=":
+			return typ.Boolean, true
 		case "+", "-", "*", "/", "%", "^", "//":
 			if leftUnknown && isNumeric(right) {
 				return numericResultType(op, right), true

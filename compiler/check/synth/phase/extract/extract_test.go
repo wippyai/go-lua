@@ -90,6 +90,10 @@ func (m *mockSynthInterface) Narrow() api.BaseSynth {
 	return nil
 }
 
+func (m *mockSynthInterface) WithFlow(api.FlowOps) api.BaseSynth {
+	return nil
+}
+
 func (m *mockSynthInterface) SynthWithExpected(expr ast.Expr, p cfg.Point, expected typ.Type) typ.Type {
 	return typ.Unknown
 }

@@ -108,6 +108,28 @@ func TestStaticKeySegment_Number(t *testing.T) {
 	}
 }
 
+func TestStaticAttrKeySegment_RejectsDynamicIdent(t *testing.T) {
+	if _, ok := path.StaticAttrKeySegment(&ast.IdentExpr{Value: "name"}); ok {
+		t.Fatal("expected dynamic attr identifier to be rejected")
+	}
+}
+
+func TestStaticAttrKeySegmentWithConst_StringIdent(t *testing.T) {
+	resolver := func(name string) *flow.ConstValue {
+		if name == "KEY" {
+			return &flow.ConstValue{Kind: flow.ConstString, Str: "field"}
+		}
+		return nil
+	}
+	seg, ok := path.StaticAttrKeySegmentWithConst(&ast.IdentExpr{Value: "KEY"}, resolver)
+	if !ok {
+		t.Fatal("expected const attr identifier to resolve")
+	}
+	if seg.Kind != constraint.SegmentField || seg.Name != "field" {
+		t.Fatalf("unexpected segment: kind=%v name=%q", seg.Kind, seg.Name)
+	}
+}
+
 func TestPathFromExpr_Unsupported(t *testing.T) {
 	p := path.FromExprWithBindings(&ast.StringExpr{Value: "hello"}, nil, nil)
 	if !p.IsEmpty() {

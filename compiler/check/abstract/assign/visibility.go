@@ -16,7 +16,7 @@ func paramSymbolSet(graph *cfg.Graph) map[cfg.SymbolID]bool {
 	if graph == nil {
 		return nil
 	}
-	params := graph.ParamSymbols()
+	params := allParamSymbols(graph)
 	if len(params) == 0 {
 		return nil
 	}
@@ -24,6 +24,23 @@ func paramSymbolSet(graph *cfg.Graph) map[cfg.SymbolID]bool {
 	for _, sym := range params {
 		if sym != 0 {
 			out[sym] = true
+		}
+	}
+	return out
+}
+
+func allParamSymbols(graph *cfg.Graph) []cfg.SymbolID {
+	if graph == nil {
+		return nil
+	}
+	slots := graph.ParamSlotsReadOnly()
+	if len(slots) == 0 {
+		return graph.ParamSymbols()
+	}
+	out := make([]cfg.SymbolID, 0, len(slots))
+	for _, slot := range slots {
+		if slot.Symbol != 0 {
+			out = append(out, slot.Symbol)
 		}
 	}
 	return out
@@ -132,7 +149,11 @@ func mergeVisibleInferredTypes(
 		if out == nil {
 			out = make(api.SpecTypes, len(inferred))
 		}
-		out[sym] = t
+		if paramSet[sym] {
+			out[sym] = mergeUnannotatedParamType(out[sym], t)
+		} else {
+			out[sym] = t
+		}
 	}
 	return out
 }

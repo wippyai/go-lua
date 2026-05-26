@@ -4,23 +4,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-func cloneFacts(f api.Facts) api.Facts {
-	if interproc.Empty(f) {
-		return api.Facts{}
-	}
-	return api.Facts{
-		FunctionFacts:      cloneFunctionFacts(f.FunctionFacts),
-		LiteralSigs:        cloneLiteralSigs(f.LiteralSigs),
-		CapturedTypes:      cloneCapturedTypes(f.CapturedTypes),
-		CapturedFields:     cloneCapturedFieldAssigns(f.CapturedFields),
-		CapturedContainers: cloneCapturedContainerMutations(f.CapturedContainers),
-		ConstructorFields:  cloneConstructorFields(f.ConstructorFields),
-	}
-}
 
 func cloneFunctionFacts(src api.FunctionFacts) api.FunctionFacts {
 	if len(src) == 0 {
@@ -28,11 +16,49 @@ func cloneFunctionFacts(src api.FunctionFacts) api.FunctionFacts {
 	}
 	out := make(api.FunctionFacts, len(src))
 	for sym, fact := range src {
-		fact.Params = cloneTypeSlice(fact.Params)
-		fact.Summary = cloneTypeSlice(fact.Summary)
-		fact.Narrow = cloneTypeSlice(fact.Narrow)
-		out[sym] = fact
+		out[sym] = cloneFunctionFact(fact)
 	}
+	return out
+}
+
+func cloneFunctionFact(fact api.FunctionFact) api.FunctionFact {
+	fact.Params = cloneAbstractValueSlice(fact.Params)
+	fact.BodyParams = cloneAbstractValueSlice(fact.BodyParams)
+	fact.EntryParams = cloneAbstractValueSlice(fact.EntryParams)
+	fact.Summary = cloneAbstractValueSlice(fact.Summary)
+	fact.Narrow = cloneAbstractValueSlice(fact.Narrow)
+	fact.EnvReturns = cloneEnvReturnSpecs(fact.EnvReturns)
+	return fact
+}
+
+func cloneAbstractValueSlice(src []product.AbstractValue) []product.AbstractValue {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]product.AbstractValue, len(src))
+	copy(out, src)
+	return out
+}
+
+func cloneEnvReturnSpecs(src []contract.EnvReturnSpec) []contract.EnvReturnSpec {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]contract.EnvReturnSpec, len(src))
+	for i, spec := range src {
+		out[i] = spec
+		out[i].Path = cloneSegments(spec.Path)
+		out[i].Args = cloneTypeSlice(spec.Args)
+	}
+	return out
+}
+
+func cloneSegments(src []constraint.Segment) []constraint.Segment {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]constraint.Segment, len(src))
+	copy(out, src)
 	return out
 }
 
@@ -58,6 +84,17 @@ func cloneCapturedTypes(src api.CapturedTypes) api.CapturedTypes {
 	return out
 }
 
+func cloneAbstractValueFieldMap(src map[string]product.AbstractValue) map[string]product.AbstractValue {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]product.AbstractValue, len(src))
+	for name, v := range src {
+		out[name] = v
+	}
+	return out
+}
+
 func cloneCapturedFieldAssigns(src api.CapturedFieldAssigns) api.CapturedFieldAssigns {
 	if len(src) == 0 {
 		return nil
@@ -67,16 +104,12 @@ func cloneCapturedFieldAssigns(src api.CapturedFieldAssigns) api.CapturedFieldAs
 		if len(bySym) == 0 {
 			continue
 		}
-		bySymOut := make(map[cfg.SymbolID]map[string]typ.Type, len(bySym))
+		bySymOut := make(map[cfg.SymbolID]map[string]product.AbstractValue, len(bySym))
 		for sym, fields := range bySym {
 			if len(fields) == 0 {
 				continue
 			}
-			fieldOut := make(map[string]typ.Type, len(fields))
-			for name, t := range fields {
-				fieldOut[name] = t
-			}
-			bySymOut[sym] = fieldOut
+			bySymOut[sym] = cloneAbstractValueFieldMap(fields)
 		}
 		if len(bySymOut) > 0 {
 			out[callee] = bySymOut
@@ -130,16 +163,16 @@ func cloneConstructorFields(src api.ConstructorFields) api.ConstructorFields {
 		if len(fields) == 0 {
 			continue
 		}
-		fieldOut := make(map[string]typ.Type, len(fields))
-		for name, t := range fields {
-			fieldOut[name] = t
-		}
-		out[sym] = fieldOut
+		out[sym] = cloneConstructorFieldMap(fields)
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+func cloneConstructorFieldMap(src map[string]product.AbstractValue) map[string]product.AbstractValue {
+	return cloneAbstractValueFieldMap(src)
 }
 
 func cloneTypeSlice(src []typ.Type) []typ.Type {

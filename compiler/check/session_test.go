@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -451,7 +452,7 @@ func TestSessionStore_ClearInterprocState(t *testing.T) {
 
 	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{
-			cfg.SymbolID(2): {"name": typ.String},
+			cfg.SymbolID(2): {"name": product.FromType(typ.String)},
 		},
 	})
 	store.InterprocPrev.Facts[api.GraphKey{GraphID: 1, ParentHash: 1}] = api.Facts{
@@ -545,7 +546,7 @@ func TestModuleConstructorFacts_EmptyFields(t *testing.T) {
 	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{1: nil},
 	})
-	got := store.GetModuleFacts().ConstructorFields[1]
+	got, _ := store.ModuleFacts().ConstructorFields(1)
 	if len(got) != 0 {
 		t.Fatalf("empty constructor field map should stay empty, got %#v", got)
 	}
@@ -553,7 +554,7 @@ func TestModuleConstructorFacts_EmptyFields(t *testing.T) {
 
 func TestModuleConstructorFacts_Basic(t *testing.T) {
 	store := store.NewSessionStore()
-	fields := map[string]typ.Type{"x": typ.Number, "y": typ.String}
+	fields := map[string]product.AbstractValue{"x": product.FromType(typ.Number), "y": product.FromType(typ.String)}
 	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{1: fields},
 	})
@@ -571,10 +572,10 @@ func TestModuleConstructorFacts_Basic(t *testing.T) {
 func TestModuleConstructorFacts_Join(t *testing.T) {
 	store := store.NewSessionStore()
 	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
-		ConstructorFields: api.ConstructorFields{1: {"x": typ.Number}},
+		ConstructorFields: api.ConstructorFields{1: {"x": product.FromType(typ.Number)}},
 	})
 	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
-		ConstructorFields: api.ConstructorFields{1: {"x": typ.String}},
+		ConstructorFields: api.ConstructorFields{1: {"x": product.FromType(typ.String)}},
 	})
 
 	next := store.InterprocNext
@@ -582,36 +583,36 @@ func TestModuleConstructorFacts_Join(t *testing.T) {
 		t.Fatal("next product facts should be initialized")
 	}
 	fields := next.Facts[api.ModuleFactsKey()].ConstructorFields[1]
-	if fields == nil || fields["x"] == typ.Number {
+	if fields == nil || product.Equal(fields["x"], product.FromType(typ.Number)) {
 		t.Error("field should be joined")
 	}
 }
 
-func TestGetModuleFacts_AbsentConstructorClass(t *testing.T) {
+func TestModuleFacts_AbsentConstructorClass(t *testing.T) {
 	store := store.NewSessionStore()
-	result := store.GetModuleFacts().ConstructorFields[0]
+	result, _ := store.ModuleFacts().ConstructorFields(0)
 	if result != nil {
 		t.Error("absent constructor class should return nil")
 	}
 }
 
-func TestGetModuleFacts_ConstructorFieldsFromNext(t *testing.T) {
+func TestModuleFacts_ConstructorFieldsFromNext(t *testing.T) {
 	store := store.NewSessionStore()
 	setConstructorFieldsNextForTest(store, map[cfg.SymbolID]map[string]typ.Type{
 		1: {"x": typ.Number},
 	})
-	result := store.GetModuleFacts().ConstructorFields[1]
+	result, _ := store.ModuleFacts().ConstructorFields(1)
 	if result == nil {
 		t.Fatal("should find same-iteration constructor fields from product overlay")
 	}
 }
 
-func TestGetModuleFacts_ConstructorFieldsFromPrev(t *testing.T) {
+func TestModuleFacts_ConstructorFieldsFromPrev(t *testing.T) {
 	store := store.NewSessionStore()
 	setConstructorFieldsPrevForTest(store, map[cfg.SymbolID]map[string]typ.Type{
 		1: {"y": typ.String},
 	})
-	result := store.GetModuleFacts().ConstructorFields[1]
+	result, _ := store.ModuleFacts().ConstructorFields(1)
 	if result == nil {
 		t.Fatal("should find fields from stable product")
 	}

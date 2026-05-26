@@ -51,6 +51,7 @@ type FlowContext struct {
 	InitialDeclaredTypes flow.DeclaredTypes
 	SiblingTypes         map[cfg.SymbolID]typ.Type
 	LiteralTypes         map[cfg.SymbolID]typ.Type
+	FunctionFacts        api.FunctionFacts
 
 	// Module-level data
 	ModuleAliases  map[cfg.SymbolID]string

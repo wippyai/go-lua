@@ -4,6 +4,7 @@ package api
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 )
 
@@ -12,6 +13,34 @@ import (
 type GraphKey struct {
 	GraphID    uint64 // Unique CFG ID from SessionStore.Graphs()
 	ParentHash uint64 // Parent scope hash from SessionStore.Parents()
+}
+
+// FunctionFactKey identifies one canonical FunctionFact inside one graph
+// product. Query inputs use this key for fine-grained dependencies on a single
+// function symbol instead of the whole interprocedural product.
+type FunctionFactKey struct {
+	GraphKey GraphKey
+	Symbol   cfg.SymbolID
+}
+
+// LiteralSigKey identifies one function literal signature inside one graph
+// product.
+type LiteralSigKey struct {
+	GraphKey GraphKey
+	Func     *ast.FunctionExpr
+}
+
+// CapturedTypeKey identifies one captured symbol type inside one graph product.
+type CapturedTypeKey struct {
+	GraphKey GraphKey
+	Symbol   cfg.SymbolID
+}
+
+// ConstructorFieldKey identifies one module-wide constructor field map by
+// class symbol. The GraphKey is always ModuleFactsKey.
+type ConstructorFieldKey struct {
+	GraphKey GraphKey
+	Symbol   cfg.SymbolID
 }
 
 // ModuleFactsKey identifies module-wide interprocedural facts that are not tied

@@ -4,7 +4,6 @@ package cfg
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg/extraction"
-	"github.com/wippyai/go-lua/types/flow/pathkey"
 )
 
 // ExtractAssignTarget extracts assignment target info from an expression.
@@ -127,7 +126,7 @@ func isStaticReceiver(expr ast.Expr) bool {
 	case *ast.IdentExpr:
 		return e.Value != ""
 	case *ast.AttrGetExpr:
-		base, fields := extractStaticFieldPath(e)
+		base, fields := extraction.ExtractFieldPath(e)
 		return base != "" && len(fields) > 0
 	default:
 		return false
@@ -139,32 +138,9 @@ func staticFieldCalleeName(expr ast.Expr) string {
 	if !ok {
 		return ""
 	}
-	_, fields := extractStaticFieldPath(attr)
+	_, fields := extraction.ExtractFieldPath(attr)
 	if len(fields) == 0 {
 		return ""
 	}
 	return fields[len(fields)-1]
-}
-
-func extractStaticFieldPath(expr *ast.AttrGetExpr) (string, []string) {
-	var path []string
-	current := expr
-
-	for {
-		key := ast.KeyName(current.Key)
-		if key == "" || !pathkey.IsIdentName(key) {
-			return "", nil
-		}
-
-		path = append([]string{key}, path...)
-
-		switch obj := current.Object.(type) {
-		case *ast.IdentExpr:
-			return obj.Value, path
-		case *ast.AttrGetExpr:
-			current = obj
-		default:
-			return "", nil
-		}
-	}
 }

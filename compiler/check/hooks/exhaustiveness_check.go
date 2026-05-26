@@ -306,8 +306,8 @@ func attrEqualsLiteral(attrExpr, literalExpr ast.Expr) (discriminantCheck, bool)
 	if !ok {
 		return discriminantCheck{}, false
 	}
-	field := ast.KeyName(attr.Key)
-	if field == "" {
+	field, ok := staticAttrFieldName(attr.Key)
+	if !ok {
 		return discriminantCheck{}, false
 	}
 	objectPath, ok := exprPath(attr.Object)
@@ -327,8 +327,8 @@ func attrEqualsPath(attrExpr, valueExpr ast.Expr) (discriminantCheck, bool) {
 	if !ok {
 		return discriminantCheck{}, false
 	}
-	field := ast.KeyName(attr.Key)
-	if field == "" {
+	field, ok := staticAttrFieldName(attr.Key)
+	if !ok {
 		return discriminantCheck{}, false
 	}
 	objectPath, ok := exprPath(attr.Object)
@@ -379,8 +379,8 @@ func exprPath(expr ast.Expr) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		key := ast.KeyName(e.Key)
-		if key == "" {
+		key, ok := staticAttrFieldName(e.Key)
+		if !ok {
 			return "", false
 		}
 		return base + "." + key, true
@@ -450,12 +450,20 @@ func isChannelSelectCall(call *cfg.CallInfo) bool {
 	if !ok {
 		return false
 	}
-	key := ast.KeyName(attr.Key)
-	if key != "select" {
+	key, ok := staticAttrFieldName(attr.Key)
+	if !ok || key != "select" {
 		return false
 	}
 	root, ok := attr.Object.(*ast.IdentExpr)
 	return ok && root.Value == "channel"
+}
+
+func staticAttrFieldName(key ast.Expr) (string, bool) {
+	seg, ok := flowpath.StaticAttrKeySegment(key)
+	if !ok || seg.Kind != constraint.SegmentField || seg.Name == "" {
+		return "", false
+	}
+	return seg.Name, true
 }
 
 func selectCaseChannels(expr ast.Expr, p cfg.Point, graph *cfg.Graph, bindings *bind.BindingTable) ([]selectCase, bool) {

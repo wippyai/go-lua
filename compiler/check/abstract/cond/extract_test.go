@@ -114,6 +114,45 @@ func TestConstraintsFromCallOnReturn_OnlyAppliesMustConstraints(t *testing.T) {
 	}
 }
 
+func TestConstraintsFromCallOnReturn_SkipsReturnKeyCollectionProvenance(t *testing.T) {
+	sym := typecfg.SymbolID(101)
+	info := &cfg.CallInfo{
+		CalleeSymbol: sym,
+		Args:         []ast.Expr{&ast.IdentExpr{Value: "t"}},
+	}
+
+	refinementLookup := func(id typecfg.SymbolID) *constraint.FunctionRefinement {
+		if id != sym {
+			return nil
+		}
+		return &constraint.FunctionRefinement{
+			OnReturn: constraint.FromConstraints(constraint.KeyOf{
+				Table: constraint.ParamPath(0),
+				Key:   constraint.RetPath(0),
+			}),
+		}
+	}
+
+	result := ConstraintsFromCallOnReturn(
+		info,
+		0,
+		nil,
+		nil,
+		nil,
+		nil,
+		refinementLookup,
+		nil,
+		nil,
+		nil,
+		nil,
+		api.FlowEvidence{},
+	)
+
+	if result.HasConstraints() {
+		t.Fatalf("returned key collection provenance must not become scalar KeyOf condition: %v", result.Disjuncts)
+	}
+}
+
 func TestConstraintsFromAssignOnReturn_NilInfo(t *testing.T) {
 	result := ConstraintsFromAssignOnReturn(nil, 0, nil, nil, nil, nil, nil, nil, nil, nil, nil, api.FlowEvidence{})
 	if result.HasConstraints() {

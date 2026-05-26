@@ -21,9 +21,8 @@ type FieldDef struct {
 	Optional bool
 }
 
-// tableConstructor synthesizes type for table constructor {}.
+// tableConstructor synthesizes the structural table-constructor result.
 func tableConstructor(fields []FieldDef, array []typ.Type) typ.Type {
-	// Empty table
 	if len(fields) == 0 && len(array) == 0 {
 		return typ.NewRecord().Build()
 	}

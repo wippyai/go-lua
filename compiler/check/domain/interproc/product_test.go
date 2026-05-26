@@ -7,25 +7,27 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
-	"github.com/wippyai/go-lua/compiler/check/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestWidenFacts_DoesNotOverrideSummaryWithNilNarrow(t *testing.T) {
 	prev := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.Integer}},
+			1: {Summary: product.LiftVector([]typ.Type{typ.Integer})},
 		},
 	}
 	next := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Narrow: []typ.Type{typ.Nil}},
+			1: {Narrow: product.LiftVector([]typ.Type{typ.Nil})},
 		},
 	}
 
 	merged := WidenFacts(prev, next)
-	got := functionfact.ReturnSummaryFromMap(merged.FunctionFacts, 1)
+	got := functionfact.ReturnSummary(merged.FunctionFacts, 1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected summary[1]=integer, got %v", got)
 	}
@@ -34,32 +36,63 @@ func TestWidenFacts_DoesNotOverrideSummaryWithNilNarrow(t *testing.T) {
 func TestWidenFacts_ElidesOptionalFromNarrowFunctionFact(t *testing.T) {
 	prev := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.NewOptional(typ.Integer)}},
+			1: {Summary: product.LiftVector([]typ.Type{typ.NewOptional(typ.Integer)})},
 		},
 	}
 	next := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Narrow: []typ.Type{typ.Integer}},
+			1: {Narrow: product.LiftVector([]typ.Type{typ.Integer})},
 		},
 	}
 
 	merged := WidenFacts(prev, next)
-	got := functionfact.ReturnSummaryFromMap(merged.FunctionFacts, 1)
+	got := functionfact.ReturnSummary(merged.FunctionFacts, 1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected summary[1]=integer, got %v", got)
 	}
 }
 
-func TestWidenFacts_RefinesOptionalForFirstOrderFunctionSummary(t *testing.T) {
+func TestWidenFacts_ReplacesEmptyReturnSeedWithMetatableEvidence(t *testing.T) {
+	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
+	prototype := typ.NewRecord().Field("ready", method).Build()
+	metatable := typ.NewRecord().Field("__index", prototype).Build()
+	seed := typ.NewRecord().Build()
+	observed := typ.NewRecord().Metatable(metatable).Build()
+
 	prev := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: []typ.Type{typ.NewOptional(typ.Integer)}},
+		1: {Summary: product.LiftVector([]typ.Type{seed, typ.Nil}), Narrow: product.LiftVector([]typ.Type{seed, typ.Nil})},
 	}}
 	next := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: []typ.Type{typ.Integer}},
+		1: {Summary: product.LiftVector([]typ.Type{observed, typ.Nil}), Narrow: product.LiftVector([]typ.Type{observed, typ.Nil})},
 	}}
 
 	merged := WidenFacts(prev, next)
-	got := functionfact.ReturnSummaryFromMap(merged.FunctionFacts, 1)
+	got := functionfact.ReturnSummary(merged.FunctionFacts, 1)
+	if len(got) != 2 {
+		t.Fatalf("expected two return slots, got %v", got)
+	}
+	if mt, ok := querycore.Method(got[0], "ready"); !ok {
+		t.Fatalf("merged metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got[0])
+	}
+	narrow := merged.FunctionFacts[1].Narrow
+	if len(narrow) != 2 {
+		t.Fatalf("expected two narrow slots, got %v", narrow)
+	}
+	if mt, ok := querycore.Method(narrow[0].ProjectValue(), "ready"); !ok {
+		t.Fatalf("merged narrow metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, narrow[0])
+	}
+}
+
+func TestWidenFacts_RefinesOptionalForFirstOrderFunctionSummary(t *testing.T) {
+	prev := api.Facts{FunctionFacts: api.FunctionFacts{
+		1: {Summary: product.LiftVector([]typ.Type{typ.NewOptional(typ.Integer)})},
+	}}
+	next := api.Facts{FunctionFacts: api.FunctionFacts{
+		1: {Summary: product.LiftVector([]typ.Type{typ.Integer})},
+	}}
+
+	merged := WidenFacts(prev, next)
+	got := functionfact.ReturnSummary(merged.FunctionFacts, 1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected integer after first-order refinement, got %v", got)
 	}
@@ -81,14 +114,14 @@ func TestWidenFacts_UsesMonotoneJoinForHigherOrderFunctionSummary(t *testing.T) 
 		Build()
 
 	prev := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: []typ.Type{base}},
+		1: {Summary: product.LiftVector([]typ.Type{base})},
 	}}
 	next := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: []typ.Type{refined}},
+		1: {Summary: product.LiftVector([]typ.Type{refined})},
 	}}
 
 	merged := WidenFacts(prev, next)
-	got := functionfact.ReturnSummaryFromMap(merged.FunctionFacts, 1)
+	got := functionfact.ReturnSummary(merged.FunctionFacts, 1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], base) {
 		t.Fatalf("expected stable upper bound for higher-order return, got %v", got)
 	}
@@ -106,14 +139,14 @@ func TestWidenFacts_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
 	})
 
 	prev := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: []typ.Type{typ.NewOptional(dbType)}},
+		1: {Summary: product.LiftVector([]typ.Type{typ.NewOptional(dbType)})},
 	}}
 	next := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: []typ.Type{dbType}},
+		1: {Summary: product.LiftVector([]typ.Type{dbType})},
 	}}
 
 	merged := WidenFacts(prev, next)
-	got := functionfact.ReturnSummaryFromMap(merged.FunctionFacts, 1)
+	got := functionfact.ReturnSummary(merged.FunctionFacts, 1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], dbType) {
 		t.Fatalf("expected optional elision for interface return, got %v", got)
 	}
@@ -182,12 +215,54 @@ func TestReturnSummaryMerge_KeepsNonRecursiveContainerRefinement(t *testing.T) {
 func TestWidenCapturedFieldAssigns_NormalizesOptionalFunctionValues(t *testing.T) {
 	fn := typ.Func().Param("fn", typ.Unknown).Build()
 	merged := WidenCapturedFieldAssigns(nil, api.CapturedFieldAssigns{
-		1: {2: {"after_all": typ.NewOptional(fn)}},
+		1: {2: {"after_all": product.FromType(typ.NewOptional(fn))}},
 	})
 
-	got := merged[1][2]["after_all"]
+	got := merged[1][2]["after_all"].ProjectValue()
 	if !typ.TypeEquals(got, fn) {
 		t.Fatalf("expected optional function value to canonicalize to function, got %v", got)
+	}
+}
+
+func TestWidenCapturedFieldAssigns_ReplacesUnsolvedFunctionSeed(t *testing.T) {
+	seed := typ.Func().Build()
+	solved := typ.Func().Param("self", typ.Unknown).Returns(typ.Number).Build()
+	merged := WidenCapturedFieldAssigns(
+		api.CapturedFieldAssigns{1: {2: {"get_x": product.FromType(seed)}}},
+		api.CapturedFieldAssigns{1: {2: {"get_x": product.FromType(solved)}}},
+	)
+
+	got := merged[1][2]["get_x"].ProjectValue()
+	if !typ.TypeEquals(got, solved) {
+		t.Fatalf("captured function seed should not dominate solved projection: got %v, want %v", got, solved)
+	}
+}
+
+func TestWidenCapturedTypes_ReplacesTopSeedWithPreciseSnapshot(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	merged := WidenCapturedTypes(
+		api.CapturedTypes{1: product.FromType(typ.Any)},
+		api.CapturedTypes{1: product.FromType(entry)},
+	)
+
+	if got := merged[1].ProjectValue(); !typ.TypeEquals(got, entry) {
+		t.Fatalf("captured top seed should not poison later precise snapshot: got %v, want %v", got, entry)
+	}
+	again := WidenCapturedTypes(merged, api.CapturedTypes{1: product.FromType(entry)})
+	if got := again[1].ProjectValue(); !typ.TypeEquals(got, entry) {
+		t.Fatalf("captured precision replacement must be idempotent: got %v, want %v", got, entry)
+	}
+}
+
+func TestJoinCapturedTypes_ReplacesTopSeedWithPreciseSnapshot(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	merged := JoinCapturedTypes(
+		api.CapturedTypes{1: product.FromType(typ.NewOptional(typ.Any))},
+		api.CapturedTypes{1: product.FromType(typ.NewOptional(entry))},
+	)
+	want := typ.NewOptional(entry)
+	if got := merged[1].ProjectValue(); !typ.TypeEquals(got, want) {
+		t.Fatalf("captured precise snapshot should replace optional top seed: got %v, want %v", got, want)
 	}
 }
 
@@ -209,11 +284,11 @@ func TestWidenCapturedFieldAssigns_MergesSameShapeFunctionValues(t *testing.T) {
 		Build()
 
 	merged := WidenCapturedFieldAssigns(
-		api.CapturedFieldAssigns{1: {2: {"describe": prevFn}}},
-		api.CapturedFieldAssigns{1: {2: {"describe": nextFn}}},
+		api.CapturedFieldAssigns{1: {2: {"describe": product.FromType(prevFn)}}},
+		api.CapturedFieldAssigns{1: {2: {"describe": product.FromType(nextFn)}}},
 	)
 
-	got := merged[1][2]["describe"]
+	got := merged[1][2]["describe"].ProjectValue()
 	if _, ok := got.(*typ.Union); ok {
 		t.Fatalf("expected function observations to merge, got union %v", got)
 	}
@@ -230,6 +305,43 @@ func TestWidenCapturedFieldAssigns_MergesSameShapeFunctionValues(t *testing.T) {
 	}
 	if rec.GetField("full_path") == nil || rec.GetField("children") == nil {
 		t.Fatalf("expected merged return fields, got %v", rec)
+	}
+}
+
+func TestJoinCapturedFieldAssigns_UsesCanonicalRecursiveProductJoin(t *testing.T) {
+	left := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	right := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Field("proc", typ.Any).
+			Build()
+	})
+
+	merged := JoinCapturedFieldAssigns(
+		api.CapturedFieldAssigns{1: {2: {"suite": product.FromType(left)}}},
+		api.CapturedFieldAssigns{1: {2: {"suite": product.FromType(right)}}},
+	)
+	got := merged[1][2]["suite"].ProjectValue()
+	if _, ok := got.(*typ.Union); ok {
+		t.Fatalf("captured field join returned raw recursive union: %v", got)
+	}
+	rec, ok := got.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("captured field join = %T %[1]v, want recursive product", got)
+	}
+	body, ok := rec.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("recursive body = %T %[1]v, want record", rec.Body)
+	}
+	proc := body.GetField("proc")
+	if proc == nil || !proc.Optional {
+		t.Fatalf("merged recursive body should retain optional proc field, got %v", body)
 	}
 }
 

@@ -4,33 +4,390 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
-	"github.com/wippyai/go-lua/compiler/check/domain/value"
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
-	typjoin "github.com/wippyai/go-lua/types/typ/join"
+	"github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// Normalize canonicalizes one stored function fact.
+// Normalize canonicalizes one stored function fact. The vector carriers store
+// interned product.AbstractValue; the rich per-slot engines run on the projected
+// typ.Type evidence, and the canonical result is lifted back onto the carriers.
 func Normalize(ff api.FunctionFact) api.FunctionFact {
+	summary := returnsummary.NormalizeAndPrune(summaryTypes(ff))
+	narrow := returnsummary.NormalizeAndPrune(narrowTypes(ff))
+	signature := normalizeFunctionFactSignature(ff.Signature)
+	summary = repairInferredSummaryWithNarrow(signature, summary, narrow)
 	return api.FunctionFact{
-		Params:     paramevidence.FilterEmptyVector(ff.Params),
-		Summary:    returnsummary.Canonical(ff.Summary),
-		Narrow:     returnsummary.Canonical(ff.Narrow),
-		Type:       value.NormalizeFactType(ff.Type),
-		Refinement: NormalizeRefinement(ff.Refinement),
+		Params:      product.LiftVector(paramevidence.FilterEmptyVector(paramsTypes(ff))),
+		BodyParams:  product.LiftVector(paramevidence.FilterEmptyBodyVector(bodyParamsTypes(ff))),
+		EntryParams: product.LiftVector(paramevidence.FilterEmptyBodyVector(entryParamsTypes(ff))),
+		Summary:     product.LiftVector(summary),
+		Narrow:      product.LiftVector(narrow),
+		Signature:   signature,
+		Refinement:  NormalizeRefinement(ff.Refinement),
+		EnvReturns:  NormalizeEnvReturns(ff.EnvReturns),
 	}
+}
+
+func normalizeFunctionFactSignature(fn *typ.Function) *typ.Function {
+	if fn == nil {
+		return nil
+	}
+	changed := false
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, param := range fn.Params {
+		paramType := normalizeFunctionParamDomainType(param.Type)
+		if !typ.TypeEquals(param.Type, paramType) {
+			changed = true
+		}
+		if param.Optional {
+			builder = builder.OptParam(param.Name, paramType)
+		} else {
+			builder = builder.Param(param.Name, paramType)
+		}
+	}
+	if fn.Variadic != nil {
+		variadic := normalizeFunctionParamDomainType(fn.Variadic)
+		if !typ.TypeEquals(fn.Variadic, variadic) {
+			changed = true
+		}
+		builder = builder.Variadic(variadic)
+	}
+	if len(fn.Returns) > 0 {
+		returns := make([]typ.Type, len(fn.Returns))
+		for idx, ret := range fn.Returns {
+			normalized := value.NormalizeFactType(ret)
+			if !typ.TypeEquals(ret, normalized) {
+				changed = true
+			}
+			returns[idx] = normalized
+		}
+		builder = builder.Returns(returns...)
+	}
+	if fn.Effects != nil {
+		builder = builder.Effects(fn.Effects)
+	}
+	if fn.Spec != nil {
+		builder = builder.Spec(fn.Spec)
+	}
+	if fn.Refinement != nil {
+		builder = builder.WithRefinement(fn.Refinement)
+	}
+	if !changed {
+		return fn
+	}
+	return builder.Build()
+}
+
+// CanonicalSourceSignature converts a synthesized function shape into the
+// stored source-signature channel. Synthetic placeholder returns are omitted;
+// declared return annotations remain part of the signature contract.
+func CanonicalSourceSignature(fn *typ.Function, hasDeclaredReturns bool) *typ.Function {
+	if fn == nil {
+		return nil
+	}
+	if hasDeclaredReturns {
+		return normalizeFunctionFactSignature(fn)
+	}
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, param := range fn.Params {
+		paramType := normalizeFunctionParamDomainType(param.Type)
+		if param.Optional {
+			builder = builder.OptParam(param.Name, paramType)
+		} else {
+			builder = builder.Param(param.Name, paramType)
+		}
+	}
+	if fn.Variadic != nil {
+		builder = builder.Variadic(normalizeFunctionParamDomainType(fn.Variadic))
+	}
+	if fn.Effects != nil {
+		builder = builder.Effects(fn.Effects)
+	}
+	if fn.Spec != nil {
+		builder = builder.Spec(fn.Spec)
+	}
+	if fn.Refinement != nil {
+		builder = builder.WithRefinement(fn.Refinement)
+	}
+	return builder.Build()
+}
+
+// CanonicalPostflowSignature admits a synthesized postflow function shape into
+// the canonical source-signature channel. Public seed parameters preserve the
+// caller contract, inferred returns are kept only when source declarations make
+// returns part of the signature, and synthetic variadics are removed for
+// non-vararg source functions.
+func CanonicalPostflowSignature(
+	observed *typ.Function,
+	publicSeed *typ.Function,
+	returns []typ.Type,
+	hasDeclaredReturns bool,
+	hasSourceVariadic bool,
+) *typ.Function {
+	if observed == nil {
+		return nil
+	}
+	candidate := observed
+	if publicSeed != nil {
+		candidate = withPublicSeedParams(candidate, publicSeed)
+	}
+	if hasDeclaredReturns && len(returns) > 0 && !returnsummary.AllNil(returns) {
+		if aligned := join.WithReturns(candidate, returns); aligned != nil {
+			candidate = aligned
+		}
+	}
+	if !hasSourceVariadic {
+		candidate = withoutSyntheticVariadic(candidate)
+	}
+	return CanonicalSourceSignature(candidate, hasDeclaredReturns)
+}
+
+func withPublicSeedParams(fn *typ.Function, publicSeed *typ.Function) *typ.Function {
+	if fn == nil || publicSeed == nil || len(publicSeed.Params) == 0 {
+		return fn
+	}
+	builder := typ.Func().ReserveParams(len(publicSeed.Params))
+	for _, tp := range publicSeed.TypeParams {
+		builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, param := range publicSeed.Params {
+		if param.Optional {
+			builder.OptParam(param.Name, param.Type)
+		} else {
+			builder.Param(param.Name, param.Type)
+		}
+	}
+	if publicSeed.Variadic != nil {
+		builder.Variadic(publicSeed.Variadic)
+	} else if fn.Variadic != nil {
+		builder.Variadic(fn.Variadic)
+	}
+	if len(fn.Returns) > 0 {
+		builder.Returns(fn.Returns...)
+	}
+	if fn.Effects != nil {
+		builder.Effects(fn.Effects)
+	}
+	if fn.Spec != nil {
+		builder.Spec(fn.Spec)
+	}
+	if fn.Refinement != nil {
+		builder.WithRefinement(fn.Refinement)
+	}
+	return builder.Build()
+}
+
+func withoutSyntheticVariadic(fn *typ.Function) *typ.Function {
+	if fn == nil || fn.Variadic == nil {
+		return fn
+	}
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, p := range fn.Params {
+		if p.Optional {
+			builder = builder.OptParam(p.Name, p.Type)
+		} else {
+			builder = builder.Param(p.Name, p.Type)
+		}
+	}
+	if len(fn.Returns) > 0 {
+		builder = builder.Returns(fn.Returns...)
+	}
+	if fn.Effects != nil {
+		builder = builder.Effects(fn.Effects)
+	}
+	if fn.Spec != nil {
+		builder = builder.Spec(fn.Spec)
+	}
+	if fn.Refinement != nil {
+		builder = builder.WithRefinement(fn.Refinement)
+	}
+	return builder.Build()
+}
+
+func normalizeFunctionParamDomainType(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	t = value.CollapseSequenceUnion(t, mergeParamType)
+	t = value.CollapseStructuralUnionShape(t, mergeParamType)
+	return value.CollapseTableTopEvidence(typ.PruneSoftUnionMembers(t))
+}
+
+// ApplyPublicSignatureEvidence makes the stored public function type agree with
+// hard public parameter obligations from the canonical function-fact product.
+// Explicit source annotations, including soft structural top annotations such
+// as {any}, stay public-authoritative; observed call shapes refine only the
+// body projection.
+func ApplyPublicSignatureEvidence(fn *typ.Function, evidence []typ.Type) *typ.Function {
+	if fn == nil || len(fn.Params) == 0 || len(evidence) == 0 {
+		return fn
+	}
+	changed := false
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for i, param := range fn.Params {
+		paramType := param.Type
+		optional := param.Optional
+		if i < len(evidence) {
+			if candidate := evidence[i]; paramevidence.HardPublicEvidence(candidate) {
+				next := applyPublicParamEvidence(param.Type, candidate)
+				if !typ.TypeEquals(next, param.Type) {
+					paramType = next
+					changed = true
+				}
+				if !unwrap.IsOptionalLike(paramType) && optional {
+					optional = false
+					changed = true
+				}
+			}
+		}
+		if optional {
+			builder = builder.OptParam(param.Name, paramType)
+		} else {
+			builder = builder.Param(param.Name, paramType)
+		}
+	}
+	if fn.Variadic != nil {
+		builder = builder.Variadic(fn.Variadic)
+	}
+	if len(fn.Returns) > 0 {
+		builder = builder.Returns(fn.Returns...)
+	}
+	if fn.Effects != nil {
+		builder = builder.Effects(fn.Effects)
+	}
+	if fn.Spec != nil {
+		builder = builder.Spec(fn.Spec)
+	}
+	if fn.Refinement != nil {
+		builder = builder.WithRefinement(fn.Refinement)
+	}
+	if !changed {
+		return fn
+	}
+	return builder.Build()
+}
+
+// ApplyBodySignatureEvidence projects body-effective parameter evidence into a
+// source signature for callee-body interpretation.
+func ApplyBodySignatureEvidence(fn *typ.Function, evidence []typ.Type) *typ.Function {
+	if fn == nil || len(fn.Params) == 0 || len(evidence) == 0 {
+		return fn
+	}
+	changed := false
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for i, param := range fn.Params {
+		paramType := param.Type
+		if i < len(evidence) {
+			next := applyBodyParamEvidence(param, evidence[i])
+			if !typ.TypeEquals(next, param.Type) {
+				paramType = next
+				changed = true
+			}
+		}
+		if param.Optional {
+			builder = builder.OptParam(param.Name, paramType)
+		} else {
+			builder = builder.Param(param.Name, paramType)
+		}
+	}
+	if fn.Variadic != nil {
+		builder = builder.Variadic(fn.Variadic)
+	}
+	if len(fn.Returns) > 0 {
+		builder = builder.Returns(fn.Returns...)
+	}
+	if fn.Effects != nil {
+		builder = builder.Effects(fn.Effects)
+	}
+	if fn.Spec != nil {
+		builder = builder.Spec(fn.Spec)
+	}
+	if fn.Refinement != nil {
+		builder = builder.WithRefinement(fn.Refinement)
+	}
+	if !changed {
+		return fn
+	}
+	return builder.Build()
+}
+
+func applyPublicParamEvidence(paramType, evidence typ.Type) typ.Type {
+	if evidence == nil {
+		return paramType
+	}
+	if paramType == nil || typ.IsUnknown(paramType) || paramevidence.AnyLikeParam(paramType) {
+		return mergeParamType(paramType, evidence)
+	}
+	if typ.IsRefinableAnnotation(paramType) {
+		return paramType
+	}
+	if value.IsStructuredTableShape(unwrap.Optional(paramType)) &&
+		value.IsStructuredTableShape(unwrap.Optional(evidence)) {
+		return mergeParamType(paramType, evidence)
+	}
+	return paramType
+}
+
+func applyBodyParamEvidence(param typ.Param, evidence typ.Type) typ.Type {
+	if evidence == nil {
+		return param.Type
+	}
+	paramType := param.Type
+	if unwrap.IsNilType(evidence) && (paramType == nil || typ.IsUnknown(paramType) || paramevidence.AnyLikeParam(paramType)) {
+		return typ.Nil
+	}
+	if paramType == nil || typ.IsUnknown(paramType) || paramevidence.AnyLikeParam(paramType) {
+		return mergeParamType(paramType, evidence)
+	}
+	if typ.IsRefinableAnnotation(paramType) {
+		return paramevidence.RefineAnnotationWithEvidence(paramType, evidence)
+	}
+	if typ.IsSoft(paramType, typ.SoftAnnotationPolicy) {
+		return mergeParamType(paramType, evidence)
+	}
+	if subtype.IsSubtype(evidence, paramType) {
+		return evidence
+	}
+	if value.IsStructuredTableShape(unwrap.Optional(paramType)) &&
+		value.IsStructuredTableShape(unwrap.Optional(evidence)) {
+		return mergeParamType(paramType, evidence)
+	}
+	return paramType
 }
 
 // Empty reports whether a canonical function fact contains no information.
 func Empty(ff api.FunctionFact) bool {
 	return len(ff.Params) == 0 &&
+		len(ff.BodyParams) == 0 &&
+		len(ff.EntryParams) == 0 &&
 		len(ff.Summary) == 0 &&
 		len(ff.Narrow) == 0 &&
-		ff.Type == nil &&
-		NormalizeRefinement(ff.Refinement) == nil
+		ff.Signature == nil &&
+		NormalizeRefinement(ff.Refinement) == nil &&
+		len(NormalizeEnvReturns(ff.EnvReturns)) == 0
 }
 
 // Join precisely merges two observations for one local function during a single
@@ -38,61 +395,317 @@ func Empty(ff api.FunctionFact) bool {
 func Join(existing, candidate api.FunctionFact) api.FunctionFact {
 	existing = Normalize(existing)
 	candidate = Normalize(candidate)
+	return JoinCanonical(existing, candidate)
+}
+
+// JoinCanonical precisely merges two already-canonical observations for one
+// local function during a single analysis iteration.
+func JoinCanonical(existing, candidate api.FunctionFact) api.FunctionFact {
 	out := existing
 
+	params := paramsTypes(existing)
+	bodyParams := bodyParamsTypes(existing)
+	entryParams := entryParamsTypes(existing)
+	summary := summaryTypes(existing)
+	narrow := narrowTypes(existing)
+
 	if len(candidate.Params) > 0 {
-		out.Params = paramevidence.JoinVectors(out.Params, candidate.Params)
+		params = paramevidence.JoinCallVectors(params, paramsTypes(candidate))
+	}
+	if len(candidate.BodyParams) > 0 {
+		bodyParams = paramevidence.JoinBodyVectors(bodyParams, bodyParamsTypes(candidate))
+	}
+	if len(candidate.EntryParams) > 0 {
+		entryParams = paramevidence.JoinEntryVectors(entryParams, entryParamsTypes(candidate))
 	}
 	if len(candidate.Summary) > 0 {
-		out.Summary = returnsummary.Merge(out.Summary, candidate.Summary)
+		summary = returnsummary.Merge(summary, summaryTypes(candidate))
 	}
 	if len(candidate.Narrow) > 0 {
-		out.Narrow = returnsummary.Merge(out.Narrow, candidate.Narrow)
+		narrow = returnsummary.Merge(narrow, narrowTypes(candidate))
 	}
-	if candidate.Type != nil {
-		out.Type = MergeType(out.Type, candidate.Type)
+	if candidate.Signature != nil {
+		out.Signature = MergeSignature(out.Signature, candidate.Signature)
 	}
 	out.Refinement = MergeRefinement(out.Refinement, candidate.Refinement)
-	out.Params = preserveDynamicParamsProvenByRefinement(existing.Params, candidate.Params, out.Params, out.Refinement)
-
-	summaryBeforeNarrow := out.Summary
-	if len(out.Narrow) > 0 {
-		if len(out.Summary) == 0 {
-			out.Summary = returnsummary.Canonical(out.Narrow)
+	out.EnvReturns = JoinEnvReturns(out.EnvReturns, candidate.EnvReturns)
+	if len(narrow) > 0 {
+		if len(summary) == 0 {
+			summary = returnsummary.Canonical(narrow)
 		} else {
-			out.Summary = returnsummary.Merge(out.Summary, out.Narrow)
+			summary = returnsummary.Merge(summary, narrow)
 		}
 	}
+	summary = repairInferredSummaryWithNarrow(out.Signature, summary, narrow)
 
-	if fn := unwrap.Function(out.Type); fn != nil {
-		alignedReturns := out.Summary
-		usingNarrow := len(out.Narrow) > 0 && !returnsummary.AllNil(out.Narrow)
-		if usingNarrow {
-			repairBase := summaryBeforeNarrow
-			if len(repairBase) == 0 {
-				repairBase = out.Summary
-			}
-			alignedReturns = repairSummaryWithNarrow(repairBase, out.Narrow)
-		}
-		if len(alignedReturns) > 0 {
-			if usingNarrow {
-				if aligned := typjoin.WithReturns(fn, alignedReturns); aligned != nil {
-					out.Type = aligned
-					fn = aligned
-				}
-			} else {
-				if aligned, changed := returnsummary.AlignFunction(fn, alignedReturns); changed {
-					out.Type = aligned
-					fn = aligned
-				}
-			}
-		}
-		if len(out.Summary) == 0 && fn != nil && len(fn.Returns) > 0 {
-			out.Summary = returnsummary.Canonical(fn.Returns)
-		}
-	}
+	out.Params = product.LiftVector(params)
+	out.BodyParams = product.LiftVector(bodyParams)
+	out.EntryParams = product.LiftVector(entryParams)
+	out.Summary = product.LiftVector(summary)
+	out.Narrow = product.LiftVector(narrow)
 
 	return out
+}
+
+// MergeSignature merges source-level function signature facts. It preserves the
+// function shape and source annotations; inferred returns remain in Summary/Narrow
+// and are projected later.
+func MergeSignature(existing, candidate *typ.Function) *typ.Function {
+	if existing == nil {
+		return candidate
+	}
+	if candidate == nil {
+		return existing
+	}
+	return unwrap.Function(MergeType(existing, candidate))
+}
+
+// MergeSignatureContracts copies body-derived contract products, such as
+// callback environment overlays, onto a source-shaped signature without
+// admitting inferred parameter or return types through this path.
+func MergeSignatureContracts(source, evidence *typ.Function) *typ.Function {
+	if source == nil || evidence == nil || evidence.Spec == nil {
+		return source
+	}
+	spec, ok := mergeFunctionSpec(source.Spec, evidence.Spec).(*contract.Spec)
+	if !ok || spec == nil {
+		return source
+	}
+	return rebuildFunctionWithSpec(source, spec)
+}
+
+// MergeExpectedSignature applies a contextual expected signature to a
+// synthesized seed signature. This is a projection/admission policy for
+// function shape, not a pipeline concern.
+func MergeExpectedSignature(seed, expected *typ.Function) *typ.Function {
+	if seed == nil {
+		return expected
+	}
+	if expected == nil {
+		return seed
+	}
+	if typ.TypeEquals(seed, expected) {
+		return seed
+	}
+
+	builder := typ.Func().ReserveParams(maxInt(len(seed.Params), len(expected.Params)))
+	if sameFunctionTypeParams(seed, expected) {
+		for _, tp := range seed.TypeParams {
+			builder = builder.TypeParam(tp.Name, tp.Constraint)
+		}
+	}
+
+	paramCount := maxInt(len(seed.Params), len(expected.Params))
+	for i := 0; i < paramCount; i++ {
+		name := ""
+		var paramType typ.Type
+		optional := true
+		if i < len(seed.Params) {
+			p := seed.Params[i]
+			name = p.Name
+			paramType = p.Type
+			optional = p.Optional
+		}
+		if i < len(expected.Params) {
+			p := expected.Params[i]
+			if name == "" {
+				name = p.Name
+			}
+			paramType = mergeExpectedParamType(paramType, p.Type, p.Optional)
+			optional = p.Optional
+		} else if expected.Variadic != nil {
+			paramType = MergeParamType(paramType, expected.Variadic)
+			optional = true
+		} else if i >= len(expected.Params) {
+			paramType = MergeParamType(paramType, typ.Nil)
+			optional = true
+		}
+		if optional {
+			builder = builder.OptParam(name, paramType)
+		} else {
+			builder = builder.Param(name, paramType)
+		}
+	}
+
+	if seed.Variadic != nil || expected.Variadic != nil {
+		builder = builder.Variadic(MergeParamType(seed.Variadic, expected.Variadic))
+	}
+
+	if returns := mergeSignatureReturns(seed.Returns, expected.Returns); len(returns) > 0 {
+		builder = builder.Returns(returns...)
+	}
+	if seed.Effects != nil {
+		builder = builder.Effects(seed.Effects)
+	} else if expected.Effects != nil {
+		builder = builder.Effects(expected.Effects)
+	}
+	if spec := mergeFunctionSpec(seed.Spec, expected.Spec); spec != nil {
+		builder = builder.Spec(spec)
+	}
+	if seed.Refinement != nil {
+		builder = builder.WithRefinement(seed.Refinement)
+	} else if expected.Refinement != nil {
+		builder = builder.WithRefinement(expected.Refinement)
+	}
+	return builder.Build()
+}
+
+func mergeExpectedParamType(seed, expected typ.Type, expectedOptional bool) typ.Type {
+	if expected == nil {
+		return seed
+	}
+	if seed == nil || typ.IsAny(seed) || typ.IsUnknown(seed) {
+		return expected
+	}
+	if !expectedOptional {
+		if inner, nilable := typ.SplitNilableFieldType(seed); nilable {
+			if typ.TypeEquals(inner, expected) || subtype.IsSubtype(expected, inner) {
+				return expected
+			}
+		}
+		if subtype.IsSubtype(expected, seed) && !subtype.IsSubtype(seed, expected) {
+			return expected
+		}
+	}
+	return MergeParamType(seed, expected)
+}
+
+func mergeSignatureReturns(a, b []typ.Type) []typ.Type {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	out := make([]typ.Type, maxInt(len(a), len(b)))
+	for i := range out {
+		var left, right typ.Type
+		if i < len(a) {
+			left = a[i]
+		}
+		if i < len(b) {
+			right = b[i]
+		}
+		out[i] = mergeExpectedReturnSlot(left, right)
+	}
+	return out
+}
+
+func mergeExpectedReturnSlot(seed, expected typ.Type) typ.Type {
+	if seed == nil {
+		return expected
+	}
+	if expected == nil {
+		return seed
+	}
+	if typ.IsUnknown(seed) {
+		return expected
+	}
+	if typ.IsUnknown(expected) {
+		return seed
+	}
+	merged := returnsummary.Merge([]typ.Type{seed}, []typ.Type{expected})
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged[0]
+}
+
+func sameFunctionTypeParams(a, b *typ.Function) bool {
+	if a == nil || b == nil || len(a.TypeParams) != len(b.TypeParams) {
+		return false
+	}
+	for i := range a.TypeParams {
+		if a.TypeParams[i] == nil || b.TypeParams[i] == nil {
+			if a.TypeParams[i] != b.TypeParams[i] {
+				return false
+			}
+			continue
+		}
+		if a.TypeParams[i].Name != b.TypeParams[i].Name || !typ.TypeEquals(a.TypeParams[i].Constraint, b.TypeParams[i].Constraint) {
+			return false
+		}
+	}
+	return true
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func mergeFunctionSpec(existing, candidate typ.SpecInfo) typ.SpecInfo {
+	if existing == nil {
+		return candidate
+	}
+	if candidate == nil {
+		return existing
+	}
+	if existing.Equals(candidate) {
+		return existing
+	}
+	existingSpec, ok := existing.(*contract.Spec)
+	if !ok {
+		return existing
+	}
+	candidateSpec, ok := candidate.(*contract.Spec)
+	if !ok {
+		return existing
+	}
+	return mergeContractSpecs(existingSpec, candidateSpec)
+}
+
+func mergeContractSpecs(existing, candidate *contract.Spec) *contract.Spec {
+	if existing == nil {
+		return candidate
+	}
+	if candidate == nil {
+		return existing
+	}
+	out := &contract.Spec{
+		Requires:     existing.Requires,
+		Ensures:      existing.Ensures,
+		ExprRequires: append([]constraint.ExprCompare(nil), existing.ExprRequires...),
+		ExprEnsures:  append([]constraint.ExprCompare(nil), existing.ExprEnsures...),
+		Effects:      existing.Effects,
+		Callbacks:    make(map[int]*contract.CallbackSpec, len(existing.Callbacks)+len(candidate.Callbacks)),
+		Return:       existing.Return,
+		EnvReturns:   existing.GetEnvReturns(),
+	}
+	for idx, cb := range existing.Callbacks {
+		out.Callbacks[idx] = cb.Clone()
+	}
+	for idx, cb := range candidate.Callbacks {
+		out.Callbacks[idx] = mergeCallbackSpec(out.Callbacks[idx], cb)
+	}
+	return out
+}
+
+func mergeCallbackSpec(existing, candidate *contract.CallbackSpec) *contract.CallbackSpec {
+	if existing == nil {
+		return candidate.Clone()
+	}
+	if candidate == nil {
+		return existing.Clone()
+	}
+	out := existing.Clone()
+	if out.InputSource.Index == candidate.InputSource.Index {
+		out.InputSource = candidate.InputSource
+	}
+	out.ReturnsBoolean = out.ReturnsBoolean || candidate.ReturnsBoolean
+	out.Cardinality = mergeCallbackCardinality(out.Cardinality, candidate.Cardinality)
+	out.Pure = out.Pure && candidate.Pure
+	out.EnvOverlay = mergeCallbackEnvOverlay(out.EnvOverlay, candidate.EnvOverlay)
+	return out
+}
+
+func mergeCallbackCardinality(existing, candidate contract.Cardinality) contract.Cardinality {
+	if existing == candidate {
+		return existing
+	}
+	return contract.CardUnknown
 }
 
 // MergeType merges function-type facts through the canonical per-function fact
@@ -111,6 +724,9 @@ func MergeType(existing, candidate typ.Type) typ.Type {
 		return mergedFromVariants
 	}
 	if existingFn != nil && candidateFn != nil {
+		if replacement, ok := value.FunctionEvidenceUpperBound(existingFn, candidateFn); ok {
+			return replacement
+		}
 		if SameShape(existingFn, candidateFn) {
 			return mergeByShape(existingFn, candidateFn)
 		}
@@ -129,51 +745,51 @@ func MergeType(existing, candidate typ.Type) typ.Type {
 // boundary.
 func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 	out := api.FunctionFact{
-		Params:     paramevidence.JoinVectors(prev.Params, next.Params),
-		Summary:    returnsummary.WidenForConvergence(prev.Summary, next.Summary),
-		Narrow:     returnsummary.WidenForConvergence(prev.Narrow, next.Narrow),
-		Type:       WidenTypeForConvergence(prev.Type, next.Type),
+		Signature:  WidenSignatureForConvergence(prev.Signature, next.Signature),
 		Refinement: MergeRefinement(prev.Refinement, next.Refinement),
+		EnvReturns: WidenEnvReturns(prev.EnvReturns, next.EnvReturns),
 	}
-	out.Params = preserveDynamicParamsProvenByRefinement(prev.Params, next.Params, out.Params, out.Refinement)
 
-	summaryBeforeNarrow := out.Summary
+	params := paramevidence.JoinCallVectors(paramsTypes(prev), paramsTypes(next))
+	bodyParams := paramevidence.JoinBodyVectors(bodyParamsTypes(prev), bodyParamsTypes(next))
+	entryParams := paramevidence.JoinEntryVectors(entryParamsTypes(prev), entryParamsTypes(next))
+	summary := returnsummary.WidenForConvergence(summaryTypes(prev), summaryTypes(next))
+	narrow := returnsummary.WidenForConvergence(narrowTypes(prev), narrowTypes(next))
+
 	// Narrow summaries can refine optional/non-nil returns, but a nil-only
 	// narrow observation must not erase an already-informative summary.
-	if len(out.Narrow) > 0 && !returnsummary.AllNil(out.Narrow) {
-		if len(out.Summary) == 0 {
-			out.Summary = returnsummary.Canonical(out.Narrow)
+	if len(narrow) > 0 && !returnsummary.AllNil(narrow) {
+		nextNarrow := narrowTypes(next)
+		if len(nextNarrow) > 0 && !returnsummary.AllNil(nextNarrow) {
+			narrow = repairInferredSummaryWithNarrow(out.Signature, narrow, nextNarrow)
+		}
+		if len(summary) == 0 {
+			summary = returnsummary.Canonical(narrow)
 		} else {
-			out.Summary = returnsummary.WidenForConvergence(out.Summary, out.Narrow)
+			summary = returnsummary.WidenForConvergence(summary, narrow)
 		}
 	}
+	summary = repairInferredSummaryWithNarrow(out.Signature, summary, narrow)
 
-	if fn := unwrap.Function(out.Type); fn != nil {
-		alignedReturns := out.Summary
-		usingNarrow := len(out.Narrow) > 0 && !returnsummary.AllNil(out.Narrow)
-		if usingNarrow {
-			repairBase := summaryBeforeNarrow
-			if len(repairBase) == 0 {
-				repairBase = out.Summary
-			}
-			alignedReturns = repairSummaryWithNarrow(repairBase, out.Narrow)
-		}
-		if len(alignedReturns) > 0 {
-			if usingNarrow {
-				if aligned := typjoin.WithReturns(fn, alignedReturns); aligned != nil {
-					out.Type = value.WidenForConvergence(aligned)
-				}
-			} else {
-				if aligned, changed := returnsummary.AlignFunction(fn, alignedReturns); changed {
-					out.Type = WidenTypeForConvergence(fn, aligned)
-				}
-			}
-		} else if len(fn.Returns) > 0 {
-			out.Summary = returnsummary.WidenForConvergence(nil, fn.Returns)
-		}
-	}
+	out.Params = product.LiftVector(params)
+	out.BodyParams = product.LiftVector(bodyParams)
+	out.EntryParams = product.LiftVector(entryParams)
+	out.Summary = product.LiftVector(summary)
+	out.Narrow = product.LiftVector(narrow)
 
 	return out
+}
+
+// WidenSignatureForConvergence widens source-level function signatures at a
+// recursive fixpoint boundary.
+func WidenSignatureForConvergence(existing, candidate *typ.Function) *typ.Function {
+	if existing == nil {
+		return candidate
+	}
+	if candidate == nil {
+		return existing
+	}
+	return unwrap.Function(WidenTypeForConvergence(existing, candidate))
 }
 
 // NormalizeRefinement canonicalizes empty function refinements away.
@@ -247,71 +863,259 @@ func effectInfoEqual(a, b typ.EffectInfo) bool {
 }
 
 func repairSummaryWithNarrow(summary, narrow []typ.Type) []typ.Type {
+	return repairSummaryWithNarrowPolicy(summary, narrow, true, true)
+}
+
+func repairInferredSummaryWithNarrow(signature *typ.Function, summary, narrow []typ.Type) []typ.Type {
+	return repairSummaryWithNarrowPolicy(summary, narrow, signatureDeclaresReturnContract(signature), false)
+}
+
+func signatureDeclaresReturnContract(fn *typ.Function) bool {
+	return fn != nil && len(fn.Returns) > 0
+}
+
+type repairTypeKey struct {
+	summary         typ.Type
+	narrow          typ.Type
+	preserveAny     bool
+	replaceConcrete bool
+}
+
+type repairFamilyKey struct {
+	summary         uint64
+	narrow          uint64
+	preserveAny     bool
+	replaceConcrete bool
+}
+
+type repairFamilyHashResult struct {
+	hash uint64
+	ok   bool
+}
+
+type repairFamilyCompareKey struct {
+	a typ.Type
+	b typ.Type
+}
+
+type repairTypeState struct {
+	done         map[repairTypeKey]typ.Type
+	active       map[repairTypeKey]bool
+	activeFamily map[repairFamilyKey]bool
+	familyHash   map[typ.Type]repairFamilyHashResult
+	familySeen   map[repairFamilyCompareKey]bool
+}
+
+func newRepairTypeState() *repairTypeState {
+	return &repairTypeState{
+		done:         make(map[repairTypeKey]typ.Type),
+		active:       make(map[repairTypeKey]bool),
+		activeFamily: make(map[repairFamilyKey]bool),
+		familyHash:   make(map[typ.Type]repairFamilyHashResult),
+		familySeen:   make(map[repairFamilyCompareKey]bool),
+	}
+}
+
+func repairSummaryWithNarrowPolicy(summary, narrow []typ.Type, preserveAny, replaceConcrete bool) []typ.Type {
 	if len(narrow) == 0 {
 		return summary
 	}
-	if len(summary) != len(narrow) || len(summary) == 0 {
+	if len(summary) == 0 && returnsummary.AllNil(narrow) {
+		return summary
+	}
+	if len(summary) == 0 {
 		return narrow
+	}
+	state := newRepairTypeState()
+	if len(summary) != len(narrow) {
+		return repairPaddedSummaryWithNarrowPolicy(state, summary, narrow, preserveAny, replaceConcrete)
 	}
 	out := make([]typ.Type, len(summary))
 	for i := range summary {
-		out[i] = repairTypeWithNarrow(summary[i], narrow[i], 0)
+		out[i] = state.repair(summary[i], narrow[i], preserveAny, replaceConcrete)
 	}
 	return out
 }
 
-func repairTypeWithNarrow(summary, narrow typ.Type, depth int) typ.Type {
-	if summary == nil || narrow == nil || depth > typ.DefaultRecursionDepth {
+func repairPaddedSummaryWithNarrowPolicy(state *repairTypeState, summary, narrow []typ.Type, preserveAny, replaceConcrete bool) []typ.Type {
+	maxLen := len(summary)
+	if len(narrow) > maxLen {
+		maxLen = len(narrow)
+	}
+	out := make([]typ.Type, maxLen)
+	for i := 0; i < maxLen; i++ {
+		var summarySlot typ.Type
+		if i < len(summary) && summary[i] != nil {
+			summarySlot = summary[i]
+		} else {
+			summarySlot = typ.Nil
+		}
+		var narrowSlot typ.Type
+		if i < len(narrow) && narrow[i] != nil {
+			narrowSlot = narrow[i]
+		} else {
+			narrowSlot = typ.Nil
+		}
+		if i < len(summary) && i < len(narrow) {
+			out[i] = state.repair(summarySlot, narrowSlot, preserveAny, replaceConcrete)
+			continue
+		}
+		out[i] = typ.JoinReturnSlot(summarySlot, narrowSlot)
+	}
+	return returnsummary.NormalizeAndPrune(out)
+}
+
+func repairTypeWithNarrow(summary, narrow typ.Type) typ.Type {
+	return repairTypeWithNarrowPolicy(summary, narrow, true, true)
+}
+
+func repairTypeWithNarrowPolicy(summary, narrow typ.Type, preserveAny, replaceConcrete bool) typ.Type {
+	return newRepairTypeState().repair(summary, narrow, preserveAny, replaceConcrete)
+}
+
+func (state *repairTypeState) repair(summary, narrow typ.Type, preserveAny, replaceConcrete bool) typ.Type {
+	if summary == nil || narrow == nil {
 		return narrow
 	}
-	if typ.IsAny(summary) && !typ.IsAny(narrow) {
+	if typ.IsUnknown(summary) {
 		return narrow
 	}
+	if typ.IsNever(summary) {
+		return narrow
+	}
+	if typ.IsAny(summary) {
+		if typ.IsUnknown(narrow) || !preserveAny {
+			return narrow
+		}
+		return summary
+	}
+	originalSummary := summary
+	originalNarrow := narrow
 	summary = unwrap.Alias(summary)
 	narrow = unwrap.Alias(narrow)
+	key := repairTypeKey{
+		summary:         summary,
+		narrow:          narrow,
+		preserveAny:     preserveAny,
+		replaceConcrete: replaceConcrete,
+	}
+	if repaired, ok := state.done[key]; ok {
+		return repaired
+	}
+	if state.active[key] {
+		return summary
+	}
+	familyKey, trackFamily := state.repairCoinductiveFamilyKey(summary, narrow, preserveAny, replaceConcrete)
+	if trackFamily && state.activeFamily[familyKey] {
+		return summary
+	}
+	state.active[key] = true
+	if trackFamily {
+		state.activeFamily[familyKey] = true
+	}
+	var repaired typ.Type
+	defer func() {
+		delete(state.active, key)
+		if trackFamily {
+			delete(state.activeFamily, familyKey)
+		}
+		state.done[key] = repaired
+	}()
+	if repairTypesEquivalent(originalSummary, originalNarrow) {
+		repaired = returnsummary.SelectEquivalentReturnSlot(originalSummary, originalNarrow)
+		return repaired
+	}
+	if upper, ok := value.DirectSelfEmbeddingUpperBound(summary, narrow); ok {
+		repaired = upper
+		return repaired
+	}
 	switch s := summary.(type) {
 	case *typ.Union:
 		n, ok := narrow.(*typ.Union)
 		if !ok {
 			members := make([]typ.Type, len(s.Members))
+			changed := false
 			for i, member := range s.Members {
-				members[i] = repairTypeWithNarrow(member, narrow, depth+1)
+				members[i] = state.repair(member, narrow, preserveAny, replaceConcrete)
+				if repairTypeChanged(members[i], member) {
+					changed = true
+				}
 			}
-			return typ.NewUnion(members...)
+			if !changed {
+				repaired = summary
+				return repaired
+			}
+			repaired = join.Types(members...)
+			return repaired
 		}
 		if len(s.Members) != len(n.Members) {
-			return summary
+			repaired = summary
+			return repaired
 		}
+		narrowIndex := state.newRepairUnionMemberIndex(n.Members)
 		members := make([]typ.Type, len(s.Members))
+		changed := false
 		for i, member := range s.Members {
-			members[i] = repairTypeWithNarrow(member, bestNarrowUnionMember(member, n.Members), depth+1)
+			members[i] = state.repair(member, state.bestNarrowUnionMember(member, n.Members, narrowIndex), preserveAny, replaceConcrete)
+			if repairTypeChanged(members[i], member) {
+				changed = true
+			}
 		}
-		return typ.NewUnion(members...)
+		if !changed {
+			repaired = summary
+			return repaired
+		}
+		repaired = join.Types(members...)
+		return repaired
 	case *typ.Record:
 		n, ok := narrow.(*typ.Record)
 		if !ok {
-			return narrow
+			repaired = narrow
+			return repaired
 		}
+		changed := false
 		builder := typ.NewRecord().SetOpen(s.Open)
 		if s.HasMapComponent() {
+			mapKey := s.MapKey
 			mapValue := s.MapValue
 			if n.HasMapComponent() {
-				mapValue = repairTypeWithNarrow(s.MapValue, n.MapValue, depth+1)
+				mapKey = state.repair(s.MapKey, n.MapKey, preserveAny, replaceConcrete)
+				mapValue = state.repair(s.MapValue, n.MapValue, preserveAny, replaceConcrete)
+				if repairTypeChanged(mapKey, s.MapKey) || repairTypeChanged(mapValue, s.MapValue) {
+					changed = true
+				}
 			}
-			builder.MapComponent(s.MapKey, mapValue)
+			builder.MapComponent(mapKey, mapValue)
 		}
 		if s.Metatable != nil {
-			builder.Metatable(s.Metatable)
+			metatable := s.Metatable
+			if n.Metatable != nil {
+				metatable = state.repair(s.Metatable, n.Metatable, preserveAny, replaceConcrete)
+				if repairTypeChanged(metatable, s.Metatable) {
+					changed = true
+				}
+			}
+			builder.Metatable(metatable)
 		}
 		for _, field := range s.Fields {
 			fieldType := field.Type
+			fieldOptional := field.Optional
 			if nf := n.GetField(field.Name); nf != nil {
-				fieldType = repairTypeWithNarrow(field.Type, nf.Type, depth+1)
+				fieldType = state.repair(field.Type, nf.Type, preserveAny, replaceConcrete)
+				if repairTypeChanged(fieldType, field.Type) {
+					changed = true
+				}
+				if !nf.Optional {
+					if fieldOptional {
+						changed = true
+					}
+					fieldOptional = false
+				}
 			}
 			switch {
-			case field.Optional && field.Readonly:
+			case fieldOptional && field.Readonly:
 				builder.OptReadonlyField(field.Name, fieldType)
-			case field.Optional:
+			case fieldOptional:
 				builder.OptField(field.Name, fieldType)
 			case field.Readonly:
 				builder.ReadonlyField(field.Name, fieldType)
@@ -319,22 +1123,371 @@ func repairTypeWithNarrow(summary, narrow typ.Type, depth int) typ.Type {
 				builder.Field(field.Name, fieldType)
 			}
 		}
-		return builder.Build()
+		if !changed {
+			repaired = summary
+			return repaired
+		}
+		repaired = builder.Build()
+		return repaired
+	case *typ.Optional:
+		n, ok := narrow.(*typ.Optional)
+		if !ok {
+			repaired = defaultRepairResult(summary, narrow, replaceConcrete)
+			return repaired
+		}
+		inner := state.repair(s.Inner, n.Inner, preserveAny, replaceConcrete)
+		if !repairTypeChanged(inner, s.Inner) {
+			repaired = summary
+			return repaired
+		}
+		repaired = typ.NewOptional(inner)
+		return repaired
+	case *typ.Array:
+		n, ok := narrow.(*typ.Array)
+		if !ok {
+			repaired = defaultRepairResult(summary, narrow, replaceConcrete)
+			return repaired
+		}
+		element := state.repair(s.Element, n.Element, preserveAny, replaceConcrete)
+		if !repairTypeChanged(element, s.Element) {
+			repaired = summary
+			return repaired
+		}
+		repaired = typ.NewArray(element)
+		return repaired
+	case *typ.Map:
+		n, ok := narrow.(*typ.Map)
+		if !ok {
+			repaired = defaultRepairResult(summary, narrow, replaceConcrete)
+			return repaired
+		}
+		key := state.repair(s.Key, n.Key, preserveAny, replaceConcrete)
+		value := state.repair(s.Value, n.Value, preserveAny, replaceConcrete)
+		if !repairTypeChanged(key, s.Key) && !repairTypeChanged(value, s.Value) {
+			repaired = summary
+			return repaired
+		}
+		repaired = typ.NewMap(key, value)
+		return repaired
+	case *typ.Tuple:
+		n, ok := narrow.(*typ.Tuple)
+		if !ok || len(s.Elements) != len(n.Elements) {
+			repaired = defaultRepairResult(summary, narrow, replaceConcrete)
+			return repaired
+		}
+		elements := make([]typ.Type, len(s.Elements))
+		changed := false
+		for i := range s.Elements {
+			elements[i] = state.repair(s.Elements[i], n.Elements[i], preserveAny, replaceConcrete)
+			if repairTypeChanged(elements[i], s.Elements[i]) {
+				changed = true
+			}
+		}
+		if !changed {
+			repaired = summary
+			return repaired
+		}
+		repaired = typ.NewTuple(elements...)
+		return repaired
 	default:
-		return narrow
+		repaired = defaultRepairResult(summary, narrow, replaceConcrete)
+		return repaired
 	}
 }
 
-func bestNarrowUnionMember(summary typ.Type, members []typ.Type) typ.Type {
+func defaultRepairResult(summary, narrow typ.Type, replaceConcrete bool) typ.Type {
+	if replaceConcrete {
+		return narrow
+	}
+	return summary
+}
+
+func repairTypeChanged(candidate, baseline typ.Type) bool {
+	if typ.SameUnionMember(candidate, baseline) {
+		return false
+	}
+	if typ.SameProductFamily(candidate, baseline) {
+		return false
+	}
+	if candidate == nil || baseline == nil {
+		return candidate != baseline
+	}
+	if typ.EqualityHash(candidate) != typ.EqualityHash(baseline) {
+		return true
+	}
+	return !typ.TypeEquals(candidate, baseline)
+}
+
+func repairTypesEquivalent(a, b typ.Type) bool {
+	if typ.SameUnionMember(a, b) {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if typ.ContainsRecursive(a) || typ.ContainsRecursive(b) {
+		return typ.SameProductFamily(a, b)
+	}
+	if typ.EqualityHash(a) == typ.EqualityHash(b) && typ.TypeEquals(a, b) {
+		return true
+	}
+	return subtype.IsSubtype(a, b) && subtype.IsSubtype(b, a)
+}
+
+type repairUnionMemberIndex map[uint64][]typ.Type
+
+func (state *repairTypeState) newRepairUnionMemberIndex(members []typ.Type) repairUnionMemberIndex {
+	index := make(repairUnionMemberIndex, len(members))
 	for _, member := range members {
-		if subtype.IsSubtype(member, summary) || subtype.IsSubtype(summary, member) {
+		hash, ok := state.repairFamilyHash(member)
+		if !ok {
+			continue
+		}
+		index[hash] = append(index[hash], member)
+	}
+	return index
+}
+
+func (state *repairTypeState) bestNarrowUnionMember(summary typ.Type, members []typ.Type, index repairUnionMemberIndex) typ.Type {
+	if hash, ok := state.repairFamilyHash(summary); ok && len(index) > 0 {
+		for _, member := range index[hash] {
+			if state.sameRepairUnionFamily(member, summary) {
+				return member
+			}
+		}
+		return summary
+	}
+	for _, member := range members {
+		if state.sameRepairUnionFamily(member, summary) {
 			return member
 		}
 	}
-	if len(members) > 0 {
-		return members[0]
-	}
 	return summary
+}
+
+func (state *repairTypeState) sameRepairUnionFamily(a, b typ.Type) bool {
+	a = unwrap.Alias(a)
+	b = unwrap.Alias(b)
+	if a == nil || b == nil {
+		return a == b
+	}
+	if typ.SameUnionMember(a, b) {
+		return true
+	}
+	key := repairFamilyCompareKey{a: a, b: b}
+	if state.familySeen[key] {
+		return true
+	}
+	state.familySeen[key] = true
+	defer delete(state.familySeen, key)
+	if al, ok := a.(*typ.Literal); ok {
+		bl, ok := b.(*typ.Literal)
+		return ok && typ.LiteralEquals(al, bl)
+	}
+	if _, ok := b.(*typ.Literal); ok {
+		return false
+	}
+	switch av := a.(type) {
+	case *typ.Optional:
+		bv, ok := b.(*typ.Optional)
+		return ok && state.sameRepairUnionFamily(av.Inner, bv.Inner)
+	case *typ.Record:
+		bv, ok := b.(*typ.Record)
+		return ok && state.sameRepairRecordFamily(av, bv)
+	case *typ.Map:
+		bv, ok := b.(*typ.Map)
+		if !ok {
+			return false
+		}
+		return state.repairMapKeyFamily(av.Key, bv.Key)
+	case *typ.Array:
+		_, ok := b.(*typ.Array)
+		return ok
+	case *typ.Tuple:
+		bv, ok := b.(*typ.Tuple)
+		return ok && len(av.Elements) == len(bv.Elements)
+	case *typ.Function:
+		bv, ok := b.(*typ.Function)
+		return ok && len(av.Params) == len(bv.Params) && len(av.Returns) == len(bv.Returns)
+	case *typ.Interface:
+		bv, ok := b.(*typ.Interface)
+		return ok && av.Name == bv.Name && len(av.Methods) == len(bv.Methods)
+	case *typ.Recursive:
+		bv, ok := b.(*typ.Recursive)
+		if !ok || av.Name != bv.Name {
+			return false
+		}
+		return state.sameRepairUnionFamily(av.Body, bv.Body)
+	default:
+		return a.Kind() == b.Kind()
+	}
+}
+
+func (state *repairTypeState) repairCoinductiveFamilyKey(summary, narrow typ.Type, preserveAny, replaceConcrete bool) (repairFamilyKey, bool) {
+	if !value.CanSelfEmbed(summary) || !value.CanSelfEmbed(narrow) {
+		return repairFamilyKey{}, false
+	}
+	summaryHash, okSummary := state.repairFamilyHash(summary)
+	narrowHash, okNarrow := state.repairFamilyHash(narrow)
+	if !okSummary || !okNarrow {
+		return repairFamilyKey{}, false
+	}
+	return repairFamilyKey{
+		summary:         summaryHash,
+		narrow:          narrowHash,
+		preserveAny:     preserveAny,
+		replaceConcrete: replaceConcrete,
+	}, true
+}
+
+func (state *repairTypeState) repairFamilyHash(t typ.Type) (uint64, bool) {
+	t = unwrap.Alias(t)
+	if t == nil {
+		return 0, false
+	}
+	if cached, ok := state.familyHash[t]; ok {
+		return cached.hash, cached.ok
+	}
+	hash, ok := state.computeRepairFamilyHash(t)
+	state.familyHash[t] = repairFamilyHashResult{hash: hash, ok: ok}
+	return hash, ok
+}
+
+func (state *repairTypeState) computeRepairFamilyHash(t typ.Type) (uint64, bool) {
+	if lit, ok := t.(*typ.Literal); ok {
+		return internal.HashCombine(uint64(lit.Kind()), lit.Hash()), true
+	}
+	switch v := t.(type) {
+	case *typ.Optional:
+		inner, ok := state.repairFamilyHash(v.Inner)
+		if !ok {
+			return 0, false
+		}
+		return internal.HashCombine(uint64(v.Kind()), inner), true
+	case *typ.Union:
+		h := internal.HashCombine(uint64(v.Kind()), uint64(len(v.Members)))
+		for _, member := range v.Members {
+			memberHash, ok := state.repairFamilyHash(member)
+			if !ok {
+				return 0, false
+			}
+			h = internal.HashCombine(h, memberHash)
+		}
+		return h, true
+	case *typ.Intersection:
+		h := internal.HashCombine(uint64(v.Kind()), uint64(len(v.Members)))
+		for _, member := range v.Members {
+			memberHash, ok := state.repairFamilyHash(member)
+			if !ok {
+				return 0, false
+			}
+			h = internal.HashCombine(h, memberHash)
+		}
+		return h, true
+	case *typ.Record:
+		h := internal.HashCombine(uint64(v.Kind()), boolHash(v.Open))
+		h = internal.HashCombine(h, boolHash(v.HasMapComponent()))
+		if v.HasMapComponent() {
+			keyHash, ok := state.repairMapKeyFamilyHash(v.MapKey)
+			if !ok {
+				return 0, false
+			}
+			h = internal.HashCombine(h, keyHash)
+		}
+		h = internal.HashCombine(h, uint64(len(v.Fields)))
+		for _, field := range v.Fields {
+			h = internal.HashCombine(h, internal.FnvString(field.Name))
+			h = internal.HashCombine(h, boolHash(field.Optional))
+			h = internal.HashCombine(h, boolHash(field.Readonly))
+			h = internal.HashCombine(h, repairFieldFamilyHash(field.Type))
+		}
+		return h, true
+	case *typ.Map:
+		keyHash, ok := state.repairMapKeyFamilyHash(v.Key)
+		if !ok {
+			return 0, false
+		}
+		return internal.HashCombine(uint64(v.Kind()), keyHash), true
+	case *typ.Array:
+		return uint64(v.Kind()), true
+	case *typ.Tuple:
+		return internal.HashCombine(uint64(v.Kind()), uint64(len(v.Elements))), true
+	case *typ.Function:
+		h := internal.HashCombine(uint64(v.Kind()), uint64(len(v.Params)))
+		h = internal.HashCombine(h, uint64(len(v.Returns)))
+		if v.Variadic != nil {
+			h = internal.HashCombine(h, 1)
+		}
+		return h, true
+	case *typ.Interface:
+		h := internal.HashCombine(uint64(v.Kind()), internal.FnvString(v.Name))
+		h = internal.HashCombine(h, uint64(len(v.Methods)))
+		return h, true
+	case *typ.Recursive:
+		return internal.HashCombine(uint64(v.Kind()), internal.FnvString(v.Name)), true
+	default:
+		return uint64(t.Kind()), true
+	}
+}
+
+func (state *repairTypeState) repairMapKeyFamilyHash(t typ.Type) (uint64, bool) {
+	t = unwrap.Alias(t)
+	if t == nil {
+		return 0, false
+	}
+	if typ.IsAny(t) || typ.IsUnknown(t) {
+		return uint64(t.Kind()), true
+	}
+	return state.repairFamilyHash(t)
+}
+
+func repairFieldFamilyHash(t typ.Type) uint64 {
+	t = unwrap.Alias(t)
+	if lit, ok := t.(*typ.Literal); ok {
+		return internal.HashCombine(uint64(lit.Kind()), lit.Hash())
+	}
+	if t == nil {
+		return 0
+	}
+	return uint64(t.Kind())
+}
+
+func boolHash(v bool) uint64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func (state *repairTypeState) repairMapKeyFamily(a, b typ.Type) bool {
+	if typ.IsAny(a) || typ.IsAny(b) || typ.IsUnknown(a) || typ.IsUnknown(b) {
+		return true
+	}
+	return state.sameRepairUnionFamily(a, b)
+}
+
+func (state *repairTypeState) sameRepairRecordFamily(a, b *typ.Record) bool {
+	if !value.ShallowStructuralShapeEquals(a, b) {
+		return false
+	}
+	for _, af := range a.Fields {
+		bf := b.GetField(af.Name)
+		if bf == nil || !sameRepairFieldFamily(af.Type, bf.Type) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameRepairFieldFamily(a, b typ.Type) bool {
+	a = unwrap.Alias(a)
+	b = unwrap.Alias(b)
+	al, aLit := a.(*typ.Literal)
+	bl, bLit := b.(*typ.Literal)
+	if aLit || bLit {
+		return aLit && bLit && typ.LiteralEquals(al, bl)
+	}
+	return true
 }
 
 // WidenTypeForConvergence merges function-type facts at a recursive fixpoint
@@ -343,13 +1496,18 @@ func WidenTypeForConvergence(existing, candidate typ.Type) typ.Type {
 	existing = value.NormalizeFactType(existing)
 	candidate = value.NormalizeFactType(candidate)
 	if existing == nil {
-		return value.WidenForConvergence(candidate)
+		return candidate
 	}
 	if candidate == nil {
-		return value.WidenForConvergence(existing)
+		return existing
 	}
 	existingFn := unwrap.Function(existing)
 	candidateFn := unwrap.Function(candidate)
+	if existingFn != nil && candidateFn != nil {
+		if replacement, ok := value.FunctionEvidenceUpperBound(existingFn, candidateFn); ok {
+			return value.WidenForConvergence(replacement)
+		}
+	}
 	if existingFn != nil && candidateFn != nil && SameShape(existingFn, candidateFn) {
 		return value.WidenForConvergence(widenByShapeForConvergence(existingFn, candidateFn))
 	}
@@ -393,7 +1551,7 @@ func mergeVariants(existing, candidate typ.Type) (typ.Type, bool) {
 		return merged, true
 	}
 	residuals = append(residuals, merged)
-	return typ.NewUnion(residuals...), true
+	return join.Types(residuals...), true
 }
 
 func splitVariants(t typ.Type) variants {
@@ -476,11 +1634,7 @@ func mergeByShape(existing, candidate *typ.Function) typ.Type {
 	if effects != nil {
 		builder = builder.Effects(effects)
 	}
-	spec := existing.Spec
-	if spec == nil {
-		spec = candidate.Spec
-	}
-	if spec != nil {
+	if spec := mergeFunctionSpec(existing.Spec, candidate.Spec); spec != nil {
 		builder = builder.Spec(spec)
 	}
 	refinement := existing.Refinement
@@ -532,11 +1686,7 @@ func widenByShapeForConvergence(existing, candidate *typ.Function) typ.Type {
 	if effects != nil {
 		builder = builder.Effects(effects)
 	}
-	spec := existing.Spec
-	if spec == nil {
-		spec = candidate.Spec
-	}
-	if spec != nil {
+	if spec := mergeFunctionSpec(existing.Spec, candidate.Spec); spec != nil {
 		builder = builder.Spec(spec)
 	}
 	refinement := existing.Refinement
@@ -574,6 +1724,23 @@ func mergeParamType(existing, candidate typ.Type) typ.Type {
 	if preferred, ok := preferStructuredRecord(existing, candidate); ok {
 		return preferred
 	}
+	if preservesBodyStructuralPrecision(candidate) &&
+		subtype.IsSubtype(candidate, existing) &&
+		!subtype.IsSubtype(existing, candidate) {
+		return candidate
+	}
+	if seq, ok := value.JoinSequenceShape(existing, candidate, mergeParamType); ok {
+		return seq
+	}
+	if joined, ok := value.JoinRecordShape(existing, candidate, mergeParamType); ok {
+		return joined
+	}
+	if joined, ok := value.JoinMapRecordShape(existing, candidate, mergeParamType); ok {
+		return joined
+	}
+	if joined, ok := value.JoinStructuralUnionShape(existing, candidate, mergeParamType); ok {
+		return joined
+	}
 	if preferred, ok := value.PreferConcreteOverSoft(existing, candidate); ok {
 		return preferred
 	}
@@ -581,6 +1748,15 @@ func mergeParamType(existing, candidate typ.Type) typ.Type {
 		return candidate
 	}
 	if typ.IsUnknown(candidate) {
+		return existing
+	}
+	if paramevidence.AnyLikeParam(existing) && paramevidence.PassiveOptionalRecordEvidence(candidate) {
+		return existing
+	}
+	if paramevidence.AnyLikeParam(existing) && !paramevidence.AnyLikeParam(candidate) {
+		return candidate
+	}
+	if paramevidence.AnyLikeParam(candidate) && !paramevidence.AnyLikeParam(existing) {
 		return existing
 	}
 	if typ.IsAny(existing) && typ.IsAny(candidate) {
@@ -611,6 +1787,9 @@ func mergeParamType(existing, candidate typ.Type) typ.Type {
 		return candidate
 	}
 	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {
+		if preservesBodyStructuralPrecision(candidate) {
+			return candidate
+		}
 		return existing
 	}
 	return typ.JoinPreferNonSoft(existing, candidate)
@@ -643,13 +1822,40 @@ func widenParamTypeForConvergence(existing, candidate typ.Type) typ.Type {
 	if preferred, ok := value.PreferConcreteOverSoft(existing, candidate); ok {
 		return preferred
 	}
+	if upper, ok := value.SelfEmbeddingUpperBound(existing, candidate); ok {
+		return upper
+	}
+	if preservesBodyStructuralPrecision(candidate) &&
+		subtype.IsSubtype(candidate, existing) &&
+		!subtype.IsSubtype(existing, candidate) {
+		return candidate
+	}
+	if seq, ok := value.JoinSequenceShape(existing, candidate, widenParamTypeForConvergence); ok {
+		return seq
+	}
+	if joined, ok := value.JoinRecordShape(existing, candidate, widenParamTypeForConvergence); ok {
+		return joined
+	}
+	if joined, ok := value.JoinMapRecordShape(existing, candidate, widenParamTypeForConvergence); ok {
+		return joined
+	}
+	if joined, ok := value.JoinStructuralUnionShape(existing, candidate, widenParamTypeForConvergence); ok {
+		return joined
+	}
 	if paramevidence.RefinesFunctionParam(candidate, existing) {
 		return candidate
 	}
 	if paramevidence.RefinesFunctionParam(existing, candidate) {
 		return existing
 	}
+	if typ.ContainsRecursive(existing) || typ.ContainsRecursive(candidate) ||
+		value.HasHigherOrderGrowthRisk(existing) || value.HasHigherOrderGrowthRisk(candidate) {
+		return value.MergeForConvergence(existing, candidate)
+	}
 	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {
+		if preservesBodyStructuralPrecision(candidate) {
+			return candidate
+		}
 		return existing
 	}
 	if subtype.IsSubtype(existing, candidate) && !subtype.IsSubtype(candidate, existing) {
@@ -681,6 +1887,22 @@ func preferStructuredRecord(existing, candidate typ.Type) (typ.Type, bool) {
 		}
 	}
 	return nil, false
+}
+
+func preservesBodyStructuralPrecision(t typ.Type) bool {
+	switch v := unwrap.Optional(t).(type) {
+	case *typ.Array, *typ.Map, *typ.Tuple:
+		return true
+	case *typ.Record:
+		return v.HasMapComponent() || len(v.Fields) > 0
+	case *typ.Union:
+		for _, member := range v.Members {
+			if preservesBodyStructuralPrecision(member) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // MergeReturnsForSameSignature merges return slots for function signatures that
@@ -729,6 +1951,9 @@ func MergeReturnsForSameSignature(prevFn, nextFn *typ.Function) (typ.Type, bool)
 		if t == nil {
 			return nil, false
 		}
+		if !typ.ContainsTypeParam(t) {
+			return t, false
+		}
 		leaked := false
 		return typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
 			tp, ok := node.(*typ.TypeParam)
@@ -774,10 +1999,7 @@ func MergeReturnsForSameSignature(prevFn, nextFn *typ.Function) (typ.Type, bool)
 	if effects == nil {
 		effects = nextFn.Effects
 	}
-	spec := prevFn.Spec
-	if spec == nil {
-		spec = nextFn.Spec
-	}
+	spec := mergeFunctionSpec(prevFn.Spec, nextFn.Spec)
 	refinement := prevFn.Refinement
 	if refinement == nil {
 		refinement = nextFn.Refinement

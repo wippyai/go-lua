@@ -109,6 +109,24 @@ func TestToTruthy_AllFalsy(t *testing.T) {
 	}
 }
 
+func TestToTruthy_LargeTruthyUnionDoesNotProjectMembers(t *testing.T) {
+	members := make([]typ.Type, 0, 256)
+	for i := 0; i < cap(members); i++ {
+		members = append(members,
+			typ.NewRecord().
+				Field("name", typ.LiteralInt(int64(i))).
+				Field("children", typ.NewArray(typ.NewRecord().Field("name", typ.String).Build())).
+				Build(),
+		)
+	}
+	union := typ.NewUnion(members...)
+
+	got := narrow.ToTruthy(union)
+	if got != union {
+		t.Fatalf("ToTruthy(truthy product union) rebuilt type, got %T", got)
+	}
+}
+
 func TestToFalsy_Optional(t *testing.T) {
 	opt := typ.NewOptional(typ.String)
 	got := narrow.ToFalsy(opt)
@@ -286,6 +304,22 @@ func TestFilterByKind_UnionAnyAndNil_Number(t *testing.T) {
 	}
 }
 
+func TestFilterByKind_AnyTablePreservesDynamicFields(t *testing.T) {
+	got := narrow.FilterByKind(typ.Any, kind.Record)
+	want := typ.NewMap(typ.Any, typ.Any)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("FilterByKind(any, table) = %v, want dynamic table %v", got, want)
+	}
+}
+
+func TestFilterByKind_UnknownTableKeepsOpaqueTableTop(t *testing.T) {
+	got := narrow.FilterByKind(typ.Unknown, kind.Record)
+	want := narrow.TypeForKind(kind.Record)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("FilterByKind(unknown, table) = %v, want opaque table top %v", got, want)
+	}
+}
+
 func TestExcludeKind_OptionalUnknown_PreservesUnknownOptional(t *testing.T) {
 	got := narrow.ExcludeKind(typ.NewOptional(typ.Unknown), kind.String)
 	want := typ.NewOptional(typ.Unknown)
@@ -350,6 +384,21 @@ func TestKindMatches_TableRecord(t *testing.T) {
 func TestKindMatches_IntegerNumber(t *testing.T) {
 	if !narrow.KindMatches(typ.Integer, kind.Number) {
 		t.Error("KindMatches(integer, number) = false, want true")
+	}
+}
+
+func TestKindMatches_LiteralPrimitiveKinds(t *testing.T) {
+	if !narrow.KindMatches(typ.LiteralString("safe"), kind.String) {
+		t.Error("KindMatches(literal string, string) = false, want true")
+	}
+	if !narrow.KindMatches(typ.LiteralInt(42), kind.Integer) {
+		t.Error("KindMatches(literal integer, integer) = false, want true")
+	}
+	if !narrow.KindMatches(typ.LiteralInt(42), kind.Number) {
+		t.Error("KindMatches(literal integer, number) = false, want true")
+	}
+	if narrow.KindMatches(typ.LiteralString("safe"), kind.Number) {
+		t.Error("KindMatches(literal string, number) = true, want false")
 	}
 }
 
@@ -1020,6 +1069,14 @@ func TestFilterByKind_Union(t *testing.T) {
 	got := narrow.FilterByKind(union, kind.String)
 	if !typ.TypeEquals(got, typ.String) {
 		t.Errorf("FilterByKind(string|number|boolean, string) = %v, want string", got)
+	}
+}
+
+func TestFilterByKind_LiteralPreservesSingleton(t *testing.T) {
+	lit := typ.LiteralString("safe")
+	got := narrow.FilterByKind(lit, kind.String)
+	if !typ.TypeEquals(got, lit) {
+		t.Errorf("FilterByKind(%v, string) = %v, want literal", lit, got)
 	}
 }
 

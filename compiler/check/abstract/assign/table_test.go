@@ -168,6 +168,46 @@ func TestEmitTableLiteralFieldAssignments_WithSynth(t *testing.T) {
 	EmitTableLiteralFieldAssignments(table, 1, "t", 0, nil, nil, synth, nil, inputs)
 }
 
+func TestEmitTableLiteralFieldAssignments_EmitsStaticLiteralValueType(t *testing.T) {
+	inputs := &flow.Inputs{
+		Assignments: []flow.UnifiedAssignment{},
+	}
+	value := &ast.StringExpr{Value: "value"}
+	table := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{Key: &ast.StringExpr{Value: "name"}, Value: value},
+		},
+	}
+	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
+		if expr == value {
+			return typ.String
+		}
+		return typ.Unknown
+	}
+
+	EmitTableLiteralFieldAssignments(table, 1, "t", 7, nil, nil, synth, nil, inputs)
+
+	if len(inputs.Assignments) != 1 {
+		t.Fatalf("expected 1 assignment, got %d", len(inputs.Assignments))
+	}
+	got := inputs.Assignments[0]
+	if got.Point != 7 {
+		t.Fatalf("assignment point = %d, want 7", got.Point)
+	}
+	if got.TargetPath.Root != "t" || got.TargetPath.Symbol != 1 {
+		t.Fatalf("target path = %+v, want t/1", got.TargetPath)
+	}
+	if len(got.TargetPath.Segments) != 1 || got.TargetPath.Segments[0].Kind != constraint.SegmentField || got.TargetPath.Segments[0].Name != "name" {
+		t.Fatalf("target segments = %+v, want field name", got.TargetPath.Segments)
+	}
+	if !typ.TypeEquals(got.Type, typ.String) {
+		t.Fatalf("assignment type = %v, want string", got.Type)
+	}
+	if !got.Source.IsZero() {
+		t.Fatalf("literal field assignment should not invent a source path, got %+v", got.Source)
+	}
+}
+
 func TestEmitTableLiteralFieldAssignments_WithConstResolver(t *testing.T) {
 	inputs := &flow.Inputs{
 		Assignments: []flow.UnifiedAssignment{},

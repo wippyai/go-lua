@@ -39,6 +39,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -50,10 +53,11 @@ import (
 // function type. Non-local functions (e.g., module-level definitions) are included
 // for captured variable resolution but do not contribute their types to siblings.
 type FuncEntry struct {
-	Func    *ast.FunctionExpr
-	Point   cfg.Point
-	Symbol  cfg.SymbolID
-	IsLocal bool
+	Func       *ast.FunctionExpr
+	Point      cfg.Point
+	Symbol     cfg.SymbolID
+	IsLocal    bool
+	TargetPath constraint.Path
 }
 
 // BuildConfig holds inputs for sibling type construction.
@@ -179,17 +183,118 @@ func Build(c BuildConfig) map[cfg.SymbolID]typ.Type {
 		if !entry.IsLocal || entry.Symbol == 0 {
 			continue
 		}
-		fnType := functionfact.TypeFromMap(c.FunctionFacts, entry.Symbol)
+		fnType := siblingFunctionType(c, entry)
 		if fnType == nil {
 			continue
 		}
 		result[entry.Symbol] = functionfact.MergeType(result[entry.Symbol], fnType)
 	}
 
+	applyFieldFunctionSurface(result, c)
+
 	if len(result) == 0 {
 		return nil
 	}
 	return result
+}
+
+// ReceiverSelfType composes the receiver object observed by parent flow with
+// the sibling surface owned by the same scope group. Method bodies should get
+// their self contract from this product, not from ad hoc AST enrichment.
+func ReceiverSelfType(base, surface typ.Type) typ.Type {
+	if surface == nil {
+		return base
+	}
+	if base == nil || typ.IsAbsentOrUnknown(base) {
+		return surface
+	}
+	if fields := receiverSurfaceFields(surface); len(fields) > 0 {
+		return overlaymut.MergeRequiredFieldsIntoType(base, fields)
+	}
+	if reconciled, ok := value.ReconcilePathFactWithDeclaredRead(surface, base); ok && reconciled != nil {
+		return reconciled
+	}
+	return value.JoinPrecise(base, surface)
+}
+
+func receiverSurfaceFields(surface typ.Type) map[string]typ.Type {
+	rec := unwrap.Record(surface)
+	if rec == nil || len(rec.Fields) == 0 {
+		return nil
+	}
+	fields := make(map[string]typ.Type, len(rec.Fields))
+	for _, field := range rec.Fields {
+		if field.Name == "" || field.Type == nil {
+			continue
+		}
+		fields[field.Name] = field.Type
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
+func siblingFunctionType(c BuildConfig, entry FuncEntry) typ.Type {
+	if entry.Symbol == 0 {
+		return nil
+	}
+	if fnType := functionfact.SiblingTypeProjection(c.FunctionFacts, entry.Symbol, api.PhaseScopeCompute); fnType != nil {
+		return fnType
+	}
+	if c.Services == nil {
+		return nil
+	}
+	return c.Services.TypeAtPoint(entry.Point, entry.Symbol)
+}
+
+func applyFieldFunctionSurface(result map[cfg.SymbolID]typ.Type, c BuildConfig) {
+	if len(c.Funcs) == 0 {
+		return
+	}
+	fields := make(map[cfg.SymbolID]map[string]typ.Type)
+	points := make(map[cfg.SymbolID]cfg.Point)
+	for _, entry := range c.Funcs {
+		baseSym, fieldName := directFieldTarget(entry.TargetPath)
+		if baseSym == 0 || fieldName == "" {
+			continue
+		}
+		fnType := siblingFunctionType(c, entry)
+		if fnType == nil {
+			continue
+		}
+		if fields[baseSym] == nil {
+			fields[baseSym] = make(map[string]typ.Type)
+		}
+		if existing := fields[baseSym][fieldName]; existing != nil {
+			fields[baseSym][fieldName] = functionfact.MergeType(existing, fnType)
+		} else {
+			fields[baseSym][fieldName] = fnType
+		}
+		if points[baseSym] == 0 || entry.Point < points[baseSym] {
+			points[baseSym] = entry.Point
+		}
+	}
+	if len(fields) == 0 {
+		return
+	}
+	for _, sym := range cfg.SortedSymbolIDs(fields) {
+		if result[sym] == nil && c.Services != nil {
+			result[sym] = c.Services.TypeAtPoint(points[sym], sym)
+		}
+		result[sym] = overlaymut.MergeRequiredFieldsIntoType(result[sym], fields[sym])
+	}
+}
+
+func directFieldTarget(path constraint.Path) (cfg.SymbolID, string) {
+	if path.Symbol == 0 || len(path.Segments) != 1 {
+		return 0, ""
+	}
+	seg := path.Segments[0]
+	if (seg.Kind != constraint.SegmentField && seg.Kind != constraint.SegmentIndexString) || seg.Name == "" {
+		return 0, ""
+	}
+	return path.Symbol, seg.Name
 }
 
 // Compute extracts sibling types for a function's scope group from the store.

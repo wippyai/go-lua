@@ -5,13 +5,14 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// IndexerInfo holds key and value types for dynamic index assignments.
-type IndexerInfo struct {
-	KeyType typ.Type
-	ValType typ.Type
+// MapMutatorInfo holds key and value types for map-write mutations.
+type MapMutatorInfo struct {
+	KeyType   typ.Type
+	ValueType typ.Type
 }
 
 // CollectFieldAssignments reduces transfer assignment evidence into field assignments grouped by base symbol.
@@ -77,7 +78,7 @@ func CollectFieldAssignments(
 				result[sym] = make(map[string]typ.Type)
 			}
 			if existing := result[sym][fieldName]; existing != nil {
-				result[sym][fieldName] = typ.JoinPreferNonSoft(existing, fieldType)
+				result[sym][fieldName] = value.JoinPrecise(existing, fieldType)
 			} else {
 				result[sym][fieldName] = fieldType
 			}
@@ -87,15 +88,70 @@ func CollectFieldAssignments(
 	return result
 }
 
-// CollectIndexerAssignments reduces transfer assignment evidence for dynamic index writes.
-// Returns a map: symbolID -> []IndexerInfo representing index assignments to each symbol.
-func CollectIndexerAssignments(
+// CollectFunctionFieldAssignments reduces function field/method definitions
+// into the same field-assignment product as explicit table writes. Function
+// definitions are separate graph events, but semantically:
+//
+//	function t.run(...) ... end
+//	function t:run(...) ... end
+//
+// both publish a function value at t.run for return/capture overlays.
+func CollectFunctionFieldAssignments(
+	functions []api.FunctionDefinitionEvidence,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	filterSyms map[cfg.SymbolID]bool,
+) map[cfg.SymbolID]map[string]typ.Type {
+	result := make(map[cfg.SymbolID]map[string]typ.Type)
+	if len(functions) == 0 {
+		return result
+	}
+	for _, def := range functions {
+		info := def.FuncDef
+		if info == nil || info.FuncExpr == nil {
+			continue
+		}
+		if info.TargetKind != cfg.FuncDefField && info.TargetKind != cfg.FuncDefMethod {
+			continue
+		}
+		target := info.TargetPath
+		if target.Symbol == 0 || len(target.Segments) != 1 {
+			continue
+		}
+		seg := target.Segments[0]
+		if seg.Name == "" {
+			continue
+		}
+		if filterSyms != nil && !filterSyms[target.Symbol] {
+			continue
+		}
+		fieldType := typ.Type(nil)
+		if synth != nil {
+			fieldType = synth(info.FuncExpr, def.Nested.Point)
+		}
+		if fieldType == nil {
+			fieldType = typ.Unknown
+		}
+		if result[target.Symbol] == nil {
+			result[target.Symbol] = make(map[string]typ.Type)
+		}
+		if existing := result[target.Symbol][seg.Name]; existing != nil {
+			result[target.Symbol][seg.Name] = value.JoinPrecise(existing, fieldType)
+		} else {
+			result[target.Symbol][seg.Name] = fieldType
+		}
+	}
+	return result
+}
+
+// CollectMapMutatorAssignments reduces transfer assignment evidence for map writes.
+// Returns a map: symbolID -> []MapMutatorInfo representing map mutations to each symbol.
+func CollectMapMutatorAssignments(
 	assignments []api.AssignmentEvidence,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	bindings *bind.BindingTable,
 	filterSyms map[cfg.SymbolID]bool,
-) map[cfg.SymbolID][]IndexerInfo {
-	result := make(map[cfg.SymbolID][]IndexerInfo)
+) map[cfg.SymbolID][]MapMutatorInfo {
+	result := make(map[cfg.SymbolID][]MapMutatorInfo)
 	if len(assignments) == 0 {
 		return result
 	}
@@ -151,9 +207,9 @@ func CollectIndexerAssignments(
 				valType = typ.Unknown
 			}
 
-			result[sym] = append(result[sym], IndexerInfo{
-				KeyType: keyType,
-				ValType: valType,
+			result[sym] = append(result[sym], MapMutatorInfo{
+				KeyType:   keyType,
+				ValueType: valType,
 			})
 		}
 	}
@@ -168,12 +224,12 @@ func canonicalDynamicKeyType(keyType typ.Type) typ.Type {
 	return keyType
 }
 
-// MergeIndexerMutations merges table mutator mutations into indexer assignments.
-func MergeIndexerMutations(
-	indexers map[cfg.SymbolID][]IndexerInfo,
-	mutations map[cfg.SymbolID][]IndexerInfo,
+// MergeMapMutatorMutations merges table mutator-derived map effects into map mutations.
+func MergeMapMutatorMutations(
+	mapMutators map[cfg.SymbolID][]MapMutatorInfo,
+	mutations map[cfg.SymbolID][]MapMutatorInfo,
 ) {
 	for sym, infos := range mutations {
-		indexers[sym] = append(indexers[sym], infos...)
+		mapMutators[sym] = append(mapMutators[sym], infos...)
 	}
 }

@@ -29,7 +29,7 @@ func SynthTableLiteralWithWrapper(ex *ast.TableExpr, p cfg.Point, recurse func(a
 		return nil
 	}
 	if len(ex.Fields) == 0 {
-		return typ.NewRecord().Build()
+		return typ.NewRecord().SetOpen(true).Build()
 	}
 
 	builder := typ.NewRecord()

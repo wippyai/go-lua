@@ -1,19 +1,36 @@
 package flow
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
-	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/join"
 )
+
+// PathFact is a finite abstract-state fact for a concrete flow path.
+type PathFact struct {
+	Path constraint.Path
+	Type typ.Type
+}
 
 // TypeAt returns the type for a path at a CFG point using canonical keys.
 func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	if path.IsEmpty() || s.pkResolver == nil {
 		return nil
+	}
+
+	if len(path.Segments) == 0 {
+		baseType, baseKey := s.rootBaseTypeAt(p, path)
+		if baseKey == "" {
+			return baseType
+		}
+		return s.mergeFieldAssignmentsAt(p, baseType, string(baseKey))
 	}
 
 	// Get canonical key for this path at this point
@@ -25,7 +42,7 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 			if len(path.Segments) == 0 {
 				return declaredType
 			}
-			if d, ok := s.deriveTypeFrom(declaredType, path.Segments); ok {
+			if d, ok := deriveTypeFrom(s.resolver, declaredType, path.Segments); ok {
 				return d
 			}
 		}
@@ -36,8 +53,14 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	basePath := constraint.Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
 	baseKey := s.pkResolver.KeyAt(p, basePath)
 
-	full := s.values[string(fullKey)]
-	base := s.values[string(baseKey)]
+	full := s.projectedValueAtPoint(p, string(fullKey))
+	base := s.valueAtPoint(p, string(baseKey))
+	if base != nil && typ.IsUnknown(base) {
+		rootDeclared := s.lookupDeclaredType(basePath)
+		if rootDeclared != nil && !typ.IsUnknown(rootDeclared) {
+			base = rootDeclared
+		}
+	}
 
 	if base == nil && full == nil {
 		declaredType := s.lookupDeclaredType(path)
@@ -45,32 +68,15 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 			if len(path.Segments) == 0 {
 				return declaredType
 			}
-			if d, ok := s.deriveTypeFrom(declaredType, path.Segments); ok {
+			if d, ok := deriveTypeFrom(s.resolver, declaredType, path.Segments); ok {
 				return d
 			}
 		}
 	}
 
-	if len(path.Segments) == 0 {
-		baseType := full
-		if baseType == nil {
-			baseType = base
-		}
-		// For annotated symbols, prefer the declared type as the base.
-		// This keeps annotations authoritative while still allowing field overlays.
-		if s.inputs != nil && s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[path.Symbol] {
-			if declared := s.lookupDeclaredType(path); declared != nil {
-				if baseType == nil || !subtype.IsSubtype(baseType, declared) {
-					baseType = declared
-				}
-			}
-		}
-		return s.mergeFieldAssignments(baseType, string(baseKey))
-	}
-
 	var derived typ.Type
 	if base != nil {
-		if d, ok := s.deriveTypeFrom(base, path.Segments); ok {
+		if d, ok := deriveTypeFrom(s.resolver, base, path.Segments); ok {
 			derived = d
 		}
 	}
@@ -88,7 +94,69 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	} else {
 		candidate = derived
 	}
-	return candidate
+	return s.projectPresenceAtPoint(p, string(fullKey), candidate)
+}
+
+func (s *Solution) rootBaseTypeAt(p cfg.Point, path constraint.Path) (typ.Type, constraint.PathKey) {
+	if s == nil || path.IsEmpty() || len(path.Segments) != 0 || s.pkResolver == nil {
+		return nil, ""
+	}
+
+	fullKey := s.pkResolver.KeyAt(p, path)
+	if fullKey == "" {
+		declaredType := s.lookupDeclaredType(path)
+		if declaredType != nil {
+			return declaredType, ""
+		}
+		return nil, ""
+	}
+
+	basePath := constraint.Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
+	baseKey := s.pkResolver.KeyAt(p, basePath)
+
+	full := s.valueAtPoint(p, string(fullKey))
+	base := s.valueAtPoint(p, string(baseKey))
+	if base != nil && typ.IsUnknown(base) {
+		rootDeclared := s.lookupDeclaredType(basePath)
+		if rootDeclared != nil && !typ.IsUnknown(rootDeclared) {
+			base = rootDeclared
+		}
+	}
+
+	if base == nil && full == nil {
+		declaredType := s.lookupDeclaredType(path)
+		if declaredType != nil {
+			return declaredType, baseKey
+		}
+	}
+
+	baseType := full
+	if baseType == nil {
+		baseType = base
+	}
+
+	// For annotated symbols, prefer sealed declarations as the base. Refinable
+	// structural annotations still admit more precise flow evidence for their
+	// placeholder slots.
+	if s.inputs != nil && s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[path.Symbol] {
+		if declared := s.lookupDeclaredType(path); declared != nil {
+			if baseType == nil || !annotationAcceptsFlowType(declared, baseType) {
+				baseType = declared
+			}
+		}
+	}
+	if typ.IsUnknown(baseType) {
+		if declared := s.lookupDeclaredType(path); declared != nil && !typ.IsUnknown(declared) {
+			baseType = declared
+		}
+	}
+	if declared := s.lookupDeclaredType(path); declared != nil && baseType != nil && !typ.TypeEquals(baseType, declared) {
+		if reconciled, ok := value.ReconcilePathFactWithDeclaredRead(baseType, declared); ok && reconciled != nil {
+			baseType = reconciled
+		}
+	}
+
+	return baseType, baseKey
 }
 
 // ConditionAt returns the full DNF condition at a CFG point.
@@ -148,6 +216,117 @@ func (s *Solution) ExcludesTypeAt(p cfg.Point, path constraint.Path, t typ.Type)
 	return s.conditionExcludesType(cond, path, t)
 }
 
+// ProvesTypeAt reports whether path conditions at point p prove that path is a
+// subtype of t. This is a condition-only proof query: it does not consult
+// declared types or inferred body overlays, so callers can distinguish
+// locally-proven refinements from caller preconditions.
+func (s *Solution) ProvesTypeAt(p cfg.Point, path constraint.Path, t typ.Type) bool {
+	if s == nil || s.inputs == nil || t == nil {
+		return false
+	}
+	cond := s.ConditionAt(p)
+	return s.conditionProvesType(cond, path, t)
+}
+
+// ConditionTypeAt returns the path type proven by propagated branch conditions
+// at point p.
+//
+// This is the proof/query sibling of NarrowedTypeAt. It deliberately builds a
+// finite environment from declared/literal/sibling inputs plus the queried base
+// path, then applies the point condition through ProductDomain. It does not call
+// NarrowedTypeAt, baseTypeAt, or transfer-derived ancestor queries, so preflow
+// evidence synthesis can ask branch-proof questions without re-entering full
+// abstract-state transfer.
+func (s *Solution) ConditionTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	return s.conditionedTypeAt(p, path, nil)
+}
+
+// ConditionedTypeAt returns the path type proven by the point condition plus
+// an additional expression-local condition. It is the proof-query surface for
+// short-circuit expressions: callers provide the local guard, while the flow
+// domain owns canonical path resolution, product-domain projection, and bottom
+// handling.
+func (s *Solution) ConditionedTypeAt(p cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type {
+	return s.conditionedTypeAt(p, path, &extra)
+}
+
+// ConditionedSeedTypeAt returns the type of queryPath proven from a caller
+// supplied seed product under the point condition plus an expression-local
+// condition.
+//
+// This is the canonical projection for pre-transfer expression scopes where the
+// root type comes from an overlay (for example a loop variable or parameter
+// product) instead of DeclaredTypes. The flow product domain still owns path
+// resolution, condition application, ancestor narrowing, and descendant
+// projection.
+func (s *Solution) ConditionedSeedTypeAt(p cfg.Point, seedPath constraint.Path, seedType typ.Type, queryPath constraint.Path, extra constraint.Condition) typ.Type {
+	if s == nil || s.pkResolver == nil || seedPath.IsEmpty() || queryPath.IsEmpty() || seedType == nil {
+		return nil
+	}
+	cond := s.ConditionAt(p)
+	if extra.HasConstraints() || extra.IsFalse() {
+		cond = constraint.And(cond, extra)
+	}
+	if cond.IsFalse() {
+		return typ.Never
+	}
+	if cond.IsTrue() || !cond.HasConstraints() {
+		return s.deriveSeedType(seedPath, seedType, queryPath)
+	}
+	projected := s.projectPointConditionForPath(p, seedPath, cond)
+	if !projected.HasConstraints() {
+		return s.deriveSeedType(seedPath, seedType, queryPath)
+	}
+	return s.applyConditionProof(p, seedType, seedPath, queryPath, projected)
+}
+
+func (s *Solution) deriveSeedType(seedPath constraint.Path, seedType typ.Type, queryPath constraint.Path) typ.Type {
+	if seedPath.Equal(queryPath) {
+		return seedType
+	}
+	if !isDescendantOf(queryPath, seedPath) {
+		return nil
+	}
+	relative := queryPath.Segments[len(seedPath.Segments):]
+	derived, ok := deriveTypeFrom(s.resolver, seedType, relative)
+	if !ok {
+		return nil
+	}
+	return derived
+}
+
+func (s *Solution) conditionedTypeAt(p cfg.Point, path constraint.Path, extra *constraint.Condition) typ.Type {
+	if s == nil || s.pkResolver == nil || path.IsEmpty() {
+		return nil
+	}
+	cond := s.ConditionAt(p)
+	if extra != nil {
+		cond = constraint.And(cond, *extra)
+	}
+	if cond.IsFalse() {
+		return typ.Never
+	}
+	rootPath := constraint.Path{Root: path.Root, Symbol: path.Symbol}
+	rootType := s.conditionRootTypeAt(rootPath)
+	if rootType == nil {
+		return nil
+	}
+	if cond.IsTrue() || !cond.HasConstraints() {
+		if len(path.Segments) == 0 {
+			return rootType
+		}
+		return nil
+	}
+	projected := s.projectPointConditionForPath(p, rootPath, cond)
+	if !projected.HasConstraints() {
+		if len(path.Segments) == 0 {
+			return rootType
+		}
+		return nil
+	}
+	return s.applyConditionProof(p, rootType, rootPath, path, projected)
+}
+
 func (s *Solution) conditionExcludesType(cond constraint.Condition, path constraint.Path, t typ.Type) bool {
 	if cond.IsFalse() || !cond.HasConstraints() {
 		return false
@@ -161,6 +340,31 @@ func (s *Solution) conditionExcludesType(cond constraint.Condition, path constra
 					found = true
 					break
 				}
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Solution) conditionProvesType(cond constraint.Condition, path constraint.Path, t typ.Type) bool {
+	if cond.IsFalse() || !cond.HasConstraints() {
+		return false
+	}
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		disjunct := cond.DisjunctConstraints(i)
+		found := false
+		for _, c := range disjunct {
+			ht, ok := c.(constraint.HasType)
+			if !ok || !s.pathMatches(ht.Path, path) {
+				continue
+			}
+			resolved := s.resolveTypeKey(ht.Type)
+			if typeMatches(resolved, t) || subtype.IsSubtype(resolved, t) {
+				found = true
+				break
 			}
 		}
 		if !found {
@@ -334,42 +538,64 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		return nil
 	}
 	cacheKey, cacheable := s.narrowedTypeCacheKey(p, path)
-	if !s.queryCacheEnabled {
-		cacheable = false
-	}
 	if cacheable {
 		if s.narrowedTypeCache == nil {
 			s.narrowedTypeCache = make(map[narrowedTypeCacheKey]narrowedTypeCacheValue)
 		}
 		if cached, ok := s.narrowedTypeCache[cacheKey]; ok {
-			if cached.ok {
-				return cached.t
+			if cached.epoch == s.stateEpoch {
+				if cached.ok {
+					return cached.t
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 
+	result := s.narrowedTypeAtWithCondition(p, path, nil)
+	if cacheable {
+		s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{epoch: s.stateEpoch, t: result, ok: true}
+	}
+	return result
+}
+
+// NarrowedTypeAtWithCondition returns the narrowed type at point p after
+// applying the point condition plus an expression-local condition.
+//
+// This is the canonical query for short-circuit expression scopes. Callers
+// provide only the condition; the flow solution owns base-type selection,
+// product-domain projection, annotation policy, numeric shape projection, and
+// bottom handling.
+func (s *Solution) NarrowedTypeAtWithCondition(p cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type {
+	return s.narrowedTypeAtWithCondition(p, path, &extra)
+}
+
+func (s *Solution) narrowedTypeAtWithCondition(p cfg.Point, path constraint.Path, extra *constraint.Condition) typ.Type {
+	if s == nil {
+		return nil
+	}
 	condition := s.ConditionAt(p)
-	if condition.IsFalse() {
-		if cacheable {
-			s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: typ.Never, ok: true}
-		}
+	if extra != nil {
+		condition = constraint.And(condition, *extra)
+	}
+	if condition.IsFalse() || !s.isPointReachable(p) {
 		return typ.Never
 	}
 
 	baseType := s.baseTypeAt(p, path)
 	if baseType == nil {
-		if cacheable {
-			s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{}
+		if extra != nil {
+			return s.conditionedTypeAt(p, path, extra)
 		}
 		return nil
 	}
 	// For annotated symbols, ensure base type does not drop required structure.
-	// If the base type is not a subtype of the declared type, use declared evidence.
+	// Refinable structural annotations can be replaced by comparable, more
+	// precise flow evidence for their placeholder slots.
 	if s.inputs != nil && len(path.Segments) == 0 && path.Symbol != 0 {
 		if s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[path.Symbol] {
 			if declared := s.lookupDeclaredType(path); declared != nil {
-				if !subtype.IsSubtype(baseType, declared) {
+				if !annotationAcceptsFlowType(declared, baseType) {
 					baseType = declared
 				}
 			}
@@ -377,17 +603,58 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	}
 
 	if !condition.HasConstraints() {
-		if cacheable {
-			s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: baseType, ok: true}
-		}
-		return baseType
+		return s.applyPointNumericShapeProjection(p, path, baseType)
 	}
 
-	result := s.applyCondition(p, baseType, path, condition)
-	if cacheable {
-		s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: result, ok: true}
+	result := s.applyPointCondition(p, baseType, path, condition)
+	if result == nil && extra != nil {
+		if proof := s.conditionedTypeAt(p, path, extra); proof != nil {
+			return proof
+		}
 	}
-	return result
+	return s.applyPointNumericShapeProjection(p, path, result)
+}
+
+func annotationAcceptsFlowType(declared, candidate typ.Type) bool {
+	if candidate == nil {
+		return false
+	}
+	if subtype.IsSubtype(candidate, declared) {
+		return true
+	}
+	if !typ.IsRefinableAnnotation(declared) {
+		return false
+	}
+	_, comparable := typ.ComparePrecision(candidate, declared)
+	return comparable
+}
+
+// PreStateTypeAt returns the path type at the entry side of point p.
+//
+// Flow transfer effects attached to p describe the state after executing that
+// point. Call-boundary consumers that need the caller environment before the
+// callee's effects run should use this query instead of NarrowedTypeAt.
+func (s *Solution) PreStateTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	if s == nil {
+		return nil
+	}
+	if pre := s.preAssignmentNarrowedTypeAt(p, path); pre != nil {
+		return pre
+	}
+	return s.NarrowedTypeAt(p, path)
+}
+
+// ChildTypesAt returns finite child facts already materialized in the abstract
+// state below path at point p. It does not derive speculative descendants from
+// the parent type; callers that need recursive products should project only
+// these finite facts back into the root product.
+func (s *Solution) ChildTypesAt(p cfg.Point, path constraint.Path) []PathFact {
+	return s.childTypesAt(p, path, false)
+}
+
+// PreStateChildTypesAt returns finite child facts on the entry side of point p.
+func (s *Solution) PreStateChildTypesAt(p cfg.Point, path constraint.Path) []PathFact {
+	return s.childTypesAt(p, path, true)
 }
 
 func (s *Solution) narrowedTypeCacheKey(p cfg.Point, path constraint.Path) (narrowedTypeCacheKey, bool) {
@@ -406,6 +673,177 @@ func (s *Solution) narrowedTypeCacheKey(p cfg.Point, path constraint.Path) (narr
 	}
 
 	return narrowedTypeCacheKey{}, false
+}
+
+func (s *Solution) childTypesAt(p cfg.Point, path constraint.Path, preState bool) []PathFact {
+	if s == nil || path.IsEmpty() || path.Symbol == 0 {
+		return nil
+	}
+	cacheKey, cacheable := s.childTypesCacheKey(p, path, preState)
+	if !s.queryCacheEnabled {
+		cacheable = false
+	}
+	if cacheable && s.childTypesCache != nil {
+		if cached, ok := s.childTypesCache[cacheKey]; ok && cached.epoch == s.stateEpoch {
+			return clonePathFacts(cached.facts)
+		}
+	}
+	var facts []PathFact
+	if preState {
+		facts = s.preStateChildTypesAt(p, path)
+	} else {
+		facts = s.childTypesAtPoint(p, path)
+	}
+	if cacheable {
+		if s.childTypesCache == nil {
+			s.childTypesCache = make(map[childTypesCacheKey]childTypesCacheValue, 8)
+		}
+		s.childTypesCache[cacheKey] = childTypesCacheValue{
+			epoch: s.stateEpoch,
+			facts: clonePathFacts(facts),
+		}
+	}
+	return facts
+}
+
+func (s *Solution) childTypesCacheKey(p cfg.Point, path constraint.Path, preState bool) (childTypesCacheKey, bool) {
+	if path.IsEmpty() || path.Symbol == 0 {
+		return childTypesCacheKey{}, false
+	}
+	key := path.Key()
+	if key == "" {
+		return childTypesCacheKey{}, false
+	}
+	return childTypesCacheKey{point: p, path: key, preState: preState}, true
+}
+
+func (s *Solution) preStateChildTypesAt(p cfg.Point, path constraint.Path) []PathFact {
+	if s.inputs == nil || s.inputs.Graph == nil {
+		return s.childTypesAtPoint(p, path)
+	}
+	preds := graphPredecessors(s.inputs.Graph, p)
+	if len(preds) == 0 {
+		return s.childTypesAtPoint(p, path)
+	}
+
+	joined := make(map[string]PathFact)
+	seenVersions := make(map[int]struct{}, len(preds))
+	for _, pred := range preds {
+		ver := s.inputs.Graph.VisibleVersion(pred, path.Symbol)
+		if ver.ID == 0 {
+			continue
+		}
+		if _, seen := seenVersions[ver.ID]; seen {
+			continue
+		}
+		seenVersions[ver.ID] = struct{}{}
+		predPath := path
+		predPath.Version = ver.ID
+		for _, fact := range s.childTypesAtPoint(pred, predPath) {
+			if fact.Type == nil || len(fact.Path.Segments) == 0 {
+				continue
+			}
+			key := constraint.FormatSegments(fact.Path.Segments[len(path.Segments):])
+			if prev, ok := joined[key]; ok {
+				prev.Type = join.Types(prev.Type, fact.Type)
+				joined[key] = prev
+				continue
+			}
+			joined[key] = fact
+		}
+	}
+	if len(joined) == 0 {
+		return s.childTypesAtPoint(p, path)
+	}
+	return sortedPathFacts(joined)
+}
+
+func (s *Solution) childTypesAtPoint(p cfg.Point, path constraint.Path) []PathFact {
+	if s.pkResolver == nil || path.Symbol == 0 {
+		return nil
+	}
+	baseKey := s.keyForPathAt(p, path)
+	if baseKey == "" {
+		return nil
+	}
+	baseSym, baseVersion, baseSuffix, ok := pathkey.ParseKeyUnchecked(baseKey)
+	if !ok || baseSym == 0 || baseVersion == 0 {
+		return nil
+	}
+	baseSegs := pathkey.ParseSuffix(baseSuffix)
+	if len(baseSuffix) > 0 && baseSegs == nil {
+		return nil
+	}
+
+	children := make(map[string]PathFact)
+	visit := func(key string) {
+		sym, version, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
+		if !ok || sym != baseSym || version != baseVersion || suffix == baseSuffix {
+			return
+		}
+		segs := pathkey.ParseSuffix(suffix)
+		if len(suffix) > 0 && segs == nil {
+			return
+		}
+		if len(segs) <= len(baseSegs) || !pathkey.SegmentsPrefix(baseSegs, segs) {
+			return
+		}
+		childSeg := segs[len(baseSegs)]
+		childPath := path
+		childPath.Version = baseVersion
+		childPath.Segments = append(append([]constraint.Segment{}, path.Segments...), childSeg)
+		childKey := constraint.FormatSegments([]constraint.Segment{childSeg})
+		if _, seen := children[childKey]; seen {
+			return
+		}
+		if t := s.TypeAt(p, childPath); t != nil {
+			children[childKey] = PathFact{Path: childPath, Type: t}
+		}
+	}
+	for key := range s.values {
+		visit(key)
+	}
+	if state := s.mutableValues[p]; len(state) > 0 {
+		for key := range state {
+			visit(key)
+		}
+	}
+	return sortedPathFacts(children)
+}
+
+func (s *Solution) keyForPathAt(p cfg.Point, path constraint.Path) constraint.PathKey {
+	if s == nil || s.pkResolver == nil || path.Symbol == 0 {
+		return ""
+	}
+	if path.Version != 0 {
+		return s.pkResolver.KeyAtVersion(path.Symbol, path.Version, path.Segments)
+	}
+	return s.pkResolver.KeyAt(p, path)
+}
+
+func sortedPathFacts(facts map[string]PathFact) []PathFact {
+	if len(facts) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(facts))
+	for key := range facts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]PathFact, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, facts[key])
+	}
+	return out
+}
+
+func clonePathFacts(facts []PathFact) []PathFact {
+	if len(facts) == 0 {
+		return nil
+	}
+	out := make([]PathFact, len(facts))
+	copy(out, facts)
+	return out
 }
 
 // baseTypeAt returns the base type for a path at point p, for use in narrowing.
@@ -429,6 +867,17 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	}
 
 	if childEvidenceIsLessInformativeThanParent(explicit, derived) {
+		return derived
+	}
+
+	if present, ok := meetPresentChildEvidence(explicit, derived); ok {
+		return present
+	}
+
+	if s.activeConditionNarrowsAncestor(p, path) && !typ.IsAbsentOrUnknown(derived) && !derived.Kind().IsPlaceholder() {
+		if subtype.IsSubtype(explicit, derived) {
+			return explicit
+		}
 		return derived
 	}
 
@@ -467,6 +916,26 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	return derived
 }
 
+func meetPresentChildEvidence(explicit, derived typ.Type) (typ.Type, bool) {
+	if explicit == nil || derived == nil || derived.Kind() == kind.Nil {
+		return nil, false
+	}
+	inner, optional := typ.SplitNilableFieldType(explicit)
+	if !optional || inner == nil || inner.Kind() == kind.Nil {
+		return nil, false
+	}
+	if _, derivedOptional := typ.SplitNilableFieldType(derived); derivedOptional {
+		return nil, false
+	}
+	if typ.TypeEquals(inner, derived) || subtype.IsSubtype(derived, inner) {
+		return derived, true
+	}
+	if subtype.IsSubtype(inner, derived) {
+		return inner, true
+	}
+	return nil, false
+}
+
 func childEvidenceIsLessInformativeThanParent(explicit, derived typ.Type) bool {
 	if explicit == nil || derived == nil || derived.Kind().IsPlaceholder() {
 		return false
@@ -475,6 +944,60 @@ func childEvidenceIsLessInformativeThanParent(explicit, derived typ.Type) bool {
 		return typeCarriesContainerShape(derived)
 	}
 	return false
+}
+
+func (s *Solution) activeConditionNarrowsAncestor(p cfg.Point, path constraint.Path) bool {
+	if s == nil || len(path.Segments) == 0 {
+		return false
+	}
+	cond := s.ConditionAt(p)
+	if !cond.HasConstraints() {
+		return false
+	}
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		for _, c := range cond.DisjunctConstraints(i) {
+			if constraintNarrowsAncestorPath(c, path) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func constraintNarrowsAncestorPath(c constraint.Constraint, path constraint.Path) bool {
+	matches := func(candidate constraint.Path) bool {
+		return isStrictAncestorPath(candidate, path)
+	}
+	// Shape-only existence proofs must not make an ancestor snapshot override a
+	// direct child fact; value-refining constraints below may.
+	return constraint.VisitConstraint(c, constraint.ConstraintVisitor[bool]{
+		Truthy:             func(v constraint.Truthy) bool { return matches(v.Path) },
+		Falsy:              func(v constraint.Falsy) bool { return matches(v.Path) },
+		IsNil:              func(v constraint.IsNil) bool { return matches(v.Path) },
+		NotNil:             func(v constraint.NotNil) bool { return matches(v.Path) },
+		HasType:            func(v constraint.HasType) bool { return matches(v.Path) },
+		NotHasType:         func(v constraint.NotHasType) bool { return matches(v.Path) },
+		HasField:           func(constraint.HasField) bool { return false },
+		FieldEquals:        func(v constraint.FieldEquals) bool { return matches(v.Target) },
+		FieldNotEquals:     func(v constraint.FieldNotEquals) bool { return matches(v.Target) },
+		IndexEquals:        func(v constraint.IndexEquals) bool { return matches(v.Target) },
+		IndexNotEquals:     func(v constraint.IndexNotEquals) bool { return matches(v.Target) },
+		EqPath:             func(v constraint.EqPath) bool { return matches(v.Left) || matches(v.Right) },
+		NotEqPath:          func(v constraint.NotEqPath) bool { return matches(v.Left) || matches(v.Right) },
+		FieldEqualsPath:    func(v constraint.FieldEqualsPath) bool { return matches(v.Target) || matches(v.Value) },
+		FieldNotEqualsPath: func(v constraint.FieldNotEqualsPath) bool { return matches(v.Target) || matches(v.Value) },
+		IndexEqualsPath:    func(v constraint.IndexEqualsPath) bool { return matches(v.Target) || matches(v.Value) },
+		IndexNotEqualsPath: func(v constraint.IndexNotEqualsPath) bool { return matches(v.Target) || matches(v.Value) },
+		KeyOf:              func(v constraint.KeyOf) bool { return matches(v.Table) || matches(v.Key) },
+		Default:            func(constraint.Constraint) bool { return false },
+	})
+}
+
+func isStrictAncestorPath(ancestor, path constraint.Path) bool {
+	if ancestor.IsEmpty() || path.IsEmpty() || len(ancestor.Segments) >= len(path.Segments) {
+		return false
+	}
+	return pathkey.PathRelated(path, ancestor) && pathkey.SegmentsPrefix(ancestor.Segments, path.Segments)
 }
 
 func typeCarriesContainerShape(t typ.Type) bool {
@@ -505,16 +1028,32 @@ func (s *Solution) derivedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		if cut > 0 {
 			ancestor.Segments = append(ancestor.Segments, path.Segments[:cut]...)
 		}
-		ancestorNarrowed := s.NarrowedTypeAt(p, ancestor)
+		ancestorNarrowed := s.narrowedAncestorBaseTypeAt(p, ancestor)
 		if ancestorNarrowed == nil {
 			continue
 		}
-		derived, ok := s.deriveTypeFrom(ancestorNarrowed, path.Segments[cut:])
+		derived, ok := deriveTypeFrom(s.resolver, ancestorNarrowed, path.Segments[cut:])
 		if ok {
 			return derived
 		}
 	}
 	return nil
+}
+
+func (s *Solution) narrowedAncestorBaseTypeAt(p cfg.Point, ancestor constraint.Path) typ.Type {
+	if len(ancestor.Segments) != 0 {
+		return s.NarrowedTypeAt(p, ancestor)
+	}
+	baseType, _ := s.rootBaseTypeAt(p, ancestor)
+	if baseType == nil {
+		return nil
+	}
+	cond := s.ConditionAt(p)
+	if !cond.HasConstraints() || cond.IsTrue() {
+		return s.applyPointNumericShapeProjection(p, ancestor, baseType)
+	}
+	narrowed := s.applyPointCondition(p, baseType, ancestor, cond)
+	return s.applyPointNumericShapeProjection(p, ancestor, narrowed)
 }
 
 // isFalseLiteral returns true if t is literal false.
@@ -532,6 +1071,116 @@ func isFalseLiteral(t typ.Type) bool {
 
 // applyCondition narrows baseType using a DNF condition.
 func (s *Solution) applyCondition(p cfg.Point, baseType typ.Type, path constraint.Path, cond constraint.Condition) typ.Type {
+	return s.applyConditionWithFilter(p, baseType, path, cond, true)
+}
+
+func (s *Solution) applyPointCondition(p cfg.Point, baseType typ.Type, path constraint.Path, cond constraint.Condition) typ.Type {
+	if baseType == nil || !cond.HasConstraints() || cond.IsTrue() || cond.IsFalse() {
+		return s.applyConditionWithFilter(p, baseType, path, cond, true)
+	}
+	projected := s.projectPointConditionForPath(p, path, cond)
+	return s.applyConditionWithFilter(p, baseType, path, projected, false)
+}
+
+func (s *Solution) applyConditionProof(p cfg.Point, seedType typ.Type, seedPath, queryPath constraint.Path, cond constraint.Condition) typ.Type {
+	if seedType == nil || !cond.HasConstraints() {
+		return seedType
+	}
+	if cond.IsTrue() {
+		return seedType
+	}
+	if cond.IsFalse() {
+		return typ.Never
+	}
+
+	narrowedTypes := make([]typ.Type, 0, cond.NumDisjuncts())
+	satisfiable := false
+	noProjection := false
+	projectedBottom := false
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		disjunct := cond.DisjunctConstraints(i)
+		if len(disjunct) == 0 {
+			satisfiable = true
+			if len(queryPath.Segments) == 0 {
+				narrowedTypes = append(narrowedTypes, seedType)
+			} else {
+				noProjection = true
+			}
+			continue
+		}
+		proof := s.applyConditionProofConstraints(p, seedType, seedPath, queryPath, disjunct)
+		switch proof.status {
+		case conditionProjectionUnsat:
+			continue
+		case conditionProjectionNone:
+			satisfiable = true
+			noProjection = true
+		case conditionProjectionType:
+			satisfiable = true
+			if proof.typ == nil {
+				noProjection = true
+				continue
+			}
+			if proof.typ.Kind().IsNever() {
+				projectedBottom = true
+				continue
+			}
+			narrowedTypes = append(narrowedTypes, proof.typ)
+		}
+	}
+
+	if len(narrowedTypes) == 0 {
+		if satisfiable && noProjection {
+			return nil
+		}
+		if satisfiable && projectedBottom {
+			return typ.Never
+		}
+		return typ.Never
+	}
+	if len(narrowedTypes) == 1 {
+		return narrowedTypes[0]
+	}
+	return typ.PruneSoftUnionMembers(typ.NewUnion(narrowedTypes...))
+}
+
+type conditionProjectionStatus uint8
+
+const (
+	conditionProjectionUnsat conditionProjectionStatus = iota
+	conditionProjectionNone
+	conditionProjectionType
+)
+
+type conditionProjectionResult struct {
+	typ    typ.Type
+	status conditionProjectionStatus
+}
+
+func (s *Solution) applyConditionProofConstraints(p cfg.Point, seedType typ.Type, seedPath, queryPath constraint.Path, constraints []constraint.Constraint) conditionProjectionResult {
+	if seedType == nil || len(constraints) == 0 {
+		return conditionProjectionResult{typ: seedType, status: conditionProjectionType}
+	}
+	canonicalKey := s.pkResolver.KeyAt(p, queryPath)
+	if canonicalKey == "" {
+		return conditionProjectionResult{status: conditionProjectionNone}
+	}
+
+	dom, _ := s.conditionProofProductDomainAt(p, seedPath, seedType, constraints)
+	if dom == nil {
+		return conditionProjectionResult{status: conditionProjectionNone}
+	}
+	if !dom.ApplyCondition(constraint.FromConstraints(constraints...)) {
+		return conditionProjectionResult{status: conditionProjectionUnsat}
+	}
+	projected := dom.ProjectedTypeAt(canonicalKey, s.resolver)
+	if projected == nil {
+		return conditionProjectionResult{status: conditionProjectionNone}
+	}
+	return conditionProjectionResult{typ: projected, status: conditionProjectionType}
+}
+
+func (s *Solution) applyConditionWithFilter(p cfg.Point, baseType typ.Type, path constraint.Path, cond constraint.Condition, filter bool) typ.Type {
 	if baseType == nil || !cond.HasConstraints() {
 		return baseType
 	}
@@ -549,7 +1198,12 @@ func (s *Solution) applyCondition(p cfg.Point, baseType typ.Type, path constrain
 			narrowedTypes = append(narrowedTypes, baseType)
 			continue
 		}
-		narrowed := s.applyConstraints(p, baseType, path, disjunct)
+		var narrowed typ.Type
+		if filter {
+			narrowed = s.applyConstraints(p, baseType, path, disjunct)
+		} else {
+			narrowed = s.applyFilteredConstraints(p, baseType, path, disjunct)
+		}
 		if narrowed != nil && !narrowed.Kind().IsNever() {
 			narrowedTypes = append(narrowedTypes, narrowed)
 		}
@@ -570,6 +1224,13 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 		return baseType
 	}
 	constraints = pathkey.FilterConstraintsForPath(constraints, path)
+	return s.applyFilteredConstraints(p, baseType, path, constraints)
+}
+
+func (s *Solution) applyFilteredConstraints(p cfg.Point, baseType typ.Type, path constraint.Path, constraints []constraint.Constraint) typ.Type {
+	if baseType == nil || len(constraints) == 0 {
+		return baseType
+	}
 	if len(constraints) == 0 {
 		return baseType
 	}
@@ -580,7 +1241,86 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 		return baseType
 	}
 
-	valueMap := s.buildPointValueMap(p, path, baseType, constraints)
+	dom, _ := s.productDomainAt(p, path, baseType, constraints)
+	if dom == nil {
+		return baseType
+	}
+	if !dom.ApplyCondition(constraint.FromConstraints(constraints...)) {
+		return nil
+	}
+
+	return dom.ProjectedTypeAt(canonicalKey, s.resolver)
+}
+
+func (s *Solution) projectPointConditionForPath(p cfg.Point, path constraint.Path, cond constraint.Condition) constraint.Condition {
+	if !cond.HasConstraints() || path.IsEmpty() {
+		return cond
+	}
+	cacheKey, cacheable := s.conditionPathCacheKey(p, path, cond)
+	if cacheable {
+		if s.pointConditionCache == nil {
+			s.pointConditionCache = make(map[conditionPathCacheKey]constraint.Condition, 16)
+		}
+		if cached, ok := s.pointConditionCache[cacheKey]; ok {
+			return cached
+		}
+	}
+
+	projected := projectConditionForPath(cond, path)
+	if cacheable {
+		s.pointConditionCache[cacheKey] = projected
+	}
+	return projected
+}
+
+func (s *Solution) conditionPathCacheKey(p cfg.Point, path constraint.Path, cond constraint.Condition) (conditionPathCacheKey, bool) {
+	if path.IsEmpty() {
+		return conditionPathCacheKey{}, false
+	}
+	pathKey := constraint.PathKey("")
+	if s != nil && s.pkResolver != nil {
+		pathKey = s.pkResolver.KeyAt(p, path)
+	}
+	if pathKey == "" {
+		pathKey = path.Key()
+	}
+	if pathKey == "" {
+		return conditionPathCacheKey{}, false
+	}
+	return conditionPathCacheKey{
+		point:         p,
+		path:          pathKey,
+		conditionHash: cond.Hash(),
+	}, true
+}
+
+func projectConditionForPath(cond constraint.Condition, path constraint.Path) constraint.Condition {
+	if !cond.HasConstraints() || path.IsEmpty() {
+		return cond
+	}
+	disjuncts := make([][]constraint.Constraint, 0, cond.NumDisjuncts())
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		disjuncts = append(disjuncts, pathkey.FilterConstraintsForPath(cond.DisjunctConstraints(i), path))
+	}
+	return constraint.FromDisjuncts(disjuncts)
+}
+
+func (s *Solution) productDomainAt(
+	p cfg.Point,
+	targetPath constraint.Path,
+	baseType typ.Type,
+	constraints []constraint.Constraint,
+) (*ProductDomain, constraint.PathKey) {
+	if s == nil || s.pkResolver == nil {
+		return nil, ""
+	}
+
+	var targetKey constraint.PathKey
+	if !targetPath.IsEmpty() {
+		targetKey = s.pkResolver.KeyAt(p, targetPath)
+	}
+
+	valueMap := s.buildPointValueMap(p, targetPath, baseType, constraints)
 	resolvePathCache := s.scratchResolvedPathMap
 	if resolvePathCache == nil {
 		resolvePathCache = make(map[constraint.PathKey]constraint.PathKey, len(constraints)*2)
@@ -606,94 +1346,57 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 	}
 	env.ResolvePath = resolvePath
 
-	dom := NewProductDomain(env)
-	if !dom.ApplyCondition(constraint.FromConstraints(constraints...)) {
-		return nil
-	}
-
-	current := baseType
-	if narrowed := dom.TypeAt(canonicalKey); narrowed != nil {
-		current = narrowed
-	}
-
-	if narrowed, ok := s.deriveFromNarrowedAncestors(canonicalKey, dom); ok {
-		if current == nil {
-			current = narrowed
-		} else {
-			current = narrow.Intersect(current, narrowed)
-		}
-	}
-
-	childNarrowings := dom.NarrowedChildPaths(canonicalKey)
-	if len(childNarrowings) > 0 {
-		current = s.filterByChildNarrowings(current, path, childNarrowings)
-	}
-
-	return current
+	return NewProductDomain(env), targetKey
 }
 
-// deriveFromNarrowedAncestors projects narrowed ancestor path types down to a target key.
-//
-// Example: if `x.y` is narrowed to non-nil record, querying `x.y.z` should derive
-// `z` from that narrowed ancestor even when `x.y.z` has no direct narrowing entry.
-func (s *Solution) deriveFromNarrowedAncestors(targetKey constraint.PathKey, dom *ProductDomain) (typ.Type, bool) {
-	targetSym, targetVersion, targetSuffix, ok := pathkey.ParseKeyUnchecked(targetKey)
-	if !ok {
-		return nil, false
-	}
-	targetSegs := s.parseSuffixCached(targetSuffix)
-
-	seen := make(map[constraint.PathKey]bool)
-	candidates := make([]constraint.PathKey, 0, len(dom.Type.Narrowed)+len(dom.Shape.Narrowed))
-	for _, key := range constraint.SortedPathKeys(dom.Type.Narrowed) {
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		candidates = append(candidates, key)
-	}
-	for _, key := range constraint.SortedPathKeys(dom.Shape.Narrowed) {
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		candidates = append(candidates, key)
+func (s *Solution) conditionProofProductDomainAt(
+	p cfg.Point,
+	targetPath constraint.Path,
+	baseType typ.Type,
+	constraints []constraint.Constraint,
+) (*ProductDomain, constraint.PathKey) {
+	if s == nil || s.pkResolver == nil {
+		return nil, ""
 	}
 
-	var combined typ.Type
-	for _, candidateKey := range candidates {
-		ancestorType := dom.TypeAt(candidateKey)
-		if ancestorType == nil {
-			continue
-		}
-		sym, version, suffix, ok := pathkey.ParseKeyUnchecked(candidateKey)
-		if !ok || sym != targetSym || version != targetVersion {
-			continue
-		}
-		ancestorSegs := s.parseSuffixCached(suffix)
-		if len(ancestorSegs) >= len(targetSegs) {
-			continue
-		}
-		if !pathkey.SegmentsPrefix(ancestorSegs, targetSegs) {
-			continue
-		}
-
-		remaining := targetSegs[len(ancestorSegs):]
-		derived, ok := s.deriveTypeFrom(ancestorType, remaining)
-		if !ok || derived == nil {
-			continue
-		}
-		if combined == nil {
-			combined = derived
-		} else {
-			combined = narrow.Intersect(combined, derived)
-		}
+	targetKey := constraint.PathKey("")
+	if !targetPath.IsEmpty() {
+		targetKey = s.pkResolver.KeyAt(p, targetPath)
 	}
 
-	if combined == nil {
-		return nil, false
+	valueMap := newPointValueEnvBuilder(s, p, targetPath, baseType, constraints, pointValueEnvConditionProof).build()
+	resolvePathCache := s.scratchResolvedPathMap
+	if resolvePathCache == nil {
+		resolvePathCache = make(map[constraint.PathKey]constraint.PathKey, len(constraints)*2)
+		s.scratchResolvedPathMap = resolvePathCache
 	}
-	return combined, true
+	clear(resolvePathCache)
+
+	resolvePath := func(cpath constraint.Path) constraint.PathKey {
+		cpath = normalizeConstraintPathForQuery(cpath)
+		rawKey := cpath.Key()
+		if resolved, ok := resolvePathCache[rawKey]; ok {
+			return resolved
+		}
+		resolved := s.pkResolver.KeyAt(p, cpath)
+		resolvePathCache[rawKey] = resolved
+		return resolved
+	}
+
+	env := s.constraintEnv()
+	env.PathTypeAt = func(key constraint.PathKey) typ.Type {
+		return valueMap[key]
+	}
+	env.ResolvePath = resolvePath
+
+	return NewProductDomain(env), targetKey
+}
+
+func (s *Solution) conditionRootTypeAt(path constraint.Path) typ.Type {
+	if s == nil || path.IsEmpty() || path.Symbol == 0 {
+		return nil
+	}
+	return s.lookupDeclaredType(constraint.Path{Root: path.Root, Symbol: path.Symbol})
 }
 
 func normalizeConstraintPathForQuery(path constraint.Path) constraint.Path {
@@ -707,80 +1410,54 @@ func normalizeConstraintPathForQuery(path constraint.Path) constraint.Path {
 	return path
 }
 
-// filterByChildNarrowings filters a type to variants where child paths match narrowed types.
-func (s *Solution) filterByChildNarrowings(baseType typ.Type, parentPath constraint.Path, children map[constraint.PathKey]typ.Type) typ.Type {
-	u, ok := baseType.(*typ.Union)
-	if !ok {
-		return baseType
-	}
-
-	parentSym := parentPath.Symbol
-
-	type parsedChildNarrowing struct {
-		narrowed typ.Type
-		segs     []constraint.Segment
-	}
-
-	parsedChildren := make([]parsedChildNarrowing, 0, len(children))
-	for childKey, narrowedChild := range children {
-		childSym, _, suffix, ok := pathkey.ParseKeyUnchecked(childKey)
-		if !ok || childSym != parentSym {
-			continue
-		}
-		segs := s.parseSuffixCached(suffix)
-		if len(segs) == 0 {
-			continue
-		}
-		parsedChildren = append(parsedChildren, parsedChildNarrowing{
-			narrowed: narrowedChild,
-			segs:     segs,
-		})
-	}
-	if len(parsedChildren) == 0 {
-		return baseType
-	}
-
-	var kept []typ.Type
-	for _, member := range u.Members {
-		compatible := true
-		for _, child := range parsedChildren {
-			memberChild, ok := s.deriveTypeFrom(member, child.segs)
-			if !ok || memberChild == nil {
-				compatible = false
-				break
-			}
-
-			if child.narrowed.Kind() == kind.Literal {
-				if lit, ok := child.narrowed.(*typ.Literal); ok {
-					if childLit, ok := memberChild.(*typ.Literal); ok {
-						if !typ.TypeEquals(childLit, lit) {
-							compatible = false
-							break
-						}
-					}
-				}
-			}
-		}
-		if compatible {
-			kept = append(kept, member)
-		}
-	}
-
-	if len(kept) == 0 {
-		return typ.Never
-	}
-	if len(kept) == 1 {
-		return kept[0]
-	}
-	return typ.NewUnion(kept...)
+// IsPointDead returns true if the given CFG point is unreachable.
+func (s *Solution) IsPointDead(p cfg.Point) bool {
+	return !s.isPointReachable(p)
 }
 
-// IsPointDead returns true if the given CFG point is unreachable due to divergence.
-func (s *Solution) IsPointDead(p cfg.Point) bool {
-	if s == nil || s.inputs == nil || s.inputs.DeadPoints == nil {
-		return s != nil && s.ConditionAt(p).IsFalse()
+func (s *Solution) isPointReachable(p cfg.Point) bool {
+	if s == nil {
+		return true
 	}
-	return s.inputs.DeadPoints[p] || s.ConditionAt(p).IsFalse()
+	if s.inputs != nil && s.inputs.DeadPoints != nil && s.inputs.DeadPoints[p] {
+		return false
+	}
+	cond := s.ConditionAt(p)
+	if cond.IsFalse() {
+		return false
+	}
+	if s.reachabilityCache != nil {
+		if cached, ok := s.reachabilityCache[p]; ok {
+			return cached.reachable
+		}
+	}
+
+	reachable := true
+	if !cond.IsTrue() && cond.HasConstraints() {
+		reachable = s.computeConstrainedPointReachable(p, cond)
+	}
+	if reachable {
+		reachable = s.pointNumericShapeReachable(p, cond)
+	}
+	if s.reachabilityCache == nil {
+		s.reachabilityCache = make(map[cfg.Point]reachabilityCacheValue, 8)
+	}
+	s.reachabilityCache[p] = reachabilityCacheValue{
+		reachable: reachable,
+	}
+	return reachable
+}
+
+func (s *Solution) transferPointReachable(p cfg.Point) bool {
+	return s.isPointReachable(p)
+}
+
+func (s *Solution) computeConstrainedPointReachable(p cfg.Point, cond constraint.Condition) bool {
+	dom, _ := s.productDomainAt(p, constraint.Path{}, nil, cond.AllConstraints())
+	if dom == nil {
+		return true
+	}
+	return dom.CanSatisfyCondition(cond)
 }
 
 // HasKeyOf checks if a KeyOf constraint exists at point p for the given table and key paths.

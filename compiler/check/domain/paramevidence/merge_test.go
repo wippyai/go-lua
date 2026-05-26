@@ -286,6 +286,19 @@ func TestEqualVectors(t *testing.T) {
 	}
 }
 
+func TestMergeArgumentObservation(t *testing.T) {
+	if got := MergeArgumentObservation(typ.String, typ.Any); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("top candidate changed observation: got %v, want string", got)
+	}
+	if got := MergeArgumentObservation(typ.Number, typ.Integer); !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("precise candidate = %v, want integer", got)
+	}
+	joined := MergeArgumentObservation(typ.String, typ.Number)
+	if !typ.TypeEquals(joined, typ.NewUnion(typ.String, typ.Number)) {
+		t.Fatalf("incomparable join = %v, want string|number", joined)
+	}
+}
+
 func evidenceMapsEqual(a, b map[cfg.SymbolID][]typ.Type) bool {
 	if len(a) != len(b) {
 		return false

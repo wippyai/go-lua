@@ -140,11 +140,10 @@ func (p *testGraphProvider) EvidenceForGraph(graph *ccfg.Graph) api.FlowEvidence
 
 func newTestSynthesizer() *Synthesizer {
 	deps := &Deps{
-		Ctx:      db.NewQueryContext(db.New()),
-		Types:    mockTypeQuerier{},
-		Scopes:   make(api.ScopeMap),
-		PreCache: make(api.Cache),
-		Graphs:   newTestGraphProvider(),
+		Ctx:    db.NewQueryContext(db.New()),
+		Types:  mockTypeQuerier{},
+		Scopes: make(api.ScopeMap),
+		Graphs: newTestGraphProvider(),
 	}
 	return NewSynthesizer(deps, api.PhaseTypeResolution)
 }
@@ -169,7 +168,6 @@ func newTestSynthesizerWithSymbol(name string, t typ.Type) (*Synthesizer, *ast.I
 		Types:    mockTypeQuerier{},
 		Scopes:   make(api.ScopeMap),
 		CheckCtx: checkCtx,
-		PreCache: make(api.Cache),
 	}
 	return NewSynthesizer(deps, api.PhaseTypeResolution), ident
 }
@@ -381,10 +379,9 @@ func TestSynthesizer_FunctionType(t *testing.T) {
 
 func TestSynthesizer_Phase_Declared(t *testing.T) {
 	deps := &Deps{
-		Ctx:      db.NewQueryContext(db.New()),
-		Types:    mockTypeQuerier{},
-		Scopes:   make(api.ScopeMap),
-		PreCache: make(api.Cache),
+		Ctx:    db.NewQueryContext(db.New()),
+		Types:  mockTypeQuerier{},
+		Scopes: make(api.ScopeMap),
 	}
 	s := NewSynthesizer(deps, api.PhaseTypeResolution)
 
@@ -398,10 +395,9 @@ func TestSynthesizer_Phase_Declared(t *testing.T) {
 
 func TestSynthesizer_Phase_Narrowed(t *testing.T) {
 	deps := &Deps{
-		Ctx:      db.NewQueryContext(db.New()),
-		Types:    mockTypeQuerier{},
-		Scopes:   make(api.ScopeMap),
-		PreCache: make(api.Cache),
+		Ctx:    db.NewQueryContext(db.New()),
+		Types:  mockTypeQuerier{},
+		Scopes: make(api.ScopeMap),
 	}
 	s := NewSynthesizer(deps, api.PhaseNarrowing)
 

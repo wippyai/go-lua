@@ -3,6 +3,7 @@ package core
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -13,21 +14,21 @@ import (
 // fieldKey uniquely identifies a field lookup operation for memoization.
 // Used as cache key for Engine.fieldQ and Engine.metaQ queries.
 type fieldKey struct {
-	t    typ.Type
+	t    *typeRef
 	name string
 }
 
 // indexKey uniquely identifies an index lookup operation for memoization.
 // Used as cache key for Engine.indexQ queries where t[key] is evaluated.
 type indexKey struct {
-	t   typ.Type
-	key typ.Type
+	t   *typeRef
+	key *typeRef
 }
 
 // methodKey uniquely identifies a method lookup operation for memoization.
 // Used as cache key for Engine.methodQ queries where t:name() is resolved.
 type methodKey struct {
-	t    typ.Type
+	t    *typeRef
 	name string
 }
 
@@ -35,29 +36,35 @@ type methodKey struct {
 // Used as cache key for Engine.unaryQ queries (e.g., -x, #x, not x).
 type unaryKey struct {
 	op string
-	t  typ.Type
+	t  *typeRef
 }
 
 // binaryKey uniquely identifies a binary operator resolution for memoization.
 // Used as cache key for Engine.binaryQ queries (e.g., a + b, a == b, a and b).
 type binaryKey struct {
-	left  typ.Type
+	left  *typeRef
 	op    string
-	right typ.Type
+	right *typeRef
 }
 
 // unwrapKey identifies a type for operations that unwrap or transform a single type.
 // Used for callable checks, type expansion, and widening operations.
 type unwrapKey struct {
-	t typ.Type
+	t *typeRef
 }
 
 // subtypeKey identifies a subtype relationship check for memoization.
 // Used as cache key for Engine.subtypeQ queries testing sub <: super.
 type subtypeKey struct {
-	sub   typ.Type
-	super typ.Type
+	sub   *typeRef
+	super *typeRef
 }
+
+type typeRef struct {
+	t typ.Type
+}
+
+const typeRefInternSalt uint64 = 0x7479706572656601
 
 // fieldResult captures the outcome of a field/method/index lookup.
 // The ok field indicates whether the lookup succeeded; t holds the resolved type.
@@ -141,16 +148,75 @@ type Engine struct {
 	methodProviders map[kind.Kind]*typ.Record
 }
 
-// internType ensures type identity for efficient cache lookups.
-// Type interning allows pointer equality checks instead of deep structural
-// comparison, significantly improving cache hit performance. Returns the
-// original type if no database context is available.
-func internType(ctx *db.QueryContext, t typ.Type) typ.Type {
-	if ctx == nil || ctx.DB() == nil {
-		return t
+func internTypeRef(ctx *db.QueryContext, t typ.Type) *typeRef {
+	if t == nil {
+		return nil
 	}
+	if ctx == nil || ctx.DB() == nil || !structuralTypeRefAllowed(t) {
+		return &typeRef{t: t}
+	}
+	key, ok := typeRefInternKey(t)
+	if !ok {
+		return &typeRef{t: t}
+	}
+	value := ctx.DB().Intern(key, func() any {
+		return &typeRef{t: t}
+	}, func(existing, candidate any) bool {
+		left, leftOK := existing.(*typeRef)
+		right, rightOK := candidate.(*typeRef)
+		return leftOK && rightOK && queryTypeRefEqual(left.t, right.t)
+	})
+	return value.(*typeRef)
+}
 
-	return ctx.DB().InternType(t)
+func typeRefInternKey(t typ.Type) (uint64, bool) {
+	if t == nil {
+		return 0, false
+	}
+	if typ.ContainsRecursive(t) {
+		return internal.HashCombine(typeRefInternSalt, typ.ProductFamilyHash(t)), true
+	}
+	return internal.HashCombine(typeRefInternSalt, t.Hash()), true
+}
+
+func queryTypeRefEqual(left, right typ.Type) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	// Alias carriers are identity-distinct from their structural target: a field
+	// query keyed on Alias('X', T) must not share the interned ref of bare T,
+	// even when T is recursive. SameProductFamily is alias-transparent, so the
+	// alias gate runs first; otherwise a recursive alias and its target collide
+	// onto one ref and the alias field query self-cycles to a false result.
+	leftAlias, leftIsAlias := left.(*typ.Alias)
+	rightAlias, rightIsAlias := right.(*typ.Alias)
+	if leftIsAlias || rightIsAlias {
+		if !leftIsAlias || !rightIsAlias {
+			return false
+		}
+		if leftAlias.Name != rightAlias.Name {
+			return false
+		}
+		return queryTypeRefEqual(leftAlias.Target, rightAlias.Target)
+	}
+	if typ.ContainsRecursive(left) || typ.ContainsRecursive(right) {
+		return typ.SameProductFamily(left, right)
+	}
+	return typ.TypeEquals(left, right)
+}
+
+func structuralTypeRefAllowed(t typ.Type) bool {
+	if fn, ok := t.(*typ.Function); ok {
+		return fn.Effects == nil && fn.Spec == nil && fn.Refinement == nil
+	}
+	return true
+}
+
+func refType(ref *typeRef) typ.Type {
+	if ref == nil {
+		return nil
+	}
+	return ref.t
 }
 
 // NewEngine constructs a new query engine with empty caches and no stdlib providers.
@@ -165,47 +231,47 @@ func NewEngine() *Engine {
 	e := &Engine{
 		methodProviders: make(map[kind.Kind]*typ.Record),
 	}
-	e.fieldQ = db.NewQueryWithWiden("Field", func(_ *db.QueryContext, key fieldKey) fieldResult {
-		t, ok := fieldDepth(key.t, key.name, 0)
+	e.fieldQ = db.NewQueryWithWiden("Field", func(ctx *db.QueryContext, key fieldKey) fieldResult {
+		t, ok := e.fieldDepth(ctx, refType(key.t), key.name, 0)
 		return fieldResult{t: t, ok: ok}
 	}, fieldResultEqual, widenFieldResult)
 	e.methodQ = db.NewQueryWithWiden("Method", func(_ *db.QueryContext, key methodKey) fieldResult {
-		t, ok := methodDepth(key.t, key.name, 0)
+		t, ok := methodDepth(refType(key.t), key.name, 0)
 		return fieldResult{t: t, ok: ok}
 	}, fieldResultEqual, widenFieldResult)
 	e.indexQ = db.NewQueryWithWiden("Index", func(_ *db.QueryContext, key indexKey) fieldResult {
-		t, ok := indexDepth(key.t, key.key, 0)
+		t, ok := indexDepth(refType(key.t), refType(key.key), 0)
 		return fieldResult{t: t, ok: ok}
 	}, fieldResultEqual, widenFieldResult)
 	e.unaryQ = db.NewQueryWithWiden("UnaryOp", func(_ *db.QueryContext, key unaryKey) typ.Type {
-		return unaryOpCompute(key.op, key.t)
+		return unaryOpCompute(key.op, refType(key.t))
 	}, typesEqual, widenType)
 	e.binaryQ = db.NewQueryWithWiden("BinaryOp", func(_ *db.QueryContext, key binaryKey) typ.Type {
-		return binaryOpCompute(key.left, key.op, key.right)
+		return binaryOpCompute(refType(key.left), key.op, refType(key.right))
 	}, typesEqual, widenType)
 	e.callableQ = db.NewQuery("Callable", func(_ *db.QueryContext, key unwrapKey) callableResult {
-		fn, ok := Callable(key.t)
+		fn, ok := Callable(refType(key.t))
 		return callableResult{fn: fn, ok: ok}
 	}, callableResultEqual)
 	e.metaQ = db.NewQueryWithWiden("GetMetamethod", func(_ *db.QueryContext, key fieldKey) fieldResult {
-		t, ok := getMetamethodDepth(key.t, key.name, 0)
+		t, ok := getMetamethodDepth(refType(key.t), key.name, 0)
 		return fieldResult{t: t, ok: ok}
 	}, fieldResultEqual, widenFieldResult)
 
 	e.subtypeQ = db.NewQuery("IsSubtype", func(_ *db.QueryContext, key subtypeKey) bool {
-		return subtype.IsSubtype(key.sub, key.super)
+		return subtype.IsSubtype(refType(key.sub), refType(key.super))
 	}, boolEqual)
 
 	e.expandQ = db.NewQueryWithWiden("ExpandInstantiated", func(_ *db.QueryContext, key unwrapKey) typ.Type {
-		return subst.ExpandInstantiated(key.t)
+		return subst.ExpandInstantiated(refType(key.t))
 	}, typesEqual, widenType)
 
 	e.widenQ = db.NewQuery("Widen", func(_ *db.QueryContext, key unwrapKey) typ.Type {
-		return subtype.Widen(key.t)
+		return subtype.Widen(refType(key.t))
 	}, typesEqual)
 
 	e.widenInferQ = db.NewQuery("WidenForInference", func(_ *db.QueryContext, key unwrapKey) typ.Type {
-		return subtype.WidenForInference(key.t)
+		return subtype.WidenForInference(refType(key.t))
 	}, typesEqual)
 
 	return e
@@ -258,8 +324,7 @@ func (e *Engine) Field(ctx *db.QueryContext, t typ.Type, name string) (typ.Type,
 		panic("unwrap.Engine requires initialization")
 	}
 
-	t = internType(ctx, t)
-	res := e.fieldQ.Get(ctx, fieldKey{t: t, name: name})
+	res := e.fieldQ.Get(ctx, fieldKey{t: internTypeRef(ctx, t), name: name})
 
 	return res.t, res.ok
 }
@@ -303,8 +368,7 @@ func (e *Engine) Method(ctx *db.QueryContext, t typ.Type, name string) (typ.Type
 		}
 	}
 
-	t = internType(ctx, t)
-	res := e.methodQ.Get(ctx, methodKey{t: t, name: name})
+	res := e.methodQ.Get(ctx, methodKey{t: internTypeRef(ctx, t), name: name})
 
 	return res.t, res.ok
 }
@@ -324,9 +388,7 @@ func (e *Engine) Index(ctx *db.QueryContext, t typ.Type, key typ.Type) (typ.Type
 		panic("unwrap.Engine requires initialization")
 	}
 
-	t = internType(ctx, t)
-	key = internType(ctx, key)
-	res := e.indexQ.Get(ctx, indexKey{t: t, key: key})
+	res := e.indexQ.Get(ctx, indexKey{t: internTypeRef(ctx, t), key: internTypeRef(ctx, key)})
 
 	return res.t, res.ok
 }
@@ -346,9 +408,7 @@ func (e *Engine) UnaryOp(ctx *db.QueryContext, op string, operand typ.Type) typ.
 		panic("unwrap.Engine requires initialization")
 	}
 
-	operand = internType(ctx, operand)
-
-	return e.unaryQ.Get(ctx, unaryKey{op: op, t: operand})
+	return e.unaryQ.Get(ctx, unaryKey{op: op, t: internTypeRef(ctx, operand)})
 }
 
 // BinaryOp resolves the result type of a binary operator expression.
@@ -372,10 +432,7 @@ func (e *Engine) BinaryOp(ctx *db.QueryContext, left typ.Type, op string, right 
 		panic("unwrap.Engine requires initialization")
 	}
 
-	left = internType(ctx, left)
-	right = internType(ctx, right)
-
-	return e.binaryQ.Get(ctx, binaryKey{left: left, op: op, right: right})
+	return e.binaryQ.Get(ctx, binaryKey{left: internTypeRef(ctx, left), op: op, right: internTypeRef(ctx, right)})
 }
 
 // Callable returns the function type if t is callable.
@@ -393,8 +450,7 @@ func (e *Engine) Callable(ctx *db.QueryContext, t typ.Type) (*typ.Function, bool
 		panic("unwrap.Engine requires initialization")
 	}
 
-	t = internType(ctx, t)
-	res := e.callableQ.Get(ctx, unwrapKey{t: t})
+	res := e.callableQ.Get(ctx, unwrapKey{t: internTypeRef(ctx, t)})
 
 	return res.fn, res.ok
 }
@@ -416,8 +472,7 @@ func (e *Engine) GetMetamethod(ctx *db.QueryContext, t typ.Type, name string) (t
 		panic("unwrap.Engine requires initialization")
 	}
 
-	t = internType(ctx, t)
-	res := e.metaQ.Get(ctx, fieldKey{t: t, name: name})
+	res := e.metaQ.Get(ctx, fieldKey{t: internTypeRef(ctx, t), name: name})
 
 	return res.t, res.ok
 }
@@ -437,10 +492,7 @@ func (e *Engine) IsSubtype(ctx *db.QueryContext, sub, super typ.Type) bool {
 		return subtype.IsSubtype(sub, super)
 	}
 
-	sub = internType(ctx, sub)
-	super = internType(ctx, super)
-
-	return e.subtypeQ.Get(ctx, subtypeKey{sub: sub, super: super})
+	return e.subtypeQ.Get(ctx, subtypeKey{sub: internTypeRef(ctx, sub), super: internTypeRef(ctx, super)})
 }
 
 // ExpandInstantiated expands generic instantiations with memoization.
@@ -455,9 +507,7 @@ func (e *Engine) ExpandInstantiated(ctx *db.QueryContext, t typ.Type) typ.Type {
 		return subst.ExpandInstantiated(t)
 	}
 
-	t = internType(ctx, t)
-
-	return e.expandQ.Get(ctx, unwrapKey{t: t})
+	return e.expandQ.Get(ctx, unwrapKey{t: internTypeRef(ctx, t)})
 }
 
 // Widen converts literal types to their base types with memoization.
@@ -473,9 +523,7 @@ func (e *Engine) Widen(ctx *db.QueryContext, t typ.Type) typ.Type {
 		return subtype.Widen(t)
 	}
 
-	t = internType(ctx, t)
-
-	return e.widenQ.Get(ctx, unwrapKey{t: t})
+	return e.widenQ.Get(ctx, unwrapKey{t: internTypeRef(ctx, t)})
 }
 
 // WidenForInference performs deep widening for type inference with memoization.
@@ -492,9 +540,7 @@ func (e *Engine) WidenForInference(ctx *db.QueryContext, t typ.Type) typ.Type {
 		return subtype.WidenForInference(t)
 	}
 
-	t = internType(ctx, t)
-
-	return e.widenInferQ.Get(ctx, unwrapKey{t: t})
+	return e.widenInferQ.Get(ctx, unwrapKey{t: internTypeRef(ctx, t)})
 }
 
 // fieldResultEqual compares two field lookup results for equality.

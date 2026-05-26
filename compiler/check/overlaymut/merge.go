@@ -2,7 +2,7 @@ package overlaymut
 
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/domain/value"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -21,7 +21,7 @@ func MergeFieldAssignments(
 		for _, name := range cfg.SortedFieldNames(fields) {
 			fieldType := fields[name]
 			if existing := dst[sym][name]; existing != nil {
-				dst[sym][name] = typ.JoinPreferNonSoft(existing, fieldType)
+				dst[sym][name] = value.JoinPrecise(existing, fieldType)
 			} else {
 				dst[sym][name] = fieldType
 			}
@@ -49,6 +49,16 @@ func ApplyFieldMergeToOverlay(
 
 // MergeFieldsIntoType merges a set of field types into a base type.
 func MergeFieldsIntoType(baseType typ.Type, fields map[string]typ.Type) typ.Type {
+	return mergeFieldsIntoType(baseType, fields, false)
+}
+
+// MergeRequiredFieldsIntoType merges declared field-surface types into a base
+// type and marks those fields present on the resulting record.
+func MergeRequiredFieldsIntoType(baseType typ.Type, fields map[string]typ.Type) typ.Type {
+	return mergeFieldsIntoType(baseType, fields, true)
+}
+
+func mergeFieldsIntoType(baseType typ.Type, fields map[string]typ.Type, required bool) typ.Type {
 	if len(fields) == 0 {
 		return baseType
 	}
@@ -76,14 +86,21 @@ func MergeFieldsIntoType(baseType typ.Type, fields map[string]typ.Type) typ.Type
 		if v.Open {
 			builder.SetOpen(true)
 		}
-		existing := make(map[string]bool)
-		for _, f := range v.Fields {
-			builder.Field(f.Name, f.Type)
-			existing[f.Name] = true
+		remaining := make(map[string]typ.Type, len(fields))
+		for name, fieldType := range fields {
+			remaining[name] = fieldType
 		}
-		for _, name := range fieldNames {
-			if !existing[name] {
-				builder.Field(name, fields[name])
+		for _, f := range v.Fields {
+			fieldType := f.Type
+			if next, ok := remaining[f.Name]; ok {
+				fieldType = value.JoinPrecise(fieldType, next)
+				delete(remaining, f.Name)
+			}
+			addMergedRecordField(builder, f, fieldType, required)
+		}
+		for _, name := range cfg.SortedFieldNames(remaining) {
+			if remaining[name] != nil {
+				builder.Field(name, remaining[name])
 			}
 		}
 		if v.Metatable != nil {
@@ -102,24 +119,41 @@ func MergeFieldsIntoType(baseType typ.Type, fields map[string]typ.Type) typ.Type
 	}
 }
 
-// ApplyIndexerMergeToOverlay adds map components to symbol types based on dynamic index assignments.
-func ApplyIndexerMergeToOverlay(
+func addMergedRecordField(builder *typ.RecordBuilder, field typ.Field, fieldType typ.Type, required bool) {
+	switch {
+	case required && field.Readonly:
+		builder.ReadonlyField(field.Name, fieldType)
+	case required:
+		builder.Field(field.Name, fieldType)
+	case field.Optional && field.Readonly:
+		builder.OptReadonlyField(field.Name, fieldType)
+	case field.Optional:
+		builder.OptField(field.Name, fieldType)
+	case field.Readonly:
+		builder.ReadonlyField(field.Name, fieldType)
+	default:
+		builder.Field(field.Name, fieldType)
+	}
+}
+
+// ApplyMapMutatorMergeToOverlay adds map components to symbol types based on map-write evidence.
+func ApplyMapMutatorMergeToOverlay(
 	overlay map[cfg.SymbolID]typ.Type,
-	indexerAssignments map[cfg.SymbolID][]IndexerInfo,
+	mapMutatorAssignments map[cfg.SymbolID][]MapMutatorInfo,
 ) {
-	for _, sym := range cfg.SortedSymbolIDs(indexerAssignments) {
-		infos := indexerAssignments[sym]
+	for _, sym := range cfg.SortedSymbolIDs(mapMutatorAssignments) {
+		infos := mapMutatorAssignments[sym]
 		if len(infos) == 0 {
 			continue
 		}
 
 		var keyType, valType typ.Type
 		for _, info := range infos {
-			if indexerAssignmentDeletesSlot(info.ValType) {
+			if mapMutatorAssignmentDeletesSlot(info.ValueType) {
 				continue
 			}
 			keyType = typ.JoinPreferNonSoft(keyType, info.KeyType)
-			valType = JoinValueTypes(valType, info.ValType)
+			valType = JoinValueTypes(valType, info.ValueType)
 		}
 		if valType == nil {
 			continue
@@ -165,24 +199,24 @@ func JoinValueTypes(a, b typ.Type) typ.Type {
 		return a
 	}
 
-	return typ.JoinPreferNonSoft(a, b)
+	return value.JoinPrecise(a, b)
 }
 
-func indexerAssignmentDeletesSlot(t typ.Type) bool {
+func mapMutatorAssignmentDeletesSlot(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
 	switch v := typ.UnwrapAnnotated(t).(type) {
 	case *typ.Alias:
-		return indexerAssignmentDeletesSlot(v.Target)
+		return mapMutatorAssignmentDeletesSlot(v.Target)
 	case *typ.Optional:
-		return indexerAssignmentDeletesSlot(v.Inner)
+		return mapMutatorAssignmentDeletesSlot(v.Inner)
 	case *typ.Union:
 		if len(v.Members) == 0 {
 			return false
 		}
 		for _, member := range v.Members {
-			if !indexerAssignmentDeletesSlot(member) {
+			if !mapMutatorAssignmentDeletesSlot(member) {
 				return false
 			}
 		}
@@ -201,7 +235,7 @@ func MergeMapComponentIntoType(baseType, keyType, valType typ.Type) typ.Type {
 	switch v := baseType.(type) {
 	case *typ.Map:
 		newKey := typ.JoinPreferNonSoft(v.Key, keyType)
-		newVal := typ.JoinPreferNonSoft(v.Value, valType)
+		newVal := value.JoinPrecise(v.Value, valType)
 		return typ.NewMap(newKey, newVal)
 	case *typ.Record:
 		builder := typ.NewRecord()
@@ -216,7 +250,7 @@ func MergeMapComponentIntoType(baseType, keyType, valType typ.Type) typ.Type {
 		}
 		if v.HasMapComponent() {
 			newKey := typ.JoinPreferNonSoft(v.MapKey, keyType)
-			newVal := typ.JoinPreferNonSoft(v.MapValue, valType)
+			newVal := value.JoinPrecise(v.MapValue, valType)
 			builder.MapComponent(newKey, newVal)
 		} else {
 			existingKey := querycore.KeyType(v)
@@ -242,7 +276,7 @@ func ApplyDirectMutationsToOverlay(
 			continue
 		}
 		baseType := overlay[sym]
-		merged := flow.WidenArrayElementType(baseType, elemType, typ.JoinPreferNonSoft)
+		merged := value.AdmitArrayElementMutation(baseType, elemType, typ.JoinPreferNonSoft)
 		if merged != nil {
 			overlay[sym] = merged
 		}

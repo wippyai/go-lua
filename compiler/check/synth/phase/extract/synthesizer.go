@@ -17,14 +17,14 @@
 // Incorporates flow-sensitive narrowing from control flow analysis.
 // Type guards, assignments, and predicates refine types at each program point.
 //
-// Caching: The synthesizer uses two caches to avoid redundant computation:
-//   - PreCache: Stores results from declared phase (base types)
-//   - NarrowCache: Stores results from narrowed phase (flow-refined types)
+// Memoization: pure TypeOf queries run through db.Query so cache hits and misses
+// are equivalent under the shared query/dependency mechanism.
 package extract
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/typefacts"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
@@ -35,7 +35,6 @@ import (
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
-	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -43,6 +42,11 @@ import (
 // ExprSynth is the function signature for recursive expression synthesis.
 // Used as callback to allow synthExprCore to recursively synthesize sub-expressions.
 type ExprSynth func(expr ast.Expr) typ.Type
+
+type exprTypeQueryKey struct {
+	Expr  ast.Expr
+	Point cfg.Point
+}
 
 type exprRecurser struct {
 	s        *Synthesizer
@@ -78,16 +82,70 @@ func (r *exprRecurser) synth(expr ast.Expr) typ.Type {
 //   - SynthTableCore: Table constructor synthesis
 //   - SynthFunctionType: Function signature extraction
 type Synthesizer struct {
-	deps  *Deps
-	phase api.Phase
+	deps              *Deps
+	phase             api.Phase
+	typeQuery         *db.Query[exprTypeQueryKey, typ.Type]
+	functionTypeQuery *db.Query[functionTypeQueryKey, *typ.Function]
 }
 
 // NewSynthesizer creates a new extract synthesizer.
 func NewSynthesizer(deps *Deps, phase api.Phase) *Synthesizer {
-	return &Synthesizer{
+	deps = normalizeDeps(deps)
+	s := &Synthesizer{
 		deps:  deps,
 		phase: phase,
 	}
+	s.typeQuery = db.NewQuery("check.extract.type-of", func(ctx *db.QueryContext, key exprTypeQueryKey) typ.Type {
+		return s.WithQueryContext(ctx).SynthExpr(key.Expr, key.Point, nil)
+	}, typ.TypeEquals)
+	s.functionTypeQuery = db.NewQueryWithSeedAndWiden(
+		"check.extract.function-type",
+		func(ctx *db.QueryContext, key functionTypeQueryKey) *typ.Function {
+			return s.WithQueryContext(ctx).computeFunctionTypeQuery(ctx, key)
+		},
+		func(a, b *typ.Function) bool { return typ.TypeEquals(a, b) },
+		func(ctx *db.QueryContext, key functionTypeQueryKey) *typ.Function {
+			return s.WithQueryContext(ctx).seedFunctionTypeQuery(ctx, key)
+		},
+		func(_, next *typ.Function) *typ.Function {
+			return next
+		},
+	)
+	return s
+}
+
+func normalizeDeps(deps *Deps) *Deps {
+	if deps == nil {
+		deps = &Deps{}
+	}
+	if deps.Ctx == nil {
+		deps = deps.WithQueryContext(db.NewQueryContext(db.New()))
+	}
+	if deps.Types == nil {
+		next := *deps
+		next.Types = core.NewEngine()
+		deps = &next
+	}
+	if deps.Graphs == nil {
+		if graphs := api.GraphsFrom(deps.Ctx); graphs != nil {
+			next := *deps
+			next.Graphs = graphs
+			deps = &next
+		}
+	}
+	return deps
+}
+
+// WithQueryContext returns a shallow synthesizer view bound to ctx. The
+// expression query remains shared; only dependency reads move to the active
+// QueryContext.
+func (s *Synthesizer) WithQueryContext(ctx *db.QueryContext) *Synthesizer {
+	if s == nil || s.deps == nil || s.deps.Ctx == ctx {
+		return s
+	}
+	next := *s
+	next.deps = s.deps.WithQueryContext(ctx)
+	return &next
 }
 
 // IsNarrowing reports whether the synthesizer is in the narrowed phase.
@@ -132,12 +190,13 @@ func (s *Synthesizer) Deps() *Deps {
 
 // TypeOf synthesizes the type of an expression at a CFG point (no narrowing).
 func (s *Synthesizer) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
-	if cached, ok := s.deps.PreCache.Get(expr, p); ok {
-		return cached
+	if expr == nil {
+		return typ.Nil
 	}
-	t := s.SynthExpr(expr, p, nil)
-	s.deps.PreCache.Put(expr, p, t)
-	return t
+	if s == nil || s.typeQuery == nil {
+		return typ.Unknown
+	}
+	return s.typeQuery.Get(s.deps.Ctx, exprTypeQueryKey{Expr: expr, Point: p})
 }
 
 // TypeOfWithExpected synthesizes expression type with expected type context (no narrowing).
@@ -189,6 +248,11 @@ func (s *Synthesizer) ExpandValuesWithSpecTypes(exprs []ast.Expr, needed int, p 
 // InferIterVars infers iterator variable types (no narrowing).
 func (s *Synthesizer) InferIterVars(exprs []ast.Expr, count int, p cfg.Point) []typ.Type {
 	return s.inferIterVars(exprs, count, p, nil)
+}
+
+// InferIterVarsWithFlow infers iterator variable types with a specific flow projection.
+func (s *Synthesizer) InferIterVarsWithFlow(exprs []ast.Expr, count int, p cfg.Point, flow api.FlowOps) []typ.Type {
+	return s.inferIterVars(exprs, count, p, flow)
 }
 
 // InferIterVarsWithSpecTypes infers iterator variable types with overlay lookup.
@@ -277,8 +341,6 @@ func (s *Synthesizer) synthNonRecursiveExpr(expr ast.Expr, sc *scope.State, p cf
 		return s.synthIdentCore(ex, p, sc, narrower), true
 	case *ast.FunctionExpr:
 		return s.FunctionType(ex, sc), true
-	case *ast.RelationalOpExpr:
-		return typ.Boolean, true
 	case *ast.StringConcatOpExpr:
 		return typ.String, true
 	case *ast.UnaryNotOpExpr:
@@ -301,7 +363,7 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 	case *ast.AttrGetExpr:
 		return s.synthAttrGetCore(ex, p, sc, narrower, recurse)
 	case *ast.TableExpr:
-		return s.SynthTableCore(ex, sc, recurse)
+		return s.SynthTableCore(ex, p, sc, recurse)
 	case *ast.FuncCallExpr:
 		types := s.SynthCallCore(ex, p, sc, narrower, recurse)
 		if len(types) > 0 {
@@ -310,6 +372,8 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 		return typ.Nil
 	case *ast.LogicalOpExpr:
 		return s.synthLogicalOpWithNarrowing(ex, p, sc, narrower, recurse)
+	case *ast.RelationalOpExpr:
+		return s.synthRelationalOpCore(ex, recurse)
 	case *ast.ArithmeticOpExpr:
 		return s.synthArithmeticOpCore(ex, recurse)
 	case *ast.UnaryMinusOpExpr:
@@ -351,145 +415,33 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 		return typ.Unknown
 	}
 
-	var sym cfg.SymbolID
-	var moduleSym cfg.SymbolID
-	if bindings := ctx.Bindings(); bindings != nil {
-		sym, _ = bindings.SymbolOf(ex)
-	}
+	sym, moduleSym := s.identifierSymbols(ctx, ex, p)
 	if sym == 0 {
-		if graph := ctx.Graph(); graph != nil {
-			if resolved, ok := graph.SymbolAt(p, ex.Value); ok && resolved != 0 {
-				sym = resolved
-			}
-		}
-	}
-	if s.deps.ModuleBindings != nil {
-		moduleSym, _ = s.deps.ModuleBindings.SymbolOf(ex)
-		if sym == 0 {
-			sym = moduleSym
-		}
-	}
-
-	if sym == 0 {
-		if ctx != nil {
-			if globalTypes := ctx.GlobalTypes(); globalTypes != nil {
-				if t, ok := globalTypes[ex.Value]; ok && t != nil {
-					return t
-				}
-			}
-		}
-		if sc != nil {
-			if t, ok := sc.LookupType(ex.Value); ok && t != nil {
-				return typ.NewMeta(t)
-			}
-		}
-		return typ.Unknown
+		return unresolvedIdentifierType(ctx, sc, ex.Value)
 	}
 
 	// For "self" identifier, check scope's self type first.
 	// This ensures methods assigned via field assignment (obj.method = function(self)...)
 	// get the correct self type before parameter lookup.
-	if ex.Value == "self" && sc != nil {
-		if selfType := sc.SelfType(); selfType != nil {
-			return selfType
-		}
+	if selfType := identifierSelfType(ex, sc); selfType != nil {
+		return selfType
 	}
 
-	if s.IsNarrowing() && narrower != nil {
-		path := constraint.Path{Root: ex.Value, Symbol: sym}
-		if narrowed := narrower.NarrowedTypeAt(p, path); narrowed != nil {
-			if specialized := s.stableLocalFunctionValueType(ex, p, sc, narrowed, nil); specialized != nil {
-				return specialized
-			}
-			// Guard against unsound narrowing for annotated symbols by ensuring
-			// the narrowed type remains a subtype of the declared type. Function
-			// signatures from declared overlays are also authoritative and should
-			// never be widened by flow facts.
-			if types := ctx.Types(); types != nil {
-				declared := types.DeclaredAt(p, sym)
-				if declared.Type != nil && declared.State == flow.StateResolved {
-					if typ.IsAny(unwrap.Alias(declared.Type)) && typ.IsUnknown(unwrap.Alias(narrowed)) {
-						return declared.Type
-					}
-					requireSubtype := types.IsAnnotated(sym)
-					if !requireSubtype {
-						requireSubtype = unwrap.Function(declared.Type) != nil
-					}
-					if requireSubtype && !subtype.IsSubtype(narrowed, declared.Type) {
-						goto declaredLookup
-					}
-				}
-			}
-			return narrowed
-		}
+	if t, ok := s.narrowedIdentifierType(ctx, ex, p, sc, sym, narrower); ok {
+		return t
 	}
 
-declaredLookup:
-	if types := ctx.Types(); types != nil {
-		tv := types.EffectiveTypeAt(p, sym)
-		if tv.State == flow.StateResolved && tv.Type != nil {
-			if specialized := s.stableLocalFunctionValueType(ex, p, sc, tv.Type, nil); specialized != nil {
-				return specialized
-			}
-			// Prefer concrete resolved types over module aliases.
-			// Allow module aliases to override unknown/any placeholders.
-			if tv.Type.Kind().IsPlaceholder() {
-				if types.IsAnnotated(sym) {
-					declared := types.DeclaredAt(p, sym)
-					if declared.State == flow.StateResolved && declared.Type != nil {
-						if typ.IsAny(unwrap.Alias(declared.Type)) {
-							return declared.Type
-						}
-					}
-				}
-				// defer to module alias below if available
-			} else {
-				return tv.Type
-			}
-		}
-		if moduleSym != 0 && moduleSym != sym {
-			moduleTV := types.EffectiveTypeAt(p, moduleSym)
-			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
-				if specialized := s.stableLocalFunctionValueType(ex, p, sc, moduleTV.Type, nil); specialized != nil {
-					return specialized
-				}
-				if moduleTV.Type.Kind().IsPlaceholder() {
-					// keep looking for better sources
-				} else {
-					return moduleTV.Type
-				}
-			}
-		}
+	if t, ok := s.effectiveIdentifierType(ctx, ex, p, sc, sym, moduleSym, true); ok {
+		return t
 	}
 
 	// Module alias lookup (require("mod")) when no concrete type is resolved.
-	moduleAliasSym := sym
-	if moduleAliasSym == 0 {
-		moduleAliasSym = moduleSym
-	}
-	if modulePath := ctx.ModuleAlias(moduleAliasSym); modulePath != "" {
-		if exportType := io.LookupEnrichedExport(s.deps.Manifests, modulePath); exportType != nil {
-			return exportType
-		}
+	if t := s.moduleAliasIdentifierType(ctx, sym, moduleSym); t != nil {
+		return t
 	}
 
-	if types := ctx.Types(); types != nil {
-		tv := types.EffectiveTypeAt(p, sym)
-		if tv.State == flow.StateResolved && tv.Type != nil {
-			if specialized := s.stableLocalFunctionValueType(ex, p, sc, tv.Type, nil); specialized != nil {
-				return specialized
-			}
-			return tv.Type
-		}
-		if moduleSym != 0 && moduleSym != sym {
-			moduleTV := types.EffectiveTypeAt(p, moduleSym)
-			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
-				if specialized := s.stableLocalFunctionValueType(ex, p, sc, moduleTV.Type, nil); specialized != nil {
-					return specialized
-				}
-				return moduleTV.Type
-			}
-		}
+	if t, ok := s.effectiveIdentifierType(ctx, ex, p, sc, sym, moduleSym, false); ok {
+		return t
 	}
 
 	if t, ok := ctx.GlobalType(sym); ok && t != nil {
@@ -514,6 +466,152 @@ declaredLookup:
 	return typ.Unknown
 }
 
+func (s *Synthesizer) identifierSymbols(ctx api.BaseEnv, ex *ast.IdentExpr, p cfg.Point) (cfg.SymbolID, cfg.SymbolID) {
+	var sym cfg.SymbolID
+	var moduleSym cfg.SymbolID
+	if bindings := ctx.Bindings(); bindings != nil {
+		sym, _ = bindings.SymbolOf(ex)
+	}
+	if sym == 0 {
+		if graph := ctx.Graph(); graph != nil {
+			if resolved, ok := graph.SymbolAt(p, ex.Value); ok && resolved != 0 {
+				sym = resolved
+			}
+		}
+	}
+	if s.deps.ModuleBindings != nil {
+		moduleSym, _ = s.deps.ModuleBindings.SymbolOf(ex)
+		if sym == 0 {
+			sym = moduleSym
+		}
+	}
+	return sym, moduleSym
+}
+
+func unresolvedIdentifierType(ctx api.BaseEnv, sc *scope.State, name string) typ.Type {
+	if globalTypes := ctx.GlobalTypes(); globalTypes != nil {
+		if t, ok := globalTypes[name]; ok && t != nil {
+			return t
+		}
+	}
+	if sc != nil {
+		if t, ok := sc.LookupType(name); ok && t != nil {
+			return typ.NewMeta(t)
+		}
+	}
+	return typ.Unknown
+}
+
+func identifierSelfType(ex *ast.IdentExpr, sc *scope.State) typ.Type {
+	if ex.Value != "self" || sc == nil {
+		return nil
+	}
+	return sc.SelfType()
+}
+
+func (s *Synthesizer) narrowedIdentifierType(
+	ctx api.BaseEnv,
+	ex *ast.IdentExpr,
+	p cfg.Point,
+	sc *scope.State,
+	sym cfg.SymbolID,
+	narrower api.FlowOps,
+) (typ.Type, bool) {
+	if !s.IsNarrowing() || narrower == nil {
+		return nil, false
+	}
+	path := s.identifierPath(ex, p, sc, sym)
+	narrowed := narrower.NarrowedTypeAt(p, path)
+	if narrowed == nil {
+		return nil, false
+	}
+	effective := flow.TypedValue{Type: narrowed, State: flow.StateResolved}
+	if types := ctx.Types(); types != nil {
+		declared := types.DeclaredAt(p, sym)
+		effective = typefacts.SelectEffective(declared, effective, types.IsAnnotated(sym) || unwrap.Function(declared.Type) != nil)
+	}
+	if effective.State != flow.StateResolved || effective.Type == nil || effective.Type.Kind().IsPlaceholder() {
+		return nil, false
+	}
+	if specialized := s.stableLocalFunctionValueType(ex, p, sc, effective.Type, nil); specialized != nil {
+		return specialized, true
+	}
+	return effective.Type, true
+}
+
+func (s *Synthesizer) identifierPath(ex *ast.IdentExpr, p cfg.Point, sc *scope.State, sym cfg.SymbolID) constraint.Path {
+	if s != nil && s.deps != nil && s.deps.Paths != nil {
+		if path := s.deps.Paths(p, ex, sc); !path.IsEmpty() {
+			return path
+		}
+	}
+	return constraint.Path{Root: ex.Value, Symbol: sym}
+}
+
+func (s *Synthesizer) effectiveIdentifierType(
+	ctx api.BaseEnv,
+	ex *ast.IdentExpr,
+	p cfg.Point,
+	sc *scope.State,
+	sym cfg.SymbolID,
+	moduleSym cfg.SymbolID,
+	concreteOnly bool,
+) (typ.Type, bool) {
+	types := ctx.Types()
+	if types == nil {
+		return nil, false
+	}
+	if t, ok := s.effectiveSymbolType(types, ex, p, sc, sym, concreteOnly); ok {
+		return t, true
+	}
+	if moduleSym != 0 && moduleSym != sym {
+		return s.effectiveSymbolType(types, ex, p, sc, moduleSym, concreteOnly)
+	}
+	return nil, false
+}
+
+func (s *Synthesizer) effectiveSymbolType(
+	types flow.TypeFacts,
+	ex *ast.IdentExpr,
+	p cfg.Point,
+	sc *scope.State,
+	sym cfg.SymbolID,
+	concreteOnly bool,
+) (typ.Type, bool) {
+	tv := types.EffectiveTypeAt(p, sym)
+	if tv.State != flow.StateResolved || tv.Type == nil {
+		return nil, false
+	}
+	if specialized := s.stableLocalFunctionValueType(ex, p, sc, tv.Type, nil); specialized != nil {
+		return specialized, true
+	}
+	if !concreteOnly {
+		return tv.Type, true
+	}
+	if !tv.Type.Kind().IsPlaceholder() {
+		return tv.Type, true
+	}
+	if !types.IsAnnotated(sym) {
+		return nil, false
+	}
+	declared := types.DeclaredAt(p, sym)
+	if declared.State == flow.StateResolved && declared.Type != nil && typ.IsAny(unwrap.Alias(declared.Type)) {
+		return declared.Type, true
+	}
+	return nil, false
+}
+
+func (s *Synthesizer) moduleAliasIdentifierType(ctx api.BaseEnv, sym cfg.SymbolID, moduleSym cfg.SymbolID) typ.Type {
+	moduleAliasSym := sym
+	if moduleAliasSym == 0 {
+		moduleAliasSym = moduleSym
+	}
+	if modulePath := ctx.ModuleAlias(moduleAliasSym); modulePath != "" {
+		return io.LookupEnrichedExport(s.deps.Manifests, modulePath)
+	}
+	return nil
+}
+
 // synthComma3 synthesizes type for varargs (...).
 func (s *Synthesizer) synthComma3(sc *scope.State) typ.Type {
 	if sc != nil {
@@ -526,10 +624,14 @@ func (s *Synthesizer) synthComma3(sc *scope.State) typ.Type {
 
 // SynthExprWithExpectedCore synthesizes expression with expected type context.
 func (s *Synthesizer) SynthExprWithExpectedCore(expr ast.Expr, sc *scope.State, p cfg.Point, recurse ExprSynth, expected typ.Type) typ.Type {
+	return s.synthExprWithExpectedCoreFlow(expr, sc, p, s.deps.Flow, recurse, expected)
+}
+
+func (s *Synthesizer) synthExprWithExpectedCoreFlow(expr ast.Expr, sc *scope.State, p cfg.Point, narrower api.FlowOps, recurse ExprSynth, expected typ.Type) typ.Type {
 	if _, ok := unwrap.Alias(expected).(*typ.Union); ok {
-		return s.synthExprWithUnionExpected(expr, sc, p, recurse, expected)
+		return s.synthExprWithUnionExpected(expr, sc, p, narrower, recurse, expected)
 	}
-	return s.synthExprWithExpectedSingle(expr, sc, p, recurse, expected)
+	return s.synthExprWithExpectedSingle(expr, sc, p, narrower, recurse, expected)
 }
 
 // LookupSymbol resolves symbol from bindings for an identifier.

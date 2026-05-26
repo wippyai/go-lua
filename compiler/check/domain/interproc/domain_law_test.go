@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -21,18 +22,18 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 	fn := typ.Func().Param("name", typ.String).Returns(typ.String).Build()
 	raw := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			fnSym: {Params: []typ.Type{typ.String}, Summary: []typ.Type{typ.String}, Narrow: []typ.Type{typ.String}, Type: fn},
+			fnSym: {Params: product.LiftVector([]typ.Type{typ.String}), Summary: product.LiftVector([]typ.Type{typ.String}), Narrow: product.LiftVector([]typ.Type{typ.String}), Signature: fn},
 		},
 		LiteralSigs: api.LiteralSigs{
 			lit: typ.Func().Param("name", typ.String).Returns(typ.String).Build(),
 		},
 		CapturedTypes: api.CapturedTypes{
-			capturedSym: typ.NewRecord().Field("name", typ.String).Build(),
+			capturedSym: product.FromType(typ.NewRecord().Field("name", typ.String).Build()),
 		},
 		CapturedFields: api.CapturedFieldAssigns{
 			fnSym: {
 				capturedSym: {
-					"callback": typ.NewOptional(callback),
+					"callback": product.FromType(typ.NewOptional(callback)),
 				},
 			},
 		},
@@ -41,14 +42,14 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 				capturedSym: {
 					{
 						Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}},
-						ValueType: typ.NewArray(typ.String),
+						ValueType: product.FromType(typ.NewArray(typ.String)),
 					},
 				},
 			},
 		},
 		ConstructorFields: api.ConstructorFields{
 			classSym: {
-				"name": typ.String,
+				"name": product.FromType(typ.String),
 			},
 		},
 	}
@@ -61,13 +62,13 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 		t.Fatalf("Join must be idempotent across the product domain")
 	}
 
-	if got := functionfact.ReturnSummaryFromMap(normalized.FunctionFacts, fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
+	if got := functionfact.ReturnSummary(normalized.FunctionFacts, fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary must come from canonical FunctionFacts, got %v", got)
 	}
-	if got := functionfact.NarrowSummaryFromMap(normalized.FunctionFacts, fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
+	if got := functionfact.NarrowSummary(normalized.FunctionFacts, fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("narrow summary must come from canonical FunctionFacts, got %v", got)
 	}
-	if got := functionfact.TypeFromMap(normalized.FunctionFacts, fnSym); got == nil {
+	if got := functionfact.SiblingTypeProjection(normalized.FunctionFacts, fnSym, api.PhaseScopeCompute); got == nil {
 		t.Fatalf("function type must come from canonical FunctionFacts")
 	}
 }
@@ -108,12 +109,12 @@ func TestFactsDomain_WidenFunctionParamsIsVarianceAware(t *testing.T) {
 	sym := cfg.SymbolID(1)
 	prev := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Type: typ.Func().Param("path", typ.Any).Returns(typ.NewArray(typ.Unknown)).Build()},
+			sym: {Signature: typ.Func().Param("path", typ.Any).Returns(typ.NewArray(typ.Unknown)).Build()},
 		},
 	}
 	next := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Type: typ.Func().Param("path", typ.String).Returns(typ.NewArray(typ.Unknown)).Build()},
+			sym: {Signature: typ.Func().Param("path", typ.String).Returns(typ.NewArray(typ.Unknown)).Build()},
 		},
 	}
 
@@ -123,7 +124,7 @@ func TestFactsDomain_WidenFunctionParamsIsVarianceAware(t *testing.T) {
 		t.Fatalf("Widen must be idempotent for function param facts")
 	}
 
-	fn := unwrapFunctionForDomainTest(t, functionfact.TypeFromMap(widened.FunctionFacts, sym))
+	fn := unwrapFunctionForDomainTest(t, functionfact.SiblingTypeProjection(widened.FunctionFacts, sym, api.PhaseScopeCompute))
 	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, typ.Any) {
 		t.Fatalf("expected widening to preserve broad parameter upper bound, got %v", fn)
 	}
@@ -137,12 +138,12 @@ func TestFactsDomain_PreservesArityAndNilabilityAsSeparateParamAxes(t *testing.T
 		Build()
 	raw := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Type: typ.Func().OptParam("context", typ.NewOptional(context)).Build()},
+			sym: {Signature: typ.Func().OptParam("context", typ.NewOptional(context)).Build()},
 		},
 	}
 
 	widened := WidenFacts(api.Facts{}, raw)
-	fn := unwrapFunctionForDomainTest(t, functionfact.TypeFromMap(widened.FunctionFacts, sym))
+	fn := unwrapFunctionForDomainTest(t, functionfact.SiblingTypeProjection(widened.FunctionFacts, sym, api.PhaseScopeCompute))
 	if len(fn.Params) != 1 || !fn.Params[0].Optional {
 		t.Fatalf("expected optional parameter slot, got %v", fn)
 	}
@@ -180,15 +181,15 @@ func TestFactsDomain_WidenPreservesCapturedCallbackUnionMembers(t *testing.T) {
 		Build()
 
 	widened := WidenFacts(
-		api.Facts{CapturedTypes: api.CapturedTypes{sym: prevFn}},
-		api.Facts{CapturedTypes: api.CapturedTypes{sym: nextFn}},
+		api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(prevFn)}},
+		api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(nextFn)}},
 	)
-	widenedAgain := WidenFacts(widened, api.Facts{CapturedTypes: api.CapturedTypes{sym: nextFn}})
+	widenedAgain := WidenFacts(widened, api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(nextFn)}})
 	if !FactsEqual(widened, widenedAgain) {
 		t.Fatalf("Widen must be idempotent for captured callback union members")
 	}
 
-	fn := unwrapFunctionForDomainTest(t, widened.CapturedTypes[sym])
+	fn := unwrapFunctionForDomainTest(t, widened.CapturedTypes[sym].ProjectValue())
 	rec, ok := fn.Returns[0].(*typ.Record)
 	if !ok {
 		t.Fatalf("expected callback record return, got %T", fn.Returns[0])

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/kind"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -50,7 +51,9 @@ func ResolveFieldAccess(
 ) FieldAccessResult {
 	if resolver != nil && fullExpr != nil {
 		fullType := resolver.TypeOf(fullExpr, p)
-		if fullType != nil && !fullType.Kind().IsPlaceholder() {
+		if fullType != nil &&
+			!fullType.Kind().IsPlaceholder() &&
+			fieldAccessCanTrustFullExprType(resolver, objType, fieldName) {
 			return FieldAccessResult{Type: fullType, Found: true, SkipCheck: true}
 		}
 	}
@@ -59,11 +62,11 @@ func ResolveFieldAccess(
 		return FieldAccessResult{SkipCheck: true}
 	}
 
-	if objType.Kind().IsPlaceholder() {
+	unwrapped := unwrap.Alias(objType)
+
+	if unwrapped.Kind().IsPlaceholder() {
 		return FieldAccessResult{SkipCheck: true}
 	}
-
-	unwrapped := unwrap.Alias(objType)
 
 	if fullExpr != nil {
 		if _, isIdent := fullExpr.Key.(*ast.IdentExpr); isIdent {
@@ -95,6 +98,9 @@ func ResolveFieldAccess(
 		}
 		return FieldAccessResult{NotIndexable: true}
 	default:
+		if unwrapped.Kind() == kind.Recursive {
+			return FieldAccessResult{SkipCheck: true}
+		}
 		if unwrapped == typ.Nil {
 			return FieldAccessResult{NotIndexable: true}
 		}
@@ -111,4 +117,12 @@ func ResolveFieldAccess(
 	}
 
 	return FieldAccessResult{Found: false}
+}
+
+func fieldAccessCanTrustFullExprType(resolver FieldResolver, objType typ.Type, fieldName string) bool {
+	if resolver == nil || objType == nil || fieldName == "" || !querycore.MissingFieldReadsNil(objType) {
+		return true
+	}
+	_, ok := resolver.Field(objType, fieldName)
+	return ok
 }

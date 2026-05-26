@@ -141,3 +141,19 @@ func TestFull_Identifier(t *testing.T) {
 		t.Fatalf("got %v, want string", result)
 	}
 }
+
+func TestFull_IdentifierDoesNotUseExpectedAsProofForUnknown(t *testing.T) {
+	synthWithExpected := func(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type {
+		if expected != nil {
+			t.Fatalf("identifier synthesis got expected %v, want nil", expected)
+		}
+		return typ.Unknown
+	}
+
+	reSynth := Full(synthWithExpected, nil, 0)
+	result := reSynth(0, &ast.IdentExpr{Value: "resource_id"}, typ.String)
+
+	if result != typ.Unknown {
+		t.Fatalf("got %v, want unknown", result)
+	}
+}

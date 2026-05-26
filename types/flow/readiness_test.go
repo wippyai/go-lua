@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/numeric"
-	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -192,13 +191,12 @@ func TestOrderIndependence_PhiOperands(t *testing.T) {
 }
 
 // =============================================================================
-// DNF Cap Behavior Tests
+// DNF Precision Behavior Tests
 // =============================================================================
 
-// TestDNFCap_ExceedsMaxDisjuncts verifies that exceeding DefaultMaxDisjuncts
-// doesn't panic and produces a sound (widened) result.
-func TestDNFCap_ExceedsMaxDisjuncts(t *testing.T) {
-	// Create many disjuncts (more than DefaultMaxDisjuncts = 32)
+// TestDNFExact_ExceedsFormerMaxDisjuncts verifies that large disjunctions
+// do not panic and preserve their alternatives exactly.
+func TestDNFExact_ExceedsFormerMaxDisjuncts(t *testing.T) {
 	var disjuncts [][]constraint.Constraint
 	for i := 0; i < 50; i++ {
 		disjuncts = append(disjuncts, []constraint.Constraint{
@@ -217,24 +215,24 @@ func TestDNFCap_ExceedsMaxDisjuncts(t *testing.T) {
 		t.Error("condition should not be false")
 	}
 
-	// Result should be widened (fewer disjuncts or collapsed to must-constraints)
-	if cond.NumDisjuncts() > constraint.DefaultMaxDisjuncts {
-		t.Errorf("expected at most %d disjuncts, got %d", constraint.DefaultMaxDisjuncts, cond.NumDisjuncts())
+	if cond.NumDisjuncts() != 50 {
+		t.Errorf("expected all 50 disjuncts, got %d", cond.NumDisjuncts())
 	}
 
-	t.Logf("DNF cap: 50 disjuncts -> %d after normalization", cond.NumDisjuncts())
+	t.Logf("DNF exact: 50 disjuncts -> %d after normalization", cond.NumDisjuncts())
 }
 
-// TestDNFCap_ANDExplosion verifies that AND of large conditions doesn't explode.
-func TestDNFCap_ANDExplosion(t *testing.T) {
+// TestDNFExact_ANDProductPreserved verifies that AND preserves the full
+// disjunct product instead of silently widening to common constraints.
+func TestDNFExact_ANDProductPreserved(t *testing.T) {
 	// Create two conditions with many disjuncts
 	var disjuncts1, disjuncts2 [][]constraint.Constraint
 	for i := 0; i < 10; i++ {
 		disjuncts1 = append(disjuncts1, []constraint.Constraint{
-			constraint.HasType{Path: constraint.Path{Root: "x"}, Type: narrow.BuiltinTypeKey("string")},
+			constraint.FieldEquals{Target: constraint.Path{Root: "x"}, Field: "a", Value: typ.LiteralInt(int64(i))},
 		})
 		disjuncts2 = append(disjuncts2, []constraint.Constraint{
-			constraint.NotNil{Path: constraint.Path{Root: "y"}},
+			constraint.FieldEquals{Target: constraint.Path{Root: "x"}, Field: "b", Value: typ.LiteralInt(int64(i))},
 		})
 	}
 
@@ -244,19 +242,19 @@ func TestDNFCap_ANDExplosion(t *testing.T) {
 	// AND would normally produce 100 disjuncts (10 * 10)
 	result := constraint.And(cond1, cond2)
 
-	// Should not panic and should be capped
+	// Should not panic and should preserve the product.
 	if result.IsFalse() {
 		t.Error("AND result should not be false")
 	}
-	if result.NumDisjuncts() > constraint.DefaultMaxDisjuncts {
-		t.Errorf("AND explosion not capped: got %d disjuncts", result.NumDisjuncts())
+	if result.NumDisjuncts() != 100 {
+		t.Errorf("AND product should preserve 100 disjuncts, got %d", result.NumDisjuncts())
 	}
 
-	t.Logf("AND cap: 10x10 -> %d after capping", result.NumDisjuncts())
+	t.Logf("AND exact: 10x10 -> %d disjuncts", result.NumDisjuncts())
 }
 
-// TestDNFCap_NarrowingSoundness verifies that DNF cap doesn't cause false positives.
-func TestDNFCap_NarrowingSoundness(t *testing.T) {
+// TestDNFExact_NarrowingSoundness verifies that large exact DNF remains sound.
+func TestDNFExact_NarrowingSoundness(t *testing.T) {
 	// Build a union with many variants
 	var variants []typ.Type
 	for i := 0; i < 40; i++ {

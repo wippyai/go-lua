@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -16,15 +17,14 @@ import (
 // CallProjectionInput describes the local evidence needed to project a stable
 // function fact into the effective call signature at one call site.
 type CallProjectionInput struct {
-	Store                 api.StoreReader
-	Info                  *cfg.CallInfo
-	Graph                 *cfg.Graph
-	Evidence              api.FlowEvidence
-	Bindings              *bind.BindingTable
-	Results               map[*ast.FunctionExpr]*api.FuncResult
-	Args                  []typ.Type
-	Current               typ.Type
-	UnobservedLocalParams map[cfg.SymbolID][]bool
+	Store    api.StoreReader
+	Info     *cfg.CallInfo
+	Graph    *cfg.Graph
+	Evidence api.FlowEvidence
+	Bindings *bind.BindingTable
+	Results  map[*ast.FunctionExpr]*api.FuncResult
+	Args     []typ.Type
+	Current  typ.Type
 }
 
 // CallProjection is the function-fact contribution to call checking.
@@ -42,40 +42,183 @@ func ProjectCall(input CallProjectionInput) (CallProjection, bool) {
 	moduleBindings := input.Store.ModuleBindings()
 	for _, sym := range callsite.CallableCalleeSymbolCandidates(input.Info, input.Graph, input.Bindings, moduleBindings) {
 		ff, ok := ForSymbol(input.Store, sym, nil)
-		if !ok || ff.Type == nil {
+		if !ok || ff.Signature == nil {
 			continue
 		}
 
 		localFn := callsite.FunctionLiteralForGraphSymbol(input.Evidence, sym)
+		sourceFn := sourceFunctionForSymbol(input.Store, sym)
 		refinementFn := localFn
 		if refinementFn == nil {
-			refinementFn = sourceFunctionForSymbol(input.Store, sym)
+			refinementFn = sourceFn
 		}
 
 		var unobservedParams []bool
 		allowExtraArgs := false
 		if localFn != nil {
-			unobservedParams = unobservedLocalParamMask(input.Store, sym, localFn, input.Results, input.UnobservedLocalParams)
+			unobservedParams = unobservedLocalParamMask(input.Store, sym, localFn, input.Results)
 			allowExtraArgs = callsite.AllowsDiscardedExtraArgs(localFn)
 		}
 
-		factType := projectRefinementProvenDynamicParams(ff.Type, input.Args, refinementFn, refinementFromFact(ff))
-		callee := input.Current
-		if typ.IsUnknownOrNil(callee) || hasWiderParams(callee, factType) {
-			callee = factType
-		} else if len(unobservedParams) > 0 {
-			callee = projectUnobservedDynamicParams(callee, input.Args, unobservedParams)
+		sourceLocal := sourceFn != nil || localFn != nil
+		factType := projectCallContract(callContractInput{
+			Fact:             ff,
+			Sym:              sym,
+			Source:           refinementFn,
+			Args:             input.Args,
+			ClosedWorldLocal: sourceLocal,
+			UnobservedParams: unobservedParams,
+		})
+		if factType == nil {
+			continue
 		}
+		callee := selectCallProjection(input.Current, factType, input.Args, sourceLocal)
 		return CallProjection{Callee: callee, AllowExtraArgs: allowExtraArgs}, true
 	}
 	return CallProjection{}, false
+}
+
+func selectCallProjection(current, factType typ.Type, args []typ.Type, sourceLocal bool) typ.Type {
+	if sourceLocal {
+		return factType
+	}
+	if typ.IsUnknownOrNil(current) ||
+		hasWiderParams(current, factType) ||
+		argsPreferFactProjection(args, current, factType) {
+		return factType
+	}
+	return current
+}
+
+type callContractInput struct {
+	Fact             api.FunctionFact
+	Sym              cfg.SymbolID
+	Source           *ast.FunctionExpr
+	Args             []typ.Type
+	ClosedWorldLocal bool
+	UnobservedParams []bool
+}
+
+// factParam projects the public parameter-evidence carrier slot at idx to its
+// structural type, returning nil for an out-of-range or unoccupied slot.
+func (input callContractInput) factParam(idx int) typ.Type {
+	if idx < 0 || idx >= len(input.Fact.Params) || input.Fact.Params[idx].IsZero() {
+		return nil
+	}
+	return input.Fact.Params[idx].ProjectValue()
+}
+
+func projectCallContract(input callContractInput) typ.Type {
+	base := projectCallFactType(input.Fact, input.Sym)
+	if base == nil {
+		return nil
+	}
+	refinement := refinementFromFact(input.Fact)
+	return rewriteFunctionParams(base, func(i int, p typ.Param) typ.Type {
+		if input.closedWorldDynamicTopAdmitted(i) {
+			return typ.Any
+		}
+		if input.refinementAdmitsDynamicTop(i, p.Type, refinement) {
+			return typ.Any
+		}
+		if input.sourceParamUnannotated(i) {
+			if publicParam, ok := input.publicParamProjection(i, p.Type); ok {
+				return publicParam
+			}
+			if input.observedDynamicParamAdmitted(i, p.Type) {
+				return typ.Any
+			}
+		}
+		return p.Type
+	})
+}
+
+func projectCallFactType(ff api.FunctionFact, sym cfg.SymbolID) typ.Type {
+	facts := api.FunctionFacts{sym: ff}
+	// Call diagnostics consume caller-facing obligations. Body/entry evidence is
+	// for interpreting the callee and computing return products; it must not
+	// become an additional precondition at a call site.
+	return PublicTypeProjection(facts, sym, api.PhaseScopeCompute)
+}
+
+func (input callContractInput) closedWorldDynamicTopAdmitted(idx int) bool {
+	return input.ClosedWorldLocal &&
+		idx < len(input.Args) &&
+		idx < len(input.UnobservedParams) &&
+		input.UnobservedParams[idx] &&
+		isDynamicTop(input.Args[idx])
+}
+
+func (input callContractInput) refinementAdmitsDynamicTop(idx int, param typ.Type, refinement *constraint.FunctionRefinement) bool {
+	return refinement != nil &&
+		input.Source != nil &&
+		idx < len(input.Args) &&
+		typ.IsAny(input.Args[idx]) &&
+		sourceParamExplicitAny(input.Source, idx) &&
+		RefinementGuaranteesParamType(refinement, idx, param)
+}
+
+func (input callContractInput) sourceParamUnannotated(idx int) bool {
+	return sourceParamUnannotated(input.Source, idx)
+}
+
+func (input callContractInput) publicParamProjection(idx int, bodyParam typ.Type) (typ.Type, bool) {
+	factParam := input.factParam(idx)
+	if factParam == nil {
+		return bodyParam, false
+	}
+	publicParam := callBoundaryParamType(bodyParam, factParam)
+	if !publicParamCanReplaceBodyParam(bodyParam, publicParam) {
+		return bodyParam, false
+	}
+	if paramProjectionIsWider(bodyParam, publicParam) {
+		return publicParam, true
+	}
+	if idx < len(input.Args) && input.Args[idx] != nil &&
+		subtype.IsSubtype(input.Args[idx], publicParam) &&
+		!subtype.IsSubtype(input.Args[idx], bodyParam) {
+		return publicParam, true
+	}
+	return bodyParam, false
+}
+
+func (input callContractInput) observedDynamicParamAdmitted(idx int, param typ.Type) bool {
+	return idx < len(input.Args) &&
+		idx < len(input.Fact.Params) &&
+		value.IsStructuredTableShape(unwrap.Optional(param)) &&
+		isDynamicTop(input.Args[idx]) &&
+		isDynamicTop(input.factParam(idx))
+}
+
+func callBoundaryParamType(bodyParam, publicParam typ.Type) typ.Type {
+	if publicParam == nil {
+		return bodyParam
+	}
+	if unwrap.IsOptionalLike(bodyParam) && !unwrap.IsOptionalLike(publicParam) {
+		return typ.NewOptional(publicParam)
+	}
+	return publicParam
+}
+
+func publicParamCanReplaceBodyParam(bodyParam, publicParam typ.Type) bool {
+	if publicParam == nil || typ.TypeEquals(bodyParam, publicParam) {
+		return true
+	}
+	if isDynamicTop(publicParam) && !isDynamicTop(bodyParam) {
+		return false
+	}
+	if typ.IsUnknown(bodyParam) || typ.IsAny(bodyParam) || bodyParam == nil {
+		return true
+	}
+	return value.IsStructuredTableShape(unwrap.Optional(bodyParam)) &&
+		value.IsStructuredTableShape(unwrap.Optional(publicParam))
 }
 
 func refinementFromFact(ff api.FunctionFact) *constraint.FunctionRefinement {
 	if ff.Refinement != nil {
 		return ff.Refinement
 	}
-	fn := unwrap.Function(ff.Type)
+	fn := ff.Signature
 	if fn == nil {
 		return nil
 	}
@@ -103,15 +246,9 @@ func unobservedLocalParamMask(
 	sym cfg.SymbolID,
 	fn *ast.FunctionExpr,
 	results map[*ast.FunctionExpr]*api.FuncResult,
-	cache map[cfg.SymbolID][]bool,
 ) []bool {
 	if store == nil || sym == 0 || fn == nil {
 		return nil
-	}
-	if cache != nil {
-		if mask, ok := cache[sym]; ok {
-			return mask
-		}
 	}
 	ref := store.FunctionRefBySym(sym)
 	if ref == nil || ref.GraphID == 0 {
@@ -125,31 +262,18 @@ func unobservedLocalParamMask(
 	if result == nil {
 		return nil
 	}
-	mask := paramevidence.UnobservedParameterMask(graph.ParamSlotsReadOnly(), result.Evidence.ParameterUses)
-	if cache != nil {
-		cache[sym] = mask
-	}
-	return mask
+	return paramevidence.UnobservedParameterMask(graph.ParamSlotsReadOnly(), result.Evidence.ParameterUses)
 }
 
-func projectRefinementProvenDynamicParams(
-	callee typ.Type,
-	args []typ.Type,
-	fn *ast.FunctionExpr,
-	refinement *constraint.FunctionRefinement,
-) typ.Type {
-	if refinement == nil || fn == nil || fn.ParList == nil || len(args) == 0 {
-		return callee
+func sourceParamExplicitAny(fn *ast.FunctionExpr, idx int) bool {
+	if fn == nil || fn.ParList == nil || idx < 0 || idx >= len(fn.ParList.Names) {
+		return false
 	}
-	return rewriteFunctionParams(callee, func(i int, p typ.Param) typ.Type {
-		if i < len(args) &&
-			typ.IsAny(args[i]) &&
-			sourceParamUnannotated(fn, i) &&
-			RefinementGuaranteesParamType(refinement, i, p.Type) {
-			return typ.Any
-		}
-		return p.Type
-	})
+	if fn.ParList.Types == nil || idx >= len(fn.ParList.Types) {
+		return false
+	}
+	primitive, ok := fn.ParList.Types[idx].(*ast.PrimitiveTypeExpr)
+	return ok && primitive.Name == "any"
 }
 
 func sourceParamUnannotated(fn *ast.FunctionExpr, idx int) bool {
@@ -159,16 +283,12 @@ func sourceParamUnannotated(fn *ast.FunctionExpr, idx int) bool {
 	return fn.ParList.Types == nil || idx >= len(fn.ParList.Types) || fn.ParList.Types[idx] == nil
 }
 
-func projectUnobservedDynamicParams(callee typ.Type, args []typ.Type, unobservedParams []bool) typ.Type {
-	if len(args) == 0 || len(unobservedParams) == 0 {
-		return callee
+func isDynamicTop(t typ.Type) bool {
+	if typ.IsAny(t) || typ.IsUnknown(t) {
+		return true
 	}
-	return rewriteFunctionParams(callee, func(i int, p typ.Param) typ.Type {
-		if i < len(args) && i < len(unobservedParams) && unobservedParams[i] && typ.IsAny(args[i]) && !typ.IsAny(p.Type) {
-			return typ.Any
-		}
-		return p.Type
-	})
+	inner := unwrap.Optional(t)
+	return typ.IsAny(inner) || typ.IsUnknown(inner)
 }
 
 func rewriteFunctionParams(callee typ.Type, rewrite func(int, typ.Param) typ.Type) typ.Type {
@@ -235,9 +355,54 @@ func hasWiderParams(current, fact typ.Type) bool {
 			wider = true
 			continue
 		}
+		if paramProjectionIsWider(currentParam.Type, factParam.Type) {
+			wider = true
+			continue
+		}
 		if subtype.IsSubtype(currentParam.Type, factParam.Type) {
 			wider = true
 		}
 	}
 	return wider
+}
+
+func argsPreferFactProjection(args []typ.Type, current, fact typ.Type) bool {
+	if len(args) == 0 {
+		return false
+	}
+	currentFn := unwrap.Function(current)
+	factFn := unwrap.Function(fact)
+	if currentFn == nil || factFn == nil || len(factFn.Params) == 0 {
+		return false
+	}
+	limit := len(args)
+	if len(factFn.Params) < limit {
+		limit = len(factFn.Params)
+	}
+	prefer := false
+	for i := 0; i < limit; i++ {
+		arg := args[i]
+		if arg == nil {
+			continue
+		}
+		factParam := factFn.Params[i].Type
+		if !subtype.IsSubtype(arg, factParam) {
+			return false
+		}
+		if i >= len(currentFn.Params) || !subtype.IsSubtype(arg, currentFn.Params[i].Type) {
+			prefer = true
+		}
+	}
+	return prefer
+}
+
+func paramProjectionIsWider(current, fact typ.Type) bool {
+	if current == nil || fact == nil || typ.TypeEquals(current, fact) {
+		return false
+	}
+	if isDynamicTop(current) {
+		return false
+	}
+	merged := mergeParamType(current, fact)
+	return typ.TypeEquals(merged, fact)
 }

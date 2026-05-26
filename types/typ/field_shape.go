@@ -35,12 +35,17 @@ func SplitNilableFieldType(t Type) (inner Type, optional bool) {
 func splitNilableUnionMembers(members []Type, original Type) (Type, bool) {
 	hasNil := false
 	nonNil := make([]Type, 0, len(members))
-	for _, m := range members {
+	nonNilHashes := make([]uint64, 0, len(members))
+	memberHashes := unionMemberHashes(original, len(members))
+	for i, m := range members {
 		if m != nil && m.Kind() == kind.Nil {
 			hasNil = true
 			continue
 		}
 		nonNil = append(nonNil, m)
+		if memberHashes != nil {
+			nonNilHashes = append(nonNilHashes, memberHashes[i])
+		}
 	}
 	if !hasNil {
 		return original, false
@@ -51,6 +56,26 @@ func splitNilableUnionMembers(members []Type, original Type) (Type, bool) {
 	case 1:
 		return nonNil[0], true
 	default:
+		if len(nonNilHashes) == len(nonNil) {
+			return newNormalizedUnion(nonNil, nonNilHashes), true
+		}
+		if u, ok := original.(*Union); ok {
+			return UnionWithoutNil(u), true
+		}
 		return NewUnion(nonNil...), true
 	}
+}
+
+func unionMemberHashes(t Type, memberCount int) []uint64 {
+	switch v := t.(type) {
+	case *Union:
+		if len(v.memberHashes) == memberCount {
+			return v.memberHashes
+		}
+	case *Alias:
+		return unionMemberHashes(v.Target, memberCount)
+	case *Annotated:
+		return unionMemberHashes(v.Inner, memberCount)
+	}
+	return nil
 }

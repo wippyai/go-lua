@@ -16,11 +16,34 @@ import (
 //
 // Aliases are transparent: compares through to their targets.
 func TypeEquals(a, b Type) bool {
+	if a == b {
+		return true
+	}
 	guard := NewGuard()
 	return typeEqualsGuard(a, b, guard, nil)
 }
 
+// SameNodeOrAcyclicEqual reports identity or structural equality for products
+// that cannot contain recursive cycles. Recursive product-family equivalence is
+// a domain relation; generic constructors and hot convergence paths must not
+// prove it by unfolding structural equality.
+func SameNodeOrAcyclicEqual(a, b Type) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if knownContainsRecursive(a) || knownContainsRecursive(b) ||
+		knownContainsOpenRecursive(a) || knownContainsOpenRecursive(b) {
+		return false
+	}
+	return TypeEquals(a, b)
+}
+
 func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair]bool) bool {
+	a = normalizeNilType(a)
+	b = normalizeNilType(b)
 	a = unwrapAliasForEquals(a, guard)
 	b = unwrapAliasForEquals(b, guard)
 
@@ -46,6 +69,9 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 	}
 
 	if a.Kind() != b.Kind() {
+		return false
+	}
+	if typeEqualsCanUseHashPrefilter(a, b) && typeEqualityHash(a) != typeEqualityHash(b) {
 		return false
 	}
 
@@ -144,6 +170,12 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 				return false
 			}
 		}
+		if (va.Metatable == nil) != (vb.Metatable == nil) {
+			return false
+		}
+		if va.Metatable != nil && !typeEqualsGuard(va.Metatable, vb.Metatable, next, seen) {
+			return false
+		}
 		return true
 	case *Function:
 		vb, ok := b.(*Function)
@@ -225,7 +257,11 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 }
 
 func unwrapAliasForEquals(t Type, guard internal.RecursionGuard) Type {
-	for t != nil {
+	for {
+		t = normalizeNilType(t)
+		if t == nil {
+			return nil
+		}
 		t = unwrapTransparentWrappers(t)
 		next, ok := guard.Enter(t)
 		if !ok {
@@ -239,7 +275,27 @@ func unwrapAliasForEquals(t Type, guard internal.RecursionGuard) Type {
 		}
 		t = alias.UnaliasedTarget()
 	}
-	return nil
+}
+
+func normalizeNilType(t Type) Type {
+	if t == nil {
+		return nil
+	}
+	v := reflect.ValueOf(t)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if v.IsNil() {
+			return nil
+		}
+	}
+	return t
+}
+
+func typeEqualsCanUseHashPrefilter(a, b Type) bool {
+	return !knownContainsRecursive(a) &&
+		!knownContainsRecursive(b) &&
+		!knownContainsOpenRecursive(a) &&
+		!knownContainsOpenRecursive(b)
 }
 
 func needsCycleCheck(k kind.Kind) bool {

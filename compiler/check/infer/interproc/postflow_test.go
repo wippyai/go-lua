@@ -4,9 +4,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/compiler/check/scope"
+	checkstore "github.com/wippyai/go-lua/compiler/check/store"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -23,68 +26,59 @@ func TestStoreFactsFromResult_NilGraph(t *testing.T) {
 	StoreFactsFromResult(nil, nil, result, nil)
 }
 
-func TestExpectedFunctionFromResult_UnannotatedParamsRemainOptional(t *testing.T) {
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{
-			Names: []string{"a", "b"},
-		},
+func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSynth(t *testing.T) {
+	stmts, err := parse.ParseString(`target("value")`, "postflow_observation.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
 	}
-	graph := cfg.Build(fn)
-	slots := graph.ParamSlots()
-	if len(slots) != 2 {
-		t.Fatalf("expected 2 param slots, got %d", len(slots))
-	}
-	declared := map[cfg.SymbolID]typ.Type{
-		slots[0].Symbol: typ.String,
-		slots[1].Symbol: typ.String,
-	}
-	result := &api.FuncResult{
-		Graph: graph,
-		FlowInputs: &flow.Inputs{
-			DeclaredTypes: declared,
-		},
+	caller := &ast.FunctionExpr{ParList: &ast.ParList{}, Stmts: stmts}
+	bindings := bind.Bind(caller, []string{"target"})
+	graph := cfg.BuildWithBindings(caller, bindings)
+	if graph == nil {
+		t.Fatal("expected caller graph")
 	}
 
-	got := expectedFunctionFromResult(result)
-	if got == nil {
-		t.Fatal("expected function type")
+	var callPoint cfg.Point
+	var callInfo *cfg.CallInfo
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if callInfo == nil {
+			callPoint = p
+			callInfo = info
+		}
+	})
+	if callInfo == nil || callInfo.CalleeSymbol == 0 {
+		t.Fatalf("expected target callsite with callee symbol, got %+v", callInfo)
 	}
-	if len(got.Params) != 2 {
-		t.Fatalf("expected 2 params, got %d", len(got.Params))
+
+	callee := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"arg"}}}
+	calleeGraph := cfg.Build(callee)
+	parent := scopeForPostflowTest()
+	st := checkstore.NewSessionStore()
+	st.RegisterGraph(graph, caller)
+	st.RegisterGraph(calleeGraph, callee)
+	st.SetParentScope(parent.Hash(), parent)
+	st.SetGraphParentHash(calleeGraph.ID(), parent.Hash())
+	st.RegisterFunctionRef(callInfo.CalleeSymbol, callee, calleeGraph, graph.ID(), callPoint)
+
+	result := &api.FuncResult{
+		Graph: graph,
+		Evidence: api.FlowEvidence{
+			Calls: []api.CallEvidence{{Point: callPoint, Info: callInfo}},
+		},
 	}
-	if !got.Params[0].Optional || !got.Params[1].Optional {
-		t.Fatalf("expected both params optional, got %+v", got.Params)
+	CollectParameterEvidenceFromResult(st, result, parent, 0)
+
+	key := api.KeyForGraph(graph, parent.Hash())
+	facts := st.InterprocNext.Facts[key].FunctionFacts
+	got := facts[callInfo.CalleeSymbol].EntryParams
+	if len(got) != 1 || got[0].IsZero() {
+		t.Fatalf("expected call-entry parameter evidence without NarrowSynth, got %#v", got)
 	}
-	if got.Variadic != nil {
-		t.Fatalf("unannotated expected function should not create a fake variadic slot, got %v", got.Variadic)
+	if !typ.TypeEquals(got[0].ProjectValue(), typ.String) {
+		t.Fatalf("entry param = %v, want string", got[0])
 	}
 }
 
-func TestExpectedFunctionFromResult_UnannotatedUndeclaredDefaultsToUnknown(t *testing.T) {
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{
-			Names: []string{"x"},
-		},
-	}
-	graph := cfg.Build(fn)
-	result := &api.FuncResult{
-		Graph: graph,
-		FlowInputs: &flow.Inputs{
-			DeclaredTypes: map[cfg.SymbolID]typ.Type{},
-		},
-	}
-
-	got := expectedFunctionFromResult(result)
-	if got == nil {
-		t.Fatal("expected function type")
-	}
-	if len(got.Params) != 1 {
-		t.Fatalf("expected one param, got %d", len(got.Params))
-	}
-	if !got.Params[0].Optional {
-		t.Fatalf("expected param optional, got %+v", got.Params[0])
-	}
-	if !typ.TypeEquals(got.Params[0].Type, typ.Unknown) {
-		t.Fatalf("expected undeclared param type unknown, got %v", got.Params[0].Type)
-	}
+func scopeForPostflowTest() *scope.State {
+	return scope.New()
 }

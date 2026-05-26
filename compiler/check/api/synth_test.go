@@ -61,6 +61,7 @@ func (m *mockSynth) ResolveTypeDef(string, ast.TypeExpr, []ast.TypeParamExpr, *s
 	return nil
 }
 func (m *mockSynth) Narrow() BaseSynth                                        { return nil }
+func (m *mockSynth) WithFlow(FlowOps) BaseSynth                               { return nil }
 func (m *mockSynth) Method(typ.Type, string) (typ.Type, bool)                 { return nil, false }
 func (m *mockSynth) Field(typ.Type, string) (typ.Type, bool)                  { return nil, false }
 func (m *mockSynth) SynthWithExpected(ast.Expr, cfg.Point, typ.Type) typ.Type { return nil }
@@ -74,11 +75,16 @@ func (m *mockFlowQuery) EffectiveTypeAt(cfg.Point, cfg.SymbolID) flow.TypedValue
 	return flow.TypedValue{}
 }
 func (m *mockFlowQuery) NarrowedTypeAt(cfg.Point, constraint.Path) typ.Type       { return nil }
+func (m *mockFlowQuery) PreStateTypeAt(cfg.Point, constraint.Path) typ.Type       { return nil }
 func (m *mockFlowQuery) ExcludesTypeAt(cfg.Point, constraint.Path, typ.Type) bool { return false }
 
 type mockFlowOps struct{}
 
 func (m *mockFlowOps) NarrowedTypeAt(cfg.Point, constraint.Path) typ.Type { return nil }
+func (m *mockFlowOps) NarrowedTypeAtWithCondition(cfg.Point, constraint.Path, constraint.Condition) typ.Type {
+	return nil
+}
+func (m *mockFlowOps) PreStateTypeAt(cfg.Point, constraint.Path) typ.Type { return nil }
 func (m *mockFlowOps) BoundsAt(cfg.Point, string) (int64, int64, bool)    { return 0, 0, false }
 func (m *mockFlowOps) ArrayLenBoundAt(cfg.Point, string) (string, bool)   { return "", false }
 func (m *mockFlowOps) ArrayLenBoundWithOffsetAt(cfg.Point, string) (string, int64, bool) {

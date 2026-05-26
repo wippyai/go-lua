@@ -23,12 +23,6 @@ func TestNewDeps(t *testing.T) {
 	if deps.Scopes == nil {
 		t.Fatal("scopes not set")
 	}
-	if deps.PreCache == nil {
-		t.Fatal("preCache not initialized")
-	}
-	if deps.NarrowCache == nil {
-		t.Fatal("narrowCache not initialized")
-	}
 }
 
 func TestDeps_Graph_NilCheckCtx(t *testing.T) {

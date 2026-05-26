@@ -306,6 +306,50 @@ func TestTypeDomain_Join(t *testing.T) {
 	}
 }
 
+func TestTypeDomain_JoinCoalescesRecursiveFamilies(t *testing.T) {
+	env := makeTestEnv(nil)
+	key := constraint.PathKey("node")
+	base := typ.NewRecursive("FlowA", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	withPath := typ.NewRecursive("FlowB", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Field("full_path", typ.String).
+			Build()
+	})
+
+	a := NewTypeDomain(env)
+	a.Narrowed[key] = base
+	b := NewTypeDomain(env)
+	b.Narrowed[key] = withPath
+
+	ab := a.Join(b).(*TypeDomain).NarrowedTypeAt(key)
+	ba := b.Join(a).(*TypeDomain).NarrowedTypeAt(key)
+	if !typ.TypeEquals(ab, ba) {
+		t.Fatalf("recursive domain join differs by order: %v vs %v", ab, ba)
+	}
+	if ab.Hash() != ba.Hash() {
+		t.Fatalf("recursive domain join hash differs by order: %d vs %d", ab.Hash(), ba.Hash())
+	}
+	rec, ok := ab.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("joined recursive family = %T %[1]v, want recursive", ab)
+	}
+	body, ok := rec.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("recursive body = %T, want record", rec.Body)
+	}
+	fullPath := body.GetField("full_path")
+	if fullPath == nil || !fullPath.Optional || !typ.TypeEquals(fullPath.Type, typ.String) {
+		t.Fatalf("full_path field = %v, want optional string", fullPath)
+	}
+}
+
 func TestTypeDomain_Join_DropsNonCommonKeys(t *testing.T) {
 	env := makeTestEnv(nil)
 

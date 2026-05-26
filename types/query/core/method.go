@@ -33,9 +33,18 @@ func Method(t typ.Type, name string) (typ.Type, bool) {
 //  1. Get __index field from current metatable
 //  2. If __index is a table, look up the method there and recurse
 //  3. If __index is a function, use its return type as the method type
-func methodViaIndex(meta typ.Type, name string, depth int) (typ.Type, bool) {
+func methodViaIndex(meta typ.Type, name string, depth int, owners ...typ.Type) (typ.Type, bool) {
 	if stopDepth(meta, depth) {
 		return nil, false
+	}
+
+	// A sealed class family appears as a recursive metatable (mu X). Unfold it to
+	// its body so prototype/__index lookup proceeds on the class record.
+	if mu, ok := meta.(*typ.Recursive); ok {
+		if mu.Body == nil || mu.Body == mu {
+			return nil, false
+		}
+		return methodViaIndex(mu.Body, name, depth+1, append(owners, mu)...)
 	}
 
 	rec, ok := meta.(*typ.Record)
@@ -50,14 +59,32 @@ func methodViaIndex(meta typ.Type, name string, depth int) (typ.Type, bool) {
 	}
 
 	res := typ.Visit(indexField.Type, typ.Visitor[fieldResult]{
+		Recursive: func(rec *typ.Recursive) fieldResult {
+			if rec == nil || rec.Body == nil || rec.Body == rec {
+				return fieldResult{}
+			}
+			if ft, ok := fieldDepth(rec.Body, name, depth+1); ok {
+				return fieldResult{t: normalizeMethodReceiverSelf(ft, append(owners, rec, rec.Body)...), ok: true}
+			}
+			ft, ok := methodViaIndex(rec.Body, name, depth+1, append(owners, rec)...)
+			return fieldResult{t: ft, ok: ok}
+		},
+		Alias: func(a *typ.Alias) fieldResult {
+			ft, ok := methodViaIndex(a.Target, name, depth+1, owners...)
+			return fieldResult{t: ft, ok: ok}
+		},
+		Optional: func(o *typ.Optional) fieldResult {
+			ft, ok := methodViaIndex(o.Inner, name, depth+1, owners...)
+			return fieldResult{t: ft, ok: ok}
+		},
 		Record: func(r *typ.Record) fieldResult {
 			// __index is a table - look for method there
 			if ft, ok := fieldDepth(r, name, depth+1); ok {
-				return fieldResult{t: normalizePrototypeMethodSelf(ft), ok: true}
+				return fieldResult{t: normalizeMethodReceiverSelf(ft, append(owners, r)...), ok: true}
 			}
 			// Continue walking the chain
 			if r.Metatable != nil {
-				ft, ok := methodViaIndex(r.Metatable, name, depth+1)
+				ft, ok := methodViaIndex(r.Metatable, name, depth+1, append(owners, r)...)
 				return fieldResult{t: ft, ok: ok}
 			}
 
@@ -81,6 +108,10 @@ func methodViaIndex(meta typ.Type, name string, depth int) (typ.Type, bool) {
 // methodDepth recursively resolves method lookup with depth limiting.
 // Handles various type constructors and propagates through wrappers.
 func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
+	return methodDepthWithOwner(t, name, depth, nil)
+}
+
+func methodDepthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
 	}
@@ -91,7 +122,7 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 	res := typ.Visit(t, typ.Visitor[fieldResult]{
 		TypeParam: func(tp *typ.TypeParam) fieldResult {
 			if tp.Constraint != nil {
-				mt, ok := methodDepth(tp.Constraint, name, depth+1)
+				mt, ok := methodDepthWithOwner(tp.Constraint, name, depth+1, owner)
 				return fieldResult{t: mt, ok: ok}
 			}
 			return fieldResult{}
@@ -104,11 +135,18 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 			return fieldResult{}
 		},
 		Record: func(r *typ.Record) fieldResult {
-			// Check if record has a field with function type (can be called as method)
-			if ft, ok := fieldDepth(r, name, depth+1); ok {
-				if unwrap.Function(ft) != nil {
-					return fieldResult{t: ft, ok: true}
+			methodOwner := owner
+			if methodOwner == nil {
+				methodOwner = r
+			}
+			// Check direct fields first. Do not use fieldDepth here: field access
+			// follows __index and open-record fallbacks, while method lookup must
+			// normalize colon-call receiver contracts at the method boundary.
+			if ft, ok := directRecordField(r, name); ok {
+				if mt, ok := methodFieldView(ft, methodOwner, r); ok {
+					return fieldResult{t: mt, ok: true}
 				}
+				return fieldResult{}
 			}
 
 			if r.Metatable == nil {
@@ -120,10 +158,12 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 			}
 			// Look for method in metatable's fields
 			if ft, ok := fieldDepth(r.Metatable, name, depth+1); ok {
-				return fieldResult{t: normalizePrototypeMethodSelf(ft), ok: true}
+				if mt, ok := methodFieldView(ft, methodOwner, r.Metatable); ok {
+					return fieldResult{t: mt, ok: true}
+				}
 			}
 			// Check __index chain for inherited methods
-			if mt, ok := methodViaIndex(r.Metatable, name, depth+1); ok {
+			if mt, ok := methodViaIndex(r.Metatable, name, depth+1, methodOwner, r.Metatable); ok {
 				return fieldResult{t: mt, ok: true}
 			}
 			if r.Open {
@@ -145,38 +185,32 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 			return fieldResult{}
 		},
 		Union: func(u *typ.Union) fieldResult {
-			var result typ.Type
-
-			hasNil := false
+			methods := make([]typ.Type, 0, len(u.Members))
 
 			for _, m := range u.Members {
 				// Skip nil in union - nil | T should allow method calls on T
 				if m.Kind() == kind.Nil {
-					hasNil = true
 					continue
 				}
 
-				mt, ok := methodDepth(m, name, depth+1)
+				mt, ok := methodDepthWithOwner(m, name, depth+1, nil)
 				if !ok {
 					return fieldResult{}
 				}
 
-				if result == nil {
-					result = mt
-				} else if !result.Equals(mt) {
-					return fieldResult{}
-				}
+				methods = append(methods, mt)
 			}
-			// If union was only nil members, no method found
-			if result == nil && hasNil {
+			// If union was empty or only nil members, no method found.
+			if len(methods) == 0 {
 				return fieldResult{}
 			}
 
+			result := typ.NewUnion(methods...)
 			return fieldResult{t: result, ok: result != nil}
 		},
 		Intersection: func(in *typ.Intersection) fieldResult {
 			for _, m := range in.Members {
-				if mt, ok := methodDepth(m, name, depth+1); ok {
+				if mt, ok := methodDepthWithOwner(m, name, depth+1, owner); ok {
 					return fieldResult{t: mt, ok: true}
 				}
 			}
@@ -184,18 +218,22 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 			return fieldResult{}
 		},
 		Optional: func(o *typ.Optional) fieldResult {
-			mt, ok := methodDepth(o.Inner, name, depth+1)
+			mt, ok := methodDepthWithOwner(o.Inner, name, depth+1, owner)
 			return fieldResult{t: mt, ok: ok}
 		},
 		Recursive: func(rec *typ.Recursive) fieldResult {
 			if rec.Body == nil || rec.Body == rec {
 				return fieldResult{}
 			}
-			mt, ok := methodDepth(rec.Body, name, depth+1)
+			methodOwner := owner
+			if methodOwner == nil {
+				methodOwner = rec
+			}
+			mt, ok := methodDepthWithOwner(rec.Body, name, depth+1, methodOwner)
 			return fieldResult{t: mt, ok: ok}
 		},
 		Alias: func(a *typ.Alias) fieldResult {
-			mt, ok := methodDepth(a.Target, name, depth+1)
+			mt, ok := methodDepthWithOwner(a.Target, name, depth+1, owner)
 			return fieldResult{t: mt, ok: ok}
 		},
 		Instantiated: func(inst *typ.Instantiated) fieldResult {
@@ -204,7 +242,7 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 				return fieldResult{}
 			}
 
-			mt, ok := methodDepth(resolved, name, depth+1)
+			mt, ok := methodDepthWithOwner(resolved, name, depth+1, owner)
 			return fieldResult{t: mt, ok: ok}
 		},
 		Ref: func(r *typ.Ref) fieldResult {
@@ -217,13 +255,49 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 	return res.t, res.ok
 }
 
-func normalizePrototypeMethodSelf(t typ.Type) typ.Type {
+func directRecordField(r *typ.Record, name string) (typ.Type, bool) {
+	if r == nil {
+		return nil, false
+	}
+	f := r.GetField(name)
+	if f == nil {
+		return nil, false
+	}
+	if f.Optional {
+		return typ.NewOptional(f.Type), true
+	}
+	return f.Type, true
+}
+
+func methodFieldView(t typ.Type, owners ...typ.Type) (typ.Type, bool) {
+	if t == nil {
+		return nil, false
+	}
+	if top, ok := specialAccessType(t); ok {
+		return top, true
+	}
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Optional:
+		inner, ok := methodFieldView(v.Inner, owners...)
+		if !ok {
+			return nil, false
+		}
+		return typ.NewOptional(inner), true
+	default:
+		if unwrap.Function(t) == nil {
+			return nil, false
+		}
+		return normalizeMethodReceiverSelf(t, owners...), true
+	}
+}
+
+func normalizeMethodReceiverSelf(t typ.Type, owners ...typ.Type) typ.Type {
 	fn := unwrap.Function(t)
 	if fn == nil || len(fn.Params) == 0 {
 		return t
 	}
 	first := fn.Params[0]
-	if first.Name != "self" && first.Name != "Self" {
+	if first.Name != "self" && first.Name != "Self" && !methodReceiverParamMatchesOwner(first.Type, owners...) {
 		return t
 	}
 	builder := typ.Func().ReserveParams(len(fn.Params))
@@ -257,6 +331,31 @@ func normalizePrototypeMethodSelf(t typ.Type) typ.Type {
 		builder = builder.WithRefinement(fn.Refinement)
 	}
 	return builder.Build()
+}
+
+func methodReceiverParamMatchesOwner(param typ.Type, owners ...typ.Type) bool {
+	param = receiverOwnerComparableType(param)
+	if param == nil {
+		return false
+	}
+	for _, owner := range owners {
+		owner = receiverOwnerComparableType(owner)
+		if owner == nil {
+			continue
+		}
+		if typ.SameNodeOrAcyclicEqual(param, owner) || typ.SameProductFamily(param, owner) {
+			return true
+		}
+	}
+	return false
+}
+
+func receiverOwnerComparableType(t typ.Type) typ.Type {
+	t = unwrap.Alias(t)
+	if opt, ok := t.(*typ.Optional); ok {
+		return receiverOwnerComparableType(opt.Inner)
+	}
+	return t
 }
 
 // HasMethod returns true if a type has a method with the given name.

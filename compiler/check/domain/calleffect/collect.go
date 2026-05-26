@@ -19,8 +19,8 @@ func CollectTableInsertMutations(
 	graph *cfg.Graph,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	bindings *bind.BindingTable,
-) map[cfg.SymbolID][]overlaymut.IndexerInfo {
-	result := make(map[cfg.SymbolID][]overlaymut.IndexerInfo)
+) map[cfg.SymbolID][]overlaymut.MapMutatorInfo {
+	result := make(map[cfg.SymbolID][]overlaymut.MapMutatorInfo)
 	if len(calls) == 0 || graph == nil {
 		return result
 	}
@@ -73,7 +73,7 @@ func CollectTableInsertMutations(
 		}
 
 		keyType = narrow.ToTruthy(keyType)
-		if keyType == nil {
+		if keyType == nil || keyType.Kind().IsPlaceholder() {
 			keyType = typ.String
 		}
 
@@ -85,9 +85,9 @@ func CollectTableInsertMutations(
 			elemType = typ.Unknown
 		}
 
-		result[baseSym] = append(result[baseSym], overlaymut.IndexerInfo{
-			KeyType: keyType,
-			ValType: typ.NewArray(elemType),
+		result[baseSym] = append(result[baseSym], overlaymut.MapMutatorInfo{
+			KeyType:   keyType,
+			ValueType: typ.NewArray(elemType),
 		})
 	}
 
@@ -140,7 +140,7 @@ func CollectTableInsertOnDirect(
 		}
 
 		if existing := result[sym]; existing != nil {
-			result[sym] = typ.JoinPreferNonSoft(existing, elemType)
+			result[sym] = overlaymut.JoinValueTypes(existing, elemType)
 		} else {
 			result[sym] = elemType
 		}

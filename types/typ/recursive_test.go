@@ -106,6 +106,18 @@ func TestRecursiveHashNoPanic(t *testing.T) {
 	_ = rec.Hash()
 }
 
+func TestRecursiveSetBodyInvalidatesCachedHash(t *testing.T) {
+	rec := NewRecursivePlaceholder("Node")
+	rec.SetBody(NewRecord().Field("value", String).Build())
+	first := rec.Hash()
+
+	rec.SetBody(NewRecord().Field("value", Number).Build())
+	second := rec.Hash()
+	if first == second {
+		t.Fatalf("SetBody should invalidate cached recursive hash")
+	}
+}
+
 // TestRecursiveString tests string representation of recursive types.
 func TestRecursiveString(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {
@@ -557,9 +569,10 @@ func TestRecursiveEqualsDifferentNames(t *testing.T) {
 	}
 }
 
-// TestUnionDedupMutualRecursion tests that union deduplicates structurally equal
-// mutual recursive types built in different orders.
-func TestUnionDedupMutualRecursion(t *testing.T) {
+// TestUnionKeepsMutualRecursiveFamiliesByIdentity tests that generic union
+// construction does not prove recursive product-family equality. Semantic
+// coalescing belongs to explicit product-family join policy.
+func TestUnionKeepsMutualRecursiveFamiliesByIdentity(t *testing.T) {
 	// Build mutual recursion: A <-> B, first order
 	recA1 := NewRecursivePlaceholder("A")
 	recB1 := NewRecursivePlaceholder("B")
@@ -572,22 +585,62 @@ func TestUnionDedupMutualRecursion(t *testing.T) {
 	recB2.SetBody(NewRecord().OptField("a", recA2).Build())
 	recA2.SetBody(NewRecord().OptField("b", recB2).Build())
 
-	// Union should deduplicate equivalent types
 	union := NewUnion(recA1, recA2, Number)
-
 	u, ok := union.(*Union)
 	if !ok {
-		// Could be simplified to just recA1 | number if deduped perfectly
-		if opt, ok := union.(*Optional); ok {
-			t.Logf("Union simplified to optional: %v", opt)
-			return
-		}
 		t.Fatalf("expected union, got %T", union)
 	}
 
-	// Should have 2 members (recA and number), not 3
-	if len(u.Members) > 2 {
-		t.Errorf("expected union to dedupe recursive types, got %d members: %v", len(u.Members), u.Members)
+	if len(u.Members) != 3 {
+		t.Errorf("expected union to preserve distinct recursive identities, got %d members: %v", len(u.Members), u.Members)
+	}
+}
+
+func TestRecursiveContentFlagsDoNotForceGraphClosure(t *testing.T) {
+	rec := NewRecursivePlaceholder("Node")
+	rec.SetBody(NewRecord().Field("value", String).Build())
+
+	if !rec.containsFlagsDirty || !rec.containsClosedDirty {
+		t.Fatal("fresh recursive body should mark both content and graph-closure flags dirty")
+	}
+	if knownContainsAny(rec) {
+		t.Fatal("record without any should not contain any")
+	}
+	if rec.containsFlagsDirty {
+		t.Fatal("content flag query should refresh content flags")
+	}
+	if !rec.containsClosedDirty {
+		t.Fatal("content flag query must not force graph-closure proof")
+	}
+	if knownContainsOpenRecursive(rec) {
+		t.Fatal("closed recursive body should not be open-recursive")
+	}
+	if rec.containsClosedDirty {
+		t.Fatal("open-recursive query should refresh graph-closure flag")
+	}
+
+	direct := NewRecursivePlaceholder("Direct")
+	direct.SetBody(NewRecord().Field("value", String).Build())
+	if ContainsAny(direct) {
+		t.Fatal("direct recursive record without any should not contain any")
+	}
+	if !direct.containsClosedDirty {
+		t.Fatal("direct content predicate must not force graph-closure proof")
+	}
+}
+
+func TestOpenRecursiveWrapperHashRefreshesForEquality(t *testing.T) {
+	rec := NewRecursivePlaceholder("Node")
+	staleWrapper := NewRecord().OptField("next", rec).Build()
+
+	rec.SetBody(NewRecord().Field("value", Number).OptField("next", rec).Build())
+	freshWrapper := NewRecord().OptField("next", rec).Build()
+
+	if !TypeEquals(staleWrapper, freshWrapper) {
+		t.Fatal("wrapper built before recursive SetBody should remain structurally equal to a fresh wrapper")
+	}
+	if EqualityHash(staleWrapper) != EqualityHash(freshWrapper) {
+		t.Fatalf("equality hash should refresh open recursive wrapper: %d vs %d", EqualityHash(staleWrapper), EqualityHash(freshWrapper))
 	}
 }
 
@@ -621,6 +674,30 @@ func TestRecursiveMutualHashConsistency(t *testing.T) {
 		if hashesB[i] != hashesB[0] {
 			t.Errorf("hash B inconsistent at iteration %d: %d vs %d", i, hashesB[i], hashesB[0])
 		}
+	}
+}
+
+func TestRecursiveHashDependencyInvalidatesOnMutualBodyChange(t *testing.T) {
+	recA := NewRecursivePlaceholder("A")
+	recB := NewRecursivePlaceholder("B")
+	recB.SetBody(NewRecord().Field("a", recA).Build())
+	recA.SetBody(NewRecord().Field("b", recB).Build())
+
+	initial := recA.Hash()
+	if got := recA.Hash(); got != initial {
+		t.Fatalf("cached mutual hash changed without mutation: %d vs %d", got, initial)
+	}
+
+	recB.SetBody(NewRecord().
+		Field("a", recA).
+		Field("tag", String).
+		Build())
+	updated := recA.Hash()
+	if updated == initial {
+		t.Fatalf("dependent recursive hash was not invalidated after body mutation")
+	}
+	if got := recA.Hash(); got != updated {
+		t.Fatalf("updated mutual hash did not stabilize: %d vs %d", got, updated)
 	}
 }
 
@@ -723,5 +800,39 @@ func TestRecursiveHashIntersection(t *testing.T) {
 
 	if !TypeEquals(rec, rec) {
 		t.Error("recursive intersection should equal itself")
+	}
+}
+
+func TestRecursiveContainsGraphClosedHandlesDeepAcyclicProducts(t *testing.T) {
+	var body Type = String
+	for i := 0; i < 80; i++ {
+		body = NewArray(body)
+	}
+
+	if !recursiveContainsGraphClosed(body, nil, 0) {
+		t.Fatal("deep acyclic products should be recognized as closed without a depth cap")
+	}
+}
+
+func TestRecursiveHashDepsHandlesDeepAcyclicProducts(t *testing.T) {
+	rec := NewRecursive("Deep", func(self Type) Type {
+		var body Type = self
+		for i := 0; i < 80; i++ {
+			body = NewArray(body)
+		}
+		return body
+	})
+
+	deps, ok := recursiveHashDeps(rec)
+	if !ok {
+		t.Fatal("deep recursive hash dependencies should be collected without a depth cap")
+	}
+	if len(deps) != 1 || deps[0].rec != rec {
+		t.Fatalf("deps = %#v, want only the recursive type itself", deps)
+	}
+	first := rec.Hash()
+	second := rec.Hash()
+	if first != second {
+		t.Fatalf("recursive hash not stable after dependency caching: %d vs %d", first, second)
 	}
 }

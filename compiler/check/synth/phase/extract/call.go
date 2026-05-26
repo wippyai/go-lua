@@ -1,13 +1,17 @@
 package extract
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	compcfg "github.com/wippyai/go-lua/compiler/cfg"
+	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
@@ -15,11 +19,12 @@ import (
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/query/core"
-	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/subst"
@@ -81,28 +86,28 @@ func (q CallQuery) UnaryOp(ctx *db.QueryContext, op string, operand typ.Type) ty
 
 func (q CallQuery) IsSubtype(ctx *db.QueryContext, sub, super typ.Type) bool {
 	if q.s == nil || q.s.deps.Types == nil {
-		return subtype.IsSubtype(sub, super)
+		return false
 	}
 	return q.s.deps.Types.IsSubtype(ctx, sub, super)
 }
 
 func (q CallQuery) ExpandInstantiated(ctx *db.QueryContext, t typ.Type) typ.Type {
 	if q.s == nil || q.s.deps.Types == nil {
-		return subst.ExpandInstantiated(t)
+		return t
 	}
 	return q.s.deps.Types.ExpandInstantiated(ctx, t)
 }
 
 func (q CallQuery) Widen(ctx *db.QueryContext, t typ.Type) typ.Type {
 	if q.s == nil || q.s.deps.Types == nil {
-		return subtype.Widen(t)
+		return t
 	}
 	return q.s.deps.Types.Widen(ctx, t)
 }
 
 func (q CallQuery) WidenForInference(ctx *db.QueryContext, t typ.Type) typ.Type {
 	if q.s == nil || q.s.deps.Types == nil {
-		return subtype.WidenForInference(t)
+		return t
 	}
 	return q.s.deps.Types.WidenForInference(ctx, t)
 }
@@ -146,7 +151,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	env := intercept.CallEnv{
 		Scope:      sc,
 		Recurse:    intercept.ExprSynth(recurse),
-		TypeLookup: s.declaredTypeLookup(sc),
+		TypeLookup: s.declaredProjectionLookup(sc),
 		StableType: func(expr ast.Expr, current typ.Type) typ.Type {
 			return s.stablePrototypeType(expr, p, sc, current, recurse)
 		},
@@ -157,6 +162,11 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 		return result.Types
 	}
 
+	ownerExpr := environmentOwnerExpr(ex)
+	var ownerType typ.Type
+	if ownerExpr != nil {
+		ownerType = recurse(ownerExpr)
+	}
 	calleeType := recurse(ex.Func)
 	if specialized := s.specializedLocalFunctionCalleeType(ex, p, sc, calleeType, captureTypes); specialized != nil {
 		calleeType = specialized
@@ -191,7 +201,8 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	result := pipeline.Run()
 
 	returns := unwrapCallResult(result)
-	returns = s.applyPostCallTransforms(calleeType, args, returns)
+	returns = s.applyPostCallTransforms(calleeType, args, returns, nil, false, false)
+	returns = s.applyEnvironmentReturnProjection(calleeType, ex, ownerExpr, ownerType, args, p, sc, returns)
 
 	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
 	return intercept.ApplyOverride(returns, specOverride)
@@ -237,7 +248,7 @@ func (s *Synthesizer) specializedLocalFunctionCalleeType(
 	for _, sym := range candidates {
 		fn := callsite.FunctionLiteralForGraphSymbol(evidence, sym)
 		if fn != nil && !s.hasDominatingDirectFunctionRebind(sym, fn, p) {
-			factType := s.functionFactType(sym)
+			factType := s.functionFactValueType(sym)
 			hasCallPointCaptureMutation := hasNonGlobalFunctionCaptures(bindings, fn) && s.hasDominatingCapturedMutation(fn, p)
 			if factType != nil && !hasCallPointCaptureMutation {
 				return factType
@@ -254,7 +265,7 @@ func (s *Synthesizer) specializedLocalFunctionCalleeType(
 			}
 		}
 		if typ.IsUnknownOrNil(current) {
-			if t := s.functionFactType(sym); t != nil {
+			if t := s.functionFactValueType(sym); t != nil {
 				return t
 			}
 		}
@@ -299,7 +310,7 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 	env := intercept.CallEnv{
 		Scope:      sc,
 		Recurse:    intercept.ExprSynth(recurse),
-		TypeLookup: s.declaredTypeLookup(sc),
+		TypeLookup: s.declaredProjectionLookup(sc),
 		StableType: func(expr ast.Expr, current typ.Type) typ.Type {
 			return s.stablePrototypeType(expr, p, sc, current, recurse)
 		},
@@ -342,7 +353,8 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 
 	result := pipeline.Run()
 	returns := unwrapCallResult(result)
-	returns = s.applyPostCallTransforms(calleeType, args, returns)
+	returns = s.applyPostCallTransforms(calleeType, args, returns, recvType, true, forceReceiver)
+	returns = s.applyEnvironmentReturnProjection(calleeType, ex, ex.Receiver, recvType, args, p, sc, returns)
 
 	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
 	return intercept.ApplyOverride(returns, specOverride)
@@ -353,7 +365,7 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 	env := intercept.CallEnv{
 		Scope:      sc,
 		Recurse:    intercept.ExprSynth(recurse),
-		TypeLookup: s.declaredTypeLookup(sc),
+		TypeLookup: s.declaredProjectionLookup(sc),
 		StableType: func(expr ast.Expr, current typ.Type) typ.Type {
 			return s.stablePrototypeType(expr, p, sc, current, recurse)
 		},
@@ -389,7 +401,8 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 
 	result := pipeline.Run()
 	returns := unwrapCallResult(result)
-	returns = s.applyPostCallTransforms(calleeType, args, returns)
+	returns = s.applyPostCallTransforms(calleeType, args, returns, recvType, true, forceReceiver)
+	returns = s.applyEnvironmentReturnProjection(calleeType, ex, ex.Receiver, recvType, args, p, sc, returns)
 
 	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
 	return intercept.ApplyOverride(returns, specOverride)
@@ -397,7 +410,7 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 
 // declaredTypeLookup returns a function that resolves identifier names to their
 // declared function types. Used by intercepts for effect-based dispatch.
-func (s *Synthesizer) declaredTypeLookup(sc *scope.State) func(string) typ.Type {
+func (s *Synthesizer) declaredProjectionLookup(sc *scope.State) func(string) typ.Type {
 	return func(name string) typ.Type {
 		// Check global types first (require, select, type, etc.)
 		if s.deps.CheckCtx != nil {
@@ -422,6 +435,10 @@ func (s *Synthesizer) declaredTypeLookup(sc *scope.State) func(string) typ.Type 
 }
 
 func (s *Synthesizer) stablePrototypeType(expr ast.Expr, p cfg.Point, sc *scope.State, current typ.Type, recurse ExprSynth) typ.Type {
+	return s.stablePrototypeTypeSeen(expr, p, sc, current, recurse, nil)
+}
+
+func (s *Synthesizer) stablePrototypeTypeSeen(expr ast.Expr, p cfg.Point, sc *scope.State, current typ.Type, recurse ExprSynth, seen map[compcfg.SymbolID]bool) typ.Type {
 	if s == nil || expr == nil || s.deps.CheckCtx == nil {
 		return current
 	}
@@ -441,11 +458,22 @@ func (s *Synthesizer) stablePrototypeType(expr ast.Expr, p cfg.Point, sc *scope.
 		return current
 	}
 	sym, ok := bindings.SymbolOf(ident)
+	if (!ok || sym == 0) && s.deps.ModuleBindings != nil && s.deps.ModuleBindings != bindings {
+		sym, ok = s.deps.ModuleBindings.SymbolOf(ident)
+	}
 	if !ok || sym == 0 {
 		return current
 	}
+	if seen == nil {
+		seen = make(map[compcfg.SymbolID]bool)
+	}
+	if seen[sym] {
+		return current
+	}
+	seen[sym] = true
+	defer delete(seen, sym)
 
-	fields := s.stablePrototypeFields(graph, sym, sc, recurse)
+	fields := s.stablePrototypeFields(s.stablePrototypeGraphs(graph), sym, sc, recurse, seen)
 	if len(fields) == 0 {
 		return current
 	}
@@ -457,7 +485,7 @@ func (s *Synthesizer) stablePrototypeType(expr ast.Expr, p cfg.Point, sc *scope.
 	builder := typ.NewRecord()
 	if base != nil {
 		for _, field := range base.Fields {
-			fields[field.Name] = typ.JoinPreferNonSoft(field.Type, fields[field.Name])
+			fields[field.Name] = value.MergeForConvergence(fields[field.Name], field.Type)
 		}
 		if base.Metatable != nil {
 			builder.Metatable(base.Metatable)
@@ -483,12 +511,32 @@ func (s *Synthesizer) stablePrototypeType(expr ast.Expr, p cfg.Point, sc *scope.
 	return builder.Build()
 }
 
-func (s *Synthesizer) stablePrototypeFields(graph *compcfg.Graph, sym compcfg.SymbolID, sc *scope.State, recurse ExprSynth) map[string]typ.Type {
-	if graph == nil || sym == 0 {
+func (s *Synthesizer) stablePrototypeGraphs(current *compcfg.Graph) []*compcfg.Graph {
+	if current == nil {
 		return nil
 	}
-	bindings := graph.Bindings()
-	evidence := s.graphEvidence(graph)
+	graphs := []*compcfg.Graph{current}
+	if s == nil || s.deps == nil || s.deps.Graphs == nil {
+		return graphs
+	}
+	type rootGraphProvider interface {
+		RootGraph() *compcfg.Graph
+	}
+	provider, ok := s.deps.Graphs.(rootGraphProvider)
+	if !ok {
+		return graphs
+	}
+	root := provider.RootGraph()
+	if root != nil && root != current {
+		graphs = append(graphs, root)
+	}
+	return graphs
+}
+
+func (s *Synthesizer) stablePrototypeFields(graphs []*compcfg.Graph, sym compcfg.SymbolID, sc *scope.State, recurse ExprSynth, seen map[compcfg.SymbolID]bool) map[string]typ.Type {
+	if len(graphs) == 0 || sym == 0 {
+		return nil
+	}
 	var fields map[string]typ.Type
 	addField := func(name string, t typ.Type) {
 		if name == "" {
@@ -501,52 +549,77 @@ func (s *Synthesizer) stablePrototypeFields(graph *compcfg.Graph, sym compcfg.Sy
 			fields = make(map[string]typ.Type)
 		}
 		if existing := fields[name]; existing != nil {
-			fields[name] = typ.JoinPreferNonSoft(existing, t)
+			fields[name] = value.MergeForConvergence(existing, t)
 		} else {
 			fields[name] = t
 		}
 	}
-	for _, assign := range evidence.Assignments {
-		p := assign.Point
-		info := assign.Info
-		if info == nil {
+	for _, graph := range graphs {
+		if graph == nil {
 			continue
 		}
-		sources := info.Sources
-		for i, target := range info.Targets {
-			fieldName := stablePrototypeFieldName(target, sym)
+		bindings := graph.Bindings()
+		evidence := s.graphEvidence(graph)
+		for _, assign := range evidence.Assignments {
+			p := assign.Point
+			info := assign.Info
+			if info == nil {
+				continue
+			}
+			sources := info.Sources
+			for i, target := range info.Targets {
+				if target.Kind == compcfg.TargetIdent && target.Symbol == sym {
+					if source := assignmentSourceAt(sources, i); source != nil {
+						s.collectStablePrototypeLiteralFields(source, p, sc, bindings, recurse, seen, addField)
+					}
+				}
+				fieldName := stablePrototypeFieldName(target, sym)
+				if fieldName == "" {
+					continue
+				}
+				addField(fieldName, s.stablePrototypeFieldType(assignmentSourceAt(sources, i), p, sc, bindings, recurse, seen))
+			}
+		}
+		for _, def := range evidence.FunctionDefinitions {
+			p := def.Nested.Point
+			info := def.FuncDef
+			fieldName := stablePrototypeFuncDefFieldName(info, sym)
 			if fieldName == "" {
 				continue
 			}
-			var source ast.Expr
-			if i < len(sources) {
-				source = sources[i]
-			}
-			addField(fieldName, s.stablePrototypeFieldType(source, p, sc, bindings, recurse))
-		}
-	}
-	for _, def := range evidence.FunctionDefinitions {
-		p := def.Nested.Point
-		info := def.FuncDef
-		fieldName := stablePrototypeFuncDefFieldName(info, sym)
-		if fieldName == "" {
-			continue
-		}
-		addField(fieldName, s.stablePrototypeFuncDefType(info, p, sc, bindings, recurse))
-	}
-	for _, field := range bindings.DirectFieldSymbols(sym) {
-		if field.Symbol == 0 {
-			continue
-		}
-		if t := s.functionFactType(field.Symbol); t != nil {
-			addField(field.Name, t)
-			continue
-		}
-		if fn, ok := bindings.FuncLitBySymbol(field.Symbol); ok {
-			addField(field.Name, s.stablePrototypeFieldType(fn, graph.Entry(), sc, bindings, recurse))
+			addField(fieldName, s.stablePrototypeFuncDefType(info, p, sc, bindings, recurse))
 		}
 	}
 	return fields
+}
+
+func assignmentSourceAt(sources []ast.Expr, i int) ast.Expr {
+	if i < 0 || i >= len(sources) {
+		return nil
+	}
+	return sources[i]
+}
+
+func (s *Synthesizer) collectStablePrototypeLiteralFields(
+	source ast.Expr,
+	p compcfg.Point,
+	sc *scope.State,
+	bindings *bind.BindingTable,
+	recurse ExprSynth,
+	seen map[compcfg.SymbolID]bool,
+	addField func(string, typ.Type),
+) {
+	table, ok := source.(*ast.TableExpr)
+	if !ok || table == nil || addField == nil {
+		return
+	}
+	for _, field := range table.Fields {
+		name, ok := staticTableFieldName(field)
+		if !ok {
+			continue
+		}
+		addField(name, s.stablePrototypeFieldType(field.Value, p, sc, bindings, recurse, seen))
+	}
 }
 
 func stablePrototypeFieldName(target compcfg.AssignTarget, sym compcfg.SymbolID) string {
@@ -588,6 +661,9 @@ func (s *Synthesizer) stablePrototypeFuncDefType(info *compcfg.FuncDefInfo, p co
 	}
 	if info.TargetKind == compcfg.FuncDefMethod && info.FuncExpr != nil && s != nil {
 		expected := typ.Func().Param("self", typ.Self).Build()
+		if projected := s.activeRecursiveFunctionType(info.FuncExpr, sc, expected); projected != nil {
+			return projected
+		}
 		if sourceType := s.SynthFunctionTypeWithExpected(info.FuncExpr, sc, expected); sourceType != nil {
 			if sourceFn := unwrap.Function(sourceType); sourceFn != nil {
 				if factFn := unwrap.Function(factType); factFn != nil && len(factFn.Returns) > 0 {
@@ -602,10 +678,10 @@ func (s *Synthesizer) stablePrototypeFuncDefType(info *compcfg.FuncDefInfo, p co
 	if factType != nil {
 		return factType
 	}
-	return s.stablePrototypeFieldType(info.FuncExpr, p, sc, bindings, recurse)
+	return s.stablePrototypeFieldType(info.FuncExpr, p, sc, bindings, recurse, nil)
 }
 
-func (s *Synthesizer) stablePrototypeFieldType(source ast.Expr, p compcfg.Point, sc *scope.State, bindings *bind.BindingTable, recurse ExprSynth) typ.Type {
+func (s *Synthesizer) stablePrototypeFieldType(source ast.Expr, p compcfg.Point, sc *scope.State, bindings *bind.BindingTable, recurse ExprSynth, seen map[compcfg.SymbolID]bool) typ.Type {
 	if source == nil {
 		return nil
 	}
@@ -617,13 +693,20 @@ func (s *Synthesizer) stablePrototypeFieldType(source ast.Expr, p compcfg.Point,
 		}
 		if s != nil {
 			expected := typ.Func().Param("self", typ.Self).Build()
+			if projected := s.activeRecursiveFunctionType(fn, sc, expected); projected != nil {
+				return projected
+			}
 			if t := s.SynthFunctionTypeWithExpected(fn, sc, expected); t != nil {
 				return t
 			}
 		}
 	}
 	if recurse != nil {
-		return recurse(source)
+		current := recurse(source)
+		if _, ok := source.(*ast.IdentExpr); ok {
+			return s.stablePrototypeTypeSeen(source, p, sc, current, recurse, seen)
+		}
+		return current
 	}
 	return nil
 }
@@ -727,9 +810,6 @@ func (s *Synthesizer) resolveMethodCallee(recvType typ.Type, method string) typ.
 	if mt, ok := s.Method(recvType, method); ok {
 		return mt
 	}
-	if ft, ok := s.Field(recvType, method); ok {
-		return ft
-	}
 	return nil
 }
 
@@ -820,7 +900,7 @@ func CopyTypes(types []typ.Type) []typ.Type {
 }
 
 // applyPostCallTransforms applies effect-based return type transforms.
-func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Type, returns []typ.Type) []typ.Type {
+func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Type, returns []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool) []typ.Type {
 	if len(returns) == 0 {
 		return returns
 	}
@@ -830,9 +910,10 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 		return returns
 	}
 
+	effectArgs := ops.RuntimeArgsForEffects(s.deps.Ctx, s.GetCallQuery(), calleeType, args, receiver, isMethod, forceMethodReceiver)
 	var result []typ.Type
 	for i := range returns {
-		transformed := transform.ApplyEffectTransform(fn, args, i, returns[i])
+		transformed := transform.ApplyEffectTransform(fn, effectArgs, i, returns[i])
 		if transformed == nil || transformed == returns[i] {
 			continue
 		}
@@ -847,6 +928,313 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 	}
 
 	return returns
+}
+
+func (s *Synthesizer) applyEnvironmentReturnProjection(
+	calleeType typ.Type,
+	ex *ast.FuncCallExpr,
+	ownerExpr ast.Expr,
+	ownerType typ.Type,
+	args []typ.Type,
+	p cfg.Point,
+	sc *scope.State,
+	returns []typ.Type,
+) []typ.Type {
+	if s == nil || ex == nil || ownerExpr == nil || len(returns) == 0 {
+		return returns
+	}
+	ownerPath := s.environmentOwnerPath(p, ownerExpr, sc)
+	return functionfact.ProjectEnvironmentReturns(calleeType, returns, args, func(spec contract.EnvReturnSpec) []typ.Type {
+		return s.evaluateEnvironmentReturn(spec, ownerType, ownerPath, p)
+	})
+}
+
+func environmentOwnerExpr(ex *ast.FuncCallExpr) ast.Expr {
+	if ex == nil {
+		return nil
+	}
+	if ex.Receiver != nil {
+		return ex.Receiver
+	}
+	if attr, ok := ex.Func.(*ast.AttrGetExpr); ok {
+		return attr.Object
+	}
+	return nil
+}
+
+func (s *Synthesizer) environmentOwnerPath(p cfg.Point, owner ast.Expr, sc *scope.State) constraint.Path {
+	if s == nil || owner == nil {
+		return constraint.Path{}
+	}
+	if s.deps.Paths != nil {
+		return s.deps.Paths(p, owner, sc)
+	}
+	var graph *compcfg.Graph
+	if s.deps.CheckCtx != nil {
+		graph, _ = s.deps.CheckCtx.Graph().(*compcfg.Graph)
+	}
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
+	if bindings == nil {
+		bindings = s.deps.ModuleBindings
+	}
+	return flowpath.FromExprWithBindingsAt(owner, nil, bindings, graph, p)
+}
+
+func (s *Synthesizer) evaluateEnvironmentReturn(
+	spec contract.EnvReturnSpec,
+	ownerType typ.Type,
+	ownerPath constraint.Path,
+	p cfg.Point,
+) []typ.Type {
+	if returns := s.evaluateEnvironmentReturnSource(spec, ownerPath, p); len(returns) > 0 {
+		return returns
+	}
+	targetType := s.environmentPathType(ownerType, ownerPath, spec.Path, p)
+	if targetType == nil {
+		return nil
+	}
+
+	def := ops.CallDef{
+		Args:  functionfact.CopyReturnVector(spec.Args),
+		Query: s.GetCallQuery(),
+	}
+	callType := targetType
+	if spec.Method != "" {
+		def.IsMethod = true
+		def.Receiver = targetType
+		def.MethodName = spec.Method
+		callType = s.resolveMethodCallee(targetType, spec.Method)
+	} else {
+		def.Callee = targetType
+	}
+	result := ops.NewCallPipeline(s.deps.Ctx, def, len(def.Args)).Run()
+	returns := unwrapCallResult(result)
+	return s.applyPostCallTransforms(callType, def.Args, returns, targetType, spec.Method != "", false)
+}
+
+func (s *Synthesizer) evaluateEnvironmentReturnSource(spec contract.EnvReturnSpec, ownerPath constraint.Path, p cfg.Point) []typ.Type {
+	if s == nil || ownerPath.Symbol == 0 || spec.Method != "" || len(spec.Path) == 0 {
+		return nil
+	}
+	source, point := s.environmentPathSource(ownerPath.Symbol, spec.Path, p)
+	fn, ok := source.(*ast.FunctionExpr)
+	if !ok || fn == nil {
+		return nil
+	}
+	expected := expectedEnvironmentFunction(spec.Args)
+	fnType := s.synthFunctionTypeWithCapturePoint(fn, s.deps.ScopeAt(point), expected, p, nil)
+	if fnType == nil {
+		return nil
+	}
+	def := ops.CallDef{
+		Callee: fnType,
+		Args:   functionfact.CopyReturnVector(spec.Args),
+		Query:  s.GetCallQuery(),
+	}
+	result := ops.NewCallPipeline(s.deps.Ctx, def, len(def.Args)).Run()
+	returns := unwrapCallResult(result)
+	return s.applyPostCallTransforms(fnType, def.Args, returns, nil, false, false)
+}
+
+func expectedEnvironmentFunction(args []typ.Type) *typ.Function {
+	builder := typ.Func().ReserveParams(len(args))
+	for _, arg := range args {
+		if arg == nil {
+			arg = typ.Unknown
+		}
+		builder = builder.Param("", arg)
+	}
+	return builder.Build()
+}
+
+func (s *Synthesizer) environmentPathSource(ownerSym cfg.SymbolID, envPath []constraint.Segment, at cfg.Point) (ast.Expr, cfg.Point) {
+	graph := s.currentGraph()
+	if graph == nil || ownerSym == 0 || len(envPath) == 0 || len(s.deps.Evidence.Assignments) == 0 {
+		return nil, 0
+	}
+	dom := cfganalysis.ImmediateDominatorsFor(s.deps.Ctx, graph.CFG())
+	var best ast.Expr
+	var bestPoint cfg.Point
+	var bestLen int
+	for _, evidence := range s.deps.Evidence.Assignments {
+		if evidence.Info == nil || evidence.Point == at || !dom.StrictlyDominates(evidence.Point, at) {
+			continue
+		}
+		for i, target := range evidence.Info.Targets {
+			targetSegments, ok := assignmentTargetSegments(target, ownerSym)
+			if !ok || !segmentsPrefix(targetSegments, envPath) {
+				continue
+			}
+			source := nestedEnvironmentSource(evidence.Info.SourceAt(i), envPath[len(targetSegments):])
+			if source == nil {
+				continue
+			}
+			if best == nil || len(targetSegments) > bestLen || dom.StrictlyDominates(bestPoint, evidence.Point) {
+				best = source
+				bestPoint = evidence.Point
+				bestLen = len(targetSegments)
+			}
+		}
+	}
+	return best, bestPoint
+}
+
+func (s *Synthesizer) currentGraph() *compcfg.Graph {
+	if s == nil || s.deps.CheckCtx == nil {
+		return nil
+	}
+	graph, _ := s.deps.CheckCtx.Graph().(*compcfg.Graph)
+	return graph
+}
+
+func assignmentTargetSegments(target compcfg.AssignTarget, ownerSym cfg.SymbolID) ([]constraint.Segment, bool) {
+	if target.BaseSymbol != ownerSym {
+		return nil, false
+	}
+	switch target.Kind {
+	case compcfg.TargetField:
+		if len(target.FieldPath) == 0 {
+			return nil, false
+		}
+		segments := make([]constraint.Segment, len(target.FieldPath))
+		for i, field := range target.FieldPath {
+			if field == "" {
+				return nil, false
+			}
+			segments[i] = constraint.Segment{Kind: constraint.SegmentField, Name: field}
+		}
+		return segments, true
+	case compcfg.TargetIndex:
+		switch key := target.Key.(type) {
+		case *ast.StringExpr:
+			return []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: key.Value}}, true
+		case *ast.NumberExpr:
+			return []constraint.Segment{{Kind: constraint.SegmentIndexInt}}, true
+		}
+	}
+	return nil, false
+}
+
+func segmentsPrefix(prefix, full []constraint.Segment) bool {
+	if len(prefix) > len(full) {
+		return false
+	}
+	for i := range prefix {
+		if prefix[i] != full[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func nestedEnvironmentSource(source ast.Expr, segments []constraint.Segment) ast.Expr {
+	if len(segments) == 0 || source == nil {
+		return source
+	}
+	table, ok := source.(*ast.TableExpr)
+	if !ok {
+		return nil
+	}
+	field := tableFieldValue(table, segments[0])
+	return nestedEnvironmentSource(field, segments[1:])
+}
+
+func tableFieldValue(table *ast.TableExpr, segment constraint.Segment) ast.Expr {
+	if table == nil {
+		return nil
+	}
+	for _, field := range table.Fields {
+		if field == nil || !tableFieldKeyMatches(field.Key, segment) {
+			continue
+		}
+		return field.Value
+	}
+	return nil
+}
+
+func tableFieldKeyMatches(key ast.Expr, segment constraint.Segment) bool {
+	switch segment.Kind {
+	case constraint.SegmentField, constraint.SegmentIndexString:
+		switch k := key.(type) {
+		case *ast.StringExpr:
+			return k.Value == segment.Name
+		case *ast.IdentExpr:
+			return k.Value == segment.Name
+		}
+	case constraint.SegmentIndexInt:
+		if k, ok := key.(*ast.NumberExpr); ok {
+			return k.Value == fmt.Sprint(segment.Index)
+		}
+	}
+	return false
+}
+
+func (s *Synthesizer) environmentPathType(ownerType typ.Type, ownerPath constraint.Path, segments []constraint.Segment, p cfg.Point) typ.Type {
+	if s == nil {
+		return nil
+	}
+	path := appendEnvironmentSegments(ownerPath, segments)
+	if s.deps.Flow != nil && !path.IsEmpty() {
+		if narrowed := s.deps.Flow.NarrowedTypeAt(p, path); narrowed != nil {
+			return narrowed
+		}
+	}
+	t := ownerType
+	for _, segment := range segments {
+		t = s.environmentSegmentType(t, segment)
+		if t == nil {
+			return nil
+		}
+	}
+	return t
+}
+
+func appendEnvironmentSegments(path constraint.Path, segments []constraint.Segment) constraint.Path {
+	if path.IsEmpty() || len(segments) == 0 {
+		return path
+	}
+	out := path
+	for _, segment := range segments {
+		out = out.Append(segment)
+	}
+	return out
+}
+
+func (s *Synthesizer) environmentSegmentType(base typ.Type, segment constraint.Segment) typ.Type {
+	if base == nil {
+		return nil
+	}
+	switch segment.Kind {
+	case constraint.SegmentField:
+		if t, ok := s.Field(base, segment.Name); ok {
+			return t
+		}
+		return s.indexType(base, typ.LiteralString(segment.Name))
+	case constraint.SegmentIndexString:
+		if t := s.indexType(base, typ.LiteralString(segment.Name)); t != nil {
+			return t
+		}
+		if t, ok := s.Field(base, segment.Name); ok {
+			return t
+		}
+	case constraint.SegmentIndexInt:
+		return s.indexType(base, typ.LiteralInt(int64(segment.Index)))
+	}
+	return nil
+}
+
+func (s *Synthesizer) indexType(base typ.Type, key typ.Type) typ.Type {
+	if s == nil || s.deps.Types == nil || key == nil {
+		return nil
+	}
+	t, ok := s.deps.Types.Index(s.deps.Ctx, base, key)
+	if !ok {
+		return nil
+	}
+	return t
 }
 
 // contextualArgReSynth creates the canonical call-site re-synthesizer.
@@ -935,21 +1323,17 @@ func (s *Synthesizer) withEnvOverlay(overlay map[string]typ.Type) *Synthesizer {
 		overlaidCtx = overlaidCtx.WithGlobalOverlay(overlay)
 	}
 	overlaidDeps := &Deps{
-		Ctx:                    s.deps.Ctx,
-		Types:                  s.deps.Types,
-		Scopes:                 s.deps.Scopes,
-		Manifests:              s.deps.Manifests,
-		CheckCtx:               overlaidCtx,
-		FunctionFacts:          s.deps.FunctionFacts,
-		Graphs:                 s.deps.Graphs,
-		Flow:                   s.deps.Flow,
-		Paths:                  s.deps.Paths,
-		PreCache:               make(api.Cache),
-		NarrowCache:            make(api.Cache),
-		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,
-		FunctionFactCache:      s.deps.FunctionFactCache,
-		ModuleBindings:         s.deps.ModuleBindings,
-		ModuleAliases:          s.deps.ModuleAliases,
+		Ctx:            s.deps.Ctx,
+		Types:          s.deps.Types,
+		Scopes:         s.deps.Scopes,
+		Manifests:      s.deps.Manifests,
+		CheckCtx:       overlaidCtx,
+		FunctionFacts:  s.deps.FunctionFacts,
+		Graphs:         s.deps.Graphs,
+		Flow:           s.deps.Flow,
+		Paths:          s.deps.Paths,
+		ModuleBindings: s.deps.ModuleBindings,
+		ModuleAliases:  s.deps.ModuleAliases,
 	}
 	return NewSynthesizer(overlaidDeps, s.phase)
 }

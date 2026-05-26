@@ -207,7 +207,7 @@ func completeRecordWithFields(r *typ.Record, fields map[string]struct{}) typ.Typ
 			continue
 		}
 		if !r.Open {
-			builder.Field(name, typ.Nil)
+			builder.OptField(name, typ.Nil)
 		}
 	}
 	return builder.Build()
@@ -343,7 +343,7 @@ func projectRecordToFields(r *typ.Record, fields map[string]struct{}) typ.Type {
 				}
 				builder.OptField(name, mapValue)
 			} else if !r.Open {
-				builder.Field(name, typ.Nil)
+				builder.OptField(name, typ.Nil)
 			}
 			continue
 		}

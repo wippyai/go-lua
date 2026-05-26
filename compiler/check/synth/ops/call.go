@@ -52,6 +52,7 @@ package ops
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/kind"
@@ -74,9 +75,62 @@ type CallResult struct {
 
 // CallError describes a type error in a function call.
 type CallError struct {
-	Kind    CallErrorKind
-	Message string
-	ArgIdx  int // For argument errors (1-based)
+	Kind          CallErrorKind
+	Message       string
+	ArgIdx        int // For argument errors (1-based)
+	Subject       string
+	Expected      typ.Type
+	ExpectedLabel string
+	Got           typ.Type
+}
+
+func (e CallError) DiagnosticMessage() string {
+	if e.hasTypeDetail() {
+		expected := e.ExpectedLabel
+		if expected == "" {
+			expected = typ.FormatShort(e.Expected)
+		}
+		got := typ.FormatShort(e.Got)
+		if e.Subject != "" {
+			return fmt.Sprintf("%s: expected %s, got %s", e.Subject, expected, got)
+		}
+		return fmt.Sprintf("expected %s, got %s", expected, got)
+	}
+	return e.Message
+}
+
+func (e CallError) String() string {
+	return e.DiagnosticMessage()
+}
+
+func (e CallError) hasTypeDetail() bool {
+	return e.Expected != nil || e.ExpectedLabel != "" || e.Got != nil
+}
+
+func (e CallError) identityKey() string {
+	if e.hasTypeDetail() {
+		return fmt.Sprintf(
+			"%d|%d|%s|%s|%s|%s",
+			e.Kind,
+			e.ArgIdx,
+			e.Subject,
+			e.ExpectedLabel,
+			callErrorTypeKey(e.Expected),
+			callErrorTypeKey(e.Got),
+		)
+	}
+	return fmt.Sprintf("%d|%d|%s", e.Kind, e.ArgIdx, e.Message)
+}
+
+func callErrorTypeKey(t typ.Type) string {
+	if t == nil {
+		return "nil"
+	}
+	v := reflect.ValueOf(t)
+	if v.Kind() == reflect.Pointer && !v.IsNil() {
+		return fmt.Sprintf("%T@%x", t, v.Pointer())
+	}
+	return fmt.Sprintf("%T", t)
 }
 
 // CallErrorKind identifies the type of call error.
@@ -231,10 +285,6 @@ func resolveCallee(ctx *db.QueryContext, def CallDef) (*resolvedCallee, *CallRes
 
 		methodType, ok := def.Query.Method(ctx, receiver, def.MethodName)
 		if !ok {
-			methodType, ok = def.Query.Field(ctx, receiver, def.MethodName)
-		}
-
-		if !ok {
 			r := CallResult{
 				Type:   typ.Unknown,
 				Errors: []CallError{{Kind: ErrNotCallable, Message: formatUnionMethodError(ctx, receiver, def.MethodName, def.Query)}},
@@ -373,7 +423,7 @@ func InferCall(ctx *db.QueryContext, def CallDef) InferResult {
 		return InferResult{
 			Kind:   InferKindNotCallable,
 			Callee: callee,
-			Errors: append(errors, CallError{Kind: ErrNotCallable, Message: fmt.Sprintf("expected function, got %s", typ.FormatShort(callee))}),
+			Errors: append(errors, CallError{Kind: ErrNotCallable, ExpectedLabel: "function", Got: callee}),
 		}
 	}
 
@@ -470,8 +520,8 @@ func inferIntersection(ctx *db.QueryContext, inter *typ.Intersection, def CallDe
 			aggVariadic = expectedVariadic
 			continue
 		}
-		aggExpected = mergeExpectedArgVectors(aggExpected, expectedArgs)
-		aggVariadic = typ.JoinPreferNonSoft(aggVariadic, expectedVariadic)
+		aggExpected = mergeExpectedArgVectors(aggExpected, expectedArgs, mergeIntersectionExpectedArg)
+		aggVariadic = mergeIntersectionExpectedArg(aggVariadic, expectedVariadic)
 	}
 
 	if found {
@@ -533,8 +583,8 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 			aggVariadic = expectedVariadic
 			continue
 		}
-		aggExpected = mergeExpectedArgVectors(aggExpected, expectedArgs)
-		aggVariadic = typ.JoinPreferNonSoft(aggVariadic, expectedVariadic)
+		aggExpected = mergeExpectedArgVectors(aggExpected, expectedArgs, mergeUnionExpectedArg)
+		aggVariadic = mergeUnionExpectedArg(aggVariadic, expectedVariadic)
 	}
 
 	if found {
@@ -545,13 +595,16 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 	return result
 }
 
-func mergeExpectedArgVectors(a, b []typ.Type) []typ.Type {
+func mergeExpectedArgVectors(a, b []typ.Type, merge func(typ.Type, typ.Type) typ.Type) []typ.Type {
 	maxLen := len(a)
 	if len(b) > maxLen {
 		maxLen = len(b)
 	}
 	if maxLen == 0 {
 		return nil
+	}
+	if merge == nil {
+		merge = mergeUnionExpectedArg
 	}
 	out := make([]typ.Type, maxLen)
 	for i := 0; i < maxLen; i++ {
@@ -562,9 +615,35 @@ func mergeExpectedArgVectors(a, b []typ.Type) []typ.Type {
 		if i < len(b) {
 			bi = b[i]
 		}
-		out[i] = typ.JoinPreferNonSoft(ai, bi)
+		out[i] = merge(ai, bi)
 	}
 	return out
+}
+
+func mergeUnionExpectedArg(a, b typ.Type) typ.Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if typ.TypeEquals(a, b) {
+		return a
+	}
+	return typ.NewUnion(a, b)
+}
+
+func mergeIntersectionExpectedArg(a, b typ.Type) typ.Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if typ.TypeEquals(a, b) {
+		return a
+	}
+	return subtype.NormalizeIntersection(a, b)
 }
 
 // computeExpectedArgs computes the expected type for each argument position.
@@ -714,7 +793,12 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 			return CallResult{
 				Type:    typ.Unknown,
 				Returns: []typ.Type{typ.Unknown},
-				Errors:  append(baseErrors, CallError{Kind: ErrNotCallable, Message: fmt.Sprintf("intersection member is not callable: %s", typ.FormatShort(member))}),
+				Errors: append(baseErrors, CallError{
+					Kind:          ErrNotCallable,
+					Subject:       "intersection member",
+					ExpectedLabel: "callable",
+					Got:           member,
+				}),
 			}
 		}
 
@@ -758,7 +842,7 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 	for _, member := range u.Members {
 		fn, ok := member.(*typ.Function)
 		if !ok {
-			hardErrors = append(hardErrors, CallError{Kind: ErrNotCallable, Message: fmt.Sprintf("expected function, got %s", typ.FormatShort(member))})
+			hardErrors = append(hardErrors, CallError{Kind: ErrNotCallable, ExpectedLabel: "function", Got: member})
 			continue
 		}
 
@@ -843,6 +927,21 @@ func methodConsumesReceiverSimple(fn *typ.Function, receiver typ.Type, isMethod 
 	return hasExplicitSelfSimple(fn, receiver)
 }
 
+// RuntimeArgsForEffects returns the runtime argument vector seen by
+// parameter-indexed return/effect transforms. For method calls that consume an
+// explicit receiver, parameter 0 is the receiver and source-level arguments are
+// shifted by one.
+func RuntimeArgsForEffects(ctx *db.QueryContext, query core.TypeOps, callee typ.Type, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool) []typ.Type {
+	fn, _ := unwrapCallee(callee).(*typ.Function)
+	if !methodConsumesReceiver(ctx, query, fn, receiver, isMethod, forceMethodReceiver) {
+		return args
+	}
+	out := make([]typ.Type, 0, len(args)+1)
+	out = append(out, receiver)
+	out = append(out, args...)
+	return out
+}
+
 func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool, allowExtraArgs bool, errors []CallError) CallResult {
 	if fn == nil {
 		return singleValueCallResult(typ.Unknown, append(errors, CallError{Kind: ErrNotCallable, Message: "nil function"}))
@@ -886,8 +985,10 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 			expectedReceiver = subst.Self(expectedReceiver, receiver)
 			if !isSubtypeCheck(ctx, query, receiver, expectedReceiver) {
 				errors = append(errors, CallError{
-					Kind:    ErrTypeMismatch,
-					Message: fmt.Sprintf("method receiver: expected %s, got %s", typ.FormatShort(expectedReceiver), typ.FormatShort(receiver)),
+					Kind:     ErrTypeMismatch,
+					Subject:  "method receiver",
+					Expected: expectedReceiver,
+					Got:      receiver,
 				})
 			}
 		}
@@ -913,9 +1014,11 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 		if expectedType != nil && arg != nil {
 			if !isSubtypeCheck(ctx, query, arg, expectedType) {
 				errors = append(errors, CallError{
-					Kind:    ErrTypeMismatch,
-					Message: fmt.Sprintf("argument %d: expected %s, got %s", i+1, typ.FormatShort(expectedType), typ.FormatShort(arg)),
-					ArgIdx:  i + 1,
+					Kind:     ErrTypeMismatch,
+					Subject:  fmt.Sprintf("argument %d", i+1),
+					Expected: expectedType,
+					Got:      arg,
+					ArgIdx:   i + 1,
 				})
 			}
 		}
@@ -1029,7 +1132,7 @@ func uniqueCallErrors(errors []CallError) []CallError {
 	unique := make([]CallError, 0, len(errors))
 
 	for _, err := range errors {
-		key := fmt.Sprintf("%d|%d|%s", err.Kind, err.ArgIdx, err.Message)
+		key := err.identityKey()
 		if seen[key] {
 			continue
 		}
@@ -1165,7 +1268,7 @@ func isExplicitSelfSubtypeCandidate(t typ.Type) bool {
 func resolveSelf(returns []typ.Type, receiver typ.Type) []typ.Type {
 	result := make([]typ.Type, len(returns))
 	for i, r := range returns {
-		result[i] = subst.Self(r, receiver)
+		result[i] = subst.SelfValue(r, receiver)
 	}
 
 	return result

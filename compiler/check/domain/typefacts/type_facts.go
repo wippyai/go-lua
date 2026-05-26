@@ -7,7 +7,9 @@ package typefacts
 
 import (
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -83,14 +85,12 @@ func (f *TypeFacts) RefinedAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 	return f.solution.RefinedAt(p, sym)
 }
 
-// EffectiveTypeAt returns the resolved flow type when available, otherwise the
-// declared product-state type.
+// EffectiveTypeAt returns the best known product-state type. A flow refinement
+// wins only when it contributes real information; top-like unknown refinements
+// do not erase a known declaration/body-evidence type.
 func (f *TypeFacts) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
-	refined := f.RefinedAt(p, sym)
-	if refined.Type != nil && refined.State == flow.StateResolved {
-		return refined
-	}
-	return f.DeclaredAt(p, sym)
+	declared := f.DeclaredAt(p, sym)
+	return SelectEffective(declared, f.RefinedAt(p, sym), f.IsAnnotated(sym))
 }
 
 // IsAnnotated reports whether a symbol has an explicit source annotation.
@@ -117,4 +117,49 @@ func typedValue(t typ.Type) flow.TypedValue {
 		return flow.TypedValue{Type: t, State: flow.StateUnknown}
 	}
 	return flow.TypedValue{Type: t, State: flow.StateResolved}
+}
+
+// SelectEffective applies the canonical precedence law for combining declared
+// product-state evidence with a flow/path refinement.
+func SelectEffective(declared, refined flow.TypedValue, annotated bool) flow.TypedValue {
+	if refined.Type == nil || refined.State != flow.StateResolved {
+		return declared
+	}
+	if declared.State == flow.StateResolved && declared.Type != nil {
+		if typ.IsUnknown(refined.Type) {
+			return declared
+		}
+		if reconciled, ok := value.ReconcilePathFactWithDeclaredRead(refined.Type, declared.Type); ok && reconciled != nil {
+			return typedValue(reconciled)
+		}
+		if annotated {
+			if typ.IsRefinableAnnotation(declared.Type) {
+				if refines, changed := value.RefinesSoftContainer(refined.Type, declared.Type); refines && changed {
+					return refined
+				}
+				refinedAnnotation, changed := value.RefineStructuralAnnotation(declared.Type, refined.Type, typ.JoinPreferNonSoft)
+				if changed {
+					return typedValue(refinedAnnotation)
+				}
+				if !subtype.IsSubtype(refined.Type, declared.Type) {
+					return declared
+				}
+			}
+			if !annotationAcceptsRefinement(declared.Type, refined.Type) {
+				return declared
+			}
+		}
+	}
+	return refined
+}
+
+func annotationAcceptsRefinement(declared, refined typ.Type) bool {
+	if subtype.IsSubtype(refined, declared) {
+		return true
+	}
+	if !typ.IsRefinableAnnotation(declared) {
+		return false
+	}
+	_, comparable := typ.ComparePrecision(refined, declared)
+	return comparable
 }

@@ -41,6 +41,21 @@ func TestIndexWrite_DynamicStringKeyOverHeterogeneousFieldsHasNoSingleProjection
 	}
 }
 
+func TestIndexWriteObligation_DynamicStringKeyOverHeterogeneousFieldsUsesUniversalMeet(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("name", typ.String).
+		Field("count", typ.Integer).
+		Build()
+
+	slot, ok := IndexWriteObligation(rec, typ.String)
+	if !ok {
+		t.Fatal("expected universal write obligation for heterogeneous dynamic record key")
+	}
+	if subtype.IsSubtype(typ.String, slot) || subtype.IsSubtype(typ.Integer, slot) {
+		t.Fatalf("heterogeneous dynamic write obligation must satisfy all fields, got %v", slot)
+	}
+}
+
 func TestIndexWrite_DynamicStringKeyWithUniformFields(t *testing.T) {
 	rec := typ.NewRecord().
 		Field("first", typ.LiteralString("a")).

@@ -26,6 +26,18 @@ func TestTypeEqualsNil(t *testing.T) {
 	}
 }
 
+func TestTypeEqualsTypedNil(t *testing.T) {
+	var nilFunction *Function
+	var nilType Type = nilFunction
+
+	if !TypeEquals(nilType, nil) {
+		t.Error("typed nil should equal nil")
+	}
+	if TypeEquals(nilType, Func().Build()) {
+		t.Error("typed nil should not equal a concrete function")
+	}
+}
+
 func TestTypeEqualsDifferentKinds(t *testing.T) {
 	if TypeEquals(Number, String) {
 		t.Error("number should not equal string")
@@ -139,6 +151,20 @@ func TestTypeEqualsRecord(t *testing.T) {
 
 	if TypeEquals(r1, r3) {
 		t.Error("records with different field types should not be equal")
+	}
+}
+
+func TestTypeEqualsRecordMetatableParticipatesInIdentity(t *testing.T) {
+	metaA := NewRecord().Field("a", Func().Param("self", Self).Returns(String).Build()).Build()
+	metaB := NewRecord().Field("b", Func().Param("self", Self).Returns(Number).Build()).Build()
+	a := NewRecord().Metatable(metaA).SetOpen(true).Build()
+	b := NewRecord().Metatable(metaB).SetOpen(true).Build()
+
+	if TypeEquals(a, b) {
+		t.Fatal("records with different metatables must not be structurally equal")
+	}
+	if a.Hash() == b.Hash() {
+		t.Fatal("test setup expected distinct hashes for distinct metatables")
 	}
 }
 
@@ -438,6 +464,22 @@ func TestTypeEqualsCycleDetection(t *testing.T) {
 	// Should not hang
 	if !TypeEquals(rec, rec) {
 		t.Error("recursive type should equal itself")
+	}
+}
+
+func TestTypeEqualsOpenRecursiveWrapperUsesCoinductiveWalk(t *testing.T) {
+	left := NewRecursivePlaceholder("Node")
+	right := NewRecursivePlaceholder("Node")
+	leftWrapper := Func().Returns(left).Build()
+	rightWrapper := Func().Returns(right).Build()
+	left.SetBody(NewRecord().OptField("next", left).Build())
+	right.SetBody(NewRecord().OptField("next", right).Build())
+
+	if !knownContainsOpenRecursive(leftWrapper) || !knownContainsOpenRecursive(rightWrapper) {
+		t.Fatal("test requires wrappers constructed before recursive bodies close")
+	}
+	if !TypeEquals(leftWrapper, rightWrapper) {
+		t.Fatal("equivalent open-recursive wrappers should compare through coinductive equality")
 	}
 }
 

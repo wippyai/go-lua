@@ -16,9 +16,15 @@ import (
 // Example: In a generic function returning T.name, if T is unresolved,
 // the return type is FieldAccess{Base: T, Field: "name"}.
 type FieldAccess struct {
-	Base  Type   // Base type (usually a TypeParam)
-	Field string // Field name to access
-	hash  uint64
+	Base                  Type   // Base type (usually a TypeParam)
+	Field                 string // Field name to access
+	hash                  uint64
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
 }
 
 // NewFieldAccess creates a deferred field access.
@@ -26,7 +32,17 @@ func NewFieldAccess(base Type, field string) *FieldAccess {
 	h := internal.HashCombine(uint64(kind.FieldAccess), base.Hash())
 	h = internal.HashCombine(h, internal.FnvString(field))
 
-	return &FieldAccess{Base: base, Field: field, hash: h}
+	return &FieldAccess{
+		Base:                  base,
+		Field:                 field,
+		hash:                  h,
+		containsAny:           knownContainsAny(base),
+		containsNever:         knownContainsNever(base),
+		containsTypeParam:     knownContainsTypeParam(base),
+		containsInstantiated:  knownContainsInstantiated(base),
+		containsRecursive:     knownContainsRecursive(base),
+		containsOpenRecursive: knownContainsOpenRecursive(base),
+	}
 }
 
 func (f *FieldAccess) Kind() kind.Kind { return kind.FieldAccess }
@@ -51,9 +67,15 @@ func (f *FieldAccess) Equals(other Type) bool {
 // Example: For Array<T>[number], if T is unresolved, the result is
 // IndexAccess{Base: Array<T>, Index: number}.
 type IndexAccess struct {
-	Base  Type // Base type (usually contains a TypeParam)
-	Index Type // Index type for the access
-	hash  uint64
+	Base                  Type // Base type (usually contains a TypeParam)
+	Index                 Type // Index type for the access
+	hash                  uint64
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
 }
 
 // NewIndexAccess creates a deferred index access.
@@ -61,7 +83,17 @@ func NewIndexAccess(base, index Type) *IndexAccess {
 	h := internal.HashCombine(uint64(kind.IndexAccess), base.Hash())
 	h = internal.HashCombine(h, index.Hash())
 
-	return &IndexAccess{Base: base, Index: index, hash: h}
+	return &IndexAccess{
+		Base:                  base,
+		Index:                 index,
+		hash:                  h,
+		containsAny:           knownAny(base, index),
+		containsNever:         knownNever(base, index),
+		containsTypeParam:     knownTypeParam(base, index),
+		containsInstantiated:  knownInstantiated(base, index),
+		containsRecursive:     knownRecursive(base, index),
+		containsOpenRecursive: knownOpenRecursive(base, index),
+	}
 }
 
 func (i *IndexAccess) Kind() kind.Kind { return kind.IndexAccess }

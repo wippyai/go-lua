@@ -15,6 +15,10 @@ type factsWriteStore interface {
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
 }
 
+type functionSymbolLookup interface {
+	SymbolForFunc(fn *ast.FunctionExpr) (cfg.SymbolID, bool)
+}
+
 type interprocFactWriter struct {
 	store factsWriteStore
 }
@@ -46,7 +50,7 @@ func (w interprocFactWriter) writeLiteralSignatures(
 	if key, ok := w.store.GraphKeyFor(graph, parent); ok {
 		delta := api.LiteralSigs{}
 		for fnExpr, sig := range sigs {
-			if fnExpr != nil && sig != nil {
+			if fnExpr != nil && sig != nil && !w.isCanonicalFunction(fnExpr) {
 				delta[fnExpr] = sig
 			}
 		}
@@ -54,4 +58,13 @@ func (w interprocFactWriter) writeLiteralSignatures(
 			w.store.MergeInterprocFactsNext(key, interprocdomain.LiteralSigsDelta(delta))
 		}
 	}
+}
+
+func (w interprocFactWriter) isCanonicalFunction(fn *ast.FunctionExpr) bool {
+	lookup, ok := w.store.(functionSymbolLookup)
+	if !ok || lookup == nil || fn == nil {
+		return false
+	}
+	sym, ok := lookup.SymbolForFunc(fn)
+	return ok && sym != 0
 }

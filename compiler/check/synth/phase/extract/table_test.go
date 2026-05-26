@@ -14,7 +14,7 @@ func TestSynthTableCore_Empty(t *testing.T) {
 	recurse := func(ex ast.Expr) typ.Type { return s.TypeOf(ex, 0) }
 
 	table := &ast.TableExpr{Fields: []*ast.Field{}}
-	result := s.SynthTableCore(table, sc, recurse)
+	result := s.SynthTableCore(table, 0, sc, recurse)
 
 	rec, ok := result.(*typ.Record)
 	if !ok {
@@ -22,6 +22,9 @@ func TestSynthTableCore_Empty(t *testing.T) {
 	}
 	if len(rec.Fields) != 0 {
 		t.Fatalf("got %d fields, want 0", len(rec.Fields))
+	}
+	if rec.Open {
+		t.Fatal("empty table should synthesize as fresh finite record")
 	}
 }
 
@@ -36,7 +39,7 @@ func TestSynthTableCore_WithFields(t *testing.T) {
 			{Key: &ast.StringExpr{Value: "count"}, Value: &ast.NumberExpr{Value: "42"}},
 		},
 	}
-	result := s.SynthTableCore(table, sc, recurse)
+	result := s.SynthTableCore(table, 0, sc, recurse)
 
 	rec, ok := result.(*typ.Record)
 	if !ok {
@@ -59,7 +62,7 @@ func TestSynthTableCore_ArrayLike(t *testing.T) {
 			{Value: &ast.NumberExpr{Value: "3"}},
 		},
 	}
-	result := s.SynthTableCore(table, sc, recurse)
+	result := s.SynthTableCore(table, 0, sc, recurse)
 
 	tuple, ok := result.(*typ.Tuple)
 	if !ok {
@@ -80,7 +83,7 @@ func TestSynthTableWithExpectedAnyPreservesTuplePrecision(t *testing.T) {
 			{Value: &ast.StringExpr{Value: "first"}},
 		},
 	}
-	result := s.SynthTableWithExpected(table, sc, recurse, typ.Any)
+	result := s.SynthTableWithExpected(table, 0, sc, recurse, typ.Any)
 
 	tuple, ok := result.(*typ.Tuple)
 	if !ok {
@@ -98,7 +101,7 @@ func TestSynthTableWithExpectedEmptyMapUsesNonNilExpected(t *testing.T) {
 
 	expected := typ.NewOptional(typ.NewMap(typ.String, typ.Any))
 	table := &ast.TableExpr{}
-	result := s.SynthTableWithExpected(table, sc, recurse, expected)
+	result := s.SynthTableWithExpected(table, 0, sc, recurse, expected)
 
 	if !typ.TypeEquals(result, typ.NewMap(typ.String, typ.Any)) {
 		t.Fatalf("got %v, want non-nil expected map", result)
@@ -112,14 +115,14 @@ func TestSynthTableWithExpectedEmptyRecordRequiresFields(t *testing.T) {
 
 	expected := typ.NewRecord().Field("name", typ.String).Build()
 	table := &ast.TableExpr{}
-	result := s.SynthTableWithExpected(table, sc, recurse, expected)
+	result := s.SynthTableWithExpected(table, 0, sc, recurse, expected)
 
 	rec, ok := result.(*typ.Record)
 	if !ok {
-		t.Fatalf("got %T, want synthesized open record", result)
+		t.Fatalf("got %T, want synthesized finite record", result)
 	}
-	if !rec.Open || len(rec.Fields) != 0 {
-		t.Fatalf("got %v, want empty open record for missing required fields", result)
+	if rec.Open || len(rec.Fields) != 0 {
+		t.Fatalf("got %v, want empty finite record for missing required fields", result)
 	}
 }
 
@@ -139,7 +142,7 @@ func TestSynthTableWithExpected_Record(t *testing.T) {
 			{Key: &ast.StringExpr{Value: "count"}, Value: &ast.NumberExpr{Value: "42"}},
 		},
 	}
-	result := s.SynthTableWithExpected(table, sc, recurse, expected)
+	result := s.SynthTableWithExpected(table, 0, sc, recurse, expected)
 
 	rec, ok := result.(*typ.Record)
 	if !ok {
@@ -171,7 +174,7 @@ func TestSynthTableWithExpected_DiscriminatedUnion(t *testing.T) {
 			{Key: &ast.StringExpr{Value: "value"}, Value: &ast.StringExpr{Value: "done"}},
 		},
 	}
-	result := s.SynthTableWithExpected(table, sc, recurse, unionType)
+	result := s.SynthTableWithExpected(table, 0, sc, recurse, unionType)
 
 	rec, ok := result.(*typ.Record)
 	if !ok {
@@ -202,7 +205,7 @@ func TestSynthTableWithExpected_Function(t *testing.T) {
 			},
 		},
 	}
-	result := s.SynthTableWithExpected(table, sc, recurse, expected)
+	result := s.SynthTableWithExpected(table, 0, sc, recurse, expected)
 
 	rec, ok := result.(*typ.Record)
 	if !ok {
@@ -210,6 +213,35 @@ func TestSynthTableWithExpected_Function(t *testing.T) {
 	}
 	if rec.GetField("callback") == nil {
 		t.Fatal("missing callback field")
+	}
+}
+
+func TestSynthTableWithExpected_StringMapContextualizesNestedRecord(t *testing.T) {
+	s := newTestSynthesizer()
+	sc := scope.New()
+	recurse := func(ex ast.Expr) typ.Type { return s.TypeOf(ex, 0) }
+
+	user := typ.NewRecord().
+		Field("id", typ.String).
+		Field("roles", typ.NewArray(typ.String)).
+		Build()
+	expected := typ.NewMap(typ.String, user)
+
+	table := &ast.TableExpr{
+		Fields: []*ast.Field{{
+			Key: &ast.StringExpr{Value: "u1"},
+			Value: &ast.TableExpr{Fields: []*ast.Field{
+				{Key: &ast.IdentExpr{Value: "id"}, Value: &ast.StringExpr{Value: "u1"}},
+				{Key: &ast.IdentExpr{Value: "roles"}, Value: &ast.TableExpr{Fields: []*ast.Field{
+					{Value: &ast.StringExpr{Value: "admin"}},
+				}}},
+			}},
+		}},
+	}
+
+	result := s.SynthTableWithExpected(table, 0, sc, recurse, expected)
+	if !typ.TypeEquals(result, expected) {
+		t.Fatalf("got %v, want expected string map product %v", result, expected)
 	}
 }
 
@@ -223,7 +255,7 @@ func TestSynthTableCore_IdentKey(t *testing.T) {
 			{Key: &ast.IdentExpr{Value: "name"}, Value: &ast.StringExpr{Value: "test"}},
 		},
 	}
-	result := s.SynthTableCore(table, sc, recurse)
+	result := s.SynthTableCore(table, 0, sc, recurse)
 
 	rec, ok := result.(*typ.Record)
 	if !ok {

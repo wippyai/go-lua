@@ -9,43 +9,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-func preserveDynamicParamsProvenByRefinement(
-	left, right, merged []typ.Type,
-	refinement *constraint.FunctionRefinement,
-) []typ.Type {
-	if refinement == nil || len(merged) == 0 {
-		return merged
-	}
-	var out []typ.Type
-	for i, t := range merged {
-		if t == nil || typ.IsAny(t) {
-			continue
-		}
-		if !slotMergedDynamicWithConcrete(left, right, i, t) {
-			continue
-		}
-		if !RefinementGuaranteesParamType(refinement, i, t) {
-			continue
-		}
-		if out == nil {
-			out = make([]typ.Type, len(merged))
-			copy(out, merged)
-		}
-		out[i] = typ.Any
-	}
-	if out != nil {
-		return out
-	}
-	return merged
-}
-
-func slotMergedDynamicWithConcrete(left, right []typ.Type, idx int, merged typ.Type) bool {
-	l := paramAt(left, idx)
-	r := paramAt(right, idx)
-	return (typ.IsAny(l) && r != nil && !typ.IsAny(r) && typ.TypeEquals(r, merged)) ||
-		(typ.IsAny(r) && l != nil && !typ.IsAny(l) && typ.TypeEquals(l, merged))
-}
-
 func paramAt(params []typ.Type, idx int) typ.Type {
 	if idx < 0 || idx >= len(params) {
 		return nil

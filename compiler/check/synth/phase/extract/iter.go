@@ -97,7 +97,7 @@ func (s *Synthesizer) inferIterVarsFromCallCore(call *ast.FuncCallExpr, count in
 			}
 		}
 		if count > 1 {
-			if vt := core.ValueType(sourceType); vt != nil {
+			if vt := core.EntryValueType(sourceType); vt != nil {
 				types[1] = vt
 			} else if sourceType.Kind().IsPlaceholder() {
 				types[1] = typ.Any

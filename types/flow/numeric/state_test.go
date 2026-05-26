@@ -82,6 +82,27 @@ func TestWiden_KeepsStableBounds(t *testing.T) {
 	}
 }
 
+func TestWiden_LengthBoundsPreserveStableLowerBound(t *testing.T) {
+	prev := NewState()
+	prev.ApplyLenGeConst("messages", 1)
+	prev.ApplyLenLeConst("messages", 1)
+	next := NewState()
+	next.ApplyLenGeConst("messages", 1)
+	next.ApplyLenLeConst("messages", 2)
+
+	got := Widen(prev, next)
+	if got == nil {
+		t.Fatal("expected widened length state")
+	}
+	lower, upper, ok := got.LenBoundsFor("messages")
+	if !ok {
+		t.Fatal("expected length bounds after widening")
+	}
+	if lower != 1 || upper != unboundedInterval.Upper {
+		t.Fatalf("len bounds = [%d,%d], want [1,+inf]", lower, upper)
+	}
+}
+
 func TestState_ApplyBounds(t *testing.T) {
 	s := NewState()
 	s.ApplyGeConst("x", 0)

@@ -59,6 +59,156 @@ func LengthBoundProvesSequenceIndex(t typ.Type, index int64) bool {
 	return lengthBoundProvesSequenceIndexDepth(t, index, 0)
 }
 
+// RefineByLengthLowerBound keeps only values that can satisfy #t >= lower.
+// The refinement is intentionally a shape law, not an index-read shortcut:
+// positive length eliminates statically empty closed shapes and filters unions,
+// while preserving sequence/map shapes whose concrete runtime length is not
+// represented by the type lattice.
+func RefineByLengthLowerBound(t typ.Type, lower int64) typ.Type {
+	if t == nil || lower <= 0 {
+		return t
+	}
+	return refineByLengthLowerBoundDepth(t, lower, 0)
+}
+
+func refineByLengthLowerBoundDepth(t typ.Type, lower int64, depth int) typ.Type {
+	if t == nil || typ.DepthExceeded(depth) {
+		return t
+	}
+	if typ.IsNever(t) {
+		return t
+	}
+	t = unwrap.Alias(t)
+	if expanded := unwrap.Instantiated(t); expanded != t {
+		return refineByLengthLowerBoundDepth(expanded, lower, depth+1)
+	}
+	return typ.Visit(t, typ.Visitor[typ.Type]{
+		Optional: func(o *typ.Optional) typ.Type {
+			if o == nil {
+				return typ.Never
+			}
+			return refineByLengthLowerBoundDepth(o.Inner, lower, depth+1)
+		},
+		Union: func(u *typ.Union) typ.Type {
+			if u == nil {
+				return typ.Never
+			}
+			members := make([]typ.Type, 0, len(u.Members))
+			for _, member := range u.Members {
+				refined := refineByLengthLowerBoundDepth(member, lower, depth+1)
+				if refined == nil || typ.IsNever(refined) {
+					continue
+				}
+				members = append(members, refined)
+			}
+			if len(members) == 0 {
+				return typ.Never
+			}
+			if len(members) == 1 {
+				return members[0]
+			}
+			return typ.NewUnion(members...)
+		},
+		Intersection: func(in *typ.Intersection) typ.Type {
+			if in == nil {
+				return typ.Never
+			}
+			members := make([]typ.Type, 0, len(in.Members))
+			changed := false
+			for _, member := range in.Members {
+				refined := refineByLengthLowerBoundDepth(member, lower, depth+1)
+				if refined == nil || typ.IsNever(refined) {
+					return typ.Never
+				}
+				if !typ.TypeEquals(refined, member) {
+					changed = true
+				}
+				members = append(members, refined)
+			}
+			if !changed {
+				return t
+			}
+			return typ.NewIntersection(members...)
+		},
+		Array: func(*typ.Array) typ.Type {
+			return t
+		},
+		Tuple: func(tuple *typ.Tuple) typ.Type {
+			if tuple != nil && int64(len(tuple.Elements)) >= lower {
+				return t
+			}
+			return typ.Never
+		},
+		Map: func(m *typ.Map) typ.Type {
+			if m != nil && typeMayContainSequenceKey(m.Key, depth+1) {
+				return t
+			}
+			return typ.Never
+		},
+		Record: func(rec *typ.Record) typ.Type {
+			if recordMayHaveLengthAtLeast(rec, lower, depth+1) {
+				return t
+			}
+			return typ.Never
+		},
+		Recursive: func(r *typ.Recursive) typ.Type {
+			if r == nil || r.Body == nil || r.Body == r {
+				return t
+			}
+			refined := refineByLengthLowerBoundDepth(r.Body, lower, depth+1)
+			if refined == nil || typ.IsNever(refined) {
+				return typ.Never
+			}
+			return t
+		},
+		Literal: func(lit *typ.Literal) typ.Type {
+			if lit == nil {
+				return typ.Never
+			}
+			if lit.Base == kind.String {
+				if s, ok := lit.Value.(string); ok && int64(len(s)) >= lower {
+					return t
+				}
+				return typ.Never
+			}
+			return t
+		},
+		Default: func(t typ.Type) typ.Type {
+			if t != nil && t.Kind() == kind.String {
+				return t
+			}
+			return t
+		},
+	})
+}
+
+func recordMayHaveLengthAtLeast(rec *typ.Record, lower int64, depth int) bool {
+	if rec == nil {
+		return false
+	}
+	if lower <= 0 {
+		return true
+	}
+	if rec.Open || rec.Metatable != nil {
+		return true
+	}
+	return rec.HasMapComponent() && typeMayContainSequenceKey(rec.MapKey, depth+1)
+}
+
+func typeMayContainSequenceKey(t typ.Type, depth int) bool {
+	if t == nil || typ.DepthExceeded(depth) {
+		return true
+	}
+	t = unwrap.Alias(t)
+	if expanded := unwrap.Instantiated(t); expanded != t {
+		return typeMayContainSequenceKey(expanded, depth+1)
+	}
+	if t.Kind().IsPlaceholder() {
+		return true
+	}
+	return TypesOverlap(t, typ.Integer)
+}
+
 func lengthBoundProvesSequenceIndexDepth(t typ.Type, index int64, depth int) bool {
 	if t == nil || typ.DepthExceeded(depth) {
 		return false

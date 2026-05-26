@@ -208,6 +208,57 @@ func TestExtractParamTypes_WithAnnotation(t *testing.T) {
 	}
 }
 
+func TestMergeImplicitSelfParamWithScope_PreservesScopedAliasContract(t *testing.T) {
+	scopeSelf := typ.NewAlias("Builder", typ.NewRecord().
+		Field("build", typ.Func().Param("self", typ.Self).Returns(typ.String).Build()).
+		OptField("prefix", typ.String).
+		Build())
+	inferred := typ.NewRecord().
+		SetOpen(true).
+		Field("prefix", typ.String).
+		Build()
+
+	got := mergeImplicitSelfParamWithScope(inferred, scopeSelf)
+	alias, ok := got.(*typ.Alias)
+	if !ok || alias.Name != "Builder" {
+		t.Fatalf("self param type = %T %v, want Builder alias", got, got)
+	}
+	target, ok := alias.Target.(*typ.Record)
+	if !ok || target.GetField("build") == nil {
+		t.Fatalf("self alias target lost scoped receiver contract: %v", alias.Target)
+	}
+	prefix := target.GetField("prefix")
+	if prefix == nil || prefix.Optional {
+		t.Fatalf("self alias target should include present prefix evidence, got %v", alias.Target)
+	}
+}
+
+func TestReconcileSelfParamTypesWithBase_RepairsLateBaseSelf(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"self"}}}
+	graph := cfg.Build(fn)
+	params := graph.ParamSymbols()
+	if len(params) != 1 || params[0] == 0 {
+		t.Fatal("expected self parameter symbol")
+	}
+	selfSym := params[0]
+	scopeSelf := typ.NewAlias("Builder", typ.NewRecord().
+		Field("build", typ.Func().Param("self", typ.Self).Returns(typ.String).Build()).
+		OptField("prefix", typ.String).
+		Build())
+	paramTypes := map[cfg.SymbolID]typ.Type{
+		selfSym: typ.NewRecord().
+			SetOpen(true).
+			OptField("prefix", typ.String).
+			Build(),
+	}
+
+	got := reconcileSelfParamTypesWithBase(graph, paramTypes, scope.New().WithSelf(scopeSelf))[selfSym]
+	alias, ok := got.(*typ.Alias)
+	if !ok || alias.Name != "Builder" {
+		t.Fatalf("reconciled self param = %T %v, want Builder alias", got, got)
+	}
+}
+
 func TestResolveCallFunctionType_NilInfo(t *testing.T) {
 	result := ResolveCallFunctionType(nil, 0, nil, nil, nil, nil)
 	if result != nil {

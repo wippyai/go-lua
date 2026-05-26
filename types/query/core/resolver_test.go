@@ -3,6 +3,7 @@ package core
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -103,5 +104,23 @@ func TestResolver_FieldMissing(t *testing.T) {
 	_, ok := r.Field(rec, "y")
 	if ok {
 		t.Error("expected false for missing field")
+	}
+}
+
+func TestQueryResolver_UsesTypeOpsQueries(t *testing.T) {
+	ctx := db.NewQueryContext(db.New())
+	r := NewQueryResolver(ctx, NewEngine())
+	rec := typ.NewRecord().
+		Field("items", typ.NewArray(typ.String)).
+		Build()
+
+	ft, ok := r.Field(rec, "items")
+	if !ok || !typ.TypeEquals(ft, typ.NewArray(typ.String)) {
+		t.Fatalf("Field(items) = %v, %v; want string[] true", ft, ok)
+	}
+
+	it, ok := r.Index(ft, typ.Integer)
+	if !ok || it != typ.String {
+		t.Fatalf("Index(items, integer) = %v, %v; want string true", it, ok)
 	}
 }

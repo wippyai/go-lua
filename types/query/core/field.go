@@ -1,6 +1,7 @@
 package core
 
 import (
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -33,82 +34,124 @@ func HasField(t typ.Type, name string) bool {
 // fieldDepth recursively resolves field lookup with depth limiting.
 // The depth parameter prevents infinite recursion on recursive types.
 func fieldDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
-	if stopDepth(t, depth) {
+	return fieldLookupEnv{}.lookup(t, name, depth).materialize()
+}
+
+func (e *Engine) fieldDepth(ctx *db.QueryContext, t typ.Type, name string, depth int) (typ.Type, bool) {
+	return fieldLookupEnv{engine: e, ctx: ctx}.lookup(t, name, depth).materialize()
+}
+
+type fieldLookupResult struct {
+	t       typ.Type
+	ok      bool
+	nilable bool
+}
+
+func (r fieldLookupResult) materialize() (typ.Type, bool) {
+	if !r.ok {
 		return nil, false
 	}
+	if r.nilable {
+		return typ.NewOptional(r.t), true
+	}
+	return r.t, true
+}
+
+type fieldLookupEnv struct {
+	engine *Engine
+	ctx    *db.QueryContext
+}
+
+func (env fieldLookupEnv) lookupChild(t typ.Type, name string, depth int) fieldLookupResult {
+	if t == nil {
+		return fieldLookupResult{}
+	}
+	if env.engine != nil && env.engine.fieldQ != nil && env.ctx != nil && env.ctx.DB() != nil {
+		res := env.engine.fieldQ.Get(env.ctx, fieldKey{t: internTypeRef(env.ctx, t), name: name})
+		return fieldLookupResult{t: res.t, ok: res.ok}
+	}
+	return env.lookup(t, name, depth)
+}
+
+func (env fieldLookupEnv) depth(t typ.Type, name string, depth int) (typ.Type, bool) {
+	return env.lookup(t, name, depth).materialize()
+}
+
+func (env fieldLookupEnv) lookup(t typ.Type, name string, depth int) fieldLookupResult {
+	if stopDepth(t, depth) {
+		return fieldLookupResult{}
+	}
 	if top, ok := specialAccessType(t); ok {
-		return top, true
+		return fieldLookupResult{t: top, ok: true}
 	}
 
-	res := typ.Visit(t, typ.Visitor[fieldResult]{
-		TypeParam: func(tp *typ.TypeParam) fieldResult {
+	return typ.Visit(t, typ.Visitor[fieldLookupResult]{
+		TypeParam: func(tp *typ.TypeParam) fieldLookupResult {
 			if tp.Constraint != nil {
-				ft, ok := fieldDepth(tp.Constraint, name, depth+1)
-				return fieldResult{t: ft, ok: ok}
+				return env.lookupChild(tp.Constraint, name, depth+1)
 			}
-			return fieldResult{}
+			return fieldLookupResult{}
 		},
-		Record: func(r *typ.Record) fieldResult {
-			ft, ok := fieldInRecord(r, name)
-			return fieldResult{t: ft, ok: ok}
+		Record: func(r *typ.Record) fieldLookupResult {
+			return env.fieldInRecordLookup(r, name, depth)
 		},
-		Map: func(m *typ.Map) fieldResult {
+		Map: func(m *typ.Map) fieldLookupResult {
 			key := typ.LiteralString(name)
 			if subtype.IsSubtype(key, m.Key) {
 				if m.Value == nil {
-					return fieldResult{t: typ.Nil, ok: true}
+					return fieldLookupResult{t: typ.Nil, ok: true}
 				}
 				// Map field access behaves like index with string key (missing keys return nil).
-				return fieldResult{t: typ.NewOptional(m.Value), ok: true}
+				return fieldLookupResult{t: m.Value, ok: true, nilable: true}
 			}
-			return fieldResult{}
+			return fieldLookupResult{}
 		},
-		Interface: func(i *typ.Interface) fieldResult {
+		Interface: func(i *typ.Interface) fieldLookupResult {
 			ft, ok := fieldInInterface(i, name)
-			return fieldResult{t: ft, ok: ok}
+			return fieldLookupResult{t: ft, ok: ok}
 		},
-		Union: func(u *typ.Union) fieldResult {
-			ft, ok := fieldInUnion(u, name, depth)
-			return fieldResult{t: ft, ok: ok}
+		Union: func(u *typ.Union) fieldLookupResult {
+			return env.fieldInUnionLookup(u, name, depth)
 		},
-		Intersection: func(i *typ.Intersection) fieldResult {
-			ft, ok := fieldInIntersection(i, name, depth)
-			return fieldResult{t: ft, ok: ok}
+		Intersection: func(i *typ.Intersection) fieldLookupResult {
+			ft, ok := env.fieldInIntersection(i, name, depth)
+			return fieldLookupResult{t: ft, ok: ok}
 		},
-		Optional: func(o *typ.Optional) fieldResult {
-			ft, ok := fieldInOptional(o, name, depth)
-			return fieldResult{t: ft, ok: ok}
-		},
-		Recursive: func(rec *typ.Recursive) fieldResult {
-			if rec.Body == nil || rec.Body == rec {
-				return fieldResult{}
+		Optional: func(o *typ.Optional) fieldLookupResult {
+			if o == nil {
+				return fieldLookupResult{}
 			}
-			ft, ok := fieldDepth(rec.Body, name, depth+1)
-			return fieldResult{t: ft, ok: ok}
+			res := env.lookupChild(o.Inner, name, depth+1)
+			if res.ok {
+				res.nilable = true
+			}
+			return res
 		},
-		Alias: func(a *typ.Alias) fieldResult {
-			ft, ok := fieldDepth(a.Target, name, depth+1)
-			return fieldResult{t: ft, ok: ok}
+		Recursive: func(rec *typ.Recursive) fieldLookupResult {
+			if rec.Body == nil || rec.Body == rec {
+				return fieldLookupResult{}
+			}
+			return env.lookupChild(rec.Body, name, depth+1)
 		},
-		Instantiated: func(inst *typ.Instantiated) fieldResult {
+		Alias: func(a *typ.Alias) fieldLookupResult {
+			return env.lookupChild(a.Target, name, depth+1)
+		},
+		Instantiated: func(inst *typ.Instantiated) fieldLookupResult {
 			resolved, err := ResolveInstantiated(inst)
 			if err != nil {
-				return fieldResult{}
+				return fieldLookupResult{}
 			}
 
-			ft, ok := fieldDepth(resolved, name, depth+1)
-			return fieldResult{t: ft, ok: ok}
+			return env.lookupChild(resolved, name, depth+1)
 		},
-		Generic: func(g *typ.Generic) fieldResult {
-			ft, ok := fieldDepth(g.Body, name, depth+1)
-			return fieldResult{t: ft, ok: ok}
+		Generic: func(g *typ.Generic) fieldLookupResult {
+			return env.lookupChild(g.Body, name, depth+1)
 		},
-		Default: func(t typ.Type) fieldResult {
+		Default: func(t typ.Type) fieldLookupResult {
 			ft, ok := fieldOnSpecial(t, name)
-			return fieldResult{t: ft, ok: ok}
+			return fieldLookupResult{t: ft, ok: ok}
 		},
 	})
-	return res.t, res.ok
 }
 
 // fieldInRecord looks up a field in a record type.
@@ -129,16 +172,20 @@ func fieldInRecord(r *typ.Record, name string) (typ.Type, bool) {
 //
 // Returns (nil, false) for closed records without the field.
 func fieldInRecordDepth(r *typ.Record, name string, depth int) (typ.Type, bool) {
+	return fieldLookupEnv{}.fieldInRecordLookup(r, name, depth).materialize()
+}
+
+func (env fieldLookupEnv) fieldInRecordLookup(r *typ.Record, name string, depth int) fieldLookupResult {
 	if stopDepth(r, depth) {
-		return nil, false
+		return fieldLookupResult{}
 	}
 
 	// Direct field lookup
 	if f := r.GetField(name); f != nil {
 		if f.Optional {
-			return typ.NewOptional(f.Type), true
+			return fieldLookupResult{t: f.Type, ok: true, nilable: true}
 		}
-		return f.Type, true
+		return fieldLookupResult{t: f.Type, ok: true}
 	}
 
 	// Map component fallback: if record has map component and the literal string key
@@ -146,48 +193,45 @@ func fieldInRecordDepth(r *typ.Record, name string, depth int) (typ.Type, bool) 
 	if r.HasMapComponent() {
 		key := typ.LiteralString(name)
 		if subtype.IsSubtype(key, r.MapKey) {
-			return typ.NewOptional(r.MapValue), true
+			return fieldLookupResult{t: r.MapValue, ok: true, nilable: true}
 		}
 	}
 
 	// Check __index metamethod fallback
 	if r.Metatable == nil {
 		if r.Open {
-			return typ.Unknown, true
+			return fieldLookupResult{t: typ.Unknown, ok: true}
 		}
-		return nil, false
+		return fieldLookupResult{}
 	}
 
-	indexMeta, ok := fieldDepth(r.Metatable, "__index", depth+1)
+	indexMeta, ok := env.depth(r.Metatable, "__index", depth+1)
 	if !ok {
 		if r.Open {
-			return typ.Unknown, true
+			return fieldLookupResult{t: typ.Unknown, ok: true}
 		}
-		return nil, false
+		return fieldLookupResult{}
 	}
 
 	// __index can be a table or a function
-	res := typ.Visit(indexMeta, typ.Visitor[fieldResult]{
-		Record: func(r *typ.Record) fieldResult {
+	return typ.Visit(indexMeta, typ.Visitor[fieldLookupResult]{
+		Record: func(r *typ.Record) fieldLookupResult {
 			// __index is a table - look up field there recursively
-			ft, ok := fieldInRecordDepth(r, name, depth+1)
-			return fieldResult{t: ft, ok: ok}
+			return env.fieldInRecordLookup(r, name, depth+1)
 		},
-		Function: func(fn *typ.Function) fieldResult {
+		Function: func(fn *typ.Function) fieldLookupResult {
 			// __index is a function - returns any (we can't know what it returns)
 			if len(fn.Returns) > 0 {
-				return fieldResult{t: fn.Returns[0], ok: true}
+				return fieldLookupResult{t: fn.Returns[0], ok: true}
 			}
 
-			return fieldResult{t: typ.Unknown, ok: true}
+			return fieldLookupResult{t: typ.Unknown, ok: true}
 		},
-		Default: func(t typ.Type) fieldResult {
+		Default: func(t typ.Type) fieldLookupResult {
 			// __index could be any type with fields
-			ft, ok := fieldDepth(t, name, depth+1)
-			return fieldResult{t: ft, ok: ok}
+			return env.lookupChild(t, name, depth+1)
 		},
 	})
-	return res.t, res.ok
 }
 
 // fieldInInterface looks up a method name in an interface type.
@@ -211,34 +255,39 @@ func fieldInInterface(i *typ.Interface, name string) (typ.Type, bool) {
 // This matches Lua table semantics for partial record unions while remaining
 // sound for non-table members (where field access would be invalid).
 func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
-	var types []typ.Type
-	missingFromSome := false
+	return fieldLookupEnv{}.fieldInUnionLookup(u, name, depth).materialize()
+}
 
-	for _, m := range u.Members {
-		ft, ok := fieldDepth(m, name, depth+1)
-		if !ok {
+func (env fieldLookupEnv) fieldInUnionLookup(u *typ.Union, name string, depth int) fieldLookupResult {
+	members := typ.CoalesceProductUnionMembers(u.Members)
+	var out typ.Type
+	nilable := false
+
+	for _, m := range members {
+		res := env.lookupChild(m, name, depth+1)
+		if !res.ok {
 			if missingFieldReadsNilDepth(m, depth+1) {
-				missingFromSome = true
+				nilable = true
 				continue
 			}
-			return nil, false
+			return fieldLookupResult{}
 		}
 
-		types = append(types, ft)
-	}
-
-	if len(types) == 0 {
-		if missingFromSome {
-			return typ.Nil, true
+		if res.nilable {
+			nilable = true
 		}
-		return nil, false
+		out = typ.JoinRecordFieldSlot(name, out, res.t)
 	}
 
-	out := typ.NewUnion(types...)
-	if missingFromSome {
-		out = typ.NewOptional(out)
+	if out == nil {
+		if nilable {
+			return fieldLookupResult{t: typ.Nil, ok: true}
+		}
+		return fieldLookupResult{}
 	}
-	return out, true
+
+	out = typ.CoalesceProductUnion(out)
+	return fieldLookupResult{t: out, ok: true, nilable: nilable}
 }
 
 // fieldInIntersection resolves a field from any intersection member.
@@ -246,11 +295,15 @@ func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
 // the field. The result is the intersection of field types from all members
 // that have the field. Returns (nil, false) if no member has the field.
 func fieldInIntersection(i *typ.Intersection, name string, depth int) (typ.Type, bool) {
+	return fieldLookupEnv{}.fieldInIntersection(i, name, depth)
+}
+
+func (env fieldLookupEnv) fieldInIntersection(i *typ.Intersection, name string, depth int) (typ.Type, bool) {
 	// Field from ANY member
 	var types []typ.Type
 
 	for _, m := range i.Members {
-		if ft, ok := fieldDepth(m, name, depth+1); ok {
+		if ft, ok := env.depth(m, name, depth+1); ok {
 			types = append(types, ft)
 		}
 	}
@@ -274,7 +327,7 @@ func fieldInOptional(o *typ.Optional, name string, depth int) (typ.Type, bool) {
 		return nil, false
 	}
 
-	if ft, ok := fieldDepth(o.Inner, name, depth+1); ok {
+	if ft, ok := (fieldLookupEnv{}).depth(o.Inner, name, depth+1); ok {
 		return typ.NewOptional(ft), true
 	}
 

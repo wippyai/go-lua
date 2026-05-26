@@ -2,8 +2,8 @@ package paramevidence
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/check/domain/value"
 	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -65,16 +65,35 @@ func mergeSignatureParam(fn *ast.FunctionExpr, sig *typ.Function, evidence []typ
 	if hasSource && srcIdx < len(fn.ParList.Types) && fn.ParList.Types[srcIdx] != nil {
 		return RefineAnnotationWithEvidence(param.Type, evidence[idx]), param.Optional
 	}
+	if AnyLikeParam(param.Type) && PassiveOptionalRecordEvidence(evidence[idx]) {
+		return param.Type, param.Optional
+	}
 	return MergeUnannotatedParam(param, evidence[idx])
 }
 
-// MergeUnannotatedParam merges call/body evidence into an unannotated parameter.
+// MergeUnannotatedParam merges public call-boundary evidence into an
+// unannotated parameter. Literal values widen to their base domains because the
+// resulting signature is a caller contract, not a body interpreter state.
+func MergeUnannotatedParam(param typ.Param, evidence typ.Type) (typ.Type, bool) {
+	return mergeUnannotatedParam(param, evidence, Join, false)
+}
+
+// MergeBodyUnannotatedParam merges body-effective evidence into an unannotated
+// parameter. Structural literals are preserved so the abstract interpreter can
+// use them as discriminants while checking the function body.
+func MergeBodyUnannotatedParam(param typ.Param, evidence typ.Type) (typ.Type, bool) {
+	return mergeUnannotatedParam(param, evidence, JoinBody, true)
+}
+
 // Concrete synthesized demands dominate stale nilable seeds: nil remains a valid
 // call-boundary arity concern, but it must not poison the specialized body type
 // once all observed/demanded uses require a non-nil value.
-func MergeUnannotatedParam(param typ.Param, evidence typ.Type) (typ.Type, bool) {
+func mergeUnannotatedParam(param typ.Param, evidence typ.Type, join JoinFn, preserveEvidenceSubtype bool) (typ.Type, bool) {
 	if evidence == nil {
 		return param.Type, param.Optional
+	}
+	if join == nil {
+		join = Join
 	}
 	if concreteParamTypeDominatesNilableEvidence(param.Type, evidence) {
 		return param.Type, false
@@ -82,7 +101,19 @@ func MergeUnannotatedParam(param typ.Param, evidence typ.Type) (typ.Type, bool) 
 	paramType := evidence
 	optional := param.Optional
 	if hasConcreteParamType(param.Type) {
-		paramType = Join(param.Type, evidence)
+		if preserveEvidenceSubtype {
+			switch {
+			case subtype.IsSubtype(evidence, param.Type):
+				paramType = evidence
+				if !unwrap.IsOptionalLike(paramType) {
+					optional = false
+				}
+				return paramType, optional
+			case subtype.IsSubtype(param.Type, evidence):
+				return param.Type, false
+			}
+		}
+		paramType = join(param.Type, evidence)
 		if concreteParamTypeDominatesNilableEvidence(param.Type, paramType) {
 			return param.Type, false
 		}
@@ -110,6 +141,32 @@ func hasConcreteParamType(t typ.Type) bool {
 		!typ.IsUnknown(t) &&
 		!t.Kind().IsPlaceholder() &&
 		!unwrap.IsOptionalLike(t)
+}
+
+// PassiveOptionalRecordEvidence is field-read/default evidence that is useful
+// inside the function body but is not a hard public precondition by itself.
+func PassiveOptionalRecordEvidence(t typ.Type) bool {
+	inner := unwrap.Optional(t)
+	rec := unwrap.Record(inner)
+	if rec == nil || len(rec.Fields) == 0 || rec.HasMapComponent() {
+		return false
+	}
+	for _, field := range rec.Fields {
+		if !field.Optional {
+			return false
+		}
+	}
+	return true
+}
+
+// AnyLikeParam reports whether a parameter slot is the unannotated gradual top,
+// including the arity nilability wrapper used for Lua's optional arguments.
+func AnyLikeParam(t typ.Type) bool {
+	if typ.IsAny(t) {
+		return true
+	}
+	inner := unwrap.Optional(t)
+	return inner != t && typ.IsAny(inner)
 }
 
 // RefineAnnotationWithEvidence returns the function-body type produced when a
@@ -194,6 +251,30 @@ func WidenType(t typ.Type) typ.Type {
 		if changed {
 			return typ.NewUnion(members...)
 		}
+	case *typ.Array:
+		elem := WidenType(v.Element)
+		if elem != v.Element {
+			return typ.NewArray(elem)
+		}
+	case *typ.Tuple:
+		changed := false
+		elements := make([]typ.Type, len(v.Elements))
+		for i, elem := range v.Elements {
+			we := WidenType(elem)
+			if we != elem {
+				changed = true
+			}
+			elements[i] = we
+		}
+		if changed {
+			return typ.NewTuple(elements...)
+		}
+	case *typ.Map:
+		key := WidenType(v.Key)
+		elem := WidenType(v.Value)
+		if key != v.Key || elem != v.Value {
+			return typ.NewMap(key, elem)
+		}
 	case *typ.Record:
 		builder := typ.NewRecord()
 		changed := false
@@ -229,9 +310,33 @@ func WidenType(t typ.Type) typ.Type {
 	return t
 }
 
-// NormalizeType applies canonical widening and soft-member pruning.
+type normalizer func(typ.Type) typ.Type
+
+// NormalizeType applies public call-boundary canonicalization. Literal values
+// widen to their base types so exported function facts describe contracts
+// rather than the current finite set of call-site constants.
 func NormalizeType(t typ.Type) typ.Type {
-	return value.CollapseTableTopEvidence(typ.PruneSoftUnionMembers(WidenType(t)))
+	return normalizeType(t, WidenType, Join)
+}
+
+// NormalizeBodyType applies body-effective canonicalization. Structural
+// literals are retained because the abstract interpreter uses them as
+// discriminants for path-sensitive branch proof inside the callee body.
+func NormalizeBodyType(t typ.Type) typ.Type {
+	return normalizeType(t, WidenBodyType, JoinBody)
+}
+
+func WidenBodyType(t typ.Type) typ.Type {
+	return value.AdmitObservation(t)
+}
+
+func normalizeType(t typ.Type, widen normalizer, join JoinFn) typ.Type {
+	if widen != nil {
+		t = widen(t)
+	}
+	t = value.CollapseSequenceUnion(t, join)
+	t = value.CollapseStructuralUnionShape(t, join)
+	return value.CollapseTableTopEvidence(typ.PruneSoftUnionMembers(t))
 }
 
 // EnsureCapacity grows evidence vector to at least size.
@@ -246,10 +351,22 @@ func EnsureCapacity(evidence []typ.Type, size int) []typ.Type {
 
 // MergeAt normalizes and joins one observation into vector slot idx.
 func MergeAt(vec []typ.Type, idx int, observed typ.Type, join JoinFn) ([]typ.Type, bool) {
+	return mergeAt(vec, idx, observed, join, NormalizeType)
+}
+
+// MergeBodyAt merges one observation into body-effective parameter evidence.
+func MergeBodyAt(vec []typ.Type, idx int, observed typ.Type, join JoinFn) ([]typ.Type, bool) {
+	return mergeAt(vec, idx, observed, join, NormalizeBodyType)
+}
+
+func mergeAt(vec []typ.Type, idx int, observed typ.Type, join JoinFn, normalize normalizer) ([]typ.Type, bool) {
 	if idx < 0 {
 		return vec, false
 	}
-	observed = NormalizeType(observed)
+	if normalize == nil {
+		normalize = NormalizeType
+	}
+	observed = normalize(observed)
 	if !IsInformative(observed) {
 		return vec, false
 	}
@@ -261,6 +378,7 @@ func MergeAt(vec []typ.Type, idx int, observed typ.Type, join JoinFn) ([]typ.Typ
 	}
 	prev := vec[idx]
 	merged := joinFn(prev, observed)
+	merged = normalize(merged)
 	if typ.TypeEquals(prev, merged) {
 		return vec, false
 	}
@@ -273,10 +391,42 @@ func MergeAt(vec []typ.Type, idx int, observed typ.Type, join JoinFn) ([]typ.Typ
 // preserved as uncertainty evidence so later literal calls cannot over-specialize
 // unannotated parameters.
 func MergeCallArgAt(evidence []typ.Type, idx int, argType typ.Type, join JoinFn, unknownOnNil bool) ([]typ.Type, bool) {
+	return mergeCallArgAt(evidence, idx, argType, unknownOnNil, NormalizeType, Join, JoinCall, join)
+}
+
+// MergeBodyCallArgAt merges a call-argument observation into body-effective
+// parameter evidence. Unlike public call-boundary evidence, structural literal
+// discriminants remain available to the callee's abstract interpreter.
+func MergeBodyCallArgAt(evidence []typ.Type, idx int, argType typ.Type, join JoinFn, unknownOnNil bool) ([]typ.Type, bool) {
+	return mergeCallArgAt(evidence, idx, argType, unknownOnNil, NormalizeBodyType, JoinBody, JoinBody, JoinBody)
+}
+
+func mergeCallArgAt(
+	evidence []typ.Type,
+	idx int,
+	argType typ.Type,
+	unknownOnNil bool,
+	normalize normalizer,
+	recursiveJoin JoinFn,
+	topJoin JoinFn,
+	slotJoin JoinFn,
+) ([]typ.Type, bool) {
 	if idx < 0 {
 		return evidence, false
 	}
-	argType = NormalizeType(argType)
+	if normalize == nil {
+		normalize = NormalizeType
+	}
+	if recursiveJoin == nil {
+		recursiveJoin = Join
+	}
+	if topJoin == nil {
+		topJoin = JoinCall
+	}
+	if slotJoin == nil {
+		slotJoin = typ.JoinPreferNonSoft
+	}
+	argType = normalize(argType)
 	if argType == nil {
 		if !unknownOnNil {
 			return evidence, false
@@ -285,33 +435,9 @@ func MergeCallArgAt(evidence []typ.Type, idx int, argType typ.Type, join JoinFn,
 	}
 	evidence = EnsureCapacity(evidence, idx+1)
 
-	joinFn := join
-	if joinFn == nil {
-		joinFn = typ.JoinPreferNonSoft
-	}
-
-	prev := NormalizeType(evidence[idx])
+	prev := normalize(evidence[idx])
 	if prev == nil {
 		prev = evidence[idx]
-	}
-
-	mergeTopAware := func(a, b typ.Type) typ.Type {
-		if a == nil {
-			return b
-		}
-		if b == nil {
-			return a
-		}
-		if typ.IsAny(a) || typ.IsAny(b) {
-			return typ.Any
-		}
-		if typ.IsUnknown(a) {
-			return b
-		}
-		if typ.IsUnknown(b) {
-			return a
-		}
-		return joinFn(a, b)
 	}
 
 	topLikeArg := typ.IsAny(argType) || typ.IsUnknown(argType)
@@ -320,7 +446,29 @@ func MergeCallArgAt(evidence []typ.Type, idx int, argType typ.Type, join JoinFn,
 		return evidence, false
 	}
 
-	merged := mergeTopAware(prev, argType)
+	var merged typ.Type
+	switch {
+	case nilArg && prev != nil && !unwrap.IsNilType(prev):
+		merged = typ.NewOptional(prev)
+	case unwrap.IsNilType(prev) && !nilArg:
+		merged = typ.NewOptional(argType)
+	default:
+		merged = topJoin(prev, argType)
+	}
+	if !topLikeArg && !nilArg && !typ.IsUnknown(prev) && !typ.IsAny(prev) && !unwrap.IsNilType(prev) {
+		if seq, ok := value.JoinSequenceShape(prev, argType, recursiveJoin); ok {
+			merged = seq
+		} else if joined, ok := value.JoinRecordShape(prev, argType, recursiveJoin); ok {
+			merged = joined
+		} else if joined, ok := value.JoinMapRecordShape(prev, argType, recursiveJoin); ok {
+			merged = joined
+		} else if joined, ok := value.JoinStructuralUnionShape(prev, argType, recursiveJoin); ok {
+			merged = joined
+		} else {
+			merged = slotJoin(prev, argType)
+		}
+	}
+	merged = normalize(merged)
 	if typ.TypeEquals(evidence[idx], merged) {
 		return evidence, false
 	}

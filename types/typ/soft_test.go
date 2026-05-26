@@ -13,10 +13,12 @@ func TestIsSoftAnnotationPolicy(t *testing.T) {
 		{"unknown", Unknown, true},
 		{"optional any", NewOptional(Any), true},
 		{"array any", NewArray(Any), true},
-		{"map value any", NewMap(String, Any), true},
+		{"map any any", NewMap(Any, Any), true},
+		{"map string any", NewMap(String, Any), false},
 		{"union all soft", NewUnion(Any, Unknown), true},
 		{"union mixed", NewUnion(String, Number), false},
-		{"record map any", NewRecord().MapComponent(Integer, Any).Build(), true},
+		{"record map any any", NewRecord().MapComponent(Any, Any).Build(), true},
+		{"record map integer any", NewRecord().MapComponent(Integer, Any).Build(), false},
 		{"record", NewRecord().Field("id", String).Build(), false},
 	}
 
@@ -30,6 +32,7 @@ func TestIsSoftAnnotationPolicy(t *testing.T) {
 func TestIsSoftPlaceholderPolicy(t *testing.T) {
 	emptyRecord := NewRecord().Build()
 	emptyMapRecord := NewRecord().MapComponent(String, Any).Build()
+	topMapRecord := NewRecord().MapComponent(Any, Any).Build()
 	entryRecord := NewRecord().Field("id", String).Build()
 
 	tests := []struct {
@@ -39,7 +42,8 @@ func TestIsSoftPlaceholderPolicy(t *testing.T) {
 	}{
 		{"empty record", emptyRecord, true},
 		{"record with field", entryRecord, false},
-		{"record map any", emptyMapRecord, true},
+		{"record map string any", emptyMapRecord, false},
+		{"record map any any", topMapRecord, true},
 		{"array of soft", NewArray(Any), true},
 		{"union all soft", NewUnion(Any, emptyRecord), true},
 		{"union mixed", NewUnion(emptyRecord, entryRecord), false},
@@ -138,6 +142,8 @@ func TestIsRefinableAnnotation(t *testing.T) {
 		{"unknown", Unknown, false},
 		{"optional any", NewOptional(Any), false},
 		{"array any", NewArray(Any), true},
+		{"map string any", NewMap(String, Any), true},
+		{"map string any array", NewMap(String, NewArray(Any)), true},
 		{"open table top", NewRecord().SetOpen(true).Build(), true},
 		{"array or open table top", NewUnion(NewArray(Any), NewRecord().SetOpen(true).Build()), true},
 		{"record map any", NewRecord().MapComponent(String, Any).Build(), true},

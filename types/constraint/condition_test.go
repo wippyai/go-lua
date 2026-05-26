@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestCondition_TrueFalse(t *testing.T) {
@@ -148,21 +149,23 @@ func TestCondition_Substitute_DropUnboundPlaceholder(t *testing.T) {
 	}
 }
 
-func TestCondition_SizeCap(t *testing.T) {
+func TestCondition_PreservesLargeDisjunction(t *testing.T) {
 	path := Path{Root: "x", Symbol: 1}
+	const disjunctCount = 37
 	var disjuncts [][]Constraint
-	for i := 0; i < DefaultMaxDisjuncts+5; i++ {
-		disjuncts = append(disjuncts, NewConjunction(HasType{
-			Path: path,
-			Type: narrow.BuiltinTypeKey("type" + string(rune('a'+i%26))),
+	for i := 0; i < disjunctCount; i++ {
+		disjuncts = append(disjuncts, NewConjunction(FieldEquals{
+			Target: path,
+			Field:  "id",
+			Value:  typ.LiteralInt(int64(i)),
 		}))
 	}
 
-	a := normalizeCondition(Condition{Disjuncts: disjuncts[:DefaultMaxDisjuncts/2]})
-	b := normalizeCondition(Condition{Disjuncts: disjuncts[DefaultMaxDisjuncts/2:]})
+	a := normalizeCondition(Condition{Disjuncts: disjuncts[:18]})
+	b := normalizeCondition(Condition{Disjuncts: disjuncts[18:]})
 	result := Or(a, b)
-	if len(result.Disjuncts) > DefaultMaxDisjuncts {
-		t.Errorf("OR exceeding cap should not exceed %d disjuncts, got %d", DefaultMaxDisjuncts, len(result.Disjuncts))
+	if len(result.Disjuncts) != disjunctCount {
+		t.Errorf("OR should preserve all %d disjuncts, got %d", disjunctCount, len(result.Disjuncts))
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -49,6 +51,7 @@ func TestRegression_ErrorReturnSiblingCorrelationDirection(t *testing.T) {
 		{Name: "apply", Type: typ.Func().
 			Param("self", typ.Self).
 			Returns(typ.NewOptional(versionType), typ.NewOptional(typ.LuaError)).
+			Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).
 			Build()},
 	})
 	registryManifest := io.NewManifest("registry")

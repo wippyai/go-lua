@@ -1,6 +1,7 @@
 package subtype
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/typ"
@@ -72,6 +73,35 @@ func TestAnyBottom(t *testing.T) {
 	// any may flow to unknown (top) if unknown is treated as unconstrained
 	if !IsSubtype(typ.Any, typ.Unknown) {
 		t.Error("any should be subtype of unknown")
+	}
+}
+
+func TestOptionalTopIsTop(t *testing.T) {
+	// Optional wrapping a top type (unknown/any) is itself a top type: it
+	// accepts every value, including nil. Any value, including the dynamic
+	// any type, must be a subtype of it.
+	unknownOpt := typ.NewOptional(typ.Unknown)
+	anyOpt := typ.NewOptional(typ.Any)
+	subs := []typ.Type{
+		typ.Any,
+		typ.Unknown,
+		typ.Nil,
+		typ.Number,
+		typ.String,
+		typ.NewUnion(typ.String, typ.Number),
+	}
+	for _, sub := range subs {
+		if !IsSubtype(sub, unknownOpt) {
+			t.Errorf("%s should be subtype of unknown?", sub)
+		}
+		if !IsSubtype(sub, anyOpt) {
+			t.Errorf("%s should be subtype of any?", sub)
+		}
+	}
+	// any must also satisfy an intersection of top types such as unknown & unknown?.
+	inter := typ.NewIntersection(typ.Unknown, typ.NewOptional(typ.Unknown))
+	if !IsSubtype(typ.Any, inter) {
+		t.Errorf("any should be subtype of %s", typ.FormatShort(inter))
 	}
 }
 
@@ -166,6 +196,46 @@ func TestUnionSuper(t *testing.T) {
 	if IsSubtype(strOrNum, typ.String) {
 		t.Error("string|number should not be subtype of string")
 	}
+}
+
+func TestSubtypeCompletedFalsePairDoesNotBecomeCoinductiveAssumption(t *testing.T) {
+	sub := typ.NewRecord().Field("x", typ.String).Build()
+	badTarget := typ.NewRecord().Field("x", typ.Number).Build()
+	super := typ.NewUnion(
+		typ.NewAlias("BadA", badTarget),
+		typ.NewAlias("BadB", badTarget),
+	)
+
+	if IsSubtype(sub, super) {
+		t.Fatal("completed false subtype pair must not be reused as an active coinductive assumption")
+	}
+}
+
+func TestSubtypeRebuiltStructuralAlternativesReuseCompletedResult(t *testing.T) {
+	sub := nestedSubtypeRecord(typ.String, 4)
+	alternatives := make([]typ.Type, 0, 64)
+	for i := 0; i < 64; i++ {
+		alternatives = append(alternatives, typ.NewAlias(
+			fmt.Sprintf("Alt%d", i),
+			nestedSubtypeRecord(typ.Number, 4),
+		))
+	}
+	super := typ.NewUnion(alternatives...)
+
+	if IsSubtype(sub, super) {
+		t.Fatal("rebuilt structural alternatives with completed false results must not become subtypes")
+	}
+}
+
+func nestedSubtypeRecord(leaf typ.Type, depth int) typ.Type {
+	t := leaf
+	for i := 0; i < depth; i++ {
+		t = typ.NewRecord().
+			Field("value", t).
+			Field("next", typ.Func().Param("x", t).Returns(t).Build()).
+			Build()
+	}
+	return t
 }
 
 func TestIntersectionSub(t *testing.T) {
@@ -782,6 +852,27 @@ func TestFunctionDifferentReturnCount(t *testing.T) {
 	}
 }
 
+func TestFunctionMissingReturnCanSatisfyNilableSlot(t *testing.T) {
+	noReturn := typ.Func().Param("changes", typ.NewOptional(typ.Unknown)).Build()
+	nilableReturn := typ.Func().
+		Param("changes", typ.NewOptional(typ.Unknown)).
+		Returns(typ.NewOptional(typ.Unknown)).
+		Build()
+
+	if !IsSubtype(noReturn, nilableReturn) {
+		t.Fatal("missing Lua return should satisfy a nilable/unknown return slot")
+	}
+}
+
+func TestFunctionMissingReturnDoesNotSatisfyConcreteSlot(t *testing.T) {
+	noReturn := typ.Func().Build()
+	stringReturn := typ.Func().Returns(typ.String).Build()
+
+	if IsSubtype(noReturn, stringReturn) {
+		t.Fatal("missing Lua return must not satisfy a required concrete return slot")
+	}
+}
+
 func TestMapKeyMismatch(t *testing.T) {
 	m1 := typ.NewMap(typ.String, typ.Number)
 	m2 := typ.NewMap(typ.Number, typ.Number)
@@ -797,6 +888,15 @@ func TestMapValueMismatch(t *testing.T) {
 
 	if IsSubtype(m1, m2) {
 		t.Error("maps are invariant in value type")
+	}
+}
+
+func TestUnionSoftRuntimeAlternativeIsNotPrunedForSubtype(t *testing.T) {
+	sub := typ.NewUnion(typ.NewArray(typ.Any), typ.NewArray(typ.Number))
+	super := typ.NewArray(typ.Number)
+
+	if IsSubtype(sub, super) {
+		t.Fatal("subtype checking must preserve real soft union alternatives")
 	}
 }
 
@@ -1536,6 +1636,21 @@ func TestMapIsNotSubtypeOfEmptyRecord(t *testing.T) {
 	}
 }
 
+func TestMapSubtypeOfCompatibleMapRecord(t *testing.T) {
+	value := typ.NewRecord().Field("proc", typ.Any).Build()
+	optionalValue := typ.NewRecord().OptField("proc", typ.Any).SetOpen(true).Build()
+	sub := typ.NewMap(typ.String, value)
+	super := typ.NewRecord().
+		OptField("container", optionalValue).
+		MapComponent(typ.String, optionalValue).
+		SetOpen(true).
+		Build()
+
+	if !IsSubtype(sub, super) {
+		t.Error("map should be subtype of compatible record with map component and optional covered fields")
+	}
+}
+
 func TestEmptyRecordToOptionalOnlyRecord(t *testing.T) {
 	rec := typ.NewRecord().Build()
 	super := typ.NewRecord().
@@ -2115,6 +2230,35 @@ func TestRecordMutableFieldWidening_NestedRecord(t *testing.T) {
 
 	if !IsSubtype(sub, super) {
 		t.Error("nested record with literal should widen")
+	}
+}
+
+func TestRecordMutableFieldWidening_RecursiveMapToBroadMap(t *testing.T) {
+	broadMeta := typ.NewMap(typ.String, typ.Any)
+	flow := typ.NewRecursive("SuiteFlow", func(self typ.Type) typ.Type {
+		entry := typ.NewRecord().
+			Field("id", typ.String).
+			OptField("meta", self).
+			Field("name", typ.String).
+			Build()
+		return typ.NewMap(typ.String, typ.NewArray(entry))
+	})
+	sub := typ.NewRecord().
+		Field("id", typ.String).
+		OptField("meta", flow).
+		Field("name", typ.String).
+		Build()
+	super := typ.NewRecord().
+		Field("id", typ.String).
+		OptField("meta", broadMeta).
+		Field("name", typ.String).
+		Build()
+
+	if !IsSubtype(sub, super) {
+		t.Fatal("recursive map field should widen to explicit broad map field")
+	}
+	if IsSubtype(super, sub) {
+		t.Fatal("broad map field must not narrow to recursive map field")
 	}
 }
 

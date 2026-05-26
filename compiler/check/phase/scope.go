@@ -29,11 +29,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
+	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -141,6 +143,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 			}
 		}
 	}
+	paramTypes = reconcileSelfParamTypesWithBase(input.Graph, paramTypes, base)
 
 	typeResolutionEngine := CreateTypeResolutionEngine(
 		input.Ctx,
@@ -219,6 +222,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 		input.GlobalTypes,
 		paramTypes,
 		paramAnnotated,
+		base,
 		scopes,
 		typeExprResolver,
 		fnSignatureResolver,
@@ -323,6 +327,9 @@ func ExtractParamTypes(
 				types[slot.Symbol] = typ.Unknown
 			}
 			if slot.Name == "self" {
+				if base != nil && base.SelfType() != nil {
+					types[slot.Symbol] = mergeImplicitSelfParamWithScope(types[slot.Symbol], base.SelfType())
+				}
 				types[slot.Symbol] = widenImplicitSelfState(types[slot.Symbol])
 			}
 			continue
@@ -353,12 +360,11 @@ func ExtractParamTypes(
 			paramType = typ.Any
 		}
 
-		// Prefer scope self type over synthesized Any/Unknown for unannotated self.
-		// This allows table-field method analysis to override placeholder literal signatures.
+		// Scope self is the canonical method-body receiver contract. Synthesis
+		// and call-entry evidence may refine it, but must not replace it with a
+		// partial receiver product.
 		if slot.Name == "self" && !hasExplicitAnnotation && base != nil && base.SelfType() != nil && paramType != nil {
-			if paramType.Kind().IsPlaceholder() {
-				paramType = base.SelfType()
-			}
+			paramType = mergeImplicitSelfParamWithScope(paramType, base.SelfType())
 		}
 		if slot.Name == "self" && !hasExplicitAnnotation {
 			paramType = widenImplicitSelfState(paramType)
@@ -376,6 +382,34 @@ func ExtractParamTypes(
 	return types, annotated
 }
 
+func reconcileSelfParamTypesWithBase(graph *cfg.Graph, paramTypes map[cfg.SymbolID]typ.Type, base *scope.State) map[cfg.SymbolID]typ.Type {
+	if graph == nil || len(paramTypes) == 0 || base == nil || base.SelfType() == nil {
+		return paramTypes
+	}
+	for _, slot := range graph.ParamSlotsReadOnly() {
+		if slot.Symbol == 0 || slot.Name != "self" {
+			continue
+		}
+		if current, ok := paramTypes[slot.Symbol]; ok {
+			paramTypes[slot.Symbol] = mergeImplicitSelfParamWithScope(current, base.SelfType())
+		}
+	}
+	return paramTypes
+}
+
+func mergeImplicitSelfParamWithScope(paramType, scopeSelf typ.Type) typ.Type {
+	if scopeSelf == nil {
+		return paramType
+	}
+	if typ.IsAbsentOrUnknown(paramType) || typ.IsAny(paramType) || paramType.Kind().IsPlaceholder() {
+		return scopeSelf
+	}
+	if reconciled, ok := value.ReconcilePathFactWithDeclaredRead(paramType, scopeSelf); ok && reconciled != nil {
+		return reconciled
+	}
+	return scopeSelf
+}
+
 func mergeParamEvidenceWithSynthSignature(evidence typ.Type, synthSig *typ.Function, paramIdx int) typ.Type {
 	if synthSig == nil || paramIdx < 0 || paramIdx >= len(synthSig.Params) {
 		return evidence
@@ -387,7 +421,7 @@ func mergeParamEvidenceWithSynthSignature(evidence typ.Type, synthSig *typ.Funct
 	if evidence == nil {
 		return param.Type
 	}
-	merged, _ := paramevidence.MergeUnannotatedParam(param, evidence)
+	merged, _ := paramevidence.MergeBodyUnannotatedParam(param, evidence)
 	return merged
 }
 
@@ -454,6 +488,7 @@ func buildDeclaredTypes(
 	globalTypes map[string]typ.Type,
 	paramTypes map[cfg.SymbolID]typ.Type,
 	paramAnnotated map[cfg.SymbolID]bool,
+	base *scope.State,
 	scopes map[cfg.Point]*scope.State,
 	typeExprResolver TypeResolver,
 	fnSigResolver FunctionSignatureResolver,
@@ -467,15 +502,7 @@ func buildDeclaredTypes(
 	out := make(flow.DeclaredTypes)
 	annotated := make(map[cfg.SymbolID]bool)
 	bindings := graph.Bindings()
-	alignWithSummary := func(sym cfg.SymbolID, fn *typ.Function) *typ.Function {
-		if fn == nil || len(functionFacts) == 0 || sym == 0 {
-			return fn
-		}
-		if summary := functionfact.ReturnSummaryFromMap(functionFacts, sym); len(summary) > 0 {
-			return returnsummary.ApplyToFunctionType(fn, summary)
-		}
-		return fn
-	}
+	paramTypes = reconcileSelfParamTypesWithBase(graph, paramTypes, base)
 
 	for _, sym := range cfg.SortedSymbolIDs(paramTypes) {
 		t := paramTypes[sym]
@@ -552,13 +579,13 @@ func buildDeclaredTypes(
 				}
 
 				if fnExpr, ok := source.(*ast.FunctionExpr); ok && fnExpr != nil {
-					if siblingFn := functionfact.TypeFromMap(functionFacts, sym); siblingFn != nil {
+					if siblingFn := functionfact.SiblingTypeProjection(functionFacts, sym, api.PhaseScopeCompute); siblingFn != nil {
 						out[sym] = siblingFn
 						return
 					}
 					if fnSigResolver != nil {
 						if fnSig := fnSigResolver.ResolveFunctionSignature(fnExpr, sc); fnSig != nil {
-							out[sym] = alignWithSummary(sym, fnSig)
+							out[sym] = functionfact.SignatureWithReturnSummary(functionFacts, sym, fnSig)
 						}
 					}
 					return
@@ -591,14 +618,14 @@ func buildDeclaredTypes(
 			if _, exists := out[sym]; exists {
 				continue
 			}
-			if siblingFn := functionfact.TypeFromMap(functionFacts, sym); siblingFn != nil {
+			if siblingFn := functionfact.SiblingTypeProjection(functionFacts, sym, api.PhaseScopeCompute); siblingFn != nil {
 				out[sym] = siblingFn
 				continue
 			}
 			sc := scopes[p]
 			if fnSigResolver != nil {
 				if fnSig := fnSigResolver.ResolveFunctionSignature(info.FuncExpr, sc); fnSig != nil {
-					out[sym] = alignWithSummary(sym, fnSig)
+					out[sym] = functionfact.SignatureWithReturnSummary(functionFacts, sym, fnSig)
 				}
 			}
 		}
@@ -894,9 +921,9 @@ func ResolveCallFunctionType(
 	if info.Callee != nil {
 		if attr, ok := info.Callee.(*ast.AttrGetExpr); ok {
 			objType := exprSynth(attr.Object, p, sc)
-			name := ast.KeyName(attr.Key)
-			if objType != nil && name != "" && types != nil {
-				if ft, ok := types.Field(ctx, objType, name); ok {
+			seg, staticField := flowpath.StaticAttrKeySegment(attr.Key)
+			if objType != nil && staticField && seg.Kind == constraint.SegmentField && types != nil {
+				if ft, ok := types.Field(ctx, objType, seg.Name); ok {
 					return unwrap.Function(ft)
 				}
 			}

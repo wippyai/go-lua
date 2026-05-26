@@ -610,6 +610,9 @@ func elementTypeDepth(t typ.Type, depth int) typ.Type {
 			}
 			return typ.NewUnion(types...)
 		},
+		Recursive: func(r *typ.Recursive) typ.Type {
+			return elementTypeDepth(r.Body, depth+1)
+		},
 		Default: func(t typ.Type) typ.Type {
 			return nil
 		},
@@ -626,6 +629,18 @@ func elementTypeDepth(t typ.Type, depth int) typ.Type {
 // Returns nil for non-container types.
 func KeyType(t typ.Type) typ.Type {
 	return keyTypeDepth(t, 0)
+}
+
+// EntryKeyType returns the key type that can be produced by present table
+// entries.
+//
+// This is intentionally stricter than KeyType. KeyType answers which keys are
+// legal to ask a table-like value about; EntryKeyType answers which keys can be
+// proven present by an entry witness such as pairs(t) or a truthy t[k] guard.
+// A closed empty record therefore has no entry key type even though reading an
+// arbitrary key is a legal nil-producing table read.
+func EntryKeyType(t typ.Type) typ.Type {
+	return entryKeyTypeDepth(t, 0)
 }
 
 // keyTypeDepth recursively extracts key types with depth limiting.
@@ -686,10 +701,123 @@ func keyTypeDepth(t typ.Type, depth int) typ.Type {
 			}
 			return typ.NewUnion(types...)
 		},
+		Recursive: func(r *typ.Recursive) typ.Type {
+			return keyTypeDepth(r.Body, depth+1)
+		},
 		Default: func(t typ.Type) typ.Type {
 			return nil
 		},
 	})
+}
+
+func entryKeyTypeDepth(t typ.Type, depth int) typ.Type {
+	if t == nil {
+		return nil
+	}
+	if typ.DepthExceeded(depth) {
+		return typ.Unknown
+	}
+
+	return typ.Visit(t, typ.Visitor[typ.Type]{
+		Map: func(m *typ.Map) typ.Type {
+			if entryValueCanBePresent(m.Value) {
+				return m.Key
+			}
+			return nil
+		},
+		Array: func(a *typ.Array) typ.Type {
+			if entryValueCanBePresent(a.Element) {
+				return typ.Integer
+			}
+			return nil
+		},
+		Tuple: func(tup *typ.Tuple) typ.Type {
+			if tup == nil || len(tup.Elements) == 0 {
+				return nil
+			}
+			keys := make([]typ.Type, 0, len(tup.Elements))
+			for i, elem := range tup.Elements {
+				if entryValueCanBePresent(elem) {
+					keys = append(keys, typ.LiteralInt(int64(i+1)))
+				}
+			}
+			return joinEntryKeyTypes(keys)
+		},
+		Record: func(r *typ.Record) typ.Type {
+			var keys []typ.Type
+			for _, f := range r.Fields {
+				if f.Name != "" && entryValueCanBePresent(f.Type) {
+					keys = append(keys, typ.LiteralString(f.Name))
+				}
+			}
+			if r.Open || r.Metatable != nil {
+				keys = append(keys, typ.String)
+			}
+			if r.HasMapComponent() && entryValueCanBePresent(r.MapValue) {
+				keys = append(keys, r.MapKey)
+			}
+			return joinEntryKeyTypes(keys)
+		},
+		Optional: func(o *typ.Optional) typ.Type {
+			return entryKeyTypeDepth(o.Inner, depth+1)
+		},
+		Alias: func(a *typ.Alias) typ.Type {
+			return entryKeyTypeDepth(a.Target, depth+1)
+		},
+		Union: func(u *typ.Union) typ.Type {
+			keys := make([]typ.Type, 0, len(u.Members))
+			for _, m := range u.Members {
+				if kt := entryKeyTypeDepth(m, depth+1); kt != nil {
+					keys = append(keys, kt)
+				}
+			}
+			return joinEntryKeyTypes(keys)
+		},
+		Intersection: func(in *typ.Intersection) typ.Type {
+			keys := make([]typ.Type, 0, len(in.Members))
+			for _, m := range in.Members {
+				if kt := entryKeyTypeDepth(m, depth+1); kt != nil {
+					keys = append(keys, kt)
+				}
+			}
+			return joinEntryKeyTypes(keys)
+		},
+		Recursive: func(r *typ.Recursive) typ.Type {
+			return entryKeyTypeDepth(r.Body, depth+1)
+		},
+		Instantiated: func(inst *typ.Instantiated) typ.Type {
+			resolved, err := ResolveInstantiated(inst)
+			if err != nil {
+				return typ.Unknown
+			}
+			return entryKeyTypeDepth(resolved, depth+1)
+		},
+		Default: func(t typ.Type) typ.Type {
+			if t.Kind().IsPlaceholder() || unwrap.IsBuiltinTableTop(t) {
+				return typ.Unknown
+			}
+			return nil
+		},
+	})
+}
+
+func entryValueCanBePresent(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	present := presentEntryValue(t)
+	return present != nil && !typ.IsNever(present) && present.Kind() != kind.Nil
+}
+
+func joinEntryKeyTypes(types []typ.Type) typ.Type {
+	switch len(types) {
+	case 0:
+		return nil
+	case 1:
+		return types[0]
+	default:
+		return typ.NewUnion(types...)
+	}
 }
 
 // ValueType returns the value type of a map-like type.
@@ -703,6 +831,16 @@ func keyTypeDepth(t typ.Type, depth int) typ.Type {
 // Returns nil for non-container types.
 func ValueType(t typ.Type) typ.Type {
 	return valueTypeDepth(t, 0)
+}
+
+// EntryValueType returns the value type yielded by table iteration.
+//
+// This is deliberately different from Index/Field read-side projection:
+// reading a missing key is nilable, but pairs-style iteration only yields
+// entries that are present in the table. Optional record fields therefore
+// contribute their non-nil slot type to iterator values.
+func EntryValueType(t typ.Type) typ.Type {
+	return entryValueTypeDepth(t, 0)
 }
 
 // valueTypeDepth recursively extracts value types with depth limiting.
@@ -758,10 +896,94 @@ func valueTypeDepth(t typ.Type, depth int) typ.Type {
 			}
 			return typ.NewUnion(types...)
 		},
+		Recursive: func(r *typ.Recursive) typ.Type {
+			return valueTypeDepth(r.Body, depth+1)
+		},
 		Default: func(t typ.Type) typ.Type {
 			return nil
 		},
 	})
+}
+
+func entryValueTypeDepth(t typ.Type, depth int) typ.Type {
+	if stopDepth(t, depth) {
+		return nil
+	}
+
+	return typ.Visit(t, typ.Visitor[typ.Type]{
+		Map: func(m *typ.Map) typ.Type {
+			return presentEntryValue(m.Value)
+		},
+		Array: func(a *typ.Array) typ.Type {
+			return presentEntryValue(a.Element)
+		},
+		Tuple: func(tup *typ.Tuple) typ.Type {
+			if len(tup.Elements) == 0 {
+				return nil
+			}
+			types := make([]typ.Type, 0, len(tup.Elements))
+			for _, elem := range tup.Elements {
+				if present := presentEntryValue(elem); present != nil {
+					types = append(types, present)
+				}
+			}
+			if len(types) == 0 {
+				return nil
+			}
+			return typ.NewUnion(types...)
+		},
+		Record: func(r *typ.Record) typ.Type {
+			var types []typ.Type
+			for _, f := range r.Fields {
+				if present := presentEntryValue(f.Type); present != nil {
+					types = append(types, present)
+				}
+			}
+			if r.Open {
+				types = append(types, typ.Unknown)
+			}
+			if r.HasMapComponent() {
+				if present := presentEntryValue(r.MapValue); present != nil {
+					types = append(types, present)
+				}
+			}
+			if len(types) == 0 {
+				return nil
+			}
+			return typ.NewUnion(types...)
+		},
+		Optional: func(o *typ.Optional) typ.Type {
+			return entryValueTypeDepth(o.Inner, depth+1)
+		},
+		Alias: func(a *typ.Alias) typ.Type {
+			return entryValueTypeDepth(a.Target, depth+1)
+		},
+		Union: func(u *typ.Union) typ.Type {
+			var types []typ.Type
+			for _, m := range u.Members {
+				if vt := entryValueTypeDepth(m, depth+1); vt != nil {
+					types = append(types, vt)
+				}
+			}
+			if len(types) == 0 {
+				return nil
+			}
+			return typ.NewUnion(types...)
+		},
+		Recursive: func(r *typ.Recursive) typ.Type {
+			return entryValueTypeDepth(r.Body, depth+1)
+		},
+		Default: func(t typ.Type) typ.Type {
+			return nil
+		},
+	})
+}
+
+func presentEntryValue(t typ.Type) typ.Type {
+	if inner, optional := typ.SplitNilableFieldType(t); optional {
+		return inner
+	}
+	return t
 }
 
 // containsNilDepth recursively checks nil containment with depth limiting.

@@ -140,7 +140,7 @@ db:release()
 		if getDbSym != 0 && result.Session.Store != nil {
 			parentHash := result.Session.Store.GraphParentHashOf(root.Graph.ID())
 			parent := result.Session.Store.Parents()[parentHash]
-			if facts := result.Session.Store.GetInterprocFacts(root.Graph, parent).FunctionFacts; facts != nil {
+			if facts := result.Session.Store.InterprocFacts(root.Graph, parent).FunctionFacts(); facts != nil {
 				if fact, ok := facts[getDbSym]; ok {
 					t.Logf("FunctionFacts[%d][get_db].Summary=%v", parentHash, fact.Summary)
 				}
@@ -288,14 +288,14 @@ db:release()
 	root := result.Session.RootResult.Graph
 	parentHash := result.Session.Store.GraphParentHashOf(root.ID())
 	parent := result.Session.Store.Parents()[parentHash]
-	functionFacts := result.Session.Store.GetInterprocFacts(root, parent).FunctionFacts
+	functionFacts := result.Session.Store.InterprocFacts(root, parent).FunctionFacts()
 
 	for _, name := range []string{"connect", "get_connection"} {
 		sym, ok := root.SymbolAt(root.Exit(), name)
 		if !ok || sym == 0 {
 			t.Fatalf("missing symbol for %s", name)
 		}
-		rets := returnsummary.Normalize(functionfact.ReturnSummaryFromMap(functionFacts, sym))
+		rets := returnsummary.Normalize(functionfact.ReturnSummary(functionFacts, sym))
 		if len(rets) == 0 {
 			t.Fatalf("missing return summary for %s", name)
 		}

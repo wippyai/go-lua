@@ -186,12 +186,12 @@ func TestPathBindingAudit_AssignmentPathsAreUnversioned(t *testing.T) {
 		for _, assign := range funcResult.FlowInputs.Assignments {
 			assignmentCount++
 
-			// SourcePath should be unversioned (no DefPoint in the path key)
-			if !assign.SourcePath.IsEmpty() {
-				key := assign.SourcePath.Key()
+			// Path assignment sources should be unversioned (no DefPoint in the path key).
+			if assign.Source.HasPath() {
+				key := assign.Source.Path.Key()
 				// Key should not contain @ unless it's from segments
-				if containsVersionMarker(string(key), assign.SourcePath.Root) {
-					t.Errorf("Assignment source path appears versioned: %s (from %s)", key, assign.SourcePath.Root)
+				if containsVersionMarker(string(key), assign.Source.Path.Root) {
+					t.Errorf("Assignment source path appears versioned: %s (from %s)", key, assign.Source.Path.Root)
 				}
 			}
 		}

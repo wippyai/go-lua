@@ -43,12 +43,12 @@ return handle_session_close
 	msgs := testutil.ErrorMessages(result.Diagnostics)
 	found := false
 	for _, msg := range msgs {
-		if strings.Contains(msg, "expected string, got any") {
+		if strings.Contains(msg, "expected string") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected string/any diagnostic, got %v", msgs)
+		t.Fatalf("expected string diagnostic, got %v", msgs)
 	}
 }

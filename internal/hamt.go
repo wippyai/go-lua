@@ -206,7 +206,7 @@ func (m *HAMT[K, V]) hashKey(key K) uint64 {
 		// Fallback for other comparable types - use fmt to serialize value
 		m.hasher.Reset()
 		m.hasher.SetSeed(m.seed)
-		_, _ = m.hasher.WriteString(fmt.Sprintf("%T:%v", key, key))
+		_, _ = fmt.Fprintf(&m.hasher, "%T:%v", key, key)
 
 		return m.hasher.Sum64()
 	}

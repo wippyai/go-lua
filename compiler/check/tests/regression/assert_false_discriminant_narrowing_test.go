@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -242,6 +243,18 @@ return generate
 	if generateMod.HasError() {
 		t.Fatalf("unexpected generate errors: %v", testutil.ErrorMessages(generateMod.Errors))
 	}
+	generateExport := unwrap.Record(generateMod.Manifest.EnrichedExport())
+	if generateExport == nil {
+		t.Fatalf("generate export should be record, got %T", generateMod.Manifest.EnrichedExport())
+	}
+	handlerField := generateExport.GetField("handler")
+	if handlerField == nil {
+		t.Fatalf("generate export missing handler field")
+	}
+	handlerSpec := contract.ExtractSpec(handlerField.Type)
+	if handlerSpec == nil || len(handlerSpec.GetEnvReturns()) == 0 {
+		t.Fatalf("generate.handler manifest spec should carry environment-return facts, got %v", handlerSpec)
+	}
 
 	source := `
 local tests = require("test_mod")
@@ -368,6 +381,18 @@ return generate
 `, "generate_mod", testutil.WithStdlib(), testutil.WithModule("mapper_mod", mapperMod))
 	if generateMod.HasError() {
 		t.Fatalf("unexpected generate errors: %v", testutil.ErrorMessages(generateMod.Errors))
+	}
+	generateExport := unwrap.Record(generateMod.Manifest.EnrichedExport())
+	if generateExport == nil {
+		t.Fatalf("generate export should be record, got %T", generateMod.Manifest.EnrichedExport())
+	}
+	handlerField := generateExport.GetField("handler")
+	if handlerField == nil {
+		t.Fatalf("generate export missing handler field")
+	}
+	handlerSpec := contract.ExtractSpec(handlerField.Type)
+	if handlerSpec == nil || len(handlerSpec.GetEnvReturns()) == 0 {
+		t.Fatalf("generate.handler manifest spec should carry environment-return facts, got %v", handlerSpec)
 	}
 
 	source := `
@@ -544,6 +569,18 @@ return generate
 		testutil.WithModule("contract_mod", contractMod))
 	if generateMod.HasError() {
 		t.Fatalf("unexpected generate errors: %v", testutil.ErrorMessages(generateMod.Errors))
+	}
+	generateExport := unwrap.Record(generateMod.Manifest.EnrichedExport())
+	if generateExport == nil {
+		t.Fatalf("generate export should be record, got %T", generateMod.Manifest.EnrichedExport())
+	}
+	handlerField := generateExport.GetField("handler")
+	if handlerField == nil {
+		t.Fatalf("generate export missing handler field")
+	}
+	handlerSpec := contract.ExtractSpec(handlerField.Type)
+	if handlerSpec == nil || len(handlerSpec.GetEnvReturns()) == 0 {
+		t.Fatalf("generate.handler manifest spec should carry environment-return facts, got %v", handlerSpec)
 	}
 
 	source := `

@@ -247,6 +247,18 @@ func (r Row) GetReturn(retIdx int) *Return {
 	return nil
 }
 
+// FlowIntoReturns returns path-sensitive parameter-to-return field flows for
+// a return slot.
+func (r Row) FlowIntoReturns(retIdx int) []FlowInto {
+	var out []FlowInto
+	for _, l := range r.Labels {
+		if flow, ok := l.(FlowInto); ok && flow.ReturnIndex == retIdx {
+			out = append(out, flow)
+		}
+	}
+	return out
+}
+
 // GetErrorReturn returns the error-return correlation for a specific value position.
 //
 // Encodes the Lua pattern where a function returns (value, nil) on success or

@@ -2,19 +2,33 @@ package returns
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/check/synth"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// BuildSeedFunctionTypeWithBindings builds a placeholder function type for an
-// SCC sibling that has no inferred return vector yet.
+type seedTypeResolver interface {
+	ResolveType(ast.TypeExpr, *scope.State) typ.Type
+	ResolveReturnTypes([]ast.TypeExpr, *scope.State) []typ.Type
+}
+
+// BuildPostflowSeedFunctionType builds the public source-declared signature
+// seed used when committing the canonical post-flow FunctionFact product.
+func BuildPostflowSeedFunctionType(result *api.FuncResult, fn *ast.FunctionExpr) *typ.Function {
+	if result == nil || fn == nil {
+		return nil
+	}
+	return result.PublicSeedSignature
+}
+
+// BuildSeedFunctionTypeWithBindings builds the source-declared seed signature
+// used before a canonical FunctionFact projection is available.
 //
 // Optional binder metadata enables implicit-self detection in method definitions.
 func BuildSeedFunctionTypeWithBindings(
 	fn *ast.FunctionExpr,
-	engine *synth.Engine,
+	engine seedTypeResolver,
 	parentScope *scope.State,
 	bindings phasecore.ParamSymbolLookup,
 ) typ.Type {

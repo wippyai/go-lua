@@ -481,6 +481,57 @@ return "missing"
 	assertGradualTypingErrorContains(t, source, "cannot assign")
 }
 
+func TestGradualTyping_FieldDiagnosticsUseRecursiveObservationConditions(t *testing.T) {
+	source := `
+type Payload = {inner: string}
+type Envelope = {payload: Payload?}
+
+local function read(env: Envelope): string
+	if (env.payload and env.payload.inner) and #env.payload.inner > 0 then
+		return env.payload.inner
+	end
+	return ""
+end
+
+return read({ payload = { inner = "ready" } })
+`
+	assertNoGradualTypingErrors(t, source)
+}
+
+func TestGradualTyping_TypeProbeConditionsFeedFieldDiagnostics(t *testing.T) {
+	source := `
+type Raw = {meta: any?}
+
+local function read(raw: Raw): string
+	if (type(raw.meta) == "table" and type(raw.meta.name) == "string") and #raw.meta.name > 0 then
+		local name: string = raw.meta.name
+		return name
+	end
+	return ""
+end
+
+return read({ meta = { name = "sota" } })
+`
+	assertNoGradualTypingErrors(t, source)
+}
+
+func TestGradualTyping_ReturnDiagnosticsUseObservationBoundary(t *testing.T) {
+	source := `
+type Raw = {meta: any?}
+type Model = {name: string}
+
+local function build(raw: Raw): Model
+	if type(raw.meta) == "table" and type(raw.meta.name) == "string" then
+		return { name = raw.meta.name }
+	end
+	return { name = "" }
+end
+
+return build({ meta = { name = "stable" } }).name
+`
+	assertNoGradualTypingErrors(t, source)
+}
+
 func TestGradualTyping_RejectsDynamicCallbackAtTypedFunctionBoundary(t *testing.T) {
 	source := `
 type User = {id: string}

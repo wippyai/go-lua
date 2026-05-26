@@ -13,16 +13,16 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestIndexerInfo(t *testing.T) {
-	info := overlaymut.IndexerInfo{
-		KeyType: typ.String,
-		ValType: typ.Integer,
+func TestMapMutatorInfo(t *testing.T) {
+	info := overlaymut.MapMutatorInfo{
+		KeyType:   typ.String,
+		ValueType: typ.Integer,
 	}
 	if info.KeyType != typ.String {
 		t.Errorf("expected KeyType to be String, got %v", info.KeyType)
 	}
-	if info.ValType != typ.Integer {
-		t.Errorf("expected ValType to be Integer, got %v", info.ValType)
+	if info.ValueType != typ.Integer {
+		t.Errorf("expected ValueType to be Integer, got %v", info.ValueType)
 	}
 }
 
@@ -95,8 +95,35 @@ func TestCollectTableInsertMutations_AssignmentCallSite(t *testing.T) {
 		t.Fatalf("expected key type string, got %v", infos[0].KeyType)
 	}
 	expectedVal := typ.NewArray(typ.Integer)
-	if !typ.TypeEquals(infos[0].ValType, expectedVal) {
-		t.Fatalf("expected value type %v, got %v", expectedVal, infos[0].ValType)
+	if !typ.TypeEquals(infos[0].ValueType, expectedVal) {
+		t.Fatalf("expected value type %v, got %v", expectedVal, infos[0].ValueType)
+	}
+}
+
+func TestCollectTableInsertMutations_PlaceholderKeyUsesDynamicStringLaw(t *testing.T) {
+	code := `
+		local t = {}
+		local suite = nil
+		local _ = table.insert(t[suite], 1)
+	`
+	graph := buildGraph(t, code, "table")
+	bindings := graph.Bindings()
+
+	result := CollectTableInsertMutations(callsFromGraph(graph), graph, tableInsertSynth(), bindings)
+	symT, ok := graph.SymbolAt(graph.Exit(), "t")
+	if !ok || symT == 0 {
+		t.Fatal("expected symbol for t")
+	}
+	infos := result[symT]
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 indexed mutation for t, got %d", len(infos))
+	}
+	if !typ.TypeEquals(infos[0].KeyType, typ.String) {
+		t.Fatalf("expected placeholder key to normalize to string, got %v", infos[0].KeyType)
+	}
+	expectedVal := typ.NewArray(typ.Integer)
+	if !typ.TypeEquals(infos[0].ValueType, expectedVal) {
+		t.Fatalf("expected value type %v, got %v", expectedVal, infos[0].ValueType)
 	}
 }
 
@@ -127,8 +154,8 @@ func TestCollectTableInsertMutations_NestedBasePath(t *testing.T) {
 		t.Fatalf("expected key type string, got %v", infos[0].KeyType)
 	}
 	expectedVal := typ.NewArray(typ.Integer)
-	if !typ.TypeEquals(infos[0].ValType, expectedVal) {
-		t.Fatalf("expected value type %v, got %v", expectedVal, infos[0].ValType)
+	if !typ.TypeEquals(infos[0].ValueType, expectedVal) {
+		t.Fatalf("expected value type %v, got %v", expectedVal, infos[0].ValueType)
 	}
 }
 

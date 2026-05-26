@@ -27,15 +27,22 @@ type Field struct {
 //
 // Fields are sorted by name for deterministic hashing and comparison.
 type Record struct {
-	Fields       []Field
-	Metatable    Type // Metatable type for metamethod lookup
-	MapKey       Type // Map component key type (nil if no map component)
-	MapValue     Type // Map component value type (nil if no map component)
-	Open         bool // Allow access to undefined fields
-	sorted       bool
-	hash         uint64
-	softPrunable bool
-	strCache     stringCache
+	Fields                []Field
+	Metatable             Type // Metatable type for metamethod lookup
+	MapKey                Type // Map component key type (nil if no map component)
+	MapValue              Type // Map component value type (nil if no map component)
+	Open                  bool // Allow access to undefined fields
+	sorted                bool
+	hash                  uint64
+	softPrunable          bool
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	containsCallableSurf  bool
+	strCache              stringCache
 }
 
 // RecordBuilder provides a fluent API for constructing record types.

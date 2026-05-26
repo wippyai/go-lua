@@ -373,8 +373,6 @@ func (c *InferSet) unifySCC(scc []int) {
 	}
 }
 
-// walkType traverses a type tree, calling pred on each node.
-// Returns true if pred returns true for any node.
 func canContainTypeVar(k kind.Kind) bool {
 	switch k {
 	case kind.Optional, kind.Union, kind.Intersection, kind.Array,
@@ -384,85 +382,6 @@ func canContainTypeVar(k kind.Kind) bool {
 	default:
 		return false
 	}
-}
-
-func walkType(t typ.Type, depth int, pred func(typ.Type) bool) bool {
-	if stopDepth(t, depth) {
-		return false
-	}
-
-	if pred(t) {
-		return true
-	}
-
-	if !canContainTypeVar(t.Kind()) {
-		return false
-	}
-
-	return typ.Visit(t, typ.Visitor[bool]{
-		Optional: func(o *typ.Optional) bool {
-			return walkType(o.Inner, depth+1, pred)
-		},
-		Union: func(u *typ.Union) bool {
-			for _, m := range u.Members {
-				if walkType(m, depth+1, pred) {
-					return true
-				}
-			}
-			return false
-		},
-		Intersection: func(in *typ.Intersection) bool {
-			for _, m := range in.Members {
-				if walkType(m, depth+1, pred) {
-					return true
-				}
-			}
-			return false
-		},
-		Tuple: func(tup *typ.Tuple) bool {
-			for _, e := range tup.Elements {
-				if walkType(e, depth+1, pred) {
-					return true
-				}
-			}
-			return false
-		},
-		Array: func(a *typ.Array) bool {
-			return walkType(a.Element, depth+1, pred)
-		},
-		Map: func(m *typ.Map) bool {
-			return walkType(m.Key, depth+1, pred) || walkType(m.Value, depth+1, pred)
-		},
-		Function: func(fn *typ.Function) bool {
-			for _, p := range fn.Params {
-				if walkType(p.Type, depth+1, pred) {
-					return true
-				}
-			}
-
-			for _, r := range fn.Returns {
-				if walkType(r, depth+1, pred) {
-					return true
-				}
-			}
-
-			return walkType(fn.Variadic, depth+1, pred)
-		},
-		Record: func(r *typ.Record) bool {
-			for _, f := range r.Fields {
-				if walkType(f.Type, depth+1, pred) {
-					return true
-				}
-			}
-			return false
-		},
-		Alias: func(a *typ.Alias) bool {
-			return walkType(a.Target, depth+1, pred)
-		},
-		Default: func(t typ.Type) bool {
-			return false
-		},
-	})
 }
 
 func occursIn(varID int, t typ.Type) bool {

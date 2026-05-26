@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 type SessionStore struct {
@@ -371,14 +372,12 @@ func (s *SessionStore) MergeInterprocFactsNext(key api.GraphKey, delta api.Facts
 			return
 		}
 		delete(s.InterprocNext.Facts, key)
-		s.syncFactsInput(key)
 		return
 	}
 	if interproc.FactsEqual(existing, facts) {
 		return
 	}
 	s.InterprocNext.Facts[key] = facts
-	s.syncFactsInput(key)
 }
 
 // Funcs returns the function map.
@@ -491,6 +490,27 @@ func (s *SessionStore) SymbolForFunc(fn *ast.FunctionExpr) (cfg.SymbolID, bool) 
 	return 0, false
 }
 
+// FunctionRefsByParentGraph returns function refs declared directly in a parent graph.
+func (s *SessionStore) FunctionRefsByParentGraph(parentGraphID uint64) []api.FunctionRef {
+	if s == nil || s.Module == nil || s.Module.Functions == nil || parentGraphID == 0 {
+		return nil
+	}
+	refs := make([]api.FunctionRef, 0)
+	for _, ref := range s.Module.Functions.BySym {
+		if ref == nil || ref.ParentGraphID != parentGraphID || ref.Sym == 0 {
+			continue
+		}
+		refs = append(refs, *ref)
+	}
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].DefPoint != refs[j].DefPoint {
+			return refs[i].DefPoint < refs[j].DefPoint
+		}
+		return refs[i].Sym < refs[j].Sym
+	})
+	return refs
+}
+
 // RegisterNestedMeta records the parent graph and definition point for a nested graph.
 func (s *SessionStore) RegisterNestedMeta(childGraphID, parentGraphID uint64, defPoint cfg.Point) {
 	if s == nil || s.Module == nil || childGraphID == 0 || parentGraphID == 0 {
@@ -595,6 +615,61 @@ func (s *SessionStore) GraphAnalysisContext(key api.GraphKey) api.AnalysisContex
 	return api.MergeAnalysisContext(api.AnalysisContext{}, s.analysisContexts[key])
 }
 
+type interprocProductView struct {
+	store *SessionStore
+	key   api.GraphKey
+	ok    bool
+}
+
+func (v interprocProductView) FunctionFacts() api.FunctionFacts {
+	if v.store == nil || !v.ok {
+		return nil
+	}
+	return v.store.functionFactsByKey(v.key)
+}
+
+func (v interprocProductView) FunctionFact(sym cfg.SymbolID) (api.FunctionFact, bool) {
+	if v.store == nil || !v.ok || sym == 0 {
+		return api.FunctionFact{}, false
+	}
+	return v.store.functionFactByKey(api.FunctionFactKey{GraphKey: v.key, Symbol: sym})
+}
+
+func (v interprocProductView) LiteralSig(fn *ast.FunctionExpr) (*typ.Function, bool) {
+	if v.store == nil || !v.ok || fn == nil {
+		return nil, false
+	}
+	return v.store.literalSigByKey(api.LiteralSigKey{GraphKey: v.key, Func: fn})
+}
+
+func (v interprocProductView) CapturedType(sym cfg.SymbolID) (typ.Type, bool) {
+	if v.store == nil || !v.ok || sym == 0 {
+		return nil, false
+	}
+	return v.store.capturedTypeByKey(api.CapturedTypeKey{GraphKey: v.key, Symbol: sym})
+}
+
+func (v interprocProductView) CapturedFieldAssigns() api.CapturedFieldAssigns {
+	if v.store == nil || !v.ok {
+		return nil
+	}
+	return v.store.capturedFieldAssignsByKey(v.key)
+}
+
+func (v interprocProductView) CapturedContainerMutations() api.CapturedContainerMutations {
+	if v.store == nil || !v.ok {
+		return nil
+	}
+	return v.store.capturedContainerMutationsByKey(v.key)
+}
+
+func (v interprocProductView) ConstructorFields(classSym cfg.SymbolID) (map[string]typ.Type, bool) {
+	if v.store == nil || !v.ok || classSym == 0 {
+		return nil, false
+	}
+	return v.store.constructorFieldsByKey(api.ConstructorFieldKey{GraphKey: v.key, Symbol: classSym})
+}
+
 // ModuleAliases returns the module aliases map.
 func (s *SessionStore) ModuleAliases() map[cfg.SymbolID]string {
 	return s.Module.ModuleAliases
@@ -608,25 +683,19 @@ func (s *SessionStore) SetModuleAliases(aliases map[cfg.SymbolID]string) {
 	s.Module.ModuleAliases = aliases
 }
 
-// GetInterprocFacts returns the visible interproc fact product for a graph.
-// Visibility is the stable product overlaid with facts already produced in the
-// current iteration, giving deterministic Gauss-Seidel propagation instead of
-// forcing every local refinement through a full outer iteration.
-func (s *SessionStore) GetInterprocFacts(
-	graph *cfg.Graph,
-	parent *scope.State,
-) api.Facts {
-	if s == nil || graph == nil {
-		return api.Facts{}
+// ModuleFacts returns the module-wide visible interproc product view.
+func (s *SessionStore) ModuleFacts() api.InterprocFactProduct {
+	if s == nil {
+		return interprocProductView{}
 	}
-	key, ok := s.GraphKeyFor(graph, parent)
-	if !ok {
-		return api.Facts{}
-	}
-	return s.interprocFactsByKey(key)
+	return interprocProductView{store: s, key: api.ModuleFactsKey(), ok: true}
 }
 
-// GetModuleFacts returns module-wide interprocedural facts.
-func (s *SessionStore) GetModuleFacts() api.Facts {
-	return s.interprocFactsByKey(api.ModuleFactsKey())
+// InterprocFacts returns the visible interproc product view for a graph.
+func (s *SessionStore) InterprocFacts(graph *cfg.Graph, parent *scope.State) api.InterprocFactProduct {
+	if s == nil || graph == nil {
+		return interprocProductView{}
+	}
+	key, ok := s.GraphKeyFor(graph, parent)
+	return interprocProductView{store: s, key: key, ok: ok}
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -45,6 +46,209 @@ func TestWidenType_StringLiteral(t *testing.T) {
 	result := WidenType(lit)
 	if result != typ.String {
 		t.Errorf("expected String, got %v", result)
+	}
+}
+
+func TestNormalizeBodyType_PreservesTupleDiscriminants(t *testing.T) {
+	in := typ.NewTuple(
+		typ.NewRecord().
+			Field("role", typ.LiteralString("function_result")).
+			Field("content", typ.LiteralString("ok")).
+			Field("function_call_id", typ.LiteralString("tool")).
+			Build(),
+		typ.NewRecord().
+			Field("role", typ.LiteralString("developer")).
+			Field("content", typ.LiteralString("merge")).
+			Build(),
+	)
+	got := NormalizeBodyType(in)
+	if !typ.TypeEquals(got, in) {
+		t.Fatalf("NormalizeBodyType() = %v, want %v", got, in)
+	}
+}
+
+func TestMergeBodyAt_PreservesTupleDiscriminants(t *testing.T) {
+	observed := typ.NewTuple(
+		typ.NewRecord().
+			Field("role", typ.LiteralString("function_result")).
+			Field("content", typ.LiteralString("ok")).
+			Field("function_call_id", typ.LiteralString("tool")).
+			Build(),
+		typ.NewRecord().
+			Field("role", typ.LiteralString("developer")).
+			Field("content", typ.LiteralString("merge")).
+			Build(),
+	)
+	got, changed := MergeBodyAt(nil, 0, observed, typ.JoinPreferNonSoft)
+	if !changed || len(got) != 1 || !typ.TypeEquals(got[0], observed) {
+		t.Fatalf("MergeBodyAt() = %v changed=%v, want %v", got, changed, observed)
+	}
+}
+
+func TestJoinBodyVectors_IsIdempotentForTupleDiscriminants(t *testing.T) {
+	observed := typ.NewTuple(
+		typ.NewRecord().
+			Field("role", typ.LiteralString("function_result")).
+			Field("content", typ.LiteralString("ok")).
+			Field("function_call_id", typ.LiteralString("tool")).
+			Build(),
+		typ.NewRecord().
+			Field("role", typ.LiteralString("developer")).
+			Field("content", typ.LiteralString("merge")).
+			Build(),
+	)
+	got := JoinBodyVectors([]typ.Type{observed}, []typ.Type{observed})
+	if len(got) != 1 || !typ.TypeEquals(got[0], observed) {
+		t.Fatalf("JoinBodyVectors() = %v, want %v", got, observed)
+	}
+}
+
+func TestJoinBodyVectors_PreservesDiscriminatedArrayElementVariants(t *testing.T) {
+	functionResult := typ.NewRecord().
+		Field("role", typ.LiteralString("function_result")).
+		Field("function_call_id", typ.String).
+		Build()
+	functionCall := typ.NewRecord().
+		Field("role", typ.LiteralString("function_call")).
+		Field("function_call", typ.NewRecord().Field("id", typ.String).Build()).
+		Build()
+	content := typ.NewRecord().
+		Field("content", typ.String).
+		Build()
+
+	got := JoinBodyVectors(
+		JoinBodyVectors([]typ.Type{typ.NewArray(functionResult)}, []typ.Type{typ.NewArray(functionCall)}),
+		[]typ.Type{typ.NewArray(content)},
+	)
+	want := typ.NewArray(typ.NewUnion(functionResult, functionCall, content))
+	if len(got) != 1 || !typ.TypeEquals(got[0], want) {
+		t.Fatalf("JoinBodyVectors() = %v, want %v", got, want)
+	}
+}
+
+func TestMergeBodyCallArgAt_PreservesArrayElementDiscriminants(t *testing.T) {
+	functionResult := typ.NewRecord().
+		Field("role", typ.LiteralString("function_result")).
+		Field("function_call_id", typ.LiteralString("tool")).
+		Field("content", typ.LiteralString("ok")).
+		Build()
+	developer := typ.NewRecord().
+		Field("role", typ.LiteralString("developer")).
+		Field("content", typ.LiteralString("merge")).
+		Build()
+	observed := typ.NewArray(typ.NewUnion(functionResult, developer))
+
+	body, changed := MergeBodyCallArgAt(nil, 0, observed, typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatal("expected body-effective evidence")
+	}
+	if !typ.TypeEquals(body[0], observed) {
+		t.Fatalf("expected body evidence to preserve array element discriminants as %v, got %v", observed, body[0])
+	}
+}
+
+func TestJoinEntryVectors_PreservesExplicitNilRuntimeState(t *testing.T) {
+	rec := typ.NewRecord().Field("id", typ.String).Build()
+	got := JoinEntryVectors([]typ.Type{typ.Nil}, []typ.Type{rec})
+	want := typ.NewOptional(rec)
+	if len(got) != 1 || !typ.TypeEquals(got[0], want) {
+		t.Fatalf("JoinEntryVectors() = %v, want %v", got, want)
+	}
+}
+
+func TestJoinEntryVectors_RecursiveAndBroadMapEntriesShareUpperBound(t *testing.T) {
+	baseMeta := typ.NewMap(typ.String, typ.Any)
+	flow := typ.NewRecursive("SuiteFlow", func(self typ.Type) typ.Type {
+		entry := typ.NewRecord().
+			Field("id", typ.String).
+			OptField("meta", self).
+			Field("name", typ.String).
+			Build()
+		return typ.NewMap(typ.String, typ.NewArray(entry))
+	})
+	recursiveEntries := typ.NewArray(typ.NewRecord().
+		Field("id", typ.String).
+		OptField("meta", flow).
+		Field("name", typ.String).
+		Build())
+	broadEntries := typ.NewArray(typ.NewRecord().
+		Field("id", typ.String).
+		OptField("meta", baseMeta).
+		Field("name", typ.String).
+		Build())
+	recursiveEntry := recursiveEntries.Element
+	broadEntry := broadEntries.Element
+
+	if !subtype.IsSubtype(flow, baseMeta) || subtype.IsSubtype(baseMeta, flow) {
+		t.Fatalf("unexpected recursive/broad map subtype relation: flow<:map=%v map<:flow=%v", subtype.IsSubtype(flow, baseMeta), subtype.IsSubtype(baseMeta, flow))
+	}
+	joinedNonNilMeta := joinNonNilBody(flow, baseMeta)
+	if !subtype.IsSubtype(flow, joinedNonNilMeta) || !subtype.IsSubtype(baseMeta, joinedNonNilMeta) {
+		t.Fatalf("joined non-nil meta must admit recursive and broad observations, got %v", joinedNonNilMeta)
+	}
+	joinedMeta := JoinBody(typ.NewOptional(flow), typ.NewOptional(baseMeta))
+	if !subtype.IsSubtype(typ.NewOptional(flow), joinedMeta) || !subtype.IsSubtype(typ.NewOptional(baseMeta), joinedMeta) {
+		t.Fatalf("joined meta must admit recursive and broad observations, got %v", joinedMeta)
+	}
+	joinedEntry := JoinEntry(recursiveEntry, broadEntry)
+	if !subtype.IsSubtype(recursiveEntry, joinedEntry) || !subtype.IsSubtype(broadEntry, joinedEntry) {
+		t.Fatalf("joined entry must admit recursive and broad observations, got %v", joinedEntry)
+	}
+
+	got := JoinEntryVectors([]typ.Type{recursiveEntries}, []typ.Type{broadEntries})
+	if len(got) != 1 {
+		t.Fatalf("JoinEntryVectors() len = %d, want 1: %v", len(got), got)
+	}
+	if !subtype.IsSubtype(recursiveEntries, got[0]) {
+		t.Fatalf("joined entry evidence must admit recursive entries: got %v", got[0])
+	}
+	if !subtype.IsSubtype(broadEntries, got[0]) {
+		t.Fatalf("joined entry evidence must admit broad-map entries: got %v", got[0])
+	}
+}
+
+func TestMergeBodyCallArgAt_PreservesOptionalContextTableKey(t *testing.T) {
+	context := typ.NewOptional(typ.NewMap(typ.String, typ.Any))
+	openContext := typ.NewOptional(typ.NewRecord().MapComponent(typ.Any, typ.Any).Build())
+
+	got, _ := MergeBodyCallArgAt([]typ.Type{context}, 0, openContext, typ.JoinPreferNonSoft, false)
+	if len(got) != 1 || !typ.TypeEquals(got[0], context) {
+		t.Fatalf("MergeBodyCallArgAt() = %v, want %v", got, context)
+	}
+}
+
+func TestMergeBodyUnannotatedParam_PreservesTupleDiscriminantsWhenPublicSignatureIsWidened(t *testing.T) {
+	bodyEvidence := typ.NewTuple(
+		typ.NewRecord().
+			Field("role", typ.LiteralString("function_result")).
+			Field("content", typ.LiteralString("ok")).
+			Field("function_call_id", typ.LiteralString("tool")).
+			Build(),
+		typ.NewRecord().
+			Field("role", typ.LiteralString("developer")).
+			Field("content", typ.LiteralString("merge")).
+			Build(),
+	)
+	publicSignature := typ.NewTuple(
+		typ.NewRecord().
+			Field("role", typ.String).
+			Field("content", typ.String).
+			Field("function_call_id", typ.String).
+			Build(),
+		typ.NewRecord().
+			Field("role", typ.String).
+			Field("content", typ.String).
+			Build(),
+	)
+
+	got, _ := MergeBodyUnannotatedParam(typ.Param{Name: "messages", Type: publicSignature}, bodyEvidence)
+	if !typ.TypeEquals(got, bodyEvidence) {
+		t.Fatalf("MergeBodyUnannotatedParam() = %v, want %v", got, bodyEvidence)
+	}
+
+	publicGot, _ := MergeUnannotatedParam(typ.Param{Name: "messages", Type: publicSignature}, bodyEvidence)
+	if typ.TypeEquals(publicGot, bodyEvidence) {
+		t.Fatalf("MergeUnannotatedParam() preserved body-only literals in public signature: %v", publicGot)
 	}
 }
 
@@ -287,6 +491,9 @@ func TestProjectToParameterUse_KeepsDemandedAbsentRecordFieldsAsNil(t *testing.T
 	if stream == nil || !typ.TypeEquals(stream.Type, typ.Nil) {
 		t.Fatalf("demanded absent stream field should project as nil, got %v in %v", stream, rec)
 	}
+	if !stream.Optional {
+		t.Fatalf("demanded absent stream field should stay optional, got %v in %v", stream, rec)
+	}
 	headers := rec.GetField("headers")
 	if headers == nil {
 		t.Fatalf("projected options evidence lost demanded headers field: %v", rec)
@@ -325,6 +532,9 @@ func TestProjectToParameterUse_WholeForwardingCompletesDemandedFields(t *testing
 	stream := rec.GetField("stream")
 	if stream == nil || !typ.TypeEquals(stream.Type, typ.Nil) {
 		t.Fatalf("direct field demand should complete forwarded evidence with stream:nil, got %v in %v", stream, rec)
+	}
+	if !stream.Optional {
+		t.Fatalf("direct field demand should complete forwarded evidence with optional stream:nil, got %v in %v", stream, rec)
 	}
 }
 
@@ -397,6 +607,9 @@ func TestProjectSignatureToParamUse_CompletesDemandedAbsentFields(t *testing.T) 
 	status := rec.GetField("status_code")
 	if status == nil || !typ.TypeEquals(status.Type, typ.Nil) {
 		t.Fatalf("projected signature should include demanded absent status_code as nil, got %v in %v", status, rec)
+	}
+	if !status.Optional {
+		t.Fatalf("projected signature should include demanded absent status_code as optional nil, got %v in %v", status, rec)
 	}
 	if len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], typ.String) {
 		t.Fatalf("projected signature lost returns: %v", got)
@@ -693,5 +906,356 @@ func TestMergeCallArgAt_PreservesExplicitNilArgument(t *testing.T) {
 	}
 	if !typ.TypeEquals(got[0], typ.NewOptional(rec)) {
 		t.Fatalf("expected nil plus record calls to produce optional record evidence, got %v", got[0])
+	}
+}
+
+func TestMergeBodyCallArgAt_PreservesExplicitNilArgument(t *testing.T) {
+	got, changed := MergeBodyCallArgAt(nil, 0, typ.Nil, typ.JoinPreferNonSoft, true)
+	if !changed {
+		t.Fatal("expected nil argument to be recorded")
+	}
+	got, changed = MergeBodyCallArgAt(got, 0, typ.Number, typ.JoinPreferNonSoft, true)
+	if !changed {
+		t.Fatal("expected number call to merge with nil evidence")
+	}
+	want := typ.NewOptional(typ.Number)
+	if len(got) != 1 || !typ.TypeEquals(got[0], want) {
+		t.Fatalf("expected body call evidence %v, got %v", want, got)
+	}
+}
+
+func TestHardContractJoin_ConcreteDominatesDynamicSeed(t *testing.T) {
+	if got := HardContractJoin(typ.Any, typ.String); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("HardContractJoin(any, string) = %v, want string", got)
+	}
+	if got := HardContractJoin(typ.Unknown, typ.Integer); !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("HardContractJoin(unknown, integer) = %v, want integer", got)
+	}
+}
+
+func TestHardContractJoin_FoldsRecursiveProductBeforeIntersection(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	base := typ.NewMap(typ.String, entry)
+	recursiveObservation := typ.NewMap(typ.String,
+		typ.NewRecord().
+			Field("child", base).
+			Build(),
+	)
+
+	got := HardContractJoin(base, recursiveObservation)
+	if _, ok := got.(*typ.Recursive); !ok {
+		t.Fatalf("HardContractJoin(self-embedding contract) = %T %[1]v, want recursive product", got)
+	}
+}
+
+func TestHardContractJoin_RecursiveUpperBoundStabilizes(t *testing.T) {
+	stable := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewMap(typ.String, typ.NewOptional(self))
+	})
+	observation := typ.NewMap(typ.String, typ.NewOptional(stable))
+
+	got := HardContractJoin(stable, observation)
+	if !typ.TypeEquals(got, stable) {
+		t.Fatalf("HardContractJoin(recursive upper, observation) = %v, want %v", got, stable)
+	}
+}
+
+func TestBodyEntryContractJoin_RecursiveContractCoversEntryObservation(t *testing.T) {
+	contract := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("children", typ.NewArray(self)).
+			Field("full_path", typ.String).
+			Build()
+	})
+	entry := typ.NewRecord().
+		Field("name", typ.String).
+		Field("children", typ.NewArray(contract)).
+		Field("full_path", typ.String).
+		Build()
+
+	got := BodyEntryContractJoin(entry, contract)
+	if !typ.SameNode(got, entry) {
+		t.Fatalf("BodyEntryContractJoin(entry, recursive contract) = %T %[1]v, want entry", got)
+	}
+}
+
+func TestBodyContractJoin_ContractDominatesCompatibleCallShape(t *testing.T) {
+	contract := typ.NewRecord().
+		OptField("headers", typ.NewMap(typ.String, typ.String)).
+		OptField("body", typ.String).
+		OptField("stream", typ.Boolean).
+		Build()
+	callShape := typ.NewRecord().
+		Field("headers", typ.NewMap(typ.String, typ.String)).
+		Field("stream", typ.True).
+		Build()
+
+	if got := BodyContractJoin(callShape, contract); !typ.TypeEquals(got, contract) {
+		t.Fatalf("BodyContractJoin(callShape, contract) = %v, want %v", got, contract)
+	}
+}
+
+func TestMergeCallArgAt_JoinsTupleAndArrayAsSequence(t *testing.T) {
+	node := typ.NewRecord().Field("node_id", typ.String).Build()
+	got, changed := MergeCallArgAt(nil, 0, typ.NewTuple(node), typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatal("expected tuple call evidence")
+	}
+	got, changed = MergeCallArgAt(got, 0, typ.NewArray(node), typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatal("expected array call evidence to widen tuple")
+	}
+	want := typ.NewArray(node)
+	if !typ.TypeEquals(got[0], want) {
+		t.Fatalf("expected tuple and array calls to canonicalize as %v, got %v", want, got[0])
+	}
+}
+
+func TestMergeCallArgAt_ConcreteArrayReplacesSoftTupleElement(t *testing.T) {
+	node := typ.NewRecord().Field("node_id", typ.String).Build()
+	got, changed := MergeCallArgAt(nil, 0, typ.NewTuple(typ.Any), typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatal("expected tuple call evidence")
+	}
+	got, changed = MergeCallArgAt(got, 0, typ.NewArray(node), typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatal("expected concrete array call evidence to refine soft tuple")
+	}
+	want := typ.NewArray(node)
+	if !typ.TypeEquals(got[0], want) {
+		t.Fatalf("expected concrete array evidence %v, got %v", want, got[0])
+	}
+}
+
+func TestMergeCallArgAt_MissingRecordFieldsStayOptionalAcrossCalls(t *testing.T) {
+	failRecord := typ.NewRecord().Field("fail", typ.Boolean).Build()
+	got, changed := MergeCallArgAt(nil, 0, typ.NewTuple(typ.NewRecord().Build()), typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatal("expected empty record tuple evidence")
+	}
+	got, changed = MergeCallArgAt(got, 0, typ.NewArray(failRecord), typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatal("expected array evidence to merge with tuple")
+	}
+
+	want := typ.NewArray(typ.NewRecord().OptField("fail", typ.Boolean).Build())
+	if !typ.TypeEquals(got[0], want) {
+		t.Fatalf("expected missing field to remain optional at call boundary as %v, got %v", want, got[0])
+	}
+}
+
+func TestMergeCallArgAt_RecordFieldsUseParameterEvidenceJoin(t *testing.T) {
+	left := typ.NewArray(typ.NewRecord().
+		Field("node_id", typ.Any).
+		Field("node_type", typ.Unknown).
+		Field("trigger_reason", typ.Unknown).
+		Build())
+	right := typ.NewArray(typ.NewRecord().
+		Field("node_id", typ.Any).
+		Field("node_type", typ.Any).
+		Field("trigger_reason", typ.LiteralString("input_ready")).
+		Build())
+
+	got, changed := MergeCallArgAt(nil, 0, left, typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatal("expected first array evidence")
+	}
+	got, changed = MergeCallArgAt(got, 0, right, typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatal("expected second array evidence to refine record fields")
+	}
+
+	want := typ.NewArray(typ.NewRecord().
+		Field("node_id", typ.Any).
+		Field("node_type", typ.Any).
+		Field("trigger_reason", typ.String).
+		Build())
+	if !typ.TypeEquals(got[0], want) {
+		t.Fatalf("expected parameter-domain record join %v, got %v", want, got[0])
+	}
+}
+
+func TestPublicContractJoin_PreciseCollectionRefinesOpenTableObligation(t *testing.T) {
+	entry := typ.NewRecord().
+		Field("id", typ.String).
+		OptField("meta", typ.NewMap(typ.String, typ.Any)).
+		Build()
+	openTable := typ.NewRecord().SetOpen(true).Build()
+	entries := typ.NewArray(entry)
+
+	if got := PublicContractJoin(openTable, entries); !typ.TypeEquals(got, entries) {
+		t.Fatalf("PublicContractJoin(open table, entries) = %v, want %v", got, entries)
+	}
+	if got := PublicContractJoin(entries, openTable); !typ.TypeEquals(got, entries) {
+		t.Fatalf("PublicContractJoin(entries, open table) = %v, want %v", got, entries)
+	}
+}
+
+func TestMergeBodyCallArgAt_PreservesStructuralDiscriminants(t *testing.T) {
+	functionResult := typ.NewRecord().
+		Field("role", typ.LiteralString("function_result")).
+		Field("function_call_id", typ.LiteralString("tool")).
+		Field("content", typ.LiteralString("ok")).
+		Build()
+	developer := typ.NewRecord().
+		Field("role", typ.LiteralString("developer")).
+		Field("content", typ.LiteralString("merge")).
+		Build()
+	observed := typ.NewTuple(functionResult, developer)
+
+	body, changed := MergeBodyCallArgAt(nil, 0, observed, typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatal("expected body-effective evidence")
+	}
+	if !typ.TypeEquals(body[0], observed) {
+		t.Fatalf("expected body evidence to preserve structural literals as %v, got %v", observed, body[0])
+	}
+
+	public, changed := MergeCallArgAt(nil, 0, observed, typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatal("expected public call-boundary evidence")
+	}
+	widened := typ.NewTuple(
+		typ.NewRecord().
+			Field("role", typ.String).
+			Field("function_call_id", typ.String).
+			Field("content", typ.String).
+			Build(),
+		typ.NewRecord().
+			Field("role", typ.String).
+			Field("content", typ.String).
+			Build(),
+	)
+	if !typ.TypeEquals(public[0], widened) {
+		t.Fatalf("expected public evidence to widen literal constants as %v, got %v", widened, public[0])
+	}
+}
+
+func TestNormalizeBodyType_WidensMutableContainerLiterals(t *testing.T) {
+	input := typ.NewMap(typ.String, typ.NewArray(typ.LiteralInt(1)))
+	got := NormalizeBodyType(input)
+	var want typ.Type = typ.NewMap(typ.String, typ.NewArray(typ.Integer))
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected body evidence to widen mutable container literals as %v, got %v", want, got)
+	}
+
+	discriminated := typ.NewRecord().
+		Field("kind", typ.LiteralString("tool_call")).
+		Field("temperature", typ.LiteralNumber(0.8)).
+		Field("items", typ.NewArray(typ.LiteralInt(1))).
+		Build()
+	got = NormalizeBodyType(discriminated)
+	want = typ.NewRecord().
+		Field("kind", typ.LiteralString("tool_call")).
+		Field("temperature", typ.LiteralNumber(0.8)).
+		Field("items", typ.NewArray(typ.Integer)).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected record discriminants preserved and container values widened as %v, got %v", want, got)
+	}
+}
+
+func TestMergeCallArgAt_DisjointPartialRecordsBecomeOptionalFields(t *testing.T) {
+	var evidence []typ.Type
+	var changed bool
+	for _, observed := range []typ.Type{
+		typ.NewRecord().Field("promptTokenCount", typ.Integer).Build(),
+		typ.NewRecord().Field("candidatesTokenCount", typ.Integer).Build(),
+		typ.NewRecord().Field("thoughtsTokenCount", typ.Integer).Build(),
+	} {
+		evidence, changed = MergeCallArgAt(evidence, 0, observed, typ.JoinPreferNonSoft, false)
+		if !changed {
+			t.Fatalf("expected evidence change for %v", observed)
+		}
+	}
+
+	want := typ.NewRecord().
+		OptField("candidatesTokenCount", typ.Integer).
+		OptField("promptTokenCount", typ.Integer).
+		OptField("thoughtsTokenCount", typ.Integer).
+		Build()
+	if !typ.TypeEquals(evidence[0], want) {
+		t.Fatalf("expected partial records to join as %v, got %v", want, evidence[0])
+	}
+}
+
+func TestMergeCallArgAt_NilableStructuralUnionIsIdempotent(t *testing.T) {
+	yieldPayload := typ.NewRecord().
+		Field("parent_id", typ.Any).
+		Field("reply_to", typ.Any).
+		Field("results", typ.Any).
+		Field("yield_id", typ.Any).
+		Build()
+	messagePayload := typ.NewRecord().
+		Field("message", typ.String).
+		Build()
+	mergedPayload := typ.NewRecord().
+		OptField("message", typ.String).
+		OptField("parent_id", typ.Any).
+		OptField("reply_to", typ.Any).
+		OptField("results", typ.Any).
+		OptField("yield_id", typ.Any).
+		Build()
+
+	evidence := []typ.Type{typ.NewUnion(typ.Nil, yieldPayload, mergedPayload, messagePayload)}
+	var changed bool
+	evidence, changed = MergeCallArgAt(evidence, 0, yieldPayload, typ.JoinPreferNonSoft, false)
+	if !changed {
+		t.Fatalf("expected noncanonical union seed to collapse")
+	}
+	evidence, changed = MergeCallArgAt(evidence, 0, messagePayload, typ.JoinPreferNonSoft, false)
+	if changed {
+		t.Fatalf("expected canonical equivalent message payload not to change evidence, got %v", evidence[0])
+	}
+	evidence, changed = MergeCallArgAt(evidence, 0, yieldPayload, typ.JoinPreferNonSoft, false)
+	if changed {
+		t.Fatalf("expected canonical equivalent yield payload not to change evidence, got %v", evidence[0])
+	}
+
+	want := typ.NewOptional(mergedPayload)
+	if !typ.TypeEquals(evidence[0], want) {
+		t.Fatalf("expected nilable payload union to canonicalize as %v, got %v", want, evidence[0])
+	}
+}
+
+func TestNormalizeType_CollapsesSequenceUnion(t *testing.T) {
+	yieldNode := typ.NewRecord().
+		Field("node_id", typ.Any).
+		Field("node_type", typ.Unknown).
+		Field("parent_id", typ.Any).
+		Field("path", typ.Any).
+		Field("trigger_reason", typ.LiteralString("yield_driven")).
+		Build()
+	inputNode := typ.NewRecord().
+		Field("node_id", typ.Any).
+		Field("node_type", typ.Any).
+		Field("path", typ.NewRecord().SetOpen(true).Build()).
+		Field("trigger_reason", typ.LiteralString("input_ready")).
+		Build()
+
+	got := NormalizeType(typ.NewUnion(
+		typ.Nil,
+		typ.NewTuple(yieldNode),
+		typ.NewArray(inputNode),
+	))
+	want := typ.NewOptional(typ.NewArray(typ.NewRecord().
+		Field("node_id", typ.Any).
+		Field("node_type", typ.Any).
+		OptField("parent_id", typ.Any).
+		Field("path", typ.Any).
+		Field("trigger_reason", typ.String).
+		Build()))
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected sequence union to collapse to %v, got %v", want, got)
+	}
+}
+
+func TestJoin_NilableTupleAndArrayBecomeNilableSequence(t *testing.T) {
+	node := typ.NewRecord().Field("node_id", typ.String).Build()
+	got := Join(typ.NewOptional(typ.NewTuple(node)), typ.NewArray(node))
+	want := typ.NewOptional(typ.NewArray(node))
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected nilable tuple plus array to produce %v, got %v", want, got)
 	}
 }

@@ -1,11 +1,17 @@
 package transform
 
 import (
+	"strings"
+
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -13,84 +19,100 @@ import (
 // If the function has a contract.Spec with a Return effect, the transform is applied
 // to derive the concrete return type from the argument types.
 func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, baseReturn typ.Type) typ.Type {
-	if fn == nil || fn.Spec == nil {
-		return baseReturn
-	}
-
-	spec, ok := fn.Spec.(*contract.Spec)
-	if !ok || spec == nil {
+	if fn == nil {
 		return baseReturn
 	}
 
 	// Error-return pattern: value is optional when an error return is present.
-	if er := spec.Effects.GetErrorReturn(returnIdx); er != nil {
+	if er := contract.ErrorReturnForValue(fn, returnIdx); er != nil {
 		if !unwrap.IsOptionalLike(baseReturn) {
 			return typ.NewOptional(baseReturn)
 		}
 	}
 
-	ret := spec.Effects.GetReturn(returnIdx)
+	row := effectiveReturnEffectRow(fn)
+	ret := row.GetReturn(returnIdx)
 	if ret == nil || ret.Transform == nil {
-		return baseReturn
+		return applyFlowIntoTransforms(row, args, returnIdx, baseReturn)
 	}
 
+	transformedReturn := baseReturn
 	switch transform := ret.Transform.(type) {
 	case effect.SameAs:
 		if resolved := resolveParamType(args, transform.Source); resolved != nil {
-			return resolved
+			transformedReturn = resolved
+			break
 		}
-		return baseReturn
 	case effect.ElementOf:
 		if resolved := resolveParamType(args, transform.Source); resolved != nil {
 			if elem := querycore.ElementType(resolved); elem != nil {
-				return elem
+				transformedReturn = elem
+				break
 			}
 		}
-		return baseReturn
 	case effect.OptionalElementOf:
 		if resolved := resolveParamType(args, transform.Source); resolved != nil {
 			if elem := querycore.ElementType(resolved); elem != nil {
-				return typ.NewOptional(elem)
+				transformedReturn = typ.NewOptional(elem)
+				break
 			}
 		}
-		return baseReturn
 	case effect.DeepElementOf:
 		if resolved := resolveParamType(args, transform.Source); resolved != nil {
 			if elem := deepElementType(resolved); elem != nil {
-				return elem
+				transformedReturn = elem
+				break
 			}
 		}
-		return baseReturn
 	case effect.StringUnpackValue:
 		if resolved := resolveParamType(args, transform.Format); resolved != nil {
 			if unpacked := unpackFirstValueType(resolved); unpacked != nil {
-				return unpacked
+				transformedReturn = unpacked
+				break
 			}
 		}
-		return baseReturn
 	case effect.CallbackReturn:
 		if resolved := resolveParamType(args, transform.CallbackParam); resolved != nil {
 			if cbRet := callbackReturnType(resolved); cbRet != nil {
-				return cbRet
+				transformedReturn = cbRet
+				break
 			}
 		}
-		return baseReturn
 	case effect.ArrayOfCallbackReturn:
 		if resolved := resolveParamType(args, transform.CallbackParam); resolved != nil {
 			if cbRet := callbackReturnType(resolved); cbRet != nil {
-				return typ.NewArray(cbRet)
+				transformedReturn = typ.NewArray(cbRet)
+				break
 			}
 		}
-		return baseReturn
 	case effect.SelectResultOfCases:
 		result := buildSelectResultUnion(args, transform)
 		if result != nil {
-			return result
+			transformedReturn = result
+			break
 		}
-		return baseReturn
 	default:
-		return baseReturn
 	}
+	return applyFlowIntoTransforms(row, args, returnIdx, transformedReturn)
+}
+
+func effectiveReturnEffectRow(fn *typ.Function) effect.Row {
+	if fn == nil {
+		return effect.Empty
+	}
+	var row effect.Row
+	if spec, ok := fn.Spec.(*contract.Spec); ok && spec != nil {
+		row = effect.Union(row, spec.Effects)
+	}
+	if r, ok := fn.Effects.(effect.Row); ok {
+		row = effect.Union(row, r)
+	}
+	if refinement, ok := fn.Refinement.(*constraint.FunctionRefinement); ok && refinement != nil {
+		if r, ok := refinement.Row.(effect.Row); ok {
+			row = effect.Union(row, r)
+		}
+	}
+	return row
 }
 
 func resolveParamType(args []typ.Type, ref effect.ParamRef) typ.Type {
@@ -99,6 +121,215 @@ func resolveParamType(args []typ.Type, ref effect.ParamRef) typ.Type {
 		return nil
 	}
 	return args[idx]
+}
+
+func applyFlowIntoTransforms(row effect.Row, args []typ.Type, returnIdx int, baseReturn typ.Type) typ.Type {
+	flows := row.FlowIntoReturns(returnIdx)
+	if len(flows) == 0 {
+		return baseReturn
+	}
+	out := baseReturn
+	for _, flow := range flows {
+		source := resolveFlowSourceType(args, flow)
+		if source == nil {
+			continue
+		}
+		source = narrow.ToTruthy(source)
+		if typ.IsNever(source) {
+			source = nil
+		}
+		projected := mergeFlowRemainder(source, flow.Remainder)
+		if projected == nil {
+			continue
+		}
+		out = setReturnPathType(out, splitEffectPath(flow.TargetPath), projected)
+	}
+	return out
+}
+
+func resolveFlowSourceType(args []typ.Type, flow effect.FlowInto) typ.Type {
+	if flow.ParamIndex < 0 || flow.ParamIndex >= len(args) {
+		return nil
+	}
+	current := args[flow.ParamIndex]
+	for _, field := range splitEffectPath(flow.SourcePath) {
+		if current == nil {
+			return nil
+		}
+		next, ok := querycore.Field(current, field)
+		if !ok {
+			return nil
+		}
+		current = next
+	}
+	return current
+}
+
+func mergeFlowRemainder(source, remainder typ.Type) typ.Type {
+	switch {
+	case source == nil:
+		return remainder
+	case remainder == nil:
+		return source
+	default:
+		return typjoin.Types(source, remainder)
+	}
+}
+
+func splitEffectPath(path string) []string {
+	if path == "" {
+		return nil
+	}
+	parts := strings.Split(path, ".")
+	out := parts[:0]
+	for _, part := range parts {
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func setReturnPathType(t typ.Type, path []string, value typ.Type) typ.Type {
+	if value == nil {
+		return t
+	}
+	if len(path) == 0 {
+		return refineFlowTargetType(t, value)
+	}
+	if t == nil || typ.IsUnknown(t) || typ.IsAny(t) || typ.IsNever(t) {
+		return buildRecordPath(path, value)
+	}
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Optional:
+		inner := setReturnPathType(v.Inner, path, value)
+		if typ.TypeEquals(inner, v.Inner) {
+			return t
+		}
+		return typ.NewOptional(inner)
+	case *typ.Union:
+		members := make([]typ.Type, len(v.Members))
+		changed := false
+		for i, member := range v.Members {
+			members[i] = member
+			if member == nil || !pathMayExist(member, path) {
+				continue
+			}
+			next := setReturnPathType(member, path, value)
+			if !typ.TypeEquals(next, member) {
+				members[i] = next
+				changed = true
+			}
+		}
+		if !changed {
+			return t
+		}
+		return typ.NewUnion(members...)
+	case *typ.Record:
+		return setRecordPathType(v, path, value)
+	default:
+		return t
+	}
+}
+
+func pathMayExist(t typ.Type, path []string) bool {
+	if len(path) == 0 {
+		return true
+	}
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Optional:
+		return pathMayExist(v.Inner, path)
+	case *typ.Union:
+		for _, member := range v.Members {
+			if pathMayExist(member, path) {
+				return true
+			}
+		}
+		return false
+	case *typ.Record:
+		field := v.GetField(path[0])
+		return field != nil && pathMayExist(field.Type, path[1:])
+	default:
+		return typ.IsUnknown(t) || typ.IsAny(t)
+	}
+}
+
+func setRecordPathType(rec *typ.Record, path []string, value typ.Type) typ.Type {
+	if rec == nil || len(path) == 0 {
+		return rec
+	}
+	fieldName := path[0]
+	fields := make([]typ.Field, len(rec.Fields))
+	copy(fields, rec.Fields)
+	found := false
+	changed := false
+	for i := range fields {
+		if fields[i].Name != fieldName {
+			continue
+		}
+		found = true
+		next := fields[i].Type
+		if len(path) == 1 {
+			next = refineFlowTargetType(fields[i].Type, value)
+		} else {
+			next = setReturnPathType(fields[i].Type, path[1:], value)
+		}
+		if !typ.TypeEquals(next, fields[i].Type) {
+			fields[i].Type = next
+			changed = true
+		}
+		break
+	}
+	if !found {
+		fields = append(fields, typ.Field{Name: fieldName, Type: buildRecordPath(path[1:], value)})
+		changed = true
+	}
+	if !changed {
+		return rec
+	}
+	builder := typ.NewRecord().SetOpen(rec.Open)
+	if rec.HasMapComponent() {
+		builder.MapComponent(rec.MapKey, rec.MapValue)
+	}
+	if rec.Metatable != nil {
+		builder.Metatable(rec.Metatable)
+	}
+	for _, field := range fields {
+		switch {
+		case field.Optional && field.Readonly:
+			builder.OptReadonlyField(field.Name, field.Type)
+		case field.Optional:
+			builder.OptField(field.Name, field.Type)
+		case field.Readonly:
+			builder.ReadonlyField(field.Name, field.Type)
+		default:
+			builder.Field(field.Name, field.Type)
+		}
+	}
+	return builder.Build()
+}
+
+func buildRecordPath(path []string, value typ.Type) typ.Type {
+	if len(path) == 0 {
+		return value
+	}
+	return typ.NewRecord().Field(path[0], buildRecordPath(path[1:], value)).Build()
+}
+
+func refineFlowTargetType(existing, candidate typ.Type) typ.Type {
+	if candidate == nil {
+		return existing
+	}
+	if existing == nil || typ.IsUnknown(existing) || typ.IsAny(existing) || typ.IsNever(existing) {
+		return candidate
+	}
+	if subtype.IsSubtype(candidate, existing) {
+		return candidate
+	}
+	if subtype.IsSubtype(existing, candidate) {
+		return existing
+	}
+	return typjoin.Types(existing, candidate)
 }
 
 func callbackReturnType(t typ.Type) typ.Type {
@@ -184,12 +415,12 @@ func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCase
 		}
 
 		builder := typ.NewRecord().
-			Field("channel", channelType).
+			Field(effect.SelectResultChannelField, channelType).
 			Field("ok", typ.Boolean).
-			Field("value", valueType).
+			Field(effect.SelectResultValueField, valueType).
 			// Preserve case multiplicity even when channel/value types are equal.
 			// This keeps identity-sensitive narrowing sound for `result.channel ~= ch`.
-			Field("__select_case_id", typ.LiteralInt(int64(caseIdx)))
+			Field(effect.SelectResultCaseIDField, typ.LiteralInt(int64(caseIdx)))
 
 		if addDefault {
 			builder = builder.OptField("default", typ.Boolean)

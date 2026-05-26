@@ -7,15 +7,18 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/cond"
 	abstractcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
+	"github.com/wippyai/go-lua/compiler/check/domain/conditionexpr"
+	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	fbpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 type typeOpsNarrowResolver struct {
@@ -66,7 +69,7 @@ func buildPreflowBranchSolution(fc *abstractcore.FlowContext, inputs *flow.Input
 	cond.ExtractEdgeConstraints(fc, &temp)
 	cond.ExtractNumericConstraints(fc, &temp)
 
-	return flow.Solve(&temp, typeOpsNarrowResolver{ctx: fc.CallCtx, ops: fc.TypeOps})
+	return flow.SolveConditionView(&temp, typeOpsNarrowResolver{ctx: fc.CallCtx, ops: fc.TypeOps})
 }
 
 // synthWithOverlayAndPreflow wraps base synthesis with overlay lookup and a
@@ -83,112 +86,271 @@ func synthWithOverlayAndPreflow(
 	preflow *flow.Solution,
 	base func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
-	var synth func(ast.Expr, cfg.Point) typ.Type
+	return newPreflowOverlaySynthesizer(overlay, bindings, inputs, callCtx, typeOps, preflow, base).Synth
+}
 
-	synth = func(expr ast.Expr, p cfg.Point) typ.Type {
-		if expr == nil {
-			return nil
-		}
+type overlayExprKey struct {
+	expr  ast.Expr
+	point cfg.Point
+}
 
-		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
-			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-				if overlay != nil {
-					if t, exists := overlay(sym, p); exists {
-						return t
-					}
-				}
-			}
-		}
+type preflowOverlaySynthesizer struct {
+	overlay  overlayTypeAt
+	bindings *bind.BindingTable
+	inputs   *flow.Inputs
+	ctx      *db.QueryContext
+	typeOps  core.TypeOps
+	preflow  *flow.Solution
+	base     func(ast.Expr, cfg.Point) typ.Type
+	query    *db.Query[overlayExprKey, typ.Type]
 
-		if preflow != nil && bindings != nil && inputs != nil {
-			constResolver := predicate.BuildConstResolver(inputs, p)
-			if path := fbpath.FromExprWithBindings(expr, constResolver, bindings); !path.IsEmpty() {
-				if narrowed := preflow.NarrowedTypeAt(p, path); !typ.IsAbsentOrUnknown(narrowed) {
-					if attr, ok := expr.(*ast.AttrGetExpr); ok && typeOps != nil {
-						if objType := synth(attr.Object, p); !typ.IsAbsentOrUnknown(objType) {
-							if refined := refinePreflowLengthIndex(attr, objType, narrowed, p, bindings, inputs, preflow); refined != nil {
-								return refined
-							}
-						}
-						if declared := declaredAttrReadType(attr, p, synth, callCtx, typeOps); declared != nil {
-							refined, ok := refinePathFactWithDeclaredType(narrowed, declared, callCtx, typeOps)
-							if !ok {
-								goto skipPreflowPathFact
-							}
-							narrowed = refined
-						}
-					}
-					return narrowed
-				}
-			}
-		}
+	localCondition *constraint.Condition
+}
 
-	skipPreflowPathFact:
-
-		if attr, ok := expr.(*ast.AttrGetExpr); ok && typeOps != nil {
-			objType := synth(attr.Object, p)
-			if !typ.IsAbsentOrUnknown(objType) {
-				switch key := attr.Key.(type) {
-				case *ast.StringExpr:
-					if ft, ok := typeOps.Field(callCtx, objType, key.Value); ok && !typ.IsAbsentOrUnknown(ft) {
-						return ft
-					}
-					if it, ok := typeOps.Index(callCtx, objType, typ.LiteralString(key.Value)); ok && !typ.IsAbsentOrUnknown(it) {
-						return it
-					}
-				default:
-					keyType := synth(attr.Key, p)
-					if !typ.IsAbsentOrUnknown(keyType) {
-						if it, ok := typeOps.Index(callCtx, objType, keyType); ok && !typ.IsAbsentOrUnknown(it) {
-							if refined := refinePreflowLengthIndex(attr, objType, it, p, bindings, inputs, preflow); refined != nil {
-								return refined
-							}
-							return it
-						}
-					}
-				}
-			}
-		}
-
-		if call, ok := expr.(*ast.FuncCallExpr); ok && typeOps != nil {
-			if result := evalOverlayCallFirstResult(call, p, synth, callCtx, typeOps); !typ.IsAbsentOrUnknown(result) {
-				return result
-			}
-			if base != nil {
-				if direct := base(expr, p); !typ.IsAbsentOrUnknown(direct) {
-					return direct
-				}
-			}
+func newPreflowOverlaySynthesizer(
+	overlay overlayTypeAt,
+	bindings *bind.BindingTable,
+	inputs *flow.Inputs,
+	callCtx *db.QueryContext,
+	typeOps core.TypeOps,
+	preflow *flow.Solution,
+	base func(ast.Expr, cfg.Point) typ.Type,
+) *preflowOverlaySynthesizer {
+	if callCtx == nil {
+		callCtx = db.NewQueryContext(db.New())
+	}
+	s := &preflowOverlaySynthesizer{
+		overlay:  overlay,
+		bindings: bindings,
+		inputs:   inputs,
+		ctx:      callCtx,
+		typeOps:  typeOps,
+		preflow:  preflow,
+		base:     base,
+	}
+	s.query = db.NewQueryWithSeedAndWiden(
+		"check.assign.preflow-overlay-synth",
+		func(_ *db.QueryContext, key overlayExprKey) typ.Type {
+			return s.eval(key.expr, key.point)
+		},
+		typ.TypeEquals,
+		func(*db.QueryContext, overlayExprKey) typ.Type {
 			return typ.Unknown
-		}
+		},
+		value.MergeForConvergence,
+	)
+	return s
+}
 
-		if logical, ok := expr.(*ast.LogicalOpExpr); ok {
-			left := synth(logical.Lhs, p)
-			right := synth(logical.Rhs, p)
-			var result typ.Type
-			switch logical.Operator {
-			case "and":
-				result = ops.LogicalAndTyped(left, right)
-			case "or":
-				result = ops.LogicalOrTyped(left, right)
-			default:
-				result = typ.Unknown
-			}
-			if (typ.IsAbsentOrUnknown(result) || typ.IsAny(result)) && base != nil {
-				if direct := base(expr, p); !typ.IsAbsentOrUnknown(direct) && !typ.IsAny(direct) {
-					return direct
-				}
-			}
+func (s *preflowOverlaySynthesizer) Synth(expr ast.Expr, p cfg.Point) typ.Type {
+	if expr == nil {
+		return nil
+	}
+	if s.localCondition != nil {
+		return s.eval(expr, p)
+	}
+	return s.query.Get(s.ctx, overlayExprKey{expr: expr, point: p})
+}
+
+func (s *preflowOverlaySynthesizer) withCondition(cond constraint.Condition) *preflowOverlaySynthesizer {
+	if s == nil || (!cond.HasConstraints() && !cond.IsFalse()) {
+		return s
+	}
+	if s.localCondition != nil {
+		cond = constraint.And(*s.localCondition, cond)
+	}
+	next := *s
+	next.localCondition = &cond
+	return &next
+}
+
+func (s *preflowOverlaySynthesizer) eval(expr ast.Expr, p cfg.Point) typ.Type {
+	if expr == nil {
+		return nil
+	}
+	if t, ok := s.overlayIdent(expr, p); ok {
+		return t
+	}
+	if t, ok := s.preflowPathFact(expr, p); ok {
+		return t
+	}
+	if attr, ok := expr.(*ast.AttrGetExpr); ok {
+		if t := s.attrRead(attr, p); !typ.IsAbsentOrUnknown(t) {
+			return t
+		}
+	}
+	if call, ok := expr.(*ast.FuncCallExpr); ok {
+		return s.callFirstResult(call, expr, p)
+	}
+	if logical, ok := expr.(*ast.LogicalOpExpr); ok {
+		return s.logicalResult(logical, expr, p)
+	}
+	return s.baseResult(expr, p)
+}
+
+func (s *preflowOverlaySynthesizer) overlayIdent(expr ast.Expr, p cfg.Point) (typ.Type, bool) {
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok || s.bindings == nil || s.overlay == nil {
+		return nil, false
+	}
+	sym, ok := s.bindings.SymbolOf(ident)
+	if !ok || sym == 0 {
+		return nil, false
+	}
+	return s.overlay(sym, p)
+}
+
+func (s *preflowOverlaySynthesizer) preflowPathFact(expr ast.Expr, p cfg.Point) (typ.Type, bool) {
+	if s.preflow == nil || s.bindings == nil || s.inputs == nil {
+		return nil, false
+	}
+	constResolver := predicate.BuildConstResolver(s.inputs, p)
+	path := fbpath.FromExprWithBindings(expr, constResolver, s.bindings)
+	if path.IsEmpty() {
+		return nil, false
+	}
+	narrowed := s.conditionedPathFact(p, path)
+	if typ.IsAbsentOrUnknown(narrowed) {
+		return nil, false
+	}
+	attr, ok := expr.(*ast.AttrGetExpr)
+	if !ok || s.typeOps == nil {
+		return narrowed, true
+	}
+	refined, keep := s.refinePreflowAttrFact(attr, narrowed, p)
+	return refined, keep
+}
+
+func (s *preflowOverlaySynthesizer) conditionedPathFact(p cfg.Point, path constraint.Path) typ.Type {
+	if s.localCondition == nil {
+		return s.preflow.ConditionTypeAt(p, path)
+	}
+	rootPath := constraint.Path{Root: path.Root, Symbol: path.Symbol}
+	rootType := s.seedRootType(rootPath, p)
+	if typ.IsAbsentOrUnknown(rootType) {
+		return s.preflow.ConditionedTypeAt(p, path, *s.localCondition)
+	}
+	return s.preflow.ConditionedSeedTypeAt(p, rootPath, rootType, path, *s.localCondition)
+}
+
+func (s *preflowOverlaySynthesizer) seedRootType(rootPath constraint.Path, p cfg.Point) typ.Type {
+	if s.overlay != nil && rootPath.Symbol != 0 {
+		if t, ok := s.overlay(rootPath.Symbol, p); ok && !typ.IsAbsentOrUnknown(t) {
+			return t
+		}
+	}
+	if s.preflow != nil {
+		return s.preflow.ConditionTypeAt(p, rootPath)
+	}
+	return nil
+}
+
+func (s *preflowOverlaySynthesizer) refinePreflowAttrFact(attr *ast.AttrGetExpr, narrowed typ.Type, p cfg.Point) (typ.Type, bool) {
+	if objType := s.Synth(attr.Object, p); !typ.IsAbsentOrUnknown(objType) {
+		if refined := refinePreflowLengthIndex(attr, objType, narrowed, p, s.bindings, s.inputs, s.preflow); refined != nil {
+			return refined, true
+		}
+	}
+	declared := declaredAttrReadType(attr, p, s.Synth, s.ctx, s.typeOps)
+	if declared == nil {
+		return narrowed, true
+	}
+	return value.ReconcilePathFactWithDeclaredRead(narrowed, declared)
+}
+
+func (s *preflowOverlaySynthesizer) attrRead(attr *ast.AttrGetExpr, p cfg.Point) typ.Type {
+	if attr == nil || s.typeOps == nil {
+		return nil
+	}
+	objType := s.Synth(attr.Object, p)
+	if typ.IsAbsentOrUnknown(objType) {
+		return nil
+	}
+	switch key := attr.Key.(type) {
+	case *ast.StringExpr:
+		if ft, ok := s.typeOps.Field(s.ctx, objType, key.Value); ok && !typ.IsAbsentOrUnknown(ft) {
+			return ft
+		}
+		if it, ok := s.typeOps.Index(s.ctx, objType, typ.LiteralString(key.Value)); ok && !typ.IsAbsentOrUnknown(it) {
+			return it
+		}
+	default:
+		return s.dynamicAttrRead(attr, objType, p)
+	}
+	return nil
+}
+
+func (s *preflowOverlaySynthesizer) dynamicAttrRead(attr *ast.AttrGetExpr, objType typ.Type, p cfg.Point) typ.Type {
+	keyType := s.Synth(attr.Key, p)
+	if typ.IsAbsentOrUnknown(keyType) {
+		return nil
+	}
+	it, ok := s.typeOps.Index(s.ctx, objType, keyType)
+	if !ok || typ.IsAbsentOrUnknown(it) {
+		return nil
+	}
+	if refined := refinePreflowLengthIndex(attr, objType, it, p, s.bindings, s.inputs, s.preflow); refined != nil {
+		return refined
+	}
+	return it
+}
+
+func (s *preflowOverlaySynthesizer) callFirstResult(call *ast.FuncCallExpr, expr ast.Expr, p cfg.Point) typ.Type {
+	if s.typeOps != nil {
+		if result := evalOverlayCallFirstResult(call, p, s.Synth, s.ctx, s.typeOps); !typ.IsAbsentOrUnknown(result) {
 			return result
 		}
-
-		if base == nil {
-			return nil
-		}
-		return base(expr, p)
 	}
+	if direct := s.baseResult(expr, p); !typ.IsAbsentOrUnknown(direct) {
+		return direct
+	}
+	return typ.Unknown
+}
 
-	return synth
+func (s *preflowOverlaySynthesizer) logicalResult(logical *ast.LogicalOpExpr, expr ast.Expr, p cfg.Point) typ.Type {
+	left := s.Synth(logical.Lhs, p)
+	var result typ.Type
+	switch logical.Operator {
+	case "and":
+		if ops.IsFalsy(left) {
+			return left
+		}
+		right := s.withCondition(s.branchCondition(logical.Lhs, p, true)).Synth(logical.Rhs, p)
+		result = ops.LogicalAndTyped(left, right)
+	case "or":
+		if ops.IsTruthy(left) {
+			return left
+		}
+		right := s.withCondition(s.branchCondition(logical.Lhs, p, false)).Synth(logical.Rhs, p)
+		result = ops.LogicalOrTyped(left, right)
+	default:
+		result = typ.Unknown
+	}
+	if typ.IsAbsentOrUnknown(result) || typ.IsAny(result) {
+		if direct := s.baseResult(expr, p); !typ.IsAbsentOrUnknown(direct) && !typ.IsAny(direct) {
+			return direct
+		}
+	}
+	return result
+}
+
+func (s *preflowOverlaySynthesizer) branchCondition(expr ast.Expr, p cfg.Point, truthy bool) constraint.Condition {
+	if expr == nil {
+		return constraint.TrueCondition()
+	}
+	return (conditionexpr.Extractor{
+		P:             p,
+		Inputs:        s.inputs,
+		Bindings:      s.bindings,
+		ConstResolver: predicate.BuildConstResolver(s.inputs, p),
+	}).ConditionForTruth(expr, truthy)
+}
+
+func (s *preflowOverlaySynthesizer) baseResult(expr ast.Expr, p cfg.Point) typ.Type {
+	if s.base == nil {
+		return nil
+	}
+	return s.base(expr, p)
 }
 
 func refinePreflowLengthIndex(attr *ast.AttrGetExpr, objType, indexResult typ.Type, p cfg.Point, bindings *bind.BindingTable, inputs *flow.Inputs, preflow *flow.Solution) typ.Type {
@@ -223,6 +385,9 @@ func evalOverlayCallFirstResult(
 	typeOps core.TypeOps,
 ) typ.Type {
 	if call == nil || synth == nil || typeOps == nil {
+		return nil
+	}
+	if metatable.IsSetMetatableCall(call) {
 		return nil
 	}
 	args := make([]typ.Type, len(call.Args))
@@ -293,31 +458,4 @@ func declaredAttrReadType(
 		}
 	}
 	return nil
-}
-
-func refinePathFactWithDeclaredType(narrowed, declared typ.Type, callCtx *db.QueryContext, typeOps core.TypeOps) (typ.Type, bool) {
-	if narrowed == nil || declared == nil {
-		return narrowed, true
-	}
-	narrowed = unwrap.Alias(narrowed)
-	declared = unwrap.Alias(declared)
-	if narrowed == nil || declared == nil || declared.Kind().IsPlaceholder() {
-		return narrowed, true
-	}
-	if typeOps == nil {
-		return nil, false
-	}
-	if typeOps.IsSubtype(callCtx, narrowed, declared) {
-		return narrowed, true
-	}
-	declaredNonNil := narrow.RemoveNil(declared)
-	if !typ.IsNever(declaredNonNil) {
-		if typeOps.IsSubtype(callCtx, declaredNonNil, narrowed) {
-			return declaredNonNil, true
-		}
-		if unwrap.Function(declaredNonNil) != nil && unwrap.Function(narrowed) != nil {
-			return declaredNonNil, true
-		}
-	}
-	return nil, false
 }
