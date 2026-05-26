@@ -613,6 +613,12 @@ func elementTypeDepth(t typ.Type, depth int) typ.Type {
 		Recursive: func(r *typ.Recursive) typ.Type {
 			return elementTypeDepth(r.Body, depth+1)
 		},
+		Instantiated: func(inst *typ.Instantiated) typ.Type {
+			if len(inst.TypeArgs) > 0 {
+				return inst.TypeArgs[0]
+			}
+			return nil
+		},
 		Default: func(t typ.Type) typ.Type {
 			return nil
 		},
