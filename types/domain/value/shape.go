@@ -722,16 +722,32 @@ func selfSimilarToAnchor(node, anchor, root typ.Type, top bool, seen map[selfSim
 	}
 
 	if !top {
-		// A placeholder seed on either side is the position the recursion grows out
-		// of. Across fixpoint iterations either observation may be ahead of the
-		// other - an inner __index level can still be the unrefined seed while the
-		// outer level already carries the concrete structure - so a seed on the node
-		// or the anchor side matches the other's structure regardless of shape.
-		if selfEmbeddingGrowthSeed(node) || selfEmbeddingGrowthSeed(anchor) {
-			return true
-		}
+		nodeSeed := selfEmbeddingGrowthSeed(node)
+		anchorSeed := selfEmbeddingGrowthSeed(anchor)
 		nodeReembeds := ShallowStructuralShapeEquals(node, root)
 		anchorReembeds := ShallowStructuralShapeEquals(anchor, root)
+		// A placeholder seed is the position the recursion grows out of. The anchor
+		// is the established (possibly under-grown) fixed point and the node is a
+		// subtree of the observation being checked against it.
+		//
+		// An anchor-side seed is the recursion bottoming out: the node is a later,
+		// more concrete observation of the position the recursion will fill, so any
+		// concrete node refines it and the position is self-similar.
+		//
+		// A node-side seed is the opposite - the observation is less refined than
+		// the concrete anchor here. That is genuine self-embedding only when the
+		// concrete anchor side itself re-embeds the root (the recursion would fill
+		// the node seed with the root product). A node seed sitting opposite a
+		// structurally divergent concrete product is not a recursion edge but a
+		// distinct sibling shape that merely happens to be soft - e.g. a
+		// {[string]: any} field map at the value slot of a {[string]: T[]} anchor -
+		// so it must not fold.
+		if anchorSeed {
+			return true
+		}
+		if nodeSeed {
+			return anchorReembeds
+		}
 		if nodeReembeds || anchorReembeds {
 			if nodeReembeds && anchorReembeds {
 				// Both re-embed the root: the shared recursion edge.

@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // FunctionTypeLookup projects canonical function summaries into the type-fact query.
@@ -129,8 +130,18 @@ func SelectEffective(declared, refined flow.TypedValue, annotated bool) flow.Typ
 		if typ.IsUnknown(refined.Type) {
 			return declared
 		}
-		if reconciled, ok := value.ReconcilePathFactWithDeclaredRead(refined.Type, declared.Type); ok && reconciled != nil {
-			return typedValue(reconciled)
+		// A refinable structural annotation and a closed multi-member union
+		// annotation are owned by the annotation-refinement law below, not by the
+		// cheaper same-expression reconciliation. Reconciliation would either
+		// return the raw flow carrier (losing the unfolded structural body) or
+		// collapse the union to the single observed member (destroying the
+		// closed discriminant domain), so it must not short-circuit those cases.
+		annotationOwned := annotated &&
+			(typ.IsRefinableAnnotation(declared.Type) || isClosedUnionAnnotation(declared.Type))
+		if !annotationOwned {
+			if reconciled, ok := value.ReconcilePathFactWithDeclaredRead(refined.Type, declared.Type); ok && reconciled != nil {
+				return typedValue(reconciled)
+			}
 		}
 		if annotated {
 			if typ.IsRefinableAnnotation(declared.Type) {
@@ -145,12 +156,54 @@ func SelectEffective(declared, refined flow.TypedValue, annotated bool) flow.Typ
 					return declared
 				}
 			}
+			// A closed union annotation is a discriminant contract: a flow
+			// observation that narrows it to a single member keeps the declared
+			// union so the closed domain survives. Only a refinement that stays
+			// the same union (or widens past it) is adopted.
+			if isClosedUnionAnnotation(declared.Type) && narrowsClosedUnion(declared.Type, refined.Type) {
+				return declared
+			}
 			if !annotationAcceptsRefinement(declared.Type, refined.Type) {
 				return declared
 			}
 		}
 	}
 	return refined
+}
+
+// isClosedUnionAnnotation reports whether a declared annotation is a multi-member
+// union whose members are all concrete (no placeholder/any). Such an annotation
+// can carry a closed discriminant domain that flow narrowing must not erase.
+func isClosedUnionAnnotation(declared typ.Type) bool {
+	u := unwrap.Union(declared)
+	if u == nil || len(u.Members) < 2 {
+		return false
+	}
+	for _, member := range u.Members {
+		if member == nil {
+			return false
+		}
+		if typ.IsAbsentOrUnknown(member) || member.Kind().IsPlaceholder() {
+			return false
+		}
+	}
+	return true
+}
+
+// narrowsClosedUnion reports whether refined is a strict narrowing of a closed
+// union annotation: it drops to a proper subset of the union members. A refined
+// type equal to or wider than the union is not a narrowing and is adopted.
+func narrowsClosedUnion(declared, refined typ.Type) bool {
+	declaredUnion := unwrap.Union(declared)
+	if declaredUnion == nil {
+		return false
+	}
+	if refinedUnion := unwrap.Union(refined); refinedUnion != nil {
+		if len(refinedUnion.Members) >= len(declaredUnion.Members) {
+			return false
+		}
+	}
+	return subtype.IsSubtype(refined, declared)
 }
 
 func annotationAcceptsRefinement(declared, refined typ.Type) bool {
