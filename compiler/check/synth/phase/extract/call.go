@@ -2,6 +2,7 @@ package extract
 
 import (
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -323,6 +324,10 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 
 	recvType := recurse(ex.Receiver)
 	calleeType := s.resolveMethodCallee(recvType, ex.Method)
+	if os.Getenv("MCDBG") != "" {
+		fmt.Fprintf(os.Stderr, "MCDBG method=%s recv=%s (%T) callee=%s (%T)\n",
+			ex.Method, typ.FormatShort(recvType), recvType, typ.FormatShort(calleeType), calleeType)
+	}
 	forceReceiver := s.forceMethodReceiverAtPoint(p, ex)
 	probeDef := ops.CallDef{
 		IsMethod:            true,

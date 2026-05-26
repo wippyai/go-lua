@@ -29,15 +29,6 @@ var recursiveFamilies = &recursiveFamilyInterner{
 	aliases: make(map[uint64][]*typ.Alias),
 }
 
-// ZZResetCanonicalRecursiveFamilies clears the process-global canonical
-// recursive-family interner. Diagnostic A/B for the cross-compilation leak.
-func ZZResetCanonicalRecursiveFamilies() {
-	recursiveFamilies.mu.Lock()
-	recursiveFamilies.buckets = make(map[uint64][]typ.Type)
-	recursiveFamilies.aliases = make(map[uint64][]*typ.Alias)
-	recursiveFamilies.mu.Unlock()
-}
-
 // CanonicalRecursiveFamily returns the single canonical representative for the
 // recursive product family of t, hash-consed across all observations.
 //

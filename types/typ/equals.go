@@ -222,6 +222,12 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 			}
 		}
 		if va.Name != "" {
+			// A named generic carrying a declaration identity is the same type only
+			// when it denotes the same declaration; without one it falls back to name
+			// nominal identity (stdlib and deserialized module types).
+			if va.declID != 0 || vb.declID != 0 {
+				return va.declID == vb.declID
+			}
 			return true
 		}
 		if (va.Body == nil) != (vb.Body == nil) {

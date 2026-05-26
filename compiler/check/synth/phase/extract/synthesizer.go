@@ -285,6 +285,7 @@ func (s *Synthesizer) Resolver() *resolve.Resolver {
 		Bindings:       s.deps.ModuleBindings,
 		ModuleBindings: s.deps.ModuleBindings,
 		ModuleAliases:  s.deps.ModuleAliases,
+		Epoch:          s.deps.Ctx.Epoch(),
 	})
 }
 

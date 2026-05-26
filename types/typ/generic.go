@@ -88,6 +88,7 @@ type Generic struct {
 	Name                  string       // Type name (empty for anonymous generics)
 	TypeParams            []*TypeParam // Type parameters to be substituted
 	Body                  Type         // Template type with TypeParam references
+	declID                uint64       // Declaration identity (0 = name nominal)
 	hash                  uint64
 	containsAny           bool
 	containsNever         bool
@@ -98,18 +99,31 @@ type Generic struct {
 	strCache              stringCache
 }
 
-// NewGeneric creates a generic type definition.
-// Named generics use nominal identity, anonymous generics use structural identity.
+// NewGeneric creates a generic type definition with name nominal identity
+// (declID 0). Named generics are nominal by name + type params; anonymous
+// generics are structural.
 func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
+	return NewGenericDecl(name, params, body, 0)
+}
+
+// NewGenericDecl creates a generic type definition carrying an explicit
+// declaration identity. A nonzero declID makes the generic identified by its
+// declaration rather than its spelling, so two same-named declarations in
+// independent compilations do not collapse to one type.
+func NewGenericDecl(name string, params []*TypeParam, body Type, declID uint64) *Generic {
 	h := internal.HashCombine(uint64(kind.Generic), internal.FnvString(name))
 	for _, p := range params {
 		h = internal.HashCombine(h, p.Hash())
 	}
 
 	// Only include body in hash for anonymous generics (structural identity).
-	// Named generics are nominal: identity is name + type params.
+	// Named generics are nominal: identity is name + type params, refined by the
+	// declaration identity when present.
 	if name == "" && body != nil {
 		h = internal.HashCombine(h, body.Hash())
+	}
+	if declID != 0 {
+		h = internal.HashCombine(h, declID)
 	}
 
 	copied := make([]*TypeParam, len(params))
@@ -119,6 +133,7 @@ func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
 		Name:                  name,
 		TypeParams:            copied,
 		Body:                  body,
+		declID:                declID,
 		hash:                  h,
 		containsAny:           knownAnyTypeParams(copied) || knownContainsAny(body),
 		containsNever:         knownNeverTypeParams(copied) || knownContainsNever(body),
