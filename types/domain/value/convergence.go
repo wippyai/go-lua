@@ -545,13 +545,6 @@ func (s *convergenceWidenState) merge(existing, candidate typ.Type) typ.Type {
 	if joined, ok := s.joinRecursiveProducts(existing, candidate); ok {
 		return joined
 	}
-	// Close a self-embedding tower into a recursive family before the record
-	// extension upper bound can admit a deeper unfolding wholesale: a
-	// structurally-cyclic class (Bus.__index = Bus) otherwise grows one level per
-	// iteration. The fold yields a verified mu upper bound, a finite representative.
-	if folded, ok := s.foldSelfEmbeddingUpperBound(existing, candidate); ok {
-		return folded
-	}
 	if upper, ok := convergenceUpperBound(existing, candidate); ok {
 		return upper
 	}
