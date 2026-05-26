@@ -124,6 +124,9 @@ func RunScope(input ScopeInput) ScopeOutput {
 		parameterEvidence = input.ParameterEvidenceSignatures[input.Fn]
 		parameterEvidence = paramevidence.ProjectToParameterUse(input.Graph.ParamSlotsReadOnly(), input.Evidence.ParameterUses, parameterEvidence)
 	}
+	if input.Fn != nil && input.Graph != nil {
+		parameterEvidence = augmentNumericBoundEvidence(input.Graph, input.Evidence.Assignments, parameterEvidence)
+	}
 	paramTypes, paramAnnotated := ExtractParamTypes(input.Graph, input.Fn, typeExprResolver, synthSig, base, parameterEvidence)
 
 	// Inject synthesized self type into base scope only if base doesn't already
@@ -285,6 +288,57 @@ func buildFnSignatureResolver(
 		}
 		return paramevidence.MergeIntoSignature(fn, evidence, sig)
 	})
+}
+
+// augmentNumericBoundEvidence records numeric parameter-use evidence for
+// parameters that appear directly as a numeric for-loop bound. Lua requires
+// init, limit, and step to be numeric, so such a use proves the parameter
+// numeric. Evidence is added only where no prior use evidence exists, so it
+// never dilutes a richer observation already projected for the slot.
+func augmentNumericBoundEvidence(graph *cfg.Graph, assignments []api.AssignmentEvidence, evidence []typ.Type) []typ.Type {
+	if graph == nil || len(assignments) == 0 {
+		return evidence
+	}
+	slots := graph.ParamSlotsReadOnly()
+	bindings := graph.Bindings()
+	if len(slots) == 0 || bindings == nil {
+		return evidence
+	}
+	idxBySym := make(map[cfg.SymbolID]int, len(slots))
+	for i, slot := range slots {
+		if slot.Symbol != 0 {
+			idxBySym[slot.Symbol] = i
+		}
+	}
+	mark := func(expr ast.Expr) {
+		ident, ok := expr.(*ast.IdentExpr)
+		if !ok || ident.Value == "" {
+			return
+		}
+		sym, ok := bindings.SymbolOf(ident)
+		if !ok || sym == 0 {
+			return
+		}
+		idx, ok := idxBySym[sym]
+		if !ok {
+			return
+		}
+		for len(evidence) <= idx {
+			evidence = append(evidence, nil)
+		}
+		if evidence[idx] == nil {
+			evidence[idx] = typ.Number
+		}
+	}
+	for _, ae := range assignments {
+		if ae.Info == nil || ae.Info.NumericFor == nil {
+			continue
+		}
+		mark(ae.Info.NumericFor.Init)
+		mark(ae.Info.NumericFor.Limit)
+		mark(ae.Info.NumericFor.Step)
+	}
+	return evidence
 }
 
 // extractParamTypes extracts parameter types from function definition.
