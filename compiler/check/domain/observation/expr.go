@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -689,9 +690,44 @@ func (p Projector) callReturns(expr *ast.FuncCallExpr, point cfg.Point) []typ.Ty
 	return p.callReturnsWithExpected(expr, point, nil)
 }
 
+// interceptSelectCall observes a select(...) call through the shared synth
+// select intercept so the variadic-transform return (select("#", ...) -> integer,
+// select(n, ...) -> the n-th vararg/element) matches the engine instead of
+// degrading to unknown. Returns false for non-select calls.
+func (p Projector) interceptSelectCall(expr *ast.FuncCallExpr, point cfg.Point) ([]typ.Type, bool) {
+	if expr == nil || p.cfg.GlobalTypes == nil {
+		return nil, false
+	}
+	var resolver intercept.VariadicTypeResolver
+	sc := p.cfg.Scopes[point]
+	if sc != nil {
+		resolver = sc
+	}
+	chain := intercept.NewChain([]intercept.CallIntercept{
+		&intercept.SelectIntercept{VariadicResolver: resolver},
+	}, nil)
+	env := intercept.CallEnv{
+		Scope:   sc,
+		Recurse: intercept.ExprSynth(func(e ast.Expr) typ.Type { return p.TypeOf(e, point) }),
+		TypeLookup: func(name string) typ.Type {
+			if t, ok := p.cfg.GlobalTypes[name]; ok {
+				return t
+			}
+			return nil
+		},
+	}
+	if res := chain.InterceptCall(expr, env); res.Skip {
+		return res.Types, true
+	}
+	return nil, false
+}
+
 func (p Projector) callReturnsWithExpected(expr *ast.FuncCallExpr, point cfg.Point, expected typ.Type) []typ.Type {
 	if expr == nil {
 		return []typ.Type{typ.Unknown}
+	}
+	if types, ok := p.interceptSelectCall(expr, point); ok {
+		return types
 	}
 	args := p.callArgTypes(expr.Args, point)
 	if metatable.IsSetMetatableCall(expr) {
