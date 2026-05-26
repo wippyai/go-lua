@@ -752,7 +752,7 @@ func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 
 	params := paramevidence.JoinCallVectors(paramsTypes(prev), paramsTypes(next))
 	bodyParams := paramevidence.JoinBodyVectors(bodyParamsTypes(prev), bodyParamsTypes(next))
-	entryParams := paramevidence.JoinEntryVectors(entryParamsTypes(prev), entryParamsTypes(next))
+	entryParams := paramevidence.JoinEntryConvergeVectors(entryParamsTypes(prev), entryParamsTypes(next))
 	summary := returnsummary.WidenForConvergence(summaryTypes(prev), summaryTypes(next))
 	narrow := returnsummary.WidenForConvergence(narrowTypes(prev), narrowTypes(next))
 

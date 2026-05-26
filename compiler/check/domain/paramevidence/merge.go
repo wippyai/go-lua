@@ -149,6 +149,16 @@ func JoinEntryVectors(a, b []typ.Type) []typ.Type {
 	return joinVectorsWith(a, b, JoinEntry)
 }
 
+// JoinEntryConvergeVectors joins observed call-entry parameter states across a
+// recursive fixpoint boundary. A pure-nil prior slot is a seed produced before
+// the argument's defining call was inferred; once a later iteration proves a
+// definite non-nil entry it must replace that seed instead of widening it to an
+// optional. Genuine nilable observations already carry their nilability into the
+// incoming slot within a single iteration, so they remain optional here.
+func JoinEntryConvergeVectors(a, b []typ.Type) []typ.Type {
+	return joinVectorsWith(a, b, JoinEntryConverge)
+}
+
 // MergeArgumentObservation combines a current call-argument observation with a
 // re-synthesized/contextual observation. Top-like candidates add no evidence;
 // otherwise the more precise comparable type wins before falling back to the
@@ -407,6 +417,30 @@ func JoinEntry(a, b typ.Type) typ.Type {
 		return joined
 	}
 	return joinNonNilBody(a, b)
+}
+
+// JoinEntryConverge merges observed call-entry states across a recursive
+// fixpoint boundary. It behaves like JoinEntry except that a pure-nil prior
+// observation is treated as an uninferred seed: a definite non-nil incoming
+// observation replaces it rather than widening to an optional. An incoming
+// observation that is itself nilable keeps its nilability, so genuine optional
+// parameters are preserved.
+func JoinEntryConverge(prev, next typ.Type) typ.Type {
+	prev = NormalizeBodyType(prev)
+	next = NormalizeBodyType(next)
+	if prev == nil {
+		return next
+	}
+	if next == nil {
+		return prev
+	}
+	if unwrap.IsNilType(prev) {
+		ni, nilable := value.SplitNilable(next)
+		if !nilable && ni != nil {
+			return next
+		}
+	}
+	return JoinEntry(prev, next)
 }
 
 // JoinCall merges two call-boundary parameter observations.
