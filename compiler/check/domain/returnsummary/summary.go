@@ -1206,7 +1206,63 @@ func mergeReturnSlot(existing, candidate typ.Type) typ.Type {
 	if refines, changed := value.RefinesFalsyMapKey(existing, candidate); refines && changed {
 		return preserveReturnSlotNilability(existing, existing, candidate)
 	}
+	if concrete, ok := concreteReturnSlotOverUnknownPeer(existing, candidate); ok {
+		return concrete
+	}
 	return typ.JoinReturnSlot(existing, candidate)
+}
+
+// concreteReturnSlotOverUnknownPeer resolves a return-slot merge where exactly
+// one side is a bare `unknown` placeholder (missing analysis evidence, e.g. the
+// not-yet-inferred recursive callee slot in a mutual-recursion SCC) and the
+// other carries concrete scalar evidence (e.g. a numeric base-case return). The
+// scalar evidence replaces the placeholder rather than being absorbed by
+// JoinReturnSlot, which would otherwise widen the slot back to `unknown` every
+// fixpoint iteration and prevent the SCC from converging.
+//
+// Only scalar primitives (number/integer/string/boolean) replace the
+// placeholder. A bare `unknown` is load-bearing for gradual field/index
+// leniency: replacing it with a structural type (record/map/array/function)
+// would strip that leniency and reject otherwise-permitted member access on a
+// genuinely dynamic outcome. Scalars carry no such member surface, so the
+// replacement is precision-only. Unlike an explicit `any` outcome (handled by
+// explicitAnyJoin, where the dynamic peer wins), a bare `unknown` means "no
+// evidence yet" and must yield to concrete scalar evidence.
+func concreteReturnSlotOverUnknownPeer(a, b typ.Type) (typ.Type, bool) {
+	aUnknown := typ.IsUnknown(unwrap.Alias(a))
+	bUnknown := typ.IsUnknown(unwrap.Alias(b))
+	if aUnknown == bUnknown {
+		return nil, false
+	}
+	concrete := a
+	if aUnknown {
+		concrete = b
+	}
+	if !isScalarReturnEvidence(concrete) {
+		return nil, false
+	}
+	return concrete, true
+}
+
+// isScalarReturnEvidence reports whether t is a scalar primitive
+// (number/integer/string/boolean), including a literal of one of those.
+func isScalarReturnEvidence(t typ.Type) bool {
+	base := unwrap.Alias(t)
+	if base == nil {
+		return false
+	}
+	k := base.Kind()
+	if k == kind.Literal {
+		if lit, ok := base.(*typ.Literal); ok {
+			k = lit.Base
+		}
+	}
+	switch k {
+	case kind.Number, kind.Integer, kind.String, kind.Boolean:
+		return true
+	default:
+		return false
+	}
 }
 
 func mergeEvidenceVectorWith(widening *value.ConvergenceWidening, existing, candidate []typ.Type) ([]typ.Type, bool) {
