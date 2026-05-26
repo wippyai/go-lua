@@ -608,6 +608,19 @@ func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool)
 			if rightUnknown && isNumeric(left) {
 				return numericResultType(op, left), true
 			}
+		case "..":
+			// Concatenation always yields string. When one operand is gradual
+			// unknown and the other is concatable (or both are unknown), assume the
+			// concat succeeds and yields string.
+			if leftUnknown && rightUnknown {
+				return typ.String, true
+			}
+			if leftUnknown && isStringish(right) {
+				return typ.String, true
+			}
+			if rightUnknown && isStringish(left) {
+				return typ.String, true
+			}
 		}
 		return typ.Unknown, true
 	}
