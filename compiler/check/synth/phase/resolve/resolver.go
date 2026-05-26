@@ -545,6 +545,13 @@ func (r *Resolver) resolveFunction(te *ast.FunctionTypeExpr, sc *scope.State, de
 
 	for _, p := range te.Params {
 		paramType := r.resolveTypeDepth(p.Type, sc, depth+1)
+		// The grammar records a variadic type param `...T` as a trailing param
+		// named "..." (never a valid Lua identifier), so lift it to the variadic
+		// slot rather than treating it as a fixed positional parameter.
+		if p.Name == "..." {
+			builder.Variadic(paramType)
+			continue
+		}
 		if _, ok := p.Type.(*ast.OptionalTypeExpr); ok {
 			builder.OptParam(p.Name, paramType)
 			continue
