@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value/axis/identityrecursion"
 	"github.com/wippyai/go-lua/types/domain/value/axis/shapevalue"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // FactsEqual checks if two canonical interproc fact bundles are equal.
@@ -115,7 +116,7 @@ func zzslot(name string, a, b []product.AbstractValue) {
 	}
 }
 
-func typstr(t interface{ String() string }) string {
+func typstr(t *typ.Function) string {
 	if t == nil {
 		return "<nil>"
 	}
