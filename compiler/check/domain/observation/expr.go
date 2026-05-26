@@ -705,6 +705,7 @@ func (p Projector) interceptSelectCall(expr *ast.FuncCallExpr, point cfg.Point) 
 	}
 	chain := intercept.NewChain([]intercept.CallIntercept{
 		&intercept.SelectIntercept{VariadicResolver: resolver},
+		&intercept.TypeCastIntercept{},
 	}, nil)
 	env := intercept.CallEnv{
 		Scope:   sc,
