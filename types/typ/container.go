@@ -13,7 +13,12 @@ import (
 // describes what each element contains. Arrays support ipairs iteration
 // and length operator (#).
 type Array struct {
-	Element               Type
+	Element Type
+	// Fresh marks a transient empty-array-literal seed ({}). It participates in
+	// gradual Consistency (see subtype.Consistent) but is invisible to IsSubtype:
+	// a Fresh array lowers to its Element ([]), behaving exactly as never[] for
+	// the empty seed. Fresh is set only via NewFreshArray; user types never set it.
+	Fresh                 bool
 	hash                  uint64
 	softPrunable          bool
 	containsAny           bool
@@ -33,6 +38,29 @@ func NewArray(elem Type) *Array {
 	h := internal.HashCombine(uint64(kind.Array), elem.Hash())
 	return &Array{
 		Element:               elem,
+		hash:                  h,
+		softPrunable:          softPruneMayRewrite(elem),
+		containsAny:           knownContainsAny(elem),
+		containsNever:         knownContainsNever(elem),
+		containsTypeParam:     knownContainsTypeParam(elem),
+		containsInstantiated:  knownContainsInstantiated(elem),
+		containsRecursive:     knownContainsRecursive(elem),
+		containsOpenRecursive: knownContainsOpenRecursive(elem),
+	}
+}
+
+// NewFreshArray creates the transient empty-array-literal seed ({}).
+//
+// Its element is Never (so under IsSubtype it is exactly never[]), but Fresh is
+// folded into the hash so it is distinct from an annotated never[]. A fresh array
+// is array-like as a Consistency target: it accepts any T[] value.
+func NewFreshArray() *Array {
+	elem := Type(Never)
+	h := internal.HashCombine(uint64(kind.Array), elem.Hash())
+	h = internal.HashCombine(h, 1)
+	return &Array{
+		Element:               elem,
+		Fresh:                 true,
 		hash:                  h,
 		softPrunable:          softPruneMayRewrite(elem),
 		containsAny:           knownContainsAny(elem),

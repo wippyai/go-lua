@@ -139,7 +139,7 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 		return true
 	case *Array:
 		vb, ok := b.(*Array)
-		return ok && typeEqualsGuard(va.Element, vb.Element, next, seen)
+		return ok && va.Fresh == vb.Fresh && typeEqualsGuard(va.Element, vb.Element, next, seen)
 	case *Map:
 		vb, ok := b.(*Map)
 		return ok &&

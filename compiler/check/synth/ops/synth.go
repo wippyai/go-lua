@@ -53,7 +53,7 @@ func tableConstructor(fields []FieldDef, array []typ.Type) typ.Type {
 // synthesizeArray creates array type from elements.
 func synthesizeArray(elements []typ.Type) typ.Type {
 	if len(elements) == 0 {
-		return typ.NewArray(typ.Never)
+		return typ.NewFreshArray()
 	}
 
 	// Union of all element types
