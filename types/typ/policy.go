@@ -316,6 +316,11 @@ func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Typ
 		return types
 	}
 	out := make([]Type, 0, len(types))
+	type familyRep struct {
+		hash uint64
+		rep  Type
+	}
+	var recReps []familyRep
 	seenNodes := make(map[uintptr]bool)
 	changed := false
 	for _, candidate := range types {
@@ -327,11 +332,28 @@ func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Typ
 			out = append(out, candidate)
 			continue
 		}
-		if ptr := typePointer(candidate); ptr != 0 {
-			if seenNodes[ptr] {
-				changed = true
-				continue
+		if ptr := typePointer(candidate); ptr != 0 && seenNodes[ptr] {
+			changed = true
+			continue
+		}
+		// Distinct recursive handles that denote the same product family (a fresh
+		// *Recursive is minted each fixpoint iteration) cannot be detected by
+		// pointer identity, so dedup by the coinductive family hash refined with
+		// the structural same-family probe.
+		h := ProductFamilyHash(candidate)
+		duplicate := false
+		for _, r := range recReps {
+			if r.hash == h && SameProductFamily(r.rep, candidate) {
+				duplicate = true
+				break
 			}
+		}
+		if duplicate {
+			changed = true
+			continue
+		}
+		recReps = append(recReps, familyRep{hash: h, rep: candidate})
+		if ptr := typePointer(candidate); ptr != 0 {
 			seenNodes[ptr] = true
 		}
 		out = append(out, candidate)
