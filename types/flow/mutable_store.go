@@ -209,6 +209,7 @@ func (s *Solution) mutableStateChangedKeys(old map[string]product.AbstractValue,
 		curAV, curOK := current[key]
 		if oldOK != curOK || !oldAV.Equal(curAV) ||
 			pathPresenceFromType(projectFlowValue(oldAV)) != pathPresenceFromType(projectFlowValue(curAV)) {
+			zzSlotDelta(p, key, old, current, oldOK, curOK)
 			keys = append(keys, key)
 		}
 	}
@@ -218,8 +219,17 @@ func (s *Solution) mutableStateChangedKeys(old map[string]product.AbstractValue,
 
 // joinPredecessorMutableState merges the post-state of each predecessor into the
 // incoming abstract state for p. The per-key merge is product.CarryForward (the
-// value-domain convergence-widening merge lifted onto AbstractValue), so the
-// store fixpoint compares product identity and converges on recursive families.
+// value-domain convergence-widening merge lifted onto AbstractValue), so the store
+// fixpoint compares product identity and converges on recursive families.
+//
+// Beyond the predecessor merge, the key universe is seeded with the prior
+// post-state slots that the point's own transfer writes back to themselves
+// (a for..pairs self write-back, t[k] = v on a loop-carried map). Those keys live
+// only in p's post-state - no predecessor edge supplies them - so a partial-map
+// join drops them and the point's mutator re-adds them every iteration, toggling
+// the key's presence and never converging. Retaining only the self-written keys
+// keeps the discovered slot set monotone for the loop carry without disturbing
+// keys a predecessor or a new symbol version legitimately kills.
 func (s *Solution) joinPredecessorMutableState(p cfg.Point) map[string]product.AbstractValue {
 	if s == nil || s.inputs == nil || s.inputs.Graph == nil || len(s.mutableValues) == 0 {
 		return nil
@@ -228,55 +238,142 @@ func (s *Solution) joinPredecessorMutableState(p cfg.Point) map[string]product.A
 	if len(preds) == 0 {
 		return nil
 	}
+
+	selfWritten := s.selfRetainedMutableKeys(p)
+
+	var out map[string]product.AbstractValue
 	if len(preds) == 1 {
-		return cloneValueMap(s.mutableValues[preds[0]])
-	}
-
-	keySet := make(map[string]struct{})
-	for _, pred := range preds {
-		for key := range s.mutableValues[pred] {
-			keySet[key] = struct{}{}
-		}
-	}
-	if len(keySet) == 0 {
-		return nil
-	}
-
-	keys := make([]string, 0, len(keySet))
-	for key := range keySet {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	out := make(map[string]product.AbstractValue, len(keys))
-	for _, key := range keys {
-		var merged product.AbstractValue
-		have := false
+		// Single-predecessor edges carry the predecessor post-state verbatim, the
+		// exact prior semantics; the self-written retention is layered on after.
+		out = cloneValueMap(s.mutableValues[preds[0]])
+	} else {
+		keySet := make(map[string]struct{})
 		for _, pred := range preds {
-			t := s.canonicalKeyTypeAt(pred, key)
-			if t == nil && isPresenceKey(key) {
-				t = typ.Nil
+			for key := range s.mutableValues[pred] {
+				keySet[key] = struct{}{}
 			}
-			if t == nil || typ.IsNever(t) {
-				continue
-			}
-			next := liftFlowValue(t)
-			if !have {
-				merged = next
-				have = true
-				continue
-			}
-			merged = product.CarryForward(merged, next)
 		}
-		if !have {
+		if len(keySet) > 0 {
+			out = make(map[string]product.AbstractValue, len(keySet))
+			keys := make([]string, 0, len(keySet))
+			for key := range keySet {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				var merged product.AbstractValue
+				have := false
+				for _, pred := range preds {
+					t := s.canonicalKeyTypeAt(pred, key)
+					if t == nil && isPresenceKey(key) {
+						t = typ.Nil
+					}
+					if t == nil || typ.IsNever(t) {
+						continue
+					}
+					next := liftFlowValue(t)
+					if !have {
+						merged = next
+						have = true
+						continue
+					}
+					merged = product.CarryForward(merged, next)
+				}
+				if !have {
+					continue
+				}
+				out[key] = merged
+			}
+		}
+	}
+
+	// Retain self-written keys whose value lives only in p's prior post-state.
+	// When no predecessor re-supplies the key, the prior value is kept so its
+	// presence is monotone across iterations; when a predecessor also supplies it,
+	// the values converge via CarryForward. This keeps the loop self write-back
+	// from toggling the key present/absent without re-deriving keys a predecessor
+	// already carries verbatim.
+	for key := range selfWritten {
+		prior, ok := s.mutableValues[p][key]
+		if !ok {
 			continue
 		}
-		out[key] = merged
+		if out == nil {
+			out = make(map[string]product.AbstractValue, len(selfWritten))
+		}
+		if existing, ok := out[key]; ok {
+			out[key] = product.CarryForward(existing, prior)
+		} else {
+			out[key] = prior
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// selfRetainedMutableKeys returns the subset of the point's self-written mutable
+// keys that are present in p's prior post-state, i.e. the loop-carried keys whose
+// value lives only in p's own post-state and so must survive the join.
+func (s *Solution) selfRetainedMutableKeys(p cfg.Point) map[string]struct{} {
+	written := s.selfWrittenMutableKeys(p)
+	if len(written) == 0 {
+		return nil
+	}
+	prior := s.mutableValues[p]
+	if len(prior) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(written))
+	for key := range written {
+		if _, ok := prior[key]; ok {
+			out[key] = struct{}{}
+		}
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// selfWrittenMutableKeys returns the mutable-store keys that the point's own
+// transfer writes back into p's post-state: map writes (t[k] = v), table/container
+// element widening, and structured field assignments. These are the keys whose
+// value can live only in p's post-state on a loop self write-back, so they need
+// monotone presence retention across the join to converge.
+func (s *Solution) selfWrittenMutableKeys(p cfg.Point) map[string]struct{} {
+	if s == nil || s.pkResolver == nil {
+		return nil
+	}
+	keys := make(map[string]struct{})
+	add := func(target constraint.Path) {
+		if target.Symbol == 0 {
+			return
+		}
+		if key := s.pkResolver.KeyAt(p, target); key != "" {
+			keys[string(key)] = struct{}{}
+		}
+	}
+	for _, mm := range s.mapMutatorAssignmentsAt(p) {
+		add(mm.Target)
+	}
+	for _, tm := range s.tableMutatorAssignmentsAt(p) {
+		add(tm.Target)
+	}
+	for _, cm := range s.containerMutatorAssignmentsAt(p) {
+		add(cm.Target)
+	}
+	for _, assign := range s.assignmentsAt(p) {
+		if len(assign.TargetPath.Segments) > 0 {
+			add(assign.TargetPath)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys
 }
 
 func (s *Solution) canonicalKeyTypeAt(p cfg.Point, key string) typ.Type {
