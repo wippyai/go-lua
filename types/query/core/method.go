@@ -283,6 +283,20 @@ func methodFieldView(t typ.Type, owners ...typ.Type) (typ.Type, bool) {
 			return nil, false
 		}
 		return typ.NewOptional(inner), true
+	case *typ.Union:
+		// A field whose type is a union of callables (e.g. close provided both as
+		// a direct field and via __index, merged across the return summary) is
+		// callable as a method. View each member and rejoin; the call pipeline
+		// resolves the union callee.
+		views := make([]typ.Type, 0, len(v.Members))
+		for _, m := range v.Members {
+			mv, ok := methodFieldView(m, owners...)
+			if !ok {
+				return nil, false
+			}
+			views = append(views, mv)
+		}
+		return typ.NewUnion(views...), true
 	default:
 		if unwrap.Function(t) == nil {
 			return nil, false
