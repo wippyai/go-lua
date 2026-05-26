@@ -25,6 +25,7 @@ import (
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/subst"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -755,6 +756,19 @@ func (p Projector) callReturnsWithExpected(expr *ast.FuncCallExpr, point cfg.Poi
 		callee = p.TypeOf(expr.Func, point)
 	}
 	fn := unwrap.Function(callee)
+	if fn == nil {
+		// A callee typed as an already-applied generic alias (e.g. a parameter
+		// of type Mapper<T, U> = fun(x: T) -> U) is an Instantiated, which
+		// unwrap.Function deliberately does not expand. Only when the ordinary
+		// unwrap yields no function do we expand the instantiated alias, so
+		// generic calls that rely on the un-expanded callee are untouched.
+		if expanded := subst.ExpandInstantiated(callee); expanded != callee {
+			if efn := unwrap.Function(expanded); efn != nil {
+				callee = expanded
+				fn = efn
+			}
+		}
+	}
 	if fn == nil {
 		return []typ.Type{typ.Unknown}
 	}
