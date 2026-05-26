@@ -14,16 +14,16 @@ import (
 )
 
 func TestStoreFactsFromResult_NilStore(t *testing.T) {
-	StoreFactsFromResult(nil, nil, nil, nil)
+	StoreFactsFromResult(nil, nil, nil, nil, typ.NewRecursiveFamilyInterner())
 }
 
 func TestStoreFactsFromResult_NilResult(t *testing.T) {
-	StoreFactsFromResult(nil, nil, nil, nil)
+	StoreFactsFromResult(nil, nil, nil, nil, typ.NewRecursiveFamilyInterner())
 }
 
 func TestStoreFactsFromResult_NilGraph(t *testing.T) {
 	result := &api.FuncResult{}
-	StoreFactsFromResult(nil, nil, result, nil)
+	StoreFactsFromResult(nil, nil, result, nil, typ.NewRecursiveFamilyInterner())
 }
 
 func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSynth(t *testing.T) {

@@ -32,8 +32,19 @@ func Library() map[string]typ.Type {
 	return library
 }
 
-// initLibrary builds the standard library type map.
+// initLibrary builds the standard library type map. Every reachable recursive
+// node is frozen so a compilation that references a shared stdlib type can never
+// mutate its body; stdlib type graphs are immutable inputs.
 func initLibrary() map[string]typ.Type {
+	lib := buildLibrary()
+	for _, t := range lib {
+		typ.FreezeType(t)
+	}
+	return lib
+}
+
+// buildLibrary constructs the standard library type map.
+func buildLibrary() map[string]typ.Type {
 	return map[string]typ.Type{
 		"assert":         Assert,
 		"collectgarbage": CollectGarbage,

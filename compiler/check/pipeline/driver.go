@@ -46,6 +46,11 @@ type Config struct {
 	MaxScopeDepth int
 	EmitScopeDiag bool
 	FuncResultQ   *db.Query[api.FuncKey, *api.FuncResult]
+
+	// RecursiveFamilies is the compilation-scoped recursive-family interner.
+	// Inferred-return sealing widens family bodies only through it, so one
+	// compilation's convergence seed cannot mutate type state shared with another.
+	RecursiveFamilies *typ.RecursiveFamilyInterner
 }
 
 // Driver executes the fixpoint loop and function analysis.
@@ -156,7 +161,7 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 		}
 	}
 	d.storeFunctionRefinement(store, result, funcSym)
-	interprocinfer.StoreFactsFromResult(store, fn, result, parent)
+	interprocinfer.StoreFactsFromResult(store, fn, result, parent, d.cfg.RecursiveFamilies)
 	d.processNestedFunctions(sess, store, graph, results, result)
 }
 

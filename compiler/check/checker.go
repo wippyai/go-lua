@@ -173,7 +173,7 @@ func NewChecker(database *db.DB, deps Deps, opts ...Option) *Checker {
 	return c
 }
 
-func (c *Checker) newPipeline() *pipeline.Driver {
+func (c *Checker) newPipeline(interner *typ.RecursiveFamilyInterner) *pipeline.Driver {
 	runner := pipeline.NewRunner(pipeline.RunnerConfig{
 		Types:         c.deps.Types,
 		GlobalTypes:   c.deps.GlobalTypes,
@@ -185,13 +185,14 @@ func (c *Checker) newPipeline() *pipeline.Driver {
 	})
 	funcResultQ := db.NewQuery("FuncResult", runner.Run, funcResultEqual)
 	return pipeline.New(pipeline.Config{
-		Types:         c.deps.Types,
-		GlobalTypes:   c.deps.GlobalTypes,
-		Stdlib:        c.deps.Stdlib,
-		Manifests:     c.db,
-		MaxScopeDepth: c.maxScopeDepth,
-		EmitScopeDiag: c.emitScopeDepthDiagnostics,
-		FuncResultQ:   funcResultQ,
+		Types:             c.deps.Types,
+		GlobalTypes:       c.deps.GlobalTypes,
+		Stdlib:            c.deps.Stdlib,
+		Manifests:         c.db,
+		MaxScopeDepth:     c.maxScopeDepth,
+		EmitScopeDiag:     c.emitScopeDepthDiagnostics,
+		FuncResultQ:       funcResultQ,
+		RecursiveFamilies: interner,
 	})
 }
 
@@ -294,10 +295,12 @@ func (c *Checker) CheckChunk(chunk []ast.Stmt, name string) *Session {
 // checkChunk is the internal implementation for Check and CheckChunk.
 // It wraps the chunk in a FunctionExpr, runs the fixpoint loop, and executes passes.
 func (c *Checker) checkChunk(sess *Session, chunk []ast.Stmt) {
-	// Keyed recursive families are owner-keyed per compilation; reset so symbol
-	// numbers reused across compilations never inherit a prior body.
-	typ.ResetKeyedRecursiveFamilies()
-	if p := c.newPipeline(); p != nil {
+	// Keyed recursive families are owner-keyed per compilation. A fresh interner
+	// instance owns this compilation's family handles; it can mutate only the
+	// body slots it minted, so symbol numbers reused across compilations never
+	// inherit a prior body and stdlib/manifest type graphs stay immutable inputs.
+	interner := typ.NewRecursiveFamilyInterner()
+	if p := c.newPipeline(interner); p != nil {
 		p.Run(sess, chunk)
 	}
 

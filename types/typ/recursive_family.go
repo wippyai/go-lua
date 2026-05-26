@@ -35,69 +35,98 @@ func (k FamilyKey) hash() uint64 {
 	return internal.HashCombine(h, internal.FnvString(k.Owner))
 }
 
-// recursiveFamilyInterner owns one canonical *Recursive handle per FamilyKey.
+// RecursiveFamilyInterner owns one canonical *Recursive handle per FamilyKey for
+// a single compilation. It is the ownership boundary that makes cross-compilation
+// type-state corruption impossible: a compilation may mutate only the *Recursive
+// body slots its own interner minted; stdlib, manifest, DB, and cache type graphs
+// are immutable inputs that the interner may reference but never mutate.
 //
 // The handle is the recursive IDENTITY of the family: its ID is fixed when the
-// key is first interned and never changes, so TypeEquals and IsRecursiveRef
-// treat every observation of the family as the same node. The handle's Body is
-// a separate monotone lattice slot widened in place (WidenRecursiveBody): body
-// refinement (field accretion, precision drift) mutates the slot under the
-// stable identity without ever minting a fresh handle. The store is
-// process-global and append-only.
-type recursiveFamilyInternerKeyed struct {
+// key is first interned and never changes, so TypeEquals and IsRecursiveRef treat
+// every observation of the family as the same node. The handle's Body is a
+// separate monotone lattice slot widened in place (Widen): body refinement (field
+// accretion, precision drift) mutates the slot under the stable identity without
+// minting a fresh handle.
+//
+// Owner keys (a function symbol, an allocation site) are unique only within one
+// compilation, so each compilation owns its own interner instance; two
+// compilations that reuse the same symbol numbers never share a family body.
+type RecursiveFamilyInterner struct {
 	mu       sync.Mutex
 	families map[FamilyKey]*Recursive
 }
 
-var keyedRecursiveFamilies = &recursiveFamilyInternerKeyed{
-	families: make(map[FamilyKey]*Recursive),
+// NewRecursiveFamilyInterner creates a compilation-scoped recursive-family
+// interner.
+func NewRecursiveFamilyInterner() *RecursiveFamilyInterner {
+	return &RecursiveFamilyInterner{families: make(map[FamilyKey]*Recursive)}
 }
 
-// ResetKeyedRecursiveFamilies clears the keyed family interner. Owner keys (a
-// function symbol, an allocation site) are unique only within one compilation, so
-// the interner is scoped per compilation: a fresh compilation resets it, and two
-// compilations that reuse the same symbol numbers never share a stale family body.
-func ResetKeyedRecursiveFamilies() {
-	keyedRecursiveFamilies.mu.Lock()
-	keyedRecursiveFamilies.families = make(map[FamilyKey]*Recursive)
-	keyedRecursiveFamilies.mu.Unlock()
+// Reset clears the interner so a reused compilation context starts with no
+// inherited family bodies.
+func (i *RecursiveFamilyInterner) Reset() {
+	if i == nil {
+		return
+	}
+	i.mu.Lock()
+	i.families = make(map[FamilyKey]*Recursive)
+	i.mu.Unlock()
 }
 
-// InternRecursiveFamily returns the one canonical *Recursive handle for key.
+// Intern returns the one canonical *Recursive handle for key.
 //
-// The first observation of a key mints a placeholder handle with a fixed ID and
-// the key recorded as its family; subsequent observations return that same
-// handle. Producers seal the body with WidenRecursiveBody. The returned handle
-// is the family's stable recursive identity: two observations of one family are
-// literally the same pointer, so Equal is identity and Hash is the key hash,
-// stable across every body refinement.
-func InternRecursiveFamily(key FamilyKey) *Recursive {
-	keyedRecursiveFamilies.mu.Lock()
-	defer keyedRecursiveFamilies.mu.Unlock()
+// The first observation of a key mints a placeholder handle with a fixed ID, the
+// key recorded as its family, and this interner recorded as its owner; subsequent
+// observations return that same handle. Producers seal the body with Widen. The
+// returned handle is the family's stable recursive identity: two observations of
+// one family are literally the same pointer, so Equal is identity and Hash is the
+// key hash, stable across every body refinement.
+func (i *RecursiveFamilyInterner) Intern(key FamilyKey) *Recursive {
+	if i == nil {
+		return nil
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
 
-	if rec, ok := keyedRecursiveFamilies.families[key]; ok {
+	if rec, ok := i.families[key]; ok {
 		return rec
 	}
 	rec := NewRecursivePlaceholder(key.String())
 	rec.familyKey = key
 	rec.keyed = true
-	keyedRecursiveFamilies.families[key] = rec
+	rec.owner = i
+	i.families[key] = rec
 	return rec
 }
 
-// WidenRecursiveBody widens the body slot of a keyed family handle by joining
-// the candidate body into the current body, rebinding the candidate's
-// self-occurrences to the family handle so the cycle stays closed on one node.
-// It mutates the handle in place under its stable identity and returns the
-// handle. join is the value-domain body lattice join supplied by the producer;
-// it must be monotone and finite-height so the body converges.
+// owns reports whether family is a handle minted by this interner. Only owned
+// handles may have their body slot mutated; a shared or foreign recursive node
+// (stdlib/manifest/DB/cache, or one minted by another compilation) is immutable.
+func (i *RecursiveFamilyInterner) owns(family *Recursive) bool {
+	return i != nil && family != nil && family.owner == i
+}
+
+// Widen widens the body slot of a keyed family handle by joining the candidate
+// body into the current body, rebinding the candidate's self-occurrences to the
+// family handle so the cycle stays closed on one node. It mutates the handle in
+// place under its stable identity and returns the handle. join is the value-domain
+// body lattice join supplied by the producer; it must be monotone and
+// finite-height so the body converges.
 //
 // The first widen seals the handle; later widens monotonically refine the same
 // slot. Identity never changes, so the handle is Equal to itself across every
-// refinement and the inter-procedural fixpoint detects a fixed point on the
-// family while the body slot still settles.
-func WidenRecursiveBody(family *Recursive, candidateBody Type, join func(existing, candidate Type) Type) *Recursive {
+// refinement and the inter-procedural fixpoint detects a fixed point on the family
+// while the body slot still settles.
+//
+// Ownership guard: Widen mutates only a family this interner minted. A shared or
+// foreign recursive node is never SetBody'd; it is returned unchanged so an
+// immutable input (stdlib/manifest/DB/cache) cannot be corrupted by one
+// compilation's convergence seed.
+func (i *RecursiveFamilyInterner) Widen(family *Recursive, candidateBody Type, join func(existing, candidate Type) Type) *Recursive {
 	if family == nil || candidateBody == nil {
+		return family
+	}
+	if !i.owns(family) {
 		return family
 	}
 	candidateBody = rebindRecursiveSelf(candidateBody, family)

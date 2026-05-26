@@ -33,11 +33,16 @@ type Store interface {
 
 // StoreFactsFromResult records post-flow interproc facts for the current iteration.
 // Facts are written into InterprocFactsNext and become visible after FixpointSwap.
+//
+// interner is the compilation-scoped recursive-family interner; inferred-return
+// sealing widens family bodies only through it, so one compilation can never
+// mutate the type state another observes.
 func StoreFactsFromResult(
 	store Store,
 	fn *ast.FunctionExpr,
 	result *api.FuncResult,
 	parent *scope.State,
+	interner *typ.RecursiveFamilyInterner,
 ) {
 	if store == nil || result == nil || result.Graph == nil {
 		return
@@ -65,7 +70,7 @@ func StoreFactsFromResult(
 	}
 	fnType = sealClassReturns(fnType)
 	narrowSummary := returnsummary.Normalize(fnType.Returns)
-	narrowSummary = sealRecursiveReturns(narrowSummary, fnSym)
+	narrowSummary = sealRecursiveReturns(narrowSummary, fnSym, interner)
 	summary := functionfact.PostflowReturnSummary(fn, narrowSummary)
 
 	publicSeed := returns.BuildPostflowSeedFunctionType(result, fn)
@@ -118,13 +123,13 @@ func sealClassReturns(fnType *typ.Function) *typ.Function {
 // place under the stable identity, so the summary is Equal to itself once the
 // body settles and the inter-procedural fixpoint converges. Non-recursive slots
 // are returned unchanged.
-func sealRecursiveReturns(summary []typ.Type, fnSym cfg.SymbolID) []typ.Type {
-	if len(summary) == 0 || fnSym == 0 {
+func sealRecursiveReturns(summary []typ.Type, fnSym cfg.SymbolID, interner *typ.RecursiveFamilyInterner) []typ.Type {
+	if len(summary) == 0 || fnSym == 0 || interner == nil {
 		return summary
 	}
 	out := summary
 	for i, slot := range summary {
-		sealed, ok := sealRecursiveReturnSlot(slot, fnSym, i)
+		sealed, ok := sealRecursiveReturnSlot(slot, fnSym, i, interner)
 		if !ok {
 			continue
 		}
@@ -142,8 +147,8 @@ func sealRecursiveReturns(summary []typ.Type, fnSym cfg.SymbolID) []typ.Type {
 // and widens the family body in place with the value-domain convergence merge so
 // precision drift still iterates while identity stays fixed. It reports false for
 // a slot that is neither recursive nor a self-embedding tower.
-func sealRecursiveReturnSlot(slot typ.Type, fnSym cfg.SymbolID, index int) (typ.Type, bool) {
-	if slot == nil {
+func sealRecursiveReturnSlot(slot typ.Type, fnSym cfg.SymbolID, index int, interner *typ.RecursiveFamilyInterner) (typ.Type, bool) {
+	if slot == nil || interner == nil {
 		return nil, false
 	}
 	// Only the value domain's unstable inferred recursion needs an owner key: a
@@ -155,7 +160,7 @@ func sealRecursiveReturnSlot(slot typ.Type, fnSym cfg.SymbolID, index int) (typ.
 		return nil, false
 	}
 	key := typ.FamilyKey{Namespace: "ret", Owner: fmt.Sprintf("%d#%d", fnSym, index)}
-	family := typ.InternRecursiveFamily(key)
+	family := interner.Intern(key)
 
 	body, ok := recursiveReturnBody(slot, family)
 	if !ok || body == nil {
@@ -170,7 +175,7 @@ func sealRecursiveReturnSlot(slot typ.Type, fnSym cfg.SymbolID, index int) (typ.
 		}
 		return family, true
 	}
-	typ.WidenRecursiveBody(family, body, value.MergeForConvergence)
+	interner.Widen(family, body, value.MergeForConvergence)
 	if family.Body == nil {
 		return nil, false
 	}

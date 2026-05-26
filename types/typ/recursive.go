@@ -25,11 +25,21 @@ type Recursive struct {
 	hash uint64
 	rev  uint64
 
-	// keyed marks a family interned by InternRecursiveFamily: its identity is
+	// keyed marks a family interned by a RecursiveFamilyInterner: its identity is
 	// familyKey, so Equal and Hash use the key, not the body. Body refinement
 	// mutates the slot in place under the stable identity.
 	keyed     bool
 	familyKey FamilyKey
+
+	// owner is the compilation-scoped interner that minted a keyed family. Only
+	// the owning interner may widen the family body; a node with no owner (a
+	// declared type, an instantiated stdlib product) is immutable to the widen path.
+	owner *RecursiveFamilyInterner
+
+	// frozen marks an immutable input graph (stdlib/manifest/DB/cache). SetBody on
+	// a frozen node is a no-op so a shared recursive body cannot be mutated by a
+	// later compilation that reaches it.
+	frozen bool
 
 	containsAny             bool
 	containsNever           bool
@@ -92,13 +102,46 @@ func NewRecursivePlaceholder(name string) *Recursive {
 }
 
 // SetBody assigns the body to a placeholder recursive type.
+//
+// A frozen node is an immutable input graph (stdlib/manifest/DB/cache); SetBody on
+// it is a no-op so a shared recursive body cannot be mutated by a compilation that
+// reaches it. The freeze guard is what makes stdlib immutability explicit.
 func (r *Recursive) SetBody(body Type) {
+	if r.frozen {
+		return
+	}
 	r.Body = body
 	r.hash = 0
 	r.rev++
 	r.hashDeps = nil
 	r.containsFlagsDirty = true
 	r.containsClosedDirty = true
+}
+
+// Freeze marks the recursive node and its reachable recursive descendants as
+// immutable input. After freezing, SetBody is a no-op, so a shared stdlib,
+// manifest, DB, or cache type graph cannot be mutated by any compilation that
+// references it.
+func (r *Recursive) Freeze() {
+	FreezeType(r)
+}
+
+// FreezeType walks t and freezes every reachable recursive node, marking the whole
+// type graph as immutable input. Stdlib types are frozen once at library init so
+// any recursive body reached through them is immutable to every compilation.
+func FreezeType(t Type) {
+	if t == nil {
+		return
+	}
+	// Contains is the canonical cycle-safe structural scanner; a predicate that
+	// freezes each recursive node it visits and never short-circuits walks the
+	// whole graph exactly once.
+	Contains(t, func(n Type) bool {
+		if rec, ok := n.(*Recursive); ok && rec != nil {
+			rec.frozen = true
+		}
+		return false
+	})
 }
 
 func (r *Recursive) ensureContainsFlags() {
