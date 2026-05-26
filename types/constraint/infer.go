@@ -540,11 +540,16 @@ func (b *Bounds) joinLower() typ.Type {
 		return typ.Never
 	}
 
-	if len(b.Lower) == 1 {
-		return b.Lower[0]
+	lower := informativeBounds(b.Lower)
+	if len(lower) == 0 {
+		lower = b.Lower
 	}
 
-	return subtype.NormalizeUnion(b.Lower...)
+	if len(lower) == 1 {
+		return lower[0]
+	}
+
+	return subtype.NormalizeUnion(lower...)
 }
 
 func (b *Bounds) meetUpper() typ.Type {
@@ -552,11 +557,33 @@ func (b *Bounds) meetUpper() typ.Type {
 		return typ.Any
 	}
 
-	if len(b.Upper) == 1 {
-		return b.Upper[0]
+	upper := informativeBounds(b.Upper)
+	if len(upper) == 0 {
+		upper = b.Upper
 	}
 
-	return subtype.NormalizeIntersection(b.Upper...)
+	if len(upper) == 1 {
+		return upper[0]
+	}
+
+	return subtype.NormalizeIntersection(upper...)
+}
+
+// informativeBounds drops unknown/placeholder entries that carry no information
+// about the type variable. A type-var bound observed as unknown (for example a
+// callback parameter whose own type is not yet inferred) must not pollute the
+// solution and override a concrete bound contributed by another argument. If
+// every bound is non-informative the caller falls back to the full set so a
+// genuinely unconstrained variable still resolves to unknown.
+func informativeBounds(bounds []typ.Type) []typ.Type {
+	var out []typ.Type
+	for _, t := range bounds {
+		if t == nil || typ.IsUnknown(t) || t.Kind().IsPlaceholder() {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // BoundsError represents unsatisfiable bounds.
