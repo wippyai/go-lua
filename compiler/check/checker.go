@@ -294,6 +294,9 @@ func (c *Checker) CheckChunk(chunk []ast.Stmt, name string) *Session {
 // checkChunk is the internal implementation for Check and CheckChunk.
 // It wraps the chunk in a FunctionExpr, runs the fixpoint loop, and executes passes.
 func (c *Checker) checkChunk(sess *Session, chunk []ast.Stmt) {
+	// Keyed recursive families are owner-keyed per compilation; reset so symbol
+	// numbers reused across compilations never inherit a prior body.
+	typ.ResetKeyedRecursiveFamilies()
 	if p := c.newPipeline(); p != nil {
 		p.Run(sess, chunk)
 	}

@@ -25,6 +25,12 @@ type Recursive struct {
 	hash uint64
 	rev  uint64
 
+	// keyed marks a family interned by InternRecursiveFamily: its identity is
+	// familyKey, so Equal and Hash use the key, not the body. Body refinement
+	// mutates the slot in place under the stable identity.
+	keyed     bool
+	familyKey FamilyKey
+
 	containsAny             bool
 	containsNever           bool
 	containsTypeParam       bool
@@ -325,6 +331,11 @@ func hashWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]uint
 
 	// Check if this is a recursive type we've already seen
 	if rec, ok := t.(*Recursive); ok {
+		if rec.keyed {
+			// Keyed identity: hash by owner key, stable across body refinement, so a
+			// keyed family contributes a fixed hash to any product that embeds it.
+			return internal.HashCombine(uint64(kind.Recursive), rec.familyKey.hash())
+		}
 		if visited[rec] {
 			// Self-reference: use a sentinel hash value
 			return internal.HashCombine(uint64(kind.Recursive), internal.FnvString("$self"))
@@ -551,6 +562,12 @@ func (r *Recursive) String() string {
 }
 
 func (r *Recursive) Hash() uint64 {
+	if r.keyed {
+		// Keyed identity: the hash is the family key, stable across every body
+		// refinement so the inter-procedural fixpoint sees a fixed point on the
+		// family while the body slot still widens.
+		return internal.HashCombine(uint64(kind.Recursive), r.familyKey.hash())
+	}
 	if r.hash != 0 && recursiveHashDepsValid(r.hashDeps) {
 		return r.hash
 	}

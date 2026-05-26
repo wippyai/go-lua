@@ -1,6 +1,8 @@
 package interproc
 
 import (
+	"fmt"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
@@ -15,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
@@ -62,6 +65,7 @@ func StoreFactsFromResult(
 	}
 	fnType = sealClassReturns(fnType)
 	narrowSummary := returnsummary.Normalize(fnType.Returns)
+	narrowSummary = sealRecursiveReturns(narrowSummary, fnSym)
 	summary := functionfact.PostflowReturnSummary(fn, narrowSummary)
 
 	publicSeed := returns.BuildPostflowSeedFunctionType(result, fn)
@@ -99,6 +103,159 @@ func sealClassReturns(fnType *typ.Function) *typ.Function {
 		return sealed
 	}
 	return fnType
+}
+
+// sealRecursiveReturns ties each self-referential return slot into the function's
+// one keyed recursive family. A function whose return embeds its own prior return
+// (rec returns o where o.x is rec(o.child)) yields a structural tower that grows a
+// level deeper every inter-procedural iteration; the value-domain self-embedding
+// fold mints a fresh recursion variable each time, so the summary never reaches a
+// fixed point.
+//
+// The owner key is the function symbol plus slot index, the stable producer
+// identity supplied by the checker. Interning by that key returns the one
+// canonical family handle across every iteration, and the body is widened in
+// place under the stable identity, so the summary is Equal to itself once the
+// body settles and the inter-procedural fixpoint converges. Non-recursive slots
+// are returned unchanged.
+func sealRecursiveReturns(summary []typ.Type, fnSym cfg.SymbolID) []typ.Type {
+	if len(summary) == 0 || fnSym == 0 {
+		return summary
+	}
+	out := summary
+	for i, slot := range summary {
+		sealed, ok := sealRecursiveReturnSlot(slot, fnSym, i)
+		if !ok {
+			continue
+		}
+		if &out[0] == &summary[0] {
+			out = append([]typ.Type(nil), summary...)
+		}
+		out[i] = sealed
+	}
+	return out
+}
+
+// sealRecursiveReturnSlot interns a self-referential return slot into the keyed
+// family owned by (fnSym, slot). It folds the slot's self-embedding tower into a
+// recursive node, rebinds that node's self-reference to the keyed family handle,
+// and widens the family body in place with the value-domain convergence merge so
+// precision drift still iterates while identity stays fixed. It reports false for
+// a slot that is neither recursive nor a self-embedding tower.
+func sealRecursiveReturnSlot(slot typ.Type, fnSym cfg.SymbolID, index int) (typ.Type, bool) {
+	if slot == nil {
+		return nil, false
+	}
+	// Only the value domain's unstable inferred recursion needs an owner key: a
+	// declared recursive type (a named mu or an alias-wrapped family) is already
+	// canonical by its declaration and carries a nominal identity the program reads
+	// (method lookups, alias names). Re-keying it would erase that identity, so the
+	// seal applies only to inferred structural self-embedding.
+	if !inferredRecursiveReturn(slot) {
+		return nil, false
+	}
+	key := typ.FamilyKey{Namespace: "ret", Owner: fmt.Sprintf("%d#%d", fnSym, index)}
+	family := typ.InternRecursiveFamily(key)
+
+	body, ok := recursiveReturnBody(slot, family)
+	if !ok || body == nil {
+		return nil, false
+	}
+	// A bare reference to the family carries no new body equation; the family is
+	// already sealed, so return it unchanged. Sealing only proceeds for a slot that
+	// contributes structural content to the body slot.
+	if typ.IsRecursiveRef(body, family) {
+		if family.Body == nil {
+			return nil, false
+		}
+		return family, true
+	}
+	typ.WidenRecursiveBody(family, body, value.MergeForConvergence)
+	if family.Body == nil {
+		return nil, false
+	}
+	// Always return the bare keyed handle: an iteration whose summary was fed back
+	// arrives as a one-level-deeper unfolding of the family, so collapsing it to the
+	// handle keeps the stored summary identical to itself across iterations.
+	return family, true
+}
+
+// inferredRecursiveReturnName is the recursion-variable name the value-domain
+// self-embedding fold mints; a return slot carrying it is unstable inferred
+// recursion (a fresh node each iteration) eligible for owner keying.
+const inferredRecursiveReturnName = "Inferred"
+
+// inferredRecursiveReturn reports whether slot is the value domain's unstable
+// inferred recursion rather than a declared nominal type. An already-keyed family,
+// an Inferred fold node, or a bare structural self-embedding tower (no declared
+// recursive or alias node) qualifies; a declared named mu (e.g. a source `type`
+// recursion) or an alias-wrapped family does not, so its nominal identity is kept.
+func inferredRecursiveReturn(slot typ.Type) bool {
+	switch v := slot.(type) {
+	case *typ.Recursive:
+		if v == nil {
+			return false
+		}
+		if _, keyed := typ.FamilyKeyOf(v); keyed {
+			return true
+		}
+		return v.Name == inferredRecursiveReturnName
+	case *typ.Alias:
+		return false
+	default:
+		// A bare structural cycle with no declared recursive/alias wrapper is an
+		// inferred self-embedding tower; a slot that wraps a declared recursive or
+		// alias keeps that declared identity and is not re-keyed.
+		return !containsDeclaredRecursion(slot)
+	}
+}
+
+// containsDeclaredRecursion reports whether t embeds a declared recursive type (a
+// named mu other than the inferred fold) or an alias, the nominal identities the
+// seal must not erase.
+func containsDeclaredRecursion(t typ.Type) bool {
+	return typ.Contains(t, func(n typ.Type) bool {
+		switch v := n.(type) {
+		case *typ.Recursive:
+			if v == nil {
+				return false
+			}
+			if _, keyed := typ.FamilyKeyOf(v); keyed {
+				return false
+			}
+			return v.Name != inferredRecursiveReturnName
+		case *typ.Alias:
+			return true
+		default:
+			return false
+		}
+	})
+}
+
+// recursiveReturnBody derives the body equation of family from a self-referential
+// return slot. Three forms reach here across iterations, all of which must collapse
+// to one body under the family handle:
+//
+//   - The slot already embeds the family (a prior seal fed back, possibly under one
+//     or more extra record levels): every reference to family is the recursion edge,
+//     so the immediate structure with those references is the body.
+//   - The slot is an already-recursive node: its body is the equation, with the old
+//     recursion variable rebound to the family handle.
+//   - The slot is a bare self-embedding tower: the value-domain fold ties it into a
+//     recursion variable, which is then rebound to the family handle.
+func recursiveReturnBody(slot typ.Type, family *typ.Recursive) (typ.Type, bool) {
+	if typ.ContainsRecursiveRef(slot, family) {
+		return typ.CollapseUnfoldingToFamily(slot, family), true
+	}
+	if rec, ok := slot.(*typ.Recursive); ok && rec != nil && rec.Body != nil {
+		return typ.RebindRecursiveRef(rec.Body, rec, family), true
+	}
+	if folded, ok := value.FoldSelfEmbedding(slot, slot); ok {
+		if rec, ok := folded.(*typ.Recursive); ok && rec != nil && rec.Body != nil {
+			return typ.RebindRecursiveRef(rec.Body, rec, family), true
+		}
+	}
+	return nil, false
 }
 
 // sealClassInstances seals each constructor instance return in a summary vector
