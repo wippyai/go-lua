@@ -52,6 +52,7 @@ package ops
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 
 	"github.com/wippyai/go-lua/types/db"
@@ -62,6 +63,8 @@ import (
 	"github.com/wippyai/go-lua/types/typ/subst"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
+
+var genCallDbg = os.Getenv("GENCALLDBG") != ""
 
 // CallResult contains the synthesized return type and any errors from call checking.
 //
@@ -443,9 +446,15 @@ func inferFunction(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod
 	}
 
 	if len(fn.TypeParams) == 0 {
+		if genCallDbg {
+			println("GENCALLDBG len(TypeParams)=0 fn:", fn.String(), "expRet:", typ.FormatShort(def.ExpectedReturn))
+		}
 		result.Instantiated = fn
 		result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, fn, isMethod, receiver, def.ForceMethodReceiver)
 		return result
+	}
+	if genCallDbg {
+		println("GENCALLDBG generic fn TP:", len(fn.TypeParams), fn.String())
 	}
 
 	var typeArgs []typ.Type
@@ -463,6 +472,13 @@ func inferFunction(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod
 
 	result.TypeArgs = typeArgs
 	result.Instantiated = InstantiateFunction(fn, typeArgs)
+	if genCallDbg {
+		var ta []string
+		for _, a := range typeArgs {
+			ta = append(ta, typ.FormatShort(a))
+		}
+		println("GENCALLDBG infer expRet:", typ.FormatShort(def.ExpectedReturn), "typeArgs:", fmt.Sprint(ta), "instReturn:", result.Instantiated.String())
+	}
 	result.ExpectedArgs, result.ExpectedVariadic = computeExpectedArgs(ctx, def.Query, result.Instantiated, isMethod, receiver, def.ForceMethodReceiver)
 
 	return result
