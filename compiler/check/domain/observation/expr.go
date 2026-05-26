@@ -886,6 +886,13 @@ func (p Projector) pathType(expr ast.Expr, point cfg.Point) typ.Type {
 				proof = p.cfg.Solution.ConditionTypeAt(point, path)
 			}
 		}
+		// A provably-empty (never) flow narrowing is authoritative: do not let a
+		// declared annotation re-widen it back to the declared type. Annotated
+		// locals carry a declared fallback here while unannotated symbols do not,
+		// so without this both must observe the same genuine never narrowing.
+		if typ.IsNever(solved) {
+			return p.finalizeObservedPath(solved)
+		}
 		if selected, ok := value.SelectPathObservation(solved, proof, declared); ok {
 			selected = p.applyPathPresenceProof(selected, expr, point)
 			return p.finalizeObservedPath(selected)
