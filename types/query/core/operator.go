@@ -599,7 +599,7 @@ func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool)
 	// For arithmetic operators, unknown + numeric preserves numeric result shape.
 	if leftUnknown || rightUnknown {
 		switch op {
-		case "==", "~=":
+		case "==", "~=", "<", "<=", ">", ">=":
 			return typ.Boolean, true
 		case "+", "-", "*", "/", "%", "^", "//":
 			if leftUnknown && isNumeric(right) {
