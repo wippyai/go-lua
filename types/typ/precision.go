@@ -839,7 +839,13 @@ func compareLiteralPrecision(candidate *Literal, baseline Type) (bool, bool) {
 	case candidate.Base:
 		return true, true
 	case kind.Number:
-		return candidate.Base == kind.Integer, true
+		// Only a numeric literal is in the number family; an integer literal is
+		// strictly more precise, a number literal is equal precision. A literal
+		// of any other base (e.g. a string literal) is not comparable to number.
+		if candidate.Base == kind.Integer || candidate.Base == kind.Number {
+			return candidate.Base == kind.Integer, true
+		}
+		return false, false
 	default:
 		return false, false
 	}
