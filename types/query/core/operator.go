@@ -596,31 +596,14 @@ func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool)
 	leftUnknown := typ.IsUnknown(left)
 	rightUnknown := typ.IsUnknown(right)
 
-	// For arithmetic operators, unknown + numeric preserves numeric result shape.
+	// An unknown operand is unresolved analysis, not a value known to be usable.
+	// Equality is invariant to operand type and always yields boolean. Every
+	// other operator may fail at runtime, so the result propagates unknown rather
+	// than fabricating a concrete type; a downstream typed use then fails soundly.
 	if leftUnknown || rightUnknown {
 		switch op {
-		case "==", "~=", "<", "<=", ">", ">=":
+		case "==", "~=":
 			return typ.Boolean, true
-		case "+", "-", "*", "/", "%", "^", "//":
-			if leftUnknown && isNumeric(right) {
-				return numericResultType(op, right), true
-			}
-			if rightUnknown && isNumeric(left) {
-				return numericResultType(op, left), true
-			}
-		case "..":
-			// Concatenation always yields string. When one operand is gradual
-			// unknown and the other is concatable (or both are unknown), assume the
-			// concat succeeds and yields string.
-			if leftUnknown && rightUnknown {
-				return typ.String, true
-			}
-			if leftUnknown && isStringish(right) {
-				return typ.String, true
-			}
-			if rightUnknown && isStringish(left) {
-				return typ.String, true
-			}
 		}
 		return typ.Unknown, true
 	}
@@ -635,8 +618,11 @@ func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool)
 // unaryOpTopType resolves any/unknown for unary operators.
 func unaryOpTopType(op string, operand typ.Type) (typ.Type, bool) {
 	if typ.IsUnknown(operand) {
-		if op == "#" {
-			return typ.Integer, true
+		// not is invariant to its operand and always yields boolean. length on
+		// unknown is unresolved analysis and propagates unknown rather than
+		// fabricating an integer.
+		if op == "not" {
+			return typ.Boolean, true
 		}
 		return typ.Unknown, true
 	}
@@ -760,23 +746,6 @@ func IsIntegerType(t typ.Type) bool {
 		return t.(*typ.Literal).Base == kind.Integer
 	default:
 		return false
-	}
-}
-
-// numericResultType returns the result type for arithmetic with one known operand.
-// Used when one operand is unknown but the other is numeric. Helps provide better
-// type inference by propagating integer vs number distinction where possible.
-func numericResultType(op string, known typ.Type) typ.Type {
-	switch op {
-	case "//":
-		return typ.Integer
-	case "^":
-		return typ.Number
-	default:
-		if IsIntegerType(known) {
-			return typ.Integer
-		}
-		return typ.Number
 	}
 }
 

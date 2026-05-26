@@ -230,7 +230,9 @@ func mayBeOrderableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 
 	k := t.Kind()
-	return k == kind.String || k == kind.Number || k == kind.Integer || k.IsPlaceholder()
+	// any is the gradual escape hatch; unknown represents missing analysis and
+	// must be narrowed before ordering.
+	return k == kind.String || k == kind.Number || k == kind.Integer || k == kind.Any
 }
 
 const (
@@ -303,7 +305,10 @@ func orderedFamilyMask(t typ.Type, guard internal.RecursionGuard) (int, bool) {
 			return orderedFamilyNumber, false
 		case k == kind.String:
 			return orderedFamilyString, false
-		case k.IsPlaceholder():
+		case k == kind.Any:
+			// any is the gradual escape hatch: treat as compatible with either
+			// ordered family. unknown is missing analysis and yields no family,
+			// so a comparison against it is rejected by the empty-mask check.
 			return 0, true
 		default:
 			return 0, false
@@ -468,7 +473,8 @@ func mayBeStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 		}
 	default:
 		k := t.Kind()
-		if k.IsPlaceholder() {
+		// any is the gradual escape hatch; unknown must be narrowed first.
+		if k == kind.Any {
 			return true
 		}
 		if k == kind.String || k == kind.Number || k == kind.Integer {
@@ -619,7 +625,8 @@ func mayHaveLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
 		return false
 	}
 
-	return t.Kind().IsPlaceholder() || t.Kind() == kind.String
+	// any is the gradual escape hatch; unknown must be narrowed first.
+	return t.Kind() == kind.Any || t.Kind() == kind.String
 }
 
 // IsStringOnly checks if type is string (not number).

@@ -652,17 +652,17 @@ func TestBinaryOp_Unknown(t *testing.T) {
 		}
 	})
 
-	t.Run("unknown + number keeps numeric type", func(t *testing.T) {
+	t.Run("unknown + number propagates unknown", func(t *testing.T) {
 		result := BinaryOp(typ.Unknown, "+", typ.Number)
-		if result != typ.Number {
-			t.Errorf("expected number, got %v", result)
+		if result != typ.Unknown {
+			t.Errorf("expected unknown, got %v", result)
 		}
 	})
 
-	t.Run("integer + unknown keeps numeric type", func(t *testing.T) {
+	t.Run("integer + unknown propagates unknown", func(t *testing.T) {
 		result := BinaryOp(typ.Integer, "+", typ.Unknown)
-		if result != typ.Integer {
-			t.Errorf("expected integer, got %v", result)
+		if result != typ.Unknown {
+			t.Errorf("expected unknown, got %v", result)
 		}
 	})
 
@@ -675,10 +675,10 @@ func TestBinaryOp_Unknown(t *testing.T) {
 }
 
 func TestUnaryOp_Unknown(t *testing.T) {
-	t.Run("length unknown returns integer", func(t *testing.T) {
+	t.Run("length unknown propagates unknown", func(t *testing.T) {
 		result := UnaryOp("#", typ.Unknown)
-		if result != typ.Integer {
-			t.Errorf("expected integer, got %v", result)
+		if result != typ.Unknown {
+			t.Errorf("expected unknown, got %v", result)
 		}
 	})
 

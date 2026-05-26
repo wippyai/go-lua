@@ -369,7 +369,7 @@ func TestMayHaveLength(t *testing.T) {
 		{"optional string", typ.NewOptional(typ.String), true},
 		{"string or nil", typ.NewUnion(typ.String, typ.Nil), true},
 		{"integer or nil", typ.NewUnion(typ.Integer, typ.Nil), false},
-		{"unknown", typ.Unknown, true},
+		{"unknown", typ.Unknown, false},
 		{"any", typ.Any, true},
 	}
 	for _, tt := range tests {
@@ -395,7 +395,7 @@ func TestMayBeStringable(t *testing.T) {
 		{"string or nil", typ.NewUnion(typ.String, typ.Nil), true},
 		{"boolean or nil", typ.NewUnion(typ.Boolean, typ.Nil), false},
 		{"any", typ.Any, true},
-		{"unknown", typ.Unknown, true},
+		{"unknown", typ.Unknown, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -419,7 +419,7 @@ func TestMayBeOrderable(t *testing.T) {
 		{"optional number", typ.NewOptional(typ.Number), true},
 		{"number or nil", typ.NewUnion(typ.Number, typ.Nil), true},
 		{"boolean or nil", typ.NewUnion(typ.Boolean, typ.Nil), false},
-		{"unknown", typ.Unknown, true},
+		{"unknown", typ.Unknown, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
