@@ -8,14 +8,14 @@ import (
 )
 
 func TestDetectConstructorPattern_NilInputs(t *testing.T) {
-	classSym, selfSym := DetectConstructorPattern(api.FlowEvidence{}, api.FlowEvidence{}, nil, nil)
+	classSym, selfSym := DetectConstructorPattern(api.FlowEvidence{}, api.FlowEvidence{}, nil, nil, nil)
 	if classSym != 0 || selfSym != 0 {
 		t.Errorf("expected (0, 0) for nil inputs, got (%d, %d)", classSym, selfSym)
 	}
 }
 
 func TestDetectConstructorPattern_NilGraph(t *testing.T) {
-	classSym, selfSym := DetectConstructorPattern(api.FlowEvidence{}, api.FlowEvidence{}, nil, nil)
+	classSym, selfSym := DetectConstructorPattern(api.FlowEvidence{}, api.FlowEvidence{}, nil, nil, nil)
 	if classSym != 0 || selfSym != 0 {
 		t.Errorf("expected (0, 0) for nil nestedGraph, got (%d, %d)", classSym, selfSym)
 	}

@@ -549,7 +549,7 @@ func (p *Processor) processNestedFunction(
 	// Detect constructor pattern and store instance fields.
 	var constructorClass cfg.SymbolID
 	if result.Graph != nil && p.store != nil {
-		pattern := nested.DetectConstructorPatternInfo(result.Evidence, parentResult.Evidence, info.NF.Func, info.FuncDef)
+		pattern := nested.DetectConstructorPatternInfo(result.Evidence, parentResult.Evidence, info.NF.Func, info.FuncDef, result.Graph.Bindings())
 		p.persistConstructorFields(pattern, result)
 		constructorClass = pattern.ClassSymbol
 	}

@@ -732,7 +732,7 @@ func (p Projector) callReturnsWithExpected(expr *ast.FuncCallExpr, point cfg.Poi
 		return types
 	}
 	args := p.callArgTypes(expr.Args, point)
-	if metatable.IsSetMetatableCall(expr) {
+	if metatable.IsSetMetatableCall(expr, p.cfg.Bindings) {
 		return []typ.Type{metatable.With(args[0], args[1])}
 	}
 	var callee typ.Type

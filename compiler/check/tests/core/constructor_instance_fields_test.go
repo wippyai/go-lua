@@ -204,6 +204,74 @@ end
 	testutil.RunCases(t, tests)
 }
 
+// TestConstructorInstanceFields_NonNewNames verifies that constructors are
+// recognized by the structural setmetatable-and-return-self body pattern
+// regardless of the field name, so T.create / T.make / T.build / T.of and
+// T:init propagate instance fields the same way T.new does.
+func TestConstructorInstanceFields_NonNewNames(t *testing.T) {
+	tests := []testutil.Case{
+		{
+			Name: "create field name",
+			Code: `
+local session_writer = {}
+session_writer.__index = session_writer
+
+function session_writer.create(session_id: string, user_id: string)
+    local self = setmetatable({}, session_writer)
+    self.session_id = session_id
+    self.user_id = user_id
+    return self
+end
+
+function session_writer:add_message(role: string, content: string)
+    local sid: string = self.session_id
+    local uid: string = self.user_id
+end
+`,
+			WantError: false,
+			Stdlib:    true,
+		},
+		{
+			Name: "build field name with metatable literal",
+			Code: `
+local Builder = {}
+
+function Builder.build()
+    local self = setmetatable({}, { __index = Builder })
+    self.value = 0
+    return self
+end
+
+function Builder:get(): number
+    return self.value
+end
+`,
+			WantError: false,
+			Stdlib:    true,
+		},
+		{
+			Name: "of field name function expression",
+			Code: `
+local Box = {}
+Box.__index = Box
+
+Box.of = function(payload: string)
+    local self = setmetatable({}, Box)
+    self.payload = payload
+    return self
+end
+
+function Box:read(): string
+    return self.payload
+end
+`,
+			WantError: false,
+			Stdlib:    true,
+		},
+	}
+	testutil.RunCases(t, tests)
+}
+
 // TestConstructorInstanceFields_NegativeCases tests cases that should produce errors.
 func TestConstructorInstanceFields_NegativeCases(t *testing.T) {
 	tests := []testutil.Case{

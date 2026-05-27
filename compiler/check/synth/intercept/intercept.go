@@ -22,6 +22,7 @@ package intercept
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
@@ -67,6 +68,11 @@ type CallEnv struct {
 	// StableType resolves an expression to its graph-stable value shape when
 	// point-local synthesis is too early to see later field assignments.
 	StableType func(expr ast.Expr, current typ.Type) typ.Type
+
+	// Bindings is the binding table for the call's scope, used to confirm that a
+	// builtin-shaped callee resolves to the genuine unshadowed global rather than
+	// a local rebinding. May be nil when unavailable.
+	Bindings *bind.BindingTable
 }
 
 // CallIntercept handles AST-specific patterns in direct function calls.

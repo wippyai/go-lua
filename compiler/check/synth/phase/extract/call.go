@@ -156,6 +156,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 		StableType: func(expr ast.Expr, current typ.Type) typ.Type {
 			return s.stablePrototypeType(expr, p, sc, current, recurse)
 		},
+		Bindings: s.activeBindings(),
 	}
 
 	chain := s.buildInterceptChain(sc)
@@ -315,6 +316,7 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 		StableType: func(expr ast.Expr, current typ.Type) typ.Type {
 			return s.stablePrototypeType(expr, p, sc, current, recurse)
 		},
+		Bindings: s.activeBindings(),
 	}
 
 	chain := s.buildInterceptChain(sc)
@@ -374,6 +376,7 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 		StableType: func(expr ast.Expr, current typ.Type) typ.Type {
 			return s.stablePrototypeType(expr, p, sc, current, recurse)
 		},
+		Bindings: s.activeBindings(),
 	}
 
 	chain := s.buildInterceptChain(sc)
@@ -714,6 +717,28 @@ func (s *Synthesizer) stablePrototypeFieldType(source ast.Expr, p compcfg.Point,
 		return current
 	}
 	return nil
+}
+
+// activeBindings returns the binding table for the function under synthesis,
+// preferring the graph's own table and falling back to module bindings. It lets
+// intercepts confirm a builtin-shaped callee is the genuine unshadowed global.
+func (s *Synthesizer) activeBindings() *bind.BindingTable {
+	if s == nil || s.deps.CheckCtx == nil {
+		return s.moduleBindings()
+	}
+	if graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph); ok && graph != nil {
+		if b := graph.Bindings(); b != nil {
+			return b
+		}
+	}
+	return s.moduleBindings()
+}
+
+func (s *Synthesizer) moduleBindings() *bind.BindingTable {
+	if s == nil {
+		return nil
+	}
+	return s.deps.ModuleBindings
 }
 
 // buildInterceptChain creates the intercept chain for call synthesis.

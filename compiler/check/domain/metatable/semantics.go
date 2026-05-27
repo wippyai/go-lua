@@ -4,18 +4,29 @@ package metatable
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // IsSetMetatableCall reports whether ex is the Lua setmetatable primitive call.
-func IsSetMetatableCall(ex *ast.FuncCallExpr) bool {
+//
+// When bindings are provided, the callee must resolve to the genuine unshadowed
+// global setmetatable; a local or parameter that rebinds the name is not the
+// primitive. Without bindings the name match is the only available signal.
+func IsSetMetatableCall(ex *ast.FuncCallExpr, bindings *bind.BindingTable) bool {
 	if ex == nil || len(ex.Args) < 2 {
 		return false
 	}
 	ident, ok := ex.Func.(*ast.IdentExpr)
-	return ok && ident.Value == "setmetatable"
+	if !ok {
+		return false
+	}
+	if bindings == nil {
+		return ident.Value == "setmetatable"
+	}
+	return bindings.ResolvesToUnshadowedGlobal(ident, "setmetatable")
 }
 
 // With returns tableType with metaType attached as its metatable, following

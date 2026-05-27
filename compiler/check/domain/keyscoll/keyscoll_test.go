@@ -275,6 +275,48 @@ func TestDetectKeysCollector_MultiReturnKeysIndex(t *testing.T) {
 	}
 }
 
+func TestDetectKeysCollector_ShadowedPairsNotDetected(t *testing.T) {
+	body, err := parse.ParseString(`
+		local pairs = function(_) return nil end
+		local keys = {}
+		for k in pairs(tbl) do
+			table.insert(keys, k)
+		end
+		return keys
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"tbl"}},
+		Stmts:   body,
+	}
+	if info := detectKeysCollector(fn); info != nil {
+		t.Fatal("a local that shadows pairs must not be read as the pairs builtin")
+	}
+}
+
+func TestDetectKeysCollector_ShadowedTableInsertNotDetected(t *testing.T) {
+	body, err := parse.ParseString(`
+		local table = { insert = function(_, _) end }
+		local keys = {}
+		for k in pairs(tbl) do
+			table.insert(keys, k)
+		end
+		return keys
+	`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"tbl"}},
+		Stmts:   body,
+	}
+	if info := detectKeysCollector(fn); info != nil {
+		t.Fatal("a local that shadows table must not be read as the table.insert builtin")
+	}
+}
+
 func TestBuildKeysCollectorDetector_RespectsReturnIndex(t *testing.T) {
 	body, err := parse.ParseString(`
 		local function sorted_keys(tbl)

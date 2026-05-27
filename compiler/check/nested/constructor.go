@@ -2,6 +2,7 @@ package nested
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
@@ -43,8 +44,9 @@ func DetectConstructorPattern(
 	parentEvidence api.FlowEvidence,
 	fn *ast.FunctionExpr,
 	funcDef *cfg.FuncDefInfo,
+	bindings *bind.BindingTable,
 ) (classSymbol, selfSymbol cfg.SymbolID) {
-	pattern := DetectConstructorPatternInfo(nestedEvidence, parentEvidence, fn, funcDef)
+	pattern := DetectConstructorPatternInfo(nestedEvidence, parentEvidence, fn, funcDef, bindings)
 	return pattern.ClassSymbol, pattern.SelfSymbol
 }
 
@@ -57,6 +59,10 @@ type ConstructorPattern struct {
 	InstanceLiteral         *ast.TableExpr
 	InstancePoint           cfg.Point
 	ReturnedViaSetmetatable bool
+	// MetatableBindsReceiver is true when the setmetatable target structurally
+	// references the class T (T directly or {__index = T}), proving the instance
+	// is bound to that class rather than an unrelated prototype.
+	MetatableBindsReceiver bool
 }
 
 // DetectConstructorPatternInfo detects constructors and identifies the prototype
@@ -68,28 +74,34 @@ func DetectConstructorPatternInfo(
 	parentEvidence api.FlowEvidence,
 	fn *ast.FunctionExpr,
 	funcDef *cfg.FuncDefInfo,
+	bindings *bind.BindingTable,
 ) ConstructorPattern {
 	if fn == nil {
 		return ConstructorPattern{}
 	}
 
-	// Check if function is T.new pattern
+	// Detect the function being assigned to a single field of a table T.
+	// Constructors are recognized structurally (the body sets a metatable and
+	// returns the instance); the field name is a confidence signal only.
 	var receiverSymbol cfg.SymbolID
 	var receiverName string
+	var fieldName string
 	if funcDef != nil && funcDef.TargetKind == cfg.FuncDefField {
 		if funcDef.TargetPath.Symbol != 0 && len(funcDef.TargetPath.Segments) == 1 {
 			seg := funcDef.TargetPath.Segments[0]
-			if seg.Kind == constraint.SegmentField && seg.Name == "new" {
+			if seg.Kind == constraint.SegmentField && seg.Name != "" {
 				receiverSymbol = funcDef.TargetPath.Symbol
 				receiverName = funcDef.ReceiverName
+				fieldName = seg.Name
 			}
 		}
 	}
 
-	// Also check for T.new = function(...) pattern in the parent graph
+	// Also check for T.field = function(...) pattern in the parent graph.
 	if receiverSymbol == 0 {
 		var found cfg.SymbolID
 		var foundName string
+		var foundField string
 		for _, assign := range parentEvidence.Assignments {
 			if found != 0 {
 				break
@@ -103,22 +115,32 @@ func DetectConstructorPatternInfo(
 				if !ok || fnExpr != fn {
 					return
 				}
-				if target.Kind == cfg.TargetField && target.BaseSymbol != 0 && len(target.FieldPath) == 1 && target.FieldPath[0] == "new" {
+				if target.Kind == cfg.TargetField && target.BaseSymbol != 0 && len(target.FieldPath) == 1 && target.FieldPath[0] != "" {
 					found = target.BaseSymbol
 					foundName = target.BaseName
+					foundField = target.FieldPath[0]
 				}
 			})
 		}
 		receiverSymbol = found
 		receiverName = foundName
+		fieldName = foundField
 	}
 
 	if receiverSymbol == 0 {
 		return ConstructorPattern{}
 	}
 
-	pattern := findSetmetatableConstructorPattern(nestedEvidence, parentEvidence, receiverName, receiverSymbol)
+	pattern := findSetmetatableConstructorPattern(nestedEvidence, parentEvidence, receiverName, receiverSymbol, bindings)
 	if pattern.SelfSymbol == 0 && pattern.InstanceLiteral == nil {
+		return ConstructorPattern{}
+	}
+
+	// The literal field name "new" is the canonical constructor signal and is
+	// accepted on the structural body match alone. Other field names must also
+	// bind the instance to the class T (setmetatable target is T or {__index=T}),
+	// so unrelated factory-shaped helpers do not get misread as constructors.
+	if fieldName != "new" && !pattern.MetatableBindsReceiver {
 		return ConstructorPattern{}
 	}
 	pattern.ClassSymbol = receiverSymbol
@@ -216,13 +238,14 @@ func findSetmetatableConstructorPattern(
 	parentEvidence api.FlowEvidence,
 	receiverName string,
 	receiverSym cfg.SymbolID,
+	bindings *bind.BindingTable,
 ) ConstructorPattern {
 	for _, assign := range nestedEvidence.Assignments {
 		info := assign.Info
 		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
 			continue
 		}
-		call, ok := setmetatableCall(info.SourceAt(0))
+		call, ok := setmetatableCall(info.SourceAt(0), bindings)
 		if !ok {
 			continue
 		}
@@ -235,10 +258,11 @@ func findSetmetatableConstructorPattern(
 			continue
 		}
 		return ConstructorPattern{
-			PrototypeSymbol: prototypeSymbolFromMetatableArg(call.Args[1], parentEvidence, receiverName, receiverSym),
-			SelfSymbol:      target.Symbol,
-			InstanceLiteral: tableArg,
-			InstancePoint:   assign.Point,
+			PrototypeSymbol:        prototypeSymbolFromMetatableArg(call.Args[1], parentEvidence, receiverName, receiverSym),
+			SelfSymbol:             target.Symbol,
+			InstanceLiteral:        tableArg,
+			InstancePoint:          assign.Point,
+			MetatableBindsReceiver: metatableBindsReceiver(call.Args[1], parentEvidence, receiverName, receiverSym),
 		}
 	}
 
@@ -246,7 +270,7 @@ func findSetmetatableConstructorPattern(
 		if ret.Info == nil || len(ret.Info.Exprs) == 0 {
 			continue
 		}
-		call, ok := setmetatableCall(ret.Info.Exprs[0])
+		call, ok := setmetatableCall(ret.Info.Exprs[0], bindings)
 		if !ok {
 			continue
 		}
@@ -260,19 +284,29 @@ func findSetmetatableConstructorPattern(
 			InstanceLiteral:         tableArg,
 			InstancePoint:           ret.Point,
 			ReturnedViaSetmetatable: true,
+			MetatableBindsReceiver:  metatableBindsReceiver(call.Args[1], parentEvidence, receiverName, receiverSym),
 		}
 	}
 
 	return ConstructorPattern{}
 }
 
-func setmetatableCall(expr ast.Expr) (*ast.FuncCallExpr, bool) {
+func setmetatableCall(expr ast.Expr, bindings *bind.BindingTable) (*ast.FuncCallExpr, bool) {
 	call, ok := expr.(*ast.FuncCallExpr)
 	if !ok || call == nil || len(call.Args) < 2 {
 		return nil, false
 	}
 	ident, ok := call.Func.(*ast.IdentExpr)
-	if !ok || ident.Value != "setmetatable" {
+	if !ok {
+		return nil, false
+	}
+	if bindings == nil {
+		if ident.Value != "setmetatable" {
+			return nil, false
+		}
+		return call, true
+	}
+	if !bindings.ResolvesToUnshadowedGlobal(ident, "setmetatable") {
 		return nil, false
 	}
 	return call, true
@@ -346,6 +380,56 @@ func prototypeSymbolFromMetatableArg(arg ast.Expr, parentEvidence api.FlowEviden
 		}
 	}
 	return 0
+}
+
+// metatableBindsReceiver reports whether the setmetatable target structurally
+// binds the instance to the class T: either setmetatable({...}, T) or
+// setmetatable({...}, {__index = T}), where T is the receiver. This is the
+// structural signal that distinguishes a constructor from a factory that wraps
+// some other prototype.
+func metatableBindsReceiver(arg ast.Expr, parentEvidence api.FlowEvidence, receiverName string, receiverSym cfg.SymbolID) bool {
+	switch mt := arg.(type) {
+	case *ast.TableExpr:
+		name := indexPrototypeName(mt)
+		if name == "" {
+			return false
+		}
+		if name == receiverName {
+			return true
+		}
+		return symbolForAssignedName(parentEvidence.Assignments, name) == receiverSym && receiverSym != 0
+	case *ast.IdentExpr:
+		if mt.Value == "" {
+			return false
+		}
+		if mt.Value == receiverName {
+			return true
+		}
+		// The metatable may be a local bound to {__index = T}.
+		for _, assign := range parentEvidence.Assignments {
+			info := assign.Info
+			if info == nil || len(info.Targets) == 0 {
+				continue
+			}
+			target, ok := info.FirstTarget()
+			if !ok || target.Kind != cfg.TargetIdent || target.Name != mt.Value {
+				continue
+			}
+			tbl, ok := info.SourceAt(0).(*ast.TableExpr)
+			if !ok {
+				continue
+			}
+			name := indexPrototypeName(tbl)
+			if name == "" {
+				return false
+			}
+			if name == receiverName {
+				return true
+			}
+			return symbolForAssignedName(parentEvidence.Assignments, name) == receiverSym && receiverSym != 0
+		}
+	}
+	return false
 }
 
 func indexPrototypeName(tbl *ast.TableExpr) string {

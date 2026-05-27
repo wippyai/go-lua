@@ -14,7 +14,7 @@ import (
 type SetMetatableIntercept struct{}
 
 func (s *SetMetatableIntercept) InterceptCall(ex *ast.FuncCallExpr, ctx CallEnv) Result {
-	if !metatable.IsSetMetatableCall(ex) || ctx.Recurse == nil {
+	if !metatable.IsSetMetatableCall(ex, ctx.Bindings) || ctx.Recurse == nil {
 		return Result{}
 	}
 

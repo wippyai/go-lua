@@ -187,6 +187,52 @@ func TestIsStringable(t *testing.T) {
 	}
 }
 
+func TestIsStringable_InterfaceStructural(t *testing.T) {
+	tostringMethod := typ.Method{
+		Name: string(typ.MetaToString),
+		Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build(),
+	}
+
+	withTostring := typ.NewInterface("Stringy", []typ.Method{tostringMethod})
+	if !IsStringable(withTostring) {
+		t.Error("interface declaring __tostring should be stringable")
+	}
+	if !MayBeStringable(withTostring) {
+		t.Error("interface declaring __tostring should be may-stringable")
+	}
+
+	plain := typ.NewInterface("Reader", []typ.Method{
+		{Name: "read", Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build()},
+	})
+	if IsStringable(plain) {
+		t.Error("interface without string-coercion metamethod should not be stringable")
+	}
+	if MayBeStringable(plain) {
+		t.Error("interface without string-coercion metamethod should not be may-stringable")
+	}
+
+	// An interface coincidentally named "Error" without a string-coercion
+	// metamethod must not be treated as stringable.
+	fakeError := typ.NewInterface("Error", []typ.Method{
+		{Name: "code", Type: typ.Func().Param("self", typ.Self).Returns(typ.Integer).Build()},
+	})
+	if IsStringable(fakeError) {
+		t.Error("interface named Error without __tostring should not be stringable")
+	}
+	if MayBeStringable(fakeError) {
+		t.Error("interface named Error without __tostring should not be may-stringable")
+	}
+
+	// The canonical LuaError instance coerces to string by Lua semantics and is
+	// recognized by identity, not name.
+	if !IsStringable(typ.LuaError) {
+		t.Error("canonical LuaError should be stringable")
+	}
+	if !MayBeStringable(typ.LuaError) {
+		t.Error("canonical LuaError should be may-stringable")
+	}
+}
+
 func TestIsStringable_Union(t *testing.T) {
 	strNumUnion := typ.NewUnion(typ.String, typ.Number)
 	if !IsStringable(strNumUnion) {
@@ -390,7 +436,8 @@ func TestMayBeStringable(t *testing.T) {
 		{"string", typ.String, true},
 		{"number", typ.Number, true},
 		{"boolean", typ.Boolean, false},
-		{"error interface", typ.NewInterface("Error", nil), true},
+		{"lua error interface", typ.LuaError, true},
+		{"interface named Error without __tostring", typ.NewInterface("Error", nil), false},
 		{"optional string", typ.NewOptional(typ.String), true},
 		{"string or nil", typ.NewUnion(typ.String, typ.Nil), true},
 		{"boolean or nil", typ.NewUnion(typ.Boolean, typ.Nil), false},

@@ -216,6 +216,35 @@ func (t *BindingTable) Name(sym cfg.SymbolID) string {
 	return t.names[sym]
 }
 
+// ResolvesToUnshadowedGlobal reports whether ident references the genuine
+// global named name, rather than a local, parameter, or field that shadows it.
+//
+// When the binder has resolved the identifier, it must map to a SymbolGlobal
+// whose recorded name matches the requested name. An unresolved identifier is
+// treated as the global by Lua's default scoping (free names are globals).
+// This is the canonical shadow guard for recognizing builtin/global calls.
+func (t *BindingTable) ResolvesToUnshadowedGlobal(ident *ast.IdentExpr, name string) bool {
+	if t == nil || ident == nil || name == "" {
+		return false
+	}
+	if ident.Value != name {
+		return false
+	}
+	sym, found := t.SymbolOf(ident)
+	if !found || sym == 0 {
+		// No binding recorded: a free name resolves to the global by default.
+		return true
+	}
+	k, ok := t.Kind(sym)
+	if !ok || k != cfg.SymbolGlobal {
+		return false
+	}
+	if recorded := t.Name(sym); recorded != "" && recorded != name {
+		return false
+	}
+	return true
+}
+
 // SymbolsByName returns all symbols recorded with the given source name.
 //
 // Results are sorted by symbol ID for deterministic iteration.

@@ -730,6 +730,50 @@ func TestBindingTable_CapturedSymbols_NoCaptures(t *testing.T) {
 	}
 }
 
+func TestBindingTable_ResolvesToUnshadowedGlobal(t *testing.T) {
+	table := NewBindingTable()
+
+	// A free name with no recorded binding is the global by default scoping.
+	free := &ast.IdentExpr{Value: "setmetatable"}
+	if !table.ResolvesToUnshadowedGlobal(free, "setmetatable") {
+		t.Error("unbound free name should resolve to the global")
+	}
+
+	// A genuine global symbol with a matching name resolves.
+	globalIdent := &ast.IdentExpr{Value: "pairs"}
+	globalSym := cfg.NextSymbolID()
+	table.Bind(globalIdent, globalSym)
+	table.SetKind(globalSym, cfg.SymbolGlobal)
+	table.SetName(globalSym, "pairs")
+	if !table.ResolvesToUnshadowedGlobal(globalIdent, "pairs") {
+		t.Error("global symbol named pairs should resolve to the pairs global")
+	}
+
+	// A local symbol that shadows the name is not the global.
+	shadowIdent := &ast.IdentExpr{Value: "setmetatable"}
+	shadowSym := cfg.NextSymbolID()
+	table.Bind(shadowIdent, shadowSym)
+	table.SetKind(shadowSym, cfg.SymbolLocal)
+	table.SetName(shadowSym, "setmetatable")
+	if table.ResolvesToUnshadowedGlobal(shadowIdent, "setmetatable") {
+		t.Error("local that shadows setmetatable must not resolve to the global")
+	}
+
+	// Name mismatch is never the requested global.
+	if table.ResolvesToUnshadowedGlobal(globalIdent, "ipairs") {
+		t.Error("ident value mismatch must not resolve")
+	}
+
+	// Nil receiver and nil ident are safe and false.
+	var nilTable *BindingTable
+	if nilTable.ResolvesToUnshadowedGlobal(globalIdent, "pairs") {
+		t.Error("nil table should not resolve")
+	}
+	if table.ResolvesToUnshadowedGlobal(nil, "pairs") {
+		t.Error("nil ident should not resolve")
+	}
+}
+
 func TestBindingTable_AllSymbols_IncludesGenericFor(t *testing.T) {
 	table := NewBindingTable()
 	stmt := &ast.GenericForStmt{Names: []string{"k", "v"}}

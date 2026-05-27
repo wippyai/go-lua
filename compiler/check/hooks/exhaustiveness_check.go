@@ -13,7 +13,9 @@ import (
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/numparse"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // CheckExhaustiveness warns when a match-like if/elseif chain misses variants
@@ -26,7 +28,7 @@ func CheckExhaustiveness(fn *ast.FunctionExpr, graph *cfg.Graph, evidence api.Fl
 		branchPoint: branchPointsByCondition(evidence.Branches),
 		graph:       graph,
 		bindings:    graph.Bindings(),
-		selectCases: selectCasesByResult(graph, evidence.Assignments),
+		selectCases: selectCasesByResult(graph, evidence.Assignments, synth),
 		synth:       synth,
 		sourceName:  sourceName,
 	}
@@ -409,7 +411,7 @@ func formatMissingNames(missing []string) string {
 	return "cases: " + strings.Join(missing, ", ")
 }
 
-func selectCasesByResult(graph *cfg.Graph, assignments []api.AssignmentEvidence) map[string]selectCaseDomain {
+func selectCasesByResult(graph *cfg.Graph, assignments []api.AssignmentEvidence, synth api.BaseSynth) map[string]selectCaseDomain {
 	if graph == nil || graph.Bindings() == nil {
 		return nil
 	}
@@ -426,7 +428,7 @@ func selectCasesByResult(graph *cfg.Graph, assignments []api.AssignmentEvidence)
 			continue
 		}
 		call := info.SingleSourceCall()
-		if !isChannelSelectCall(call) || len(call.Args) == 0 {
+		if !isChannelSelectCall(call, p, synth) || len(call.Args) == 0 {
 			continue
 		}
 		cases, ok := selectCaseChannels(call.Args[0], p, graph, bindings)
@@ -442,7 +444,7 @@ func selectCasesByResult(graph *cfg.Graph, assignments []api.AssignmentEvidence)
 	return domains
 }
 
-func isChannelSelectCall(call *cfg.CallInfo) bool {
+func isChannelSelectCall(call *cfg.CallInfo, p cfg.Point, synth api.BaseSynth) bool {
 	if call == nil || call.Method != "" {
 		return false
 	}
@@ -454,8 +456,47 @@ func isChannelSelectCall(call *cfg.CallInfo) bool {
 	if !ok || key != "select" {
 		return false
 	}
-	root, ok := attr.Object.(*ast.IdentExpr)
-	return ok && root.Value == "channel"
+	if attr.Object == nil {
+		return false
+	}
+	if synth == nil {
+		return false
+	}
+	// The receiver is the channel module when its `select` member structurally
+	// returns the channel select-result record. This identifies the module by
+	// its type, not by the source-level identifier name.
+	objType := synth.TypeOf(attr.Object, p)
+	selectType, ok := querycore.FieldOrMethod(objType, "select")
+	if !ok {
+		return false
+	}
+	return returnsSelectResultRecord(selectType)
+}
+
+// returnsSelectResultRecord reports whether fnType is the channel module's
+// select function: a function whose first return is the select-result record
+// carrying the channel/value/ok fields.
+func returnsSelectResultRecord(fnType typ.Type) bool {
+	fn, ok := unwrap.Alias(fnType).(*typ.Function)
+	if !ok || len(fn.Returns) == 0 {
+		return false
+	}
+	rec, ok := unwrap.Alias(fn.Returns[0]).(*typ.Record)
+	if !ok {
+		return false
+	}
+	var hasChannel, hasValue, hasOk bool
+	for _, field := range rec.Fields {
+		switch field.Name {
+		case "channel":
+			hasChannel = true
+		case "value":
+			hasValue = true
+		case "ok":
+			hasOk = true
+		}
+	}
+	return hasChannel && hasValue && hasOk
 }
 
 func staticAttrFieldName(key ast.Expr) (string, bool) {

@@ -396,11 +396,7 @@ func isStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 
 		return false
 	case *typ.Interface:
-		if v.Name == "Error" {
-			return true
-		}
-
-		return false
+		return interfaceCoercesToString(v)
 
 	default:
 		k := t.Kind()
@@ -430,6 +426,9 @@ func mayBeStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	next, ok := guard.Enter(t)
 	if !ok {
 		return false
+	}
+	if t.Equals(typ.LuaError) {
+		return true
 	}
 
 	switch v := t.(type) {
@@ -463,7 +462,7 @@ func mayBeStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 		}
 		return false
 	case *typ.Interface:
-		return v.Name == "Error"
+		return interfaceCoercesToString(v)
 	case *typ.Literal:
 		switch v.Value.(type) {
 		case string, float64, int64:
@@ -482,6 +481,23 @@ func mayBeStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 		}
 		return subtype.IsSubtype(t, typ.String)
 	}
+}
+
+// interfaceCoercesToString reports whether an interface participates in string
+// concatenation by structurally declaring a string-coercion metamethod
+// (__tostring or __concat). The canonical LuaError instance is recognized by
+// identity at the call sites, so name has no bearing here.
+func interfaceCoercesToString(iface *typ.Interface) bool {
+	if iface == nil {
+		return false
+	}
+	for _, m := range iface.Methods {
+		switch typ.Metamethod(m.Name) {
+		case typ.MetaToString, typ.MetaConcat:
+			return true
+		}
+	}
+	return false
 }
 
 // HasLength checks if a type supports the length operator (#).

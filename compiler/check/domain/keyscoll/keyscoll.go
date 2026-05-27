@@ -74,7 +74,7 @@ func DetectKeysCollector(graph *cfg.Graph, evidence api.FlowEvidence) *KeysColle
 				continue
 			}
 			// Check if it's pairs(something)
-			if !isPairsCall(call) {
+			if !isPairsCall(call, bindings) {
 				continue
 			}
 			if len(call.Args) == 0 {
@@ -121,7 +121,7 @@ func DetectKeysCollector(graph *cfg.Graph, evidence api.FlowEvidence) *KeysColle
 		if info == nil {
 			continue
 		}
-		if !isTableInsertCall(info) {
+		if !isTableInsertCall(info, bindings) {
 			continue
 		}
 		if len(info.Args) < 2 {
@@ -225,7 +225,7 @@ func DetectKeysCollector(graph *cfg.Graph, evidence api.FlowEvidence) *KeysColle
 	return &KeysCollectorInfo{ParamIndex: pairsParamIndex, ReturnIndex: keysReturnIndex}
 }
 
-func isPairsCall(call *ast.FuncCallExpr) bool {
+func isPairsCall(call *ast.FuncCallExpr, bindings *bind.BindingTable) bool {
 	if call == nil || callsite.IsMethodLikeExpr(call) {
 		return false
 	}
@@ -233,10 +233,10 @@ func isPairsCall(call *ast.FuncCallExpr) bool {
 	if !ok {
 		return false
 	}
-	return ident.Value == "pairs"
+	return resolvesToGlobalName(ident, "pairs", bindings)
 }
 
-func isTableInsertCall(info *cfg.CallInfo) bool {
+func isTableInsertCall(info *cfg.CallInfo, bindings *bind.BindingTable) bool {
 	if info == nil || callsite.IsMethodLikeCallInfo(info) {
 		return false
 	}
@@ -245,7 +245,7 @@ func isTableInsertCall(info *cfg.CallInfo) bool {
 		return false
 	}
 	obj, ok := attr.Object.(*ast.IdentExpr)
-	if !ok || obj.Value != "table" {
+	if !ok || !resolvesToGlobalName(obj, "table", bindings) {
 		return false
 	}
 	key, ok := attr.Key.(*ast.StringExpr)
@@ -253,6 +253,19 @@ func isTableInsertCall(info *cfg.CallInfo) bool {
 		return false
 	}
 	return true
+}
+
+// resolvesToGlobalName reports whether ident refers to the genuine unshadowed
+// global named name. When a binding table is present the binder's shadow guard
+// decides; without bindings the name match is the only available signal.
+func resolvesToGlobalName(ident *ast.IdentExpr, name string, bindings *bind.BindingTable) bool {
+	if ident == nil {
+		return false
+	}
+	if bindings == nil {
+		return ident.Value == name
+	}
+	return bindings.ResolvesToUnshadowedGlobal(ident, name)
 }
 
 func functionGraph(fn *ast.FunctionExpr, owner *cfg.Graph, graphs api.GraphProvider) *cfg.Graph {

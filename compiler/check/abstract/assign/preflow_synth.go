@@ -311,7 +311,7 @@ func (s *preflowOverlaySynthesizer) dynamicAttrRead(attr *ast.AttrGetExpr, objTy
 
 func (s *preflowOverlaySynthesizer) callFirstResult(call *ast.FuncCallExpr, expr ast.Expr, p cfg.Point) typ.Type {
 	if s.typeOps != nil {
-		if result := evalOverlayCallFirstResult(call, p, s.Synth, s.ctx, s.typeOps); !typ.IsAbsentOrUnknown(result) {
+		if result := evalOverlayCallFirstResult(call, p, s.Synth, s.ctx, s.typeOps, s.bindings); !typ.IsAbsentOrUnknown(result) {
 			return result
 		}
 	}
@@ -397,11 +397,12 @@ func evalOverlayCallFirstResult(
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	callCtx *db.QueryContext,
 	typeOps core.TypeOps,
+	bindings *bind.BindingTable,
 ) typ.Type {
 	if call == nil || synth == nil || typeOps == nil {
 		return nil
 	}
-	if metatable.IsSetMetatableCall(call) {
+	if metatable.IsSetMetatableCall(call, bindings) {
 		return nil
 	}
 	args := make([]typ.Type, len(call.Args))
