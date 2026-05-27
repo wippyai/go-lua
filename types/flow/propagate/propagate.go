@@ -118,32 +118,55 @@ type Result struct {
 	PointConditions map[cfg.Point]constraint.Condition
 }
 
+// loopHeaderWideningThreshold is the K used by the FVS widening policy:
+// widening fires at an FVS point only after K state-changing visits.
+//
+// Per DOMAIN_DESIGN.md §7.2, K=3 lets the precise transfer iterate twice on a
+// fresh loop body before widening engages on the third revisit.
+const loopHeaderWideningThreshold = 3
+
 // Propagate computes type constraints at each CFG point via forward dataflow.
 //
 // This is the main entry point for constraint propagation. The algorithm:
 //
-//  1. Initialize entry point with True condition
-//  2. Process points in worklist order (initially RPO for efficiency)
-//  3. For each point, compute new condition from predecessors
-//  4. If condition changed, add successors to worklist
-//  5. Repeat until no changes (fixed point)
+//  1. Initialize entry point with True condition.
+//  2. Process points in worklist order (initially RPO for efficiency).
+//  3. For each point, compute new condition from predecessors.
+//  4. Join with the existing point condition.
+//  5. If the point is in the feedback vertex set (FVS) and has already
+//     produced strict state changes at least loopHeaderWideningThreshold
+//     times, apply constraint.Domain.Widen to the result.
+//  6. If the post-update condition differs, store it and enqueue successors.
+//  7. Repeat until no changes (fixed point).
 //
-// Condition computation at each point:
-//   - For each predecessor with non-False condition:
-//   - Combine predecessor condition with edge condition (AND)
-//   - Apply loop preheader reinforcement for loop headers
-//   - Kill constraints for reassigned variables
-//   - Merge all incoming conditions (OR)
+// FVS = { p : p.LoopPreheaderSet } ∪ { headers of non-loop SCCs }, where the
+// "header" of an SCC is the point with the smallest RPO index in that SCC.
+// This is Cousot's classical feedback-vertex-set widening policy: every CFG
+// cycle contains at least one FVS point, so widening at FVS suffices to
+// terminate every chain, and acyclic high-fan-in joins are NOT in FVS (so
+// they keep full precision; see §10.5).
 //
-// The result maps each point to its computed condition. Points unreachable
-// from entry have False conditions (or are absent).
+// Condition computation at each point (per computeConditionAtPoint):
+//   - For each predecessor with non-False condition: AND predecessor
+//     condition with the edge condition.
+//   - Apply loop preheader reinforcement for loop headers.
+//   - OR the incoming conditions together.
+//   - Kill literals invalidated by assignments at this point (uses
+//     constraint.SemanticAffectedPaths, fixing prior subpath-write
+//     unsoundness — DOMAIN_DESIGN.md §8.2).
+//
+// Determinism: under shuffled RPO the algorithm visits the same set of
+// points, applies the same widening policy at the same set of FVS points,
+// and arrives at the same fixpoint set. Visit count is bounded by the
+// fixpoint height; with FVS widening the height is finite.
 func Propagate(inputs *Inputs) *Result {
 	if inputs == nil || inputs.Graph == nil {
 		return &Result{PointConditions: make(map[cfg.Point]constraint.Condition)}
 	}
 
 	g := inputs.Graph
-	worklist := g.RPO()
+	rpo := g.RPO()
+	worklist := append([]cfg.Point(nil), rpo...)
 	pointConditions := make(map[cfg.Point]constraint.Condition, len(worklist))
 	pointConditions[g.Entry()] = constraint.TrueCondition()
 
@@ -152,27 +175,34 @@ func Propagate(inputs *Inputs) *Result {
 		inQueue[p] = true
 	}
 
-	// Cache preheader conditions for monotonic convergence
+	// Cache preheader conditions for monotonic convergence.
 	preheaderConds := make(map[cfg.Point]constraint.Condition)
+
+	fvs := computeFeedbackVertexSet(g, rpo)
+	visitCount := make(map[cfg.Point]int, len(fvs))
 
 	for len(worklist) > 0 {
 		p := worklist[0]
 		worklist = worklist[1:]
 		inQueue[p] = false
 
-		newCond := computeConditionAtPoint(inputs, pointConditions, preheaderConds, p)
+		incoming := computeConditionAtPoint(inputs, pointConditions, preheaderConds, p)
 		oldCond := pointConditions[p]
 
-		changed := false
-		if oldCond.IsFalse() || (!newCond.IsFalse() && !oldCond.Subsumes(newCond)) {
-			merged := constraint.Or(oldCond, newCond)
-			if !merged.Equals(oldCond) {
-				pointConditions[p] = merged
-				changed = true
-			}
+		// candidate = Join(oldCond, incoming). When oldCond is absent (zero
+		// value, IsFalse), Or returns incoming.
+		candidate := constraint.Or(oldCond, incoming)
+
+		var next constraint.Condition
+		if fvs[p] && visitCount[p] >= loopHeaderWideningThreshold {
+			next = constraint.Domain.Widen(oldCond, candidate)
+		} else {
+			next = candidate
 		}
 
-		if changed {
+		if !constraint.Domain.Equal(next, oldCond) {
+			pointConditions[p] = next
+			visitCount[p]++
 			for _, succ := range graphSuccessors(g, p) {
 				if !inQueue[succ] {
 					worklist = append(worklist, succ)
@@ -183,6 +213,170 @@ func Propagate(inputs *Inputs) *Result {
 	}
 
 	return &Result{PointConditions: pointConditions}
+}
+
+// computeFeedbackVertexSet identifies CFG points where widening must fire.
+//
+// FVS = loop headers (LoopPreheaderSet) ∪ headers of non-loop SCCs. Every
+// cycle in the CFG contains at least one FVS point, so widening at FVS is
+// sufficient to terminate every ascending chain. Non-cyclic high-fan-in
+// merge points are NOT in FVS — they keep precision (DOMAIN_DESIGN.md §7.4).
+//
+// SCC detection runs Tarjan's algorithm over the CFG's successor relation.
+// Trivial SCCs (single point, no self-loop) are skipped. Loop-header SCCs
+// (already covered by LoopPreheaderSet) are absorbed by the union and do not
+// require a separate entry. Lua's structured control flow typically yields
+// zero non-loop SCCs.
+func computeFeedbackVertexSet(g Graph, rpo []cfg.Point) map[cfg.Point]bool {
+	fvs := make(map[cfg.Point]bool)
+	for _, p := range rpo {
+		n := g.Node(p)
+		if n != nil && n.LoopPreheaderSet {
+			fvs[p] = true
+		}
+	}
+
+	// RPO index lookup, so we can pick the smallest-RPO point per SCC.
+	rpoIndex := make(map[cfg.Point]int, len(rpo))
+	for i, p := range rpo {
+		rpoIndex[p] = i
+	}
+
+	tarjan := newTarjanState(g, rpo, rpoIndex)
+	for _, p := range rpo {
+		if _, seen := tarjan.indexOf[p]; !seen {
+			tarjan.strongConnect(p)
+		}
+	}
+
+	for _, scc := range tarjan.sccs {
+		if len(scc) < 2 {
+			// Singleton SCC: only counts as a cycle if it has a self-edge.
+			only := scc[0]
+			selfLoop := false
+			for _, succ := range graphSuccessors(g, only) {
+				if succ == only {
+					selfLoop = true
+					break
+				}
+			}
+			if !selfLoop {
+				continue
+			}
+		}
+		// Pick the SCC member with the smallest RPO index as the header.
+		header := scc[0]
+		headerIdx := rpoIndex[header]
+		for _, q := range scc[1:] {
+			if idx, ok := rpoIndex[q]; ok && idx < headerIdx {
+				header = q
+				headerIdx = idx
+			}
+		}
+		fvs[header] = true
+	}
+
+	return fvs
+}
+
+// tarjanState implements Tarjan's SCC algorithm on the propagate.Graph
+// interface. It is run once per Propagate call; allocations scale O(|V|+|E|).
+type tarjanState struct {
+	g        Graph
+	rpoIndex map[cfg.Point]int
+	indexOf  map[cfg.Point]int
+	lowlink  map[cfg.Point]int
+	onStack  map[cfg.Point]bool
+	stack    []cfg.Point
+	counter  int
+	sccs     [][]cfg.Point
+}
+
+func newTarjanState(g Graph, rpo []cfg.Point, rpoIndex map[cfg.Point]int) *tarjanState {
+	return &tarjanState{
+		g:        g,
+		rpoIndex: rpoIndex,
+		indexOf:  make(map[cfg.Point]int, len(rpo)),
+		lowlink:  make(map[cfg.Point]int, len(rpo)),
+		onStack:  make(map[cfg.Point]bool, len(rpo)),
+	}
+}
+
+func (s *tarjanState) strongConnect(v cfg.Point) {
+	// Iterative implementation to avoid Go stack overflow on deep CFGs.
+	type frame struct {
+		v        cfg.Point
+		succs    []cfg.Point
+		succIdx  int
+		childRet cfg.Point
+		hasRet   bool
+	}
+	var frames []frame
+	push := func(v cfg.Point) {
+		s.indexOf[v] = s.counter
+		s.lowlink[v] = s.counter
+		s.counter++
+		s.stack = append(s.stack, v)
+		s.onStack[v] = true
+		frames = append(frames, frame{v: v, succs: graphSuccessors(s.g, v)})
+	}
+	push(v)
+
+	for len(frames) > 0 {
+		top := &frames[len(frames)-1]
+
+		if top.hasRet {
+			// Returning from a recursive strongConnect on a successor.
+			child := top.childRet
+			if s.lowlink[child] < s.lowlink[top.v] {
+				s.lowlink[top.v] = s.lowlink[child]
+			}
+			top.hasRet = false
+		}
+
+		if top.succIdx < len(top.succs) {
+			w := top.succs[top.succIdx]
+			top.succIdx++
+			if _, seen := s.indexOf[w]; !seen {
+				// Recurse via stack.
+				push(w)
+				continue
+			}
+			if s.onStack[w] {
+				if s.indexOf[w] < s.lowlink[top.v] {
+					s.lowlink[top.v] = s.indexOf[w]
+				}
+			}
+			continue
+		}
+
+		// All successors processed; if v is an SCC root, pop one SCC.
+		if s.lowlink[top.v] == s.indexOf[top.v] {
+			var scc []cfg.Point
+			for {
+				if len(s.stack) == 0 {
+					break
+				}
+				last := s.stack[len(s.stack)-1]
+				s.stack = s.stack[:len(s.stack)-1]
+				s.onStack[last] = false
+				scc = append(scc, last)
+				if last == top.v {
+					break
+				}
+			}
+			s.sccs = append(s.sccs, scc)
+		}
+
+		// Pop frame and propagate lowlink to parent.
+		v := top.v
+		frames = frames[:len(frames)-1]
+		if len(frames) > 0 {
+			parent := &frames[len(frames)-1]
+			parent.hasRet = true
+			parent.childRet = v
+		}
+	}
 }
 
 // computeConditionAtPoint computes the condition for a single CFG point.
@@ -265,18 +459,25 @@ func FilterConditionSymbols(cond constraint.Condition, syms []cfg.SymbolID) cons
 	return constraint.FromDisjuncts(newDisjuncts)
 }
 
-// KillRedefinedConditions removes constraints for paths assigned at a point.
+// KillRedefinedConditions removes constraints invalidated by assignments at p.
 //
-// When a variable is reassigned, constraints about its previous value become
-// invalid. This function filters out such "killed" constraints to maintain
-// soundness. Without killing, propagation would incorrectly conclude that
-// preassignment constraints still hold.
+// Per DOMAIN_DESIGN.md §8.2, a literal L is killed by an assignment to path w
+// iff w is a (non-strict) prefix of at least one path in
+// constraint.SemanticAffectedPaths(L). The semantic visitor exposes every
+// path L reads, including synthetic field/index sub-paths — fixing the prior
+// unsoundness where a write like `x.kind = …` did not kill
+// `FieldEquals{x, "kind", lit}`.
 //
-// Example: Given "if type(x) == 'string' then x = 5 end", after the assignment,
-// the constraint HasType(x, string) must be killed because x is now a number.
+// The descendant direction in the design's "ancestor or descendant" wording
+// is omitted intentionally: it over-kills (writing x.value would invalidate
+// reads of x.kind). The ancestor-only check is sound — every path the
+// literal reads is checked individually — and preserves precision for
+// disjoint subpath writes. See PathAffectedByAssignment for details.
 //
-// The function checks each constraint path against each assignment at point p.
-// If any constraint path is affected by an assignment, that constraint is removed.
+// If every literal in a disjunct is killed, that disjunct collapses to TRUE
+// (no constraints, fully unrestricted), which propagates to the whole
+// condition. If every literal across all disjuncts is killed, the result is
+// TrueCondition — the assignment removed every refinement.
 func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments []Assignment) constraint.Condition {
 	if !cond.HasConstraints() {
 		return cond
@@ -297,22 +498,10 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 	for _, d := range cond.Disjuncts {
 		var kept []constraint.Constraint
 		for _, c := range d {
-			shouldKeep := true
-			constraint.VisitPaths(c, func(cpath constraint.Path) bool {
-				if cpath.Symbol == 0 {
-					return false
-				}
-				for _, ap := range assignedPaths {
-					if PathAffectedByAssignment(cpath, ap.TargetSym, ap.TargetSegs) {
-						shouldKeep = false
-						return true
-					}
-				}
-				return false
-			})
-			if shouldKeep {
-				kept = append(kept, c)
+			if literalKilledByAssignments(c, assignedPaths) {
+				continue
 			}
+			kept = append(kept, c)
 		}
 		if len(kept) == 0 {
 			return constraint.TrueCondition()
@@ -327,38 +516,69 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 	return constraint.FromDisjuncts(newDisjuncts)
 }
 
-// PathAffectedByAssignment checks if a constraint path is invalidated by an assignment.
+// literalKilledByAssignments returns true if any of the literal's semantic
+// access paths is affected by any assignment at the current point.
+func literalKilledByAssignments(c constraint.Constraint, assigns []Assignment) bool {
+	paths := constraint.SemanticAffectedPaths(c)
+	for _, cpath := range paths {
+		if cpath.Symbol == 0 {
+			continue
+		}
+		for _, ap := range assigns {
+			if PathAffectedByAssignment(cpath, ap.TargetSym, ap.TargetSegs) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// PathAffectedByAssignment reports whether the constraint's access path cpath
+// is invalidated by an assignment to (assignSym, assignSegs).
 //
-// A path is affected if:
-//  1. The constraint path's symbol matches the assignment symbol
-//  2. The assignment's segments are a prefix of (or equal to) the constraint's segments
+// Rule (precise + sound, refined from DOMAIN_DESIGN.md §8.2 to preserve
+// precision): cpath is affected iff
+//  1. cpath's symbol matches the assignment symbol; AND
+//  2. assignSegs is a (non-strict) prefix of cpath.Segments — i.e., the
+//     assignment writes AT or ABOVE the constraint's read path, so the read
+//     is shadowed by the new value.
+//
+// The reverse direction (cpath.Segments is a strict prefix of assignSegs —
+// the assignment writes to a deeper SUBPATH of cpath) intentionally does
+// NOT kill: writing `x.value = …` does not change the value of `x.kind`,
+// so a constraint reading `x.kind` is preserved. Combined with
+// SemanticAffectedPaths exposing the constraint's full read paths
+// (e.g., FieldEquals{x, "kind"} reads BOTH x and x.kind), the original
+// unsoundness Codex flagged — `x.kind = …` not killing FieldEquals{x, kind} —
+// is fixed: w=x.kind matches the literal's x.kind read path.
 //
 // Examples:
-//   - Assigning to x affects x, x.foo, x.foo.bar (all have x's value)
-//   - Assigning to x.foo affects x.foo, x.foo.bar (but not x or x.baz)
-//   - Assigning to x.foo[0] affects x.foo[0], x.foo[0].bar (but not x.foo)
-//
-// This captures that assigning to a path invalidates both the path itself
-// and any nested paths that depend on the assigned value.
+//   - Assigning to x affects x, x.foo, x.foo.bar  — assignSegs empty, prefix
+//     of every cpath.
+//   - Assigning to x.foo affects x.foo, x.foo.bar — assignSegs prefix of
+//     cpath.
+//   - Assigning to x.foo does NOT affect x.bar    — neither is a prefix of
+//     the other.
+//   - Assigning to x.foo does NOT affect x          — assignment to a deeper
+//     subpath does not shadow the parent read.
 func PathAffectedByAssignment(cpath constraint.Path, assignSym cfg.SymbolID, assignSegs []constraint.Segment) bool {
 	if cpath.Symbol != assignSym {
 		return false
 	}
+	return segmentsPrefix(assignSegs, cpath.Segments)
+}
 
-	if len(assignSegs) == 0 {
-		return true
-	}
-
-	if len(cpath.Segments) < len(assignSegs) {
+// segmentsPrefix reports whether prefix's segments match the first
+// len(prefix) segments of full.
+func segmentsPrefix(prefix, full []constraint.Segment) bool {
+	if len(prefix) > len(full) {
 		return false
 	}
-
-	for i, seg := range assignSegs {
-		cseg := cpath.Segments[i]
-		if cseg.Kind != seg.Kind || cseg.Name != seg.Name || cseg.Index != seg.Index {
+	for i, seg := range prefix {
+		fseg := full[i]
+		if fseg.Kind != seg.Kind || fseg.Name != seg.Name || fseg.Index != seg.Index {
 			return false
 		}
 	}
-
 	return true
 }

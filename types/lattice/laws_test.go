@@ -22,21 +22,16 @@ const (
 	pTop
 )
 
-type presenceLattice struct{}
+func presenceEqual(a, b presence) bool { return a == b }
 
-func (presenceLattice) Bottom() presence { return pBottom }
-func (presenceLattice) Top() presence    { return pTop }
-
-func (presenceLattice) Equal(a, b presence) bool { return a == b }
-
-func (presenceLattice) LessOrEq(a, b presence) bool {
+func presenceLessOrEq(a, b presence) bool {
 	if a == pBottom || b == pTop {
 		return true
 	}
 	return a == b
 }
 
-func (presenceLattice) Join(a, b presence) presence {
+func presenceJoin(a, b presence) presence {
 	if a == b {
 		return a
 	}
@@ -49,7 +44,7 @@ func (presenceLattice) Join(a, b presence) presence {
 	return pTop
 }
 
-func (presenceLattice) Meet(a, b presence) presence {
+func presenceMeet(a, b presence) presence {
 	if a == b {
 		return a
 	}
@@ -62,15 +57,24 @@ func (presenceLattice) Meet(a, b presence) presence {
 	return pBottom
 }
 
-func (l presenceLattice) Widen(prev, next presence) presence {
-	// Finite height → Join is a valid widening.
-	return l.Join(prev, next)
+// presenceLattice returns the canonical Lattice value for the presence domain.
+// Finite height → Widen = Join is a valid widening.
+func presenceLattice() Lattice[presence] {
+	return Lattice[presence]{
+		Bottom:   func() presence { return pBottom },
+		Top:      func() presence { return pTop },
+		Equal:    presenceEqual,
+		LessOrEq: presenceLessOrEq,
+		Join:     presenceJoin,
+		Meet:     presenceMeet,
+		Widen:    presenceJoin,
+	}
 }
 
 func TestLawSuite_PassesOnPresenceLattice(t *testing.T) {
 	suite := LawSuite[presence]{
 		Name:   "presence",
-		Domain: presenceLattice{},
+		Domain: presenceLattice(),
 		Sample: []presence{pBottom, pNil, pNonNil, pTop},
 	}
 	suite.Run(t)
@@ -78,31 +82,37 @@ func TestLawSuite_PassesOnPresenceLattice(t *testing.T) {
 
 // brokenJoinLattice violates idempotency: Join(x,x) returns Top instead of x.
 // The harness must catch this with a clear diagnostic.
-type brokenJoinLattice struct{ presenceLattice }
-
-func (brokenJoinLattice) Join(a, b presence) presence {
-	if a == b {
-		return pTop
+func brokenJoinLattice() Lattice[presence] {
+	d := presenceLattice()
+	d.Join = func(a, b presence) presence {
+		if a == b {
+			return pTop
+		}
+		return presenceJoin(a, b)
 	}
-	return presenceLattice{}.Join(a, b)
+	return d
 }
 
 // brokenLessOrEq violates antisymmetry: declares Bottom ⊑ Top and Top ⊑ Bottom.
-type brokenLessOrEq struct{ presenceLattice }
+func brokenLessOrEqLattice() Lattice[presence] {
+	d := presenceLattice()
+	d.LessOrEq = func(a, b presence) bool { return true }
+	return d
+}
 
-func (brokenLessOrEq) LessOrEq(a, b presence) bool { return true }
-
-// nonTerminatingWiden generates a chain that never stabilizes by returning
+// nonTerminatingDomain generates a chain that never stabilizes by returning
 // (prev+1) % 256 — guaranteed to spin until the harness bound fires.
-type nonTerminatingDomain struct{}
-
-func (nonTerminatingDomain) Bottom() int               { return 0 }
-func (nonTerminatingDomain) Top() int                  { return 255 }
-func (nonTerminatingDomain) Equal(a, b int) bool       { return a == b }
-func (nonTerminatingDomain) LessOrEq(a, b int) bool    { return a <= b }
-func (nonTerminatingDomain) Join(a, b int) int         { return max2(a, b) }
-func (nonTerminatingDomain) Meet(a, b int) int         { return min2(a, b) }
-func (nonTerminatingDomain) Widen(prev, next int) int  { return (prev + 1) & 0xff }
+func nonTerminatingDomain() Lattice[int] {
+	return Lattice[int]{
+		Bottom:   func() int { return 0 },
+		Top:      func() int { return 255 },
+		Equal:    func(a, b int) bool { return a == b },
+		LessOrEq: func(a, b int) bool { return a <= b },
+		Join:     max2,
+		Meet:     min2,
+		Widen:    func(prev, next int) int { return (prev + 1) & 0xff },
+	}
+}
 
 func max2(a, b int) int {
 	if a > b {
@@ -121,7 +131,7 @@ func TestLawSuite_CatchesBrokenJoin(t *testing.T) {
 	mock := &mockT{}
 	suite := LawSuite[presence]{
 		Name:   "broken-join",
-		Domain: brokenJoinLattice{},
+		Domain: brokenJoinLattice(),
 		Sample: []presence{pBottom, pNil, pNonNil, pTop},
 	}
 	suite.Run(mock)
@@ -134,7 +144,7 @@ func TestLawSuite_CatchesBrokenLessOrEq(t *testing.T) {
 	mock := &mockT{}
 	suite := LawSuite[presence]{
 		Name:   "broken-leq",
-		Domain: brokenLessOrEq{},
+		Domain: brokenLessOrEqLattice(),
 		Sample: []presence{pBottom, pNil, pNonNil, pTop},
 	}
 	suite.Run(mock)
@@ -147,7 +157,7 @@ func TestLawSuite_CatchesNonTerminatingWiden(t *testing.T) {
 	mock := &mockT{}
 	suite := LawSuite[int]{
 		Name:   "non-terminating",
-		Domain: nonTerminatingDomain{},
+		Domain: nonTerminatingDomain(),
 		Sample: []int{0, 1, 2, 255},
 	}
 	suite.Run(mock)
@@ -164,9 +174,12 @@ type mockT struct {
 	fatal    bool
 }
 
-func (m *mockT) Helper()                                {}
-func (m *mockT) Errorf(format string, args ...any)      { m.messages = append(m.messages, sprintf(format, args...)) }
-func (m *mockT) Fatalf(format string, args ...any)      { m.messages = append(m.messages, sprintf(format, args...)); m.fatal = true }
+func (m *mockT) Helper()                           {}
+func (m *mockT) Errorf(format string, args ...any) { m.messages = append(m.messages, sprintf(format, args...)) }
+func (m *mockT) Fatalf(format string, args ...any) {
+	m.messages = append(m.messages, sprintf(format, args...))
+	m.fatal = true
+}
 func (m *mockT) hasLaw(law string) bool {
 	for _, msg := range m.messages {
 		if strings.Contains(msg, law) {

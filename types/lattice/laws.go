@@ -2,7 +2,6 @@ package lattice
 
 import (
 	"fmt"
-	"time"
 )
 
 // reporter is the minimal subset of testing.TB the harness uses. reporter
@@ -50,8 +49,8 @@ func (s LawSuite[T]) Run(t reporter) {
 	if s.Name == "" {
 		t.Fatalf("lattice.LawSuite: Name is required")
 	}
-	if s.Domain == nil {
-		t.Fatalf("lattice.LawSuite[%s]: Domain is required", s.Name)
+	if !s.domainValid() {
+		t.Fatalf("lattice.LawSuite[%s]: Domain is required (all function fields must be set)", s.Name)
 	}
 	if len(s.Sample) < 2 {
 		t.Fatalf("lattice.LawSuite[%s]: Sample must contain at least Bottom and Top", s.Name)
@@ -73,7 +72,12 @@ func (s LawSuite[T]) Run(t reporter) {
 	s.checkAbsorption(t)
 	s.checkWideningOverApproximates(t)
 	s.checkWideningChainTerminates(t)
-	s.checkMeetChainBoundedTime(t)
+}
+
+func (s LawSuite[T]) domainValid() bool {
+	d := s.Domain
+	return d.Bottom != nil && d.Top != nil && d.Equal != nil && d.LessOrEq != nil &&
+		d.Join != nil && d.Meet != nil && d.Widen != nil
 }
 
 func (s LawSuite[T]) fmt(x T) string {
@@ -337,54 +341,8 @@ func (s LawSuite[T]) checkWideningChainTerminates(t reporter) {
 	}
 }
 
-// meetChainPerOpBudget caps how long a single Meet-chain iteration may run
-// before the harness flags the domain as having representational blowup. A
-// well-behaved abstract domain runs Meet in time bounded by the inputs'
-// representation size; an exponential cross-product (e.g. raw DNF) blows
-// through this budget on small inputs. The bound is generous enough that
-// constant-factor differences across CPUs do not produce flakes.
-const meetChainPerOpBudget = 50 * time.Millisecond
-
-// meetChainIterations is the depth of the simulated Meet chain. Mirrors the
-// loop-preheader reinforcement pattern: at each iteration a fresh constraint
-// is And'd into the running condition. If the domain's representation is
-// finite/canonical (presence, numeric ranges, BDDs) each Meet is O(prev|next);
-// if it is unbounded DNF, each Meet's cross product grows multiplicatively
-// and one iteration eventually exceeds meetChainPerOpBudget.
-const meetChainIterations = 32
-
-// checkMeetChainBoundedTime catches representational blowup in Meet.
-//
-// Distinct from the semantic-laws checks: Meet may be algebraically a proper
-// meet operation (commutative, associative, idempotent, monotone) and still
-// have an implementation whose result grows exponentially in successive
-// applications. This is what happens to constraint.Condition under the
-// loop-preheader And-reinforcement transfer, and it is the actual cause of
-// the fixture non-termination — not a semantic lattice violation.
-//
-// For each pair (seed, growth) we simulate meetChainIterations rounds of
-// `t ← Meet(t, growth)`. If any single Meet call exceeds the per-op time
-// budget, we report a representational-complexity violation. Domains whose
-// Meet is canonical-by-construction pass effortlessly; raw-DNF will fail
-// (and that is the test surface Phase F closes).
-func (s LawSuite[T]) checkMeetChainBoundedTime(t reporter) {
-	t.Helper()
-	for _, seed := range s.Sample {
-		for _, growth := range s.Sample {
-			cur := seed
-			for i := 0; i < meetChainIterations; i++ {
-				start := time.Now()
-				next := s.Domain.Meet(cur, growth)
-				elapsed := time.Since(start)
-				if elapsed > meetChainPerOpBudget {
-					s.report(t, "Meet representational-bound", "Meet at chain iter %d from seed=%s growth=%s took %s (budget %s) — domain has unbounded representational growth under repeated Meet", i, s.fmt(seed), s.fmt(growth), elapsed, meetChainPerOpBudget)
-					break
-				}
-				if s.Domain.Equal(next, cur) {
-					break
-				}
-				cur = next
-			}
-		}
-	}
-}
+// Note: a "Meet representational-bound" timing check existed in rev 1 of the
+// lattice harness. The Condition domain DOMAIN_DESIGN.md rev 2 (§13) shows
+// that bound conflicts with the design premise — widening happens at the
+// worklist iterate (§7), not inside Meet/And. The check was removed as part
+// of the Condition close.
