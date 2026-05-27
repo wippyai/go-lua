@@ -2,6 +2,9 @@ package value
 
 import (
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -625,58 +628,287 @@ func appendConvergenceUnionMembers(out []typ.Type, t typ.Type) []typ.Type {
 	return append(out, t)
 }
 
+// reduceConvergenceUnionMembers computes the order-independent canonical
+// least-upper-bound of a union's members. The merge of an unordered member set
+// must be a semilattice operation: commutative, associative, and idempotent. A
+// single encounter-order left-fold is none of these, because greedily folding a
+// member into the first compatible group it meets can strand two members of one
+// family in separate groups when no later member happens to bridge them; the
+// surviving group then exposes a less precise field (a converged record field
+// can flip string -> unknown purely on Go map-iteration order).
+//
+// The reduction is therefore a confluent closure rather than a left-fold:
+//   - members are canonically ordered so representative selection is total and
+//     order-independent (it never decides precision, only the surface among
+//     equally-precise alternatives);
+//   - groups are merged pairwise with a commutative binary join until no pair
+//     merges, so the final partition is the coarsest one the join admits,
+//     independent of the order members arrived in.
 func (s *convergenceWidenState) reduceConvergenceUnionMembers(members []typ.Type) []typ.Type {
 	if len(members) < 2 {
 		return members
 	}
-	out := make([]typ.Type, 0, len(members))
+	groups := make([]typ.Type, 0, len(members))
 	for _, member := range members {
-		out = s.admitConvergenceUnionMember(out, member)
+		if member == nil || typ.IsAbsentOrUnknown(member) {
+			continue
+		}
+		groups = append(groups, member)
 	}
-	return out
+	if len(groups) < 2 {
+		return groups
+	}
+	sortConvergenceUnionMembers(groups)
+	return s.closeConvergenceUnionGroups(groups)
 }
 
-func (s *convergenceWidenState) admitConvergenceUnionMember(members []typ.Type, candidate typ.Type) []typ.Type {
-	if candidate == nil || typ.IsAbsentOrUnknown(candidate) {
-		return members
+// sortConvergenceUnionMembers imposes a total order over the member set so the
+// closure's representative selection is deterministic. The key is cycle-stable:
+// ProductFamilyHash is the coinductive structural fold (it ignores fresh
+// recursive node ids), and convergenceMemberOrderKey is the recursion-id-blind
+// structural tiebreak that resolves genuine hash collisions without consulting
+// any pointer or allocation counter. The order never decides precision; it only
+// fixes which canonical surface is chosen among equally-precise alternatives.
+func sortConvergenceUnionMembers(members []typ.Type) {
+	if len(members) < 2 {
+		return
 	}
-	if foldDbg && len(members) >= 3 {
-		println("FOLDDBG admit union members=", len(members), "rec(cand)=", ContainsRecursiveDbg(candidate), "cand=", DbgString(candidate))
+	type slot struct {
+		typ  typ.Type
+		hash uint64
+		key  string
 	}
-	for i, existing := range members {
-		if SameConvergedFact(existing, candidate) {
-			return members
+	slots := make([]slot, len(members))
+	for i, m := range members {
+		slots[i] = slot{typ: m, hash: typ.ProductFamilyHash(m), key: convergenceMemberOrderKey(m)}
+	}
+	sort.SliceStable(slots, func(i, j int) bool {
+		if slots[i].hash != slots[j].hash {
+			return slots[i].hash < slots[j].hash
 		}
-		if joined, ok := s.joinRecursiveProducts(existing, candidate); ok {
-			members[i] = joined
-			return members
+		return slots[i].key < slots[j].key
+	})
+	for i, s := range slots {
+		members[i] = s.typ
+	}
+}
+
+// convergenceMemberOrderKey renders a cycle-stable structural key for one type.
+// Recursive references are encoded by the de Bruijn depth of their binder, never
+// by node identity, so two observations of the same family with fresh recursive
+// ids produce the same key.
+func convergenceMemberOrderKey(t typ.Type) string {
+	var b strings.Builder
+	writeConvergenceOrderKey(&b, t, nil)
+	return b.String()
+}
+
+func writeConvergenceOrderKey(b *strings.Builder, t typ.Type, binders []*typ.Recursive) {
+	if t == nil {
+		b.WriteString("nil;")
+		return
+	}
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Recursive:
+		if idx, ok := binderIndexOf(v, binders); ok {
+			b.WriteString("self#")
+			b.WriteString(strconv.Itoa(idx))
+			b.WriteByte(';')
+			return
 		}
-		// Prefer the precise convergence bounds first (top-array absorption,
-		// existing-recursive coverage, record extension). They keep the simplest
-		// finite representative; the knot-closing fold is the fallback that ties off
-		// a growing self-embedding tower no simpler bound already absorbs.
-		if upper, ok := convergenceUpperBound(existing, candidate); ok {
-			members[i] = upper
-			return members
+		if v.Body == nil {
+			b.WriteString("mu?;")
+			return
 		}
-		// Close a self-embedding tower into a recursive family: when one member is
-		// a deeper unfolding of the other's family, fold it into a recursive upper
-		// bound so progressive unfoldings cannot accumulate as distinct members and
-		// grow the union without bound.
-		if folded, ok := s.foldSelfEmbeddingUpperBound(existing, candidate); ok {
-			members[i] = folded
-			return members
+		b.WriteString("mu(")
+		writeConvergenceOrderKey(b, v.Body, append(binders, v))
+		b.WriteString(");")
+	case *typ.Union:
+		members := append([]typ.Type(nil), v.Members...)
+		keys := make([]string, len(members))
+		for i, m := range members {
+			var sub strings.Builder
+			writeConvergenceOrderKey(&sub, m, binders)
+			keys[i] = sub.String()
 		}
-		if joined, ok := JoinStructuralShape(existing, candidate, s.merge); ok {
-			members[i] = s.widen(joined)
-			return members
+		sort.Strings(keys)
+		b.WriteString("U[")
+		for _, k := range keys {
+			b.WriteString(k)
 		}
-		if joined, ok := JoinStructuralUnionShape(existing, candidate, s.merge); ok {
-			members[i] = s.widen(joined)
-			return members
+		b.WriteString("];")
+	case *typ.Optional:
+		b.WriteString("opt(")
+		writeConvergenceOrderKey(b, v.Inner, binders)
+		b.WriteString(");")
+	case *typ.Array:
+		b.WriteString("arr(")
+		writeConvergenceOrderKey(b, v.Element, binders)
+		b.WriteString(");")
+	case *typ.Map:
+		b.WriteString("map(")
+		writeConvergenceOrderKey(b, v.Key, binders)
+		b.WriteByte(',')
+		writeConvergenceOrderKey(b, v.Value, binders)
+		b.WriteString(");")
+	case *typ.Record:
+		writeConvergenceRecordOrderKey(b, v, binders)
+	case *typ.Function:
+		b.WriteString("fn[")
+		for _, p := range v.Params {
+			b.WriteString(p.Name)
+			if p.Optional {
+				b.WriteByte('?')
+			}
+			b.WriteByte(':')
+			writeConvergenceOrderKey(b, p.Type, binders)
+		}
+		if v.Variadic != nil {
+			b.WriteString("...")
+			writeConvergenceOrderKey(b, v.Variadic, binders)
+		}
+		b.WriteString("->")
+		for _, r := range v.Returns {
+			writeConvergenceOrderKey(b, r, binders)
+		}
+		b.WriteString("];")
+	default:
+		if ref, ok := recursiveBinderIndex(t, binders); ok {
+			b.WriteString("self#")
+			b.WriteString(strconv.Itoa(ref))
+			b.WriteByte(';')
+			return
+		}
+		b.WriteString(t.Kind().String())
+		b.WriteByte(':')
+		b.WriteString(t.String())
+		b.WriteByte(';')
+	}
+}
+
+func writeConvergenceRecordOrderKey(b *strings.Builder, r *typ.Record, binders []*typ.Recursive) {
+	b.WriteString("rec{")
+	if r.Open {
+		b.WriteString("open;")
+	}
+	fields := append([]typ.Field(nil), r.Fields...)
+	sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
+	for _, f := range fields {
+		b.WriteString(f.Name)
+		if f.Optional {
+			b.WriteByte('?')
+		}
+		b.WriteByte(':')
+		writeConvergenceOrderKey(b, f.Type, binders)
+	}
+	if r.HasMapComponent() {
+		b.WriteString("[map]")
+		writeConvergenceOrderKey(b, r.MapKey, binders)
+		b.WriteByte(',')
+		writeConvergenceOrderKey(b, r.MapValue, binders)
+	}
+	b.WriteString("};")
+}
+
+// recursiveBinderIndex returns the de Bruijn depth of t when it is a reference to
+// one of the enclosing recursive binders, counting from the innermost binder.
+func recursiveBinderIndex(t typ.Type, binders []*typ.Recursive) (int, bool) {
+	for i := len(binders) - 1; i >= 0; i-- {
+		if typ.IsRecursiveRef(t, binders[i]) {
+			return len(binders) - 1 - i, true
 		}
 	}
-	return append(members, candidate)
+	return 0, false
+}
+
+// binderIndexOf returns the de Bruijn depth of a recursive node already in scope,
+// so re-encountering a binder during the structural walk closes the cycle instead
+// of recursing into its body forever.
+func binderIndexOf(rec *typ.Recursive, binders []*typ.Recursive) (int, bool) {
+	for i := len(binders) - 1; i >= 0; i-- {
+		if binders[i] == rec {
+			return len(binders) - 1 - i, true
+		}
+	}
+	return 0, false
+}
+
+// closeConvergenceUnionGroups merges groups to a fixpoint. Each pass scans every
+// unordered pair; on a successful merge the merged representative replaces the
+// pair and the scan restarts so the new representative is re-tested against all
+// remaining groups. Because the binary merge is a join (a least upper bound for
+// the family it joins), the closure reaches the same coarsest partition for any
+// canonical input order, so the result is associative and order-independent.
+func (s *convergenceWidenState) closeConvergenceUnionGroups(groups []typ.Type) []typ.Type {
+	for {
+		merged := false
+		for i := 0; i < len(groups); i++ {
+			for j := i + 1; j < len(groups); j++ {
+				joined, ok := s.mergeConvergenceUnionPair(groups[i], groups[j])
+				if !ok {
+					continue
+				}
+				groups[i] = joined
+				groups = append(groups[:j], groups[j+1:]...)
+				merged = true
+				break
+			}
+			if merged {
+				break
+			}
+		}
+		if !merged {
+			break
+		}
+	}
+	sortConvergenceUnionMembers(groups)
+	return groups
+}
+
+// mergeConvergenceUnionPair is the commutative binary join over two union
+// members. Every join law is probed in both operand orders so the merge is
+// symmetric: mergeConvergenceUnionPair(a,b) and (b,a) admit the same upper bound.
+func (s *convergenceWidenState) mergeConvergenceUnionPair(a, b typ.Type) (typ.Type, bool) {
+	if SameConvergedFact(a, b) {
+		return a, true
+	}
+	if joined, ok := s.joinRecursiveProducts(a, b); ok {
+		return joined, true
+	}
+	// Prefer the precise convergence bounds first (top-array absorption,
+	// recursive coverage, record extension). They keep the simplest finite
+	// representative; the knot-closing fold is the fallback that ties off a
+	// growing self-embedding tower no simpler bound already absorbs.
+	if upper, ok := convergenceUpperBound(a, b); ok {
+		return upper, true
+	}
+	// Close a self-embedding tower into a recursive family: when one member is a
+	// deeper unfolding of the other's family, fold it into a recursive upper bound
+	// so progressive unfoldings cannot accumulate as distinct members and grow the
+	// union without bound.
+	if folded, ok := s.foldSelfEmbeddingUpperBound(a, b); ok {
+		return folded, true
+	}
+	if joined, ok := s.joinStructuralUnionPair(a, b); ok {
+		return s.widen(joined), true
+	}
+	return nil, false
+}
+
+// joinStructuralUnionPair runs the structural table joins in both operand orders
+// so a directed structural join (record/map/sequence) admits the same shape
+// regardless of which member is the accumulator.
+func (s *convergenceWidenState) joinStructuralUnionPair(a, b typ.Type) (typ.Type, bool) {
+	if joined, ok := JoinStructuralShape(a, b, s.merge); ok {
+		return joined, true
+	}
+	if joined, ok := JoinStructuralShape(b, a, s.merge); ok {
+		return joined, true
+	}
+	if joined, ok := JoinStructuralUnionShape(a, b, s.merge); ok {
+		return joined, true
+	}
+	return nil, false
 }
 
 // foldSelfEmbeddingUpperBound folds a self-embedding tower of two union members

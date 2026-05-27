@@ -24,6 +24,37 @@ func TestJoinReturnSlot_PreservesUnknownOverConcrete(t *testing.T) {
 	}
 }
 
+// TestJoinReturnSlot_PrefersConcreteScalarOverUnknown locks the evidence-lattice
+// semantics for a converged slot: a bare unknown is unresolved evidence ("no
+// value yet"), not the dynamic top, so its least upper bound with a concrete
+// scalar is the scalar. Widening the scalar back to unknown is a precision drop;
+// when one record observation carries full_path: string and another carries the
+// not-yet-solved full_path: unknown, joining the field must keep string so a
+// later string concatenation does not falsely error.
+func TestJoinReturnSlot_PrefersConcreteScalarOverUnknown(t *testing.T) {
+	scalars := []Type{String, Number, Integer, Boolean, LiteralString("k")}
+	for _, scalar := range scalars {
+		if got := JoinReturnSlot(scalar, Unknown); !TypeEquals(got, scalar) {
+			t.Fatalf("JoinReturnSlot(%v, unknown) = %v, want %v", scalar, got, scalar)
+		}
+		if got := JoinReturnSlot(Unknown, scalar); !TypeEquals(got, scalar) {
+			t.Fatalf("JoinReturnSlot(unknown, %v) = %v, want %v", scalar, got, scalar)
+		}
+	}
+}
+
+// TestJoinRecordFieldSlot_KeepsScalarFieldOverUnknownPeer proves the field-slot
+// join keeps the precise scalar field when one record observation has not yet
+// resolved it.
+func TestJoinRecordFieldSlot_KeepsScalarFieldOverUnknownPeer(t *testing.T) {
+	if got := JoinRecordFieldSlot("full_path", String, Unknown); !TypeEquals(got, String) {
+		t.Fatalf("full_path slot join(string, unknown) = %v, want string", got)
+	}
+	if got := JoinRecordFieldSlot("full_path", Unknown, String); !TypeEquals(got, String) {
+		t.Fatalf("full_path slot join(unknown, string) = %v, want string", got)
+	}
+}
+
 func TestClosedRecordConflictFastPath_NoRequiredDiscriminants(t *testing.T) {
 	records := []*Record{
 		NewRecord().

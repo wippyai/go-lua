@@ -150,6 +150,8 @@ func (s *returnJoinState) joinReturnSlot(a, b Type) Type {
 		result = merged
 	} else if (IsAny(a) && b.Kind() == kind.Nil) || (IsAny(b) && a.Kind() == kind.Nil) {
 		result = Any
+	} else if concrete, ok := concreteScalarOverUnknownReturnSlot(a, b); ok {
+		result = concrete
 	} else if IsUnknown(a) || IsUnknown(b) {
 		result = Unknown
 	} else {
@@ -162,6 +164,51 @@ func (s *returnJoinState) joinReturnSlot(a, b Type) Type {
 		s.returnSlots[key] = result
 	}
 	return result
+}
+
+// concreteScalarOverUnknownReturnSlot prefers concrete scalar evidence over a
+// bare unknown peer. A bare unknown is unresolved evidence ("no value yet"), not
+// the dynamic top: in the convergence evidence lattice it is below a solved
+// scalar, so the least upper bound of a scalar and an unknown peer is the scalar,
+// not unknown. Widening the scalar back to unknown drops precision and, because
+// whether two observations reach this join depends on map-iteration order, lets a
+// record field (e.g. full_path: string) flip to unknown across runs. The rule is
+// symmetric and limited to scalar primitives, matching the documented
+// return-summary policy that bare unknown yields to concrete scalar evidence
+// while structural unknown stays load-bearing for gradual member access.
+func concreteScalarOverUnknownReturnSlot(a, b Type) (Type, bool) {
+	aUnknown := IsUnknown(UnwrapAnnotated(a))
+	bUnknown := IsUnknown(UnwrapAnnotated(b))
+	if aUnknown == bUnknown {
+		return nil, false
+	}
+	concrete := a
+	if aUnknown {
+		concrete = b
+	}
+	if !isScalarReturnSlotEvidence(concrete) {
+		return nil, false
+	}
+	return concrete, true
+}
+
+func isScalarReturnSlotEvidence(t Type) bool {
+	base := UnwrapAnnotated(t)
+	if base == nil {
+		return false
+	}
+	k := base.Kind()
+	if k == kind.Literal {
+		if lit, ok := base.(*Literal); ok {
+			k = lit.Base
+		}
+	}
+	switch k {
+	case kind.Number, kind.Integer, kind.String, kind.Boolean:
+		return true
+	default:
+		return false
+	}
 }
 
 func preferArrayOverEmptyRecord(a, b Type) (Type, bool) {
