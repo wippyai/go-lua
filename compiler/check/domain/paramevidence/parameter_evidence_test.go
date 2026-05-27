@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -1258,4 +1259,110 @@ func TestJoin_NilableTupleAndArrayBecomeNilableSequence(t *testing.T) {
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("expected nilable tuple plus array to produce %v, got %v", want, got)
 	}
+}
+
+func TestConvergeContractJoin_StructurallyIncompatibleEvidenceStaysBounded(t *testing.T) {
+	mig := typ.NewInterface("migration.Transaction", []typ.Method{
+		{Name: "query", Type: typ.Func().Param("self", typ.Self).Returns(typ.Any).Build()},
+	})
+	db := typ.NewInterface("sql.DB", []typ.Method{
+		{Name: "type", Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build()},
+	})
+	tx := typ.NewInterface("sql.Transaction", []typ.Method{
+		{Name: "commit", Type: typ.Func().Param("self", typ.Self).Returns(typ.Boolean).Build()},
+	})
+	contract := typ.NewUnion(db, tx)
+
+	// Repeatedly meeting a structurally-incompatible observation against the
+	// converged contract must reach a fixpoint instead of forming an
+	// ever-growing intersection of intersections.
+	state := contract
+	prev := state
+	for i := 0; i < 8; i++ {
+		state = ConvergeContractJoin(state, mig)
+		if i > 0 && !typ.TypeEquals(state, prev) {
+			t.Fatalf("Params convergence not bounded at iteration %d: %v -> %v", i, prev, state)
+		}
+		prev = state
+	}
+	// The widened contract must still admit the original contract values.
+	if !subtype.IsSubtype(contract, state) {
+		t.Fatalf("widened contract %v dropped the original obligation %v", state, contract)
+	}
+}
+
+func TestConvergeContractJoin_NeverSeedYieldsToConcreteEvidence(t *testing.T) {
+	concreteElem := typ.NewRecord().Field("node_id", typ.Any).Build()
+	concrete := typ.NewArray(concreteElem)
+
+	// never[]? is the empty-array "no evidence yet" seed; concrete call evidence
+	// must replace it rather than being absorbed by the never-collapsing
+	// intersection.
+	seed := typ.NewOptional(typ.NewArray(typ.Never))
+	if got := ConvergeContractJoin(seed, concrete); !typ.TypeEquals(got, concrete) {
+		t.Fatalf("ConvergeContractJoin(never[]?, concrete) = %v, want %v", got, concrete)
+	}
+	if got := ConvergeContractJoin(concrete, seed); !typ.TypeEquals(got, concrete) {
+		t.Fatalf("ConvergeContractJoin(concrete, never[]?) = %v, want %v", got, concrete)
+	}
+
+	// A bare-never seed yields the same way.
+	if got := ConvergeContractJoin(typ.Never, concrete); !typ.TypeEquals(got, concrete) {
+		t.Fatalf("ConvergeContractJoin(never, concrete) = %v, want %v", got, concrete)
+	}
+}
+
+func TestBodyContractJoin_IncompatibleEntryRefinesMemberWiseAndDropsSeedNil(t *testing.T) {
+	mig := typ.NewInterface("migration.Transaction", []typ.Method{
+		{Name: "query", Type: typ.Func().Param("self", typ.Self).Returns(typ.Any).Build()},
+	})
+	db := typ.NewInterface("sql.DB", []typ.Method{
+		{Name: "type", Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build()},
+	})
+	tx := typ.NewInterface("sql.Transaction", []typ.Method{
+		{Name: "commit", Type: typ.Func().Param("self", typ.Self).Returns(typ.Boolean).Build()},
+	})
+	contract := typ.NewUnion(db, tx)
+
+	// An optional entry observation refined by a non-nilable hard contract must
+	// drop the seed nil (the contract is the body's non-nil precondition) and
+	// stay bounded under repeated refinement rather than cross-distributing into
+	// a growing intersection.
+	entry := typ.NewOptional(mig)
+	first := BodyContractJoin(entry, contract)
+	if hasNilMember(first) {
+		t.Fatalf("non-nilable contract should refine away seed nil, got nilable %v", first)
+	}
+	if !subtype.IsSubtype(first, contract) {
+		t.Fatalf("refined entry %v must satisfy the contract %v", first, contract)
+	}
+	firstCount := unionMemberCount(first)
+	state := first
+	for i := 0; i < 6; i++ {
+		state = BodyContractJoin(state, contract)
+		if unionMemberCount(state) > firstCount {
+			t.Fatalf("BodyContractJoin grew unbounded at iteration %d: %d -> %d members (%v)", i, firstCount, unionMemberCount(state), state)
+		}
+	}
+}
+
+func hasNilMember(t typ.Type) bool {
+	if _, ok := typ.UnwrapAnnotated(t).(*typ.Optional); ok {
+		return true
+	}
+	if u, ok := typ.UnwrapAnnotated(t).(*typ.Union); ok {
+		for _, m := range u.Members {
+			if typ.UnwrapAnnotated(m).Kind() == kind.Nil {
+				return true
+			}
+		}
+	}
+	return typ.UnwrapAnnotated(t).Kind() == kind.Nil
+}
+
+func unionMemberCount(t typ.Type) int {
+	if u, ok := typ.UnwrapAnnotated(t).(*typ.Union); ok {
+		return len(u.Members)
+	}
+	return 1
 }

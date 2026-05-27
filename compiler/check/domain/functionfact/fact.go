@@ -254,7 +254,12 @@ func ApplyPublicSignatureEvidence(fn *typ.Function, evidence []typ.Type) *typ.Fu
 					paramType = next
 					changed = true
 				}
-				if !unwrap.IsOptionalLike(paramType) && optional {
+				// A non-nilable hard obligation is derived only from an
+				// unconditional, non-rebound use of the parameter, which proves the
+				// parameter value is non-nil regardless of whether the obligation's
+				// value type merges with the declared type. An unannotated parameter
+				// seeded optional therefore drops its optionality.
+				if optional && (!unwrap.IsOptionalLike(paramType) || nonNilableHardEvidence(candidate)) {
 					optional = false
 					changed = true
 				}
@@ -311,6 +316,65 @@ func ApplyBodySignatureEvidence(fn *typ.Function, evidence []typ.Type) *typ.Func
 			builder = builder.OptParam(param.Name, paramType)
 		} else {
 			builder = builder.Param(param.Name, paramType)
+		}
+	}
+	if fn.Variadic != nil {
+		builder = builder.Variadic(fn.Variadic)
+	}
+	if len(fn.Returns) > 0 {
+		builder = builder.Returns(fn.Returns...)
+	}
+	if fn.Effects != nil {
+		builder = builder.Effects(fn.Effects)
+	}
+	if fn.Spec != nil {
+		builder = builder.Spec(fn.Spec)
+	}
+	if fn.Refinement != nil {
+		builder = builder.WithRefinement(fn.Refinement)
+	}
+	if !changed {
+		return fn
+	}
+	return builder.Build()
+}
+
+// nonNilableHardEvidence reports whether a public obligation requires a
+// definitely non-nil parameter value.
+func nonNilableHardEvidence(evidence typ.Type) bool {
+	if evidence == nil {
+		return false
+	}
+	_, nilable := value.SplitNilable(evidence)
+	return !nilable
+}
+
+// ClearOptionalForNonNilableObligation drops the optional flag from any
+// parameter whose public obligation is a non-nilable hard contract. Such an
+// obligation is recorded only from an unconditional, non-rebound use, so it
+// proves the parameter value is non-nil; an unannotated parameter that was
+// seeded optional is therefore non-optional in every projection.
+func ClearOptionalForNonNilableObligation(fn *typ.Function, obligations []typ.Type) *typ.Function {
+	if fn == nil || len(fn.Params) == 0 || len(obligations) == 0 {
+		return fn
+	}
+	changed := false
+	builder := typ.Func().ReserveParams(len(fn.Params))
+	for _, tp := range fn.TypeParams {
+		builder = builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for i, param := range fn.Params {
+		optional := param.Optional
+		if optional && i < len(obligations) &&
+			paramevidence.HardPublicEvidence(obligations[i]) &&
+			nonNilableHardEvidence(obligations[i]) {
+			optional = false
+			changed = true
+		}
+		if optional {
+			builder = builder.OptParam(param.Name, param.Type)
+		} else {
+			builder = builder.Param(param.Name, param.Type)
 		}
 	}
 	if fn.Variadic != nil {
@@ -750,7 +814,7 @@ func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 		EnvReturns: WidenEnvReturns(prev.EnvReturns, next.EnvReturns),
 	}
 
-	params := paramevidence.JoinCallVectors(paramsTypes(prev), paramsTypes(next))
+	params := paramevidence.JoinConvergeCallVectors(paramsTypes(prev), paramsTypes(next))
 	bodyParams := paramevidence.JoinBodyVectors(bodyParamsTypes(prev), bodyParamsTypes(next))
 	entryParams := paramevidence.JoinEntryConvergeVectors(entryParamsTypes(prev), entryParamsTypes(next))
 	summary := returnsummary.WidenForConvergence(summaryTypes(prev), summaryTypes(next))

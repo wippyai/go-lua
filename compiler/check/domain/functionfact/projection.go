@@ -334,6 +334,10 @@ func projectTypeNormalized(ff api.FunctionFact, projection Projection, phase api
 	if fn == nil {
 		return nil
 	}
+	// A non-nilable hard public obligation proves the parameter is used as a
+	// definitely non-nil value, so an unannotated parameter seeded optional is
+	// not optional in any projection.
+	fn = ClearOptionalForNonNilableObligation(fn, paramsTypes(ff))
 	switch projection {
 	case ProjectionBody:
 		fn = ApplyBodySignatureEvidence(fn, bodyEntryEvidenceNormalized(ff))

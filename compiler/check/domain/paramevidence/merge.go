@@ -285,7 +285,9 @@ func BodyEvidenceDominatesCallArg(existing, observed typ.Type) bool {
 // BodyContractJoin merges a body-proven parameter contract into existing
 // body-effective evidence. When the existing evidence is merely a compatible
 // call shape, the contract wins because it is the callee's semantic
-// precondition, not another passive observation.
+// precondition, not another passive observation. Structurally-incompatible
+// evidence is refined member-wise against the contract so the result stays
+// bounded across fixpoint iterations.
 func BodyContractJoin(existing, contract typ.Type) typ.Type {
 	existing = NormalizeBodyType(existing)
 	contract = NormalizeBodyType(contract)
@@ -298,7 +300,7 @@ func BodyContractJoin(existing, contract typ.Type) typ.Type {
 	if value.Covers(contract, existing) || value.Covers(existing, contract) {
 		return contract
 	}
-	return subtype.NormalizeIntersection(existing, contract)
+	return refineEntryByContract(existing, contract)
 }
 
 // BodyEntryContractJoin applies a body contract to an observed entry state.
@@ -319,7 +321,61 @@ func BodyEntryContractJoin(entry, contract typ.Type) typ.Type {
 	if value.Covers(entry, contract) {
 		return contract
 	}
-	return subtype.NormalizeIntersection(entry, contract)
+	return refineEntryByContract(entry, contract)
+}
+
+// refineEntryByContract intersects an observed entry state with a body contract
+// member-wise so the result stays bounded across fixpoint iterations. A whole
+// union-of-unions intersection cross-distributes into a quadratically growing
+// set of intersection members; refining each entry member independently and
+// keeping members that already satisfy the contract is idempotent once an entry
+// has been refined, so the entry channel converges. A non-nilable contract is a
+// hard precondition that the body only satisfies for non-nil values, so it
+// refines away a seed nil in the entry; a nilable contract leaves entry
+// nilability intact because nil remains a valid runtime entry state.
+func refineEntryByContract(entry, contract typ.Type) typ.Type {
+	entryNonNil, entryNilable := value.SplitNilable(entry)
+	if entryNonNil == nil {
+		return entry
+	}
+	_, contractNilable := value.SplitNilable(contract)
+	resultNilable := entryNilable && contractNilable
+	members := unionMembers(entryNonNil)
+	refined := make([]typ.Type, 0, len(members))
+	for _, member := range members {
+		if member == nil {
+			continue
+		}
+		if value.Covers(contract, member) {
+			refined = append(refined, member)
+			continue
+		}
+		intersected := subtype.NormalizeIntersection(member, contract)
+		if intersected == nil || typ.IsNever(intersected) {
+			continue
+		}
+		refined = append(refined, intersected)
+	}
+	if len(refined) == 0 {
+		if resultNilable {
+			return typ.Nil
+		}
+		return entry
+	}
+	result := typ.NewUnion(refined...)
+	if resultNilable {
+		result = typ.NewOptional(result)
+	}
+	return result
+}
+
+// unionMembers returns the alias-stripped top-level union members of t, or t
+// itself when it is not a union.
+func unionMembers(t typ.Type) []typ.Type {
+	if u, ok := unwrap.Alias(t).(*typ.Union); ok {
+		return u.Members
+	}
+	return []typ.Type{t}
 }
 
 // HardContractJoin intersects hard parameter obligations, with concrete
@@ -350,6 +406,74 @@ func HardContractJoin(prev, next typ.Type) typ.Type {
 // dominating top-like dynamic observations.
 func PublicContractJoin(prev, next typ.Type) typ.Type {
 	return HardContractJoin(prev, next)
+}
+
+// JoinConvergeCallVectors joins public parameter contracts across a recursive
+// fixpoint boundary. It mirrors JoinCallVectors for non-boundary merges but
+// replaces the intersecting HardContractJoin with the convergence-bounded
+// ConvergeContractJoin so structurally-incompatible call evidence widens to a
+// finite union instead of forming an ever-growing intersection.
+func JoinConvergeCallVectors(a, b []typ.Type) []typ.Type {
+	return joinVectorsWith(a, b, ConvergeContractJoin)
+}
+
+// ConvergeContractJoin merges one public parameter contract at a recursive
+// fixpoint boundary. A never-seed contract carries no evidence yet, so it yields
+// to concrete call evidence. When neither side covers the other the join widens
+// to the union rather than intersecting, keeping the contract monotone and
+// bounded across iterations.
+func ConvergeContractJoin(prev, next typ.Type) typ.Type {
+	if prev == nil || typ.IsAny(prev) || typ.IsUnknown(prev) {
+		return next
+	}
+	if next == nil || typ.IsAny(next) || typ.IsUnknown(next) {
+		return prev
+	}
+	if isNeverSeed(prev) && !isNeverSeed(next) {
+		return next
+	}
+	if isNeverSeed(next) && !isNeverSeed(prev) {
+		return prev
+	}
+	if precise, ok := preciseTableContract(prev, next); ok {
+		return precise
+	}
+	if finite, ok := finiteRecursiveContract(prev, next); ok {
+		return finite
+	}
+	// Convergence widens upward: when one side already covers the other, keep the
+	// broader contract so the obligation only ever weakens across iterations.
+	if value.Covers(next, prev) {
+		return next
+	}
+	if value.Covers(prev, next) {
+		return prev
+	}
+	return typ.JoinPreferNonSoft(prev, next)
+}
+
+// isNeverSeed reports whether a parameter contract is the empty "no evidence
+// yet" seed: the bottom type, or a container/optional whose every value-carrying
+// position bottoms out at never. Such a seed admits no concrete value and must
+// yield to real call evidence at the fixpoint boundary. A type that carries any
+// concrete content is not a seed.
+func isNeverSeed(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	if typ.IsNever(t) {
+		return true
+	}
+	switch v := typ.UnwrapAnnotated(t).(type) {
+	case *typ.Optional:
+		return isNeverSeed(v.Inner)
+	case *typ.Array:
+		return isNeverSeed(v.Element)
+	case *typ.Map:
+		return isNeverSeed(v.Value)
+	default:
+		return false
+	}
 }
 
 func finiteRecursiveContract(prev, next typ.Type) (typ.Type, bool) {
