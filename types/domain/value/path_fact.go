@@ -68,7 +68,53 @@ func ReconcilePathFactWithDeclaredRead(narrowed, declared typ.Type) (typ.Type, b
 	if declaredReadCoveredByUnion(narrowed, declared) {
 		return declared, true
 	}
+	if reconciled, ok := reconcileNarrowedAgainstUnionDeclared(narrowed, declared); ok {
+		return reconciled, true
+	}
 	return nil, false
+}
+
+// reconcileNarrowedAgainstUnionDeclared handles the case where the declared
+// read is a union and the narrowed flow evidence is a single concrete carrier
+// (e.g. a record literal-shape) that matches exactly one union member by
+// product contract. The narrowed value is then reconciled against that
+// member: a narrowed value of one union member is a sound observation of the
+// declared union read.
+func reconcileNarrowedAgainstUnionDeclared(narrowed, declared typ.Type) (typ.Type, bool) {
+	u := unwrap.Union(declared)
+	if u == nil {
+		return nil, false
+	}
+	if unwrap.Union(narrowed) != nil {
+		return nil, false
+	}
+	var matched typ.Type
+	var matchedReconciled typ.Type
+	for _, member := range u.Members {
+		memberCore := unwrap.Alias(member)
+		if memberCore == nil {
+			continue
+		}
+		if reconciled, ok := reconcileDeclaredProductContract(narrowed, memberCore); ok {
+			if matched != nil {
+				return nil, false
+			}
+			matched = member
+			matchedReconciled = reconciled
+			continue
+		}
+		if samePathFactFamily(narrowed, memberCore) {
+			if matched != nil {
+				return nil, false
+			}
+			matched = member
+			matchedReconciled = narrowed
+		}
+	}
+	if matched == nil {
+		return nil, false
+	}
+	return matchedReconciled, true
 }
 
 func reconcileDeclaredProductContract(candidate, declared typ.Type) (typ.Type, bool) {

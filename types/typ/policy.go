@@ -1597,6 +1597,47 @@ func IsRefinableAnnotation(t Type) bool {
 	return isRefinableStructuralAnnotation(t, NewGuard())
 }
 
+// IsClosedUnionAnnotation reports whether a declared annotation is a multi-member
+// union whose members are all concrete (no placeholder/any/unknown at the top
+// level of any member). Such an annotation carries a closed discriminant domain
+// that flow narrowing must preserve at the variable's root even if the union
+// has refinable slots deep inside member fields.
+func IsClosedUnionAnnotation(t Type) bool {
+	if t == nil {
+		return false
+	}
+	u := closedUnionOf(t)
+	if u == nil || len(u.Members) < 2 {
+		return false
+	}
+	for _, member := range u.Members {
+		if member == nil {
+			return false
+		}
+		if IsAbsentOrUnknown(member) || member.Kind().IsPlaceholder() {
+			return false
+		}
+	}
+	return true
+}
+
+// closedUnionOf unwraps Annotated/Alias/Optional layers to expose an underlying
+// Union, mirroring the unwrap.Union helper without the import.
+func closedUnionOf(t Type) *Union {
+	for {
+		switch v := UnwrapAnnotated(t).(type) {
+		case *Union:
+			return v
+		case *Alias:
+			t = v.Target
+		case *Optional:
+			t = v.Inner
+		default:
+			return nil
+		}
+	}
+}
+
 func isRefinableStructuralAnnotation(t Type, guard internal.RecursionGuard) bool {
 	if t == nil {
 		return false

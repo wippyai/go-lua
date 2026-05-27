@@ -632,7 +632,67 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 		}
 	}
 
+	// Metatable participates in subtype: a record without the supertype's metatable
+	// methods cannot stand in for it. Method lookup at runtime traverses Metatable
+	// (notably __index), so a structurally identical record missing the metatable
+	// would crash on m:method().
+	if !c.metaSubtype(sub.Metatable, super.Metatable, depth+1) {
+		return false
+	}
+
 	return true
+}
+
+// metaSubtype implements the covariant metatable axis for record subtyping.
+//
+//   - super == unknown / MetatableUnconstrained: top, anything narrows to it.
+//   - sub == unknown, super concrete: unknown does not narrow to concrete.
+//   - sub == MetatableUnconstrained, super concrete: an unconstrained source-level
+//     metatable axis does not stand in for a concrete metatable.
+//   - exactly one nil: nil means known-no-metatable, NOT "don't care", so it is
+//     incompatible with a concrete metatable on the other side.
+//   - same recursive FamilyKey: structurally identical recursive families
+//     short-circuit to true (the pair guard handles non-keyed cycles).
+//   - otherwise: recurse through the existing subtype machinery (which already
+//     enforces field-mutability invariance via checkRecord).
+func (c *checker) metaSubtype(subMT, superMT typ.Type, depth int) bool {
+	if subMT == nil && superMT == nil {
+		return true
+	}
+	// MetatableUnconstrained marks source annotations that do not constrain
+	// the metatable axis. Strict Codex algorithm: nil <: MU true, MU <: nil
+	// false, concrete <: MU true, MU <: concrete false. A bilateral nil<->MU
+	// allowance remains in place as a conservative-evidence-merge artifact
+	// for alias expansion paths that drop MU on inlined records — tracked
+	// as a follow-up; do not weaken without first fixing alias-expansion.
+	subUnconstrained := subMT != nil && typ.IsMetatableUnconstrained(subMT)
+	superUnconstrained := superMT != nil && typ.IsMetatableUnconstrained(superMT)
+	if subUnconstrained && (superMT == nil || superUnconstrained) {
+		return true
+	}
+	if superUnconstrained {
+		// MU on super accepts any sub: nil, concrete, MU, or unknown.
+		return true
+	}
+	if superMT != nil && typ.IsUnknown(superMT) {
+		return true
+	}
+	if subMT != nil && typ.IsUnknown(subMT) {
+		return false
+	}
+	if subUnconstrained {
+		// MU on sub cannot narrow to a concrete or absent metatable.
+		return false
+	}
+	if subMT == nil || superMT == nil {
+		return false
+	}
+	if subKey, ok := typ.FamilyKeyOf(subMT); ok {
+		if superKey, ok := typ.FamilyKeyOf(superMT); ok && subKey == superKey {
+			return true
+		}
+	}
+	return c.check(subMT, superMT, depth)
 }
 
 // canWidenTo reports whether narrow can safely widen to wide in a mutable context.

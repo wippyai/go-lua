@@ -149,7 +149,7 @@ func methodDepthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (t
 				return fieldResult{}
 			}
 
-			if r.Metatable == nil {
+			if r.Metatable == nil || typ.IsMetatableUnconstrained(r.Metatable) {
 				if r.Open {
 					// Open record: allow unknown methods to be called.
 					return fieldResult{t: typ.Func().Variadic(typ.Any).Returns(typ.Any).Build(), ok: true}
@@ -474,7 +474,7 @@ func callableDepth(t typ.Type, depth int) (*typ.Function, bool) {
 		},
 		Record: func(r *typ.Record) callableResult {
 			// Check for __call metamethod
-			if r.Metatable == nil {
+			if r.Metatable == nil || typ.IsMetatableUnconstrained(r.Metatable) {
 				return callableResult{}
 			}
 
@@ -520,7 +520,7 @@ func getMetamethodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 
 	res := typ.Visit(t, typ.Visitor[fieldResult]{
 		Record: func(r *typ.Record) fieldResult {
-			if r.Metatable == nil {
+			if r.Metatable == nil || typ.IsMetatableUnconstrained(r.Metatable) {
 				return fieldResult{}
 			}
 

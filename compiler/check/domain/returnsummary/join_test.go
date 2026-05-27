@@ -264,7 +264,9 @@ func TestReturnSummaryWiden_ReplacesEmptySeedWithMetatableEvidence(t *testing.T)
 	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
 	prototype := typ.NewRecord().Field("ready", method).Build()
 	metatable := typ.NewRecord().Field("__index", prototype).Build()
-	seed := typ.NewRecord().Build()
+	// nil Metatable means known-absent under the sound subtype order, so a seed
+	// representing "no metatable evidence yet" carries Unknown on that axis.
+	seed := typ.NewRecord().Metatable(typ.Unknown).Build()
 	observed := typ.NewRecord().Metatable(metatable).Build()
 
 	got := WidenForConvergence([]typ.Type{seed, typ.Nil}, []typ.Type{observed, typ.Nil})

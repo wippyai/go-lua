@@ -529,6 +529,11 @@ func (r *Resolver) resolveRecord(te *ast.RecordTypeExpr, sc *scope.State, depth 
 			builder.Field(f.Name, fieldType)
 		}
 	}
+	// Source-level record type annotations carry no explicit metatable constraint.
+	// nil means known-absent under the sound subtype order, so unannotated sources
+	// use a dedicated sentinel that subtype treats as the top of the metatable
+	// axis without exposing method lookup through it.
+	builder.Metatable(typ.MetatableUnconstrained)
 	return builder.Build()
 }
 

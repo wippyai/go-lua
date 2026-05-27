@@ -175,19 +175,7 @@ func SelectEffective(declared, refined flow.TypedValue, annotated bool) flow.Typ
 // union whose members are all concrete (no placeholder/any). Such an annotation
 // can carry a closed discriminant domain that flow narrowing must not erase.
 func isClosedUnionAnnotation(declared typ.Type) bool {
-	u := unwrap.Union(declared)
-	if u == nil || len(u.Members) < 2 {
-		return false
-	}
-	for _, member := range u.Members {
-		if member == nil {
-			return false
-		}
-		if typ.IsAbsentOrUnknown(member) || member.Kind().IsPlaceholder() {
-			return false
-		}
-	}
-	return true
+	return typ.IsClosedUnionAnnotation(declared)
 }
 
 // narrowsClosedUnion reports whether refined is a strict narrowing of a closed

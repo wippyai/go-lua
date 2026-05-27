@@ -198,7 +198,7 @@ func (env fieldLookupEnv) fieldInRecordLookup(r *typ.Record, name string, depth 
 	}
 
 	// Check __index metamethod fallback
-	if r.Metatable == nil {
+	if r.Metatable == nil || typ.IsMetatableUnconstrained(r.Metatable) {
 		if r.Open {
 			return fieldLookupResult{t: typ.Unknown, ok: true}
 		}

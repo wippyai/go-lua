@@ -12,6 +12,14 @@ func IsAny(t Type) bool {
 	return t != nil && t.Kind() == kind.Any
 }
 
+// IsMetatableUnconstrained reports whether t is the sentinel used by source-level
+// record annotations that omit a metatable constraint. The sentinel is top on the
+// subtype metatable axis but carries no methods of its own.
+func IsMetatableUnconstrained(t Type) bool {
+	_, ok := t.(metatableUnconstrainedType)
+	return ok
+}
+
 // IsNever reports whether t is explicitly the never type.
 func IsNever(t Type) bool {
 	return t != nil && t.Kind() == kind.Never
