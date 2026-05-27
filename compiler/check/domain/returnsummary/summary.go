@@ -980,6 +980,84 @@ func demoteInferredDynamicAnyType(t typ.Type) typ.Type {
 	})
 }
 
+// DemoteInferredDynamicAnySlot demotes only a whole-slot dynamic-any outcome in
+// an inferred return product to unknown, leaving any leaves nested inside a
+// structured contract intact.
+//
+// A slot that is, at its surface, the bare any top type (optionally under an
+// alias, or as the dynamic alternative of a top-level union/optional) is an
+// unverified dynamic outcome and demotes to unknown. A structured contract that
+// carries any only at a nested leaf - an any[] array, a {field: any} record, a
+// Map<k, any> - keeps its proven structure: the container/record shape is a real
+// inferred contract and the dynamic leaf is the genuine gradual element type.
+// Rewriting those nested any leaves to unknown would erase proven structure,
+// degrading precise inferred returns for within-compilation callers below the
+// converged function fact. The module-export boundary uses the deeper
+// DemoteInferredDynamicAny instead.
+func DemoteInferredDynamicAnySlot(rets []typ.Type) []typ.Type {
+	if len(rets) == 0 {
+		return nil
+	}
+	var out []typ.Type
+	for i, ret := range rets {
+		demoted := demoteInferredDynamicAnySlotType(ret)
+		if out != nil {
+			out[i] = demoted
+			continue
+		}
+		if !typ.TypeEquals(ret, demoted) {
+			out = make([]typ.Type, len(rets))
+			copy(out, rets[:i])
+			out[i] = demoted
+		}
+	}
+	if out != nil {
+		return out
+	}
+	return rets
+}
+
+func demoteInferredDynamicAnySlotType(t typ.Type) typ.Type {
+	if t == nil {
+		return t
+	}
+	switch v := t.(type) {
+	case *typ.Alias:
+		if v.Target == nil {
+			return t
+		}
+		demoted := demoteInferredDynamicAnySlotType(v.Target)
+		if demoted == v.Target {
+			return t
+		}
+		return typ.NewAlias(v.Name, demoted)
+	case *typ.Optional:
+		inner := demoteInferredDynamicAnySlotType(v.Inner)
+		if inner == v.Inner {
+			return t
+		}
+		return typ.NewOptional(inner)
+	case *typ.Union:
+		members := make([]typ.Type, len(v.Members))
+		changed := false
+		for i, m := range v.Members {
+			members[i] = demoteInferredDynamicAnySlotType(m)
+			if members[i] != m {
+				changed = true
+			}
+		}
+		if !changed {
+			return t
+		}
+		return typ.NewUnion(members...)
+	default:
+		if typ.IsAny(t) {
+			return typ.Unknown
+		}
+		return t
+	}
+}
+
 // Merge applies the canonical return-summary merge policy shared by iterative
 // product facts.
 func Merge(existing, candidate []typ.Type) []typ.Type {

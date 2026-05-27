@@ -348,7 +348,17 @@ func projectTypeNormalized(ff api.FunctionFact, projection Projection, phase api
 	}
 	if len(returns) > 0 {
 		if projectionDemotesInferredDynamicReturns(projection, fn) {
-			returns = returnsummary.DemoteInferredDynamicAny(returns)
+			// The module-export boundary cannot vouch for any inferred dynamic-any
+			// nested in a structured return, so it demotes every any leaf. A
+			// within-compilation public caller view keeps proven container/record
+			// structure and only demotes a whole-slot bare any outcome, so an
+			// inferred any[] or {field: any} stays precise for sibling and captured
+			// local callers instead of collapsing to unknown.
+			if projection == ProjectionExport {
+				returns = returnsummary.DemoteInferredDynamicAny(returns)
+			} else {
+				returns = returnsummary.DemoteInferredDynamicAnySlot(returns)
+			}
 		}
 		returns = preserveDeclaredDynamicReturns(fn.Returns, returns)
 		if withReturns := returnsummary.ApplyToFunctionType(fn, returns); withReturns != nil {
