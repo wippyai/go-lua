@@ -24,10 +24,6 @@ type DiscriminatorInfo struct {
 	Values []interface{}
 }
 
-// preferredDiscriminatorNames lists common discriminator field names in priority order.
-// When multiple valid discriminators exist, these names are preferred.
-var preferredDiscriminatorNames = []string{"tag", "type", "kind", "status", "action"}
-
 // InferDiscriminator analyzes a union type to find a discriminator field.
 //
 // A valid discriminator must:
@@ -35,8 +31,10 @@ var preferredDiscriminatorNames = []string{"tag", "type", "kind", "status", "act
 //  2. Have a literal type in each member
 //  3. Have a UNIQUE literal value for each member
 //
-// If multiple valid discriminators exist, the function prefers common names
-// (tag, type, kind, status, action) and falls back to field declaration order.
+// Detection is structural. When multiple valid discriminators exist, the
+// tie-break is deterministic: the candidate carrying the most member-distinct
+// literals wins, falling back to field declaration order. No field name is
+// privileged.
 //
 // Returns nil if the union has fewer than 2 members, contains non-record types,
 // or no valid discriminator field exists.
@@ -66,19 +64,18 @@ func InferDiscriminator(union *typ.Union) *DiscriminatorInfo {
 		return nil
 	}
 
-	for _, name := range preferredDiscriminatorNames {
-		if info, ok := candidates[name]; ok {
-			return info
-		}
-	}
-
+	var best *DiscriminatorInfo
 	for _, field := range records[0].Fields {
-		if info, ok := candidates[field.Name]; ok {
-			return info
+		info, ok := candidates[field.Name]
+		if !ok {
+			continue
+		}
+		if best == nil || len(info.Values) > len(best.Values) {
+			best = info
 		}
 	}
 
-	return nil
+	return best
 }
 
 // findDiscriminatorCandidates finds all fields that could serve as discriminators.

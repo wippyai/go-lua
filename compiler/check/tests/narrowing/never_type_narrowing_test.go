@@ -366,10 +366,12 @@ end
 // TestNeverTypeNarrowing_ChannelSelectBranches tests the pattern where
 // checking channel identity in sequential if statements produces never.
 func TestNeverTypeNarrowing_ChannelSelectBranches(t *testing.T) {
-	// Create channel types for select result simulation
-	chanAType := typ.NewRecord().Field("__tag", typ.String).Build()
-	chanBType := typ.NewRecord().Field("__tag", typ.String).Build()
-	chanCType := typ.NewRecord().Field("__tag", typ.String).Build()
+	// Channel types are distinct discriminated variants: each carries a unique
+	// literal __tag so the union is discriminated structurally by literal value,
+	// not by Go pointer identity.
+	chanAType := typ.NewRecord().Field("__tag", typ.LiteralString("chanA")).Build()
+	chanBType := typ.NewRecord().Field("__tag", typ.LiteralString("chanB")).Build()
+	chanCType := typ.NewRecord().Field("__tag", typ.LiteralString("chanC")).Build()
 
 	selectResultType := typ.NewUnion(
 		typ.NewRecord().Field("channel", chanAType).Field("value", typ.String).Build(),

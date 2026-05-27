@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/join"
 )
@@ -159,30 +158,7 @@ func capturedTypeAtPoint(
 		return nil
 	}
 	root := constraint.Path{Symbol: sym}
-	// For an annotated symbol whose declared type is a record, the captured root
-	// carries nominal identity used for discrimination (e.g. `result.channel == a`).
-	// EffectiveTypeAt and child-fact projection rebuild a literal-narrowed
-	// structural copy ({__tag: "chanA"}) that is pointer-incompatible with the
-	// declared record, breaking sameTypeInstance / narrowUnionByFieldInstance.
-	// Preserve the declared record's pointer identity by returning it verbatim;
-	// re-projecting children would synthesize a fresh record and lose nominal
-	// identity, which is the property discrimination relies on.
-	if parentFacts.IsAnnotated(sym) {
-		declared := parentFacts.DeclaredAt(point, sym)
-		if declared.State == flow.StateResolved && isNominalRecord(declared.Type) {
-			return declared.Type
-		}
-	}
 	return projectPathFacts(point, root, tv.Type, projection, nil, true)
-}
-
-// isNominalRecord reports whether t is a record type whose pointer identity is
-// used for nominal discrimination of captured roots.
-func isNominalRecord(t typ.Type) bool {
-	if typ.IsAbsentOrUnknown(t) {
-		return false
-	}
-	return t.Kind() == kind.Record
 }
 
 type projectionKey struct {

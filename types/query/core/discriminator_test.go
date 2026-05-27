@@ -119,7 +119,7 @@ func TestInferDiscriminator(t *testing.T) {
 		}
 	})
 
-	t.Run("prefers preferred discriminator names", func(t *testing.T) {
+	t.Run("ties broken by field declaration order", func(t *testing.T) {
 		rec1 := typ.NewRecord().
 			Field("tag", typ.LiteralString("a")).
 			Field("foo", typ.LiteralString("x")).
@@ -136,8 +136,37 @@ func TestInferDiscriminator(t *testing.T) {
 			return
 		}
 
+		// Both fields are equally valid discriminators with two distinct
+		// literals each. With no privileged names, the tie breaks on field
+		// order, which records normalize alphabetically: "foo" before "tag".
+		if result.FieldName != "foo" {
+			t.Errorf("expected first-ordered field 'foo', got '%s'", result.FieldName)
+		}
+	})
+
+	t.Run("candidate with more distinct literals wins", func(t *testing.T) {
+		rec1 := typ.NewRecord().
+			Field("tag", typ.LiteralString("a")).
+			Field("shared", typ.LiteralString("x")).
+			Build()
+		rec2 := typ.NewRecord().
+			Field("tag", typ.LiteralString("b")).
+			Field("shared", typ.LiteralString("y")).
+			Build()
+		rec3 := typ.NewRecord().
+			Field("tag", typ.LiteralString("c")).
+			Field("shared", typ.LiteralString("x")).
+			Build()
+		union := &typ.Union{Members: []typ.Type{rec1, rec2, rec3}}
+
+		// "shared" repeats its "x" literal, so it is not a valid discriminator
+		// across all members; "tag" is the only structural candidate.
+		result := InferDiscriminator(union)
+		if result == nil {
+			t.Fatal("expected discriminator")
+		}
 		if result.FieldName != "tag" {
-			t.Errorf("expected preferred field 'tag', got '%s'", result.FieldName)
+			t.Errorf("expected structural discriminator 'tag', got '%s'", result.FieldName)
 		}
 	})
 

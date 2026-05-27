@@ -1380,11 +1380,37 @@ func sameTypeInstance(a, b typ.Type) bool {
 	// Named interfaces have nominal identity: the named type IS the instance, so
 	// equal name + method structure denote the same path even when interning
 	// returns a canonical instance whose pointer differs from the declaration.
-	// Other kinds keep strict pointer identity, since two structurally equal but
-	// distinct instances (e.g. records) are distinct runtime paths.
 	if ai, ok := a.(*typ.Interface); ok {
 		if bi, ok := b.(*typ.Interface); ok {
 			return ai.Equals(bi)
+		}
+	}
+	// Tagged discriminated records identify by literal value, not by pointer.
+	// When both records carry a required exact-literal tag, structural equality
+	// of those tags decides the runtime path: distinct-pointer-but-same-literal
+	// records denote the same variant, and distinct literals denote different
+	// variants. Opaque records keep strict pointer identity below, since two
+	// structurally equal but tagless instances are distinct runtime objects.
+	if hasTaggedLiteral(a) && hasTaggedLiteral(b) {
+		return typesEquivalent(a, b)
+	}
+	return false
+}
+
+// hasTaggedLiteral reports whether t is a record carrying at least one required
+// field whose type is an exact literal singleton, marking it a discriminated
+// variant. Detection is structural; no field name is privileged.
+func hasTaggedLiteral(t typ.Type) bool {
+	rec, ok := unwrap.Alias(t).(*typ.Record)
+	if !ok {
+		return false
+	}
+	for _, f := range rec.Fields {
+		if f.Optional {
+			continue
+		}
+		if _, ok := unwrap.Alias(f.Type).(*typ.Literal); ok {
+			return true
 		}
 	}
 	return false
