@@ -81,7 +81,7 @@ func sealClassRoot(root *typ.Record, priorRec *typ.Recursive, ownerKey string) t
 	switch {
 	case classRecordHasBackEdge(root):
 		rec := typ.NewRecursivePlaceholder(classFamilyName(ownerKey))
-		r := &backEdgeRewriter{rec: rec, priorRec: priorRec, seen: make(map[typ.Type]typ.Type)}
+		r := &backEdgeRewriter{rec: rec, priorRec: priorRec, root: root, seen: make(map[typ.Type]typ.Type)}
 		body := r.rewriteRecord(root, typ.NewGuard())
 		rec.SetBody(body)
 		if sealDbg {
@@ -90,7 +90,8 @@ func sealClassRoot(root *typ.Record, priorRec *typ.Recursive, ownerKey string) t
 		return rec
 	case instanceMetatableHasBackEdge(root):
 		rec := typ.NewRecursivePlaceholder(classFamilyName(ownerKey))
-		r := &backEdgeRewriter{rec: rec, priorRec: priorRec, seen: make(map[typ.Type]typ.Type)}
+		metaRoot, _ := unwrapRecord(root.Metatable)
+		r := &backEdgeRewriter{rec: rec, priorRec: priorRec, root: metaRoot, seen: make(map[typ.Type]typ.Type)}
 		sealed := r.rewriteInstance(root, typ.NewGuard())
 		if sealDbg {
 			println("SEALDBG SEALING instance owner=", ownerKey, " instance=", typ.FormatShort(root))
@@ -191,22 +192,208 @@ func classRootRecord(class typ.Type) *typ.Record {
 	return nil
 }
 
-// classRecordHasBackEdge reports whether root is a Lua class record: it carries
-// a record-typed __index prototype field. That field is the class self-cycle
-// the seal closes. A record with only a metatable (and no own __index) is an
-// instance, handled by instanceMetatableHasBackEdge.
+// classRecordHasBackEdge reports whether root is a Lua class record carrying a
+// genuine class self-cycle through its __index prototype. The seal fires when
+// __index target either is root itself, structurally equals root, contains a
+// direct self-reference (a self-referential prototype), or when root duplicates
+// the prototype's surface (the seal-test cyclic class shape where both class
+// and __index proto carry the same method surface and the seal collapses them
+// to one mu via __index folding).
+//
+// The folding misfire it guards against is the split-pattern metatable
+// {__index = T} where T is a separate, flat methods record whose self params
+// reference back through this metatable: folding __index in that case would
+// erase T's method surface. Such a metatable has only the __index field, no
+// peer method surface duplicated alongside __index, so the seal does not fire
+// on that metatable shape.
+//
+// A record with only a metatable (and no own __index) is an instance, handled
+// by instanceMetatableHasBackEdge.
 func classRecordHasBackEdge(root *typ.Record) bool {
 	if root == nil {
 		return false
 	}
 	for _, f := range root.Fields {
-		if f.Name == indexField {
-			if _, ok := unwrapRecord(f.Type); ok {
-				return true
-			}
+		if f.Name != indexField {
+			continue
+		}
+		idx, ok := unwrapRecord(f.Type)
+		if !ok {
+			continue
+		}
+		if idx == root || typ.SameNode(idx, root) || typ.TypeEquals(idx, root) {
+			return true
+		}
+		if recordContainsSelfReference(idx) {
+			return true
+		}
+		// Root carries its own method surface alongside __index: the seal-test
+		// cyclic class shape where class.{new, run, ...} == proto.{new, run, ...}
+		// and __index points at proto. Folding __index closes the cycle into one
+		// mu in that case. A flat metatable {__index = T} (no peer fields) does
+		// not match and remains unsealed so T's methods are preserved.
+		if rootDuplicatesPrototypeSurface(root, idx) {
+			return true
 		}
 	}
 	return false
+}
+
+// rootDuplicatesPrototypeSurface reports whether root carries the same method
+// surface as the __index prototype: root has at least one non-__index field
+// and every non-__index field of idx that is a function also appears as a
+// function field on root. This is the structural signature of a class allocation
+// where __index folds the cycle onto one mu without losing prototype methods.
+func rootDuplicatesPrototypeSurface(root, idx *typ.Record) bool {
+	if root == nil || idx == nil {
+		return false
+	}
+	rootFunctions := 0
+	rootFields := make(map[string]bool, len(root.Fields))
+	for _, f := range root.Fields {
+		if f.Name == indexField {
+			continue
+		}
+		rootFields[f.Name] = true
+		if _, ok := f.Type.(*typ.Function); ok {
+			rootFunctions++
+		}
+	}
+	if rootFunctions == 0 {
+		return false
+	}
+	for _, f := range idx.Fields {
+		if f.Name == indexField {
+			continue
+		}
+		if _, ok := f.Type.(*typ.Function); !ok {
+			continue
+		}
+		if !rootFields[f.Name] {
+			return false
+		}
+	}
+	return true
+}
+
+// recordContainsSelfReference reports whether t is a record whose structure
+// embeds a DIRECT back-reference to itself: a record-typed back-edge below
+// the top of t (a method's self-param metatable, a nested record metatable)
+// points to t. This is the closed-family condition the class seal needs — a
+// prototype that recurses to itself directly is its own family.
+//
+// A reference to t reachable only through ANOTHER record's __index back-edge
+// (the split-pattern class_mt = {__index = T}, where T's methods reference
+// instances whose metatable is class_mt and class_mt's __index is T) is NOT
+// a direct self-cycle on T; T is a separate prototype allocation reachable
+// through class_mt, and folding T to the seal's recursion variable would
+// erase T's method surface.
+func recordContainsSelfReference(t *typ.Record) bool {
+	if t == nil {
+		return false
+	}
+	seen := make(map[*typ.Record]bool)
+	// Walk children only; matching the top against itself is not a cycle.
+	for _, f := range t.Fields {
+		if f.Name == indexField {
+			// A direct back-edge on t's own __index does denote the
+			// self-referential class pattern. Other __index fields are followed
+			// normally so the search stops at the next allocation boundary.
+			if rec, ok := unwrapRecord(f.Type); ok && rec == t {
+				return true
+			}
+			continue
+		}
+		if directRecordContainsRecord(f.Type, t, seen) {
+			return true
+		}
+	}
+	if t.Metatable != nil && directRecordContainsRecord(t.Metatable, t, seen) {
+		return true
+	}
+	if t.HasMapComponent() {
+		if directRecordContainsRecord(t.MapKey, t, seen) || directRecordContainsRecord(t.MapValue, t, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+// directRecordContainsRecord reports whether t contains a structural reference
+// to target without following any __index back-edge of an intermediate record.
+// Each __index field denotes a SEPARATE allocation boundary: a reference to
+// target reachable only by descending into an intermediate __index target is a
+// cross-allocation reference, not a self-cycle on target.
+func directRecordContainsRecord(t typ.Type, target *typ.Record, seen map[*typ.Record]bool) bool {
+	if t == nil || target == nil {
+		return false
+	}
+	switch v := t.(type) {
+	case *typ.Record:
+		if v == target {
+			return true
+		}
+		if seen[v] {
+			return false
+		}
+		seen[v] = true
+		for _, f := range v.Fields {
+			if f.Name == indexField {
+				continue
+			}
+			if directRecordContainsRecord(f.Type, target, seen) {
+				return true
+			}
+		}
+		if v.Metatable != nil && directRecordContainsRecord(v.Metatable, target, seen) {
+			return true
+		}
+		if v.HasMapComponent() {
+			if directRecordContainsRecord(v.MapKey, target, seen) || directRecordContainsRecord(v.MapValue, target, seen) {
+				return true
+			}
+		}
+		return false
+	case *typ.Function:
+		for _, p := range v.Params {
+			if directRecordContainsRecord(p.Type, target, seen) {
+				return true
+			}
+		}
+		for _, r := range v.Returns {
+			if directRecordContainsRecord(r, target, seen) {
+				return true
+			}
+		}
+		if v.Variadic != nil && directRecordContainsRecord(v.Variadic, target, seen) {
+			return true
+		}
+		return false
+	case *typ.Optional:
+		return directRecordContainsRecord(v.Inner, target, seen)
+	case *typ.Union:
+		for _, m := range v.Members {
+			if directRecordContainsRecord(m, target, seen) {
+				return true
+			}
+		}
+		return false
+	case *typ.Array:
+		return directRecordContainsRecord(v.Element, target, seen)
+	case *typ.Map:
+		return directRecordContainsRecord(v.Key, target, seen) || directRecordContainsRecord(v.Value, target, seen)
+	case *typ.Tuple:
+		for _, e := range v.Elements {
+			if directRecordContainsRecord(e, target, seen) {
+				return true
+			}
+		}
+		return false
+	case *typ.Alias:
+		return directRecordContainsRecord(v.Target, target, seen)
+	default:
+		return false
+	}
 }
 
 // instanceMetatableHasBackEdge reports whether root is an instance of a class:
@@ -256,10 +443,14 @@ func metaHasMethodSurface(meta *typ.Record) bool {
 
 // backEdgeRewriter rewrites class back-edges to a single recursion variable. A
 // back-edge is the record value of an __index field or the metatable of any
-// record below the root; both denote the class/prototype allocation.
+// record below the root; both denote the class/prototype allocation. The root
+// the seal owns is recorded so a back-edge target that denotes a SEPARATE
+// prototype allocation (split-pattern class_mt = {__index = Class}) is not
+// folded into the recursion variable and Class's method surface is preserved.
 type backEdgeRewriter struct {
 	rec      *typ.Recursive
 	priorRec *typ.Recursive
+	root     *typ.Record
 	seen     map[typ.Type]typ.Type
 }
 
@@ -274,13 +465,63 @@ func (r *backEdgeRewriter) rewriteInstance(root *typ.Record, guard internal.Recu
 	return r.rewriteRecord(root, guard)
 }
 
-// foldBackEdge replaces a record-typed back-edge target with the recursion
-// variable; non-record targets are walked normally.
+// foldBackEdge replaces a class back-edge target with the recursion variable.
+// The back-edge is the value of an __index field or the metatable slot of a
+// record below the root: both denote the prototype/metatable allocation the
+// seal owns. For the self-referential class pattern (Class = setmetatable(Class,
+// {__index = Class}), or the same closed family observed as two views — a class
+// wrapping its __index prototype where the prototype's methods reference
+// instances with metatable = prototype) the back-edge value is structurally
+// part of the same recursion family, so folding to the recursion variable
+// closes the cycle.
+//
+// For the split-pattern (class_mt = {__index = Class}, Class = {methods})
+// folding the __index value erases Class's method surface; the recursion
+// belongs to class_mt (the metatable) and Class is a separate prototype
+// allocation reachable through the back-edge but not itself recursive. Only
+// fold when the target is the recursion family — the root the seal started
+// with, structurally equal to it, the prior fold, or a record that is itself
+// structurally self-referential and so denotes its own closed family.
 func (r *backEdgeRewriter) foldBackEdge(t typ.Type, guard internal.RecursionGuard) typ.Type {
-	if _, ok := unwrapRecord(t); ok {
+	if r.priorRec != nil && typ.IsRecursiveRef(t, r.priorRec) {
+		return r.rec
+	}
+	rec, ok := unwrapRecord(t)
+	if !ok {
+		return r.rewrite(t, guard)
+	}
+	if r.targetIsRecursionFamily(rec) {
 		return r.rec
 	}
 	return r.rewrite(t, guard)
+}
+
+// targetIsRecursionFamily reports whether a record reached through a class
+// back-edge denotes the recursion family the seal owns. The root the seal
+// started with, any record structurally equal to that root, a record that
+// contains a direct self-reference, and a prototype whose method surface is
+// duplicated on the root (a self-referential class shape sharing the prototype
+// methods at both levels) all qualify. A separate, flat prototype allocation
+// whose body only references the seal's metatable family (the split-pattern
+// Class where Class has methods but its self params reference back through a
+// metatable, not through Class itself) does not.
+func (r *backEdgeRewriter) targetIsRecursionFamily(rec *typ.Record) bool {
+	if rec == nil {
+		return false
+	}
+	if rec == r.root {
+		return true
+	}
+	if r.root != nil && typ.TypeEquals(typ.Type(rec), typ.Type(r.root)) {
+		return true
+	}
+	if recordContainsSelfReference(rec) {
+		return true
+	}
+	if r.root != nil && rootDuplicatesPrototypeSurface(r.root, rec) {
+		return true
+	}
+	return false
 }
 
 func (r *backEdgeRewriter) rewrite(t typ.Type, guard internal.RecursionGuard) typ.Type {
