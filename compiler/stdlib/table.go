@@ -21,7 +21,7 @@ var tableInsertSpec = contract.NewSpec().
 		},
 	)
 
-var createdTableType = typ.NewRecord().SetOpen(true).Build()
+var createdTableType = typ.NewFreshEmptyRecord()
 
 var tableMethods = typ.NewRecord().
 	Field("remove", func() typ.Type {

@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -114,9 +115,43 @@ func (p Projector) AssignmentTargetWriteType(target cfg.AssignTarget, source ast
 		return expected
 	}
 	if expected, ok := querycore.IndexWriteObligation(objType, keyType); ok {
+		// The universal write obligation gates a write that must satisfy every
+		// field a dynamic key may denote, which is correct for a sealed,
+		// declared table whose shape is fixed. A mutable/fresh table reached by
+		// a dynamic key instead widens: the value domain admits the write by
+		// extending the table's map component, leaving the existing fields
+		// untouched. Honor that admission here so an inferred table is not gated
+		// by the strict heterogeneous-field meet.
+		if p.indexTargetSealed(target, point) {
+			return expected
+		}
+		valType := p.AssignmentSourceType(source, point, nil, target.Symbol)
+		if widened := value.AdmitIndexedWrite(objType, keyType, valType); widened != nil && !typ.TypeEquals(widened, objType) {
+			return nil
+		}
 		return expected
 	}
 	return nil
+}
+
+// indexTargetSealed reports whether the index target's base denotes a declared,
+// annotation-sealed table whose shape a dynamic write must not widen. Mutable
+// tables built from a literal or a fresh allocation are not sealed, so a dynamic
+// write widens them instead of meeting a heterogeneous-field write obligation.
+func (p Projector) indexTargetSealed(target cfg.AssignTarget, point cfg.Point) bool {
+	if p.cfg.Inputs == nil {
+		return false
+	}
+	sym := target.BaseSymbol
+	if sym == 0 {
+		basePath := p.pathOfExpr(target.Base, point)
+		sym = basePath.Symbol
+	}
+	if sym == 0 || !p.cfg.Inputs.AnnotatedVars[sym] {
+		return false
+	}
+	declared := p.cfg.Inputs.DeclaredTypes[sym]
+	return !typ.IsRefinableAnnotation(declared)
 }
 
 func (p Projector) assignmentTargetFlowWriteType(target cfg.AssignTarget, source ast.Expr, point cfg.Point) typ.Type {

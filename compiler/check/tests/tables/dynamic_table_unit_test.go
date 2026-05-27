@@ -480,3 +480,68 @@ func TestCompositeTable_RecordWithMapComponent(t *testing.T) {
 		}
 	})
 }
+
+// TestDynamicWrite_MutableFreshTableWidens verifies that a dynamic indexed write
+// to a mutable table built from a literal widens the table by extending its map
+// component instead of meeting a heterogeneous-field write obligation.
+func TestDynamicWrite_MutableFreshTableWidens(t *testing.T) {
+	source := `
+		local t = {}
+		t.name = "hello"
+		local key: string = "k"
+		t[key] = 42
+		local back: integer = t[key]
+		local name: string = t.name
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Errorf("expected mutable table to admit widening dynamic write, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+// TestDynamicWrite_DeclaredClosedRecordRejectsIncompatibleWrite verifies that a
+// declared, annotation-sealed heterogeneous record keeps the strict write
+// obligation: a dynamic write whose value satisfies only some fields is rejected.
+func TestDynamicWrite_DeclaredClosedRecordRejectsIncompatibleWrite(t *testing.T) {
+	source := `
+		local t: {name: string, count: integer} = {name = "a", count = 1}
+		local key: string = "k"
+		t[key] = 42
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if !result.HasError() {
+		t.Fatal("expected sealed heterogeneous record to reject incompatible dynamic write")
+	}
+}
+
+// TestDynamicWrite_TableCreateFreshHashAcceptsWrites verifies that a fresh hash
+// table allocated by table.create is a fresh empty table: a key absent before a
+// write reads as nil, so an `or` default resolves consistently with the same
+// table built from an empty literal. The read in get sees the field shape, not
+// the write performed in set, so the fresh-allocation read must not be unknown.
+func TestDynamicWrite_TableCreateFreshHashAcceptsWrites(t *testing.T) {
+	source := `
+		local Store = {}
+		Store.__index = Store
+
+		function Store.new()
+			return setmetatable({ values = table.create(0, 16) }, Store)
+		end
+
+		function Store:set(id: string, value: number)
+			self.values[id] = value
+		end
+
+		function Store:get(id: string): number
+			return self.values[id] or 0
+		end
+
+		local s = Store.new()
+		s:set("a", 1)
+		return s:get("a")
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Errorf("expected table.create fresh hash to admit dynamic writes, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
