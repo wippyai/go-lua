@@ -199,7 +199,63 @@ func (s *preflowOverlaySynthesizer) eval(expr ast.Expr, p cfg.Point) typ.Type {
 	if logical, ok := expr.(*ast.LogicalOpExpr); ok {
 		return s.logicalResult(logical, expr, p)
 	}
+	// Operators recurse through the overlay so a gradual `any` operand resolved
+	// from inference (and not visible to the base synth) carries its dynamic
+	// contract into the operator result instead of degrading to `unknown`.
+	if t, ok := s.operatorResult(expr, p); ok {
+		return t
+	}
 	return s.baseResult(expr, p)
+}
+
+// operatorResult computes arithmetic/concat/relational/unary results from
+// overlay-resolved operands. It returns ok=false for non-operator expressions
+// and when the base synth must own the result (the overlay produced no more
+// informative type than the base would).
+func (s *preflowOverlaySynthesizer) operatorResult(expr ast.Expr, p cfg.Point) (typ.Type, bool) {
+	if s.typeOps == nil {
+		return nil, false
+	}
+	var op string
+	var left, right ast.Expr
+	switch ex := expr.(type) {
+	case *ast.ArithmeticOpExpr:
+		op, left, right = ex.Operator, ex.Lhs, ex.Rhs
+	case *ast.StringConcatOpExpr:
+		op, left, right = "..", ex.Lhs, ex.Rhs
+	case *ast.UnaryMinusOpExpr:
+		operand := s.Synth(ex.Expr, p)
+		return s.overlayUnary("-", operand)
+	case *ast.UnaryBNotOpExpr:
+		operand := s.Synth(ex.Expr, p)
+		return s.overlayUnary("~", operand)
+	case *ast.UnaryLenOpExpr:
+		operand := s.Synth(ex.Expr, p)
+		return s.overlayUnary("#", operand)
+	default:
+		return nil, false
+	}
+	lt := s.Synth(left, p)
+	rt := s.Synth(right, p)
+	if typ.IsAbsentOrUnknown(lt) && typ.IsAbsentOrUnknown(rt) {
+		return nil, false
+	}
+	res := s.typeOps.BinaryOp(s.ctx, lt, op, rt)
+	if typ.IsAbsentOrUnknown(res) {
+		return nil, false
+	}
+	return res, true
+}
+
+func (s *preflowOverlaySynthesizer) overlayUnary(op string, operand typ.Type) (typ.Type, bool) {
+	if typ.IsAbsentOrUnknown(operand) {
+		return nil, false
+	}
+	res := s.typeOps.UnaryOp(s.ctx, op, operand)
+	if typ.IsAbsentOrUnknown(res) {
+		return nil, false
+	}
+	return res, true
 }
 
 func (s *preflowOverlaySynthesizer) overlayIdent(expr ast.Expr, p cfg.Point) (typ.Type, bool) {

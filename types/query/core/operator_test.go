@@ -630,9 +630,12 @@ func TestBinaryOp_Any(t *testing.T) {
 	})
 
 	t.Run("any .. any", func(t *testing.T) {
+		// Concatenation result is invariant: a successful `..` always yields a
+		// string, so a gradual any operand still produces the concrete string
+		// type rather than propagating any.
 		result := BinaryOp(typ.Any, "..", typ.Any)
-		if result != typ.Any {
-			t.Errorf("expected any, got %v", result)
+		if result != typ.String {
+			t.Errorf("expected string, got %v", result)
 		}
 	})
 

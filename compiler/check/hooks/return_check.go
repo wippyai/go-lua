@@ -72,6 +72,8 @@ func CheckReturns(
 		return nil
 	}
 
+	observer = observer.WithGradualParamReads()
+
 	var diags []diag.Diagnostic
 	missingRequired := func(start int) (int, typ.Type) {
 		if start < 0 {

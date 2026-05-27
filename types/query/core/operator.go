@@ -571,6 +571,12 @@ func binaryOpAny(op string) typ.Type {
 	switch op {
 	case "==", "~=", "<", "<=", ">", ">=":
 		return typ.Boolean
+	case "..":
+		// Concatenation result is invariant: a successful `..` always yields a
+		// string regardless of operand grad-ness. A gradual `any` operand is
+		// admitted as stringable, so the result is the concrete string type
+		// rather than a fresh any.
+		return typ.String
 	case "and", "or":
 		return typ.Any
 	default:

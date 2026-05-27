@@ -1167,7 +1167,11 @@ func (r *localAssignmentRHS) overlay() api.SpecTypes {
 	s := r.solver
 	rhsOverlayBase := inferenceOverlayAtPoint(s.ctx.Graph, r.point, s.inferred, s.config.SeedTypes, s.funcSigTypes, s.valueDefs, s.paramSet)
 	r.rhsOverlay = rhsSpecTypesAtAssignPoint(s.ctx.Graph, r.info, r.point, rhsOverlayBase, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-		if t, ok := rhsOverlayBase[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
+		// any is the authoritative gradual top: a value inferred any carries its
+		// dynamic contract through every read, so it is propagated like a concrete
+		// type. Only unknown defers to the resolver, which may hold a more refined
+		// inference seed for an as-yet-unresolved symbol.
+		if t, ok := rhsOverlayBase[sym]; ok && t != nil && (!t.Kind().IsPlaceholder() || typ.IsAny(t)) {
 			return t, true
 		}
 		return r.resolver()(point, sym)
