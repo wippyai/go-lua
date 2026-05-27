@@ -206,7 +206,7 @@ func TestBodyPreconditionContext_RecursiveSelfCallEvidenceStaysBodyLocal(t *test
 		Point:        4,
 		Info:         &cfg.CallInfo{CalleeSymbol: currentSym, Args: []ast.Expr{arg}},
 		ExpectedArgs: []typ.Type{expected},
-	}, nil)
+	}, nil, nil)
 
 	if len(preconditions.Body) != 1 || !typ.TypeEquals(preconditions.Body[0], expected) {
 		t.Fatalf("body preconditions = %v, want %v", preconditions.Body, expected)
@@ -235,7 +235,7 @@ func TestBodyPreconditionContext_NonRecursiveHardUseCanPublishPublic(t *testing.
 		Point:        4,
 		Info:         &cfg.CallInfo{CalleeSymbol: calleeSym, Args: []ast.Expr{arg}},
 		ExpectedArgs: []typ.Type{expected},
-	}, nil)
+	}, nil, nil)
 
 	if len(preconditions.Public) != 1 || !typ.TypeEquals(preconditions.Public[0], expected) {
 		t.Fatalf("public preconditions = %v, want %v", preconditions.Public, expected)

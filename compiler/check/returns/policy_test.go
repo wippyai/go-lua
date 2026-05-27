@@ -30,6 +30,27 @@ func TestSourceParamEvidencePolicy(t *testing.T) {
 	}
 }
 
+func TestSourceParamIsUnannotated(t *testing.T) {
+	untyped := functionForPolicyTest("x", nil)
+	if !SourceParamIsUnannotated(untyped, cfg.Build(untyped), 0) {
+		t.Fatalf("an unannotated parameter must report as inferred")
+	}
+
+	typed := functionForPolicyTest("x", &ast.PrimitiveTypeExpr{Name: "string"})
+	if SourceParamIsUnannotated(typed, cfg.Build(typed), 0) {
+		t.Fatalf("a source-annotated parameter must not report as inferred")
+	}
+
+	optional := functionForPolicyTest("x", &ast.OptionalTypeExpr{Inner: &ast.PrimitiveTypeExpr{Name: "integer"}})
+	if SourceParamIsUnannotated(optional, cfg.Build(optional), 0) {
+		t.Fatalf("an optional annotation is still a concrete annotation, not inferred")
+	}
+
+	if SourceParamIsUnannotated(typed, cfg.Build(typed), 5) {
+		t.Fatalf("an out-of-range index must not report as inferred")
+	}
+}
+
 func TestStaticArgumentShapePreservesNestedDiscriminants(t *testing.T) {
 	got := StaticArgumentShape(&ast.TableExpr{Fields: []*ast.Field{
 		{

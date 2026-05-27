@@ -31,6 +31,29 @@ func SourceParamReceivesCallEvidence(fn *ast.FunctionExpr, graph *cfg.Graph, idx
 	return sourceAnnotationReceivesCallEvidence(fn.ParList.Types[sourceIdx])
 }
 
+// SourceParamIsUnannotated reports whether the source parameter at idx carries
+// no type annotation. An unannotated callee parameter is inferred from its
+// callsites, so its in-progress contract is not a concrete caller obligation.
+func SourceParamIsUnannotated(fn *ast.FunctionExpr, graph *cfg.Graph, idx int) bool {
+	if fn == nil || fn.ParList == nil || idx < 0 {
+		return false
+	}
+	sourceIdx := idx
+	if signatureHasImplicitSelfSlot(fn, graph) {
+		if idx == 0 {
+			return false
+		}
+		sourceIdx = idx - 1
+	}
+	if sourceIdx >= len(fn.ParList.Names) {
+		return false
+	}
+	if fn.ParList.Types == nil || sourceIdx >= len(fn.ParList.Types) {
+		return true
+	}
+	return fn.ParList.Types[sourceIdx] == nil
+}
+
 func signatureHasImplicitSelfSlot(fn *ast.FunctionExpr, graph *cfg.Graph) bool {
 	if fn == nil || fn.ParList == nil || graph == nil {
 		return false

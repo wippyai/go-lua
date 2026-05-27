@@ -61,8 +61,13 @@ func (c BodyPreconditionContext) WithCurrentFunctionSymbol(sym cfg.SymbolID) Bod
 }
 
 // PreconditionsFromCall derives current-function parameter obligations from
-// one hard call context in the solved body.
-func (c BodyPreconditionContext) PreconditionsFromCall(p cfg.Point, evidence api.CallEvidence, expectedReceiver typ.Type) BodyPreconditions {
+// one hard call context in the solved body. calleeParamInferred reports whether
+// the callee parameter at a runtime argument index is an unannotated inferred
+// parameter; such an expectation is an in-progress LUB of the callee's own
+// callsites, not a concrete annotation, so it must not become a contravariant
+// hard obligation on the caller parameter. The genuine callsite arg-check still
+// enforces the callee's concrete contract after the interprocedural fixpoint.
+func (c BodyPreconditionContext) PreconditionsFromCall(p cfg.Point, evidence api.CallEvidence, expectedReceiver typ.Type, calleeParamInferred func(argIdx int) bool) BodyPreconditions {
 	info := evidence.Info
 	if c.result == nil || info == nil || len(c.paramIndexBySym) == 0 {
 		return BodyPreconditions{}
@@ -74,6 +79,9 @@ func (c BodyPreconditionContext) PreconditionsFromCall(p cfg.Point, evidence api
 		}
 	}
 	for i, arg := range info.Args {
+		if calleeParamInferred != nil && calleeParamInferred(i) {
+			continue
+		}
 		expected := evidence.ExpectedArgType(i)
 		idx, evidence, public, ok := c.hardUseEvidence(arg, expected, p)
 		if !ok {

@@ -447,7 +447,7 @@ func (c *parameterEvidenceCollector) recordCurrentBodyPreconditions(p cfg.Point,
 			expectedReceiver = c.expectedReceiverType(info.Method)
 		}
 	}
-	preconditions := c.bodyContext.PreconditionsFromCall(p, evidence, expectedReceiver)
+	preconditions := c.bodyContext.PreconditionsFromCall(p, evidence, expectedReceiver, c.calleeParamInferred(evidence.Info))
 	if preconditions.IsZero() {
 		return
 	}
@@ -457,6 +457,38 @@ func (c *parameterEvidenceCollector) recordCurrentBodyPreconditions(p cfg.Point,
 	facts := builder.Build()
 	if len(facts) > 0 {
 		c.store.MergeInterprocFactsNext(c.currentKey, interprocdomain.FunctionFactsDelta(facts))
+	}
+}
+
+// calleeParamInferred returns a predicate over explicit argument indices that
+// reports whether the resolved callee's source parameter for that argument is
+// unannotated and therefore inferred from its own callsites. Such an expectation
+// is an in-progress LUB rather than a concrete annotation, so it must not be
+// recorded as a contravariant hard precondition on the caller parameter. The
+// callsite arg-check still enforces a concrete callee contract once the callee's
+// inferred parameter converges.
+func (c parameterEvidenceCollector) calleeParamInferred(info *cfg.CallInfo) func(argIdx int) bool {
+	if info == nil || c.store == nil {
+		return nil
+	}
+	calleeSym := c.callEntry.CalleeSymbol(info)
+	if calleeSym == 0 {
+		return nil
+	}
+	fn, graph := sourceFunctionAndGraphForSymbol(c.store, calleeSym)
+	if fn == nil {
+		return nil
+	}
+	method := checkcallsite.IsMethodCallInfo(info)
+	return func(argIdx int) bool {
+		if argIdx < 0 {
+			return false
+		}
+		runtimeIdx := argIdx
+		if method {
+			runtimeIdx++
+		}
+		return returns.SourceParamIsUnannotated(fn, graph, runtimeIdx)
 	}
 }
 

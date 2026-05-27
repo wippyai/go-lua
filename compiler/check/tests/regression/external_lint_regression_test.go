@@ -4294,6 +4294,79 @@ return test.run_cases(define_tests)
 	}
 }
 
+// An inferred parameter observed with {integer?, number} at two callsites is the
+// monotone LUB number?, not the contravariant intersection number & integer??.
+// The body passing the second inferred param to the first inferred callee param
+// must not back-propagate the callee's in-progress integer? expectation.
+func TestExternalLint_InferredParamLUBNotIntersection(t *testing.T) {
+	source := `
+local function chars_to_tokens(chars)
+	return math.floor((tonumber(chars) or 0) / 4)
+end
+
+local function from_int(): integer?
+	return 10
+end
+
+local function calc(target_chars: number)
+	return chars_to_tokens(target_chars)
+end
+
+local a = chars_to_tokens(from_int())
+local b = calc(100)
+return a + b
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected inferred param LUB integer? + number = number? to type-check, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+// A parameter inferred number whose body passes it to a string-annotated callee
+// is a genuine error: removing the inferred-callee back-prop must not drop the
+// concrete-annotation callsite obligation.
+func TestExternalLint_InferredNumberPassedToStringParamErrors(t *testing.T) {
+	source := `
+local function takes_string(s: string)
+	return #s
+end
+
+local function helper(x)
+	return takes_string(x)
+end
+
+return helper(5)
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if !result.HasError() {
+		t.Fatalf("expected error passing inferred number to string-annotated param")
+	}
+}
+
+// A parameter inferred integer? passed unguarded to a number-annotated callee is
+// a genuine nil error that must still fire after the back-prop removal.
+func TestExternalLint_InferredOptionalPassedUnguardedToNumberParamErrors(t *testing.T) {
+	source := `
+local function takes_number(n: number)
+	return n + 1
+end
+
+local function maybe(): integer?
+	return nil
+end
+
+local function helper(x)
+	return takes_number(x)
+end
+
+return helper(maybe())
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if !result.HasError() {
+		t.Fatalf("expected nil error passing inferred integer? unguarded to number-annotated param")
+	}
+}
+
 func TestExternalLint_ModelCardBuilderPreludeDoesNotOptionalizeNumericDefaults(t *testing.T) {
 	source := `
 local function build_model_card(entry)
