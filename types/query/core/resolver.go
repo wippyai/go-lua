@@ -81,3 +81,19 @@ func (r *QueryResolver) Index(t typ.Type, key typ.Type) (typ.Type, bool) {
 	}
 	return r.ops.Index(r.ctx, t, key)
 }
+
+// BinaryOp resolves a binary operator result through the shared TypeOps.
+func (r *QueryResolver) BinaryOp(left typ.Type, op string, right typ.Type) typ.Type {
+	if r == nil || r.ops == nil || r.ctx == nil {
+		return nil
+	}
+	return r.ops.BinaryOp(r.ctx, left, op, right)
+}
+
+// UnaryOp resolves a unary operator result through the shared TypeOps.
+func (r *QueryResolver) UnaryOp(op string, operand typ.Type) typ.Type {
+	if r == nil || r.ops == nil || r.ctx == nil {
+		return nil
+	}
+	return r.ops.UnaryOp(r.ctx, op, operand)
+}

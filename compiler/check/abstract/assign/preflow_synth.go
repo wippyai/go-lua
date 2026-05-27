@@ -42,6 +42,20 @@ func (r typeOpsNarrowResolver) Index(t typ.Type, key typ.Type) (typ.Type, bool) 
 	return r.ops.Index(r.ctx, t, key)
 }
 
+func (r typeOpsNarrowResolver) BinaryOp(left typ.Type, op string, right typ.Type) typ.Type {
+	if r.ops == nil {
+		return nil
+	}
+	return r.ops.BinaryOp(r.ctx, left, op, right)
+}
+
+func (r typeOpsNarrowResolver) UnaryOp(op string, operand typ.Type) typ.Type {
+	if r.ops == nil {
+		return nil
+	}
+	return r.ops.UnaryOp(r.ctx, op, operand)
+}
+
 type overlayTypeAt func(cfg.SymbolID, cfg.Point) (typ.Type, bool)
 
 func mapOverlayTypeAt(overlay map[cfg.SymbolID]typ.Type) overlayTypeAt {

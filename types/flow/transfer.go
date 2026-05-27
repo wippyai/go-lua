@@ -533,8 +533,57 @@ func (s *Solution) assignmentSourceTypeAt(p cfg.Point, assign UnifiedAssignment)
 		sourceType = s.lengthIndexTypeAt(p, assign.Source, assign.Type)
 	case AssignmentSourceCallReturn:
 		sourceType = s.callReturnTypeAt(p, assign.Source)
+	case AssignmentSourceOperator:
+		sourceType = s.operatorTypeAt(p, assign.Source)
 	}
 	return assignmentSourceProjectionType(sourceType, assign.Source)
+}
+
+// OperatorResolver resolves operator result types from operand types. The flow
+// transfer consumes it for AssignmentSourceOperator when the solve resolver
+// supports it. It is intentionally optional so resolvers that only support
+// structural Field/Index lookups remain valid.
+type OperatorResolver interface {
+	BinaryOp(left typ.Type, op string, right typ.Type) typ.Type
+	UnaryOp(op string, operand typ.Type) typ.Type
+}
+
+// operatorTypeAt re-derives an operator assignment result from the solved
+// operand types. Path operands re-read their narrowed type at the point; other
+// operands use their static extraction type. Returns nil when the operand types
+// are not yet informative or the resolver cannot resolve the operator, leaving
+// the static target slot authoritative.
+func (s *Solution) operatorTypeAt(p cfg.Point, source AssignmentSource) typ.Type {
+	resolver, ok := s.resolver.(OperatorResolver)
+	if !ok || resolver == nil || len(source.Operands) == 0 {
+		return nil
+	}
+	operands := make([]typ.Type, len(source.Operands))
+	for i, operand := range source.Operands {
+		t := operand.Static
+		if operand.Path.HasSymbol() {
+			if narrowed := s.NarrowedTypeAt(p, operand.Path); !typ.IsAbsentOrUnknown(narrowed) {
+				t = narrowed
+			}
+		}
+		if typ.IsAbsentOrUnknown(t) {
+			return nil
+		}
+		operands[i] = t
+	}
+	var result typ.Type
+	switch len(operands) {
+	case 1:
+		result = resolver.UnaryOp(source.Operator, operands[0])
+	case 2:
+		result = resolver.BinaryOp(operands[0], source.Operator, operands[1])
+	default:
+		return nil
+	}
+	if typ.IsAbsentOrUnknown(result) {
+		return nil
+	}
+	return result
 }
 
 func assignmentSourceProjectionType(sourceType typ.Type, source AssignmentSource) typ.Type {

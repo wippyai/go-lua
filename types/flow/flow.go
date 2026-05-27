@@ -150,7 +150,24 @@ const (
 	AssignmentSourceLengthIndex
 	// AssignmentSourceCallReturn derives a call return from a flow-resolved callee.
 	AssignmentSourceCallReturn
+	// AssignmentSourceOperator derives an arithmetic, relational, concatenation,
+	// or unary operator result from solve-time operand types. Operands that are
+	// flow paths re-read their narrowed type at the assignment point; other
+	// operands carry their static extraction type. This lets an operator result
+	// over a guard-narrowed operand (for example data.amount + 1 where the guard
+	// proves data.amount is a number) recover its type after the operand narrows,
+	// instead of freezing the extraction-time unknown into the target.
+	AssignmentSourceOperator
 )
+
+// OperatorOperand is one operand of an AssignmentSourceOperator. When Path has a
+// symbol it re-reads the narrowed operand type at the assignment point; otherwise
+// Static carries the extraction-time operand type for non-path operands such as
+// literals or call results.
+type OperatorOperand struct {
+	Path   constraint.Path
+	Static typ.Type
+}
 
 // AssignmentSourceProjectionKind classifies same-source projection evidence
 // attached to an assignment source.
@@ -198,6 +215,11 @@ type AssignmentSource struct {
 	ReceiverPath constraint.Path
 	Method       string
 	ReturnIndex  int
+
+	// Operator is the operator token for AssignmentSourceOperator. Operands holds
+	// its operand evidence in source order.
+	Operator string
+	Operands []OperatorOperand
 }
 
 func (s AssignmentSource) IsZero() bool {

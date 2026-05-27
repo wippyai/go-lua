@@ -263,6 +263,9 @@ func (e *assignmentPointEmitter) sourceInfoFromExpr(source ast.Expr) flow.Assign
 			},
 		}
 	}
+	if src, ok := e.operatorSourceFromExpr(source); ok {
+		return src
+	}
 	attr, ok := source.(*ast.AttrGetExpr)
 	if !ok {
 		return flow.AssignmentSource{}
@@ -293,6 +296,61 @@ func (e *assignmentPointEmitter) sourceInfoFromExpr(source ast.Expr) flow.Assign
 		KeySymbol: keySym,
 		KeyVar:    keyVar,
 	}
+}
+
+// operatorSourceFromExpr lowers an operator RHS into an AssignmentSourceOperator
+// so the flow transfer can re-derive the result from solve-time operand types.
+// Operands resolvable to flow paths re-read their narrowed type at the point;
+// other operands carry their static synthesized type. Returns ok=false for
+// non-operator sources, leaving other source kinds untouched.
+func (e *assignmentPointEmitter) operatorSourceFromExpr(source ast.Expr) (flow.AssignmentSource, bool) {
+	var op string
+	var operands []ast.Expr
+	switch ex := source.(type) {
+	case *ast.ArithmeticOpExpr:
+		op, operands = ex.Operator, []ast.Expr{ex.Lhs, ex.Rhs}
+	case *ast.RelationalOpExpr:
+		op, operands = ex.Operator, []ast.Expr{ex.Lhs, ex.Rhs}
+	case *ast.StringConcatOpExpr:
+		op, operands = "..", []ast.Expr{ex.Lhs, ex.Rhs}
+	case *ast.UnaryMinusOpExpr:
+		op, operands = "-", []ast.Expr{ex.Expr}
+	case *ast.UnaryBNotOpExpr:
+		op, operands = "~", []ast.Expr{ex.Expr}
+	case *ast.UnaryLenOpExpr:
+		op, operands = "#", []ast.Expr{ex.Expr}
+	default:
+		return flow.AssignmentSource{}, false
+	}
+	resolved := make([]flow.OperatorOperand, len(operands))
+	pathBacked := false
+	for i, operand := range operands {
+		if operand == nil {
+			return flow.AssignmentSource{}, false
+		}
+		if sp := path.FromExprWithBindings(operand, e.constResolver, e.state.bindings); !sp.IsEmpty() && sp.Symbol != 0 {
+			resolved[i].Path = constraint.Path{
+				Root:     resolve.RootNameFromBindings(e.state.bindings, sp.Symbol, sp.Root),
+				Symbol:   sp.Symbol,
+				Segments: sp.Segments,
+			}
+			pathBacked = true
+		}
+		if e.state.wrappedSynth != nil {
+			resolved[i].Static = resolve.Ref(e.state.wrappedSynth(operand, e.p), e.sc)
+		}
+	}
+	// Only worth a re-derivable source when at least one operand reads a flow
+	// path that narrowing can refine later; pure-literal operators already
+	// synthesize their final type at extraction.
+	if !pathBacked {
+		return flow.AssignmentSource{}, false
+	}
+	return flow.AssignmentSource{
+		Kind:     flow.AssignmentSourceOperator,
+		Operator: op,
+		Operands: resolved,
+	}, true
 }
 
 func (e *assignmentPointEmitter) predicateLinkForIdent(i int) *flow.PredicateLink {
