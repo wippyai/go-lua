@@ -169,10 +169,26 @@ func (s *Synthesizer) stringKeyAttrType(
 	if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, typ.LiteralString(key)); ok {
 		return s.specializedOrOriginalAttrValue(ex, p, sc, it, captureTypes)
 	}
+	if missingFieldIsTypo(objType) {
+		return typ.Unknown
+	}
 	if querycore.MissingFieldReadsNil(objType) {
 		return typ.Nil
 	}
 	return typ.Unknown
+}
+
+// missingFieldIsTypo reports whether reading a named field absent from objType
+// is a likely typo against an exhaustive shape rather than a well-defined Lua
+// nil read. A closed record without a map component declares its full field set,
+// so an unlisted field resolves to unknown and drives the no-field diagnostic.
+// Open records, maps, and other dynamic table shapes read missing keys as nil.
+func missingFieldIsTypo(objType typ.Type) bool {
+	rec, ok := unwrap.Alias(objType).(*typ.Record)
+	if !ok {
+		return false
+	}
+	return !rec.Open && !rec.HasMapComponent()
 }
 
 func (s *Synthesizer) manifestPathForAttrObject(obj ast.Expr) string {
@@ -479,18 +495,75 @@ func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.P
 
 	if ex.Operator == "and" {
 		if wrapped, ok := s.logicalBranchFlow(ex.Lhs, p, sc, narrower, true); ok {
-			right := s.SynthExpr(ex.Rhs, p, wrapped)
+			right := s.synthLogicalRHS(ex, p, sc, wrapped, recurse, true)
 			return ops.LogicalAndTyped(left, right)
 		}
 	}
 	if ex.Operator == "or" {
 		if wrapped, ok := s.logicalBranchFlow(ex.Lhs, p, sc, narrower, false); ok {
-			right := s.SynthExpr(ex.Rhs, p, wrapped)
+			right := s.synthLogicalRHS(ex, p, sc, wrapped, recurse, false)
 			return ops.LogicalOrTyped(left, right)
 		}
 	}
 
 	return s.synthLogicalOpCore(ex, recurse)
+}
+
+// synthLogicalRHS synthesizes the RHS of a short-circuit logical operator with
+// the LHS narrowed by its branch truthiness. A flow projection (wrapped) carries
+// the narrowing when a solution is present. When no flow solution is available
+// (spec-overlay/pre-flow synthesis), the RHS is synthesized through the original
+// recurse closure so the active type context survives, and references to the LHS
+// path are structurally refined to the truthy/falsy branch so a guarded operand
+// such as `nl` in `nl and (nl - 1)` reads as non-nil rather than degrading to
+// unknown.
+func (s *Synthesizer) synthLogicalRHS(
+	ex *ast.LogicalOpExpr,
+	p cfg.Point,
+	sc *scope.State,
+	wrapped api.FlowOps,
+	recurse ExprSynth,
+	truthy bool,
+) typ.Type {
+	if wrapped != nil {
+		if right := s.SynthExpr(ex.Rhs, p, wrapped); !typ.IsUnknown(right) {
+			return right
+		}
+	}
+	lhsSym := s.logicalGuardSymbol(ex.Lhs)
+	if lhsSym == 0 {
+		return recurse(ex.Rhs)
+	}
+	narrowed := func(t typ.Type) typ.Type {
+		if truthy {
+			return narrow.ToTruthy(t)
+		}
+		return narrow.ToFalsy(t)
+	}
+	guarded := func(inner ExprSynth) ExprSynth {
+		var self ExprSynth
+		self = func(child ast.Expr) typ.Type {
+			if ident, ok := child.(*ast.IdentExpr); ok && s.LookupSymbol(ident) == lhsSym {
+				if refined := narrowed(inner(child)); refined != nil {
+					return refined
+				}
+			}
+			return s.synthExprCore(child, sc, p, nil, self)
+		}
+		return self
+	}
+	return guarded(recurse)(ex.Rhs)
+}
+
+// logicalGuardSymbol returns the symbol guarded by a logical operator's LHS when
+// it is a bare identifier whose truthiness refines later reads. Compound guards
+// resolve through the flow projection instead.
+func (s *Synthesizer) logicalGuardSymbol(expr ast.Expr) cfg.SymbolID {
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok {
+		return 0
+	}
+	return s.LookupSymbol(ident)
 }
 
 func (s *Synthesizer) logicalBranchFlow(expr ast.Expr, p cfg.Point, sc *scope.State, narrower api.FlowOps, truthy bool) (api.FlowOps, bool) {

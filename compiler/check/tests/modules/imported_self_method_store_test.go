@@ -43,7 +43,7 @@ function Store:put(key: string, value: string): Store
 end
 
 return M
-`, "store")
+`, "store", testutil.WithStdlib())
 	if mod.HasError() {
 		t.Fatalf("module errors: %v", testutil.ErrorMessages(mod.Errors))
 	}

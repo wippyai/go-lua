@@ -142,6 +142,43 @@ func TestSynthAttrGetCore_UnknownField(t *testing.T) {
 	}
 }
 
+// An open record declares no exhaustive field set, so an unlisted field read
+// follows Lua table semantics and resolves to nil rather than the unknown typo
+// placeholder used for closed records.
+func TestSynthAttrGetCore_UnknownFieldOpenRecordReadsNil(t *testing.T) {
+	rec := typ.NewRecord().Field("name", typ.String).SetOpen(true).Build()
+	const sym = cfg.SymbolID(1)
+	objIdent := &ast.IdentExpr{Value: "obj"}
+
+	bindings := bind.NewBindingTable()
+	bindings.Bind(objIdent, sym)
+
+	graph := mockGraph{symbols: map[string]cfg.SymbolID{"obj": sym}}
+	declared := flow.DeclaredTypes{sym: rec}
+	checkCtx := api.NewDeclaredEnv(api.DeclaredEnvConfig{
+		Graph:         graph,
+		Bindings:      bindings,
+		DeclaredTypes: declared,
+	})
+
+	e := New(Config{
+		Ctx:    db.NewQueryContext(db.New()),
+		Types:  mockTypeQuerier{},
+		Scopes: make(api.ScopeMap),
+		Env:    checkCtx,
+	})
+
+	expr := &ast.AttrGetExpr{
+		Object: objIdent,
+		Key:    &ast.StringExpr{Value: "unknown"},
+	}
+
+	result := e.TypeOf(expr, 0)
+	if result != typ.Nil {
+		t.Fatalf("got %v, want nil", result)
+	}
+}
+
 func TestSynthLogicalOpCore_And(t *testing.T) {
 	e := newTestEngine()
 	expr := &ast.LogicalOpExpr{

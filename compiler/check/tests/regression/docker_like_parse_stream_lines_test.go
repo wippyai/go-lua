@@ -53,3 +53,22 @@ func TestDockerLikeParseStreamLines_IndexAfterEqLen(t *testing.T) {
 		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
+
+// A short-circuit guard refines its operand inside the right-hand branch: in
+// `nl and (nl - 1)` the optional `nl` is non-nil when the subtraction runs, so
+// the bound value is numeric and stays usable in later arithmetic rather than
+// collapsing to unknown.
+func TestGuardedOptionalArithmetic_RefinesBranchOperand(t *testing.T) {
+	source := `
+		local data = "abc"
+		local nl = data:find("x", 1, true)
+		local line_end = nl and (nl - 1) or #data
+		local span = line_end + 1
+		return span
+	`
+
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
