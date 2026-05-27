@@ -39,6 +39,7 @@ func CheckFields(graph *cfg.Graph, evidence api.FlowEvidence, observer observati
 	}
 
 	bindings := graph.Bindings()
+	observer = observer.WithGradualParamReads()
 	resolver := fieldResolverImpl{observer: observer, bindings: bindings, graph: graph}
 	preStateResolver := resolver
 	if flowOps != nil {

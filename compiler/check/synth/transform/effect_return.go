@@ -130,8 +130,8 @@ func applyFlowIntoTransforms(row effect.Row, args []typ.Type, returnIdx int, bas
 	}
 	out := baseReturn
 	for _, flow := range flows {
-		source := resolveFlowSourceType(args, flow)
-		if source == nil {
+		source, ok := resolveFlowSourceType(args, flow)
+		if !ok {
 			continue
 		}
 		source = narrow.ToTruthy(source)
@@ -147,22 +147,44 @@ func applyFlowIntoTransforms(row effect.Row, args []typ.Type, returnIdx int, bas
 	return out
 }
 
-func resolveFlowSourceType(args []typ.Type, flow effect.FlowInto) typ.Type {
+// resolveFlowSourceType reads the flow's source path on the call argument. The
+// boolean reports whether the flow applies at all: a missing argument or an
+// unresolvable base cannot be projected and skips the flow. A field that is
+// provably absent on a concrete argument resolves to nil, so an `or`-default
+// flow still contributes its Remainder rather than being dropped.
+func resolveFlowSourceType(args []typ.Type, flow effect.FlowInto) (typ.Type, bool) {
 	if flow.ParamIndex < 0 || flow.ParamIndex >= len(args) {
-		return nil
+		return nil, false
 	}
 	current := args[flow.ParamIndex]
 	for _, field := range splitEffectPath(flow.SourcePath) {
 		if current == nil {
-			return nil
+			return nil, false
 		}
 		next, ok := querycore.Field(current, field)
 		if !ok {
-			return nil
+			if absentFieldResolvesToNil(current) {
+				return typ.Nil, true
+			}
+			return nil, false
 		}
 		current = next
 	}
-	return current
+	return current, true
+}
+
+// absentFieldResolvesToNil reports whether a failed field read on t proves the
+// field is absent (value nil) rather than merely unresolved. A concrete table
+// shape that does not declare the field reads nil at that key.
+func absentFieldResolvesToNil(t typ.Type) bool {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Record:
+		return !v.Open && !v.HasMapComponent()
+	case *typ.Optional:
+		return absentFieldResolvesToNil(v.Inner)
+	default:
+		return false
+	}
 }
 
 func mergeFlowRemainder(source, remainder typ.Type) typ.Type {

@@ -40,6 +40,8 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionRe
 	}
 	row = effect.Union(row, inferLocalReturnFlowRow(result))
 
+	callerParamIndexes := returnFlowParamIndexes(result.Graph)
+
 	// Start with the function's own Terminates value.
 	terminates := fnEffect.Terminates
 
@@ -70,7 +72,7 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionRe
 		}
 		if calleeEffect.Row != nil {
 			if calleeRow, ok := calleeEffect.Row.(effect.Row); ok {
-				row = effect.Union(row, calleeRow)
+				row = effect.Union(row, remapCalleeFlowInto(calleeRow, info, result.Graph, callerParamIndexes))
 			}
 		}
 	}
@@ -92,6 +94,67 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionRe
 		OnFalse:    fnEffect.OnFalse,
 		Terminates: terminates,
 	}
+}
+
+// remapCalleeFlowInto rewrites a callee effect row into the caller frame. A
+// callee FlowInto names a callee parameter index, which is meaningless in the
+// caller: it is retained only when the caller forwards one of its own
+// parameters whole into that callee slot, with the index remapped to the caller
+// parameter. A callee FlowInto sourced from a literal or local argument is
+// resolved at this call and contributes no caller-parameter-to-return flow, so
+// it is dropped rather than aliasing an unrelated caller parameter by index.
+func remapCalleeFlowInto(calleeRow effect.Row, info *cfg.CallInfo, graph *cfg.Graph, callerParams map[cfg.SymbolID]int) effect.Row {
+	if len(calleeRow.Labels) == 0 {
+		return calleeRow
+	}
+	var bindings *bind.BindingTable
+	if graph != nil {
+		bindings = graph.Bindings()
+	}
+	out := effect.Row{Tail: calleeRow.Tail}
+	out.Labels = make([]effect.Label, 0, len(calleeRow.Labels))
+	for _, label := range calleeRow.Labels {
+		flow, ok := label.(effect.FlowInto)
+		if !ok {
+			out.Labels = append(out.Labels, label)
+			continue
+		}
+		callerIdx, ok := callerParamForCalleeArg(info, flow.ParamIndex, graph, bindings, callerParams)
+		if !ok {
+			continue
+		}
+		flow.ParamIndex = callerIdx
+		out.Labels = append(out.Labels, flow)
+	}
+	if len(out.Labels) == 0 {
+		return effect.Row{Tail: calleeRow.Tail}
+	}
+	return out
+}
+
+// callerParamForCalleeArg maps a callee parameter index to the caller parameter
+// the call forwards into it, if the argument is a whole caller-parameter read.
+func callerParamForCalleeArg(
+	info *cfg.CallInfo,
+	calleeParamIdx int,
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	callerParams map[cfg.SymbolID]int,
+) (int, bool) {
+	if info == nil || bindings == nil || len(callerParams) == 0 || calleeParamIdx < 0 {
+		return 0, false
+	}
+	arg := callsite.RuntimeArgAt(info, calleeParamIdx)
+	ident, ok := arg.(*ast.IdentExpr)
+	if !ok || ident == nil {
+		return 0, false
+	}
+	sym, ok := bindings.SymbolOf(ident)
+	if !ok || sym == 0 {
+		return 0, false
+	}
+	idx, ok := callerParams[sym]
+	return idx, ok
 }
 
 // ResolveRefinementBySym resolves effects from canonical function facts or global

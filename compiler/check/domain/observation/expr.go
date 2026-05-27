@@ -53,6 +53,7 @@ type Config struct {
 	GlobalTypes       map[string]typ.Type
 	PreferPreState    bool
 	PreserveProof     bool
+	GradualParamReads bool
 	LocalCondition    *constraint.Condition
 }
 
@@ -82,6 +83,16 @@ func (p Projector) WithPreStateReads() Projector {
 // convergent value-product representation.
 func (p Projector) WithProofValues() Projector {
 	p.cfg.PreserveProof = true
+	return p
+}
+
+// WithGradualParamReads returns a projector that reads an unannotated, fully
+// unconstrained parameter as gradual `any` rather than the unrefined `unknown`
+// inference seed. Diagnostic walkers use this so value operators on a gradual
+// parameter the public surface already admits as `any?` are not rejected, while
+// fact computation keeps the precise `unknown` seed for interproc refinement.
+func (p Projector) WithGradualParamReads() Projector {
+	p.cfg.GradualParamReads = true
 	return p
 }
 
@@ -324,6 +335,9 @@ func (p Projector) identType(expr *ast.IdentExpr, point cfg.Point) typ.Type {
 	if p.cfg.Bindings != nil {
 		if sym, ok := p.cfg.Bindings.SymbolOf(expr); ok {
 			if t := p.symbolType(point, sym); t != nil {
+				if p.cfg.GradualParamReads && typ.IsUnknown(t) && p.isUnannotatedParamSymbol(sym) {
+					return typ.Any
+				}
 				return t
 			}
 		}
@@ -334,6 +348,40 @@ func (p Projector) identType(expr *ast.IdentExpr, point cfg.Point) typ.Type {
 		}
 	}
 	return typ.Unknown
+}
+
+// isUnannotatedParamSymbol reports whether sym is a source parameter of the
+// current function that carries no type annotation. Such a parameter, left at
+// the unrefined `unknown` seed, is the gradual `any?` the public contract
+// already exposes.
+func (p Projector) isUnannotatedParamSymbol(sym cfg.SymbolID) bool {
+	if sym == 0 || p.cfg.Graph == nil {
+		return false
+	}
+	if p.cfg.Inputs != nil && p.cfg.Inputs.AnnotatedVars[sym] {
+		return false
+	}
+	fn := p.cfg.Graph.Func()
+	if fn == nil || fn.ParList == nil {
+		return false
+	}
+	for _, slot := range p.cfg.Graph.ParamSlotsReadOnly() {
+		if slot.Symbol != sym {
+			continue
+		}
+		sourceIdx, hasSource := slot.SourceParamIndex()
+		if !hasSource {
+			return false
+		}
+		if sourceIdx < 0 || sourceIdx >= len(fn.ParList.Names) {
+			return false
+		}
+		if sourceIdx >= len(fn.ParList.Types) {
+			return true
+		}
+		return fn.ParList.Types[sourceIdx] == nil
+	}
+	return false
 }
 
 func (p Projector) identTypeWithExpected(expr *ast.IdentExpr, point cfg.Point, expected typ.Type) typ.Type {
