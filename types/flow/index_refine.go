@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // IndexKeyDescriptor is the AST-free description of an indexed read's key, used
@@ -49,13 +48,15 @@ func (s *Solution) refineIndexReadAt(p cfg.Point, container, result typ.Type, de
 		}
 	}
 
-	// Fixed-arity tuple: numeric index proven within [1, arity] is present.
+	// Fixed-arity tuple (or union of tuples): numeric index proven within
+	// [1, arity] is present. The arity is the min element count across non-nil
+	// tuple members.
 	if desc.HasVar {
-		if tuple, ok := unwrap.Alias(container).(*typ.Tuple); ok && tuple != nil && len(tuple.Elements) > 0 {
+		if arity, ok := narrow.TupleArity(container); ok {
 			if lower, upper, ok := s.BoundsAt(p, desc.VarName); ok {
 				lower += desc.VarOffset
 				upper += desc.VarOffset
-				if lower >= 1 && upper <= int64(len(tuple.Elements)) {
+				if lower >= 1 && upper <= arity {
 					if refined, ok := removeFlowNil(result); ok {
 						return refined
 					}
@@ -78,6 +79,12 @@ func (s *Solution) refineIndexReadAt(p cfg.Point, container, result typ.Type, de
 
 	// Sequence indexed by a length expression (#arr + k) on the same container.
 	if desc.HasLenExpr && !desc.ContainerPath.IsEmpty() && desc.LenExprPath.Equal(desc.ContainerPath) {
+		// A fixed-arity tuple's #t resolves to its static arity directly.
+		if arity, ok := narrow.TupleArity(container); ok {
+			if refined := narrow.RefineLengthIndex(container, result, arity, desc.LenOffset); refined != nil {
+				return refined
+			}
+		}
 		if lower, _, ok := s.LengthBoundsAt(p, desc.ContainerPath); ok {
 			if refined := narrow.RefineLengthIndex(container, result, lower, desc.LenOffset); refined != nil {
 				return refined

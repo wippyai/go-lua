@@ -59,6 +59,73 @@ func LengthBoundProvesSequenceIndex(t typ.Type, index int64) bool {
 	return lengthBoundProvesSequenceIndexDepth(t, index, 0)
 }
 
+// TupleArity returns the guaranteed minimum static arity of a fixed-arity tuple
+// container. It accepts a bare tuple, or a union/optional whose non-nil members
+// are all tuples, returning the minimum element count across those members.
+// A non-nil member that is not a tuple, or an empty/zero-arity shape, yields
+// ok=false because no positive index can be proven present. The static arity is
+// the exact runtime length of a fixed-arity tuple, so #t == arity and any index
+// in [1, arity] is provably present.
+func TupleArity(t typ.Type) (int64, bool) {
+	return tupleArityDepth(t, 0)
+}
+
+func tupleArityDepth(t typ.Type, depth int) (int64, bool) {
+	if t == nil || typ.DepthExceeded(depth) {
+		return 0, false
+	}
+	t = unwrap.Alias(t)
+	if expanded := unwrap.Instantiated(t); expanded != t {
+		return tupleArityDepth(expanded, depth+1)
+	}
+	return typ.Visit(t, typ.Visitor[arityResult]{
+		Tuple: func(tuple *typ.Tuple) arityResult {
+			if tuple == nil || len(tuple.Elements) == 0 {
+				return arityResult{}
+			}
+			return arityResult{arity: int64(len(tuple.Elements)), ok: true}
+		},
+		Optional: func(o *typ.Optional) arityResult {
+			if o == nil {
+				return arityResult{}
+			}
+			n, ok := tupleArityDepth(o.Inner, depth+1)
+			return arityResult{arity: n, ok: ok}
+		},
+		Union: func(u *typ.Union) arityResult {
+			if u == nil {
+				return arityResult{}
+			}
+			min := int64(0)
+			seen := false
+			for _, m := range u.Members {
+				if m == nil || m.Kind() == kind.Nil {
+					continue
+				}
+				n, ok := tupleArityDepth(m, depth+1)
+				if !ok {
+					return arityResult{}
+				}
+				if !seen || n < min {
+					min = n
+				}
+				seen = true
+			}
+			return arityResult{arity: min, ok: seen}
+		},
+		Default: func(typ.Type) arityResult {
+			return arityResult{}
+		},
+	}).unpack()
+}
+
+type arityResult struct {
+	arity int64
+	ok    bool
+}
+
+func (r arityResult) unpack() (int64, bool) { return r.arity, r.ok }
+
 // RefineByLengthLowerBound keeps only values that can satisfy #t >= lower.
 // The refinement is intentionally a shape law, not an index-read shortcut:
 // positive length eliminates statically empty closed shapes and filters unions,

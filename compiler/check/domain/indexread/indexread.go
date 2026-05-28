@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // Flow is the solved proof surface needed to refine indexed reads.
@@ -73,8 +72,8 @@ func refineTupleIndexByNumericBounds(q Query) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	tuple, ok := unwrap.Alias(q.Container).(*typ.Tuple)
-	if !ok || tuple == nil || len(tuple.Elements) == 0 {
+	arity, ok := narrow.TupleArity(q.Container)
+	if !ok {
 		return nil, false
 	}
 	lower, upper, ok := q.Flow.BoundsAt(q.Point, name)
@@ -83,7 +82,7 @@ func refineTupleIndexByNumericBounds(q Query) (typ.Type, bool) {
 	}
 	lower += offset
 	upper += offset
-	if lower < 1 || upper > int64(len(tuple.Elements)) {
+	if lower < 1 || upper > arity {
 		return nil, false
 	}
 	return removeNil(q.Result)
@@ -123,6 +122,15 @@ func refineSequenceIndexByLengthExpr(q Query) (typ.Type, bool) {
 	lenPath, offset, ok := lenIndexPathFromExpr(q.Key, q.PathOf)
 	if !ok || !lenPath.Equal(tablePath) {
 		return nil, false
+	}
+	// A fixed-arity tuple has a static length equal to its arity, so #t resolves
+	// to the constant arity without a flow length fact. Any index in [1, arity]
+	// (#t + offset, offset <= 0) is provably present.
+	if arity, ok := narrow.TupleArity(q.Container); ok {
+		refined := narrow.RefineLengthIndex(q.Container, q.Result, arity, offset)
+		if refined != nil {
+			return refined, true
+		}
 	}
 	lower, _, ok := q.Flow.LengthBoundsAt(q.Point, tablePath)
 	if !ok {

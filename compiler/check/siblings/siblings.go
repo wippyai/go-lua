@@ -227,6 +227,15 @@ func receiverSurfaceFields(surface typ.Type) map[string]typ.Type {
 		if field.Name == "" || field.Type == nil {
 			continue
 		}
+		// The sibling surface injects resolved method signatures into the
+		// receiver as required fields so mutual references within the scope
+		// group resolve. Data fields belong to the value-tracked base and keep
+		// their declared shape there; merging them as required would drop a
+		// base field's optionality (e.g. an optional data field `f?: string`
+		// would become a required non-nil `f: string`).
+		if unwrap.Function(field.Type) == nil {
+			continue
+		}
 		fields[field.Name] = field.Type
 	}
 	if len(fields) == 0 {

@@ -92,11 +92,16 @@ func mergeFieldsIntoType(baseType typ.Type, fields map[string]typ.Type, required
 		}
 		for _, f := range v.Fields {
 			fieldType := f.Type
+			injected := false
 			if next, ok := remaining[f.Name]; ok {
 				fieldType = value.JoinPrecise(fieldType, next)
 				delete(remaining, f.Name)
+				injected = true
 			}
-			addMergedRecordField(builder, f, fieldType, required)
+			// Only the injected surface fields adopt the required presence; a base
+			// field absent from the injection map keeps its own optionality so a
+			// declared optional field is not silently downgraded to required.
+			addMergedRecordField(builder, f, fieldType, required && injected)
 		}
 		for _, name := range cfg.SortedFieldNames(remaining) {
 			if remaining[name] != nil {
