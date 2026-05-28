@@ -44,6 +44,11 @@ type LawSuite[T any] struct {
 // per-element violations through t.Errorf. The test does not abort on
 // the first failure — running all laws gives a richer picture of how a
 // domain is broken than a single fail-fast.
+//
+// Meet-side laws (idempotency, commutativity, associativity, lower-bound,
+// absorption) are gated on Domain.Meet != nil; a forward-only domain that
+// leaves Meet nil exercises only the join-side, partial-order, and widening
+// laws.
 func (s LawSuite[T]) Run(t reporter) {
 	t.Helper()
 	if s.Name == "" {
@@ -76,8 +81,12 @@ func (s LawSuite[T]) Run(t reporter) {
 
 func (s LawSuite[T]) domainValid() bool {
 	d := s.Domain
+	// Meet is optional: forward-only domains (e.g. AbstractValue, where no
+	// analyzer surface consumes a greatest lower bound) may leave it nil.
+	// LawSuite skips the meet-side laws when Meet is nil; see the per-law
+	// guards in checkMeet* and checkAbsorption.
 	return d.Bottom != nil && d.Top != nil && d.Equal != nil && d.LessOrEq != nil &&
-		d.Join != nil && d.Meet != nil && d.Widen != nil
+		d.Join != nil && d.Widen != nil
 }
 
 func (s LawSuite[T]) fmt(x T) string {
@@ -220,6 +229,9 @@ func (s LawSuite[T]) checkJoinLeastUpperBound(t reporter) {
 
 func (s LawSuite[T]) checkMeetIdempotent(t reporter) {
 	t.Helper()
+	if s.Domain.Meet == nil {
+		return
+	}
 	for _, x := range s.Sample {
 		m := s.Domain.Meet(x, x)
 		if !s.Domain.Equal(m, x) {
@@ -230,6 +242,9 @@ func (s LawSuite[T]) checkMeetIdempotent(t reporter) {
 
 func (s LawSuite[T]) checkMeetCommutative(t reporter) {
 	t.Helper()
+	if s.Domain.Meet == nil {
+		return
+	}
 	for _, a := range s.Sample {
 		for _, b := range s.Sample {
 			ab := s.Domain.Meet(a, b)
@@ -243,6 +258,9 @@ func (s LawSuite[T]) checkMeetCommutative(t reporter) {
 
 func (s LawSuite[T]) checkMeetAssociative(t reporter) {
 	t.Helper()
+	if s.Domain.Meet == nil {
+		return
+	}
 	cap := len(s.Sample)
 	if cap > 12 {
 		cap = 12
@@ -263,6 +281,9 @@ func (s LawSuite[T]) checkMeetAssociative(t reporter) {
 
 func (s LawSuite[T]) checkMeetLowerBound(t reporter) {
 	t.Helper()
+	if s.Domain.Meet == nil {
+		return
+	}
 	for _, a := range s.Sample {
 		for _, b := range s.Sample {
 			m := s.Domain.Meet(a, b)
@@ -278,6 +299,10 @@ func (s LawSuite[T]) checkMeetLowerBound(t reporter) {
 
 func (s LawSuite[T]) checkAbsorption(t reporter) {
 	t.Helper()
+	// Absorption requires both Join and Meet. Skip when Meet is absent.
+	if s.Domain.Meet == nil {
+		return
+	}
 	for _, a := range s.Sample {
 		for _, b := range s.Sample {
 			// a ⊔ (a ⊓ b) = a

@@ -90,16 +90,27 @@ func Join(a, b Value) Value {
 	return joinUnaliased(a.t, b.t)
 }
 
-// joinUnaliased is the alias-free lattice join over two structural types. It keeps
-// the Covers short-circuits and the proven convergence merge.
+// joinUnaliased is the alias-free lattice join over two structural types.
+//
+// Covers is a preorder, not antisymmetric with carrier identity, so returning
+// either operand under mutual coverage is unsound for a commutative join:
+// when a.Covers(b) AND b.Covers(a) but the carrier values differ (alias vs
+// bare, recursive vs union with the recursive arm), returning the first one
+// makes Join order-sensitive. The fix is to canonicalize through the
+// convergence merge whenever both Covers checks succeed without Equal.
 func joinUnaliased(at, bt typ.Type) Value {
 	a := Value{t: at}
 	b := Value{t: bt}
-	if a.Covers(b) {
+	aCovB := a.Covers(b)
+	bCovA := b.Covers(a)
+	if aCovB && !bCovA {
 		return a
 	}
-	if b.Covers(a) {
+	if bCovA && !aCovB {
 		return b
+	}
+	if aCovB && bCovA && Equal(a, b) {
+		return a
 	}
 	return Value{t: canonical(value.MergeForConvergence(at, bt))}
 }

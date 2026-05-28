@@ -47,7 +47,9 @@ package lattice
 //   - Join: least upper bound — commutative, associative, idempotent,
 //     monotone.
 //   - Meet: greatest lower bound — commutative, associative, idempotent,
-//     monotone.
+//     monotone. May be nil for forward-only domains whose analyzer surface
+//     does not consume a greatest lower bound (e.g. AbstractValue);
+//     LawSuite skips the meet-side laws (including absorption) when nil.
 //   - Widen: Cousot widening operator —
 //     prev ⊑ Widen(prev, next), next ⊑ Widen(prev, next), and for any
 //     monotone f: L → L, the sequence s₀ = ⊥, sᵢ₊₁ = Widen(sᵢ, f(sᵢ)) is

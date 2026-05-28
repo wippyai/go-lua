@@ -39,6 +39,16 @@ func Covers(upper, observation typ.Type) bool {
 	if upper == nil || observation == nil {
 		return false
 	}
+	// Bottom (Never) is universally covered. Bottom covers nothing but itself.
+	// The acyclic subtype path below would handle this for non-recursive inputs,
+	// but the recursive branch can bypass IsSubtype, so the check belongs here
+	// before the recursive dispatch.
+	if typ.IsNever(observation) {
+		return true
+	}
+	if typ.IsNever(upper) {
+		return false
+	}
 	if typ.ContainsRecursive(upper) || typ.ContainsRecursive(observation) {
 		// Same-family recursive products are the same point in the convergence
 		// lattice, so each covers the other; the directional self-embedding

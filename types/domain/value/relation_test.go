@@ -90,3 +90,24 @@ func TestCovers_AcyclicUsesSubtype(t *testing.T) {
 		t.Fatalf("integer must not cover number")
 	}
 }
+
+// TestCovers_BottomIsUniversallyCovered locks the universal Bottom coverage
+// rule. The recursive branch of Covers previously bypassed subtype.IsSubtype's
+// Never handling, so a recursive observation under Bottom (Never) reported
+// uncovered — wrong: γ(Bottom)=∅, ∅⊆γ(x) for every x. Found by applying the
+// lattice law harness to the value domain. Codex-locked fix at .codex-out-join-fix.txt Q3.
+func TestCovers_BottomIsUniversallyCovered(t *testing.T) {
+	// Build a recursive family the recursive branch would dispatch on.
+	muList := typ.NewRecursive("List", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("next", typ.NewOptional(self)).Build()
+	})
+	if !Covers(muList, typ.Never) {
+		t.Fatalf("Covers(muList, Never) = false; Bottom must be universally covered")
+	}
+	if Covers(typ.Never, muList) {
+		t.Fatalf("Covers(Never, muList) = true; Bottom covers nothing but itself")
+	}
+	if !Covers(typ.Never, typ.Never) {
+		t.Fatalf("Covers(Never, Never) = false; Bottom equals itself")
+	}
+}

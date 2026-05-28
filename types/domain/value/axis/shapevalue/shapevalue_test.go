@@ -185,3 +185,32 @@ func TestProjectRoundTrips(t *testing.T) {
 		t.Fatalf("Project/Of round-trip changed value: %s", v)
 	}
 }
+
+// TestJoin_CommutativeOnMutualCoverRecursive locks the fix for the carrier
+// non-commutativity caught by the value-domain lattice law harness. Previously,
+// when a.Covers(b) AND b.Covers(a) but the values are carrier-distinct
+// (e.g. recursive `List` family vs the union with `List` as a member),
+// joinUnaliased returned whichever operand it tested first — making Join
+// order-sensitive. The fix routes mutual-cover-but-not-Equal through
+// canonical(MergeForConvergence). Codex-locked fix at .codex-out-join-fix.txt Q1.
+func TestJoin_CommutativeOnMutualCoverRecursive(t *testing.T) {
+	muList := typ.NewRecursive("List", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("next", typ.NewOptional(self)).Build()
+	})
+	a := Value{t: muList}
+	b := Value{t: typ.Boolean}
+	ab := Join(a, b)
+	ba := Join(b, a)
+
+	if !Equal(ab, ba) {
+		t.Fatalf("Join not commutative on mutual-cover recursive case:\n  Join(a, b) = %v\n  Join(b, a) = %v", ab.t, ba.t)
+	}
+
+	// Idempotency on the joined value: Join(a, ab) = ab AND Join(ab, a) = ab.
+	if !Equal(Join(a, ab), ab) {
+		t.Errorf("Join not idempotent: Join(a, Join(a,b)) ≠ Join(a,b)")
+	}
+	if !Equal(Join(ab, a), ab) {
+		t.Errorf("Join not idempotent (other order): Join(Join(a,b), a) ≠ Join(a,b)")
+	}
+}

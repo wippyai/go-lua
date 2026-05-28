@@ -153,6 +153,37 @@ func TestLawSuite_CatchesBrokenLessOrEq(t *testing.T) {
 	}
 }
 
+// TestLawSuite_HandlesMissingMeet pins that LawSuite tolerates a Lattice value
+// with Meet=nil — the forward-only domain shape used by AbstractValue. The
+// presence lattice is reused with Meet replaced by nil; join-side, partial-
+// order, and widening laws still run, while every meet-side law (including
+// absorption) silently skips.
+func TestLawSuite_HandlesMissingMeet(t *testing.T) {
+	d := presenceLattice()
+	d.Meet = nil
+	mock := &mockT{}
+	suite := LawSuite[presence]{
+		Name:   "no-meet",
+		Domain: d,
+		Sample: []presence{pBottom, pNil, pNonNil, pTop},
+	}
+	suite.Run(mock)
+	if mock.fatal {
+		t.Fatalf("Run aborted on a valid no-meet domain: %v", mock.messages)
+	}
+	for _, law := range []string{
+		"Meet idempotency",
+		"Meet commutativity",
+		"Meet associativity",
+		"Meet lower-bound",
+		"Absorption",
+	} {
+		if mock.hasLaw(law) {
+			t.Errorf("law %q fired on a no-meet domain; messages: %v", law, mock.messages)
+		}
+	}
+}
+
 func TestLawSuite_CatchesNonTerminatingWiden(t *testing.T) {
 	mock := &mockT{}
 	suite := LawSuite[int]{
