@@ -62,6 +62,8 @@ func (s *Solution) checkNumericConstraints() {
 
 	state := make(map[cfg.Point]*numeric.State, len(relevant))
 	widenedTop := make(map[cfg.Point]bool)
+	// seeded tracks whether a point has produced its first state.
+	seeded := make(map[cfg.Point]bool, len(relevant))
 	worklist := make([]cfg.Point, 0, len(relevant))
 	inQueue := make(map[cfg.Point]bool, len(relevant))
 
@@ -80,15 +82,40 @@ func (s *Solution) checkNumericConstraints() {
 
 		oldState := state[p]
 		rawState := s.computeNumericStateAt(c, p, state)
-		newState := rawState
-		if widenedTop[p] {
+		var newState *numeric.State
+		switch {
+		case widenedTop[p]:
 			newState = nil
-		} else {
+		case !seeded[p]:
+			// First-visit seed; widening at an uninitialized point would
+			// return Top because the corrected numeric.Widen treats nil as
+			// the lattice Top, not as "no state yet".
+			newState = rawState
+		case !numericPointIsWideningSite(c, p):
+			// Cousot widening points: only loop headers can host infinite
+			// ascending chains. Non-loop-header points use plain Join, which
+			// preserves precision and terminates because chain length is
+			// bounded by the lattice height of predecessor contributions.
+			newState = numeric.Join(oldState, rawState)
+		default:
+			// Loop header — Cousot widening to guarantee termination on
+			// infinite-height interval chains.
 			newState = numeric.Widen(oldState, rawState)
 			if numericStateWidenedToTop(oldState, rawState, newState) {
 				widenedTop[p] = true
 				newState = nil
 			}
+		}
+
+		// Mark seeded only when the visit produces a meaningful (non-Top)
+		// state. Top (nil) is the join-absorbing element under the corrected
+		// numeric.Join — once we mark Top as "seeded" and a later visit
+		// produces a real rawState, Join(Top, rawState) = Top destroys the
+		// fact. By gating on non-Top, the worklist re-enters the
+		// first-visit-seed branch until the first real numeric observation
+		// reaches p, then Join thereafter accumulates correctly.
+		if newState != nil && !newState.IsTop() {
+			seeded[p] = true
 		}
 
 		if !newState.Equals(oldState) {
@@ -350,4 +377,20 @@ func (s *Solution) rekeyForPhis(state *numeric.State, pred, p cfg.Point) *numeri
 
 	// Create new state with rekeyed bounds
 	return state.Rekey(keyRemap)
+}
+
+// numericPointIsWideningSite reports whether p is a feedback-vertex-set
+// point at which numeric widening must be applied to ensure termination
+// on infinite-height interval ascending chains. Loop headers (marked by
+// CFG extraction via Node.LoopPreheaderSet) cover every structured-loop
+// cycle. Non-loop SCC headers are not currently handled — if a future
+// fixture exposes a non-reducible CFG cycle that diverges, extend this
+// to include the SCC head. The per-fixture deadline (commit 930068c9)
+// catches such divergences cleanly.
+func numericPointIsWideningSite(g cfg.Graph, p cfg.Point) bool {
+	n := g.Node(p)
+	if n == nil {
+		return false
+	}
+	return n.LoopPreheaderSet
 }

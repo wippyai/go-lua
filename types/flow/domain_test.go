@@ -248,13 +248,17 @@ func TestNumericDomain_Join(t *testing.T) {
 
 	joined := a.Join(b).(*numeric.Domain)
 
-	// Intersection of [0,10] and [5,15] = [5,10]
+	// LUB of [0,10] and [5,15] is the interval HULL [0,15] (set union of admitted
+	// values). The prior assertion (intersection [5,10]) was an algebraic bug
+	// in numeric.Join — Codex caught it via the lattice law harness; the fix
+	// landed in the same change that introduces this corrected expectation.
+	// See types/flow/numeric/DOMAIN_DESIGN.md §5.1.
 	lower, upper, ok := joined.State().BoundsFor("x")
 	if !ok {
 		t.Fatal("expected bounds")
 	}
-	if lower != 5 || upper != 10 {
-		t.Fatalf("expected [5,10], got [%d,%d]", lower, upper)
+	if lower != 0 || upper != 15 {
+		t.Fatalf("expected hull [0,15], got [%d,%d]", lower, upper)
 	}
 }
 

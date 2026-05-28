@@ -98,6 +98,26 @@ func Bottom() *State {
 	return &State{unsat: true}
 }
 
+// Top returns the unconstrained state (top of the lattice).
+//
+// Top is represented by a nil pointer per the package convention; γ(Top) is
+// the full state space. Exposed as a constructor so the lattice wiring does
+// not rely on package-external knowledge of the nil convention.
+func Top() *State {
+	return nil
+}
+
+// LessOrEq reports whether a ⊑ b in the lattice's partial order, derived
+// from the join-induced order: a ⊑ b iff Join(a, b) = b.
+//
+// This is consistent with the γ-order (γ(a) ⊆ γ(b)) under the LUB Join: more
+// constraints = smaller concretization = lower in the lattice. The function
+// uses structural Equals on the carrier; γ-equivalent but structurally distinct
+// states are not collapsed (see Equals doc).
+func LessOrEq(a, b *State) bool {
+	return Join(a, b).Equals(b)
+}
+
 // IsUnsat returns true if the state represents a contradiction.
 //
 // An unsatisfiable state indicates that the combination of numeric constraints
@@ -160,106 +180,122 @@ func (s *State) Clone() *State {
 	return c
 }
 
-// Join computes the intersection of two states for control flow merge.
+// Join computes the least upper bound (LUB) of two states for control flow merge.
 //
-// At join points (phi nodes), we keep only facts that hold on all incoming paths.
-// This is the meet operation in the abstract interpretation lattice:
+// At join points (phi nodes), the LUB is the weakest state that admits every
+// assignment from either input. Per the lattice γ-order (a ⊑ b iff γ(a) ⊆ γ(b)),
+// the LUB widens by taking the interval HULL (not intersection), the congruence
+// hull of modular constraints, the weaker difference bound, and the larger
+// length-reference offset. Facts present in only one input are dropped, since
+// the LUB must admit the input that lacks the fact.
 //
-//   - Bounds: Keep variables present in both, take interval intersection.
-//     If Lower > Upper after intersection, result is Bottom (unsatisfiable).
+//   - Top (nil) is absorbing: Join(nil, x) = nil, Join(x, nil) = nil.
+//   - Bottom (unsat) is identity: Join(Bottom, x) = x, Join(x, Bottom) = x.
+//   - Bounds and LenBounds: interval hull [min(la, lb), max(ua, ub)]; drop the
+//     fact if absent in either side (LUB = no constraint).
+//   - Modular: congruence hull. For x ≡ r1 mod m1 joined with x ≡ r2 mod m2,
+//     compute g = gcd(m1, m2, |r1 - r2|). If g == 1, drop; otherwise keep
+//     x ≡ (r1 mod g) mod g. Drop if absent in either.
+//   - Relations: weaker difference bound max(c1, c2); drop if absent in either.
+//   - LenRefs: same Array key, max offset; drop if different Array or absent.
 //
-//   - Modular: Keep only identical modular constraints from both states.
-//     Different modular constraints on the same variable are incompatible.
-//
-//   - Relations: Keep constraints present in both, take maximum (loosest) bound.
-//     max(a.relations[k], b.relations[k]) represents the weakest constraint
-//     that holds on both paths.
-//
-//   - LenRefs: Keep only identical length references from both states.
-//
-//   - LenBounds: Keep arrays present in both, take interval intersection.
-//
-// If both states are nil or Bottom, returns the non-Bottom one.
-// If the result is Top (empty maps), returns nil to save memory.
+// If the result has no constraints, returns nil (Top) for canonical form.
 func Join(a, b *State) *State {
-	if a == nil && b == nil {
+	// Top absorbing: Join(Top, anything) = Top.
+	if a == nil || b == nil {
 		return nil
 	}
 
-	if a == nil || a.unsat {
+	// Bottom identity: Join(Bottom, x) = x, Join(x, Bottom) = x.
+	if a.unsat {
 		return b.Clone()
 	}
-
-	if b == nil || b.unsat {
+	if b.unsat {
 		return a.Clone()
+	}
+
+	// Either side already Top (empty maps) absorbs the join: γ(Top) is the
+	// full state space, so any joined element ⊑ Top.
+	if a.isTop() || b.isTop() {
+		return nil
 	}
 
 	result := &State{}
 
-	// Bounds: keep only variables in both, intersect intervals.
+	// Bounds: interval HULL for keys present in BOTH states. Keys present in
+	// only one are dropped (LUB admits the side without the constraint).
 	for v, ai := range a.bounds {
-		if bi, ok := b.bounds[v]; ok {
-			merged := intersectIntervals(ai, bi)
-			if merged.Lower > merged.Upper {
-				return Bottom()
-			}
-
-			if merged != unboundedInterval {
-				if result.bounds == nil {
-					result.bounds = make(map[constraint.PathKey]Interval, minMapLen(len(a.bounds), len(b.bounds)))
-				}
-				result.bounds[v] = merged
-			}
+		bi, ok := b.bounds[v]
+		if !ok {
+			continue
 		}
+		hull := hullIntervals(ai, bi)
+		if hull == unboundedInterval {
+			continue
+		}
+		if result.bounds == nil {
+			result.bounds = make(map[constraint.PathKey]Interval, minMapLen(len(a.bounds), len(b.bounds)))
+		}
+		result.bounds[v] = hull
 	}
 
-	// Modular: keep only if identical in both.
+	// Modular: congruence hull per Codex rev 3 finding. The LUB of two
+	// congruence classes is the coarsest congruence that contains both.
 	for v, am := range a.modular {
-		if bm, ok := b.modular[v]; ok {
-			if am.Modulus == bm.Modulus && am.Residue == bm.Residue {
-				if result.modular == nil {
-					result.modular = make(map[constraint.PathKey]ModResidue, minMapLen(len(a.modular), len(b.modular)))
-				}
-				result.modular[v] = am
-			}
+		bm, ok := b.modular[v]
+		if !ok {
+			continue
 		}
+		hull, ok := congruenceHull(am, bm)
+		if !ok {
+			continue
+		}
+		if result.modular == nil {
+			result.modular = make(map[constraint.PathKey]ModResidue, minMapLen(len(a.modular), len(b.modular)))
+		}
+		result.modular[v] = hull
 	}
 
-	// Relations: keep only if present in both, take maximum (loosest bound).
+	// Relations: weaker bound (max) when both states have the constraint.
+	// Drop if absent in either (no constraint = weaker).
 	for k, av := range a.relations {
-		if bv, ok := b.relations[k]; ok {
-			if result.relations == nil {
-				result.relations = make(map[relationKey]int64, minMapLen(len(a.relations), len(b.relations)))
-			}
-			result.relations[k] = maxInt64(av, bv)
+		bv, ok := b.relations[k]
+		if !ok {
+			continue
 		}
+		if result.relations == nil {
+			result.relations = make(map[relationKey]int64, minMapLen(len(a.relations), len(b.relations)))
+		}
+		result.relations[k] = maxInt64(av, bv)
 	}
 
-	// LenRefs: keep only if identical in both.
+	// LenRefs: same Array key required; offset takes max (weaker upper bound).
+	// Different Array keys → drop. Missing in either → drop.
 	for v, ref := range a.lenRefs {
-		if bref, ok := b.lenRefs[v]; ok && ref == bref {
-			if result.lenRefs == nil {
-				result.lenRefs = make(map[constraint.PathKey]lenRefBound, minMapLen(len(a.lenRefs), len(b.lenRefs)))
-			}
-			result.lenRefs[v] = ref
+		bref, ok := b.lenRefs[v]
+		if !ok || ref.Array != bref.Array {
+			continue
 		}
+		if result.lenRefs == nil {
+			result.lenRefs = make(map[constraint.PathKey]lenRefBound, minMapLen(len(a.lenRefs), len(b.lenRefs)))
+		}
+		result.lenRefs[v] = lenRefBound{Array: ref.Array, Offset: maxInt64(ref.Offset, bref.Offset)}
 	}
 
-	// LenBounds: keep only arrays in both, intersect intervals.
+	// LenBounds: interval HULL for arrays in BOTH states; drop if absent in one.
 	for arr, ai := range a.lenBounds {
-		if bi, ok := b.lenBounds[arr]; ok {
-			merged := intersectIntervals(ai, bi)
-			if merged.Lower > merged.Upper {
-				return Bottom()
-			}
-
-			if merged != unboundedInterval {
-				if result.lenBounds == nil {
-					result.lenBounds = make(map[constraint.PathKey]Interval, minMapLen(len(a.lenBounds), len(b.lenBounds)))
-				}
-				result.lenBounds[arr] = merged
-			}
+		bi, ok := b.lenBounds[arr]
+		if !ok {
+			continue
 		}
+		hull := hullIntervals(ai, bi)
+		if hull == unboundedInterval {
+			continue
+		}
+		if result.lenBounds == nil {
+			result.lenBounds = make(map[constraint.PathKey]Interval, minMapLen(len(a.lenBounds), len(b.lenBounds)))
+		}
+		result.lenBounds[arr] = hull
 	}
 
 	if result.isTop() {
@@ -269,37 +305,90 @@ func Join(a, b *State) *State {
 	return result
 }
 
-// Widen returns the stable facts shared by the previous and next numeric states.
+// Widen implements textbook Cousot widening on the numeric carrier.
 //
-// Numeric facts inside loops can move indefinitely (for example a counter whose
-// exact upper bound increases on each trip). The sound widening is to keep only
-// facts that are unchanged across iterations and drop moving facts to Top.
+// For each interval bound present in BOTH prev and next, the widening
+// operates per-bound (independently on lower and upper):
+//
+//	lower = if next.Lower < prev.Lower then math.MinInt64 else prev.Lower
+//	upper = if next.Upper > prev.Upper then math.MaxInt64 else prev.Upper
+//
+// A stable lower (or upper) is preserved; a moved lower (or upper) is dropped
+// to the domain extreme. The pair of bounds for a single variable widens
+// independently — moving the upper does not erase a stable lower. This is the
+// Cousot interval widening; it guarantees termination of ascending chains.
+//
+// A key present in only one of prev / next is dropped. Soundness requires
+// Widen(prev, next) ⊒ next; if next omits the fact, the result must also
+// omit (be Top for) that fact, else it would be more constrained than next.
+// Symmetrically, prev-missing / next-present is unstable across the iteration
+// (newly observed fact) so dropped per the standard rule. Both branches
+// collapse to "keep only when both sides have it".
+//
+// Discrete facts (modular, relations, lenRefs) widen by exact equality: keep
+// only when prev and next agree, drop otherwise. Length bounds use the same
+// per-bound widening as bounds.
+//
+//   - Top (nil) absorbing: Widen(nil, x) = nil, Widen(x, nil) = nil. Top is
+//     the over-approximation of any prev or next; the only sound widening is
+//     Top itself.
+//   - Bottom identity: Widen(Bottom, x) = x (Bottom adds no information about
+//     prev), Widen(x, Bottom) = x.
 func Widen(prev, next *State) *State {
-	if prev == nil && next == nil {
+	// Top (nil) absorbing in widening: Widen(nil, x) = nil, Widen(x, nil) = nil.
+	if prev == nil || next == nil {
 		return nil
 	}
-	if prev == nil || prev.isTop() {
-		return next.Clone()
-	}
-	if next == nil || next.isTop() {
-		return nil
-	}
+	// Bottom identity: Widen(Bottom, x) = x, Widen(x, Bottom) = x.
 	if prev.unsat {
 		return next.Clone()
 	}
 	if next.unsat {
 		return prev.Clone()
 	}
+	// Either side already Top (empty maps) absorbs the widening.
+	if prev.isTop() || next.isTop() {
+		return nil
+	}
 
 	result := &State{}
+
+	// Bounds: per-bound Cousot widening for keys present in BOTH; drop
+	// otherwise so the result over-approximates next.
 	for k, pv := range prev.bounds {
-		if nv, ok := next.bounds[k]; ok && pv == nv {
-			if result.bounds == nil {
-				result.bounds = make(map[constraint.PathKey]Interval)
-			}
-			result.bounds[k] = pv
+		nv, ok := next.bounds[k]
+		if !ok {
+			continue
 		}
+		widened := widenInterval(pv, nv)
+		if widened == unboundedInterval {
+			continue
+		}
+		if result.bounds == nil {
+			result.bounds = make(map[constraint.PathKey]Interval)
+		}
+		result.bounds[k] = widened
 	}
+
+	// LenBounds: per-bound Cousot widening, identical treatment to bounds.
+	for k, pv := range prev.lenBounds {
+		nv, ok := next.lenBounds[k]
+		if !ok {
+			continue
+		}
+		widened := widenInterval(pv, nv)
+		if widened == unboundedInterval {
+			continue
+		}
+		if result.lenBounds == nil {
+			result.lenBounds = make(map[constraint.PathKey]Interval)
+		}
+		result.lenBounds[k] = widened
+	}
+
+	// Discrete facts: keep iff exactly stable across iterations. Drop on any
+	// disagreement, including key missing on either side (the result must
+	// remain ⊒ next, so a fact absent from next cannot appear in the result).
 	for k, pv := range prev.modular {
 		if nv, ok := next.modular[k]; ok && pv == nv {
 			if result.modular == nil {
@@ -324,31 +413,29 @@ func Widen(prev, next *State) *State {
 			result.lenRefs[k] = pv
 		}
 	}
-	for k, pv := range prev.lenBounds {
-		if nv, ok := next.lenBounds[k]; ok {
-			widened := widenLengthInterval(pv, nv)
-			if widened == unboundedInterval {
-				continue
-			}
-			if result.lenBounds == nil {
-				result.lenBounds = make(map[constraint.PathKey]Interval)
-			}
-			result.lenBounds[k] = widened
-		}
-	}
+
 	if result.isTop() {
 		return nil
 	}
 	return result
 }
 
-// intersectIntervals computes the intersection of two intervals.
-//
-// The intersection is the range of values that satisfy both intervals:
-// Lower = max(a.Lower, b.Lower), Upper = min(a.Upper, b.Upper).
-//
-// If the result has Lower > Upper, the intersection is empty, indicating
-// unsatisfiability (no value can satisfy both constraints).
+// hullIntervals computes the interval hull (least upper bound) of two
+// intervals: [min(la, lb), max(ua, ub)]. The hull is the smallest interval
+// containing both inputs, which is the LUB under interval-inclusion order.
+func hullIntervals(a, b Interval) Interval {
+	return Interval{
+		Lower: minInt64(a.Lower, b.Lower),
+		Upper: maxInt64(a.Upper, b.Upper),
+	}
+}
+
+// intersectIntervals computes the intersection of two intervals (the meet
+// under interval-inclusion order): [max(la, lb), min(ua, ub)]. If the result
+// has Lower > Upper the intersection is empty (unsatisfiable). Used by Rekey
+// when two source keys collide on the same target key — the merged constraint
+// must satisfy BOTH source intervals, so intersection is the correct algebra
+// in that local context (NOT the lattice Join).
 func intersectIntervals(a, b Interval) Interval {
 	return Interval{
 		Lower: maxInt64(a.Lower, b.Lower),
@@ -356,16 +443,64 @@ func intersectIntervals(a, b Interval) Interval {
 	}
 }
 
-func widenLengthInterval(prev, next Interval) Interval {
+// widenInterval applies Cousot per-bound widening to a single interval.
+//
+// A moved lower bound (next.Lower < prev.Lower) widens to math.MinInt64; a
+// stable lower bound is preserved. Independently, a moved upper bound
+// (next.Upper > prev.Upper) widens to math.MaxInt64; a stable upper is
+// preserved. The result over-approximates both prev and next.
+func widenInterval(prev, next Interval) Interval {
 	lower := prev.Lower
-	if next.Lower < lower {
-		lower = next.Lower
+	if next.Lower < prev.Lower {
+		lower = math.MinInt64
 	}
 	upper := prev.Upper
 	if next.Upper > prev.Upper {
 		upper = math.MaxInt64
 	}
 	return Interval{Lower: lower, Upper: upper}
+}
+
+// congruenceHull computes the LUB of two modular constraints under the
+// concretization order γ(x ≡ r mod m) = { v : v ≡ r mod m }.
+//
+// For x ≡ r1 mod m1 and x ≡ r2 mod m2, the LUB is the coarsest congruence
+// containing both classes: g = gcd(m1, m2, |r1 - r2|), residue r1 mod g.
+// If g == 1 the hull is the trivial congruence (every integer); the function
+// reports ok=false so the caller drops the constraint (LUB = no modular
+// fact). m1 = 0 or m2 = 0 (degenerate moduli) also drops.
+func congruenceHull(a, b ModResidue) (ModResidue, bool) {
+	if a.Modulus <= 0 || b.Modulus <= 0 {
+		return ModResidue{}, false
+	}
+	diff := a.Residue - b.Residue
+	if diff < 0 {
+		diff = -diff
+	}
+	g := gcdInt64(gcdInt64(a.Modulus, b.Modulus), diff)
+	if g <= 1 {
+		return ModResidue{}, false
+	}
+	r := a.Residue % g
+	if r < 0 {
+		r += g
+	}
+	return ModResidue{Modulus: g, Residue: r}, true
+}
+
+// gcdInt64 returns the non-negative greatest common divisor of |a| and |b|.
+// gcd(x, 0) = |x|.
+func gcdInt64(a, b int64) int64 {
+	if a < 0 {
+		a = -a
+	}
+	if b < 0 {
+		b = -b
+	}
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
 }
 
 func minMapLen(a, b int) int {
@@ -884,11 +1019,18 @@ func (s *State) checkDifferenceConstraints() bool {
 	return true
 }
 
-// Equals checks if two states are semantically equal.
+// Equals reports structural carrier equality between two states.
 //
-// Two states are equal if they have the same unsat flag and identical maps
-// for bounds, modular constraints, relations, length references, and length bounds.
-// nil and Top (empty maps) states are considered equal.
+// Two states are equal iff they have the same unsat flag and identical maps
+// for bounds, modular constraints, relations, length references, and length
+// bounds. nil and Top (empty maps) are considered equal.
+//
+// This is carrier equality, not γ-equality: structurally distinct states with
+// the same concretization (for example x ≡ 0 mod 4 vs. x ≡ 0 mod 4 derived
+// from a congruence-hull simplification) are equal only when their normalized
+// forms agree. The lattice contract uses structural Equals throughout, so the
+// LawSuite checks hold on the carrier even where γ-equivalent representatives
+// would compare unequal.
 func (s *State) Equals(other *State) bool {
 	if s == nil && other == nil {
 		return true

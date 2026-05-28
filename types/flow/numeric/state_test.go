@@ -1,6 +1,7 @@
 package numeric
 
 import (
+	"math"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/constraint"
@@ -56,6 +57,9 @@ func TestState_Clone_Nil(t *testing.T) {
 }
 
 func TestWiden_DropsMovingBounds(t *testing.T) {
+	// prev = [1,1], next = [2,2]: lower moved up (stable per Cousot — next.Lower
+	// is NOT less than prev.Lower), upper moved up (unstable). Per per-bound
+	// Cousot widening: lower stays at 1, upper widens to math.MaxInt64.
 	prev := NewState()
 	prev.ApplyGeConst("x", 1)
 	prev.ApplyLeConst("x", 1)
@@ -63,8 +67,16 @@ func TestWiden_DropsMovingBounds(t *testing.T) {
 	next.ApplyGeConst("x", 2)
 	next.ApplyLeConst("x", 2)
 
-	if got := Widen(prev, next); got != nil {
-		t.Fatalf("moving exact bound widened to %v, want top", got)
+	got := Widen(prev, next)
+	if got == nil {
+		t.Fatalf("widened to top, expected stable lower preserved")
+	}
+	lower, upper, ok := got.BoundsFor("x")
+	if !ok {
+		t.Fatalf("expected bounds for x after widening")
+	}
+	if lower != 1 || upper != math.MaxInt64 {
+		t.Fatalf("widened bounds = [%d, %d], want [1, MaxInt64] per Cousot per-bound widening", lower, upper)
 	}
 }
 
@@ -179,20 +191,20 @@ func TestJoin_BothNil(t *testing.T) {
 }
 
 func TestJoin_OneNil(t *testing.T) {
+	// Top (nil) is absorbing in Join: Join(x, nil) = nil = Top.
 	s := NewState()
 	s.ApplyGeConst("x", 5)
 
-	result := Join(s, nil)
-	if result == nil {
-		t.Fatal("join with nil should return clone")
+	if result := Join(s, nil); result != nil {
+		t.Fatalf("Join(x, Top) = %v, want Top (nil)", result)
 	}
-	lower, _, ok := result.BoundsFor("x")
-	if !ok || lower != 5 {
-		t.Fatal("join result should preserve bounds")
+	if result := Join(nil, s); result != nil {
+		t.Fatalf("Join(Top, x) = %v, want Top (nil)", result)
 	}
 }
 
-func TestJoin_Intersection(t *testing.T) {
+func TestJoin_IntervalHull(t *testing.T) {
+	// Join is LUB → interval hull. Hull([0,10], [5,15]) = [0,15].
 	a := NewState()
 	a.ApplyGeConst("x", 0)
 	a.ApplyLeConst("x", 10)
@@ -206,17 +218,18 @@ func TestJoin_Intersection(t *testing.T) {
 		t.Fatal("join should not be nil")
 	}
 
-	// Intersection of [0,10] and [5,15] = [5,10]
 	lower, upper, ok := result.BoundsFor("x")
 	if !ok {
 		t.Fatal("expected bounds")
 	}
-	if lower != 5 || upper != 10 {
-		t.Fatalf("expected [5, 10], got [%d, %d]", lower, upper)
+	if lower != 0 || upper != 15 {
+		t.Fatalf("Join([0,10], [5,15]) bounds = [%d, %d], want [0, 15] (interval hull)", lower, upper)
 	}
 }
 
-func TestJoin_EmptyIntersection(t *testing.T) {
+func TestJoin_DisjointIntervalsTakeHull(t *testing.T) {
+	// Disjoint inputs join to the hull spanning both — LUB, not Bottom.
+	// Hull([0,5], [10,15]) = [0,15].
 	a := NewState()
 	a.ApplyGeConst("x", 0)
 	a.ApplyLeConst("x", 5)
@@ -226,9 +239,15 @@ func TestJoin_EmptyIntersection(t *testing.T) {
 	b.ApplyLeConst("x", 15)
 
 	result := Join(a, b)
-	// [0,5] ∩ [10,15] = empty
-	if result == nil || !result.IsUnsat() {
-		t.Fatal("join of disjoint intervals should be bottom")
+	if result == nil || result.IsUnsat() {
+		t.Fatalf("Join of disjoint intervals = %v, want hull state", result)
+	}
+	lower, upper, ok := result.BoundsFor("x")
+	if !ok {
+		t.Fatal("expected bounds")
+	}
+	if lower != 0 || upper != 15 {
+		t.Fatalf("Join([0,5], [10,15]) bounds = [%d, %d], want [0, 15] (LUB hull spans the gap)", lower, upper)
 	}
 }
 

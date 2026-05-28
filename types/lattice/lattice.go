@@ -1,7 +1,7 @@
 // Package lattice defines the abstract-domain contract for every abstract
 // interpreter in the type system.
 //
-// Every abstract domain — Condition, AbstractValue, NumericRange, LengthBound,
+// Every abstract domain — Condition, AbstractValue, NumericRange,
 // PathPresence, TypeNarrowing — exposes a Lattice value. The contract is the
 // algebraic foundation for the fixed-point algorithms in flow.Solve and
 // propagate.Propagate: a domain that satisfies the laws (idempotency,
