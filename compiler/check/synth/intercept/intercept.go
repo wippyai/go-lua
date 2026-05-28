@@ -69,6 +69,15 @@ type CallEnv struct {
 	// point-local synthesis is too early to see later field assignments.
 	StableType func(expr ast.Expr, current typ.Type) typ.Type
 
+	// CanonicalMetatable maps a metatable argument expression and its current
+	// synthesized type to the shared interned class family keyed by the metatable
+	// binding's origin symbol. When the expression is a direct class identifier and
+	// current is a class-shaped record, the result is the one interned *typ.Recursive
+	// family whose body widens in place as the class converges, so a constructor's
+	// stored metatable edge always sees the converged class. Otherwise it returns
+	// current unchanged. May be nil when no interner is available.
+	CanonicalMetatable func(expr ast.Expr, current typ.Type) typ.Type
+
 	// Bindings is the binding table for the call's scope, used to confirm that a
 	// builtin-shaped callee resolves to the genuine unshadowed global rather than
 	// a local rebinding. May be nil when unavailable.

@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Deps aggregates all dependencies needed by the Synthesizer.
@@ -46,6 +47,10 @@ type Deps struct {
 
 	// Module-level aliases from require() statements.
 	ModuleAliases map[cfg.SymbolID]string
+
+	// RecursiveFamilies is the compilation-scoped recursive-family interner used
+	// to seal class metatables into shared interned families during synthesis.
+	RecursiveFamilies *typ.RecursiveFamilyInterner
 }
 
 // NewDeps creates a new Deps instance.

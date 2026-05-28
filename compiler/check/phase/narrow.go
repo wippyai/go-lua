@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // RunNarrow executes the narrowing phase.
@@ -70,6 +71,7 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 		input.ModuleBindings,
 		input.ModuleAliases,
 		input.Extract.Evidence,
+		input.RecursiveFamilies,
 	)
 
 	fnEffect := InferRefinement(input.Graph, input.Solve.Solution, input.Extract.Params, input.Extract.ReturnType)
@@ -97,6 +99,7 @@ func createNarrowedEngine(
 	moduleBindings *bind.BindingTable,
 	moduleAliases map[cfg.SymbolID]string,
 	evidence api.FlowEvidence,
+	recursiveFamilies *typ.RecursiveFamilyInterner,
 ) *synth.Engine {
 	var bindings *bind.BindingTable
 	if checkCtx != nil {
@@ -115,10 +118,11 @@ func createNarrowedEngine(
 		Manifests:      manifests,
 		Env:            checkCtx,
 		FunctionFacts:  functionFacts,
-		Phase:          api.PhaseNarrowing,
-		Evidence:       evidence,
-		ModuleBindings: moduleBindings,
-		ModuleAliases:  moduleAliases,
+		Phase:             api.PhaseNarrowing,
+		Evidence:          evidence,
+		ModuleBindings:    moduleBindings,
+		ModuleAliases:     moduleAliases,
+		RecursiveFamilies: recursiveFamilies,
 	})
 }
 

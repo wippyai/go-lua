@@ -1,6 +1,8 @@
 package functionfact
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
@@ -1559,6 +1561,172 @@ func sameRepairFieldFamily(a, b typ.Type) bool {
 		return aLit && bLit && typ.LiteralEquals(al, bl)
 	}
 	return true
+}
+
+// ClassFamilyJoin joins two class-family record bodies at the recursive fixpoint
+// boundary. The recursive-family interner passes the full class records as
+// existing and candidate.
+//
+// A class body's fields are method functions plus the __index back-edge. Method
+// fields merge through WidenTypeForConvergence, which collapses two same-method
+// function snapshots to one function; the value-domain merge would instead union
+// them into fn|fn and re-degrade the method surface. So when both bodies are
+// records the join rebuilds the record field-by-field, widening function-typed
+// fields with the function-aware merge and other fields with the value-domain
+// convergence merge. Non-record bodies fall back to the value-domain merge.
+func ClassFamilyJoin(existing, candidate typ.Type) typ.Type {
+	exRec := unwrap.Record(existing)
+	caRec := unwrap.Record(candidate)
+	if exRec == nil || caRec == nil {
+		return value.MergeForConvergence(existing, candidate)
+	}
+
+	builder := typ.NewRecord()
+	seen := make(map[string]bool, len(exRec.Fields)+len(caRec.Fields))
+	names := make([]string, 0, len(exRec.Fields)+len(caRec.Fields))
+	for _, f := range exRec.Fields {
+		if !seen[f.Name] {
+			seen[f.Name] = true
+			names = append(names, f.Name)
+		}
+	}
+	for _, f := range caRec.Fields {
+		if !seen[f.Name] {
+			seen[f.Name] = true
+			names = append(names, f.Name)
+		}
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		merged, opt, ro := mergeClassFamilyField(name, exRec.GetField(name), caRec.GetField(name))
+		switch {
+		case opt && ro:
+			builder.OptReadonlyField(name, merged)
+		case opt:
+			builder.OptField(name, merged)
+		case ro:
+			builder.ReadonlyField(name, merged)
+		default:
+			builder.Field(name, merged)
+		}
+	}
+	if exRec.Metatable != nil || caRec.Metatable != nil {
+		builder.Metatable(value.MergeForConvergence(metatableOf(exRec), metatableOf(caRec)))
+	}
+	switch {
+	case exRec.HasMapComponent():
+		builder.MapComponent(exRec.MapKey, exRec.MapValue)
+	case caRec.HasMapComponent():
+		builder.MapComponent(caRec.MapKey, caRec.MapValue)
+	}
+	return builder.SetOpen(exRec.Open || caRec.Open).Build()
+}
+
+// mergeClassFamilyField merges one class-family field from the two record bodies.
+// The __index back-edge denotes the class family itself, so when one observation
+// has folded it to the recursion variable while the other still carries the
+// structural unfolding, the merge collapses to the recursion variable rather than
+// unioning the two views; otherwise unioning would leave __index as
+// {unfolded proto} | mu, which method resolution cannot fold. Function fields use
+// the function-aware widen; remaining fields use the value-domain merge. It
+// returns the merged type and the optional/readonly attributes (true when either
+// side carries them).
+func mergeClassFamilyField(name string, ef, cf *typ.Field) (typ.Type, bool, bool) {
+	switch {
+	case ef == nil && cf == nil:
+		return typ.Unknown, false, false
+	case ef == nil:
+		return cf.Type, cf.Optional, cf.Readonly
+	case cf == nil:
+		return ef.Type, ef.Optional, ef.Readonly
+	}
+	var merged typ.Type
+	switch {
+	case name == classIndexField:
+		merged = mergeClassBackEdge(ef.Type, cf.Type)
+	case unwrap.Function(ef.Type) != nil || unwrap.Function(cf.Type) != nil:
+		merged = mergeClassMethodField(ef.Type, cf.Type)
+	default:
+		merged = value.MergeForConvergence(ef.Type, cf.Type)
+	}
+	return merged, ef.Optional || cf.Optional, ef.Readonly || cf.Readonly
+}
+
+// classIndexField names the Lua metatable __index slot carrying the class
+// prototype back-edge.
+const classIndexField = "__index"
+
+// mergeClassMethodField merges two observations of a class method field across
+// fixpoint iterations. An uninformative seed (a parameterless, return-less
+// placeholder emitted before the method literal has a solved projection) is
+// dropped in favor of the informative side, collapsing the seed-vs-solved fn|fn
+// the task warns about.
+//
+// For two same-shape function observations the merge is monotone-precise on the
+// return vector: a class method's return refines from unknown toward its solved
+// type across iterations, so each return slot takes the informative side when the
+// other is still unknown, and otherwise the value-domain convergence merge. This
+// keeps a partially-solved snapshot such as (unknown, string?) from pinning the
+// family body below a later (Context[]?, string?) observation. Differently-shaped
+// or non-function observations fall back to the value-domain convergence merge.
+func mergeClassMethodField(a, b typ.Type) typ.Type {
+	af := unwrap.Function(a)
+	bf := unwrap.Function(b)
+	if af == nil || bf == nil {
+		return value.MergeForConvergence(a, b)
+	}
+	switch {
+	case value.UninformativeFunctionSeed(af) && !value.UninformativeFunctionSeed(bf):
+		return b
+	case value.UninformativeFunctionSeed(bf) && !value.UninformativeFunctionSeed(af):
+		return a
+	}
+	if !SameShape(af, bf) || len(af.Returns) != len(bf.Returns) {
+		return value.MergeForConvergence(a, b)
+	}
+	rets := make([]typ.Type, len(af.Returns))
+	for i := range af.Returns {
+		rets[i] = mergeClassMethodReturnSlot(af.Returns[i], bf.Returns[i])
+	}
+	if merged := join.WithReturns(af, rets); merged != nil {
+		return merged
+	}
+	return value.MergeForConvergence(a, b)
+}
+
+// mergeClassMethodReturnSlot merges one return slot of a class method, taking the
+// informative side when the other is still the unknown inference seed and the
+// value-domain convergence merge otherwise.
+func mergeClassMethodReturnSlot(a, b typ.Type) typ.Type {
+	switch {
+	case a == nil || typ.IsUnknown(a):
+		return b
+	case b == nil || typ.IsUnknown(b):
+		return a
+	default:
+		return value.MergeForConvergence(a, b)
+	}
+}
+
+// mergeClassBackEdge merges two observations of a class __index back-edge,
+// collapsing to a recursion variable when one side carries it so the back-edge
+// stays a single recursion edge instead of a {unfolding | mu} union.
+func mergeClassBackEdge(a, b typ.Type) typ.Type {
+	if _, ok := a.(*typ.Recursive); ok {
+		return a
+	}
+	if _, ok := b.(*typ.Recursive); ok {
+		return b
+	}
+	return value.MergeForConvergence(a, b)
+}
+
+func metatableOf(rec *typ.Record) typ.Type {
+	if rec == nil {
+		return nil
+	}
+	return rec.Metatable
 }
 
 // WidenTypeForConvergence merges function-type facts at a recursive fixpoint

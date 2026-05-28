@@ -175,13 +175,14 @@ func NewChecker(database *db.DB, deps Deps, opts ...Option) *Checker {
 
 func (c *Checker) newPipeline(interner *typ.RecursiveFamilyInterner) *pipeline.Driver {
 	runner := pipeline.NewRunner(pipeline.RunnerConfig{
-		Types:         c.deps.Types,
-		GlobalTypes:   c.deps.GlobalTypes,
-		Stdlib:        c.deps.Stdlib,
-		Manifests:     c.db,
-		Resolver:      c.deps.Resolver,
-		MaxScopeDepth: c.maxScopeDepth,
-		ComputePasses: c.computePasses,
+		Types:             c.deps.Types,
+		GlobalTypes:       c.deps.GlobalTypes,
+		Stdlib:            c.deps.Stdlib,
+		Manifests:         c.db,
+		Resolver:          c.deps.Resolver,
+		MaxScopeDepth:     c.maxScopeDepth,
+		ComputePasses:     c.computePasses,
+		RecursiveFamilies: interner,
 	})
 	funcResultQ := db.NewQuery("FuncResult", runner.Run, funcResultEqual)
 	return pipeline.New(pipeline.Config{

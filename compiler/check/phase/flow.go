@@ -34,16 +34,17 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		BuildFlowInput()
 
 	engine := synth.New(synth.Config{
-		Ctx:            input.Ctx,
-		Types:          input.Types,
-		Scopes:         input.Scope.Scopes,
-		Manifests:      input.Manifests,
-		Env:            extractionCtx,
-		FunctionFacts:  input.FunctionFacts,
-		Phase:          api.PhaseScopeCompute,
-		Evidence:       input.Evidence,
-		ModuleBindings: input.ModuleBindings,
-		ModuleAliases:  moduleAliases,
+		Ctx:               input.Ctx,
+		Types:             input.Types,
+		Scopes:            input.Scope.Scopes,
+		Manifests:         input.Manifests,
+		Env:               extractionCtx,
+		FunctionFacts:     input.FunctionFacts,
+		Phase:             api.PhaseScopeCompute,
+		Evidence:          input.Evidence,
+		ModuleBindings:    input.ModuleBindings,
+		ModuleAliases:     moduleAliases,
+		RecursiveFamilies: input.RecursiveFamilies,
 	})
 
 	abstractOut := abstract.Run(&core.FlowContext{
@@ -101,16 +102,17 @@ func RunLiteral(input LiteralInput) LiteralOutput {
 		BuildDeclared()
 
 	engine := synth.New(synth.Config{
-		Ctx:            input.Ctx,
-		Types:          input.Types,
-		Scopes:         input.Scope.Scopes,
-		Manifests:      input.Manifests,
-		Env:            initialCtx,
-		FunctionFacts:  input.FunctionFacts,
-		Phase:          api.PhaseScopeCompute,
-		Evidence:       input.Evidence,
-		ModuleBindings: input.ModuleBindings,
-		ModuleAliases:  input.ModuleAliases,
+		Ctx:               input.Ctx,
+		Types:             input.Types,
+		Scopes:            input.Scope.Scopes,
+		Manifests:         input.Manifests,
+		Env:               initialCtx,
+		FunctionFacts:     input.FunctionFacts,
+		Phase:             api.PhaseScopeCompute,
+		Evidence:          input.Evidence,
+		ModuleBindings:    input.ModuleBindings,
+		ModuleAliases:     input.ModuleAliases,
+		RecursiveFamilies: input.RecursiveFamilies,
 	})
 
 	fnLiteralTypes := synth.FunctionLiteralTypes(input.Graph, input.Evidence, func(expr ast.Expr, p cfg.Point) typ.Type {

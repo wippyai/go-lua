@@ -48,30 +48,37 @@ type RunnerConfig struct {
 	MaxScopeDepth int
 
 	ComputePasses []api.ComputePass
+
+	// RecursiveFamilies is the compilation-scoped recursive-family interner.
+	// Class-metatable sealing widens family bodies only through it, so one
+	// compilation's convergence seed cannot mutate type state shared with another.
+	RecursiveFamilies *typ.RecursiveFamilyInterner
 }
 
 // Runner executes the phase pipeline for a single function.
 // It is used as the compute function for FuncResult queries.
 type Runner struct {
-	types         core.TypeOps
-	globalTypes   map[string]typ.Type
-	stdlib        *scope.State
-	manifests     io.ManifestQuerier
-	resolver      narrow.Resolver
-	maxScopeDepth int
-	computePasses []api.ComputePass
+	types             core.TypeOps
+	globalTypes       map[string]typ.Type
+	stdlib            *scope.State
+	manifests         io.ManifestQuerier
+	resolver          narrow.Resolver
+	maxScopeDepth     int
+	computePasses     []api.ComputePass
+	recursiveFamilies *typ.RecursiveFamilyInterner
 }
 
 // NewRunner returns a configured pipeline runner.
 func NewRunner(cfg RunnerConfig) *Runner {
 	return &Runner{
-		types:         cfg.Types,
-		globalTypes:   cfg.GlobalTypes,
-		stdlib:        cfg.Stdlib,
-		manifests:     cfg.Manifests,
-		resolver:      cfg.Resolver,
-		maxScopeDepth: cfg.MaxScopeDepth,
-		computePasses: cfg.ComputePasses,
+		types:             cfg.Types,
+		globalTypes:       cfg.GlobalTypes,
+		stdlib:            cfg.Stdlib,
+		manifests:         cfg.Manifests,
+		resolver:          cfg.Resolver,
+		maxScopeDepth:     cfg.MaxScopeDepth,
+		computePasses:     cfg.ComputePasses,
+		recursiveFamilies: cfg.RecursiveFamilies,
 	}
 }
 
@@ -139,9 +146,10 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		Manifests:      r.manifests,
 		GlobalTypes:    globalTypes,
 		ModuleAliases:  mergedAliases,
-		ModuleBindings: store.ModuleBindings(),
-		Refinements:    refinementFactsFrom(store),
-		Evidence:       graphEvidence,
+		ModuleBindings:    store.ModuleBindings(),
+		Refinements:       refinementFactsFrom(store),
+		Evidence:          graphEvidence,
+		RecursiveFamilies: r.recursiveFamilies,
 	}
 
 	// Phase A: Resolve type annotations.
@@ -252,6 +260,8 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		LiteralSignatures:   literalOut.Signatures,
 		Extras:              extras,
 		DepthLimitExceeded:  scopeOut.DepthLimitExceeded,
+		RecursiveFamilies:   r.recursiveFamilies,
+		ClassFamilyJoin:     functionfact.ClassFamilyJoin,
 	}
 }
 

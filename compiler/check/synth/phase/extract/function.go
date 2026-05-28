@@ -639,9 +639,10 @@ func (f *returnSynthFactory) Synth() *Synthesizer {
 		FunctionFacts:  f.functionFacts,
 		Graphs:         f.owner.deps.Graphs,
 		Evidence:       f.graphEvidence,
-		ModuleBindings: f.owner.deps.ModuleBindings,
-		ModuleAliases:  f.moduleAliases,
-		Paths:          f.owner.deps.Paths,
+		ModuleBindings:    f.owner.deps.ModuleBindings,
+		ModuleAliases:     f.moduleAliases,
+		Paths:             f.owner.deps.Paths,
+		RecursiveFamilies: f.owner.deps.RecursiveFamilies,
 	}
 	f.synth = NewSynthesizer(deps, f.owner.phase)
 	return f.synth
@@ -834,9 +835,10 @@ func (s *Synthesizer) newReturnInferenceSynth(
 		FunctionFacts:  functionFacts,
 		Graphs:         s.deps.Graphs,
 		Evidence:       graphEvidence,
-		ModuleBindings: s.deps.ModuleBindings,
-		ModuleAliases:  moduleAliases,
-		Paths:          s.deps.Paths,
+		ModuleBindings:    s.deps.ModuleBindings,
+		ModuleAliases:     moduleAliases,
+		Paths:             s.deps.Paths,
+		RecursiveFamilies: s.deps.RecursiveFamilies,
 	}
 	if s.IsNarrowing() && s.deps.Flow != nil && s.deps.CheckCtx != nil {
 		if currentGraph, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && currentGraph == fnGraph {
@@ -1195,10 +1197,11 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 			Manifests:      s.deps.Manifests,
 			CheckCtx:       fnCheckCtx,
 			FunctionFacts:  functionFacts,
-			Graphs:         s.deps.Graphs,
-			Evidence:       s.graphEvidence(graph),
-			ModuleBindings: s.deps.ModuleBindings,
-			ModuleAliases:  moduleAliases,
+			Graphs:            s.deps.Graphs,
+			Evidence:          s.graphEvidence(graph),
+			ModuleBindings:    s.deps.ModuleBindings,
+			ModuleAliases:     moduleAliases,
+			RecursiveFamilies: s.deps.RecursiveFamilies,
 		}
 		tempSynths[graph] = NewSynthesizer(tempDeps, api.PhaseTypeResolution)
 		return tempSynths[graph]

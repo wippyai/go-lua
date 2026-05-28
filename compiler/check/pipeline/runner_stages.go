@@ -124,16 +124,17 @@ func (r *Runner) appendCapturedCallEffectAssignments(
 		BuildFlowInput()
 
 	synthEngine := synth.New(synth.Config{
-		Ctx:            env.Ctx,
-		Types:          env.Types,
-		Scopes:         scopeOut.Scopes,
-		Manifests:      env.Manifests,
-		Env:            declaredEnv,
-		FunctionFacts:  functionFacts,
-		Phase:          api.PhaseScopeCompute,
-		Evidence:       env.Evidence,
-		ModuleBindings: env.ModuleBindings,
-		ModuleAliases:  env.ModuleAliases,
+		Ctx:               env.Ctx,
+		Types:             env.Types,
+		Scopes:            scopeOut.Scopes,
+		Manifests:         env.Manifests,
+		Env:               declaredEnv,
+		FunctionFacts:     functionFacts,
+		Phase:             api.PhaseScopeCompute,
+		Evidence:          env.Evidence,
+		ModuleBindings:    env.ModuleBindings,
+		ModuleAliases:     env.ModuleAliases,
+		RecursiveFamilies: env.RecursiveFamilies,
 	})
 
 	symResolver := resolve.BuildInputSymbolResolver(declaredEnv, extractOut.Inputs)

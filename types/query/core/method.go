@@ -23,7 +23,11 @@ import (
 // For unions, the method must exist with compatible signatures in all non-nil
 // members. Returns (nil, false) if the method does not exist.
 func Method(t typ.Type, name string) (typ.Type, bool) {
-	return methodDepth(t, name, 0)
+	res, ok := methodDepth(t, name, 0)
+	if zzMethodDbg && (name == "type" || name == "all" || name == "contexts") {
+		println("ZZMETHOD name=", name, " recv=", zzMethodDump(t), " ok=", ok, " res=", typ.FormatShort(res))
+	}
+	return res, ok
 }
 
 // methodViaIndex walks the __index chain to find inherited methods.

@@ -38,6 +38,9 @@ func With(tableType, metaType typ.Type) typ.Type {
 	if tableType == nil {
 		return typ.Unknown
 	}
+	if zzSealDbg {
+		println("ZZWITH table=", zzDump(tableType, 0), " meta=", zzDump(metaType, 0))
+	}
 
 	switch t := tableType.(type) {
 	case *typ.Record:

@@ -3,6 +3,8 @@
 package observation
 
 import (
+	"strconv"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
@@ -55,6 +57,17 @@ type Config struct {
 	PreserveProof     bool
 	GradualParamReads bool
 	LocalCondition    *constraint.Condition
+
+	// RecursiveFamilies is the compilation-scoped recursive-family interner used
+	// to seal an observed class metatable into the same shared family the synthesis
+	// engine seals, so a constructor's observed return metatable resolves to the
+	// converging family handle instead of a degraded structural snapshot.
+	RecursiveFamilies *typ.RecursiveFamilyInterner
+
+	// ClassFamilyJoin is the function-aware class-family body join the seal widens
+	// with. It is supplied by the pipeline so observation seals a metatable with the
+	// same join the synthesis engine uses.
+	ClassFamilyJoin func(existing, candidate typ.Type) typ.Type
 }
 
 // Projector observes expression value types from solved product state.
@@ -138,6 +151,8 @@ func FromFuncResult(result *api.FuncResult, functionType SymbolTypeLookup) Proje
 		cfg.Ctx = result.QueryContext
 		cfg.TypeOps = result.TypeOps
 		cfg.GlobalTypes = result.GlobalTypes
+		cfg.RecursiveFamilies = result.RecursiveFamilies
+		cfg.ClassFamilyJoin = result.ClassFamilyJoin
 		if result.NarrowSynth != nil {
 			cfg.ResolveType = result.NarrowSynth.ResolveType
 		}
@@ -159,6 +174,8 @@ func FromAnalysisView(result *api.FuncAnalysisView, functionType SymbolTypeLooku
 		cfg.TypeOps = result.TypeOps
 		cfg.GlobalTypes = result.GlobalTypes
 		cfg.LiteralSignatures = result.LiteralSignatures
+		cfg.RecursiveFamilies = result.RecursiveFamilies
+		cfg.ClassFamilyJoin = result.ClassFamilyJoin
 		if result.NarrowSynth != nil {
 			cfg.ResolveType = result.NarrowSynth.ResolveType
 		}
@@ -873,7 +890,11 @@ func (p Projector) callReturnsWithExpected(expr *ast.FuncCallExpr, point cfg.Poi
 	}
 	args := p.callArgTypes(expr.Args, point)
 	if metatable.IsSetMetatableCall(expr, p.cfg.Bindings) {
-		return []typ.Type{metatable.With(args[0], args[1])}
+		meta := args[1]
+		if len(expr.Args) >= 2 {
+			meta = p.canonicalMetatable(expr.Args[1], meta)
+		}
+		return []typ.Type{metatable.With(args[0], meta)}
 	}
 	if types, ok := p.interceptMethodCall(expr, point); ok {
 		return types
@@ -948,6 +969,57 @@ func (p Projector) callReturnsWithExpected(expr *ast.FuncCallExpr, point cfg.Poi
 	result := pipeline.Run()
 	returns := callResultReturns(result)
 	return applyEffectReturnTransforms(p.cfg.Ctx, p.cfg.TypeOps, callee, args, returns, receiver, expr.Method != "", false)
+}
+
+// canonicalMetatable maps an observed setmetatable metatable argument to the
+// shared interned class family keyed by the metatable binding's origin symbol.
+// It mirrors the synthesis-side canonicalization so a constructor's observed
+// return metatable resolves to the same converging family handle instead of a
+// degraded structural snapshot. Returns current unchanged for a non-identifier
+// metatable, an unresolved symbol, a non-class record, or when the interner is
+// unavailable.
+func (p Projector) canonicalMetatable(expr ast.Expr, current typ.Type) typ.Type {
+	if expr == nil || current == nil || p.cfg.RecursiveFamilies == nil {
+		return current
+	}
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok || ident.Value == "" {
+		return current
+	}
+	if !metatable.IsClassShaped(current) {
+		return current
+	}
+	sym := p.metatableOriginSymbol(ident)
+	if sym == 0 {
+		return current
+	}
+	join := p.cfg.ClassFamilyJoin
+	if join == nil {
+		join = value.MergeForConvergence
+	}
+	key := typ.FamilyKey{Namespace: "class", Owner: strconv.FormatUint(uint64(sym), 10)}
+	return metatable.SealClassFamilyInterned(current, key, p.cfg.RecursiveFamilies, join)
+}
+
+// metatableOriginSymbol resolves a class identifier to its binding symbol,
+// preferring graph bindings and falling back to module bindings.
+func (p Projector) metatableOriginSymbol(ident *ast.IdentExpr) cfg.SymbolID {
+	if ident == nil {
+		return 0
+	}
+	if p.cfg.Bindings != nil {
+		if sym, ok := p.cfg.Bindings.SymbolOf(ident); ok && sym != 0 {
+			return sym
+		}
+	}
+	if p.cfg.Graph != nil {
+		if gb := p.cfg.Graph.Bindings(); gb != nil && gb != p.cfg.Bindings {
+			if sym, ok := gb.SymbolOf(ident); ok && sym != 0 {
+				return sym
+			}
+		}
+	}
+	return 0
 }
 
 func (p Projector) callArgTypes(args []ast.Expr, point cfg.Point) []typ.Type {

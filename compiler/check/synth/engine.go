@@ -61,6 +61,10 @@ type Config struct {
 	Phase          api.Phase
 	ModuleBindings *bind.BindingTable
 	ModuleAliases  map[cfg.SymbolID]string
+
+	// RecursiveFamilies is the compilation-scoped recursive-family interner used
+	// to seal class metatables into shared interned families during synthesis.
+	RecursiveFamilies *typ.RecursiveFamilyInterner
 }
 
 // Engine provides type synthesis configured by compilation phase.
@@ -121,8 +125,9 @@ func New(cfg Config) *Engine {
 		Inputs:         cfg.Inputs,
 		Paths:          cfg.Paths,
 		Evidence:       cfg.Evidence,
-		ModuleBindings: cfg.ModuleBindings,
-		ModuleAliases:  cfg.ModuleAliases,
+		ModuleBindings:    cfg.ModuleBindings,
+		ModuleAliases:     cfg.ModuleAliases,
+		RecursiveFamilies: cfg.RecursiveFamilies,
 	}
 
 	engine := &Engine{

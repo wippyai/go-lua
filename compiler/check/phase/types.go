@@ -109,6 +109,10 @@ type PhaseEnv struct {
 
 	// Scopes maps CFG points to scope states (populated after scope phase).
 	Scopes map[cfg.Point]*scope.State
+
+	// RecursiveFamilies is the compilation-scoped recursive-family interner used
+	// to seal class metatables into shared interned families during synthesis.
+	RecursiveFamilies *typ.RecursiveFamilyInterner
 }
 
 // TypeResolver resolves type expressions to types.

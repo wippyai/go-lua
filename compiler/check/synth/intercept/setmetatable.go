@@ -23,6 +23,9 @@ func (s *SetMetatableIntercept) InterceptCall(ex *ast.FuncCallExpr, ctx CallEnv)
 	if ctx.StableType != nil {
 		metaType = ctx.StableType(ex.Args[1], metaType)
 	}
+	if ctx.CanonicalMetatable != nil {
+		metaType = ctx.CanonicalMetatable(ex.Args[1], metaType)
+	}
 	if tableType == nil {
 		return Result{Skip: true, Types: []typ.Type{typ.Unknown}}
 	}

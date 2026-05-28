@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
@@ -12,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
@@ -156,7 +158,8 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 		StableType: func(expr ast.Expr, current typ.Type) typ.Type {
 			return s.stablePrototypeType(expr, p, sc, current, recurse)
 		},
-		Bindings: s.activeBindings(),
+		CanonicalMetatable: s.canonicalMetatableType,
+		Bindings:           s.activeBindings(),
 	}
 
 	chain := s.buildInterceptChain(sc)
@@ -444,6 +447,58 @@ func (s *Synthesizer) declaredProjectionLookup(sc *scope.State) func(string) typ
 
 func (s *Synthesizer) stablePrototypeType(expr ast.Expr, p cfg.Point, sc *scope.State, current typ.Type, recurse ExprSynth) typ.Type {
 	return s.stablePrototypeTypeSeen(expr, p, sc, current, recurse, nil)
+}
+
+// canonicalMetatableType maps a setmetatable metatable argument to the shared
+// interned class family keyed by the metatable binding's origin symbol. When expr
+// is a direct class identifier and current is a class allocation, the result is
+// the one interned *typ.Recursive family whose body widens in place across the
+// inter-procedural fixpoint, so a constructor's stored metatable edge always sees
+// the converged class. Otherwise current is returned unchanged: a non-identifier
+// metatable, an unresolved symbol, or a plain (non-class) record keeps the
+// existing structural-snapshot behavior.
+func (s *Synthesizer) canonicalMetatableType(expr ast.Expr, current typ.Type) typ.Type {
+	if s == nil || expr == nil || current == nil || s.deps == nil || s.deps.RecursiveFamilies == nil {
+		return current
+	}
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok || ident.Value == "" {
+		return current
+	}
+	if !metatable.IsClassShaped(current) {
+		return current
+	}
+	sym := s.metatableOriginSymbol(ident)
+	if sym == 0 {
+		return current
+	}
+	key := typ.FamilyKey{Namespace: "class", Owner: strconv.FormatUint(uint64(sym), 10)}
+	return metatable.SealClassFamilyInterned(current, key, s.deps.RecursiveFamilies, functionfact.ClassFamilyJoin)
+}
+
+// metatableOriginSymbol resolves a class identifier to its binding symbol,
+// preferring the active graph's bindings and falling back to module bindings.
+func (s *Synthesizer) metatableOriginSymbol(ident *ast.IdentExpr) compcfg.SymbolID {
+	if s == nil || ident == nil || s.deps == nil {
+		return 0
+	}
+	var bindings *bind.BindingTable
+	if s.deps.CheckCtx != nil {
+		if graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph); ok && graph != nil {
+			bindings = graph.Bindings()
+		}
+	}
+	if bindings != nil {
+		if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
+			return sym
+		}
+	}
+	if s.deps.ModuleBindings != nil && s.deps.ModuleBindings != bindings {
+		if sym, ok := s.deps.ModuleBindings.SymbolOf(ident); ok && sym != 0 {
+			return sym
+		}
+	}
+	return 0
 }
 
 func (s *Synthesizer) stablePrototypeTypeSeen(expr ast.Expr, p cfg.Point, sc *scope.State, current typ.Type, recurse ExprSynth, seen map[compcfg.SymbolID]bool) typ.Type {
@@ -1361,9 +1416,10 @@ func (s *Synthesizer) withEnvOverlay(overlay map[string]typ.Type) *Synthesizer {
 		FunctionFacts:  s.deps.FunctionFacts,
 		Graphs:         s.deps.Graphs,
 		Flow:           s.deps.Flow,
-		Paths:          s.deps.Paths,
-		ModuleBindings: s.deps.ModuleBindings,
-		ModuleAliases:  s.deps.ModuleAliases,
+		Paths:             s.deps.Paths,
+		ModuleBindings:    s.deps.ModuleBindings,
+		ModuleAliases:     s.deps.ModuleAliases,
+		RecursiveFamilies: s.deps.RecursiveFamilies,
 	}
 	return NewSynthesizer(overlaidDeps, s.phase)
 }

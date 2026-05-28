@@ -92,6 +92,17 @@ type FuncResult struct {
 
 	// DepthLimitExceeded indicates scope depth limit was hit during scope phase.
 	DepthLimitExceeded bool
+
+	// RecursiveFamilies is the compilation-scoped recursive-family interner used
+	// to seal class metatables into shared interned families. Solved-state
+	// observation reuses it so a constructor's observed metatable resolves to the
+	// same converging family the synthesis engine seals.
+	RecursiveFamilies *typ.RecursiveFamilyInterner
+
+	// ClassFamilyJoin is the function-aware body lattice join the class-family
+	// seal widens with. It is supplied by the pipeline so observation can seal a
+	// metatable into the shared family without importing the producing package.
+	ClassFamilyJoin func(existing, candidate typ.Type) typ.Type
 }
 
 // EffectiveTypeAt returns the narrowed type for a symbol at a specific CFG point.
@@ -162,6 +173,8 @@ type FuncAnalysisView struct {
 	QueryContext        *db.QueryContext
 	TypeOps             core.TypeOps
 	GlobalTypes         map[string]typ.Type
+	RecursiveFamilies   *typ.RecursiveFamilyInterner
+	ClassFamilyJoin     func(existing, candidate typ.Type) typ.Type
 }
 
 // ViewFromResult constructs the nested-processing view from a full result.
@@ -184,5 +197,7 @@ func ViewFromResult(r *FuncResult) *FuncAnalysisView {
 		QueryContext:        r.QueryContext,
 		TypeOps:             r.TypeOps,
 		GlobalTypes:         r.GlobalTypes,
+		RecursiveFamilies:   r.RecursiveFamilies,
+		ClassFamilyJoin:     r.ClassFamilyJoin,
 	}
 }

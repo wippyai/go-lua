@@ -147,12 +147,15 @@ func recordHasOptionalEvidence(rec *typ.Record) bool {
 
 func joinedRecordMetatable(a, b typ.Type, join func(typ.Type, typ.Type) typ.Type) typ.Type {
 	if a == nil || b == nil {
+		zzMTlog(a, b, nil)
 		return nil
 	}
 	if FactTypeEqual(a, b) {
 		return a
 	}
-	return join(a, b)
+	out := join(a, b)
+	zzMTlog(a, b, out)
+	return out
 }
 
 func joinedRecordMapComponent(a, b *typ.Record, join func(typ.Type, typ.Type) typ.Type) (typ.Type, typ.Type, bool) {
@@ -226,12 +229,61 @@ func fieldWithMissingBranchMapEvidence(
 	missingBranch *typ.Record,
 	join func(typ.Type, typ.Type) typ.Type,
 ) typ.Field {
+	// A field absent from the missing branch's top level but reachable through
+	// its __index prototype (the Lua method-resolution path) is still accessible
+	// there, so the two records are the same class observed as a self view
+	// ({m, __index}) and a split view ({__index: {m}}). Keep it required and join
+	// against the reachable type instead of optionalizing the surface.
+	if reached, ok := fieldReachableViaIndex(missingBranch, name); ok {
+		field.Type = join(field.Type, reached)
+		return field
+	}
 	field.Optional = true
 	if missingBranch != nil && missingBranch.HasMapComponent() &&
 		subtype.IsSubtype(typ.LiteralString(name), missingBranch.MapKey) {
 		field.Type = join(field.Type, missingBranch.MapValue)
 	}
 	return field
+}
+
+// fieldReachableViaIndex reports the type of name reachable through rec's
+// __index prototype chain, the Lua method-resolution path. It follows __index
+// fields whose value is a record, bounded against self-cycles, so a method that
+// lives in the prototype of a split-view class record counts as present.
+func fieldReachableViaIndex(rec *typ.Record, name string) (typ.Type, bool) {
+	const indexField = "__index"
+	seen := make(map[*typ.Record]bool, 4)
+	for rec != nil && !seen[rec] {
+		seen[rec] = true
+		idx := rec.GetField(indexField)
+		if idx == nil {
+			return nil, false
+		}
+		proto, ok := recordUnderRecursive(idx.Type)
+		if !ok || proto == nil {
+			return nil, false
+		}
+		if f := proto.GetField(name); f != nil {
+			return f.Type, true
+		}
+		rec = proto
+	}
+	return nil, false
+}
+
+// recordUnderRecursive unwraps a record from a transparent alias or a sealed
+// recursive family body, so an __index prototype tied into a class mu still
+// exposes its method surface for reachability.
+func recordUnderRecursive(t typ.Type) (*typ.Record, bool) {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Record:
+		return v, true
+	case *typ.Recursive:
+		if v != nil && v.Body != nil && v.Body != typ.Type(v) {
+			return recordUnderRecursive(v.Body)
+		}
+	}
+	return nil, false
 }
 
 func addRecordField(builder *typ.RecordBuilder, field typ.Field) {

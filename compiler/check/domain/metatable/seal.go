@@ -93,6 +93,80 @@ func sealClassRoot(root *typ.Record, priorRec *typ.Recursive, ownerKey string) t
 	}
 }
 
+// SealClassFamilyInterned seals a Lua OOP class type into the single interned
+// recursive family owned by key in interner. Unlike SealClassFamily, which mints
+// a fresh typ.Recursive per call, this binds every class back-edge to the one
+// canonical family handle the interner owns for key and widens that family's body
+// slot IN PLACE. Every observation of the same class (the class binding, a
+// constructor's stored metatable edge) therefore resolves to the same handle, and
+// when the class converges later in the inter-procedural fixpoint the widened body
+// is visible through every prior reference. join is the body lattice join the
+// producer supplies; it must be monotone and finite-height so the body converges.
+//
+// Returns class unchanged when the inputs are unusable or class carries no class
+// back-edge (the producer evidence that the value is a class allocation).
+func SealClassFamilyInterned(class typ.Type, key typ.FamilyKey, interner *typ.RecursiveFamilyInterner, join func(existing, candidate typ.Type) typ.Type) typ.Type {
+	if class == nil || interner == nil {
+		return class
+	}
+	if mu, ok := class.(*typ.Recursive); ok {
+		if mu.Body == nil || mu.Body == mu {
+			return class
+		}
+		root := classRootRecord(mu.Body)
+		if root == nil {
+			return class
+		}
+		return sealClassRootInterned(root, mu, key, interner, join)
+	}
+	root := classRootRecord(class)
+	if root == nil {
+		return class
+	}
+	return sealClassRootInterned(root, nil, key, interner, join)
+}
+
+// sealClassRootInterned seals a class root record into the interned family owned
+// by key. It mirrors sealClassRoot but obtains the recursion variable from the
+// interner and widens the family body in place instead of minting a fresh
+// placeholder per call.
+func sealClassRootInterned(root *typ.Record, priorRec *typ.Recursive, key typ.FamilyKey, interner *typ.RecursiveFamilyInterner, join func(existing, candidate typ.Type) typ.Type) typ.Type {
+	switch {
+	case classRecordHasBackEdge(root):
+		rec := interner.Intern(key)
+		r := &backEdgeRewriter{rec: rec, priorRec: priorRec, root: root, seen: make(map[typ.Type]typ.Type)}
+		body := r.rewriteRecord(root, typ.NewGuard())
+		interner.Widen(rec, body, join)
+		return rec
+	case instanceMetatableHasBackEdge(root):
+		rec := interner.Intern(key)
+		metaRoot, _ := unwrapRecord(root.Metatable)
+		r := &backEdgeRewriter{rec: rec, priorRec: priorRec, root: metaRoot, seen: make(map[typ.Type]typ.Type)}
+		metaBody := r.rewriteRecord(metaRoot, typ.NewGuard())
+		interner.Widen(rec, metaBody, join)
+		return r.rewriteRecord(root, typ.NewGuard())
+	case classPrototypeShape(root):
+		// Producer evidence proved this is the class allocation even though the
+		// self back-edge through __index has not converged. When __index is still
+		// degraded (no method-bearing target), force-fold it to the family so the
+		// self-cycle closes; the body widens to the converged class as __index
+		// resolves on later iterations. When __index already points at a
+		// method-bearing prototype, that prototype IS the class surface, so it is
+		// rewritten in place (its self-edges fold) and force-folding is not applied,
+		// keeping the method surface reachable through __index.
+		rec := interner.Intern(key)
+		r := &backEdgeRewriter{rec: rec, priorRec: priorRec, root: root, seen: make(map[typ.Type]typ.Type), forceIndexFold: !indexTargetHasMethodSurface(root)}
+		body := r.rewriteRecord(root, typ.NewGuard())
+		interner.Widen(rec, body, join)
+		return rec
+	default:
+		if priorRec != nil {
+			return priorRec
+		}
+		return root
+	}
+}
+
 // SealClassInstanceReturn seals a constructor's instance return into its class
 // recursive family. It applies only to a plain instance record (a metatable
 // class back-edge, no own __index, not already recursive), the shape a
@@ -107,7 +181,14 @@ func SealClassInstanceReturn(t typ.Type) typ.Type {
 	if owner == "" {
 		return t
 	}
-	return SealClassFamily(t, owner)
+	if zzSealOff {
+		return t
+	}
+	out := SealClassFamily(t, owner)
+	if zzSealDbg {
+		println("ZZSEAL in=", zzDump(t, 0), " out=", zzDump(out, 0))
+	}
+	return out
 }
 
 // SealClassFamilyAuto seals a class type or class instance when no explicit
@@ -123,6 +204,60 @@ func SealClassFamilyAuto(t typ.Type) typ.Type {
 		return t
 	}
 	return SealClassFamily(t, owner)
+}
+
+// IsClassShaped reports whether t is a Lua class allocation: a class record
+// carrying a genuine __index/method back-edge, a class instance whose metatable
+// is such a record, or a class prototype record whose __index back-edge has not
+// yet resolved to a record but which already carries an __index slot and a method
+// surface. The last case is the pre-convergence shape of a setmetatable class
+// where the self back-edge through __index is still degraded to unknown; the
+// caller pairs it with producer evidence (a resolved class symbol) so this does
+// not over-fold unrelated records. A plain record with no __index slot and no
+// method surface returns false. A recursive node is inspected through its body.
+func IsClassShaped(t typ.Type) bool {
+	if mu, ok := t.(*typ.Recursive); ok {
+		if mu.Body == nil || mu.Body == mu {
+			return false
+		}
+		return IsClassShaped(mu.Body)
+	}
+	root, ok := unwrapRecord(t)
+	if !ok || root == nil {
+		return false
+	}
+	return classRecordHasBackEdge(root) || instanceMetatableHasBackEdge(root) || classPrototypeShape(root)
+}
+
+// classPrototypeShape reports whether root is the prototype shape of a
+// setmetatable class whose self back-edge has not yet converged: it carries an
+// __index slot (the prototype back-edge, possibly still degraded to unknown) and
+// a method surface. The method surface is either a non-__index function field on
+// root itself (the self-referential class where methods sit beside __index) or a
+// method field on the record the __index slot points at (the class whose methods
+// live in the prototype delegate). This is the structural signature of a class
+// metatable independent of whether __index has resolved to the class record;
+// sealing folds the __index slot to the class family so the cycle closes once the
+// body widens to a fixed point.
+func classPrototypeShape(root *typ.Record) bool {
+	if root == nil {
+		return false
+	}
+	hasIndex := false
+	hasMethod := false
+	for _, f := range root.Fields {
+		if f.Name == indexField {
+			hasIndex = true
+			if idx, ok := unwrapRecord(f.Type); ok && metaHasMethodSurface(idx) {
+				hasMethod = true
+			}
+			continue
+		}
+		if _, ok := f.Type.(*typ.Function); ok {
+			hasMethod = true
+		}
+	}
+	return hasIndex && hasMethod
 }
 
 // autoOwnerKey derives a stable owner key from the class metatable signature of
@@ -409,6 +544,26 @@ func classFamilyBody(body typ.Type) bool {
 	return classRecordHasBackEdge(root) || instanceMetatableHasBackEdge(root)
 }
 
+// indexTargetHasMethodSurface reports whether root's own __index slot points at a
+// record that carries a method surface. The prototype delegate of such a class
+// holds the methods, so its surface must be preserved during sealing.
+func indexTargetHasMethodSurface(root *typ.Record) bool {
+	if root == nil {
+		return false
+	}
+	for _, f := range root.Fields {
+		if f.Name != indexField {
+			continue
+		}
+		idx, ok := unwrapRecord(f.Type)
+		if !ok {
+			return false
+		}
+		return metaHasMethodSurface(idx)
+	}
+	return false
+}
+
 // metaHasMethodSurface reports whether a metatable prototype carries a callable
 // method field, the surface a class metatable provides to its instances.
 func metaHasMethodSurface(meta *typ.Record) bool {
@@ -434,6 +589,11 @@ type backEdgeRewriter struct {
 	priorRec *typ.Recursive
 	root     *typ.Record
 	seen     map[typ.Type]typ.Type
+	// forceIndexFold folds the root record's own __index slot to the recursion
+	// variable unconditionally. It is set only with producer evidence (a resolved
+	// class symbol), for the pre-convergence prototype shape whose __index has not
+	// yet resolved to the class record, so the self-cycle still closes on one node.
+	forceIndexFold bool
 }
 
 // rewriteInstance seals an instance whose metatable is the class: the metatable
@@ -594,7 +754,11 @@ func (r *backEdgeRewriter) rewriteRecord(v *typ.Record, guard internal.Recursion
 	for _, f := range v.Fields {
 		var ft typ.Type
 		if f.Name == indexField {
-			ft = r.foldBackEdge(f.Type, guard)
+			if r.forceIndexFold && v == r.root {
+				ft = r.rec
+			} else {
+				ft = r.foldBackEdge(f.Type, guard)
+			}
 		} else {
 			ft = r.rewrite(f.Type, guard)
 		}
