@@ -1739,6 +1739,8 @@ return handle
 
 func TestExternalLint_MultiModuleSessionQueryLengthGuardEliminatesNil(t *testing.T) {
 	repoModule := testutil.CheckAndExport(`
+type Context = { text: string, created_at: string, time: string? }
+
 local executor = {}
 function executor:query(): any
 	return nil
@@ -1746,7 +1748,7 @@ end
 
 local repo = {}
 
-function repo.list_by_type(_session_id, _context_type)
+function repo.list_by_type(_session_id: string?, _context_type: string?): ({Context}?, string?)
 	local contexts, err = executor:query()
 	if err then
 		return nil, err
