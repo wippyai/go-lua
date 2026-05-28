@@ -24,10 +24,10 @@ func (s *Solution) applyPointNumericShapeProjection(p cfg.Point, path constraint
 }
 
 func (s *Solution) pointNumericShapeReachable(p cfg.Point, cond constraint.Condition) bool {
-	if s == nil || s.numericStates == nil {
+	if s == nil || s.numericAt == nil {
 		return true
 	}
-	state := s.numericStates[p]
+	state := s.numericAt[p]
 	if state == nil {
 		return true
 	}

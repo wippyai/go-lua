@@ -20,12 +20,12 @@ import (
 // cross-products on each visit and the condition grows without bound.
 //
 // With FVS widening (DOMAIN_DESIGN.md §7), the loop header is in FVS and
-// the widening fires once the visit count exceeds the threshold. The chain
-// stabilizes within O(|CFG| × K) worklist visits.
+// widening fires structurally on every revisit (no visit-count delay). The
+// chain stabilizes within O(|CFG|) worklist visits.
 func TestPropagate_LoopPreheaderReinforcement_Terminates(t *testing.T) {
 	g := buildPreheaderReinforcementGraph()
 	inputs := makePreheaderReinforcementInputs(g)
-	bounded := withVisitCap(t, inputs, len(g.rpo)*loopHeaderWideningThreshold*8)
+	bounded := withVisitCap(t, inputs, len(g.rpo)*8)
 
 	result := Propagate(bounded.inputs)
 

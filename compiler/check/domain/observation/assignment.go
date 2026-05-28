@@ -25,7 +25,7 @@ func (p Projector) AssignmentSourceType(source ast.Expr, point cfg.Point, expect
 	// assigned to a number? annotation resolves T to number).
 	if expected != nil {
 		if t, ok := p.assignmentSourceProductType(point, targetSym); ok && !typ.ContainsTypeParam(t) {
-			return t
+			return p.refineAssignmentSourceIndexRead(t, source, point)
 		}
 		if t, ok := p.assignmentPathSourceType(source, point, targetSym); ok && !typ.ContainsTypeParam(t) {
 			return t
@@ -33,7 +33,7 @@ func (p Projector) AssignmentSourceType(source ast.Expr, point cfg.Point, expect
 		return p.assignmentSourceProjector(source, targetSym).TypeOfWithExpected(source, point, expected)
 	}
 	if t, ok := p.assignmentSourceProductType(point, targetSym); ok {
-		return t
+		return p.refineAssignmentSourceIndexRead(t, source, point)
 	}
 	if t, ok := p.assignmentPathSourceType(source, point, targetSym); ok {
 		return t
@@ -47,6 +47,20 @@ func (p Projector) AssignmentSourceType(source ast.Expr, point cfg.Point, expect
 // and contextual table compatibility.
 func (p Projector) AssignmentSourceTableCheck(table *ast.TableExpr, point cfg.Point, expected typ.Type, targetSym cfg.SymbolID) TableCheckResult {
 	return p.assignmentSourceProjector(table, targetSym).CheckTable(table, point, expected)
+}
+
+// refineAssignmentSourceIndexRead applies the solved index-read proof to a
+// flow-derived assignment-source value. The flow product algebra resolves
+// data[i] to the element union (with nil for out-of-range), but it does not
+// consult the numeric-interval / length proofs that prove the index in range.
+// Routing the product through the same proof as a directly observed read makes
+// loop-variable reads (for and while alike) honor those proofs uniformly.
+func (p Projector) refineAssignmentSourceIndexRead(t typ.Type, source ast.Expr, point cfg.Point) typ.Type {
+	attr, ok := source.(*ast.AttrGetExpr)
+	if !ok || attr == nil {
+		return t
+	}
+	return p.applyIndexReadProof(t, p.TypeOf(attr.Object, point), attr.Object, attr.Key, point)
 }
 
 func (p Projector) assignmentSourceProjector(source ast.Expr, targetSym cfg.SymbolID) Projector {

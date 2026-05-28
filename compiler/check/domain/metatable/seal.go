@@ -1,15 +1,9 @@
 package metatable
 
 import (
-	"os"
-
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-// sealDbg gates the class-sealing diagnostics used while verifying that the
-// producer seal fires on a structurally-cyclic class allocation.
-var sealDbg = os.Getenv("SEALDBG") != ""
 
 // indexField names the Lua metatable __index slot that holds a class's
 // prototype back-edge.
@@ -84,23 +78,14 @@ func sealClassRoot(root *typ.Record, priorRec *typ.Recursive, ownerKey string) t
 		r := &backEdgeRewriter{rec: rec, priorRec: priorRec, root: root, seen: make(map[typ.Type]typ.Type)}
 		body := r.rewriteRecord(root, typ.NewGuard())
 		rec.SetBody(body)
-		if sealDbg {
-			println("SEALDBG SEALING class owner=", ownerKey, " class=", typ.FormatShort(root))
-		}
 		return rec
 	case instanceMetatableHasBackEdge(root):
 		rec := typ.NewRecursivePlaceholder(classFamilyName(ownerKey))
 		metaRoot, _ := unwrapRecord(root.Metatable)
 		r := &backEdgeRewriter{rec: rec, priorRec: priorRec, root: metaRoot, seen: make(map[typ.Type]typ.Type)}
 		sealed := r.rewriteInstance(root, typ.NewGuard())
-		if sealDbg {
-			println("SEALDBG SEALING instance owner=", ownerKey, " instance=", typ.FormatShort(root))
-		}
 		return sealed
 	default:
-		if sealDbg {
-			println("SEALDBG no-back-edge class=", typ.FormatShort(root))
-		}
 		if priorRec != nil {
 			return priorRec
 		}
@@ -134,9 +119,6 @@ func SealClassInstanceReturn(t typ.Type) typ.Type {
 // back-edge.
 func SealClassFamilyAuto(t typ.Type) typ.Type {
 	owner := autoOwnerKey(t)
-	if sealDbg {
-		println("SEALDBG auto owner=", owner, " t=", typ.FormatShort(t))
-	}
 	if owner == "" {
 		return t
 	}

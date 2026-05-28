@@ -27,12 +27,18 @@ func CollectConstAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 			if target.Kind != cfg.TargetIdent || target.Name == "" {
 				return
 			}
-			val := ConstValueFromExpr(source)
-			if val == nil {
+			if source == nil {
 				return
 			}
-
 			sym := target.Symbol
+			val := ConstValueFromExpr(source)
+			if val == nil {
+				// A reassignment from a non-literal source (e.g. i = i + 1)
+				// destroys any prior constant binding. Record the kill so
+				// propagation does not fold a loop-mutated variable to its
+				// pre-loop literal at later read points.
+				val = &flow.ConstValue{Kind: flow.ConstUnknown}
+			}
 
 			if values[sym] == nil {
 				values[sym] = make(map[cfg.Point]*flow.ConstValue)
@@ -146,22 +152,21 @@ func recomputeConstValue(g *basecfg.CFG, p cfg.Point, assigns map[cfg.Point]*flo
 	if node == nil {
 		return nil
 	}
-	switch node.Kind {
-	case cfg.NodeEntry:
+	if node.Kind == cfg.NodeEntry {
 		return nil
-	case cfg.NodeJoin, cfg.NodeExit, cfg.NodeScopeEnter, cfg.NodeScopeExit:
-		return mergeConstPreds(g, p, values)
 	}
-	pred := g.Predecessor(p)
-	predVals := values[pred]
-	if node.Kind == cfg.NodeAssign {
-		if assigns != nil {
-			if v := assigns[p]; v != nil {
-				return v
-			}
+	// An assignment overwrites the symbol regardless of incoming flow.
+	if node.Kind == cfg.NodeAssign && assigns != nil {
+		if v := assigns[p]; v != nil {
+			return v
 		}
 	}
-	return predVals
+	// Every other node forwards its predecessors. Any node may have more than
+	// one predecessor (a loop header is a NodeBranch with the preheader and the
+	// back-edge), so always merge: disagreement among predecessors collapses to
+	// unknown, which is what prevents folding a loop-mutated variable to its
+	// pre-loop literal.
+	return mergeConstPreds(g, p, values)
 }
 
 // mergeConstPreds merges const values from predecessors.

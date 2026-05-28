@@ -129,8 +129,10 @@ func FunctionLiteralTypes(graph *cfg.Graph, evidence api.FlowEvidence, synth api
 //  1. Local assignments: Extracts signatures from function literals and nested
 //     function fields in table literals
 //  2. Function definitions: Handles field and method definitions on receivers
-//  3. Return statements: If declaredReturns is provided, uses expected return
-//     types to guide function literal inference at return positions
+//  3. Return statements: collects function literals at return positions,
+//     including closures nested in returned table literals. When declaredReturns
+//     is provided, the matching slot guides inference as an expected type;
+//     otherwise the literal is synthesized from its own annotations.
 //
 // Expected type propagation:
 //   - For table fields, uses expected table type to infer field function signatures
@@ -325,20 +327,18 @@ func FunctionLiteralSignatures(graph *cfg.Graph, evidence api.FlowEvidence, engi
 		}
 	}
 
-	if len(declaredReturns) > 0 {
-		for _, ret := range evidence.Returns {
-			p := ret.Point
-			info := ret.Info
-			if info == nil {
-				continue
+	for _, ret := range evidence.Returns {
+		p := ret.Point
+		info := ret.Info
+		if info == nil {
+			continue
+		}
+		for i, expr := range info.Exprs {
+			var expected typ.Type
+			if i < len(declaredReturns) {
+				expected = declaredReturns[i]
 			}
-			for i, expr := range info.Exprs {
-				if i >= len(declaredReturns) {
-					break
-				}
-				expected := declaredReturns[i]
-				collectExpr(expr, p, expected)
-			}
+			collectExpr(expr, p, expected)
 		}
 	}
 

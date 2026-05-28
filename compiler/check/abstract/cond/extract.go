@@ -172,6 +172,7 @@ func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 
 // ExtractNumericConstraints extracts numeric constraints from branch conditions.
 func ExtractNumericConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
+	anchors := buildLoopCounterAnchors(fc.Graph, inputs)
 	for _, branch := range fc.Evidence.Branches {
 		p := branch.Point
 		info := branch.Info
@@ -204,21 +205,385 @@ func ExtractNumericConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 		}
 
 		numConstraints := NumericBranchConstraintsFromExpr(info.Condition, p, inputs)
-		if trueEdge != 0 && len(numConstraints.OnTrue) > 0 {
+		onTrue := appendLoopCounterAnchors(numConstraints.OnTrue, anchors, p)
+		onFalse := appendLoopCounterAnchors(numConstraints.OnFalse, anchors, p)
+		if trueEdge != 0 && len(onTrue) > 0 {
 			inputs.EdgeNumericConstraints = append(inputs.EdgeNumericConstraints, flow.EdgeNumericConstraint{
 				From:        p,
 				To:          trueEdge,
-				Constraints: numConstraints.OnTrue,
+				Constraints: onTrue,
 			})
 		}
-		if falseEdge != 0 && len(numConstraints.OnFalse) > 0 {
+		if falseEdge != 0 && len(onFalse) > 0 {
 			inputs.EdgeNumericConstraints = append(inputs.EdgeNumericConstraints, flow.EdgeNumericConstraint{
 				From:        p,
 				To:          falseEdge,
-				Constraints: numConstraints.OnFalse,
+				Constraints: onFalse,
 			})
 		}
 	}
+
+	extractCallEnsuresNumericConstraints(fc, inputs)
+}
+
+// extractCallEnsuresNumericConstraints seeds length facts from a statement call
+// whose refinement guarantees a length relation on a container argument. An
+// assertion wrapper that ensures `actual == expected` over args `#arr` and a
+// constant proves `len(arr) == const` on its normal-return edges, which the
+// index-read proof then consumes. The relation is read structurally from the
+// callee refinement (no name-matching); only length-over-container args produce
+// a numeric fact.
+func extractCallEnsuresNumericConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
+	if fc == nil || fc.Graph == nil || fc.Derived == nil {
+		return
+	}
+	bindings := resolve.GetBindings(inputs)
+	for _, call := range fc.Evidence.Calls {
+		if call.Origin != api.CallOriginStatement {
+			continue
+		}
+		p := call.Point
+		info := call.Info
+		if info == nil {
+			continue
+		}
+		callArgs := runtimeCallArgs(info)
+		if len(callArgs) == 0 {
+			continue
+		}
+		eff := ExtractFunctionRefinement(info, p, fc.Derived.Synth, fc.Derived.RefinementBySym, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
+		if eff == nil || !eff.OnReturn.HasConstraints() {
+			continue
+		}
+		constResolver := predicate.BuildConstResolver(inputs, p)
+		var ncs []constraint.NumericConstraint
+		for _, c := range eff.OnReturn.MustConstraints() {
+			ncs = append(ncs, callEnsuresLengthConstraints(c, callArgs, p, inputs, bindings, constResolver)...)
+		}
+		if len(ncs) == 0 {
+			continue
+		}
+		for _, succ := range fc.Graph.Successors(p) {
+			if inputs.DeadPoints != nil && inputs.DeadPoints[succ] {
+				continue
+			}
+			inputs.EdgeNumericConstraints = append(inputs.EdgeNumericConstraints, flow.EdgeNumericConstraint{
+				From:        p,
+				To:          succ,
+				Constraints: ncs,
+			})
+		}
+	}
+}
+
+// callEnsuresLengthConstraints maps a single refinement constraint that relates
+// two argument placeholders into length numeric constraints when one argument is
+// a length expression `#container` and the other is an integer constant.
+func callEnsuresLengthConstraints(
+	c constraint.Constraint,
+	callArgs []ast.Expr,
+	p cfg.Point,
+	inputs *flow.Inputs,
+	bindings *bind.BindingTable,
+	constResolver func(string) *flow.ConstValue,
+) []constraint.NumericConstraint {
+	left, right, equality, ok := placeholderRelationArgs(c)
+	if !ok {
+		return nil
+	}
+	lIdx, lOK := constraint.PlaceholderArgIndex(left, len(callArgs))
+	rIdx, rOK := constraint.PlaceholderArgIndex(right, len(callArgs))
+	if !lOK || !rOK || lIdx >= len(callArgs) || rIdx >= len(callArgs) {
+		return nil
+	}
+	if !equality {
+		return nil
+	}
+	if lenPath, c, ok := lenAndConstArgs(callArgs[lIdx], callArgs[rIdx], p, inputs, bindings, constResolver); ok {
+		return lenEqConstraints(lenPath, c)
+	}
+	if lenPath, c, ok := lenAndConstArgs(callArgs[rIdx], callArgs[lIdx], p, inputs, bindings, constResolver); ok {
+		return lenEqConstraints(lenPath, c)
+	}
+	return nil
+}
+
+func placeholderRelationArgs(c constraint.Constraint) (left, right constraint.Path, equality, ok bool) {
+	switch v := c.(type) {
+	case constraint.EqPath:
+		return v.Left, v.Right, true, true
+	case constraint.NotEqPath:
+		return v.Left, v.Right, false, true
+	}
+	return constraint.Path{}, constraint.Path{}, false, false
+}
+
+func lenAndConstArgs(
+	lenArg, constArg ast.Expr,
+	p cfg.Point,
+	inputs *flow.Inputs,
+	bindings *bind.BindingTable,
+	constResolver func(string) *flow.ConstValue,
+) (constraint.Path, int64, bool) {
+	lenOp, ok := lenArg.(*ast.UnaryLenOpExpr)
+	if !ok || lenOp == nil {
+		return constraint.Path{}, 0, false
+	}
+	container := path.FromExprWithBindingsAt(lenOp.Expr, constResolver, bindings, inputs.Graph, p)
+	if container.IsEmpty() {
+		return constraint.Path{}, 0, false
+	}
+	c, ok := numconst.IntConstFromExpr(constArg)
+	if !ok || c < 0 {
+		return constraint.Path{}, 0, false
+	}
+	return container, c, true
+}
+
+func lenEqConstraints(container constraint.Path, c int64) []constraint.NumericConstraint {
+	return []constraint.NumericConstraint{
+		constraint.LenGeConst{Array: container, C: c},
+		constraint.LenLeConst{Array: container, C: c},
+	}
+}
+
+// loopCounterAnchor is a loop counter's init-side numeric bound together with the
+// loop body it holds in. The body bounds where the anchor may be re-asserted, so
+// a counter reused outside its loop (a later reassignment, an unrelated branch on
+// the same symbol) is never anchored with an invariant that holds only in-loop.
+type loopCounterAnchor struct {
+	constraint constraint.NumericConstraint
+	body       map[cfg.Point]bool
+}
+
+// appendLoopCounterAnchors pairs each loop counter's init-side anchor with any
+// numeric edge constraint that bounds that counter at a branch inside the
+// counter's loop. Pairing the init anchor on the SAME edge as a guard bound seeds
+// the counter's interval with both ends at once, so the body read sees a tight
+// interval immediately instead of one whose init-side end was widened away at the
+// loop header. The anchor is a sound loop invariant (a monotone counter never
+// crosses its init on the init side), so re-asserting it on an in-loop guard edge
+// never admits an out-of-range value.
+func appendLoopCounterAnchors(constraints []constraint.NumericConstraint, anchors map[cfg.SymbolID]loopCounterAnchor, branch cfg.Point) []constraint.NumericConstraint {
+	if len(constraints) == 0 || len(anchors) == 0 {
+		return constraints
+	}
+	seen := make(map[cfg.SymbolID]struct{})
+	out := constraints
+	for _, nc := range constraints {
+		for _, p := range nc.Paths() {
+			if p.Symbol == 0 {
+				continue
+			}
+			if _, ok := seen[p.Symbol]; ok {
+				continue
+			}
+			anchor, ok := anchors[p.Symbol]
+			if !ok || !anchor.body[branch] {
+				continue
+			}
+			seen[p.Symbol] = struct{}{}
+			out = append(out, anchor.constraint)
+		}
+	}
+	return out
+}
+
+// buildLoopCounterAnchors maps each monotone loop counter to its init-side
+// numeric anchor and the loop body it holds in, keyed by symbol. A counter
+// qualifies when some loop header (LoopPreheaderSet with the counter in LoopVars)
+// gives it a constant integer init at the header's preheader and a single
+// constant-step self-update in the loop body. An incrementing counter (step > 0)
+// anchors a lower bound (i >= init); a decrementing one (step < 0) anchors an
+// upper bound (i <= init). The anchors let appendLoopCounterAnchors restore the
+// init-side end on in-loop guard edges so the header widening cannot strand a
+// sound bound. This covers while, while-true + break, and repeat-until uniformly,
+// with no loop-kind special-casing.
+func buildLoopCounterAnchors(graph *cfg.Graph, inputs *flow.Inputs) map[cfg.SymbolID]loopCounterAnchor {
+	c := graph.CFG()
+	var anchors map[cfg.SymbolID]loopCounterAnchor
+	for pi := range c.Nodes {
+		header := cfg.Point(pi)
+		node := c.Node(header)
+		if node == nil || !node.LoopPreheaderSet || len(node.LoopVars) == 0 {
+			continue
+		}
+		constResolver := predicate.BuildConstResolver(inputs, node.LoopPreheader)
+		if constResolver == nil {
+			continue
+		}
+		body := loopBodyPoints(c, header)
+		for _, counter := range node.LoopVars {
+			nc, ok := loopCounterInitAnchor(graph, header, counter, body, constResolver)
+			if !ok {
+				continue
+			}
+			if anchors == nil {
+				anchors = make(map[cfg.SymbolID]loopCounterAnchor)
+			}
+			anchors[counter] = loopCounterAnchor{constraint: nc, body: body}
+		}
+	}
+	return anchors
+}
+
+// loopCounterInitAnchor builds the init-side numeric anchor for one loop counter,
+// or ok=false when the counter has no constant init at the preheader or no
+// constant-step self-update establishing a monotone direction in the loop body.
+func loopCounterInitAnchor(graph *cfg.Graph, header cfg.Point, counter cfg.SymbolID, body map[cfg.Point]bool, constResolver func(string) *flow.ConstValue) (constraint.NumericConstraint, bool) {
+	if counter == 0 {
+		return nil, false
+	}
+	name := graph.NameOf(counter)
+	if name == "" {
+		return nil, false
+	}
+	counterPath := constraint.Path{Root: name, Symbol: counter}
+	init, ok := initConstFor(counterPath, constResolver)
+	if !ok {
+		return nil, false
+	}
+	step, ok := loopCounterStep(graph, body, counter)
+	if !ok || step == 0 {
+		return nil, false
+	}
+	if step > 0 {
+		return constraint.GeConst{X: counterPath, C: init}, true
+	}
+	return constraint.LeConst{X: counterPath, C: init}, true
+}
+
+// loopCounterStep returns the signed constant step of a loop counter's monotone
+// self-update within the given loop body, or ok=false when the counter is not
+// monotone there. Every assignment to the counter inside the loop body must be
+// the same constant-step self-update (counter = counter +|- k); any other in-loop
+// write (reset, non-constant step, differing step) voids the anchor so no
+// monotone direction is assumed unsoundly. Assignments outside the loop body (the
+// counter's pre-loop initializer) are ignored.
+func loopCounterStep(graph *cfg.Graph, body map[cfg.Point]bool, counter cfg.SymbolID) (int64, bool) {
+	c := graph.CFG()
+	var step int64
+	found := false
+	for pi := range c.Nodes {
+		if !body[cfg.Point(pi)] {
+			continue
+		}
+		info, ok := graph.Info(cfg.Point(pi)).(*cfg.AssignInfo)
+		if !ok {
+			continue
+		}
+		for i, target := range info.Targets {
+			if target.Kind != cfg.TargetIdent || target.Symbol != counter {
+				continue
+			}
+			if i >= len(info.Sources) {
+				return 0, false
+			}
+			s, ok := selfUpdateStep(info.Sources[i], counter, graph)
+			if !ok {
+				return 0, false
+			}
+			if found && s != step {
+				return 0, false
+			}
+			step = s
+			found = true
+		}
+	}
+	return step, found
+}
+
+// loopBodyPoints returns the natural-loop body of header: header plus every node
+// that reaches a latch (a back-edge predecessor of header) without passing
+// through header or the loop preheader. The preheader (the unique entry edge,
+// marked by the CFG) distinguishes the loop-entry predecessor from the latches;
+// every other predecessor of header is a back edge whose source is inside the
+// loop. Bounding the backward walk by header and the preheader excludes both the
+// pre-loop initializer and any enclosing-loop body, so a nested loop's body
+// contains only its own nodes and the counter's self-update is checked against
+// the precise loop it belongs to.
+func loopBodyPoints(c *cfg.CFG, header cfg.Point) map[cfg.Point]bool {
+	body := make(map[cfg.Point]bool)
+	body[header] = true
+	node := c.Node(header)
+	if node != nil && node.LoopPreheaderSet {
+		body[node.LoopPreheader] = true
+	}
+	var stack []cfg.Point
+	for _, pred := range c.PredecessorsReadOnly(header) {
+		if !body[pred] {
+			body[pred] = true
+			stack = append(stack, pred)
+		}
+	}
+	for len(stack) > 0 {
+		p := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, pred := range c.PredecessorsReadOnly(p) {
+			if !body[pred] {
+				body[pred] = true
+				stack = append(stack, pred)
+			}
+		}
+	}
+	// The preheader is a boundary only, never a body member.
+	if node != nil && node.LoopPreheaderSet {
+		delete(body, node.LoopPreheader)
+	}
+	return body
+}
+
+// selfUpdateStep returns the signed constant step when expr is counter (+|-) k,
+// resolving the counter operand by symbol identity. Any other shape is ok=false.
+func selfUpdateStep(expr ast.Expr, counter cfg.SymbolID, graph *cfg.Graph) (int64, bool) {
+	arith, ok := expr.(*ast.ArithmeticOpExpr)
+	if !ok || (arith.Operator != "+" && arith.Operator != "-") {
+		return 0, false
+	}
+	bindings := graph.Bindings()
+	counterIsLhs := identIsSymbol(arith.Lhs, counter, bindings)
+	counterIsRhs := identIsSymbol(arith.Rhs, counter, bindings)
+	switch {
+	case counterIsLhs:
+		k, ok := numconst.IntConstFromExpr(arith.Rhs)
+		if !ok {
+			return 0, false
+		}
+		if arith.Operator == "-" {
+			return -k, true
+		}
+		return k, true
+	case counterIsRhs && arith.Operator == "+":
+		// k + counter is also increasing by k.
+		k, ok := numconst.IntConstFromExpr(arith.Lhs)
+		if !ok {
+			return 0, false
+		}
+		return k, true
+	}
+	return 0, false
+}
+
+func identIsSymbol(expr ast.Expr, sym cfg.SymbolID, bindings *bind.BindingTable) bool {
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok || bindings == nil {
+		return false
+	}
+	s, ok := bindings.SymbolOf(ident)
+	return ok && s == sym
+}
+
+// initConstFor returns the integer value the counter path holds at the loop
+// preheader, or ok=false when it is not a compile-time integer constant there.
+func initConstFor(p constraint.Path, constResolver func(string) *flow.ConstValue) (int64, bool) {
+	if p.Root == "" {
+		return 0, false
+	}
+	val := constResolver(p.Root)
+	if val == nil || val.Kind != flow.ConstInt {
+		return 0, false
+	}
+	return val.Int, true
 }
 
 // numericForConstraints extracts numeric constraints from a numeric for-loop.
@@ -239,11 +604,6 @@ func NumericForConstraints(graph *cfg.Graph, branchPoint cfg.Point, varName stri
 		return nil
 	}
 
-	initVal, initOk := numconst.IntConstFromExpr(forInfo.Init)
-	if !initOk {
-		return nil
-	}
-
 	root := varName
 	if varSymbol != 0 {
 		if name := graph.NameOf(varSymbol); name != "" {
@@ -252,18 +612,60 @@ func NumericForConstraints(graph *cfg.Graph, branchPoint cfg.Point, varName stri
 	}
 	varPath := path.WithVersion(constraint.Path{Root: root, Symbol: varSymbol}, graph, branchPoint)
 
-	var result []constraint.NumericConstraint
-	result = append(result, constraint.GeConst{X: varPath, C: initVal})
-
-	if limitVal, limitOk := numconst.IntConstFromExpr(forInfo.Limit); limitOk {
-		result = append(result, constraint.LeConst{X: varPath, C: limitVal})
-	} else if arrPath, offset, ok := ExtractLenBound(forInfo.Limit, branchPoint, graph); ok {
-		result = append(result, constraint.LeLenOf{X: varPath, Array: arrPath, Offset: offset})
-	} else {
+	// The Init bound is the loop-start end; Limit is the loop-stop end. A positive
+	// step ascends from Init up to Limit, so Init is the lower bound and Limit the
+	// upper; a negative step descends from Init down to Limit, so Init is the upper
+	// bound and Limit the lower. A non-constant step has no provable direction and
+	// emits no bounds (sound: no presence proof).
+	step, stepOk := forStepValue(forInfo.Step)
+	if !stepOk || step == 0 {
 		return nil
 	}
+	var lowerExpr, upperExpr ast.Expr
+	if step > 0 {
+		lowerExpr, upperExpr = forInfo.Init, forInfo.Limit
+	} else {
+		lowerExpr, upperExpr = forInfo.Limit, forInfo.Init
+	}
 
-	return result
+	lower, lowerOk := forLowerConstraint(varPath, lowerExpr)
+	upper, upperOk := forUpperConstraint(varPath, upperExpr, branchPoint, graph)
+	if !lowerOk || !upperOk {
+		return nil
+	}
+	return []constraint.NumericConstraint{lower, upper}
+}
+
+// forStepValue returns the integer step of a numeric for-loop, defaulting to 1
+// when the step is omitted. A non-integer-constant step yields ok=false.
+func forStepValue(step ast.Expr) (int64, bool) {
+	if step == nil {
+		return 1, true
+	}
+	return numconst.IntConstFromExpr(step)
+}
+
+// forLowerConstraint builds the v >= X lower bound for a for-loop end. Only an
+// integer-constant end is expressible as a lower bound (there is no symbolic
+// length lower-bound constraint), so a length-expression lower end yields false.
+func forLowerConstraint(varPath constraint.Path, expr ast.Expr) (constraint.NumericConstraint, bool) {
+	c, ok := numconst.IntConstFromExpr(expr)
+	if !ok {
+		return nil, false
+	}
+	return constraint.GeConst{X: varPath, C: c}, true
+}
+
+// forUpperConstraint builds the v <= X upper bound for a for-loop end, as either
+// a constant (LeConst) or a symbolic array-length relation (LeLenOf, e.g. #arr).
+func forUpperConstraint(varPath constraint.Path, expr ast.Expr, branchPoint cfg.Point, graph *cfg.Graph) (constraint.NumericConstraint, bool) {
+	if c, ok := numconst.IntConstFromExpr(expr); ok {
+		return constraint.LeConst{X: varPath, C: c}, true
+	}
+	if arrPath, offset, ok := ExtractLenBound(expr, branchPoint, graph); ok {
+		return constraint.LeLenOf{X: varPath, Array: arrPath, Offset: offset}, true
+	}
+	return nil, false
 }
 
 func ExtractLenPath(expr ast.Expr, p cfg.Point, graph *cfg.Graph) constraint.Path {

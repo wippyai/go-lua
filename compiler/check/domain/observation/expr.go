@@ -454,6 +454,61 @@ func (p Projector) attrTypeWithExpected(expr *ast.AttrGetExpr, point cfg.Point, 
 	return t
 }
 
+// SourceReadIsNonIndexable reports whether the source expression is an attribute
+// or index read whose object type cannot be indexed at all at the point (for
+// example a nil value reached on a non-dominating path). Such a read is the
+// field-check's diagnostic ("cannot index type ..."); its result degrades to
+// unknown, so a downstream assignment must not re-report that unknown as its own
+// mismatch.
+//
+// Only a fundamentally non-indexable object qualifies. An indexable container
+// whose specific field is merely absent (for example a union member missing the
+// field) is a distinct "field missing" diagnostic and is left untouched.
+func (p Projector) SourceReadIsNonIndexable(source ast.Expr, point cfg.Point) bool {
+	attr, ok := source.(*ast.AttrGetExpr)
+	if !ok || attr == nil {
+		return false
+	}
+	obj := p.TypeOf(attr.Object, point)
+	if obj == nil || obj.Kind().IsPlaceholder() {
+		return false
+	}
+	return typeIsNonIndexable(obj)
+}
+
+// typeIsNonIndexable reports whether a concrete type supports no field or index
+// access at all. It mirrors the NotIndexable classification used by field
+// resolution: containers, records, interfaces, unions, intersections, optionals,
+// type parameters and strings index; nil, never, functions and other scalars do
+// not.
+func typeIsNonIndexable(t typ.Type) bool {
+	switch u := unwrap.Alias(t).(type) {
+	case *typ.Record, *typ.Interface, *typ.Union, *typ.Intersection, *typ.Optional:
+		return false
+	case *typ.Map, *typ.Array, *typ.Tuple:
+		return false
+	case *typ.TypeParam, *typ.Instantiated:
+		return false
+	case *typ.Function:
+		return true
+	case *typ.Literal:
+		return u.Base != kind.String
+	default:
+		if u == nil {
+			return false
+		}
+		switch u.Kind() {
+		case kind.Recursive:
+			return false
+		case kind.String:
+			return false
+		case kind.Nil, kind.Never:
+			return true
+		}
+		return true
+	}
+}
+
 func (p Projector) attrType(expr *ast.AttrGetExpr, point cfg.Point) typ.Type {
 	if expr == nil {
 		return typ.Unknown
@@ -772,6 +827,43 @@ func (p Projector) interceptSelectCall(expr *ast.FuncCallExpr, point cfg.Point) 
 	return nil, false
 }
 
+// interceptMethodCall observes a method call through the shared synth method
+// intercept so an effect-dispatched type-guard call (Type:is(x) -> (Type?, Error?))
+// resolves to the same return vector the engine synthesizes instead of degrading
+// to unknown. Returns false for non-intercepted method calls. The post-flow return
+// summary observes a body's return list through this surface, so a local function
+// whose body is `return Point:is(x)` publishes the inferred (Point?, Error?) summary.
+func (p Projector) interceptMethodCall(expr *ast.FuncCallExpr, point cfg.Point) ([]typ.Type, bool) {
+	if expr == nil || expr.Method == "" {
+		return nil, false
+	}
+	sc := p.cfg.Scopes[point]
+	if sc == nil {
+		return nil, false
+	}
+	chain := intercept.NewChain(nil, []intercept.MethodIntercept{
+		&intercept.TypeIsIntercept{},
+	})
+	env := intercept.CallEnv{
+		Scope:    sc,
+		Recurse:  intercept.ExprSynth(func(e ast.Expr) typ.Type { return p.TypeOf(e, point) }),
+		Bindings: p.cfg.Bindings,
+		TypeLookup: func(name string) typ.Type {
+			if p.cfg.GlobalTypes == nil {
+				return nil
+			}
+			if t, ok := p.cfg.GlobalTypes[name]; ok {
+				return t
+			}
+			return nil
+		},
+	}
+	if res := chain.InterceptMethodCall(expr, env); res.Skip {
+		return res.Types, true
+	}
+	return nil, false
+}
+
 func (p Projector) callReturnsWithExpected(expr *ast.FuncCallExpr, point cfg.Point, expected typ.Type) []typ.Type {
 	if expr == nil {
 		return []typ.Type{typ.Unknown}
@@ -782,6 +874,9 @@ func (p Projector) callReturnsWithExpected(expr *ast.FuncCallExpr, point cfg.Poi
 	args := p.callArgTypes(expr.Args, point)
 	if metatable.IsSetMetatableCall(expr, p.cfg.Bindings) {
 		return []typ.Type{metatable.With(args[0], args[1])}
+	}
+	if types, ok := p.interceptMethodCall(expr, point); ok {
+		return types
 	}
 	var callee typ.Type
 	var receiver typ.Type
@@ -954,6 +1049,17 @@ func (p Projector) pathType(expr ast.Expr, point cfg.Point) typ.Type {
 		// so without this both must observe the same genuine never narrowing.
 		if typ.IsNever(solved) {
 			return p.finalizeObservedPath(solved)
+		}
+		// A short-circuit local condition that proves the path empty is
+		// authoritative: the expression is on a control branch that cannot
+		// execute for this value (e.g. msg.content[1] guarded by
+		// type(msg.content) == "table" when msg.content is a string). The proof
+		// surface (ConditionedTypeAt/ConditionedSeedTypeAt) only yields Never as
+		// genuine bottom for ConditionAt(point) AND LocalCondition; projection
+		// imprecision falls back to nil, not Never, so this never converts an
+		// unknown read into a spurious unreachable.
+		if p.cfg.LocalCondition != nil && typ.IsNever(proof) {
+			return p.finalizeObservedPath(proof)
 		}
 		if selected, ok := value.SelectPathObservation(solved, proof, declared); ok {
 			selected = p.applyPathPresenceProof(selected, expr, point)

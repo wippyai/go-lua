@@ -180,6 +180,16 @@ func conditionedPathEvidenceFromCondition(path constraint.Path, evidence typ.Typ
 	if evidence == nil || path.Symbol == 0 || cond.IsFalse() || !cond.HasConstraints() {
 		return evidence, false
 	}
+	// A truthy/non-nil guard on a field path proves the body locally handles a nil
+	// field, so the field is required only optionally from callers. Re-admit the
+	// guarded-away nil into the field's evidence leaf; the resulting passive
+	// optional record is no longer a hard caller obligation.
+	if len(path.Segments) > 0 && pathProvenNonNilByGuard(path, cond) {
+		if relaxed := optionalLeafEvidence(path.Segments, evidence); relaxed != nil && !typ.TypeEquals(relaxed, evidence) {
+			return relaxed, true
+		}
+		return evidence, true
+	}
 	conditionEvidence := typ.Type(nil)
 	guarded := false
 	for _, item := range cond.MustConstraints() {
@@ -213,6 +223,67 @@ func conditionedPathEvidenceFromCondition(path constraint.Path, evidence typ.Typ
 		return evidence, guarded
 	}
 	return conditioned, true
+}
+
+// pathProvenNonNilByGuard reports whether cond carries a truthy/non-nil guard on
+// exactly path, proving the body has locally excluded nil at that field. Versions
+// are ignored: the guard and the use refer to the same field by symbol and
+// segment chain even when their SSA versions differ.
+func pathProvenNonNilByGuard(path constraint.Path, cond constraint.Condition) bool {
+	for _, item := range cond.MustConstraints() {
+		var guardPath constraint.Path
+		switch v := item.(type) {
+		case constraint.Truthy:
+			guardPath = v.Path
+		case constraint.NotNil:
+			guardPath = v.Path
+		default:
+			continue
+		}
+		if samePathIgnoringVersion(guardPath, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func samePathIgnoringVersion(a, b constraint.Path) bool {
+	if a.Symbol != b.Symbol || len(a.Segments) != len(b.Segments) {
+		return false
+	}
+	for i := range a.Segments {
+		if a.Segments[i].Kind != b.Segments[i].Kind ||
+			a.Segments[i].Name != b.Segments[i].Name ||
+			a.Segments[i].Index != b.Segments[i].Index {
+			return false
+		}
+	}
+	return true
+}
+
+// optionalLeafEvidence rebuilds the structural evidence for segments with its
+// deepest field marked optional, re-admitting the nil a body guard excluded.
+func optionalLeafEvidence(segments []constraint.Segment, evidence typ.Type) typ.Type {
+	if len(segments) == 0 {
+		return evidence
+	}
+	rec := unwrap.Record(evidence)
+	if rec == nil || len(rec.Fields) != 1 {
+		return evidence
+	}
+	field := rec.Fields[0]
+	if len(segments) == 1 {
+		builder := typ.NewRecord().SetOpen(rec.Open)
+		builder.OptReadonlyField(field.Name, field.Type)
+		return builder.Build()
+	}
+	child := optionalLeafEvidence(segments[1:], field.Type)
+	if child == nil || typ.TypeEquals(child, field.Type) {
+		return evidence
+	}
+	builder := typ.NewRecord().SetOpen(rec.Open)
+	builder.ReadonlyField(field.Name, child)
+	return builder.Build()
 }
 
 func fieldConditionConstraint(item constraint.Constraint, resolveLiteral func(constraint.Path) *typ.Literal) (constraint.Path, string, *typ.Literal, bool) {

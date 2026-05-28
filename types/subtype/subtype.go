@@ -588,9 +588,20 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 			continue
 		}
 
+		// An optional super field reads (and, when mutable, writes) as `sf.Type | nil`:
+		// an absent field yields nil. The depth comparison therefore measures the sub
+		// field against the nilable form of the super field type. This makes a required
+		// nilable sub field (`f: T?`) a sound subtype of an optional super field (`f?: T`)
+		// while a non-nilable sub field stays governed by the mutable invariance guard
+		// below (the super may write nil that the sub cannot accept).
+		superFieldType := sf.Type
+		if sf.Optional {
+			superFieldType = typ.NewOptional(sf.Type)
+		}
+
 		if sf.Readonly {
 			// Readonly in super: covariant check is sound (no writes through supertype)
-			if !c.check(subField.Type, sf.Type, depth+1) {
+			if !c.check(subField.Type, superFieldType, depth+1) {
 				return false
 			}
 		} else {
@@ -600,12 +611,12 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 			}
 
 			// Forward check: sub field type must be subtype of super field type
-			if !c.check(subField.Type, sf.Type, depth+1) {
+			if !c.check(subField.Type, superFieldType, depth+1) {
 				return false
 			}
 			// Reverse check with widening: allow literal/refinement types to widen
 			// This is sound for fresh record literals where no narrower-typed alias exists
-			if !c.check(sf.Type, subField.Type, depth+1) && !c.canWidenTo(subField.Type, sf.Type, depth+1) {
+			if !c.check(superFieldType, subField.Type, depth+1) && !c.canWidenTo(subField.Type, superFieldType, depth+1) {
 				return false
 			}
 		}

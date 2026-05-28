@@ -61,8 +61,14 @@ type Solution struct {
 	unsatEdges                   map[edgeKey]bool // edges proven unreachable by constraints
 	pointConditions              map[cfg.Point]constraint.Condition
 	reachabilityDeps             dependencyMap
-	numericStates                map[cfg.Point]*numeric.State
-	iterations                   int
+	reachabilityDepsSeen         map[reachabilityPointDep]bool
+	// numericAt is the relational numeric component of each point's worklist
+	// state. It is a first-class slot of the unified value worklist fixpoint:
+	// solve() computes it in the same iteration that processes the value env,
+	// joining/widening predecessor contributions, and convergence requires both
+	// the value and numeric components to be stable. Top is the absent slot.
+	numericAt  map[cfg.Point]*numeric.State
+	iterations int
 
 	// Scratch buffers to reduce allocations in hot paths
 	scratchTypes           []typ.Type
@@ -147,15 +153,14 @@ type mergedField struct {
 //
 // The algorithm:
 //  1. Builds edge conditions from input constraints
-//  2. Checks numeric constraints to mark unreachable edges
-//  3. Propagates conditions through the CFG to compute point conditions
-//  4. Runs worklist iteration to compute final narrowed types
+//  2. Propagates conditions through the CFG to compute point conditions
+//  3. Runs worklist iteration to compute final narrowed types and the numeric
+//     component, then marks unreachable edges from the converged numeric state
 func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 	s, size := newSolution(inputs, resolver)
 	s.buildTransferPlan(size)
 	s.buildEdgeConditions()
 	s.buildEdgeNumericConstraints()
-	s.checkNumericConstraints()
 
 	// Propagate conditions using standalone propagate package
 	s.runPropagation()
@@ -174,7 +179,7 @@ func SolveConditionView(inputs *Inputs, resolver narrow.Resolver) *Solution {
 	s, _ := newSolution(conditionViewInputs(inputs), resolver)
 	s.buildEdgeConditions()
 	s.buildEdgeNumericConstraints()
-	s.checkNumericConstraints()
+	s.runNumericWorklist()
 	s.runPropagation()
 	s.initializeDeclarations()
 	s.queryCacheEnabled = true
@@ -268,11 +273,17 @@ func (s *Solution) runPropagation() {
 		}
 	}
 
+	demand := s.inputs.ConditionDemand
+	if demand == nil {
+		demand = buildConditionDemand(s.inputs)
+	}
+
 	propInputs := &propagate.Inputs{
 		Graph:          s.inputs.Graph,
 		EdgeConditions: edgeConds,
 		DeadPoints:     s.inputs.DeadPoints,
 		Assignments:    assigns,
+		Demand:         demand,
 	}
 
 	result := propagate.Propagate(propInputs)
@@ -438,6 +449,19 @@ func (s *Solution) solve() {
 	assignDeps := s.buildAssignmentDependencies()
 	edgeDeps := s.buildEdgeConditionDependencies()
 
+	// The numeric component is a first-class slot of this worklist's per-point
+	// state. It carries its own seeding/widening bookkeeping and is computed in
+	// the same iteration as the value env; convergence requires both components
+	// to be stable, so a point is rescheduled when either changes.
+	numericActive := len(s.edgeNumericConstraints) > 0 || s.hasNumericLengthEffects()
+	var numericWS *numericWorklistState
+	if numericActive {
+		numericWS = newNumericWorklistState()
+		if s.numericAt == nil {
+			s.numericAt = make(map[cfg.Point]*numeric.State)
+		}
+	}
+
 	worklist := g.RPO()
 	inQueue := make([]bool, g.Size())
 	for _, p := range worklist {
@@ -454,8 +478,12 @@ func (s *Solution) solve() {
 			inQueue[idx] = false
 		}
 
+		// Compute the numeric component first so the value transfer's
+		// reachability and length-shape projection at p observe the current
+		// numeric state in the same visit.
+		numericChanged := numericActive && s.numericTransferAt(p, numericWS)
 		changedKeys := s.processPointReturnChangedKeys(p)
-		if len(changedKeys) > 0 {
+		if len(changedKeys) > 0 || numericChanged {
 			// Add direct successors
 			for _, succ := range graphSuccessors(g, p) {
 				if succIdx := int(succ); succIdx >= 0 && succIdx < len(inQueue) && !inQueue[succIdx] {
@@ -468,6 +496,10 @@ func (s *Solution) solve() {
 		}
 
 		s.iterations++
+	}
+
+	if numericActive {
+		s.finalizeUnsatEdges()
 	}
 	if s.narrowedTypeCache != nil {
 		clear(s.narrowedTypeCache)

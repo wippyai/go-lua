@@ -281,3 +281,53 @@ func FamilyKeyOf(t Type) (FamilyKey, bool) {
 	}
 	return rec.familyKey, true
 }
+
+// RecursiveFamilyFingerprint folds the recursive-family identities reachable
+// from t into a stable, order-independent hash.
+//
+// A recursive family is identified by its keyed owner FamilyKey when it carries
+// one, otherwise by the recursion-variable name the source declaration gave it.
+// Both identities are stable across body refinement and unfolding depth, so two
+// equivalent unfoldings of one family reference the same handles and produce one
+// fingerprint, while two distinct families (a class allocation per module, say)
+// carry different identities and differ.
+//
+// The fingerprint is the discriminator the product-family precision relation
+// lacks: SameProductFamily and precisionFamilyHash bottom out at a constant for
+// any recursive-containing terminal, so they conflate distinct families that
+// share structural precision. That conflation is unsound when a memoized result
+// must reflect a specific family. Combining SameProductFamily with an equal
+// fingerprint keeps equivalent unfoldings shared while keeping distinct families
+// apart.
+func RecursiveFamilyFingerprint(t Type) uint64 {
+	if t == nil {
+		return 0
+	}
+	var fp uint64
+	seen := make(map[uint64]bool)
+	Rewrite(t, func(node Type) (Type, bool) {
+		rec, ok := node.(*Recursive)
+		if !ok {
+			return nil, false
+		}
+		var id uint64
+		if rec.keyed {
+			id = internal.HashCombine(recursiveFamilyKeyedSalt, rec.familyKey.hash())
+		} else {
+			id = internal.HashCombine(recursiveFamilyNamedSalt, internal.FnvString(rec.Name))
+		}
+		if !seen[id] {
+			seen[id] = true
+			// XOR folds per-family identities order-independently so the
+			// traversal order does not perturb the fingerprint.
+			fp ^= id
+		}
+		return nil, false
+	})
+	return fp
+}
+
+const (
+	recursiveFamilyKeyedSalt uint64 = 0x9e3779b97f4a7c15
+	recursiveFamilyNamedSalt uint64 = 0xc2b2ae3d27d4eb4f
+)

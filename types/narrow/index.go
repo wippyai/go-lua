@@ -189,6 +189,12 @@ func recordMayHaveLengthAtLeast(rec *typ.Record, lower int64, depth int) bool {
 	if lower <= 0 {
 		return true
 	}
+	// A fresh empty-table seed ({}) is the gradual bottom of the table lattice:
+	// it can still grow into a sequence (table.insert widens it), so a positive
+	// length lower bound is compatible with it rather than a contradiction.
+	if rec.Fresh {
+		return true
+	}
 	if rec.Open || rec.Metatable != nil {
 		return true
 	}

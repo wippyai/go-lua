@@ -521,6 +521,15 @@ func (s *Solution) assignmentSourceTypeAt(p cfg.Point, assign UnifiedAssignment)
 			}
 		}
 		sourceType = s.NarrowedTypeAt(p, assign.Source.Path)
+		// A field-path source read off an ANNOTATED root that the flow tracks as a
+		// precise non-nil construction value must keep the declared field
+		// optionality when there is no nil-guard on that path. Otherwise an
+		// optional field captured into a local (local x = ann.field) would lose its
+		// nil presence. Guard-narrowed reads carry a point condition and are handled
+		// by NarrowedTypeAt's condition projection, not here.
+		if !s.ConditionAt(p).HasConstraints() {
+			sourceType = s.reconcileFieldPathAgainstAnnotatedDeclared(assign.Source.Path, sourceType)
+		}
 	case AssignmentSourceIterator:
 		if iterType := s.iterVarTypeAt(p, assign.Source); iterType != nil {
 			sourceType = mergeIteratorAssignedType(assign.Type, iterType)
@@ -956,7 +965,7 @@ func (s *Solution) iterationElementEvidenceAt(p cfg.Point, src AssignmentSource)
 	for _, srcType := range [...]typ.Type{
 		s.pointLocalPathTypeAt(p, src.Path),
 		s.pathDomainJoinedType(src.Path),
-		s.lookupDeclaredType(src.Path),
+		s.declaredPathType(src.Path),
 	} {
 		if srcType == nil {
 			continue
@@ -1154,14 +1163,44 @@ func (s *Solution) mapElementPresenceTypeAt(p cfg.Point, src AssignmentSource, v
 	if valueType == nil || s == nil || src.Kind != AssignmentSourceMapElement {
 		return valueType
 	}
-	keyPath := s.mapElementKeyPath(src)
-	if keyPath.IsEmpty() || src.MapPath.IsEmpty() {
+	if src.MapPath.IsEmpty() {
 		return valueType
 	}
-	if s.HasKeyOf(p, src.MapPath, keyPath) {
-		return narrow.RemoveNil(valueType)
+	container := s.NarrowedTypeAt(p, src.MapPath)
+	if container == nil {
+		return valueType
 	}
-	return valueType
+	return s.refineIndexReadAt(p, container, valueType, s.mapElementKeyDescriptor(src))
+}
+
+// mapElementKeyDescriptor lowers a dynamic index-read assignment source into the
+// AST-free index-key vocabulary the shared presence proof consumes.
+func (s *Solution) mapElementKeyDescriptor(src AssignmentSource) IndexKeyDescriptor {
+	desc := IndexKeyDescriptor{ContainerPath: src.MapPath}
+	keyName := src.KeyVar
+	if keyName == "" && src.KeySymbol != 0 && s.inputs != nil && s.inputs.Graph != nil {
+		keyName = s.inputs.Graph.NameOf(src.KeySymbol)
+	}
+	if keyName != "" {
+		desc.HasVar = true
+		desc.VarName = keyName
+		desc.VarOffset = src.Offset
+	}
+	if keyPath := s.mapElementKeyPath(src); !keyPath.IsEmpty() {
+		desc.HasKeyPath = true
+		desc.KeyPath = keyPath
+	}
+	return desc
+}
+
+// addCheckedOffset adds an index offset with overflow guarding, mirroring the
+// read-side proof's checked arithmetic so a wrapped sum never proves presence.
+func addCheckedOffset(a, b int64) (int64, bool) {
+	sum := a + b
+	if (b > 0 && sum < a) || (b < 0 && sum > a) {
+		return 0, false
+	}
+	return sum, true
 }
 
 func (s *Solution) mapElementKeyPath(src AssignmentSource) constraint.Path {
@@ -1193,21 +1232,28 @@ func (s *Solution) lengthIndexTypeAt(p cfg.Point, src AssignmentSource, indexRes
 	if containerType == nil {
 		return nil
 	}
-	lower, _, ok := s.LengthBoundsAt(p, src.ContainerPath)
-	if !ok {
-		return nil
-	}
+	solvedRead := lengthIndexNeedsSolvedRead(indexResult)
 	readType := indexResult
-	if lengthIndexNeedsSolvedRead(readType) {
+	if solvedRead {
 		readType = s.lengthIndexReadType(containerType)
 	}
 	if readType == nil {
 		return nil
 	}
-	if refined := narrow.RefineLengthIndex(containerType, readType, lower, src.Offset); refined != nil {
+	desc := IndexKeyDescriptor{
+		ContainerPath: src.ContainerPath,
+		HasLenExpr:    true,
+		LenExprPath:   src.ContainerPath,
+		LenOffset:     src.Offset,
+	}
+	if refined := s.refineIndexReadAt(p, containerType, readType, desc); refined != nil && !typ.TypeEquals(refined, readType) {
 		return refined
 	}
-	if lengthIndexNeedsSolvedRead(indexResult) && lengthIndexPresenceProven(containerType, lower, src.Offset) {
+	// When the static read carried no element evidence, the container-resolved
+	// read is only authoritative once presence is proven (the refine arm removes
+	// nil only when the result was nil-eligible; a non-nilable resolved read
+	// needs the explicit presence check to be surfaced).
+	if solvedRead && s.lengthIndexPresenceProvenAt(p, src.ContainerPath, containerType, src.Offset) {
 		return readType
 	}
 	return nil
@@ -1232,7 +1278,11 @@ func (s *Solution) lengthIndexReadType(containerType typ.Type) typ.Type {
 	return nil
 }
 
-func lengthIndexPresenceProven(containerType typ.Type, lower, offset int64) bool {
+func (s *Solution) lengthIndexPresenceProvenAt(p cfg.Point, container constraint.Path, containerType typ.Type, offset int64) bool {
+	lower, _, ok := s.LengthBoundsAt(p, container)
+	if !ok {
+		return false
+	}
 	index := lower + offset
 	if index < 1 {
 		return false
@@ -1387,9 +1437,6 @@ func (s *Solution) evaluateMapMutation(p cfg.Point, mm MapMutatorAssignment) (ma
 // only the mutator's admitted result (setMutableValue), so no retained value leaks
 // to projections or interproc summaries.
 func (s *Solution) carryWidenedMutatorSeed(p cfg.Point, key string, current typ.Type) typ.Type {
-	if zzNoSeed {
-		return current
-	}
 	carried := s.mutableSelfCarryAt(p, key)
 	if carried == nil {
 		return current
@@ -1399,9 +1446,6 @@ func (s *Solution) carryWidenedMutatorSeed(p cfg.Point, key string, current typ.
 	}
 	merged := value.MergeForConvergence(current, carried)
 	if merged != nil {
-		if zzSeedDbg && !sameFlowValue(current, merged) {
-			zzLog("ZZSEED key=%s current=%s carry=%s merged=%s", key, current.String(), carried.String(), merged.String())
-		}
 		return merged
 	}
 	return current
@@ -1574,6 +1618,21 @@ func (s *Solution) joinKnownRootTypes(sym cfg.SymbolID) typ.Type {
 		return nil
 	}
 	return join.Types(types...)
+}
+
+// declaredPathType returns the declared/literal/sibling type for a path, with
+// its segments projected against the root type. The declared maps are keyed by
+// the root symbol only, so a segmented path (state.active_sessions) must project
+// its field segments rather than return the whole root record.
+func (s *Solution) declaredPathType(path constraint.Path) typ.Type {
+	declared := s.lookupDeclaredType(path)
+	if declared == nil || len(path.Segments) == 0 {
+		return declared
+	}
+	if derived, ok := deriveTypeFrom(s.resolver, declared, path.Segments); ok {
+		return derived
+	}
+	return nil
 }
 
 func (s *Solution) pathDomainJoinedType(path constraint.Path) typ.Type {
@@ -1941,12 +2000,13 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 		if targetKey == "" {
 			continue
 		}
-		// Join and store under phi target canonical key
-		joined := s.joinPhiEquation(p, string(targetKey), types)
-		old := projectFlowValue(s.values[string(targetKey)])
-		joined = stabilizePhiJoin(old, joined)
-		if !sameFlowValue(old, joined) {
-			s.setValue(string(targetKey), joined)
+		// Accumulate the precise control-flow join of the operands into the
+		// stored carrier monotonically under the phi target canonical key.
+		candidate := s.joinPhiEquation(p, string(targetKey), types)
+		oldAV := s.values[string(targetKey)]
+		nextAV := s.accumulatePhi(p, oldAV, candidate)
+		if !sameFlowValueAV(oldAV, nextAV) {
+			s.setValueAV(string(targetKey), nextAV)
 			changedKeys = append(changedKeys, string(targetKey))
 		}
 
@@ -1977,11 +2037,11 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 				continue
 			}
 			fullKey := string(targetKey) + suffix
-			joined = s.joinPhiEquation(p, fullKey, types)
-			old = s.valueAtPoint(p, fullKey)
-			joined = stabilizePhiJoin(old, joined)
-			if !sameFlowValue(old, joined) {
-				s.setMutableValue(p, fullKey, joined)
+			suffixCandidate := s.joinPhiEquation(p, fullKey, types)
+			suffixOldAV, _ := s.abstractValueAt(p, fullKey)
+			suffixNextAV := s.accumulatePhi(p, suffixOldAV, suffixCandidate)
+			if !sameFlowValueAV(suffixOldAV, suffixNextAV) {
+				s.setMutableValueAV(p, fullKey, suffixNextAV)
 			}
 		}
 	}
@@ -1989,20 +2049,29 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 	return changedKeys
 }
 
-// stabilizePhiJoin keeps the existing stored fact when the freshly joined
-// candidate is the same point in the product lattice, so a recursive product
-// family that re-derives to a different typ.Type instance but the same canonical
-// product node reports no change and the worklist drains. The comparison is
-// product identity (sameFlowValue / product.Equal), not a typ.Type precision
-// comparison, which is what the convergence proof depends on.
-func stabilizePhiJoin(existing, candidate typ.Type) typ.Type {
-	if existing == nil || candidate == nil {
-		return candidate
+// accumulatePhi merges a freshly computed phi candidate into the stored carrier
+// for a monotone-ascending fixpoint: product.Join at ordinary control-flow
+// joins, and a Cousot product.Widen at widening sites (loop headers), so the
+// value-domain worklist ascends to a fixed point and terminates on the
+// infinite-height type lattice.
+//
+// The candidate is the precise control-flow join of the phi operands
+// (joinPhiEquation), lifted to the carrier. Accumulating it against the stored
+// value — rather than replacing the slot — is what keeps the iterate ascending:
+// a back-edge operand that transiently reads the opaque unknown type can no
+// longer descend an already-established slot, which is the limit cycle that
+// otherwise spins the worklist (and grows the interner without bound). Identity
+// is the zero carrier (an absent slot), for which the first visit seeds the
+// candidate directly.
+func (s *Solution) accumulatePhi(p cfg.Point, old product.AbstractValue, candidate typ.Type) product.AbstractValue {
+	cand := liftFlowValue(candidate)
+	if old.IsZero() {
+		return cand
 	}
-	if sameFlowValue(existing, candidate) {
-		return existing
+	if s.inputs != nil && s.inputs.Graph != nil && pointIsWideningSite(s.inputs.Graph, p) {
+		return product.Widen(old, cand)
 	}
-	return candidate
+	return product.Join(old, cand)
 }
 
 // joinPhiEquation joins phi operands. The join itself stays the precise
@@ -2126,3 +2195,4 @@ func (s *Solution) mutableSuffixesForRoot(p cfg.Point, baseKey string) []string 
 	}
 	return s.mutableSuffixIndex[pointRootKey{point: p, root: baseKey}]
 }
+

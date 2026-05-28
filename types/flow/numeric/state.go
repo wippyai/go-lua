@@ -830,6 +830,17 @@ func (s *State) ApplyLenGeConst(arr constraint.PathKey, c int64) {
 	s.applyLenGeConst(arr, c)
 }
 
+// DropLenBound removes any tracked length interval for arr. A mutation that may
+// shrink or reshape a sequence (table.remove, an index write that may hole, an
+// unknown mutator) invalidates the prior length bound; dropping it keeps the
+// numeric state sound rather than carrying a floor the post-state no longer has.
+func (s *State) DropLenBound(arr constraint.PathKey) {
+	if s == nil || s.lenBounds == nil {
+		return
+	}
+	delete(s.lenBounds, arr)
+}
+
 func (s *State) applyLenGeConst(arr constraint.PathKey, c int64) {
 	if c < 0 {
 		c = 0

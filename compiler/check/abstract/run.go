@@ -156,6 +156,9 @@ func BuildInputs(fc *abstractcore.FlowContext) *flow.Inputs {
 	// Numeric constraints.
 	cond.ExtractNumericConstraints(fc, inputs)
 
+	// Return-expression and call-argument reads for path-condition liveness.
+	ExtractConditionReads(fc, inputs)
+
 	return inputs
 }
 

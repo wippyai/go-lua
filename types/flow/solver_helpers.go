@@ -102,12 +102,27 @@ func (s *Solution) setValue(key string, t typ.Type) {
 	if s == nil || key == "" {
 		return
 	}
+	// Admission boundary: a typ.Type fact enters the abstract-state carrier as a
+	// product.AbstractValue. Bookkeeping uses the caller's typ.Type directly.
+	s.storeValue(key, liftFlowValue(t), t)
+}
+
+// setValueAV stores an already-built carrier in the stable values store. It is
+// the native ingress for the value-domain fixpoint merge: a product.Join/Widen
+// result is stored without a project-then-relift round trip, which would mint a
+// different interned node and break the product-identity convergence check.
+func (s *Solution) setValueAV(key string, av product.AbstractValue) {
+	if s == nil || key == "" || av.IsZero() {
+		return
+	}
+	s.storeValue(key, av, projectFlowValue(av))
+}
+
+func (s *Solution) storeValue(key string, av product.AbstractValue, t typ.Type) {
 	if s.values == nil {
 		s.values = make(map[string]product.AbstractValue, 1)
 	}
-	// Admission boundary: a typ.Type fact enters the abstract-state carrier as a
-	// product.AbstractValue. This is the only ingress for the stable values store.
-	s.values[key] = liftFlowValue(t)
+	s.values[key] = av
 	s.setValuePresence(key, t)
 	s.indexFieldOverlayValue(key, t)
 	s.indexValueSuffix(key)
@@ -440,33 +455,44 @@ func (s *Solution) buildReachabilityDependencies() dependencyMap {
 			}
 		}
 	}
-	s.registerNumericShapeReachabilityDeps(deps, seen)
+	s.reachabilityDepsSeen = seen
 	return deps
 }
 
-func (s *Solution) registerNumericShapeReachabilityDeps(deps dependencyMap, seen map[reachabilityPointDep]bool) {
-	if s == nil || s.numericStates == nil {
+// registerPointNumericShapeReachabilityDeps registers the reachability
+// dependencies induced by point p's converged numeric length bounds. A length
+// lower-bound on an array key makes p's shape-reachability depend on that array's
+// value type, so the value worklist must re-evaluate p when the array key (or its
+// ancestors) changes. It is called from the unified worklist's numeric transfer
+// as numeric states materialize, since the numeric component is computed inside
+// solve() rather than in a prior pass.
+func (s *Solution) registerPointNumericShapeReachabilityDeps(point cfg.Point) {
+	if s == nil || s.reachabilityDeps == nil {
 		return
 	}
-	for point, state := range s.numericStates {
-		if state == nil {
-			continue
-		}
-		state.ForEachLenBound(func(key constraint.PathKey, lower, _ int64) bool {
-			if lower <= 0 || key == "" {
-				return true
-			}
-			dep := reachabilityPointDep{key: string(key), point: point}
-			if !seen[dep] {
-				seen[dep] = true
-				deps.register(key, point)
-			}
-			if path, ok := s.pathFromCanonicalKeyAtPoint(point, key); ok {
-				s.registerReachabilityAncestorDeps(deps, seen, point, path)
-			}
-			return true
-		})
+	state := s.numericAt[point]
+	if state == nil {
+		return
 	}
+	seen := s.reachabilityDepsSeen
+	if seen == nil {
+		seen = make(map[reachabilityPointDep]bool)
+		s.reachabilityDepsSeen = seen
+	}
+	state.ForEachLenBound(func(key constraint.PathKey, lower, _ int64) bool {
+		if lower <= 0 || key == "" {
+			return true
+		}
+		dep := reachabilityPointDep{key: string(key), point: point}
+		if !seen[dep] {
+			seen[dep] = true
+			s.reachabilityDeps.register(key, point)
+		}
+		if path, ok := s.pathFromCanonicalKeyAtPoint(point, key); ok {
+			s.registerReachabilityAncestorDeps(s.reachabilityDeps, seen, point, path)
+		}
+		return true
+	})
 }
 
 func (s *Solution) registerReachabilityAncestorDeps(

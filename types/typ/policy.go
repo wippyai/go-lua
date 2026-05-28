@@ -1217,6 +1217,11 @@ func JoinRecordFieldSlot(name string, a, b Type) Type {
 }
 
 func joinNonDiscriminantLiteralField(a, b Type) (Type, bool) {
+	// Join is idempotent: equal literal-bearing slots (single literals or whole
+	// literal unions) keep their precise type rather than widening to the base.
+	if SameNodeOrAcyclicEqual(a, b) {
+		return a, true
+	}
 	al, aOK := literalType(a)
 	bl, bOK := literalType(b)
 	if aOK && bOK && al.Base == bl.Base {

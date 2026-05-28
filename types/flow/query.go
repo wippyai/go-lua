@@ -97,6 +97,34 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	return s.projectPresenceAtPoint(p, string(fullKey), candidate)
 }
 
+// reconcileFieldPathAgainstAnnotatedDeclared restores declared optionality on a
+// field-path value read off an ANNOTATED root. A literal constructed under an
+// explicit annotation seeds precise non-nil field facts; reading a field whose
+// declared type permits nil must keep the precise shape but stay optional, since
+// the construction is not a nil-guard. Unannotated roots carry no declared
+// contract and are left untouched so guard-narrowed values keep their proof.
+func (s *Solution) reconcileFieldPathAgainstAnnotatedDeclared(path constraint.Path, candidate typ.Type) typ.Type {
+	if candidate == nil || len(path.Segments) == 0 || path.Symbol == 0 || s.inputs == nil {
+		return candidate
+	}
+	// Use the explicit declared annotation as the contract. An annotated root's
+	// DeclaredTypes entry is the source annotation (its literal initializer lives
+	// separately in LiteralTypes), so a field whose declared type permits nil keeps
+	// that presence even when the flow tracks a precise non-nil construction value.
+	declaredRoot := s.inputs.DeclaredTypes[path.Symbol]
+	if declaredRoot == nil {
+		return candidate
+	}
+	declaredField, ok := deriveTypeFrom(s.resolver, declaredRoot, path.Segments)
+	if !ok || declaredField == nil {
+		return candidate
+	}
+	if reconciled, ok := value.ReconcilePathFactWithDeclaredRead(candidate, declaredField); ok && reconciled != nil {
+		return reconciled
+	}
+	return candidate
+}
+
 func (s *Solution) rootBaseTypeAt(p cfg.Point, path constraint.Path) (typ.Type, constraint.PathKey) {
 	if s == nil || path.IsEmpty() || len(path.Segments) != 0 || s.pkResolver == nil {
 		return nil, ""
@@ -437,10 +465,10 @@ func (s *Solution) IsEdgeUnreachable(from, to cfg.Point) bool {
 
 // BoundsAt returns the integer bounds for a variable at a CFG point.
 func (s *Solution) BoundsAt(p cfg.Point, name string) (lower, upper int64, ok bool) {
-	if s == nil || s.numericStates == nil {
+	if s == nil || s.numericAt == nil {
 		return 0, 0, false
 	}
-	state := s.numericStates[p]
+	state := s.numericAt[p]
 	if state == nil {
 		return 0, 0, false
 	}
@@ -461,10 +489,10 @@ func (s *Solution) BoundsAt(p cfg.Point, name string) (lower, upper int64, ok bo
 
 // ArrayLenBoundAt returns the array key if the variable has an array length upper bound.
 func (s *Solution) ArrayLenBoundAt(p cfg.Point, varName string) (arrKey string, ok bool) {
-	if s == nil || s.numericStates == nil {
+	if s == nil || s.numericAt == nil {
 		return "", false
 	}
-	state := s.numericStates[p]
+	state := s.numericAt[p]
 	if state == nil {
 		return "", false
 	}
@@ -486,10 +514,10 @@ func (s *Solution) ArrayLenBoundAt(p cfg.Point, varName string) (arrKey string, 
 
 // ArrayLenBoundWithOffsetAt returns the array key and offset for a symbolic length bound.
 func (s *Solution) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool) {
-	if s == nil || s.numericStates == nil {
+	if s == nil || s.numericAt == nil {
 		return "", 0, false
 	}
-	state := s.numericStates[p]
+	state := s.numericAt[p]
 	if state == nil {
 		return "", 0, false
 	}
@@ -514,10 +542,10 @@ func (s *Solution) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKe
 
 // LengthBoundsAt returns numeric bounds for len(path) at a CFG point.
 func (s *Solution) LengthBoundsAt(p cfg.Point, path constraint.Path) (lower, upper int64, ok bool) {
-	if s == nil || s.numericStates == nil {
+	if s == nil || s.numericAt == nil {
 		return 0, 0, false
 	}
-	state := s.numericStates[p]
+	state := s.numericAt[p]
 	if state == nil {
 		return 0, 0, false
 	}
@@ -618,6 +646,14 @@ func (s *Solution) narrowedTypeAtWithCondition(p cfg.Point, path constraint.Path
 func annotationAcceptsFlowType(declared, candidate typ.Type) bool {
 	if candidate == nil {
 		return false
+	}
+	// any is the gradual top: an explicit any annotation is a dynamic boundary
+	// that erases the structure of whatever value flows into it. Keeping the
+	// precise flow value as the base would let a field read off the any root
+	// recover the concrete value type, defeating the boundary. The declared any
+	// must win so reads through it stay dynamic.
+	if typ.IsAny(declared) {
+		return typ.IsAny(candidate)
 	}
 	if subtype.IsSubtype(candidate, declared) {
 		return true
@@ -849,6 +885,10 @@ func clonePathFacts(facts []PathFact) []PathFact {
 // baseTypeAt returns the base type for a path at point p, for use in narrowing.
 // For child paths: prefers the narrower of explicit (TypeAt) vs parent-derived.
 func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	if derived, ok := s.gradualRootDescendantTypeAt(path); ok {
+		return derived
+	}
+
 	explicit := s.TypeAt(p, path)
 
 	if len(path.Segments) == 0 {
@@ -914,6 +954,29 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	}
 
 	return derived
+}
+
+// gradualRootDescendantTypeAt projects the declared type of a descendant path
+// whose annotated root is the gradual top any. An explicit any annotation is a
+// dynamic boundary: a value flowing into it loses its structure, so every read
+// through a descendant path stays any regardless of the precise child facts the
+// initializer seeded. Reading the descendant off the precise initializer instead
+// would recover concrete field types and silently defeat the boundary.
+func (s *Solution) gradualRootDescendantTypeAt(path constraint.Path) (typ.Type, bool) {
+	if s.inputs == nil || len(path.Segments) == 0 || path.Symbol == 0 {
+		return nil, false
+	}
+	if s.inputs.AnnotatedVars == nil || !s.inputs.AnnotatedVars[path.Symbol] {
+		return nil, false
+	}
+	declaredRoot := s.inputs.DeclaredTypes[path.Symbol]
+	if !typ.IsAny(declaredRoot) {
+		return nil, false
+	}
+	if derived, ok := deriveTypeFrom(s.resolver, declaredRoot, path.Segments); ok {
+		return derived, true
+	}
+	return declaredRoot, true
 }
 
 func meetPresentChildEvidence(explicit, derived typ.Type) (typ.Type, bool) {
@@ -1032,12 +1095,47 @@ func (s *Solution) derivedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		if ancestorNarrowed == nil {
 			continue
 		}
-		derived, ok := deriveTypeFrom(s.resolver, ancestorNarrowed, path.Segments[cut:])
+		derived, ok := s.deriveTypeFromAt(p, ancestor, ancestorNarrowed, path.Segments[cut:])
 		if ok {
 			return derived
 		}
 	}
 	return nil
+}
+
+// deriveTypeFromAt projects relative segments from a narrowed ancestor like
+// deriveTypeFrom, but applies the solved index-read presence proof at every
+// int-index step. A sequence element c[k] is nil-eligible by default; the
+// container's proven length lower bound (literal/length fact) removes that nil
+// when it covers k, so a deeper field read c[k].field stays precise under a
+// proof and stays nil-eligible without one (sound).
+func (s *Solution) deriveTypeFromAt(p cfg.Point, ancestor constraint.Path, base typ.Type, segs []constraint.Segment) (typ.Type, bool) {
+	current := base
+	containerPath := ancestor
+	for i, seg := range segs {
+		next, ok := deriveTypeFrom(s.resolver, current, segs[i:i+1])
+		if !ok || next == nil {
+			return nil, false
+		}
+		if seg.Kind == constraint.SegmentIndexInt && seg.Index >= 1 {
+			next = s.refineIndexReadAt(p, current, next, IndexKeyDescriptor{
+				ContainerPath: containerPath,
+				HasLiteral:    true,
+				LiteralIndex:  int64(seg.Index),
+			})
+		}
+		current = next
+		containerPath = appendSegment(containerPath, seg)
+	}
+	return current, true
+}
+
+func appendSegment(path constraint.Path, seg constraint.Segment) constraint.Path {
+	out := constraint.Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
+	out.Segments = make([]constraint.Segment, 0, len(path.Segments)+1)
+	out.Segments = append(out.Segments, path.Segments...)
+	out.Segments = append(out.Segments, seg)
+	return out
 }
 
 func (s *Solution) narrowedAncestorBaseTypeAt(p cfg.Point, ancestor constraint.Path) typ.Type {

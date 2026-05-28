@@ -12,6 +12,7 @@ import (
 	fbpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value"
@@ -339,13 +340,76 @@ func (s *preflowOverlaySynthesizer) attrRead(attr *ast.AttrGetExpr, p cfg.Point)
 	switch key := attr.Key.(type) {
 	case *ast.StringExpr:
 		if ft, ok := s.typeOps.Field(s.ctx, objType, key.Value); ok && !typ.IsAbsentOrUnknown(ft) {
-			return ft
+			return s.reconcileFieldAgainstDeclaredObject(attr.Object, key.Value, ft, p)
 		}
 		if it, ok := s.typeOps.Index(s.ctx, objType, typ.LiteralString(key.Value)); ok && !typ.IsAbsentOrUnknown(it) {
 			return it
 		}
 	default:
 		return s.dynamicAttrRead(attr, objType, p)
+	}
+	return nil
+}
+
+// reconcileFieldAgainstDeclaredObject restores declared optionality on a
+// value-precise field read by reconciling against the field's declared type
+// resolved from the object's DECLARED type (walked from an annotated root). A
+// literal constructed under an explicit annotation flows precise field shapes;
+// the declared field's optionality must survive so the preflow seed matches the
+// observation read.
+func (s *preflowOverlaySynthesizer) reconcileFieldAgainstDeclaredObject(obj ast.Expr, key string, ft typ.Type, p cfg.Point) typ.Type {
+	declaredObj := s.declaredExprType(obj, p)
+	if declaredObj == nil {
+		return ft
+	}
+	declaredField, ok := s.typeOps.Field(s.ctx, declaredObj, key)
+	if !ok || declaredField == nil {
+		return ft
+	}
+	if reconciled, ok := value.ReconcilePathFactWithDeclaredRead(ft, declaredField); ok && reconciled != nil {
+		return reconciled
+	}
+	return ft
+}
+
+// declaredExprType resolves the declared (annotation-derived) type of an
+// identifier or static field-access path, walking to an annotated root symbol.
+func (s *preflowOverlaySynthesizer) declaredExprType(expr ast.Expr, p cfg.Point) typ.Type {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		if s.bindings == nil || s.inputs == nil {
+			return nil
+		}
+		sym, ok := s.bindings.SymbolOf(e)
+		if !ok || sym == 0 {
+			return nil
+		}
+		if s.inputs.AnnotatedVars == nil || !s.inputs.AnnotatedVars[sym] {
+			return nil
+		}
+		declared := s.inputs.DeclaredTypes[sym]
+		if typ.IsAbsentOrUnknown(declared) || declared.Kind().IsPlaceholder() {
+			return nil
+		}
+		return declared
+	case *ast.AttrGetExpr:
+		objDeclared := s.declaredExprType(e.Object, p)
+		if objDeclared == nil {
+			return nil
+		}
+		seg, ok := pathseg.StaticAttrKeySegment(e.Key)
+		if !ok {
+			return nil
+		}
+		switch seg.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			if ft, ok := s.typeOps.Field(s.ctx, objDeclared, seg.Name); ok {
+				return ft
+			}
+			if it, ok := s.typeOps.Index(s.ctx, objDeclared, typ.LiteralString(seg.Name)); ok {
+				return it
+			}
+		}
 	}
 	return nil
 }

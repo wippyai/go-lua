@@ -216,7 +216,6 @@ func (s *Solution) mutableStateChangedKeys(old map[string]product.AbstractValue,
 		if s.isStableCarryMembershipFlap(p, key, oldAV, oldOK, curAV, curOK) {
 			continue
 		}
-		zzSlotDelta(p, key, old, current, oldOK, curOK)
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
@@ -332,12 +331,6 @@ func (s *Solution) joinPredecessorMutableState(p cfg.Point) map[string]product.A
 // as a widening/no-op seed - it never reaches a public projection or interproc summary.
 func (s *Solution) seedPointMutableSelfCarry(p cfg.Point, prior map[string]product.AbstractValue) {
 	if s == nil {
-		return
-	}
-	if zzNoCarry {
-		if s.mutableSelfCarry != nil {
-			delete(s.mutableSelfCarry, p)
-		}
 		return
 	}
 	if len(prior) == 0 {
@@ -531,6 +524,22 @@ func (s *Solution) setMutableValue(p cfg.Point, key string, t typ.Type) {
 	if s == nil || key == "" || t == nil {
 		return
 	}
+	// Admission boundary for the point-sensitive mutable store; bookkeeping uses
+	// the caller's typ.Type directly.
+	s.storeMutableValue(p, key, liftFlowValue(t), t)
+}
+
+// setMutableValueAV stores an already-built carrier at a point. It is the native
+// ingress for the phi field-suffix merge so a product.Join/Widen result is stored
+// without a project-then-relift round trip (which would break product identity).
+func (s *Solution) setMutableValueAV(p cfg.Point, key string, av product.AbstractValue) {
+	if s == nil || key == "" || av.IsZero() {
+		return
+	}
+	s.storeMutableValue(p, key, av, projectFlowValue(av))
+}
+
+func (s *Solution) storeMutableValue(p cfg.Point, key string, av product.AbstractValue, t typ.Type) {
 	if s.mutableValues == nil {
 		s.mutableValues = make(map[cfg.Point]map[string]product.AbstractValue)
 	}
@@ -539,8 +548,7 @@ func (s *Solution) setMutableValue(p cfg.Point, key string, t typ.Type) {
 		state = make(map[string]product.AbstractValue, 1)
 		s.mutableValues[p] = state
 	}
-	// Admission boundary for the point-sensitive mutable store.
-	state[key] = liftFlowValue(t)
+	state[key] = av
 	if s.mutableSuffixIndexed == nil {
 		s.mutableSuffixIndexed = make(map[cfg.Point]bool, 1)
 	}

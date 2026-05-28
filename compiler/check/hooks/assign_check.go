@@ -171,6 +171,15 @@ func CheckAssignments(graph *cfg.Graph, evidence api.FlowEvidence, declared flow
 				return
 			}
 
+			// A read off a non-indexable object (for example a nil reached on a
+			// non-dominating path) is already reported by the field check as
+			// "cannot index". Its result degrades to unknown; reporting that
+			// unknown here would duplicate the same root cause as a cascaded
+			// assignment mismatch.
+			if typ.IsUnknown(valueType) && observer.SourceReadIsNonIndexable(source, p) {
+				return
+			}
+
 			if table, ok := source.(*ast.TableExpr); ok {
 				if result := observer.AssignmentSourceTableCheck(table, p, declaredType, sym); result.Handled {
 					if result.Compatible {

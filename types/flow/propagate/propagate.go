@@ -104,6 +104,12 @@ type Inputs struct {
 	DeadPoints map[cfg.Point]bool
 	// Assignments lists all variable assignments for constraint killing.
 	Assignments []Assignment
+	// Demand seeds the SSA-version liveness used to project dead facts out of
+	// the path condition. When nil, projection is disabled and the path
+	// condition is propagated exactly (subject only to FVS widening). Callers
+	// that can enumerate real read sites (the checker) supply it so dead
+	// discriminants are forgotten and the acyclic DNF cannot cross-multiply.
+	Demand *Demand
 }
 
 // Result holds the computed conditions at each CFG point.
@@ -118,13 +124,6 @@ type Result struct {
 	PointConditions map[cfg.Point]constraint.Condition
 }
 
-// loopHeaderWideningThreshold is the K used by the FVS widening policy:
-// widening fires at an FVS point only after K state-changing visits.
-//
-// Per DOMAIN_DESIGN.md §7.2, K=3 lets the precise transfer iterate twice on a
-// fresh loop body before widening engages on the third revisit.
-const loopHeaderWideningThreshold = 3
-
 // Propagate computes type constraints at each CFG point via forward dataflow.
 //
 // This is the main entry point for constraint propagation. The algorithm:
@@ -133,11 +132,20 @@ const loopHeaderWideningThreshold = 3
 //  2. Process points in worklist order (initially RPO for efficiency).
 //  3. For each point, compute new condition from predecessors.
 //  4. Join with the existing point condition.
-//  5. If the point is in the feedback vertex set (FVS) and has already
-//     produced strict state changes at least loopHeaderWideningThreshold
-//     times, apply constraint.Domain.Widen to the result.
-//  6. If the post-update condition differs, store it and enqueue successors.
-//  7. Repeat until no changes (fixed point).
+//  5. If the point is in the feedback vertex set (FVS), widen the join against
+//     the prior point condition (no visit-count delay).
+//  6. Project the result onto the point's live SSA-version demand, forgetting
+//     facts on dead access paths before storing.
+//  7. If the post-update condition differs, store it and enqueue successors.
+//  8. Repeat until no changes (fixed point).
+//
+// Two distinct, threshold-free mechanisms bound termination:
+//   - Projection (step 6) forgets facts whose referenced access-path versions
+//     are dead. This bounds ACYCLIC relevance growth: a straight-line chain of
+//     independent guards on distinct discriminants cannot cross-multiply the
+//     DNF, because each discriminant dies after its own guard region.
+//   - FVS widening (step 5) bounds CYCLIC ascending chains. Every CFG cycle
+//     contains an FVS point, so widening there terminates every loop.
 //
 // FVS = { p : p.LoopPreheaderSet } ∪ { headers of non-loop SCCs }, where the
 // "header" of an SCC is the point with the smallest RPO index in that SCC.
@@ -157,8 +165,9 @@ const loopHeaderWideningThreshold = 3
 //
 // Determinism: under shuffled RPO the algorithm visits the same set of
 // points, applies the same widening policy at the same set of FVS points,
-// and arrives at the same fixpoint set. Visit count is bounded by the
-// fixpoint height; with FVS widening the height is finite.
+// projects against the same (RPO-independent) live sets, and arrives at the
+// same fixpoint set. With projection bounding the acyclic vocabulary and FVS
+// widening bounding cyclic chains, the fixpoint height is finite.
 func Propagate(inputs *Inputs) *Result {
 	if inputs == nil || inputs.Graph == nil {
 		return &Result{PointConditions: make(map[cfg.Point]constraint.Condition)}
@@ -179,7 +188,10 @@ func Propagate(inputs *Inputs) *Result {
 	preheaderConds := make(map[cfg.Point]constraint.Condition)
 
 	fvs := computeFeedbackVertexSet(g, rpo)
-	visitCount := make(map[cfg.Point]int, len(fvs))
+
+	// SSA-version liveness depends only on CFG/SSA/use-demand, not on the
+	// changing condition facts; compute it once before the fixpoint.
+	live := computeLiveSets(inputs)
 
 	for len(worklist) > 0 {
 		p := worklist[0]
@@ -193,16 +205,26 @@ func Propagate(inputs *Inputs) *Result {
 		// value, IsFalse), Or returns incoming.
 		candidate := constraint.Or(oldCond, incoming)
 
-		var next constraint.Condition
-		if fvs[p] && visitCount[p] >= loopHeaderWideningThreshold {
-			next = constraint.Domain.Widen(oldCond, candidate)
-		} else {
-			next = candidate
+		// Widening (cyclic bound) is structural at FVS points with no delay.
+		if fvs[p] {
+			candidate = constraint.Domain.Widen(oldCond, candidate)
+		}
+
+		// Projection (acyclic bound) forgets dead field-presence guards at JOIN
+		// points, where independent guard regions merge and the DNF would
+		// cross-multiply. Straight-line points keep the exact condition, so a
+		// guard stays active throughout the region it guards (where its field is
+		// still read) and is only forgotten once the region closes at the merge.
+		// Disabled (no-op) when the caller supplied no liveness demand.
+		next := candidate
+		if live.enabled() && len(graphPredecessors(g, p)) > 1 {
+			next = candidate.Project(func(lit constraint.Constraint) bool {
+				return literalLive(live, p, lit)
+			})
 		}
 
 		if !constraint.Domain.Equal(next, oldCond) {
 			pointConditions[p] = next
-			visitCount[p]++
 			for _, succ := range graphSuccessors(g, p) {
 				if !inQueue[succ] {
 					worklist = append(worklist, succ)

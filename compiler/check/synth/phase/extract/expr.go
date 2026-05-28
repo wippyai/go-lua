@@ -31,6 +31,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
@@ -161,6 +162,7 @@ func (s *Synthesizer) stringKeyAttrType(
 		if manifestPath := s.manifestPathForAttrObject(ex.Object); manifestPath != "" {
 			ft = enrichWithManifest(s.deps.Manifests, ft, manifestPath, key)
 		}
+		ft = s.reconcileFieldAgainstDeclaredObject(ex.Object, key, ft, p, sc)
 		return s.specializedOrOriginalAttrValue(ex, p, sc, ft, captureTypes)
 	}
 	if vt := mapValueType(objType); vt != nil {
@@ -176,6 +178,77 @@ func (s *Synthesizer) stringKeyAttrType(
 		return typ.Nil
 	}
 	return typ.Unknown
+}
+
+// reconcileFieldAgainstDeclaredObject reconciles a value-precise field read with
+// the field's declared type resolved from the object's DECLARED type (walked
+// from an annotated root), not from the precise flow value. A literal constructed
+// under an explicit annotation flows precise field shapes; reading such a field
+// keeps the precise shape but must restore declared optionality (e.g. a declared
+// {[string]:string}? map field read off a precise record literal stays optional),
+// mirroring the observation read so the seeded flow value is sound.
+func (s *Synthesizer) reconcileFieldAgainstDeclaredObject(obj ast.Expr, key string, ft typ.Type, p cfg.Point, sc *scope.State) typ.Type {
+	declaredObj := s.declaredExprType(obj, p, sc)
+	if declaredObj == nil {
+		return ft
+	}
+	declaredField, ok := s.deps.Types.Field(s.deps.Ctx, declaredObj, key)
+	if !ok || declaredField == nil {
+		return ft
+	}
+	if reconciled, ok := value.ReconcilePathFactWithDeclaredRead(ft, declaredField); ok && reconciled != nil {
+		return reconciled
+	}
+	return ft
+}
+
+// declaredExprType resolves the declared (annotation-derived) type of an
+// identifier or static field-access path. It walks to an annotated root symbol
+// and projects declared field types through the chain; an unannotated root or a
+// dynamic key yields nil (no declared contract to honor).
+func (s *Synthesizer) declaredExprType(expr ast.Expr, p cfg.Point, sc *scope.State) typ.Type {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		return s.declaredSymbolType(e, p, sc)
+	case *ast.AttrGetExpr:
+		objDeclared := s.declaredExprType(e.Object, p, sc)
+		if objDeclared == nil {
+			return nil
+		}
+		seg, ok := pathseg.StaticAttrKeySegment(e.Key)
+		if !ok {
+			return nil
+		}
+		switch seg.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			if ft, ok := s.deps.Types.Field(s.deps.Ctx, objDeclared, seg.Name); ok {
+				return ft
+			}
+			if it, ok := s.deps.Types.Index(s.deps.Ctx, objDeclared, typ.LiteralString(seg.Name)); ok {
+				return it
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Synthesizer) declaredSymbolType(ex *ast.IdentExpr, p cfg.Point, sc *scope.State) typ.Type {
+	if s.deps.CheckCtx == nil {
+		return nil
+	}
+	types := s.deps.CheckCtx.Types()
+	if types == nil {
+		return nil
+	}
+	sym, _ := s.identifierSymbols(s.deps.CheckCtx, ex, p)
+	if sym == 0 || !types.IsAnnotated(sym) {
+		return nil
+	}
+	declared := types.DeclaredAt(p, sym)
+	if declared.State != flow.StateResolved || declared.Type == nil || declared.Type.Kind().IsPlaceholder() {
+		return nil
+	}
+	return declared.Type
 }
 
 // missingFieldIsTypo reports whether reading a named field absent from objType
@@ -323,14 +396,15 @@ func (s *Synthesizer) dynamicKeyAttrType(
 	if !ok {
 		return typ.Unknown
 	}
-	if narrower != nil {
-		if refined, ok := s.refineIndexRead(objType, it, ex.Object, ex.Key, p, sc, narrower); ok {
-			return s.specializedOrOriginalAttrValue(ex, p, sc, refined, captureTypes)
-		}
+	if refined, ok := s.refineIndexRead(objType, it, ex.Object, ex.Key, p, sc, narrower); ok {
+		return s.specializedOrOriginalAttrValue(ex, p, sc, refined, captureTypes)
 	}
 	return s.specializedOrOriginalAttrValue(ex, p, sc, it, captureTypes)
 }
 
+// refineIndexRead routes an indexed read through the solved index-read presence
+// proof. It returns the refined result and true only when presence narrowing
+// changed the type (nil removed); otherwise the original result and false.
 func (s *Synthesizer) refineIndexRead(container, result typ.Type, obj, key ast.Expr, p cfg.Point, sc *scope.State, narrower api.FlowOps) (typ.Type, bool) {
 	if narrower == nil || s == nil || s.deps == nil || s.deps.Paths == nil {
 		return nil, false

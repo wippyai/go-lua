@@ -57,6 +57,104 @@ func (c Condition) WidenAgainst(next Condition) Condition {
 	return Or(c, projected)
 }
 
+// Project forgets dead, branch-local literals, then renormalizes. keep reports
+// whether a literal is still relevant (some referenced access path is live); a
+// dead literal (keep returns false) is forgotten only when it is also NOT common
+// to every disjunct.
+//
+// Why commonality matters: a literal present in EVERY disjunct is a common
+// factor — L ∧ (D₁ ∨ D₂ ∨ …) — that does not contribute to disjunct
+// cross-multiplication. It typically represents a dominating fact established
+// before the merge (e.g. an early-return guard's surviving narrowing that holds
+// on all paths), whose refinement a downstream value-domain query still
+// observes through the narrowed container even when the guarded path itself is
+// not re-read syntactically. Dropping such a fact loses precision without
+// bounding the DNF. Conversely, a literal present in only SOME disjuncts is
+// branch-local; when its access path is dead it is exactly the kind of
+// discriminant that cross-multiplies a straight-line chain of independent
+// guards, so forgetting it is what keeps the DNF bounded.
+//
+// Semantics:
+//   - ⊥ (False) and ⊤ (True) are preserved as-is.
+//   - A literal is dropped from every disjunct iff keep rejects it AND it does
+//     not appear in all disjuncts. Relational literals (EqPath, FieldEqualsPath,
+//     …) are dropped whole, never half-kept, so stale vocabulary cannot leak
+//     through a surviving endpoint.
+//   - If a disjunct becomes empty, it is ⊤; the whole condition collapses toward
+//     ⊤. The result is renormalized/deduped.
+//
+// Project is WIDENING in the sound direction: γ(c) ⊆ γ(Project(c)). Dropping a
+// conjunct only weakens a disjunct (adds models), so a downstream query can
+// never be unsoundly narrowed by a projected condition. It is the acyclic
+// relevance bound that keeps the DNF from cross-multiplying over dead
+// discriminants; it is independent of (and composes with) WidenAgainst.
+func (c Condition) Project(keep func(Constraint) bool) Condition {
+	if keep == nil {
+		return c
+	}
+	if c.IsFalse() {
+		return FalseCondition()
+	}
+	if c.IsTrue() {
+		return TrueCondition()
+	}
+
+	common := commonLiterals(c)
+
+	retained := make([][]Constraint, 0, len(c.Disjuncts))
+	for _, disj := range c.Disjuncts {
+		// An empty disjunct in a non-⊤ Condition cannot survive normalization
+		// (it short-circuits to ⊤). Defensive: collapse to ⊤ if seen.
+		if len(disj) == 0 {
+			return TrueCondition()
+		}
+		kept := make([]Constraint, 0, len(disj))
+		for _, lit := range disj {
+			if keep(lit) || common.contains(lit) {
+				kept = append(kept, lit)
+			}
+		}
+		if len(kept) == 0 {
+			// Every literal of this disjunct was forgotten: under γ the
+			// disjunct's contribution becomes the whole state space (no
+			// restriction). The DNF weakens to ⊤. Sound, maximally imprecise.
+			return TrueCondition()
+		}
+		retained = append(retained, kept)
+	}
+
+	return FromDisjuncts(retained)
+}
+
+// commonLiterals returns the set of literals that appear in EVERY disjunct of c
+// (the common factors of the DNF). For a single-disjunct condition that is the
+// whole disjunct. Common factors never multiply the disjunct count, so they are
+// exempt from relevance projection.
+func commonLiterals(c Condition) vocabularySet {
+	if len(c.Disjuncts) == 0 {
+		return newVocabularySet(0)
+	}
+	// Seed with the first disjunct's literals, then intersect with each other.
+	common := newVocabularySet(len(c.Disjuncts[0]))
+	for _, lit := range c.Disjuncts[0] {
+		common.add(lit)
+	}
+	for _, disj := range c.Disjuncts[1:] {
+		present := newVocabularySet(len(disj))
+		for _, lit := range disj {
+			present.add(lit)
+		}
+		next := newVocabularySet(len(disj))
+		for _, lit := range c.Disjuncts[0] {
+			if common.contains(lit) && present.contains(lit) {
+				next.add(lit)
+			}
+		}
+		common = next
+	}
+	return common
+}
+
 // projectOntoVocabulary returns c with every literal not in vocab dropped from
 // every disjunct. If any disjunct is empty after dropping, the projection is
 // ⊤ (TrueCondition). ⊥ is preserved as ⊥; ⊤ is preserved as ⊤.

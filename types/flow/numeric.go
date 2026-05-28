@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/numeric"
+	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // buildEdgeNumericConstraints populates the edge numeric constraint map.
@@ -33,109 +35,106 @@ func (s *Solution) buildEdgeNumericConstraints() {
 	}
 }
 
-// checkNumericConstraints performs numeric constraint analysis to detect unreachable edges.
-//
-// This method implements a worklist-based dataflow analysis that propagates
-// numeric state (bounds, orderings, modular constraints) through the CFG.
-// At each edge with numeric constraints, it checks if the constraints are
-// satisfiable given the current state. Unsatisfiable edges are marked
-// unreachable in s.unsatEdges.
-//
-// The algorithm:
-//  1. Computes relevant CFG points (those reachable from constraint edges)
-//  2. Initializes a worklist with all relevant non-entry points
-//  3. Iterates until fixed point, computing numeric state at each point
-//  4. After convergence, checks each edge's constraints for satisfiability
-//
-// The computed numeric states are stored in s.numericStates for later queries
-// (e.g., BoundsAt to get variable bounds at a specific point).
-func (s *Solution) checkNumericConstraints() {
-	if s.inputs == nil || s.inputs.Graph == nil || len(s.edgeNumericConstraints) == 0 {
-		return
-	}
+// numericWorklistState carries the per-point bookkeeping the numeric component
+// of the worklist fixpoint needs across visits: whether a point has produced its
+// first non-Top state (seeded) and whether a loop header has already widened to
+// Top (widenedTop). It is shared by the unified value worklist (solve) and the
+// value-less numeric fixpoint of the condition view.
+type numericWorklistState struct {
+	seeded     map[cfg.Point]bool
+	widenedTop map[cfg.Point]bool
+}
 
+func newNumericWorklistState() *numericWorklistState {
+	return &numericWorklistState{
+		seeded:     make(map[cfg.Point]bool),
+		widenedTop: make(map[cfg.Point]bool),
+	}
+}
+
+// numericTransferAt recomputes the numeric component at point p and updates
+// s.numericAt in place, returning whether the stored numeric state changed.
+//
+// This is the per-point numeric transfer of the unified worklist: it joins the
+// edge-constrained predecessor states (computeNumericStateAt), then merges that
+// raw contribution into the prior stored state with plain Join at ordinary
+// points and Cousot Widen at loop headers (pointIsWideningSite), preserving the
+// first-non-Top seeding discipline and the widened-to-Top latch. Top is stored
+// as the absent slot.
+func (s *Solution) numericTransferAt(p cfg.Point, ws *numericWorklistState) bool {
 	c := s.inputs.Graph
-	relevant := s.computeRelevantPoints()
-	if len(relevant) == 0 {
+	// The entry point starts the analysis at Top and is never assigned a numeric
+	// state: it carries no incoming numeric edge contribution. Skipping it keeps
+	// the entry slot Top even for degenerate CFGs with an edge back to entry.
+	if p == c.Entry() {
+		return false
+	}
+	oldState := s.numericAt[p]
+	rawState := s.computeNumericStateAt(c, p, s.numericAt)
+	rawState = s.applyNumericLengthEffects(p, rawState)
+	var newState *numeric.State
+	switch {
+	case ws.widenedTop[p]:
+		newState = nil
+	case !ws.seeded[p]:
+		// First-visit seed; widening at an uninitialized point would
+		// return Top because the corrected numeric.Widen treats nil as
+		// the lattice Top, not as "no state yet".
+		newState = rawState
+	case !pointIsWideningSite(c, p):
+		// Cousot widening points: only loop headers can host infinite
+		// ascending chains. Non-loop-header points use plain Join, which
+		// preserves precision and terminates because chain length is
+		// bounded by the lattice height of predecessor contributions.
+		newState = numeric.Join(oldState, rawState)
+	default:
+		// Loop header — Cousot widening to guarantee termination on
+		// infinite-height interval chains.
+		newState = numeric.Widen(oldState, rawState)
+		if numericStateWidenedToTop(oldState, rawState, newState) {
+			ws.widenedTop[p] = true
+			newState = nil
+		}
+	}
+
+	// Mark seeded only when the visit produces a meaningful (non-Top)
+	// state. Top (nil) is the join-absorbing element under the corrected
+	// numeric.Join — once we mark Top as "seeded" and a later visit
+	// produces a real rawState, Join(Top, rawState) = Top destroys the
+	// fact. By gating on non-Top, the worklist re-enters the
+	// first-visit-seed branch until the first real numeric observation
+	// reaches p, then Join thereafter accumulates correctly.
+	if newState != nil && !newState.IsTop() {
+		ws.seeded[p] = true
+	}
+
+	if newState.Equals(oldState) {
+		return false
+	}
+	if newState == nil || newState.IsTop() {
+		delete(s.numericAt, p)
+	} else {
+		if s.numericAt == nil {
+			s.numericAt = make(map[cfg.Point]*numeric.State)
+		}
+		s.numericAt[p] = newState
+		s.registerPointNumericShapeReachabilityDeps(p)
+	}
+	// p's shape-reachability and length-shape projection read its numeric state,
+	// so a numeric change invalidates any cached reachability for p.
+	if s.reachabilityCache != nil {
+		delete(s.reachabilityCache, p)
+	}
+	return true
+}
+
+// finalizeUnsatEdges marks edges whose numeric constraints are unsatisfiable
+// given the converged numeric state at the edge source. It runs once after the
+// numeric component of the worklist has reached its fixed point.
+func (s *Solution) finalizeUnsatEdges() {
+	if len(s.edgeNumericConstraints) == 0 {
 		return
 	}
-
-	state := make(map[cfg.Point]*numeric.State, len(relevant))
-	widenedTop := make(map[cfg.Point]bool)
-	// seeded tracks whether a point has produced its first state.
-	seeded := make(map[cfg.Point]bool, len(relevant))
-	worklist := make([]cfg.Point, 0, len(relevant))
-	inQueue := make(map[cfg.Point]bool, len(relevant))
-
-	for p := range relevant {
-		if p != c.Entry() {
-			worklist = append(worklist, p)
-			inQueue[p] = true
-		}
-	}
-	slices.Sort(worklist)
-
-	for len(worklist) > 0 {
-		p := worklist[len(worklist)-1]
-		worklist = worklist[:len(worklist)-1]
-		inQueue[p] = false
-
-		oldState := state[p]
-		rawState := s.computeNumericStateAt(c, p, state)
-		var newState *numeric.State
-		switch {
-		case widenedTop[p]:
-			newState = nil
-		case !seeded[p]:
-			// First-visit seed; widening at an uninitialized point would
-			// return Top because the corrected numeric.Widen treats nil as
-			// the lattice Top, not as "no state yet".
-			newState = rawState
-		case !numericPointIsWideningSite(c, p):
-			// Cousot widening points: only loop headers can host infinite
-			// ascending chains. Non-loop-header points use plain Join, which
-			// preserves precision and terminates because chain length is
-			// bounded by the lattice height of predecessor contributions.
-			newState = numeric.Join(oldState, rawState)
-		default:
-			// Loop header — Cousot widening to guarantee termination on
-			// infinite-height interval chains.
-			newState = numeric.Widen(oldState, rawState)
-			if numericStateWidenedToTop(oldState, rawState, newState) {
-				widenedTop[p] = true
-				newState = nil
-			}
-		}
-
-		// Mark seeded only when the visit produces a meaningful (non-Top)
-		// state. Top (nil) is the join-absorbing element under the corrected
-		// numeric.Join — once we mark Top as "seeded" and a later visit
-		// produces a real rawState, Join(Top, rawState) = Top destroys the
-		// fact. By gating on non-Top, the worklist re-enters the
-		// first-visit-seed branch until the first real numeric observation
-		// reaches p, then Join thereafter accumulates correctly.
-		if newState != nil && !newState.IsTop() {
-			seeded[p] = true
-		}
-
-		if !newState.Equals(oldState) {
-			if newState == nil || newState.IsTop() {
-				delete(state, p)
-			} else {
-				state[p] = newState
-			}
-			for _, succ := range graphSuccessors(c, p) {
-				if relevant[succ] && !inQueue[succ] {
-					worklist = append(worklist, succ)
-					inQueue[succ] = true
-				}
-			}
-		}
-	}
-
-	// Store computed numeric states for later queries
-	s.numericStates = state
-
 	edgeKeys := make([]edgeKey, 0, len(s.edgeNumericConstraints))
 	for key := range s.edgeNumericConstraints {
 		edgeKeys = append(edgeKeys, key)
@@ -151,7 +150,7 @@ func (s *Solution) checkNumericConstraints() {
 		if len(edgeConstraints) == 0 {
 			continue
 		}
-		fromState := state[key.from]
+		fromState := s.numericAt[key.from]
 		edgeState := fromState.Clone()
 		if edgeState == nil {
 			edgeState = numeric.NewState()
@@ -170,6 +169,165 @@ func (s *Solution) checkNumericConstraints() {
 	}
 }
 
+// runNumericWorklist computes the numeric component as a value-less fixpoint over
+// all RPO points and finalizes unsatisfiable edges. It backs the condition view,
+// which performs no assignment/phi value transfer; the main solve path computes
+// the same numeric component inline in its unified worklist instead.
+func (s *Solution) runNumericWorklist() {
+	if s.inputs == nil || s.inputs.Graph == nil || len(s.edgeNumericConstraints) == 0 {
+		return
+	}
+	c := s.inputs.Graph
+
+	ws := newNumericWorklistState()
+	s.numericAt = make(map[cfg.Point]*numeric.State)
+
+	worklist := c.RPO()
+	inQueue := make(map[cfg.Point]bool, len(worklist))
+	for _, p := range worklist {
+		inQueue[p] = true
+	}
+
+	for len(worklist) > 0 {
+		p := worklist[0]
+		worklist = worklist[1:]
+		inQueue[p] = false
+
+		if s.numericTransferAt(p, ws) {
+			for _, succ := range graphSuccessors(c, p) {
+				if !inQueue[succ] {
+					worklist = append(worklist, succ)
+					inQueue[succ] = true
+				}
+			}
+		}
+	}
+
+	s.finalizeUnsatEdges()
+}
+
+// hasNumericLengthEffects reports whether any point carries a table-mutator
+// length effect. The numeric component must run when length facts can be seeded
+// even if no comparison produced an edge numeric constraint, so a bare
+// table.insert sequence still proves an in-range index read.
+func (s *Solution) hasNumericLengthEffects() bool {
+	if s == nil || s.inputs == nil {
+		return false
+	}
+	for _, tm := range s.inputs.TableMutatorAssignments {
+		if tm.LengthDelta > 0 && tm.KeySymbol == 0 && tm.KeyType == nil && tm.Target.Symbol != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// applyNumericLengthEffects applies a point's value-domain length effects to the
+// numeric state: a table.insert-like mutator with a constant LengthDelta and a
+// non-nil inserted value raises its sequence target's length lower bound by the
+// delta over the pre-state; any other length-affecting mutation on a sequence
+// (table.remove, arr[k] = nil, an unknown mutator) degrades the lower bound,
+// since the post-state length is no longer provably at the prior floor. The
+// effect feeds the index-read presence proof through s.numericAt.
+func (s *Solution) applyNumericLengthEffects(p cfg.Point, state *numeric.State) *numeric.State {
+	if s == nil || s.pkResolver == nil {
+		return state
+	}
+	raises := s.tableInsertLengthRaises(p)
+	kills := s.lengthDegradingTargets(p)
+	if len(raises) == 0 && len(kills) == 0 {
+		return state
+	}
+	if state == nil {
+		state = numeric.NewState()
+	} else {
+		state = state.Clone()
+	}
+	for key := range kills {
+		if _, ok := raises[key]; ok {
+			continue
+		}
+		state.DropLenBound(key)
+	}
+	for key, delta := range raises {
+		lower := int64(0)
+		if curLower, _, ok := state.LenBoundsFor(key); ok && curLower > 0 {
+			lower = curLower
+		}
+		state.ApplyLenGeConst(key, lower+delta)
+	}
+	return state
+}
+
+// tableInsertLengthRaises maps each direct-sequence table.insert target at p to
+// the constant length increase it guarantees, when the inserted value is non-nil
+// (a nil insert does not grow a Lua sequence's border).
+func (s *Solution) tableInsertLengthRaises(p cfg.Point) map[constraint.PathKey]int64 {
+	var raises map[constraint.PathKey]int64
+	for _, tm := range s.tableMutatorAssignmentsAt(p) {
+		if tm.LengthDelta <= 0 || tm.KeySymbol != 0 || tm.KeyType != nil {
+			continue
+		}
+		if tm.Target.Symbol == 0 {
+			continue
+		}
+		// The non-nil check reads the STATIC inserted value type only. Reading the
+		// flow-resolved value here would re-enter the value domain during the
+		// numeric transfer (which runs first at p, before the value transfer),
+		// observing premature state. A static nil/optional insert is conservatively
+		// treated as no length growth.
+		value := tm.ValueType
+		if value != nil && (value.Kind() == kind.Nil || unwrap.IsOptionalLike(value)) {
+			continue
+		}
+		key := s.pkResolver.KeyAt(p, tm.Target)
+		if key == "" {
+			continue
+		}
+		if raises == nil {
+			raises = make(map[constraint.PathKey]int64, 1)
+		}
+		if delta, ok := raises[key]; !ok || tm.LengthDelta > delta {
+			raises[key] = tm.LengthDelta
+		}
+	}
+	return raises
+}
+
+// lengthDegradingTargets collects sequence paths whose length lower bound must be
+// dropped at p because a mutation may shrink or arbitrarily reshape them: a
+// direct-index write that may assign nil, or an unknown table-mutator without a
+// positive length delta.
+func (s *Solution) lengthDegradingTargets(p cfg.Point) map[constraint.PathKey]bool {
+	var kills map[constraint.PathKey]bool
+	add := func(path constraint.Path) {
+		if path.Symbol == 0 {
+			return
+		}
+		key := s.pkResolver.KeyAt(p, path)
+		if key == "" {
+			return
+		}
+		if kills == nil {
+			kills = make(map[constraint.PathKey]bool, 1)
+		}
+		kills[key] = true
+	}
+	for _, tm := range s.tableMutatorAssignmentsAt(p) {
+		if tm.LengthDelta > 0 && tm.KeySymbol == 0 && tm.KeyType == nil {
+			continue
+		}
+		add(constraint.Path{Root: tm.Target.Root, Symbol: tm.Target.Symbol, Segments: tm.Target.Segments})
+	}
+	for _, mm := range s.mapMutatorAssignmentsAt(p) {
+		// A direct integer-index write can leave a hole (arr[k] = nil) or extend
+		// past the tracked floor; either way the prior length lower bound no longer
+		// holds. Conservatively drop it.
+		add(constraint.Path{Root: mm.Target.Root, Symbol: mm.Target.Symbol, Segments: mm.Target.Segments})
+	}
+	return kills
+}
+
 func numericStateWidenedToTop(oldState, rawState, widened *numeric.State) bool {
 	if oldState == nil || oldState.IsTop() {
 		return false
@@ -178,83 +336,6 @@ func numericStateWidenedToTop(oldState, rawState, widened *numeric.State) bool {
 		return false
 	}
 	return !rawState.Equals(oldState)
-}
-
-// computeRelevantPoints identifies CFG points needed for numeric constraint analysis.
-//
-// Not all CFG points need numeric analysis - only those that can influence or
-// be influenced by numeric constraint edges. This method computes the minimal
-// set of relevant points by:
-//
-//  1. Seeding with all points involved in numeric constraint edges
-//  2. Adding the entry point (starting state for analysis)
-//  3. Forward propagation: adding all successors of seeds
-//  4. Backward propagation: adding all predecessors of relevant points
-//
-// The result is the smallest subgraph containing all constraint edges and
-// their transitive dependencies, enabling efficient analysis without
-// processing irrelevant parts of the CFG.
-func (s *Solution) computeRelevantPoints() map[cfg.Point]bool {
-	if s.inputs == nil || s.inputs.Graph == nil {
-		return nil
-	}
-
-	c := s.inputs.Graph
-	relevant := make(map[cfg.Point]bool)
-	seeds := make([]cfg.Point, 0)
-
-	edgeKeys := make([]edgeKey, 0, len(s.edgeNumericConstraints))
-	for key := range s.edgeNumericConstraints {
-		edgeKeys = append(edgeKeys, key)
-	}
-	slices.SortFunc(edgeKeys, func(a, b edgeKey) int {
-		if a.from != b.from {
-			return int(a.from) - int(b.from)
-		}
-		return int(a.to) - int(b.to)
-	})
-	for _, key := range edgeKeys {
-		if !relevant[key.from] {
-			relevant[key.from] = true
-			seeds = append(seeds, key.from)
-		}
-		if !relevant[key.to] {
-			relevant[key.to] = true
-			seeds = append(seeds, key.to)
-		}
-	}
-
-	if !relevant[c.Entry()] {
-		relevant[c.Entry()] = true
-	}
-
-	for i := 0; i < len(seeds); i++ {
-		p := seeds[i]
-		for _, succ := range graphSuccessors(c, p) {
-			if !relevant[succ] {
-				relevant[succ] = true
-				seeds = append(seeds, succ)
-			}
-		}
-	}
-
-	backSeeds := make([]cfg.Point, 0, len(relevant))
-	for p := range relevant {
-		backSeeds = append(backSeeds, p)
-	}
-	slices.Sort(backSeeds)
-
-	for i := 0; i < len(backSeeds); i++ {
-		p := backSeeds[i]
-		for _, pred := range graphPredecessors(c, p) {
-			if !relevant[pred] {
-				relevant[pred] = true
-				backSeeds = append(backSeeds, pred)
-			}
-		}
-	}
-
-	return relevant
 }
 
 // computeNumericStateAt computes the numeric state at a CFG point by joining predecessors.
@@ -379,15 +460,15 @@ func (s *Solution) rekeyForPhis(state *numeric.State, pred, p cfg.Point) *numeri
 	return state.Rekey(keyRemap)
 }
 
-// numericPointIsWideningSite reports whether p is a feedback-vertex-set
-// point at which numeric widening must be applied to ensure termination
-// on infinite-height interval ascending chains. Loop headers (marked by
-// CFG extraction via Node.LoopPreheaderSet) cover every structured-loop
-// cycle. Non-loop SCC headers are not currently handled — if a future
-// fixture exposes a non-reducible CFG cycle that diverges, extend this
-// to include the SCC head. The per-fixture deadline (commit 930068c9)
-// catches such divergences cleanly.
-func numericPointIsWideningSite(g cfg.Graph, p cfg.Point) bool {
+// pointIsWideningSite reports whether p is a feedback-vertex-set point at which
+// widening must be applied to ensure termination on infinite-height ascending
+// chains. It is shared by the numeric worklist and the value-domain phi merge.
+// Loop headers (marked by CFG extraction via Node.LoopPreheaderSet) cover every
+// structured-loop cycle. Non-loop SCC headers are not currently handled — if a
+// future fixture exposes a non-reducible CFG cycle (Lua goto) that diverges,
+// extend this to the full feedback vertex set (propagate.computeFeedbackVertexSet).
+// The per-fixture deadline (commit 930068c9) catches such divergences cleanly.
+func pointIsWideningSite(g cfg.Graph, p cfg.Point) bool {
 	n := g.Node(p)
 	if n == nil {
 		return false

@@ -147,8 +147,9 @@ func TestEngine_Index_Array(t *testing.T) {
 	if !ok {
 		t.Fatal("Index should succeed for array")
 	}
-	if elemType != typ.String {
-		t.Errorf("got %v, want string", elemType)
+	// A sequence index is nil-eligible until a length proof removes nil.
+	if !ContainsNil(elemType) {
+		t.Errorf("got %v, want optional string", elemType)
 	}
 }
 

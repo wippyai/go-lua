@@ -475,25 +475,13 @@ func topArrayCoversSelfEmbedding(anchor, observation typ.Type) bool {
 // the repeated nested edge becomes a mu-type reference instead of another tree
 // level.
 func FoldSelfEmbedding(anchor, observation typ.Type) (typ.Type, bool) {
-	if foldDbg {
-		println("FOLDDBG enter FoldSelfEmbedding anchor=", DbgString(anchor), "obs=", DbgString(observation))
-	}
 	if !canUseSelfEmbeddingAnchor(anchor) || observation == nil {
-		if foldDbg {
-			println("FOLDDBG gate canUseAnchor=false anchor=", DbgString(anchor), "obs=", DbgString(observation))
-		}
 		return nil, false
 	}
 	if !selfEmbeddingObservationPreservesAnchor(anchor, observation) {
-		if foldDbg {
-			println("FOLDDBG gate preservesAnchor=false anchor=", DbgString(anchor), "obs=", DbgString(observation))
-		}
 		return nil, false
 	}
 	if !containsSelfEmbeddingAnchorBelowRoot(anchor, observation) {
-		if foldDbg {
-			println("FOLDDBG gate belowRoot=false anchor=", DbgString(anchor), "obs=", DbgString(observation))
-		}
 		return nil, false
 	}
 

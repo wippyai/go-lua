@@ -1822,13 +1822,12 @@ func TestPhiEquationStateReusesRecursiveConvergedJoin(t *testing.T) {
 	}
 }
 
-// TestStabilizePhiJoinKeepsProductEqualRecursiveFact verifies the native
-// stabilization contract: stabilizePhiJoin keeps the existing stored fact when a
-// re-derived recursive observation is the same point in the product lattice (a
-// distinct *typ.Recursive instance that interns to the same canonical product
-// node), so the worklist reports no change and drains. A product-equal recursive
-// observation must therefore return the existing instance.
-func TestStabilizePhiJoinKeepsProductEqualRecursiveFact(t *testing.T) {
+// TestAccumulatePhiNoOpOnProductEqualFact verifies the convergence contract:
+// accumulating a candidate that is the same point in the product lattice as the
+// stored carrier (a distinct *typ.Recursive instance that interns to the same
+// canonical node) yields a product-equal result, so the worklist reports no
+// change and drains.
+func TestAccumulatePhiNoOpOnProductEqualFact(t *testing.T) {
 	existing := typ.NewRecursive("Query", func(self typ.Type) typ.Type {
 		return typ.NewRecord().
 			Field("where", typ.Func().Param("self", self).Returns(self).Build()).
@@ -1840,21 +1839,24 @@ func TestStabilizePhiJoinKeepsProductEqualRecursiveFact(t *testing.T) {
 			Build()
 	})
 
-	if !product.Equal(liftFlowValue(existing), liftFlowValue(observation)) {
+	oldAV := liftFlowValue(existing)
+	if !product.Equal(oldAV, liftFlowValue(observation)) {
 		t.Fatalf("precondition: equivalent recursive facts must be product-equal")
 	}
-	got := stabilizePhiJoin(existing, observation)
-	if got != existing {
-		t.Fatalf("stabilizePhiJoin product-equal recursive observation = %v, want existing instance", got)
+	s := &Solution{}
+	got := s.accumulatePhi(0, oldAV, observation)
+	if !sameFlowValueAV(oldAV, got) {
+		t.Fatalf("accumulatePhi of a product-equal observation must be a worklist no-op")
 	}
 }
 
-// TestStabilizePhiJoinTakesStrictlyExtendingObservation verifies that when a
-// recursive observation strictly extends the existing fact (an added field), it
-// is not product-equal, so stabilizePhiJoin takes the more precise observation.
-// Worklist termination is owned by product.PhiJoin folding growth and the
-// product.Equal no-op check, not by a typ.Type precision keep-existing rule.
-func TestStabilizePhiJoinTakesStrictlyExtendingObservation(t *testing.T) {
+// TestAccumulatePhiAscendsToUpperBound verifies the monotone-ascent contract:
+// accumulating a candidate that is not product-equal yields an upper bound of
+// both the stored carrier and the candidate (the iterate ascends, never
+// descends), and re-accumulating the same candidate is a fixed point, so the
+// ascending chain terminates. This replaces the prior take-the-more-precise
+// observation behavior, which permitted in-pass descent (the limit-cycle source).
+func TestAccumulatePhiAscendsToUpperBound(t *testing.T) {
 	existing := typ.NewRecursive("Query", func(self typ.Type) typ.Type {
 		return typ.NewRecord().
 			Field("where", typ.Func().Param("self", self).Returns(self).Build()).
@@ -1867,12 +1869,22 @@ func TestStabilizePhiJoinTakesStrictlyExtendingObservation(t *testing.T) {
 			Build()
 	})
 
-	if product.Equal(liftFlowValue(existing), liftFlowValue(observation)) {
+	oldAV := liftFlowValue(existing)
+	candAV := liftFlowValue(observation)
+	if product.Equal(oldAV, candAV) {
 		t.Fatalf("precondition: strictly-extending recursive fact must not be product-equal")
 	}
-	got := stabilizePhiJoin(existing, observation)
-	if got != observation {
-		t.Fatalf("stabilizePhiJoin strictly-extending observation = %v, want the observation", got)
+	s := &Solution{}
+	got := s.accumulatePhi(0, oldAV, observation)
+	if !product.Equal(product.Join(oldAV, got), got) {
+		t.Fatalf("accumulatePhi result must be an upper bound of the stored carrier")
+	}
+	if !product.Equal(product.Join(candAV, got), got) {
+		t.Fatalf("accumulatePhi result must be an upper bound of the candidate")
+	}
+	again := s.accumulatePhi(0, got, observation)
+	if !sameFlowValueAV(got, again) {
+		t.Fatalf("accumulatePhi must be a fixed point on re-accumulation; the ascending chain did not terminate")
 	}
 }
 

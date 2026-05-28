@@ -410,6 +410,13 @@ func applyPublicParamEvidence(paramType, evidence typ.Type) typ.Type {
 	}
 	if value.IsStructuredTableShape(unwrap.Optional(paramType)) &&
 		value.IsStructuredTableShape(unwrap.Optional(evidence)) {
+		// A declared annotation stays authoritative when the public evidence is
+		// merely a widening of it (the annotation is already a subtype). Merging
+		// would degrade a precise discriminated union to the evidence's
+		// literal-widened shape, so refine only when the evidence adds precision.
+		if subtype.IsSubtype(paramType, evidence) && !subtype.IsSubtype(evidence, paramType) {
+			return paramType
+		}
 		return mergeParamType(paramType, evidence)
 	}
 	return paramType

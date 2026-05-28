@@ -42,6 +42,10 @@ func NumericConstraintFromComparisonWithBindings(op string, lhs, rhs ast.Expr, p
 		if leftIsConst && !rightLenPath.IsEmpty() {
 			return constraint.LenGeConst{Array: rightLenPath, C: leftConst + 1}
 		}
+		// i < #arr  =>  i <= len(arr) - 1
+		if !leftPath.IsEmpty() && !rightLenPath.IsEmpty() {
+			return constraint.LeLenOf{X: leftPath, Array: rightLenPath, Offset: -1}
+		}
 		if !leftPath.IsEmpty() && !rightPath.IsEmpty() {
 			return constraint.Lt{X: leftPath, Y: rightPath}
 		}
@@ -57,6 +61,10 @@ func NumericConstraintFromComparisonWithBindings(op string, lhs, rhs ast.Expr, p
 		}
 		if leftIsConst && !rightLenPath.IsEmpty() {
 			return constraint.LenLeConst{Array: rightLenPath, C: leftConst - 1}
+		}
+		// #arr > i  =>  i <= len(arr) - 1
+		if !leftLenPath.IsEmpty() && !rightPath.IsEmpty() {
+			return constraint.LeLenOf{X: rightPath, Array: leftLenPath, Offset: -1}
 		}
 		if !leftPath.IsEmpty() && !rightPath.IsEmpty() {
 			return constraint.Gt{X: leftPath, Y: rightPath}
@@ -74,6 +82,10 @@ func NumericConstraintFromComparisonWithBindings(op string, lhs, rhs ast.Expr, p
 		if leftIsConst && !rightLenPath.IsEmpty() {
 			return constraint.LenGeConst{Array: rightLenPath, C: leftConst}
 		}
+		// i <= #arr  =>  i <= len(arr)
+		if !leftPath.IsEmpty() && !rightLenPath.IsEmpty() {
+			return constraint.LeLenOf{X: leftPath, Array: rightLenPath, Offset: 0}
+		}
 		if !leftPath.IsEmpty() && !rightPath.IsEmpty() {
 			return constraint.Le{X: leftPath, Y: rightPath, C: 0}
 		}
@@ -89,6 +101,10 @@ func NumericConstraintFromComparisonWithBindings(op string, lhs, rhs ast.Expr, p
 		}
 		if leftIsConst && !rightLenPath.IsEmpty() {
 			return constraint.LenLeConst{Array: rightLenPath, C: leftConst}
+		}
+		// #arr >= i  =>  i <= len(arr)
+		if !leftLenPath.IsEmpty() && !rightPath.IsEmpty() {
+			return constraint.LeLenOf{X: rightPath, Array: leftLenPath, Offset: 0}
 		}
 		if !leftPath.IsEmpty() && !rightPath.IsEmpty() {
 			return constraint.Ge{X: leftPath, Y: rightPath}

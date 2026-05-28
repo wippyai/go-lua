@@ -61,7 +61,7 @@ func SolutionEqual(a, b *Solution) bool {
 		edgeNumericConstraintMapEqual(a.edgeNumericConstraints, b.edgeNumericConstraints) &&
 		edgeBoolMapEqual(a.unsatEdges, b.unsatEdges) &&
 		pointConditionMapEqual(a.pointConditions, b.pointConditions) &&
-		numericStateMapEqual(a.numericStates, b.numericStates) &&
+		numericStateMapEqual(a.numericAt, b.numericAt) &&
 		stringStringMapEqual(a.pathAliases, b.pathAliases)
 }
 

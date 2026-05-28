@@ -51,16 +51,37 @@ func (c ErrorReturnConvention) canClassifyFunction(fn *typ.Function) bool {
 	return fn != nil && c.CanClassifyReturns(fn.Returns)
 }
 
+// ReturnPatternProof records which value/error return shapes a function body
+// exhibits under this convention. SawSuccess means a `(value, nil)` return is
+// reachable; SawFailure means a `(nil, error)` return is reachable. Consistent is
+// false when any reachable return contradicts the convention (e.g. both slots
+// non-nil or both nil), in which case neither flag may be trusted.
+type ReturnPatternProof struct {
+	SawSuccess bool
+	SawFailure bool
+	Consistent bool
+}
+
 // HasStrictInversePattern proves this convention from the function body.
 func (c ErrorReturnConvention) HasStrictInversePattern(
 	returns []api.ReturnEvidence,
 	solution *flow.Solution,
 	synth abstractreturns.ExprSynth,
 ) bool {
+	proof := c.ProveReturnPattern(returns, solution, synth)
+	return proof.Consistent && proof.SawSuccess && proof.SawFailure
+}
+
+// ProveReturnPattern classifies the function body's returns under this convention.
+func (c ErrorReturnConvention) ProveReturnPattern(
+	returns []api.ReturnEvidence,
+	solution *flow.Solution,
+	synth abstractreturns.ExprSynth,
+) ReturnPatternProof {
 	if !c.valid() {
-		return false
+		return ReturnPatternProof{}
 	}
-	return HasStrictInverseReturnPattern(returns, solution, synth, c.ValueIndex, c.ErrorIndex)
+	return ProveReturnPattern(returns, solution, synth, c.ValueIndex, c.ErrorIndex)
 }
 
 // Attach enriches fn with this convention's ErrorReturn effect.
@@ -86,11 +107,55 @@ func AttachInferredErrorReturnSpec(
 	if HasErrorReturnLabel(fn) {
 		return fn
 	}
-	if !convention.HasStrictInversePattern(evidence.Returns, solution, synth) {
+	proof := convention.ProveReturnPattern(evidence.Returns, solution, synth)
+	if !convention.ProvenReturnPatternAttaches(fn, proof) {
 		return fn
 	}
-
 	return convention.Attach(fn)
+}
+
+// ProvenReturnPatternAttaches reports whether a proven return pattern justifies
+// attaching the (value, err) correlation to fn.
+//
+// A body that exhibits both a `(value, nil)` and a `(nil, error)` return proves
+// the full bidirectional correlation. A body that only ever succeeds still
+// proves the forward direction `err == nil => value != nil`, which soundly
+// narrows a caller's value slot under an error guard. The forward-only case is
+// admitted only when the declared value slot is already optional: the
+// correlation's value-becomes-optional transform would otherwise widen a
+// non-optional slot, and a function that never returns a nil value carries no
+// correlation worth recording for a non-optional slot.
+func (c ErrorReturnConvention) ProvenReturnPatternAttaches(fn *typ.Function, proof ReturnPatternProof) bool {
+	if !proof.Consistent || !proof.SawSuccess {
+		return false
+	}
+	if proof.SawFailure {
+		return true
+	}
+	return c.valueSlotOptional(fn)
+}
+
+func (c ErrorReturnConvention) valueSlotOptional(fn *typ.Function) bool {
+	if fn == nil || c.ValueIndex < 0 || c.ValueIndex >= len(fn.Returns) {
+		return false
+	}
+	return unwrap.IsOptionalLike(fn.Returns[c.ValueIndex])
+}
+
+// ProvenReturnPatternForReturns is the slice-typed counterpart of
+// ProvenReturnPatternAttaches for inferred return vectors that are not yet built
+// into a function type.
+func (c ErrorReturnConvention) ProvenReturnPatternForReturns(returns []typ.Type, proof ReturnPatternProof) bool {
+	if !proof.Consistent || !proof.SawSuccess {
+		return false
+	}
+	if proof.SawFailure {
+		return true
+	}
+	if c.ValueIndex < 0 || c.ValueIndex >= len(returns) {
+		return false
+	}
+	return unwrap.IsOptionalLike(returns[c.ValueIndex])
 }
 
 func HasErrorReturnLabel(fn *typ.Function) bool {
@@ -113,12 +178,25 @@ func HasStrictInverseReturnPattern(
 	valueIdx int,
 	errorIdx int,
 ) bool {
+	proof := ProveReturnPattern(returns, solution, synth, valueIdx, errorIdx)
+	return proof.Consistent && proof.SawSuccess && proof.SawFailure
+}
+
+// ProveReturnPattern classifies a function body's returns under the (value, err)
+// convention at the given slot indices.
+func ProveReturnPattern(
+	returns []api.ReturnEvidence,
+	solution *flow.Solution,
+	synth abstractreturns.ExprSynth,
+	valueIdx int,
+	errorIdx int,
+) ReturnPatternProof {
 	if len(returns) == 0 || synth == nil {
-		return false
+		return ReturnPatternProof{}
 	}
 	needed := requiredReturnSlots(valueIdx, errorIdx)
 	if needed == 0 {
-		return false
+		return ReturnPatternProof{}
 	}
 	var sawSuccess bool
 	var sawFailure bool
@@ -177,7 +255,11 @@ func HasStrictInverseReturnPattern(
 		}
 	}
 
-	return classified && !incompatible && sawSuccess && sawFailure
+	return ReturnPatternProof{
+		SawSuccess: sawSuccess,
+		SawFailure: sawFailure,
+		Consistent: classified && !incompatible,
+	}
 }
 
 func delegatesErrorReturn(

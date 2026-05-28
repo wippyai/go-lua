@@ -128,11 +128,13 @@ func ExcludeByTypeKey(t typ.Type, key TypeKey, resolve TypeResolver) typ.Type {
 		if !ok {
 			return t
 		}
-		narrowed := ExcludeKind(t, targetKind)
-		if typ.IsNever(narrowed) {
-			return t
-		}
-		return narrowed
+		// ExcludeKind is coverage-based: it removes a union member (or leaf)
+		// only when its Lua typeof kind matches the excluded kind, and it
+		// preserves placeholders (any/unknown). A Never result therefore means
+		// the input was wholly the excluded kind, so the control path that
+		// asserts type(x) ~= kind is unreachable. Propagating Never is the sound
+		// answer; the constraint domain reads it as an unsatisfiable branch.
+		return ExcludeKind(t, targetKind)
 	}
 	if key.Kind == TypeKeyHash && resolve != nil {
 		exact := resolve(key)
@@ -140,6 +142,11 @@ func ExcludeByTypeKey(t typ.Type, key TypeKey, resolve TypeResolver) typ.Type {
 			return t
 		}
 		narrowed := ExcludeType(t, exact)
+		// ExcludeType is overlap-based, not coverage-based: a leaf that merely
+		// overlaps the excluded type (e.g. string overlapping literal "x") is
+		// dropped even though its complement is still inhabited. A Never result
+		// here is not a proof of unreachability, so preserve the input to avoid
+		// over-narrowing reachable paths.
 		if typ.IsNever(narrowed) {
 			return t
 		}

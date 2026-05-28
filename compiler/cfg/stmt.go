@@ -461,8 +461,27 @@ func (b *Builder) WhileStmt(s *ast.WhileStmt) {
 	b.Cfg.AddEdge(loopExit, join, false)
 
 	b.Current = join
-	b.CurrentLive = entryLive
+	// A while loop whose condition is syntactically always truthy exits only
+	// through a break. Without one, the loop is infinite and the code after it is
+	// unreachable: the false-condition edge to the join is taken on no execution,
+	// so the join is dead. loopExit collects break targets, so it has a
+	// predecessor exactly when a reachable break exists.
+	loopFallsThrough := !conditionAlwaysTruthy(s.Condition) || len(b.Cfg.PredecessorsReadOnly(loopExit)) > 0
+	b.CurrentLive = entryLive && loopFallsThrough
 	b.ScopeTracker.SnapshotVisibility(join)
+}
+
+// conditionAlwaysTruthy reports whether a loop condition is a syntactic constant
+// that Lua evaluates as truthy on every iteration (every value except false and
+// nil). Only literal forms are classified; any expression that could evaluate to
+// false or nil at runtime is conservatively not always-truthy.
+func conditionAlwaysTruthy(expr ast.Expr) bool {
+	switch expr.(type) {
+	case *ast.TrueExpr, *ast.NumberExpr, *ast.StringExpr, *ast.TableExpr, *ast.FunctionExpr:
+		return true
+	default:
+		return false
+	}
 }
 
 // RepeatStmt processes a repeat statement.

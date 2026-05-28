@@ -24,8 +24,8 @@ func TestIndex(t *testing.T) {
 		checker func(typ.Type) bool
 	}{
 		{"nil type", nil, typ.Integer, false, nil},
-		{"array with integer key", arr, typ.Integer, true, func(t typ.Type) bool { return t == typ.String }},
-		{"array with number key", arr, typ.Number, true, func(t typ.Type) bool { return t == typ.String }},
+		{"array with integer key", arr, typ.Integer, true, func(t typ.Type) bool { return ContainsNil(t) }},
+		{"array with number key", arr, typ.Number, true, func(t typ.Type) bool { return ContainsNil(t) }},
 		{"array with unknown key placeholder", arr, typ.Unknown, true, func(t typ.Type) bool {
 			return ContainsNil(t)
 		}},
@@ -333,8 +333,10 @@ func TestIndexAlias(t *testing.T) {
 			t.Error("expected to index alias")
 		}
 
-		if result != typ.Number {
-			t.Errorf("expected number, got %v", result)
+		// A sequence index is nil-eligible: the runtime length is statically
+		// unknown, so the result is optional until a length proof removes nil.
+		if !ContainsNil(result) {
+			t.Errorf("expected optional number, got %v", result)
 		}
 	})
 }

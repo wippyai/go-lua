@@ -72,6 +72,7 @@ func (p preStateFlowOps) HasKeyOf(point cfg.Point, tablePath, keyPath constraint
 	return p.inner.HasKeyOf(point, tablePath, keyPath)
 }
 
+
 type conditionFlowOps struct {
 	inner     FlowOps
 	condition constraint.Condition
@@ -143,3 +144,4 @@ func (o conditionFlowOps) HasKeyOf(point cfg.Point, tablePath, keyPath constrain
 	}
 	return false
 }
+

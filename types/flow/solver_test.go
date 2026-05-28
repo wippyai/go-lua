@@ -1320,7 +1320,10 @@ func TestNarrowedTypeAt_IgnoresUnrelatedUnsatConstraints(t *testing.T) {
 	}
 
 	inputs := newInputs(g)
-	inputs.DeclaredTypes[symX] = typ.NewOptional(typ.NewRecord().Build())
+	// x admits a non-table member so the edge constraint on x is satisfiable
+	// and the then-branch stays reachable; the constraint must not bleed into
+	// the unrelated symbol y.
+	inputs.DeclaredTypes[symX] = typ.NewOptional(typ.NewUnion(typ.NewRecord().Build(), typ.String))
 	wantY := typ.Func().Param("v", typ.Any).Returns(typ.Any).Build()
 	inputs.DeclaredTypes[symY] = wantY
 

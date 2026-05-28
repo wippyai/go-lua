@@ -120,12 +120,55 @@ func TestExcludeByTypeKey_UnknownBuiltin(t *testing.T) {
 	}
 }
 
-func TestExcludeByTypeKey_BuiltinResultsNever(t *testing.T) {
+func TestExcludeByTypeKey_BuiltinFullExclusionIsNever(t *testing.T) {
+	// Excluding the kind that wholly covers the input proves the asserting
+	// control path unreachable; the sound result is Never.
 	base := typ.String
 	key := narrow.BuiltinTypeKey("string")
 	result := narrow.ExcludeByTypeKey(base, key, nil)
-	if result != base {
-		t.Error("exclusion resulting in never should return original")
+	if !typ.IsNever(result) {
+		t.Errorf("excluding string from string should be never, got %v", result)
+	}
+}
+
+func TestExcludeByTypeKey_LiteralFullExclusionIsNever(t *testing.T) {
+	// A string literal is wholly a string, so type(x) ~= "string" is a
+	// contradiction on that path.
+	base := typ.LiteralString("merge")
+	key := narrow.BuiltinTypeKey("string")
+	result := narrow.ExcludeByTypeKey(base, key, nil)
+	if !typ.IsNever(result) {
+		t.Errorf("excluding string from \"merge\" should be never, got %v", result)
+	}
+}
+
+func TestExcludeByTypeKey_BuiltinPreservesPlaceholder(t *testing.T) {
+	// any/unknown are not provably the excluded kind; exclusion must not narrow.
+	for _, base := range []typ.Type{typ.Any, typ.Unknown} {
+		key := narrow.BuiltinTypeKey("string")
+		result := narrow.ExcludeByTypeKey(base, key, nil)
+		if typ.IsNever(result) {
+			t.Errorf("excluding string from %v must not be never", base)
+		}
+	}
+}
+
+func TestExcludeByTypeKey_HashLiteralComplementInhabitedPreserved(t *testing.T) {
+	// ExcludeType is overlap-based: string overlaps literal "merge" but its
+	// complement is still inhabited, so a Never result is not a reachability
+	// proof and the input is preserved.
+	base := typ.String
+	lit := typ.LiteralString("merge")
+	key := narrow.HashTypeKey(lit.Hash())
+	resolver := func(k narrow.TypeKey) typ.Type {
+		if k.Hash == lit.Hash() {
+			return lit
+		}
+		return nil
+	}
+	result := narrow.ExcludeByTypeKey(base, key, resolver)
+	if !typ.TypeEquals(result, base) {
+		t.Errorf("string excluding literal should stay string, got %v", result)
 	}
 }
 

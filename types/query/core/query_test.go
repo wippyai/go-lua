@@ -33,11 +33,13 @@ func TestIndexArray(t *testing.T) {
 
 	et, ok := Index(arr, typ.Integer)
 	if !ok {
-		t.Error("Index on string[] with integer should return string")
+		t.Error("Index on string[] with integer should return optional string")
 	}
 
-	if et != typ.String {
-		t.Errorf("expected string, got %v", et)
+	// A sequence index is nil-eligible: a numeric key past the runtime border
+	// reads nil, so the result is optional until a length proof removes nil.
+	if _, isOpt := et.(*typ.Optional); !isOpt {
+		t.Errorf("expected optional string, got %v", et)
 	}
 }
 

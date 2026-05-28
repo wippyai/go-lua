@@ -31,13 +31,27 @@ func ReconcilePathFactWithDeclaredRead(narrowed, declared typ.Type) (typ.Type, b
 	if narrowed == nil || declared == nil || declared.Kind().IsPlaceholder() {
 		return narrowed, true
 	}
+	declaredNonNil, nilable := SplitNilable(declared)
+	// A record literal flowing into a declared map field is over-precise for the
+	// ascribed map type. Widen it to the declared map so a downstream read sees the
+	// keyed-container shape (an index on it is a map lookup), and keep the declared
+	// optionality: this widening only matches a record candidate against a map
+	// declared, which is exclusively a construction value, never a nil-guard
+	// (guards narrow {map}? to {map}, a map candidate, not a record).
+	if declaredMap, ok := mapDeclaredFor(declared, declaredNonNil); ok {
+		if recordSatisfiesMapValue(narrowed, declaredMap) {
+			if nilable {
+				return typ.NewOptional(declaredMap), true
+			}
+			return declaredMap, true
+		}
+	}
 	if reconciled, ok := reconcileDeclaredProductContract(narrowed, declared); ok {
 		return reconciled, true
 	}
 	if samePathFactFamily(narrowed, declared) {
 		return narrowed, true
 	}
-	declaredNonNil, nilable := SplitNilable(declared)
 	if nilable && declaredNonNil != nil && !typ.IsNever(declaredNonNil) {
 		declaredNonNil = unwrap.Alias(declaredNonNil)
 		if reconciled, ok := reconcileDeclaredProductContract(narrowed, declaredNonNil); ok {
@@ -115,6 +129,45 @@ func reconcileNarrowedAgainstUnionDeclared(narrowed, declared typ.Type) (typ.Typ
 		return nil, false
 	}
 	return matchedReconciled, true
+}
+
+// mapDeclaredFor returns the declared map type when the candidate is a record
+// and the declared read is a map (directly or as the non-nil core of an optional).
+func mapDeclaredFor(declared, declaredNonNil typ.Type) (*typ.Map, bool) {
+	if m, ok := unwrap.Alias(declared).(*typ.Map); ok {
+		return m, true
+	}
+	if declaredNonNil != nil {
+		if m, ok := unwrap.Alias(declaredNonNil).(*typ.Map); ok {
+			return m, true
+		}
+	}
+	return nil, false
+}
+
+// recordSatisfiesMapValue reports whether candidate is a record whose every field
+// value is a subtype of a declared map's value type, so the record is a valid
+// value of that map.
+func recordSatisfiesMapValue(candidate typ.Type, m *typ.Map) bool {
+	rec, ok := unwrap.Alias(candidate).(*typ.Record)
+	if !ok || rec == nil || m == nil || m.Value == nil {
+		return false
+	}
+	// An empty record is the bottom table (an uninitialized/accumulator literal),
+	// not a concrete map value to widen. Widening it would synthesize map shape it
+	// does not carry, so only a record with concrete fields widens to the map.
+	if len(rec.Fields) == 0 && !rec.HasMapComponent() {
+		return false
+	}
+	if rec.HasMapComponent() && !subtype.IsSubtype(rec.MapValue, m.Value) {
+		return false
+	}
+	for _, f := range rec.Fields {
+		if f.Type == nil || !subtype.IsSubtype(f.Type, m.Value) {
+			return false
+		}
+	}
+	return true
 }
 
 func reconcileDeclaredProductContract(candidate, declared typ.Type) (typ.Type, bool) {
@@ -235,6 +288,16 @@ func reconcileDeclaredFieldContract(candidate, declared typ.Type) (typ.Type, boo
 		return merged, true
 	}
 	declaredNonNil, nilable := SplitNilable(declared)
+	// A record literal field flowing into a declared map field is over-precise for
+	// the ascribed map type; widen it to the declared map and keep the declared
+	// optionality. This only matches a record candidate against a map-declared
+	// field, which is a construction value, never a nil-guard.
+	if declaredMap, ok := mapDeclaredFor(declared, declaredNonNil); ok && recordSatisfiesMapValue(candidate, declaredMap) {
+		if nilable {
+			return typ.NewOptional(declaredMap), true
+		}
+		return declaredMap, true
+	}
 	if nilable && declaredNonNil != nil {
 		if merged, ok := reconcileDeclaredProductContract(candidate, declaredNonNil); ok {
 			return merged, true

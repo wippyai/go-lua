@@ -107,12 +107,26 @@ func EnrichSelfTypeWithConstructorFields(selfType typ.Type, fields map[string]ty
 // MethodSelfTypeFromReceiverSurface constructs the instance-side self contract
 // for an unannotated colon method. The receiver expression in `function T:m`
 // names the prototype/class table, while calls pass an instance whose metatable
-// delegates to that table.
+// delegates lookups to that table.
+//
+// The self contract is an open instance record whose metatable carries
+// `__index` pointing at the receiver, so both `self.field` and `self:method`
+// resolve through the prototype. Field resolution follows the metatable
+// `__index` chain rather than the metatable's own fields, so the receiver must
+// be reachable as `__index`; when T is already a metatable record exposing
+// `__index` (the `T.__index = T` idiom) reuse it directly to avoid a redundant
+// wrapper, otherwise synthesize the `{__index = T}` delegate. This surfaces a
+// plain local table's data fields (`local T = {count = 0}` then `T:inc()`) as
+// well as a prototype's inherited methods.
 func MethodSelfTypeFromReceiverSurface(receiver typ.Type) typ.Type {
 	if receiver == nil {
 		return nil
 	}
-	return typ.NewRecord().SetOpen(true).Metatable(receiver).Build()
+	meta := receiver
+	if rec, ok := receiver.(*typ.Record); !ok || rec.GetField("__index") == nil {
+		meta = typ.NewRecord().Field("__index", receiver).Build()
+	}
+	return typ.NewRecord().SetOpen(true).Metatable(meta).Build()
 }
 
 // NormalizeMethodSelfType widens literal-heavy self shapes so method-local

@@ -68,6 +68,7 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/propagate"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -355,6 +356,19 @@ type Inputs struct {
 	// Value: symbol of table the keys came from (e.g., suites)
 	// Used to emit KeyOf constraints when iterating over such variables.
 	KeysProvenance map[cfg.SymbolID]cfg.SymbolID
+
+	// ConditionDemand seeds the SSA-version liveness used to project dead facts
+	// out of the propagated path condition. It is populated by the checker,
+	// which can enumerate real read/def sites, and is nil for callers that
+	// build Inputs without read evidence (path-condition propagation then stays
+	// exact, subject only to FVS widening).
+	ConditionDemand *propagate.Demand
+
+	// ConditionExtraReads records access paths read at a CFG point that the flow
+	// inputs do not otherwise encode — notably return-expression reads and call
+	// argument reads. The condition-demand builder folds these into the liveness
+	// use set so a field guard feeding a return summary is not forgotten.
+	ConditionExtraReads map[cfg.Point][]constraint.Path
 }
 
 // ReturnExprConstraints holds constraints extracted from a return expression.
@@ -471,6 +485,11 @@ type TableMutatorAssignment struct {
 	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
 	ValueType typ.Type        // Static value type if ValuePath doesn't resolve
 	Value     ValueTemplate   // Flow-resolved slots inside a static table value
+	// LengthDelta is the constant length increase the callee's Mutate effect
+	// guarantees for Target (table.insert is +1). Zero means no length effect.
+	// The numeric component raises Target's length lower bound by this delta when
+	// the inserted value is non-nil and the target is a direct sequence path.
+	LengthDelta int64
 }
 
 // ContainerMutatorAssignment describes container mutations (channel.send, etc.)

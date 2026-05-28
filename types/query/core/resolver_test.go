@@ -120,7 +120,7 @@ func TestQueryResolver_UsesTypeOpsQueries(t *testing.T) {
 	}
 
 	it, ok := r.Index(ft, typ.Integer)
-	if !ok || it != typ.String {
-		t.Fatalf("Index(items, integer) = %v, %v; want string true", it, ok)
+	if !ok || !ContainsNil(it) {
+		t.Fatalf("Index(items, integer) = %v, %v; want optional string true", it, ok)
 	}
 }

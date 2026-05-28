@@ -200,7 +200,18 @@ func queryTypeRefEqual(left, right typ.Type) bool {
 		return queryTypeRefEqual(leftAlias.Target, rightAlias.Target)
 	}
 	if typ.ContainsRecursive(left) || typ.ContainsRecursive(right) {
-		return typ.SameProductFamily(left, right)
+		// SameProductFamily merges equivalent unfoldings of one recursive family,
+		// which a field/method memo must keep sharing to converge. It is, however,
+		// alias- and identity-transparent and bottoms out at a constant terminal
+		// hash for recursive-containing leaves, so two distinct families that
+		// share structural precision (for example a per-module class allocation
+		// whose constructor return differs only by the family) compare as equal
+		// and would memoize the first family's field result for all of them. Gate
+		// the precision merge on an equal recursive-family fingerprint so distinct
+		// families keep distinct cache refs while equivalent unfoldings, which
+		// reference the same family identities, still share.
+		return typ.SameProductFamily(left, right) &&
+			typ.RecursiveFamilyFingerprint(left) == typ.RecursiveFamilyFingerprint(right)
 	}
 	return typ.TypeEquals(left, right)
 }

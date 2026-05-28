@@ -5,10 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/types/domain/value"
-	"github.com/wippyai/go-lua/types/domain/value/axis/identityrecursion"
-	"github.com/wippyai/go-lua/types/domain/value/axis/shapevalue"
 	"github.com/wippyai/go-lua/types/domain/value/product"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // FactsEqual checks if two canonical interproc fact bundles are equal.
@@ -58,69 +55,30 @@ func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 // interning), the same relation the flow store uses for its fixpoint.
 func FunctionFactEqual(a, b api.FunctionFact) bool {
 	if !product.EqualVector(a.Params, b.Params) {
-		zzslot("Params", a.Params, b.Params)
 		return false
 	}
 	if !product.EqualVector(a.BodyParams, b.BodyParams) {
-		zzslot("BodyParams", a.BodyParams, b.BodyParams)
 		return false
 	}
 	if !product.EqualVector(a.EntryParams, b.EntryParams) {
-		zzslot("EntryParams", a.EntryParams, b.EntryParams)
 		return false
 	}
 	if !product.EqualVector(a.Summary, b.Summary) {
-		zzslot("Summary", a.Summary, b.Summary)
 		return false
 	}
 	if !product.EqualVector(a.Narrow, b.Narrow) {
-		zzslot("Narrow", a.Narrow, b.Narrow)
 		return false
 	}
 	if !value.FactTypeEqual(a.Signature, b.Signature) {
-		println("ZZSLOT Signature", typstr(a.Signature), "VS", typstr(b.Signature))
 		return false
 	}
 	if !RefinementEqual(a.Refinement, b.Refinement) {
-		println("ZZSLOT Refinement differs")
 		return false
 	}
 	if !functionfact.EnvReturnsEqual(a.EnvReturns, b.EnvReturns) {
-		println("ZZSLOT EnvReturns differs")
 		return false
 	}
 	return true
-}
-
-func zzslot(name string, a, b []product.AbstractValue) {
-	for i := 0; i < len(a) && i < len(b); i++ {
-		if !product.Equal(a[i], b[i]) {
-			if a[i].IsZero() || b[i].IsZero() {
-				println("ZZSLOT", name, i, "zero-value entry")
-				continue
-			}
-			ap := a[i].ProjectValue()
-			bp := b[i].ProjectValue()
-			println("ZZSLOT", name, i,
-				"shapeEq", shapevalue.Equal(a[i].Shape(), b[i].Shape()),
-				"idEq", identityrecursion.Equal(a[i].Identity(), b[i].Identity()),
-				"recA", value.ContainsRecursiveDbg(ap), "recB", value.ContainsRecursiveDbg(bp),
-				"hashSame", value.FamilyHashDbg(ap) == value.FamilyHashDbg(bp),
-				"canonSame", value.CanonicalSameDbg(ap, bp))
-			println("    A=", value.DbgString(ap), "B=", value.DbgString(bp))
-			println("    mtA=", value.MetatableDbg(ap), "mtB=", value.MetatableDbg(bp))
-		}
-	}
-	if len(a) != len(b) {
-		println("ZZSLOT", name, "len", len(a), "vs", len(b))
-	}
-}
-
-func typstr(t *typ.Function) string {
-	if t == nil {
-		return "<nil>"
-	}
-	return t.String()
 }
 
 // LiteralSigsEqual checks if two literal signature maps are equal.

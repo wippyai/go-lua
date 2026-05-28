@@ -491,6 +491,11 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImpl, s
 
 	objType := resolver.TypeOf(e.Object, p)
 
+	if d, ok := optionalIndexError(objType, e, sourceName); ok {
+		diags = append(diags, d)
+		return diags
+	}
+
 	if !isStringKeyExpr(e.Key) {
 		diags = append(diags, checkIndexAccess(e, p, resolver, objType, sourceName)...)
 		return diags
@@ -598,6 +603,92 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImp
 	}
 
 	return []diag.Diagnostic{indexError(objType, e, sourceName)}
+}
+
+// optionalIndexError rejects an index read on an optional container. Indexing a
+// value whose type includes nil dereferences nil at runtime when the value is
+// absent, so the read is unsound until the optional is narrowed non-nil (a nil
+// guard such as `if m then m[k] end` or `m = m or {}`). This mirrors the
+// optional-call rule (ErrOptionalCall) for the call site. It fires only when the
+// non-nil inner is a keyed container (map, array, or tuple); record field access
+// on an optional is reported through field resolution.
+func optionalIndexError(objType typ.Type, e *ast.AttrGetExpr, sourceName string) (diag.Diagnostic, bool) {
+	if e == nil || objType == nil {
+		return diag.Diagnostic{}, false
+	}
+	inner, ok := optionalContainerInner(objType)
+	if !ok {
+		return diag.Diagnostic{}, false
+	}
+	if !indexesKeyedContainer(inner) {
+		return diag.Diagnostic{}, false
+	}
+	pos := diag.Position{File: sourceName, Line: e.Line(), Column: e.Column()}
+	span := ast.SpanOf(e)
+	if e.Object != nil && e.Object.Line() > 0 {
+		pos.Line = e.Object.Line()
+		pos.Column = e.Object.Column()
+		span = ast.SpanOf(e.Object)
+	}
+	msg := "cannot index optional value " + typ.FormatShort(objType) + " without nil check"
+	_, help := diag.ContextualHelp(diag.ErrOptionalIndex, msg, "")
+	return diag.Diagnostic{
+		Severity: diag.SeverityError,
+		Code:     diag.ErrOptionalIndex,
+		Position: pos,
+		Span:     span,
+		Message:  msg,
+		Help:     help,
+	}, true
+}
+
+// optionalContainerInner returns the non-nil inner of an optional object type.
+// A plain Optional yields its Inner; a union carrying nil alongside a single
+// other member yields that member.
+func optionalContainerInner(t typ.Type) (typ.Type, bool) {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Optional:
+		if v == nil || v.Inner == nil {
+			return nil, false
+		}
+		return v.Inner, true
+	case *typ.Union:
+		if v == nil {
+			return nil, false
+		}
+		var inner typ.Type
+		hasNil := false
+		for _, m := range v.Members {
+			if m == nil {
+				continue
+			}
+			if m.Kind() == kind.Nil {
+				hasNil = true
+				continue
+			}
+			if inner != nil {
+				return nil, false
+			}
+			inner = m
+		}
+		if !hasNil || inner == nil {
+			return nil, false
+		}
+		return inner, true
+	}
+	return nil, false
+}
+
+// indexesKeyedContainer reports whether t is a keyed container whose index read
+// dereferences the container at runtime, so reaching it through an optional is
+// unsound (map, array, or tuple). Record field access on an optional is reported
+// through field resolution / result optionality, not here.
+func indexesKeyedContainer(t typ.Type) bool {
+	switch unwrap.Alias(t).(type) {
+	case *typ.Map, *typ.Array, *typ.Tuple:
+		return true
+	}
+	return false
 }
 
 func indexError(objType typ.Type, e *ast.AttrGetExpr, sourceName string) diag.Diagnostic {

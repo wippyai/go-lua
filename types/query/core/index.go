@@ -62,7 +62,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				return indexResult{t: typ.NewOptional(m.Value), ok: true}
 			}
 
-			if subtype.IsSubtype(keyType, m.Key) {
+			// A nil-bearing key reads soundly in Lua (t[nil] yields nil) and the
+			// result is already optional, so match against the non-nil key domain.
+			if subtype.IsSubtype(nonNilKey(keyType), m.Key) {
 				if m.Value == nil {
 					return indexResult{}
 				}
@@ -103,9 +105,10 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				}
 				return indexResult{t: typ.Nil, ok: true}
 			}
-			// Unknown string returns optional union of all field types
-			if keyType.Kind() == kind.String {
-				return indexRecordByGenericStringKey(r, keyType)
+			// Unknown string returns optional union of all field types. A
+			// nil-bearing key reads soundly in Lua, so match the non-nil domain.
+			if nnKey := nonNilKey(keyType); nnKey.Kind() == kind.String {
+				return indexRecordByGenericStringKey(r, nnKey)
 			}
 			// Placeholder/unknown keys may still resolve to string fields at runtime.
 			// Keep this sound by returning an optional union of field types.
@@ -125,7 +128,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 
 			// Map component fallback for non-string-literal keys.
 			if r.HasMapComponent() && keyType != nil {
-				if keyType.Kind().IsPlaceholder() || subtype.IsSubtype(keyType, r.MapKey) {
+				if keyType.Kind().IsPlaceholder() || subtype.IsSubtype(nonNilKey(keyType), r.MapKey) {
 					return indexResult{t: typ.NewOptional(r.MapValue), ok: true}
 				}
 			}
@@ -232,6 +235,36 @@ func indexRecordByGenericStringKey(r *typ.Record, keyType typ.Type) indexResult 
 		return indexResult{t: typ.Nil, ok: true}
 	}
 	return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
+}
+
+// nonNilKey strips nil from an index key type. Reading a Lua table with a
+// nil-bearing key is sound (t[nil] yields nil), and the optional read result
+// already captures the absent case, so key matching uses the non-nil domain.
+func nonNilKey(keyType typ.Type) typ.Type {
+	if keyType == nil {
+		return keyType
+	}
+	switch k := keyType.(type) {
+	case *typ.Optional:
+		return nonNilKey(k.Inner)
+	case *typ.Union:
+		if !containsNilOrOptional(keyType) {
+			return keyType
+		}
+		members := make([]typ.Type, 0, len(k.Members))
+		for _, m := range k.Members {
+			if m.Kind() == kind.Nil {
+				continue
+			}
+			members = append(members, nonNilKey(m))
+		}
+		if len(members) == 0 {
+			return keyType
+		}
+		return typ.NewUnion(members...)
+	default:
+		return keyType
+	}
 }
 
 // containsNilOrOptional returns true if the type already contains nil or Optional.

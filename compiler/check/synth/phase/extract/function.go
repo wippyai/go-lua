@@ -383,7 +383,8 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	if !convention.CanClassifyReturns(returnTypes) {
 		return returnTypes, false
 	}
-	return returnTypes, convention.HasStrictInversePattern(graphEvidence.Returns, nil, tempSynth)
+	proof := convention.ProveReturnPattern(graphEvidence.Returns, nil, tempSynth)
+	return returnTypes, convention.ProvenReturnPatternForReturns(returnTypes, proof)
 }
 
 func (s *Synthesizer) canonicalReturnProjection(functionFacts api.FunctionFacts, fnSym cfg.SymbolID) []typ.Type {

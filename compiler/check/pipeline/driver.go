@@ -101,19 +101,9 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 }
 
 func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State, ctx api.AnalysisContext) {
-	zzIter := 0
 	for {
 		d.prepareIterationState(sess)
 		d.checkFunctionFixpoint(sess, fn, parent, ctx)
-		zzIter++
-		if zzIter > 40 {
-			if st := sess.StoreHandle(); st != nil {
-				println("ZZFIX iter", zzIter, "diffs", fmt.Sprint(st.FixpointDiffs()))
-			}
-		}
-		if zzIter > 60 {
-			panic("ZZFIX non-convergence aborted")
-		}
 		if d.advanceFixpoint(sess.StoreHandle()) {
 			return
 		}

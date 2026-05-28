@@ -1,7 +1,6 @@
 package value
 
 import (
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,9 +11,6 @@ import (
 	typejoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
-
-// foldDbg gates the self-embedding/union-growth convergence diagnostics.
-var foldDbg = os.Getenv("FOLDDBG") != ""
 
 // NormalizeFactType canonicalizes one type before it is stored in an
 // interprocedural fact slot.
@@ -920,9 +916,6 @@ func (s *convergenceWidenState) joinStructuralUnionPair(a, b typ.Type) (typ.Type
 func (s *convergenceWidenState) foldSelfEmbeddingUpperBound(existing, candidate typ.Type) (typ.Type, bool) {
 	for _, pair := range [2][2]typ.Type{{existing, candidate}, {candidate, existing}} {
 		folded, ok := FoldSelfEmbedding(pair[0], pair[1])
-		if foldDbg {
-			println("FOLDDBG fold try foldOK=", ok, "anchor=", DbgString(pair[0]), "obs=", DbgString(pair[1]))
-		}
 		if !ok {
 			continue
 		}
@@ -931,9 +924,6 @@ func (s *convergenceWidenState) foldSelfEmbeddingUpperBound(existing, candidate 
 			continue
 		}
 		coversBoth := Covers(folded, existing) && Covers(folded, candidate)
-		if foldDbg {
-			println("FOLDDBG folded coversBoth=", coversBoth, "folded=", DbgString(folded))
-		}
 		if coversBoth {
 			return folded, true
 		}
@@ -1058,21 +1048,12 @@ func convergenceUpperBound(existing, candidate typ.Type) (typ.Type, bool) {
 		return upper, true
 	}
 	if upper, ok := SelfEmbeddingUpperBound(existing, candidate); ok {
-		if foldDbg {
-			println("FOLDDBG convergenceUpperBound via SelfEmbeddingUpperBound")
-		}
 		return upper, true
 	}
 	if upper, ok := RecordExtensionUpperBound(existing, candidate); ok {
-		if foldDbg {
-			println("FOLDDBG convergenceUpperBound via RecordExtensionUpperBound")
-		}
 		return upper, true
 	}
 	if upper, ok := RecursiveUnionUpperBound(existing, candidate); ok {
-		if foldDbg {
-			println("FOLDDBG convergenceUpperBound via RecursiveUnionUpperBound")
-		}
 		return upper, true
 	}
 	return nil, false
