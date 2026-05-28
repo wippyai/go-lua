@@ -3,6 +3,7 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/lattice"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -31,6 +32,20 @@ func pathPresenceFromType(t typ.Type) pathPresence {
 	return pathPresencePresent
 }
 
+// joinPathPresence is the least-upper-bound on the 4-element presence lattice.
+//
+// Polarity (per PRESENCE_DOMAIN_DESIGN.md §3 rev 2 / Codex amendment): Unknown
+// is Bottom (the join identity, γ = ∅, "no information yet"), Maybe is Top (the
+// absorbing element, γ = full state space). Present and Absent are incomparable
+// mid-level elements.
+//
+// Table:
+//
+//	Unknown ⊔ x       = x                 (Unknown is the join identity / Bottom)
+//	Maybe   ⊔ x       = Maybe              (Maybe is the absorbing element / Top)
+//	Present ⊔ Present = Present
+//	Absent  ⊔ Absent  = Absent
+//	Present ⊔ Absent  = Maybe
 func joinPathPresence(a, b pathPresence) pathPresence {
 	if a == pathPresenceUnknown {
 		return b
@@ -42,6 +57,53 @@ func joinPathPresence(a, b pathPresence) pathPresence {
 		return a
 	}
 	return pathPresenceMaybe
+}
+
+// meetPathPresence is the greatest-lower-bound on the 4-element presence
+// lattice. Dual to joinPathPresence (per PRESENCE_DOMAIN_DESIGN.md §5 rev 2).
+//
+// Table:
+//
+//	Unknown ⊓ x       = Unknown            (Unknown is Bottom; meet absorbs)
+//	Maybe   ⊓ x       = x                  (Maybe is Top; meet is identity)
+//	Present ⊓ Present = Present
+//	Absent  ⊓ Absent  = Absent
+//	Present ⊓ Absent  = Unknown            (no shared concretization)
+func meetPathPresence(a, b pathPresence) pathPresence {
+	if a == pathPresenceUnknown || b == pathPresenceUnknown {
+		return pathPresenceUnknown
+	}
+	if a == pathPresenceMaybe {
+		return b
+	}
+	if b == pathPresenceMaybe {
+		return a
+	}
+	if a == b {
+		return a
+	}
+	return pathPresenceUnknown
+}
+
+// pathPresenceDomain wires the 4-element presence carrier to the
+// lattice.Lattice contract. Per PRESENCE_DOMAIN_DESIGN.md §6 rev 2:
+//
+//   - Bottom = pathPresenceUnknown (the join identity)
+//   - Top    = pathPresenceMaybe   (the join absorbing element)
+//   - Widen  = Join: the lattice has finite height 2, so the trivial widening
+//     suffices (longest strict chain Unknown → Present|Absent → Maybe is 2
+//     steps). No Cousot extrapolation needed.
+//
+// Per the "no adapter" directive: the contract IS a struct of function fields;
+// the fields point at the existing/new package functions directly.
+var pathPresenceDomain = lattice.Lattice[pathPresence]{
+	Bottom:   func() pathPresence { return pathPresenceUnknown },
+	Top:      func() pathPresence { return pathPresenceMaybe },
+	Equal:    func(a, b pathPresence) bool { return a == b },
+	LessOrEq: func(a, b pathPresence) bool { return joinPathPresence(a, b) == b },
+	Join:     joinPathPresence,
+	Meet:     meetPathPresence,
+	Widen:    joinPathPresence,
 }
 
 func projectPathPresence(t typ.Type, presence pathPresence) typ.Type {
