@@ -136,7 +136,7 @@ func (c *structuredCarryForward) collectStableSuffixTypes(out map[string][]typ.T
 }
 
 func (c *structuredCarryForward) collectMutableSuffixTypes(out map[string][]typ.Type, pred cfg.Point, predBaseKey string) {
-	state := c.s.mutableValues[pred]
+	state := c.s.mutableOut[pred]
 	for _, suffix := range c.s.mutableSuffixesForRoot(pred, predBaseKey) {
 		if av, ok := state[predBaseKey+suffix]; ok {
 			if t := projectFlowValue(av); t != nil {

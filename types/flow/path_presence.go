@@ -196,7 +196,7 @@ func (s *Solution) rebuildMutablePresenceForPoint(p cfg.Point) {
 	if s == nil {
 		return
 	}
-	state := s.mutableValues[p]
+	state := s.mutableOut[p]
 	if len(state) == 0 {
 		if s.mutablePresence != nil {
 			delete(s.mutablePresence, p)

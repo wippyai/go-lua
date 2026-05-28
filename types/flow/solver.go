@@ -26,31 +26,29 @@ import (
 // until reaching a fixed point. Edge conditions from conditionals narrow types
 // along specific branches, while phi nodes merge types from different paths.
 type Solution struct {
-	inputs            *Inputs
-	resolver          narrow.Resolver
-	pkResolver        *pathkey.Resolver
-	// values and mutableValues are the abstract-state carriers of the worklist
-	// fixpoint. They hold product.AbstractValue so convergence/no-op detection
-	// compares product identity (product.Equal) - the interner collapses converged
-	// recursive families to one canonical node, so the worklist drains where a
-	// typ.Type carrier with SameConvergedFact does not. typ.Type enters only at
-	// admission (FromType in setValue/setMutableValue) and leaves only at egress
+	inputs     *Inputs
+	resolver   narrow.Resolver
+	pkResolver *pathkey.Resolver
+	// values, mutableIn, and mutableOut are the abstract-state carriers of the
+	// worklist fixpoint. They hold product.AbstractValue so convergence/no-op
+	// detection compares product identity (product.Equal) - the interner collapses
+	// converged recursive families to one canonical node, so the worklist drains
+	// where a typ.Type carrier with SameConvergedFact does not. typ.Type enters only
+	// at admission (FromType in setValue/setMutableValue) and leaves only at egress
 	// (ProjectValue in valueAtPoint/projectedValueAtPoint and the query API).
 	values            map[string]product.AbstractValue // canonical key (sym<ID>@<ver><segs>) -> abstract value
 	presence          map[string]pathPresence
 	fieldOverlayIndex map[string]map[string]typ.Type
-	mutableValues     map[cfg.Point]map[string]product.AbstractValue
-	mutablePresence   map[cfg.Point]map[string]pathPresence
-	// mutableSelfCarry is the private termination-only carry for keys whose value
-	// lives only in p's own post-state (a for..pairs self write-back, t[k] = v on a
-	// loop-carried map). It seeds p's mutator so the prior self-written slot remains
-	// a widening/no-op fixpoint seed and the worklist drains. It is NOT public state:
-	// no projection (valueAtPoint/projectedValueAtPoint/rootBaseTypeAt/field overlays/
-	// point value envs) and no interproc summary ever reads it. Only the mutator
-	// transfer reads it, and only when the public slot is absent.
-	mutableSelfCarry map[cfg.Point]map[string]product.AbstractValue
-	edgeConditions    map[edgeKey]constraint.Condition
-	declaredSyms      []cfg.SymbolID
+	// mutableIn is the joined predecessor state for each point (the Kildall IN).
+	// mutableOut is the committed post-state each successor joins and every query
+	// reads (the Kildall OUT). During a point's own transfer, mutableOut[p] holds
+	// the working store the transfers read and write; the commit widens it against
+	// the prior OUT so the iterate is monotone and bounded.
+	mutableIn       map[cfg.Point]map[string]product.AbstractValue
+	mutableOut      map[cfg.Point]map[string]product.AbstractValue
+	mutablePresence map[cfg.Point]map[string]pathPresence
+	edgeConditions  map[edgeKey]constraint.Condition
+	declaredSyms    []cfg.SymbolID
 
 	phisByPoint                  [][]cfg.PhiNode
 	assignmentsByPoint           [][]UnifiedAssignment
@@ -741,10 +739,8 @@ func (s *Solution) fieldAssignmentsForRoot(baseRoot string) []mergedField {
 }
 
 func (s *Solution) fieldAssignmentsForRootAt(p cfg.Point, baseRoot string) []mergedField {
-	if s == nil || len(s.values) == 0 || baseRoot == "" {
-		if s == nil || len(s.mutableValues[p]) == 0 || baseRoot == "" {
-			return nil
-		}
+	if s == nil || baseRoot == "" || (len(s.values) == 0 && len(s.mutableOut[p]) == 0) {
+		return nil
 	}
 	if s.fieldOverlayCache == nil {
 		s.fieldOverlayCache = make(map[fieldOverlayCacheKey][]mergedField)
@@ -758,10 +754,6 @@ func (s *Solution) fieldAssignmentsForRootAt(p cfg.Point, baseRoot string) []mer
 	return fields
 }
 
-func (s *Solution) collectFieldAssignmentsForRoot(baseRoot string) []mergedField {
-	return s.collectFieldAssignmentsForRootAt(0, baseRoot)
-}
-
 func (s *Solution) collectFieldAssignmentsForRootAt(p cfg.Point, baseRoot string) []mergedField {
 	values := make(map[string]typ.Type, 8)
 	if indexed := s.fieldOverlayValuesForRoot(baseRoot); len(indexed) > 0 {
@@ -769,7 +761,7 @@ func (s *Solution) collectFieldAssignmentsForRootAt(p cfg.Point, baseRoot string
 			values[suffix] = value
 		}
 	}
-	if state := s.mutableValues[p]; state != nil {
+	if state := s.mutableOut[p]; state != nil {
 		prefixLen := len(baseRoot)
 		for key, av := range state {
 			if len(key) <= prefixLen || key[:prefixLen] != baseRoot {

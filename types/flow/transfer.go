@@ -73,7 +73,7 @@ func (s *Solution) processPointReturnChangedKeys(p cfg.Point) []string {
 
 	assignKeys := s.processAssignmentReturnChangedKeys(p)
 	changedKeys = append(changedKeys, assignKeys...)
-	changedKeys = append(changedKeys, s.mutableStateChangedKeys(oldMutableState, p)...)
+	changedKeys = append(changedKeys, s.commitPointMutableState(oldMutableState, p)...)
 
 	return changedKeys
 }
@@ -148,25 +148,19 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 		}
 	}
 
-	// Process map writes through the canonical indexed-write domain law.
+	// Mutators write the widened element into p's working OUT-store. Propagation of
+	// the mutated key is driven by commitPointMutableState's prior-OUT/new-OUT diff,
+	// not by the transfer's input-vs-output comparison: a monotone widening transfer
+	// differs from its own input at every visit even at the store fixpoint, so the
+	// return key is the store write's effect, not a worklist change signal.
 	for _, mm := range s.mapMutatorAssignmentsAt(p) {
-		if key := s.processMapMutatorAssignmentReturnKey(p, mm); key != "" {
-			changedKeys = append(changedKeys, key)
-		}
+		s.processMapMutatorAssignmentReturnKey(p, mm)
 	}
-
-	// Process table mutator assignments (table.insert-like)
 	for _, tm := range s.tableMutatorAssignmentsAt(p) {
-		if key := s.processTableMutatorAssignmentReturnKey(p, tm); key != "" {
-			changedKeys = append(changedKeys, key)
-		}
+		s.processTableMutatorAssignmentReturnKey(p, tm)
 	}
-
-	// Process container mutator assignments (channel.send-like)
 	for _, cm := range s.containerMutatorAssignmentsAt(p) {
-		if key := s.processContainerMutatorAssignmentReturnKey(p, cm); key != "" {
-			changedKeys = append(changedKeys, key)
-		}
+		s.processContainerMutatorAssignmentReturnKey(p, cm)
 	}
 
 	return changedKeys
@@ -394,10 +388,7 @@ func (s *Solution) clearPointTransferState(p cfg.Point, oldMutableState map[stri
 	}
 
 	changed := s.clearPointScalarTransferState(p)
-	if len(s.mutableValues[p]) > 0 {
-		delete(s.mutableValues, p)
-	}
-	changed = append(changed, s.mutableStateChangedKeys(oldMutableState, p)...)
+	changed = append(changed, s.clearPointMutableState(oldMutableState, p)...)
 	if len(changed) <= 1 {
 		return changed
 	}
@@ -1193,16 +1184,6 @@ func (s *Solution) mapElementKeyDescriptor(src AssignmentSource) IndexKeyDescrip
 	return desc
 }
 
-// addCheckedOffset adds an index offset with overflow guarding, mirroring the
-// read-side proof's checked arithmetic so a wrapped sum never proves presence.
-func addCheckedOffset(a, b int64) (int64, bool) {
-	sum := a + b
-	if (b > 0 && sum < a) || (b < 0 && sum > a) {
-		return 0, false
-	}
-	return sum, true
-}
-
 func (s *Solution) mapElementKeyPath(src AssignmentSource) constraint.Path {
 	if src.KeySymbol == 0 {
 		return constraint.Path{}
@@ -1414,7 +1395,6 @@ func (s *Solution) evaluateMapMutation(p cfg.Point, mm MapMutatorAssignment) (ma
 	if currentType == nil {
 		currentType = s.joinPredecessorPathTypes(p, mm.Target)
 	}
-	currentType = s.carryWidenedMutatorSeed(p, pathKeyStr, currentType)
 	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(mm.Target))
 
 	return mapMutationEvaluation{
@@ -1424,31 +1404,6 @@ func (s *Solution) evaluateMapMutation(p cfg.Point, mm MapMutatorAssignment) (ma
 		existingType: existingAtCurrentKey,
 		pathKey:      pathKeyStr,
 	}, true
-}
-
-// carryWidenedMutatorSeed folds the private loop-carry into the mutator's current
-// seed so the self write-back is monotone across iterations. The carry holds p's
-// prior post-state value for this exact self-written key; the public predecessor
-// join can drop or partially re-supply it from pass to pass (a back-edge lag),
-// which would otherwise toggle the key present/absent and spin the worklist. Merging
-// the carry as a convergence-widening seed makes the mutator output depend only on
-// the monotone closure of p's own writes, never on the oscillating join membership.
-// The carry is private: it is read only here, and the public store still receives
-// only the mutator's admitted result (setMutableValue), so no retained value leaks
-// to projections or interproc summaries.
-func (s *Solution) carryWidenedMutatorSeed(p cfg.Point, key string, current typ.Type) typ.Type {
-	carried := s.mutableSelfCarryAt(p, key)
-	if carried == nil {
-		return current
-	}
-	if current == nil {
-		return carried
-	}
-	merged := value.MergeForConvergence(current, carried)
-	if merged != nil {
-		return merged
-	}
-	return current
 }
 
 // IndexWriteAdmission returns the value admitted by the solved dynamic
@@ -1722,7 +1677,6 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 	if currentType == nil {
 		currentType = s.joinPredecessorPathTypes(p, tm.Target)
 	}
-	currentType = s.carryWidenedMutatorSeed(p, pathKeyStr, currentType)
 	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(tm.Target))
 
 	var newType typ.Type
@@ -1795,7 +1749,6 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 	if currentType == nil {
 		currentType = s.joinPredecessorPathTypes(p, cm.Target)
 	}
-	currentType = s.carryWidenedMutatorSeed(p, pathKeyStr, currentType)
 	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTemplateForPath(cm.Target))
 	newType := widenContainerElementType(currentType, valueType)
 	if newType != nil {
@@ -2104,10 +2057,6 @@ func (s *Solution) joinPhiEquation(p cfg.Point, key string, operands []typ.Type)
 	return joined
 }
 
-func typeVectorsEqual(a, b []typ.Type) bool {
-	return sameFlowValueVector(a, b)
-}
-
 func (s *Solution) phiOperandTypeAt(joinPoint cfg.Point, op cfg.PhiOperand, segments []constraint.Segment) typ.Type {
 	if s == nil {
 		return nil
@@ -2187,7 +2136,7 @@ func (s *Solution) valueSuffixesForRoot(baseKey string) []string {
 }
 
 func (s *Solution) mutableSuffixesForRoot(p cfg.Point, baseKey string) []string {
-	if s == nil || baseKey == "" || len(s.mutableValues[p]) == 0 {
+	if s == nil || baseKey == "" || len(s.mutableOut[p]) == 0 {
 		return nil
 	}
 	if s.mutableSuffixIndexed == nil || !s.mutableSuffixIndexed[p] {
@@ -2195,4 +2144,3 @@ func (s *Solution) mutableSuffixesForRoot(p cfg.Point, baseKey string) []string 
 	}
 	return s.mutableSuffixIndex[pointRootKey{point: p, root: baseKey}]
 }
-

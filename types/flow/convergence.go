@@ -22,19 +22,6 @@ func sameFlowValueAV(a, b product.AbstractValue) bool {
 	return a.Equal(b)
 }
 
-func sameFlowValueMap(a, b map[string]product.AbstractValue) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		bv, ok := b[k]
-		if !ok || !sameFlowValueAV(av, bv) {
-			return false
-		}
-	}
-	return true
-}
-
 func sameFlowValueVector(a, b []typ.Type) bool {
 	if len(a) != len(b) {
 		return false

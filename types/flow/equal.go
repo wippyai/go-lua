@@ -55,7 +55,7 @@ func SolutionEqual(a, b *Solution) bool {
 	}
 	return stringValueMapEqual(a.values, b.values) &&
 		nestedStringTypeMapEqual(a.fieldOverlayIndex, b.fieldOverlayIndex) &&
-		pointStringValueMapEqual(a.mutableValues, b.mutableValues) &&
+		pointStringValueMapEqual(a.mutableOut, b.mutableOut) &&
 		edgeConditionMapEqual(a.edgeConditions, b.edgeConditions) &&
 		symbolSliceEqual(a.declaredSyms, b.declaredSyms) &&
 		edgeNumericConstraintMapEqual(a.edgeNumericConstraints, b.edgeNumericConstraints) &&

@@ -839,7 +839,7 @@ func (s *Solution) childTypesAtPoint(p cfg.Point, path constraint.Path) []PathFa
 	for key := range s.values {
 		visit(key)
 	}
-	if state := s.mutableValues[p]; len(state) > 0 {
+	if state := s.mutableOut[p]; len(state) > 0 {
 		for key := range state {
 			visit(key)
 		}

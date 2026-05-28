@@ -1012,16 +1012,16 @@ func TestMutableStateChangedKeys_UsesValueDomainRecursiveEquality(t *testing.T) 
 	})
 
 	s := &Solution{
-		mutableValues: liftPointFlowValues(map[cfg.Point]map[string]typ.Type{
+		mutableOut: liftPointFlowValues(map[cfg.Point]map[string]typ.Type{
 			7: {"sym1@1.children": right},
 		}),
 	}
-	if changed := s.mutableStateChangedKeys(liftFlowValues(map[string]typ.Type{"sym1@1.children": left}), 7); len(changed) != 0 {
+	if changed := s.commitPointMutableState(liftFlowValues(map[string]typ.Type{"sym1@1.children": left}), 7); len(changed) != 0 {
 		t.Fatalf("equivalent recursive flow value reported changed keys: %v", changed)
 	}
 
-	s.mutableValues[7]["sym1@1.children"] = liftFlowValue(refined)
-	changed := s.mutableStateChangedKeys(liftFlowValues(map[string]typ.Type{"sym1@1.children": left}), 7)
+	s.mutableOut[7]["sym1@1.children"] = liftFlowValue(refined)
+	changed := s.commitPointMutableState(liftFlowValues(map[string]typ.Type{"sym1@1.children": left}), 7)
 	if len(changed) != 1 || changed[0] != "sym1@1.children" {
 		t.Fatalf("strict recursive refinement changed keys = %v, want sym1@1.children", changed)
 	}
@@ -1722,7 +1722,7 @@ func TestPhiOperandSuffixIndexesInvalidateOnStateWrites(t *testing.T) {
 			"sym1@1.name":     typ.String,
 			"sym10@1.name":    typ.Boolean,
 		}),
-		mutableValues: liftPointFlowValues(map[cfg.Point]map[string]typ.Type{
+		mutableOut: liftPointFlowValues(map[cfg.Point]map[string]typ.Type{
 			3: {
 				"sym1@1.child.active": typ.Boolean,
 				"sym1@1.score":        typ.Number,
@@ -1769,7 +1769,7 @@ func TestMutableSuffixReplacementIsPointLocal(t *testing.T) {
 		"sym1@1.next": typ.Boolean,
 	})
 	s := &Solution{
-		mutableValues: map[cfg.Point]map[string]product.AbstractValue{
+		mutableOut: map[cfg.Point]map[string]product.AbstractValue{
 			3: old,
 			4: liftFlowValues(map[string]typ.Type{"sym1@1.other": typ.Number}),
 		},
@@ -1777,7 +1777,7 @@ func TestMutableSuffixReplacementIsPointLocal(t *testing.T) {
 	assertSuffixes(t, s.mutableSuffixesForRoot(3, "sym1@1"), ".child.old", ".old")
 	assertSuffixes(t, s.mutableSuffixesForRoot(4, "sym1@1"), ".other")
 
-	s.mutableValues[3] = next
+	s.mutableOut[3] = next
 	s.replaceMutableSuffixesForPoint(3, old, next)
 
 	assertSuffixes(t, s.mutableSuffixesForRoot(3, "sym1@1"), ".next")
