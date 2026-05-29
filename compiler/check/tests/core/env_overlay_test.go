@@ -460,7 +460,9 @@ func TestEnvOverlay_MigrationCallbackParameterSatisfiesSQLBuilderRunnerUnion(t *
 			local executor = query:run_with(db)
 			local results, err = executor:query()
 			if err then error(err) end
-			return results[1].count > 0
+			local first = results[1]
+			if not first then return false end
+			return first.count > 0
 		end
 
 		local function create_admin_user(db)

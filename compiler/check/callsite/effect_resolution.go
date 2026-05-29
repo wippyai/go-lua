@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 func resolveSynthedCalleeType(
@@ -116,4 +117,59 @@ func ResolveCalleeType(
 		p,
 		resolveBySym,
 	)
+}
+
+// PreferSpecCarryingCallee recovers a callee signature that carries late-attached
+// contract spec evidence when the synth surface resolved the same callable to its
+// source signature, which lacks it. ResolveCalleeType resolves a non-method local
+// callee through the synth surface (the assignment overlay's declared source
+// type), which can short-circuit before the spec-carrying symbol resolution; the
+// symbol resolver holds the converged FunctionFact projection for the same symbol.
+// When the synth resolution does not satisfy carries but a candidate of the same
+// callable shape does, swap in that candidate. Method calls, a nil resolver, or a
+// nil predicate return fnType unchanged.
+//
+// The carries predicate selects the spec feature the caller needs (correlation
+// labels, return-length postconditions); the shape guard ensures the candidate is
+// the same callable the synth surface resolved rather than an unrelated symbol.
+func PreferSpecCarryingCallee(
+	fnType typ.Type,
+	info *cfg.CallInfo,
+	p cfg.Point,
+	graph *cfg.Graph,
+	primary, secondary *bind.BindingTable,
+	resolveBySym func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool),
+	carries func(typ.Type) bool,
+) typ.Type {
+	if resolveBySym == nil || carries == nil || IsMethodCallInfo(info) {
+		return fnType
+	}
+	if carries(fnType) {
+		return fnType
+	}
+	for _, sym := range ResolverCalleeSymbolCandidates(info, graph, primary, secondary) {
+		if sym == 0 {
+			continue
+		}
+		candidate, ok := resolveBySym(p, sym)
+		if !ok || candidate == nil {
+			continue
+		}
+		if SameCallableShape(fnType, candidate) && carries(candidate) {
+			return candidate
+		}
+	}
+	return fnType
+}
+
+// SameCallableShape reports whether two resolved callee types describe the same
+// callable arity, so a spec-carrying candidate is the same function the synth
+// surface resolved rather than an unrelated symbol.
+func SameCallableShape(a, b typ.Type) bool {
+	fa := unwrap.Function(a)
+	fb := unwrap.Function(b)
+	if fa == nil || fb == nil {
+		return false
+	}
+	return len(fa.Params) == len(fb.Params) && len(fa.Returns) == len(fb.Returns)
 }

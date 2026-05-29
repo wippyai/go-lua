@@ -33,6 +33,8 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 			continue
 		}
 
+		lengthDelta := calleffect.TableMutatorLengthDelta(info, tm, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Graph, bindings, fc.ModuleBindings)
+
 		targetExpr := callsite.RuntimeArgAt(info, tm.Target.Index)
 		valueExpr := callsite.RuntimeArgAt(info, tm.Value.Index)
 		if targetExpr == nil || valueExpr == nil {
@@ -65,9 +67,10 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 					Symbol:   path.Symbol,
 					Segments: path.Segments,
 				},
-				ValuePath: valuePath,
-				ValueType: valueType,
-				Value:     mutationValueTemplate(fc, valueExpr),
+				ValuePath:   valuePath,
+				ValueType:   valueType,
+				Value:       mutationValueTemplate(fc, valueExpr),
+				LengthDelta: lengthDelta,
 			})
 			continue
 		}
@@ -88,9 +91,10 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 				Symbol:   basePath.Symbol,
 				Segments: basePath.Segments,
 			},
-			ValuePath: valuePath,
-			ValueType: valueType,
-			Value:     mutationValueTemplate(fc, valueExpr),
+			ValuePath:   valuePath,
+			ValueType:   valueType,
+			Value:       mutationValueTemplate(fc, valueExpr),
+			LengthDelta: lengthDelta,
 		}
 
 		if ident, ok := attr.Key.(*ast.IdentExpr); ok && ident.Value != "" {

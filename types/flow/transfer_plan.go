@@ -40,6 +40,18 @@ func (s *Solution) buildTransferPlan(size int) {
 			s.containerMutatorByPoint[idx] = append(s.containerMutatorByPoint[idx], assign)
 		}
 	}
+	s.arrayLiteralLengthByPoint = make([][]ArrayLiteralLength, size)
+	for _, lit := range s.inputs.ArrayLiteralLengths {
+		if idx := int(lit.Point); idx >= 0 && idx < size {
+			s.arrayLiteralLengthByPoint[idx] = append(s.arrayLiteralLengthByPoint[idx], lit)
+		}
+	}
+	s.loopInsertLengthByPoint = make([][]LoopInsertLength, size)
+	for _, lil := range s.inputs.LoopInsertLengths {
+		if idx := int(lil.Point); idx >= 0 && idx < size {
+			s.loopInsertLengthByPoint[idx] = append(s.loopInsertLengthByPoint[idx], lil)
+		}
+	}
 }
 
 func (s *Solution) phisAt(p cfg.Point) []cfg.PhiNode {
@@ -95,4 +107,26 @@ func (s *Solution) containerMutatorAssignmentsAt(p cfg.Point) []ContainerMutator
 		return nil
 	}
 	return s.containerMutatorByPoint[idx]
+}
+
+func (s *Solution) arrayLiteralLengthsAt(p cfg.Point) []ArrayLiteralLength {
+	if s == nil {
+		return nil
+	}
+	idx := int(p)
+	if idx < 0 || idx >= len(s.arrayLiteralLengthByPoint) {
+		return nil
+	}
+	return s.arrayLiteralLengthByPoint[idx]
+}
+
+func (s *Solution) loopInsertLengthsAt(p cfg.Point) []LoopInsertLength {
+	if s == nil {
+		return nil
+	}
+	idx := int(p)
+	if idx < 0 || idx >= len(s.loopInsertLengthByPoint) {
+		return nil
+	}
+	return s.loopInsertLengthByPoint[idx]
 }

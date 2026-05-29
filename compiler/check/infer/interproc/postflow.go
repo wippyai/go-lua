@@ -82,6 +82,7 @@ func StoreFactsFromResult(
 		fn != nil && fn.ParList != nil && fn.ParList.HasVargs,
 	)
 	envReturns := functionfact.ExtractEnvironmentReturns(result, fnSym, observation.FromFuncResult(result, nil))
+	signature = attachReturnLengthEnsures(signature, result)
 	builder := functionfact.NewBuilder()
 	builder.AddSummary(fnSym, summary)
 	builder.AddNarrow(fnSym, narrowSummary)
@@ -89,6 +90,163 @@ func StoreFactsFromResult(
 	builder.AddEnvReturns(fnSym, envReturns)
 	delta := interprocdomain.FunctionFactsDelta(builder.Build())
 	writer.mergeParentFactsForSymbol(fnSym, delta)
+}
+
+// attachReturnLengthEnsures proves the constant arm of each return slot's length
+// postcondition from the flow solution and attaches it to the signature spec as
+// a constraint.ExprCompare over constraint.RL(i). For each normal return whose
+// i-th expression is an identifier, it reads the flow solution's proven length
+// lower bound for that identifier at the return point; across all live normal
+// returns it takes the minimum (a slot's guaranteed length is the weakest proof
+// on any returning path), and emits len(ret_i) >= k only when k >= 1. A slot
+// missing on any live path, or with no proof on some path, contributes no fact,
+// so a conditional/data-dependent return weakens the bound exactly as soundness
+// requires. The postcondition is instantiated at call sites onto the assigned
+// target's numeric length lower bound so a literal index read narrows.
+func attachReturnLengthEnsures(signature *typ.Function, result *api.FuncResult) *typ.Function {
+	if signature == nil || result == nil || result.FlowSolution == nil || result.Graph == nil {
+		return signature
+	}
+	rets := result.Evidence.Returns
+	if len(rets) == 0 {
+		return signature
+	}
+
+	// minLower[i] is the smallest proven length lower bound for return slot i
+	// across all live normal returns; seen[i] records that every such return
+	// supplied a value for slot i (a slot missing on any path proves nothing).
+	minLower := make(map[int]int64)
+	seen := make(map[int]int)
+	liveReturns := 0
+	for _, ret := range rets {
+		p := ret.Point
+		info := ret.Info
+		if info == nil || result.FlowSolution.IsPointDead(p) {
+			continue
+		}
+		liveReturns++
+		for i := range info.Exprs {
+			sym := cfg.SymbolID(0)
+			if i < len(info.Symbols) {
+				sym = info.Symbols[i]
+			}
+			if sym == 0 {
+				// A non-identifier return slot (literal, call, expression) carries no
+				// tracked length identity; it proves no lower bound.
+				continue
+			}
+			name := ""
+			if i < len(info.Names) {
+				name = info.Names[i]
+			}
+			path := constraint.Path{Root: name, Symbol: sym}
+			lower, _, ok := result.FlowSolution.LengthBoundsAt(p, path)
+			if !ok || lower < 0 {
+				lower = 0
+			}
+			if cur, exists := minLower[i]; !exists || lower < cur {
+				minLower[i] = lower
+			}
+			seen[i]++
+		}
+	}
+	if liveReturns == 0 {
+		return signature
+	}
+
+	var ensures []constraint.ExprCompare
+	for i, lower := range minLower {
+		if seen[i] != liveReturns || lower < 1 {
+			// The slot is unproven on some live path, or carries no positive bound.
+			continue
+		}
+		ensures = append(ensures, constraint.GeExpr(constraint.RL(i), constraint.C(lower)))
+	}
+	ensures = append(ensures, returnLengthParamEnsures(result)...)
+	return functionfact.AttachReturnLengthEnsures(signature, ensures)
+}
+
+// returnLengthParamEnsures proves the relational arm of return-length
+// postconditions: a returned accumulator whose length is tied to a parameter's
+// length. A loop that appends once per iteration over pairs(param_j) into an
+// accumulator establishes #acc >= len(param_j) (the param's key cardinality); the
+// loop-length extractor records this as a LoopInsertLength with Source set to the
+// parameter path. When that accumulator is returned in slot i, this emits
+// len(ret_i) >= len(param_j) as an ExprCompare over RL(i) and PL(j). Only a
+// relation the body proves is emitted; a non-parameter source or a returned slot
+// that is not the accumulator yields nothing.
+func returnLengthParamEnsures(result *api.FuncResult) []constraint.ExprCompare {
+	if result == nil || result.FlowInputs == nil || result.Graph == nil {
+		return nil
+	}
+	lils := result.FlowInputs.LoopInsertLengths
+	if len(lils) == 0 {
+		return nil
+	}
+	paramIndex := paramIndexBySymbol(result.Graph)
+	if len(paramIndex) == 0 {
+		return nil
+	}
+	rets := result.Evidence.Returns
+	var ensures []constraint.ExprCompare
+	seen := make(map[[2]int]struct{})
+	for _, lil := range lils {
+		if lil.Source.Symbol == 0 || lil.Target.Symbol == 0 {
+			continue
+		}
+		j, ok := paramIndex[lil.Source.Symbol]
+		if !ok {
+			continue
+		}
+		for _, retSlot := range returnSlotsForSymbol(rets, result.FlowSolution, lil.Target.Symbol) {
+			key := [2]int{retSlot, j}
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			ensures = append(ensures, constraint.GeExpr(constraint.RL(retSlot), constraint.PL(j)))
+		}
+	}
+	return ensures
+}
+
+// paramIndexBySymbol maps each parameter symbol to its zero-based index.
+func paramIndexBySymbol(graph *cfg.Graph) map[cfg.SymbolID]int {
+	syms := graph.ParamSymbols()
+	if len(syms) == 0 {
+		return nil
+	}
+	out := make(map[cfg.SymbolID]int, len(syms))
+	for i, sym := range syms {
+		if sym != 0 {
+			out[sym] = i
+		}
+	}
+	return out
+}
+
+// returnSlotsForSymbol returns the return slot indices that return the given
+// symbol on a live normal-return path. A slot returning a different value, or a
+// slot on a dead path, is not included.
+func returnSlotsForSymbol(rets []api.ReturnEvidence, solution *flow.Solution, sym cfg.SymbolID) []int {
+	var slots []int
+	seen := make(map[int]struct{})
+	for _, ret := range rets {
+		if ret.Info == nil || (solution != nil && solution.IsPointDead(ret.Point)) {
+			continue
+		}
+		for i := range ret.Info.Symbols {
+			if ret.Info.Symbols[i] != sym {
+				continue
+			}
+			if _, dup := seen[i]; dup {
+				continue
+			}
+			seen[i] = struct{}{}
+			slots = append(slots, i)
+		}
+	}
+	return slots
 }
 
 // sealClassReturns seals a constructor's instance return into its class

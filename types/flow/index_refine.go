@@ -69,7 +69,7 @@ func (s *Solution) refineIndexReadAt(p cfg.Point, container, result typ.Type, de
 	if desc.HasVar && !desc.ContainerPath.IsEmpty() {
 		if lower, _, ok := s.BoundsAt(p, desc.VarName); ok && lower+desc.VarOffset >= 1 {
 			if arrKey, lenOffset, ok := s.ArrayLenBoundWithOffsetAt(p, desc.VarName); ok &&
-				string(desc.ContainerPath.Key()) == arrKey && lenOffset <= -desc.VarOffset {
+				s.containerKeyAt(p, desc.ContainerPath) == arrKey && lenOffset <= -desc.VarOffset {
 				if refined := narrow.RefineSequenceIndex(container, result, lower+desc.VarOffset); refined != nil {
 					return refined
 				}
@@ -102,6 +102,18 @@ func (s *Solution) refineIndexReadAt(p cfg.Point, container, result typ.Type, de
 	}
 
 	return result
+}
+
+// containerKeyAt resolves a container path to its versioned PathKey at p through
+// the solution's resolver, matching the keying used for the array's stored length
+// reference. A raw Path.Key() omits the SSA version when the path carries none, so
+// comparing it against the resolver-versioned length-reference key would miss; the
+// resolver makes both sides versioned consistently.
+func (s *Solution) containerKeyAt(p cfg.Point, path constraint.Path) string {
+	if s.pkResolver != nil {
+		return string(s.pkResolver.KeyAt(p, path))
+	}
+	return string(path.Key())
 }
 
 // removeFlowNil drops a flow-uncertainty nil from t, returning false when t is

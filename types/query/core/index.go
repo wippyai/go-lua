@@ -47,7 +47,10 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				if a.Element == nil {
 					return indexResult{t: typ.Nil, ok: true}
 				}
-				return indexResult{t: a.Element, ok: true}
+				// A sequence has unknown runtime length, so an unproven numeric
+				// index may be out of range and read nil. The result is optional;
+				// a length lower-bound proof narrows it back to the element type.
+				return indexResult{t: typ.NewOptional(a.Element), ok: true}
 			}
 			if keyType.Kind().IsPlaceholder() && a.Element != nil {
 				return indexResult{t: typ.NewOptional(a.Element), ok: true}

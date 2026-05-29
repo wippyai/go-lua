@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/numconst"
 	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
 	"github.com/wippyai/go-lua/compiler/check/abstract/sibling"
+	"github.com/wippyai/go-lua/compiler/check/abstract/tblutil"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/path"
@@ -29,9 +30,12 @@ import (
 	checkeffects "github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // ExtractEdgeConstraints extracts type constraints from branch conditions.
@@ -221,9 +225,332 @@ func ExtractNumericConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 				Constraints: onFalse,
 			})
 		}
+
+		// A tail-test loop (repeat-until) tests the counter AFTER the body, so the
+		// body read precedes the test. Its bound is established only on the
+		// continue (back) edge, but the body read sits on the header's forward edge
+		// where no test applies; the header join with the loop-entry edge drops the
+		// back-edge bound because the entry side has no interval for the counter.
+		// Re-assert the loop bound on the header's forward body edges, derived from
+		// the counter init and the tail-test continue bound, so the body read sees
+		// the same interval a head-test loop applies on its head->body edge.
+		emitTailTestBodyConstraints(fc.Graph, p, falseEdge, numConstraints.OnFalse, anchors, inputs)
 	}
 
 	extractCallEnsuresNumericConstraints(fc, inputs)
+	extractCallReturnLengthEnsures(fc, inputs)
+}
+
+// hasReturnLengthEnsures reports whether a resolved callee type carries return-
+// length postconditions. It is the spec predicate the call-site recovery uses to
+// prefer the converged FunctionFact projection over the synth surface's source
+// signature, which lacks the late-attached ExprEnsures.
+func hasReturnLengthEnsures(t typ.Type) bool {
+	spec := contract.ExtractSpec(t)
+	return spec != nil && len(spec.ExprEnsures) > 0
+}
+
+// extractCallReturnLengthEnsures instantiates a callee's return-length
+// postconditions at an assignment call site. For `local x = f(args)` it reads
+// the resolved callee's Spec.ExprEnsures, substitutes each RetLen(i) term with
+// the assignment target for return slot i and each ParamLen(j) term with the
+// j-th argument, and lowers a proven constant lower bound len(ret_i) >= k to a
+// LenGeConst on the target. The numeric domain then proves an in-range literal
+// index read on the assigned sequence. Only the proven bound is emitted, so a
+// callee with no length postcondition seeds nothing and the index stays optional.
+func extractCallReturnLengthEnsures(fc *core.FlowContext, inputs *flow.Inputs) {
+	if fc == nil || fc.Graph == nil || fc.Derived == nil {
+		return
+	}
+	bindings := resolve.GetBindings(inputs)
+	for _, call := range fc.Evidence.Calls {
+		if call.Origin != api.CallOriginAssignment {
+			continue
+		}
+		p := call.Point
+		info := call.Info
+		if info == nil {
+			continue
+		}
+		calleeType := callsite.ResolveCalleeType(info, p, fc.Graph, bindings, fc.ModuleBindings, fc.Derived.Synth, fc.Derived.SymResolver)
+		calleeType = callsite.PreferSpecCarryingCallee(calleeType, info, p, fc.Graph, bindings, fc.ModuleBindings, fc.Derived.SymResolver, hasReturnLengthEnsures)
+		spec := contract.ExtractSpec(calleeType)
+		if spec == nil || len(spec.ExprEnsures) == 0 {
+			continue
+		}
+		retTargets := callReturnTargets(info, p, fc.Graph)
+		if len(retTargets) == 0 {
+			continue
+		}
+		argPaths := callArgPaths(info, p, fc.Graph, bindings, inputs)
+		var ncs []constraint.NumericConstraint
+		for _, e := range spec.ExprEnsures {
+			ncs = append(ncs, returnLengthNumericConstraints(e, retTargets, argPaths, fc.Graph, inputs)...)
+		}
+		if len(ncs) == 0 {
+			continue
+		}
+		for _, succ := range fc.Graph.Successors(p) {
+			if inputs.DeadPoints != nil && inputs.DeadPoints[succ] {
+				continue
+			}
+			inputs.EdgeNumericConstraints = append(inputs.EdgeNumericConstraints, flow.EdgeNumericConstraint{
+				From:        p,
+				To:          succ,
+				Constraints: ncs,
+			})
+		}
+	}
+}
+
+// returnLengthNumericConstraints lowers one return-length postcondition to a
+// numeric constraint on the caller's assigned target.
+//
+// The constant arm len(ret_i) >= k becomes LenGeConst{target, k} on the
+// identifier assigned from return slot i.
+//
+// The relational arm len(ret_i) >= len(param_j) substitutes param_j with the
+// j-th call argument and resolves the argument's proven length lower bound k at
+// this caller (the map literal's key cardinality), then becomes
+// LenGeConst{target, k} on the assigned result alone. Only an argument whose
+// length floor is provable here contributes; an argument with no proven floor
+// yields nothing, so the index stays optional. The floor is applied to the
+// result target, never to the argument, so the argument's own type and
+// interprocedural entry evidence are unaffected.
+//
+// A postcondition that does not bound a return-length term, or whose target slot
+// is not an assigned identifier, yields nothing.
+func returnLengthNumericConstraints(e constraint.ExprCompare, retTargets map[int]constraint.Path, argPaths map[int]constraint.Path, graph *cfg.Graph, inputs *flow.Inputs) []constraint.NumericConstraint {
+	if e.Rel != constraint.ExprGe && e.Rel != constraint.ExprEq {
+		return nil
+	}
+	rl, ok := e.Left.(constraint.RetLen)
+	if !ok {
+		return nil
+	}
+	target, ok := retTargets[rl.Index]
+	if !ok || target.IsEmpty() {
+		return nil
+	}
+	switch right := e.Right.(type) {
+	case constraint.Const:
+		if right.Value < 1 {
+			return nil
+		}
+		return []constraint.NumericConstraint{constraint.LenGeConst{Array: target, C: right.Value}}
+	case constraint.ParamLen:
+		argPath, ok := argPaths[right.Index]
+		if !ok || argPath.IsEmpty() {
+			return nil
+		}
+		floor, ok := argLengthFloor(argPath, graph, inputs)
+		if !ok || floor < 1 {
+			return nil
+		}
+		return []constraint.NumericConstraint{constraint.LenGeConst{Array: target, C: floor}}
+	}
+	return nil
+}
+
+// callArgPaths maps each runtime argument index to the identifier path it reads,
+// for substituting a callee parameter-length term with the actual argument.
+func callArgPaths(info *cfg.CallInfo, p cfg.Point, graph *cfg.Graph, bindings *bind.BindingTable, inputs *flow.Inputs) map[int]constraint.Path {
+	args := runtimeCallArgs(info)
+	if len(args) == 0 {
+		return nil
+	}
+	constResolver := predicate.BuildConstResolver(inputs, p)
+	out := make(map[int]constraint.Path, len(args))
+	for i, arg := range args {
+		ap := path.FromExprWithBindingsAt(arg, constResolver, bindings, graph, p)
+		ap = fillCallArgPathSymbol(info, i, ap, graph)
+		if !ap.IsEmpty() && ap.Symbol != 0 {
+			out[i] = constraint.Path{Root: ap.Root, Symbol: ap.Symbol, Segments: ap.Segments}
+		}
+	}
+	return out
+}
+
+// argLengthFloor returns the proven length lower bound the caller establishes for
+// the argument symbol: the key cardinality of its defining map literal. The floor
+// is used only when the argument's container is defined by a single whole-symbol
+// map-literal assignment and is never length-mutated in this caller (no keyed
+// write, table mutator, or second definition), so the cardinality still holds at
+// the call. A mutated, multiply-defined, or non-literal argument yields ok=false,
+// leaving the relation unresolved.
+func argLengthFloor(arg constraint.Path, graph *cfg.Graph, inputs *flow.Inputs) (int64, bool) {
+	if arg.Symbol == 0 || len(arg.Segments) != 0 || inputs == nil || graph == nil {
+		return 0, false
+	}
+	if argLengthMutated(arg.Symbol, inputs) {
+		return 0, false
+	}
+	floor := argMapLiteralCardinality(arg.Symbol, graph)
+	if floor < 1 {
+		return 0, false
+	}
+	return floor, true
+}
+
+// argMapLiteralCardinality returns the key cardinality of the map literal that
+// defines the argument symbol, or 0 when the symbol is not defined by exactly one
+// whole-symbol map-literal assignment. Requiring a single literal definition
+// keeps the cardinality sound without consulting solved flow state.
+func argMapLiteralCardinality(sym cfg.SymbolID, graph *cfg.Graph) int64 {
+	var card int64
+	defs := 0
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if info == nil {
+			return
+		}
+		for i, target := range info.Targets {
+			if target.Kind != cfg.TargetIdent || target.Symbol != sym {
+				continue
+			}
+			defs++
+			tbl, ok := info.SourceAt(i).(*ast.TableExpr)
+			if !ok {
+				continue
+			}
+			card = tblutil.MapLiteralKeyCardinality(tbl)
+		}
+	})
+	if defs != 1 {
+		return 0
+	}
+	return card
+}
+
+// argLengthMutated reports whether the caller performs a mutation on the argument
+// symbol that could lower its key cardinality below the literal floor: a dynamic
+// keyed write (which may assign nil and remove a key) or a table mutator (e.g.
+// table.remove). A whole reassignment is handled separately by requiring a single
+// whole-symbol literal definition. The map literal's own static-key field
+// initializers are emitted as segmented UnifiedAssignments, not as mutators, so
+// they are not flagged; only post-definition key removal voids the floor.
+func argLengthMutated(sym cfg.SymbolID, inputs *flow.Inputs) bool {
+	for _, mm := range inputs.MapMutatorAssignments {
+		if mm.Target.Symbol == sym {
+			return true
+		}
+	}
+	for _, tm := range inputs.TableMutatorAssignments {
+		if tm.Target.Symbol == sym {
+			return true
+		}
+	}
+	// A static-key write of a nil-capable value into the symbol (data.x = nil)
+	// removes a key and can lower the cardinality. The literal's own initializers
+	// carry concrete non-nil values, so they are not flagged.
+	for _, a := range inputs.Assignments {
+		if a.TargetPath.Symbol != sym || len(a.TargetPath.Segments) == 0 {
+			continue
+		}
+		if a.Type != nil && (a.Type.Kind() == kind.Nil || unwrap.IsOptionalLike(a.Type)) {
+			return true
+		}
+	}
+	return false
+}
+
+// emitTailTestBodyConstraints recognizes a tail-test loop and seeds its body
+// read with the counter's loop bound. The tail-test branch's continue edge (the
+// falseEdge of `until cond`) targets the loop header join; the header's forward
+// successors are the loop body. For each monotone counter whose init anchor is
+// known, the body-read interval is [init, max(init, T)] for an incrementing
+// counter and [min(init, T), init] for a decrementing one, where T is the
+// constant bound the tail-test continue condition places on the counter. This is
+// a sound over-approximation: a monotone counter never crosses its init on the
+// init side, and the body-read value on every iteration is bounded by the
+// continue threshold (re-entries) or the init (first iteration). The interval is
+// emitted as a numeric edge constraint on each header->body edge.
+func emitTailTestBodyConstraints(graph *cfg.Graph, testPoint, continueEdge cfg.Point, continueConstraints []constraint.NumericConstraint, anchors map[cfg.SymbolID]loopCounterAnchor, inputs *flow.Inputs) {
+	if continueEdge == 0 || testPoint == continueEdge || len(anchors) == 0 {
+		return
+	}
+	header := graph.CFG().Node(continueEdge)
+	if header == nil || !header.LoopPreheaderSet {
+		return
+	}
+	for sym, anchor := range anchors {
+		if !anchor.body[testPoint] {
+			continue
+		}
+		bound, ok := tailTestBodyBound(anchor.constraint, continueConstraints, sym)
+		if !ok {
+			continue
+		}
+		for _, body := range graph.Successors(continueEdge) {
+			inputs.EdgeNumericConstraints = append(inputs.EdgeNumericConstraints, flow.EdgeNumericConstraint{
+				From:        continueEdge,
+				To:          body,
+				Constraints: bound,
+			})
+		}
+	}
+}
+
+// tailTestBodyBound builds the body-read interval for one tail-test counter from
+// its init anchor (GeConst init for incrementing, LeConst init for decrementing)
+// and the tail-test continue bound on the same counter. The init anchor fixes
+// one end and the loop direction; the continue bound supplies the other end,
+// clamped so the first-iteration init value is always inside the interval.
+func tailTestBodyBound(anchor constraint.NumericConstraint, continueConstraints []constraint.NumericConstraint, sym cfg.SymbolID) ([]constraint.NumericConstraint, bool) {
+	switch a := anchor.(type) {
+	case constraint.GeConst:
+		if a.X.Symbol != sym {
+			return nil, false
+		}
+		hi, ok := counterUpperBound(continueConstraints, sym)
+		if !ok {
+			return nil, false
+		}
+		if hi < a.C {
+			hi = a.C
+		}
+		return []constraint.NumericConstraint{
+			constraint.GeConst{X: a.X, C: a.C},
+			constraint.LeConst{X: a.X, C: hi},
+		}, true
+	case constraint.LeConst:
+		if a.X.Symbol != sym {
+			return nil, false
+		}
+		lo, ok := counterLowerBound(continueConstraints, sym)
+		if !ok {
+			return nil, false
+		}
+		if lo > a.C {
+			lo = a.C
+		}
+		return []constraint.NumericConstraint{
+			constraint.LeConst{X: a.X, C: a.C},
+			constraint.GeConst{X: a.X, C: lo},
+		}, true
+	}
+	return nil, false
+}
+
+// counterUpperBound returns the constant upper bound the tail-test continue
+// constraints place on the counter (a LeConst), or ok=false when none does.
+func counterUpperBound(constraints []constraint.NumericConstraint, sym cfg.SymbolID) (int64, bool) {
+	for _, c := range constraints {
+		if le, ok := c.(constraint.LeConst); ok && le.X.Symbol == sym {
+			return le.C, true
+		}
+	}
+	return 0, false
+}
+
+// counterLowerBound returns the constant lower bound the tail-test continue
+// constraints place on the counter (a GeConst), or ok=false when none does.
+func counterLowerBound(constraints []constraint.NumericConstraint, sym cfg.SymbolID) (int64, bool) {
+	for _, c := range constraints {
+		if ge, ok := c.(constraint.GeConst); ok && ge.X.Symbol == sym {
+			return ge.C, true
+		}
+	}
+	return 0, false
 }
 
 // extractCallEnsuresNumericConstraints seeds length facts from a statement call
@@ -400,7 +727,13 @@ func appendLoopCounterAnchors(constraints []constraint.NumericConstraint, anchor
 // sound bound. This covers while, while-true + break, and repeat-until uniformly,
 // with no loop-kind special-casing.
 func buildLoopCounterAnchors(graph *cfg.Graph, inputs *flow.Inputs) map[cfg.SymbolID]loopCounterAnchor {
+	if graph == nil {
+		return nil
+	}
 	c := graph.CFG()
+	if c == nil {
+		return nil
+	}
 	var anchors map[cfg.SymbolID]loopCounterAnchor
 	for pi := range c.Nodes {
 		header := cfg.Point(pi)

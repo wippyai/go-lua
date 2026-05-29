@@ -128,7 +128,20 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 
 		if assignedType != nil {
 			targetKeyStr := string(targetKey)
-			old := s.valueAtPoint(p, targetKeyStr)
+			baseSymbol := len(assign.TargetPath.Segments) == 0
+			// A base-symbol assignment's prior fact lives in the store the write
+			// targets: s.values for base symbols, the point-mutable overlay for
+			// field/index writes. The point overlay can shadow a base key when a
+			// mutator (table.insert) widened a prior incarnation and the loop
+			// back-edge propagated it into p's IN-state; that shadow is stale once
+			// the symbol is redefined here, so the self-comparison must read the
+			// base symbol's own store, not the mutator's shadow.
+			var old typ.Type
+			if baseSymbol {
+				old = s.baseSymbolValue(targetKeyStr)
+			} else {
+				old = s.valueAtPoint(p, targetKeyStr)
+			}
 			if len(assign.TargetPath.Segments) > 0 && assignedType.Kind() == kind.Nil {
 				assignedType = s.normalizeNilFieldAssignmentType(p, assign.TargetPath, old)
 			}
@@ -139,6 +152,12 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 					s.setValue(targetKeyStr, assignedType)
 					changedKeys = append(changedKeys, targetKeyStr)
 				}
+			}
+			// Redefining a base symbol supersedes any mutator-widened shadow the
+			// point overlay carried into p, so the overlay must reflect the new
+			// fact for queries and successor joins to read the live value.
+			if baseSymbol {
+				s.overwriteMutableShadow(p, targetKeyStr, assignedType)
 			}
 			changedKeys = append(changedKeys, s.clearMutableDescendantsAtPoint(p, targetKeyStr)...)
 			if len(assign.TargetPath.Segments) > 0 {

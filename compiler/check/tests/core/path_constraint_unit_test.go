@@ -85,7 +85,7 @@ func TestPathConstraint_FieldThenIndex(t *testing.T) {
 			values: number[]
 		}
 
-		function get_first(d: Data): number
+		function get_first(d: Data): number?
 			return d.values[1]
 		end
 	`

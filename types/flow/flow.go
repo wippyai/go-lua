@@ -330,6 +330,19 @@ type Inputs struct {
 	// that widen element types via ContainerElementUnion effects.
 	ContainerMutatorAssignments []ContainerMutatorAssignment
 
+	// ArrayLiteralLengths tracks sequence constructors that establish a length
+	// lower bound for their target at the construction point. A literal {e1..eN}
+	// with N positional elements proves #target >= N flow-sensitively, even when
+	// the declared type ({number}) erases the static length.
+	ArrayLiteralLengths []ArrayLiteralLength
+
+	// LoopInsertLengths tracks constant-trip-count numeric for-loops whose body
+	// performs exactly one unconditional non-nil table.insert per iteration into a
+	// target sequence. The loop exit then proves #target >= Count, where Count is
+	// the loop trip count. Unlike ArrayLiteralLength, the bound is raised (not
+	// reset), since it composes with any pre-loop length the target already holds.
+	LoopInsertLengths []LoopInsertLength
+
 	// DeadPoints marks CFG points that are unreachable.
 	// Used when a terminating function (one that never returns) is called.
 	DeadPoints map[cfg.Point]bool
@@ -500,6 +513,38 @@ type ContainerMutatorAssignment struct {
 	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
 	ValueType typ.Type        // Static value type if ValuePath doesn't resolve
 	Value     ValueTemplate   // Flow-resolved slots inside a static table value
+}
+
+// ArrayLiteralLength records a sequence constructor's proven length lower bound.
+// Count is the number of leading positional elements whose count is statically
+// certain (a trailing multi-value element such as a call or vararg is excluded,
+// since it may expand to zero values). The numeric component seeds #Target >= Count
+// at Point, the same length-proof channel table.insert raises.
+type ArrayLiteralLength struct {
+	Point  cfg.Point
+	Target constraint.Path
+	Count  int64
+}
+
+// LoopInsertLength records a loop's proven append count for a target sequence,
+// established at the loop exit Point.
+//
+// A constant-trip-count numeric for-loop fixes Count, the number of times the
+// body's single unconditional non-nil append runs; the numeric component raises
+// #Target >= Count, which composes with any pre-loop length lower bound.
+//
+// A pairs(Source) loop instead ties the count to the iterated map's key
+// cardinality: each iteration appends exactly once and pairs visits every entry
+// once, so #Target >= (key cardinality of Source) at exit. Source carries the
+// iterated map path; Count is 0 for this relational form, since the bound is the
+// source's cardinality rather than a constant. The post-flow producer reads a
+// returned slot whose accumulator has a Source path equal to a parameter and
+// emits the relational return-length postcondition len(ret) >= len(param).
+type LoopInsertLength struct {
+	Point  cfg.Point
+	Target constraint.Path
+	Count  int64
+	Source constraint.Path
 }
 
 // ValueTemplate records flow-owned source slots inside an extracted value.

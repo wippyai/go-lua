@@ -460,6 +460,40 @@ func (s *Solution) abstractValueAt(p cfg.Point, key string) (product.AbstractVal
 	return av, ok
 }
 
+// baseSymbolValue returns the stored fact for a base-symbol key from the global
+// values store, the home a base-symbol assignment writes through setValue. It
+// bypasses the point-mutable overlay so a base symbol's self-convergence compares
+// against the same store its write targets, immune to a mutator-widened shadow the
+// overlay may carry for a prior incarnation of the same key.
+func (s *Solution) baseSymbolValue(key string) typ.Type {
+	if s == nil || key == "" {
+		return nil
+	}
+	if av, ok := s.values[key]; ok {
+		return projectFlowValue(av)
+	}
+	return nil
+}
+
+// overwriteMutableShadow replaces a base key's point-mutable overlay entry at p
+// with the freshly assigned fact when the overlay shadows it. A base-symbol
+// redefinition supersedes any value the overlay carried into p (a mutator-widened
+// prior incarnation propagated across a loop back-edge), so the egress read and
+// successor joins observe the live value rather than the dead one.
+func (s *Solution) overwriteMutableShadow(p cfg.Point, key string, t typ.Type) {
+	if s == nil || key == "" || t == nil {
+		return
+	}
+	state := s.mutableOut[p]
+	if state == nil {
+		return
+	}
+	if _, ok := state[key]; !ok {
+		return
+	}
+	s.storeMutableValue(p, key, liftFlowValue(t), t)
+}
+
 func (s *Solution) setMutableValue(p cfg.Point, key string, t typ.Type) {
 	if s == nil || key == "" || t == nil {
 		return

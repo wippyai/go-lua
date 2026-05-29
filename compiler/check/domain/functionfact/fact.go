@@ -740,8 +740,8 @@ func mergeContractSpecs(existing, candidate *contract.Spec) *contract.Spec {
 	out := &contract.Spec{
 		Requires:     existing.Requires,
 		Ensures:      existing.Ensures,
-		ExprRequires: append([]constraint.ExprCompare(nil), existing.ExprRequires...),
-		ExprEnsures:  append([]constraint.ExprCompare(nil), existing.ExprEnsures...),
+		ExprRequires: mergeExprCompares(existing.ExprRequires, candidate.ExprRequires),
+		ExprEnsures:  mergeExprCompares(existing.ExprEnsures, candidate.ExprEnsures),
 		Effects:      existing.Effects,
 		Callbacks:    make(map[int]*contract.CallbackSpec, len(existing.Callbacks)+len(candidate.Callbacks)),
 		Return:       existing.Return,
@@ -754,6 +754,76 @@ func mergeContractSpecs(existing, candidate *contract.Spec) *contract.Spec {
 		out.Callbacks[idx] = mergeCallbackSpec(out.Callbacks[idx], cb)
 	}
 	return out
+}
+
+// mergeExprCompares is the lattice join of two arithmetic postcondition lists
+// for one function symbol across analysis observations. Two return-length lower
+// bounds on the same slot, len(ret_i) >= c1 and len(ret_i) >= c2, join to the
+// weaker bound len(ret_i) >= min(c1, c2): the postcondition survives the join
+// only as the floor proven by every observation. Joining to the weaker bound
+// keeps the merge monotone in the descending direction even when a later
+// observation proves a larger constant, so the spec reaches a fixed point and
+// the interprocedural fixpoint converges. Other postconditions (e.g. stdlib
+// equalities) carry no constant arm to weaken and are unioned with dedup.
+func mergeExprCompares(existing, candidate []constraint.ExprCompare) []constraint.ExprCompare {
+	if len(candidate) == 0 {
+		return append([]constraint.ExprCompare(nil), existing...)
+	}
+	out := append([]constraint.ExprCompare(nil), existing...)
+	for _, c := range candidate {
+		if idx, ok := weakenableLowerBound(out, c); ok {
+			cc := c.Right.(constraint.Const)
+			ec := out[idx].Right.(constraint.Const)
+			if cc.Value < ec.Value {
+				out[idx].Right = constraint.C(cc.Value)
+			}
+			continue
+		}
+		duplicate := false
+		for _, e := range out {
+			if e.Equals(c) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// weakenableLowerBound finds an existing return-length lower bound on the same
+// slot as c (len(ret_i) >= const, same relation), which the join weakens to the
+// smaller constant. It matches only the constant-arm RetLen lower-bound shape so
+// distinct postconditions on the same slot are not collapsed.
+func weakenableLowerBound(list []constraint.ExprCompare, c constraint.ExprCompare) (int, bool) {
+	idx, ok := retLenLowerBoundIndex(c)
+	if !ok {
+		return 0, false
+	}
+	for i, e := range list {
+		if eIdx, ok := retLenLowerBoundIndex(e); ok && eIdx == idx && e.Rel == c.Rel {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// retLenLowerBoundIndex reports the return slot of a len(ret_i) >= const
+// postcondition, or ok=false for any other shape.
+func retLenLowerBoundIndex(c constraint.ExprCompare) (int, bool) {
+	if c.Rel != constraint.ExprGe {
+		return 0, false
+	}
+	rl, ok := c.Left.(constraint.RetLen)
+	if !ok {
+		return 0, false
+	}
+	if _, ok := c.Right.(constraint.Const); !ok {
+		return 0, false
+	}
+	return rl.Index, true
 }
 
 func mergeCallbackSpec(existing, candidate *contract.CallbackSpec) *contract.CallbackSpec {

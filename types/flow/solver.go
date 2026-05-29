@@ -55,6 +55,8 @@ type Solution struct {
 	mapMutatorAssignmentsByPoint [][]MapMutatorAssignment
 	tableMutatorByPoint          [][]TableMutatorAssignment
 	containerMutatorByPoint      [][]ContainerMutatorAssignment
+	arrayLiteralLengthByPoint    [][]ArrayLiteralLength
+	loopInsertLengthByPoint      [][]LoopInsertLength
 	edgeNumericConstraints       map[edgeKey][]constraint.NumericConstraint
 	unsatEdges                   map[edgeKey]bool // edges proven unreachable by constraints
 	pointConditions              map[cfg.Point]constraint.Condition

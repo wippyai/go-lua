@@ -681,6 +681,41 @@ func cloneContractSpec(fn *typ.Function) *contract.Spec {
 	return clone
 }
 
+// AttachReturnLengthEnsures appends proven return-length postconditions to a
+// signature's contract spec. Each ExprCompare relates a return-length term to a
+// constant or parameter-length term and is consumed at call sites to seed the
+// caller's numeric length lower bound. An already-present postcondition is not
+// duplicated, so the attach is idempotent and the spec stays Equal to itself
+// once the body's proven bound settles, letting the interprocedural fixpoint
+// converge.
+func AttachReturnLengthEnsures(fn *typ.Function, ensures []constraint.ExprCompare) *typ.Function {
+	if fn == nil || len(ensures) == 0 {
+		return fn
+	}
+	spec := cloneContractSpec(fn)
+	added := false
+	for _, e := range ensures {
+		if containsExprCompare(spec.ExprEnsures, e) {
+			continue
+		}
+		spec.ExprEnsures = append(spec.ExprEnsures, e)
+		added = true
+	}
+	if !added {
+		return fn
+	}
+	return rebuildFunctionWithSpec(fn, spec)
+}
+
+func containsExprCompare(list []constraint.ExprCompare, target constraint.ExprCompare) bool {
+	for _, e := range list {
+		if e.Equals(target) {
+			return true
+		}
+	}
+	return false
+}
+
 func rebuildFunctionWithSpec(fn *typ.Function, spec *contract.Spec) *typ.Function {
 	if fn == nil {
 		return nil

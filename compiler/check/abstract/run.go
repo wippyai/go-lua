@@ -114,6 +114,9 @@ func BuildInputs(fc *abstractcore.FlowContext) *flow.Inputs {
 	// Table mutator assignments (table.insert-like).
 	mutator.ExtractTableMutatorAssignments(fc, inputs)
 
+	// Constant-trip-count loop append lengths (proves #target >= N at loop exit).
+	mutator.ExtractLoopInsertLengths(fc, inputs)
+
 	// Container mutator assignments (channel.send-like).
 	mutator.ExtractContainerMutatorAssignments(fc, inputs)
 

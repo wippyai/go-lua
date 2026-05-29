@@ -489,10 +489,11 @@ func (e *assignmentPointEmitter) emitTableLiteralFields(sym cfg.SymbolID, name s
 	if !ok || tblutil.TableHasFunctionField(tbl) {
 		return
 	}
+	root := resolve.RootName(e.state.fc.Graph, sym, name)
 	EmitTableLiteralFieldAssignments(
 		tbl,
 		sym,
-		resolve.RootName(e.state.fc.Graph, sym, name),
+		root,
 		e.p,
 		e.state.bindings,
 		e.constResolver,
@@ -500,6 +501,59 @@ func (e *assignmentPointEmitter) emitTableLiteralFields(sym cfg.SymbolID, name s
 		e.sc,
 		e.state.inputs,
 	)
+	if count := arrayLiteralPositionalLength(tbl); count > 0 {
+		e.state.inputs.ArrayLiteralLengths = append(e.state.inputs.ArrayLiteralLengths, flow.ArrayLiteralLength{
+			Point:  e.p,
+			Target: constraint.Path{Root: root, Symbol: sym},
+			Count:  count,
+		})
+	}
+}
+
+// arrayLiteralPositionalLength returns the proven length lower bound of a table
+// constructor's sequence part: the count of leading positional (keyless) fields.
+// A trailing positional field that is a multi-value expression (call or vararg)
+// is excluded, since it may expand to zero values and so cannot lower-bound the
+// border. A keyed field interrupts the sequence part, ending the count.
+func arrayLiteralPositionalLength(tbl *ast.TableExpr) int64 {
+	var count int64
+	for _, field := range tbl.Fields {
+		if field == nil || field.Value == nil {
+			break
+		}
+		if field.Key != nil {
+			continue
+		}
+		count++
+	}
+	if count == 0 {
+		return 0
+	}
+	if last := lastPositionalField(tbl); last != nil && isMultiValueExpr(last) {
+		count--
+	}
+	return count
+}
+
+// lastPositionalField returns the final keyless field's value expression.
+func lastPositionalField(tbl *ast.TableExpr) ast.Expr {
+	var last ast.Expr
+	for _, field := range tbl.Fields {
+		if field == nil || field.Value == nil || field.Key != nil {
+			continue
+		}
+		last = field.Value
+	}
+	return last
+}
+
+// isMultiValueExpr reports whether an expression can expand to a variable number
+// of values (zero or more) in a constructor tail, making the positional count
+// uncertain. A function call in the tail position spreads its results, so it may
+// contribute zero values and cannot lower-bound the border.
+func isMultiValueExpr(expr ast.Expr) bool {
+	_, ok := expr.(*ast.FuncCallExpr)
+	return ok
 }
 
 func (e *assignmentPointEmitter) emitFieldTarget(i int, target cfg.AssignTarget, source ast.Expr) {

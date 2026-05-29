@@ -438,8 +438,8 @@ func TestConditionTypeAt_DerivesDescendantFromAncestorConditionProof(t *testing.
 	}
 
 	s := Solve(inputs, testResolver())
-	if got := s.ConditionTypeAt(thenNode, textPath); !typ.TypeEquals(got, typ.String) {
-		t.Fatalf("ConditionTypeAt(then, result.items[1].text) = %v, want string from ancestor proof", got)
+	if got := s.ConditionTypeAt(thenNode, textPath); !typ.TypeEquals(got, typ.NewOptional(typ.String)) {
+		t.Fatalf("ConditionTypeAt(then, result.items[1].text) = %v, want string? (items proven present; the array index is bounds-optional without a length proof)", got)
 	}
 }
 
@@ -1087,7 +1087,7 @@ func TestBaseTypeAt_WithSegments_ExplicitPreferred(t *testing.T) {
 		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "err"}},
 	}
 	result := s.baseTypeAt(c.Entry(), path)
-	if result != errType {
+	if !typ.TypeEquals(result, errType) {
 		t.Errorf("baseTypeAt(r.err) = %v, want Err (explicit assignment)", result)
 	}
 }
@@ -1288,7 +1288,7 @@ func TestDerivedTypeAt_FromNarrowedParent(t *testing.T) {
 	if result == nil {
 		t.Fatal("derivedTypeAt(r.value) = nil, want derived type from narrowed parent")
 	}
-	if result != msgA {
+	if !typ.TypeEquals(result, msgA) {
 		t.Errorf("derivedTypeAt(r.value) = %v, want MsgA", result)
 	}
 }
@@ -1345,8 +1345,8 @@ func TestDerivedTypeAt_FromNarrowedIntermediateAncestor(t *testing.T) {
 	if result == nil {
 		t.Fatal("derivedTypeAt(r.system[1].text) = nil, want derived type from narrowed intermediate ancestor")
 	}
-	if !typ.TypeEquals(result, typ.String) {
-		t.Errorf("derivedTypeAt(r.system[1].text) = %v, want string", result)
+	if !typ.TypeEquals(result, typ.NewOptional(typ.String)) {
+		t.Errorf("derivedTypeAt(r.system[1].text) = %v, want string? (array index is bounds-optional without a length proof)", result)
 	}
 }
 
@@ -1366,8 +1366,8 @@ func TestProductDomainProjectedTypeDerivesFromIntermediateAncestor(t *testing.T)
 	dom.Type.Narrowed["sym1@1.system"] = typ.NewArray(item)
 
 	got := dom.ProjectedTypeAt("sym1@1.system[1].text", testResolver())
-	if !typ.TypeEquals(got, typ.String) {
-		t.Fatalf("ProjectedTypeAt(system[1].text) = %v, want string", got)
+	if !typ.TypeEquals(got, typ.NewOptional(typ.String)) {
+		t.Fatalf("ProjectedTypeAt(system[1].text) = %v, want string? (array index is bounds-optional without a length proof)", got)
 	}
 }
 

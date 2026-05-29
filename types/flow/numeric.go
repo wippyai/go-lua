@@ -219,6 +219,16 @@ func (s *Solution) hasNumericLengthEffects() bool {
 			return true
 		}
 	}
+	for _, lit := range s.inputs.ArrayLiteralLengths {
+		if lit.Count > 0 && lit.Target.Symbol != 0 {
+			return true
+		}
+	}
+	for _, lil := range s.inputs.LoopInsertLengths {
+		if lil.Count > 0 && lil.Target.Symbol != 0 {
+			return true
+		}
+	}
 	return false
 }
 
@@ -235,7 +245,9 @@ func (s *Solution) applyNumericLengthEffects(p cfg.Point, state *numeric.State) 
 	}
 	raises := s.tableInsertLengthRaises(p)
 	kills := s.lengthDegradingTargets(p)
-	if len(raises) == 0 && len(kills) == 0 {
+	floors := s.arrayLiteralLengthFloors(p)
+	loopFloors := s.loopInsertLengthFloors(p)
+	if len(raises) == 0 && len(kills) == 0 && len(floors) == 0 && len(loopFloors) == 0 {
 		return state
 	}
 	if state == nil {
@@ -256,7 +268,63 @@ func (s *Solution) applyNumericLengthEffects(p cfg.Point, state *numeric.State) 
 		}
 		state.ApplyLenGeConst(key, lower+delta)
 	}
+	// A sequence constructor redefines its target, so the prior length bound is
+	// dead. Replacing it with the exact constructor floor is the sound post-state.
+	for key, count := range floors {
+		state.DropLenBound(key)
+		state.ApplyLenGeConst(key, count)
+	}
+	// A constant-trip-count loop's proven append count raises the target's length
+	// lower bound at the loop exit. It composes with any pre-loop bound (the loop
+	// counter cannot shorten the sequence), so it raises rather than resets.
+	for key, count := range loopFloors {
+		state.ApplyLenGeConst(key, count)
+	}
 	return state
+}
+
+// loopInsertLengthFloors maps each loop-exit target at p to the trip-count length
+// lower bound its single per-iteration table.insert proves.
+func (s *Solution) loopInsertLengthFloors(p cfg.Point) map[constraint.PathKey]int64 {
+	var floors map[constraint.PathKey]int64
+	for _, lil := range s.loopInsertLengthsAt(p) {
+		if lil.Count <= 0 || lil.Target.Symbol == 0 {
+			continue
+		}
+		key := s.pkResolver.KeyAt(p, lil.Target)
+		if key == "" {
+			continue
+		}
+		if floors == nil {
+			floors = make(map[constraint.PathKey]int64, 1)
+		}
+		if cur, ok := floors[key]; !ok || lil.Count > cur {
+			floors[key] = lil.Count
+		}
+	}
+	return floors
+}
+
+// arrayLiteralLengthFloors maps each sequence-constructor target at p to the
+// length lower bound its positional element count proves.
+func (s *Solution) arrayLiteralLengthFloors(p cfg.Point) map[constraint.PathKey]int64 {
+	var floors map[constraint.PathKey]int64
+	for _, lit := range s.arrayLiteralLengthsAt(p) {
+		if lit.Count <= 0 || lit.Target.Symbol == 0 {
+			continue
+		}
+		key := s.pkResolver.KeyAt(p, lit.Target)
+		if key == "" {
+			continue
+		}
+		if floors == nil {
+			floors = make(map[constraint.PathKey]int64, 1)
+		}
+		if cur, ok := floors[key]; !ok || lit.Count > cur {
+			floors[key] = lit.Count
+		}
+	}
+	return floors
 }
 
 // tableInsertLengthRaises maps each direct-sequence table.insert target at p to

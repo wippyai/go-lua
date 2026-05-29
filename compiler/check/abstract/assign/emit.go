@@ -996,49 +996,10 @@ func extractCallCorrelations(
 	// signature. The spec-carrying resolver holds the labeled signature for the
 	// same callable, so prefer it for spec lookup when the synth resolution lacks
 	// the labels.
-	fnType = preferSpecCarryingCallee(fnType, callInfo, p, symResolver, graph, bindings, moduleBindings)
+	fnType = callsite.PreferSpecCarryingCallee(fnType, callInfo, p, graph, bindings, moduleBindings, symResolver, hasCorrelationLabels)
 	inv, co := correlationsFromFunctionType(fnType)
 	guarded := guardedTypeCorrelationsFromCall(fnType, callInfo, synth, p)
 	return inv, co, guarded
-}
-
-// preferSpecCarryingCallee returns the callee signature that carries contract
-// correlation labels. CalleeType resolves a non-method callee through the synth
-// surface, which can return a signature stripped of the late-attached spec while
-// the spec-carrying resolver holds the labeled signature for the same symbol. For
-// such calls, swap in the labeled signature when the synth resolution carries no
-// correlation labels but a spec-carrying candidate of the same callable does.
-func preferSpecCarryingCallee(
-	fnType typ.Type,
-	callInfo *cfg.CallInfo,
-	p cfg.Point,
-	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	graph *cfg.Graph,
-	bindings *bind.BindingTable,
-	moduleBindings *bind.BindingTable,
-) typ.Type {
-	if symResolver == nil || callsite.IsMethodCallInfo(callInfo) {
-		return fnType
-	}
-	if hasCorrelationLabels(fnType) {
-		return fnType
-	}
-	for _, sym := range callsite.ResolverCalleeSymbolCandidates(callInfo, graph, bindings, moduleBindings) {
-		if sym == 0 {
-			continue
-		}
-		candidate, ok := symResolver(p, sym)
-		if !ok || candidate == nil {
-			continue
-		}
-		if !sameCallableShape(fnType, candidate) {
-			continue
-		}
-		if hasCorrelationLabels(candidate) {
-			return candidate
-		}
-	}
-	return fnType
 }
 
 // hasCorrelationLabels reports whether fnType's contract spec carries an
@@ -1056,18 +1017,6 @@ func hasCorrelationLabels(fnType typ.Type) bool {
 		}
 	}
 	return false
-}
-
-// sameCallableShape reports whether two resolved callee types describe the same
-// callable arity, so the spec-carrying candidate is the same function the synth
-// surface resolved rather than an unrelated symbol.
-func sameCallableShape(a, b typ.Type) bool {
-	fa := unwrap.Function(a)
-	fb := unwrap.Function(b)
-	if fa == nil || fb == nil {
-		return false
-	}
-	return len(fa.Params) == len(fb.Params) && len(fa.Returns) == len(fb.Returns)
 }
 
 // correlationsFromFunctionType extracts ErrorReturn and CorrelatedReturn labels from a function's spec effects.
