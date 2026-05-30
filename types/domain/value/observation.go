@@ -242,7 +242,7 @@ func (w *observationAdmission) admit(t typ.Type) typ.Type {
 			builder.SetOpen(true)
 		}
 		for _, f := range v.Fields {
-			fieldType := w.admitRecordField(f.Name, f.Type, preserveRecordLiterals)
+			fieldType := w.admitRecordField(f.Type, preserveRecordLiterals)
 			if fieldType != f.Type {
 				changed = true
 			}
@@ -303,16 +303,33 @@ func admitObservationLiteral(lit *typ.Literal) typ.Type {
 	}
 }
 
+// recordHasDiscriminantLiteral reports whether a record has the shape of a tagged
+// variant whose literal fields admission keeps precise rather than widening to
+// their base. The reliable single-record signal of a discriminated-union member is
+// several correlated literal axes: two or more required literal fields the record
+// carries together (for example {kind, name}). A single required literal field is
+// ambiguous from one record alone -- it is just as likely incidental scalar data
+// (a numeric initializer, a config key) as a lone tag -- so admission widens it and
+// leaves any genuine partition to the union/flow join, where a conflicting sibling
+// makes the discriminant observable. Literals carried only by a recursive
+// self-embedding node are repeated values, so they widen too.
 func recordHasDiscriminantLiteral(r *typ.Record) bool {
 	if r == nil {
 		return false
 	}
+	requiredLiterals := 0
 	for _, f := range r.Fields {
-		if f.Optional || !typ.IsDiscriminantLiteralField(f.Name) {
+		if f.Optional {
+			continue
+		}
+		if typ.ContainsRecursive(f.Type) {
 			continue
 		}
 		if _, ok := f.Type.(*typ.Literal); ok {
-			return true
+			requiredLiterals++
+			if requiredLiterals >= 2 {
+				return true
+			}
 		}
 	}
 	return false
@@ -355,8 +372,8 @@ func (w *observationAdmission) admitUnionMember(t typ.Type, preserveFalsySentine
 	return w.admit(t)
 }
 
-func (w *observationAdmission) admitRecordField(name string, t typ.Type, preserveRecordLiterals bool) typ.Type {
-	if _, ok := t.(*typ.Literal); ok && (preserveRecordLiterals || typ.IsDiscriminantLiteralField(name)) {
+func (w *observationAdmission) admitRecordField(t typ.Type, preserveRecordLiterals bool) typ.Type {
+	if _, ok := t.(*typ.Literal); ok && preserveRecordLiterals {
 		return t
 	}
 	return w.admit(t)
@@ -380,7 +397,7 @@ func (w *observationAdmission) admitFreshRecursiveBody(t typ.Type) typ.Type {
 	for _, field := range body.Fields {
 		fieldType := field.Type
 		if !typ.ContainsRecursive(fieldType) {
-			fieldType = w.admitRecordField(field.Name, fieldType, preserveRecordLiterals)
+			fieldType = w.admitRecordField(fieldType, preserveRecordLiterals)
 		}
 		if fieldType != field.Type {
 			changed = true

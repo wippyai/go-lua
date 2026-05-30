@@ -43,15 +43,15 @@ func TestJoinReturnSlot_PrefersConcreteScalarOverUnknown(t *testing.T) {
 	}
 }
 
-// TestJoinRecordFieldSlot_KeepsScalarFieldOverUnknownPeer proves the field-slot
+// TestJoinUnionFieldSlot_KeepsScalarFieldOverUnknownPeer proves the field-slot
 // join keeps the precise scalar field when one record observation has not yet
 // resolved it.
-func TestJoinRecordFieldSlot_KeepsScalarFieldOverUnknownPeer(t *testing.T) {
-	if got := JoinRecordFieldSlot("full_path", String, Unknown); !TypeEquals(got, String) {
-		t.Fatalf("full_path slot join(string, unknown) = %v, want string", got)
+func TestJoinUnionFieldSlot_KeepsScalarFieldOverUnknownPeer(t *testing.T) {
+	if got := JoinUnionFieldSlot(String, Unknown, false); !TypeEquals(got, String) {
+		t.Fatalf("slot join(string, unknown) = %v, want string", got)
 	}
-	if got := JoinRecordFieldSlot("full_path", Unknown, String); !TypeEquals(got, String) {
-		t.Fatalf("full_path slot join(unknown, string) = %v, want string", got)
+	if got := JoinUnionFieldSlot(Unknown, String, false); !TypeEquals(got, String) {
+		t.Fatalf("slot join(unknown, string) = %v, want string", got)
 	}
 }
 
@@ -450,6 +450,62 @@ func TestJoinReturnSlot_PreservesDiscriminatedRecordUnion(t *testing.T) {
 	}
 }
 
+// TestJoinReturnSlot_PreservesStructuralDiscriminantUnion proves discriminant
+// detection is structural, not a field-name list: a shared required literal field
+// with conflicting values whose erasure leaves disjoint required payloads keeps the
+// records as a discriminated union regardless of the field name.
+func TestJoinReturnSlot_PreservesStructuralDiscriminantUnion(t *testing.T) {
+	a := NewRecord().
+		Field("shape_kind", LiteralString("circle")).
+		Field("r", Number).
+		Build()
+	b := NewRecord().
+		Field("shape_kind", LiteralString("square")).
+		Field("s", Number).
+		Build()
+
+	got := JoinReturnSlot(a, b)
+	if _, ok := got.(*Union); !ok {
+		t.Fatalf("JoinReturnSlot(shape_kind discriminated records) = %T %[1]v, want *Union", got)
+	}
+
+	tags := requiredDiscriminantTags(a)
+	if tags["shape_kind"] != LiteralString("circle").Hash() {
+		t.Fatalf("shape_kind not recognized as a structural discriminant tag: %v", tags)
+	}
+}
+
+// TestJoinReturnSlot_CoalescesBroadScalarSharedField is the negative: a shared
+// field that is a broad scalar rather than a literal is not a discriminant, so the
+// records coalesce instead of forming a union.
+func TestJoinReturnSlot_CoalescesBroadScalarSharedField(t *testing.T) {
+	a := NewRecord().
+		Field("count", Number).
+		Field("a", Number).
+		Build()
+	b := NewRecord().
+		Field("count", Number).
+		Field("b", Number).
+		Build()
+
+	if got := JoinReturnSlot(a, b); !isRecordLike(got) {
+		t.Fatalf("JoinReturnSlot(broad scalar shared field) = %T %[1]v, want coalesced record", got)
+	}
+}
+
+func isRecordLike(t Type) bool {
+	switch v := t.(type) {
+	case *Record:
+		return true
+	case *Optional:
+		return isRecordLike(v.Inner)
+	case *Alias:
+		return isRecordLike(v.Target)
+	default:
+		return false
+	}
+}
+
 func TestJoinReturnSlot_PreservesNestedDiscriminatedRecordUnion(t *testing.T) {
 	chanInt := NewAlias("__test_ChanInt", NewRecord().
 		Field("__tag", LiteralString("int")).
@@ -559,20 +615,24 @@ func TestJoinReturnSlot_MessageLiteralMismatchStillCoalesces(t *testing.T) {
 	}
 }
 
-func TestJoinRecordFieldSlot_WidensAccumulatedNonDiscriminantLiteralUnion(t *testing.T) {
-	acc := JoinRecordFieldSlot("full_path", LiteralString("a"), LiteralString("b"))
-	got := JoinRecordFieldSlot("full_path", acc, LiteralString("c"))
+func TestJoinUnionFieldSlot_WidensAccumulatedNonDiscriminantLiteralUnion(t *testing.T) {
+	// A non-discriminant data field widens its differing literals to the base so a
+	// many-member union read does not explode into a literal union.
+	acc := JoinUnionFieldSlot(LiteralString("a"), LiteralString("b"), false)
+	got := JoinUnionFieldSlot(acc, LiteralString("c"), false)
 	if !TypeEquals(got, String) {
-		t.Fatalf("JoinRecordFieldSlot(full_path literals) = %v, want string", got)
+		t.Fatalf("JoinUnionFieldSlot(non-discriminant literals) = %v, want string", got)
 	}
 
-	tag := JoinRecordFieldSlot("kind", LiteralString("a"), LiteralString("b"))
+	// A field the caller identifies as the union's discriminant keeps its distinct
+	// literal alternatives for path-sensitive narrowing.
+	tag := JoinUnionFieldSlot(LiteralString("a"), LiteralString("b"), true)
 	if _, ok := tag.(*Union); !ok {
-		t.Fatalf("JoinRecordFieldSlot(kind literals) = %T %[1]v, want discriminant union", tag)
+		t.Fatalf("JoinUnionFieldSlot(discriminant literals) = %T %[1]v, want discriminant union", tag)
 	}
 }
 
-func TestJoinRecordFieldSlot_JoinsArrayElementsPointwise(t *testing.T) {
+func TestJoinUnionFieldSlot_JoinsArrayElementsPointwise(t *testing.T) {
 	left := NewArray(NewRecord().
 		Field("name", LiteralString("a")).
 		Field("line", LiteralInt(1)).
@@ -582,9 +642,9 @@ func TestJoinRecordFieldSlot_JoinsArrayElementsPointwise(t *testing.T) {
 		Field("line", LiteralInt(2)).
 		Build())
 
-	got, ok := JoinRecordFieldSlot("children", left, right).(*Array)
+	got, ok := JoinUnionFieldSlot(left, right, false).(*Array)
 	if !ok {
-		t.Fatalf("JoinRecordFieldSlot(children arrays) = %T, want array", got)
+		t.Fatalf("JoinUnionFieldSlot(children arrays) = %T, want array", got)
 	}
 	elem, ok := got.Element.(*Record)
 	if !ok {

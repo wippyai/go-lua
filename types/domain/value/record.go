@@ -20,7 +20,7 @@ func JoinRecordShape(a, b typ.Type, join func(typ.Type, typ.Type) typ.Type) (typ
 	if !okA || !okB || ar == nil || br == nil {
 		return nil, false
 	}
-	if recordsHaveConflictingRequiredLiterals(ar, br) || recordsHaveAsymmetricRequiredLiteral(ar, br) {
+	if recordsHaveConflictingRequiredLiterals(ar, br) || recordsHaveDisjointPayload(ar, br) {
 		return nil, false
 	}
 	if recordsAreRecursiveAlternatives(ar, br) {
@@ -76,7 +76,7 @@ func RecordWidthDiffer(a, b typ.Type) bool {
 	if !okA || !okB || ar == nil || br == nil {
 		return false
 	}
-	if recordsHaveConflictingRequiredLiterals(ar, br) || recordsHaveAsymmetricRequiredLiteral(ar, br) {
+	if recordsHaveConflictingRequiredLiterals(ar, br) || recordsHaveDisjointPayload(ar, br) {
 		return false
 	}
 	if recordsAreRecursiveAlternatives(ar, br) {
@@ -323,31 +323,35 @@ func recordsHaveConflictingRequiredLiterals(a, b *typ.Record) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	for _, left := range a.Fields {
-		if left.Optional {
-			continue
-		}
-		right := b.GetField(left.Name)
-		if right == nil || right.Optional {
-			continue
-		}
-		if typ.IsDiscriminantLiteralField(left.Name) && requiredLiteralsConflict(left.Type, right.Type) {
-			return true
-		}
-	}
-	return false
+	return typ.RecordsConflictOnLiteralDiscriminant(a, b)
 }
 
-func recordsHaveAsymmetricRequiredLiteral(a, b *typ.Record) bool {
+// recordsHaveDisjointPayload reports whether two records are distinct tagged
+// variants: one carries a required literal field the other lacks, and their
+// non-literal payloads are mutually disjoint. The asymmetric literal alone is just
+// data (config records with differing literal keys collapse), and disjoint payloads
+// alone are partial records that optionalize on merge; only their combination
+// (for example {kind, content} versus {tool, arguments}) marks a partition.
+func recordsHaveDisjointPayload(a, b *typ.Record) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if !recordHasAsymmetricRequiredLiteral(a, b) {
+		return false
+	}
+	return recordRequiredPayloadMissingFrom(a, b) && recordRequiredPayloadMissingFrom(b, a)
+}
+
+// recordHasAsymmetricRequiredLiteral reports whether either record carries a
+// required literal field the other does not require, the structural sign that a
+// variant tag is present on one alternative only.
+func recordHasAsymmetricRequiredLiteral(a, b *typ.Record) bool {
 	return recordHasRequiredLiteralMissingFrom(a, b) || recordHasRequiredLiteralMissingFrom(b, a)
 }
 
 func recordHasRequiredLiteralMissingFrom(src, dst *typ.Record) bool {
-	if src == nil || dst == nil {
-		return false
-	}
 	for _, field := range src.Fields {
-		if field.Optional || !typ.IsDiscriminantLiteralField(field.Name) || !isLiteralType(field.Type) {
+		if field.Optional || !isLiteralType(field.Type) {
 			continue
 		}
 		other := dst.GetField(field.Name)
@@ -358,10 +362,19 @@ func recordHasRequiredLiteralMissingFrom(src, dst *typ.Record) bool {
 	return false
 }
 
-func requiredLiteralsConflict(a, b typ.Type) bool {
-	al, okA := unwrap.Alias(a).(*typ.Literal)
-	bl, okB := unwrap.Alias(b).(*typ.Literal)
-	return okA && okB && al.Base == bl.Base && !typ.TypeEquals(al, bl)
+// recordRequiredPayloadMissingFrom reports whether src requires a non-literal field
+// dst lacks entirely. Such mutual absence is a disjoint payload rather than additive
+// width that optionalizes on merge.
+func recordRequiredPayloadMissingFrom(src, dst *typ.Record) bool {
+	for _, field := range src.Fields {
+		if field.Optional || isLiteralType(field.Type) {
+			continue
+		}
+		if dst.GetField(field.Name) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func isLiteralType(t typ.Type) bool {

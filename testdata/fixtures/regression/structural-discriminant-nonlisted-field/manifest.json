@@ -1,0 +1,4 @@
+{
+  "description": "A union discriminated by a literal field NOT in the old magic name-list (shape_kind) is recognized structurally: the union is preserved through return coalescing and narrows by the literal, so the per-variant payload fields read non-optional.",
+  "files": ["main.lua"]
+}

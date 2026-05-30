@@ -3,6 +3,7 @@ package core
 import (
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -250,6 +251,11 @@ func fieldInInterface(i *typ.Interface, name string) (typ.Type, bool) {
 // sound for non-table members (where field access would be invalid).
 func (env fieldLookupEnv) fieldInUnionLookup(u *typ.Union, name string, depth int) fieldLookupResult {
 	members := typ.CoalesceProductUnionMembers(u.Members)
+	// The field is a discriminant only when it structurally partitions this union
+	// (a closed literal domain), in which case its distinct literal alternatives are
+	// preserved for narrowing; ordinary data fields widen so a many-member union
+	// does not explode into a giant literal union on read.
+	_, preserveLiteral := narrow.ClosedDiscriminantDomain(u, name)
 	var out typ.Type
 	nilable := false
 
@@ -266,7 +272,11 @@ func (env fieldLookupEnv) fieldInUnionLookup(u *typ.Union, name string, depth in
 		if res.nilable {
 			nilable = true
 		}
-		out = typ.JoinRecordFieldSlot(name, out, res.t)
+		if out == nil {
+			out = res.t
+			continue
+		}
+		out = typ.JoinUnionFieldSlot(out, res.t, preserveLiteral)
 	}
 
 	if out == nil {

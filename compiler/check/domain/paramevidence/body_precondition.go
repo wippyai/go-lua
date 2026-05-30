@@ -209,7 +209,16 @@ func conditionedPathEvidenceFromCondition(path constraint.Path, evidence typ.Typ
 			Name: field,
 		})
 		if ev := PathEvidence(segments, value); ev != nil {
-			conditionEvidence = JoinBody(conditionEvidence, ev)
+			// The accumulated discriminant constraints are precise guard values, not
+			// observations: merge them structurally so a tag literal survives until it
+			// joins its payload record, where it is recognized as a discriminant.
+			if conditionEvidence == nil {
+				conditionEvidence = ev
+			} else if merged, ok := mergeConditionedRecordEvidence(conditionEvidence, ev); ok {
+				conditionEvidence = merged
+			} else {
+				conditionEvidence = JoinBody(conditionEvidence, ev)
+			}
 		}
 	}
 	if conditionEvidence == nil {
