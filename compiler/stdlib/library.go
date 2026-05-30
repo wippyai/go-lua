@@ -83,6 +83,11 @@ func buildLibrary() map[string]typ.Type {
 
 		"_G":       typ.Any,
 		"_VERSION": typ.String,
+
+		// process is the Wippy actor-runtime global: always present in every
+		// script and never require()d. Its full host interface is not modeled
+		// here, so it carries the gradual top type like _G.
+		"process": typ.Any,
 	}
 }
 

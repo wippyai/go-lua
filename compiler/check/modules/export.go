@@ -1,6 +1,8 @@
 package modules
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	abstractreturns "github.com/wippyai/go-lua/compiler/check/abstract/returns"
@@ -8,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -75,7 +78,212 @@ func ExportType(result *api.FuncResult, refinementsBySym map[cfg.SymbolID]*const
 	if export == nil {
 		return typ.Nil
 	}
+	export = preservePopulatedMapKeys(export, result)
 	return export
+}
+
+// preservePopulatedMapKeys recovers the provably-populated literal string keys of
+// a module field whose value is a local declared as a string-keyed map ({[string]:
+// V}) and populated by literal-string index writes. The declared map annotation
+// erases those keys at export, collapsing the field to the bare map; a known-key
+// read across the module boundary then observes the optional map value (V?) even
+// though the key is statically present.
+//
+// The recovery rebuilds such a field as a record carrying the populated keys as
+// concrete fields plus the declared map component (Record{key: V, ..., [string]:
+// V}). A literal-key read then resolves to the present field (non-optional) while
+// an absent/unknown key still falls to the map component (V?), so the read of a
+// key the producer never wrote stays soundly optional.
+func preservePopulatedMapKeys(export typ.Type, result *api.FuncResult) typ.Type {
+	if export == nil || result == nil || result.NarrowSynth == nil || result.Graph == nil {
+		return export
+	}
+	rec, ok := unwrap.Alias(export).(*typ.Record)
+	if !ok || rec == nil {
+		return export
+	}
+	if len(result.Evidence.Assignments) == 0 {
+		return export
+	}
+
+	fieldSources := exportFieldSourceSymbols(result, rec)
+	if len(fieldSources) == 0 {
+		return export
+	}
+
+	overlays := make(map[string]typ.Type)
+	for fieldName, sourceSym := range fieldSources {
+		field := rec.GetField(fieldName)
+		if field == nil {
+			continue
+		}
+		declaredMap, ok := stringKeyedMapDecl(field.Type)
+		if !ok {
+			continue
+		}
+		populated := populatedStringKeyWrites(result, sourceSym, declaredMap)
+		if len(populated) == 0 {
+			continue
+		}
+		overlays[fieldName] = buildPopulatedMapRecord(field.Type, declaredMap, populated)
+	}
+	if len(overlays) == 0 {
+		return export
+	}
+	return overlayExportFieldsRecord(export, rec, overlays)
+}
+
+// exportFieldSourceSymbols maps an exported record field name to the local symbol
+// whose value was assigned into it (root.field = local). Only a direct identifier
+// source feeds the map; a computed or call source is not a recoverable populated
+// literal.
+func exportFieldSourceSymbols(result *api.FuncResult, rec *typ.Record) map[string]cfg.SymbolID {
+	out := make(map[string]cfg.SymbolID)
+	for _, asg := range result.Evidence.Assignments {
+		info := asg.Info
+		if info == nil || len(info.Targets) != 1 || len(info.Sources) != 1 {
+			continue
+		}
+		target := info.Targets[0]
+		if target.Kind != cfg.TargetField || len(target.FieldPath) != 1 || target.BaseSymbol == 0 {
+			continue
+		}
+		fieldName := target.FieldPath[0]
+		if rec.GetField(fieldName) == nil {
+			continue
+		}
+		if len(info.SourceSymbols) != 1 {
+			continue
+		}
+		sourceSym := info.SourceSymbols[0]
+		if sourceSym == 0 {
+			continue
+		}
+		out[fieldName] = sourceSym
+	}
+	return out
+}
+
+// stringKeyedMapDecl returns the declared map when t is a map (directly or through
+// an alias) whose key admits literal string keys. The literal keys recovered below
+// must be subtypes of this key for the rebuild to be sound.
+func stringKeyedMapDecl(t typ.Type) (*typ.Map, bool) {
+	m, ok := unwrap.Alias(t).(*typ.Map)
+	if !ok || m == nil || m.Key == nil || m.Value == nil {
+		return nil, false
+	}
+	if !subtype.IsSubtype(typ.LiteralString("k"), m.Key) {
+		return nil, false
+	}
+	return m, true
+}
+
+// populatedStringKeyWrites observes the value type of every literal-string index
+// write into the source local (local["key"] = value), keyed by the literal key.
+// A write whose key is not a sound literal string key for the declared map, or
+// whose observed value is not a subtype of the declared map value, is skipped so
+// the rebuilt record never widens the declared map contract.
+func populatedStringKeyWrites(result *api.FuncResult, sourceSym cfg.SymbolID, declaredMap *typ.Map) map[string]typ.Type {
+	populated := make(map[string]typ.Type)
+	for _, asg := range result.Evidence.Assignments {
+		info := asg.Info
+		if info == nil || len(info.Targets) != 1 || len(info.Sources) != 1 {
+			continue
+		}
+		target := info.Targets[0]
+		if target.Kind != cfg.TargetField || target.BaseSymbol != sourceSym || len(target.FieldPath) != 1 {
+			continue
+		}
+		key := target.FieldPath[0]
+		if !subtype.IsSubtype(typ.LiteralString(key), declaredMap.Key) {
+			continue
+		}
+		value := result.NarrowSynth.TypeOf(info.Sources[0], asg.Point)
+		if value == nil || typ.IsAbsentOrUnknown(value) {
+			continue
+		}
+		if !subtype.IsSubtype(value, declaredMap.Value) {
+			continue
+		}
+		if existing, ok := populated[key]; ok {
+			populated[key] = typ.NewUnion(existing, value)
+			continue
+		}
+		populated[key] = value
+	}
+	return populated
+}
+
+// buildPopulatedMapRecord rebuilds a declared string-keyed map field as a record
+// carrying the populated literal keys as concrete fields plus the declared map
+// component. When the declared field is an alias of the map, the rebuilt record is
+// re-wrapped in the same alias so the importer still sees the named type.
+func buildPopulatedMapRecord(declared typ.Type, declaredMap *typ.Map, populated map[string]typ.Type) typ.Type {
+	builder := typ.NewRecord().MapComponent(declaredMap.Key, declaredMap.Value)
+	for _, key := range sortedKeys(populated) {
+		builder.Field(key, populated[key])
+	}
+	record := builder.Build()
+	if alias, ok := declared.(*typ.Alias); ok {
+		return typ.NewAlias(alias.Name, record)
+	}
+	return record
+}
+
+func sortedKeys(m map[string]typ.Type) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// overlayExportFieldsRecord replaces the named fields of the module export record
+// with their rebuilt populated-map records, re-wrapping the original export alias
+// when the export type was an alias of the record.
+func overlayExportFieldsRecord(export typ.Type, rec *typ.Record, overlays map[string]typ.Type) typ.Type {
+	changed := false
+	fields := make([]typ.Field, len(rec.Fields))
+	for i, field := range rec.Fields {
+		fields[i] = field
+		overlay, ok := overlays[field.Name]
+		if !ok || overlay == nil {
+			continue
+		}
+		fields[i].Type = overlay
+		changed = true
+	}
+	if !changed {
+		return export
+	}
+	builder := typ.NewRecord()
+	if rec.Open {
+		builder.SetOpen(true)
+	}
+	if rec.HasMapComponent() {
+		builder.MapComponent(rec.MapKey, rec.MapValue)
+	}
+	if rec.Metatable != nil {
+		builder.Metatable(rec.Metatable)
+	}
+	for _, field := range fields {
+		switch {
+		case field.Optional && field.Readonly:
+			builder.OptReadonlyField(field.Name, field.Type)
+		case field.Optional:
+			builder.OptField(field.Name, field.Type)
+		case field.Readonly:
+			builder.ReadonlyField(field.Name, field.Type)
+		default:
+			builder.Field(field.Name, field.Type)
+		}
+	}
+	rebuilt := builder.Build()
+	if alias, ok := export.(*typ.Alias); ok {
+		return typ.NewAlias(alias.Name, rebuilt)
+	}
+	return rebuilt
 }
 
 // ExportTypes extracts module-local type definitions for manifest generation.

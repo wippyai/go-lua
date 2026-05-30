@@ -241,6 +241,14 @@ type Transfer struct {
 	// rather than the value-domain unknown. Nil leaves a capture unresolved (the
 	// sound carry-forward: a genuinely-unresolved capture stays unknown).
 	captureType func(sym cfg.SymbolID) (typ.Type, bool)
+	// castType resolves the annotated type of an `expr :: T` cast against the
+	// function's base scope. A `::` cast asserts the operand has type T, so the
+	// expression's value is T regardless of the operand's inferred type (the same
+	// unsafe-cast semantics the synth flow applies via ResolveType). Without it a
+	// cast resolves to unknown and a `pairs(m :: {[string]: string})` loop, or a
+	// `(x :: SomeType)` operand, collapses to unknown. Nil leaves a cast resolved
+	// only by its inner expression (the sound carry-forward).
+	castType func(expr ast.TypeExpr) typ.Type
 }
 
 // New builds the transfer for the given canonical inputs. ops, funcTyper, and
@@ -321,6 +329,15 @@ func (t *Transfer) SetInferredParams(bySlot map[int]typ.Type) {
 // the same interprocedural query the call graph uses).
 func (t *Transfer) SetCaptureResolver(resolve func(sym cfg.SymbolID) (typ.Type, bool)) {
 	t.captureType = resolve
+}
+
+// SetCastResolver installs the `expr :: T` cast-type resolver: it resolves a
+// cast's syntactic type annotation to its type against the function's base
+// scope. The driver binds it to the same annotation resolver the parameter and
+// declared-local types use, so a cast resolves to the asserted type identically
+// to the synth flow's ResolveType.
+func (t *Transfer) SetCastResolver(resolve func(expr ast.TypeExpr) typ.Type) {
+	t.castType = resolve
 }
 
 // SetSiblingNils installs the (value, err) inverse-correlation binds after
@@ -901,6 +918,17 @@ func (t *Transfer) evalExpr(
 		// #x is an integer; record the demand that x is read.
 		t.evalExpr(out, e.Expr, demand)
 		return product.FromType(typ.Integer), true
+	case *ast.CastExpr:
+		// `expr :: T` asserts the operand has type T; its value is T. The operand is
+		// still read (parameter demand). When the cast type does not resolve, fall
+		// back to the operand's own value (the sound carry-forward).
+		t.demandConditionReads(out, e.Expr, demand)
+		if t.castType != nil && e.Type != nil {
+			if ct := t.castType(e.Type); ct != nil && !typ.IsAbsentOrUnknown(ct) {
+				return product.FromType(ct), true
+			}
+		}
+		return t.evalExpr(out, e.Expr, demand)
 	case *ast.AttrGetExpr:
 		return t.evalAttrGet(out, e, demand)
 	case *ast.FuncCallExpr:

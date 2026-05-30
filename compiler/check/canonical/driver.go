@@ -398,6 +398,19 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 		queries = summary.New(prog)
 		d.activeQueries = queries
 		d.solvePass(sess, prog, queries)
+		// The sibling re-solve refined a callee's converged return (a `local v, err =
+		// f()` value narrowed non-nil), which flows into the prototype record a method
+		// receiver's `self` is seeded from. The capture-refine loop seeded `self` and the
+		// capture resolvers from the PRE-recompute captures, so a sibling method's body
+		// (`self:inputs()`) still reads the stale prototype. Re-seed `self` and the
+		// capture resolvers from the refreshed captures and re-solve once when either
+		// shifted, so a body read of a method whose return the recompute refined sees the
+		// converged signature.
+		if d.seedMethodSelfFromCaptures(prog) || d.seedCaptureResolvers(prog) {
+			queries = summary.New(prog)
+			d.activeQueries = queries
+			d.solvePass(sess, prog, queries)
+		}
 	}
 
 	d.bridgeResults(sess, prog)
@@ -2180,6 +2193,14 @@ func (d *Driver) addFunction(sess api.AnalysisSession, p *program, g *cfg.Graph)
 	// value receiver (an anonymous table) has no named binding here and stays unseeded
 	// (the sound carry-forward), recovered through the observation surface's capture.
 	tr := transfer.New(in, opsResolver{d}, funcTyper{d}, callTyper{d: d, g: g}, d.typeCheckBinds(g), nil, declared, d.methodSelfSeed(p, g))
+	// A `expr :: T` cast asserts the operand has the annotated type. Resolve it
+	// through the same annotation resolver the parameter and declared-local types
+	// use, against the module base scope, so the transfer types a cast operand
+	// (e.g. `pairs(cfg :: {[string]: string})`) by its asserted type.
+	baseScope := d.baseScope()
+	tr.SetCastResolver(func(expr ast.TypeExpr) typ.Type {
+		return d.resolveType(expr, baseScope)
+	})
 	p.transfers[ref] = tr
 	// The parameter-narrowing effects (wrapper assert / if-error guards) are a
 	// syntactic property of the body the transfer's recognizers extract once here, so
@@ -3747,6 +3768,21 @@ func (ft funcTyper) MethodFuncTypeOver(info *cfg.FuncDefInfo, base *scope.State)
 		ImplicitSelfType: selfType,
 	})
 	d.applyReturnList(builder, fn, sc)
+	// A method with no return annotation otherwise carries an empty return tuple, so
+	// a sibling `self:m()` call types its result as nil. Splice in the inferred
+	// summary return the body produces (the same splice FuncTypeOver applies to a
+	// plain literal), so the class field `T.m` holds the method's inferred return and
+	// a `self:m()` call sees it. The lookup runs only for an unannotated-return method
+	// mapping to a program ref; a declared return is authoritative.
+	if len(fn.ReturnTypes) == 0 {
+		if prog := d.activeProgram; prog != nil {
+			if ref, ok := prog.refByFunc(fn); ok {
+				if returns := d.inferredReturnTypes(ref); len(returns) > 0 {
+					builder.Returns(returns...)
+				}
+			}
+		}
+	}
 	return builder.Build()
 }
 
