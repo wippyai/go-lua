@@ -1,0 +1,4 @@
+{
+  "description": "A regular (non type-cast) call does not assert its argument's type, so the argument stays gradual any and is not assignable to a concrete type. Boundary twin of type-cast argument narrowing: only a CallableType cast narrows.",
+  "files": ["main.lua"]
+}

@@ -2199,6 +2199,12 @@ type ParamNarrow struct {
 	// `x == nil` proven falsy narrows x to not-nil, exactly as the false edge of
 	// `if x == nil` would. A non-condition effect leaves CondArg false.
 	CondArg bool
+	// CastType, when non-nil, makes this a parameter TYPE-CAST effect: the body asserts
+	// the parameter IS this concrete type on every normal return (a `T(param)` cast that
+	// dominates the exit, the transitive form of the call-site cast narrowing). A caller
+	// narrows the matching argument's value directly to CastType. Check/EqParam are
+	// unused for a cast effect.
+	CastType typ.Type
 }
 
 // ParamNarrowEffects extracts the parameter-narrowing effects this function's body
@@ -2238,6 +2244,20 @@ func (t *Transfer) ParamNarrowEffects() []ParamNarrow {
 			return
 		}
 		add(t.paramEffectFromCondition(info.Call.Args[0], false))
+	})
+	// A type-cast `T(param)` that dominates the exit asserts the parameter IS T on
+	// every normal return: a wrapper `function expect(x) return T(x) end` forwards a
+	// concrete-type narrowing to its callers, the transitive form of the call-site cast
+	// narrowing. The cast appears as a call SITE (a return/assign source), so it is
+	// visited through EachCallSite rather than the statement-only EachCall above.
+	g.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.Call == nil || info.CalleeName == "assert" {
+			return
+		}
+		if !dominatesExit(g, p) {
+			return
+		}
+		add(t.paramCastEffect(info.Call))
 	})
 	g.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
 		if info == nil || !dominatesExit(g, p) {
@@ -2382,6 +2402,35 @@ func (t *Transfer) toParamEffect(sym cfg.SymbolID, segs []constraint.Segment, ch
 	default:
 		return ParamNarrow{}, false
 	}
+}
+
+// paramCastEffect recognizes a type-cast `T(param)` whose single argument is one of
+// this function's bare parameters, returning the effect narrowing that parameter to T.
+// The cast asserts the parameter IS T on every normal return (the caller composes
+// dominatesExit), so a wrapper `function expect(x) return T(x) end` forwards the
+// concrete-type narrowing to its callers. A call that is not a cast, or whose argument
+// is not a bare parameter, yields no effect.
+func (t *Transfer) paramCastEffect(call *ast.FuncCallExpr) (ParamNarrow, bool) {
+	if t.callTyper == nil || call == nil || len(call.Args) != 1 {
+		return ParamNarrow{}, false
+	}
+	target, ok := t.callTyper.TypeCastTarget(call, func(ast.Expr) typ.Type { return typ.Unknown })
+	if !ok || target == nil || typ.IsAbsentOrUnknown(target) {
+		return ParamNarrow{}, false
+	}
+	ident, ok := call.Args[0].(*ast.IdentExpr)
+	if !ok {
+		return ParamNarrow{}, false
+	}
+	sym := t.symbolOf(ident)
+	if sym == 0 {
+		return ParamNarrow{}, false
+	}
+	idx, isParam := t.paramBySym[sym]
+	if !isParam {
+		return ParamNarrow{}, false
+	}
+	return ParamNarrow{Param: idx, EqParam: -1, CastType: target}, true
 }
 
 // paramEqEffect recognizes a parameter-equality refinement an asserted/guarded
@@ -2567,6 +2616,9 @@ func paramNarrowKey(e ParamNarrow) string {
 	if e.EqParam >= 0 {
 		return "p" + itoa(uint64(e.Param)) + "=p" + itoa(uint64(e.EqParam))
 	}
+	if e.CastType != nil {
+		return "p" + itoa(uint64(e.Param)) + "::" + itoa(e.CastType.Hash())
+	}
 	key := "p" + itoa(uint64(e.Param)) + ":" + itoa(uint64(uint(e.Check)))
 	if e.CondArg {
 		key += "c"
@@ -2593,6 +2645,10 @@ func (t *Transfer) ApplyParamNarrows(out *flow.PointState, call *ast.FuncCallExp
 		}
 		if e.EqParam >= 0 {
 			t.applyParamEqNarrow(out, call, e)
+			continue
+		}
+		if e.CastType != nil {
+			t.applyParamCastNarrow(out, call.Args[e.Param], e.CastType)
 			continue
 		}
 		if e.CondArg {
@@ -2656,6 +2712,36 @@ func (t *Transfer) applyParamCondNarrow(out *flow.PointState, arg ast.Expr, prov
 	narrowed := t.narrowEdgeInner(*out, leaf, wantTruthy, false)
 	out.Env = narrowed.Env
 	out.Cond = narrowed.Cond
+}
+
+// applyParamCastNarrow narrows the argument of a forwarded type-cast effect to the
+// asserted type at the call site: the callee's body proved its parameter IS castType
+// on every normal return (a `function expect(x) return T(x) end` wrapper), so the
+// matching argument here provably IS castType too. It rewrites the argument's tracked
+// value (or the field path within it) to castType, the call-site counterpart of
+// applyTypeCastNarrow. An argument the flow does not track is left unchanged.
+func (t *Transfer) applyParamCastNarrow(out *flow.PointState, arg ast.Expr, castType typ.Type) {
+	if castType == nil || typ.IsAbsentOrUnknown(castType) {
+		return
+	}
+	sym, segs, ok := t.pathSymbol(arg)
+	if !ok || sym == 0 {
+		return
+	}
+	key := symKey(sym)
+	if len(segs) == 0 {
+		out.Env[key] = product.FromType(castType)
+		return
+	}
+	base, has := t.narrowBase(sym, out.Env[key], true)
+	if !has {
+		return
+	}
+	refined := refineAtPath(base.ProjectValue(), segs, func(typ.Type) typ.Type { return castType })
+	if refined == nil {
+		return
+	}
+	out.Env[key] = product.FromType(refined)
 }
 
 // applyParamEqNarrow applies a parameter-equality effect at the call site: argument

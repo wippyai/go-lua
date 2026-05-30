@@ -158,6 +158,13 @@ type CallTyper interface {
 	// continuation is unreachable. A callee that does return, or one that does not
 	// resolve to a module function, yields false.
 	IsNoReturn(call *ast.FuncCallExpr) bool
+	// TypeCastTarget reports whether call is a type-cast/assertion call `T(arg)` (a
+	// type name used as a callable constructor, recognized by the same CallableType
+	// effect the call-return typing uses), and if so returns the asserted type T. A
+	// failed cast raises, so on the post-call path the argument provably IS T; the
+	// transfer narrows the argument value to T. A call that is not a type cast yields
+	// false.
+	TypeCastTarget(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) (typ.Type, bool)
 }
 
 // TypeCheckBind records the value-narrowing a `local val, err = T:is(x)` type-check
@@ -539,6 +546,15 @@ func (t *Transfer) applyAssign(
 	if len(info.IterExprs) > 0 {
 		t.applyGenericFor(out, info, demand)
 		return
+	}
+	// A type-cast call source (`local v = T(arg)`) asserts its argument IS T on the
+	// continuation, exactly as a statement cast does. Narrow the argument before the
+	// targets are bound, so a later read of the argument sees the asserted type. The
+	// cast's RESULT type (T) is bound to the target through the ordinary call typing.
+	for _, src := range info.Sources {
+		if srcCall, ok := src.(*ast.FuncCallExpr); ok {
+			t.applyTypeCastNarrow(out, srcCall, demand)
+		}
 	}
 	// A call source feeding more targets than sources expands to a multi-return
 	// tuple: bind each target to the matching return slot (target i -> return i),
@@ -1774,6 +1790,10 @@ func (t *Transfer) applyCallArgs(
 		t.demandConditionReads(out, arg, demand)
 	}
 	t.applyTableInsert(out, info, demand)
+	// A type-cast/assertion call `T(arg)` proves its argument IS T on the post-call
+	// path (a failed cast raises). Narrow the argument value to T, so a later read of
+	// it observes the asserted type — the same continuation refinement an assert imposes.
+	t.applyTypeCastNarrow(out, info.Call, demand)
 	// assert(cond, ...) narrows its asserted value in the continuation (the value
 	// holds truthy past the call, or the call raised). It is recognized by the
 	// CalleeName the CFG pre-extracted, the genuine Lua builtin, not a name heuristic.
@@ -1797,6 +1817,48 @@ func (t *Transfer) applyCallArgs(
 		}
 	}
 	return false
+}
+
+// applyTypeCastNarrow narrows the argument of a type-cast/assertion call `T(arg)` to
+// the asserted type T in out. A cast raises on a value that is not T, so on the
+// continuation the argument provably IS T — narrowing it to T is the same sound
+// continuation refinement an assert imposes, just to a concrete type. It applies to a
+// bare-symbol or static field-path argument the transfer tracks; the argument's Env
+// slot (or the field path within it) is rewritten to T. A non-cast call, or an
+// argument the transfer does not track, leaves out unchanged.
+func (t *Transfer) applyTypeCastNarrow(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if t.callTyper == nil || call == nil || call.Method != "" || len(call.Args) != 1 {
+		return
+	}
+	exprType := func(e ast.Expr) typ.Type {
+		return t.resolveExprType(out, e, demand)
+	}
+	target, ok := t.callTyper.TypeCastTarget(call, exprType)
+	if !ok || target == nil || typ.IsAbsentOrUnknown(target) {
+		return
+	}
+	sym, segs, ok := t.pathSymbol(call.Args[0])
+	if !ok || sym == 0 {
+		return
+	}
+	key := symKey(sym)
+	if len(segs) == 0 {
+		out.Env[key] = product.FromType(target)
+		return
+	}
+	base, has := t.narrowBase(sym, out.Env[key], true)
+	if !has {
+		return
+	}
+	refined := refineAtPath(base.ProjectValue(), segs, func(typ.Type) typ.Type { return target })
+	if refined == nil {
+		return
+	}
+	out.Env[key] = product.FromType(refined)
 }
 
 // demandConditionReads walks an expression for identifier reads, emitting

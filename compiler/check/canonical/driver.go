@@ -1711,7 +1711,7 @@ func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, ref su
 func refinementFromParamNarrows(narrows []transfer.ParamNarrow, terminates bool) *constraint.FunctionRefinement {
 	var onReturn []constraint.Constraint
 	for _, e := range narrows {
-		if e.EqParam >= 0 || e.CondArg || e.Param < 0 {
+		if e.EqParam >= 0 || e.CondArg || e.CastType != nil || e.Param < 0 {
 			continue
 		}
 		c, ok := paramNarrowConstraint(e)
@@ -3995,6 +3995,41 @@ func (ct callTyper) runIntercepts(call *ast.FuncCallExpr, exprType func(ast.Expr
 		return res.Types, true
 	}
 	return nil, false
+}
+
+// TypeCastTarget reports whether call is a type-cast/assertion call `T(arg)` — a
+// type name used as a CallableType constructor — and returns the asserted type T. It
+// runs the same TypeCastIntercept the call-return chain uses (effect-based dispatch,
+// not a name heuristic), so the canonical flow recognizes a cast identically here and
+// in CallReturns. A call that is not a type cast, or one whose target does not
+// resolve, yields false.
+func (ct callTyper) TypeCastTarget(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) (typ.Type, bool) {
+	d := ct.d
+	if call == nil || call.Method != "" {
+		return nil, false
+	}
+	env := intercept.CallEnv{
+		Scope:   d.baseScope(),
+		Recurse: intercept.ExprSynth(func(e ast.Expr) typ.Type { return exprType(e) }),
+		TypeLookup: func(name string) typ.Type {
+			if d.cfg.GlobalTypes == nil {
+				return nil
+			}
+			if t, ok := d.cfg.GlobalTypes[name]; ok {
+				return t
+			}
+			return nil
+		},
+	}
+	if ct.g != nil {
+		env.Bindings = ct.g.Bindings()
+	}
+	cast := &intercept.TypeCastIntercept{}
+	res := cast.InterceptCall(call, env)
+	if !res.Skip || len(res.Types) == 0 {
+		return nil, false
+	}
+	return res.Types[0], true
 }
 
 // calleeSignature resolves a callee identifier to the module function it names: the
