@@ -3165,7 +3165,7 @@ func (d *Driver) calleeProvesErrorReturn(p *program, callerGraph *cfg.Graph, cal
 	ct := callTyper{d: d, g: callerGraph}
 	if ref, ok := ct.resolveCalleeRef(call.Call, p); ok {
 		if cg := p.graphs[ref]; cg != nil {
-			return d.provesErrorReturnFromBody(cg, ref, d.signatureForRef(p, ref))
+			return d.provesErrorReturnFromBody(p, cg, ref, d.signatureForRef(p, ref))
 		}
 	}
 	// A cross-module or otherwise type-resolved callee: read the convention off the
@@ -3213,29 +3213,44 @@ func (d *Driver) calleeSignatureFor(ct callTyper, call *ast.FuncCallExpr) typ.Ty
 // from d.states[ref] when it is populated; at pre-solve program-build time it is
 // absent, so only the syntactically certain literal forms classify and the proof is
 // recomputed after the solve once the per-return types are known.
-func (d *Driver) provesErrorReturnFromBody(cg *cfg.Graph, ref summary.FuncRef, sig typ.Type) bool {
+func (d *Driver) provesErrorReturnFromBody(p *program, cg *cfg.Graph, ref summary.FuncRef, sig typ.Type) bool {
 	const valueIdx, errorIdx = 0, 1
 	fs, hasState := d.states[ref]
 	sawSuccess, sawFailure, inconsistent, classified := false, false, false, false
-	cg.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+	cg.EachReturn(func(pt cfg.Point, info *cfg.ReturnInfo) {
 		if inconsistent || info == nil || len(info.Exprs) == 0 {
 			return
 		}
 		var ps flow.PointState
 		if hasState {
-			ps = fs.Points[p]
+			ps = fs.Points[pt]
 		}
-		valState, okVal := d.classifyReturnSlot(info.Exprs[valueIdx], cg, ps, hasState)
+		// A sole tail call in the value slot (`return helper(...)`) delegates its whole
+		// result vector to the callee, so the (value, err) pair this return contributes
+		// is the callee's. When the callee proves the inverse pattern, the delegation
+		// carries both the success and failure shapes; an undelegatable expanding tail
+		// (a callee that does not prove the pattern, or a vararg) cannot be pinned.
+		if len(info.Exprs) == 1 && returnSlotExpands(info, 0) {
+			if d.delegatedReturnProvesErrorReturn(p, cg, info) {
+				classified = true
+				sawSuccess = true
+				sawFailure = true
+				return
+			}
+			inconsistent = true
+			return
+		}
+		valState, okVal := d.classifyReturnSlotAt(p, cg, info, valueIdx, ps, hasState)
 		var errState returnSlotNil
 		var okErr bool
 		if errorIdx < len(info.Exprs) {
-			errState, okErr = d.classifyReturnSlot(info.Exprs[errorIdx], cg, ps, hasState)
+			errState, okErr = d.classifyReturnSlotAt(p, cg, info, errorIdx, ps, hasState)
 		} else {
 			// A short return (`return v`) implicitly supplies nil for the trailing
 			// error slot in Lua, the success shape of the (value, err) convention --
-			// unless the last present expression expands to multiple values (a call or
-			// vararg `...`), in which case the error slot is filled at runtime and the
-			// proof cannot pin it.
+			// unless the last present expression expands to multiple values (a vararg
+			// `...`; a sole tail call is the delegation case handled above), in which
+			// case the error slot is filled at runtime and the proof cannot pin it.
 			if returnSlotExpands(info, len(info.Exprs)-1) {
 				inconsistent = true
 				return
@@ -3265,6 +3280,57 @@ func (d *Driver) provesErrorReturnFromBody(cg *cfg.Graph, ref summary.FuncRef, s
 	return valueReturnSlotOptional(sig, valueIdx)
 }
 
+// delegatedReturnProvesErrorReturn reports whether a sole tail-call return
+// (`return helper(...)`) delegates to a callee that itself proves the (value, err)
+// inverse pattern: the delegated call's result vector becomes this function's, so
+// the callee's proof carries through. The delegate is resolved with the same
+// machinery the direct call-site correlation uses, so a delegate proven by its own
+// body, by a synthesized signature, or by a cross-module label all carry through.
+func (d *Driver) delegatedReturnProvesErrorReturn(p *program, cg *cfg.Graph, info *cfg.ReturnInfo) bool {
+	call := info.SourceCallAt(0)
+	if call == nil || call.Call == nil {
+		return false
+	}
+	return d.calleeProvesErrorReturn(p, cg, call)
+}
+
+// classifyReturnSlotAt classifies the nil state of a return expression slot,
+// extending classifyReturnSlot with a call-expression slot (`return nil,
+// build_error(x)` or an interior call). A call slot is classified by the converged
+// type of its first return: a non-optional result is nonNil, an exactly-nil result
+// is nil, an optional/unknown result stays indeterminate (voids the proof). The
+// non-call forms route to classifyReturnSlot unchanged.
+func (d *Driver) classifyReturnSlotAt(p *program, cg *cfg.Graph, info *cfg.ReturnInfo, idx int, ps flow.PointState, hasState bool) (returnSlotNil, bool) {
+	if call := info.SourceCallAt(idx); call != nil && call.Call != nil {
+		return d.classifyCallSlotNil(p, cg, call.Call)
+	}
+	return d.classifyReturnSlot(info.Exprs[idx], cg, ps, hasState)
+}
+
+// classifyCallSlotNil classifies the nil state a call expression contributes to a
+// single return slot, from the call's first-return type resolved against the
+// callee's declared/inferred signature. An unresolved or gradual result stays
+// indeterminate so the proof is voided rather than fabricated.
+func (d *Driver) classifyCallSlotNil(p *program, cg *cfg.Graph, call *ast.FuncCallExpr) (returnSlotNil, bool) {
+	return classifyNilType(d.callReturnSlotType(p, cg, call, 0))
+}
+
+// classifyNilType classifies a resolved value type into the nil state a return slot
+// proof reads: an exactly-nil type is nil, a definitely-present type is nonNil, an
+// optional/unknown/absent type stays indeterminate (voids the proof).
+func classifyNilType(t typ.Type) (returnSlotNil, bool) {
+	if t == nil || typ.IsAbsentOrUnknown(t) {
+		return indeterminateExpr, false
+	}
+	if unwrap.Alias(t).Kind() == kind.Nil {
+		return nilExpr, true
+	}
+	if _, optional := typ.SplitNilableFieldType(t); optional {
+		return indeterminateExpr, false
+	}
+	return nonNilExpr, true
+}
+
 // classifyReturnSlot classifies a return expression's nil state, preferring the
 // syntactically certain literal forms (a nil literal, a non-nil constructor/literal)
 // and otherwise — when the converged state is available — the value type the solve
@@ -3279,17 +3345,7 @@ func (d *Driver) classifyReturnSlot(e ast.Expr, cg *cfg.Graph, ps flow.PointStat
 	if !hasState {
 		return indeterminateExpr, false
 	}
-	t := exprValueAt(e, cg, ps, d.moduleCaptures)
-	if t == nil || typ.IsAbsentOrUnknown(t) {
-		return indeterminateExpr, false
-	}
-	if unwrap.Alias(t).Kind() == kind.Nil {
-		return nilExpr, true
-	}
-	if _, optional := typ.SplitNilableFieldType(t); optional {
-		return indeterminateExpr, false
-	}
-	return nonNilExpr, true
+	return classifyNilType(exprValueAt(e, cg, ps, d.moduleCaptures))
 }
 
 // returnSlotNil is the nil classification of a single return expression slot.

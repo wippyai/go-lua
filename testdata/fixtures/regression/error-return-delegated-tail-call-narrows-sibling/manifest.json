@@ -1,0 +1,4 @@
+{
+  "description": "A wrapper whose body is a sole tail call (return inner(...)) delegates its whole result vector to the callee, so when the callee proves the (value, err) inverse the wrapper carries it: a caller's `if err` guard then narrows the value sibling non-nil.",
+  "files": ["main.lua"]
+}
