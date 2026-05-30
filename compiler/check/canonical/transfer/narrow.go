@@ -1396,6 +1396,14 @@ func (t *Transfer) narrowNumericComparison(out flow.PointState, info *cfg.Branch
 	if !ok {
 		return out
 	}
+	// A `#container OP const` length guard (`#x > 0`, `#x >= 1`, `#x ~= 0`, `#x == 0`)
+	// bounds the container's length on the edge it holds, raising the proven length
+	// floor (or ceiling) the same numeric component an in-range index read consults.
+	// It is recognized before the index-variable orientation because the guarded value
+	// is `#container`, not a tracked integer variable.
+	if narrowed, applied := t.narrowLengthGuard(out, rel, info, taken); applied {
+		return narrowed
+	}
 	op := rel.Operator
 	switch op {
 	case "<", "<=", ">", ">=":
@@ -1442,6 +1450,121 @@ func (t *Transfer) narrowNumericComparison(out flow.PointState, info *cfg.Branch
 		return res
 	}
 	return out
+}
+
+// narrowLengthGuard seeds the container length bound a `#container OP const` guard
+// proves on the edge it holds. It orients the comparison so the `#container` side is
+// the value and the integer constant the bound, applies the comparison's
+// proven-edge operator, and translates it into a length floor / ceiling on the
+// container's numeric key:
+//
+//   - `#x >  c`  proves  #x >= c+1  (floor c+1)
+//   - `#x >= c`  proves  #x >= c    (floor c)
+//   - `#x <  c`  proves  #x <= c-1  (ceiling c-1)
+//   - `#x <= c`  proves  #x <= c    (ceiling c)
+//   - `#x == c`  proves  #x >= c AND #x <= c
+//   - `#x ~= 0`  proves  #x >= 1    (a sequence length is non-negative, so != 0 is >= 1)
+//
+// A `~= c` for c other than 0 proves nothing soundly (the length may sit above or
+// below c), so it is declined. A floor of c >= 1 on the true edge lets a later
+// in-range index read `x[1]` / `x[#x]` in the guarded block drop its soundly-optional
+// element through the same length proof a bounded loop seeds. The numeric component is
+// cloned before the bound is applied so the shared predecessor state is never mutated;
+// the merge-LUB rebuilds the unbounded length past the guard. A comparison neither side
+// of which is `#container` over a tracked sequence, or whose other side is not an integer
+// constant, reports applied=false so the index-variable orientation runs.
+func (t *Transfer) narrowLengthGuard(out flow.PointState, rel *ast.RelationalOpExpr, info *cfg.BranchInfo, taken bool) (flow.PointState, bool) {
+	switch rel.Operator {
+	case "<", "<=", ">", ">=", "==", "~=":
+	default:
+		return out, false
+	}
+	arrKey, c, op, ok := t.orientLengthComparison(rel.Lhs, rel.Rhs, rel.Operator)
+	if !ok {
+		return out, false
+	}
+	// The CFG records the comparison branch as a truthy/falsy check; the taken edge
+	// holds the comparison as written, the not-taken edge its logical negation.
+	if !effectiveTruthy(info.CondCheck.Kind, taken) {
+		op = negateLengthOp(op)
+	}
+	floor, ceil, hasFloor, hasCeil := lengthBoundFromOp(op, c)
+	if !hasFloor && !hasCeil {
+		return out, false
+	}
+	res := cloneForNarrow(out)
+	num := res.Num.Clone()
+	if hasFloor {
+		num.ApplyLenGeConst(arrKey, floor)
+	}
+	if hasCeil {
+		num.ApplyLenLeConst(arrKey, ceil)
+	}
+	res.Num = num
+	zprobeNarrow("lengthGuard arr=%q op=%q c=%d floor=%d(%v) ceil=%d(%v)", arrKey, op, c, floor, hasFloor, ceil, hasCeil)
+	return res, true
+}
+
+// orientLengthComparison resolves a `#container OP const` comparison into the
+// container's numeric key, the integer constant, and the operator oriented so it
+// reads `#container OP const`. The `#container` side may be either operand; when it
+// is on the right the operator is flipped. A comparison neither side of which is
+// `#container` over a tracked sequence, or whose other side is not an integer
+// constant, reports ok=false.
+func (t *Transfer) orientLengthComparison(lhs, rhs ast.Expr, op string) (constraint.PathKey, int64, string, bool) {
+	if arrKey, ok := t.lenExprContainerKey(lhs); ok {
+		if c, ok := t.constInt(rhs); ok {
+			return arrKey, c, op, true
+		}
+	}
+	if arrKey, ok := t.lenExprContainerKey(rhs); ok {
+		if c, ok := t.constInt(lhs); ok {
+			return arrKey, c, flipComparisonOp(op), true
+		}
+	}
+	return "", 0, op, false
+}
+
+// negateLengthOp returns the logical negation of a relational operator over the
+// integer length, including the equality operators the index-variable negation does
+// not handle (not (a == b) is a ~= b).
+func negateLengthOp(op string) string {
+	switch op {
+	case "==":
+		return "~="
+	case "~=":
+		return "=="
+	default:
+		return negateComparisonOp(op)
+	}
+}
+
+// lengthBoundFromOp translates a proven `#x OP c` comparison into the inclusive
+// integer length floor and/or ceiling it establishes. A strict bound is tightened to
+// its integer neighbor (`#x > c` is `#x >= c+1`). An equality bounds both ends; an
+// inequality bounds the length only when c is 0 (a non-negative length that is not 0
+// is at least 1). An operator/constant that proves no usable bound reports both
+// has-flags false.
+func lengthBoundFromOp(op string, c int64) (floor, ceil int64, hasFloor, hasCeil bool) {
+	switch op {
+	case ">":
+		return c + 1, 0, true, false
+	case ">=":
+		return c, 0, true, false
+	case "<":
+		return 0, c - 1, false, true
+	case "<=":
+		return 0, c, false, true
+	case "==":
+		return c, c, true, true
+	case "~=":
+		if c == 0 {
+			return 1, 0, true, false
+		}
+		return 0, 0, false, false
+	default:
+		return 0, 0, false, false
+	}
 }
 
 // orientComparison resolves which operand of a relational comparison is the

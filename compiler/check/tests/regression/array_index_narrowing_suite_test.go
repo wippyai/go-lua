@@ -131,3 +131,84 @@ func TestArrayIndexNarrowing_TypedSequence(t *testing.T) {
 			i = i + 1
 		end`)
 }
+
+// A non-empty length guard (#seq > 0, #seq >= 1, #seq ~= 0, the #seq == 0 false
+// edge) raises seq's proven length floor to >= 1 on the guarded edge, so a literal
+// first / last (#seq) index read inside the block is proven in range and drops its
+// soundly-optional element. An unguarded read, an out-of-range index, the empty
+// (false) edge, or an index past the proven floor keeps nil (sound).
+func TestArrayIndexNarrowing_LengthGuard(t *testing.T) {
+	// #seq > 0 → first element proven present.
+	wantOK(t, "gt_zero_first", `
+		local function build(): {number} return {1} end
+		local seq = build()
+		if #seq > 0 then
+			local v: number = seq[1]
+		end`)
+	// #seq > 0 → last element seq[#seq] proven present.
+	wantOK(t, "gt_zero_last", `
+		local function build(): {number} return {1} end
+		local seq = build()
+		if #seq > 0 then
+			local v: number = seq[#seq]
+		end`)
+	// #seq >= 1 → first element proven present.
+	wantOK(t, "ge_one_first", `
+		local function build(): {number} return {1} end
+		local seq = build()
+		if #seq >= 1 then
+			local v: number = seq[1]
+		end`)
+	// #seq ~= 0 (non-negative length, so >= 1) → first element proven present.
+	wantOK(t, "ne_zero_first", `
+		local function build(): {number} return {1} end
+		local seq = build()
+		if #seq ~= 0 then
+			local v: number = seq[1]
+		end`)
+	// The #seq == 0 FALSE edge proves #seq >= 1 → first element present in else.
+	wantOK(t, "eq_zero_false_edge_first", `
+		local function build(): {number} return {1} end
+		local seq = build()
+		if #seq == 0 then
+			-- empty
+		else
+			local v: number = seq[1]
+		end`)
+	// #seq >= 2 proves the first TWO elements present.
+	wantOK(t, "ge_two_second", `
+		local function build(): {number} return {1, 2} end
+		local seq = build()
+		if #seq >= 2 then
+			local v: number = seq[2]
+		end`)
+
+	// SOUNDNESS: an unguarded read keeps nil (no length proof).
+	wantErr(t, "unguarded_first_keeps_nil", `
+		local function build(): {number} return {1} end
+		local seq = build()
+		local v: number = seq[1]`)
+	// SOUNDNESS: #seq > 0 proves only index 1; index 2 is out of the proven floor.
+	wantErr(t, "gt_zero_second_out_of_floor", `
+		local function build(): {number} return {1} end
+		local seq = build()
+		if #seq > 0 then
+			local v: number = seq[2]
+		end`)
+	// SOUNDNESS: the TRUE edge of #seq == 0 is the empty case; seq[1] is absent.
+	wantErr(t, "eq_zero_true_edge_keeps_nil", `
+		local function build(): {number} return {1} end
+		local seq = build()
+		if #seq == 0 then
+			local v: number = seq[1]
+		end`)
+	// SOUNDNESS: the FALSE edge of #seq > 0 is the empty case; seq[1] is absent.
+	wantErr(t, "gt_zero_false_edge_keeps_nil", `
+		local function build(): {number} return {1} end
+		local seq = build()
+		if #seq > 0 then
+			-- present
+		else
+			local v: number = seq[1]
+		end`)
+}
