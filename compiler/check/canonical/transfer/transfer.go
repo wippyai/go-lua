@@ -249,6 +249,14 @@ type Transfer struct {
 	// `(x :: SomeType)` operand, collapses to unknown. Nil leaves a cast resolved
 	// only by its inner expression (the sound carry-forward).
 	castType func(expr ast.TypeExpr) typ.Type
+	// typeNameValue resolves an identifier that names a TYPE used as a value
+	// (`M.AppError = AppError`, where AppError is a `type` not a local) to the
+	// reified Meta of that type — the type value carrying the built-in `:is` guard
+	// method. The driver binds it to the base scope's MetaForName, which yields the
+	// Meta only when the name is a defined type with NO shadowing value binding, so a
+	// real value variable is never mistaken for a type value. Nil leaves a bare
+	// identifier resolved only by its Env value (the sound carry-forward).
+	typeNameValue func(name string) typ.Type
 }
 
 // New builds the transfer for the given canonical inputs. ops, funcTyper, and
@@ -338,6 +346,15 @@ func (t *Transfer) SetCaptureResolver(resolve func(sym cfg.SymbolID) (typ.Type, 
 // to the synth flow's ResolveType.
 func (t *Transfer) SetCastResolver(resolve func(expr ast.TypeExpr) typ.Type) {
 	t.castType = resolve
+}
+
+// SetTypeNameValueResolver installs the type-name-as-value resolver: it maps a bare
+// identifier naming a `type` (with no shadowing value binding) to the reified Meta of
+// that type. The driver binds it to the base scope's MetaForName, the same rule the
+// synth flow uses, so `M.AppError = AppError` records the type value (carrying the
+// built-in `:is` guard) rather than dropping the field.
+func (t *Transfer) SetTypeNameValueResolver(resolve func(name string) typ.Type) {
+	t.typeNameValue = resolve
 }
 
 // SetSiblingNils installs the (value, err) inverse-correlation binds after
@@ -1132,6 +1149,9 @@ func (t *Transfer) evalIdent(
 ) (product.AbstractValue, bool) {
 	sym := t.symbolOf(e)
 	if sym == 0 {
+		if meta, ok := t.typeValueOf(e); ok {
+			return meta, true
+		}
 		return product.AbstractValue{}, false
 	}
 	av, ok := out.Env[symKey(sym)]
@@ -1156,9 +1176,30 @@ func (t *Transfer) evalIdent(
 				return product.FromType(ct), true
 			}
 		}
+		// A symbol with no flow value may name a `type` used as a value (the `type X`
+		// binding carries a symbol but no runtime value); resolve it to that type's Meta.
+		if meta, ok := t.typeValueOf(e); ok {
+			return meta, true
+		}
 		return product.AbstractValue{}, false
 	}
 	return av, true
+}
+
+// typeValueOf resolves an identifier naming a `type` used as a value to that type's
+// reified Meta (the type value carrying the built-in `:is` guard), via the driver's
+// MetaForName-backed resolver. MetaForName yields nil for a name that is not a defined
+// type or has a shadowing value binding, so a genuine value variable or undefined
+// identifier never resolves here.
+func (t *Transfer) typeValueOf(e *ast.IdentExpr) (product.AbstractValue, bool) {
+	if t.typeNameValue == nil || e == nil {
+		return product.AbstractValue{}, false
+	}
+	meta := t.typeNameValue(e.Value)
+	if meta == nil || typ.IsAbsentOrUnknown(meta) {
+		return product.AbstractValue{}, false
+	}
+	return product.FromType(meta), true
 }
 
 // isCapturedFreeVar reports whether sym is a free variable this body reads from an

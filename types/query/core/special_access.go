@@ -22,7 +22,10 @@ func specialAccessType(t typ.Type) (typ.Type, bool) {
 		return typ.Never, true
 	}
 	if unwrap.IsBuiltinTableTop(t) {
-		return typ.Unknown, true
+		// An explicit bare `table` annotation is the gradual table top: like
+		// `_G`/`_VERSION`, accesses off it project gradual `any` (permissive
+		// escape hatch), not inferred `unknown` (which must stay strict).
+		return typ.Any, true
 	}
 	return nil, false
 }

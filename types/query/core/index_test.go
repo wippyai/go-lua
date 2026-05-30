@@ -77,7 +77,7 @@ func TestIndex(t *testing.T) {
 		{"empty open record with literal string", typ.NewRecord().SetOpen(true).Build(), typ.LiteralString("missing"), true, func(t typ.Type) bool {
 			return t == typ.Unknown
 		}},
-		{"builtin table marker", typ.NewInterface("table", nil), typ.String, true, func(t typ.Type) bool { return t == typ.Unknown }},
+		{"builtin table marker", typ.NewInterface("table", nil), typ.String, true, func(t typ.Type) bool { return t == typ.Any }},
 		{"any type", typ.Any, typ.String, true, func(t typ.Type) bool { return t == typ.Any }},
 		{"unknown type", typ.Unknown, typ.String, true, func(t typ.Type) bool { return t == typ.Unknown }},
 		{"never type", typ.Never, typ.String, true, func(t typ.Type) bool { return t == typ.Never }},

@@ -111,6 +111,13 @@ type Driver struct {
 	// per-point env the diagnostic bridge reads to derive point-local value types.
 	states map[summary.FuncRef]state.FunctionState
 
+	// returnMethodWrites is the method fields a nested closure installs on a
+	// function's returned table, per return-tuple slot. The return projection rebuilds
+	// d.summaries every solve pass, so this cache (computed from the graphs, stable
+	// across re-solves) is layered onto the returned slot by ReturnTypes so a caller of
+	// `make()` sees the closure-installed methods on the result.
+	returnMethodWrites map[summary.FuncRef]map[int][]closureMethodWrite
+
 	// funcExprs maps each ref to the function literal it analyzes, so the bridge
 	// stores results into the session keyed by *ast.FunctionExpr, the same key the
 	// diagnostic passes range over.
@@ -221,7 +228,7 @@ func (d *Driver) ReturnTypes(ref summary.FuncRef) []typ.Type {
 	for i, av := range s.Returns {
 		out[i] = projectValue(av)
 	}
-	return out
+	return d.applyReturnMethodWrites(ref, out)
 }
 
 // ParamTypes is ref's canonical-computed parameter contracts as concrete types,
@@ -411,6 +418,21 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 			d.activeQueries = queries
 			d.solvePass(sess, prog, queries)
 		}
+	}
+
+	// A local function that returns a freshly-built table whose method fields are
+	// installed inside a nested closure (`local function init() obj.m = function...
+	// end; init(); return obj`) loses those methods: the field write runs in the
+	// closure's graph against the captured `obj`, whose mutation never flows back to
+	// the owning function's converged `obj`. Compute the closure-installed method
+	// fields per returned slot (from the graphs, now that every closure body is typed),
+	// then re-solve once so a caller's `local x = make()` sees the enriched return
+	// (ReturnTypes layers the cached method fields onto the projected return slot).
+	d.flowBackClosureMethodWrites(prog)
+	if len(d.returnMethodWrites) > 0 {
+		queries = summary.New(prog)
+		d.activeQueries = queries
+		d.solvePass(sess, prog, queries)
 	}
 
 	d.bridgeResults(sess, prog)
@@ -1040,6 +1062,343 @@ func (d *Driver) collectMetatableIndexSymbols(sess api.AnalysisSession, prog *pr
 		}
 	}
 	return out
+}
+
+// closureMethodWrite is one `<base>.<name> = function(...)` write the driver
+// attributes back onto the returned table: the field name, the function value, and
+// whether the writing closure is proven to run synchronously before the owning
+// function returns (present) or only may run (optional).
+type closureMethodWrite struct {
+	name    string
+	fn      *typ.Function
+	present bool
+}
+
+// closureInvocation classifies how a method-installing closure is reachable from the
+// owning function, the soundness pivot for attributing its writes to the returned
+// table. Higher ordinals dominate when a closure is reachable several ways.
+type closureInvocation uint8
+
+const (
+	// invocationNever: the closure is defined but never invoked nor passed as a
+	// value anywhere, so at runtime its writes never run. Its method is genuinely
+	// absent and must not be attributed (a method call on it must still error).
+	invocationNever closureInvocation = iota
+	// invocationConditional: the closure's binding is called only on a path that does
+	// not dominate the exit, so a return on the other path runs without it. Its method
+	// is attributed OPTIONAL (the value carries the call's nilability).
+	invocationConditional
+	// invocationInstalled: the closure is unconditionally invoked or registered to run
+	// — a callback passed to a runtime (coroutine.spawn / an event registration) or a
+	// statement call dominating the exit. Either way it is the object's initializer and
+	// its method fields are PRESENT on the returned table. A registered callback is the
+	// canonical "wire up the methods" form; only a never-referenced closure (the dead
+	// case) is excluded.
+	invocationInstalled
+)
+
+// flowBackClosureMethodWrites enriches each function's converged return tuple with
+// the method fields a nested closure installs on a returned table. The canonical
+// transfer types `obj.m = function...` inside the closure that performs it, but the
+// closure mutates the captured `obj` cell; the owning function's converged `obj`
+// (the value the return projection reads) never sees the write. This pass reattaches
+// those method fields onto the returned slot.
+//
+// Soundness is execution-order-driven, not value-kind-driven: a method field is
+// added PRESENT only when its writing closure is a local function the owning body
+// invokes by a synchronous statement call that dominates the function exit (so the
+// write runs before every return). A closure whose invocation is not proven before
+// the return (an async coroutine.spawn callback, a conditional call) contributes the
+// field as OPTIONAL, so a method call still resolves the callable while a may-absent
+// field keeps its nilability. A field never installed stays absent (a genuinely
+// missing method still errors). Only function-valued writes participate; this never
+// invents a data field nor a type the closure body did not prove.
+func (d *Driver) flowBackClosureMethodWrites(prog *program) {
+	if prog == nil {
+		return
+	}
+	ft := funcTyper{d}
+	cache := map[summary.FuncRef]map[int][]closureMethodWrite{}
+	for _, ref := range d.refs {
+		g := prog.graphs[ref]
+		if g == nil {
+			continue
+		}
+		returnedSlots := returnedLocalSlots(g)
+		if len(returnedSlots) == 0 {
+			continue
+		}
+		bySlot := map[int][]closureMethodWrite{}
+		for slot, sym := range returnedSlots {
+			writes := d.collectClosureMethodWrites(prog, ft, ref, g, sym)
+			if len(writes) == 0 {
+				continue
+			}
+			bySlot[slot] = writes
+		}
+		if len(bySlot) > 0 {
+			cache[ref] = bySlot
+		}
+	}
+	if len(cache) == 0 {
+		d.returnMethodWrites = nil
+		return
+	}
+	d.returnMethodWrites = cache
+}
+
+// applyReturnMethodWrites layers ref's cached closure-installed method fields onto
+// the projected return types: slot i's record gains each method field a nested
+// closure installs on the returned table, present or optional per the closure's
+// proven execution order. A method already on the record (written in the owning body
+// or a literal) is authoritative and not overwritten.
+func (d *Driver) applyReturnMethodWrites(ref summary.FuncRef, returns []typ.Type) []typ.Type {
+	bySlot, ok := d.returnMethodWrites[ref]
+	if !ok || len(bySlot) == 0 {
+		return returns
+	}
+	for slot, writes := range bySlot {
+		if slot < 0 || slot >= len(returns) {
+			continue
+		}
+		base := returns[slot]
+		if base == nil || typ.IsAbsentOrUnknown(base) {
+			continue
+		}
+		av := product.FromType(base)
+		for _, w := range writes {
+			if existing, ok := product.FieldOf(av, w.name); ok && !existing.IsZero() {
+				continue
+			}
+			fieldType := typ.Type(w.fn)
+			if !w.present {
+				fieldType = typ.NewOptional(w.fn)
+			}
+			av = product.WithField(av, w.name, product.FromType(fieldType))
+		}
+		returns[slot] = av.ProjectValue()
+	}
+	return returns
+}
+
+// returnedLocalSlots maps each return-tuple slot that returns a local-identifier
+// symbol to that symbol. A slot returned under different symbols on different return
+// statements is dropped (ambiguous; the closure attribution would be unsound), as is
+// a non-identifier slot.
+func returnedLocalSlots(g *cfg.Graph) map[int]cfg.SymbolID {
+	out := map[int]cfg.SymbolID{}
+	conflict := map[int]bool{}
+	g.EachReturn(func(_ cfg.Point, info *cfg.ReturnInfo) {
+		if info == nil {
+			return
+		}
+		for i := range info.Symbols {
+			sym := info.Symbols[i]
+			if sym == 0 {
+				continue
+			}
+			if prev, seen := out[i]; seen && prev != sym {
+				conflict[i] = true
+				continue
+			}
+			out[i] = sym
+		}
+	})
+	for i := range conflict {
+		delete(out, i)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// collectClosureMethodWrites gathers every `sym.<name> = function...` write across
+// the module's graphs (the owning function and the closures that capture sym),
+// typing each function value and classifying it present/optional by whether its
+// writing closure is proven to run before owner's exit. The shared binding table
+// gives sym the same id in every body, so a write in any graph targeting sym is the
+// same heap cell the owning function returns.
+func (d *Driver) collectClosureMethodWrites(prog *program, ft funcTyper, owner summary.FuncRef, ownerGraph *cfg.Graph, sym cfg.SymbolID) []closureMethodWrite {
+	if sym == 0 {
+		return nil
+	}
+	byName := map[string]*closureMethodWrite{}
+	order := []string{}
+	for wref, wg := range prog.graphs {
+		if wg == nil {
+			continue
+		}
+		var inv closureInvocation
+		if wref == owner {
+			inv = invocationInstalled
+		} else {
+			inv = d.closureInvocationKind(prog, ownerGraph, wg)
+			if inv == invocationNever {
+				// A closure never invoked nor passed anywhere never runs; its writes are
+				// not attributed (the method stays genuinely absent).
+				continue
+			}
+		}
+		wg.EachAssign(func(_ cfg.Point, ai *cfg.AssignInfo) {
+			if ai == nil {
+				return
+			}
+			for i := range ai.Targets {
+				target := ai.Targets[i]
+				if target.Kind != cfg.TargetField || target.BaseSymbol != sym || len(target.FieldPath) != 1 {
+					continue
+				}
+				name := target.FieldPath[0]
+				if name == "" {
+					continue
+				}
+				fnExpr, ok := ai.SourceAt(i).(*ast.FunctionExpr)
+				if !ok || fnExpr == nil {
+					continue
+				}
+				fn := ft.FuncType(fnExpr)
+				if fn == nil {
+					continue
+				}
+				present := inv == invocationInstalled
+				w := byName[name]
+				if w == nil {
+					w = &closureMethodWrite{name: name, fn: fn, present: present}
+					byName[name] = w
+					order = append(order, name)
+					continue
+				}
+				// Multiple writers of the same field name: the field is present only when
+				// every contributing writer is proven to run; the type is the union.
+				w.present = w.present && present
+				w.fn = unionFunction(w.fn, fn)
+			}
+		})
+	}
+	if len(order) == 0 {
+		return nil
+	}
+	out := make([]closureMethodWrite, 0, len(order))
+	for _, name := range order {
+		out = append(out, *byName[name])
+	}
+	return out
+}
+
+// closureInvocationKind classifies how closure graph wg is reachable from the owning
+// function. The closure is identified by its function-binding symbol (the local
+// function or assigned binding); an anonymous closure (a coroutine.spawn callback) is
+// matched by its literal function expression where it is passed as a call argument.
+//
+//   - invocationInstalled: the closure's binding is called by a statement that
+//     dominates the exit, OR the closure is passed as a call argument (registered as a
+//     callback). Either way it runs as the object's initializer, so its method fields
+//     are present on the returned table.
+//   - invocationConditional: the closure's binding is called only on a path that does
+//     not dominate the exit (it may not run before a return), so its method is optional.
+//   - invocationNever: the closure is defined but never called nor passed; its writes
+//     never run, so its method is not attributed.
+func (d *Driver) closureInvocationKind(prog *program, ownerGraph *cfg.Graph, wg *cfg.Graph) closureInvocation {
+	wfn := wg.Func()
+	if wfn == nil {
+		return invocationNever
+	}
+	var closureSym cfg.SymbolID
+	for sym, fn := range prog.funcSyms {
+		if fn == wfn {
+			closureSym = sym
+			break
+		}
+	}
+	result := invocationNever
+	raise := func(to closureInvocation) {
+		if to > result {
+			result = to
+		}
+	}
+	ownerGraph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+		if result == invocationInstalled || info == nil {
+			return
+		}
+		// A direct call to the closure's binding in the owning body: dominating the
+		// exit makes it the proven initializer; a non-dominating call may not run.
+		if closureSym != 0 && info.CalleeSymbol == closureSym {
+			if graphDominatesExit(ownerGraph, p) {
+				raise(invocationInstalled)
+			} else {
+				raise(invocationConditional)
+			}
+		}
+		// The closure passed as a call argument (a coroutine.spawn callback / an event
+		// registration) is wired to run as the object's initializer: installed.
+		if callPassesClosure(info, wfn, closureSym, ownerGraph.Bindings()) {
+			raise(invocationInstalled)
+		}
+	})
+	// The closure may be registered as a callback from within a nested body (the
+	// spawn call sits in the owning body's nested scope); scan every graph for it
+	// being passed as a value.
+	if result < invocationInstalled {
+		for _, g := range prog.graphs {
+			if g == nil {
+				continue
+			}
+			g.EachCall(func(_ cfg.Point, info *cfg.CallInfo) {
+				if result == invocationInstalled || info == nil {
+					return
+				}
+				if callPassesClosure(info, wfn, closureSym, g.Bindings()) {
+					raise(invocationInstalled)
+				}
+			})
+			if result == invocationInstalled {
+				break
+			}
+		}
+	}
+	return result
+}
+
+// callPassesClosure reports whether call info passes the closure (by its literal
+// function expression, or by its binding symbol) as one of its arguments — a callback
+// the call may invoke. It matches both an inline anonymous closure argument
+// (spawn(function() ... end)) and a named closure passed by reference (spawn(init)).
+func callPassesClosure(info *cfg.CallInfo, wfn *ast.FunctionExpr, closureSym cfg.SymbolID, bindings *bind.BindingTable) bool {
+	if info == nil || info.Call == nil {
+		return false
+	}
+	for i, arg := range info.Call.Args {
+		if fnArg, ok := arg.(*ast.FunctionExpr); ok && fnArg == wfn {
+			return true
+		}
+		if closureSym != 0 && i < len(info.ArgSymbols) && info.ArgSymbols[i] == closureSym {
+			return true
+		}
+		if closureSym != 0 && bindings != nil {
+			if s := identSymbol(arg, bindings); s == closureSym {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// unionFunction joins two function field types written under the same name. A method
+// table built by two closures with the same field name takes the value-domain union,
+// the sound over-approximation of either being installed.
+func unionFunction(a, b *typ.Function) *typ.Function {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	joined := product.Domain.Join(product.FromType(a), product.FromType(b)).ProjectValue()
+	if fn, ok := joined.(*typ.Function); ok {
+		return fn
+	}
+	return a
 }
 
 // indexFieldSourceSymbol returns the symbol the __index field of a table literal
@@ -2200,6 +2559,15 @@ func (d *Driver) addFunction(sess api.AnalysisSession, p *program, g *cfg.Graph)
 	baseScope := d.baseScope()
 	tr.SetCastResolver(func(expr ast.TypeExpr) typ.Type {
 		return d.resolveType(expr, baseScope)
+	})
+	// A bare identifier naming a `type` used as a value (`M.AppError = AppError`)
+	// resolves to that type's reified Meta, the same MetaForName rule the synth flow
+	// applies, so the field carries the type value (with the built-in `:is` guard).
+	tr.SetTypeNameValueResolver(func(name string) typ.Type {
+		if meta := baseScope.MetaForName(name); meta != nil {
+			return meta
+		}
+		return nil
 	})
 	p.transfers[ref] = tr
 	// The parameter-narrowing effects (wrapper assert / if-error guards) are a
@@ -3990,7 +4358,7 @@ func (d *Driver) liveReturnTypes(ref summary.FuncRef) []typ.Type {
 	for i, av := range s.Returns {
 		out[i] = projectValue(av)
 	}
-	return out
+	return d.applyReturnMethodWrites(ref, out)
 }
 
 // edgeNarrower extracts the per-edge path-sensitive narrowing seam from a
