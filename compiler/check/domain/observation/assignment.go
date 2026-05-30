@@ -64,22 +64,36 @@ func (p Projector) admitGradualAssignmentSource(t typ.Type, source ast.Expr, poi
 // gradual top admissible against a concrete annotation, rather than an `any` the
 // boundary check must still flag.
 //
-// The gradual top is a field/index read OFF A TYPED CONTAINER whose projected
-// field/element is genuinely `any`: a value the inference could type the
-// container of but not the member (a `{ data_func: any }` record built from a
-// `{[string]: any}` dynamic map, an unannotated parameter's projected field).
-// Gradual consistency admits it against a concrete expected type, mirroring the
-// return boundary.
+// Two disjoint shapes are the gradual top:
 //
-// A read whose CONTAINER is itself `any`/`unknown` is NOT the gradual top: the
-// flow cannot type the object at all, so the projected `any` is an unproven
-// guess (a wrapper whose return widened to `any` on a non-dominating path). It
-// keeps strict rejection so an unsound write is still flagged. A bare symbol
-// read (no projection) likewise keeps its declared contract: a value declared
-// `any` must report its any->concrete write (the cast-guard soundness contract).
+//   - A read whose PATH ROOT is an unannotated parameter. An unannotated parameter
+//     is the gradual top by inference: the function asserts no type for it, so the
+//     parameter and every field/index projection of it are consistent with any
+//     concrete target (a bare `url` parameter, or `http_response.body` read off an
+//     unannotated `http_response`). This is gradual consistency, not a declared
+//     `any`: a parameter explicitly annotated `any` is an opt-in to the strict
+//     dynamic contract and is excluded by isUnannotatedParamSymbol.
+//   - A field/index read OFF A TYPED CONTAINER whose projected field/element is
+//     genuinely `any`: a value the inference could type the container of but not
+//     the member (a `{ data_func: any }` record built from a `{[string]: any}`
+//     dynamic map). Gradual consistency admits it against a concrete expected type.
+//
+// All other `any` reads keep strict rejection. A read whose CONTAINER is itself
+// `any`/`unknown` (and whose root is NOT an unannotated parameter) is not the
+// gradual top: the flow cannot type the object at all, so the projected `any` is
+// an unproven guess (a wrapper whose return widened to `any` on a non-dominating
+// path, or a declared-`any` record field read into a local). A bare symbol read
+// whose symbol is a declared `any` (an annotated parameter, or a local typed
+// `any`) keeps its any->concrete contract (the cast-guard soundness contract).
 func (p Projector) sourceAnyIsGradualTop(source ast.Expr, point cfg.Point) bool {
 	path := p.pathOfExpr(source, point)
-	if path.IsEmpty() || len(path.Segments) == 0 || path.Symbol == 0 {
+	if path.IsEmpty() || path.Symbol == 0 {
+		return false
+	}
+	if p.isUnannotatedParamSymbol(path.Symbol) {
+		return true
+	}
+	if len(path.Segments) == 0 {
 		return false
 	}
 	attr, ok := source.(*ast.AttrGetExpr)

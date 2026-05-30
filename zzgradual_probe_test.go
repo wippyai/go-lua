@@ -32,6 +32,38 @@ func TestZZGradual_DynamicRegistry(t *testing.T) {
 	zzGradualProbe(t, "dynamic-registry-renderer-guard")
 }
 
+// TestZZGradual_GoogleClient traces the google-client-metadata-regression
+// fixture: 5 gradual-top `any` call args (unannotated params + a field off an
+// unannotated-param container) must be admitted against concrete string params,
+// leaving only the single sound error (unguarded json.decode of an optional
+// body). The fixture flips when the 5 any-arg false positives clear AND the
+// single sound error remains.
+func TestZZGradual_GoogleClient(t *testing.T) {
+	suites, err := discoverFixtures("testdata/fixtures")
+	if err != nil {
+		t.Fatalf("discovering fixtures: %v", err)
+	}
+	for _, s := range suites {
+		if s.Name != "modules/google-client-metadata-regression" {
+			continue
+		}
+		diags, entry := canonicalFixtureDiagnostics(s)
+		v := judgeAgainstCuratedExpectations(s, diags, entry)
+		t.Logf("[%s] entry=%s diags=%d passed=%v", s.Name, entry, len(diags), v.passed)
+		for _, d := range diags {
+			t.Logf("  DIAG: %s @ %s:%d:%d (%s)", d.Message, d.Position.File, d.Position.Line, d.Position.Column, d.Severity)
+		}
+		for _, m := range v.missing {
+			t.Logf("  MISS: %s", m)
+		}
+		for _, u := range v.unexpected {
+			t.Logf("  FALSE+: %s", u)
+		}
+		return
+	}
+	t.Fatalf("google-client fixture not found")
+}
+
 func TestZZGradual_FieldDefinedWrapper(t *testing.T) {
 	zzGradualProbe(t, "field-defined-wrapper-return")
 }

@@ -536,9 +536,14 @@ func (t *Transfer) applyAssign(
 			val = product.FromType(dc)
 		}
 		key := symKey(target.Symbol)
-		if prev, had := out.Env[key]; had {
-			// A re-assignment in a loop body joins with the prior value: the
-			// loop-header widening then bounds the accumulating chain.
+		if prev, had := out.Env[key]; had && !info.IsLocal {
+			// A re-assignment (`x = ...`, not a `local` declaration) in a loop body
+			// joins with the prior value: the loop-header widening then bounds the
+			// accumulating chain (`x = x + 1`). A `local x = ...` REBINDS a fresh
+			// variable each time it executes, so the loop-carried prior binding is
+			// dead — overwriting it with this iteration's value is sound and avoids a
+			// monotonic LUB that would re-admit a stale optionality the current
+			// iteration's value (e.g. an in-bounds-refined arr[i]) no longer carries.
 			out.Env[key] = product.Domain.Join(prev, val)
 		} else {
 			out.Env[key] = val
