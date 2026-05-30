@@ -3221,16 +3221,27 @@ func (d *Driver) provesErrorReturnFromBody(cg *cfg.Graph, ref summary.FuncRef, s
 		if inconsistent || info == nil || len(info.Exprs) == 0 {
 			return
 		}
-		if errorIdx >= len(info.Exprs) {
-			inconsistent = true
-			return
-		}
 		var ps flow.PointState
 		if hasState {
 			ps = fs.Points[p]
 		}
 		valState, okVal := d.classifyReturnSlot(info.Exprs[valueIdx], cg, ps, hasState)
-		errState, okErr := d.classifyReturnSlot(info.Exprs[errorIdx], cg, ps, hasState)
+		var errState returnSlotNil
+		var okErr bool
+		if errorIdx < len(info.Exprs) {
+			errState, okErr = d.classifyReturnSlot(info.Exprs[errorIdx], cg, ps, hasState)
+		} else {
+			// A short return (`return v`) implicitly supplies nil for the trailing
+			// error slot in Lua, the success shape of the (value, err) convention --
+			// unless the last present expression expands to multiple values (a call or
+			// vararg `...`), in which case the error slot is filled at runtime and the
+			// proof cannot pin it.
+			if returnSlotExpands(info, len(info.Exprs)-1) {
+				inconsistent = true
+				return
+			}
+			errState, okErr = nilExpr, true
+		}
 		if !okVal || !okErr {
 			inconsistent = true
 			return
@@ -3305,6 +3316,21 @@ func classifyReturnSlotNil(e ast.Expr) (returnSlotNil, bool) {
 	default:
 		return indeterminateExpr, false
 	}
+}
+
+// returnSlotExpands reports whether the return expression at index i may expand to
+// fill more than one result slot at runtime: a call in tail position (its result
+// vector flows into the trailing slots) or a vararg `...`. Only the last expression
+// of a return expands; an interior expression contributes exactly one value.
+func returnSlotExpands(info *cfg.ReturnInfo, i int) bool {
+	if info == nil || i < 0 || i >= len(info.Exprs) {
+		return false
+	}
+	if info.SourceCallAt(i) != nil {
+		return true
+	}
+	_, vararg := info.Exprs[i].(*ast.Comma3Expr)
+	return vararg
 }
 
 // valueReturnSlotOptional reports whether sig's return slot at idx is optional, the

@@ -1,0 +1,4 @@
+{
+  "description": "Boundary twin: without an `if err` guard, the value sibling of an error-return stays soundly-optional, so a method call on it is rejected. The nil-strip engages only when the guard proves the error nil.",
+  "files": ["main.lua"]
+}
