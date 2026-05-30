@@ -349,7 +349,8 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 		}
 		seededCaptures := d.seedCaptureResolvers(prog)
 		seededSelf := d.seedMethodSelfFromCaptures(prog)
-		if !seededCaptures && !seededSelf {
+		seededNarrowBases := d.seedCaptureNarrowBases(prog)
+		if !seededCaptures && !seededSelf && !seededNarrowBases {
 			break
 		}
 		queries = summary.New(prog)
@@ -416,6 +417,79 @@ func (d *Driver) seedCaptureResolvers(prog *program) bool {
 		seeded = true
 	}
 	return seeded
+}
+
+// seedCaptureNarrowBases makes a captured OPTIONAL value narrowable by a body guard.
+// A closure that reads a free variable captured from an enclosing scope (a builder's
+// `decorator: Decorator?`, a module-level `_services: Services?`) gets no Env slot for
+// it: seedEntry seeds only parameters, so a `if decorator then decorator() end` guard
+// finds no tracked value and the read stays optional, spuriously raising the
+// optional-call / optional-return diagnostic.
+//
+// The transfer's per-edge guard narrowing (narrowBase) already refines a symbol with
+// no Env value when the symbol carries a DECLARED narrowing base: it narrows the
+// declared type on the guard edge and writes the result into Env, so a guarded read
+// observes the non-nil refinement. This adds each genuine captured optional's
+// converged module-wide type to the owning transfer's narrowing-base map (the same
+// instance the transfer aliases, retained in p.declaredTypes), so the EXISTING
+// narrowing refines the capture exactly as it refines an annotated local.
+//
+// It is sound: the base is added only as a narrowing source, never as an entry-Env
+// value, so an UNGUARDED captured-optional read finds no Env refinement and stays
+// optional (its diagnostic still fires). Only a narrowable optional (a type the
+// truthy/not-nil guard can shrink) is seeded; a non-optional or already-declared
+// symbol is left untouched. It returns whether any base was added.
+func (d *Driver) seedCaptureNarrowBases(prog *program) bool {
+	if len(d.moduleCaptures) == 0 {
+		return false
+	}
+	added := false
+	for ref, g := range prog.graphs {
+		if g == nil {
+			continue
+		}
+		base := prog.declaredTypes[ref]
+		if base == nil {
+			continue
+		}
+		for sym, t := range d.moduleCaptures {
+			if sym == 0 || t == nil || typ.IsAbsentOrUnknown(t) {
+				continue
+			}
+			if _, exists := base[sym]; exists {
+				continue
+			}
+			if !isCapturedInGraph(g, sym) {
+				continue
+			}
+			if _, optional := typ.SplitNilableFieldType(t); !optional {
+				continue
+			}
+			base[sym] = t
+			added = true
+		}
+	}
+	return added
+}
+
+// isCapturedInGraph reports whether sym is a free variable g reads from an enclosing
+// scope: a symbol g neither takes as a parameter nor declares as a local. It mirrors
+// the transfer's isCapturedFreeVar classification (a SymbolLocal/SymbolParam is the
+// body's own, never a capture), so the narrowing-base seed targets the same symbols
+// the capture resolver feeds.
+func isCapturedInGraph(g *cfg.Graph, sym cfg.SymbolID) bool {
+	if g == nil || sym == 0 {
+		return false
+	}
+	for _, ps := range g.ParamSymbols() {
+		if ps == sym {
+			return false
+		}
+	}
+	if k, ok := g.SymbolKind(sym); ok && (k == cfg.SymbolLocal || k == cfg.SymbolParam) {
+		return false
+	}
+	return true
 }
 
 // seedMethodSelfFromCaptures re-seeds each method body's implicit `self` with the
@@ -1162,6 +1236,15 @@ type program struct {
 	transfers map[summary.FuncRef]equation.NodeTransfer
 	params    map[summary.FuncRef]int
 
+	// declaredTypes is each function's narrowing-base map: the declared/annotated
+	// types its transfer reads as the base for per-edge guard narrowing. It is the
+	// SAME map instance the transfer holds (transfer.New aliases it), so adding a
+	// captured optional's converged type here makes the existing narrowBase refine
+	// that capture on a guard edge without re-building the transfer. Populated in
+	// addFunction; the capture-refine loop extends it with captured optionals once
+	// the module-wide capture map is known.
+	declaredTypes map[summary.FuncRef]map[cfg.SymbolID]typ.Type
+
 	// funcExprs maps each ref to the function literal it analyzes, the key the
 	// diagnostic bridge stores results under (the same *ast.FunctionExpr key the
 	// passes range over).
@@ -1305,6 +1388,7 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph) *p
 		delegatedCalls: make(map[summary.FuncRef][]transfer.DelegatedCall),
 		noReturn:       make(map[summary.FuncRef]bool),
 		inferredParams: make(map[summary.FuncRef]map[int]typ.Type),
+		declaredTypes:  make(map[summary.FuncRef]map[cfg.SymbolID]typ.Type),
 	}
 
 	// Phase 1: BFS the hierarchy. Each function's body may define nested
@@ -1893,6 +1977,9 @@ func (d *Driver) addFunction(sess api.AnalysisSession, p *program, g *cfg.Graph)
 	// the Env. The same resolution the diagnostic surface reads (buildFunctionFacts)
 	// supplies them; it is annotation-only and does not depend on the solve.
 	declared := d.buildFunctionFacts(g, evidence).declared
+	// Retain the narrowing-base map the transfer aliases, so the capture-refine loop
+	// can add captured optionals to it (the same instance the transfer reads).
+	p.declaredTypes[ref] = declared
 	// A method body's implicit `self` (function T:m()) is seeded with the receiver's
 	// class so the flow tracks self.field reads: without it self is unknown and every
 	// captured field, the locals it feeds, and the records it builds collapse to

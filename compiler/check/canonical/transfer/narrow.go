@@ -215,6 +215,7 @@ func (t *Transfer) narrowBySiblingNil(out flow.PointState, info *cfg.BranchInfo,
 		return out
 	}
 	bind, ok := t.siblingNilByErr[sym]
+	zprobeNarrow("siblingNil.enter sym=%d hasBind=%v binds=%d", sym, ok, len(t.siblingNilByErr))
 	if !ok {
 		return out
 	}
@@ -559,20 +560,44 @@ func (t *Transfer) trackedIdentType(out flow.PointState, ident *ast.IdentExpr) t
 }
 
 // isDiscriminatingType reports whether t is a sealed-variant type that can
-// discriminate a union: a record carrying at least one literal-typed field (the
-// __tag / kind discriminant the channel-select idiom uses). A non-record or a
-// record with no literal field cannot soundly narrow a union by value equality.
+// discriminate a union by value equality on a field. Two shapes qualify:
+//
+//   - a record carrying at least one literal-typed field (the __tag / kind
+//     discriminant a setmetatable-sealed variant records use); or
+//   - a generic instantiation carrying a concrete type argument (Channel<Event>,
+//     the channel-select handle): two instantiations of the same generic with
+//     distinct type arguments are provably disjoint (narrow.TypesOverlap routes
+//     Instantiated pairs through instantiatedTypesOverlap, which requires equal
+//     type args), so a `result.channel == events_ch` guard selects the case whose
+//     channel field is exactly Channel<Event> and drops the disjoint cases.
+//
+// A non-record / non-instantiation, a record with no literal field, or an
+// instantiation whose type arguments are themselves gradual (any/unknown) cannot
+// soundly narrow a union by value equality.
 func isDiscriminatingType(t typ.Type) bool {
-	rec, ok := unwrap.Alias(t).(*typ.Record)
-	if !ok {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Record:
+		for _, f := range v.Fields {
+			if _, isLit := f.Type.(*typ.Literal); isLit {
+				return true
+			}
+		}
+		return false
+	case *typ.Instantiated:
+		if v.Generic == nil || len(v.TypeArgs) == 0 {
+			return false
+		}
+		// A gradual type argument makes two instantiations indistinguishable
+		// (Channel<any> overlaps everything), so it cannot discriminate.
+		for _, a := range v.TypeArgs {
+			if a == nil || typ.IsAny(a) || typ.IsUnknown(a) {
+				return false
+			}
+		}
+		return true
+	default:
 		return false
 	}
-	for _, f := range rec.Fields {
-		if _, isLit := f.Type.(*typ.Literal); isLit {
-			return true
-		}
-	}
-	return false
 }
 
 // exitGuard synthesizes the branch guard a then-exit / else-exit ScopeExit node
