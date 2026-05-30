@@ -357,7 +357,33 @@ func (s *Session) ExportType() typ.Type {
 	if facts := s.rootFunctionFactsForExport(); len(facts) > 0 {
 		export = functionfact.ProjectExportType(export, "", facts, s.RootGraph())
 	}
+	export = modules.EnrichExportFunctions(export, s.exportFunctionResults())
 	return export
+}
+
+// exportFunctionResults pairs each module-level exported function definition with
+// its solved per-function analysis result so the export type can carry the
+// function's inferred return vector and proven (value, err) correlation.
+func (s *Session) exportFunctionResults() []modules.ExportFunctionResult {
+	if s == nil || s.RootResult == nil || len(s.Results) == 0 {
+		return nil
+	}
+	defs := s.RootResult.Evidence.FunctionDefinitions
+	if len(defs) == 0 {
+		return nil
+	}
+	out := make([]modules.ExportFunctionResult, 0, len(defs))
+	for _, def := range defs {
+		if def.IsLocal || def.Name == "" || def.Nested.Func == nil {
+			continue
+		}
+		result := s.Results[def.Nested.Func]
+		if result == nil {
+			continue
+		}
+		out = append(out, modules.ExportFunctionResult{Name: def.Name, Result: result})
+	}
+	return out
 }
 
 // Release frees heavy allocations to reduce memory pressure after analysis.

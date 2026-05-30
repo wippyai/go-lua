@@ -260,7 +260,7 @@ func (p Projector) typeOf(expr ast.Expr, point cfg.Point, expected typ.Type) typ
 		return p.attrTypeWithExpected(attr, point, expected)
 	}
 	if t := p.pathType(expr, point); !typ.IsAbsentOrUnknown(t) {
-		return t
+		return p.coerceGradualToExpected(t, expected)
 	}
 	switch e := expr.(type) {
 	case *ast.NilExpr:
@@ -426,7 +426,7 @@ func (p Projector) identTypeWithExpected(expr *ast.IdentExpr, point cfg.Point, e
 	if refined, ok := p.refineWithExpectedProof(point, expr, t, expected); ok {
 		return refined
 	}
-	return t
+	return p.coerceGradualToExpected(t, expected)
 }
 
 func (p Projector) provesExprType(point cfg.Point, expr ast.Expr, expected typ.Type) bool {
@@ -482,13 +482,32 @@ func (p Projector) attrTypeWithExpected(expr *ast.AttrGetExpr, point cfg.Point, 
 		if refined, ok := p.refineWithExpectedProof(point, expr, t, expected); ok {
 			return refined
 		}
-		return t
+		return p.coerceGradualToExpected(t, expected)
 	}
 	t := p.attrType(expr, point)
 	if refined, ok := p.refineWithExpectedProof(point, expr, t, expected); ok {
 		return refined
 	}
-	return t
+	return p.coerceGradualToExpected(t, expected)
+}
+
+// coerceGradualToExpected applies gradual-typing's consistency at a typed
+// boundary: a value observed as the gradual top `any` (an unannotated parameter,
+// or a field/index read off one) is consistent with every type, so against a
+// concrete expected type it observes as that expected type. This mirrors the
+// proven-path refinement refineWithExpectedProof already performs for `any`, for
+// the unproven gradual case the path-type short-circuit otherwise bypasses. It is
+// gradual-`any` admission, not error suppression: only the gradual top is
+// coerced, and only toward a concrete expected target (never `unknown`, the
+// opaque inference seed, which keeps its strict rejection).
+func (p Projector) coerceGradualToExpected(t typ.Type, expected typ.Type) typ.Type {
+	if expected == nil || !typ.IsAny(t) {
+		return t
+	}
+	if typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
+		return t
+	}
+	return expected
 }
 
 // SourceReadIsNonIndexable reports whether the source expression is an attribute
