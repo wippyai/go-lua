@@ -246,6 +246,12 @@ func checkStructuredAssignmentTarget(target cfg.AssignTarget, source ast.Expr, p
 		return diag.Diagnostic{}, false
 	}
 
+	// A write into a typed container's element slot is a store into invariant
+	// container state, not a consistency-boundary coercion: a non-parameter-rooted
+	// `any` field read must satisfy the element domain strictly rather than be
+	// relaxed by gradual consistency, so the element-domain obligation is gated by
+	// the strict source type.
+	observer = observer.WithStrictContainerWrite()
 	valueType := observer.AssignmentSourceType(source, p, expected, target.Symbol)
 	if typ.IsAbsentOrUnknown(valueType) {
 		return diag.Diagnostic{}, false

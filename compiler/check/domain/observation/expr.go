@@ -76,7 +76,13 @@ type Config struct {
 	PreferPreState    bool
 	PreserveProof     bool
 	GradualParamReads bool
-	LocalCondition    *constraint.Condition
+	// StrictContainerWrite restricts the gradual-top admission to the true gradual
+	// top (an unannotated-parameter path root). A write into a typed container's
+	// element slot uses it so a field/index read off a typed container whose member
+	// is `any` does NOT relax the element-domain obligation: storing into invariant
+	// container state is not a consistency-boundary coercion.
+	StrictContainerWrite bool
+	LocalCondition       *constraint.Condition
 
 	// RecursiveFamilies is the compilation-scoped recursive-family interner used
 	// to seal an observed class metatable into the same shared family the synthesis
@@ -116,6 +122,16 @@ func (p Projector) WithPreStateReads() Projector {
 // convergent value-product representation.
 func (p Projector) WithProofValues() Projector {
 	p.cfg.PreserveProof = true
+	return p
+}
+
+// WithStrictContainerWrite returns a projector whose gradual-top admission is
+// restricted to the true gradual top (an unannotated-parameter path root). It is
+// used for an index-write into a typed container, where a field/index read off a
+// typed container whose member is `any` must not relax the element-domain
+// obligation (a closed-domain write is a store, not a boundary coercion).
+func (p Projector) WithStrictContainerWrite() Projector {
+	p.cfg.StrictContainerWrite = true
 	return p
 }
 

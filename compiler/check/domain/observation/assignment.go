@@ -61,8 +61,8 @@ func (p Projector) admitGradualAssignmentSource(t typ.Type, source ast.Expr, poi
 }
 
 // sourceAnyIsGradualTop reports whether a source observed as `any` is the
-// gradual top admissible against a concrete annotation, rather than an `any` the
-// boundary check must still flag.
+// gradual top admissible at a CONSISTENCY boundary (assignment to a typed local,
+// return, call argument), rather than an `any` the boundary check must still flag.
 //
 // Two disjoint shapes are the gradual top:
 //
@@ -70,21 +70,23 @@ func (p Projector) admitGradualAssignmentSource(t typ.Type, source ast.Expr, poi
 //     is the gradual top by inference: the function asserts no type for it, so the
 //     parameter and every field/index projection of it are consistent with any
 //     concrete target (a bare `url` parameter, or `http_response.body` read off an
-//     unannotated `http_response`). This is gradual consistency, not a declared
-//     `any`: a parameter explicitly annotated `any` is an opt-in to the strict
-//     dynamic contract and is excluded by isUnannotatedParamSymbol.
-//   - A field/index read OFF A TYPED CONTAINER whose projected field/element is
-//     genuinely `any`: a value the inference could type the container of but not
-//     the member (a `{ data_func: any }` record built from a `{[string]: any}`
-//     dynamic map). Gradual consistency admits it against a concrete expected type.
+//     unannotated `http_response`). A parameter explicitly annotated `any` is an
+//     opt-in to the strict dynamic contract and is excluded by isUnannotatedParamSymbol.
+//   - A field/index read OFF A TYPED CONTAINER whose member is genuinely `any`: a
+//     value the inference could type the container of but not the member (a record
+//     field that is `any`, or a `{[string]: any}` map value). Gradual consistency
+//     admits it against a concrete expected type at a boundary.
 //
 // All other `any` reads keep strict rejection. A read whose CONTAINER is itself
-// `any`/`unknown` (and whose root is NOT an unannotated parameter) is not the
-// gradual top: the flow cannot type the object at all, so the projected `any` is
-// an unproven guess (a wrapper whose return widened to `any` on a non-dominating
-// path, or a declared-`any` record field read into a local). A bare symbol read
-// whose symbol is a declared `any` (an annotated parameter, or a local typed
-// `any`) keeps its any->concrete contract (the cast-guard soundness contract).
+// `any`/`unknown` is not the gradual top (the flow cannot type the object at all),
+// and a bare symbol whose symbol is a declared `any`/`unknown` keeps its
+// any->concrete contract (the cast-guard soundness contract).
+//
+// This relation gates CONSISTENCY boundaries only. A WRITE into a typed container's
+// element slot (a structured index-write target) is a store into invariant
+// container state, not a boundary coercion: its element-domain obligation is gated
+// by the strict source type, so the 2nd shape here never relaxes a closed-domain
+// write (see checkStructuredAssignmentTarget's strict source projection).
 func (p Projector) sourceAnyIsGradualTop(source ast.Expr, point cfg.Point) bool {
 	path := p.pathOfExpr(source, point)
 	if path.IsEmpty() || path.Symbol == 0 {
@@ -92,6 +94,16 @@ func (p Projector) sourceAnyIsGradualTop(source ast.Expr, point cfg.Point) bool 
 	}
 	if p.isUnannotatedParamSymbol(path.Symbol) {
 		return true
+	}
+	// A field/index read off a typed (non-placeholder) container whose member is
+	// `any` is the gradual top at a CONSISTENCY boundary (assignment to a typed
+	// local, return, call argument): gradual consistency admits it against a
+	// concrete expected type. A read whose container is itself `any`/`unknown`, or
+	// a bare declared-`any` symbol, is not the gradual top and keeps strict
+	// rejection (the cast-guard soundness contract). A write into a typed container
+	// is not such a boundary, so its strict projection declines this shape.
+	if p.cfg.StrictContainerWrite {
+		return false
 	}
 	if len(path.Segments) == 0 {
 		return false

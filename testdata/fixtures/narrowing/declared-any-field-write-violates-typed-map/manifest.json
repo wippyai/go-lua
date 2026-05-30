@@ -1,0 +1,3 @@
+{
+  "description": "A declared-any value stored into a record field is a concrete declared any, not a gradual top from an untyped source; writing it unguarded into a typed {[string]: string} map violates the element domain and is rejected"
+}
