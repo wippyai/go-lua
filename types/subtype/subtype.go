@@ -92,9 +92,15 @@ func isOptionalTop(t typ.Type) bool {
 
 // checker holds mutable state for a single subtype derivation.
 // It tracks seen type pairs to handle recursive types via coinduction.
+//
+// When gradual is set the derivation implements consistent-subtyping (≲): `any`
+// is the gradual wildcard in source position as well as target position, so a
+// position carrying `any` on either side is consistent. Strict IsSubtype leaves
+// gradual unset and keeps the clean subtype order.
 type checker struct {
 	inProgress map[typePair]bool
 	memo       map[typePair]bool
+	gradual    bool
 }
 
 // check performs the recursive subtype check with depth tracking.
@@ -265,6 +271,11 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	}
 	// Any is NOT assignable to specific types; only to Any itself (Unknown handled above).
 	if typ.IsAny(sub) {
+		// Under consistent-subtyping, `any` is the gradual wildcard in source
+		// position too: it is consistent with any (non-unknown) target.
+		if c.gradual {
+			return true
+		}
 		// Builtin table-top marker is a dynamic table boundary; explicit `any`
 		// values are permitted to flow through it.
 		if unwrap.IsBuiltinTableTop(super) {

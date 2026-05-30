@@ -38,6 +38,21 @@ func ConsistentBeyondSubtype(sub, super typ.Type) bool {
 	return isFreshEmptyTable(sub) && emptyTableSatisfies(super)
 }
 
+// ConsistentSubtype reports whether sub is a consistent-subtype (≲) of super:
+// strict subtyping where `any` acts as the gradual wildcard in both source and
+// target position. It is the relation generic inference uses to test whether a
+// lower bound (the value flowing into a type variable) can be reconciled with an
+// upper bound (the context constraining it) when only gradual `any` material
+// stands between them. Concrete-vs-concrete mismatches (no `any` bridge) stay
+// rejected, so soundness of fully-static positions is preserved.
+func ConsistentSubtype(sub, super typ.Type) bool {
+	if sub == nil || super == nil {
+		return false
+	}
+	c := &checker{gradual: true}
+	return c.check(sub, super, 0)
+}
+
 // isFreshEmptyTable reports whether t is a fresh empty-table-literal seed: a
 // Fresh empty record (the `{}` seed) or a Fresh empty array. Both are only ever
 // produced by typ.NewFreshEmptyRecord / typ.NewFreshArray.

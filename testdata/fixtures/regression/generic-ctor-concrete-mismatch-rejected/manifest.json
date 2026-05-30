@@ -1,0 +1,4 @@
+{
+  "description": "A genuine concrete mismatch with no gradual any to bridge it stays rejected: inferring T = boolean from the argument cannot satisfy a StringBox (value: string) return context. The consistent-subtyping bridge admits only gradual any, never a static type mismatch.",
+  "files": ["main.lua"]
+}

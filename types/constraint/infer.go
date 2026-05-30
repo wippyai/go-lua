@@ -512,12 +512,24 @@ func (b *Bounds) Solve() (typ.Type, error) {
 
 	lower = subtype.Widen(lower)
 
+	gradualBridge := false
 	if !typ.IsNever(lower) && !typ.IsAny(upper) {
 		if !containsTypeVar(lower) && !containsTypeVar(upper) {
 			if !subtype.IsSubtype(lower, upper) {
-				return nil, &BoundsError{Lower: lower, Upper: upper}
+				// A lower bound whose only obstruction to the upper bound is
+				// gradual `any` is reconciled by inferring the precise upper
+				// (contextual) bound; the gradual cast is checked at the
+				// argument boundary. A genuine concrete mismatch still errors.
+				if !subtype.ConsistentSubtype(lower, upper) {
+					return nil, &BoundsError{Lower: lower, Upper: upper}
+				}
+				gradualBridge = true
 			}
 		}
+	}
+
+	if gradualBridge && len(b.Upper) > 0 {
+		return upper, nil
 	}
 
 	if len(b.Lower) > 0 && !containsTypeVar(lower) {
