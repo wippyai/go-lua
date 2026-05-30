@@ -237,6 +237,15 @@ func Propagate(inputs *Inputs) *Result {
 	return &Result{PointConditions: pointConditions}
 }
 
+// FeedbackVertexSet returns the set of CFG points at which widening must fire to
+// cut every cycle in g: loop headers plus non-loop SCC headers. It is the same
+// set the propagation worklist uses internally, exposed so the canonical
+// equation graph can mark exactly these CFG point cells as WidenAt sites (and
+// extend them with contract-cell cycles) over the single generic solver.
+func FeedbackVertexSet(g Graph) map[cfg.Point]bool {
+	return computeFeedbackVertexSet(g, g.RPO())
+}
+
 // computeFeedbackVertexSet identifies CFG points where widening must fire.
 //
 // FVS = loop headers (LoopPreheaderSet) ∪ headers of non-loop SCCs. Every

@@ -3,6 +3,8 @@
 package observation
 
 import (
+	"fmt"
+	"os"
 	"strconv"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -30,6 +32,24 @@ import (
 	"github.com/wippyai/go-lua/types/typ/subst"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
+
+// zprobeExpr traces observation read-surface narrowing when ZNARROW is set.
+func zprobeExpr(format string, args ...interface{}) {
+	if os.Getenv("ZNARROW") == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[ZEXPR] "+format+"\n", args...)
+}
+
+// ZProbeRefined exposes the flow-refined symbol type at a point for the
+// narrowing-precision probe. Debug helper.
+func (p Projector) ZProbeRefined(point cfg.Point, sym cfg.SymbolID) (typ.Type, flow.TypeState) {
+	if p.cfg.Facts == nil {
+		return nil, flow.StateUnknown
+	}
+	tv := p.cfg.Facts.RefinedAt(point, sym)
+	return tv.Type, tv.State
+}
 
 // SymbolTypeLookup projects canonical function facts or other product-owned
 // symbol types into the observation surface.
@@ -1137,6 +1157,25 @@ func (p Projector) pathType(expr ast.Expr, point cfg.Point) typ.Type {
 			selected = p.applyPathPresenceProof(selected, expr, point)
 			return p.finalizeObservedPath(selected)
 		}
+	} else if t, ok := p.factsNarrowedPathType(point, path); ok {
+		zprobeExpr("pathType point=%v root=%d segs=%v factsNarrowed=%v declared=%v", point, path.Symbol, path.Segments, t, declared)
+		// No Solution: the canonical flow's narrowing lives in the per-point Facts.
+		// A read of a path narrowed by a branch guard (a nil-check fall-through, a
+		// type guard, a discriminant) observes the flow-refined type here rather than
+		// the flow-insensitive declared type, the same surface the assignment-source
+		// read consults. The merge-point env LUB recovers the unnarrowed value where
+		// both edges meet, so a narrowing never survives past its guard.
+		//
+		// A provably-empty (never) narrowing is authoritative: the read is on an
+		// impossible edge (a discriminant guard pinned the value to the other
+		// variant), so a declared annotation must not re-widen it back, mirroring the
+		// Solution-present never branch above.
+		if typ.IsNever(t) {
+			return p.finalizeObservedPath(t)
+		}
+		selected := p.reconcileObservedPath(t, declared)
+		selected = p.applyPathPresenceProof(selected, expr, point)
+		return p.finalizeObservedPath(selected)
 	}
 	if declared != nil {
 		return p.applyPathPresenceProof(declared, expr, point)
@@ -1295,6 +1334,7 @@ func (p Projector) symbolType(point cfg.Point, sym cfg.SymbolID) typ.Type {
 }
 
 func (p Projector) reconcileObservedPath(observed, declared typ.Type) typ.Type {
+	zprobeExpr("reconcileObservedPath observed=%v declared=%v", observed, declared)
 	if t, ok := value.ReconcilePathFactWithDeclaredRead(observed, declared); ok {
 		if p.cfg.PreserveProof {
 			return t

@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
-func check(t *testing.T, name, source string) {
+func checkNoError(t *testing.T, name, source string) {
 	t.Run(name, func(t *testing.T) {
 		result := testutil.Check(source, testutil.WithStdlib())
 		if result.HasError() {
@@ -24,19 +24,19 @@ local function pick(t)
 	return ""
 end
 `
-	check(t, "literal_key_straight", `
+	checkNoError(t, "literal_key_straight", `
 local pending = {}
 pending["a"] = true
 pending["a"] = false
 `)
-	check(t, "dynamic_key_straight", pick+`
+	checkNoError(t, "dynamic_key_straight", pick+`
 local pending = {}
 local keys = { "a", "b" }
 for i = 1, #keys do pending[keys[i]] = true end
 local k = pick(keys)
 pending[k] = false
 `)
-	check(t, "dynamic_key_loop", pick+`
+	checkNoError(t, "dynamic_key_loop", pick+`
 local pending = {}
 local keys = { "a", "b" }
 for i = 1, #keys do pending[keys[i]] = true end
@@ -52,7 +52,7 @@ end
 // the back-edge map at the loop header. The empty table is the bottom of the table
 // lattice (least information), so the join must yield the map, not collapse to {}.
 func TestMapPopulatedOnlyInLoopStaysIndexable(t *testing.T) {
-	check(t, "accumulator_in_while", `
+	checkNoError(t, "accumulator_in_while", `
 local function pick(t)
 	for _, v in pairs(t) do return v end
 	return ""
@@ -74,7 +74,7 @@ return x
 // phi of the pre-loop {} and the back-edge map; it must be the map so the caller
 // can index the returned value.
 func TestReturnedLoopAccumulatorStaysIndexable(t *testing.T) {
-	check(t, "early_return_before_write", `
+	checkNoError(t, "early_return_before_write", `
 local function pick(t)
 	for _, v in pairs(t) do return v end
 	return ""
@@ -104,7 +104,7 @@ return x
 // accumulator is returned from an early return. The returned accumulator must keep
 // its index signature.
 func TestGuardedDualMapAccumulatorReturn(t *testing.T) {
-	check(t, "guarded_write_record_key", `
+	checkNoError(t, "guarded_write_record_key", `
 local function build(keys, ev)
 	local pending = {}
 	local acc = {}

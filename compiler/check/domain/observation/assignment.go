@@ -7,7 +7,9 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -104,11 +106,164 @@ func (p Projector) assignmentPathSourceType(source ast.Expr, point cfg.Point, ta
 		} else if t := p.cfg.Solution.NarrowedTypeAt(point, path); !typ.IsAbsentOrUnknown(t) {
 			return p.reconcileObservedPath(t, declared), true
 		}
+	} else if t, ok := p.factsNarrowedPathType(point, path); ok {
+		// No Solution: a flow whose narrowing lives in the per-point Facts (the
+		// canonical flow) supplies the path's flow-refined type here, so an
+		// assignment source observes the value narrowed by the branch guard rather
+		// than its flow-insensitive declared type.
+		return p.reconcileObservedPath(t, declared), true
 	}
 	if declared != nil {
 		return declared, true
 	}
 	return nil, false
+}
+
+// factsNarrowedPathType resolves the flow-refined type of path from the per-point
+// Facts, the narrowing surface a Solution-less flow (the canonical flow) exposes.
+// It reads the refined base symbol type and derives through the path segments the
+// same way pathDeclaredType walks the declared type, so a discriminant-narrowed
+// base.field read resolves to the narrowed variant's field. Returns false when no
+// sound refinement is available for the path root (then the declared type is used).
+//
+// The root refinement is admitted only when it is a sound narrowing of the root's
+// declared type: an annotated symbol keeps a gradual (any) contract, and a refined
+// type that is not a subtype of the declared type is rejected. This mirrors the
+// legacy Solution.EffectiveTypeAt annotated-symbol guard so the canonical flow does
+// not replace a declared type with a refinement the assignment check must still
+// validate against the declaration (e.g. a value typed any must stay any at an
+// assignment source so an any -> concrete write is flagged, not silently admitted).
+func (p Projector) factsNarrowedPathType(point cfg.Point, path constraint.Path) (typ.Type, bool) {
+	if p.cfg.Facts == nil || path.Symbol == 0 {
+		return nil, false
+	}
+	refined := p.cfg.Facts.RefinedAt(point, path.Symbol)
+	if refined.State != flow.StateResolved || refined.Type == nil || typ.IsUnknown(refined.Type) {
+		return nil, false
+	}
+	root := p.soundRootRefinement(point, path.Symbol, refined.Type)
+	if root == nil {
+		return nil, false
+	}
+	if len(path.Segments) == 0 {
+		return root, true
+	}
+	derived := p.derivePathSegments(root, path.Segments)
+	if derived == nil {
+		return nil, false
+	}
+	return p.refineFactsLengthIndex(point, path, root, derived), true
+}
+
+// refineFactsLengthIndex recovers a non-optional element type for an assignment
+// source `arr[k]` a length proof shows is in range, the read-side counterpart of
+// the path-sensitive Solution's index-read refinement for a Solution-less flow. It
+// fires only for a single trailing positive literal index over the path's root
+// container and consults the flow's LengthFacts proof: when the proven length lower
+// bound covers the index, the same narrow law the path-sensitive flow uses
+// (RefineSequenceIndex) drops the in-range read's flow-uncertainty nil. A read the
+// proof cannot place in range keeps its optional element (sound).
+func (p Projector) refineFactsLengthIndex(point cfg.Point, path constraint.Path, container, derived typ.Type) typ.Type {
+	if len(path.Segments) != 1 {
+		return derived
+	}
+	seg := path.Segments[0]
+	if seg.Kind != constraint.SegmentIndexInt || seg.Index < 1 {
+		return derived
+	}
+	lengthFacts, ok := p.cfg.Facts.(flow.LengthFacts)
+	if !ok {
+		return derived
+	}
+	lower, ok := lengthFacts.LengthLowerBoundAt(point, path.Symbol)
+	if !ok || lower < int64(seg.Index) {
+		return derived
+	}
+	if refined := narrow.RefineSequenceIndex(container, derived, int64(seg.Index)); refined != nil {
+		return refined
+	}
+	return derived
+}
+
+// soundRootRefinement gates a path-root refinement against the symbol's declared
+// type, mirroring the legacy Solution.EffectiveTypeAt annotated-symbol guard. For an
+// unannotated symbol the refinement is the inferred value (used as is). For an
+// annotated symbol:
+//
+//   - a gradual declared type (any/unknown) keeps its contract: a value declared
+//     any must stay any at an assignment source so an any -> concrete write is
+//     flagged, not silently admitted by an inferred concrete refinement;
+//   - a refinement that is not a subtype of the declared type is rejected (an
+//     unsound narrowing that would drop declared structure);
+//
+// otherwise the refinement (a sound narrowing within the declaration, e.g.
+// string narrowed from string?) is admitted. Returns nil to decline the override.
+func (p Projector) soundRootRefinement(point cfg.Point, sym cfg.SymbolID, refined typ.Type) typ.Type {
+	declared := p.declaredSymbolType(point, sym)
+	if declared == nil {
+		return refined
+	}
+	if declared.Kind().IsPlaceholder() {
+		// A gradual (any/unknown) declaration keeps its contract for an UNNARROWED
+		// read: a value declared any must stay any at an assignment source so an
+		// any -> concrete write is flagged, not silently admitted by an inferred
+		// concrete value. But a path-sensitive type guard (a type(x) == k / T:is(x)
+		// success edge) narrows the gradual value to a concrete type; that refinement
+		// is sound to admit (the guard proved it). In the canonical flow the only way
+		// a gradual symbol's refined value becomes a concrete strict-subtype is such a
+		// guard narrowing, so a non-placeholder refinement is the guarded narrowing
+		// and is admitted; a still-gradual refinement keeps the declared contract.
+		if refined.Kind().IsPlaceholder() {
+			return nil
+		}
+		return refined
+	}
+	if !subtype.IsSubtype(refined, declared) {
+		return nil
+	}
+	return refined
+}
+
+// derivePathSegments walks base through the field/index segments of a path,
+// returning the type the path denotes or nil when a segment does not resolve. It
+// reuses the same query-core field/index resolution pathDeclaredType uses.
+func (p Projector) derivePathSegments(base typ.Type, segments []constraint.Segment) typ.Type {
+	current := base
+	for _, segment := range segments {
+		var next typ.Type
+		switch segment.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			if p.cfg.TypeOps != nil {
+				next, _ = p.cfg.TypeOps.Field(p.cfg.Ctx, current, segment.Name)
+				if next == nil {
+					next, _ = p.cfg.TypeOps.Index(p.cfg.Ctx, current, typ.LiteralString(segment.Name))
+				}
+			} else {
+				next, _ = querycore.Field(current, segment.Name)
+				if next == nil {
+					next, _ = querycore.Index(current, typ.LiteralString(segment.Name))
+				}
+			}
+		case constraint.SegmentIndexInt:
+			key := typ.LiteralInt(int64(segment.Index))
+			if p.cfg.TypeOps != nil {
+				next, _ = p.cfg.TypeOps.Index(p.cfg.Ctx, current, key)
+			} else {
+				next, _ = querycore.Index(current, key)
+			}
+		default:
+			return nil
+		}
+		if next == nil {
+			if querycore.MissingFieldReadsNil(current) {
+				next = typ.Nil
+			} else {
+				return nil
+			}
+		}
+		current = next
+	}
+	return current
 }
 
 // AssignmentTargetWriteType projects the solved write-slot type for an

@@ -275,7 +275,6 @@ func (e *Engine) ResolveTypeDefAt(name string, typeExpr ast.TypeExpr, typeParams
 		},
 		ModuleBindings: e.deps.ModuleBindings,
 		ModuleAliases:  e.deps.ModuleAliases,
-		Epoch:          e.deps.Ctx.Epoch(),
 	})
 	return resolver.ResolveTypeDef(name, typeExpr, typeParams, sc)
 }

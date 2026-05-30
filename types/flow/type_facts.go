@@ -53,6 +53,18 @@ type TypeFacts interface {
 	IsAnnotated(sym cfg.SymbolID) bool
 }
 
+// LengthFacts exposes a container symbol's proven length lower bound at a CFG
+// point, the numeric proof a flow without a path-sensitive Solution (the canonical
+// flow) carries in its numeric component. The observation surface consults it to
+// refine an index read `arr[k]` that the length proof shows is provably in range,
+// the read-side counterpart of the path-sensitive Solution.LengthBoundsAt. A flow
+// that does not implement it offers no length proof, so the read stays optional.
+type LengthFacts interface {
+	// LengthLowerBoundAt returns the proven lower bound on #sym (the container's
+	// length) entering point p, and whether such a bound is known.
+	LengthLowerBoundAt(p cfg.Point, sym cfg.SymbolID) (lower int64, ok bool)
+}
+
 // DeclaredTypes maps SymbolID to its declared type.
 //
 // This type alias documents that the map should contain only annotation-derived

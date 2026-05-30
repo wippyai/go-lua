@@ -49,7 +49,6 @@ type Resolver struct {
 	bindings       core.ParamSymbolLookup
 	moduleBindings *bind.BindingTable
 	moduleAliases  map[typecfg.SymbolID]string
-	epoch          uint64
 }
 
 // Config configures a Resolver.
@@ -59,10 +58,6 @@ type Config struct {
 	Bindings       core.ParamSymbolLookup
 	ModuleBindings *bind.BindingTable
 	ModuleAliases  map[typecfg.SymbolID]string
-	// Epoch is the compilation-unique identity that scopes nominal declaration
-	// identity for locally declared generic types, so two independent
-	// compilations declaring a same-named type do not collapse to one type.
-	Epoch uint64
 }
 
 // New creates a new type resolver.
@@ -73,7 +68,6 @@ func New(c Config) *Resolver {
 		bindings:       c.Bindings,
 		moduleBindings: c.ModuleBindings,
 		moduleAliases:  c.ModuleAliases,
-		epoch:          c.Epoch,
 	}
 }
 
@@ -177,11 +171,12 @@ func (r *Resolver) ResolveTypeDef(name string, typeExpr ast.TypeExpr, typeParams
 			paramScope = paramScope.WithTypeParams(map[string]typ.Type{tp.Name: params[i]})
 		}
 
-		forwardRef := typ.NewGenericDecl(name, params, nil, r.epoch)
-		bodyScope := paramScope.WithType(name, forwardRef)
+		generic := typ.NewGeneric(name, params, nil)
+		bodyScope := paramScope.WithType(name, generic)
 
 		body := r.ResolveType(typeExpr, bodyScope)
-		return typ.NewGenericDecl(name, params, body, r.epoch)
+		generic.SetBody(body)
+		return generic
 	}
 	return r.resolveNonGenericTypeDef(name, typeExpr, sc)
 }

@@ -82,13 +82,18 @@ func (t *TypeParam) Equals(other Type) bool {
 // when instantiated. The Body contains the type with TypeParam references.
 //
 // Identity:
-//   - Named generics use nominal identity (name + params, ignoring body)
-//   - Anonymous generics use structural identity (includes body in hash)
+//
+// A generic is identified by its declaration content: name + type params + the
+// structure of its body. Two declarations of the same name with the same body
+// (e.g. one exported generic imported into two modules) are the same type, even
+// across independent compilations; two same-named declarations with different
+// bodies (a record `Box<T>` vs an interface `Box<T>`) stay distinct. This makes
+// identity stable across the export/import round-trip without depending on an
+// ephemeral per-compilation counter.
 type Generic struct {
 	Name                  string       // Type name (empty for anonymous generics)
 	TypeParams            []*TypeParam // Type parameters to be substituted
 	Body                  Type         // Template type with TypeParam references
-	declID                uint64       // Declaration identity (0 = name nominal)
 	hash                  uint64
 	containsAny           bool
 	containsNever         bool
@@ -99,31 +104,22 @@ type Generic struct {
 	strCache              stringCache
 }
 
-// NewGeneric creates a generic type definition with name nominal identity
-// (declID 0). Named generics are nominal by name + type params; anonymous
-// generics are structural.
+// NewGeneric creates a generic type definition identified by name + type params
+// + body structure.
 func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
-	return NewGenericDecl(name, params, body, 0)
-}
-
-// NewGenericDecl creates a generic type definition carrying an explicit
-// declaration identity. A nonzero declID makes the generic identified by its
-// declaration rather than its spelling, so two same-named declarations in
-// independent compilations do not collapse to one type.
-func NewGenericDecl(name string, params []*TypeParam, body Type, declID uint64) *Generic {
 	h := internal.HashCombine(uint64(kind.Generic), internal.FnvString(name))
 	for _, p := range params {
 		h = internal.HashCombine(h, p.Hash())
 	}
 
-	// Only include body in hash for anonymous generics (structural identity).
-	// Named generics are nominal: identity is name + type params, refined by the
-	// declaration identity when present.
-	if name == "" && body != nil {
+	// The body participates in identity so two same-named declarations with
+	// different bodies stay distinct, while two declarations of the same body
+	// are one type regardless of which compilation produced them. A self-recursive
+	// forward-reference body (nil at the time the placeholder is hashed) is left
+	// out of the hash; structural equality still distinguishes such generics
+	// through the coinductive body comparison.
+	if body != nil {
 		h = internal.HashCombine(h, body.Hash())
-	}
-	if declID != 0 {
-		h = internal.HashCombine(h, declID)
 	}
 
 	copied := make([]*TypeParam, len(params))
@@ -133,7 +129,6 @@ func NewGenericDecl(name string, params []*TypeParam, body Type, declID uint64) 
 		Name:                  name,
 		TypeParams:            copied,
 		Body:                  body,
-		declID:                declID,
 		hash:                  h,
 		containsAny:           knownAnyTypeParams(copied) || knownContainsAny(body),
 		containsNever:         knownNeverTypeParams(copied) || knownContainsNever(body),
@@ -142,6 +137,34 @@ func NewGenericDecl(name string, params []*TypeParam, body Type, declID uint64) 
 		containsRecursive:     knownRecursiveTypeParams(copied) || knownContainsRecursive(body),
 		containsOpenRecursive: knownOpenRecursiveTypeParams(copied) || knownContainsOpenRecursive(body),
 	}
+}
+
+// SetBody back-patches the body of a generic that was created as a forward
+// reference (nil body) so the body can refer to the generic itself. The same
+// node carries the declaration identity throughout body resolution, so a
+// self-referential body and the top-level generic are the same node and the
+// hash is finalized against the completed body. Intended for construction
+// before the generic escapes into any interner; a no-op once a body is set.
+func (g *Generic) SetBody(body Type) {
+	if g == nil || g.Body != nil || body == nil {
+		return
+	}
+	g.Body = body
+
+	h := internal.HashCombine(uint64(kind.Generic), internal.FnvString(g.Name))
+	for _, p := range g.TypeParams {
+		h = internal.HashCombine(h, p.Hash())
+	}
+	h = internal.HashCombine(h, body.Hash())
+	g.hash = h
+
+	g.containsAny = g.containsAny || knownContainsAny(body)
+	g.containsNever = g.containsNever || knownContainsNever(body)
+	g.containsTypeParam = g.containsTypeParam || knownContainsTypeParam(body)
+	g.containsInstantiated = g.containsInstantiated || knownContainsInstantiated(body)
+	g.containsRecursive = g.containsRecursive || knownContainsRecursive(body)
+	g.containsOpenRecursive = g.containsOpenRecursive || knownContainsOpenRecursive(body)
+	g.strCache = stringCache{}
 }
 
 func (g *Generic) Kind() kind.Kind { return kind.Generic }

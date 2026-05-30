@@ -50,16 +50,6 @@ func (c *QueryContext) DB() *DB {
 	return c.db
 }
 
-// Epoch returns the compilation-unique identity of the backing database, or 0
-// when none is attached. Nil-safe so callers need not guard the context.
-func (c *QueryContext) Epoch() uint64 {
-	if c == nil || c.db == nil {
-		return 0
-	}
-
-	return c.db.epoch
-}
-
 func (c *QueryContext) hasActiveFrame() bool {
 	return c != nil && c.tracker != nil && len(c.tracker.stack) > 0
 }

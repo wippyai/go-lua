@@ -87,6 +87,9 @@ func (i *recursiveFamilyInterner) canonical(t typ.Type) typ.Type {
 
 	for _, rep := range i.buckets[h] {
 		if factTypeMetadataEqual(rep, t, nil) {
+			if zzFamDbg && !typ.TypeEquals(rep, t) {
+				println("ZZFAM COLLAPSE incoming=", zzShort(t), " onto rep=", zzShort(rep))
+			}
 			return rep
 		}
 	}

@@ -20,7 +20,10 @@ if err == nil and spec then
     local name: string = spec.name
     local prompt: string = spec.prompt
     local tool_count: number = #spec.tools
-    local first_tool_id: string = spec.tools[1].id
+    -- spec.tools is the typed sequence {TraitToolEntry}: it has unknown runtime
+    -- length, so spec.tools[1] is TraitToolEntry? and its .id field is string?;
+    -- assigning that to a non-optional string is soundly rejected.
+    local first_tool_id: string = spec.tools[1].id -- expect-error: cannot assign string? to string
 end
 
 local normalized = processor.normalize_tool("tool:simple")

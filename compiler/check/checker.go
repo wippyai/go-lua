@@ -53,6 +53,7 @@ package check
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/canonical"
 	"github.com/wippyai/go-lua/compiler/check/pipeline"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -101,6 +102,33 @@ type Deps struct {
 	Resolver narrow.Resolver
 }
 
+// moduleDriver is the module-analysis seam: it runs one fixpoint flow over a
+// parsed module chunk. The legacy *pipeline.Driver and the canonical
+// *canonical.Driver both satisfy it, so checkChunk drives either flow through the
+// same call regardless of which one newPipeline selected.
+type moduleDriver interface {
+	Run(sess api.AnalysisSession, chunk []ast.Stmt)
+}
+
+// FlowMode selects which type-flow engine the Checker drives.
+type FlowMode int
+
+const (
+	// FlowLegacy is the established multi-fixpoint pipeline flow.
+	FlowLegacy FlowMode = iota
+	// FlowCanonical is the single-fixed-point canonical engine: one
+	// intraprocedural FunctionState fixed point per function plus the
+	// interprocedural summary fixed point over the call graph.
+	FlowCanonical
+)
+
+// WithCanonicalFlow selects the canonical type-flow engine for analysis. The
+// legacy flow remains the default; this opt-in switches newPipeline to construct
+// the canonical driver instead.
+func WithCanonicalFlow() Option {
+	return func(c *Checker) { c.flowMode = FlowCanonical }
+}
+
 // Option configures optional behaviors of a Checker.
 type Option func(*Checker)
 
@@ -137,6 +165,7 @@ type Checker struct {
 	computePasses             []api.ComputePass
 	maxScopeDepth             int
 	emitScopeDepthDiagnostics bool
+	flowMode                  FlowMode
 }
 
 // NewChecker creates a new Checker instance with the given database, dependencies, and options.
@@ -173,7 +202,25 @@ func NewChecker(database *db.DB, deps Deps, opts ...Option) *Checker {
 	return c
 }
 
-func (c *Checker) newPipeline(interner *typ.RecursiveFamilyInterner) *pipeline.Driver {
+// newPipeline returns the module driver for the configured flow mode. The legacy
+// flow returns the established *pipeline.Driver unchanged; the canonical flow
+// returns the single-fixed-point *canonical.Driver. Both satisfy moduleDriver, so
+// checkChunk drives either through the same Run call.
+func (c *Checker) newPipeline(interner *typ.RecursiveFamilyInterner) moduleDriver {
+	switch c.flowMode {
+	case FlowCanonical:
+		return canonical.NewDriver(canonical.Config{
+			Types:       c.deps.Types,
+			GlobalTypes: c.deps.GlobalTypes,
+			Stdlib:      c.deps.Stdlib,
+			Manifests:   c.db,
+		})
+	default:
+		return c.newLegacyPipeline(interner)
+	}
+}
+
+func (c *Checker) newLegacyPipeline(interner *typ.RecursiveFamilyInterner) *pipeline.Driver {
 	runner := pipeline.NewRunner(pipeline.RunnerConfig{
 		Types:             c.deps.Types,
 		GlobalTypes:       c.deps.GlobalTypes,

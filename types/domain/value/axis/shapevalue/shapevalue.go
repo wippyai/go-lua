@@ -103,16 +103,25 @@ func joinUnaliased(at, bt typ.Type) Value {
 	b := Value{t: bt}
 	aCovB := a.Covers(b)
 	bCovA := b.Covers(a)
-	if aCovB && !bCovA {
-		return a
+	// A record that width-covers another (it requires a strict subset of fields)
+	// is an upper bound but not the LEAST one: the least upper bound carries the
+	// union of fields with every non-shared field made optional ({id} join
+	// {id,name} = {id, name?}, strictly below {id} in the order). Returning the
+	// covering operand here would diverge from the record-into-union join and break
+	// associativity, so width-differing records always route through the
+	// optionalizing structural join below.
+	if !value.RecordWidthDiffer(at, bt) {
+		if aCovB && !bCovA {
+			return a
+		}
+		if bCovA && !aCovB {
+			return b
+		}
+		if aCovB && bCovA && Equal(a, b) {
+			return a
+		}
 	}
-	if bCovA && !aCovB {
-		return b
-	}
-	if aCovB && bCovA && Equal(a, b) {
-		return a
-	}
-	return Value{t: canonical(value.MergeForConvergence(at, bt))}
+	return Value{t: canonical(value.JoinForConvergence(at, bt))}
 }
 
 // unaliasTopLevel returns t with its outermost alias wrapper removed.

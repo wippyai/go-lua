@@ -352,7 +352,16 @@ type convergenceWidenState struct {
 	growth               *growthScanState
 	seen                 map[typ.Type]typ.Type
 	active               map[typ.Type]bool
+	structuralFold       map[typ.Type]typ.Type
 	activeRecursiveJoins map[recursiveProductJoinKey]*typ.Recursive
+	// joinMode selects the pure least-upper-bound semantics over the convergence
+	// widening semantics. Join must be the associative LUB, so a width-differing
+	// record pair optionalizes its non-shared fields ({id} join {id,name} =
+	// {id, name?}) instead of admitting one operand whole as the convergence
+	// upper bound. The record-construction acceleration (RecordExtensionUpperBound:
+	// {} -> {field = T} kept required) is a widening step that over-approximates
+	// the join, so it is reserved for widen mode where Widen(a,b) >= Join(a,b).
+	joinMode bool
 }
 
 type recursiveProductJoinKey struct {
@@ -362,9 +371,10 @@ type recursiveProductJoinKey struct {
 
 func newConvergenceWidenState() *convergenceWidenState {
 	return &convergenceWidenState{
-		growth: newGrowthScanState(),
-		seen:   make(map[typ.Type]typ.Type),
-		active: make(map[typ.Type]bool),
+		growth:         newGrowthScanState(),
+		seen:           make(map[typ.Type]typ.Type),
+		active:         make(map[typ.Type]bool),
+		structuralFold: make(map[typ.Type]typ.Type),
 	}
 }
 
@@ -387,15 +397,254 @@ func (s *convergenceWidenState) widen(t typ.Type) typ.Type {
 	var out typ.Type
 	if fn := unwrap.Function(t); fn != nil {
 		out = s.widenFunction(fn)
-	} else if !s.growth.hasHigherOrderGrowthRisk(t, typ.NewGuard()) {
-		out = t
-	} else if folded, ok := FoldSelfEmbedding(t, t); ok {
-		out = folded
 	} else {
-		out = subtype.WidenForInference(t)
+		// Bound structural self-embedding towers. A record/map/tuple whose own
+		// field/value/element re-introduces its product family below the root grows a
+		// {text:{text:{text:...}}} tower across loop iterations; boundSelfEmbedding ties
+		// each such knot into a finite recursive product and collapses the finite
+		// unfoldings the recursive representative covers. This is the ACC widening for
+		// that growth dimension, independent of callable surfaces: a plain
+		// heterogeneous data record self-embeds just as a method-bearing class can.
+		out = s.boundSelfEmbedding(t)
+		if s.growth.hasHigherOrderGrowthRisk(out, typ.NewGuard()) {
+			if folded, ok := FoldSelfEmbedding(out, out); ok {
+				out = folded
+			} else {
+				out = subtype.WidenForInference(out)
+			}
+		}
 	}
 	s.seen[t] = out
 	return out
+}
+
+// foldStructuralSelfEmbedding deeply ties off self-embedding structural towers.
+// It folds children first, then folds the node itself, so a knot at any depth
+// (a record field, map value, sequence element) is bounded into one recursive
+// product instead of accumulating another unfolded level each iteration. Folding
+// is a least-upper-bound-preserving widening: FoldSelfEmbedding only ties a knot
+// when the node genuinely re-embeds its own family below the root, and the mu it
+// returns covers every finite unfolding. Discriminant literals and field
+// optionality are preserved; only self-embedding depth is collapsed.
+func (s *convergenceWidenState) foldStructuralSelfEmbedding(t typ.Type) typ.Type {
+	return s.foldStructuralSelfEmbeddingGuard(t, typ.NewGuard())
+}
+
+func (s *convergenceWidenState) foldStructuralSelfEmbeddingGuard(t typ.Type, guard internal.RecursionGuard) typ.Type {
+	if t == nil || typ.ContainsRecursive(t) {
+		return t
+	}
+	if out, ok := s.structuralFold[t]; ok {
+		return out
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return t
+	}
+	// Top-down: tie the shallowest self-embedding knot first. Folding the outermost
+	// anchor ties the entire subtree below it into one recursive product, so the
+	// descent never re-walks the deep tower interior. Only nodes that do not fold
+	// are descended into, bounding any remaining inner knot.
+	//
+	// The fold is admitted only when the recursive product is well-founded: it must
+	// have a base case, an unfolding reachable without traversing the self-reference.
+	// FoldSelfEmbedding ties a knot at a required field whose tower leaf omits it (the
+	// {v} leaf of a {v, next:{v, next:...}} tower) into mu X.{v, next:X} with next
+	// required — a product with no base case that covers no finite unfolding. Such an
+	// under-approximating fold is rejected so the node falls through to the structural
+	// descent and the existing element/field widening bounds it soundly. A message
+	// tower mu X.{text: string | tuple(X), type:"text"} exits through the string union
+	// member, so it is well-founded and admitted.
+	if folded, ok := FoldSelfEmbedding(t, t); ok && recursiveProductWellFounded(folded) {
+		s.structuralFold[t] = folded
+		return folded
+	}
+	var out typ.Type
+	switch v := t.(type) {
+	case *typ.Optional:
+		inner := s.foldStructuralSelfEmbeddingGuard(v.Inner, next)
+		if typ.SameNode(inner, v.Inner) {
+			out = t
+		} else {
+			out = typ.NewOptional(inner)
+		}
+	case *typ.Union:
+		members := make([]typ.Type, len(v.Members))
+		changed := false
+		for i, m := range v.Members {
+			members[i] = s.foldStructuralSelfEmbeddingGuard(m, next)
+			if !typ.SameNode(members[i], m) {
+				changed = true
+			}
+		}
+		if changed {
+			out = typ.NewUnion(members...)
+		} else {
+			out = t
+		}
+	case *typ.Array:
+		elem := s.foldStructuralSelfEmbeddingGuard(v.Element, next)
+		if typ.SameNode(elem, v.Element) {
+			out = t
+		} else {
+			out = typ.NewArray(elem)
+		}
+	case *typ.Tuple:
+		elements := make([]typ.Type, len(v.Elements))
+		changed := false
+		for i, e := range v.Elements {
+			elements[i] = s.foldStructuralSelfEmbeddingGuard(e, next)
+			if !typ.SameNode(elements[i], e) {
+				changed = true
+			}
+		}
+		if changed {
+			out = typ.NewTuple(elements...)
+		} else {
+			out = t
+		}
+	case *typ.Map:
+		key := s.foldStructuralSelfEmbeddingGuard(v.Key, next)
+		val := s.foldStructuralSelfEmbeddingGuard(v.Value, next)
+		if typ.SameNode(key, v.Key) && typ.SameNode(val, v.Value) {
+			out = t
+		} else {
+			out = typ.NewMap(key, val)
+		}
+	case *typ.Record:
+		out = s.foldRecordChildrenSelfEmbedding(v, next)
+	default:
+		out = t
+	}
+	s.structuralFold[t] = out
+	return out
+}
+
+// foldRecordChildrenSelfEmbedding rebuilds a record with each field, map slot, and
+// metatable structurally folded, preserving optionality, readonly, openness, and
+// discriminant literals.
+func (s *convergenceWidenState) foldRecordChildrenSelfEmbedding(r *typ.Record, guard internal.RecursionGuard) *typ.Record {
+	builder := typ.NewRecord()
+	if r.Open {
+		builder.SetOpen(true)
+	}
+	changed := false
+	for _, f := range r.Fields {
+		fieldType := s.foldStructuralSelfEmbeddingGuard(f.Type, guard)
+		if !typ.SameNode(fieldType, f.Type) {
+			changed = true
+		}
+		switch {
+		case f.Optional && f.Readonly:
+			builder.OptReadonlyField(f.Name, fieldType)
+		case f.Optional:
+			builder.OptField(f.Name, fieldType)
+		case f.Readonly:
+			builder.ReadonlyField(f.Name, fieldType)
+		default:
+			builder.Field(f.Name, fieldType)
+		}
+	}
+	if r.HasMapComponent() {
+		mapKey := s.foldStructuralSelfEmbeddingGuard(r.MapKey, guard)
+		mapValue := s.foldStructuralSelfEmbeddingGuard(r.MapValue, guard)
+		if !typ.SameNode(mapKey, r.MapKey) || !typ.SameNode(mapValue, r.MapValue) {
+			changed = true
+		}
+		builder.MapComponent(mapKey, mapValue)
+	}
+	if r.Metatable != nil {
+		mt := s.foldStructuralSelfEmbeddingGuard(r.Metatable, guard)
+		if !typ.SameNode(mt, r.Metatable) {
+			changed = true
+		}
+		builder.Metatable(mt)
+	}
+	if !changed {
+		return r
+	}
+	return builder.Build()
+}
+
+// recursiveProductWellFounded reports whether a recursive product admits a base
+// case: a finite unfolding reachable without traversing the recursive reference.
+// A well-founded mu covers its finite unfoldings (the over-approximation half of a
+// sound widening); a mu without a base case (mu X.{next: X} with next required)
+// denotes only the infinite value and covers nothing finite, so folding into it
+// under-approximates.
+func recursiveProductWellFounded(t typ.Type) bool {
+	rec, ok := unwrap.Alias(t).(*typ.Recursive)
+	if !ok || rec == nil || rec.Body == nil {
+		return false
+	}
+	return recursiveBodyHasBaseCase(rec.Body, rec, typ.NewGuard())
+}
+
+// recursiveBodyHasBaseCase reports whether body can be inhabited by a finite value
+// that does not traverse self. A node not mentioning self is itself a base case; a
+// union exits through any base-case member; a record needs every required field to
+// have a base case (optional fields and a map component may be omitted/empty); an
+// array or map exits through the empty container; a tuple needs every element to
+// have a base case; an optional always exits through nil.
+func recursiveBodyHasBaseCase(body typ.Type, self *typ.Recursive, guard internal.RecursionGuard) bool {
+	if body == nil {
+		return false
+	}
+	if !mentionsRecursiveSelf(body, self) {
+		return true
+	}
+	next, ok := guard.Enter(body)
+	if !ok {
+		return false
+	}
+	switch v := unwrap.Alias(body).(type) {
+	case *typ.Recursive:
+		if typ.IsRecursiveRef(v, self) {
+			return false
+		}
+		return v.Body != nil && recursiveBodyHasBaseCase(v.Body, self, next)
+	case *typ.Optional:
+		return true
+	case *typ.Union:
+		for _, member := range v.Members {
+			if recursiveBodyHasBaseCase(member, self, next) {
+				return true
+			}
+		}
+		return false
+	case *typ.Array, *typ.Map:
+		return true
+	case *typ.Tuple:
+		for _, elem := range v.Elements {
+			if !recursiveBodyHasBaseCase(elem, self, next) {
+				return false
+			}
+		}
+		return true
+	case *typ.Record:
+		for _, field := range v.Fields {
+			if field.Optional {
+				continue
+			}
+			if !recursiveBodyHasBaseCase(field.Type, self, next) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func mentionsRecursiveSelf(t typ.Type, self *typ.Recursive) bool {
+	found := false
+	typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		if typ.IsRecursiveRef(node, self) {
+			found = true
+		}
+		return nil, false
+	})
+	return found
 }
 
 // WidenFunctionForConvergence applies convergence widening to a function type.
@@ -510,8 +759,48 @@ func JoinPrecise(existing, candidate typ.Type) typ.Type {
 }
 
 // MergeForConvergence merges non-function value facts at a fixpoint boundary.
+//
+// The merge result is bounded so the boundary is a true widening (ACC): the merge
+// is the least upper bound, and bounding closes the one dimension a plain LUB does
+// not — the structural depth that grows when successive loop iterations contribute
+// same-family records whose own field/element re-introduces the family (a record
+// one reads as a recursive alternative of another). Folding those self-embedding
+// towers into one finite recursive product makes the ascending chain stabilize. The
+// bound is the self-embedding fold alone, not full widening: the LUB's other
+// precision (discriminated union members, exact field widths) must be preserved, so
+// the width-coalescing of CoalesceProductUnion is not applied here.
 func MergeForConvergence(existing, candidate typ.Type) typ.Type {
-	return newConvergenceWidenState().merge(existing, candidate)
+	s := newConvergenceWidenState()
+	return s.boundSelfEmbedding(s.merge(existing, candidate))
+}
+
+// boundSelfEmbedding applies the ACC self-embedding fold to a merge result without
+// the union width-coalescing the full widen performs, so discriminated-union and
+// field-width precision survive the fixpoint boundary while self-embedding towers
+// are still bounded into a finite recursive product.
+func (s *convergenceWidenState) boundSelfEmbedding(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	out := s.foldStructuralSelfEmbedding(t)
+	if typ.ContainsRecursive(out) {
+		out = collapseSameFamilyRecursiveUnions(out)
+	}
+	return out
+}
+
+// JoinForConvergence is the associative least-upper-bound over two value facts.
+//
+// It shares the convergence merge's structural dispatch (recursive product
+// folding, gradual unknown/any handling, union coalescing) but selects the pure
+// LUB semantics: a width-differing record pair optionalizes its non-shared fields
+// rather than admitting one operand whole, so the result is the unique least
+// upper bound and Join stays associative. The construction-history acceleration
+// that keeps a freshly added field required belongs to WidenForConvergence.
+func JoinForConvergence(existing, candidate typ.Type) typ.Type {
+	s := newConvergenceWidenState()
+	s.joinMode = true
+	return s.merge(existing, candidate)
 }
 
 func (s *convergenceWidenState) merge(existing, candidate typ.Type) typ.Type {
@@ -544,8 +833,33 @@ func (s *convergenceWidenState) merge(existing, candidate typ.Type) typ.Type {
 	if joined, ok := s.joinRecursiveProducts(existing, candidate); ok {
 		return joined
 	}
-	if upper, ok := convergenceUpperBound(existing, candidate); ok {
+	// The convergence upper bound runs first in both modes. Its laws are
+	// least-upper-bound-preserving (they return the operand that already covers the
+	// other: precision evidence absorbing a dynamic any[] / dynamic map slot, an
+	// elided optional, a function-evidence projection, a recursive-family cover);
+	// returning the covering operand is exactly Join(A,B)=B when A<=B. The one
+	// over-approximating law, RecordExtensionUpperBound, is suppressed under joinMode
+	// inside convergenceUpperBound, so a width-differing record pair falls through to
+	// the optionalizing structural join below rather than being admitted whole.
+	//
+	// Running the structural join before these covers checks is unsound for Join: it
+	// can mis-fold an imprecise-but-covered operand (e.g. {[string]: any[]} joined
+	// with a refined {[string]: {...}[]}) into a spurious self-embedding recursion
+	// instead of yielding the covering refined operand.
+	if upper, ok := s.convergenceUpperBound(existing, candidate); ok {
 		return upper
+	}
+	if s.joinMode {
+		// In Join mode the optionalizing structural join is the least upper bound
+		// for shape-compatible records/maps/sequences the convergence upper bound did
+		// not already absorb (a width-differing record pair: {id} join {id,name} =
+		// {id, name?}).
+		if joined, ok := JoinStructuralShape(existing, candidate, s.merge); ok {
+			return joined
+		}
+		if joined, ok := JoinStructuralUnionShape(existing, candidate, s.merge); ok {
+			return joined
+		}
 	}
 	existing = s.widen(existing)
 	candidate = s.widen(candidate)
@@ -558,7 +872,7 @@ func (s *convergenceWidenState) merge(existing, candidate typ.Type) typ.Type {
 	if unwrap.IsNilType(candidate) && !unwrap.IsNilType(existing) {
 		return existing
 	}
-	if upper, ok := convergenceUpperBound(existing, candidate); ok {
+	if upper, ok := s.convergenceUpperBound(existing, candidate); ok {
 		return upper
 	}
 	if typ.IsAny(existing) || typ.IsAny(candidate) {
@@ -873,10 +1187,21 @@ func (s *convergenceWidenState) mergeConvergenceUnionPair(a, b typ.Type) (typ.Ty
 	}
 	// Prefer the precise convergence bounds first (top-array absorption,
 	// recursive coverage, record extension). They keep the simplest finite
-	// representative; the knot-closing fold is the fallback that ties off a
-	// growing self-embedding tower no simpler bound already absorbs.
-	if upper, ok := convergenceUpperBound(a, b); ok {
+	// representative and are least-upper-bound-preserving (they return the operand
+	// that already covers the other), so running them before the structural join
+	// stops a covered imprecise member from mis-folding into a spurious recursion.
+	// RecordExtensionUpperBound is suppressed under joinMode inside
+	// convergenceUpperBound, so a width-differing record pair still falls through to
+	// the optionalizing structural join below rather than being admitted whole.
+	if upper, ok := s.convergenceUpperBound(a, b); ok {
 		return upper, true
+	}
+	if s.joinMode {
+		// Join mode optionalizes width-differing record members the convergence upper
+		// bound did not absorb instead of taking a record extension whole.
+		if joined, ok := s.joinStructuralUnionPair(a, b); ok {
+			return joined, true
+		}
 	}
 	// Close a self-embedding tower into a recursive family: when one member is a
 	// deeper unfolding of the other's family, fold it into a recursive upper bound
@@ -1031,7 +1356,7 @@ func rewriteRecursiveSelf(t typ.Type, from, to *typ.Recursive) typ.Type {
 	})
 }
 
-func convergenceUpperBound(existing, candidate typ.Type) (typ.Type, bool) {
+func (s *convergenceWidenState) convergenceUpperBound(existing, candidate typ.Type) (typ.Type, bool) {
 	if upper, ok := FunctionEvidenceUpperBound(existing, candidate); ok {
 		return upper, true
 	}
@@ -1050,8 +1375,14 @@ func convergenceUpperBound(existing, candidate typ.Type) (typ.Type, bool) {
 	if upper, ok := SelfEmbeddingUpperBound(existing, candidate); ok {
 		return upper, true
 	}
-	if upper, ok := RecordExtensionUpperBound(existing, candidate); ok {
-		return upper, true
+	// RecordExtensionUpperBound admits a construction-history extension whole, with
+	// the freshly added field kept required. That over-approximates the join (the
+	// LUB optionalizes the non-shared field), so it is a widening step only; Join
+	// reaches the optionalizing structural join above instead.
+	if !s.joinMode {
+		if upper, ok := RecordExtensionUpperBound(existing, candidate); ok {
+			return upper, true
+		}
 	}
 	if upper, ok := RecursiveUnionUpperBound(existing, candidate); ok {
 		return upper, true

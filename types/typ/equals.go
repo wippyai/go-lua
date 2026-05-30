@@ -221,15 +221,13 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 				return false
 			}
 		}
-		if va.Name != "" {
-			// A named generic carrying a declaration identity is the same type only
-			// when it denotes the same declaration; without one it falls back to name
-			// nominal identity (stdlib and deserialized module types).
-			if va.declID != 0 || vb.declID != 0 {
-				return va.declID == vb.declID
-			}
-			return true
-		}
+		// Identity is the declaration content: name + type params + body
+		// structure. Two declarations of the same body are one type regardless
+		// of which compilation produced them, so an exported generic imported
+		// into two modules compares equal; same-named declarations with
+		// different bodies stay distinct. The coinductive guard above handles
+		// self-recursive bodies (a forward-reference body is nil only on one
+		// side at the placeholder stage).
 		if (va.Body == nil) != (vb.Body == nil) {
 			return false
 		}

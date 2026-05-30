@@ -65,6 +65,26 @@ func JoinRecordShape(a, b typ.Type, join func(typ.Type, typ.Type) typ.Type) (typ
 	return builder.Build(), true
 }
 
+// RecordWidthDiffer reports whether a and b are two records the structural join
+// merges (JoinRecordShape admits them) whose field sets differ, so their least
+// upper bound optionalizes the non-shared fields. Width-covering does not make
+// the covering record the LUB here, so callers must route such a pair through the
+// optionalizing structural join rather than returning either operand whole.
+func RecordWidthDiffer(a, b typ.Type) bool {
+	ar, okA := unwrap.Alias(a).(*typ.Record)
+	br, okB := unwrap.Alias(b).(*typ.Record)
+	if !okA || !okB || ar == nil || br == nil {
+		return false
+	}
+	if recordsHaveConflictingRequiredLiterals(ar, br) || recordsHaveAsymmetricRequiredLiteral(ar, br) {
+		return false
+	}
+	if recordsAreRecursiveAlternatives(ar, br) {
+		return false
+	}
+	return recordAddsField(ar, br) || recordAddsField(br, ar)
+}
+
 // RecordExtensionUpperBound admits a record extension as the convergence upper
 // bound only when doing so is monotone for the value evidence lattice. Plain
 // construction histories can grow from {} to {field = T}, but once a baseline

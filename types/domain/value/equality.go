@@ -316,9 +316,14 @@ func factFunctionEqual(left, right *typ.Function, seen map[factTypePair]bool) bo
 		len(left.Returns) != len(right.Returns) {
 		return false
 	}
-	if (typ.ContainsRecursive(left) || typ.ContainsRecursive(right)) && typ.SameProductFamily(left, right) {
-		return true
-	}
+	// Recursive functions are compared field-by-field below, never short-circuited
+	// by SameProductFamily. SameProductFamily is the precision relation, which
+	// treats a recursive family reached as a member by name only; two distinct
+	// same-named families (a Store class per module) carry the same member-level
+	// fingerprint, so the shortcut would judge fun()->StoreA equal to fun()->StoreB
+	// and let the value interner collapse them. The structural descent plus the
+	// coinductive family/pointer guards terminate on genuine same-family unfoldings
+	// while keeping distinct families apart.
 	for i, tp := range left.TypeParams {
 		if !factTypeParamEqual(tp, right.TypeParams[i], seen) {
 			return false

@@ -647,22 +647,26 @@ func TestWidenForConvergence_StableOptionalMapRecordIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestMergeForConvergence_ConcreteArraySelfEmbeddingStillFolds(t *testing.T) {
+func TestMergeForConvergence_ConcreteArraySelfEmbeddingBoundsSoundly(t *testing.T) {
 	elem := typ.NewRecord().Field("id", typ.String).Build()
 	base := typ.NewArray(elem)
 	nested := typ.NewArray(base)
 
 	got := MergeForConvergence(base, nested)
-	rec, ok := got.(*typ.Recursive)
-	if !ok {
-		t.Fatalf("MergeForConvergence(concrete[], concrete[][]) = %T %[1]v, want recursive type", got)
+
+	// A bare sequence has no slot for a genuine recursive reference: folding the
+	// depth tower into a recursive family yields mu X.X[], an infinitely-nested
+	// sequence with no element leaf that covers neither operand. The merge must be a
+	// sound upper bound instead, so the result covers both base and nested, and is
+	// commutative.
+	if !Covers(got, base) || !Covers(got, nested) {
+		t.Fatalf("MergeForConvergence(concrete[], concrete[][]) = %v must cover both base and nested", got)
 	}
-	body, ok := rec.Body.(*typ.Array)
-	if !ok {
-		t.Fatalf("recursive body = %T %[1]v, want array", rec.Body)
+	if _, ok := got.(*typ.Recursive); ok {
+		t.Fatalf("sequence depth growth must not fold into a recursive family: %v", got)
 	}
-	if !typ.IsRecursiveRef(body.Element, rec) {
-		t.Fatalf("recursive array element = %v, want recursive self reference %v", body.Element, rec)
+	if reverse := MergeForConvergence(nested, base); !SameConvergedFact(got, reverse) {
+		t.Fatalf("merge must be commutative: %v vs %v", got, reverse)
 	}
 }
 

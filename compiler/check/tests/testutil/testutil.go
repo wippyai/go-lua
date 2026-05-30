@@ -18,10 +18,11 @@ import (
 
 // Config holds configuration for creating a test checker.
 type Config struct {
-	Stdlib    bool
-	Manifests map[string]*io.Manifest
-	Database  *db.DB
-	Types     map[string]typ.Type
+	Stdlib       bool
+	Manifests    map[string]*io.Manifest
+	Database     *db.DB
+	Types        map[string]typ.Type
+	CheckOptions []check.Option
 }
 
 // Option configures a test checker.
@@ -41,6 +42,14 @@ func WithManifest(path string, manifest *io.Manifest) Option {
 			c.Manifests = make(map[string]*io.Manifest)
 		}
 		c.Manifests[path] = manifest
+	}
+}
+
+// WithCheckOption forwards a check.Option (e.g. check.WithCanonicalFlow) to the
+// constructed Checker, on top of the default test passes.
+func WithCheckOption(opts ...check.Option) Option {
+	return func(c *Config) {
+		c.CheckOptions = append(c.CheckOptions, opts...)
 	}
 }
 
@@ -64,59 +73,7 @@ func NewChecker(opts ...Option) *check.Checker {
 	for _, opt := range opts {
 		opt(cfg)
 	}
-
-	for path, manifest := range cfg.Manifests {
-		cfg.Database.Connect(path, manifest)
-	}
-
-	var stdlibScope *scope.State
-	globalTypes := make(map[string]typ.Type)
-
-	if cfg.Stdlib {
-		stdlibScope = scope.NewWithBuiltins()
-		for name, t := range stdlib.Library() {
-			globalTypes[name] = t
-		}
-	}
-
-	for _, manifest := range cfg.Manifests {
-		if stdlibScope == nil {
-			stdlibScope = scope.New()
-		}
-		if manifest.Export != nil {
-			globalTypes[manifest.Path] = manifest.Export
-		}
-		for name, t := range manifest.Types {
-			stdlibScope = stdlibScope.WithType(name, t)
-		}
-		for name, t := range manifest.AllGlobals() {
-			globalTypes[name] = t
-		}
-	}
-
-	for name, t := range cfg.Types {
-		if stdlibScope == nil {
-			stdlibScope = scope.New()
-		}
-		stdlibScope = stdlibScope.WithType(name, t)
-	}
-
-	var engine *core.Engine
-	if cfg.Stdlib {
-		engine = core.NewEngineWithStdlib(stdlib.EngineConfig())
-	} else {
-		engine = core.NewEngine()
-	}
-
-	return check.NewChecker(cfg.Database, check.Deps{
-		Types:       engine,
-		Stdlib:      stdlibScope,
-		GlobalTypes: globalTypes,
-		Resolver: &core.FuncResolver{
-			FieldFunc: core.Field,
-			IndexFunc: core.Index,
-		},
-	}, hooks.All()...)
+	return buildChecker(cfg)
 }
 
 // Result holds the result of a check operation.
@@ -249,6 +206,7 @@ func CheckAndExport(source, name string, opts ...Option) *ModuleResult {
 		engine = core.NewEngine()
 	}
 
+	checkOpts := append(hooks.All(), cfg.CheckOptions...)
 	checker := check.NewChecker(cfg.Database, check.Deps{
 		Types:       engine,
 		Stdlib:      stdlibScope,
@@ -257,7 +215,7 @@ func CheckAndExport(source, name string, opts ...Option) *ModuleResult {
 			FieldFunc: core.Field,
 			IndexFunc: core.Index,
 		},
-	}, hooks.All()...)
+	}, checkOpts...)
 
 	sess := checker.Check(source, name+".lua")
 	manifest := sess.ExportManifest(name)

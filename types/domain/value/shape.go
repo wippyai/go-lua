@@ -758,6 +758,31 @@ func selfSimilarToAnchor(node, anchor, root typ.Type, top bool, seen map[selfSim
 	seen[pair] = true
 
 	switch n := node.(type) {
+	case *typ.Union:
+		// A recursive position that is a union grows by accumulating members across
+		// observations (string today, string | self tomorrow). The node is the
+		// under-grown union, so every member it carries must be self-similar to some
+		// anchor-union member; the anchor may carry extra members it has not yet
+		// reached. This admits the differing-arity unions a self-embedding tower
+		// builds (the recursion edge member sits among non-recursive siblings such as
+		// a string base) while still requiring each present member to align.
+		a, ok := anchor.(*typ.Union)
+		if !ok {
+			return false
+		}
+		for _, member := range n.Members {
+			matched := false
+			for _, anchorMember := range a.Members {
+				if selfSimilarToAnchor(member, anchorMember, root, false, seen) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+		return true
 	case *typ.Record:
 		// The node is the earlier, under-grown observation, so it may carry a
 		// subset of the anchor's fields. Every field it does carry must align with
@@ -832,6 +857,16 @@ func canUseSelfEmbeddingAnchor(t typ.Type) bool {
 	t = UnwrapStructuralShape(t)
 	switch t.(type) {
 	case *typ.Union, *typ.Intersection, *typ.Recursive:
+		return false
+	case *typ.Array, *typ.Tuple:
+		// A bare sequence hosts no slot for a genuine recursive reference: its only
+		// "self-embedding" is finite depth nesting (number[] sitting inside number[][]).
+		// Folding that into a recursive family yields mu X.X[] — an infinitely-nested
+		// sequence with no element leaf, which covers no finite tower under either the
+		// join-induced order or semantic Covers, an unsound widening. Sequence growth is
+		// bounded by widening the element type, not by recursive folding. A record or
+		// map whose field/value re-introduces the anchor is a real recursive position
+		// and still folds through the default branch.
 		return false
 	default:
 		return CanSelfEmbed(t) && !typ.IsAbsentOrUnknown(t)
@@ -2051,18 +2086,6 @@ func refinesSoftContainerSlot(candidate, baseline typ.Type, seen softContainerSe
 	}
 	preferred, ok := PreferConcreteOverSoft(baseline, candidate)
 	return ok && sameValueNodeOrAcyclicEqual(preferred, candidate), ok
-}
-
-func sameRecordFrame(a, b *typ.Record) bool {
-	if !sameRecordLayout(a, b) {
-		return false
-	}
-	for i, field := range a.Fields {
-		if !typ.TypeEquals(field.Type, b.Fields[i].Type) {
-			return false
-		}
-	}
-	return true
 }
 
 func sameRecordLayout(a, b *typ.Record) bool {

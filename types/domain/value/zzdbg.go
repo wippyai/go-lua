@@ -8,6 +8,8 @@ import (
 
 var zzMTDbg = os.Getenv("ZZMT") != ""
 
+var zzFamDbg = os.Getenv("ZZFAM") != ""
+
 func zzMTlog(a, b, out typ.Type) {
 	if !zzMTDbg {
 		return

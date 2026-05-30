@@ -44,30 +44,19 @@ type Revision uint64
 // Thread-safe for concurrent access.
 type DB struct {
 	revision  uint64
-	epoch     uint64
 	interner  *Interner
 	manifests *Input[string, *io.Manifest]
 }
-
-var dbEpochCounter uint64
 
 // New creates a new database starting at revision 1.
 func New() *DB {
 	db := &DB{
 		revision: 1,
-		epoch:    atomic.AddUint64(&dbEpochCounter, 1),
 		interner: newInterner(),
 	}
 	db.manifests = NewInput[string, *io.Manifest](db)
 
 	return db
-}
-
-// Epoch returns the compilation-unique identity of this database. It scopes
-// nominal declaration identity so two independent compilations that declare a
-// same-named type do not collapse to one type through process-global interning.
-func (db *DB) Epoch() uint64 {
-	return db.epoch
 }
 
 // Revision returns the current revision number.

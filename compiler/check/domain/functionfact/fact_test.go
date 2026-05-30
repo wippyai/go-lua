@@ -518,8 +518,15 @@ func TestWidenForConvergence_SelfEmbeddingTupleParamTerminates(t *testing.T) {
 	)
 
 	fn := projectFunctionForTest(t, out)
-	if _, ok := fn.Params[0].Type.(*typ.Recursive); !ok {
-		t.Fatalf("expected recursive self-embedding upper bound, got %v", fn.Params[0].Type)
+	got := fn.Params[0].Type
+	// Soundness: the widened parameter must be a terminating upper bound that
+	// covers BOTH observed shapes — the shallow tuple and the once-nested tuple.
+	gotAV := product.FromType(got)
+	coversTuple := product.Domain.LessOrEq(product.FromType(tuple), gotAV)
+	coversNested := product.Domain.LessOrEq(product.FromType(nested), gotAV)
+	t.Logf("widened self-embedding tuple param = %v (coversTuple=%v coversNested=%v)", got, coversTuple, coversNested)
+	if !coversTuple || !coversNested {
+		t.Fatalf("widened tuple param %v does not cover both (record) and ((record)): coversTuple=%v coversNested=%v", got, coversTuple, coversNested)
 	}
 }
 

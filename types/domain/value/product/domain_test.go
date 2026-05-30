@@ -101,6 +101,13 @@ func domainSample() []AbstractValue {
 		FromType(typ.NewAlias("Tx", rec)),
 		FromType(typ.NewAlias("Ty", rec)),
 
+		// Width-differing records plus a non-record: the join-associativity hazard.
+		// {id} join {id,name} must be the optionalizing LUB {id, name?}, equal
+		// whether the non-record (nil | integer) is folded in left or right.
+		FromType(typ.NewRecord().Field("id", typ.String).Build()),
+		FromType(typ.NewRecord().Field("id", typ.String).Field("name", typ.String).Build()),
+		FromType(typ.NewOptional(typ.Integer)),
+
 		// Per-axis isolated stress points.
 		numericRange,
 		effectRows,
