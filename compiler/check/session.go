@@ -507,23 +507,69 @@ func (s *Session) rootFunctionFactsForExport() api.FunctionFacts {
 // The returned map associates each function's SymbolID with its computed refinement,
 // including IO effects (row), termination status, and conditional effects.
 // This enables importers to see side effect information for exported functions.
+//
+// The legacy interproc product records each function's refinement in the converged
+// FunctionFacts; the canonical flow records it on the per-function FuncResult
+// (FnRefinement) instead, so both sources are merged here. A symbol present in both
+// keeps the interproc-product refinement (the legacy authority); a canonical-only
+// symbol contributes its body-proven refinement.
 func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
-	if s == nil || s.Store == nil {
-		return nil
-	}
-	if s.Store.InterprocPrev == nil {
+	if s == nil {
 		return nil
 	}
 	refinements := make(map[cfg.SymbolID]*constraint.FunctionRefinement)
-	for _, key := range api.SortedGraphKeys(s.Store.InterprocPrev.Facts) {
-		facts := s.Store.InterprocPrev.Facts[key]
-		for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
-			if refinement := functionfact.Refinement(facts.FunctionFacts, sym); refinement != nil {
-				refinements[sym] = refinement
+	if s.Store != nil && s.Store.InterprocPrev != nil {
+		for _, key := range api.SortedGraphKeys(s.Store.InterprocPrev.Facts) {
+			facts := s.Store.InterprocPrev.Facts[key]
+			for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
+				if refinement := functionfact.Refinement(facts.FunctionFacts, sym); refinement != nil {
+					refinements[sym] = refinement
+				}
 			}
 		}
 	}
+	for sym, refinement := range s.canonicalRefinementsForExport() {
+		if _, ok := refinements[sym]; ok {
+			continue
+		}
+		refinements[sym] = refinement
+	}
+	if len(refinements) == 0 {
+		return nil
+	}
 	return modules.CopyRefinementsForExport(refinements)
+}
+
+// canonicalRefinementsForExport collects each exported module function's
+// body-proven refinement (FnRefinement) from its per-function FuncResult, keyed by
+// the function definition's symbol. It is the canonical-flow source of the
+// assert-style summary the legacy interproc product otherwise supplies: the
+// canonical driver records the projected refinement on the result, and the export
+// path publishes it as the manifest function summary so a cross-module importer
+// resolves the imported callee's narrowing.
+func (s *Session) canonicalRefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
+	if s == nil || s.RootResult == nil || len(s.Results) == 0 {
+		return nil
+	}
+	defs := s.RootResult.Evidence.FunctionDefinitions
+	if len(defs) == 0 {
+		return nil
+	}
+	out := make(map[cfg.SymbolID]*constraint.FunctionRefinement)
+	for _, def := range defs {
+		if def.IsLocal || def.Symbol == 0 || def.Nested.Func == nil {
+			continue
+		}
+		result := s.Results[def.Nested.Func]
+		if result == nil || result.FnRefinement == nil || result.FnRefinement.IsEmpty() {
+			continue
+		}
+		out[def.Symbol] = result.FnRefinement
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // RootGraph returns the root function's control flow graph.

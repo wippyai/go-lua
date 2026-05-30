@@ -1073,6 +1073,19 @@ func (t *Transfer) narrowByCondCheck(out flow.PointState, info *cfg.BranchInfo, 
 	if check == cfg.CheckNone {
 		return out
 	}
+	// A comparison guard (`op.type == tag`, `a ~= b`) whose CondCheck fell through to a
+	// bare truthy/falsy carries no truthiness fact about its operand: the truthiness of
+	// `a == b` says nothing about whether `a` itself is truthy. The CFG records such a
+	// comparison as CheckTruthy on the comparison's root symbol (here `op`), but no
+	// presence/type/discriminant narrower claimed it (those carry CheckNil / CheckTypeEqual
+	// / their own discriminant handling and ran before this fall-through). Narrowing the
+	// operand by truthy/falsy here would corrupt it -- on the false edge NarrowFalsy(any)
+	// pins the operand to `false?`. Decline so the operand keeps its value; the comparison
+	// is still type-checked through the ordinary expression demand.
+	if comparisonTruthyOnOperand(info.Condition, check) {
+		zprobeNarrow("condCheck.declineComparison sym=%d check=%v", sym, check)
+		return out
+	}
 	segments := t.condTestSegments(info)
 	key := symKey(sym)
 	baseAV, has := t.narrowBase(sym, out.Env[key], atExit)
@@ -1103,6 +1116,38 @@ func (t *Transfer) narrowByCondCheck(out flow.PointState, info *cfg.BranchInfo, 
 	}
 	res.Env[key] = narrowed
 	return res
+}
+
+// comparisonTruthyOnOperand reports whether the guard condition is a value comparison
+// (`a == b`, `a ~= b`, `a < b`, ...) whose resolved check is the fall-through truthy /
+// falsy, in which case the operand's truthiness is NOT constrained by the comparison's
+// result. A comparison the CFG could interpret as a presence/type guard carries
+// CheckNil / CheckNotNil / CheckTypeEqual / CheckTypeNot instead (and is narrowed
+// correctly); only the uninterpreted comparison reduces to the bare truthy/falsy that
+// would otherwise project the comparison's truthiness onto its root operand symbol. A
+// `not (a == b)` wraps the comparison in a CheckFalsy, so the inner comparison is
+// unwrapped. A non-comparison condition (a bare value / field path) returns false so the
+// ordinary truthy/falsy narrowing runs.
+func comparisonTruthyOnOperand(cond ast.Expr, check cfg.CondCheckKind) bool {
+	switch check {
+	case cfg.CheckTruthy, cfg.CheckFalsy:
+	default:
+		return false
+	}
+	expr := cond
+	if not, ok := expr.(*ast.UnaryNotOpExpr); ok {
+		expr = not.Expr
+	}
+	rel, ok := expr.(*ast.RelationalOpExpr)
+	if !ok {
+		return false
+	}
+	switch rel.Operator {
+	case "==", "~=", "<", "<=", ">", ">=":
+		return true
+	default:
+		return false
+	}
 }
 
 // narrowIndexPresenceLength records `#arr >= i` on the guarded edge when the guard

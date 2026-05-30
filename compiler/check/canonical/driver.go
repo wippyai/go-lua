@@ -1301,7 +1301,75 @@ func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, ref su
 		obs:    observation.FromFuncResult(result, nil).WithProofValues().TypeOf,
 		ctx:    result.QueryContext,
 	}
+	// The converged parameter-narrowing effects (an assert/guard wrapper proving a
+	// presence/type check on every normal return) and the never-returns-normally
+	// fact ARE the function's behavioral refinement. Project them into the legacy
+	// FunctionRefinement vocabulary so the module export can publish the same
+	// assert-style summary the legacy interproc projection does, letting a
+	// cross-module importer narrow the wrapped argument (and its correlated
+	// (value, err) siblings) by the imported callee's proven refinement.
+	result.FnRefinement = refinementFromParamNarrows(prog.paramNarrows[ref], prog.noReturn[ref])
 	return result
+}
+
+// refinementFromParamNarrows projects a function's body-proven parameter-narrowing
+// effects and never-returns fact into a constraint.FunctionRefinement. Each
+// non-equality, non-condition effect proving parameter Param satisfies a
+// presence/type check on every normal return becomes an OnReturn constraint rooted
+// at the parameter placeholder ($Param) along the effect's field path — the
+// relative, assert-style refinement an importer substitutes with the actual
+// argument path. A parameter-equality or condition-argument effect carries no
+// placeholder-rooted constraint expressible in the OnReturn vocabulary, so it is
+// projected as the narrowing-only effect it is (left to the call-graph-local
+// ParamNarrow machinery) rather than a fabricated constraint. Terminates carries
+// the proven never-returns-normally fact. Returns nil when nothing is proven.
+func refinementFromParamNarrows(narrows []transfer.ParamNarrow, terminates bool) *constraint.FunctionRefinement {
+	var onReturn []constraint.Constraint
+	for _, e := range narrows {
+		if e.EqParam >= 0 || e.CondArg || e.Param < 0 {
+			continue
+		}
+		c, ok := paramNarrowConstraint(e)
+		if !ok {
+			continue
+		}
+		onReturn = append(onReturn, c)
+	}
+	if len(onReturn) == 0 && !terminates {
+		return nil
+	}
+	refinement := &constraint.FunctionRefinement{Terminates: terminates}
+	if len(onReturn) > 0 {
+		refinement.OnReturn = constraint.FromConstraints(onReturn...)
+	}
+	return refinement
+}
+
+// paramNarrowConstraint maps one parameter-narrowing effect to the OnReturn
+// constraint it proves: a presence check (CheckNil/CheckNotNil/CheckTruthy/
+// CheckFalsy) becomes the matching nil/not-nil/falsy/truthy constraint. The
+// constraint is rooted at the parameter placeholder $Param extended by the effect's
+// field-path segments, the relative form the importer substitutes with the argument
+// path. An effect whose check has no constraint vocabulary (a type-equality check,
+// whose narrowing the importer applies through the call-graph-local path rather than
+// a published constraint) yields ok=false.
+func paramNarrowConstraint(e transfer.ParamNarrow) (constraint.Constraint, bool) {
+	path := constraint.ParamPath(e.Param)
+	for _, seg := range e.Segments {
+		path = path.Append(seg)
+	}
+	switch e.Check {
+	case cfg.CheckNil:
+		return constraint.IsNil{Path: path}, true
+	case cfg.CheckFalsy:
+		return constraint.Falsy{Path: path}, true
+	case cfg.CheckNotNil:
+		return constraint.NotNil{Path: path}, true
+	case cfg.CheckTruthy:
+		return constraint.Truthy{Path: path}, true
+	default:
+		return nil, false
+	}
 }
 
 // buildLiteralSignatures resolves the declared signature of every function literal
@@ -3415,8 +3483,10 @@ func (ct callTyper) calleeSignature(ident *ast.IdentExpr) typ.Type {
 // does — an identifier callee through the module function-binding map, a field-path
 // callee (M.f) through the field-function registry, and a method/static name through
 // byName — so a wrapper called by name, field, or method narrows its arguments. A
-// callee that does not resolve to a module function (a stdlib or imported call)
-// yields none.
+// callee that does not resolve to a module function is an imported callee: its
+// body-proven refinement rides its imported signature (the manifest function
+// summary the module export published), so the effects are recovered from that
+// signature's FunctionRefinement instead.
 func (ct callTyper) ParamNarrows(call *ast.FuncCallExpr) []transfer.ParamNarrow {
 	if call == nil {
 		return nil
@@ -3425,11 +3495,80 @@ func (ct callTyper) ParamNarrows(call *ast.FuncCallExpr) []transfer.ParamNarrow 
 	if prog == nil {
 		return nil
 	}
-	ref, ok := ct.resolveCalleeRef(call, prog)
-	if !ok {
+	if ref, ok := ct.resolveCalleeRef(call, prog); ok {
+		return prog.paramNarrows[ref]
+	}
+	return ct.importedParamNarrows(call)
+}
+
+// importedParamNarrows recovers the parameter-narrowing effects an imported callee
+// proves from its resolved signature's FunctionRefinement. The exporting module
+// published the body-proven assert/guard refinement as the callee's OnReturn
+// condition (an isnil/notnil/falsy/truthy/hastype constraint rooted at a parameter
+// placeholder); reversing the projection here gives the importer the same
+// ParamNarrow effects a module-local wrapper carries, so a `test.is_nil(err)` call
+// narrows its argument (and its correlated (value, err) siblings) exactly as the
+// local case does. A callee whose signature carries no refinement yields none.
+func (ct callTyper) importedParamNarrows(call *ast.FuncCallExpr) []transfer.ParamNarrow {
+	sig := ct.capturedFieldCalleeSignature(call.Func)
+	if sig == nil {
 		return nil
 	}
-	return prog.paramNarrows[ref]
+	fn := unwrap.Function(sig)
+	if fn == nil || fn.Refinement == nil {
+		return nil
+	}
+	refinement, ok := fn.Refinement.(*constraint.FunctionRefinement)
+	if !ok || refinement == nil || !refinement.OnReturn.HasConstraints() {
+		return nil
+	}
+	var out []transfer.ParamNarrow
+	for _, c := range refinement.OnReturn.MustConstraints() {
+		if e, ok := paramNarrowFromConstraint(c); ok {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// paramNarrowFromConstraint reverses paramNarrowConstraint: a placeholder-rooted
+// OnReturn constraint becomes the parameter-narrowing effect it encodes. The
+// placeholder index is the parameter; the constraint's remaining path segments are
+// the proven field path; the constraint kind is the proven check. A constraint not
+// rooted at a parameter placeholder (a constraint on a non-parameter value, or a
+// vocabulary the call-site narrowing cannot apply) yields ok=false.
+func paramNarrowFromConstraint(c constraint.Constraint) (transfer.ParamNarrow, bool) {
+	path, check, ok := constraintPathAndCheck(c)
+	if !ok || !path.IsPlaceholder() {
+		return transfer.ParamNarrow{}, false
+	}
+	idx := path.PlaceholderIndex()
+	if idx < 0 {
+		return transfer.ParamNarrow{}, false
+	}
+	var segs []constraint.Segment
+	if len(path.Segments) > 0 {
+		segs = append(segs, path.Segments...)
+	}
+	return transfer.ParamNarrow{Param: idx, Segments: segs, Check: check, EqParam: -1}, true
+}
+
+// constraintPathAndCheck classifies one OnReturn constraint into its path and the
+// CondCheckKind it proves, the inverse of paramNarrowConstraint's mapping. A
+// constraint kind with no call-site narrowing vocabulary yields ok=false.
+func constraintPathAndCheck(c constraint.Constraint) (constraint.Path, cfg.CondCheckKind, bool) {
+	switch v := c.(type) {
+	case constraint.IsNil:
+		return v.Path, cfg.CheckNil, true
+	case constraint.Falsy:
+		return v.Path, cfg.CheckFalsy, true
+	case constraint.NotNil:
+		return v.Path, cfg.CheckNotNil, true
+	case constraint.Truthy:
+		return v.Path, cfg.CheckTruthy, true
+	default:
+		return constraint.Path{}, cfg.CheckNone, false
+	}
 }
 
 // IsNoReturn reports whether call's callee is a module function the program proved
