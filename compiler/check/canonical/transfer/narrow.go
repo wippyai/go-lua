@@ -81,7 +81,23 @@ var fieldResolver = querycore.Resolver()
 // declared union carries every variant, so a per-edge filter keeps the consistent
 // one(s) and the merge-LUB rebuilds A|B (narrowing never escapes its guard). A
 // symbol with no declared type narrows over its tracked Env value as before.
-func (t *Transfer) narrowBase(sym cfg.SymbolID, av product.AbstractValue) (product.AbstractValue, bool) {
+//
+// preferEnv overrides the declared-type base with the tracked Env value when one is
+// present. A ScopeExit re-narrowing (the then/else-exit guard a post-`if` merge
+// reaches) runs AFTER the branch already narrowed the value on the entering edge, so
+// the Env carries the precise branch refinement (`{ok:true,value:Action}` from a
+// `not r.ok` guard). Resetting that to the declared union there would discard the
+// branch's work — the more so because the ScopeExit guard lost the original field
+// path (it carries only the root symbol + a bare check), so a declared-base bare-
+// symbol narrowing widens the refined variant back to the full union. Narrowing the
+// already-refined Env value instead only ever shrinks it further (sound), and the
+// constructor-singleton variant recovery the declared base provides has already run
+// at the fresh branch, whose full condition AST is intact. The declared base is
+// still used when the Env carries no tracked value (the symbol is unrefined here).
+func (t *Transfer) narrowBase(sym cfg.SymbolID, av product.AbstractValue, preferEnv bool) (product.AbstractValue, bool) {
+	if preferEnv && !av.IsZero() {
+		return av, true
+	}
 	if declared, ok := t.declaredTypes[sym]; ok && declared != nil && !typ.IsAbsentOrUnknown(declared) {
 		return product.FromType(declared), true
 	}
@@ -120,22 +136,26 @@ func (t *Transfer) NarrowEdge(g *cfg.Graph, pred, succ cfg.Point, out flow.Point
 	if out.Num != nil && out.Num.IsUnsat() {
 		return out
 	}
+	atExit := false
 	info, ok := g.Info(pred).(*cfg.BranchInfo)
 	if !ok || info == nil {
 		info = exitGuard(g, pred)
 		if info == nil {
 			return out
 		}
+		// A ScopeExit guard re-narrows a state the entering branch already refined; it
+		// narrows over the tracked Env value rather than resetting to the declared type.
+		atExit = true
 	}
 	taken, known := g.EdgeCond(pred, succ)
 	if !known {
 		return out
 	}
-	zprobeNarrow("NarrowEdge pred=%v succ=%v taken=%v known=%v", pred, succ, taken, known)
-	return t.narrowEdgeInner(out, info, taken)
+	zprobeNarrow("NarrowEdge pred=%v succ=%v taken=%v known=%v atExit=%v", pred, succ, taken, known, atExit)
+	return t.narrowEdgeInner(out, info, taken, atExit)
 }
 
-func (t *Transfer) narrowEdgeInner(out flow.PointState, info *cfg.BranchInfo, taken bool) flow.PointState {
+func (t *Transfer) narrowEdgeInner(out flow.PointState, info *cfg.BranchInfo, taken, atExit bool) flow.PointState {
 	zprobeNarrow("edge taken=%v condVar=%q check=%v hasCond=%v cond=%T", taken, info.CondVar, info.CondCheck.Kind, info.Condition != nil, info.Condition)
 	// A multi-return error guard narrows the correlated value siblings independently
 	// of the tested error symbol's own refinement, so it composes with whichever base
@@ -158,7 +178,7 @@ func (t *Transfer) narrowEdgeInner(out flow.PointState, info *cfg.BranchInfo, ta
 		return narrowed
 	}
 	zprobeNarrow("  -> condCheck")
-	return t.narrowByCondCheck(out, info, taken)
+	return t.narrowByCondCheck(out, info, taken, atExit)
 }
 
 // narrowBySiblingNil strips nil from the value siblings of a multi-return error
@@ -309,7 +329,7 @@ func (t *Transfer) narrowOperand(state flow.PointState, og operandGuard) (flow.P
 		CondCheck:  check,
 		Condition:  og.expr,
 	}
-	narrowed := t.narrowEdgeInner(state, leaf, og.truthy)
+	narrowed := t.narrowEdgeInner(state, leaf, og.truthy, false)
 	if statesEqualForNarrow(narrowed, state) {
 		return state, false
 	}
@@ -617,9 +637,9 @@ func (t *Transfer) narrowByTypeCheck(out flow.PointState, info *cfg.BranchInfo, 
 // narrows the FIELD slot inside the base symbol's record value, leaving the rest
 // of the record untouched, so a read of that field path observes the refinement
 // while the base symbol stays its full type.
-func (t *Transfer) narrowByCondCheck(out flow.PointState, info *cfg.BranchInfo, taken bool) flow.PointState {
+func (t *Transfer) narrowByCondCheck(out flow.PointState, info *cfg.BranchInfo, taken, atExit bool) flow.PointState {
 	sym := t.condTestSymbol(info)
-	zprobeNarrow("condCheck.enter condVar=%q check=%v condSym=%d resolvedSym=%d", info.CondVar, info.CondCheck.Kind, info.CondSymbol, sym)
+	zprobeNarrow("condCheck.enter condVar=%q check=%v condSym=%d resolvedSym=%d atExit=%v", info.CondVar, info.CondCheck.Kind, info.CondSymbol, sym, atExit)
 	if sym == 0 {
 		return out
 	}
@@ -629,7 +649,7 @@ func (t *Transfer) narrowByCondCheck(out flow.PointState, info *cfg.BranchInfo, 
 	}
 	segments := t.condTestSegments(info)
 	key := symKey(sym)
-	baseAV, has := t.narrowBase(sym, out.Env[key])
+	baseAV, has := t.narrowBase(sym, out.Env[key], atExit)
 
 	cond := condForCheck(sym, segments, info.CondVar, check, info.CondCheck.TypeName)
 	res := cloneForNarrow(out)
@@ -1191,7 +1211,9 @@ func (t *Transfer) narrowByDiscriminant(out flow.PointState, info *cfg.BranchInf
 	}
 	key := symKey(g.sym)
 	av := out.Env[key]
-	baseAV, has := t.narrowBase(g.sym, av)
+	// A discriminant guard only fires from a fresh branch (it reads info.Condition,
+	// which a ScopeExit guard drops), so the declared-base variant recovery applies.
+	baseAV, has := t.narrowBase(g.sym, av, false)
 	if !has {
 		return out, false
 	}
@@ -1444,7 +1466,7 @@ func attrRootIdent(attr *ast.AttrGetExpr) *ast.IdentExpr {
 // flow. An unrefined value leaves out unchanged.
 func (t *Transfer) narrowAssertPath(out *flow.PointState, sym cfg.SymbolID, segments []constraint.Segment, check cfg.CondCheckKind) (dead bool) {
 	key := symKey(sym)
-	baseAV, has := t.narrowBase(sym, out.Env[key])
+	baseAV, has := t.narrowBase(sym, out.Env[key], false)
 	if !has {
 		return false
 	}
@@ -1963,7 +1985,7 @@ func (t *Transfer) applyParamCondNarrow(out *flow.PointState, arg ast.Expr, prov
 	leaf.CondVar = condVar
 	leaf.CondCheck = check
 	leaf.CondSymbol = t.condRootSymbol(arg, condVar)
-	narrowed := t.narrowEdgeInner(*out, leaf, wantTruthy)
+	narrowed := t.narrowEdgeInner(*out, leaf, wantTruthy, false)
 	out.Env = narrowed.Env
 	out.Cond = narrowed.Cond
 }
@@ -1982,7 +2004,7 @@ func (t *Transfer) applyParamEqNarrow(out *flow.PointState, call *ast.FuncCallEx
 	if !ok || len(segs) != 0 {
 		return
 	}
-	targetAV, has := t.narrowBase(targetSym, out.Env[symKey(targetSym)])
+	targetAV, has := t.narrowBase(targetSym, out.Env[symKey(targetSym)], false)
 	if !has {
 		return
 	}
