@@ -772,15 +772,7 @@ func (t *Transfer) applyGenericFor(
 		return
 	}
 	exprType := func(e ast.Expr) typ.Type {
-		if e == nil {
-			return typ.Unknown
-		}
-		if av, ok := t.evalExpr(out, e, demand); ok && !av.IsZero() {
-			if pt := av.ProjectValue(); pt != nil && !typ.IsUnknown(pt) {
-				return pt
-			}
-		}
-		return typ.Unknown
+		return t.resolveExprType(out, e, demand)
 	}
 	varTypes, ok := t.callTyper.IterVars(iterCall, len(info.Targets), exprType)
 	if !ok || len(varTypes) == 0 {
@@ -905,17 +897,10 @@ func (t *Transfer) evalCall(
 	// exprType resolves an expression against the live Env for the driver's callee/
 	// receiver resolution (a function-valued local, a tracked receiver record). It
 	// returns the value-domain unknown when the transfer does not track the value, so
-	// the driver falls back to its module-wide signatures and globals.
+	// the driver falls back to its module-wide signatures and globals; a read of an
+	// unannotated parameter resolves to gradual `any` (a genuinely-gradual source).
 	exprType := func(e ast.Expr) typ.Type {
-		if e == nil {
-			return typ.Unknown
-		}
-		if av, ok := t.evalExpr(out, e, demand); ok && !av.IsZero() {
-			if pt := av.ProjectValue(); pt != nil && !typ.IsUnknown(pt) {
-				return pt
-			}
-		}
-		return typ.Unknown
+		return t.resolveExprType(out, e, demand)
 	}
 	returns, ok := t.callTyper.CallReturns(call, argTypes, exprType)
 	if !ok || len(returns) == 0 {
@@ -1288,6 +1273,35 @@ func (t *Transfer) operandType(
 		}
 	}
 	return nil
+}
+
+// resolveExprType resolves an expression's value type against the live Env for the
+// driver's callee/receiver/iterator-source resolution. It projects a determined
+// value, and otherwise falls back to gradual `any` for a read of an unannotated
+// parameter (the same gradual-source projection operandType applies): an
+// unannotated parameter is a genuinely-gradual source, so a callee/iterator over it
+// is gradual `any`, not strict unknown. It returns the value-domain unknown when no
+// value resolves and the expression is not a gradual-parameter read, so the driver
+// falls back to its module-wide signatures and globals.
+func (t *Transfer) resolveExprType(
+	out *flow.PointState,
+	e ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+) typ.Type {
+	if e == nil {
+		return typ.Unknown
+	}
+	if av, ok := t.evalExpr(out, e, demand); ok && !av.IsZero() {
+		if pt := av.ProjectValue(); pt != nil && !typ.IsUnknown(pt) {
+			return pt
+		}
+	}
+	if ident, ok := e.(*ast.IdentExpr); ok {
+		if sym := t.symbolOf(ident); sym != 0 && t.unannotatedParam[sym] {
+			return typ.Any
+		}
+	}
+	return typ.Unknown
 }
 
 // applyNumeric updates the relational numeric component for an assignment to the

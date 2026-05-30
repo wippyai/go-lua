@@ -410,7 +410,7 @@ func (s *convergenceWidenState) widen(t typ.Type) typ.Type {
 			if folded, ok := FoldSelfEmbedding(out, out); ok {
 				out = folded
 			} else {
-				out = subtype.WidenForInference(out)
+				out = subtype.WidenReturnTowerOnly(out)
 			}
 		}
 	}
@@ -681,7 +681,7 @@ func (s *convergenceWidenState) widenFunction(fn *typ.Function) *typ.Function {
 			return out
 		}
 	}
-	if out, ok := subtype.WidenForInference(widened).(*typ.Function); ok {
+	if out, ok := subtype.WidenReturnTowerOnly(widened).(*typ.Function); ok {
 		s.seen[fn] = out
 		return out
 	}

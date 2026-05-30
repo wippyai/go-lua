@@ -2417,6 +2417,16 @@ func (ct callTyper) CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exp
 		if callee == nil || typ.IsAbsentOrUnknown(callee) {
 			return nil, false
 		}
+		// A gradual-top `any` callee (a call/field-path through an opaque external such
+		// as a `local m = require("unresolved")` alias, or any other gradual `any`
+		// value) yields a single gradual `any` result. `any` is the gradual escape
+		// hatch: a call through it is permissive, not strict unknown, so the result
+		// stays gradual rather than collapsing to unknown and rejecting a later use of
+		// the result. This mirrors how a method call on an `any` receiver resolves to
+		// `any` through the pipeline below.
+		if typ.IsAny(callee) {
+			return []typ.Type{typ.Any}, true
+		}
 		fn := unwrap.Function(callee)
 		if fn == nil {
 			// A callee typed as an already-applied generic alias is an Instantiated,
@@ -2491,6 +2501,23 @@ func (ct callTyper) IterVars(iter *ast.FuncCallExpr, count int, exprType func(as
 		return nil, false
 	}
 	source := exprType(iter.Args[srcIdx])
+	// A gradual `any` source (an unannotated parameter, an :: any value) iterated by
+	// pairs is a uniform gradual keyed container: every key and value is gradual `any`.
+	// The core key/value helpers return nil for `any` and isKeyedContainer rejects it,
+	// so without this the key/value loop variables collapse to strict unknown and a
+	// `key`/`v` use is wrongly rejected. Indexed (ipairs) iteration over `any` is NOT
+	// special-cased: it falls through to the general path below, where the integer
+	// index var is set and the element var resolves through core.ElementType (nil for
+	// `any`, i.e. left untyped) — the same sound projection an explicitly-`any` source
+	// already produced, which keeps the element var from over-typing into the
+	// equality-discriminant narrowing the loop body may run on it.
+	if typ.IsAny(source) && kind == effect.IterateKeyed {
+		out := make([]typ.Type, count)
+		for i := range out {
+			out[i] = typ.Any
+		}
+		return out, true
+	}
 	if source == nil || typ.IsAbsentOrUnknown(source) {
 		return nil, false
 	}
