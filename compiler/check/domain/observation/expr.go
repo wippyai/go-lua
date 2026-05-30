@@ -624,7 +624,11 @@ func (p Projector) attrType(expr *ast.AttrGetExpr, point cfg.Point) typ.Type {
 }
 
 func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Expr, key ast.Expr, point cfg.Point) typ.Type {
-	if t == nil || p.cfg.Solution == nil {
+	if t == nil {
+		return t
+	}
+	flowProof := p.indexReadFlow()
+	if flowProof == nil {
 		return t
 	}
 	if refined, ok := indexread.Refine(indexread.Query{
@@ -633,7 +637,7 @@ func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Exp
 		Result:    t,
 		Object:    obj,
 		Key:       key,
-		Flow:      p.cfg.Solution,
+		Flow:      flowProof,
 		PathOf: func(expr ast.Expr) constraint.Path {
 			return p.pathOfExpr(expr, point)
 		},
@@ -641,6 +645,55 @@ func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Exp
 		return refined
 	}
 	return t
+}
+
+// indexReadFlow returns the index-read proof surface for the current flow. The
+// path-sensitive Solution supplies it directly. A Solution-less flow (the
+// canonical flow) exposes its key-presence proof through Facts: when Facts holds
+// the KeyOf surface, a Facts-backed adapter answers HasKeyOf from the converged
+// per-point condition so a `container[k]` read with a held KeyOf strips the
+// optional on the diagnostic path too. Length-based refinements over the
+// canonical assignment source flow through refineFactsLengthIndex, so the adapter
+// declines them. Returns nil when neither proof is available.
+func (p Projector) indexReadFlow() indexread.Flow {
+	if p.cfg.Solution != nil {
+		return p.cfg.Solution
+	}
+	if kf, ok := p.cfg.Facts.(keyOfFacts); ok {
+		return factsIndexReadFlow{keyOf: kf}
+	}
+	return nil
+}
+
+// keyOfFacts is the key-presence proof a Solution-less flow exposes: HasKeyOf
+// reports whether a KeyOf(table, key) fact holds at point p, i.e. the key was
+// drawn from `pairs(table)` over the same container so the lookup is present.
+type keyOfFacts interface {
+	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
+}
+
+// factsIndexReadFlow adapts the canonical Facts key-presence proof to the
+// indexread.Flow surface. Only HasKeyOf is answered; the length-relative
+// refinements are served elsewhere on the canonical path, so the bound queries
+// decline (returning no proof keeps the read soundly optional).
+type factsIndexReadFlow struct {
+	keyOf keyOfFacts
+}
+
+func (f factsIndexReadFlow) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
+	return f.keyOf.HasKeyOf(p, tablePath, keyPath)
+}
+
+func (f factsIndexReadFlow) BoundsAt(cfg.Point, string) (int64, int64, bool) {
+	return 0, 0, false
+}
+
+func (f factsIndexReadFlow) ArrayLenBoundWithOffsetAt(cfg.Point, string) (string, int64, bool) {
+	return "", 0, false
+}
+
+func (f factsIndexReadFlow) LengthBoundsAt(cfg.Point, constraint.Path) (int64, int64, bool) {
+	return 0, 0, false
 }
 
 func (p Projector) tableType(expr *ast.TableExpr, point cfg.Point, expected typ.Type) typ.Type {

@@ -134,6 +134,16 @@ type CallTyper interface {
 	// variable is provably a key of that source container. A non-keyed iterator
 	// (ipairs-style indexed, or an unrecognized form) yields false.
 	KeyedIterSource(iter *ast.FuncCallExpr) (ast.Expr, bool)
+	// IndexedIterKeyProvenance reports whether iter is an indexed (ipairs-style)
+	// iteration over an array whose elements are provably keys of a container, and if
+	// so returns that container's path. It holds when the iterated array is the
+	// single-assignment result of a call to a structurally recognized keys-collector
+	// (a function that returns the keys of one of its parameters): each value iterated
+	// out of that array is a key of the actual argument the caller passed for that
+	// parameter. The transfer conjoins KeyOf(container, valueVar) into the loop body,
+	// so a `container[valueVar]` read inside is present. A source that is not such a
+	// keys-collector result yields false, so its read stays optional.
+	IndexedIterKeyProvenance(iter *ast.FuncCallExpr) (constraint.Path, bool)
 	// ParamNarrows resolves the callee's parameter-narrowing effects: the
 	// presence/truthy refinements the callee's body proves about its parameters on
 	// every normal return (a wrapper around assert / `if x == nil then error()`).
@@ -924,6 +934,7 @@ func (t *Transfer) applyGenericFor(
 		}
 	}
 	t.seedKeyedIterKeyOf(out, info, iterCall)
+	t.seedIndexedIterKeyOf(out, info, iterCall)
 }
 
 // seedKeyedIterKeyOf records the key-presence fact a keyed (pairs-style) iteration
@@ -957,6 +968,47 @@ func (t *Transfer) seedKeyedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo
 	// entry (the lattice Bottom FalseCondition, or an empty TrueCondition) becomes the
 	// bare KeyOf so the fact holds unconditionally inside the loop body; And short-
 	// circuits FalseCondition to FalseCondition, which would drop the fact.
+	if out.Cond.IsFalse() || out.Cond.IsTrue() {
+		out.Cond = keyOf
+	} else {
+		out.Cond = constraint.And(out.Cond, keyOf)
+	}
+}
+
+// seedIndexedIterKeyOf records the interprocedural key-presence fact an indexed
+// (ipairs-style) iteration establishes when the iterated array provably holds keys
+// of a container: the value variable `v` of `for _, v in ipairs(names)` is a key of
+// that container when `names` is the result of a keys-collector call over it
+// (`local names = sorted_keys(c)`). It conjoins constraint.KeyOf{Table: container,
+// Key: v} into the body-entry condition, the same fact a direct keyed iteration
+// produces, so a `c[v]` read inside the loop strips the optional.
+//
+// The provenance is resolved by the CallTyper's IndexedIterKeyProvenance, which
+// holds only for a structurally recognized keys-collector result at its keys return
+// slot, so an arbitrary indexed iteration receives no KeyOf and its read stays
+// soundly optional. The value variable is the second loop target (the `v` of
+// `for _, v`), or the only target when the loop binds one variable.
+func (t *Transfer) seedIndexedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo, iterCall *ast.FuncCallExpr) {
+	if t.callTyper == nil {
+		return
+	}
+	tablePath, ok := t.callTyper.IndexedIterKeyProvenance(iterCall)
+	if !ok || tablePath.IsEmpty() {
+		return
+	}
+	valueIdx := 1
+	if len(info.Targets) == 1 {
+		valueIdx = 0
+	}
+	if valueIdx >= len(info.Targets) {
+		return
+	}
+	valueTarget := info.Targets[valueIdx]
+	if valueTarget.Kind != cfg.TargetIdent || valueTarget.Symbol == 0 {
+		return
+	}
+	keyPath := constraint.NewPath(valueTarget.Symbol, valueTarget.Name)
+	keyOf := constraint.FromConstraints(constraint.KeyOf{Table: tablePath, Key: keyPath})
 	if out.Cond.IsFalse() || out.Cond.IsTrue() {
 		out.Cond = keyOf
 	} else {

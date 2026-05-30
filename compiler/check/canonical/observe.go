@@ -479,6 +479,62 @@ func (f *canonicalFacts) LengthLowerBoundAt(p cfg.Point, sym cfg.SymbolID) (int6
 	return lower, ok
 }
 
+// HasKeyOf reports whether a KeyOf(tablePath, keyPath) fact holds in the in-state
+// condition of point p: the key was drawn from `pairs(tablePath)` over the same
+// container, so `tablePath[keyPath]` reads a present value. It is the diagnostic
+// (Solution-less) counterpart of the transfer's seedKeyedIterKeyOf consumption, so
+// an index-read diagnostic over a keyed-iteration key strips the optional the same
+// way the transfer slot does.
+//
+// The canonical Cond is a fact accumulator that lands two facts holding together
+// (here NotNil(k) and KeyOf(container, k) on a keyed-iteration body edge) in
+// SEPARATE single-fact disjuncts, so presence of the EXACT (table, key) pair in
+// ANY disjunct is the sound test rather than a strict all-disjuncts conjunction. A
+// KeyOf is produced ONLY by seedKeyedIterKeyOf at the keyed `pairs` binding that
+// introduces that specific key symbol, so a key from a different container, an
+// arbitrary/literal key, or a read outside the loop never matches the pair. Paths
+// match by symbol/segment identity, version-insensitively: the producer keys the
+// fact by bare symbol (Version 0) while a diagnostic-side path is version-bound, so
+// equating the bare identity (the same symbol the producer keyed) is required.
+func (f *canonicalFacts) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
+	cond := f.inState(p).Cond
+	if !cond.HasConstraints() || cond.IsFalse() {
+		return false
+	}
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		for _, c := range cond.DisjunctConstraints(i) {
+			ko, ok := c.(constraint.KeyOf)
+			if ok && pathIdentEqual(ko.Table, tablePath) && pathIdentEqual(ko.Key, keyPath) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pathIdentEqual compares two paths by symbol/segment identity, ignoring the SSA
+// version. The KeyOf producer keys its fact by the bare symbol (Version 0) while
+// the diagnostic-side path is bound to the version visible at the read point, so a
+// version-sensitive Path.Equal would never match a sound key-presence pair.
+func pathIdentEqual(a, b constraint.Path) bool {
+	if a.Symbol != 0 || b.Symbol != 0 {
+		if a.Symbol != b.Symbol {
+			return false
+		}
+	} else if a.Root != b.Root {
+		return false
+	}
+	if len(a.Segments) != len(b.Segments) {
+		return false
+	}
+	for i := range a.Segments {
+		if a.Segments[i] != b.Segments[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // returnSynth is the api.Synth the WithReturn / WithExhaustiveness passes read. It
 // is a facade over the two real components of the observation surface: the
 // driver's annotation resolver (declared type/return resolution) and the canonical

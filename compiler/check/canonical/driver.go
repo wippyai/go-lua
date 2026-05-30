@@ -35,12 +35,15 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/cfg/extraction"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/canonical/equation"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
+	"github.com/wippyai/go-lua/compiler/check/domain/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
+	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	checkphase "github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -1869,6 +1872,17 @@ type program struct {
 	// binds, the snapshot the post-solve recompute compares against to decide whether
 	// the converged per-return types proved a new correlation and a re-solve is needed.
 	siblingNils map[summary.FuncRef][]transfer.SiblingNilBind
+
+	// keysCollectors records, for each function that provably collects the keys of one
+	// of its parameters (`local keys = {}; for k in pairs(param) do table.insert(keys, k)
+	// end; return keys`), which parameter the returned keys table comes from and which
+	// return slot carries it. It is detected STRUCTURALLY (keyscoll.DetectKeysCollector,
+	// the pattern recognizer — not a name match) once per function at program build,
+	// where the function's own evidence is available. A caller reads the callee's entry
+	// to instantiate a key-presence fact: a value iterated out of that returned keys
+	// table is provably a key of the actual argument the caller passed for that
+	// parameter, so a `container[name]` read with that key is present.
+	keysCollectors map[summary.FuncRef]*keyscoll.KeysCollectorInfo
 }
 
 func (p *program) Graph(ref summary.FuncRef) *cfg.Graph { return p.graphs[ref] }
@@ -1950,6 +1964,7 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph) *p
 		noReturn:       make(map[summary.FuncRef]bool),
 		inferredParams: make(map[summary.FuncRef]map[int]typ.Type),
 		declaredTypes:  make(map[summary.FuncRef]map[cfg.SymbolID]typ.Type),
+		keysCollectors: make(map[summary.FuncRef]*keyscoll.KeysCollectorInfo),
 	}
 
 	// Phase 1: BFS the hierarchy. Each function's body may define nested
@@ -2581,6 +2596,13 @@ func (d *Driver) addFunction(sess api.AnalysisSession, p *program, g *cfg.Graph)
 	}
 	if fn := g.Func(); fn != nil {
 		p.funcExprs[ref] = fn
+	}
+	// A function whose body is the structural keys-collector pattern (creates a
+	// table, iterates a parameter with pairs, inserts each key, returns the table)
+	// carries a keys-of-parameter provenance on its returned slot. The recognizer is
+	// purely structural; the function's own evidence is available here.
+	if info := keyscoll.DetectKeysCollector(g, evidence); info != nil {
+		p.keysCollectors[ref] = info
 	}
 	p.refs = append(p.refs, ref)
 	return ref
@@ -3628,6 +3650,117 @@ func (ct callTyper) KeyedIterSource(iter *ast.FuncCallExpr) (ast.Expr, bool) {
 		return nil, false
 	}
 	return iter.Args[srcIdx], true
+}
+
+// IndexedIterKeyProvenance reports whether iter is an indexed (ipairs-style)
+// iteration over an array whose elements are PROVABLY keys of a container, and if
+// so returns that container's path. It closes the interprocedural key-presence
+// chain: a local `names = sorted_keys(c)` binds `names` to the keys table a
+// keys-collector function returns from its parameter, so each `name` iterated out
+// of `names` is a key of the actual argument `c`. The transfer emits KeyOf(c, name)
+// into the loop body, so a `c[name]` read inside is present.
+//
+// The provenance is sound only when the iterated source is the SINGLE-assignment
+// result of a call to a function the structural keys-collector recognizer accepts
+// (keyscoll.DetectKeysCollector), at that function's keys return slot. A source
+// assigned from anything else (a literal, an arbitrary function, a reassigned
+// local) yields no provenance, so its read stays optional.
+func (ct callTyper) IndexedIterKeyProvenance(iter *ast.FuncCallExpr) (constraint.Path, bool) {
+	if iter == nil || iter.Method != "" || ct.g == nil {
+		return constraint.Path{}, false
+	}
+	kind, srcIdx, ok := ct.iteratorKind(iter)
+	if !ok || kind != effect.IterateIndexed || srcIdx < 0 || srcIdx >= len(iter.Args) {
+		return constraint.Path{}, false
+	}
+	srcIdent, ok := iter.Args[srcIdx].(*ast.IdentExpr)
+	if !ok {
+		return constraint.Path{}, false
+	}
+	bindings := ct.bindings()
+	if bindings == nil {
+		return constraint.Path{}, false
+	}
+	srcSym, ok := bindings.SymbolOf(srcIdent)
+	if !ok || srcSym == 0 {
+		return constraint.Path{}, false
+	}
+	prog := ct.d.activeProgram
+	if prog == nil {
+		return constraint.Path{}, false
+	}
+	// The source array must be assigned EXACTLY ONCE, and that single assignment
+	// must be a call to a keys-collector at its keys return slot. A symbol assigned at
+	// more than one point (a reassignment from any source) carries no single sound
+	// provenance, so it is declined: the iterated array might hold an arbitrary value
+	// the later assignment introduced.
+	assignCount := 0
+	var collectorPath constraint.Path
+	var collectorFound bool
+	ct.g.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if info == nil {
+			return
+		}
+		idx, retIndex, callInfo := assignTargetCall(info, srcSym)
+		if idx < 0 {
+			return
+		}
+		assignCount++
+		if callInfo == nil || callInfo.Call == nil {
+			return
+		}
+		ref, ok := ct.resolveCalleeRef(callInfo.Call, prog)
+		if !ok {
+			return
+		}
+		kc := prog.keysCollectors[ref]
+		if kc == nil || kc.ReturnIndex != retIndex {
+			return
+		}
+		path, pok := ct.argContainerPath(callsite.RuntimeArgAt(callInfo, kc.ParamIndex))
+		if !pok {
+			return
+		}
+		collectorPath = path
+		collectorFound = true
+	})
+	if assignCount != 1 || !collectorFound {
+		return constraint.Path{}, false
+	}
+	return collectorPath, true
+}
+
+// assignTargetCall resolves the call source producing the assignment target bound
+// to symbol sym, returning that target's index, its return slot, and the source
+// call. A target not bound to sym yields index -1; a target bound to sym whose
+// source is not a call yields a nil call (the assignment still counts, so a
+// reassignment from a non-call source is observed by the caller's count).
+func assignTargetCall(info *cfg.AssignInfo, sym cfg.SymbolID) (int, int, *cfg.CallInfo) {
+	for i, target := range info.Targets {
+		if target.Kind != cfg.TargetIdent || target.Symbol != sym {
+			continue
+		}
+		call, retIndex := info.CallForTarget(i)
+		return i, retIndex, call
+	}
+	return -1, 0, nil
+}
+
+// argContainerPath builds the container path of a keys-collector's actual argument
+// (`sorted_keys(c)` -> path of `c`). It accepts a bare identifier and a static
+// field path, the same shapes the consumption matches, and keys by the bare symbol
+// (Version 0) so the emitted KeyOf matches the version-insensitive consumption. A
+// non-static or symbol-less argument yields no path.
+func (ct callTyper) argContainerPath(arg ast.Expr) (constraint.Path, bool) {
+	bindings := ct.bindings()
+	if bindings == nil || arg == nil {
+		return constraint.Path{}, false
+	}
+	path := flowpath.FromExprWithBindings(arg, nil, bindings)
+	if path.IsEmpty() || path.Symbol == 0 {
+		return constraint.Path{}, false
+	}
+	return path, true
 }
 
 // resolveCallee resolves a non-method call's callee type. It tries the live Env
