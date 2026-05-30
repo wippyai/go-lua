@@ -851,6 +851,7 @@ func (d *Driver) buildModuleCaptures(sess api.AnalysisSession, prog *program) ma
 	}
 	d.enrichPrototypeReceivers(sess, prog, out)
 	d.enrichCapturedContainerInserts(sess, prog, out)
+	d.enrichCapturedContainerIndexedWrites(sess, prog, out)
 	return out
 }
 
@@ -1023,6 +1024,152 @@ func (d *Driver) enrichCapturedContainerInserts(sess api.AnalysisSession, prog *
 				out[rootSym] = widened
 			}
 		}
+	}
+}
+
+// enrichCapturedContainerIndexedWrites flows a `captured.path[key] = value` written
+// element type back onto the module-wide captured container, so a reader in a
+// DIFFERENT function sees the inserted map value rather than the empty `{}` the
+// capture's defining site recorded.
+//
+// A captured container (`local state = { active_sessions = {} }`) takes its
+// module-wide type from its defining function's exit state, where the map is still
+// the empty literal `{}`. A second function installs entries through a dynamic key
+// (`state.active_sessions[session_id] = { created_at = now, ... }`), widening the
+// map's value domain only inside that body's local state; the capture never observes
+// the mutation, so a third function's `for _, s in pairs(state.active_sessions)`
+// reads `s` as the empty container's unknown value and a typed field read collapses
+// to unknown. This pass scans every function for a dynamic-keyed write whose
+// container is rooted at a module-captured symbol, resolves the written value and key
+// at the assign point, and map-widens the captured container's value at that field
+// path.
+//
+// The widen is the value-domain WriteIndex (the same map-value mutation the
+// intra-function transfer applies for a local indexed write), so it never invents a
+// type the write did not prove: an unresolved value, an untracked root, or an
+// unresolved container leaves the capture unchanged (the sound carry-forward). This is
+// the self-derived container-construction write, not the foreign-write weakening case:
+// the value populates the map's value slot, it does not weaken a sibling declared field
+// of a closed record.
+func (d *Driver) enrichCapturedContainerIndexedWrites(sess api.AnalysisSession, prog *program, out map[cfg.SymbolID]typ.Type) {
+	if len(out) == 0 || prog == nil {
+		return
+	}
+	for _, ref := range d.refs {
+		g := prog.graphs[ref]
+		if g == nil {
+			continue
+		}
+		fs, hasState := d.states[ref]
+		if !hasState {
+			continue
+		}
+		bindings := g.Bindings()
+		if bindings == nil {
+			continue
+		}
+		tr, _ := prog.transfers[ref].(*transfer.Transfer)
+		g.EachAssign(func(p cfg.Point, ai *cfg.AssignInfo) {
+			if ai == nil {
+				return
+			}
+			for i := range ai.Targets {
+				target := ai.Targets[i]
+				if target.Kind != cfg.TargetIndex || target.Base == nil || target.Key == nil {
+					continue
+				}
+				rootSym, path, ok := capturedContainerPath(target.Base, bindings)
+				if !ok {
+					continue
+				}
+				if _, captured := out[rootSym]; !captured {
+					continue
+				}
+				val := d.insertedElementType(tr, fs, p, ai.SourceAt(i), g, out)
+				if val == nil || typ.IsAbsentOrUnknown(val) {
+					continue
+				}
+				key := d.indexedWriteKeyType(tr, fs, p, target.Key, g, out)
+				if widened := indexWriteCapturedContainer(out[rootSym], path, key, val); widened != nil {
+					out[rootSym] = widened
+				}
+			}
+		})
+	}
+}
+
+// indexedWriteKeyType resolves the key type of a captured-container indexed write at
+// the assign point. A resolvable key narrows the map's key domain to the written key;
+// an unresolved key falls back to the widest string-or-number key the value domain's
+// map-value merge already over-approximates, so the value widening still applies.
+func (d *Driver) indexedWriteKeyType(tr *transfer.Transfer, fs state.FunctionState, p cfg.Point, keyExpr ast.Expr, g *cfg.Graph, captures map[cfg.SymbolID]typ.Type) typ.Type {
+	if tr != nil {
+		if in, ok := fs.InPoints[p]; ok {
+			if av, ok := tr.EvalExprValue(&in, keyExpr); ok && !av.IsZero() {
+				if t := av.ProjectValue(); t != nil && !typ.IsAbsentOrUnknown(t) {
+					return t
+				}
+			}
+		}
+	}
+	if ps, ok := fs.Points[p]; ok {
+		if t := exprValueAt(keyExpr, g, ps, captures); t != nil && !typ.IsAbsentOrUnknown(t) {
+			return t
+		}
+	}
+	return nil
+}
+
+// indexWriteCapturedContainer map-widens the container the field path names within
+// base by an indexed write of val under key, returning the rewritten base type. An
+// empty path widens base directly (the root is the container). A path that does not
+// resolve through a tracked record field leaves base unchanged, reported as nil so the
+// caller declines. The write is the value-domain WriteIndex over the resolved key/value
+// — the same self-derived map-value mutation the intra-function transfer applies.
+//
+// The widen applies only when the resolved container is an inference-built container
+// the write GROWS into a map: an empty table literal (`active_sessions = {}`) or an
+// already-inferred map. A closed record with declared fields is an authored shape; a
+// foreign dynamic write to it must not add an `[K]: V` map component at the capture
+// level (that would leak the written value's type into the declared fields' reads).
+// The intra-function transfer owns that closed-record foreign-write weakening, so the
+// module-wide capture leaves the closed record intact (reported nil, the caller
+// declines).
+func indexWriteCapturedContainer(base typ.Type, path []string, key, val typ.Type) typ.Type {
+	if base == nil {
+		return nil
+	}
+	baseAV := product.FromType(base)
+	if len(path) == 0 {
+		if !isGrowableCapturedContainer(base) {
+			return nil
+		}
+		return product.WriteIndex(baseAV, product.FromType(key), product.FromType(val)).ProjectValue()
+	}
+	child, ok := product.FieldOf(baseAV, path[0])
+	if !ok || child.IsZero() {
+		return nil
+	}
+	updated := indexWriteCapturedContainer(child.ProjectValue(), path[1:], key, val)
+	if updated == nil {
+		return nil
+	}
+	return product.WithField(baseAV, path[0], product.FromType(updated)).ProjectValue()
+}
+
+// isGrowableCapturedContainer reports whether t is an inference-built container a
+// dynamic-keyed write grows into a map: an empty record literal (no declared fields,
+// no map component) or an already-inferred map. A closed record with declared fields,
+// or any other authored shape, is not growable — its field contract is owned by the
+// intra-function transfer, not the module-wide capture flow-back.
+func isGrowableCapturedContainer(t typ.Type) bool {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Map:
+		return true
+	case *typ.Record:
+		return len(v.Fields) == 0 && !v.HasMapComponent()
+	default:
+		return t != nil && t.Kind().IsPlaceholder()
 	}
 }
 
