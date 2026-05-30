@@ -1496,24 +1496,40 @@ func mapUnionField(t typ.Type, field string, refine func(typ.Type) typ.Type, abs
 		}
 		return typ.NewRecord().SetOpen(true).Field(field, refined).MapComponent(v.Key, v.Value).Build()
 	default:
-		ft, ok := fieldResolver.Field(t, field)
-		if !ok || ft == nil {
-			// An `any` base carries no static field, but a `type(x.f) == k` guard still
-			// proves x.f is k on the positive edge. Overlay a one-field record on a
-			// gradual base so the field read observes the refinement.
-			if typ.IsAny(t) {
-				refined := refine(typ.Any)
-				if refined == nil {
+		// A gradual `any` base resolves EVERY field to `any` (fieldResolver.Field(any, f)
+		// succeeds with `any`), so a positive guard on a field (`type(x.f) == k`, `if x.f`)
+		// proves only that f's refined type holds on this edge while the rest of the value
+		// stays gradual. Overlay an OPEN record that pins the proven field over an `any`
+		// fallback: a read of x.f observes the refinement and any other field read stays
+		// `any` (gradual preserved, never over-narrowed). This must run before the resolver
+		// fall-through below, which — seeing `any` resolve the field — would otherwise
+		// return the base unchanged and drop the guard's refinement.
+		if typ.IsAny(t) {
+			refined := refine(typ.Any)
+			if refined == nil {
+				return t
+			}
+			if refined.Kind().IsNever() {
+				if absentKeeps {
 					return t
 				}
-				if refined.Kind().IsNever() {
-					if absentKeeps {
-						return t
-					}
-					return typ.Never
-				}
-				return typ.ExtendRecordWithField(typ.NewRecord().Build(), field, refined)
+				return typ.Never
 			}
+			// Only a COMPLETE scalar proof (`type(x.f) == "string"|"number"|"boolean"`,
+			// which filters the gradual `any` down to a primitive) pins a gradual field to
+			// a concrete, assignable type. A truthy/presence guard leaves `any`, and a
+			// `type(x.f) == "table"` guard proves only table-ness with gradual elements
+			// (a Map/Record, not a primitive) — neither establishes a type a typed slot
+			// can soundly consume. Leave the gradual base unchanged there so the field
+			// reads `any` and unproven dynamic data stays non-assignable; field/index
+			// access through the `any` still flows `any`, so precision is not lost.
+			if !refined.Kind().IsPrimitive() {
+				return t
+			}
+			return typ.NewRecord().SetOpen(true).Field(field, refined).MapComponent(typ.Any, typ.Any).Build()
+		}
+		ft, ok := fieldResolver.Field(t, field)
+		if !ok || ft == nil {
 			return t
 		}
 		refined := refine(ft)
