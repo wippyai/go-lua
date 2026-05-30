@@ -127,6 +127,13 @@ type CallTyper interface {
 	// live Env. It returns false when the iterator is not a recognized iteration form,
 	// so the transfer leaves the loop variables untyped (the sound carry-forward).
 	IterVars(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) ([]typ.Type, bool)
+	// KeyedIterSource reports whether iter is a keyed (pairs-style) iteration and,
+	// if so, returns the iterated source-argument expression. It resolves the
+	// iterator function's declared iteration effect (the same contract-spec / builtin
+	// recognition IterVars uses), so a key drawn from a keyed iteration's first loop
+	// variable is provably a key of that source container. A non-keyed iterator
+	// (ipairs-style indexed, or an unrecognized form) yields false.
+	KeyedIterSource(iter *ast.FuncCallExpr) (ast.Expr, bool)
 	// ParamNarrows resolves the callee's parameter-narrowing effects: the
 	// presence/truthy refinements the callee's body proves about its parameters on
 	// every normal return (a wrapper around assert / `if x == nil then error()`).
@@ -915,6 +922,45 @@ func (t *Transfer) applyGenericFor(
 		} else {
 			out.Env[key] = val
 		}
+	}
+	t.seedKeyedIterKeyOf(out, info, iterCall)
+}
+
+// seedKeyedIterKeyOf records the key-presence fact a keyed (pairs-style) iteration
+// establishes: the first loop variable `k` of `for k in pairs(container)` is
+// provably a key of `container`, so `container[k]` inside the loop body returns a
+// present value. It conjoins a constraint.KeyOf{Table: container, Key: k} into the
+// body-entry condition, which refineIndexRead consults to strip the optional from
+// that read. The fact is gated on the iteration being keyed (KeyedIterSource, which
+// resolves the iterator's declared iteration effect — not a name match), so an
+// indexed (ipairs) iteration, or a key drawn from a DIFFERENT container, never
+// receives KeyOf and its index read stays soundly optional.
+func (t *Transfer) seedKeyedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo, iterCall *ast.FuncCallExpr) {
+	if len(info.Targets) == 0 || t.callTyper == nil {
+		return
+	}
+	source, ok := t.callTyper.KeyedIterSource(iterCall)
+	if !ok {
+		return
+	}
+	keyTarget := info.Targets[0]
+	if keyTarget.Kind != cfg.TargetIdent || keyTarget.Symbol == 0 {
+		return
+	}
+	tablePath, ok := t.containerExprPath(source)
+	if !ok {
+		return
+	}
+	keyPath := constraint.NewPath(keyTarget.Symbol, keyTarget.Name)
+	keyOf := constraint.FromConstraints(constraint.KeyOf{Table: tablePath, Key: keyPath})
+	// Conjoin KeyOf into every disjunct of the body-entry condition. An unconstrained
+	// entry (the lattice Bottom FalseCondition, or an empty TrueCondition) becomes the
+	// bare KeyOf so the fact holds unconditionally inside the loop body; And short-
+	// circuits FalseCondition to FalseCondition, which would drop the fact.
+	if out.Cond.IsFalse() || out.Cond.IsTrue() {
+		out.Cond = keyOf
+	} else {
+		out.Cond = constraint.And(out.Cond, keyOf)
 	}
 }
 

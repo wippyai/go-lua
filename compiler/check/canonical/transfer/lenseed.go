@@ -170,6 +170,39 @@ func (t *Transfer) containerExprKey(expr ast.Expr) (constraint.PathKey, bool) {
 	return "", false
 }
 
+// containerExprPath builds the constraint.Path for a tracked container expression
+// (a bare identifier or a static field path), the path-typed counterpart of
+// containerExprKey. The KeyOf production (applyGenericFor) and the index-read
+// consumption (refineIndexRead) both derive their table/key paths through this
+// helper, so a key drawn from `pairs(container)` and the same container indexed by
+// that key resolve to Equal paths. A non-static or non-identifier-rooted base
+// reports ok=false.
+func (t *Transfer) containerExprPath(expr ast.Expr) (constraint.Path, bool) {
+	switch obj := expr.(type) {
+	case *ast.IdentExpr:
+		if sym := t.symbolOf(obj); sym != 0 {
+			return constraint.NewPath(sym, obj.Value), true
+		}
+	case *ast.AttrGetExpr:
+		segs := staticAttrPath(obj)
+		if len(segs) == 0 {
+			return constraint.Path{}, false
+		}
+		root := attrRootIdent(obj)
+		if root == nil {
+			return constraint.Path{}, false
+		}
+		sym := t.symbolOf(root)
+		if sym == 0 {
+			return constraint.Path{}, false
+		}
+		path := constraint.NewPath(sym, root.Value)
+		path.Segments = append(path.Segments, segs...)
+		return path, true
+	}
+	return constraint.Path{}, false
+}
+
 // lenExprContainerKey reports whether expr is `#container` over a tracked
 // sequence container (a bare identifier or a static field path) and returns that
 // container's numeric path key. It generalizes lenExprBase from
@@ -527,6 +560,79 @@ func (t *Transfer) forStepIsNegative(step ast.Expr) bool {
 	return false
 }
 
+// refineByKeyPresence strips the optional from an index read `container[key]`
+// when a KeyOf(container, key) fact is present in out.Cond — i.e. the key was
+// drawn from `pairs(container)` over the same container, so the lookup is present.
+// It builds the table/key paths through containerExprPath / the key identifier's
+// symbol (the same shapes seedKeyedIterKeyOf produced), then matches the exact pair
+// via condHasKeyOf. A non-identifier key, an empty path, or a missing fact declines,
+// leaving the optional intact. Removal is gated by the narrow laws: only a result
+// whose nil is pure flow-uncertainty (an optional element value) is narrowed.
+func (t *Transfer) refineByKeyPresence(
+	out *flow.PointState,
+	e *ast.AttrGetExpr,
+	result typ.Type,
+) (product.AbstractValue, bool) {
+	if !out.Cond.HasConstraints() {
+		return product.AbstractValue{}, false
+	}
+	tablePath, ok := t.containerExprPath(e.Object)
+	if !ok || tablePath.IsEmpty() {
+		return product.AbstractValue{}, false
+	}
+	keyIdent, ok := e.Key.(*ast.IdentExpr)
+	if !ok {
+		return product.AbstractValue{}, false
+	}
+	keySym := t.symbolOf(keyIdent)
+	if keySym == 0 {
+		return product.AbstractValue{}, false
+	}
+	keyPath := constraint.NewPath(keySym, keyIdent.Value)
+	if !condHasKeyOf(out.Cond, tablePath, keyPath) {
+		return product.AbstractValue{}, false
+	}
+	if !narrow.NilPresenceIsOnlyFlowUncertainty(result) {
+		return product.AbstractValue{}, false
+	}
+	refined := narrow.RemoveNil(result)
+	if refined == nil || typ.IsNever(refined) || typ.TypeEquals(refined, result) {
+		return product.AbstractValue{}, false
+	}
+	return product.FromType(refined), true
+}
+
+// condHasKeyOf reports whether the exact KeyOf(tablePath, keyPath) fact is present
+// in the accumulated condition. The canonical Cond is a fact accumulator: a branch
+// folds its test in by disjunction (Domain.Join = Or) and per-edge narrowing folds
+// its own check by disjunction too, so two facts that hold together at one point
+// (here NotNil(k) and KeyOf(container, k) on a keyed-iteration body edge) land in
+// SEPARATE single-fact disjuncts rather than one conjunct. A strict all-disjuncts
+// HasKeyOfConstraint test would therefore never see the fact past the loop latch.
+//
+// Presence of the EXACT (table, key) pair is sound for this accumulator: a
+// KeyOf(container, k) is produced ONLY by seedKeyedIterKeyOf, at the keyed pairs
+// binding that introduces that specific key symbol k, which dominates every read of
+// container[k] inside the loop body. A key from a different container (different
+// table symbol), an arbitrary/literal key (different key symbol, or none), or a read
+// outside the loop (a different bound symbol) does not match this pair, so the
+// optional stays. Matching is by path identity (symbol/segments), exactly as
+// HasKeyOfConstraint compares.
+func condHasKeyOf(cond constraint.Condition, tablePath, keyPath constraint.Path) bool {
+	if !cond.HasConstraints() || cond.IsFalse() {
+		return false
+	}
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		for _, c := range cond.DisjunctConstraints(i) {
+			ko, ok := c.(constraint.KeyOf)
+			if ok && ko.Table.Equal(tablePath) && ko.Key.Equal(keyPath) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // refineIndexRead recovers a non-optional element type for a provably in-bounds
 // sequence read `base[key]`. It ports the four arms of the store-side
 // refineIndexReadAt against the canonical numeric component (out.Num): a literal
@@ -543,12 +649,22 @@ func (t *Transfer) refineIndexRead(
 	base product.AbstractValue,
 	ev product.AbstractValue,
 ) product.AbstractValue {
-	if out.Num == nil {
-		return ev
-	}
 	container := base.ProjectValue()
 	result := ev.ProjectValue()
 	if container == nil || result == nil {
+		return ev
+	}
+
+	// Key-presence (KeyOf): a key drawn from `pairs(container)` indexing that same
+	// container reads a present value, so the optional is stripped. The fact is
+	// produced by seedKeyedIterKeyOf into out.Cond and matched here for the exact
+	// (container, key) path pair, so a key from a different container or an arbitrary
+	// key never matches and its read stays optional.
+	if refined, ok := t.refineByKeyPresence(out, e, result); ok {
+		return refined
+	}
+
+	if out.Num == nil {
 		return ev
 	}
 

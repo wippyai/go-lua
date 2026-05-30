@@ -54,6 +54,78 @@ end
 	}
 }
 
+// TestZZKeyOfDirect isolates the PRODUCTION half: a key drawn from pairs over the
+// SAME container indexes it -> present (non-optional). No interproc.
+func TestZZKeyOfDirect(t *testing.T) {
+	src := `
+local a: {[string]: number} = {}
+for k in pairs(a) do
+    local v: number = a[k]
+end
+`
+	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	msgs := testutil.ErrorMessages(res.Diagnostics)
+	t.Logf("DIRECT KeyOf: %d diags", len(msgs))
+	for _, m := range msgs {
+		t.Logf("  DIAG: %s", m)
+	}
+}
+
+// TestZZKeyOfStoredSlot confirms the transfer stores the KeyOf-refined (non-optional)
+// element in the loop body's target slot: the read a[k] binds to v, and a later
+// `w: number = v` reads v's slot. If v carries the refined `number` the second
+// assignment passes, isolating the residual to the assignment-source re-derivation
+// of the dynamic-key read (observation), not the transfer's production.
+func TestZZKeyOfStoredSlot(t *testing.T) {
+	src := `
+local a: {[string]: number} = {}
+for k in pairs(a) do
+    local v = a[k]
+    local w: number = v
+end
+`
+	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	msgs := testutil.ErrorMessages(res.Diagnostics)
+	t.Logf("STORED-SLOT: %d diags (0 = transfer slot refined)", len(msgs))
+	for _, m := range msgs {
+		t.Logf("  DIAG: %s", m)
+	}
+}
+
+// TestZZKeyOfWrongContainer is the SOUNDNESS probe: a key from pairs(a) indexing a
+// DIFFERENT container b must stay optional and ERROR.
+func TestZZKeyOfWrongContainer(t *testing.T) {
+	src := `
+local a: {[string]: number} = {}
+local b: {[string]: number} = {}
+for k in pairs(a) do
+    local v: number = b[k]
+end
+`
+	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	msgs := testutil.ErrorMessages(res.Diagnostics)
+	t.Logf("WRONG-CONTAINER: %d diags (expect >=1)", len(msgs))
+	for _, m := range msgs {
+		t.Logf("  DIAG: %s", m)
+	}
+}
+
+// TestZZKeyOfArbitrary is the SOUNDNESS probe: an arbitrary key (literal / unrelated
+// var) indexing the map must stay optional and ERROR.
+func TestZZKeyOfArbitrary(t *testing.T) {
+	src := `
+local a: {[string]: number} = {}
+local k = "foo"
+local v: number = a[k]
+`
+	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	msgs := testutil.ErrorMessages(res.Diagnostics)
+	t.Logf("ARBITRARY-KEY: %d diags (expect >=1)", len(msgs))
+	for _, m := range msgs {
+		t.Logf("  DIAG: %s", m)
+	}
+}
+
 // TestZZInsertIndexedFixture runs the actual fixture through the canonical flow.
 func TestZZInsertIndexedFixture(t *testing.T) {
 	suites, err := discoverFixtures("testdata/fixtures")

@@ -3614,6 +3614,22 @@ func (ct callTyper) iteratorKind(iter *ast.FuncCallExpr) (effect.IteratorKind, i
 	return 0, 0, false
 }
 
+// KeyedIterSource reports whether iter is a keyed (pairs-style) iteration and, if
+// so, returns the iterated source-argument expression. It reuses iteratorKind so
+// the keyed/indexed decision is the contract-spec iteration effect (or the pairs/
+// ipairs builtin), not a name match: only a keyed iteration's first loop variable
+// is a key of the source, so only that case yields a source for KeyOf production.
+func (ct callTyper) KeyedIterSource(iter *ast.FuncCallExpr) (ast.Expr, bool) {
+	if iter == nil || iter.Method != "" {
+		return nil, false
+	}
+	kind, srcIdx, ok := ct.iteratorKind(iter)
+	if !ok || kind != effect.IterateKeyed || srcIdx < 0 || srcIdx >= len(iter.Args) {
+		return nil, false
+	}
+	return iter.Args[srcIdx], true
+}
+
 // resolveCallee resolves a non-method call's callee type. It tries the live Env
 // value (a function-valued local), then the callee symbol's module-wide function
 // signature, then a predeclared global's value type, then the expression's own
