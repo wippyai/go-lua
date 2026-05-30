@@ -231,6 +231,15 @@ type Transfer struct {
 	// it so the body sees the call-site type rather than the gradual any. A declared
 	// parameter is unaffected (its annotation is authoritative).
 	inferredParamBySlot map[int]typ.Type
+	// captureType resolves the type of a free variable this body reads from an
+	// enclosing scope (an upvalue / module-level capture) — a symbol with no Env
+	// value here, that this function neither declares nor takes as a parameter. The
+	// driver implements it by reading the capture's module-wide converged type
+	// (the value its defining scope holds), so a body read of `renderer` (a local
+	// of the enclosing builder captured into a returned closure) sees that type
+	// rather than the value-domain unknown. Nil leaves a capture unresolved (the
+	// sound carry-forward: a genuinely-unresolved capture stays unknown).
+	captureType func(sym cfg.SymbolID) (typ.Type, bool)
 }
 
 // New builds the transfer for the given canonical inputs. ops, funcTyper, and
@@ -299,6 +308,18 @@ func (t *Transfer) SetInferredParams(bySlot map[int]typ.Type) {
 		return
 	}
 	t.inferredParamBySlot = bySlot
+}
+
+// SetCaptureResolver installs the free-variable (upvalue / module-capture) type
+// resolver. A nested function reads a captured variable under the same shared
+// symbol id its enclosing scope assigns, but the captured value lives in no Env
+// slot of this body; the resolver supplies the capture's module-wide converged
+// type so the body's reads, the locals it feeds, and the records it builds carry
+// that type rather than collapsing to unknown. Installed after the program is
+// built (the capture type comes from the defining scope's solve, resolved through
+// the same interprocedural query the call graph uses).
+func (t *Transfer) SetCaptureResolver(resolve func(sym cfg.SymbolID) (typ.Type, bool)) {
+	t.captureType = resolve
 }
 
 // SetSiblingNils installs the (value, err) inverse-correlation binds after
@@ -1047,7 +1068,8 @@ func (t *Transfer) evalIdent(
 		return product.AbstractValue{}, false
 	}
 	av, ok := out.Env[symKey(sym)]
-	if idx, isParam := t.paramBySym[sym]; isParam && demand != nil {
+	idx, isParam := t.paramBySym[sym]
+	if isParam && demand != nil {
 		// A parameter read demands that the parameter at least carries the value
 		// observed for it here. With no narrower observation, demand the value's
 		// own type; an unread-but-present slot demands nothing new.
@@ -1056,9 +1078,43 @@ func (t *Transfer) evalIdent(
 		}
 	}
 	if !ok || av.IsZero() {
+		// A free variable captured from an enclosing scope has no Env value in this
+		// body. It is neither a parameter nor a symbol this function declares, so its
+		// type is the module-wide value its defining scope holds. A parameter or a
+		// local declared here is NOT a capture (its absent Env value means undetermined,
+		// the sound carry-forward), so the resolver is consulted only for a genuine
+		// free variable.
+		if !isParam && t.captureType != nil && t.isCapturedFreeVar(sym) {
+			if ct, ok := t.captureType(sym); ok && ct != nil && !typ.IsAbsentOrUnknown(ct) {
+				return product.FromType(ct), true
+			}
+		}
 		return product.AbstractValue{}, false
 	}
 	return av, true
+}
+
+// isCapturedFreeVar reports whether sym is a free variable this body reads from an
+// enclosing scope rather than a value the body's own flow determines. The shared
+// binding table gives a captured variable the same id its defining scope assigns,
+// but this graph's scope tracker classifies it: a symbol DECLARED as a local in
+// this body (SymbolLocal) carries its value through the transfer (its absent Env
+// value is undetermined flow, recovered by the assignment that defines it), so it
+// is NOT a capture. A parameter is seeded at entry, also not a capture. Every other
+// classification — an upvalue, or a captured outer local the tracker resolves to
+// the enclosing scope (recorded here as a non-local) — is a free variable whose
+// type is the module-wide value its defining scope holds.
+func (t *Transfer) isCapturedFreeVar(sym cfg.SymbolID) bool {
+	if sym == 0 || t.in.Graph == nil {
+		return false
+	}
+	if _, isParam := t.paramBySym[sym]; isParam {
+		return false
+	}
+	if k, ok := t.in.Graph.SymbolKind(sym); ok && (k == cfg.SymbolLocal || k == cfg.SymbolParam) {
+		return false
+	}
+	return true
 }
 
 // demandParamCtx records that a parameter used in a typing context (where its

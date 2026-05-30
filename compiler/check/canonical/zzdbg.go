@@ -32,6 +32,15 @@ func zdbg(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "[ZSIB] "+format+"\n", args...)
 }
 
+// zcap prints a formatted trace line to stderr when the ZCAP env var is set.
+// Debug probe for upvalue/module-capture Env seeding.
+func zcap(format string, args ...interface{}) {
+	if os.Getenv("ZCAP") == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[ZCAP] "+format+"\n", args...)
+}
+
 // zzDumpType prints recursive-family identity details for a resolved type when
 // the ZZCLASS env var is set. Debug probe for cross-module class identity.
 func zzDumpType(label string, t typ.Type) {

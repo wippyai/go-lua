@@ -28,6 +28,8 @@
 package canonical
 
 import (
+	"os"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
@@ -310,8 +312,6 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	// point). A mutually recursive or self-recursive cluster is a db query cycle
 	// the engine converges from the bottom seed via SummaryWiden.
 	d.refs = prog.refs
-	d.summaries = make(map[summary.FuncRef]summary.Summary, len(prog.refs))
-	d.states = make(map[summary.FuncRef]state.FunctionState, len(prog.refs))
 	d.funcExprs = prog.funcExprs
 	// The per-node transfer's call typing resolves callees against the fully built
 	// program and runs the call pipeline against this run's query context. Expose
@@ -320,6 +320,55 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	d.activeCtx = sess.Context()
 	d.activeQueries = queries
 	defer func() { d.activeProgram = nil; d.activeCtx = nil; d.activeQueries = nil }()
+	d.solvePass(sess, prog, queries)
+
+	// A nested function reads a free variable captured from an enclosing scope (an
+	// upvalue like a builder's `renderer` captured into the closure it returns).
+	// The first pass solves with no capture value seeded, so the capture's module-
+	// wide converged type is unknown to the closure body and a record built from it
+	// collapses to unknown. Now that the first pass has converged, the module-wide
+	// capture map is known: seed it into every transfer's capture resolver and re-
+	// solve, so the closure body sees the captured value's type. Each re-solve uses
+	// a fresh query memo (the captures move the inputs); the loop iterates until the
+	// capture map stabilizes, bounded so a non-converging chain still terminates.
+	// The capture types are the same module-wide values the observation surface
+	// trusts, so this never makes a value more precise than the converged solve.
+	prevCaptures := d.moduleCaptures
+	for pass := 0; pass < captureRefinePasses; pass++ {
+		if len(prevCaptures) == 0 {
+			break
+		}
+		if !d.seedCaptureResolvers(prog) {
+			break
+		}
+		queries = summary.New(prog)
+		d.activeQueries = queries
+		d.solvePass(sess, prog, queries)
+		if captureMapEqual(prevCaptures, d.moduleCaptures) {
+			break
+		}
+		prevCaptures = d.moduleCaptures
+	}
+
+	d.bridgeResults(sess, prog)
+}
+
+// captureRefinePasses bounds the capture-seeding re-solve loop. A closure-captured
+// upvalue's type can feed another closure's capture, so seeding shifts the capture
+// map and the loop re-solves until the map stabilizes (captureMapEqual). The bound
+// is the termination guarantee: it caps the loop whether or not the chain reaches a
+// fixed point, so a pathological case never re-solves unboundedly.
+const captureRefinePasses = 4
+
+// solvePass drives the interprocedural fixed point over prog with queries, filling
+// d.summaries / d.states from the converged solve and computing the module-wide
+// capture map. Summarizing every function runs its intraprocedural solve (the
+// inner fixed point) and resolves its callees' summaries through the db cycle (the
+// outer fixed point); a recursive cluster converges from the bottom seed via
+// SummaryWiden.
+func (d *Driver) solvePass(sess api.AnalysisSession, prog *program, queries *summary.Queries) {
+	d.summaries = make(map[summary.FuncRef]summary.Summary, len(prog.refs))
+	d.states = make(map[summary.FuncRef]state.FunctionState, len(prog.refs))
 	for _, ref := range prog.refs {
 		d.summaries[ref] = queries.Summarize(sess.Context(), ref)
 		// The converged per-point state shares SummaryQ's cache entry (IntraQ
@@ -327,8 +376,58 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 		// rather than re-solving it.
 		d.states[ref] = queries.Intra(sess.Context(), ref)
 	}
+	d.moduleCaptures = d.buildModuleCaptures(sess, prog)
+}
 
-	d.bridgeResults(sess, prog)
+// seedCaptureResolvers installs the module-wide capture map as each transfer's
+// free-variable resolver, so the next solve pass sees a captured upvalue's
+// converged type. It returns false when no transfer carries the canonical type and
+// nothing changes (no further pass would differ).
+func (d *Driver) seedCaptureResolvers(prog *program) bool {
+	if len(d.moduleCaptures) == 0 {
+		return false
+	}
+	captures := d.moduleCaptures
+	resolve := func(sym cfg.SymbolID) (typ.Type, bool) {
+		t, ok := captures[sym]
+		if !ok || t == nil || typ.IsAbsentOrUnknown(t) {
+			return nil, false
+		}
+		return t, true
+	}
+	seeded := false
+	for _, tr := range prog.transfers {
+		ct, ok := tr.(*transfer.Transfer)
+		if !ok || ct == nil {
+			continue
+		}
+		ct.SetCaptureResolver(resolve)
+		seeded = true
+	}
+	return seeded
+}
+
+// captureMapEqual reports whether two module-capture maps carry the same symbol
+// types, the fixpoint test the capture-seeding loop iterates against. A type
+// changes the map when its string form differs (the canonical structural identity
+// the rest of the engine compares by).
+func captureMapEqual(a, b map[cfg.SymbolID]typ.Type) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for sym, ta := range a {
+		tb, ok := b[sym]
+		if !ok || ta == nil || tb == nil {
+			if (ta == nil) != (tb == nil) || !ok {
+				return false
+			}
+			continue
+		}
+		if ta.String() != tb.String() {
+			return false
+		}
+	}
+	return true
 }
 
 // bridgeResults populates the session's per-function results from the converged
@@ -355,7 +454,8 @@ func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program) {
 	if results == nil {
 		return
 	}
-	d.moduleCaptures = d.buildModuleCaptures(sess, prog)
+	// d.moduleCaptures is already the converged map from the final solve pass; the
+	// observation surface and result bridge read it directly.
 	for _, ref := range d.refs {
 		fn := prog.funcExprs[ref]
 		if fn == nil {
@@ -445,6 +545,23 @@ func (d *Driver) buildModuleCaptures(sess api.AnalysisSession, prog *program) ma
 		return nil
 	}
 	zzDumpCaptures(out)
+	if os.Getenv("ZCAP") != "" {
+		var b *bind.BindingTable
+		for _, g := range prog.graphs {
+			if g != nil && g.Bindings() != nil {
+				b = g.Bindings()
+				break
+			}
+		}
+		if b != nil {
+			for sym, t := range out {
+				if t == nil {
+					continue
+				}
+				zcap("capture sym=%d name=%q type=%s", uint64(sym), b.Name(sym), t.String())
+			}
+		}
+	}
 	d.enrichPrototypeReceivers(sess, prog, out)
 	return out
 }
