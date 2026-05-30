@@ -1,7 +1,6 @@
 package store
 
 import (
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -59,28 +58,6 @@ func cloneSegments(src []constraint.Segment) []constraint.Segment {
 	}
 	out := make([]constraint.Segment, len(src))
 	copy(out, src)
-	return out
-}
-
-func cloneLiteralSigs(src api.LiteralSigs) api.LiteralSigs {
-	if len(src) == 0 {
-		return nil
-	}
-	out := make(map[*ast.FunctionExpr]*typ.Function, len(src))
-	for fn, sig := range src {
-		out[fn] = sig
-	}
-	return out
-}
-
-func cloneCapturedTypes(src api.CapturedTypes) api.CapturedTypes {
-	if len(src) == 0 {
-		return nil
-	}
-	out := make(api.CapturedTypes, len(src))
-	for sym, t := range src {
-		out[sym] = t
-	}
 	return out
 }
 
@@ -147,23 +124,6 @@ func cloneCapturedContainerMutations(src api.CapturedContainerMutations) api.Cap
 		if len(bySymOut) > 0 {
 			out[callee] = bySymOut
 		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func cloneConstructorFields(src api.ConstructorFields) api.ConstructorFields {
-	if len(src) == 0 {
-		return nil
-	}
-	out := make(api.ConstructorFields, len(src))
-	for sym, fields := range src {
-		if len(fields) == 0 {
-			continue
-		}
-		out[sym] = cloneConstructorFieldMap(fields)
 	}
 	if len(out) == 0 {
 		return nil

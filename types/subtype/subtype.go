@@ -732,11 +732,6 @@ func (c *checker) metaSubtype(subMT, superMT typ.Type, depth int) bool {
 //
 // This is sound because it only applies to fresh values where no narrower-typed
 // alias can exist to observe the widening.
-func canWidenTo(narrow, wide typ.Type) bool {
-	c := &checker{}
-	return c.canWidenTo(narrow, wide, 0)
-}
-
 func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 	if stopDepthPair(narrow, wide, depth) {
 		return false

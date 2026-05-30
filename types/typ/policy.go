@@ -354,10 +354,6 @@ func (s *returnJoinState) coalesceProductUnionMembers(types []Type) []Type {
 	return out
 }
 
-func coalesceFoldedProductFamilyMembers(types []Type) []Type {
-	return newReturnJoinState().coalesceFoldedProductFamilyMembers(types)
-}
-
 func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Type {
 	if len(types) < 2 {
 		return types
@@ -667,10 +663,6 @@ func unaliasRecursive(t Type) *Recursive {
 	}
 	rec, _ := t.(*Recursive)
 	return rec
-}
-
-func rewriteRecursiveFamilySelf(t Type, from, to *Recursive) Type {
-	return newReturnJoinState().rewriteRecursiveFamilySelf(t, from, to)
 }
 
 func (s *returnJoinState) rewriteRecursiveFamilySelf(t Type, from, to *Recursive) Type {
@@ -1374,33 +1366,6 @@ func unaliasRecord(t Type) *Record {
 	}
 	rec, _ := t.(*Record)
 	return rec
-}
-
-func unaliasUnion(t Type) *Union {
-	for {
-		a, ok := t.(*Alias)
-		if !ok {
-			break
-		}
-		t = a.Target
-	}
-	u, _ := t.(*Union)
-	return u
-}
-
-func (s *returnJoinState) coalesceCompatibleRecordMembers(t Type) Type {
-	u := unaliasUnion(t)
-	if u == nil || len(u.Members) < 2 {
-		return t
-	}
-
-	members := make([]Type, len(u.Members))
-	copy(members, u.Members)
-	coalesced := s.coalesceCompatibleRecordTypes(members)
-	if sameTypeSlice(members, coalesced) {
-		return t
-	}
-	return NewUnion(coalesced...)
 }
 
 func sameTypeSlice(a, b []Type) bool {

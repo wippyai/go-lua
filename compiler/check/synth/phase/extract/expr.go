@@ -682,25 +682,6 @@ func (s *Synthesizer) conditionInputs() *flow.Inputs {
 	return nil
 }
 
-func (s *Synthesizer) logicalNarrowPath(p cfg.Point, expr ast.Expr, sc *scope.State) constraint.Path {
-	if s == nil {
-		return constraint.Path{}
-	}
-	if s.deps.Paths != nil {
-		return s.deps.Paths(p, expr, sc)
-	}
-	if ident, ok := expr.(*ast.IdentExpr); ok {
-		if s.deps.CheckCtx != nil {
-			if bindings := s.deps.CheckCtx.Bindings(); bindings != nil {
-				if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-					return constraint.Path{Root: ident.Value, Symbol: sym}
-				}
-			}
-		}
-	}
-	return constraint.Path{}
-}
-
 func (s *Synthesizer) synthLogicalOpWithExpected(ex *ast.LogicalOpExpr, sc *scope.State, p cfg.Point, narrower api.FlowOps, recurse ExprSynth, expected typ.Type) typ.Type {
 	if ex == nil {
 		return typ.Unknown

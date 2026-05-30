@@ -649,10 +649,6 @@ func recursiveHashDeps(r *Recursive) ([]recursiveHashDep, bool) {
 	return deps, true
 }
 
-func collectRecursiveHashDeps(r *Recursive, seen map[*Recursive]bool, depth int) bool {
-	return collectRecursiveHashDepsMemo(r, seen, make(map[graphClosedKey]bool))
-}
-
 func collectRecursiveHashDepsMemo(r *Recursive, seen map[*Recursive]bool, memo map[graphClosedKey]bool) bool {
 	if r == nil {
 		return true
@@ -665,10 +661,6 @@ func collectRecursiveHashDepsMemo(r *Recursive, seen map[*Recursive]bool, memo m
 	}
 	seen[r] = true
 	return collectRecursiveHashDepsInTypeMemo(r.Body, seen, memo)
-}
-
-func collectRecursiveHashDepsInType(t Type, seen map[*Recursive]bool, depth int) bool {
-	return collectRecursiveHashDepsInTypeMemo(t, seen, make(map[graphClosedKey]bool))
 }
 
 func collectRecursiveHashDepsInTypeMemo(t Type, seen map[*Recursive]bool, memo map[graphClosedKey]bool) bool {

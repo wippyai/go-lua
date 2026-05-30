@@ -1108,14 +1108,6 @@ func repairPaddedSummaryWithNarrowPolicy(state *repairTypeState, summary, narrow
 	return returnsummary.NormalizeAndPrune(out)
 }
 
-func repairTypeWithNarrow(summary, narrow typ.Type) typ.Type {
-	return repairTypeWithNarrowPolicy(summary, narrow, true, true)
-}
-
-func repairTypeWithNarrowPolicy(summary, narrow typ.Type, preserveAny, replaceConcrete bool) typ.Type {
-	return newRepairTypeState().repair(summary, narrow, preserveAny, replaceConcrete)
-}
-
 func (state *repairTypeState) repair(summary, narrow typ.Type, preserveAny, replaceConcrete bool) typ.Type {
 	if summary == nil || narrow == nil {
 		return narrow

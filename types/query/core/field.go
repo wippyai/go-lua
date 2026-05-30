@@ -154,12 +154,6 @@ func (env fieldLookupEnv) lookup(t typ.Type, name string, depth int) fieldLookup
 	})
 }
 
-// fieldInRecord looks up a field in a record type.
-// Entry point for record-specific lookup with depth tracking.
-func fieldInRecord(r *typ.Record, name string) (typ.Type, bool) {
-	return fieldInRecordDepth(r, name, 0)
-}
-
 // fieldInRecordDepth resolves a field in a record with multiple fallback strategies.
 //
 // Resolution order:
@@ -246,7 +240,7 @@ func fieldInInterface(i *typ.Interface, name string) (typ.Type, bool) {
 	return nil, false
 }
 
-// fieldInUnion resolves a field across all union members.
+// fieldInUnionLookup resolves a field across all union members.
 // For a union A | B, field access t.name behaves as:
 //   - if all members expose the field, result is union of member field types
 //   - if some table-like members miss the field, result is optional(union(...))
@@ -254,10 +248,6 @@ func fieldInInterface(i *typ.Interface, name string) (typ.Type, bool) {
 //
 // This matches Lua table semantics for partial record unions while remaining
 // sound for non-table members (where field access would be invalid).
-func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
-	return fieldLookupEnv{}.fieldInUnionLookup(u, name, depth).materialize()
-}
-
 func (env fieldLookupEnv) fieldInUnionLookup(u *typ.Union, name string, depth int) fieldLookupResult {
 	members := typ.CoalesceProductUnionMembers(u.Members)
 	var out typ.Type
@@ -294,10 +284,6 @@ func (env fieldLookupEnv) fieldInUnionLookup(u *typ.Union, name string, depth in
 // For an intersection A & B, field access t.name succeeds if ANY member has
 // the field. The result is the intersection of field types from all members
 // that have the field. Returns (nil, false) if no member has the field.
-func fieldInIntersection(i *typ.Intersection, name string, depth int) (typ.Type, bool) {
-	return fieldLookupEnv{}.fieldInIntersection(i, name, depth)
-}
-
 func (env fieldLookupEnv) fieldInIntersection(i *typ.Intersection, name string, depth int) (typ.Type, bool) {
 	// Field from ANY member
 	var types []typ.Type
@@ -317,21 +303,6 @@ func (env fieldLookupEnv) fieldInIntersection(i *typ.Intersection, name string, 
 	}
 
 	return typ.NewIntersection(types...), true
-}
-
-// fieldInOptional resolves a field on an optional type.
-// The result is wrapped in Optional since the base value may be nil.
-// Example: (T?).name -> T.name? (the field type becomes optional)
-func fieldInOptional(o *typ.Optional, name string, depth int) (typ.Type, bool) {
-	if o == nil {
-		return nil, false
-	}
-
-	if ft, ok := (fieldLookupEnv{}).depth(o.Inner, name, depth+1); ok {
-		return typ.NewOptional(ft), true
-	}
-
-	return nil, false
 }
 
 // fieldOnSpecial handles special fields on primitive types.

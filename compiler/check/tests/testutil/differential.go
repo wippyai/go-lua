@@ -87,9 +87,7 @@ func runFlow(source, name string, flowOpts []check.Option, userOpts []Option) []
 	for _, opt := range userOpts {
 		opt(cfg)
 	}
-	for _, fo := range flowOpts {
-		cfg.CheckOptions = append(cfg.CheckOptions, fo)
-	}
+	cfg.CheckOptions = append(cfg.CheckOptions, flowOpts...)
 
 	checker := buildChecker(cfg)
 	sess := checker.Check(source, name)

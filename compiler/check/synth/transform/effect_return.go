@@ -290,7 +290,7 @@ func setRecordPathType(rec *typ.Record, path []string, value typ.Type) typ.Type 
 			continue
 		}
 		found = true
-		next := fields[i].Type
+		var next typ.Type
 		if len(path) == 1 {
 			next = refineFlowTargetType(fields[i].Type, value)
 		} else {

@@ -9,13 +9,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-func paramAt(params []typ.Type, idx int) typ.Type {
-	if idx < 0 || idx >= len(params) {
-		return nil
-	}
-	return params[idx]
-}
-
 // RefinementGuaranteesParamType reports whether normal return proves parameter idx has type t.
 func RefinementGuaranteesParamType(refinement *constraint.FunctionRefinement, idx int, t typ.Type) bool {
 	if refinement == nil || t == nil {

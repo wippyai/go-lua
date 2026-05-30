@@ -249,7 +249,9 @@ func TestReducedValuesInternCanonically(t *testing.T) {
 // beyond the lattice order: an already-consistent Top value is unchanged, so it
 // stays Equal to a freshly built Top.
 func TestReductionPreservesEqualToTop(t *testing.T) {
-	if !Equal(Top(), Top()) || Top().n != Top().n {
+	a := Top()
+	b := Top()
+	if !Equal(a, b) || a.n != b.n {
 		t.Fatal("reduction must leave a consistent Top value canonical")
 	}
 }

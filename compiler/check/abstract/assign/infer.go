@@ -412,8 +412,16 @@ func buildLocalInferenceDependencyGraph(c localDependencyConfig) map[uint64][]ui
 func addParameterDependencyNodes(deps map[uint64][]uint64, paramSyms []cfg.SymbolID) {
 	for _, sym := range paramSyms {
 		if sym != 0 {
-			deps[uint64(sym)] = deps[uint64(sym)]
+			ensureDependencyNode(deps, uint64(sym))
 		}
+	}
+}
+
+// ensureDependencyNode registers sym as a graph node so an isolated symbol with
+// no outgoing dependency edges still forms its own SCC during fixpoint ordering.
+func ensureDependencyNode(deps map[uint64][]uint64, sym uint64) {
+	if _, ok := deps[sym]; !ok {
+		deps[sym] = nil
 	}
 }
 
@@ -431,7 +439,7 @@ func addAssignmentDependencies(
 				continue
 			}
 			targetSym := uint64(targetSymID)
-			deps[targetSym] = deps[targetSym]
+			ensureDependencyNode(deps, targetSym)
 			for _, ref := range assignmentSourceRefs(info, bindings) {
 				deps[targetSym] = append(deps[targetSym], uint64(ref))
 			}
@@ -463,7 +471,7 @@ func addTableMutatorDependencies(deps map[uint64][]uint64, c localDependencyConf
 			continue
 		}
 		targetKey := uint64(targetSym)
-		deps[targetKey] = deps[targetKey]
+		ensureDependencyNode(deps, targetKey)
 		for _, ref := range mutatorValueRefs(targetExpr, valueExpr, c.bindings) {
 			deps[targetKey] = append(deps[targetKey], uint64(ref))
 		}
@@ -526,7 +534,7 @@ func addExpectationDependency(deps map[uint64][]uint64, sym cfg.SymbolID, refs [
 		return
 	}
 	targetKey := uint64(sym)
-	deps[targetKey] = deps[targetKey]
+	ensureDependencyNode(deps, targetKey)
 	for _, ref := range refs {
 		if ref != 0 && ref != sym {
 			deps[targetKey] = append(deps[targetKey], uint64(ref))
@@ -742,11 +750,9 @@ type localInferenceSCCWork struct {
 	mutatorCallIdx    []int
 	overlayScratch    api.SpecTypes
 	snapshot          []typ.Type
-	currentOverlay    api.SpecTypes
-	currentSynth      func(ast.Expr, cfg.Point) typ.Type
-	currentIteration  localInferenceIteration
-	currentDidChange  bool
-	currentHasStarted bool
+	currentOverlay   api.SpecTypes
+	currentSynth     func(ast.Expr, cfg.Point) typ.Type
+	currentIteration localInferenceIteration
 }
 
 func newLocalInferenceSolver(config LocalInferenceConfig) *localInferenceSolver {

@@ -1513,10 +1513,6 @@ func UnsafePrecisionDrop(prev, merged []typ.Type) bool {
 	return false
 }
 
-func shouldUseMonotoneJoin(a, b []typ.Type) bool {
-	return shouldUseMonotoneJoinWith(value.NewConvergenceWidening(), a, b)
-}
-
 func shouldUseMonotoneJoinWith(widening *value.ConvergenceWidening, a, b []typ.Type) bool {
 	for _, t := range a {
 		if returnSlotNeedsMonotoneJoinWith(widening, t) {
@@ -1531,16 +1527,8 @@ func shouldUseMonotoneJoinWith(widening *value.ConvergenceWidening, a, b []typ.T
 	return false
 }
 
-func returnSlotNeedsMonotoneJoin(t typ.Type) bool {
-	return returnSlotNeedsMonotoneJoinWith(value.NewConvergenceWidening(), t)
-}
-
 func returnSlotNeedsMonotoneJoinWith(widening *value.ConvergenceWidening, t typ.Type) bool {
 	return typ.ContainsRecursive(t) || widening.HasHigherOrderGrowthRisk(t)
-}
-
-func joinMonotone(a, b []typ.Type) []typ.Type {
-	return joinMonotoneWith(value.NewConvergenceWidening(), a, b)
 }
 
 func joinMonotoneWith(widening *value.ConvergenceWidening, a, b []typ.Type) []typ.Type {
@@ -1566,10 +1554,6 @@ func joinMonotoneWith(widening *value.ConvergenceWidening, a, b []typ.Type) []ty
 		out[i] = joinTypeMonotoneWith(widening, ai, bi)
 	}
 	return out
-}
-
-func joinTypeMonotone(a, b typ.Type) typ.Type {
-	return joinTypeMonotoneWith(value.NewConvergenceWidening(), a, b)
 }
 
 func joinTypeMonotoneWith(widening *value.ConvergenceWidening, a, b typ.Type) typ.Type {

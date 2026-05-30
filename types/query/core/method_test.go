@@ -87,8 +87,7 @@ func TestMethodUnion(t *testing.T) {
 
 func TestMethodUnion_RecursiveMetatableVariants(t *testing.T) {
 	makeReader := func() typ.Type {
-		var self *typ.Recursive
-		self = typ.NewRecursivePlaceholder("Reader")
+		self := typ.NewRecursivePlaceholder("Reader")
 		method := typ.Func().Param("self", typ.Self).Returns(self).Build()
 		self.SetBody(typ.NewRecord().
 			Metatable(typ.NewRecord().Field("get_full_context", method).Build()).
@@ -280,8 +279,7 @@ func TestMethodDirectRecordLookupPreservesOptionalCallableField(t *testing.T) {
 }
 
 func TestMethodDirectRecordLookupNormalizesOwnerTypedReceiver(t *testing.T) {
-	var owner typ.Type
-	owner = typ.NewRecursive("Builder", func(self typ.Type) typ.Type {
+	owner := typ.NewRecursive("Builder", func(self typ.Type) typ.Type {
 		return typ.NewRecord().
 			Field("append", typ.Func().Param("", self).Returns(self).Build()).
 			Build()
