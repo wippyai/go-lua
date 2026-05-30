@@ -589,8 +589,12 @@ func (t *Transfer) narrowBySiblingNil(out flow.PointState, info *cfg.BranchInfo,
 //     falsy narrowing holds; they compose. This is the `not x or not x.f` guard's
 //     surviving edge, where `not x` and `not x.f` are both false, hence x and x.f
 //     are both truthy.
-//   - the other two edges (`A and B` falsy, `A or B` truthy) prove only that at least
-//     one operand has the polarity, which narrows neither, so they leave out unchanged.
+//   - `A or B` truthy (the true edge): at least one operand holds, an existential.
+//     When both operands narrow the SAME tested value, the value is the UNION of each
+//     operand's narrowing (narrowOrUnionTrueEdge joins them); when they narrow
+//     different values, no single value is known and the edge narrows nothing.
+//   - `A and B` falsy proves only that at least one operand is falsy, which narrows
+//     neither, so it leaves out unchanged.
 //
 // A non-logical condition returns applied=false so the simple narrowers run.
 func (t *Transfer) narrowByCompound(out flow.PointState, info *cfg.BranchInfo, taken bool) (flow.PointState, bool) {
@@ -607,6 +611,15 @@ func (t *Transfer) narrowByCompound(out flow.PointState, info *cfg.BranchInfo, t
 	if info.CondCheck.Kind == cfg.CheckFalsy {
 		wantTruthy = !taken
 	}
+	// `A or B` truthy (the true edge) proves only that at least one operand holds,
+	// an existential. When both operands narrow the SAME tested value, that
+	// existential pins the value to the UNION of each operand's narrowing
+	// (narrow_A(x) | narrow_B(x)); when they narrow different values, nothing about
+	// any single value is known. The union narrowing handles the former; the latter
+	// declines (no decomposable operands) and the value is left unchanged.
+	if logical.Operator == "or" && wantTruthy {
+		return t.narrowOrUnionTrueEdge(out, logical)
+	}
 	operands, decomposable := compoundOperands(logical, wantTruthy)
 	if !decomposable {
 		return out, false
@@ -622,6 +635,62 @@ func (t *Transfer) narrowByCompound(out flow.PointState, info *cfg.BranchInfo, t
 		applied = true
 	}
 	return state, applied
+}
+
+// narrowOrUnionTrueEdge narrows the TRUE edge of `A or B` when both operands are
+// guards on the SAME tested value: at least one operand holds, so the value is the
+// UNION of each operand's narrowing. It narrows each operand independently from the
+// shared entering state (each asserted truthy, the polarity the surviving disjunct
+// would carry), then requires both to refine EXACTLY the same single Env key. When
+// they do, the two refined values are joined on that key by the value-domain LUB
+// (product.Join), the sound union the existential proves. When they refine different
+// keys, refine more than one key, or one operand classifies no narrowing, the edge
+// proves nothing about a single value and the state is left unchanged (applied=false:
+// a precision loss, never an over-narrow). Only the value join is applied; the
+// per-operand path conditions are NOT recorded, since neither holds unconditionally
+// on the existential edge.
+func (t *Transfer) narrowOrUnionTrueEdge(out flow.PointState, logical *ast.LogicalOpExpr) (flow.PointState, bool) {
+	lhs, lkey, lok := t.operandNarrowsOneKey(out, logical.Lhs)
+	if !lok {
+		return out, false
+	}
+	rhs, rkey, rok := t.operandNarrowsOneKey(out, logical.Rhs)
+	if !rok || lkey != rkey {
+		return out, false
+	}
+	joined := product.Join(lhs.Env[lkey], rhs.Env[rkey])
+	res := cloneForNarrow(out)
+	res.Env[lkey] = joined
+	zprobeNarrow("orUnionTrueEdge key=%q lhs=%v rhs=%v joined=%v", lkey, projectStr(lhs.Env[lkey]), projectStr(rhs.Env[rkey]), projectStr(joined))
+	return res, true
+}
+
+// operandNarrowsOneKey narrows state by one OR-disjunct asserted truthy and reports
+// the single Env key it refined. It returns ok=true only when the operand refines
+// EXACTLY one key (the value it tests), so the caller can join two disjuncts that
+// agree on which value they constrain; an operand that refines no key (an
+// unclassifiable guard) or more than one key (a multi-value guard) is not a
+// same-value disjunct and returns ok=false.
+func (t *Transfer) operandNarrowsOneKey(state flow.PointState, expr ast.Expr) (flow.PointState, string, bool) {
+	narrowed, ok := t.narrowOperand(state, operandGuard{expr: expr, truthy: true})
+	if !ok {
+		return flow.PointState{}, "", false
+	}
+	var changed string
+	for k, av := range narrowed.Env {
+		base, had := state.Env[k]
+		if had && product.Domain.Equal(base, av) {
+			continue
+		}
+		if changed != "" {
+			return flow.PointState{}, "", false
+		}
+		changed = k
+	}
+	if changed == "" {
+		return flow.PointState{}, "", false
+	}
+	return narrowed, changed, true
 }
 
 // compoundOperands returns the operands a logical guard narrows on the chosen edge
