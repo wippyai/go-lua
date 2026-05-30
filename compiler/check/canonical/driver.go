@@ -333,12 +333,22 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	// capture map stabilizes, bounded so a non-converging chain still terminates.
 	// The capture types are the same module-wide values the observation surface
 	// trusts, so this never makes a value more precise than the converged solve.
+	// A split-pattern OOP method's implicit `self` is the receiver prototype, which
+	// is only enriched with its instance data fields by enrichPrototypeReceivers at
+	// the end of the first solve's buildModuleCaptures. Re-seed self from that
+	// enriched record (alongside the capture resolvers) so the re-solve types
+	// self.field reads against the receiver's proven fields. A named-type receiver was
+	// already seeded at construction; this only adds the previously-unresolvable value
+	// receivers. The self seed shifts the capture map (the methods read more concrete
+	// fields), so it iterates in the same bounded fixpoint as capture seeding.
 	prevCaptures := d.moduleCaptures
 	for pass := 0; pass < captureRefinePasses; pass++ {
 		if len(prevCaptures) == 0 {
 			break
 		}
-		if !d.seedCaptureResolvers(prog) {
+		seededCaptures := d.seedCaptureResolvers(prog)
+		seededSelf := d.seedMethodSelfFromCaptures(prog)
+		if !seededCaptures && !seededSelf {
 			break
 		}
 		queries = summary.New(prog)
@@ -405,6 +415,57 @@ func (d *Driver) seedCaptureResolvers(prog *program) bool {
 		seeded = true
 	}
 	return seeded
+}
+
+// seedMethodSelfFromCaptures re-seeds each method body's implicit `self` with the
+// receiver record now that the module-wide capture map (and the enriched
+// split-pattern prototype it carries) is known. A value-receiver method (the
+// split-pattern OOP class: methods live on a bare prototype table sealed onto the
+// instance with setmetatable) has no resolvable receiver at program-build time, so
+// transfer.New left its self slot unseeded and the first solve typed self.field as
+// unknown. enrichPrototypeReceivers ran at the end of the first solve's
+// buildModuleCaptures, joining the instance data fields onto the prototype record;
+// receiverType now resolves the receiver to that enriched record. Seeding it into
+// slot 0 (the implicit self slot, which carries no declared annotation) lets the
+// re-solve track self.field reads against the receiver's proven fields and methods.
+//
+// The self type is injected as the slot-0 inferred-parameter value: seedEntry pins
+// an unannotated parameter slot from inferredParamBySlot when declaredParamBySlot has
+// no entry, which is exactly the implicit-self case. The function's other inferred
+// params are preserved by rebuilding the full slot map. A named-type receiver was
+// already seeded at construction (declaredParamBySlot[0]); re-seeding it as inferred
+// is a no-op there because declaredParamBySlot wins in seedEntry, so this is safe to
+// run for every method. It returns whether any transfer's self seed changed.
+func (d *Driver) seedMethodSelfFromCaptures(prog *program) bool {
+	if prog == nil || len(prog.methodDefs) == 0 {
+		return false
+	}
+	changed := false
+	for ref, g := range prog.graphs {
+		if g == nil {
+			continue
+		}
+		selfType := d.methodSelfSeed(prog, g)
+		if selfType == nil || typ.IsAbsentOrUnknown(selfType) {
+			continue
+		}
+		tr, ok := prog.transfers[ref].(*transfer.Transfer)
+		if !ok || tr == nil {
+			continue
+		}
+		bySlot := d.inferredParamsBySlot(prog, ref)
+		if existing, ok := bySlot[0]; ok && existing != nil && existing.String() == selfType.String() {
+			continue
+		}
+		merged := make(map[int]typ.Type, len(bySlot)+1)
+		for slot, t := range bySlot {
+			merged[slot] = t
+		}
+		merged[0] = selfType
+		tr.SetInferredParams(merged)
+		changed = true
+	}
+	return changed
 }
 
 // captureMapEqual reports whether two module-capture maps carry the same symbol
@@ -658,6 +719,13 @@ func (d *Driver) enrichPrototypeReceivers(sess api.AnalysisSession, prog *progra
 		}
 	}
 	for protoSym, entry := range byProto {
+		// A method body's `self.field = value` write widens the field beyond its
+		// construction-site initial value: a field initialized `= nil` and reassigned
+		// `= T` in a method is `T?`, not the narrow `nil` the literal alone records, so
+		// a later `return self.field` reads the union rather than a spurious nil. The
+		// write join runs before mergeInstanceFields so the accumulated type carries
+		// into the receiver record.
+		d.joinSelfFieldWrites(prog, protoSym, entry)
 		if len(entry.fields) == 0 {
 			continue
 		}
@@ -666,6 +734,78 @@ func (d *Driver) enrichPrototypeReceivers(sess api.AnalysisSession, prog *progra
 			continue
 		}
 		out[protoSym] = mergeInstanceFields(rec, entry.fields, entry.count)
+	}
+}
+
+// joinSelfFieldWrites widens a class's instance data fields with the values its
+// method bodies write to `self`. A split-pattern class initializes a field at the
+// construction site (recorded in entry.fields) but a method commonly reassigns it
+// (`self._cache = computed`); reading only the literal types the field at its
+// initial value, so a `return self.field` after the write mistypes. This scans every
+// method body whose receiver is protoSym for a `self.<name> = value` write and joins
+// the written value's converged type into the field accumulator: a field already
+// present (a construction field) widens to the union of its init and written types; a
+// field written but never constructed is added optional (a method may not run before
+// the field is first read). The written value is read from the assignment point's
+// converged in-state, the same state the observation surface trusts, so this never
+// invents a type more precise than the solve proved.
+func (d *Driver) joinSelfFieldWrites(prog *program, protoSym cfg.SymbolID, entry *instanceData) {
+	if entry == nil || protoSym == 0 {
+		return
+	}
+	for ref, g := range prog.graphs {
+		if g == nil {
+			continue
+		}
+		fn := g.Func()
+		if fn == nil {
+			continue
+		}
+		info, ok := prog.methodDefs[fn]
+		if !ok || info == nil || info.ReceiverSymbol != protoSym {
+			continue
+		}
+		bindings := g.Bindings()
+		if bindings == nil || !phasecore.HasUnannotatedSelfParam(fn, bindings) {
+			continue
+		}
+		params := g.ParamSymbols()
+		if len(params) == 0 || params[0] == 0 || bindings.Name(params[0]) != "self" {
+			continue
+		}
+		selfSym := params[0]
+		fs, hasState := d.states[ref]
+		if !hasState {
+			continue
+		}
+		g.EachAssign(func(p cfg.Point, ai *cfg.AssignInfo) {
+			if ai == nil {
+				return
+			}
+			for i := range ai.Targets {
+				target := ai.Targets[i]
+				if target.Kind != cfg.TargetField || target.BaseSymbol != selfSym || len(target.FieldPath) != 1 {
+					continue
+				}
+				name := target.FieldPath[0]
+				if name == "" {
+					continue
+				}
+				ps, ok := fs.Points[p]
+				if !ok {
+					continue
+				}
+				vt := exprValueAt(ai.SourceAt(i), g, ps, d.moduleCaptures)
+				if vt == nil || typ.IsAbsentOrUnknown(vt) {
+					continue
+				}
+				if fa := entry.fields[name]; fa != nil {
+					fa.typ = product.Domain.Join(product.FromType(fa.typ), product.FromType(vt)).ProjectValue()
+				} else {
+					entry.fields[name] = &fieldAcc{typ: vt, optional: true}
+				}
+			}
+		})
 	}
 }
 
@@ -1779,13 +1919,20 @@ func (d *Driver) addFunction(sess api.AnalysisSession, p *program, g *cfg.Graph)
 
 // methodSelfSeed resolves the implicit `self` type to seed a method body's entry
 // state with. It applies only to a method/field definition (function T:m()) whose
-// self the user did not annotate, and only when the receiver names a module type
-// resolvable now (the named-type path, which needs no converged value). A value
-// receiver (an anonymous table) or an explicitly annotated self yields nil, so the
-// transfer leaves self unseeded (the sound carry-forward). The parent graph records
-// the method's FuncDefInfo before this function's graph is dequeued, so methodDefs is
-// populated by the time addFunction runs for the method body.
+// self the user did not annotate; an explicitly annotated self yields nil so the
+// annotation wins. The receiver type is resolved through receiverType, the single
+// source of truth the observation surface also reads: a receiver naming a module
+// type resolves immediately (the named-type path needs no converged value), while a
+// value receiver (the split-pattern OOP prototype) resolves to the receiver symbol's
+// module-wide converged record. At program-build time moduleCaptures is empty, so a
+// value receiver yields nil and self stays unseeded (the sound carry-forward); the
+// capture-refine re-solve seeds it once the enriched prototype is known. The parent
+// graph records the method's FuncDefInfo before this function's graph is dequeued, so
+// methodDefs is populated by the time addFunction runs for the method body.
 func (d *Driver) methodSelfSeed(p *program, g *cfg.Graph) typ.Type {
+	if g == nil {
+		return nil
+	}
 	fn := g.Func()
 	if fn == nil {
 		return nil
@@ -1798,19 +1945,7 @@ func (d *Driver) methodSelfSeed(p *program, g *cfg.Graph) typ.Type {
 	if bindings == nil || !phasecore.HasUnannotatedSelfParam(fn, bindings) {
 		return nil
 	}
-	ident, ok := info.Receiver.(*ast.IdentExpr)
-	if !ok || ident == nil {
-		return nil
-	}
-	sc := d.baseScope()
-	if sc == nil {
-		return nil
-	}
-	named, ok := sc.LookupType(ident.Value)
-	if !ok || named == nil || typ.IsAbsentOrUnknown(named) {
-		return nil
-	}
-	return named
+	return d.receiverType(info)
 }
 
 // collectGlobalNames is the predeclared global names the binder seeds, derived

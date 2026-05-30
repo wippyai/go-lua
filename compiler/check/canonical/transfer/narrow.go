@@ -21,12 +21,25 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// zprobeNarrow traces discriminant/cond-check narrowing when ZNARROW is set.
+// zprobeNarrow traces discriminant/cond-check narrowing when ZNARROW is set. The
+// trace is appended to the file ZNARROW names (stderr is swallowed in the test
+// sandbox), or to stderr when ZNARROW is the literal "1".
 func zprobeNarrow(format string, args ...interface{}) {
-	if os.Getenv("ZNARROW") == "" {
+	dst := os.Getenv("ZNARROW")
+	if dst == "" {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[ZNARROW] "+format+"\n", args...)
+	line := fmt.Sprintf("[ZNARROW] "+format+"\n", args...)
+	if dst == "1" {
+		fmt.Fprint(os.Stderr, line)
+		return
+	}
+	f, err := os.OpenFile(dst, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprint(f, line)
 }
 
 // projectStr renders an abstract value's projected type for the ZNARROW probe,
@@ -563,19 +576,29 @@ func isDiscriminatingType(t typ.Type) bool {
 }
 
 // exitGuard synthesizes the branch guard a then-exit / else-exit ScopeExit node
-// carries. The CFG copies a branch's CondVar (the tested symbol) and CondCheck onto
-// both arm-exit ScopeExit nodes (compiler/cfg/stmt.go IfStmt), so a post-`if` merge
-// and a read after an early return in the other arm both reach a predecessor that
-// holds the guard markers but is NOT a *cfg.BranchInfo. This reconstructs the
+// carries. The CFG copies a branch's CondVar (the tested ROOT symbol) and CondCheck
+// onto both arm-exit ScopeExit nodes (compiler/cfg/stmt.go IfStmt), so a post-`if`
+// merge and a read after an early return in the other arm both reach a predecessor
+// that holds the guard markers but is NOT a *cfg.BranchInfo. This reconstructs the
 // equivalent BranchInfo so the same narrowing helpers fire on those preds.
 //
-// The CondSymbol is resolved from the node's CondVar the same way the branch path
-// resolves it (the base node's CondVar IS the branch's tested symbol); the variable
-// name is recovered for the per-edge path condition. The full condition AST is not
-// copied onto the exit node, so the discriminant and typeof-argument paths (which
-// read it) are inert here — a precision loss on those guards, never unsoundness.
-// Edge polarity is selected by EdgeCond on the exit node's outgoing edge: the
-// then-exit's edge to the merge is the TRUE edge, the else-exit's the FALSE edge.
+// The node carries only the ROOT symbol, never the field path: a field-path guard
+// (`if current.updated_at == nil`) copies the root `current` symbol and the nil
+// check onto the exit node, dropping the `.updated_at` segment. Re-narrowing the
+// BARE root by that check would be UNSOUND — `current.updated_at == nil` proves
+// nothing about `current` itself, yet a bare nil-check on the then-arm would pin
+// `current` to nil and corrupt a later `return current`. So the originating branch
+// is recovered by a backward walk to the nearest matching NodeBranch, whose intact
+// BranchInfo (full Condition AST + field-path CondVar) drives the narrowing: the
+// field-path narrowing then refines the FIELD slot, leaving the root symbol intact.
+// The branch is always a backward ancestor of both its arm exits (condEntry ->
+// thenStart/elseStart -> ... -> thenExit/elseExit), so the walk finds it.
+//
+// When no originating branch is recoverable (a degenerate graph), the lossy bare
+// reconstruction is returned only for a bare-symbol root path — a field-path guard
+// declines rather than narrow the wrong (root) value. Edge polarity is selected by
+// EdgeCond on the exit node's outgoing edge: the then-exit's edge to the merge is
+// the TRUE edge, the else-exit's the FALSE edge.
 func exitGuard(g *cfg.Graph, pred cfg.Point) *cfg.BranchInfo {
 	node := g.Node(pred)
 	if node == nil || node.Kind != cfg.NodeScopeExit {
@@ -584,11 +607,41 @@ func exitGuard(g *cfg.Graph, pred cfg.Point) *cfg.BranchInfo {
 	if node.CondVar == 0 && node.CondCheck.Kind == cfg.CheckNone {
 		return nil
 	}
+	if info := originatingBranch(g, pred, node.CondVar, node.CondCheck); info != nil {
+		return info
+	}
 	return &cfg.BranchInfo{
 		CondVar:    g.NameOf(node.CondVar),
 		CondSymbol: node.CondVar,
 		CondCheck:  node.CondCheck,
 	}
+}
+
+// originatingBranch finds the branch a ScopeExit copied its guard markers from: the
+// nearest NodeBranch reached by a backward walk over predecessors whose CondSymbol
+// and CondCheck match the markers the exit node carries. It returns that branch's
+// full BranchInfo (with the intact Condition AST and field-path CondVar string), so
+// the exit re-narrowing operates on the SAME path the branch tested, recovering the
+// field segments the node-level markers drop. A no-match (no matching branch is a
+// backward ancestor) returns nil so the caller falls back to the bare reconstruction.
+func originatingBranch(g *cfg.Graph, exit cfg.Point, condSym cfg.SymbolID, check cfg.CondCheck) *cfg.BranchInfo {
+	seen := map[cfg.Point]bool{exit: true}
+	frontier := append([]cfg.Point(nil), g.Predecessors(exit)...)
+	for len(frontier) > 0 {
+		var next []cfg.Point
+		for _, p := range frontier {
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			if info := g.Branch(p); info != nil && info.CondSymbol == condSym && info.CondCheck == check {
+				return info
+			}
+			next = append(next, g.Predecessors(p)...)
+		}
+		frontier = next
+	}
+	return nil
 }
 
 // narrowByTypeCheck applies the value-narrowing a `local val, err = T:is(x)` guard
