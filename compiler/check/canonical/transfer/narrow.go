@@ -17,6 +17,7 @@ import (
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/subst"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -635,6 +636,14 @@ func (t *Transfer) narrowByCondCheck(out flow.PointState, info *cfg.BranchInfo, 
 	if cond.HasConstraints() {
 		res.Cond = constraint.Domain.Join(res.Cond, cond)
 	}
+	// A positive guard on a literal index path `arr[i]` (`if arr[i]`, `arr[i] ~= nil`)
+	// proves the element at index i is present, so the container holds at least i
+	// elements: record `#arr >= i` on this edge. A later read of `arr[i]` in the
+	// guarded body reads it in-range and drops the soundly-optional element nil
+	// through the existing length proof, recovering the non-optional element exactly
+	// where the guard establishes presence. The merge-LUB rebuilds the unbounded
+	// length where both edges meet, so the floor never survives past the guard.
+	res = t.narrowIndexPresenceLength(res, sym, segments, check)
 	if !has {
 		// No tracked value to refine; the per-edge path condition still records the
 		// guard for soundness.
@@ -647,6 +656,37 @@ func (t *Transfer) narrowByCondCheck(out flow.PointState, info *cfg.BranchInfo, 
 		return res
 	}
 	res.Env[key] = narrowed
+	return res
+}
+
+// narrowIndexPresenceLength records `#arr >= i` on the guarded edge when the guard
+// is a positive presence check (truthy / not-nil) on a literal index path arr[i]
+// rooted at sym. A present element at index i implies the container has at least i
+// elements, the sound length floor an in-range index read consults to drop its
+// optional element. A negative check, a non-index or non-literal-index path, or a
+// missing numeric component leaves the state unchanged. The numeric component is
+// cloned before the floor is applied so the shared predecessor state is never
+// mutated; the merge-LUB rebuilds the unbounded length past the guard.
+func (t *Transfer) narrowIndexPresenceLength(res flow.PointState, sym cfg.SymbolID, segments []constraint.Segment, check cfg.CondCheckKind) flow.PointState {
+	switch check {
+	case cfg.CheckTruthy, cfg.CheckNotNil:
+	default:
+		return res
+	}
+	if len(segments) != 1 {
+		return res
+	}
+	seg := segments[0]
+	if seg.Kind != constraint.SegmentIndexInt || seg.Index < 1 {
+		return res
+	}
+	if res.Num == nil {
+		return res
+	}
+	num := res.Num.Clone()
+	num.ApplyLenGeConst(constraint.PathKey(symKey(sym)), int64(seg.Index))
+	res.Num = num
+	zprobeNarrow("indexPresenceLen sym=%d idx=%d", sym, seg.Index)
 	return res
 }
 
@@ -864,6 +904,19 @@ func mapUnionField(t typ.Type, field string, refine func(typ.Type) typ.Type, abs
 		return t
 	}
 	switch v := unwrap.Alias(t).(type) {
+	case *typ.Instantiated:
+		// A generic instantiation (Result<Greeting> = {ok: true, value: T} |
+		// {ok: false, error: string}) carries its discriminated union behind the
+		// instantiation; unwrap.Alias does not expand it, so the per-member field
+		// filter never sees the variants. Expand the instantiation to its
+		// substituted body and narrow that, so a `if r.ok` guard drops the false
+		// variant exactly as it would for a non-generic union. A body that does not
+		// expand (no resolvable generic) leaves t unchanged.
+		expanded := subst.ExpandInstantiated(t)
+		if expanded == nil || expanded == t {
+			return t
+		}
+		return mapUnionField(expanded, field, refine, absentKeeps)
 	case *typ.Union:
 		kept := make([]typ.Type, 0, len(v.Members))
 		for _, m := range v.Members {

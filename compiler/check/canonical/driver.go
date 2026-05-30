@@ -1642,7 +1642,7 @@ func (d *Driver) addFunction(sess api.AnalysisSession, p *program, g *cfg.Graph)
 	// path that needs no converged value), so it is available at program-build time. A
 	// value receiver (an anonymous table) has no named binding here and stays unseeded
 	// (the sound carry-forward), recovered through the observation surface's capture.
-	tr := transfer.New(in, nil, funcTyper{d}, callTyper{d: d, g: g}, d.typeCheckBinds(g), nil, declared, d.methodSelfSeed(p, g))
+	tr := transfer.New(in, opsResolver{d}, funcTyper{d}, callTyper{d: d, g: g}, d.typeCheckBinds(g), nil, declared, d.methodSelfSeed(p, g))
 	p.transfers[ref] = tr
 	// The parameter-narrowing effects (wrapper assert / if-error guards) are a
 	// syntactic property of the body the transfer's recognizers extract once here, so
@@ -2231,6 +2231,37 @@ func signatureHasErrorReturn(sig typ.Type) bool {
 type callTyper struct {
 	d *Driver
 	g *cfg.Graph
+}
+
+// opsResolver adapts the driver to the transfer's OperatorResolver seam: it routes
+// arithmetic/relational operator typing through the shared TypeOps engine, the same
+// resolver the legacy flow uses (core.QueryResolver). It holds the driver and reads
+// the query context lazily at call time, because the transfers are built during
+// buildProgram before the run's activeCtx is set. A run with no resolved context or
+// query ops yields nil, so the transfer falls back to its structural numeric default.
+type opsResolver struct{ d *Driver }
+
+func (r opsResolver) resolver() *core.QueryResolver {
+	if r.d == nil || r.d.cfg.Types == nil || r.d.activeCtx == nil {
+		return nil
+	}
+	return core.NewQueryResolver(r.d.activeCtx, r.d.cfg.Types)
+}
+
+func (r opsResolver) BinaryOp(left typ.Type, op string, right typ.Type) typ.Type {
+	res := r.resolver()
+	if res == nil {
+		return nil
+	}
+	return res.BinaryOp(left, op, right)
+}
+
+func (r opsResolver) UnaryOp(op string, operand typ.Type) typ.Type {
+	res := r.resolver()
+	if res == nil {
+		return nil
+	}
+	return res.UnaryOp(op, operand)
 }
 
 // CallReturns types call's Lua return vector. argTypes are the value-domain types

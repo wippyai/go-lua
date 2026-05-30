@@ -1,0 +1,126 @@
+package canonical_test
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/compiler/check"
+	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+)
+
+// TestZZOptGuardProbe drives the call/method/index-on-optional-after-guard
+// patterns through the canonical flow so ZNARROW traces whether the guard
+// narrows the callee/receiver/index base and whether the call/index read sees
+// it. Debug probe.
+func TestZZOptGuardProbe(t *testing.T) {
+	cases := map[string]string{
+		"if-call": `
+type Cb = fun(): nil
+local function run(f: Cb?)
+    if f then
+        f()
+    end
+end
+return run
+`,
+		"if-method": `
+type Svc = { go: fun(self: Svc) }
+local function run(s: Svc?)
+    if s then
+        s:go()
+    end
+end
+return run
+`,
+		"and-method": `
+type Svc = { go: fun(self: Svc): boolean }
+local function run(s: Svc?)
+    local ok = s and s:go()
+end
+return run
+`,
+		"if-and-index": `
+type Row = { exists: boolean }
+type QR = { [number]: Row }
+local function run(result: QR?)
+    if result and result[1] then
+        local r = result[1].exists
+    end
+end
+return run
+`,
+		"if-and-index-array": `
+type QueryResult = {[string]: any}
+local function run(result: {QueryResult}?)
+    if result and result[1] then
+        local r = result[1].exists
+    end
+end
+return run
+`,
+		"index-guard-does-not-leak-sibling": `
+type QueryResult = {[string]: any}
+local function run(result: {QueryResult})
+    if result[1] then
+        local a = result[1]["k"]
+        local b = result[3]["k"]
+    end
+end
+return run
+`,
+		"if-field-then-call": `
+type Cb = fun(): nil
+type Obj = { cb: Cb? }
+local function run(o: Obj)
+    if o.cb then
+        o.cb()
+    end
+end
+return run
+`,
+		"local-from-field-if-method": `
+type Svc = { go: fun(self: Svc) }
+type Holder = { store: Svc? }
+local function run(h: Holder)
+    local store = h.store
+    if store then
+        store:go()
+    end
+end
+return run
+`,
+		"upvalue-if-method": `
+type Svc = { lookup: fun(self: Svc, k: string): boolean }
+type Holder = { store: Svc? }
+local function build(h: Holder)
+    local store = h.store
+    return function(token: string)
+        if store then
+            local snap = store:lookup(token)
+        end
+    end
+end
+return build
+`,
+		"upvalue-if-call": `
+type Cb = fun(): nil
+type Holder = { cb: Cb? }
+local function build(h: Holder)
+    local cb = h.cb
+    return function()
+        if cb then
+            cb()
+        end
+    end
+end
+return build
+`,
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+			for _, m := range testutil.ErrorMessages(res.Diagnostics) {
+				t.Logf("DIAG: %s", m)
+			}
+		})
+	}
+}
