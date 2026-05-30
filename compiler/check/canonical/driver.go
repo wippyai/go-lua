@@ -850,6 +850,7 @@ func (d *Driver) buildModuleCaptures(sess api.AnalysisSession, prog *program) ma
 		}
 	}
 	d.enrichPrototypeReceivers(sess, prog, out)
+	d.enrichCapturedContainerInserts(sess, prog, out)
 	return out
 }
 
@@ -963,6 +964,168 @@ func (d *Driver) enrichPrototypeReceivers(sess api.AnalysisSession, prog *progra
 	}
 }
 
+// enrichCapturedContainerInserts flows a `table.insert(captured.path, v)` element
+// type back onto the module-wide captured container, so a reader in a DIFFERENT
+// function sees the inserted element rather than the empty `{}` the capture's
+// defining site recorded.
+//
+// A captured container (`local _default_context = { suites_hierarchy = {} }`) takes
+// its module-wide type from its defining function's exit state, where the array is
+// still empty. A second function appends to it (`table.insert(
+// _default_context.suites_hierarchy, suite)`), widening the element only inside that
+// body's local state; the capture never observes the mutation, so a third function's
+// `for _, s in ipairs(_default_context.suites_hierarchy)` reads `s` as the empty
+// array's unknown element. This pass scans every function for a table.insert whose
+// container is rooted at a module-captured symbol, resolves the inserted value at the
+// call point, and array-widens the captured container's element at that field path.
+//
+// The widen is the value-domain AppendElement (the same array-element mutation the
+// intra-function transfer applies for a local insert), so it never invents a type the
+// insert did not prove: an unresolved element, an untracked root, or a non-record
+// container leaves the capture unchanged (the sound carry-forward).
+func (d *Driver) enrichCapturedContainerInserts(sess api.AnalysisSession, prog *program, out map[cfg.SymbolID]typ.Type) {
+	if len(out) == 0 || prog == nil {
+		return
+	}
+	for _, ref := range d.refs {
+		g := prog.graphs[ref]
+		if g == nil {
+			continue
+		}
+		fs, hasState := d.states[ref]
+		if !hasState {
+			continue
+		}
+		bindings := g.Bindings()
+		if bindings == nil {
+			continue
+		}
+		tr, _ := prog.transfers[ref].(*transfer.Transfer)
+		evidence := sess.EvidenceForGraph(g)
+		for _, call := range evidence.Calls {
+			info := call.Info
+			if !isTableInsertCall(info) || len(info.Args) < 2 {
+				continue
+			}
+			rootSym, path, ok := capturedContainerPath(info.Args[0], bindings)
+			if !ok {
+				continue
+			}
+			if _, captured := out[rootSym]; !captured {
+				continue
+			}
+			elemExpr := info.Args[len(info.Args)-1]
+			elem := d.insertedElementType(tr, fs, call.Point, elemExpr, g, out)
+			if elem == nil || typ.IsAbsentOrUnknown(elem) {
+				continue
+			}
+			if widened := appendCapturedElement(out[rootSym], path, elem); widened != nil {
+				out[rootSym] = widened
+			}
+		}
+	}
+}
+
+// insertedElementType resolves the precise type of a table.insert element argument at
+// the call point. The converged transfer types the argument exactly as the body did
+// (a nested table literal keeps its element records, a call keeps its return), reading
+// the call point's IN-state. When no transfer or IN-state is available, it falls back
+// to the static exprValueAt resolution (a captured/symbol-valued element), so a
+// symbol-valued insert still flows back.
+func (d *Driver) insertedElementType(tr *transfer.Transfer, fs state.FunctionState, p cfg.Point, elemExpr ast.Expr, g *cfg.Graph, captures map[cfg.SymbolID]typ.Type) typ.Type {
+	if tr != nil {
+		if in, ok := fs.InPoints[p]; ok {
+			if av, ok := tr.EvalExprValue(&in, elemExpr); ok && !av.IsZero() {
+				if t := av.ProjectValue(); t != nil && !typ.IsAbsentOrUnknown(t) {
+					return t
+				}
+			}
+		}
+	}
+	if ps, ok := fs.Points[p]; ok {
+		return exprValueAt(elemExpr, g, ps, captures)
+	}
+	return nil
+}
+
+// isTableInsertCall reports whether info is precisely a `table.insert(...)` function
+// call (the static `table` root with a single `insert` field, not a method call). It
+// mirrors transfer.isTableInsertCallee so the flow-back recognizes the same appends
+// the intra-function transfer does.
+func isTableInsertCall(info *cfg.CallInfo) bool {
+	if info == nil || info.Method != "" || info.CalleeName != "insert" {
+		return false
+	}
+	p := info.CalleePath
+	return p.Root == "table" && len(p.Segments) == 1 &&
+		p.Segments[0].Kind == constraint.SegmentField && p.Segments[0].Name == "insert"
+}
+
+// capturedContainerPath resolves a table.insert target expression to the module
+// symbol it is rooted at and the static field-path segments from that root down to
+// the appended container. A bare identifier yields the symbol with no path; a static
+// field path (`_default_context.suites_hierarchy`) yields the root symbol plus the
+// field names. A dynamic-keyed or non-identifier-rooted target reports ok=false.
+func capturedContainerPath(target ast.Expr, bindings *bind.BindingTable) (cfg.SymbolID, []string, bool) {
+	switch obj := target.(type) {
+	case *ast.IdentExpr:
+		if sym := identSymbol(obj, bindings); sym != 0 {
+			return sym, nil, true
+		}
+	case *ast.AttrGetExpr:
+		baseName, fields := extraction.ExtractFieldPath(obj)
+		if baseName == "" || len(fields) == 0 {
+			return 0, nil, false
+		}
+		root := attrPathRootIdent(obj)
+		if root == nil {
+			return 0, nil, false
+		}
+		if sym := identSymbol(root, bindings); sym != 0 {
+			return sym, fields, true
+		}
+	}
+	return 0, nil, false
+}
+
+// attrPathRootIdent returns the leftmost identifier of a static attribute path
+// (`a.b.c` -> a), or nil when the path is not rooted at an identifier.
+func attrPathRootIdent(e ast.Expr) *ast.IdentExpr {
+	for {
+		switch v := e.(type) {
+		case *ast.IdentExpr:
+			return v
+		case *ast.AttrGetExpr:
+			e = v.Object
+		default:
+			return nil
+		}
+	}
+}
+
+// appendCapturedElement array-widens the container the field path names within base
+// by the inserted element, returning the rewritten base type. An empty path widens
+// base directly (the root is the container). A path that does not resolve through a
+// tracked record field leaves base unchanged, reported as nil so the caller declines.
+func appendCapturedElement(base typ.Type, path []string, elem typ.Type) typ.Type {
+	if base == nil {
+		return nil
+	}
+	baseAV := product.FromType(base)
+	if len(path) == 0 {
+		return product.AppendElement(baseAV, product.FromType(elem)).ProjectValue()
+	}
+	child, ok := product.FieldOf(baseAV, path[0])
+	if !ok || child.IsZero() {
+		return nil
+	}
+	updated := appendCapturedElement(child.ProjectValue(), path[1:], elem)
+	if updated == nil {
+		return nil
+	}
+	return product.WithField(baseAV, path[0], product.FromType(updated)).ProjectValue()
+}
+
 // joinSelfFieldWrites widens a class's instance data fields with the values its
 // method bodies write to `self`. A split-pattern class initializes a field at the
 // construction site (recorded in entry.fields) but a method commonly reassigns it
@@ -1036,12 +1199,18 @@ func (d *Driver) joinSelfFieldWrites(prog *program, protoSym cfg.SymbolID, entry
 }
 
 // collectMetatableIndexSymbols maps every metatable symbol to the symbol its
-// __index field references. It scans the module's table-literal assignments
-// (local mt = {__index = methods}) and records the metatable symbol -> __index
-// source symbol edge, the static link from a class metatable to its method
-// prototype. The shared module binding table gives both symbols the same id in
-// every body, so a setmetatable call in any function resolves the prototype its
-// metatable names.
+// __index field references. It records the metatable symbol -> __index source
+// symbol edge, the static link from a class metatable to its method prototype, in
+// either of the two ways a class wires that edge:
+//
+//   - a table-literal metatable (`local mt = {__index = methods}`): the literal's
+//     __index field references the prototype symbol.
+//   - a field assignment (`Class.__index = Class`): the self-referential class
+//     where the prototype table is its own metatable, the form used by
+//     `setmetatable(instance, Class)` with `Class.__index = Class`.
+//
+// The shared module binding table gives both symbols the same id in every body, so
+// a setmetatable call in any function resolves the prototype its metatable names.
 func (d *Driver) collectMetatableIndexSymbols(sess api.AnalysisSession, prog *program) map[cfg.SymbolID]cfg.SymbolID {
 	out := make(map[cfg.SymbolID]cfg.SymbolID)
 	for _, ref := range d.refs {
@@ -1060,17 +1229,21 @@ func (d *Driver) collectMetatableIndexSymbols(sess api.AnalysisSession, prog *pr
 				continue
 			}
 			for i, target := range info.Targets {
-				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-					continue
-				}
 				src := info.SourceAt(i)
-				tbl, ok := src.(*ast.TableExpr)
-				if !ok {
-					continue
-				}
-				idxSym := indexFieldSourceSymbol(tbl, bindings)
-				if idxSym != 0 {
-					out[target.Symbol] = idxSym
+				switch {
+				case target.Kind == cfg.TargetIdent && target.Symbol != 0:
+					tbl, ok := src.(*ast.TableExpr)
+					if !ok {
+						continue
+					}
+					if idxSym := indexFieldSourceSymbol(tbl, bindings); idxSym != 0 {
+						out[target.Symbol] = idxSym
+					}
+				case target.Kind == cfg.TargetField && target.BaseSymbol != 0 &&
+					len(target.FieldPath) == 1 && target.FieldPath[0] == metaIndexField:
+					if idxSym := identSymbol(src, bindings); idxSym != 0 {
+						out[target.BaseSymbol] = idxSym
+					}
 				}
 			}
 		}

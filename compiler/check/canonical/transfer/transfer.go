@@ -384,6 +384,21 @@ func (t *Transfer) SetInferredParams(bySlot map[int]typ.Type) {
 	t.inferredParamBySlot = bySlot
 }
 
+// EvalExprValue types expr against the converged point state out, returning the
+// AbstractValue the per-node transfer would produce for it and whether it resolves.
+// It is the precise expression typing the intra-function transfer uses (nested table
+// literals, calls, field reads), exposed for a post-convergence reader that needs the
+// same value an in-body evaluation would compute — for instance the interprocedural
+// flow-back of a `table.insert(captured, literal)` element onto the captured
+// container's module-wide type. The parameter-demand callback is a no-op: a
+// post-convergence read records no new contract.
+func (t *Transfer) EvalExprValue(out *flow.PointState, expr ast.Expr) (product.AbstractValue, bool) {
+	if out == nil || expr == nil {
+		return product.AbstractValue{}, false
+	}
+	return t.evalExpr(out, expr, func(int, paramevidence.ParamContract) {})
+}
+
 // SetCaptureResolver installs the free-variable (upvalue / module-capture) type
 // resolver. A nested function reads a captured variable under the same shared
 // symbol id its enclosing scope assigns, but the captured value lives in no Env
