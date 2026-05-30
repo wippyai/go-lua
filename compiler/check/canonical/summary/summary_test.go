@@ -54,7 +54,7 @@ func newTestProgram(t *testing.T, fns map[string]string) *testProgram {
 		}
 		ref := summary.FuncRef{GraphID: in.Graph.ID()}
 		p.graphs[ref] = in.Graph
-		p.transfers[ref] = transfer.New(in, nil, nil, nil, nil, nil, nil)
+		p.transfers[ref] = transfer.New(in, nil, nil, nil, nil, nil, nil, nil)
 		p.params[ref] = in.Scope.NumParams()
 		p.byName[name] = ref
 	}

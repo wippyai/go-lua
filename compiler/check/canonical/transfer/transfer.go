@@ -132,6 +132,13 @@ type CallTyper interface {
 	// `y`. A callee with no such effect, or one that does not resolve to a module
 	// function, yields none.
 	ParamNarrows(call *ast.FuncCallExpr) []ParamNarrow
+	// IsNoReturn reports whether call's callee is a module function that never
+	// returns normally (its body always raises — every exit path ends in error() or
+	// a call to another no-return function). A statement call to such a function
+	// terminates the live flow, exactly as the builtin error() does, so its
+	// continuation is unreachable. A callee that does return, or one that does not
+	// resolve to a module function, yields false.
+	IsNoReturn(call *ast.FuncCallExpr) bool
 }
 
 // TypeCheckBind records the value-narrowing a `local val, err = T:is(x)` type-check
@@ -148,6 +155,23 @@ type TypeCheckBind struct {
 	ErrSym     cfg.SymbolID
 	NarrowSyms []cfg.SymbolID
 	Type       typ.Type
+}
+
+// SiblingNilBind records the value/error correlation a multi-return assignment
+// `local v, err = f()` establishes when the callee proves the Lua `(value, err)`
+// inverse pattern (the body returns `(value, nil)` on success and `(nil, error)`
+// on failure, or only `(value, nil)` with an optional value slot). On the edge a
+// branch proves err nil, the correlated value symbols are non-nil, so they narrow
+// by stripping nil from their flow value: a surviving `local v, err = f(); if err
+// ~= nil then return end` then reads v as its non-optional type.
+//
+// ErrSym is the assignment's error target (the correlated error return). ValueSyms
+// are the value targets the same call's inverse-correlated slot binds; on the
+// err-nil edge each narrows by NarrowPresent over its current value, recovering the
+// non-nil type without fabricating a fixed type the callee did not return.
+type SiblingNilBind struct {
+	ErrSym    cfg.SymbolID
+	ValueSyms []cfg.SymbolID
 }
 
 // Transfer is the canonical per-node transfer. It is stateless across points:
@@ -174,6 +198,11 @@ type Transfer struct {
 	// so a branch testing the error symbol narrows the checked value to the checked
 	// type.
 	typeCheckByErr map[cfg.SymbolID]TypeCheckBind
+	// siblingNilByErr maps a multi-return assignment's error-result symbol to the
+	// value symbols proven non-nil when that error is nil. NarrowEdge reads it so a
+	// branch testing the error symbol strips nil from the correlated value symbols on
+	// the err-nil edge.
+	siblingNilByErr map[cfg.SymbolID]SiblingNilBind
 	// unannotatedParam marks a parameter symbol with no declared type. A read of one
 	// the body does not pin resolves to gradual `any` (a Lua parameter without an
 	// annotation is dynamic, usable in every operation), the same default the
@@ -196,18 +225,25 @@ type Transfer struct {
 	// declared types into slot order through the graph's ParamSlots so seedEntry pins
 	// each parameter slot to its own annotation rather than the previous slot's.
 	declaredParamBySlot map[int]typ.Type
+	// inferredParamBySlot maps an UNANNOTATED parameter SLOT to the type inferred for
+	// it from the module's call sites. seedEntry seeds an unannotated parameter from
+	// it so the body sees the call-site type rather than the gradual any. A declared
+	// parameter is unaffected (its annotation is authoritative).
+	inferredParamBySlot map[int]typ.Type
 }
 
 // New builds the transfer for the given canonical inputs. ops, funcTyper, and
 // callTyper may be nil. typeChecks are the type-check value-narrowing binds the
 // caller precomputed from the graph's `local val, err = T:is(x)` assignments (nil
-// for none). declared maps an annotated symbol (parameter or annotated local) to
+// for none). siblingNils are the (value, err) inverse-correlation binds the caller
+// precomputed from the graph's `local v, err = f()` assignments whose callee proves
+// the Lua error-return pattern (nil for none). declared maps an annotated symbol (parameter or annotated local) to
 // its declared type, so edge narrowing refines the declared union rather than the
 // precise constructor value the Env seeds; nil leaves narrowing on the Env value.
 // selfType, when non-nil, is the receiver class of a method body's implicit `self`
 // (function T:m()): it seeds the self parameter's entry value so self.field reads
 // track the receiver record rather than collapsing to unknown.
-func New(in input.Inputs, ops OperatorResolver, funcTyper FuncTyper, callTyper CallTyper, typeChecks []TypeCheckBind, declared map[cfg.SymbolID]typ.Type, selfType typ.Type) *Transfer {
+func New(in input.Inputs, ops OperatorResolver, funcTyper FuncTyper, callTyper CallTyper, typeChecks []TypeCheckBind, siblingNils []SiblingNilBind, declared map[cfg.SymbolID]typ.Type, selfType typ.Type) *Transfer {
 	t := &Transfer{in: in, ops: ops, funcTyper: funcTyper, callTyper: callTyper, paramBySym: make(map[cfg.SymbolID]int), declaredTypes: declared}
 	t.declaredParamBySlot = declaredParamBySlot(in)
 	// A method body's implicit `self` occupies slot 0 with no source annotation, so the
@@ -240,7 +276,46 @@ func New(in input.Inputs, ops OperatorResolver, funcTyper FuncTyper, callTyper C
 		}
 		t.typeCheckByErr[b.ErrSym] = b
 	}
+	for _, b := range siblingNils {
+		if b.ErrSym == 0 || len(b.ValueSyms) == 0 {
+			continue
+		}
+		if t.siblingNilByErr == nil {
+			t.siblingNilByErr = make(map[cfg.SymbolID]SiblingNilBind, len(siblingNils))
+		}
+		t.siblingNilByErr[b.ErrSym] = b
+	}
 	return t
+}
+
+// SetInferredParams installs the call-site-inferred types of unannotated parameters
+// after construction. Like SetSiblingNils, the inference needs the call graph
+// resolved (a parameter's type comes from its callers' argument types), which is
+// after the transfer is built, so the types are injected here.
+func (t *Transfer) SetInferredParams(bySlot map[int]typ.Type) {
+	if len(bySlot) == 0 {
+		t.inferredParamBySlot = nil
+		return
+	}
+	t.inferredParamBySlot = bySlot
+}
+
+// SetSiblingNils installs the (value, err) inverse-correlation binds after
+// construction. The driver computes them in a build phase that runs once the call
+// graph's name resolution is complete (a sibling correlation needs the callee
+// resolved to prove the error-return pattern), which is after the transfer is
+// built, so they are injected here rather than passed to New.
+func (t *Transfer) SetSiblingNils(siblingNils []SiblingNilBind) {
+	t.siblingNilByErr = nil
+	for _, b := range siblingNils {
+		if b.ErrSym == 0 || len(b.ValueSyms) == 0 {
+			continue
+		}
+		if t.siblingNilByErr == nil {
+			t.siblingNilByErr = make(map[cfg.SymbolID]SiblingNilBind, len(siblingNils))
+		}
+		t.siblingNilByErr[b.ErrSym] = b
+	}
 }
 
 // declaredParamBySlot re-keys the source-indexed DeclaredParamTypes into parameter
@@ -353,6 +428,10 @@ func (t *Transfer) seedEntry(out *flow.PointState, contracts paramevidence.Contr
 		var av product.AbstractValue
 		if declared, ok := t.declaredParamBySlot[i]; ok && declared != nil {
 			av = product.FromType(declared)
+		} else if inferred, ok := t.inferredParamBySlot[i]; ok && inferred != nil {
+			// An unannotated parameter takes its call-site-inferred type, so the body's
+			// reads and narrowing of it have a concrete base rather than the gradual any.
+			av = product.FromType(inferred)
 		}
 		if c, ok := contracts[i]; ok {
 			if av.IsZero() {
@@ -1306,6 +1385,14 @@ func (t *Transfer) applyCallArgs(
 	// CalleeName the CFG pre-extracted, the genuine Lua builtin, not a name heuristic.
 	if info.CalleeName == "assert" {
 		return t.applyAssertNarrow(out, info.Call)
+	}
+	// A statement call to a no-return function terminates the live flow: its
+	// continuation is unreachable, exactly as the builtin error() prunes its
+	// successor. The post-state is the lattice Bottom, so the branch arm holding
+	// this call drops out of the post-guard merge.
+	if t.callTyper != nil && t.callTyper.IsNoReturn(info.Call) {
+		zprobeNarrow("noReturn-call dead callee=%q", info.CalleeName)
+		return true
 	}
 	// A call to a module function that narrows its parameters (a wrapper around
 	// assert / `if x == nil then error()`) carries that narrowing to the matching

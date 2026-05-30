@@ -42,7 +42,7 @@ func solveFn(t *testing.T, params []string, paramTypes []ast.TypeExpr, resolve i
 	if in.Graph == nil {
 		t.Fatal("input builder produced no graph")
 	}
-	tr := transfer.New(in, nil, nil, nil, nil, nil, nil)
+	tr := transfer.New(in, nil, nil, nil, nil, nil, nil, nil)
 	fs := equation.NewBuilder(in.Graph, in.Scope.NumParams(), tr).Solve()
 	return fs, in.Graph
 }
@@ -71,7 +71,7 @@ return count
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"items"}}, Stmts: stmts}
 	in := input.BuildFromFunction(fn, nil, nil)
 	g := in.Graph
-	real := transfer.New(in, nil, nil, nil, nil, nil, nil)
+	real := transfer.New(in, nil, nil, nil, nil, nil, nil, nil)
 
 	// The loop must have a feedback-vertex set; its header cell is the widening
 	// site that makes the ascending counter converge.

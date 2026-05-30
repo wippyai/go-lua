@@ -115,6 +115,13 @@ type Driver struct {
 	// from an enclosing scope (a free variable not declared in the closure body).
 	moduleCaptures map[cfg.SymbolID]typ.Type
 
+	// moduleAliasTypes maps a require() alias symbol to its module export type. It is
+	// a STATIC fact (the manifest export, no solve needed), built before the solve so
+	// the per-node call resolution can type a `time.now()` call whose base `time` is a
+	// captured require alias inside a nested function, where the transfer Env tracks
+	// no value for the captured free variable.
+	moduleAliasTypes map[cfg.SymbolID]typ.Type
+
 	// moduleScope is the base type-name scope every annotation resolves against: the
 	// configured Stdlib scope enriched with the module's own `type X = ...`
 	// definitions. Without it a named annotation referring to a module-local type
@@ -287,6 +294,11 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	// resolveType call below (parameter contracts, declared returns, function
 	// signatures) through the same scope the legacy flow puts type defs in.
 	d.moduleScope = d.buildModuleScope(sess, rootGraph)
+
+	// Resolve each require() alias to its module export type before the solve, so a
+	// captured module value (`time` read as `time.now()` inside a nested function)
+	// types its calls even where the transfer Env tracks no value for the capture.
+	d.moduleAliasTypes = d.buildModuleAliasTypes(sess, rootGraph)
 
 	prog := d.buildProgram(sess, rootGraph)
 	queries := summary.New(prog)
@@ -621,6 +633,20 @@ type program struct {
 	// each argument forwards, the input to the transitive closure that propagates a
 	// callee's parameter narrowing to a wrapper that forwards a parameter to it.
 	delegatedCalls map[summary.FuncRef][]transfer.DelegatedCall
+
+	// inferredParams maps a function ref to the inferred type of each unannotated
+	// parameter, joined across the module's call sites. A function with no annotation
+	// on a parameter takes the static type its callers pass there (`get_page_data(page)`
+	// called with a `Page?` argument types the body's `page` as `Page?` rather than
+	// the gradual `any`), so the body's field reads and narrowing have a concrete base.
+	inferredParams map[summary.FuncRef]map[int]typ.Type
+
+	// noReturn marks each module function that never returns normally: its body
+	// always raises, so a statement call to it terminates the caller's live flow. It
+	// is the least fixed point of "every exit path ends in a no-return step": a
+	// function whose CFG exit is unreachable (direct error()) seeds it, and a
+	// function all of whose exit-dominating calls are no-return inherits it.
+	noReturn map[summary.FuncRef]bool
 }
 
 func (p *program) Graph(ref summary.FuncRef) *cfg.Graph { return p.graphs[ref] }
@@ -699,6 +725,8 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph) *p
 		fieldFuncs:     make(map[cfg.SymbolID]map[string]*ast.FunctionExpr),
 		paramNarrows:   make(map[summary.FuncRef][]transfer.ParamNarrow),
 		delegatedCalls: make(map[summary.FuncRef][]transfer.DelegatedCall),
+		noReturn:       make(map[summary.FuncRef]bool),
+		inferredParams: make(map[summary.FuncRef]map[int]typ.Type),
 	}
 
 	// Phase 1: BFS the hierarchy. Each function's body may define nested
@@ -805,6 +833,39 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph) *p
 	// The names resolved in phase 2 are required to map each delegated call to its
 	// callee ref, so this runs last.
 	d.closeParamNarrows(p)
+
+	// Phase 4a: compute the no-return set as the least fixed point over the call
+	// graph. A function whose CFG exit is unreachable always raises directly (the
+	// builtin error() prunes its successor); a function all of whose exit-dominating
+	// calls resolve to no-return functions inherits it. Resolving a callee needs the
+	// phase-2 name resolution, so this runs here.
+	d.computeNoReturn(p)
+
+	// Phase 4a2: infer each unannotated parameter's type from the module's call sites,
+	// then seed it on the owning transfer. A `function f(x)` whose only callers pass a
+	// concrete-typed argument types the body's x as that type rather than the gradual
+	// any, so x's field reads and narrowing have a real base.
+	d.computeInferredParams(p)
+	for ref := range p.graphs {
+		tr, ok := p.transfers[ref].(*transfer.Transfer)
+		if !ok || tr == nil {
+			continue
+		}
+		tr.SetInferredParams(d.inferredParamsBySlot(p, ref))
+	}
+
+	// Phase 4b: install the (value, err) inverse-correlation binds. A
+	// `local v, err = f()` whose callee f proves the Lua error-return pattern lets a
+	// branch proving err nil narrow v to non-nil. Resolving f to prove the pattern
+	// needs the phase-2 name resolution, so this runs after the transfers are built
+	// and injects the binds.
+	for ref, g := range p.graphs {
+		tr, ok := p.transfers[ref].(*transfer.Transfer)
+		if !ok || tr == nil {
+			continue
+		}
+		tr.SetSiblingNils(d.siblingNilBinds(p, g))
+	}
 	return p
 }
 
@@ -859,6 +920,299 @@ func (d *Driver) closeParamNarrows(p *program) {
 			}
 		}
 	}
+}
+
+// computeInferredParams fills p.inferredParams with each unannotated parameter's
+// type joined across the module's call sites. For every call to a module function,
+// each argument's static type (resolved from the caller's defining assignments and
+// the callee return signatures, no solve needed) is joined into the matching
+// parameter's inferred type when that parameter carries no declared annotation.
+func (d *Driver) computeInferredParams(p *program) {
+	for _, g := range p.graphs {
+		if g == nil {
+			continue
+		}
+		ct := callTyper{d: d, g: g}
+		g.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+			if info == nil || info.Call == nil || info.Call.Method != "" {
+				return
+			}
+			calleeRef, ok := ct.resolveCalleeRef(info.Call, p)
+			if !ok {
+				return
+			}
+			fn := p.funcExprs[calleeRef]
+			if fn == nil {
+				return
+			}
+			for argIdx, arg := range info.Call.Args {
+				paramIdx := calleeParamSlotForArg(p, calleeRef, fn, argIdx)
+				if paramIdx < 0 || d.paramHasAnnotation(fn, argIdx) {
+					continue
+				}
+				at := d.staticArgType(p, g, arg)
+				if at == nil || typ.IsAbsentOrUnknown(at) {
+					continue
+				}
+				d.joinInferredParam(p, calleeRef, paramIdx, at)
+			}
+		})
+	}
+}
+
+// calleeParamSlotForArg maps a call argument index to the callee parameter slot it
+// fills, accounting for an implicit method-receiver `self` slot the graph's
+// parameter layout includes but the source argument list does not. For a plain
+// function the slots coincide; the receiver case is excluded by the caller (method
+// calls are skipped), so the mapping is identity here.
+func calleeParamSlotForArg(p *program, calleeRef summary.FuncRef, fn *ast.FunctionExpr, argIdx int) int {
+	if fn == nil || fn.ParList == nil {
+		return -1
+	}
+	if argIdx < 0 || argIdx >= len(fn.ParList.Names) {
+		return -1
+	}
+	return argIdx
+}
+
+// paramHasAnnotation reports whether fn's source parameter at index argIdx carries a
+// type annotation. An annotated parameter keeps its declared type; only an
+// unannotated one takes the inferred call-site type.
+func (d *Driver) paramHasAnnotation(fn *ast.FunctionExpr, argIdx int) bool {
+	if fn == nil || fn.ParList == nil {
+		return false
+	}
+	if argIdx < 0 || argIdx >= len(fn.ParList.Types) {
+		return false
+	}
+	return fn.ParList.Types[argIdx] != nil
+}
+
+// joinInferredParam folds at into the inferred type of calleeRef's parameter slot.
+func (d *Driver) joinInferredParam(p *program, calleeRef summary.FuncRef, slot int, at typ.Type) {
+	byIdx := p.inferredParams[calleeRef]
+	if byIdx == nil {
+		byIdx = make(map[int]typ.Type)
+		p.inferredParams[calleeRef] = byIdx
+	}
+	if prev, ok := byIdx[slot]; ok && prev != nil {
+		byIdx[slot] = typ.NewUnion(prev, at)
+		return
+	}
+	byIdx[slot] = at
+}
+
+// staticArgType resolves a call argument expression's type without the solve. A
+// literal/table yields its literal type; an identifier bound by `local x = T:annot`
+// or `local x, ... = f()` resolves through the declared annotation or the source
+// call's return slot. An expression whose type cannot be pinned statically yields
+// nil (no inference, the parameter stays gradual).
+func (d *Driver) staticArgType(p *program, g *cfg.Graph, arg ast.Expr) typ.Type {
+	switch e := arg.(type) {
+	case *ast.IdentExpr:
+		return d.staticIdentType(p, g, e)
+	default:
+		return nil
+	}
+}
+
+// staticIdentType resolves an identifier's type from its defining assignment in g:
+// a declared annotation on the local, or the return-slot type of the source call
+// that produced it (`local page, err = load_page()` -> page is load_page's return 0).
+func (d *Driver) staticIdentType(p *program, g *cfg.Graph, ident *ast.IdentExpr) typ.Type {
+	bindings := g.Bindings()
+	if bindings == nil {
+		return nil
+	}
+	sym, ok := bindings.SymbolOf(ident)
+	if !ok || sym == 0 {
+		return nil
+	}
+	var result typ.Type
+	g.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if result != nil || info == nil {
+			return
+		}
+		for i := range info.Targets {
+			target := info.Targets[i]
+			if target.Kind != cfg.TargetIdent || target.Symbol != sym {
+				continue
+			}
+			// A declared annotation on the local is authoritative.
+			if ann := info.TypeAnnotationAt(i); ann != nil {
+				if t := d.resolveType(ann, d.baseScope()); t != nil && !typ.IsAbsentOrUnknown(t) {
+					result = t
+					return
+				}
+			}
+			// Otherwise the type of the source call's return slot the target binds.
+			if call, retIdx := info.CallForTarget(i); call != nil && call.Call != nil {
+				rt := d.callReturnSlotType(p, g, call.Call, retIdx)
+				zdbg("staticIdent sym=%d retIdx=%d rt=%v", sym, retIdx, rt)
+				if rt != nil {
+					result = rt
+				}
+			}
+			return
+		}
+	})
+	return result
+}
+
+// callReturnSlotType resolves return slot retIdx of a call statically: the callee's
+// declared/inferred return signature slot. An in-module callee resolves through its
+// ref signature; a cross-module callee through the captured/aliased module member.
+func (d *Driver) callReturnSlotType(p *program, g *cfg.Graph, call *ast.FuncCallExpr, retIdx int) typ.Type {
+	ct := callTyper{d: d, g: g}
+	var sig typ.Type
+	if ref, ok := ct.resolveCalleeRef(call, p); ok {
+		sig = d.signatureForRef(p, ref)
+	}
+	if sig == nil {
+		sig = d.calleeSignatureFor(ct, call)
+	}
+	if sig == nil {
+		sig = ct.capturedFieldCalleeSignature(call.Func)
+	}
+	fn := unwrap.Function(sig)
+	if fn == nil || retIdx < 0 || retIdx >= len(fn.Returns) {
+		return nil
+	}
+	return fn.Returns[retIdx]
+}
+
+// inferredParamsBySlot re-keys ref's inferred parameter types from source-parameter
+// index into the graph's parameter SLOT layout (the same re-key seedEntry applies to
+// declared types), so an implicit method receiver does not shift the mapping.
+func (d *Driver) inferredParamsBySlot(p *program, ref summary.FuncRef) map[int]typ.Type {
+	src := p.inferredParams[ref]
+	if len(src) == 0 {
+		return nil
+	}
+	g := p.graphs[ref]
+	if g == nil {
+		return src
+	}
+	slots := g.ParamSlotsReadOnly()
+	if len(slots) == 0 {
+		return src
+	}
+	out := make(map[int]typ.Type, len(src))
+	for i, slot := range slots {
+		srcIdx, ok := slot.SourceParamIndex()
+		if !ok {
+			continue
+		}
+		if t, ok := src[srcIdx]; ok && t != nil {
+			out[i] = t
+		}
+	}
+	return out
+}
+
+// computeNoReturn fills p.noReturn with the least fixed point of "never returns
+// normally" over the call graph. A function's CFG exit being unreachable from its
+// entry seeds it (the builtin error() prunes its successor edge, so a body that
+// always raises directly has no live exit). A function then inherits it when an
+// exit-dominating statement call resolves to an already-no-return function — a
+// `function w(x) inner(x) end` wrapper around a no-return inner. The iteration
+// terminates because the set only grows and is bounded by the function count.
+func (d *Driver) computeNoReturn(p *program) {
+	for ref, g := range p.graphs {
+		if g == nil {
+			continue
+		}
+		if !graphReachesExit(g, g.Entry()) {
+			p.noReturn[ref] = true
+		}
+		zdbg("noReturn-seed ref=%v reachesExit=%v -> noReturn=%v", ref, graphReachesExit(g, g.Entry()), p.noReturn[ref])
+	}
+	for changed := true; changed; {
+		changed = false
+		for ref, g := range p.graphs {
+			if g == nil || p.noReturn[ref] {
+				continue
+			}
+			if d.bodyAlwaysRaises(p, g) {
+				p.noReturn[ref] = true
+				changed = true
+			}
+		}
+	}
+}
+
+// bodyAlwaysRaises reports whether g has an exit-dominating statement call to a
+// function already known to be no-return: such a call terminates every path to the
+// exit, so g itself never returns normally.
+func (d *Driver) bodyAlwaysRaises(p *program, g *cfg.Graph) bool {
+	ct := callTyper{d: d, g: g}
+	raises := false
+	g.EachCall(func(point cfg.Point, info *cfg.CallInfo) {
+		if raises || info == nil || info.Call == nil {
+			return
+		}
+		if !graphDominatesExit(g, point) {
+			return
+		}
+		ref, ok := ct.resolveCalleeRef(info.Call, p)
+		if ok && p.noReturn[ref] {
+			raises = true
+		}
+	})
+	return raises
+}
+
+// graphReachesExit reports whether g's exit is reachable from p by a forward CFG
+// walk. A path that terminates with error() (a node with no successors) does not
+// reach the exit, so a body all of whose paths raise has an unreachable exit.
+func graphReachesExit(g *cfg.Graph, p cfg.Point) bool {
+	if g == nil {
+		return false
+	}
+	exit := g.Exit()
+	seen := make(map[cfg.Point]bool)
+	stack := []cfg.Point{p}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if cur == exit {
+			return true
+		}
+		if seen[cur] {
+			continue
+		}
+		seen[cur] = true
+		stack = append(stack, g.Successors(cur)...)
+	}
+	return false
+}
+
+// graphDominatesExit reports whether q is on every entry-to-exit path: the exit is
+// unreachable from the entry once q is removed.
+func graphDominatesExit(g *cfg.Graph, q cfg.Point) bool {
+	if g == nil {
+		return false
+	}
+	entry := g.Entry()
+	exit := g.Exit()
+	if q == entry {
+		return true
+	}
+	seen := make(map[cfg.Point]bool)
+	stack := []cfg.Point{entry}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if cur == q || seen[cur] {
+			continue
+		}
+		if cur == exit {
+			return false
+		}
+		seen[cur] = true
+		stack = append(stack, g.Successors(cur)...)
+	}
+	return true
 }
 
 // resolveDelegatedCallee resolves a delegated call's callee to its module FuncRef,
@@ -968,7 +1322,7 @@ func (d *Driver) addFunction(sess api.AnalysisSession, p *program, g *cfg.Graph)
 	// path that needs no converged value), so it is available at program-build time. A
 	// value receiver (an anonymous table) has no named binding here and stays unseeded
 	// (the sound carry-forward), recovered through the observation surface's capture.
-	tr := transfer.New(in, nil, funcTyper{d}, callTyper{d: d, g: g}, d.typeCheckBinds(g), declared, d.methodSelfSeed(p, g))
+	tr := transfer.New(in, nil, funcTyper{d}, callTyper{d: d, g: g}, d.typeCheckBinds(g), nil, declared, d.methodSelfSeed(p, g))
 	p.transfers[ref] = tr
 	// The parameter-narrowing effects (wrapper assert / if-error guards) are a
 	// syntactic property of the body the transfer's recognizers extract once here, so
@@ -1096,6 +1450,27 @@ func (d *Driver) buildModuleScope(sess api.AnalysisSession, rootGraph *cfg.Graph
 		}
 	}
 	return base
+}
+
+// buildModuleAliasTypes resolves each require() alias symbol to its module export
+// type from the manifests. It is the static capture type of a require alias,
+// available before the solve, so a `time.now()` call whose base is a captured alias
+// resolves its member off the module export rather than collapsing to unknown.
+func (d *Driver) buildModuleAliasTypes(sess api.AnalysisSession, rootGraph *cfg.Graph) map[cfg.SymbolID]typ.Type {
+	aliases := d.buildModuleAliases(sess, rootGraph)
+	if len(aliases) == 0 || d.cfg.Manifests == nil {
+		return nil
+	}
+	out := make(map[cfg.SymbolID]typ.Type, len(aliases))
+	for sym, path := range aliases {
+		if export := io.LookupEnrichedExport(d.cfg.Manifests, path); export != nil && !typ.IsAbsentOrUnknown(export) {
+			out[sym] = export
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // buildModuleAliases collects every require() alias the module introduces (a
@@ -1332,6 +1707,191 @@ func (d *Driver) typeCheckNarrowSyms(info *cfg.AssignInfo, errTargetIdx, errRetI
 		}
 	}
 	return syms
+}
+
+// siblingNilBinds derives the (value, err) inverse-correlation binds for every
+// multi-return assignment `local v, err = f()` in g whose callee f proves the Lua
+// error-return pattern. On the edge a later branch proves err nil, the value
+// target(s) narrow to non-nil. The convention is the canonical Lua layout: value
+// at return slot 0, error at slot 1. The proof is the callee's own body — the
+// inverse pattern (success returns `(value, nil)`, failure returns `(nil, error)`),
+// or a forward-only `(value, nil)` when the value return slot is optional — so the
+// correlation is recorded only when the callee genuinely returns the pair that way.
+func (d *Driver) siblingNilBinds(p *program, g *cfg.Graph) []transfer.SiblingNilBind {
+	if g == nil {
+		return nil
+	}
+	var out []transfer.SiblingNilBind
+	g.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if info == nil {
+			return
+		}
+		call, first := info.ExpandingSourceCall()
+		zdbg("assign targets=%d sources=%d expanding=%v", len(info.Targets), len(info.Sources), call != nil)
+		if call == nil || call.Call == nil {
+			return
+		}
+		// The error target is the slot bound to return index 1 (target first+1); the
+		// value targets are the slots bound to return index 0 (target first). A
+		// `local v, err = T:is(x)` type-check guard is handled by typeCheckBinds, so
+		// skip that specific method-is form; an ordinary call (which the CFG also flags
+		// IsTypeCheck syntactically) is the sibling-correlation case handled here.
+		if call.IsTypeCheck && call.Method == "is" && call.Receiver != nil {
+			return
+		}
+		valTargetIdx := first
+		errTargetIdx := first + 1
+		if errTargetIdx >= len(info.Targets) || valTargetIdx < 0 {
+			return
+		}
+		errTarget := info.Targets[errTargetIdx]
+		valTarget := info.Targets[valTargetIdx]
+		zdbg("  first=%d errKind=%v errSym=%d valKind=%v valSym=%d typecheck=%v", first, errTarget.Kind, errTarget.Symbol, valTarget.Kind, valTarget.Symbol, call.IsTypeCheck)
+		if errTarget.Kind != cfg.TargetIdent || errTarget.Symbol == 0 {
+			return
+		}
+		if valTarget.Kind != cfg.TargetIdent || valTarget.Symbol == 0 {
+			return
+		}
+		proves := d.calleeProvesErrorReturn(p, g, call)
+		zdbg("siblingBind callee=%q errSym=%d valSym=%d proves=%v", call.CalleeName, errTarget.Symbol, valTarget.Symbol, proves)
+		if !proves {
+			return
+		}
+		out = append(out, transfer.SiblingNilBind{
+			ErrSym:    errTarget.Symbol,
+			ValueSyms: []cfg.SymbolID{valTarget.Symbol},
+		})
+	})
+	return out
+}
+
+// calleeProvesErrorReturn reports whether the callee of call proves the Lua
+// (value, err) inverse pattern at slots (0, 1). It first reads an ErrorReturn label
+// off the resolved callee type (the label a synthesized signature may carry), then
+// falls back to proving the pattern from the callee's own body when the callee is a
+// module function whose graph this program holds.
+func (d *Driver) calleeProvesErrorReturn(p *program, callerGraph *cfg.Graph, call *cfg.CallInfo) bool {
+	ct := callTyper{d: d, g: callerGraph}
+	if ref, ok := ct.resolveCalleeRef(call.Call, p); ok {
+		if cg := p.graphs[ref]; cg != nil {
+			return provesErrorReturnFromBody(cg, d.signatureForRef(p, ref))
+		}
+	}
+	// A cross-module or otherwise type-resolved callee: read the convention off the
+	// resolved signature's ErrorReturn label when present.
+	return signatureHasErrorReturn(d.calleeSignatureFor(ct, call.Call))
+}
+
+// calleeSignatureFor resolves a call's callee to a function signature for
+// correlation lookup, trying the callee-identifier binding then a field-path
+// callee (M.f). It is the annotation/summary-resolved signature, not the live Env
+// value, so it is available at program-build time.
+func (d *Driver) calleeSignatureFor(ct callTyper, call *ast.FuncCallExpr) typ.Type {
+	if call == nil {
+		return nil
+	}
+	if ident, ok := call.Func.(*ast.IdentExpr); ok && ident != nil {
+		if sig := ct.calleeSignature(ident); sig != nil {
+			return sig
+		}
+	}
+	return ct.fieldCalleeSignature(call.Func)
+}
+
+// provesErrorReturnFromBody proves the (value, err) inverse pattern at slots (0, 1)
+// from a callee graph's return statements. Each return is classified by the nil
+// state of its value and error slots: a success return is `(non-nil, nil)`, a
+// failure return is `(nil, non-nil)`; any other shape (both non-nil, both nil, or
+// indeterminate) is inconsistent and voids the proof. A body that exhibits both a
+// success and a failure return proves the full bidirectional correlation; a body
+// that only ever succeeds proves the forward direction (err == nil => value != nil)
+// only when the declared value return slot is optional, so the present-narrowing
+// does not fabricate non-nil for a slot the callee never returns nil for.
+func provesErrorReturnFromBody(cg *cfg.Graph, sig typ.Type) bool {
+	const valueIdx, errorIdx = 0, 1
+	sawSuccess, sawFailure, inconsistent, classified := false, false, false, false
+	cg.EachReturn(func(_ cfg.Point, info *cfg.ReturnInfo) {
+		if inconsistent || info == nil || len(info.Exprs) == 0 {
+			return
+		}
+		if errorIdx >= len(info.Exprs) {
+			inconsistent = true
+			return
+		}
+		valState, okVal := classifyReturnSlotNil(info.Exprs[valueIdx])
+		errState, okErr := classifyReturnSlotNil(info.Exprs[errorIdx])
+		if !okVal || !okErr {
+			inconsistent = true
+			return
+		}
+		classified = true
+		switch {
+		case valState == nonNilExpr && errState == nilExpr:
+			sawSuccess = true
+		case valState == nilExpr && errState == nonNilExpr:
+			sawFailure = true
+		default:
+			inconsistent = true
+		}
+	})
+	if inconsistent || !classified || !sawSuccess {
+		return false
+	}
+	if sawFailure {
+		return true
+	}
+	return valueReturnSlotOptional(sig, valueIdx)
+}
+
+// returnSlotNil is the nil classification of a single return expression slot.
+type returnSlotNil uint8
+
+const (
+	indeterminateExpr returnSlotNil = iota
+	nilExpr
+	nonNilExpr
+)
+
+// classifyReturnSlotNil classifies a return expression as the nil literal, a
+// provably non-nil literal/constructor/arithmetic form, or indeterminate. Only the
+// syntactically certain forms classify; an identifier or call (whose value the
+// proof cannot pin from the AST alone) is indeterminate and voids the proof.
+func classifyReturnSlotNil(e ast.Expr) (returnSlotNil, bool) {
+	switch e.(type) {
+	case *ast.NilExpr:
+		return nilExpr, true
+	case *ast.StringExpr, *ast.NumberExpr, *ast.TrueExpr, *ast.FalseExpr,
+		*ast.TableExpr, *ast.ArithmeticOpExpr, *ast.StringConcatOpExpr,
+		*ast.FunctionExpr:
+		return nonNilExpr, true
+	default:
+		return indeterminateExpr, false
+	}
+}
+
+// valueReturnSlotOptional reports whether sig's return slot at idx is optional, the
+// admission condition for a forward-only (success-only) error-return correlation.
+func valueReturnSlotOptional(sig typ.Type, idx int) bool {
+	fn := unwrap.Function(sig)
+	if fn == nil || idx < 0 || idx >= len(fn.Returns) {
+		return false
+	}
+	return unwrap.IsOptionalLike(fn.Returns[idx])
+}
+
+// signatureHasErrorReturn reports whether sig's contract spec carries an
+// ErrorReturn label at the canonical (value 0, error 1) slots.
+func signatureHasErrorReturn(sig typ.Type) bool {
+	if sig == nil {
+		return false
+	}
+	spec := contract.ExtractSpec(sig)
+	if spec == nil {
+		return false
+	}
+	er := spec.Effects.GetErrorReturn(0)
+	return er != nil && er.ErrorIndex == 1
 }
 
 // callTyper adapts the driver to the transfer's CallTyper seam: it types a
@@ -1584,9 +2144,79 @@ func (ct callTyper) resolveCallee(funcExpr ast.Expr, exprType func(ast.Expr) typ
 	if sig := ct.fieldCalleeSignature(funcExpr); sig != nil {
 		return sig
 	}
+	// A field-path callee whose base is a captured module value (`local time =
+	// require("time")` read inside a nested function as `time.now()`) resolves the
+	// base from the module-capture fallback and reads the field/method off it. The
+	// transfer Env does not track a captured free variable, so without this the call
+	// types as unknown and a returned record field built from it collapses to unknown.
+	if sig := ct.capturedFieldCalleeSignature(funcExpr); sig != nil {
+		return sig
+	}
 	// Otherwise the callee is the expression's own resolved type (a field path the
 	// transfer tracks, a call-result function value).
 	if t := exprType(funcExpr); !typ.IsAbsentOrUnknown(t) {
+		return t
+	}
+	return nil
+}
+
+// capturedFieldCalleeSignature resolves a field-path callee `base.field` whose base
+// identifier is a module-level value captured into a nested function (its type is
+// in moduleCaptures but it has no live Env value here). It reads base's captured
+// type and resolves the field's member type — a module export interface's method
+// (`time.now`) or a captured record's field function — so the call types its
+// return rather than collapsing to unknown.
+func (ct callTyper) capturedFieldCalleeSignature(funcExpr ast.Expr) typ.Type {
+	attr, ok := funcExpr.(*ast.AttrGetExpr)
+	if !ok {
+		return nil
+	}
+	baseIdent, ok := attr.Object.(*ast.IdentExpr)
+	if !ok {
+		return nil
+	}
+	field, ok := attr.Key.(*ast.StringExpr)
+	if !ok || field.Value == "" {
+		return nil
+	}
+	baseType := ct.capturedBaseType(baseIdent)
+	zdbg("capturedFieldCallee base=%q field=%q baseType=%v", baseIdent.Value, field.Value, baseType)
+	if baseType == nil {
+		return nil
+	}
+	ft, ok := fieldMemberType(baseType, field.Value)
+	if !ok || ft == nil || typ.IsAbsentOrUnknown(ft) {
+		return nil
+	}
+	return ft
+}
+
+// fieldMemberType resolves a named member (an interface method or a record/map
+// field) off a container type, reusing the structural field resolver. It is the
+// member a `base.field` access reads when base resolves to its captured type.
+func fieldMemberType(base typ.Type, name string) (typ.Type, bool) {
+	return core.Field(base, name)
+}
+
+// capturedBaseType resolves an identifier's type from the module-capture fallback:
+// the module-wide type of a symbol captured from an enclosing scope. It returns nil
+// when the identifier is not a captured module value.
+func (ct callTyper) capturedBaseType(ident *ast.IdentExpr) typ.Type {
+	if ident == nil || ct.g == nil {
+		return nil
+	}
+	bindings := ct.g.Bindings()
+	if bindings == nil {
+		return nil
+	}
+	sym, ok := bindings.SymbolOf(ident)
+	if !ok || sym == 0 {
+		return nil
+	}
+	if t, ok := ct.d.moduleAliasTypes[sym]; ok && t != nil && !typ.IsAbsentOrUnknown(t) {
+		return t
+	}
+	if t, ok := ct.d.moduleCaptures[sym]; ok && t != nil && !typ.IsAbsentOrUnknown(t) {
 		return t
 	}
 	return nil
@@ -1752,6 +2382,24 @@ func (ct callTyper) ParamNarrows(call *ast.FuncCallExpr) []transfer.ParamNarrow 
 		return nil
 	}
 	return prog.paramNarrows[ref]
+}
+
+// IsNoReturn reports whether call's callee is a module function the program proved
+// never returns normally. A statement call to it terminates the caller's flow.
+func (ct callTyper) IsNoReturn(call *ast.FuncCallExpr) bool {
+	if call == nil {
+		return false
+	}
+	prog := ct.d.activeProgram
+	if prog == nil {
+		return false
+	}
+	ref, ok := ct.resolveCalleeRef(call, prog)
+	zdbg("IsNoReturn callee=%q resolved=%v noReturn=%v", extraction.ExtractCalleeName(call.Func), ok, ok && prog.noReturn[ref])
+	if !ok {
+		return false
+	}
+	return prog.noReturn[ref]
 }
 
 // resolveCalleeRef resolves call's callee to its module FuncRef. It tries the callee

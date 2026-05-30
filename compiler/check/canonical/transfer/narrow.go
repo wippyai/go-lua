@@ -111,6 +111,14 @@ func (t *Transfer) NarrowEdge(g *cfg.Graph, pred, succ cfg.Point, out flow.Point
 	if g == nil {
 		return out
 	}
+	// A dead predecessor out-state (its numeric component is the UNSAT bottom, the
+	// state error()/a no-return call left behind) stays dead across the edge: edge
+	// narrowing must not resurrect a value into an unreachable point, or the
+	// successor merge would re-admit the terminated arm. The join then drops this
+	// predecessor as unreachable, exactly as it should.
+	if out.Num != nil && out.Num.IsUnsat() {
+		return out
+	}
 	info, ok := g.Info(pred).(*cfg.BranchInfo)
 	if !ok || info == nil {
 		info = exitGuard(g, pred)
@@ -128,6 +136,10 @@ func (t *Transfer) NarrowEdge(g *cfg.Graph, pred, succ cfg.Point, out flow.Point
 
 func (t *Transfer) narrowEdgeInner(out flow.PointState, info *cfg.BranchInfo, taken bool) flow.PointState {
 	zprobeNarrow("edge taken=%v condVar=%q check=%v hasCond=%v cond=%T", taken, info.CondVar, info.CondCheck.Kind, info.Condition != nil, info.Condition)
+	// A multi-return error guard narrows the correlated value siblings independently
+	// of the tested error symbol's own refinement, so it composes with whichever base
+	// narrower classifies the guard rather than short-circuiting the chain.
+	out = t.narrowBySiblingNil(out, info, taken)
 	if narrowed, applied := t.narrowByCompound(out, info, taken); applied {
 		zprobeNarrow("  -> compound")
 		return narrowed
@@ -146,6 +158,64 @@ func (t *Transfer) narrowEdgeInner(out flow.PointState, info *cfg.BranchInfo, ta
 	}
 	zprobeNarrow("  -> condCheck")
 	return t.narrowByCondCheck(out, info, taken)
+}
+
+// narrowBySiblingNil strips nil from the value siblings of a multi-return error
+// assignment when the branch proves the error symbol nil. For `local v, err = f()`
+// with f proving the (value, err) inverse pattern, the err-nil edge proves v
+// non-nil, so v's flow value narrows by NarrowPresent. It resolves the tested
+// symbol the same way the cond-check narrower does (the branch's CondSymbol or its
+// resolved root), looks up the recorded sibling correlation for that error symbol,
+// and applies the present-narrowing on the success (err == nil) edge. A branch that
+// tests no recorded error symbol, or whose edge does not prove the error nil,
+// returns out unchanged.
+func (t *Transfer) narrowBySiblingNil(out flow.PointState, info *cfg.BranchInfo, taken bool) flow.PointState {
+	if t.siblingNilByErr == nil {
+		return out
+	}
+	sym := info.CondSymbol
+	if sym == 0 {
+		sym = t.condTestSymbol(info)
+	}
+	if sym == 0 {
+		return out
+	}
+	bind, ok := t.siblingNilByErr[sym]
+	if !ok {
+		return out
+	}
+	// The success edge is the one on which the error result is proven nil. A
+	// field-path error test (`if err.code ~= nil`) does not prove the bare error
+	// symbol nil, so the bare-symbol guard is required: a segmented test leaves the
+	// correlation untouched.
+	if len(t.condTestSegments(info)) > 0 {
+		return out
+	}
+	errIsNil := effectiveCheck(info.CondCheck.Kind, taken)
+	switch errIsNil {
+	case cfg.CheckNil, cfg.CheckFalsy:
+	default:
+		return out
+	}
+	res := cloneForNarrow(out)
+	applied := false
+	for _, vs := range bind.ValueSyms {
+		if vs == 0 {
+			continue
+		}
+		key := symKey(vs)
+		av, has := res.Env[key]
+		if !has || av.IsZero() {
+			continue
+		}
+		res.Env[key] = product.NarrowPresent(av)
+		applied = true
+	}
+	if !applied {
+		return out
+	}
+	zprobeNarrow("siblingNil errSym=%d valueSyms=%v", sym, bind.ValueSyms)
+	return res
 }
 
 // narrowByCompound decomposes a short-circuit logical guard (`A and B`, `A or B`)
@@ -860,9 +930,43 @@ func mapUnionField(t typ.Type, field string, refine func(typ.Type) typ.Type, abs
 			return typ.Never
 		}
 		return typ.ExtendRecordWithField(v, field, refined)
+	case *typ.Map:
+		// A dynamic map base (`{[any]: any}`, the shape a `type(x) == "table"` guard
+		// produces from `any`) has no static field, but a `type(x.f) == "number"` guard
+		// still proves the field is that type on the positive edge. Overlay a record
+		// pinning the field to the refined map-value type so a later read of x.f sees
+		// the refinement; the value's open map character is otherwise preserved by the
+		// merge-LUB at the post-guard join.
+		refined := refine(v.Value)
+		if refined == nil {
+			return t
+		}
+		if refined.Kind().IsNever() {
+			if absentKeeps {
+				return t
+			}
+			return typ.Never
+		}
+		return typ.ExtendRecordWithField(typ.NewRecord().Build(), field, refined)
 	default:
 		ft, ok := fieldResolver.Field(t, field)
 		if !ok || ft == nil {
+			// An `any` base carries no static field, but a `type(x.f) == k` guard still
+			// proves x.f is k on the positive edge. Overlay a one-field record on a
+			// gradual base so the field read observes the refinement.
+			if typ.IsAny(t) {
+				refined := refine(typ.Any)
+				if refined == nil {
+					return t
+				}
+				if refined.Kind().IsNever() {
+					if absentKeeps {
+						return t
+					}
+					return typ.Never
+				}
+				return typ.ExtendRecordWithField(typ.NewRecord().Build(), field, refined)
+			}
 			return t
 		}
 		refined := refine(ft)
@@ -1758,6 +1862,37 @@ func (t *Transfer) ApplyParamNarrows(out *flow.PointState, call *ast.FuncCallExp
 		}
 		segs := append(append([]constraint.Segment{}, argSegs...), e.Segments...)
 		t.narrowAssertPath(out, argSym, segs, e.Check)
+		// When the narrowed argument is a recorded multi-return error symbol proven nil
+		// (a `test.is_nil(err)` wrapper that errors unless err is nil), its correlated
+		// value siblings are non-nil, so strip nil from them — the same correlation a
+		// branch `if err ~= nil then ... end` triggers, here proven by the wrapper call.
+		if len(segs) == 0 && (e.Check == cfg.CheckNil || e.Check == cfg.CheckFalsy) {
+			t.applySiblingNilForErr(out, argSym)
+		}
+	}
+}
+
+// applySiblingNilForErr strips nil from the value siblings correlated with err
+// symbol, when err has just been proven nil. It is the call-site (param-narrow)
+// counterpart of narrowBySiblingNil's branch-edge narrowing.
+func (t *Transfer) applySiblingNilForErr(out *flow.PointState, errSym cfg.SymbolID) {
+	if t.siblingNilByErr == nil || errSym == 0 {
+		return
+	}
+	bind, ok := t.siblingNilByErr[errSym]
+	if !ok {
+		return
+	}
+	for _, vs := range bind.ValueSyms {
+		if vs == 0 {
+			continue
+		}
+		key := symKey(vs)
+		av, has := out.Env[key]
+		if !has || av.IsZero() {
+			continue
+		}
+		out.Env[key] = product.NarrowPresent(av)
 	}
 }
 

@@ -7,6 +7,15 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+// zdbg prints a formatted trace line to stderr when the ZSIB env var is set.
+// Debug probe for sibling-correlation / NoReturn bind derivation.
+func zdbg(format string, args ...interface{}) {
+	if os.Getenv("ZSIB") == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[ZSIB] "+format+"\n", args...)
+}
+
 // zzDumpType prints recursive-family identity details for a resolved type when
 // the ZZCLASS env var is set. Debug probe for cross-module class identity.
 func zzDumpType(label string, t typ.Type) {
