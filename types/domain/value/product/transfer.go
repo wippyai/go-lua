@@ -91,6 +91,22 @@ func WriteIndex(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) Abst
 	return FromType(value.MergeForConvergence(current, written))
 }
 
+// WriteIndexForeign is the AbstractValue-native form of an indexed write
+// av[keyAV] = valAV whose value is a FOREIGN value — not provably drawn from av at
+// the written key. It is WriteIndex over value.AdmitForeignIndexedWrite: a closed
+// record's declared field the key could match is weakened by valAV (the foreign
+// store can replace that field at runtime), where the plain WriteIndex would leave
+// the field type intact and only add a map component. A self-derived write (the
+// value provably read from av at the same key) keeps plain WriteIndex, so its fields
+// are not weakened.
+func WriteIndexForeign(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) AbstractValue {
+	current := av.ProjectValue()
+	key := keyAV.ProjectValue()
+	val := valAV.ProjectValue()
+	written := value.AdmitForeignIndexedWrite(current, key, val)
+	return FromType(value.MergeForConvergence(current, written))
+}
+
 // IndexWriteAdmits is the AbstractValue-native form of the indexed-write
 // admission predicate.
 //

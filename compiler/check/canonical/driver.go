@@ -43,6 +43,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	checkphase "github.com/wippyai/go-lua/compiler/check/phase"
@@ -187,6 +188,15 @@ type Driver struct {
 	// dependency, the same way computeSummary closes its Callees edges). It is set
 	// before the summary loop and cleared after it.
 	activeQueries *summary.Queries
+
+	// derivingContracts guards the body-proven parameter-contract derivation against
+	// re-entering the contract narrowing. The derivation resolves a body callee's
+	// signature (signatureForRef), which itself applies constrainUnannotatedParams; a
+	// callee that is another in-module function would recurse without this guard. The
+	// derivation needs only the callee's DECLARED parameter types (an annotated
+	// parameter the narrowing never touches), so the base signature suffices while the
+	// guard is set.
+	derivingContracts bool
 }
 
 // NewDriver constructs a canonical driver with the given configuration.
@@ -2268,6 +2278,12 @@ func (d *Driver) staticIdentType(p *program, g *cfg.Graph, ident *ast.IdentExpr)
 	sym, ok := bindings.SymbolOf(ident)
 	if !ok || sym == 0 {
 		return nil
+	}
+	// A require() alias (`local m = require("mod")`) resolves to the module export
+	// type, pre-resolved before the solve. The export is the static type a call site
+	// forwards when it passes the alias as an argument.
+	if t, ok := d.moduleAliasTypes[sym]; ok && t != nil && !typ.IsAbsentOrUnknown(t) {
+		return t
 	}
 	var result typ.Type
 	g.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
@@ -4449,7 +4465,328 @@ func (d *Driver) signatureForRef(prog *program, ref summary.FuncRef) *typ.Functi
 	if returns := d.returnTypesForRef(prog, ref, sc); len(returns) > 0 {
 		builder.Returns(returns...)
 	}
+	sig := builder.Build()
+	return d.constrainUnannotatedParams(prog, ref, fn, sig)
+}
+
+// constrainUnannotatedParams narrows each unannotated parameter slot of sig to the
+// obligation the function body PROVES the caller must satisfy. A parameter with no
+// proven obligation keeps its gradual `any` (the sound default for an unannotated
+// Lua parameter), so a caller is constrained ONLY where the body proves a
+// precondition: an arithmetic operand pins the parameter to number (the converged
+// Contracts component), and a parameter forwarded to a typed callee's parameter pins
+// it to that callee's parameter type. An annotated parameter is the function's
+// declared contract and is left untouched.
+func (d *Driver) constrainUnannotatedParams(prog *program, ref summary.FuncRef, fn *ast.FunctionExpr, sig *typ.Function) *typ.Function {
+	if sig == nil || fn == nil || fn.ParList == nil || d.derivingContracts {
+		return sig
+	}
+	contracts := d.bodyParamContracts(prog, ref)
+	if len(contracts) == 0 {
+		return sig
+	}
+	offset := len(sig.Params) - len(fn.ParList.Names)
+	if offset < 0 {
+		return sig
+	}
+	var params []typ.Param
+	for i := range fn.ParList.Names {
+		slot := i + offset
+		if slot < 0 || slot >= len(sig.Params) {
+			continue
+		}
+		if d.paramHasAnnotation(fn, i) {
+			continue
+		}
+		obligation, ok := contracts[i]
+		if !ok || obligation == nil || typ.IsAbsentOrUnknown(obligation) || typ.IsAny(obligation) {
+			continue
+		}
+		current := sig.Params[slot].Type
+		// The obligation only ever narrows a gradual slot. A slot the body already
+		// pins to a concrete type (a prior obligation) keeps the more precise of the
+		// two; a gradual `any`/`unknown` slot takes the obligation outright.
+		next := obligation
+		if !typ.IsAbsentOrUnknown(current) && !typ.IsAny(current) {
+			next = paramevidence.HardContractJoin(current, obligation)
+			if next == nil {
+				continue
+			}
+		}
+		if typ.TypeEquals(next, current) && !sig.Params[slot].Optional {
+			continue
+		}
+		if params == nil {
+			params = append([]typ.Param(nil), sig.Params...)
+		}
+		params[slot].Type = next
+		// A body-proven precondition is a hard obligation: the body uses the value in a
+		// position that fails for nil (an arithmetic operand, a typed callee argument),
+		// so the parameter is no longer the gradual optional an unannotated parameter
+		// otherwise is. Dropping optionality lets the call-site arg-check reject a nil/
+		// unknown argument the obligation excludes.
+		params[slot].Optional = false
+	}
+	if params == nil {
+		return sig
+	}
+	return rebuildFunctionParams(sig, params)
+}
+
+// rebuildFunctionParams returns a copy of fn with its parameter list replaced,
+// preserving every other component (type parameters, variadic, returns, effects,
+// spec, refinement). It is the param-list analogue of typjoin.WithReturns the
+// signature constraint uses to narrow an unannotated parameter slot.
+func rebuildFunctionParams(fn *typ.Function, params []typ.Param) *typ.Function {
+	if fn == nil {
+		return fn
+	}
+	builder := typ.Func()
+	for _, tp := range fn.TypeParams {
+		if tp == nil {
+			continue
+		}
+		builder.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, p := range params {
+		if p.Optional {
+			builder.OptParam(p.Name, p.Type)
+		} else {
+			builder.Param(p.Name, p.Type)
+		}
+	}
+	if fn.Variadic != nil {
+		builder.Variadic(fn.Variadic)
+	}
+	if len(fn.Returns) > 0 {
+		builder.Returns(fn.Returns...)
+	}
+	builder.Effects(fn.Effects)
+	builder.Spec(fn.Spec)
+	builder.WithRefinement(fn.Refinement)
 	return builder.Build()
+}
+
+// bodyParamContracts is the body-proven parameter obligation of ref keyed by SOURCE
+// parameter index: the converged Contracts component (Summary.Params, re-keyed from
+// the graph parameter SLOT layout to the source index so an implicit method receiver
+// does not shift the mapping) joined with the obligation each parameter forwarded to
+// a typed callee imposes. A parameter the body never constrains is absent.
+func (d *Driver) bodyParamContracts(prog *program, ref summary.FuncRef) map[int]typ.Type {
+	out := make(map[int]typ.Type)
+	g := prog.graphs[ref]
+	slotContracts := d.ParamTypes(ref)
+	if len(slotContracts) > 0 && g != nil {
+		slots := g.ParamSlotsReadOnly()
+		for slot, t := range slotContracts {
+			if t == nil || typ.IsAbsentOrUnknown(t) || typ.IsAny(t) {
+				continue
+			}
+			if slot < 0 || slot >= len(slots) {
+				continue
+			}
+			srcIdx, ok := slots[slot].SourceParamIndex()
+			if !ok {
+				continue
+			}
+			out[srcIdx] = t
+		}
+	}
+	for srcIdx, t := range d.typedCalleeArgContracts(prog, ref) {
+		if t == nil {
+			continue
+		}
+		if prev, ok := out[srcIdx]; ok && prev != nil {
+			joined := paramevidence.HardContractJoin(prev, t)
+			if joined != nil {
+				out[srcIdx] = joined
+			}
+			continue
+		}
+		out[srcIdx] = t
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// typedCalleeArgContracts derives the precondition each of ref's unannotated
+// parameters proves by being forwarded, as a bare identifier, to a TYPED parameter
+// of a callee invoked in ref's body. `local function helper(client, model_id)
+// return client.invoke(model_id, ...) end` proves model_id: string when invoke's
+// first parameter is declared string, because the body unconditionally passes
+// model_id into a slot the callee requires to be a string.
+//
+// The obligation is recorded only when the callee's parameter type is CONCRETE: a
+// gradual `any`/`unknown` callee parameter (an untyped client.invoke) imposes
+// nothing, so the forwarded parameter stays gradual and an importer passing any
+// value still type-checks. The result is keyed by ref's SOURCE parameter index.
+func (d *Driver) typedCalleeArgContracts(prog *program, ref summary.FuncRef) map[int]typ.Type {
+	g := prog.graphs[ref]
+	if g == nil {
+		return nil
+	}
+	bindings := g.Bindings()
+	if bindings == nil {
+		return nil
+	}
+	paramBySym := d.paramSourceIndexBySym(g)
+	if len(paramBySym) == 0 {
+		return nil
+	}
+	ct := callTyper{d: d, g: g}
+	exprType := d.bodyParamExprType(prog, ref, g)
+	// Resolving a body callee's signature re-enters signatureForRef; the guard makes
+	// that resolution return the base (declared) signature instead of recursing back
+	// into the contract narrowing. The declared parameter types are all the derivation
+	// reads, so the guard loses no information.
+	prev := d.derivingContracts
+	d.derivingContracts = true
+	defer func() { d.derivingContracts = prev }()
+	out := make(map[int]typ.Type)
+	g.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.Call == nil {
+			return
+		}
+		call := info.Call
+		callee := unwrap.Function(ct.resolveCallee(call.Func, exprType))
+		if callee == nil {
+			return
+		}
+		// A method call inserts an implicit receiver into the callee parameter list; a
+		// dotted field/function call does not. Mirror the call-typing parameter offset
+		// so an argument maps to the parameter slot it actually fills.
+		paramOffset := 0
+		if call.Method != "" {
+			paramOffset = 1
+		}
+		for argIdx, arg := range call.Args {
+			ident, ok := arg.(*ast.IdentExpr)
+			if !ok {
+				continue
+			}
+			sym, ok := bindings.SymbolOf(ident)
+			if !ok || sym == 0 {
+				continue
+			}
+			srcIdx, isParam := paramBySym[sym]
+			if !isParam {
+				continue
+			}
+			expected := calleeParamType(callee, argIdx+paramOffset)
+			if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
+				continue
+			}
+			if prev, ok := out[srcIdx]; ok && prev != nil {
+				if joined := paramevidence.HardContractJoin(prev, expected); joined != nil {
+					out[srcIdx] = joined
+				}
+				continue
+			}
+			out[srcIdx] = expected
+		}
+	})
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// calleeParamType is callee's runtime parameter type at slot idx: the declared
+// parameter type (unwrapped to its non-optional runtime form), or the variadic
+// element for an over-arity slot. An out-of-range slot with no variadic yields nil.
+func calleeParamType(callee *typ.Function, idx int) typ.Type {
+	if callee == nil || idx < 0 {
+		return nil
+	}
+	if idx < len(callee.Params) {
+		p := callee.Params[idx]
+		if p.Optional {
+			// An optional callee parameter admits nil, so it does not prove a hard
+			// non-nilable precondition on the forwarded argument.
+			return nil
+		}
+		return p.Type
+	}
+	return callee.Variadic
+}
+
+// paramSourceIndexBySym maps each of g's parameter symbols to its SOURCE parameter
+// index (the position in the source parameter list), skipping an implicit method
+// receiver slot that has no source position.
+func (d *Driver) paramSourceIndexBySym(g *cfg.Graph) map[cfg.SymbolID]int {
+	if g == nil {
+		return nil
+	}
+	slots := g.ParamSlotsReadOnly()
+	if len(slots) == 0 {
+		return nil
+	}
+	out := make(map[cfg.SymbolID]int, len(slots))
+	for _, slot := range slots {
+		if slot.Symbol == 0 {
+			continue
+		}
+		srcIdx, ok := slot.SourceParamIndex()
+		if !ok {
+			continue
+		}
+		out[slot.Symbol] = srcIdx
+	}
+	return out
+}
+
+// bodyParamExprType resolves a body expression's type for callee resolution during
+// the contract derivation: a read of one of ref's parameters resolves to its
+// call-site-inferred type (so a forwarded `client` resolves to the imported record
+// whose `.invoke` member carries the typed signature). Any other expression resolves
+// to the value-domain unknown, so callee resolution falls back to the module-wide
+// signatures and globals.
+func (d *Driver) bodyParamExprType(prog *program, ref summary.FuncRef, g *cfg.Graph) func(ast.Expr) typ.Type {
+	bindings := g.Bindings()
+	paramBySym := d.paramSourceIndexBySym(g)
+	inferred := prog.inferredParams[ref]
+	var resolve func(ast.Expr) typ.Type
+	resolve = func(e ast.Expr) typ.Type {
+		switch ex := e.(type) {
+		case *ast.IdentExpr:
+			if bindings == nil {
+				return typ.Unknown
+			}
+			sym, ok := bindings.SymbolOf(ex)
+			if !ok || sym == 0 {
+				return typ.Unknown
+			}
+			if srcIdx, isParam := paramBySym[sym]; isParam {
+				if t, ok := inferred[srcIdx]; ok && t != nil && !typ.IsAbsentOrUnknown(t) {
+					return t
+				}
+			}
+			return typ.Unknown
+		case *ast.AttrGetExpr:
+			// A field/method access off a parameter (`client.invoke`) resolves the base's
+			// inferred type, then the member, so the callee resolution sees the typed
+			// member function the forwarded parameter exposes.
+			key, isField := ex.Key.(*ast.StringExpr)
+			if !isField || key.Value == "" {
+				return typ.Unknown
+			}
+			name := key.Value
+			base := resolve(ex.Object)
+			if base == nil || typ.IsAbsentOrUnknown(base) {
+				return typ.Unknown
+			}
+			member, ok := fieldMemberType(base, name)
+			if !ok || member == nil {
+				return typ.Unknown
+			}
+			return member
+		default:
+			return typ.Unknown
+		}
+	}
+	return resolve
 }
 
 // returnTypesForRef is ref's return tuple as concrete types. A declared return

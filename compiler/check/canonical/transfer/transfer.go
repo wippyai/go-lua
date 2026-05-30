@@ -838,11 +838,20 @@ func (t *Transfer) applyContainerWrite(
 			return
 		}
 		t.applyIndexWriteLength(out, target, baseKey)
-		key, ok := t.evalExpr(out, target.Key, demand)
-		if !ok || key.IsZero() {
+		key := t.dynamicWriteKey(out, target, base, demand)
+		if key.IsZero() {
 			return
 		}
-		out.Env[baseKey] = product.WriteIndex(base, key, val)
+		// A FOREIGN dynamic-key write into a closed record weakens the declared fields
+		// the key could match (the store can replace that field's value at runtime); a
+		// SELF-write (the value provably read from this container at the same key) stores
+		// the field back unchanged, so it keeps the plain write that leaves the fields
+		// intact. The self/foreign judgment is the key-presence provenance in lenseed.go.
+		if t.writeIsSelfDerived(target, src) {
+			out.Env[baseKey] = product.WriteIndex(base, key, val)
+		} else {
+			out.Env[baseKey] = product.WriteIndexForeign(base, key, val)
+		}
 	}
 }
 
@@ -912,6 +921,14 @@ func (t *Transfer) applyGenericFor(
 	exprType := func(e ast.Expr) typ.Type {
 		return t.resolveExprType(out, e, demand)
 	}
+	// The key-presence facts (KeyOf) a keyed iteration establishes hold regardless of
+	// whether the loop variables receive a type: a `pairs(container)` over a closed
+	// record yields no uniform key/value type (IterVars declines), but the first loop
+	// variable is still provably a key of the container. Seed the facts before the
+	// IterVars gate so a write/read through the key inside the body has the provenance
+	// even when the variables stay untyped.
+	t.seedKeyedIterKeyOf(out, info, iterCall)
+	t.seedIndexedIterKeyOf(out, info, iterCall)
 	varTypes, ok := t.callTyper.IterVars(iterCall, len(info.Targets), exprType)
 	if !ok || len(varTypes) == 0 {
 		return
@@ -933,8 +950,6 @@ func (t *Transfer) applyGenericFor(
 			out.Env[key] = val
 		}
 	}
-	t.seedKeyedIterKeyOf(out, info, iterCall)
-	t.seedIndexedIterKeyOf(out, info, iterCall)
 }
 
 // seedKeyedIterKeyOf records the key-presence fact a keyed (pairs-style) iteration
@@ -1521,12 +1536,60 @@ func (t *Transfer) operandType(
 			return pt
 		}
 	}
-	if ident, ok := expr.(*ast.IdentExpr); ok {
-		if sym := t.symbolOf(ident); sym != 0 && t.unannotatedParam[sym] {
-			return typ.Any
-		}
+	// A read whose root is a genuinely-gradual source — an unannotated parameter, or
+	// a field/index read off one — is gradual `any`, not nil/unknown. `args.url` (the
+	// field of an untyped `args`) carries `any` exactly as a bare `args` read does, so
+	// a default pattern over it (`args.url or d`) joins against a usable `any` left
+	// operand rather than collapsing to the right default. Without this the operand
+	// resolves to nil and the `or` drops the left, losing the gradual top that an
+	// untyped source must flow to a typed sink for the consistency check to fire.
+	if t.gradualAnySource(out, expr) {
+		return typ.Any
 	}
 	return nil
+}
+
+// gradualAnySource reports whether expr is a read whose value is a genuine gradual
+// `any` — a value from an UNTYPED Lua source that flows dynamically. A bare read of
+// an unannotated parameter is the base case; a field or index read off such a source
+// is itself gradual `any` (Lua admits any field of a dynamic value as dynamic), so
+// `args.url` over an untyped `args` is `any`. A logical operand chain (`a and b`,
+// `a or b`) is gradual when its surviving operand is — `(args and args.url)` is `any`
+// because both arms are gradual. The judgment is rooted in the symbol's declared-ness,
+// not a name match: an annotated parameter, an annotated local, or a resolved value is
+// NOT a gradual source, so this never over-admits a typed read.
+func (t *Transfer) gradualAnySource(out *flow.PointState, expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		sym := t.symbolOf(e)
+		if sym == 0 {
+			return false
+		}
+		if t.unannotatedParam[sym] {
+			return true
+		}
+		// A symbol whose tracked value is the gradual top is itself a gradual source
+		// (an `any`-typed local, or an unannotated parameter seeded from `any`).
+		if av, ok := out.Env[symKey(sym)]; ok && !av.IsZero() {
+			if pt := av.ProjectValue(); pt != nil && typ.IsAny(pt) {
+				return true
+			}
+		}
+		return false
+	case *ast.AttrGetExpr:
+		// A field/index read resolves to a determined value when the base is tracked;
+		// only treat it as gradual when the base itself is a gradual source AND the read
+		// did not resolve to a concrete value (handled by the caller: this path is taken
+		// only after evalExpr failed to determine the read).
+		return t.gradualAnySource(out, e.Object)
+	case *ast.LogicalOpExpr:
+		// `a and b` survives to b on the truthy path, `a or b` to a on the truthy path;
+		// a logical whose relevant operand is gradual is gradual. Both `(args and
+		// args.url)` arms are gradual, so the result is gradual `any`.
+		return t.gradualAnySource(out, e.Lhs) || t.gradualAnySource(out, e.Rhs)
+	default:
+		return false
+	}
 }
 
 // resolveExprType resolves an expression's value type against the live Env for the

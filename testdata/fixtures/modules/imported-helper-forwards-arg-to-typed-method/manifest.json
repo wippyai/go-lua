@@ -1,0 +1,7 @@
+{
+  "description": "An unannotated helper whose body forwards a parameter into an imported string-typed method proves that parameter is a string; an any flowing through the helper is rejected at the helper call site.",
+  "files": [
+    "bedrock_client.lua",
+    "main.lua"
+  ]
+}

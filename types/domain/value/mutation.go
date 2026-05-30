@@ -281,6 +281,87 @@ func AdmitIndexedWrite(t typ.Type, keyType, valType typ.Type) typ.Type {
 	})
 }
 
+// AdmitForeignIndexedWrite returns the value-domain result of observing t[k] = v
+// when v is a FOREIGN value — one not provably drawn from t at the key being
+// written. For a closed record with declared fields it differs from
+// AdmitIndexedWrite: a foreign value stored through a dynamic key that could match
+// a declared field's name WEAKENS that field's type (joining v into it), because at
+// runtime the write can land on that field and replace its value. Merely adding a
+// `[K]: v` map component (as AdmitIndexedWrite does) would leave the declared field
+// type intact and let a later `r.field` read return the original type when the
+// runtime value is v — unsound.
+//
+// A field is weakened only when keyType is consistent with the literal field name
+// (a write under keyType could land on that key): a string-literal key weakens only
+// the named field, a `string`-domain key weakens every string-named field, an
+// integer/other key weakens none. For a non-record container, or a write whose key
+// cannot reach any declared field, the result equals AdmitIndexedWrite (the map/array
+// widening already over-approximates soundly).
+func AdmitForeignIndexedWrite(t typ.Type, keyType, valType typ.Type) typ.Type {
+	if valType != nil && valType.Kind() == kind.Nil {
+		return t
+	}
+	if t == nil || valType == nil {
+		return AdmitIndexedWrite(t, keyType, valType)
+	}
+	rec, ok := unwrap.Alias(t).(*typ.Record)
+	if !ok || len(rec.Fields) == 0 {
+		return AdmitIndexedWrite(t, keyType, valType)
+	}
+	weakened := weakenRecordFieldsForForeignWrite(rec, keyType, valType)
+	// The map component still records the open key/value domain the write admits, so a
+	// later dynamic-key read sees v. Reuse the AdmitIndexedWrite record path over the
+	// field-weakened record so the map component merge stays identical.
+	return AdmitIndexedWrite(weakened, keyType, valType)
+}
+
+// weakenRecordFieldsForForeignWrite rebuilds rec with every declared field the
+// dynamic key could match joined with valType. A field name the key domain cannot
+// reach is left intact, so a literal-keyed write weakens only its target field. The
+// record's open flag, metatable, and existing map component are preserved; the caller
+// adds the map component for the dynamic key.
+func weakenRecordFieldsForForeignWrite(rec *typ.Record, keyType, valType typ.Type) typ.Type {
+	builder := typ.NewRecord()
+	if rec.Open {
+		builder.SetOpen(true)
+	}
+	for _, f := range rec.Fields {
+		ft := f.Type
+		if keyCanMatchFieldName(keyType, f.Name) {
+			ft = joinContainerValueTypes(f.Type, valType)
+		}
+		switch {
+		case f.Optional && f.Readonly:
+			builder.OptReadonlyField(f.Name, ft)
+		case f.Optional:
+			builder.OptField(f.Name, ft)
+		case f.Readonly:
+			builder.ReadonlyField(f.Name, ft)
+		default:
+			builder.Field(f.Name, ft)
+		}
+	}
+	if rec.Metatable != nil {
+		builder.Metatable(rec.Metatable)
+	}
+	if rec.HasMapComponent() {
+		builder.MapComponent(rec.MapKey, rec.MapValue)
+	}
+	return builder.Build()
+}
+
+// keyCanMatchFieldName reports whether a dynamic key of type keyType could equal the
+// string field name at runtime. A nil/placeholder key domain (an untyped dynamic key)
+// could be any string, so it matches; a concrete key matches when the literal field
+// name is within its domain (subtype of keyType). An integer/number-only key never
+// names a string field.
+func keyCanMatchFieldName(keyType typ.Type, name string) bool {
+	if keyType == nil || keyType.Kind().IsPlaceholder() {
+		return true
+	}
+	return subtype.IsSubtype(typ.LiteralString(name), keyType)
+}
+
 // IndexedWriteAdmits reports whether the value domain can soundly admit an
 // indexed write on t. It is the predicate counterpart to AdmitIndexedWrite:
 // transfer uses AdmitIndexedWrite to compute the next value, while proof

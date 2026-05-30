@@ -368,12 +368,21 @@ func (f *canonicalFacts) RefinedAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValu
 	}
 	in := f.inState(p)
 	av, ok := in.Env[symKey(sym)]
-	if !ok || av.IsZero() {
-		// A function-binding symbol carries no env value (it is not a flow variable
-		// the transfer writes); its type is its converged callee signature.
-		if sig, ok := f.funcSignatures[sym]; ok && sig != nil {
+	// A function-binding symbol's converged callee signature carries the parameter
+	// contracts the body proves. The transfer caches the function literal's pre-solve
+	// signature in the env (an unannotated parameter as the gradual `any`), built before
+	// the interprocedural solve could prove those contracts. When the env value is that
+	// pre-solve function approximation, the converged funcSignatures entry is the more
+	// precise authority, so a caller observing the function reads the body-proven
+	// precondition and the call-site arg-check enforces it. A symbol rebound to a
+	// non-function value keeps its env value (the rebinding is the live type).
+	if sig, sigOK := f.funcSignatures[sym]; sigOK && sig != nil {
+		envIsFunc := ok && !av.IsZero() && projectValue(av).Kind() == kind.Function
+		if !ok || av.IsZero() || envIsFunc {
 			return flow.TypedValue{Type: sig, State: flow.StateResolved}
 		}
+	}
+	if !ok || av.IsZero() {
 		// A free variable captured from an enclosing scope has no value in this
 		// function's env; its type is the captured variable's module-wide type. A
 		// symbol this function declares locally (an annotated local) is NOT a

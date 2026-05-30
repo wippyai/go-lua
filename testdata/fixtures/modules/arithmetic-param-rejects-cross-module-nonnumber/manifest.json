@@ -1,0 +1,7 @@
+{
+  "description": "An unannotated parameter used as an arithmetic operand proves it must be a number; forwarding a cross-module non-number record into that parameter is rejected.",
+  "files": [
+    "provider.lua",
+    "main.lua"
+  ]
+}

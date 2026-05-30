@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // lenseed.go carries the array-length seeding and the in-bounds index-read
@@ -631,6 +632,175 @@ func condHasKeyOf(cond constraint.Condition, tablePath, keyPath constraint.Path)
 		}
 	}
 	return false
+}
+
+// dynamicWriteKey resolves the value-domain key of a dynamic-key write base[key] = v.
+// It first reads the key expression's tracked value; when that does not resolve — a
+// `pairs` key variable over a closed record is left untyped by the iteration typing,
+// since a closed record is not a uniform keyed container — it synthesizes the key's
+// sound domain from the base record's field names when the key is provably a key of
+// that base (a KeyOf fact from `pairs(base)` in the path condition). The synthesized
+// domain is the union of the record's string field-name literals: a `pairs(base)` key
+// ranges over exactly those names, so a write through it can land on any of them. A
+// key the transfer can neither resolve nor prove a key of the base yields zero, so the
+// write is left as the sound carry-forward.
+func (t *Transfer) dynamicWriteKey(
+	out *flow.PointState,
+	target cfg.AssignTarget,
+	base product.AbstractValue,
+	demand func(int, paramevidence.ParamContract),
+) product.AbstractValue {
+	if key, ok := t.evalExpr(out, target.Key, demand); ok && !key.IsZero() {
+		return key
+	}
+	keyIdent, ok := target.Key.(*ast.IdentExpr)
+	if !ok {
+		return product.AbstractValue{}
+	}
+	keySym := t.symbolOf(keyIdent)
+	if keySym == 0 || target.BaseSymbol == 0 {
+		return product.AbstractValue{}
+	}
+	basePath := constraint.NewPath(target.BaseSymbol, target.BaseName)
+	keyPath := constraint.NewPath(keySym, keyIdent.Value)
+	if !condHasKeyOf(out.Cond, basePath, keyPath) {
+		return product.AbstractValue{}
+	}
+	names := recordFieldNameDomain(base)
+	if names == nil {
+		return product.AbstractValue{}
+	}
+	return product.FromType(names)
+}
+
+// recordFieldNameDomain returns the union of the string field-name literals of the
+// record av carries, the key domain a `pairs` iteration over a closed record ranges
+// over. A non-record value, or a record with no named string fields, yields nil so
+// the caller declines to synthesize a key.
+func recordFieldNameDomain(av product.AbstractValue) typ.Type {
+	t := av.ProjectValue()
+	if t == nil {
+		return nil
+	}
+	rec, ok := unwrapRecord(t)
+	if !ok || len(rec.Fields) == 0 {
+		return nil
+	}
+	names := make([]typ.Type, 0, len(rec.Fields))
+	for _, f := range rec.Fields {
+		names = append(names, typ.LiteralString(f.Name))
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return typ.NewUnion(names...)
+}
+
+// unwrapRecord resolves t to its underlying record through an alias, reporting false
+// for a non-record type.
+func unwrapRecord(t typ.Type) (*typ.Record, bool) {
+	switch r := unwrap.Alias(t).(type) {
+	case *typ.Record:
+		return r, true
+	}
+	return nil, false
+}
+
+// writeIsSelfDerived reports whether the dynamic-key write base[key] = src writes
+// back a value provably already held by base at the key being written, so the write
+// changes no field's value domain (the value at key K is stored back to key K). Such
+// a SELF-write must not weaken the container's declared fields; only a FOREIGN write
+// (a value not drawn from base at this key) can replace a field with a new type.
+//
+// Two self-derivation forms are recognized structurally from the source expression:
+//
+//   - src is `base[key]` itself (the same base symbol and the same key expression as
+//     the target): writing a slot back to itself is identity.
+//   - src is the VALUE variable of a keyed `pairs(base)` iteration whose KEY variable
+//     is exactly the write's key: the pair (k, v) binds v = base[k] at every step, so
+//     `base[k] = v` stores base[k] back to base[k]. The binding loop is recovered from
+//     the graph (the generic-for whose targets are [key, src] and whose iterator is a
+//     keyed iteration over base), so the judgment needs no per-point mutable state.
+//
+// Any other source is treated as foreign (the sound default: a value the transfer
+// cannot prove came from base at this key may differ from the field's type).
+func (t *Transfer) writeIsSelfDerived(target cfg.AssignTarget, src ast.Expr) bool {
+	if target.Key == nil || target.BaseSymbol == 0 {
+		return false
+	}
+	keyIdent, ok := target.Key.(*ast.IdentExpr)
+	if !ok {
+		return false
+	}
+	keySym := t.symbolOf(keyIdent)
+	if keySym == 0 {
+		return false
+	}
+	// Form 1: base[key] = base[key] (same base symbol, same key symbol).
+	if attr, ok := src.(*ast.AttrGetExpr); ok {
+		if rootIdent, isIdent := attr.Object.(*ast.IdentExpr); isIdent {
+			if t.symbolOf(rootIdent) == target.BaseSymbol {
+				if srcKeyIdent, isKeyIdent := attr.Key.(*ast.IdentExpr); isKeyIdent {
+					if t.symbolOf(srcKeyIdent) == keySym {
+						return true
+					}
+				}
+			}
+		}
+	}
+	// Form 2: base[key] = value, where (key, value) are the loop variables of a keyed
+	// iteration over base.
+	srcIdent, ok := src.(*ast.IdentExpr)
+	if !ok {
+		return false
+	}
+	valueSym := t.symbolOf(srcIdent)
+	if valueSym == 0 {
+		return false
+	}
+	return t.pairsBindsValueToKey(target.BaseSymbol, keySym, valueSym)
+}
+
+// pairsBindsValueToKey reports whether the graph holds a keyed-iteration generic-for
+// `for keySym, valueSym in pairs(base)` over the container at baseSym: its first
+// target is keySym, its second is valueSym, and its iterator is a keyed iteration
+// whose source is the base symbol. When so, valueSym = base[keySym] at every step, so
+// a write base[keySym] = valueSym is a self-write. The keyed-iteration recognition
+// reuses the CallTyper's KeyedIterSource (the declared iteration-effect resolution,
+// not a name match), so an ipairs/indexed iteration or an iteration over a different
+// container does not qualify.
+func (t *Transfer) pairsBindsValueToKey(baseSym cfg.SymbolID, keySym, valueSym cfg.SymbolID) bool {
+	if t.in.Graph == nil || t.callTyper == nil {
+		return false
+	}
+	found := false
+	t.in.Graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if found || len(info.IterExprs) == 0 || len(info.Targets) < 2 {
+			return
+		}
+		if info.Targets[0].Kind != cfg.TargetIdent || info.Targets[0].Symbol != keySym {
+			return
+		}
+		if info.Targets[1].Kind != cfg.TargetIdent || info.Targets[1].Symbol != valueSym {
+			return
+		}
+		iterCall, ok := info.IterExprs[0].(*ast.FuncCallExpr)
+		if !ok {
+			return
+		}
+		source, ok := t.callTyper.KeyedIterSource(iterCall)
+		if !ok {
+			return
+		}
+		rootIdent, ok := source.(*ast.IdentExpr)
+		if !ok {
+			return
+		}
+		if t.symbolOf(rootIdent) == baseSym {
+			found = true
+		}
+	})
+	return found
 }
 
 // refineIndexRead recovers a non-optional element type for a provably in-bounds
