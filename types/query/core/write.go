@@ -325,7 +325,12 @@ func widenWritableFieldDefault(t typ.Type) typ.Type {
 		}
 		return typ.NewOptional(inner)
 	}
-	return subtype.WidenForInference(t)
+	// Preserve declared function parameter types. A field whose slot is a
+	// method (e.g. a fluent builder's self-returning method with a literal-union
+	// param) is contravariant in its parameters: flattening the param domain to a
+	// base type widens the EXPECTED slot and desyncs it from the declared
+	// signature. The recursive return tower still widens for termination.
+	return subtype.WidenReturnTowerOnly(t)
 }
 
 func isClosedLiteralDomain(t typ.Type) bool {

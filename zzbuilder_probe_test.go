@@ -19,6 +19,8 @@ func TestZZBuilderProbe(t *testing.T) {
 	order := []string{
 		"realworld/tenant-policy-runtime",
 		"realworld/cqrs-order-runtime",
+		"realworld/cqrs-order-runtime-soundness",
+		"realworld/notification-delivery-runtime-soundness",
 		"realworld/agent-workflow-engine",
 		"realworld/middleware-session-router",
 		"realworld/plugin-supervisor-runtime",

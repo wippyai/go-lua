@@ -55,6 +55,7 @@ import (
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
@@ -362,7 +363,86 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 		prevCaptures = d.moduleCaptures
 	}
 
+	// The (value, err) inverse-correlation binds were computed at program-build time
+	// from the syntactically certain return forms only: a non-literal value/error
+	// return (`return u.email, nil`) was indeterminate, so its callee did not yet
+	// prove the pattern. Now that the solve has converged, recompute the binds with
+	// the per-return value types the callee proved; a callee whose return slots are
+	// non-optional value / nil error (the inverse pattern) now proves it. Re-solve
+	// once when any bind changed so the converged state the bridge reads reflects the
+	// newly correlated narrowing. The recompute is monotone (it only adds binds a
+	// determinate return type proves), so one extra pass suffices.
+	if d.recomputeSiblingNilBinds(prog) {
+		queries = summary.New(prog)
+		d.activeQueries = queries
+		d.solvePass(sess, prog, queries)
+	}
+
 	d.bridgeResults(sess, prog)
+}
+
+// recomputeSiblingNilBinds re-derives every function's (value, err) correlation
+// binds using the converged per-return value types and re-installs them on the owning
+// transfer, returning whether any transfer's bind set changed. It is the post-solve
+// counterpart of the program-build-time bind computation: a callee whose value/error
+// return slots are non-literal (a field access, a call) classifies by the type the
+// solve proved, which is unavailable before the solve.
+func (d *Driver) recomputeSiblingNilBinds(p *program) bool {
+	changed := false
+	for ref, g := range p.graphs {
+		tr, ok := p.transfers[ref].(*transfer.Transfer)
+		if !ok || tr == nil {
+			continue
+		}
+		binds := d.siblingNilBinds(p, g)
+		if siblingNilBindsEqual(p.siblingNils[ref], binds) {
+			continue
+		}
+		tr.SetSiblingNils(binds)
+		p.siblingNils[ref] = binds
+		changed = true
+	}
+	return changed
+}
+
+// siblingNilBindsEqual reports whether two sibling-nil bind slices carry the same
+// (error symbol -> value symbols) correlations, the change test the post-solve
+// recompute iterates against. Order-insensitive on the value symbols within a bind,
+// since the bind producer appends them in graph-traversal order.
+func siblingNilBindsEqual(a, b []transfer.SiblingNilBind) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	index := func(binds []transfer.SiblingNilBind) map[cfg.SymbolID]map[cfg.SymbolID]bool {
+		out := make(map[cfg.SymbolID]map[cfg.SymbolID]bool, len(binds))
+		for _, bind := range binds {
+			set := out[bind.ErrSym]
+			if set == nil {
+				set = make(map[cfg.SymbolID]bool, len(bind.ValueSyms))
+				out[bind.ErrSym] = set
+			}
+			for _, vs := range bind.ValueSyms {
+				set[vs] = true
+			}
+		}
+		return out
+	}
+	ai, bi := index(a), index(b)
+	if len(ai) != len(bi) {
+		return false
+	}
+	for err, aset := range ai {
+		bset, ok := bi[err]
+		if !ok || len(aset) != len(bset) {
+			return false
+		}
+		for vs := range aset {
+			if !bset[vs] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // captureRefinePasses bounds the capture-seeding re-solve loop. A closure-captured
@@ -1000,6 +1080,20 @@ func exprValueAt(e ast.Expr, g *cfg.Graph, ps flow.PointState, captures map[cfg.
 		return nil
 	case *ast.TableExpr:
 		return tableLiteralRecord(ex, g, ps, captures)
+	case *ast.AttrGetExpr:
+		base := exprValueAt(ex.Object, g, ps, captures)
+		if base == nil || typ.IsAbsentOrUnknown(base) {
+			return nil
+		}
+		name, ok := staticFieldKeyName(ex.Key)
+		if !ok || name == "" {
+			return nil
+		}
+		ft, ok := core.Field(base, name)
+		if !ok || ft == nil {
+			return nil
+		}
+		return ft
 	default:
 		return nil
 	}
@@ -1308,6 +1402,11 @@ type program struct {
 	// function whose CFG exit is unreachable (direct error()) seeds it, and a
 	// function all of whose exit-dominating calls are no-return inherits it.
 	noReturn map[summary.FuncRef]bool
+
+	// siblingNils is each function's currently installed (value, err) correlation
+	// binds, the snapshot the post-solve recompute compares against to decide whether
+	// the converged per-return types proved a new correlation and a re-solve is needed.
+	siblingNils map[summary.FuncRef][]transfer.SiblingNilBind
 }
 
 func (p *program) Graph(ref summary.FuncRef) *cfg.Graph { return p.graphs[ref] }
@@ -1521,12 +1620,15 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph) *p
 	// branch proving err nil narrow v to non-nil. Resolving f to prove the pattern
 	// needs the phase-2 name resolution, so this runs after the transfers are built
 	// and injects the binds.
+	p.siblingNils = make(map[summary.FuncRef][]transfer.SiblingNilBind, len(p.graphs))
 	for ref, g := range p.graphs {
 		tr, ok := p.transfers[ref].(*transfer.Transfer)
 		if !ok || tr == nil {
 			continue
 		}
-		tr.SetSiblingNils(d.siblingNilBinds(p, g))
+		binds := d.siblingNilBinds(p, g)
+		tr.SetSiblingNils(binds)
+		p.siblingNils[ref] = binds
 	}
 	return p
 }
@@ -2435,7 +2537,7 @@ func (d *Driver) calleeProvesErrorReturn(p *program, callerGraph *cfg.Graph, cal
 	ct := callTyper{d: d, g: callerGraph}
 	if ref, ok := ct.resolveCalleeRef(call.Call, p); ok {
 		if cg := p.graphs[ref]; cg != nil {
-			return provesErrorReturnFromBody(cg, d.signatureForRef(p, ref))
+			return d.provesErrorReturnFromBody(cg, ref, d.signatureForRef(p, ref))
 		}
 	}
 	// A cross-module or otherwise type-resolved callee: read the convention off the
@@ -2444,9 +2546,13 @@ func (d *Driver) calleeProvesErrorReturn(p *program, callerGraph *cfg.Graph, cal
 }
 
 // calleeSignatureFor resolves a call's callee to a function signature for
-// correlation lookup, trying the callee-identifier binding then a field-path
-// callee (M.f). It is the annotation/summary-resolved signature, not the live Env
-// value, so it is available at program-build time.
+// correlation lookup, trying the callee-identifier binding, then a field-path
+// callee defined in this program (M.f), then a field-path callee whose base is an
+// imported module value (`service.get_email`, base bound by require()). It is the
+// annotation/summary-resolved signature, not the live Env value, so it is available
+// at program-build time: the imported-module path reads the module alias type, which
+// the driver resolves before the program is built and which carries the exported
+// signature's ErrorReturn label.
 func (d *Driver) calleeSignatureFor(ct callTyper, call *ast.FuncCallExpr) typ.Type {
 	if call == nil {
 		return nil
@@ -2456,7 +2562,10 @@ func (d *Driver) calleeSignatureFor(ct callTyper, call *ast.FuncCallExpr) typ.Ty
 			return sig
 		}
 	}
-	return ct.fieldCalleeSignature(call.Func)
+	if sig := ct.fieldCalleeSignature(call.Func); sig != nil {
+		return sig
+	}
+	return ct.capturedFieldCalleeSignature(call.Func)
 }
 
 // provesErrorReturnFromBody proves the (value, err) inverse pattern at slots (0, 1)
@@ -2468,10 +2577,19 @@ func (d *Driver) calleeSignatureFor(ct callTyper, call *ast.FuncCallExpr) typ.Ty
 // that only ever succeeds proves the forward direction (err == nil => value != nil)
 // only when the declared value return slot is optional, so the present-narrowing
 // does not fabricate non-nil for a slot the callee never returns nil for.
-func provesErrorReturnFromBody(cg *cfg.Graph, sig typ.Type) bool {
+//
+// A non-literal return slot (a field access `return u.email, nil`, an identifier, a
+// call) classifies by the converged value type the callee's solve proved at that
+// return point: a non-optional value type is nonNil, an exactly-nil type is nil, an
+// optional/unknown type stays indeterminate (voids the proof). The state is read
+// from d.states[ref] when it is populated; at pre-solve program-build time it is
+// absent, so only the syntactically certain literal forms classify and the proof is
+// recomputed after the solve once the per-return types are known.
+func (d *Driver) provesErrorReturnFromBody(cg *cfg.Graph, ref summary.FuncRef, sig typ.Type) bool {
 	const valueIdx, errorIdx = 0, 1
+	fs, hasState := d.states[ref]
 	sawSuccess, sawFailure, inconsistent, classified := false, false, false, false
-	cg.EachReturn(func(_ cfg.Point, info *cfg.ReturnInfo) {
+	cg.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
 		if inconsistent || info == nil || len(info.Exprs) == 0 {
 			return
 		}
@@ -2479,8 +2597,12 @@ func provesErrorReturnFromBody(cg *cfg.Graph, sig typ.Type) bool {
 			inconsistent = true
 			return
 		}
-		valState, okVal := classifyReturnSlotNil(info.Exprs[valueIdx])
-		errState, okErr := classifyReturnSlotNil(info.Exprs[errorIdx])
+		var ps flow.PointState
+		if hasState {
+			ps = fs.Points[p]
+		}
+		valState, okVal := d.classifyReturnSlot(info.Exprs[valueIdx], cg, ps, hasState)
+		errState, okErr := d.classifyReturnSlot(info.Exprs[errorIdx], cg, ps, hasState)
 		if !okVal || !okErr {
 			inconsistent = true
 			return
@@ -2502,6 +2624,33 @@ func provesErrorReturnFromBody(cg *cfg.Graph, sig typ.Type) bool {
 		return true
 	}
 	return valueReturnSlotOptional(sig, valueIdx)
+}
+
+// classifyReturnSlot classifies a return expression's nil state, preferring the
+// syntactically certain literal forms (a nil literal, a non-nil constructor/literal)
+// and otherwise — when the converged state is available — the value type the solve
+// proved for the expression at the return point. A non-optional proved type is
+// nonNil; an exactly-nil proved type is nil; an optional/unknown type, or any
+// expression with no proved type, stays indeterminate so the proof is voided rather
+// than fabricated.
+func (d *Driver) classifyReturnSlot(e ast.Expr, cg *cfg.Graph, ps flow.PointState, hasState bool) (returnSlotNil, bool) {
+	if state, ok := classifyReturnSlotNil(e); ok {
+		return state, true
+	}
+	if !hasState {
+		return indeterminateExpr, false
+	}
+	t := exprValueAt(e, cg, ps, d.moduleCaptures)
+	if t == nil || typ.IsAbsentOrUnknown(t) {
+		return indeterminateExpr, false
+	}
+	if unwrap.Alias(t).Kind() == kind.Nil {
+		return nilExpr, true
+	}
+	if _, optional := typ.SplitNilableFieldType(t); optional {
+		return indeterminateExpr, false
+	}
+	return nonNilExpr, true
 }
 
 // returnSlotNil is the nil classification of a single return expression slot.

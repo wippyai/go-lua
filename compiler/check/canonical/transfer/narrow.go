@@ -1589,11 +1589,12 @@ func isAlwaysFalsyLiteral(expr ast.Expr) bool {
 
 // ParamNarrow is one parameter-narrowing effect a function body proves on every
 // live exit: parameter Param (optionally at field path Segments) satisfies Check
-// (CheckTruthy / CheckNotNil) when the function returns normally. A caller applies
-// it to the matching argument so a wrapper like `function check(x) assert(x) end`
-// narrows the argument at `check(y)`. It is the relative form of the body's assert /
-// guard refinement, expressed as a check (not a concrete type), so it applies even
-// to an unannotated `any` parameter where the body's own narrowed type is unchanged.
+// (CheckTruthy / CheckNotNil / CheckNil / CheckFalsy) when the function returns
+// normally. A caller applies it to the matching argument so a wrapper like `function
+// check(x) assert(x) end` narrows the argument at `check(y)`. It is the relative form
+// of the body's assert / guard refinement, expressed as a check (not a concrete
+// type), so it applies even to an unannotated `any` parameter where the body's own
+// narrowed type is unchanged.
 type ParamNarrow struct {
 	Param    int
 	Segments []constraint.Segment
@@ -1777,17 +1778,20 @@ func (t *Transfer) paramEffectFromCondition(cond ast.Expr, _ bool) (ParamNarrow,
 }
 
 // toParamEffect builds a ParamNarrow when sym is a parameter and check is a
-// presence/truthy refinement worth carrying to a caller. A nil/falsy check (the
-// parameter proven nil/falsy) is not propagated: a caller narrowing an argument to
-// nil is rarely the intent and never required by these wrappers, so only the
-// not-nil / truthy refinements become effects.
+// presence/truthy or absence/falsy refinement the body proves on every normal
+// return. A not-nil/truthy wrapper (`function check(x) assert(x) end`) narrows the
+// argument to non-nil at the call site; a nil/falsy wrapper (`function is_nil(x) if
+// x ~= nil then error() end`) proves the argument nil, which both narrows the
+// argument to nil and -- when the argument is a recorded multi-return error symbol --
+// strips nil from its correlated value siblings (the call-site form of the (value,
+// err) inverse correlation, applied by ApplyParamNarrows/applySiblingNilForErr).
 func (t *Transfer) toParamEffect(sym cfg.SymbolID, segs []constraint.Segment, check cfg.CondCheckKind) (ParamNarrow, bool) {
 	idx, isParam := t.paramBySym[sym]
 	if !isParam {
 		return ParamNarrow{}, false
 	}
 	switch check {
-	case cfg.CheckTruthy, cfg.CheckNotNil:
+	case cfg.CheckTruthy, cfg.CheckNotNil, cfg.CheckNil, cfg.CheckFalsy:
 		return ParamNarrow{Param: idx, Segments: segs, Check: check, EqParam: -1}, true
 	default:
 		return ParamNarrow{}, false
