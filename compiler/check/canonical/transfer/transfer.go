@@ -897,8 +897,10 @@ func writeFieldPath(base product.AbstractValue, path []string, val product.Abstr
 // ranging over the integer interval the control expressions describe, so the
 // variable's value is integer — the same type the legacy local-inference assigns
 // the numeric-for induction variable. The relational numeric component seeds the
-// variable at its integer init when that is a constant, so a body comparison sees
-// a concrete numeric bound rather than the unbounded default.
+// variable's loop RANGE [init, limit] (not its init value): the body executes only
+// for an in-range index, so a body read `arr[i]` reads in range exactly when the
+// range lies within the container's length. Pinning the variable to its init would
+// model only the first iteration and over-narrow every subsequent body read.
 func (t *Transfer) applyNumericFor(out *flow.PointState, info *cfg.AssignInfo) {
 	target, ok := info.FirstTarget()
 	if !ok || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
@@ -907,10 +909,7 @@ func (t *Transfer) applyNumericFor(out *flow.PointState, info *cfg.AssignInfo) {
 	key := symKey(target.Symbol)
 	out.Env[key] = product.FromType(typ.Integer)
 	if out.Num != nil && info.NumericFor != nil {
-		if c, ok := t.constInt(info.NumericFor.Init); ok {
-			out.Num.ApplyEqConst(constraint.PathKey(key), c)
-		}
-		t.seedNumericForLength(out, target.Symbol, info.NumericFor)
+		t.seedNumericForBounds(out, target.Symbol, info.NumericFor)
 	}
 }
 

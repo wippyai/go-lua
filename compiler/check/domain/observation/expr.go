@@ -665,20 +665,29 @@ func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Exp
 
 // indexReadFlow returns the index-read proof surface for the current flow. The
 // path-sensitive Solution supplies it directly. A Solution-less flow (the
-// canonical flow) exposes its key-presence proof through Facts: when Facts holds
-// the KeyOf surface, a Facts-backed adapter answers HasKeyOf from the converged
-// per-point condition so a `container[k]` read with a held KeyOf strips the
-// optional on the diagnostic path too. Length-based refinements over the
-// canonical assignment source flow through refineFactsLengthIndex, so the adapter
-// declines them. Returns nil when neither proof is available.
+// canonical flow) exposes its proofs through Facts: a Facts-backed adapter answers
+// HasKeyOf from the converged per-point condition (a `container[k]` read with a
+// held KeyOf strips the optional), and the numeric bound / length proofs from the
+// canonical numeric component so a dynamic-index read `arr[i]` a loop bound or
+// length guard proves in range drops the soundly-optional element on the
+// diagnostic path too. Returns nil when no proof is available.
 func (p Projector) indexReadFlow() indexread.Flow {
 	if p.cfg.Solution != nil {
 		return p.cfg.Solution
 	}
-	if kf, ok := p.cfg.Facts.(keyOfFacts); ok {
-		return factsIndexReadFlow{keyOf: kf}
+	kf, hasKeyOf := p.cfg.Facts.(keyOfFacts)
+	nf, hasNum := p.cfg.Facts.(flow.NumericFacts)
+	lf, hasLen := p.cfg.Facts.(flow.LengthFacts)
+	if !hasKeyOf && !hasNum && !hasLen {
+		return nil
 	}
-	return nil
+	return factsIndexReadFlow{
+		keyOf:    kf,
+		numeric:  nf,
+		length:   lf,
+		graph:    p.cfg.Graph,
+		bindings: p.cfg.Bindings,
+	}
 }
 
 // keyOfFacts is the key-presence proof a Solution-less flow exposes: HasKeyOf
@@ -688,28 +697,84 @@ type keyOfFacts interface {
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
 }
 
-// factsIndexReadFlow adapts the canonical Facts key-presence proof to the
-// indexread.Flow surface. Only HasKeyOf is answered; the length-relative
-// refinements are served elsewhere on the canonical path, so the bound queries
-// decline (returning no proof keeps the read soundly optional).
+// factsIndexReadFlow adapts a Solution-less flow's per-point Facts proofs to the
+// indexread.Flow surface. HasKeyOf answers the key-presence proof; the numeric
+// bound and length queries are answered from the canonical numeric component
+// (flow.NumericFacts / flow.LengthFacts), resolving a variable NAME to its symbol
+// at the read point through the graph so the index-var bound / length-reference of
+// a `for i = 1, #arr` / `while i <= n` induction variable is consulted. A flow that
+// implements none of these, or a name the graph cannot resolve, answers no proof so
+// the read stays soundly optional.
 type factsIndexReadFlow struct {
-	keyOf keyOfFacts
+	keyOf    keyOfFacts
+	numeric  flow.NumericFacts
+	length   flow.LengthFacts
+	graph    *cfg.Graph
+	bindings *bind.BindingTable
 }
 
 func (f factsIndexReadFlow) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
+	if f.keyOf == nil {
+		return false
+	}
 	return f.keyOf.HasKeyOf(p, tablePath, keyPath)
 }
 
-func (f factsIndexReadFlow) BoundsAt(cfg.Point, string) (int64, int64, bool) {
-	return 0, 0, false
+func (f factsIndexReadFlow) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {
+	if f.numeric == nil {
+		return 0, 0, false
+	}
+	sym, ok := f.symbolAt(p, name)
+	if !ok {
+		return 0, 0, false
+	}
+	return f.numeric.NumericBoundsAt(p, sym)
 }
 
-func (f factsIndexReadFlow) ArrayLenBoundWithOffsetAt(cfg.Point, string) (string, int64, bool) {
-	return "", 0, false
+func (f factsIndexReadFlow) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (string, int64, bool) {
+	if f.numeric == nil {
+		return "", 0, false
+	}
+	sym, ok := f.symbolAt(p, varName)
+	if !ok {
+		return "", 0, false
+	}
+	arrSym, offset, ok := f.numeric.ArrayLenRefAt(p, sym)
+	if !ok {
+		return "", 0, false
+	}
+	// indexread.Refine compares this key against the container expression's
+	// constraint.Path.Key(), which is bound to the container symbol's SSA version at
+	// the read point. The numeric component is version-insensitive, so the array
+	// symbol's path is versioned at p the same way the container path is, yielding
+	// the matching key.
+	arrPath := flowpath.WithVersion(constraint.Path{Symbol: arrSym}, f.graph, p)
+	return string(arrPath.Key()), offset, true
 }
 
-func (f factsIndexReadFlow) LengthBoundsAt(cfg.Point, constraint.Path) (int64, int64, bool) {
-	return 0, 0, false
+func (f factsIndexReadFlow) LengthBoundsAt(p cfg.Point, path constraint.Path) (int64, int64, bool) {
+	if f.length == nil || path.Symbol == 0 || len(path.Segments) != 0 {
+		return 0, 0, false
+	}
+	lower, ok := f.length.LengthLowerBoundAt(p, path.Symbol)
+	if !ok {
+		return 0, 0, false
+	}
+	return lower, 0, true
+}
+
+// symbolAt resolves a variable name to its symbol visible at point p, the bridge
+// between the indexread.Flow's name-keyed numeric queries and the symbol-keyed
+// canonical numeric component.
+func (f factsIndexReadFlow) symbolAt(p cfg.Point, name string) (cfg.SymbolID, bool) {
+	if f.graph == nil || name == "" {
+		return 0, false
+	}
+	sym, ok := f.graph.SymbolAt(p, name)
+	if !ok || sym == 0 {
+		return 0, false
+	}
+	return sym, true
 }
 
 func (p Projector) tableType(expr *ast.TableExpr, point cfg.Point, expected typ.Type) typ.Type {

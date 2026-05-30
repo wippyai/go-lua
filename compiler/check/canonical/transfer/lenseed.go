@@ -505,39 +505,43 @@ func (t *Transfer) mapBaseSymbol(expr ast.Expr) (cfg.SymbolID, []string, bool) {
 	return 0, nil, false
 }
 
-// seedNumericForLength seeds the numeric component for a numeric-for loop whose
-// range is bounded by a sequence length: a forward `for i = 1, #arr` or a
-// backward `for i = #arr, 1, -1`. The step direction selects which control
-// expression supplies the length limit and which supplies the constant floor:
-//   - step > 0: i ascends init..limit, so #-bound is the LIMIT and the floor is
-//     init (`i <= #arr`, `i >= init`).
-//   - step < 0: i descends init..limit, so #-bound is the INIT and the floor is
-//     limit (`i <= #arr`, `i >= limit`).
+// seedNumericForBounds seeds the numeric component with a numeric-for loop's
+// induction RANGE [floor, ceil]: the interval the control variable ranges over
+// across the whole loop body. The step direction selects which control expression
+// is the range floor and which is the range ceiling:
+//   - step > 0: i ascends init..limit, so the floor is init and the ceiling limit
+//     (`i >= init`, `i <= limit`).
+//   - step < 0: i descends init..limit, so the floor is limit and the ceiling init
+//     (`i >= limit`, `i <= init`).
 //
-// The body executes only when the range is non-empty, which for either form
-// implies `#arr >= floor`, so an in-body read `arr[i]` is provably in range. The
-// length container may be a bare identifier or a static field path
-// (`saga.compensations`). A range whose #-bounded end is not `#container`, or
-// whose constant floor is absent, leaves the length reference unseeded (the
-// sound carry-forward).
-func (t *Transfer) seedNumericForLength(out *flow.PointState, idxSym cfg.SymbolID, info *cfg.NumericForInfo) {
+// The ceiling is recorded as a constant (`i <= c`) when it is an integer constant,
+// or as a symbolic length reference (`i <= #arr + offset`) when it is `#container`
+// over a tracked sequence (a bare identifier or a static field path). The floor is
+// recorded as a constant when it is one. Both bounds describe the body view of the
+// induction variable on every iteration, so a body read `arr[i]` is provably in
+// range exactly when the range lies within the container's length: a constant
+// ceiling within a tuple's static arity, or a #arr-relative ceiling, proves the
+// element present, while a ceiling that exceeds the length keeps the read optional
+// (soundness). A non-constant, non-length ceiling, or a step with no provable
+// direction, leaves the corresponding bound unseeded (the sound carry-forward).
+func (t *Transfer) seedNumericForBounds(out *flow.PointState, idxSym cfg.SymbolID, info *cfg.NumericForInfo) {
 	if out.Num == nil || info == nil || idxSym == 0 {
 		return
 	}
-	lenEnd, floorEnd := info.Limit, info.Init
+	ceilEnd, floorEnd := info.Limit, info.Init
 	if t.forStepIsNegative(info.Step) {
-		lenEnd, floorEnd = info.Init, info.Limit
-	}
-	arrKey, ok := t.lenExprContainerKey(lenEnd)
-	if !ok {
-		return
+		ceilEnd, floorEnd = info.Init, info.Limit
 	}
 	idxKey := constraint.PathKey(symKey(idxSym))
-	out.Num.ApplyLeLenOfWithOffset(idxKey, arrKey, 0)
 	if c, ok := t.constInt(floorEnd); ok {
 		out.Num.ApplyGeConst(idxKey, c)
-	} else {
-		out.Num.ApplyGeConst(idxKey, 1)
+	}
+	if c, ok := t.constInt(ceilEnd); ok {
+		out.Num.ApplyLeConst(idxKey, c)
+		return
+	}
+	if arrKey, ok := t.lenExprContainerKey(ceilEnd); ok {
+		out.Num.ApplyLeLenOfWithOffset(idxKey, arrKey, 0)
 	}
 }
 

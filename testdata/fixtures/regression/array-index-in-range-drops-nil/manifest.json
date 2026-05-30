@@ -1,0 +1,4 @@
+{
+  "description": "A provably in-range array index read drops its soundly-optional nil and is usable as the element type: a bounded for-loop induction variable, an ipairs value, and a while-loop index bounded by #arr all read the element non-optional.",
+  "files": ["main.lua"]
+}

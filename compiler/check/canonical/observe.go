@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/kind"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -349,6 +350,10 @@ var _ flow.TypeFacts = (*canonicalFacts)(nil)
 // observation surface consults to refine an in-bounds index read.
 var _ flow.LengthFacts = (*canonicalFacts)(nil)
 
+// compile-time assertion: canonicalFacts exposes the numeric proofs the
+// observation surface consults to refine an in-range dynamic-index read.
+var _ flow.NumericFacts = (*canonicalFacts)(nil)
+
 // DeclaredAt returns the declared (annotated) type of sym. Declared types are
 // flow-insensitive, so the point is unused.
 func (f *canonicalFacts) DeclaredAt(_ cfg.Point, sym cfg.SymbolID) flow.TypedValue {
@@ -486,6 +491,50 @@ func (f *canonicalFacts) LengthLowerBoundAt(p cfg.Point, sym cfg.SymbolID) (int6
 	}
 	lower, _, ok := num.LenBoundsFor(constraint.PathKey(symKey(sym)))
 	return lower, ok
+}
+
+// NumericBoundsAt returns the proven integer bounds on sym entering point p from the
+// in-state's numeric component, using the theory solver so a bound established
+// transitively through a relation (an induction variable bounded by another value)
+// is recovered. The numeric component keys a value by the same symbol Env key the
+// transfer writes, so this reads the same bounds the equation-side refineIndexRead
+// consults.
+func (f *canonicalFacts) NumericBoundsAt(p cfg.Point, sym cfg.SymbolID) (int64, int64, bool) {
+	if sym == 0 {
+		return 0, 0, false
+	}
+	num := f.inState(p).Num
+	if num == nil {
+		return 0, 0, false
+	}
+	return numeric.BoundsForWithTheory(num, constraint.PathKey(symKey(sym)))
+}
+
+// ArrayLenRefAt returns the container symbol and constant offset of a proven
+// `sym <= #arr + offset` relation on sym entering point p, the symbolic length
+// reference the transfer seeds for a `for i = 1, #arr` / `while i <= #arr`
+// induction variable. The numeric component stores the array as the transfer's
+// symbol key, which symFromKey recovers, so the observation surface returns the
+// SAME container symbol the read's container path resolves to. A value with no
+// length reference, or a length reference keyed on a non-symbol path, reports
+// ok=false.
+func (f *canonicalFacts) ArrayLenRefAt(p cfg.Point, sym cfg.SymbolID) (cfg.SymbolID, int64, bool) {
+	if sym == 0 {
+		return 0, 0, false
+	}
+	num := f.inState(p).Num
+	if num == nil {
+		return 0, 0, false
+	}
+	arrKey, offset, ok := num.LenRefWithOffsetFor(constraint.PathKey(symKey(sym)))
+	if !ok {
+		return 0, 0, false
+	}
+	arrSym, ok := symFromKey(string(arrKey))
+	if !ok {
+		return 0, 0, false
+	}
+	return arrSym, offset, true
 }
 
 // HasKeyOf reports whether a KeyOf(tablePath, keyPath) fact holds in the in-state

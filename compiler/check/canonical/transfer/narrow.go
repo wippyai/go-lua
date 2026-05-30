@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -497,6 +498,10 @@ func (t *Transfer) narrowEdgeInner(out flow.PointState, info *cfg.BranchInfo, ta
 	// of the tested error symbol's own refinement, so it composes with whichever base
 	// narrower classifies the guard rather than short-circuiting the chain.
 	out = t.narrowBySiblingNil(out, info, taken)
+	// A relational comparison guard (`i <= n`, `i < #arr`) bounds a numeric value on
+	// the edge it holds; the bound seeds the numeric component independently of the
+	// guard's value narrowing, so it composes too.
+	out = t.narrowNumericComparison(out, info, taken)
 	if narrowed, applied := t.narrowByCompound(out, info, taken); applied {
 		zprobeNarrow("  -> compound")
 		return narrowed
@@ -1248,6 +1253,174 @@ func (t *Transfer) narrowIndexPresenceLength(res flow.PointState, sym cfg.Symbol
 	res.Num = num
 	zprobeNarrow("indexPresenceLen sym=%d idx=%d", sym, seg.Index)
 	return res
+}
+
+// narrowNumericComparison seeds the numeric component with the integer bound a
+// relational comparison guard proves on the edge it holds. It recognizes a guard
+// `var OP bound` where var is a tracked symbol and bound is an integer constant or
+// `#container` over a tracked sequence, on either side of the comparison. On the
+// taken edge the comparison's effective operator holds; on the not-taken edge its
+// negation. The proven `var <= c` / `var >= c` is applied as a constant bound, and
+// `var <= #container (+/- k)` as a symbolic length reference, the same bound forms
+// a numeric-for loop seeds, so a body read `container[var]` consults them through
+// the in-range index narrowing. A guard the helper cannot classify as a numeric
+// comparison on a tracked symbol leaves the state unchanged (precision loss, never
+// unsoundness). The numeric component is cloned before the bound is applied so the
+// shared predecessor state is never mutated; the merge-LUB rebuilds the unbounded
+// range past the guard.
+func (t *Transfer) narrowNumericComparison(out flow.PointState, info *cfg.BranchInfo, taken bool) flow.PointState {
+	if out.Num == nil || info == nil {
+		return out
+	}
+	rel, ok := info.Condition.(*ast.RelationalOpExpr)
+	if !ok {
+		return out
+	}
+	op := rel.Operator
+	switch op {
+	case "<", "<=", ">", ">=":
+	default:
+		return out
+	}
+	// Resolve which side is the tracked integer variable and which is the bound,
+	// orienting the operator so it always reads `var OP bound`.
+	varExpr, boundExpr, op, ok := t.orientComparison(rel.Lhs, rel.Rhs, op)
+	if !ok {
+		return out
+	}
+	idxIdent, ok := varExpr.(*ast.IdentExpr)
+	if !ok {
+		return out
+	}
+	idxSym := t.symbolOf(idxIdent)
+	if idxSym == 0 {
+		return out
+	}
+	// The CFG records the whole comparison branch as a truthy check; the taken edge
+	// holds the comparison as written, the not-taken edge its logical negation.
+	if !effectiveTruthy(info.CondCheck.Kind, taken) {
+		op = negateComparisonOp(op)
+	}
+	idxKey := constraint.PathKey(symKey(idxSym))
+	if c, ok := t.constInt(boundExpr); ok {
+		res := cloneForNarrow(out)
+		num := res.Num.Clone()
+		applyConstComparison(num, idxKey, op, c)
+		res.Num = num
+		zprobeNarrow("numericCmp sym=%d op=%q c=%d", idxSym, op, c)
+		return res
+	}
+	// `var <= #container` / `var < #container`: a symbolic length reference. Only the
+	// upper-bound senses bound the index by the container length; a lower-bound sense
+	// does not establish in-range presence and is left unseeded.
+	if arrKey, off, ok := t.lengthBoundComparison(boundExpr, op); ok {
+		res := cloneForNarrow(out)
+		num := res.Num.Clone()
+		num.ApplyLeLenOfWithOffset(idxKey, arrKey, off)
+		res.Num = num
+		zprobeNarrow("numericCmpLen sym=%d off=%d", idxSym, off)
+		return res
+	}
+	return out
+}
+
+// orientComparison resolves which operand of a relational comparison is the
+// candidate index variable and which is the bound, returning them in `var OP bound`
+// orientation with the operator flipped when the variable is on the right. It
+// prefers an identifier operand as the variable; when both or neither are
+// identifiers it picks the left as the variable. A comparison with no usable
+// operand reports ok=false.
+func (t *Transfer) orientComparison(lhs, rhs ast.Expr, op string) (ast.Expr, ast.Expr, string, bool) {
+	_, lIdent := lhs.(*ast.IdentExpr)
+	_, rIdent := rhs.(*ast.IdentExpr)
+	switch {
+	case lIdent:
+		return lhs, rhs, op, true
+	case rIdent:
+		return rhs, lhs, flipComparisonOp(op), true
+	default:
+		return nil, nil, op, false
+	}
+}
+
+// flipComparisonOp swaps the sides of a relational operator (a < b  <=>  b > a).
+func flipComparisonOp(op string) string {
+	switch op {
+	case "<":
+		return ">"
+	case "<=":
+		return ">="
+	case ">":
+		return "<"
+	case ">=":
+		return "<="
+	}
+	return op
+}
+
+// negateComparisonOp returns the logical negation of a relational operator over
+// integers: not (a < b) is a >= b, etc.
+func negateComparisonOp(op string) string {
+	switch op {
+	case "<":
+		return ">="
+	case "<=":
+		return ">"
+	case ">":
+		return "<="
+	case ">=":
+		return "<"
+	}
+	return op
+}
+
+// effectiveTruthy reports whether the branch condition holds on the chosen edge: a
+// CheckTruthy branch holds on the taken edge, a CheckFalsy on the not-taken. A
+// comparison the CFG could not classify as a presence/type guard falls through to
+// one of these bare truthiness checks.
+func effectiveTruthy(check cfg.CondCheckKind, taken bool) bool {
+	switch check {
+	case cfg.CheckFalsy:
+		return !taken
+	default:
+		return taken
+	}
+}
+
+// applyConstComparison seeds the numeric bound a `var OP c` comparison proves. A
+// strict bound is tightened to the inclusive integer neighbor (var < c is var <=
+// c-1), since the numeric component carries inclusive integer intervals.
+func applyConstComparison(num *numeric.State, idxKey constraint.PathKey, op string, c int64) {
+	switch op {
+	case "<":
+		num.ApplyLeConst(idxKey, c-1)
+	case "<=":
+		num.ApplyLeConst(idxKey, c)
+	case ">":
+		num.ApplyGeConst(idxKey, c+1)
+	case ">=":
+		num.ApplyGeConst(idxKey, c)
+	}
+}
+
+// lengthBoundComparison recognizes a `var <= #container` / `var < #container`
+// upper bound, returning the container's numeric key and the inclusive integer
+// offset (a strict `<` is `<= #container - 1`). Only the upper-bound senses (`<`,
+// `<=`) bound the index by the container length; a lower-bound sense proves no
+// in-range presence and reports ok=false.
+func (t *Transfer) lengthBoundComparison(boundExpr ast.Expr, op string) (constraint.PathKey, int64, bool) {
+	arrKey, ok := t.lenExprContainerKey(boundExpr)
+	if !ok {
+		return "", 0, false
+	}
+	switch op {
+	case "<=":
+		return arrKey, 0, true
+	case "<":
+		return arrKey, -1, true
+	default:
+		return "", 0, false
+	}
 }
 
 // condTestSegments resolves the field segments of the path the guard tests. A bare

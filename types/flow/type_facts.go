@@ -65,6 +65,24 @@ type LengthFacts interface {
 	LengthLowerBoundAt(p cfg.Point, sym cfg.SymbolID) (lower int64, ok bool)
 }
 
+// NumericFacts exposes the per-point numeric proofs a Solution-less flow (the
+// canonical flow) carries in its numeric component, keyed by the value's SYMBOL
+// (never a name or a versioned key, so the surface is independent of how the flow
+// keys its numeric state internally). The observation surface consults it to refine
+// a dynamic index read `arr[i]` whose index variable a loop bound or guard proves
+// in range, the read-side counterpart of the path-sensitive Solution's BoundsAt /
+// ArrayLenBoundWithOffsetAt. A flow that does not implement it offers no numeric
+// proof, so a dynamic-index read stays optional (sound).
+type NumericFacts interface {
+	// NumericBoundsAt returns the proven integer bounds on sym entering point p,
+	// using transitive (theory) inference where relations are present.
+	NumericBoundsAt(p cfg.Point, sym cfg.SymbolID) (lower, upper int64, ok bool)
+
+	// ArrayLenRefAt returns the container symbol arr and constant offset of a proven
+	// `sym <= #arr + offset` relation on sym entering point p, and whether one holds.
+	ArrayLenRefAt(p cfg.Point, sym cfg.SymbolID) (arr cfg.SymbolID, offset int64, ok bool)
+}
+
 // DeclaredTypes maps SymbolID to its declared type.
 //
 // This type alias documents that the map should contain only annotation-derived
