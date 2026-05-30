@@ -186,6 +186,45 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 	return facts
 }
 
+// mergeCallbackEnvOverlay adds a callback's spec-injected globals to the declared-type
+// context, so an EnvOverlay name a callback body references ({describe, it, after_each,
+// ...} a test-DSL run_cases helper injects) is a defined identifier rather than
+// "undefined variable". The overlay applies only to the function literal it belongs to
+// (and its nested closures, which the program's transitive propagation already keyed),
+// so this is the canonical, per-callback-scope equivalent of the legacy synthesizer's
+// withEnvOverlay — no shared scope is mutated and the overlay does not cross function
+// boundaries it was not propagated to.
+//
+// A name is added only when it binds a graph global symbol that the binding table does
+// not bind to a local/parameter (an overlay name shadowed by a local stays the local).
+// A symbol already declared (a predeclared global, a parameter, an annotated local) is
+// not overwritten: the overlay supplies a default for an otherwise-undefined global.
+func (d *Driver) mergeCallbackEnvOverlay(facts *functionFacts, g *cfg.Graph, overlay map[string]typ.Type) {
+	if facts == nil || g == nil || len(overlay) == 0 {
+		return
+	}
+	bindings := g.Bindings()
+	for _, name := range cfg.SortedFieldNames(overlay) {
+		t := overlay[name]
+		if t == nil {
+			continue
+		}
+		sym, ok := g.GlobalSymbol(name)
+		if !ok || sym == 0 {
+			continue
+		}
+		if bindings != nil {
+			if k, ok := bindings.Kind(sym); ok && k != cfg.SymbolGlobal {
+				continue
+			}
+		}
+		if _, exists := facts.declared[sym]; exists {
+			continue
+		}
+		facts.declared[sym] = t
+	}
+}
+
 // seedMethodSelf types a method/field-definition body's implicit `self` parameter
 // as the receiver's record. A method defined as `function T:m()` (or a field
 // definition `function T.m()` whose body declares a leading `self`) binds an

@@ -41,6 +41,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
@@ -1646,6 +1647,15 @@ func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, ref su
 	// has no path-sensitive narrowing solution); the Projector reads the per-point
 	// facts and declared types instead, which are the canonical-computed types.
 	facts := d.buildFunctionFacts(g, evidence)
+	// A function literal passed as a callback to a callee whose parameter spec injects
+	// callback-scoped globals (a test-DSL run_cases helper's {describe, it, after_each})
+	// sees those names as declared globals in its body. The overlay is per-callback and
+	// was keyed on the literal's identity (with transitive propagation into its nested
+	// closures) at program build, so merging it here is compilation-isolated: a prior
+	// compilation's smaller overlay on a same-signature helper does not poison this one.
+	if g != nil {
+		d.mergeCallbackEnvOverlay(&facts, g, prog.callbackEnvOverlays[g.Func()])
+	}
 	// A method/field-definition body's implicit `self` parameter types as the
 	// receiver's record (function T:m() / function T.m()): self.f then reads the
 	// receiver field's type rather than the gradual default. The receiver type comes
@@ -1893,6 +1903,24 @@ type program struct {
 	// table is provably a key of the actual argument the caller passed for that
 	// parameter, so a `container[name]` read with that key is present.
 	keysCollectors map[summary.FuncRef]*keyscoll.KeysCollectorInfo
+
+	// callbackEnvOverlays maps a function literal passed as a callback argument to the
+	// callback-scoped globals its callee's CallbackSpec injects into the callback body
+	// ({describe, it, after_each, ...} for a test-DSL run_cases helper). It is the
+	// canonical counterpart of the legacy synthesizer's withEnvOverlay: a closure
+	// `define_tests` passed to `run_cases(define_cases_fn: fun())` whose parameter spec
+	// carries an EnvOverlay sees those names as declared globals in its body, and the
+	// overlay propagates transitively to every nested literal it contains (the inner
+	// `function() it(...) end` a describe callback). It is keyed by *ast.FunctionExpr,
+	// the same identity the diagnostic bridge stores results under, so it survives a
+	// prior compilation that declared a different overlay on a same-signature helper.
+	callbackEnvOverlays map[*ast.FunctionExpr]map[string]typ.Type
+
+	// nestedFuncs maps each function literal to the function literals defined directly
+	// in its body, the parent->child edges of the module's function hierarchy. It backs
+	// the transitive propagation of a callback EnvOverlay into the nested closures of a
+	// callback body.
+	nestedFuncs map[*ast.FunctionExpr][]*ast.FunctionExpr
 }
 
 func (p *program) Graph(ref summary.FuncRef) *cfg.Graph { return p.graphs[ref] }
@@ -1975,6 +2003,8 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph) *p
 		inferredParams: make(map[summary.FuncRef]map[int]typ.Type),
 		declaredTypes:  make(map[summary.FuncRef]map[cfg.SymbolID]typ.Type),
 		keysCollectors: make(map[summary.FuncRef]*keyscoll.KeysCollectorInfo),
+		nestedFuncs:         make(map[*ast.FunctionExpr][]*ast.FunctionExpr),
+		callbackEnvOverlays: make(map[*ast.FunctionExpr]map[string]typ.Type),
 	}
 
 	// Phase 1: BFS the hierarchy. Each function's body may define nested
@@ -2050,9 +2080,13 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph) *p
 		// m.f()` definition.
 		registerTableFieldFuncs(p, g)
 
+		parentFn := g.Func()
 		for _, nested := range g.NestedFunctions() {
 			if nested.Func == nil {
 				continue
+			}
+			if parentFn != nil {
+				p.nestedFuncs[parentFn] = append(p.nestedFuncs[parentFn], nested.Func)
 			}
 			ng := sess.GetOrBuildCFG(nested.Func)
 			if ng == nil || enqueued[ng.ID()] {
@@ -2074,6 +2108,13 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph) *p
 			p.byName[b.name] = ref
 		}
 	}
+
+	// Phase 2b: collect the callback EnvOverlays. A function literal passed as a
+	// callback argument to a callee whose parameter spec injects callback-scoped
+	// globals takes those names as declared globals in its body, propagated
+	// transitively into its nested closures. Resolving each callee signature reads
+	// the phase-1/phase-2 registries, so this runs after name resolution.
+	d.computeCallbackEnvOverlays(sess, p)
 
 	// Phase 3: close the parameter-narrowing effects over wrapper delegation. A
 	// function that forwards a parameter to a callee on every normal return inherits
@@ -2191,6 +2232,274 @@ func (d *Driver) closeParamNarrows(p *program) {
 			}
 		}
 	}
+}
+
+// computeCallbackEnvOverlays records, for every function literal passed as a
+// callback argument, the callback-scoped globals its callee's spec injects, and
+// propagates them transitively into the nested closures of each callback body.
+//
+// It walks every call site in the module. For each argument that is a function
+// literal, it resolves the callee signature (an in-module ref or a cross-module
+// field/captured member, the same resolution the call-typing seam uses) and reads
+// the callee spec's CallbackSpec at the matching parameter index: the EnvOverlay it
+// carries is the set of names the callee makes visible inside that callback body.
+// The overlay is keyed on the literal's *ast.FunctionExpr identity, so the same
+// physical closure resolves the same overlay regardless of which compilation runs.
+//
+// The transitive step is the canonical equivalent of the legacy synthesizer
+// re-synthesizing a callback body (and every literal nested in it) under the
+// overlaid context: a `describe("s", function() it(...) end)` inside the callback
+// body sees the callee's {describe, it} too, so the inner `function() ... end` it
+// passes to describe inherits the overlay.
+func (d *Driver) computeCallbackEnvOverlays(sess api.AnalysisSession, p *program) {
+	if p == nil {
+		return
+	}
+	// The callee resolution below reads the program through d.activeProgram (the
+	// field-function and captured-member signature lookups). The run sets it after
+	// buildProgram returns, so expose the in-flight program for this phase and
+	// restore the prior value when done.
+	prev := d.activeProgram
+	d.activeProgram = p
+	defer func() { d.activeProgram = prev }()
+
+	// An in-module callee's structural callback overlays, inferred once per ref from
+	// the callee's own body and the closures it returns (the same setup->param-call->
+	// cleanup recognizer the export pass runs). A cross-module callee instead carries
+	// the overlay on its already-enriched exported spec, read below.
+	refOverlays := make(map[summary.FuncRef]map[int]map[string]typ.Type, len(p.graphs))
+	for ref, g := range p.graphs {
+		if ov := d.inferRefCallbackOverlays(sess, p, ref, g); len(ov) > 0 {
+			refOverlays[ref] = ov
+		}
+	}
+
+	for _, g := range p.graphs {
+		if g == nil {
+			continue
+		}
+		ct := callTyper{d: d, g: g}
+		g.EachCallSite(func(_ cfg.Point, info *cfg.CallInfo) {
+			call := callInfoExpr(info)
+			if call == nil {
+				return
+			}
+			overlay := d.calleeCallbackOverlay(ct, call, refOverlays)
+			if len(overlay) == 0 {
+				return
+			}
+			for argIdx, arg := range call.Args {
+				fn := callbackArgFunctionLiteral(p, g, arg)
+				if fn == nil {
+					continue
+				}
+				paramIdx := callbackParamIndexForArg(call, argIdx)
+				cbOverlay, ok := overlay[paramIdx]
+				if !ok || len(cbOverlay) == 0 {
+					continue
+				}
+				p.callbackEnvOverlays[fn] = mergeEnvOverlay(p.callbackEnvOverlays[fn], cbOverlay)
+			}
+		})
+	}
+	d.propagateCallbackEnvOverlays(p)
+}
+
+// inferRefCallbackOverlays runs the structural callback-environment recognizer over
+// an in-module function: the callee's own body plus the closures it returns are the
+// sources that may bracket a captured-parameter call with temporary _G assignments
+// (`run_cases` returns `function() _G.describe = ...; define_cases_fn(); _G.describe
+// = nil end`). It is the canonical counterpart of the export pass's
+// attachSolvedCallbackOverlaySpec, but read from the program directly so an in-module
+// run_cases helper injects its callback overlay without round-tripping a manifest.
+func (d *Driver) inferRefCallbackOverlays(sess api.AnalysisSession, p *program, ref summary.FuncRef, g *cfg.Graph) map[int]map[string]typ.Type {
+	if sess == nil || g == nil {
+		return nil
+	}
+	paramSlots := g.ParamSlotsReadOnly()
+	if len(paramSlots) == 0 {
+		return nil
+	}
+	evidence := sess.EvidenceForGraph(g)
+	unknownExpr := func(ast.Expr, cfg.Point) typ.Type { return typ.Unknown }
+	sources := []functionfact.CallbackEnvOverlaySource{{
+		Graph:     g,
+		Evidence:  evidence,
+		SynthExpr: unknownExpr,
+	}}
+	for _, returned := range returnedClosureFunctionExprs(g) {
+		ref, ok := p.refByFunc(returned)
+		if !ok {
+			continue
+		}
+		cg := p.graphs[ref]
+		if cg == nil || cg == g {
+			continue
+		}
+		sources = append(sources, functionfact.CallbackEnvOverlaySource{
+			Graph:     cg,
+			Evidence:  sess.EvidenceForGraph(cg),
+			SynthExpr: unknownExpr,
+		})
+	}
+	bindings := g.Bindings()
+	return functionfact.InferCallbackEnvOverlaysFromSources(sources, paramSlots, bindings)
+}
+
+// returnedClosureFunctionExprs is the function literals a graph returns, the
+// additional callback-overlay inference sources for a function that brackets its
+// captured-parameter call inside a closure it returns.
+func returnedClosureFunctionExprs(g *cfg.Graph) []*ast.FunctionExpr {
+	if g == nil {
+		return nil
+	}
+	seen := make(map[*ast.FunctionExpr]bool)
+	var out []*ast.FunctionExpr
+	g.EachReturn(func(_ cfg.Point, info *cfg.ReturnInfo) {
+		if info == nil {
+			return
+		}
+		for _, expr := range info.Exprs {
+			if fn, ok := expr.(*ast.FunctionExpr); ok && fn != nil && !seen[fn] {
+				seen[fn] = true
+				out = append(out, fn)
+			}
+		}
+	})
+	return out
+}
+
+// callInfoExpr returns the call expression a call site carries, or nil.
+func callInfoExpr(info *cfg.CallInfo) *ast.FuncCallExpr {
+	if info == nil {
+		return nil
+	}
+	return info.Call
+}
+
+// callbackArgFunctionLiteral resolves the function literal a callback argument
+// denotes: a direct literal (`run_cases(function() ... end)`), or an identifier
+// bound to a named/local function definition (`local function define_tests() ...;
+// run_cases(define_tests)`), which the program's module-wide function-binding map
+// resolves to its literal. Any other argument yields nil (no callback body to seed).
+func callbackArgFunctionLiteral(p *program, g *cfg.Graph, arg ast.Expr) *ast.FunctionExpr {
+	switch e := arg.(type) {
+	case *ast.FunctionExpr:
+		return e
+	case *ast.IdentExpr:
+		if p == nil || g == nil || e == nil {
+			return nil
+		}
+		bindings := g.Bindings()
+		if bindings == nil {
+			return nil
+		}
+		sym, ok := bindings.SymbolOf(e)
+		if !ok || sym == 0 {
+			return nil
+		}
+		return p.funcSyms[sym]
+	default:
+		return nil
+	}
+}
+
+// calleeCallbackOverlay returns the callback EnvOverlays a call's callee injects,
+// keyed by parameter index. An in-module callee resolves to its ref's structurally
+// inferred overlays (refOverlays); a cross-module callee carries the overlay on its
+// already-enriched exported spec, resolved through the same captured/aliased member
+// lookup the return typing uses. Returns nil when the callee injects no overlay.
+func (d *Driver) calleeCallbackOverlay(ct callTyper, call *ast.FuncCallExpr, refOverlays map[summary.FuncRef]map[int]map[string]typ.Type) map[int]map[string]typ.Type {
+	if call == nil {
+		return nil
+	}
+	if ref, ok := ct.resolveCalleeRef(call, d.activeProgram); ok {
+		if ov, ok := refOverlays[ref]; ok && len(ov) > 0 {
+			return ov
+		}
+		if sig := d.signatureForRef(d.activeProgram, ref); sig != nil {
+			if ov := callbackOverlaysFromSpec(contract.ExtractSpec(sig)); len(ov) > 0 {
+				return ov
+			}
+		}
+	}
+	return callbackOverlaysFromSpec(contract.ExtractSpec(d.calleeSignatureFor(ct, call)))
+}
+
+// callbackOverlaysFromSpec extracts the non-empty callback EnvOverlays a spec
+// carries, keyed by parameter index, or nil.
+func callbackOverlaysFromSpec(spec *contract.Spec) map[int]map[string]typ.Type {
+	if spec == nil || len(spec.Callbacks) == 0 {
+		return nil
+	}
+	out := make(map[int]map[string]typ.Type, len(spec.Callbacks))
+	for idx, cb := range spec.Callbacks {
+		if cb == nil || len(cb.EnvOverlay) == 0 {
+			continue
+		}
+		out[idx] = cb.EnvOverlay
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// callbackParamIndexForArg maps a call argument index to the callee parameter index
+// it fills, accounting for a method call whose receiver fills the implicit first
+// parameter (obj:m(arg) -> arg is parameter 1, not 0).
+func callbackParamIndexForArg(call *ast.FuncCallExpr, argIdx int) int {
+	if call != nil && call.Method != "" {
+		return argIdx + 1
+	}
+	return argIdx
+}
+
+// propagateCallbackEnvOverlays extends each callback overlay over the nested-function
+// hierarchy: a literal that carries an overlay shares it with every literal defined
+// directly in its body, transitively to a fixpoint. A child that already carries its
+// own callback overlay keeps it merged with the inherited one (its own callee's
+// overlay plus the enclosing callback's).
+func (d *Driver) propagateCallbackEnvOverlays(p *program) {
+	if p == nil || len(p.callbackEnvOverlays) == 0 {
+		return
+	}
+	for changed := true; changed; {
+		changed = false
+		for parent, overlay := range p.callbackEnvOverlays {
+			if len(overlay) == 0 {
+				continue
+			}
+			for _, child := range p.nestedFuncs[parent] {
+				if child == nil {
+					continue
+				}
+				before := len(p.callbackEnvOverlays[child])
+				merged := mergeEnvOverlay(p.callbackEnvOverlays[child], overlay)
+				if len(merged) != before {
+					p.callbackEnvOverlays[child] = merged
+					changed = true
+				}
+			}
+		}
+	}
+}
+
+// mergeEnvOverlay merges overlay into base, returning a new map. A name already in
+// base keeps base's binding (the inner callee's contract wins over an inherited
+// outer overlay for the same name). A nil result means neither map had entries.
+func mergeEnvOverlay(base, overlay map[string]typ.Type) map[string]typ.Type {
+	if len(base) == 0 && len(overlay) == 0 {
+		return nil
+	}
+	out := make(map[string]typ.Type, len(base)+len(overlay))
+	for k, v := range overlay {
+		out[k] = v
+	}
+	for k, v := range base {
+		out[k] = v
+	}
+	return out
 }
 
 // computeInferredParams fills p.inferredParams with each unannotated parameter's
