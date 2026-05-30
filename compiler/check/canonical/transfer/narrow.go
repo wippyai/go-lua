@@ -178,8 +178,144 @@ func (t *Transfer) NarrowEdge(g *cfg.Graph, pred, succ cfg.Point, out flow.Point
 			zprobeNarrow("  -> exitDiscriminantChain")
 			return narrowed
 		}
+		if narrowed, applied := t.narrowExitAssignsPresent(g, pred, info, taken, out); applied {
+			zprobeNarrow("  -> exitAssignsPresent")
+			return narrowed
+		}
 	}
 	return t.narrowEdgeInner(out, info, taken, atExit)
+}
+
+// narrowExitAssignsPresent narrows the `if not m[<lit k>] then m[<lit k>] = v end`
+// fill-if-absent idiom on the then-arm exit. The guard's then-arm runs only when the
+// key is ABSENT, so the ordinary exit narrowing would refine m[k] toward nil there;
+// but the arm then ASSIGNS m[k], making the key present unconditionally on every path
+// that reaches this exit. The other (else) arm reaches the merge with the key already
+// present (the surviving falsy/nil edge proves it). So both predecessors of the merge
+// hold m[k] present, and the merge-LUB keeps it present -- the canonical present-key
+// fact, expressed by overlaying a record that pins the key to its non-optional value
+// over the preserved map component.
+//
+// It applies only when the recovered guard tests a single literal-keyed index path
+// (one field/string-index segment under the base symbol), this exit is the arm where
+// the key was proven ABSENT (the edge's effective check is falsy/nil), and an
+// assignment to that EXACT path dominates this exit within the arm. A guard on a
+// different shape, an exit the assignment does not dominate, or a base the narrowing
+// cannot refine returns applied=false so the ordinary exit narrowing runs (the
+// surviving else arm still carries the present key, a precision loss not unsoundness).
+func (t *Transfer) narrowExitAssignsPresent(g *cfg.Graph, pred cfg.Point, info *cfg.BranchInfo, taken bool, out flow.PointState) (flow.PointState, bool) {
+	sym := t.condTestSymbol(info)
+	if sym == 0 {
+		return flow.PointState{}, false
+	}
+	segments := t.condTestSegments(info)
+	if len(segments) != 1 {
+		return flow.PointState{}, false
+	}
+	seg := segments[0]
+	if seg.Kind != constraint.SegmentField && seg.Kind != constraint.SegmentIndexString {
+		return flow.PointState{}, false
+	}
+	// This exit must be the arm on which the guard proved the key ABSENT: only there
+	// does the then-arm assignment supply the presence the merge needs. The edge's
+	// effective check is falsy/nil exactly on that arm (the `not m[k]` true edge / the
+	// `m[k] == nil` true edge); the opposite arm already carries the present key.
+	switch effectiveCheck(info.CondCheck.Kind, taken) {
+	case cfg.CheckFalsy, cfg.CheckNil:
+	default:
+		return flow.PointState{}, false
+	}
+	if !t.armAssignsKeyPath(g, pred, sym, seg) {
+		return flow.PointState{}, false
+	}
+	key := symKey(sym)
+	baseAV, has := t.narrowBase(sym, out.Env[key], true)
+	if !has {
+		return flow.PointState{}, false
+	}
+	// The assignment proves the key present: refine the path by the POSITIVE presence
+	// check (CheckTruthy), the same per-member field narrowing the surviving else edge
+	// already applied, so this exit's value matches it and the merge keeps the key.
+	narrowed, ok := narrowAtPath(baseAV, segments, cfg.CheckTruthy, "")
+	if !ok {
+		return flow.PointState{}, false
+	}
+	res := cloneForNarrow(out)
+	res.Env[key] = narrowed
+	zprobeNarrow("exitAssignsPresent sym=%d seg=%q narrowed=%v", sym, seg.Name, projectStr(narrowed))
+	return res, true
+}
+
+// armAssignsKeyPath reports whether an assignment to the exact index/field path
+// base[seg] (the symbol sym at the single field/string-index segment seg) dominates
+// the arm exit. It walks the assignment nodes backward from the exit (the arm-local
+// region terminating at this exit) and matches a TargetField / TargetIndex write whose
+// base resolves to sym and whose single field/key equals seg. The walk stays within
+// the arm by stopping at a point with no predecessors or already seen, so it never
+// crosses out of the guarded arm into unrelated code.
+func (t *Transfer) armAssignsKeyPath(g *cfg.Graph, exit cfg.Point, sym cfg.SymbolID, seg constraint.Segment) bool {
+	seen := map[cfg.Point]bool{}
+	frontier := append([]cfg.Point(nil), g.Predecessors(exit)...)
+	for len(frontier) > 0 {
+		var next []cfg.Point
+		for _, p := range frontier {
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			if info := g.Assign(p); info != nil {
+				for _, target := range info.Targets {
+					if t.targetWritesKeyPath(target, sym, seg) {
+						return true
+					}
+				}
+			}
+			// A branch node bounds the arm: the assignment that fills the key sits between
+			// the guard branch and this exit, so the backward walk need not pass the
+			// guard. Continuing past a branch would leave the arm; stop the walk there.
+			if g.Branch(p) != nil {
+				continue
+			}
+			next = append(next, g.Predecessors(p)...)
+		}
+		frontier = next
+	}
+	return false
+}
+
+// targetWritesKeyPath reports whether an assignment target writes the exact single
+// key path base[seg]: a TargetField whose base symbol is sym and whose field chain is
+// the single field seg, or a TargetIndex on sym whose static literal key equals seg.
+// A multi-segment write, a different base, or a dynamic key does not match.
+func (t *Transfer) targetWritesKeyPath(target cfg.AssignTarget, sym cfg.SymbolID, seg constraint.Segment) bool {
+	switch target.Kind {
+	case cfg.TargetField:
+		if len(target.FieldPath) != 1 || target.FieldPath[0] != seg.Name {
+			return false
+		}
+		return t.targetBaseSymbol(target) == sym
+	case cfg.TargetIndex:
+		name, ok := staticFieldName(target.Key)
+		if !ok || name != seg.Name {
+			return false
+		}
+		return t.targetBaseSymbol(target) == sym
+	default:
+		return false
+	}
+}
+
+// targetBaseSymbol resolves the base symbol of a field/index assignment target,
+// preferring the pre-resolved BaseSymbol and falling back to the base expression's
+// root identifier so a target whose symbol the builder left unresolved still matches.
+func (t *Transfer) targetBaseSymbol(target cfg.AssignTarget) cfg.SymbolID {
+	if target.BaseSymbol != 0 {
+		return target.BaseSymbol
+	}
+	if ident, ok := target.Base.(*ast.IdentExpr); ok {
+		return t.symbolOf(ident)
+	}
+	return 0
 }
 
 // narrowExitDiscriminantChain composes, over the symbol's declared union, every
@@ -1294,12 +1430,15 @@ func mapUnionField(t typ.Type, field string, refine func(typ.Type) typ.Type, abs
 		}
 		return typ.ExtendRecordWithField(v, field, refined)
 	case *typ.Map:
-		// A dynamic map base (`{[any]: any}`, the shape a `type(x) == "table"` guard
-		// produces from `any`) has no static field, but a `type(x.f) == "number"` guard
-		// still proves the field is that type on the positive edge. Overlay a record
-		// pinning the field to the refined map-value type so a later read of x.f sees
-		// the refinement; the value's open map character is otherwise preserved by the
-		// merge-LUB at the post-guard join.
+		// A map base (`{[K]: V}`, or the `{[any]: any}` a `type(x) == "table"` guard
+		// produces from `any`) carries no static field, but a guard on a single key
+		// (`if m["root"]`, `type(x.f) == "number"`) proves THAT key's value is the
+		// refined type on the positive edge. Overlay a record that pins the proven key
+		// while PRESERVING the map component, so the proven key reads its non-optional
+		// refined type (field precedence) and every other key stays its soundly-optional
+		// map value (the map fallback): narrowing one key never asserts another present.
+		// The merge-LUB at the post-guard join rebuilds the bare map where both edges
+		// meet, so the per-key refinement never survives past its guard.
 		refined := refine(v.Value)
 		if refined == nil {
 			return t
@@ -1310,7 +1449,7 @@ func mapUnionField(t typ.Type, field string, refine func(typ.Type) typ.Type, abs
 			}
 			return typ.Never
 		}
-		return typ.ExtendRecordWithField(typ.NewRecord().Build(), field, refined)
+		return typ.NewRecord().SetOpen(true).Field(field, refined).MapComponent(v.Key, v.Value).Build()
 	default:
 		ft, ok := fieldResolver.Field(t, field)
 		if !ok || ft == nil {

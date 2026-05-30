@@ -53,6 +53,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // DeferredNodeKinds names the CFG node kinds and source forms this transfer does
@@ -511,10 +512,28 @@ func (t *Transfer) applyAssign(
 				// for a parameter), so leave it untouched rather than clobber it.
 				return
 			}
+			// A declared keyed/indexed local (`local m: {[string]: string} = f()`) is
+			// statically that container regardless of an unresolved initializer: the
+			// annotation is the slot's authority (resolve.go's hierarchy: declared
+			// overrides structural inference). Seed it so a later read/iteration of the
+			// slot sees the declared element/key/value rather than collapsing to unknown.
+			if dc, has := t.declaredContainerType(target.Symbol); has {
+				out.Env[symKey(target.Symbol)] = product.FromType(dc)
+				return
+			}
 			// Unknown source: clear any stale narrowing so the slot is the value
 			// domain's Top (the most general value), never a stale precise type.
 			delete(out.Env, symKey(target.Symbol))
 			return
+		}
+		// A declared keyed/indexed local's slot carries its declared container type
+		// rather than the initializer's narrower value: `local m: {[string]: string}
+		// = {}` is a string-keyed map (so `pairs(m)` types its key/value), not the empty
+		// closed record the `{}` constructor yields. The annotation is the authority for
+		// a mutable container slot; narrowing operates over t.declaredTypes directly, so
+		// the declared base here does not perturb per-edge discriminant refinement.
+		if dc, has := t.declaredContainerType(target.Symbol); has {
+			val = product.FromType(dc)
 		}
 		key := symKey(target.Symbol)
 		if prev, had := out.Env[key]; had {
@@ -529,6 +548,36 @@ func (t *Transfer) applyAssign(
 			t.seedArrayLiteralLength(out, key, src)
 		}
 	})
+}
+
+// declaredContainerType returns the declared type of sym when that annotation is a
+// keyed/indexed container — a Map (`{[K]: V}`) or an Array (`{T}`). A local declared
+// as such a container is statically that container: the slot's element/key/value
+// relation is the annotation, not the structure of whatever initializer the
+// constructor produced (an empty `{}` is a closed record that loses the map/array
+// shape, and a partial literal is a subtype that under-counts the declared keys). The
+// resolution hierarchy (declared annotation over structural inference) makes the
+// annotation the authority, so the slot carries it; a non-container annotation (a
+// union, a record, a scalar) returns false so the ordinary value-domain flow runs and
+// per-edge discriminant narrowing over the declared union is undisturbed.
+func (t *Transfer) declaredContainerType(sym cfg.SymbolID) (typ.Type, bool) {
+	declared, ok := t.declaredTypes[sym]
+	if !ok || declared == nil || typ.IsAbsentOrUnknown(declared) {
+		return nil, false
+	}
+	// A nilable container annotation (`{T}?`) stays under per-edge nil narrowing: a
+	// guard refines the optional to its non-nil container, so re-seeding the declared
+	// optional here would clobber that narrowing and re-introduce nil (a later
+	// index/method read then reports a spurious optional-access error). Only a
+	// non-optional container is the unconditional slot authority.
+	if _, optional := typ.SplitNilableFieldType(declared); optional {
+		return nil, false
+	}
+	switch unwrap.Underlying(declared).(type) {
+	case *typ.Map, *typ.Array:
+		return declared, true
+	}
+	return nil, false
 }
 
 // callExpansionReturns types the return vector of an assignment's single source

@@ -141,13 +141,22 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		return true
 	}
 
-	// Local refs match aliases by name.
+	// Local refs match aliases, refs, and recursive families by name. A Recursive
+	// family carries its declared .Name; a local Ref naming it denotes the same
+	// nominal type in an unresolved node form (the import path can leave a class
+	// self-receiver as a bare Ref while the caller resolved it to the interned
+	// family). This is a nominal-identity match, not structural and not
+	// self-dropping: it succeeds only when the names match.
 	if ref, ok := sub.(*typ.Ref); ok && ref.Module == "" {
 		if a, ok := super.(*typ.Alias); ok && a.Name == ref.Name {
 			return true
 		}
 
 		if r, ok := super.(*typ.Ref); ok && r.Module == "" && r.Name == ref.Name {
+			return true
+		}
+
+		if r, ok := super.(*typ.Recursive); ok && r.Name == ref.Name {
 			return true
 		}
 	}
@@ -158,6 +167,10 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		}
 
 		if r, ok := sub.(*typ.Ref); ok && r.Module == "" && r.Name == ref.Name {
+			return true
+		}
+
+		if r, ok := sub.(*typ.Recursive); ok && r.Name == ref.Name {
 			return true
 		}
 	}
