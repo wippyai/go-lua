@@ -4,8 +4,24 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+// zzDumpCaptures prints every captured record value carrying a metatable when the
+// ZZCLASS env var is set. Debug probe for class-instance data-field enrichment.
+func zzDumpCaptures(out map[cfg.SymbolID]typ.Type) {
+	if os.Getenv("ZZCLASS") == "" {
+		return
+	}
+	for sym, t := range out {
+		rec, ok := t.(*typ.Record)
+		if !ok || rec.Metatable == nil {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "[ZZ capture-meta sym=%d] %s\n", uint64(sym), t.String())
+	}
+}
 
 // zdbg prints a formatted trace line to stderr when the ZSIB env var is set.
 // Debug probe for sibling-correlation / NoReturn bind derivation.

@@ -50,6 +50,7 @@ import (
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -443,7 +444,326 @@ func (d *Driver) buildModuleCaptures(sess api.AnalysisSession, prog *program) ma
 	if len(out) == 0 {
 		return nil
 	}
+	zzDumpCaptures(out)
+	d.enrichPrototypeReceivers(sess, prog, out)
 	return out
+}
+
+// instanceData is the data fields collected for one OOP class across its
+// setmetatable construction sites, keyed by the prototype receiver symbol.
+type instanceData struct {
+	fields map[string]*fieldAcc
+	count  int
+}
+
+// enrichPrototypeReceivers ties a split-pattern OOP class's data fields onto its
+// method-prototype receiver. In the split pattern (local methods = {}; local mt =
+// {__index = methods}; an instance literal sealed with setmetatable(instance, mt))
+// the methods are defined on a bare prototype table while the data fields live on
+// the instance. The method receiver `self` resolves to the prototype's converged
+// value (the method surface only), so a method body's self.dataField read wrongly
+// reports the field absent. At runtime self IS the instance, which sees both the
+// data fields and (through __index) the prototype methods.
+//
+// This pass reconstructs the instance contract from the module's setmetatable call
+// sites. The metatable's __index field references the prototype symbol directly in
+// the metatable literal ({__index = methods}); that symbol is the method receiver.
+// The pass maps each metatable to its __index source symbol (the prototype symbol),
+// then at each setmetatable(table, mt) call resolves the table argument's data
+// fields and groups them under the prototype symbol the metatable's __index names.
+// Each prototype's captured value is then enriched with its class's data fields. A
+// data field observed on every construction is required; one seen on only some
+// constructions is optional. The prototype's own method fields are preserved, so
+// self.method() and self.dataField both resolve.
+func (d *Driver) enrichPrototypeReceivers(sess api.AnalysisSession, prog *program, out map[cfg.SymbolID]typ.Type) {
+	if len(out) == 0 || prog == nil {
+		return
+	}
+	// metatableIndexSym maps a metatable symbol to the symbol its __index field
+	// references in the metatable literal: the class's method prototype.
+	metatableIndexSym := d.collectMetatableIndexSymbols(sess, prog)
+	if len(metatableIndexSym) == 0 {
+		return
+	}
+	byProto := make(map[cfg.SymbolID]*instanceData)
+	for _, ref := range d.refs {
+		g := prog.graphs[ref]
+		if g == nil {
+			continue
+		}
+		fs, hasState := d.states[ref]
+		if !hasState {
+			continue
+		}
+		bindings := g.Bindings()
+		if bindings == nil {
+			continue
+		}
+		evidence := sess.EvidenceForGraph(g)
+		for _, call := range evidence.Calls {
+			info := call.Info
+			if info == nil || info.CalleeName != "setmetatable" || len(info.Args) < 2 {
+				continue
+			}
+			metaSym := identSymbol(info.Args[1], bindings)
+			protoSym, ok := metatableIndexSym[metaSym]
+			if !ok || protoSym == 0 {
+				continue
+			}
+			ps, ok := fs.Points[call.Point]
+			if !ok {
+				continue
+			}
+			tableRec, ok := unwrap.Alias(exprValueAt(info.Args[0], g, ps, out)).(*typ.Record)
+			if !ok {
+				continue
+			}
+			entry := byProto[protoSym]
+			if entry == nil {
+				entry = &instanceData{fields: make(map[string]*fieldAcc)}
+				byProto[protoSym] = entry
+			}
+			entry.count++
+			for _, f := range tableRec.Fields {
+				if f.Name == metaIndexField || isFunctionField(f.Type) {
+					continue
+				}
+				fa := entry.fields[f.Name]
+				if fa == nil {
+					fa = &fieldAcc{typ: f.Type, optional: f.Optional}
+					entry.fields[f.Name] = fa
+				} else {
+					fa.typ = product.Domain.Join(product.FromType(fa.typ), product.FromType(f.Type)).ProjectValue()
+					fa.optional = fa.optional || f.Optional
+				}
+				fa.count++
+			}
+		}
+	}
+	for protoSym, entry := range byProto {
+		if len(entry.fields) == 0 {
+			continue
+		}
+		rec, ok := out[protoSym].(*typ.Record)
+		if !ok {
+			continue
+		}
+		out[protoSym] = mergeInstanceFields(rec, entry.fields, entry.count)
+	}
+}
+
+// collectMetatableIndexSymbols maps every metatable symbol to the symbol its
+// __index field references. It scans the module's table-literal assignments
+// (local mt = {__index = methods}) and records the metatable symbol -> __index
+// source symbol edge, the static link from a class metatable to its method
+// prototype. The shared module binding table gives both symbols the same id in
+// every body, so a setmetatable call in any function resolves the prototype its
+// metatable names.
+func (d *Driver) collectMetatableIndexSymbols(sess api.AnalysisSession, prog *program) map[cfg.SymbolID]cfg.SymbolID {
+	out := make(map[cfg.SymbolID]cfg.SymbolID)
+	for _, ref := range d.refs {
+		g := prog.graphs[ref]
+		if g == nil {
+			continue
+		}
+		bindings := g.Bindings()
+		if bindings == nil {
+			continue
+		}
+		evidence := sess.EvidenceForGraph(g)
+		for _, assign := range evidence.Assignments {
+			info := assign.Info
+			if info == nil {
+				continue
+			}
+			for i, target := range info.Targets {
+				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+					continue
+				}
+				src := info.SourceAt(i)
+				tbl, ok := src.(*ast.TableExpr)
+				if !ok {
+					continue
+				}
+				idxSym := indexFieldSourceSymbol(tbl, bindings)
+				if idxSym != 0 {
+					out[target.Symbol] = idxSym
+				}
+			}
+		}
+	}
+	return out
+}
+
+// indexFieldSourceSymbol returns the symbol the __index field of a table literal
+// references ({__index = methods} -> the methods symbol), or 0 when the literal has
+// no __index field whose value is a resolvable identifier.
+func indexFieldSourceSymbol(tbl *ast.TableExpr, bindings *bind.BindingTable) cfg.SymbolID {
+	for _, field := range tbl.Fields {
+		if field == nil || field.Key == nil {
+			continue
+		}
+		name, ok := staticFieldKeyName(field.Key)
+		if !ok || name != metaIndexField {
+			continue
+		}
+		return identSymbol(field.Value, bindings)
+	}
+	return 0
+}
+
+// staticFieldKeyName returns the static field name of a table-literal key (a string
+// literal key or an identifier key), reporting whether the key is static.
+func staticFieldKeyName(key ast.Expr) (string, bool) {
+	switch k := key.(type) {
+	case *ast.StringExpr:
+		return k.Value, true
+	case *ast.IdentExpr:
+		return k.Value, true
+	default:
+		return "", false
+	}
+}
+
+// identSymbol resolves an identifier expression to its symbol via a binding table,
+// returning 0 for a non-identifier or unresolved expression.
+func identSymbol(e ast.Expr, bindings *bind.BindingTable) cfg.SymbolID {
+	ident, ok := e.(*ast.IdentExpr)
+	if !ok || bindings == nil {
+		return 0
+	}
+	sym, ok := bindings.SymbolOf(ident)
+	if !ok {
+		return 0
+	}
+	return sym
+}
+
+// exprValueAt resolves a setmetatable table/metatable argument's value type at a
+// point. An identifier argument (the instance local, or a captured metatable) reads
+// from the point's env, falling back to the module-wide captures. A table-literal
+// argument (the inline instance `setmetatable({...}, mt)`) builds a record from its
+// static field names, typing each from its statically-resolvable value (a record's
+// own metatable __index, a captured local) or gradual `any` when the value does not
+// resolve — the field is present in the literal regardless. Returns nil so a
+// non-resolving argument is skipped rather than fabricated.
+func exprValueAt(e ast.Expr, g *cfg.Graph, ps flow.PointState, captures map[cfg.SymbolID]typ.Type) typ.Type {
+	if g == nil {
+		return nil
+	}
+	switch ex := e.(type) {
+	case *ast.IdentExpr:
+		sym := identSymbol(ex, g.Bindings())
+		if sym == 0 {
+			return nil
+		}
+		if av, ok := ps.Env[symKey(sym)]; ok && !av.IsZero() {
+			return projectValue(av)
+		}
+		if captures != nil {
+			if t, ok := captures[sym]; ok {
+				return t
+			}
+		}
+		return nil
+	case *ast.TableExpr:
+		return tableLiteralRecord(ex, g, ps, captures)
+	default:
+		return nil
+	}
+}
+
+// tableLiteralRecord builds the record an inline setmetatable table-literal argument
+// denotes: every statically-named field present in the literal, typed from a
+// resolvable identifier value or gradual `any`. The field set is the instance's data
+// fields; their presence (not their precise types) is what the prototype-receiver
+// enrichment needs.
+func tableLiteralRecord(tbl *ast.TableExpr, g *cfg.Graph, ps flow.PointState, captures map[cfg.SymbolID]typ.Type) typ.Type {
+	builder := typ.NewRecord()
+	count := 0
+	for _, field := range tbl.Fields {
+		if field == nil || field.Key == nil {
+			continue
+		}
+		name, ok := staticFieldKeyName(field.Key)
+		if !ok {
+			continue
+		}
+		ft := typ.Any
+		if t := exprValueAt(field.Value, g, ps, captures); t != nil && !typ.IsUnknown(t) {
+			ft = t
+		}
+		builder.Field(name, ft)
+		count++
+	}
+	if count == 0 {
+		return nil
+	}
+	return builder.Build()
+}
+
+// metaIndexField is the Lua metatable __index slot the canonical receiver
+// enrichment reads to link an instance to its method prototype.
+const metaIndexField = "__index"
+
+// isFunctionField reports whether a record field's type is a callable (a method),
+// distinguishing the prototype's method surface from an instance's data fields.
+func isFunctionField(t typ.Type) bool {
+	_, ok := t.(*typ.Function)
+	return ok
+}
+
+// mergeInstanceFields returns proto with the collected instance data fields added.
+// A data field observed on every instance construction (its count matches the
+// number of instances of the class) is a required field; a field seen on only some
+// constructions, or already optional at its source, is optional. A data field whose
+// name collides with a prototype method is left as the method (the method surface
+// wins). The result is the instance contract the method receiver `self` carries.
+func mergeInstanceFields(proto *typ.Record, fields map[string]*fieldAcc, instanceCount int) typ.Type {
+	builder := typ.NewRecord()
+	existing := make(map[string]bool, len(proto.Fields))
+	for _, f := range proto.Fields {
+		existing[f.Name] = true
+		switch {
+		case f.Optional && f.Readonly:
+			builder.OptReadonlyField(f.Name, f.Type)
+		case f.Optional:
+			builder.OptField(f.Name, f.Type)
+		case f.Readonly:
+			builder.ReadonlyField(f.Name, f.Type)
+		default:
+			builder.Field(f.Name, f.Type)
+		}
+	}
+	for name, fa := range fields {
+		if existing[name] {
+			continue
+		}
+		ft := fa.typ
+		if ft == nil {
+			ft = typ.Unknown
+		}
+		if fa.optional || fa.count < instanceCount {
+			builder.OptField(name, ft)
+		} else {
+			builder.Field(name, ft)
+		}
+	}
+	if proto.Metatable != nil {
+		builder.Metatable(proto.Metatable)
+	}
+	if proto.HasMapComponent() {
+		builder.MapComponent(proto.MapKey, proto.MapValue)
+	}
+	return builder.SetOpen(proto.Open).Build()
+}
+
+// fieldAcc accumulates one instance data field across a class's constructions: its
+// joined type, how many instances carried it, and whether any source was optional.
+type fieldAcc struct {
+	typ      typ.Type
+	count    int
+	optional bool
 }
 
 // buildFuncResult assembles one function's api.FuncResult from the converged

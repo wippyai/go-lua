@@ -39,6 +39,7 @@ package transfer
 
 import (
 	"math"
+	"os"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
@@ -953,12 +954,18 @@ func (t *Transfer) evalTable(
 				continue
 			}
 		}
-		fv, ok := t.evalExpr(out, field.Value, demand)
-		if !ok || fv.IsZero() {
-			continue
+		// A statically-named field IS present in the literal: the constructor writes
+		// it. When its value type does not resolve (an unannotated parameter source, a
+		// call whose return is unknown), the field is still present with a gradual
+		// `any` value — recording it keeps a later read of the field from a false
+		// absence, while a value that resolves carries its precise type.
+		ft := typ.Any
+		if fv, ok := t.evalExpr(out, field.Value, demand); ok && !fv.IsZero() {
+			if pt := fv.ProjectValue(); pt != nil && !typ.IsUnknown(pt) {
+				ft = pt
+			}
 		}
-		ft := fv.ProjectValue()
-		if ft == nil || typ.IsUnknown(ft) {
+		if zzEvalTableNoAny() && ft == typ.Any {
 			continue
 		}
 		builder.Field(name, ft)
@@ -1510,4 +1517,12 @@ func itoa(v uint64) string {
 		v /= 10
 	}
 	return string(buf[i:])
+}
+
+// zzEvalTableNoAny disables recording a table-literal field whose value does not
+// resolve as a gradual `any` field, restoring the prior drop-the-field behavior.
+// Debug toggle for attributing oracle deltas to the table-literal field-presence
+// change.
+func zzEvalTableNoAny() bool {
+	return os.Getenv("ZZNOANY") != ""
 }

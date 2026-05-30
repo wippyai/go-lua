@@ -239,6 +239,7 @@ func (d *Driver) receiverType(info *cfg.FuncDefInfo) typ.Type {
 	// its type is the converged module-wide value of the receiver symbol.
 	if info.ReceiverSymbol != 0 && d.moduleCaptures != nil {
 		if t, ok := d.moduleCaptures[info.ReceiverSymbol]; ok && t != nil && !typ.IsAbsentOrUnknown(t) {
+			zzDumpType("receiver-value", t)
 			return t
 		}
 	}
