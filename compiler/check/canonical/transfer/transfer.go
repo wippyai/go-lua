@@ -546,6 +546,15 @@ func (t *Transfer) applyAssign(
 				// for a parameter), so leave it untouched rather than clobber it.
 				return
 			}
+			// A local declared `any` carries the gradual top regardless of the
+			// initializer: the annotation is an opt-in to the strict dynamic contract,
+			// so the slot stays `any` (a placeholder) even when the source is
+			// unresolved. A field read off it is then a read off a placeholder, which
+			// the gradual-admission gate does not silently admit.
+			if t.declaredGradualTop(target.Symbol) {
+				out.Env[symKey(target.Symbol)] = product.FromType(typ.Any)
+				return
+			}
 			// A declared keyed/indexed local (`local m: {[string]: string} = f()`) is
 			// statically that container regardless of an unresolved initializer: the
 			// annotation is the slot's authority (resolve.go's hierarchy: declared
@@ -560,13 +569,21 @@ func (t *Transfer) applyAssign(
 			delete(out.Env, symKey(target.Symbol))
 			return
 		}
-		// A declared keyed/indexed local's slot carries its declared container type
-		// rather than the initializer's narrower value: `local m: {[string]: string}
-		// = {}` is a string-keyed map (so `pairs(m)` types its key/value), not the empty
-		// closed record the `{}` constructor yields. The annotation is the authority for
-		// a mutable container slot; narrowing operates over t.declaredTypes directly, so
-		// the declared base here does not perturb per-edge discriminant refinement.
-		if dc, has := t.declaredContainerType(target.Symbol); has {
+		// A local declared `any` keeps the gradual top rather than the initializer's
+		// precise shape: `local raw: any = {id = "x"}` is the dynamic `any`, not the
+		// record literal `{id: "x"}`. The annotation is the slot authority (the same
+		// declared-over-inferred hierarchy declaredContainerType applies), so a later
+		// field read `raw.id` is a read off a placeholder the gradual-admission gate
+		// must flag against a concrete target, not the literal's precise field type.
+		if t.declaredGradualTop(target.Symbol) {
+			val = product.FromType(typ.Any)
+		} else if dc, has := t.declaredContainerType(target.Symbol); has {
+			// A declared keyed/indexed local's slot carries its declared container type
+			// rather than the initializer's narrower value: `local m: {[string]: string}
+			// = {}` is a string-keyed map (so `pairs(m)` types its key/value), not the empty
+			// closed record the `{}` constructor yields. The annotation is the authority for
+			// a mutable container slot; narrowing operates over t.declaredTypes directly, so
+			// the declared base here does not perturb per-edge discriminant refinement.
 			val = product.FromType(dc)
 		}
 		key := symKey(target.Symbol)
@@ -587,6 +604,22 @@ func (t *Transfer) applyAssign(
 			t.seedArrayLiteralLength(out, key, src)
 		}
 	})
+}
+
+// declaredGradualTop reports whether sym is declared with the gradual top `any`,
+// the opt-in dynamic contract a local `local raw: any = ...` carries. Such a slot
+// stays `any` regardless of its initializer: the declared annotation is the slot
+// authority (the same declared-over-inferred hierarchy declaredContainerType
+// follows), so a record-literal initializer never refines the slot to a precise
+// shape that would let a later field read off it pass a concrete-type assignment.
+// Only `any` qualifies; `unknown` (the opaque top) is not erased here — it carries
+// its own strict contract the value domain already enforces.
+func (t *Transfer) declaredGradualTop(sym cfg.SymbolID) bool {
+	declared, ok := t.declaredTypes[sym]
+	if !ok || declared == nil {
+		return false
+	}
+	return typ.IsAny(declared)
 }
 
 // declaredContainerType returns the declared type of sym when that annotation is a

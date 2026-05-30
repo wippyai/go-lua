@@ -256,9 +256,22 @@ func isTableInsertCallee(info *cfg.CallInfo) bool {
 // applyTableInsert applies `table.insert(arr, v)` (and the positional
 // `table.insert(arr, pos, v)`): the sequence gains one element, so the length
 // floor rises by one and the array element widens to admit the inserted value.
-// The first argument must be a tracked identifier; the inserted value is the
-// last argument. A call that does not match leaves the state unchanged (the
-// sound carry-forward).
+// The inserted value is the last argument. The append target is one of:
+//
+//   - a bare identifier `arr`: the tracked sequence slot itself widens and its
+//     length floor rises by one.
+//   - an indexed map element `m[k]` (a dynamic key): the value at that key is an
+//     array, so the MAP's array-value component widens to admit the element
+//     (`table.insert(suites[suite], entry)` makes suites a `{[string]: {Entry}}`).
+//     A later read `suites[name]` then reads the inserted element type rather than
+//     the empty `{}` the `suites[k] = suites[k] or {}` initializer seeded. A map
+//     element's length is per-key and not tracked in the numeric component, so no
+//     length floor is keyed.
+//   - a static field-path container `saga.compensations`: the array at that path
+//     widens and the field-path-keyed length floor rises by one.
+//
+// A target the transfer cannot resolve to a tracked container leaves the state
+// unchanged (the sound carry-forward).
 func (t *Transfer) applyTableInsert(
 	out *flow.PointState,
 	info *cfg.CallInfo,
@@ -271,31 +284,191 @@ func (t *Transfer) applyTableInsert(
 	if len(args) < 2 || len(args) > 3 {
 		return
 	}
-	arrIdent, ok := args[0].(*ast.IdentExpr)
+	target := args[0]
+	elemAV, hasElem := t.evalExpr(out, args[len(args)-1], demand)
+	if !hasElem || elemAV.IsZero() {
+		elemAV = product.AbstractValue{}
+	}
+
+	// A map-element target `m[k]` with a dynamic key: the inserted element widens
+	// the map's array-value component, written back through the base map's slot. A
+	// map element's length is per-key and not tracked in the numeric component, so
+	// no length floor is keyed; an unresolved element leaves the map unchanged.
+	if attr, isAttr := target.(*ast.AttrGetExpr); isAttr {
+		if _, isField := staticFieldName(attr.Key); !isField {
+			if !elemAV.IsZero() {
+				t.applyMapElementInsert(out, attr, elemAV, demand)
+			}
+			return
+		}
+	}
+
+	arrKey, ok := t.containerExprKey(target)
 	if !ok {
 		return
 	}
-	arrSym := t.symbolOf(arrIdent)
-	if arrSym == 0 {
-		return
-	}
-	arrKey := constraint.PathKey(symKey(arrSym))
+	// The insert adds one element, so the length floor rises regardless of whether
+	// the inserted value's type resolves.
 	if lower, _, ok := out.Num.LenBoundsFor(arrKey); ok {
 		out.Num.ApplyLenGeConst(arrKey, lower+1)
 	} else {
 		out.Num.ApplyLenGeConst(arrKey, 1)
 	}
+	if !elemAV.IsZero() {
+		t.appendContainerElement(out, target, elemAV)
+	}
+}
 
-	elemAV, ok := t.evalExpr(out, args[len(args)-1], demand)
-	if !ok || elemAV.IsZero() {
+// appendContainerElement widens the element type of the tracked sequence the
+// target expression names (a bare identifier or a static field path) by the
+// inserted value, writing the widened container back into its root symbol's Env
+// slot. A bare identifier widens its own slot; a static field path widens the
+// array at that path within the root record (`saga.compensations`). A target the
+// transfer does not track, or one not rooted at an identifier, leaves the state
+// unchanged.
+func (t *Transfer) appendContainerElement(out *flow.PointState, target ast.Expr, elemAV product.AbstractValue) {
+	switch obj := target.(type) {
+	case *ast.IdentExpr:
+		sym := t.symbolOf(obj)
+		if sym == 0 {
+			return
+		}
+		key := symKey(sym)
+		base, had := out.Env[key]
+		if !had || base.IsZero() {
+			return
+		}
+		out.Env[key] = product.AppendElement(base, elemAV)
+	case *ast.AttrGetExpr:
+		segs := staticAttrPath(obj)
+		if len(segs) == 0 {
+			return
+		}
+		root := attrRootIdent(obj)
+		if root == nil {
+			return
+		}
+		sym := t.symbolOf(root)
+		if sym == 0 {
+			return
+		}
+		key := symKey(sym)
+		base, had := out.Env[key]
+		if !had || base.IsZero() {
+			return
+		}
+		names := make([]string, len(segs))
+		for i, s := range segs {
+			names[i] = s.Name
+		}
+		child, ok := product.FieldOf(base, names[0])
+		if !ok || child.IsZero() {
+			return
+		}
+		updated := t.appendAtFieldPath(child, names[1:], elemAV)
+		out.Env[key] = writeFieldPath(base, names, updated)
+	}
+}
+
+// appendAtFieldPath descends the field-path names within base to the leaf array
+// and widens its element type by the inserted value, returning the updated leaf.
+// An empty path widens base directly (the leaf array). A path that does not
+// resolve through a tracked field leaves base unchanged.
+func (t *Transfer) appendAtFieldPath(base product.AbstractValue, names []string, elemAV product.AbstractValue) product.AbstractValue {
+	if len(names) == 0 {
+		return product.AppendElement(base, elemAV)
+	}
+	child, ok := product.FieldOf(base, names[0])
+	if !ok || child.IsZero() {
+		return base
+	}
+	return t.appendAtFieldPath(child, names[1:], elemAV)
+}
+
+// applyMapElementInsert applies `table.insert(m[k], v)` for a dynamic map key:
+// the value at key k is an array, so the map's array-value component is widened by
+// the inserted element (value.AdmitMapArrayElementMutation, via
+// product.AppendMapElement), and the widened map is written back into the base
+// symbol's slot. A later read `m[name]` then reads the inserted element type
+// rather than the empty `{}` the `m[k] = m[k] or {}` initializer seeded. The base
+// must be a tracked symbol or field-path container; an untracked base, or a key
+// the transfer cannot resolve, leaves the state unchanged.
+func (t *Transfer) applyMapElementInsert(
+	out *flow.PointState,
+	attr *ast.AttrGetExpr,
+	elemAV product.AbstractValue,
+	demand func(int, paramevidence.ParamContract),
+) {
+	baseSym, baseSegs, ok := t.mapBaseSymbol(attr.Object)
+	if !ok {
 		return
 	}
-	baseKey := symKey(arrSym)
-	base, had := out.Env[baseKey]
-	if !had || base.IsZero() {
+	key := symKey(baseSym)
+	rootAV, had := out.Env[key]
+	if !had || rootAV.IsZero() {
 		return
 	}
-	out.Env[baseKey] = product.AppendElement(base, elemAV)
+	keyAV, ok := t.evalExpr(out, attr.Key, demand)
+	if !ok || keyAV.IsZero() {
+		return
+	}
+	if len(baseSegs) == 0 {
+		out.Env[key] = product.AppendMapElement(rootAV, keyAV, elemAV)
+		return
+	}
+	mapAV, ok := product.FieldOf(rootAV, baseSegs[0])
+	if !ok || mapAV.IsZero() {
+		return
+	}
+	updated := t.appendMapElementAtPath(mapAV, baseSegs[1:], keyAV, elemAV)
+	out.Env[key] = writeFieldPath(rootAV, baseSegs, updated)
+}
+
+// appendMapElementAtPath descends the field-path names to the leaf map and widens
+// its array-value component at keyAV by the inserted element. An empty path widens
+// the map at base directly. A path that does not resolve leaves base unchanged.
+func (t *Transfer) appendMapElementAtPath(base product.AbstractValue, names []string, keyAV, elemAV product.AbstractValue) product.AbstractValue {
+	if len(names) == 0 {
+		return product.AppendMapElement(base, keyAV, elemAV)
+	}
+	child, ok := product.FieldOf(base, names[0])
+	if !ok || child.IsZero() {
+		return base
+	}
+	return t.appendMapElementAtPath(child, names[1:], keyAV, elemAV)
+}
+
+// mapBaseSymbol resolves the base of a map-element insert target `m[k]` to its
+// root symbol and the static field-path segment names from that root down to the
+// map (a bare identifier yields the symbol with no segments; a static field path
+// `state.suites` yields the root symbol plus ["suites"]). A non-identifier-rooted
+// or dynamic-keyed base reports false.
+func (t *Transfer) mapBaseSymbol(expr ast.Expr) (cfg.SymbolID, []string, bool) {
+	switch obj := expr.(type) {
+	case *ast.IdentExpr:
+		if sym := t.symbolOf(obj); sym != 0 {
+			return sym, nil, true
+		}
+	case *ast.AttrGetExpr:
+		segs := staticAttrPath(obj)
+		if len(segs) == 0 {
+			return 0, nil, false
+		}
+		root := attrRootIdent(obj)
+		if root == nil {
+			return 0, nil, false
+		}
+		sym := t.symbolOf(root)
+		if sym == 0 {
+			return 0, nil, false
+		}
+		names := make([]string, len(segs))
+		for i, s := range segs {
+			names[i] = s.Name
+		}
+		return sym, names, true
+	}
+	return 0, nil, false
 }
 
 // seedNumericForLength seeds the numeric component for a numeric-for loop whose

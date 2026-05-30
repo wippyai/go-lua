@@ -1683,6 +1683,9 @@ func (t *Transfer) narrowByDiscriminant(out flow.PointState, info *cfg.BranchInf
 	if !ok {
 		return out, false
 	}
+	if len(g.prefix) > 0 {
+		return t.narrowByMemberDiscriminant(out, g, taken)
+	}
 	key := symKey(g.sym)
 	av := out.Env[key]
 	baseAV, has := t.discriminantBase(g.sym, av)
@@ -1693,29 +1696,12 @@ func (t *Transfer) narrowByDiscriminant(out flow.PointState, info *cfg.BranchInf
 	if base == nil {
 		return out, false
 	}
-	// A genuine literal-discriminant guard reads base.field, which presupposes base is
-	// non-nil on BOTH edges (nil.field errors at runtime before the comparison). So a
-	// member the field read cannot reach -- nil / the optional wrapper an array-index
-	// or captured-optional source carries -- is excluded on either edge. The include
-	// edge already drops it (ByFieldLiteral maps a fieldless nil member to Never); strip
-	// it here so the exclude edge does too, leaving only the live record variants. This
-	// applies only when field genuinely discriminates the union (a tag field); a plain
-	// `field == value` on a broad scalar field is left non-nil-stripped so it stays the
-	// legacy no-op and never rewrites a sibling guard's field refinement.
-	if fieldDiscriminatesUnion(base, g.field) {
-		base = narrow.RemoveNil(base)
-	}
 	// On the false edge the equality is negated: == becomes the exclusion and
 	// ~= becomes the inclusion.
 	include := taken != g.negated
-	var refined typ.Type
-	if include {
-		refined = narrow.ByFieldLiteral(base, g.field, g.literal, fieldResolver)
-	} else {
-		refined = narrow.ExcludeByFieldLiteral(base, g.field, g.literal, fieldResolver)
-	}
+	refined, ok := narrowDiscriminantUnion(base, g.field, g.literal, include)
 	zprobeNarrow("discriminant sym=%d field=%q lit=%v include=%v base=%s refined=%v", g.sym, g.field, g.literal, include, base, refinedStr(refined, base))
-	if refined == nil || refined == base {
+	if !ok {
 		// An unchanged base carries no refinement; leave it to the plain join.
 		return out, false
 	}
@@ -1729,6 +1715,120 @@ func (t *Transfer) narrowByDiscriminant(out flow.PointState, info *cfg.BranchInf
 		res.Env[key] = product.FromType(refined)
 	}
 	return res, true
+}
+
+// narrowByMemberDiscriminant narrows a member-access discriminant `root[prefix].field
+// == literal` (`if receipt.output.kind == "rendered"`). The union the discriminant
+// partitions lives at the path g.prefix inside the root symbol's record value
+// (receipt.output), so the refinement is applied to the value at that path and the
+// narrowed value is written back into the root record, leaving the rest of the record
+// untouched. A read of root[prefix] in the guarded body then observes the narrowed
+// variant exactly as a bare-symbol discriminant narrows a directly-tracked union. The
+// root record value is required from the live Env (no declared-singleton recovery is
+// needed: the field's type comes from the record, which is already the declared union
+// member). A root the flow does not track, a non-record root, or a path that does not
+// resolve to a discriminable union leaves the state unchanged (a precision loss).
+func (t *Transfer) narrowByMemberDiscriminant(out flow.PointState, g discriminant, taken bool) (flow.PointState, bool) {
+	key := symKey(g.sym)
+	av := out.Env[key]
+	if av.IsZero() {
+		return out, false
+	}
+	root := av.ProjectValue()
+	if root == nil {
+		return out, false
+	}
+	union, ok := readFieldPath(root, g.prefix)
+	if !ok || union == nil {
+		return out, false
+	}
+	include := taken != g.negated
+	refined, ok := narrowDiscriminantUnion(union, g.field, g.literal, include)
+	zprobeNarrow("memberDiscriminant sym=%d prefix=%v field=%q lit=%v include=%v union=%s refined=%v", g.sym, g.prefix, g.field, g.literal, include, union, refinedStr(refined, union))
+	if !ok {
+		return out, false
+	}
+	rewritten := refineAtPath(root, g.prefix, func(typ.Type) typ.Type { return refined })
+	if rewritten == nil || rewritten == root {
+		return out, false
+	}
+	res := cloneForNarrow(out)
+	if rewritten.Kind().IsNever() {
+		res.Env[key] = product.Bottom()
+	} else {
+		res.Env[key] = product.FromType(rewritten)
+	}
+	return res, true
+}
+
+// narrowDiscriminantUnion refines a discriminated union by a literal on its tag field:
+// it keeps the matching variant on the include edge (narrow.ByFieldLiteral) or excludes
+// it on the exclude edge (narrow.ExcludeByFieldLiteral). A genuine literal-discriminant
+// guard reads base.field, which presupposes base is non-nil on BOTH edges (nil.field
+// errors at runtime before the comparison), so an optional/nil wrapper an array-index or
+// captured-optional source carries is stripped before refinement, leaving only the live
+// record variants the exclude edge must also drop. A plain `field == value` on a broad
+// scalar field (not a discriminant) is left un-stripped so it stays the legacy no-op and
+// never rewrites a sibling guard's field refinement. ok=false reports an unchanged base.
+func narrowDiscriminantUnion(base typ.Type, field string, lit *typ.Literal, include bool) (typ.Type, bool) {
+	if fieldDiscriminatesUnion(base, field) {
+		base = narrow.RemoveNil(base)
+	}
+	var refined typ.Type
+	if include {
+		refined = narrow.ByFieldLiteral(base, field, lit, fieldResolver)
+	} else {
+		refined = narrow.ExcludeByFieldLiteral(base, field, lit, fieldResolver)
+	}
+	if refined == nil || refined == base {
+		return nil, false
+	}
+	return refined, true
+}
+
+// readFieldPath resolves the type at a field path inside t, descending each static
+// field/string-index segment via the value-domain field resolver. An empty path returns
+// t. A segment that does not resolve (a non-record value, a missing field, an index
+// segment) reports ok=false so the caller declines.
+func readFieldPath(t typ.Type, segments []constraint.Segment) (typ.Type, bool) {
+	cur := t
+	for _, seg := range segments {
+		if seg.Kind != constraint.SegmentField && seg.Kind != constraint.SegmentIndexString {
+			return nil, false
+		}
+		if cur == nil {
+			return nil, false
+		}
+		ft, ok := fieldResolver.Field(cur, seg.Name)
+		if !ok || ft == nil {
+			return nil, false
+		}
+		cur = ft
+	}
+	return cur, true
+}
+
+// refineAtPath rebuilds t with the value at field path segments replaced by
+// refine(value), descending each static field/string-index segment and reusing the same
+// per-member record rebuild mapUnionField applies for the leaf-field narrowing. A
+// single-segment path applies refine to that field directly; a deeper path recurses into
+// the field's value. It is the write-back counterpart of readFieldPath, used to install a
+// member-path discriminant's narrowed union back into its enclosing record. An empty path
+// applies refine to t itself.
+func refineAtPath(t typ.Type, segments []constraint.Segment, refine func(typ.Type) typ.Type) typ.Type {
+	if len(segments) == 0 {
+		return refine(t)
+	}
+	seg := segments[0]
+	if seg.Kind != constraint.SegmentField && seg.Kind != constraint.SegmentIndexString {
+		return t
+	}
+	if len(segments) == 1 {
+		return mapUnionField(t, seg.Name, refine, false)
+	}
+	return mapUnionField(t, seg.Name, func(ft typ.Type) typ.Type {
+		return refineAtPath(ft, segments[1:], refine)
+	}, false)
 }
 
 // discriminantBase selects the value a discriminant guard refines for sym. The
@@ -1763,7 +1863,15 @@ func (t *Transfer) discriminantBase(sym cfg.SymbolID, av product.AbstractValue) 
 
 // discriminant is a recognized base.field == literal (or ~=) guard.
 type discriminant struct {
-	sym     cfg.SymbolID
+	sym cfg.SymbolID
+	// prefix is the field path from the root symbol sym down to the union value the
+	// discriminant refines. It is empty for a bare-symbol discriminant (`if x.tag ==
+	// "a"`, x the union); it carries the intermediate segments for a member-access
+	// discriminant (`if receipt.output.kind == "rendered"`, prefix [output], the
+	// union value lives at receipt.output, the discriminant field "kind" is read off
+	// it). The narrowing refines the value at sym[prefix] and writes the refined value
+	// back into that path, leaving the rest of the root record untouched.
+	prefix  []constraint.Segment
 	field   string
 	literal *typ.Literal
 	negated bool // the guard is base.field ~= literal
@@ -1807,19 +1915,40 @@ func (t *Transfer) discriminantFromSides(access, value ast.Expr, negated bool) (
 	if !ok {
 		return discriminant{}, false
 	}
-	baseIdent, ok := attr.Object.(*ast.IdentExpr)
-	if !ok {
-		return discriminant{}, false
-	}
-	sym := t.symbolOf(baseIdent)
-	if sym == 0 {
-		return discriminant{}, false
-	}
 	lit, ok := literalValue(value)
 	if !ok {
 		return discriminant{}, false
 	}
-	return discriminant{sym: sym, field: field, literal: lit, negated: negated}, true
+	// A bare-symbol discriminant (`if x.tag == "a"`): the access object is the
+	// identifier bound to the union directly.
+	if baseIdent, isIdent := attr.Object.(*ast.IdentExpr); isIdent {
+		sym := t.symbolOf(baseIdent)
+		if sym == 0 {
+			return discriminant{}, false
+		}
+		return discriminant{sym: sym, field: field, literal: lit, negated: negated}, true
+	}
+	// A member-access discriminant (`if receipt.output.kind == "rendered"`): the access
+	// object is itself a field path whose root identifier binds the symbol and whose
+	// segments are the prefix to the refined union value (receipt.output). The
+	// discriminant field "kind" is read off the value at that prefix.
+	objAttr, ok := attr.Object.(*ast.AttrGetExpr)
+	if !ok {
+		return discriminant{}, false
+	}
+	prefix := staticAttrPath(objAttr)
+	if prefix == nil {
+		return discriminant{}, false
+	}
+	root := attrRootIdent(objAttr)
+	if root == nil {
+		return discriminant{}, false
+	}
+	sym := t.symbolOf(root)
+	if sym == 0 {
+		return discriminant{}, false
+	}
+	return discriminant{sym: sym, prefix: prefix, field: field, literal: lit, negated: negated}, true
 }
 
 // literalValue resolves a literal expression (string/number/bool) to its singleton

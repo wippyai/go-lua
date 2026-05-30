@@ -48,6 +48,29 @@ end
 	}
 }
 
+// Member-access narrow target WITHOUT a guard: the union field must NOT narrow,
+// so the assign of the full Output union to a RenderOutput slot still errors.
+// Soundness twin of TestZZNarrowMemberPath.
+func TestZZNarrowMemberPathUnguarded(t *testing.T) {
+	src := `
+type RenderOutput = { kind: "rendered", body: string, label: string? }
+type IndexOutput = { kind: "indexed", count: integer }
+type Output = RenderOutput | IndexOutput
+type Receipt = { plugin: string, output: Output }
+local function f(receipt: Receipt)
+    local r: RenderOutput = receipt.output
+end
+`
+	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	msgs := testutil.ErrorMessages(res.Diagnostics)
+	if len(msgs) == 0 {
+		t.Fatalf("expected an assign error for unguarded Output -> RenderOutput, got none")
+	}
+	for _, m := range msgs {
+		t.Logf("UNGUARDED DIAG: %s", m)
+	}
+}
+
 // Member-access narrow target with a GENERIC-instantiated receipt, mirroring
 // OutputReceipt = Receipt<Output>.
 func TestZZNarrowMemberPathGeneric(t *testing.T) {
