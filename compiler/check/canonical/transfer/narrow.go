@@ -502,6 +502,11 @@ func (t *Transfer) narrowEdgeInner(out flow.PointState, info *cfg.BranchInfo, ta
 	// the edge it holds; the bound seeds the numeric component independently of the
 	// guard's value narrowing, so it composes too.
 	out = t.narrowNumericComparison(out, info, taken)
+	// A local type-predicate guard (`if P(arg)` or `if ok` with `local ok = P(arg)`)
+	// narrows the predicate argument to the tested kind on the true edge. It refines
+	// the argument independently of the truthy narrowing the cond-check applies to the
+	// predicate result, so it composes with the chain.
+	out = t.narrowByPredicate(out, info, taken)
 	if narrowed, applied := t.narrowByCompound(out, info, taken); applied {
 		zprobeNarrow("  -> compound")
 		return narrowed
@@ -1190,6 +1195,121 @@ func (t *Transfer) narrowByCondCheck(out flow.PointState, info *cfg.BranchInfo, 
 	}
 	res.Env[key] = narrowed
 	return res
+}
+
+// narrowByPredicate applies the value-narrowing a local type-predicate guard
+// proves. A predicate is a local function whose body returns a builtin
+// `type(param) == kind` test on one of its parameters (recorded as a PredicateFact,
+// the canonical counterpart of the legacy LocalTypePredicateEvidence). On the edge
+// the predicate result holds true, the argument passed at the tested parameter
+// narrows to that kind, exactly as a direct `type(arg) == kind` guard would.
+//
+// The narrowing is ONE-SIDED: a predicate body is a conjunction of conditions
+// (`type(v) == "number" and v > 0`), so a false result does not prove the argument
+// is NOT the kind. Only the true edge narrows; the false edge leaves the argument
+// its declared (gradual) type, preserving the legacy PredicateLink direction and
+// the soundness boundary the false-branch adversarial cases pin.
+//
+// It recognizes both forms: the direct call `if P(arg)` (the branch condition is the
+// call, or its negation under `if not P(arg)`), and the assigned result
+// `local ok = P(arg); if ok` (the branch tests the recorded ok symbol).
+func (t *Transfer) narrowByPredicate(out flow.PointState, info *cfg.BranchInfo, taken bool) flow.PointState {
+	if len(t.predicateByFunc) == 0 && len(t.predicateByCondSym) == 0 {
+		return out
+	}
+	argSym, kind, trueEdge, ok := t.predicateGuardForBranch(info, taken)
+	if !ok || argSym == 0 || kind == "" || !trueEdge {
+		return out
+	}
+	if _, known := narrow.KnownBuiltinTypeKey(kind); !known {
+		return out
+	}
+	key := symKey(argSym)
+	baseAV, has := t.narrowBase(argSym, out.Env[key], false)
+	if !has {
+		return out
+	}
+	narrowed, ok := narrowAtPath(baseAV, nil, cfg.CheckTypeEqual, kind)
+	zprobeNarrow("predicate argSym=%d kind=%q base=%v narrowed=%v ok=%v", argSym, kind, projectStr(baseAV), projectStr(narrowed), ok)
+	if !ok {
+		return out
+	}
+	res := cloneForNarrow(out)
+	res.Env[key] = narrowed
+	return res
+}
+
+// predicateGuardForBranch resolves the predicate-narrowing a branch carries: the
+// argument symbol proved to be the tested kind, and whether the taken edge is the
+// edge on which the predicate result holds true. It recognizes the direct call
+// `if P(arg)` (and its `if not P(arg)` negation, where the proven edge is the false
+// edge) and the assigned result `if ok` (with `local ok = P(arg)` recorded). A
+// branch that tests no predicate yields ok=false.
+func (t *Transfer) predicateGuardForBranch(info *cfg.BranchInfo, taken bool) (argSym cfg.SymbolID, kind string, trueEdge, ok bool) {
+	// Assigned form: the branch tests the ok symbol of `local ok = P(arg)`.
+	if info.CondSymbol != 0 {
+		if g, found := t.predicateByCondSym[info.CondSymbol]; found {
+			// The bare-symbol truthy/falsy check selects the edge: a truthy resolved check
+			// is the predicate-true edge. A segmented test (`if ok.field`) does not test the
+			// predicate result, so it carries no predicate fact.
+			if len(t.condTestSegments(info)) > 0 {
+				return 0, "", false, false
+			}
+			check := effectiveCheck(info.CondCheck.Kind, taken)
+			return g.NarrowSym, g.Kind, check == cfg.CheckTruthy, true
+		}
+	}
+	// Direct form: the branch condition is the predicate call, optionally negated.
+	cond := info.Condition
+	trueEdge = taken
+	if not, isNot := cond.(*ast.UnaryNotOpExpr); isNot {
+		cond = not.Expr
+		trueEdge = !taken
+	}
+	call, isCall := cond.(*ast.FuncCallExpr)
+	if !isCall || call == nil {
+		return 0, "", false, false
+	}
+	sym, kindName, found := t.predicateCallNarrow(call)
+	if !found {
+		return 0, "", false, false
+	}
+	return sym, kindName, trueEdge, true
+}
+
+// predicateCallNarrow resolves a predicate call `P(arg)` to the argument symbol it
+// narrows and the kind it proves: P's symbol must name a recorded PredicateFact, and
+// the argument at the tested parameter index must resolve to an identifier symbol.
+// A method-like call, an unrecognized callee, or a non-identifier argument yields
+// found=false.
+func (t *Transfer) predicateCallNarrow(call *ast.FuncCallExpr) (argSym cfg.SymbolID, kind string, found bool) {
+	if call == nil || len(t.predicateByFunc) == 0 {
+		return 0, "", false
+	}
+	fnIdent, ok := call.Func.(*ast.IdentExpr)
+	if !ok || fnIdent == nil {
+		return 0, "", false
+	}
+	fnSym := t.symbolOf(fnIdent)
+	if fnSym == 0 {
+		return 0, "", false
+	}
+	fact, ok := t.predicateByFunc[fnSym]
+	if !ok || fact.Kind == "" {
+		return 0, "", false
+	}
+	if fact.ParamIndex < 0 || fact.ParamIndex >= len(call.Args) {
+		return 0, "", false
+	}
+	argIdent, ok := call.Args[fact.ParamIndex].(*ast.IdentExpr)
+	if !ok || argIdent == nil {
+		return 0, "", false
+	}
+	sym := t.symbolOf(argIdent)
+	if sym == 0 {
+		return 0, "", false
+	}
+	return sym, fact.Kind, true
 }
 
 // comparisonTruthyOnOperand reports whether the guard condition is a value comparison

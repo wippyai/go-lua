@@ -200,6 +200,30 @@ type SiblingNilBind struct {
 	ValueSyms []cfg.SymbolID
 }
 
+// PredicateFact records a local function whose body returns a builtin
+// `type(param) == kind` predicate on one of its parameters. It is the canonical
+// counterpart of the legacy LocalTypePredicateEvidence the ConditionExtractor
+// consumes: calling such a function on an argument proves, on the true edge, that
+// the argument has the kind the predicate tests.
+//
+// ParamIndex is the position of the tested parameter; Kind is the Lua typeof name
+// it asserts ("number", "string", ...). Only the true edge narrows: the predicate
+// returns a conjunction of conditions, so a false result proves nothing about the
+// argument (the one-sided guard, matching the legacy PredicateLink direction).
+type PredicateFact struct {
+	ParamIndex int
+	Kind       string
+}
+
+// PredicateGuard records an assigned predicate result `local ok = P(arg)` where P
+// is a recorded PredicateFact and arg resolves to a symbol. On the edge a later
+// branch proves ok truthy, the argument symbol narrows to the predicate's kind,
+// matching the direct-call form `if P(arg)`.
+type PredicateGuard struct {
+	NarrowSym cfg.SymbolID
+	Kind      string
+}
+
 // Transfer is the canonical per-node transfer. It is stateless across points:
 // every Transfer call is a pure function of the incoming state and the node's
 // evidence.
@@ -229,6 +253,15 @@ type Transfer struct {
 	// branch testing the error symbol strips nil from the correlated value symbols on
 	// the err-nil edge.
 	siblingNilByErr map[cfg.SymbolID]SiblingNilBind
+	// predicateByFunc maps a local type-predicate function's symbol to the parameter
+	// and kind it tests. NarrowEdge reads it so a branch `if P(arg)` narrows arg to
+	// the predicate's kind on the true edge.
+	predicateByFunc map[cfg.SymbolID]PredicateFact
+	// predicateByCondSym maps an assigned predicate result `local ok = P(arg)` keyed
+	// by the ok symbol to the argument narrowing it proves. NarrowEdge reads it so a
+	// branch `if ok` narrows the argument on the true edge, the assigned counterpart
+	// of the direct-call form.
+	predicateByCondSym map[cfg.SymbolID]PredicateGuard
 	// unannotatedParam marks a parameter symbol with no declared type. A read of one
 	// the body does not pin resolves to gradual `any` (a Lua parameter without an
 	// annotation is dynamic, usable in every operation), the same default the
@@ -397,6 +430,16 @@ func (t *Transfer) SetSiblingNils(siblingNils []SiblingNilBind) {
 		}
 		t.siblingNilByErr[b.ErrSym] = b
 	}
+}
+
+// SetPredicateGuards installs the local type-predicate facts (function symbol to
+// tested parameter/kind) and the assigned predicate guards (ok symbol to the
+// argument narrowing it proves). NarrowEdge reads them so a branch `if P(arg)` or
+// `if ok` (with `local ok = P(arg)`) narrows the predicate argument to its tested
+// kind on the true edge.
+func (t *Transfer) SetPredicateGuards(byFunc map[cfg.SymbolID]PredicateFact, byCondSym map[cfg.SymbolID]PredicateGuard) {
+	t.predicateByFunc = byFunc
+	t.predicateByCondSym = byCondSym
 }
 
 // declaredParamBySlot re-keys the source-indexed DeclaredParamTypes into parameter

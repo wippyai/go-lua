@@ -2117,6 +2117,26 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph) *p
 		tr.SetSiblingNils(binds)
 		p.siblingNils[ref] = binds
 	}
+
+	// Phase 4c: install the local type-predicate guards. A predicate function is
+	// defined in one graph but called (and narrows) from a sibling or nested function,
+	// so the facts are collected module-wide first, then every transfer shares the
+	// module-wide function map and carries its own graph's assigned-result binds. A
+	// branch `if P(arg)` / `if ok` (with `local ok = P(arg)`) then narrows the predicate
+	// argument to its tested kind on the true edge.
+	predicateByFunc := make(map[cfg.SymbolID]transfer.PredicateFact)
+	for _, g := range p.graphs {
+		collectPredicateFacts(predicateByFunc, sess.EvidenceForGraph(g))
+	}
+	if len(predicateByFunc) > 0 {
+		for ref, g := range p.graphs {
+			tr, ok := p.transfers[ref].(*transfer.Transfer)
+			if !ok || tr == nil {
+				continue
+			}
+			tr.SetPredicateGuards(predicateByFunc, predicateCondSymBinds(g, predicateByFunc))
+		}
+	}
 	return p
 }
 
@@ -3044,6 +3064,98 @@ func (d *Driver) typeCheckBinds(g *cfg.Graph) []transfer.TypeCheckBind {
 		}
 	})
 	return out
+}
+
+// collectPredicateFacts accumulates the module-wide local type-predicate facts from
+// evidence into byFunc, keyed by the predicate function's symbol. A predicate is a
+// local function whose body returns a builtin `type(param) == kind` test; symbols are
+// module-unique, so a predicate defined in one graph is callable (and narrows) from a
+// sibling or nested function's body. It is the canonical counterpart of the legacy
+// LocalTypePredicateEvidence the ConditionExtractor consumes.
+func collectPredicateFacts(byFunc map[cfg.SymbolID]transfer.PredicateFact, evidence api.FlowEvidence) {
+	for _, pred := range evidence.LocalTypePredicates {
+		if pred.Symbol == 0 || pred.Kind == "" || pred.ParamIndex < 0 {
+			continue
+		}
+		// Keep the first recorded fact per function symbol: the predicate detector emits
+		// a single param/kind per function (it breaks on the first matching parameter).
+		if _, seen := byFunc[pred.Symbol]; seen {
+			continue
+		}
+		byFunc[pred.Symbol] = transfer.PredicateFact{ParamIndex: pred.ParamIndex, Kind: pred.Kind}
+	}
+}
+
+// predicateCondSymBinds derives g's assigned-result predicate guards: for each
+// `local ok = P(arg)` whose callee P names a recorded PredicateFact, it records the ok
+// symbol to the argument narrowing the predicate proves. The transfer's NarrowEdge
+// applies it so a branch `if ok` narrows the argument on the true edge, the assigned
+// counterpart of the direct-call form `if P(arg)`.
+func predicateCondSymBinds(g *cfg.Graph, byFunc map[cfg.SymbolID]transfer.PredicateFact) map[cfg.SymbolID]transfer.PredicateGuard {
+	if g == nil || len(byFunc) == 0 {
+		return nil
+	}
+	bindings := g.Bindings()
+	byCondSym := make(map[cfg.SymbolID]transfer.PredicateGuard)
+	g.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if info == nil {
+			return
+		}
+		for i := range info.Targets {
+			target := info.Targets[i]
+			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+				continue
+			}
+			call, retIdx := info.CallForTarget(i)
+			if call == nil || retIdx != 0 || call.Call == nil {
+				continue
+			}
+			argSym, kind, ok := predicateCallNarrow(call.Call, byFunc, bindings)
+			if !ok {
+				continue
+			}
+			byCondSym[target.Symbol] = transfer.PredicateGuard{NarrowSym: argSym, Kind: kind}
+		}
+	})
+	if len(byCondSym) == 0 {
+		return nil
+	}
+	return byCondSym
+}
+
+// predicateCallNarrow resolves a predicate call `P(arg)` against the recorded
+// PredicateFact map to the argument symbol it narrows and the kind it proves. P's
+// callee must name a recorded predicate function, and the argument at the tested
+// parameter index must resolve to an identifier symbol. A method-like call, an
+// unrecognized callee, or a non-identifier argument yields ok=false.
+func predicateCallNarrow(call *ast.FuncCallExpr, byFunc map[cfg.SymbolID]transfer.PredicateFact, bindings *bind.BindingTable) (cfg.SymbolID, string, bool) {
+	if call == nil || bindings == nil || callsite.IsMethodLikeExpr(call) {
+		return 0, "", false
+	}
+	fnIdent, ok := call.Func.(*ast.IdentExpr)
+	if !ok || fnIdent == nil {
+		return 0, "", false
+	}
+	fnSym, ok := bindings.SymbolOf(fnIdent)
+	if !ok || fnSym == 0 {
+		return 0, "", false
+	}
+	fact, ok := byFunc[fnSym]
+	if !ok || fact.Kind == "" {
+		return 0, "", false
+	}
+	if fact.ParamIndex < 0 || fact.ParamIndex >= len(call.Args) {
+		return 0, "", false
+	}
+	argIdent, ok := call.Args[fact.ParamIndex].(*ast.IdentExpr)
+	if !ok || argIdent == nil {
+		return 0, "", false
+	}
+	argSym, ok := bindings.SymbolOf(argIdent)
+	if !ok || argSym == 0 {
+		return 0, "", false
+	}
+	return argSym, fact.Kind, true
 }
 
 // typeCheckResultType resolves the type a `T:is(x)` guard proves about its checked
