@@ -126,11 +126,23 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 	}
 
 	// Annotated local declarations: local x: T = ... pins x's declared type from
-	// its aligned annotation, resolved in the base scope.
+	// its aligned annotation. The annotation resolves against the block-aware scope
+	// LEXICALLY VISIBLE at the declaration point, not the flat module scope: a
+	// reference to a block-local type used outside its block, or a forward reference
+	// to a type defined later, then resolves to nothing (the declaration mismatches
+	// the unresolved annotation), and a shadowed type name resolves to the binding
+	// active at the declaration rather than the innermost block's definition.
+	pointScopes := d.buildPointScopes(g)
 	for _, assign := range evidence.Assignments {
 		info := assign.Info
 		if info == nil || !info.IsLocal {
 			continue
+		}
+		declScope := annScope
+		if pointScopes != nil {
+			if sc, ok := pointScopes[assign.Point]; ok && sc != nil {
+				declScope = d.genericScopeOver(nil, g.Func(), sc)
+			}
 		}
 		for i := range info.TypeAnnotations {
 			ann := info.TypeAnnotationAt(i)
@@ -150,12 +162,18 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 			if _, isParam := facts.declared[target.Symbol]; isParam && facts.annotated[target.Symbol] {
 				continue
 			}
-			// Resolve a local declaration in the same scope as the parameters (the
-			// type-param scope when the function is generic): a local typed by a type
-			// parameter (`local result: {U}` inside `map<T, U>`) then carries the same
-			// bounded type parameter the parameter and call-result types carry, so an
-			// element write `result[i] = f(v)` compares `U` against `U` consistently.
-			t := d.resolveType(ann, annScope)
+			// Resolve a local declaration against the scope lexically visible at its
+			// declaration point, extended with the function's type parameters (so a
+			// local typed by a type parameter — `local result: {U}` inside `map<T, U>` —
+			// still carries the same bounded type parameter the parameter and
+			// call-result types carry, and an element write `result[i] = f(v)` compares
+			// `U` against `U` consistently). A block-local, forward, or shadowed type
+			// name then resolves to the binding actually visible here.
+			t := d.resolveType(ann, declScope)
+			if zzScopeDbg() {
+				_, hasPS := pointScopes[assign.Point]
+				zzScopef("local-decl pt=%d sym=%d hasPerPointScope=%v resolved=%v", uint64(assign.Point), uint64(target.Symbol), hasPS, t)
+			}
 			if t == nil {
 				continue
 			}

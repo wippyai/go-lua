@@ -8,6 +8,17 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+// zzScopeDbg reports whether the lexical-scope debug probe is active (ZZSCOPE set).
+func zzScopeDbg() bool { return os.Getenv("ZZSCOPE") != "" }
+
+// zzScopef prints a lexical-scope probe line when ZZSCOPE is set.
+func zzScopef(format string, args ...any) {
+	if !zzScopeDbg() {
+		return
+	}
+	fmt.Printf("[ZZSCOPE] "+format+"\n", args...)
+}
+
 // zzDumpCaptures prints every captured record value carrying a metatable when the
 // ZZCLASS env var is set. Debug probe for class-instance data-field enrichment.
 func zzDumpCaptures(out map[cfg.SymbolID]typ.Type) {

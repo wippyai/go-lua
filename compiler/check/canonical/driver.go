@@ -42,6 +42,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/modules"
+	checkphase "github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
@@ -145,6 +146,20 @@ type Driver struct {
 	// (read from a point scope) carry distinct families and an imported
 	// `local s: m.X = m.new()` mismatches the same source type. It is reset per Run.
 	typedefCache map[ast.TypeExpr]typ.Type
+
+	// pointScopes is the block-aware per-CFG-point type-name scope for every graph in
+	// the module hierarchy, keyed by graph ID. Each point's scope carries exactly the
+	// type definitions LEXICALLY VISIBLE there: a block-local `type X` inside an
+	// if/do/loop body is in scope only at the points inside that block (the scope-exit
+	// node pops it), and a `type X` is in scope only at points after its definition in
+	// definition order (RPO). A nested function's points see the module-level types
+	// its parent declared (the parent's block-aware exit scope is the nested function's
+	// base) but not a sibling block's locals. It is the single per-point scope source
+	// the diagnostic passes and local-declaration annotation resolution read, computed
+	// once per Run by buildHierarchyScopes. Without it the flat module scope would make
+	// a block-local or forward type spuriously visible (a not-visible/used-before-def
+	// miss) and a shadowed type resolve to the wrong binding.
+	pointScopes map[uint64]map[cfg.Point]*scope.State
 
 	// activeProgram and activeCtx are the in-flight Run's program and db query
 	// context. The per-node transfer's call typing (callTyper) reads them while the
@@ -299,6 +314,13 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	// resolveType call below (parameter contracts, declared returns, function
 	// signatures) through the same scope the legacy flow puts type defs in.
 	d.moduleScope = d.buildModuleScope(sess, rootGraph)
+
+	// Compute the block-aware per-point type-name scope for every graph in the
+	// hierarchy: a block-local or forward `type X` is in scope only where Lua's
+	// lexical rules make it visible, so a local-declaration annotation and the
+	// diagnostic passes resolve a type name against the binding actually visible at
+	// the point rather than the flat module scope.
+	d.pointScopes = d.buildHierarchyScopes(sess, rootGraph)
 
 	// Resolve each require() alias to its module export type before the solve, so a
 	// captured module value (`time` read as `time.now()` inside a nested function)
@@ -2276,16 +2298,127 @@ func (d *Driver) buildModuleAliases(sess api.AnalysisSession, rootGraph *cfg.Gra
 
 // buildPointScopes is the per-CFG-point type-name scope the diagnostic passes
 // read (the ident pass's type-name-as-value guard, the field pass's named-type
-// resolution). It seeds every point from the module base scope (which already
-// carries the module's type definitions) and layers each graph-local TypeDef
-// visible at the point, reusing the legacy scope.BuildTypeDefScopes. A bare
-// reference to a type name (Point:is(...), M.Snapshot = Snapshot) then resolves to
-// a type rather than an undefined variable.
+// resolution). It returns g's block-aware per-point scopes (precomputed by
+// buildHierarchyScopes): each point carries exactly the type definitions lexically
+// visible there, so a bare reference to a module-level type name resolves to that
+// type while a block-local or forward type name resolves to nothing outside its
+// block / before its definition.
 func (d *Driver) buildPointScopes(g *cfg.Graph) map[cfg.Point]*scope.State {
 	if g == nil || d.resolver == nil {
 		return nil
 	}
-	return scope.BuildTypeDefScopes(g, d.baseScope(), d.typeDefResolver())
+	if d.pointScopes != nil {
+		if scopes, ok := d.pointScopes[g.ID()]; ok {
+			return scopes
+		}
+	}
+	return d.computePointScopes(g, d.baseScope())
+}
+
+// buildHierarchyScopes computes the block-aware per-point type-name scope for
+// every graph in the module's CFG hierarchy, keyed by graph ID. It walks the
+// hierarchy from the root chunk; each graph's points are scoped by the legacy
+// block-aware RPO walk (ComputeScopes), which enters a child scope at every
+// block/loop body, adds a `type X` to the scope active at its definition point,
+// and POPS the block's locals on scope exit. A nested function's base scope is its
+// parent's block-aware exit scope (the type namespace visible where the nested
+// function is defined), extended with the nested function's own type parameters,
+// so a module-level type stays visible inside the closure while a sibling block's
+// local type does not. The root chunk's base is the configured stdlib scope.
+func (d *Driver) buildHierarchyScopes(sess api.AnalysisSession, rootGraph *cfg.Graph) map[uint64]map[cfg.Point]*scope.State {
+	if rootGraph == nil || d.resolver == nil {
+		return nil
+	}
+	out := make(map[uint64]map[cfg.Point]*scope.State)
+
+	type item struct {
+		g    *cfg.Graph
+		base *scope.State
+	}
+	// The root chunk's base is the configured stdlib scope (its predeclared globals
+	// and imported type names), NOT the flat module scope: the module's own top-level
+	// `type X` defs are re-introduced block-aware as ComputeScopes encounters them in
+	// RPO, so a block-local or forward type is not visible at points where Lua's
+	// lexical rules exclude it. The root chunk fn carries no type parameters, so
+	// genericScopeOver leaves the stdlib base unchanged here.
+	rootBase := d.genericScopeOver(nil, rootGraph.Func(), d.cfg.Stdlib)
+	queue := []item{{g: rootGraph, base: rootBase}}
+	enqueued := map[uint64]bool{rootGraph.ID(): true}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		scopes := d.computePointScopes(cur.g, cur.base)
+		out[cur.g.ID()] = scopes
+		// A nested function defined in this graph sees the type namespace visible at
+		// its definition point. ComputeScopes pops a block's locals on exit, so the
+		// scope at the function-definition point carries the enclosing module-level
+		// types but not a sibling block's locals.
+		exitScope := cur.base
+		if scopes != nil {
+			if s, ok := scopes[cur.g.Exit()]; ok && s != nil {
+				exitScope = s
+			}
+		}
+		for _, nested := range cur.g.NestedFunctions() {
+			if nested.Func == nil {
+				continue
+			}
+			ng := sess.GetOrBuildCFG(nested.Func)
+			if ng == nil || enqueued[ng.ID()] {
+				continue
+			}
+			enqueued[ng.ID()] = true
+			childBase := exitScope
+			if defScope := d.scopeAtNestedDef(scopes, cur.g, nested.Func); defScope != nil {
+				childBase = defScope
+			}
+			childBase = d.genericScopeOver(nil, nested.Func, childBase)
+			queue = append(queue, item{g: ng, base: childBase})
+		}
+	}
+	return out
+}
+
+// scopeAtNestedDef returns the block-aware scope active at the point where the
+// nested function fn is defined in parent graph g, so a closure defined inside a
+// block sees that block's types while a closure defined at the module top level
+// does not see a sibling block's locals. It returns nil when no definition point is
+// found, so the caller falls back to the parent's exit scope.
+func (d *Driver) scopeAtNestedDef(scopes map[cfg.Point]*scope.State, g *cfg.Graph, fn *ast.FunctionExpr) *scope.State {
+	if scopes == nil || g == nil || fn == nil {
+		return nil
+	}
+	var found *scope.State
+	g.EachNode(func(p cfg.Point, _ cfg.NodeInfo) {
+		if found != nil {
+			return
+		}
+		if info := g.FuncDef(p); info != nil && info.FuncExpr == fn {
+			found = scopes[p]
+		}
+	})
+	return found
+}
+
+// computePointScopes runs the legacy block-aware scope walk over g from base,
+// resolving each `type X` through the Run's single-sourced typedef resolver so a
+// per-point scope shares the same recursive family the module scope carries. The
+// walk enters a child scope at every block body and pops it on exit, giving each
+// point the type names lexically visible there.
+func (d *Driver) computePointScopes(g *cfg.Graph, base *scope.State) map[cfg.Point]*scope.State {
+	if g == nil || d.resolver == nil {
+		return nil
+	}
+	defResolver := d.typeDefResolver()
+	services := checkphase.ScopeServicesFuncs{
+		TypeResolver: func(info *cfg.TypeDefInfo, _ cfg.Point, sc *scope.State) typ.Type {
+			if info == nil || info.TypeExpr == nil {
+				return nil
+			}
+			return defResolver(info.Name, info.TypeExpr, scope.ToTypeParamExprs(info.TypeParams), sc)
+		},
+	}
+	return checkphase.ComputeScopes(g, base, services, checkphase.ScopeOptions{})
 }
 
 // typeDefResolver is the single-sourced TypeDef resolver for this Run: it resolves

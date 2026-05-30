@@ -165,7 +165,194 @@ func (t *Transfer) NarrowEdge(g *cfg.Graph, pred, succ cfg.Point, out flow.Point
 		return out
 	}
 	zprobeNarrow("NarrowEdge pred=%v succ=%v taken=%v known=%v atExit=%v", pred, succ, taken, known, atExit)
+	// At an exit guard whose recovered branch is a discriminant on a union symbol, a
+	// single exclude over the (widened) out-state cannot see the prior dominating
+	// excludes of an early-return chain (`if x.kind == k1 then return end; if x.kind
+	// == k2 then return end; use x`), so it would re-admit a member a preceding guard
+	// already returned. Compose every discriminant guard that dominates this exit over
+	// the declared union instead, dropping each member its surviving edge excludes, so
+	// the fallthrough carries the single remaining variant. A non-discriminant exit
+	// guard, or one over a non-union symbol, falls through to the ordinary narrowing.
+	if atExit {
+		if narrowed, applied := t.narrowExitDiscriminantChain(g, pred, info, out); applied {
+			zprobeNarrow("  -> exitDiscriminantChain")
+			return narrowed
+		}
+	}
 	return t.narrowEdgeInner(out, info, taken, atExit)
+}
+
+// narrowExitDiscriminantChain composes, over the symbol's declared union, every
+// discriminant guard that dominates the exit point pred and shares the recovered
+// guard's tested symbol. Each dominating guard contributes the refinement of its
+// surviving edge (the arm that reaches pred): a guard whose include arm terminates
+// excludes its matched variant, the early-return-chain exhaustiveness pattern. The
+// composition runs entirely over the declared base, so it is independent of whatever
+// widened value the exit's out-state happens to carry. It applies only when the exit
+// guard itself is a discriminant on a union-typed symbol and at least two variants of
+// the declared union survive composition into a strict refinement; a non-discriminant
+// guard, a non-union base, or a no-op composition returns applied=false so the
+// ordinary exit narrowing runs.
+func (t *Transfer) narrowExitDiscriminantChain(g *cfg.Graph, pred cfg.Point, info *cfg.BranchInfo, out flow.PointState) (flow.PointState, bool) {
+	d, ok := t.discriminantGuard(info.Condition)
+	if !ok {
+		return flow.PointState{}, false
+	}
+	declared, has := t.declaredTypes[d.sym]
+	if !has || declared == nil || typ.IsAbsentOrUnknown(declared) {
+		return flow.PointState{}, false
+	}
+	base := narrow.RemoveNil(declared)
+	// Only a genuine literal discriminant partitions the union; a `field == value` on a
+	// broad scalar field does not select a variant, so composing it over the declared
+	// union would rewrite the symbol to its declared type and clobber a sibling guard's
+	// field refinement. Decline so the ordinary exit narrowing runs.
+	if !fieldDiscriminatesUnion(base, d.field) {
+		return flow.PointState{}, false
+	}
+	guards := t.dominatingDiscriminants(g, pred, d.sym)
+	if len(guards) == 0 {
+		return flow.PointState{}, false
+	}
+	refined := base
+	for _, gd := range guards {
+		var next typ.Type
+		if gd.include {
+			next = narrow.ByFieldLiteral(refined, gd.field, gd.literal, fieldResolver)
+		} else {
+			next = narrow.ExcludeByFieldLiteral(refined, gd.field, gd.literal, fieldResolver)
+		}
+		if next != nil {
+			refined = next
+		}
+	}
+	// The composition must strictly reduce the union (drop at least one variant) to be
+	// a refinement: a chain that leaves every declared variant live carries no
+	// exhaustiveness narrowing and rebuilding the union here would only lose precision a
+	// per-edge guard already established.
+	if refined == nil || !unionMembersReduced(base, refined) {
+		return flow.PointState{}, false
+	}
+	res := cloneForNarrow(out)
+	if refined.Kind().IsNever() {
+		res.Env[symKey(d.sym)] = product.Bottom()
+	} else {
+		res.Env[symKey(d.sym)] = product.FromType(refined)
+	}
+	return res, true
+}
+
+// unionMembersReduced reports whether refined is a strict reduction of the union base
+// -- Never, or a type whose top-level union member count is smaller than base's. The
+// early-return-chain composition is meaningful only when it drops a variant; an equal
+// or larger member count is a no-op (or a rebuild) the exit narrowing should not apply.
+func unionMembersReduced(base, refined typ.Type) bool {
+	if refined.Kind().IsNever() {
+		return true
+	}
+	bu := unwrap.Union(base)
+	ru := unwrap.Union(refined)
+	baseN := 1
+	if bu != nil {
+		baseN = len(bu.Members)
+	}
+	refinedN := 1
+	if ru != nil {
+		refinedN = len(ru.Members)
+	}
+	return refinedN < baseN
+}
+
+// dominatingDiscriminants collects, in dominance order, every discriminant guard on
+// symbol sym whose branch dominates the exit point pred and exactly one of whose arms
+// reaches pred (the other terminated via an early return / error). Each such guard
+// contributes its surviving edge: when the include (matching) arm terminates, the
+// surviving edge is the exclude of the matched variant; when the exclude arm
+// terminates, the surviving edge includes the matched variant. A guard both of whose
+// arms reach pred (a plain `if` whose then-arm does not terminate) is not a dominating
+// early-return guard and is skipped, since the value past it is the union join, not a
+// single refined edge.
+func (t *Transfer) dominatingDiscriminants(g *cfg.Graph, pred cfg.Point, sym cfg.SymbolID) []discriminant {
+	var guards []discriminant
+	seen := map[cfg.Point]bool{pred: true}
+	frontier := append([]cfg.Point(nil), g.Predecessors(pred)...)
+	for len(frontier) > 0 {
+		var next []cfg.Point
+		for _, p := range frontier {
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			if bi := g.Branch(p); bi != nil {
+				if d, ok := t.discriminantGuard(bi.Condition); ok && d.sym == sym {
+					if gd, take := t.survivingDiscriminantEdge(g, p, d, pred); take {
+						guards = append(guards, gd)
+					}
+				}
+			}
+			next = append(next, g.Predecessors(p)...)
+		}
+		frontier = next
+	}
+	// The backward walk yields guards nearest-first; compose them outermost-first so a
+	// later include cannot resurrect a variant an earlier exclude removed.
+	for i, j := 0, len(guards)-1; i < j; i, j = i+1, j-1 {
+		guards[i], guards[j] = guards[j], guards[i]
+	}
+	return guards
+}
+
+// survivingDiscriminantEdge resolves which edge of a dominating discriminant branch
+// reaches the exit point pred, and returns the discriminant marked with that edge's
+// include/exclude sense. It applies only when exactly one arm reaches pred (the other
+// terminated), so the surviving edge holds unconditionally on every path to pred. A
+// branch both/neither of whose arms reach pred carries no single-edge refinement.
+func (t *Transfer) survivingDiscriminantEdge(g *cfg.Graph, branch cfg.Point, d discriminant, target cfg.Point) (discriminant, bool) {
+	var trueSucc, falseSucc cfg.Point
+	for _, s := range g.Successors(branch) {
+		if taken, ok := g.EdgeCond(branch, s); ok && taken {
+			trueSucc = s
+		} else {
+			falseSucc = s
+		}
+	}
+	trueReaches := trueSucc != 0 && reaches(g, trueSucc, target, branch)
+	falseReaches := falseSucc != 0 && reaches(g, falseSucc, target, branch)
+	switch {
+	case trueReaches && !falseReaches:
+		// The true (matching) edge survives: include the matched variant.
+		d.include = !d.negated
+		return d, true
+	case falseReaches && !trueReaches:
+		// The false (non-matching) edge survives: exclude the matched variant.
+		d.include = d.negated
+		return d, true
+	default:
+		return discriminant{}, false
+	}
+}
+
+// reaches reports whether target is reachable from start by a forward walk that never
+// re-enters the branch node avoid (so the walk stays within the arm it started on).
+func reaches(g *cfg.Graph, start, target, avoid cfg.Point) bool {
+	if start == target {
+		return true
+	}
+	seen := map[cfg.Point]bool{avoid: true}
+	stack := []cfg.Point{start}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if cur == target {
+			return true
+		}
+		if seen[cur] {
+			continue
+		}
+		seen[cur] = true
+		stack = append(stack, g.Successors(cur)...)
+	}
+	return false
 }
 
 func (t *Transfer) narrowEdgeInner(out flow.PointState, info *cfg.BranchInfo, taken, atExit bool) flow.PointState {
@@ -598,6 +785,31 @@ func isDiscriminatingType(t typ.Type) bool {
 	default:
 		return false
 	}
+}
+
+// fieldDiscriminatesUnion reports whether field is a literal discriminant of the
+// union base -- a tagged-union tag (kind/__tag/...) whose value distinguishes the
+// variants. It requires base to unwrap (through an optional) to a multi-member union
+// at least one of whose members types the field as a literal, the shape a genuine
+// discriminated union carries. A guard on a non-union base, or on a union field whose
+// type is a broad scalar (a `field == ""` on a `string?` field), is an ordinary value
+// equality that does not partition the union, so it is left to the plain narrowers and
+// the discriminant-specific nil-strip / exhaustiveness composition do not engage.
+func fieldDiscriminatesUnion(base typ.Type, field string) bool {
+	u := unwrap.Union(base)
+	if u == nil || len(u.Members) < 2 {
+		return false
+	}
+	for _, m := range u.Members {
+		ft, ok := fieldResolver.Field(m, field)
+		if !ok || ft == nil {
+			continue
+		}
+		if _, isLit := unwrap.Alias(ft).(*typ.Literal); isLit {
+			return true
+		}
+	}
+	return false
 }
 
 // exitGuard synthesizes the branch guard a then-exit / else-exit ScopeExit node
@@ -1289,15 +1501,25 @@ func (t *Transfer) narrowByDiscriminant(out flow.PointState, info *cfg.BranchInf
 	}
 	key := symKey(g.sym)
 	av := out.Env[key]
-	// A discriminant guard only fires from a fresh branch (it reads info.Condition,
-	// which a ScopeExit guard drops), so the declared-base variant recovery applies.
-	baseAV, has := t.narrowBase(g.sym, av, false)
+	baseAV, has := t.discriminantBase(g.sym, av)
 	if !has {
 		return out, false
 	}
 	base := baseAV.ProjectValue()
 	if base == nil {
 		return out, false
+	}
+	// A genuine literal-discriminant guard reads base.field, which presupposes base is
+	// non-nil on BOTH edges (nil.field errors at runtime before the comparison). So a
+	// member the field read cannot reach -- nil / the optional wrapper an array-index
+	// or captured-optional source carries -- is excluded on either edge. The include
+	// edge already drops it (ByFieldLiteral maps a fieldless nil member to Never); strip
+	// it here so the exclude edge does too, leaving only the live record variants. This
+	// applies only when field genuinely discriminates the union (a tag field); a plain
+	// `field == value` on a broad scalar field is left non-nil-stripped so it stays the
+	// legacy no-op and never rewrites a sibling guard's field refinement.
+	if fieldDiscriminatesUnion(base, g.field) {
+		base = narrow.RemoveNil(base)
 	}
 	// On the false edge the equality is negated: == becomes the exclusion and
 	// ~= becomes the inclusion.
@@ -1325,12 +1547,47 @@ func (t *Transfer) narrowByDiscriminant(out flow.PointState, info *cfg.BranchInf
 	return res, true
 }
 
+// discriminantBase selects the value a discriminant guard refines for sym. The
+// choice composes two requirements:
+//
+//   - SEQUENTIAL EXCLUSION (exhaustiveness): a chain of `if x.kind == k then return`
+//     early-returns narrows x on each exclude edge; the second guard must compose with
+//     the first's refinement (Output minus RenderOutput minus IndexOutput = AuditOutput),
+//     not reset to the full declared union. The dataflow Env already carries the prior
+//     edge's refinement, so when the tracked value is itself a (multi-member) union --
+//     a shape that only arises from the declared union or a prior union-narrowing of it
+//     -- it is the tightest sound base and narrowing over it preserves the composition.
+//
+//   - CONSTRUCTOR-SINGLETON RECOVERY: an annotated `local r: A|B = {tag="a",...}` seeds
+//     the precise singleton {tag:"a",...}; the annotation is authoritative, so the else
+//     edge of `if r.tag == "a"` must recover sibling variant B (per the declaration),
+//     not collapse to Never over the singleton. The Env there holds a single record
+//     (below the union's variant granularity), so the declared union is restored.
+//
+// The discriminator is structural: a tracked value that unwraps to a multi-member union
+// (optionally behind an Optional, the array-index / captured-optional source) is the
+// composition base; any other tracked value (a constructor singleton, a scalar, none)
+// falls to narrowBase, which restores the declared union for annotation authority.
+func (t *Transfer) discriminantBase(sym cfg.SymbolID, av product.AbstractValue) (product.AbstractValue, bool) {
+	if !av.IsZero() {
+		if u := unwrap.Union(av.ProjectValue()); u != nil && len(u.Members) > 1 {
+			return av, true
+		}
+	}
+	return t.narrowBase(sym, av, false)
+}
+
 // discriminant is a recognized base.field == literal (or ~=) guard.
 type discriminant struct {
 	sym     cfg.SymbolID
 	field   string
 	literal *typ.Literal
 	negated bool // the guard is base.field ~= literal
+	// include records the refinement sense the dominating-discriminant chain resolved
+	// for this guard's surviving edge: true keeps the matched variant, false excludes
+	// it. It is meaningful only for a guard the exit-chain composition selected; the
+	// per-edge discriminant narrowing derives include from taken/negated directly.
+	include bool
 }
 
 // discriminantGuard recognizes a discriminated-union equality guard in expr:
