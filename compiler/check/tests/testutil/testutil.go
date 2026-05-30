@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"os"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check"
@@ -73,7 +74,20 @@ func NewChecker(opts ...Option) *check.Checker {
 	for _, opt := range opts {
 		opt(cfg)
 	}
+	cfg.CheckOptions = append(cfg.CheckOptions, envFlowOptions()...)
 	return buildChecker(cfg)
+}
+
+// envFlowOptions returns a flow override read from the WIPPY_FLOW environment
+// variable so the whole behavioral suite can be exercised under the canonical
+// engine on demand (WIPPY_FLOW=canonical) without editing each test. Unset or any
+// other value leaves the default legacy flow. Differential bypasses this entirely:
+// it drives each arm's flow directly through buildChecker.
+func envFlowOptions() []check.Option {
+	if os.Getenv("WIPPY_FLOW") == "canonical" {
+		return []check.Option{check.WithCanonicalFlow()}
+	}
+	return nil
 }
 
 // Result holds the result of a check operation.
