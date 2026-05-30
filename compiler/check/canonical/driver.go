@@ -47,6 +47,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
+	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
@@ -2615,7 +2616,46 @@ func (ct callTyper) CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exp
 	if len(returns) == 0 {
 		return nil, false
 	}
+	// Apply the callee's runtime-effect return transforms (the same transforms the
+	// observation surface applies after the pipeline), so a contract effect that
+	// shapes the return from the argument values takes hold here too. The dominant
+	// case is channel.select's SelectResultOfCases: it rebuilds the bare result record
+	// {channel, ok, value: unknown} into a union of per-case records carrying each
+	// case's channel identity and value type, which the channel-identity narrowing then
+	// refines. Without it the transfer stores the bare record, value stays unknown, and
+	// a per-case `result.value.f` read has nothing to narrow.
+	returns = d.applyEffectReturns(callee, receiver, argTypes, returns, call.Method != "")
 	return returns, true
+}
+
+// applyEffectReturns runs the callee's runtime-effect return transforms over the
+// pipeline-produced return tuple, the canonical counterpart of the observation
+// surface's applyEffectReturnTransforms. It resolves the effect runtime arguments
+// (the argument values the effect spec consults), then for each return slot applies
+// the function's effect transform, substituting a transformed slot. A callee with no
+// function shape or no returns is returned unchanged.
+func (d *Driver) applyEffectReturns(callee, receiver typ.Type, args, returns []typ.Type, isMethod bool) []typ.Type {
+	fn := unwrap.Function(callee)
+	if fn == nil || len(returns) == 0 {
+		return returns
+	}
+	effectArgs := ops.RuntimeArgsForEffects(d.activeCtx, d.cfg.Types, callee, args, receiver, isMethod, false)
+	var out []typ.Type
+	for i := range returns {
+		transformed := transform.ApplyEffectTransform(fn, effectArgs, i, returns[i])
+		if transformed == nil || transformed == returns[i] {
+			continue
+		}
+		if out == nil {
+			out = make([]typ.Type, len(returns))
+			copy(out, returns)
+		}
+		out[i] = transformed
+	}
+	if out != nil {
+		return out
+	}
+	return returns
 }
 
 // IterVars types a generic-for loop's iteration variables from its iterator
@@ -2664,6 +2704,15 @@ func (ct callTyper) IterVars(iter *ast.FuncCallExpr, count int, exprType func(as
 		}
 		if count > 1 {
 			out[1] = core.ElementType(source)
+			// A gradual dynamic source (a bare `any`, or an `any?` parameter whose
+			// optional wraps `any`) has no structural element type, so core.ElementType
+			// yields nil and the element variable would collapse to unknown — a later
+			// field read off it then degrades to `never`. Iterating a dynamic container
+			// keeps its elements dynamic: the element is gradual `any`, the same sound
+			// projection the extract iterator inference applies (iter.go IsPlaceholder).
+			if out[1] == nil && unwrap.Underlying(source).Kind().IsPlaceholder() {
+				out[1] = typ.Any
+			}
 		}
 	case effect.IterateKeyed:
 		// Keyed iteration types its variables only over a genuine keyed container (a
@@ -3104,15 +3153,16 @@ func callResultReturns(result ops.CallResult) []typ.Type {
 }
 
 // funcTyper adapts the driver to the transfer's FuncTyper seam: it resolves a
-// function literal's declared signature from its annotations alone, with no
-// dependence on the interprocedural summary fixpoint. The transfer runs inside the
-// fixpoint solve, so it can read declared annotations (stable inputs) but not the
-// not-yet-converged summary returns.
+// function literal's signature from its declared annotations, plus the inferred
+// summary return when the literal declares no return. The inferred lookup reads the
+// same summary query signatureForRef uses (the converged returns, or the in-flight
+// query's current returns during the solve), which the call-graph fixpoint widens, so
+// it is stable inside the solve rather than a not-yet-converged dependence.
 type funcTyper struct{ d *Driver }
 
 // FuncType builds fn's signature from its declared parameter and return
-// annotations. The result is the structural callable a function-valued table field
-// carries.
+// annotations, splicing the inferred summary return when fn declares none. The result
+// is the structural callable a function-valued table field carries.
 func (ft funcTyper) FuncType(fn *ast.FunctionExpr) *typ.Function {
 	return ft.FuncTypeOver(fn, ft.d.baseScope())
 }
@@ -3129,7 +3179,34 @@ func (ft funcTyper) FuncTypeOver(fn *ast.FunctionExpr, base *scope.State) *typ.F
 	sc := d.genericScopeOver(builder, fn, base)
 	d.applyParamList(builder, fn, sc)
 	d.applyReturnList(builder, fn, sc)
+	// A literal that declares no return annotation otherwise carries an empty return
+	// tuple, so its single-value call result types as nil. Splice in the inferred
+	// summary return the body produces — the same return signatureForRef builds — so
+	// the literal value a local function binds (and any field it is stored under)
+	// carries its inferred return. The inferred lookup runs only for an
+	// unannotated-return literal that maps to a program ref; an annotated return is
+	// authoritative and a literal with no ref keeps the declared (possibly empty) tuple.
+	if len(fn.ReturnTypes) == 0 {
+		if prog := d.activeProgram; prog != nil {
+			if ref, ok := prog.refByFunc(fn); ok {
+				if returns := d.inferredReturnTypes(ref); len(returns) > 0 {
+					builder.Returns(returns...)
+				}
+			}
+		}
+	}
 	return builder.Build()
+}
+
+// inferredReturnTypes is ref's inferred return tuple from the converged summary, or
+// its current return tuple from the in-flight summary query during the solve. It is
+// the inferred half of returnTypesForRef, factored so FuncTypeOver splices a literal's
+// inferred return without re-resolving declared annotations.
+func (d *Driver) inferredReturnTypes(ref summary.FuncRef) []typ.Type {
+	if returns := d.ReturnTypes(ref); len(returns) > 0 {
+		return returns
+	}
+	return d.liveReturnTypes(ref)
 }
 
 // MethodFuncType builds a method definition's signature with the implicit leading

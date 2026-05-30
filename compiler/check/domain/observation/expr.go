@@ -510,6 +510,30 @@ func (p Projector) coerceGradualToExpected(t typ.Type, expected typ.Type) typ.Ty
 	return expected
 }
 
+// AdmitGradualArgument applies the gradual-top-any admission for the
+// call-argument diagnostic boundary, mirroring the assignment source and the
+// return boundary: an argument observed as the gradual top `any` is consistent
+// with a concrete expected parameter type. It is gated by sourceAnyIsGradualTop
+// so a declared-`any` symbol read (an `any` the cast-guard contract requires to
+// stay strict) and the opaque `unknown` seed are untouched and keep their
+// rejection.
+func (p Projector) AdmitGradualArgument(t typ.Type, arg ast.Expr, point cfg.Point, expected typ.Type) typ.Type {
+	if zNoGradualBoundary() {
+		return t
+	}
+	if !typ.IsAny(t) || !p.sourceAnyIsGradualTop(arg, point) {
+		return t
+	}
+	return p.coerceGradualToExpected(t, expected)
+}
+
+// zNoGradualBoundary disables the assignment/call-argument gradual-top admission
+// for the baseline measurement probe, leaving the pre-existing return coercion
+// untouched. Debug helper.
+func zNoGradualBoundary() bool {
+	return os.Getenv("ZNOGRADUAL_BOUNDARY") != ""
+}
+
 // SourceReadIsNonIndexable reports whether the source expression is an attribute
 // or index read whose object type cannot be indexed at all at the point (for
 // example a nil value reached on a non-dominating path). Such a read is the

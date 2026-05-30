@@ -122,16 +122,26 @@ func checkSingleCall(
 		}
 	}
 
+	full := callarg.Full(
+		func(arg ast.Expr, pt cfg.Point, expected typ.Type) typ.Type {
+			return observer.TypeOfWithExpected(arg, pt, expected)
+		},
+		func(table *ast.TableExpr, expected typ.Type, pt cfg.Point) bool {
+			return observer.TableCompatible(table, pt, expected)
+		},
+		p,
+	)
+	// An argument observed as the gradual top `any` is consistent with a concrete
+	// expected parameter type (gradual consistency), mirroring the assignment and
+	// return boundaries. The synthesis-side re-synth declines to refine a gradual
+	// `any` toward an expected type, so admit it here at the diagnostic boundary
+	// against the resolved expected parameter; a narrowed/dominated `any` is no
+	// longer the gradual top and is untouched.
+	resynth := func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
+		return observer.AdmitGradualArgument(full(idx, arg, expected), arg, p, expected)
+	}
 	pipeline := ops.NewCallPipeline(ctx, def, len(info.Args)).
-		WithReSynth(callarg.ForArgs(info.Args, callarg.Full(
-			func(arg ast.Expr, pt cfg.Point, expected typ.Type) typ.Type {
-				return observer.TypeOfWithExpected(arg, pt, expected)
-			},
-			func(table *ast.TableExpr, expected typ.Type, pt cfg.Point) bool {
-				return observer.TableCompatible(table, pt, expected)
-			},
-			p,
-		)))
+		WithReSynth(callarg.ForArgs(info.Args, resynth))
 	result := pipeline.Run()
 	return callErrorsToDiags(result.Errors, info, sourceName)
 }

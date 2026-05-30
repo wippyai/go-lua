@@ -11,6 +11,7 @@ import (
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // AssignmentSourceType projects the value read by an assignment source. If the
@@ -27,10 +28,10 @@ func (p Projector) AssignmentSourceType(source ast.Expr, point cfg.Point, expect
 	// assigned to a number? annotation resolves T to number).
 	if expected != nil {
 		if t, ok := p.assignmentSourceProductType(point, targetSym); ok && !typ.ContainsTypeParam(t) {
-			return p.refineAssignmentSourceIndexRead(t, source, point)
+			return p.admitGradualAssignmentSource(p.refineAssignmentSourceIndexRead(t, source, point), source, point, expected)
 		}
 		if t, ok := p.assignmentPathSourceType(source, point, targetSym); ok && !typ.ContainsTypeParam(t) {
-			return t
+			return p.admitGradualAssignmentSource(t, source, point, expected)
 		}
 		return p.assignmentSourceProjector(source, targetSym).TypeOfWithExpected(source, point, expected)
 	}
@@ -41,6 +42,52 @@ func (p Projector) AssignmentSourceType(source ast.Expr, point cfg.Point, expect
 		return t
 	}
 	return p.assignmentSourceProjector(source, targetSym).TypeOfWithExpected(source, point, expected)
+}
+
+// admitGradualAssignmentSource applies gradual-typing's consistency to an
+// assignment source observed as the gradual top `any`, mirroring the return
+// boundary's coerceGradualToExpected: such a value is consistent with every
+// type, so against a concrete annotation it observes as that annotation. It is
+// gated by sourceAnyIsGradualTop so a declared-`any` symbol read keeps its
+// strict any->concrete rejection.
+func (p Projector) admitGradualAssignmentSource(t typ.Type, source ast.Expr, point cfg.Point, expected typ.Type) typ.Type {
+	if zNoGradualBoundary() {
+		return t
+	}
+	if !typ.IsAny(t) || !p.sourceAnyIsGradualTop(source, point) {
+		return t
+	}
+	return p.coerceGradualToExpected(t, expected)
+}
+
+// sourceAnyIsGradualTop reports whether a source observed as `any` is the
+// gradual top admissible against a concrete annotation, rather than an `any` the
+// boundary check must still flag.
+//
+// The gradual top is a field/index read OFF A TYPED CONTAINER whose projected
+// field/element is genuinely `any`: a value the inference could type the
+// container of but not the member (a `{ data_func: any }` record built from a
+// `{[string]: any}` dynamic map, an unannotated parameter's projected field).
+// Gradual consistency admits it against a concrete expected type, mirroring the
+// return boundary.
+//
+// A read whose CONTAINER is itself `any`/`unknown` is NOT the gradual top: the
+// flow cannot type the object at all, so the projected `any` is an unproven
+// guess (a wrapper whose return widened to `any` on a non-dominating path). It
+// keeps strict rejection so an unsound write is still flagged. A bare symbol
+// read (no projection) likewise keeps its declared contract: a value declared
+// `any` must report its any->concrete write (the cast-guard soundness contract).
+func (p Projector) sourceAnyIsGradualTop(source ast.Expr, point cfg.Point) bool {
+	path := p.pathOfExpr(source, point)
+	if path.IsEmpty() || len(path.Segments) == 0 || path.Symbol == 0 {
+		return false
+	}
+	attr, ok := source.(*ast.AttrGetExpr)
+	if !ok || attr == nil {
+		return false
+	}
+	obj := unwrap.Alias(p.TypeOf(attr.Object, point))
+	return obj != nil && !obj.Kind().IsPlaceholder()
 }
 
 // AssignmentSourceTableCheck validates a table literal through the same
