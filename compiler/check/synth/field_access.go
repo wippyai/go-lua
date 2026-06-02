@@ -76,7 +76,7 @@ func ResolveFieldAccess(
 
 	if fieldName == "" {
 		switch unwrapped.(type) {
-		case *typ.Map, *typ.Array, *typ.Tuple, *typ.Record:
+		case *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple, *typ.Record:
 			return FieldAccessResult{SkipCheck: true}
 		case *typ.TypeParam, *typ.Instantiated:
 			return FieldAccessResult{SkipCheck: true}
@@ -87,7 +87,7 @@ func ResolveFieldAccess(
 
 	switch unwrapped := unwrapped.(type) {
 	case *typ.Record, *typ.Interface, *typ.Union, *typ.Intersection, *typ.Optional:
-	case *typ.Map, *typ.Array, *typ.Tuple:
+	case *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple:
 	case *typ.TypeParam, *typ.Instantiated:
 		return FieldAccessResult{SkipCheck: true}
 	case *typ.Function:

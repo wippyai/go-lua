@@ -257,6 +257,9 @@ func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map
 	case *Map:
 		result = recursiveContainsGraphClosedMemo(n.Key, seen, memo, depth+1) &&
 			recursiveContainsGraphClosedMemo(n.Value, seen, memo, depth+1)
+	case *ReadonlyMap:
+		result = recursiveContainsGraphClosedMemo(n.Key, seen, memo, depth+1) &&
+			recursiveContainsGraphClosedMemo(n.Value, seen, memo, depth+1)
 	case *Tuple:
 		for _, elem := range n.Elements {
 			if !recursiveContainsGraphClosedMemo(elem, seen, memo, depth+1) {
@@ -488,6 +491,12 @@ func hashBodyWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]
 			h = internal.HashCombine(h, hashBodyWithVisitedMemo(m.Value, visited, memo))
 			return h
 		},
+		ReadonlyMap: func(m *ReadonlyMap) uint64 {
+			h := uint64(kind.ReadonlyMap)
+			h = internal.HashCombine(h, hashBodyWithVisitedMemo(m.Key, visited, memo))
+			h = internal.HashCombine(h, hashBodyWithVisitedMemo(m.Value, visited, memo))
+			return h
+		},
 		Tuple: func(t *Tuple) uint64 {
 			h := uint64(kind.Tuple)
 			for _, e := range t.Elements {
@@ -704,6 +713,9 @@ func collectRecursiveHashDepsInTypeMemo(t Type, seen map[*Recursive]bool, memo m
 	case *Array:
 		result = collectRecursiveHashDepsInTypeMemo(n.Element, seen, memo)
 	case *Map:
+		result = collectRecursiveHashDepsInTypeMemo(n.Key, seen, memo) &&
+			collectRecursiveHashDepsInTypeMemo(n.Value, seen, memo)
+	case *ReadonlyMap:
 		result = collectRecursiveHashDepsInTypeMemo(n.Key, seen, memo) &&
 			collectRecursiveHashDepsInTypeMemo(n.Value, seen, memo)
 	case *Tuple:

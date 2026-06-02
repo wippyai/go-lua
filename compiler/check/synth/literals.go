@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/db"
@@ -196,7 +197,6 @@ func FunctionLiteralSignatures(graph *cfg.Graph, evidence api.FlowEvidence, engi
 		if tbl == nil {
 			return
 		}
-		expectedFields := querycore.AllFieldTypesResolved(expected)
 		selfType := expected
 		if selfType == nil {
 			selfBuilder := typ.NewRecord()
@@ -208,12 +208,8 @@ func FunctionLiteralSignatures(graph *cfg.Graph, evidence api.FlowEvidence, engi
 				if _, ok := field.Value.(*ast.FunctionExpr); ok {
 					continue
 				}
-				switch k := field.Key.(type) {
-				case *ast.StringExpr:
-					selfBuilder.Field(k.Value, engine.TypeOf(field.Value, p))
-					fieldCount++
-				case *ast.IdentExpr:
-					selfBuilder.Field(k.Value, engine.TypeOf(field.Value, p))
+				if name, ok := fieldkey.RecordFieldNameFromTableField(field); ok {
+					selfBuilder.Field(name, engine.TypeOf(field.Value, p))
 					fieldCount++
 				}
 			}
@@ -229,18 +225,9 @@ func FunctionLiteralSignatures(graph *cfg.Graph, evidence api.FlowEvidence, engi
 			switch v := field.Value.(type) {
 			case *ast.FunctionExpr:
 				var expectedFn *typ.Function
-				switch k := field.Key.(type) {
-				case *ast.StringExpr:
-					if expectedFields != nil {
-						if ft := expectedFields[k.Value]; ft != nil {
-							expectedFn, _ = unwrap.Alias(ft).(*typ.Function)
-						}
-					}
-				case *ast.IdentExpr:
-					if expectedFields != nil {
-						if ft := expectedFields[k.Value]; ft != nil {
-							expectedFn, _ = unwrap.Alias(ft).(*typ.Function)
-						}
+				if key, ok := fieldkey.FromTableField(field); ok {
+					if ft := ops.ExpectedTableEntryType(expected, key); ft != nil {
+						expectedFn, _ = unwrap.Alias(ft).(*typ.Function)
 					}
 				}
 				if expectedFn == nil && selfType != nil && phasecore.HasUnannotatedSelfParam(v, graph.Bindings()) {
@@ -249,14 +236,9 @@ func FunctionLiteralSignatures(graph *cfg.Graph, evidence api.FlowEvidence, engi
 				addSig(v, p, expectedFn)
 			case *ast.TableExpr:
 				var nestedExpected typ.Type
-				switch k := field.Key.(type) {
-				case *ast.StringExpr:
-					if expectedFields != nil {
-						nestedExpected = expectedFields[k.Value]
-					}
-				case *ast.IdentExpr:
-					if expectedFields != nil {
-						nestedExpected = expectedFields[k.Value]
+				if key, ok := fieldkey.FromTableField(field); ok {
+					if ft := ops.ExpectedTableEntryType(expected, key); ft != nil {
+						nestedExpected = ft
 					}
 				}
 				collectTable(v, p, nestedExpected)

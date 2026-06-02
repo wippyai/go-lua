@@ -810,7 +810,7 @@ func isExcludableValueType(t typ.Type) bool {
 				return false
 			}
 			switch k {
-			case kind.Record, kind.Interface, kind.Map, kind.Array, kind.Tuple, kind.Function:
+			case kind.Record, kind.Interface, kind.Map, kind.ReadonlyMap, kind.Array, kind.Tuple, kind.Function:
 				return true
 			case kind.String, kind.Number, kind.Boolean, kind.Integer:
 				return false

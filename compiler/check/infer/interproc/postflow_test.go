@@ -10,6 +10,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	checkstore "github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -76,6 +78,18 @@ func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSy
 	}
 	if !typ.TypeEquals(got[0].ProjectValue(), typ.String) {
 		t.Fatalf("entry param = %v, want string", got[0])
+	}
+}
+
+func TestReturnLengthRelationEnsuresFromCanonicalRelations(t *testing.T) {
+	rels := flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{
+		{ReturnIndex: 0, ParamIndex: 2},
+	})
+
+	got := returnLengthRelationEnsures(rels)
+	want := constraint.GeExpr(constraint.RL(0), constraint.PL(2))
+	if len(got) != 1 || !got[0].Equals(want) {
+		t.Fatalf("returnLengthRelationEnsures() = %#v, want %#v", got, want)
 	}
 }
 

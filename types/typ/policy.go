@@ -2,6 +2,7 @@ package typ
 
 import (
 	"sort"
+	"strconv"
 
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
@@ -58,6 +59,22 @@ type returnJoinKey struct {
 type recordJoinResult struct {
 	t  Type
 	ok bool
+}
+
+type staticMemberJoinKey struct {
+	kind  StaticMemberKind
+	name  string
+	index int64
+}
+
+type staticMemberAcc struct {
+	memberType Type
+	count      int
+	optional   bool
+	readonly   bool
+	kind       StaticMemberKind
+	name       string
+	index      int64
 }
 
 type recursiveRewriteKey struct {
@@ -226,7 +243,7 @@ func isEmptyRecordNoMap(t Type) bool {
 	case *Alias:
 		return isEmptyRecordNoMap(v.Target)
 	case *Record:
-		return len(v.Fields) == 0 && !v.HasMapComponent()
+		return len(v.Fields) == 0 && len(v.StaticMembers) == 0 && !v.HasMapComponent()
 	default:
 		return false
 	}
@@ -287,6 +304,7 @@ func (s *returnJoinState) joinClosedCompatibleRecordSet(records []*Record) (Type
 		readonly  bool
 	}
 	fields := make(map[string]*fieldAcc)
+	staticMembers := make(map[staticMemberJoinKey]*staticMemberAcc)
 	for _, rec := range records {
 		for _, field := range rec.Fields {
 			acc := fields[field.Name]
@@ -304,6 +322,26 @@ func (s *returnJoinState) joinClosedCompatibleRecordSet(records []*Record) (Type
 			acc.optional = acc.optional || field.Optional
 			acc.readonly = acc.readonly && field.Readonly
 		}
+		for _, member := range rec.StaticMembers {
+			key := staticMemberKey(member)
+			acc := staticMembers[key]
+			if acc == nil {
+				staticMembers[key] = &staticMemberAcc{
+					memberType: member.Type,
+					count:      1,
+					optional:   member.Optional,
+					readonly:   member.Readonly,
+					kind:       member.Kind,
+					name:       member.Name,
+					index:      member.Index,
+				}
+				continue
+			}
+			acc.memberType = state.joinRecordFieldSlot(acc.memberType, member.Type)
+			acc.count++
+			acc.optional = acc.optional || member.Optional
+			acc.readonly = acc.readonly && member.Readonly
+		}
 	}
 
 	mergedFields := make([]Field, 0, len(fields))
@@ -315,7 +353,18 @@ func (s *returnJoinState) joinClosedCompatibleRecordSet(records []*Record) (Type
 			Readonly: acc.readonly,
 		})
 	}
-	return buildRecordType(mergedFields, nil, nil, nil, false, false, false), true
+	mergedStaticMembers := make([]StaticMember, 0, len(staticMembers))
+	for _, acc := range staticMembers {
+		mergedStaticMembers = append(mergedStaticMembers, StaticMember{
+			Kind:     acc.kind,
+			Name:     acc.name,
+			Index:    acc.index,
+			Type:     acc.memberType,
+			Optional: acc.optional || acc.count < len(records),
+			Readonly: acc.readonly,
+		})
+	}
+	return buildRecordType(mergedFields, mergedStaticMembers, nil, nil, nil, false, false, false), true
 }
 
 // CoalesceCompatibleRecords merges compatible record alternatives before a
@@ -1075,7 +1124,8 @@ func (s *returnJoinState) joinCompatibleRecords(a, b Type) (Type, bool) {
 		}
 	}
 
-	merged := buildRecordType(fields, metatable, mapKey, mapValue, open, true, false)
+	staticMembers := s.mergeRecordStaticMembers(ar, br)
+	merged := buildRecordType(fields, staticMembers, metatable, mapKey, mapValue, open, true, false)
 	if s != nil {
 		s.cacheRecordJoin(key, merged, true)
 	}
@@ -1127,6 +1177,76 @@ func (s *returnJoinState) mergeRecordField(name string, fa Field, oka bool, fb F
 	return Field{Name: name, Type: fieldType, Optional: optional, Readonly: readonly}
 }
 
+func (s *returnJoinState) mergeRecordStaticMembers(ar, br *Record) []StaticMember {
+	staticMembers := make([]StaticMember, 0, len(ar.StaticMembers)+len(br.StaticMembers))
+	i, j := 0, 0
+	for i < len(ar.StaticMembers) || j < len(br.StaticMembers) {
+		switch {
+		case j >= len(br.StaticMembers):
+			staticMembers = append(staticMembers, s.mergeRecordStaticMember(ar.StaticMembers[i], true, StaticMember{}, false, ar, br))
+			i++
+		case i >= len(ar.StaticMembers):
+			staticMembers = append(staticMembers, s.mergeRecordStaticMember(StaticMember{}, false, br.StaticMembers[j], true, ar, br))
+			j++
+		default:
+			cmp := compareStaticMembers(ar.StaticMembers[i], br.StaticMembers[j])
+			switch {
+			case cmp == 0:
+				staticMembers = append(staticMembers, s.mergeRecordStaticMember(ar.StaticMembers[i], true, br.StaticMembers[j], true, ar, br))
+				i++
+				j++
+			case cmp < 0:
+				staticMembers = append(staticMembers, s.mergeRecordStaticMember(ar.StaticMembers[i], true, StaticMember{}, false, ar, br))
+				i++
+			default:
+				staticMembers = append(staticMembers, s.mergeRecordStaticMember(StaticMember{}, false, br.StaticMembers[j], true, ar, br))
+				j++
+			}
+		}
+	}
+	return staticMembers
+}
+
+func (s *returnJoinState) mergeRecordStaticMember(ma StaticMember, oka bool, mb StaticMember, okb bool, ar, br *Record) StaticMember {
+	member := ma
+	memberType := Type(nil)
+	optional := true
+	readonly := false
+	switch {
+	case oka && okb:
+		memberType = s.joinRecordFieldSlot(ma.Type, mb.Type)
+		optional = ma.Optional || mb.Optional
+		readonly = ma.Readonly && mb.Readonly
+	case oka:
+		memberType = ma.Type
+		optional = true
+		readonly = ma.Readonly
+		if tail, ok := recordTailStaticMemberType(br, ma); ok {
+			memberType, optional = normalizeMergedRecordField(s.joinReturnSlot(ma.Type, tail))
+			if recordMapTailMayContainStaticMember(br, ma) {
+				optional = true
+			}
+			readonly = false
+		}
+	case okb:
+		member = mb
+		memberType = mb.Type
+		optional = true
+		readonly = mb.Readonly
+		if tail, ok := recordTailStaticMemberType(ar, mb); ok {
+			memberType, optional = normalizeMergedRecordField(s.joinReturnSlot(tail, mb.Type))
+			if recordMapTailMayContainStaticMember(ar, mb) {
+				optional = true
+			}
+			readonly = false
+		}
+	}
+	member.Type = memberType
+	member.Optional = optional
+	member.Readonly = readonly
+	return member
+}
+
 func (s *returnJoinState) joinRecordFieldSlot(a, b Type) Type {
 	if joined, ok := s.joinFieldContainerSlot(a, b); ok {
 		return joined
@@ -1156,6 +1276,12 @@ func (s *returnJoinState) joinFieldContainerSlot(a, b Type) (Type, bool) {
 			return nil, false
 		}
 		return NewMap(JoinPreferNonSoft(av.Key, bv.Key), s.joinReturnSlot(av.Value, bv.Value)), true
+	case *ReadonlyMap:
+		bv, ok := b.(*ReadonlyMap)
+		if !ok {
+			return nil, false
+		}
+		return NewReadonlyMap(JoinPreferNonSoft(av.Key, bv.Key), s.joinReturnSlot(av.Value, bv.Value)), true
 	case *Tuple:
 		bv, ok := b.(*Tuple)
 		if !ok || len(av.Elements) != len(bv.Elements) {
@@ -1308,8 +1434,36 @@ func recordTailFieldType(r *Record, name string) (Type, bool) {
 	return nil, false
 }
 
+func recordTailStaticMemberType(r *Record, member StaticMember) (Type, bool) {
+	if r == nil {
+		return nil, false
+	}
+	if r.HasMapComponent() && mapComponentMayContainStaticMemberKey(r.MapKey, member) {
+		return NewOptional(r.MapValue), true
+	}
+	if r.Open {
+		return Unknown, true
+	}
+	return nil, false
+}
+
 func recordMapTailMayContain(r *Record, name string) bool {
 	return r != nil && r.HasMapComponent() && mapComponentMayContainStringKey(r.MapKey, name)
+}
+
+func recordMapTailMayContainStaticMember(r *Record, member StaticMember) bool {
+	return r != nil && r.HasMapComponent() && mapComponentMayContainStaticMemberKey(r.MapKey, member)
+}
+
+func mapComponentMayContainStaticMemberKey(key Type, member StaticMember) bool {
+	switch member.Kind {
+	case StaticMemberStringIndex:
+		return mapComponentMayContainStringKey(key, member.Name)
+	case StaticMemberIntIndex:
+		return mapComponentMayContainIntKey(key, member.Index)
+	default:
+		return false
+	}
 }
 
 func mapComponentMayContainStringKey(key Type, name string) bool {
@@ -1333,6 +1487,53 @@ func mapComponentMayContainStringKey(key Type, name string) bool {
 		return k.Base == kind.String && k.Value == name
 	default:
 		return k.Kind() == kind.String
+	}
+}
+
+func mapComponentMayContainIntKey(key Type, index int64) bool {
+	if key == nil {
+		return false
+	}
+	if IsAny(key) || IsUnknown(key) {
+		return true
+	}
+	switch k := key.(type) {
+	case *Alias:
+		return mapComponentMayContainIntKey(k.Target, index)
+	case *Union:
+		for _, member := range k.Members {
+			if mapComponentMayContainIntKey(member, index) {
+				return true
+			}
+		}
+		return false
+	case *Literal:
+		switch k.Base {
+		case kind.Integer:
+			return k.Value == index
+		case kind.Number:
+			number, ok := k.Value.(float64)
+			return ok && number == float64(index)
+		default:
+			return false
+		}
+	default:
+		return k.Kind() == kind.Integer || k.Kind() == kind.Number
+	}
+}
+
+func staticMemberKey(member StaticMember) staticMemberJoinKey {
+	return staticMemberJoinKey{kind: member.Kind, name: member.Name, index: member.Index}
+}
+
+func staticMemberDiscriminantPath(member StaticMember) string {
+	switch member.Kind {
+	case StaticMemberStringIndex:
+		return "[" + strconv.Quote(member.Name) + "]"
+	case StaticMemberIntIndex:
+		return "[" + strconv.FormatInt(member.Index, 10) + "]"
+	default:
+		return "[]"
 	}
 }
 
@@ -1465,6 +1666,24 @@ func literalErasedResidualsCleanlyMergeable(a, b *Record) bool {
 			return false
 		}
 	}
+	for _, member := range a.StaticMembers {
+		if member.Optional {
+			continue
+		}
+		if _, ok := literalType(member.Type); ok {
+			continue
+		}
+		other := b.getStaticMember(member.Kind, member.Name, member.Index)
+		if other == nil || other.Optional {
+			continue
+		}
+		if _, ok := literalType(other.Type); ok {
+			continue
+		}
+		if !mergeKeepsPreciseFieldType(member.Type, other.Type) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -1480,6 +1699,17 @@ func requiredNonLiteralPayloadMissingFrom(src, dst *Record) bool {
 			continue
 		}
 		if dst.GetField(field.Name) == nil {
+			return true
+		}
+	}
+	for _, member := range src.StaticMembers {
+		if member.Optional {
+			continue
+		}
+		if _, ok := literalType(member.Type); ok {
+			continue
+		}
+		if dst.getStaticMember(member.Kind, member.Name, member.Index) == nil {
 			return true
 		}
 	}
@@ -1521,6 +1751,26 @@ func nestedRequiredLiteralConflict(a, b *Record) bool {
 			continue
 		}
 		other := b.GetField(field.Name)
+		if other == nil || other.Optional {
+			continue
+		}
+		otherLit, ok := literalType(other.Type)
+		if !ok {
+			continue
+		}
+		if lit.Hash() != otherLit.Hash() {
+			return true
+		}
+	}
+	for _, member := range a.StaticMembers {
+		if member.Optional {
+			continue
+		}
+		lit, ok := literalType(member.Type)
+		if !ok {
+			continue
+		}
+		other := b.getStaticMember(member.Kind, member.Name, member.Index)
 		if other == nil || other.Optional {
 			continue
 		}
@@ -1608,6 +1858,17 @@ func (s *returnJoinState) collectRequiredDiscriminantTags(t Type) map[string]uin
 				continue
 			}
 			addPrefixedDiscriminantTags(tags, field.Name, s.requiredDiscriminantTags(field.Type))
+		}
+		for _, member := range v.StaticMembers {
+			if member.Optional {
+				continue
+			}
+			path := staticMemberDiscriminantPath(member)
+			if lit, ok := literalType(member.Type); ok {
+				tags[path] = lit.Hash()
+				continue
+			}
+			addPrefixedDiscriminantTags(tags, path, s.requiredDiscriminantTags(member.Type))
 		}
 		return tags
 	case *Union:
@@ -1774,6 +2035,8 @@ func isRefinableStructuralAnnotation(t Type, guard internal.RecursionGuard) bool
 	case *Array:
 		return annotationSlotRefinable(v.Element, next)
 	case *Map:
+		return annotationSlotRefinable(v.Key, next) || annotationSlotRefinable(v.Value, next)
+	case *ReadonlyMap:
 		return annotationSlotRefinable(v.Key, next) || annotationSlotRefinable(v.Value, next)
 	case *Record:
 		if v.Open && len(v.Fields) == 0 && !v.HasMapComponent() {

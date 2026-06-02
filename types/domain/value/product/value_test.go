@@ -30,6 +30,18 @@ func withShape(t typ.Type) AbstractValue {
 	)
 }
 
+func TestFromTypeAdmitsFreshEmptyRecordOnEscapeAxis(t *testing.T) {
+	fresh := FromType(typ.NewFreshEmptyRecord())
+	if !fresh.IsFreshAllocation() {
+		t.Fatalf("FromType(NewFreshEmptyRecord()).Escape = %s, want fresh", fresh.Escape())
+	}
+
+	ordinary := FromType(typ.NewRecord().Build())
+	if ordinary.IsFreshAllocation() {
+		t.Fatalf("ordinary empty record escaped axis = %s, want non-fresh", ordinary.Escape())
+	}
+}
+
 // TestInterningIdentity pins that equal content interns to one canonical node: two
 // independently constructed equal values share a pointer (the fast path).
 func TestInterningIdentity(t *testing.T) {
@@ -153,6 +165,30 @@ func TestProvenanceExcludedFromEqualAndHash(t *testing.T) {
 	}
 	if _, ok := base.Provenance(); ok {
 		t.Fatal("a value without provenance must report none")
+	}
+}
+
+func TestGradualAnyEvidenceParticipatesInEqualAndHash(t *testing.T) {
+	strict := FromType(typ.Any)
+	gradual := GradualAny()
+
+	if Equal(strict, gradual) {
+		t.Fatal("strict declared any and gradual any must be distinct product facts")
+	}
+	if strict.Hash() == gradual.Hash() {
+		t.Fatal("strict declared any and gradual any must hash differently")
+	}
+	if !gradual.IsGradualTop() {
+		t.Fatal("GradualAny must carry gradual-top evidence")
+	}
+	if strict.IsGradualTop() {
+		t.Fatal("FromType(any) must not carry gradual-top evidence")
+	}
+	if got := Join(gradual, gradual); !got.IsGradualTop() {
+		t.Fatal("joining gradual evidence with itself must preserve the proof")
+	}
+	if got := Join(gradual, strict); got.IsGradualTop() {
+		t.Fatal("joining gradual evidence with strict any must drop the proof")
 	}
 }
 
@@ -304,5 +340,27 @@ func TestFromTypePresence(t *testing.T) {
 	}
 	if !presence.Equal(FromType(typ.NewUnion(typ.Number, typ.Nil)).Presence(), presence.Maybe()) {
 		t.Fatal("nil-admitting union must be Maybe")
+	}
+}
+
+func TestPresencePredicates(t *testing.T) {
+	if !FromType(typ.Number).DefinitelyPresent() {
+		t.Fatal("concrete non-nil value must be definitely present")
+	}
+	if !FromType(typ.Nil).DefinitelyAbsent() {
+		t.Fatal("nil value must be definitely absent")
+	}
+	if !PresentDynamic().DefinitelyPresent() {
+		t.Fatal("present dynamic value must expose product-level presence")
+	}
+	if FromType(typ.NewUnion(typ.Number, typ.Nil)).DefinitelyPresent() {
+		t.Fatal("optional value is not definitely present")
+	}
+	if FromType(typ.NewUnion(typ.Number, typ.Nil)).DefinitelyAbsent() {
+		t.Fatal("optional value is not definitely absent")
+	}
+	var zero AbstractValue
+	if zero.DefinitelyPresent() || zero.DefinitelyAbsent() {
+		t.Fatal("zero handle must not report semantic presence facts")
 	}
 }

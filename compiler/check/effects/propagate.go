@@ -6,8 +6,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -78,7 +80,7 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionRe
 	}
 
 	// Compute Terminates from flow reachability.
-	if !terminates && result.FlowSolution != nil && result.Graph.CFG() != nil {
+	if !terminates && conditionProofFacts(result) != nil && result.Graph.CFG() != nil {
 		terminates = TerminatesFromReachability(result)
 	}
 
@@ -162,7 +164,7 @@ func callerParamForCalleeArg(
 func ResolveRefinementBySym(
 	facts api.RefinementFacts,
 	bindings *bind.BindingTable,
-	globalTypes map[string]typ.Type,
+	globalTypes globalenv.TypeOverlay,
 	sym cfg.SymbolID,
 ) *constraint.FunctionRefinement {
 	if sym == 0 {
@@ -173,9 +175,9 @@ func ResolveRefinementBySym(
 			return eff
 		}
 	}
-	if bindings != nil && globalTypes != nil {
+	if bindings != nil && len(globalTypes) > 0 {
 		if name := bindings.Name(sym); name != "" {
-			if t, ok := globalTypes[name]; ok && t != nil {
+			if t, ok := globalTypes.Type(name); ok && t != nil {
 				return EffectFromType(t)
 			}
 		}
@@ -186,21 +188,39 @@ func ResolveRefinementBySym(
 // TerminatesFromReachability determines if a function never returns normally
 // by checking reachability of all return and exit points via flow analysis.
 func TerminatesFromReachability(result *api.FuncResult) bool {
-	if result == nil || result.FlowSolution == nil || !result.Evidence.NormalExit.Valid {
+	proofs := conditionProofFacts(result)
+	if result == nil || proofs == nil || !result.Evidence.NormalExit.Valid {
 		return false
 	}
 
 	// Check if any return node is reachable.
 	for _, ret := range result.Evidence.Returns {
-		cond := result.FlowSolution.ConditionAt(ret.Point)
+		cond := proofs.ConditionAt(ret.Point)
 		if !cond.IsFalse() {
 			return false
 		}
 	}
 
 	// Check if exit node is reachable.
-	exitCond := result.FlowSolution.ConditionAt(result.Evidence.NormalExit.Point)
+	exitCond := proofs.ConditionAt(result.Evidence.NormalExit.Point)
 	return exitCond.IsFalse()
+}
+
+func conditionProofFacts(result *api.FuncResult) flow.ConditionProofFacts {
+	if result == nil {
+		return nil
+	}
+	if result.Facts != nil {
+		if proofs, ok := result.Facts.(flow.ConditionProofFacts); ok {
+			return proofs
+		}
+	}
+	if flowOps := result.SolvedFlow(); flowOps != nil {
+		if proofs, ok := flowOps.(flow.ConditionProofFacts); ok {
+			return proofs
+		}
+	}
+	return nil
 }
 
 // EffectFromType extracts FunctionRefinement from a function type's declared effect annotations.

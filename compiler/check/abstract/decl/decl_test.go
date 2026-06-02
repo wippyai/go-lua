@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/core"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/flow"
@@ -135,7 +136,7 @@ func TestExtractDeclaredTypes_NilGraph(t *testing.T) {
 
 func TestExtractDeclaredTypes_EmptyGlobals(t *testing.T) {
 	fc := &core.FlowContext{
-		Globals: make(map[string]typ.Type),
+		Globals: globalenv.TypeOverlayFromMap(map[string]typ.Type{"": typ.String}),
 	}
 	inputs := &flow.Inputs{
 		DeclaredTypes: make(map[cfg.SymbolID]typ.Type),

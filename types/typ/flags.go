@@ -161,6 +161,8 @@ func knownContainsAny(t Type) bool {
 		return n.containsAny
 	case *Map:
 		return n.containsAny
+	case *ReadonlyMap:
+		return n.containsAny
 	case *Tuple:
 		return n.containsAny
 	case *Function:
@@ -215,6 +217,8 @@ func knownContainsNever(t Type) bool {
 		return n.containsNever
 	case *Map:
 		return n.containsNever
+	case *ReadonlyMap:
+		return n.containsNever
 	case *Tuple:
 		return n.containsNever
 	case *Function:
@@ -268,6 +272,8 @@ func knownContainsTypeParam(t Type) bool {
 		return n.containsTypeParam
 	case *Map:
 		return n.containsTypeParam
+	case *ReadonlyMap:
+		return n.containsTypeParam
 	case *Tuple:
 		return n.containsTypeParam
 	case *Function:
@@ -319,6 +325,8 @@ func knownContainsInstantiated(t Type) bool {
 		return n.containsInstantiated
 	case *Map:
 		return n.containsInstantiated
+	case *ReadonlyMap:
+		return n.containsInstantiated
 	case *Tuple:
 		return n.containsInstantiated
 	case *Function:
@@ -366,6 +374,8 @@ func knownContainsRecursive(t Type) bool {
 	case *Array:
 		return n.containsRecursive
 	case *Map:
+		return n.containsRecursive
+	case *ReadonlyMap:
 		return n.containsRecursive
 	case *Tuple:
 		return n.containsRecursive
@@ -417,6 +427,8 @@ func knownContainsOpenRecursive(t Type) bool {
 	case *Array:
 		return n.containsOpenRecursive
 	case *Map:
+		return n.containsOpenRecursive
+	case *ReadonlyMap:
 		return n.containsOpenRecursive
 	case *Tuple:
 		return n.containsOpenRecursive

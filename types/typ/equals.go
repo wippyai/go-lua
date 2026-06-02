@@ -145,9 +145,16 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 		return ok &&
 			typeEqualsGuard(va.Key, vb.Key, next, seen) &&
 			typeEqualsGuard(va.Value, vb.Value, next, seen)
+	case *ReadonlyMap:
+		vb, ok := b.(*ReadonlyMap)
+		return ok &&
+			typeEqualsGuard(va.Key, vb.Key, next, seen) &&
+			typeEqualsGuard(va.Value, vb.Value, next, seen)
 	case *Record:
 		vb, ok := b.(*Record)
-		if !ok || va.Open != vb.Open || va.Fresh != vb.Fresh || len(va.Fields) != len(vb.Fields) {
+		if !ok || va.Open != vb.Open || va.Fresh != vb.Fresh ||
+			len(va.Fields) != len(vb.Fields) ||
+			len(va.StaticMembers) != len(vb.StaticMembers) {
 			return false
 		}
 		for i, f := range va.Fields {
@@ -156,6 +163,16 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 				return false
 			}
 			if !typeEqualsGuard(f.Type, fb.Type, next, seen) {
+				return false
+			}
+		}
+		for i, m := range va.StaticMembers {
+			mb := vb.StaticMembers[i]
+			if m.Kind != mb.Kind || m.Name != mb.Name || m.Index != mb.Index ||
+				m.Optional != mb.Optional || m.Readonly != mb.Readonly {
+				return false
+			}
+			if !typeEqualsGuard(m.Type, mb.Type, next, seen) {
 				return false
 			}
 		}

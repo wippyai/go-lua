@@ -20,8 +20,9 @@ func TestExtractAssignTarget(t *testing.T) {
 
 	t.Run("field", func(t *testing.T) {
 		expr := &ast.AttrGetExpr{
-			Object: &ast.IdentExpr{Value: "obj"},
-			Key:    &ast.StringExpr{Value: "prop"},
+			Object:    &ast.IdentExpr{Value: "obj"},
+			Key:       &ast.StringExpr{Value: "prop"},
+			KeySyntax: ast.AttrKeyDot,
 		}
 		target := ExtractAssignTarget(expr)
 		if target.Kind != TargetField {
@@ -32,6 +33,21 @@ func TestExtractAssignTarget(t *testing.T) {
 		}
 		if len(target.FieldPath) != 1 || target.FieldPath[0] != "prop" {
 			t.Errorf("FieldPath should be [prop], got %v", target.FieldPath)
+		}
+	})
+
+	t.Run("bracket string index", func(t *testing.T) {
+		expr := &ast.AttrGetExpr{
+			Object:    &ast.IdentExpr{Value: "obj"},
+			Key:       &ast.StringExpr{Value: "prop"},
+			KeySyntax: ast.AttrKeyIndex,
+		}
+		target := ExtractAssignTarget(expr)
+		if target.Kind != TargetIndex {
+			t.Error("Should be TargetIndex for bracket string key")
+		}
+		if target.Base != expr.Object || target.Key != expr.Key {
+			t.Error("TargetIndex should preserve base and key expressions")
 		}
 	})
 

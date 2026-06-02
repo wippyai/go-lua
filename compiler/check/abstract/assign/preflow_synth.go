@@ -337,18 +337,49 @@ func (s *preflowOverlaySynthesizer) attrRead(attr *ast.AttrGetExpr, p cfg.Point)
 	if typ.IsAbsentOrUnknown(objType) {
 		return nil
 	}
-	switch key := attr.Key.(type) {
-	case *ast.StringExpr:
-		if ft, ok := s.typeOps.Field(s.ctx, objType, key.Value); ok && !typ.IsAbsentOrUnknown(ft) {
-			return s.reconcileFieldAgainstDeclaredObject(attr.Object, key.Value, ft, p)
+	if seg, ok := pathseg.StaticAttrSegment(attr); ok {
+		switch seg.Kind {
+		case constraint.SegmentField:
+			if ft, ok := s.staticAttrReadType(objType, seg); ok && !typ.IsAbsentOrUnknown(ft) {
+				return s.reconcileFieldAgainstDeclaredObject(attr.Object, seg.Name, ft, p)
+			}
+		case constraint.SegmentIndexString, constraint.SegmentIndexInt:
+			if it, ok := s.staticAttrReadType(objType, seg); ok && !typ.IsAbsentOrUnknown(it) {
+				return it
+			}
 		}
-		if it, ok := s.typeOps.Index(s.ctx, objType, typ.LiteralString(key.Value)); ok && !typ.IsAbsentOrUnknown(it) {
-			return it
-		}
-	default:
-		return s.dynamicAttrRead(attr, objType, p)
+		return nil
 	}
-	return nil
+	return s.dynamicAttrRead(attr, objType, p)
+}
+
+func (s *preflowOverlaySynthesizer) staticAttrReadType(objType typ.Type, seg constraint.Segment) (typ.Type, bool) {
+	return staticAttrReadType(s.ctx, s.typeOps, objType, seg)
+}
+
+func staticAttrReadType(ctx *db.QueryContext, typeOps core.TypeOps, objType typ.Type, seg constraint.Segment) (typ.Type, bool) {
+	if typeOps == nil || typ.IsAbsentOrUnknown(objType) {
+		return nil, false
+	}
+	switch seg.Kind {
+	case constraint.SegmentField:
+		if seg.Name == "" {
+			return nil, false
+		}
+		if ft, ok := typeOps.Field(ctx, objType, seg.Name); ok && !typ.IsAbsentOrUnknown(ft) {
+			return ft, true
+		}
+		return typeOps.Index(ctx, objType, typ.LiteralString(seg.Name))
+	case constraint.SegmentIndexString:
+		return typeOps.Index(ctx, objType, typ.LiteralString(seg.Name))
+	case constraint.SegmentIndexInt:
+		if seg.Index < 1 {
+			return nil, false
+		}
+		return typeOps.Index(ctx, objType, typ.LiteralInt(int64(seg.Index)))
+	default:
+		return nil, false
+	}
 }
 
 // reconcileFieldAgainstDeclaredObject restores declared optionality on a
@@ -397,18 +428,12 @@ func (s *preflowOverlaySynthesizer) declaredExprType(expr ast.Expr, p cfg.Point)
 		if objDeclared == nil {
 			return nil
 		}
-		seg, ok := pathseg.StaticAttrKeySegment(e.Key)
+		seg, ok := pathseg.StaticAttrSegment(e)
 		if !ok {
 			return nil
 		}
-		switch seg.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			if ft, ok := s.typeOps.Field(s.ctx, objDeclared, seg.Name); ok {
-				return ft
-			}
-			if it, ok := s.typeOps.Index(s.ctx, objDeclared, typ.LiteralString(seg.Name)); ok {
-				return it
-			}
+		if t, ok := s.staticAttrReadType(objDeclared, seg); ok {
+			return t
 		}
 	}
 	return nil
@@ -576,15 +601,11 @@ func declaredAttrReadType(
 	if typ.IsAbsentOrUnknown(objType) {
 		return nil
 	}
-	switch key := attr.Key.(type) {
-	case *ast.StringExpr:
-		if ft, ok := typeOps.Field(callCtx, objType, key.Value); ok {
-			return ft
+	if seg, ok := pathseg.StaticAttrSegment(attr); ok {
+		if t, ok := staticAttrReadType(callCtx, typeOps, objType, seg); ok {
+			return t
 		}
-		if it, ok := typeOps.Index(callCtx, objType, typ.LiteralString(key.Value)); ok {
-			return it
-		}
-	default:
+	} else {
 		keyType := synth(attr.Key, p)
 		if !typ.IsAbsentOrUnknown(keyType) {
 			if it, ok := typeOps.Index(callCtx, objType, keyType); ok {

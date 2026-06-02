@@ -53,7 +53,7 @@ type DifferentialResult struct {
 // difference in the diff reflects only the facts the passes read — the divergence
 // the harness is built to measure — not a difference in the diagnostic layer.
 func Differential(source, name string, opts ...Option) DifferentialResult {
-	legacy := runFlow(source, name, nil, opts)
+	legacy := runFlow(source, name, []check.Option{check.WithLegacyFlow()}, opts)
 	canonical := runFlow(source, name, []check.Option{check.WithCanonicalFlow()}, opts)
 
 	legacyKeys := indexByKey(legacy)

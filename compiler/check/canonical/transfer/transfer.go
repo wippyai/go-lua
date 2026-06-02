@@ -39,18 +39,30 @@ package transfer
 
 import (
 	"math"
-	"os"
+	"sort"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/literal"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
+	canonicalplace "github.com/wippyai/go-lua/compiler/check/canonical/place"
+	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/guard"
+	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
+	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	domainpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/numeric"
+	"github.com/wippyai/go-lua/types/flow/pathkey"
+	"github.com/wippyai/go-lua/types/flow/propagate"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -69,7 +81,7 @@ import (
 // (x ~= nil, type(x) == k, x.kind == "tag") per branch edge via NarrowEdge
 // (narrow.go).
 var DeferredNodeKinds = []string{
-	"container/map mutators other than table.insert (table.remove, channel.send)",
+	"container/map mutators not represented by table.insert or spec-level ContainerElementUnion (table.remove)",
 	"generic-for iteration variable element typing",
 	"method-call receiver narrowing (unannotated self) and OnReturn argument refinement",
 	"logical-op (and/or) value flow and field-default (x.f or d) patterns",
@@ -101,6 +113,15 @@ type FuncTyper interface {
 	MethodFuncType(info *cfg.FuncDefInfo) *typ.Function
 }
 
+type functionRefProvider interface {
+	FuncRef(fn *ast.FunctionExpr) (flow.FunctionRef, bool)
+	MethodFuncRef(info *cfg.FuncDefInfo) (flow.FunctionRef, bool)
+}
+
+type closureCaptureProvider interface {
+	CapturedSymbols(ref flow.FunctionRef) []cfg.SymbolID
+}
+
 // CallTyper types a call or method-call expression's Lua return vector. It is the
 // transfer's seam to the legacy call-typing machinery (ops.NewCallPipeline): the
 // driver implements it by resolving the callee/receiver type (from the module's
@@ -118,7 +139,7 @@ type FuncTyper interface {
 // value-domain unknown for an expression the transfer does not determine, so the
 // driver falls back to its module-wide signatures/globals.
 type CallTyper interface {
-	CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type) ([]typ.Type, bool)
+	CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) ([]typ.Type, bool)
 	// IterVars types a generic-for loop's iteration variables from the loop's
 	// iterator expression (`for i, v in ipairs(arr)`): it resolves the iterator
 	// function's iteration effect (indexed/keyed) and the iterated container's
@@ -134,16 +155,17 @@ type CallTyper interface {
 	// variable is provably a key of that source container. A non-keyed iterator
 	// (ipairs-style indexed, or an unrecognized form) yields false.
 	KeyedIterSource(iter *ast.FuncCallExpr) (ast.Expr, bool)
-	// IndexedIterKeyProvenance reports whether iter is an indexed (ipairs-style)
-	// iteration over an array whose elements are provably keys of a container, and if
-	// so returns that container's path. It holds when the iterated array is the
-	// single-assignment result of a call to a structurally recognized keys-collector
-	// (a function that returns the keys of one of its parameters): each value iterated
-	// out of that array is a key of the actual argument the caller passed for that
-	// parameter. The transfer conjoins KeyOf(container, valueVar) into the loop body,
-	// so a `container[valueVar]` read inside is present. A source that is not such a
-	// keys-collector result yields false, so its read stays optional.
-	IndexedIterKeyProvenance(iter *ast.FuncCallExpr) (constraint.Path, bool)
+	// IndexedIterSource reports the live source array path for an indexed
+	// (ipairs-style) iteration. Transfer uses it to read point-sensitive
+	// key-array provenance from PointState.KeyPresence; the proof itself is not
+	// recomputed here.
+	IndexedIterSource(iter *ast.FuncCallExpr) (constraint.Path, bool)
+	// KeysCollectorContainer reports whether call's return slot retIndex is the
+	// keys array returned by a structurally recognized keys-collector, and if so
+	// returns the runtime container whose keys it holds. Transfer seeds this as live
+	// product-state provenance on the assigned array; indexed iteration consumes
+	// only the live fact after intervening writes have had a chance to kill it.
+	KeysCollectorContainer(call *cfg.CallInfo, retIndex int) (constraint.Path, bool)
 	// ParamNarrows resolves the callee's parameter-narrowing effects: the
 	// presence/truthy refinements the callee's body proves about its parameters on
 	// every normal return (a wrapper around assert / `if x == nil then error()`).
@@ -151,13 +173,12 @@ type CallTyper interface {
 	// `y`. A callee with no such effect, or one that does not resolve to a module
 	// function, yields none.
 	ParamNarrows(call *ast.FuncCallExpr) []ParamNarrow
-	// IsNoReturn reports whether call's callee is a module function that never
-	// returns normally (its body always raises — every exit path ends in error() or
-	// a call to another no-return function). A statement call to such a function
-	// terminates the live flow, exactly as the builtin error() does, so its
-	// continuation is unreachable. A callee that does return, or one that does not
-	// resolve to a module function, yields false.
-	IsNoReturn(call *ast.FuncCallExpr) bool
+	// IsNoReturn reports whether call's selected callees are proven never to return
+	// normally (their bodies always raise — every exit path ends in error() or a
+	// call to another no-return function). A statement call terminates the live
+	// flow only when all selected product/static targets are no-return; mixed or
+	// unresolved targets keep the continuation reachable.
+	IsNoReturn(call *ast.FuncCallExpr, ctx ProductCallContext) bool
 	// TypeCastTarget reports whether call is a type-cast/assertion call `T(arg)` (a
 	// type name used as a callable constructor, recognized by the same CallableType
 	// effect the call-return typing uses), and if so returns the asserted type T. A
@@ -167,61 +188,194 @@ type CallTyper interface {
 	TypeCastTarget(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) (typ.Type, bool)
 }
 
-// TypeCheckBind records the value-narrowing a `local val, err = T:is(x)` type-check
-// assignment establishes: the symbols that the type guard proves carry the checked
-// type T when the error result is nil (the `err == nil` / `val ~= nil` edge). It is
-// the canonical counterpart of the legacy PredicateLink the assignment point-emitter
-// builds for a Type:is(...) call: on the success edge the value symbols narrow to T,
-// on the failure edge the error symbol is the diagnostic carrier.
-//
-// ErrSym is the assignment's error target (the second return of T:is). NarrowSyms
-// are the symbols proved to be T on success (the checked argument and, when bound,
-// the value target). Type is the resolved checked type T.
-type TypeCheckBind struct {
-	ErrSym     cfg.SymbolID
-	NarrowSyms []cfg.SymbolID
-	Type       typ.Type
+type IterVarProjector interface {
+	IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (iteration.VarProjection, bool)
 }
 
-// SiblingNilBind records the value/error correlation a multi-return assignment
-// `local v, err = f()` establishes when the callee proves the Lua `(value, err)`
-// inverse pattern (the body returns `(value, nil)` on success and `(nil, error)`
-// on failure, or only `(value, nil)` with an optional value slot). On the edge a
-// branch proves err nil, the correlated value symbols are non-nil, so they narrow
-// by stripping nil from their flow value: a surviving `local v, err = f(); if err
-// ~= nil then return end` then reads v as its non-optional type.
-//
-// ErrSym is the assignment's error target (the correlated error return). ValueSyms
-// are the value targets the same call's inverse-correlated slot binds; on the
-// err-nil edge each narrows by NarrowPresent over its current value, recovering the
-// non-nil type without fabricating a fixed type the callee did not return.
-type SiblingNilBind struct {
-	ErrSym    cfg.SymbolID
-	ValueSyms []cfg.SymbolID
+// ProductCallTyper is the product-carrier call-return seam. A CallTyper may
+// implement it when it can preserve axes that are lost by projecting through
+// typ.Type, such as the gradual-top evidence axis. The older CallReturns seam
+// remains the compatibility fallback for type-only call facts.
+type ProductCallTyper interface {
+	CallReturnValues(call *ast.FuncCallExpr, ctx ProductCallContext) ([]product.AbstractValue, bool)
 }
 
-// PredicateFact records a local function whose body returns a builtin
-// `type(param) == kind` predicate on one of its parameters. It is the canonical
-// counterpart of the legacy LocalTypePredicateEvidence the ConditionExtractor
-// consumes: calling such a function on an argument proves, on the true edge, that
-// the argument has the kind the predicate tests.
-//
-// ParamIndex is the position of the tested parameter; Kind is the Lua typeof name
-// it asserts ("number", "string", ...). Only the true edge narrows: the predicate
-// returns a conjunction of conditions, so a false result proves nothing about the
-// argument (the one-sided guard, matching the legacy PredicateLink direction).
-type PredicateFact struct {
-	ParamIndex int
-	Kind       string
+type CallArgDemandProvider interface {
+	CallArgDemands(call *ast.FuncCallExpr, ctx ProductCallContext) []callobligation.Obligation
 }
 
-// PredicateGuard records an assigned predicate result `local ok = P(arg)` where P
-// is a recorded PredicateFact and arg resolves to a symbol. On the edge a later
-// branch proves ok truthy, the argument symbol narrows to the predicate's kind,
-// matching the direct-call form `if P(arg)`.
-type PredicateGuard struct {
-	NarrowSym cfg.SymbolID
-	Kind      string
+// ProductCallContext is the product-domain evidence attached to one concrete call
+// site. It is the canonical internal context for product-aware call providers:
+// argument values, a provider-safe expression projection, and the live
+// capture/function-ref state all move together instead of each provider inventing
+// its own parallel signature.
+type ProductCallContext struct {
+	ArgValues        []product.AbstractValue
+	RuntimeArgValues []product.AbstractValue
+	PendingInput     bool
+	SelfType         typ.Type
+	ExprValue        func(ast.Expr) (product.AbstractValue, bool)
+	Cells            flow.CaptureCells
+	FunctionRefs     flow.FunctionRefs
+	ClosureRefs      flow.ClosureRefs
+}
+
+// ExprType is the compatibility projection for legacy/provider code that still
+// needs a typ.Type resolver. It is an egress from the product context, not a
+// separate source of call evidence.
+func (c ProductCallContext) ExprType(e ast.Expr) typ.Type {
+	if c.ExprValue == nil {
+		return typ.Unknown
+	}
+	av, ok := c.ExprValue(e)
+	if !ok || av.IsZero() {
+		return typ.Unknown
+	}
+	if pt := av.ProjectValue(); pt != nil && !typ.IsUnknown(pt) {
+		return pt
+	}
+	return typ.Unknown
+}
+
+// ArgTypes projects product argument values to the type-only call-typer seam.
+func (c ProductCallContext) ArgTypes() []typ.Type {
+	return product.ProjectValuesOrUnknown(c.ArgValues)
+}
+
+// RuntimeArgValueAt returns the product value for a runtime parameter index.
+// Method calls include receiver/self at slot 0; direct calls use positional args.
+// Negative indices address from the runtime tail, matching callsite.RuntimeArgAt.
+func (c ProductCallContext) RuntimeArgValueAt(paramIdx int) (product.AbstractValue, bool) {
+	if len(c.RuntimeArgValues) == 0 {
+		return product.AbstractValue{}, false
+	}
+	idx := paramIdx
+	if idx < 0 {
+		idx = len(c.RuntimeArgValues) + idx
+	}
+	if idx < 0 || idx >= len(c.RuntimeArgValues) {
+		return product.AbstractValue{}, false
+	}
+	av := c.RuntimeArgValues[idx]
+	if av.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return av, true
+}
+
+// ForCall reprojects this context's expression-value view onto another call
+// expression. It is used when a provider must inspect a nested call while staying
+// on the product call path instead of falling back to a parallel type-only
+// resolver.
+func (c ProductCallContext) ForCall(call *ast.FuncCallExpr) ProductCallContext {
+	next := c
+	next.ArgValues = nil
+	next.RuntimeArgValues = nil
+	next.SelfType = nil
+	if call == nil || c.ExprValue == nil {
+		return next
+	}
+	for _, arg := range call.Args {
+		av, _ := c.ExprValue(arg)
+		next.ArgValues = append(next.ArgValues, av)
+	}
+	if call.Method != "" {
+		receiver, _ := c.ExprValue(call.Receiver)
+		next.RuntimeArgValues = append(next.RuntimeArgValues, receiver)
+	}
+	next.RuntimeArgValues = append(next.RuntimeArgValues, next.ArgValues...)
+	if call.Method != "" && len(next.RuntimeArgValues) > 0 && !next.RuntimeArgValues[0].IsZero() {
+		if selfType := product.ProjectValueOrUnknown(next.RuntimeArgValues[0]); callobligation.InformativeType(selfType) {
+			next.SelfType = selfType
+		}
+	}
+	return next
+}
+
+type returnRelationProvider interface {
+	ReturnRelations(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) flow.ReturnRelations
+}
+
+type productReturnRelationProvider interface {
+	ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.ReturnRelations
+}
+
+type callReturnFunctionRefsProvider interface {
+	CallReturnFunctionRefs(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) []flow.FunctionRefs
+}
+
+type productCallReturnFunctionRefsProvider interface {
+	CallReturnFunctionRefsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) []flow.FunctionRefs
+}
+
+type productCallReturnClosureRefsProvider interface {
+	CallReturnClosureRefsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) []flow.ClosureRefs
+}
+
+type cellEffectProvider interface {
+	CellEffects(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) flow.CaptureEffects
+}
+
+type productCellEffectProvider interface {
+	CellEffectsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.CaptureEffects
+}
+
+type productReceiverEffectProvider interface {
+	ReceiverEffectsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.ReceiverEffects
+}
+
+type containerElementUnionProvider interface {
+	ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) []effect.ContainerElementUnion
+}
+
+type functionValueProvider interface {
+	FunctionValueByRef(ref flow.FunctionRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs) (typ.Type, bool)
+}
+
+type functionValueAtPathProvider interface {
+	FunctionValueAtPath(path constraint.Path, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs) (typ.Type, bool)
+}
+
+// Config is immutable construction-time configuration for a Transfer. These are
+// analysis inputs/resolvers, not mutable post-build state.
+type Config struct {
+	// Ops resolves arithmetic/relational operator result types. Nil falls back to
+	// the structural default (arithmetic on numbers stays numeric).
+	Ops OperatorResolver
+	// FuncTyper resolves a function literal's declared signature, so a
+	// function-valued table-literal field types as a callable. Nil leaves such a
+	// field untyped (the sound carry-forward).
+	FuncTyper FuncTyper
+	// CallTyper types a call/method-call expression's return vector through the
+	// legacy call pipeline. Nil leaves a call result untyped (the sound
+	// carry-forward), so a slot assigned from a call drops to the value-domain Top.
+	CallTyper CallTyper
+	// TypeChecks are type-check value-narrowing binds precomputed from graph
+	// assignments such as `local val, err = T:is(x)`.
+	TypeChecks []guard.TypeCheckBind
+	// SelfType, when non-nil, is the receiver class of a method body's implicit
+	// `self` (function T:m()): it seeds self's entry value.
+	SelfType typ.Type
+	// CastType resolves the annotated type of an `expr :: T` cast against the
+	// function's base scope.
+	CastType func(expr ast.TypeExpr) typ.Type
+	// TypeNameValue resolves an identifier that names a type used as a value to the
+	// reified Meta of that type.
+	TypeNameValue func(name string) typ.Type
+	// MethodReceivers are immutable receiver/prototype topology facts for this
+	// function. They seed runtime self through the PrototypeSelf product axis.
+	MethodReceivers []metatable.MethodReceiver
+	// SetMetatableSites are this function's static setmetatable construction sites.
+	SetMetatableSites []metatable.SetMetatableSite
+	// MetatableIndexes are module-wide static metatable -> prototype facts.
+	MetatableIndexes []metatable.Index
+	// PrototypeMethods are module-wide static prototype method identities. Transfer
+	// publishes them into FunctionRefs when an instance is linked to a prototype.
+	PrototypeMethods []metatable.PrototypeMethod
+	// PredicateFacts are module-local type-predicate function facts.
+	PredicateFacts []guard.PredicateFunction
+	// PredicateGuards are this function's assigned predicate-result facts.
+	PredicateGuards []guard.PredicateResult
 }
 
 // Transfer is the canonical per-node transfer. It is stateless across points:
@@ -247,21 +401,16 @@ type Transfer struct {
 	// value narrowing the guard proves on the err == nil edge. NarrowEdge reads it
 	// so a branch testing the error symbol narrows the checked value to the checked
 	// type.
-	typeCheckByErr map[cfg.SymbolID]TypeCheckBind
-	// siblingNilByErr maps a multi-return assignment's error-result symbol to the
-	// value symbols proven non-nil when that error is nil. NarrowEdge reads it so a
-	// branch testing the error symbol strips nil from the correlated value symbols on
-	// the err-nil edge.
-	siblingNilByErr map[cfg.SymbolID]SiblingNilBind
+	typeCheckByErr map[cfg.SymbolID]guard.TypeCheckBind
 	// predicateByFunc maps a local type-predicate function's symbol to the parameter
 	// and kind it tests. NarrowEdge reads it so a branch `if P(arg)` narrows arg to
 	// the predicate's kind on the true edge.
-	predicateByFunc map[cfg.SymbolID]PredicateFact
+	predicateByFunc map[cfg.SymbolID]guard.PredicateFunction
 	// predicateByCondSym maps an assigned predicate result `local ok = P(arg)` keyed
 	// by the ok symbol to the argument narrowing it proves. NarrowEdge reads it so a
 	// branch `if ok` narrows the argument on the true edge, the assigned counterpart
 	// of the direct-call form.
-	predicateByCondSym map[cfg.SymbolID]PredicateGuard
+	predicateByCondSym map[cfg.SymbolID]guard.PredicateResult
 	// unannotatedParam marks a parameter symbol with no declared type. A read of one
 	// the body does not pin resolves to gradual `any` (a Lua parameter without an
 	// annotation is dynamic, usable in every operation), the same default the
@@ -284,20 +433,10 @@ type Transfer struct {
 	// declared types into slot order through the graph's ParamSlots so seedEntry pins
 	// each parameter slot to its own annotation rather than the previous slot's.
 	declaredParamBySlot map[int]typ.Type
-	// inferredParamBySlot maps an UNANNOTATED parameter SLOT to the type inferred for
-	// it from the module's call sites. seedEntry seeds an unannotated parameter from
-	// it so the body sees the call-site type rather than the gradual any. A declared
-	// parameter is unaffected (its annotation is authoritative).
-	inferredParamBySlot map[int]typ.Type
-	// captureType resolves the type of a free variable this body reads from an
-	// enclosing scope (an upvalue / module-level capture) — a symbol with no Env
-	// value here, that this function neither declares nor takes as a parameter. The
-	// driver implements it by reading the capture's module-wide converged type
-	// (the value its defining scope holds), so a body read of `renderer` (a local
-	// of the enclosing builder captured into a returned closure) sees that type
-	// rather than the value-domain unknown. Nil leaves a capture unresolved (the
-	// sound carry-forward: a genuinely-unresolved capture stays unknown).
-	captureType func(sym cfg.SymbolID) (typ.Type, bool)
+	// symbolStorage maps lexical symbols to the PointState storage axis they use
+	// (Env, owner cell, or captured cell). It is the transfer-owned compiler policy
+	// above the flow package's primitive PointFacts/PointWriter mechanics.
+	symbolStorage symbolStoragePolicy
 	// castType resolves the annotated type of an `expr :: T` cast against the
 	// function's base scope. A `::` cast asserts the operand has type T, so the
 	// expression's value is T regardless of the operand's inferred type (the same
@@ -314,30 +453,47 @@ type Transfer struct {
 	// real value variable is never mistaken for a type value. Nil leaves a bare
 	// identifier resolved only by its Env value (the sound carry-forward).
 	typeNameValue func(name string) typ.Type
+	// prototypeReceiverSym is the prototype symbol this method body's `self`
+	// belongs to. setMetatableProtoByPoint records construction sites in this
+	// function that publish runtime self values for a prototype.
+	prototypeReceiverSym     cfg.SymbolID
+	prototypeSelfSlot        int
+	prototypeSelfSymbol      cfg.SymbolID
+	prototypeMethods         []metatable.PrototypeMethod
+	metatablePrototypeBySym  map[cfg.SymbolID]cfg.SymbolID
+	setMetatableProtoByPoint map[cfg.Point]cfg.SymbolID
+	conditionProjector       *propagate.ConditionProjector
+	// loopAppendLengthsByPoint indexes passive loop-summary facts by the point
+	// where the fact first holds. Transfer applies them before interpreting the
+	// point's own node so ordinary writes can kill stale proofs.
+	loopAppendLengthsByPoint map[cfg.Point][]input.LoopAppendLengthFact
 }
 
-// New builds the transfer for the given canonical inputs. ops, funcTyper, and
-// callTyper may be nil. typeChecks are the type-check value-narrowing binds the
-// caller precomputed from the graph's `local val, err = T:is(x)` assignments (nil
-// for none). siblingNils are the (value, err) inverse-correlation binds the caller
-// precomputed from the graph's `local v, err = f()` assignments whose callee proves
-// the Lua error-return pattern (nil for none). declared maps an annotated symbol (parameter or annotated local) to
-// its declared type, so edge narrowing refines the declared union rather than the
-// precise constructor value the Env seeds; nil leaves narrowing on the Env value.
-// selfType, when non-nil, is the receiver class of a method body's implicit `self`
-// (function T:m()): it seeds the self parameter's entry value so self.field reads
-// track the receiver record rather than collapsing to unknown.
-func New(in input.Inputs, ops OperatorResolver, funcTyper FuncTyper, callTyper CallTyper, typeChecks []TypeCheckBind, siblingNils []SiblingNilBind, declared map[cfg.SymbolID]typ.Type, selfType typ.Type) *Transfer {
-	t := &Transfer{in: in, ops: ops, funcTyper: funcTyper, callTyper: callTyper, paramBySym: make(map[cfg.SymbolID]int), declaredTypes: declared}
+// New builds the transfer for the given canonical inputs. in.Scope.DeclaredTypes
+// maps annotated symbols (parameters, globals, or annotated locals) to their
+// declared type, so edge narrowing refines the declared union rather than the
+// precise constructor value the Env seeds; absence leaves narrowing on the Env
+// value.
+func New(in input.Inputs, config Config) *Transfer {
+	t := &Transfer{
+		in:            in,
+		ops:           config.Ops,
+		funcTyper:     config.FuncTyper,
+		callTyper:     config.CallTyper,
+		paramBySym:    make(map[cfg.SymbolID]int),
+		declaredTypes: in.Scope.DeclaredTypes,
+		castType:      config.CastType,
+		typeNameValue: config.TypeNameValue,
+	}
 	t.declaredParamBySlot = declaredParamBySlot(in)
 	// A method body's implicit `self` occupies slot 0 with no source annotation, so the
 	// slot map has no entry for it; seed it from the resolved receiver class so the
 	// entry state pins self to its record.
-	if selfType != nil && len(in.Scope.ParamSymbols) > 0 {
+	if config.SelfType != nil && len(in.Scope.ParamSymbols) > 0 {
 		if t.declaredParamBySlot == nil {
 			t.declaredParamBySlot = make(map[int]typ.Type, 1)
 		}
-		t.declaredParamBySlot[0] = selfType
+		t.declaredParamBySlot[0] = config.SelfType
 	}
 	for i, sym := range in.Scope.ParamSymbols {
 		if sym == 0 {
@@ -351,47 +507,87 @@ func New(in input.Inputs, ops OperatorResolver, funcTyper FuncTyper, callTyper C
 			t.unannotatedParam[sym] = true
 		}
 	}
-	for _, b := range typeChecks {
+	t.symbolStorage = newSymbolStoragePolicy(in.Graph, t.paramBySym, in.Scope.CellSymbols)
+	for _, b := range config.TypeChecks {
 		if b.ErrSym == 0 || b.Type == nil || len(b.NarrowSyms) == 0 {
 			continue
 		}
 		if t.typeCheckByErr == nil {
-			t.typeCheckByErr = make(map[cfg.SymbolID]TypeCheckBind, len(typeChecks))
+			t.typeCheckByErr = make(map[cfg.SymbolID]guard.TypeCheckBind, len(config.TypeChecks))
 		}
 		t.typeCheckByErr[b.ErrSym] = b
 	}
-	for _, b := range siblingNils {
-		if b.ErrSym == 0 || len(b.ValueSyms) == 0 {
-			continue
-		}
-		if t.siblingNilByErr == nil {
-			t.siblingNilByErr = make(map[cfg.SymbolID]SiblingNilBind, len(siblingNils))
-		}
-		t.siblingNilByErr[b.ErrSym] = b
+	t.installPrototypeReceiverFacts(config.MethodReceivers, config.SetMetatableSites, config.MetatableIndexes, config.PrototypeMethods)
+	t.installPredicateGuards(config.PredicateFacts, config.PredicateGuards)
+	t.loopAppendLengthsByPoint = indexLoopAppendLengthFacts(in.LoopAppendLengths)
+	if in.ConditionDemand != nil {
+		t.conditionProjector = propagate.NewConditionProjector(&propagate.Inputs{
+			Graph:  in.Graph,
+			Demand: in.ConditionDemand,
+		})
 	}
 	return t
 }
 
-// SetInferredParams installs the call-site-inferred types of unannotated parameters
-// after construction. Like SetSiblingNils, the inference needs the call graph
-// resolved (a parameter's type comes from its callers' argument types), which is
-// after the transfer is built, so the types are injected here.
-func (t *Transfer) SetInferredParams(bySlot map[int]typ.Type) {
-	if len(bySlot) == 0 {
-		t.inferredParamBySlot = nil
+// ConditionProjector supplies the canonical equation builder with the shared
+// condition relevance abstraction for this function. It is derived solely from
+// CFG reads/defs, so it is immutable transfer input rather than mutable solver
+// state.
+func (t *Transfer) ConditionProjector() *propagate.ConditionProjector {
+	if t == nil {
+		return nil
+	}
+	return t.conditionProjector
+}
+
+// installPrototypeReceiverFacts installs immutable receiver/prototype topology
+// facts for this function. The facts are pre-solve identities; transfer uses
+// them to update the PrototypeSelf product axis when source semantics run.
+func (t *Transfer) installPrototypeReceiverFacts(receivers []metatable.MethodReceiver, sites []metatable.SetMetatableSite, metas []metatable.Index, methods []metatable.PrototypeMethod) {
+	t.prototypeReceiverSym = 0
+	t.prototypeSelfSlot = 0
+	t.prototypeSelfSymbol = 0
+	t.prototypeMethods = append([]metatable.PrototypeMethod(nil), methods...)
+	t.metatablePrototypeBySym = nil
+	for _, m := range receivers {
+		if m.PrototypeSym == 0 || m.SelfSlot < 0 || m.SelfSlot >= len(t.in.Scope.ParamSymbols) {
+			continue
+		}
+		sym := t.in.Scope.ParamSymbols[m.SelfSlot]
+		if sym == 0 {
+			continue
+		}
+		t.prototypeReceiverSym = m.PrototypeSym
+		t.prototypeSelfSlot = m.SelfSlot
+		t.prototypeSelfSymbol = sym
+		break
+	}
+	if len(metas) > 0 {
+		t.metatablePrototypeBySym = make(map[cfg.SymbolID]cfg.SymbolID, len(metas))
+		for _, m := range metas {
+			if m.MetatableSym != 0 && m.PrototypeSym != 0 {
+				t.metatablePrototypeBySym[m.MetatableSym] = m.PrototypeSym
+			}
+		}
+	}
+	if len(sites) == 0 {
+		t.setMetatableProtoByPoint = nil
 		return
 	}
-	t.inferredParamBySlot = bySlot
+	t.setMetatableProtoByPoint = make(map[cfg.Point]cfg.SymbolID, len(sites))
+	for _, s := range sites {
+		if s.Point != 0 && s.PrototypeSym != 0 {
+			t.setMetatableProtoByPoint[s.Point] = s.PrototypeSym
+		}
+	}
 }
 
 // EvalExprValue types expr against the converged point state out, returning the
 // AbstractValue the per-node transfer would produce for it and whether it resolves.
 // It is the precise expression typing the intra-function transfer uses (nested table
-// literals, calls, field reads), exposed for a post-convergence reader that needs the
-// same value an in-body evaluation would compute — for instance the interprocedural
-// flow-back of a `table.insert(captured, literal)` element onto the captured
-// container's module-wide type. The parameter-demand callback is a no-op: a
-// post-convergence read records no new contract.
+// literals, calls, field reads), exposed for post-convergence readers. The
+// parameter-demand callback is a no-op: a post-convergence read records no new
+// contract.
 func (t *Transfer) EvalExprValue(out *flow.PointState, expr ast.Expr) (product.AbstractValue, bool) {
 	if out == nil || expr == nil {
 		return product.AbstractValue{}, false
@@ -399,62 +595,40 @@ func (t *Transfer) EvalExprValue(out *flow.PointState, expr ast.Expr) (product.A
 	return t.evalExpr(out, expr, func(int, paramevidence.ParamContract) {})
 }
 
-// SetCaptureResolver installs the free-variable (upvalue / module-capture) type
-// resolver. A nested function reads a captured variable under the same shared
-// symbol id its enclosing scope assigns, but the captured value lives in no Env
-// slot of this body; the resolver supplies the capture's module-wide converged
-// type so the body's reads, the locals it feeds, and the records it builds carry
-// that type rather than collapsing to unknown. Installed after the program is
-// built (the capture type comes from the defining scope's solve, resolved through
-// the same interprocedural query the call graph uses).
-func (t *Transfer) SetCaptureResolver(resolve func(sym cfg.SymbolID) (typ.Type, bool)) {
-	t.captureType = resolve
+// ProductCallContext returns the product-domain call context for a converged
+// point state. It uses the same expression evaluator as the node transfer, but
+// records no new parameter-demand edges because post-convergence readers must not
+// mutate the solved equation.
+func (t *Transfer) ProductCallContext(out *flow.PointState, call *ast.FuncCallExpr) ProductCallContext {
+	return t.productCallContext(out, call, func(int, paramevidence.ParamContract) {})
 }
 
-// SetCastResolver installs the `expr :: T` cast-type resolver: it resolves a
-// cast's syntactic type annotation to its type against the function's base
-// scope. The driver binds it to the same annotation resolver the parameter and
-// declared-local types use, so a cast resolves to the asserted type identically
-// to the synth flow's ResolveType.
-func (t *Transfer) SetCastResolver(resolve func(expr ast.TypeExpr) typ.Type) {
-	t.castType = resolve
-}
-
-// SetTypeNameValueResolver installs the type-name-as-value resolver: it maps a bare
-// identifier naming a `type` (with no shadowing value binding) to the reified Meta of
-// that type. The driver binds it to the base scope's MetaForName, the same rule the
-// synth flow uses, so `M.AppError = AppError` records the type value (carrying the
-// built-in `:is` guard) rather than dropping the field.
-func (t *Transfer) SetTypeNameValueResolver(resolve func(name string) typ.Type) {
-	t.typeNameValue = resolve
-}
-
-// SetSiblingNils installs the (value, err) inverse-correlation binds after
-// construction. The driver computes them in a build phase that runs once the call
-// graph's name resolution is complete (a sibling correlation needs the callee
-// resolved to prove the error-return pattern), which is after the transfer is
-// built, so they are injected here rather than passed to New.
-func (t *Transfer) SetSiblingNils(siblingNils []SiblingNilBind) {
-	t.siblingNilByErr = nil
-	for _, b := range siblingNils {
-		if b.ErrSym == 0 || len(b.ValueSyms) == 0 {
-			continue
-		}
-		if t.siblingNilByErr == nil {
-			t.siblingNilByErr = make(map[cfg.SymbolID]SiblingNilBind, len(siblingNils))
-		}
-		t.siblingNilByErr[b.ErrSym] = b
-	}
-}
-
-// SetPredicateGuards installs the local type-predicate facts (function symbol to
-// tested parameter/kind) and the assigned predicate guards (ok symbol to the
+// installPredicateGuards installs the local type-predicate facts (function symbol
+// to tested parameter/kind) and the assigned predicate guards (ok symbol to the
 // argument narrowing it proves). NarrowEdge reads them so a branch `if P(arg)` or
 // `if ok` (with `local ok = P(arg)`) narrows the predicate argument to its tested
 // kind on the true edge.
-func (t *Transfer) SetPredicateGuards(byFunc map[cfg.SymbolID]PredicateFact, byCondSym map[cfg.SymbolID]PredicateGuard) {
-	t.predicateByFunc = byFunc
-	t.predicateByCondSym = byCondSym
+func (t *Transfer) installPredicateGuards(byFunc []guard.PredicateFunction, byCondSym []guard.PredicateResult) {
+	t.predicateByFunc = nil
+	for _, entry := range byFunc {
+		if entry.FuncSym == 0 || entry.Kind == "" {
+			continue
+		}
+		if t.predicateByFunc == nil {
+			t.predicateByFunc = make(map[cfg.SymbolID]guard.PredicateFunction, len(byFunc))
+		}
+		t.predicateByFunc[entry.FuncSym] = entry
+	}
+	t.predicateByCondSym = nil
+	for _, entry := range byCondSym {
+		if entry.CondSym == 0 || entry.Kind == "" || entry.NarrowSym == 0 {
+			continue
+		}
+		if t.predicateByCondSym == nil {
+			t.predicateByCondSym = make(map[cfg.SymbolID]guard.PredicateResult, len(byCondSym))
+		}
+		t.predicateByCondSym[entry.CondSym] = entry
+	}
 }
 
 // declaredParamBySlot re-keys the source-indexed DeclaredParamTypes into parameter
@@ -490,16 +664,8 @@ func declaredParamBySlot(in input.Inputs) map[int]typ.Type {
 // i-th return expression at a return point. It is distinct from any symbol key
 // (which is "s"+id), so it never collides with a variable's value. The summary
 // projection reads it to recover the typed value of a non-identifier return.
-func ReturnSlotKey(i int) string {
-	return "r" + itoa(uint64(i))
-}
-
-// symKey is the Env key for a symbol: a stable per-function string identity. The
-// CFG binds every variable occurrence to a SymbolID, so keying by symbol is
-// sound and version-free within one function's point states (the per-point Env
-// already carries the flow-sensitive value).
-func symKey(sym cfg.SymbolID) string {
-	return "s" + itoa(uint64(sym))
+func ReturnSlotKey(i int) flow.ValueKey {
+	return flow.ReturnSlotValueKey(i)
 }
 
 // Transfer implements equation.NodeTransfer. It computes the state holding after
@@ -512,7 +678,11 @@ func (t *Transfer) Transfer(
 	entryContracts paramevidence.Contracts,
 	demand func(param int, c paramevidence.ParamContract),
 ) flow.PointState {
-	out := clonePointState(incoming)
+	out := flow.ClonePointState(incoming)
+	// Index-write admissions are point-local transfer proofs, not durable store
+	// state. Clear predecessor proofs before interpreting this node so only writes
+	// performed at p can appear in out[p].
+	out.IndexWrites = flow.IndexWriteAdmissionFactsDomain.Top()
 
 	// At the entry point the assumed contracts ARE the parameter values a caller
 	// supplies: seed each parameter's Env slot from its declared type joined with
@@ -526,11 +696,10 @@ func (t *Transfer) Transfer(
 	// satisfiable empty state — the initial reachable numeric environment that
 	// the forward join propagates and the per-node numeric transfer refines.
 	if p == g.Entry() {
-		if out.Num == nil || out.Num.IsUnsat() {
-			out.Num = numeric.NewState()
-		}
+		t.applyEntryReachabilityEffect(&out, EntryReachabilityEffect{})
 		t.seedEntry(&out, entryContracts)
 	}
+	t.applyLoopAppendLengthFacts(&out, t.loopAppendLengthsByPoint[p])
 
 	switch info := g.Info(p).(type) {
 	case *cfg.AssignInfo:
@@ -538,9 +707,10 @@ func (t *Transfer) Transfer(
 	case *cfg.BranchInfo:
 		t.applyBranch(&out, info, demand)
 	case *cfg.ReturnInfo:
-		t.applyReturn(&out, info, demand)
+		t.applyReturn(&out, p, info, demand)
 	case *cfg.CallInfo:
-		if dead := t.applyCallArgs(&out, info, demand); dead {
+		t.applySetMetatablePrototypeSelf(&out, p, info.Call, demand)
+		if dead := t.applyCallArgs(&out, p, info, demand); dead {
 			// An assert whose condition cannot hold proves the continuation
 			// unreachable; the post-state is the lattice Bottom (UNSAT), so the
 			// successors' in-states drop out as unreachable, exactly as error()
@@ -556,33 +726,81 @@ func (t *Transfer) Transfer(
 	return out
 }
 
-// seedEntry writes each parameter's entry value into Env: the declared type when
-// annotated, refined by any demanded contract (the value a caller must supply).
+// seedEntry writes each parameter's composed entry value through EntrySeedEffect:
+// declared annotation, exact caller entry value, and body-demand contract all
+// meet at the same product-state location.
 func (t *Transfer) seedEntry(out *flow.PointState, contracts paramevidence.Contracts) {
 	for i, sym := range t.in.Scope.ParamSymbols {
 		if sym == 0 {
 			continue
 		}
-		key := symKey(sym)
-		var av product.AbstractValue
+		var effect EntrySeedEffect
+		effect.Symbol = sym
 		if declared, ok := t.declaredParamBySlot[i]; ok && declared != nil {
-			av = product.FromType(declared)
-		} else if inferred, ok := t.inferredParamBySlot[i]; ok && inferred != nil {
-			// An unannotated parameter takes its call-site-inferred type, so the body's
-			// reads and narrowing of it have a concrete base rather than the gradual any.
-			av = product.FromType(inferred)
+			effect.Declared = declared
+		} else if existing, ok := t.symbolValue(out, sym); ok && !existing.IsZero() {
+			// Entry values supplied by the equation graph are already product-domain
+			// facts. Keep them in the same Env/Cells location and let contracts join
+			// below, instead of reading a transfer-local side channel.
+			effect.Entry = existing
 		}
-		if c, ok := contracts[i]; ok {
-			if av.IsZero() {
-				av = c
-			} else {
-				av = product.Domain.Join(av, c)
+		if effect.Declared != nil {
+			if existing, ok := t.symbolValue(out, sym); ok && !existing.IsZero() {
+				effect.Entry = existing
 			}
 		}
-		if av.IsZero() {
+		if c, ok := contracts[i]; ok {
+			effect.Contract = c
+		}
+		t.applyEntrySeedEffect(out, effect)
+	}
+}
+
+// SeedEntryValues writes product-domain entry values for parameters into the
+// same storage the ordinary transfer uses. The equation graph calls this before
+// seedEntry; seedEntry then composes them with declared annotations and inferred
+// body contracts through EntrySeedEffect.
+func (t *Transfer) SeedEntryValues(out *flow.PointState, values map[int]product.AbstractValue) {
+	if out == nil || len(values) == 0 {
+		return
+	}
+	slots := make([]int, 0, len(values))
+	for slot := range values {
+		slots = append(slots, slot)
+	}
+	sort.Ints(slots)
+	for _, slot := range slots {
+		if slot < 0 || slot >= len(t.in.Scope.ParamSymbols) {
 			continue
 		}
-		out.Env[key] = av
+		sym := t.in.Scope.ParamSymbols[slot]
+		av := values[slot]
+		if sym == 0 || av.IsZero() {
+			continue
+		}
+		t.setSymbolValue(out, sym, av, false)
+	}
+}
+
+// SeedEntrySymbolValues writes immutable entry values keyed directly by graph
+// symbol into the same product-state store ordinary transfer reads. The equation
+// graph calls this only at the entry point; local node semantics and widening
+// then own the fact like any other Env/Cells value.
+func (t *Transfer) SeedEntrySymbolValues(out *flow.PointState, values map[cfg.SymbolID]product.AbstractValue) {
+	if out == nil || len(values) == 0 {
+		return
+	}
+	syms := make([]cfg.SymbolID, 0, len(values))
+	for sym := range values {
+		syms = append(syms, sym)
+	}
+	sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
+	for _, sym := range syms {
+		av := values[sym]
+		if sym == 0 || av.IsZero() {
+			continue
+		}
+		t.setSymbolValue(out, sym, av, false)
 	}
 }
 
@@ -611,7 +829,7 @@ func (t *Transfer) applyAssign(
 	// cast's RESULT type (T) is bound to the target through the ordinary call typing.
 	for _, src := range info.Sources {
 		if srcCall, ok := src.(*ast.FuncCallExpr); ok {
-			t.applyTypeCastNarrow(out, srcCall, demand)
+			t.applyTypeCastNarrow(out, p, srcCall, demand)
 		}
 	}
 	// A call source feeding more targets than sources expands to a multi-return
@@ -622,14 +840,24 @@ func (t *Transfer) applyAssign(
 	callReturns := t.callExpansionReturns(out, info, demand)
 	info.EachTargetSource(func(i int, target cfg.AssignTarget, src ast.Expr) {
 		if target.Kind == cfg.TargetField || target.Kind == cfg.TargetIndex {
-			t.applyContainerWrite(out, target, src, demand)
+			t.applyContainerWriteForAssign(out, target, src, info, i, demand)
 			return
 		}
 		if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 			return
 		}
-		val, ok := t.targetValue(out, info, i, src, callReturns, demand)
+		keyArrayTable, _ := t.keyArrayTableForAssignment(info, i, target)
+		functionRefs, closureRefs := t.referenceWritesForAssignedPlace(out, Place{Root: target.Symbol}, info, i, src, demand)
+		val, ok := t.targetValue(out, p, info, i, src, callReturns, demand)
 		if !ok {
+			if src != nil && t.pendingUnannotatedParamSource(out, src) {
+				t.applySymbolWriteEffect(out, target, product.AbstractValue{}, false, false, src, keyArrayTable, functionRefs, closureRefs)
+				return
+			}
+			if t.symbolStorage.isCellBacked(target.Symbol) && src != nil {
+				t.applySymbolWriteEffect(out, target, product.Domain.Top(), false, false, nil, keyArrayTable, functionRefs, closureRefs)
+				return
+			}
 			if src == nil {
 				// A target with no aligned source and no expanding call return: a
 				// parameter declaration node, or a multi-value tail slot whose producer
@@ -637,13 +865,13 @@ func (t *Transfer) applyAssign(
 				// for a parameter), so leave it untouched rather than clobber it.
 				return
 			}
-			// A local declared `any` carries the gradual top regardless of the
+			// A local declared `any` carries strict dynamic top regardless of the
 			// initializer: the annotation is an opt-in to the strict dynamic contract,
 			// so the slot stays `any` (a placeholder) even when the source is
 			// unresolved. A field read off it is then a read off a placeholder, which
 			// the gradual-admission gate does not silently admit.
 			if t.declaredGradualTop(target.Symbol) {
-				out.Env[symKey(target.Symbol)] = product.FromType(typ.Any)
+				t.applySymbolWriteEffect(out, target, product.FromType(typ.Any), false, false, nil, keyArrayTable, functionRefs, closureRefs)
 				return
 			}
 			// A declared keyed/indexed local (`local m: {[string]: string} = f()`) is
@@ -652,15 +880,15 @@ func (t *Transfer) applyAssign(
 			// overrides structural inference). Seed it so a later read/iteration of the
 			// slot sees the declared element/key/value rather than collapsing to unknown.
 			if dc, has := t.declaredContainerType(target.Symbol); has {
-				out.Env[symKey(target.Symbol)] = product.FromType(dc)
+				t.applySymbolWriteEffect(out, target, product.FromType(dc), false, false, nil, keyArrayTable, functionRefs, closureRefs)
 				return
 			}
 			// Unknown source: clear any stale narrowing so the slot is the value
 			// domain's Top (the most general value), never a stale precise type.
-			delete(out.Env, symKey(target.Symbol))
+			t.applySymbolWriteEffect(out, target, product.AbstractValue{}, true, false, nil, keyArrayTable, functionRefs, closureRefs)
 			return
 		}
-		// A local declared `any` keeps the gradual top rather than the initializer's
+		// A local declared `any` keeps strict dynamic top rather than the initializer's
 		// precise shape: `local raw: any = {id = "x"}` is the dynamic `any`, not the
 		// record literal `{id: "x"}`. The annotation is the slot authority (the same
 		// declared-over-inferred hierarchy declaredContainerType applies), so a later
@@ -668,36 +896,35 @@ func (t *Transfer) applyAssign(
 		// must flag against a concrete target, not the literal's precise field type.
 		if t.declaredGradualTop(target.Symbol) {
 			val = product.FromType(typ.Any)
-		} else if dc, has := t.declaredContainerType(target.Symbol); has {
+		} else if dc, has := t.declaredContainerType(target.Symbol); has && declaredContainerOverridesKnownValue(dc) {
 			// A declared keyed/indexed local's slot carries its declared container type
 			// rather than the initializer's narrower value: `local m: {[string]: string}
 			// = {}` is a string-keyed map (so `pairs(m)` types its key/value), not the empty
 			// closed record the `{}` constructor yields. The annotation is the authority for
-			// a mutable container slot; narrowing operates over t.declaredTypes directly, so
-			// the declared base here does not perturb per-edge discriminant refinement.
+			// a mutable container slot when it carries real key/element information. Broad
+			// soft containers such as `any[]` are contracts over future writes, not hard
+			// element facts: preserving the empty initializer lets later mutator effects
+			// refine the element from observed inserts instead of joining forever with any.
 			val = product.FromType(dc)
 		}
-		key := symKey(target.Symbol)
-		if prev, had := out.Env[key]; had && !info.IsLocal {
-			// A re-assignment (`x = ...`, not a `local` declaration) in a loop body
-			// joins with the prior value: the loop-header widening then bounds the
-			// accumulating chain (`x = x + 1`). A `local x = ...` REBINDS a fresh
-			// variable each time it executes, so the loop-carried prior binding is
-			// dead — overwriting it with this iteration's value is sound and avoids a
-			// monotonic LUB that would re-admit a stale optionality the current
-			// iteration's value (e.g. an in-bounds-refined arr[i]) no longer carries.
-			out.Env[key] = product.Domain.Join(prev, val)
-		} else {
-			out.Env[key] = val
+		if withOrigin, ok := t.attachVariantOriginToAssignedValue(p, target, val); ok {
+			val = withOrigin
 		}
+		key := flow.SymbolValueKey(target.Symbol)
+		// Assignment transfer is a strong update to the target location. Loop and
+		// branch joins belong to the equation/fixpoint layer; weak-updating here
+		// pollutes ordinary branch precision (for example an `any` local overwritten
+		// by a string inside the true edge stays `any` forever).
+		t.applySymbolWriteEffect(out, target, val, false, false, src, keyArrayTable, functionRefs, closureRefs)
 		if src != nil {
 			t.applyNumeric(out, key, src)
 			t.seedArrayLiteralLength(out, key, src)
 		}
 	})
+	t.seedSiblingNilRelations(out, info, demand)
 }
 
-// declaredGradualTop reports whether sym is declared with the gradual top `any`,
+// declaredGradualTop reports whether sym is declared with the strict dynamic top `any`,
 // the opt-in dynamic contract a local `local raw: any = ...` carries. Such a slot
 // stays `any` regardless of its initializer: the declared annotation is the slot
 // authority (the same declared-over-inferred hierarchy declaredContainerType
@@ -737,10 +964,14 @@ func (t *Transfer) declaredContainerType(sym cfg.SymbolID) (typ.Type, bool) {
 		return nil, false
 	}
 	switch unwrap.Underlying(declared).(type) {
-	case *typ.Map, *typ.Array:
+	case *typ.Map, *typ.ReadonlyMap, *typ.Array:
 		return declared, true
 	}
 	return nil, false
+}
+
+func declaredContainerOverridesKnownValue(declared typ.Type) bool {
+	return declared != nil && !typ.IsSoft(declared, typ.SoftPlaceholderPolicy)
 }
 
 // callExpansionReturns types the return vector of an assignment's single source
@@ -765,12 +996,96 @@ func (t *Transfer) callExpansionReturns(
 	return returns
 }
 
+func (t *Transfer) seedSiblingNilRelations(
+	out *flow.PointState,
+	info *cfg.AssignInfo,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if info == nil {
+		return
+	}
+	call, first := info.ExpandingSourceCall()
+	if call == nil || call.Call == nil {
+		return
+	}
+	if call.IsTypeCheck && call.Method == "is" && call.Receiver != nil {
+		return
+	}
+	rels := t.callReturnRelations(out, call.Call, demand)
+	for _, corr := range rels.ErrorReturns() {
+		valIdx := first + corr.ValueIndex
+		errIdx := first + corr.ErrorIndex
+		if valIdx < 0 || valIdx >= len(info.Targets) || errIdx < 0 || errIdx >= len(info.Targets) {
+			continue
+		}
+		valTarget := info.Targets[valIdx]
+		errTarget := info.Targets[errIdx]
+		if valTarget.Kind != cfg.TargetIdent || valTarget.Symbol == 0 {
+			continue
+		}
+		if errTarget.Kind != cfg.TargetIdent || errTarget.Symbol == 0 {
+			continue
+		}
+		t.applyRelationEffect(out, RelationEffect{
+			Kind:      RelationSeedSiblingNil,
+			ErrSym:    errTarget.Symbol,
+			ValueSyms: []cfg.SymbolID{valTarget.Symbol},
+		})
+	}
+}
+
+func (t *Transfer) attachVariantOriginToAssignedValue(p cfg.Point, target cfg.AssignTarget, val product.AbstractValue) (product.AbstractValue, bool) {
+	if val.IsZero() || len(t.in.VariantFieldOrigins) == 0 {
+		return product.AbstractValue{}, false
+	}
+	targetPath, ok := t.staticPathOfAssignTarget(target)
+	if !ok || targetPath.IsEmpty() {
+		return product.AbstractValue{}, false
+	}
+	targetPath = domainpath.WithVersion(targetPath, t.in.Graph, p)
+	var family uint64
+	var cases []int
+	for _, origin := range t.in.VariantFieldOrigins {
+		if origin.OriginFamily == 0 || !origin.Target.Equal(targetPath) {
+			continue
+		}
+		if family == 0 {
+			family = origin.OriginFamily
+		}
+		if family != origin.OriginFamily {
+			return product.AbstractValue{}, false
+		}
+		cases = append(cases, origin.CaseIndex)
+	}
+	if family == 0 || len(cases) == 0 {
+		return product.AbstractValue{}, false
+	}
+	return product.WithVariantOrigin(val, family, cases), true
+}
+
+func (t *Transfer) callReturnRelations(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) flow.ReturnRelations {
+	if provider, ok := t.callTyper.(productReturnRelationProvider); ok && provider != nil && call != nil {
+		return provider.ReturnRelationsFromValues(call, t.productCallContext(out, call, demand))
+	}
+	provider, ok := t.callTyper.(returnRelationProvider)
+	if !ok || provider == nil || call == nil {
+		return flow.ReturnRelationsDomain.Top()
+	}
+	exprType := t.projectExprTypeResolver(out)
+	return provider.ReturnRelations(call, exprType, out.Cells, out.FunctionRefs)
+}
+
 // targetValue resolves the value bound to target index i. A target aligned with a
 // source expression is the source's value. A trailing target fed by an expanding
 // call (`local a, b = f()`, where b has no aligned source) is the call's return at
 // the matching slot.
 func (t *Transfer) targetValue(
 	out *flow.PointState,
+	p cfg.Point,
 	info *cfg.AssignInfo,
 	i int,
 	src ast.Expr,
@@ -804,40 +1119,110 @@ func (t *Transfer) targetValue(
 		}
 	}
 	if src != nil {
-		return t.evalExpr(out, src, demand)
+		return t.evalExprAt(out, p, src, demand)
 	}
 	return product.AbstractValue{}, false
 }
 
-// applyFuncDef types a container-targeted function definition (function M.add(),
-// function M:add()) by writing the function's declared signature into the receiver
-// container's field, so a later call M.add(...) resolves to the function rather
-// than a missing field. A plain function definition (function f / local function f)
-// binds a symbol directly and is typed by the bridge's function-signature map, so
-// it is not handled here. A definition whose function type the typer cannot resolve
-// leaves the container untouched (sound carry-forward).
+// pendingUnannotatedParamSource reports whether src failed to resolve because it
+// is rooted in an unannotated parameter whose entry value is still the product
+// Bottom. During the interprocedural summary fixed point, caller-projected
+// EntryValues arrive monotonically after the first bottom iteration; treating
+// that temporary absence as the value-domain Top would permanently pollute
+// captured-cell effects and prevent the later precise entry value from flowing.
+//
+// True dynamic values are admitted at explicit boundaries (declared `any`,
+// unknown call results, external seeds). A local unannotated parameter with no
+// entry value yet is not such a boundary; it is pending data in the same product
+// fixed point.
+func (t *Transfer) pendingUnannotatedParamSource(out *flow.PointState, src ast.Expr) bool {
+	return t.exprUsesPendingUnannotatedParam(out, src)
+}
+
+func (t *Transfer) sourceRootSymbol(src ast.Expr) cfg.SymbolID {
+	switch e := src.(type) {
+	case *ast.IdentExpr:
+		return t.symbolOf(e)
+	case *ast.AttrGetExpr:
+		return t.sourceRootSymbol(e.Object)
+	case *ast.FuncCallExpr:
+		if e.Method != "" {
+			return t.sourceRootSymbol(e.Receiver)
+		}
+		return t.sourceRootSymbol(e.Func)
+	default:
+		return 0
+	}
+}
+
+func (t *Transfer) exprUsesPendingUnannotatedParam(out *flow.PointState, expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case nil:
+		return false
+	case *ast.IdentExpr:
+		sym := t.symbolOf(e)
+		if sym == 0 || !t.unannotatedParam[sym] {
+			return false
+		}
+		_, ok := t.symbolValue(out, sym)
+		return !ok
+	case *ast.AttrGetExpr:
+		return t.exprUsesPendingUnannotatedParam(out, e.Object) || t.exprUsesPendingUnannotatedParam(out, e.Key)
+	case *ast.FuncCallExpr:
+		if t.exprUsesPendingUnannotatedParam(out, e.Func) || t.exprUsesPendingUnannotatedParam(out, e.Receiver) {
+			return true
+		}
+		for _, arg := range e.Args {
+			if t.exprUsesPendingUnannotatedParam(out, arg) {
+				return true
+			}
+		}
+		return false
+	case *ast.CastExpr:
+		return t.exprUsesPendingUnannotatedParam(out, e.Expr)
+	case *ast.ArithmeticOpExpr:
+		return t.exprUsesPendingUnannotatedParam(out, e.Lhs) || t.exprUsesPendingUnannotatedParam(out, e.Rhs)
+	case *ast.StringConcatOpExpr:
+		return t.exprUsesPendingUnannotatedParam(out, e.Lhs) || t.exprUsesPendingUnannotatedParam(out, e.Rhs)
+	case *ast.LogicalOpExpr:
+		return t.exprUsesPendingUnannotatedParam(out, e.Lhs) || t.exprUsesPendingUnannotatedParam(out, e.Rhs)
+	case *ast.RelationalOpExpr:
+		return t.exprUsesPendingUnannotatedParam(out, e.Lhs) || t.exprUsesPendingUnannotatedParam(out, e.Rhs)
+	case *ast.UnaryLenOpExpr:
+		return t.exprUsesPendingUnannotatedParam(out, e.Expr)
+	case *ast.UnaryMinusOpExpr:
+		return t.exprUsesPendingUnannotatedParam(out, e.Expr)
+	case *ast.UnaryNotOpExpr:
+		return t.exprUsesPendingUnannotatedParam(out, e.Expr)
+	default:
+		return false
+	}
+}
+
+// applyFuncDef types a function-definition assignment. A root definition
+// (`function f()`) writes the function value and identity into the binding symbol;
+// a container definition (`function M.add()`, `function M:add()`) writes the
+// function value and identity into the receiver field. A definition whose function
+// type the typer cannot resolve leaves the state untouched (sound carry-forward).
 func (t *Transfer) applyFuncDef(out *flow.PointState, info *cfg.FuncDefInfo) {
-	if t.funcTyper == nil || info == nil || info.FuncExpr == nil {
+	if out == nil || info == nil || info.TargetPath.Symbol == 0 {
+		return
+	}
+	place, ok := canonicalplace.FromStaticPath(info.TargetPath)
+	if !ok || place.Root == 0 {
+		return
+	}
+	t.applyWriteEffect(out, WriteEffect{
+		Place:        place,
+		FunctionRefs: sourceFunctionRefsWrite(),
+		ClosureRefs:  sourceClosureRefsWrite(),
+		RecordStatic: true,
+	})
+	if t.funcTyper == nil || info.FuncExpr == nil {
 		return
 	}
 	base := info.TargetPath.Symbol
 	segs := info.TargetPath.Segments
-	if base == 0 || len(segs) == 0 {
-		return
-	}
-	path := make([]string, 0, len(segs))
-	for _, seg := range segs {
-		switch seg.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			if seg.Name == "" {
-				return
-			}
-			path = append(path, seg.Name)
-		default:
-			// An integer-indexed function target is not a named field write.
-			return
-		}
-	}
 	var fn *typ.Function
 	if info.IsMethod {
 		// A method definition (function T:m()) stores the callable with the implicit
@@ -850,15 +1235,46 @@ func (t *Transfer) applyFuncDef(out *flow.PointState, info *cfg.FuncDefInfo) {
 	if fn == nil {
 		return
 	}
-	baseKey := symKey(base)
-	baseAV, had := out.Env[baseKey]
-	if !had || baseAV.IsZero() {
-		// The receiver container has no value the transfer tracks (an imported or
-		// captured table whose type lives in the observation surface). Writing here
-		// would clobber its real fields, so carry forward unchanged.
+	if len(segs) == 0 {
+		_, had := t.symbolValue(out, base)
+		t.applyWriteEffect(out, WriteEffect{
+			Place:         place,
+			Value:         product.FromType(fn),
+			JoinExisting:  had,
+			Source:        info.FuncExpr,
+			FunctionRefs:  t.functionRefsWriteForFuncDef(info),
+			ClosureRefs:   sourceClosureRefsWrite(),
+			KillRelations: true,
+			RecordStatic:  true,
+		})
 		return
 	}
-	out.Env[baseKey] = writeFieldPath(baseAV, path, product.FromType(fn))
+	for _, seg := range segs {
+		if key, ok := value.MemberFromSegment(seg); !ok || key.Kind() == value.MemberKindIntIndex {
+			// An integer-indexed function target is not a record field write.
+			return
+		}
+	}
+	t.applyWriteEffect(out, WriteEffect{
+		Place:        place,
+		Value:        product.FromType(fn),
+		Source:       info.FuncExpr,
+		FunctionRefs: t.functionRefsWriteForFuncDef(info),
+		ClosureRefs:  sourceClosureRefsWrite(),
+		RecordStatic: true,
+	})
+}
+
+func (t *Transfer) functionRefsWriteForFuncDef(info *cfg.FuncDefInfo) functionRefsWrite {
+	if provider, ok := t.funcTyper.(functionRefProvider); ok {
+		if ref, ok := provider.MethodFuncRef(info); ok {
+			return explicitFunctionRefsWrite(flow.WithFunctionRef(nil, info.TargetPath.Key(), flow.FunctionRefSetOf(ref)))
+		}
+		if ref, ok := provider.FuncRef(info.FuncExpr); ok {
+			return explicitFunctionRefsWrite(flow.WithFunctionRef(nil, info.TargetPath.Key(), flow.FunctionRefSetOf(ref)))
+		}
+	}
+	return sourceFunctionRefsWrite()
 }
 
 // applyContainerWrite applies a field or index write (t.f = v, t.a.b = v, t[k] = v)
@@ -877,77 +1293,738 @@ func (t *Transfer) applyContainerWrite(
 	src ast.Expr,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	if target.BaseSymbol == 0 {
-		// A write through a non-identifier base (e.g. f().x = v) has no symbol slot
+	t.applyContainerWriteWithRefs(out, target, src, demand, sourceFunctionRefsWrite(), sourceClosureRefsWrite())
+}
+
+func (t *Transfer) applyContainerWriteForAssign(
+	out *flow.PointState,
+	target cfg.AssignTarget,
+	src ast.Expr,
+	info *cfg.AssignInfo,
+	targetIndex int,
+	demand func(int, paramevidence.ParamContract),
+) {
+	t.applyContainerWriteWithRefResolver(out, target, src, demand, func(place Place) (functionRefsWrite, closureRefsWrite) {
+		return t.referenceWritesForAssignedPlace(out, place, info, targetIndex, src, demand)
+	})
+}
+
+func (t *Transfer) applyContainerWriteWithRefs(
+	out *flow.PointState,
+	target cfg.AssignTarget,
+	src ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+	functionRefs functionRefsWrite,
+	closureRefs closureRefsWrite,
+) {
+	t.applyContainerWriteWithRefResolver(out, target, src, demand, func(Place) (functionRefsWrite, closureRefsWrite) {
+		return functionRefs, closureRefs
+	})
+}
+
+func (t *Transfer) applyContainerWriteWithRefResolver(
+	out *flow.PointState,
+	target cfg.AssignTarget,
+	src ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+	refWrites func(Place) (functionRefsWrite, closureRefsWrite),
+) {
+	var base product.AbstractValue
+	if target.BaseSymbol != 0 {
+		var had bool
+		base, had, _ = t.rootContainerValue(out, target.BaseSymbol)
+		if !had || base.IsZero() {
+			// The base container has no value the transfer tracks: an imported module, a
+			// captured variable, or a parameter whose type lives in the observation
+			// surface, not the Env. The WriteEffect below may still invalidate side
+			// products at the lowered Place, but assignPlaceValue will not fabricate a
+			// closed root value for the untracked container.
+			base = product.AbstractValue{}
+		}
+	}
+	place, ok := t.placeOfAssignTarget(out, target, base, demand)
+	if !ok || place.Root == 0 || len(place.Steps) == 0 {
+		// A write through an unresolved dynamic key may still have a tracked static
+		// container prefix (`items.byName[k] = v`). Emit an invalidation-only effect
+		// for that footprint; do not pretend we know the exact key or root value.
+		if prefix, prefixOK := t.invalidationPlaceOfAssignTarget(target); prefixOK && prefix.Root != 0 {
+			functionRefs, closureRefs := sourceFunctionRefsWrite(), sourceClosureRefsWrite()
+			if refWrites != nil {
+				functionRefs, closureRefs = refWrites(prefix)
+			}
+			t.applyWriteEffect(out, WriteEffect{
+				Place:        prefix,
+				Source:       src,
+				RecordProto:  true,
+				FunctionRefs: functionRefs,
+				ClosureRefs:  closureRefs,
+				RecordStatic: true,
+			})
+		}
+		// A write through a non-identifier base (e.g. f().x = v) has no root slot
 		// to update; its container value lives nowhere this transfer tracks.
 		return
 	}
-	if src == nil {
-		return
+	functionRefs, closureRefs := sourceFunctionRefsWrite(), sourceClosureRefsWrite()
+	if refWrites != nil {
+		functionRefs, closureRefs = refWrites(place)
 	}
-	val, ok := t.evalExpr(out, src, demand)
-	if !ok || val.IsZero() {
-		return
-	}
-	baseKey := symKey(target.BaseSymbol)
-	base, had := out.Env[baseKey]
-	if !had || base.IsZero() {
-		// The base container has no value the transfer tracks: an imported module, a
-		// captured variable, or a parameter whose type lives in the observation
-		// surface, not the Env. Overwriting it here would fabricate a closed record
-		// that drops the base's real fields and mask a genuine field. Carry forward
-		// unchanged (sound: the observation surface keeps the base's actual type).
-		return
+	val := product.AbstractValue{}
+	if src != nil {
+		if resolved, ok := t.evalExpr(out, src, demand); ok && !resolved.IsZero() {
+			val = resolved
+		} else if !t.pendingUnannotatedParamSource(out, src) {
+			val = product.Domain.Top()
+		}
 	}
 
-	switch target.Kind {
-	case cfg.TargetField:
-		if len(target.FieldPath) == 0 {
-			return
+	mode := DynamicWriteForeign
+	if target.Kind == cfg.TargetIndex && target.BaseSymbol == place.Root && len(place.Steps) == 1 && t.writeIsSelfDerived(out, target, src) {
+		mode = DynamicWriteSelfDerived
+	}
+	var lengthBase flow.ValueKey
+	if target.Kind == cfg.TargetIndex && target.BaseSymbol != 0 {
+		lengthBase = flow.SymbolValueKey(target.BaseSymbol)
+	}
+	t.applyWriteEffect(out, WriteEffect{
+		Place:        place,
+		Value:        val,
+		Source:       src,
+		IndexTarget:  target,
+		DynamicMode:  mode,
+		LengthTarget: target,
+		LengthBase:   lengthBase,
+		RecordProto:  true,
+		FunctionRefs: functionRefs,
+		ClosureRefs:  closureRefs,
+		RecordStatic: true,
+	})
+}
+
+func (t *Transfer) installStaticMemberWriteFactForPlace(out *flow.PointState, place Place, val product.AbstractValue) {
+	if out == nil || val.IsZero() || !val.DefinitelyPresent() {
+		return
+	}
+	path, ok := place.StaticPath()
+	if !ok || path.Symbol == 0 || len(path.Segments) == 0 {
+		return
+	}
+	t.installStaticMemberWriteFact(out, path.Symbol, path.Segments, val)
+}
+
+func (t *Transfer) invalidateIterationTargetWrites(out *flow.PointState, targets []cfg.AssignTarget) {
+	for _, target := range targets {
+		t.applyIterationTargetWrite(out, target, product.AbstractValue{}, false)
+	}
+}
+
+func (t *Transfer) applyIterationTargetWrite(
+	out *flow.PointState,
+	target cfg.AssignTarget,
+	val product.AbstractValue,
+	joinExisting bool,
+) bool {
+	return t.applySymbolWriteEffect(
+		out,
+		target,
+		val,
+		false,
+		joinExisting,
+		nil,
+		constraint.Path{},
+		sourceFunctionRefsWrite(),
+		sourceClosureRefsWrite(),
+	)
+}
+
+func (t *Transfer) installStaticMemberWriteFact(out *flow.PointState, sym cfg.SymbolID, segs []constraint.Segment, val product.AbstractValue) {
+	if out == nil || sym == 0 || len(segs) == 0 || val.IsZero() || !val.DefinitelyPresent() {
+		return
+	}
+	out.StaticMembers = out.StaticMembers.With(flow.SymbolPathKey(sym, segs), val)
+}
+
+func (t *Transfer) referenceWritesForAssignedPlace(
+	out *flow.PointState,
+	place Place,
+	info *cfg.AssignInfo,
+	targetIndex int,
+	src ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+) (functionRefsWrite, closureRefsWrite) {
+	functionRefs := sourceFunctionRefsWrite()
+	if refs, ok := t.callReturnFunctionRefsForAssignedPlace(out, place, info, targetIndex, src, demand); ok {
+		functionRefs = explicitFunctionRefsWrite(refs)
+	}
+	closureRefs := sourceClosureRefsWrite()
+	if refs, ok := t.callReturnClosureRefsForAssignedPlace(out, place, info, targetIndex, src, demand); ok {
+		closureRefs = explicitClosureRefsWrite(refs)
+	}
+	return functionRefs, closureRefs
+}
+
+func (t *Transfer) callReturnFunctionRefsForAssignedPlace(
+	out *flow.PointState,
+	place Place,
+	info *cfg.AssignInfo,
+	targetIndex int,
+	src ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+) (flow.FunctionRefs, bool) {
+	if info != nil {
+		if call, retIndex := info.CallForTarget(targetIndex); call != nil && call.Call != nil {
+			return t.callReturnFunctionRefsForPlace(out, place, call.Call, retIndex, demand)
 		}
-		out.Env[baseKey] = writeFieldPath(base, target.FieldPath, val)
-	case cfg.TargetIndex:
-		if name, isField := staticFieldName(target.Key); isField {
-			out.Env[baseKey] = product.WithField(base, name, val)
-			return
+	}
+	if call, ok := src.(*ast.FuncCallExpr); ok {
+		return t.callReturnFunctionRefsForPlace(out, place, call, 0, demand)
+	}
+	return nil, false
+}
+
+func (t *Transfer) callReturnFunctionRefsForPlace(
+	out *flow.PointState,
+	place Place,
+	call *ast.FuncCallExpr,
+	retIndex int,
+	demand func(int, paramevidence.ParamContract),
+) (flow.FunctionRefs, bool) {
+	if out == nil || call == nil || retIndex < 0 {
+		return nil, false
+	}
+	path, ok := place.StaticPath()
+	if !ok || path.IsEmpty() {
+		return nil, false
+	}
+	if provider, ok := t.callTyper.(productCallReturnFunctionRefsProvider); ok {
+		returns := provider.CallReturnFunctionRefsFromValues(call, t.productCallContext(out, call, demand))
+		return rebaseCallReturnFunctionRefs(path, retIndex, returns)
+	}
+	provider, ok := t.callTyper.(callReturnFunctionRefsProvider)
+	if !ok {
+		return nil, false
+	}
+	exprType := t.projectExprTypeResolver(out)
+	returns := provider.CallReturnFunctionRefs(call, exprType, out.Cells, out.FunctionRefs)
+	return rebaseCallReturnFunctionRefs(path, retIndex, returns)
+}
+
+func rebaseCallReturnFunctionRefs(
+	path constraint.Path,
+	retIndex int,
+	returns []flow.FunctionRefs,
+) (flow.FunctionRefs, bool) {
+	if retIndex >= len(returns) {
+		return nil, false
+	}
+	rebased := flow.RebaseFunctionRefs(returns[retIndex], constraint.NewPlaceholder(retIndex), path)
+	if flow.FunctionRefsDomain.Equal(rebased, flow.FunctionRefsDomain.Bottom()) {
+		return nil, false
+	}
+	return rebased, true
+}
+
+func (t *Transfer) recordFunctionRefAt(out *flow.PointState, path constraint.Path, src ast.Expr) {
+	key := path.Key()
+	if key == "" {
+		return
+	}
+	set, ok := t.functionRefSetOfExpr(out, src)
+	nested := t.nestedFunctionRefSetsOfExpr(out, src)
+	out.FunctionRefs = flow.WithoutFunctionRefSubtree(out.FunctionRefs, key)
+	if !ok {
+		for _, entry := range nested {
+			out.FunctionRefs = flow.WithFunctionRef(out.FunctionRefs, appendFunctionRefPath(path, entry.segments).Key(), entry.set)
 		}
-		t.applyIndexWriteLength(out, target, baseKey)
-		key := t.dynamicWriteKey(out, target, base, demand)
-		if key.IsZero() {
-			return
+		return
+	}
+	out.FunctionRefs = flow.WithFunctionRef(out.FunctionRefs, key, set)
+	for _, entry := range nested {
+		out.FunctionRefs = flow.WithFunctionRef(out.FunctionRefs, appendFunctionRefPath(path, entry.segments).Key(), entry.set)
+	}
+}
+
+func (t *Transfer) callReturnClosureRefsForAssignedPlace(
+	out *flow.PointState,
+	place Place,
+	info *cfg.AssignInfo,
+	targetIndex int,
+	src ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+) (flow.ClosureRefs, bool) {
+	if info != nil {
+		if call, retIndex := info.CallForTarget(targetIndex); call != nil && call.Call != nil {
+			return t.callReturnClosureRefsForPlace(out, place, call.Call, retIndex, demand)
 		}
-		// A FOREIGN dynamic-key write into a closed record weakens the declared fields
-		// the key could match (the store can replace that field's value at runtime); a
-		// SELF-write (the value provably read from this container at the same key) stores
-		// the field back unchanged, so it keeps the plain write that leaves the fields
-		// intact. The self/foreign judgment is the key-presence provenance in lenseed.go.
-		if t.writeIsSelfDerived(target, src) {
-			out.Env[baseKey] = product.WriteIndex(base, key, val)
-		} else {
-			out.Env[baseKey] = product.WriteIndexForeign(base, key, val)
+	}
+	if call, ok := src.(*ast.FuncCallExpr); ok {
+		return t.callReturnClosureRefsForPlace(out, place, call, 0, demand)
+	}
+	return nil, false
+}
+
+func (t *Transfer) callReturnClosureRefsForPlace(
+	out *flow.PointState,
+	place Place,
+	call *ast.FuncCallExpr,
+	retIndex int,
+	demand func(int, paramevidence.ParamContract),
+) (flow.ClosureRefs, bool) {
+	if out == nil || call == nil || retIndex < 0 {
+		return nil, false
+	}
+	path, ok := place.StaticPath()
+	if !ok || path.IsEmpty() {
+		return nil, false
+	}
+	provider, ok := t.callTyper.(productCallReturnClosureRefsProvider)
+	if !ok || provider == nil {
+		return nil, false
+	}
+	returns := provider.CallReturnClosureRefsFromValues(call, t.productCallContext(out, call, demand))
+	return rebaseCallReturnClosureRefs(path, retIndex, returns)
+}
+
+func rebaseCallReturnClosureRefs(
+	path constraint.Path,
+	retIndex int,
+	returns []flow.ClosureRefs,
+) (flow.ClosureRefs, bool) {
+	if retIndex >= len(returns) {
+		return nil, false
+	}
+	rebased := flow.RebaseClosureRefs(returns[retIndex], constraint.NewPlaceholder(retIndex), path)
+	if flow.ClosureRefsDomain.Equal(rebased, flow.ClosureRefsDomain.Bottom()) {
+		return nil, false
+	}
+	return rebased, true
+}
+
+func (t *Transfer) recordClosureRefAt(out *flow.PointState, path constraint.Path, src ast.Expr) {
+	key := path.Key()
+	if out == nil || key == "" {
+		return
+	}
+	set, ok := t.closureRefSetOfExpr(out, src)
+	nested := t.nestedClosureRefSetsOfExpr(out, src)
+	out.ClosureRefs = flow.WithoutClosureRefSubtree(out.ClosureRefs, key)
+	if !ok {
+		for _, entry := range nested {
+			out.ClosureRefs = flow.WithClosureRef(out.ClosureRefs, appendFunctionRefPath(path, entry.segments).Key(), entry.set)
+		}
+		return
+	}
+	out.ClosureRefs = flow.WithClosureRef(out.ClosureRefs, key, set)
+	for _, entry := range nested {
+		out.ClosureRefs = flow.WithClosureRef(out.ClosureRefs, appendFunctionRefPath(path, entry.segments).Key(), entry.set)
+	}
+}
+
+func (t *Transfer) closureRefSetOfExpr(out *flow.PointState, expr ast.Expr) (flow.ClosureRefSet, bool) {
+	if expr == nil || out == nil {
+		return flow.ClosureRefSet{}, false
+	}
+	if fn, ok := expr.(*ast.FunctionExpr); ok && fn != nil {
+		provider, ok := t.funcTyper.(functionRefProvider)
+		if !ok || provider == nil {
+			return flow.ClosureRefSet{}, false
+		}
+		ref, ok := provider.FuncRef(fn)
+		if !ok {
+			return flow.ClosureRefSet{}, false
+		}
+		captured := t.closureCapturedSymbols(ref)
+		return flow.ClosureRefSetOf(flow.ClosureRefOf(
+			ref,
+			t.closureCaptureCells(out, captured),
+			flow.ProjectFunctionRefsBySymbols(out.FunctionRefs, captured),
+			flow.ProjectClosureRefsBySymbols(out.ClosureRefs, captured),
+		)), true
+	}
+	key, ok := t.functionExprPathKey(expr)
+	if !ok {
+		return flow.ClosureRefSet{}, false
+	}
+	return flow.ClosureRefAt(out.ClosureRefs, key)
+}
+
+func (t *Transfer) closureCapturedSymbols(ref flow.FunctionRef) []cfg.SymbolID {
+	provider, ok := t.funcTyper.(closureCaptureProvider)
+	if !ok || provider == nil {
+		return nil
+	}
+	return provider.CapturedSymbols(ref)
+}
+
+func (t *Transfer) closureCaptureCells(out *flow.PointState, captured []cfg.SymbolID) flow.CaptureCells {
+	if out == nil || len(captured) == 0 {
+		return flow.CaptureCellsDomain.Bottom()
+	}
+	cells := out.Cells.Project(captured)
+	for _, sym := range captured {
+		if sym == 0 {
+			continue
+		}
+		if _, ok := cells.Value(sym); ok {
+			continue
+		}
+		av, has := t.symbolValue(out, sym)
+		if refined, ok := t.conditionRefinedCaptureValue(out, sym, av, has); ok && !valueIsBottom(refined) {
+			cells = cells.With(sym, refined)
+			continue
+		}
+		if has && !valueIsBottom(av) {
+			cells = cells.With(sym, av)
+		}
+	}
+	return cells
+}
+
+type nestedClosureRefSet struct {
+	segments []constraint.Segment
+	set      flow.ClosureRefSet
+}
+
+func (t *Transfer) nestedClosureRefSetsOfExpr(out *flow.PointState, expr ast.Expr) []nestedClosureRefSet {
+	table, ok := expr.(*ast.TableExpr)
+	if !ok || table == nil {
+		return nil
+	}
+	var entries []nestedClosureRefSet
+	t.collectTableClosureRefs(out, table, nil, &entries)
+	return entries
+}
+
+func (t *Transfer) collectTableClosureRefs(out *flow.PointState, table *ast.TableExpr, prefix []constraint.Segment, entries *[]nestedClosureRefSet) {
+	if table == nil {
+		return
+	}
+	for _, field := range table.Fields {
+		if field == nil || field.Key == nil || field.Value == nil {
+			continue
+		}
+		seg, ok := pathseg.StaticTableFieldSegment(field)
+		if !ok {
+			continue
+		}
+		segments := append(append([]constraint.Segment(nil), prefix...), seg)
+		switch v := field.Value.(type) {
+		case *ast.TableExpr:
+			t.collectTableClosureRefs(out, v, segments, entries)
+		default:
+			if set, ok := t.closureRefSetOfExpr(out, field.Value); ok {
+				*entries = append(*entries, nestedClosureRefSet{
+					segments: segments,
+					set:      set,
+				})
+			}
 		}
 	}
 }
 
-// writeFieldPath overlays val at the nested field path within base (the chain
-// ["a","b"] for base.a.b = val), rebuilding each enclosing record so the innermost
-// field write propagates outward. It reuses the value-domain product.FieldOf to
-// read the intermediate container and product.WithField to write each level, so a
-// missing intermediate field is created as a fresh record the way Lua admits a new
-// nested key.
-func writeFieldPath(base product.AbstractValue, path []string, val product.AbstractValue) product.AbstractValue {
+func (t *Transfer) functionRefSetOfExpr(out *flow.PointState, expr ast.Expr) (flow.FunctionRefSet, bool) {
+	if expr == nil {
+		return flow.FunctionRefSet{}, false
+	}
+	if fn, ok := expr.(*ast.FunctionExpr); ok && fn != nil {
+		if provider, ok := t.funcTyper.(functionRefProvider); ok {
+			if ref, ok := provider.FuncRef(fn); ok {
+				return flow.FunctionRefSetOf(ref), true
+			}
+		}
+		return flow.FunctionRefSet{}, false
+	}
+	key, ok := t.functionExprPathKey(expr)
+	if !ok {
+		return flow.FunctionRefSet{}, false
+	}
+	return flow.FunctionRefAt(out.FunctionRefs, key)
+}
+
+type nestedFunctionRefSet struct {
+	segments []constraint.Segment
+	set      flow.FunctionRefSet
+}
+
+func (t *Transfer) nestedFunctionRefSetsOfExpr(out *flow.PointState, expr ast.Expr) []nestedFunctionRefSet {
+	table, ok := expr.(*ast.TableExpr)
+	if !ok || table == nil {
+		return nil
+	}
+	var entries []nestedFunctionRefSet
+	t.collectTableFunctionRefs(out, table, nil, &entries)
+	return entries
+}
+
+func (t *Transfer) collectTableFunctionRefs(out *flow.PointState, table *ast.TableExpr, prefix []constraint.Segment, entries *[]nestedFunctionRefSet) {
+	if table == nil {
+		return
+	}
+	for _, field := range table.Fields {
+		if field == nil || field.Key == nil || field.Value == nil {
+			continue
+		}
+		seg, ok := pathseg.StaticTableFieldSegment(field)
+		if !ok {
+			continue
+		}
+		segments := append(append([]constraint.Segment(nil), prefix...), seg)
+		switch v := field.Value.(type) {
+		case *ast.TableExpr:
+			t.collectTableFunctionRefs(out, v, segments, entries)
+		default:
+			if set, ok := t.functionRefSetOfExpr(out, field.Value); ok {
+				*entries = append(*entries, nestedFunctionRefSet{
+					segments: segments,
+					set:      set,
+				})
+			}
+		}
+	}
+}
+
+func appendFunctionRefPath(base constraint.Path, segments []constraint.Segment) constraint.Path {
+	if len(segments) == 0 {
+		return base
+	}
+	next := base
+	next.Segments = append(append([]constraint.Segment(nil), base.Segments...), segments...)
+	return next
+}
+
+func (t *Transfer) targetFunctionPath(target cfg.AssignTarget) (constraint.Path, bool) {
+	return t.staticPathOfAssignTarget(target)
+}
+
+func (t *Transfer) targetFunctionPathKey(target cfg.AssignTarget) (constraint.PathKey, bool) {
+	path, ok := t.targetFunctionPath(target)
+	if !ok {
+		return "", false
+	}
+	return path.Key(), true
+}
+
+func (t *Transfer) functionExprPathKey(expr ast.Expr) (constraint.PathKey, bool) {
+	place, ok := t.staticPlaceOfExpr(expr)
+	if !ok {
+		return "", false
+	}
+	return place.StaticPathKey()
+}
+
+func (t *Transfer) staticMemberExprPathKey(expr ast.Expr) (constraint.PathKey, bool) {
+	place, ok := t.staticPlaceOfExpr(expr)
+	if !ok {
+		return "", false
+	}
+	return symbolPathKey(place)
+}
+
+func (t *Transfer) staticMemberExprPathKeyAt(out *flow.PointState, p cfg.Point, expr ast.Expr) (constraint.PathKey, bool) {
+	if out == nil {
+		return t.staticMemberExprPathKey(expr)
+	}
+	place, ok := t.placeOfExprAt(out, p, expr, nil)
+	if !ok {
+		return t.staticMemberExprPathKey(expr)
+	}
+	return symbolPathKey(place)
+}
+
+func fieldSegments(names []string) []constraint.Segment {
+	if len(names) == 0 {
+		return nil
+	}
+	segs := make([]constraint.Segment, 0, len(names))
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		segs = append(segs, constraint.Segment{Kind: constraint.SegmentField, Name: name})
+	}
+	return segs
+}
+
+func (t *Transfer) recordPrototypeSelfWrite(out *flow.PointState, sym cfg.SymbolID, updated product.AbstractValue) bool {
+	if out == nil || sym == 0 || updated.IsZero() {
+		return false
+	}
+	changed := false
+	if t.prototypeReceiverSym != 0 && t.prototypeSelfSymbol != 0 && sym == t.prototypeSelfSymbol &&
+		t.applyPrototypeSelfEffect(out, PrototypeSelfEffect{Prototype: t.prototypeReceiverSym, Value: updated}) {
+		changed = true
+	}
+	if t.prototypeSelfSymbol != 0 && sym == t.prototypeSelfSymbol && t.prototypeSelfSlot >= 0 &&
+		t.recordReceiverEffect(out, t.prototypeSelfSlot, updated) {
+		changed = true
+	}
+	return changed
+}
+
+func (t *Transfer) applySetMetatableInstanceBinding(out *flow.PointState, src ast.Expr, sym cfg.SymbolID) bool {
+	if out == nil || sym == 0 {
+		return false
+	}
+	proto, ok := t.setMetatablePrototypeFromSource(src)
+	if !ok || proto == 0 {
+		return false
+	}
+	before := out.PrototypeInstances
+	out.PrototypeInstances = out.PrototypeInstances.WithPrototype(sym, proto)
+	changed := !flow.PrototypeInstancesDomain.Equal(before, out.PrototypeInstances)
+	if t.publishPrototypeMethodRefs(out, proto, constraint.NewPath(sym, "")) {
+		changed = true
+	}
+	return changed
+}
+
+func (t *Transfer) publishPrototypeMethodRefs(out *flow.PointState, proto cfg.SymbolID, base constraint.Path) bool {
+	if out == nil || proto == 0 || base.IsEmpty() || len(t.prototypeMethods) == 0 {
+		return false
+	}
+	refs := t.prototypeMethodRefs(proto, base)
+	if flow.FunctionRefsDomain.Equal(refs, flow.FunctionRefsDomain.Bottom()) {
+		return false
+	}
+	before := out.FunctionRefs
+	out.FunctionRefs = flow.FunctionRefsDomain.Join(out.FunctionRefs, refs)
+	return !flow.FunctionRefsDomain.Equal(before, out.FunctionRefs)
+}
+
+func (t *Transfer) prototypeMethodRefs(proto cfg.SymbolID, base constraint.Path) flow.FunctionRefs {
+	if proto == 0 || base.IsEmpty() || len(t.prototypeMethods) == 0 {
+		return flow.FunctionRefsDomain.Bottom()
+	}
+	var refs flow.FunctionRefs
+	for _, method := range t.prototypeMethods {
+		if method.PrototypeSym != proto || method.FuncRef == (flow.FunctionRef{}) || method.Field == (constraint.Segment{}) {
+			continue
+		}
+		path := base
+		path.Segments = append(append([]constraint.Segment(nil), base.Segments...), method.Field)
+		key := path.Key()
+		set := flow.FunctionRefSetOf(method.FuncRef)
+		if existing, ok := flow.FunctionRefAt(refs, key); ok {
+			set = flow.FunctionRefSetDomain.Join(existing, set)
+		}
+		refs = flow.WithFunctionRef(refs, key, set)
+	}
+	return refs
+}
+
+func (t *Transfer) clearPrototypeInstance(out *flow.PointState, sym cfg.SymbolID) bool {
+	if out == nil || sym == 0 {
+		return false
+	}
+	before := out.PrototypeInstances
+	out.PrototypeInstances = out.PrototypeInstances.With(sym, nil)
+	return !flow.PrototypeInstancesDomain.Equal(before, out.PrototypeInstances)
+}
+
+func (t *Transfer) setMetatablePrototypeFromSource(src ast.Expr) (cfg.SymbolID, bool) {
+	call, ok := src.(*ast.FuncCallExpr)
+	if !ok || call == nil || t.in.Graph == nil || !metatable.IsSetMetatableCall(call, t.in.Graph.Bindings()) {
+		return 0, false
+	}
+	return t.setMetatablePrototype(0, call)
+}
+
+// writeFieldPath overlays val at the nested static member path within base,
+// rebuilding each enclosing record so the innermost field write propagates
+// outward. Dot-field segments project to typ.Record names only at the current
+// value-domain boundary; static index segments stay structural through
+// product.MemberOf / product.WithMember.
+func writeFieldPath(base product.AbstractValue, path []constraint.Segment, val product.AbstractValue) product.AbstractValue {
 	if len(path) == 0 {
 		return base
 	}
-	if len(path) == 1 {
-		return product.WithField(base, path[0], val)
+	member, ok := value.MemberFromSegment(path[0])
+	if !ok {
+		return base
 	}
-	child, ok := product.FieldOf(base, path[0])
+	if len(path) == 1 {
+		return product.WithMember(base, member, val)
+	}
+	child, ok := product.MemberOf(base, member)
 	if !ok || child.IsZero() {
 		child = product.FromType(typ.NewRecord().Build())
 	}
 	updated := writeFieldPath(child, path[1:], val)
-	return product.WithField(base, path[0], updated)
+	return product.WithMember(base, member, updated)
+}
+
+func staticMemberKey(attr *ast.AttrGetExpr) (value.MemberKey, bool) {
+	seg, ok := pathseg.StaticAttrSegment(attr)
+	if !ok {
+		return value.MemberKey{}, false
+	}
+	return value.MemberFromSegment(seg)
+}
+
+func staticMemberKeyWithConst(attr *ast.AttrGetExpr, constResolver func(string) *flow.ConstValue) (value.MemberKey, bool) {
+	if constResolver == nil {
+		return staticMemberKey(attr)
+	}
+	seg, ok := domainpath.StaticAttrSegmentWithConst(attr, constResolver)
+	if !ok {
+		return value.MemberKey{}, false
+	}
+	return value.MemberFromSegment(seg)
+}
+
+func staticAttrFieldName(attr *ast.AttrGetExpr) (string, bool) {
+	seg, ok := pathseg.StaticAttrSegment(attr)
+	if !ok || seg.Kind != constraint.SegmentField || seg.Name == "" {
+		return "", false
+	}
+	return seg.Name, true
+}
+
+func staticIndexMemberKey(key ast.Expr) (value.MemberKey, bool) {
+	seg, ok := staticIndexSegment(key)
+	if !ok {
+		return value.MemberKey{}, false
+	}
+	return value.MemberFromSegment(seg)
+}
+
+func staticIndexSegment(key ast.Expr) (constraint.Segment, bool) {
+	switch k := key.(type) {
+	case *ast.StringExpr:
+		return constraint.Segment{Kind: constraint.SegmentIndexString, Name: k.Value}, true
+	case *ast.NumberExpr:
+		idx, ok := pathkey.ParseIntLiteral(k.Value)
+		if !ok {
+			return constraint.Segment{}, false
+		}
+		return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx}, true
+	default:
+		return constraint.Segment{}, false
+	}
+}
+
+func staticIndexSegmentFromValue(av product.AbstractValue) (constraint.Segment, bool) {
+	t := av.ProjectValue()
+	return staticIndexSegmentFromType(t)
+}
+
+func staticIndexSegmentFromType(t typ.Type) (constraint.Segment, bool) {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Annotated:
+		return staticIndexSegmentFromType(v.Inner)
+	case *typ.Literal:
+		switch v.Base {
+		case kind.String:
+			if s, ok := v.Value.(string); ok {
+				return constraint.Segment{Kind: constraint.SegmentIndexString, Name: s}, true
+			}
+		case kind.Integer:
+			if i, ok := v.Value.(int64); ok {
+				return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(i)}, true
+			}
+		}
+	}
+	return constraint.Segment{}, false
 }
 
 // applyNumericFor types the control variable of a numeric for-loop
@@ -964,8 +2041,7 @@ func (t *Transfer) applyNumericFor(out *flow.PointState, info *cfg.AssignInfo) {
 	if !ok || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 		return
 	}
-	key := symKey(target.Symbol)
-	out.Env[key] = product.FromType(typ.Integer)
+	t.applyIterationTargetWrite(out, target, product.FromType(typ.Integer), false)
 	if out.Num != nil && info.NumericFor != nil {
 		t.seedNumericForBounds(out, target.Symbol, info.NumericFor)
 	}
@@ -976,9 +2052,12 @@ func (t *Transfer) applyNumericFor(out *flow.PointState, info *cfg.AssignInfo) {
 // function's iteration effect and the iterated container's element/key/value types
 // through the CallTyper's IterVars seam (the same iteration-effect machinery the
 // legacy synthesizer uses), then writes each loop variable's element type into its Env
-// slot, joining with any prior value so the loop-header widening bounds the chain. An
-// iterator the seam does not recognize leaves the variables untyped (sound carry-
-// forward), the prior behavior.
+// slot as a strong assignment update. The loop-header join/widening bounds the
+// chain; the local target transfer must not join with its previous value or stale
+// optional/foreign arms can survive a fresh iterator yield. Every loop target
+// first emits an invalidation-only WriteEffect, so even an unrecognized iterator
+// clears stale target-derived side facts while preserving the prior value-slot
+// carry-forward behavior.
 func (t *Transfer) applyGenericFor(
 	out *flow.PointState,
 	info *cfg.AssignInfo,
@@ -988,52 +2067,123 @@ func (t *Transfer) applyGenericFor(
 		t.demandConditionReads(out, iter, demand)
 	}
 	iterCall, ok := info.IterExprs[0].(*ast.FuncCallExpr)
-	if !ok || t.callTyper == nil {
+	if !ok {
+		iterCall = nil
+	}
+	t.applyGenericForBinding(out, info, iterCall, demand)
+}
+
+// applyGenericForBinding applies the semantic rebinding performed by one
+// successful generic-for iterator step. The CFG contains a target assignment
+// before the loop branch, but the loop backedge returns to the branch, not that
+// assignment point. Canonical flow therefore reuses this operation both at the
+// assignment node and on the branch->body edge so each iteration re-establishes
+// the current key/value variables and their KeyPresence provenance inside the
+// single Kildall equation graph.
+func (t *Transfer) applyGenericForBinding(
+	out *flow.PointState,
+	info *cfg.AssignInfo,
+	iterCall *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if out == nil || info == nil {
+		return
+	}
+	t.invalidateIterationTargetWrites(out, info.Targets)
+	if iterCall == nil || t.callTyper == nil {
 		return
 	}
 	exprType := func(e ast.Expr) typ.Type {
 		return t.resolveExprType(out, e, demand)
 	}
-	// The key-presence facts (KeyOf) a keyed iteration establishes hold regardless of
-	// whether the loop variables receive a type: a `pairs(container)` over a closed
-	// record yields no uniform key/value type (IterVars declines), but the first loop
-	// variable is still provably a key of the container. Seed the facts before the
-	// IterVars gate so a write/read through the key inside the body has the provenance
-	// even when the variables stay untyped.
-	t.seedKeyedIterKeyOf(out, info, iterCall)
-	t.seedIndexedIterKeyOf(out, info, iterCall)
-	varTypes, ok := t.callTyper.IterVars(iterCall, len(info.Targets), exprType)
-	if !ok || len(varTypes) == 0 {
+	proj, ok := t.iterVarProjection(iterCall, len(info.Targets), exprType)
+	if ok && proj.Empty {
+		t.assignGenericForEmpty(out, info.Targets)
 		return
 	}
-	for i := range info.Targets {
-		target := info.Targets[i]
-		if target.Kind != cfg.TargetIdent || target.Symbol == 0 || i >= len(varTypes) {
-			continue
+	// KeyPresence facts only describe values yielded by a live iteration. A
+	// recognized-empty source returns above and deliberately seeds no key facts; an
+	// unrecognized iterator may still run, so we preserve the prior conservative
+	// provenance seeding when the iterator source itself is recognized.
+	if ok && len(proj.Types) > 0 {
+		for i := range info.Targets {
+			target := info.Targets[i]
+			if target.Kind != cfg.TargetIdent || target.Symbol == 0 || i >= len(proj.Types) {
+				continue
+			}
+			vt := proj.Types[i]
+			if vt == nil || typ.IsAbsentOrUnknown(vt) {
+				continue
+			}
+			val := product.FromType(vt)
+			t.applyIterationTargetWrite(out, target, val, false)
 		}
-		vt := varTypes[i]
-		if vt == nil || typ.IsAbsentOrUnknown(vt) {
-			continue
-		}
-		key := symKey(target.Symbol)
-		val := product.FromType(vt)
-		if prev, had := out.Env[key]; had {
-			out.Env[key] = product.Domain.Join(prev, val)
-		} else {
-			out.Env[key] = val
+	}
+	t.seedKeyedIterKeyOf(out, info, iterCall)
+	t.seedIndexedIterKeyOf(out, info, iterCall)
+	t.seedIteratorValueOrigins(out, info, iterCall)
+}
+
+func (t *Transfer) seedIteratorValueOrigins(out *flow.PointState, info *cfg.AssignInfo, iterCall *ast.FuncCallExpr) {
+	if t.callTyper == nil || out == nil || info == nil || iterCall == nil {
+		return
+	}
+	if source, ok := t.callTyper.IndexedIterSource(iterCall); ok && !source.IsEmpty() {
+		t.seedIteratorValueOriginsFromPath(out, info, source, flow.ValueOriginIndexedIterator)
+		return
+	}
+	if sourceExpr, ok := t.callTyper.KeyedIterSource(iterCall); ok {
+		source, ok := t.containerExprPath(sourceExpr)
+		if ok && !source.IsEmpty() {
+			t.seedIteratorValueOriginsFromPath(out, info, source, flow.ValueOriginKeyedIterator)
 		}
 	}
 }
 
-// seedKeyedIterKeyOf records the key-presence fact a keyed (pairs-style) iteration
-// establishes: the first loop variable `k` of `for k in pairs(container)` is
-// provably a key of `container`, so `container[k]` inside the loop body returns a
-// present value. It conjoins a constraint.KeyOf{Table: container, Key: k} into the
-// body-entry condition, which refineIndexRead consults to strip the optional from
-// that read. The fact is gated on the iteration being keyed (KeyedIterSource, which
-// resolves the iterator's declared iteration effect — not a name match), so an
-// indexed (ipairs) iteration, or a key drawn from a DIFFERENT container, never
-// receives KeyOf and its index read stays soundly optional.
+func (t *Transfer) seedIteratorValueOriginsFromPath(out *flow.PointState, info *cfg.AssignInfo, source constraint.Path, kind flow.ValueOriginKind) {
+	for i, target := range info.Targets {
+		if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+			continue
+		}
+		t.applyValueOriginEffect(out, ValueOriginEffect{
+			ValuePath:  constraint.NewPath(target.Symbol, target.Name),
+			SourcePath: source,
+			Kind:       kind,
+			VarIndex:   i,
+		})
+	}
+}
+
+func (t *Transfer) iterVarProjection(
+	iterCall *ast.FuncCallExpr,
+	count int,
+	exprType func(ast.Expr) typ.Type,
+) (iteration.VarProjection, bool) {
+	if projector, ok := t.callTyper.(IterVarProjector); ok {
+		return projector.IterVarProjection(iterCall, count, exprType)
+	}
+	varTypes, ok := t.callTyper.IterVars(iterCall, count, exprType)
+	if !ok {
+		return iteration.VarProjection{}, false
+	}
+	return iteration.VarProjection{Types: varTypes}, true
+}
+
+func (t *Transfer) assignGenericForEmpty(out *flow.PointState, targets []cfg.AssignTarget) {
+	for _, target := range targets {
+		if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+			continue
+		}
+		t.applyIterationTargetWrite(out, target, product.FromType(typ.Nil), false)
+	}
+}
+
+// seedKeyedIterKeyOf records the key-presence fact a keyed (pairs-style)
+// iteration establishes: the first loop variable `k` of
+// `for k in pairs(container)` is provably a key of `container`, so
+// `container[k]` inside the loop body returns a present value. KeyPresence is the
+// canonical product-state axis for that runtime provenance; Cond is not used as
+// compatibility storage for this fact.
 func (t *Transfer) seedKeyedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo, iterCall *ast.FuncCallExpr) {
 	if len(info.Targets) == 0 || t.callTyper == nil {
 		return
@@ -1051,37 +2201,67 @@ func (t *Transfer) seedKeyedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo
 		return
 	}
 	keyPath := constraint.NewPath(keyTarget.Symbol, keyTarget.Name)
-	keyOf := constraint.FromConstraints(constraint.KeyOf{Table: tablePath, Key: keyPath})
-	// Conjoin KeyOf into every disjunct of the body-entry condition. An unconstrained
-	// entry (the lattice Bottom FalseCondition, or an empty TrueCondition) becomes the
-	// bare KeyOf so the fact holds unconditionally inside the loop body; And short-
-	// circuits FalseCondition to FalseCondition, which would drop the fact.
-	if out.Cond.IsFalse() || out.Cond.IsTrue() {
-		out.Cond = keyOf
-	} else {
-		out.Cond = constraint.And(out.Cond, keyOf)
+	effect := KeyProvenanceEffect{
+		Kind:      KeyProvenanceKeyedIteration,
+		TablePath: tablePath,
+		KeyPath:   keyPath,
 	}
+	if len(info.Targets) > 1 {
+		valueTarget := info.Targets[1]
+		if valueTarget.Kind == cfg.TargetIdent && valueTarget.Symbol != 0 {
+			effect.ValuePath = constraint.NewPath(valueTarget.Symbol, valueTarget.Name)
+		}
+	}
+	t.applyKeyProvenanceEffect(out, effect)
+}
+
+// seedKeyArrayForAssignment records the live provenance established by
+// `array = keys(container)`: the assigned array's current elements are keys of
+// container. The fact lives in PointState.KeyPresence so subsequent writes to the
+// array or table can kill it before indexed iteration consumes it.
+func (t *Transfer) seedKeyArrayForAssignment(out *flow.PointState, info *cfg.AssignInfo, targetIndex int, target cfg.AssignTarget) {
+	if out == nil {
+		return
+	}
+	tablePath, ok := t.keyArrayTableForAssignment(info, targetIndex, target)
+	if !ok {
+		return
+	}
+	arrayPath := constraint.NewPath(target.Symbol, target.Name)
+	t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
+		Kind:      KeyProvenanceKeyArrayAssignment,
+		ArrayPath: arrayPath,
+		TablePath: tablePath,
+	})
+}
+
+func (t *Transfer) keyArrayTableForAssignment(info *cfg.AssignInfo, targetIndex int, target cfg.AssignTarget) (constraint.Path, bool) {
+	if info == nil || t.callTyper == nil || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+		return constraint.Path{}, false
+	}
+	callInfo, retIndex := info.CallForTarget(targetIndex)
+	if callInfo == nil || callInfo.Call == nil {
+		return constraint.Path{}, false
+	}
+	tablePath, ok := t.callTyper.KeysCollectorContainer(callInfo, retIndex)
+	if !ok || tablePath.IsEmpty() {
+		return constraint.Path{}, false
+	}
+	return tablePath, true
 }
 
 // seedIndexedIterKeyOf records the interprocedural key-presence fact an indexed
-// (ipairs-style) iteration establishes when the iterated array provably holds keys
-// of a container: the value variable `v` of `for _, v in ipairs(names)` is a key of
-// that container when `names` is the result of a keys-collector call over it
-// (`local names = sorted_keys(c)`). It conjoins constraint.KeyOf{Table: container,
-// Key: v} into the body-entry condition, the same fact a direct keyed iteration
-// produces, so a `c[v]` read inside the loop strips the optional.
+// (ipairs-style) iteration establishes when the iterated array provably holds
+// keys of a container: the value variable `v` of `for _, v in ipairs(names)` is a
+// key of that container when live product state still proves `names` is a
+// keys-collector result over it (`local names = sorted_keys(c)`, with no
+// intervening write to names or c). KeyPresence is the authoritative product
+// state.
 //
-// The provenance is resolved by the CallTyper's IndexedIterKeyProvenance, which
-// holds only for a structurally recognized keys-collector result at its keys return
-// slot, so an arbitrary indexed iteration receives no KeyOf and its read stays
-// soundly optional. The value variable is the second loop target (the `v` of
-// `for _, v`), or the only target when the loop binds one variable.
+// The value variable is the second loop target (the `v` of `for _, v`), or the
+// only target when the loop binds one variable.
 func (t *Transfer) seedIndexedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo, iterCall *ast.FuncCallExpr) {
-	if t.callTyper == nil {
-		return
-	}
-	tablePath, ok := t.callTyper.IndexedIterKeyProvenance(iterCall)
-	if !ok || tablePath.IsEmpty() {
+	if t.callTyper == nil || out == nil {
 		return
 	}
 	valueIdx := 1
@@ -1095,13 +2275,15 @@ func (t *Transfer) seedIndexedIterKeyOf(out *flow.PointState, info *cfg.AssignIn
 	if valueTarget.Kind != cfg.TargetIdent || valueTarget.Symbol == 0 {
 		return
 	}
-	keyPath := constraint.NewPath(valueTarget.Symbol, valueTarget.Name)
-	keyOf := constraint.FromConstraints(constraint.KeyOf{Table: tablePath, Key: keyPath})
-	if out.Cond.IsFalse() || out.Cond.IsTrue() {
-		out.Cond = keyOf
-	} else {
-		out.Cond = constraint.And(out.Cond, keyOf)
+	source, ok := t.callTyper.IndexedIterSource(iterCall)
+	if !ok || source.IsEmpty() {
+		return
 	}
+	t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
+		Kind:      KeyProvenanceIndexedKeyArrayIteration,
+		ArrayPath: source,
+		KeyPath:   constraint.NewPath(valueTarget.Symbol, valueTarget.Name),
+	})
 }
 
 // evalExpr computes the value of a source expression against the current Env.
@@ -1181,15 +2363,37 @@ func (t *Transfer) evalExpr(
 	}
 }
 
+func (t *Transfer) evalExprAt(
+	out *flow.PointState,
+	p cfg.Point,
+	expr ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+) (product.AbstractValue, bool) {
+	switch e := expr.(type) {
+	case *ast.AttrGetExpr:
+		return t.evalAttrGetAt(out, p, e, demand)
+	case *ast.CastExpr:
+		t.demandConditionReads(out, e.Expr, demand)
+		if t.castType != nil && e.Type != nil {
+			if ct := t.castType(e.Type); ct != nil && !typ.IsAbsentOrUnknown(ct) {
+				return product.FromType(ct), true
+			}
+		}
+		return t.evalExprAt(out, p, e.Expr, demand)
+	default:
+		return t.evalExpr(out, expr, demand)
+	}
+}
+
 // evalCall types a call or method-call expression's Lua return vector through the
-// CallTyper seam (the legacy ops.NewCallPipeline). It resolves the argument values
-// from the current Env and emits parameter demand for arguments that are parameter
-// reads, then routes the call through the CallTyper, which resolves the callee
-// signature (module function, predeclared global, captured value, or live Env
-// value), infers generic type arguments from the argument types, and produces the
-// multi-return tuple. A slot per returned value carries its value-domain type. The
-// receiver of a method call and any field-path callee are resolved through evalExpr
-// against the live Env, so a method on a tracked local resolves its receiver type.
+// CallTyper seam. It resolves argument product values from the current Env and
+// emits parameter demand for arguments that are parameter reads. A product-aware
+// typer receives the product values directly, preserving axes that typ.Type cannot
+// express (notably gradual-top evidence); type-only typers remain supported at
+// external type-only boundaries.
+//
+// The receiver of a method call and any field-path callee are resolved through the
+// live point state, so a method on a tracked local resolves its receiver value.
 // Returns false when no CallTyper is wired or the callee does not resolve, so the
 // caller drops the slot to the value-domain Top (sound: precision loss).
 func (t *Transfer) evalCall(
@@ -1197,42 +2401,603 @@ func (t *Transfer) evalCall(
 	call *ast.FuncCallExpr,
 	demand func(int, paramevidence.ParamContract),
 ) ([]product.AbstractValue, bool) {
-	if t.callTyper == nil || call == nil {
+	if call == nil {
+		return nil, false
+	}
+	if set, ok := t.evalSetMetatableCall(out, call, demand); ok {
+		return []product.AbstractValue{set}, true
+	}
+	if t.callTyper == nil {
 		return nil, false
 	}
 	// Emit parameter demand for argument and receiver reads, and resolve each
-	// argument's value type for the call pipeline's generic inference and arity.
-	t.demandConditionReads(out, call.Receiver, demand)
-	argTypes := make([]typ.Type, len(call.Args))
-	for i, arg := range call.Args {
-		t.demandConditionReads(out, arg, demand)
-		if av, ok := t.evalExpr(out, arg, demand); ok && !av.IsZero() {
-			argTypes[i] = av.ProjectValue()
-		} else {
-			argTypes[i] = typ.Unknown
-		}
-	}
+	// argument's product value for the call pipeline's generic inference and arity.
+	ctx := t.productCallContext(out, call, demand)
+	t.applyCallArgDemands(out, call, ctx, demand)
+	argTypes := ctx.ArgTypes()
 	// exprType resolves an expression against the live Env for the driver's callee/
 	// receiver resolution (a function-valued local, a tracked receiver record). It
 	// returns the value-domain unknown when the transfer does not track the value, so
 	// the driver falls back to its module-wide signatures and globals; a read of an
 	// unannotated parameter resolves to gradual `any` (a genuinely-gradual source).
-	exprType := func(e ast.Expr) typ.Type {
-		return t.resolveExprType(out, e, demand)
+	exprType := ctx.ExprType
+	t.applyCallCellEffects(out, call, ctx, exprType)
+	if productTyper, ok := t.callTyper.(ProductCallTyper); ok {
+		returns, ok := productTyper.CallReturnValues(call, ctx)
+		if ok && len(returns) > 0 {
+			out2 := make([]product.AbstractValue, len(returns))
+			copy(out2, returns)
+			return out2, true
+		}
+		if ctx.PendingInput {
+			return nil, false
+		}
 	}
-	returns, ok := t.callTyper.CallReturns(call, argTypes, exprType)
+	returns, ok := t.callTyper.CallReturns(call, argTypes, exprType, out.Cells, out.FunctionRefs)
 	if !ok || len(returns) == 0 {
 		return nil, false
 	}
-	out2 := make([]product.AbstractValue, len(returns))
-	for i, rt := range returns {
-		if rt == nil || typ.IsUnknown(rt) {
-			out2[i] = product.AbstractValue{}
+	// Legacy/type-only providers return a storage vector, not a summary tuple.
+	// Keep nil/unknown slots as zero so targetValue can distinguish "slot exists
+	// but no product fact" from "the call returned an explicit unknown value".
+	return product.FromTypes(returns), true
+}
+
+func (t *Transfer) evalSetMetatableCall(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) (product.AbstractValue, bool) {
+	if out == nil || call == nil || len(call.Args) < 2 {
+		return product.AbstractValue{}, false
+	}
+	if t.in.Graph == nil || !metatable.IsSetMetatableCall(call, t.in.Graph.Bindings()) {
+		return product.AbstractValue{}, false
+	}
+	instance, ok := t.evalExpr(out, call.Args[0], demand)
+	if !ok || instance.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	var meta product.AbstractValue
+	var metaOK bool
+	if proto, ok := t.setMetatablePrototype(0, call); ok && proto != 0 {
+		if protoMeta, ok := t.prototypeMetatableValue(out, proto); ok && !protoMeta.IsZero() {
+			meta = protoMeta
+			metaOK = true
+		}
+	}
+	if !metaOK {
+		meta, metaOK = t.evalExpr(out, call.Args[1], demand)
+	}
+	if !metaOK || meta.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return product.WithMetatable(instance, meta)
+}
+
+func (t *Transfer) productCallContext(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) ProductCallContext {
+	argValues := t.callArgumentValues(out, call, demand)
+	ctx := ProductCallContext{
+		ArgValues:        argValues,
+		RuntimeArgValues: t.runtimeArgumentValues(out, call, argValues, demand),
+		PendingInput:     t.exprUsesPendingUnannotatedParam(out, call),
+		ExprValue:        t.projectExprValueResolver(out),
+	}
+	if call != nil && call.Method != "" && len(ctx.RuntimeArgValues) > 0 && !ctx.RuntimeArgValues[0].IsZero() {
+		if selfType := product.ProjectValueOrUnknown(ctx.RuntimeArgValues[0]); callobligation.InformativeType(selfType) {
+			ctx.SelfType = selfType
+		}
+	}
+	if out != nil {
+		ctx.Cells = out.Cells
+		ctx.FunctionRefs = out.FunctionRefs
+		ctx.ClosureRefs = out.ClosureRefs
+	}
+	return ctx
+}
+
+func (t *Transfer) runtimeArgumentValues(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	argValues []product.AbstractValue,
+	demand func(int, paramevidence.ParamContract),
+) []product.AbstractValue {
+	if call == nil {
+		return nil
+	}
+	n := len(call.Args)
+	if call.Method != "" {
+		n++
+	}
+	if n == 0 {
+		return nil
+	}
+	outValues := make([]product.AbstractValue, n)
+	offset := 0
+	if call.Method != "" {
+		t.demandConditionReads(out, call.Receiver, demand)
+		if av, ok := t.resolveExprValue(out, call.Receiver, demand); ok && !av.IsZero() {
+			outValues[0] = av
+		}
+		offset = 1
+	}
+	for i := range call.Args {
+		if i < len(argValues) && !argValues[i].IsZero() {
+			outValues[i+offset] = argValues[i]
+		}
+	}
+	return outValues
+}
+
+func (t *Transfer) callArgumentValues(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) []product.AbstractValue {
+	if call == nil {
+		return nil
+	}
+	t.demandConditionReads(out, call.Receiver, demand)
+	outValues := make([]product.AbstractValue, len(call.Args))
+	for i, arg := range call.Args {
+		t.demandConditionReads(out, arg, demand)
+		if av, ok := t.resolveExprValue(out, arg, demand); ok && !av.IsZero() {
+			outValues[i] = av
+		}
+	}
+	return outValues
+}
+
+func (t *Transfer) applyCallArgDemands(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	ctx ProductCallContext,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if t.callTyper == nil || call == nil || demand == nil {
+		return
+	}
+	provider, ok := t.callTyper.(CallArgDemandProvider)
+	if !ok || provider == nil {
+		return
+	}
+	expected := provider.CallArgDemands(call, ctx)
+	for i, arg := range call.Args {
+		if i >= len(expected) {
+			break
+		}
+		if !expected[i].Informative() {
 			continue
 		}
-		out2[i] = product.FromType(rt)
+		t.demandExprCtx(out, arg, expected[i].Type, demand)
 	}
-	return out2, true
+}
+
+func (t *Transfer) exprValueResolver(
+	out *flow.PointState,
+	demand func(int, paramevidence.ParamContract),
+) func(ast.Expr) (product.AbstractValue, bool) {
+	return func(e ast.Expr) (product.AbstractValue, bool) {
+		return t.resolveExprValue(out, e, demand)
+	}
+}
+
+// projectExprValueResolver exposes only already-known point-state facts to
+// product call providers. It deliberately does not evaluate call expressions:
+// providers are part of the current call's transfer, so re-entering evalCall from
+// a fallback resolver creates a transfer-local recursion outside the Kildall/db
+// summary fixed point.
+func (t *Transfer) projectExprValueResolver(
+	out *flow.PointState,
+) func(ast.Expr) (product.AbstractValue, bool) {
+	return func(e ast.Expr) (product.AbstractValue, bool) {
+		return t.projectExprValue(out, e)
+	}
+}
+
+func (t *Transfer) exprTypeResolver(exprValue func(ast.Expr) (product.AbstractValue, bool)) func(ast.Expr) typ.Type {
+	return func(e ast.Expr) typ.Type {
+		if av, ok := exprValue(e); ok && !av.IsZero() {
+			if pt := av.ProjectValue(); pt != nil && !typ.IsUnknown(pt) {
+				return pt
+			}
+		}
+		return typ.Unknown
+	}
+}
+
+func (t *Transfer) projectExprTypeResolver(out *flow.PointState) func(ast.Expr) typ.Type {
+	return t.exprTypeResolver(t.projectExprValueResolver(out))
+}
+
+func (t *Transfer) projectExprValue(out *flow.PointState, expr ast.Expr) (product.AbstractValue, bool) {
+	switch e := expr.(type) {
+	case nil:
+		return product.AbstractValue{}, false
+	case *ast.IdentExpr:
+		return t.projectIdentValue(out, e)
+	case *ast.NilExpr:
+		return product.FromType(typ.Nil), true
+	case *ast.StringExpr, *ast.NumberExpr, *ast.TrueExpr, *ast.FalseExpr:
+		if lit, ok := literal.FromExpr(expr); ok {
+			return product.FromType(lit), true
+		}
+		return product.AbstractValue{}, false
+	case *ast.FunctionExpr:
+		if t.funcTyper != nil {
+			if fn := t.funcTyper.FuncType(e); fn != nil {
+				return product.FromType(fn), true
+			}
+		}
+		return product.AbstractValue{}, false
+	case *ast.CastExpr:
+		if t.castType != nil && e.Type != nil {
+			if ct := t.castType(e.Type); ct != nil && !typ.IsAbsentOrUnknown(ct) {
+				return product.FromType(ct), true
+			}
+		}
+		return t.projectExprValue(out, e.Expr)
+	case *ast.AttrGetExpr:
+		return t.projectAttrGetValue(out, e)
+	case *ast.UnaryLenOpExpr:
+		if _, ok := t.projectExprValue(out, e.Expr); ok {
+			return product.FromType(typ.Integer), true
+		}
+		return product.AbstractValue{}, false
+	case *ast.FuncCallExpr:
+		return t.projectDynamicCallValue(out, e)
+	default:
+		if t.gradualAnySource(out, expr) {
+			return product.GradualAny(), true
+		}
+		return product.AbstractValue{}, false
+	}
+}
+
+func (t *Transfer) projectDynamicCallValue(out *flow.PointState, call *ast.FuncCallExpr) (product.AbstractValue, bool) {
+	if call == nil {
+		return product.AbstractValue{}, false
+	}
+	subject := call.Func
+	if call.Method != "" {
+		subject = call.Receiver
+	}
+	av, ok := t.projectExprValue(out, subject)
+	if !ok || av.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	if av.IsGradualTop() {
+		return product.GradualAny(), true
+	}
+	if typ.IsAny(av.ProjectValue()) {
+		return product.FromType(typ.Any), true
+	}
+	return product.AbstractValue{}, false
+}
+
+func (t *Transfer) projectIdentValue(out *flow.PointState, e *ast.IdentExpr) (product.AbstractValue, bool) {
+	sym := t.symbolOf(e)
+	if sym == 0 {
+		if meta, ok := t.typeValueOf(e); ok {
+			return meta, true
+		}
+		return product.AbstractValue{}, false
+	}
+	av, ok := t.symbolValue(out, sym)
+	path := constraint.NewPath(sym, "")
+	if !ok || av.IsZero() {
+		if ft, ok := t.functionValueForPath(out, path); ok {
+			return product.FromType(ft), true
+		}
+		if meta, ok := t.typeValueOf(e); ok {
+			return meta, true
+		}
+		if t.unannotatedParam[sym] {
+			return product.GradualAny(), true
+		}
+		return product.AbstractValue{}, false
+	}
+	if pt := av.ProjectValue(); pt != nil && pt.Kind() == kind.Function {
+		if ft, ok := t.functionValueForPath(out, constraint.NewPath(sym, "")); ok {
+			return product.RefineCallableValue(av, ft), true
+		}
+	}
+	return av, true
+}
+
+func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr) (product.AbstractValue, bool) {
+	if out != nil {
+		if pathKey, hasPath := t.staticMemberExprPathKey(e); hasPath {
+			if fact, ok := out.StaticMembers.Value(pathKey); ok {
+				return fact, true
+			}
+		}
+	}
+	base, ok := t.projectExprValue(out, e.Object)
+	if !ok || base.IsZero() {
+		if t.gradualAnySource(out, e) {
+			return product.GradualAny(), true
+		}
+		return product.AbstractValue{}, false
+	}
+	if member, isStatic := staticMemberKey(e); isStatic {
+		fv, ok := product.RuntimeMemberOf(base, member)
+		if !ok || fv.IsZero() {
+			if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
+				if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+					return product.RefineCallableRead(fv, ft), true
+				}
+			}
+			if t.gradualAnySource(out, e) {
+				return product.GradualAny(), true
+			}
+			return product.AbstractValue{}, false
+		}
+		if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
+			if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+				return product.RefineCallableRead(fv, ft), true
+			}
+		}
+		return t.refineIndexRead(out, e, base, fv), true
+	}
+	key, ok := t.projectExprValue(out, e.Key)
+	if !ok || key.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	ev, ok := product.RuntimeIndexOf(base, key)
+	if !ok || ev.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return t.refineIndexRead(out, e, base, ev), true
+}
+
+func (t *Transfer) applyCallCellEffects(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	ctx ProductCallContext,
+	exprType func(ast.Expr) typ.Type,
+) {
+	if out == nil || call == nil {
+		return
+	}
+	var effects flow.CaptureEffects
+	if provider, ok := t.callTyper.(productCellEffectProvider); ok {
+		effects = provider.CellEffectsFromValues(call, ctx)
+	} else if provider, ok := t.callTyper.(cellEffectProvider); ok {
+		effects = provider.CellEffects(call, exprType, out.Cells, out.FunctionRefs)
+	} else {
+		return
+	}
+	closurePath, _ := t.callClosurePath(call)
+	t.applyCellEffect(out, CellEffect{Effects: effects, ClosurePath: closurePath})
+}
+
+func (t *Transfer) applyCallReceiverEffects(
+	out *flow.PointState,
+	info *cfg.CallInfo,
+	ctx ProductCallContext,
+	demand func(int, paramevidence.ParamContract),
+) bool {
+	if out == nil || info == nil || info.Call == nil || t.callTyper == nil {
+		return false
+	}
+	provider, ok := t.callTyper.(productReceiverEffectProvider)
+	if !ok || provider == nil {
+		return false
+	}
+	effects := provider.ReceiverEffectsFromValues(info.Call, ctx)
+	if flow.ReceiverEffectsDomain.Equal(effects, flow.ReceiverEffectsDomain.Bottom()) ||
+		flow.ReceiverEffectsDomain.Equal(effects, flow.ReceiverEffectsIdentity()) {
+		return false
+	}
+	changed := false
+	if effects.IsTop() {
+		for slot := range ctx.RuntimeArgValues {
+			target := callsite.RuntimeArgAt(info, slot)
+			if target == nil {
+				continue
+			}
+			place, ok := t.placeOfExpr(out, target, demand)
+			if !ok || place.Root == 0 {
+				continue
+			}
+			changed = t.applyWriteEffect(out, WriteEffect{
+				Place:         place,
+				Value:         product.Domain.Top(),
+				KillRelations: true,
+				RecordProto:   true,
+				RecordStatic:  true,
+			}) || changed
+		}
+		return changed
+	}
+	for _, entry := range effects.Entries() {
+		target := callsite.RuntimeArgAt(info, entry.Slot)
+		if target == nil {
+			continue
+		}
+		place, ok := t.placeOfExpr(out, target, demand)
+		if !ok || place.Root == 0 {
+			continue
+		}
+		value := entry.Value
+		if !entry.MustWrite {
+			if old, ok := t.resolveExprValue(out, target, demand); ok && !old.IsZero() {
+				value = product.Domain.Join(old, value)
+			}
+		}
+		if value.IsZero() {
+			continue
+		}
+		changed = t.applyWriteEffect(out, WriteEffect{
+			Place:         place,
+			Value:         value,
+			KillRelations: true,
+			RecordProto:   true,
+			RecordStatic:  true,
+		}) || changed
+	}
+	return changed
+}
+
+func (t *Transfer) applyCallMutatorEffects(
+	out *flow.PointState,
+	info *cfg.CallInfo,
+	ctx ProductCallContext,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if out == nil || info == nil || info.Call == nil || t.callTyper == nil {
+		return
+	}
+	provider, ok := t.callTyper.(containerElementUnionProvider)
+	if !ok || provider == nil {
+		return
+	}
+	for _, effect := range provider.ContainerElementUnionsFromValues(info.Call, ctx) {
+		t.applyContainerElementUnionEffect(out, info, ctx, effect, demand)
+	}
+}
+
+func (t *Transfer) applyContainerElementUnionEffect(
+	out *flow.PointState,
+	info *cfg.CallInfo,
+	ctx ProductCallContext,
+	mutation effect.ContainerElementUnion,
+	demand func(int, paramevidence.ParamContract),
+) bool {
+	targetExpr := callsite.RuntimeArgAt(info, mutation.Container.Index)
+	valueExpr := callsite.RuntimeArgAt(info, mutation.Value.Index)
+	if targetExpr == nil || valueExpr == nil {
+		return false
+	}
+	target, ok := t.placeOfExpr(out, targetExpr, demand)
+	if !ok || target.Root == 0 {
+		return false
+	}
+	elem, ok := ctx.RuntimeArgValueAt(mutation.Value.Index)
+	if !ok || elem.IsZero() {
+		elem = product.Top()
+	}
+	return t.applyMutatorEffect(out, MutatorEffect{
+		Place:                 target,
+		Kind:                  MutatorContainerElementUnion,
+		Element:               elem,
+		InvalidateKeyPresence: true,
+	})
+}
+
+func (t *Transfer) callClosurePath(call *ast.FuncCallExpr) (constraint.Path, bool) {
+	if call == nil {
+		return constraint.Path{}, false
+	}
+	if call.Method != "" {
+		path, ok := t.containerExprPath(call.Receiver)
+		if !ok || path.IsEmpty() {
+			return constraint.Path{}, false
+		}
+		path.Segments = append(append([]constraint.Segment(nil), path.Segments...), constraint.Segment{
+			Kind: constraint.SegmentField,
+			Name: call.Method,
+		})
+		return path, true
+	}
+	return t.containerExprPath(call.Func)
+}
+
+func (t *Transfer) applySetMetatablePrototypeSelf(
+	out *flow.PointState,
+	p cfg.Point,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if out == nil || call == nil || len(call.Args) < 2 ||
+		(len(t.setMetatableProtoByPoint) == 0 && len(t.metatablePrototypeBySym) == 0) {
+		return
+	}
+	proto, ok := t.setMetatablePrototype(p, call)
+	if !ok || proto == 0 {
+		return
+	}
+	instance, ok := t.evalExpr(out, call.Args[0], demand)
+	if !ok || instance.IsZero() {
+		return
+	}
+	meta, ok := t.prototypeMetatableValue(out, proto)
+	if !ok || meta.IsZero() {
+		meta, ok = t.evalExpr(out, call.Args[1], demand)
+	}
+	if ok && !meta.IsZero() {
+		if withMeta, ok := product.WithMetatable(instance, meta); ok && !withMeta.IsZero() {
+			instance = withMeta
+		}
+	}
+	t.applyPrototypeSelfEffect(out, PrototypeSelfEffect{
+		Prototype: proto,
+		Value:     instance,
+	})
+}
+
+func (t *Transfer) setMetatablePrototype(p cfg.Point, call *ast.FuncCallExpr) (cfg.SymbolID, bool) {
+	if proto, ok := t.setMetatableProtoByPoint[p]; ok && proto != 0 {
+		return proto, true
+	}
+	if call == nil || len(call.Args) < 2 || len(t.metatablePrototypeBySym) == 0 {
+		return 0, false
+	}
+	mt := t.symbolOfIdent(call.Args[1])
+	if mt == 0 {
+		return 0, false
+	}
+	proto, ok := t.metatablePrototypeBySym[mt]
+	return proto, ok && proto != 0
+}
+
+func (t *Transfer) prototypeMetatableValue(out *flow.PointState, proto cfg.SymbolID) (product.AbstractValue, bool) {
+	base := typ.NewRecord().Build()
+	protoType, hasMethodSurface := t.prototypeSurfaceType(out, proto, base)
+	if !hasMethodSurface {
+		return product.AbstractValue{}, false
+	}
+	meta := typ.NewRecord().Field("__index", protoType).Build()
+	return product.FromType(meta), true
+}
+
+func (t *Transfer) prototypeSurfaceType(out *flow.PointState, proto cfg.SymbolID, base typ.Type) (typ.Type, bool) {
+	surface := base
+	hasMethodSurface := false
+	for _, method := range t.prototypeMethods {
+		if method.PrototypeSym != proto || method.FuncRef == (flow.FunctionRef{}) || method.Field == (constraint.Segment{}) {
+			continue
+		}
+		fnType, ok := t.functionValueForRef(out, method.FuncRef)
+		if !ok || typ.IsAbsentOrUnknown(fnType) {
+			continue
+		}
+		switch method.Field.Kind {
+		case constraint.SegmentField:
+			surface = typ.ExtendRecordWithField(surface, method.Field.Name, fnType)
+			hasMethodSurface = true
+		case constraint.SegmentIndexString:
+			surface = typ.ExtendRecordWithField(surface, method.Field.Name, fnType)
+			hasMethodSurface = true
+		}
+	}
+	if surface == nil {
+		return typ.Unknown, hasMethodSurface
+	}
+	return surface, hasMethodSurface
+}
+
+func (t *Transfer) symbolOfIdent(expr ast.Expr) cfg.SymbolID {
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok {
+		return 0
+	}
+	return t.symbolOf(ident)
 }
 
 // evalTable types a table-constructor value. It builds a record whose
@@ -1265,18 +3030,17 @@ func (t *Transfer) evalTable(
 	if tup, ok := t.positionalTupleLiteral(out, e, demand); ok {
 		return tup, true
 	}
-	builder := typ.NewRecord()
+	if len(e.Fields) == 0 {
+		return product.FromType(typ.NewFreshEmptyRecord()), true
+	}
+	av := product.FromType(typ.NewRecord().Build())
 	for _, field := range e.Fields {
 		if field == nil || field.Key == nil {
 			continue
 		}
-		name, ok := staticFieldName(field.Key)
+		key, ok := fieldkey.FromTableField(field)
 		if !ok {
-			if id, isIdent := field.Key.(*ast.IdentExpr); isIdent {
-				name = id.Value
-			} else {
-				continue
-			}
+			continue
 		}
 		// A statically-named field IS present in the literal: the constructor writes
 		// it. When its value type does not resolve (an unannotated parameter source, a
@@ -1289,12 +3053,13 @@ func (t *Transfer) evalTable(
 				ft = pt
 			}
 		}
-		if zzEvalTableNoAny() && ft == typ.Any {
+		member, ok := value.MemberFromSegment(key)
+		if !ok {
 			continue
 		}
-		builder.Field(name, ft)
+		av = product.WithMember(av, member, product.FromType(ft))
 	}
-	return product.FromType(builder.Build()), true
+	return av, true
 }
 
 // varargSpreadElement reports the element type of a pure vararg-spread literal
@@ -1316,47 +3081,94 @@ func (t *Transfer) varargSpreadElement(e *ast.TableExpr) typ.Type {
 	return t.varargElem()
 }
 
-// evalAttrGet computes the value of a field or index read base.key against the
-// current Env. It reads the base container's value, then applies the value-domain
-// field read (product.FieldOf for a string-literal key) or index read
-// (product.IndexOf for a dynamic key) — the AbstractValue-native forms of the
-// legacy transfer's field/index query. A base or field that does not resolve
-// reports false so the caller drops the slot to the value-domain Top.
+// evalAttrGet computes the runtime value of a field or index read base.key
+// against the current Env. It reads the base container's value, then applies the
+// product-domain runtime member/index read: strict structural lookup when the
+// slot is present, nil when a table-like shape proves the slot is absent, and
+// unresolved only for non-table/deferred reads.
 func (t *Transfer) evalAttrGet(
 	out *flow.PointState,
 	e *ast.AttrGetExpr,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
+	if pathKey, hasPath := t.staticMemberExprPathKey(e); hasPath {
+		if fact, ok := out.StaticMembers.Value(pathKey); ok {
+			return fact, true
+		}
+	}
 	base, ok := t.evalExpr(out, e.Object, demand)
 	if !ok || base.IsZero() {
 		return product.AbstractValue{}, false
 	}
-	if name, isField := staticFieldName(e.Key); isField {
-		fv, ok := product.FieldOf(base, name)
+	if member, isStatic := staticMemberKey(e); isStatic {
+		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
+			if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
+				if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+					return product.RefineCallableRead(fv, ft), true
+				}
+			}
 			return product.AbstractValue{}, false
 		}
-		return fv, true
+		if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
+			if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+				return product.RefineCallableRead(fv, ft), true
+			}
+		}
+		return t.refineIndexRead(out, e, base, fv), true
 	}
 	key, ok := t.evalExpr(out, e.Key, demand)
 	if !ok || key.IsZero() {
 		return product.AbstractValue{}, false
 	}
-	ev, ok := product.IndexOf(base, key)
+	ev, ok := product.RuntimeIndexOf(base, key)
 	if !ok || ev.IsZero() {
 		return product.AbstractValue{}, false
 	}
 	return t.refineIndexRead(out, e, base, ev), true
 }
 
-// staticFieldName reports whether key is a static field name (a dotted field
-// access t.name lowers to a string-literal key) and that name. A non-literal key
-// is a dynamic index, resolved through the index read instead.
-func staticFieldName(key ast.Expr) (string, bool) {
-	if s, ok := key.(*ast.StringExpr); ok {
-		return s.Value, true
+func (t *Transfer) evalAttrGetAt(
+	out *flow.PointState,
+	p cfg.Point,
+	e *ast.AttrGetExpr,
+	demand func(int, paramevidence.ParamContract),
+) (product.AbstractValue, bool) {
+	if pathKey, hasPath := t.staticMemberExprPathKeyAt(out, p, e); hasPath {
+		if fact, ok := out.StaticMembers.Value(pathKey); ok {
+			return fact, true
+		}
 	}
-	return "", false
+	base, ok := t.evalExprAt(out, p, e.Object, demand)
+	if !ok || base.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	if member, isStatic := staticMemberKeyWithConst(e, t.constResolverAt(p)); isStatic {
+		fv, ok := product.RuntimeMemberOf(base, member)
+		if !ok || fv.IsZero() {
+			if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
+				if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+					return product.RefineCallableRead(fv, ft), true
+				}
+			}
+			return product.AbstractValue{}, false
+		}
+		if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
+			if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+				return product.RefineCallableRead(fv, ft), true
+			}
+		}
+		return t.refineIndexRead(out, e, base, fv), true
+	}
+	key, ok := t.evalExprAt(out, p, e.Key, demand)
+	if !ok || key.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	ev, ok := product.RuntimeIndexOf(base, key)
+	if !ok || ev.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return t.refineIndexRead(out, e, base, ev), true
 }
 
 // evalIdent reads an identifier's value from Env and emits parameter demand when
@@ -1373,27 +3185,11 @@ func (t *Transfer) evalIdent(
 		}
 		return product.AbstractValue{}, false
 	}
-	av, ok := out.Env[symKey(sym)]
-	idx, isParam := t.paramBySym[sym]
-	if isParam && demand != nil {
-		// A parameter read demands that the parameter at least carries the value
-		// observed for it here. With no narrower observation, demand the value's
-		// own type; an unread-but-present slot demands nothing new.
-		if ok && !av.IsZero() {
-			demand(idx, av)
-		}
-	}
+	av, ok := t.symbolValue(out, sym)
+	path := constraint.NewPath(sym, "")
 	if !ok || av.IsZero() {
-		// A free variable captured from an enclosing scope has no Env value in this
-		// body. It is neither a parameter nor a symbol this function declares, so its
-		// type is the module-wide value its defining scope holds. A parameter or a
-		// local declared here is NOT a capture (its absent Env value means undetermined,
-		// the sound carry-forward), so the resolver is consulted only for a genuine
-		// free variable.
-		if !isParam && t.captureType != nil && t.isCapturedFreeVar(sym) {
-			if ct, ok := t.captureType(sym); ok && ct != nil && !typ.IsAbsentOrUnknown(ct) {
-				return product.FromType(ct), true
-			}
+		if ft, ok := t.functionValueForPath(out, path); ok {
+			return product.FromType(ft), true
 		}
 		// A symbol with no flow value may name a `type` used as a value (the `type X`
 		// binding carries a symbol but no runtime value); resolve it to that type's Meta.
@@ -1402,7 +3198,95 @@ func (t *Transfer) evalIdent(
 		}
 		return product.AbstractValue{}, false
 	}
+	if pt := av.ProjectValue(); pt != nil && pt.Kind() == kind.Function {
+		if ft, ok := t.functionValueForPath(out, path); ok {
+			return product.RefineCallableValue(av, ft), true
+		}
+	}
 	return av, true
+}
+
+func (t *Transfer) functionValueForPath(out *flow.PointState, path constraint.Path) (typ.Type, bool) {
+	if ft, ok := t.functionValueForPathKey(out, path.Key()); ok {
+		return ft, true
+	}
+	if out == nil || t.callTyper == nil {
+		return nil, false
+	}
+	provider, ok := t.callTyper.(functionValueAtPathProvider)
+	if !ok {
+		return nil, false
+	}
+	ft, ok := provider.FunctionValueAtPath(path, out.Cells, out.FunctionRefs, out.ClosureRefs)
+	if !ok || typ.IsAbsentOrUnknown(ft) {
+		return nil, false
+	}
+	return ft, true
+}
+
+func (t *Transfer) functionValueForPathKey(out *flow.PointState, key constraint.PathKey) (typ.Type, bool) {
+	if out == nil || t.callTyper == nil {
+		return nil, false
+	}
+	refs, ok := flow.FunctionRefAt(out.FunctionRefs, key)
+	if !ok {
+		return nil, false
+	}
+	ref, singleton := refs.Singleton()
+	if !singleton {
+		return nil, false
+	}
+	return t.functionValueForRef(out, ref)
+}
+
+func (t *Transfer) functionValueForRef(out *flow.PointState, ref flow.FunctionRef) (typ.Type, bool) {
+	if out == nil || t.callTyper == nil || ref == (flow.FunctionRef{}) {
+		return nil, false
+	}
+	provider, ok := t.callTyper.(functionValueProvider)
+	if !ok {
+		return nil, false
+	}
+	ft, ok := provider.FunctionValueByRef(ref, out.Cells, out.FunctionRefs, out.ClosureRefs)
+	if !ok || typ.IsAbsentOrUnknown(ft) {
+		return nil, false
+	}
+	return ft, true
+}
+
+func (t *Transfer) symbolValue(out *flow.PointState, sym cfg.SymbolID) (product.AbstractValue, bool) {
+	return t.symbolStorage.read(out, sym)
+}
+
+// symbolValueByKey is the transfer-owned value-key read boundary. Symbol keys
+// route through symbolStoragePolicy so Env-backed locals cannot be shadowed by a
+// same-ID capture-cell entry; non-symbol keys remain ordinary Env facts.
+func (t *Transfer) symbolValueByKey(out flow.PointState, key flow.ValueKey) (product.AbstractValue, bool) {
+	sym, ok := flow.ParseSymbolValueKey(key)
+	if !ok {
+		av, ok := flow.PointFactsOf(out).ValueKeyValue(key)
+		if !ok || valueIsBottom(av) {
+			return product.AbstractValue{}, false
+		}
+		return av, true
+	}
+	return t.symbolValue(&out, sym)
+}
+
+func (t *Transfer) setSymbolValue(out *flow.PointState, sym cfg.SymbolID, val product.AbstractValue, joinExisting bool) {
+	t.writeSymbolValue(out, sym, val, joinExisting, false)
+}
+
+func (t *Transfer) writeSymbolValue(out *flow.PointState, sym cfg.SymbolID, val product.AbstractValue, joinExisting bool, emitEffect bool) {
+	t.symbolStorage.write(out, sym, val, joinExisting, emitEffect)
+}
+
+func (t *Transfer) setSymbolValueByKey(out *flow.PointState, key flow.ValueKey, val product.AbstractValue, joinExisting bool) {
+	if sym, ok := flow.ParseSymbolValueKey(key); ok {
+		t.setSymbolValue(out, sym, val, joinExisting)
+		return
+	}
+	flow.NewPointWriter(out).WriteValueKey(key, val, joinExisting)
 }
 
 // typeValueOf resolves an identifier naming a `type` used as a value to that type's
@@ -1431,17 +3315,8 @@ func (t *Transfer) typeValueOf(e *ast.IdentExpr) (product.AbstractValue, bool) {
 // classification — an upvalue, or a captured outer local the tracker resolves to
 // the enclosing scope (recorded here as a non-local) — is a free variable whose
 // type is the module-wide value its defining scope holds.
-func (t *Transfer) isCapturedFreeVar(sym cfg.SymbolID) bool {
-	if sym == 0 || t.in.Graph == nil {
-		return false
-	}
-	if _, isParam := t.paramBySym[sym]; isParam {
-		return false
-	}
-	if k, ok := t.in.Graph.SymbolKind(sym); ok && (k == cfg.SymbolLocal || k == cfg.SymbolParam) {
-		return false
-	}
-	return true
+func valueIsBottom(v product.AbstractValue) bool {
+	return v.IsZero() || product.Domain.Equal(v, product.Domain.Bottom())
 }
 
 // demandParamCtx records that a parameter used in a typing context (where its
@@ -1641,10 +3516,11 @@ func (t *Transfer) gradualAnySource(out *flow.PointState, expr ast.Expr) bool {
 		if t.unannotatedParam[sym] {
 			return true
 		}
-		// A symbol whose tracked value is the gradual top is itself a gradual source
-		// (an `any`-typed local, or an unannotated parameter seeded from `any`).
-		if av, ok := out.Env[symKey(sym)]; ok && !av.IsZero() {
-			if pt := av.ProjectValue(); pt != nil && typ.IsAny(pt) {
+		// A symbol whose tracked product value carries gradual-top evidence is itself
+		// a gradual source. A strict declared `any` projects to typ.Any too, but has no
+		// such evidence and must not be admitted as gradual.
+		if av, ok := t.symbolValue(out, sym); ok && !av.IsZero() {
+			if av.IsGradualTop() {
 				return true
 			}
 		}
@@ -1681,17 +3557,26 @@ func (t *Transfer) resolveExprType(
 	if e == nil {
 		return typ.Unknown
 	}
+	return t.exprTypeResolver(t.exprValueResolver(out, demand))(e)
+}
+
+func (t *Transfer) resolveExprValue(
+	out *flow.PointState,
+	e ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+) (product.AbstractValue, bool) {
+	if e == nil {
+		return product.AbstractValue{}, false
+	}
 	if av, ok := t.evalExpr(out, e, demand); ok && !av.IsZero() {
-		if pt := av.ProjectValue(); pt != nil && !typ.IsUnknown(pt) {
-			return pt
-		}
+		return av, true
 	}
 	if ident, ok := e.(*ast.IdentExpr); ok {
 		if sym := t.symbolOf(ident); sym != 0 && t.unannotatedParam[sym] {
-			return typ.Any
+			return product.GradualAny(), true
 		}
 	}
-	return typ.Unknown
+	return product.AbstractValue{}, false
 }
 
 // applyNumeric updates the relational numeric component for an assignment to the
@@ -1708,13 +3593,16 @@ func (t *Transfer) resolveExprType(
 //
 // Other numeric assignments leave the component untouched (the slot's prior
 // relation is dropped only when it is overwritten, which ApplyEqConst does).
-func (t *Transfer) applyNumeric(out *flow.PointState, key string, src ast.Expr) {
-	if out.Num == nil {
+func (t *Transfer) applyNumeric(out *flow.PointState, key flow.ValueKey, src ast.Expr) {
+	if out == nil {
 		return
 	}
 	pk := constraint.PathKey(key)
 	if c, ok := t.constInt(src); ok {
-		out.Num.ApplyEqConst(pk, c)
+		t.applyNumericEffect(out, NumericEffect{
+			Ops:             []NumericOp{{Kind: NumericVarEqConst, Key: pk, Const: c}},
+			RequireExisting: true,
+		})
 		return
 	}
 	arith, ok := src.(*ast.ArithmeticOpExpr)
@@ -1723,6 +3611,9 @@ func (t *Transfer) applyNumeric(out *flow.PointState, key string, src ast.Expr) 
 	}
 	delta, self := t.constIncrement(arith, key)
 	if !self || delta == 0 {
+		return
+	}
+	if out.Num == nil {
 		return
 	}
 	_, prevUpper, bounded := out.Num.BoundsFor(pk)
@@ -1737,12 +3628,15 @@ func (t *Transfer) applyNumeric(out *flow.PointState, key string, src ast.Expr) 
 	if (delta > 0 && prevUpper > math.MaxInt64-delta) || (delta < 0 && prevUpper < math.MinInt64-delta) {
 		return
 	}
-	out.Num.ApplyEqConst(pk, prevUpper+delta)
+	t.applyNumericEffect(out, NumericEffect{
+		Ops:             []NumericOp{{Kind: NumericVarEqConst, Key: pk, Const: prevUpper + delta}},
+		RequireExisting: true,
+	})
 }
 
 // constIncrement reports whether arith is `key + const` or `const + key` (the
 // self-increment of the counter named by key) and the constant delta.
-func (t *Transfer) constIncrement(arith *ast.ArithmeticOpExpr, key string) (int64, bool) {
+func (t *Transfer) constIncrement(arith *ast.ArithmeticOpExpr, key flow.ValueKey) (int64, bool) {
 	if c, ok := t.constInt(arith.Rhs); ok && t.isSymExpr(arith.Lhs, key) {
 		return c, true
 	}
@@ -1765,45 +3659,25 @@ func (t *Transfer) constInt(expr ast.Expr) (int64, bool) {
 	return 0, false
 }
 
-func (t *Transfer) isSymExpr(expr ast.Expr, key string) bool {
+func (t *Transfer) isSymExpr(expr ast.Expr, key flow.ValueKey) bool {
 	ident, ok := expr.(*ast.IdentExpr)
 	if !ok {
 		return false
 	}
-	return symKey(t.symbolOf(ident)) == key
+	return flow.SymbolValueKey(t.symbolOf(ident)) == key
 }
 
-// applyBranch records the parameter demand a branch condition imposes and folds
-// the branch's unconditional path test into this point's Cond (the condition that
-// holds at the branch itself, before either edge is taken). The per-successor
-// narrowing — the guard on the true edge and its negation on the false edge,
-// applied to the Env values — is done by NarrowEdge (narrow.go) when a successor
-// reads across the branch edge, since both successors share this point's out-state.
-// A condition on a parameter still emits demand.
+// applyBranch records the parameter demand a branch condition imposes. Guard
+// facts themselves belong to the successor edge chosen by the branch, not to the
+// branch node's shared out-state: before an edge is selected, neither the guard
+// nor its negation holds unconditionally. NarrowEdge (narrow.go) installs the
+// true-edge guard or false-edge complement before the predecessor join.
 func (t *Transfer) applyBranch(
 	out *flow.PointState,
 	info *cfg.BranchInfo,
 	demand func(int, paramevidence.ParamContract),
 ) {
 	t.demandConditionReads(out, info.Condition, demand)
-	if info.CondSymbol == 0 {
-		return
-	}
-	path := constraint.NewPath(info.CondSymbol, info.CondVar)
-	var c constraint.Condition
-	switch info.CondCheck.Kind {
-	case cfg.CheckTruthy:
-		c = constraint.FromConstraints(constraint.Truthy{Path: path})
-	case cfg.CheckFalsy:
-		c = constraint.FromConstraints(constraint.Falsy{Path: path})
-	case cfg.CheckNil:
-		c = constraint.FromConstraints(constraint.IsNil{Path: path})
-	case cfg.CheckNotNil:
-		c = constraint.FromConstraints(constraint.NotNil{Path: path})
-	default:
-		return
-	}
-	out.Cond = constraint.Domain.Join(out.Cond, c)
 }
 
 // applyReturn records demand for parameters read in return expressions and
@@ -1813,20 +3687,115 @@ func (t *Transfer) applyBranch(
 // rather than the value-domain Top.
 func (t *Transfer) applyReturn(
 	out *flow.PointState,
+	p cfg.Point,
 	info *cfg.ReturnInfo,
 	demand func(int, paramevidence.ParamContract),
 ) {
+	effect := ReturnEffect{Relations: flow.ReturnRelationsDomain.Top()}
+	if info == nil {
+		t.applyReturnEffect(out, effect)
+		return
+	}
+	if len(info.Exprs) == 1 {
+		if call := info.SourceCallAt(0); call != nil && call.Call != nil {
+			effect.Relations = t.callReturnRelations(out, call.Call, demand)
+		}
+	}
 	for i, expr := range info.Exprs {
 		t.demandConditionReads(out, expr, demand)
+		slot := ReturnSlotEffect{Index: i, Source: expr}
+		if call := nestedCallExpr(expr); call != nil {
+			t.applySetMetatablePrototypeSelf(out, p, call, demand)
+			if proto, ok := t.setMetatablePrototype(p, call); ok && proto != 0 {
+				slot.FunctionRefs = t.prototypeMethodRefs(proto, constraint.NewPlaceholder(i))
+			}
+		}
+		t.publishReturnedPrototypeSelf(out, expr)
 		// A returned identifier already carries its value in the variable's Env
 		// slot, which the projection reads directly; only stash non-identifier
 		// return values, whose value lives nowhere else.
-		if _, isIdent := expr.(*ast.IdentExpr); isIdent {
+		if _, isIdent := expr.(*ast.IdentExpr); !isIdent {
+			if val, ok := t.evalExpr(out, expr, demand); ok && !val.IsZero() {
+				slot.Value = val
+			}
+		}
+		effect.Slots = append(effect.Slots, slot)
+	}
+	t.applyReturnEffect(out, effect)
+}
+
+func (t *Transfer) publishReturnedPrototypeSelf(out *flow.PointState, expr ast.Expr) {
+	if out == nil || expr == nil {
+		return
+	}
+	sym := t.returnedPrototypeInstanceSymbol(expr)
+	if sym == 0 {
+		return
+	}
+	protos, ok := out.PrototypeInstances.Prototypes(sym)
+	if !ok || len(protos) == 0 {
+		return
+	}
+	current, ok := t.symbolValue(out, sym)
+	if !ok || current.IsZero() {
+		return
+	}
+	for _, proto := range protos {
+		if proto == 0 {
 			continue
 		}
-		if val, ok := t.evalExpr(out, expr, demand); ok && !val.IsZero() {
-			out.Env[ReturnSlotKey(i)] = val
+		t.applyPrototypeSelfEffect(out, PrototypeSelfEffect{Prototype: proto, Value: current})
+	}
+}
+
+func (t *Transfer) returnedPrototypeInstanceSymbol(expr ast.Expr) cfg.SymbolID {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		return t.symbolOf(e)
+	case *ast.CastExpr:
+		return t.returnedPrototypeInstanceSymbol(e.Expr)
+	default:
+		return 0
+	}
+}
+
+func nestedCallExpr(expr ast.Expr) *ast.FuncCallExpr {
+	switch e := expr.(type) {
+	case *ast.FuncCallExpr:
+		return e
+	case *ast.CastExpr:
+		return nestedCallExpr(e.Expr)
+	default:
+		return nil
+	}
+}
+
+func (t *Transfer) constResolverAt(p cfg.Point) func(string) *flow.ConstValue {
+	if t == nil || t.in.Graph == nil || len(t.in.ConstValues) == 0 {
+		return nil
+	}
+	return func(name string) *flow.ConstValue {
+		sym, ok := t.in.Graph.SymbolAt(p, name)
+		if !ok || sym == 0 {
+			if bindings := t.in.Graph.Bindings(); bindings != nil {
+				symbols := bindings.SymbolsByName(name)
+				if len(symbols) == 1 {
+					sym = symbols[0]
+				}
+			}
+			if sym == 0 {
+				return nil
+			}
 		}
+		at := t.in.ConstValues[sym]
+		if at == nil {
+			return nil
+		}
+		val := at[p]
+		if val == nil || val.Kind == flow.ConstUnknown {
+			return nil
+		}
+		return val
 	}
 }
 
@@ -1836,6 +3805,7 @@ func (t *Transfer) applyReturn(
 // (assert of an always-false condition), so the caller terminates the flow.
 func (t *Transfer) applyCallArgs(
 	out *flow.PointState,
+	p cfg.Point,
 	info *cfg.CallInfo,
 	demand func(int, paramevidence.ParamContract),
 ) (dead bool) {
@@ -1850,7 +3820,7 @@ func (t *Transfer) applyCallArgs(
 	// A type-cast/assertion call `T(arg)` proves its argument IS T on the post-call
 	// path (a failed cast raises). Narrow the argument value to T, so a later read of
 	// it observes the asserted type — the same continuation refinement an assert imposes.
-	t.applyTypeCastNarrow(out, info.Call, demand)
+	t.applyTypeCastNarrow(out, p, info.Call, demand)
 	// assert(cond, ...) narrows its asserted value in the continuation (the value
 	// holds truthy past the call, or the call raised). It is recognized by the
 	// CalleeName the CFG pre-extracted, the genuine Lua builtin, not a name heuristic.
@@ -1861,9 +3831,15 @@ func (t *Transfer) applyCallArgs(
 	// continuation is unreachable, exactly as the builtin error() prunes its
 	// successor. The post-state is the lattice Bottom, so the branch arm holding
 	// this call drops out of the post-guard merge.
-	if t.callTyper != nil && t.callTyper.IsNoReturn(info.Call) {
-		zprobeNarrow("noReturn-call dead callee=%q", info.CalleeName)
-		return true
+	if t.callTyper != nil {
+		ctx := t.productCallContext(out, info.Call, demand)
+		if t.callTyper.IsNoReturn(info.Call, ctx) {
+			return true
+		}
+		t.applyCallArgDemands(out, info.Call, ctx, demand)
+		t.applyCallCellEffects(out, info.Call, ctx, ctx.ExprType)
+		t.applyCallReceiverEffects(out, info, ctx, demand)
+		t.applyCallMutatorEffects(out, info, ctx, demand)
 	}
 	// A call to a module function that narrows its parameters (a wrapper around
 	// assert / `if x == nil then error()`) carries that narrowing to the matching
@@ -1885,37 +3861,32 @@ func (t *Transfer) applyCallArgs(
 // argument the transfer does not track, leaves out unchanged.
 func (t *Transfer) applyTypeCastNarrow(
 	out *flow.PointState,
+	p cfg.Point,
 	call *ast.FuncCallExpr,
 	demand func(int, paramevidence.ParamContract),
 ) {
 	if t.callTyper == nil || call == nil || call.Method != "" || len(call.Args) != 1 {
 		return
 	}
-	exprType := func(e ast.Expr) typ.Type {
-		return t.resolveExprType(out, e, demand)
-	}
+	exprType := t.projectExprTypeResolver(out)
 	target, ok := t.callTyper.TypeCastTarget(call, exprType)
 	if !ok || target == nil || typ.IsAbsentOrUnknown(target) {
 		return
 	}
-	sym, segs, ok := t.pathSymbol(call.Args[0])
+	sym, segs, ok := t.pathSymbolInStateAt(out, p, call.Args[0], demand)
 	if !ok || sym == 0 {
 		return
 	}
-	key := symKey(sym)
-	if len(segs) == 0 {
-		out.Env[key] = product.FromType(target)
+	place, ok := staticPlace(sym, segs)
+	if !ok {
 		return
 	}
-	base, has := t.narrowBase(sym, out.Env[key], true)
-	if !has {
-		return
-	}
-	refined := refineAtPath(base.ProjectValue(), segs, func(typ.Type) typ.Type { return target })
-	if refined == nil {
-		return
-	}
-	out.Env[key] = product.FromType(refined)
+	t.applyRefinementEffect(out, RefinementEffect{
+		Place:     place,
+		Kind:      RefinementTypeCast,
+		Target:    target,
+		PreferEnv: true,
+	})
 }
 
 // demandConditionReads walks an expression for identifier reads, emitting
@@ -1994,41 +3965,4 @@ func isNumeric(v product.AbstractValue, ok bool) bool {
 		return lit.Base == kind.Integer || lit.Base == kind.Number
 	}
 	return false
-}
-
-// clonePointState deep-copies the mutable parts of a PointState so the transfer
-// never aliases a predecessor's stored state (the solver compares states by
-// value-domain Equal; mutating shared maps would corrupt the worklist).
-func clonePointState(ps flow.PointState) flow.PointState {
-	env := make(map[string]product.AbstractValue, len(ps.Env))
-	for k, v := range ps.Env {
-		env[k] = v
-	}
-	out := flow.PointState{Env: env, Cond: ps.Cond}
-	if ps.Num != nil {
-		out.Num = ps.Num.Clone()
-	}
-	return out
-}
-
-func itoa(v uint64) string {
-	if v == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for v > 0 {
-		i--
-		buf[i] = byte('0' + v%10)
-		v /= 10
-	}
-	return string(buf[i:])
-}
-
-// zzEvalTableNoAny disables recording a table-literal field whose value does not
-// resolve as a gradual `any` field, restoring the prior drop-the-field behavior.
-// Debug toggle for attributing oracle deltas to the table-literal field-presence
-// change.
-func zzEvalTableNoAny() bool {
-	return os.Getenv("ZZNOANY") != ""
 }

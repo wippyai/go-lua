@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -95,7 +96,7 @@ func TestMergeFieldsIntoSelfType_EmptyFields(t *testing.T) {
 
 func TestMergeFieldsIntoSelfType_NonRecordNonInterface(t *testing.T) {
 	selfType := typ.Number
-	fields := map[string]typ.Type{"x": typ.String}
+	fields := interproc.LiftTypeFieldMap(map[string]typ.Type{"x": typ.String})
 	result := mergeFieldsIntoSelfType(selfType, fields)
 	if result != selfType {
 		t.Errorf("expected original selfType for non-record/interface, got %v", result)

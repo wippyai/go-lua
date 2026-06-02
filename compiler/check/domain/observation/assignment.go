@@ -3,16 +3,32 @@ package observation
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
+
+type conditionFacts interface {
+	ConditionAt(point cfg.Point) constraint.Condition
+}
+
+type observationResolver struct{}
+
+func (observationResolver) Field(t typ.Type, name string) (typ.Type, bool) {
+	return querycore.Field(t, name)
+}
+
+func (observationResolver) Index(t typ.Type, key typ.Type) (typ.Type, bool) {
+	return querycore.Index(t, key)
+}
 
 // AssignmentSourceType projects the value read by an assignment source. If the
 // source references the target symbol, reads use the point-entry state so
@@ -21,27 +37,65 @@ func (p Projector) AssignmentSourceType(source ast.Expr, point cfg.Point, expect
 	if source == nil {
 		return nil
 	}
-	// A stored source type that still carries a type parameter is a generic call
-	// synthesized bottom-up without its expected return, so the parameter was never
-	// bound. When an expected type is available, re-synthesize the source with it so
-	// bidirectional inference instantiates the parameter (e.g. registry.get<T>(): T?
-	// assigned to a number? annotation resolves T to number).
+	stored, storedOK := p.assignmentSourceProductType(point, targetSym)
+	if storedOK {
+		stored = p.refineAssignmentSourceIndexRead(stored, source, point)
+	}
+	path, pathOK := p.assignmentPathSourceType(source, point, targetSym)
+
 	if expected != nil {
-		if t, ok := p.assignmentSourceProductType(point, targetSym); ok && !typ.ContainsTypeParam(t) {
-			return p.admitGradualAssignmentSource(p.refineAssignmentSourceIndexRead(t, source, point), source, point, expected)
+		// A stored/path source type that still carries a type parameter is a generic
+		// call synthesized bottom-up without its expected return, so the parameter was
+		// never bound. When an expected type is available, re-synthesize the source
+		// with it so bidirectional inference instantiates the parameter (e.g.
+		// registry.get<T>(): T? assigned to a number? annotation resolves T to number).
+		if storedOK && typ.ContainsTypeParam(stored) {
+			stored = nil
 		}
-		if t, ok := p.assignmentPathSourceType(source, point, targetSym); ok && !typ.ContainsTypeParam(t) {
-			return p.admitGradualAssignmentSource(t, source, point, expected)
+		if pathOK && typ.ContainsTypeParam(path) {
+			path = nil
+		}
+		if selected := flow.SelectAssignmentSourceObservation(flow.AssignmentSourceObservationSelection{
+			Stored: stored,
+			Path:   path,
+		}); !typ.IsAbsentOrUnknown(selected) {
+			return p.admitGradualAssignmentSource(selected, source, point, expected)
 		}
 		return p.assignmentSourceProjector(source, targetSym).TypeOfWithExpected(source, point, expected)
 	}
-	if t, ok := p.assignmentSourceProductType(point, targetSym); ok {
-		return p.refineAssignmentSourceIndexRead(t, source, point)
-	}
-	if t, ok := p.assignmentPathSourceType(source, point, targetSym); ok {
-		return t
+
+	if selected := flow.SelectAssignmentSourceObservation(flow.AssignmentSourceObservationSelection{
+		Stored: stored,
+		Path:   path,
+	}); !typ.IsAbsentOrUnknown(selected) {
+		return selected
 	}
 	return p.assignmentSourceProjector(source, targetSym).TypeOfWithExpected(source, point, expected)
+}
+
+// ReturnSourceType projects a returned expression at a declared-return boundary.
+// Path-like returns consume the same normalized path and condition-proof surface
+// as assignment sources, but there is no target symbol whose write could
+// self-reference the read.
+func (p Projector) ReturnSourceType(source ast.Expr, point cfg.Point, expected typ.Type) typ.Type {
+	if source == nil {
+		return nil
+	}
+	path, pathOK := p.assignmentPathSourceType(source, point, 0)
+	if expected != nil {
+		if pathOK && typ.ContainsTypeParam(path) {
+			path = nil
+			pathOK = false
+		}
+		if pathOK && !typ.IsAbsentOrUnknown(path) {
+			return p.admitGradualAssignmentSource(path, source, point, expected)
+		}
+		return p.TypeOfWithExpected(source, point, expected)
+	}
+	if pathOK && !typ.IsAbsentOrUnknown(path) {
+		return path
+	}
+	return p.TypeOfWithExpected(source, point, expected)
 }
 
 // admitGradualAssignmentSource applies gradual-typing's consistency to an
@@ -51,69 +105,31 @@ func (p Projector) AssignmentSourceType(source ast.Expr, point cfg.Point, expect
 // gated by sourceAnyIsGradualTop so a declared-`any` symbol read keeps its
 // strict any->concrete rejection.
 func (p Projector) admitGradualAssignmentSource(t typ.Type, source ast.Expr, point cfg.Point, expected typ.Type) typ.Type {
-	if zNoGradualBoundary() {
-		return t
-	}
 	if !typ.IsAny(t) || !p.sourceAnyIsGradualTop(source, point) {
 		return t
 	}
-	return p.coerceGradualToExpected(t, expected)
+	return p.coerceGradualToExpected(t, expected, source, point)
 }
 
 // sourceAnyIsGradualTop reports whether a source observed as `any` is the
 // gradual top admissible at a CONSISTENCY boundary (assignment to a typed local,
 // return, call argument), rather than an `any` the boundary check must still flag.
 //
-// Two disjoint shapes are the gradual top:
-//
-//   - A read whose PATH ROOT is an unannotated parameter. An unannotated parameter
-//     is the gradual top by inference: the function asserts no type for it, so the
-//     parameter and every field/index projection of it are consistent with any
-//     concrete target (a bare `url` parameter, or `http_response.body` read off an
-//     unannotated `http_response`). A parameter explicitly annotated `any` is an
-//     opt-in to the strict dynamic contract and is excluded by isUnannotatedParamSymbol.
-//   - A field/index read OFF A TYPED CONTAINER whose member is genuinely `any`: a
-//     value the inference could type the container of but not the member (a record
-//     field that is `any`, or a `{[string]: any}` map value). Gradual consistency
-//     admits it against a concrete expected type at a boundary.
-//
-// All other `any` reads keep strict rejection. A read whose CONTAINER is itself
-// `any`/`unknown` is not the gradual top (the flow cannot type the object at all),
-// and a bare symbol whose symbol is a declared `any`/`unknown` keeps its
-// any->concrete contract (the cast-guard soundness contract).
+// The preferred proof is the product-valued observation boundary
+// (flow.ProductFacts / flow.ProductPathFacts), which reads the product carrier's
+// evidence axis. That distinguishes a gradual `any` introduced by an unannotated
+// source from a strict declared `any`, even though both project to typ.Any.
+// Product evidence is authoritative when present; the unannotated-parameter root
+// check is only a compatibility fallback for flow surfaces that do not yet expose
+// product facts.
 //
 // This relation gates CONSISTENCY boundaries only. A WRITE into a typed container's
 // element slot (a structured index-write target) is a store into invariant
 // container state, not a boundary coercion: its element-domain obligation is gated
-// by the strict source type, so the 2nd shape here never relaxes a closed-domain
-// write (see checkStructuredAssignmentTarget's strict source projection).
+// by the strict source type (see checkStructuredAssignmentTarget's strict source
+// projection).
 func (p Projector) sourceAnyIsGradualTop(source ast.Expr, point cfg.Point) bool {
-	path := p.pathOfExpr(source, point)
-	if path.IsEmpty() || path.Symbol == 0 {
-		return false
-	}
-	if p.isUnannotatedParamSymbol(path.Symbol) {
-		return true
-	}
-	// A field/index read off a typed (non-placeholder) container whose member is
-	// `any` is the gradual top at a CONSISTENCY boundary (assignment to a typed
-	// local, return, call argument): gradual consistency admits it against a
-	// concrete expected type. A read whose container is itself `any`/`unknown`, or
-	// a bare declared-`any` symbol, is not the gradual top and keeps strict
-	// rejection (the cast-guard soundness contract). A write into a typed container
-	// is not such a boundary, so its strict projection declines this shape.
-	if p.cfg.StrictContainerWrite {
-		return false
-	}
-	if len(path.Segments) == 0 {
-		return false
-	}
-	attr, ok := source.(*ast.AttrGetExpr)
-	if !ok || attr == nil {
-		return false
-	}
-	obj := unwrap.Alias(p.TypeOf(attr.Object, point))
-	return obj != nil && !obj.Kind().IsPlaceholder()
+	return p.exprIsGradualTop(source, point)
 }
 
 // AssignmentSourceTableCheck validates a table literal through the same
@@ -146,7 +162,11 @@ func (p Projector) assignmentSourceProjector(source ast.Expr, targetSym cfg.Symb
 }
 
 func (p Projector) assignmentSourceProductType(point cfg.Point, targetSym cfg.SymbolID) (typ.Type, bool) {
-	if p.cfg.Inputs == nil || p.cfg.Solution == nil || targetSym == 0 {
+	if p.cfg.Inputs == nil || targetSym == 0 {
+		return nil, false
+	}
+	sourceFacts := p.assignmentSourceFacts()
+	if sourceFacts == nil {
 		return nil, false
 	}
 	for _, assign := range p.cfg.Inputs.Assignments {
@@ -156,7 +176,7 @@ func (p Projector) assignmentSourceProductType(point cfg.Point, targetSym cfg.Sy
 		if assign.Source.Kind == flow.AssignmentSourceStatic && assign.Source.ProjectionKind == flow.AssignmentSourceProjectionNone {
 			return nil, false
 		}
-		t := p.cfg.Solution.AssignmentSourceValueAt(point, assign.TargetPath, assign.Source)
+		t := sourceFacts.AssignmentSourceValueAt(point, assign.TargetPath, assign.Source)
 		if typ.IsAbsentOrUnknown(t) {
 			return nil, false
 		}
@@ -165,31 +185,39 @@ func (p Projector) assignmentSourceProductType(point cfg.Point, targetSym cfg.Sy
 	return nil, false
 }
 
+func (p Projector) assignmentSourceFacts() flow.AssignmentSourceFacts {
+	if p.cfg.Facts != nil {
+		if facts, ok := p.cfg.Facts.(flow.AssignmentSourceFacts); ok {
+			return facts
+		}
+	}
+	if p.cfg.Flow != nil {
+		if facts, ok := p.cfg.Flow.(flow.AssignmentSourceFacts); ok {
+			return facts
+		}
+	}
+	return nil
+}
+
 func (p Projector) assignmentPathSourceType(source ast.Expr, point cfg.Point, targetSym cfg.SymbolID) (typ.Type, bool) {
 	path := p.pathOfExpr(source, point)
 	if path.IsEmpty() {
 		return nil, false
 	}
-	declared := p.pathDeclaredType(point, path)
-	if p.cfg.Solution != nil {
-		if targetSym != 0 && p.exprReferencesSymbol(source, targetSym) {
-			if t := p.cfg.Solution.PreStateTypeAt(point, path); !typ.IsAbsentOrUnknown(t) {
-				return p.reconcileObservedPath(t, declared), true
-			}
-		} else if t := p.cfg.Solution.NarrowedTypeAt(point, path); !typ.IsAbsentOrUnknown(t) {
-			return p.reconcileObservedPath(t, declared), true
-		}
-	} else if t, ok := p.factsNarrowedPathType(point, path); ok {
-		// No Solution: a flow whose narrowing lives in the per-point Facts (the
-		// canonical flow) supplies the path's flow-refined type here, so an
-		// assignment source observes the value narrowed by the branch guard rather
-		// than its flow-insensitive declared type.
-		return p.reconcileObservedPath(t, declared), true
+	selfReference := targetSym != 0 && p.exprReferencesSymbol(source, targetSym)
+	phase := flow.PathReadCurrent
+	if selfReference {
+		phase = flow.PathReadPre
 	}
-	if declared != nil {
-		return declared, true
-	}
-	return nil, false
+	obs := p.pathObservationFacts().ObservePath(flow.PathObservationQuery{
+		Point:               point,
+		Path:                path,
+		Phase:               phase,
+		StrictPhase:         selfReference,
+		AllowConditionProof: true,
+		PreserveProof:       p.cfg.PreserveProof,
+	})
+	return obs.Type, obs.Resolved()
 }
 
 // factsNarrowedPathType resolves the flow-refined type of path from the per-point
@@ -201,14 +229,23 @@ func (p Projector) assignmentPathSourceType(source ast.Expr, point cfg.Point, ta
 //
 // The root refinement is admitted only when it is a sound narrowing of the root's
 // declared type: an annotated symbol keeps a gradual (any) contract, and a refined
-// type that is not a subtype of the declared type is rejected. This mirrors the
-// legacy Solution.EffectiveTypeAt annotated-symbol guard so the canonical flow does
-// not replace a declared type with a refinement the assignment check must still
-// validate against the declaration (e.g. a value typed any must stay any at an
-// assignment source so an any -> concrete write is flagged, not silently admitted).
+// type that is not a subtype of the declared type is rejected. This matches the
+// concrete solver's annotated-symbol guard so a producer-neutral flow projection
+// does not replace a declared type with a refinement the assignment check must
+// still validate against the declaration (e.g. a value typed any must stay any at
+// an assignment source so an any -> concrete write is flagged, not silently
+// admitted).
 func (p Projector) factsNarrowedPathType(point cfg.Point, path constraint.Path) (typ.Type, bool) {
 	if p.cfg.Facts == nil || path.Symbol == 0 {
 		return nil, false
+	}
+	if len(path.Segments) > 0 {
+		if pathFacts, ok := p.cfg.Facts.(flow.PathFacts); ok {
+			refined := pathFacts.RefinedPathAt(point, path)
+			if refined.State == flow.StateResolved && !typ.IsAbsentOrUnknown(refined.Type) {
+				return refined.Type, true
+			}
+		}
 	}
 	refined := p.cfg.Facts.RefinedAt(point, path.Symbol)
 	if refined.State != flow.StateResolved || refined.Type == nil || typ.IsUnknown(refined.Type) {
@@ -225,22 +262,28 @@ func (p Projector) factsNarrowedPathType(point cfg.Point, path constraint.Path) 
 	if derived == nil {
 		return nil, false
 	}
-	return p.refineFactsLengthIndex(point, path, root, derived), true
+	derived = p.refineFactsLengthIndex(point, path, root, derived)
+	if cf, ok := p.cfg.Facts.(conditionFacts); ok {
+		derived = p.refineFactsCondition(point, path, root, derived, cf.ConditionAt(point))
+	}
+	return derived, true
 }
 
-// refineFactsLengthIndex recovers a non-optional element type for an assignment
-// source `arr[k]` a length proof shows is in range, the read-side counterpart of
-// the path-sensitive Solution's index-read refinement for a Solution-less flow. It
-// fires only for a single trailing positive literal index over the path's root
-// container and consults the flow's LengthFacts proof: when the proven length lower
-// bound covers the index, the same narrow law the path-sensitive flow uses
-// (RefineSequenceIndex) drops the in-range read's flow-uncertainty nil. A read the
-// proof cannot place in range keeps its optional element (sound).
-func (p Projector) refineFactsLengthIndex(point cfg.Point, path constraint.Path, container, derived typ.Type) typ.Type {
-	if len(path.Segments) != 1 {
+func (p Projector) refineFactsLengthIndex(point cfg.Point, path constraint.Path, root, derived typ.Type) typ.Type {
+	if len(path.Segments) == 0 {
 		return derived
 	}
-	seg := path.Segments[0]
+	idx := -1
+	for i := len(path.Segments) - 1; i >= 0; i-- {
+		if path.Segments[i].Kind == constraint.SegmentIndexInt {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return derived
+	}
+	seg := path.Segments[idx]
 	if seg.Kind != constraint.SegmentIndexInt || seg.Index < 1 {
 		return derived
 	}
@@ -248,8 +291,23 @@ func (p Projector) refineFactsLengthIndex(point cfg.Point, path constraint.Path,
 	if !ok {
 		return derived
 	}
+	containerPath := constraint.Path{
+		Root:     path.Root,
+		Symbol:   path.Symbol,
+		Version:  path.Version,
+		Segments: append([]constraint.Segment(nil), path.Segments[:idx]...),
+	}
 	lower, ok := lengthFacts.LengthLowerBoundAt(point, path.Symbol)
+	if pathFacts, hasPathFacts := p.cfg.Facts.(flow.PathLengthFacts); hasPathFacts {
+		if pathLower, pathOK := pathFacts.LengthLowerBoundForPathAt(point, containerPath); pathOK {
+			lower, ok = pathLower, true
+		}
+	}
 	if !ok || lower < int64(seg.Index) {
+		return derived
+	}
+	container := p.derivePathSegments(root, path.Segments[:idx])
+	if container == nil {
 		return derived
 	}
 	if refined := narrow.RefineSequenceIndex(container, derived, int64(seg.Index)); refined != nil {
@@ -258,10 +316,126 @@ func (p Projector) refineFactsLengthIndex(point cfg.Point, path constraint.Path,
 	return derived
 }
 
+func (p Projector) refineFactsCondition(point cfg.Point, path constraint.Path, root, derived typ.Type, cond constraint.Condition) typ.Type {
+	if root == nil || derived == nil || !cond.HasConstraints() || cond.IsFalse() || cond.IsTrue() {
+		return derived
+	}
+	var out typ.Type
+	applied := false
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		next, ok := p.refineFactsConditionDisjunct(point, path, root, cond.DisjunctConstraints(i))
+		if !ok || next == nil {
+			next = derived
+		} else {
+			applied = true
+		}
+		out = typ.JoinPreferNonSoft(out, next)
+	}
+	if !applied || out == nil {
+		return derived
+	}
+	return typ.PruneSoftUnionMembers(out)
+}
+
+func (p Projector) refineFactsConditionDisjunct(_ cfg.Point, query constraint.Path, root typ.Type, constraints []constraint.Constraint) (typ.Type, bool) {
+	if root == nil || len(constraints) == 0 {
+		return nil, false
+	}
+	for _, c := range constraints {
+		switch v := c.(type) {
+		case constraint.FieldEquals:
+			if next, ok := p.refineQueryByFieldEquals(query, root, v.Target, v.Field, v.Value); ok {
+				return next, true
+			}
+		case constraint.IndexEquals:
+			if lit, ok := v.Key.(*typ.Literal); ok && lit.Base == kind.Integer {
+				if n, ok := lit.Value.(int64); ok {
+					target := v.Target.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(n)})
+					if next, ok := p.refineQueryByLiteralPath(query, root, target, v.Value); ok {
+						return next, true
+					}
+				}
+			}
+		}
+	}
+	return nil, false
+}
+
+func (p Projector) refineQueryByFieldEquals(query constraint.Path, root typ.Type, target constraint.Path, field string, value typ.Type) (typ.Type, bool) {
+	if field == "" {
+		return nil, false
+	}
+	return p.refineQueryByFieldLiteral(query, root, target, field, value)
+}
+
+func (p Projector) refineQueryByLiteralPath(query constraint.Path, root typ.Type, literalPath constraint.Path, value typ.Type) (typ.Type, bool) {
+	if len(literalPath.Segments) == 0 {
+		return nil, false
+	}
+	fieldSeg := literalPath.Segments[len(literalPath.Segments)-1]
+	if fieldSeg.Kind != constraint.SegmentField && fieldSeg.Kind != constraint.SegmentIndexString {
+		return nil, false
+	}
+	target := constraint.Path{
+		Root:     literalPath.Root,
+		Symbol:   literalPath.Symbol,
+		Version:  literalPath.Version,
+		Segments: append([]constraint.Segment(nil), literalPath.Segments[:len(literalPath.Segments)-1]...),
+	}
+	return p.refineQueryByFieldLiteral(query, root, target, fieldSeg.Name, value)
+}
+
+func (p Projector) refineQueryByFieldLiteral(query constraint.Path, root typ.Type, target constraint.Path, field string, value typ.Type) (typ.Type, bool) {
+	lit, ok := unwrap.Alias(value).(*typ.Literal)
+	if !ok || lit == nil {
+		return nil, false
+	}
+	if !pathHasPrefix(query, target) {
+		return nil, false
+	}
+	targetType := p.derivePathSegments(root, target.Segments)
+	if targetType == nil {
+		return nil, false
+	}
+	refinedTarget := narrow.ByFieldLiteral(targetType, field, lit, observationResolver{})
+	if refinedTarget == nil || typ.TypeEquals(refinedTarget, targetType) {
+		return nil, false
+	}
+	suffix := query.Segments[len(target.Segments):]
+	out := p.derivePathSegments(refinedTarget, suffix)
+	if out == nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func pathHasPrefix(path, prefix constraint.Path) bool {
+	if path.Symbol != 0 && prefix.Symbol != 0 {
+		if path.Symbol != prefix.Symbol {
+			return false
+		}
+	} else if path.Root != prefix.Root {
+		return false
+	}
+	if len(prefix.Segments) > len(path.Segments) {
+		return false
+	}
+	for i := range prefix.Segments {
+		if !segmentEqual(path.Segments[i], prefix.Segments[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func segmentEqual(a, b constraint.Segment) bool {
+	return a.Kind == b.Kind && a.Name == b.Name && a.Index == b.Index
+}
+
 // soundRootRefinement gates a path-root refinement against the symbol's declared
-// type, mirroring the legacy Solution.EffectiveTypeAt annotated-symbol guard. For an
-// unannotated symbol the refinement is the inferred value (used as is). For an
-// annotated symbol:
+// type, matching the concrete solver's annotated-symbol guard. For an unannotated
+// symbol the refinement is the inferred value (used as is). For an annotated
+// symbol:
 //
 //   - a gradual declared type (any/unknown) keeps its contract: a value declared
 //     any must stay any at an assignment source so an any -> concrete write is
@@ -349,9 +523,21 @@ func (p Projector) AssignmentTargetWriteType(target cfg.AssignTarget, source ast
 		return t
 	}
 	objType := p.TypeOf(target.Base, point)
+	sealed := p.indexTargetSealed(target, point)
 	keyType := typ.Type(nil)
 	if target.Key != nil {
-		keyType = p.TypeOf(target.Key, point)
+		keyType = p.assignmentTargetIndexKeyType(target, point, !sealed)
+	}
+	if sealed {
+		return value.SealedIndexedWriteObligation(objType, keyType)
+	}
+	if keyType != nil && !sealed {
+		valType := p.AssignmentSourceType(source, point, nil, target.Symbol)
+		if valType != nil {
+			if widened := value.AdmitForeignIndexedWrite(objType, keyType, valType); widened != nil && !typ.TypeEquals(widened, objType) {
+				return nil
+			}
+		}
 	}
 	if expected, ok := querycore.IndexWrite(objType, keyType); ok {
 		return expected
@@ -360,15 +546,16 @@ func (p Projector) AssignmentTargetWriteType(target cfg.AssignTarget, source ast
 		// The universal write obligation gates a write that must satisfy every
 		// field a dynamic key may denote, which is correct for a sealed,
 		// declared table whose shape is fixed. A mutable/fresh table reached by
-		// a dynamic key instead widens: the value domain admits the write by
-		// extending the table's map component, leaving the existing fields
-		// untouched. Honor that admission here so an inferred table is not gated
-		// by the strict heterogeneous-field meet.
-		if p.indexTargetSealed(target, point) {
+		// a dynamic key instead widens through the value-domain admission law:
+		// exact keys add exact members, while broad keys weaken any field they
+		// may overwrite and extend the map component. Honor that admission here
+		// so an inferred table is not gated by the strict heterogeneous-field
+		// meet.
+		if sealed {
 			return expected
 		}
 		valType := p.AssignmentSourceType(source, point, nil, target.Symbol)
-		if widened := value.AdmitIndexedWrite(objType, keyType, valType); widened != nil && !typ.TypeEquals(widened, objType) {
+		if widened := value.AdmitForeignIndexedWrite(objType, keyType, valType); widened != nil && !typ.TypeEquals(widened, objType) {
 			return nil
 		}
 		return expected
@@ -376,28 +563,50 @@ func (p Projector) AssignmentTargetWriteType(target cfg.AssignTarget, source ast
 	return nil
 }
 
+func (p Projector) assignmentTargetIndexKeyType(target cfg.AssignTarget, point cfg.Point, allowConst bool) typ.Type {
+	if target.Key == nil {
+		return nil
+	}
+	attr := &ast.AttrGetExpr{Key: target.Key, KeySyntax: ast.AttrKeyIndex}
+	constResolver := (func(string) *flow.ConstValue)(nil)
+	if allowConst {
+		constResolver = p.constResolver(point)
+	}
+	if seg, ok := flowpath.StaticAttrSegmentWithConst(attr, constResolver); ok {
+		switch seg.Kind {
+		case constraint.SegmentIndexString:
+			return typ.LiteralString(seg.Name)
+		case constraint.SegmentIndexInt:
+			return typ.LiteralInt(int64(seg.Index))
+		case constraint.SegmentField:
+			return typ.LiteralString(seg.Name)
+		}
+	}
+	return p.TypeOf(target.Key, point)
+}
+
 // indexTargetSealed reports whether the index target's base denotes a declared,
 // annotation-sealed table whose shape a dynamic write must not widen. Mutable
 // tables built from a literal or a fresh allocation are not sealed, so a dynamic
 // write widens them instead of meeting a heterogeneous-field write obligation.
 func (p Projector) indexTargetSealed(target cfg.AssignTarget, point cfg.Point) bool {
-	if p.cfg.Inputs == nil {
+	basePath := p.indexTargetBasePath(target, point)
+	if basePath.IsEmpty() || basePath.Symbol == 0 {
 		return false
 	}
-	sym := target.BaseSymbol
-	if sym == 0 {
-		basePath := p.pathOfExpr(target.Base, point)
-		sym = basePath.Symbol
+	if p.cfg.Facts != nil {
+		return flow.AnnotatedDeclaredPathSealed(p.cfg.Facts, point, basePath)
 	}
-	if sym == 0 || !p.cfg.Inputs.AnnotatedVars[sym] {
+	if p.cfg.Inputs == nil || p.cfg.Inputs.AnnotatedVars == nil || !p.cfg.Inputs.AnnotatedVars[basePath.Symbol] {
 		return false
 	}
-	declared := p.cfg.Inputs.DeclaredTypes[sym]
-	return !typ.IsRefinableAnnotation(declared)
+	declared := DeclaredPathType(p.cfg.Inputs.DeclaredTypes, basePath)
+	return declared != nil && !typ.IsAbsentOrUnknown(declared) && !typ.IsRefinableAnnotation(declared)
 }
 
 func (p Projector) assignmentTargetFlowWriteType(target cfg.AssignTarget, source ast.Expr, point cfg.Point) typ.Type {
-	if p.cfg.Solution == nil {
+	facts := p.indexWriteFacts()
+	if facts == nil {
 		return nil
 	}
 	targetPath := p.indexTargetBasePath(target, point)
@@ -405,7 +614,7 @@ func (p Projector) assignmentTargetFlowWriteType(target cfg.AssignTarget, source
 		return nil
 	}
 	keyPath := p.pathOfExpr(target.Key, point)
-	value, ok := p.cfg.Solution.IndexWriteAdmission(flow.IndexWriteQuery{
+	value, ok := facts.IndexWriteAdmission(flow.IndexWriteQuery{
 		Point:     point,
 		Target:    targetPath,
 		KeySymbol: keyPath.Symbol,
@@ -416,6 +625,20 @@ func (p Projector) assignmentTargetFlowWriteType(target cfg.AssignTarget, source
 		return nil
 	}
 	return value
+}
+
+func (p Projector) indexWriteFacts() flow.IndexWriteFacts {
+	if p.cfg.Facts != nil {
+		if facts, ok := p.cfg.Facts.(flow.IndexWriteFacts); ok {
+			return facts
+		}
+	}
+	if p.cfg.Flow != nil {
+		if facts, ok := p.cfg.Flow.(flow.IndexWriteFacts); ok {
+			return facts
+		}
+	}
+	return nil
 }
 
 func (p Projector) indexTargetBasePath(target cfg.AssignTarget, point cfg.Point) constraint.Path {
@@ -446,14 +669,14 @@ func (p Projector) AssignmentTargetDeleteAllowed(target cfg.AssignTarget, point 
 // ExcludesExprTypeAt reports whether the solved flow product proves declared
 // impossible for expr at point.
 func (p Projector) ExcludesExprTypeAt(point cfg.Point, expr ast.Expr, declared typ.Type) bool {
-	if p.cfg.Solution == nil || expr == nil || declared == nil {
+	if p.cfg.Flow == nil || expr == nil || declared == nil {
 		return false
 	}
 	path := p.pathOfExpr(expr, point)
 	if path.IsEmpty() {
 		return false
 	}
-	return p.cfg.Solution.ExcludesTypeAt(point, path, declared)
+	return p.cfg.Flow.ExcludesTypeAt(point, path, declared)
 }
 
 func (p Projector) exprReferencesSymbol(expr ast.Expr, sym cfg.SymbolID) bool {

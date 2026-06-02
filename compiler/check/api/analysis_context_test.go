@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -53,5 +54,55 @@ func TestMergeAnalysisContext_ExpectedFunctionUsesValueConvergence(t *testing.T)
 	}
 	if len(merged.ExpectedFunction.Returns) != 1 || !typ.ContainsRecursive(merged.ExpectedFunction.Returns[0]) {
 		t.Fatalf("merged return did not use value convergence: %v", merged.ExpectedFunction.Returns)
+	}
+}
+
+func TestAnalysisContextGlobalOverlayUsesCarrierSemantics(t *testing.T) {
+	left := AnalysisContext{
+		GlobalOverlay: GlobalOverlayFromValues(map[GlobalName]product.AbstractValue{
+			GlobalName("z"): product.FromType(typ.Number),
+			GlobalName("a"): product.FromType(typ.String),
+		}),
+	}
+	right := AnalysisContext{
+		GlobalOverlay: GlobalOverlayFromValues(map[GlobalName]product.AbstractValue{
+			GlobalName("a"): product.FromType(typ.Boolean),
+			GlobalName("m"): product.FromType(typ.Integer),
+		}),
+	}
+
+	merged := MergeAnalysisContext(left, right)
+	if len(merged.GlobalOverlay) != 3 {
+		t.Fatalf("merged overlay = %+v, want 3 bindings", merged.GlobalOverlay)
+	}
+	if merged.GlobalOverlay[0].Name != GlobalName("a") || merged.GlobalOverlay[1].Name != GlobalName("m") || merged.GlobalOverlay[2].Name != GlobalName("z") {
+		t.Fatalf("merged overlay order = %+v, want a,m,z", merged.GlobalOverlay)
+	}
+	wantA := product.CarryForward(product.FromType(typ.String), product.FromType(typ.Boolean))
+	if got, ok := merged.GlobalOverlay.Value("a"); !ok || !product.Equal(got, wantA) {
+		t.Fatalf("merged a = %v, %v; want CarryForward(string, boolean)", got, ok)
+	}
+
+	projected := ProjectGlobalOverlay(merged.GlobalOverlay)
+	if len(projected) != 3 || !typ.TypeEquals(projected["m"], typ.Integer) || !typ.TypeEquals(projected["z"], typ.Number) {
+		t.Fatalf("ProjectGlobalOverlay = %+v, want m=integer,z=number plus merged a", projected)
+	}
+}
+
+func TestAnalysisContextParentHashNormalizesGlobalOverlay(t *testing.T) {
+	a := AnalysisContext{
+		GlobalOverlay: GlobalOverlayFromValues(map[GlobalName]product.AbstractValue{
+			GlobalName("z"): product.FromType(typ.Number),
+			GlobalName("a"): product.FromType(typ.String),
+		}),
+	}
+	b := AnalysisContext{
+		GlobalOverlay: GlobalOverlayFromValues(map[GlobalName]product.AbstractValue{
+			GlobalName("a"): product.FromType(typ.String),
+			GlobalName("z"): product.FromType(typ.Number),
+		}),
+	}
+	if gotA, gotB := a.ParentHash(99), b.ParentHash(99); gotA != gotB {
+		t.Fatalf("ParentHash order-dependent: %x != %x", gotA, gotB)
 	}
 }

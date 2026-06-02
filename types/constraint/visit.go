@@ -3,25 +3,27 @@ package constraint
 // ConstraintVisitor dispatches on constraint variants.
 // Nil handlers fall back to Default when provided; otherwise return zero.
 type ConstraintVisitor[R any] struct {
-	Truthy             func(Truthy) R
-	Falsy              func(Falsy) R
-	IsNil              func(IsNil) R
-	NotNil             func(NotNil) R
-	HasType            func(HasType) R
-	NotHasType         func(NotHasType) R
-	HasField           func(HasField) R
-	FieldEquals        func(FieldEquals) R
-	FieldNotEquals     func(FieldNotEquals) R
-	IndexEquals        func(IndexEquals) R
-	IndexNotEquals     func(IndexNotEquals) R
-	EqPath             func(EqPath) R
-	NotEqPath          func(NotEqPath) R
-	FieldEqualsPath    func(FieldEqualsPath) R
-	FieldNotEqualsPath func(FieldNotEqualsPath) R
-	IndexEqualsPath    func(IndexEqualsPath) R
-	IndexNotEqualsPath func(IndexNotEqualsPath) R
-	KeyOf              func(KeyOf) R
-	Default            func(Constraint) R
+	Truthy               func(Truthy) R
+	Falsy                func(Falsy) R
+	IsNil                func(IsNil) R
+	NotNil               func(NotNil) R
+	HasType              func(HasType) R
+	NotHasType           func(NotHasType) R
+	HasField             func(HasField) R
+	FieldEquals          func(FieldEquals) R
+	FieldNotEquals       func(FieldNotEquals) R
+	IndexEquals          func(IndexEquals) R
+	IndexNotEquals       func(IndexNotEquals) R
+	EqPath               func(EqPath) R
+	NotEqPath            func(NotEqPath) R
+	FieldEqualsPath      func(FieldEqualsPath) R
+	FieldNotEqualsPath   func(FieldNotEqualsPath) R
+	IndexEqualsPath      func(IndexEqualsPath) R
+	IndexNotEqualsPath   func(IndexNotEqualsPath) R
+	VariantCaseEquals    func(VariantCaseEquals) R
+	VariantCaseNotEquals func(VariantCaseNotEquals) R
+	KeyOf                func(KeyOf) R
+	Default              func(Constraint) R
 }
 
 // VisitConstraint applies the first matching handler in v to c.
@@ -162,6 +164,22 @@ func VisitConstraint[R any](c Constraint, v ConstraintVisitor[R]) R {
 	case *IndexNotEqualsPath:
 		if v.IndexNotEqualsPath != nil {
 			return v.IndexNotEqualsPath(*cc)
+		}
+	case VariantCaseEquals:
+		if v.VariantCaseEquals != nil {
+			return v.VariantCaseEquals(cc)
+		}
+	case *VariantCaseEquals:
+		if v.VariantCaseEquals != nil {
+			return v.VariantCaseEquals(*cc)
+		}
+	case VariantCaseNotEquals:
+		if v.VariantCaseNotEquals != nil {
+			return v.VariantCaseNotEquals(cc)
+		}
+	case *VariantCaseNotEquals:
+		if v.VariantCaseNotEquals != nil {
+			return v.VariantCaseNotEquals(*cc)
 		}
 	case KeyOf:
 		if v.KeyOf != nil {

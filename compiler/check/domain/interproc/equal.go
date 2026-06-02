@@ -22,9 +22,6 @@ func FactsEqual(a, b api.Facts) bool {
 	if !CapturedFieldAssignsEqual(a.CapturedFields, b.CapturedFields) {
 		return false
 	}
-	if !CapturedContainerMutationsEqual(a.CapturedContainers, b.CapturedContainers) {
-		return false
-	}
 	if !ConstructorFieldsEqual(a.ConstructorFields, b.ConstructorFields) {
 		return false
 	}
@@ -126,58 +123,13 @@ func CapturedFieldAssignsEqual(a, b api.CapturedFieldAssigns) bool {
 			if len(fields) != len(otherFields) {
 				return false
 			}
-			for _, name := range cfg.SortedFieldNames(fields) {
-				left := fields[name]
-				right := otherFields[name]
+			for _, key := range SortedFieldKeys(fields) {
+				left := fields[key]
+				right := otherFields[key]
 				if !product.Equal(left, right) {
 					return false
 				}
 			}
-		}
-	}
-	return true
-}
-
-// CapturedContainerMutationsEqual checks if two captured container mutation maps are equal.
-func CapturedContainerMutationsEqual(a, b api.CapturedContainerMutations) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for _, callee := range cfg.SortedSymbolIDs(a) {
-		baseMap := a[callee]
-		otherBase := b[callee]
-		if len(baseMap) != len(otherBase) {
-			return false
-		}
-		for _, sym := range cfg.SortedSymbolIDs(baseMap) {
-			muts := baseMap[sym]
-			otherMuts := otherBase[sym]
-			if !containerMutationSlicesEqual(muts, otherMuts) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func containerMutationSlicesEqual(a, b []api.ContainerMutation) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	if len(a) == 0 {
-		return true
-	}
-	index := make(map[string]api.ContainerMutation, len(a))
-	for _, m := range a {
-		index[api.ContainerMutationKey(m)] = m
-	}
-	for _, m := range b {
-		key := api.ContainerMutationKey(m)
-		other, ok := index[key]
-		if !ok ||
-			!product.Equal(other.KeyType, m.KeyType) ||
-			!product.Equal(other.ValueType, m.ValueType) {
-			return false
 		}
 	}
 	return true
@@ -194,9 +146,9 @@ func ConstructorFieldsEqual(a, b api.ConstructorFields) bool {
 		if len(fields) != len(other) {
 			return false
 		}
-		for _, name := range cfg.SortedFieldNames(fields) {
-			left := fields[name]
-			right := other[name]
+		for _, key := range SortedFieldKeys(fields) {
+			left := fields[key]
+			right := other[key]
 			if !product.Equal(left, right) {
 				return false
 			}

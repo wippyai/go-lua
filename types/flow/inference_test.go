@@ -333,30 +333,41 @@ func TestFilterParamConstraints(t *testing.T) {
 	symX := cfg.SymbolID(100)
 	symY := cfg.SymbolID(101)
 	symZ := cfg.SymbolID(102)
+	localX := cfg.SymbolID(103)
 
 	xPath := constraint.Path{Root: "x", Symbol: symX}
 	yPath := constraint.Path{Root: "y", Symbol: symY}
 	zPath := constraint.Path{Root: "z", Symbol: symZ}
+	localXPath := constraint.Path{Root: "x", Symbol: localX}
+	unresolvedXPath := constraint.Path{Root: "x"}
 
 	set := constraint.NewConjunction(
 		constraint.NotNil{Path: xPath},
 		constraint.NotNil{Path: yPath},
 		constraint.NotNil{Path: zPath},
+		constraint.Truthy{Path: localXPath},
+		constraint.Falsy{Path: unresolvedXPath},
 	)
 
-	// Only x and y are parameters (Symbol-keyed)
-	paramIndex := map[cfg.SymbolID]int{symX: 0, symY: 1}
+	projection := newParameterProjection([]ParamInfo{
+		{Name: "x", Symbol: symX},
+		{Name: "y", Symbol: symY},
+	})
 
-	filtered := filterParamConstraints(set, paramIndex, nil)
-	if len(filtered) != 2 {
-		t.Errorf("expected 2 filtered constraints, got %d", len(filtered))
+	filtered := filterParamConstraints(set, projection)
+	if len(filtered) != 3 {
+		t.Errorf("expected 3 filtered constraints, got %d", len(filtered))
 	}
 
-	// z should be filtered out (not in paramIndex)
 	for _, c := range filtered {
-		if nn, ok := c.(constraint.NotNil); ok {
-			if nn.Path.Symbol == symZ {
+		switch v := c.(type) {
+		case constraint.NotNil:
+			if v.Path.Symbol == symZ {
 				t.Error("z should have been filtered out")
+			}
+		case constraint.Truthy:
+			if v.Path.Symbol == localX {
+				t.Error("same root with different nonzero symbol must not fall back by name")
 			}
 		}
 	}
@@ -375,10 +386,12 @@ func TestSubstituteToPlaceholders(t *testing.T) {
 		constraint.HasType{Path: yPath, Type: narrow.BuiltinTypeKey("string")},
 	)
 
-	// Symbol-keyed parameter index
-	paramIndex := map[cfg.SymbolID]int{symX: 0, symY: 1}
+	projection := newParameterProjection([]ParamInfo{
+		{Name: "x", Symbol: symX},
+		{Name: "y", Symbol: symY},
+	})
 
-	substituted := substituteToPlaceholders(set, paramIndex, nil)
+	substituted := substituteToPlaceholders(set, projection)
 	if len(substituted) != 2 {
 		t.Errorf("expected 2 substituted constraints, got %d", len(substituted))
 	}
@@ -408,6 +421,36 @@ func TestSubstituteToPlaceholders(t *testing.T) {
 	}
 }
 
+func TestParameterCondition_DoesNotRewriteSameNameDifferentSymbol(t *testing.T) {
+	paramSym := cfg.SymbolID(100)
+	localSym := cfg.SymbolID(200)
+	cond := constraint.FromConstraints(
+		constraint.NotNil{Path: constraint.Path{Root: "x", Symbol: paramSym}},
+		constraint.Truthy{Path: constraint.Path{Root: "x", Symbol: localSym}},
+	)
+
+	got := ParameterCondition(cond, []ParamInfo{{Name: "x", Symbol: paramSym}})
+	want := constraint.FromConstraints(constraint.NotNil{Path: constraint.ParamPath(0)})
+
+	if !got.Equals(want) {
+		t.Fatalf("ParameterCondition() = %v, want %v", got, want)
+	}
+}
+
+func TestParameterCondition_UsesLegacyNameOnlyForUnresolvedPath(t *testing.T) {
+	paramSym := cfg.SymbolID(100)
+	cond := constraint.FromConstraints(
+		constraint.NotNil{Path: constraint.Path{Root: "x"}},
+	)
+
+	got := ParameterCondition(cond, []ParamInfo{{Name: "x", Symbol: paramSym}})
+	want := constraint.FromConstraints(constraint.NotNil{Path: constraint.ParamPath(0)})
+
+	if !got.Equals(want) {
+		t.Fatalf("ParameterCondition() = %v, want %v", got, want)
+	}
+}
+
 func TestSubstitutePathsInConstraint_EqPath(t *testing.T) {
 	// Use Symbol-based identity for parameter matching
 	symX := cfg.SymbolID(100)
@@ -418,9 +461,11 @@ func TestSubstitutePathsInConstraint_EqPath(t *testing.T) {
 		Right: constraint.Path{Root: "y", Symbol: symY},
 	}
 
-	// Symbol-keyed placeholder mapping
-	placeholders := map[cfg.SymbolID]string{symX: "$0", symY: "$1"}
-	result := substitutePathsInConstraint(c, placeholders, nil)
+	projection := newParameterProjection([]ParamInfo{
+		{Name: "x", Symbol: symX},
+		{Name: "y", Symbol: symY},
+	})
+	result := substitutePathsInConstraint(c, projection)
 
 	eq, ok := result.(constraint.EqPath)
 	if !ok {
@@ -435,6 +480,40 @@ func TestSubstitutePathsInConstraint_EqPath(t *testing.T) {
 	// Placeholder paths have Symbol cleared
 	if eq.Left.Symbol != 0 || eq.Right.Symbol != 0 {
 		t.Error("expected Symbol=0 for placeholder paths")
+	}
+}
+
+func TestSubstitutePathsInConstraint_DropsCalleeLocalPathPair(t *testing.T) {
+	symX := cfg.SymbolID(100)
+	local := cfg.SymbolID(200)
+	c := constraint.EqPath{
+		Left:  constraint.Path{Root: "x", Symbol: symX},
+		Right: constraint.Path{Root: "tmp", Symbol: local},
+	}
+
+	projection := newParameterProjection([]ParamInfo{{Name: "x", Symbol: symX}})
+	if got := substitutePathsInConstraint(c, projection); got != nil {
+		t.Fatalf("expected non-portable callee-local relation to be dropped, got %v", got)
+	}
+}
+
+func TestSubstitutePathsInConstraint_KeyOfParamReturn(t *testing.T) {
+	symTable := cfg.SymbolID(100)
+	c := constraint.KeyOf{
+		Table: constraint.Path{Root: "tbl", Symbol: symTable},
+		Key:   constraint.RetPath(0),
+	}
+
+	projection := newParameterProjection([]ParamInfo{{Name: "tbl", Symbol: symTable}})
+	got, ok := substitutePathsInConstraint(c, projection).(constraint.KeyOf)
+	if !ok {
+		t.Fatalf("expected KeyOf substitution, got %T", got)
+	}
+	if !got.Table.Equal(constraint.ParamPath(0)) {
+		t.Fatalf("table = %v, want %v", got.Table, constraint.ParamPath(0))
+	}
+	if !constraint.IsReturnPath(got.Key) {
+		t.Fatalf("key = %v, want return path", got.Key)
 	}
 }
 

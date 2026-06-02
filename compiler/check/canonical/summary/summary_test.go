@@ -7,11 +7,17 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/equation"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
+	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/lattice"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -54,7 +60,7 @@ func newTestProgram(t *testing.T, fns map[string]string) *testProgram {
 		}
 		ref := summary.FuncRef{GraphID: in.Graph.ID()}
 		p.graphs[ref] = in.Graph
-		p.transfers[ref] = transfer.New(in, nil, nil, nil, nil, nil, nil, nil)
+		p.transfers[ref] = transfer.New(in, transfer.Config{})
 		p.params[ref] = in.Scope.NumParams()
 		p.byName[name] = ref
 	}
@@ -91,10 +97,660 @@ func (p *testProgram) Callees(ref summary.FuncRef) []summary.FuncRef {
 	return out
 }
 
+type captureSeedProgram struct {
+	graphs    map[summary.FuncRef]*cfg.Graph
+	transfers map[summary.FuncRef]equation.NodeTransfer
+	parent    summary.FuncRef
+	child     summary.FuncRef
+}
+
+func (p *captureSeedProgram) Graph(ref summary.FuncRef) *cfg.Graph { return p.graphs[ref] }
+func (p *captureSeedProgram) NumParams(summary.FuncRef) int        { return 0 }
+func (p *captureSeedProgram) Transfer(ref summary.FuncRef) equation.NodeTransfer {
+	return p.transfers[ref]
+}
+func (p *captureSeedProgram) Callees(summary.FuncRef) []summary.FuncRef { return nil }
+func (p *captureSeedProgram) CaptureEntries(ref summary.FuncRef, captureExportsOf func(summary.FuncRef) flow.CaptureCells) flow.CaptureCells {
+	if ref != p.child {
+		return flow.CaptureCellsDomain.Bottom()
+	}
+	if av, ok := captureExportsOf(p.parent).Value(cfg.SymbolID(7)); ok {
+		return flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(7), Value: av}})
+	}
+	return flow.CaptureCellsDomain.Bottom()
+}
+func (p *captureSeedProgram) CaptureEntryRefs(ref summary.FuncRef, captureFunctionRefsOf func(summary.FuncRef) flow.FunctionRefs) flow.FunctionRefs {
+	if ref != p.child {
+		return flow.FunctionRefsDomain.Bottom()
+	}
+	return flow.ProjectFunctionRefsBySymbols(captureFunctionRefsOf(p.parent), []cfg.SymbolID{7})
+}
+
+type captureSeedTransfer struct {
+	exportSym   cfg.SymbolID
+	exportValue product.AbstractValue
+	exportRef   flow.FunctionRef
+}
+
+func (t *captureSeedTransfer) Transfer(
+	_ *cfg.Graph,
+	_ cfg.Point,
+	incoming flow.PointState,
+	_ paramevidence.Contracts,
+	_ func(int, paramevidence.ParamContract),
+) flow.PointState {
+	out := incoming
+	if out.CellEffects.IsBottom() {
+		out.CellEffects = flow.CaptureEffectsIdentity()
+	}
+	if t.exportSym != 0 && !t.exportValue.IsZero() {
+		out.Cells = out.Cells.With(t.exportSym, t.exportValue)
+	}
+	if t.exportSym != 0 && t.exportRef != (flow.FunctionRef{}) {
+		out.FunctionRefs = flow.WithFunctionRef(out.FunctionRefs, constraint.NewPath(t.exportSym, "captured").Key(), flow.FunctionRefSetOf(t.exportRef))
+	}
+	return out
+}
+
+type countingTransfer struct {
+	delegate equation.NodeTransfer
+	calls    int
+}
+
+func (t *countingTransfer) Transfer(
+	g *cfg.Graph,
+	p cfg.Point,
+	incoming flow.PointState,
+	contracts paramevidence.Contracts,
+	emitParamContract func(int, paramevidence.ParamContract),
+) flow.PointState {
+	t.calls++
+	if t.delegate == nil {
+		return incoming
+	}
+	return t.delegate.Transfer(g, p, incoming, contracts, emitParamContract)
+}
+
+type paramNarrowCellProgram struct {
+	local     map[summary.FuncRef][]paramevidence.ParamNarrow
+	delegated map[summary.FuncRef][]paramevidence.DelegatedCall
+	targets   map[*ast.FuncCallExpr]summary.FuncRef
+}
+
+func (p *paramNarrowCellProgram) Graph(summary.FuncRef) *cfg.Graph { return nil }
+func (p *paramNarrowCellProgram) NumParams(summary.FuncRef) int    { return 0 }
+func (p *paramNarrowCellProgram) Transfer(summary.FuncRef) equation.NodeTransfer {
+	return nil
+}
+func (p *paramNarrowCellProgram) Callees(summary.FuncRef) []summary.FuncRef { return nil }
+func (p *paramNarrowCellProgram) LocalParamNarrows(ref summary.FuncRef) []paramevidence.ParamNarrow {
+	return append([]paramevidence.ParamNarrow(nil), p.local[ref]...)
+}
+func (p *paramNarrowCellProgram) DelegatedParamNarrowCalls(ref summary.FuncRef) []paramevidence.DelegatedCall {
+	return append([]paramevidence.DelegatedCall(nil), p.delegated[ref]...)
+}
+func (p *paramNarrowCellProgram) ResolveDelegatedCallee(_ summary.FuncRef, call *ast.FuncCallExpr) (summary.FuncRef, bool) {
+	ref, ok := p.targets[call]
+	return ref, ok
+}
+
+func TestSummaryDomain_Laws(t *testing.T) {
+	n := product.FromType(typ.Number)
+	s := product.FromType(typ.String)
+	effects := flow.CaptureMustWrite(cfg.SymbolID(1), s)
+	exports := flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(2), Value: n}})
+	exportRefs := flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(2), "captured").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 4}))
+	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 5}, exports, exportRefs)
+	exportClosures := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(2), "captured").Field("factory").Key(), flow.ClosureRefSetOf(closure))
+	protos := flow.PrototypeSelfOf([]flow.PrototypeSelfEntry{{Prototype: cfg.SymbolID(3), Value: s}})
+	entryValues := summary.CallEntryValues{
+		summary.FuncRef{GraphID: 99}: summary.EntryValues{0: n},
+	}
+	rels := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 1}})
+
+	lattice.LawSuite[summary.Summary]{
+		Name:   "Summary",
+		Domain: summary.SummaryDomain,
+		Sample: []summary.Summary{
+			summary.SummaryDomain.Bottom(),
+			summary.SummaryDomain.Top(),
+			{Returns: []product.AbstractValue{n}},
+			{Relations: rels},
+			{CellEffects: effects},
+			{CaptureExports: exports},
+			{CaptureFunctionRefs: exportRefs},
+			{ReturnClosureRefs: []flow.ClosureRefs{exportClosures}},
+			{CaptureClosureRefs: exportClosures},
+			{PrototypeSelf: protos},
+			{CallEntryValues: entryValues},
+			{Returns: []product.AbstractValue{n, s}, ReturnClosureRefs: []flow.ClosureRefs{exportClosures}, Relations: rels, CellEffects: effects, CaptureExports: exports, CaptureFunctionRefs: exportRefs, CaptureClosureRefs: exportClosures, PrototypeSelf: protos, CallEntryValues: entryValues},
+		},
+	}.Run(t)
+}
+
+func TestParamNarrowQ_InheritsDelegatedEffectsWithoutSummaryContext(t *testing.T) {
+	inner := summary.FuncRef{GraphID: 1}
+	outer := summary.FuncRef{GraphID: 2}
+	call := &ast.FuncCallExpr{}
+	prog := &paramNarrowCellProgram{
+		local: map[summary.FuncRef][]paramevidence.ParamNarrow{
+			inner: {{Param: 0, Check: cfg.CheckNotNil, EqParam: -1}},
+		},
+		delegated: map[summary.FuncRef][]paramevidence.DelegatedCall{
+			outer: {{Call: call, ArgParams: []int{1}}},
+		},
+		targets: map[*ast.FuncCallExpr]summary.FuncRef{call: inner},
+	}
+	q := summary.New(prog)
+	ctx := db.NewQueryContext(db.New())
+
+	got := q.ParamNarrows(ctx, outer)
+	if len(got) != 1 {
+		t.Fatalf("ParamNarrows len = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Param != 1 || got[0].Check != cfg.CheckNotNil || got[0].EqParam != -1 {
+		t.Fatalf("inherited ParamNarrow = %#v, want param 1 not-nil", got[0])
+	}
+
+	sum := q.Summarize(ctx, outer)
+	if len(sum.ParamNarrows) != 1 || sum.ParamNarrows[0].Param != 1 {
+		t.Fatalf("Summary.ParamNarrows = %#v, want same context-free cell", sum.ParamNarrows)
+	}
+}
+
+func TestParamNarrowQ_InheritsDelegatedEqualityEffects(t *testing.T) {
+	inner := summary.FuncRef{GraphID: 11}
+	outer := summary.FuncRef{GraphID: 12}
+	call := &ast.FuncCallExpr{}
+	prog := &paramNarrowCellProgram{
+		local: map[summary.FuncRef][]paramevidence.ParamNarrow{
+			inner: {{Param: 0, EqParam: 1}},
+		},
+		delegated: map[summary.FuncRef][]paramevidence.DelegatedCall{
+			outer: {{Call: call, ArgParams: []int{2, 0}}},
+		},
+		targets: map[*ast.FuncCallExpr]summary.FuncRef{call: inner},
+	}
+	q := summary.New(prog)
+	ctx := db.NewQueryContext(db.New())
+
+	got := q.ParamNarrows(ctx, outer)
+	if len(got) != 1 {
+		t.Fatalf("ParamNarrows len = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Param != 2 || got[0].EqParam != 0 || !got[0].IsParamEquality() {
+		t.Fatalf("inherited equality = %#v, want param 2 == param 0", got[0])
+	}
+
+	sum := q.Summarize(ctx, outer)
+	if len(sum.ParamNarrows) != 1 || !sum.ParamNarrows[0].IsParamEquality() {
+		t.Fatalf("Summary.ParamNarrows = %#v, want delegated equality", sum.ParamNarrows)
+	}
+}
+
+func TestParamNarrowQ_InheritsDelegatedInequalityEffects(t *testing.T) {
+	inner := summary.FuncRef{GraphID: 13}
+	outer := summary.FuncRef{GraphID: 14}
+	call := &ast.FuncCallExpr{}
+	prog := &paramNarrowCellProgram{
+		local: map[summary.FuncRef][]paramevidence.ParamNarrow{
+			inner: {{Param: 0, EqParam: 1, NotEqual: true}},
+		},
+		delegated: map[summary.FuncRef][]paramevidence.DelegatedCall{
+			outer: {{Call: call, ArgParams: []int{2, 0}}},
+		},
+		targets: map[*ast.FuncCallExpr]summary.FuncRef{call: inner},
+	}
+	q := summary.New(prog)
+	ctx := db.NewQueryContext(db.New())
+
+	got := q.ParamNarrows(ctx, outer)
+	if len(got) != 1 {
+		t.Fatalf("ParamNarrows len = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Param != 2 || got[0].EqParam != 0 || !got[0].IsParamInequality() {
+		t.Fatalf("inherited inequality = %#v, want param 2 ~= param 0", got[0])
+	}
+}
+
+func TestParamNarrowQ_ComposesDelegatedConditionArgumentEffects(t *testing.T) {
+	inner := summary.FuncRef{GraphID: 21}
+	outer := summary.FuncRef{GraphID: 22}
+	call := &ast.FuncCallExpr{}
+	prog := &paramNarrowCellProgram{
+		local: map[summary.FuncRef][]paramevidence.ParamNarrow{
+			inner: {{Param: 0, Check: cfg.CheckTruthy, CondArg: true, EqParam: -1}},
+		},
+		delegated: map[summary.FuncRef][]paramevidence.DelegatedCall{
+			outer: {{
+				Call:      call,
+				ArgParams: []int{-1},
+				ArgTruthyEffects: [][]paramevidence.ParamNarrow{
+					{{Param: 1, Check: cfg.CheckNotNil, EqParam: -1}},
+				},
+			}},
+		},
+		targets: map[*ast.FuncCallExpr]summary.FuncRef{call: inner},
+	}
+	q := summary.New(prog)
+	ctx := db.NewQueryContext(db.New())
+
+	got := q.ParamNarrows(ctx, outer)
+	if len(got) != 1 {
+		t.Fatalf("ParamNarrows len = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].Param != 1 || got[0].Check != cfg.CheckNotNil || got[0].CondArg {
+		t.Fatalf("delegated condition narrow = %#v, want param 1 not-nil value effect", got[0])
+	}
+}
+
+func TestJoinReturnFunctionRefs_OwnsTupleJoin(t *testing.T) {
+	slot0a := flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("a").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 1}))
+	slot0b := flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("b").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 2}))
+	slot2 := flow.WithFunctionRef(nil, constraint.NewPlaceholder(2).Field("c").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 3}))
+
+	got := summary.JoinReturnFunctionRefs(
+		[]flow.FunctionRefs{slot0a},
+		[]flow.FunctionRefs{slot0b, flow.FunctionRefsDomain.Bottom(), slot2},
+	)
+
+	if len(got) != 3 {
+		t.Fatalf("joined tuple len = %d, want 3: %#v", len(got), got)
+	}
+	want0 := flow.FunctionRefsDomain.Join(slot0a, slot0b)
+	if !flow.FunctionRefsDomain.Equal(got[0], want0) {
+		t.Fatalf("slot 0 = %#v, want %#v", got[0], want0)
+	}
+	if !flow.FunctionRefsDomain.Equal(got[1], flow.FunctionRefsDomain.Bottom()) {
+		t.Fatalf("slot 1 = %#v, want bottom", got[1])
+	}
+	if !flow.FunctionRefsDomain.Equal(got[2], slot2) {
+		t.Fatalf("slot 2 = %#v, want %#v", got[2], slot2)
+	}
+	if trimmed := summary.JoinReturnFunctionRefs(nil, []flow.FunctionRefs{flow.FunctionRefsDomain.Bottom()}); len(trimmed) != 0 {
+		t.Fatalf("bottom-only tuple was not canonicalized away: %#v", trimmed)
+	}
+}
+
+func TestJoinReturnClosureRefs_OwnsTupleJoin(t *testing.T) {
+	closureA := flow.ClosureRefOf(flow.FunctionRef{GraphID: 1}, flow.CaptureCellsDomain.Bottom(), nil)
+	closureB := flow.ClosureRefOf(flow.FunctionRef{GraphID: 2}, flow.CaptureCellsDomain.Bottom(), nil)
+	slot0a := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("a").Key(), flow.ClosureRefSetOf(closureA))
+	slot0b := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("b").Key(), flow.ClosureRefSetOf(closureB))
+	slot2 := flow.WithClosureRef(nil, constraint.NewPlaceholder(2).Field("c").Key(), flow.ClosureRefSetOf(closureA))
+
+	got := summary.JoinReturnClosureRefs(
+		[]flow.ClosureRefs{slot0a},
+		[]flow.ClosureRefs{slot0b, flow.ClosureRefsDomain.Bottom(), slot2},
+	)
+
+	if len(got) != 3 {
+		t.Fatalf("joined tuple len = %d, want 3: %#v", len(got), got)
+	}
+	want0 := flow.ClosureRefsDomain.Join(slot0a, slot0b)
+	if !flow.ClosureRefsDomain.Equal(got[0], want0) {
+		t.Fatalf("slot 0 = %#v, want %#v", got[0], want0)
+	}
+	if !flow.ClosureRefsDomain.Equal(got[1], flow.ClosureRefsDomain.Bottom()) {
+		t.Fatalf("slot 1 = %#v, want bottom", got[1])
+	}
+	if !flow.ClosureRefsDomain.Equal(got[2], slot2) {
+		t.Fatalf("slot 2 = %#v, want %#v", got[2], slot2)
+	}
+	if trimmed := summary.JoinReturnClosureRefs(nil, []flow.ClosureRefs{flow.ClosureRefsDomain.Bottom()}); len(trimmed) != 0 {
+		t.Fatalf("bottom-only tuple was not canonicalized away: %#v", trimmed)
+	}
+}
+
+func TestReader_UsesConvergedSnapshotWhenNotLive(t *testing.T) {
+	ref := summary.FuncRef{GraphID: 77}
+	want := summary.Summary{
+		Returns: []product.AbstractValue{product.FromType(typ.String)},
+		ParamNarrows: []paramevidence.ParamNarrow{
+			{Param: 1, Check: cfg.CheckNotNil, EqParam: -1},
+		},
+	}
+
+	reader := summary.NewReader(nil, nil, map[summary.FuncRef]summary.Summary{ref: want})
+	if reader.Live() {
+		t.Fatal("snapshot-only reader reported live")
+	}
+
+	got := reader.SummarizeWithEntryContext(
+		ref,
+		flow.CaptureCellsDomain.Top(),
+		flow.FunctionRefsDomain.Top(),
+		flow.ClosureRefsDomain.Top(),
+		summary.EntryValues{0: product.FromType(typ.Number)},
+	)
+	if !summary.SummaryDomain.Equal(got, want) {
+		t.Fatalf("reader summary = %#v, want snapshot %#v", got, want)
+	}
+	narrows := reader.ParamNarrows(ref)
+	if len(narrows) != 1 || narrows[0].Param != 1 || narrows[0].Check != cfg.CheckNotNil {
+		t.Fatalf("reader ParamNarrows = %#v, want snapshot narrows", narrows)
+	}
+}
+
+func TestReader_MissingSnapshotIsBottom(t *testing.T) {
+	got := summary.NewReader(nil, nil, nil).Summarize(summary.FuncRef{GraphID: 88})
+	if !summary.SummaryDomain.Equal(got, summary.SummaryDomain.Bottom()) {
+		t.Fatalf("missing snapshot summary = %#v, want bottom", got)
+	}
+	if narrows := summary.NewReader(nil, nil, nil).ParamNarrows(summary.FuncRef{GraphID: 88}); len(narrows) != 0 {
+		t.Fatalf("missing snapshot ParamNarrows = %#v, want nil", narrows)
+	}
+}
+
+func TestProject_CellEffectsFromReturnBoundaries(t *testing.T) {
+	g := cfg.Build(&ast.FunctionExpr{
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{},
+		},
+	})
+	var ret cfg.Point
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		ret = p
+	})
+	if ret == 0 {
+		t.Fatal("return point not found")
+	}
+
+	effect := flow.CaptureMustWrite(cfg.SymbolID(42), product.FromType(typ.String))
+	sum := summary.Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			ret: {CellEffects: effect},
+			g.Entry(): {
+				CellEffects: flow.CaptureMustWrite(cfg.SymbolID(99), product.FromType(typ.Number)),
+			},
+		},
+	}, g)
+
+	if !flow.CaptureEffectsDomain.Equal(sum.CellEffects, effect) {
+		t.Fatalf("summary cell effects = %s, want return-boundary effect %s", sum.CellEffects.Format(), effect.Format())
+	}
+}
+
+func TestProject_CaptureExportsFromReturnBoundaryCells(t *testing.T) {
+	g := cfg.Build(&ast.FunctionExpr{
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{},
+		},
+	})
+	var ret cfg.Point
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		ret = p
+	})
+	if ret == 0 {
+		t.Fatal("return point not found")
+	}
+
+	exported := product.FromType(typ.String)
+	sum := summary.Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			ret: {
+				Env: map[flow.ValueKey]product.AbstractValue{
+					"s42": exported,
+				},
+				Cells: flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(77), Value: product.FromType(typ.Number)}}),
+			},
+			g.Entry(): {
+				Env: map[flow.ValueKey]product.AbstractValue{
+					"s99": product.FromType(typ.Boolean),
+				},
+			},
+		},
+	}, g)
+
+	if v, ok := sum.CaptureExports.Value(cfg.SymbolID(42)); ok {
+		t.Fatalf("ordinary env symbol leaked into capture exports: %v; exports=%s", v.ProjectValue(), sum.CaptureExports.Format())
+	}
+	if v, ok := sum.CaptureExports.Value(cfg.SymbolID(77)); !ok || !product.Domain.Equal(v, product.FromType(typ.Number)) {
+		t.Fatalf("exported captured cell 77 = %v/%v, want number; exports=%s", v.ProjectValue(), ok, sum.CaptureExports.Format())
+	}
+	if _, ok := sum.CaptureExports.Value(cfg.SymbolID(99)); ok {
+		t.Fatalf("entry-only symbol leaked into capture exports: %s", sum.CaptureExports.Format())
+	}
+}
+
+func TestProject_CaptureFunctionRefsFromReturnBoundaries(t *testing.T) {
+	g := cfg.Build(&ast.FunctionExpr{
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{},
+		},
+	})
+	var ret cfg.Point
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		ret = p
+	})
+	if ret == 0 {
+		t.Fatal("return point not found")
+	}
+
+	sym := cfg.SymbolID(88)
+	ref := flow.FunctionRef{GraphID: 707, ParentHash: 808}
+	sum := summary.Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			ret: {
+				FunctionRefs: flow.WithFunctionRef(nil, constraint.NewPath(sym, "captured").Key(), flow.FunctionRefSetOf(ref)),
+			},
+		},
+	}, g)
+
+	refs, ok := flow.FunctionRefAt(sum.CaptureFunctionRefs, constraint.NewPath(sym, "captured").Key())
+	if !ok {
+		t.Fatalf("projected capture function refs missing; refs=%v", sum.CaptureFunctionRefs)
+	}
+	got, singleton := refs.Singleton()
+	if !singleton || got != ref {
+		t.Fatalf("projected capture function refs = %s, want singleton %v", refs.Format(), ref)
+	}
+}
+
+func TestProject_PrototypeSelfFromReturnBoundaries(t *testing.T) {
+	g := cfg.Build(&ast.FunctionExpr{
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{},
+		},
+	})
+	var ret cfg.Point
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		ret = p
+	})
+	if ret == 0 {
+		t.Fatal("return point not found")
+	}
+
+	self := flow.PrototypeSelfOf([]flow.PrototypeSelfEntry{{Prototype: cfg.SymbolID(7), Value: product.FromType(typ.String)}})
+	entryOnly := flow.PrototypeSelfOf([]flow.PrototypeSelfEntry{{Prototype: cfg.SymbolID(8), Value: product.FromType(typ.Number)}})
+	sum := summary.Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			ret:       {PrototypeSelf: self},
+			g.Entry(): {PrototypeSelf: entryOnly},
+		},
+	}, g)
+
+	if v, ok := sum.PrototypeSelf.Value(cfg.SymbolID(7)); !ok || !product.Domain.Equal(v, product.FromType(typ.String)) {
+		t.Fatalf("prototype 7 = %v/%v, want string; protos=%s", v.ProjectValue(), ok, sum.PrototypeSelf.Format())
+	}
+	if _, ok := sum.PrototypeSelf.Value(cfg.SymbolID(8)); ok {
+		t.Fatalf("entry-only prototype leaked into summary: %s", sum.PrototypeSelf.Format())
+	}
+}
+
+func TestProject_ReceiverEffectsFromReturnBoundaries(t *testing.T) {
+	g := cfg.Build(&ast.FunctionExpr{
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{},
+		},
+	})
+	var ret cfg.Point
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		ret = p
+	})
+	if ret == 0 {
+		t.Fatal("return point not found")
+	}
+
+	effects := flow.ReceiverMustWrite(0, product.FromType(typ.String))
+	entryOnly := flow.ReceiverMustWrite(1, product.FromType(typ.Number))
+	sum := summary.Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			ret:       {ReceiverEffects: effects},
+			g.Entry(): {ReceiverEffects: entryOnly},
+		},
+	}, g)
+
+	if !flow.ReceiverEffectsDomain.Equal(sum.ReceiverEffects, effects) {
+		t.Fatalf("receiver effects = %s, want %s", sum.ReceiverEffects.Format(), effects.Format())
+	}
+}
+
+func TestProject_ReturnIdentifierReadsCells(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local x = "seed"
+return x
+`, "return_cell.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	g := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	var ret cfg.Point
+	var retInfo *cfg.ReturnInfo
+	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		ret = p
+		retInfo = info
+	})
+	if ret == 0 || retInfo == nil || len(retInfo.Symbols) != 1 || retInfo.Symbols[0] == 0 {
+		t.Fatal("return symbol not found")
+	}
+	sym := retInfo.Symbols[0]
+	sum := summary.Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			ret: {
+				Env:   map[flow.ValueKey]product.AbstractValue{},
+				Cells: flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: sym, Value: product.FromType(typ.String)}}),
+			},
+		},
+	}, g)
+	if len(sum.Returns) != 1 || !product.Domain.Equal(sum.Returns[0], product.FromType(typ.String)) {
+		t.Fatalf("cell-backed return = %#v, want string", sum.Returns)
+	}
+}
+
+func TestSummarySolve_SeedsCaptureEntriesFromParentExports(t *testing.T) {
+	parentGraph := cfg.Build(&ast.FunctionExpr{})
+	childGraph := cfg.Build(&ast.FunctionExpr{})
+	parentRef := summary.FuncRef{GraphID: parentGraph.ID()}
+	childRef := summary.FuncRef{GraphID: childGraph.ID()}
+	parentTransfer := &captureSeedTransfer{exportSym: cfg.SymbolID(7), exportValue: product.FromType(typ.String)}
+	childTransfer := &captureSeedTransfer{}
+	prog := &captureSeedProgram{
+		graphs: map[summary.FuncRef]*cfg.Graph{
+			parentRef: parentGraph,
+			childRef:  childGraph,
+		},
+		transfers: map[summary.FuncRef]equation.NodeTransfer{
+			parentRef: parentTransfer,
+			childRef:  childTransfer,
+		},
+		parent: parentRef,
+		child:  childRef,
+	}
+
+	q := summary.New(prog)
+	ctx := db.NewQueryContext(db.New())
+	_ = q.Summarize(ctx, childRef)
+	fs := q.Intra(ctx, childRef)
+
+	got, ok := fs.Points[childGraph.Entry()].Cells.Value(cfg.SymbolID(7))
+	if !ok || !product.Domain.Equal(got, product.FromType(typ.String)) {
+		t.Fatalf("child capture entry = %v/%v, want parent-exported string", got.ProjectValue(), ok)
+	}
+}
+
+func TestSummary_IntraObserverUsesExactLocalSolve(t *testing.T) {
+	g := cfg.Build(&ast.FunctionExpr{})
+	ref := summary.FuncRef{GraphID: g.ID()}
+	tr := &countingTransfer{delegate: &captureSeedTransfer{
+		exportSym:   cfg.SymbolID(7),
+		exportValue: product.FromType(typ.String),
+	}}
+	prog := &captureSeedProgram{
+		graphs: map[summary.FuncRef]*cfg.Graph{
+			ref: g,
+		},
+		transfers: map[summary.FuncRef]equation.NodeTransfer{
+			ref: tr,
+		},
+	}
+	q := summary.New(prog)
+	ctx := db.NewQueryContext(db.New())
+
+	sum := q.Summarize(ctx, ref)
+	afterSummary := tr.calls
+	if afterSummary == 0 {
+		t.Fatal("Summarize did not drive the intraprocedural solve")
+	}
+	if _, ok := sum.CaptureExports.Value(cfg.SymbolID(7)); !ok {
+		t.Fatalf("summary did not project transfer result: %s", sum.CaptureExports.Format())
+	}
+
+	fs := q.Intra(ctx, ref)
+	afterIntra := tr.calls
+	if afterIntra <= afterSummary {
+		t.Fatalf("Intra did not run the exact observer solve after Summary: calls after Summary=%d after Intra=%d", afterSummary, afterIntra)
+	}
+	if _, ok := fs.Points[g.Entry()].Cells.Value(cfg.SymbolID(7)); !ok {
+		t.Fatalf("intra state did not share solved transfer result: %#v", fs.Points[g.Entry()].Cells)
+	}
+
+	_ = q.Summarize(ctx, ref)
+	if tr.calls != afterIntra {
+		t.Fatalf("Summarize re-solved after exact Intra observer: calls after Intra=%d after second Summary=%d", afterIntra, tr.calls)
+	}
+}
+
+func TestSummarySolve_SeedsCaptureFunctionRefsFromParentExports(t *testing.T) {
+	parentGraph := cfg.Build(&ast.FunctionExpr{})
+	childGraph := cfg.Build(&ast.FunctionExpr{})
+	parentRef := summary.FuncRef{GraphID: parentGraph.ID()}
+	childRef := summary.FuncRef{GraphID: childGraph.ID()}
+	fnRef := flow.FunctionRef{GraphID: 909, ParentHash: 1001}
+	parentTransfer := &captureSeedTransfer{exportSym: cfg.SymbolID(7), exportRef: fnRef}
+	childTransfer := &captureSeedTransfer{}
+	prog := &captureSeedProgram{
+		graphs: map[summary.FuncRef]*cfg.Graph{
+			parentRef: parentGraph,
+			childRef:  childGraph,
+		},
+		transfers: map[summary.FuncRef]equation.NodeTransfer{
+			parentRef: parentTransfer,
+			childRef:  childTransfer,
+		},
+		parent: parentRef,
+		child:  childRef,
+	}
+
+	q := summary.New(prog)
+	ctx := db.NewQueryContext(db.New())
+	_ = q.Summarize(ctx, childRef)
+	fs := q.Intra(ctx, childRef)
+
+	refs, ok := flow.FunctionRefAt(fs.Points[childGraph.Entry()].FunctionRefs, constraint.NewPath(cfg.SymbolID(7), "captured").Key())
+	if !ok {
+		t.Fatalf("child capture function refs missing: %v", fs.Points[childGraph.Entry()].FunctionRefs)
+	}
+	got, singleton := refs.Singleton()
+	if !singleton || got != fnRef {
+		t.Fatalf("child capture function refs = %s, want singleton %v", refs.Format(), fnRef)
+	}
+}
+
 // TestSummary_CalleeReturnFlowsToCaller is gate (a): a caller that calls a callee
 // resolves the callee's summary, and the callee's summary carries its return
 // type. The converged summary of the callee is asserted; the caller's summary
-// resolving the callee through SummaryQ closes the call-graph edge.
+// resolving the callee through the summary solve closes the call-graph edge.
 func TestSummary_CalleeReturnFlowsToCaller(t *testing.T) {
 	prog := newTestProgram(t, map[string]string{
 		// callee returns a string literal.

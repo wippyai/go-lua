@@ -1,8 +1,6 @@
 package mutator
 
 import (
-	"strconv"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
@@ -10,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/tblutil"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -100,18 +99,7 @@ func mutationValueFieldSegment(field *ast.Field, arrayIndex *int) (constraint.Se
 		}
 		return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx}, true
 	}
-	switch key := field.Key.(type) {
-	case *ast.IdentExpr:
-		return constraint.Segment{Kind: constraint.SegmentField, Name: key.Value}, key.Value != ""
-	case *ast.StringExpr:
-		return constraint.Segment{Kind: constraint.SegmentField, Name: key.Value}, key.Value != ""
-	case *ast.NumberExpr:
-		idx, err := strconv.Atoi(key.Value)
-		if err == nil {
-			return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx}, true
-		}
-	}
-	return constraint.Segment{}, false
+	return pathseg.StaticTableFieldSegment(field)
 }
 
 func cloneTemplateSegments(in []constraint.Segment) []constraint.Segment {

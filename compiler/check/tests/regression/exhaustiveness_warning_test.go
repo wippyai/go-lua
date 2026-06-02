@@ -34,6 +34,29 @@ return render({kind = "message", text = "hi"})
 	assertNonExhaustiveWarning(t, result.Diagnostics, "event.kind", `"timeout"`)
 }
 
+func TestExhaustivenessWarning_DeclaredLocalInitializerMissingVariant(t *testing.T) {
+	source := `
+type Message = {kind: "message", text: string}
+type Tool = {kind: "tool", name: string}
+type Timeout = {kind: "timeout", at: number}
+type Event = Message | Tool | Timeout
+
+local event: Event = {kind = "message", text = "hi"}
+if event.kind == "message" then
+	return event.text
+elseif event.kind == "tool" then
+	return event.name
+end
+return "unknown"
+`
+
+	result := testutil.Check(source)
+	if result.HasError() {
+		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+	assertNonExhaustiveWarning(t, result.Diagnostics, "event.kind", `"timeout"`)
+}
+
 func TestExhaustivenessWarning_ChannelSelectMissingCase(t *testing.T) {
 	source := `
 type Event = {kind: string}

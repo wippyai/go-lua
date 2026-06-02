@@ -273,6 +273,24 @@ func TestInferTypeArgs_FunctionParamWithInstantiatedUnionReturn(t *testing.T) {
 	}
 }
 
+func TestInferTypeArgs_ZeroParamCallbackReturn(t *testing.T) {
+	tParam := typ.NewTypeParam("T", nil)
+	fn := typ.Func().
+		TypeParamRef(tParam).
+		Param("cb", typ.Func().Returns(tParam).Build()).
+		Returns(tParam).
+		Build()
+	callback := typ.Func().Returns(typ.Number).Build()
+
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(fn, []typ.Type{callback}, false, nil, nil, false)
+	if err != nil {
+		t.Fatalf("InferTypeArgs error: %v", err)
+	}
+	if len(typeArgs) != 1 || !typ.TypeEquals(typeArgs[0], typ.Number) {
+		t.Fatalf("T = %v, want number", typeArgs)
+	}
+}
+
 func TestInferTypeArgs_ExpectedExplicitUnionPrefersSpecificMember(t *testing.T) {
 	tParam := typ.NewTypeParam("T", nil)
 	fn := typ.Func().

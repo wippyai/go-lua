@@ -18,6 +18,7 @@ func TestConsistent_FreshEmptyRecordSource(t *testing.T) {
 	}{
 		{"array", typ.NewArray(typ.Number), true},
 		{"map", typ.NewMap(typ.String, typ.Number), true},
+		{"readonly map", typ.NewReadonlyMap(typ.String, typ.Number), true},
 		{"optional-only record", typ.NewRecord().OptField("x", typ.Number).Build(), true},
 		{"required-field record", typ.NewRecord().Field("x", typ.Number).Build(), false},
 		{"empty tuple", typ.NewTuple(), true},

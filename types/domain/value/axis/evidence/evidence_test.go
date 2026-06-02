@@ -2,36 +2,26 @@ package evidence
 
 import "testing"
 
-// TestEvidenceAxisLaws verifies the lattice laws for the current one-point
-// evidence lattice. The discriminant/correlation/predicate carriers and their
-// reducers arrive in Phase 5; the suite expands with them. For now it pins that
-// every operation is total and law-consistent over the sole element.
-func TestEvidenceAxisLaws(t *testing.T) {
-	vs := []Value{Bottom(), Top()}
-	for _, a := range vs {
-		if !Equal(a, a) {
-			t.Fatal("Equal not reflexive")
-		}
-		if !a.Covers(a) {
-			t.Fatal("Covers not reflexive")
-		}
-		for _, b := range vs {
-			if Equal(a, b) && a.Hash() != b.Hash() {
-				t.Fatal("Equal values must hash identically")
-			}
-			if !Equal(Join(a, b), Join(b, a)) {
-				t.Fatal("Join not commutative")
-			}
-			if !Equal(Join(a, a), a) {
-				t.Fatal("Join not idempotent")
-			}
-			j := Join(a, b)
-			if !j.Covers(a) || !j.Covers(b) {
-				t.Fatal("Join not an upper bound")
-			}
-			if !Equal(Widen(a, b), Join(a, b)) {
-				t.Fatal("Widen must equal Join")
-			}
-		}
+func TestGradualTopJoinKeepsOnlyCommonProof(t *testing.T) {
+	if got := Join(GradualTop(), GradualTop()); !Equal(got, GradualTop()) {
+		t.Fatalf("gradual proof joined with itself = %s, want gradual-top", got)
+	}
+	if got := Join(GradualTop(), Top()); !Equal(got, Top()) {
+		t.Fatalf("gradual proof joined with top = %s, want top", got)
+	}
+	if got := Join(Bottom(), GradualTop()); !Equal(got, GradualTop()) {
+		t.Fatalf("bottom joined with gradual proof = %s, want gradual-top", got)
+	}
+}
+
+func TestGradualTopOrderAndHash(t *testing.T) {
+	if !Top().Covers(GradualTop()) {
+		t.Fatal("top/no-evidence must cover gradual-top evidence")
+	}
+	if GradualTop().Covers(Top()) {
+		t.Fatal("gradual-top evidence must not cover no-evidence top")
+	}
+	if Top().Hash() == GradualTop().Hash() {
+		t.Fatal("distinct evidence states should not hash identically")
 	}
 }

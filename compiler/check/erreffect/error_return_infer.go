@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -65,23 +64,23 @@ type ReturnPatternProof struct {
 // HasStrictInversePattern proves this convention from the function body.
 func (c ErrorReturnConvention) HasStrictInversePattern(
 	returns []api.ReturnEvidence,
-	solution *flow.Solution,
+	flowOps api.FlowOps,
 	synth abstractreturns.ExprSynth,
 ) bool {
-	proof := c.ProveReturnPattern(returns, solution, synth)
+	proof := c.ProveReturnPattern(returns, flowOps, synth)
 	return proof.Consistent && proof.SawSuccess && proof.SawFailure
 }
 
 // ProveReturnPattern classifies the function body's returns under this convention.
 func (c ErrorReturnConvention) ProveReturnPattern(
 	returns []api.ReturnEvidence,
-	solution *flow.Solution,
+	flowOps api.FlowOps,
 	synth abstractreturns.ExprSynth,
 ) ReturnPatternProof {
 	if !c.valid() {
 		return ReturnPatternProof{}
 	}
-	return ProveReturnPattern(returns, solution, synth, c.ValueIndex, c.ErrorIndex)
+	return ProveReturnPattern(returns, flowOps, synth, c.ValueIndex, c.ErrorIndex)
 }
 
 // Attach enriches fn with this convention's ErrorReturn effect.
@@ -97,7 +96,7 @@ func (c ErrorReturnConvention) Attach(fn *typ.Function) *typ.Function {
 func AttachInferredErrorReturnSpec(
 	fn *typ.Function,
 	evidence api.FlowEvidence,
-	solution *flow.Solution,
+	flowOps api.FlowOps,
 	synth abstractreturns.ExprSynth,
 ) *typ.Function {
 	convention := CanonicalLuaValueErrorConvention()
@@ -107,7 +106,7 @@ func AttachInferredErrorReturnSpec(
 	if HasErrorReturnLabel(fn) {
 		return fn
 	}
-	proof := convention.ProveReturnPattern(evidence.Returns, solution, synth)
+	proof := convention.ProveReturnPattern(evidence.Returns, flowOps, synth)
 	if !convention.ProvenReturnPatternAttaches(fn, proof) {
 		return fn
 	}
@@ -173,12 +172,12 @@ func HasErrorReturnLabel(fn *typ.Function) bool {
 
 func HasStrictInverseReturnPattern(
 	returns []api.ReturnEvidence,
-	solution *flow.Solution,
+	flowOps api.FlowOps,
 	synth abstractreturns.ExprSynth,
 	valueIdx int,
 	errorIdx int,
 ) bool {
-	proof := ProveReturnPattern(returns, solution, synth, valueIdx, errorIdx)
+	proof := ProveReturnPattern(returns, flowOps, synth, valueIdx, errorIdx)
 	return proof.Consistent && proof.SawSuccess && proof.SawFailure
 }
 
@@ -186,7 +185,7 @@ func HasStrictInverseReturnPattern(
 // convention at the given slot indices.
 func ProveReturnPattern(
 	returns []api.ReturnEvidence,
-	solution *flow.Solution,
+	flowOps api.FlowOps,
 	synth abstractreturns.ExprSynth,
 	valueIdx int,
 	errorIdx int,
@@ -209,7 +208,7 @@ func ProveReturnPattern(
 		if incompatible || info == nil {
 			continue
 		}
-		if solution != nil && solution.IsPointDead(p) {
+		if flowOps != nil && flowOps.IsPointDead(p) {
 			continue
 		}
 		// Skip synthetic implicit return nodes; explicit `return` without values
@@ -375,7 +374,7 @@ func cloneFunctionWithSpec(fn *typ.Function, spec *contract.Spec) *typ.Function 
 	}
 	builder := typ.Func()
 	for _, tp := range fn.TypeParams {
-		builder.TypeParam(tp.Name, tp.Constraint)
+		builder.TypeParamRef(tp)
 	}
 	for _, param := range fn.Params {
 		if param.Optional {

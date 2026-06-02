@@ -33,7 +33,6 @@
 //   - [LiteralSigs]: Signatures for anonymous function literals
 //   - [CapturedTypes]: Flow-derived types for captured variables
 //   - [CapturedFieldAssigns]: Field assignments to captured variables
-//   - [CapturedContainerMutations]: Container writes to captured variables
 //   - [ConstructorFields]: Instance fields collected from constructors
 //
 // Facts are emitted as canonical deltas. Function-local products are keyed by a

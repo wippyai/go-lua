@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // assertProjects fails unless av projects (losslessly, under the value-domain
@@ -57,6 +58,270 @@ func TestFieldOfMatchesQueryCore(t *testing.T) {
 			continue
 		}
 		assertProjects(t, "FieldOf "+name, got, want)
+	}
+}
+
+func TestGradualAnyEvidenceSurvivesDynamicReads(t *testing.T) {
+	field, ok := FieldOf(GradualAny(), "anything")
+	if !ok || !field.IsGradualTop() {
+		t.Fatalf("FieldOf(GradualAny) = %v/%v, want gradual-top evidence", field.ProjectValue(), ok)
+	}
+
+	index, ok := IndexOf(GradualAny(), FromType(typ.LiteralString("anything")))
+	if !ok || !index.IsGradualTop() {
+		t.Fatalf("IndexOf(GradualAny) = %v/%v, want gradual-top evidence", index.ProjectValue(), ok)
+	}
+
+	strict, ok := FieldOf(FromType(typ.Any), "anything")
+	if !ok {
+		t.Fatal("FieldOf(strict any) did not resolve")
+	}
+	if strict.IsGradualTop() {
+		t.Fatal("strict declared any field read must not acquire gradual-top evidence")
+	}
+}
+
+func TestWithMemberStaticStringIndexDoesNotOverwriteDotField(t *testing.T) {
+	base := FromType(typ.NewRecord().
+		Field("name", typ.String).
+		MapComponent(typ.String, typ.Any).
+		Build())
+
+	got := WithMember(base, value.MemberStringIndex("raw-key"), FromType(typ.Number)).ProjectValue()
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("WithMember projected %T %[1]v, want record", got)
+	}
+	field := rec.GetField("name")
+	if field == nil || !typ.TypeEquals(field.Type, typ.String) {
+		t.Fatalf("dot field name = %#v, want string", field)
+	}
+	member := rec.GetStaticStringIndex("raw-key")
+	if member == nil || !typ.TypeEquals(member.Type, typ.Number) {
+		t.Fatalf("static member [\"raw-key\"] = %#v, want number", member)
+	}
+}
+
+func TestStaticIndexInstallJoinedWithMissingBranchStaysOptional(t *testing.T) {
+	message := typ.NewRecord().
+		Field("_topic", typ.String).
+		Field("topic", typ.Func().Param("self", typ.Any).Returns(typ.String).Build()).
+		Build()
+	base := FromType(typ.NewMap(typ.String, message))
+	installed := WithMember(base, value.MemberStringIndex("root"), FromType(message))
+
+	joined := Join(base, installed)
+	rec, ok := joined.ProjectValue().(*typ.Record)
+	if !ok {
+		t.Fatalf("joined static install projected %T %[1]v, want record carrier", joined.ProjectValue())
+	}
+	member := rec.GetStaticStringIndex("root")
+	if member == nil {
+		t.Fatalf("joined static install lost [\"root\"] member: %v", rec)
+	}
+	if !member.Optional {
+		t.Fatalf("branch-local [\"root\"] install became definite after join: %v", rec)
+	}
+
+	got, ok := MemberOf(joined, value.MemberStringIndex("root"))
+	want := typ.NewOptional(message)
+	if !ok || !typ.TypeEquals(got.ProjectValue(), want) {
+		t.Fatalf("MemberOf(joined, [\"root\"]) = %v, %v; want %v,true", got.ProjectValue(), ok, want)
+	}
+}
+
+func TestFieldOf_PartialRecordUnionKeepsMissingFieldOptionality(t *testing.T) {
+	action := typ.NewUnion(
+		typ.NewRecord().Field("kind", typ.LiteralString("a")).Field("x", typ.String).Build(),
+		typ.NewRecord().Field("kind", typ.LiteralString("b")).Field("y", typ.String).Build(),
+	)
+	okVariant := typ.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", action).
+		Build()
+	errVariant := typ.NewRecord().
+		Field("ok", typ.LiteralBool(false)).
+		Field("error", typ.String).
+		Build()
+
+	got, ok := FieldOf(FromType(typ.NewUnion(okVariant, errVariant)), "value")
+	want := typ.NewOptional(action)
+	if !ok || !typ.TypeEquals(got.ProjectValue(), want) {
+		t.Fatalf("FieldOf(value) = %v, %v; want %v,true", got.ProjectValue(), ok, want)
+	}
+}
+
+func TestMemberOfDistinguishesFieldAndStaticStringIndex(t *testing.T) {
+	action := typ.NewUnion(
+		typ.NewRecord().Field("kind", typ.LiteralString("a")).Field("x", typ.String).Build(),
+		typ.NewRecord().Field("kind", typ.LiteralString("b")).Field("y", typ.String).Build(),
+	)
+	okVariant := typ.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", action).
+		Build()
+	errVariant := typ.NewRecord().
+		Field("ok", typ.LiteralBool(false)).
+		Field("error", typ.String).
+		Build()
+	av := FromType(typ.NewUnion(okVariant, errVariant))
+
+	fieldRead, fieldOK := MemberOf(av, value.MemberField("value"))
+	wantField := typ.NewOptional(action)
+	if !fieldOK || !typ.TypeEquals(fieldRead.ProjectValue(), wantField) {
+		t.Fatalf("MemberField(value) = %v, %v; want %v,true", fieldRead.ProjectValue(), fieldOK, wantField)
+	}
+	if indexRead, indexOK := MemberOf(av, value.MemberStringIndex("value")); indexOK {
+		t.Fatalf("MemberStringIndex(value) = %v, true; want unresolved exact index on missing union member", indexRead.ProjectValue())
+	}
+}
+
+func TestRuntimeMemberOfMissingFieldReadsNil(t *testing.T) {
+	av := FromType(typ.NewRecord().Field("data", typ.NewRecord().Build()).Build())
+	data, ok := RuntimeMemberOf(av, value.MemberField("data"))
+	if !ok {
+		t.Fatal("RuntimeMemberOf(data) did not resolve present field")
+	}
+	got, ok := RuntimeMemberOf(data, value.MemberField("max_tokens"))
+	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.Nil) {
+		t.Fatalf("RuntimeMemberOf(missing) = %v, %v; want nil,true", got.ProjectValue(), ok)
+	}
+}
+
+func TestRuntimeMemberOfPartialUnionKeepsPresentAndMissingVariants(t *testing.T) {
+	action := typ.NewUnion(
+		typ.NewRecord().Field("kind", typ.LiteralString("a")).Field("x", typ.String).Build(),
+		typ.NewRecord().Field("kind", typ.LiteralString("b")).Field("y", typ.String).Build(),
+	)
+	okVariant := typ.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", action).
+		Build()
+	errVariant := typ.NewRecord().
+		Field("ok", typ.LiteralBool(false)).
+		Field("error", typ.String).
+		Build()
+	av := FromType(typ.NewUnion(okVariant, errVariant))
+
+	got, ok := RuntimeMemberOf(av, value.MemberStringIndex("value"))
+	want := typ.NewOptional(action)
+	if !ok || !typ.TypeEquals(got.ProjectValue(), want) {
+		t.Fatalf("RuntimeMemberOf([value]) = %v, %v; want %v,true", got.ProjectValue(), ok, want)
+	}
+}
+
+func TestRefineCallableValuePreservesOptionalPresence(t *testing.T) {
+	base := FromType(typ.NewOptional(typ.Func().Returns(typ.Unknown).Build()))
+	sig := typ.Func().Returns(typ.String).Build()
+
+	got := RefineCallableValue(base, sig)
+	inner, optional := typ.SplitNilableFieldType(got.ProjectValue())
+	if !optional {
+		t.Fatalf("RefineCallableValue = %v, want optional function", got.ProjectValue())
+	}
+	fn, ok := inner.(*typ.Function)
+	if !ok {
+		t.Fatalf("RefineCallableValue inner = %T, want function", inner)
+	}
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
+		t.Fatalf("returns = %#v, want [string]", fn.Returns)
+	}
+}
+
+func TestRefineCallableValueKeepsDefiniteCallableDefinite(t *testing.T) {
+	base := FromType(typ.Func().Returns(typ.Unknown).Build())
+	sig := typ.Func().Returns(typ.String).Build()
+
+	got := RefineCallableValue(base, sig)
+	if _, optional := typ.SplitNilableFieldType(got.ProjectValue()); optional {
+		t.Fatalf("RefineCallableValue = %v, want definite function", got.ProjectValue())
+	}
+	assertProjects(t, "RefineCallableValue definite", got, sig)
+}
+
+func TestRefineCallableValueDoesNotInventCallableFromNil(t *testing.T) {
+	got := RefineCallableValue(FromType(typ.Nil), typ.Func().Returns(typ.String).Build())
+	assertProjects(t, "RefineCallableValue nil", got, typ.Nil)
+}
+
+func TestRefineCallableReadTreatsNilAsOptionalCallable(t *testing.T) {
+	sig := typ.Func().Returns(typ.String).Build()
+	got := RefineCallableRead(FromType(typ.Nil), sig)
+	inner, optional := typ.SplitNilableFieldType(got.ProjectValue())
+	if !optional {
+		t.Fatalf("RefineCallableRead(nil) = %v, want optional callable", got.ProjectValue())
+	}
+	if fn := unwrap.Function(inner); fn == nil {
+		t.Fatalf("RefineCallableRead(nil) inner = %v, want function", inner)
+	}
+}
+
+func TestRefineCallableReadDoesNotMakeAbsentReadDefinite(t *testing.T) {
+	sig := typ.Func().Returns(typ.String).Build()
+	got := RefineCallableRead(AbstractValue{}, sig)
+	inner, optional := typ.SplitNilableFieldType(got.ProjectValue())
+	if !optional {
+		t.Fatalf("RefineCallableRead(absent) = %v, want optional callable", got.ProjectValue())
+	}
+	if fn := unwrap.Function(inner); fn == nil {
+		t.Fatalf("RefineCallableRead(absent) inner = %v, want function", inner)
+	}
+}
+
+func TestRefineCallableReadKeepsDefiniteCallableDefinite(t *testing.T) {
+	base := FromType(typ.Func().Returns(typ.Unknown).Build())
+	sig := typ.Func().Returns(typ.String).Build()
+	got := RefineCallableRead(base, sig)
+	if _, optional := typ.SplitNilableFieldType(got.ProjectValue()); optional {
+		t.Fatalf("RefineCallableRead(definite) = %v, want definite callable", got.ProjectValue())
+	}
+	assertProjects(t, "RefineCallableRead definite", got, sig)
+}
+
+func TestWithMetatableAttachesPrototypeLookup(t *testing.T) {
+	prototype := typ.NewRecord().
+		OptField("_session_id", typ.String).
+		Field("all", typ.Func().Returns(typ.NewArray(typ.String), typ.Nil).Build()).
+		Build()
+	meta := typ.NewRecord().Field("__index", prototype).Build()
+	instance := FromType(typ.NewRecord().Build())
+
+	got, ok := WithMetatable(instance, FromType(meta))
+	if !ok {
+		t.Fatal("WithMetatable did not produce a value")
+	}
+	rec, ok := got.ProjectValue().(*typ.Record)
+	if !ok || rec.Metatable == nil {
+		t.Fatalf("WithMetatable projected %T %v, want record with metatable", got.ProjectValue(), got.ProjectValue())
+	}
+
+	field, ok := RuntimeMemberOf(got, value.MemberField("_session_id"))
+	wantField := typ.NewOptional(typ.String)
+	if !ok || !typ.TypeEquals(field.ProjectValue(), wantField) {
+		t.Fatalf("prototype field read = %v, %v; want %v,true", field.ProjectValue(), ok, wantField)
+	}
+	method, ok := RuntimeMemberOf(got, value.MemberField("all"))
+	if !ok {
+		t.Fatal("prototype method read did not resolve")
+	}
+	if _, ok := method.ProjectValue().(*typ.Function); !ok {
+		t.Fatalf("prototype method read = %T %v, want function", method.ProjectValue(), method.ProjectValue())
+	}
+}
+
+func TestNarrowLengthLowerBoundFiltersImpossibleContainerShapes(t *testing.T) {
+	row := typ.NewRecord().Field("text", typ.String).Build()
+	rowsArray := typ.NewArray(row)
+	base := FromType(typ.NewUnion(typ.NewRecord().Build(), rowsArray, typ.Nil))
+
+	got := NarrowLengthLowerBound(base, 1)
+	if !typ.TypeEquals(got.ProjectValue(), rowsArray) {
+		t.Fatalf("NarrowLengthLowerBound({}|array|nil, 1) = %v, want %v", got.ProjectValue(), rowsArray)
+	}
+
+	empty := NarrowLengthLowerBound(FromType(typ.NewRecord().Build()), 1)
+	if !typ.IsNever(empty.ProjectValue()) {
+		t.Fatalf("NarrowLengthLowerBound({}, 1) = %v, want never", empty.ProjectValue())
 	}
 }
 
@@ -130,6 +395,101 @@ func TestWriteIndexMatchesValueDomain(t *testing.T) {
 	}
 }
 
+func TestWriteIndexForeignFreshEmptyTableSeparatesExactWriteFromIteratorTail(t *testing.T) {
+	payload := typ.NewRecord().
+		Field("created_at", typ.String).
+		Field("last_activity", typ.NewOptional(typ.String)).
+		Build()
+
+	got := WriteIndexForeign(FromType(typ.NewFreshEmptyRecord()), FromType(typ.LiteralString("s1")), FromType(payload))
+	projected := got.ProjectValue()
+	iter := querycore.EntryValueType(projected)
+	if !typ.TypeEquals(iter, typ.Any) {
+		t.Fatalf("EntryValueType(WriteIndexForeign(fresh{})) = %v, want any; projected=%v", iter, projected)
+	}
+	exact, ok := querycore.Index(projected, typ.LiteralString("s1"))
+	if !ok || !typ.TypeEquals(exact, payload) {
+		t.Fatalf("exact read after WriteIndexForeign(fresh{}) = %v/%v, want %v/true; projected=%v", exact, ok, payload, projected)
+	}
+}
+
+func TestWriteIndexForeignFreshEmptyTableDynamicKeyLearnsIteratorTail(t *testing.T) {
+	payload := typ.NewRecord().
+		Field("created_at", typ.Number).
+		Field("last_activity", typ.Number).
+		Build()
+
+	got := WriteIndexForeign(FromType(typ.NewFreshEmptyRecord()), FromType(typ.String), FromType(payload))
+	projected := got.ProjectValue()
+	iter := querycore.EntryValueType(projected)
+	if !typ.TypeEquals(iter, payload) {
+		t.Fatalf("EntryValueType(WriteIndexForeign(fresh{}, string)) = %v, want %v; projected=%v", iter, payload, projected)
+	}
+}
+
+func TestNestedFreshEmptyTableStaticWriteDoesNotInferIteratorTail(t *testing.T) {
+	payload := typ.NewRecord().
+		Field("created_at", typ.String).
+		Field("last_activity", typ.NewOptional(typ.String)).
+		Build()
+	state := FromType(typ.NewRecord().
+		Field("active_sessions", typ.NewFreshEmptyRecord()).
+		Build())
+
+	child, ok := RuntimeMemberOf(state, value.MemberField("active_sessions"))
+	if !ok {
+		t.Fatalf("active_sessions field did not resolve from %v", state.ProjectValue())
+	}
+	if !child.IsFreshAllocation() {
+		t.Fatalf("nested fresh table lost freshness before write: %v", child.ProjectValue())
+	}
+
+	updatedChild := WithMember(child, value.MemberStringIndex("s1"), FromType(payload))
+	updatedState := WithMember(state, value.MemberField("active_sessions"), updatedChild)
+	projectedChild, ok := RuntimeMemberOf(updatedState, value.MemberField("active_sessions"))
+	if !ok {
+		t.Fatalf("active_sessions field missing after write: %v", updatedState.ProjectValue())
+	}
+	projected := projectedChild.ProjectValue()
+	iter := querycore.EntryValueType(projected)
+	if !typ.TypeEquals(iter, typ.Any) {
+		t.Fatalf("EntryValueType(nested fresh table after static write) = %v, want any; projected=%v", iter, projected)
+	}
+	exact, ok := querycore.Index(projected, typ.LiteralString("s1"))
+	if !ok || !typ.TypeEquals(exact, payload) {
+		t.Fatalf("exact nested [\"s1\"] read = %v/%v, want %v/true; projected=%v", exact, ok, payload, projected)
+	}
+}
+
+func TestSealedIndexWriteAdmitsUsesDeclaredObligation(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("count", typ.Integer).
+		Field("name", typ.String).
+		Build()
+
+	if SealedIndexWriteAdmits(FromType(rec), FromType(typ.String), FromType(typ.Integer)) {
+		t.Fatal("sealed heterogeneous record must reject broad string integer write")
+	}
+	if !SealedIndexWriteAdmits(FromType(rec), FromType(typ.LiteralString("count")), FromType(typ.Integer)) {
+		t.Fatal("sealed record must admit compatible exact count write")
+	}
+	if !IndexWriteAdmits(FromType(rec), FromType(typ.String), FromType(typ.Integer)) {
+		t.Fatal("mutable admission law should still allow weakening the same record")
+	}
+}
+
+func TestWriteSelfDerivedIndexPreservesHeterogeneousRecord(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("count", typ.LiteralInt(1)).
+		Field("name", typ.LiteralString("ready")).
+		Build()
+	key := typ.NewUnion(typ.LiteralString("count"), typ.LiteralString("name"))
+	val := typ.NewUnion(typ.LiteralInt(1), typ.LiteralString("ready"))
+
+	got := WriteSelfDerivedIndex(FromType(rec), FromType(key), FromType(val))
+	assertProjects(t, "WriteSelfDerivedIndex", got, rec)
+}
+
 // TestMutateIndexMatchesValueDomain pins that MutateIndex agrees with the
 // value-domain update law (AdmitIndexedValueMutation then MergeForConvergence)
 // and that its admission predicate agrees with IndexedValueMutationAdmits.
@@ -177,6 +537,20 @@ func TestAppendMapElementMatchesValueDomain(t *testing.T) {
 	want := value.MergeForConvergence(container, value.AdmitMapArrayElementMutation(container, key, elem))
 	got := AppendMapElement(FromType(container), FromType(key), FromType(elem))
 	assertProjects(t, "AppendMapElement", got, want)
+}
+
+// TestContainerElementUnionMatchesValueDomain pins that the product-level
+// ContainerElementUnion primitive agrees with the value-domain law used for
+// channel/send-like mutation effects.
+func TestContainerElementUnionMatchesValueDomain(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	channel := typ.NewGeneric("Channel", []*typ.TypeParam{tp}, typ.NewRecord().Build())
+	container := typ.Instantiate(channel, typ.Unknown)
+	elem := typ.String
+
+	want := value.AdmitContainerElementUnion(container, elem)
+	got := ContainerElementUnion(FromType(container), FromType(elem))
+	assertProjects(t, "ContainerElementUnion", got, want)
 }
 
 // TestPhiJoinMatchesProductJoin pins PhiJoin as the product Join reduction: empty

@@ -5,34 +5,56 @@ import "github.com/wippyai/go-lua/internal"
 // Value is the SemanticEvidence axis abstraction of the path-sensitive proofs
 // attached to a value.
 //
-// The axis currently carries a single element: the no-evidence (Top) state. Its
-// lattice is therefore the trivial one-point lattice, which is sound (every
-// operation is total and the laws hold degenerately). The evidence carriers
-// (discriminant, correlation, predicate) and their reducers land in Phase 5; they
-// extend this carrier without changing the axis surface.
-type Value struct {
-	_ struct{}
-}
+// The first non-trivial proof carried here is GradualTop: the value is the
+// dynamic top introduced by an unannotated source, not a strict declared `any`.
+// Keeping that proof in the product carrier makes it part of Equal and Hash, so
+// query/change detection observes the semantic distinction instead of recovering
+// it from driver-side maps.
+type Value uint8
 
-// Bottom is the unreachable evidence state. On the one-point lattice it coincides
-// with Top.
+const (
+	bottom Value = iota
+	gradualTop
+	top
+)
+
+// Bottom is the unreachable evidence state.
 func Bottom() Value {
-	return Value{}
+	return bottom
 }
 
 // Top carries no evidence.
 func Top() Value {
-	return Value{}
+	return top
 }
 
-// Join keeps only evidence proven on all incoming paths. On the one-point lattice
-// it returns the sole element.
+// GradualTop proves that a dynamic `any` came from an unannotated source and is
+// therefore admissible at gradual-consistency boundaries.
+func GradualTop() Value {
+	return gradualTop
+}
+
+// IsGradualTop reports whether this evidence proves the gradual top.
+func (v Value) IsGradualTop() bool {
+	return v == gradualTop
+}
+
+// Join keeps only evidence proven on all incoming paths.
 func Join(a, b Value) Value {
-	return Value{}
+	if a == b {
+		return a
+	}
+	if a == bottom {
+		return b
+	}
+	if b == bottom {
+		return a
+	}
+	return top
 }
 
-// Widen accelerates an ascending chain. The one-point lattice has height zero, so
-// Widen equals Join.
+// Widen accelerates an ascending chain. The evidence lattice is finite, so Widen
+// equals Join.
 func Widen(prev, next Value) Value {
 	return Join(prev, next)
 }
@@ -44,10 +66,24 @@ func Equal(a, b Value) bool {
 
 // Hash is a stable hash consistent with Equal.
 func (v Value) Hash() uint64 {
-	return internal.FnvString("evidence")
+	return internal.HashCombine(internal.FnvString("evidence"), uint64(v))
 }
 
-// Covers reports whether the receiver carries at least as much evidence as other.
+// Covers reports whether the receiver is at least as high as other in the lattice.
 func (v Value) Covers(other Value) bool {
-	return true
+	return Join(v, other) == v
+}
+
+// String renders the evidence state for diagnostics and law-test failures.
+func (v Value) String() string {
+	switch v {
+	case bottom:
+		return "bottom"
+	case gradualTop:
+		return "gradual-top"
+	case top:
+		return "top"
+	default:
+		return "evidence(invalid)"
+	}
 }

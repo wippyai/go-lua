@@ -3,8 +3,6 @@ package interproc
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/types/domain/value/product"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // FunctionFactsDelta returns a canonical product delta for function facts.
@@ -35,49 +33,31 @@ func CapturedTypesDelta(types api.CapturedTypes) api.Facts {
 // performed by one nested function.
 func CapturedFieldAssignsDelta(
 	fnSym cfg.SymbolID,
-	fields map[cfg.SymbolID]map[string]typ.Type,
+	fields map[cfg.SymbolID]FieldValues,
 ) api.Facts {
 	if fnSym == 0 || len(fields) == 0 {
 		return api.Facts{}
 	}
-	lifted := make(map[cfg.SymbolID]map[string]product.AbstractValue, len(fields))
-	for sym, byName := range fields {
-		if m := product.LiftFieldMap(byName); m != nil {
-			lifted[sym] = m
+	normalized := make(map[cfg.SymbolID]FieldValues, len(fields))
+	for sym, byField := range fields {
+		if len(byField) > 0 {
+			normalized[sym] = byField
 		}
 	}
-	if len(lifted) == 0 {
+	if len(normalized) == 0 {
 		return api.Facts{}
 	}
 	return JoinFacts(api.Facts{}, api.Facts{
-		CapturedFields: api.CapturedFieldAssigns{fnSym: lifted},
-	})
-}
-
-// CapturedContainerMutationsDelta returns a canonical product delta for
-// container writes performed by one nested function.
-func CapturedContainerMutationsDelta(
-	fnSym cfg.SymbolID,
-	mutations map[cfg.SymbolID][]api.ContainerMutation,
-) api.Facts {
-	if fnSym == 0 || len(mutations) == 0 {
-		return api.Facts{}
-	}
-	return JoinFacts(api.Facts{}, api.Facts{
-		CapturedContainers: api.CapturedContainerMutations{fnSym: mutations},
+		CapturedFields: api.CapturedFieldAssigns{fnSym: normalized},
 	})
 }
 
 // ConstructorFieldsDelta returns a canonical module product delta for one class.
-func ConstructorFieldsDelta(classSym cfg.SymbolID, fields map[string]typ.Type) api.Facts {
+func ConstructorFieldsDelta(classSym cfg.SymbolID, fields FieldValues) api.Facts {
 	if classSym == 0 || len(fields) == 0 {
 		return api.Facts{}
 	}
-	lifted := product.LiftFieldMap(fields)
-	if len(lifted) == 0 {
-		return api.Facts{}
-	}
 	return JoinFacts(api.Facts{}, api.Facts{
-		ConstructorFields: api.ConstructorFields{classSym: lifted},
+		ConstructorFields: api.ConstructorFields{classSym: fields},
 	})
 }

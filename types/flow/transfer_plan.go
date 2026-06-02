@@ -34,12 +34,6 @@ func (s *Solution) buildTransferPlan(size int) {
 			s.tableMutatorByPoint[idx] = append(s.tableMutatorByPoint[idx], assign)
 		}
 	}
-	s.containerMutatorByPoint = make([][]ContainerMutatorAssignment, size)
-	for _, assign := range s.inputs.ContainerMutatorAssignments {
-		if idx := int(assign.Point); idx >= 0 && idx < size {
-			s.containerMutatorByPoint[idx] = append(s.containerMutatorByPoint[idx], assign)
-		}
-	}
 	s.arrayLiteralLengthByPoint = make([][]ArrayLiteralLength, size)
 	for _, lit := range s.inputs.ArrayLiteralLengths {
 		if idx := int(lit.Point); idx >= 0 && idx < size {
@@ -96,17 +90,6 @@ func (s *Solution) tableMutatorAssignmentsAt(p cfg.Point) []TableMutatorAssignme
 		return nil
 	}
 	return s.tableMutatorByPoint[idx]
-}
-
-func (s *Solution) containerMutatorAssignmentsAt(p cfg.Point) []ContainerMutatorAssignment {
-	if s == nil {
-		return nil
-	}
-	idx := int(p)
-	if idx < 0 || idx >= len(s.containerMutatorByPoint) {
-		return nil
-	}
-	return s.containerMutatorByPoint[idx]
 }
 
 func (s *Solution) arrayLiteralLengthsAt(p cfg.Point) []ArrayLiteralLength {

@@ -5,32 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/core"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
-	"github.com/wippyai/go-lua/types/contract"
-	"github.com/wippyai/go-lua/types/effect"
-	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
-
-func TestExtractContainerMutatorAssignments_NilGraph(t *testing.T) {
-	fc := &core.FlowContext{}
-	inputs := &flow.Inputs{}
-
-	ExtractContainerMutatorAssignments(fc, inputs)
-
-	if len(inputs.ContainerMutatorAssignments) != 0 {
-		t.Errorf("expected no assignments for nil graph, got %d", len(inputs.ContainerMutatorAssignments))
-	}
-}
-
-func TestExtractContainerMutatorAssignments_NilInputs(t *testing.T) {
-	fc := &core.FlowContext{}
-
-	ExtractContainerMutatorAssignments(fc, nil)
-}
 
 func TestContainerElementReturnInfo(t *testing.T) {
 	info := calleffect.ContainerElementReturnInfo{
@@ -101,67 +78,5 @@ func TestContainerArgAtMethod_OutOfBounds(t *testing.T) {
 	}, 5)
 	if result != nil {
 		t.Error("expected nil for out of bounds index")
-	}
-}
-
-func TestExtractContainerMutatorAssignments_AssignmentCallSite(t *testing.T) {
-	code := `
-		local c = {}
-		local _ = send(c, 1)
-	`
-	graph := buildGraph(t, code, "send")
-	inputs := &flow.Inputs{
-		Graph: graph,
-	}
-
-	ExtractContainerMutatorAssignments(&core.FlowContext{
-		Graph:    graph,
-		Evidence: trace.GraphEvidence(graph, graph.Bindings()),
-		Derived: &core.Derived{
-			Synth: containerSendSynth(),
-		},
-	}, inputs)
-
-	if len(inputs.ContainerMutatorAssignments) != 1 {
-		t.Fatalf("expected 1 container mutator assignment, got %d", len(inputs.ContainerMutatorAssignments))
-	}
-	symC, ok := graph.SymbolAt(graph.Exit(), "c")
-	if !ok || symC == 0 {
-		t.Fatal("expected symbol for c")
-	}
-	assign := inputs.ContainerMutatorAssignments[0]
-	if assign.Target.Symbol != symC {
-		t.Fatalf("expected target symbol %d, got %d", symC, assign.Target.Symbol)
-	}
-	if !typ.TypeEquals(assign.ValueType, typ.Integer) {
-		t.Fatalf("expected value type integer, got %v", assign.ValueType)
-	}
-}
-
-func containerSendSynth() func(ast.Expr, cfg.Point) typ.Type {
-	spec := contract.NewSpec().WithEffects(effect.Mutate{
-		Target: effect.ParamRef{Index: 0},
-		Transform: effect.ContainerElementUnion{
-			Container: effect.ParamRef{Index: 0},
-			Value:     effect.ParamRef{Index: 1},
-		},
-	})
-	send := typ.Func().
-		Param("container", typ.Any).
-		Param("value", typ.Any).
-		Returns(typ.Nil).
-		Spec(spec).
-		Build()
-
-	return func(expr ast.Expr, _ cfg.Point) typ.Type {
-		switch v := expr.(type) {
-		case *ast.IdentExpr:
-			if v.Value == "send" {
-				return send
-			}
-		case *ast.NumberExpr:
-			return typ.Integer
-		}
-		return typ.Unknown
 	}
 }

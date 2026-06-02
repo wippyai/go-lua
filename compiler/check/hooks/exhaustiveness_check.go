@@ -8,9 +8,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/numparse"
 	querycore "github.com/wippyai/go-lua/types/query/core"
@@ -20,7 +23,7 @@ import (
 
 // CheckExhaustiveness warns when a match-like if/elseif chain misses variants
 // from a provably closed discriminated union.
-func CheckExhaustiveness(fn *ast.FunctionExpr, graph *cfg.Graph, evidence api.FlowEvidence, synth api.BaseSynth, sourceName string) []diag.Diagnostic {
+func CheckExhaustiveness(fn *ast.FunctionExpr, graph *cfg.Graph, evidence api.FlowEvidence, declared flow.DeclaredTypes, synth api.BaseSynth, sourceName string) []diag.Diagnostic {
 	if fn == nil || graph == nil || synth == nil {
 		return nil
 	}
@@ -28,6 +31,7 @@ func CheckExhaustiveness(fn *ast.FunctionExpr, graph *cfg.Graph, evidence api.Fl
 		branchPoint: branchPointsByCondition(evidence.Branches),
 		graph:       graph,
 		bindings:    graph.Bindings(),
+		declared:    declared,
 		selectCases: selectCasesByResult(graph, evidence.Assignments, synth),
 		synth:       synth,
 		sourceName:  sourceName,
@@ -40,7 +44,8 @@ type exhaustivenessChecker struct {
 	branchPoint map[ast.Expr]cfg.Point
 	graph       *cfg.Graph
 	bindings    *bind.BindingTable
-	selectCases map[string]selectCaseDomain
+	declared    flow.DeclaredTypes
+	selectCases map[constraint.PathKey]selectCaseDomain
 	synth       api.BaseSynth
 	sourceName  string
 	diags       []diag.Diagnostic
@@ -135,7 +140,7 @@ func (c *exhaustivenessChecker) checkIfChain(stmt *ast.IfStmt) {
 		return
 	}
 
-	objectType := c.synth.TypeOf(first.object, first.point)
+	objectType := c.discriminantDomainType(first)
 	domain, ok := narrow.ClosedDiscriminantDomain(objectType, first.field)
 	if !ok {
 		return
@@ -160,22 +165,32 @@ func (c *exhaustivenessChecker) checkIfChain(stmt *ast.IfStmt) {
 	c.addNonExhaustiveWarning(stmt.Condition, first.path, missing)
 }
 
+func (c *exhaustivenessChecker) discriminantDomainType(check discriminantCheck) typ.Type {
+	if t := observation.DeclaredPathType(c.declared, check.objectPath); t != nil {
+		return t
+	}
+	if c.synth == nil {
+		return nil
+	}
+	return c.synth.TypeOf(check.object, check.point)
+}
+
 func (c *exhaustivenessChecker) checkSelectCaseChain(stmt *ast.IfStmt, checks []discriminantCheck) {
 	first := checks[0]
 	if first.field != "channel" || first.objectPath.IsEmpty() {
 		return
 	}
-	domain, ok := c.selectCases[pathKey(first.objectPath)]
+	domain, ok := c.selectCases[first.objectPath.Key()]
 	if !ok || len(domain.cases) < 2 {
 		return
 	}
 
-	handled := make(map[string]struct{}, len(checks))
+	handled := make(map[constraint.PathKey]struct{}, len(checks))
 	for _, check := range checks {
 		if check.valuePath.IsEmpty() {
 			return
 		}
-		key := pathKey(check.valuePath)
+		key := check.valuePath.Key()
 		if !domain.contains(key) {
 			return
 		}
@@ -184,7 +199,7 @@ func (c *exhaustivenessChecker) checkSelectCaseChain(stmt *ast.IfStmt, checks []
 
 	var missing []string
 	for _, candidate := range domain.cases {
-		if _, ok := handled[pathKey(candidate.path)]; !ok {
+		if _, ok := handled[candidate.path.Key()]; !ok {
 			missing = append(missing, candidate.name)
 		}
 	}
@@ -308,7 +323,7 @@ func attrEqualsLiteral(attrExpr, literalExpr ast.Expr) (discriminantCheck, bool)
 	if !ok {
 		return discriminantCheck{}, false
 	}
-	field, ok := staticAttrFieldName(attr.Key)
+	field, ok := staticAttrFieldName(attr)
 	if !ok {
 		return discriminantCheck{}, false
 	}
@@ -329,7 +344,7 @@ func attrEqualsPath(attrExpr, valueExpr ast.Expr) (discriminantCheck, bool) {
 	if !ok {
 		return discriminantCheck{}, false
 	}
-	field, ok := staticAttrFieldName(attr.Key)
+	field, ok := staticAttrFieldName(attr)
 	if !ok {
 		return discriminantCheck{}, false
 	}
@@ -381,7 +396,7 @@ func exprPath(expr ast.Expr) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		key, ok := staticAttrFieldName(e.Key)
+		key, ok := staticAttrFieldName(e)
 		if !ok {
 			return "", false
 		}
@@ -411,12 +426,12 @@ func formatMissingNames(missing []string) string {
 	return "cases: " + strings.Join(missing, ", ")
 }
 
-func selectCasesByResult(graph *cfg.Graph, assignments []api.AssignmentEvidence, synth api.BaseSynth) map[string]selectCaseDomain {
+func selectCasesByResult(graph *cfg.Graph, assignments []api.AssignmentEvidence, synth api.BaseSynth) map[constraint.PathKey]selectCaseDomain {
 	if graph == nil || graph.Bindings() == nil {
 		return nil
 	}
 	bindings := graph.Bindings()
-	domains := make(map[string]selectCaseDomain)
+	domains := make(map[constraint.PathKey]selectCaseDomain)
 	for _, assign := range assignments {
 		p := assign.Point
 		info := assign.Info
@@ -439,7 +454,7 @@ func selectCasesByResult(graph *cfg.Graph, assignments []api.AssignmentEvidence,
 		if len(info.TargetVersions) > 0 && !info.TargetVersions[0].IsZero() {
 			resultPath.Version = info.TargetVersions[0].ID
 		}
-		domains[pathKey(resultPath)] = selectCaseDomain{cases: cases}
+		domains[resultPath.Key()] = selectCaseDomain{cases: cases}
 	}
 	return domains
 }
@@ -452,7 +467,7 @@ func isChannelSelectCall(call *cfg.CallInfo, p cfg.Point, synth api.BaseSynth) b
 	if !ok {
 		return false
 	}
-	key, ok := staticAttrFieldName(attr.Key)
+	key, ok := staticAttrFieldName(attr)
 	if !ok || key != "select" {
 		return false
 	}
@@ -499,8 +514,8 @@ func returnsSelectResultRecord(fnType typ.Type) bool {
 	return hasChannel && hasValue && hasOk
 }
 
-func staticAttrFieldName(key ast.Expr) (string, bool) {
-	seg, ok := flowpath.StaticAttrKeySegment(key)
+func staticAttrFieldName(attr *ast.AttrGetExpr) (string, bool) {
+	seg, ok := flowpath.StaticAttrSegment(attr)
 	if !ok || seg.Kind != constraint.SegmentField || seg.Name == "" {
 		return "", false
 	}
@@ -517,7 +532,7 @@ func selectCaseChannels(expr ast.Expr, p cfg.Point, graph *cfg.Graph, bindings *
 		if field == nil {
 			return nil, false
 		}
-		if key := ast.KeyName(field.Key); key == "default" {
+		if name, ok := fieldkey.StringKeyFromTableField(field); ok && name == "default" {
 			return nil, false
 		}
 		call, ok := field.Value.(*ast.FuncCallExpr)
@@ -537,18 +552,11 @@ func selectCaseChannels(expr ast.Expr, p cfg.Point, graph *cfg.Graph, bindings *
 	return cases, len(cases) > 0
 }
 
-func (d selectCaseDomain) contains(key string) bool {
+func (d selectCaseDomain) contains(key constraint.PathKey) bool {
 	for _, c := range d.cases {
-		if pathKey(c.path) == key {
+		if c.path.Key() == key {
 			return true
 		}
 	}
 	return false
-}
-
-func pathKey(p constraint.Path) string {
-	if p.Symbol != 0 {
-		return fmt.Sprintf("#%d@%d%s", p.Symbol, p.Version, constraint.FormatSegments(p.Segments))
-	}
-	return p.String()
 }

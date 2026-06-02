@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
+	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -125,6 +127,307 @@ func TestJoinBodyVectors_PreservesDiscriminatedArrayElementVariants(t *testing.T
 	if len(got) != 1 || !typ.TypeEquals(got[0], want) {
 		t.Fatalf("JoinBodyVectors() = %v, want %v", got, want)
 	}
+}
+
+func TestSourceParamAnnotated(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{
+		Names: []string{"plain", "typed"},
+		Types: []ast.TypeExpr{nil, &ast.PrimitiveTypeExpr{Name: "number"}},
+	}}
+
+	if SourceParamAnnotated(fn, 0) {
+		t.Fatal("plain parameter reported annotated")
+	}
+	if !SourceParamAnnotated(fn, 1) {
+		t.Fatal("typed parameter not reported annotated")
+	}
+	if SourceParamAnnotated(fn, -1) || SourceParamAnnotated(fn, 2) || SourceParamAnnotated(nil, 0) {
+		t.Fatal("out-of-range/nil parameter reported annotated")
+	}
+}
+
+func TestParamSlotForCallArgUsesCanonicalParamSlots(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"opts"}}}
+	g := cfg.Build(fn)
+
+	source, slot, ok := ParamSlotForCallArg(g, fn, &ast.FuncCallExpr{}, 0)
+	if !ok || source != 0 || slot != 0 {
+		t.Fatalf("plain call arg maps to source/slot %d/%d ok=%v, want 0/0 true", source, slot, ok)
+	}
+}
+
+func TestParamSlotForCallArgShiftsMethodReceiver(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"self", "opts"}}}
+	g := cfg.Build(fn)
+
+	source, slot, ok := ParamSlotForCallArg(g, fn, &ast.FuncCallExpr{Method: "with_options"}, 0)
+	if !ok || source != 1 || slot != 1 {
+		t.Fatalf("method call arg maps to source/slot %d/%d ok=%v, want 1/1 true", source, slot, ok)
+	}
+}
+
+func TestParamSlotForCallArgUsesRuntimeSlotsForImplicitSelf(t *testing.T) {
+	fn, g := implicitSelfMethodGraph(t)
+
+	source, slot, ok := ParamSlotForCallArg(g, fn, &ast.FuncCallExpr{Method: "run"}, 0)
+	if !ok || source != 0 || slot != 1 {
+		t.Fatalf("method call arg maps to source/slot %d/%d ok=%v, want 0/1 true", source, slot, ok)
+	}
+
+	source, slot, ok = ParamSlotForCallArg(g, fn, &ast.FuncCallExpr{}, 0)
+	if !ok || source != -1 || slot != 0 {
+		t.Fatalf("plain call arg0 maps to source/slot %d/%d ok=%v, want -1/0 true", source, slot, ok)
+	}
+
+	source, slot, ok = ParamSlotForCallArg(g, fn, &ast.FuncCallExpr{Args: []ast.Expr{
+		&ast.IdentExpr{Value: "selfArg"},
+		&ast.IdentExpr{Value: "opts"},
+	}}, 1)
+	if !ok || source != 0 || slot != 1 {
+		t.Fatalf("plain call arg1 maps to source/slot %d/%d ok=%v, want 0/1 true", source, slot, ok)
+	}
+}
+
+func TestParamSlotForRuntimeArgIncludesImplicitSelfSlot(t *testing.T) {
+	fn, g := implicitSelfMethodGraph(t)
+
+	source, slot, ok := ParamSlotForRuntimeArg(g, fn, 0)
+	if !ok || source != -1 || slot != 0 {
+		t.Fatalf("runtime arg0 maps to source/slot %d/%d ok=%v, want implicit self -1/0 true", source, slot, ok)
+	}
+
+	source, slot, ok = ParamSlotForRuntimeArg(g, fn, 1)
+	if !ok || source != 0 || slot != 1 {
+		t.Fatalf("runtime arg1 maps to source/slot %d/%d ok=%v, want first source param 0/1 true", source, slot, ok)
+	}
+}
+
+func TestCallArgContractTypesProjectsBodyDemandThroughParamSlots(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"self", "opts"}}}
+	g := cfg.Build(fn)
+	call := &ast.FuncCallExpr{
+		Method: "with_options",
+		Args:   []ast.Expr{&ast.IdentExpr{Value: "opts"}},
+	}
+
+	got := CallArgContractTypes(CallArgContractConfig{
+		Graph:     g,
+		Function:  fn,
+		Call:      call,
+		Contracts: Contracts{1: DemandFromType(typ.String)},
+	})
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+		t.Fatalf("method call arg demand = %v, want string", got)
+	}
+}
+
+func TestContractTypesProjectsSolvedContracts(t *testing.T) {
+	got := ContractTypes(Contracts{
+		-1: DemandFromType(typ.Number),
+		0:  DemandFromType(nil),
+		1:  DemandFromType(typ.String),
+	})
+	if len(got) != 1 || !typ.TypeEquals(got[1], typ.String) {
+		t.Fatalf("ContractTypes() = %#v, want only slot 1 string", got)
+	}
+	got[1] = typ.Number
+	again := ContractTypes(Contracts{1: DemandFromType(typ.String)})
+	if !typ.TypeEquals(again[1], typ.String) {
+		t.Fatalf("ContractTypes exposed mutable backing state: %#v", again)
+	}
+}
+
+func TestCallArgContractTypesProjectsImplicitSelfPlainCallBySlot(t *testing.T) {
+	fn, g := implicitSelfMethodGraph(t)
+	call := &ast.FuncCallExpr{Args: []ast.Expr{
+		&ast.IdentExpr{Value: "runner"},
+		&ast.IdentExpr{Value: "opts"},
+	}}
+
+	got := CallArgContractTypes(CallArgContractConfig{
+		Graph:     g,
+		Function:  fn,
+		Call:      call,
+		Contracts: Contracts{0: DemandFromType(typ.NewRecord().ReadonlyField("run", typ.Any).Build()), 1: DemandFromType(typ.String)},
+	})
+	if len(got) != 2 || !typ.TypeEquals(got[1], typ.String) {
+		t.Fatalf("plain method-function arg demand = %v, want slot1 string demand", got)
+	}
+	if got[0] == nil {
+		t.Fatalf("plain method-function arg0 should receive implicit self slot demand, got %v", got)
+	}
+}
+
+func TestCallArgContractTypesAnnotatedParamKeepsDeclaredContract(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{
+		Names: []string{"value"},
+		Types: []ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "number"}},
+	}}
+	g := cfg.Build(fn)
+	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "value"}}}
+
+	got := CallArgContractTypes(CallArgContractConfig{
+		Graph:     g,
+		Function:  fn,
+		Call:      call,
+		Contracts: Contracts{0: DemandFromType(typ.String)},
+		DeclaredSlotType: func(slot int) typ.Type {
+			if slot == 0 {
+				return typ.Number
+			}
+			return nil
+		},
+	})
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Number) {
+		t.Fatalf("annotated call arg demand = %v, want declared number", got)
+	}
+}
+
+func TestFunctionCallArgContractTypesProjectsRequiredAndVariadicParams(t *testing.T) {
+	fn := typ.Func().
+		Param("required", typ.String).
+		OptParam("optional", typ.Number).
+		Variadic(typ.Boolean).
+		Build()
+	call := &ast.FuncCallExpr{Args: []ast.Expr{
+		&ast.IdentExpr{Value: "a"},
+		&ast.IdentExpr{Value: "b"},
+		&ast.IdentExpr{Value: "c"},
+	}}
+
+	got := FunctionCallArgContractTypes(call, fn)
+	if len(got) != 3 {
+		t.Fatalf("signature call arg contracts = %v, want 3 slots", got)
+	}
+	if !typ.TypeEquals(got[0], typ.String) {
+		t.Fatalf("arg0 contract = %v, want string", got[0])
+	}
+	if got[1] != nil {
+		t.Fatalf("optional arg1 should not produce obligation, got %v", got[1])
+	}
+	if !typ.TypeEquals(got[2], typ.Boolean) {
+		t.Fatalf("arg2 variadic contract = %v, want boolean", got[2])
+	}
+}
+
+func TestJoinCallArgContractTypesOwnsContractVectorAlgebra(t *testing.T) {
+	out := JoinCallArgContractTypes(nil, []typ.Type{typ.String, nil})
+	out = JoinCallArgContractTypes(out, []typ.Type{typ.Number, typ.Boolean})
+
+	if len(out) != 2 {
+		t.Fatalf("joined contracts = %v, want 2 slots", out)
+	}
+	if !typ.IsNever(out[0]) {
+		t.Fatalf("incompatible arg0 obligation = %v, want never", out[0])
+	}
+	if !typ.TypeEquals(out[1], typ.Boolean) {
+		t.Fatalf("arg1 obligation = %v, want boolean", out[1])
+	}
+	if NormalizeCallArgContractTypes([]typ.Type{nil, typ.Any, typ.Unknown}) != nil {
+		t.Fatal("all-empty call arg contract vector must normalize to nil")
+	}
+}
+
+func TestCallArgDemandProjectionJoinsMultipleTargets(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"value"}}}
+	g := cfg.Build(fn)
+	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "value"}}}
+
+	got := CallArgDemandProjection{
+		Call: call,
+		Targets: []CallArgDemandTarget{
+			{
+				Graph:     g,
+				Function:  fn,
+				Contracts: Contracts{0: DemandFromType(typ.String)},
+			},
+			{
+				Graph:     g,
+				Function:  fn,
+				Contracts: Contracts{0: DemandFromType(typ.Number)},
+			},
+		},
+	}.DemandTypes()
+
+	if len(got) != 1 || !typ.IsNever(got[0]) {
+		t.Fatalf("joined target demands = %v, want [never]", got)
+	}
+}
+
+func TestCallArgDemandProjectionFiltersAnnotatedSourceParams(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{
+		Names: []string{"value"},
+		Types: []ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "number"}},
+	}}
+	g := cfg.Build(fn)
+	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "value"}}}
+
+	got := CallArgDemandProjection{
+		Call: call,
+		Targets: []CallArgDemandTarget{
+			{
+				Graph:     g,
+				Function:  fn,
+				Contracts: Contracts{0: DemandFromType(typ.String)},
+				DeclaredSlotType: func(slot int) typ.Type {
+					if slot == 0 {
+						return typ.Number
+					}
+					return nil
+				},
+				SourceParamAnnotated: func(sourceParam int) bool {
+					return sourceParam == 0
+				},
+			},
+		},
+	}.DemandTypes()
+
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Number) {
+		t.Fatalf("annotated projection demand = %v, want number", got)
+	}
+}
+
+func TestCallArgDemandProjectionEmptyTargetsNormalizeNil(t *testing.T) {
+	got := CallArgDemandProjection{
+		Call: &ast.FuncCallExpr{
+			Args: []ast.Expr{&ast.IdentExpr{Value: "value"}},
+		},
+	}.DemandTypes()
+	if got != nil {
+		t.Fatalf("empty projection demand = %v, want nil", got)
+	}
+}
+
+func implicitSelfMethodGraph(t *testing.T) (*ast.FunctionExpr, *cfg.Graph) {
+	t.Helper()
+	stmts, err := parse.ParseString(`
+local Runner = {}
+function Runner:run(options)
+	return options
+end
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := cfg.BuildBlock(stmts)
+	if root == nil {
+		t.Fatal("BuildBlock returned nil")
+	}
+	var fn *ast.FunctionExpr
+	root.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
+		if fn != nil || info == nil || !info.IsMethod {
+			return
+		}
+		fn = info.FuncExpr
+	})
+	if fn == nil {
+		t.Fatal("method function not found")
+	}
+	g := cfg.BuildWithBindings(fn, root.Bindings())
+	if g == nil {
+		t.Fatal("BuildWithBindings returned nil")
+	}
+	return fn, g
 }
 
 func TestMergeBodyCallArgAt_PreservesArrayElementDiscriminants(t *testing.T) {
@@ -743,6 +1046,42 @@ func TestProjectToParameterUse_DedupsUnionAfterProjection(t *testing.T) {
 	}
 }
 
+func TestProjectToParameterUse_PreservesStaticStringIndexKey(t *testing.T) {
+	fn := functionWithParams("options")
+	fn.Stmts = []ast.Stmt{
+		&ast.ReturnStmt{Exprs: []ast.Expr{
+			&ast.AttrGetExpr{
+				Object: &ast.IdentExpr{Value: "options"},
+				Key:    &ast.StringExpr{Value: "x-y"},
+			},
+		}},
+	}
+	graph := cfg.Build(fn)
+	uses := trace.ParameterUses(graph, fn)
+	if len(uses) != 1 || len(uses[0].Fields) != 1 {
+		t.Fatalf("parameter uses = %#v, want one structural field key", uses)
+	}
+	if got := uses[0].Fields[0]; got.Kind != constraint.SegmentIndexString || got.Name != "x-y" {
+		t.Fatalf("parameter use field = %#v, want static string-index x-y", got)
+	}
+	evidence := typ.NewRecord().
+		Field("x-y", typ.String).
+		Field("unused", typ.Number).
+		Build()
+
+	got := ProjectToParameterUse(graph.ParamSlotsReadOnly(), uses, []typ.Type{evidence})
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("projected options evidence = %T, want record (%v)", got[0], got[0])
+	}
+	if rec.GetField("x-y") == nil {
+		t.Fatalf("projected evidence lost demanded static string-index field: %v", rec)
+	}
+	if rec.GetField("unused") != nil {
+		t.Fatalf("projected evidence kept unused field: %v", rec)
+	}
+}
+
 func TestProjectToParameterUse_WholeParameterUseKeepsEvidence(t *testing.T) {
 	fn := functionWithParams("client")
 	fn.Stmts = []ast.Stmt{
@@ -978,6 +1317,34 @@ func TestBodyEntryContractJoin_RecursiveContractCoversEntryObservation(t *testin
 	got := BodyEntryContractJoin(entry, contract)
 	if !typ.SameNode(got, entry) {
 		t.Fatalf("BodyEntryContractJoin(entry, recursive contract) = %T %[1]v, want entry", got)
+	}
+}
+
+func TestBodyEntryContractJoin_PreservesPreciseContainerEntryUnderBroadContract(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+
+	cases := []struct {
+		name     string
+		entry    typ.Type
+		contract typ.Type
+	}{
+		{
+			name:     "map value",
+			entry:    typ.NewMap(typ.String, typ.NewArray(entry)),
+			contract: typ.NewMap(typ.String, typ.Any),
+		},
+		{
+			name:     "array element",
+			entry:    typ.NewArray(entry),
+			contract: typ.NewArray(typ.Any),
+		},
+	}
+
+	for _, tc := range cases {
+		got := BodyEntryContractJoin(tc.entry, tc.contract)
+		if !typ.TypeEquals(got, tc.entry) {
+			t.Fatalf("%s: BodyEntryContractJoin(%v, %v) = %v, want %v", tc.name, tc.entry, tc.contract, got, tc.entry)
+		}
 	}
 }
 
@@ -1343,6 +1710,22 @@ func TestBodyContractJoin_IncompatibleEntryRefinesMemberWiseAndDropsSeedNil(t *t
 		if unionMemberCount(state) > firstCount {
 			t.Fatalf("BodyContractJoin grew unbounded at iteration %d: %d -> %d members (%v)", i, firstCount, unionMemberCount(state), state)
 		}
+	}
+}
+
+func TestEntryContradictsBodyContract(t *testing.T) {
+	record := typ.NewRecord().Field("name", typ.String).Build()
+	if !EntryContradictsBodyContract(record, typ.Number) {
+		t.Fatalf("record entry should contradict numeric body contract")
+	}
+	if EntryContradictsBodyContract(typ.Integer, typ.Number) {
+		t.Fatalf("integer entry should be compatible with numeric body contract")
+	}
+	if EntryContradictsBodyContract(typ.Unknown, typ.Number) {
+		t.Fatalf("unknown entry is not precise enough to contradict a body contract")
+	}
+	if EntryContradictsBodyContract(typ.NewOptional(typ.Integer), typ.Number) {
+		t.Fatalf("integer? entry has a non-nil numeric member compatible with number")
 	}
 }
 

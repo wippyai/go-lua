@@ -149,6 +149,70 @@ func (m *Map) Equals(o Type) bool {
 	return TypeEquals(m, o)
 }
 
+// ReadonlyMap represents a covariant read-only view of key/value table entries.
+//
+// It is used for obligations such as pairs(t): the body only enumerates present
+// keys/values and does not gain the right to write arbitrary entries back through
+// the value. Mutable Map remains invariant; ReadonlyMap is covariant in both key
+// and value because it exposes reads only.
+type ReadonlyMap struct {
+	Key                   Type
+	Value                 Type
+	hash                  uint64
+	softPrunable          bool
+	containsAny           bool
+	containsNever         bool
+	containsTypeParam     bool
+	containsInstantiated  bool
+	containsRecursive     bool
+	containsOpenRecursive bool
+	strCache              stringCache
+}
+
+// NewReadonlyMap creates a read-only key/value view type.
+func NewReadonlyMap(key, value Type) *ReadonlyMap {
+	if key == nil {
+		key = Unknown
+	}
+	key = NormalizeTableKey(key)
+	if value == nil {
+		value = Unknown
+	}
+	h := internal.HashCombine(uint64(kind.ReadonlyMap), key.Hash())
+	h = internal.HashCombine(h, value.Hash())
+
+	return &ReadonlyMap{
+		Key:                   key,
+		Value:                 value,
+		hash:                  h,
+		softPrunable:          softPruneAny(key, value),
+		containsAny:           knownAny(key, value),
+		containsNever:         knownNever(key, value),
+		containsTypeParam:     knownTypeParam(key, value),
+		containsInstantiated:  knownInstantiated(key, value),
+		containsRecursive:     knownRecursive(key, value),
+		containsOpenRecursive: knownOpenRecursive(key, value),
+	}
+}
+
+func (m *ReadonlyMap) Kind() kind.Kind { return kind.ReadonlyMap }
+func (m *ReadonlyMap) String() string {
+	return m.strCache.get(func() string {
+		ks, vs := "unknown", "unknown"
+		if m.Key != nil {
+			ks = m.Key.String()
+		}
+		if m.Value != nil {
+			vs = m.Value.String()
+		}
+		return "readonly {[" + ks + "]: " + vs + "}"
+	})
+}
+func (m *ReadonlyMap) Hash() uint64 { return m.hash }
+func (m *ReadonlyMap) Equals(o Type) bool {
+	return TypeEquals(m, o)
+}
+
 // Tuple represents a fixed-length heterogeneous sequence: (T1, T2, ...).
 //
 // Tuples are used for multi-value returns and destructuring assignments.

@@ -1,12 +1,19 @@
 package summary
 
 import (
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
-	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	domainpath "github.com/wippyai/go-lua/compiler/check/domain/path"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/flow/pathkey"
+	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // Project reduces a solved intraprocedural FunctionState to the interprocedural
@@ -22,10 +29,175 @@ import (
 // Top in that slot, the sound over-approximation. Return arity is the widest
 // return statement's expression count.
 func Project(fs state.FunctionState, g *cfg.Graph) Summary {
+	return ProjectWithDeclaredReturns(fs, g, nil)
+}
+
+// ProjectWithDeclaredReturns is Project plus annotation context from the
+// function signature. The declared return tuple is not a second analysis: it is a
+// caller-visible contract used only where the summary projection needs to know
+// that a success-only `(value, nil)` body is allowed to prove an error-return
+// relation for an optional value slot.
+func ProjectWithDeclaredReturns(fs state.FunctionState, g *cfg.Graph, declaredReturns []typ.Type) Summary {
+	returns := projectReturns(fs, g)
 	return Summary{
-		Returns: projectReturns(fs, g),
-		Params:  cloneContracts(fs.Contracts),
+		Returns:             returns,
+		ReturnFunctionRefs:  projectReturnFunctionRefs(fs, g),
+		ReturnClosureRefs:   projectReturnClosureRefs(fs, g),
+		Params:              cloneContracts(fs.Contracts),
+		Relations:           projectReturnRelations(fs, g, returns, declaredReturns),
+		CellEffects:         projectCellEffects(fs, g),
+		ReceiverEffects:     projectReceiverEffects(fs, g),
+		CaptureExports:      projectCaptureExports(fs, g),
+		CaptureFunctionRefs: projectCaptureFunctionRefs(fs, g),
+		CaptureClosureRefs:  projectCaptureClosureRefs(fs, g),
+		PrototypeSelf:       projectPrototypeSelf(fs, g),
 	}
+}
+
+// projectCellEffects folds the caller-visible capture-cell effects at every
+// normal function boundary. Return nodes include implicit fallthrough returns
+// with zero expressions, so this intentionally does not filter by arity.
+func projectCellEffects(fs state.FunctionState, g *cfg.Graph) flow.CaptureEffects {
+	if g == nil {
+		return flow.CaptureEffectsDomain.Top()
+	}
+	out := flow.CaptureEffectsDomain.Bottom()
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		out = flow.CaptureEffectsDomain.Join(out, ps.CellEffects)
+	})
+	return out
+}
+
+// projectReceiverEffects folds caller-visible runtime-argument effects at every
+// normal function boundary. The effect carrier distinguishes identity from
+// conditional writes, so unchanged entry arguments are not mistaken for writes.
+func projectReceiverEffects(fs state.FunctionState, g *cfg.Graph) flow.ReceiverEffects {
+	if g == nil {
+		return flow.ReceiverEffectsDomain.Top()
+	}
+	out := flow.ReceiverEffectsDomain.Bottom()
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		out = flow.ReceiverEffectsDomain.Join(out, ps.ReceiverEffects)
+	})
+	return out
+}
+
+// projectCaptureExports folds the captured-cell store visible at normal function
+// boundaries. It includes both explicit captured cells this function carries and
+// ordinary Env symbols this function declares: a nested closure captures lexical
+// locations, and a parent publishes those locations as store entries for the
+// child entry-state seed. Unlike CellEffects, this is a store snapshot.
+func projectCaptureExports(fs state.FunctionState, g *cfg.Graph) flow.CaptureCells {
+	if g == nil {
+		return flow.CaptureCellsDomain.Top()
+	}
+	envExports := captureExportSymbols(g)
+	out := flow.CaptureCellsDomain.Bottom()
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		point := flow.CaptureCellsDomain.Join(ps.Cells, captureCellsFromEnv(ps.Env, envExports))
+		out = flow.CaptureCellsDomain.Join(out, point)
+	})
+	return out
+}
+
+func projectCaptureFunctionRefs(fs state.FunctionState, g *cfg.Graph) flow.FunctionRefs {
+	if g == nil {
+		return flow.FunctionRefsDomain.Top()
+	}
+	out := flow.FunctionRefsDomain.Bottom()
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		out = flow.FunctionRefsDomain.Join(out, ps.FunctionRefs)
+	})
+	return out
+}
+
+func projectCaptureClosureRefs(fs state.FunctionState, g *cfg.Graph) flow.ClosureRefs {
+	if g == nil {
+		return flow.ClosureRefsDomain.Top()
+	}
+	out := flow.ClosureRefsDomain.Bottom()
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		out = flow.ClosureRefsDomain.Join(out, ps.ClosureRefs)
+	})
+	return out
+}
+
+// projectPrototypeSelf folds the solved receiver-self product relation at normal
+// function boundaries. Source semantics that create or update the relation live
+// in transfer; projection only carries the product-state component into Summary.
+func projectPrototypeSelf(fs state.FunctionState, g *cfg.Graph) flow.PrototypeSelf {
+	if g == nil {
+		return flow.PrototypeSelfDomain.Top()
+	}
+	out := flow.PrototypeSelfDomain.Bottom()
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		out = flow.PrototypeSelfDomain.Join(out, ps.PrototypeSelf)
+	})
+	return out
+}
+
+func captureCellsFromEnv(env map[flow.ValueKey]product.AbstractValue, allowed map[cfg.SymbolID]bool) flow.CaptureCells {
+	if len(env) == 0 || len(allowed) == 0 {
+		return flow.CaptureCellsDomain.Bottom()
+	}
+	entries := make([]flow.CaptureCell, 0, len(env))
+	for key, av := range env {
+		sym, ok := symbolFromEnvKey(key)
+		if !ok || !allowed[sym] || av.IsZero() {
+			continue
+		}
+		entries = append(entries, flow.CaptureCell{Symbol: sym, Value: av})
+	}
+	return flow.CaptureCellsOf(entries)
+}
+
+func captureExportSymbols(g *cfg.Graph) map[cfg.SymbolID]bool {
+	if g == nil || g.Bindings() == nil {
+		return nil
+	}
+	out := make(map[cfg.SymbolID]bool)
+	for _, nested := range g.NestedFunctions() {
+		if nested.Func == nil {
+			continue
+		}
+		for _, sym := range g.Bindings().CapturedSymbols(nested.Func) {
+			if g.OwnsSymbol(sym) {
+				out[sym] = true
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func symbolFromEnvKey(key flow.ValueKey) (cfg.SymbolID, bool) {
+	return flow.ParseSymbolValueKey(key)
 }
 
 // projectReturns folds the per-return-point Env into a single return tuple. For
@@ -55,11 +227,68 @@ func projectReturns(fs state.FunctionState, g *cfg.Graph) []product.AbstractValu
 	return tuple
 }
 
+func projectReturnFunctionRefs(fs state.FunctionState, g *cfg.Graph) []flow.FunctionRefs {
+	if g == nil {
+		return nil
+	}
+	acc := returnFunctionRefsTupleLattice{}
+	var tuple []flow.FunctionRefs
+	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if info == nil || len(info.Exprs) == 0 {
+			return
+		}
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		stmt := returnFunctionRefsTupleAt(ps, info)
+		tuple = acc.Join(tuple, stmt)
+	})
+	return tuple
+}
+
+func projectReturnClosureRefs(fs state.FunctionState, g *cfg.Graph) []flow.ClosureRefs {
+	if g == nil {
+		return nil
+	}
+	acc := returnClosureRefsTupleLattice{}
+	var tuple []flow.ClosureRefs
+	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if info == nil || len(info.Exprs) == 0 {
+			return
+		}
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		stmt := returnClosureRefsTupleAt(ps, info)
+		tuple = acc.Join(tuple, stmt)
+	})
+	return tuple
+}
+
+func returnClosureRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.ClosureRefs {
+	out := make([]flow.ClosureRefs, len(info.Exprs))
+	for i := range info.Exprs {
+		out[i] = flow.ProjectClosureRefsByPath(ps.ClosureRefs, constraint.NewPlaceholder(i))
+	}
+	return out
+}
+
+func returnFunctionRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.FunctionRefs {
+	out := make([]flow.FunctionRefs, len(info.Exprs))
+	for i := range info.Exprs {
+		out[i] = flow.ProjectFunctionRefsByPath(ps.FunctionRefs, constraint.NewPlaceholder(i))
+	}
+	return out
+}
+
 // returnTupleAt reads the values of one return statement's expressions from the
 // converged point state ps. A returned identifier (ReturnInfo.Symbols[i] != 0)
-// projects its Env value; any other returned form whose value the transfer did
-// not establish in Env projects the value-domain Top — the sound default that a
-// later transfer-fidelity pass (call-return typing) refines.
+// projects its Env value; otherwise or when identifier fallback is unavailable,
+// the function falls back to the transfer-owned return-slot Env key. When both
+// lookups miss, it projects value-domain Top, and later transfer-fidelity passes
+// (call-return typing) can still refine.
 func returnTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []product.AbstractValue {
 	out := make([]product.AbstractValue, len(info.Exprs))
 	for i := range info.Exprs {
@@ -69,24 +298,250 @@ func returnTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []product.AbstractV
 }
 
 func returnSlotValue(ps flow.PointState, info *cfg.ReturnInfo, i int) product.AbstractValue {
+	return returnSlotValueFromPointState(ps, info, i)
+}
+
+func returnSlotValueFromPointState(ps flow.PointState, info *cfg.ReturnInfo, i int) product.AbstractValue {
 	if i < len(info.Symbols) && info.Symbols[i] != 0 {
-		if av, ok := ps.Env[symKey(info.Symbols[i])]; ok && !av.IsZero() {
+		if av, ok := flow.PointFactsOf(ps).SymbolValue(info.Symbols[i]); ok && !av.IsZero() {
 			return av
 		}
 	}
-	// A non-identifier return (a literal, an arithmetic result, a call) carries its
-	// value in the transfer's return-slot Env key, written by applyReturn.
-	if av, ok := ps.Env[transfer.ReturnSlotKey(i)]; ok && !av.IsZero() {
+	// A non-identifier return (a literal, an arithmetic result, a call) carries
+	// its value in the return-slot Env key written by applyReturn. This is a
+	// summary-owned read of transfer assembly facts through the PointFacts
+	// typed-key boundary.
+	if av, ok := flow.PointFactsOf(ps).ValueKeyValue(flow.ReturnSlotValueKey(i)); ok && !av.IsZero() {
 		return av
 	}
 	return product.Domain.Top()
 }
 
-// symKey mirrors the canonical transfer's Env key convention: a parameter or
-// local symbol is keyed by its CFG SymbolID. The transfer writes Env under this
-// key, so the projection must read under the same key.
-func symKey(sym cfg.SymbolID) string {
-	return "s" + itoa(uint64(sym))
+// projectReturnRelations proves caller-visible return-slot relations from the
+// solved return-point states. This is the summary-level counterpart of legacy
+// ErrorReturn inference, but it lives inside Summary projection so recursive
+// callees and callers see it through the same interprocedural fixed point.
+func projectReturnRelations(fs state.FunctionState, g *cfg.Graph, returns []product.AbstractValue, declaredReturns []typ.Type) flow.ReturnRelations {
+	return flow.MergeReturnRelationProofs(
+		projectErrorReturnRelations(fs, g, returns, declaredReturns),
+		flow.MergeReturnRelationProofs(
+			projectForwardedReturnRelations(fs, g),
+			projectPointLengthParamRelations(fs, g),
+		),
+	)
+}
+
+func projectErrorReturnRelations(fs state.FunctionState, g *cfg.Graph, returns []product.AbstractValue, declaredReturns []typ.Type) flow.ReturnRelations {
+	if g == nil {
+		return flow.ReturnRelationsDomain.Top()
+	}
+	const valueIdx, errorIdx = 0, 1
+	proof := returnRelationProof{consistent: true}
+	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if !proof.consistent || info == nil {
+			return
+		}
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		if len(info.Exprs) == 0 && info.Stmt == nil {
+			return
+		}
+		if len(info.Exprs) == 1 && info.SourceCallAt(0) != nil {
+			if ps.ReturnRel.HasErrorReturn(flow.ReturnCorrelation{ValueIndex: valueIdx, ErrorIndex: errorIdx}) {
+				proof.sawSuccess = true
+				proof.sawFailure = true
+				return
+			}
+			proof.consistent = false
+			return
+		}
+		valState, okVal := classifyReturnSlot(ps, info, valueIdx)
+		errState, okErr := classifyReturnSlot(ps, info, errorIdx)
+		if !okVal || !okErr {
+			proof.consistent = false
+			return
+		}
+		switch {
+		case valState == returnNonNil && errState == returnNil:
+			proof.sawSuccess = true
+		case valState == returnNil && errState == returnNonNil:
+			proof.sawFailure = true
+		default:
+			proof.consistent = false
+		}
+	})
+	if !proof.consistent || !proof.sawSuccess {
+		return flow.ReturnRelationsDomain.Top()
+	}
+	if proof.sawFailure || returnValueSlotOptional(returns, valueIdx) || declaredReturnSlotOptional(declaredReturns, valueIdx) {
+		return flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: valueIdx, ErrorIndex: errorIdx}})
+	}
+	return flow.ReturnRelationsDomain.Top()
+}
+
+func projectForwardedReturnRelations(fs state.FunctionState, g *cfg.Graph) flow.ReturnRelations {
+	if g == nil {
+		return flow.ReturnRelationsDomain.Top()
+	}
+	out := flow.ReturnRelationsDomain.Bottom()
+	sawReturn := false
+	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if info == nil {
+			return
+		}
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		rels := flow.ReturnRelationsDomain.Top()
+		if len(info.Exprs) == 1 && info.SourceCallAt(0) != nil {
+			rels = ps.ReturnRel
+		}
+		out = flow.ReturnRelationsDomain.Join(out, rels)
+		sawReturn = true
+	})
+	if !sawReturn || flow.ReturnRelationsDomain.Equal(out, flow.ReturnRelationsDomain.Bottom()) {
+		return flow.ReturnRelationsDomain.Top()
+	}
+	return out
+}
+
+func projectPointLengthParamRelations(fs state.FunctionState, g *cfg.Graph) flow.ReturnRelations {
+	if g == nil {
+		return flow.ReturnRelationsDomain.Top()
+	}
+	resolver := pathkey.NewResolver(g)
+	out := flow.ReturnRelationsDomain.Bottom()
+	sawReturn := false
+	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if info == nil {
+			return
+		}
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		rels := flow.ReturnRelationsDomain.Top()
+		var proven []flow.ReturnLengthParamRelation
+		for i := range info.Exprs {
+			key, ok := returnExprPathKey(g, resolver, p, info, i)
+			if !ok {
+				continue
+			}
+			for _, rel := range ps.Rel.LengthParamsForTarget(key) {
+				proven = append(proven, flow.ReturnLengthParamRelation{
+					ReturnIndex: i,
+					ParamIndex:  rel.ParamIndex,
+				})
+			}
+		}
+		if len(proven) > 0 {
+			rels = flow.ReturnRelationsOfLengthParams(proven)
+		}
+		out = flow.ReturnRelationsDomain.Join(out, rels)
+		sawReturn = true
+	})
+	if !sawReturn || flow.ReturnRelationsDomain.Equal(out, flow.ReturnRelationsDomain.Bottom()) {
+		return flow.ReturnRelationsDomain.Top()
+	}
+	return out
+}
+
+func returnExprPathKey(g *cfg.Graph, resolver *pathkey.Resolver, p cfg.Point, info *cfg.ReturnInfo, i int) (constraint.PathKey, bool) {
+	if g == nil || resolver == nil || info == nil || i < 0 || i >= len(info.Exprs) {
+		return "", false
+	}
+	constResolver := predicate.BuildConstResolver(nil, p)
+	path := domainpath.FromExprWithBindingsAt(info.Exprs[i], constResolver, g.Bindings(), g, p)
+	if path.Symbol == 0 && i < len(info.Symbols) && info.Symbols[i] != 0 {
+		path = constraint.Path{Symbol: info.Symbols[i]}
+	}
+	if path.Symbol == 0 {
+		return "", false
+	}
+	path.Version = 0
+	key := resolver.KeyAt(p, path)
+	return key, key != ""
+}
+
+type returnRelationProof struct {
+	sawSuccess bool
+	sawFailure bool
+	consistent bool
+}
+
+type returnNilState uint8
+
+const (
+	returnNil returnNilState = iota + 1
+	returnNonNil
+)
+
+func classifyReturnSlot(ps flow.PointState, info *cfg.ReturnInfo, idx int) (returnNilState, bool) {
+	if idx < 0 {
+		return 0, false
+	}
+	if idx >= len(info.Exprs) {
+		if implicitReturnSlotIsNil(info.Exprs, idx) {
+			return returnNil, true
+		}
+		return 0, false
+	}
+	return classifyReturnValue(returnSlotValue(ps, info, idx))
+}
+
+func classifyReturnValue(av product.AbstractValue) (returnNilState, bool) {
+	if av.IsZero() {
+		return 0, false
+	}
+	if av.DefinitelyPresent() {
+		return returnNonNil, true
+	}
+	t := av.ProjectValue()
+	if t == nil || typ.IsAbsentOrUnknown(t) {
+		return 0, false
+	}
+	u := unwrap.Alias(t)
+	if u == nil || u.Kind() == kind.Never {
+		return 0, false
+	}
+	if u.Kind() == kind.Nil {
+		return returnNil, true
+	}
+	if _, optional := typ.SplitNilableFieldType(t); optional {
+		return 0, false
+	}
+	return returnNonNil, true
+}
+
+func implicitReturnSlotIsNil(exprs []ast.Expr, idx int) bool {
+	if idx < 0 || idx < len(exprs) || len(exprs) == 0 {
+		return false
+	}
+	last := exprs[len(exprs)-1]
+	switch last.(type) {
+	case *ast.FuncCallExpr, *ast.Comma3Expr:
+		return false
+	default:
+		return true
+	}
+}
+
+func returnValueSlotOptional(returns []product.AbstractValue, idx int) bool {
+	if idx < 0 || idx >= len(returns) || returns[idx].IsZero() {
+		return false
+	}
+	_, optional := typ.SplitNilableFieldType(returns[idx].ProjectValue())
+	return optional
+}
+
+func declaredReturnSlotOptional(returns []typ.Type, idx int) bool {
+	if idx < 0 || idx >= len(returns) || returns[idx] == nil {
+		return false
+	}
+	return unwrap.IsOptionalLike(returns[idx])
 }
 
 func itoa(v uint64) string {

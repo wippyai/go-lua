@@ -175,11 +175,14 @@ func (p *Processor) nestedAnalysisContext(
 	}
 
 	ctx := inheritedNestedAnalysisContext(parentResult.AnalysisContext)
-	if sig := parentResult.LiteralSignatures[fn]; sig != nil {
-		ctx = api.MergeAnalysisContext(ctx, api.AnalysisContext{ExpectedFunction: sig})
+	if lookup := parentResult.LiteralSignatureLookup(); lookup != nil {
+		if sig := lookup.Lookup(fn); sig != nil {
+			ctx = api.MergeAnalysisContext(ctx, api.AnalysisContext{ExpectedFunction: sig})
+		}
 	}
-	for _, ev := range parentResult.Evidence.Calls {
-		if parentResult.FlowSolution != nil && parentResult.FlowSolution.IsPointDead(ev.Point) {
+	parentFlow := parentResult.SolvedFlow()
+	for callIdx, ev := range parentResult.Evidence.Calls {
+		if parentFlow != nil && parentFlow.IsPointDead(ev.Point) {
 			continue
 		}
 		info := ev.Info
@@ -194,7 +197,7 @@ func (p *Processor) nestedAnalysisContext(
 			if calleeType == nil {
 				calleeType = callbackCalleeType(observer, parentResult.QueryContext, parentResult.TypeOps, info, ev.Point)
 			}
-			if expected := expectedFunctionForCallbackArg(arg, ev.ExpectedArgType(idx)); expected != nil {
+			if expected := expectedFunctionForCallbackArg(parentResult, callIdx, idx, arg, ev); expected != nil {
 				ctx = api.MergeAnalysisContext(ctx, api.AnalysisContext{ExpectedFunction: expected})
 			}
 			spec := contract.ExtractSpec(calleeType)
@@ -205,20 +208,36 @@ func (p *Processor) nestedAnalysisContext(
 			if cb == nil || len(cb.EnvOverlay) == 0 {
 				continue
 			}
-			ctx = api.MergeAnalysisContext(ctx, api.AnalysisContext{GlobalOverlay: product.LiftFieldMap(cb.EnvOverlay)})
+			ctx = api.MergeAnalysisContext(ctx, api.AnalysisContext{GlobalOverlay: api.LiftGlobalOverlay(cb.EnvOverlay)})
 		}
 	}
 	return ctx
 }
 
 func inheritedNestedAnalysisContext(parent api.AnalysisContext) api.AnalysisContext {
-	if len(parent.GlobalOverlay) == 0 {
+	if parent.GlobalOverlay.Empty() {
 		return api.AnalysisContext{}
 	}
 	return api.MergeAnalysisContext(api.AnalysisContext{}, api.AnalysisContext{GlobalOverlay: parent.GlobalOverlay})
 }
 
-func expectedFunctionForCallbackArg(arg ast.Expr, expected typ.Type) *typ.Function {
+func expectedFunctionForCallbackArg(
+	parentResult *api.FuncAnalysisView,
+	callIdx int,
+	argIdx int,
+	arg ast.Expr,
+	ev api.CallEvidence,
+) *typ.Function {
+	if expected := expectedFunctionLiteralSignature(arg, ev.ExpectedArgType(argIdx)); expected != nil {
+		return expected
+	}
+	if parentResult == nil || callIdx < 0 || callIdx >= len(parentResult.CallExpectedArgs) {
+		return nil
+	}
+	return expectedFunctionLiteralSignature(arg, parentResult.CallExpectedArgs[callIdx].ArgType(argIdx))
+}
+
+func expectedFunctionLiteralSignature(arg ast.Expr, expected typ.Type) *typ.Function {
 	fnArg, ok := arg.(*ast.FunctionExpr)
 	if !ok {
 		return nil
@@ -294,11 +313,12 @@ func (p *Processor) capturedTypesAtCallPoints(
 	}
 	preferTarget := func(sym cfg.SymbolID) bool { return sym == targetSym }
 	points := map[cfg.Point]struct{}{}
+	parentFlow := parentResult.SolvedFlow()
 	for _, ev := range parentResult.Evidence.Calls {
 		if ev.Point == 0 || ev.Info == nil {
 			continue
 		}
-		if parentResult.FlowSolution != nil && parentResult.FlowSolution.IsPointDead(ev.Point) {
+		if parentFlow != nil && parentFlow.IsPointDead(ev.Point) {
 			continue
 		}
 		if callTargetsFunction(ev.Info, parentGraph, bindings, moduleBindings, targetSym) {
@@ -332,6 +352,32 @@ func (p *Processor) capturedTypesAtCallPoints(
 		out = mergeCapturedObservation(out, observed)
 	}
 	return out
+}
+
+func nestedPathObservationFacts(parentResult *api.FuncAnalysisView, fallback flow.PathObservationFacts) flow.PathObservationFacts {
+	if parentResult != nil {
+		if facts := parentResult.PathObservationFacts(); facts != nil {
+			return facts
+		}
+	}
+	return fallback
+}
+
+func observedNestedPathType(facts flow.PathObservationFacts, point cfg.Point, path constraint.Path) typ.Type {
+	if facts == nil || path.IsEmpty() {
+		return nil
+	}
+	obs := facts.ObservePath(flow.PathObservationQuery{
+		Point:               point,
+		Path:                path,
+		Phase:               flow.PathReadCurrent,
+		AllowConditionProof: true,
+		PreserveProof:       true,
+	})
+	if !obs.Resolved() {
+		return nil
+	}
+	return obs.Type
 }
 
 func callTargetsFunction(info *cfg.CallInfo, graph *cfg.Graph, bindings, moduleBindings *bind.BindingTable, target cfg.SymbolID) bool {
@@ -456,11 +502,9 @@ func (p *Processor) processNestedFunction(
 	var capturedTypes map[cfg.SymbolID]typ.Type
 	var projection captured.PathProjection
 	if nestedGraph != nil && parentResult != nil {
-		if parentResult.FlowSolution != nil {
-			projection = captured.PathProjection{
-				TypeAt:       parentResult.FlowSolution.NarrowedTypeAt,
-				ChildTypesAt: parentResult.FlowSolution.ChildTypesAt,
-			}
+		projection = captured.PathProjection{
+			Paths:    nestedPathObservationFacts(parentResult, parentObserver),
+			Children: parentResult.PathChildFacts(),
 		}
 		capturedTypes = captured.FromParentFactsAtPoint(parentResult.Facts, nestedGraph, info.NF.Point, nestedGraph.Bindings(), projection)
 		if observed := p.capturedTypesAtCallPoints(graph, parentResult, nestedGraph, info, projection); len(observed) > 0 {
@@ -484,7 +528,7 @@ func (p *Processor) processNestedFunction(
 						if capturedTypes == nil {
 							capturedTypes = make(map[cfg.SymbolID]typ.Type, len(fields))
 						}
-						promoted := p.promotedCapturedFieldNames(graph, parentResult, capturedSet, info.NF.Point)
+						promoted := p.promotedCapturedFields(graph, parentResult, capturedSet, info.NF.Point)
 						for _, sym := range cfg.SortedSymbolIDs(fields) {
 							fieldMap := fields[sym]
 							if sym == 0 {
@@ -593,16 +637,16 @@ func (p *Processor) sealConstructorReturn(fnType *typ.Function, graph *cfg.Graph
 	return fnType
 }
 
-// promotedCapturedFieldNames reports captured field names whose parent-scope
+// promotedCapturedFields reports captured field slots whose parent-scope
 // assignment definitely reaches the nested function's definition point with a
 // concrete non-nilable value, so the closure observes the field as present
 // rather than optional. Dominance is computed against the parent graph.
-func (p *Processor) promotedCapturedFieldNames(
+func (p *Processor) promotedCapturedFields(
 	parentGraph *cfg.Graph,
 	parentResult *api.FuncAnalysisView,
 	capturedSet map[cfg.SymbolID]bool,
 	defPoint cfg.Point,
-) map[cfg.SymbolID]map[string]bool {
+) captured.PromotedFields {
 	if parentGraph == nil || parentResult == nil || parentResult.FlowInputs == nil {
 		return nil
 	}
@@ -610,7 +654,7 @@ func (p *Processor) promotedCapturedFieldNames(
 	if dom == nil {
 		return nil
 	}
-	return captured.PromotedFieldNamesAtPoint(
+	return captured.PromotedFieldsAtPoint(
 		parentResult.FlowInputs,
 		capturedSet,
 		defPoint,
@@ -624,23 +668,27 @@ func (p *Processor) promotedCapturedFieldNames(
 // merged without changing presence.
 func mergeCapturedFieldFacts(
 	base typ.Type,
-	fieldMap map[string]typ.Type,
-	promoted map[string]bool,
+	fields interprocdomain.FieldValues,
+	promoted captured.PromotedFieldSet,
 ) typ.Type {
-	if len(fieldMap) == 0 {
+	if len(fields) == 0 {
 		return base
 	}
 	if len(promoted) == 0 {
-		return overlaymut.MergeFieldsIntoType(base, fieldMap)
+		return overlaymut.MergeFieldsIntoType(base, fields)
 	}
 
-	requiredFields := make(map[string]typ.Type, len(promoted))
-	optionalFields := make(map[string]typ.Type, len(fieldMap))
-	for name, fieldType := range fieldMap {
-		if promoted[name] {
-			requiredFields[name] = fieldType
+	requiredFields := make(interprocdomain.FieldValues, len(promoted))
+	optionalFields := make(interprocdomain.FieldValues, len(fields))
+	for _, key := range interprocdomain.SortedFieldKeys(fields) {
+		fieldValue := fields[key]
+		if fieldValue.IsZero() {
+			continue
+		}
+		if promoted[key] {
+			requiredFields[key] = fieldValue
 		} else {
-			optionalFields[name] = fieldType
+			optionalFields[key] = fieldValue
 		}
 	}
 
@@ -827,10 +875,10 @@ func (p *Processor) resolveSelfTypeForImplicitSelf(
 		if selfType == nil && parentResult != nil {
 			selfType = parentObserver.TypeOf(tbl, info.NF.Point)
 		}
-		// Use FlowSolution.TypeAt to get field-merged type.
-		if selfType == nil && parentResult != nil && parentResult.FlowSolution != nil {
+		// Use the normalized path observation law to get field-merged type.
+		if selfType == nil && parentResult != nil {
 			path := constraint.Path{Symbol: tblSym}
-			selfType = parentResult.FlowSolution.TypeAt(info.NF.Point, path)
+			selfType = observedNestedPathType(nestedPathObservationFacts(parentResult, parentObserver), info.NF.Point, path)
 		}
 		// Then consult Facts.EffectiveTypeAt.
 		if selfType == nil && parentResult != nil && parentResult.Facts != nil {
@@ -862,10 +910,10 @@ func (p *Processor) resolveSelfTypeForImplicitSelf(
 			if selfType == nil && baseTbl != nil && parentResult != nil && baseTblPoint != 0 {
 				selfType = parentObserver.TypeOf(baseTbl, baseTblPoint)
 			}
-			// Use FlowSolution.TypeAt to get field-merged type.
-			if selfType == nil && parentResult != nil && parentResult.FlowSolution != nil {
+			// Use the normalized path observation law to get field-merged type.
+			if selfType == nil && parentResult != nil {
 				path := constraint.Path{Symbol: baseSym}
-				selfType = parentResult.FlowSolution.TypeAt(info.NF.Point, path)
+				selfType = observedNestedPathType(nestedPathObservationFacts(parentResult, parentObserver), info.NF.Point, path)
 			}
 			// Then consult Facts.EffectiveTypeAt.
 			if selfType == nil && parentResult != nil && parentResult.Facts != nil {
@@ -902,7 +950,7 @@ func (p *Processor) sealClassFamily(class typ.Type, graph *cfg.Graph, classSym c
 	return metatable.SealClassFamilyAuto(class)
 }
 
-func (p *Processor) constructorFieldsForClass(classSym cfg.SymbolID) map[string]typ.Type {
+func (p *Processor) constructorFieldsForClass(classSym cfg.SymbolID) interprocdomain.FieldValues {
 	if p == nil || p.store == nil || classSym == 0 {
 		return nil
 	}

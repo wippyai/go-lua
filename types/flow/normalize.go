@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Normalize enforces deterministic ordering for slice-based inputs.
@@ -20,7 +21,6 @@ func (in *Inputs) Normalize() {
 	in.normalizeVariantFieldOrigins()
 	in.normalizeMapMutatorAssignments()
 	in.normalizeTableMutatorAssignments()
-	in.normalizeContainerMutatorAssignments()
 }
 
 func (in *Inputs) normalizeAssignments() {
@@ -67,14 +67,6 @@ func (in *Inputs) normalizeTableMutatorAssignments() {
 	if len(in.TableMutatorAssignments) > 1 {
 		sort.Slice(in.TableMutatorAssignments, func(i, j int) bool {
 			return tableMutatorAssignmentLess(in.TableMutatorAssignments[i], in.TableMutatorAssignments[j])
-		})
-	}
-}
-
-func (in *Inputs) normalizeContainerMutatorAssignments() {
-	if len(in.ContainerMutatorAssignments) > 1 {
-		sort.Slice(in.ContainerMutatorAssignments, func(i, j int) bool {
-			return containerMutatorAssignmentLess(in.ContainerMutatorAssignments[i], in.ContainerMutatorAssignments[j])
 		})
 	}
 }
@@ -128,13 +120,13 @@ func variantFieldOriginLess(a, b VariantFieldOrigin) bool {
 	if pathLess(b.Source, a.Source) {
 		return false
 	}
-	if a.DiscriminatorField != b.DiscriminatorField {
-		return a.DiscriminatorField < b.DiscriminatorField
+	if a.OriginFamily != b.OriginFamily {
+		return a.OriginFamily < b.OriginFamily
 	}
-	if a.DiscriminatorValue == nil || b.DiscriminatorValue == nil {
-		return a.DiscriminatorValue != nil
+	if a.CaseIndex != b.CaseIndex {
+		return a.CaseIndex < b.CaseIndex
 	}
-	return a.DiscriminatorValue.Hash() < b.DiscriminatorValue.Hash()
+	return false
 }
 
 func mapMutatorAssignmentLess(a, b MapMutatorAssignment) bool {
@@ -156,10 +148,22 @@ func mapMutatorAssignmentLess(a, b MapMutatorAssignment) bool {
 	if a.KeyVar != b.KeyVar {
 		return a.KeyVar < b.KeyVar
 	}
+	if typeLess(a.KeyType, b.KeyType) {
+		return true
+	}
+	if typeLess(b.KeyType, a.KeyType) {
+		return false
+	}
 	if pathLess(a.ValuePath, b.ValuePath) {
 		return true
 	}
 	if pathLess(b.ValuePath, a.ValuePath) {
+		return false
+	}
+	if typeLess(a.ValueType, b.ValueType) {
+		return true
+	}
+	if typeLess(b.ValueType, a.ValueType) {
 		return false
 	}
 	return valueTemplateLess(a.Value, b.Value)
@@ -181,32 +185,44 @@ func tableMutatorAssignmentLess(a, b TableMutatorAssignment) bool {
 	if a.KeyVar != b.KeyVar {
 		return a.KeyVar < b.KeyVar
 	}
+	if typeLess(a.KeyType, b.KeyType) {
+		return true
+	}
+	if typeLess(b.KeyType, a.KeyType) {
+		return false
+	}
 	if pathLess(a.ValuePath, b.ValuePath) {
 		return true
 	}
 	if pathLess(b.ValuePath, a.ValuePath) {
 		return false
 	}
-	return valueTemplateLess(a.Value, b.Value)
+	if typeLess(a.ValueType, b.ValueType) {
+		return true
+	}
+	if typeLess(b.ValueType, a.ValueType) {
+		return false
+	}
+	if valueTemplateLess(a.Value, b.Value) {
+		return true
+	}
+	if valueTemplateLess(b.Value, a.Value) {
+		return false
+	}
+	return a.LengthDelta < b.LengthDelta
 }
 
-func containerMutatorAssignmentLess(a, b ContainerMutatorAssignment) bool {
-	if a.Point != b.Point {
-		return a.Point < b.Point
+func typeLess(a, b typ.Type) bool {
+	if a == nil || b == nil {
+		return a == nil && b != nil
 	}
-	if pathLess(a.Target, b.Target) {
-		return true
+	if a.Kind() != b.Kind() {
+		return a.Kind() < b.Kind()
 	}
-	if pathLess(b.Target, a.Target) {
-		return false
+	if a.Hash() != b.Hash() {
+		return a.Hash() < b.Hash()
 	}
-	if pathLess(a.ValuePath, b.ValuePath) {
-		return true
-	}
-	if pathLess(b.ValuePath, a.ValuePath) {
-		return false
-	}
-	return valueTemplateLess(a.Value, b.Value)
+	return a.String() < b.String()
 }
 
 func valueTemplateLess(a, b ValueTemplate) bool {

@@ -370,7 +370,7 @@ funcname1:
             key:= &ast.StringExpr{Value:$3.Str}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            fn := &ast.AttrGetExpr{Object: $1.Func, Key: key}
+            fn := &ast.AttrGetExpr{Object: $1.Func, Key: key, KeySyntax: ast.AttrKeyDot}
             fn.CopyPos($1.Func)
             fn.SetLastPosFromToken($3.Pos)
             $$ = &ast.FuncName{Func: fn}
@@ -390,14 +390,14 @@ var:
             $$.SetPosFromToken($1.Pos)
         } |
         prefixexp '[' expr ']' {
-            $$ = &ast.AttrGetExpr{Object: $1, Key: $3}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: $3, KeySyntax: ast.AttrKeyIndex}
             $$.CopyPos($1)
         } | 
         prefixexp '.' TIdent {
             key := &ast.StringExpr{Value:$3.Str}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -405,7 +405,7 @@ var:
             key := &ast.StringExpr{Value:"type"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -413,7 +413,7 @@ var:
             key := &ast.StringExpr{Value:"interface"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -421,7 +421,7 @@ var:
             key := &ast.StringExpr{Value:"readonly"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -429,7 +429,7 @@ var:
             key := &ast.StringExpr{Value:"as"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -437,7 +437,7 @@ var:
             key := &ast.StringExpr{Value:"asserts"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         } |
@@ -445,7 +445,7 @@ var:
             key := &ast.StringExpr{Value:"is"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key}
+            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
             $$.CopyPos($1)
             $$.SetLastPosFromToken($3.Pos)
         }
@@ -809,10 +809,10 @@ fieldlist:
 
 field:
         fieldname '=' expr {
-            $$ = &ast.Field{Key: &ast.StringExpr{Value:$1}, Value: $3}
+            $$ = &ast.Field{Key: &ast.StringExpr{Value:$1}, KeySyntax: ast.AttrKeyDot, Value: $3}
         } |
         '[' expr ']' '=' expr {
-            $$ = &ast.Field{Key: $2, Value: $5}
+            $$ = &ast.Field{Key: $2, KeySyntax: ast.AttrKeyIndex, Value: $5}
         } |
         expr {
             $$ = &ast.Field{Value: $1}

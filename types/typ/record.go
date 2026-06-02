@@ -2,6 +2,7 @@ package typ
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/types/kind"
@@ -13,6 +14,26 @@ type Field struct {
 	Type     Type
 	Optional bool // True if field may be absent (nil access returns nil)
 	Readonly bool // True if field cannot be reassigned
+}
+
+// StaticMemberKind classifies an exact non-dot table member stored on a record.
+type StaticMemberKind uint8
+
+const (
+	StaticMemberStringIndex StaticMemberKind = iota + 1
+	StaticMemberIntIndex
+)
+
+// StaticMember represents a provably-present bracket member such as t["k"] or
+// t[1]. It is separate from Field so dot-field shape and bracket-key facts do
+// not collapse into one raw string namespace.
+type StaticMember struct {
+	Kind     StaticMemberKind
+	Name     string
+	Index    int64
+	Type     Type
+	Optional bool
+	Readonly bool
 }
 
 // Record represents a Lua table with named fields: {field1: T1, field2: T2, ...}.
@@ -27,11 +48,12 @@ type Field struct {
 //
 // Fields are sorted by name for deterministic hashing and comparison.
 type Record struct {
-	Fields                []Field
-	Metatable             Type // Metatable type for metamethod lookup
-	MapKey                Type // Map component key type (nil if no map component)
-	MapValue              Type // Map component value type (nil if no map component)
-	Open                  bool // Allow access to undefined fields
+	Fields        []Field
+	StaticMembers []StaticMember
+	Metatable     Type // Metatable type for metamethod lookup
+	MapKey        Type // Map component key type (nil if no map component)
+	MapValue      Type // Map component value type (nil if no map component)
+	Open          bool // Allow access to undefined fields
 	// Fresh marks a transient empty-table-literal seed ({}). It is the gradual
 	// bottom of the table lattice: invisible to IsSubtype (a Fresh empty record
 	// behaves exactly as a closed empty record under <:) but admitted by
@@ -60,11 +82,12 @@ type Record struct {
 //	    OptField("age", typ.Integer).
 //	    Build()
 type RecordBuilder struct {
-	fields    []Field
-	metatable Type
-	mapKey    Type
-	mapValue  Type
-	open      bool
+	fields        []Field
+	staticMembers []StaticMember
+	metatable     Type
+	mapKey        Type
+	mapValue      Type
+	open          bool
 }
 
 // NewRecord starts building a record type.
@@ -107,6 +130,24 @@ func (b *RecordBuilder) AnnotatedField(name string, t Type, optional bool, annot
 	return b.Field(name, t)
 }
 
+// StaticStringIndex adds a required bracket-string member.
+func (b *RecordBuilder) StaticStringIndex(name string, t Type) *RecordBuilder {
+	b.staticMembers = append(b.staticMembers, StaticMember{Kind: StaticMemberStringIndex, Name: name, Type: t})
+	return b
+}
+
+// StaticIntIndex adds a required bracket-integer member.
+func (b *RecordBuilder) StaticIntIndex(index int64, t Type) *RecordBuilder {
+	b.staticMembers = append(b.staticMembers, StaticMember{Kind: StaticMemberIntIndex, Index: index, Type: t})
+	return b
+}
+
+// AddStaticMember adds a pre-built exact bracket member.
+func (b *RecordBuilder) AddStaticMember(member StaticMember) *RecordBuilder {
+	b.staticMembers = append(b.staticMembers, member)
+	return b
+}
+
 // Metatable sets the metatable type.
 func (b *RecordBuilder) Metatable(t Type) *RecordBuilder {
 	b.metatable = t
@@ -128,7 +169,7 @@ func (b *RecordBuilder) MapComponent(key, value Type) *RecordBuilder {
 
 // Build creates the record type.
 func (b *RecordBuilder) Build() *Record {
-	return buildRecordType(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, false, false)
+	return buildRecordType(b.fields, b.staticMembers, b.metatable, b.mapKey, b.mapValue, b.open, false, false)
 }
 
 // NewFreshEmptyRecord creates the transient empty-table-literal seed ({}).
@@ -139,7 +180,7 @@ func (b *RecordBuilder) Build() *Record {
 // admitted by subtype.Consistent against any table-like target an empty table
 // can satisfy (see emptyTableSatisfies).
 func NewFreshEmptyRecord() *Record {
-	return buildRecordType(nil, nil, nil, nil, false, true, true)
+	return buildRecordType(nil, nil, nil, nil, nil, false, true, true)
 }
 
 func (r *Record) Kind() kind.Kind { return kind.Record }
@@ -173,8 +214,27 @@ func (r *Record) String() string {
 			}
 		}
 
+		for i, member := range r.StaticMembers {
+			if len(r.Fields) > 0 || i > 0 {
+				sb.WriteString(", ")
+			}
+			if member.Readonly {
+				sb.WriteString("readonly ")
+			}
+			writeStaticMemberKey(&sb, member)
+			if member.Optional {
+				sb.WriteString("?")
+			}
+			sb.WriteString(": ")
+			if member.Type != nil {
+				sb.WriteString(member.Type.String())
+			} else {
+				sb.WriteString("unknown")
+			}
+		}
+
 		if r.HasMapComponent() {
-			if len(r.Fields) > 0 {
+			if len(r.Fields) > 0 || len(r.StaticMembers) > 0 {
 				sb.WriteString(", ")
 			}
 			sb.WriteString("[")
@@ -192,7 +252,7 @@ func (r *Record) String() string {
 		}
 
 		if r.Open {
-			if len(r.Fields) > 0 || r.HasMapComponent() {
+			if len(r.Fields) > 0 || len(r.StaticMembers) > 0 || r.HasMapComponent() {
 				sb.WriteString(", ")
 			}
 			sb.WriteString("...")
@@ -234,4 +294,47 @@ func (r *Record) GetField(name string) *Field {
 	}
 
 	return nil
+}
+
+// GetStaticStringIndex returns the exact bracket-string member with the given
+// key, or nil when no such member is carried.
+func (r *Record) GetStaticStringIndex(name string) *StaticMember {
+	return r.getStaticMember(StaticMemberStringIndex, name, 0)
+}
+
+// GetStaticIntIndex returns the exact bracket-integer member with the given key,
+// or nil when no such member is carried.
+func (r *Record) GetStaticIntIndex(index int64) *StaticMember {
+	return r.getStaticMember(StaticMemberIntIndex, "", index)
+}
+
+func (r *Record) getStaticMember(kind StaticMemberKind, name string, index int64) *StaticMember {
+	if r == nil || len(r.StaticMembers) == 0 {
+		return nil
+	}
+	i := sort.Search(len(r.StaticMembers), func(i int) bool {
+		return compareStaticMemberKey(r.StaticMembers[i], kind, name, index) >= 0
+	})
+	if i < len(r.StaticMembers) {
+		member := &r.StaticMembers[i]
+		if member.Kind == kind && member.Name == name && member.Index == index {
+			return member
+		}
+	}
+	return nil
+}
+
+func writeStaticMemberKey(sb *strings.Builder, member StaticMember) {
+	switch member.Kind {
+	case StaticMemberStringIndex:
+		sb.WriteString("[\"")
+		sb.WriteString(strings.ReplaceAll(member.Name, `"`, `\"`))
+		sb.WriteString("\"]")
+	case StaticMemberIntIndex:
+		sb.WriteString("[")
+		sb.WriteString(strconv.FormatInt(member.Index, 10))
+		sb.WriteString("]")
+	default:
+		sb.WriteString("[unknown]")
+	}
 }

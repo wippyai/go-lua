@@ -1196,6 +1196,12 @@ func consistentCheck(ctx *db.QueryContext, query core.TypeOps, sub, super typ.Ty
 	return isSubtypeCheck(ctx, query, sub, super) || subtype.ConsistentBeyondSubtype(sub, super)
 }
 
+// Consistent reports whether sub satisfies super at a call boundary, using the
+// same memoized subtype relation and gradual admissions as normal call checking.
+func Consistent(ctx *db.QueryContext, query core.TypeOps, sub, super typ.Type) bool {
+	return consistentCheck(ctx, query, sub, super)
+}
+
 // hasExplicitSelfSimple is a non-memoized version for use in contexts without QueryContext.
 func hasExplicitSelfSimple(fn *typ.Function, receiver typ.Type) bool {
 	if len(fn.Params) == 0 {

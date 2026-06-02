@@ -2,6 +2,7 @@ package transform
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/numparse"
@@ -71,12 +72,8 @@ func tableConstructorFieldMatchesLiteral(expr ast.Expr, fieldName string, expect
 	}
 
 	for _, field := range tbl.Fields {
-		// Check for string key: {["fieldName"] = value}
-		if keyExpr, ok := field.Key.(*ast.StringExpr); ok && keyExpr.Value == fieldName {
-			return exprMatchesLiteral(field.Value, expected)
-		}
-		// Check for identifier key: {fieldName = value}
-		if keyIdent, ok := field.Key.(*ast.IdentExpr); ok && keyIdent.Value == fieldName {
+		name, ok := fieldkey.RecordFieldNameFromTableField(field)
+		if ok && name == fieldName {
 			return exprMatchesLiteral(field.Value, expected)
 		}
 	}

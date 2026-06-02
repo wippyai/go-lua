@@ -795,6 +795,18 @@ func substituteConstraint(c Constraint, args []Path) Constraint {
 			}
 			return IndexNotEqualsPath{Target: target, Key: v.Key, Value: value}
 		},
+		VariantCaseEquals: func(v VariantCaseEquals) Constraint {
+			if p := substitutePath(v.Target, args); !p.IsEmpty() {
+				return VariantCaseEquals{Target: p, OriginFamily: v.OriginFamily, CaseIndex: v.CaseIndex}
+			}
+			return nil
+		},
+		VariantCaseNotEquals: func(v VariantCaseNotEquals) Constraint {
+			if p := substitutePath(v.Target, args); !p.IsEmpty() {
+				return VariantCaseNotEquals{Target: p, OriginFamily: v.OriginFamily, CaseIndex: v.CaseIndex}
+			}
+			return nil
+		},
 		KeyOf: func(v KeyOf) Constraint {
 			table := substitutePath(v.Table, args)
 			key := substitutePath(v.Key, args)
@@ -1089,6 +1101,12 @@ func NegateConstraint(item Constraint) (Constraint, bool) {
 		},
 		IndexNotEqualsPath: func(v IndexNotEqualsPath) result {
 			return result{constraint: IndexEqualsPath(v), ok: true}
+		},
+		VariantCaseEquals: func(v VariantCaseEquals) result {
+			return result{constraint: VariantCaseNotEquals(v), ok: true}
+		},
+		VariantCaseNotEquals: func(v VariantCaseNotEquals) result {
+			return result{constraint: VariantCaseEquals(v), ok: true}
 		},
 		Default: func(Constraint) result {
 			return result{}

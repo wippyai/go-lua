@@ -69,7 +69,7 @@ func joinMapRecordShapeDirected(mapType, recordType typ.Type, join func(typ.Type
 		key = joinMapKey(key, r.MapKey, join)
 		value = join(value, r.MapValue)
 	}
-	if len(r.Fields) == 0 && r.Metatable == nil {
+	if len(r.Fields) == 0 && len(r.StaticMembers) == 0 && r.Metatable == nil {
 		return typ.NewMap(key, value), true
 	}
 	builder := typ.NewRecord()
@@ -98,6 +98,15 @@ func joinMapRecordShapeDirected(mapType, recordType typ.Type, join func(typ.Type
 		default:
 			builder.Field(field.Name, fieldType)
 		}
+	}
+	for _, member := range r.StaticMembers {
+		memberType := member.Type
+		member.Optional = true
+		if subtype.IsSubtype(staticMemberKeyType(member), key) {
+			memberType = join(member.Type, value)
+		}
+		member.Type = memberType
+		addRecordStaticMember(builder, member)
 	}
 	return builder.Build(), true
 }

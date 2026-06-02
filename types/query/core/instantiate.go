@@ -260,6 +260,16 @@ func substituteVisited(t typ.Type, subst map[string]typ.Type, visited map[typ.Ty
 
 			return typ.NewMap(newKey, newValue)
 		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) typ.Type {
+			newKey := substituteVisited(m.Key, subst, visited)
+			newValue := substituteVisited(m.Value, subst, visited)
+
+			if newKey == m.Key && newValue == m.Value {
+				return t
+			}
+
+			return typ.NewReadonlyMap(newKey, newValue)
+		},
 		Tuple: func(tup *typ.Tuple) typ.Type {
 			newElems := make([]typ.Type, len(tup.Elements))
 			changed := false
@@ -426,6 +436,11 @@ func collectTypeParamsVisited(t typ.Type, params *[]*typ.TypeParam, visited map[
 			return struct{}{}
 		},
 		Map: func(m *typ.Map) struct{} {
+			collectTypeParamsVisited(m.Key, params, visited)
+			collectTypeParamsVisited(m.Value, params, visited)
+			return struct{}{}
+		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) struct{} {
 			collectTypeParamsVisited(m.Key, params, visited)
 			collectTypeParamsVisited(m.Value, params, visited)
 			return struct{}{}

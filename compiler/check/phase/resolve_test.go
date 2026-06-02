@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -51,7 +52,7 @@ func TestBuildInitialSymbolTypes_EmptyTypes(t *testing.T) {
 func TestBuildInitialSymbolTypes_WithGlobals(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
 	graph := cfg.Build(fn)
-	globals := map[string]typ.Type{"print": typ.Any}
+	globals := globalenv.TypeOverlayFromMap(map[string]typ.Type{"print": typ.Any})
 	result := BuildInitialSymbolTypes(graph, globals, nil)
 	// Result depends on whether 'print' is visible at any CFG point
 	if result == nil {
@@ -94,7 +95,7 @@ func TestBuildInitialSymbolTypes_GlobalTypeNotAppliedToShadowedLocal(t *testing.
 		t.Fatal("expected local print symbol to shadow global")
 	}
 
-	result := BuildInitialSymbolTypes(graph, map[string]typ.Type{"print": typ.String}, nil)
+	result := BuildInitialSymbolTypes(graph, globalenv.TypeOverlayFromMap(map[string]typ.Type{"print": typ.String}), nil)
 	entryTypes := result[entry]
 	if entryTypes == nil {
 		t.Fatal("expected entry type map to exist")
@@ -226,7 +227,7 @@ func TestBuildDeclaredTypesForResolve_MatchesSymbolTypePipeline(t *testing.T) {
 		t.Fatal("expected one parameter symbol")
 	}
 
-	globalTypes := map[string]typ.Type{"print": typ.String}
+	globalTypes := globalenv.TypeOverlayFromMap(map[string]typ.Type{"print": typ.String})
 	paramTypes := map[cfg.SymbolID]typ.Type{paramSyms[0]: typ.Number}
 
 	want := BuildDeclaredTypesFromSymbolTypes(graph, BuildInitialSymbolTypes(graph, globalTypes, paramTypes))

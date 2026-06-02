@@ -16,6 +16,8 @@ func softPruneMayRewrite(t Type) bool {
 		return node.softPrunable
 	case *Map:
 		return node.softPrunable
+	case *ReadonlyMap:
+		return node.softPrunable
 	case *Tuple:
 		return node.softPrunable
 	case *Function:

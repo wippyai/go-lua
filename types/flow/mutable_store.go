@@ -10,45 +10,86 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+// pathValueMap is the native value-store carrier for canonical flow paths. The
+// encoded string form is still used at parser/API boundaries, but semantic state
+// is keyed by constraint.PathKey.
+type pathValueMap map[constraint.PathKey]product.AbstractValue
+
 // fieldOverlayCacheKey identifies root overlays in the point-sensitive mutable store.
 type fieldOverlayCacheKey struct {
 	point cfg.Point
-	root  string
+	root  constraint.PathKey
 }
 
 type fieldMergeCacheKey struct {
 	point cfg.Point
-	root  string
+	root  constraint.PathKey
 	base  typ.Type
 }
 
 type pointRootKey struct {
 	point cfg.Point
-	root  string
+	root  constraint.PathKey
+}
+
+// pathSuffixKey is the canonical encoded form of a non-root flow path suffix.
+//
+// It is intentionally a named cache key rather than a raw string. Solver state
+// stays keyed by constraint.PathKey and semantic code converts suffixes back to
+// []constraint.Segment before reasoning about them; this type only identifies
+// the deterministic suffix representation used for indexes and memo tables.
+type pathSuffixKey string
+
+func newPathSuffixKey(s string) (pathSuffixKey, bool) {
+	if s == "" {
+		return "", false
+	}
+	if s[0] != '.' && s[0] != '[' {
+		return "", false
+	}
+	if len(pathkey.ParseSuffix(s)) == 0 {
+		return "", false
+	}
+	return pathSuffixKey(s), true
+}
+
+func (k pathSuffixKey) String() string {
+	return string(k)
+}
+
+func (k pathSuffixKey) Segments() []constraint.Segment {
+	return pathkey.ParseSuffix(string(k))
+}
+
+func (k pathSuffixKey) PathUnder(root constraint.PathKey) constraint.PathKey {
+	if root == "" || k == "" {
+		return ""
+	}
+	return constraint.PathKey(string(root) + string(k))
 }
 
 func (s *Solution) ensureValueSuffixIndex() {
 	if s == nil || s.valueSuffixIndex != nil {
 		return
 	}
-	s.valueSuffixIndex = make(map[string][]string)
+	s.valueSuffixIndex = make(map[constraint.PathKey][]pathSuffixKey)
 	for key := range s.values {
 		s.indexValueSuffix(key)
 	}
 }
 
-func (s *Solution) indexValueSuffix(key string) {
+func (s *Solution) indexValueSuffix(key constraint.PathKey) {
 	root, suffix, ok := indexedPathSuffix(key)
 	if !ok {
 		return
 	}
 	if s.valueSuffixIndex == nil {
-		s.valueSuffixIndex = make(map[string][]string, 1)
+		s.valueSuffixIndex = make(map[constraint.PathKey][]pathSuffixKey, 1)
 	}
 	s.valueSuffixIndex[root] = insertSortedSuffix(s.valueSuffixIndex[root], suffix)
 }
 
-func (s *Solution) removeValueSuffix(key string) {
+func (s *Solution) removeValueSuffix(key constraint.PathKey) {
 	root, suffix, ok := indexedPathSuffix(key)
 	if !ok || s == nil || s.valueSuffixIndex == nil {
 		return
@@ -69,7 +110,7 @@ func (s *Solution) indexMutableSuffixesForPoint(p cfg.Point) {
 	s.replaceMutableSuffixesForPoint(p, nil, state)
 }
 
-func (s *Solution) replaceMutableSuffixesForPoint(p cfg.Point, old, next map[string]product.AbstractValue) {
+func (s *Solution) replaceMutableSuffixesForPoint(p cfg.Point, old, next pathValueMap) {
 	if s == nil {
 		return
 	}
@@ -84,26 +125,26 @@ func (s *Solution) replaceMutableSuffixesForPoint(p cfg.Point, old, next map[str
 		return
 	}
 	if s.mutableSuffixIndex == nil {
-		s.mutableSuffixIndex = make(map[pointRootKey][]string, len(next))
+		s.mutableSuffixIndex = make(map[pointRootKey][]pathSuffixKey, len(next))
 	}
 	for key := range next {
 		s.indexMutableSuffix(p, key)
 	}
 }
 
-func (s *Solution) indexMutableSuffix(p cfg.Point, key string) {
+func (s *Solution) indexMutableSuffix(p cfg.Point, key constraint.PathKey) {
 	root, suffix, ok := indexedPathSuffix(key)
 	if !ok {
 		return
 	}
 	if s.mutableSuffixIndex == nil {
-		s.mutableSuffixIndex = make(map[pointRootKey][]string, 1)
+		s.mutableSuffixIndex = make(map[pointRootKey][]pathSuffixKey, 1)
 	}
 	indexKey := pointRootKey{point: p, root: root}
 	s.mutableSuffixIndex[indexKey] = insertSortedSuffix(s.mutableSuffixIndex[indexKey], suffix)
 }
 
-func (s *Solution) removeMutableSuffix(p cfg.Point, key string) {
+func (s *Solution) removeMutableSuffix(p cfg.Point, key constraint.PathKey) {
 	root, suffix, ok := indexedPathSuffix(key)
 	if !ok || s == nil || s.mutableSuffixIndex == nil {
 		return
@@ -117,19 +158,22 @@ func (s *Solution) removeMutableSuffix(p cfg.Point, key string) {
 	s.mutableSuffixIndex[indexKey] = next
 }
 
-func indexedPathSuffix(key string) (string, string, bool) {
-	root, suffix, ok := pathkey.ParseRootAndSuffix(constraint.PathKey(key))
-	if !ok || root == "" || suffix == "" {
+func indexedPathSuffix(key constraint.PathKey) (constraint.PathKey, pathSuffixKey, bool) {
+	root, suffix, ok := pathkey.ParseRootAndSuffix(key)
+	if !ok || root == "" {
 		return "", "", false
 	}
-	if suffix[0] != '.' && suffix[0] != '[' {
+	suffixKey, ok := newPathSuffixKey(suffix)
+	if !ok {
 		return "", "", false
 	}
-	return root, suffix, true
+	return constraint.PathKey(root), suffixKey, true
 }
 
-func insertSortedSuffix(values []string, suffix string) []string {
-	i := sort.SearchStrings(values, suffix)
+func insertSortedSuffix(values []pathSuffixKey, suffix pathSuffixKey) []pathSuffixKey {
+	i := sort.Search(len(values), func(i int) bool {
+		return values[i] >= suffix
+	})
 	if i < len(values) && values[i] == suffix {
 		return values
 	}
@@ -139,8 +183,10 @@ func insertSortedSuffix(values []string, suffix string) []string {
 	return values
 }
 
-func removeSortedSuffix(values []string, suffix string) []string {
-	i := sort.SearchStrings(values, suffix)
+func removeSortedSuffix(values []pathSuffixKey, suffix pathSuffixKey) []pathSuffixKey {
+	i := sort.Search(len(values), func(i int) bool {
+		return values[i] >= suffix
+	})
 	if i >= len(values) || values[i] != suffix {
 		return values
 	}
@@ -148,22 +194,28 @@ func removeSortedSuffix(values []string, suffix string) []string {
 	return values[:len(values)-1]
 }
 
+func sortPathKeys(keys []constraint.PathKey) {
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i] < keys[j]
+	})
+}
+
 // beginPointMutableState computes the Kildall IN-state for p (the join of every
 // predecessor OUT-state), installs a working clone of it where the point's own
 // transfers read and write (mutableOut[p]), and returns the prior committed
 // OUT-state. commitPointMutableState then widens the working store against that
 // prior OUT to keep the iterate monotone and diffs the two to drive propagation.
-func (s *Solution) beginPointMutableState(p cfg.Point) map[string]product.AbstractValue {
+func (s *Solution) beginPointMutableState(p cfg.Point) pathValueMap {
 	if s == nil {
 		return nil
 	}
 	if s.mutableOut == nil {
-		s.mutableOut = make(map[cfg.Point]map[string]product.AbstractValue)
+		s.mutableOut = make(map[cfg.Point]pathValueMap)
 	}
 	oldOut := cloneValueMap(s.mutableOut[p])
 	incoming := s.joinPredecessorMutableState(p)
 	if s.mutableIn == nil {
-		s.mutableIn = make(map[cfg.Point]map[string]product.AbstractValue)
+		s.mutableIn = make(map[cfg.Point]pathValueMap)
 	}
 	if len(incoming) == 0 {
 		delete(s.mutableIn, p)
@@ -201,7 +253,7 @@ func (s *Solution) beginPointMutableState(p cfg.Point) map[string]product.Abstra
 // committed OUT, and returns the keys whose committed fact changed. The per-key
 // product.Widen keeps the store fixpoint monotone and bounded; the presence-aware
 // product.Equal diff drives successor requeue.
-func (s *Solution) commitPointMutableState(oldOut map[string]product.AbstractValue, p cfg.Point) []string {
+func (s *Solution) commitPointMutableState(oldOut pathValueMap, p cfg.Point) []constraint.PathKey {
 	if s == nil {
 		return nil
 	}
@@ -209,18 +261,18 @@ func (s *Solution) commitPointMutableState(oldOut map[string]product.AbstractVal
 	if len(oldOut) == 0 && len(working) == 0 {
 		return nil
 	}
-	seen := make(map[string]struct{}, len(oldOut)+len(working))
+	seen := make(map[constraint.PathKey]struct{}, len(oldOut)+len(working))
 	for key := range oldOut {
 		seen[key] = struct{}{}
 	}
 	for key := range working {
 		seen[key] = struct{}{}
 	}
-	var newOut map[string]product.AbstractValue
+	var newOut pathValueMap
 	if len(seen) > 0 {
-		newOut = make(map[string]product.AbstractValue, len(seen))
+		newOut = make(pathValueMap, len(seen))
 	}
-	var changed []string
+	var changed []constraint.PathKey
 	for key := range seen {
 		oldAV, oldOK := oldOut[key]
 		curAV, curOK := working[key]
@@ -251,7 +303,7 @@ func (s *Solution) commitPointMutableState(oldOut map[string]product.AbstractVal
 		s.rebuildMutablePresenceForPoint(p)
 	}
 	s.replaceMutableSuffixesForPoint(p, working, newOut)
-	sort.Strings(changed)
+	sortPathKeys(changed)
 	return changed
 }
 
@@ -259,7 +311,7 @@ func (s *Solution) commitPointMutableState(oldOut map[string]product.AbstractVal
 // unreachable. The OUT lattice top for an unreachable point is empty, so every key
 // present in the prior OUT is reported as removed to requeue successors; the
 // monotone widen of commitPointMutableState does not apply once reachability flips.
-func (s *Solution) clearPointMutableState(oldOut map[string]product.AbstractValue, p cfg.Point) []string {
+func (s *Solution) clearPointMutableState(oldOut pathValueMap, p cfg.Point) []constraint.PathKey {
 	if s == nil {
 		return nil
 	}
@@ -274,11 +326,11 @@ func (s *Solution) clearPointMutableState(oldOut map[string]product.AbstractValu
 	if len(oldOut) == 0 {
 		return nil
 	}
-	changed := make([]string, 0, len(oldOut))
+	changed := make([]constraint.PathKey, 0, len(oldOut))
 	for key := range oldOut {
 		changed = append(changed, key)
 	}
-	sort.Strings(changed)
+	sortPathKeys(changed)
 	return changed
 }
 
@@ -289,7 +341,7 @@ func (s *Solution) clearPointMutableState(oldOut map[string]product.AbstractValu
 // end-to-end with no typ.Type round-trip. It reads only mutableOut[pred]; when p is
 // its own predecessor over a back-edge, that read naturally observes p's prior
 // committed OUT (the working store is installed after the join).
-func (s *Solution) joinPredecessorMutableState(p cfg.Point) map[string]product.AbstractValue {
+func (s *Solution) joinPredecessorMutableState(p cfg.Point) pathValueMap {
 	if s == nil || s.inputs == nil || s.inputs.Graph == nil || len(s.mutableOut) == 0 {
 		return nil
 	}
@@ -298,24 +350,24 @@ func (s *Solution) joinPredecessorMutableState(p cfg.Point) map[string]product.A
 		return nil
 	}
 
-	var out map[string]product.AbstractValue
+	var out pathValueMap
 	if len(preds) == 1 {
 		// Single-predecessor edges carry the predecessor OUT-state verbatim.
 		out = cloneValueMap(s.mutableOut[preds[0]])
 	} else {
-		keySet := make(map[string]struct{})
+		keySet := make(map[constraint.PathKey]struct{})
 		for _, pred := range preds {
 			for key := range s.mutableOut[pred] {
 				keySet[key] = struct{}{}
 			}
 		}
 		if len(keySet) > 0 {
-			out = make(map[string]product.AbstractValue, len(keySet))
-			keys := make([]string, 0, len(keySet))
+			out = make(pathValueMap, len(keySet))
+			keys := make([]constraint.PathKey, 0, len(keySet))
 			for key := range keySet {
 				keys = append(keys, key)
 			}
-			sort.Strings(keys)
+			sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 			for _, key := range keys {
 				var merged product.AbstractValue
 				have := false
@@ -350,12 +402,13 @@ func (s *Solution) joinPredecessorMutableState(p cfg.Point) map[string]product.A
 // trip). A key absent from pred's OUT contributes the canonical fact derived from
 // pred's predecessor/global state; a presence key with no fact on pred's path
 // contributes Absent (nil) so a present/absent split joins to Maybe.
-func (s *Solution) predMutableValue(pred cfg.Point, key string) (product.AbstractValue, bool) {
+func (s *Solution) predMutableValue(pred cfg.Point, pathKey constraint.PathKey) (product.AbstractValue, bool) {
 	if state := s.mutableOut[pred]; state != nil {
-		if av, ok := state[key]; ok {
+		if av, ok := state[pathKey]; ok {
 			return av, true
 		}
 	}
+	key := string(pathKey)
 	t := s.canonicalKeyTypeAt(pred, key)
 	if t == nil && isPresenceKey(key) {
 		t = typ.Nil
@@ -370,12 +423,13 @@ func (s *Solution) canonicalKeyTypeAt(p cfg.Point, key string) typ.Type {
 	if s == nil || key == "" {
 		return nil
 	}
+	pathKey := constraint.PathKey(key)
 	if state := s.mutableOut[p]; state != nil {
-		if av, ok := state[key]; ok {
+		if av, ok := state[pathKey]; ok {
 			return s.projectPresenceAtPoint(p, key, projectFlowValue(av))
 		}
 	}
-	if av, ok := s.values[key]; ok {
+	if av, ok := s.values[pathKey]; ok {
 		return s.projectPresenceAtPoint(p, key, projectFlowValue(av))
 	}
 	if s.inputs == nil || s.inputs.Graph == nil || s.pkResolver == nil {
@@ -393,19 +447,23 @@ func (s *Solution) canonicalKeyTypeAt(p cfg.Point, key string) typ.Type {
 	if suffix == "" {
 		return s.lookupDeclaredType(path)
 	}
-	segments := s.parseSuffixCached(suffix)
+	suffixKey, ok := newPathSuffixKey(suffix)
+	if !ok {
+		return nil
+	}
+	segments := s.parseSuffixCached(suffixKey)
 	if segments == nil {
 		return nil
 	}
 	baseKey := s.pkResolver.KeyAtVersion(sym, version, nil)
 	var base typ.Type
 	if state := s.mutableOut[p]; state != nil {
-		if av, ok := state[string(baseKey)]; ok {
+		if av, ok := state[baseKey]; ok {
 			base = projectFlowValue(av)
 		}
 	}
 	if base == nil {
-		if av, ok := s.values[string(baseKey)]; ok {
+		if av, ok := s.values[baseKey]; ok {
 			base = projectFlowValue(av)
 		}
 	}
@@ -433,12 +491,13 @@ func (s *Solution) valueAtPoint(p cfg.Point, key string) typ.Type {
 	if s == nil || key == "" {
 		return nil
 	}
+	pathKey := constraint.PathKey(key)
 	if state := s.mutableOut[p]; state != nil {
-		if av, ok := state[key]; ok {
+		if av, ok := state[pathKey]; ok {
 			return projectFlowValue(av)
 		}
 	}
-	if av, ok := s.values[key]; ok {
+	if av, ok := s.values[pathKey]; ok {
 		return projectFlowValue(av)
 	}
 	return nil
@@ -451,12 +510,13 @@ func (s *Solution) abstractValueAt(p cfg.Point, key string) (product.AbstractVal
 	if s == nil || key == "" {
 		return product.AbstractValue{}, false
 	}
+	pathKey := constraint.PathKey(key)
 	if state := s.mutableOut[p]; state != nil {
-		if av, ok := state[key]; ok {
+		if av, ok := state[pathKey]; ok {
 			return av, true
 		}
 	}
-	av, ok := s.values[key]
+	av, ok := s.values[pathKey]
 	return av, ok
 }
 
@@ -469,7 +529,7 @@ func (s *Solution) baseSymbolValue(key string) typ.Type {
 	if s == nil || key == "" {
 		return nil
 	}
-	if av, ok := s.values[key]; ok {
+	if av, ok := s.values[constraint.PathKey(key)]; ok {
 		return projectFlowValue(av)
 	}
 	return nil
@@ -488,7 +548,7 @@ func (s *Solution) overwriteMutableShadow(p cfg.Point, key string, t typ.Type) {
 	if state == nil {
 		return
 	}
-	if _, ok := state[key]; !ok {
+	if _, ok := state[constraint.PathKey(key)]; !ok {
 		return
 	}
 	s.storeMutableValue(p, key, liftFlowValue(t), t)
@@ -515,24 +575,25 @@ func (s *Solution) setMutableValueAV(p cfg.Point, key string, av product.Abstrac
 
 func (s *Solution) storeMutableValue(p cfg.Point, key string, av product.AbstractValue, t typ.Type) {
 	if s.mutableOut == nil {
-		s.mutableOut = make(map[cfg.Point]map[string]product.AbstractValue)
+		s.mutableOut = make(map[cfg.Point]pathValueMap)
 	}
 	state := s.mutableOut[p]
 	if state == nil {
-		state = make(map[string]product.AbstractValue, 1)
+		state = make(pathValueMap, 1)
 		s.mutableOut[p] = state
 	}
-	state[key] = av
+	pathKey := constraint.PathKey(key)
+	state[pathKey] = av
 	if s.mutableSuffixIndexed == nil {
 		s.mutableSuffixIndexed = make(map[cfg.Point]bool, 1)
 	}
 	s.mutableSuffixIndexed[p] = true
 	s.setMutablePresence(p, key, t)
-	s.indexMutableSuffix(p, key)
+	s.indexMutableSuffix(p, pathKey)
 	s.invalidateQueryCachesForPointWrite(p, key)
 }
 
-func (s *Solution) clearMutableDescendantsAtPoint(p cfg.Point, baseKey string) []string {
+func (s *Solution) clearMutableDescendantsAtPoint(p cfg.Point, baseKey string) []constraint.PathKey {
 	if s == nil || baseKey == "" {
 		return nil
 	}
@@ -540,20 +601,21 @@ func (s *Solution) clearMutableDescendantsAtPoint(p cfg.Point, baseKey string) [
 	if len(state) == 0 {
 		return nil
 	}
-	var changed []string
+	var changed []constraint.PathKey
 	baseLen := len(baseKey)
 	for key := range state {
-		if len(key) <= baseLen || key[:baseLen] != baseKey {
+		keyString := string(key)
+		if len(keyString) <= baseLen || keyString[:baseLen] != baseKey {
 			continue
 		}
-		suffix := key[baseLen:]
+		suffix := keyString[baseLen:]
 		if suffix == "" || (suffix[0] != '.' && suffix[0] != '[') {
 			continue
 		}
 		delete(state, key)
 		if s.mutablePresence != nil {
 			if presence := s.mutablePresence[p]; presence != nil {
-				delete(presence, key)
+				delete(presence, constraint.PathKey(key))
 				if len(presence) == 0 {
 					delete(s.mutablePresence, p)
 				}
@@ -564,7 +626,7 @@ func (s *Solution) clearMutableDescendantsAtPoint(p cfg.Point, baseKey string) [
 	}
 	if len(changed) > 0 {
 		s.invalidateQueryCachesForPointWrite(p, baseKey)
-		sort.Strings(changed)
+		sortPathKeys(changed)
 	}
 	return changed
 }
@@ -589,11 +651,11 @@ func (s *Solution) invalidateQueryCachesForPointWrite(_ cfg.Point, key string) {
 	}
 }
 
-func cloneValueMap(in map[string]product.AbstractValue) map[string]product.AbstractValue {
+func cloneValueMap(in pathValueMap) pathValueMap {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[string]product.AbstractValue, len(in))
+	out := make(pathValueMap, len(in))
 	for key, av := range in {
 		out[key] = av
 	}

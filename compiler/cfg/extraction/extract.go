@@ -17,15 +17,9 @@ func ExtractFieldPath(expr *ast.AttrGetExpr) (string, []string) {
 	current := expr
 
 	for {
-		var fieldName string
-		switch key := current.Key.(type) {
-		case *ast.StringExpr:
-			if pathkey.IsIdentName(key.Value) {
-				fieldName = key.Value
-			}
-		}
+		fieldName, ok := staticFieldName(current)
 
-		if fieldName == "" {
+		if !ok {
 			return "", nil
 		}
 
@@ -39,6 +33,29 @@ func ExtractFieldPath(expr *ast.AttrGetExpr) (string, []string) {
 		default:
 			return "", nil
 		}
+	}
+}
+
+func staticFieldName(expr *ast.AttrGetExpr) (string, bool) {
+	if expr == nil {
+		return "", false
+	}
+
+	key, ok := expr.Key.(*ast.StringExpr)
+	if !ok || key.Value == "" {
+		return "", false
+	}
+
+	switch expr.KeySyntax {
+	case ast.AttrKeyDot:
+		return key.Value, true
+	case ast.AttrKeyIndex:
+		return "", false
+	default:
+		if pathkey.IsIdentName(key.Value) {
+			return key.Value, true
+		}
+		return "", false
 	}
 }
 
@@ -173,11 +190,17 @@ func PathFromExpr(expr ast.Expr) string {
 
 		switch key := e.Key.(type) {
 		case *ast.StringExpr:
-			if pathkey.IsIdentName(key.Value) {
+			switch e.KeySyntax {
+			case ast.AttrKeyDot:
 				return base + "." + key.Value
+			case ast.AttrKeyIndex:
+				return base + "[\"" + EscapePathKey(key.Value) + "\"]"
+			default:
+				if pathkey.IsIdentName(key.Value) {
+					return base + "." + key.Value
+				}
+				return base + "[\"" + EscapePathKey(key.Value) + "\"]"
 			}
-
-			return base + "[\"" + EscapePathKey(key.Value) + "\"]"
 		case *ast.NumberExpr:
 			if idx, ok := ParseInt(key.Value); ok {
 				return base + "[" + idx + "]"

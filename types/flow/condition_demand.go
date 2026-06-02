@@ -85,7 +85,7 @@ func buildConditionDemand(inputs *Inputs) *propagate.Demand {
 		}
 	}
 
-	// Container mutator reads (table.insert-like, map writes, channel.send-like).
+	// Table mutator reads (table.insert-like and map writes).
 	for _, m := range inputs.TableMutatorAssignments {
 		addUse(m.Point, m.Target)
 		addUse(m.Point, m.ValuePath)
@@ -100,11 +100,6 @@ func buildConditionDemand(inputs *Inputs) *propagate.Demand {
 			addUse(m.Point, constraint.Path{Root: m.KeyVar, Symbol: m.KeySymbol})
 		}
 	}
-	for _, m := range inputs.ContainerMutatorAssignments {
-		addUse(m.Point, m.Target)
-		addUse(m.Point, m.ValuePath)
-	}
-
 	// Phi operands and targets.
 	for _, phi := range g.PhiNodes() {
 		for _, op := range phi.Operands {

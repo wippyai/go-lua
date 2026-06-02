@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/decl"
 	"github.com/wippyai/go-lua/compiler/check/abstract/tblutil"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/domain/value"
@@ -66,7 +67,7 @@ func TestExtractFromConfig_WithGlobals(t *testing.T) {
 	result := abstract.BuildInputs(&core.FlowContext{
 		Graph:   graph,
 		Base:    scope.New(),
-		Globals: globals,
+		Globals: globalenv.TypeOverlayFromMap(globals),
 	})
 	if result == nil {
 		t.Fatal("expected non-nil inputs")

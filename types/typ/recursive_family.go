@@ -252,11 +252,13 @@ func collapseChildren(slot Type, family *Recursive) Type {
 			builder.Metatable(child(v.Metatable))
 		}
 		if v.HasMapComponent() {
-			builder.MapComponent(v.MapKey, child(v.MapValue))
+			builder.MapComponent(child(v.MapKey), child(v.MapValue))
 		}
 		return builder.Build()
 	case *Map:
-		return NewMap(v.Key, child(v.Value))
+		return NewMap(child(v.Key), child(v.Value))
+	case *ReadonlyMap:
+		return NewReadonlyMap(child(v.Key), child(v.Value))
 	case *Array:
 		return NewArray(child(v.Element))
 	case *Optional:

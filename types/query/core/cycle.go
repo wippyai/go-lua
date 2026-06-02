@@ -93,6 +93,9 @@ func canFormCycleVisited(t typ.Type, visited map[typ.Type]bool) bool {
 		Map: func(m *typ.Map) bool {
 			return canFormCycleVisited(m.Key, visited) || canFormCycleVisited(m.Value, visited)
 		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) bool {
+			return canFormCycleVisited(m.Key, visited) || canFormCycleVisited(m.Value, visited)
+		},
 		Function: func(fn *typ.Function) bool {
 			return true
 		},

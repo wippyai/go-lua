@@ -154,6 +154,14 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 			break
 		}
 		out = NewMap(keyType, valueType)
+	case *ReadonlyMap:
+		keyType := rewriteDepth(tt.Key, fn, next, memo)
+		valueType := rewriteDepth(tt.Value, fn, next, memo)
+		if keyType == tt.Key && valueType == tt.Value {
+			out = t
+			break
+		}
+		out = NewReadonlyMap(keyType, valueType)
 	case *Tuple:
 		var elems []Type
 		for i, e := range tt.Elements {
@@ -246,6 +254,7 @@ func rewriteCanDescend(t Type) bool {
 		kind.Intersection,
 		kind.Array,
 		kind.Map,
+		kind.ReadonlyMap,
 		kind.Tuple,
 		kind.Function,
 		kind.Record,
@@ -339,6 +348,20 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard inter
 			fields[i] = f
 		}
 	}
+	var staticMembers []StaticMember
+	for i, m := range v.StaticMembers {
+		newType := rewriteDepth(m.Type, fn, guard, memo)
+		if newType != m.Type {
+			if staticMembers == nil {
+				staticMembers = make([]StaticMember, len(v.StaticMembers))
+				copy(staticMembers, v.StaticMembers)
+			}
+			changed = true
+			staticMembers[i].Type = newType
+		} else if staticMembers != nil {
+			staticMembers[i] = m
+		}
+	}
 
 	var metatable Type
 	if v.Metatable != nil {
@@ -369,5 +392,9 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard inter
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, v.Open, true, false)
+	staticMembersSrc := v.StaticMembers
+	if staticMembers != nil {
+		staticMembersSrc = staticMembers
+	}
+	return buildRecordType(fieldsSrc, staticMembersSrc, metatable, mapKey, mapValue, v.Open, true, false)
 }

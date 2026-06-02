@@ -35,7 +35,7 @@ func TestFunctionStateDomain_Laws(t *testing.T) {
 // the component Bottom per MapLattice semantics.
 func functionStateSample() []FunctionState {
 	psMixed := flow.PointState{
-		Env:  map[string]product.AbstractValue{"x": product.FromType(typ.String)},
+		Env:  map[flow.ValueKey]product.AbstractValue{flow.ValueKey("x"): product.FromType(typ.String)},
 		Cond: constraint.Domain.Bottom(),
 		Num:  numeric.StateDomain.Bottom(),
 	}

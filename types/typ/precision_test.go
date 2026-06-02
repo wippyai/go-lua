@@ -33,13 +33,11 @@ func TestMorePreciseUnionMembersRefineCommonRecord(t *testing.T) {
 	timeType := NewRecord().Field("sec", Number).Build()
 	candidate := NewUnion(
 		NewRecord().
-			Field("__select_case_id", LiteralInt(0)).
 			Field("channel", eventChannel).
 			Field("value", eventType).
 			Field("ok", Boolean).
 			Build(),
 		NewRecord().
-			Field("__select_case_id", LiteralInt(1)).
 			Field("channel", timeChannel).
 			Field("value", timeType).
 			Field("ok", Boolean).
@@ -86,6 +84,38 @@ func TestComparePrecisionUnionToUnionMatchesMembersIndependently(t *testing.T) {
 
 	if strict, comparable := ComparePrecision(candidate, baseline); !strict || !comparable {
 		t.Fatalf("union member precision = (%v, %v), want strict comparable", strict, comparable)
+	}
+}
+
+func TestComparePrecisionStaticStringMemberRefinesUnknown(t *testing.T) {
+	baseline := NewRecord().
+		StaticStringIndex("raw-key", Unknown).
+		Build()
+	candidate := NewRecord().
+		StaticStringIndex("raw-key", String).
+		Build()
+
+	if strict, comparable := ComparePrecision(candidate, baseline); !strict || !comparable {
+		t.Fatalf("static member precision = (%v, %v), want strict comparable", strict, comparable)
+	}
+	if SameProductFamily(candidate, baseline) {
+		t.Fatalf("static member precision variants must not share product family")
+	}
+}
+
+func TestComparePrecisionDistinguishesDotFieldAndStaticStringMember(t *testing.T) {
+	field := NewRecord().
+		Field("raw-key", String).
+		Build()
+	index := NewRecord().
+		StaticStringIndex("raw-key", String).
+		Build()
+
+	if strict, comparable := ComparePrecision(index, field); strict || comparable {
+		t.Fatalf("static string index vs dot field precision = (%v, %v), want unrelated", strict, comparable)
+	}
+	if SameProductFamily(index, field) {
+		t.Fatalf("static string index and dot field must not share product family")
 	}
 }
 

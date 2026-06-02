@@ -50,20 +50,21 @@ func arrayLiteralArity(e *ast.TableExpr) int64 {
 // within that floor reads the non-optional element. A binding from any other
 // source drops a prior length floor (soundness: the new value's length is
 // unknown), so a slot reused across assignments never carries a stale floor.
-func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key string, src ast.Expr) {
-	if out.Num == nil {
+func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key flow.ValueKey, src ast.Expr) {
+	arrKey := constraint.PathKey(key)
+	if out == nil {
 		return
 	}
-	arrKey := constraint.PathKey(key)
+	ops := []NumericOp{{Kind: NumericDropLenBound, Key: arrKey}}
 	tbl, ok := src.(*ast.TableExpr)
 	if !ok {
-		out.Num.DropLenBound(arrKey)
+		t.applyNumericEffect(out, NumericEffect{Ops: ops, RequireExisting: true})
 		return
 	}
-	out.Num.DropLenBound(arrKey)
 	if n := arrayLiteralArity(tbl); n > 0 {
-		out.Num.ApplyLenGeConst(arrKey, n)
+		ops = append(ops, NumericOp{Kind: NumericLenGeConst, Key: arrKey, Const: n})
 	}
+	t.applyNumericEffect(out, NumericEffect{Ops: ops, RequireExisting: true})
 }
 
 // applyIndexWriteLength updates the length floor of an indexed write `base[k]=v`.
@@ -72,25 +73,37 @@ func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key string, src 
 // sequence. Any other index write the transfer cannot prove is a same-base border
 // append drops the floor (soundness default: the write may target a hole or an
 // index the proven floor does not cover, so the prior floor no longer holds).
-func (t *Transfer) applyIndexWriteLength(out *flow.PointState, target cfg.AssignTarget, baseKey string) {
-	if out.Num == nil {
+func (t *Transfer) applyIndexWriteLength(out *flow.PointState, target cfg.AssignTarget, baseKey flow.ValueKey) {
+	if out == nil {
 		return
 	}
 	arrKey := constraint.PathKey(baseKey)
 	lenIdent, offset, ok := t.lengthIndexOffset(target.Key)
 	if !ok || offset < 1 {
-		out.Num.DropLenBound(arrKey)
+		t.applyNumericEffect(out, NumericEffect{
+			Ops:             []NumericOp{{Kind: NumericDropLenBound, Key: arrKey}},
+			RequireExisting: true,
+		})
 		return
 	}
-	if lenSym := t.symbolOf(lenIdent); lenSym == 0 || constraint.PathKey(symKey(lenSym)) != arrKey {
-		out.Num.DropLenBound(arrKey)
+	if lenSym := t.symbolOf(lenIdent); lenSym == 0 || constraint.PathKey(flow.SymbolValueKey(lenSym)) != arrKey {
+		t.applyNumericEffect(out, NumericEffect{
+			Ops:             []NumericOp{{Kind: NumericDropLenBound, Key: arrKey}},
+			RequireExisting: true,
+		})
 		return
 	}
-	if lower, _, ok := out.Num.LenBoundsFor(arrKey); ok {
-		out.Num.ApplyLenGeConst(arrKey, lower+offset)
-	} else {
-		out.Num.ApplyLenGeConst(arrKey, offset)
-	}
+	t.applyNumericEffect(out, NumericEffect{
+		Ops:             []NumericOp{{Kind: NumericIncrementLenLower, Key: arrKey, Delta: offset}},
+		RequireExisting: true,
+	})
+}
+
+func (t *Transfer) incrementLenBound(out *flow.PointState, arrKey constraint.PathKey, delta int64) bool {
+	return t.applyNumericEffect(out, NumericEffect{
+		Ops:             []NumericOp{{Kind: NumericIncrementLenLower, Key: arrKey, Delta: delta}},
+		RequireExisting: true,
+	})
 }
 
 // positionalTupleLiteral types a pure positional table literal (`{1, 2, 3}`) as a
@@ -148,27 +161,11 @@ func lenExprBase(expr ast.Expr) (*ast.IdentExpr, bool) {
 // seeding and the read both derive identically is sufficient; a non-static or
 // non-identifier-rooted base reports ok=false so no length fact is keyed.
 func (t *Transfer) containerExprKey(expr ast.Expr) (constraint.PathKey, bool) {
-	switch obj := expr.(type) {
-	case *ast.IdentExpr:
-		if sym := t.symbolOf(obj); sym != 0 {
-			return constraint.PathKey(symKey(sym)), true
-		}
-	case *ast.AttrGetExpr:
-		segs := staticAttrPath(obj)
-		if len(segs) == 0 {
-			return "", false
-		}
-		root := attrRootIdent(obj)
-		if root == nil {
-			return "", false
-		}
-		sym := t.symbolOf(root)
-		if sym == 0 {
-			return "", false
-		}
-		return constraint.PathKey(symKey(sym) + constraint.FormatSegments(segs)), true
+	place, ok := t.staticPlaceOfExpr(expr)
+	if !ok {
+		return "", false
 	}
-	return "", false
+	return symbolPathKey(place)
 }
 
 // containerExprPath builds the constraint.Path for a tracked container expression
@@ -179,29 +176,11 @@ func (t *Transfer) containerExprKey(expr ast.Expr) (constraint.PathKey, bool) {
 // that key resolve to Equal paths. A non-static or non-identifier-rooted base
 // reports ok=false.
 func (t *Transfer) containerExprPath(expr ast.Expr) (constraint.Path, bool) {
-	switch obj := expr.(type) {
-	case *ast.IdentExpr:
-		if sym := t.symbolOf(obj); sym != 0 {
-			return constraint.NewPath(sym, obj.Value), true
-		}
-	case *ast.AttrGetExpr:
-		segs := staticAttrPath(obj)
-		if len(segs) == 0 {
-			return constraint.Path{}, false
-		}
-		root := attrRootIdent(obj)
-		if root == nil {
-			return constraint.Path{}, false
-		}
-		sym := t.symbolOf(root)
-		if sym == 0 {
-			return constraint.Path{}, false
-		}
-		path := constraint.NewPath(sym, root.Value)
-		path.Segments = append(path.Segments, segs...)
-		return path, true
+	place, ok := t.staticPlaceOfExpr(expr)
+	if !ok {
+		return constraint.Path{}, false
 	}
-	return constraint.Path{}, false
+	return place.StaticPath()
 }
 
 // lenExprContainerKey reports whether expr is `#container` over a tracked
@@ -214,6 +193,22 @@ func (t *Transfer) lenExprContainerKey(expr ast.Expr) (constraint.PathKey, bool)
 		return "", false
 	}
 	return t.containerExprKey(lenOp.Expr)
+}
+
+func (t *Transfer) lenExprContainerPlace(expr ast.Expr) (Place, constraint.PathKey, bool) {
+	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
+	if !ok {
+		return Place{}, "", false
+	}
+	place, ok := t.staticPlaceOfExpr(lenOp.Expr)
+	if !ok {
+		return Place{}, "", false
+	}
+	key, ok := symbolPathKey(place)
+	if !ok {
+		return Place{}, "", false
+	}
+	return place, key, true
 }
 
 // lengthIndexOffset reports whether key is `#base + c` or `c + #base` (the
@@ -287,31 +282,18 @@ func isTableInsertCallee(info *cfg.CallInfo) bool {
 	return seg.Kind == constraint.SegmentField && seg.Name == "insert"
 }
 
-// applyTableInsert applies `table.insert(arr, v)` (and the positional
-// `table.insert(arr, pos, v)`): the sequence gains one element, so the length
-// floor rises by one and the array element widens to admit the inserted value.
-// The inserted value is the last argument. The append target is one of:
-//
-//   - a bare identifier `arr`: the tracked sequence slot itself widens and its
-//     length floor rises by one.
-//   - an indexed map element `m[k]` (a dynamic key): the value at that key is an
-//     array, so the MAP's array-value component widens to admit the element
-//     (`table.insert(suites[suite], entry)` makes suites a `{[string]: {Entry}}`).
-//     A later read `suites[name]` then reads the inserted element type rather than
-//     the empty `{}` the `suites[k] = suites[k] or {}` initializer seeded. A map
-//     element's length is per-key and not tracked in the numeric component, so no
-//     length floor is keyed.
-//   - a static field-path container `saga.compensations`: the array at that path
-//     widens and the field-path-keyed length floor rises by one.
-//
-// A target the transfer cannot resolve to a tracked container leaves the state
-// unchanged (the sound carry-forward).
+// applyTableInsert lowers `table.insert` into a MutatorEffect. Direct sequence
+// targets (`arr`, `saga.compensations`, `groups["default"]`) append to the exact
+// Place and raise that sequence's length floor when it has a static numeric key.
+// Dynamic map-element targets (`suites[suite]`) append into the map value slot
+// through the base Place with an explicit abstract key; those per-key lengths are
+// not represented in the numeric component.
 func (t *Transfer) applyTableInsert(
 	out *flow.PointState,
 	info *cfg.CallInfo,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	if out.Num == nil || !isTableInsertCallee(info) {
+	if !isTableInsertCallee(info) {
 		return
 	}
 	args := info.Call.Args
@@ -319,190 +301,74 @@ func (t *Transfer) applyTableInsert(
 		return
 	}
 	target := args[0]
+	if out.Num == nil {
+		effect, ok := t.tableInsertMutatorEffect(out, target, product.AbstractValue{}, demand)
+		if ok {
+			effect.LengthKey = ""
+			effect.LengthIncrement = 0
+			t.applyMutatorEffect(out, effect)
+		}
+		return
+	}
 	elemAV, hasElem := t.evalExpr(out, args[len(args)-1], demand)
 	if !hasElem || elemAV.IsZero() {
 		elemAV = product.AbstractValue{}
 	}
 
-	// A map-element target `m[k]` with a dynamic key: the inserted element widens
-	// the map's array-value component, written back through the base map's slot. A
-	// map element's length is per-key and not tracked in the numeric component, so
-	// no length floor is keyed; an unresolved element leaves the map unchanged.
-	if attr, isAttr := target.(*ast.AttrGetExpr); isAttr {
-		if _, isField := staticFieldName(attr.Key); !isField {
-			if !elemAV.IsZero() {
-				t.applyMapElementInsert(out, attr, elemAV, demand)
-			}
-			return
-		}
-	}
-
-	arrKey, ok := t.containerExprKey(target)
+	effect, ok := t.tableInsertMutatorEffect(out, target, elemAV, demand)
 	if !ok {
 		return
 	}
-	// The insert adds one element, so the length floor rises regardless of whether
-	// the inserted value's type resolves.
-	if lower, _, ok := out.Num.LenBoundsFor(arrKey); ok {
-		out.Num.ApplyLenGeConst(arrKey, lower+1)
-	} else {
-		out.Num.ApplyLenGeConst(arrKey, 1)
-	}
-	if !elemAV.IsZero() {
-		t.appendContainerElement(out, target, elemAV)
-	}
+	t.applyMutatorEffect(out, effect)
 }
 
-// appendContainerElement widens the element type of the tracked sequence the
-// target expression names (a bare identifier or a static field path) by the
-// inserted value, writing the widened container back into its root symbol's Env
-// slot. A bare identifier widens its own slot; a static field path widens the
-// array at that path within the root record (`saga.compensations`). A target the
-// transfer does not track, or one not rooted at an identifier, leaves the state
-// unchanged.
-func (t *Transfer) appendContainerElement(out *flow.PointState, target ast.Expr, elemAV product.AbstractValue) {
-	switch obj := target.(type) {
-	case *ast.IdentExpr:
-		sym := t.symbolOf(obj)
-		if sym == 0 {
-			return
-		}
-		key := symKey(sym)
-		base, had := out.Env[key]
-		if !had || base.IsZero() {
-			return
-		}
-		out.Env[key] = product.AppendElement(base, elemAV)
-	case *ast.AttrGetExpr:
-		segs := staticAttrPath(obj)
-		if len(segs) == 0 {
-			return
-		}
-		root := attrRootIdent(obj)
-		if root == nil {
-			return
-		}
-		sym := t.symbolOf(root)
-		if sym == 0 {
-			return
-		}
-		key := symKey(sym)
-		base, had := out.Env[key]
-		if !had || base.IsZero() {
-			return
-		}
-		names := make([]string, len(segs))
-		for i, s := range segs {
-			names[i] = s.Name
-		}
-		child, ok := product.FieldOf(base, names[0])
-		if !ok || child.IsZero() {
-			return
-		}
-		updated := t.appendAtFieldPath(child, names[1:], elemAV)
-		out.Env[key] = writeFieldPath(base, names, updated)
-	}
-}
-
-// appendAtFieldPath descends the field-path names within base to the leaf array
-// and widens its element type by the inserted value, returning the updated leaf.
-// An empty path widens base directly (the leaf array). A path that does not
-// resolve through a tracked field leaves base unchanged.
-func (t *Transfer) appendAtFieldPath(base product.AbstractValue, names []string, elemAV product.AbstractValue) product.AbstractValue {
-	if len(names) == 0 {
-		return product.AppendElement(base, elemAV)
-	}
-	child, ok := product.FieldOf(base, names[0])
-	if !ok || child.IsZero() {
-		return base
-	}
-	return t.appendAtFieldPath(child, names[1:], elemAV)
-}
-
-// applyMapElementInsert applies `table.insert(m[k], v)` for a dynamic map key:
-// the value at key k is an array, so the map's array-value component is widened by
-// the inserted element (value.AdmitMapArrayElementMutation, via
-// product.AppendMapElement), and the widened map is written back into the base
-// symbol's slot. A later read `m[name]` then reads the inserted element type
-// rather than the empty `{}` the `m[k] = m[k] or {}` initializer seeded. The base
-// must be a tracked symbol or field-path container; an untracked base, or a key
-// the transfer cannot resolve, leaves the state unchanged.
-func (t *Transfer) applyMapElementInsert(
+func (t *Transfer) tableInsertMutatorEffect(
 	out *flow.PointState,
-	attr *ast.AttrGetExpr,
+	target ast.Expr,
 	elemAV product.AbstractValue,
 	demand func(int, paramevidence.ParamContract),
-) {
-	baseSym, baseSegs, ok := t.mapBaseSymbol(attr.Object)
-	if !ok {
-		return
+) (MutatorEffect, bool) {
+	if attr, isAttr := target.(*ast.AttrGetExpr); isAttr {
+		if _, isStatic := staticMemberKey(attr); !isStatic {
+			base, ok := t.placeOfExpr(out, attr.Object, demand)
+			if !ok || base.Root == 0 {
+				return MutatorEffect{}, false
+			}
+			key, _ := t.evalExpr(out, attr.Key, demand)
+			return MutatorEffect{
+				Place:   base,
+				Kind:    MutatorAppendMapElement,
+				Element: elemAV,
+				Key:     key,
+			}, true
+		}
 	}
-	key := symKey(baseSym)
-	rootAV, had := out.Env[key]
-	if !had || rootAV.IsZero() {
-		return
+
+	place, ok := t.placeOfExpr(out, target, demand)
+	if !ok || place.Root == 0 {
+		return MutatorEffect{}, false
 	}
-	keyAV, ok := t.evalExpr(out, attr.Key, demand)
-	if !ok || keyAV.IsZero() {
-		return
+	effect := MutatorEffect{
+		Place:                 place,
+		Kind:                  MutatorAppendElement,
+		Element:               elemAV,
+		InvalidateKeyPresence: true,
 	}
-	if len(baseSegs) == 0 {
-		out.Env[key] = product.AppendMapElement(rootAV, keyAV, elemAV)
-		return
+	if arrKey, ok := t.containerExprKey(target); ok {
+		effect.LengthKey = arrKey
+		effect.LengthIncrement = 1
 	}
-	mapAV, ok := product.FieldOf(rootAV, baseSegs[0])
-	if !ok || mapAV.IsZero() {
-		return
-	}
-	updated := t.appendMapElementAtPath(mapAV, baseSegs[1:], keyAV, elemAV)
-	out.Env[key] = writeFieldPath(rootAV, baseSegs, updated)
+	return effect, true
 }
 
-// appendMapElementAtPath descends the field-path names to the leaf map and widens
-// its array-value component at keyAV by the inserted element. An empty path widens
-// the map at base directly. A path that does not resolve leaves base unchanged.
-func (t *Transfer) appendMapElementAtPath(base product.AbstractValue, names []string, keyAV, elemAV product.AbstractValue) product.AbstractValue {
-	if len(names) == 0 {
-		return product.AppendMapElement(base, keyAV, elemAV)
-	}
-	child, ok := product.FieldOf(base, names[0])
-	if !ok || child.IsZero() {
-		return base
-	}
-	return t.appendMapElementAtPath(child, names[1:], keyAV, elemAV)
+func (t *Transfer) rootContainerValue(out *flow.PointState, sym cfg.SymbolID) (product.AbstractValue, bool, bool) {
+	targetsCell := t.symbolStorage.isCellBacked(sym)
+	base, had := t.symbolValue(out, sym)
+	return base, had, targetsCell
 }
 
-// mapBaseSymbol resolves the base of a map-element insert target `m[k]` to its
-// root symbol and the static field-path segment names from that root down to the
-// map (a bare identifier yields the symbol with no segments; a static field path
-// `state.suites` yields the root symbol plus ["suites"]). A non-identifier-rooted
-// or dynamic-keyed base reports false.
-func (t *Transfer) mapBaseSymbol(expr ast.Expr) (cfg.SymbolID, []string, bool) {
-	switch obj := expr.(type) {
-	case *ast.IdentExpr:
-		if sym := t.symbolOf(obj); sym != 0 {
-			return sym, nil, true
-		}
-	case *ast.AttrGetExpr:
-		segs := staticAttrPath(obj)
-		if len(segs) == 0 {
-			return 0, nil, false
-		}
-		root := attrRootIdent(obj)
-		if root == nil {
-			return 0, nil, false
-		}
-		sym := t.symbolOf(root)
-		if sym == 0 {
-			return 0, nil, false
-		}
-		names := make([]string, len(segs))
-		for i, s := range segs {
-			names[i] = s.Name
-		}
-		return sym, names, true
-	}
-	return 0, nil, false
+func (t *Transfer) writeRootContainer(out *flow.PointState, sym cfg.SymbolID, updated product.AbstractValue) {
+	t.writeSymbolValue(out, sym, updated, false, true)
 }
 
 // seedNumericForBounds seeds the numeric component with a numeric-for loop's
@@ -525,24 +391,27 @@ func (t *Transfer) mapBaseSymbol(expr ast.Expr) (cfg.SymbolID, []string, bool) {
 // (soundness). A non-constant, non-length ceiling, or a step with no provable
 // direction, leaves the corresponding bound unseeded (the sound carry-forward).
 func (t *Transfer) seedNumericForBounds(out *flow.PointState, idxSym cfg.SymbolID, info *cfg.NumericForInfo) {
-	if out.Num == nil || info == nil || idxSym == 0 {
+	if out == nil || info == nil || idxSym == 0 {
 		return
 	}
 	ceilEnd, floorEnd := info.Limit, info.Init
 	if t.forStepIsNegative(info.Step) {
 		ceilEnd, floorEnd = info.Init, info.Limit
 	}
-	idxKey := constraint.PathKey(symKey(idxSym))
+	idxKey := constraint.PathKey(flow.SymbolValueKey(idxSym))
+	ops := make([]NumericOp, 0, 2)
 	if c, ok := t.constInt(floorEnd); ok {
-		out.Num.ApplyGeConst(idxKey, c)
+		ops = append(ops, NumericOp{Kind: NumericVarGeConst, Key: idxKey, Const: c})
 	}
 	if c, ok := t.constInt(ceilEnd); ok {
-		out.Num.ApplyLeConst(idxKey, c)
+		ops = append(ops, NumericOp{Kind: NumericVarLeConst, Key: idxKey, Const: c})
+		t.applyNumericEffect(out, NumericEffect{Ops: ops, RequireExisting: true})
 		return
 	}
 	if arrKey, ok := t.lenExprContainerKey(ceilEnd); ok {
-		out.Num.ApplyLeLenOfWithOffset(idxKey, arrKey, 0)
+		ops = append(ops, NumericOp{Kind: NumericVarLeLenOffset, Key: idxKey, Other: arrKey})
 	}
+	t.applyNumericEffect(out, NumericEffect{Ops: ops, RequireExisting: true})
 }
 
 // forStepIsNegative reports whether a numeric-for step expression is a negative
@@ -566,11 +435,8 @@ func (t *Transfer) forStepIsNegative(step ast.Expr) bool {
 }
 
 // refineByKeyPresence strips the optional from an index read `container[key]`
-// when a KeyOf(container, key) fact is present in out.Cond — i.e. the key was
-// drawn from `pairs(container)` over the same container, so the lookup is present.
-// It builds the table/key paths through containerExprPath / the key identifier's
-// symbol (the same shapes seedKeyedIterKeyOf produced), then matches the exact pair
-// via condHasKeyOf. A non-identifier key, an empty path, or a missing fact declines,
+// when the product-state KeyPresence axis proves that key came from the same
+// container. A non-identifier key, an empty path, or a missing fact declines,
 // leaving the optional intact. Removal is gated by the narrow laws: only a result
 // whose nil is pure flow-uncertainty (an optional element value) is narrowed.
 func (t *Transfer) refineByKeyPresence(
@@ -578,23 +444,15 @@ func (t *Transfer) refineByKeyPresence(
 	e *ast.AttrGetExpr,
 	result typ.Type,
 ) (product.AbstractValue, bool) {
-	if !out.Cond.HasConstraints() {
-		return product.AbstractValue{}, false
-	}
 	tablePath, ok := t.containerExprPath(e.Object)
 	if !ok || tablePath.IsEmpty() {
 		return product.AbstractValue{}, false
 	}
-	keyIdent, ok := e.Key.(*ast.IdentExpr)
+	keyPath, ok := t.dynamicIndexKeyPath(e.Key)
 	if !ok {
 		return product.AbstractValue{}, false
 	}
-	keySym := t.symbolOf(keyIdent)
-	if keySym == 0 {
-		return product.AbstractValue{}, false
-	}
-	keyPath := constraint.NewPath(keySym, keyIdent.Value)
-	if !condHasKeyOf(out.Cond, tablePath, keyPath) {
+	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
 		return product.AbstractValue{}, false
 	}
 	if !narrow.NilPresenceIsOnlyFlowUncertainty(result) {
@@ -607,47 +465,24 @@ func (t *Transfer) refineByKeyPresence(
 	return product.FromType(refined), true
 }
 
-// condHasKeyOf reports whether the exact KeyOf(tablePath, keyPath) fact is present
-// in the accumulated condition. The canonical Cond is a fact accumulator: a branch
-// folds its test in by disjunction (Domain.Join = Or) and per-edge narrowing folds
-// its own check by disjunction too, so two facts that hold together at one point
-// (here NotNil(k) and KeyOf(container, k) on a keyed-iteration body edge) land in
-// SEPARATE single-fact disjuncts rather than one conjunct. A strict all-disjuncts
-// HasKeyOfConstraint test would therefore never see the fact past the loop latch.
-//
-// Presence of the EXACT (table, key) pair is sound for this accumulator: a
-// KeyOf(container, k) is produced ONLY by seedKeyedIterKeyOf, at the keyed pairs
-// binding that introduces that specific key symbol k, which dominates every read of
-// container[k] inside the loop body. A key from a different container (different
-// table symbol), an arbitrary/literal key (different key symbol, or none), or a read
-// outside the loop (a different bound symbol) does not match this pair, so the
-// optional stays. Matching is by path identity (symbol/segments), exactly as
-// HasKeyOfConstraint compares.
-func condHasKeyOf(cond constraint.Condition, tablePath, keyPath constraint.Path) bool {
-	if !cond.HasConstraints() || cond.IsFalse() {
-		return false
+func (t *Transfer) dynamicIndexKeyPath(expr ast.Expr) (constraint.Path, bool) {
+	path, ok := t.staticPathOfExpr(expr)
+	if !ok || path.Symbol == 0 {
+		return constraint.Path{}, false
 	}
-	for i := 0; i < cond.NumDisjuncts(); i++ {
-		for _, c := range cond.DisjunctConstraints(i) {
-			ko, ok := c.(constraint.KeyOf)
-			if ok && ko.Table.Equal(tablePath) && ko.Key.Equal(keyPath) {
-				return true
-			}
-		}
-	}
-	return false
+	return path, true
 }
 
 // dynamicWriteKey resolves the value-domain key of a dynamic-key write base[key] = v.
 // It first reads the key expression's tracked value; when that does not resolve — a
 // `pairs` key variable over a closed record is left untyped by the iteration typing,
-// since a closed record is not a uniform keyed container — it synthesizes the key's
-// sound domain from the base record's field names when the key is provably a key of
-// that base (a KeyOf fact from `pairs(base)` in the path condition). The synthesized
-// domain is the union of the record's string field-name literals: a `pairs(base)` key
-// ranges over exactly those names, so a write through it can land on any of them. A
-// key the transfer can neither resolve nor prove a key of the base yields zero, so the
-// write is left as the sound carry-forward.
+// since a closed record is not a uniform keyed container — it synthesizes the
+// key's sound domain from the base record's field names when KeyPresence proves
+// the key came from that base. The synthesized domain is the union of the record's
+// string field-name literals: a `pairs(base)` key ranges over exactly those
+// names, so a write through it can land on any of them. A key the transfer can
+// neither resolve nor prove a key of the base yields zero, so the write is left
+// as the sound carry-forward.
 func (t *Transfer) dynamicWriteKey(
 	out *flow.PointState,
 	target cfg.AssignTarget,
@@ -662,12 +497,15 @@ func (t *Transfer) dynamicWriteKey(
 		return product.AbstractValue{}
 	}
 	keySym := t.symbolOf(keyIdent)
-	if keySym == 0 || target.BaseSymbol == 0 {
+	if keySym == 0 {
 		return product.AbstractValue{}
 	}
-	basePath := constraint.NewPath(target.BaseSymbol, target.BaseName)
+	basePath, ok := t.staticContainerPathOfAssignTarget(target)
+	if !ok {
+		return product.AbstractValue{}
+	}
 	keyPath := constraint.NewPath(keySym, keyIdent.Value)
-	if !condHasKeyOf(out.Cond, basePath, keyPath) {
+	if !out.KeyPresence.HasPaths(basePath, keyPath) {
 		return product.AbstractValue{}
 	}
 	names := recordFieldNameDomain(base)
@@ -711,24 +549,24 @@ func unwrapRecord(t typ.Type) (*typ.Record, bool) {
 }
 
 // writeIsSelfDerived reports whether the dynamic-key write base[key] = src writes
-// back a value provably already held by base at the key being written, so the write
-// changes no field's value domain (the value at key K is stored back to key K). Such
-// a SELF-write must not weaken the container's declared fields; only a FOREIGN write
-// (a value not drawn from base at this key) can replace a field with a new type.
+// back a value provably already held by base at the key being written, so the
+// write changes no field's value domain (the value at key K is stored back to
+// key K). Such a SELF-write must not weaken the container's declared fields;
+// only a FOREIGN write (a value not drawn from base at this key) can replace a
+// field with a new type.
 //
 // Two self-derivation forms are recognized structurally from the source expression:
 //
 //   - src is `base[key]` itself (the same base symbol and the same key expression as
 //     the target): writing a slot back to itself is identity.
-//   - src is the VALUE variable of a keyed `pairs(base)` iteration whose KEY variable
-//     is exactly the write's key: the pair (k, v) binds v = base[k] at every step, so
-//     `base[k] = v` stores base[k] back to base[k]. The binding loop is recovered from
-//     the graph (the generic-for whose targets are [key, src] and whose iterator is a
-//     keyed iteration over base), so the judgment needs no per-point mutable state.
+//   - src is the VALUE variable of a keyed `pairs(base)` iteration whose current
+//     product-state provenance says value = base[key]. This fact is killed by
+//     assignment to base, key, or value, so reassignment cannot keep a stale
+//     self-write proof alive.
 //
 // Any other source is treated as foreign (the sound default: a value the transfer
 // cannot prove came from base at this key may differ from the field's type).
-func (t *Transfer) writeIsSelfDerived(target cfg.AssignTarget, src ast.Expr) bool {
+func (t *Transfer) writeIsSelfDerived(out *flow.PointState, target cfg.AssignTarget, src ast.Expr) bool {
 	if target.Key == nil || target.BaseSymbol == 0 {
 		return false
 	}
@@ -740,14 +578,16 @@ func (t *Transfer) writeIsSelfDerived(target cfg.AssignTarget, src ast.Expr) boo
 	if keySym == 0 {
 		return false
 	}
-	// Form 1: base[key] = base[key] (same base symbol, same key symbol).
+	basePath, ok := t.staticContainerPathOfAssignTarget(target)
+	if !ok {
+		return false
+	}
+	// Form 1: base[key] = base[key] (same container path, same key symbol).
 	if attr, ok := src.(*ast.AttrGetExpr); ok {
-		if rootIdent, isIdent := attr.Object.(*ast.IdentExpr); isIdent {
-			if t.symbolOf(rootIdent) == target.BaseSymbol {
-				if srcKeyIdent, isKeyIdent := attr.Key.(*ast.IdentExpr); isKeyIdent {
-					if t.symbolOf(srcKeyIdent) == keySym {
-						return true
-					}
+		if srcBasePath, ok := t.staticPathOfExpr(attr.Object); ok && srcBasePath.Equal(basePath) {
+			if srcKeyIdent, isKeyIdent := attr.Key.(*ast.IdentExpr); isKeyIdent {
+				if t.symbolOf(srcKeyIdent) == keySym {
+					return true
 				}
 			}
 		}
@@ -762,49 +602,9 @@ func (t *Transfer) writeIsSelfDerived(target cfg.AssignTarget, src ast.Expr) boo
 	if valueSym == 0 {
 		return false
 	}
-	return t.pairsBindsValueToKey(target.BaseSymbol, keySym, valueSym)
-}
-
-// pairsBindsValueToKey reports whether the graph holds a keyed-iteration generic-for
-// `for keySym, valueSym in pairs(base)` over the container at baseSym: its first
-// target is keySym, its second is valueSym, and its iterator is a keyed iteration
-// whose source is the base symbol. When so, valueSym = base[keySym] at every step, so
-// a write base[keySym] = valueSym is a self-write. The keyed-iteration recognition
-// reuses the CallTyper's KeyedIterSource (the declared iteration-effect resolution,
-// not a name match), so an ipairs/indexed iteration or an iteration over a different
-// container does not qualify.
-func (t *Transfer) pairsBindsValueToKey(baseSym cfg.SymbolID, keySym, valueSym cfg.SymbolID) bool {
-	if t.in.Graph == nil || t.callTyper == nil {
-		return false
-	}
-	found := false
-	t.in.Graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if found || len(info.IterExprs) == 0 || len(info.Targets) < 2 {
-			return
-		}
-		if info.Targets[0].Kind != cfg.TargetIdent || info.Targets[0].Symbol != keySym {
-			return
-		}
-		if info.Targets[1].Kind != cfg.TargetIdent || info.Targets[1].Symbol != valueSym {
-			return
-		}
-		iterCall, ok := info.IterExprs[0].(*ast.FuncCallExpr)
-		if !ok {
-			return
-		}
-		source, ok := t.callTyper.KeyedIterSource(iterCall)
-		if !ok {
-			return
-		}
-		rootIdent, ok := source.(*ast.IdentExpr)
-		if !ok {
-			return
-		}
-		if t.symbolOf(rootIdent) == baseSym {
-			found = true
-		}
-	})
-	return found
+	keyPath := constraint.NewPath(keySym, keyIdent.Value)
+	valuePath := constraint.NewPath(valueSym, srcIdent.Value)
+	return out != nil && out.KeyPresence.HasValuePaths(basePath, keyPath, valuePath)
 }
 
 // refineIndexRead recovers a non-optional element type for a provably in-bounds
@@ -831,9 +631,9 @@ func (t *Transfer) refineIndexRead(
 
 	// Key-presence (KeyOf): a key drawn from `pairs(container)` indexing that same
 	// container reads a present value, so the optional is stripped. The fact is
-	// produced by seedKeyedIterKeyOf into out.Cond and matched here for the exact
-	// (container, key) path pair, so a key from a different container or an arbitrary
-	// key never matches and its read stays optional.
+	// produced by iteration transfer into PointState.KeyPresence and matched here
+	// for the exact (container, key) path pair, so a key from a different container
+	// or an arbitrary key never matches and its read stays optional.
 	if refined, ok := t.refineByKeyPresence(out, e, result); ok {
 		return refined
 	}
@@ -890,7 +690,7 @@ func (t *Transfer) refineIndexRead(
 	if idxSym == 0 {
 		return ev
 	}
-	idxKey := constraint.PathKey(symKey(idxSym))
+	idxKey := constraint.PathKey(flow.SymbolValueKey(idxSym))
 
 	if arity, ok := narrow.TupleArity(container); ok {
 		if lower, upper, ok := numeric.BoundsForWithTheory(out.Num, idxKey); ok && lower >= 1 && upper <= arity {

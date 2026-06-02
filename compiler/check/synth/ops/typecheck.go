@@ -525,7 +525,7 @@ func hasLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 
 	switch v := t.(type) {
-	case *typ.Array, *typ.Map, *typ.Record, *typ.Tuple:
+	case *typ.Array, *typ.Map, *typ.ReadonlyMap, *typ.Record, *typ.Tuple:
 		return true
 
 	case *typ.Union:
@@ -599,7 +599,7 @@ func mayHaveLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 
 	switch v := t.(type) {
-	case *typ.Array, *typ.Map, *typ.Record, *typ.Tuple:
+	case *typ.Array, *typ.Map, *typ.ReadonlyMap, *typ.Record, *typ.Tuple:
 		return true
 
 	case *typ.Union:

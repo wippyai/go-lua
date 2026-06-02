@@ -430,6 +430,60 @@ func TestBuilder_IfStmt(t *testing.T) {
 	}
 }
 
+func TestBuilder_IfStmtSplitConditionScopeExitsDoNotCopyPartialGuard(t *testing.T) {
+	t.Parallel()
+
+	for _, op := range []string{"and", "or"} {
+		op := op
+		t.Run(op, func(t *testing.T) {
+			t.Parallel()
+
+			stmt := &ast.IfStmt{
+				Condition: &ast.LogicalOpExpr{
+					Operator: op,
+					Lhs:      &ast.IdentExpr{Value: "v"},
+					Rhs: &ast.RelationalOpExpr{
+						Lhs:      &ast.IdentExpr{Value: "v"},
+						Operator: "~=",
+						Rhs:      &ast.StringExpr{Value: ""},
+					},
+				},
+				Then: []ast.Stmt{
+					&ast.AssignStmt{
+						Lhs: []ast.Expr{&ast.IdentExpr{Value: "v"}},
+						Rhs: []ast.Expr{&ast.StringExpr{Value: "qualified"}},
+					},
+				},
+			}
+			fn := &ast.FunctionExpr{
+				ParList: &ast.ParList{Names: []string{"v"}},
+				Stmts:   []ast.Stmt{stmt},
+			}
+
+			b := NewBuilder()
+			b.Bindings = bind.Bind(fn, nil)
+			b.Current = b.Cfg.Entry()
+			b.ScopeTracker.SnapshotVisibility(b.Current)
+
+			b.IfStmt(stmt)
+
+			exits := 0
+			for _, n := range b.Cfg.Nodes {
+				if n.Kind != basecfg.NodeScopeExit {
+					continue
+				}
+				exits++
+				if n.CondVar != 0 || n.CondCheck.Kind != basecfg.CheckNone {
+					t.Fatalf("split-condition scope exit copied partial guard: CondVar=%q CondCheck=%v", n.CondVar, n.CondCheck)
+				}
+			}
+			if exits != 2 {
+				t.Fatalf("split-condition if scope exits = %d, want 2", exits)
+			}
+		})
+	}
+}
+
 // TestBuilder_WhileStmt tests while loop CFG construction.
 func TestBuilder_WhileStmt(t *testing.T) {
 	t.Parallel()

@@ -9,8 +9,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -434,11 +434,8 @@ func TestContextBuilder_DeclaredUsesSiblingProjection(t *testing.T) {
 		}).
 		BuildDeclared()
 
-	tv := ctx.Types().DeclaredAt(0, sym)
-	fn, ok := tv.Type.(*typ.Function)
-	if tv.State != flow.StateResolved || !ok || len(fn.Params) != 1 {
-		t.Fatalf("declared type = %#v, want function", tv)
-	}
+	assertNoDeclaredFunctionBinding(t, ctx.Types(), sym)
+	fn := functionBindingProjection(t, ctx.Types(), sym)
 	if !typ.TypeEquals(fn.Params[0].Type, entryParam) {
 		t.Fatalf("declared projection parameter = %v, want entry %v", fn.Params[0].Type, entryParam)
 	}
@@ -459,11 +456,8 @@ func TestContextBuilder_FlowInputUsesFlowInputProjection(t *testing.T) {
 		}).
 		BuildFlowInput()
 
-	tv := ctx.Types().DeclaredAt(0, sym)
-	fn, ok := tv.Type.(*typ.Function)
-	if tv.State != flow.StateResolved || !ok || len(fn.Params) != 1 {
-		t.Fatalf("flow-input type = %#v, want function", tv)
-	}
+	assertNoDeclaredFunctionBinding(t, ctx.Types(), sym)
+	fn := functionBindingProjection(t, ctx.Types(), sym)
 	if !typ.TypeEquals(fn.Params[0].Type, publicParam) {
 		t.Fatalf("flow-input projection parameter = %v, want public %v", fn.Params[0].Type, publicParam)
 	}
@@ -484,14 +478,37 @@ func TestContextBuilder_NarrowUsesSiblingProjection(t *testing.T) {
 		WithSolution(&flow.Solution{}).
 		BuildNarrow()
 
-	tv := ctx.Types().DeclaredAt(0, sym)
-	fn, ok := tv.Type.(*typ.Function)
-	if tv.State != flow.StateResolved || !ok || len(fn.Params) != 1 {
-		t.Fatalf("narrow declared type = %#v, want function", tv)
-	}
+	assertNoDeclaredFunctionBinding(t, ctx.Types(), sym)
+	fn := functionBindingProjection(t, ctx.Types(), sym)
 	if !typ.TypeEquals(fn.Params[0].Type, entryParam) {
 		t.Fatalf("narrow projection parameter = %v, want entry %v", fn.Params[0].Type, entryParam)
 	}
+}
+
+func assertNoDeclaredFunctionBinding(t *testing.T, facts flow.TypeFacts, sym cfg.SymbolID) {
+	t.Helper()
+	tv := facts.DeclaredAt(0, sym)
+	if tv.State != flow.StateUnknown || !typ.IsUnknown(tv.Type) {
+		t.Fatalf("DeclaredAt(%d) = %#v, want unknown; function projections belong to BindingValueAt", sym, tv)
+	}
+}
+
+func functionBindingProjection(t *testing.T, facts flow.TypeFacts, sym cfg.SymbolID) *typ.Function {
+	t.Helper()
+	bindings, ok := facts.(flow.BindingValueFacts)
+	if !ok {
+		t.Fatal("ContextBuilder TypeFacts must expose BindingValueFacts")
+	}
+	binding := bindings.BindingValueAt(0, sym)
+	fn, ok := binding.Type.(*typ.Function)
+	if binding.State != flow.StateResolved || !ok || len(fn.Params) != 1 {
+		t.Fatalf("BindingValueAt(%d) = %#v, want one-param function", sym, binding)
+	}
+	effective := facts.EffectiveTypeAt(0, sym)
+	if effective.State != flow.StateResolved || !typ.TypeEquals(effective.Type, binding.Type) {
+		t.Fatalf("EffectiveTypeAt(%d) = %#v, want binding projection %v", sym, effective, binding.Type)
+	}
+	return fn
 }
 
 func TestMergeParameterEvidenceIntoSig_NilSig(t *testing.T) {

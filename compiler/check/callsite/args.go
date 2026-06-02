@@ -25,10 +25,7 @@ func RuntimeArgCount(info *cfg.CallInfo) int {
 	if info == nil {
 		return 0
 	}
-	if IsMethodCallInfo(info) {
-		return len(info.Args) + 1
-	}
-	return len(info.Args)
+	return runtimeArgCount(info.Method != "", info.Args)
 }
 
 // RuntimeArgAt returns the runtime argument at parameter index paramIdx.
@@ -40,18 +37,47 @@ func RuntimeArgAt(info *cfg.CallInfo, paramIdx int) ast.Expr {
 	if info == nil {
 		return nil
 	}
-	if IsMethodCallInfo(info) {
+	return runtimeArgAt(info.Method != "", info.Receiver, info.Args, paramIdx)
+}
+
+// RuntimeArgExprCount returns call runtime arity directly from the AST call,
+// including the receiver for method calls.
+func RuntimeArgExprCount(call *ast.FuncCallExpr) int {
+	if call == nil {
+		return 0
+	}
+	return runtimeArgCount(call.Method != "", call.Args)
+}
+
+// RuntimeArgExprAt returns the runtime argument expression directly from the AST
+// call. For method calls, index 0 is the receiver and listed args start at 1.
+func RuntimeArgExprAt(call *ast.FuncCallExpr, paramIdx int) ast.Expr {
+	if call == nil {
+		return nil
+	}
+	return runtimeArgAt(call.Method != "", call.Receiver, call.Args, paramIdx)
+}
+
+func runtimeArgCount(method bool, args []ast.Expr) int {
+	if method {
+		return len(args) + 1
+	}
+	return len(args)
+}
+
+func runtimeArgAt(method bool, receiver ast.Expr, args []ast.Expr, paramIdx int) ast.Expr {
+	if method {
 		if paramIdx == 0 {
-			return info.Receiver
+			return receiver
 		}
 		if paramIdx < 0 {
-			adj := RuntimeArgCount(info) + paramIdx
+			adj := runtimeArgCount(method, args) + paramIdx
 			if adj == 0 {
-				return info.Receiver
+				return receiver
 			}
-			return PositionalArgAt(info.Args, adj-1)
+			return PositionalArgAt(args, adj-1)
 		}
-		return PositionalArgAt(info.Args, paramIdx-1)
+		return PositionalArgAt(args, paramIdx-1)
 	}
-	return PositionalArgAt(info.Args, paramIdx)
+	return PositionalArgAt(args, paramIdx)
 }

@@ -13,16 +13,16 @@ type structuredCarryForward struct {
 	s              *Solution
 	point          cfg.Point
 	targetPath     constraint.Path
-	currentBaseKey string
+	currentBaseKey constraint.PathKey
 	preds          []cfg.Point
-	predBaseKeys   []string
+	predBaseKeys   []constraint.PathKey
 }
 
 func newStructuredCarryForward(s *Solution, p cfg.Point, targetPath constraint.Path) *structuredCarryForward {
 	return &structuredCarryForward{s: s, point: p, targetPath: targetPath}
 }
 
-func (c *structuredCarryForward) apply() []string {
+func (c *structuredCarryForward) apply() []constraint.PathKey {
 	if !c.prepare() {
 		return nil
 	}
@@ -47,7 +47,7 @@ func (c *structuredCarryForward) prepare() bool {
 	if baseKey == "" {
 		return false
 	}
-	c.currentBaseKey = string(baseKey)
+	c.currentBaseKey = baseKey
 	c.preds = graphPredecessors(c.s.inputs.Graph, c.point)
 	if len(c.preds) == 0 {
 		return false
@@ -56,9 +56,9 @@ func (c *structuredCarryForward) prepare() bool {
 	return len(c.predBaseKeys) > 0
 }
 
-func (c *structuredCarryForward) collectPredecessorBaseKeys() []string {
-	predBaseKeys := make([]string, 0, len(c.preds))
-	seen := make(map[string]struct{}, len(c.preds))
+func (c *structuredCarryForward) collectPredecessorBaseKeys() []constraint.PathKey {
+	predBaseKeys := make([]constraint.PathKey, 0, len(c.preds))
+	seen := make(map[constraint.PathKey]struct{}, len(c.preds))
 	for _, pred := range c.preds {
 		key := c.predecessorBaseKey(pred)
 		if key == "" {
@@ -73,16 +73,15 @@ func (c *structuredCarryForward) collectPredecessorBaseKeys() []string {
 	return predBaseKeys
 }
 
-func (c *structuredCarryForward) predecessorBaseKey(pred cfg.Point) string {
+func (c *structuredCarryForward) predecessorBaseKey(pred cfg.Point) constraint.PathKey {
 	ver := c.s.inputs.Graph.VisibleVersion(pred, c.targetPath.Symbol)
 	if ver.Symbol == 0 || ver.ID == 0 {
 		return ""
 	}
-	key := c.s.pkResolver.KeyAtVersion(ver.Symbol, ver.ID, nil)
-	return string(key)
+	return c.s.pkResolver.KeyAtVersion(ver.Symbol, ver.ID, nil)
 }
 
-func (c *structuredCarryForward) seedRoot() []string {
+func (c *structuredCarryForward) seedRoot() []constraint.PathKey {
 	baseTypes := c.s.predecessorNarrowedRootTypes(c.point, c.targetPath, c.predBaseKeys)
 	if _, exists := c.s.values[c.currentBaseKey]; len(baseTypes) == 0 || exists {
 		return nil
@@ -91,8 +90,8 @@ func (c *structuredCarryForward) seedRoot() []string {
 	if sameFlowValue(projectFlowValue(c.s.values[c.currentBaseKey]), joinedBase) {
 		return nil
 	}
-	c.s.setValue(c.currentBaseKey, joinedBase)
-	return []string{c.currentBaseKey}
+	c.s.setValue(string(c.currentBaseKey), joinedBase)
+	return []constraint.PathKey{c.currentBaseKey}
 }
 
 func (c *structuredCarryForward) seedSuffixes() {
@@ -101,19 +100,20 @@ func (c *structuredCarryForward) seedSuffixes() {
 		if len(types) == 0 {
 			continue
 		}
-		key := c.currentBaseKey + suffix
-		if c.s.valueAtPoint(c.point, key) != nil {
+		key := suffix.PathUnder(c.currentBaseKey)
+		keyString := string(key)
+		if c.s.valueAtPoint(c.point, keyString) != nil {
 			continue
 		}
 		joined := join.Types(types...)
-		if !sameFlowValue(c.s.valueAtPoint(c.point, key), joined) {
-			c.s.setMutableValue(c.point, key, joined)
+		if !sameFlowValue(c.s.valueAtPoint(c.point, keyString), joined) {
+			c.s.setMutableValue(c.point, keyString, joined)
 		}
 	}
 }
 
-func (c *structuredCarryForward) collectPredecessorSuffixTypes() map[string][]typ.Type {
-	out := make(map[string][]typ.Type)
+func (c *structuredCarryForward) collectPredecessorSuffixTypes() map[pathSuffixKey][]typ.Type {
+	out := make(map[pathSuffixKey][]typ.Type)
 	for _, pred := range c.preds {
 		predBaseKey := c.predecessorBaseKey(pred)
 		if predBaseKey == "" {
@@ -125,9 +125,9 @@ func (c *structuredCarryForward) collectPredecessorSuffixTypes() map[string][]ty
 	return out
 }
 
-func (c *structuredCarryForward) collectStableSuffixTypes(out map[string][]typ.Type, predBaseKey string) {
+func (c *structuredCarryForward) collectStableSuffixTypes(out map[pathSuffixKey][]typ.Type, predBaseKey constraint.PathKey) {
 	for _, suffix := range c.s.valueSuffixesForRoot(predBaseKey) {
-		if av, ok := c.s.values[predBaseKey+suffix]; ok {
+		if av, ok := c.s.values[suffix.PathUnder(predBaseKey)]; ok {
 			if t := projectFlowValue(av); t != nil {
 				out[suffix] = append(out[suffix], t)
 			}
@@ -135,10 +135,10 @@ func (c *structuredCarryForward) collectStableSuffixTypes(out map[string][]typ.T
 	}
 }
 
-func (c *structuredCarryForward) collectMutableSuffixTypes(out map[string][]typ.Type, pred cfg.Point, predBaseKey string) {
+func (c *structuredCarryForward) collectMutableSuffixTypes(out map[pathSuffixKey][]typ.Type, pred cfg.Point, predBaseKey constraint.PathKey) {
 	state := c.s.mutableOut[pred]
 	for _, suffix := range c.s.mutableSuffixesForRoot(pred, predBaseKey) {
-		if av, ok := state[predBaseKey+suffix]; ok {
+		if av, ok := state[suffix.PathUnder(predBaseKey)]; ok {
 			if t := projectFlowValue(av); t != nil {
 				out[suffix] = append(out[suffix], t)
 			}

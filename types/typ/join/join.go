@@ -51,7 +51,7 @@ func WithReturns(sig *typ.Function, returns []typ.Type) *typ.Function {
 
 	builder := typ.Func().ReserveParams(len(sig.Params))
 	for _, tp := range sig.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for _, p := range sig.Params {
 		if p.Optional {

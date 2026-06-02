@@ -28,6 +28,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -539,7 +540,7 @@ func widenImplicitSelfField(t typ.Type) typ.Type {
 // buildDeclaredTypes builds declared types from annotations.
 func buildDeclaredTypes(
 	graph *cfg.Graph,
-	globalTypes map[string]typ.Type,
+	globalTypes globalenv.TypeOverlay,
 	paramTypes map[cfg.SymbolID]typ.Type,
 	paramAnnotated map[cfg.SymbolID]bool,
 	base *scope.State,
@@ -568,11 +569,11 @@ func buildDeclaredTypes(
 
 	// Apply global types once using the graph's global symbol map.
 	if len(globalTypes) > 0 {
-		for _, name := range cfg.SortedFieldNames(globalTypes) {
-			t := globalTypes[name]
-			if t == nil {
+		for _, binding := range globalTypes {
+			if binding.Name == "" || binding.Type == nil {
 				continue
 			}
+			name := binding.Name.String()
 			if sym, ok := graph.GlobalSymbol(name); ok {
 				if _, exists := out[sym]; exists {
 					continue
@@ -582,7 +583,7 @@ func buildDeclaredTypes(
 						continue
 					}
 				}
-				out[sym] = t
+				out[sym] = binding.Type
 			}
 		}
 	}
@@ -975,7 +976,7 @@ func ResolveCallFunctionType(
 	if info.Callee != nil {
 		if attr, ok := info.Callee.(*ast.AttrGetExpr); ok {
 			objType := exprSynth(attr.Object, p, sc)
-			seg, staticField := flowpath.StaticAttrKeySegment(attr.Key)
+			seg, staticField := flowpath.StaticAttrSegment(attr)
 			if objType != nil && staticField && seg.Kind == constraint.SegmentField && types != nil {
 				if ft, ok := types.Field(ctx, objType, seg.Name); ok {
 					return unwrap.Function(ft)

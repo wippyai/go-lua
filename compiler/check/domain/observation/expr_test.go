@@ -8,7 +8,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
@@ -34,11 +37,186 @@ func (f factsStub) IsAnnotated(cfg.SymbolID) bool {
 	return false
 }
 
+type annotatedFactsStub struct {
+	factsStub
+	annotated map[cfg.SymbolID]bool
+}
+
+func (f annotatedFactsStub) IsAnnotated(sym cfg.SymbolID) bool {
+	return f.annotated[sym]
+}
+
 func typedValueForTest(t typ.Type) flow.TypedValue {
 	if t == nil {
 		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 	}
 	return flow.TypedValue{Type: t, State: flow.StateResolved}
+}
+
+type productFactsStub struct {
+	factsStub
+	values map[cfg.SymbolID]product.AbstractValue
+}
+
+func (f productFactsStub) RefinedValueAt(_ cfg.Point, sym cfg.SymbolID) flow.ProductValue {
+	if av, ok := f.values[sym]; ok && !av.IsZero() {
+		return flow.ProductValue{Value: av, State: flow.StateResolved}
+	}
+	return flow.ProductValue{State: flow.StateUnknown}
+}
+
+func (f productFactsStub) RefinedPathValueAt(_ cfg.Point, path constraint.Path) flow.ProductValue {
+	if len(path.Segments) == 0 {
+		return f.RefinedValueAt(0, path.Symbol)
+	}
+	if av, ok := f.values[path.Symbol]; ok && !av.IsZero() {
+		for _, seg := range path.Segments {
+			member, ok := value.MemberFromSegment(seg)
+			if !ok {
+				return flow.ProductValue{State: flow.StateUnknown}
+			}
+			next, ok := product.MemberOf(av, member)
+			if !ok || next.IsZero() {
+				return flow.ProductValue{State: flow.StateUnknown}
+			}
+			av = next
+		}
+		return flow.ProductValue{Value: av, State: flow.StateResolved}
+	}
+	return flow.ProductValue{State: flow.StateUnknown}
+}
+
+type assignmentSourceFactsStub struct {
+	factsStub
+	value typ.Type
+}
+
+func (f assignmentSourceFactsStub) AssignmentSourceValueAt(cfg.Point, constraint.Path, flow.AssignmentSource) typ.Type {
+	return f.value
+}
+
+type assignmentSelectionFactsStub struct {
+	factsStub
+	stored   typ.Type
+	path     typ.Type
+	constSym cfg.SymbolID
+	sawPath  constraint.Path
+}
+
+func (f *assignmentSelectionFactsStub) AssignmentSourceValueAt(cfg.Point, constraint.Path, flow.AssignmentSource) typ.Type {
+	return f.stored
+}
+
+func (f *assignmentSelectionFactsStub) RefinedPathAt(_ cfg.Point, path constraint.Path) flow.TypedValue {
+	f.sawPath = path
+	return typedValueForTest(f.path)
+}
+
+func (f *assignmentSelectionFactsStub) ConstValueAtSym(_ cfg.Point, sym cfg.SymbolID) *flow.ConstValue {
+	if sym != f.constSym {
+		return nil
+	}
+	return &flow.ConstValue{Kind: flow.ConstString, Str: "p-q"}
+}
+
+type indexWriteFactsStub struct {
+	factsStub
+	value typ.Type
+	query flow.IndexWriteQuery
+}
+
+func (f *indexWriteFactsStub) IndexWriteAdmission(q flow.IndexWriteQuery) (typ.Type, bool) {
+	f.query = q
+	return f.value, f.value != nil
+}
+
+type conditionProofFactsStub struct {
+	factsStub
+	cond       constraint.Condition
+	provedPath constraint.Path
+	provedType typ.Type
+}
+
+func (f conditionProofFactsStub) ConditionAt(cfg.Point) constraint.Condition {
+	if f.cond.HasConstraints() || f.cond.IsFalse() {
+		return f.cond
+	}
+	return constraint.TrueCondition()
+}
+
+func (f conditionProofFactsStub) ProvesTypeAt(_ cfg.Point, path constraint.Path, t typ.Type) bool {
+	return path.Equal(f.provedPath) && typ.TypeEquals(t, f.provedType)
+}
+
+func (f conditionProofFactsStub) ConditionTypeAt(_ cfg.Point, path constraint.Path) typ.Type {
+	if path.Equal(f.provedPath) {
+		return f.provedType
+	}
+	return nil
+}
+
+func (f conditionProofFactsStub) ConditionedTypeAt(_ cfg.Point, path constraint.Path, _ constraint.Condition) typ.Type {
+	return f.ConditionTypeAt(0, path)
+}
+
+func (f conditionProofFactsStub) ConditionedSeedTypeAt(_ cfg.Point, _ constraint.Path, _ typ.Type, queryPath constraint.Path, _ constraint.Condition) typ.Type {
+	return f.ConditionTypeAt(0, queryPath)
+}
+
+type flowOpsStub struct {
+	narrowed typ.Type
+	pre      typ.Type
+}
+
+func (f flowOpsStub) NarrowedTypeAt(cfg.Point, constraint.Path) typ.Type {
+	return f.narrowed
+}
+
+func (f flowOpsStub) NarrowedTypeAtWithCondition(cfg.Point, constraint.Path, constraint.Condition) typ.Type {
+	return f.narrowed
+}
+
+func (f flowOpsStub) PreStateTypeAt(cfg.Point, constraint.Path) typ.Type {
+	return f.pre
+}
+
+func (f flowOpsStub) ExcludesTypeAt(cfg.Point, constraint.Path, typ.Type) bool {
+	return false
+}
+
+func (f flowOpsStub) BoundsAt(cfg.Point, string) (int64, int64, bool) {
+	return 0, 0, false
+}
+
+func (f flowOpsStub) ArrayLenBoundAt(cfg.Point, string) (string, bool) {
+	return "", false
+}
+
+func (f flowOpsStub) ArrayLenBoundWithOffsetAt(cfg.Point, string) (string, int64, bool) {
+	return "", 0, false
+}
+
+func (f flowOpsStub) LengthBoundsAt(cfg.Point, constraint.Path) (int64, int64, bool) {
+	return 0, 0, false
+}
+
+func (f flowOpsStub) IsPointDead(cfg.Point) bool {
+	return false
+}
+
+func (f flowOpsStub) HasKeyOf(cfg.Point, constraint.Path, constraint.Path) bool {
+	return false
+}
+
+type pathObservationFactsStub struct {
+	factsStub
+	observation flow.PathObservation
+	query       flow.PathObservationQuery
+}
+
+func (f *pathObservationFactsStub) ObservePath(q flow.PathObservationQuery) flow.PathObservation {
+	f.query = q
+	return f.observation
 }
 
 func TestProjector_IdentUsesSolvedFacts(t *testing.T) {
@@ -54,6 +232,513 @@ func TestProjector_IdentUsesSolvedFacts(t *testing.T) {
 
 	if !typ.TypeEquals(observed, typ.String) {
 		t.Fatalf("TypeOf(ident) = %v, want string", observed)
+	}
+}
+
+func TestProjector_AssignmentSourceTypeUsesFactsCarrierWithoutSolution(t *testing.T) {
+	source := &ast.IdentExpr{Value: "rhs"}
+	const targetSym cfg.SymbolID = 22
+	target := constraint.NewPath(targetSym, "target")
+
+	got := New(Config{
+		Inputs: &flow.Inputs{
+			Assignments: []flow.UnifiedAssignment{
+				{
+					Point:      7,
+					TargetPath: target,
+					Source: flow.AssignmentSource{
+						Kind: flow.AssignmentSourcePath,
+						Path: constraint.NewPath(23, "rhs"),
+					},
+				},
+			},
+		},
+		Facts: assignmentSourceFactsStub{
+			factsStub: factsStub{},
+			value:     typ.String,
+		},
+	}).AssignmentSourceType(source, 7, nil, targetSym)
+
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("AssignmentSourceType via facts carrier = %v, want string", got)
+	}
+}
+
+func TestProjector_AssignmentSourceTypeUsesMorePreciseNormalizedPath(t *testing.T) {
+	obj := &ast.IdentExpr{Value: "obj"}
+	key := &ast.IdentExpr{Value: "key"}
+	source := &ast.AttrGetExpr{Object: obj, Key: key, KeySyntax: ast.AttrKeyIndex}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"obj"}},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"key"},
+				Exprs: []ast.Expr{&ast.StringExpr{Value: "p-q"}},
+			},
+			&ast.LocalAssignStmt{
+				Names: []string{"target"},
+				Exprs: []ast.Expr{source},
+			},
+		},
+	}
+	g := cfg.Build(fn)
+	bindings := g.Bindings()
+
+	var point cfg.Point
+	var targetSym cfg.SymbolID
+	g.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
+			if src != source {
+				return
+			}
+			point = p
+			targetSym = target.Symbol
+		})
+	})
+	if point == 0 || targetSym == 0 {
+		t.Fatalf("target assignment not found: point=%d target=%d", point, targetSym)
+	}
+	objSym, ok := g.SymbolAt(point, "obj")
+	if !ok || objSym == 0 {
+		t.Fatalf("obj symbol at point = %d, %v; want visible symbol", objSym, ok)
+	}
+	keySym, ok := g.SymbolAt(point, "key")
+	if !ok || keySym == 0 {
+		t.Fatalf("key symbol at point = %d, %v; want visible symbol", keySym, ok)
+	}
+
+	pointType := typ.NewRecord().Field("x", typ.Number).Field("y", typ.Number).Build()
+	target := constraint.NewPath(targetSym, "target")
+	facts := &assignmentSelectionFactsStub{
+		stored:   typ.Any,
+		path:     pointType,
+		constSym: keySym,
+	}
+
+	got := New(Config{
+		Graph:    g,
+		Bindings: bindings,
+		Inputs: &flow.Inputs{
+			Assignments: []flow.UnifiedAssignment{
+				{
+					Point:      point,
+					TargetPath: target,
+					Source: flow.AssignmentSource{
+						Kind: flow.AssignmentSourcePath,
+						Path: constraint.NewPath(objSym, "obj").IndexStr("p-q"),
+					},
+				},
+			},
+		},
+		Facts: facts,
+	}).AssignmentSourceType(source, point, pointType, targetSym)
+
+	if !typ.TypeEquals(got, pointType) {
+		t.Fatalf("AssignmentSourceType = %v, want normalized path precision %v", got, pointType)
+	}
+	if len(facts.sawPath.Segments) != 1 ||
+		facts.sawPath.Segments[0].Kind != constraint.SegmentIndexString ||
+		facts.sawPath.Segments[0].Name != "p-q" {
+		t.Fatalf("observed path = %#v, want const-normalized obj[\"p-q\"]", facts.sawPath)
+	}
+}
+
+func TestProjector_AssignmentSourceSelfReadUsesStrictPreState(t *testing.T) {
+	source := &ast.IdentExpr{Value: "value"}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"value"}},
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{Exprs: []ast.Expr{source}},
+		},
+	}
+	g := cfg.Build(fn)
+	syms := g.ParamSymbols()
+	if len(syms) != 1 || syms[0] == 0 {
+		t.Fatalf("ParamSymbols() = %v, want one non-zero symbol", syms)
+	}
+
+	got := New(Config{
+		Graph:    g,
+		Bindings: g.Bindings(),
+		Flow:     flowOpsStub{pre: typ.String, narrowed: typ.Number},
+	}).AssignmentSourceType(source, g.Entry(), nil, syms[0])
+
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("AssignmentSourceType self-read = %v, want pre-state string", got)
+	}
+}
+
+func TestProjector_AssignmentTargetWriteTypeUsesIndexWriteFactsWithoutSolution(t *testing.T) {
+	base := &ast.IdentExpr{Value: "m"}
+	key := &ast.IdentExpr{Value: "k"}
+	source := &ast.IdentExpr{Value: "v"}
+	bindings := bind.NewBindingTable()
+	const (
+		baseSym cfg.SymbolID = 31
+		keySym  cfg.SymbolID = 32
+		valSym  cfg.SymbolID = 33
+	)
+	bindings.Bind(base, baseSym)
+	bindings.Bind(key, keySym)
+	bindings.Bind(source, valSym)
+	facts := &indexWriteFactsStub{value: typ.String}
+
+	got := New(Config{
+		Bindings: bindings,
+		Facts:    facts,
+	}).AssignmentTargetWriteType(cfg.AssignTarget{
+		Kind:       cfg.TargetIndex,
+		Base:       base,
+		BaseName:   "m",
+		BaseSymbol: baseSym,
+		Key:        key,
+	}, source, 9)
+
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("AssignmentTargetWriteType via IndexWriteFacts = %v, want string", got)
+	}
+	if facts.query.Point != 9 || !facts.query.Target.Equal(constraint.NewPath(baseSym, "m")) ||
+		facts.query.KeySymbol != keySym || !facts.query.ValuePath.Equal(constraint.NewPath(valSym, "v")) {
+		t.Fatalf("IndexWriteAdmission query = %#v", facts.query)
+	}
+}
+
+func TestProjector_AssignmentTargetFlowWriteTypeIgnoresAnyAdmission(t *testing.T) {
+	base := &ast.IdentExpr{Value: "m"}
+	key := &ast.IdentExpr{Value: "k"}
+	source := &ast.IdentExpr{Value: "v"}
+	bindings := bind.NewBindingTable()
+	const baseSym cfg.SymbolID = 41
+	bindings.Bind(base, baseSym)
+	bindings.Bind(key, cfg.SymbolID(42))
+	bindings.Bind(source, cfg.SymbolID(43))
+
+	got := New(Config{
+		Bindings: bindings,
+		Facts:    &indexWriteFactsStub{value: typ.Any},
+	}).assignmentTargetFlowWriteType(cfg.AssignTarget{
+		Kind:       cfg.TargetIndex,
+		Base:       base,
+		BaseName:   "m",
+		BaseSymbol: baseSym,
+		Key:        key,
+	}, source, 9)
+
+	if got != nil {
+		t.Fatalf("assignmentTargetFlowWriteType(any admission) = %v, want nil", got)
+	}
+}
+
+func TestProjectorProvesExprTypeUsesConditionProofFactsWithoutSolution(t *testing.T) {
+	ident := &ast.IdentExpr{Value: "value"}
+	bindings := bind.NewBindingTable()
+	const sym cfg.SymbolID = 44
+	bindings.Bind(ident, sym)
+	path := constraint.NewPath(sym, "value")
+
+	projector := New(Config{
+		Bindings: bindings,
+		Facts: conditionProofFactsStub{
+			factsStub:  factsStub{sym: typ.Unknown},
+			provedPath: path,
+			provedType: typ.String,
+		},
+	})
+
+	if !projector.provesExprType(3, ident, typ.String) {
+		t.Fatalf("provesExprType via ConditionProofFacts = false, want true")
+	}
+}
+
+func TestProjectorPathTypeUsesFlowOpsWithoutSolution(t *testing.T) {
+	ident := &ast.IdentExpr{Value: "value"}
+	bindings := bind.NewBindingTable()
+	const sym cfg.SymbolID = 45
+	bindings.Bind(ident, sym)
+
+	projector := New(Config{
+		Bindings: bindings,
+		Flow:     flowOpsStub{narrowed: typ.String},
+	})
+
+	got := projector.pathType(ident, 4)
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("pathType via FlowOps = %v, want string", got)
+	}
+}
+
+func TestProjectorPathTypeUsesPathObservationFactsWithoutSolution(t *testing.T) {
+	ident := &ast.IdentExpr{Value: "value"}
+	bindings := bind.NewBindingTable()
+	const sym cfg.SymbolID = 46
+	bindings.Bind(ident, sym)
+	facts := &pathObservationFactsStub{
+		factsStub: factsStub{sym: typ.Unknown},
+		observation: flow.PathObservation{
+			Type:   typ.String,
+			State:  flow.StateResolved,
+			Source: flow.PathObservationSolvedFlow,
+		},
+	}
+
+	got := New(Config{
+		Bindings:      bindings,
+		Facts:         facts,
+		PreserveProof: true,
+	}).pathType(ident, 8)
+
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("pathType via PathObservationFacts = %v, want string", got)
+	}
+	if facts.query.Point != 8 || facts.query.Phase != flow.PathReadCurrent || !facts.query.PreserveProof ||
+		!facts.query.Path.Equal(constraint.NewPath(sym, "value")) {
+		t.Fatalf("PathObservationQuery = %#v", facts.query)
+	}
+}
+
+func TestObservedArgumentTypeUsesPathObservationFactsWithoutFlowSolution(t *testing.T) {
+	arg := &ast.IdentExpr{Value: "arg"}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"arg"}},
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{Exprs: []ast.Expr{arg}},
+		},
+	}
+	g := cfg.Build(fn)
+	bindings := g.Bindings()
+	sym, ok := bindings.SymbolOf(arg)
+	if !ok || sym == 0 {
+		t.Fatal("missing arg symbol")
+	}
+	facts := &pathObservationFactsStub{
+		factsStub: factsStub{sym: typ.Unknown},
+		observation: flow.PathObservation{
+			Type:   typ.String,
+			State:  flow.StateResolved,
+			Source: flow.PathObservationFactProjection,
+		},
+	}
+
+	got := ObservedArgumentType(&api.FuncResult{
+		Graph:          g,
+		ModuleBindings: bindings,
+		Facts:          facts,
+	}, g.Entry(), arg, nil, bindings)
+
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("ObservedArgumentType via PathObservationFacts = %v, want string", got)
+	}
+	if facts.query.Point != g.Entry() ||
+		facts.query.Phase != flow.PathReadPre ||
+		!facts.query.PreserveProof ||
+		facts.query.AllowConditionProof ||
+		facts.query.Path.Symbol != sym {
+		t.Fatalf("PathObservationQuery = %#v", facts.query)
+	}
+}
+
+func TestObservedArgumentTypeIgnoresDeclaredOnlyPathObservation(t *testing.T) {
+	arg := &ast.IdentExpr{Value: "arg"}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"arg"}},
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{Exprs: []ast.Expr{arg}},
+		},
+	}
+	g := cfg.Build(fn)
+	bindings := g.Bindings()
+	sym, ok := bindings.SymbolOf(arg)
+	if !ok || sym == 0 {
+		t.Fatal("missing arg symbol")
+	}
+	facts := &pathObservationFactsStub{
+		factsStub: factsStub{sym: typ.String},
+		observation: flow.PathObservation{
+			Type:   typ.String,
+			State:  flow.StateResolved,
+			Source: flow.PathObservationDeclared,
+		},
+	}
+
+	got := ObservedArgumentType(&api.FuncResult{
+		Graph:          g,
+		ModuleBindings: bindings,
+		Facts:          facts,
+	}, g.Entry(), arg, typ.Number, bindings)
+
+	if !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("ObservedArgumentType declared-only fallback = %v, want current number", got)
+	}
+}
+
+func TestProjectorConstResolverUsesInputsWithoutSolution(t *testing.T) {
+	keyIdent := &ast.IdentExpr{Value: "key"}
+	objIdent := &ast.IdentExpr{Value: "obj"}
+	read := &ast.AttrGetExpr{
+		Object:    objIdent,
+		Key:       keyIdent,
+		KeySyntax: ast.AttrKeyIndex,
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"obj"}},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"key"},
+				Exprs: []ast.Expr{&ast.StringExpr{Value: "name"}},
+			},
+			&ast.ReturnStmt{Exprs: []ast.Expr{read}},
+		},
+	}
+	g := cfg.Build(fn)
+	bindings := g.Bindings()
+
+	var returnPoint cfg.Point
+	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
+		returnPoint = p
+	})
+	if returnPoint == 0 {
+		t.Fatal("return point not found")
+	}
+	keySym, ok := g.SymbolAt(returnPoint, "key")
+	if !ok || keySym == 0 {
+		t.Fatalf("key symbol at return point = %d, %v; want visible symbol", keySym, ok)
+	}
+	objSym, ok := g.SymbolAt(returnPoint, "obj")
+	if !ok || objSym == 0 {
+		t.Fatalf("obj symbol at return point = %d, %v; want visible symbol", objSym, ok)
+	}
+
+	projector := New(Config{
+		Graph:    g,
+		Bindings: bindings,
+		Inputs: &flow.Inputs{
+			ConstValues: map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue{
+				keySym: {
+					returnPoint: {Kind: flow.ConstString, Str: "name"},
+				},
+			},
+		},
+	})
+
+	got := projector.pathOfExpr(read, returnPoint)
+	if got.Symbol != objSym || len(got.Segments) != 1 ||
+		got.Segments[0].Kind != constraint.SegmentIndexString || got.Segments[0].Name != "name" {
+		t.Fatalf("pathOfExpr with input const facts = %#v, want obj[\"name\"]", got)
+	}
+}
+
+func TestProjectorDeclaredPathProofRequiresAnnotation(t *testing.T) {
+	ident := &ast.IdentExpr{Value: "value"}
+	bindings := bind.NewBindingTable()
+	const sym cfg.SymbolID = 15
+	bindings.Bind(ident, sym)
+
+	unannotated := New(Config{
+		Bindings: bindings,
+		Facts:    factsStub{sym: typ.String},
+	})
+	if got := unannotated.declaredPathProofType(1, ident); got != nil {
+		t.Fatalf("unannotated declaredPathProofType = %v, want nil", got)
+	}
+
+	annotated := New(Config{
+		Bindings: bindings,
+		Facts: annotatedFactsStub{
+			factsStub: factsStub{sym: typ.String},
+			annotated: map[cfg.SymbolID]bool{
+				sym: true,
+			},
+		},
+	})
+	if got := annotated.declaredPathProofType(1, ident); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("annotated declaredPathProofType = %v, want string", got)
+	}
+}
+
+func TestProjector_ExpectedAnyCoercionRequiresProductGradualEvidence(t *testing.T) {
+	ident := &ast.IdentExpr{Value: "value"}
+	bindings := bind.NewBindingTable()
+	const sym cfg.SymbolID = 12
+	bindings.Bind(ident, sym)
+
+	strict := New(Config{
+		Bindings: bindings,
+		Facts: productFactsStub{
+			factsStub: factsStub{sym: typ.Any},
+			values:    map[cfg.SymbolID]product.AbstractValue{sym: product.FromType(typ.Any)},
+		},
+	}).TypeOfWithExpected(ident, 1, typ.String)
+	if !typ.TypeEquals(strict, typ.Any) {
+		t.Fatalf("strict any with expected string = %v, want any", strict)
+	}
+
+	gradual := New(Config{
+		Bindings: bindings,
+		Facts: productFactsStub{
+			factsStub: factsStub{sym: typ.Any},
+			values:    map[cfg.SymbolID]product.AbstractValue{sym: product.GradualAny()},
+		},
+	}).TypeOfWithExpected(ident, 1, typ.String)
+	if !typ.TypeEquals(gradual, typ.String) {
+		t.Fatalf("gradual any with expected string = %v, want string", gradual)
+	}
+}
+
+func TestProjector_ProductGradualEvidenceOverridesUnannotatedParamFallback(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"value"}}}
+	g := cfg.Build(fn)
+	syms := g.ParamSymbols()
+	if len(syms) != 1 || syms[0] == 0 {
+		t.Fatalf("ParamSymbols() = %v, want one non-zero symbol", syms)
+	}
+	ident := &ast.IdentExpr{Value: "value"}
+	bindings := bind.NewBindingTable()
+	bindings.Bind(ident, syms[0])
+
+	compatFallback := New(Config{
+		Graph:    g,
+		Bindings: bindings,
+		Facts:    factsStub{syms[0]: typ.Any},
+	}).TypeOfWithExpected(ident, g.Entry(), typ.String)
+	if !typ.TypeEquals(compatFallback, typ.String) {
+		t.Fatalf("unannotated fallback any with expected string = %v, want string", compatFallback)
+	}
+
+	strictProduct := New(Config{
+		Graph:    g,
+		Bindings: bindings,
+		Facts: productFactsStub{
+			factsStub: factsStub{syms[0]: typ.Any},
+			values:    map[cfg.SymbolID]product.AbstractValue{syms[0]: product.FromType(typ.Any)},
+		},
+	}).TypeOfWithExpected(ident, g.Entry(), typ.String)
+	if !typ.TypeEquals(strictProduct, typ.Any) {
+		t.Fatalf("strict product any with expected string = %v, want any", strictProduct)
+	}
+}
+
+func TestProjector_GlobalIdentUsesSymbolFactsBeforeNameMap(t *testing.T) {
+	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{
+		&ast.ReturnStmt{Exprs: []ast.Expr{&ast.IdentExpr{Value: "print"}}},
+	}}
+	g := cfg.Build(fn, "print")
+	sym, ok := g.GlobalSymbol("print")
+	if !ok || sym == 0 {
+		t.Fatal("print global symbol not found")
+	}
+	ident := &ast.IdentExpr{Value: "print"}
+	bindings := bind.NewBindingTable()
+	bindings.Bind(ident, sym)
+	bindings.SetKind(sym, cfg.SymbolGlobal)
+
+	observed := New(Config{
+		Graph:    g,
+		Bindings: bindings,
+		Facts:    factsStub{sym: typ.String},
+	}).TypeOf(ident, g.Entry())
+
+	if !typ.TypeEquals(observed, typ.String) {
+		t.Fatalf("TypeOf(global ident) = %v, want string", observed)
 	}
 }
 
@@ -195,7 +880,7 @@ func TestProjector_FunctionLiteralUsesActualBeforeExpected(t *testing.T) {
 	expected := typ.Func().Param("s", typ.String).Returns(typ.String).Build()
 
 	observed := New(Config{
-		LiteralSignatures: map[*ast.FunctionExpr]*typ.Function{fn: actual},
+		LiteralSignatureProvider: api.LiteralSigsLookup{fn: actual},
 	}).TypeOfWithExpected(fn, 1, expected)
 
 	if !typ.TypeEquals(observed, actual) {
@@ -378,8 +1063,10 @@ func TestProjector_FunctionLiteralUsesCanonicalProjection(t *testing.T) {
 	want := typ.Func().Param("self", typ.Unknown).Returns(typ.Number).Build()
 
 	observed := New(Config{
-		Bindings:          bindings,
-		LiteralSignatures: map[*ast.FunctionExpr]*typ.Function{fn: staleLiteral},
+		Bindings: bindings,
+		LiteralSignatureProvider: api.LiteralSigsLookup{
+			fn: staleLiteral,
+		},
 		FunctionType: func(candidate cfg.SymbolID) typ.Type {
 			if candidate == sym {
 				return want

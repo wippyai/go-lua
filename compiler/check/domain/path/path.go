@@ -24,11 +24,11 @@ type versionedGraph interface {
 }
 
 // StaticKeySegment converts a syntactically static table-constructor key
-// expression into a path segment.
+// expression into a path segment using the legacy hand-built-AST heuristic.
 //
 // Table-constructor semantics:
 //   - identifier field: {foo = v}  -> SegmentField("foo")
-//   - string key: {["foo"] = v}    -> SegmentField("foo")
+//   - unknown string key "foo"     -> SegmentField("foo")
 //   - string key: {["x-y"] = v}    -> SegmentIndexString("x-y")
 //   - number key: {[1] = v}        -> SegmentIndexInt(1)
 //
@@ -37,17 +37,48 @@ func StaticKeySegment(key ast.Expr) (constraint.Segment, bool) {
 	return pathseg.StaticTableFieldKeySegment(key)
 }
 
+// StaticFieldSegment converts a full table-constructor field into a path
+// segment, preserving parser-produced name-vs-bracket syntax when available.
+func StaticFieldSegment(field *ast.Field) (constraint.Segment, bool) {
+	return pathseg.StaticTableFieldSegment(field)
+}
+
+// StaticFieldSegmentWithConst converts a full table-constructor field into a
+// path segment, resolving compile-time constant bracket keys without collapsing
+// bracket strings into dot fields.
+func StaticFieldSegmentWithConst(field *ast.Field, constResolver func(string) *flow.ConstValue) (constraint.Segment, bool) {
+	return pathseg.StaticTableFieldSegmentWithConst(field, constResolver)
+}
+
+// TableFieldMatchesSegment reports whether a table-constructor field lowers
+// exactly to segment under parser-preserved table-key syntax.
+func TableFieldMatchesSegment(field *ast.Field, segment constraint.Segment) bool {
+	return pathseg.TableFieldMatchesSegment(field, segment)
+}
+
+// TableFieldMatchesSegmentWithConst is TableFieldMatchesSegment plus
+// compile-time constant resolution for bracket-syntax dynamic identifiers.
+func TableFieldMatchesSegmentWithConst(field *ast.Field, segment constraint.Segment, constResolver func(string) *flow.ConstValue) bool {
+	return pathseg.TableFieldMatchesSegmentWithConst(field, segment, constResolver)
+}
+
 // StaticAttrKeySegment converts a syntactically static attribute/index key into
-// a path segment.
+// a path segment using the legacy hand-built-AST heuristic.
 //
 // Attribute semantics:
 //   - dot field: obj.foo            -> SegmentField("foo")
-//   - string key: obj["foo"]        -> SegmentField("foo")
+//   - unknown string key "foo"      -> SegmentField("foo")
 //   - string key: obj["x-y"]        -> SegmentIndexString("x-y")
 //   - number key: obj[1]            -> SegmentIndexInt(1)
 //   - dynamic identifier: obj[key]  -> rejected
 func StaticAttrKeySegment(key ast.Expr) (constraint.Segment, bool) {
 	return pathseg.StaticAttrKeySegment(key)
+}
+
+// StaticAttrSegment converts a full attribute/index expression into a path
+// segment using the parser's dot-vs-bracket syntax bit when available.
+func StaticAttrSegment(attr *ast.AttrGetExpr) (constraint.Segment, bool) {
+	return pathseg.StaticAttrSegment(attr)
 }
 
 // StaticAttrKeySegmentWithConst resolves compile-time constant attribute/index
@@ -68,6 +99,38 @@ func StaticAttrKeySegmentWithConst(key ast.Expr, constResolver func(string) *flo
 	switch val.Kind {
 	case flow.ConstString:
 		return StaticAttrKeySegment(&ast.StringExpr{Value: val.Str})
+	case flow.ConstInt:
+		return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(val.Int)}, true
+	case flow.ConstFloat:
+		if idx, ok := pathkey.FloatToSafeInt(val.Float); ok {
+			return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx}, true
+		}
+	}
+	return constraint.Segment{}, false
+}
+
+// StaticAttrSegmentWithConst resolves compile-time constant attribute/index keys
+// using the AttrGetExpr syntax bit. Parsed x["foo"] remains a string-index path,
+// while parsed x.foo remains a dot-field path. AttrKeyUnknown preserves legacy
+// behavior for manually constructed ASTs.
+func StaticAttrSegmentWithConst(attr *ast.AttrGetExpr, constResolver func(string) *flow.ConstValue) (constraint.Segment, bool) {
+	if attr == nil {
+		return constraint.Segment{}, false
+	}
+	if seg, ok := StaticAttrSegment(attr); ok {
+		return seg, true
+	}
+	ident, ok := attr.Key.(*ast.IdentExpr)
+	if !ok || constResolver == nil {
+		return constraint.Segment{}, false
+	}
+	val := constResolver(ident.Value)
+	if val == nil {
+		return constraint.Segment{}, false
+	}
+	switch val.Kind {
+	case flow.ConstString:
+		return pathseg.StaticAttrKeySegmentWithSyntax(&ast.StringExpr{Value: val.Str}, attr.KeySyntax)
 	case flow.ConstInt:
 		return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(val.Int)}, true
 	case flow.ConstFloat:
@@ -116,7 +179,7 @@ func FromExprWithBindings(expr ast.Expr, constResolver func(string) *flow.ConstV
 		if base.IsEmpty() {
 			return constraint.Path{}
 		}
-		if seg, ok := StaticAttrKeySegmentWithConst(e.Key, constResolver); ok {
+		if seg, ok := StaticAttrSegmentWithConst(e, constResolver); ok {
 			return base.Append(seg)
 		}
 	}

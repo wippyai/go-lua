@@ -342,18 +342,9 @@ end
 				typeAt := solution.TypeAt(p, path)
 				narrowed := solution.NarrowedTypeAt(p, path)
 				cond := solution.ConditionAt(p)
-				vkey := solution.DebugVersionedKey("found", p)
-				if typeAt != nil || narrowed != nil || cond.HasConstraints() || vkey != "" {
-					t.Logf("    Point %v: vKey=%q TypeAt=%v NarrowedTypeAt=%v Condition=%v",
-						p, vkey, typeAt, narrowed, cond.AllConstraints())
-				}
-			}
-
-			// Debug: show version values
-			t.Log("  Version values for found@* keys:")
-			for key, val := range solution.DebugVersionValues() {
-				if len(key) >= 5 && key[:5] == "found" {
-					t.Logf("    %s: %v", key, val)
+				if typeAt != nil || narrowed != nil || cond.HasConstraints() {
+					t.Logf("    Point %v: TypeAt=%v NarrowedTypeAt=%v Condition=%v",
+						p, typeAt, narrowed, cond.AllConstraints())
 				}
 			}
 		}

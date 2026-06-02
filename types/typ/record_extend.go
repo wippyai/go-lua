@@ -46,6 +46,9 @@ func ExtendRecordWithField(base Type, field string, fieldType Type) Type {
 			builder.Field(f.Name, f.Type)
 		}
 	}
+	for _, m := range rec.StaticMembers {
+		builder.AddStaticMember(m)
+	}
 	if !added {
 		builder.Field(field, fieldType)
 	}

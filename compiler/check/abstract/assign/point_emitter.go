@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/cond"
 	"github.com/wippyai/go-lua/compiler/check/abstract/constprop"
 	"github.com/wippyai/go-lua/compiler/check/abstract/decl"
+	"github.com/wippyai/go-lua/compiler/check/abstract/literal"
 	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
 	"github.com/wippyai/go-lua/compiler/check/abstract/tblutil"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
@@ -108,7 +109,7 @@ func (e *assignmentPointEmitter) emitIdentTarget(i int, target cfg.AssignTarget,
 	sourceInfo := e.assignmentSourceForIdent(i, source)
 	sourceInfo = e.withAssignmentSourceProjection(i, sourceInfo)
 	if link := e.predicateLinkForIdent(i); link != nil {
-		e.state.inputs.PredicateLinks[predicate.LinkKey(target.Name, e.p)] = *link
+		e.state.inputs.PredicateLinks[predicate.LinkKey(sym, e.p)] = *link
 	}
 	e.emitKeysProvenance(i, sym)
 	if src := e.containerElementSource(i); !src.IsZero() {
@@ -273,7 +274,7 @@ func (e *assignmentPointEmitter) sourceInfoFromExpr(source ast.Expr) flow.Assign
 	if src, ok := lengthIndexSourceFromAttr(attr, e.constResolver, e.state.bindings); ok {
 		return src
 	}
-	if _, isStatic := staticSegmentForAttrKey(attr.Key, e.constResolver); isStatic {
+	if _, isStatic := staticSegmentForAttr(attr, e.constResolver); isStatic {
 		return flow.AssignmentSource{}
 	}
 	mp := path.FromExprWithBindings(attr.Object, e.constResolver, e.state.bindings)
@@ -655,35 +656,29 @@ func (e *assignmentPointEmitter) indexBasePath(target cfg.AssignTarget) constrai
 }
 
 func (e *assignmentPointEmitter) indexKeyInfo(target cfg.AssignTarget) (constraint.Segment, bool, typ.Type) {
-	switch k := target.Key.(type) {
-	case *ast.StringExpr:
-		seg, ok := path.StaticKeySegment(k)
-		return seg, ok, nil
-	case *ast.IdentExpr:
-		if e.constResolver == nil {
-			return constraint.Segment{}, false, nil
-		}
-		val := e.constResolver(k.Value)
-		if val == nil {
-			return constraint.Segment{}, false, nil
-		}
-		switch val.Kind {
-		case flow.ConstString:
-			seg, ok := path.StaticKeySegment(&ast.StringExpr{Value: val.Str})
-			return seg, ok, nil
-		case flow.ConstInt:
-			return constraint.Segment{}, false, typ.Integer
-		case flow.ConstFloat:
-			return constraint.Segment{}, false, typ.Number
-		}
-	case *ast.NumberExpr:
-		if val := constValueFromIndexKey(target.Key); val != nil {
+	if target.Key == nil {
+		return constraint.Segment{}, false, nil
+	}
+	attr := &ast.AttrGetExpr{Key: target.Key, KeySyntax: ast.AttrKeyIndex}
+	if seg, ok := path.StaticAttrSegmentWithConst(attr, e.constResolver); ok {
+		return seg, true, nil
+	}
+	if ident, ok := target.Key.(*ast.IdentExpr); ok && e.constResolver != nil {
+		if val := e.constResolver(ident.Value); val != nil {
 			switch val.Kind {
 			case flow.ConstInt:
 				return constraint.Segment{}, false, typ.Integer
 			case flow.ConstFloat:
 				return constraint.Segment{}, false, typ.Number
 			}
+		}
+	}
+	if val := constValueFromIndexKey(target.Key); val != nil {
+		switch val.Kind {
+		case flow.ConstInt:
+			return constraint.Segment{}, false, typ.Integer
+		case flow.ConstFloat:
+			return constraint.Segment{}, false, typ.Number
 		}
 	}
 	return constraint.Segment{}, false, nil
@@ -705,6 +700,9 @@ func (e *assignmentPointEmitter) emitDynamicIndexTarget(
 	if keyIdent, ok := target.Key.(*ast.IdentExpr); ok && e.state.bindings != nil {
 		keySym, _ = e.state.bindings.SymbolOf(keyIdent)
 		keyVar = resolve.RootNameFromBindings(e.state.bindings, keySym, keyIdent.Value)
+	}
+	if keyType == nil && target.Key != nil {
+		keyType = literal.KeyTypeFromExpr(target.Key, e.constResolver)
 	}
 	if keyType == nil && target.Key != nil && e.state.wrappedSynth != nil {
 		keyType = e.state.wrappedSynth(target.Key, e.p)

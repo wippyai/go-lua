@@ -740,6 +740,35 @@ func (g *Graph) NestedFunctions() []NestedFunc {
 	return g.nested
 }
 
+// CellBackedSymbols returns symbols declared by this graph that are captured by
+// nested functions. Those lexical locations are shared cells, so transfer stores
+// them in PointState.Cells instead of the ordinary Env.
+func (g *Graph) CellBackedSymbols() []basecfg.SymbolID {
+	if g == nil || g.bindings == nil {
+		return nil
+	}
+	set := make(map[basecfg.SymbolID]struct{})
+	for _, nested := range g.nested {
+		if nested.Func == nil {
+			continue
+		}
+		for _, sym := range g.bindings.CapturedSymbols(nested.Func) {
+			if g.OwnsSymbol(sym) {
+				set[sym] = struct{}{}
+			}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]basecfg.SymbolID, 0, len(set))
+	for sym := range set {
+		out = append(out, sym)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
 // LocalFunctionAssignments returns local identifiers bound directly to function literals.
 func (g *Graph) LocalFunctionAssignments() []LocalFunctionAssignment {
 	if g == nil {
@@ -1351,6 +1380,33 @@ func (g *Graph) SymbolKind(sym basecfg.SymbolID) (basecfg.SymbolKind, bool) {
 	return kind, ok
 }
 
+// OwnsSymbol reports whether sym is declared by this graph as a parameter or
+// local. Globals and enclosing-scope upvalues are not owned by the graph.
+func (g *Graph) OwnsSymbol(sym basecfg.SymbolID) bool {
+	if g == nil || sym == 0 {
+		return false
+	}
+	if kind, ok := g.SymbolKind(sym); ok {
+		return kind == basecfg.SymbolLocal || kind == basecfg.SymbolParam
+	}
+	for _, param := range g.ParamSymbols() {
+		if param == sym {
+			return true
+		}
+	}
+	return false
+}
+
+// IsFreeSymbol reports whether sym is not declared by this graph. It is the CFG
+// topology predicate for upvalue/global capture filtering; callers usually apply
+// it to symbols already returned by the binding table's CapturedSymbols.
+func (g *Graph) IsFreeSymbol(sym basecfg.SymbolID) bool {
+	if g == nil || sym == 0 {
+		return false
+	}
+	return !g.OwnsSymbol(sym)
+}
+
 // SymbolCount returns the number of symbols tracked by the graph.
 func (g *Graph) SymbolCount() int {
 	if g == nil {
@@ -1437,4 +1493,20 @@ func (g *Graph) FuncDefPathAt(p Point) constraint.Path {
 		return info.TargetPath
 	}
 	return constraint.Path{}
+}
+
+// FuncDefPathForSymbol returns the structural target path for the function
+// definition whose published function symbol is sym.
+func (g *Graph) FuncDefPathForSymbol(sym basecfg.SymbolID) (constraint.Path, bool) {
+	if g == nil || sym == 0 {
+		return constraint.Path{}, false
+	}
+	for _, p := range g.orderedFuncDefPoints {
+		info := g.FuncDef(p)
+		if info == nil || info.Symbol != sym || info.TargetPath.IsEmpty() {
+			continue
+		}
+		return info.TargetPath, true
+	}
+	return constraint.Path{}, false
 }

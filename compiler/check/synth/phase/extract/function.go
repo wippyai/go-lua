@@ -43,8 +43,10 @@ import (
 	abstractreturns "github.com/wippyai/go-lua/compiler/check/abstract/returns"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/calleffect"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
@@ -263,16 +265,15 @@ func (s *Synthesizer) synthFunctionTypeBody(
 	}
 
 	if len(fn.TypeParams) > 0 {
-		typeParams := make(map[string]typ.Type, len(fn.TypeParams))
 		for _, tp := range fn.TypeParams {
 			var constraint typ.Type
 			if tp.Constraint != nil {
 				constraint = s.ResolveType(tp.Constraint, resolveScope)
 			}
-			typeParams[tp.Name] = typ.NewTypeParam(tp.Name, constraint)
-			builder = builder.TypeParam(tp.Name, constraint)
+			param := typ.NewTypeParam(tp.Name, constraint)
+			builder = builder.TypeParamRef(param)
+			resolveScope = resolveScope.WithTypeParams(map[string]typ.Type{tp.Name: param})
 		}
-		resolveScope = resolveScope.WithTypeParams(typeParams)
 	}
 
 	implicitSelf := core.HasImplicitSelfParam(fn, s.deps.ModuleBindings)
@@ -568,11 +569,11 @@ func visibleSiblingFunctionDef(def api.FunctionDefinitionEvidence, current *ast.
 	return ok && visibleSym == def.Symbol
 }
 
-func (s *Synthesizer) returnInferenceGlobals() (map[string]typ.Type, map[cfg.SymbolID]string) {
-	var globalTypes map[string]typ.Type
+func (s *Synthesizer) returnInferenceGlobals() (globalenv.TypeOverlay, map[cfg.SymbolID]string) {
+	var globalTypes globalenv.TypeOverlay
 	var moduleAliases map[cfg.SymbolID]string
 	if s.deps.CheckCtx != nil {
-		globalTypes = s.deps.CheckCtx.GlobalTypes()
+		globalTypes = s.deps.CheckCtx.GlobalTypeOverlay()
 		moduleAliases = s.deps.CheckCtx.ModuleAliases()
 	}
 	if moduleAliases == nil {
@@ -586,7 +587,7 @@ type returnSynthFactory struct {
 	fnGraph       *cfg.Graph
 	resolveScope  *scope.State
 	overlay       map[cfg.SymbolID]typ.Type
-	globalTypes   map[string]typ.Type
+	globalTypes   globalenv.TypeOverlay
 	moduleAliases map[cfg.SymbolID]string
 	functionFacts api.FunctionFacts
 	graphEvidence api.FlowEvidence
@@ -597,7 +598,7 @@ func (s *Synthesizer) newReturnSynthFactory(
 	fnGraph *cfg.Graph,
 	resolveScope *scope.State,
 	overlay map[cfg.SymbolID]typ.Type,
-	globalTypes map[string]typ.Type,
+	globalTypes globalenv.TypeOverlay,
 	moduleAliases map[cfg.SymbolID]string,
 	functionFacts api.FunctionFacts,
 	graphEvidence api.FlowEvidence,
@@ -626,19 +627,19 @@ func (f *returnSynthFactory) Synth() *Synthesizer {
 		Bindings:      f.fnGraph.Bindings(),
 		BaseScope:     f.resolveScope,
 		DeclaredTypes: f.overlay,
-		GlobalTypes:   f.globalTypes,
+		GlobalOverlay: f.globalTypes,
 		ModuleAliases: f.moduleAliases,
 		FunctionType:  functionfact.ProjectionLookup(f.functionFacts, functionfact.ProjectionSibling, f.owner.phase),
 	})
 	deps := &Deps{
-		Ctx:            f.owner.deps.Ctx,
-		Types:          f.owner.deps.Types,
-		DefaultScope:   f.resolveScope,
-		Manifests:      f.owner.deps.Manifests,
-		CheckCtx:       prelimCtx,
-		FunctionFacts:  f.functionFacts,
-		Graphs:         f.owner.deps.Graphs,
-		Evidence:       f.graphEvidence,
+		Ctx:               f.owner.deps.Ctx,
+		Types:             f.owner.deps.Types,
+		DefaultScope:      f.resolveScope,
+		Manifests:         f.owner.deps.Manifests,
+		CheckCtx:          prelimCtx,
+		FunctionFacts:     f.functionFacts,
+		Graphs:            f.owner.deps.Graphs,
+		Evidence:          f.graphEvidence,
 		ModuleBindings:    f.owner.deps.ModuleBindings,
 		ModuleAliases:     f.moduleAliases,
 		Paths:             f.owner.deps.Paths,
@@ -811,7 +812,7 @@ func (s *Synthesizer) newReturnInferenceSynth(
 	fnGraph *cfg.Graph,
 	resolveScope *scope.State,
 	overlay map[cfg.SymbolID]typ.Type,
-	globalTypes map[string]typ.Type,
+	globalTypes globalenv.TypeOverlay,
 	moduleAliases map[cfg.SymbolID]string,
 	functionFacts api.FunctionFacts,
 	graphEvidence api.FlowEvidence,
@@ -821,20 +822,20 @@ func (s *Synthesizer) newReturnInferenceSynth(
 		Bindings:      fnGraph.Bindings(),
 		BaseScope:     resolveScope,
 		DeclaredTypes: overlay,
-		GlobalTypes:   globalTypes,
+		GlobalOverlay: globalTypes,
 		ModuleAliases: moduleAliases,
 		FunctionType:  functionfact.ProjectionLookup(functionFacts, functionfact.ProjectionSibling, s.phase),
 	})
 
 	deps := &Deps{
-		Ctx:            s.deps.Ctx,
-		Types:          s.deps.Types,
-		DefaultScope:   resolveScope,
-		Manifests:      s.deps.Manifests,
-		CheckCtx:       fnCheckCtx,
-		FunctionFacts:  functionFacts,
-		Graphs:         s.deps.Graphs,
-		Evidence:       graphEvidence,
+		Ctx:               s.deps.Ctx,
+		Types:             s.deps.Types,
+		DefaultScope:      resolveScope,
+		Manifests:         s.deps.Manifests,
+		CheckCtx:          fnCheckCtx,
+		FunctionFacts:     functionFacts,
+		Graphs:            s.deps.Graphs,
+		Evidence:          graphEvidence,
 		ModuleBindings:    s.deps.ModuleBindings,
 		ModuleAliases:     moduleAliases,
 		Paths:             s.deps.Paths,
@@ -1171,10 +1172,10 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 			bodyEvidence,
 		)
 
-		var globalTypes map[string]typ.Type
+		var globalTypes globalenv.TypeOverlay
 		var moduleAliases map[cfg.SymbolID]string
 		if s.deps.CheckCtx != nil {
-			globalTypes = s.deps.CheckCtx.GlobalTypes()
+			globalTypes = s.deps.CheckCtx.GlobalTypeOverlay()
 			moduleAliases = s.deps.CheckCtx.ModuleAliases()
 		}
 		if moduleAliases == nil {
@@ -1186,17 +1187,17 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 			Bindings:      graph.Bindings(),
 			BaseScope:     sc,
 			DeclaredTypes: overlay,
-			GlobalTypes:   globalTypes,
+			GlobalOverlay: globalTypes,
 			ModuleAliases: moduleAliases,
 			FunctionType:  functionfact.ProjectionLookup(functionFacts, functionfact.ProjectionFlowInput, s.phase),
 		})
 		tempDeps := &Deps{
-			Ctx:            s.deps.Ctx,
-			Types:          s.deps.Types,
-			DefaultScope:   sc,
-			Manifests:      s.deps.Manifests,
-			CheckCtx:       fnCheckCtx,
-			FunctionFacts:  functionFacts,
+			Ctx:               s.deps.Ctx,
+			Types:             s.deps.Types,
+			DefaultScope:      sc,
+			Manifests:         s.deps.Manifests,
+			CheckCtx:          fnCheckCtx,
+			FunctionFacts:     functionFacts,
 			Graphs:            s.deps.Graphs,
 			Evidence:          s.graphEvidence(graph),
 			ModuleBindings:    s.deps.ModuleBindings,
@@ -1217,7 +1218,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 	}
 
 	rootEvidence := s.graphEvidence(fnGraph)
-	sources := []functionfact.CallbackEnvOverlaySource{{
+	sources := []callbackenv.Source{{
 		Graph:     fnGraph,
 		Evidence:  rootEvidence,
 		SynthExpr: synthExprForGraph(fnGraph),
@@ -1227,23 +1228,23 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 		if childGraph == nil || childGraph == fnGraph {
 			continue
 		}
-		sources = append(sources, functionfact.CallbackEnvOverlaySource{
+		sources = append(sources, callbackenv.Source{
 			Graph:     childGraph,
 			Evidence:  s.graphEvidence(childGraph),
 			SynthExpr: synthExprForGraph(childGraph),
 		})
 	}
 
-	overlays := functionfact.InferCallbackEnvOverlaysFromSources(sources, paramSlots, s.deps.ModuleBindings)
+	overlays := callbackenv.InferFromSources(sources, paramSlots, s.deps.ModuleBindings)
 	if len(overlays) == 0 {
 		return nil
 	}
 
 	spec := contract.NewSpec()
-	for paramIdx, ov := range overlays {
-		spec.WithCallback(paramIdx, &contract.CallbackSpec{
+	for _, param := range overlays {
+		spec.WithCallback(param.ParamIndex, &contract.CallbackSpec{
 			Cardinality: contract.CardExactlyOnce,
-			EnvOverlay:  ov,
+			EnvOverlay:  param.Overlay.ToContractMap(),
 		})
 	}
 	return spec

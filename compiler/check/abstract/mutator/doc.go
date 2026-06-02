@@ -1,24 +1,24 @@
-// Package mutator extracts container mutation operations from call sites.
+// Package mutator extracts table mutation operations from call sites.
 //
-// This package identifies calls that mutate container types (arrays, maps, channels)
-// and produces flow inputs that track element type constraints. It enables the type
-// checker to infer container element types from usage patterns.
+// This package identifies calls that mutate table-like values and produces flow
+// inputs that track element type and length constraints. It enables the legacy
+// flow solver to infer table element types from usage patterns.
 //
-// # Container Mutators
+// # Table Mutators
 //
-// A container mutator is a function that adds elements to a container:
+// A table mutator is a function or syntax form that adds elements to a table:
 //
 //	table.insert(arr, value)  -- adds value to arr
-//	channel:send(msg)         -- sends msg through channel
 //	map[key] = value          -- assigns value at key
 //
-// The package detects these patterns by matching call signatures against known
-// mutator specs (from type annotations or builtins) and extracting the target
-// container and value expressions.
+// Spec-level container mutations such as channel:send(msg) are handled by the
+// canonical product transfer through ContainerElementUnion effects, not by a
+// legacy flow-input replay lane.
 //
 // # Flow Integration
 //
-// Extracted mutations become [flow.ContainerMutatorAssignment] records:
+// Extracted table.insert-like mutations become [flow.TableMutatorAssignment]
+// records:
 //
 //   - Target: The container being mutated (path + symbol)
 //   - Value: The element being added (expression + synthesized type)

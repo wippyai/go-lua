@@ -3,11 +3,11 @@ package product
 import "github.com/wippyai/go-lua/types/typ"
 
 // vector.go provides the slice-level admission and egress boundary for
-// interprocedural carriers (api.FunctionFact parameter/return vectors and the
-// captured/constructor field maps). A carrier stores []AbstractValue; producers
-// lift their computed typ.Type vectors here at admission and consumers project
-// them back at egress. The per-element conversion is FromType / ProjectValue, so
-// the round-trip is the value-domain lossless inverse the carriers rely on.
+// interprocedural carriers (api.FunctionFact parameter/return vectors). A
+// carrier stores []AbstractValue; producers lift their computed typ.Type vectors
+// here at admission and consumers project them back at egress. The per-element
+// conversion is FromType / ProjectValue, so the round-trip is the value-domain
+// lossless inverse the carriers rely on.
 
 // LiftVector lifts a typ.Type evidence vector into the interned AbstractValue
 // carrier vector. A nil slot lifts to the zero AbstractValue so an unoccupied
@@ -40,38 +40,6 @@ func ProjectVector(values []AbstractValue) []typ.Type {
 			continue
 		}
 		out[i] = v.ProjectValue()
-	}
-	return out
-}
-
-// LiftFieldMap lifts a fieldName->typ.Type map into the interned carrier field
-// map at admission. A nil-typed slot lifts to the zero AbstractValue.
-func LiftFieldMap(fields map[string]typ.Type) map[string]AbstractValue {
-	if len(fields) == 0 {
-		return nil
-	}
-	out := make(map[string]AbstractValue, len(fields))
-	for name, t := range fields {
-		if t == nil {
-			continue
-		}
-		out[name] = FromType(t)
-	}
-	return out
-}
-
-// ProjectFieldMap projects a carrier field map back to its structural
-// fieldName->typ.Type map at egress. A zero-handle slot projects to a nil type.
-func ProjectFieldMap(fields map[string]AbstractValue) map[string]typ.Type {
-	if len(fields) == 0 {
-		return nil
-	}
-	out := make(map[string]typ.Type, len(fields))
-	for name, v := range fields {
-		if v.IsZero() {
-			continue
-		}
-		out[name] = v.ProjectValue()
 	}
 	return out
 }

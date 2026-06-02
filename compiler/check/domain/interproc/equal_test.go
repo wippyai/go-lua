@@ -223,60 +223,20 @@ func TestCapturedFieldAssignsEqual_Empty(t *testing.T) {
 
 func TestCapturedFieldAssignsEqual_DifferentCallee(t *testing.T) {
 	a := api.CapturedFieldAssigns{
-		cfg.SymbolID(1): {cfg.SymbolID(2): {"foo": product.FromType(typ.String)}},
+		cfg.SymbolID(1): {cfg.SymbolID(2): {fieldKey("foo"): product.FromType(typ.String)}},
 	}
 	b := api.CapturedFieldAssigns{
-		cfg.SymbolID(3): {cfg.SymbolID(2): {"foo": product.FromType(typ.String)}},
+		cfg.SymbolID(3): {cfg.SymbolID(2): {fieldKey("foo"): product.FromType(typ.String)}},
 	}
 	if CapturedFieldAssignsEqual(a, b) {
 		t.Error("different callee symbols should not be equal")
 	}
 }
 
-func TestCapturedContainerMutationsEqual_Basic(t *testing.T) {
-	a := api.CapturedContainerMutations{
-		cfg.SymbolID(1): {
-			cfg.SymbolID(2): {
-				{Segments: nil, ValueType: product.FromType(typ.Number)},
-			},
-		},
-	}
-	b := api.CapturedContainerMutations{
-		cfg.SymbolID(1): {
-			cfg.SymbolID(2): {
-				{Segments: nil, ValueType: product.FromType(typ.Number)},
-			},
-		},
-	}
-	if !CapturedContainerMutationsEqual(a, b) {
-		t.Error("same container mutations should be equal")
-	}
-}
-
-func TestCapturedContainerMutationsEqual_DifferentOperatorKind(t *testing.T) {
-	a := api.CapturedContainerMutations{
-		cfg.SymbolID(1): {
-			cfg.SymbolID(2): {
-				{Kind: api.ContainerMutationContainerElement, ValueType: product.FromType(typ.Number)},
-			},
-		},
-	}
-	b := api.CapturedContainerMutations{
-		cfg.SymbolID(1): {
-			cfg.SymbolID(2): {
-				{Kind: api.ContainerMutationTableElement, ValueType: product.FromType(typ.Number)},
-			},
-		},
-	}
-	if CapturedContainerMutationsEqual(a, b) {
-		t.Error("same path with different mutation operators should not be equal")
-	}
-}
-
 func TestCapturedFieldAssignsEqual_DoesNotRepairOptionalFunctionValues(t *testing.T) {
 	fn := typ.Func().Param("fn", typ.Unknown).Build()
-	left := api.CapturedFieldAssigns{1: {2: {"after_all": product.FromType(typ.NewOptional(fn))}}}
-	right := api.CapturedFieldAssigns{1: {2: {"after_all": product.FromType(fn)}}}
+	left := api.CapturedFieldAssigns{1: {2: {fieldKey("after_all"): product.FromType(typ.NewOptional(fn))}}}
+	right := api.CapturedFieldAssigns{1: {2: {fieldKey("after_all"): product.FromType(fn)}}}
 	if CapturedFieldAssignsEqual(left, right) {
 		t.Fatal("equality must compare stored canonical products, not repair non-canonical optional function values")
 	}

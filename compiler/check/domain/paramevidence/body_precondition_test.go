@@ -12,6 +12,66 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+type bodyPreconditionFacts struct {
+	condition constraint.Condition
+	proves    bool
+	observed  map[constraint.PathKey]typ.Type
+}
+
+func (f bodyPreconditionFacts) DeclaredAt(cfg.Point, cfg.SymbolID) flow.TypedValue {
+	return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
+}
+
+func (f bodyPreconditionFacts) RefinedAt(cfg.Point, cfg.SymbolID) flow.TypedValue {
+	return flow.TypedValue{Type: nil, State: flow.StateUnknown}
+}
+
+func (f bodyPreconditionFacts) EffectiveTypeAt(cfg.Point, cfg.SymbolID) flow.TypedValue {
+	return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
+}
+
+func (f bodyPreconditionFacts) IsAnnotated(cfg.SymbolID) bool {
+	return false
+}
+
+func (f bodyPreconditionFacts) ConditionAt(cfg.Point) constraint.Condition {
+	if len(f.condition.Disjuncts) == 0 {
+		return constraint.TrueCondition()
+	}
+	return f.condition
+}
+
+func (f bodyPreconditionFacts) ProvesTypeAt(cfg.Point, constraint.Path, typ.Type) bool {
+	return f.proves
+}
+
+func (f bodyPreconditionFacts) ConditionTypeAt(cfg.Point, constraint.Path) typ.Type {
+	return nil
+}
+
+func (f bodyPreconditionFacts) ConditionedTypeAt(cfg.Point, constraint.Path, constraint.Condition) typ.Type {
+	return nil
+}
+
+func (f bodyPreconditionFacts) ConditionedSeedTypeAt(cfg.Point, constraint.Path, typ.Type, constraint.Path, constraint.Condition) typ.Type {
+	return nil
+}
+
+func (f bodyPreconditionFacts) ObservePath(q flow.PathObservationQuery) flow.PathObservation {
+	if f.observed == nil {
+		return flow.PathObservation{}
+	}
+	t := f.observed[q.Path.Key()]
+	if t == nil {
+		return flow.PathObservation{}
+	}
+	return flow.PathObservation{
+		Type:   t,
+		State:  flow.StateResolved,
+		Source: flow.PathObservationFactProjection,
+	}
+}
+
 func TestBodyPreconditionContext_DerivedLocalPathReachesParameter(t *testing.T) {
 	paramSym := cfg.SymbolID(1)
 	localSym := cfg.SymbolID(2)
@@ -188,6 +248,100 @@ func TestBodyPreconditionContext_MapElementEvidenceUsesAnyKeyWithoutSolvedKeyTyp
 	}
 }
 
+func TestBodyPreconditionContext_MapElementEvidenceUsesPathObservationFactsWithoutFlowSolution(t *testing.T) {
+	mapSym := cfg.SymbolID(1)
+	keySym := cfg.SymbolID(2)
+	keyPath := constraint.NewPath(keySym, "kind")
+	ctx := BodyPreconditionContext{
+		result: &api.FuncResult{
+			Facts: bodyPreconditionFacts{
+				observed: map[constraint.PathKey]typ.Type{
+					keyPath.Key(): typ.String,
+				},
+			},
+		},
+	}
+
+	_, evidence, ok := ctx.sourceEvidenceForDerivedLocal(flow.AssignmentSource{
+		Kind:      flow.AssignmentSourceMapElement,
+		MapPath:   constraint.NewPath(mapSym, "items"),
+		KeyVar:    "kind",
+		KeySymbol: keySym,
+	}, typ.Integer, 5)
+	if !ok {
+		t.Fatal("sourceEvidenceForDerivedLocal() rejected map element source")
+	}
+	want := typ.NewMap(typ.String, typ.Integer)
+	if !typ.TypeEquals(evidence, want) {
+		t.Fatalf("evidence = %v, want %v", evidence, want)
+	}
+}
+
+func TestBodyPreconditionContext_LocalProofUsesConditionProofFactsWithoutFlowSolution(t *testing.T) {
+	paramSym := cfg.SymbolID(1)
+	arg := &ast.IdentExpr{Value: "value"}
+	bindings := bind.NewBindingTable()
+	bindings.Bind(arg, paramSym)
+	ctx := BodyPreconditionContext{
+		result: &api.FuncResult{
+			Facts: bodyPreconditionFacts{proves: true},
+		},
+		bindings:        bindings,
+		paramIndexBySym: map[cfg.SymbolID]int{paramSym: 0},
+	}
+
+	preconditions := ctx.PreconditionsFromCall(4, api.CallEvidence{
+		Point:        4,
+		Info:         &cfg.CallInfo{CalleeSymbol: 9, Args: []ast.Expr{arg}},
+		ExpectedArgs: []typ.Type{typ.String},
+	}, nil, nil)
+
+	if len(preconditions.Body) != 1 || !typ.TypeEquals(preconditions.Body[0], typ.String) {
+		t.Fatalf("body preconditions = %v, want string", preconditions.Body)
+	}
+	if len(preconditions.Public) != 0 {
+		t.Fatalf("locally proven precondition leaked to public contract: %v", preconditions.Public)
+	}
+}
+
+func TestBodyPreconditionContext_ConditionedEvidenceUsesProofAndPathObservationFactsWithoutFlowSolution(t *testing.T) {
+	paramSym := cfg.SymbolID(1)
+	constSym := cfg.SymbolID(2)
+	msg := constraint.NewPath(paramSym, "msg")
+	roleConst := constraint.NewPath(constSym, "prompt").Field("ROLE").Field("FUNCTION_CALL")
+	cond := constraint.FromConstraints(constraint.FieldEqualsPath{
+		Target: msg,
+		Field:  "role",
+		Value:  roleConst,
+	})
+	ctx := BodyPreconditionContext{
+		result: &api.FuncResult{
+			Facts: bodyPreconditionFacts{
+				condition: cond,
+				observed: map[constraint.PathKey]typ.Type{
+					roleConst.Key(): typ.LiteralString("function_call"),
+				},
+			},
+		},
+		paramIndexBySym: map[cfg.SymbolID]int{paramSym: 0},
+	}
+
+	idx, evidence, conditional, ok := ctx.paramEvidenceFromPath(msg.Field("function_call").Field("id"), typ.String, 7, nil)
+	if !ok || idx != 0 {
+		t.Fatalf("paramEvidenceFromPath() = idx %d ok %v, want idx 0 ok true", idx, ok)
+	}
+	if !conditional {
+		t.Fatal("conditioned evidence was not marked conditional")
+	}
+	want := typ.NewRecord().
+		ReadonlyField("role", typ.LiteralString("function_call")).
+		ReadonlyField("function_call", typ.NewRecord().ReadonlyField("id", typ.String).Build()).
+		Build()
+	if !typ.TypeEquals(evidence, want) {
+		t.Fatalf("conditioned evidence = %v, want %v", evidence, want)
+	}
+}
+
 func TestBodyPreconditionContext_RecursiveSelfCallEvidenceStaysBodyLocal(t *testing.T) {
 	paramSym := cfg.SymbolID(1)
 	currentSym := cfg.SymbolID(2)
@@ -266,6 +420,32 @@ func TestConditionedPathEvidenceFromCondition_AddsDiscriminant(t *testing.T) {
 	}
 }
 
+func TestMergeConditionedRecordEvidence_OrdersByStructuralFieldKey(t *testing.T) {
+	evidence := typ.NewRecord().
+		Field("b", typ.String).
+		Field("a", typ.Number).
+		Build()
+	condition := typ.NewRecord().
+		ReadonlyField("b", typ.String).
+		Build()
+
+	got, ok := mergeConditionedRecordEvidence(evidence, condition)
+	if !ok {
+		t.Fatal("mergeConditionedRecordEvidence rejected record evidence")
+	}
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("merged evidence = %T, want record (%v)", got, got)
+	}
+	if len(rec.Fields) != 2 || rec.Fields[0].Name != "a" || rec.Fields[1].Name != "b" {
+		t.Fatalf("merged fields not in structural order: %#v", rec.Fields)
+	}
+	field := rec.GetField("b")
+	if field == nil || !field.Readonly {
+		t.Fatalf("merged duplicate field did not retain readonly evidence: %#v", field)
+	}
+}
+
 func TestConditionedPathEvidenceFromCondition_ResolvesDiscriminantPath(t *testing.T) {
 	msg := constraint.NewPath(1, "msg")
 	roleConst := constraint.NewPath(2, "prompt").Field("ROLE").Field("FUNCTION_CALL")
@@ -314,5 +494,58 @@ func TestConditionedPathEvidenceFromCondition_UnresolvedDiscriminantPathStillGua
 	}
 	if !typ.TypeEquals(got, evidence) {
 		t.Fatalf("unresolved discriminant evidence = %v, want original %v", got, evidence)
+	}
+}
+
+func TestConditionedPathEvidenceFromCondition_TruthyGuardAdmitsFalsyLeaf(t *testing.T) {
+	pageData := constraint.NewPath(1, "page").Field("data_func")
+	evidence := PathEvidence(pageData.Segments, typ.String)
+	cond := constraint.FromConstraints(constraint.Truthy{Path: pageData})
+
+	got, conditional := conditionedPathEvidenceFromCondition(pageData, evidence, cond, nil)
+	if !conditional {
+		t.Fatal("truthy guard did not mark path evidence conditional")
+	}
+	want := typ.NewRecord().
+		ReadonlyField("data_func", typ.NewUnion(typ.String, typ.Nil, typ.False)).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("truthy-conditioned evidence = %v, want %v", got, want)
+	}
+}
+
+func TestConditionedPathEvidenceFromCondition_NotNilGuardAdmitsNilLeaf(t *testing.T) {
+	pageData := constraint.NewPath(1, "page").Field("data_func")
+	evidence := PathEvidence(pageData.Segments, typ.String)
+	cond := constraint.FromConstraints(constraint.NotNil{Path: pageData})
+
+	got, conditional := conditionedPathEvidenceFromCondition(pageData, evidence, cond, nil)
+	if !conditional {
+		t.Fatal("not-nil guard did not mark path evidence conditional")
+	}
+	want := typ.NewRecord().
+		ReadonlyField("data_func", typ.NewOptional(typ.String)).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("not-nil-conditioned evidence = %v, want %v", got, want)
+	}
+}
+
+func TestConditionedPathEvidenceFromCondition_TruthyGuardAdmitsNestedFalsyLeaf(t *testing.T) {
+	nested := constraint.NewPath(1, "page").Field("meta").Field("data_func")
+	evidence := PathEvidence(nested.Segments, typ.String)
+	cond := constraint.FromConstraints(constraint.Truthy{Path: nested})
+
+	got, conditional := conditionedPathEvidenceFromCondition(nested, evidence, cond, nil)
+	if !conditional {
+		t.Fatal("nested truthy guard did not mark path evidence conditional")
+	}
+	want := typ.NewRecord().
+		ReadonlyField("meta", typ.NewRecord().
+			ReadonlyField("data_func", typ.NewUnion(typ.String, typ.Nil, typ.False)).
+			Build()).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("nested truthy-conditioned evidence = %v, want %v", got, want)
 	}
 }

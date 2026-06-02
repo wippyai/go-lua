@@ -13,8 +13,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 )
 
-func TestKeysCollectorInfo_ParamIndex(t *testing.T) {
-	info := &keyscoll.KeysCollectorInfo{ParamIndex: 2, ReturnIndex: 1}
+func TestKeysCollector_ParamIndex(t *testing.T) {
+	info := &keyscoll.KeysCollector{ParamIndex: 2, ReturnIndex: 1}
 	if info.ParamIndex != 2 {
 		t.Errorf("expected ParamIndex 2, got %d", info.ParamIndex)
 	}
@@ -23,7 +23,7 @@ func TestKeysCollectorInfo_ParamIndex(t *testing.T) {
 	}
 }
 
-func detectKeysCollector(fn *ast.FunctionExpr) *keyscoll.KeysCollectorInfo {
+func detectKeysCollector(fn *ast.FunctionExpr) *keyscoll.KeysCollector {
 	graph := cfg.Build(fn)
 	return keyscoll.DetectKeysCollector(graph, evidenceForGraph(graph))
 }

@@ -3,6 +3,7 @@ package nested
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -97,7 +98,7 @@ func EnrichTableTypeWithFunctionLookup(
 //	function T:greet()
 //	    print(self.name)  -- self.name is recognized because of constructor fields
 //	end
-func EnrichSelfTypeWithConstructorFields(selfType typ.Type, fields map[string]typ.Type) typ.Type {
+func EnrichSelfTypeWithConstructorFields(selfType typ.Type, fields interproc.FieldValues) typ.Type {
 	if selfType == nil || len(fields) == 0 {
 		return selfType
 	}
@@ -138,7 +139,7 @@ func NormalizeMethodSelfType(selfType typ.Type) typ.Type {
 	return value.WidenForConvergence(selfType)
 }
 
-func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.Type {
+func mergeFieldsIntoSelfType(selfType typ.Type, fields interproc.FieldValues) typ.Type {
 	if len(fields) == 0 {
 		return selfType
 	}
@@ -150,24 +151,39 @@ func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.
 			builder.SetOpen(true)
 		}
 
-		existingFields := make(map[string]bool)
+		existingFields := make(fieldKeySet)
 		for _, f := range v.Fields {
 			fieldType := f.Type
-			if constructorType := fields[f.Name]; constructorType != nil && (typ.IsAbsentOrUnknown(fieldType) || typ.IsAny(fieldType)) {
-				fieldType = constructorType
+			fieldKey, ok := interproc.FieldKeyFromName(f.Name)
+			if ok {
+				constructorValue := fields[fieldKey]
+				if !constructorValue.IsZero() && (typ.IsAbsentOrUnknown(fieldType) || typ.IsAny(fieldType)) {
+					fieldType = constructorValue.ProjectValue()
+				}
 			}
 			if f.Optional {
 				builder.OptField(f.Name, fieldType)
 			} else {
 				builder.Field(f.Name, fieldType)
 			}
-			existingFields[f.Name] = true
+			if ok {
+				existingFields.add(fieldKey)
+			}
 		}
 
-		for name, t := range fields {
-			if !existingFields[name] {
-				builder.Field(name, t)
+		for _, fieldKey := range interproc.SortedFieldKeys(fields) {
+			if existingFields.has(fieldKey) {
+				continue
 			}
+			name, ok := interproc.FieldKeyStringKey(fieldKey)
+			if !ok {
+				continue
+			}
+			fieldValue := fields[fieldKey]
+			if fieldValue.IsZero() {
+				continue
+			}
+			builder.Field(name, fieldValue.ProjectValue())
 		}
 
 		if v.Metatable != nil {
@@ -180,14 +196,24 @@ func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.
 
 	case *typ.Interface:
 		builder := typ.NewRecord().SetOpen(true)
-		existingFields := make(map[string]bool)
+		existingFields := make(fieldKeySet)
 		for _, m := range v.Methods {
 			builder.Field(m.Name, m.Type)
-			existingFields[m.Name] = true
+			if fieldKey, ok := interproc.FieldKeyFromName(m.Name); ok {
+				existingFields.add(fieldKey)
+			}
 		}
-		for name, t := range fields {
-			if !existingFields[name] {
-				builder.Field(name, t)
+		for _, fieldKey := range interproc.SortedFieldKeys(fields) {
+			if existingFields.has(fieldKey) {
+				continue
+			}
+			name, ok := interproc.FieldKeyStringKey(fieldKey)
+			if !ok {
+				continue
+			}
+			fieldValue := fields[fieldKey]
+			if !fieldValue.IsZero() {
+				builder.Field(name, fieldValue.ProjectValue())
 			}
 		}
 		return builder.Build()
@@ -195,4 +221,15 @@ func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.
 	default:
 		return selfType
 	}
+}
+
+type fieldKeySet map[interproc.FieldKey]struct{}
+
+func (s fieldKeySet) add(key interproc.FieldKey) {
+	s[key] = struct{}{}
+}
+
+func (s fieldKeySet) has(key interproc.FieldKey) bool {
+	_, ok := s[key]
+	return ok
 }

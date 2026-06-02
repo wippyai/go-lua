@@ -80,14 +80,35 @@ func ProjectCall(input CallProjectionInput) (CallProjection, bool) {
 
 func selectCallProjection(current, factType typ.Type, args []typ.Type, sourceLocal bool) typ.Type {
 	if sourceLocal {
-		return factType
+		return projectFactAgainstCurrentPresence(current, factType)
 	}
 	if typ.IsUnknownOrNil(current) ||
 		hasWiderParams(current, factType) ||
 		argsPreferFactProjection(args, current, factType) {
-		return factType
+		return projectFactAgainstCurrentPresence(current, factType)
 	}
 	return current
+}
+
+func projectFactAgainstCurrentPresence(current, factType typ.Type) typ.Type {
+	if typ.IsAbsentOrUnknown(current) {
+		return factType
+	}
+	inner, nilable := value.SplitNilable(current)
+	if !nilable {
+		return factType
+	}
+	if inner == nil || !callProjectionCanRefine(inner) {
+		return current
+	}
+	return typ.NewOptional(factType)
+}
+
+func callProjectionCanRefine(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	return typ.IsUnknown(t) || typ.IsAny(t) || unwrap.Function(t) != nil
 }
 
 type callContractInput struct {
@@ -299,7 +320,7 @@ func rewriteFunctionParams(callee typ.Type, rewrite func(int, typ.Param) typ.Typ
 	changed := false
 	builder := typ.Func().ReserveParams(len(fn.Params))
 	for _, tp := range fn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for i, p := range fn.Params {
 		paramType := rewrite(i, p)

@@ -4,6 +4,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -50,16 +52,38 @@ type FuncResult struct {
 	// Includes assignments, conditions, type guards, and dead point markers.
 	FlowInputs *flow.Inputs
 
-	// FlowSolution contains the solved constraint system from Phase C.
-	// Provides reachability conditions and exclusion facts for narrowing.
+	// FlowSolution contains the concrete flow solver result for producers that
+	// materialize one. Producer-neutral consumers should use SolvedFlow.
 	FlowSolution *flow.Solution
+
+	// FlowProjection is the producer-neutral solved-flow read surface.
+	// FlowSolution-backed results may leave this nil because flow.Solution already
+	// implements FlowOps. Product-state producers set this to their projection
+	// instead of fabricating a flow.Solution.
+	FlowProjection FlowOps
 
 	// Evidence records events discovered during abstract interpretation.
 	Evidence FlowEvidence
 
+	// CallExpectedArgs stores solved/contextual expected argument types,
+	// index-aligned with Evidence.Calls. These are used to seed contextual
+	// analysis of callback literals and are deliberately separate from diagnostic
+	// call-edge obligations.
+	CallExpectedArgs []CallExpectedArgEvidence
+
+	// CallContracts stores solved call-edge argument obligations, index-aligned with
+	// Evidence.Calls. These are fixed-point projections (for example callee
+	// Summary.Params), not extraction evidence; keeping them separate preserves the
+	// immutable FlowEvidence carrier.
+	CallContracts []CallContractEvidence
+
 	// FnRefinement captures the function's inferred refinement summary.
 	// It includes propagated effect rows and branch-specific narrowing facts.
 	FnRefinement *constraint.FunctionRefinement
+
+	// ReturnRelations captures caller-visible return-slot relations proven by the
+	// canonical product summary, such as Lua's `(value, err)` inverse convention.
+	ReturnRelations flow.ReturnRelations
 
 	// SourceSignature is the annotation-only function signature resolved during
 	// phase execution.
@@ -83,8 +107,18 @@ type FuncResult struct {
 	// including callback/global overlays from its analysis context.
 	GlobalTypes map[string]typ.Type
 
+	// GlobalTypeBindings is the normalized source-global type overlay visible to
+	// this function. In-process consumers should use GlobalTypeOverlay(); the map
+	// field above remains the public external projection.
+	GlobalTypeBindings globalenv.TypeOverlay
+
 	// LiteralSignatures holds synthesized signatures for function literals in this graph.
 	LiteralSignatures map[*ast.FunctionExpr]*typ.Function
+
+	// LiteralSignatureProvider is the normalized lookup surface for function
+	// literal signatures. In-process consumers should use LiteralSignatureLookup();
+	// the map above remains the public external projection.
+	LiteralSignatureProvider LiteralSignatureLookup
 
 	// Extras stores results from registered ComputePass plugins.
 	// Keyed by ComputePass.Name().
@@ -105,6 +139,61 @@ type FuncResult struct {
 	ClassFamilyJoin func(existing, candidate typ.Type) typ.Type
 }
 
+// CallExpectedArgEvidence is the solved contextual expected-type vector for one
+// FlowEvidence.Calls entry. It is not a diagnostic contract; it gives function
+// literal arguments their parameter context.
+type CallExpectedArgEvidence struct {
+	Args []typ.Type
+}
+
+// NewCallExpectedArgEvidence stores a cloned call expected-argument vector.
+func NewCallExpectedArgEvidence(args []typ.Type) CallExpectedArgEvidence {
+	if len(args) == 0 {
+		return CallExpectedArgEvidence{}
+	}
+	out := make([]typ.Type, len(args))
+	copy(out, args)
+	return CallExpectedArgEvidence{Args: out}
+}
+
+// ArgType returns the contextual expected type for argument idx.
+func (e CallExpectedArgEvidence) ArgType(idx int) typ.Type {
+	if idx < 0 || idx >= len(e.Args) {
+		return nil
+	}
+	return e.Args[idx]
+}
+
+// CallContractEvidence is the solved call-edge contract vector for one
+// FlowEvidence.Calls entry. ExpectedArgs remain call-signature contextual
+// synthesis input; Args are post-fixpoint obligations consumed at diagnostics.
+type CallContractEvidence struct {
+	Args []callobligation.Obligation
+}
+
+// NewCallContractEvidence stores a cloned call-edge contract vector.
+func NewCallContractEvidence(args []callobligation.Obligation) CallContractEvidence {
+	if len(args) == 0 {
+		return CallContractEvidence{}
+	}
+	out := make([]callobligation.Obligation, len(args))
+	copy(out, args)
+	return CallContractEvidence{Args: out}
+}
+
+// ArgObligation returns the solved call-edge obligation for argument idx.
+func (e CallContractEvidence) ArgObligation(idx int) callobligation.Obligation {
+	if idx < 0 || idx >= len(e.Args) {
+		return callobligation.Obligation{}
+	}
+	return e.Args[idx]
+}
+
+// ArgType returns the solved call-edge contract for argument idx.
+func (e CallContractEvidence) ArgType(idx int) typ.Type {
+	return e.ArgObligation(idx).Type
+}
+
 // EffectiveTypeAt returns the narrowed type for a symbol at a specific CFG point.
 // The effective type reflects flow-based narrowing (type guards, nil checks, etc.)
 // applied to the symbol's declared type based on control flow leading to point p.
@@ -121,20 +210,113 @@ func (r *FuncResult) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedVa
 	return r.Facts.EffectiveTypeAt(p, sym)
 }
 
-// NarrowedTypeAt returns the precise path-sensitive narrowed type at a CFG point.
-func (r *FuncResult) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
-	if r == nil || r.FlowSolution == nil {
+// SolvedFlow returns the normalized solved-flow projection for this result.
+func (r *FuncResult) SolvedFlow() FlowOps {
+	if r == nil {
 		return nil
 	}
-	return r.FlowSolution.NarrowedTypeAt(p, path)
+	if r.FlowProjection != nil {
+		return r.FlowProjection
+	}
+	if r.FlowSolution != nil {
+		return r.FlowSolution
+	}
+	return nil
+}
+
+// ConditionProofFacts returns the producer-neutral condition-proof surface for
+// this result. Consumers use this instead of checking the concrete flow solver.
+func (r *FuncResult) ConditionProofFacts() flow.ConditionProofFacts {
+	if r == nil {
+		return nil
+	}
+	if facts, ok := r.Facts.(flow.ConditionProofFacts); ok {
+		return facts
+	}
+	if facts, ok := r.SolvedFlow().(flow.ConditionProofFacts); ok {
+		return facts
+	}
+	return nil
+}
+
+// ConstFacts returns immutable constant facts for this result.
+func (r *FuncResult) ConstFacts() flow.ConstFacts {
+	if r == nil {
+		return nil
+	}
+	if facts, ok := r.Facts.(flow.ConstFacts); ok {
+		return facts
+	}
+	if facts, ok := r.SolvedFlow().(flow.ConstFacts); ok {
+		return facts
+	}
+	if r.FlowInputs != nil {
+		return r.FlowInputs
+	}
+	return nil
+}
+
+// PathObservationFacts returns the high-level path-observation surface for this
+// result when the producer exposes one.
+func (r *FuncResult) PathObservationFacts() flow.PathObservationFacts {
+	if r == nil {
+		return nil
+	}
+	if facts, ok := r.Facts.(flow.PathObservationFacts); ok {
+		return facts
+	}
+	if facts, ok := r.SolvedFlow().(flow.PathObservationFacts); ok {
+		return facts
+	}
+	return nil
+}
+
+// PathChildFacts returns the producer-neutral finite child path surface for this
+// result when the producer exposes one.
+func (r *FuncResult) PathChildFacts() flow.PathChildFacts {
+	if r == nil {
+		return nil
+	}
+	if facts, ok := r.Facts.(flow.PathChildFacts); ok {
+		return facts
+	}
+	if facts, ok := r.SolvedFlow().(flow.PathChildFacts); ok {
+		return facts
+	}
+	return nil
+}
+
+// TransferValueFacts returns the producer-neutral transfer-value surface for
+// this result when the producer exposes one.
+func (r *FuncResult) TransferValueFacts() flow.TransferValueFacts {
+	if r == nil {
+		return nil
+	}
+	if facts, ok := r.Facts.(flow.TransferValueFacts); ok {
+		return facts
+	}
+	if facts, ok := r.SolvedFlow().(flow.TransferValueFacts); ok {
+		return facts
+	}
+	return nil
+}
+
+// NarrowedTypeAt returns the precise path-sensitive narrowed type at a CFG point.
+func (r *FuncResult) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	flowOps := r.SolvedFlow()
+	if flowOps == nil {
+		return nil
+	}
+	return flowOps.NarrowedTypeAt(p, path)
 }
 
 // PreStateTypeAt returns the path-sensitive type before point-local transfer effects.
 func (r *FuncResult) PreStateTypeAt(p cfg.Point, path constraint.Path) typ.Type {
-	if r == nil || r.FlowSolution == nil {
+	flowOps := r.SolvedFlow()
+	if flowOps == nil {
 		return nil
 	}
-	return r.FlowSolution.PreStateTypeAt(p, path)
+	return flowOps.PreStateTypeAt(p, path)
 }
 
 // ExcludesTypeAt checks if the flow solution proves a type is excluded at a CFG point.
@@ -150,31 +332,65 @@ func (r *FuncResult) PreStateTypeAt(p cfg.Point, path constraint.Path) typ.Type 
 //
 // Returns true if flow analysis proves the declared type cannot occur at point p.
 func (r *FuncResult) ExcludesTypeAt(p cfg.Point, path constraint.Path, declared typ.Type) bool {
-	if r == nil || r.FlowSolution == nil {
+	flowOps := r.SolvedFlow()
+	if flowOps == nil {
 		return false
 	}
-	return r.FlowSolution.ExcludesTypeAt(p, path, declared)
+	return flowOps.ExcludesTypeAt(p, path, declared)
+}
+
+// GlobalTypeOverlay returns the normalized source-global type overlay for this
+// result. If only the external map projection is populated, it is normalized here.
+func (r *FuncResult) GlobalTypeOverlay() globalenv.TypeOverlay {
+	if r == nil {
+		return nil
+	}
+	if len(r.GlobalTypeBindings) != 0 {
+		return r.GlobalTypeBindings.Clone()
+	}
+	return globalenv.TypeOverlayFromMap(r.GlobalTypes)
+}
+
+// LiteralSignatureLookup returns the normalized function-literal signature
+// lookup surface for this result. If only the external map projection is populated,
+// it is normalized here.
+func (r *FuncResult) LiteralSignatureLookup() LiteralSignatureLookup {
+	if r == nil {
+		return nil
+	}
+	if r.LiteralSignatureProvider != nil {
+		return r.LiteralSignatureProvider
+	}
+	if len(r.LiteralSignatures) == 0 {
+		return nil
+	}
+	return LiteralSignatureLookupFromMap(r.LiteralSignatures)
 }
 
 // FuncAnalysisView is the stable slice of a function analysis result
 // required by nested processing and interprocedural helpers.
 type FuncAnalysisView struct {
-	Graph               *cfg.Graph
-	AnalysisContext     AnalysisContext
-	Scopes              map[cfg.Point]*scope.State
-	Facts               flow.TypeFacts
-	FlowInputs          *flow.Inputs
-	FlowSolution        *flow.Solution
-	Evidence            FlowEvidence
-	NarrowSynth         Synth
-	SourceSignature     *typ.Function
-	PublicSeedSignature *typ.Function
-	LiteralSignatures   map[*ast.FunctionExpr]*typ.Function
-	QueryContext        *db.QueryContext
-	TypeOps             core.TypeOps
-	GlobalTypes         map[string]typ.Type
-	RecursiveFamilies   *typ.RecursiveFamilyInterner
-	ClassFamilyJoin     func(existing, candidate typ.Type) typ.Type
+	Graph                    *cfg.Graph
+	AnalysisContext          AnalysisContext
+	Scopes                   map[cfg.Point]*scope.State
+	Facts                    flow.TypeFacts
+	FlowInputs               *flow.Inputs
+	FlowSolution             *flow.Solution
+	FlowProjection           FlowOps
+	Evidence                 FlowEvidence
+	CallExpectedArgs         []CallExpectedArgEvidence
+	CallContracts            []CallContractEvidence
+	NarrowSynth              Synth
+	SourceSignature          *typ.Function
+	PublicSeedSignature      *typ.Function
+	LiteralSignatures        map[*ast.FunctionExpr]*typ.Function
+	LiteralSignatureProvider LiteralSignatureLookup
+	QueryContext             *db.QueryContext
+	TypeOps                  core.TypeOps
+	GlobalTypes              map[string]typ.Type
+	GlobalTypeBindings       globalenv.TypeOverlay
+	RecursiveFamilies        *typ.RecursiveFamilyInterner
+	ClassFamilyJoin          func(existing, candidate typ.Type) typ.Type
 }
 
 // ViewFromResult constructs the nested-processing view from a full result.
@@ -183,21 +399,145 @@ func ViewFromResult(r *FuncResult) *FuncAnalysisView {
 		return nil
 	}
 	return &FuncAnalysisView{
-		Graph:               r.Graph,
-		AnalysisContext:     r.AnalysisContext,
-		Scopes:              r.Scopes,
-		Facts:               r.Facts,
-		FlowInputs:          r.FlowInputs,
-		FlowSolution:        r.FlowSolution,
-		Evidence:            r.Evidence,
-		NarrowSynth:         r.NarrowSynth,
-		SourceSignature:     r.SourceSignature,
-		PublicSeedSignature: r.PublicSeedSignature,
-		LiteralSignatures:   r.LiteralSignatures,
-		QueryContext:        r.QueryContext,
-		TypeOps:             r.TypeOps,
-		GlobalTypes:         r.GlobalTypes,
-		RecursiveFamilies:   r.RecursiveFamilies,
-		ClassFamilyJoin:     r.ClassFamilyJoin,
+		Graph:                    r.Graph,
+		AnalysisContext:          r.AnalysisContext,
+		Scopes:                   r.Scopes,
+		Facts:                    r.Facts,
+		FlowInputs:               r.FlowInputs,
+		FlowSolution:             r.FlowSolution,
+		FlowProjection:           r.FlowProjection,
+		Evidence:                 r.Evidence,
+		CallExpectedArgs:         r.CallExpectedArgs,
+		CallContracts:            r.CallContracts,
+		NarrowSynth:              r.NarrowSynth,
+		SourceSignature:          r.SourceSignature,
+		PublicSeedSignature:      r.PublicSeedSignature,
+		LiteralSignatures:        r.LiteralSignatures,
+		LiteralSignatureProvider: r.LiteralSignatureLookup(),
+		QueryContext:             r.QueryContext,
+		TypeOps:                  r.TypeOps,
+		GlobalTypes:              r.GlobalTypes,
+		GlobalTypeBindings:       r.GlobalTypeOverlay(),
+		RecursiveFamilies:        r.RecursiveFamilies,
+		ClassFamilyJoin:          r.ClassFamilyJoin,
 	}
+}
+
+// SolvedFlow returns the normalized solved-flow projection for this view.
+func (r *FuncAnalysisView) SolvedFlow() FlowOps {
+	if r == nil {
+		return nil
+	}
+	if r.FlowProjection != nil {
+		return r.FlowProjection
+	}
+	if r.FlowSolution != nil {
+		return r.FlowSolution
+	}
+	return nil
+}
+
+// ConditionProofFacts returns the producer-neutral condition-proof surface for
+// this view.
+func (r *FuncAnalysisView) ConditionProofFacts() flow.ConditionProofFacts {
+	if r == nil {
+		return nil
+	}
+	if facts, ok := r.Facts.(flow.ConditionProofFacts); ok {
+		return facts
+	}
+	if facts, ok := r.SolvedFlow().(flow.ConditionProofFacts); ok {
+		return facts
+	}
+	return nil
+}
+
+// ConstFacts returns immutable constant facts for this view.
+func (r *FuncAnalysisView) ConstFacts() flow.ConstFacts {
+	if r == nil {
+		return nil
+	}
+	if facts, ok := r.Facts.(flow.ConstFacts); ok {
+		return facts
+	}
+	if facts, ok := r.SolvedFlow().(flow.ConstFacts); ok {
+		return facts
+	}
+	if r.FlowInputs != nil {
+		return r.FlowInputs
+	}
+	return nil
+}
+
+// PathObservationFacts returns the high-level path-observation surface for this
+// view when the producer exposes one.
+func (r *FuncAnalysisView) PathObservationFacts() flow.PathObservationFacts {
+	if r == nil {
+		return nil
+	}
+	if facts, ok := r.Facts.(flow.PathObservationFacts); ok {
+		return facts
+	}
+	if facts, ok := r.SolvedFlow().(flow.PathObservationFacts); ok {
+		return facts
+	}
+	return nil
+}
+
+// PathChildFacts returns the producer-neutral finite child path surface for this
+// view when the producer exposes one.
+func (r *FuncAnalysisView) PathChildFacts() flow.PathChildFacts {
+	if r == nil {
+		return nil
+	}
+	if facts, ok := r.Facts.(flow.PathChildFacts); ok {
+		return facts
+	}
+	if facts, ok := r.SolvedFlow().(flow.PathChildFacts); ok {
+		return facts
+	}
+	return nil
+}
+
+// TransferValueFacts returns the producer-neutral transfer-value surface for
+// this view when the producer exposes one.
+func (r *FuncAnalysisView) TransferValueFacts() flow.TransferValueFacts {
+	if r == nil {
+		return nil
+	}
+	if facts, ok := r.Facts.(flow.TransferValueFacts); ok {
+		return facts
+	}
+	if facts, ok := r.SolvedFlow().(flow.TransferValueFacts); ok {
+		return facts
+	}
+	return nil
+}
+
+// GlobalTypeOverlay returns the normalized source-global type overlay for this
+// view. If only the external map projection is populated, it is normalized here.
+func (r *FuncAnalysisView) GlobalTypeOverlay() globalenv.TypeOverlay {
+	if r == nil {
+		return nil
+	}
+	if len(r.GlobalTypeBindings) != 0 {
+		return r.GlobalTypeBindings.Clone()
+	}
+	return globalenv.TypeOverlayFromMap(r.GlobalTypes)
+}
+
+// LiteralSignatureLookup returns the normalized function-literal signature
+// lookup surface for this view. If only the external map projection is populated,
+// it is normalized here.
+func (r *FuncAnalysisView) LiteralSignatureLookup() LiteralSignatureLookup {
+	if r == nil {
+		return nil
+	}
+	if r.LiteralSignatureProvider != nil {
+		return r.LiteralSignatureProvider
+	}
+	if len(r.LiteralSignatures) == 0 {
+		return nil
+	}
+	return LiteralSignatureLookupFromMap(r.LiteralSignatures)
 }

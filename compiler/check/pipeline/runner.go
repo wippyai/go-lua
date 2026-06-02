@@ -22,18 +22,21 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
-	productpkg "github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -59,7 +62,7 @@ type RunnerConfig struct {
 // It is used as the compute function for FuncResult queries.
 type Runner struct {
 	types             core.TypeOps
-	globalTypes       map[string]typ.Type
+	globalTypes       globalenv.TypeOverlay
 	stdlib            *scope.State
 	manifests         io.ManifestQuerier
 	resolver          narrow.Resolver
@@ -72,7 +75,7 @@ type Runner struct {
 func NewRunner(cfg RunnerConfig) *Runner {
 	return &Runner{
 		types:             cfg.Types,
-		globalTypes:       cfg.GlobalTypes,
+		globalTypes:       globalenv.TypeOverlayFromMap(cfg.GlobalTypes),
 		stdlib:            cfg.Stdlib,
 		manifests:         cfg.Manifests,
 		resolver:          cfg.Resolver,
@@ -139,13 +142,13 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	localAliases := modules.AliasesFromAssignments(graphEvidence.Assignments, graph)
 	mergedAliases := modules.MergeAliases(store.ModuleAliases(), localAliases)
 	env := phase.PhaseEnv{
-		Ctx:            ctx,
-		Graph:          graph,
-		Fn:             fn,
-		Types:          r.types,
-		Manifests:      r.manifests,
-		GlobalTypes:    globalTypes,
-		ModuleAliases:  mergedAliases,
+		Ctx:               ctx,
+		Graph:             graph,
+		Fn:                fn,
+		Types:             r.types,
+		Manifests:         r.manifests,
+		GlobalTypes:       globalTypes,
+		ModuleAliases:     mergedAliases,
 		ModuleBindings:    store.ModuleBindings(),
 		Refinements:       refinementFactsFrom(store),
 		Evidence:          graphEvidence,
@@ -239,30 +242,98 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	extras := r.runComputePasses(graph, scopeOut.Scopes)
 	sourceSignature, publicSeedSignature := postflowSignatures(fn, graph, scopeOut.BaseScope, narrowOut.Synth)
 	sourceSignature = functionfact.MergeSignatureContracts(sourceSignature, synthSig)
+	callExpectedArgs := r.projectCallExpectedArgs(ctx, graph, extractOut.Evidence, narrowOut.Synth)
 
 	return &api.FuncResult{
-		Graph:               graph,
-		ModuleBindings:      env.ModuleBindings,
-		AnalysisContext:     analysisCtx,
-		BaseScope:           scopeOut.BaseScope,
-		Scopes:              scopeOut.Scopes,
-		Facts:               narrowOut.Facts,
-		FlowInputs:          extractOut.Inputs,
-		FlowSolution:        solveOut.Solution,
-		Evidence:            extractOut.Evidence,
-		FnRefinement:        narrowOut.Refinement,
-		SourceSignature:     sourceSignature,
-		PublicSeedSignature: publicSeedSignature,
-		NarrowSynth:         narrowOut.Synth,
-		QueryContext:        narrowOut.QueryContext,
-		TypeOps:             narrowOut.TypeOps,
-		GlobalTypes:         globalTypes,
-		LiteralSignatures:   literalOut.Signatures,
-		Extras:              extras,
-		DepthLimitExceeded:  scopeOut.DepthLimitExceeded,
-		RecursiveFamilies:   r.recursiveFamilies,
-		ClassFamilyJoin:     functionfact.ClassFamilyJoin,
+		Graph:                    graph,
+		ModuleBindings:           env.ModuleBindings,
+		AnalysisContext:          analysisCtx,
+		BaseScope:                scopeOut.BaseScope,
+		Scopes:                   scopeOut.Scopes,
+		Facts:                    narrowOut.Facts,
+		FlowInputs:               extractOut.Inputs,
+		FlowSolution:             solveOut.Solution,
+		Evidence:                 extractOut.Evidence,
+		CallExpectedArgs:         callExpectedArgs,
+		FnRefinement:             narrowOut.Refinement,
+		SourceSignature:          sourceSignature,
+		PublicSeedSignature:      publicSeedSignature,
+		NarrowSynth:              narrowOut.Synth,
+		QueryContext:             narrowOut.QueryContext,
+		TypeOps:                  narrowOut.TypeOps,
+		GlobalTypes:              globalTypes.ToMap(),
+		GlobalTypeBindings:       globalTypes,
+		LiteralSignatures:        literalOut.Signatures,
+		LiteralSignatureProvider: api.LiteralSignatureLookupFromMap(literalOut.Signatures),
+		Extras:                   extras,
+		DepthLimitExceeded:       scopeOut.DepthLimitExceeded,
+		RecursiveFamilies:        r.recursiveFamilies,
+		ClassFamilyJoin:          functionfact.ClassFamilyJoin,
 	}
+}
+
+func (r *Runner) projectCallExpectedArgs(
+	ctx *db.QueryContext,
+	graph *cfg.Graph,
+	evidence api.FlowEvidence,
+	synth api.BaseSynth,
+) []api.CallExpectedArgEvidence {
+	if graph == nil || synth == nil || len(evidence.Calls) == 0 {
+		return nil
+	}
+	var out []api.CallExpectedArgEvidence
+	for i, ev := range evidence.Calls {
+		info := ev.Info
+		if info == nil || info.Call == nil || len(info.Call.Args) == 0 {
+			continue
+		}
+		def := ops.CallDef{
+			Args:                shallowCallArgTypes(synth, info.Args, ev.Point),
+			Query:               r.types,
+			ForceMethodReceiver: callsite.ForceMethodReceiverAtPoint(graph.Bindings(), graph, evidence, ev.Point, info.Call),
+		}
+		if callsite.IsMethodCallInfo(info) {
+			def.IsMethod = true
+			def.Receiver = synth.TypeOf(info.Receiver, ev.Point)
+			def.MethodName = info.Method
+		} else {
+			def.Callee = synth.TypeOf(info.Callee, ev.Point)
+		}
+		inferred := ops.InferCall(ctx, def)
+		args := make([]typ.Type, len(info.Call.Args))
+		any := false
+		for argIdx := range info.Call.Args {
+			expected := inferred.ExpectedArgType(argIdx)
+			if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
+				continue
+			}
+			args[argIdx] = expected
+			any = true
+		}
+		if !any {
+			continue
+		}
+		if out == nil {
+			out = make([]api.CallExpectedArgEvidence, len(evidence.Calls))
+		}
+		out[i] = api.NewCallExpectedArgEvidence(args)
+	}
+	return out
+}
+
+func shallowCallArgTypes(synth api.BaseSynth, args []ast.Expr, point cfg.Point) []typ.Type {
+	if len(args) == 0 {
+		return nil
+	}
+	out := make([]typ.Type, len(args))
+	for i, arg := range args {
+		if fn, ok := arg.(*ast.FunctionExpr); ok {
+			out[i] = phasecore.ShallowFunctionLiteralSignature(fn)
+			continue
+		}
+		out[i] = synth.TypeOf(arg, point)
+	}
+	return out
 }
 
 func postflowSignatures(fn *ast.FunctionExpr, graph *cfg.Graph, base *scope.State, synth api.Synth) (*typ.Function, *typ.Function) {
@@ -280,20 +351,15 @@ func postflowSignatures(fn *ast.FunctionExpr, graph *cfg.Graph, base *scope.Stat
 		unwrap.Function(returns.BuildSeedFunctionTypeWithBindings(fn, synth, base, bindings))
 }
 
-func mergeGlobalOverlay(base map[string]typ.Type, overlay map[string]productpkg.AbstractValue) map[string]typ.Type {
-	if len(overlay) == 0 {
+func mergeGlobalOverlay(base globalenv.TypeOverlay, overlay api.GlobalOverlay) globalenv.TypeOverlay {
+	projected := overlay.ToTypeOverlay()
+	if len(projected) == 0 {
 		return base
 	}
-	out := make(map[string]typ.Type, len(base)+len(overlay))
-	for name, t := range base {
-		out[name] = t
-	}
-	for name, v := range overlay {
-		if name != "" && !v.IsZero() {
-			out[name] = v.ProjectValue()
-		}
-	}
-	return out
+	return globalenv.OverrideTypeOverlay(
+		base,
+		projected,
+	)
 }
 
 func capturedTypesForFunction(product api.InterprocFactProduct, graph *cfg.Graph, fn *ast.FunctionExpr) map[cfg.SymbolID]typ.Type {

@@ -8,9 +8,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -217,10 +217,10 @@ func TestReturnSummaryMerge_KeepsNonRecursiveContainerRefinement(t *testing.T) {
 func TestWidenCapturedFieldAssigns_NormalizesOptionalFunctionValues(t *testing.T) {
 	fn := typ.Func().Param("fn", typ.Unknown).Build()
 	merged := WidenCapturedFieldAssigns(nil, api.CapturedFieldAssigns{
-		1: {2: {"after_all": product.FromType(typ.NewOptional(fn))}},
+		1: {2: {fieldKey("after_all"): product.FromType(typ.NewOptional(fn))}},
 	})
 
-	got := merged[1][2]["after_all"].ProjectValue()
+	got := merged[1][2][fieldKey("after_all")].ProjectValue()
 	if !typ.TypeEquals(got, fn) {
 		t.Fatalf("expected optional function value to canonicalize to function, got %v", got)
 	}
@@ -230,11 +230,11 @@ func TestWidenCapturedFieldAssigns_ReplacesUnsolvedFunctionSeed(t *testing.T) {
 	seed := typ.Func().Build()
 	solved := typ.Func().Param("self", typ.Unknown).Returns(typ.Number).Build()
 	merged := WidenCapturedFieldAssigns(
-		api.CapturedFieldAssigns{1: {2: {"get_x": product.FromType(seed)}}},
-		api.CapturedFieldAssigns{1: {2: {"get_x": product.FromType(solved)}}},
+		api.CapturedFieldAssigns{1: {2: {fieldKey("get_x"): product.FromType(seed)}}},
+		api.CapturedFieldAssigns{1: {2: {fieldKey("get_x"): product.FromType(solved)}}},
 	)
 
-	got := merged[1][2]["get_x"].ProjectValue()
+	got := merged[1][2][fieldKey("get_x")].ProjectValue()
 	if !typ.TypeEquals(got, solved) {
 		t.Fatalf("captured function seed should not dominate solved projection: got %v, want %v", got, solved)
 	}
@@ -286,11 +286,11 @@ func TestWidenCapturedFieldAssigns_MergesSameShapeFunctionValues(t *testing.T) {
 		Build()
 
 	merged := WidenCapturedFieldAssigns(
-		api.CapturedFieldAssigns{1: {2: {"describe": product.FromType(prevFn)}}},
-		api.CapturedFieldAssigns{1: {2: {"describe": product.FromType(nextFn)}}},
+		api.CapturedFieldAssigns{1: {2: {fieldKey("describe"): product.FromType(prevFn)}}},
+		api.CapturedFieldAssigns{1: {2: {fieldKey("describe"): product.FromType(nextFn)}}},
 	)
 
-	got := merged[1][2]["describe"].ProjectValue()
+	got := merged[1][2][fieldKey("describe")].ProjectValue()
 	if _, ok := got.(*typ.Union); ok {
 		t.Fatalf("expected function observations to merge, got union %v", got)
 	}
@@ -326,10 +326,10 @@ func TestJoinCapturedFieldAssigns_UsesCanonicalRecursiveProductJoin(t *testing.T
 	})
 
 	merged := JoinCapturedFieldAssigns(
-		api.CapturedFieldAssigns{1: {2: {"suite": product.FromType(left)}}},
-		api.CapturedFieldAssigns{1: {2: {"suite": product.FromType(right)}}},
+		api.CapturedFieldAssigns{1: {2: {fieldKey("suite"): product.FromType(left)}}},
+		api.CapturedFieldAssigns{1: {2: {fieldKey("suite"): product.FromType(right)}}},
 	)
-	got := merged[1][2]["suite"].ProjectValue()
+	got := merged[1][2][fieldKey("suite")].ProjectValue()
 	if _, ok := got.(*typ.Union); ok {
 		t.Fatalf("captured field join returned raw recursive union: %v", got)
 	}

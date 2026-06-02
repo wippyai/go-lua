@@ -8,15 +8,16 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestTruthyPathKey_Equality(t *testing.T) {
-	key1 := guard.TruthyPathKey{Symbol: 1, Field: "foo"}
-	key2 := guard.TruthyPathKey{Symbol: 1, Field: "foo"}
-	key3 := guard.TruthyPathKey{Symbol: 2, Field: "foo"}
-	key4 := guard.TruthyPathKey{Symbol: 1, Field: "bar"}
+	key1 := truthyKey(t, 1, constraint.Segment{Kind: constraint.SegmentField, Name: "foo"})
+	key2 := truthyKey(t, 1, constraint.Segment{Kind: constraint.SegmentField, Name: "foo"})
+	key3 := truthyKey(t, 2, constraint.Segment{Kind: constraint.SegmentField, Name: "foo"})
+	key4 := truthyKey(t, 1, constraint.Segment{Kind: constraint.SegmentField, Name: "bar"})
 
 	if key1 != key2 {
 		t.Error("expected identical keys to be equal")
@@ -26,6 +27,15 @@ func TestTruthyPathKey_Equality(t *testing.T) {
 	}
 	if key1 == key4 {
 		t.Error("expected different fields to produce different keys")
+	}
+}
+
+func TestTruthyPathKey_DistinguishesFieldAndStringIndex(t *testing.T) {
+	fieldKey := truthyKey(t, 1, constraint.Segment{Kind: constraint.SegmentField, Name: "x-y"})
+	indexKey := truthyKey(t, 1, constraint.Segment{Kind: constraint.SegmentIndexString, Name: "x-y"})
+
+	if fieldKey == indexKey {
+		t.Fatal("field and static string-index paths must not share a guard key")
 	}
 }
 
@@ -82,8 +92,8 @@ func TestExtractTruthyPathKeys_IdentExpr(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("expected 1 key, got %d", len(result))
 	}
-	if result[0].Field != "" {
-		t.Errorf("expected empty field for simple ident, got %q", result[0].Field)
+	if result[0].Path.Display() != "" {
+		t.Errorf("expected empty field for simple ident, got %q", result[0].Path.Display())
 	}
 }
 
@@ -112,8 +122,8 @@ func TestExtractTruthyPathKeys_NestedAttrExpr(t *testing.T) {
 	if result[0].Symbol != sym {
 		t.Fatalf("expected symbol %d, got %d", sym, result[0].Symbol)
 	}
-	if result[0].Field != "payload.from" {
-		t.Fatalf("expected field payload.from, got %q", result[0].Field)
+	if result[0].Path.Display() != "payload.from" {
+		t.Fatalf("expected field payload.from, got %q", result[0].Path.Display())
 	}
 }
 
@@ -133,8 +143,8 @@ func TestExtractTruthyPathKeys_StaticIndexIntExpr(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("expected 1 key for static index-int path, got %d", len(result))
 	}
-	if result[0].Field != "[1]" {
-		t.Fatalf("expected [1], got %q", result[0].Field)
+	if result[0].Path.Display() != "[1]" {
+		t.Fatalf("expected [1], got %q", result[0].Path.Display())
 	}
 }
 
@@ -155,8 +165,8 @@ func TestExtractTruthyPathKeys_StaticIndexStringExpr(t *testing.T) {
 	if len(result) != 1 {
 		t.Fatalf("expected 1 key, got %d", len(result))
 	}
-	if result[0].Field != "[\"x-y\"]" {
-		t.Fatalf("expected [\"x-y\"], got %q", result[0].Field)
+	if result[0].Path.Display() != "[\"x-y\"]" {
+		t.Fatalf("expected [\"x-y\"], got %q", result[0].Path.Display())
 	}
 }
 
@@ -246,7 +256,10 @@ func TestNarrowTableFieldsByGuard_MatchingNestedPath(t *testing.T) {
 
 	guards := map[cfg.Point]map[guard.TruthyPathKey]bool{
 		1: {
-			{Symbol: eventSym, Field: "payload.from"}: true,
+			truthyKey(t, eventSym,
+				constraint.Segment{Kind: constraint.SegmentField, Name: "payload"},
+				constraint.Segment{Kind: constraint.SegmentField, Name: "from"},
+			): true,
 		},
 	}
 
@@ -293,7 +306,7 @@ func TestNarrowTableFieldsByGuard_FieldOptionalityIsARecordShapeChange(t *testin
 	eventSym, _ := bindings.SymbolOf(valueExpr.Object.(*ast.IdentExpr))
 	guards := map[cfg.Point]map[guard.TruthyPathKey]bool{
 		1: {
-			{Symbol: eventSym, Field: "from"}: true,
+			truthyKey(t, eventSym, constraint.Segment{Kind: constraint.SegmentField, Name: "from"}): true,
 		},
 	}
 
@@ -355,7 +368,7 @@ func TestCollectTypeGuards_TypeNotEqReturnPropagatesFallthrough(t *testing.T) {
 	if !ok || payloadSym == 0 {
 		t.Fatal("expected payload symbol")
 	}
-	wantKey := guard.TruthyPathKey{Symbol: payloadSym, Field: "respond_to"}
+	wantKey := truthyKey(t, payloadSym, constraint.Segment{Kind: constraint.SegmentField, Name: "respond_to"})
 	wantType := narrow.BuiltinTypeKey("string")
 
 	found := false
@@ -472,7 +485,7 @@ func TestNarrowTableFieldsByGuard_TypeGuardNarrowsAny(t *testing.T) {
 	payloadSym, _ := bindings.SymbolOf(valueExpr.Object.(*ast.IdentExpr))
 	typeGuards := map[cfg.Point]map[guard.TruthyPathKey]narrow.TypeKey{
 		1: {
-			{Symbol: payloadSym, Field: "respond_to"}: narrow.BuiltinTypeKey("string"),
+			truthyKey(t, payloadSym, constraint.Segment{Kind: constraint.SegmentField, Name: "respond_to"}): narrow.BuiltinTypeKey("string"),
 		},
 	}
 
@@ -487,4 +500,47 @@ func TestNarrowTableFieldsByGuard_TypeGuardNarrowsAny(t *testing.T) {
 	if !typ.TypeEquals(out.Fields[0].Type, typ.String) {
 		t.Fatalf("expected narrowed string field, got %s", out.Fields[0].Type.String())
 	}
+}
+
+func TestNarrowTableFieldsByGuard_StaticStringIndexDoesNotCollapseToRecordField(t *testing.T) {
+	valueExpr := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "payload"},
+		Key:    &ast.StringExpr{Value: "x-y"},
+	}
+	rec := typ.NewRecord().OptField("x-y", typ.String).Build()
+	tbl := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{Key: &ast.StringExpr{Value: "x-y"}, Value: valueExpr},
+		},
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"payload"}},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"x"},
+				Exprs: []ast.Expr{tbl},
+			},
+		},
+	}
+	bindings := bind.Bind(fn, nil)
+	payloadSym, _ := bindings.SymbolOf(valueExpr.Object.(*ast.IdentExpr))
+	guards := map[cfg.Point]map[guard.TruthyPathKey]bool{
+		1: {
+			truthyKey(t, payloadSym, constraint.Segment{Kind: constraint.SegmentIndexString, Name: "x-y"}): true,
+		},
+	}
+
+	result := guard.NarrowTableFieldsByGuard(rec, tbl, 1, bindings, guards, nil)
+	if result != rec {
+		t.Fatalf("string-index source must not collapse to record field identity, got %s", result.String())
+	}
+}
+
+func truthyKey(t *testing.T, sym cfg.SymbolID, segs ...constraint.Segment) guard.TruthyPathKey {
+	t.Helper()
+	key, ok := guard.TruthyPathKeyFromSegments(sym, segs)
+	if !ok {
+		t.Fatalf("invalid truthy key for symbol %d and segments %#v", sym, segs)
+	}
+	return key
 }

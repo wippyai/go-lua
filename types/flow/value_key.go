@@ -1,0 +1,168 @@
+package flow
+
+import (
+	"strconv"
+
+	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
+)
+
+// ValueKey is the canonical key of one value cell in a PointState Env.
+//
+// It is intentionally not a plain string at the domain boundary. The encoded form
+// is still deterministic and compact for maps/cache keys, but callers must choose
+// a constructor that states what the key denotes.
+type ValueKey string
+
+// SymbolValueKey identifies the current point-local value of a CFG symbol.
+func SymbolValueKey(sym cfg.SymbolID) ValueKey {
+	return ValueKey("s" + valueKeyItoa(uint64(sym)))
+}
+
+// SymbolPathKey identifies a path rooted at a CFG symbol for components, such as
+// numeric length facts, that need a stable key for a nested container. A bare
+// symbol path uses the same encoding as SymbolValueKey; nested paths append the
+// canonical structured segment suffix. Callers pass structured segments so the
+// string form stays an internal deterministic cache key, not a semantic API.
+func SymbolPathKey(sym cfg.SymbolID, segments []constraint.Segment) constraint.PathKey {
+	key := string(SymbolValueKey(sym))
+	if len(segments) > 0 {
+		key += constraint.FormatSegments(segments)
+	}
+	return constraint.PathKey(key)
+}
+
+// ParseSymbolPathKey inverts SymbolPathKey. Non-symbol path keys return false.
+func ParseSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constraint.Segment, bool) {
+	s := string(key)
+	if len(s) < 2 || s[0] != 's' {
+		return 0, nil, false
+	}
+	i := 1
+	var n uint64
+	for i < len(s) {
+		c := s[i]
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + uint64(c-'0')
+		i++
+	}
+	if n == 0 {
+		return 0, nil, false
+	}
+	segments, ok := parseSymbolPathSegments(s[i:])
+	if !ok {
+		return 0, nil, false
+	}
+	return cfg.SymbolID(n), segments, true
+}
+
+// ReturnSlotValueKey identifies the value stashed for a non-identifier return
+// expression at a return point.
+func ReturnSlotValueKey(i int) ValueKey {
+	return ValueKey("r" + valueKeyItoa(uint64(i)))
+}
+
+// ParseSymbolValueKey inverts SymbolValueKey. Non-symbol keys return false.
+func ParseSymbolValueKey(key ValueKey) (cfg.SymbolID, bool) {
+	s := string(key)
+	if len(s) < 2 || s[0] != 's' {
+		return 0, false
+	}
+	var n uint64
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + uint64(c-'0')
+	}
+	if n == 0 {
+		return 0, false
+	}
+	return cfg.SymbolID(n), true
+}
+
+func parseSymbolPathSegments(s string) ([]constraint.Segment, bool) {
+	if s == "" {
+		return nil, true
+	}
+	var segments []constraint.Segment
+	for len(s) > 0 {
+		switch s[0] {
+		case '.':
+			end := 1
+			for end < len(s) && s[end] != '.' && s[end] != '[' {
+				end++
+			}
+			if end == 1 {
+				return nil, false
+			}
+			segments = append(segments, constraint.Segment{Kind: constraint.SegmentField, Name: s[1:end]})
+			s = s[end:]
+		case '[':
+			if len(s) < 3 {
+				return nil, false
+			}
+			if s[1] == '"' {
+				end, ok := quotedSegmentEnd(s)
+				if !ok || end+1 >= len(s) || s[end+1] != ']' {
+					return nil, false
+				}
+				name, err := strconv.Unquote(s[1 : end+1])
+				if err != nil {
+					return nil, false
+				}
+				segments = append(segments, constraint.Segment{Kind: constraint.SegmentIndexString, Name: name})
+				s = s[end+2:]
+				continue
+			}
+			end := 1
+			for end < len(s) && s[end] != ']' {
+				end++
+			}
+			if end == 1 || end >= len(s) {
+				return nil, false
+			}
+			v, err := strconv.Atoi(s[1:end])
+			if err != nil {
+				return nil, false
+			}
+			segments = append(segments, constraint.Segment{Kind: constraint.SegmentIndexInt, Index: v})
+			s = s[end+1:]
+		default:
+			return nil, false
+		}
+	}
+	return segments, true
+}
+
+func quotedSegmentEnd(s string) (int, bool) {
+	escaped := false
+	for i := 2; i < len(s); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case s[i] == '\\':
+			escaped = true
+		case s[i] == '"':
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func valueKeyItoa(v uint64) string {
+	if v == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for v > 0 {
+		i--
+		buf[i] = byte('0' + v%10)
+		v /= 10
+	}
+	return string(buf[i:])
+}

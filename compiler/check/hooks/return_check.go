@@ -32,8 +32,6 @@
 package hooks
 
 import (
-	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -44,7 +42,6 @@ import (
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/subtype"
-	"github.com/wippyai/go-lua/types/typ/subst"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -146,7 +143,7 @@ func CheckReturns(
 				continue
 			}
 
-			actual := observer.TypeOfWithExpected(expr, p, declaredType)
+			actual := observer.ReturnSourceType(expr, p, declaredType)
 			if actual == nil {
 				actual = typ.Unknown
 			}
@@ -178,23 +175,8 @@ func CheckReturns(
 }
 
 func returnTypeCompatible(actual, declared typ.Type) bool {
-	if subtype.Consistent(actual, declared) {
-		return true
-	}
-	_, ok := value.ReconcilePathFactWithDeclaredRead(actual, declared)
-	if rcdbg && !ok {
-		exp := subst.ExpandInstantiated(declared)
-		fmt.Fprintf(os.Stderr, "RCDBG actual=%s (%T) declared=%s (%T)\n  expanded=%s (%T) expChanged=%v subOnExp=%v\n",
-			typ.FormatShort(actual), actual, typ.FormatShort(declared), declared,
-			typ.FormatShort(exp), exp, exp != declared, subtype.IsSubtype(actual, exp))
-		if inst, isInst := declared.(*typ.Instantiated); isInst && inst.Generic != nil {
-			fmt.Fprintf(os.Stderr, "  generic=%s body=%s args=%v\n", inst.Generic.Name, typ.FormatShort(inst.Generic.Body), inst.TypeArgs)
-		}
-	}
-	return ok
+	return value.DeclaredBoundaryCompatible(actual, declared)
 }
-
-var rcdbg = os.Getenv("RCDBG") != ""
 
 func resolveDeclaredReturns(returnTypes []ast.TypeExpr, baseScope *scope.State, s api.Synth) []typ.Type {
 	if s == nil {

@@ -110,6 +110,22 @@ func TestParseKey_Unversioned(t *testing.T) {
 	}
 }
 
+func TestParseKey_CanonicalPointStateRoot(t *testing.T) {
+	sym, version, suffix, ok := ParseKey("s9[\"k\"].value")
+	if !ok {
+		t.Fatal("expected canonical point-state key parse to succeed")
+	}
+	if sym != 9 {
+		t.Fatalf("sym=%d, want 9", sym)
+	}
+	if version != 0 {
+		t.Fatalf("version=%d, want 0", version)
+	}
+	if suffix != "[\"k\"].value" {
+		t.Fatalf("suffix=%q, want [\"k\"].value", suffix)
+	}
+}
+
 func TestParseKey_InvalidVersionRejected(t *testing.T) {
 	invalid := []constraint.PathKey{
 		"sym1@.field",

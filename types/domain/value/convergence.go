@@ -233,6 +233,14 @@ func (c *recursiveUnionCollapse) rewriteRecord(orig typ.Type, rec *typ.Record, g
 		}
 		addRecordField(builder, f)
 	}
+	for _, member := range rec.StaticMembers {
+		m := member
+		m.Type = c.rewrite(member.Type, guard)
+		if !typ.SameNode(m.Type, member.Type) {
+			changed = true
+		}
+		addRecordStaticMember(builder, m)
+	}
 	if !changed {
 		return orig
 	}
@@ -544,6 +552,14 @@ func (s *convergenceWidenState) foldRecordChildrenSelfEmbedding(r *typ.Record, g
 		default:
 			builder.Field(f.Name, fieldType)
 		}
+	}
+	for _, m := range r.StaticMembers {
+		memberType := s.foldStructuralSelfEmbeddingGuard(m.Type, guard)
+		if !typ.SameNode(memberType, m.Type) {
+			changed = true
+		}
+		m.Type = memberType
+		addRecordStaticMember(builder, m)
 	}
 	if r.HasMapComponent() {
 		mapKey := s.foldStructuralSelfEmbeddingGuard(r.MapKey, guard)

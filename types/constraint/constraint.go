@@ -83,6 +83,8 @@ const (
 	KindFieldNotEqualsPath
 	KindIndexEqualsPath
 	KindIndexNotEqualsPath
+	KindVariantCaseEquals
+	KindVariantCaseNotEquals
 	KindKeyOf
 )
 
@@ -825,6 +827,72 @@ func (c IndexNotEqualsPath) Substitute(args []Path) (Constraint, bool) {
 	}
 
 	return IndexNotEqualsPath{Target: t, Key: c.Key, Value: v}, true
+}
+
+// VariantCaseEquals constrains a product value to a finite origin case without
+// materializing that case as a user-visible record field.
+type VariantCaseEquals struct {
+	Target       Path
+	OriginFamily uint64
+	CaseIndex    int
+}
+
+func (c VariantCaseEquals) Kind() Kind    { return KindVariantCaseEquals }
+func (c VariantCaseEquals) Paths() []Path { return []Path{c.Target} }
+func (c VariantCaseEquals) Hash() uint64 {
+	h := hashPathConstraint(c.Kind(), c.Target)
+	h = internal.HashCombine(h, c.OriginFamily)
+	return internal.HashCombine(h, uint64(c.CaseIndex+1))
+}
+func (c VariantCaseEquals) Equals(o Constraint) bool {
+	other, ok := o.(VariantCaseEquals)
+	return ok &&
+		c.Target.Equal(other.Target) &&
+		c.OriginFamily == other.OriginFamily &&
+		c.CaseIndex == other.CaseIndex
+}
+func (c VariantCaseEquals) String() string {
+	return fmt.Sprintf("variantcase(%s,%d,%d)", c.Target.String(), c.OriginFamily, c.CaseIndex)
+}
+func (c VariantCaseEquals) Substitute(args []Path) (Constraint, bool) {
+	t, ok := c.Target.Substitute(args)
+	if !ok {
+		return nil, false
+	}
+	return VariantCaseEquals{Target: t, OriginFamily: c.OriginFamily, CaseIndex: c.CaseIndex}, true
+}
+
+// VariantCaseNotEquals excludes one finite origin case from a product value
+// without interpreting the origin as a user-visible field.
+type VariantCaseNotEquals struct {
+	Target       Path
+	OriginFamily uint64
+	CaseIndex    int
+}
+
+func (c VariantCaseNotEquals) Kind() Kind    { return KindVariantCaseNotEquals }
+func (c VariantCaseNotEquals) Paths() []Path { return []Path{c.Target} }
+func (c VariantCaseNotEquals) Hash() uint64 {
+	h := hashPathConstraint(c.Kind(), c.Target)
+	h = internal.HashCombine(h, c.OriginFamily)
+	return internal.HashCombine(h, uint64(c.CaseIndex+1))
+}
+func (c VariantCaseNotEquals) Equals(o Constraint) bool {
+	other, ok := o.(VariantCaseNotEquals)
+	return ok &&
+		c.Target.Equal(other.Target) &&
+		c.OriginFamily == other.OriginFamily &&
+		c.CaseIndex == other.CaseIndex
+}
+func (c VariantCaseNotEquals) String() string {
+	return fmt.Sprintf("variantcase-not(%s,%d,%d)", c.Target.String(), c.OriginFamily, c.CaseIndex)
+}
+func (c VariantCaseNotEquals) Substitute(args []Path) (Constraint, bool) {
+	t, ok := c.Target.Substitute(args)
+	if !ok {
+		return nil, false
+	}
+	return VariantCaseNotEquals{Target: t, OriginFamily: c.OriginFamily, CaseIndex: c.CaseIndex}, true
 }
 
 // KeyOf constrains a key path to be a known key of a table path.

@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/lattice"
@@ -14,14 +15,14 @@ import (
 
 // TestPointStateDomain_Laws validates the canonical intraprocedural carrier.
 //
-// PointStateDomain is the componentwise reduced product of three independently
+// PointStateDomain is the componentwise reduced product of independently
 // law-tested domains (envDomain over product.Domain, constraint.Domain,
-// numeric.StateDomain). A product of law-satisfying lattices is itself a
-// law-satisfying lattice, so the laws must hold here by construction; this
-// suite exists to catch a COMPOSITION bug — a field delegating to the wrong
-// component, a component left nil where the carrier requires a value, or a
-// Meet wired where a component lacks one — rather than to re-prove the
-// components.
+// numeric.StateDomain, relation domains, CaptureCellsDomain, and
+// CaptureEffectsDomain). A product of law-satisfying lattices is itself a
+// law-satisfying lattice, so the laws must hold here by construction; this suite
+// exists to catch a COMPOSITION bug — a field delegating to the wrong component,
+// a component left nil where the carrier requires a value, or a Meet wired where
+// a component lacks one — rather than to re-prove the components.
 //
 // The sample crosses each component independently (one component non-trivial
 // at a time) and jointly (all three non-trivial), so a swapped delegation
@@ -35,9 +36,140 @@ func TestPointStateDomain_Laws(t *testing.T) {
 	}.Run(t)
 }
 
+func TestPointStateJoinKeepsBranchLocalStaticIndexInstallOptional(t *testing.T) {
+	const sym = cfg.SymbolID(901)
+	message := typ.NewRecord().
+		Field("_topic", typ.String).
+		Field("topic", typ.Func().Param("self", typ.Any).Returns(typ.String).Build()).
+		Build()
+	base := product.FromType(typ.NewMap(typ.String, message))
+	installed := product.WithMember(base, value.MemberStringIndex("root"), product.FromType(message))
+
+	left := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): base,
+		},
+	}
+	right := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): installed,
+		},
+		KeyPresence: KeyPresenceFacts{}.With(
+			SymbolPathKey(sym, nil),
+			SymbolPathKey(cfg.SymbolID(902), nil),
+		),
+	}
+
+	joined := PointStateDomain.Join(left, right)
+	av, ok := SymbolValue(joined, sym)
+	if !ok || av.IsZero() {
+		t.Fatal("joined PointState lost installed/base symbol")
+	}
+	got, ok := product.MemberOf(av, value.MemberStringIndex("root"))
+	want := typ.NewOptional(message)
+	if !ok || !typ.TypeEquals(got.ProjectValue(), want) {
+		t.Fatalf("PointState join [\"root\"] = %v, %v; want %v,true", got.ProjectValue(), ok, want)
+	}
+	if joined.KeyPresence.Has(SymbolPathKey(sym, nil), SymbolPathKey(cfg.SymbolID(902), nil)) {
+		t.Fatalf("PointState join kept one-branch KeyPresence: %s", joined.KeyPresence.Format())
+	}
+}
+
+func TestPointStateJoinDropsOneBranchMustFacts(t *testing.T) {
+	table := constraint.NewPath(cfg.SymbolID(910), "messages")
+	key := constraint.NewPath(cfg.SymbolID(911), "key")
+	valuePath := constraint.NewPath(cfg.SymbolID(912), "entry")
+	sourcePath := constraint.NewPath(cfg.SymbolID(913), "items")
+	errSym := cfg.SymbolID(914)
+
+	empty := reachableEmptyPointState()
+	factful := reachableEmptyPointState()
+	factful.StaticMembers = factful.StaticMembers.With(
+		KeyPresencePathKey(table.IndexStr("root")),
+		product.FromType(typ.String),
+	)
+	factful.KeyPresence = factful.KeyPresence.
+		WithPaths(table, key).
+		WithValuePaths(table, key, valuePath)
+	factful.ValueOrigins = factful.ValueOrigins.WithPaths(
+		valuePath,
+		sourcePath,
+		ValueOriginIndexedIterator,
+		1,
+	)
+	factful.IndexWrites = factful.IndexWrites.With(IndexWriteAdmissionFact{
+		Target:    KeyPresencePathKey(table),
+		KeyPath:   KeyPresencePathKey(key),
+		Key:       product.FromType(typ.String),
+		ValuePath: KeyPresencePathKey(valuePath),
+		Value:     product.FromType(typ.Number),
+	})
+	factful.Rel = factful.Rel.WithSiblingNil(errSym, []cfg.SymbolID{valuePath.Symbol})
+
+	if !PointStateDomain.LessOrEq(factful, empty) {
+		t.Fatalf("factful reachable state should be below empty must-fact state:\nfactful=%s\nempty=%s", formatPointState(factful), formatPointState(empty))
+	}
+	if PointStateDomain.LessOrEq(empty, factful) {
+		t.Fatalf("empty must-fact state should not imply branch-local facts:\nempty=%s\nfactful=%s", formatPointState(empty), formatPointState(factful))
+	}
+
+	joined := PointStateDomain.Join(empty, factful)
+	reverse := PointStateDomain.Join(factful, empty)
+	if !PointStateDomain.Equal(joined, reverse) {
+		t.Fatalf("PointState join is not deterministic/commutative:\nleft=%s\nright=%s", formatPointState(joined), formatPointState(reverse))
+	}
+	assertPointStateDroppedOneBranchMustFacts(t, joined, table, key, valuePath, errSym)
+
+	widened := PointStateDomain.Widen(empty, factful)
+	assertPointStateDroppedOneBranchMustFacts(t, widened, table, key, valuePath, errSym)
+}
+
+func reachableEmptyPointState() PointState {
+	return PointState{
+		Env:                envDomain.Bottom(),
+		Cond:               constraint.Domain.Top(),
+		Num:                numeric.NewState(),
+		Rel:                PointRelationsDomain.Top(),
+		ReturnRel:          ReturnRelationsDomain.Top(),
+		Cells:              CaptureCellsDomain.Bottom(),
+		CellEffects:        CaptureEffectsIdentity(),
+		PrototypeSelf:      PrototypeSelfDomain.Bottom(),
+		PrototypeInstances: PrototypeInstancesDomain.Bottom(),
+		FunctionRefs:       FunctionRefsDomain.Bottom(),
+		ClosureRefs:        ClosureRefsDomain.Bottom(),
+		StaticMembers:      StaticMemberFactsDomain.Top(),
+		KeyPresence:        KeyPresenceFactsDomain.Top(),
+		ValueOrigins:       ValueOriginFactsDomain.Top(),
+	}
+}
+
+func assertPointStateDroppedOneBranchMustFacts(t *testing.T, ps PointState, table, key, valuePath constraint.Path, errSym cfg.SymbolID) {
+	t.Helper()
+	if _, ok := ps.StaticMembers.Value(KeyPresencePathKey(table.IndexStr("root"))); ok {
+		t.Fatalf("PointState kept one-branch StaticMembers fact: %s", ps.StaticMembers.Format())
+	}
+	if ps.KeyPresence.HasPaths(table, key) || ps.KeyPresence.HasValuePaths(table, key, valuePath) {
+		t.Fatalf("PointState kept one-branch KeyPresence fact: %s", ps.KeyPresence.Format())
+	}
+	if got := ps.ValueOrigins.OriginsOfPath(valuePath); len(got) != 0 {
+		t.Fatalf("PointState kept one-branch ValueOrigins fact: %s", ps.ValueOrigins.Format())
+	}
+	if rel, ok := ps.Rel.SiblingNil(errSym); ok {
+		t.Fatalf("PointState kept one-branch relation: %#v", rel)
+	}
+	if _, ok := ps.IndexWrites.Admission(IndexWriteQuery{
+		Target:    table,
+		KeySymbol: key.Symbol,
+		KeyType:   typ.String,
+		ValuePath: valuePath,
+	}); ok {
+		t.Fatalf("PointState kept one-branch IndexWrites fact: %s", ps.IndexWrites.Format())
+	}
+}
+
 // pointStateSample builds Bottom, Top, and a structural cross-section in which
 // each component varies independently and jointly. Every PointState sets all
-// three fields to a valid component element: Env may be nil (MapLattice reads
+// fields to valid component elements: Env may be nil (MapLattice reads
 // absence as product.Domain.Bottom()), but Cond and Num must be real domain
 // values, never their Go zero value.
 func pointStateSample() []PointState {
@@ -57,14 +189,116 @@ func pointStateSample() []PointState {
 	numBounded.ApplyLeConst("x", 100)
 
 	// Env cross-section: empty (Bottom), single key, multi key, top sentinel.
-	envOne := map[string]product.AbstractValue{"x": product.FromType(typ.String)}
-	envTwo := map[string]product.AbstractValue{
-		"x": product.FromType(typ.Number),
-		"y": product.FromType(typ.Integer),
+	envOne := map[ValueKey]product.AbstractValue{ValueKey("x"): product.FromType(typ.String)}
+	envTwo := map[ValueKey]product.AbstractValue{
+		ValueKey("x"): product.FromType(typ.Number),
+		ValueKey("y"): product.FromType(typ.Integer),
 	}
 
-	mk := func(env map[string]product.AbstractValue, cond constraint.Condition, num *numeric.State) PointState {
-		return PointState{Env: env, Cond: cond, Num: num}
+	cellsOne := CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.String)}})
+	cellsTwo := CaptureCellsOf([]CaptureCell{
+		{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.Number)},
+		{Symbol: cfg.SymbolID(11), Value: product.FromType(typ.Boolean)},
+	})
+	effectsOne := CaptureMustWrite(cfg.SymbolID(10), product.FromType(typ.String))
+	effectsTwo := CaptureEffectsOf([]CaptureEffect{
+		{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.Number), MustWrite: false},
+		{Symbol: cfg.SymbolID(12), Value: product.FromType(typ.Boolean), MustWrite: true},
+	})
+	protoOne := PrototypeSelfOf([]PrototypeSelfEntry{{Prototype: cfg.SymbolID(20), Value: product.FromType(typ.String)}})
+	protoTwo := PrototypeSelfOf([]PrototypeSelfEntry{
+		{Prototype: cfg.SymbolID(20), Value: product.FromType(typ.Number)},
+		{Prototype: cfg.SymbolID(21), Value: product.FromType(typ.Boolean)},
+	})
+	instOne := PrototypeInstancesOf([]PrototypeInstanceEntry{{Symbol: cfg.SymbolID(25), Prototypes: []cfg.SymbolID{20}}})
+	instTwo := PrototypeInstancesOf([]PrototypeInstanceEntry{
+		{Symbol: cfg.SymbolID(25), Prototypes: []cfg.SymbolID{20, 21}},
+		{Symbol: cfg.SymbolID(26), Prototypes: []cfg.SymbolID{22}},
+	})
+	refsOne := WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(30), "fn").Key(), FunctionRefSetOf(FunctionRef{GraphID: 300}))
+	closureOne := WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(31), "closure").Key(), ClosureRefSetOf(ClosureRefOf(
+		FunctionRef{GraphID: 301},
+		CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.String)}}),
+		refsOne,
+	)))
+	closureTwo := WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(31), "closure").Key(), ClosureRefSetOf(
+		ClosureRefOf(
+			FunctionRef{GraphID: 301},
+			CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.Number)}}),
+			FunctionRefsDomain.Bottom(),
+		),
+		ClosureRefOf(
+			FunctionRef{GraphID: 302},
+			CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(11), Value: product.FromType(typ.Boolean)}}),
+			refsOne,
+		),
+	))
+	staticOne := StaticMemberFactsOf([]StaticMemberFact{{
+		Path:  SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: ""}}),
+		Value: product.FromType(typ.String),
+	}})
+	staticTwo := StaticMemberFactsOf([]StaticMemberFact{
+		{
+			Path:  SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: ""}}),
+			Value: product.FromType(typ.Number),
+		},
+		{
+			Path:  SymbolPathKey(cfg.SymbolID(2), []constraint.Segment{{Kind: constraint.SegmentIndexInt, Index: 1}}),
+			Value: product.FromType(typ.Boolean),
+		},
+	})
+	keyPresenceOne := KeyPresenceFactsOf([]KeyPresenceFact{{
+		Table: SymbolPathKey(cfg.SymbolID(1), nil),
+		Key:   SymbolPathKey(cfg.SymbolID(3), nil),
+	}})
+	keyPresenceTwo := KeyPresenceFactsOf([]KeyPresenceFact{
+		{
+			Table: SymbolPathKey(cfg.SymbolID(1), nil),
+			Key:   SymbolPathKey(cfg.SymbolID(3), nil),
+		},
+		{
+			Table: SymbolPathKey(cfg.SymbolID(2), []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}}),
+			Key:   SymbolPathKey(cfg.SymbolID(4), nil),
+		},
+	})
+	valueOriginOne := ValueOriginFacts{}.WithPaths(
+		constraint.NewPath(cfg.SymbolID(5), "entry"),
+		constraint.NewPath(cfg.SymbolID(6), "items"),
+		ValueOriginIndexedIterator,
+		1,
+	)
+	valueOriginTwo := valueOriginOne.WithPaths(
+		constraint.NewPath(cfg.SymbolID(7), "key"),
+		constraint.NewPath(cfg.SymbolID(6), "items"),
+		ValueOriginKeyedIterator,
+		0,
+	)
+	indexWriteOne := IndexWriteAdmissionFactsOf([]IndexWriteAdmissionFact{{
+		Target:    SymbolPathKey(cfg.SymbolID(1), nil),
+		KeyPath:   SymbolPathKey(cfg.SymbolID(3), nil),
+		Key:       product.FromType(typ.String),
+		ValuePath: SymbolPathKey(cfg.SymbolID(5), nil),
+		Value:     product.FromType(typ.Number),
+	}})
+	indexWriteTwo := IndexWriteAdmissionFactsOf([]IndexWriteAdmissionFact{
+		{
+			Target:    SymbolPathKey(cfg.SymbolID(1), nil),
+			KeyPath:   SymbolPathKey(cfg.SymbolID(3), nil),
+			Key:       product.FromType(typ.String),
+			ValuePath: SymbolPathKey(cfg.SymbolID(5), nil),
+			Value:     product.FromType(typ.Integer),
+		},
+		{
+			Target:    SymbolPathKey(cfg.SymbolID(2), []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}}),
+			KeyPath:   SymbolPathKey(cfg.SymbolID(4), nil),
+			Key:       product.FromType(typ.Number),
+			ValuePath: SymbolPathKey(cfg.SymbolID(8), nil),
+			Value:     product.FromType(typ.Boolean),
+		},
+	})
+
+	mk := func(env map[ValueKey]product.AbstractValue, cond constraint.Condition, num *numeric.State, cells CaptureCells, effects CaptureEffects, proto PrototypeSelf, instances PrototypeInstances, closures ClosureRefs, static StaticMemberFacts, keyPresence KeyPresenceFacts, valueOrigins ValueOriginFacts, indexWrites IndexWriteAdmissionFacts) PointState {
+		return PointState{Env: env, Cond: cond, Num: num, Cells: cells, CellEffects: effects, PrototypeSelf: proto, PrototypeInstances: instances, ClosureRefs: closures, StaticMembers: static, KeyPresence: keyPresence, ValueOrigins: valueOrigins, IndexWrites: indexWrites}
 	}
 
 	return []PointState{
@@ -72,23 +306,32 @@ func pointStateSample() []PointState {
 		PointStateDomain.Top(),
 
 		// One component non-trivial at a time, the other two at Bottom.
-		mk(envOne, constraint.Domain.Bottom(), numeric.StateDomain.Bottom()),
-		mk(envDomain.Bottom(), condTruthy, numeric.StateDomain.Bottom()),
-		mk(envDomain.Bottom(), constraint.Domain.Bottom(), numBounded),
+		mk(envOne, constraint.Domain.Bottom(), numeric.StateDomain.Bottom(), CaptureCellsDomain.Bottom(), CaptureEffectsDomain.Bottom(), PrototypeSelfDomain.Bottom(), PrototypeInstancesDomain.Bottom(), ClosureRefsDomain.Bottom(), StaticMemberFactsDomain.Bottom(), KeyPresenceFactsDomain.Bottom(), ValueOriginFactsDomain.Bottom(), IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envDomain.Bottom(), condTruthy, numeric.StateDomain.Bottom(), CaptureCellsDomain.Bottom(), CaptureEffectsDomain.Bottom(), PrototypeSelfDomain.Bottom(), PrototypeInstancesDomain.Bottom(), ClosureRefsDomain.Bottom(), StaticMemberFactsDomain.Bottom(), KeyPresenceFactsDomain.Bottom(), ValueOriginFactsDomain.Bottom(), IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envDomain.Bottom(), constraint.Domain.Bottom(), numBounded, CaptureCellsDomain.Bottom(), CaptureEffectsDomain.Bottom(), PrototypeSelfDomain.Bottom(), PrototypeInstancesDomain.Bottom(), ClosureRefsDomain.Bottom(), StaticMemberFactsDomain.Bottom(), KeyPresenceFactsDomain.Bottom(), ValueOriginFactsDomain.Bottom(), IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envDomain.Bottom(), constraint.Domain.Bottom(), numeric.StateDomain.Bottom(), cellsOne, CaptureEffectsDomain.Bottom(), PrototypeSelfDomain.Bottom(), PrototypeInstancesDomain.Bottom(), ClosureRefsDomain.Bottom(), StaticMemberFactsDomain.Bottom(), KeyPresenceFactsDomain.Bottom(), ValueOriginFactsDomain.Bottom(), IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envDomain.Bottom(), constraint.Domain.Bottom(), numeric.StateDomain.Bottom(), CaptureCellsDomain.Bottom(), effectsOne, PrototypeSelfDomain.Bottom(), PrototypeInstancesDomain.Bottom(), ClosureRefsDomain.Bottom(), StaticMemberFactsDomain.Bottom(), KeyPresenceFactsDomain.Bottom(), ValueOriginFactsDomain.Bottom(), IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envDomain.Bottom(), constraint.Domain.Bottom(), numeric.StateDomain.Bottom(), CaptureCellsDomain.Bottom(), CaptureEffectsDomain.Bottom(), protoOne, PrototypeInstancesDomain.Bottom(), ClosureRefsDomain.Bottom(), StaticMemberFactsDomain.Bottom(), KeyPresenceFactsDomain.Bottom(), ValueOriginFactsDomain.Bottom(), IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envDomain.Bottom(), constraint.Domain.Bottom(), numeric.StateDomain.Bottom(), CaptureCellsDomain.Bottom(), CaptureEffectsDomain.Bottom(), PrototypeSelfDomain.Bottom(), instOne, ClosureRefsDomain.Bottom(), StaticMemberFactsDomain.Bottom(), KeyPresenceFactsDomain.Bottom(), ValueOriginFactsDomain.Bottom(), IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envDomain.Bottom(), constraint.Domain.Bottom(), numeric.StateDomain.Bottom(), CaptureCellsDomain.Bottom(), CaptureEffectsDomain.Bottom(), PrototypeSelfDomain.Bottom(), PrototypeInstancesDomain.Bottom(), closureOne, StaticMemberFactsDomain.Bottom(), KeyPresenceFactsDomain.Bottom(), ValueOriginFactsDomain.Bottom(), IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envDomain.Bottom(), constraint.Domain.Bottom(), numeric.StateDomain.Bottom(), CaptureCellsDomain.Bottom(), CaptureEffectsDomain.Bottom(), PrototypeSelfDomain.Bottom(), PrototypeInstancesDomain.Bottom(), ClosureRefsDomain.Bottom(), staticOne, KeyPresenceFactsDomain.Bottom(), ValueOriginFactsDomain.Bottom(), IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envDomain.Bottom(), constraint.Domain.Bottom(), numeric.StateDomain.Bottom(), CaptureCellsDomain.Bottom(), CaptureEffectsDomain.Bottom(), PrototypeSelfDomain.Bottom(), PrototypeInstancesDomain.Bottom(), ClosureRefsDomain.Bottom(), StaticMemberFactsDomain.Bottom(), keyPresenceOne, ValueOriginFactsDomain.Bottom(), IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envDomain.Bottom(), constraint.Domain.Bottom(), numeric.StateDomain.Bottom(), CaptureCellsDomain.Bottom(), CaptureEffectsDomain.Bottom(), PrototypeSelfDomain.Bottom(), PrototypeInstancesDomain.Bottom(), ClosureRefsDomain.Bottom(), StaticMemberFactsDomain.Bottom(), KeyPresenceFactsDomain.Bottom(), valueOriginOne, IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envDomain.Bottom(), constraint.Domain.Bottom(), numeric.StateDomain.Bottom(), CaptureCellsDomain.Bottom(), CaptureEffectsDomain.Bottom(), PrototypeSelfDomain.Bottom(), PrototypeInstancesDomain.Bottom(), ClosureRefsDomain.Bottom(), StaticMemberFactsDomain.Bottom(), KeyPresenceFactsDomain.Bottom(), ValueOriginFactsDomain.Bottom(), indexWriteOne),
 
 		// Pairs and a fully-mixed point.
-		mk(envTwo, condTwo, numeric.StateDomain.Bottom()),
-		mk(envOne, constraint.Domain.Bottom(), numBounded),
-		mk(envTwo, condTwo, numBounded),
+		mk(envTwo, condTwo, numeric.StateDomain.Bottom(), CaptureCellsDomain.Bottom(), CaptureEffectsDomain.Bottom(), PrototypeSelfDomain.Bottom(), PrototypeInstancesDomain.Bottom(), ClosureRefsDomain.Bottom(), StaticMemberFactsDomain.Bottom(), KeyPresenceFactsDomain.Bottom(), ValueOriginFactsDomain.Bottom(), IndexWriteAdmissionFactsDomain.Bottom()),
+		mk(envOne, constraint.Domain.Bottom(), numBounded, cellsOne, effectsOne, protoOne, instOne, closureOne, staticOne, keyPresenceOne, valueOriginOne, indexWriteOne),
+		mk(envTwo, condTwo, numBounded, cellsTwo, effectsTwo, protoTwo, instTwo, closureTwo, staticTwo, keyPresenceTwo, valueOriginTwo, indexWriteTwo),
 
 		// One component at Top, others finite — exercises the envDomain top
 		// sentinel and condition/numeric Top against finite neighbours.
-		mk(envDomain.Top(), condTruthy, numBounded),
-		mk(envOne, constraint.Domain.Top(), numeric.StateDomain.Top()),
+		mk(envDomain.Top(), condTruthy, numBounded, cellsOne, effectsOne, protoOne, instOne, closureOne, staticOne, keyPresenceOne, valueOriginOne, indexWriteOne),
+		mk(envOne, constraint.Domain.Top(), numeric.StateDomain.Top(), CaptureCellsDomain.Top(), CaptureEffectsDomain.Top(), PrototypeSelfDomain.Top(), PrototypeInstancesDomain.Top(), ClosureRefsDomain.Top(), StaticMemberFactsDomain.Top(), KeyPresenceFactsDomain.Top(), ValueOriginFactsDomain.Top(), IndexWriteAdmissionFactsDomain.Top()),
 	}
 }
 
 func formatPointState(p PointState) string {
-	return fmt.Sprintf("{Env:%v Cond:%v Num:%v}",
-		p.Env, constraint.Domain.Equal(p.Cond, constraint.Domain.Top()), numeric.StateDomain.Equal(p.Num, numeric.StateDomain.Top()))
+	return fmt.Sprintf("{Env:%v Cond:%v Num:%v Cells:%s Effects:%s PrototypeSelf:%s PrototypeInstances:%s ClosureRefs:%v StaticMembers:%s KeyPresence:%s ValueOrigins:%s IndexWrites:%s}",
+		p.Env, constraint.Domain.Equal(p.Cond, constraint.Domain.Top()), numeric.StateDomain.Equal(p.Num, numeric.StateDomain.Top()), p.Cells.Format(), p.CellEffects.Format(), p.PrototypeSelf.Format(), p.PrototypeInstances.Format(), p.ClosureRefs, p.StaticMembers.Format(), p.KeyPresence.Format(), p.ValueOrigins.Format(), p.IndexWrites.Format())
 }

@@ -138,6 +138,14 @@ func (f *formatter) formatType(t Type, depth int, guard internal.RecursionGuard)
 				f.write("}")
 				return struct{}{}
 			},
+			ReadonlyMap: func(m *ReadonlyMap) struct{} {
+				f.write("readonly {[")
+				f.formatType(m.Key, depth+1, next)
+				f.write("]: ")
+				f.formatType(m.Value, depth+1, next)
+				f.write("}")
+				return struct{}{}
+			},
 			Tuple: func(tu *Tuple) struct{} {
 				f.formatTuple(tu, depth, next)
 				return struct{}{}
@@ -373,8 +381,24 @@ func (f *formatter) formatRecord(r *Record, depth int, guard internal.RecursionG
 	if limit < len(r.Fields) {
 		f.write(", ...")
 	}
+	for i, member := range r.StaticMembers {
+		if len(r.Fields) > 0 || i > 0 {
+			f.write(", ")
+		}
+		if member.Readonly {
+			f.write("readonly ")
+		}
+		var key strings.Builder
+		writeStaticMemberKey(&key, member)
+		f.write(key.String())
+		if member.Optional {
+			f.write("?")
+		}
+		f.write(": ")
+		f.formatType(member.Type, depth+1, guard)
+	}
 	if r.HasMapComponent() {
-		if len(r.Fields) > 0 {
+		if len(r.Fields) > 0 || len(r.StaticMembers) > 0 {
 			f.write(", ")
 		}
 		f.write("[")

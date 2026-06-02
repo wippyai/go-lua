@@ -271,7 +271,7 @@ func (b *Builder) processTableField(p basecfg.Point, baseSym basecfg.SymbolID, f
 		return
 	}
 
-	fieldSeg, hasStaticField := pathseg.StaticTableFieldKeySegment(field.Key)
+	fieldSeg, hasStaticField := pathseg.StaticTableFieldSegment(field)
 
 	// If we have a base symbol and static field key, create field symbol for function values
 	if baseSym != 0 && hasStaticField && b.Bindings != nil {

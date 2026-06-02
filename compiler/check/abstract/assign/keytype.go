@@ -1,6 +1,7 @@
 package assign
 
 import (
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -14,6 +15,9 @@ func canonicalDynamicKeyType(keyType typ.Type) typ.Type {
 	keyType = narrow.ToTruthy(keyType)
 	if typ.IsAbsentOrUnknown(keyType) {
 		return typ.Unknown
+	}
+	if typ.UnwrapAnnotated(keyType).Kind() == kind.Literal {
+		return keyType
 	}
 	return subtype.Widen(keyType)
 }

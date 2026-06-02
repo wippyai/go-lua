@@ -24,7 +24,6 @@ type FlowEvidence struct {
 	EscapedFunctions    []FunctionEscapeEvidence
 	LocalTypePredicates []LocalTypePredicateEvidence
 	CapturedFields      []CapturedFieldEvidence
-	CapturedContainers  []CapturedContainerEvidence
 }
 
 // IsZero reports whether no abstract-interpreter event evidence has been
@@ -42,8 +41,7 @@ func (e FlowEvidence) IsZero() bool {
 		len(e.FunctionDefinitions) == 0 &&
 		len(e.EscapedFunctions) == 0 &&
 		len(e.LocalTypePredicates) == 0 &&
-		len(e.CapturedFields) == 0 &&
-		len(e.CapturedContainers) == 0
+		len(e.CapturedFields) == 0
 }
 
 // CallOrigin classifies the graph event that owns a call expression.
@@ -163,7 +161,10 @@ type LocalTypePredicateEvidence struct {
 type ParameterUseEvidence struct {
 	Symbol cfg.SymbolID
 	Whole  bool
-	Fields []string
+	// Fields are static field/index slots demanded from the parameter. They remain
+	// structural segments in the evidence stream; consumers project to strings only
+	// at record/API boundaries.
+	Fields []constraint.Segment
 }
 
 // CapturedFieldEvidence records a direct field write to a captured symbol.
@@ -175,18 +176,4 @@ type CapturedFieldEvidence struct {
 	Value       ast.Expr
 	ValueType   typ.Type
 	ValueSource flow.AssignmentSource
-}
-
-// CapturedContainerEvidence records an element mutation on a captured symbol.
-type CapturedContainerEvidence struct {
-	Point         cfg.Point
-	Target        cfg.SymbolID
-	Segments      []constraint.Segment
-	KeyPath       constraint.Path
-	KeyType       typ.Type
-	ValueMode     flow.MapMutationValueMode
-	ValuePath     constraint.Path
-	ValueType     typ.Type
-	ValueTemplate flow.ValueTemplate
-	Kind          ContainerMutationKind
 }

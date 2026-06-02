@@ -1,6 +1,7 @@
 package metatable
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -181,14 +182,7 @@ func SealClassInstanceReturn(t typ.Type) typ.Type {
 	if owner == "" {
 		return t
 	}
-	if zzSealOff {
-		return t
-	}
-	out := SealClassFamily(t, owner)
-	if zzSealDbg {
-		println("ZZSEAL in=", zzDump(t, 0), " out=", zzDump(out, 0))
-	}
-	return out
+	return SealClassFamily(t, owner)
 }
 
 // SealClassFamilyAuto seals a class type or class instance when no explicit
@@ -292,7 +286,6 @@ func autoOwnerKey(t typ.Type) string {
 // without an explicit class symbol.
 const autoOwnerName = "auto"
 
-
 // classFamilyName builds the recursion-variable name from the class owner key.
 // The name carries the owner identity so the sealed family stays a distinct
 // nominal carrier from structurally similar but distinctly-owned classes.
@@ -349,29 +342,31 @@ func classRecordHasBackEdge(root *typ.Record) bool {
 		// and __index points at proto. Folding __index closes the cycle into one
 		// mu in that case. A flat metatable {__index = T} (no peer fields) does
 		// not match and remains unsealed so T's methods are preserved.
-		if rootDuplicatesPrototypeSurface(root, idx) {
+		if rootDuplicatesPrototypeMethods(root, idx) {
 			return true
 		}
 	}
 	return false
 }
 
-// rootDuplicatesPrototypeSurface reports whether root carries the same method
-// surface as the __index prototype: root has at least one non-__index field
+// rootDuplicatesPrototypeMethods reports whether root carries the same method
+// fields as the __index prototype: root has at least one non-__index field
 // and every non-__index field of idx that is a function also appears as a
 // function field on root. This is the structural signature of a class allocation
 // where __index folds the cycle onto one mu without losing prototype methods.
-func rootDuplicatesPrototypeSurface(root, idx *typ.Record) bool {
+func rootDuplicatesPrototypeMethods(root, idx *typ.Record) bool {
 	if root == nil || idx == nil {
 		return false
 	}
 	rootFunctions := 0
-	rootFields := make(map[string]bool, len(root.Fields))
+	rootFields := make(map[fieldkey.Key]struct{}, len(root.Fields))
 	for _, f := range root.Fields {
 		if f.Name == indexField {
 			continue
 		}
-		rootFields[f.Name] = true
+		if key, ok := fieldkey.FromName(f.Name); ok {
+			rootFields[key] = struct{}{}
+		}
 		if _, ok := f.Type.(*typ.Function); ok {
 			rootFunctions++
 		}
@@ -386,7 +381,11 @@ func rootDuplicatesPrototypeSurface(root, idx *typ.Record) bool {
 		if _, ok := f.Type.(*typ.Function); !ok {
 			continue
 		}
-		if !rootFields[f.Name] {
+		key, ok := fieldkey.FromName(f.Name)
+		if !ok {
+			return false
+		}
+		if _, ok := rootFields[key]; !ok {
 			return false
 		}
 	}
@@ -660,7 +659,7 @@ func (r *backEdgeRewriter) targetIsRecursionFamily(rec *typ.Record) bool {
 	if recordContainsSelfReference(rec) {
 		return true
 	}
-	if r.root != nil && rootDuplicatesPrototypeSurface(r.root, rec) {
+	if r.root != nil && rootDuplicatesPrototypeMethods(r.root, rec) {
 		return true
 	}
 	return false
@@ -785,7 +784,7 @@ func (r *backEdgeRewriter) rewriteRecord(v *typ.Record, guard internal.Recursion
 func (r *backEdgeRewriter) rewriteFunction(v *typ.Function, guard internal.RecursionGuard) typ.Type {
 	builder := typ.Func().ReserveParams(len(v.Params))
 	for _, tp := range v.TypeParams {
-		builder.TypeParam(tp.Name, tp.Constraint)
+		builder.TypeParamRef(tp)
 	}
 	for _, p := range v.Params {
 		pt := r.rewrite(p.Type, guard)

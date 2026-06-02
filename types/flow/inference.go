@@ -10,8 +10,6 @@
 package flow
 
 import (
-	"fmt"
-
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
@@ -20,9 +18,8 @@ import (
 
 // ParamInfo describes a function parameter for effect inference.
 //
-// Both Name and Symbol are needed: Name for user-facing constraint paths,
-// Symbol for SSA-based path resolution. Type is included for completeness
-// but not currently used during inference.
+// Symbol is the canonical identity. Name is retained only for legacy constraints
+// that were emitted before a symbol was attached to the path.
 type ParamInfo struct {
 	Name   string
 	Symbol cfg.SymbolID
@@ -105,8 +102,8 @@ func InferFunctionRefinementFromInputs(
 // canonical flow-level representation for exporting path-sensitive facts
 // through contracts or function products.
 func ParameterCondition(cond constraint.Condition, params []ParamInfo) constraint.Condition {
-	paramIndex, paramNameIndex := parameterIndexes(params)
-	return substituteToPlaceholdersCondition(filterParamCondition(cond, paramIndex, paramNameIndex), paramIndex, paramNameIndex)
+	projection := newParameterProjection(params)
+	return substituteToPlaceholdersCondition(filterParamCondition(cond, projection), projection)
 }
 
 // refinementSource abstracts the data sources for refinement inference.
@@ -136,7 +133,7 @@ type refinementSource struct {
 // This method walks the CFG to find all return and exit points, collecting
 // constraints that hold at each. The algorithm:
 //
-//  1. Build parameter maps for constraint filtering and placeholder substitution
+//  1. Build a parameter projection for filtering and placeholder substitution
 //  2. Iterate over CFG points in RPO order, processing NodeReturn and NodeExit
 //  3. For each return point, combine base condition with return expression constraints
 //  4. Accumulate conditions into OnTrue/OnFalse/OnReturn based on return kind
@@ -152,7 +149,7 @@ func inferFunctionRefinementCore(
 	params []ParamInfo,
 	returnType typ.Type,
 ) *constraint.FunctionRefinement {
-	paramIndex, paramNameIndex := parameterIndexes(params)
+	projection := newParameterProjection(params)
 
 	// Count return nodes to detect terminating functions
 	hasReturnNode := false
@@ -236,13 +233,13 @@ func inferFunctionRefinementCore(
 	}
 
 	if !onTrueCond.IsFalse() {
-		onTrueCond = substituteToPlaceholdersCondition(filterParamCondition(onTrueCond, paramIndex, paramNameIndex), paramIndex, paramNameIndex)
+		onTrueCond = substituteToPlaceholdersCondition(filterParamCondition(onTrueCond, projection), projection)
 	}
 	if !onFalseCond.IsFalse() {
-		onFalseCond = substituteToPlaceholdersCondition(filterParamCondition(onFalseCond, paramIndex, paramNameIndex), paramIndex, paramNameIndex)
+		onFalseCond = substituteToPlaceholdersCondition(filterParamCondition(onFalseCond, projection), projection)
 	}
 	if !onReturnCond.IsFalse() {
-		onReturnCond = substituteToPlaceholdersCondition(filterParamCondition(onReturnCond, paramIndex, paramNameIndex), paramIndex, paramNameIndex)
+		onReturnCond = substituteToPlaceholdersCondition(filterParamCondition(onReturnCond, projection), projection)
 	}
 
 	exitHasPredecessors := len(graphPredecessors(g, g.Exit())) > 0
@@ -260,18 +257,54 @@ func inferFunctionRefinementCore(
 	return eff
 }
 
-func parameterIndexes(params []ParamInfo) (map[cfg.SymbolID]int, map[string]int) {
-	paramIndex := make(map[cfg.SymbolID]int)
-	paramNameIndex := make(map[string]int)
+type parameterProjection struct {
+	bySymbol     map[cfg.SymbolID]int
+	legacyByRoot map[string]int
+}
+
+func newParameterProjection(params []ParamInfo) parameterProjection {
+	projection := parameterProjection{
+		bySymbol:     make(map[cfg.SymbolID]int),
+		legacyByRoot: make(map[string]int),
+	}
 	for i, p := range params {
 		if p.Symbol != 0 {
-			paramIndex[p.Symbol] = i
+			projection.bySymbol[p.Symbol] = i
 		}
 		if p.Name != "" {
-			paramNameIndex[p.Name] = i
+			projection.legacyByRoot[p.Name] = i
 		}
 	}
-	return paramIndex, paramNameIndex
+	return projection
+}
+
+func (p parameterProjection) slotForPath(path constraint.Path) (int, bool) {
+	if path.Symbol != 0 {
+		idx, ok := p.bySymbol[path.Symbol]
+		return idx, ok
+	}
+	if path.Root == "" {
+		return 0, false
+	}
+	idx, ok := p.legacyByRoot[path.Root]
+	return idx, ok
+}
+
+func (p parameterProjection) references(path constraint.Path) bool {
+	_, ok := p.slotForPath(path)
+	return ok
+}
+
+func (p parameterProjection) placeholderRoot(path constraint.Path) (string, bool) {
+	idx, ok := p.slotForPath(path)
+	if !ok {
+		return "", false
+	}
+	placeholder := constraint.ParamPath(idx)
+	if placeholder.IsEmpty() {
+		return "", false
+	}
+	return placeholder.Root, true
 }
 
 // isBooleanReturnType checks if the return type is boolean.
@@ -305,9 +338,9 @@ func isBooleanReturnType(t typ.Type) bool {
 // reference only local variables or globals are filtered out since they cannot be
 // used at call sites for argument narrowing.
 //
-// Uses Symbol-based identity first, and root-name identity only for constraints
-// emitted before symbols were attached.
-func filterParamConstraints(set []constraint.Constraint, paramIndex map[cfg.SymbolID]int, paramNameIndex map[string]int) []constraint.Constraint {
+// Uses symbol identity when present. Root-name identity is a legacy fallback only
+// for unresolved paths with Symbol=0; a nonzero symbol mismatch is final.
+func filterParamConstraints(set []constraint.Constraint, projection parameterProjection) []constraint.Constraint {
 	if len(set) == 0 {
 		return nil
 	}
@@ -317,17 +350,9 @@ func filterParamConstraints(set []constraint.Constraint, paramIndex map[cfg.Symb
 	for _, c := range set {
 		references := false
 		for _, path := range c.Paths() {
-			if path.Symbol != 0 {
-				if _, ok := paramIndex[path.Symbol]; ok {
-					references = true
-					break
-				}
-			}
-			if path.Root != "" && paramNameIndex != nil {
-				if _, ok := paramNameIndex[path.Root]; ok {
-					references = true
-					break
-				}
+			if projection.references(path) {
+				references = true
+				break
 			}
 		}
 		if references {
@@ -351,26 +376,16 @@ func filterParamConstraints(set []constraint.Constraint, paramIndex map[cfg.Symb
 // This substitution enables effect instantiation: at a call site, $0 is replaced
 // with the actual first argument's path, $1 with the second, etc.
 //
-// Uses Symbol-based identity first, and root-name identity only for pre-symbol
-// constraints.
-func substituteToPlaceholders(set []constraint.Constraint, paramIndex map[cfg.SymbolID]int, paramNameIndex map[string]int) []constraint.Constraint {
+// Uses symbol identity when present. Root-name identity is a legacy fallback only
+// for unresolved paths with Symbol=0.
+func substituteToPlaceholders(set []constraint.Constraint, projection parameterProjection) []constraint.Constraint {
 	if len(set) == 0 {
 		return nil
 	}
 
-	placeholders := make(map[cfg.SymbolID]string, len(paramIndex))
-	for sym, idx := range paramIndex {
-		placeholders[sym] = fmt.Sprintf("$%d", idx)
-	}
-
-	placeholdersByName := make(map[string]string, len(paramNameIndex))
-	for name, idx := range paramNameIndex {
-		placeholdersByName[name] = fmt.Sprintf("$%d", idx)
-	}
-
 	var substituted []constraint.Constraint
 	for _, c := range set {
-		if sub := substitutePathsInConstraint(c, placeholders, placeholdersByName); sub != nil {
+		if sub := substitutePathsInConstraint(c, projection); sub != nil {
 			substituted = append(substituted, sub)
 		}
 	}
@@ -392,31 +407,11 @@ func substituteToPlaceholders(set []constraint.Constraint, paramIndex map[cfg.Sy
 //   - Binary path constraints (EqPath, FieldEqualsPath): Substitute both paths
 //   - Field/Index constraints: Substitute Target path
 //
-// Returns nil if no parameter reference is found (constraint references only
-// locals/globals), causing the constraint to be filtered out of the effect.
-func substitutePathsInConstraint(c constraint.Constraint, placeholders map[cfg.SymbolID]string, placeholdersByName map[string]string) constraint.Constraint {
-	return newParameterPathSubstituter(placeholders, placeholdersByName).constraint(c)
-}
-
-// lookupPlaceholder returns the placeholder for a path if it references a parameter.
-//
-// Lookup priority:
-//  1. Symbol-based: If path has Symbol, look up in placeholders map (SSA identity)
-//  2. Name-based: If path has Root, look up in placeholdersByName (string identity)
-//
-// Returns ("$N", true) if the path references parameter N, or ("", false) otherwise.
-func lookupPlaceholder(p constraint.Path, placeholders map[cfg.SymbolID]string, placeholdersByName map[string]string) (string, bool) {
-	if p.Symbol != 0 {
-		if placeholder, ok := placeholders[p.Symbol]; ok {
-			return placeholder, true
-		}
-	}
-	if p.Root != "" && placeholdersByName != nil {
-		if placeholder, ok := placeholdersByName[p.Root]; ok {
-			return placeholder, true
-		}
-	}
-	return "", false
+// Returns nil if the constraint cannot be expressed in the exported refinement
+// vocabulary. Exported path references must be parameter placeholders or explicit
+// return paths; callee locals/globals must not leak into a caller-facing effect.
+func substitutePathsInConstraint(c constraint.Constraint, projection parameterProjection) constraint.Constraint {
+	return newParameterPathSubstituter(projection).constraint(c)
 }
 
 // pathWithNewRoot creates a new path with a placeholder root.
@@ -440,14 +435,14 @@ func pathWithNewRoot(p constraint.Path, newRoot string) constraint.Path {
 // Applies filterParamConstraints to each disjunct. If any disjunct becomes empty
 // (all constraints filtered out), the entire condition becomes True (no restriction).
 // This is sound: an empty disjunct in DNF is True, and True OR anything is True.
-func filterParamCondition(cond constraint.Condition, paramIndex map[cfg.SymbolID]int, paramNameIndex map[string]int) constraint.Condition {
+func filterParamCondition(cond constraint.Condition, projection parameterProjection) constraint.Condition {
 	if cond.IsFalse() {
 		return cond
 	}
 
 	var disjuncts [][]constraint.Constraint
 	for _, d := range cond.Disjuncts {
-		filtered := filterParamConstraints(d, paramIndex, paramNameIndex)
+		filtered := filterParamConstraints(d, projection)
 		if len(filtered) == 0 {
 			return constraint.TrueCondition()
 		}
@@ -464,14 +459,14 @@ func filterParamCondition(cond constraint.Condition, paramIndex map[cfg.SymbolID
 //
 // Applies substituteToPlaceholders to each disjunct. If any disjunct becomes empty
 // (no constraints survive substitution), the entire condition becomes True.
-func substituteToPlaceholdersCondition(cond constraint.Condition, paramIndex map[cfg.SymbolID]int, paramNameIndex map[string]int) constraint.Condition {
+func substituteToPlaceholdersCondition(cond constraint.Condition, projection parameterProjection) constraint.Condition {
 	if cond.IsFalse() {
 		return cond
 	}
 
 	var disjuncts [][]constraint.Constraint
 	for _, d := range cond.Disjuncts {
-		sub := substituteToPlaceholders(d, paramIndex, paramNameIndex)
+		sub := substituteToPlaceholders(d, projection)
 		if len(sub) == 0 {
 			return constraint.TrueCondition()
 		}

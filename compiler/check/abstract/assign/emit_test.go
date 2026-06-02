@@ -153,7 +153,7 @@ func TestExtractAssignments_NilConfig(t *testing.T) {
 		Assignments:           []flow.UnifiedAssignment{},
 		MapMutatorAssignments: []flow.MapMutatorAssignment{},
 		SiblingAssignments:    make(map[flow.SiblingKey]*flow.SiblingAssignment),
-		PredicateLinks:        make(map[string]flow.PredicateLink),
+		PredicateLinks:        make(map[flow.PredicateLinkKey]flow.PredicateLink),
 	}
 	fc := &core.FlowContext{}
 	ExtractAssignments(fc, inputs, nil)
@@ -371,7 +371,7 @@ func TestExtractAssignments_ContainerElementSourceFromTrailingCall(t *testing.T)
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -429,7 +429,7 @@ func TestExtractAssignments_CallReturnSourceFromMethodReceiver(t *testing.T) {
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -496,7 +496,7 @@ func TestExtractAssignments_FunctionLiteralUsesCanonicalInputProjection(t *testi
 	inputs := &flow.Inputs{
 		DeclaredTypes:      map[cfg.SymbolID]typ.Type{fnSym: precise},
 		LiteralTypes:       map[cfg.SymbolID]typ.Type{fnSym: precise},
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -551,7 +551,7 @@ func TestExtractAssignments_GenericForEmitsIteratorSource(t *testing.T) {
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -642,7 +642,7 @@ func TestExtractAssignments_SelectResultVariantOriginsFromEffectContract(t *test
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -679,8 +679,8 @@ func hasVariantOrigin(origins []flow.VariantFieldOrigin, targetSym, sourceSym cf
 		if origin.Target.Symbol == targetSym &&
 			origin.Field == effect.SelectResultChannelField &&
 			origin.Source.Symbol == sourceSym &&
-			origin.DiscriminatorField == effect.SelectResultCaseIDField &&
-			typ.TypeEquals(origin.DiscriminatorValue, typ.LiteralInt(caseID)) {
+			origin.OriginFamily != 0 &&
+			int64(origin.CaseIndex) == caseID {
 			return true
 		}
 	}
@@ -709,7 +709,7 @@ func TestExtractAssignments_KeysCollectorEffectFallbackIgnoresNonCollectorEffect
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -752,7 +752,7 @@ func TestExtractAssignments_PrefersPreciseDirectTypeOverExpandedAnyForLogicalOr(
 	synthAPI := &preciseSourceSynthStub{preciseType: contextAlias}
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -801,7 +801,7 @@ func TestExtractAssignments_LocalRHSExpansionBeatsStaleTargetResolver(t *testing
 	synthAPI := &expandedValueSynthStub{values: []typ.Type{expanded, typ.Nil}}
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -861,7 +861,7 @@ func TestExtractAssignments_KeysCollectorEffectFallbackRespectsReturnIndex(t *te
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -919,7 +919,7 @@ func TestExtractAssignments_KeysCollectorEffectFallback_TriesAllNameCandidates(t
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -1012,7 +1012,7 @@ func TestExtractAssignments_KeysCollector_WithFilterBranch(t *testing.T) {
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	evidence := trace.GraphEvidence(graph, graph.Bindings())
@@ -1051,7 +1051,7 @@ func TestExtractAssignments_IndexAssign_NonIdentifierStringKey_UsesIndexStringSe
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -1105,7 +1105,7 @@ func TestExtractAssignments_LengthIndexReadCarriesSemanticSource(t *testing.T) {
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -1166,7 +1166,7 @@ func TestExtractAssignments_NestedDynamicIndex_LiftsToRootIndexer(t *testing.T) 
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{
@@ -1217,7 +1217,7 @@ func TestExtractAssignments_NestedDynamicFieldAndSiblingMutatorStayOnSeparatePat
 
 	inputs := &flow.Inputs{
 		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 	}
 	ExtractAssignments(&core.FlowContext{

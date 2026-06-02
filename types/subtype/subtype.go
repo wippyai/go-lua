@@ -386,7 +386,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	// Empty record can satisfy array/map shapes, but should still flow through
 	// regular record subtyping for record supers (e.g. all-optional records).
 	if r, ok := sub.(*typ.Record); ok && len(r.Fields) == 0 {
-		if super.Kind() == kind.Array || super.Kind() == kind.Map {
+		if super.Kind() == kind.Array || super.Kind() == kind.Map || super.Kind() == kind.ReadonlyMap {
 			return true
 		}
 	}
@@ -395,10 +395,16 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		if m, ok := super.(*typ.Map); ok {
 			return c.checkRecordToMap(r, m, depth+1)
 		}
+		if m, ok := super.(*typ.ReadonlyMap); ok {
+			return c.checkRecordToReadonlyMap(r, m, depth+1)
+		}
 	}
 	if m, ok := sub.(*typ.Map); ok {
 		if r, ok := super.(*typ.Record); ok {
 			return c.checkMapToRecord(m, r, depth+1)
+		}
+		if view, ok := super.(*typ.ReadonlyMap); ok {
+			return c.checkReadonlyMap(typ.NewReadonlyMap(m.Key, m.Value), view, depth+1)
 		}
 	}
 
@@ -406,6 +412,9 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	if arr, ok := sub.(*typ.Array); ok {
 		if m, ok := super.(*typ.Map); ok {
 			return c.checkArrayToMap(arr, m, depth+1)
+		}
+		if view, ok := super.(*typ.ReadonlyMap); ok {
+			return c.checkReadonlyMap(typ.NewReadonlyMap(typ.Integer, arr.Element), view, depth+1)
 		}
 	}
 
@@ -416,6 +425,9 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		}
 		if m, ok := super.(*typ.Map); ok {
 			return c.checkTupleToMap(tup, m, depth+1)
+		}
+		if view, ok := super.(*typ.ReadonlyMap); ok {
+			return c.checkTupleToReadonlyMap(tup, view, depth+1)
 		}
 	}
 
@@ -480,6 +492,8 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		return c.checkArray(sub.(*typ.Array), super.(*typ.Array), depth)
 	case kind.Map:
 		return c.checkMap(sub.(*typ.Map), super.(*typ.Map), depth)
+	case kind.ReadonlyMap:
+		return c.checkReadonlyMap(sub.(*typ.ReadonlyMap), super.(*typ.ReadonlyMap), depth)
 	case kind.Tuple:
 		return c.checkTuple(sub.(*typ.Tuple), super.(*typ.Tuple), depth)
 	case kind.Interface:
@@ -994,6 +1008,18 @@ func (c *checker) checkMap(sub, super *typ.Map, depth int) bool {
 	return c.check(super.Value, sub.Value, depth+1) || typ.IsAny(super.Value)
 }
 
+// checkReadonlyMap implements covariant read-only key/value view subtyping.
+//
+// ReadonlyMap<K1,V1> <: ReadonlyMap<K2,V2> iff K1 <: K2 and V1 <: V2.
+// There is no reverse check because callers cannot write through this view.
+func (c *checker) checkReadonlyMap(sub, super *typ.ReadonlyMap, depth int) bool {
+	if sub == nil || super == nil {
+		return false
+	}
+	return c.check(sub.Key, super.Key, depth+1) &&
+		c.check(presentReadonlyEntryValue(sub.Value), super.Value, depth+1)
+}
+
 // checkTuple implements tuple subtyping with covariant elements.
 //
 // Tuple<A1, A2, ...> <: Tuple<B1, B2, ...> iff length matches and Ai <: Bi for all i
@@ -1092,6 +1118,47 @@ func (c *checker) checkRecordToMap(sub *typ.Record, super *typ.Map, depth int) b
 	return true
 }
 
+// checkRecordToReadonlyMap checks if every entry a record can enumerate is
+// compatible with a read-only map view.
+func (c *checker) checkRecordToReadonlyMap(sub *typ.Record, super *typ.ReadonlyMap, depth int) bool {
+	if sub == nil || super == nil {
+		return false
+	}
+
+	for _, f := range sub.Fields {
+		if !c.check(typ.LiteralString(f.Name), super.Key, depth+1) {
+			return false
+		}
+		if !c.check(presentReadonlyEntryValue(f.Type), super.Value, depth+1) {
+			return false
+		}
+	}
+	for _, m := range sub.StaticMembers {
+		keyType, ok := readonlyStaticMemberKeyType(m)
+		if !ok || !c.check(keyType, super.Key, depth+1) {
+			return false
+		}
+		if !c.check(presentReadonlyEntryValue(m.Type), super.Value, depth+1) {
+			return false
+		}
+	}
+	if sub.Open || sub.Metatable != nil {
+		if !c.check(typ.String, super.Key, depth+1) || !c.check(typ.Unknown, super.Value, depth+1) {
+			return false
+		}
+	}
+	if sub.HasMapComponent() {
+		if !c.check(sub.MapKey, super.Key, depth+1) {
+			return false
+		}
+		if !c.check(presentReadonlyEntryValue(sub.MapValue), super.Value, depth+1) {
+			return false
+		}
+	}
+
+	return true
+}
+
 // checkMapToRecord checks if a homogeneous map can satisfy a record with a
 // compatible map component and only optional literal fields covered by the map.
 func (c *checker) checkMapToRecord(sub *typ.Map, super *typ.Record, depth int) bool {
@@ -1140,6 +1207,39 @@ func (c *checker) checkArrayToMap(sub *typ.Array, super *typ.Map, depth int) boo
 	}
 
 	return c.check(sub.Element, super.Value, depth+1)
+}
+
+func (c *checker) checkTupleToReadonlyMap(sub *typ.Tuple, super *typ.ReadonlyMap, depth int) bool {
+	if sub == nil || super == nil {
+		return false
+	}
+	for i, elem := range sub.Elements {
+		if !c.check(typ.LiteralInt(int64(i+1)), super.Key, depth+1) {
+			return false
+		}
+		if !c.check(presentReadonlyEntryValue(elem), super.Value, depth+1) {
+			return false
+		}
+	}
+	return true
+}
+
+func readonlyStaticMemberKeyType(member typ.StaticMember) (typ.Type, bool) {
+	switch member.Kind {
+	case typ.StaticMemberStringIndex:
+		return typ.LiteralString(member.Name), true
+	case typ.StaticMemberIntIndex:
+		return typ.LiteralInt(member.Index), true
+	default:
+		return nil, false
+	}
+}
+
+func presentReadonlyEntryValue(t typ.Type) typ.Type {
+	if inner, optional := typ.SplitNilableFieldType(t); optional {
+		return inner
+	}
+	return t
 }
 
 // checkTupleToArray checks if a tuple is a subtype of an array.
@@ -1250,7 +1350,7 @@ func isTableLikeType(t typ.Type) bool {
 		return isTableLikeType(v.UnaliasedTarget())
 	case *typ.Recursive:
 		return v.Body != nil && v.Body != v && isTableLikeType(v.Body)
-	case *typ.Record, *typ.Map, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Intersection:
+	case *typ.Record, *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Intersection:
 		return true
 	default:
 		return false

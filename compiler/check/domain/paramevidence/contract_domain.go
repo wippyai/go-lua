@@ -67,6 +67,27 @@ func DemandFromType(t typ.Type) ParamContract {
 	return product.FromType(t)
 }
 
+// ContractTypes projects the solved Contracts carrier to caller-visible concrete
+// types keyed by parameter index. It is a projection boundary only: the abstract
+// interpreter keeps Contracts as product-domain values, while external bridges
+// that need concrete types read them through this function.
+func ContractTypes(contracts Contracts) map[int]typ.Type {
+	if len(contracts) == 0 {
+		return nil
+	}
+	out := make(map[int]typ.Type, len(contracts))
+	for idx, av := range contracts {
+		if idx < 0 || ParamContractDomain.Equal(av, ParamContractDomain.Bottom()) {
+			continue
+		}
+		out[idx] = product.ProjectValueOrUnknown(av)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // JoinDemand accumulates one observed requirement into the contract for a
 // parameter index, returning the updated Contracts cell map.
 //

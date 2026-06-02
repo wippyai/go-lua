@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -42,7 +43,7 @@ type FlowContext struct {
 	Base *scope.State
 
 	// Global type namespace
-	Globals map[string]typ.Type
+	Globals globalenv.TypeOverlay
 
 	// Services provides signature and type expression resolution.
 	Services FlowServices

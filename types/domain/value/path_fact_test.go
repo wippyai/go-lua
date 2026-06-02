@@ -105,6 +105,18 @@ func TestSelectPathObservation_UsesConditionProofWhenItRefinesSolvedFlow(t *test
 	}
 }
 
+func TestSelectPathObservation_KeepsNilRefinementOfOptionalDeclaredRead(t *testing.T) {
+	declared := typ.NewOptional(typ.String)
+
+	got, ok := SelectPathObservation(typ.Nil, nil, declared)
+	if !ok {
+		t.Fatal("path observation should keep explicit nil refinement of nilable declaration")
+	}
+	if !typ.TypeEquals(got, typ.Nil) {
+		t.Fatalf("selected observation = %v, want nil", got)
+	}
+}
+
 func TestSelectSourceProjection_UsesCallpointProjectionOverStaleNilRead(t *testing.T) {
 	projected := typ.NewRecord().Field("answer", typ.String).Build()
 
@@ -278,5 +290,47 @@ func TestReconcilePathFactWithDeclaredRead_RejectsPartialOpenOverlayWithUndeclar
 
 	if got, ok := ReconcilePathFactWithDeclaredRead(overlay, declared); ok {
 		t.Fatalf("undeclared partial overlay reconciled to %v", got)
+	}
+}
+
+func TestReconcileDeclaredBoundary_RejectsNilableActualAgainstNonNilDeclared(t *testing.T) {
+	action := typ.NewUnion(
+		typ.NewRecord().
+			Field("kind", typ.LiteralString("a")).
+			Field("x", typ.String).
+			Build(),
+		typ.NewRecord().
+			Field("kind", typ.LiteralString("b")).
+			Field("y", typ.String).
+			Build(),
+	)
+
+	if got, ok := ReconcileDeclaredBoundary(typ.NewOptional(action), action); ok {
+		t.Fatalf("nilable actual crossed non-nil declared boundary as %v", got)
+	}
+	if got, ok := ReconcileDeclaredBoundary(typ.Nil, action); ok {
+		t.Fatalf("nil crossed non-nil declared boundary as %v", got)
+	}
+}
+
+func TestReconcileDeclaredBoundary_AcceptsReconciledProductWitnessWhenNilabilityPreserved(t *testing.T) {
+	declared := typ.NewRecord().
+		Field("build", typ.Func().Param("self", typ.Self).Returns(typ.String).Build()).
+		OptField("prefix", typ.String).
+		Build()
+	overlay := typ.NewRecord().
+		SetOpen(true).
+		Field("prefix", typ.String).
+		Build()
+
+	got, ok := ReconcileDeclaredBoundary(overlay, declared)
+	if !ok {
+		t.Fatal("consistent reconciled product witness should cross declared boundary")
+	}
+	if !typ.TypeEquals(got, declared) && !typ.TypeEquals(got, typ.NewRecord().
+		Field("build", typ.Func().Param("self", typ.Self).Returns(typ.String).Build()).
+		Field("prefix", typ.String).
+		Build()) {
+		t.Fatalf("reconciled boundary witness = %v, want declared-compatible product", got)
 	}
 }

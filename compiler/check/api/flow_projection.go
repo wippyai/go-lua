@@ -48,6 +48,10 @@ func (p preStateFlowOps) PreStateTypeAt(point cfg.Point, path constraint.Path) t
 	return p.inner.PreStateTypeAt(point, path)
 }
 
+func (p preStateFlowOps) ExcludesTypeAt(point cfg.Point, path constraint.Path, declared typ.Type) bool {
+	return p.inner.ExcludesTypeAt(point, path, declared)
+}
+
 func (p preStateFlowOps) BoundsAt(point cfg.Point, name string) (lower, upper int64, ok bool) {
 	return p.inner.BoundsAt(point, name)
 }
@@ -71,7 +75,6 @@ func (p preStateFlowOps) IsPointDead(point cfg.Point) bool {
 func (p preStateFlowOps) HasKeyOf(point cfg.Point, tablePath, keyPath constraint.Path) bool {
 	return p.inner.HasKeyOf(point, tablePath, keyPath)
 }
-
 
 type conditionFlowOps struct {
 	inner     FlowOps
@@ -101,6 +104,13 @@ func (o conditionFlowOps) PreStateTypeAt(point cfg.Point, path constraint.Path) 
 		return o.inner.PreStateTypeAt(point, path)
 	}
 	return nil
+}
+
+func (o conditionFlowOps) ExcludesTypeAt(point cfg.Point, path constraint.Path, declared typ.Type) bool {
+	if o.inner != nil {
+		return o.inner.ExcludesTypeAt(point, path, declared)
+	}
+	return false
 }
 
 func (o conditionFlowOps) BoundsAt(point cfg.Point, name string) (lower, upper int64, ok bool) {
@@ -144,4 +154,3 @@ func (o conditionFlowOps) HasKeyOf(point cfg.Point, tablePath, keyPath constrain
 	}
 	return false
 }
-

@@ -265,21 +265,21 @@ func TestKeyTypeFromExpr_NilExpr(t *testing.T) {
 
 func TestKeyTypeFromExpr_StringLiteral(t *testing.T) {
 	result := literal.KeyTypeFromExpr(&ast.StringExpr{Value: "key"}, nil)
-	if result != typ.String {
-		t.Error("expected typ.String")
+	if !typ.TypeEquals(result, typ.LiteralString("key")) {
+		t.Errorf("expected literal key, got %v", result)
 	}
 }
 
 func TestKeyTypeFromExpr_IntegerLiteral(t *testing.T) {
 	result := literal.KeyTypeFromExpr(&ast.NumberExpr{Value: "5"}, nil)
-	if result != typ.Integer {
-		t.Error("expected typ.Integer")
+	if !typ.TypeEquals(result, typ.LiteralInt(5)) {
+		t.Errorf("expected literal integer key, got %v", result)
 	}
 }
 
 func TestKeyTypeFromExpr_BoolLiteral(t *testing.T) {
 	result := literal.KeyTypeFromExpr(&ast.TrueExpr{}, nil)
-	if result != typ.Boolean {
-		t.Error("expected typ.Boolean")
+	if !typ.TypeEquals(result, typ.True) {
+		t.Errorf("expected literal boolean key, got %v", result)
 	}
 }

@@ -15,9 +15,13 @@
 // at every cell and Cousot/Cousot widening (Patrick Cousot & Radhia Cousot,
 // "Abstract interpretation: a unified lattice model …", POPL 1977) applied at
 // the cells the caller marks as widening points (loop heads / feedback-vertex
-// cells). The accumulate-and-widen update is exactly the iterate the lattice
-// laws (monotonicity of Join, ACC of Widen at WidenAt cells — see
-// types/lattice/laws.go) are designed to make terminate with a sound
+// cells). The caller may delay widening for the first few strict updates after a
+// widening cell's first transfer visit, the standard precision-preserving
+// strategy used by practical chaotic solvers: initial predecessor fan-in and
+// early feedback iterations use exact Join, then Widen guarantees convergence if
+// the chain keeps growing. The accumulate-and-widen update is the iterate the
+// lattice laws (monotonicity of Join, ACC of Widen at WidenAt cells
+// — see types/lattice/laws.go) are designed to make terminate with a sound
 // over-approximation of the collecting semantics.
 //
 // Determinism: the worklist is a FIFO seeded in Cells order; re-queued
@@ -50,7 +54,9 @@ import (
 // value changes. Transfer reads the current value of any cells it depends on
 // (via read) and contributes lattice elements to any cells it constrains (via
 // emit). Dependencies are discovered dynamically through read, so the caller
-// does not pre-declare the dependency graph.
+// does not pre-declare the dependency graph. With no widening, the result is the
+// least fixed point on finite-height systems; with widening, it is the standard
+// sound post-fixpoint over-approximation of that least fixed point.
 type EquationSystem[Cell comparable, State any] struct {
 	// Lattice is the abstract domain. Join accumulates contributions, Equal
 	// detects convergence, and Widen (at WidenAt cells) enforces termination.
@@ -75,16 +81,35 @@ type EquationSystem[Cell comparable, State any] struct {
 	// the iterate sound and terminating.
 	Transfer func(cell Cell, read func(Cell) State, emit func(Cell, State))
 
-	// WidenAt reports whether emit into a cell applies Widen rather than plain
+	// WidenAt reports whether emit into a cell may apply Widen rather than plain
 	// Join. It is true at feedback-vertex / loop-head cells — enough cells to
 	// cut every cycle in the dependency graph — so that ascending chains there
 	// stabilize. If nil, no cell is widened (sound only for finite-height
 	// domains, where Join itself is a widening).
 	WidenAt func(Cell) bool
+
+	// WidenDelay returns how many post-visit strict value changes a WidenAt cell
+	// gets with exact Join before Widen is used. A nil function means no delay.
+	// Pre-visit contributions are always joined exactly; widening starts only
+	// after the destination cell has run its own Transfer once. Delaying is a
+	// precision policy, not a termination cap: after the delay is exhausted the
+	// same lattice Widen operator enforces convergence.
+	WidenDelay func(Cell) int
+
+	// Abstract, when non-nil, is a cell-local upper-closure applied after
+	// Join/Widen and before convergence comparison. It is for sound abstractions
+	// such as relevance projection: Abstract(c, x) must over-approximate x in
+	// the lattice order, be monotone, and be deterministic. Nil means the raw
+	// Join/Widen result is stored.
+	Abstract func(Cell, State) State
 }
 
-// Solve computes the least solution of sys by Kildall worklist iteration and
-// returns the converged value of every cell in sys.Cells.
+// Solve computes the converged solution of sys by Kildall worklist iteration and
+// returns the value of every cell in sys.Cells.
+//
+// If WidenAt is nil, or every domain Widen equals Join, this is the least fixed
+// point for finite-height systems. If WidenAt marks infinite-height cycles, the
+// result is a sound widened post-fixpoint.
 //
 // The returned map has one entry per cell in sys.Cells (the value it held when
 // the worklist drained). Cells that were only ever emitted into but are absent
@@ -101,8 +126,10 @@ type solveState[Cell comparable, State any] struct {
 
 	// transfer/widenAt mirror the system's functions so run does not re-read
 	// the struct each visit.
-	transfer func(cell Cell, read func(Cell) State, emit func(Cell, State))
-	widenAt  func(Cell) bool
+	transfer   func(cell Cell, read func(Cell) State, emit func(Cell, State))
+	widenAt    func(Cell) bool
+	widenDelay func(Cell) int
+	abstract   func(Cell, State) State
 
 	// order is the canonical index of each cell, fixing deterministic
 	// re-queue ordering. Only cells in sys.Cells receive an order; emitted-only
@@ -111,6 +138,13 @@ type solveState[Cell comparable, State any] struct {
 
 	// cur is the working value of every cell touched so far.
 	cur map[Cell]State
+
+	// changes counts all strict value changes per cell. visits counts how many
+	// times a cell's own Transfer has run. widenChanges counts strict post-visit
+	// changes that consumed WidenDelay.
+	changes      map[Cell]int
+	visits       map[Cell]int
+	widenChanges map[Cell]int
 
 	// dependents[d] is the set of cells whose Transfer has read d. When d's
 	// value changes, every dependent is re-queued. Stored as an
@@ -138,6 +172,14 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 	if widenAt == nil {
 		widenAt = func(Cell) bool { return false }
 	}
+	widenDelay := sys.WidenDelay
+	if widenDelay == nil {
+		widenDelay = func(Cell) int { return 0 }
+	}
+	abstract := sys.Abstract
+	if abstract == nil {
+		abstract = func(_ Cell, v State) State { return v }
+	}
 	initial := sys.Initial
 	if initial == nil {
 		initial = func(Cell) State { return sys.Lattice.Bottom() }
@@ -145,15 +187,20 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 
 	n := len(sys.Cells)
 	s := &solveState[Cell, State]{
-		sys:        sys.Lattice,
-		transfer:   sys.Transfer,
-		widenAt:    widenAt,
-		order:      make(map[Cell]int, n),
-		cur:        make(map[Cell]State, n),
-		dependents: make(map[Cell][]Cell),
-		dependEdge: make(map[edge[Cell]]struct{}),
-		queue:      make([]Cell, 0, n),
-		inQueue:    make(map[Cell]struct{}, n),
+		sys:          sys.Lattice,
+		transfer:     sys.Transfer,
+		widenAt:      widenAt,
+		widenDelay:   widenDelay,
+		abstract:     abstract,
+		order:        make(map[Cell]int, n),
+		cur:          make(map[Cell]State, n),
+		changes:      make(map[Cell]int, n),
+		visits:       make(map[Cell]int, n),
+		widenChanges: make(map[Cell]int, n),
+		dependents:   make(map[Cell][]Cell),
+		dependEdge:   make(map[edge[Cell]]struct{}),
+		queue:        make([]Cell, 0, n),
+		inQueue:      make(map[Cell]struct{}, n),
 	}
 
 	// Seed initial values and the worklist in Cells order. Deduplicate so a
@@ -207,20 +254,32 @@ func (s *solveState[Cell, State]) recordDependency(d Cell) {
 	s.dependents[d] = append(s.dependents[d], s.active)
 }
 
-// emit accumulates v into cell d via Join (or Widen at WidenAt cells) and, if d
-// changed, re-queues d and its readers. changed is reported so a Transfer that
-// emits to several cells can be reasoned about; the solver only needs the
-// side effect.
+// emit accumulates v into cell d via Join. Contributions that arrive before d's
+// own transfer has run are always exact joins; this preserves high-fan-in facts
+// from being widened during the initial wave. At WidenAt cells, the first
+// WidenDelay(d) strict post-visit changes are kept exact; subsequent changes
+// apply Widen to the previous iterate and the joined candidate. If d changed, d
+// and its readers are re-queued.
 func (s *solveState[Cell, State]) emit(d Cell, v State) {
 	prev := s.curOf(d)
 	next := s.sys.Join(prev, v)
-	if s.widenAt(d) {
-		next = s.sys.Widen(prev, next)
+	delayConsumed := false
+	if s.widenAt(d) && s.visits[d] > 0 {
+		if s.widenChanges[d] >= max(0, s.widenDelay(d)) {
+			next = s.sys.Widen(prev, next)
+		} else {
+			delayConsumed = true
+		}
 	}
+	next = s.abstract(d, next)
 	if s.sys.Equal(next, prev) {
 		return
 	}
 	s.cur[d] = next
+	s.changes[d]++
+	if delayConsumed {
+		s.widenChanges[d]++
+	}
 	s.requeueChanged(d)
 }
 
@@ -275,6 +334,7 @@ func (s *solveState[Cell, State]) run() {
 
 		s.active = c
 		s.transfer(c, read, emit)
+		s.visits[c]++
 	}
 }
 

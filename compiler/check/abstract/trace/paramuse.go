@@ -7,13 +7,14 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
 type parameterUse struct {
 	whole  bool
-	fields map[string]struct{}
+	fields map[fieldkey.Key]struct{}
 }
 
 // ParameterUses records the parameter surface demanded by fn's body.
@@ -55,12 +56,7 @@ func ParameterUses(graph *cfg.Graph, fn *ast.FunctionExpr) []api.ParameterUseEvi
 		use := collector.uses[sym]
 		ev := api.ParameterUseEvidence{Symbol: sym, Whole: use.whole}
 		if len(use.fields) > 0 {
-			fields := make([]string, 0, len(use.fields))
-			for field := range use.fields {
-				fields = append(fields, field)
-			}
-			sort.Strings(fields)
-			ev.Fields = fields
+			ev.Fields = append(ev.Fields, fieldkey.Sorted(use.fields)...)
 		}
 		out = append(out, ev)
 	}
@@ -232,7 +228,11 @@ func (c *parameterUseCollector) call(call *ast.FuncCallExpr) {
 	recursive := c.isDirectRecursiveCall(call)
 	if call.Method != "" {
 		if recv := flowpath.FromExprWithBindings(call.Receiver, nil, c.bindings); c.isParamPath(recv) {
-			c.field(recv.Symbol, firstFieldOrMethod(recv, call.Method))
+			if len(recv.Segments) == 0 {
+				c.fieldName(recv.Symbol, call.Method)
+			} else {
+				c.fieldSegment(recv.Symbol, recv.Segments[0])
+			}
 		} else {
 			c.expr(call.Receiver)
 		}
@@ -240,7 +240,7 @@ func (c *parameterUseCollector) call(call *ast.FuncCallExpr) {
 		if len(callee.Segments) == 0 {
 			c.markWhole(callee.Symbol)
 		} else {
-			c.field(callee.Symbol, segmentFieldName(callee.Segments[0]))
+			c.fieldSegment(callee.Symbol, callee.Segments[0])
 		}
 	} else {
 		c.expr(call.Func)
@@ -309,7 +309,7 @@ func (c *parameterUseCollector) lvaluePathUse(expr ast.Expr) bool {
 	if len(p.Segments) <= 1 {
 		return true
 	}
-	c.field(p.Symbol, segmentFieldName(p.Segments[0]))
+	c.fieldSegment(p.Symbol, p.Segments[0])
 	return true
 }
 
@@ -339,7 +339,7 @@ func (c *parameterUseCollector) pathUse(expr ast.Expr) bool {
 		c.markWhole(p.Symbol)
 		return true
 	}
-	c.field(p.Symbol, segmentFieldName(p.Segments[0]))
+	c.fieldSegment(p.Symbol, p.Segments[0])
 	return true
 }
 
@@ -410,24 +410,31 @@ func (c *parameterUseCollector) markWhole(sym cfg.SymbolID) {
 	c.uses[sym] = use
 }
 
-func (c *parameterUseCollector) field(sym cfg.SymbolID, name string) {
-	if name == "" {
+func (c *parameterUseCollector) fieldName(sym cfg.SymbolID, name string) {
+	key, ok := fieldkey.FromName(name)
+	if !ok {
 		c.markWhole(sym)
 		return
 	}
-	use := c.uses[sym]
-	if use.fields == nil {
-		use.fields = make(map[string]struct{}, 1)
-	}
-	use.fields[name] = struct{}{}
-	c.uses[sym] = use
+	c.field(sym, key)
 }
 
-func firstFieldOrMethod(p constraint.Path, method string) string {
-	if len(p.Segments) == 0 {
-		return method
+func (c *parameterUseCollector) fieldSegment(sym cfg.SymbolID, seg constraint.Segment) {
+	key, ok := fieldkey.FromSegment(seg)
+	if !ok {
+		c.markWhole(sym)
+		return
 	}
-	return segmentFieldName(p.Segments[0])
+	c.field(sym, key)
+}
+
+func (c *parameterUseCollector) field(sym cfg.SymbolID, key fieldkey.Key) {
+	use := c.uses[sym]
+	if use.fields == nil {
+		use.fields = make(map[fieldkey.Key]struct{}, 1)
+	}
+	use.fields[key] = struct{}{}
+	c.uses[sym] = use
 }
 
 func currentFunctionSymbols(graph *cfg.Graph, fn *ast.FunctionExpr) map[cfg.SymbolID]struct{} {
@@ -454,13 +461,4 @@ func currentFunctionSymbols(graph *cfg.Graph, fn *ast.FunctionExpr) map[cfg.Symb
 		return nil
 	}
 	return syms
-}
-
-func segmentFieldName(seg constraint.Segment) string {
-	switch seg.Kind {
-	case constraint.SegmentField, constraint.SegmentIndexString:
-		return seg.Name
-	default:
-		return ""
-	}
 }

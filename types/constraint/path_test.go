@@ -70,6 +70,56 @@ func TestPathLessAndAppend(t *testing.T) {
 	}
 }
 
+func TestPathDirectFieldName(t *testing.T) {
+	tests := []struct {
+		name string
+		path Path
+		want string
+		ok   bool
+	}{
+		{
+			name: "dot field",
+			path: Path{Root: "x", Symbol: 1, Segments: []Segment{{Kind: SegmentField, Name: "f"}}},
+			want: "f",
+			ok:   true,
+		},
+		{
+			name: "string index",
+			path: Path{Root: "x", Symbol: 1, Segments: []Segment{{Kind: SegmentIndexString, Name: "f"}}},
+			want: "f",
+			ok:   true,
+		},
+		{
+			name: "nested field rejected",
+			path: Path{Root: "x", Symbol: 1, Segments: []Segment{
+				{Kind: SegmentField, Name: "a"},
+				{Kind: SegmentField, Name: "b"},
+			}},
+		},
+		{
+			name: "integer index rejected",
+			path: Path{Root: "x", Symbol: 1, Segments: []Segment{{Kind: SegmentIndexInt, Index: 1}}},
+		},
+		{
+			name: "empty name rejected",
+			path: Path{Root: "x", Symbol: 1, Segments: []Segment{{Kind: SegmentField}}},
+		},
+		{
+			name: "root only rejected",
+			path: Path{Root: "x", Symbol: 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := tt.path.DirectFieldName()
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("DirectFieldName() = %q/%v, want %q/%v", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
 func TestPathSubstitute(t *testing.T) {
 	placeholder := Path{Root: "$0"}
 	arg := Path{Root: "vol"}

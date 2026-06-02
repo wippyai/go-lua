@@ -170,6 +170,10 @@ func (r fieldResolverImpl) Index(t typ.Type, key typ.Type) (typ.Type, bool) {
 	return r.observer.Index(t, key)
 }
 
+func (r fieldResolverImpl) RuntimeIndex(t typ.Type, key typ.Type) (typ.Type, bool) {
+	return r.observer.RuntimeIndex(t, key)
+}
+
 func (r fieldResolverImpl) PathOf(expr ast.Expr, p cfg.Point) constraint.Path {
 	return path.FromExprWithBindingsAt(expr, nil, r.bindings, r.graph, p)
 }
@@ -597,7 +601,7 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImp
 		keyType = typ.Unknown
 	}
 
-	_, ok := resolver.Index(objType, keyType)
+	_, ok := resolver.RuntimeIndex(objType, keyType)
 	if ok {
 		return nil
 	}
@@ -685,7 +689,7 @@ func optionalContainerInner(t typ.Type) (typ.Type, bool) {
 // through field resolution / result optionality, not here.
 func indexesKeyedContainer(t typ.Type) bool {
 	switch unwrap.Alias(t).(type) {
-	case *typ.Map, *typ.Array, *typ.Tuple:
+	case *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple:
 		return true
 	}
 	return false

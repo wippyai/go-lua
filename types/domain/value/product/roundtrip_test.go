@@ -94,6 +94,50 @@ func TestProjectValueRoundTripLossless(t *testing.T) {
 	}
 }
 
+func TestProjectValueOrUnknownZero(t *testing.T) {
+	got := ProjectValueOrUnknown(AbstractValue{})
+	if !typ.IsUnknown(got) {
+		t.Fatalf("ProjectValueOrUnknown(zero) = %v, want unknown", got)
+	}
+}
+
+func TestVectorAdmissionAndProjectionBoundary(t *testing.T) {
+	values := FromTypes([]typ.Type{typ.String, nil, typ.Unknown})
+	if len(values) != 3 {
+		t.Fatalf("FromTypes length = %d, want 3", len(values))
+	}
+	if values[0].IsZero() || !typ.TypeEquals(values[0].ProjectValue(), typ.String) {
+		t.Fatalf("FromTypes[0] = %v, want string value", values[0].ProjectValue())
+	}
+	if !values[1].IsZero() || !values[2].IsZero() {
+		t.Fatalf("nil/unknown slots must remain zero product values: %v", values)
+	}
+	projected := ProjectValuesOrUnknown(values)
+	if len(projected) != 3 || !typ.TypeEquals(projected[0], typ.String) || !typ.IsUnknown(projected[1]) || !typ.IsUnknown(projected[2]) {
+		t.Fatalf("ProjectValuesOrUnknown = %v, want [string unknown unknown]", projected)
+	}
+}
+
+func TestTotalVectorAdmissionProducesCarrierValues(t *testing.T) {
+	values := FromTypesTotal([]typ.Type{typ.String, nil, typ.Unknown})
+	if len(values) != 3 {
+		t.Fatalf("FromTypesTotal length = %d, want 3", len(values))
+	}
+	for i, v := range values {
+		if v.IsZero() {
+			t.Fatalf("FromTypesTotal[%d] is zero; total admission must produce product carrier values", i)
+		}
+	}
+	projected := ProjectValuesOrUnknown(values)
+	if len(projected) != 3 || !typ.TypeEquals(projected[0], typ.String) || !typ.IsUnknown(projected[1]) || !typ.IsUnknown(projected[2]) {
+		t.Fatalf("ProjectValuesOrUnknown(FromTypesTotal) = %v, want [string unknown unknown]", projected)
+	}
+	joined := Domain.Join(values[1], FromType(typ.Number))
+	if joined.IsZero() {
+		t.Fatal("joining total-admitted unknown with number produced zero")
+	}
+}
+
 // TestUnknownIsNotAny is the core P3.1 invariant: the gradual placeholder `unknown`
 // and the dynamic top `any` are distinct converged facts, so they must not be Equal
 // and must intern to distinct nodes. The old mutual-Covers equality conflated them

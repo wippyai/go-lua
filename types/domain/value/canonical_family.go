@@ -29,6 +29,17 @@ var recursiveFamilies = &recursiveFamilyInterner{
 	aliases: make(map[uint64][]*typ.Alias),
 }
 
+// ResetCanonicalRecursiveFamilies clears the process-local canonical family table.
+//
+// The table canonicalizes recursive observations within one analysis run; it must
+// not retain function-bearing family representatives across independent checker
+// runs, where identical source type names can refer to different function bodies
+// and query contexts. The long-term owner is the analysis/query context; this
+// reset keeps today's package-level interner scoped to that boundary.
+func ResetCanonicalRecursiveFamilies() {
+	recursiveFamilies.reset()
+}
+
 // CanonicalRecursiveFamily returns the single canonical representative for the
 // recursive product family of t, hash-consed across all observations.
 //
@@ -87,14 +98,18 @@ func (i *recursiveFamilyInterner) canonical(t typ.Type) typ.Type {
 
 	for _, rep := range i.buckets[h] {
 		if factTypeMetadataEqual(rep, t, nil) {
-			if zzFamDbg && !typ.TypeEquals(rep, t) {
-				println("ZZFAM COLLAPSE incoming=", zzShort(t), " onto rep=", zzShort(rep))
-			}
 			return rep
 		}
 	}
 	i.buckets[h] = append(i.buckets[h], t)
 	return t
+}
+
+func (i *recursiveFamilyInterner) reset() {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.buckets = make(map[uint64][]typ.Type)
+	i.aliases = make(map[uint64][]*typ.Alias)
 }
 
 // canonicalAlias returns the canonical alias wrapper for (name, canonicalTarget),

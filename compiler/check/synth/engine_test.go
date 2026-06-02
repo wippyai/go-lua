@@ -105,6 +105,10 @@ func (m mockFlowOps) PreStateTypeAt(p cfg.Point, path constraint.Path) typ.Type 
 	return m.NarrowedTypeAt(p, path)
 }
 
+func (m mockFlowOps) ExcludesTypeAt(p cfg.Point, path constraint.Path, declared typ.Type) bool {
+	return false
+}
+
 func (m mockFlowOps) BoundsAt(p cfg.Point, name string) (lower, upper int64, ok bool) {
 	return 0, 0, false
 }

@@ -3,6 +3,8 @@ package api
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/bind"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/flow"
@@ -168,6 +170,60 @@ func TestDeclaredEnv_TypeFacts(t *testing.T) {
 	declared := facts.DeclaredAt(point, symX)
 	if declared.Type != typ.Number {
 		t.Errorf("DeclaredAt() = %v, want Number", declared.Type)
+	}
+}
+
+func TestEnvGlobalOverlayUsesCarrierSemantics(t *testing.T) {
+	graph := newMockGraph()
+	point := cfg.Point(10)
+	symPrint := cfg.SymbolID(10)
+	symLocal := cfg.SymbolID(11)
+	graph.addSymbol(point, "print", symPrint, cfg.SymbolGlobal)
+	graph.addSymbol(point, "printLocal", symLocal, cfg.SymbolLocal)
+
+	bindings := bind.NewBindingTable()
+	bindings.SetKind(symPrint, cfg.SymbolGlobal)
+	bindings.SetName(symPrint, "print")
+	bindings.SetKind(symLocal, cfg.SymbolLocal)
+	bindings.SetName(symLocal, "print")
+
+	env := NewDeclaredEnv(DeclaredEnvConfig{
+		Graph:       graph,
+		Bindings:    bindings,
+		GlobalTypes: map[string]typ.Type{"print": typ.String},
+	})
+	if got, ok := env.GlobalType(symPrint); !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("GlobalType(print) = %v/%v, want string/true", got, ok)
+	}
+	if _, ok := env.GlobalType(symLocal); ok {
+		t.Fatal("GlobalType(local) should be absent")
+	}
+
+	overlaid := env.WithGlobalTypeOverlay(globalenv.TypeOverlay{
+		{Name: globalenv.Name("print"), Type: typ.Number},
+	})
+	if got, ok := overlaid.GlobalType(symPrint); !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("overlaid GlobalType(print) = %v/%v, want number/true", got, ok)
+	}
+	if got, ok := env.GlobalType(symPrint); !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("base GlobalType(print) = %v/%v, want string/true", got, ok)
+	}
+
+	normalized := overlaid.GlobalTypeOverlay()
+	if len(normalized) != 1 || normalized[0].Name != globalenv.Name("print") {
+		t.Fatalf("GlobalTypeOverlay = %+v, want print", normalized)
+	}
+	normalized[0].Type = typ.Boolean
+	if got, ok := overlaid.GlobalType(symPrint); !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("mutating projected GlobalTypeOverlay changed env: %v/%v", got, ok)
+	}
+
+	fromCarrier := env.WithGlobalTypeOverlay(globalenv.TypeOverlay{
+		{Name: globalenv.Name("print"), Type: typ.Boolean},
+		{Name: globalenv.Name(""), Type: typ.String},
+	})
+	if got, ok := fromCarrier.GlobalType(symPrint); !ok || !typ.TypeEquals(got, typ.Boolean) {
+		t.Fatalf("carrier overlaid GlobalType(print) = %v/%v, want boolean/true", got, ok)
 	}
 }
 

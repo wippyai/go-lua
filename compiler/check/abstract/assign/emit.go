@@ -34,8 +34,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
-	"github.com/wippyai/go-lua/compiler/check/abstract/constprop"
 	abstractcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
+	"github.com/wippyai/go-lua/compiler/check/abstract/literal"
 	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
 	"github.com/wippyai/go-lua/compiler/check/abstract/tblutil"
 	"github.com/wippyai/go-lua/compiler/check/api"
@@ -324,7 +324,7 @@ func (s *assignmentExtractionState) synthGuardedAttr(attr *ast.AttrGetExpr, expr
 		return t
 	}
 	pathKey, ok := guard.TruthyKeyFromExpr(attr, s.bindings)
-	if !ok || pathKey.Field == "" {
+	if !ok || !pathKey.HasFieldPath() {
 		return t
 	}
 	if guards, ok := s.typeGuards[p]; ok {
@@ -543,7 +543,7 @@ func buildLiftedDynamicMapMutatorAssignment(
 	}
 
 	outer := steps[firstDynamic]
-	keyVar, keySym, keyType := keyInfoForStep(outer, graph, assignments, bindings, synth, symResolver, p, true)
+	keyVar, keySym, keyType := keyInfoForStep(outer, graph, assignments, bindings, synth, symResolver, constResolver, p, true)
 
 	valType := assignedType
 	if source != nil && bindings != nil && truthyGuards != nil {
@@ -630,7 +630,7 @@ func passthroughReturnParamIndex(fn *typ.Function, returnIndex int, argCount int
 		}
 	}
 	for _, flow := range row.FlowIntoReturns(returnIndex) {
-		if flow.SourcePath != "" || flow.TargetPath != "" {
+		if !flow.SourcePath.Empty() || !flow.TargetPath.Empty() {
 			continue
 		}
 		return effect.ResolveParamIndex(effect.ParamRef{Index: flow.ParamIndex}, argCount)
@@ -672,7 +672,7 @@ func flattenAttrChain(expr ast.Expr, constResolver func(string) *flow.ConstValue
 	}
 
 	step := attrChainStep{KeyExpr: attr.Key}
-	if seg, ok := staticSegmentForAttrKey(attr.Key, constResolver); ok {
+	if seg, ok := staticSegmentForAttr(attr, constResolver); ok {
 		step.Static = true
 		step.Seg = seg
 	}
@@ -681,8 +681,8 @@ func flattenAttrChain(expr ast.Expr, constResolver func(string) *flow.ConstValue
 	return root, steps, true
 }
 
-func staticSegmentForAttrKey(key ast.Expr, constResolver func(string) *flow.ConstValue) (constraint.Segment, bool) {
-	return path.StaticAttrKeySegmentWithConst(key, constResolver)
+func staticSegmentForAttr(attr *ast.AttrGetExpr, constResolver func(string) *flow.ConstValue) (constraint.Segment, bool) {
+	return path.StaticAttrSegmentWithConst(attr, constResolver)
 }
 
 func keyInfoForStep(
@@ -692,6 +692,7 @@ func keyInfoForStep(
 	bindings *bind.BindingTable,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	constResolver func(string) *flow.ConstValue,
 	p cfg.Point,
 	_ bool,
 ) (string, cfg.SymbolID, typ.Type) {
@@ -702,7 +703,7 @@ func keyInfoForStep(
 		keyVar = resolve.RootNameFromBindings(bindings, keySym, keyIdent.Value)
 	}
 
-	keyType := inferDynamicKeyType(step, synth, p)
+	keyType := inferDynamicKeyType(step, synth, constResolver, p)
 	if typ.IsAbsentOrUnknown(keyType) && keySym != 0 && symResolver != nil {
 		if resolved, ok := symResolver(p, keySym); ok && !typ.IsAbsentOrUnknown(resolved) {
 			keyType = resolved
@@ -717,26 +718,19 @@ func keyInfoForStep(
 	return keyVar, keySym, keyType
 }
 
-func inferDynamicKeyType(step attrChainStep, synth func(ast.Expr, cfg.Point) typ.Type, p cfg.Point) typ.Type {
+func inferDynamicKeyType(step attrChainStep, synth func(ast.Expr, cfg.Point) typ.Type, constResolver func(string) *flow.ConstValue, p cfg.Point) typ.Type {
 	if step.Static {
 		switch step.Seg.Kind {
 		case constraint.SegmentIndexInt:
-			return typ.Integer
+			return typ.LiteralInt(int64(step.Seg.Index))
 		case constraint.SegmentField, constraint.SegmentIndexString:
-			return typ.String
+			return typ.LiteralString(step.Seg.Name)
 		}
 	}
 
 	if step.KeyExpr != nil {
-		if val := constprop.ConstValueFromExpr(step.KeyExpr); val != nil {
-			switch val.Kind {
-			case flow.ConstInt:
-				return typ.Integer
-			case flow.ConstFloat:
-				return typ.Number
-			case flow.ConstString:
-				return typ.String
-			}
+		if t := literal.KeyTypeFromExpr(step.KeyExpr, constResolver); t != nil {
+			return t
 		}
 		if synth != nil {
 			if t := synth(step.KeyExpr, p); !typ.IsAbsentOrUnknown(t) {
@@ -772,7 +766,7 @@ func wrapStepValue(
 		}
 	}
 
-	_, _, keyType := keyInfoForStep(step, graph, assignments, bindings, synth, symResolver, p, false)
+	_, _, keyType := keyInfoForStep(step, graph, assignments, bindings, synth, symResolver, nil, p, false)
 	return typ.NewMap(keyType, value)
 }
 

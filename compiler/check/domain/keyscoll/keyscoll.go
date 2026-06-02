@@ -9,8 +9,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 )
 
-// KeysCollectorInfo tracks that a function returns keys of one of its parameters.
-type KeysCollectorInfo struct {
+// KeysCollector tracks that a function returns keys of one of its parameters.
+// It is the canonical carrier for keys-collector provenance; module fact stores
+// may index it, but they should not copy the shape into local adapter structs.
+type KeysCollector struct {
 	ParamIndex  int // Which parameter the keys come from (0-based)
 	ReturnIndex int // Which return slot carries the keys table (0-based)
 }
@@ -26,7 +28,7 @@ type KeysCollectorInfo struct {
 //	    table.insert(keys, k)
 //	end
 //	return keys
-func DetectKeysCollector(graph *cfg.Graph, evidence api.FlowEvidence) *KeysCollectorInfo {
+func DetectKeysCollector(graph *cfg.Graph, evidence api.FlowEvidence) *KeysCollector {
 	if graph == nil {
 		return nil
 	}
@@ -222,7 +224,7 @@ func DetectKeysCollector(graph *cfg.Graph, evidence api.FlowEvidence) *KeysColle
 		return nil
 	}
 
-	return &KeysCollectorInfo{ParamIndex: pairsParamIndex, ReturnIndex: keysReturnIndex}
+	return &KeysCollector{ParamIndex: pairsParamIndex, ReturnIndex: keysReturnIndex}
 }
 
 func isPairsCall(call *ast.FuncCallExpr, bindings *bind.BindingTable) bool {
@@ -294,7 +296,7 @@ func BuildKeysCollectorDetector(
 	moduleBindings *bind.BindingTable,
 	graphs api.GraphProvider,
 ) func(*cfg.CallInfo, cfg.Point, int) cfg.SymbolID {
-	cache := make(map[cfg.SymbolID]*KeysCollectorInfo)
+	cache := make(map[cfg.SymbolID]*KeysCollector)
 	bindings := graph.Bindings()
 
 	return func(callInfo *cfg.CallInfo, _ cfg.Point, retIndex int) cfg.SymbolID {

@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	flowfacts "github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/typ"
@@ -32,128 +33,168 @@ type Query struct {
 	PathOf    PathOf
 }
 
+// ContextQuery lowers one indexed-read expression into an AST-free proof
+// context.
+type ContextQuery struct {
+	Container typ.Type
+	Object    ast.Expr
+	Key       ast.Expr
+	PathOf    PathOf
+}
+
+// ObservationQuery refines an already-selected path observation through a
+// normalized indexed-read proof context.
+type ObservationQuery struct {
+	Point  cfg.Point
+	Result typ.Type
+	Index  flowfacts.PathObservationIndexRead
+	Flow   Flow
+}
+
 // Refine returns a result type refined by solved index-read proofs.
 func Refine(q Query) (typ.Type, bool) {
+	index, ok := Context(ContextQuery{
+		Container: q.Container,
+		Object:    q.Object,
+		Key:       q.Key,
+		PathOf:    q.PathOf,
+	})
+	if !ok {
+		return nil, false
+	}
+	return RefineObservation(ObservationQuery{
+		Point:  q.Point,
+		Result: q.Result,
+		Index:  index,
+		Flow:   q.Flow,
+	})
+}
+
+// Context returns an AST-free indexed-read context. The returned context is
+// usable when at least one proof shape was recognized.
+func Context(q ContextQuery) (flowfacts.PathObservationIndexRead, bool) {
+	var out flowfacts.PathObservationIndexRead
+	out.Container = q.Container
+	if q.PathOf != nil {
+		out.TablePath = q.PathOf(q.Object)
+		out.KeyPath = q.PathOf(q.Key)
+	}
+	if path, offset, ok := indexVarOffsetPathFromExpr(q.Key, q.PathOf); ok {
+		out.IndexVarPath = path
+		out.IndexVarOffset = offset
+		out.HasIndexVar = true
+	}
+	if path, offset, ok := lenIndexPathFromExpr(q.Key, q.PathOf); ok {
+		out.LengthPath = path
+		out.LengthOffset = offset
+		out.HasLength = true
+	}
+	if index, ok := integerLiteralIndex(q.Key); ok {
+		out.LiteralIndex = index
+		out.HasLiteralIndex = true
+	}
+	return out, !out.TablePath.IsEmpty() || !out.KeyPath.IsEmpty() || out.HasIndexVar || out.HasLength || out.HasLiteralIndex
+}
+
+// RefineObservation returns a result type refined by solved index-read proofs
+// from a normalized context.
+func RefineObservation(q ObservationQuery) (typ.Type, bool) {
 	if q.Result == nil || q.Flow == nil {
 		return nil, false
 	}
-	if refined, ok := refineByKeyPresence(q); ok {
+	if refined, ok := refineObservationByKeyPresence(q); ok {
 		return refined, true
 	}
-	if refined, ok := refineTupleIndexByNumericBounds(q); ok {
+	if refined, ok := refineObservationTupleIndexByNumericBounds(q); ok {
 		return refined, true
 	}
-	if refined, ok := refineSequenceIndexByLengthRelation(q); ok {
+	if refined, ok := refineObservationSequenceIndexByLengthRelation(q); ok {
 		return refined, true
 	}
-	if refined, ok := refineSequenceIndexByLengthExpr(q); ok {
+	if refined, ok := refineObservationSequenceIndexByLengthExpr(q); ok {
 		return refined, true
 	}
-	if refined, ok := refineSequenceIndexByLiteralLength(q); ok {
+	if refined, ok := refineObservationSequenceIndexByLiteralLength(q); ok {
 		return refined, true
 	}
 	return nil, false
 }
 
-func refineByKeyPresence(q Query) (typ.Type, bool) {
-	if q.PathOf == nil {
-		return nil, false
-	}
-	tablePath := q.PathOf(q.Object)
-	keyPath := q.PathOf(q.Key)
-	if tablePath.IsEmpty() || keyPath.IsEmpty() || !q.Flow.HasKeyOf(q.Point, tablePath, keyPath) {
+func refineObservationByKeyPresence(q ObservationQuery) (typ.Type, bool) {
+	if q.Index.TablePath.IsEmpty() || q.Index.KeyPath.IsEmpty() || !q.Flow.HasKeyOf(q.Point, q.Index.TablePath, q.Index.KeyPath) {
 		return nil, false
 	}
 	return removeNil(q.Result)
 }
 
-func refineTupleIndexByNumericBounds(q Query) (typ.Type, bool) {
-	name, offset, ok := indexVarOffsetFromExpr(q.Key)
+func refineObservationTupleIndexByNumericBounds(q ObservationQuery) (typ.Type, bool) {
+	if !q.Index.HasIndexVar || q.Index.IndexVarPath.Root == "" {
+		return nil, false
+	}
+	arity, ok := narrow.TupleArity(q.Index.Container)
 	if !ok {
 		return nil, false
 	}
-	arity, ok := narrow.TupleArity(q.Container)
+	lower, upper, ok := q.Flow.BoundsAt(q.Point, q.Index.IndexVarPath.Root)
 	if !ok {
 		return nil, false
 	}
-	lower, upper, ok := q.Flow.BoundsAt(q.Point, name)
-	if !ok {
-		return nil, false
-	}
-	lower += offset
-	upper += offset
+	lower += q.Index.IndexVarOffset
+	upper += q.Index.IndexVarOffset
 	if lower < 1 || upper > arity {
 		return nil, false
 	}
 	return removeNil(q.Result)
 }
 
-func refineSequenceIndexByLengthRelation(q Query) (typ.Type, bool) {
-	name, offset, ok := indexVarOffsetFromExpr(q.Key)
-	if !ok || q.PathOf == nil {
+func refineObservationSequenceIndexByLengthRelation(q ObservationQuery) (typ.Type, bool) {
+	if !q.Index.HasIndexVar || q.Index.IndexVarPath.Root == "" || q.Index.TablePath.IsEmpty() {
 		return nil, false
 	}
-	lower, _, ok := q.Flow.BoundsAt(q.Point, name)
-	if !ok || lower+offset < 1 {
+	lower, _, ok := q.Flow.BoundsAt(q.Point, q.Index.IndexVarPath.Root)
+	if !ok || lower+q.Index.IndexVarOffset < 1 {
 		return nil, false
 	}
-	arrKey, lenOffset, ok := q.Flow.ArrayLenBoundWithOffsetAt(q.Point, name)
+	arrKey, lenOffset, ok := q.Flow.ArrayLenBoundWithOffsetAt(q.Point, q.Index.IndexVarPath.Root)
 	if !ok {
 		return nil, false
 	}
-	tablePath := q.PathOf(q.Object)
-	if tablePath.IsEmpty() || string(tablePath.Key()) != arrKey {
+	if string(q.Index.TablePath.Key()) != arrKey {
 		return nil, false
 	}
-	if lenOffset > -offset {
+	if lenOffset > -q.Index.IndexVarOffset {
 		return nil, false
 	}
-	return refineSequenceIndex(q.Container, q.Result, lower+offset)
+	return refineSequenceIndex(q.Index.Container, q.Result, lower+q.Index.IndexVarOffset)
 }
 
-func refineSequenceIndexByLengthExpr(q Query) (typ.Type, bool) {
-	if q.PathOf == nil {
+func refineObservationSequenceIndexByLengthExpr(q ObservationQuery) (typ.Type, bool) {
+	if !q.Index.HasLength || q.Index.TablePath.IsEmpty() || !q.Index.LengthPath.Equal(q.Index.TablePath) {
 		return nil, false
 	}
-	tablePath := q.PathOf(q.Object)
-	if tablePath.IsEmpty() {
-		return nil, false
-	}
-	lenPath, offset, ok := lenIndexPathFromExpr(q.Key, q.PathOf)
-	if !ok || !lenPath.Equal(tablePath) {
-		return nil, false
-	}
-	// A fixed-arity tuple has a static length equal to its arity, so #t resolves
-	// to the constant arity without a flow length fact. Any index in [1, arity]
-	// (#t + offset, offset <= 0) is provably present.
-	if arity, ok := narrow.TupleArity(q.Container); ok {
-		refined := narrow.RefineLengthIndex(q.Container, q.Result, arity, offset)
+	if arity, ok := narrow.TupleArity(q.Index.Container); ok {
+		refined := narrow.RefineLengthIndex(q.Index.Container, q.Result, arity, q.Index.LengthOffset)
 		if refined != nil {
 			return refined, true
 		}
 	}
-	lower, _, ok := q.Flow.LengthBoundsAt(q.Point, tablePath)
+	lower, _, ok := q.Flow.LengthBoundsAt(q.Point, q.Index.TablePath)
 	if !ok {
 		return nil, false
 	}
-	refined := narrow.RefineLengthIndex(q.Container, q.Result, lower, offset)
+	refined := narrow.RefineLengthIndex(q.Index.Container, q.Result, lower, q.Index.LengthOffset)
 	return refined, refined != nil
 }
 
-func refineSequenceIndexByLiteralLength(q Query) (typ.Type, bool) {
-	index, ok := integerLiteralIndex(q.Key)
-	if !ok || index < 1 || q.PathOf == nil {
+func refineObservationSequenceIndexByLiteralLength(q ObservationQuery) (typ.Type, bool) {
+	if !q.Index.HasLiteralIndex || q.Index.LiteralIndex < 1 || q.Index.TablePath.IsEmpty() {
 		return nil, false
 	}
-	tablePath := q.PathOf(q.Object)
-	if tablePath.IsEmpty() {
+	lower, _, ok := q.Flow.LengthBoundsAt(q.Point, q.Index.TablePath)
+	if !ok || lower < q.Index.LiteralIndex {
 		return nil, false
 	}
-	lower, _, ok := q.Flow.LengthBoundsAt(q.Point, tablePath)
-	if !ok || lower < index {
-		return nil, false
-	}
-	return refineSequenceIndex(q.Container, q.Result, index)
+	return refineSequenceIndex(q.Index.Container, q.Result, q.Index.LiteralIndex)
 }
 
 func refineSequenceIndex(container, result typ.Type, index int64) (typ.Type, bool) {
@@ -177,31 +218,43 @@ func integerLiteralIndex(expr ast.Expr) (int64, bool) {
 	return numparse.ParseIntegerLiteral(num.Value)
 }
 
-func indexVarOffsetFromExpr(expr ast.Expr) (string, int64, bool) {
+func indexVarOffsetPathFromExpr(expr ast.Expr, paths PathOf) (constraint.Path, int64, bool) {
 	switch e := expr.(type) {
 	case *ast.IdentExpr:
 		if e.Value == "" {
-			return "", 0, false
+			return constraint.Path{}, 0, false
 		}
-		return e.Value, 0, true
+		if paths != nil {
+			path := paths(e)
+			if !path.IsEmpty() {
+				return path, 0, true
+			}
+		}
+		return constraint.Path{Root: e.Value}, 0, true
 	case *ast.ArithmeticOpExpr:
 		ident, ok := e.Lhs.(*ast.IdentExpr)
 		if !ok || ident.Value == "" {
-			return "", 0, false
+			return constraint.Path{}, 0, false
 		}
 		if e.Operator != "+" && e.Operator != "-" {
-			return "", 0, false
+			return constraint.Path{}, 0, false
 		}
 		k, ok := intConstFromExpr(e.Rhs)
 		if !ok {
-			return "", 0, false
+			return constraint.Path{}, 0, false
 		}
 		if e.Operator == "-" {
 			k = -k
 		}
-		return ident.Value, k, true
+		if paths != nil {
+			path := paths(ident)
+			if !path.IsEmpty() {
+				return path, k, true
+			}
+		}
+		return constraint.Path{Root: ident.Value}, k, true
 	}
-	return "", 0, false
+	return constraint.Path{}, 0, false
 }
 
 func lenIndexPathFromExpr(expr ast.Expr, paths PathOf) (constraint.Path, int64, bool) {

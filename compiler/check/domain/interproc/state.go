@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 )
 
 // Empty reports whether a canonical interprocedural fact product carries no
@@ -14,7 +13,6 @@ func Empty(f api.Facts) bool {
 		len(f.LiteralSigs) == 0 &&
 		len(f.CapturedTypes) == 0 &&
 		len(f.CapturedFields) == 0 &&
-		len(f.CapturedContainers) == 0 &&
 		len(f.ConstructorFields) == 0
 }
 
@@ -78,7 +76,7 @@ func RefinementEqual(a, b *constraint.FunctionRefinement) bool {
 }
 
 // ConstructorFieldMapEqual compares one class-symbol constructor field map.
-func ConstructorFieldMapEqual(sym cfg.SymbolID, a, b map[string]product.AbstractValue) bool {
+func ConstructorFieldMapEqual(sym cfg.SymbolID, a, b FieldValues) bool {
 	if len(a) == 0 && len(b) == 0 {
 		return true
 	}

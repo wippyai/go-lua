@@ -4,6 +4,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	synthops "github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/compiler/pathseg"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -172,7 +175,11 @@ func staticTableShape(tbl *ast.TableExpr) typ.Type {
 
 	builder := typ.NewRecord()
 	var arrayElements []typ.Type
-	fieldCount := 0
+	var indexedWrites []struct {
+		key typ.Type
+		val typ.Type
+	}
+	keyedCount := 0
 	for _, field := range tbl.Fields {
 		if field == nil {
 			continue
@@ -185,33 +192,41 @@ func staticTableShape(tbl *ast.TableExpr) typ.Type {
 			arrayElements = append(arrayElements, elem)
 			continue
 		}
-		name := staticFieldName(field.Key)
-		if name == "" {
+		seg, ok := pathseg.StaticTableFieldSegment(field)
+		if !ok {
 			continue
 		}
-		value := staticArgumentShapeWith(field.Value, true)
-		if value == nil {
-			value = typ.Unknown
+		fieldValue := staticArgumentShapeWith(field.Value, true)
+		if fieldValue == nil {
+			fieldValue = typ.Unknown
 		}
-		builder.Field(name, value)
-		fieldCount++
+		switch seg.Kind {
+		case constraint.SegmentField:
+			builder.Field(seg.Name, fieldValue)
+			keyedCount++
+		case constraint.SegmentIndexString:
+			indexedWrites = append(indexedWrites, struct {
+				key typ.Type
+				val typ.Type
+			}{key: typ.LiteralString(seg.Name), val: fieldValue})
+			keyedCount++
+		case constraint.SegmentIndexInt:
+			indexedWrites = append(indexedWrites, struct {
+				key typ.Type
+				val typ.Type
+			}{key: typ.LiteralInt(int64(seg.Index)), val: fieldValue})
+			keyedCount++
+		}
 	}
-	if len(arrayElements) > 0 && fieldCount == 0 {
+	if len(arrayElements) > 0 && keyedCount == 0 {
 		return typ.NewTuple(arrayElements...)
 	}
-	if fieldCount > 0 {
-		return builder.Build()
+	if keyedCount > 0 {
+		var out typ.Type = builder.Build()
+		for _, write := range indexedWrites {
+			out = value.AdmitForeignIndexedWrite(out, write.key, write.val)
+		}
+		return out
 	}
 	return nil
-}
-
-func staticFieldName(expr ast.Expr) string {
-	switch k := expr.(type) {
-	case *ast.StringExpr:
-		return k.Value
-	case *ast.IdentExpr:
-		return k.Value
-	default:
-		return ""
-	}
 }

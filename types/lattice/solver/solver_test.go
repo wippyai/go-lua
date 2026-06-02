@@ -198,6 +198,95 @@ func TestSolve_WidenForcesTermination(t *testing.T) {
 	}
 }
 
+// TestSolve_WidenDoesNotCollapseInitialFanIn checks the solver-level precision
+// rule: a WidenAt cell still exact-joins contributions that arrive before the
+// cell's own transfer has run. Widening starts on revisits, not while collecting
+// the initial predecessor fan-in.
+func TestSolve_WidenDoesNotCollapseInitialFanIn(t *testing.T) {
+	cl := capLattice{top: 50}
+	sys := EquationSystem[string, int]{
+		Lattice: cl.lattice(), // Widen = jump-to-top if it fires
+		Cells:   []string{"a", "b", "c", "d", "target"},
+		Initial: func(string) int { return 0 },
+		Transfer: func(cell string, _ func(string) int, emit func(string, int)) {
+			switch cell {
+			case "a":
+				emit("target", 1)
+			case "b":
+				emit("target", 2)
+			case "c":
+				emit("target", 3)
+			case "d":
+				emit("target", 4)
+			}
+		},
+		WidenAt: func(c string) bool { return c == "target" },
+	}
+
+	got := Solve(sys)
+	if got["target"] != 4 {
+		t.Fatalf("initial fan-in was widened: target=%d, want exact join 4", got["target"])
+	}
+}
+
+// TestSolve_DelayedWideningKeepsInitialJoinsExact checks the precision policy:
+// a WidenAt cell may receive a few exact post-visit Join updates before Widen
+// is allowed to accelerate the chain. This is not an iteration cap; after the
+// delay, the same widening still forces termination.
+func TestSolve_DelayedWideningKeepsInitialJoinsExact(t *testing.T) {
+	cl := capLattice{top: 50}
+	seen := []int{}
+	sys := EquationSystem[string, int]{
+		Lattice: cl.lattice(), // Widen = jump-to-top
+		Cells:   []string{"x"},
+		Initial: func(string) int { return 0 },
+		Transfer: func(cell string, read func(string) int, emit func(string, int)) {
+			cur := read("x")
+			seen = append(seen, cur)
+			emit("x", cur+1)
+		},
+		WidenAt:    func(c string) bool { return c == "x" },
+		WidenDelay: func(c string) int { return 2 },
+	}
+
+	got := Solve(sys)
+	if got["x"] != cl.top {
+		t.Fatalf("delayed widening did not terminate at Top: got %d, want %d", got["x"], cl.top)
+	}
+	if len(seen) < 3 || seen[0] != 0 || seen[1] != 1 || seen[2] != 2 {
+		t.Fatalf("widening delay did not keep first joins exact; seen reads = %v, want prefix [0 1 2]", seen)
+	}
+}
+
+// TestSolve_AbstractRunsAfterJoin pins the solver-level abstraction hook used by
+// canonical condition relevance projection. The hook must run on the cell's
+// joined accumulator, not only on the transfer contribution, otherwise a stale
+// value already stored in the cell could survive every future projected emit.
+func TestSolve_AbstractRunsAfterJoin(t *testing.T) {
+	cl := capLattice{top: 10}
+	sys := EquationSystem[string, int]{
+		Lattice: cl.joinOnly(),
+		Cells:   []string{"source", "target"},
+		Initial: func(string) int { return 0 },
+		Transfer: func(cell string, _ func(string) int, emit func(string, int)) {
+			if cell == "source" {
+				emit("target", 1)
+			}
+		},
+		Abstract: func(cell string, value int) int {
+			if cell == "target" && value > 0 {
+				return cl.top
+			}
+			return value
+		},
+	}
+
+	got := Solve(sys)
+	if got["target"] != cl.top {
+		t.Fatalf("Abstract did not run on joined target value: got %d, want %d", got["target"], cl.top)
+	}
+}
+
 // TestSolve_Deterministic runs the same system twice and asserts the maps are
 // Equal under the lattice. Uses the diamond system whose convergence order
 // depends on correct deterministic re-queueing.

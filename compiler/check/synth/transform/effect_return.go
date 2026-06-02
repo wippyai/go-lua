@@ -1,8 +1,6 @@
 package transform
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
@@ -142,7 +140,7 @@ func applyFlowIntoTransforms(row effect.Row, args []typ.Type, returnIdx int, bas
 		if projected == nil {
 			continue
 		}
-		out = setReturnPathType(out, splitEffectPath(flow.TargetPath), projected)
+		out = setReturnPathType(out, flow.TargetPath, projected)
 	}
 	return out
 }
@@ -157,13 +155,13 @@ func resolveFlowSourceType(args []typ.Type, flow effect.FlowInto) (typ.Type, boo
 		return nil, false
 	}
 	current := args[flow.ParamIndex]
-	for _, field := range splitEffectPath(flow.SourcePath) {
+	for _, seg := range flow.SourcePath {
 		if current == nil {
 			return nil, false
 		}
-		next, ok := querycore.Field(current, field)
+		next, ok := queryTypeAtSegment(current, seg)
 		if !ok {
-			if absentFieldResolvesToNil(current) {
+			if absentPathSegmentResolvesToNil(current, seg) {
 				return typ.Nil, true
 			}
 			return nil, false
@@ -173,15 +171,27 @@ func resolveFlowSourceType(args []typ.Type, flow effect.FlowInto) (typ.Type, boo
 	return current, true
 }
 
-// absentFieldResolvesToNil reports whether a failed field read on t proves the
-// field is absent (value nil) rather than merely unresolved. A concrete table
-// shape that does not declare the field reads nil at that key.
-func absentFieldResolvesToNil(t typ.Type) bool {
+func queryTypeAtSegment(t typ.Type, seg constraint.Segment) (typ.Type, bool) {
+	switch seg.Kind {
+	case constraint.SegmentField:
+		return querycore.Field(t, seg.Name)
+	case constraint.SegmentIndexString:
+		return querycore.Index(t, typ.LiteralString(seg.Name))
+	case constraint.SegmentIndexInt:
+		return querycore.Index(t, typ.LiteralInt(int64(seg.Index)))
+	default:
+		return nil, false
+	}
+}
+
+// absentPathSegmentResolvesToNil reports whether a failed static read on t proves
+// the key is absent (value nil) rather than merely unresolved.
+func absentPathSegmentResolvesToNil(t typ.Type, seg constraint.Segment) bool {
 	switch v := unwrap.Alias(t).(type) {
 	case *typ.Record:
-		return !v.Open && !v.HasMapComponent()
+		return !v.Open && !v.HasMapComponent() && v.Metatable == nil
 	case *typ.Optional:
-		return absentFieldResolvesToNil(v.Inner)
+		return absentPathSegmentResolvesToNil(v.Inner, seg)
 	default:
 		return false
 	}
@@ -198,21 +208,7 @@ func mergeFlowRemainder(source, remainder typ.Type) typ.Type {
 	}
 }
 
-func splitEffectPath(path string) []string {
-	if path == "" {
-		return nil
-	}
-	parts := strings.Split(path, ".")
-	out := parts[:0]
-	for _, part := range parts {
-		if part != "" {
-			out = append(out, part)
-		}
-	}
-	return out
-}
-
-func setReturnPathType(t typ.Type, path []string, value typ.Type) typ.Type {
+func setReturnPathType(t typ.Type, path effect.PathSuffix, value typ.Type) typ.Type {
 	if value == nil {
 		return t
 	}
@@ -254,7 +250,7 @@ func setReturnPathType(t typ.Type, path []string, value typ.Type) typ.Type {
 	}
 }
 
-func pathMayExist(t typ.Type, path []string) bool {
+func pathMayExist(t typ.Type, path effect.PathSuffix) bool {
 	if len(path) == 0 {
 		return true
 	}
@@ -269,42 +265,61 @@ func pathMayExist(t typ.Type, path []string) bool {
 		}
 		return false
 	case *typ.Record:
-		field := v.GetField(path[0])
-		return field != nil && pathMayExist(field.Type, path[1:])
+		member, ok := recordSegmentType(v, path[0])
+		return ok && pathMayExist(member, path[1:])
 	default:
 		return typ.IsUnknown(t) || typ.IsAny(t)
 	}
 }
 
-func setRecordPathType(rec *typ.Record, path []string, value typ.Type) typ.Type {
+func setRecordPathType(rec *typ.Record, path effect.PathSuffix, value typ.Type) typ.Type {
 	if rec == nil || len(path) == 0 {
 		return rec
 	}
-	fieldName := path[0]
+	seg := path[0]
 	fields := make([]typ.Field, len(rec.Fields))
 	copy(fields, rec.Fields)
+	staticMembers := make([]typ.StaticMember, len(rec.StaticMembers))
+	copy(staticMembers, rec.StaticMembers)
 	found := false
 	changed := false
-	for i := range fields {
-		if fields[i].Name != fieldName {
-			continue
+	switch seg.Kind {
+	case constraint.SegmentField:
+		for i := range fields {
+			if fields[i].Name != seg.Name {
+				continue
+			}
+			found = true
+			next := setFlowPathLeaf(fields[i].Type, path[1:], value)
+			if !typ.TypeEquals(next, fields[i].Type) {
+				fields[i].Type = next
+				changed = true
+			}
+			break
 		}
-		found = true
-		var next typ.Type
-		if len(path) == 1 {
-			next = refineFlowTargetType(fields[i].Type, value)
-		} else {
-			next = setReturnPathType(fields[i].Type, path[1:], value)
-		}
-		if !typ.TypeEquals(next, fields[i].Type) {
-			fields[i].Type = next
+		if !found {
+			fields = append(fields, typ.Field{Name: seg.Name, Type: buildRecordPath(path[1:], value)})
 			changed = true
 		}
-		break
-	}
-	if !found {
-		fields = append(fields, typ.Field{Name: fieldName, Type: buildRecordPath(path[1:], value)})
-		changed = true
+	case constraint.SegmentIndexString, constraint.SegmentIndexInt:
+		for i := range staticMembers {
+			if !staticMemberMatchesSegment(staticMembers[i], seg) {
+				continue
+			}
+			found = true
+			next := setFlowPathLeaf(staticMembers[i].Type, path[1:], value)
+			if !typ.TypeEquals(next, staticMembers[i].Type) {
+				staticMembers[i].Type = next
+				changed = true
+			}
+			break
+		}
+		if !found {
+			staticMembers = append(staticMembers, staticMemberFromSegment(seg, buildRecordPath(path[1:], value)))
+			changed = true
+		}
+	default:
+		return rec
 	}
 	if !changed {
 		return rec
@@ -317,25 +332,102 @@ func setRecordPathType(rec *typ.Record, path []string, value typ.Type) typ.Type 
 		builder.Metatable(rec.Metatable)
 	}
 	for _, field := range fields {
-		switch {
-		case field.Optional && field.Readonly:
-			builder.OptReadonlyField(field.Name, field.Type)
-		case field.Optional:
-			builder.OptField(field.Name, field.Type)
-		case field.Readonly:
-			builder.ReadonlyField(field.Name, field.Type)
-		default:
-			builder.Field(field.Name, field.Type)
-		}
+		addRecordField(builder, field)
+	}
+	for _, member := range staticMembers {
+		builder.AddStaticMember(member)
 	}
 	return builder.Build()
 }
 
-func buildRecordPath(path []string, value typ.Type) typ.Type {
+func setFlowPathLeaf(existing typ.Type, rest effect.PathSuffix, value typ.Type) typ.Type {
+	if len(rest) == 0 {
+		return refineFlowTargetType(existing, value)
+	}
+	return setReturnPathType(existing, rest, value)
+}
+
+func recordSegmentType(rec *typ.Record, seg constraint.Segment) (typ.Type, bool) {
+	if rec == nil {
+		return nil, false
+	}
+	switch seg.Kind {
+	case constraint.SegmentField:
+		if field := rec.GetField(seg.Name); field != nil {
+			if field.Optional {
+				return typ.NewOptional(field.Type), true
+			}
+			return field.Type, true
+		}
+	case constraint.SegmentIndexString:
+		if member := rec.GetStaticStringIndex(seg.Name); member != nil {
+			if member.Optional {
+				return typ.NewOptional(member.Type), true
+			}
+			return member.Type, true
+		}
+	case constraint.SegmentIndexInt:
+		if member := rec.GetStaticIntIndex(int64(seg.Index)); member != nil {
+			if member.Optional {
+				return typ.NewOptional(member.Type), true
+			}
+			return member.Type, true
+		}
+	}
+	return nil, false
+}
+
+func staticMemberMatchesSegment(member typ.StaticMember, seg constraint.Segment) bool {
+	switch seg.Kind {
+	case constraint.SegmentIndexString:
+		return member.Kind == typ.StaticMemberStringIndex && member.Name == seg.Name
+	case constraint.SegmentIndexInt:
+		return member.Kind == typ.StaticMemberIntIndex && member.Index == int64(seg.Index)
+	default:
+		return false
+	}
+}
+
+func staticMemberFromSegment(seg constraint.Segment, t typ.Type) typ.StaticMember {
+	switch seg.Kind {
+	case constraint.SegmentIndexString:
+		return typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: seg.Name, Type: t}
+	case constraint.SegmentIndexInt:
+		return typ.StaticMember{Kind: typ.StaticMemberIntIndex, Index: int64(seg.Index), Type: t}
+	default:
+		return typ.StaticMember{}
+	}
+}
+
+func addRecordField(builder *typ.RecordBuilder, field typ.Field) {
+	switch {
+	case field.Optional && field.Readonly:
+		builder.OptReadonlyField(field.Name, field.Type)
+	case field.Optional:
+		builder.OptField(field.Name, field.Type)
+	case field.Readonly:
+		builder.ReadonlyField(field.Name, field.Type)
+	default:
+		builder.Field(field.Name, field.Type)
+	}
+}
+
+func buildRecordPath(path effect.PathSuffix, value typ.Type) typ.Type {
 	if len(path) == 0 {
 		return value
 	}
-	return typ.NewRecord().Field(path[0], buildRecordPath(path[1:], value)).Build()
+	builder := typ.NewRecord()
+	switch seg := path[0]; seg.Kind {
+	case constraint.SegmentField:
+		builder.Field(seg.Name, buildRecordPath(path[1:], value))
+	case constraint.SegmentIndexString:
+		builder.StaticStringIndex(seg.Name, buildRecordPath(path[1:], value))
+	case constraint.SegmentIndexInt:
+		builder.StaticIntIndex(int64(seg.Index), buildRecordPath(path[1:], value))
+	default:
+		return value
+	}
+	return builder.Build()
 }
 
 func refineFlowTargetType(existing, candidate typ.Type) typ.Type {
@@ -425,7 +517,7 @@ func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCase
 	var resultTypes []typ.Type
 	seen := make(map[uint64]bool)
 
-	for caseIdx, caseType := range caseTypes {
+	for _, caseType := range caseTypes {
 		channelType, valueType := extractSelectCaseParts(caseType)
 		if channelType == nil {
 			// Keep unknown/any case elements conservative; skip concrete non-case fields.
@@ -439,10 +531,7 @@ func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCase
 		builder := typ.NewRecord().
 			Field(effect.SelectResultChannelField, channelType).
 			Field("ok", typ.Boolean).
-			Field(effect.SelectResultValueField, valueType).
-			// Preserve case multiplicity even when channel/value types are equal.
-			// This keeps identity-sensitive narrowing sound for `result.channel ~= ch`.
-			Field(effect.SelectResultCaseIDField, typ.LiteralInt(int64(caseIdx)))
+			Field(effect.SelectResultValueField, valueType)
 
 		if addDefault {
 			builder = builder.OptField("default", typ.Boolean)

@@ -4,8 +4,10 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	compilercfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
@@ -116,7 +118,7 @@ func TestFuncResultEqual_IgnoresRecursiveFlowInputs(t *testing.T) {
 }
 
 func TestFuncResultEqual_UsesRecursiveSafeFactEqualityForLiteralSigs(t *testing.T) {
-	fn := &ast.FunctionExpr{}
+	graph, fn := funcResultEqualNestedLiteral(t)
 	leftRecursive := typ.NewRecursive("Builder", func(self typ.Type) typ.Type {
 		return typ.NewRecord().
 			Field("add", typ.Func().Param("self", self).Returns(self).Build()).
@@ -128,12 +130,14 @@ func TestFuncResultEqual_UsesRecursiveSafeFactEqualityForLiteralSigs(t *testing.
 			Build()
 	})
 	left := &api.FuncResult{
-		LiteralSignatures: api.LiteralSigs{
+		Graph: graph,
+		LiteralSignatureProvider: api.LiteralSigsLookup{
 			fn: typ.Func().Param("self", leftRecursive).Returns(leftRecursive).Build(),
 		},
 	}
 	right := &api.FuncResult{
-		LiteralSignatures: api.LiteralSigs{
+		Graph: graph,
+		LiteralSignatureProvider: api.LiteralSigsLookup{
 			fn: typ.Func().Param("self", rightRecursive).Returns(rightRecursive).Build(),
 		},
 	}
@@ -141,6 +145,23 @@ func TestFuncResultEqual_UsesRecursiveSafeFactEqualityForLiteralSigs(t *testing.
 	if !funcResultEqual(left, right) {
 		t.Fatal("recursive literal signatures should compare through value-domain fact equality")
 	}
+}
+
+func funcResultEqualNestedLiteral(t *testing.T) (*compilercfg.Graph, *ast.FunctionExpr) {
+	t.Helper()
+	stmts, err := parse.ParseString(`return function(self) end`, "func_result_equal.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := &ast.FunctionExpr{ParList: &ast.ParList{}, Stmts: stmts}
+	graph := compilercfg.Build(root)
+	for _, nested := range graph.NestedFunctions() {
+		if nested.Func != nil {
+			return graph, nested.Func
+		}
+	}
+	t.Fatal("expected nested function literal")
+	return nil, nil
 }
 
 func TestFuncResultQueryCycleConvergesOnSemanticEquality(t *testing.T) {

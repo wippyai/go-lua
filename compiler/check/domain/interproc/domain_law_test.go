@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -33,23 +32,13 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 		CapturedFields: api.CapturedFieldAssigns{
 			fnSym: {
 				capturedSym: {
-					"callback": product.FromType(typ.NewOptional(callback)),
-				},
-			},
-		},
-		CapturedContainers: api.CapturedContainerMutations{
-			fnSym: {
-				capturedSym: {
-					{
-						Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}},
-						ValueType: product.FromType(typ.NewArray(typ.String)),
-					},
+					fieldKey("callback"): product.FromType(typ.NewOptional(callback)),
 				},
 			},
 		},
 		ConstructorFields: api.ConstructorFields{
 			classSym: {
-				"name": product.FromType(typ.String),
+				fieldKey("name"): product.FromType(typ.String),
 			},
 		},
 	}

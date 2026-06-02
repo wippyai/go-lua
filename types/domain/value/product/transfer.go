@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // transfer.go provides the AbstractValue-native form of the flow transfer
@@ -38,7 +39,340 @@ func FieldOf(av AbstractValue, name string) (AbstractValue, bool) {
 	if !ok || ft == nil {
 		return Bottom(), false
 	}
+	if av.IsGradualTop() && typ.IsAny(ft) {
+		return GradualAny(), true
+	}
 	return FromType(ft), true
+}
+
+// MemberOf is the structural-keyed member read. Dot fields dispatch to FieldOf;
+// static string/int indexes dispatch to IndexOf with an exact literal key. This
+// keeps product callers from collapsing `.x` and `["x"]` before the value-domain
+// boundary decides which operation is intended.
+func MemberOf(av AbstractValue, key value.MemberKey) (AbstractValue, bool) {
+	if !key.IsValid() {
+		return Bottom(), false
+	}
+	switch key.Kind() {
+	case value.MemberKindField:
+		return FieldOf(av, key.Name())
+	case value.MemberKindStringIndex:
+		return IndexOf(av, FromType(typ.LiteralString(key.Name())))
+	case value.MemberKindIntIndex:
+		return IndexOf(av, FromType(typ.LiteralInt(int64(key.Index()))))
+	default:
+		return Bottom(), false
+	}
+}
+
+// RuntimeMemberOf is the Lua-runtime read counterpart of MemberOf. MemberOf is a
+// strict structural query: it reports ok=false for a precise table shape that does
+// not declare the requested member, so diagnostics can still flag likely typos.
+// RuntimeMemberOf is for transfer semantics: reading a missing slot from a
+// table-like value produces nil, while a non-table miss remains unresolved.
+func RuntimeMemberOf(av AbstractValue, key value.MemberKey) (AbstractValue, bool) {
+	if !key.IsValid() {
+		return Bottom(), false
+	}
+	t, ok := runtimeMemberType(av.ProjectValue(), key, 0)
+	if !ok || t == nil {
+		return Bottom(), false
+	}
+	if av.IsGradualTop() && typ.IsAny(t) {
+		return GradualAny(), true
+	}
+	return FromType(t), true
+}
+
+// RuntimeIndexOf is the Lua-runtime read counterpart of IndexOf. It preserves
+// strict index precision when available and falls back to nil for definitely
+// absent table-like slots.
+func RuntimeIndexOf(av AbstractValue, key AbstractValue) (AbstractValue, bool) {
+	keyType := key.ProjectValue()
+	t, ok := querycore.RuntimeIndex(av.ProjectValue(), keyType)
+	if !ok || t == nil {
+		return Bottom(), false
+	}
+	if av.IsGradualTop() && typ.IsAny(t) {
+		return GradualAny(), true
+	}
+	return FromType(t), true
+}
+
+// RefineCallableValue sharpens av's callable arm to sig without changing its
+// presence proof. Function identity is not a presence proof: a value known only
+// as F? remains F? after signature projection, while a definitely-present
+// callable becomes the solved signature.
+func RefineCallableValue(av AbstractValue, sig typ.Type) AbstractValue {
+	if typ.IsAbsentOrUnknown(sig) {
+		return av
+	}
+	if av.IsZero() {
+		return FromType(sig)
+	}
+	t := ProjectValueOrUnknown(av)
+	if typ.IsAbsentOrUnknown(t) {
+		return FromType(sig)
+	}
+	if inner, nilable := value.SplitNilable(t); nilable {
+		if inner == nil || !callableValueCanRefine(inner) {
+			return av
+		}
+		return FromType(typ.NewOptional(sig))
+	}
+	if callableValueCanRefine(t) {
+		return FromType(sig)
+	}
+	return av
+}
+
+// RefineCallableRead overlays callable identity/signature evidence onto the
+// result of a runtime slot read. Unlike RefineCallableValue, this function treats
+// absence/nil as "maybe callable" rather than as must-present: FunctionRefs name
+// a callable but do not prove that a map/table slot is present at this program
+// point. Presence must come from the product value, StaticMembers, or
+// KeyPresence/index-read proof.
+func RefineCallableRead(read AbstractValue, sig typ.Type) AbstractValue {
+	if typ.IsAbsentOrUnknown(sig) {
+		return read
+	}
+	if read.IsZero() {
+		return FromType(typ.NewOptional(sig))
+	}
+	t := ProjectValueOrUnknown(read)
+	if typ.IsAbsentOrUnknown(t) || typ.IsUnknown(t) || typ.TypeEquals(t, typ.Nil) {
+		return FromType(typ.NewOptional(sig))
+	}
+	return RefineCallableValue(read, sig)
+}
+
+func callableValueCanRefine(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	return typ.IsUnknown(t) || typ.IsAny(t) || unwrap.Function(t) != nil
+}
+
+// WithMetatable is the AbstractValue-native form of Lua setmetatable(t, mt).
+// It preserves the table value while attaching mt on the structural metatable
+// axis, so subsequent field/method reads use the ordinary query-core metatable
+// lookup. Non-record table values keep their original shape because the current
+// structural domain can represent metatables only on records.
+func WithMetatable(av, meta AbstractValue) (AbstractValue, bool) {
+	if av.IsZero() || meta.IsZero() {
+		return Bottom(), false
+	}
+	t := withMetatableType(av.ProjectValue(), meta.ProjectValue())
+	if t == nil || typ.IsAbsentOrUnknown(t) {
+		return Bottom(), false
+	}
+	if av.IsGradualTop() && typ.IsAny(t) {
+		return GradualAny(), true
+	}
+	return FromType(t), true
+}
+
+const runtimeReadMaxDepth = 32
+
+func runtimeMemberType(t typ.Type, key value.MemberKey, depth int) (typ.Type, bool) {
+	if depth > runtimeReadMaxDepth || t == nil {
+		return nil, false
+	}
+	if strict, ok := strictMemberType(t, key); ok {
+		return strict, true
+	}
+	switch v := t.(type) {
+	case *typ.Union:
+		return runtimeUnionMemberType(v.Members, func(member typ.Type) (typ.Type, bool) {
+			return runtimeMemberType(member, key, depth+1)
+		})
+	case *typ.Optional:
+		return runtimeOptionalType(v.Inner, func(inner typ.Type) (typ.Type, bool) {
+			return runtimeMemberType(inner, key, depth+1)
+		})
+	case *typ.Alias:
+		return runtimeMemberType(v.Target, key, depth+1)
+	case *typ.Generic:
+		return runtimeMemberType(v.Body, key, depth+1)
+	case *typ.TypeParam:
+		return runtimeMemberType(v.Constraint, key, depth+1)
+	case *typ.Recursive:
+		if v.Body == v {
+			return nil, false
+		}
+		return runtimeMemberType(v.Body, key, depth+1)
+	case *typ.Instantiated:
+		resolved, err := querycore.ResolveInstantiated(v)
+		if err != nil {
+			return nil, false
+		}
+		return runtimeMemberType(resolved, key, depth+1)
+	}
+	if querycore.MissingFieldReadsNil(t) {
+		return typ.Nil, true
+	}
+	return nil, false
+}
+
+func strictMemberType(t typ.Type, key value.MemberKey) (typ.Type, bool) {
+	switch key.Kind() {
+	case value.MemberKindField:
+		return querycore.Field(t, key.Name())
+	case value.MemberKindStringIndex:
+		return querycore.Index(t, typ.LiteralString(key.Name()))
+	case value.MemberKindIntIndex:
+		return querycore.Index(t, typ.LiteralInt(int64(key.Index())))
+	default:
+		return nil, false
+	}
+}
+
+func runtimeUnionMemberType(members []typ.Type, read func(typ.Type) (typ.Type, bool)) (typ.Type, bool) {
+	if len(members) == 0 || read == nil {
+		return nil, false
+	}
+	out := make([]typ.Type, 0, len(members))
+	for _, member := range typ.CoalesceProductUnionMembers(members) {
+		t, ok := read(member)
+		if !ok || t == nil {
+			return nil, false
+		}
+		out = append(out, t)
+	}
+	if len(out) == 0 {
+		return nil, false
+	}
+	return typ.CoalesceProductUnion(typ.NewUnion(out...)), true
+}
+
+func runtimeOptionalType(inner typ.Type, read func(typ.Type) (typ.Type, bool)) (typ.Type, bool) {
+	t, ok := read(inner)
+	if !ok || t == nil || runtimeContainsNil(t) {
+		return t, ok
+	}
+	return typ.NewOptional(t), true
+}
+
+func runtimeContainsNil(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	return typ.Visit(t, typ.Visitor[bool]{
+		Optional: func(*typ.Optional) bool {
+			return true
+		},
+		Union: func(u *typ.Union) bool {
+			for _, member := range u.Members {
+				if runtimeContainsNil(member) {
+					return true
+				}
+			}
+			return false
+		},
+		Default: func(t typ.Type) bool {
+			return t.Kind() == kind.Nil
+		},
+	})
+}
+
+func withMetatableType(tableType, metaType typ.Type) typ.Type {
+	tableType = unwrap.Alias(tableType)
+	if tableType == nil {
+		return typ.Unknown
+	}
+
+	switch t := tableType.(type) {
+	case *typ.Record:
+		return recordWithMetatableVariants(t, metaType)
+	case *typ.Optional:
+		return typ.NewOptional(withMetatableType(t.Inner, metaType))
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(t.Members))
+		for _, member := range t.Members {
+			if member == nil || member.Kind() == kind.Nil {
+				members = append(members, member)
+				continue
+			}
+			members = append(members, withMetatableType(member, metaType))
+		}
+		return typ.NewUnion(members...)
+	default:
+		return tableType
+	}
+}
+
+func recordWithMetatableVariants(rec *typ.Record, metaType typ.Type) typ.Type {
+	var variants []typ.Type
+	for _, meta := range metatableVariants(metaType) {
+		variants = append(variants, rebuildRecordWithMetatable(rec, meta))
+	}
+	if len(variants) == 0 {
+		return rebuildRecordWithMetatable(rec, nil)
+	}
+	if len(variants) == 1 {
+		return variants[0]
+	}
+	return typ.NewUnion(variants...)
+}
+
+func metatableVariants(metaType typ.Type) []typ.Type {
+	metaType = unwrap.Alias(metaType)
+	if metaType == nil {
+		return []typ.Type{nil}
+	}
+	switch m := metaType.(type) {
+	case *typ.Optional:
+		return []typ.Type{nil, unwrap.Alias(m.Inner)}
+	case *typ.Union:
+		var variants []typ.Type
+		hasNil := false
+		for _, member := range m.Members {
+			member = unwrap.Alias(member)
+			if member == nil || member.Kind() == kind.Nil {
+				if !hasNil {
+					variants = append(variants, nil)
+					hasNil = true
+				}
+				continue
+			}
+			variants = append(variants, member)
+		}
+		return variants
+	default:
+		if metaType.Kind() == kind.Nil {
+			return []typ.Type{nil}
+		}
+		return []typ.Type{metaType}
+	}
+}
+
+func rebuildRecordWithMetatable(rec *typ.Record, meta typ.Type) typ.Type {
+	if rec == nil {
+		return typ.Unknown
+	}
+	builder := typ.NewRecord()
+	for _, field := range rec.Fields {
+		switch {
+		case field.Optional && field.Readonly:
+			builder.OptReadonlyField(field.Name, field.Type)
+		case field.Optional:
+			builder.OptField(field.Name, field.Type)
+		case field.Readonly:
+			builder.ReadonlyField(field.Name, field.Type)
+		default:
+			builder.Field(field.Name, field.Type)
+		}
+	}
+	for _, member := range rec.StaticMembers {
+		builder.AddStaticMember(member)
+	}
+	if rec.HasMapComponent() {
+		builder.MapComponent(rec.MapKey, rec.MapValue)
+	}
+	if meta != nil {
+		builder.Metatable(meta)
+	}
+	return builder.SetOpen(rec.Open).Build()
 }
 
 // WithField is the AbstractValue-native form of a field write/overlay
@@ -54,6 +388,118 @@ func WithField(av AbstractValue, name string, fieldAV AbstractValue) AbstractVal
 	base := av.ProjectValue()
 	fieldType := fieldAV.ProjectValue()
 	return FromType(typ.ExtendRecordWithField(base, name, fieldType))
+}
+
+// WithMember is the structural-keyed member write. Dot-field writes preserve the
+// existing record-field transfer; static index writes use the index-write law so
+// they do not masquerade as dot fields before typ.Record grows a structural
+// member carrier.
+func WithMember(av AbstractValue, key value.MemberKey, fieldAV AbstractValue) AbstractValue {
+	if !key.IsValid() {
+		return av
+	}
+	switch key.Kind() {
+	case value.MemberKindField:
+		return WithField(av, key.Name(), fieldAV)
+	case value.MemberKindStringIndex:
+		return withStaticMember(av, key, fieldAV)
+	case value.MemberKindIntIndex:
+		return withStaticMember(av, key, fieldAV)
+	default:
+		return av
+	}
+}
+
+func withStaticMember(av AbstractValue, key value.MemberKey, fieldAV AbstractValue) AbstractValue {
+	current := av.ProjectValue()
+	keyType := memberKeyType(key)
+	valType := fieldAV.ProjectValue()
+	written := value.AdmitForeignIndexedWrite(current, keyType, valType)
+	return FromType(addStaticMemberToType(written, key, valType))
+}
+
+func memberKeyType(key value.MemberKey) typ.Type {
+	switch key.Kind() {
+	case value.MemberKindStringIndex:
+		return typ.LiteralString(key.Name())
+	case value.MemberKindIntIndex:
+		return typ.LiteralInt(int64(key.Index()))
+	default:
+		return typ.Unknown
+	}
+}
+
+func addStaticMemberToType(t typ.Type, key value.MemberKey, val typ.Type) typ.Type {
+	if val == nil {
+		val = typ.Unknown
+	}
+	switch v := t.(type) {
+	case *typ.Alias:
+		return typ.NewAlias(v.Name, addStaticMemberToType(v.Target, key, val))
+	case *typ.Record:
+		return addStaticMemberToRecord(v, key, val)
+	case *typ.Map:
+		builder := typ.NewRecord().MapComponent(v.Key, v.Value)
+		addStaticMemberToBuilder(builder, key, val)
+		return builder.Build()
+	default:
+		builder := typ.NewRecord().SetOpen(true)
+		addStaticMemberToBuilder(builder, key, val)
+		return builder.Build()
+	}
+}
+
+func addStaticMemberToRecord(rec *typ.Record, key value.MemberKey, val typ.Type) typ.Type {
+	builder := typ.NewRecord()
+	if rec.Open {
+		builder.SetOpen(true)
+	}
+	for _, f := range rec.Fields {
+		switch {
+		case f.Optional && f.Readonly:
+			builder.OptReadonlyField(f.Name, f.Type)
+		case f.Optional:
+			builder.OptField(f.Name, f.Type)
+		case f.Readonly:
+			builder.ReadonlyField(f.Name, f.Type)
+		default:
+			builder.Field(f.Name, f.Type)
+		}
+	}
+	for _, m := range rec.StaticMembers {
+		if staticMemberMatchesKey(m, key) {
+			continue
+		}
+		builder.AddStaticMember(m)
+	}
+	addStaticMemberToBuilder(builder, key, val)
+	if rec.Metatable != nil {
+		builder.Metatable(rec.Metatable)
+	}
+	if rec.HasMapComponent() {
+		builder.MapComponent(rec.MapKey, rec.MapValue)
+	}
+	return builder.Build()
+}
+
+func staticMemberMatchesKey(member typ.StaticMember, key value.MemberKey) bool {
+	switch key.Kind() {
+	case value.MemberKindStringIndex:
+		return member.Kind == typ.StaticMemberStringIndex && member.Name == key.Name()
+	case value.MemberKindIntIndex:
+		return member.Kind == typ.StaticMemberIntIndex && member.Index == int64(key.Index())
+	default:
+		return false
+	}
+}
+
+func addStaticMemberToBuilder(builder *typ.RecordBuilder, key value.MemberKey, val typ.Type) {
+	switch key.Kind() {
+	case value.MemberKindStringIndex:
+		builder.StaticStringIndex(key.Name(), val)
+	case value.MemberKindIntIndex:
+		builder.StaticIntIndex(int64(key.Index()), val)
+	}
 }
 
 // IndexOf is the AbstractValue-native form of a dynamic index read av[keyAV].
@@ -73,6 +519,9 @@ func IndexOf(av AbstractValue, keyAV AbstractValue) (AbstractValue, bool) {
 	if !ok || et == nil {
 		return Bottom(), false
 	}
+	if av.IsGradualTop() && typ.IsAny(et) {
+		return GradualAny(), true
+	}
 	return FromType(et), true
 }
 
@@ -91,14 +540,24 @@ func WriteIndex(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) Abst
 	return FromType(value.MergeForConvergence(current, written))
 }
 
+// WriteSelfDerivedIndex is the AbstractValue-native form of a proven identity
+// write av[key] = av[key].
+//
+// The caller has already proved that valAV is the value read from the same
+// container at the same key, so the concrete store does not change. Keeping the
+// container unchanged is strictly more precise than applying the generic indexed
+// write widening to the union of possible keys and values.
+func WriteSelfDerivedIndex(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) AbstractValue {
+	return av
+}
+
 // WriteIndexForeign is the AbstractValue-native form of an indexed write
 // av[keyAV] = valAV whose value is a FOREIGN value — not provably drawn from av at
 // the written key. It is WriteIndex over value.AdmitForeignIndexedWrite: a closed
 // record's declared field the key could match is weakened by valAV (the foreign
-// store can replace that field at runtime), where the plain WriteIndex would leave
-// the field type intact and only add a map component. A self-derived write (the
-// value provably read from av at the same key) keeps plain WriteIndex, so its fields
-// are not weakened.
+// store can replace that field at runtime). A self-derived write (the value
+// provably read from av at the same key) uses WriteSelfDerivedIndex instead, so
+// its fields are not weakened.
 func WriteIndexForeign(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) AbstractValue {
 	current := av.ProjectValue()
 	key := keyAV.ProjectValue()
@@ -115,6 +574,14 @@ func WriteIndexForeign(av AbstractValue, keyAV AbstractValue, valAV AbstractValu
 // av[keyAV] = valAV before WriteIndex computes the next container.
 func IndexWriteAdmits(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) bool {
 	return value.IndexedWriteAdmits(av.ProjectValue(), keyAV.ProjectValue(), valAV.ProjectValue())
+}
+
+// SealedIndexWriteAdmits is the AbstractValue-native sealed-table admission
+// predicate. It accepts only writes that satisfy the declared write slot or
+// universal write obligation already present in the container; it never admits a
+// write by widening the container shape.
+func SealedIndexWriteAdmits(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) bool {
+	return value.SealedIndexedWriteAdmits(av.ProjectValue(), keyAV.ProjectValue(), valAV.ProjectValue())
 }
 
 // MutateIndex is the AbstractValue-native form of a structural mutation inside an
@@ -170,6 +637,16 @@ func AppendMapElement(av AbstractValue, keyAV AbstractValue, elemAV AbstractValu
 	elem := elemAV.ProjectValue()
 	widened := value.AdmitMapArrayElementMutation(current, key, elem)
 	return FromType(value.MergeForConvergence(current, widened))
+}
+
+// ContainerElementUnion is the AbstractValue-native form of a spec-level
+// ContainerElementUnion mutation such as channel.send(v). It widens the element
+// slot of arrays, maps, instantiated generic containers, aliases, and unions.
+func ContainerElementUnion(av AbstractValue, elemAV AbstractValue) AbstractValue {
+	current := av.ProjectValue()
+	elem := elemAV.ProjectValue()
+	widened := value.AdmitContainerElementUnion(current, elem)
+	return FromType(widened)
 }
 
 // PhiJoin is the AbstractValue-native form of a phi-node join across
@@ -241,6 +718,22 @@ func NarrowFalsy(av AbstractValue) AbstractValue {
 // is recorded natively.
 func NarrowPresent(av AbstractValue) AbstractValue {
 	narrowed := narrow.RemoveNil(av.ProjectValue())
+	if narrowed == nil {
+		return Bottom()
+	}
+	return FromType(narrowed)
+}
+
+// NarrowLengthLowerBound is the AbstractValue-native form of a proven sequence
+// length floor, such as the true edge of `#x > 0`. It filters impossible shapes
+// (`{}` in `{}`|array) through the shared type-domain law and re-lifts the
+// reduced value into the product.
+func NarrowLengthLowerBound(av AbstractValue, lower int64) AbstractValue {
+	base := av.ProjectValue()
+	if lower > 0 {
+		base = narrow.RemoveNil(base)
+	}
+	narrowed := narrow.RefineByLengthLowerBound(base, lower)
 	if narrowed == nil {
 		return Bottom()
 	}

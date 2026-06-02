@@ -19,6 +19,7 @@ func TestKindString(t *testing.T) {
 		{Union, "union"},
 		{Function, "function"},
 		{Array, "array"},
+		{ReadonlyMap, "readonlymap"},
 		{Record, "record"},
 	}
 
@@ -53,7 +54,7 @@ func TestKindIsPrimitive(t *testing.T) {
 }
 
 func TestKindIsComposite(t *testing.T) {
-	composites := []Kind{Union, Intersection, Tuple, Array, Map, Record, Function}
+	composites := []Kind{Union, Intersection, Tuple, Array, Map, ReadonlyMap, Record, Function}
 	for _, k := range composites {
 		if !k.IsComposite() {
 			t.Errorf("%s should be composite", k)
@@ -91,6 +92,7 @@ func TestKindValuesUnique(t *testing.T) {
 		Optional, Union, Intersection, Tuple, Function, Array, Map, Record,
 		Sum, Interface, Alias, Generic, Instantiated, Platform, Literal,
 		Self, Ref, Meta, TypeParam, TypeVar, Refined, FieldAccess, IndexAccess,
+		ReadonlyMap,
 	}
 
 	for _, k := range kinds {
@@ -105,7 +107,7 @@ func TestKindValuesUnique(t *testing.T) {
 
 func TestKindNamesComplete(t *testing.T) {
 	// Verify all kinds have non-empty names
-	for k := Nil; k <= IndexAccess; k++ {
+	for k := Nil; k <= ReadonlyMap; k++ {
 		name := k.String()
 		if name == "" {
 			t.Errorf("Kind(%d) has no name", k)

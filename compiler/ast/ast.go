@@ -133,8 +133,9 @@ func (n *Node) CopyLastPos(src PositionHolder) {
 
 // Field represents a key-value pair in a table constructor.
 type Field struct {
-	Key   Expr
-	Value Expr
+	Key       Expr
+	KeySyntax AttrKeySyntax // Dot/name, bracket, or unknown for legacy/manual ASTs
+	Value     Expr
 }
 
 // ParList represents a function parameter list.

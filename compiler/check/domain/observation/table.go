@@ -3,7 +3,10 @@ package observation
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -25,7 +28,7 @@ func (p Projector) CheckTable(table *ast.TableExpr, point cfg.Point, expected ty
 		return TableCheckResult{}
 	}
 	expected = p.resolveLocalRefs(expected, point)
-	fields, arrayElems, _, earlyFail := p.tableFields(table, expected, point, true)
+	entries, arrayElems, _, earlyFail := p.tableEntries(table, expected, point, true)
 	if earlyFail {
 		return TableCheckResult{Handled: true, Compatible: false, Reason: "table shape is incompatible with expected record fields"}
 	}
@@ -33,7 +36,7 @@ func (p Projector) CheckTable(table *ast.TableExpr, point cfg.Point, expected ty
 	if u := unwrap.Union(expected); u != nil {
 		bestReason := ""
 		for _, member := range u.Members {
-			ok, reason := checkTableWithOptionalRelax(fields, arrayElems, member)
+			ok, reason := checkTableEntriesWithOptionalRelax(entries, arrayElems, member)
 			if ok {
 				return TableCheckResult{Handled: true, Compatible: true}
 			}
@@ -44,7 +47,7 @@ func (p Projector) CheckTable(table *ast.TableExpr, point cfg.Point, expected ty
 		return TableCheckResult{Handled: true, Compatible: false, Reason: bestReason}
 	}
 
-	ok, reason := checkTableWithOptionalRelax(fields, arrayElems, expected)
+	ok, reason := checkTableEntriesWithOptionalRelax(entries, arrayElems, expected)
 	return TableCheckResult{Handled: true, Compatible: ok, Reason: reason}
 }
 
@@ -55,7 +58,7 @@ func (p Projector) TableCompatible(table *ast.TableExpr, point cfg.Point, expect
 	return result.Handled && result.Compatible
 }
 
-func (p Projector) tableFields(table *ast.TableExpr, expected typ.Type, point cfg.Point, failDynamicRecordKeys bool) ([]ops.FieldDef, []typ.Type, int, bool) {
+func (p Projector) tableEntries(table *ast.TableExpr, expected typ.Type, point cfg.Point, failDynamicRecordKeys bool) ([]ops.EntryDef, []typ.Type, int, bool) {
 	recordOnly := false
 	if u := unwrap.Union(expected); u != nil {
 		recordOnly = unionAllRecordLike(u)
@@ -63,7 +66,7 @@ func (p Projector) tableFields(table *ast.TableExpr, expected typ.Type, point cf
 		recordOnly = true
 	}
 
-	fields := make([]ops.FieldDef, 0, len(table.Fields))
+	entries := make([]ops.EntryDef, 0, len(table.Fields))
 	var arrayElems []typ.Type
 	fieldCount := 0
 
@@ -81,31 +84,46 @@ func (p Projector) tableFields(table *ast.TableExpr, expected typ.Type, point cf
 			continue
 		}
 
-		var name string
-		switch k := field.Key.(type) {
-		case *ast.StringExpr:
-			name = k.Value
-		case *ast.IdentExpr:
+		if failDynamicRecordKeys && recordOnly {
+			name, ok := fieldkey.RecordFieldNameFromTableField(field)
+			if !ok {
+				return nil, nil, 0, true
+			}
+			expectedFieldType := ops.ExpectedTableFieldType(expected, name)
+			var ft typ.Type
+			if isEmptyTableExpr(field.Value) {
+				ft = promoteEmptyTableLiteral(expectedFieldType)
+			}
+			if ft == nil {
+				ft = p.TypeOfWithExpected(field.Value, point, expectedFieldType)
+			}
+			if ft == nil {
+				ft = typ.Unknown
+			}
+			entries = append(entries, ops.EntryDef{
+				Key:  constraint.Segment{Kind: constraint.SegmentField, Name: name},
+				Type: ft,
+			})
+			fieldCount++
+			continue
+		}
+
+		seg, ok := flowpath.StaticFieldSegmentWithConst(field, p.constResolver(point))
+		if !ok {
 			if failDynamicRecordKeys && recordOnly {
 				return nil, nil, 0, true
 			}
-			name = k.Value
-		case *ast.NumberExpr:
-			elemExpected := ops.ExpectedTableElementType(expected, len(arrayElems))
-			elemType := p.TypeOfWithExpected(field.Value, point, elemExpected)
-			if elemType == nil {
-				elemType = typ.Unknown
-			}
-			arrayElems = append(arrayElems, elemType)
 			continue
-		default:
+		}
+		key, ok := fieldkey.FromSegment(seg)
+		if !ok {
 			if failDynamicRecordKeys && recordOnly {
 				return nil, nil, 0, true
 			}
 			continue
 		}
 
-		expectedFieldType := ops.ExpectedTableFieldType(expected, name)
+		expectedFieldType := ops.ExpectedTableEntryType(expected, key)
 		var ft typ.Type
 		if isEmptyTableExpr(field.Value) {
 			ft = promoteEmptyTableLiteral(expectedFieldType)
@@ -116,11 +134,11 @@ func (p Projector) tableFields(table *ast.TableExpr, expected typ.Type, point cf
 		if ft == nil {
 			ft = typ.Unknown
 		}
-		fields = append(fields, ops.FieldDef{Name: name, Type: ft})
+		entries = append(entries, ops.EntryDef{Key: key, Type: ft})
 		fieldCount++
 	}
 
-	return fields, arrayElems, fieldCount, false
+	return entries, arrayElems, fieldCount, false
 }
 
 func isEmptyTableExpr(expr ast.Expr) bool {
@@ -143,7 +161,7 @@ func promoteEmptyTableLiteral(expected typ.Type) typ.Type {
 		}
 	}
 	switch unwrap.Alias(expected).Kind() {
-	case kind.Map, kind.Array:
+	case kind.Map, kind.ReadonlyMap, kind.Array:
 		return expected
 	default:
 		return nil
@@ -152,6 +170,15 @@ func promoteEmptyTableLiteral(expected typ.Type) typ.Type {
 
 func checkTableWithOptionalRelax(fields []ops.FieldDef, arrayElems []typ.Type, expected typ.Type) (bool, string) {
 	result := ops.CheckTable(fields, arrayElems, expected)
+	return checkTableResultWithOptionalRelax(result, expected)
+}
+
+func checkTableEntriesWithOptionalRelax(entries []ops.EntryDef, arrayElems []typ.Type, expected typ.Type) (bool, string) {
+	result := ops.CheckTableEntries(entries, arrayElems, expected)
+	return checkTableResultWithOptionalRelax(result, expected)
+}
+
+func checkTableResultWithOptionalRelax(result ops.CheckResult, expected typ.Type) (bool, string) {
 	if len(result.Errors) == 0 {
 		return true, ""
 	}

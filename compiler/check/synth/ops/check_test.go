@@ -3,6 +3,7 @@ package ops
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -25,6 +26,24 @@ func TestCheckTable_ExpectedAny(t *testing.T) {
 	result := CheckTable(fields, nil, typ.Any)
 	if len(result.Errors) > 0 {
 		t.Error("any should accept any table")
+	}
+}
+
+func TestCheckTable_ExpectedReadonlyMapUsesReadViewContract(t *testing.T) {
+	fields := []FieldDef{{Name: "x", Type: typ.Integer}}
+	expected := typ.NewReadonlyMap(typ.String, typ.Number)
+
+	result := CheckTable(fields, nil, expected)
+	if len(result.Errors) > 0 {
+		t.Fatalf("readonly map should accept compatible present entries: %v", result.Errors)
+	}
+	if !typ.TypeEquals(result.Type, expected) {
+		t.Fatalf("CheckTable readonly map type = %v, want %v", result.Type, expected)
+	}
+
+	bad := CheckTable(fields, nil, typ.NewReadonlyMap(typ.Number, typ.Number))
+	if len(bad.Errors) == 0 {
+		t.Fatal("readonly map should reject incompatible literal field key")
 	}
 }
 
@@ -163,6 +182,55 @@ func TestCheckTable_ExpectedMap(t *testing.T) {
 	result := CheckTable(fields, nil, expected)
 	if len(result.Errors) > 0 {
 		t.Errorf("should match map: %v", result.Errors)
+	}
+}
+
+func TestCheckTableEntries_BracketStringDoesNotSatisfyRecordField(t *testing.T) {
+	expected := typ.NewRecord().Field("name", typ.String).Build()
+	entries := []EntryDef{{
+		Key:  constraint.Segment{Kind: constraint.SegmentIndexString, Name: "name"},
+		Type: typ.String,
+	}}
+
+	result := CheckTableEntries(entries, nil, expected)
+	if len(result.Errors) == 0 {
+		t.Fatal("bracket string entry should not satisfy dot record field")
+	}
+}
+
+func TestCheckTableEntries_StaticMembersUseStructuralKeys(t *testing.T) {
+	expected := typ.NewRecord().
+		StaticStringIndex("name", typ.String).
+		StaticIntIndex(1, typ.Integer).
+		Build()
+	entries := []EntryDef{
+		{Key: constraint.Segment{Kind: constraint.SegmentIndexString, Name: "name"}, Type: typ.String},
+		{Key: constraint.Segment{Kind: constraint.SegmentIndexInt, Index: 1}, Type: typ.Integer},
+	}
+
+	result := CheckTableEntries(entries, nil, expected)
+	if len(result.Errors) > 0 {
+		t.Fatalf("static members should accept structural bracket entries: %v", result.Errors)
+	}
+}
+
+func TestCheckTableEntries_BracketEntriesUseMapAndArraySlots(t *testing.T) {
+	mapResult := CheckTableEntries(
+		[]EntryDef{{Key: constraint.Segment{Kind: constraint.SegmentIndexString, Name: "name"}, Type: typ.Integer}},
+		nil,
+		typ.NewMap(typ.String, typ.Integer),
+	)
+	if len(mapResult.Errors) > 0 {
+		t.Fatalf("string bracket entry should use map slot: %v", mapResult.Errors)
+	}
+
+	arrayResult := CheckTableEntries(
+		[]EntryDef{{Key: constraint.Segment{Kind: constraint.SegmentIndexInt, Index: 1}, Type: typ.Integer}},
+		nil,
+		typ.NewArray(typ.Integer),
+	)
+	if len(arrayResult.Errors) > 0 {
+		t.Fatalf("int bracket entry should use array slot: %v", arrayResult.Errors)
 	}
 }
 

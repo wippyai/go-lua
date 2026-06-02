@@ -275,6 +275,12 @@ func WidenType(t typ.Type) typ.Type {
 		if key != v.Key || elem != v.Value {
 			return typ.NewMap(key, elem)
 		}
+	case *typ.ReadonlyMap:
+		key := WidenType(v.Key)
+		elem := WidenType(v.Value)
+		if key != v.Key || elem != v.Value {
+			return typ.NewReadonlyMap(key, elem)
+		}
 	case *typ.Record:
 		builder := typ.NewRecord()
 		changed := false

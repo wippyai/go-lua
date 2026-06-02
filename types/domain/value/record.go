@@ -1,8 +1,6 @@
 package value
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -39,27 +37,38 @@ func JoinRecordShape(a, b typ.Type, join func(typ.Type, typ.Type) typ.Type) (typ
 		builder.MapComponent(mapKey, mapValue)
 	}
 
-	leftFields := fieldsByName(ar)
-	rightFields := fieldsByName(br)
-	names := make([]string, 0, len(leftFields)+len(rightFields))
-	seen := make(map[string]struct{}, len(leftFields)+len(rightFields))
-	for name := range leftFields {
-		names = append(names, name)
-		seen[name] = struct{}{}
+	leftFields := recordFieldsByKey(ar)
+	rightFields := recordFieldsByKey(br)
+	keys := make(map[recordFieldKey]struct{}, len(leftFields)+len(rightFields))
+	for key := range leftFields {
+		keys[key] = struct{}{}
 	}
-	for name := range rightFields {
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		names = append(names, name)
+	for key := range rightFields {
+		keys[key] = struct{}{}
 	}
-	sort.Strings(names)
 
-	for _, name := range names {
-		lf, hasLeft := leftFields[name]
-		rf, hasRight := rightFields[name]
+	for _, key := range sortedRecordFieldKeys(keys) {
+		name := recordFieldKeyName(key)
+		lf, hasLeft := leftFields[key]
+		rf, hasRight := rightFields[key]
 		field := joinRecordFieldWithMapEvidence(name, lf, hasLeft, ar, rf, hasRight, br, join)
 		addRecordField(builder, field)
+	}
+
+	leftStaticMembers := recordStaticMembersByKey(ar)
+	rightStaticMembers := recordStaticMembersByKey(br)
+	staticKeys := make(map[recordStaticMemberKey]struct{}, len(leftStaticMembers)+len(rightStaticMembers))
+	for key := range leftStaticMembers {
+		staticKeys[key] = struct{}{}
+	}
+	for key := range rightStaticMembers {
+		staticKeys[key] = struct{}{}
+	}
+	for _, key := range sortedRecordStaticMemberKeys(staticKeys) {
+		lm, hasLeft := leftStaticMembers[key]
+		rm, hasRight := rightStaticMembers[key]
+		member := joinRecordStaticMemberWithMapEvidence(lm, hasLeft, ar, rm, hasRight, br, join)
+		addRecordStaticMember(builder, member)
 	}
 
 	return builder.Build(), true
@@ -124,9 +133,15 @@ func recordExtensionIsConvergenceUpperBound(candidate, baseline typ.Type) bool {
 
 // recordAddsField reports whether candidate carries a field absent from baseline.
 func recordAddsField(candidate, baseline *typ.Record) bool {
-	baselineFields := fieldsByName(baseline)
+	baselineFields := recordFieldsByKey(baseline)
 	for _, field := range candidate.Fields {
-		if _, ok := baselineFields[field.Name]; !ok {
+		if _, ok := baselineFields[recordFieldKeyFromName(field.Name)]; !ok {
+			return true
+		}
+	}
+	baselineStaticMembers := recordStaticMembersByKey(baseline)
+	for _, member := range candidate.StaticMembers {
+		if _, ok := baselineStaticMembers[recordStaticMemberKeyFromMember(member)]; !ok {
 			return true
 		}
 	}
@@ -137,9 +152,10 @@ func recordExtensionErasesAlternativeAbsence(candidate, baseline *typ.Record) bo
 	if candidate == nil || baseline == nil {
 		return false
 	}
-	baselineFields := fieldsByName(baseline)
+	baselineFields := recordFieldsByKey(baseline)
+	baselineStaticMembers := recordStaticMembersByKey(baseline)
 	for _, field := range candidate.Fields {
-		base, ok := baselineFields[field.Name]
+		base, ok := baselineFields[recordFieldKeyFromName(field.Name)]
 		if !ok {
 			if recordHasOptionalEvidence(baseline) && !field.Optional && !unwrap.IsOptionalLike(field.Type) {
 				return true
@@ -147,6 +163,18 @@ func recordExtensionErasesAlternativeAbsence(candidate, baseline *typ.Record) bo
 			continue
 		}
 		if base.Optional && !field.Optional && !unwrap.IsOptionalLike(field.Type) {
+			return true
+		}
+	}
+	for _, member := range candidate.StaticMembers {
+		base, ok := baselineStaticMembers[recordStaticMemberKeyFromMember(member)]
+		if !ok {
+			if recordHasOptionalEvidence(baseline) && !member.Optional && !unwrap.IsOptionalLike(member.Type) {
+				return true
+			}
+			continue
+		}
+		if base.Optional && !member.Optional && !unwrap.IsOptionalLike(member.Type) {
 			return true
 		}
 	}
@@ -162,20 +190,22 @@ func recordHasOptionalEvidence(rec *typ.Record) bool {
 			return true
 		}
 	}
+	for _, member := range rec.StaticMembers {
+		if member.Optional || unwrap.IsOptionalLike(member.Type) {
+			return true
+		}
+	}
 	return false
 }
 
 func joinedRecordMetatable(a, b typ.Type, join func(typ.Type, typ.Type) typ.Type) typ.Type {
 	if a == nil || b == nil {
-		zzMTlog(a, b, nil)
 		return nil
 	}
 	if FactTypeEqual(a, b) {
 		return a
 	}
-	out := join(a, b)
-	zzMTlog(a, b, out)
-	return out
+	return join(a, b)
 }
 
 func joinedRecordMapComponent(a, b *typ.Record, join func(typ.Type, typ.Type) typ.Type) (typ.Type, typ.Type, bool) {
@@ -189,14 +219,6 @@ func joinedRecordMapComponent(a, b *typ.Record, join func(typ.Type, typ.Type) ty
 	default:
 		return nil, nil, false
 	}
-}
-
-func fieldsByName(r *typ.Record) map[string]typ.Field {
-	out := make(map[string]typ.Field, len(r.Fields))
-	for _, field := range r.Fields {
-		out[field.Name] = field
-	}
-	return out
 }
 
 func joinRecordField(
@@ -241,6 +263,59 @@ func joinRecordFieldWithMapEvidence(
 		return fieldWithMissingBranchMapEvidence(name, left, rightRecord, join)
 	}
 	return fieldWithMissingBranchMapEvidence(name, right, leftRecord, join)
+}
+
+func joinRecordStaticMemberWithMapEvidence(
+	left typ.StaticMember,
+	hasLeft bool,
+	leftRecord *typ.Record,
+	right typ.StaticMember,
+	hasRight bool,
+	rightRecord *typ.Record,
+	join func(typ.Type, typ.Type) typ.Type,
+) typ.StaticMember {
+	if hasLeft && hasRight {
+		return joinRecordStaticMember(left, true, right, true, join)
+	}
+	if hasLeft {
+		return staticMemberWithMissingBranchMapEvidence(left, rightRecord, join)
+	}
+	return staticMemberWithMissingBranchMapEvidence(right, leftRecord, join)
+}
+
+func joinRecordStaticMember(
+	left typ.StaticMember,
+	hasLeft bool,
+	right typ.StaticMember,
+	hasRight bool,
+	join func(typ.Type, typ.Type) typ.Type,
+) typ.StaticMember {
+	switch {
+	case hasLeft && hasRight:
+		left.Type = join(left.Type, right.Type)
+		left.Optional = left.Optional || right.Optional
+		left.Readonly = left.Readonly && right.Readonly
+		return left
+	case hasLeft:
+		left.Optional = true
+		return left
+	default:
+		right.Optional = true
+		return right
+	}
+}
+
+func staticMemberWithMissingBranchMapEvidence(
+	member typ.StaticMember,
+	missingBranch *typ.Record,
+	join func(typ.Type, typ.Type) typ.Type,
+) typ.StaticMember {
+	member.Optional = true
+	if missingBranch != nil && missingBranch.HasMapComponent() &&
+		subtype.IsSubtype(staticMemberKeyType(member), missingBranch.MapKey) {
+		member.Type = join(member.Type, missingBranch.MapValue)
+	}
+	return member
 }
 
 func fieldWithMissingBranchMapEvidence(
@@ -319,6 +394,10 @@ func addRecordField(builder *typ.RecordBuilder, field typ.Field) {
 	}
 }
 
+func addRecordStaticMember(builder *typ.RecordBuilder, member typ.StaticMember) {
+	builder.AddStaticMember(member)
+}
+
 func recordsHaveConflictingRequiredLiterals(a, b *typ.Record) bool {
 	if a == nil || b == nil {
 		return false
@@ -359,6 +438,15 @@ func recordHasRequiredLiteralMissingFrom(src, dst *typ.Record) bool {
 			return true
 		}
 	}
+	for _, member := range src.StaticMembers {
+		if member.Optional || !isLiteralType(member.Type) {
+			continue
+		}
+		other := recordStaticMemberByKey(dst, recordStaticMemberKeyFromMember(member))
+		if other == nil || other.Optional {
+			return true
+		}
+	}
 	return false
 }
 
@@ -371,6 +459,14 @@ func recordRequiredPayloadMissingFrom(src, dst *typ.Record) bool {
 			continue
 		}
 		if dst.GetField(field.Name) == nil {
+			return true
+		}
+	}
+	for _, member := range src.StaticMembers {
+		if member.Optional || isLiteralType(member.Type) {
+			continue
+		}
+		if recordStaticMemberByKey(dst, recordStaticMemberKeyFromMember(member)) == nil {
 			return true
 		}
 	}
@@ -392,6 +488,11 @@ func recordsAreRecursiveAlternatives(a, b *typ.Record) bool {
 func recordContainsEquivalentField(container, target *typ.Record) bool {
 	for _, field := range container.Fields {
 		if typ.SameNodeOrAcyclicEqual(field.Type, target) || ContainsEquivalent(field.Type, target) {
+			return true
+		}
+	}
+	for _, member := range container.StaticMembers {
+		if typ.SameNodeOrAcyclicEqual(member.Type, target) || ContainsEquivalent(member.Type, target) {
 			return true
 		}
 	}

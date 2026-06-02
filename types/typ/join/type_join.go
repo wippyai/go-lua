@@ -391,7 +391,7 @@ func CoalesceEmptyRecordWithMap(types []typ.Type) []typ.Type {
 		if unwrap.IsEmptyRecord(t) {
 			hasEmptyRecord = true
 		}
-		if t != nil && t.Kind() == kind.Map {
+		if t != nil && (t.Kind() == kind.Map || t.Kind() == kind.ReadonlyMap) {
 			hasMap = true
 		}
 	}

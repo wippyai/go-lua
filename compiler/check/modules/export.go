@@ -2,19 +2,32 @@ package modules
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	abstractreturns "github.com/wippyai/go-lua/compiler/check/abstract/returns"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/exportkey"
+	interprocfields "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
+
+type exportFieldTypes map[interprocfields.FieldKey]typ.Type
+type exportFieldSymbols map[interprocfields.FieldKey]cfg.SymbolID
+type exportFunctionOverlays map[exportkey.MemberPathKey]exportFunctionOverlay
+
+type exportFunctionOverlay struct {
+	path exportkey.MemberPath
+	fn   *typ.Function
+}
 
 // ExportType computes the module's exported type from return statements.
 // Pass refinementsBySym to enrich exported functions with effect summaries.
@@ -90,10 +103,11 @@ func ExportType(result *api.FuncResult, refinementsBySym map[cfg.SymbolID]*const
 // though the key is statically present.
 //
 // The recovery rebuilds such a field as a record carrying the populated keys as
-// concrete fields plus the declared map component (Record{key: V, ..., [string]:
-// V}). A literal-key read then resolves to the present field (non-optional) while
-// an absent/unknown key still falls to the map component (V?), so the read of a
-// key the producer never wrote stays soundly optional.
+// exact static bracket members plus the declared map component
+// (Record{["key"]: V, ..., [string]: V}). A literal-key read then resolves to the
+// present static member (non-optional) while an absent/unknown key still falls to
+// the map component (V?), so the read of a key the producer never wrote stays
+// soundly optional.
 func preservePopulatedMapKeys(export typ.Type, result *api.FuncResult) typ.Type {
 	if export == nil || result == nil || result.NarrowSynth == nil || result.Graph == nil {
 		return export
@@ -111,8 +125,13 @@ func preservePopulatedMapKeys(export typ.Type, result *api.FuncResult) typ.Type 
 		return export
 	}
 
-	overlays := make(map[string]typ.Type)
-	for fieldName, sourceSym := range fieldSources {
+	overlays := make(exportFieldTypes)
+	for _, fieldKey := range interprocfields.SortedFieldKeys(fieldSources) {
+		fieldName, ok := interprocfields.FieldKeyStringKey(fieldKey)
+		if !ok {
+			continue
+		}
+		sourceSym := fieldSources[fieldKey]
 		field := rec.GetField(fieldName)
 		if field == nil {
 			continue
@@ -125,7 +144,7 @@ func preservePopulatedMapKeys(export typ.Type, result *api.FuncResult) typ.Type 
 		if len(populated) == 0 {
 			continue
 		}
-		overlays[fieldName] = buildPopulatedMapRecord(field.Type, declaredMap, populated)
+		overlays[fieldKey] = buildPopulatedMapRecord(field.Type, declaredMap, populated)
 	}
 	if len(overlays) == 0 {
 		return export
@@ -137,8 +156,8 @@ func preservePopulatedMapKeys(export typ.Type, result *api.FuncResult) typ.Type 
 // whose value was assigned into it (root.field = local). Only a direct identifier
 // source feeds the map; a computed or call source is not a recoverable populated
 // literal.
-func exportFieldSourceSymbols(result *api.FuncResult, rec *typ.Record) map[string]cfg.SymbolID {
-	out := make(map[string]cfg.SymbolID)
+func exportFieldSourceSymbols(result *api.FuncResult, rec *typ.Record) exportFieldSymbols {
+	out := make(exportFieldSymbols)
 	for _, asg := range result.Evidence.Assignments {
 		info := asg.Info
 		if info == nil || len(info.Targets) != 1 || len(info.Sources) != 1 {
@@ -152,6 +171,10 @@ func exportFieldSourceSymbols(result *api.FuncResult, rec *typ.Record) map[strin
 		if rec.GetField(fieldName) == nil {
 			continue
 		}
+		fieldKey, ok := interprocfields.FieldKeyFromName(fieldName)
+		if !ok {
+			continue
+		}
 		if len(info.SourceSymbols) != 1 {
 			continue
 		}
@@ -159,7 +182,7 @@ func exportFieldSourceSymbols(result *api.FuncResult, rec *typ.Record) map[strin
 		if sourceSym == 0 {
 			continue
 		}
-		out[fieldName] = sourceSym
+		out[fieldKey] = sourceSym
 	}
 	return out
 }
@@ -183,19 +206,27 @@ func stringKeyedMapDecl(t typ.Type) (*typ.Map, bool) {
 // A write whose key is not a sound literal string key for the declared map, or
 // whose observed value is not a subtype of the declared map value, is skipped so
 // the rebuilt record never widens the declared map contract.
-func populatedStringKeyWrites(result *api.FuncResult, sourceSym cfg.SymbolID, declaredMap *typ.Map) map[string]typ.Type {
-	populated := make(map[string]typ.Type)
+func populatedStringKeyWrites(result *api.FuncResult, sourceSym cfg.SymbolID, declaredMap *typ.Map) exportFieldTypes {
+	populated := make(exportFieldTypes)
 	for _, asg := range result.Evidence.Assignments {
 		info := asg.Info
 		if info == nil || len(info.Targets) != 1 || len(info.Sources) != 1 {
 			continue
 		}
 		target := info.Targets[0]
-		if target.Kind != cfg.TargetField || target.BaseSymbol != sourceSym || len(target.FieldPath) != 1 {
+		if target.Kind != cfg.TargetIndex || target.BaseSymbol != sourceSym || len(target.FieldPath) != 0 {
 			continue
 		}
-		key := target.FieldPath[0]
+		keyExpr, ok := target.Key.(*ast.StringExpr)
+		if !ok {
+			continue
+		}
+		key := keyExpr.Value
 		if !subtype.IsSubtype(typ.LiteralString(key), declaredMap.Key) {
+			continue
+		}
+		fieldKey, ok := interprocfields.FieldKeyFromName(key)
+		if !ok {
 			continue
 		}
 		value := result.NarrowSynth.TypeOf(info.Sources[0], asg.Point)
@@ -205,23 +236,27 @@ func populatedStringKeyWrites(result *api.FuncResult, sourceSym cfg.SymbolID, de
 		if !subtype.IsSubtype(value, declaredMap.Value) {
 			continue
 		}
-		if existing, ok := populated[key]; ok {
-			populated[key] = typ.NewUnion(existing, value)
+		if existing, ok := populated[fieldKey]; ok {
+			populated[fieldKey] = typ.NewUnion(existing, value)
 			continue
 		}
-		populated[key] = value
+		populated[fieldKey] = value
 	}
 	return populated
 }
 
 // buildPopulatedMapRecord rebuilds a declared string-keyed map field as a record
-// carrying the populated literal keys as concrete fields plus the declared map
-// component. When the declared field is an alias of the map, the rebuilt record is
-// re-wrapped in the same alias so the importer still sees the named type.
-func buildPopulatedMapRecord(declared typ.Type, declaredMap *typ.Map, populated map[string]typ.Type) typ.Type {
+// carrying the populated literal keys as exact bracket members plus the declared
+// map component. When the declared field is an alias of the map, the rebuilt
+// record is re-wrapped in the same alias so the importer still sees the named type.
+func buildPopulatedMapRecord(declared typ.Type, declaredMap *typ.Map, populated exportFieldTypes) typ.Type {
 	builder := typ.NewRecord().MapComponent(declaredMap.Key, declaredMap.Value)
-	for _, key := range sortedKeys(populated) {
-		builder.Field(key, populated[key])
+	for _, fieldKey := range interprocfields.SortedFieldKeys(populated) {
+		name, ok := interprocfields.FieldKeyStringKey(fieldKey)
+		if !ok {
+			continue
+		}
+		builder.StaticStringIndex(name, populated[fieldKey])
 	}
 	record := builder.Build()
 	if alias, ok := declared.(*typ.Alias); ok {
@@ -230,24 +265,19 @@ func buildPopulatedMapRecord(declared typ.Type, declaredMap *typ.Map, populated 
 	return record
 }
 
-func sortedKeys(m map[string]typ.Type) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 // overlayExportFieldsRecord replaces the named fields of the module export record
 // with their rebuilt populated-map records, re-wrapping the original export alias
 // when the export type was an alias of the record.
-func overlayExportFieldsRecord(export typ.Type, rec *typ.Record, overlays map[string]typ.Type) typ.Type {
+func overlayExportFieldsRecord(export typ.Type, rec *typ.Record, overlays exportFieldTypes) typ.Type {
 	changed := false
 	fields := make([]typ.Field, len(rec.Fields))
 	for i, field := range rec.Fields {
 		fields[i] = field
-		overlay, ok := overlays[field.Name]
+		fieldKey, keyOK := interprocfields.FieldKeyFromName(field.Name)
+		if !keyOK {
+			continue
+		}
+		overlay, ok := overlays[fieldKey]
 		if !ok || overlay == nil {
 			continue
 		}
@@ -266,6 +296,9 @@ func overlayExportFieldsRecord(export typ.Type, rec *typ.Record, overlays map[st
 	}
 	if rec.Metatable != nil {
 		builder.Metatable(rec.Metatable)
+	}
+	for _, member := range rec.StaticMembers {
+		builder.AddStaticMember(member)
 	}
 	for _, field := range fields {
 		switch {
@@ -328,7 +361,10 @@ func CopyRefinementsForExport(refinementsBySym map[cfg.SymbolID]*constraint.Func
 // solved analysis result of its body, supplying the source needed to recover the
 // function's inferred return vector and proven (value, err) correlation.
 type ExportFunctionResult struct {
+	// TargetPath is the CFG's structural function-definition path.
+	TargetPath constraint.Path
 	// Name is the function definition's source name (e.g. "M.request").
+	// It is a compatibility fallback for direct local/global function names only.
 	Name string
 	// Result is the solved per-function analysis result.
 	Result *api.FuncResult
@@ -357,40 +393,126 @@ func EnrichExportFunctions(export typ.Type, results []ExportFunctionResult) typ.
 		return export
 	}
 
-	overlays := make(map[string]*typ.Function, len(results))
+	overlays := make(exportFunctionOverlays, len(results))
 	for _, fr := range results {
-		field, ok := exportFieldNameFromSymbolName(fr.Name)
+		path, ok := exportFunctionResultPath(fr)
 		if !ok {
 			continue
 		}
-		existing := rec.GetField(field)
-		if existing == nil {
-			continue
-		}
-		base := unwrap.Function(existing.Type)
+		base := exportFunctionMemberType(rec, path)
 		if base == nil {
 			continue
 		}
 		if enriched := enrichExportFunctionType(base, fr.Result); enriched != nil && enriched != base {
-			overlays[field] = enriched
+			overlays[path.Key()] = exportFunctionOverlay{path: path, fn: enriched}
 		}
 	}
 	if len(overlays) == 0 {
 		return export
 	}
-	return applyExportFunctionOverlays(export, overlays, 0)
+	return applyExportFunctionOverlays(export, overlays)
+}
+
+func exportFunctionResultPath(fr ExportFunctionResult) (exportkey.MemberPath, bool) {
+	if path, ok := exportkey.MemberPathFromTargetPath("", fr.TargetPath); ok {
+		return path, true
+	}
+	if fr.Name == "" || strings.Contains(fr.Name, ".") {
+		return exportkey.MemberPath{}, false
+	}
+	key, ok := interprocfields.FieldKeyFromName(fr.Name)
+	if !ok {
+		return exportkey.MemberPath{}, false
+	}
+	return exportkey.NewMemberPath([]interprocfields.FieldKey{key})
+}
+
+func exportFunctionMemberType(t typ.Type, path exportkey.MemberPath) *typ.Function {
+	member, ok := exportMemberTypeAtPath(t, path.Segments(), 0)
+	if !ok {
+		return nil
+	}
+	return unwrap.Function(member)
+}
+
+func exportMemberTypeAtPath(t typ.Type, path []interprocfields.FieldKey, depth int) (typ.Type, bool) {
+	if t == nil || len(path) == 0 || typ.DepthExceeded(depth) {
+		return nil, false
+	}
+	base := unwrap.Alias(t)
+	var member typ.Type
+	var ok bool
+	switch v := base.(type) {
+	case *typ.Record:
+		member, ok = exportRecordMemberType(v, path[0])
+	case *typ.Interface:
+		member, ok = exportInterfaceMemberType(v, path[0])
+	default:
+		return nil, false
+	}
+	if !ok || member == nil {
+		return nil, false
+	}
+	if len(path) == 1 {
+		return member, true
+	}
+	return exportMemberTypeAtPath(member, path[1:], depth+1)
+}
+
+func exportRecordMemberType(rec *typ.Record, key interprocfields.FieldKey) (typ.Type, bool) {
+	if rec == nil {
+		return nil, false
+	}
+	switch key.Kind {
+	case constraint.SegmentField:
+		field := rec.GetField(key.Name)
+		if field == nil {
+			return nil, false
+		}
+		return field.Type, true
+	case constraint.SegmentIndexString:
+		member := rec.GetStaticStringIndex(key.Name)
+		if member == nil {
+			return nil, false
+		}
+		return member.Type, true
+	case constraint.SegmentIndexInt:
+		member := rec.GetStaticIntIndex(int64(key.Index))
+		if member == nil {
+			return nil, false
+		}
+		return member.Type, true
+	default:
+		return nil, false
+	}
+}
+
+func exportInterfaceMemberType(iface *typ.Interface, key interprocfields.FieldKey) (typ.Type, bool) {
+	if iface == nil {
+		return nil, false
+	}
+	name, ok := interprocfields.FieldKeyStringKey(key)
+	if !ok {
+		return nil, false
+	}
+	for _, method := range iface.Methods {
+		if method.Name == name {
+			return method.Type, true
+		}
+	}
+	return nil, false
 }
 
 // enrichExportFunctionType grafts the body-observed return vector and proven
 // ErrorReturn correlation onto base when base lacks them. It returns base
 // unchanged when the result carries no recoverable summary.
 func enrichExportFunctionType(base *typ.Function, result *api.FuncResult) *typ.Function {
-	if base == nil || result == nil || result.NarrowSynth == nil {
+	if base == nil || result == nil {
 		return base
 	}
 
 	enriched := base
-	if len(result.Evidence.Returns) > 0 {
+	if result.NarrowSynth != nil && len(result.Evidence.Returns) > 0 {
 		observed := abstractreturns.ObservedSummary(
 			result.Graph,
 			result.Evidence.Returns,
@@ -403,53 +525,119 @@ func enrichExportFunctionType(base *typ.Function, result *api.FuncResult) *typ.F
 	}
 
 	if !erreffect.HasErrorReturnLabel(enriched) {
+		enriched = attachExportReturnRelations(enriched, result.ReturnRelations)
+	}
+	if result.NarrowSynth != nil && !erreffect.HasErrorReturnLabel(enriched) {
 		enriched = erreffect.AttachInferredErrorReturnSpec(
 			enriched,
 			result.Evidence,
-			result.FlowSolution,
+			deadPointFlow(result),
 			result.NarrowSynth,
 		)
 	}
 	return enriched
 }
 
-func deadPointFlow(result *api.FuncResult) api.FlowOps {
-	if result == nil || result.FlowSolution == nil {
-		return nil
+func attachExportReturnRelations(fn *typ.Function, rels flow.ReturnRelations) *typ.Function {
+	if fn == nil {
+		return fn
 	}
-	return result.FlowSolution
+	for _, rel := range rels.ErrorReturns() {
+		return erreffect.AttachErrorReturnSpec(fn, rel.ValueIndex, rel.ErrorIndex)
+	}
+	return fn
 }
 
-// applyExportFunctionOverlays replaces the named function fields with their
-// enriched signatures throughout the export type structure.
-func applyExportFunctionOverlays(t typ.Type, overlays map[string]*typ.Function, depth int) typ.Type {
-	if t == nil || len(overlays) == 0 || typ.DepthExceeded(depth) {
+func deadPointFlow(result *api.FuncResult) api.FlowOps {
+	if result == nil {
+		return nil
+	}
+	return result.SolvedFlow()
+}
+
+// applyExportFunctionOverlays replaces exactly the exported function members
+// identified by their structural export paths. It intentionally does not recurse
+// by leaf name: `M.run` and `M.api.run` are distinct paths.
+func applyExportFunctionOverlays(t typ.Type, overlays exportFunctionOverlays) typ.Type {
+	if t == nil || len(overlays) == 0 {
 		return t
 	}
-	switch v := unwrap.Alias(t).(type) {
+	out := t
+	for _, overlay := range sortedExportFunctionOverlays(overlays) {
+		out = applyExportFunctionOverlay(out, overlay.path.Segments(), overlay.fn, 0)
+	}
+	return out
+}
+
+func sortedExportFunctionOverlays(overlays exportFunctionOverlays) []exportFunctionOverlay {
+	keys := make([]exportkey.MemberPathKey, 0, len(overlays))
+	for key := range overlays {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return string(keys[i]) < string(keys[j])
+	})
+	out := make([]exportFunctionOverlay, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, overlays[key])
+	}
+	return out
+}
+
+func applyExportFunctionOverlay(t typ.Type, path []interprocfields.FieldKey, fn *typ.Function, depth int) typ.Type {
+	if t == nil || len(path) == 0 || fn == nil || typ.DepthExceeded(depth) {
+		return t
+	}
+	base := unwrap.Alias(t)
+	var out typ.Type
+	switch v := base.(type) {
 	case *typ.Record:
-		return overlayExportRecord(v, overlays, depth)
+		out = overlayExportRecordPath(v, path, fn, depth+1)
 	case *typ.Interface:
-		return overlayExportInterface(v, overlays, depth)
+		out = overlayExportInterfacePath(v, path, fn)
 	default:
 		return t
 	}
+	if out == base {
+		return t
+	}
+	if alias, ok := t.(*typ.Alias); ok {
+		return typ.NewAlias(alias.Name, out)
+	}
+	return out
 }
 
-func overlayExportRecord(rec *typ.Record, overlays map[string]*typ.Function, depth int) typ.Type {
+func overlayExportRecordPath(rec *typ.Record, path []interprocfields.FieldKey, fn *typ.Function, depth int) typ.Type {
+	if rec == nil || len(path) == 0 || fn == nil {
+		return rec
+	}
 	changed := false
 	fields := make([]typ.Field, len(rec.Fields))
 	for i, field := range rec.Fields {
 		fields[i] = field
-		overlay, ok := overlays[field.Name]
-		if !ok || overlay == nil {
+		fieldKey, keyOK := interprocfields.FieldKeyFromName(field.Name)
+		if !keyOK || fieldKey != path[0] {
 			continue
 		}
-		base := unwrap.Function(field.Type)
-		if base == nil || base == overlay {
+		next := overlayExportMemberType(field.Type, path[1:], fn, depth+1)
+		if exportOverlayTypeUnchanged(next, field.Type) {
 			continue
 		}
-		fields[i].Type = overlay
+		fields[i].Type = next
+		changed = true
+	}
+	staticMembers := make([]typ.StaticMember, len(rec.StaticMembers))
+	for i, member := range rec.StaticMembers {
+		staticMembers[i] = member
+		memberKey, keyOK := exportStaticMemberKey(member)
+		if !keyOK || memberKey != path[0] {
+			continue
+		}
+		next := overlayExportMemberType(member.Type, path[1:], fn, depth+1)
+		if exportOverlayTypeUnchanged(next, member.Type) {
+			continue
+		}
+		staticMembers[i].Type = next
 		changed = true
 	}
 	if !changed {
@@ -464,6 +652,9 @@ func overlayExportRecord(rec *typ.Record, overlays map[string]*typ.Function, dep
 	}
 	if rec.Metatable != nil {
 		builder.Metatable(rec.Metatable)
+	}
+	for _, member := range staticMembers {
+		builder.AddStaticMember(member)
 	}
 	for _, field := range fields {
 		switch {
@@ -480,20 +671,53 @@ func overlayExportRecord(rec *typ.Record, overlays map[string]*typ.Function, dep
 	return builder.Build()
 }
 
-func overlayExportInterface(iface *typ.Interface, overlays map[string]*typ.Function, depth int) typ.Type {
+func exportOverlayTypeUnchanged(next, current typ.Type) bool {
+	if next == current {
+		return true
+	}
+	if unwrap.Function(next) != nil || unwrap.Function(current) != nil {
+		return false
+	}
+	return typ.TypeEquals(next, current)
+}
+
+func overlayExportMemberType(current typ.Type, rest []interprocfields.FieldKey, fn *typ.Function, depth int) typ.Type {
+	if len(rest) == 0 {
+		if unwrap.Function(current) == nil {
+			return current
+		}
+		return fn
+	}
+	return applyExportFunctionOverlay(current, rest, fn, depth+1)
+}
+
+func exportStaticMemberKey(member typ.StaticMember) (interprocfields.FieldKey, bool) {
+	switch member.Kind {
+	case typ.StaticMemberStringIndex:
+		return interprocfields.FieldKey{Kind: constraint.SegmentIndexString, Name: member.Name}, true
+	case typ.StaticMemberIntIndex:
+		return interprocfields.FieldKey{Kind: constraint.SegmentIndexInt, Index: int(member.Index)}, true
+	default:
+		return interprocfields.FieldKey{}, false
+	}
+}
+
+func overlayExportInterfacePath(iface *typ.Interface, path []interprocfields.FieldKey, fn *typ.Function) typ.Type {
+	if iface == nil || len(path) != 1 || fn == nil {
+		return iface
+	}
+	name, ok := interprocfields.FieldKeyStringKey(path[0])
+	if !ok {
+		return iface
+	}
 	changed := false
 	methods := make([]typ.Method, len(iface.Methods))
 	for i, method := range iface.Methods {
 		methods[i] = method
-		overlay, ok := overlays[method.Name]
-		if !ok || overlay == nil {
+		if method.Name != name || unwrap.Function(method.Type) == nil || method.Type == fn {
 			continue
 		}
-		base := unwrap.Function(method.Type)
-		if base == nil || base == overlay {
-			continue
-		}
-		methods[i].Type = overlay
+		methods[i].Type = fn
 		changed = true
 	}
 	if !changed {

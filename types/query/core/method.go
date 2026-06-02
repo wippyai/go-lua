@@ -320,7 +320,7 @@ func normalizeMethodReceiverSelf(t typ.Type, owners ...typ.Type) typ.Type {
 	}
 	builder := typ.Func().ReserveParams(len(fn.Params))
 	for _, tp := range fn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for i, p := range fn.Params {
 		paramType := p.Type

@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/exportkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
@@ -54,15 +56,31 @@ func TestResolveRefinementBySym_ZeroSym(t *testing.T) {
 	}
 }
 
+func TestResolveRefinementBySym_GlobalOverlay(t *testing.T) {
+	sym := cfg.SymbolID(7)
+	bindings := bind.NewBindingTable()
+	bindings.SetKind(sym, cfg.SymbolGlobal)
+	bindings.SetName(sym, "send")
+
+	row := effect.Empty.With(effect.IO{})
+	globalTypes := globalenv.TypeOverlayFromMap(map[string]typ.Type{
+		"send": typ.Func().Returns(typ.Nil).Effects(row).Build(),
+	})
+	result := ResolveRefinementBySym(nil, bindings, globalTypes, sym)
+	if result == nil || result.Row == nil {
+		t.Fatalf("ResolveRefinementBySym global = %#v, want effect row", result)
+	}
+}
+
 func TestTerminatesFromReachability_NilResult(t *testing.T) {
 	if TerminatesFromReachability(nil) {
 		t.Error("expected false for nil result")
 	}
 }
 
-func TestTerminatesFromReachability_NilFlowSolution(t *testing.T) {
+func TestTerminatesFromReachability_NilConditionProofFacts(t *testing.T) {
 	if TerminatesFromReachability(&api.FuncResult{}) {
-		t.Error("expected false for nil flow solution")
+		t.Error("expected false for nil condition proof facts")
 	}
 }
 
@@ -148,30 +166,32 @@ func TestEnrichExportWithEffects_NonRecordNonInterface(t *testing.T) {
 	}
 }
 
-func TestExportFieldNameFromEffectSymbol(t *testing.T) {
+func TestExportKeyFromTargetPath(t *testing.T) {
 	tests := []struct {
 		name     string
 		rootName string
-		symbol   string
-		want     string
+		path     constraint.Path
+		want     constraint.Segment
 		wantOK   bool
 	}{
-		{name: "direct no root", rootName: "", symbol: "validate", want: "validate", wantOK: true},
-		{name: "single dot no root", rootName: "", symbol: "M.validate", want: "validate", wantOK: true},
-		{name: "nested no root rejected", rootName: "", symbol: "M.api.validate", want: "", wantOK: false},
-		{name: "root direct", rootName: "M", symbol: "M.validate", want: "validate", wantOK: true},
-		{name: "root nested rejected", rootName: "M", symbol: "M.api.validate", want: "", wantOK: false},
-		{name: "root mismatch rejected", rootName: "M", symbol: "N.validate", want: "", wantOK: false},
+		{name: "direct no root", path: constraint.Path{Root: "validate", Symbol: 1}, want: constraint.Segment{Kind: constraint.SegmentField, Name: "validate"}, wantOK: true},
+		{name: "single field no root", path: constraint.Path{Root: "M", Symbol: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "validate"}}}, want: constraint.Segment{Kind: constraint.SegmentField, Name: "validate"}, wantOK: true},
+		{name: "string index no root", path: constraint.Path{Root: "M", Symbol: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "validate"}}}, want: constraint.Segment{Kind: constraint.SegmentIndexString, Name: "validate"}, wantOK: true},
+		{name: "int index no root", path: constraint.Path{Root: "M", Symbol: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentIndexInt, Index: 1}}}, want: constraint.Segment{Kind: constraint.SegmentIndexInt, Index: 1}, wantOK: true},
+		{name: "nested no root rejected", path: constraint.Path{Root: "M", Symbol: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "api"}, {Kind: constraint.SegmentField, Name: "validate"}}}, wantOK: false},
+		{name: "root direct", rootName: "M", path: constraint.Path{Root: "M", Symbol: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "validate"}}}, want: constraint.Segment{Kind: constraint.SegmentField, Name: "validate"}, wantOK: true},
+		{name: "root nested rejected", rootName: "M", path: constraint.Path{Root: "M", Symbol: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "api"}, {Kind: constraint.SegmentField, Name: "validate"}}}, wantOK: false},
+		{name: "root mismatch rejected", rootName: "M", path: constraint.Path{Root: "N", Symbol: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "validate"}}}, wantOK: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := exportFieldNameFromEffectSymbol(tt.rootName, tt.symbol)
+			got, ok := exportkey.FromTargetPath(tt.rootName, tt.path)
 			if ok != tt.wantOK {
 				t.Fatalf("ok=%v, want %v", ok, tt.wantOK)
 			}
 			if got != tt.want {
-				t.Fatalf("field=%q, want %q", got, tt.want)
+				t.Fatalf("key=%#v, want %#v", got, tt.want)
 			}
 		})
 	}

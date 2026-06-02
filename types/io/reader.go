@@ -196,7 +196,7 @@ func (r *typeReader) readType() typ.Type {
 			if r.err != nil || tp == nil {
 				return nil
 			}
-			fb.TypeParam(tp.Name, tp.Constraint)
+			fb.TypeParamRef(tp)
 		}
 
 		paramCount := r.readUint32()
@@ -277,6 +277,16 @@ func (r *typeReader) readType() typ.Type {
 
 		return typ.NewMap(key, value)
 
+	case kind.ReadonlyMap:
+		key := r.readTypeNonNil()
+		value := r.readTypeNonNil()
+
+		if r.err != nil {
+			return nil
+		}
+
+		return typ.NewReadonlyMap(key, value)
+
 	case kind.Record:
 		fieldCount := r.readUint32()
 		if !r.checkSliceLen(fieldCount) {
@@ -304,6 +314,29 @@ func (r *typeReader) readType() typ.Type {
 			default:
 				rb.Field(name, fType)
 			}
+		}
+		memberCount := r.readUint32()
+		if !r.checkSliceLen(memberCount) {
+			return nil
+		}
+		for i := uint32(0); i < memberCount; i++ {
+			memberKind := typ.StaticMemberKind(r.readByte())
+			name := r.readString()
+			index := int64(r.readUint64())
+			mType := r.readTypeNonNil()
+			if r.err != nil {
+				return nil
+			}
+			optional := r.readBool()
+			readonly := r.readBool()
+			rb.AddStaticMember(typ.StaticMember{
+				Kind:     memberKind,
+				Name:     name,
+				Index:    index,
+				Type:     mType,
+				Optional: optional,
+				Readonly: readonly,
+			})
 		}
 
 		if r.readBool() {
@@ -609,7 +642,7 @@ func (r *typeReader) readLiteral() *typ.Literal {
 	case kind.String:
 		return typ.LiteralString(r.readString())
 	case kind.Nil, kind.Any, kind.Unknown, kind.Never, kind.Optional, kind.Union,
-		kind.Intersection, kind.Tuple, kind.Function, kind.Array, kind.Map, kind.Record,
+		kind.Intersection, kind.Tuple, kind.Function, kind.Array, kind.Map, kind.ReadonlyMap, kind.Record,
 		kind.Sum, kind.Interface, kind.Alias, kind.Generic, kind.Instantiated, kind.Platform,
 		kind.Literal, kind.Self, kind.Ref, kind.Meta, kind.TypeParam, kind.TypeVar,
 		kind.Refined, kind.FieldAccess, kind.IndexAccess, kind.Recursive:

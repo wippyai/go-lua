@@ -50,6 +50,35 @@ func TestSynthTableCore_WithFields(t *testing.T) {
 	}
 }
 
+func TestSynthTableCore_BracketKeysPreserveStaticMembers(t *testing.T) {
+	s := newTestSynthesizer()
+	sc := scope.New()
+	recurse := func(ex ast.Expr) typ.Type { return s.TypeOf(ex, 0) }
+
+	table := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{Key: &ast.StringExpr{Value: "field"}, KeySyntax: ast.AttrKeyDot, Value: &ast.StringExpr{Value: "dot"}},
+			{Key: &ast.StringExpr{Value: "name"}, KeySyntax: ast.AttrKeyIndex, Value: &ast.NumberExpr{Value: "42"}},
+			{Key: &ast.NumberExpr{Value: "1"}, KeySyntax: ast.AttrKeyIndex, Value: &ast.TrueExpr{}},
+		},
+	}
+	result := s.SynthTableCore(table, 0, sc, recurse)
+
+	rec, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("got %T, want record", result)
+	}
+	if field := rec.GetField("field"); field == nil {
+		t.Fatalf("missing dot field in synthesized result: %v", rec)
+	}
+	if member := rec.GetStaticStringIndex("name"); member == nil {
+		t.Fatalf("missing static string member in synthesized result: %v", rec)
+	}
+	if member := rec.GetStaticIntIndex(1); member == nil {
+		t.Fatalf("missing static int member in synthesized result: %v", rec)
+	}
+}
+
 func TestSynthTableCore_ArrayLike(t *testing.T) {
 	s := newTestSynthesizer()
 	sc := scope.New()
@@ -150,6 +179,33 @@ func TestSynthTableWithExpected_Record(t *testing.T) {
 	}
 	if len(rec.Fields) != 2 {
 		t.Fatalf("got %d fields, want 2", len(rec.Fields))
+	}
+}
+
+func TestSynthTableWithExpected_BracketStringDoesNotSatisfyRecordField(t *testing.T) {
+	s := newTestSynthesizer()
+	sc := scope.New()
+	recurse := func(ex ast.Expr) typ.Type { return s.TypeOf(ex, 0) }
+
+	expected := typ.NewRecord().Field("name", typ.String).Build()
+	table := &ast.TableExpr{
+		Fields: []*ast.Field{{
+			Key:       &ast.StringExpr{Value: "name"},
+			KeySyntax: ast.AttrKeyIndex,
+			Value:     &ast.StringExpr{Value: "test"},
+		}},
+	}
+	result := s.SynthTableWithExpected(table, 0, sc, recurse, expected)
+
+	rec, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("got %T, want synthesized record", result)
+	}
+	if rec.GetField("name") != nil {
+		t.Fatalf("bracket string entry incorrectly synthesized dot field: %v", rec)
+	}
+	if rec.GetStaticStringIndex("name") == nil {
+		t.Fatalf("missing static string member in synthesized result: %v", rec)
 	}
 }
 

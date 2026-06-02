@@ -592,7 +592,7 @@ func withRefinement(fn *typ.Function, refinement *constraint.FunctionRefinement)
 	}
 	builder := typ.Func().ReserveParams(len(fn.Params))
 	for _, tp := range fn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for _, p := range fn.Params {
 		if p.Optional {
@@ -722,7 +722,7 @@ func rebuildFunctionWithSpec(fn *typ.Function, spec *contract.Spec) *typ.Functio
 	}
 	builder := typ.Func().ReserveParams(len(fn.Params))
 	for _, tp := range fn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for _, p := range fn.Params {
 		if p.Optional {

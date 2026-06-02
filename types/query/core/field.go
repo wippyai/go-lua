@@ -13,7 +13,7 @@ import (
 // This is the pure, non-memoized version of field lookup. It traverses the
 // type structure to find the named field, handling:
 //   - Record fields (direct lookup)
-//   - Map key-value pairs (if key accepts string literal)
+//   - Map and ReadonlyMap key-value pairs (if key accepts string literal)
 //   - Interface methods
 //   - Union types (field must exist in all members)
 //   - Intersection types (field from any member)
@@ -107,6 +107,18 @@ func (env fieldLookupEnv) lookup(t typ.Type, name string, depth int) fieldLookup
 			}
 			return fieldLookupResult{}
 		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) fieldLookupResult {
+			key := typ.LiteralString(name)
+			if subtype.IsSubtype(key, m.Key) {
+				if m.Value == nil {
+					return fieldLookupResult{t: typ.Nil, ok: true}
+				}
+				// ReadonlyMap exposes the same read semantics as Map without
+				// granting write/delete permissions through IndexWrite.
+				return fieldLookupResult{t: m.Value, ok: true, nilable: true}
+			}
+			return fieldLookupResult{}
+		},
 		Interface: func(i *typ.Interface) fieldLookupResult {
 			ft, ok := fieldInInterface(i, name)
 			return fieldLookupResult{t: ft, ok: ok}
@@ -181,6 +193,13 @@ func (env fieldLookupEnv) fieldInRecordLookup(r *typ.Record, name string, depth 
 			return fieldLookupResult{t: f.Type, ok: true, nilable: true}
 		}
 		return fieldLookupResult{t: f.Type, ok: true}
+	}
+
+	// Lua dot access is sugar for a string-key index. Keep bracket-string facts
+	// structurally separate in Record.StaticMembers, but make `t.name` observe a
+	// proven `t["name"]` member at the query boundary.
+	if member := r.GetStaticStringIndex(name); member != nil {
+		return fieldLookupResult{t: member.Type, ok: true, nilable: member.Optional}
 	}
 
 	// Map component fallback: if record has map component and the literal string key
@@ -381,6 +400,9 @@ func missingFieldReadsNilDepth(t typ.Type, depth int) bool {
 			return true
 		},
 		Map: func(*typ.Map) bool {
+			return true
+		},
+		ReadonlyMap: func(*typ.ReadonlyMap) bool {
 			return true
 		},
 		Array: func(*typ.Array) bool {

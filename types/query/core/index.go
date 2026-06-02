@@ -23,9 +23,109 @@ func Index(t typ.Type, keyType typ.Type) (typ.Type, bool) {
 	return indexDepth(t, keyType, 0)
 }
 
+// RuntimeIndex resolves Lua runtime indexed-read semantics.
+//
+// Index is the strict structural query: it returns false when the type cannot
+// prove a present indexed value. RuntimeIndex answers the different question
+// used by transfer and diagnostics: can Lua read t[key]? For table-like values,
+// a missing key is a defined read of nil, not an indexing error.
+func RuntimeIndex(t typ.Type, keyType typ.Type) (typ.Type, bool) {
+	return runtimeIndexDepth(t, keyType, 0)
+}
+
 type indexResult struct {
 	t  typ.Type
 	ok bool
+}
+
+const runtimeIndexMaxDepth = 32
+
+func runtimeIndexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
+	if depth > runtimeIndexMaxDepth || t == nil {
+		return nil, false
+	}
+	if strict, ok := indexDepth(t, keyType, depth+1); ok {
+		return strict, true
+	}
+	switch v := t.(type) {
+	case *typ.Union:
+		return runtimeUnionIndexType(v.Members, func(member typ.Type) (typ.Type, bool) {
+			return runtimeIndexDepth(member, keyType, depth+1)
+		})
+	case *typ.Optional:
+		return runtimeOptionalIndexType(v.Inner, func(inner typ.Type) (typ.Type, bool) {
+			return runtimeIndexDepth(inner, keyType, depth+1)
+		})
+	case *typ.Alias:
+		return runtimeIndexDepth(v.Target, keyType, depth+1)
+	case *typ.Generic:
+		return runtimeIndexDepth(v.Body, keyType, depth+1)
+	case *typ.TypeParam:
+		return runtimeIndexDepth(v.Constraint, keyType, depth+1)
+	case *typ.Recursive:
+		if v.Body == v {
+			return nil, false
+		}
+		return runtimeIndexDepth(v.Body, keyType, depth+1)
+	case *typ.Instantiated:
+		resolved, err := ResolveInstantiated(v)
+		if err != nil {
+			return nil, false
+		}
+		return runtimeIndexDepth(resolved, keyType, depth+1)
+	}
+	if MissingFieldReadsNil(t) {
+		return typ.Nil, true
+	}
+	return nil, false
+}
+
+func runtimeUnionIndexType(members []typ.Type, read func(typ.Type) (typ.Type, bool)) (typ.Type, bool) {
+	if len(members) == 0 || read == nil {
+		return nil, false
+	}
+	out := make([]typ.Type, 0, len(members))
+	for _, member := range typ.CoalesceProductUnionMembers(members) {
+		t, ok := read(member)
+		if !ok || t == nil {
+			return nil, false
+		}
+		out = append(out, t)
+	}
+	if len(out) == 0 {
+		return nil, false
+	}
+	return typ.CoalesceProductUnion(typ.NewUnion(out...)), true
+}
+
+func runtimeOptionalIndexType(inner typ.Type, read func(typ.Type) (typ.Type, bool)) (typ.Type, bool) {
+	t, ok := read(inner)
+	if !ok || t == nil || runtimeIndexContainsNil(t) {
+		return t, ok
+	}
+	return typ.NewOptional(t), true
+}
+
+func runtimeIndexContainsNil(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	return typ.Visit(t, typ.Visitor[bool]{
+		Optional: func(*typ.Optional) bool {
+			return true
+		},
+		Union: func(u *typ.Union) bool {
+			for _, member := range u.Members {
+				if runtimeIndexContainsNil(member) {
+					return true
+				}
+			}
+			return false
+		},
+		Default: func(t typ.Type) bool {
+			return t.Kind() == kind.Nil
+		},
+	})
 }
 
 // indexDepth recursively resolves index operations with depth limiting.
@@ -78,6 +178,21 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 
 			return indexResult{}
 		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) indexResult {
+			if keyType.Kind().IsPlaceholder() {
+				if m.Value == nil {
+					return indexResult{}
+				}
+				return indexResult{t: typ.NewOptional(m.Value), ok: true}
+			}
+			if subtype.IsSubtype(nonNilKey(keyType), m.Key) {
+				if m.Value == nil {
+					return indexResult{}
+				}
+				return indexResult{t: typ.NewOptional(m.Value), ok: true}
+			}
+			return indexResult{}
+		},
 		Tuple: func(tup *typ.Tuple) indexResult {
 			// Integer literal index
 			if lit, ok := keyType.(*typ.Literal); ok && lit.Base == kind.Integer {
@@ -101,6 +216,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 		Record: func(r *typ.Record) indexResult {
 			if keySet, ok := exactStringKeyDomain(keyType, depth+1); ok {
 				return indexRecordByExactStringKeyDomain(r, keySet, depth+1)
+			}
+			if keySet, ok := exactIntKeyDomain(keyType, depth+1); ok {
+				return indexRecordByExactIntKeyDomain(r, keySet)
 			}
 			if len(r.Fields) == 0 && !r.HasMapComponent() {
 				if r.Open {
@@ -405,6 +523,78 @@ func exactStringKeyDomain(t typ.Type, depth int) ([]string, bool) {
 	return keys, true
 }
 
+func exactIntKeyDomain(t typ.Type, depth int) ([]int64, bool) {
+	if stopDepth(t, depth) {
+		return nil, false
+	}
+
+	keys := typ.Visit(t, typ.Visitor[[]int64]{
+		Literal: func(lit *typ.Literal) []int64 {
+			if lit.Base != kind.Integer {
+				return nil
+			}
+			i, ok := lit.Value.(int64)
+			if !ok {
+				return nil
+			}
+			return []int64{i}
+		},
+		Union: func(u *typ.Union) []int64 {
+			if len(u.Members) == 0 {
+				return nil
+			}
+			seen := make(map[int64]struct{}, len(u.Members))
+			var keys []int64
+			for _, member := range u.Members {
+				memberKeys, ok := exactIntKeyDomain(member, depth+1)
+				if !ok {
+					return nil
+				}
+				for _, key := range memberKeys {
+					if _, exists := seen[key]; exists {
+						continue
+					}
+					seen[key] = struct{}{}
+					keys = append(keys, key)
+				}
+			}
+			sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+			return keys
+		},
+		Alias: func(a *typ.Alias) []int64 {
+			keys, ok := exactIntKeyDomain(a.Target, depth+1)
+			if !ok {
+				return nil
+			}
+			return keys
+		},
+		Optional: func(o *typ.Optional) []int64 {
+			keys, ok := exactIntKeyDomain(o.Inner, depth+1)
+			if !ok {
+				return nil
+			}
+			return keys
+		},
+		TypeParam: func(tp *typ.TypeParam) []int64 {
+			if tp.Constraint == nil {
+				return nil
+			}
+			keys, ok := exactIntKeyDomain(tp.Constraint, depth+1)
+			if !ok {
+				return nil
+			}
+			return keys
+		},
+		Default: func(t typ.Type) []int64 {
+			return nil
+		},
+	})
+	if keys == nil {
+		return nil, false
+	}
+	return keys, true
+}
+
 func indexRecordByExactStringKeyDomain(r *typ.Record, keys []string, depth int) indexResult {
 	if len(keys) == 0 {
 		return indexResult{}
@@ -414,7 +604,14 @@ func indexRecordByExactStringKeyDomain(r *typ.Record, keys []string, depth int) 
 	missing := false
 
 	for _, key := range keys {
-		fieldType, found := fieldInRecordDepth(r, key, depth+1)
+		var fieldType typ.Type
+		found := false
+		if member := r.GetStaticStringIndex(key); member != nil {
+			fieldType = staticMemberReadType(member)
+			found = true
+		} else {
+			fieldType, found = fieldInRecordDepth(r, key, depth+1)
+		}
 		if !found {
 			missing = true
 			continue
@@ -433,5 +630,50 @@ func indexRecordByExactStringKeyDomain(r *typ.Record, keys []string, depth int) 
 		out = typ.NewOptional(out)
 	}
 
+	return indexResult{t: out, ok: true}
+}
+
+func staticMemberReadType(member *typ.StaticMember) typ.Type {
+	if member == nil {
+		return nil
+	}
+	t := member.Type
+	if member.Optional && !containsNilOrOptional(t) {
+		t = typ.NewOptional(t)
+	}
+	return t
+}
+
+func indexRecordByExactIntKeyDomain(r *typ.Record, keys []int64) indexResult {
+	if len(keys) == 0 {
+		return indexResult{}
+	}
+
+	var matched []typ.Type
+	missing := false
+	for _, key := range keys {
+		member := r.GetStaticIntIndex(key)
+		switch {
+		case member != nil:
+			if member.Type != nil {
+				matched = append(matched, staticMemberReadType(member))
+			}
+		case r.HasMapComponent() && subtype.IsSubtype(typ.LiteralInt(key), r.MapKey):
+			if r.MapValue != nil {
+				matched = append(matched, typ.NewOptional(r.MapValue))
+			}
+		case r.Open:
+			matched = append(matched, typ.Unknown)
+		default:
+			missing = true
+		}
+	}
+	if len(matched) == 0 {
+		return indexResult{}
+	}
+	out := typ.NewUnion(matched...)
+	if missing && !containsNilOrOptional(out) {
+		out = typ.NewOptional(out)
+	}
 	return indexResult{t: out, ok: true}
 }

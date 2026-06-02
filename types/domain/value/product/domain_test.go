@@ -95,6 +95,7 @@ func domainSample() []AbstractValue {
 		// Codex carrier-distinct mutual-cover cases.
 		FromType(typ.Unknown),
 		FromType(typ.Any),
+		GradualAny(),
 
 		// Alias vs bare and distinct alias names over the same target.
 		FromType(rec),
@@ -159,5 +160,21 @@ func TestDomain_LessOrEqImpliesCovers(t *testing.T) {
 					i, j, j, i, a, b)
 			}
 		}
+	}
+}
+
+func TestDomain_JoinPreservesFiniteScalarLiteralAlternatives(t *testing.T) {
+	left := FromType(typ.LiteralString("qualified"))
+	right := FromType(typ.NewUnion(typ.Nil, typ.False, typ.LiteralString("")))
+
+	got := Join(left, right).ProjectValue()
+	want := typ.NewUnion(typ.Nil, typ.False, typ.LiteralString(""), typ.LiteralString("qualified"))
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("Join(%v, %v) = %v, want %v", left.ProjectValue(), right.ProjectValue(), got, want)
+	}
+
+	reverse := Join(right, left).ProjectValue()
+	if !typ.TypeEquals(reverse, want) {
+		t.Fatalf("Join reverse = %v, want %v", reverse, want)
 	}
 }

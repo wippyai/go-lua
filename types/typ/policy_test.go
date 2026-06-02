@@ -43,6 +43,39 @@ func TestJoinReturnSlot_PrefersConcreteScalarOverUnknown(t *testing.T) {
 	}
 }
 
+func TestJoinCompatibleRecordsPreservesStaticBracketMembers(t *testing.T) {
+	left := NewRecord().
+		Field("name", String).
+		StaticStringIndex("raw-key", Number).
+		Build()
+	right := NewRecord().
+		Field("name", String).
+		Build()
+
+	got, ok := JoinCompatibleRecords(left, right)
+	if !ok {
+		t.Fatal("JoinCompatibleRecords ok=false")
+	}
+	rec, ok := got.(*Record)
+	if !ok {
+		t.Fatalf("JoinCompatibleRecords = %T %[1]v, want record", got)
+	}
+	field := rec.GetField("name")
+	if field == nil || field.Optional || !TypeEquals(field.Type, String) {
+		t.Fatalf("dot field name = %#v, want required string", field)
+	}
+	member := rec.GetStaticStringIndex("raw-key")
+	if member == nil {
+		t.Fatalf("static member [\"raw-key\"] missing from %v", rec)
+	}
+	if !member.Optional {
+		t.Fatalf("static member [\"raw-key\"] = %#v, want optional after missing branch", member)
+	}
+	if !TypeEquals(member.Type, Number) {
+		t.Fatalf("static member [\"raw-key\"] type = %v, want number", member.Type)
+	}
+}
+
 // TestJoinUnionFieldSlot_KeepsScalarFieldOverUnknownPeer proves the field-slot
 // join keeps the precise scalar field when one record observation has not yet
 // resolved it.

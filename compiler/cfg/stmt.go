@@ -272,7 +272,7 @@ func (b *Builder) Assign(s *ast.AssignStmt) {
 			}
 
 			if target.BaseSymbol != 0 && target.Key != nil {
-				if keySegment, ok := pathseg.StaticAttrKeySegment(target.Key); ok {
+				if keySegment, ok := pathseg.StaticAttrKeySegmentWithSyntax(target.Key, ast.AttrKeyIndex); ok {
 					target.Symbol = b.getOrCreateFieldPathSymbol(target.BaseSymbol, []constraint.Segment{keySegment})
 				}
 
@@ -367,7 +367,7 @@ func (b *Builder) IfStmt(s *ast.IfStmt) {
 	b.Stmts(s.Then)
 	thenExit := b.Cfg.AddNode(basecfg.NodeScopeExit, 0, "")
 
-	if condNode := b.Cfg.Node(condEntry); condNode != nil {
+	if condNode := b.Cfg.Node(condEntry); condNode != nil && !conditionSplitsAcrossBranches(s.Condition) {
 		b.Cfg.Nodes[thenExit].CondVar = condNode.CondVar
 		b.Cfg.Nodes[thenExit].CondCheck = condNode.CondCheck
 	}
@@ -394,7 +394,7 @@ func (b *Builder) IfStmt(s *ast.IfStmt) {
 
 	elseExit := b.Cfg.AddNode(basecfg.NodeScopeExit, 0, "")
 
-	if condNode := b.Cfg.Node(condEntry); condNode != nil {
+	if condNode := b.Cfg.Node(condEntry); condNode != nil && !conditionSplitsAcrossBranches(s.Condition) {
 		b.Cfg.Nodes[elseExit].CondVar = condNode.CondVar
 		b.Cfg.Nodes[elseExit].CondCheck = condNode.CondCheck
 	}
@@ -422,6 +422,14 @@ func (b *Builder) IfStmt(s *ast.IfStmt) {
 	b.Current = join
 	b.CurrentLive = entryLive && (thenLive || elseLive)
 	b.ScopeTracker.SnapshotVisibility(join)
+}
+
+func conditionSplitsAcrossBranches(expr ast.Expr) bool {
+	logical, ok := expr.(*ast.LogicalOpExpr)
+	if !ok {
+		return false
+	}
+	return logical.Operator == "and" || logical.Operator == "or"
 }
 
 // WhileStmt processes a while statement.

@@ -215,16 +215,21 @@ func (s *Synthesizer) declaredExprType(expr ast.Expr, p cfg.Point, sc *scope.Sta
 		if objDeclared == nil {
 			return nil
 		}
-		seg, ok := pathseg.StaticAttrKeySegment(e.Key)
+		seg, ok := pathseg.StaticAttrSegment(e)
 		if !ok {
 			return nil
 		}
 		switch seg.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
+		case constraint.SegmentField:
 			if ft, ok := s.deps.Types.Field(s.deps.Ctx, objDeclared, seg.Name); ok {
 				return ft
 			}
+		case constraint.SegmentIndexString:
 			if it, ok := s.deps.Types.Index(s.deps.Ctx, objDeclared, typ.LiteralString(seg.Name)); ok {
+				return it
+			}
+		case constraint.SegmentIndexInt:
+			if it, ok := s.deps.Types.Index(s.deps.Ctx, objDeclared, typ.LiteralInt(int64(seg.Index))); ok {
 				return it
 			}
 		}
@@ -504,6 +509,8 @@ func mapValueType(t typ.Type) typ.Type {
 	}
 	switch v := unwrap.Alias(t).(type) {
 	case *typ.Map:
+		return v.Value
+	case *typ.ReadonlyMap:
 		return v.Value
 	case *typ.Optional:
 		return mapValueType(v.Inner)

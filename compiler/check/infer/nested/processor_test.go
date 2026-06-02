@@ -68,6 +68,54 @@ func TestNestedAnalysisContext_UsesCallEvidenceExpectedArgsWithoutNarrowSynth(t 
 	}
 }
 
+func TestNestedAnalysisContext_UsesSolvedCallExpectedArgs(t *testing.T) {
+	stmts, err := parse.ParseString(`register(function(value) end)`, "nested_callback.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	caller := &ast.FunctionExpr{ParList: &ast.ParList{}, Stmts: stmts}
+	bindings := bind.Bind(caller, []string{"register"})
+	graph := cfg.BuildWithBindings(caller, bindings)
+
+	var callPoint cfg.Point
+	var callInfo *cfg.CallInfo
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if callInfo == nil {
+			callPoint = p
+			callInfo = info
+		}
+	})
+	if callInfo == nil || len(callInfo.Args) != 1 {
+		t.Fatalf("expected one callback call, got %+v", callInfo)
+	}
+	callback, ok := callInfo.Args[0].(*ast.FunctionExpr)
+	if !ok {
+		t.Fatalf("arg type = %T, want function literal", callInfo.Args[0])
+	}
+
+	expected := typ.Func().Param("value", typ.String).Build()
+	parent := &api.FuncAnalysisView{
+		Graph: graph,
+		Evidence: api.FlowEvidence{
+			Calls: []api.CallEvidence{{
+				Point: callPoint,
+				Info:  callInfo,
+			}},
+		},
+		CallExpectedArgs: []api.CallExpectedArgEvidence{
+			api.NewCallExpectedArgEvidence([]typ.Type{expected}),
+		},
+	}
+
+	ctx := New(Config{}).nestedAnalysisContext(callback, parent)
+	if ctx.ExpectedFunction == nil {
+		t.Fatal("expected solved call contract to seed callback analysis context")
+	}
+	if len(ctx.ExpectedFunction.Params) != 1 || !typ.TypeEquals(ctx.ExpectedFunction.Params[0].Type, typ.String) {
+		t.Fatalf("expected function = %v, want string parameter", ctx.ExpectedFunction)
+	}
+}
+
 func TestNestedAnalysisContext_InheritsAmbientOverlay(t *testing.T) {
 	stmts, err := parse.ParseString(`register(function(value) end)`, "nested_callback.lua")
 	if err != nil {
@@ -97,7 +145,7 @@ func TestNestedAnalysisContext_InheritsAmbientOverlay(t *testing.T) {
 	parent := &api.FuncAnalysisView{
 		Graph: graph,
 		AnalysisContext: api.AnalysisContext{
-			GlobalOverlay:    map[string]product.AbstractValue{"up": product.FromType(ambient)},
+			GlobalOverlay:    api.GlobalOverlayFromValues(map[api.GlobalName]product.AbstractValue{api.GlobalName("up"): product.FromType(ambient)}),
 			ExpectedFunction: typ.Func().Returns(typ.Nil).Build(),
 		},
 		Evidence: api.FlowEvidence{
@@ -109,7 +157,8 @@ func TestNestedAnalysisContext_InheritsAmbientOverlay(t *testing.T) {
 	}
 
 	ctx := New(Config{}).nestedAnalysisContext(callback, parent)
-	if !typ.TypeEquals(ctx.GlobalOverlay["up"].ProjectValue(), ambient) {
+	up, ok := ctx.GlobalOverlay.Type("up")
+	if !ok || !typ.TypeEquals(up, ambient) {
 		t.Fatalf("expected ambient overlay to propagate to nested callback, got %v", ctx.GlobalOverlay)
 	}
 	if ctx.ExpectedFunction != nil {
@@ -138,9 +187,15 @@ func TestNestedAnalysisContext_UsesParentLiteralSignature(t *testing.T) {
 	}
 
 	expected := typ.Func().Param("value", typ.String).Build()
+	stale := typ.Func().Param("value", typ.Number).Build()
 	parent := &api.FuncAnalysisView{
-		Graph:             graph,
-		LiteralSignatures: map[*ast.FunctionExpr]*typ.Function{returned: expected},
+		Graph: graph,
+		LiteralSignatures: map[*ast.FunctionExpr]*typ.Function{
+			returned: stale,
+		},
+		LiteralSignatureProvider: api.LiteralSigsLookup{
+			returned: expected,
+		},
 	}
 
 	ctx := New(Config{}).nestedAnalysisContext(returned, parent)

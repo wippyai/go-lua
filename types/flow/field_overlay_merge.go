@@ -1,6 +1,8 @@
 package flow
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
@@ -16,8 +18,8 @@ type fieldOverlayMerger struct {
 	s        *Solution
 	point    cfg.Point
 	baseType typ.Type
-	baseKey  string
-	baseRoot string
+	baseKey  constraint.PathKey
+	baseRoot constraint.PathKey
 	fields   []mergedField
 }
 
@@ -26,7 +28,7 @@ type assignedOverlayField struct {
 	optional bool
 }
 
-func newFieldOverlayMerger(s *Solution, p cfg.Point, baseType typ.Type, baseKey string) *fieldOverlayMerger {
+func newFieldOverlayMerger(s *Solution, p cfg.Point, baseType typ.Type, baseKey constraint.PathKey) *fieldOverlayMerger {
 	return &fieldOverlayMerger{
 		s:        s,
 		point:    p,
@@ -53,11 +55,11 @@ func (m *fieldOverlayMerger) merge() typ.Type {
 }
 
 func (m *fieldOverlayMerger) prepareRootAndFields() bool {
-	baseSym, baseVersion, _, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(m.baseKey))
+	baseSym, baseVersion, _, ok := pathkey.ParseKeyUnchecked(m.baseKey)
 	if !ok {
 		return false
 	}
-	m.baseRoot = pathkey.SymbolVersionRoot(baseSym, baseVersion)
+	m.baseRoot = constraint.PathKey(pathkey.SymbolVersionRoot(baseSym, baseVersion))
 	m.fields = m.s.fieldAssignmentsForRootAt(m.point, m.baseRoot)
 	return len(m.fields) > 0
 }
@@ -197,18 +199,32 @@ func (m *fieldOverlayMerger) mergeRecord(r *typ.Record) typ.Type {
 	if r.Open {
 		builder.SetOpen(true)
 	}
-	assignedByName := coalesceOverlayFields(m.fields)
+	assignedByKey := coalesceOverlayFields(m.fields)
 	for _, f := range r.Fields {
 		fieldType := f.Type
 		optional := f.Optional
-		if assigned, ok := assignedByName[f.Name]; ok {
+		key := constraint.Segment{Kind: constraint.SegmentField, Name: f.Name}
+		if assigned, ok := assignedByKey[key]; ok {
 			fieldType = assigned.t
 			optional = assigned.optional
-			delete(assignedByName, f.Name)
+			delete(assignedByKey, key)
 		}
 		addRecordField(builder, f.Name, fieldType, optional, f.Readonly)
 	}
-	addAssignedOverlayFields(builder, assignedByName)
+	for _, member := range r.StaticMembers {
+		memberType := member.Type
+		optional := member.Optional
+		key, ok := segmentFromStaticMember(member)
+		if ok {
+			if assigned, exists := assignedByKey[key]; exists {
+				memberType = assigned.t
+				optional = assigned.optional
+				delete(assignedByKey, key)
+			}
+		}
+		addRecordStaticMember(builder, member, memberType, optional)
+	}
+	addAssignedOverlayFields(builder, assignedByKey)
 	if r.Metatable != nil {
 		builder.Metatable(r.Metatable)
 	}
@@ -229,38 +245,104 @@ func (m *fieldOverlayMerger) mergeDefault(baseType typ.Type) func(typ.Type) typ.
 	}
 }
 
-func coalesceOverlayFields(fields []mergedField) map[string]assignedOverlayField {
-	assignedByName := make(map[string]assignedOverlayField, len(fields))
+func coalesceOverlayFields(fields []mergedField) map[constraint.Segment]assignedOverlayField {
+	assignedByKey := make(map[constraint.Segment]assignedOverlayField, len(fields))
 	for _, f := range fields {
-		if prev, ok := assignedByName[f.Name]; ok {
-			assignedByName[f.Name] = assignedOverlayField{
+		if !overlaySegmentCanProjectToRecord(f.Key) {
+			continue
+		}
+		if prev, ok := assignedByKey[f.Key]; ok {
+			assignedByKey[f.Key] = assignedOverlayField{
 				t:        typ.JoinReturnSlot(prev.t, f.Type),
 				optional: prev.optional || f.Optional,
 			}
 			continue
 		}
-		assignedByName[f.Name] = assignedOverlayField{t: f.Type, optional: f.Optional}
+		assignedByKey[f.Key] = assignedOverlayField{t: f.Type, optional: f.Optional}
 	}
-	return assignedByName
+	return assignedByKey
 }
 
 func addOverlayFields(builder *typ.RecordBuilder, fields []mergedField) {
 	for _, f := range fields {
-		if f.Optional {
-			builder.OptField(f.Name, f.Type)
-		} else {
-			builder.Field(f.Name, f.Type)
-		}
+		addOverlayField(builder, f.Key, f.Type, f.Optional)
 	}
 }
 
-func addAssignedOverlayFields(builder *typ.RecordBuilder, fields map[string]assignedOverlayField) {
-	for name, field := range fields {
-		if field.optional {
-			builder.OptField(name, field.t)
-		} else {
-			builder.Field(name, field.t)
+func addAssignedOverlayFields(builder *typ.RecordBuilder, fields map[constraint.Segment]assignedOverlayField) {
+	keys := make([]constraint.Segment, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		left, right := keys[i], keys[j]
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
 		}
+		if left.Name != right.Name {
+			return left.Name < right.Name
+		}
+		return left.Index < right.Index
+	})
+	for _, key := range keys {
+		field := fields[key]
+		addOverlayField(builder, key, field.t, field.optional)
+	}
+}
+
+func addOverlayField(builder *typ.RecordBuilder, key constraint.Segment, fieldType typ.Type, optional bool) {
+	switch key.Kind {
+	case constraint.SegmentField:
+		if key.Name == "" {
+			return
+		}
+		if optional {
+			builder.OptField(key.Name, fieldType)
+		} else {
+			builder.Field(key.Name, fieldType)
+		}
+	case constraint.SegmentIndexString:
+		builder.AddStaticMember(typ.StaticMember{
+			Kind:     typ.StaticMemberStringIndex,
+			Name:     key.Name,
+			Type:     fieldType,
+			Optional: optional,
+		})
+	case constraint.SegmentIndexInt:
+		builder.AddStaticMember(typ.StaticMember{
+			Kind:     typ.StaticMemberIntIndex,
+			Index:    int64(key.Index),
+			Type:     fieldType,
+			Optional: optional,
+		})
+	}
+}
+
+func segmentFromStaticMember(member typ.StaticMember) (constraint.Segment, bool) {
+	switch member.Kind {
+	case typ.StaticMemberStringIndex:
+		return constraint.Segment{Kind: constraint.SegmentIndexString, Name: member.Name}, true
+	case typ.StaticMemberIntIndex:
+		return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(member.Index)}, true
+	default:
+		return constraint.Segment{}, false
+	}
+}
+
+func addRecordStaticMember(builder *typ.RecordBuilder, member typ.StaticMember, memberType typ.Type, optional bool) {
+	member.Type = memberType
+	member.Optional = optional
+	builder.AddStaticMember(member)
+}
+
+func overlaySegmentCanProjectToRecord(key constraint.Segment) bool {
+	switch key.Kind {
+	case constraint.SegmentField:
+		return key.Name != ""
+	case constraint.SegmentIndexString, constraint.SegmentIndexInt:
+		return true
+	default:
+		return false
 	}
 }
 

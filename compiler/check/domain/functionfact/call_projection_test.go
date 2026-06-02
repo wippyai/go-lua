@@ -133,6 +133,41 @@ func TestProjectPublicCallParams_CanWidenStructuralCallBoundary(t *testing.T) {
 	}
 }
 
+func TestSelectCallProjectionSourceLocalPreservesOptionalCurrentCallee(t *testing.T) {
+	current := typ.NewOptional(typ.Func().Returns(typ.Unknown).Build())
+	fact := typ.Func().Returns(typ.String).Build()
+
+	got := selectCallProjection(current, fact, nil, true)
+	inner, optional := typ.SplitNilableFieldType(got)
+	if !optional {
+		t.Fatalf("selectCallProjection = %v, want optional fact projection", got)
+	}
+	fn, ok := inner.(*typ.Function)
+	if !ok {
+		t.Fatalf("selectCallProjection inner = %T, want function", inner)
+	}
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
+		t.Fatalf("returns = %#v, want [string]", fn.Returns)
+	}
+}
+
+func TestSelectCallProjectionSourceLocalKeepsDefiniteCurrentCalleePrecise(t *testing.T) {
+	current := typ.Func().Returns(typ.Unknown).Build()
+	fact := typ.Func().Returns(typ.String).Build()
+
+	got := selectCallProjection(current, fact, nil, true)
+	fn, ok := got.(*typ.Function)
+	if !ok {
+		t.Fatalf("selectCallProjection = %T, want function", got)
+	}
+	if _, optional := typ.SplitNilableFieldType(got); optional {
+		t.Fatalf("selectCallProjection = %v, want definite function", got)
+	}
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
+		t.Fatalf("returns = %#v, want [string]", fn.Returns)
+	}
+}
+
 func TestProjectCallFactType_UsesPublicProjectionForSourceLocalCall(t *testing.T) {
 	entry := typ.NewRecord().Field("id", typ.String).Build()
 	sym := cfg.SymbolID(42)

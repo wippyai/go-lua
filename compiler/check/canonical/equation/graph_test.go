@@ -64,7 +64,7 @@ func pointStateWithUpper(u int64) flow.PointState {
 	st := numeric.NewState()
 	st.ApplyLeConst(growKey, u)
 	return flow.PointState{
-		Env:  map[string]product.AbstractValue{},
+		Env:  map[flow.ValueKey]product.AbstractValue{},
 		Cond: constraint.Domain.Bottom(),
 		Num:  st,
 	}
@@ -99,7 +99,7 @@ func TestStraightLine(t *testing.T) {
 		_ paramevidence.Contracts, _ func(int, paramevidence.ParamContract),
 	) flow.PointState {
 		out := flow.PointStateDomain.Join(incoming, flow.PointStateDomain.Bottom())
-		mark := map[string]product.AbstractValue{markKey(p): product.FromType(typ.String)}
+		mark := map[flow.ValueKey]product.AbstractValue{markKey(p): product.FromType(typ.String)}
 		out.Env = envJoin(out.Env, mark)
 		return out
 	})
@@ -234,9 +234,141 @@ func TestBidirectionalDemand(t *testing.T) {
 	}
 }
 
+// TestContractsAreEntryOnlyContext pins the dependency shape of the combined
+// graph: parameter contracts feed the entry equation, then entry's out-state
+// carries any changed assumption forward through ordinary CFG edges. Non-entry
+// points must not receive contracts as a side channel, or every body point
+// becomes directly contract-dependent and the graph over-widens.
+func TestContractsAreEntryOnlyContext(t *testing.T) {
+	g := straightLineGraph()
+	const param = 0
+	want := paramevidence.DemandFromType(typ.String)
+	entry := g.Entry()
+	exit := g.Exit()
+
+	var entrySawContract bool
+	var nonEntrySawContract bool
+	mock := NodeTransferFunc(func(
+		g *cfg.Graph, p cfg.Point, incoming flow.PointState,
+		entryContracts paramevidence.Contracts, demand func(int, paramevidence.ParamContract),
+	) flow.PointState {
+		if c, ok := entryContracts[param]; ok &&
+			paramevidence.ParamContractDomain.Equal(c, want) {
+			if p == entry {
+				entrySawContract = true
+			} else {
+				nonEntrySawContract = true
+			}
+		}
+		if p == exit {
+			demand(param, want)
+		}
+		return incoming
+	})
+
+	fs := NewBuilder(g, 1, mock).Solve()
+
+	if got, ok := fs.Contracts[param]; !ok || !paramevidence.ParamContractDomain.Equal(got, want) {
+		t.Fatalf("Contracts[%d] = %v, want %v", param, got, want)
+	}
+	if !entrySawContract {
+		t.Fatalf("entry point never read the accumulated contract")
+	}
+	if nonEntrySawContract {
+		t.Fatalf("non-entry point received entryContracts directly; contracts must flow through entry state")
+	}
+}
+
+// TestBuilderDoesNotProbeTransferOutsideSolver locks the Kildall shape: the
+// builder must not execute NodeTransfer in a fake discovery/pre-pass with Bottom
+// inputs. Non-entry points may run only as solver cells, after their reachable
+// predecessors have emitted the marker below.
+func TestBuilderDoesNotProbeTransferOutsideSolver(t *testing.T) {
+	g := straightLineGraph()
+	entry := g.Entry()
+	entryMark := markKey(entry)
+
+	mock := NodeTransferFunc(func(
+		g *cfg.Graph, p cfg.Point, incoming flow.PointState,
+		_ paramevidence.Contracts, _ func(int, paramevidence.ParamContract),
+	) flow.PointState {
+		if p != entry {
+			if _, ok := incoming.Env[entryMark]; !ok {
+				t.Fatalf("transfer for non-entry point %v saw fake/pre-solver Bottom input; incoming=%v", p, incoming.Env)
+			}
+		}
+		out := flow.PointStateDomain.Join(incoming, flow.PointStateDomain.Bottom())
+		if p == entry {
+			out.Env = envJoin(out.Env, map[flow.ValueKey]product.AbstractValue{
+				entryMark: product.FromType(typ.Boolean),
+			})
+		}
+		return out
+	})
+
+	NewBuilder(g, 0, mock).Solve()
+}
+
+// TestConditionProjectionRunsAsCellAbstraction pins the canonical acyclic
+// condition bound: relevance projection is applied as a solver cell abstraction,
+// after the Kildall accumulator joins into the point cell. If it were only
+// applied to transfer output, stale DNF vocabulary already stored in the cell
+// would survive future emits and a straight-line guard chain could still grow
+// without bound.
+func TestConditionProjectionRunsAsCellAbstraction(t *testing.T) {
+	g := straightLineGraph()
+	xa := constraint.NewPath(cfg.SymbolID(101), "x").Field("a")
+	xb := constraint.NewPath(cfg.SymbolID(101), "x").Field("b")
+	deadFact := constraint.Or(
+		constraint.FromConstraints(constraint.Truthy{Path: xa}),
+		constraint.FromConstraints(constraint.Truthy{Path: xb}),
+	)
+
+	mock := projectingTransfer{
+		projector: propagate.NewConditionProjector(&propagate.Inputs{
+			Graph:  g,
+			Demand: &propagate.Demand{},
+		}),
+		fact: deadFact,
+	}
+
+	fs := NewBuilder(g, 0, mock).Solve()
+	for p, ps := range fs.Points {
+		if !ps.Cond.IsTrue() {
+			t.Fatalf("point %v retained dead condition vocabulary: %v", p, ps.Cond)
+		}
+	}
+	for p, ps := range fs.InPoints {
+		if !ps.Cond.IsTrue() {
+			t.Fatalf("in-state %v retained dead condition vocabulary: %v", p, ps.Cond)
+		}
+	}
+}
+
+type projectingTransfer struct {
+	projector *propagate.ConditionProjector
+	fact      constraint.Condition
+}
+
+func (m projectingTransfer) Transfer(
+	_ *cfg.Graph,
+	_ cfg.Point,
+	incoming flow.PointState,
+	_ paramevidence.Contracts,
+	_ func(int, paramevidence.ParamContract),
+) flow.PointState {
+	out := flow.PointStateDomain.Join(incoming, flow.PointStateDomain.Bottom())
+	out.Cond = m.fact
+	return out
+}
+
+func (m projectingTransfer) ConditionProjector() *propagate.ConditionProjector {
+	return m.projector
+}
+
 // markKey names the Env slot a straight-line mock writes for point p.
-func markKey(p cfg.Point) string {
-	return "mark/" + itoa(uint64(p))
+func markKey(p cfg.Point) flow.ValueKey {
+	return flow.ValueKey("mark/" + itoa(uint64(p)))
 }
 
 func itoa(v uint64) string {
@@ -254,8 +386,8 @@ func itoa(v uint64) string {
 }
 
 // envJoin merges b into a via the value domain, returning a fresh map.
-func envJoin(a, b map[string]product.AbstractValue) map[string]product.AbstractValue {
-	out := make(map[string]product.AbstractValue, len(a)+len(b))
+func envJoin(a, b map[flow.ValueKey]product.AbstractValue) map[flow.ValueKey]product.AbstractValue {
+	out := make(map[flow.ValueKey]product.AbstractValue, len(a)+len(b))
 	for k, v := range a {
 		out[k] = v
 	}

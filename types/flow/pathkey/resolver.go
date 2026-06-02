@@ -265,7 +265,10 @@ func writeInt(b *strings.Builder, value int) {
 //   - OK: true
 //
 // For keys without a version (missing @), versionID is 0.
-// For keys that don't start with "sym", returns (0, 0, "", false).
+// For keys that don't start with a symbol root, returns (0, 0, "", false).
+// Both legacy solver roots ("sym42") and canonical point-state roots ("s42")
+// are accepted so product-domain projection can consume normalized PointState
+// keys without translating them through versioned solver keys.
 //
 // The suffix includes any field or index path after the version number.
 func ParseKey(key constraint.PathKey) (cfg.SymbolID, int, string, bool) {
@@ -348,10 +351,17 @@ func KeysShareSymbol(a, b constraint.PathKey) bool {
 }
 
 func parseLeadingSymbol(s string) (cfg.SymbolID, int, bool) {
-	if len(s) < 4 || s[0] != 's' || s[1] != 'y' || s[2] != 'm' {
+	if len(s) >= 4 && s[0] == 's' && s[1] == 'y' && s[2] == 'm' {
+		value, end, ok := parseNonNegativeUintComponent(s, 3)
+		if !ok {
+			return 0, 0, false
+		}
+		return cfg.SymbolID(value), end, true
+	}
+	if len(s) < 2 || s[0] != 's' {
 		return 0, 0, false
 	}
-	value, end, ok := parseNonNegativeUintComponent(s, 3)
+	value, end, ok := parseNonNegativeUintComponent(s, 1)
 	if !ok {
 		return 0, 0, false
 	}

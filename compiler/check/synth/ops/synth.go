@@ -11,6 +11,8 @@
 package ops
 
 import (
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -21,33 +23,87 @@ type FieldDef struct {
 	Optional bool
 }
 
+// EntryDef describes a structurally-keyed entry in a table constructor.
+// SegmentField models `{name = v}` / `.name`; SegmentIndexString and
+// SegmentIndexInt model exact bracket keys (`["name"]`, `[1]`). Keeping this
+// carrier structural prevents record fields and bracket indexes from collapsing
+// into a boundary string before the expected type policy is known.
+type EntryDef struct {
+	Key      constraint.Segment
+	Type     typ.Type
+	Optional bool
+}
+
+func fieldDefEntries(fields []FieldDef) []EntryDef {
+	if len(fields) == 0 {
+		return nil
+	}
+	entries := make([]EntryDef, 0, len(fields))
+	for _, f := range fields {
+		if f.Name == "" {
+			continue
+		}
+		entries = append(entries, EntryDef{
+			Key:      constraint.Segment{Kind: constraint.SegmentField, Name: f.Name},
+			Type:     f.Type,
+			Optional: f.Optional,
+		})
+	}
+	return entries
+}
+
 // tableConstructor synthesizes the structural table-constructor result.
 func tableConstructor(fields []FieldDef, array []typ.Type) typ.Type {
-	if len(fields) == 0 && len(array) == 0 {
+	return tableConstructorEntries(fieldDefEntries(fields), array)
+}
+
+// tableConstructorEntries synthesizes the structural table-constructor result
+// from the canonical keyed-entry carrier.
+func tableConstructorEntries(entries []EntryDef, array []typ.Type) typ.Type {
+	if len(entries) == 0 && len(array) == 0 {
 		return typ.NewFreshEmptyRecord()
 	}
 
 	// Pure array
-	if len(fields) == 0 {
+	if len(entries) == 0 {
 		return synthesizeArray(array)
 	}
 
-	// Record with named fields
-	rec := typ.NewRecord()
-
-	for _, f := range fields {
-		ft := f.Type
+	var out typ.Type = typ.NewRecord().Build()
+	for i, elem := range array {
+		if elem == nil {
+			elem = typ.Unknown
+		}
+		out = applyTableEntry(out, constraint.Segment{Kind: constraint.SegmentIndexInt, Index: i + 1}, elem)
+	}
+	for _, entry := range entries {
+		ft := entry.Type
 		if ft == nil {
 			ft = typ.Unknown
 		}
-		if f.Optional {
-			rec = rec.OptField(f.Name, ft)
-		} else {
-			rec = rec.Field(f.Name, ft)
+		if entry.Optional {
+			ft = typ.NewOptional(ft)
 		}
+		out = applyTableEntry(out, entry.Key, ft)
 	}
 
-	return rec.Build()
+	return out
+}
+
+func applyTableEntry(base typ.Type, key constraint.Segment, valueType typ.Type) typ.Type {
+	switch key.Kind {
+	case constraint.SegmentField:
+		if key.Name == "" {
+			return base
+		}
+		return typ.ExtendRecordWithField(base, key.Name, valueType)
+	case constraint.SegmentIndexString:
+		return value.AdmitForeignIndexedWrite(base, typ.LiteralString(key.Name), valueType)
+	case constraint.SegmentIndexInt:
+		return value.AdmitForeignIndexedWrite(base, typ.LiteralInt(int64(key.Index)), valueType)
+	default:
+		return base
+	}
 }
 
 // synthesizeArray creates array type from elements.

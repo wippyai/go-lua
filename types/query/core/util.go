@@ -442,6 +442,9 @@ func iterableDepth(t typ.Type, depth int) bool {
 		Map: func(m *typ.Map) bool {
 			return true
 		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) bool {
+			return true
+		},
 		Tuple: func(tup *typ.Tuple) bool {
 			return true
 		},
@@ -586,6 +589,9 @@ func elementTypeDepth(t typ.Type, depth int) typ.Type {
 		Map: func(m *typ.Map) typ.Type {
 			return m.Value
 		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) typ.Type {
+			return m.Value
+		},
 		Record: func(r *typ.Record) typ.Type {
 			if r.HasMapComponent() {
 				return r.MapValue
@@ -659,6 +665,9 @@ func keyTypeDepth(t typ.Type, depth int) typ.Type {
 		Map: func(m *typ.Map) typ.Type {
 			return m.Key
 		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) typ.Type {
+			return m.Key
+		},
 		Array: func(a *typ.Array) typ.Type {
 			return typ.Integer
 		},
@@ -726,6 +735,12 @@ func entryKeyTypeDepth(t typ.Type, depth int) typ.Type {
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
 		Map: func(m *typ.Map) typ.Type {
+			if entryValueCanBePresent(m.Value) {
+				return m.Key
+			}
+			return nil
+		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) typ.Type {
 			if entryValueCanBePresent(m.Value) {
 				return m.Key
 			}
@@ -859,6 +874,9 @@ func valueTypeDepth(t typ.Type, depth int) typ.Type {
 		Map: func(m *typ.Map) typ.Type {
 			return m.Value
 		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) typ.Type {
+			return m.Value
+		},
 		Array: func(a *typ.Array) typ.Type {
 			return a.Element
 		},
@@ -918,6 +936,9 @@ func entryValueTypeDepth(t typ.Type, depth int) typ.Type {
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
 		Map: func(m *typ.Map) typ.Type {
+			return presentEntryValue(m.Value)
+		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) typ.Type {
 			return presentEntryValue(m.Value)
 		},
 		Array: func(a *typ.Array) typ.Type {
@@ -1042,6 +1063,9 @@ func isArrayLikeDepth(t typ.Type, depth int) bool {
 	}
 	return typ.Visit(unwrapped, typ.Visitor[bool]{
 		Map: func(m *typ.Map) bool {
+			return true
+		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) bool {
 			return true
 		},
 		Array: func(a *typ.Array) bool {

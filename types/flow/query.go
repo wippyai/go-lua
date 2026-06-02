@@ -30,7 +30,7 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		if baseKey == "" {
 			return baseType
 		}
-		return s.mergeFieldAssignmentsAt(p, baseType, string(baseKey))
+		return s.mergeFieldAssignmentsAt(p, baseType, baseKey)
 	}
 
 	// Get canonical key for this path at this point
@@ -693,6 +693,16 @@ func (s *Solution) PreStateChildTypesAt(p cfg.Point, path constraint.Path) []Pat
 	return s.childTypesAt(p, path, true)
 }
 
+// ObserveChildPaths implements PathChildFacts for solution-backed flows.
+func (s *Solution) ObserveChildPaths(q PathChildQuery) []PathFact {
+	switch q.Phase {
+	case PathReadPre:
+		return s.PreStateChildTypesAt(q.Point, q.Path)
+	default:
+		return s.ChildTypesAt(q.Point, q.Path)
+	}
+}
+
 func (s *Solution) narrowedTypeCacheKey(p cfg.Point, path constraint.Path) (narrowedTypeCacheKey, bool) {
 	if path.IsEmpty() {
 		return narrowedTypeCacheKey{}, false
@@ -812,8 +822,8 @@ func (s *Solution) childTypesAtPoint(p cfg.Point, path constraint.Path) []PathFa
 	}
 
 	children := make(map[string]PathFact)
-	visit := func(key string) {
-		sym, version, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
+	visit := func(key constraint.PathKey) {
+		sym, version, suffix, ok := pathkey.ParseKeyUnchecked(key)
 		if !ok || sym != baseSym || version != baseVersion || suffix == baseSuffix {
 			return
 		}
@@ -1264,7 +1274,7 @@ func (s *Solution) applyConditionProofConstraints(p cfg.Point, seedType typ.Type
 		return conditionProjectionResult{status: conditionProjectionNone}
 	}
 
-	dom, _ := s.conditionProofProductDomainAt(p, seedPath, seedType, constraints)
+	dom, seedKey := s.conditionProofProductDomainAt(p, seedPath, seedType, constraints)
 	if dom == nil {
 		return conditionProjectionResult{status: conditionProjectionNone}
 	}
@@ -1273,6 +1283,9 @@ func (s *Solution) applyConditionProofConstraints(p cfg.Point, seedType typ.Type
 	}
 	projected := dom.ProjectedTypeAt(canonicalKey, s.resolver)
 	if projected == nil {
+		if descendant, ok := projectedDescendantRead(dom, s.resolver, seedKey, seedType, seedPath, queryPath); ok {
+			return conditionProjectionResult{typ: descendant, status: conditionProjectionType}
+		}
 		return conditionProjectionResult{status: conditionProjectionNone}
 	}
 	return conditionProjectionResult{typ: projected, status: conditionProjectionType}
@@ -1573,19 +1586,19 @@ func (s *Solution) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) boo
 	return constraint.HasKeyOfConstraint(cond, tablePath, keyPath, resolve)
 }
 
-func (s *Solution) parseSuffixCached(suffix string) []constraint.Segment {
+func (s *Solution) parseSuffixCached(suffix pathSuffixKey) []constraint.Segment {
 	if suffix == "" {
 		return nil
 	}
 	cache := s.scratchParsedSuffixes
 	if cache == nil {
-		cache = make(map[string][]constraint.Segment, 32)
+		cache = make(map[pathSuffixKey][]constraint.Segment, 32)
 		s.scratchParsedSuffixes = cache
 	}
 	if segs, ok := cache[suffix]; ok {
 		return segs
 	}
-	segs := pathkey.ParseSuffix(suffix)
+	segs := suffix.Segments()
 	cache[suffix] = segs
 	return segs
 }

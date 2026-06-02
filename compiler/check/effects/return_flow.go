@@ -1,14 +1,11 @@
 package effects
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -60,7 +57,7 @@ func returnFlowLabelsForExpr(
 	aliases *returnFlowAliasResolver,
 	point cfg.Point,
 	returnIndex int,
-	target []string,
+	target effect.PathSuffix,
 	expr ast.Expr,
 ) []effect.FlowInto {
 	if expr == nil {
@@ -72,11 +69,11 @@ func returnFlowLabelsForExpr(
 			if field == nil || field.Key == nil {
 				continue
 			}
-			name := ast.KeyName(field.Key)
-			if name == "" {
+			seg, ok := flowpath.StaticFieldSegment(field)
+			if !ok {
 				continue
 			}
-			nextTarget := appendPathSegment(target, name)
+			nextTarget := target.Append(seg)
 			labels = append(labels, returnFlowLabelsForExpr(graph, observer, params, aliases, point, returnIndex, nextTarget, field.Value)...)
 		}
 		return labels
@@ -85,21 +82,13 @@ func returnFlowLabelsForExpr(
 	if len(candidates) == 0 {
 		return nil
 	}
-	targetPath := strings.Join(target, ".")
 	labels := make([]effect.FlowInto, 0, len(candidates))
 	for _, candidate := range candidates {
 		candidate.ReturnIndex = returnIndex
-		candidate.TargetPath = targetPath
+		candidate.TargetPath = effect.PathSuffixFromSegments(target)
 		labels = append(labels, candidate)
 	}
 	return labels
-}
-
-func appendPathSegment(path []string, segment string) []string {
-	out := make([]string, 0, len(path)+1)
-	out = append(out, path...)
-	out = append(out, segment)
-	return out
 }
 
 func returnFlowSourcesForExpr(
@@ -143,10 +132,7 @@ func directReturnFlowSources(
 	if path.Symbol == 0 {
 		return nil
 	}
-	sourcePath, ok := returnFlowEffectPath(path.Segments)
-	if !ok {
-		return nil
-	}
+	sourcePath := effect.PathSuffixFromSegments(path.Segments)
 	if paramIndex, ok := params[path.Symbol]; ok {
 		return []effect.FlowInto{{ParamIndex: paramIndex, SourcePath: sourcePath}}
 	}
@@ -238,7 +224,7 @@ func rowFromReturnFlowSources(sources []effect.FlowInto) effect.Row {
 	return row
 }
 
-func appendAliasSourcePath(row effect.Row, suffix string) []effect.FlowInto {
+func appendAliasSourcePath(row effect.Row, suffix effect.PathSuffix) []effect.FlowInto {
 	if len(row.Labels) == 0 {
 		return nil
 	}
@@ -248,40 +234,10 @@ func appendAliasSourcePath(row effect.Row, suffix string) []effect.FlowInto {
 		if !ok {
 			continue
 		}
-		flow.SourcePath = joinEffectPath(flow.SourcePath, suffix)
+		flow.SourcePath = flow.SourcePath.Join(suffix)
 		out = append(out, flow)
 	}
 	return out
-}
-
-func joinEffectPath(prefix, suffix string) string {
-	switch {
-	case prefix == "":
-		return suffix
-	case suffix == "":
-		return prefix
-	default:
-		return prefix + "." + suffix
-	}
-}
-
-func returnFlowEffectPath(segments []constraint.Segment) (string, bool) {
-	if len(segments) == 0 {
-		return "", true
-	}
-	parts := make([]string, 0, len(segments))
-	for _, segment := range segments {
-		switch segment.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			if segment.Name == "" {
-				return "", false
-			}
-			parts = append(parts, segment.Name)
-		default:
-			return "", false
-		}
-	}
-	return strings.Join(parts, "."), true
 }
 
 func joinFlowRemainder(existing, candidate typ.Type) typ.Type {

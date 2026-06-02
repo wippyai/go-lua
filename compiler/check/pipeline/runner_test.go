@@ -18,7 +18,7 @@ func TestNewRunner(t *testing.T) {
 	if r == nil {
 		t.Fatal("expected non-nil runner")
 	}
-	if r.globalTypes["print"] != typ.Any {
+	if got, ok := r.globalTypes.Type("print"); !ok || !typ.TypeEquals(got, typ.Any) {
 		t.Error("globals not set")
 	}
 	if r.maxScopeDepth != 10 {

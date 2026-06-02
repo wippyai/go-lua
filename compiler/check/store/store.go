@@ -656,14 +656,7 @@ func (v interprocProductView) CapturedFieldAssigns() api.CapturedFieldAssigns {
 	return v.store.capturedFieldAssignsByKey(v.key)
 }
 
-func (v interprocProductView) CapturedContainerMutations() api.CapturedContainerMutations {
-	if v.store == nil || !v.ok {
-		return nil
-	}
-	return v.store.capturedContainerMutationsByKey(v.key)
-}
-
-func (v interprocProductView) ConstructorFields(classSym cfg.SymbolID) (map[string]typ.Type, bool) {
+func (v interprocProductView) ConstructorFields(classSym cfg.SymbolID) (api.FieldValues, bool) {
 	if v.store == nil || !v.ok || classSym == 0 {
 		return nil, false
 	}

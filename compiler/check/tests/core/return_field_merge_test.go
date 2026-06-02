@@ -344,3 +344,27 @@ func TestReturnFieldMerge_CallbackInvokedInlineFunction(t *testing.T) {
 		t.Errorf("expected no errors, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
+
+func TestReturnFieldMerge_NonCallbackArgumentDoesNotInstallMethod(t *testing.T) {
+	code := `
+		local function hold(fn)
+		end
+
+		local function make_obj()
+			local obj = {}
+			hold(function()
+				obj.get_value = function(self): number
+					return 42
+				end
+			end)
+			return obj
+		end
+
+		local o = make_obj()
+		local n: number = o:get_value()
+	`
+	result := testutil.Check(code, testutil.WithStdlib())
+	if !result.HasError() {
+		t.Errorf("expected missing method error")
+	}
+}

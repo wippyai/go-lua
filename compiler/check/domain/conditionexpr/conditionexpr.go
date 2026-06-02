@@ -128,7 +128,7 @@ func (e Extractor) pathConditions(expr ast.Expr, includeFieldPresence bool) Bran
 	if includeFieldPresence {
 		if attr, ok := expr.(*ast.AttrGetExpr); ok {
 			if basePath := e.pathFromExpr(attr.Object); !basePath.IsEmpty() {
-				if seg, ok := flowpath.StaticAttrKeySegmentWithConst(attr.Key, e.ConstResolver); ok && seg.Kind == constraint.SegmentField {
+				if seg, ok := flowpath.StaticAttrSegmentWithConst(attr, e.ConstResolver); ok && seg.Kind == constraint.SegmentField {
 					onTrue = append(onTrue, constraint.HasField{Path: basePath, Field: seg.Name})
 				}
 			}

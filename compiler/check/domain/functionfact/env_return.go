@@ -1,8 +1,8 @@
 package functionfact
 
 import (
-	"sort"
-	"strconv"
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -67,10 +67,14 @@ func ExtractEnvironmentReturns(result *api.FuncResult, fnSym cfg.SymbolID, obser
 }
 
 func envReturnCondition(result *api.FuncResult, p cfg.Point) constraint.Condition {
-	if result == nil || result.FlowSolution == nil || result.Graph == nil {
+	if result == nil || result.Graph == nil {
 		return constraint.TrueCondition()
 	}
-	return flow.ParameterCondition(result.FlowSolution.ConditionAt(p), envReturnParams(result.Graph))
+	proofs := result.ConditionProofFacts()
+	if proofs == nil {
+		return constraint.TrueCondition()
+	}
+	return flow.ParameterCondition(proofs.ConditionAt(p), envReturnParams(result.Graph))
 }
 
 func envReturnParams(graph *cfg.Graph) []flow.ParamInfo {
@@ -169,17 +173,20 @@ func mergeEnvReturns(
 	if len(existing) == 0 && len(candidate) == 0 {
 		return nil
 	}
-	merged := make(map[string]contract.EnvReturnSpec, len(existing)+len(candidate))
+	merged := make([]contract.EnvReturnSpec, 0, len(existing)+len(candidate))
 	add := func(spec contract.EnvReturnSpec) {
 		normalized, ok := normalizeEnvReturn(spec, mergeType)
 		if !ok {
 			return
 		}
-		key := envReturnKey(normalized)
-		if current, ok := merged[key]; ok {
-			normalized.Args = mergeEnvReturnArgs(current.Args, normalized.Args, mergeType)
+		for i, current := range merged {
+			if envReturnMergeIdentityEqual(current, normalized) {
+				normalized.Args = mergeEnvReturnArgs(current.Args, normalized.Args, mergeType)
+				merged[i] = normalized
+				return
+			}
 		}
-		merged[key] = normalized
+		merged = append(merged, normalized)
 	}
 	for _, spec := range existing {
 		add(spec)
@@ -190,16 +197,8 @@ func mergeEnvReturns(
 	if len(merged) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	out := make([]contract.EnvReturnSpec, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, merged[key])
-	}
-	return out
+	slices.SortFunc(merged, compareEnvReturnIdentity)
+	return merged
 }
 
 func normalizeEnvReturn(
@@ -253,26 +252,6 @@ func mergeEnvReturnArgs(existing, candidate []typ.Type, mergeType func(typ.Type,
 	return out
 }
 
-func envReturnKey(spec contract.EnvReturnSpec) string {
-	key := strconv.Itoa(spec.ReturnIndex) + ":" +
-		strconv.Itoa(spec.ResultIndex) + ":" +
-		spec.Method + ":" +
-		constraint.FormatSegments(spec.Path) + ":" +
-		strconv.FormatUint(spec.When.Hash(), 16)
-	if len(spec.Args) == 0 {
-		return key
-	}
-	key += ":args"
-	for _, arg := range spec.Args {
-		if arg == nil {
-			key += ":nil"
-			continue
-		}
-		key += ":" + strconv.Itoa(int(arg.Kind())) + "/" + strconv.FormatUint(arg.Hash(), 16)
-	}
-	return key
-}
-
 func envReturnSpecEqual(a, b contract.EnvReturnSpec) bool {
 	if !a.When.Equals(b.When) {
 		return false
@@ -294,4 +273,96 @@ func envReturnSpecEqual(a, b contract.EnvReturnSpec) bool {
 		}
 	}
 	return true
+}
+
+func envReturnMergeIdentityEqual(a, b contract.EnvReturnSpec) bool {
+	if !a.When.Equals(b.When) {
+		return false
+	}
+	if a.ReturnIndex != b.ReturnIndex || a.ResultIndex != b.ResultIndex || a.Method != b.Method {
+		return false
+	}
+	if !segmentsEqual(a.Path, b.Path) || len(a.Args) != len(b.Args) {
+		return false
+	}
+	for i := range a.Args {
+		if !typ.TypeEquals(a.Args[i], b.Args[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func compareEnvReturnIdentity(a, b contract.EnvReturnSpec) int {
+	if c := cmp.Compare(a.ReturnIndex, b.ReturnIndex); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.ResultIndex, b.ResultIndex); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Method, b.Method); c != 0 {
+		return c
+	}
+	if c := compareSegments(a.Path, b.Path); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.When.Hash(), b.When.Hash()); c != 0 {
+		return c
+	}
+	return compareEnvReturnArgsIdentity(a.Args, b.Args)
+}
+
+func compareSegments(a, b []constraint.Segment) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		if c := cmp.Compare(a[i].Kind, b[i].Kind); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a[i].Name, b[i].Name); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a[i].Index, b[i].Index); c != 0 {
+			return c
+		}
+	}
+	return cmp.Compare(len(a), len(b))
+}
+
+func segmentsEqual(a, b []constraint.Segment) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func compareEnvReturnArgsIdentity(a, b []typ.Type) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		switch {
+		case a[i] == nil && b[i] == nil:
+			continue
+		case a[i] == nil:
+			return -1
+		case b[i] == nil:
+			return 1
+		}
+		if c := cmp.Compare(a[i].Kind(), b[i].Kind()); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a[i].Hash(), b[i].Hash()); c != 0 {
+			return c
+		}
+	}
+	return cmp.Compare(len(a), len(b))
 }

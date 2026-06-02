@@ -367,32 +367,14 @@ end
 			}
 		}
 
-		// Log flow solution
+		// Log flow conditions
 		if funcResult.FlowSolution != nil {
 			solution := funcResult.FlowSolution
-			t.Log("  Conditions and EdgeValues:")
+			t.Log("  Conditions:")
 			for p := cfg.Point(2); p <= 10; p++ {
 				cond := solution.ConditionAt(p)
 				if cond.HasConstraints() {
 					t.Logf("    ConditionAt(%d): %v", p, cond.AllConstraints())
-				}
-				key := solution.DebugVersionedKey("vol", p)
-				if key != "" {
-					t.Logf("    VersionedKey(vol, %d): %s", p, key)
-					// Also show the type at this versioned key
-					typeAtKey := solution.DebugValueAt(key, p)
-					if typeAtKey != nil {
-						t.Logf("    ValueAt(%s): %v", key, typeAtKey)
-					} else {
-						t.Logf("    ValueAt(%s): nil", key)
-					}
-				}
-				// Log edge values for edges INTO this point
-				for pred := cfg.Point(1); pred < p; pred++ {
-					edgeVals := solution.DebugEdgeValues(pred, p)
-					if len(edgeVals) > 0 {
-						t.Logf("    EdgeValues %d->%d: %v", pred, p, edgeVals)
-					}
 				}
 			}
 		}

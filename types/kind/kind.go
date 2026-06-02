@@ -62,6 +62,7 @@ const (
 	FieldAccess
 	IndexAccess
 	Recursive
+	ReadonlyMap
 )
 
 var kindNames = [...]string{
@@ -97,6 +98,7 @@ var kindNames = [...]string{
 	FieldAccess:  "fieldaccess",
 	IndexAccess:  "indexaccess",
 	Recursive:    "recursive",
+	ReadonlyMap:  "readonlymap",
 }
 
 func (k Kind) String() string {
@@ -115,7 +117,7 @@ func (k Kind) IsPrimitive() bool {
 // IsComposite returns true for composite types (union, intersection, tuple, etc.).
 func (k Kind) IsComposite() bool {
 	switch k {
-	case Union, Intersection, Tuple, Array, Map, Record, Function:
+	case Union, Intersection, Tuple, Array, Map, ReadonlyMap, Record, Function:
 		return true
 	}
 

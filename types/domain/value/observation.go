@@ -305,19 +305,19 @@ func admitObservationLiteral(lit *typ.Literal) typ.Type {
 
 // recordHasDiscriminantLiteral reports whether a record has the shape of a tagged
 // variant whose literal fields admission keeps precise rather than widening to
-// their base. The reliable single-record signal of a discriminated-union member is
-// several correlated literal axes: two or more required literal fields the record
-// carries together (for example {kind, name}). A single required literal field is
-// ambiguous from one record alone -- it is just as likely incidental scalar data
-// (a numeric initializer, a config key) as a lone tag -- so admission widens it and
-// leaves any genuine partition to the union/flow join, where a conflicting sibling
-// makes the discriminant observable. Literals carried only by a recursive
-// self-embedding node are repeated values, so they widen too.
+// their base. Two or more required literal fields are a structural signal of
+// correlated variant evidence. A single literal field is admitted only when it is
+// on the checker's discriminator surface and the record has required non-literal
+// payload; otherwise scalar config/data literals still widen at the admission
+// boundary. Literals carried only by a recursive self-embedding node are repeated
+// values, so they widen too.
 func recordHasDiscriminantLiteral(r *typ.Record) bool {
 	if r == nil {
 		return false
 	}
 	requiredLiterals := 0
+	hasNamedDiscriminant := false
+	hasPayload := false
 	for _, f := range r.Fields {
 		if f.Optional {
 			continue
@@ -330,9 +330,23 @@ func recordHasDiscriminantLiteral(r *typ.Record) bool {
 			if requiredLiterals >= 2 {
 				return true
 			}
+			if isRecordDiscriminantField(f.Name) {
+				hasNamedDiscriminant = true
+			}
+			continue
 		}
+		hasPayload = true
 	}
-	return false
+	return hasNamedDiscriminant && hasPayload
+}
+
+func isRecordDiscriminantField(name string) bool {
+	switch name {
+	case "kind", "type", "tag", "__tag", "ok", "role":
+		return true
+	default:
+		return false
+	}
 }
 
 func unionHasStructuralMember(u *typ.Union) bool {

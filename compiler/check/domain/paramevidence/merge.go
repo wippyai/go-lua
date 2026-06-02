@@ -324,6 +324,30 @@ func BodyEntryContractJoin(entry, contract typ.Type) typ.Type {
 	return refineEntryByContract(entry, contract)
 }
 
+// EntryContradictsBodyContract reports whether observed call-entry evidence and
+// a body-proven contract are disjoint. In that case the contradiction is local to
+// the analyzed entry state: the body will diagnose the impossible operation from
+// its seeded parameter value, and projecting the same contract as a public caller
+// obligation would duplicate the error at the call boundary.
+//
+// Top-like entry evidence is not a contradiction; it carries too little runtime
+// information, so the body contract remains the exported obligation.
+func EntryContradictsBodyContract(entry, contract typ.Type) bool {
+	entry = NormalizeBodyType(entry)
+	contract = NormalizeBodyType(contract)
+	if entry == nil || contract == nil {
+		return false
+	}
+	if typ.IsAny(entry) || typ.IsUnknown(entry) || typ.IsAny(contract) || typ.IsUnknown(contract) {
+		return false
+	}
+	if value.Covers(contract, entry) || value.Covers(entry, contract) {
+		return false
+	}
+	intersection := subtype.NormalizeIntersection(entry, contract)
+	return intersection == nil || typ.IsNever(intersection)
+}
+
 // refineEntryByContract intersects an observed entry state with a body contract
 // member-wise so the result stays bounded across fixpoint iterations. A whole
 // union-of-unions intersection cross-distributes into a quadratically growing
@@ -470,6 +494,8 @@ func isNeverSeed(t typ.Type) bool {
 	case *typ.Array:
 		return isNeverSeed(v.Element)
 	case *typ.Map:
+		return isNeverSeed(v.Value)
+	case *typ.ReadonlyMap:
 		return isNeverSeed(v.Value)
 	default:
 		return false
@@ -638,11 +664,11 @@ func joinNilable(a, b typ.Type, nonNil func(typ.Type, typ.Type) typ.Type) (typ.T
 }
 
 func joinNonNil(a, b typ.Type) typ.Type {
-	return joinNonNilWith(a, b, NormalizeType, Join, joinNonNil)
+	return joinNonNilWith(a, b, NormalizeType, Join, joinNonNil, nil)
 }
 
 func joinNonNilBody(a, b typ.Type) typ.Type {
-	return joinNonNilWith(a, b, NormalizeBodyType, JoinBody, joinNonNilBody)
+	return joinNonNilWith(a, b, NormalizeBodyType, JoinBody, joinNonNilBody, joinBodyFallback)
 }
 
 func joinNonNilWith(
@@ -650,6 +676,7 @@ func joinNonNilWith(
 	normalize normalizer,
 	recursiveJoin JoinFn,
 	recursiveNonNil func(typ.Type, typ.Type) typ.Type,
+	fallback func(typ.Type, typ.Type) typ.Type,
 ) typ.Type {
 	if upper, ok := value.SelectTableUpperBound(a, b); ok {
 		return upper
@@ -681,6 +708,11 @@ func joinNonNilWith(
 			return joined
 		}
 	}
+	if fallback != nil {
+		if union, ok := bodyVariantUnion(a, b); ok {
+			return union
+		}
+	}
 	if joined, ok := value.JoinStructuralUnionShape(a, b, recursiveJoin); ok {
 		if joinAdmitsObservedPair(a, b, joined) {
 			return joined
@@ -694,7 +726,38 @@ func joinNonNilWith(
 			return a
 		}
 	}
+	if fallback != nil {
+		return fallback(a, b)
+	}
 	return typ.JoinPreferNonSoft(a, b)
+}
+
+func joinBodyFallback(a, b typ.Type) typ.Type {
+	if union, ok := bodyVariantUnion(a, b); ok {
+		return union
+	}
+	return typ.JoinPreferNonSoft(a, b)
+}
+
+func bodyVariantUnion(a, b typ.Type) (typ.Type, bool) {
+	members := append([]typ.Type{}, unionMembers(a)...)
+	members = append(members, unionMembers(b)...)
+	if len(members) < 2 {
+		return nil, false
+	}
+	for _, member := range members {
+		if _, ok := unwrap.Alias(member).(*typ.Record); !ok {
+			return nil, false
+		}
+	}
+	for i := 0; i < len(members); i++ {
+		for j := i + 1; j < len(members); j++ {
+			if _, ok := value.JoinRecordShape(members[i], members[j], JoinBody); !ok {
+				return typ.NewUnion(members...), true
+			}
+		}
+	}
+	return nil, false
 }
 
 func joinAdmitsObservedPair(a, b, joined typ.Type) bool {

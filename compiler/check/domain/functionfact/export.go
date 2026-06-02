@@ -1,10 +1,13 @@
 package functionfact
 
 import (
-	"strings"
+	"sort"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/exportkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -20,25 +23,28 @@ func ProjectExportType(export typ.Type, rootName string, facts api.FunctionFacts
 	return projectExportTypeForNames(export, rootName, facts, graph)
 }
 
-type exportNameSource interface {
-	NameOf(cfg.SymbolID) string
+type exportFieldTypes map[exportkey.MemberPathKey]exportFieldType
+
+type exportFieldType struct {
+	path exportkey.MemberPath
+	typ  typ.Type
 }
 
-func projectExportTypeForNames(export typ.Type, rootName string, facts api.FunctionFacts, names exportNameSource) typ.Type {
-	if export == nil || names == nil || len(facts) == 0 {
+func projectExportTypeForNames(export typ.Type, rootName string, facts api.FunctionFacts, source exportkey.SymbolSource) typ.Type {
+	if export == nil || source == nil || len(facts) == 0 {
 		return export
 	}
-	fieldTypes := make(map[string]typ.Type)
+	fieldTypes := make(exportFieldTypes)
 	for _, sym := range cfg.SortedSymbolIDs(facts) {
 		projected := ExportTypeProjection(facts, sym, api.PhaseNarrowing)
 		if projected == nil || unwrap.Function(projected) == nil {
 			continue
 		}
-		field, ok := exportFieldName(rootName, names.NameOf(sym))
+		path, ok := exportkey.MemberPathFromGraphSymbol(rootName, source, sym)
 		if !ok {
 			continue
 		}
-		fieldTypes[field] = projected
+		fieldTypes[path.Key()] = exportFieldType{path: path, typ: projected}
 	}
 	if len(fieldTypes) == 0 {
 		return export
@@ -47,107 +53,123 @@ func projectExportTypeForNames(export typ.Type, rootName string, facts api.Funct
 	return projectExportType(export, fieldTypes, 0)
 }
 
-func exportFieldName(rootName, symbolName string) (string, bool) {
-	if symbolName == "" {
-		return "", false
-	}
-	if rootName != "" {
-		prefix := rootName + "."
-		if !strings.HasPrefix(symbolName, prefix) {
-			return "", false
-		}
-		field := strings.TrimPrefix(symbolName, prefix)
-		return field, field != "" && !strings.Contains(field, ".")
-	}
-	if !strings.Contains(symbolName, ".") {
-		return symbolName, true
-	}
-	parts := strings.Split(symbolName, ".")
-	if len(parts) == 2 && parts[1] != "" {
-		return parts[1], true
-	}
-	return "", false
-}
-
-func projectExportType(t typ.Type, fieldTypes map[string]typ.Type, depth int) typ.Type {
+func projectExportType(t typ.Type, fieldTypes exportFieldTypes, depth int) typ.Type {
 	if t == nil || len(fieldTypes) == 0 || typ.DepthExceeded(depth) {
 		return t
 	}
-	switch v := t.(type) {
-	case *typ.Record:
-		return projectRecordExport(v, fieldTypes, depth+1)
-	case *typ.Interface:
-		return projectInterfaceExport(v, fieldTypes, depth+1)
-	case *typ.Function:
-		if projected := publicExportFunctionType(v, nil, fieldTypes, depth+1); projected != nil {
-			return projected
-		}
+	if projected, ok := projectDirectFunctionExport(t, fieldTypes, depth+1); ok {
+		return projected
+	}
+	out := t
+	for _, fieldType := range sortedExportFieldTypes(fieldTypes) {
+		out = projectExportPath(out, fieldType.path.Segments(), fieldType.typ, fieldTypes, depth+1)
+	}
+	return out
+}
+
+func projectDirectFunctionExport(t typ.Type, fieldTypes exportFieldTypes, depth int) (typ.Type, bool) {
+	if unwrap.Function(t) == nil || len(fieldTypes) != 1 {
+		return nil, false
+	}
+	fieldType := sortedExportFieldTypes(fieldTypes)[0]
+	if len(fieldType.path.Segments()) != 1 {
+		return nil, false
+	}
+	projected := publicExportFunctionType(t, fieldType.typ, fieldTypes, depth+1)
+	if projected == nil {
+		return nil, false
+	}
+	return projected, true
+}
+
+func sortedExportFieldTypes(fieldTypes exportFieldTypes) []exportFieldType {
+	keys := make([]exportkey.MemberPathKey, 0, len(fieldTypes))
+	for key := range fieldTypes {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return string(keys[i]) < string(keys[j])
+	})
+	out := make([]exportFieldType, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, fieldTypes[key])
+	}
+	return out
+}
+
+func projectExportPath(t typ.Type, path []fieldkey.Key, public typ.Type, fieldTypes exportFieldTypes, depth int) typ.Type {
+	if t == nil || len(path) == 0 || typ.DepthExceeded(depth) {
 		return t
+	}
+	base := unwrap.Alias(t)
+	var out typ.Type
+	switch v := base.(type) {
+	case *typ.Record:
+		out = projectRecordExportPath(v, path, public, fieldTypes, depth+1)
+	case *typ.Interface:
+		out = projectInterfaceExportPath(v, path, public, fieldTypes, depth+1)
 	case *typ.Optional:
-		inner := projectExportType(v.Inner, fieldTypes, depth+1)
+		inner := projectExportPath(v.Inner, path, public, fieldTypes, depth+1)
 		if typ.TypeEquals(inner, v.Inner) {
-			return t
+			out = base
+		} else {
+			out = typ.NewOptional(inner)
 		}
-		return typ.NewOptional(inner)
 	case *typ.Union:
 		members := make([]typ.Type, len(v.Members))
 		changed := false
 		for i, member := range v.Members {
-			members[i] = projectExportType(member, fieldTypes, depth+1)
+			members[i] = projectExportPath(member, path, public, fieldTypes, depth+1)
 			changed = changed || !typ.TypeEquals(members[i], member)
 		}
 		if !changed {
-			return t
+			out = base
+		} else {
+			out = typ.NewUnion(members...)
 		}
-		return typ.NewUnion(members...)
-	case *typ.Array:
-		elem := projectExportType(v.Element, fieldTypes, depth+1)
-		if typ.TypeEquals(elem, v.Element) {
-			return t
-		}
-		return typ.NewArray(elem)
-	case *typ.Map:
-		value := projectExportType(v.Value, fieldTypes, depth+1)
-		if typ.TypeEquals(value, v.Value) {
-			return t
-		}
-		return typ.NewMap(v.Key, value)
-	case *typ.Tuple:
-		elems := make([]typ.Type, len(v.Elements))
-		changed := false
-		for i, elem := range v.Elements {
-			elems[i] = projectExportType(elem, fieldTypes, depth+1)
-			changed = changed || !typ.TypeEquals(elems[i], elem)
-		}
-		if !changed {
-			return t
-		}
-		return typ.NewTuple(elems...)
 	default:
 		return t
 	}
+	if out == base {
+		return t
+	}
+	if alias, ok := t.(*typ.Alias); ok {
+		return typ.NewAlias(alias.Name, out)
+	}
+	return out
 }
 
-func projectRecordExport(rec *typ.Record, fieldTypes map[string]typ.Type, depth int) typ.Type {
-	if rec == nil || len(fieldTypes) == 0 {
+func projectRecordExportPath(rec *typ.Record, path []fieldkey.Key, public typ.Type, fieldTypes exportFieldTypes, depth int) typ.Type {
+	if rec == nil || len(path) == 0 {
 		return rec
 	}
 	changed := false
 	fields := make([]typ.Field, len(rec.Fields))
 	for i, field := range rec.Fields {
 		fields[i] = field
-		fieldType := projectExportType(field.Type, fieldTypes, depth+1)
-		if publicType := publicExportFunctionType(fieldType, fieldTypes[field.Name], fieldTypes, depth+1); publicType != nil {
-			fieldType = publicType
+		key, ok := fieldkey.FromName(field.Name)
+		if !ok || key != path[0] {
+			continue
 		}
+		fieldType := projectExportMemberType(field.Type, path[1:], public, fieldTypes, depth+1)
 		if typ.TypeEquals(field.Type, fieldType) {
 			continue
 		}
 		fields[i].Type = fieldType
 		changed = true
 	}
-	meta := projectExportType(rec.Metatable, fieldTypes, depth+1)
-	if !typ.TypeEquals(meta, rec.Metatable) {
+	staticMembers := make([]typ.StaticMember, len(rec.StaticMembers))
+	for i, member := range rec.StaticMembers {
+		staticMembers[i] = member
+		key, ok := staticMemberKey(member)
+		if !ok || key != path[0] {
+			continue
+		}
+		memberType := projectExportMemberType(member.Type, path[1:], public, fieldTypes, depth+1)
+		if typ.TypeEquals(member.Type, memberType) {
+			continue
+		}
+		staticMembers[i].Type = memberType
 		changed = true
 	}
 	if !changed {
@@ -160,8 +182,11 @@ func projectRecordExport(rec *typ.Record, fieldTypes map[string]typ.Type, depth 
 	if rec.HasMapComponent() {
 		builder.MapComponent(rec.MapKey, rec.MapValue)
 	}
-	if meta != nil {
-		builder.Metatable(meta)
+	if rec.Metatable != nil {
+		builder.Metatable(rec.Metatable)
+	}
+	for _, member := range staticMembers {
+		builder.AddStaticMember(member)
 	}
 	for _, field := range fields {
 		addRecordField(builder, field)
@@ -169,16 +194,43 @@ func projectRecordExport(rec *typ.Record, fieldTypes map[string]typ.Type, depth 
 	return builder.Build()
 }
 
-func projectInterfaceExport(iface *typ.Interface, fieldTypes map[string]typ.Type, depth int) typ.Type {
-	if iface == nil || len(fieldTypes) == 0 {
+func projectExportMemberType(current typ.Type, rest []fieldkey.Key, public typ.Type, fieldTypes exportFieldTypes, depth int) typ.Type {
+	if len(rest) == 0 {
+		if projected := publicExportFunctionType(current, public, fieldTypes, depth+1); projected != nil {
+			return projected
+		}
+		return current
+	}
+	return projectExportPath(current, rest, public, fieldTypes, depth+1)
+}
+
+func staticMemberKey(member typ.StaticMember) (fieldkey.Key, bool) {
+	switch member.Kind {
+	case typ.StaticMemberStringIndex:
+		return fieldkey.FromSegment(fieldkey.Key{Kind: constraint.SegmentIndexString, Name: member.Name})
+	case typ.StaticMemberIntIndex:
+		return fieldkey.FromSegment(fieldkey.Key{Kind: constraint.SegmentIndexInt, Index: int(member.Index)})
+	default:
+		return fieldkey.Key{}, false
+	}
+}
+
+func projectInterfaceExportPath(iface *typ.Interface, path []fieldkey.Key, public typ.Type, fieldTypes exportFieldTypes, depth int) typ.Type {
+	if iface == nil || len(path) != 1 {
+		return iface
+	}
+	name, ok := fieldkey.StringKeyFromSegment(path[0])
+	if !ok {
 		return iface
 	}
 	changed := false
 	methods := make([]typ.Method, len(iface.Methods))
 	for i, method := range iface.Methods {
 		methods[i] = method
-		methodType := projectExportType(method.Type, fieldTypes, depth+1)
-		publicFn := unwrap.Function(publicExportFunctionType(methodType, fieldTypes[method.Name], fieldTypes, depth+1))
+		if method.Name != name {
+			continue
+		}
+		publicFn := unwrap.Function(publicExportFunctionType(method.Type, public, fieldTypes, depth+1))
 		if publicFn == nil || typ.TypeEquals(method.Type, publicFn) {
 			continue
 		}
@@ -191,7 +243,7 @@ func projectInterfaceExport(iface *typ.Interface, fieldTypes map[string]typ.Type
 	return typ.NewInterface(iface.Name, methods)
 }
 
-func publicExportFunctionType(current, public typ.Type, fieldTypes map[string]typ.Type, depth int) typ.Type {
+func publicExportFunctionType(current, public typ.Type, fieldTypes exportFieldTypes, depth int) typ.Type {
 	currentFn := unwrap.Function(current)
 	publicFn := unwrap.Function(public)
 	if currentFn == nil && publicFn == nil {
@@ -207,13 +259,13 @@ func publicExportFunctionType(current, public typ.Type, fieldTypes map[string]ty
 	return projectFunctionReturns(sourceFn, fieldTypes, depth+1, currentFn)
 }
 
-func projectFunctionReturns(fn *typ.Function, fieldTypes map[string]typ.Type, depth int, preserve *typ.Function) typ.Type {
+func projectFunctionReturns(fn *typ.Function, fieldTypes exportFieldTypes, depth int, preserve *typ.Function) typ.Type {
 	if fn == nil {
 		return nil
 	}
 	builder := typ.Func().ReserveParams(len(fn.Params))
 	for _, tp := range fn.TypeParams {
-		builder.TypeParam(tp.Name, tp.Constraint)
+		builder.TypeParamRef(tp)
 	}
 	for _, param := range fn.Params {
 		if param.Optional {

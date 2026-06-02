@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/domain/value/product"
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -62,6 +61,33 @@ type FunctionFacts map[cfg.SymbolID]FunctionFact
 // without explicit type annotations.
 type LiteralSigs = map[*ast.FunctionExpr]*typ.Function
 
+// LiteralSignatureLookup is the normalized lookup surface for function-literal
+// signatures. It prevents consumers from depending on a concrete AST-keyed map
+// when a producer can provide a lazy or projected carrier.
+type LiteralSignatureLookup interface {
+	Lookup(fn *ast.FunctionExpr) *typ.Function
+}
+
+// LiteralSigsLookup lifts an external AST-keyed map into LiteralSignatureLookup.
+type LiteralSigsLookup map[*ast.FunctionExpr]*typ.Function
+
+// LiteralSignatureLookupFromMap normalizes an external AST-keyed map into the
+// lookup surface consumed by in-process analysis.
+func LiteralSignatureLookupFromMap(signatures map[*ast.FunctionExpr]*typ.Function) LiteralSignatureLookup {
+	if len(signatures) == 0 {
+		return nil
+	}
+	return LiteralSigsLookup(signatures)
+}
+
+// Lookup returns the signature for fn.
+func (m LiteralSigsLookup) Lookup(fn *ast.FunctionExpr) *typ.Function {
+	if fn == nil || len(m) == 0 {
+		return nil
+	}
+	return m[fn]
+}
+
 // CapturedTypes maps captured symbols to their flow-derived types for a graph.
 // These are computed from the parent function's flow facts at the definition
 // point of the nested function and used as type hints for captured variables.
@@ -69,90 +95,33 @@ type LiteralSigs = map[*ast.FunctionExpr]*typ.Function
 // projected at egress.
 type CapturedTypes = map[cfg.SymbolID]product.AbstractValue
 
+// FieldValues maps a typed field/path segment to its product-domain value.
+// Boundary collection/projection APIs may still speak in source field names;
+// Facts store typed keys so the interprocedural product has one identity
+// language.
+type FieldValues = map[constraint.Segment]product.AbstractValue
+
 // CapturedFieldAssigns maps nested function symbols to field assignments
 // they make to captured variables from parent scopes.
 //
-// Structure: nestedFuncSymbol -> capturedVarSymbol -> fieldName -> fieldType
+// Structure: nestedFuncSymbol -> capturedVarSymbol -> fieldKey -> fieldType
 //
 // This enables the parent scope to see which fields a nested function assigns
 // to its captured variables, supporting constructor inference patterns. The
 // field type carrier holds interned product.AbstractValue.
-type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]map[string]product.AbstractValue
-
-// ContainerMutationKind describes the operator used for a captured container
-// mutation. Different operators have different abstract interpreter effects in
-// the parent flow.
-type ContainerMutationKind uint8
-
-const (
-	// ContainerMutationContainerElement widens generic container element types,
-	// such as channel:send(value) through a ContainerElementUnion effect.
-	ContainerMutationContainerElement ContainerMutationKind = iota
-	// ContainerMutationTableElement widens Lua table array/map-array element
-	// types, such as table.insert(t, value).
-	ContainerMutationTableElement
-	// ContainerMutationMapElement widens Lua table map values from dynamic
-	// assignments such as t[k] = value.
-	ContainerMutationMapElement
-)
-
-// ContainerMutation records a container element mutation on a captured variable.
-// Segments capture the path from the base symbol (e.g., .ch, ["queue"]).
-type ContainerMutation struct {
-	Kind      ContainerMutationKind
-	Segments  []constraint.Segment
-	KeyType   product.AbstractValue
-	ValueMode flow.MapMutationValueMode
-	ValueType product.AbstractValue
-}
-
-// ContainerMutationKey returns the canonical path key for a container mutation.
-func ContainerMutationKey(m ContainerMutation) string {
-	return containerMutationKindKey(m.Kind) + containerMutationKeyMode(m) + ":" + constraint.FormatSegments(m.Segments)
-}
-
-func containerMutationKeyMode(m ContainerMutation) string {
-	if m.Kind != ContainerMutationTableElement && m.Kind != ContainerMutationMapElement {
-		return ""
-	}
-	if m.Kind == ContainerMutationMapElement && m.ValueMode == flow.MapMutationValueUpdate {
-		return ":update"
-	}
-	if !m.KeyType.IsZero() {
-		return ":keyed"
-	}
-	return ":append"
-}
-
-func containerMutationKindKey(kind ContainerMutationKind) string {
-	switch kind {
-	case ContainerMutationMapElement:
-		return "map"
-	case ContainerMutationTableElement:
-		return "table"
-	default:
-		return "container"
-	}
-}
-
-// CapturedContainerMutations maps nested function symbols to container mutations
-// they make to captured variables from parent scopes.
-//
-// Structure: nestedFuncSymbol -> capturedVarSymbol -> []ContainerMutation
-type CapturedContainerMutations = map[cfg.SymbolID]map[cfg.SymbolID][]ContainerMutation
+type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]FieldValues
 
 // ConstructorFields maps class symbols to field assignments captured in constructors.
-// Structure: classSymbol -> fieldName -> fieldType. The field type carrier holds
+// Structure: classSymbol -> fieldKey -> fieldType. The field type carrier holds
 // interned product.AbstractValue.
-type ConstructorFields = map[cfg.SymbolID]map[string]product.AbstractValue
+type ConstructorFields = map[cfg.SymbolID]FieldValues
 
 // Facts bundles one canonical interprocedural product slice. Most slices are
 // stored per (graph, parent) pair; module-wide facts use ModuleFactsKey.
 type Facts struct {
-	FunctionFacts      FunctionFacts
-	LiteralSigs        LiteralSigs
-	CapturedTypes      CapturedTypes
-	CapturedFields     CapturedFieldAssigns
-	CapturedContainers CapturedContainerMutations
-	ConstructorFields  ConstructorFields
+	FunctionFacts     FunctionFacts
+	LiteralSigs       LiteralSigs
+	CapturedTypes     CapturedTypes
+	CapturedFields    CapturedFieldAssigns
+	ConstructorFields ConstructorFields
 }

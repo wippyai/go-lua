@@ -1,25 +1,17 @@
 package flow
 
 import (
-	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
 // parameterPathSubstituter converts function-local parameter paths into
 // call-site placeholders for interprocedural refinement effects.
 type parameterPathSubstituter struct {
-	placeholders       map[cfg.SymbolID]string
-	placeholdersByName map[string]string
+	projection parameterProjection
 }
 
-func newParameterPathSubstituter(
-	placeholders map[cfg.SymbolID]string,
-	placeholdersByName map[string]string,
-) parameterPathSubstituter {
-	return parameterPathSubstituter{
-		placeholders:       placeholders,
-		placeholdersByName: placeholdersByName,
-	}
+func newParameterPathSubstituter(projection parameterProjection) parameterPathSubstituter {
+	return parameterPathSubstituter{projection: projection}
 }
 
 func (s parameterPathSubstituter) constraint(c constraint.Constraint) constraint.Constraint {
@@ -41,6 +33,7 @@ func (s parameterPathSubstituter) constraint(c constraint.Constraint) constraint
 		FieldNotEqualsPath: s.fieldNotEqualsPath,
 		IndexEqualsPath:    s.indexEqualsPath,
 		IndexNotEqualsPath: s.indexNotEqualsPath,
+		KeyOf:              s.keyOf,
 		Default: func(constraint.Constraint) constraint.Constraint {
 			return nil
 		},
@@ -183,8 +176,16 @@ func (s parameterPathSubstituter) indexNotEqualsPath(v constraint.IndexNotEquals
 	return constraint.IndexNotEqualsPath{Target: target, Key: v.Key, Value: value}
 }
 
+func (s parameterPathSubstituter) keyOf(v constraint.KeyOf) constraint.Constraint {
+	table, key, ok := s.pathPair(v.Table, v.Key)
+	if !ok {
+		return nil
+	}
+	return constraint.KeyOf{Table: table, Key: key}
+}
+
 func (s parameterPathSubstituter) path(path constraint.Path) (constraint.Path, bool) {
-	newRoot, ok := lookupPlaceholder(path, s.placeholders, s.placeholdersByName)
+	newRoot, ok := s.projection.placeholderRoot(path)
 	if !ok {
 		return constraint.Path{}, false
 	}
@@ -192,16 +193,20 @@ func (s parameterPathSubstituter) path(path constraint.Path) (constraint.Path, b
 }
 
 func (s parameterPathSubstituter) pathPair(left, right constraint.Path) (constraint.Path, constraint.Path, bool) {
-	newLeft, leftOk := s.path(left)
-	newRight, rightOk := s.path(right)
-	switch {
-	case leftOk && rightOk:
-		return newLeft, newRight, true
-	case leftOk:
-		return newLeft, right, true
-	case rightOk:
-		return left, newRight, true
-	default:
+	newLeft, leftParam, leftOK := s.exportPath(left)
+	newRight, rightParam, rightOK := s.exportPath(right)
+	if !leftOK || !rightOK || (!leftParam && !rightParam) {
 		return constraint.Path{}, constraint.Path{}, false
 	}
+	return newLeft, newRight, true
+}
+
+func (s parameterPathSubstituter) exportPath(path constraint.Path) (constraint.Path, bool, bool) {
+	if newPath, ok := s.path(path); ok {
+		return newPath, true, true
+	}
+	if constraint.IsReturnPath(path) {
+		return path, false, true
+	}
+	return constraint.Path{}, false, false
 }

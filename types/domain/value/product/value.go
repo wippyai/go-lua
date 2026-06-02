@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/types/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/types/domain/value/axis/shapevalue"
+	"github.com/wippyai/go-lua/types/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -29,6 +30,7 @@ type node struct {
 	escape   escape.Value
 	identity identityrecursion.Value
 	evidence evidence.Value
+	origin   variantorigin.Value
 }
 
 // AbstractValue is the opaque, deeply immutable, interned reduced product over the
@@ -68,6 +70,7 @@ func New(
 		escape:   esc,
 		identity: id,
 		evidence: ev,
+		origin:   variantorigin.Top(),
 	}
 	return AbstractValue{n: intern(reduce(n))}
 }
@@ -98,10 +101,76 @@ func FromType(t typ.Type) AbstractValue {
 		numeric.Top(),
 		effectrows.Top(),
 		ownership.Top(),
-		escape.Top(),
+		escapeOf(t),
 		identityOf(t),
 		evidence.Top(),
 	)
+}
+
+// FreshFromType admits a newly allocated, still-confined runtime value into the
+// product. Its structural shape is t, while the Escape/Allocation axis records
+// Fresh so transfer laws can distinguish strong-update allocations from escaped
+// or declared table shapes without inspecting source syntax.
+func FreshFromType(t typ.Type) AbstractValue {
+	return New(
+		shapeOf(t),
+		presenceOf(t),
+		numeric.Top(),
+		effectrows.Top(),
+		ownership.Top(),
+		escape.Fresh(),
+		identityOf(t),
+		evidence.Top(),
+	)
+}
+
+// FromTypes admits a tuple/vector of structural types into product values at a
+// storage seam. Nil and unknown slots stay as the zero AbstractValue, which is
+// not a product-lattice element; it is the Go-level "no fact was established for
+// this slot yet" sentinel used by Env/return-vector storage. This sentinel must
+// not be passed directly to product.Domain.Join/Widen. Lattice folds should use
+// FromTypesTotal or normalize through their carrier-specific slot reader.
+func FromTypes(types []typ.Type) []AbstractValue {
+	out := make([]AbstractValue, len(types))
+	for i, t := range types {
+		if t == nil || typ.IsUnknown(t) {
+			continue
+		}
+		out[i] = FromType(t)
+	}
+	return out
+}
+
+// FromTypesTotal admits a tuple/vector of structural types into the product
+// carrier for lattice algebra. Every returned slot is a valid AbstractValue, so
+// callers may pass the vector to slotwise Join/Widen without a storage-seam zero
+// leaking into the product domain. Missing or unknown type slots become the
+// explicit unknown product value.
+//
+// Do not use this at intraprocedural storage seams where "unknown" means "the
+// same fixed point has not produced evidence yet". Total admission turns absence
+// into a real unknown fact, which is monotone and sticky. That is correct at
+// summary/public projection boundaries, but it can erase later generic/call
+// precision if used while transfer state is still being solved.
+func FromTypesTotal(types []typ.Type) []AbstractValue {
+	out := make([]AbstractValue, len(types))
+	for i, t := range types {
+		if t == nil || typ.IsUnknown(t) {
+			t = typ.Unknown
+		}
+		out[i] = FromType(t)
+	}
+	return out
+}
+
+// ProjectValuesOrUnknown projects product values to structural types at a
+// type-only egress boundary. A zero slot becomes unknown.
+func ProjectValuesOrUnknown(values []AbstractValue) []typ.Type {
+	out := make([]typ.Type, len(values))
+	for i, v := range values {
+		out[i] = ProjectValueOrUnknown(v)
+	}
+	return out
 }
 
 // Top is the most general AbstractValue: every axis at its Top.
@@ -115,6 +184,55 @@ func Top() AbstractValue {
 		escape.Top(),
 		identityrecursion.Top(),
 		evidence.Top(),
+	)
+}
+
+// PresentDynamic is the value-domain carrier for a value whose structure is fully
+// dynamic but whose presence is proven by control flow. It is the reduction a
+// truthy/not-nil guard contributes when a symbol had no previous Env value: the
+// shape stays top (`any`), but the presence axis is Present so downstream product
+// consumers can distinguish "unknown but non-nil" from "unknown and maybe nil".
+func PresentDynamic() AbstractValue {
+	return New(
+		shapevalue.Top(),
+		presence.Present(),
+		numeric.Top(),
+		effectrows.Top(),
+		ownership.Top(),
+		escape.Top(),
+		identityrecursion.Top(),
+		evidence.Top(),
+	)
+}
+
+// GradualAny is the product carrier for the dynamic top introduced by an
+// unannotated source. Its structural projection is `any`, but the evidence axis
+// distinguishes it from a strict declared `any`, so consistency boundaries can
+// admit the former without erasing the latter.
+func GradualAny() AbstractValue {
+	return New(
+		shapevalue.Top(),
+		presence.Top(),
+		numeric.Top(),
+		effectrows.Top(),
+		ownership.Top(),
+		escape.Top(),
+		identityrecursion.Top(),
+		evidence.GradualTop(),
+	)
+}
+
+// PresentGradualAny is GradualAny refined by a not-nil/truthy proof.
+func PresentGradualAny() AbstractValue {
+	return New(
+		shapevalue.Top(),
+		presence.Present(),
+		numeric.Top(),
+		effectrows.Top(),
+		ownership.Top(),
+		escape.Top(),
+		identityrecursion.Top(),
+		evidence.GradualTop(),
 	)
 }
 
@@ -138,6 +256,20 @@ func (v AbstractValue) Shape() shapevalue.Value { return v.n.shape }
 // Presence returns the Presence/Nilability axis component.
 func (v AbstractValue) Presence() presence.Value { return v.n.presence }
 
+// DefinitelyPresent reports whether the reduced product proves this value is
+// non-nil. It is the public product-level predicate for consumers that need the
+// semantic fact, keeping them from inspecting the presence axis representation.
+func (v AbstractValue) DefinitelyPresent() bool {
+	return !v.IsZero() && presence.Equal(v.n.presence, presence.Present())
+}
+
+// DefinitelyAbsent reports whether the reduced product proves this value is nil.
+// It is intentionally product-level: callers should not pattern-match on the
+// presence axis unless they are implementing the value domain itself.
+func (v AbstractValue) DefinitelyAbsent() bool {
+	return !v.IsZero() && presence.Equal(v.n.presence, presence.Absent())
+}
+
 // Numeric returns the Numeric/Interval axis component.
 func (v AbstractValue) Numeric() numeric.Value { return v.n.numeric }
 
@@ -150,11 +282,23 @@ func (v AbstractValue) Ownership() ownership.Value { return v.n.owner }
 // Escape returns the Escape/Allocation axis component.
 func (v AbstractValue) Escape() escape.Value { return v.n.escape }
 
+// IsFreshAllocation reports whether the product proves this value is still a
+// fresh allocation confined to its allocating frame.
+func (v AbstractValue) IsFreshAllocation() bool {
+	return !v.IsZero() && escape.Equal(v.n.escape, escape.Fresh())
+}
+
 // Identity returns the Identity/Recursion axis component.
 func (v AbstractValue) Identity() identityrecursion.Value { return v.n.identity }
 
 // Evidence returns the SemanticEvidence axis component.
 func (v AbstractValue) Evidence() evidence.Value { return v.n.evidence }
+
+// IsGradualTop reports whether this value carries the semantic proof that its
+// dynamic top came from an unannotated source.
+func (v AbstractValue) IsGradualTop() bool {
+	return !v.IsZero() && v.n.evidence.IsGradualTop()
+}
 
 // Project recovers the underlying non-nil structural type carried on the Shape
 // axis. It is the bare shape egress: nilability, which FromType factors onto the
@@ -202,6 +346,16 @@ func (v AbstractValue) ProjectValue() typ.Type {
 	}
 }
 
+// ProjectValueOrUnknown projects v to the full structural type at an egress
+// boundary. A zero AbstractValue means the analysis did not establish a value for
+// the slot, so the sound public type is unknown.
+func ProjectValueOrUnknown(v AbstractValue) typ.Type {
+	if v.IsZero() {
+		return typ.Unknown
+	}
+	return v.ProjectValue()
+}
+
 // IsZero reports whether the value is the zero AbstractValue: an uninitialized
 // handle with no interned node. It is the value a Go map read returns for an absent
 // key, distinct from Bottom (the interned empty value). Callers at a storage seam
@@ -240,6 +394,7 @@ func Join(a, b AbstractValue) AbstractValue {
 		escape:   escape.Join(a.n.escape, b.n.escape),
 		identity: identityrecursion.Join(a.n.identity, b.n.identity),
 		evidence: evidence.Join(a.n.evidence, b.n.evidence),
+		origin:   variantorigin.Join(a.n.origin, b.n.origin),
 	}
 	return AbstractValue{n: intern(reduce(n))}
 }
@@ -255,6 +410,7 @@ func Widen(prev, next AbstractValue) AbstractValue {
 		escape:   escape.Widen(prev.n.escape, next.n.escape),
 		identity: identityrecursion.Widen(prev.n.identity, next.n.identity),
 		evidence: evidence.Widen(prev.n.evidence, next.n.evidence),
+		origin:   variantorigin.Widen(prev.n.origin, next.n.origin),
 	}
 	return AbstractValue{n: intern(reduce(n))}
 }
@@ -313,7 +469,8 @@ func Covers(a, b AbstractValue) bool {
 		a.n.owner.Covers(b.n.owner) &&
 		a.n.escape.Covers(b.n.escape) &&
 		a.n.identity.Covers(b.n.identity) &&
-		a.n.evidence.Covers(b.n.evidence)
+		a.n.evidence.Covers(b.n.evidence) &&
+		a.n.origin.Covers(b.n.origin)
 }
 
 // Covers reports whether the receiver covers other on every axis.
@@ -336,7 +493,8 @@ func nodeEqual(a, b *node) bool {
 		ownership.Equal(a.owner, b.owner) &&
 		escape.Equal(a.escape, b.escape) &&
 		identityrecursion.Equal(a.identity, b.identity) &&
-		evidence.Equal(a.evidence, b.evidence)
+		evidence.Equal(a.evidence, b.evidence) &&
+		variantorigin.Equal(a.origin, b.origin)
 }
 
 // nodeHash folds the per-axis hashes into a stable product hash. Each axis hash is
@@ -351,6 +509,7 @@ func nodeHash(n *node) uint64 {
 	h = internal.HashCombine(h, n.escape.Hash())
 	h = internal.HashCombine(h, n.identity.Hash())
 	h = internal.HashCombine(h, n.evidence.Hash())
+	h = internal.HashCombine(h, n.origin.Hash())
 	return h
 }
 
@@ -415,6 +574,14 @@ func shapeOf(t typ.Type) shapevalue.Value {
 		return shapevalue.Bottom()
 	}
 	return shapevalue.Of(nonNil)
+}
+
+func escapeOf(t typ.Type) escape.Value {
+	nonNil, _ := value.SplitNilable(t)
+	if rec, ok := nonNil.(*typ.Record); ok && rec != nil && rec.Fresh {
+		return escape.Fresh()
+	}
+	return escape.Top()
 }
 
 // presenceOf derives the Presence axis from a structural type at admission.

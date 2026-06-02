@@ -54,16 +54,16 @@ func TestJoinValueTypes_TableInsertRefinesSoftArrayFallback(t *testing.T) {
 func TestMergeFieldAssignments_ReplacesUnsolvedFunctionSeed(t *testing.T) {
 	seed := typ.Func().Build()
 	solved := typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()
-	dst := map[cfg.SymbolID]map[string]typ.Type{
+	dst := liftFieldAssignments(map[cfg.SymbolID]map[string]typ.Type{
 		1: {"get_x": seed},
-	}
-	src := map[cfg.SymbolID]map[string]typ.Type{
+	})
+	src := liftFieldAssignments(map[cfg.SymbolID]map[string]typ.Type{
 		1: {"get_x": solved},
-	}
+	})
 
 	MergeFieldAssignments(dst, src)
 
-	got := dst[1]["get_x"]
+	got := projectedField(dst[1], "get_x")
 	if !typ.TypeEquals(got, solved) {
 		t.Fatalf("merged field assignment = %v, want %v", got, solved)
 	}
@@ -79,7 +79,7 @@ func TestMergeFieldsIntoType_MergesExistingFieldAndPreservesShape(t *testing.T) 
 		SetOpen(true).
 		Build()
 
-	got := MergeFieldsIntoType(base, map[string]typ.Type{"get_x": solved, "reset": typ.Func().Build()})
+	got := MergeFieldsIntoType(base, fieldValues(map[string]typ.Type{"get_x": solved, "reset": typ.Func().Build()}))
 	rec, ok := got.(*typ.Record)
 	if !ok {
 		t.Fatalf("merged type = %T %v, want record", got, got)
@@ -107,7 +107,7 @@ func TestMergeRequiredFieldsIntoType_MarksSurfaceFieldPresent(t *testing.T) {
 	solved := typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()
 	base := typ.NewRecord().OptField("get_x", seed).Build()
 
-	got := MergeRequiredFieldsIntoType(base, map[string]typ.Type{"get_x": solved})
+	got := MergeRequiredFieldsIntoType(base, fieldValues(map[string]typ.Type{"get_x": solved}))
 	rec, ok := got.(*typ.Record)
 	if !ok {
 		t.Fatalf("merged type = %T %v, want record", got, got)

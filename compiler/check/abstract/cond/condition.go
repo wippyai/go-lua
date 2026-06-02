@@ -197,6 +197,14 @@ func (ce *ConditionExtractor) pathFromExpr(expr ast.Expr) constraint.Path {
 	return flowpath.FromExprWithBindingsAt(expr, ce.ConstResolver, ce.bindings(), ce.graph(), ce.P)
 }
 
+func (ce *ConditionExtractor) predicateLinkForIdent(ident *ast.IdentExpr) *flow.PredicateLink {
+	if ident == nil {
+		return nil
+	}
+	path := ce.pathFromExpr(ident)
+	return predicate.LookupPredicateLink(path.Symbol, ce.Inputs)
+}
+
 // constraintsFromConditionExpr extracts predicate conditions from a full condition expression.
 func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) BranchConditions {
 	return ce.branchConditionsFromExpr(expr)
@@ -273,7 +281,7 @@ func (ce *ConditionExtractor) branchConditionsFromExpr(expr ast.Expr) BranchCond
 		result := []constraint.Constraint{constraint.Truthy{Path: path}}
 		basePath := ce.pathFromExpr(e.Object)
 		if !basePath.IsEmpty() {
-			if seg, ok := flowpath.StaticAttrKeySegmentWithConst(e.Key, ce.ConstResolver); ok && seg.Kind == constraint.SegmentField {
+			if seg, ok := flowpath.StaticAttrSegmentWithConst(e, ce.ConstResolver); ok && seg.Kind == constraint.SegmentField {
 				cpath := basePath
 				result = append(result, constraint.HasField{
 					Path:  cpath,
@@ -370,7 +378,7 @@ func (ce *ConditionExtractor) branchConditionsFromIdent(ident *ast.IdentExpr) Br
 		onFalse = constraint.FromConstraints(append([]constraint.Constraint{constraint.Falsy{Path: path}},
 			versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)...)...)
 	}
-	if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil {
+	if link := ce.predicateLinkForIdent(ident); link != nil {
 		if link.OnTruthy.HasConstraints() {
 			onTrue = constraint.And(onTrue, link.OnTruthy)
 		}
@@ -627,7 +635,7 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 	// x == nil
 	if literal.IsNilExpr(lhs) {
 		if ident, ok := rhs.(*ast.IdentExpr); ok {
-			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnFalsy.HasConstraints() {
+			if link := ce.predicateLinkForIdent(ident); link != nil && link.OnFalsy.HasConstraints() {
 				path := ce.pathFromExpr(rhs)
 				if path.IsEmpty() {
 					return link.OnFalsy
@@ -647,7 +655,7 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 	}
 	if literal.IsNilExpr(rhs) {
 		if ident, ok := lhs.(*ast.IdentExpr); ok {
-			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnFalsy.HasConstraints() {
+			if link := ce.predicateLinkForIdent(ident); link != nil && link.OnFalsy.HasConstraints() {
 				path := ce.pathFromExpr(lhs)
 				if path.IsEmpty() {
 					return link.OnFalsy
@@ -797,7 +805,7 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 	// x ~= nil
 	if literal.IsNilExpr(lhs) {
 		if ident, ok := rhs.(*ast.IdentExpr); ok {
-			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnTruthy.HasConstraints() {
+			if link := ce.predicateLinkForIdent(ident); link != nil && link.OnTruthy.HasConstraints() {
 				path := ce.pathFromExpr(rhs)
 				if path.IsEmpty() {
 					return link.OnTruthy
@@ -817,7 +825,7 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 	}
 	if literal.IsNilExpr(rhs) {
 		if ident, ok := lhs.(*ast.IdentExpr); ok {
-			if link := predicate.LookupPredicateLink(ident.Value, ce.Inputs); link != nil && link.OnTruthy.HasConstraints() {
+			if link := ce.predicateLinkForIdent(ident); link != nil && link.OnTruthy.HasConstraints() {
 				path := ce.pathFromExpr(lhs)
 				if path.IsEmpty() {
 					return link.OnTruthy
@@ -886,25 +894,26 @@ func (ce *ConditionExtractor) variantFieldOriginConstraints(target constraint.Pa
 	var out []constraint.Constraint
 	for _, origin := range ce.Inputs.VariantFieldOrigins {
 		if origin.Field != field ||
-			origin.DiscriminatorField == "" ||
-			origin.DiscriminatorValue == nil ||
 			!pathsCompatibleForOrigin(origin.Target, target) ||
 			!pathsCompatibleForOrigin(origin.Source, source) {
 			continue
 		}
-		if equals {
-			out = append(out, constraint.FieldEquals{
-				Target: origin.Target,
-				Field:  origin.DiscriminatorField,
-				Value:  origin.DiscriminatorValue,
+		if origin.OriginFamily != 0 {
+			if equals {
+				out = append(out, constraint.VariantCaseEquals{
+					Target:       origin.Target,
+					OriginFamily: origin.OriginFamily,
+					CaseIndex:    origin.CaseIndex,
+				})
+				continue
+			}
+			out = append(out, constraint.VariantCaseNotEquals{
+				Target:       origin.Target,
+				OriginFamily: origin.OriginFamily,
+				CaseIndex:    origin.CaseIndex,
 			})
 			continue
 		}
-		out = append(out, constraint.FieldNotEquals{
-			Target: origin.Target,
-			Field:  origin.DiscriminatorField,
-			Value:  origin.DiscriminatorValue,
-		})
 	}
 	return out
 }
@@ -1235,13 +1244,6 @@ func appendNumericConstraints(left, right []constraint.NumericConstraint) []cons
 
 // ExtractReturnExprConstraints extracts constraints from a return expression.
 func ExtractReturnExprConstraints(expr ast.Expr, p cfg.Point, sc *scope.State, inputs *flow.Inputs, evidence api.FlowEvidence, typeKeyResolver func(string, *scope.State) (narrow.TypeKey, bool), synthFunc func(ast.Expr, cfg.Point) typ.Type, constResolver func(string) *flow.ConstValue, symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool)) flow.ReturnExprConstraints {
-	if ident, ok := expr.(*ast.IdentExpr); ok {
-		link := predicate.LookupPredicateLink(ident.Value, inputs)
-		if link == nil || (!link.OnTruthy.HasConstraints() && !link.OnFalsy.HasConstraints()) {
-			return flow.ReturnExprConstraints{}
-		}
-	}
-
 	ce := &ConditionExtractor{
 		P: p, SC: sc, Inputs: inputs,
 		Synth:         synthFunc,
@@ -1249,6 +1251,12 @@ func ExtractReturnExprConstraints(expr ast.Expr, p cfg.Point, sc *scope.State, i
 		TypeKeyRes:    typeKeyResolver,
 		ConstResolver: constResolver,
 		Evidence:      evidence,
+	}
+	if ident, ok := expr.(*ast.IdentExpr); ok {
+		link := ce.predicateLinkForIdent(ident)
+		if link == nil || (!link.OnTruthy.HasConstraints() && !link.OnFalsy.HasConstraints()) {
+			return flow.ReturnExprConstraints{}
+		}
 	}
 	branches := ce.ConstraintsFromConditionExpr(expr)
 	var onReturn constraint.Condition

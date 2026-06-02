@@ -107,8 +107,7 @@ func (r *Runner) appendCapturedCallEffectAssignments(
 
 	product := store.InterprocFacts(graph, parent)
 	capturedFields := product.CapturedFieldAssigns()
-	capturedContainers := product.CapturedContainerMutations()
-	if len(capturedFields) == 0 && len(capturedContainers) == 0 {
+	if len(capturedFields) == 0 {
 		return
 	}
 
@@ -149,20 +148,10 @@ func (r *Runner) appendCapturedCallEffectAssignments(
 		extractOut.Evidence.Calls,
 		extractOut.Evidence.EscapedFunctions,
 		capturedFields,
-		capturedContainers,
 		calleeTypeResolver,
 	)
 	if len(extra.Fields) > 0 {
 		extractOut.Inputs.Assignments = append(extractOut.Inputs.Assignments, extra.Fields...)
-	}
-	if len(extra.Map) > 0 {
-		extractOut.Inputs.MapMutatorAssignments = append(extractOut.Inputs.MapMutatorAssignments, extra.Map...)
-	}
-	if len(extra.Table) > 0 {
-		extractOut.Inputs.TableMutatorAssignments = append(extractOut.Inputs.TableMutatorAssignments, extra.Table...)
-	}
-	if len(extra.Container) > 0 {
-		extractOut.Inputs.ContainerMutatorAssignments = append(extractOut.Inputs.ContainerMutatorAssignments, extra.Container...)
 	}
 }
 

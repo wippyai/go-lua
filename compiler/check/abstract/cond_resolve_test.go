@@ -357,20 +357,21 @@ func TestConstraintsFromEquality_FieldEqualsPath(t *testing.T) {
 	}
 }
 
-func TestConstraintsFromEquality_SelectVariantOriginEmitsDiscriminator(t *testing.T) {
+func TestConstraintsFromEquality_SelectVariantOriginEmitsCaseConstraint(t *testing.T) {
 	lhs := &ast.AttrGetExpr{
 		Object: &ast.IdentExpr{Value: "result"},
 		Key:    &ast.StringExpr{Value: effect.SelectResultChannelField},
 	}
 	rhs := &ast.IdentExpr{Value: "timeout"}
+	family := flow.VariantOriginFamily(constraint.Path{Root: "result"}, effect.SelectResultChannelField)
 
 	ce := &cond.ConditionExtractor{Inputs: &flow.Inputs{
 		VariantFieldOrigins: []flow.VariantFieldOrigin{{
-			Target:             constraint.Path{Root: "result"},
-			Field:              effect.SelectResultChannelField,
-			Source:             constraint.Path{Root: "timeout"},
-			DiscriminatorField: effect.SelectResultCaseIDField,
-			DiscriminatorValue: typ.LiteralInt(1),
+			Target:       constraint.Path{Root: "result"},
+			Field:        effect.SelectResultChannelField,
+			Source:       constraint.Path{Root: "timeout"},
+			OriginFamily: family,
+			CaseIndex:    1,
 		}},
 	}}
 	c := ce.ConditionFromEquality(lhs, rhs)
@@ -379,25 +380,26 @@ func TestConstraintsFromEquality_SelectVariantOriginEmitsDiscriminator(t *testin
 	if !hasFieldEqualsPathConstraint(constraints, "result", effect.SelectResultChannelField, "timeout") {
 		t.Fatalf("missing field/path equality in %v", constraints)
 	}
-	if !hasFieldEqualsConstraint(constraints, "result", effect.SelectResultCaseIDField, typ.LiteralInt(1)) {
-		t.Fatalf("missing select discriminator equality in %v", constraints)
+	if !hasVariantCaseEqualsConstraint(constraints, "result", family, 1) {
+		t.Fatalf("missing select variant-case equality in %v", constraints)
 	}
 }
 
-func TestConstraintsFromInequality_SelectVariantOriginEmitsDiscriminatorExclusion(t *testing.T) {
+func TestConstraintsFromInequality_SelectVariantOriginEmitsCaseExclusion(t *testing.T) {
 	lhs := &ast.AttrGetExpr{
 		Object: &ast.IdentExpr{Value: "result"},
 		Key:    &ast.StringExpr{Value: effect.SelectResultChannelField},
 	}
 	rhs := &ast.IdentExpr{Value: "timeout"}
+	family := flow.VariantOriginFamily(constraint.Path{Root: "result"}, effect.SelectResultChannelField)
 
 	ce := &cond.ConditionExtractor{Inputs: &flow.Inputs{
 		VariantFieldOrigins: []flow.VariantFieldOrigin{{
-			Target:             constraint.Path{Root: "result"},
-			Field:              effect.SelectResultChannelField,
-			Source:             constraint.Path{Root: "timeout"},
-			DiscriminatorField: effect.SelectResultCaseIDField,
-			DiscriminatorValue: typ.LiteralInt(1),
+			Target:       constraint.Path{Root: "result"},
+			Field:        effect.SelectResultChannelField,
+			Source:       constraint.Path{Root: "timeout"},
+			OriginFamily: family,
+			CaseIndex:    1,
 		}},
 	}}
 	c := ce.ConditionFromInequality(lhs, rhs)
@@ -406,8 +408,8 @@ func TestConstraintsFromInequality_SelectVariantOriginEmitsDiscriminatorExclusio
 	if !hasFieldNotEqualsPathConstraint(constraints, "result", effect.SelectResultChannelField, "timeout") {
 		t.Fatalf("missing field/path inequality in %v", constraints)
 	}
-	if !hasFieldNotEqualsConstraint(constraints, "result", effect.SelectResultCaseIDField, typ.LiteralInt(1)) {
-		t.Fatalf("missing select discriminator exclusion in %v", constraints)
+	if !hasVariantCaseNotEqualsConstraint(constraints, "result", family, 1) {
+		t.Fatalf("missing select variant-case exclusion in %v", constraints)
 	}
 }
 
@@ -464,6 +466,26 @@ func hasFieldNotEqualsConstraint(constraints []constraint.Constraint, targetRoot
 	for _, c := range constraints {
 		v, ok := c.(constraint.FieldNotEquals)
 		if ok && v.Target.Root == targetRoot && v.Field == field && typ.TypeEquals(v.Value, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasVariantCaseEqualsConstraint(constraints []constraint.Constraint, targetRoot string, family uint64, caseIndex int) bool {
+	for _, c := range constraints {
+		v, ok := c.(constraint.VariantCaseEquals)
+		if ok && v.Target.Root == targetRoot && v.OriginFamily == family && v.CaseIndex == caseIndex {
+			return true
+		}
+	}
+	return false
+}
+
+func hasVariantCaseNotEqualsConstraint(constraints []constraint.Constraint, targetRoot string, family uint64, caseIndex int) bool {
+	for _, c := range constraints {
+		v, ok := c.(constraint.VariantCaseNotEquals)
+		if ok && v.Target.Root == targetRoot && v.OriginFamily == family && v.CaseIndex == caseIndex {
 			return true
 		}
 	}

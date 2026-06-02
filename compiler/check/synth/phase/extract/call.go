@@ -3,7 +3,6 @@ package extract
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strconv"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -12,6 +11,9 @@ import (
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
+	"github.com/wippyai/go-lua/compiler/check/domain/callreturn"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
@@ -27,6 +29,7 @@ import (
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
@@ -425,10 +428,8 @@ func (s *Synthesizer) declaredProjectionLookup(sc *scope.State) func(string) typ
 	return func(name string) typ.Type {
 		// Check global types first (require, select, type, etc.)
 		if s.deps.CheckCtx != nil {
-			if globalTypes := s.deps.CheckCtx.GlobalTypes(); globalTypes != nil {
-				if t, ok := globalTypes[name]; ok {
-					return t
-				}
+			if t, ok := s.deps.CheckCtx.GlobalTypeOverlay().Type(name); ok {
+				return t
 			}
 		}
 		// Check scope metadata for type names (Number, Point, etc.)
@@ -548,7 +549,18 @@ func (s *Synthesizer) stablePrototypeTypeSeen(expr ast.Expr, p cfg.Point, sc *sc
 	builder := typ.NewRecord()
 	if base != nil {
 		for _, field := range base.Fields {
-			fields[field.Name] = value.MergeForConvergence(fields[field.Name], field.Type)
+			key, ok := fieldkey.FromName(field.Name)
+			if !ok {
+				continue
+			}
+			fields[key] = value.MergeForConvergence(fields[key], field.Type)
+		}
+		for _, member := range base.StaticMembers {
+			key, ok := stablePrototypeStaticMemberKey(member)
+			if !ok {
+				continue
+			}
+			fields[key] = value.MergeForConvergence(fields[key], member.Type)
 		}
 		if base.Metatable != nil {
 			builder.Metatable(base.Metatable)
@@ -559,17 +571,12 @@ func (s *Synthesizer) stablePrototypeTypeSeen(expr ast.Expr, p cfg.Point, sc *sc
 		builder.SetOpen(base.Open)
 	}
 
-	names := make([]string, 0, len(fields))
-	for name := range fields {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		t := fields[name]
+	for _, key := range fieldkey.Sorted(fields) {
+		t := fields[key]
 		if t == nil {
 			t = typ.Unknown
 		}
-		builder.Field(name, t)
+		addStablePrototypeField(builder, key, t)
 	}
 	return builder.Build()
 }
@@ -596,25 +603,27 @@ func (s *Synthesizer) stablePrototypeGraphs(current *compcfg.Graph) []*compcfg.G
 	return graphs
 }
 
-func (s *Synthesizer) stablePrototypeFields(graphs []*compcfg.Graph, sym compcfg.SymbolID, sc *scope.State, recurse ExprSynth, seen map[compcfg.SymbolID]bool) map[string]typ.Type {
+type stablePrototypeFieldTypes map[fieldkey.Key]typ.Type
+
+func (s *Synthesizer) stablePrototypeFields(graphs []*compcfg.Graph, sym compcfg.SymbolID, sc *scope.State, recurse ExprSynth, seen map[compcfg.SymbolID]bool) stablePrototypeFieldTypes {
 	if len(graphs) == 0 || sym == 0 {
 		return nil
 	}
-	var fields map[string]typ.Type
-	addField := func(name string, t typ.Type) {
-		if name == "" {
+	var fields stablePrototypeFieldTypes
+	addField := func(key fieldkey.Key, t typ.Type) {
+		if !stablePrototypeFieldKeyValid(key) {
 			return
 		}
 		if t == nil {
 			t = typ.Unknown
 		}
 		if fields == nil {
-			fields = make(map[string]typ.Type)
+			fields = make(stablePrototypeFieldTypes)
 		}
-		if existing := fields[name]; existing != nil {
-			fields[name] = value.MergeForConvergence(existing, t)
+		if existing := fields[key]; existing != nil {
+			fields[key] = value.MergeForConvergence(existing, t)
 		} else {
-			fields[name] = t
+			fields[key] = t
 		}
 	}
 	for _, graph := range graphs {
@@ -636,21 +645,21 @@ func (s *Synthesizer) stablePrototypeFields(graphs []*compcfg.Graph, sym compcfg
 						s.collectStablePrototypeLiteralFields(source, p, sc, bindings, recurse, seen, addField)
 					}
 				}
-				fieldName := stablePrototypeFieldName(target, sym)
-				if fieldName == "" {
+				fieldKey, ok := stablePrototypeFieldKey(target, sym)
+				if !ok {
 					continue
 				}
-				addField(fieldName, s.stablePrototypeFieldType(assignmentSourceAt(sources, i), p, sc, bindings, recurse, seen))
+				addField(fieldKey, s.stablePrototypeFieldType(assignmentSourceAt(sources, i), p, sc, bindings, recurse, seen))
 			}
 		}
 		for _, def := range evidence.FunctionDefinitions {
 			p := def.Nested.Point
 			info := def.FuncDef
-			fieldName := stablePrototypeFuncDefFieldName(info, sym)
-			if fieldName == "" {
+			fieldKey, ok := stablePrototypeFuncDefFieldKey(info, sym)
+			if !ok {
 				continue
 			}
-			addField(fieldName, s.stablePrototypeFuncDefType(info, p, sc, bindings, recurse))
+			addField(fieldKey, s.stablePrototypeFuncDefType(info, p, sc, bindings, recurse))
 		}
 	}
 	return fields
@@ -670,47 +679,92 @@ func (s *Synthesizer) collectStablePrototypeLiteralFields(
 	bindings *bind.BindingTable,
 	recurse ExprSynth,
 	seen map[compcfg.SymbolID]bool,
-	addField func(string, typ.Type),
+	addField func(fieldkey.Key, typ.Type),
 ) {
 	table, ok := source.(*ast.TableExpr)
 	if !ok || table == nil || addField == nil {
 		return
 	}
 	for _, field := range table.Fields {
-		name, ok := staticTableFieldName(field)
+		key, ok := fieldkey.FromTableField(field)
 		if !ok {
 			continue
 		}
-		addField(name, s.stablePrototypeFieldType(field.Value, p, sc, bindings, recurse, seen))
+		addField(key, s.stablePrototypeFieldType(field.Value, p, sc, bindings, recurse, seen))
 	}
 }
 
-func stablePrototypeFieldName(target compcfg.AssignTarget, sym compcfg.SymbolID) string {
+func stablePrototypeFieldKey(target compcfg.AssignTarget, sym compcfg.SymbolID) (fieldkey.Key, bool) {
 	if target.BaseSymbol != sym {
-		return ""
+		return fieldkey.Key{}, false
 	}
 	switch target.Kind {
 	case compcfg.TargetField:
 		if len(target.FieldPath) == 1 {
-			return target.FieldPath[0]
+			return fieldkey.FromName(target.FieldPath[0])
 		}
 	case compcfg.TargetIndex:
-		if key, ok := target.Key.(*ast.StringExpr); ok {
-			return key.Value
-		}
+		return stablePrototypeIndexKey(target.Key)
 	}
-	return ""
+	return fieldkey.Key{}, false
 }
 
-func stablePrototypeFuncDefFieldName(info *compcfg.FuncDefInfo, sym compcfg.SymbolID) string {
+func stablePrototypeIndexKey(key ast.Expr) (fieldkey.Key, bool) {
+	switch k := key.(type) {
+	case *ast.StringExpr:
+		return fieldkey.FromSegment(constraint.Segment{Kind: constraint.SegmentIndexString, Name: k.Value})
+	case *ast.NumberExpr:
+		if idx, ok := pathkey.ParseIntLiteral(k.Value); ok {
+			return fieldkey.FromSegment(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})
+		}
+	}
+	return fieldkey.Key{}, false
+}
+
+func stablePrototypeStaticMemberKey(member typ.StaticMember) (fieldkey.Key, bool) {
+	switch member.Kind {
+	case typ.StaticMemberStringIndex:
+		return fieldkey.FromSegment(constraint.Segment{Kind: constraint.SegmentIndexString, Name: member.Name})
+	case typ.StaticMemberIntIndex:
+		return fieldkey.FromSegment(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(member.Index)})
+	default:
+		return fieldkey.Key{}, false
+	}
+}
+
+func stablePrototypeFieldKeyValid(key fieldkey.Key) bool {
+	switch key.Kind {
+	case constraint.SegmentField:
+		return key.Name != ""
+	case constraint.SegmentIndexString, constraint.SegmentIndexInt:
+		return true
+	default:
+		return false
+	}
+}
+
+func addStablePrototypeField(builder *typ.RecordBuilder, key fieldkey.Key, t typ.Type) {
+	switch key.Kind {
+	case constraint.SegmentField:
+		if key.Name != "" {
+			builder.Field(key.Name, t)
+		}
+	case constraint.SegmentIndexString:
+		builder.StaticStringIndex(key.Name, t)
+	case constraint.SegmentIndexInt:
+		builder.StaticIntIndex(int64(key.Index), t)
+	}
+}
+
+func stablePrototypeFuncDefFieldKey(info *compcfg.FuncDefInfo, sym compcfg.SymbolID) (fieldkey.Key, bool) {
 	if info == nil || info.ReceiverSymbol != sym || info.Name == "" {
-		return ""
+		return fieldkey.Key{}, false
 	}
 	switch info.TargetKind {
 	case compcfg.FuncDefField, compcfg.FuncDefMethod:
-		return info.Name
+		return fieldkey.FromName(info.Name)
 	default:
-		return ""
+		return fieldkey.Key{}, false
 	}
 }
 
@@ -986,33 +1040,16 @@ func CopyTypes(types []typ.Type) []typ.Type {
 
 // applyPostCallTransforms applies effect-based return type transforms.
 func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Type, returns []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool) []typ.Type {
-	if len(returns) == 0 {
-		return returns
-	}
-
-	fn := intercept.ResolveSpecFunction(calleeType)
-	if fn == nil {
-		return returns
-	}
-
-	effectArgs := ops.RuntimeArgsForEffects(s.deps.Ctx, s.GetCallQuery(), calleeType, args, receiver, isMethod, forceMethodReceiver)
-	var result []typ.Type
-	for i := range returns {
-		transformed := transform.ApplyEffectTransform(fn, effectArgs, i, returns[i])
-		if transformed == nil || transformed == returns[i] {
-			continue
-		}
-		if result == nil {
-			result = make([]typ.Type, len(returns))
-			copy(result, returns)
-		}
-		result[i] = transformed
-	}
-	if result != nil {
-		return result
-	}
-
-	return returns
+	return callreturn.ApplyEffectTransforms(callreturn.EffectTransformInput{
+		Ctx:                 s.deps.Ctx,
+		Query:               s.GetCallQuery(),
+		Callee:              calleeType,
+		Args:                args,
+		Returns:             returns,
+		Receiver:            receiver,
+		IsMethod:            isMethod,
+		ForceMethodReceiver: forceMethodReceiver,
+	})
 }
 
 func (s *Synthesizer) applyEnvironmentReturnProjection(
@@ -1232,29 +1269,12 @@ func tableFieldValue(table *ast.TableExpr, segment constraint.Segment) ast.Expr 
 		return nil
 	}
 	for _, field := range table.Fields {
-		if field == nil || !tableFieldKeyMatches(field.Key, segment) {
+		if field == nil || !flowpath.TableFieldMatchesSegment(field, segment) {
 			continue
 		}
 		return field.Value
 	}
 	return nil
-}
-
-func tableFieldKeyMatches(key ast.Expr, segment constraint.Segment) bool {
-	switch segment.Kind {
-	case constraint.SegmentField, constraint.SegmentIndexString:
-		switch k := key.(type) {
-		case *ast.StringExpr:
-			return k.Value == segment.Name
-		case *ast.IdentExpr:
-			return k.Value == segment.Name
-		}
-	case constraint.SegmentIndexInt:
-		if k, ok := key.(*ast.NumberExpr); ok {
-			return k.Value == fmt.Sprint(segment.Index)
-		}
-	}
-	return false
 }
 
 func (s *Synthesizer) environmentPathType(ownerType typ.Type, ownerPath constraint.Path, segments []constraint.Segment, p cfg.Point) typ.Type {
@@ -1384,8 +1404,10 @@ func functionExprForCallbackArg(s *Synthesizer, arg ast.Expr) *ast.FunctionExpr 
 	return s.functionLiteralForIdent(ident)
 }
 
-// callbackEnvOverlay extracts the EnvOverlay for a callback at the given parameter index.
-func callbackEnvOverlay(calleeType typ.Type, paramIdx int) map[string]typ.Type {
+// callbackEnvOverlay extracts the callback environment overlay for a callback at
+// the given parameter index. The raw contract map is normalized immediately into
+// the callbackenv domain carrier.
+func callbackEnvOverlay(calleeType typ.Type, paramIdx int) callbackenv.Overlay {
 	fn := intercept.ResolveSpecFunction(calleeType)
 	if fn == nil || fn.Spec == nil {
 		return nil
@@ -1398,24 +1420,25 @@ func callbackEnvOverlay(calleeType typ.Type, paramIdx int) map[string]typ.Type {
 	if cb == nil || len(cb.EnvOverlay) == 0 {
 		return nil
 	}
-	return cb.EnvOverlay
+	return callbackenv.OverlayFromContractMap(cb.EnvOverlay)
 }
 
-// withEnvOverlay returns a new Synthesizer with additional globals merged into the context.
-func (s *Synthesizer) withEnvOverlay(overlay map[string]typ.Type) *Synthesizer {
+// withEnvOverlay returns a new Synthesizer with additional globals merged into
+// the context through the normalized source-global overlay carrier.
+func (s *Synthesizer) withEnvOverlay(overlay callbackenv.Overlay) *Synthesizer {
 	overlaidCtx := s.deps.CheckCtx
 	if overlaidCtx != nil {
-		overlaidCtx = overlaidCtx.WithGlobalOverlay(overlay)
+		overlaidCtx = overlaidCtx.WithGlobalTypeOverlay(overlay)
 	}
 	overlaidDeps := &Deps{
-		Ctx:            s.deps.Ctx,
-		Types:          s.deps.Types,
-		Scopes:         s.deps.Scopes,
-		Manifests:      s.deps.Manifests,
-		CheckCtx:       overlaidCtx,
-		FunctionFacts:  s.deps.FunctionFacts,
-		Graphs:         s.deps.Graphs,
-		Flow:           s.deps.Flow,
+		Ctx:               s.deps.Ctx,
+		Types:             s.deps.Types,
+		Scopes:            s.deps.Scopes,
+		Manifests:         s.deps.Manifests,
+		CheckCtx:          overlaidCtx,
+		FunctionFacts:     s.deps.FunctionFacts,
+		Graphs:            s.deps.Graphs,
+		Flow:              s.deps.Flow,
 		Paths:             s.deps.Paths,
 		ModuleBindings:    s.deps.ModuleBindings,
 		ModuleAliases:     s.deps.ModuleAliases,

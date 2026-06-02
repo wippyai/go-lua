@@ -112,6 +112,65 @@ func TestIndex_RecordWithMapComponent_LiteralFieldPrecedence(t *testing.T) {
 	}
 }
 
+func TestIndex_RecordStaticStringMemberStaysSeparateFromDotField(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("name", typ.String).
+		StaticStringIndex("raw-key", typ.Number).
+		Build()
+
+	dot, ok := Field(rec, "name")
+	if !ok || !typ.TypeEquals(dot, typ.String) {
+		t.Fatalf("Field(rec, name) = %v ok=%v, want string true", dot, ok)
+	}
+	index, ok := Index(rec, typ.LiteralString("raw-key"))
+	if !ok || !typ.TypeEquals(index, typ.Number) {
+		t.Fatalf(`Index(rec, "raw-key") = %v ok=%v, want number true`, index, ok)
+	}
+}
+
+func TestRuntimeIndex_MissingTableSlotReadsNil(t *testing.T) {
+	rec := typ.NewRecord().Build()
+
+	got, ok := RuntimeIndex(rec, typ.String)
+	if !ok || !typ.TypeEquals(got, typ.Nil) {
+		t.Fatalf("RuntimeIndex({}, string) = %v ok=%v, want nil true", got, ok)
+	}
+}
+
+func TestRuntimeIndex_UnionKeepsPresentAndMissingTableSlots(t *testing.T) {
+	recWithSlot := typ.NewRecord().
+		StaticStringIndex("name", typ.String).
+		Build()
+	recWithoutSlot := typ.NewRecord().Build()
+
+	got, ok := RuntimeIndex(typ.NewUnion(recWithSlot, recWithoutSlot), typ.LiteralString("name"))
+	if !ok {
+		t.Fatal("RuntimeIndex(union, literal key) did not resolve")
+	}
+	if !subtype.IsSubtype(typ.String, got) || !ContainsNil(got) {
+		t.Fatalf("RuntimeIndex(union, literal key) = %v, want string|nil", got)
+	}
+}
+
+func TestRuntimeIndex_NonTableStillRejected(t *testing.T) {
+	if got, ok := RuntimeIndex(typ.Number, typ.String); ok || got != nil {
+		t.Fatalf("RuntimeIndex(number, string) = %v ok=%v, want nil false", got, ok)
+	}
+}
+
+func TestIndex_RecordExactIntFallsBackToMapComponent(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("_dataflow_ref", typ.False).
+		MapComponent(typ.Any, typ.Any).
+		SetOpen(true).
+		Build()
+
+	got, ok := Index(rec, typ.LiteralInt(1))
+	if !ok || !ContainsNil(got) {
+		t.Fatalf("Index(rec, 1) = %v ok=%v, want optional map value", got, ok)
+	}
+}
+
 func TestIndex_RecordWithMapComponent_LiteralMissingFallsBackToMap(t *testing.T) {
 	rec := typ.NewRecord().
 		Field("name", typ.String).

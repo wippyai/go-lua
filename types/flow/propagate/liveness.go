@@ -46,6 +46,38 @@ type liveSets struct {
 	liveIn map[cfg.Point]map[pathDemandKey]struct{}
 }
 
+// ConditionProjector applies the SSA-version relevance abstraction to a
+// condition at a CFG point. It is shared by the legacy condition propagator and
+// the canonical product equation solver so both fixed points use the same
+// condition-vocabulary bound instead of carrying parallel projection logic.
+type ConditionProjector struct {
+	live *liveSets
+}
+
+// NewConditionProjector computes the liveness demand needed to project
+// path-condition facts. A nil or disabled demand returns a projector whose
+// Project method is a no-op.
+func NewConditionProjector(inputs *Inputs) *ConditionProjector {
+	return &ConditionProjector{live: computeLiveSets(inputs)}
+}
+
+// Enabled reports whether this projector has real liveness demand.
+func (p *ConditionProjector) Enabled() bool {
+	return p != nil && p.live.enabled()
+}
+
+// Project forgets condition literals whose semantic access paths are dead at
+// point. Forgetting weakens the condition, so this is sound for forward
+// propagation and bounds acyclic DNF vocabulary growth.
+func (p *ConditionProjector) Project(point cfg.Point, cond constraint.Condition) constraint.Condition {
+	if !p.Enabled() {
+		return cond
+	}
+	return cond.Project(func(lit constraint.Constraint) bool {
+		return literalLive(p.live, point, lit)
+	})
+}
+
 // enabled reports whether projection should run: only when liveness demand was
 // supplied and solved.
 func (l *liveSets) enabled() bool {

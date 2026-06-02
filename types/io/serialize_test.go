@@ -439,6 +439,36 @@ func TestEncodeDecode_Record(t *testing.T) {
 			t.Errorf("expected map value number, got %s", rec.MapValue.String())
 		}
 	})
+
+	t.Run("static-bracket-members", func(t *testing.T) {
+		original := typ.NewRecord().
+			Field("name", typ.String).
+			StaticStringIndex("raw-key", typ.Number).
+			StaticIntIndex(1, typ.Boolean).
+			Build()
+
+		data, err := Encode(original)
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+		decoded, err := Decode(data)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		rec, ok := decoded.(*typ.Record)
+		if !ok {
+			t.Fatalf("Decode = %T %[1]v, want record", decoded)
+		}
+		if field := rec.GetField("name"); field == nil || !typ.TypeEquals(field.Type, typ.String) {
+			t.Fatalf("dot field name = %#v, want string", field)
+		}
+		if member := rec.GetStaticStringIndex("raw-key"); member == nil || !typ.TypeEquals(member.Type, typ.Number) {
+			t.Fatalf("static member [\"raw-key\"] = %#v, want number", member)
+		}
+		if member := rec.GetStaticIntIndex(1); member == nil || !typ.TypeEquals(member.Type, typ.Boolean) {
+			t.Fatalf("static member [1] = %#v, want boolean", member)
+		}
+	})
 }
 
 func TestEncodeDecode_Array(t *testing.T) {

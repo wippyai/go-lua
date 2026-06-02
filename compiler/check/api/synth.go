@@ -187,6 +187,9 @@ type FlowOps interface {
 	// PreStateTypeAt returns the path type at the entry side of point p.
 	PreStateTypeAt(p cfg.Point, path constraint.Path) typ.Type
 
+	// ExcludesTypeAt checks if solved flow proves a type impossible at a point.
+	ExcludesTypeAt(p cfg.Point, path constraint.Path, declared typ.Type) bool
+
 	// BoundsAt returns numeric bounds for a variable at a point.
 	// Used for array length inference and index bounds checking.
 	BoundsAt(p cfg.Point, name string) (lower, upper int64, ok bool)

@@ -159,40 +159,40 @@ func TestKeyTypeFromExpr_NilExpr(t *testing.T) {
 func TestKeyTypeFromExpr_StringLiteral(t *testing.T) {
 	expr := &ast.StringExpr{Value: "key"}
 	result := literal.KeyTypeFromExpr(expr, nil)
-	if result != typ.String {
-		t.Errorf("expected String, got %v", result)
+	if !typ.TypeEquals(result, typ.LiteralString("key")) {
+		t.Errorf("expected literal string key, got %v", result)
 	}
 }
 
 func TestKeyTypeFromExpr_IntegerLiteral(t *testing.T) {
 	expr := &ast.NumberExpr{Value: "42"}
 	result := literal.KeyTypeFromExpr(expr, nil)
-	if result != typ.Integer {
-		t.Errorf("expected Integer, got %v", result)
+	if !typ.TypeEquals(result, typ.LiteralInt(42)) {
+		t.Errorf("expected literal integer key, got %v", result)
 	}
 }
 
 func TestKeyTypeFromExpr_FloatLiteral(t *testing.T) {
 	expr := &ast.NumberExpr{Value: "3.14"}
 	result := literal.KeyTypeFromExpr(expr, nil)
-	if result != typ.Number {
-		t.Errorf("expected Number, got %v", result)
+	if !typ.TypeEquals(result, typ.LiteralNumber(3.14)) {
+		t.Errorf("expected literal number key, got %v", result)
 	}
 }
 
 func TestKeyTypeFromExpr_BoolLiteral(t *testing.T) {
 	expr := &ast.TrueExpr{}
 	result := literal.KeyTypeFromExpr(expr, nil)
-	if result != typ.Boolean {
-		t.Errorf("expected Boolean, got %v", result)
+	if !typ.TypeEquals(result, typ.True) {
+		t.Errorf("expected literal true key, got %v", result)
 	}
 }
 
 func TestKeyTypeFromExpr_FalseLiteral(t *testing.T) {
 	expr := &ast.FalseExpr{}
 	result := literal.KeyTypeFromExpr(expr, nil)
-	if result != typ.Boolean {
-		t.Errorf("expected Boolean, got %v", result)
+	if !typ.TypeEquals(result, typ.False) {
+		t.Errorf("expected literal false key, got %v", result)
 	}
 }
 
@@ -205,8 +205,8 @@ func TestKeyTypeFromExpr_IdentWithConstResolver(t *testing.T) {
 	}
 	expr := &ast.IdentExpr{Value: "key"}
 	result := literal.KeyTypeFromExpr(expr, constResolver)
-	if result != typ.String {
-		t.Errorf("expected String, got %v", result)
+	if !typ.TypeEquals(result, typ.LiteralString("test")) {
+		t.Errorf("expected literal string key, got %v", result)
 	}
 }
 
@@ -219,8 +219,8 @@ func TestKeyTypeFromExpr_IdentWithIntConstResolver(t *testing.T) {
 	}
 	expr := &ast.IdentExpr{Value: "idx"}
 	result := literal.KeyTypeFromExpr(expr, constResolver)
-	if result != typ.Integer {
-		t.Errorf("expected Integer, got %v", result)
+	if !typ.TypeEquals(result, typ.LiteralInt(5)) {
+		t.Errorf("expected literal integer key, got %v", result)
 	}
 }
 

@@ -743,13 +743,13 @@ type localInferenceSolver struct {
 }
 
 type localInferenceSCCWork struct {
-	sccSet            map[cfg.SymbolID]bool
-	sccSyms           []cfg.SymbolID
-	assignIdx         []int
-	argCallIdx        []int
-	mutatorCallIdx    []int
-	overlayScratch    api.SpecTypes
-	snapshot          []typ.Type
+	sccSet           map[cfg.SymbolID]bool
+	sccSyms          []cfg.SymbolID
+	assignIdx        []int
+	argCallIdx       []int
+	mutatorCallIdx   []int
+	overlayScratch   api.SpecTypes
+	snapshot         []typ.Type
 	currentOverlay   api.SpecTypes
 	currentSynth     func(ast.Expr, cfg.Point) typ.Type
 	currentIteration localInferenceIteration
@@ -1471,7 +1471,7 @@ func (s *localInferenceSolver) applyDynamicTargetMutator(
 	if !ok {
 		return false
 	}
-	if _, static := path.StaticAttrKeySegment(attr.Key); static {
+	if _, static := path.StaticAttrSegment(attr); static {
 		return false
 	}
 	baseSym := callsite.SymbolOrCreateFieldFromExpr(attr.Object, s.bindings)

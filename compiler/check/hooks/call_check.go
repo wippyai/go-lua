@@ -17,6 +17,7 @@
 package hooks
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -26,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/db"
@@ -38,6 +40,7 @@ import (
 func CheckCalls(
 	graph *cfg.Graph,
 	evidence api.FlowEvidence,
+	callContracts []api.CallContractEvidence,
 	observer observation.Projector,
 	ctx *db.QueryContext,
 	query core.TypeOps,
@@ -50,7 +53,7 @@ func CheckCalls(
 
 	var diags []diag.Diagnostic
 	bindings := graph.Bindings()
-	for _, call := range evidence.Calls {
+	for callIdx, call := range evidence.Calls {
 		if call.Origin == api.CallOriginExpression {
 			continue
 		}
@@ -59,7 +62,7 @@ func CheckCalls(
 		if info == nil {
 			continue
 		}
-		callDiags := checkSingleCall(p, info, observer, ctx, query, sourceName, graph, evidence, bindings, results)
+		callDiags := checkSingleCall(callContractAt(callContracts, callIdx), p, info, observer, ctx, query, sourceName, graph, evidence, bindings, results)
 		diags = append(diags, callDiags...)
 	}
 
@@ -67,6 +70,7 @@ func CheckCalls(
 }
 
 func checkSingleCall(
+	contract api.CallContractEvidence,
 	p cfg.Point,
 	info *cfg.CallInfo,
 	observer observation.Projector,
@@ -90,9 +94,10 @@ func checkSingleCall(
 		}
 	}
 
+	callObserver := observer.WithPostStateReads()
 	args := make([]typ.Type, len(info.Args))
 	for i, arg := range info.Args {
-		args[i] = observer.TypeOf(arg, p)
+		args[i] = callObserver.TypeOf(arg, p)
 	}
 
 	def := ops.CallDef{
@@ -103,10 +108,10 @@ func checkSingleCall(
 	if callsite.IsMethodCallInfo(info) {
 		def.IsMethod = true
 		def.MethodName = info.Method
-		def.Receiver = observer.TypeOf(info.Receiver, p)
+		def.Receiver = callObserver.TypeOf(info.Receiver, p)
 		def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, graph, evidence, info)
 	} else if info.Callee != nil {
-		def.Callee = observer.TypeOf(info.Callee, p)
+		def.Callee = callObserver.TypeOf(info.Callee, p)
 		if projection, ok := functionfact.ProjectCall(functionfact.CallProjectionInput{
 			Store:    api.StoreFrom(ctx),
 			Info:     info,
@@ -124,10 +129,10 @@ func checkSingleCall(
 
 	full := callarg.Full(
 		func(arg ast.Expr, pt cfg.Point, expected typ.Type) typ.Type {
-			return observer.TypeOfWithExpected(arg, pt, expected)
+			return callObserver.TypeOfWithExpected(arg, pt, expected)
 		},
 		func(table *ast.TableExpr, expected typ.Type, pt cfg.Point) bool {
-			return observer.TableCompatible(table, pt, expected)
+			return callObserver.TableCompatible(table, pt, expected)
 		},
 		p,
 	)
@@ -138,12 +143,77 @@ func checkSingleCall(
 	// against the resolved expected parameter; a narrowed/dominated `any` is no
 	// longer the gradual top and is untouched.
 	resynth := func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
-		return observer.AdmitGradualArgument(full(idx, arg, expected), arg, p, expected)
+		return callObserver.AdmitGradualArgument(full(idx, arg, expected), arg, p, expected)
 	}
 	pipeline := ops.NewCallPipeline(ctx, def, len(info.Args)).
 		WithReSynth(callarg.ForArgs(info.Args, resynth))
-	result := pipeline.Run()
-	return callErrorsToDiags(result.Errors, info, sourceName)
+	pipeline.Infer()
+	pipeline.ReSynthAndReInfer()
+	result := pipeline.Finish()
+	errors := appendCallContractErrors(result.Errors, contract, info, p, callObserver, ctx, query, pipeline)
+	return callErrorsToDiags(errors, info, sourceName)
+}
+
+func appendCallContractErrors(
+	errors []ops.CallError,
+	contract api.CallContractEvidence,
+	info *cfg.CallInfo,
+	p cfg.Point,
+	observer observation.Projector,
+	ctx *db.QueryContext,
+	query core.TypeOps,
+	pipeline *ops.CallPipeline,
+) []ops.CallError {
+	if info == nil || pipeline == nil || len(contract.Args) == 0 {
+		return errors
+	}
+	for i, arg := range info.Args {
+		obligation := contract.ArgObligation(i)
+		expected := obligation.Type
+		if !paramevidence.InformativeCallArgContract(expected) {
+			continue
+		}
+		if obligation.AllowsGradualAny() && typ.TypeEquals(pipeline.ExpectedArgType(i), expected) {
+			continue
+		}
+		if callErrorAlreadyCovers(errors, i+1, expected) {
+			continue
+		}
+		actual := observer.TypeOfWithExpected(arg, p, expected)
+		if obligation.AllowsGradualAny() {
+			actual = observer.AdmitGradualArgument(actual, arg, p, expected)
+		}
+		if actual == nil || ops.Consistent(ctx, query, actual, expected) {
+			continue
+		}
+		errors = append(errors, ops.CallError{
+			Kind:     ops.ErrTypeMismatch,
+			Subject:  fmt.Sprintf("argument %d", i+1),
+			Expected: expected,
+			Got:      actual,
+			ArgIdx:   i + 1,
+		})
+	}
+	return errors
+}
+
+func callErrorAlreadyCovers(errors []ops.CallError, argIdx int, expected typ.Type) bool {
+	for _, err := range errors {
+		if err.Kind != ops.ErrTypeMismatch || err.ArgIdx != argIdx {
+			continue
+		}
+		if expected == nil || err.Expected == nil || typ.TypeEquals(err.Expected, expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func callContractAt(contracts []api.CallContractEvidence, idx int) api.CallContractEvidence {
+	if idx < 0 || idx >= len(contracts) {
+		return api.CallContractEvidence{}
+	}
+	return contracts[idx]
 }
 
 func getCallPosition(info *cfg.CallInfo, sourceName string) diag.Position {

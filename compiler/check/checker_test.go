@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/compiler/stdlib"
@@ -183,7 +184,7 @@ func TestChecker_CheckChunk(t *testing.T) {
 	}
 }
 
-func TestChecker_TypeofNarrowing_EdgeConditions(t *testing.T) {
+func TestChecker_TypeofNarrowing_UsesSolvedFlowProjection(t *testing.T) {
 	c := NewChecker(db.New(), Deps{Types: core.NewEngine(), GlobalTypes: stdlib.Library()})
 	code := `
 		local x: string | number = "hello"
@@ -198,43 +199,25 @@ func TestChecker_TypeofNarrowing_EdgeConditions(t *testing.T) {
 	if sess.RootResult == nil {
 		t.Fatal("RootResult is nil")
 	}
-	inputs := sess.RootResult.FlowInputs
-	if inputs == nil {
-		t.Fatal("FlowInputs is nil")
-	}
-	if len(inputs.EdgeConditions) == 0 {
-		t.Errorf("expected edge conditions, got 0")
+	flowOps := sess.RootResult.SolvedFlow()
+	if flowOps == nil {
+		t.Fatal("SolvedFlow projection is nil")
 	}
 
-	solution := sess.RootResult.FlowSolution
-	if solution == nil {
-		t.Fatal("FlowSolution is nil")
-	}
-
-	// Find an edge with constraints
-	var thenPoint cfg.Point
-	for _, ec := range inputs.EdgeConditions {
-		if ec.Condition.HasConstraints() {
-			thenPoint = ec.To
+	found := false
+	for _, point := range sess.RootResult.Graph.RPO() {
+		symX, ok := sess.RootResult.Graph.SymbolAt(point, "x")
+		if !ok || symX == 0 {
+			continue
+		}
+		path := constraint.Path{Root: "x", Symbol: symX}
+		if narrowed := flowOps.NarrowedTypeAt(point, path); typ.TypeEquals(narrowed, typ.String) {
+			found = true
 			break
 		}
 	}
-	if thenPoint == 0 {
-		t.Fatal("could not find edge with constraints")
-	}
-
-	// Query the type at then-branch - should be narrowed to string
-	symX, ok := inputs.Graph.SymbolAt(thenPoint, "x")
-	if !ok {
-		t.Fatal("could not find symbol for 'x'")
-	}
-	path := constraint.Path{Root: "x", Symbol: symX}
-	narrowed := solution.NarrowedTypeAt(thenPoint, path)
-	if narrowed == nil {
-		t.Errorf("NarrowedTypeAt returned nil at then-branch")
-	}
-	if narrowed.String() != "string" {
-		t.Errorf("expected narrowed type 'string', got %v", narrowed)
+	if !found {
+		t.Fatal("expected canonical solved-flow projection to observe string-narrowed x in then branch")
 	}
 }
 
@@ -357,7 +340,7 @@ func TestBuildInitialSymbolTypes_GlobalsGetTyped(t *testing.T) {
 	}
 
 	// Call BuildInitialSymbolTypes from resolve package
-	result := phase.BuildInitialSymbolTypes(graph, globalTypes, nil)
+	result := phase.BuildInitialSymbolTypes(graph, globalenv.TypeOverlayFromMap(globalTypes), nil)
 
 	// The global "print" should get its type
 	if result == nil {

@@ -2,6 +2,7 @@ package extract
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
@@ -57,22 +58,21 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, p cfg.Point, sc 
 
 	if len(table.arrayElements) > 0 && table.fieldCount == 0 {
 		result := table.arrayResult(expected)
-		if useExpectedTableResult(expected) && len(ops.CheckTable(nil, table.arrayElements, expected).Errors) == 0 {
+		if useExpectedTableResult(expected) && len(ops.CheckTableEntries(nil, table.arrayElements, expected).Errors) == 0 {
 			return expected
 		}
 		return result
 	}
 
-	result := table.builder.Build()
-	if useExpectedTableResult(expected) && len(ops.CheckTable(table.fieldDefs, table.arrayElements, expected).Errors) == 0 {
+	result := table.resultType(expected)
+	if useExpectedTableResult(expected) && len(ops.CheckTableEntries(table.entryDefs, table.arrayElements, expected).Errors) == 0 {
 		return expected
 	}
 	return result
 }
 
 type tableSynthesis struct {
-	builder       *typ.RecordBuilder
-	fieldDefs     []ops.FieldDef
+	entryDefs     []ops.EntryDef
 	arrayElements []typ.Type
 	hasVararg     bool
 	fieldCount    int
@@ -85,7 +85,7 @@ func (s *Synthesizer) tableSelfType(ex *ast.TableExpr, recurse ExprSynth, expect
 	selfBuilder := typ.NewRecord()
 	fieldCount := 0
 	for _, field := range ex.Fields {
-		name, ok := staticTableFieldName(field)
+		name, ok := fieldkey.RecordFieldNameFromTableField(field)
 		if !ok {
 			continue
 		}
@@ -113,7 +113,7 @@ func (s *Synthesizer) collectTableFields(
 	expected typ.Type,
 	selfType typ.Type,
 ) tableSynthesis {
-	table := tableSynthesis{builder: typ.NewRecord()}
+	table := tableSynthesis{}
 	for _, field := range ex.Fields {
 		if field.Key == nil {
 			table.addArrayElement(s.tableElementType(field.Value, p, sc, recurse, expected, len(table.arrayElements), selfType))
@@ -122,29 +122,12 @@ func (s *Synthesizer) collectTableFields(
 			}
 			continue
 		}
-		if name, ok := staticTableFieldName(field); ok {
-			table.addNamedField(name, s.tableFieldType(field.Value, p, sc, recurse, ops.ExpectedTableFieldType(expected, name), selfType))
+		if key, ok := fieldkey.FromTableField(field); ok {
+			table.addEntry(key, s.tableFieldType(field.Value, p, sc, recurse, ops.ExpectedTableEntryType(expected, key), selfType))
 			continue
-		}
-		if _, ok := field.Key.(*ast.NumberExpr); ok {
-			table.addArrayElement(s.tableElementType(field.Value, p, sc, recurse, expected, len(table.arrayElements), selfType))
 		}
 	}
 	return table
-}
-
-func staticTableFieldName(field *ast.Field) (string, bool) {
-	if field == nil {
-		return "", false
-	}
-	switch k := field.Key.(type) {
-	case *ast.StringExpr:
-		return k.Value, true
-	case *ast.IdentExpr:
-		return k.Value, true
-	default:
-		return "", false
-	}
 }
 
 func (s *Synthesizer) tableFieldType(value ast.Expr, p cfg.Point, sc *scope.State, recurse ExprSynth, expected typ.Type, selfType typ.Type) typ.Type {
@@ -164,9 +147,8 @@ func (s *Synthesizer) tableElementType(value ast.Expr, p cfg.Point, sc *scope.St
 	return elemType
 }
 
-func (t *tableSynthesis) addNamedField(name string, ft typ.Type) {
-	t.fieldDefs = append(t.fieldDefs, ops.FieldDef{Name: name, Type: ft})
-	addRecordField(t.builder, name, ft)
+func (t *tableSynthesis) addEntry(key fieldkey.Key, ft typ.Type) {
+	t.entryDefs = append(t.entryDefs, ops.EntryDef{Key: key, Type: ft})
 	t.fieldCount++
 }
 
@@ -180,6 +162,13 @@ func addRecordField(builder *typ.RecordBuilder, name string, ft typ.Type) {
 
 func (t *tableSynthesis) addArrayElement(elem typ.Type) {
 	t.arrayElements = append(t.arrayElements, elem)
+}
+
+func (t tableSynthesis) resultType(expected typ.Type) typ.Type {
+	if len(t.entryDefs) == 0 && len(t.arrayElements) > 0 {
+		return t.arrayResult(expected)
+	}
+	return ops.CheckTableEntries(t.entryDefs, t.arrayElements, nil).Type
 }
 
 func (t tableSynthesis) arrayResult(expected typ.Type) typ.Type {

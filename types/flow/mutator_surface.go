@@ -16,13 +16,12 @@ type RootMutationPoint struct {
 }
 
 // RootMutationPoints returns canonical mutation points for roots touched by
-// map, table, or container mutator transfer operators.
+// map or table mutator transfer operators.
 func (in *Inputs) RootMutationPoints(symbols map[cfg.SymbolID]bool) []RootMutationPoint {
 	if in == nil {
 		return nil
 	}
-	out := make([]RootMutationPoint, 0,
-		len(in.MapMutatorAssignments)+len(in.TableMutatorAssignments)+len(in.ContainerMutatorAssignments))
+	out := make([]RootMutationPoint, 0, len(in.MapMutatorAssignments)+len(in.TableMutatorAssignments))
 	seen := make(map[rootMutationPointKey]struct{})
 	add := func(point cfg.Point, target constraint.Path) {
 		if point == 0 || target.Symbol == 0 {
@@ -44,9 +43,6 @@ func (in *Inputs) RootMutationPoints(symbols map[cfg.SymbolID]bool) []RootMutati
 	for _, mutation := range in.TableMutatorAssignments {
 		add(mutation.Point, mutation.Target)
 	}
-	for _, mutation := range in.ContainerMutatorAssignments {
-		add(mutation.Point, mutation.Target)
-	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Point != out[j].Point {
 			return out[i].Point < out[j].Point
@@ -65,8 +61,7 @@ func (in *Inputs) TransferObservationPoints() []cfg.Point {
 	if in == nil {
 		return nil
 	}
-	seen := make(map[cfg.Point]struct{},
-		len(in.Assignments)+len(in.MapMutatorAssignments)+len(in.TableMutatorAssignments)+len(in.ContainerMutatorAssignments))
+	seen := make(map[cfg.Point]struct{}, len(in.Assignments)+len(in.MapMutatorAssignments)+len(in.TableMutatorAssignments))
 	add := func(point cfg.Point) {
 		if point == 0 {
 			return
@@ -80,9 +75,6 @@ func (in *Inputs) TransferObservationPoints() []cfg.Point {
 		add(mutation.Point)
 	}
 	for _, mutation := range in.TableMutatorAssignments {
-		add(mutation.Point)
-	}
-	for _, mutation := range in.ContainerMutatorAssignments {
 		add(mutation.Point)
 	}
 	if len(seen) == 0 {

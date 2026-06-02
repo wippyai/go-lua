@@ -61,13 +61,13 @@ func cloneSegments(src []constraint.Segment) []constraint.Segment {
 	return out
 }
 
-func cloneAbstractValueFieldMap(src map[string]product.AbstractValue) map[string]product.AbstractValue {
+func cloneAbstractValueFieldMap(src api.FieldValues) api.FieldValues {
 	if len(src) == 0 {
 		return nil
 	}
-	out := make(map[string]product.AbstractValue, len(src))
-	for name, v := range src {
-		out[name] = v
+	out := make(api.FieldValues, len(src))
+	for key, v := range src {
+		out[key] = v
 	}
 	return out
 }
@@ -81,7 +81,7 @@ func cloneCapturedFieldAssigns(src api.CapturedFieldAssigns) api.CapturedFieldAs
 		if len(bySym) == 0 {
 			continue
 		}
-		bySymOut := make(map[cfg.SymbolID]map[string]product.AbstractValue, len(bySym))
+		bySymOut := make(map[cfg.SymbolID]api.FieldValues, len(bySym))
 		for sym, fields := range bySym {
 			if len(fields) == 0 {
 				continue
@@ -98,40 +98,7 @@ func cloneCapturedFieldAssigns(src api.CapturedFieldAssigns) api.CapturedFieldAs
 	return out
 }
 
-func cloneCapturedContainerMutations(src api.CapturedContainerMutations) api.CapturedContainerMutations {
-	if len(src) == 0 {
-		return nil
-	}
-	out := make(api.CapturedContainerMutations, len(src))
-	for callee, bySym := range src {
-		if len(bySym) == 0 {
-			continue
-		}
-		bySymOut := make(map[cfg.SymbolID][]api.ContainerMutation, len(bySym))
-		for sym, muts := range bySym {
-			if len(muts) == 0 {
-				continue
-			}
-			mutsOut := make([]api.ContainerMutation, len(muts))
-			copy(mutsOut, muts)
-			for i := range mutsOut {
-				if len(mutsOut[i].Segments) > 0 {
-					mutsOut[i].Segments = append(mutsOut[i].Segments[:0:0], mutsOut[i].Segments...)
-				}
-			}
-			bySymOut[sym] = mutsOut
-		}
-		if len(bySymOut) > 0 {
-			out[callee] = bySymOut
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func cloneConstructorFieldMap(src map[string]product.AbstractValue) map[string]product.AbstractValue {
+func cloneConstructorFieldMap(src api.FieldValues) api.FieldValues {
 	return cloneAbstractValueFieldMap(src)
 }
 

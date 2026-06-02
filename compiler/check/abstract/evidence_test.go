@@ -10,9 +10,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
-	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestExtractCapturedFieldEvidence(t *testing.T) {
@@ -66,89 +63,6 @@ end
 		}
 	}
 	t.Fatalf("missing captured nested function-definition path; all=%#v", got)
-}
-
-func TestExtractCapturedContainerEvidence(t *testing.T) {
-	graph := graphFromSource(t, `
-local c = {}
-`)
-	symC := mustSymbol(t, graph, "c")
-	inputs := &flow.Inputs{
-		ContainerMutatorAssignments: []flow.ContainerMutatorAssignment{
-			{
-				Point:     graph.Exit(),
-				Target:    constraint.NewPath(symC, "c"),
-				ValueType: typ.Number,
-			},
-		},
-		TableMutatorAssignments: []flow.TableMutatorAssignment{
-			{
-				Point:     graph.Exit(),
-				Target:    constraint.NewPath(symC, "c").Field("items"),
-				ValueType: typ.Number,
-			},
-		},
-	}
-	got := abstract.ExtractCapturedContainerEvidence(&core.FlowContext{
-		Graph: graph,
-	}, inputs, map[cfg.SymbolID]bool{symC: true})
-
-	var sawContainer, sawTable bool
-	for _, ev := range got {
-		if ev.Target != symC {
-			continue
-		}
-		switch ev.Kind {
-		case api.ContainerMutationContainerElement:
-			sawContainer = true
-		case api.ContainerMutationTableElement:
-			sawTable = len(ev.Segments) == 1 && ev.Segments[0].Name == "items"
-		}
-	}
-	if !sawContainer {
-		t.Fatal("missing captured generic container mutation evidence")
-	}
-	if !sawTable {
-		t.Fatalf("missing captured table mutation evidence with .items path; all=%#v", got)
-	}
-}
-
-func TestExtractCapturedContainerEvidence_UsesLoweredMapMutatorAssignments(t *testing.T) {
-	graph := graphFromSource(t, `
-local c = {}
-`)
-	symC := mustSymbol(t, graph, "c")
-	valueType := typ.NewRecord().Field("last_activity", typ.String).Build()
-	inputs := &flow.Inputs{
-		MapMutatorAssignments: []flow.MapMutatorAssignment{
-			{
-				Point: graph.Exit(),
-				Target: constraint.Path{
-					Root:     "c",
-					Symbol:   symC,
-					Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "sessions"}},
-				},
-				KeyType:   typ.String,
-				ValueType: valueType,
-			},
-		},
-	}
-
-	got := abstract.ExtractCapturedContainerEvidence(&core.FlowContext{
-		Graph: graph,
-	}, inputs, map[cfg.SymbolID]bool{symC: true})
-
-	if len(got) != 1 {
-		t.Fatalf("captured container evidence = %#v, want one", got)
-	}
-	if got[0].Kind != api.ContainerMutationMapElement ||
-		got[0].Target != symC ||
-		len(got[0].Segments) != 1 ||
-		got[0].Segments[0].Name != "sessions" ||
-		!typ.TypeEquals(got[0].KeyType, typ.String) ||
-		!typ.TypeEquals(got[0].ValueType, valueType) {
-		t.Fatalf("unexpected lowered map mutator evidence: %#v", got[0])
-	}
 }
 
 func TestExtractFunctionEscapeEvidence(t *testing.T) {

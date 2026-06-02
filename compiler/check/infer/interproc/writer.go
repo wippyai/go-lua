@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 type factsWriteStore interface {
@@ -42,14 +41,16 @@ func (w interprocFactWriter) mergeParentFactsForSymbol(sym cfg.SymbolID, delta a
 func (w interprocFactWriter) writeLiteralSignatures(
 	graph *cfg.Graph,
 	parent *scope.State,
-	sigs map[*ast.FunctionExpr]*typ.Function,
+	sigs api.LiteralSignatureLookup,
 ) {
-	if w.store == nil || graph == nil || len(sigs) == 0 {
+	if w.store == nil || graph == nil || sigs == nil {
 		return
 	}
 	if key, ok := w.store.GraphKeyFor(graph, parent); ok {
 		delta := api.LiteralSigs{}
-		for fnExpr, sig := range sigs {
+		for _, nested := range graph.NestedFunctions() {
+			fnExpr := nested.Func
+			sig := sigs.Lookup(fnExpr)
 			if fnExpr != nil && sig != nil && !w.isCanonicalFunction(fnExpr) {
 				delta[fnExpr] = sig
 			}

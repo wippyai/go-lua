@@ -5,6 +5,7 @@ package api
 
 import (
 	"github.com/wippyai/go-lua/compiler/bind"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/typefacts"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
@@ -50,8 +51,8 @@ type BaseEnv interface {
 	ModuleAliases() map[cfg.SymbolID]string
 	ModuleAlias(sym cfg.SymbolID) string
 	GlobalType(sym cfg.SymbolID) (typ.Type, bool)
-	GlobalTypes() map[string]typ.Type
-	WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv
+	GlobalTypeOverlay() globalenv.TypeOverlay
+	WithGlobalTypeOverlay(overlay globalenv.TypeOverlay) BaseEnv
 }
 
 // DeclaredEnv is the declared-phase synthesis environment.
@@ -73,22 +74,18 @@ type envBase struct {
 	refinements   RefinementFacts
 	typeNames     *scope.State
 	moduleAliases map[cfg.SymbolID]string
-	globalTypes   map[string]typ.Type
+	globalTypes   globalenv.TypeOverlay
 }
 
-func (b envBase) withGlobalOverlay(overlay map[string]typ.Type) envBase {
+func (b envBase) withGlobalTypeOverlay(overlay globalenv.TypeOverlay) envBase {
 	if len(overlay) == 0 {
 		return b
 	}
-	merged := make(map[string]typ.Type, len(b.globalTypes)+len(overlay))
-	for k, v := range b.globalTypes {
-		merged[k] = v
-	}
-	for k, v := range overlay {
-		merged[k] = v
-	}
 	next := b
-	next.globalTypes = merged
+	next.globalTypes = globalenv.OverrideTypeOverlay(
+		b.globalTypes,
+		overlay,
+	)
 	return next
 }
 
@@ -96,14 +93,14 @@ type envCommon struct {
 	base envBase
 }
 
-func (c *envCommon) withGlobalOverlay(overlay map[string]typ.Type) envCommon {
+func (c *envCommon) withGlobalTypeOverlay(overlay globalenv.TypeOverlay) envCommon {
 	if c == nil || len(overlay) == 0 {
 		if c == nil {
 			return envCommon{}
 		}
 		return *c
 	}
-	return envCommon{base: c.base.withGlobalOverlay(overlay)}
+	return envCommon{base: c.base.withGlobalTypeOverlay(overlay)}
 }
 
 // Phase returns the current checking phase.
@@ -180,7 +177,7 @@ func (c *envCommon) ModuleAlias(sym cfg.SymbolID) string {
 
 // GlobalType returns the global type for a symbol if it is a confirmed global.
 func (c *envCommon) GlobalType(sym cfg.SymbolID) (typ.Type, bool) {
-	if c == nil || c.base.globalTypes == nil || sym == 0 {
+	if c == nil || len(c.base.globalTypes) == 0 || sym == 0 {
 		return nil, false
 	}
 	if c.base.bindings == nil {
@@ -191,19 +188,17 @@ func (c *envCommon) GlobalType(sym cfg.SymbolID) (typ.Type, bool) {
 		return nil, false
 	}
 	if name := c.base.bindings.Name(sym); name != "" {
-		if t, found := c.base.globalTypes[name]; found && t != nil {
-			return t, true
-		}
+		return c.base.globalTypes.Type(name)
 	}
 	return nil, false
 }
 
-// GlobalTypes returns the global type map.
-func (c *envCommon) GlobalTypes() map[string]typ.Type {
+// GlobalTypeOverlay returns the normalized global type overlay.
+func (c *envCommon) GlobalTypeOverlay() globalenv.TypeOverlay {
 	if c == nil {
 		return nil
 	}
-	return c.base.globalTypes
+	return c.base.globalTypes.Clone()
 }
 
 // DeclaredEnvImpl is the concrete declared-phase environment.
@@ -381,24 +376,24 @@ func (e *NarrowEnvImpl) GlobalType(sym cfg.SymbolID) (typ.Type, bool) {
 	return e.envCommon.GlobalType(sym)
 }
 
-// GlobalTypes returns the global type map.
-func (e *DeclaredEnvImpl) GlobalTypes() map[string]typ.Type {
+// GlobalTypeOverlay returns the normalized global type overlay.
+func (e *DeclaredEnvImpl) GlobalTypeOverlay() globalenv.TypeOverlay {
 	if e == nil {
 		return nil
 	}
-	return e.envCommon.GlobalTypes()
+	return e.envCommon.GlobalTypeOverlay()
 }
 
-// GlobalTypes returns the global type map.
-func (e *NarrowEnvImpl) GlobalTypes() map[string]typ.Type {
+// GlobalTypeOverlay returns the normalized global type overlay.
+func (e *NarrowEnvImpl) GlobalTypeOverlay() globalenv.TypeOverlay {
 	if e == nil {
 		return nil
 	}
-	return e.envCommon.GlobalTypes()
+	return e.envCommon.GlobalTypeOverlay()
 }
 
-// WithGlobalOverlay returns a derived Env with additional globals merged in.
-func (e *DeclaredEnvImpl) WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv {
+// WithGlobalTypeOverlay returns a derived Env with normalized globals merged in.
+func (e *DeclaredEnvImpl) WithGlobalTypeOverlay(overlay globalenv.TypeOverlay) BaseEnv {
 	if e == nil {
 		return e
 	}
@@ -406,12 +401,12 @@ func (e *DeclaredEnvImpl) WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv
 		return e
 	}
 	next := *e
-	next.envCommon = e.withGlobalOverlay(overlay)
+	next.envCommon = e.withGlobalTypeOverlay(overlay)
 	return &next
 }
 
-// WithGlobalOverlay returns a derived Env with additional globals merged in.
-func (e *NarrowEnvImpl) WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv {
+// WithGlobalTypeOverlay returns a derived Env with normalized globals merged in.
+func (e *NarrowEnvImpl) WithGlobalTypeOverlay(overlay globalenv.TypeOverlay) BaseEnv {
 	if e == nil {
 		return e
 	}
@@ -419,7 +414,7 @@ func (e *NarrowEnvImpl) WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv {
 		return e
 	}
 	next := *e
-	next.envCommon = e.withGlobalOverlay(overlay)
+	next.envCommon = e.withGlobalTypeOverlay(overlay)
 	return &next
 }
 
@@ -433,6 +428,7 @@ type DeclaredEnvConfig struct {
 	Refinements   RefinementFacts
 	ModuleAliases map[cfg.SymbolID]string
 	GlobalTypes   map[string]typ.Type
+	GlobalOverlay globalenv.TypeOverlay
 	LiteralTypes  flow.DeclaredTypes
 	FunctionType  typefacts.FunctionTypeLookup
 }
@@ -448,6 +444,7 @@ type NarrowEnvConfig struct {
 	Refinements   RefinementFacts
 	ModuleAliases map[cfg.SymbolID]string
 	GlobalTypes   map[string]typ.Type
+	GlobalOverlay globalenv.TypeOverlay
 	LiteralTypes  flow.DeclaredTypes
 	FunctionType  typefacts.FunctionTypeLookup
 }
@@ -462,7 +459,12 @@ func newEnvBase(
 	typeNames *scope.State,
 	moduleAliases map[cfg.SymbolID]string,
 	globalTypes map[string]typ.Type,
+	globalOverlay globalenv.TypeOverlay,
 ) envBase {
+	normalizedGlobals := globalenv.OverrideTypeOverlay(
+		globalenv.TypeOverlayFromMap(globalTypes),
+		globalOverlay,
+	)
 	return envBase{
 		phase:         phase,
 		graph:         graph,
@@ -472,7 +474,7 @@ func newEnvBase(
 		refinements:   refinements,
 		typeNames:     typeNames,
 		moduleAliases: moduleAliases,
-		globalTypes:   globalTypes,
+		globalTypes:   normalizedGlobals,
 	}
 }
 
@@ -496,6 +498,7 @@ func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 		cfg.BaseScope,
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
+		cfg.GlobalOverlay,
 	)
 	return &DeclaredEnvImpl{envCommon: envCommon{base: base}}
 }
@@ -521,6 +524,7 @@ func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 		cfg.BaseScope,
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
+		cfg.GlobalOverlay,
 	)
 	return &NarrowEnvImpl{envCommon: envCommon{base: base}}
 }
@@ -532,6 +536,7 @@ type ReturnInferenceEnvConfig struct {
 	BaseScope     *scope.State
 	DeclaredTypes flow.DeclaredTypes
 	GlobalTypes   map[string]typ.Type
+	GlobalOverlay globalenv.TypeOverlay
 	ModuleAliases map[cfg.SymbolID]string
 	FunctionType  typefacts.FunctionTypeLookup
 }
@@ -554,6 +559,7 @@ func NewReturnInferenceEnv(cfg ReturnInferenceEnvConfig) *DeclaredEnvImpl {
 		cfg.BaseScope,
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
+		cfg.GlobalOverlay,
 	)
 	return &DeclaredEnvImpl{envCommon: envCommon{base: base}}
 }

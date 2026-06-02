@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
+	interprocfields "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -25,23 +26,24 @@ func projectCarrierField(av product.AbstractValue) typ.Type {
 	return av.ProjectValue()
 }
 
-// CalledNestedAssignments is the flow replay payload for captured effects made
-// by nested functions that are proven to run from the parent graph.
+// CalledNestedAssignments is the remaining legacy flow replay payload for
+// captured field writes made by nested functions that are proven to run from the
+// parent graph.
 type CalledNestedAssignments struct {
-	Fields    []flow.UnifiedAssignment
-	Map       []flow.MapMutatorAssignment
-	Table     []flow.TableMutatorAssignment
-	Container []flow.ContainerMutatorAssignment
+	Fields []flow.UnifiedAssignment
 }
 
-// CollectNestedAssignments collects captured field writes and mutator effects
-// recorded for parent-visible nested functions and replays each effect through
-// its matching flow operator. Direct invocation is driven by transfer call
-// evidence.
+// CollectNestedAssignments collects captured field writes recorded for
+// parent-visible nested functions and replays them through the legacy flow
+// assignment operator. Direct invocation is driven by transfer call evidence.
 //
-// This supports cases where a nested function writes fields, mutates a captured
-// table map (t[k] = v), mutates a table array (table.insert), or mutates a
-// generic container (channel.send), and the nested function is:
+// Captured container mutations are intentionally not replayed here. The
+// canonical single-fixpoint path owns those through CaptureEffects on Summary and
+// transfer.applyCallCellEffects; fabricating flow.Inputs mutator rows here would
+// preserve the old parallel precision lane.
+//
+// This supports cases where a nested function writes fields and the nested
+// function is:
 //   - invoked directly,
 //   - passed as a callback to a function with a callback spec, or
 //   - stored in a field/global position that can be called outside the parent
@@ -52,19 +54,15 @@ func CollectNestedAssignments(
 	calls []api.CallEvidence,
 	escapes []api.FunctionEscapeEvidence,
 	capturedFields api.CapturedFieldAssigns,
-	capturedContainers api.CapturedContainerMutations,
 	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
 ) CalledNestedAssignments {
-	if parent == nil || (len(capturedFields) == 0 && len(capturedContainers) == 0) {
+	if parent == nil || len(capturedFields) == 0 {
 		return CalledNestedAssignments{}
 	}
 
 	parentSymbols := parent.AllSymbolIDs()
-	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedFields)+len(capturedContainers))
+	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedFields))
 	for calleeSym := range capturedFields {
-		trackedCallees[calleeSym] = true
-	}
-	for calleeSym := range capturedContainers {
 		trackedCallees[calleeSym] = true
 	}
 	assignments := CalledNestedAssignments{}
@@ -76,14 +74,6 @@ func CollectNestedAssignments(
 			}
 			root := resolve.RootNameFromGraphAndBindings(parent, bindings, targetSym, "")
 			appendNestedFieldAssignments(&assignments, p, root, targetSym, fields)
-		}
-		for _, targetSym := range cfg.SortedSymbolIDs(capturedContainers[sym]) {
-			mutations := capturedContainers[sym][targetSym]
-			if !parentSymbols[targetSym] {
-				continue
-			}
-			root := resolve.RootNameFromGraphAndBindings(parent, bindings, targetSym, "")
-			appendNestedMutatorAssignments(&assignments, p, root, targetSym, mutations)
 		}
 	}
 
@@ -119,72 +109,26 @@ func appendNestedFieldAssignments(
 	p cfg.Point,
 	root string,
 	targetSym cfg.SymbolID,
-	fields map[string]product.AbstractValue,
+	fields api.FieldValues,
 ) {
 	if assignments == nil || targetSym == 0 || len(fields) == 0 {
 		return
 	}
-	for _, fieldName := range cfg.SortedFieldNames(fields) {
-		fieldType := projectCarrierField(fields[fieldName])
+	for _, fieldKey := range interprocfields.SortedFieldKeys(fields) {
+		fieldType := projectCarrierField(fields[fieldKey])
 		if fieldType == nil {
 			fieldType = typ.Unknown
 		}
+		segment := fieldKey
 		assignments.Fields = append(assignments.Fields, flow.UnifiedAssignment{
 			Point: p,
 			TargetPath: constraint.Path{
-				Root:   root,
-				Symbol: targetSym,
-				Segments: []constraint.Segment{{
-					Kind: constraint.SegmentField,
-					Name: fieldName,
-				}},
+				Root:     root,
+				Symbol:   targetSym,
+				Segments: []constraint.Segment{segment},
 			},
 			Type: fieldType,
 		})
-	}
-}
-
-func appendNestedMutatorAssignments(
-	assignments *CalledNestedAssignments,
-	p cfg.Point,
-	root string,
-	targetSym cfg.SymbolID,
-	mutations []api.ContainerMutation,
-) {
-	if assignments == nil || targetSym == 0 || len(mutations) == 0 {
-		return
-	}
-	for _, mutation := range mutations {
-		segs := make([]constraint.Segment, len(mutation.Segments))
-		copy(segs, mutation.Segments)
-		target := constraint.Path{
-			Root:     root,
-			Symbol:   targetSym,
-			Segments: segs,
-		}
-		switch mutation.Kind {
-		case api.ContainerMutationMapElement:
-			assignments.Map = append(assignments.Map, flow.MapMutatorAssignment{
-				Point:     p,
-				Target:    target,
-				ValueMode: mutation.ValueMode,
-				KeyType:   projectCarrierField(mutation.KeyType),
-				ValueType: projectCarrierField(mutation.ValueType),
-			})
-		case api.ContainerMutationTableElement:
-			assignments.Table = append(assignments.Table, flow.TableMutatorAssignment{
-				Point:     p,
-				Target:    target,
-				KeyType:   projectCarrierField(mutation.KeyType),
-				ValueType: projectCarrierField(mutation.ValueType),
-			})
-		default:
-			assignments.Container = append(assignments.Container, flow.ContainerMutatorAssignment{
-				Point:     p,
-				Target:    target,
-				ValueType: projectCarrierField(mutation.ValueType),
-			})
-		}
 	}
 }
 

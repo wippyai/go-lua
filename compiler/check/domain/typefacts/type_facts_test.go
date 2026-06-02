@@ -32,7 +32,7 @@ func TestTypeFactsDeclaredAtPrefersAnnotatedDeclaration(t *testing.T) {
 	}
 }
 
-func TestTypeFactsDeclaredAtUsesFunctionBeforeDeclaration(t *testing.T) {
+func TestTypeFactsSeparatesBindingValueFromDeclaration(t *testing.T) {
 	const sym cfg.SymbolID = 2
 	fn := typ.Func().Returns(typ.String).Build()
 	facts := New(Config{
@@ -40,9 +40,19 @@ func TestTypeFactsDeclaredAtUsesFunctionBeforeDeclaration(t *testing.T) {
 		FunctionType: functionTypeMap{sym: fn}.lookup,
 	})
 
-	got := facts.DeclaredAt(0, sym)
-	if got.State != flow.StateResolved || !typ.TypeEquals(got.Type, fn) {
-		t.Fatalf("DeclaredAt function symbol = %v/%v, want canonical function fact", got.Type, got.State)
+	declared := facts.DeclaredAt(0, sym)
+	if declared.State != flow.StateResolved || !typ.TypeEquals(declared.Type, typ.Number) {
+		t.Fatalf("DeclaredAt function symbol = %v/%v, want declared number/resolved", declared.Type, declared.State)
+	}
+
+	binding := facts.BindingValueAt(0, sym)
+	if binding.State != flow.StateResolved || !typ.TypeEquals(binding.Type, fn) {
+		t.Fatalf("BindingValueAt function symbol = %v/%v, want canonical function fact", binding.Type, binding.State)
+	}
+
+	effective := facts.EffectiveTypeAt(0, sym)
+	if effective.State != flow.StateResolved || !typ.TypeEquals(effective.Type, fn) {
+		t.Fatalf("EffectiveTypeAt function symbol = %v/%v, want canonical function fact", effective.Type, effective.State)
 	}
 }
 

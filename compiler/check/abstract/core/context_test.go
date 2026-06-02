@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -62,9 +63,9 @@ func TestFlowServicesFuncs_ResolveTypeExpr(t *testing.T) {
 
 func TestFlowContext_Fields(t *testing.T) {
 	fc := FlowContext{
-		Globals: map[string]typ.Type{"foo": typ.String},
+		Globals: globalenv.TypeOverlayFromMap(map[string]typ.Type{"foo": typ.String}),
 	}
-	if fc.Globals["foo"] != typ.String {
+	if got, ok := fc.Globals.Type("foo"); !ok || got != typ.String {
 		t.Error("globals not set")
 	}
 }

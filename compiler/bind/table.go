@@ -781,6 +781,36 @@ func (t *BindingTable) Globals() []cfg.SymbolID {
 	return result
 }
 
+// ReferencedGlobals returns global symbols that are actually referenced by an
+// identifier use in this bound unit. Predeclared globals that were seeded only
+// so binding can resolve them, but never used by the AST, are excluded.
+func (t *BindingTable) ReferencedGlobals() []cfg.SymbolID {
+	if t == nil || len(t.symbols) == 0 {
+		return nil
+	}
+	seen := make(map[cfg.SymbolID]struct{})
+	for _, sym := range t.symbols {
+		if sym == 0 {
+			continue
+		}
+		if k, ok := t.Kind(sym); !ok || k != cfg.SymbolGlobal {
+			continue
+		}
+		seen[sym] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]cfg.SymbolID, 0, len(seen))
+	for sym := range seen {
+		out = append(out, sym)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i] < out[j]
+	})
+	return out
+}
+
 // AllSymbols returns every symbol in the table without duplicates.
 //
 // This collects symbols from all sources: bound identifiers, kinds map,

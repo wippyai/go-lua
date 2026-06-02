@@ -14,9 +14,9 @@
 package effects
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/exportkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
@@ -30,21 +30,17 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 		return export
 	}
 
-	fieldEffects := make(map[string]*constraint.FunctionRefinement)
+	fieldEffects := make(map[fieldkey.Key]*constraint.FunctionRefinement)
 	for _, sym := range cfg.SortedSymbolIDs(effectsBySym) {
 		eff := effectsBySym[sym]
 		if eff == nil {
 			continue
 		}
-		name := graph.NameOf(sym)
-		if name == "" {
-			continue
-		}
-		field, ok := exportFieldNameFromEffectSymbol(rootName, name)
+		key, ok := exportkey.FromGraphSymbol(rootName, graph, sym)
 		if !ok {
 			continue
 		}
-		fieldEffects[field] = eff
+		fieldEffects[key] = eff
 	}
 	if len(fieldEffects) == 0 {
 		return export
@@ -57,10 +53,28 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 		for i, f := range v.Fields {
 			fields[i] = f
 			if fn, ok := f.Type.(*typ.Function); ok {
-				if eff := fieldEffects[f.Name]; eff != nil {
-					if enriched := applyFunctionRefinement(fn, eff); enriched != nil && enriched != fn {
-						fields[i].Type = enriched
-						changed = true
+				key, keyOK := fieldkey.FromName(f.Name)
+				if keyOK {
+					if eff := fieldEffects[key]; eff != nil {
+						if enriched := applyFunctionRefinement(fn, eff); enriched != nil && enriched != fn {
+							fields[i].Type = enriched
+							changed = true
+						}
+					}
+				}
+			}
+		}
+		staticMembers := make([]typ.StaticMember, len(v.StaticMembers))
+		for i, member := range v.StaticMembers {
+			staticMembers[i] = member
+			if fn, ok := member.Type.(*typ.Function); ok {
+				key, keyOK := effectStaticMemberKey(member)
+				if keyOK {
+					if eff := fieldEffects[key]; eff != nil {
+						if enriched := applyFunctionRefinement(fn, eff); enriched != nil && enriched != fn {
+							staticMembers[i].Type = enriched
+							changed = true
+						}
 					}
 				}
 			}
@@ -78,6 +92,9 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 		if v.Metatable != nil {
 			builder.Metatable(v.Metatable)
 		}
+		for _, member := range staticMembers {
+			builder.AddStaticMember(member)
+		}
 		for _, f := range fields {
 			builder = appendRecordField(builder, f)
 		}
@@ -88,10 +105,13 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 		for i, m := range v.Methods {
 			methods[i] = m
 			fn := m.Type
-			if eff := fieldEffects[m.Name]; eff != nil {
-				if enriched := applyFunctionRefinement(fn, eff); enriched != nil && enriched != fn {
-					methods[i].Type = enriched
-					changed = true
+			key, keyOK := fieldkey.FromName(m.Name)
+			if keyOK {
+				if eff := fieldEffects[key]; eff != nil {
+					if enriched := applyFunctionRefinement(fn, eff); enriched != nil && enriched != fn {
+						methods[i].Type = enriched
+						changed = true
+					}
 				}
 			}
 		}
@@ -104,42 +124,15 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 	}
 }
 
-// exportFieldNameFromEffectSymbol resolves a graph symbol name to a top-level
-// export field name.
-//
-// Accepted forms:
-//   - rootName == "": "field" or "root.field"
-//   - rootName != "": "rootName.field"
-//
-// Deeper dotted paths are rejected to avoid ambiguous leaf mapping.
-func exportFieldNameFromEffectSymbol(rootName, name string) (string, bool) {
-	if name == "" {
-		return "", false
+func effectStaticMemberKey(member typ.StaticMember) (fieldkey.Key, bool) {
+	switch member.Kind {
+	case typ.StaticMemberStringIndex:
+		return fieldkey.Key{Kind: constraint.SegmentIndexString, Name: member.Name}, true
+	case typ.StaticMemberIntIndex:
+		return fieldkey.Key{Kind: constraint.SegmentIndexInt, Index: int(member.Index)}, true
+	default:
+		return fieldkey.Key{}, false
 	}
-	if rootName != "" {
-		prefix := rootName + "."
-		if !strings.HasPrefix(name, prefix) {
-			return "", false
-		}
-		rest := strings.TrimPrefix(name, prefix)
-		if rest == "" || strings.Contains(rest, ".") {
-			return "", false
-		}
-		return rest, true
-	}
-
-	if !strings.Contains(name, ".") {
-		return name, true
-	}
-	firstDot := strings.IndexByte(name, '.')
-	if firstDot <= 0 || firstDot >= len(name)-1 {
-		return "", false
-	}
-	rest := name[firstDot+1:]
-	if strings.Contains(rest, ".") {
-		return "", false
-	}
-	return rest, true
 }
 
 func appendRecordField(builder *typ.RecordBuilder, f typ.Field) *typ.RecordBuilder {
@@ -164,7 +157,7 @@ func applyFunctionRefinement(fn *typ.Function, eff *constraint.FunctionRefinemen
 	}
 	builder := typ.Func()
 	for _, tp := range fn.TypeParams {
-		builder.TypeParam(tp.Name, tp.Constraint)
+		builder.TypeParamRef(tp)
 	}
 	for _, p := range fn.Params {
 		if p.Optional {

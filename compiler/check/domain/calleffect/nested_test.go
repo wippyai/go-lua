@@ -16,8 +16,8 @@ import (
 
 func TestCollectNestedAssignments(t *testing.T) {
 	t.Run("nil graph returns empty map", func(t *testing.T) {
-		result := CollectNestedAssignments(nil, nil, nil, nil, nil, nil, nil)
-		if len(result.Fields) != 0 || len(result.Map) != 0 || len(result.Table) != 0 || len(result.Container) != 0 {
+		result := CollectNestedAssignments(nil, nil, nil, nil, nil, nil)
+		if len(result.Fields) != 0 {
 			t.Error("expected empty result")
 		}
 	})
@@ -54,13 +54,13 @@ func TestCollectNestedAssignments_ReplaysFieldWrites(t *testing.T) {
 	captured := api.CapturedFieldAssigns{
 		setupSym: {
 			stateSym: {
-				"ready": product.FromType(typ.Boolean),
+				{Kind: constraint.SegmentField, Name: "ready"}: product.FromType(typ.Boolean),
 			},
 		},
 	}
 
 	calls := callEvidenceForGraph(graph)
-	got := CollectNestedAssignments(graph, bindings, calls, nil, captured, nil, nil)
+	got := CollectNestedAssignments(graph, bindings, calls, nil, captured, nil)
 	if len(got.Fields) != 1 {
 		t.Fatalf("field assignments = %d, want 1", len(got.Fields))
 	}
@@ -69,83 +69,6 @@ func TestCollectNestedAssignments_ReplaysFieldWrites(t *testing.T) {
 		got.Fields[0].TargetPath.Segments[0].Name != "ready" ||
 		!typ.TypeEquals(got.Fields[0].Type, typ.Boolean) {
 		t.Fatalf("unexpected field assignment: %#v", got.Fields[0])
-	}
-}
-
-func TestCollectNestedAssignments_SplitsOperatorKinds(t *testing.T) {
-	stmts, err := parse.ParseString(`
-		local state = {}
-		local function setup()
-			return nil
-		end
-		setup()
-	`, "test.lua")
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
-	if graph == nil {
-		t.Fatal("expected graph")
-	}
-	bindings := graph.Bindings()
-	if bindings == nil {
-		t.Fatal("expected bindings")
-	}
-	stateSym, ok := graph.SymbolAt(graph.Exit(), "state")
-	if !ok || stateSym == 0 {
-		t.Fatal("expected symbol for state")
-	}
-	setupSym, ok := graph.SymbolAt(graph.Exit(), "setup")
-	if !ok || setupSym == 0 {
-		t.Fatal("expected symbol for setup")
-	}
-
-	captured := api.CapturedContainerMutations{
-		setupSym: {
-			stateSym: {
-				{
-					Kind:      api.ContainerMutationTableElement,
-					Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}},
-					ValueType: product.FromType(typ.String),
-				},
-				{
-					Kind:      api.ContainerMutationMapElement,
-					Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "by_id"}},
-					KeyType:   product.FromType(typ.String),
-					ValueType: product.FromType(typ.Boolean),
-				},
-				{
-					Kind:      api.ContainerMutationContainerElement,
-					Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "channel"}},
-					ValueType: product.FromType(typ.Number),
-				},
-			},
-		},
-	}
-
-	calls := callEvidenceForGraph(graph)
-	got := CollectNestedAssignments(graph, bindings, calls, nil, nil, captured, nil)
-	if len(got.Table) != 1 {
-		t.Fatalf("table assignments = %d, want 1", len(got.Table))
-	}
-	if len(got.Map) != 1 {
-		t.Fatalf("map assignments = %d, want 1", len(got.Map))
-	}
-	if len(got.Container) != 1 {
-		t.Fatalf("container assignments = %d, want 1", len(got.Container))
-	}
-	if got.Table[0].Target.Symbol != stateSym || len(got.Table[0].Target.Segments) != 1 || got.Table[0].Target.Segments[0].Name != "items" {
-		t.Fatalf("unexpected table target: %#v", got.Table[0].Target)
-	}
-	if got.Container[0].Target.Symbol != stateSym || len(got.Container[0].Target.Segments) != 1 || got.Container[0].Target.Segments[0].Name != "channel" {
-		t.Fatalf("unexpected container target: %#v", got.Container[0].Target)
-	}
-	if got.Map[0].Target.Symbol != stateSym ||
-		len(got.Map[0].Target.Segments) != 1 ||
-		got.Map[0].Target.Segments[0].Name != "by_id" ||
-		!typ.TypeEquals(got.Map[0].KeyType, typ.String) ||
-		!typ.TypeEquals(got.Map[0].ValueType, typ.Boolean) {
-		t.Fatalf("unexpected map assignment: %#v", got.Map[0])
 	}
 }
 
@@ -196,28 +119,24 @@ func TestCollectNestedAssignments_ReplaysExportedFieldFunction(t *testing.T) {
 		t.Fatal("expected symbol for api.add")
 	}
 
-	captured := api.CapturedContainerMutations{
+	captured := api.CapturedFieldAssigns{
 		addSym: {
 			stateSym: {
-				{
-					Kind:      api.ContainerMutationTableElement,
-					Segments:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}},
-					ValueType: product.FromType(typ.String),
-				},
+				{Kind: constraint.SegmentField, Name: "items"}: product.FromType(typ.String),
 			},
 		},
 	}
 
 	escapes := []api.FunctionEscapeEvidence{{Point: addPoint, Symbol: addSym}}
-	got := CollectNestedAssignments(graph, bindings, nil, escapes, nil, captured, nil)
-	if len(got.Table) != 1 {
-		t.Fatalf("table assignments = %d, want 1", len(got.Table))
+	got := CollectNestedAssignments(graph, bindings, nil, escapes, captured, nil)
+	if len(got.Fields) != 1 {
+		t.Fatalf("field assignments = %d, want 1", len(got.Fields))
 	}
-	if got.Table[0].Point != addPoint {
-		t.Fatalf("assignment point = %d, want exported definition point %d", got.Table[0].Point, addPoint)
+	if got.Fields[0].Point != addPoint {
+		t.Fatalf("assignment point = %d, want exported definition point %d", got.Fields[0].Point, addPoint)
 	}
-	if got.Table[0].Target.Symbol != stateSym || got.Table[0].Target.Segments[0].Name != "items" {
-		t.Fatalf("unexpected exported table target: %#v", got.Table[0].Target)
+	if got.Fields[0].TargetPath.Symbol != stateSym || got.Fields[0].TargetPath.Segments[0].Name != "items" {
+		t.Fatalf("unexpected exported field target: %#v", got.Fields[0].TargetPath)
 	}
 }
 

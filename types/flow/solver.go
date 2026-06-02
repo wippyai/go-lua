@@ -36,17 +36,22 @@ type Solution struct {
 	// where a typ.Type carrier with SameConvergedFact does not. typ.Type enters only
 	// at admission (FromType in setValue/setMutableValue) and leaves only at egress
 	// (ProjectValue in valueAtPoint/projectedValueAtPoint and the query API).
-	values            map[string]product.AbstractValue // canonical key (sym<ID>@<ver><segs>) -> abstract value
-	presence          map[string]pathPresence
-	fieldOverlayIndex map[string]map[string]typ.Type
+	values   pathValueMap // canonical key (sym<ID>@<ver><segs>) -> abstract value
+	presence map[constraint.PathKey]pathPresence
+	// fieldOverlayIndex is a derived lookup cache over values, not semantic
+	// state. Child slots are keyed by structural path segments; suffix strings
+	// exist only at PathKey parse/admission boundaries. It keeps the native
+	// product carrier; typ.Type projection happens only at the field-list query
+	// boundary.
+	fieldOverlayIndex map[constraint.PathKey]fieldOverlayValues
 	// mutableIn is the joined predecessor state for each point (the Kildall IN).
 	// mutableOut is the committed post-state each successor joins and every query
 	// reads (the Kildall OUT). During a point's own transfer, mutableOut[p] holds
 	// the working store the transfers read and write; the commit widens it against
 	// the prior OUT so the iterate is monotone and bounded.
-	mutableIn       map[cfg.Point]map[string]product.AbstractValue
-	mutableOut      map[cfg.Point]map[string]product.AbstractValue
-	mutablePresence map[cfg.Point]map[string]pathPresence
+	mutableIn       map[cfg.Point]pathValueMap
+	mutableOut      map[cfg.Point]pathValueMap
+	mutablePresence map[cfg.Point]map[constraint.PathKey]pathPresence
 	edgeConditions  map[edgeKey]constraint.Condition
 	declaredSyms    []cfg.SymbolID
 
@@ -54,7 +59,6 @@ type Solution struct {
 	assignmentsByPoint           [][]UnifiedAssignment
 	mapMutatorAssignmentsByPoint [][]MapMutatorAssignment
 	tableMutatorByPoint          [][]TableMutatorAssignment
-	containerMutatorByPoint      [][]ContainerMutatorAssignment
 	arrayLiteralLengthByPoint    [][]ArrayLiteralLength
 	loopInsertLengthByPoint      [][]LoopInsertLength
 	edgeNumericConstraints       map[edgeKey][]constraint.NumericConstraint
@@ -72,20 +76,20 @@ type Solution struct {
 
 	// Scratch buffers to reduce allocations in hot paths
 	scratchTypes           []typ.Type
-	scratchSuffix          map[string]struct{}
+	scratchSuffix          map[pathSuffixKey]struct{}
 	scratchVersionIDs      map[cfg.SymbolID]int
 	scratchMissingVersions map[cfg.SymbolID]struct{}
 	scratchUnresolvedPaths map[constraint.PathKey]struct{}
 	scratchValueMap        map[constraint.PathKey]typ.Type
 	scratchResolvedPathMap map[constraint.PathKey]constraint.PathKey
-	scratchParsedSuffixes  map[string][]constraint.Segment
+	scratchParsedSuffixes  map[pathSuffixKey][]constraint.Segment
 	fieldOverlayCache      map[fieldOverlayCacheKey][]mergedField
 	fieldMergeCache        map[fieldMergeCacheKey]typ.Type
-	valueSuffixIndex       map[string][]string
-	mutableSuffixIndex     map[pointRootKey][]string
+	valueSuffixIndex       map[constraint.PathKey][]pathSuffixKey
+	mutableSuffixIndex     map[pointRootKey][]pathSuffixKey
 	mutableSuffixIndexed   map[cfg.Point]bool
 	phiJoinState           map[phiJoinKey]phiJoinValue
-	pathAliases            map[string]string // canonical target path key -> canonical source path key
+	pathAliases            map[constraint.PathKey]constraint.PathKey // canonical target path key -> canonical source path key
 	narrowedTypeCache      map[narrowedTypeCacheKey]narrowedTypeCacheValue
 	childTypesCache        map[childTypesCacheKey]childTypesCacheValue
 	pointConditionCache    map[conditionPathCacheKey]constraint.Condition
@@ -94,7 +98,7 @@ type Solution struct {
 	queryCacheEnabled      bool
 
 	// Worklist/dependency scratch to reduce per-iteration allocations.
-	scratchChangedKeys  []string
+	scratchChangedKeys  []constraint.PathKey
 	scratchPendingMarks []int
 	scratchPendingPts   []cfg.Point
 	pendingMarkEpoch    int
@@ -140,9 +144,16 @@ type edgeKey struct {
 }
 
 type mergedField struct {
-	Name     string
+	Key      constraint.Segment
 	Type     typ.Type
 	Optional bool
+}
+
+type fieldOverlayValues map[constraint.Segment]fieldOverlayValue
+
+type fieldOverlayValue struct {
+	value  product.AbstractValue
+	pathID constraint.PathKey
 }
 
 // Solve computes flow analysis and returns the solution.
@@ -194,7 +205,6 @@ func conditionViewInputs(inputs *Inputs) *Inputs {
 	view.Assignments = nil
 	view.MapMutatorAssignments = nil
 	view.TableMutatorAssignments = nil
-	view.ContainerMutatorAssignments = nil
 	return &view
 }
 
@@ -211,7 +221,7 @@ func newSolution(inputs *Inputs, resolver narrow.Resolver) (*Solution, int) {
 		inputs:     inputs,
 		resolver:   resolver,
 		pkResolver: pkRes,
-		values:     make(map[string]product.AbstractValue, estimateSolutionValueCapacity(inputs, size)),
+		values:     make(pathValueMap, estimateSolutionValueCapacity(inputs, size)),
 	}
 	if inputs != nil && len(inputs.DeclaredTypes) > 0 {
 		s.declaredSyms = make([]cfg.SymbolID, 0, len(inputs.DeclaredTypes))
@@ -229,7 +239,6 @@ func estimateSolutionValueCapacity(inputs *Inputs, graphSize int) int {
 	}
 	capacity := len(inputs.DeclaredTypes) + len(inputs.Assignments)
 	capacity += len(inputs.MapMutatorAssignments) + len(inputs.TableMutatorAssignments)
-	capacity += len(inputs.ContainerMutatorAssignments)
 	if capacity < len(inputs.ConstValues) {
 		capacity += len(inputs.ConstValues)
 	}
@@ -357,52 +366,9 @@ func (s *Solution) constraintEnv() constraint.Env {
 	}
 }
 
-// DebugValueAt returns the raw value stored for a version key.
-func (s *Solution) DebugValueAt(key string, p cfg.Point) typ.Type {
-	if s == nil {
-		return nil
-	}
-	return s.valueAtPoint(p, key)
-}
-
-// DebugVersionedKey returns the canonical key for root at point.
-func (s *Solution) DebugVersionedKey(root string, p cfg.Point) string {
-	if s.inputs == nil || s.inputs.Graph == nil || s.pkResolver == nil {
-		return ""
-	}
-	sym, ok := s.inputs.Graph.SymbolAt(p, root)
-	if !ok {
-		return ""
-	}
-	path := constraint.Path{Root: root, Symbol: sym}
-	return string(s.pkResolver.KeyAt(p, path))
-}
-
 // DebugIterations returns worklist iterations used for convergence.
 func (s *Solution) DebugIterations() int {
 	return s.iterations
-}
-
-// DebugVersionValues returns the version values for debugging.
-func (s *Solution) DebugVersionValues() map[string]typ.Type {
-	out := make(map[string]typ.Type, len(s.values))
-	for key, av := range s.values {
-		out[key] = av.ProjectValue()
-	}
-	return out
-}
-
-// DebugEdgeValues returns nil (edge values removed in single narrowing system consolidation).
-func (s *Solution) DebugEdgeValues(from, to cfg.Point) map[string]typ.Type {
-	return nil
-}
-
-// DebugEdgeCondition returns the condition stored for a specific edge.
-func (s *Solution) DebugEdgeCondition(from, to cfg.Point) constraint.Condition {
-	if s == nil {
-		return constraint.Condition{}
-	}
-	return s.edgeConditions[edgeKey{from: from, to: to}]
 }
 
 // UnreachableEdges returns all edges proven unreachable by constraint analysis.
@@ -511,7 +477,7 @@ func (s *Solution) solve() {
 
 func (s *Solution) addDependentPointsBatch(
 	phiDeps, assignDeps, edgeDeps dependencyMap,
-	changedKeys []string,
+	changedKeys []constraint.PathKey,
 	worklist []cfg.Point,
 	inQueue []bool,
 ) []cfg.Point {
@@ -522,7 +488,7 @@ func (s *Solution) addDependentPointsBatch(
 	// Keep deterministic behavior while reusing backing storage.
 	keys := s.scratchChangedKeys[:0]
 	keys = append(keys, changedKeys...)
-	sort.Strings(keys)
+	sortPathKeys(keys)
 	s.scratchChangedKeys = keys
 
 	if len(s.scratchPendingMarks) < len(inQueue) {
@@ -546,7 +512,7 @@ func (s *Solution) addDependentPointsBatch(
 		marks[idx] = epoch
 		pendingPts = append(pendingPts, point)
 	}
-	addByKey := func(dm dependencyMap, key string) {
+	addByKey := func(dm dependencyMap, key dependencyKey) {
 		for _, point := range dm[key] {
 			addPoint(point)
 		}
@@ -557,7 +523,7 @@ func (s *Solution) addDependentPointsBatch(
 	// header phi). The reachability cache is cleared on write, but the consuming
 	// points must also be re-queued or the worklist drains on the stale narrow
 	// fixpoint. Re-queue the reachability dependents and their successors.
-	addReachabilityDeps := func(key string) {
+	addReachabilityDeps := func(key dependencyKey) {
 		for _, point := range s.reachabilityDeps[key] {
 			addPoint(point)
 			for _, succ := range graphSuccessors(s.inputs.Graph, point) {
@@ -567,13 +533,14 @@ func (s *Solution) addDependentPointsBatch(
 	}
 
 	for _, key := range keys {
-		addByKey(phiDeps, key)
-		addByKey(assignDeps, key)
-		addByKey(edgeDeps, key)
-		addReachabilityDeps(key)
+		pathDep := dependencyPathKey(key)
+		addByKey(phiDeps, pathDep)
+		addByKey(assignDeps, pathDep)
+		addByKey(edgeDeps, pathDep)
+		addReachabilityDeps(pathDep)
 
-		if sym := pathkey.KeySymbolUnchecked(constraint.PathKey(key)); sym != 0 {
-			symKey := symbolDependencyKey(sym)
+		if sym := pathkey.KeySymbolUnchecked(key); sym != 0 {
+			symKey := dependencySym(sym)
 			addByKey(phiDeps, symKey)
 			addByKey(assignDeps, symKey)
 			addByKey(edgeDeps, symKey)
@@ -681,10 +648,10 @@ func (s *Solution) resolveTypeKey(key narrow.TypeKey) typ.Type {
 //
 // This enables gradual type construction for tables built incrementally.
 func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.Type {
-	return s.mergeFieldAssignmentsAt(0, baseType, baseKey)
+	return s.mergeFieldAssignmentsAt(0, baseType, constraint.PathKey(baseKey))
 }
 
-func (s *Solution) mergeFieldAssignmentsAt(p cfg.Point, baseType typ.Type, baseKey string) typ.Type {
+func (s *Solution) mergeFieldAssignmentsAt(p cfg.Point, baseType typ.Type, baseKey constraint.PathKey) typ.Type {
 	return newFieldOverlayMerger(s, p, baseType, baseKey).merge()
 }
 
@@ -694,13 +661,7 @@ func mergeRecursiveUnionFieldOverlay(u *typ.Union, fields []mergedField) (typ.Ty
 	}
 
 	builder := typ.NewRecord().SetOpen(true)
-	for _, f := range fields {
-		if f.Optional {
-			builder.OptField(f.Name, f.Type)
-		} else {
-			builder.Field(f.Name, f.Type)
-		}
-	}
+	addOverlayFields(builder, fields)
 	overlay := builder.Build()
 
 	residual := make([]typ.Type, 0, len(u.Members)+1)
@@ -736,11 +697,11 @@ func recursiveTableOverlayMember(t typ.Type) bool {
 	}
 }
 
-func (s *Solution) fieldAssignmentsForRoot(baseRoot string) []mergedField {
+func (s *Solution) fieldAssignmentsForRoot(baseRoot constraint.PathKey) []mergedField {
 	return s.fieldAssignmentsForRootAt(0, baseRoot)
 }
 
-func (s *Solution) fieldAssignmentsForRootAt(p cfg.Point, baseRoot string) []mergedField {
+func (s *Solution) fieldAssignmentsForRootAt(p cfg.Point, baseRoot constraint.PathKey) []mergedField {
 	if s == nil || baseRoot == "" || (len(s.values) == 0 && len(s.mutableOut[p]) == 0) {
 		return nil
 	}
@@ -756,34 +717,37 @@ func (s *Solution) fieldAssignmentsForRootAt(p cfg.Point, baseRoot string) []mer
 	return fields
 }
 
-func (s *Solution) collectFieldAssignmentsForRootAt(p cfg.Point, baseRoot string) []mergedField {
-	values := make(map[string]typ.Type, 8)
+func (s *Solution) collectFieldAssignmentsForRootAt(p cfg.Point, baseRoot constraint.PathKey) []mergedField {
+	values := make(fieldOverlayValues, 8)
 	if indexed := s.fieldOverlayValuesForRoot(baseRoot); len(indexed) > 0 {
-		for suffix, value := range indexed {
-			values[suffix] = value
+		for seg, overlay := range indexed {
+			values[seg] = overlay
 		}
 	}
 	if state := s.mutableOut[p]; state != nil {
-		prefixLen := len(baseRoot)
+		baseRootString := string(baseRoot)
+		prefixLen := len(baseRootString)
 		for key, av := range state {
-			if len(key) <= prefixLen || key[:prefixLen] != baseRoot {
+			keyString := string(key)
+			if len(keyString) <= prefixLen || keyString[:prefixLen] != baseRootString {
 				continue
 			}
-			suffix := key[prefixLen:]
-			if _, ok := parseSingleOverlaySegment(suffix); !ok {
+			suffix := keyString[prefixLen:]
+			seg, ok := parseSingleOverlaySegment(suffix)
+			if !ok {
 				continue
 			}
-			values[suffix] = av.ProjectValue()
+			values[seg] = fieldOverlayValue{value: av, pathID: key}
 		}
 	}
 	fields := make([]mergedField, 0, len(values))
-	for suffix, value := range values {
-		seg, ok := parseSingleOverlaySegment(suffix)
-		if !ok {
+	for seg, overlay := range values {
+		value := projectFlowValue(overlay.value)
+		if value == nil {
 			continue
 		}
 		fieldType, optional := typ.SplitNilableFieldType(value)
-		switch s.presenceAtPoint(p, baseRoot+suffix) {
+		switch s.presenceAtPoint(p, string(overlay.pathID)) {
 		case pathPresencePresent:
 			if inner, nilable := typ.SplitNilableFieldType(value); nilable {
 				fieldType = inner
@@ -795,13 +759,13 @@ func (s *Solution) collectFieldAssignmentsForRootAt(p cfg.Point, baseRoot string
 		case pathPresenceMaybe:
 			optional = true
 		}
-		fields = append(fields, mergedField{Name: seg.Name, Type: fieldType, Optional: optional})
+		fields = append(fields, mergedField{Key: seg, Type: fieldType, Optional: optional})
 	}
 	sortMergedFields(fields)
 	return fields
 }
 
-func (s *Solution) fieldOverlayValuesForRoot(baseRoot string) map[string]typ.Type {
+func (s *Solution) fieldOverlayValuesForRoot(baseRoot constraint.PathKey) fieldOverlayValues {
 	if s == nil || baseRoot == "" || len(s.values) == 0 {
 		return nil
 	}
@@ -813,13 +777,13 @@ func (s *Solution) ensureFieldOverlayIndex() {
 	if s == nil || s.fieldOverlayIndex != nil {
 		return
 	}
-	s.fieldOverlayIndex = make(map[string]map[string]typ.Type)
+	s.fieldOverlayIndex = make(map[constraint.PathKey]fieldOverlayValues)
 	for key, av := range s.values {
-		s.indexFieldOverlayValue(key, av.ProjectValue())
+		s.indexFieldOverlayValue(string(key), av)
 	}
 }
 
-func (s *Solution) indexFieldOverlayValue(key string, value typ.Type) {
+func (s *Solution) indexFieldOverlayValue(key string, value product.AbstractValue) {
 	if s == nil || key == "" {
 		return
 	}
@@ -827,27 +791,29 @@ func (s *Solution) indexFieldOverlayValue(key string, value typ.Type) {
 	if !ok || root == "" {
 		return
 	}
-	if _, ok := parseSingleOverlaySegment(suffix); !ok {
+	seg, ok := parseSingleOverlaySegment(suffix)
+	if !ok {
 		return
 	}
+	rootKey := constraint.PathKey(root)
 	if s.fieldOverlayIndex == nil {
-		s.fieldOverlayIndex = make(map[string]map[string]typ.Type)
+		s.fieldOverlayIndex = make(map[constraint.PathKey]fieldOverlayValues)
 	}
-	if value == nil {
-		if bySuffix := s.fieldOverlayIndex[root]; bySuffix != nil {
-			delete(bySuffix, suffix)
-			if len(bySuffix) == 0 {
-				delete(s.fieldOverlayIndex, root)
+	if value.IsZero() {
+		if bySegment := s.fieldOverlayIndex[rootKey]; bySegment != nil {
+			delete(bySegment, seg)
+			if len(bySegment) == 0 {
+				delete(s.fieldOverlayIndex, rootKey)
 			}
 		}
 		return
 	}
-	bySuffix := s.fieldOverlayIndex[root]
-	if bySuffix == nil {
-		bySuffix = make(map[string]typ.Type, 1)
-		s.fieldOverlayIndex[root] = bySuffix
+	bySegment := s.fieldOverlayIndex[rootKey]
+	if bySegment == nil {
+		bySegment = make(fieldOverlayValues, 1)
+		s.fieldOverlayIndex[rootKey] = bySegment
 	}
-	bySuffix[suffix] = value
+	bySegment[seg] = fieldOverlayValue{value: value, pathID: constraint.PathKey(key)}
 }
 
 func sortMergedFields(fields []mergedField) {
@@ -855,8 +821,14 @@ func sortMergedFields(fields []mergedField) {
 		return
 	}
 	sort.Slice(fields, func(i, j int) bool {
-		if fields[i].Name != fields[j].Name {
-			return fields[i].Name < fields[j].Name
+		if fields[i].Key.Kind != fields[j].Key.Kind {
+			return fields[i].Key.Kind < fields[j].Key.Kind
+		}
+		if fields[i].Key.Name != fields[j].Key.Name {
+			return fields[i].Key.Name < fields[j].Key.Name
+		}
+		if fields[i].Key.Index != fields[j].Key.Index {
+			return fields[i].Key.Index < fields[j].Key.Index
 		}
 		if fields[i].Optional != fields[j].Optional {
 			return !fields[i].Optional && fields[j].Optional

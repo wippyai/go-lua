@@ -74,6 +74,29 @@ func TestEngine_Field_AliasDiscriminatedUnionCommonField(t *testing.T) {
 	}
 }
 
+func TestEngine_Field_PartialRecordUnionKeepsMissingFieldOptionality(t *testing.T) {
+	e := NewEngine()
+	ctx := db.NewQueryContext(db.New())
+	action := typ.NewUnion(
+		typ.NewRecord().Field("kind", typ.LiteralString("a")).Field("x", typ.String).Build(),
+		typ.NewRecord().Field("kind", typ.LiteralString("b")).Field("y", typ.String).Build(),
+	)
+	okVariant := typ.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", action).
+		Build()
+	errVariant := typ.NewRecord().
+		Field("ok", typ.LiteralBool(false)).
+		Field("error", typ.String).
+		Build()
+
+	got, ok := e.Field(ctx, typ.NewUnion(okVariant, errVariant), "value")
+	want := typ.NewOptional(action)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("Engine.Field(VR, value) = %v, %v; want %v,true", got, ok, want)
+	}
+}
+
 func TestEngine_Field_NotFound(t *testing.T) {
 	e := NewEngine()
 	rec := typ.NewRecord().Field("x", typ.Number).Build()

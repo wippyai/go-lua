@@ -10,20 +10,13 @@ import (
 	"github.com/wippyai/go-lua/types/typ/join"
 )
 
-// PathTypeAt returns the parent abstract-state type for a rooted path at a CFG
-// point. The captured environment projection uses this to preserve field and
-// container facts that live below the captured root symbol.
-type PathTypeAt func(cfg.Point, constraint.Path) typ.Type
-
-// ChildTypesAt returns finite child path facts that are already materialized in
-// the parent abstract state. Captured projection consumes these facts instead of
-// deriving an unbounded tree of descendants from recursive products.
-type ChildTypesAt func(cfg.Point, constraint.Path) []flow.PathFact
-
-// PathProjection is the captured environment view of parent flow state.
+// PathProjection is the captured environment view of parent flow state. It is
+// intentionally expressed in producer-neutral fact surfaces, not in a concrete
+// solver carrier: path reads use the normalized observation law, and child reads
+// enumerate only finite facts already materialized below a path.
 type PathProjection struct {
-	TypeAt       PathTypeAt
-	ChildTypesAt ChildTypesAt
+	Paths    flow.PathObservationFacts
+	Children flow.PathChildFacts
 }
 
 // FromParentFactsAtPoint computes captured types for a nested graph from parent
@@ -177,8 +170,8 @@ func projectPathFacts(
 	if typ.IsAbsentOrUnknown(base) || path.IsEmpty() {
 		return base
 	}
-	if allowDirect && projection.TypeAt != nil {
-		if direct := projection.TypeAt(point, path); !typ.IsAbsentOrUnknown(direct) {
+	if allowDirect {
+		if direct := projectionPathType(point, path, projection); !typ.IsAbsentOrUnknown(direct) {
 			if reconciled, ok := value.ReconcilePathFactWithDeclaredRead(direct, base); ok && reconciled != nil {
 				base = reconciled
 			} else {
@@ -301,10 +294,31 @@ func projectRecordPathFacts(
 }
 
 func projectionChildFacts(point cfg.Point, path constraint.Path, projection PathProjection) []flow.PathFact {
-	if projection.ChildTypesAt == nil {
+	if projection.Children == nil {
 		return nil
 	}
-	return projection.ChildTypesAt(point, path)
+	return projection.Children.ObserveChildPaths(flow.PathChildQuery{
+		Point: point,
+		Path:  path,
+		Phase: flow.PathReadCurrent,
+	})
+}
+
+func projectionPathType(point cfg.Point, path constraint.Path, projection PathProjection) typ.Type {
+	if projection.Paths == nil {
+		return nil
+	}
+	obs := projection.Paths.ObservePath(flow.PathObservationQuery{
+		Point:               point,
+		Path:                path,
+		Phase:               flow.PathReadCurrent,
+		AllowConditionProof: true,
+		PreserveProof:       true,
+	})
+	if !obs.Resolved() {
+		return nil
+	}
+	return obs.Type
 }
 
 func childDirectSegment(parent, child constraint.Path) (constraint.Segment, bool) {

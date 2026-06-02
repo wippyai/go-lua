@@ -72,7 +72,7 @@ func WithAssign() check.Option {
 		if result.FlowInputs != nil {
 			declared = result.FlowInputs.DeclaredTypes
 		}
-		return CheckAssignments(result.Graph, result.Evidence, declared, observer, result.FlowSolution, sess.SourceName)
+		return CheckAssignments(result.Graph, result.Evidence, declared, observer, result.SolvedFlow(), sess.SourceName)
 	})
 }
 
@@ -92,7 +92,7 @@ func WithCall() check.Option {
 		if result.TypeOps == nil {
 			return nil
 		}
-		return CheckCalls(result.Graph, result.Evidence, solvedObservation(result), result.QueryContext, result.TypeOps, sess.ResultsMap(), sess.SourceName)
+		return CheckCalls(result.Graph, result.Evidence, result.CallContracts, solvedObservation(result), result.QueryContext, result.TypeOps, sess.ResultsMap(), sess.SourceName)
 	})
 }
 
@@ -102,7 +102,7 @@ func WithField() check.Option {
 		if result.Graph == nil {
 			return nil
 		}
-		return CheckFields(result.Graph, result.Evidence, solvedObservation(result), result.FlowSolution, sess.SourceName)
+		return CheckFields(result.Graph, result.Evidence, solvedObservation(result), result.SolvedFlow(), sess.SourceName)
 	})
 }
 
@@ -122,7 +122,11 @@ func WithExhaustiveness() check.Option {
 		if fn == nil || result.Graph == nil || result.NarrowSynth == nil {
 			return nil
 		}
-		return CheckExhaustiveness(fn, result.Graph, result.Evidence, result.NarrowSynth.Narrow(), sess.SourceName)
+		var declared flow.DeclaredTypes
+		if result.FlowInputs != nil {
+			declared = result.FlowInputs.DeclaredTypes
+		}
+		return CheckExhaustiveness(fn, result.Graph, result.Evidence, declared, result.NarrowSynth.Narrow(), sess.SourceName)
 	})
 }
 
@@ -133,10 +137,12 @@ func WithIdent() check.Option {
 			return nil
 		}
 		var declared map[cfg.SymbolID]typ.Type
+		var bindings map[cfg.SymbolID]typ.Type
 		if result.FlowInputs != nil {
 			declared = result.FlowInputs.DeclaredTypes
+			bindings = result.FlowInputs.BindingTypes
 		}
-		return CheckIdents(result.Graph, result.Evidence, result.Scopes, declared, sess.SourceName)
+		return CheckIdents(result.Graph, result.Evidence, result.Scopes, declared, bindings, sess.SourceName)
 	})
 }
 

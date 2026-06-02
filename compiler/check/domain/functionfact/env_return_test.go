@@ -6,42 +6,114 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/domain/observation"
-	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestExtractEnvironmentReturns_FromSolvedReturnCall(t *testing.T) {
-	stmts, err := parse.ParseString(`return generate._mapper.map_error_response("bad")`, "env_return.lua")
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-	fn := &ast.FunctionExpr{Stmts: stmts}
-	graph := cfg.Build(fn, "generate")
-	if graph == nil || graph.Bindings() == nil {
-		t.Fatal("expected graph with bindings")
-	}
-	const fnSym cfg.SymbolID = 9000
-	graph.Bindings().SetName(fnSym, "generate.handler")
+type envReturnProofFacts struct {
+	condition constraint.Condition
+}
 
-	result := &api.FuncResult{Graph: graph}
-	specs := ExtractEnvironmentReturns(result, fnSym, observation.FromFuncResult(result, nil))
-	if len(specs) != 1 {
-		t.Fatalf("ExtractEnvironmentReturns() returned %d specs, want 1: %#v", len(specs), specs)
+func (f envReturnProofFacts) DeclaredAt(cfg.Point, cfg.SymbolID) flow.TypedValue {
+	return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
+}
+
+func (f envReturnProofFacts) RefinedAt(cfg.Point, cfg.SymbolID) flow.TypedValue {
+	return flow.TypedValue{Type: nil, State: flow.StateUnknown}
+}
+
+func (f envReturnProofFacts) EffectiveTypeAt(cfg.Point, cfg.SymbolID) flow.TypedValue {
+	return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
+}
+
+func (f envReturnProofFacts) IsAnnotated(cfg.SymbolID) bool {
+	return false
+}
+
+func (f envReturnProofFacts) ConditionAt(cfg.Point) constraint.Condition {
+	return f.condition
+}
+
+func (f envReturnProofFacts) ProvesTypeAt(cfg.Point, constraint.Path, typ.Type) bool {
+	return false
+}
+
+func (f envReturnProofFacts) ConditionTypeAt(cfg.Point, constraint.Path) typ.Type {
+	return nil
+}
+
+func (f envReturnProofFacts) ConditionedTypeAt(cfg.Point, constraint.Path, constraint.Condition) typ.Type {
+	return nil
+}
+
+func (f envReturnProofFacts) ConditionedSeedTypeAt(cfg.Point, constraint.Path, typ.Type, constraint.Path, constraint.Condition) typ.Type {
+	return nil
+}
+
+func TestEnvReturnConditionUsesConditionProofFactsWithoutFlowSolution(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"args"}}}
+	graph := cfg.Build(fn)
+	params := graph.ParamSlotsReadOnly()
+	if len(params) != 1 {
+		t.Fatalf("param slots len = %d, want 1", len(params))
 	}
-	spec := specs[0]
-	if spec.ReturnIndex != 0 || spec.ResultIndex != 0 {
-		t.Fatalf("return/result index = %d/%d, want 0/0", spec.ReturnIndex, spec.ResultIndex)
+
+	paramPath := constraint.Path{Root: "args", Symbol: params[0].Symbol}.Field("bad")
+	result := &api.FuncResult{
+		Graph: graph,
+		Facts: envReturnProofFacts{
+			condition: constraint.FromConstraints(constraint.Truthy{Path: paramPath}),
+		},
 	}
-	if len(spec.Path) != 2 ||
-		spec.Path[0].Kind != constraint.SegmentField ||
-		spec.Path[0].Name != "_mapper" ||
-		spec.Path[1].Kind != constraint.SegmentField ||
-		spec.Path[1].Name != "map_error_response" {
-		t.Fatalf("path = %#v, want _mapper.map_error_response", spec.Path)
+
+	got := envReturnCondition(result, graph.Entry())
+	want := constraint.FromConstraints(constraint.Truthy{Path: constraint.ParamPath(0).Field("bad")})
+	if !got.Equals(want) {
+		t.Fatalf("envReturnCondition() = %v, want %v", got, want)
 	}
-	if len(spec.Args) != 1 || !typ.TypeEquals(spec.Args[0], typ.LiteralString("bad")) {
-		t.Fatalf("args = %v, want [\"bad\"]", spec.Args)
+}
+
+func TestNormalizeEnvReturns_UsesStructuralPathIdentity(t *testing.T) {
+	fieldPath := []constraint.Segment{{Kind: constraint.SegmentField, Name: "x-y"}}
+	indexPath := []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "x-y"}}
+	got := NormalizeEnvReturns([]contract.EnvReturnSpec{
+		{ReturnIndex: 0, ResultIndex: 0, Path: indexPath, Args: []typ.Type{typ.String}},
+		{ReturnIndex: 0, ResultIndex: 0, Path: fieldPath, Args: []typ.Type{typ.Number}},
+	})
+
+	if len(got) != 2 {
+		t.Fatalf("NormalizeEnvReturns len = %d, want distinct field and string-index specs: %#v", len(got), got)
+	}
+	if len(got[0].Path) != 1 || got[0].Path[0].Kind != constraint.SegmentField {
+		t.Fatalf("first normalized env return path = %#v, want dot field first", got[0].Path)
+	}
+	if len(got[1].Path) != 1 || got[1].Path[0].Kind != constraint.SegmentIndexString {
+		t.Fatalf("second normalized env return path = %#v, want string-index path", got[1].Path)
+	}
+}
+
+func TestJoinEnvReturns_MergesSameTypedIdentity(t *testing.T) {
+	path := []constraint.Segment{{Kind: constraint.SegmentField, Name: "invoke"}}
+	left := contract.EnvReturnSpec{
+		ReturnIndex: 0,
+		ResultIndex: 0,
+		Path:        path,
+		Args:        []typ.Type{typ.Integer},
+	}
+	right := contract.EnvReturnSpec{
+		ReturnIndex: 0,
+		ResultIndex: 0,
+		Path:        path,
+		Args:        []typ.Type{typ.Integer},
+	}
+
+	got := JoinEnvReturns([]contract.EnvReturnSpec{left}, []contract.EnvReturnSpec{right})
+	if len(got) != 1 {
+		t.Fatalf("JoinEnvReturns len = %d, want duplicate identity merged: %#v", len(got), got)
+	}
+	if len(got[0].Args) != 1 || !typ.TypeEquals(got[0].Args[0], typ.Integer) {
+		t.Fatalf("merged args = %#v, want integer", got[0].Args)
 	}
 }

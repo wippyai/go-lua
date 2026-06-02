@@ -199,6 +199,60 @@ func TestConditionTypeAt_ProjectsDiscriminatedChildFromDeclaredProduct(t *testin
 	}
 }
 
+func TestConditionTypeAt_DNFDescendantAbsentDisjunctContributesNil(t *testing.T) {
+	c, branch, thenNode := buildBranchCFG()
+	g := newMockSSAGraph(c)
+
+	points := []cfg.Point{c.Entry(), branch, thenNode, c.Exit()}
+	symResult := setupSymbol(g, "result", points)
+	verResult := cfg.Version{Root: "result", Symbol: symResult, ID: 1}
+	for _, p := range points {
+		setVersion(g, p, symResult, verResult)
+	}
+
+	aVariant := typ.NewRecord().
+		Field("kind", typ.LiteralString("a")).
+		Field("a_field", typ.Number).
+		Build()
+	bVariant := typ.NewRecord().
+		Field("kind", typ.LiteralString("b")).
+		Field("b_field", typ.String).
+		Build()
+	cVariant := typ.NewRecord().
+		Field("kind", typ.LiteralString("c")).
+		Field("c_field", typ.Boolean).
+		Build()
+	pathResult := constraint.Path{Root: "result", Symbol: symResult}
+	aFieldPath := pathResult.Field("a_field")
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symResult] = typ.NewUnion(aVariant, bVariant, cVariant)
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From: branch,
+			To:   thenNode,
+			Condition: constraint.Or(
+				constraint.FromConstraints(constraint.FieldEquals{
+					Target: pathResult,
+					Field:  "kind",
+					Value:  typ.LiteralString("a"),
+				}),
+				constraint.FromConstraints(constraint.FieldEquals{
+					Target: pathResult,
+					Field:  "kind",
+					Value:  typ.LiteralString("b"),
+				}),
+			),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+	want := typ.NewOptional(typ.Number)
+	if got := s.ConditionTypeAt(thenNode, aFieldPath); !typ.TypeEquals(got, want) {
+		t.Fatalf("ConditionTypeAt(then, result.a_field) = %v, want %v", got, want)
+	}
+}
+
 func TestConditionTypeAt_NegativeDiscriminantUnmatchedLiteralDoesNotBottomChild(t *testing.T) {
 	c, branch, thenNode := buildBranchCFG()
 	g := newMockSSAGraph(c)

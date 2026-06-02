@@ -116,8 +116,8 @@ func TestCollectFunctionFieldAssignments_MethodDefinition(t *testing.T) {
 		}
 		return fnType
 	}, nil)
-	if !typ.TypeEquals(got[1]["from"], fnType) {
-		t.Fatalf("method field type = %v, want %v", got[1]["from"], fnType)
+	if fieldType := projectedField(got[1], "from"); !typ.TypeEquals(fieldType, fnType) {
+		t.Fatalf("method field type = %v, want %v", fieldType, fnType)
 	}
 }
 

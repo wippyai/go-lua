@@ -52,15 +52,15 @@ func migrationManifest() *io.Manifest {
 	return m
 }
 
-func migrationManifestWithTransactionDB() *io.Manifest {
-	txType := typ.NewInterface("migration.Transaction", []typ.Method{
+func transactionRunnerType(name string) *typ.Interface {
+	return typ.NewInterface(name, []typ.Method{
 		{
 			Name: "query",
 			Type: typ.Func().
 				Param("self", typ.Self).
 				Param("sql", typ.String).
-				OptParam("params", typ.Any).
-				Returns(typ.Any, typ.NewOptional(typ.LuaError)).
+				Variadic(typ.Any).
+				Returns(typ.NewArray(typ.NewMap(typ.String, typ.Any)), typ.NewOptional(typ.LuaError)).
 				Build(),
 		},
 		{
@@ -68,11 +68,32 @@ func migrationManifestWithTransactionDB() *io.Manifest {
 			Type: typ.Func().
 				Param("self", typ.Self).
 				Param("sql", typ.String).
-				OptParam("params", typ.Any).
+				Variadic(typ.Any).
+				Returns(typ.NewRecord().
+					Field("rows_affected", typ.Integer).
+					Field("last_insert_id", typ.Integer).
+					Build(), typ.NewOptional(typ.LuaError)).
+				Build(),
+		},
+		{
+			Name: "commit",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).
+				Build(),
+		},
+		{
+			Name: "rollback",
+			Type: typ.Func().
+				Param("self", typ.Self).
 				Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).
 				Build(),
 		},
 	})
+}
+
+func migrationManifestWithTransactionDB() *io.Manifest {
+	txType := transactionRunnerType("migration.Transaction")
 	stepFn := typ.Func().Param("db", txType).Returns(typ.Nil).Build()
 	upFn := typ.Func().Param("fn", stepFn).Returns(typ.Nil).Build()
 	overlay := map[string]typ.Type{}
@@ -119,43 +140,7 @@ func migrationManifestWithTransactionDB() *io.Manifest {
 }
 
 func sqlManifestWithServiceDB() *io.Manifest {
-	txType := typ.NewInterface("sql.Transaction", []typ.Method{
-		{
-			Name: "query",
-			Type: typ.Func().
-				Param("self", typ.Self).
-				Param("sql", typ.String).
-				Variadic(typ.Any).
-				Returns(typ.NewArray(typ.NewMap(typ.String, typ.Any)), typ.NewOptional(typ.LuaError)).
-				Build(),
-		},
-		{
-			Name: "execute",
-			Type: typ.Func().
-				Param("self", typ.Self).
-				Param("sql", typ.String).
-				Variadic(typ.Any).
-				Returns(typ.NewRecord().
-					Field("rows_affected", typ.Integer).
-					Field("last_insert_id", typ.Integer).
-					Build(), typ.NewOptional(typ.LuaError)).
-				Build(),
-		},
-		{
-			Name: "commit",
-			Type: typ.Func().
-				Param("self", typ.Self).
-				Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).
-				Build(),
-		},
-		{
-			Name: "rollback",
-			Type: typ.Func().
-				Param("self", typ.Self).
-				Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).
-				Build(),
-		},
-	})
+	txType := transactionRunnerType("sql.Transaction")
 	dbType := typ.NewInterface("sql.DB", []typ.Method{
 		{
 			Name: "type",

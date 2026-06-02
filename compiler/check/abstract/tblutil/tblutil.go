@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -34,7 +35,7 @@ func MapLiteralKeyCardinality(tbl *ast.TableExpr) int64 {
 		if _, ok := field.Value.(*ast.NilExpr); ok {
 			continue
 		}
-		seg, ok := pathseg.StaticTableFieldKeySegment(field.Key)
+		seg, ok := pathseg.StaticTableFieldSegment(field)
 		if !ok {
 			continue
 		}
@@ -71,8 +72,12 @@ func SynthTableLiteralWithWrapper(ex *ast.TableExpr, p cfg.Point, recurse func(a
 
 	builder := typ.NewRecord()
 	var arrayElements []typ.Type
+	var indexedWrites []struct {
+		key typ.Type
+		val typ.Type
+	}
 	hasVararg := false
-	fieldCount := 0
+	keyedCount := 0
 
 	for _, field := range ex.Fields {
 		if field == nil {
@@ -85,24 +90,42 @@ func SynthTableLiteralWithWrapper(ex *ast.TableExpr, p cfg.Point, recurse func(a
 			arrayElements = append(arrayElements, recurse(field.Value, p))
 			continue
 		}
-		switch k := field.Key.(type) {
-		case *ast.StringExpr:
-			builder.Field(k.Value, recurse(field.Value, p))
-			fieldCount++
-		case *ast.IdentExpr:
-			builder.Field(k.Value, recurse(field.Value, p))
-			fieldCount++
+		seg, ok := pathseg.StaticTableFieldSegment(field)
+		if !ok {
+			continue
+		}
+		val := recurse(field.Value, p)
+		switch seg.Kind {
+		case constraint.SegmentField:
+			builder.Field(seg.Name, val)
+			keyedCount++
+		case constraint.SegmentIndexString:
+			indexedWrites = append(indexedWrites, struct {
+				key typ.Type
+				val typ.Type
+			}{key: typ.LiteralString(seg.Name), val: val})
+			keyedCount++
+		case constraint.SegmentIndexInt:
+			indexedWrites = append(indexedWrites, struct {
+				key typ.Type
+				val typ.Type
+			}{key: typ.LiteralInt(int64(seg.Index)), val: val})
+			keyedCount++
 		}
 	}
 
-	if len(arrayElements) > 0 && fieldCount == 0 {
+	if len(arrayElements) > 0 && keyedCount == 0 {
 		if hasVararg {
 			return typ.NewArray(typ.NewUnion(arrayElements...))
 		}
 		return typ.NewTuple(arrayElements...)
 	}
 
-	return builder.Build()
+	var out typ.Type = builder.Build()
+	for _, write := range indexedWrites {
+		out = value.AdmitForeignIndexedWrite(out, write.key, write.val)
+	}
+	return out
 }
 
 // FunctionHasAnnotations returns true if the function expression has explicit type annotations

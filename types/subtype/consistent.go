@@ -68,10 +68,10 @@ func isFreshEmptyTable(t typ.Type) bool {
 
 // emptyTableSatisfies reports whether an empty table value can satisfy super.
 // It mirrors ops.CheckTable's empty-literal case exactly: an empty `{}` is
-// compatible with an array or map (no required structure), a record only when
-// every field is optional, a tuple only at arity zero, a union when some member
-// is satisfied, and an intersection only when every member is satisfied. super
-// is unwrapped through alias and optional first.
+// compatible with an array, map, or read-only map view (no required structure),
+// a record only when every field is optional, a tuple only at arity zero, a
+// union when some member is satisfied, and an intersection only when every
+// member is satisfied. super is unwrapped through alias and optional first.
 func emptyTableSatisfies(super typ.Type) bool {
 	u := unwrap.Optional(super)
 	if u == nil {
@@ -81,6 +81,8 @@ func emptyTableSatisfies(super typ.Type) bool {
 	case *typ.Array:
 		return true
 	case *typ.Map:
+		return true
+	case *typ.ReadonlyMap:
 		return true
 	case *typ.Record:
 		return recordAcceptsEmptyTable(t)

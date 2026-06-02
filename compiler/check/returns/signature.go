@@ -49,19 +49,24 @@ func BuildSeedFunctionTypeWithBindings(
 	}
 
 	if len(fn.TypeParams) > 0 {
-		tps := make(map[string]typ.Type, len(fn.TypeParams))
 		for _, tp := range fn.TypeParams {
 			var constr typ.Type
 			if tp.Constraint != nil {
 				constr = resolveType(tp.Constraint, resolveScope)
 			}
-			tps[tp.Name] = typ.NewTypeParam(tp.Name, constr)
+			param := typ.NewTypeParam(tp.Name, constr)
+			resolveScope = resolveScope.WithTypeParams(map[string]typ.Type{tp.Name: param})
 		}
-		resolveScope = resolveScope.WithTypeParams(tps)
 	}
 
 	builder := typ.Func()
 	for _, tp := range fn.TypeParams {
+		if resolved, ok := resolveScope.LookupTypeParam(tp.Name); ok {
+			if param, ok := resolved.(*typ.TypeParam); ok {
+				builder = builder.TypeParamRef(param)
+				continue
+			}
+		}
 		var constr typ.Type
 		if tp.Constraint != nil {
 			constr = resolveType(tp.Constraint, resolveScope)

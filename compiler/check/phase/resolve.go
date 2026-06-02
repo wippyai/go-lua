@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
@@ -41,7 +42,7 @@ func RunResolve(input ResolveInput) ResolveOutput {
 		Bindings:      input.Bindings,
 		DeclaredTypes: BuildDeclaredTypesForResolve(input.Graph, input.GlobalTypes, nil),
 		BaseScope:     input.BaseScope,
-		GlobalTypes:   input.GlobalTypes,
+		GlobalOverlay: input.GlobalTypes,
 	})
 
 	engine := synth.New(synth.Config{
@@ -63,7 +64,7 @@ func RunResolve(input ResolveInput) ResolveOutput {
 func CreateTypeResolutionEngine(
 	ctx *db.QueryContext,
 	graph *cfg.Graph,
-	globalTypes map[string]typ.Type,
+	globalTypes globalenv.TypeOverlay,
 	paramTypes map[cfg.SymbolID]typ.Type,
 	base *scope.State,
 	types core.TypeOps,
@@ -79,7 +80,7 @@ func CreateTypeResolutionEngine(
 		Bindings:      bindings,
 		DeclaredTypes: BuildDeclaredTypesForResolve(graph, globalTypes, paramTypes),
 		BaseScope:     base,
-		GlobalTypes:   globalTypes,
+		GlobalOverlay: globalTypes,
 	})
 	return synth.New(synth.Config{
 		Ctx:            ctx,
@@ -111,14 +112,14 @@ func graphModuleAliases(graph *cfg.Graph, evidence api.FlowEvidence) map[cfg.Sym
 }
 
 // BuildInitialSymbolTypes creates SymbolTypes for globals and parameters at all CFG points.
-func BuildInitialSymbolTypes(graph *cfg.Graph, globalTypes map[string]typ.Type, paramTypes map[cfg.SymbolID]typ.Type) flow.SymbolTypes {
+func BuildInitialSymbolTypes(graph *cfg.Graph, globalTypes globalenv.TypeOverlay, paramTypes map[cfg.SymbolID]typ.Type) flow.SymbolTypes {
 	if graph == nil {
 		return nil
 	}
 
 	// Collect all names we need to look up
 	namesToCheck := make(map[string]struct{}, len(globalTypes)+len(paramTypes))
-	for name := range globalTypes {
+	for _, name := range globalTypes.Names() {
 		namesToCheck[name] = struct{}{}
 	}
 
@@ -148,7 +149,7 @@ func BuildInitialSymbolTypes(graph *cfg.Graph, globalTypes map[string]typ.Type, 
 		if t := paramNameTypes[name]; t != nil {
 			item.paramName = t
 		}
-		if t := globalTypes[name]; t != nil {
+		if t, ok := globalTypes.Type(name); ok && t != nil {
 			item.global = t
 			if sym, ok := graph.GlobalSymbol(name); ok {
 				item.globalSym = sym
@@ -281,7 +282,7 @@ func BuildDeclaredTypesFromSymbolTypes(graph basecfg.VersionedGraph, symbolTypes
 //
 // This avoids materializing the full per-point SymbolTypes map when resolve only
 // needs the collapsed DeclaredTypes result.
-func BuildDeclaredTypesForResolve(graph *cfg.Graph, globalTypes map[string]typ.Type, paramTypes map[cfg.SymbolID]typ.Type) flow.DeclaredTypes {
+func BuildDeclaredTypesForResolve(graph *cfg.Graph, globalTypes globalenv.TypeOverlay, paramTypes map[cfg.SymbolID]typ.Type) flow.DeclaredTypes {
 	if graph == nil || (len(globalTypes) == 0 && len(paramTypes) == 0) {
 		return nil
 	}
@@ -299,12 +300,12 @@ func BuildDeclaredTypesForResolve(graph *cfg.Graph, globalTypes map[string]typ.T
 		}
 	}
 
-	for name, t := range globalTypes {
-		if t == nil {
+	for _, binding := range globalTypes {
+		if binding.Name == "" || binding.Type == nil {
 			continue
 		}
-		if sym, ok := graph.GlobalSymbol(name); ok && sym != 0 {
-			out[sym] = t
+		if sym, ok := graph.GlobalSymbol(binding.Name.String()); ok && sym != 0 {
+			out[sym] = binding.Type
 		}
 	}
 

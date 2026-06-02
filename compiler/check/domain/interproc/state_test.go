@@ -84,7 +84,7 @@ func TestWidenFactMap_NormalizesNewFacts(t *testing.T) {
 			CapturedFields: api.CapturedFieldAssigns{
 				cfg.SymbolID(10): {
 					cfg.SymbolID(20): {
-						"after_all": product.FromType(typ.NewOptional(fn)),
+						fieldKey("after_all"): product.FromType(typ.NewOptional(fn)),
 					},
 				},
 			},
@@ -92,7 +92,7 @@ func TestWidenFactMap_NormalizesNewFacts(t *testing.T) {
 	}
 
 	result := WidenFactMap(nil, next)
-	got := result[key].CapturedFields[cfg.SymbolID(10)][cfg.SymbolID(20)]["after_all"].ProjectValue()
+	got := result[key].CapturedFields[cfg.SymbolID(10)][cfg.SymbolID(20)][fieldKey("after_all")].ProjectValue()
 	if !typ.TypeEquals(got, fn) {
 		t.Fatalf("expected new facts to be normalized through WidenFacts, got %v", got)
 	}

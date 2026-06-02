@@ -18,6 +18,16 @@ func TestExtractFieldPath(t *testing.T) {
 		{
 			name: "single field",
 			expr: &ast.AttrGetExpr{
+				Object:    &ast.IdentExpr{Value: "x"},
+				Key:       &ast.StringExpr{Value: "y"},
+				KeySyntax: ast.AttrKeyDot,
+			},
+			wantBase:   "x",
+			wantFields: []string{"y"},
+		},
+		{
+			name: "legacy manual string field",
+			expr: &ast.AttrGetExpr{
 				Object: &ast.IdentExpr{Value: "x"},
 				Key:    &ast.StringExpr{Value: "y"},
 			},
@@ -25,13 +35,25 @@ func TestExtractFieldPath(t *testing.T) {
 			wantFields: []string{"y"},
 		},
 		{
+			name: "bracket string is not a field path",
+			expr: &ast.AttrGetExpr{
+				Object:    &ast.IdentExpr{Value: "x"},
+				Key:       &ast.StringExpr{Value: "y"},
+				KeySyntax: ast.AttrKeyIndex,
+			},
+			wantBase:   "",
+			wantFields: nil,
+		},
+		{
 			name: "nested fields",
 			expr: &ast.AttrGetExpr{
 				Object: &ast.AttrGetExpr{
-					Object: &ast.IdentExpr{Value: "a"},
-					Key:    &ast.StringExpr{Value: "b"},
+					Object:    &ast.IdentExpr{Value: "a"},
+					Key:       &ast.StringExpr{Value: "b"},
+					KeySyntax: ast.AttrKeyDot,
 				},
-				Key: &ast.StringExpr{Value: "c"},
+				Key:       &ast.StringExpr{Value: "c"},
+				KeySyntax: ast.AttrKeyDot,
 			},
 			wantBase:   "a",
 			wantFields: []string{"b", "c"},
@@ -395,6 +417,24 @@ func TestPathFromExpr(t *testing.T) {
 		{
 			name: "field access",
 			expr: &ast.AttrGetExpr{
+				Object:    &ast.IdentExpr{Value: "obj"},
+				Key:       &ast.StringExpr{Value: "field"},
+				KeySyntax: ast.AttrKeyDot,
+			},
+			want: "obj.field",
+		},
+		{
+			name: "bracket string keeps index syntax",
+			expr: &ast.AttrGetExpr{
+				Object:    &ast.IdentExpr{Value: "obj"},
+				Key:       &ast.StringExpr{Value: "field"},
+				KeySyntax: ast.AttrKeyIndex,
+			},
+			want: `obj["field"]`,
+		},
+		{
+			name: "legacy manual string key uses field heuristic",
+			expr: &ast.AttrGetExpr{
 				Object: &ast.IdentExpr{Value: "obj"},
 				Key:    &ast.StringExpr{Value: "field"},
 			},
@@ -404,10 +444,12 @@ func TestPathFromExpr(t *testing.T) {
 			name: "nested field",
 			expr: &ast.AttrGetExpr{
 				Object: &ast.AttrGetExpr{
-					Object: &ast.IdentExpr{Value: "a"},
-					Key:    &ast.StringExpr{Value: "b"},
+					Object:    &ast.IdentExpr{Value: "a"},
+					Key:       &ast.StringExpr{Value: "b"},
+					KeySyntax: ast.AttrKeyDot,
 				},
-				Key: &ast.StringExpr{Value: "c"},
+				Key:       &ast.StringExpr{Value: "c"},
+				KeySyntax: ast.AttrKeyDot,
 			},
 			want: "a.b.c",
 		},

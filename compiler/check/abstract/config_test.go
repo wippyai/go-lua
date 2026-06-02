@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/abstract/core"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -38,7 +39,7 @@ func TestFlowContext_WithFields(t *testing.T) {
 		Scopes:   make(map[cfg.Point]*scope.State),
 		CheckCtx: api.NewDeclaredEnv(api.DeclaredEnvConfig{Graph: &cfg.Graph{}}),
 		Base:     &scope.State{},
-		Globals:  make(map[string]typ.Type),
+		Globals:  globalenv.TypeOverlayFromMap(map[string]typ.Type{"print": typ.String}),
 	}
 	if fc.Graph == nil {
 		t.Error("expected non-nil Graph")

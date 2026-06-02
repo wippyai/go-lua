@@ -24,7 +24,7 @@ func TestCheckIdents_AcceptsDeclaredOverlayGlobals(t *testing.T) {
 		scopes[p] = scope.New()
 	}
 
-	withoutOverlay := CheckIdents(graph, evidence, scopes, nil, "overlay.lua")
+	withoutOverlay := CheckIdents(graph, evidence, scopes, nil, nil, "overlay.lua")
 	if len(withoutOverlay) == 0 {
 		t.Fatal("expected implicit global without overlay to be reported")
 	}
@@ -35,8 +35,15 @@ func TestCheckIdents_AcceptsDeclaredOverlayGlobals(t *testing.T) {
 	}
 	withOverlay := CheckIdents(graph, evidence, scopes, map[cfg.SymbolID]typ.Type{
 		upSym: typ.Func().Build(),
-	}, "overlay.lua")
+	}, nil, "overlay.lua")
 	if len(withOverlay) != 0 {
 		t.Fatalf("expected overlay global to be accepted, got %v", withOverlay)
+	}
+
+	withBindingOverlay := CheckIdents(graph, evidence, scopes, nil, map[cfg.SymbolID]typ.Type{
+		upSym: typ.Func().Build(),
+	}, "overlay.lua")
+	if len(withBindingOverlay) != 0 {
+		t.Fatalf("expected binding overlay global to be accepted, got %v", withBindingOverlay)
 	}
 }

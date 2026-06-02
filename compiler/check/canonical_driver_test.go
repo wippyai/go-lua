@@ -3,11 +3,18 @@ package check_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/canonical"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // TestCanonicalDriver_MultiFunctionModuleSummarizesEachFunction is gate (b): the
@@ -96,6 +103,57 @@ return walk
 	}
 }
 
+func TestCanonicalDriver_ParamNarrowsInheritThroughNestedWrapperSummary(t *testing.T) {
+	const src = `
+local function innerAssert(val: any, msg: string)
+	assert(val, msg)
+end
+local function outerAssert(val: any)
+	innerAssert(val, "outer: value is nil")
+end
+function process(x: string?)
+	outerAssert(x)
+	local s: string = x
+end
+`
+	chunk, err := parse.ParseString(src, "nested_wrapper.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	ctx := db.NewQueryContext(db.New())
+	sess := check.New(ctx, "nested_wrapper.lua")
+
+	driver := canonical.NewDriver(canonical.Config{})
+	driver.Run(sess, chunk)
+
+	var outer summary.FuncRef
+	var found bool
+	for _, ref := range driver.FuncRefs() {
+		fn, ok := sessionFuncByRef(sess, ref)
+		if !ok || fn == nil || fn.Line() != 5 {
+			continue
+		}
+		outer = ref
+		found = true
+		break
+	}
+	if !found {
+		t.Fatal("outerAssert function ref not found")
+	}
+
+	sum, ok := driver.SummaryFor(outer)
+	if !ok {
+		t.Fatal("outerAssert has no summary")
+	}
+	for _, e := range sum.ParamNarrows {
+		if e.Param == 0 && e.Check == cfg.CheckTruthy && e.EqParam < 0 && len(e.Segments) == 0 {
+			return
+		}
+	}
+	t.Fatalf("outerAssert ParamNarrows = %#v, want truthy narrow on parameter 0", sum.ParamNarrows)
+}
+
 // TestCanonicalDriver_BridgePopulatesSessionResults verifies the diagnostic bridge
 // (component 11b): after Run, every module function has an api.FuncResult in the
 // session keyed by its *ast.FunctionExpr, carrying the bridged sound inputs (the
@@ -127,7 +185,7 @@ return pick()
 	// Every analyzed function is bridged into the session results under its own
 	// function node, with the CFG populated (the sound input the passes read).
 	for _, ref := range refs {
-		fn, ok := driver.FuncExprFor(ref)
+		fn, ok := sessionFuncByRef(sess, ref)
 		if !ok {
 			t.Fatalf("ref %v has no function node", ref)
 		}
@@ -148,24 +206,285 @@ return pick()
 	// pick returns a single number; the canonical-computed return fact is exposed
 	// for the transfer-fidelity worklist even though the bridge does not yet route
 	// it into a legacy diagnostic field.
-	var pickRef summary.FuncRef
-	found := false
-	for _, ref := range refs {
-		fn, _ := driver.FuncExprFor(ref)
-		if fn != nil && fn.ParList != nil && len(fn.ParList.Names) == 0 && !fn.ParList.HasVargs {
-			// pick has no params and is not the vararg module body.
-			pickRef = ref
-			found = true
-		}
-	}
+	pickRef, found := findRefByFunc(sess, func(fn *ast.FunctionExpr) bool {
+		return fn != nil && fn.ParList != nil && len(fn.ParList.Names) == 0 && !fn.ParList.HasVargs
+	})
 	if !found {
 		t.Fatal("could not locate pick among module functions")
 	}
-	rets := driver.ReturnTypes(pickRef)
+	sum, ok := driver.SummaryFor(pickRef)
+	if !ok {
+		t.Fatal("pick summary missing")
+	}
+	rets := summary.ReturnTypes(sum)
 	if len(rets) != 1 {
 		t.Fatalf("pick canonical return arity = %d, want 1", len(rets))
 	}
 	if rets[0] == nil {
 		t.Fatal("pick canonical return slot 0 is nil")
 	}
+}
+
+func TestCanonicalDriver_ProjectsDirectCallEntryValue(t *testing.T) {
+	const src = `
+local captured = nil
+
+local function setter(opts)
+	captured = opts
+end
+
+setter({ retry = { max_attempts = 3, initial_delay = 100 } })
+
+if captured == nil then error("nil") end
+if captured.retry == nil then error("nil retry") end
+
+local attempts: number = captured.retry.max_attempts
+local delay: number = captured.retry.initial_delay
+return attempts, delay
+`
+	chunk, err := parse.ParseString(src, "captured_entry.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	ctx := db.NewQueryContext(db.New())
+	sess := check.New(ctx, "captured_entry.lua")
+
+	driver := canonical.NewDriver(canonical.Config{})
+	driver.Run(sess, chunk)
+
+	var root, setter summary.FuncRef
+	var foundRoot, foundSetter bool
+	for _, ref := range driver.FuncRefs() {
+		fn, ok := sessionFuncByRef(sess, ref)
+		if !ok || fn == nil || fn.ParList == nil {
+			continue
+		}
+		switch {
+		case fn.ParList.HasVargs:
+			root, foundRoot = ref, true
+		case len(fn.ParList.Names) == 1 && fn.ParList.Names[0] == "opts":
+			setter, foundSetter = ref, true
+		}
+	}
+	if !foundRoot || !foundSetter {
+		t.Fatalf("root/setter refs not found: root=%v setter=%v refs=%v", foundRoot, foundSetter, driver.FuncRefs())
+	}
+
+	rootSum, ok := driver.SummaryFor(root)
+	if !ok {
+		t.Fatal("root summary missing")
+	}
+	entry, ok := rootSum.CallEntryValues[setter][0]
+	if !ok {
+		t.Fatalf("root CallEntryValues missing setter slot 0: %#v", rootSum.CallEntryValues)
+	}
+	assertNestedNumberField(t, "root call-entry opts", entry, "retry", "max_attempts")
+	assertNestedNumberField(t, "root call-entry opts", entry, "retry", "initial_delay")
+}
+
+func TestCanonicalDriver_ProjectsMethodCallEntryValue(t *testing.T) {
+	const src = `
+local captured = nil
+
+local function make()
+	return {
+		with_options = function(self, opts)
+			captured = opts
+			return self
+		end,
+	}
+end
+
+local chain = make()
+chain:with_options({ retry = { max_attempts = 3, initial_delay = 100 } })
+
+return captured
+`
+	chunk, err := parse.ParseString(src, "captured_method_entry.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	ctx := db.NewQueryContext(db.New())
+	sess := check.New(ctx, "captured_method_entry.lua")
+
+	driver := canonical.NewDriver(canonical.Config{})
+	driver.Run(sess, chunk)
+
+	var root, makeRef, withOptions summary.FuncRef
+	var foundRoot, foundMake, foundWithOptions bool
+	for _, ref := range driver.FuncRefs() {
+		fn, ok := sessionFuncByRef(sess, ref)
+		if !ok || fn == nil || fn.ParList == nil {
+			continue
+		}
+		switch {
+		case fn.ParList.HasVargs:
+			root, foundRoot = ref, true
+		case len(fn.ParList.Names) == 0:
+			makeRef, foundMake = ref, true
+		case len(fn.ParList.Names) == 2 && fn.ParList.Names[0] == "self" && fn.ParList.Names[1] == "opts":
+			withOptions, foundWithOptions = ref, true
+		}
+	}
+	if !foundRoot || !foundMake || !foundWithOptions {
+		t.Fatalf("root/make/with_options refs not found: root=%v make=%v withOptions=%v refs=%v", foundRoot, foundMake, foundWithOptions, driver.FuncRefs())
+	}
+
+	makeSum, ok := driver.SummaryFor(makeRef)
+	if !ok {
+		t.Fatal("make summary missing")
+	}
+	if len(makeSum.ReturnFunctionRefs) == 0 {
+		t.Fatalf("make ReturnFunctionRefs missing: %#v", makeSum)
+	}
+	returnMethodKey := constraint.NewPlaceholder(0).Field("with_options").Key()
+	if _, ok := flow.FunctionRefAt(makeSum.ReturnFunctionRefs[0], returnMethodKey); !ok {
+		t.Fatalf("make return slot missing with_options function ref at %s: %#v", returnMethodKey, makeSum.ReturnFunctionRefs)
+	}
+	withOptionsSum, ok := driver.SummaryFor(withOptions)
+	if !ok {
+		t.Fatal("with_options summary missing")
+	}
+	if flow.CaptureEffectsDomain.Equal(withOptionsSum.CellEffects, flow.CaptureEffectsDomain.Bottom()) {
+		t.Fatalf("with_options cell effects missing: %#v", withOptionsSum)
+	}
+
+	rootSum, ok := driver.SummaryFor(root)
+	if !ok {
+		t.Fatal("root summary missing")
+	}
+	entry, ok := rootSum.CallEntryValues[withOptions][1]
+	if !ok {
+		t.Fatalf("root CallEntryValues missing with_options opts slot 1: entries=%#v root function refs=%#v make returns=%v make return refs=%#v", rootSum.CallEntryValues, rootSum.CaptureFunctionRefs, makeSum.Returns, makeSum.ReturnFunctionRefs)
+	}
+	assertNestedNumberField(t, "root method call-entry opts", entry, "retry", "max_attempts")
+	assertNestedNumberField(t, "root method call-entry opts", entry, "retry", "initial_delay")
+}
+
+func TestCanonicalDriver_ProjectsIndirectMethodEffectThroughOpen(t *testing.T) {
+	const src = `
+local captured = nil
+local function get_contract()
+	return {
+		with_options = function(self, opts)
+			captured = opts
+			return self
+		end,
+	}
+end
+local function open(overrides)
+	local c = get_contract()
+	c = c:with_options({ retry = overrides.retry })
+	return c
+end
+open({ retry = { max_attempts = 3, initial_delay = 100 } })
+return captured
+`
+	chunk, err := parse.ParseString(src, "captured_indirect_entry.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	ctx := db.NewQueryContext(db.New())
+	sess := check.New(ctx, "captured_indirect_entry.lua")
+
+	driver := canonical.NewDriver(canonical.Config{})
+	driver.Run(sess, chunk)
+
+	var root, openRef, withOptions summary.FuncRef
+	var foundRoot, foundOpen, foundWithOptions bool
+	for _, ref := range driver.FuncRefs() {
+		fn, ok := sessionFuncByRef(sess, ref)
+		if !ok || fn == nil || fn.ParList == nil {
+			continue
+		}
+		switch {
+		case fn.ParList.HasVargs:
+			root, foundRoot = ref, true
+		case len(fn.ParList.Names) == 1 && fn.ParList.Names[0] == "overrides":
+			openRef, foundOpen = ref, true
+		case len(fn.ParList.Names) == 2 && fn.ParList.Names[0] == "self" && fn.ParList.Names[1] == "opts":
+			withOptions, foundWithOptions = ref, true
+		}
+	}
+	if !foundRoot || !foundOpen || !foundWithOptions {
+		t.Fatalf("root/open/with_options refs not found: root=%v open=%v withOptions=%v refs=%v", foundRoot, foundOpen, foundWithOptions, driver.FuncRefs())
+	}
+
+	rootSum, ok := driver.SummaryFor(root)
+	if !ok {
+		t.Fatal("root summary missing")
+	}
+	openEntry, ok := rootSum.CallEntryValues[openRef][0]
+	if !ok {
+		t.Fatalf("root CallEntryValues missing open overrides slot 0: %#v", rootSum.CallEntryValues)
+	}
+	assertNestedNumberField(t, "root open call-entry overrides", openEntry, "retry", "max_attempts")
+
+	_ = withOptions
+	if len(rootSum.Returns) == 0 {
+		t.Fatalf("root return summary missing after open call: %#v", rootSum)
+	}
+	assertNestedNumberField(t, "root return captured", rootSum.Returns[0], "retry", "max_attempts")
+	assertNestedNumberField(t, "root return captured", rootSum.Returns[0], "retry", "initial_delay")
+}
+
+func assertNestedNumberField(t *testing.T, label string, av product.AbstractValue, first, second string) {
+	t.Helper()
+	if !nestedNumberField(av, first, second) {
+		t.Fatalf("%s.%s.%s = %v, want numeric field", label, first, second, av.ProjectValue())
+	}
+}
+
+func nestedNumberField(av product.AbstractValue, first, second string) bool {
+	child, ok := product.FieldOf(av, first)
+	if !ok || child.IsZero() {
+		return false
+	}
+	grandchild, ok := product.FieldOf(child, second)
+	if !ok || grandchild.IsZero() {
+		return false
+	}
+	return typeIsNumeric(grandchild.ProjectValue())
+}
+
+func typeIsNumeric(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	if typ.TypeEquals(t, typ.Number) || typ.TypeEquals(t, typ.Integer) {
+		return true
+	}
+	lit, ok := t.(*typ.Literal)
+	return ok && (lit.Base == kind.Number || lit.Base == kind.Integer)
+}
+
+func sessionFuncByRef(sess *check.Session, ref summary.FuncRef) (*ast.FunctionExpr, bool) {
+	if sess == nil {
+		return nil, false
+	}
+	for fn, result := range sess.Results {
+		if result == nil || result.Graph == nil {
+			continue
+		}
+		if result.Graph.ID() == ref.GraphID {
+			return fn, true
+		}
+	}
+	return nil, false
+}
+
+func findRefByFunc(sess *check.Session, match func(*ast.FunctionExpr) bool) (summary.FuncRef, bool) {
+	if sess == nil || match == nil {
+		return summary.FuncRef{}, false
+	}
+	for fn, result := range sess.Results {
+		if fn == nil || result == nil || result.Graph == nil || !match(fn) {
+			continue
+		}
+		return summary.FuncRef{GraphID: result.Graph.ID()}, true
+	}
+	return summary.FuncRef{}, false
 }

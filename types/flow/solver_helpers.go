@@ -2,8 +2,6 @@ package flow
 
 import (
 	"slices"
-	"sort"
-	"strconv"
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -11,6 +9,36 @@ import (
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+type dependencyKeyKind uint8
+
+const (
+	dependencyKeyPath dependencyKeyKind = iota + 1
+	dependencyKeySym
+)
+
+// dependencyKey is the scheduler dependency key. It is deliberately a typed sum:
+// path dependencies use canonical PathKey identity, while symbol dependencies
+// cover all versions of a symbol when the exact version key is not enough.
+type dependencyKey struct {
+	kind dependencyKeyKind
+	path constraint.PathKey
+	sym  cfg.SymbolID
+}
+
+func dependencyPathKey(key constraint.PathKey) dependencyKey {
+	if key == "" {
+		return dependencyKey{}
+	}
+	return dependencyKey{kind: dependencyKeyPath, path: key}
+}
+
+func dependencySym(sym cfg.SymbolID) dependencyKey {
+	if sym == 0 {
+		return dependencyKey{}
+	}
+	return dependencyKey{kind: dependencyKeySym, sym: sym}
+}
 
 // symbolTypeSource configures how to initialize symbol types in the solution's values map.
 //
@@ -89,7 +117,7 @@ func (s *Solution) initSymbolTypes(src symbolTypeSource) {
 		// Respect priority ordering if skipIfExists is set
 		keyStr := string(key)
 		if src.skipIfExists {
-			if _, exists := s.values[keyStr]; exists {
+			if _, exists := s.values[key]; exists {
 				continue
 			}
 		}
@@ -120,12 +148,12 @@ func (s *Solution) setValueAV(key string, av product.AbstractValue) {
 
 func (s *Solution) storeValue(key string, av product.AbstractValue, t typ.Type) {
 	if s.values == nil {
-		s.values = make(map[string]product.AbstractValue, 1)
+		s.values = make(pathValueMap, 1)
 	}
-	s.values[key] = av
+	s.values[constraint.PathKey(key)] = av
 	s.setValuePresence(key, t)
-	s.indexFieldOverlayValue(key, t)
-	s.indexValueSuffix(key)
+	s.indexFieldOverlayValue(key, av)
+	s.indexValueSuffix(constraint.PathKey(key))
 	s.invalidateQueryCachesForWrite(key)
 }
 
@@ -163,14 +191,14 @@ func (s *Solution) invalidateReachabilityForWrite(key string) {
 	if s == nil || key == "" || len(s.reachabilityCache) == 0 {
 		return
 	}
-	invalidate := func(depKey string) {
+	invalidate := func(depKey dependencyKey) {
 		for _, point := range s.reachabilityDeps[depKey] {
 			delete(s.reachabilityCache, point)
 		}
 	}
-	invalidate(key)
+	invalidate(dependencyPathKey(constraint.PathKey(key)))
 	if sym := pathkey.KeySymbolUnchecked(constraint.PathKey(key)); sym != 0 {
-		invalidate(symbolDependencyKey(sym))
+		invalidate(dependencySym(sym))
 	}
 }
 
@@ -184,24 +212,21 @@ func (s *Solution) bumpStateEpoch() {
 	}
 }
 
-// dependencyMap tracks which CFG points depend on a given canonical key.
+// dependencyMap tracks which CFG points depend on a canonical path or symbol.
 //
 // During worklist iteration, when a key's type value changes, all dependent
 // points must be re-processed. This map enables efficient lookup of those
 // dependencies without re-scanning the entire input on each iteration.
 //
 // The map is built once before the worklist loop and consulted whenever
-// a key's value changes. Keys are canonical path keys (e.g., "sym1@1.field"),
-// and values are slices of CFG points that read from that key.
-type dependencyMap map[string][]cfg.Point
+// a key's value changes. Values are slices of CFG points that read from that
+// key. Path dependencies are canonical PathKeys (e.g., "sym1@1.field");
+// symbol dependencies are explicit SymbolID keys, not string sentinels.
+type dependencyMap map[dependencyKey][]cfg.Point
 
 type reachabilityPointDep struct {
-	key   string
+	key   dependencyKey
 	point cfg.Point
-}
-
-func symbolDependencyKey(sym cfg.SymbolID) string {
-	return "$sym:" + strconv.FormatUint(uint64(sym), 10)
 }
 
 // register adds a dependency from a canonical key to a CFG point.
@@ -213,16 +238,18 @@ func symbolDependencyKey(sym cfg.SymbolID) string {
 // and the same (key, point) pair may be registered multiple times
 // (duplicates are handled during worklist iteration via the inQueue map).
 func (dm dependencyMap) register(key constraint.PathKey, point cfg.Point) {
-	if key != "" {
-		dm[string(key)] = append(dm[string(key)], point)
+	depKey := dependencyPathKey(key)
+	if depKey != (dependencyKey{}) {
+		dm[depKey] = append(dm[depKey], point)
 	}
 }
 
 func (dm dependencyMap) registerSymbol(sym cfg.SymbolID, point cfg.Point) {
-	if sym == 0 {
+	depKey := dependencySym(sym)
+	if depKey == (dependencyKey{}) {
 		return
 	}
-	dm[symbolDependencyKey(sym)] = append(dm[symbolDependencyKey(sym)], point)
+	dm[depKey] = append(dm[depKey], point)
 }
 
 // buildPhiDependencies constructs a map from version keys to phi points.
@@ -321,14 +348,6 @@ func (s *Solution) buildAssignmentDependencies() dependencyMap {
 		}
 		s.registerValueTemplateDependencies(deps, tm.Point, tm.Value)
 	}
-	for _, cm := range s.inputs.ContainerMutatorAssignments {
-		if cm.ValuePath.Symbol != 0 {
-			srcKey := s.pkResolver.KeyAt(cm.Point, cm.ValuePath)
-			deps.register(srcKey, cm.Point)
-		}
-		s.registerValueTemplateDependencies(deps, cm.Point, cm.Value)
-	}
-
 	return deps
 }
 
@@ -444,7 +463,7 @@ func (s *Solution) buildReachabilityDependencies() dependencyMap {
 					if key == "" {
 						continue
 					}
-					dep := reachabilityPointDep{key: string(key), point: point}
+					dep := reachabilityPointDep{key: dependencyPathKey(key), point: point}
 					if seen[dep] {
 						continue
 					}
@@ -483,7 +502,7 @@ func (s *Solution) registerPointNumericShapeReachabilityDeps(point cfg.Point) {
 		if lower <= 0 || key == "" {
 			return true
 		}
-		dep := reachabilityPointDep{key: string(key), point: point}
+		dep := reachabilityPointDep{key: dependencyPathKey(key), point: point}
 		if !seen[dep] {
 			seen[dep] = true
 			s.reachabilityDeps.register(key, point)
@@ -515,7 +534,7 @@ func (s *Solution) registerReachabilityAncestorDeps(
 		if key == "" {
 			continue
 		}
-		dep := reachabilityPointDep{key: string(key), point: point}
+		dep := reachabilityPointDep{key: dependencyPathKey(key), point: point}
 		if seen[dep] {
 			continue
 		}
@@ -540,25 +559,26 @@ func (s *Solution) registerReachabilityAncestorDeps(
 //   - inQueue: Set of points already in the worklist
 //
 // Returns the updated worklist (may be the same slice if no growth occurred).
-func addDependentPoints(deps dependencyMap, changedKeys []string, worklist []cfg.Point, inQueue map[cfg.Point]bool) []cfg.Point {
+func addDependentPoints(deps dependencyMap, changedKeys []constraint.PathKey, worklist []cfg.Point, inQueue map[cfg.Point]bool) []cfg.Point {
 	if len(changedKeys) == 0 {
 		return worklist
 	}
-	keys := append([]string(nil), changedKeys...)
-	sort.Strings(keys)
+	keys := append([]constraint.PathKey(nil), changedKeys...)
+	sortPathKeys(keys)
 
 	pending := make(map[cfg.Point]bool)
 	points := make([]cfg.Point, 0)
 	for _, key := range keys {
-		for _, point := range deps[key] {
+		pathDep := dependencyPathKey(key)
+		for _, point := range deps[pathDep] {
 			if inQueue[point] || pending[point] {
 				continue
 			}
 			pending[point] = true
 			points = append(points, point)
 		}
-		if sym := pathkey.KeySymbolUnchecked(constraint.PathKey(key)); sym != 0 {
-			for _, point := range deps[symbolDependencyKey(sym)] {
+		if sym := pathkey.KeySymbolUnchecked(key); sym != 0 {
+			for _, point := range deps[dependencySym(sym)] {
 				if inQueue[point] || pending[point] {
 					continue
 				}

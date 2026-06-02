@@ -9,12 +9,16 @@ import (
 func TestNew(t *testing.T) {
 	d := New(Config{
 		MaxScopeDepth: 10,
+		GlobalTypes:   map[string]typ.Type{"print": typ.Any},
 	})
 	if d == nil {
 		t.Fatal("expected non-nil driver")
 	}
 	if d.cfg.MaxScopeDepth != 10 {
 		t.Error("MaxScopeDepth not set")
+	}
+	if got, ok := d.globalTypes.Type("print"); !ok || !typ.TypeEquals(got, typ.Any) {
+		t.Errorf("globalTypes(print) = %v/%v, want any/true", got, ok)
 	}
 }
 
@@ -37,26 +41,5 @@ func TestConfig_Fields(t *testing.T) {
 	}
 	if cfg.GlobalTypes["foo"] != typ.String {
 		t.Error("GlobalTypes not set")
-	}
-}
-
-func TestCollectGlobalNames(t *testing.T) {
-	globals := map[string]typ.Type{
-		"print": typ.Any,
-		"error": typ.Any,
-	}
-	names := collectGlobalNames(globals)
-	if len(names) != 2 {
-		t.Errorf("expected 2 names, got %d", len(names))
-	}
-	found := make(map[string]bool)
-	for _, name := range names {
-		found[name] = true
-	}
-	if !found["print"] {
-		t.Error("print not found")
-	}
-	if !found["error"] {
-		t.Error("error not found")
 	}
 }

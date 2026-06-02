@@ -286,7 +286,6 @@ func TestTransferPlanIndexesOperationsByPoint(t *testing.T) {
 	}
 	inputs.MapMutatorAssignments = []MapMutatorAssignment{{Point: first, Target: constraint.Path{Root: "a", Symbol: 1}}}
 	inputs.TableMutatorAssignments = []TableMutatorAssignment{{Point: second, Target: constraint.Path{Root: "b", Symbol: 2}}}
-	inputs.ContainerMutatorAssignments = []ContainerMutatorAssignment{{Point: first, Target: constraint.Path{Root: "a", Symbol: 1}}}
 
 	s := &Solution{inputs: inputs}
 	s.buildTransferPlan(c.Size())
@@ -305,9 +304,6 @@ func TestTransferPlanIndexesOperationsByPoint(t *testing.T) {
 	}
 	if got := len(s.tableMutatorAssignmentsAt(second)); got != 1 {
 		t.Fatalf("tableMutatorAssignmentsAt(second) = %d, want 1", got)
-	}
-	if got := len(s.containerMutatorAssignmentsAt(first)); got != 1 {
-		t.Fatalf("containerMutatorAssignmentsAt(first) = %d, want 1", got)
 	}
 	if got := len(s.phisAt(first)); got != 0 {
 		t.Fatalf("phisAt(first) = %d, want 0", got)
@@ -408,13 +404,11 @@ func TestAssignmentEvidenceTypeKeepsEffectProjectedStaticType(t *testing.T) {
 		Build()
 	preciseSelectResult := typ.NewUnion(
 		typ.NewRecord().
-			Field("__select_case_id", typ.LiteralInt(0)).
 			Field("channel", typ.NewInterface("Channel<Event>", nil)).
 			Field("value", typ.NewRecord().Field("kind", typ.String).Build()).
 			Field("ok", typ.Boolean).
 			Build(),
 		typ.NewRecord().
-			Field("__select_case_id", typ.LiteralInt(1)).
 			Field("channel", typ.NewInterface("Channel<Time>", nil)).
 			Field("value", typ.NewRecord().Field("sec", typ.Number).Build()).
 			Field("ok", typ.Boolean).
@@ -439,13 +433,11 @@ func TestAssignmentEvidenceTypeKeepsEffectProjectedInstantiatedStaticType(t *tes
 		Build()
 	preciseSelectResult := typ.NewUnion(
 		typ.NewRecord().
-			Field("__select_case_id", typ.LiteralInt(0)).
 			Field("channel", typ.Instantiate(channelGeneric, eventType)).
 			Field("value", eventType).
 			Field("ok", typ.Boolean).
 			Build(),
 		typ.NewRecord().
-			Field("__select_case_id", typ.LiteralInt(1)).
 			Field("channel", typ.Instantiate(channelGeneric, timeType)).
 			Field("value", timeType).
 			Field("ok", typ.Boolean).
@@ -493,13 +485,11 @@ func TestProcessAssignmentReturnChangedKeys_CallReturnKeepsEffectProjectedStatic
 		Field("ok", typ.Boolean).
 		Build()
 	eventResult := typ.NewRecord().
-		Field("__select_case_id", typ.LiteralInt(0)).
 		Field("channel", typ.NewInterface("Channel<Event>", nil)).
 		Field("value", typ.NewRecord().Field("kind", typ.String).Build()).
 		Field("ok", typ.Boolean).
 		Build()
 	timeResult := typ.NewRecord().
-		Field("__select_case_id", typ.LiteralInt(1)).
 		Field("channel", typ.NewInterface("Channel<Time>", nil)).
 		Field("value", typ.NewRecord().Field("sec", typ.Number).Build()).
 		Field("ok", typ.Boolean).
@@ -658,7 +648,7 @@ func TestProcessAssignmentReturnChangedKeys_SkipsDeadPoint(t *testing.T) {
 	}
 
 	s := Solve(inputs, testResolver())
-	if _, ok := s.values[canonicalVersionKey(ver)]; ok {
+	if _, ok := s.values[constraint.PathKey(canonicalVersionKey(ver))]; ok {
 		t.Fatalf("dead assignment wrote value for %v", ver)
 	}
 }
@@ -705,7 +695,7 @@ func TestProcessAssignmentReturnChangedKeys_SkipsSemanticallyDeadPoint(t *testin
 	if !s.IsPointDead(dead) {
 		t.Fatal("truthy(nil) point should be semantically dead")
 	}
-	if _, ok := s.values[canonicalVersionKey(verY)]; ok {
+	if _, ok := s.values[constraint.PathKey(canonicalVersionKey(verY))]; ok {
 		t.Fatalf("semantically dead assignment wrote value for %v", verY)
 	}
 }
@@ -1027,19 +1017,19 @@ func TestMutableStateChangedKeys_UsesValueDomainRecursiveEquality(t *testing.T) 
 	}
 }
 
-func TestWidenContainerElementType_UnknownGenericElementIsEvidenceHole(t *testing.T) {
+func TestContainerElementUnion_UnknownGenericElementIsEvidenceHole(t *testing.T) {
 	elem := typ.NewTypeParam("T", nil)
 	body := typ.NewInterface("Channel", []typ.Method{
 		{Name: "receive", Type: typ.Func().Param("self", typ.Self).Returns(elem).Build()},
 	})
 	channel := typ.NewGeneric("Channel", []*typ.TypeParam{elem}, body)
 	base := typ.Instantiate(channel, typ.Unknown)
-	value := typ.NewRecord().Field("name", typ.String).Build()
+	payload := typ.NewRecord().Field("name", typ.String).Build()
 
-	got := widenContainerElementType(base, value)
-	want := typ.Instantiate(channel, value)
+	got := value.AdmitContainerElementUnion(base, payload)
+	want := typ.Instantiate(channel, payload)
 	if !typ.TypeEquals(got, want) {
-		t.Fatalf("widenContainerElementType(Channel<unknown>, record) = %v, want %v", got, want)
+		t.Fatalf("AdmitContainerElementUnion(Channel<unknown>, record) = %v, want %v", got, want)
 	}
 }
 
@@ -1704,13 +1694,13 @@ func TestMergeFieldAssignments_PreservesNilAlternative(t *testing.T) {
 }
 
 func TestPhiOperandSuffixIndexesInvalidateOnStateWrites(t *testing.T) {
-	assertSuffixes := func(t *testing.T, got []string, want ...string) {
+	assertSuffixes := func(t *testing.T, got []pathSuffixKey, want ...string) {
 		t.Helper()
 		if len(got) != len(want) {
 			t.Fatalf("suffixes = %v, want %v", got, want)
 		}
 		for i := range want {
-			if got[i] != want[i] {
+			if got[i].String() != want[i] {
 				t.Fatalf("suffixes = %v, want %v", got, want)
 			}
 		}
@@ -1749,13 +1739,13 @@ func TestPhiOperandSuffixIndexesInvalidateOnStateWrites(t *testing.T) {
 }
 
 func TestMutableSuffixReplacementIsPointLocal(t *testing.T) {
-	assertSuffixes := func(t *testing.T, got []string, want ...string) {
+	assertSuffixes := func(t *testing.T, got []pathSuffixKey, want ...string) {
 		t.Helper()
 		if len(got) != len(want) {
 			t.Fatalf("suffixes = %v, want %v", got, want)
 		}
 		for i := range want {
-			if got[i] != want[i] {
+			if got[i].String() != want[i] {
 				t.Fatalf("suffixes = %v, want %v", got, want)
 			}
 		}
@@ -1769,7 +1759,7 @@ func TestMutableSuffixReplacementIsPointLocal(t *testing.T) {
 		"sym1@1.next": typ.Boolean,
 	})
 	s := &Solution{
-		mutableOut: map[cfg.Point]map[string]product.AbstractValue{
+		mutableOut: map[cfg.Point]pathValueMap{
 			3: old,
 			4: liftFlowValues(map[string]typ.Type{"sym1@1.other": typ.Number}),
 		},
@@ -1782,7 +1772,7 @@ func TestMutableSuffixReplacementIsPointLocal(t *testing.T) {
 
 	assertSuffixes(t, s.mutableSuffixesForRoot(3, "sym1@1"), ".next")
 	assertSuffixes(t, s.mutableSuffixesForRoot(4, "sym1@1"), ".other")
-	if _, ok := s.mutableSuffixIndex[pointRootKey{point: 3, root: "sym1@1"}]; !ok {
+	if _, ok := s.mutableSuffixIndex[pointRootKey{point: 3, root: constraint.PathKey("sym1@1")}]; !ok {
 		t.Fatalf("replacement should retain point 3 index for current suffixes: %#v", s.mutableSuffixIndex)
 	}
 }

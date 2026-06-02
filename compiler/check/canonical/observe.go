@@ -4,16 +4,25 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/canonical/equation"
+	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
+	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
+	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
+	"github.com/wippyai/go-lua/compiler/check/domain/assignsource"
+	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
+	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
+	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -53,12 +62,49 @@ import (
 type functionFacts struct {
 	declared  map[cfg.SymbolID]typ.Type
 	annotated map[cfg.SymbolID]bool
+	// bindings are immutable value-binding facts, not source declarations. They
+	// carry canonical signatures for named/local function bindings so effective
+	// reads and identifier-definedness can see the binding without polluting
+	// DeclaredAt or FlowInputs.DeclaredTypes.
+	bindings map[cfg.SymbolID]typ.Type
 	// paramSyms are the function's parameter symbols in declaration order. An
 	// unannotated parameter (not in annotated, with no declared type) is a gradual
 	// `any` when the body imposes no obligation on it: a Lua parameter with no
 	// annotation is dynamic, usable in every operation, exactly as the legacy
 	// localInferenceSolver.defaultUnconstrainedParams defaults it.
 	paramSyms []cfg.SymbolID
+}
+
+func cloneFunctionFacts(in functionFacts) functionFacts {
+	out := functionFacts{}
+	if len(in.declared) > 0 {
+		out.declared = make(map[cfg.SymbolID]typ.Type, len(in.declared))
+		for sym, t := range in.declared {
+			out.declared[sym] = t
+		}
+	} else {
+		out.declared = make(map[cfg.SymbolID]typ.Type)
+	}
+	if len(in.annotated) > 0 {
+		out.annotated = make(map[cfg.SymbolID]bool, len(in.annotated))
+		for sym, ok := range in.annotated {
+			out.annotated[sym] = ok
+		}
+	} else {
+		out.annotated = make(map[cfg.SymbolID]bool)
+	}
+	if len(in.bindings) > 0 {
+		out.bindings = make(map[cfg.SymbolID]typ.Type, len(in.bindings))
+		for sym, t := range in.bindings {
+			out.bindings[sym] = t
+		}
+	} else {
+		out.bindings = make(map[cfg.SymbolID]typ.Type)
+	}
+	if len(in.paramSyms) > 0 {
+		out.paramSyms = append([]cfg.SymbolID(nil), in.paramSyms...)
+	}
+	return out
 }
 
 // buildFunctionFacts resolves the declared types of a function's annotated
@@ -77,15 +123,14 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 	// Predeclared globals: a use of a predeclared name (print, pairs, require, ...)
 	// resolves to its global symbol; the declared-type map carries its value type so
 	// the ident pass sees it as defined and the observation surface types it as its
-	// function/value type rather than the value-domain unknown. This mirrors the
-	// legacy buildDeclaredTypes global pass; globals are declared, not annotated.
-	if len(d.cfg.GlobalTypes) > 0 {
+	// function/value type rather than the value-domain unknown. The driver admits
+	// Config.GlobalTypes into a deterministic globalenv.TypeOverlay at construction;
+	// this bridge consumes that carrier rather than the raw external map.
+	if len(d.globalTypes) > 0 {
 		bindings := g.Bindings()
-		for _, name := range cfg.SortedFieldNames(d.cfg.GlobalTypes) {
-			t := d.cfg.GlobalTypes[name]
-			if t == nil {
-				continue
-			}
+		for _, binding := range d.globalTypes {
+			name := binding.Name.String()
+			t := binding.Type
 			sym, ok := g.GlobalSymbol(name)
 			if !ok {
 				continue
@@ -171,73 +216,27 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 			// `U` against `U` consistently). A block-local, forward, or shadowed type
 			// name then resolves to the binding actually visible here.
 			t := d.resolveType(ann, declScope)
-			if zzScopeDbg() {
-				_, hasPS := pointScopes[assign.Point]
-				zzScopef("local-decl pt=%d sym=%d hasPerPointScope=%v resolved=%v", uint64(assign.Point), uint64(target.Symbol), hasPS, t)
-			}
 			if t == nil {
 				continue
 			}
 			facts.declared[target.Symbol] = t
 			facts.annotated[target.Symbol] = true
-			zzDumpType("declared-local", t)
 		}
 	}
 	return facts
 }
 
-// mergeCallbackEnvOverlay adds a callback's spec-injected globals to the declared-type
-// context, so an EnvOverlay name a callback body references ({describe, it, after_each,
-// ...} a test-DSL run_cases helper injects) is a defined identifier rather than
-// "undefined variable". The overlay applies only to the function literal it belongs to
-// (and its nested closures, which the program's transitive propagation already keyed),
-// so this is the canonical, per-callback-scope equivalent of the legacy synthesizer's
-// withEnvOverlay — no shared scope is mutated and the overlay does not cross function
-// boundaries it was not propagated to.
+// seedMethodSelf records only source-declared receiver facts for a method body's
+// implicit `self` parameter. A method defined on a named type (`function T:m()`
+// where T is a type binding) has a declared receiver contract, so the diagnostic
+// bridge may mark self annotated to T. A value receiver (`local methods = {};
+// function methods:m()`) has no source annotation: its runtime self is produced by
+// the PrototypeSelf product axis, and marking it declared from moduleCaptures would
+// leak the old driver scan back into the bridge.
 //
-// A name is added only when it binds a graph global symbol that the binding table does
-// not bind to a local/parameter (an overlay name shadowed by a local stays the local).
-// A symbol already declared (a predeclared global, a parameter, an annotated local) is
-// not overwritten: the overlay supplies a default for an otherwise-undefined global.
-func (d *Driver) mergeCallbackEnvOverlay(facts *functionFacts, g *cfg.Graph, overlay map[string]typ.Type) {
-	if facts == nil || g == nil || len(overlay) == 0 {
-		return
-	}
-	bindings := g.Bindings()
-	for _, name := range cfg.SortedFieldNames(overlay) {
-		t := overlay[name]
-		if t == nil {
-			continue
-		}
-		sym, ok := g.GlobalSymbol(name)
-		if !ok || sym == 0 {
-			continue
-		}
-		if bindings != nil {
-			if k, ok := bindings.Kind(sym); ok && k != cfg.SymbolGlobal {
-				continue
-			}
-		}
-		if _, exists := facts.declared[sym]; exists {
-			continue
-		}
-		facts.declared[sym] = t
-	}
-}
-
-// seedMethodSelf types a method/field-definition body's implicit `self` parameter
-// as the receiver's record. A method defined as `function T:m()` (or a field
-// definition `function T.m()` whose body declares a leading `self`) binds an
-// implicit `self` first parameter; the legacy FunctionLiteralSignatures pass types
-// it from the receiver (receiverSelfType -> the named type or the receiver value's
-// converged type). Here the receiver type is the receiver symbol's module-wide
-// converged value (moduleCaptures), or, for a type-name receiver, the named type
-// from the base scope. With the self type known, self.f reads the receiver field's
-// type rather than the gradual `any` an unannotated parameter otherwise carries.
-//
-// A self parameter the user annotated explicitly is left untouched (the annotation
-// wins). A receiver whose type cannot be resolved leaves self at the gradual
-// default, the sound carry-forward.
+// A self parameter the user annotated explicitly is left untouched. A value
+// receiver stays unannotated so EffectiveTypeAt observes the solved point-state
+// value seeded through EntryValues/PrototypeSelf.
 func (d *Driver) seedMethodSelf(facts *functionFacts, prog *program, g *cfg.Graph) {
 	if facts == nil || prog == nil || g == nil {
 		return
@@ -246,8 +245,12 @@ func (d *Driver) seedMethodSelf(facts *functionFacts, prog *program, g *cfg.Grap
 	if fn == nil {
 		return
 	}
-	info, ok := prog.methodDefs[fn]
-	if !ok || info == nil || info.Receiver == nil {
+	ref, ok := prog.refByFunc(fn)
+	if !ok {
+		return
+	}
+	info := prog.methodDef(ref)
+	if info == nil || info.Receiver == nil {
 		return
 	}
 	bindings := g.Bindings()
@@ -267,7 +270,7 @@ func (d *Driver) seedMethodSelf(facts *functionFacts, prog *program, g *cfg.Grap
 	if selfSym == 0 || bindings.Name(selfSym) != "self" {
 		return
 	}
-	recv := d.receiverType(info)
+	recv := d.namedReceiverType(info, d.baseScope())
 	if recv == nil || typ.IsAbsentOrUnknown(recv) {
 		return
 	}
@@ -275,44 +278,40 @@ func (d *Driver) seedMethodSelf(facts *functionFacts, prog *program, g *cfg.Grap
 	facts.annotated[selfSym] = true
 }
 
-// receiverType resolves the record type of a method/field definition's receiver
-// (the T in function T:m() / function T.m()). It mirrors the legacy
-// receiverSelfType: a receiver naming a module type resolves to that named type;
-// otherwise it is the receiver symbol's module-wide converged value (the table the
-// methods are defined on). Returns nil when neither resolves.
-func (d *Driver) receiverType(info *cfg.FuncDefInfo) typ.Type {
+// namedReceiverType resolves only an explicit type-namespace receiver binding.
+// It intentionally does not fall back to moduleCaptures: value-receiver self
+// values are flow facts owned by the PrototypeSelf point-state axis.
+func (d *Driver) namedReceiverType(info *cfg.FuncDefInfo, sc *scope.State) typ.Type {
 	if info == nil {
 		return nil
 	}
-	// A receiver naming a module-local type (function Point:is() where `type Point`)
-	// resolves to that named type.
 	if ident, ok := info.Receiver.(*ast.IdentExpr); ok && ident != nil {
-		if sc := d.baseScope(); sc != nil {
+		if sc == nil {
+			sc = d.baseScope()
+		}
+		if sc != nil {
 			if named, ok := sc.LookupType(ident.Value); ok && named != nil && !typ.IsAbsentOrUnknown(named) {
 				return named
 			}
 		}
 	}
-	// Otherwise the receiver is a value (a local table the methods are defined on);
-	// its type is the converged module-wide value of the receiver symbol.
-	if info.ReceiverSymbol != 0 && d.moduleCaptures != nil {
-		if t, ok := d.moduleCaptures[info.ReceiverSymbol]; ok && t != nil && !typ.IsAbsentOrUnknown(t) {
-			zzDumpType("receiver-value", t)
-			return t
-		}
-	}
 	return nil
 }
 
-// mergeFuncSignaturesIntoDeclared adds each function-binding symbol's signature to
-// the declared-type context, so the ident pass treats a named function reference as
-// a defined identifier. A symbol already declared (a parameter or annotated local)
-// is not overwritten, and none are marked annotated: a function binding is defined,
-// not user-annotated. A signature whose symbol is not bound in g is skipped (it is
-// not a reference this function resolves).
-func mergeFuncSignaturesIntoDeclared(facts functionFacts, funcSigs map[cfg.SymbolID]typ.Type, g *cfg.Graph) {
+// recordFunctionBindingTypes records each function-binding symbol's canonical
+// signature as an immutable binding fact. These facts are definition/value facts:
+// they make named functions observable through EffectiveTypeAt and the identifier
+// pass without becoming source annotations. A source declaration remains
+// authoritative when both exist.
+func recordFunctionBindingTypes(facts *functionFacts, funcSigs map[cfg.SymbolID]typ.Type, g *cfg.Graph) {
+	if facts == nil {
+		return
+	}
 	if len(funcSigs) == 0 || g == nil {
 		return
+	}
+	if facts.bindings == nil {
+		facts.bindings = make(map[cfg.SymbolID]typ.Type, len(funcSigs))
 	}
 	for sym, sig := range funcSigs {
 		if sym == 0 || sig == nil {
@@ -321,7 +320,30 @@ func mergeFuncSignaturesIntoDeclared(facts functionFacts, funcSigs map[cfg.Symbo
 		if _, exists := facts.declared[sym]; exists {
 			continue
 		}
-		facts.declared[sym] = sig
+		facts.bindings[sym] = sig
+	}
+}
+
+// recordCallbackEnvBindingTypes records callback-scoped global overlay facts as
+// immutable value bindings. The facts package has already lowered overlay names
+// to this callback body's graph symbols, so the bridge only admits those
+// normalized facts into the same non-declaration surface used for function
+// bindings. Source declarations remain authoritative when both exist.
+func recordCallbackEnvBindingTypes(facts *functionFacts, entries []callbackenv.GlobalBinding) {
+	if facts == nil || len(entries) == 0 {
+		return
+	}
+	if facts.bindings == nil {
+		facts.bindings = make(map[cfg.SymbolID]typ.Type, len(entries))
+	}
+	for _, entry := range entries {
+		if entry.Symbol == 0 || entry.Type == nil || typ.IsAbsentOrUnknown(entry.Type) {
+			continue
+		}
+		if _, exists := facts.declared[entry.Symbol]; exists {
+			continue
+		}
+		facts.bindings[entry.Symbol] = entry.Type
 	}
 }
 
@@ -330,20 +352,12 @@ func mergeFuncSignaturesIntoDeclared(facts functionFacts, funcSigs map[cfg.Symbo
 // per-symbol type query from the converged env and a declared-type query from the
 // function's resolved annotations.
 type canonicalFacts struct {
+	graph    *cfg.Graph
 	state    state.FunctionState
 	declared map[cfg.SymbolID]typ.Type
 	annotate map[cfg.SymbolID]bool
-
-	// funcSignatures maps a function-binding symbol visible in this function (a
-	// nested function definition or local-function binding) to its canonical
-	// signature. A callee identifier resolves to it so a call's return type is the
-	// callee's converged summary returns rather than unknown.
-	funcSignatures map[cfg.SymbolID]typ.Type
-
-	// moduleCaptures is the module-wide type of every capturable symbol, read for a
-	// free variable captured from an enclosing scope (a symbol with no value in this
-	// function's converged env and no local declaration).
-	moduleCaptures map[cfg.SymbolID]typ.Type
+	bindings map[cfg.SymbolID]typ.Type
+	consts   map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue
 
 	// unannotatedParams is the set of parameter symbols with no declared annotation.
 	// A read of one whose converged value is the value-domain unknown resolves to
@@ -351,14 +365,18 @@ type canonicalFacts struct {
 	// every operation), mirroring the legacy defaultUnconstrainedParams fallback. A
 	// parameter the body constrains carries its inferred value and is not defaulted.
 	unannotatedParams map[cfg.SymbolID]bool
+
+	paths   pathProjector
+	driver  *Driver
+	program *program
+	reader  summary.Reader
 }
 
 // newCanonicalFacts builds the per-function diagnostic facts over the solved
 // FunctionState. The per-point in-state it reads is the solver-derived
-// state.FunctionState.InPoints, so the graph and narrower the solve ran over are
-// not re-consulted here; they are accepted to keep the driver's construction
-// seam stable but are not read (the in-state is read, never re-derived).
-func (d *Driver) newCanonicalFacts(_ *cfg.Graph, fs state.FunctionState, facts functionFacts, funcSignatures map[cfg.SymbolID]typ.Type, _ equation.EdgeNarrower) *canonicalFacts {
+// state.FunctionState.InPoints, so the graph the solve ran over is not
+// re-consulted here (the in-state is read, never re-derived).
+func (d *Driver) newCanonicalFacts(g *cfg.Graph, fs state.FunctionState, facts functionFacts, prog *program, queries *summary.Queries, ctx *db.QueryContext, _ api.FlowEvidence) *canonicalFacts {
 	var unannotated map[cfg.SymbolID]bool
 	for _, sym := range facts.paramSyms {
 		if sym == 0 || facts.annotated[sym] {
@@ -372,26 +390,152 @@ func (d *Driver) newCanonicalFacts(_ *cfg.Graph, fs state.FunctionState, facts f
 		}
 		unannotated[sym] = true
 	}
+	var consts map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue
+	if prog != nil && g != nil {
+		if ref, ok := prog.refByGraph(g); ok {
+			consts = prog.inputs[ref].ConstValues
+		}
+	}
+	callables := newCallableProjector(d, prog, queries, ctx)
 	return &canonicalFacts{
+		graph:             g,
 		state:             fs,
 		declared:          facts.declared,
 		annotate:          facts.annotated,
-		funcSignatures:    funcSignatures,
-		moduleCaptures:    d.moduleCaptures,
+		bindings:          facts.bindings,
+		consts:            consts,
 		unannotatedParams: unannotated,
+		paths:             newPathProjector(fs, unannotated, callables),
+		driver:            d,
+		program:           prog,
+		reader:            summary.NewReader(queries, ctx, d.summaries),
 	}
+}
+
+// CallReturnTypesAt is the diagnostic observation bridge for call expressions.
+// It projects the call through the same selected-target CallOutcome carrier the
+// transfer path uses, instead of reinterpreting the callee from a possibly
+// polluted expression type. This keeps declared-return checks on the canonical
+// summary/entry-context path.
+func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallExpr, expected typ.Type) ([]typ.Type, bool) {
+	if f == nil || f.driver == nil || f.program == nil || call == nil {
+		return nil, false
+	}
+	callCtx, ok := f.productCallContextAt(point, call)
+	if !ok {
+		return nil, false
+	}
+	ct := callTyper{d: f.driver, g: f.graph}
+	targets := ct.resolveCallTargets(call, f.program, callCtx.FunctionRefs, callCtx.ClosureRefs)
+	outcome := canonicalcall.CallOutcomeForTargets(
+		targets,
+		func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
+			ref := target.Ref()
+			if closure, ok := target.Closure(); ok {
+				entry, _ := ct.productClosureCallEntryContext(ref, closure, call, callCtx)
+				return entry
+			}
+			entry, _ := ct.productCallEntryContext(ref, call, callCtx)
+			return entry
+		},
+		func(ctx canonicalcall.EntryContext) summary.Summary {
+			return f.reader.SummarizeWithEntryContext(
+				ctx.Ref(),
+				ctx.CaptureCells(),
+				ctx.FunctionRefs(),
+				ctx.ClosureRefs(),
+				ctx.EntryValues(),
+			)
+		},
+		canonicalcall.SummaryTargetInfo{
+			DeclaredReturns: func(target canonicalcall.SelectedTarget) bool {
+				return len(f.program.declaredReturns[target.Ref()]) > 0
+			},
+			SignatureReturns: func(target canonicalcall.SelectedTarget) []typ.Type {
+				return ct.selectedTargetSignatureReturns(
+					f.program,
+					target,
+					call,
+					callCtx.ArgTypes(),
+					callCtx.ExprType,
+					callCtx.Cells,
+					callCtx.FunctionRefs,
+					callCtx.SelfType,
+				)
+			},
+			SignatureRelations: func(target canonicalcall.SelectedTarget) flow.ReturnRelations {
+				return flow.ReturnRelationsFromFunctionType(f.driver.signatureForRef(f.program, target.Ref()))
+			},
+		},
+	)
+	values := outcome.InferredReturnValues()
+	if len(values) == 0 {
+		return nil, false
+	}
+	return product.ProjectValuesOrUnknown(values), true
+}
+
+func (f *canonicalFacts) productCallContextAt(point cfg.Point, call *ast.FuncCallExpr) (transfer.ProductCallContext, bool) {
+	if f == nil || f.program == nil || f.graph == nil || call == nil {
+		return transfer.ProductCallContext{}, false
+	}
+	ref, ok := f.program.refByGraph(f.graph)
+	if !ok {
+		return transfer.ProductCallContext{}, false
+	}
+	tr, ok := f.program.transfers[ref].(*transfer.Transfer)
+	if !ok || tr == nil {
+		return transfer.ProductCallContext{}, false
+	}
+	in := f.inState(point)
+	return tr.ProductCallContext(&in, call), true
+}
+
+func (f *canonicalFacts) observedExprTypeAt(point cfg.Point, expr ast.Expr, expected typ.Type) typ.Type {
+	if expr == nil {
+		return nil
+	}
+	path := flowpath.FromExprWithBindings(expr, nil, f.graph.Bindings())
+	if !path.IsEmpty() && path.Symbol != 0 {
+		if expected != nil && expr == nil {
+			return expected
+		}
+		if tv := f.RefinedPathAt(point, path); tv.Type != nil {
+			return tv.Type
+		}
+		if tv := f.DeclaredAt(point, path.Symbol); tv.Type != nil && !typ.IsAbsentOrUnknown(tv.Type) {
+			return tv.Type
+		}
+	}
+	return typ.Unknown
 }
 
 // compile-time assertion: canonicalFacts implements the observation surface.
 var _ flow.TypeFacts = (*canonicalFacts)(nil)
+var _ flow.BindingValueFacts = (*canonicalFacts)(nil)
+var _ flow.PathFacts = (*canonicalFacts)(nil)
+var _ flow.ProductFacts = (*canonicalFacts)(nil)
+var _ flow.ProductPathFacts = (*canonicalFacts)(nil)
+var _ flow.PathChildFacts = (*canonicalFacts)(nil)
+var _ flow.AssignmentSourceFacts = (*canonicalFacts)(nil)
+var _ flow.TransferValueFacts = (*canonicalFacts)(nil)
+var _ flow.ConditionProofFacts = (*canonicalFacts)(nil)
+var _ flow.PathObservationFacts = (*canonicalFacts)(nil)
+var _ flow.ConstFacts = (*canonicalFacts)(nil)
 
 // compile-time assertion: canonicalFacts also exposes the length proof the
 // observation surface consults to refine an in-bounds index read.
 var _ flow.LengthFacts = (*canonicalFacts)(nil)
+var _ flow.PathLengthFacts = (*canonicalFacts)(nil)
 
 // compile-time assertion: canonicalFacts exposes the numeric proofs the
 // observation surface consults to refine an in-range dynamic-index read.
 var _ flow.NumericFacts = (*canonicalFacts)(nil)
+
+// compile-time assertion: canonicalFacts is also the canonical producer's
+// normalized solved-flow projection. It supplies FlowOps directly from the
+// product state, without constructing a solver-shaped carrier it did not compute.
+var _ api.FlowOps = (*canonicalFacts)(nil)
 
 // DeclaredAt returns the declared (annotated) type of sym. Declared types are
 // flow-insensitive, so the point is unused.
@@ -402,43 +546,96 @@ func (f *canonicalFacts) DeclaredAt(_ cfg.Point, sym cfg.SymbolID) flow.TypedVal
 	return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 }
 
+// ConstValueAtSym exposes canonical passive const facts to the diagnostic
+// observation boundary. These facts normalize exact paths such as obj[key] when
+// key is a proven literal; they do not interpret values or add a second fixpoint.
+func (f *canonicalFacts) ConstValueAtSym(p cfg.Point, sym cfg.SymbolID) *flow.ConstValue {
+	if f == nil || sym == 0 || f.consts == nil {
+		return nil
+	}
+	at := f.consts[sym]
+	if at == nil {
+		return nil
+	}
+	val := at[p]
+	if val == nil || val.Kind == flow.ConstUnknown {
+		return nil
+	}
+	return val
+}
+
+func (f *canonicalFacts) bindingTypeAt(sym cfg.SymbolID) flow.TypedValue {
+	if t, ok := f.bindings[sym]; ok && t != nil {
+		return flow.TypedValue{Type: t, State: flow.StateResolved}
+	}
+	return flow.TypedValue{Type: nil, State: flow.StateUnknown}
+}
+
+// BindingValueAt returns immutable function-binding value facts without treating
+// them as source declarations.
+func (f *canonicalFacts) BindingValueAt(_ cfg.Point, sym cfg.SymbolID) flow.TypedValue {
+	return f.bindingTypeAt(sym)
+}
+
+func (f *canonicalFacts) staticEffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
+	declared := f.DeclaredAt(p, sym)
+	if f.IsAnnotated(sym) && declared.State == flow.StateResolved && declared.Type != nil {
+		return declared
+	}
+	if binding := f.bindingTypeAt(sym); binding.Type != nil {
+		return binding
+	}
+	return declared
+}
+
 // RefinedAt returns the flow-narrowed type of sym at point p: the converged value
 // of sym in the in-state of p (the join of p's reachable predecessors' out-states,
 // or p's own seeded state at the entry). A symbol with no converged value has no
 // refinement.
 func (f *canonicalFacts) RefinedAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
+	return f.refinedAt(p, sym, false)
+}
+
+func (f *canonicalFacts) PostEffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
+	refined := f.refinedAt(p, sym, true)
+	if refined.Type != nil {
+		return refined
+	}
+	return f.staticEffectiveTypeAt(p, sym)
+}
+
+func (f *canonicalFacts) PostRefinedPathAt(p cfg.Point, path constraint.Path) flow.TypedValue {
+	if len(path.Segments) == 0 {
+		return f.refinedAt(p, path.Symbol, true)
+	}
+	return f.paths.WithPostState().RefinedPathAt(p, path)
+}
+
+func (f *canonicalFacts) refinedAt(p cfg.Point, sym cfg.SymbolID, post bool) flow.TypedValue {
 	if sym == 0 {
 		return flow.TypedValue{Type: nil, State: flow.StateUnknown}
 	}
-	in := f.inState(p)
-	av, ok := in.Env[symKey(sym)]
-	// A function-binding symbol's converged callee signature carries the parameter
-	// contracts the body proves. The transfer caches the function literal's pre-solve
-	// signature in the env (an unannotated parameter as the gradual `any`), built before
-	// the interprocedural solve could prove those contracts. When the env value is that
-	// pre-solve function approximation, the converged funcSignatures entry is the more
-	// precise authority, so a caller observing the function reads the body-proven
-	// precondition and the call-site arg-check enforces it. A symbol rebound to a
-	// non-function value keeps its env value (the rebinding is the live type).
-	if sig, sigOK := f.funcSignatures[sym]; sigOK && sig != nil {
-		envIsFunc := ok && !av.IsZero() && projectValue(av).Kind() == kind.Function
-		if !ok || av.IsZero() || envIsFunc {
+	in := f.pointState(p, post)
+	av, ok := flow.PointFactsOf(in).SymbolValue(sym)
+	// A function-binding symbol's summary-sensitive identity is point-state data:
+	// FunctionRefs names the body, while Env/Cells carries the callable shape. Read
+	// that product before projecting the structural function value; do not recover
+	// precision from the driver's module-wide function-signature map.
+	envIsFunc := false
+	if ok && !av.IsZero() {
+		if t := product.ProjectValueOrUnknown(av); t != nil && t.Kind() == kind.Function {
+			envIsFunc = true
+		}
+	}
+	if !ok || av.IsZero() || envIsFunc {
+		if sig := f.paths.callables.TypeAt(in, constraint.NewPath(sym, "")); !typ.IsAbsentOrUnknown(sig) {
 			return flow.TypedValue{Type: sig, State: flow.StateResolved}
 		}
 	}
 	if !ok || av.IsZero() {
-		// A free variable captured from an enclosing scope has no value in this
-		// function's env; its type is the captured variable's module-wide type. A
-		// symbol this function declares locally (an annotated local) is NOT a
-		// capture: its declared type is authoritative, so the module-wide capture
-		// (which the exit-state scan also records for every function's locals) must
-		// not shadow it. Leaving such a symbol unrefined here routes EffectiveTypeAt
-		// to its declared type.
-		if _, declaredHere := f.declared[sym]; !declaredHere {
-			if t, ok := f.moduleCaptures[sym]; ok && t != nil && !typ.IsUnknown(t) {
-				return flow.TypedValue{Type: t, State: flow.StateResolved}
-			}
-		}
+		// Captured free variables are owned by PointState.Cells. If the solved
+		// in-state has no cell/env value, observation must not recover precision from
+		// a module-wide side map; that would mask a missing capture seed.
 		// An unannotated parameter the body imposes no obligation on is gradual
 		// `any` (dynamic, usable in every operation), not opaque unknown.
 		if f.unannotatedParams[sym] {
@@ -446,7 +643,7 @@ func (f *canonicalFacts) RefinedAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValu
 		}
 		return flow.TypedValue{Type: nil, State: flow.StateUnknown}
 	}
-	t := projectValue(av)
+	t := product.ProjectValueOrUnknown(av)
 	if t == nil || typ.IsUnknown(t) {
 		// A converged-but-unknown value for an unannotated parameter is the gradual
 		// default: the body did not pin it to a concrete type, so it stays `any`.
@@ -455,7 +652,6 @@ func (f *canonicalFacts) RefinedAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValu
 		}
 		return flow.TypedValue{Type: nil, State: flow.StateUnknown}
 	}
-	zzDumpType("refined-value", t)
 	// A generic parameter typed `T` seeds the bottom-up transfer with an unresolved
 	// reference: the transfer resolves the annotation against the module base scope,
 	// where the function's type parameter is not bound, so the env carries `Ref{T}`.
@@ -474,6 +670,13 @@ func (f *canonicalFacts) RefinedAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValu
 	return flow.TypedValue{Type: t, State: flow.StateResolved}
 }
 
+// RefinedValueAt returns the product carrier for sym at p without projecting
+// through typ.Type. It is the semantic observation boundary for consumers that
+// need carrier evidence such as gradual-top provenance.
+func (f *canonicalFacts) RefinedValueAt(p cfg.Point, sym cfg.SymbolID) flow.ProductValue {
+	return f.paths.RefinedValueAt(p, sym)
+}
+
 // refName is the referenced type name of an unresolved reference, or the empty
 // string when t is not a reference.
 func refName(t typ.Type) string {
@@ -490,7 +693,95 @@ func (f *canonicalFacts) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.Typ
 	if refined.Type != nil {
 		return refined
 	}
-	return f.DeclaredAt(p, sym)
+	return f.staticEffectiveTypeAt(p, sym)
+}
+
+// RefinedPathAt projects a solved product path from the canonical point state.
+// Function identities are enriched through the same summary-sensitive ref axis
+// RefinedAt uses for root function values; callers still reconcile the result
+// against declared source types at the observation boundary.
+func (f *canonicalFacts) RefinedPathAt(p cfg.Point, path constraint.Path) flow.TypedValue {
+	if len(path.Segments) == 0 {
+		return f.RefinedAt(p, path.Symbol)
+	}
+	return f.paths.RefinedPathAt(p, path)
+}
+
+// RefinedPathValueAt projects a solved product path from canonical point state
+// without dropping carrier evidence at the typ.Type boundary.
+func (f *canonicalFacts) RefinedPathValueAt(p cfg.Point, path constraint.Path) flow.ProductValue {
+	return f.paths.RefinedPathValueAt(p, path)
+}
+
+// ObserveChildPaths exposes finite child path facts already materialized in the
+// canonical point state. It does not derive descendants from recursive products.
+func (f *canonicalFacts) ObserveChildPaths(q flow.PathChildQuery) []flow.PathFact {
+	if f == nil {
+		return nil
+	}
+	return f.paths.ObserveChildPaths(q)
+}
+
+// AssignmentSourceValueAt evaluates source-owned assignment evidence against the
+// canonical solved product projection. The target annotation/static slot is not
+// consulted here; observation reconciles boundary types separately.
+func (f *canonicalFacts) AssignmentSourceValueAt(p cfg.Point, target constraint.Path, source flow.AssignmentSource) typ.Type {
+	return assignsource.Value(assignsource.Query{
+		Point:  p,
+		Target: target,
+		Source: source,
+		Flow:   f,
+	})
+}
+
+// AssignedValueTypeAt evaluates assignment-source evidence and reconciles it
+// with the statically extracted slot type using the flow transfer law.
+func (f *canonicalFacts) AssignedValueTypeAt(p cfg.Point, target constraint.Path, static typ.Type, source flow.AssignmentSource) typ.Type {
+	if f == nil {
+		return static
+	}
+	return flow.AssignmentEvidenceType(static, f.AssignmentSourceValueAt(p, target, source))
+}
+
+// MutatorValueTypeAt evaluates the lowered mutator value path and nested value
+// template against canonical facts.
+func (f *canonicalFacts) MutatorValueTypeAt(p cfg.Point, valuePath constraint.Path, static typ.Type, template flow.ValueTemplate) typ.Type {
+	if f == nil {
+		return static
+	}
+	valueType := static
+	if valuePath.HasSymbol() {
+		if resolved := f.NarrowedTypeAt(p, valuePath); !typ.IsAbsentOrUnknown(resolved) {
+			valueType = resolved
+		}
+	}
+	if len(template.Slots) == 0 {
+		return valueType
+	}
+	return flow.ApplyValueTemplate(valueType, template, func(source flow.AssignmentSource) typ.Type {
+		return f.AssignmentSourceValueAt(p, constraint.Path{}, source)
+	})
+}
+
+// MutatorKeyTypeAt evaluates the lowered dynamic mutator key path against
+// canonical facts and applies the same dynamic-key widening law as transfer.
+func (f *canonicalFacts) MutatorKeyTypeAt(p cfg.Point, keyPath constraint.Path, static typ.Type) typ.Type {
+	if static == nil && !keyPath.HasSymbol() {
+		return nil
+	}
+	keyType := static
+	if f != nil && keyPath.HasSymbol() {
+		if resolved := f.NarrowedTypeAt(p, keyPath); !typ.IsAbsentOrUnknown(resolved) {
+			keyType = resolved
+		}
+	}
+	return flow.NormalizeDynamicKeyType(keyType)
+}
+
+// IndexWriteAdmission reads the post-transfer point-state proof that a dynamic
+// indexed replacement write was admitted by the canonical product transfer.
+func (f *canonicalFacts) IndexWriteAdmission(q flow.IndexWriteQuery) (typ.Type, bool) {
+	return flow.PointFactsOf(f.pointState(q.Point, true)).IndexWriteAdmission(q)
 }
 
 // IsAnnotated reports whether sym carries an explicit type annotation.
@@ -509,6 +800,15 @@ func (f *canonicalFacts) IsAnnotated(sym cfg.SymbolID) bool {
 // opposite branch) is observed exactly, and a narrowing never survives past its
 // guard.
 func (f *canonicalFacts) inState(p cfg.Point) flow.PointState {
+	return f.pointState(p, false)
+}
+
+func (f *canonicalFacts) pointState(p cfg.Point, post bool) flow.PointState {
+	if post {
+		if ps, ok := f.state.Points[p]; ok {
+			return ps
+		}
+	}
 	if ps, ok := f.state.InPoints[p]; ok {
 		return ps
 	}
@@ -528,8 +828,341 @@ func (f *canonicalFacts) LengthLowerBoundAt(p cfg.Point, sym cfg.SymbolID) (int6
 	if num == nil {
 		return 0, false
 	}
-	lower, _, ok := num.LenBoundsFor(constraint.PathKey(symKey(sym)))
+	lower, _, ok := num.LenBoundsFor(constraint.PathKey(flow.SymbolValueKey(sym)))
 	return lower, ok
+}
+
+// LengthLowerBoundForPathAt returns the proven lower bound on a container path,
+// including field/index segments below a root symbol (for example #result.items).
+func (f *canonicalFacts) LengthLowerBoundForPathAt(p cfg.Point, path constraint.Path) (int64, bool) {
+	return f.paths.LengthLowerBoundForPathAt(p, path)
+}
+
+// ConditionAt exposes the canonical point condition to the Solution-less
+// observation surface for condition-proof projection.
+func (f *canonicalFacts) ConditionAt(p cfg.Point) constraint.Condition {
+	return f.inState(p).Cond
+}
+
+// ProvesTypeAt answers condition-only type proofs from the canonical point
+// condition without consulting legacy flow.Solution.
+func (f *canonicalFacts) ProvesTypeAt(p cfg.Point, path constraint.Path, t typ.Type) bool {
+	return f.conditionProofProjector().ProvesTypeAt(p, path, t)
+}
+
+// ConditionTypeAt returns the path type proven by the canonical point condition.
+func (f *canonicalFacts) ConditionTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	return f.conditionProofProjector().ConditionTypeAt(p, path)
+}
+
+// ConditionedTypeAt returns the path type proven by the point condition plus an
+// expression-local condition.
+func (f *canonicalFacts) ConditionedTypeAt(p cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type {
+	return f.conditionProofProjector().ConditionedTypeAt(p, path, extra)
+}
+
+// ConditionedSeedTypeAt projects a caller-supplied seed type under the point
+// condition plus an expression-local condition.
+func (f *canonicalFacts) ConditionedSeedTypeAt(p cfg.Point, seedPath constraint.Path, seedType typ.Type, queryPath constraint.Path, extra constraint.Condition) typ.Type {
+	return f.conditionProofProjector().ConditionedSeedTypeAt(p, seedPath, seedType, queryPath, extra)
+}
+
+// ObservePath implements the high-level path observation policy directly over
+// canonical FunctionState. It is the canonical counterpart of the legacy
+// observation adapter: phase selection, declared reconciliation, condition
+// proofs, authoritative Never, and normalized index-read proofs are all handled
+// here without constructing a flow.Solution-shaped carrier.
+func (f *canonicalFacts) ObservePath(q flow.PathObservationQuery) flow.PathObservation {
+	if f == nil || q.Path.IsEmpty() {
+		return flow.PathObservation{}
+	}
+	declared := f.pathObservationDeclaredType(q)
+
+	var direct flow.PathObservationCandidate
+	if q.LocalCondition == nil && len(q.Path.Segments) > 0 {
+		if t, ok := f.pathObservationSolvedType(q); ok {
+			direct = flow.PathObservationCandidate{
+				Type:   t,
+				Source: flow.PathObservationDirectPath,
+				OK:     true,
+			}
+		}
+	}
+
+	solved, solvedOK := f.pathObservationSolvedType(q)
+	var proof typ.Type
+	if q.AllowConditionProof {
+		switch {
+		case q.LocalCondition != nil:
+			proof = f.pathObservationConditionedType(q, solved, declared)
+		case f.hasConditionProofAt(q.Point):
+			proof = f.ConditionTypeAt(q.Point, q.Path)
+		}
+	}
+
+	var solvedCandidate flow.PathObservationCandidate
+	if solvedOK {
+		solvedCandidate = flow.PathObservationCandidate{
+			Type:   solved,
+			Source: flow.PathObservationFactProjection,
+			OK:     true,
+		}
+	}
+
+	return f.withPathObservationIndexRead(q, flow.SelectPathObservationResult(flow.PathObservationSelection{
+		Query:         q,
+		Declared:      declared,
+		Direct:        direct,
+		Solved:        solvedCandidate,
+		Proof:         proof,
+		AdmitSelected: true,
+	}))
+}
+
+func (f *canonicalFacts) pathObservationSolvedType(q flow.PathObservationQuery) (typ.Type, bool) {
+	var refined flow.TypedValue
+	if q.Phase == flow.PathReadPost {
+		refined = f.PostRefinedPathAt(q.Point, q.Path)
+	} else {
+		refined = f.RefinedPathAt(q.Point, q.Path)
+	}
+	if refined.State != flow.StateResolved || typ.IsAbsentOrUnknown(refined.Type) {
+		return nil, false
+	}
+	if len(q.Path.Segments) == 0 {
+		if root := f.soundPathObservationRoot(q.Point, q.Path.Symbol, refined.Type); root != nil {
+			return root, true
+		}
+		return nil, false
+	}
+	return f.preserveDeclaredPathNilability(q, refined.Type), true
+}
+
+func (f *canonicalFacts) preserveDeclaredPathNilability(q flow.PathObservationQuery, solved typ.Type) typ.Type {
+	if typ.IsAbsentOrUnknown(solved) || f.pathObservationHasProductValue(q) {
+		return solved
+	}
+	declared := f.pathObservationDeclaredType(q)
+	if typ.IsAbsentOrUnknown(declared) {
+		return solved
+	}
+	_, declaredNilable := typ.SplitNilableFieldType(declared)
+	_, solvedNilable := typ.SplitNilableFieldType(solved)
+	if !declaredNilable || solvedNilable {
+		return solved
+	}
+	return typ.NewOptional(solved)
+}
+
+func (f *canonicalFacts) pathObservationHasProductValue(q flow.PathObservationQuery) bool {
+	if len(q.Path.Segments) == 0 {
+		return true
+	}
+	paths := f.paths
+	if q.Phase == flow.PathReadPost {
+		paths = paths.WithPostState()
+	}
+	av, ok := paths.pathValueAt(q.Point, q.Path)
+	return ok && !av.IsZero()
+}
+
+func (f *canonicalFacts) soundPathObservationRoot(point cfg.Point, sym cfg.SymbolID, refined typ.Type) typ.Type {
+	declared := f.annotatedDeclaredType(point, sym)
+	if declared == nil {
+		return refined
+	}
+	if declared.Kind().IsPlaceholder() {
+		if refined.Kind().IsPlaceholder() {
+			return nil
+		}
+		return refined
+	}
+	if !subtype.IsSubtype(refined, declared) {
+		return nil
+	}
+	return refined
+}
+
+func (f *canonicalFacts) pathObservationConditionedType(q flow.PathObservationQuery, solved typ.Type, declared typ.Type) typ.Type {
+	if q.LocalCondition == nil || q.Path.IsEmpty() {
+		return nil
+	}
+	seedPath := constraint.Path{Root: q.Path.Root, Symbol: q.Path.Symbol, Version: q.Path.Version}
+	seedType := solved
+	if len(q.Path.Segments) > 0 || typ.IsAbsentOrUnknown(seedType) {
+		seedType, _ = f.pathObservationSolvedType(flow.PathObservationQuery{
+			Point: q.Point,
+			Path:  seedPath,
+			Phase: q.Phase,
+		})
+	}
+	if typ.IsAbsentOrUnknown(seedType) && len(q.Path.Segments) == 0 {
+		seedType = declared
+	}
+	if typ.IsAbsentOrUnknown(seedType) {
+		seedType = f.pathObservationDeclaredType(flow.PathObservationQuery{
+			Point: q.Point,
+			Path:  seedPath,
+			Phase: q.Phase,
+		})
+	}
+	if typ.IsAbsentOrUnknown(seedType) {
+		return f.ConditionedTypeAt(q.Point, q.Path, *q.LocalCondition)
+	}
+	return f.ConditionedSeedTypeAt(q.Point, seedPath, seedType, q.Path, *q.LocalCondition)
+}
+
+func (f *canonicalFacts) pathObservationDeclaredType(q flow.PathObservationQuery) typ.Type {
+	path := q.Path
+	if path.Symbol == 0 {
+		return nil
+	}
+	base := f.annotatedDeclaredType(q.Point, path.Symbol)
+	if base == nil {
+		base = f.effectivePathObservationRoot(q.Point, path.Symbol, q.Phase)
+	}
+	if base == nil || len(path.Segments) == 0 {
+		return base
+	}
+	return deriveCanonicalPathSegments(base, path.Segments)
+}
+
+func (f *canonicalFacts) annotatedDeclaredType(point cfg.Point, sym cfg.SymbolID) typ.Type {
+	if sym == 0 || !f.IsAnnotated(sym) {
+		return nil
+	}
+	tv := f.DeclaredAt(point, sym)
+	if tv.State != flow.StateResolved || tv.Type == nil || typ.IsUnknown(tv.Type) {
+		return nil
+	}
+	return tv.Type
+}
+
+func (f *canonicalFacts) effectivePathObservationRoot(point cfg.Point, sym cfg.SymbolID, phase flow.PathReadPhase) typ.Type {
+	var tv flow.TypedValue
+	if phase == flow.PathReadPost {
+		tv = f.PostEffectiveTypeAt(point, sym)
+	} else {
+		tv = f.EffectiveTypeAt(point, sym)
+	}
+	if tv.Type != nil && (tv.State == flow.StateResolved || !typ.IsUnknown(tv.Type)) {
+		return tv.Type
+	}
+	return nil
+}
+
+func deriveCanonicalPathSegments(base typ.Type, segments []constraint.Segment) typ.Type {
+	current := base
+	for _, segment := range segments {
+		var next typ.Type
+		switch segment.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			next, _ = querycore.Field(current, segment.Name)
+			if next == nil {
+				next, _ = querycore.Index(current, typ.LiteralString(segment.Name))
+			}
+		case constraint.SegmentIndexInt:
+			next, _ = querycore.Index(current, typ.LiteralInt(int64(segment.Index)))
+		}
+		if next == nil {
+			return nil
+		}
+		current = next
+	}
+	return current
+}
+
+func (f *canonicalFacts) hasConditionProofAt(point cfg.Point) bool {
+	cond := f.ConditionAt(point)
+	return cond.IsFalse() || cond.HasConstraints()
+}
+
+func (f *canonicalFacts) withPathObservationIndexRead(q flow.PathObservationQuery, obs flow.PathObservation) flow.PathObservation {
+	if !obs.Resolved() || typ.IsNever(obs.Type) || q.IndexRead == nil {
+		return obs
+	}
+	if refined, ok := indexread.RefineObservation(indexread.ObservationQuery{
+		Point:  q.Point,
+		Result: obs.Type,
+		Index:  *q.IndexRead,
+		Flow:   f,
+	}); ok {
+		obs.Type = refined
+	}
+	return obs
+}
+
+func (f *canonicalFacts) conditionProofProjector() flow.ConditionProofProjector {
+	return flow.ConditionProofProjector{
+		Resolver:    canonicalConditionResolver{},
+		ResolveType: f.resolveConditionTypeKey,
+		ConditionAt: f.ConditionAt,
+		RootTypeAt:  f.conditionProofRootTypeAt,
+		ResolvePath: func(_ cfg.Point, path constraint.Path) constraint.PathKey {
+			return flow.ConditionProofStructuralPathKey(path)
+		},
+	}
+}
+
+func (f *canonicalFacts) conditionProofRootTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	if path.Symbol == 0 {
+		return nil
+	}
+	tv := f.staticEffectiveTypeAt(p, path.Symbol)
+	if tv.State != flow.StateResolved || typ.IsAbsentOrUnknown(tv.Type) {
+		return nil
+	}
+	return tv.Type
+}
+
+func (f *canonicalFacts) resolveConditionTypeKey(key narrow.TypeKey) typ.Type {
+	switch key.Kind {
+	case narrow.TypeKeyBuiltin:
+		if builtinKind, ok := key.BuiltinKind(); ok {
+			return narrow.TypeForKind(builtinKind)
+		}
+	case narrow.TypeKeyHash:
+		return f.typeByHash(key.Hash)
+	}
+	return nil
+}
+
+func (f *canonicalFacts) typeByHash(hash uint64) typ.Type {
+	if hash == 0 {
+		return nil
+	}
+	var out typ.Type
+	ambiguous := false
+	accept := func(t typ.Type) {
+		if ambiguous || t == nil || t.Hash() != hash {
+			return
+		}
+		if out == nil {
+			out = t
+			return
+		}
+		if !typ.TypeEquals(out, t) {
+			out = nil
+			ambiguous = true
+		}
+	}
+	for _, t := range f.declared {
+		accept(t)
+	}
+	for _, t := range f.bindings {
+		accept(t)
+	}
+	return out
+}
+
+type canonicalConditionResolver struct{}
+
+func (canonicalConditionResolver) Field(t typ.Type, name string) (typ.Type, bool) {
+	return querycore.Field(t, name)
+}
+
+func (canonicalConditionResolver) Index(t typ.Type, key typ.Type) (typ.Type, bool) {
+	return querycore.Index(t, key)
 }
 
 // NumericBoundsAt returns the proven integer bounds on sym entering point p from the
@@ -546,7 +1179,7 @@ func (f *canonicalFacts) NumericBoundsAt(p cfg.Point, sym cfg.SymbolID) (int64, 
 	if num == nil {
 		return 0, 0, false
 	}
-	return numeric.BoundsForWithTheory(num, constraint.PathKey(symKey(sym)))
+	return numeric.BoundsForWithTheory(num, constraint.PathKey(flow.SymbolValueKey(sym)))
 }
 
 // ArrayLenRefAt returns the container symbol and constant offset of a proven
@@ -565,71 +1198,185 @@ func (f *canonicalFacts) ArrayLenRefAt(p cfg.Point, sym cfg.SymbolID) (cfg.Symbo
 	if num == nil {
 		return 0, 0, false
 	}
-	arrKey, offset, ok := num.LenRefWithOffsetFor(constraint.PathKey(symKey(sym)))
+	arrKey, offset, ok := num.LenRefWithOffsetFor(constraint.PathKey(flow.SymbolValueKey(sym)))
 	if !ok {
 		return 0, 0, false
 	}
-	arrSym, ok := symFromKey(string(arrKey))
+	arrSym, ok := flow.ParseSymbolValueKey(flow.ValueKey(arrKey))
 	if !ok {
 		return 0, 0, false
 	}
 	return arrSym, offset, true
 }
 
-// HasKeyOf reports whether a KeyOf(tablePath, keyPath) fact holds in the in-state
-// condition of point p: the key was drawn from `pairs(tablePath)` over the same
-// container, so `tablePath[keyPath]` reads a present value. It is the diagnostic
-// (Solution-less) counterpart of the transfer's seedKeyedIterKeyOf consumption, so
-// an index-read diagnostic over a keyed-iteration key strips the optional the same
-// way the transfer slot does.
-//
-// The canonical Cond is a fact accumulator that lands two facts holding together
-// (here NotNil(k) and KeyOf(container, k) on a keyed-iteration body edge) in
-// SEPARATE single-fact disjuncts, so presence of the EXACT (table, key) pair in
-// ANY disjunct is the sound test rather than a strict all-disjuncts conjunction. A
-// KeyOf is produced ONLY by seedKeyedIterKeyOf at the keyed `pairs` binding that
-// introduces that specific key symbol, so a key from a different container, an
-// arbitrary/literal key, or a read outside the loop never matches the pair. Paths
-// match by symbol/segment identity, version-insensitively: the producer keys the
-// fact by bare symbol (Version 0) while a diagnostic-side path is version-bound, so
-// equating the bare identity (the same symbol the producer keyed) is required.
+// HasKeyOf reports whether the product-state KeyPresence axis proves that
+// keyPath was drawn from tablePath. This is the diagnostic counterpart of
+// transfer's index-read refinement and deliberately does not scan Cond: key
+// presence is runtime must-state, not a disjunct-level logical query.
 func (f *canonicalFacts) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
+	return f.inState(p).KeyPresence.HasPaths(tablePath, keyPath)
+}
+
+// NarrowedTypeAt implements api.FlowOps over the canonical in-state projection.
+func (f *canonicalFacts) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	if f == nil || path.IsEmpty() {
+		return nil
+	}
+	if tv := f.RefinedPathAt(p, path); !typ.IsAbsentOrUnknown(tv.Type) {
+		return tv.Type
+	}
+	return nil
+}
+
+// NarrowedTypeAtWithCondition is a sound projection under an expression-local
+// condition. A false condition is unreachable; non-false local conditions are
+// currently represented in observation.Projector's condition-proof path, so this
+// FlowOps view returns the unconditioned over-approximation instead of rebuilding
+// a parallel condition interpreter.
+func (f *canonicalFacts) NarrowedTypeAtWithCondition(p cfg.Point, path constraint.Path, condition constraint.Condition) typ.Type {
+	if condition.IsFalse() {
+		return typ.Never
+	}
+	return f.NarrowedTypeAt(p, path)
+}
+
+// PreStateTypeAt reads the solver-derived IN-state for p. CanonicalFacts already
+// stores IN and OUT separately, so this is a direct projection, not a re-derived
+// predecessor join.
+func (f *canonicalFacts) PreStateTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	return f.NarrowedTypeAt(p, path)
+}
+
+func (f *canonicalFacts) ExcludesTypeAt(p cfg.Point, path constraint.Path, declared typ.Type) bool {
+	if f == nil || path.IsEmpty() || declared == nil {
+		return false
+	}
 	cond := f.inState(p).Cond
-	if !cond.HasConstraints() || cond.IsFalse() {
+	if cond.IsFalse() || !cond.HasConstraints() {
 		return false
 	}
 	for i := 0; i < cond.NumDisjuncts(); i++ {
+		found := false
 		for _, c := range cond.DisjunctConstraints(i) {
-			ko, ok := c.(constraint.KeyOf)
-			if ok && pathIdentEqual(ko.Table, tablePath) && pathIdentEqual(ko.Key, keyPath) {
-				return true
+			nht, ok := c.(constraint.NotHasType)
+			if !ok {
+				continue
+			}
+			if canonicalPathMatches(nht.Path, path) && canonicalTypeMatches(typeFromConstraintKey(nht.Type), declared) {
+				found = true
+				break
 			}
 		}
-	}
-	return false
-}
-
-// pathIdentEqual compares two paths by symbol/segment identity, ignoring the SSA
-// version. The KeyOf producer keys its fact by the bare symbol (Version 0) while
-// the diagnostic-side path is bound to the version visible at the read point, so a
-// version-sensitive Path.Equal would never match a sound key-presence pair.
-func pathIdentEqual(a, b constraint.Path) bool {
-	if a.Symbol != 0 || b.Symbol != 0 {
-		if a.Symbol != b.Symbol {
-			return false
-		}
-	} else if a.Root != b.Root {
-		return false
-	}
-	if len(a.Segments) != len(b.Segments) {
-		return false
-	}
-	for i := range a.Segments {
-		if a.Segments[i] != b.Segments[i] {
+		if !found {
 			return false
 		}
 	}
 	return true
+}
+
+func (f *canonicalFacts) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {
+	sym, ok := f.symbolAt(p, name)
+	if !ok {
+		return 0, 0, false
+	}
+	return f.NumericBoundsAt(p, sym)
+}
+
+func (f *canonicalFacts) ArrayLenBoundAt(p cfg.Point, varName string) (string, bool) {
+	key, offset, ok := f.ArrayLenBoundWithOffsetAt(p, varName)
+	if !ok || offset != 0 {
+		return "", false
+	}
+	return key, true
+}
+
+func (f *canonicalFacts) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (string, int64, bool) {
+	sym, ok := f.symbolAt(p, varName)
+	if !ok {
+		return "", 0, false
+	}
+	arrSym, offset, ok := f.ArrayLenRefAt(p, sym)
+	if !ok {
+		return "", 0, false
+	}
+	arrPath := flowpath.WithVersion(constraint.Path{Symbol: arrSym}, f.graph, p)
+	return string(arrPath.Key()), offset, true
+}
+
+func (f *canonicalFacts) LengthBoundsAt(p cfg.Point, path constraint.Path) (int64, int64, bool) {
+	if f == nil || path.IsEmpty() {
+		return 0, 0, false
+	}
+	if lower, ok := f.LengthLowerBoundForPathAt(p, path); ok {
+		return lower, 0, true
+	}
+	return 0, 0, false
+}
+
+// IsPointDead reports reachability from the solver output. InPoints is derived
+// by the equation builder from the solved cell map; an absent IN/OUT state means
+// the point is unreachable under the same fixed point diagnostics observe.
+func (f *canonicalFacts) IsPointDead(p cfg.Point) bool {
+	if f == nil {
+		return false
+	}
+	if _, ok := f.state.InPoints[p]; ok {
+		return false
+	}
+	if _, ok := f.state.Points[p]; ok {
+		return false
+	}
+	return true
+}
+
+func (f *canonicalFacts) symbolAt(p cfg.Point, name string) (cfg.SymbolID, bool) {
+	if f == nil || f.graph == nil || name == "" {
+		return 0, false
+	}
+	sym, ok := f.graph.SymbolAt(p, name)
+	if !ok || sym == 0 {
+		return 0, false
+	}
+	return sym, true
+}
+
+func canonicalPathMatches(cpath constraint.Path, qpath constraint.Path) bool {
+	if cpath.Symbol != 0 && qpath.Symbol != 0 {
+		return cpath.Symbol == qpath.Symbol
+	}
+	if cpath.Symbol != 0 || qpath.Symbol != 0 {
+		return false
+	}
+	if cpath.IsPlaceholder() {
+		return cpath.Root == qpath.Root
+	}
+	return false
+}
+
+func typeFromConstraintKey(key narrow.TypeKey) typ.Type {
+	if key.Kind != narrow.TypeKeyBuiltin {
+		return nil
+	}
+	builtinKind, ok := key.BuiltinKind()
+	if !ok {
+		return nil
+	}
+	return narrow.TypeForKind(builtinKind)
+}
+
+func canonicalTypeMatches(a, b typ.Type) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Hash() == b.Hash() {
+		return true
+	}
+	switch a.Kind() {
+	case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String:
+		return a.Kind() == b.Kind()
+	default:
+		return false
+	}
 }
 
 // returnSynth is the api.Synth the WithReturn / WithExhaustiveness passes read. It
@@ -750,6 +1497,7 @@ func buildObservationInputs(g *cfg.Graph, facts functionFacts) *flow.Inputs {
 	in := &flow.Inputs{
 		DeclaredTypes: make(map[cfg.SymbolID]typ.Type, len(facts.declared)),
 		AnnotatedVars: make(map[cfg.SymbolID]bool, len(facts.annotated)),
+		BindingTypes:  make(map[cfg.SymbolID]typ.Type, len(facts.bindings)),
 	}
 	if g != nil {
 		in.Graph = g
@@ -759,6 +1507,9 @@ func buildObservationInputs(g *cfg.Graph, facts functionFacts) *flow.Inputs {
 	}
 	for sym := range facts.annotated {
 		in.AnnotatedVars[sym] = true
+	}
+	for sym, t := range facts.bindings {
+		in.BindingTypes[sym] = t
 	}
 	return in
 }

@@ -10,6 +10,7 @@ type Visitor[R any] struct {
 	Intersection func(*Intersection) R
 	Array        func(*Array) R
 	Map          func(*Map) R
+	ReadonlyMap  func(*ReadonlyMap) R
 	Tuple        func(*Tuple) R
 	Function     func(*Function) R
 	Record       func(*Record) R
@@ -54,6 +55,10 @@ func Visit[R any](t Type, v Visitor[R]) R {
 	case *Map:
 		if v.Map != nil {
 			return v.Map(tt)
+		}
+	case *ReadonlyMap:
+		if v.ReadonlyMap != nil {
+			return v.ReadonlyMap(tt)
 		}
 	case *Tuple:
 		if v.Tuple != nil {

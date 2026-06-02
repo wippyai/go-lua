@@ -29,10 +29,22 @@ func TestField(t *testing.T) {
 		{"nil type", nil, "x", false, nil},
 		{"record existing field", rec, "name", true, func(t typ.Type) bool { return t == typ.String }},
 		{"record another field", rec, "age", true, func(t typ.Type) bool { return t == typ.Integer }},
+		{"record static string index via dot", typ.NewRecord().StaticStringIndex("name", typ.String).Build(), "name", true, func(t typ.Type) bool {
+			return typ.TypeEquals(t, typ.String)
+		}},
+		{"record optional static string index via dot", typ.NewRecord().AddStaticMember(typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "name", Type: typ.String, Optional: true}).Build(), "name", true, func(t typ.Type) bool {
+			return typ.TypeEquals(t, typ.NewOptional(typ.String))
+		}},
+		{"record dot field wins over static string index", typ.NewRecord().Field("name", typ.Number).StaticStringIndex("name", typ.String).Build(), "name", true, func(t typ.Type) bool {
+			return typ.TypeEquals(t, typ.Number)
+		}},
 		{"record optional field", recWithOpt, "name", true, func(t typ.Type) bool {
 			return typ.TypeEquals(t, typ.NewOptional(typ.String))
 		}},
 		{"record missing field", rec, "missing", false, nil},
+		{"readonly map field read", typ.NewReadonlyMap(typ.String, typ.Integer), "count", true, func(t typ.Type) bool {
+			return typ.TypeEquals(t, typ.NewOptional(typ.Integer))
+		}},
 		{"interface method", iface, "read", true, func(t typ.Type) bool { return t.Kind() == typ.String.Kind() || true }},
 		{"interface missing", iface, "write", false, nil},
 		{"builtin table marker", typ.NewInterface("table", nil), "anything", true, func(t typ.Type) bool { return t == typ.Any }},

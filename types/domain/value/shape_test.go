@@ -349,6 +349,41 @@ func TestJoinRecordShape_DirectFieldPresentOnBothSidesStaysRequiredWithMapCompon
 	}
 }
 
+func TestJoinRecordShape_StaticBracketMembersStaySeparateFromDotFields(t *testing.T) {
+	left := typ.NewRecord().
+		Field("name", typ.String).
+		StaticStringIndex("raw-key", typ.Number).
+		Build()
+	right := typ.NewRecord().
+		Field("name", typ.String).
+		MapComponent(typ.String, typ.Boolean).
+		Build()
+
+	got, ok := JoinRecordShape(left, right, typ.JoinPreferNonSoft)
+	if !ok {
+		t.Fatal("JoinRecordShape() ok=false")
+	}
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("JoinRecordShape() = %T %[1]v, want record", got)
+	}
+	field := rec.GetField("name")
+	if field == nil || field.Optional || !typ.TypeEquals(field.Type, typ.String) {
+		t.Fatalf("dot field name = %#v, want required string", field)
+	}
+	member := rec.GetStaticStringIndex("raw-key")
+	if member == nil {
+		t.Fatalf("static member [\"raw-key\"] missing from %v", rec)
+	}
+	if !member.Optional {
+		t.Fatalf("static member [\"raw-key\"] = %#v, want optional after map branch", member)
+	}
+	want := typ.JoinPreferNonSoft(typ.Number, typ.Boolean)
+	if !typ.TypeEquals(member.Type, want) {
+		t.Fatalf("static member [\"raw-key\"] type = %v, want %v", member.Type, want)
+	}
+}
+
 func TestJoinRecordShape_DisjointPartialRecordsBecomeOptionalFields(t *testing.T) {
 	left := typ.NewRecord().Field("promptTokenCount", typ.Integer).Build()
 	right := typ.NewRecord().Field("candidatesTokenCount", typ.Integer).Build()

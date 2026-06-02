@@ -39,7 +39,7 @@ func EmitTableLiteralFieldAssignments(
 			continue
 		}
 
-		seg, ok := path.StaticKeySegment(field.Key)
+		seg, ok := path.StaticFieldSegmentWithConst(field, constResolver)
 		if !ok {
 			// Skip non-static keys (array elements / computed keys).
 			continue

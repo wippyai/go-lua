@@ -77,7 +77,7 @@ func canBeFalsyGuard(t typ.Type, guard internal.RecursionGuard) bool {
 
 		return true // unconstrained type param can be any type including nil
 
-	case *typ.Array, *typ.Map, *typ.Record, *typ.Tuple, *typ.Function:
+	case *typ.Array, *typ.Map, *typ.ReadonlyMap, *typ.Record, *typ.Tuple, *typ.Function:
 		// These types are always truthy
 		return false
 

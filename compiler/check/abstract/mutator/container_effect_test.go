@@ -137,7 +137,7 @@ func TestSubstituteParams_PreservesSpec(t *testing.T) {
 	}
 }
 
-func TestContainerMutatorFromCall_DetectsEffect(t *testing.T) {
+func TestContainerElementUnionSpecDetectsEffect(t *testing.T) {
 	elemParam := typ.NewTypeParam("T", nil)
 
 	sendSpec := contract.NewSpec().WithEffectRow(effect.Row{

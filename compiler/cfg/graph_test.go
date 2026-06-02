@@ -626,6 +626,79 @@ func TestGraph_NestedFunctions(t *testing.T) {
 	}
 }
 
+func TestGraph_CellBackedSymbols(t *testing.T) {
+	t.Parallel()
+
+	paramUse := &ast.IdentExpr{Value: "p"}
+	localUse := &ast.IdentExpr{Value: "x"}
+	globalUse := &ast.IdentExpr{Value: "g"}
+	nestedFn := &ast.FunctionExpr{
+		ParList: &ast.ParList{},
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{
+				Exprs: []ast.Expr{
+					&ast.ArithmeticOpExpr{
+						Operator: "+",
+						Lhs:      paramUse,
+						Rhs: &ast.ArithmeticOpExpr{
+							Operator: "+",
+							Lhs:      localUse,
+							Rhs:      globalUse,
+						},
+					},
+				},
+			},
+		},
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"p"}},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"x"},
+				Exprs: []ast.Expr{&ast.NumberExpr{Value: "1"}},
+			},
+			&ast.LocalAssignStmt{
+				Names: []string{"child"},
+				Exprs: []ast.Expr{nestedFn},
+			},
+		},
+	}
+
+	g := Build(fn, "g")
+	if g == nil {
+		t.Fatal("Build should return graph")
+	}
+	bindings := g.Bindings()
+	if bindings == nil {
+		t.Fatal("graph should retain bindings")
+	}
+	paramSym, ok := bindings.SymbolOf(paramUse)
+	if !ok || paramSym == 0 {
+		t.Fatal("inner parameter use should bind to parent parameter")
+	}
+	localSym, ok := bindings.SymbolOf(localUse)
+	if !ok || localSym == 0 {
+		t.Fatal("inner local use should bind to parent local")
+	}
+	globalSym, ok := bindings.SymbolOf(globalUse)
+	if !ok || globalSym == 0 {
+		t.Fatal("inner global use should bind to seeded global")
+	}
+
+	got := g.CellBackedSymbols()
+	if len(got) != 2 {
+		t.Fatalf("CellBackedSymbols() = %v, want parent param/local only", got)
+	}
+	if got[0] != paramSym || got[1] != localSym {
+		t.Fatalf("CellBackedSymbols() = %v, want sorted [%d %d]", got, paramSym, localSym)
+	}
+	for _, sym := range got {
+		if sym == globalSym {
+			t.Fatalf("CellBackedSymbols() included global symbol %d", globalSym)
+		}
+	}
+}
+
 // TestGraph_PopulateSymbols tests symbol population.
 func TestGraph_PopulateSymbols(t *testing.T) {
 	t.Parallel()
@@ -1054,6 +1127,69 @@ func TestGraph_SymbolKind(t *testing.T) {
 	}
 	if kind != basecfg.SymbolUnknown {
 		t.Errorf("basecfg.SymbolKind(99999) = %d, want basecfg.SymbolUnknown (%d)", kind, basecfg.SymbolUnknown)
+	}
+}
+
+func TestGraph_SymbolOwnership(t *testing.T) {
+	t.Parallel()
+
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"param1"}},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"localVar"},
+				Exprs: []ast.Expr{&ast.NumberExpr{Value: "1"}},
+			},
+			&ast.AssignStmt{
+				Lhs: []ast.Expr{&ast.IdentExpr{Value: "globalVar"}},
+				Rhs: []ast.Expr{&ast.NumberExpr{Value: "2"}},
+			},
+		},
+	}
+
+	g := Build(fn)
+	if g == nil {
+		t.Fatal("Build should return graph")
+	}
+	paramSym := g.ParamSymbols()[0]
+	var localSym, globalSym basecfg.SymbolID
+	for _, p := range g.RPO() {
+		if localSym == 0 {
+			localSym, _ = g.SymbolAt(p, "localVar")
+		}
+		if globalSym == 0 {
+			globalSym, _ = g.SymbolAt(p, "globalVar")
+		}
+	}
+	if localSym == 0 || globalSym == 0 {
+		t.Fatalf("missing symbols: local=%d global=%d", localSym, globalSym)
+	}
+
+	for name, sym := range map[string]basecfg.SymbolID{
+		"param": paramSym,
+		"local": localSym,
+	} {
+		if !g.OwnsSymbol(sym) {
+			t.Fatalf("OwnsSymbol(%s=%d) = false, want true", name, sym)
+		}
+		if g.IsFreeSymbol(sym) {
+			t.Fatalf("IsFreeSymbol(%s=%d) = true, want false", name, sym)
+		}
+	}
+	if g.OwnsSymbol(globalSym) {
+		t.Fatalf("OwnsSymbol(global=%d) = true, want false", globalSym)
+	}
+	if !g.IsFreeSymbol(globalSym) {
+		t.Fatalf("IsFreeSymbol(global=%d) = false, want true", globalSym)
+	}
+	if g.OwnsSymbol(0) || g.IsFreeSymbol(0) {
+		t.Fatal("zero symbol should be neither owned nor free")
+	}
+	if g.OwnsSymbol(99999) {
+		t.Fatal("unknown symbol should not be owned")
+	}
+	if !g.IsFreeSymbol(99999) {
+		t.Fatal("unknown nonzero symbol should classify as free")
 	}
 }
 
@@ -1854,5 +1990,49 @@ func TestSSA_Invariant_GenericForVariablesHaveVersions(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestGraph_FunctionLiteralExpressionSymbols(t *testing.T) {
+	t.Parallel()
+
+	stmts, err := parse.ParseString(`
+local cb = function() end
+run(function() end, cb)
+return function() end
+`, "function_literal_symbols.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	g := Build(&ast.FunctionExpr{ParList: &ast.ParList{}, Stmts: stmts}, "run")
+	if g == nil {
+		t.Fatal("Build should return graph")
+	}
+
+	var callArgSym SymbolID
+	g.EachCallSite(func(_ Point, info *CallInfo) {
+		if info == nil || info.CalleeName != "run" || len(info.ArgSymbols) == 0 {
+			return
+		}
+		callArgSym = info.ArgSymbols[0]
+	})
+	if callArgSym == 0 {
+		t.Fatal("function literal call argument has no stable symbol")
+	}
+	if _, ok := g.Bindings().FuncLitBySymbol(callArgSym); !ok {
+		t.Fatalf("call argument symbol %d does not resolve to a function literal", callArgSym)
+	}
+
+	var returnSym SymbolID
+	g.EachReturn(func(_ Point, info *ReturnInfo) {
+		if info != nil && len(info.Symbols) > 0 {
+			returnSym = info.Symbols[0]
+		}
+	})
+	if returnSym == 0 {
+		t.Fatal("function literal return expression has no stable symbol")
+	}
+	if _, ok := g.Bindings().FuncLitBySymbol(returnSym); !ok {
+		t.Fatalf("return symbol %d does not resolve to a function literal", returnSym)
 	}
 }

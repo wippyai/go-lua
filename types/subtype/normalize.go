@@ -295,7 +295,7 @@ func incompatiblePrimitives(list []typ.Type) bool {
 			hasNil = true
 		case kind.Function:
 			hasFunction = true
-		case kind.Record, kind.Map, kind.Array, kind.Tuple, kind.Interface:
+		case kind.Record, kind.Map, kind.ReadonlyMap, kind.Array, kind.Tuple, kind.Interface:
 			hasTable = true
 		}
 	}

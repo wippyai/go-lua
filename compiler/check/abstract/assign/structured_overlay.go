@@ -1,11 +1,14 @@
 package assign
 
 import (
+	"strconv"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -121,12 +124,13 @@ func structuredWriteForTarget(graph *cfg.Graph, p cfg.Point, source ast.Expr, ta
 	case cfg.TargetIndex:
 		switch key := target.Key.(type) {
 		case *ast.StringExpr:
-			if key.Value == "" {
-				return structuredWrite{}, 0, false
-			}
 			segments = []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: key.Value}}
 		case *ast.NumberExpr:
-			segments = []constraint.Segment{{Kind: constraint.SegmentIndexInt}}
+			idx, err := strconv.Atoi(key.Value)
+			if err != nil {
+				return structuredWrite{}, 0, false
+			}
+			segments = []constraint.Segment{{Kind: constraint.SegmentIndexInt, Index: idx}}
 		default:
 			return structuredWrite{}, 0, false
 		}
@@ -198,10 +202,12 @@ func applyStructuredWrite(baseType typ.Type, segments []constraint.Segment, valu
 	updatedChild := applyStructuredWrite(child, segments[1:], valueType)
 
 	switch seg.Kind {
-	case constraint.SegmentField, constraint.SegmentIndexString:
+	case constraint.SegmentField:
 		return overwriteStructuredField(baseType, seg.Name, updatedChild)
+	case constraint.SegmentIndexString:
+		return overwriteStructuredIndex(baseType, typ.LiteralString(seg.Name), updatedChild)
 	case constraint.SegmentIndexInt:
-		return overwriteStructuredIntIndex(baseType, updatedChild)
+		return overwriteStructuredIndex(baseType, typ.LiteralInt(int64(seg.Index)), updatedChild)
 	default:
 		return baseType
 	}
@@ -272,46 +278,9 @@ func overwriteStructuredField(baseType typ.Type, field string, fieldType typ.Typ
 	}
 }
 
-func overwriteStructuredIntIndex(baseType typ.Type, elemType typ.Type) typ.Type {
-	if elemType == nil {
+func overwriteStructuredIndex(baseType typ.Type, keyType typ.Type, elemType typ.Type) typ.Type {
+	if keyType == nil || elemType == nil {
 		return baseType
 	}
-
-	switch t := baseType.(type) {
-	case *typ.Alias:
-		updated := overwriteStructuredIntIndex(t.Target, elemType)
-		if updated == nil || typ.TypeEquals(updated, t.Target) {
-			return baseType
-		}
-		return typ.NewAlias(t.Name, updated)
-	case *typ.Array:
-		return typ.NewArray(elemType)
-	case *typ.Map:
-		return typ.NewMap(t.Key, elemType)
-	case *typ.Record:
-		builder := typ.NewRecord()
-		if t.Open {
-			builder.SetOpen(true)
-		}
-		for _, f := range t.Fields {
-			if f.Optional {
-				if f.Readonly {
-					builder.OptReadonlyField(f.Name, f.Type)
-				} else {
-					builder.OptField(f.Name, f.Type)
-				}
-			} else if f.Readonly {
-				builder.ReadonlyField(f.Name, f.Type)
-			} else {
-				builder.Field(f.Name, f.Type)
-			}
-		}
-		if t.Metatable != nil {
-			builder.Metatable(t.Metatable)
-		}
-		builder.MapComponent(typ.Integer, elemType)
-		return builder.Build()
-	default:
-		return typ.NewMap(typ.Integer, elemType)
-	}
+	return value.AdmitForeignIndexedWrite(baseType, keyType, elemType)
 }

@@ -57,6 +57,10 @@ func VisitPaths(c Constraint, fn func(Path) bool) bool {
 		return fn(v.Target) || fn(v.Value)
 	case IndexNotEqualsPath:
 		return fn(v.Target) || fn(v.Value)
+	case VariantCaseEquals:
+		return fn(v.Target)
+	case VariantCaseNotEquals:
+		return fn(v.Target)
 	case KeyOf:
 		return fn(v.Table) || fn(v.Key)
 	default:
@@ -176,6 +180,10 @@ func SemanticAffectedPaths(c Constraint) []Path {
 		return []Path{v.Left, v.Right}
 	case NotEqPath:
 		return []Path{v.Left, v.Right}
+	case VariantCaseEquals:
+		return []Path{v.Target}
+	case VariantCaseNotEquals:
+		return []Path{v.Target}
 	case KeyOf:
 		return []Path{v.Table, v.Key}
 	default:

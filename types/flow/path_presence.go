@@ -2,6 +2,7 @@ package flow
 
 import (
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/lattice"
 	"github.com/wippyai/go-lua/types/typ"
@@ -129,8 +130,15 @@ func projectPathPresence(t typ.Type, presence pathPresence) typ.Type {
 }
 
 func isPresenceKey(key string) bool {
-	_, _, ok := indexedPathSuffix(key)
+	_, _, ok := indexedPathSuffix(constraint.PathKey(key))
 	return ok
+}
+
+func presencePathKey(key string) (constraint.PathKey, bool) {
+	if key == "" || !isPresenceKey(key) {
+		return "", false
+	}
+	return constraint.PathKey(key), true
 }
 
 func (s *Solution) projectedValueAtPoint(p cfg.Point, key string) typ.Type {
@@ -145,22 +153,24 @@ func (s *Solution) projectPresenceAtPoint(p cfg.Point, key string, t typ.Type) t
 }
 
 func (s *Solution) presenceAtPoint(p cfg.Point, key string) pathPresence {
-	if s == nil || key == "" || !isPresenceKey(key) {
+	pkey, ok := presencePathKey(key)
+	if s == nil || !ok {
 		return pathPresenceUnknown
 	}
 	if state := s.mutablePresence[p]; state != nil {
-		if presence, ok := state[key]; ok {
+		if presence, ok := state[pkey]; ok {
 			return presence
 		}
 	}
-	if presence, ok := s.presence[key]; ok {
+	if presence, ok := s.presence[pkey]; ok {
 		return presence
 	}
 	return pathPresenceFromType(s.valueAtPoint(p, key))
 }
 
 func (s *Solution) setValuePresence(key string, t typ.Type) {
-	if s == nil || key == "" || !isPresenceKey(key) {
+	pkey, ok := presencePathKey(key)
+	if s == nil || !ok {
 		return
 	}
 	presence := pathPresenceFromType(t)
@@ -168,13 +178,14 @@ func (s *Solution) setValuePresence(key string, t typ.Type) {
 		return
 	}
 	if s.presence == nil {
-		s.presence = make(map[string]pathPresence, 1)
+		s.presence = make(map[constraint.PathKey]pathPresence, 1)
 	}
-	s.presence[key] = presence
+	s.presence[pkey] = presence
 }
 
 func (s *Solution) setMutablePresence(p cfg.Point, key string, t typ.Type) {
-	if s == nil || key == "" || !isPresenceKey(key) {
+	pkey, ok := presencePathKey(key)
+	if s == nil || !ok {
 		return
 	}
 	presence := pathPresenceFromType(t)
@@ -182,14 +193,14 @@ func (s *Solution) setMutablePresence(p cfg.Point, key string, t typ.Type) {
 		return
 	}
 	if s.mutablePresence == nil {
-		s.mutablePresence = make(map[cfg.Point]map[string]pathPresence)
+		s.mutablePresence = make(map[cfg.Point]map[constraint.PathKey]pathPresence)
 	}
 	state := s.mutablePresence[p]
 	if state == nil {
-		state = make(map[string]pathPresence, 1)
+		state = make(map[constraint.PathKey]pathPresence, 1)
 		s.mutablePresence[p] = state
 	}
-	state[key] = presence
+	state[pkey] = presence
 }
 
 func (s *Solution) rebuildMutablePresenceForPoint(p cfg.Point) {
@@ -204,15 +215,16 @@ func (s *Solution) rebuildMutablePresenceForPoint(p cfg.Point) {
 		return
 	}
 	if s.mutablePresence == nil {
-		s.mutablePresence = make(map[cfg.Point]map[string]pathPresence)
+		s.mutablePresence = make(map[cfg.Point]map[constraint.PathKey]pathPresence)
 	}
-	presence := make(map[string]pathPresence, len(state))
+	presence := make(map[constraint.PathKey]pathPresence, len(state))
 	for key, av := range state {
-		if !isPresenceKey(key) {
+		pkey, ok := presencePathKey(string(key))
+		if !ok {
 			continue
 		}
 		if p := pathPresenceFromType(projectFlowValue(av)); p != pathPresenceUnknown {
-			presence[key] = p
+			presence[pkey] = p
 		}
 	}
 	if len(presence) == 0 {

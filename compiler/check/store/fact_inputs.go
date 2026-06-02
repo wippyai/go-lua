@@ -18,20 +18,18 @@ import (
 type factInputs struct {
 	database *db.DB
 
-	functionFactMaps        *db.Input[api.GraphKey, api.FunctionFacts]
-	functionFacts           *db.Input[api.FunctionFactKey, api.FunctionFact]
-	literalSigs             *db.Input[api.LiteralSigKey, *typ.Function]
-	capturedTypes           *db.Input[api.CapturedTypeKey, product.AbstractValue]
-	capturedFields          *db.Input[api.GraphKey, api.CapturedFieldAssigns]
-	capturedContainers      *db.Input[api.GraphKey, api.CapturedContainerMutations]
-	constructorFields       *db.Input[api.ConstructorFieldKey, map[string]product.AbstractValue]
-	functionMapValues       map[api.GraphKey]api.FunctionFacts
-	functionFactValues      map[api.FunctionFactKey]api.FunctionFact
-	literalSigValues        map[api.LiteralSigKey]*typ.Function
-	capturedTypeValues      map[api.CapturedTypeKey]product.AbstractValue
-	capturedFieldValues     map[api.GraphKey]api.CapturedFieldAssigns
-	capturedContainerValues map[api.GraphKey]api.CapturedContainerMutations
-	constructorValues       map[api.ConstructorFieldKey]map[string]product.AbstractValue
+	functionFactMaps    *db.Input[api.GraphKey, api.FunctionFacts]
+	functionFacts       *db.Input[api.FunctionFactKey, api.FunctionFact]
+	literalSigs         *db.Input[api.LiteralSigKey, *typ.Function]
+	capturedTypes       *db.Input[api.CapturedTypeKey, product.AbstractValue]
+	capturedFields      *db.Input[api.GraphKey, api.CapturedFieldAssigns]
+	constructorFields   *db.Input[api.ConstructorFieldKey, api.FieldValues]
+	functionMapValues   map[api.GraphKey]api.FunctionFacts
+	functionFactValues  map[api.FunctionFactKey]api.FunctionFact
+	literalSigValues    map[api.LiteralSigKey]*typ.Function
+	capturedTypeValues  map[api.CapturedTypeKey]product.AbstractValue
+	capturedFieldValues map[api.GraphKey]api.CapturedFieldAssigns
+	constructorValues   map[api.ConstructorFieldKey]api.FieldValues
 }
 
 func newFactInputs(database *db.DB) *factInputs {
@@ -39,21 +37,19 @@ func newFactInputs(database *db.DB) *factInputs {
 		return nil
 	}
 	return &factInputs{
-		database:                database,
-		functionFactMaps:        db.NewInput[api.GraphKey, api.FunctionFacts](database),
-		functionFacts:           db.NewInput[api.FunctionFactKey, api.FunctionFact](database),
-		literalSigs:             db.NewInput[api.LiteralSigKey, *typ.Function](database),
-		capturedTypes:           db.NewInput[api.CapturedTypeKey, product.AbstractValue](database),
-		capturedFields:          db.NewInput[api.GraphKey, api.CapturedFieldAssigns](database),
-		capturedContainers:      db.NewInput[api.GraphKey, api.CapturedContainerMutations](database),
-		constructorFields:       db.NewInput[api.ConstructorFieldKey, map[string]product.AbstractValue](database),
-		functionMapValues:       make(map[api.GraphKey]api.FunctionFacts),
-		functionFactValues:      make(map[api.FunctionFactKey]api.FunctionFact),
-		literalSigValues:        make(map[api.LiteralSigKey]*typ.Function),
-		capturedTypeValues:      make(map[api.CapturedTypeKey]product.AbstractValue),
-		capturedFieldValues:     make(map[api.GraphKey]api.CapturedFieldAssigns),
-		capturedContainerValues: make(map[api.GraphKey]api.CapturedContainerMutations),
-		constructorValues:       make(map[api.ConstructorFieldKey]map[string]product.AbstractValue),
+		database:            database,
+		functionFactMaps:    db.NewInput[api.GraphKey, api.FunctionFacts](database),
+		functionFacts:       db.NewInput[api.FunctionFactKey, api.FunctionFact](database),
+		literalSigs:         db.NewInput[api.LiteralSigKey, *typ.Function](database),
+		capturedTypes:       db.NewInput[api.CapturedTypeKey, product.AbstractValue](database),
+		capturedFields:      db.NewInput[api.GraphKey, api.CapturedFieldAssigns](database),
+		constructorFields:   db.NewInput[api.ConstructorFieldKey, api.FieldValues](database),
+		functionMapValues:   make(map[api.GraphKey]api.FunctionFacts),
+		functionFactValues:  make(map[api.FunctionFactKey]api.FunctionFact),
+		literalSigValues:    make(map[api.LiteralSigKey]*typ.Function),
+		capturedTypeValues:  make(map[api.CapturedTypeKey]product.AbstractValue),
+		capturedFieldValues: make(map[api.GraphKey]api.CapturedFieldAssigns),
+		constructorValues:   make(map[api.ConstructorFieldKey]api.FieldValues),
 	}
 }
 
@@ -77,9 +73,6 @@ func (in *factInputs) reset() {
 	for key := range in.capturedFieldValues {
 		in.capturedFields.SetInBatch(batch, key, nil)
 	}
-	for key := range in.capturedContainerValues {
-		in.capturedContainers.SetInBatch(batch, key, nil)
-	}
 	for key := range in.constructorValues {
 		in.constructorFields.SetInBatch(batch, key, nil)
 	}
@@ -88,7 +81,6 @@ func (in *factInputs) reset() {
 	clear(in.literalSigValues)
 	clear(in.capturedTypeValues)
 	clear(in.capturedFieldValues)
-	clear(in.capturedContainerValues)
 	clear(in.constructorValues)
 }
 
@@ -147,18 +139,7 @@ func (in *factInputs) capturedFieldAssignsFor(ctx *db.QueryContext, key api.Grap
 	return cloneCapturedFieldAssigns(fields), true
 }
 
-func (in *factInputs) capturedContainerMutationsFor(ctx *db.QueryContext, key api.GraphKey) (api.CapturedContainerMutations, bool) {
-	if in == nil || in.capturedContainers == nil {
-		return nil, false
-	}
-	containers, ok := in.capturedContainers.Get(ctx, key)
-	if !ok || len(containers) == 0 {
-		return nil, false
-	}
-	return cloneCapturedContainerMutations(containers), true
-}
-
-func (in *factInputs) constructorFieldsFor(ctx *db.QueryContext, key api.ConstructorFieldKey) (map[string]typ.Type, bool) {
+func (in *factInputs) constructorFieldsFor(ctx *db.QueryContext, key api.ConstructorFieldKey) (api.FieldValues, bool) {
 	if in == nil || in.constructorFields == nil {
 		return nil, false
 	}
@@ -166,7 +147,7 @@ func (in *factInputs) constructorFieldsFor(ctx *db.QueryContext, key api.Constru
 	if !ok || len(fields) == 0 {
 		return nil, false
 	}
-	return product.ProjectFieldMap(fields), true
+	return cloneConstructorFieldMap(fields), true
 }
 
 func (in *factInputs) setProjectedFacts(batch *db.InputBatch, key api.GraphKey, facts api.Facts) {
@@ -175,7 +156,6 @@ func (in *factInputs) setProjectedFacts(batch *db.InputBatch, key api.GraphKey, 
 	in.setProjectedLiteralSigs(batch, key, facts.LiteralSigs)
 	in.setProjectedCapturedTypes(batch, key, facts.CapturedTypes)
 	in.setProjectedCapturedFields(batch, key, facts.CapturedFields)
-	in.setProjectedCapturedContainers(batch, key, facts.CapturedContainers)
 	in.setProjectedConstructorFields(batch, key, facts.ConstructorFields)
 }
 
@@ -287,26 +267,6 @@ func (in *factInputs) setProjectedCapturedFields(batch *db.InputBatch, key api.G
 	}
 	in.capturedFieldValues[key] = next
 	in.capturedFields.SetInBatch(batch, key, next)
-}
-
-func (in *factInputs) setProjectedCapturedContainers(batch *db.InputBatch, key api.GraphKey, containers api.CapturedContainerMutations) {
-	if in == nil || in.capturedContainers == nil {
-		return
-	}
-	if len(containers) == 0 {
-		if _, ok := in.capturedContainerValues[key]; !ok {
-			return
-		}
-		delete(in.capturedContainerValues, key)
-		in.capturedContainers.SetInBatch(batch, key, nil)
-		return
-	}
-	next := cloneCapturedContainerMutations(containers)
-	if prev, ok := in.capturedContainerValues[key]; ok && interproc.CapturedContainerMutationsEqual(prev, next) {
-		return
-	}
-	in.capturedContainerValues[key] = next
-	in.capturedContainers.SetInBatch(batch, key, next)
 }
 
 func (in *factInputs) setProjectedConstructorFields(batch *db.InputBatch, key api.GraphKey, fields api.ConstructorFields) {
@@ -460,22 +420,7 @@ func (s *SessionStore) visibleCapturedFieldAssigns(key api.GraphKey) api.Capture
 	return cloneCapturedFieldAssigns(interproc.OverlayFacts(prev, next).CapturedFields)
 }
 
-func (s *SessionStore) visibleCapturedContainerMutations(key api.GraphKey) api.CapturedContainerMutations {
-	if s == nil {
-		return nil
-	}
-	prev := api.Facts{}
-	if s.InterprocPrev != nil {
-		prev.CapturedContainers = s.InterprocPrev.Facts[key].CapturedContainers
-	}
-	next := api.Facts{}
-	if s.InterprocNext != nil {
-		next.CapturedContainers = s.InterprocNext.Facts[key].CapturedContainers
-	}
-	return cloneCapturedContainerMutations(interproc.OverlayFacts(prev, next).CapturedContainers)
-}
-
-func (s *SessionStore) visibleConstructorFields(key api.GraphKey, sym cfg.SymbolID) (map[string]typ.Type, bool) {
+func (s *SessionStore) visibleConstructorFields(key api.GraphKey, sym cfg.SymbolID) (api.FieldValues, bool) {
 	if s == nil || sym == 0 {
 		return nil, false
 	}
@@ -486,22 +431,22 @@ func (s *SessionStore) visibleConstructorFields(key api.GraphKey, sym cfg.Symbol
 		case len(prev) == 0 && len(next) == 0:
 			return nil, false
 		case len(prev) == 0:
-			return product.ProjectFieldMap(next), true
+			return cloneConstructorFieldMap(next), true
 		case len(next) == 0:
-			return product.ProjectFieldMap(prev), true
+			return cloneConstructorFieldMap(prev), true
 		default:
 			merged := interproc.WidenConstructorFields(
 				api.ConstructorFields{sym: prev},
 				api.ConstructorFields{sym: next},
 			)
 			fields := merged[sym]
-			return product.ProjectFieldMap(fields), len(fields) > 0
+			return cloneConstructorFieldMap(fields), len(fields) > 0
 		}
 	}
 	return nil, false
 }
 
-func constructorFieldsFromFacts(facts api.Facts, sym cfg.SymbolID) map[string]product.AbstractValue {
+func constructorFieldsFromFacts(facts api.Facts, sym cfg.SymbolID) api.FieldValues {
 	if sym == 0 || len(facts.ConstructorFields) == 0 {
 		return nil
 	}
@@ -567,20 +512,7 @@ func (s *SessionStore) capturedFieldAssignsByKey(key api.GraphKey) api.CapturedF
 	return s.visibleCapturedFieldAssigns(key)
 }
 
-func (s *SessionStore) capturedContainerMutationsByKey(key api.GraphKey) api.CapturedContainerMutations {
-	if s == nil {
-		return nil
-	}
-	if s.factInputs != nil {
-		if containers, ok := s.factInputs.capturedContainerMutationsFor(s.factCtx, key); ok {
-			return containers
-		}
-		return nil
-	}
-	return s.visibleCapturedContainerMutations(key)
-}
-
-func (s *SessionStore) constructorFieldsByKey(key api.ConstructorFieldKey) (map[string]typ.Type, bool) {
+func (s *SessionStore) constructorFieldsByKey(key api.ConstructorFieldKey) (api.FieldValues, bool) {
 	if s == nil || key.Symbol == 0 {
 		return nil, false
 	}
@@ -605,24 +537,22 @@ func (s *SessionStore) visibleProjectedInterprocFacts(key api.GraphKey) api.Fact
 	if s.InterprocPrev != nil {
 		facts := s.InterprocPrev.Facts[key]
 		prev = api.Facts{
-			FunctionFacts:      facts.FunctionFacts,
-			LiteralSigs:        facts.LiteralSigs,
-			CapturedTypes:      facts.CapturedTypes,
-			CapturedFields:     facts.CapturedFields,
-			CapturedContainers: facts.CapturedContainers,
-			ConstructorFields:  facts.ConstructorFields,
+			FunctionFacts:     facts.FunctionFacts,
+			LiteralSigs:       facts.LiteralSigs,
+			CapturedTypes:     facts.CapturedTypes,
+			CapturedFields:    facts.CapturedFields,
+			ConstructorFields: facts.ConstructorFields,
 		}
 	}
 	next := api.Facts{}
 	if s.InterprocNext != nil {
 		facts := s.InterprocNext.Facts[key]
 		next = api.Facts{
-			FunctionFacts:      facts.FunctionFacts,
-			LiteralSigs:        facts.LiteralSigs,
-			CapturedTypes:      facts.CapturedTypes,
-			CapturedFields:     facts.CapturedFields,
-			CapturedContainers: facts.CapturedContainers,
-			ConstructorFields:  facts.ConstructorFields,
+			FunctionFacts:     facts.FunctionFacts,
+			LiteralSigs:       facts.LiteralSigs,
+			CapturedTypes:     facts.CapturedTypes,
+			CapturedFields:    facts.CapturedFields,
+			ConstructorFields: facts.ConstructorFields,
 		}
 	}
 	return interproc.OverlayFacts(prev, next)
@@ -647,9 +577,6 @@ func (s *SessionStore) syncFactInputs() {
 		factKeys[key.GraphKey] = struct{}{}
 	}
 	for key := range s.factInputs.capturedFieldValues {
-		factKeys[key] = struct{}{}
-	}
-	for key := range s.factInputs.capturedContainerValues {
 		factKeys[key] = struct{}{}
 	}
 	for key := range s.factInputs.constructorValues {

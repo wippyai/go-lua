@@ -9,7 +9,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/equation"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
+	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
+	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -42,7 +44,7 @@ func solveFn(t *testing.T, params []string, paramTypes []ast.TypeExpr, resolve i
 	if in.Graph == nil {
 		t.Fatal("input builder produced no graph")
 	}
-	tr := transfer.New(in, nil, nil, nil, nil, nil, nil, nil)
+	tr := transfer.New(in, transfer.Config{})
 	fs := equation.NewBuilder(in.Graph, in.Scope.NumParams(), tr).Solve()
 	return fs, in.Graph
 }
@@ -71,7 +73,7 @@ return count
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"items"}}, Stmts: stmts}
 	in := input.BuildFromFunction(fn, nil, nil)
 	g := in.Graph
-	real := transfer.New(in, nil, nil, nil, nil, nil, nil, nil)
+	real := transfer.New(in, transfer.Config{})
 
 	// The loop must have a feedback-vertex set; its header cell is the widening
 	// site that makes the ascending counter converge.
@@ -186,9 +188,173 @@ return n
 	}
 }
 
+func TestCanonical_LoopAppendLengthRelationExportsToSummary(t *testing.T) {
+	resolve := func(expr ast.TypeExpr, _ *scope.State) typ.Type {
+		if prim, ok := expr.(*ast.PrimitiveTypeExpr); ok && prim.Name == "Map" {
+			return typ.NewMap(typ.String, typ.String)
+		}
+		return nil
+	}
+	fs, g := solveFn(t, []string{"xs"}, []ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "Map"}}, resolve, `
+local out = {}
+for k, v in pairs(xs) do
+	table.insert(out, v)
+end
+return out
+	`, "table", "pairs")
+
+	sum := summary.Project(fs, g)
+	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 0}
+	if !sum.Relations.HasLengthParam(rel) {
+		t.Fatalf("summary relations = %#v, want loop-derived length relation %#v", sum.Relations, rel)
+	}
+}
+
+func TestCanonical_LoopAppendLengthRelationRejectsStaleReturnedTarget(t *testing.T) {
+	resolve := func(expr ast.TypeExpr, _ *scope.State) typ.Type {
+		if prim, ok := expr.(*ast.PrimitiveTypeExpr); ok && prim.Name == "Map" {
+			return typ.NewMap(typ.String, typ.String)
+		}
+		return nil
+	}
+	fs, g := solveFn(t, []string{"xs"}, []ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "Map"}}, resolve, `
+local out = {}
+for k, v in pairs(xs) do
+	table.insert(out, v)
+end
+out = {}
+return out
+	`, "table", "pairs")
+
+	sum := summary.Project(fs, g)
+	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 0}
+	if sum.Relations.HasLengthParam(rel) {
+		t.Fatalf("summary relations exported stale loop-derived target: %#v", sum.Relations)
+	}
+}
+
+func TestCanonical_GuardedFieldDemandExportsGuardImplication(t *testing.T) {
+	fs, _ := solveFnWithTransferConfig(t, []string{"page"}, nil, nil, `
+if not page or not page.data_func or page.data_func == "" then
+	return {}, nil
+end
+takes_string(page.data_func)
+return {}, nil
+`, transfer.Config{CallTyper: staticDemandTyper{demand: typ.String}})
+
+	got, ok := fs.Contracts[0]
+	if !ok {
+		t.Fatalf("guarded field use must produce a parameter contract; contracts=%v", fs.Contracts)
+	}
+	want := typ.NewRecord().
+		ReadonlyField("data_func", typ.NewUnion(typ.String, typ.Nil, typ.False)).
+		Build()
+	if !typ.TypeEquals(got.ProjectValue(), want) {
+		t.Fatalf("guarded demand = %v, want %v", got.ProjectValue(), want)
+	}
+}
+
+func TestCanonical_ShortCircuitAndFalseEdgeUnionsSameValueLiteralRefinements(t *testing.T) {
+	input := typ.NewUnion(typ.String, typ.Boolean, typ.Nil)
+	resolve := func(expr ast.TypeExpr, _ *scope.State) typ.Type {
+		if prim, ok := expr.(*ast.PrimitiveTypeExpr); ok && prim.Name == "Input" {
+			return input
+		}
+		return nil
+	}
+	fs, g := solveFn(t, []string{"raw"}, []ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "Input"}}, resolve, `
+local v = raw
+if v and v ~= "" then
+	v = "qualified"
+end
+return v
+`)
+
+	ps, ok := fs.Points[g.Exit()]
+	if !ok {
+		t.Fatalf("no exit state; points=%v", fs.Points)
+	}
+	vSym := mustSymbol(t, g, "v")
+	av, ok := ps.Env[symbolKey(vSym)]
+	if !ok {
+		t.Fatalf("local v has no value at exit; env=%v", ps.Env)
+	}
+	want := typ.NewUnion(typ.Nil, typ.False, typ.LiteralString(""), typ.LiteralString("qualified"))
+	if got := av.ProjectValue(); !typ.TypeEquals(got, want) {
+		t.Fatalf("post short-circuit v = %v, want %v", got, want)
+	}
+}
+
+func solveFnWithTransferConfig(t *testing.T, params []string, paramTypes []ast.TypeExpr, resolve input.TypeResolver, body string, config transfer.Config, globals ...string) (state.FunctionState, *cfg.Graph) {
+	t.Helper()
+	stmts, err := parse.ParseString(body, "canonical.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: params, Types: paramTypes},
+		Stmts:   stmts,
+	}
+	in := input.BuildFromFunction(fn, resolve, nil, globals...)
+	if in.Graph == nil {
+		t.Fatal("input builder produced no graph")
+	}
+	tr := transfer.New(in, config)
+	fs := equation.NewBuilder(in.Graph, in.Scope.NumParams(), tr).Solve()
+	return fs, in.Graph
+}
+
+type staticDemandTyper struct {
+	demand typ.Type
+}
+
+func (s staticDemandTyper) CallReturns(*ast.FuncCallExpr, []typ.Type, func(ast.Expr) typ.Type, flow.CaptureCells, flow.FunctionRefs) ([]typ.Type, bool) {
+	return nil, false
+}
+
+func (s staticDemandTyper) IterVars(*ast.FuncCallExpr, int, func(ast.Expr) typ.Type) ([]typ.Type, bool) {
+	return nil, false
+}
+
+func (s staticDemandTyper) KeyedIterSource(*ast.FuncCallExpr) (ast.Expr, bool) {
+	return nil, false
+}
+
+func (s staticDemandTyper) IndexedIterSource(*ast.FuncCallExpr) (constraint.Path, bool) {
+	return constraint.Path{}, false
+}
+
+func (s staticDemandTyper) KeysCollectorContainer(*cfg.CallInfo, int) (constraint.Path, bool) {
+	return constraint.Path{}, false
+}
+
+func (s staticDemandTyper) ParamNarrows(*ast.FuncCallExpr) []transfer.ParamNarrow {
+	return nil
+}
+
+func (s staticDemandTyper) IsNoReturn(*ast.FuncCallExpr, transfer.ProductCallContext) bool {
+	return false
+}
+
+func (s staticDemandTyper) TypeCastTarget(*ast.FuncCallExpr, func(ast.Expr) typ.Type) (typ.Type, bool) {
+	return nil, false
+}
+
+func (s staticDemandTyper) CallArgDemands(call *ast.FuncCallExpr, _ transfer.ProductCallContext) []callobligation.Obligation {
+	if call == nil || len(call.Args) == 0 || s.demand == nil {
+		return nil
+	}
+	out := make([]callobligation.Obligation, len(call.Args))
+	for i := range out {
+		out[i] = callobligation.Body(s.demand)
+	}
+	return out
+}
+
 // TestCanonical_DeclaredParamSeedsEntry confirms a declared parameter type seeds
-// the entry env, so a body read of the parameter recovers its declared type and
-// the read demands it.
+// the entry env, so a body read of the parameter recovers its declared type. A
+// plain read is not a body-proven caller obligation; the annotation is already
+// the public contract.
 func TestCanonical_DeclaredParamSeedsEntry(t *testing.T) {
 	resolve := func(expr ast.TypeExpr, _ *scope.State) typ.Type {
 		if prim, ok := expr.(*ast.PrimitiveTypeExpr); ok && prim.Name == "number" {
@@ -196,26 +362,26 @@ func TestCanonical_DeclaredParamSeedsEntry(t *testing.T) {
 		}
 		return nil
 	}
-	fs, _ := solveFn(t, []string{"p"}, []ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "number"}}, resolve, `
+	fs, g := solveFn(t, []string{"p"}, []ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "number"}}, resolve, `
 local n = p
 return n
 `)
 
-	c, ok := fs.Contracts[0]
+	if _, ok := fs.Contracts[0]; ok {
+		t.Fatalf("plain read of declared parameter must not create body contract; contracts=%v", fs.Contracts)
+	}
+	ps, ok := fs.Points[g.Exit()]
 	if !ok {
-		t.Fatalf("declared+read parameter must appear in contracts; contracts=%v", fs.Contracts)
+		t.Fatalf("no exit state; points=%v", fs.Points)
 	}
-	want := paramevidence.DemandFromType(typ.Number)
-	if !paramevidence.ParamContractDomain.Equal(c, want) {
-		got := c.ProjectValue()
-		if got != typ.Number {
-			t.Fatalf("parameter 0 contract = %v, want number-derived demand", got)
-		}
+	symN := mustSymbol(t, g, "n")
+	av, ok := ps.Env[symbolKey(symN)]
+	if !ok {
+		t.Fatalf("local n has no value at exit; env=%v", ps.Env)
 	}
-}
-
-func symbolKey(sym cfg.SymbolID) string {
-	return "s" + itoa(uint64(sym))
+	if got := av.ProjectValue(); got != typ.Number {
+		t.Fatalf("local n = p projected as %v, want number", got)
+	}
 }
 
 func mustSymbol(t *testing.T, g *cfg.Graph, name string) cfg.SymbolID {
@@ -227,16 +393,6 @@ func mustSymbol(t *testing.T, g *cfg.Graph, name string) cfg.SymbolID {
 	return sym
 }
 
-func itoa(v uint64) string {
-	if v == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for v > 0 {
-		i--
-		buf[i] = byte('0' + v%10)
-		v /= 10
-	}
-	return string(buf[i:])
+func symbolKey(sym cfg.SymbolID) flow.ValueKey {
+	return flow.SymbolValueKey(sym)
 }

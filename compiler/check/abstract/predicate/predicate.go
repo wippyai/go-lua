@@ -1,43 +1,42 @@
 package predicate
 
 import (
-	"strconv"
-
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/flow"
 )
 
 // LookupPredicateLink finds the predicate link for a variable.
-// When multiple links exist for the same name (different def points),
+// When multiple links exist for the same symbol (different definition points),
 // returns the one with the highest def point for deterministic results.
-func LookupPredicateLink(name string, inputs *flow.Inputs) *flow.PredicateLink {
-	if inputs == nil || inputs.PredicateLinks == nil || name == "" {
+func LookupPredicateLink(sym cfg.SymbolID, inputs *flow.Inputs) *flow.PredicateLink {
+	if inputs == nil || inputs.PredicateLinks == nil || sym == 0 {
 		return nil
 	}
-	prefix := name + "@"
-	bestDef := -1
+	var bestDef cfg.Point
+	found := false
 	var bestLink flow.PredicateLink
 	for key, link := range inputs.PredicateLinks {
-		if len(key) > len(prefix) && key[:len(prefix)] == prefix {
-			def, err := strconv.Atoi(key[len(prefix):])
-			if err != nil {
-				continue
-			}
-			if def > bestDef {
-				bestDef = def
-				bestLink = link
-			}
+		if key.Symbol != sym {
+			continue
+		}
+		if !found || key.DefPoint > bestDef {
+			found = true
+			bestDef = key.DefPoint
+			bestLink = link
 		}
 	}
-	if bestDef < 0 {
+	if !found {
 		return nil
 	}
 	return &bestLink
 }
 
-// LinkKey generates a unique key for predicate links.
-func LinkKey(name string, defPoint cfg.Point) string {
-	return name + "@" + strconv.Itoa(int(defPoint))
+// LinkKey returns the typed key for a predicate-link assignment.
+func LinkKey(sym cfg.SymbolID, defPoint cfg.Point) flow.PredicateLinkKey {
+	if sym == 0 {
+		return flow.PredicateLinkKey{}
+	}
+	return flow.PredicateLinkKey{Symbol: sym, DefPoint: defPoint}
 }
 
 // BuildConstResolver creates a const resolver function for a given CFG point.

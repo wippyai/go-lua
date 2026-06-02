@@ -153,6 +153,21 @@ func (p Path) FieldName() string {
 	return ""
 }
 
+// DirectFieldName returns the field name for a root.field path with exactly one
+// string-valued segment. It accepts both dot fields and static string indexes.
+func (p Path) DirectFieldName() (string, bool) {
+	if len(p.Segments) != 1 {
+		return "", false
+	}
+	seg := p.Segments[0]
+	switch seg.Kind {
+	case SegmentField, SegmentIndexString:
+		return seg.Name, seg.Name != ""
+	default:
+		return "", false
+	}
+}
+
 // FormatSegments converts path segments to a canonical suffix string.
 // This is the single canonical implementation for segment serialization.
 // Format: .field for SegmentField, ["key"] for SegmentIndexString, [123] for SegmentIndexInt.

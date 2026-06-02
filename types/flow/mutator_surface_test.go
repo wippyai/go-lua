@@ -20,9 +20,6 @@ func TestRootMutationPoints_UnifiesMutatorLanes(t *testing.T) {
 		TableMutatorAssignments: []TableMutatorAssignment{
 			{Point: 10, Target: constraint.NewPath(state, "state").Field("items")},
 		},
-		ContainerMutatorAssignments: []ContainerMutatorAssignment{
-			{Point: 9, Target: constraint.NewPath(other, "other")},
-		},
 	}
 
 	got := inputs.RootMutationPoints(map[cfg.SymbolID]bool{state: true})
@@ -49,9 +46,6 @@ func TestTransferObservationPoints_IncludesAssignmentsAndMutators(t *testing.T) 
 		},
 		TableMutatorAssignments: []TableMutatorAssignment{
 			{Point: 5, Target: constraint.NewPath(3, "state").Field("items")},
-		},
-		ContainerMutatorAssignments: []ContainerMutatorAssignment{
-			{Point: 9, Target: constraint.NewPath(4, "ch")},
 		},
 	}
 

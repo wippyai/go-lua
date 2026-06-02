@@ -117,9 +117,6 @@ func BuildInputs(fc *abstractcore.FlowContext) *flow.Inputs {
 	// Constant-trip-count loop append lengths (proves #target >= N at loop exit).
 	mutator.ExtractLoopInsertLengths(fc, inputs)
 
-	// Container mutator assignments (channel.send-like).
-	mutator.ExtractContainerMutatorAssignments(fc, inputs)
-
 	// Function definitions on table fields (function M.add()).
 	assign.ExtractFuncDefAssignments(fc, inputs)
 
@@ -187,7 +184,7 @@ func initInputsFromContext(fc *abstractcore.FlowContext) *flow.Inputs {
 		TypeKeys:           make(map[uint64]typ.Type),
 		ReturnKinds:        make(map[cfg.Point]flow.ReturnKind),
 		ReturnConstraints:  make(map[cfg.Point]flow.ReturnExprConstraints),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 		ModuleAliases:      moduleAliases,
 		SiblingTypes:       fc.SiblingTypes,

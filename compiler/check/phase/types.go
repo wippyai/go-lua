@@ -45,6 +45,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -56,19 +57,12 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// LiteralSigsProvider provides lookup for pre-computed function literal signatures.
-// Implemented by both map[*ast.FunctionExpr]*typ.Function and lazy view types.
-type LiteralSigsProvider interface {
-	Lookup(fn *ast.FunctionExpr) *typ.Function
-}
+// LiteralSigsProvider provides lookup for pre-computed function literal
+// signatures.
+type LiteralSigsProvider = api.LiteralSignatureLookup
 
-// LiteralSigsMap wraps a map to implement LiteralSigsProvider.
-type LiteralSigsMap map[*ast.FunctionExpr]*typ.Function
-
-// Lookup returns the signature for a function from the map.
-func (m LiteralSigsMap) Lookup(fn *ast.FunctionExpr) *typ.Function {
-	return m[fn]
-}
+// LiteralSigsMap lifts an AST-keyed map into LiteralSigsProvider.
+type LiteralSigsMap = api.LiteralSigsLookup
 
 // PhaseEnv holds shared environment fields used across all analysis phases.
 // It is built once by the checker and embedded into each phase input struct,
@@ -93,7 +87,7 @@ type PhaseEnv struct {
 	Manifests io.ManifestQuerier
 
 	// GlobalTypes contains built-in global function types (print, pairs, etc.).
-	GlobalTypes map[string]typ.Type
+	GlobalTypes globalenv.TypeOverlay
 
 	// ModuleAliases maps symbols to their require() module paths.
 	ModuleAliases map[cfg.SymbolID]string
@@ -179,7 +173,7 @@ type ScopeInput struct {
 	SynthesizedFunctionSig *typ.Function
 	// FunctionLiteralSignatures contains pre-computed signatures for nested literals.
 	// Read-only - populated from LiteralSigs channel during iteration.
-	// Can be a map or LiteralSigsProvider interface for lazy lookup.
+	// AST-keyed maps are lifted with LiteralSigsMap at the producer boundary.
 	FunctionLiteralSignatures LiteralSigsProvider
 	// ParameterEvidenceSignatures contains function-expression keyed parameter evidence.
 	// Read-only - projected from canonical FunctionFacts during iteration.
@@ -384,7 +378,7 @@ func (b *ContextBuilder) buildDeclaredWithProjection(projection functionfact.Pro
 		BaseScope:     b.baseScope,
 		Refinements:   b.env.Refinements,
 		ModuleAliases: b.env.ModuleAliases,
-		GlobalTypes:   b.env.GlobalTypes,
+		GlobalOverlay: b.env.GlobalTypes,
 		FunctionType:  functionfact.ProjectionLookup(b.functionFacts, projection, api.PhaseScopeCompute),
 	})
 }
@@ -401,7 +395,7 @@ func (b *ContextBuilder) BuildNarrow() *api.NarrowEnvImpl {
 		BaseScope:     b.baseScope,
 		Refinements:   b.env.Refinements,
 		ModuleAliases: b.env.ModuleAliases,
-		GlobalTypes:   b.env.GlobalTypes,
+		GlobalOverlay: b.env.GlobalTypes,
 		FunctionType:  functionfact.ProjectionLookup(b.functionFacts, functionfact.ProjectionSibling, api.PhaseNarrowing),
 	})
 }

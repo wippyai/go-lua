@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -43,17 +44,23 @@ type CheckError struct {
 //
 // Returns the checked type and any errors found.
 func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) CheckResult {
+	return CheckTableEntries(fieldDefEntries(fields), arrayElems, expected)
+}
+
+// CheckTableEntries performs bidirectional table-constructor checking over the
+// canonical structural entry carrier.
+func CheckTableEntries(entries []EntryDef, arrayElems []typ.Type, expected typ.Type) CheckResult {
 	if expected == nil {
 		// Pure synthesis mode
-		return CheckResult{Type: tableConstructor(fields, arrayElems)}
+		return CheckResult{Type: tableConstructorEntries(entries, arrayElems)}
 	}
 
 	if rec := unwrap.Record(expected); rec != nil {
-		return checkTableAsRecord(fields, arrayElems, rec)
+		return checkTableEntriesAsRecord(entries, arrayElems, rec)
 	}
 
 	if alias, ok := expected.(*typ.Alias); ok {
-		return CheckTable(fields, arrayElems, alias.Target)
+		return CheckTableEntries(entries, arrayElems, alias.Target)
 	}
 
 	if opt, ok := expected.(*typ.Optional); ok {
@@ -62,7 +69,7 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 			inner = typ.Unknown
 		}
 
-		result := CheckTable(fields, arrayElems, inner)
+		result := CheckTableEntries(entries, arrayElems, inner)
 		if result.Type == nil {
 			result.Type = inner
 		}
@@ -72,22 +79,22 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 
 	if inst, ok := expected.(*typ.Instantiated); ok {
 		if resolved, err := querycore.ResolveInstantiated(inst); err == nil {
-			return CheckTable(fields, arrayElems, resolved)
+			return CheckTableEntries(entries, arrayElems, resolved)
 		}
 	}
 
 	// Handle any/unknown
 	if expected.Kind().IsPlaceholder() {
-		return CheckResult{Type: tableConstructor(fields, arrayElems)}
+		return CheckResult{Type: tableConstructorEntries(entries, arrayElems)}
 	}
 
 	if inter, ok := expected.(*typ.Intersection); ok {
 		var errors []CheckError
 
 		for _, member := range inter.Members {
-			result := CheckTable(fields, arrayElems, member)
+			result := CheckTableEntries(entries, arrayElems, member)
 			if rec := unwrap.Record(member); rec != nil {
-				result = checkTableAsRecordAllowExtra(fields, arrayElems, rec)
+				result = checkTableEntriesAsRecordAllowExtra(entries, arrayElems, rec)
 			}
 
 			if len(result.Errors) > 0 {
@@ -106,18 +113,20 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 
 	switch unwrapped.Kind() {
 	case kind.Array:
-		return checkTableAsArray(fields, arrayElems, unwrapped.(*typ.Array))
+		return checkTableEntriesAsArray(entries, arrayElems, unwrapped.(*typ.Array))
 	case kind.Map:
-		return checkTableAsMap(fields, arrayElems, unwrapped.(*typ.Map))
+		return checkTableEntriesAsMap(entries, arrayElems, unwrapped.(*typ.Map))
+	case kind.ReadonlyMap:
+		return checkTableEntriesAsReadonlyMap(entries, arrayElems, unwrapped.(*typ.ReadonlyMap))
 	case kind.Record:
-		return checkTableAsRecord(fields, arrayElems, unwrapped.(*typ.Record))
+		return checkTableEntriesAsRecord(entries, arrayElems, unwrapped.(*typ.Record))
 	case kind.Tuple:
 		return checkTableAsTuple(arrayElems, unwrapped.(*typ.Tuple))
 	case kind.Union:
-		return checkTableAsUnion(fields, arrayElems, unwrapped.(*typ.Union))
+		return checkTableEntriesAsUnion(entries, arrayElems, unwrapped.(*typ.Union))
 	default:
 		// Try synthesis and check compatibility
-		synthesized := tableConstructor(fields, arrayElems)
+		synthesized := tableConstructorEntries(entries, arrayElems)
 		if subtype.Consistent(synthesized, expected) {
 			return CheckResult{Type: synthesized}
 		}
@@ -134,7 +143,11 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 }
 
 func checkTableAsRecordAllowExtra(fields []FieldDef, elems []typ.Type, expected *typ.Record) CheckResult {
-	result := checkTableAsRecord(fields, elems, expected)
+	return checkTableEntriesAsRecordAllowExtra(fieldDefEntries(fields), elems, expected)
+}
+
+func checkTableEntriesAsRecordAllowExtra(entries []EntryDef, elems []typ.Type, expected *typ.Record) CheckResult {
+	result := checkTableEntriesAsRecord(entries, elems, expected)
 	if len(result.Errors) == 0 {
 		return result
 	}
@@ -156,13 +169,30 @@ func checkTableAsRecordAllowExtra(fields []FieldDef, elems []typ.Type, expected 
 
 // checkTableAsArray checks table against array type.
 func checkTableAsArray(fields []FieldDef, elems []typ.Type, expected *typ.Array) CheckResult {
+	return checkTableEntriesAsArray(fieldDefEntries(fields), elems, expected)
+}
+
+func checkTableEntriesAsArray(entries []EntryDef, elems []typ.Type, expected *typ.Array) CheckResult {
 	var errors []CheckError
 
-	// Named fields not allowed in array context
-	if len(fields) > 0 {
-		errors = append(errors, CheckError{
-			Message: "named fields not allowed in array context",
-		})
+	for _, entry := range entries {
+		slot := ExpectedTableEntryType(expected, entry.Key)
+		if slot == nil {
+			errors = append(errors, CheckError{
+				Message: "keyed entry not allowed in array context",
+				Got:     entry.Type,
+				Field:   entryLabel(entry.Key),
+			})
+			continue
+		}
+		if !subtype.Consistent(entry.Type, slot) {
+			errors = append(errors, CheckError{
+				Message:  "entry type mismatch",
+				Expected: slot,
+				Got:      entry.Type,
+				Field:    entryLabel(entry.Key),
+			})
+		}
 	}
 
 	// Check each element against expected element type
@@ -182,24 +212,47 @@ func checkTableAsArray(fields []FieldDef, elems []typ.Type, expected *typ.Array)
 
 // checkTableAsMap checks table against map type.
 func checkTableAsMap(fields []FieldDef, elems []typ.Type, expected *typ.Map) CheckResult {
+	return checkTableEntriesAsMap(fieldDefEntries(fields), elems, expected)
+}
+
+func checkTableEntriesAsMap(entries []EntryDef, elems []typ.Type, expected *typ.Map) CheckResult {
+	return checkTableEntriesAsKeyedView(entries, elems, expected, "map")
+}
+
+// checkTableAsReadonlyMap checks table against a read-only map view type. A
+// fresh literal can satisfy the read-view contract, but this path does not
+// expose write-side slots through the ReadonlyMap type itself.
+func checkTableAsReadonlyMap(fields []FieldDef, elems []typ.Type, expected *typ.ReadonlyMap) CheckResult {
+	return checkTableEntriesAsReadonlyMap(fieldDefEntries(fields), elems, expected)
+}
+
+func checkTableEntriesAsReadonlyMap(entries []EntryDef, elems []typ.Type, expected *typ.ReadonlyMap) CheckResult {
+	return checkTableEntriesAsKeyedView(entries, elems, expected, "readonly map")
+}
+
+func checkTableAsKeyedView(fields []FieldDef, elems []typ.Type, expected typ.Type, context string) CheckResult {
+	return checkTableEntriesAsKeyedView(fieldDefEntries(fields), elems, expected, context)
+}
+
+func checkTableEntriesAsKeyedView(entries []EntryDef, elems []typ.Type, expected typ.Type, context string) CheckResult {
 	var errors []CheckError
 
-	for _, f := range fields {
-		slot := ExpectedTableFieldType(expected, f.Name)
+	for _, entry := range entries {
+		slot := ExpectedTableEntryType(expected, entry.Key)
 		if slot == nil {
 			errors = append(errors, CheckError{
-				Message: "named field not allowed in map context",
-				Got:     f.Type,
-				Field:   f.Name,
+				Message: "keyed entry not allowed in " + context + " context",
+				Got:     entry.Type,
+				Field:   entryLabel(entry.Key),
 			})
 			continue
 		}
-		if !subtype.Consistent(f.Type, slot) {
+		if !subtype.Consistent(entry.Type, slot) {
 			errors = append(errors, CheckError{
 				Message:  "field value type mismatch",
 				Expected: slot,
-				Got:      f.Type,
-				Field:    f.Name,
+				Got:      entry.Type,
+				Field:    entryLabel(entry.Key),
 			})
 		}
 	}
@@ -208,7 +261,7 @@ func checkTableAsMap(fields []FieldDef, elems []typ.Type, expected *typ.Map) Che
 		slot := ExpectedTableElementType(expected, i)
 		if slot == nil {
 			errors = append(errors, CheckError{
-				Message: "array element not allowed in map context",
+				Message: "array element not allowed in " + context + " context",
 				Got:     elem,
 				Field:   string(rune('0' + i + 1)),
 			})
@@ -229,17 +282,21 @@ func checkTableAsMap(fields []FieldDef, elems []typ.Type, expected *typ.Map) Che
 
 // checkTableAsUnion checks table against union type by finding the best-matching member.
 func checkTableAsUnion(fields []FieldDef, arrayElems []typ.Type, expected *typ.Union) CheckResult {
+	return checkTableEntriesAsUnion(fieldDefEntries(fields), arrayElems, expected)
+}
+
+func checkTableEntriesAsUnion(entries []EntryDef, arrayElems []typ.Type, expected *typ.Union) CheckResult {
 	if len(expected.Members) == 0 {
 		return CheckResult{
-			Type:   tableConstructor(fields, arrayElems),
+			Type:   tableConstructorEntries(entries, arrayElems),
 			Errors: []CheckError{{Message: "empty union type"}},
 		}
 	}
 
 	// Find the union member with the best field match
-	bestMember := findBestUnionMember(fields, expected.Members)
+	bestMember := findBestUnionMemberEntries(entries, expected.Members)
 	if bestMember != nil {
-		result := CheckTable(fields, arrayElems, bestMember)
+		result := CheckTableEntries(entries, arrayElems, bestMember)
 		if len(result.Errors) == 0 {
 			return result
 		}
@@ -247,14 +304,14 @@ func checkTableAsUnion(fields []FieldDef, arrayElems []typ.Type, expected *typ.U
 
 	// Try each member and return first success
 	for _, member := range expected.Members {
-		result := CheckTable(fields, arrayElems, member)
+		result := CheckTableEntries(entries, arrayElems, member)
 		if len(result.Errors) == 0 {
 			return result
 		}
 	}
 
 	// No member matched - synthesize and report error
-	synthesized := tableConstructor(fields, arrayElems)
+	synthesized := tableConstructorEntries(entries, arrayElems)
 
 	return CheckResult{
 		Type: synthesized,
@@ -268,13 +325,17 @@ func checkTableAsUnion(fields []FieldDef, arrayElems []typ.Type, expected *typ.U
 
 // findBestUnionMember finds the union member whose record fields best match the provided fields.
 func findBestUnionMember(fields []FieldDef, members []typ.Type) typ.Type {
-	if len(fields) == 0 {
+	return findBestUnionMemberEntries(fieldDefEntries(fields), members)
+}
+
+func findBestUnionMemberEntries(entries []EntryDef, members []typ.Type) typ.Type {
+	if len(entries) == 0 {
 		return nil
 	}
 
-	fieldNames := make(map[string]bool)
-	for _, f := range fields {
-		fieldNames[f.Name] = true
+	provided := make(map[constraint.Segment]bool)
+	for _, entry := range entries {
+		provided[entry.Key] = true
 	}
 
 	var bestMember typ.Type
@@ -290,7 +351,13 @@ func findBestUnionMember(fields []FieldDef, members []typ.Type) typ.Type {
 		score := 0
 
 		for _, rf := range rec.Fields {
-			if fieldNames[rf.Name] {
+			if provided[constraint.Segment{Kind: constraint.SegmentField, Name: rf.Name}] {
+				score++
+			}
+		}
+		for _, member := range rec.StaticMembers {
+			seg, ok := staticMemberSegment(member)
+			if ok && provided[seg] {
 				score++
 			}
 		}
@@ -306,6 +373,10 @@ func findBestUnionMember(fields []FieldDef, members []typ.Type) typ.Type {
 
 // checkTableAsRecord checks table against record type.
 func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Record) CheckResult {
+	return checkTableEntriesAsRecord(fieldDefEntries(fields), elems, expected)
+}
+
+func checkTableEntriesAsRecord(entries []EntryDef, elems []typ.Type, expected *typ.Record) CheckResult {
 	var errors []CheckError
 
 	for i, elem := range elems {
@@ -328,15 +399,14 @@ func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Recor
 		}
 	}
 
-	// Build a map of provided fields
-	provided := make(map[string]typ.Type)
-	for _, f := range fields {
-		provided[f.Name] = f.Type
+	provided := make(map[constraint.Segment]typ.Type)
+	for _, entry := range entries {
+		provided[entry.Key] = entry.Type
 	}
 
 	// Check each expected field
 	for _, ef := range expected.Fields {
-		_, ok := provided[ef.Name]
+		_, ok := provided[constraint.Segment{Kind: constraint.SegmentField, Name: ef.Name}]
 		if !ok {
 			if !ef.Optional {
 				errors = append(errors, CheckError{
@@ -350,27 +420,82 @@ func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Recor
 		}
 	}
 
-	for _, f := range fields {
-		expectedFieldType := ExpectedTableFieldType(expected, f.Name)
+	for _, member := range expected.StaticMembers {
+		_, ok := staticMemberProvided(member, provided)
+		if !ok && !member.Optional {
+			errors = append(errors, CheckError{
+				Message:  "missing required static member",
+				Expected: member.Type,
+				Field:    staticMemberLabel(member),
+			})
+		}
+	}
+
+	for _, entry := range entries {
+		expectedFieldType := ExpectedTableEntryType(expected, entry.Key)
 		if expectedFieldType == nil {
 			errors = append(errors, CheckError{
 				Message: "unexpected field",
-				Got:     f.Type,
-				Field:   f.Name,
+				Got:     entry.Type,
+				Field:   entryLabel(entry.Key),
 			})
 			continue
 		}
-		if !subtype.Consistent(f.Type, expectedFieldType) {
+		if !subtype.Consistent(entry.Type, expectedFieldType) {
 			errors = append(errors, CheckError{
 				Message:  "field type mismatch",
 				Expected: expectedFieldType,
-				Got:      f.Type,
-				Field:    f.Name,
+				Got:      entry.Type,
+				Field:    entryLabel(entry.Key),
 			})
 		}
 	}
 
 	return CheckResult{Type: expected, Errors: errors}
+}
+
+func staticMemberProvided(member typ.StaticMember, provided map[constraint.Segment]typ.Type) (typ.Type, bool) {
+	seg, ok := staticMemberSegment(member)
+	if !ok {
+		return nil, false
+	}
+	t, ok := provided[seg]
+	return t, ok
+}
+
+func staticMemberSegment(member typ.StaticMember) (constraint.Segment, bool) {
+	switch member.Kind {
+	case typ.StaticMemberStringIndex:
+		return constraint.Segment{Kind: constraint.SegmentIndexString, Name: member.Name}, true
+	case typ.StaticMemberIntIndex:
+		return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(member.Index)}, true
+	default:
+		return constraint.Segment{}, false
+	}
+}
+
+func entryLabel(key constraint.Segment) string {
+	switch key.Kind {
+	case constraint.SegmentField:
+		return key.Name
+	case constraint.SegmentIndexString:
+		return "[" + typ.LiteralString(key.Name).String() + "]"
+	case constraint.SegmentIndexInt:
+		return typ.LiteralInt(int64(key.Index)).String()
+	default:
+		return ""
+	}
+}
+
+func staticMemberLabel(member typ.StaticMember) string {
+	switch member.Kind {
+	case typ.StaticMemberStringIndex:
+		return "[" + typ.LiteralString(member.Name).String() + "]"
+	case typ.StaticMemberIntIndex:
+		return typ.LiteralInt(member.Index).String()
+	default:
+		return ""
+	}
 }
 
 // checkTableAsTuple checks table against tuple type.

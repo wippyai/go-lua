@@ -10,6 +10,7 @@ import (
 var (
 	recordMapKeyHash   = internal.FnvString("$mapKey")
 	recordMapValueHash = internal.FnvString("$mapValue")
+	recordStaticHash   = internal.FnvString("$staticMember")
 	freshRecordHash    = internal.FnvString("$freshEmptyTable")
 )
 
@@ -96,7 +97,7 @@ func buildFunctionType(
 	}
 }
 
-func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool, assumeSorted bool, fresh bool) *Record {
+func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, mapKey, mapValue Type, open bool, assumeSorted bool, fresh bool) *Record {
 	sorted := make([]Field, len(fields))
 	copy(sorted, fields)
 	if !assumeSorted || !fieldsSortedByName(sorted) {
@@ -110,6 +111,21 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		}
 		if sorted[i].Optional {
 			sorted[i].Type = normalizeOptionalFieldType(sorted[i].Type)
+		}
+	}
+	members := make([]StaticMember, len(staticMembers))
+	copy(members, staticMembers)
+	if !assumeSorted || !staticMembersSorted(members) {
+		sort.Slice(members, func(i, j int) bool {
+			return compareStaticMembers(members[i], members[j]) < 0
+		})
+	}
+	for i := range members {
+		if members[i].Type == nil {
+			members[i].Type = Unknown
+		}
+		if members[i].Optional {
+			members[i].Type = normalizeOptionalFieldType(members[i].Type)
 		}
 	}
 
@@ -134,6 +150,23 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 			h = internal.HashCombine(h, 2)
 		}
 	}
+	for _, m := range members {
+		h = internal.HashCombine(h, recordStaticHash)
+		h = internal.HashCombine(h, uint64(m.Kind))
+		switch m.Kind {
+		case StaticMemberStringIndex:
+			h = internal.HashCombine(h, internal.FnvString(m.Name))
+		case StaticMemberIntIndex:
+			h = internal.HashCombine(h, uint64(m.Index))
+		}
+		h = internal.HashCombine(h, m.Type.Hash())
+		if m.Optional {
+			h = internal.HashCombine(h, 1)
+		}
+		if m.Readonly {
+			h = internal.HashCombine(h, 2)
+		}
+	}
 
 	if metatable != nil {
 		h = internal.HashCombine(h, metatable.Hash())
@@ -152,17 +185,18 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 	if fresh {
 		h = internal.HashCombine(h, freshRecordHash)
 	}
-	softPrunable := softPruneFields(sorted) || softPruneAny(metatable, mapKey, mapValue)
-	containsAny := knownAnyFields(sorted) || knownAny(metatable, mapKey, mapValue)
-	containsNever := knownNeverFields(sorted) || knownNever(metatable, mapKey, mapValue)
-	containsTypeParam := knownTypeParamFields(sorted) || knownTypeParam(metatable, mapKey, mapValue)
-	containsInstantiated := knownInstantiatedFields(sorted) || knownInstantiated(metatable, mapKey, mapValue)
-	containsRecursive := knownRecursiveFields(sorted) || knownRecursive(metatable, mapKey, mapValue)
-	containsOpenRecursive := knownOpenRecursiveFields(sorted) || knownOpenRecursive(metatable, mapKey, mapValue)
-	containsCallableSurf := knownCallableSurfaceFields(sorted) || HasCallableSurface(metatable) || HasCallableSurface(mapValue)
+	softPrunable := softPruneFields(sorted) || softPruneStaticMembers(members) || softPruneAny(metatable, mapKey, mapValue)
+	containsAny := knownAnyFields(sorted) || knownAnyStaticMembers(members) || knownAny(metatable, mapKey, mapValue)
+	containsNever := knownNeverFields(sorted) || knownNeverStaticMembers(members) || knownNever(metatable, mapKey, mapValue)
+	containsTypeParam := knownTypeParamFields(sorted) || knownTypeParamStaticMembers(members) || knownTypeParam(metatable, mapKey, mapValue)
+	containsInstantiated := knownInstantiatedFields(sorted) || knownInstantiatedStaticMembers(members) || knownInstantiated(metatable, mapKey, mapValue)
+	containsRecursive := knownRecursiveFields(sorted) || knownRecursiveStaticMembers(members) || knownRecursive(metatable, mapKey, mapValue)
+	containsOpenRecursive := knownOpenRecursiveFields(sorted) || knownOpenRecursiveStaticMembers(members) || knownOpenRecursive(metatable, mapKey, mapValue)
+	containsCallableSurf := knownCallableSurfaceFields(sorted) || knownCallableSurfaceStaticMembers(members) || HasCallableSurface(metatable) || HasCallableSurface(mapValue)
 
 	return &Record{
 		Fields:                sorted,
+		StaticMembers:         members,
 		Metatable:             metatable,
 		MapKey:                mapKey,
 		MapValue:              mapValue,
@@ -181,9 +215,120 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 	}
 }
 
+func compareStaticMembers(left, right StaticMember) int {
+	return compareStaticMemberKey(left, right.Kind, right.Name, right.Index)
+}
+
+func compareStaticMemberKey(left StaticMember, kind StaticMemberKind, name string, index int64) int {
+	if left.Kind != kind {
+		if left.Kind < kind {
+			return -1
+		}
+		return 1
+	}
+	switch left.Kind {
+	case StaticMemberStringIndex:
+		if left.Name < name {
+			return -1
+		}
+		if left.Name > name {
+			return 1
+		}
+	case StaticMemberIntIndex:
+		if left.Index < index {
+			return -1
+		}
+		if left.Index > index {
+			return 1
+		}
+	}
+	return 0
+}
+
+func staticMembersSorted(members []StaticMember) bool {
+	for i := 1; i < len(members); i++ {
+		if compareStaticMembers(members[i-1], members[i]) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func knownCallableSurfaceFields(fields []Field) bool {
 	for _, f := range fields {
 		if HasCallableSurface(f.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func knownCallableSurfaceStaticMembers(members []StaticMember) bool {
+	for _, m := range members {
+		if HasCallableSurface(m.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func softPruneStaticMembers(members []StaticMember) bool {
+	for _, m := range members {
+		if softPruneAny(m.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func knownAnyStaticMembers(members []StaticMember) bool {
+	for _, m := range members {
+		if knownAny(m.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func knownNeverStaticMembers(members []StaticMember) bool {
+	for _, m := range members {
+		if knownNever(m.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func knownTypeParamStaticMembers(members []StaticMember) bool {
+	for _, m := range members {
+		if knownTypeParam(m.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func knownInstantiatedStaticMembers(members []StaticMember) bool {
+	for _, m := range members {
+		if knownInstantiated(m.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func knownRecursiveStaticMembers(members []StaticMember) bool {
+	for _, m := range members {
+		if knownRecursive(m.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func knownOpenRecursiveStaticMembers(members []StaticMember) bool {
+	for _, m := range members {
+		if knownOpenRecursive(m.Type) {
 			return true
 		}
 	}

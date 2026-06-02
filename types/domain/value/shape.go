@@ -1808,12 +1808,13 @@ func RecordSuperset(newRec, oldRec *typ.Record) bool {
 			return false
 		}
 	}
-	oldFields := make(map[string]typ.Field, len(oldRec.Fields))
+	oldFields := make(map[recordFieldKey]typ.Field, len(oldRec.Fields))
 	for _, f := range oldRec.Fields {
-		oldFields[f.Name] = f
+		oldFields[recordFieldKeyFromName(f.Name)] = f
 	}
 	for _, nf := range newRec.Fields {
-		if of, ok := oldFields[nf.Name]; ok {
+		key := recordFieldKeyFromName(nf.Name)
+		if of, ok := oldFields[key]; ok {
 			if of.Optional && !nf.Optional {
 				// ok: stronger requirement
 			} else if !of.Optional && nf.Optional {
@@ -1830,7 +1831,7 @@ func RecordSuperset(newRec, oldRec *typ.Record) bool {
 					return false
 				}
 			}
-			delete(oldFields, nf.Name)
+			delete(oldFields, key)
 		}
 	}
 	return len(oldFields) == 0

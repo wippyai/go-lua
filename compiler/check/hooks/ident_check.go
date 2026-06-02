@@ -28,18 +28,19 @@ import (
 )
 
 // CheckIdents validates that all identifier expressions are defined at their use point.
-func CheckIdents(graph *cfg.Graph, evidence api.FlowEvidence, scopes map[cfg.Point]*scope.State, declared map[cfg.SymbolID]typ.Type, sourceName string) []diag.Diagnostic {
+func CheckIdents(graph *cfg.Graph, evidence api.FlowEvidence, scopes map[cfg.Point]*scope.State, declared map[cfg.SymbolID]typ.Type, bindingTypes map[cfg.SymbolID]typ.Type, sourceName string) []diag.Diagnostic {
 	if graph == nil {
 		return nil
 	}
 
 	var diags []diag.Diagnostic
 	checker := &identChecker{
-		graph:      graph,
-		scopes:     scopes,
-		declared:   declared,
-		sourceName: sourceName,
-		diags:      &diags,
+		graph:        graph,
+		scopes:       scopes,
+		declared:     declared,
+		bindingTypes: bindingTypes,
+		sourceName:   sourceName,
+		diags:        &diags,
 	}
 
 	for _, use := range evidence.IdentifierUses {
@@ -55,13 +56,14 @@ func CheckIdents(graph *cfg.Graph, evidence api.FlowEvidence, scopes map[cfg.Poi
 }
 
 type identChecker struct {
-	graph      *cfg.Graph
-	scopes     map[cfg.Point]*scope.State
-	declared   map[cfg.SymbolID]typ.Type
-	sourceName string
-	point      cfg.Point
-	scope      *scope.State
-	diags      *[]diag.Diagnostic
+	graph        *cfg.Graph
+	scopes       map[cfg.Point]*scope.State
+	declared     map[cfg.SymbolID]typ.Type
+	bindingTypes map[cfg.SymbolID]typ.Type
+	sourceName   string
+	point        cfg.Point
+	scope        *scope.State
+	diags        *[]diag.Diagnostic
 }
 
 func (c *identChecker) checkIdent(ident *ast.IdentExpr) {
@@ -81,7 +83,7 @@ func (c *identChecker) checkIdent(ident *ast.IdentExpr) {
 	if bindings := c.graph.Bindings(); bindings != nil {
 		if sym, ok := bindings.SymbolOf(ident); ok {
 			if kind, found := bindings.Kind(sym); found && kind == cfg.SymbolGlobal {
-				if c.declared[sym] != nil {
+				if c.declared[sym] != nil || c.bindingTypes[sym] != nil {
 					return
 				}
 			} else if !bindings.IsImplicitGlobalUse(ident) {

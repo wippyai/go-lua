@@ -5,8 +5,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -205,11 +208,8 @@ func findSetmetatablePatternByName(assignments []api.AssignmentEvidence, expecte
 			foundClassName = mt.Value
 		case *ast.TableExpr:
 			for _, field := range mt.Fields {
-				if field.Key == nil {
-					continue
-				}
-				keyStr, ok := field.Key.(*ast.StringExpr)
-				if !ok || keyStr.Value != "__index" {
+				name, ok := fieldkey.StringKeyFromTableField(field)
+				if !ok || name != "__index" {
 					continue
 				}
 				if valIdent, ok := field.Value.(*ast.IdentExpr); ok {
@@ -437,8 +437,8 @@ func indexPrototypeName(tbl *ast.TableExpr) string {
 		return ""
 	}
 	for _, field := range tbl.Fields {
-		key, ok := field.Key.(*ast.StringExpr)
-		if !ok || key.Value != "__index" {
+		name, ok := fieldkey.StringKeyFromTableField(field)
+		if !ok || name != "__index" {
 			continue
 		}
 		if ident, ok := field.Value.(*ast.IdentExpr); ok {
@@ -519,10 +519,14 @@ func isConstructorSymbolReturned(returns []api.ReturnEvidence, sym cfg.SymbolID)
 // CollectConstructorFields collects field assignments to a self symbol in a constructor.
 //
 // This reduces transfer assignment evidence for statements like
-// `self.field = value` and builds a map of field names to their types.
+// `self.field = value` and builds the typed interprocedural field carrier.
 // These fields become part of the class's instance type, enabling the type
 // checker to validate field access on instances created by this constructor.
-func CollectConstructorFields(assignments []api.AssignmentEvidence, selfSym cfg.SymbolID, synth func(ast.Expr, cfg.Point) typ.Type) map[string]typ.Type {
+func CollectConstructorFields(
+	assignments []api.AssignmentEvidence,
+	selfSym cfg.SymbolID,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+) interprocdomain.FieldValues {
 	if len(assignments) == 0 || selfSym == 0 {
 		return nil
 	}
@@ -531,15 +535,20 @@ func CollectConstructorFields(assignments []api.AssignmentEvidence, selfSym cfg.
 	fields := overlaymut.CollectFieldAssignments(assignments, synth, filterSyms)
 
 	if selfFields, ok := fields[selfSym]; ok && len(selfFields) > 0 {
-		filtered := make(map[string]typ.Type, len(selfFields))
-		for name, t := range selfFields {
+		out := make(interprocdomain.FieldValues, len(selfFields))
+		for _, fieldKey := range interprocdomain.SortedFieldKeys(selfFields) {
+			fieldValue := selfFields[fieldKey]
+			if fieldValue.IsZero() {
+				continue
+			}
+			t := fieldValue.ProjectValue()
 			if typ.IsAbsentOrUnknown(t) {
 				continue
 			}
-			filtered[name] = t
+			out[fieldKey] = fieldValue
 		}
-		if len(filtered) > 0 {
-			return filtered
+		if len(out) > 0 {
+			return out
 		}
 	}
 	return nil
@@ -547,14 +556,18 @@ func CollectConstructorFields(assignments []api.AssignmentEvidence, selfSym cfg.
 
 // CollectConstructorLiteralFields collects fields declared directly in the
 // instance table passed to setmetatable.
-func CollectConstructorLiteralFields(table *ast.TableExpr, point cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type) map[string]typ.Type {
+func CollectConstructorLiteralFields(
+	table *ast.TableExpr,
+	point cfg.Point,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+) interprocdomain.FieldValues {
 	if table == nil {
 		return nil
 	}
-	fields := make(map[string]typ.Type)
+	fields := make(interprocdomain.FieldValues)
 	for _, field := range table.Fields {
-		key, ok := field.Key.(*ast.StringExpr)
-		if !ok || key.Value == "" || field.Value == nil {
+		fieldKey, ok := fieldkey.FromTableField(field)
+		if !ok || field.Value == nil {
 			continue
 		}
 		var fieldType typ.Type
@@ -564,7 +577,7 @@ func CollectConstructorLiteralFields(table *ast.TableExpr, point cfg.Point, synt
 		if typ.IsAbsentOrUnknown(fieldType) {
 			fieldType = typ.Any
 		}
-		fields[key.Value] = fieldType
+		fields[fieldKey] = product.FromType(fieldType)
 	}
 	if len(fields) == 0 {
 		return nil
@@ -572,22 +585,28 @@ func CollectConstructorLiteralFields(table *ast.TableExpr, point cfg.Point, synt
 	return fields
 }
 
-// MergeConstructorFieldMaps joins constructor field maps from assignment and
-// literal sources.
-func MergeConstructorFieldMaps(a, b map[string]typ.Type) map[string]typ.Type {
+// MergeConstructorFieldMaps joins constructor field carriers from assignment
+// and literal sources.
+func MergeConstructorFieldMaps(a, b interprocdomain.FieldValues) interprocdomain.FieldValues {
 	if len(a) == 0 {
 		return b
 	}
 	if len(b) == 0 {
 		return a
 	}
-	out := make(map[string]typ.Type, len(a)+len(b))
+	out := make(interprocdomain.FieldValues, len(a)+len(b))
 	for k, v := range a {
+		if v.IsZero() {
+			continue
+		}
 		out[k] = v
 	}
 	for k, v := range b {
-		if prev := out[k]; prev != nil {
-			out[k] = typ.JoinPreferNonSoft(prev, v)
+		if v.IsZero() {
+			continue
+		}
+		if prev := out[k]; !prev.IsZero() {
+			out[k] = product.FromType(typ.JoinPreferNonSoft(prev.ProjectValue(), v.ProjectValue()))
 		} else {
 			out[k] = v
 		}

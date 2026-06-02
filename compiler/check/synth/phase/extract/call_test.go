@@ -4,8 +4,10 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	compcfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
@@ -28,6 +30,55 @@ func TestCallQuery_NilSynthesizer(t *testing.T) {
 	}
 	if q.UnaryOp(nil, "-", typ.Integer) != typ.Unknown {
 		t.Fatal("expected unknown for nil synthesizer")
+	}
+}
+
+func TestStablePrototypeFieldKeyKeepsIndexStructural(t *testing.T) {
+	sym := compcfg.SymbolID(7)
+
+	field, ok := stablePrototypeFieldKey(compcfg.AssignTarget{
+		Kind:       compcfg.TargetField,
+		BaseSymbol: sym,
+		FieldPath:  []string{"method"},
+	}, sym)
+	if !ok || field != (constraint.Segment{Kind: constraint.SegmentField, Name: "method"}) {
+		t.Fatalf("field key = %#v,%v; want SegmentField(method),true", field, ok)
+	}
+
+	stringIndex, ok := stablePrototypeFieldKey(compcfg.AssignTarget{
+		Kind:       compcfg.TargetIndex,
+		BaseSymbol: sym,
+		Key:        &ast.StringExpr{Value: "method"},
+	}, sym)
+	if !ok || stringIndex != (constraint.Segment{Kind: constraint.SegmentIndexString, Name: "method"}) {
+		t.Fatalf("string index key = %#v,%v; want SegmentIndexString(method),true", stringIndex, ok)
+	}
+
+	intIndex, ok := stablePrototypeFieldKey(compcfg.AssignTarget{
+		Kind:       compcfg.TargetIndex,
+		BaseSymbol: sym,
+		Key:        &ast.NumberExpr{Value: "1"},
+	}, sym)
+	if !ok || intIndex != (constraint.Segment{Kind: constraint.SegmentIndexInt, Index: 1}) {
+		t.Fatalf("int index key = %#v,%v; want SegmentIndexInt(1),true", intIndex, ok)
+	}
+}
+
+func TestAddStablePrototypeFieldPreservesStaticMembers(t *testing.T) {
+	builder := typ.NewRecord()
+	addStablePrototypeField(builder, constraint.Segment{Kind: constraint.SegmentField, Name: "dot"}, typ.String)
+	addStablePrototypeField(builder, constraint.Segment{Kind: constraint.SegmentIndexString, Name: "dot"}, typ.Number)
+	addStablePrototypeField(builder, constraint.Segment{Kind: constraint.SegmentIndexInt, Index: 1}, typ.Boolean)
+
+	rec := builder.Build()
+	if rec.GetField("dot") == nil {
+		t.Fatalf("missing dot field in %v", rec)
+	}
+	if rec.GetStaticStringIndex("dot") == nil {
+		t.Fatalf("missing static string member in %v", rec)
+	}
+	if rec.GetStaticIntIndex(1) == nil {
+		t.Fatalf("missing static int member in %v", rec)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -46,6 +47,26 @@ func (s *factsWriteStoreStub) SymbolForFunc(fn *ast.FunctionExpr) (cfg.SymbolID,
 	return sym, ok
 }
 
+func graphWithNestedFunctions(t *testing.T, src string) (*cfg.Graph, []*ast.FunctionExpr) {
+	t.Helper()
+	stmts, err := parse.ParseString(src, "literal_sigs.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := &ast.FunctionExpr{ParList: &ast.ParList{}, Stmts: stmts}
+	graph := cfg.Build(root)
+	var fns []*ast.FunctionExpr
+	for _, nested := range graph.NestedFunctions() {
+		if nested.Func != nil {
+			fns = append(fns, nested.Func)
+		}
+	}
+	if len(fns) == 0 {
+		t.Fatalf("expected nested functions in %q", src)
+	}
+	return graph, fns
+}
+
 func TestInterprocFactWriter_MergeParentFactsForSymbol(t *testing.T) {
 	stub := newFactsWriteStoreStub()
 	key := api.GraphKey{GraphID: 7, ParentHash: 11}
@@ -77,12 +98,10 @@ func TestInterprocFactWriter_WriteLiteralSignatures(t *testing.T) {
 	stub.graphKeyForOK = true
 	writer := newInterprocFactWriter(stub)
 
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{},
-	}
-	graph := cfg.Build(fn)
+	graph, fns := graphWithNestedFunctions(t, `return function() end`)
+	fn := fns[0]
 	sig := typ.Func().Returns(typ.String).Build()
-	sigs := map[*ast.FunctionExpr]*typ.Function{fn: sig}
+	sigs := api.LiteralSigsLookup{fn: sig}
 
 	writer.writeLiteralSignatures(graph, scope.New(), sigs)
 
@@ -99,14 +118,17 @@ func TestInterprocFactWriter_WriteLiteralSignaturesSkipsCanonicalFunctions(t *te
 	stub.graphKeyForOK = true
 	writer := newInterprocFactWriter(stub)
 
-	registered := &ast.FunctionExpr{ParList: &ast.ParList{}}
-	anonymous := &ast.FunctionExpr{ParList: &ast.ParList{}}
+	graph, fns := graphWithNestedFunctions(t, `
+		local registered = function() end
+		local anonymous = function() end
+	`)
+	registered := fns[0]
+	anonymous := fns[1]
 	stub.symbolByFunc[registered] = 42
 
-	graph := cfg.Build(&ast.FunctionExpr{ParList: &ast.ParList{}})
 	registeredSig := typ.Func().Returns(typ.String).Build()
 	anonymousSig := typ.Func().Returns(typ.Number).Build()
-	writer.writeLiteralSignatures(graph, scope.New(), map[*ast.FunctionExpr]*typ.Function{
+	writer.writeLiteralSignatures(graph, scope.New(), api.LiteralSigsLookup{
 		registered: registeredSig,
 		anonymous:  anonymousSig,
 	})
@@ -128,12 +150,10 @@ func TestInterprocFactWriter_WriteLiteralSignatures_RequiresGraphKey(t *testing.
 	stub.graphKeyForOK = false
 	writer := newInterprocFactWriter(stub)
 
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{},
-	}
-	graph := cfg.Build(fn)
+	graph, fns := graphWithNestedFunctions(t, `return function() end`)
+	fn := fns[0]
 	sig := typ.Func().Returns(typ.Number).Build()
-	writer.writeLiteralSignatures(graph, scope.New(), map[*ast.FunctionExpr]*typ.Function{fn: sig})
+	writer.writeLiteralSignatures(graph, scope.New(), api.LiteralSigsLookup{fn: sig})
 
 	if len(stub.factsByGraphKeyNext) != 0 {
 		t.Fatalf("expected no facts writes without graph key, got %#v", stub.factsByGraphKeyNext)

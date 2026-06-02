@@ -16,7 +16,7 @@ import (
 // Manifest file format constants.
 const (
 	manifestMagic   = 0x4D414E49 // "MANI" - identifies valid manifest files
-	manifestVersion = 11         // v11: path-sensitive FlowInto effects
+	manifestVersion = 12         // v12: structural record static bracket members
 )
 
 // Manifest decoding errors.
@@ -579,7 +579,7 @@ func ApplyFunctionSummary(fn *typ.Function, summary *FunctionSummary) *typ.Funct
 
 	builder := typ.Func()
 	for _, tp := range fn.TypeParams {
-		builder.TypeParam(tp.Name, tp.Constraint)
+		builder.TypeParamRef(tp)
 	}
 
 	for _, p := range fn.Params {

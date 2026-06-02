@@ -3,13 +3,13 @@ package assign
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 func (e *assignmentPointEmitter) emitVariantFieldOrigins(i int, targetPath constraint.Path) {
@@ -58,11 +58,11 @@ func (e *assignmentPointEmitter) emitVariantFieldOrigins(i int, targetPath const
 			continue
 		}
 		e.state.inputs.VariantFieldOrigins = append(e.state.inputs.VariantFieldOrigins, flow.VariantFieldOrigin{
-			Target:             targetPath,
-			Field:              effect.SelectResultChannelField,
-			Source:             sourcePath,
-			DiscriminatorField: effect.SelectResultCaseIDField,
-			DiscriminatorValue: typ.LiteralInt(int64(caseIdx)),
+			Target:       targetPath,
+			Field:        effect.SelectResultChannelField,
+			Source:       sourcePath,
+			OriginFamily: flow.VariantOriginFamily(targetPath, effect.SelectResultChannelField),
+			CaseIndex:    caseIdx,
 		})
 	}
 }
@@ -96,12 +96,6 @@ func selectCaseFieldIsDefault(field *ast.Field) bool {
 	if field == nil || field.Key == nil {
 		return false
 	}
-	switch k := field.Key.(type) {
-	case *ast.IdentExpr:
-		return k.Value == "default"
-	case *ast.StringExpr:
-		return k.Value == "default"
-	default:
-		return false
-	}
+	name, ok := fieldkey.StringKeyFromTableField(field)
+	return ok && name == "default"
 }

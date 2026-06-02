@@ -376,7 +376,7 @@ func (c *InferSet) unifySCC(scc []int) {
 func canContainTypeVar(k kind.Kind) bool {
 	switch k {
 	case kind.Optional, kind.Union, kind.Intersection, kind.Array,
-		kind.Map, kind.Tuple, kind.Function, kind.Record, kind.Alias,
+		kind.Map, kind.ReadonlyMap, kind.Tuple, kind.Function, kind.Record, kind.Alias,
 		kind.TypeVar, kind.Instantiated:
 		return true
 	default:
@@ -440,6 +440,9 @@ func walkTypeMemo(t typ.Type, depth int, seen map[typ.Type]bool, pred func(typ.T
 			return walkTypeMemo(a.Element, depth+1, seen, pred)
 		},
 		Map: func(m *typ.Map) bool {
+			return walkTypeMemo(m.Key, depth+1, seen, pred) || walkTypeMemo(m.Value, depth+1, seen, pred)
+		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) bool {
 			return walkTypeMemo(m.Key, depth+1, seen, pred) || walkTypeMemo(m.Value, depth+1, seen, pred)
 		},
 		Function: func(fn *typ.Function) bool {
@@ -828,6 +831,16 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 
 			return typ.NewMap(key, value)
 		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) typ.Type {
+			key := applyInferSubst(m.Key, s, visited, memo, depth+1)
+			value := applyInferSubst(m.Value, s, visited, memo, depth+1)
+
+			if key == m.Key && value == m.Value {
+				return t
+			}
+
+			return typ.NewReadonlyMap(key, value)
+		},
 		Record: func(r *typ.Record) typ.Type {
 			changed := false
 			fields := make([]typ.Field, len(r.Fields))
@@ -978,6 +991,28 @@ func matchDepth(pattern, concrete typ.Type, cs *InferSet, variance subtype.Varia
 
 						break
 					}
+				}
+			}
+			return struct{}{}
+		},
+		ReadonlyMap: func(p *typ.ReadonlyMap) struct{} {
+			keyVar := subtype.CombineVariance(variance, subtype.Covariant)
+			valVar := subtype.CombineVariance(variance, subtype.Covariant)
+			switch c := concrete.(type) {
+			case *typ.ReadonlyMap:
+				matchDepth(p.Key, c.Key, cs, keyVar, depth+1)
+				matchDepth(p.Value, c.Value, cs, valVar, depth+1)
+			case *typ.Map:
+				matchDepth(p.Key, c.Key, cs, keyVar, depth+1)
+				matchDepth(p.Value, c.Value, cs, valVar, depth+1)
+			case *typ.Record:
+				for _, f := range c.Fields {
+					matchDepth(p.Key, typ.LiteralString(f.Name), cs, keyVar, depth+1)
+					matchDepth(p.Value, f.Type, cs, valVar, depth+1)
+				}
+				if c.HasMapComponent() {
+					matchDepth(p.Key, c.MapKey, cs, keyVar, depth+1)
+					matchDepth(p.Value, c.MapValue, cs, valVar, depth+1)
 				}
 			}
 			return struct{}{}

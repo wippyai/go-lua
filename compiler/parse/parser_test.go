@@ -31,6 +31,65 @@ func parseOneString(t *testing.T, input string) ast.Stmt {
 	return stmts[0]
 }
 
+func TestParseAttrGetKeySyntax(t *testing.T) {
+	stmt := parseOneString(t, `local a, b, c = obj.foo, obj["foo"], obj[1]`)
+	local, ok := stmt.(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("got %T, want *ast.LocalAssignStmt", stmt)
+	}
+	if len(local.Exprs) != 3 {
+		t.Fatalf("got %d exprs, want 3", len(local.Exprs))
+	}
+	dot, ok := local.Exprs[0].(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("expr 0 = %T, want *ast.AttrGetExpr", local.Exprs[0])
+	}
+	if dot.KeySyntax != ast.AttrKeyDot {
+		t.Fatalf("dot KeySyntax = %v, want AttrKeyDot", dot.KeySyntax)
+	}
+	bracketString, ok := local.Exprs[1].(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("expr 1 = %T, want *ast.AttrGetExpr", local.Exprs[1])
+	}
+	if bracketString.KeySyntax != ast.AttrKeyIndex {
+		t.Fatalf("string index KeySyntax = %v, want AttrKeyIndex", bracketString.KeySyntax)
+	}
+	bracketNumber, ok := local.Exprs[2].(*ast.AttrGetExpr)
+	if !ok {
+		t.Fatalf("expr 2 = %T, want *ast.AttrGetExpr", local.Exprs[2])
+	}
+	if bracketNumber.KeySyntax != ast.AttrKeyIndex {
+		t.Fatalf("number index KeySyntax = %v, want AttrKeyIndex", bracketNumber.KeySyntax)
+	}
+}
+
+func TestParseTableFieldKeySyntax(t *testing.T) {
+	stmt := parseOneString(t, `local t = {foo = 1, ["foo"] = 2, [1] = 3}`)
+	local, ok := stmt.(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("got %T, want *ast.LocalAssignStmt", stmt)
+	}
+	if len(local.Exprs) != 1 {
+		t.Fatalf("got %d exprs, want 1", len(local.Exprs))
+	}
+	table, ok := local.Exprs[0].(*ast.TableExpr)
+	if !ok {
+		t.Fatalf("expr = %T, want *ast.TableExpr", local.Exprs[0])
+	}
+	if len(table.Fields) != 3 {
+		t.Fatalf("got %d fields, want 3", len(table.Fields))
+	}
+	if table.Fields[0].KeySyntax != ast.AttrKeyDot {
+		t.Fatalf("name field syntax = %v, want AttrKeyDot", table.Fields[0].KeySyntax)
+	}
+	if table.Fields[1].KeySyntax != ast.AttrKeyIndex {
+		t.Fatalf("string index field syntax = %v, want AttrKeyIndex", table.Fields[1].KeySyntax)
+	}
+	if table.Fields[2].KeySyntax != ast.AttrKeyIndex {
+		t.Fatalf("numeric index field syntax = %v, want AttrKeyIndex", table.Fields[2].KeySyntax)
+	}
+}
+
 func TestParseLocalWithType(t *testing.T) {
 	tests := []struct {
 		input    string

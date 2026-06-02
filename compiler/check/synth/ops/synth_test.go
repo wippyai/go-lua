@@ -3,6 +3,7 @@ package ops
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -70,6 +71,28 @@ func TestTableConstructor_Record(t *testing.T) {
 	}
 	if len(rec.Fields) != 2 {
 		t.Errorf("expected 2 fields, got %d", len(rec.Fields))
+	}
+}
+
+func TestTableConstructorEntries_PreservesStaticIndexes(t *testing.T) {
+	result := tableConstructorEntries([]EntryDef{
+		{Key: constraint.Segment{Kind: constraint.SegmentField, Name: "field"}, Type: typ.String},
+		{Key: constraint.Segment{Kind: constraint.SegmentIndexString, Name: "name"}, Type: typ.Number},
+		{Key: constraint.Segment{Kind: constraint.SegmentIndexInt, Index: 1}, Type: typ.Boolean},
+	}, nil)
+
+	rec, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("got %T, want record", result)
+	}
+	if field := rec.GetField("field"); field == nil || field.Type != typ.String {
+		t.Fatalf("dot field = %v, want string", field)
+	}
+	if member := rec.GetStaticStringIndex("name"); member == nil || member.Type != typ.Number {
+		t.Fatalf("static string index name = %v, want number", member)
+	}
+	if member := rec.GetStaticIntIndex(1); member == nil || member.Type != typ.Boolean {
+		t.Fatalf("static int index 1 = %v, want boolean", member)
 	}
 }
 

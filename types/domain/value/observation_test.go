@@ -25,6 +25,38 @@ func TestAdmitObservation_RecordDiscriminantPreservesPayloadLiterals(t *testing.
 	}
 }
 
+func TestAdmitObservation_SingleNamedDiscriminantPreservesTag(t *testing.T) {
+	event := typ.NewRecord().
+		Field("kind", typ.LiteralString("tool_call")).
+		Field("ids", typ.NewArray(typ.LiteralInt(1))).
+		Build()
+
+	got := AdmitObservation(event)
+	want := typ.NewRecord().
+		Field("kind", typ.LiteralString("tool_call")).
+		Field("ids", typ.NewArray(typ.Integer)).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("AdmitObservation(single-tag record) = %v, want %v", got, want)
+	}
+}
+
+func TestAdmitObservation_SingleBooleanDiscriminantPreservesResultTag(t *testing.T) {
+	result := typ.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", typ.String).
+		Build()
+
+	got := AdmitObservation(result)
+	want := typ.NewRecord().
+		Field("ok", typ.LiteralBool(true)).
+		Field("value", typ.String).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("AdmitObservation(result tag) = %v, want %v", got, want)
+	}
+}
+
 func TestAdmitObservation_RecordDataFieldLiteralsWiden(t *testing.T) {
 	cfg := typ.NewRecord().
 		Field("default_temperature", typ.LiteralNumber(0.8)).
@@ -36,6 +68,22 @@ func TestAdmitObservation_RecordDataFieldLiteralsWiden(t *testing.T) {
 		Build()
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("AdmitObservation(config record) = %v, want %v", got, want)
+	}
+}
+
+func TestAdmitObservation_NonDiscriminantLiteralWithPayloadWidens(t *testing.T) {
+	cfg := typ.NewRecord().
+		Field("default_temperature", typ.LiteralNumber(0.8)).
+		Field("model", typ.String).
+		Build()
+
+	got := AdmitObservation(cfg)
+	want := typ.NewRecord().
+		Field("default_temperature", typ.Number).
+		Field("model", typ.String).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("AdmitObservation(config payload) = %v, want %v", got, want)
 	}
 }
 

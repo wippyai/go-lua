@@ -20,6 +20,17 @@ type interner struct {
 
 var canonical = &interner{buckets: make(map[uint64][]*node)}
 
+// ResetCanonicalInterner clears the package-level product-value interner.
+//
+// Product nodes are immutable, but the canonical store owns analysis-local
+// identity. Keeping nodes from an unrelated checker run lets same-shaped function
+// values with different query context collapse, which is not a valid Salsa key.
+func ResetCanonicalInterner() {
+	canonical.mu.Lock()
+	defer canonical.mu.Unlock()
+	canonical.buckets = make(map[uint64][]*node)
+}
+
 // intern returns the canonical node equal to n, inserting n when none exists yet.
 //
 // The fast path takes the read lock and probes the bucket. On a miss it takes the

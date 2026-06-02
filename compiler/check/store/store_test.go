@@ -437,7 +437,7 @@ func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	}
 	s.InterprocNext.Facts[api.ModuleFactsKey()] = api.Facts{
 		ConstructorFields: api.ConstructorFields{
-			3: {"v": product.FromType(typ.Number)},
+			3: {constraint.Segment{Kind: constraint.SegmentField, Name: "v"}: product.FromType(typ.Number)},
 		},
 	}
 

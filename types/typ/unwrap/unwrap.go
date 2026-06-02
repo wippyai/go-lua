@@ -134,7 +134,7 @@ func IsEmptyRecord(t typ.Type) bool {
 		return false
 	}
 	rec, ok := t.(*typ.Record)
-	return ok && len(rec.Fields) == 0 && !rec.HasMapComponent()
+	return ok && len(rec.Fields) == 0 && len(rec.StaticMembers) == 0 && !rec.HasMapComponent()
 }
 
 // IsContainer returns true if t is an array, map, tuple, or record.
@@ -143,7 +143,7 @@ func IsContainer(t typ.Type) bool {
 		return false
 	}
 	switch t.Kind() {
-	case kind.Array, kind.Map, kind.Tuple, kind.Record:
+	case kind.Array, kind.Map, kind.ReadonlyMap, kind.Tuple, kind.Record:
 		return true
 	}
 	return false

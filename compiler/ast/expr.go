@@ -65,11 +65,24 @@ type IdentExpr struct {
 	Value string // Identifier name
 }
 
+// AttrKeySyntax records how an AttrGetExpr key appeared in source.
+type AttrKeySyntax uint8
+
+const (
+	// AttrKeyUnknown preserves legacy behavior for hand-built AST nodes.
+	AttrKeyUnknown AttrKeySyntax = iota
+	// AttrKeyDot is source dot syntax: obj.key.
+	AttrKeyDot
+	// AttrKeyIndex is source bracket syntax: obj[key].
+	AttrKeyIndex
+)
+
 // AttrGetExpr represents a table field access (obj.key or obj[key]).
 type AttrGetExpr struct {
 	ExprBase
-	Object Expr // Table expression
-	Key    Expr // Key expression
+	Object    Expr          // Table expression
+	Key       Expr          // Key expression
+	KeySyntax AttrKeySyntax // Dot, bracket, or unknown for legacy/manual ASTs
 }
 
 // TableExpr represents a table constructor ({...}).

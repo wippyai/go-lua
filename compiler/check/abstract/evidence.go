@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // ExtractEvidence records abstract-interpreter events that are consumed after
@@ -24,7 +23,6 @@ func ExtractEvidence(fc *core.FlowContext, inputs *flow.Inputs) api.FlowEvidence
 	fc.Evidence = out
 	captured := capturedSymbolSet(bindings, fc.Fn)
 	out.CapturedFields = ExtractCapturedFieldEvidence(inputs, captured)
-	out.CapturedContainers = ExtractCapturedContainerEvidence(fc, inputs, captured)
 	return out
 }
 
@@ -77,70 +75,6 @@ func capturedFieldPathRoot(path constraint.Path) (cfg.SymbolID, string, bool) {
 	default:
 	}
 	return 0, "", false
-}
-
-// ExtractCapturedContainerEvidence records lowered table/container/map mutator
-// transfer operators that target captured symbols.
-func ExtractCapturedContainerEvidence(
-	fc *core.FlowContext,
-	inputs *flow.Inputs,
-	capturedSyms map[cfg.SymbolID]bool,
-) []api.CapturedContainerEvidence {
-	if fc == nil || fc.Graph == nil || len(capturedSyms) == 0 {
-		return nil
-	}
-	var out []api.CapturedContainerEvidence
-	if inputs != nil {
-		for _, mutation := range inputs.ContainerMutatorAssignments {
-			out = appendCapturedMutatorEvidence(out, capturedSyms, mutation.Point, mutation.Target, constraint.Path{}, nil, 0, mutation.ValuePath, mutation.ValueType, mutation.Value, api.ContainerMutationContainerElement)
-		}
-		for _, mutation := range inputs.TableMutatorAssignments {
-			out = appendCapturedMutatorEvidence(out, capturedSyms, mutation.Point, mutation.Target, mutatorKeyPath(mutation.KeyVar, mutation.KeySymbol), mutation.KeyType, 0, mutation.ValuePath, mutation.ValueType, mutation.Value, api.ContainerMutationTableElement)
-		}
-		for _, mutation := range inputs.MapMutatorAssignments {
-			out = appendCapturedMutatorEvidence(out, capturedSyms, mutation.Point, mutation.Target, mutatorKeyPath(mutation.KeyVar, mutation.KeySymbol), mutation.KeyType, mutation.ValueMode, mutation.ValuePath, mutation.ValueType, mutation.Value, api.ContainerMutationMapElement)
-		}
-	}
-	return out
-}
-
-func appendCapturedMutatorEvidence(
-	out []api.CapturedContainerEvidence,
-	capturedSyms map[cfg.SymbolID]bool,
-	point cfg.Point,
-	target constraint.Path,
-	keyPath constraint.Path,
-	keyType typ.Type,
-	valueMode flow.MapMutationValueMode,
-	valuePath constraint.Path,
-	valueType typ.Type,
-	valueTemplate flow.ValueTemplate,
-	kind api.ContainerMutationKind,
-) []api.CapturedContainerEvidence {
-	if target.Symbol == 0 || !capturedSyms[target.Symbol] {
-		return out
-	}
-	segments := make([]constraint.Segment, len(target.Segments))
-	copy(segments, target.Segments)
-	return append(out, api.CapturedContainerEvidence{
-		Point:         point,
-		Target:        target.Symbol,
-		Segments:      segments,
-		KeyPath:       keyPath,
-		KeyType:       keyType,
-		ValueMode:     valueMode,
-		ValuePath:     valuePath,
-		ValueType:     valueType,
-		ValueTemplate: valueTemplate,
-		Kind:          kind,
-	})
-}
-
-func mutatorKeyPath(root string, sym cfg.SymbolID) constraint.Path {
-	if sym == 0 {
-		return constraint.Path{}
-	}
-	return constraint.Path{Root: root, Symbol: sym}
 }
 
 func capturedSymbolSet(bindings *bind.BindingTable, fn *ast.FunctionExpr) map[cfg.SymbolID]bool {

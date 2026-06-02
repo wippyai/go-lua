@@ -1,10 +1,10 @@
 package check
 
 import (
-	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/types/domain/value"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -30,20 +30,14 @@ func funcResultDependencyEqual(a, b *api.FuncResult) bool {
 		refinementEqual(a.FnRefinement, b.FnRefinement) &&
 		functionTypeEqual(a.SourceSignature, b.SourceSignature) &&
 		functionTypeEqual(a.PublicSeedSignature, b.PublicSeedSignature) &&
-		literalSignaturesEqual(a.LiteralSignatures, b.LiteralSignatures) &&
+		callExpectedArgsEqual(a.CallExpectedArgs, b.CallExpectedArgs) &&
+		literalSignatureLookupsEqual(a.Graph, a.LiteralSignatureLookup(), b.LiteralSignatureLookup()) &&
 		a.DepthLimitExceeded == b.DepthLimitExceeded
 }
 
 func analysisContextEqual(a, b api.AnalysisContext) bool {
-	if len(a.GlobalOverlay) != len(b.GlobalOverlay) {
-		return false
-	}
-	for name, av := range a.GlobalOverlay {
-		if !product.Equal(av, b.GlobalOverlay[name]) {
-			return false
-		}
-	}
-	return functionTypeEqual(a.ExpectedFunction, b.ExpectedFunction)
+	return globalenv.EqualValueOverlay(a.GlobalOverlay, b.GlobalOverlay) &&
+		functionTypeEqual(a.ExpectedFunction, b.ExpectedFunction)
 }
 
 func refinementEqual(a, b any) bool {
@@ -59,13 +53,41 @@ func refinementEqual(a, b any) bool {
 	return false
 }
 
-func literalSignaturesEqual(a, b map[*ast.FunctionExpr]*typ.Function) bool {
+func literalSignatureLookupsEqual(graph *cfg.Graph, a, b api.LiteralSignatureLookup) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if graph == nil {
+		return false
+	}
+	for _, nested := range graph.NestedFunctions() {
+		fn := nested.Func
+		var av, bv *typ.Function
+		if a != nil {
+			av = a.Lookup(fn)
+		}
+		if b != nil {
+			bv = b.Lookup(fn)
+		}
+		if !functionTypeEqual(av, bv) {
+			return false
+		}
+	}
+	return true
+}
+
+func callExpectedArgsEqual(a, b []api.CallExpectedArgEvidence) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for fn, av := range a {
-		if !functionTypeEqual(av, b[fn]) {
+	for i := range a {
+		if len(a[i].Args) != len(b[i].Args) {
 			return false
+		}
+		for j := range a[i].Args {
+			if !typ.TypeEquals(a[i].Args[j], b[i].Args[j]) {
+				return false
+			}
 		}
 	}
 	return true

@@ -1406,7 +1406,7 @@ yydefault:
 			key := &ast.StringExpr{Value: yyDollar[3].token.Str}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			fn := &ast.AttrGetExpr{Object: yyDollar[1].funcname.Func, Key: key}
+			fn := &ast.AttrGetExpr{Object: yyDollar[1].funcname.Func, Key: key, KeySyntax: ast.AttrKeyDot}
 			fn.CopyPos(yyDollar[1].funcname.Func)
 			fn.SetLastPosFromToken(yyDollar[3].token.Pos)
 			yyVAL.funcname = &ast.FuncName{Func: fn}
@@ -1434,7 +1434,7 @@ yydefault:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:392
 		{
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: yyDollar[3].expr}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: yyDollar[3].expr, KeySyntax: ast.AttrKeyIndex}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 		}
 	case 46:
@@ -1444,7 +1444,7 @@ yydefault:
 			key := &ast.StringExpr{Value: yyDollar[3].token.Str}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1455,7 +1455,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "type"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1466,7 +1466,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "interface"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1477,7 +1477,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "readonly"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1488,7 +1488,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "as"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1499,7 +1499,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "asserts"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -1510,7 +1510,7 @@ yydefault:
 			key := &ast.StringExpr{Value: "is"}
 			key.SetPosFromToken(yyDollar[3].token.Pos)
 			key.SetLastPosFromToken(yyDollar[3].token.Pos)
-			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key}
+			yyVAL.expr = &ast.AttrGetExpr{Object: yyDollar[1].expr, Key: key, KeySyntax: ast.AttrKeyDot}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			yyVAL.expr.SetLastPosFromToken(yyDollar[3].token.Pos)
 		}
@@ -2069,13 +2069,13 @@ yydefault:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:811
 		{
-			yyVAL.field = &ast.Field{Key: &ast.StringExpr{Value: yyDollar[1].fieldname}, Value: yyDollar[3].expr}
+			yyVAL.field = &ast.Field{Key: &ast.StringExpr{Value: yyDollar[1].fieldname}, KeySyntax: ast.AttrKeyDot, Value: yyDollar[3].expr}
 		}
 	case 128:
 		yyDollar = yyS[yypt-5 : yypt+1]
 //line parser.go.y:814
 		{
-			yyVAL.field = &ast.Field{Key: yyDollar[2].expr, Value: yyDollar[5].expr}
+			yyVAL.field = &ast.Field{Key: yyDollar[2].expr, KeySyntax: ast.AttrKeyIndex, Value: yyDollar[5].expr}
 		}
 	case 129:
 		yyDollar = yyS[yypt-1 : yypt+1]

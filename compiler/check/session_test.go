@@ -6,15 +6,16 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/compiler/stdlib"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -452,7 +453,7 @@ func TestSessionStore_ClearInterprocState(t *testing.T) {
 
 	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{
-			cfg.SymbolID(2): {"name": product.FromType(typ.String)},
+			cfg.SymbolID(2): interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"name": typ.String}),
 		},
 	})
 	store.InterprocPrev.Facts[api.GraphKey{GraphID: 1, ParentHash: 1}] = api.Facts{
@@ -554,7 +555,7 @@ func TestModuleConstructorFacts_EmptyFields(t *testing.T) {
 
 func TestModuleConstructorFacts_Basic(t *testing.T) {
 	store := store.NewSessionStore()
-	fields := map[string]product.AbstractValue{"x": product.FromType(typ.Number), "y": product.FromType(typ.String)}
+	fields := interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.Number, "y": typ.String})
 	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{1: fields},
 	})
@@ -572,10 +573,10 @@ func TestModuleConstructorFacts_Basic(t *testing.T) {
 func TestModuleConstructorFacts_Join(t *testing.T) {
 	store := store.NewSessionStore()
 	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
-		ConstructorFields: api.ConstructorFields{1: {"x": product.FromType(typ.Number)}},
+		ConstructorFields: api.ConstructorFields{1: interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.Number})},
 	})
 	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
-		ConstructorFields: api.ConstructorFields{1: {"x": product.FromType(typ.String)}},
+		ConstructorFields: api.ConstructorFields{1: interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.String})},
 	})
 
 	next := store.InterprocNext
@@ -583,7 +584,8 @@ func TestModuleConstructorFacts_Join(t *testing.T) {
 		t.Fatal("next product facts should be initialized")
 	}
 	fields := next.Facts[api.ModuleFactsKey()].ConstructorFields[1]
-	if fields == nil || product.Equal(fields["x"], product.FromType(typ.Number)) {
+	xKey, ok := interprocdomain.FieldKeyFromName("x")
+	if !ok || fields == nil || product.Equal(fields[xKey], product.FromType(typ.Number)) {
 		t.Error("field should be joined")
 	}
 }
@@ -616,7 +618,8 @@ func TestModuleFacts_ConstructorFieldsFromPrev(t *testing.T) {
 	if result == nil {
 		t.Fatal("should find fields from stable product")
 	}
-	if result["y"] != typ.String {
+	key, ok := interprocdomain.FieldKeyFromName("y")
+	if !ok || !typ.TypeEquals(result[key].ProjectValue(), typ.String) {
 		t.Error("wrong field type")
 	}
 }

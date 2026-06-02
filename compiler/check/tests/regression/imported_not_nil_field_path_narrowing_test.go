@@ -10,7 +10,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
-// Regression guard: imported not_nil summaries must narrow field paths, not only local identifiers.
+// Regression guard: imported not_nil summaries must narrow field paths, not only
+// local identifiers. not_nil(result.system) removes the field's outer optionality;
+// it does not prove that the sequence has an element at index 1.
 func TestImportedNotNilSummaryNarrowsFieldPath(t *testing.T) {
 	assertManifest := io.NewManifest("test")
 	assertExport := typ.NewRecord().
@@ -32,9 +34,10 @@ func TestImportedNotNilSummaryNarrowsFieldPath(t *testing.T) {
 		type R = { system: {SystemItem}? }
 		local result: R = { system = { { text = "ok" } } }
 
-		test.not_nil(result.system, "system required")
-		local text: string = result.system[1].text
-		return text
+			test.not_nil(result.system, "system required")
+			local system: {SystemItem} = result.system
+			local text: string? = system[1].text
+			return text
 	`
 
 	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("test", assertManifest))

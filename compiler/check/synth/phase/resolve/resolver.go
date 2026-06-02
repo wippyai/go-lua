@@ -112,16 +112,17 @@ func (r *Resolver) ResolveFunctionSignature(fn *ast.FunctionExpr, sc *scope.Stat
 
 	resolveScope := sc
 	if len(fn.TypeParams) > 0 {
-		typeParams := make(map[string]typ.Type, len(fn.TypeParams))
 		for _, tp := range fn.TypeParams {
 			var constr typ.Type
 			if tp.Constraint != nil {
 				constr = r.ResolveType(tp.Constraint, resolveScope)
 			}
-			typeParams[tp.Name] = typ.NewTypeParam(tp.Name, constr)
-			builder = builder.TypeParam(tp.Name, constr)
+			param := typ.NewTypeParam(tp.Name, constr)
+			builder = builder.TypeParamRef(param)
+			if resolveScope != nil {
+				resolveScope = resolveScope.WithTypeParams(map[string]typ.Type{tp.Name: param})
+			}
 		}
-		resolveScope = resolveScope.WithTypeParams(typeParams)
 	}
 
 	implicitSelf := core.HasImplicitSelfParam(fn, r.bindings)
@@ -237,6 +238,10 @@ func containsRecursiveRef(t typ.Type, self *typ.Recursive, depth int) bool {
 			return containsRecursiveRef(a.Element, self, depth+1)
 		},
 		Map: func(m *typ.Map) bool {
+			return containsRecursiveRef(m.Key, self, depth+1) ||
+				containsRecursiveRef(m.Value, self, depth+1)
+		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) bool {
 			return containsRecursiveRef(m.Key, self, depth+1) ||
 				containsRecursiveRef(m.Value, self, depth+1)
 		},
@@ -534,17 +539,22 @@ func (r *Resolver) resolveRecord(te *ast.RecordTypeExpr, sc *scope.State, depth 
 
 func (r *Resolver) resolveFunction(te *ast.FunctionTypeExpr, sc *scope.State, depth int) typ.Type {
 	builder := typ.Func()
+	resolveScope := sc
 
 	for _, tp := range te.TypeParams {
 		var constr typ.Type
 		if tp.Constraint != nil {
-			constr = r.resolveTypeDepth(tp.Constraint, sc, depth+1)
+			constr = r.resolveTypeDepth(tp.Constraint, resolveScope, depth+1)
 		}
-		builder.TypeParam(tp.Name, constr)
+		param := typ.NewTypeParam(tp.Name, constr)
+		builder.TypeParamRef(param)
+		if resolveScope != nil {
+			resolveScope = resolveScope.WithTypeParams(map[string]typ.Type{tp.Name: param})
+		}
 	}
 
 	for _, p := range te.Params {
-		paramType := r.resolveTypeDepth(p.Type, sc, depth+1)
+		paramType := r.resolveTypeDepth(p.Type, resolveScope, depth+1)
 		// The grammar records a variadic type param `...T` as a trailing param
 		// named "..." (never a valid Lua identifier), so lift it to the variadic
 		// slot rather than treating it as a fixed positional parameter.
@@ -560,7 +570,7 @@ func (r *Resolver) resolveFunction(te *ast.FunctionTypeExpr, sc *scope.State, de
 	}
 
 	if te.Variadic != nil {
-		builder.Variadic(r.resolveTypeDepth(te.Variadic, sc, depth+1))
+		builder.Variadic(r.resolveTypeDepth(te.Variadic, resolveScope, depth+1))
 	}
 
 	var assertsExpr *ast.AssertsTypeExpr
@@ -572,11 +582,11 @@ func (r *Resolver) resolveFunction(te *ast.FunctionTypeExpr, sc *scope.State, de
 		}
 		if tuple, ok := ret.(*ast.TupleTypeExpr); ok {
 			for _, elem := range tuple.Elements {
-				returns = append(returns, r.resolveTypeDepth(elem, sc, depth+1))
+				returns = append(returns, r.resolveTypeDepth(elem, resolveScope, depth+1))
 			}
 			continue
 		}
-		returns = append(returns, r.resolveTypeDepth(ret, sc, depth+1))
+		returns = append(returns, r.resolveTypeDepth(ret, resolveScope, depth+1))
 	}
 	if len(returns) > 0 {
 		builder.Returns(returns...)
@@ -591,7 +601,7 @@ func (r *Resolver) resolveFunction(te *ast.FunctionTypeExpr, sc *scope.State, de
 			}
 		}
 		if paramIdx >= 0 {
-			eff := r.buildAssertEffect(paramIdx, assertsExpr.NarrowTo, sc, depth)
+			eff := r.buildAssertEffect(paramIdx, assertsExpr.NarrowTo, resolveScope, depth)
 			if eff != nil {
 				builder.WithRefinement(eff)
 			}
@@ -787,6 +797,8 @@ func ComputeKeyOf(t typ.Type) typ.Type {
 
 	case *typ.Map:
 		return tt.Key
+	case *typ.ReadonlyMap:
+		return tt.Key
 
 	case *typ.Array:
 		return typ.Integer
@@ -821,6 +833,8 @@ func ComputeIndexAccess(obj, key typ.Type) typ.Type {
 		return typ.Unknown
 
 	case *typ.Map:
+		return ot.Value
+	case *typ.ReadonlyMap:
 		return ot.Value
 
 	case *typ.Array:

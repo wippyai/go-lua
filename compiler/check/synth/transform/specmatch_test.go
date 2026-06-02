@@ -35,3 +35,23 @@ func TestExprMatchesLiteral_HexFloatDoesNotMatchInteger(t *testing.T) {
 		t.Fatal("expected hex float literal to not match integer literal 4")
 	}
 }
+
+func TestTableConstructorFieldMatchesLiteralRequiresRecordFieldSyntax(t *testing.T) {
+	dot := &ast.TableExpr{Fields: []*ast.Field{{
+		Key:       &ast.StringExpr{Value: "kind"},
+		KeySyntax: ast.AttrKeyDot,
+		Value:     &ast.StringExpr{Value: "ok"},
+	}}}
+	if !tableConstructorFieldMatchesLiteral(dot, "kind", typ.LiteralString("ok")) {
+		t.Fatal("dot record field should match discriminant literal")
+	}
+
+	bracket := &ast.TableExpr{Fields: []*ast.Field{{
+		Key:       &ast.StringExpr{Value: "kind"},
+		KeySyntax: ast.AttrKeyIndex,
+		Value:     &ast.StringExpr{Value: "ok"},
+	}}}
+	if tableConstructorFieldMatchesLiteral(bracket, "kind", typ.LiteralString("ok")) {
+		t.Fatal("bracket string entry should not satisfy dot-field discriminant")
+	}
+}

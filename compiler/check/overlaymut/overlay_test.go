@@ -4,42 +4,59 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
+	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
+func fieldValues(fields map[string]typ.Type) interprocdomain.FieldValues {
+	return interprocdomain.LiftTypeFieldMap(fields)
+}
+
+func liftFieldAssignments(fields map[cfg.SymbolID]map[string]typ.Type) FieldAssignments {
+	out := make(FieldAssignments, len(fields))
+	for sym, byName := range fields {
+		out[sym] = fieldValues(byName)
+	}
+	return out
+}
+
+func projectedField(fields interprocdomain.FieldValues, name string) typ.Type {
+	return interprocdomain.ProjectValueFieldMap(fields)[name]
+}
+
 func TestMergeFieldAssignments(t *testing.T) {
 	t.Run("nil dst map entries are created", func(t *testing.T) {
-		dst := make(map[cfg.SymbolID]map[string]typ.Type)
-		src := map[cfg.SymbolID]map[string]typ.Type{
+		dst := make(FieldAssignments)
+		src := liftFieldAssignments(map[cfg.SymbolID]map[string]typ.Type{
 			1: {"foo": typ.String},
-		}
+		})
 		MergeFieldAssignments(dst, src)
 		if dst[1] == nil {
 			t.Fatal("expected dst[1] to be created")
 		}
-		if dst[1]["foo"] != typ.String {
-			t.Fatalf("expected dst[1][foo] = string, got %v", dst[1]["foo"])
+		if got := projectedField(dst[1], "foo"); got != typ.String {
+			t.Fatalf("expected dst[1][foo] = string, got %v", got)
 		}
 	})
 
 	t.Run("existing fields are joined", func(t *testing.T) {
-		dst := map[cfg.SymbolID]map[string]typ.Type{
+		dst := liftFieldAssignments(map[cfg.SymbolID]map[string]typ.Type{
 			1: {"foo": typ.String},
-		}
-		src := map[cfg.SymbolID]map[string]typ.Type{
+		})
+		src := liftFieldAssignments(map[cfg.SymbolID]map[string]typ.Type{
 			1: {"foo": typ.Number},
-		}
+		})
 		MergeFieldAssignments(dst, src)
-		joined := dst[1]["foo"]
+		joined := projectedField(dst[1], "foo")
 		if joined == nil {
 			t.Fatal("expected joined type")
 		}
 	})
 
 	t.Run("empty src does nothing", func(t *testing.T) {
-		dst := make(map[cfg.SymbolID]map[string]typ.Type)
+		dst := make(FieldAssignments)
 		MergeFieldAssignments(dst, nil)
 		if len(dst) != 0 {
 			t.Fatal("expected empty dst")
@@ -50,8 +67,8 @@ func TestMergeFieldAssignments(t *testing.T) {
 func TestApplyFieldMergeToOverlay(t *testing.T) {
 	t.Run("empty fields are skipped", func(t *testing.T) {
 		overlay := make(map[cfg.SymbolID]typ.Type)
-		fieldAssignments := map[cfg.SymbolID]map[string]typ.Type{
-			1: {},
+		fieldAssignments := FieldAssignments{
+			1: interprocdomain.FieldValues{},
 		}
 		ApplyFieldMergeToOverlay(overlay, fieldAssignments)
 		if _, ok := overlay[1]; ok {
@@ -63,9 +80,9 @@ func TestApplyFieldMergeToOverlay(t *testing.T) {
 		overlay := map[cfg.SymbolID]typ.Type{
 			1: typ.NewRecord().Build(),
 		}
-		fieldAssignments := map[cfg.SymbolID]map[string]typ.Type{
+		fieldAssignments := liftFieldAssignments(map[cfg.SymbolID]map[string]typ.Type{
 			1: {"x": typ.Number},
-		}
+		})
 		ApplyFieldMergeToOverlay(overlay, fieldAssignments)
 		rec, ok := overlay[1].(*typ.Record)
 		if !ok {
@@ -79,7 +96,7 @@ func TestApplyFieldMergeToOverlay(t *testing.T) {
 
 func TestMergeFieldsIntoType(t *testing.T) {
 	t.Run("nil base type creates open record", func(t *testing.T) {
-		result := MergeFieldsIntoType(nil, map[string]typ.Type{"x": typ.Number})
+		result := MergeFieldsIntoType(nil, fieldValues(map[string]typ.Type{"x": typ.Number}))
 		rec, ok := result.(*typ.Record)
 		if !ok {
 			t.Fatalf("expected record, got %T", result)
@@ -99,7 +116,7 @@ func TestMergeFieldsIntoType(t *testing.T) {
 
 	t.Run("map base creates record with map component", func(t *testing.T) {
 		base := typ.NewMap(typ.String, typ.Number)
-		result := MergeFieldsIntoType(base, map[string]typ.Type{"x": typ.Boolean})
+		result := MergeFieldsIntoType(base, fieldValues(map[string]typ.Type{"x": typ.Boolean}))
 		rec, ok := result.(*typ.Record)
 		if !ok {
 			t.Fatalf("expected record, got %T", result)
@@ -111,7 +128,7 @@ func TestMergeFieldsIntoType(t *testing.T) {
 
 	t.Run("record base preserves existing fields", func(t *testing.T) {
 		base := typ.NewRecord().Field("existing", typ.String).Build()
-		result := MergeFieldsIntoType(base, map[string]typ.Type{"new": typ.Number})
+		result := MergeFieldsIntoType(base, fieldValues(map[string]typ.Type{"new": typ.Number}))
 		rec, ok := result.(*typ.Record)
 		if !ok {
 			t.Fatalf("expected record, got %T", result)

@@ -30,7 +30,7 @@ func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
 	}
 	node := unwrapTransparentSoft(t)
 	switch node.(type) {
-	case *Alias, *Optional, *Array, *Map, *Record, *Union:
+	case *Alias, *Optional, *Array, *Map, *ReadonlyMap, *Record, *Union:
 		// recurse below
 	default:
 		return node.Kind().IsPlaceholder()
@@ -49,6 +49,8 @@ func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
 	case *Array:
 		return isSoft(tt.Element, next, policy)
 	case *Map:
+		return isSoft(tt.Key, next, policy) && isSoft(tt.Value, next, policy)
+	case *ReadonlyMap:
 		return isSoft(tt.Key, next, policy) && isSoft(tt.Value, next, policy)
 	case *Record:
 		if tt.Open && len(tt.Fields) == 0 && !tt.HasMapComponent() {
@@ -280,6 +282,14 @@ func pruneSoftUnionMembersMemo(
 			break
 		}
 		out = NewMap(key, val)
+	case *ReadonlyMap:
+		key := pruneSoftUnionMembersMemo(node.Key, next, memo, visiting, softMemo)
+		val := pruneSoftUnionMembersMemo(node.Value, next, memo, visiting, softMemo)
+		if key == node.Key && val == node.Value {
+			out = t
+			break
+		}
+		out = NewReadonlyMap(key, val)
 	case *Tuple:
 		var elems []Type
 		for i, e := range node.Elements {
@@ -430,6 +440,20 @@ func pruneSoftRecord(
 			fields[i] = f
 		}
 	}
+	var staticMembers []StaticMember
+	for i, m := range r.StaticMembers {
+		newType := pruneSoftUnionMembersMemo(m.Type, next, memo, visiting, softMemo)
+		if newType != m.Type {
+			if staticMembers == nil {
+				staticMembers = make([]StaticMember, len(r.StaticMembers))
+				copy(staticMembers, r.StaticMembers)
+			}
+			changed = true
+			staticMembers[i].Type = newType
+		} else if staticMembers != nil {
+			staticMembers[i] = m
+		}
+	}
 
 	metatable := r.Metatable
 	if r.Metatable != nil {
@@ -463,7 +487,11 @@ func pruneSoftRecord(
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, r.Open, true, false)
+	staticMembersSrc := r.StaticMembers
+	if staticMembers != nil {
+		staticMembersSrc = staticMembers
+	}
+	return buildRecordType(fieldsSrc, staticMembersSrc, metatable, mapKey, mapValue, r.Open, true, false)
 }
 
 func isSoftWithMemo(t Type, policy SoftPolicy, memo map[Type]bool) bool {

@@ -227,6 +227,20 @@ func comparePrecision(candidate, baseline Type, depth int, seen *precisionSeen) 
 		default:
 			return false, false
 		}
+	case *ReadonlyMap:
+		b, ok := baseline.(*ReadonlyMap)
+		if !ok {
+			return false, false
+		}
+		keyStrict, ok := comparePrecision(c.Key, b.Key, depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		valueStrict, ok := comparePrecision(c.Value, b.Value, depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		return keyStrict || valueStrict, true
 	case *Instantiated:
 		b, ok := baseline.(*Instantiated)
 		if !ok || c.Generic == nil || b.Generic == nil || !TypeEquals(c.Generic, b.Generic) || len(c.TypeArgs) != len(b.TypeArgs) {
@@ -492,11 +506,23 @@ func precisionFamilyHashSeen(t Type, active map[uintptr]bool, seen *precisionSee
 			h = internal.HashCombine(h, boolPrecisionHash(field.Readonly))
 			h = internal.HashCombine(h, precisionFamilyTerminalHash(field.Type, seen))
 		}
+		h = internal.HashCombine(h, uint64(len(v.StaticMembers)))
+		for _, member := range v.StaticMembers {
+			h = internal.HashCombine(h, uint64(member.Kind))
+			h = internal.HashCombine(h, internal.FnvString(member.Name))
+			h = internal.HashCombine(h, uint64(member.Index))
+			h = internal.HashCombine(h, boolPrecisionHash(member.Optional))
+			h = internal.HashCombine(h, boolPrecisionHash(member.Readonly))
+			h = internal.HashCombine(h, precisionFamilyTerminalHash(member.Type, seen))
+		}
 		return h
 	case *Array:
 		return internal.HashCombine(uint64(kind.Array), precisionFamilyMemberHash(v.Element, active, seen))
 	case *Map:
 		h := internal.HashCombine(uint64(kind.Map), precisionFamilyMemberHash(v.Key, active, seen))
+		return internal.HashCombine(h, precisionFamilyMemberHash(v.Value, active, seen))
+	case *ReadonlyMap:
+		h := internal.HashCombine(uint64(kind.ReadonlyMap), precisionFamilyMemberHash(v.Key, active, seen))
 		return internal.HashCombine(h, precisionFamilyMemberHash(v.Value, active, seen))
 	case *Tuple:
 		h := internal.HashCombine(uint64(kind.Tuple), uint64(len(v.Elements)))
@@ -771,11 +797,38 @@ func compareRecordPrecision(candidate, baseline *Record, depth int, seen *precis
 	if len(candidate.Fields) > len(baseline.Fields) {
 		strict = true
 	}
+	for _, baselineMember := range baseline.StaticMembers {
+		candidateMember := candidate.getStaticMember(baselineMember.Kind, baselineMember.Name, baselineMember.Index)
+		if candidateMember == nil {
+			if baselineMember.Optional {
+				strict = true
+				continue
+			}
+			return false, false
+		}
+		if candidateMember.Readonly != baselineMember.Readonly {
+			return false, false
+		}
+		if candidateMember.Optional && !baselineMember.Optional {
+			return false, false
+		}
+		if baselineMember.Optional && !candidateMember.Optional {
+			strict = true
+		}
+		memberStrict, ok := comparePrecision(candidateMember.Type, baselineMember.Type, depth+1, seen)
+		if !ok {
+			return false, false
+		}
+		strict = strict || memberStrict
+	}
+	if len(candidate.StaticMembers) > len(baseline.StaticMembers) {
+		strict = true
+	}
 	return strict, true
 }
 
 func compareMapRecordPrecision(candidate *Map, baseline *Record, depth int, seen *precisionSeen) (bool, bool) {
-	if candidate == nil || baseline == nil || !baseline.HasMapComponent() || len(baseline.Fields) != 0 || baseline.Metatable != nil {
+	if candidate == nil || baseline == nil || !baseline.HasMapComponent() || len(baseline.Fields) != 0 || len(baseline.StaticMembers) != 0 || baseline.Metatable != nil {
 		return false, false
 	}
 	keyStrict, ok := comparePrecision(candidate.Key, baseline.MapKey, depth+1, seen)

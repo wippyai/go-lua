@@ -254,6 +254,82 @@ func TestEmitTableLiteralFieldAssignments_StringNonIdentifierKey_UsesIndexString
 	}
 }
 
+func TestEmitTableLiteralFieldAssignments_BracketStringKey_UsesIndexStringSegment(t *testing.T) {
+	inputs := &flow.Inputs{
+		Assignments: []flow.UnifiedAssignment{},
+	}
+	bindings := bind.NewBindingTable()
+	src := &ast.IdentExpr{Value: "src"}
+	bindings.Bind(src, 42)
+	bindings.SetName(42, "src")
+
+	table := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{
+				Key:       &ast.StringExpr{Value: "name"},
+				KeySyntax: ast.AttrKeyIndex,
+				Value:     src,
+			},
+		},
+	}
+
+	EmitTableLiteralFieldAssignments(table, 1, "t", 0, bindings, nil, nil, nil, inputs)
+	if len(inputs.Assignments) != 1 {
+		t.Fatalf("expected 1 assignment, got %d", len(inputs.Assignments))
+	}
+	got := inputs.Assignments[0]
+	if len(got.TargetPath.Segments) != 1 {
+		t.Fatalf("expected 1 target segment, got %d", len(got.TargetPath.Segments))
+	}
+	if got.TargetPath.Segments[0].Kind != constraint.SegmentIndexString {
+		t.Fatalf("expected SegmentIndexString, got %v", got.TargetPath.Segments[0].Kind)
+	}
+	if got.TargetPath.Segments[0].Name != "name" {
+		t.Fatalf("expected index key name, got %q", got.TargetPath.Segments[0].Name)
+	}
+}
+
+func TestEmitTableLiteralFieldAssignments_ConstBracketIdentKey_UsesIndexStringSegment(t *testing.T) {
+	inputs := &flow.Inputs{
+		Assignments: []flow.UnifiedAssignment{},
+	}
+	bindings := bind.NewBindingTable()
+	src := &ast.IdentExpr{Value: "src"}
+	bindings.Bind(src, 42)
+	bindings.SetName(42, "src")
+	constResolver := func(name string) *flow.ConstValue {
+		if name == "k" {
+			return &flow.ConstValue{Kind: flow.ConstString, Str: "name"}
+		}
+		return nil
+	}
+
+	table := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{
+				Key:       &ast.IdentExpr{Value: "k"},
+				KeySyntax: ast.AttrKeyIndex,
+				Value:     src,
+			},
+		},
+	}
+
+	EmitTableLiteralFieldAssignments(table, 1, "t", 0, bindings, constResolver, nil, nil, inputs)
+	if len(inputs.Assignments) != 1 {
+		t.Fatalf("expected 1 assignment, got %d", len(inputs.Assignments))
+	}
+	got := inputs.Assignments[0]
+	if len(got.TargetPath.Segments) != 1 {
+		t.Fatalf("expected 1 target segment, got %d", len(got.TargetPath.Segments))
+	}
+	if got.TargetPath.Segments[0].Kind != constraint.SegmentIndexString {
+		t.Fatalf("expected SegmentIndexString, got %v", got.TargetPath.Segments[0].Kind)
+	}
+	if got.TargetPath.Segments[0].Name != "name" {
+		t.Fatalf("expected index key name, got %q", got.TargetPath.Segments[0].Name)
+	}
+}
+
 func TestEmitTableLiteralFieldAssignments_IdentKey_UsesFieldSegment(t *testing.T) {
 	inputs := &flow.Inputs{
 		Assignments: []flow.UnifiedAssignment{},
@@ -282,5 +358,40 @@ func TestEmitTableLiteralFieldAssignments_IdentKey_UsesFieldSegment(t *testing.T
 	}
 	if got.TargetPath.Segments[0].Name != "name" {
 		t.Fatalf("expected field name, got %q", got.TargetPath.Segments[0].Name)
+	}
+}
+
+func TestAssignmentPointEmitterIndexKeyInfo_StringKeyUsesIndexSegment(t *testing.T) {
+	e := &assignmentPointEmitter{}
+	seg, ok, keyType := e.indexKeyInfo(cfg.AssignTarget{Key: &ast.StringExpr{Value: "name"}})
+	if !ok {
+		t.Fatal("expected static index key")
+	}
+	if seg != (constraint.Segment{Kind: constraint.SegmentIndexString, Name: "name"}) {
+		t.Fatalf("segment = %+v, want string index name", seg)
+	}
+	if keyType != nil {
+		t.Fatalf("keyType = %v, want nil for static key", keyType)
+	}
+}
+
+func TestAssignmentPointEmitterIndexKeyInfo_ConstIdentKeyUsesIndexSegment(t *testing.T) {
+	e := &assignmentPointEmitter{
+		constResolver: func(name string) *flow.ConstValue {
+			if name == "k" {
+				return &flow.ConstValue{Kind: flow.ConstString, Str: "name"}
+			}
+			return nil
+		},
+	}
+	seg, ok, keyType := e.indexKeyInfo(cfg.AssignTarget{Key: &ast.IdentExpr{Value: "k"}})
+	if !ok {
+		t.Fatal("expected static const index key")
+	}
+	if seg != (constraint.Segment{Kind: constraint.SegmentIndexString, Name: "name"}) {
+		t.Fatalf("segment = %+v, want string index name", seg)
+	}
+	if keyType != nil {
+		t.Fatalf("keyType = %v, want nil for static key", keyType)
 	}
 }

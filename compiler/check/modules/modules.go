@@ -22,9 +22,9 @@
 package modules
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/exportkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/effect"
@@ -84,21 +84,12 @@ func ExportFunctionSummaries(manifest *io.Manifest, exportType typ.Type, graph *
 			continue
 		}
 
-		fullName := graph.NameOf(sym)
-		if fullName == "" {
-			continue
-		}
-
-		fieldName, ok := exportFieldNameFromSymbolName(fullName)
+		key, ok := exportkey.FromGraphSymbol("", graph, sym)
 		if !ok {
 			continue
 		}
 
-		field := rec.GetField(fieldName)
-		if field == nil {
-			continue
-		}
-		fn, ok := field.Type.(*typ.Function)
+		fieldName, fn, ok := exportedFunctionSummaryField(rec, key)
 		if !ok {
 			continue
 		}
@@ -129,31 +120,29 @@ func functionSummaryHasRefinement(refinement *constraint.FunctionRefinement) boo
 	return refinement.Terminates
 }
 
-// exportFieldNameFromSymbolName resolves a symbol name to an exported record field.
-//
-// Accepted forms:
-//   - "field" (direct export field)
-//   - "root.field" (exported via a root table variable)
-//
-// Deeper dotted paths are rejected to avoid collapsing nested paths to an
-// ambiguous leaf name (e.g. "M.a.f" -> "f"), which can mis-associate summaries.
-func exportFieldNameFromSymbolName(fullName string) (string, bool) {
-	if fullName == "" {
-		return "", false
+func exportedFunctionSummaryField(rec *typ.Record, key fieldkey.Key) (string, *typ.Function, bool) {
+	name, ok := fieldkey.StringKeyFromSegment(key)
+	if !ok {
+		return "", nil, false
 	}
-	if !strings.Contains(fullName, ".") {
-		return fullName, true
+	switch key.Kind {
+	case constraint.SegmentField:
+		field := rec.GetField(name)
+		if field == nil {
+			return "", nil, false
+		}
+		fn, ok := field.Type.(*typ.Function)
+		return name, fn, ok
+	case constraint.SegmentIndexString:
+		member := rec.GetStaticStringIndex(name)
+		if member == nil {
+			return "", nil, false
+		}
+		fn, ok := member.Type.(*typ.Function)
+		return name, fn, ok
+	default:
+		return "", nil, false
 	}
-
-	firstDot := strings.IndexByte(fullName, '.')
-	if firstDot <= 0 || firstDot >= len(fullName)-1 {
-		return "", false
-	}
-	rest := fullName[firstDot+1:]
-	if rest == "" || strings.Contains(rest, ".") {
-		return "", false
-	}
-	return rest, true
 }
 
 // Disconnect removes a module's manifest from the DB.

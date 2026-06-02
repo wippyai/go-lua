@@ -316,6 +316,40 @@ func TestMap(t *testing.T) {
 	}
 }
 
+func TestReadonlyMapViewIsCovariant(t *testing.T) {
+	mapStrInt := typ.NewMap(typ.String, typ.Integer)
+	viewStrNum := typ.NewReadonlyMap(typ.String, typ.Number)
+	if !IsSubtype(mapStrInt, viewStrNum) {
+		t.Fatal("mutable map should satisfy covariant readonly map view")
+	}
+
+	mapStrNum := typ.NewMap(typ.String, typ.Number)
+	viewLiteralNum := typ.NewReadonlyMap(typ.LiteralString("id"), typ.Number)
+	if IsSubtype(mapStrNum, viewLiteralNum) {
+		t.Fatal("broad string-key map should not satisfy literal-key readonly map view")
+	}
+
+	if IsSubtype(viewStrNum, typ.NewMap(typ.String, typ.Number)) {
+		t.Fatal("readonly map view must not grant mutable map capability")
+	}
+}
+
+func TestRecordSatisfiesReadonlyMapViewByPresentEntries(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("id", typ.Integer).
+		OptField("name", typ.NewOptional(typ.String)).
+		Build()
+	view := typ.NewReadonlyMap(typ.String, typ.NewUnion(typ.Number, typ.String))
+	if !IsSubtype(rec, view) {
+		t.Fatal("record with present integer/string? entries should satisfy readonly string->number|string view")
+	}
+
+	narrowValueView := typ.NewReadonlyMap(typ.String, typ.Integer)
+	if IsSubtype(rec, narrowValueView) {
+		t.Fatal("record string entry should not satisfy readonly integer value view")
+	}
+}
+
 func TestTuple(t *testing.T) {
 	t1 := typ.NewTuple(typ.String, typ.Number)
 	t2 := typ.NewTuple(typ.String, typ.Integer)

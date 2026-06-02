@@ -10,7 +10,7 @@ import (
 )
 
 func TestLookupPredicateLink_NilInputsParam(t *testing.T) {
-	result := predicate.LookupPredicateLink("name", nil)
+	result := predicate.LookupPredicateLink(cfg.SymbolID(1), nil)
 	if result != nil {
 		t.Error("expected nil for nil inputs")
 	}
@@ -18,31 +18,31 @@ func TestLookupPredicateLink_NilInputsParam(t *testing.T) {
 
 func TestLookupPredicateLink_NilPredicateLinksMap(t *testing.T) {
 	inputs := &flow.Inputs{PredicateLinks: nil}
-	result := predicate.LookupPredicateLink("name", inputs)
+	result := predicate.LookupPredicateLink(cfg.SymbolID(1), inputs)
 	if result != nil {
 		t.Error("expected nil for nil predicate links")
 	}
 }
 
-func TestLookupPredicateLink_EmptyNameParam(t *testing.T) {
+func TestLookupPredicateLink_ZeroSymbolParam(t *testing.T) {
 	inputs := &flow.Inputs{
-		PredicateLinks: map[string]flow.PredicateLink{
-			"name@1": {},
+		PredicateLinks: map[flow.PredicateLinkKey]flow.PredicateLink{
+			predicate.LinkKey(cfg.SymbolID(1), 1): {},
 		},
 	}
-	result := predicate.LookupPredicateLink("", inputs)
+	result := predicate.LookupPredicateLink(0, inputs)
 	if result != nil {
-		t.Error("expected nil for empty name")
+		t.Error("expected nil for zero symbol")
 	}
 }
 
 func TestLookupPredicateLink_NoMatchFound(t *testing.T) {
 	inputs := &flow.Inputs{
-		PredicateLinks: map[string]flow.PredicateLink{
-			"other@1": {},
+		PredicateLinks: map[flow.PredicateLinkKey]flow.PredicateLink{
+			predicate.LinkKey(cfg.SymbolID(2), 1): {},
 		},
 	}
-	result := predicate.LookupPredicateLink("name", inputs)
+	result := predicate.LookupPredicateLink(cfg.SymbolID(1), inputs)
 	if result != nil {
 		t.Error("expected nil when no match found")
 	}
@@ -57,11 +57,11 @@ func TestLookupPredicateLink_SingleMatchFound(t *testing.T) {
 		},
 	}
 	inputs := &flow.Inputs{
-		PredicateLinks: map[string]flow.PredicateLink{
-			"name@5": link,
+		PredicateLinks: map[flow.PredicateLinkKey]flow.PredicateLink{
+			predicate.LinkKey(cfg.SymbolID(1), 5): link,
 		},
 	}
-	result := predicate.LookupPredicateLink("name", inputs)
+	result := predicate.LookupPredicateLink(cfg.SymbolID(1), inputs)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -77,49 +77,38 @@ func TestLookupPredicateLink_HighestDefPointSelected(t *testing.T) {
 		},
 	}
 	inputs := &flow.Inputs{
-		PredicateLinks: map[string]flow.PredicateLink{
-			"name@3":  {},
-			"name@7":  {OnTruthy: wantCondition},
-			"name@1":  {},
-			"name@10": {},
+		PredicateLinks: map[flow.PredicateLinkKey]flow.PredicateLink{
+			predicate.LinkKey(cfg.SymbolID(1), 3):  {},
+			predicate.LinkKey(cfg.SymbolID(1), 7):  {OnTruthy: wantCondition},
+			predicate.LinkKey(cfg.SymbolID(1), 1):  {},
+			predicate.LinkKey(cfg.SymbolID(1), 10): {},
+			predicate.LinkKey(cfg.SymbolID(2), 20): {OnTruthy: wantCondition},
 		},
 	}
-	result := predicate.LookupPredicateLink("name", inputs)
+	result := predicate.LookupPredicateLink(cfg.SymbolID(1), inputs)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
 	if len(result.OnTruthy.Disjuncts) != 0 {
-		t.Log("result should be from name@10 which has empty condition")
+		t.Log("result should be from symbol 1 at def point 10, which has empty condition")
 	}
 }
 
-func TestLookupPredicateLink_InvalidDefPointFormat(t *testing.T) {
-	inputs := &flow.Inputs{
-		PredicateLinks: map[string]flow.PredicateLink{
-			"name@abc": {},
-		},
-	}
-	result := predicate.LookupPredicateLink("name", inputs)
-	if result != nil {
-		t.Error("expected nil for invalid def point")
-	}
-}
-
-func TestLinkKey_FormatCorrect(t *testing.T) {
+func TestLinkKey_TypedKey(t *testing.T) {
 	tests := []struct {
-		name     string
+		sym      cfg.SymbolID
 		defPoint cfg.Point
-		expected string
+		expected flow.PredicateLinkKey
 	}{
-		{"var", 0, "var@0"},
-		{"myFunc", 42, "myFunc@42"},
-		{"x", 100, "x@100"},
+		{1, 0, flow.PredicateLinkKey{Symbol: 1, DefPoint: 0}},
+		{42, 42, flow.PredicateLinkKey{Symbol: 42, DefPoint: 42}},
+		{100, 100, flow.PredicateLinkKey{Symbol: 100, DefPoint: 100}},
 	}
 
 	for _, tt := range tests {
-		result := predicate.LinkKey(tt.name, tt.defPoint)
+		result := predicate.LinkKey(tt.sym, tt.defPoint)
 		if result != tt.expected {
-			t.Errorf("LinkKey(%q, %d) = %q, expected %q", tt.name, tt.defPoint, result, tt.expected)
+			t.Errorf("LinkKey(%d, %d) = %#v, expected %#v", tt.sym, tt.defPoint, result, tt.expected)
 		}
 	}
 }

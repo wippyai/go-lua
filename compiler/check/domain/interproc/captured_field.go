@@ -2,7 +2,6 @@ package interproc
 
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -14,12 +13,12 @@ import (
 type FieldTypeMerger func(prev typ.Type, next typ.Type) typ.Type
 
 // MergeCapturedFieldSymbolMaps merges captured-field maps keyed by captured symbol.
-// Structure: capturedSymbol -> fieldName -> fieldType.
+// Structure: capturedSymbol -> fieldKey -> fieldType.
 func MergeCapturedFieldSymbolMaps(
-	existing map[cfg.SymbolID]map[string]product.AbstractValue,
-	next map[cfg.SymbolID]map[string]product.AbstractValue,
+	existing map[cfg.SymbolID]FieldValues,
+	next map[cfg.SymbolID]FieldValues,
 	merge FieldTypeMerger,
-) map[cfg.SymbolID]map[string]product.AbstractValue {
+) map[cfg.SymbolID]FieldValues {
 	if existing == nil {
 		return next
 	}
@@ -37,7 +36,7 @@ func MergeCapturedFieldSymbolMaps(
 		}
 	}
 
-	merged := make(map[cfg.SymbolID]map[string]product.AbstractValue, len(existing)+len(next))
+	merged := make(map[cfg.SymbolID]FieldValues, len(existing)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(existing) {
 		merged[sym] = existing[sym]
 	}
@@ -48,12 +47,12 @@ func MergeCapturedFieldSymbolMaps(
 			merged[sym] = fields
 			continue
 		}
-		out := make(map[string]product.AbstractValue, len(existingFields)+len(fields))
-		for _, name := range cfg.SortedFieldNames(existingFields) {
-			out[name] = existingFields[name]
+		out := make(FieldValues, len(existingFields)+len(fields))
+		for _, key := range SortedFieldKeys(existingFields) {
+			out[key] = existingFields[key]
 		}
-		for _, name := range cfg.SortedFieldNames(fields) {
-			out[name] = liftCarrier(mergeFn(projectCarrier(out[name]), projectCarrier(fields[name])))
+		for _, key := range SortedFieldKeys(fields) {
+			out[key] = liftCarrier(mergeFn(projectCarrier(out[key]), projectCarrier(fields[key])))
 		}
 		merged[sym] = out
 	}

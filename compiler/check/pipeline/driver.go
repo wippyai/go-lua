@@ -24,6 +24,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/effects"
 	interprocinfer "github.com/wippyai/go-lua/compiler/check/infer/interproc"
@@ -55,12 +56,16 @@ type Config struct {
 
 // Driver executes the fixpoint loop and function analysis.
 type Driver struct {
-	cfg Config
+	cfg         Config
+	globalTypes globalenv.TypeOverlay
 }
 
 // New creates a driver with the provided configuration.
 func New(cfg Config) *Driver {
-	return &Driver{cfg: cfg}
+	return &Driver{
+		cfg:         cfg,
+		globalTypes: globalenv.TypeOverlayFromMap(cfg.GlobalTypes),
+	}
 }
 
 // Run analyzes a module chunk using the fixpoint loop.
@@ -77,7 +82,7 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 
 	store := sess.StoreHandle()
 	if store != nil {
-		globals := collectGlobalNames(d.cfg.GlobalTypes)
+		globals := d.globalTypes.Names()
 		store.SetModuleBindings(bind.Bind(fn, globals))
 	}
 
@@ -266,7 +271,7 @@ func (d *Driver) storeFunctionRefinement(store api.IterationStore, result *api.F
 	}
 	refinementFacts := refinementFactsFrom(store)
 	lookup := func(sym cfg.SymbolID) *constraint.FunctionRefinement {
-		return effects.ResolveRefinementBySym(refinementFacts, store.ModuleBindings(), d.cfg.GlobalTypes, sym)
+		return effects.ResolveRefinementBySym(refinementFacts, store.ModuleBindings(), d.globalTypes, sym)
 	}
 	fnEffect := effects.Propagate(result, lookup)
 	if fnEffect == nil {
@@ -279,18 +284,4 @@ func (d *Driver) storeFunctionRefinement(store api.IterationStore, result *api.F
 	builder := functionfact.NewBuilder()
 	builder.AddRefinement(funcSym, fnEffect)
 	store.MergeInterprocFactsNext(key, interprocdomain.FunctionFactsDelta(builder.Build()))
-}
-
-func collectGlobalNames(globalTypes map[string]typ.Type) []string {
-	if globalTypes == nil {
-		return nil
-	}
-	all := cfg.SortedFieldNames(globalTypes)
-	names := make([]string, 0, len(all))
-	for _, name := range all {
-		if name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
 }

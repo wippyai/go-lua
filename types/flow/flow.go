@@ -301,20 +301,20 @@ type Inputs struct {
 	ReturnConstraints map[cfg.Point]ReturnExprConstraints
 
 	// PredicateLinks tracks variables assigned from predicate calls.
-	// Key is "varname@defpoint", value contains constraints to apply when var is truthy/falsy.
+	// Keyed by the graph symbol and definition point; value contains constraints
+	// to apply when the variable is truthy/falsy.
 	// Example: local _, err = Point:is(data) -> err nil implies HasType{data, Point}
-	PredicateLinks map[string]PredicateLink
+	PredicateLinks map[PredicateLinkKey]PredicateLink
 
 	// SiblingAssignments tracks variables assigned from the same multi-return call.
 	// Key is "varname@defpoint", maps to the sibling group.
 	// Used for error return pattern where checking err narrows result.
 	SiblingAssignments map[SiblingKey]*SiblingAssignment
 
-	// VariantFieldOrigins records path-origin evidence for discriminated
-	// variants produced by effectful calls. For example, a select result variant
-	// can state that result.channel aliases timeout and is identified by
-	// result.__select_case_id == 1. Branch extraction uses this product to turn
-	// runtime identity tests into ordinary discriminator constraints.
+	// VariantFieldOrigins records path-origin evidence for variants produced by
+	// effectful calls. For example, a select result can state that result.channel
+	// aliases timeout in origin family F, case 1. Branch extraction uses this fact
+	// to turn runtime identity tests into first-class variant-case constraints.
 	VariantFieldOrigins []VariantFieldOrigin
 
 	// MapMutatorAssignments tracks Lua map writes such as t[k] = v.
@@ -325,10 +325,6 @@ type Inputs struct {
 	// TableMutatorAssignments tracks table.insert-like mutations that widen
 	// array element types (including map values that are arrays).
 	TableMutatorAssignments []TableMutatorAssignment
-
-	// ContainerMutatorAssignments tracks container mutations (e.g., channel.send)
-	// that widen element types via ContainerElementUnion effects.
-	ContainerMutatorAssignments []ContainerMutatorAssignment
 
 	// ArrayLiteralLengths tracks sequence constructors that establish a length
 	// lower bound for their target at the construction point. A literal {e1..eN}
@@ -364,6 +360,11 @@ type Inputs struct {
 	// Explicit overlay, never merged into DeclaredTypes.
 	LiteralTypes map[cfg.SymbolID]typ.Type
 
+	// BindingTypes provides immutable value-binding types, such as the canonical
+	// signature of a named/local function binding. These are definition facts, not
+	// source annotations, and must never be merged into DeclaredTypes.
+	BindingTypes map[cfg.SymbolID]typ.Type
+
 	// KeysProvenance tracks variables that contain keys of another table.
 	// Key: symbol of variable holding keys (e.g., suite_names)
 	// Value: symbol of table the keys came from (e.g., suites)
@@ -393,6 +394,17 @@ type ReturnExprConstraints struct {
 	OnReturn constraint.Condition
 	OnTrue   constraint.Condition
 	OnFalse  constraint.Condition
+}
+
+// PredicateLinkKey identifies a variable assigned from a predicate call.
+//
+// Symbol is the graph-local variable identity; DefPoint is the assignment point
+// where that variable received the predicate result. This is analysis-facing
+// evidence, so it uses typed identities instead of the old "name@point" string
+// encoding.
+type PredicateLinkKey struct {
+	Symbol   cfg.SymbolID
+	DefPoint cfg.Point
 }
 
 // PredicateLink stores predicate constraints for a variable assigned from a predicate call.
@@ -436,16 +448,14 @@ type SiblingKey struct {
 	VersionID int
 }
 
-// VariantFieldOrigin links a variant field value to the source path it aliases.
-// Target.Field aliases Source when Target.DiscriminatorField equals
-// DiscriminatorValue. The abstract interpreter owns this relational evidence;
-// the constraint solver consumes the lowered discriminator constraints.
+// VariantFieldOrigin links a variant field value to the source path it aliases
+// through a first-class finite provenance family/case axis.
 type VariantFieldOrigin struct {
-	Target             constraint.Path
-	Field              string
-	Source             constraint.Path
-	DiscriminatorField string
-	DiscriminatorValue *typ.Literal
+	Target       constraint.Path
+	Field        string
+	Source       constraint.Path
+	OriginFamily uint64
+	CaseIndex    int
 }
 
 // MapMutationValueMode describes how a map mutation affects the value slot.
@@ -503,16 +513,6 @@ type TableMutatorAssignment struct {
 	// The numeric component raises Target's length lower bound by this delta when
 	// the inserted value is non-nil and the target is a direct sequence path.
 	LengthDelta int64
-}
-
-// ContainerMutatorAssignment describes container mutations (channel.send, etc.)
-// that widen element types. Uses the ContainerElementUnion effect pattern from specs.
-type ContainerMutatorAssignment struct {
-	Point     cfg.Point
-	Target    constraint.Path // Container path (symbol-only, e.g., channel variable)
-	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
-	ValueType typ.Type        // Static value type if ValuePath doesn't resolve
-	Value     ValueTemplate   // Flow-resolved slots inside a static table value
 }
 
 // ArrayLiteralLength records a sequence constructor's proven length lower bound.

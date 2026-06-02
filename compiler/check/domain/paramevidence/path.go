@@ -41,16 +41,18 @@ func IndexedIteratorEvidence(varIndex int, local typ.Type) typ.Type {
 }
 
 // KeyedIteratorEvidence converts pairs-style iterator variable evidence back
-// into the map evidence required from the source parameter.
+// into the read-only iterable evidence required from the source parameter.
+// Enumerating a key/value does not grant write permission to arbitrary map
+// entries, so this deliberately returns ReadonlyMap instead of mutable Map.
 func KeyedIteratorEvidence(varIndex int, local typ.Type) typ.Type {
-	if local == nil {
+	if local == nil || typ.IsAny(local) || typ.IsUnknown(local) {
 		return nil
 	}
 	switch varIndex {
 	case 0:
-		return typ.NewMap(local, typ.Any)
+		return typ.NewReadonlyMap(local, typ.Any)
 	case 1:
-		return typ.NewMap(typ.Any, local)
+		return typ.NewReadonlyMap(typ.Any, local)
 	default:
 		return nil
 	}

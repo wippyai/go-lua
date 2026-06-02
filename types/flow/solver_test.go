@@ -271,14 +271,87 @@ func TestMergeFieldAssignments_IncludesCanonicalStringIndexKeys(t *testing.T) {
 	if !ok {
 		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
 	}
-	if f := rec.GetField("meta.type"); f == nil || !typ.TypeEquals(f.Type, typ.String) {
-		t.Fatalf("expected merged field meta.type=string, got %v", f)
+	if member := rec.GetStaticStringIndex("meta.type"); member == nil || !typ.TypeEquals(member.Type, typ.String) {
+		t.Fatalf("expected merged static string index meta.type=string, got %v", member)
 	}
 	if f := rec.GetField("name"); f == nil || !typ.TypeEquals(f.Type, typ.Number) {
 		t.Fatalf("expected merged field name=number, got %v", f)
 	}
 	if f := rec.GetField("id"); f == nil || !typ.TypeEquals(f.Type, typ.String) {
 		t.Fatalf("expected existing field id=string to be preserved, got %v", f)
+	}
+}
+
+func TestMergeFieldAssignments_KeepsDotFieldAndStringIndexDistinct(t *testing.T) {
+	s := &Solution{
+		values: liftFlowValues(map[string]typ.Type{
+			`sym1@1.name`:    typ.Number,
+			`sym1@1["name"]`: typ.String,
+		}),
+	}
+
+	got := s.mergeFieldAssignments(nil, "sym1@1")
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
+	}
+	if f := rec.GetField("name"); f == nil || !typ.TypeEquals(f.Type, typ.Number) {
+		t.Fatalf("dot field name = %v, want number", f)
+	}
+	if member := rec.GetStaticStringIndex("name"); member == nil || !typ.TypeEquals(member.Type, typ.String) {
+		t.Fatalf("static string index name = %v, want string", member)
+	}
+}
+
+func TestMergeFieldAssignments_PreservesExistingStaticMembers(t *testing.T) {
+	s := &Solution{
+		values: liftFlowValues(map[string]typ.Type{
+			`sym1@1.field`: typ.Number,
+		}),
+	}
+
+	base := typ.NewRecord().
+		StaticStringIndex("raw", typ.Boolean).
+		StaticIntIndex(1, typ.Integer).
+		Build()
+	got := s.mergeFieldAssignments(base, "sym1@1")
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
+	}
+	if f := rec.GetField("field"); f == nil || !typ.TypeEquals(f.Type, typ.Number) {
+		t.Fatalf("merged dot field = %v, want number", f)
+	}
+	if member := rec.GetStaticStringIndex("raw"); member == nil || !typ.TypeEquals(member.Type, typ.Boolean) {
+		t.Fatalf("static string index raw = %v, want boolean", member)
+	}
+	if member := rec.GetStaticIntIndex(1); member == nil || !typ.TypeEquals(member.Type, typ.Integer) {
+		t.Fatalf("static int index 1 = %v, want integer", member)
+	}
+}
+
+func TestMergeFieldAssignments_OverlaysExistingStaticMember(t *testing.T) {
+	s := &Solution{
+		values: liftFlowValues(map[string]typ.Type{
+			`sym1@1["raw"]`: typ.String,
+			`sym1@1[1]`:     typ.Number,
+		}),
+	}
+
+	base := typ.NewRecord().
+		StaticStringIndex("raw", typ.Boolean).
+		StaticIntIndex(1, typ.Integer).
+		Build()
+	got := s.mergeFieldAssignments(base, "sym1@1")
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
+	}
+	if member := rec.GetStaticStringIndex("raw"); member == nil || !typ.TypeEquals(member.Type, typ.String) {
+		t.Fatalf("overlaid static string index raw = %v, want string", member)
+	}
+	if member := rec.GetStaticIntIndex(1); member == nil || !typ.TypeEquals(member.Type, typ.Number) {
+		t.Fatalf("overlaid static int index 1 = %v, want number", member)
 	}
 }
 
@@ -465,8 +538,8 @@ func TestMergeFieldAssignments_IncludesEscapedStringIndexKey(t *testing.T) {
 	if !ok {
 		t.Fatalf("mergeFieldAssignments returned %T, want *typ.Record", got)
 	}
-	if f := rec.GetField(`a"b`); f == nil || !typ.TypeEquals(f.Type, typ.Boolean) {
-		t.Fatalf("expected escaped key field a\\\"b=boolean, got %v", f)
+	if member := rec.GetStaticStringIndex(`a"b`); member == nil || !typ.TypeEquals(member.Type, typ.Boolean) {
+		t.Fatalf("expected escaped static string index a\\\"b=boolean, got %v", member)
 	}
 }
 
@@ -655,14 +728,15 @@ func TestFieldAssignmentsForRoot_InvalidatesCachedRootOnFieldWrite(t *testing.T)
 	}
 
 	first := s.fieldAssignmentsForRoot("sym21@1")
-	if len(first) != 1 || first[0].Name != "name" || !typ.TypeEquals(first[0].Type, typ.String) {
+	nameKey := constraint.Segment{Kind: constraint.SegmentField, Name: "name"}
+	if len(first) != 1 || first[0].Key != nameKey || !typ.TypeEquals(first[0].Type, typ.String) {
 		t.Fatalf("first field overlay = %v, want name:string", first)
 	}
 
 	s.setValue(`sym21@1.name`, typ.Integer)
 
 	second := s.fieldAssignmentsForRoot("sym21@1")
-	if len(second) != 1 || second[0].Name != "name" || !typ.TypeEquals(second[0].Type, typ.Integer) {
+	if len(second) != 1 || second[0].Key != nameKey || !typ.TypeEquals(second[0].Type, typ.Integer) {
 		t.Fatalf("second field overlay = %v, want name:integer", second)
 	}
 }
@@ -677,11 +751,15 @@ func TestFieldAssignmentsForRoot_UsesRootOverlayIndex(t *testing.T) {
 	}
 
 	fields := s.fieldAssignmentsForRoot("sym30@1")
-	if len(fields) != 1 || fields[0].Name != "name" || !typ.TypeEquals(fields[0].Type, typ.String) {
+	nameKey := constraint.Segment{Kind: constraint.SegmentField, Name: "name"}
+	if len(fields) != 1 || fields[0].Key != nameKey || !typ.TypeEquals(fields[0].Type, typ.String) {
 		t.Fatalf("field overlay = %v, want only direct name:string", fields)
 	}
 	if len(s.fieldOverlayIndex) == 0 {
 		t.Fatal("expected root overlay index to be built")
+	}
+	if _, ok := s.fieldOverlayIndex["sym30@1"][nameKey]; !ok {
+		t.Fatalf("field overlay index is not keyed by structural segment: %#v", s.fieldOverlayIndex["sym30@1"])
 	}
 
 	s.setValue(`sym30@1.age`, typ.Integer)
@@ -689,10 +767,11 @@ func TestFieldAssignmentsForRoot_UsesRootOverlayIndex(t *testing.T) {
 	if len(fields) != 2 {
 		t.Fatalf("field overlay after indexed write = %v, want two direct fields", fields)
 	}
-	if fields[0].Name != "age" || !typ.TypeEquals(fields[0].Type, typ.Integer) {
+	ageKey := constraint.Segment{Kind: constraint.SegmentField, Name: "age"}
+	if fields[0].Key != ageKey || !typ.TypeEquals(fields[0].Type, typ.Integer) {
 		t.Fatalf("first field = %v, want age:integer", fields[0])
 	}
-	if fields[1].Name != "name" || !typ.TypeEquals(fields[1].Type, typ.String) {
+	if fields[1].Key != nameKey || !typ.TypeEquals(fields[1].Type, typ.String) {
 		t.Fatalf("second field = %v, want name:string", fields[1])
 	}
 }
@@ -944,7 +1023,7 @@ func TestFlow_PhiChildSuffix_UsesPredecessorNarrowingWhenSuffixMissing(t *testin
 	}
 
 	fullKey := string(s.pkResolver.KeyAt(join, childPath))
-	raw := s.DebugValueAt(fullKey, join)
+	raw := s.valueAtPoint(join, fullKey)
 	if raw == nil {
 		t.Fatal("joined child suffix value missing from solver state")
 	}
@@ -1551,16 +1630,6 @@ func TestNarrowedTypeAt_ReassignmentWithConflictingConstraints(t *testing.T) {
 
 	s := Solve(inputs, testResolver())
 
-	t.Logf("VersionedKey at assign1: %s", s.DebugVersionedKey("x", assign1))
-	t.Logf("VersionedKey at call1: %s", s.DebugVersionedKey("x", call1))
-	t.Logf("VersionedKey at assign2: %s", s.DebugVersionedKey("x", assign2))
-	t.Logf("VersionedKey at call2: %s", s.DebugVersionedKey("x", call2))
-	t.Logf("VersionedKey at use: %s", s.DebugVersionedKey("x", use))
-
-	// Check edge values
-	t.Logf("EdgeValues call1->assign2: %v", s.DebugEdgeValues(call1, assign2))
-	t.Logf("EdgeValues call2->use: %v", s.DebugEdgeValues(call2, use))
-
 	// At use point, x should be narrowed to recType (not nil), not never
 	got := s.NarrowedTypeAt(use, constraint.Path{Root: "x", Symbol: symX})
 	if got == nil {
@@ -1676,11 +1745,6 @@ func TestNarrowedTypeAt_PhiTruthy(t *testing.T) {
 
 	s := Solve(inputs, testResolver())
 
-	// Debug logging
-	t.Logf("VersionedKey at join1: %s", s.DebugVersionedKey("err", join1))
-	t.Logf("VersionedKey at branch2: %s", s.DebugVersionedKey("err", branch2))
-	t.Logf("VersionedKey at then2: %s", s.DebugVersionedKey("err", then2))
-
 	// Check type at join1 - should be Err? (union of nil from entry, Err from then1)
 	typeAtJoin := s.TypeAt(join1, constraint.Path{Root: "err", Symbol: symErr})
 	t.Logf("TypeAt(join1) = %v", typeAtJoin)
@@ -1764,10 +1828,6 @@ func TestNarrowedTypeAt_TableFieldTruthy(t *testing.T) {
 
 	s := Solve(inputs, testResolver())
 
-	// Debug logging
-	t.Logf("VersionedKey at join1 for 'result': %s", s.DebugVersionedKey("result", join1))
-	t.Logf("VersionedKey at then2 for 'result': %s", s.DebugVersionedKey("result", then2))
-
 	// Check type at join1 for result.err
 	pathResultErr := constraint.Path{Root: "result", Symbol: symResult, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "err"}}}
 	typeAtJoin := s.TypeAt(join1, pathResultErr)
@@ -1845,18 +1905,8 @@ func TestNarrowedTypeAt_TableFieldTruthyNoAssignment(t *testing.T) {
 
 	s := Solve(inputs, testResolver())
 
-	// Debug logging
-	t.Logf("VersionedKey at branch for 'result': %s", s.DebugVersionedKey("result", branch))
-	t.Logf("VersionedKey at thenNode for 'result': %s", s.DebugVersionedKey("result", thenNode))
-
 	pathResult := constraint.Path{Root: "result", Symbol: symResult}
 	pathResultErr := constraint.Path{Root: "result", Symbol: symResult, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "err"}}}
-
-	// Debug: check what's stored in values
-	t.Logf("Values for 'result@0' at entry: %v", s.DebugValueAt("result@0", c.Entry()))
-	t.Logf("Values for 'result@0' at branch: %v", s.DebugValueAt("result@0", branch))
-	t.Logf("Values for 'result@0' at thenNode: %v", s.DebugValueAt("result@0", thenNode))
-	t.Logf("EdgeValues branch->thenNode: %v", s.DebugEdgeValues(branch, thenNode))
 
 	// Check base type at branch for result
 	typeAtBranchBase := s.TypeAt(branch, pathResult)
@@ -2089,14 +2139,6 @@ func TestNarrowedTypeAt_NilInitConditionalAssign(t *testing.T) {
 	}
 
 	s := Solve(inputs, testResolver())
-
-	// Debug logging
-	t.Logf("DeclaredType for v: %v", inputs.DeclaredTypes[symV])
-	t.Logf("VersionedKey at entry: %s", s.DebugVersionedKey("v", c.Entry()))
-	t.Logf("VersionedKey at then1: %s", s.DebugVersionedKey("v", then1))
-	t.Logf("VersionedKey at join1: %s", s.DebugVersionedKey("v", join1))
-	t.Logf("VersionedKey at branch2: %s", s.DebugVersionedKey("v", branch2))
-	t.Logf("VersionedKey at then2: %s", s.DebugVersionedKey("v", then2))
 
 	// Check type at entry - should be nil
 	pathV := constraint.Path{Root: "v", Symbol: symV}

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -36,7 +37,7 @@ return {
 	})
 
 	row := inferLocalReturnFlowRow(result)
-	message := findFlowInto(row, 0, "message", 0, "error_message")
+	message := findFlowInto(row, 0, effect.FieldPath("message"), 0, effect.FieldPath("error_message"))
 	if message == nil {
 		t.Fatalf("missing info.message -> return.error_message flow in %#v", row.Labels)
 	}
@@ -44,7 +45,7 @@ return {
 		t.Fatalf("message remainder = %v, want fallback literal", message.Remainder)
 	}
 
-	status := findFlowInto(row, 0, "status_code", 0, "metadata.status_code")
+	status := findFlowInto(row, 0, effect.FieldPath("status_code"), 0, effect.FieldPath("metadata", "status_code"))
 	if status == nil {
 		t.Fatalf("missing info.status_code -> return.metadata.status_code flow in %#v", row.Labels)
 	}
@@ -73,7 +74,7 @@ return {
 	}
 
 	row := inferLocalReturnFlowRow(&api.FuncResult{Graph: graph})
-	message := findFlowInto(row, 0, "message", 0, "error_message")
+	message := findFlowInto(row, 0, effect.FieldPath("message"), 0, effect.FieldPath("error_message"))
 	if message == nil {
 		t.Fatalf("missing info.message -> return.error_message flow in %#v", row.Labels)
 	}
@@ -81,7 +82,7 @@ return {
 		t.Fatalf("message remainder = %v, want fallback literal", message.Remainder)
 	}
 
-	status := findFlowInto(row, 0, "status_code", 0, "metadata.status_code")
+	status := findFlowInto(row, 0, effect.FieldPath("status_code"), 0, effect.FieldPath("metadata", "status_code"))
 	if status == nil {
 		t.Fatalf("missing info.status_code -> return.metadata.status_code flow in %#v", row.Labels)
 	}
@@ -90,16 +91,82 @@ return {
 	}
 }
 
-func findFlowInto(row effect.Row, paramIndex int, sourcePath string, returnIndex int, targetPath string) *effect.FlowInto {
+func TestInferLocalReturnFlowRow_BracketStringKeyUsesStructuralSegment(t *testing.T) {
+	stmts, err := parse.ParseString(`
+return {
+  ["error_message"] = info.message,
+}
+`, "return_flow_bracket.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"info"}},
+		Stmts:   stmts,
+	}
+	graph := cfg.Build(fn, "mapper.map_error_response")
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	row := inferLocalReturnFlowRow(&api.FuncResult{Graph: graph})
+	message := findFlowInto(row, 0, effect.FieldPath("message"), 0, effect.PathSuffix{
+		{Kind: constraint.SegmentIndexString, Name: "error_message"},
+	})
+	if message == nil {
+		t.Fatalf("missing bracket string return flow in %#v", row.Labels)
+	}
+}
+
+func TestInferLocalReturnFlowRow_StaticIndexesDoNotCollapseToDottedPath(t *testing.T) {
+	stmts, err := parse.ParseString(`
+return {
+  ["error.message"] = info["source.value"],
+  [1] = info[2],
+}
+`, "return_flow_static_indexes.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"info"}},
+		Stmts:   stmts,
+	}
+	graph := cfg.Build(fn, "mapper.static_indexes")
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	row := inferLocalReturnFlowRow(&api.FuncResult{Graph: graph})
+	stringIndex := findFlowInto(row, 0, effect.PathSuffix{
+		{Kind: constraint.SegmentIndexString, Name: "source.value"},
+	}, 0, effect.PathSuffix{
+		{Kind: constraint.SegmentIndexString, Name: "error.message"},
+	})
+	if stringIndex == nil {
+		t.Fatalf("missing structural string-index flow in %#v", row.Labels)
+	}
+
+	intIndex := findFlowInto(row, 0, effect.PathSuffix{
+		{Kind: constraint.SegmentIndexInt, Index: 2},
+	}, 0, effect.PathSuffix{
+		{Kind: constraint.SegmentIndexInt, Index: 1},
+	})
+	if intIndex == nil {
+		t.Fatalf("missing structural int-index flow in %#v", row.Labels)
+	}
+}
+
+func findFlowInto(row effect.Row, paramIndex int, sourcePath effect.PathSuffix, returnIndex int, targetPath effect.PathSuffix) *effect.FlowInto {
 	for _, label := range row.Labels {
 		flow, ok := label.(effect.FlowInto)
 		if !ok {
 			continue
 		}
 		if flow.ParamIndex == paramIndex &&
-			flow.SourcePath == sourcePath &&
+			flow.SourcePath.Equal(sourcePath) &&
 			flow.ReturnIndex == returnIndex &&
-			flow.TargetPath == targetPath {
+			flow.TargetPath.Equal(targetPath) {
 			return &flow
 		}
 	}

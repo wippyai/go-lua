@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
@@ -111,7 +112,10 @@ func (c BodyPreconditionContext) hardUseEvidence(arg ast.Expr, expected typ.Type
 	if !HardPublicEvidence(evidence) {
 		return 0, nil, false, false
 	}
-	locallyProven := c.result.FlowSolution != nil && c.result.FlowSolution.ProvesTypeAt(p, path, evidence)
+	locallyProven := false
+	if proofs := c.conditionProofFacts(); proofs != nil {
+		locallyProven = proofs.ProvesTypeAt(p, path, evidence)
+	}
 	return paramIdx, evidence, !locallyProven && !conditional, true
 }
 
@@ -124,7 +128,7 @@ func (c BodyPreconditionContext) paramEvidenceFromPath(path constraint.Path, exp
 		return 0, nil, false, false
 	}
 	var conditional bool
-	if c.result != nil && c.result.FlowSolution != nil {
+	if c.conditionProofFacts() != nil {
 		evidence, conditional = c.conditionedPathEvidence(path, evidence, p)
 	}
 	if paramIdx, found := c.paramIndexBySym[path.Symbol]; found {
@@ -158,34 +162,51 @@ func (c BodyPreconditionContext) paramEvidenceFromPath(path constraint.Path, exp
 }
 
 func (c BodyPreconditionContext) conditionedPathEvidence(path constraint.Path, evidence typ.Type, p cfg.Point) (typ.Type, bool) {
-	if c.result == nil || c.result.FlowSolution == nil {
+	proofs := c.conditionProofFacts()
+	if proofs == nil {
 		return evidence, false
 	}
-	return conditionedPathEvidenceFromCondition(path, evidence, c.result.FlowSolution.ConditionAt(p), func(value constraint.Path) *typ.Literal {
+	return conditionedPathEvidenceFromCondition(path, evidence, proofs.ConditionAt(p), func(value constraint.Path) *typ.Literal {
 		return c.literalValueAtPath(p, value)
 	})
 }
 
+// ConditionedPathEvidence weakens hard path evidence when the current abstract
+// condition proves the use is locally guarded. It is the transfer-time counterpart
+// of BodyPreconditionContext.conditionedPathEvidence for demand that is already
+// being computed inside the single product fixpoint.
+func ConditionedPathEvidence(path constraint.Path, evidence typ.Type, cond constraint.Condition) (typ.Type, bool) {
+	return conditionedPathEvidenceFromCondition(path, evidence, cond, nil)
+}
+
 func (c BodyPreconditionContext) literalValueAtPath(p cfg.Point, path constraint.Path) *typ.Literal {
-	if c.result == nil || c.result.FlowSolution == nil || path.IsEmpty() {
+	if path.IsEmpty() {
 		return nil
 	}
-	if lit := singletonLiteralType(c.result.FlowSolution.NarrowedTypeAt(p, path)); lit != nil {
+	if lit := singletonLiteralType(c.pathTypeAt(p, path)); lit != nil {
 		return lit
 	}
-	return singletonLiteralType(c.result.FlowSolution.TypeAt(p, path))
+	if len(path.Segments) == 0 {
+		if facts := c.constFacts(); facts != nil {
+			if val := facts.ConstValueAtSym(p, path.Symbol); val != nil {
+				return singletonLiteralType(val.ToLiteralType())
+			}
+		}
+	}
+	return nil
 }
 
 func conditionedPathEvidenceFromCondition(path constraint.Path, evidence typ.Type, cond constraint.Condition, resolveLiteral func(constraint.Path) *typ.Literal) (typ.Type, bool) {
 	if evidence == nil || path.Symbol == 0 || cond.IsFalse() || !cond.HasConstraints() {
 		return evidence, false
 	}
-	// A truthy/non-nil guard on a field path proves the body locally handles a nil
-	// field, so the field is required only optionally from callers. Re-admit the
-	// guarded-away nil into the field's evidence leaf; the resulting passive
-	// optional record is no longer a hard caller obligation.
-	if len(path.Segments) > 0 && pathProvenNonNilByGuard(path, cond) {
-		if relaxed := optionalLeafEvidence(path.Segments, evidence); relaxed != nil && !typ.TypeEquals(relaxed, evidence) {
+	// A guard dominating a path use turns the exported caller obligation into an
+	// implication: G => evidence, equivalently !G OR evidence. Approximate the
+	// guard complement at the consumed path leaf so guarded-away runtime values
+	// remain admitted by the public contract while the guarded branch still sees
+	// the precise body-local evidence.
+	if complement := pathGuardComplement(path, cond); complement != nil {
+		if relaxed := guardedLeafEvidence(path.Segments, evidence, complement); relaxed != nil && !typ.TypeEquals(relaxed, evidence) {
 			return relaxed, true
 		}
 		return evidence, true
@@ -234,26 +255,34 @@ func conditionedPathEvidenceFromCondition(path constraint.Path, evidence typ.Typ
 	return conditioned, true
 }
 
-// pathProvenNonNilByGuard reports whether cond carries a truthy/non-nil guard on
-// exactly path, proving the body has locally excluded nil at that field. Versions
-// are ignored: the guard and the use refer to the same field by symbol and
-// segment chain even when their SSA versions differ.
-func pathProvenNonNilByGuard(path constraint.Path, cond constraint.Condition) bool {
+// pathGuardComplement returns the type admitted by the negation of unary guards
+// that dominate a demand on path. Versions are ignored: the guard and the use
+// refer to the same runtime location by symbol and segment chain even when their
+// SSA versions differ.
+func pathGuardComplement(path constraint.Path, cond constraint.Condition) typ.Type {
+	var complement typ.Type
 	for _, item := range cond.MustConstraints() {
 		var guardPath constraint.Path
+		var next typ.Type
 		switch v := item.(type) {
 		case constraint.Truthy:
 			guardPath = v.Path
+			next = typ.NewUnion(typ.Nil, typ.False)
 		case constraint.NotNil:
 			guardPath = v.Path
+			next = typ.Nil
 		default:
 			continue
 		}
 		if samePathIgnoringVersion(guardPath, path) {
-			return true
+			if complement == nil {
+				complement = next
+			} else {
+				complement = typ.NewUnion(complement, next)
+			}
 		}
 	}
-	return false
+	return complement
 }
 
 func samePathIgnoringVersion(a, b constraint.Path) bool {
@@ -270,11 +299,14 @@ func samePathIgnoringVersion(a, b constraint.Path) bool {
 	return true
 }
 
-// optionalLeafEvidence rebuilds the structural evidence for segments with its
-// deepest field marked optional, re-admitting the nil a body guard excluded.
-func optionalLeafEvidence(segments []constraint.Segment, evidence typ.Type) typ.Type {
-	if len(segments) == 0 {
+// guardedLeafEvidence rebuilds structural evidence for segments with the
+// guard-complement admitted at the deepest consumed leaf.
+func guardedLeafEvidence(segments []constraint.Segment, evidence typ.Type, complement typ.Type) typ.Type {
+	if complement == nil {
 		return evidence
+	}
+	if len(segments) == 0 {
+		return typ.NewUnion(evidence, complement)
 	}
 	rec := unwrap.Record(evidence)
 	if rec == nil || len(rec.Fields) != 1 {
@@ -283,15 +315,37 @@ func optionalLeafEvidence(segments []constraint.Segment, evidence typ.Type) typ.
 	field := rec.Fields[0]
 	if len(segments) == 1 {
 		builder := typ.NewRecord().SetOpen(rec.Open)
-		builder.OptReadonlyField(field.Name, field.Type)
+		fieldType := typ.NewUnion(field.Type, complement)
+		if fieldType == nil {
+			fieldType = field.Type
+		}
+		switch {
+		case field.Optional && field.Readonly:
+			builder.OptReadonlyField(field.Name, fieldType)
+		case field.Optional:
+			builder.OptField(field.Name, fieldType)
+		case field.Readonly:
+			builder.ReadonlyField(field.Name, fieldType)
+		default:
+			builder.Field(field.Name, fieldType)
+		}
 		return builder.Build()
 	}
-	child := optionalLeafEvidence(segments[1:], field.Type)
+	child := guardedLeafEvidence(segments[1:], field.Type, complement)
 	if child == nil || typ.TypeEquals(child, field.Type) {
 		return evidence
 	}
 	builder := typ.NewRecord().SetOpen(rec.Open)
-	builder.ReadonlyField(field.Name, child)
+	switch {
+	case field.Optional && field.Readonly:
+		builder.OptReadonlyField(field.Name, child)
+	case field.Optional:
+		builder.OptField(field.Name, child)
+	case field.Readonly:
+		builder.ReadonlyField(field.Name, child)
+	default:
+		builder.Field(field.Name, child)
+	}
 	return builder.Build()
 }
 
@@ -349,25 +403,30 @@ func mergeConditionedRecordEvidence(evidence, condition typ.Type) (typ.Type, boo
 	} else if right.HasMapComponent() {
 		builder.MapComponent(right.MapKey, right.MapValue)
 	}
-	seen := make(map[string]typ.Field, len(left.Fields)+len(right.Fields))
-	order := make([]string, 0, len(left.Fields)+len(right.Fields))
+	seen := make(map[fieldkey.Key]typ.Field, len(left.Fields)+len(right.Fields))
 	for _, field := range left.Fields {
-		seen[field.Name] = field
-		order = append(order, field.Name)
+		key, ok := fieldkey.FromName(field.Name)
+		if !ok {
+			continue
+		}
+		seen[key] = field
 	}
 	for _, field := range right.Fields {
-		if existing, ok := seen[field.Name]; ok {
+		key, ok := fieldkey.FromName(field.Name)
+		if !ok {
+			continue
+		}
+		if existing, ok := seen[key]; ok {
 			field.Type = JoinBody(existing.Type, field.Type)
 			field.Optional = existing.Optional && field.Optional
 			field.Readonly = existing.Readonly || field.Readonly
-			seen[field.Name] = field
+			seen[key] = field
 			continue
 		}
-		seen[field.Name] = field
-		order = append(order, field.Name)
+		seen[key] = field
 	}
-	for _, name := range order {
-		field := seen[name]
+	for _, key := range fieldkey.Sorted(seen) {
+		field := seen[key]
 		switch {
 		case field.Optional && field.Readonly:
 			builder.OptReadonlyField(field.Name, field.Type)
@@ -498,14 +557,59 @@ func (c BodyPreconditionContext) sourceEvidenceForDerivedLocal(src flow.Assignme
 }
 
 func (c BodyPreconditionContext) mapElementEvidenceKeyType(src flow.AssignmentSource, p cfg.Point) typ.Type {
-	if src.KeySymbol == 0 || c.result == nil || c.result.FlowSolution == nil {
+	if src.KeySymbol == 0 {
 		return typ.Any
 	}
 	keyPath := constraint.Path{Root: src.KeyVar, Symbol: src.KeySymbol}
-	if keyType := c.result.FlowSolution.NarrowedTypeAt(p, keyPath); keyType != nil && !typ.IsAbsentOrUnknown(keyType) {
+	if keyType := c.pathTypeAt(p, keyPath); keyType != nil && !typ.IsAbsentOrUnknown(keyType) {
 		return keyType
 	}
 	return typ.Any
+}
+
+func (c BodyPreconditionContext) conditionProofFacts() flow.ConditionProofFacts {
+	if c.result == nil {
+		return nil
+	}
+	return c.result.ConditionProofFacts()
+}
+
+func (c BodyPreconditionContext) constFacts() flow.ConstFacts {
+	if c.result == nil {
+		return nil
+	}
+	return c.result.ConstFacts()
+}
+
+func (c BodyPreconditionContext) pathObservationFacts() flow.PathObservationFacts {
+	if c.result == nil {
+		return nil
+	}
+	return c.result.PathObservationFacts()
+}
+
+func (c BodyPreconditionContext) pathTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	if path.IsEmpty() {
+		return nil
+	}
+	if facts := c.pathObservationFacts(); facts != nil {
+		obs := facts.ObservePath(flow.PathObservationQuery{
+			Point:               p,
+			Path:                path,
+			Phase:               flow.PathReadCurrent,
+			AllowConditionProof: true,
+			PreserveProof:       true,
+		})
+		if obs.Resolved() {
+			return obs.Type
+		}
+	}
+	if c.result != nil {
+		if flowOps := c.result.SolvedFlow(); flowOps != nil {
+			return flowOps.NarrowedTypeAt(p, path)
+		}
+	}
+	return nil
 }
 
 func functionParameterIndexes(graph *cfg.Graph) (map[cfg.SymbolID]int, map[cfg.SymbolID]cfg.Point) {

@@ -18,13 +18,16 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 	}
 
 	typeVars := make(map[string]*typ.TypeVar)
+	typeVarArgs := make([]typ.Type, len(fn.TypeParams))
 	for i, tp := range fn.TypeParams {
-		typeVars[tp.Name] = typ.NewTypeVar(i + 1)
+		tv := typ.NewTypeVar(i + 1)
+		typeVars[tp.Name] = tv
+		typeVarArgs[i] = tv
 	}
 
 	paramTypes := make([]typ.Type, len(fn.Params))
 	for i, p := range fn.Params {
-		paramTypes[i] = SubstituteTypeVars(p.Type, typeVars)
+		paramTypes[i] = subst.Params(p.Type, fn.TypeParams, typeVarArgs)
 	}
 
 	cs := constraint.NewInferSet()
@@ -45,7 +48,7 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 		if paramIdx < len(paramTypes) {
 			expected = paramTypes[paramIdx]
 		} else if fn.Variadic != nil {
-			expected = SubstituteTypeVars(fn.Variadic, typeVars)
+			expected = subst.Params(fn.Variadic, fn.TypeParams, typeVarArgs)
 		} else {
 			break
 		}
@@ -63,7 +66,7 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 	if expectedReturn != nil && len(fn.Returns) > 0 {
 		expKind := expectedReturn.Kind()
 		if !expKind.IsPlaceholder() {
-			returnType := SubstituteTypeVars(fn.Returns[0], typeVars)
+			returnType := subst.Params(fn.Returns[0], fn.TypeParams, typeVarArgs)
 			returnType = subst.ExpandInstantiated(returnType)
 
 			// Handle union expected types by matching against each member

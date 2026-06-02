@@ -54,11 +54,15 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/canonical"
+	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/pipeline"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -114,19 +118,27 @@ type moduleDriver interface {
 type FlowMode int
 
 const (
-	// FlowLegacy is the established multi-fixpoint pipeline flow.
-	FlowLegacy FlowMode = iota
 	// FlowCanonical is the single-fixed-point canonical engine: one
 	// intraprocedural FunctionState fixed point per function plus the
 	// interprocedural summary fixed point over the call graph.
-	FlowCanonical
+	FlowCanonical FlowMode = iota
+	// FlowLegacy is the established multi-fixpoint pipeline flow. It remains
+	// available only as an explicit compatibility/differential mode.
+	FlowLegacy
 )
 
-// WithCanonicalFlow selects the canonical type-flow engine for analysis. The
-// legacy flow remains the default; this opt-in switches newPipeline to construct
-// the canonical driver instead.
+// WithCanonicalFlow selects the canonical type-flow engine for analysis. Canonical
+// is the default; this option is retained for call sites that choose a flow
+// explicitly and for older test helpers.
 func WithCanonicalFlow() Option {
 	return func(c *Checker) { c.flowMode = FlowCanonical }
+}
+
+// WithLegacyFlow selects the historical multi-pass pipeline. It is an explicit
+// compatibility escape hatch for differential tests and legacy-only gates; new
+// analysis should use the canonical default.
+func WithLegacyFlow() Option {
+	return func(c *Checker) { c.flowMode = FlowLegacy }
 }
 
 // Option configures optional behaviors of a Checker.
@@ -202,21 +214,25 @@ func NewChecker(database *db.DB, deps Deps, opts ...Option) *Checker {
 	return c
 }
 
-// newPipeline returns the module driver for the configured flow mode. The legacy
-// flow returns the established *pipeline.Driver unchanged; the canonical flow
-// returns the single-fixed-point *canonical.Driver. Both satisfy moduleDriver, so
-// checkChunk drives either through the same Run call.
+// newPipeline returns the module driver for the configured flow mode. The
+// canonical flow is the default and returns the single-fixed-point
+// *canonical.Driver; the legacy flow returns the established *pipeline.Driver only
+// when explicitly selected. Both satisfy moduleDriver, so checkChunk drives either
+// through the same Run call.
 func (c *Checker) newPipeline(interner *typ.RecursiveFamilyInterner) moduleDriver {
 	switch c.flowMode {
-	case FlowCanonical:
-		return canonical.NewDriver(canonical.Config{
-			Types:       c.deps.Types,
-			GlobalTypes: c.deps.GlobalTypes,
-			Stdlib:      c.deps.Stdlib,
-			Manifests:   c.db,
-		})
-	default:
+	case FlowLegacy:
 		return c.newLegacyPipeline(interner)
+	default:
+		return canonical.NewDriver(canonical.Config{
+			Types:         c.deps.Types,
+			GlobalTypes:   c.deps.GlobalTypes,
+			Stdlib:        c.deps.Stdlib,
+			Manifests:     c.db,
+			MaxScopeDepth: c.maxScopeDepth,
+			EmitScopeDiag: c.emitScopeDepthDiagnostics,
+			ComputePasses: c.computePasses,
+		})
 	}
 }
 
@@ -343,6 +359,12 @@ func (c *Checker) CheckChunk(chunk []ast.Stmt, name string) *Session {
 // checkChunk is the internal implementation for Check and CheckChunk.
 // It wraps the chunk in a FunctionExpr, runs the fixpoint loop, and executes passes.
 func (c *Checker) checkChunk(sess *Session, chunk []ast.Stmt) {
+	value.ResetCanonicalRecursiveFamilies()
+	product.ResetCanonicalInterner()
+	flow.ResetCanonicalCaptureCellKeys()
+	flow.ResetCanonicalFunctionRefsKeys()
+	flow.ResetCanonicalClosureRefsKeys()
+	summary.ResetEntryValuesKeyInterner()
 	// Keyed recursive families are owner-keyed per compilation. A fresh interner
 	// instance owns this compilation's family handles; it can mutate only the
 	// body slots it minted, so symbol numbers reused across compilations never

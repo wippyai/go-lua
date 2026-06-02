@@ -1,17 +1,16 @@
 package paramevidence
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 type paramUse struct {
 	whole  bool
-	fields map[string]struct{}
+	fields map[fieldkey.Key]struct{}
 }
 
 // ProjectToParameterUse trims structured call-site evidence to the surface the
@@ -92,7 +91,7 @@ func ProjectSignatureToParamUse(slots []cfg.ParamSlot, evidence []api.ParameterU
 
 	builder := typ.Func().ReserveParams(len(sig.Params))
 	for _, tp := range sig.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for i, p := range sig.Params {
 		paramType := p.Type
@@ -123,7 +122,7 @@ func ProjectSignatureToParamUse(slots []cfg.ParamSlot, evidence []api.ParameterU
 	return builder.Build()
 }
 
-func completeTypeWithFields(t typ.Type, fields map[string]struct{}) (typ.Type, bool) {
+func completeTypeWithFields(t typ.Type, fields map[fieldkey.Key]struct{}) (typ.Type, bool) {
 	if t == nil || len(fields) == 0 {
 		return t, false
 	}
@@ -165,7 +164,7 @@ func completeTypeWithFields(t typ.Type, fields map[string]struct{}) (typ.Type, b
 	}
 }
 
-func completeRecordWithFields(r *typ.Record, fields map[string]struct{}) typ.Type {
+func completeRecordWithFields(r *typ.Record, fields map[fieldkey.Key]struct{}) typ.Type {
 	builder := typ.NewRecord()
 	if r.Open {
 		builder.SetOpen(true)
@@ -189,12 +188,7 @@ func completeRecordWithFields(r *typ.Record, fields map[string]struct{}) typ.Typ
 		builder.MapComponent(r.MapKey, r.MapValue)
 	}
 
-	names := make([]string, 0, len(fields))
-	for name := range fields {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
+	for _, name := range fieldUseNames(fields) {
 		if r.GetField(name) != nil {
 			continue
 		}
@@ -253,11 +247,11 @@ func parameterUseMap(evidence []api.ParameterUseEvidence) map[cfg.SymbolID]param
 		}
 		if len(ev.Fields) > 0 {
 			if use.fields == nil {
-				use.fields = make(map[string]struct{}, len(ev.Fields))
+				use.fields = make(map[fieldkey.Key]struct{}, len(ev.Fields))
 			}
 			for _, field := range ev.Fields {
-				if field != "" {
-					use.fields[field] = struct{}{}
+				if key, ok := fieldkey.FromSegment(field); ok {
+					use.fields[key] = struct{}{}
 				}
 			}
 		}
@@ -293,7 +287,7 @@ func projectEvidenceToUse(observed typ.Type, use paramUse) typ.Type {
 	return projected
 }
 
-func projectTypeToFields(t typ.Type, fields map[string]struct{}) (typ.Type, bool) {
+func projectTypeToFields(t typ.Type, fields map[fieldkey.Key]struct{}) (typ.Type, bool) {
 	if t == nil {
 		return nil, false
 	}
@@ -323,17 +317,12 @@ func projectTypeToFields(t typ.Type, fields map[string]struct{}) (typ.Type, bool
 	}
 }
 
-func projectRecordToFields(r *typ.Record, fields map[string]struct{}) typ.Type {
+func projectRecordToFields(r *typ.Record, fields map[fieldkey.Key]struct{}) typ.Type {
 	builder := typ.NewRecord().SetOpen(true)
 	if r.Metatable != nil {
 		builder.Metatable(r.Metatable)
 	}
-	names := make([]string, 0, len(fields))
-	for name := range fields {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
+	for _, name := range fieldUseNames(fields) {
 		field := r.GetField(name)
 		if field == nil {
 			if r.HasMapComponent() && subtype.IsSubtype(typ.LiteralString(name), r.MapKey) {
@@ -359,4 +348,24 @@ func projectRecordToFields(r *typ.Record, fields map[string]struct{}) typ.Type {
 		}
 	}
 	return builder.Build()
+}
+
+func fieldUseNames(fields map[fieldkey.Key]struct{}) []string {
+	if len(fields) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+	for _, key := range fieldkey.Sorted(fields) {
+		name, ok := fieldkey.StringKeyFromSegment(key)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names
 }

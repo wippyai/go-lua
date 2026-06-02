@@ -131,6 +131,109 @@ func TestSynthTableLiteralWithWrapper_RecordFields(t *testing.T) {
 	if len(rec.Fields) != 2 {
 		t.Errorf("expected 2 fields, got %d", len(rec.Fields))
 	}
+	name := rec.GetField("name")
+	if name == nil || !typ.TypeEquals(name.Type, typ.String) {
+		t.Fatalf("name field = %v, want string", name)
+	}
+	count := rec.GetField("count")
+	if count == nil || !typ.TypeEquals(count.Type, typ.Integer) {
+		t.Fatalf("count field = %v, want integer", count)
+	}
+	if rec.HasMapComponent() {
+		t.Fatalf("record field syntax unexpectedly produced map component [%v]: %v", rec.MapKey, rec.MapValue)
+	}
+}
+
+func TestSynthTableLiteralWithWrapper_StaticStringIndexUsesMapComponent(t *testing.T) {
+	value := &ast.StringExpr{Value: "test"}
+	tbl := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{Key: &ast.StringExpr{Value: "x-y"}, KeySyntax: ast.AttrKeyIndex, Value: value},
+		},
+	}
+	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
+		if expr == value {
+			return typ.String
+		}
+		return typ.Unknown
+	}
+	result := tblutil.SynthTableLiteralWithWrapper(tbl, 0, synth)
+	rec, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("result = %T, want record with exact static member (%v)", result, result)
+	}
+	member := rec.GetStaticStringIndex("x-y")
+	if member == nil || !typ.TypeEquals(member.Type, typ.String) {
+		t.Fatalf("static member [\"x-y\"] = %#v, want string", member)
+	}
+	if !rec.HasMapComponent() ||
+		!typ.TypeEquals(rec.MapKey, typ.LiteralString("x-y")) ||
+		!typ.TypeEquals(rec.MapValue, typ.String) {
+		t.Fatalf("map tail = [%v]: %v, want [\"x-y\"]: string", rec.MapKey, rec.MapValue)
+	}
+}
+
+func TestSynthTableLiteralWithWrapper_StaticNumericIndexUsesLiteralMapComponent(t *testing.T) {
+	value := &ast.NumberExpr{Value: "42"}
+	tbl := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{Key: &ast.NumberExpr{Value: "2"}, KeySyntax: ast.AttrKeyIndex, Value: value},
+		},
+	}
+	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
+		if expr == value {
+			return typ.Integer
+		}
+		return typ.Unknown
+	}
+	result := tblutil.SynthTableLiteralWithWrapper(tbl, 0, synth)
+	rec, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("result = %T, want record with exact static member (%v)", result, result)
+	}
+	member := rec.GetStaticIntIndex(2)
+	if member == nil || !typ.TypeEquals(member.Type, typ.Integer) {
+		t.Fatalf("static member [2] = %#v, want integer", member)
+	}
+	if !rec.HasMapComponent() ||
+		!typ.TypeEquals(rec.MapKey, typ.LiteralInt(2)) ||
+		!typ.TypeEquals(rec.MapValue, typ.Integer) {
+		t.Fatalf("map tail = [%v]: %v, want [2]: integer", rec.MapKey, rec.MapValue)
+	}
+}
+
+func TestSynthTableLiteralWithWrapper_StaticStringIndexWeakensMatchingDotField(t *testing.T) {
+	dotValue := &ast.NumberExpr{Value: "1"}
+	indexValue := &ast.StringExpr{Value: "test"}
+	tbl := &ast.TableExpr{
+		Fields: []*ast.Field{
+			{Key: &ast.IdentExpr{Value: "same"}, KeySyntax: ast.AttrKeyDot, Value: dotValue},
+			{Key: &ast.StringExpr{Value: "same"}, KeySyntax: ast.AttrKeyIndex, Value: indexValue},
+		},
+	}
+	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
+		switch expr {
+		case dotValue:
+			return typ.Number
+		case indexValue:
+			return typ.String
+		default:
+			return typ.Unknown
+		}
+	}
+	result := tblutil.SynthTableLiteralWithWrapper(tbl, 0, synth)
+	rec, ok := result.(*typ.Record)
+	if !ok {
+		t.Fatalf("result = %T, want record preserving both member namespaces (%v)", result, result)
+	}
+	field := rec.GetField("same")
+	if field == nil || !typ.TypeEquals(field.Type, typ.NewUnion(typ.Number, typ.String)) {
+		t.Fatalf("dot field same = %#v, want number|string", field)
+	}
+	member := rec.GetStaticStringIndex("same")
+	if member == nil || !typ.TypeEquals(member.Type, typ.String) {
+		t.Fatalf("static member [\"same\"] = %#v, want string", member)
+	}
 }
 
 func TestSynthTableLiteralWithWrapper_ArrayElements(t *testing.T) {

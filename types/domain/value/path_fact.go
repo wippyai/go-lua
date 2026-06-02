@@ -32,6 +32,9 @@ func ReconcilePathFactWithDeclaredRead(narrowed, declared typ.Type) (typ.Type, b
 		return narrowed, true
 	}
 	declaredNonNil, nilable := SplitNilable(declared)
+	if nilable && typ.TypeEquals(narrowed, typ.Nil) {
+		return narrowed, true
+	}
 	// A record literal flowing into a declared map field is over-precise for the
 	// ascribed map type. Widen it to the declared map so a downstream read sees the
 	// keyed-container shape (an index on it is a map lookup), and keep the declared
@@ -86,6 +89,54 @@ func ReconcilePathFactWithDeclaredRead(narrowed, declared typ.Type) (typ.Type, b
 		return reconciled, true
 	}
 	return nil, false
+}
+
+// ReconcileDeclaredBoundary reconciles an observed expression value with a
+// declared type boundary (return, assignment, argument, field write).
+//
+// Same-expression path facts may normalize over-precise product witnesses when
+// plain structural consistency cannot see that two products belong to the same
+// evidence family. Reconciliation is admissible at a declared boundary only when
+// it does not erase explicit nilability: a value known as T? or nil cannot cross
+// a non-nil T boundary merely because its non-nil component belongs to the same
+// product family.
+func ReconcileDeclaredBoundary(actual, declared typ.Type) (typ.Type, bool) {
+	if actual == nil || declared == nil {
+		return nil, false
+	}
+	if boundaryLosesExplicitNil(actual, declared) {
+		return nil, false
+	}
+	if subtype.Consistent(actual, declared) {
+		return actual, true
+	}
+	reconciled, ok := ReconcilePathFactWithDeclaredRead(actual, declared)
+	if !ok || reconciled == nil {
+		return nil, false
+	}
+	if boundaryLosesExplicitNil(reconciled, declared) {
+		return nil, false
+	}
+	return reconciled, true
+}
+
+// DeclaredBoundaryCompatible reports whether an observed expression value may
+// cross a declared type boundary after any admissible product reconciliation.
+func DeclaredBoundaryCompatible(actual, declared typ.Type) bool {
+	_, ok := ReconcileDeclaredBoundary(actual, declared)
+	return ok
+}
+
+func boundaryLosesExplicitNil(actual, declared typ.Type) bool {
+	_, actualNilable := SplitNilable(actual)
+	if !actualNilable {
+		return false
+	}
+	if typ.IsAny(declared) || typ.IsUnknown(declared) {
+		return false
+	}
+	_, declaredNilable := SplitNilable(declared)
+	return !declaredNilable
 }
 
 // reconcileNarrowedAgainstUnionDeclared handles the case where the declared
@@ -220,10 +271,10 @@ func reconcileDeclaredRecordContract(candidate, declared *typ.Record) (typ.Type,
 		builder.MapComponent(declared.MapKey, declared.MapValue)
 	}
 
-	added := map[string]bool{}
-	declaredNames := make(map[string]struct{}, len(declared.Fields))
+	added := map[recordFieldKey]bool{}
+	declaredKeys := make(map[recordFieldKey]struct{}, len(declared.Fields))
 	for _, declaredField := range declared.Fields {
-		declaredNames[declaredField.Name] = struct{}{}
+		declaredKeys[recordFieldKeyFromName(declaredField.Name)] = struct{}{}
 	}
 	partialOverlay := candidate.Open && !declared.Open
 	changed := false
@@ -234,7 +285,7 @@ func reconcileDeclaredRecordContract(candidate, declared *typ.Record) (typ.Type,
 				return nil, false
 			}
 			addRecordField(builder, declaredField)
-			added[declaredField.Name] = true
+			added[recordFieldKeyFromName(declaredField.Name)] = true
 			changed = true
 			continue
 		}
@@ -249,7 +300,7 @@ func reconcileDeclaredRecordContract(candidate, declared *typ.Record) (typ.Type,
 			Readonly: candidateField.Readonly || declaredField.Readonly,
 		}
 		addRecordField(builder, field)
-		added[field.Name] = true
+		added[recordFieldKeyFromName(field.Name)] = true
 		if !typ.TypeEquals(merged, candidateField.Type) ||
 			field.Optional != candidateField.Optional ||
 			field.Readonly != candidateField.Readonly {
@@ -257,11 +308,12 @@ func reconcileDeclaredRecordContract(candidate, declared *typ.Record) (typ.Type,
 		}
 	}
 	for _, field := range candidate.Fields {
-		if added[field.Name] {
+		key := recordFieldKeyFromName(field.Name)
+		if added[key] {
 			continue
 		}
 		if partialOverlay {
-			if _, declared := declaredNames[field.Name]; !declared {
+			if _, declared := declaredKeys[key]; !declared {
 				return nil, false
 			}
 		}

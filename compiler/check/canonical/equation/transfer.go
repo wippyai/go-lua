@@ -3,7 +3,9 @@ package equation
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/flow/propagate"
 )
 
 // NodeTransfer is the injected per-node transfer function of the canonical flow.
@@ -25,16 +27,18 @@ import (
 //     computed this iteration (PointStateDomain.Bottom at the entry, before the
 //     entry's assumed-contract injection).
 //   - entryContracts is the current per-parameter demand assumed at function
-//     entry. The transfer at the entry point folds this into the state it
-//     returns (it is what a caller is assumed to supply); at non-entry points it
-//     is read-only context.
+//     entry. The builder supplies it only to the entry point transfer, which
+//     folds it into the state it returns (it is what a caller is assumed to
+//     supply). Non-entry points receive an empty contract map; contract influence
+//     reaches them only through the entry out-state and ordinary CFG flow.
 //   - demand(i, c) records that p constrains parameter i with contract c. The
 //     builder Joins c into ContractCell(i). Calling demand for i<0 is ignored.
 //   - The returned PointState is the value of point p; the builder emits it to
 //     every successor of p.
 //
-// Transfer must be monotone in incoming and entryContracts so the combined
-// system has a least fixed point; the lattice laws then make Solve terminate.
+// Transfer must be monotone in incoming and, at entry, entryContracts so the
+// combined system has a least fixed point; the lattice laws then make Solve
+// terminate.
 type NodeTransfer interface {
 	Transfer(
 		g *cfg.Graph,
@@ -43,6 +47,27 @@ type NodeTransfer interface {
 		entryContracts paramevidence.Contracts,
 		demand func(param int, c paramevidence.ParamContract),
 	) flow.PointState
+}
+
+// EntryValueSeeder is the optional seam for entry-point values that are already
+// elements of the product domain. The equation graph owns when these values
+// enter the point-state fixed point; the concrete transfer owns how a parameter
+// slot maps to the function's symbol store (Env vs captured Cells).
+//
+// These are not parameter contracts. Contracts are backward demand facts joined
+// into the entry assumption; entry values are forward seeds from caller evidence
+// or immutable topology. Declared annotations remain authoritative.
+type EntryValueSeeder interface {
+	SeedEntryValues(out *flow.PointState, values map[int]product.AbstractValue)
+}
+
+// EntrySymbolValueSeeder is the optional seam for entry-point values keyed by
+// stable symbols rather than parameter slots. It is used for immutable
+// scope/fact-derived bindings such as callback-scoped globals that must enter the
+// product state before the local transfer runs. These values are forward facts,
+// not declarations injected into the diagnostic bridge after solving.
+type EntrySymbolValueSeeder interface {
+	SeedEntrySymbolValues(out *flow.PointState, values map[cfg.SymbolID]product.AbstractValue)
 }
 
 // EdgeNarrower is the optional per-edge refinement of the canonical flow: the
@@ -65,6 +90,15 @@ type NodeTransfer interface {
 // per-edge refinement is.
 type EdgeNarrower interface {
 	NarrowEdge(g *cfg.Graph, pred, succ cfg.Point, out flow.PointState) flow.PointState
+}
+
+// ConditionProjectorProvider optionally supplies the point-condition relevance
+// abstraction for the combined solver. The builder applies it as a cell-local
+// upper closure after solver Join/Widen and around the local transfer, so
+// PointState.Cond cannot retain dead guard vocabulary through the generic
+// Kildall accumulator.
+type ConditionProjectorProvider interface {
+	ConditionProjector() *propagate.ConditionProjector
 }
 
 // NodeTransferFunc adapts a plain function to NodeTransfer for callers (and

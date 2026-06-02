@@ -38,7 +38,7 @@ func TestPassThroughEquals(t *testing.T) {
 }
 
 func TestFlowIntoLabel(t *testing.T) {
-	f := FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: "inner"}
+	f := FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: FieldPath("inner")}
 
 	// Implements Label interface
 	var _ Label = f
@@ -50,10 +50,10 @@ func TestFlowIntoLabel(t *testing.T) {
 }
 
 func TestFlowIntoEquals(t *testing.T) {
-	f1 := FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: "a"}
-	f2 := FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: "a"}
-	f3 := FlowInto{ParamIndex: 1, ReturnIndex: 0, TargetPath: "a"}
-	f4 := FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: "b"}
+	f1 := FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: FieldPath("a")}
+	f2 := FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: FieldPath("a")}
+	f3 := FlowInto{ParamIndex: 1, ReturnIndex: 0, TargetPath: FieldPath("a")}
+	f4 := FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: FieldPath("b")}
 
 	if !f1.Equals(f2) {
 		t.Error("same FlowInto should be equal")

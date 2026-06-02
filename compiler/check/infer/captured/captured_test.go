@@ -43,11 +43,13 @@ func TestCapturedTypeAtPointMergesPathSensitiveRecordField(t *testing.T) {
 	facts := fixedFacts{declared: map[cfg.SymbolID]typ.Type{sym: base}}
 	root := constraint.Path{Symbol: sym}
 	got := capturedTypeAtPoint(facts, point, sym, PathProjection{
-		ChildTypesAt: func(p cfg.Point, path constraint.Path) []flow.PathFact {
-			if p == point && path.Equal(root) {
-				return []flow.PathFact{{Path: root.Field("suites_hierarchy"), Type: wantSuites}}
-			}
-			return nil
+		Children: projectionSurface{
+			childTypes: func(p cfg.Point, path constraint.Path) []flow.PathFact {
+				if p == point && path.Equal(root) {
+					return []flow.PathFact{{Path: root.Field("suites_hierarchy"), Type: wantSuites}}
+				}
+				return nil
+			},
 		},
 	})
 
@@ -76,20 +78,22 @@ func TestProjectPathFacts_UsesParentIdentityWhenRecursingIntoChildFacts(t *testi
 	base := typ.NewRecord().Field("__index", typ.NewRecord().Build()).Build()
 
 	got := projectPathFacts(point, root, base, PathProjection{
-		ChildTypesAt: func(p cfg.Point, path constraint.Path) []flow.PathFact {
-			if p != point {
+		Children: projectionSurface{
+			childTypes: func(p cfg.Point, path constraint.Path) []flow.PathFact {
+				if p != point {
+					return nil
+				}
+				if path.Equal(root) {
+					return []flow.PathFact{{
+						Path: constraint.Path{Root: "$sym38", Symbol: sym}.Field("__index"),
+						Type: typ.NewRecord().Build(),
+					}}
+				}
+				if path.Equal(index) {
+					return []flow.PathFact{{Path: index.Field("is_empty"), Type: method}}
+				}
 				return nil
-			}
-			if path.Equal(root) {
-				return []flow.PathFact{{
-					Path: constraint.Path{Root: "$sym38", Symbol: sym}.Field("__index"),
-					Type: typ.NewRecord().Build(),
-				}}
-			}
-			if path.Equal(index) {
-				return []flow.PathFact{{Path: index.Field("is_empty"), Type: method}}
-			}
-			return nil
+			},
 		},
 	}, nil, true)
 
@@ -121,20 +125,22 @@ func TestProjectPathFacts_UsesVersionedChildFactIdentityForRecursion(t *testing.
 	base := typ.NewRecord().Field("__index", typ.NewRecord().Build()).Build()
 
 	got := projectPathFacts(point, root, base, PathProjection{
-		ChildTypesAt: func(p cfg.Point, path constraint.Path) []flow.PathFact {
-			if p != point {
+		Children: projectionSurface{
+			childTypes: func(p cfg.Point, path constraint.Path) []flow.PathFact {
+				if p != point {
+					return nil
+				}
+				if path.Equal(root) {
+					return []flow.PathFact{{
+						Path: index,
+						Type: typ.NewRecord().Build(),
+					}}
+				}
+				if path.Equal(index) {
+					return []flow.PathFact{{Path: index.Field("is_empty"), Type: method}}
+				}
 				return nil
-			}
-			if path.Equal(root) {
-				return []flow.PathFact{{
-					Path: index,
-					Type: typ.NewRecord().Build(),
-				}}
-			}
-			if path.Equal(index) {
-				return []flow.PathFact{{Path: index.Field("is_empty"), Type: method}}
-			}
-			return nil
+			},
 		},
 	}, nil, true)
 
@@ -171,12 +177,14 @@ func TestProjectPathFacts_AppliesDirectPathFactOnceForUnion(t *testing.T) {
 	calls := 0
 
 	got := projectPathFacts(point, path, base, PathProjection{
-		TypeAt: func(p cfg.Point, q constraint.Path) typ.Type {
-			if p == point && q.Equal(path) {
-				calls++
-				return direct
-			}
-			return nil
+		Paths: projectionSurface{
+			pathType: func(p cfg.Point, q constraint.Path) typ.Type {
+				if p == point && q.Equal(path) {
+					calls++
+					return direct
+				}
+				return nil
+			},
 		},
 	}, nil, true)
 
@@ -198,11 +206,13 @@ func TestProjectPathFacts_ReconcilesDirectInitWitnessUnionWithDeclaredCapture(t 
 	direct := typ.NewUnion(declared, typ.NewRecord().Build())
 
 	got := projectPathFacts(point, root, declared, PathProjection{
-		TypeAt: func(p cfg.Point, path constraint.Path) typ.Type {
-			if p == point && path.Equal(root) {
-				return direct
-			}
-			return nil
+		Paths: projectionSurface{
+			pathType: func(p cfg.Point, path constraint.Path) typ.Type {
+				if p == point && path.Equal(root) {
+					return direct
+				}
+				return nil
+			},
 		},
 	}, nil, true)
 
@@ -230,17 +240,19 @@ func TestProjectPathFacts_UsesFiniteChildFactsInsteadOfDerivedRecursivePaths(t *
 	parentCalls := 0
 
 	got := projectPathFacts(point, root, base, PathProjection{
-		ChildTypesAt: func(p cfg.Point, path constraint.Path) []flow.PathFact {
-			if p != point {
+		Children: projectionSurface{
+			childTypes: func(p cfg.Point, path constraint.Path) []flow.PathFact {
+				if p != point {
+					return nil
+				}
+				if path.Equal(root) {
+					return []flow.PathFact{{Path: parent, Type: parentType}}
+				}
+				if path.Equal(parent) {
+					parentCalls++
+				}
 				return nil
-			}
-			if path.Equal(root) {
-				return []flow.PathFact{{Path: parent, Type: parentType}}
-			}
-			if path.Equal(parent) {
-				parentCalls++
-			}
-			return nil
+			},
 		},
 	}, nil, true)
 
@@ -280,3 +292,30 @@ func (f fixedFacts) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedVal
 }
 
 func (f fixedFacts) IsAnnotated(cfg.SymbolID) bool { return false }
+
+type projectionSurface struct {
+	pathType   func(cfg.Point, constraint.Path) typ.Type
+	childTypes func(cfg.Point, constraint.Path) []flow.PathFact
+}
+
+func (p projectionSurface) ObservePath(q flow.PathObservationQuery) flow.PathObservation {
+	if p.pathType == nil {
+		return flow.PathObservation{}
+	}
+	t := p.pathType(q.Point, q.Path)
+	if typ.IsAbsentOrUnknown(t) {
+		return flow.PathObservation{}
+	}
+	return flow.PathObservation{
+		Type:   t,
+		State:  flow.StateResolved,
+		Source: flow.PathObservationFactProjection,
+	}
+}
+
+func (p projectionSurface) ObserveChildPaths(q flow.PathChildQuery) []flow.PathFact {
+	if p.childTypes == nil {
+		return nil
+	}
+	return p.childTypes(q.Point, q.Path)
+}

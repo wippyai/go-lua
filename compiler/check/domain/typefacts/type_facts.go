@@ -36,6 +36,7 @@ type TypeFacts struct {
 }
 
 var _ flow.TypeFacts = (*TypeFacts)(nil)
+var _ flow.BindingValueFacts = (*TypeFacts)(nil)
 
 // New returns the canonical type-fact query for a checker phase.
 func New(cfg Config) *TypeFacts {
@@ -49,6 +50,8 @@ func New(cfg Config) *TypeFacts {
 }
 
 // DeclaredAt returns the declared product-state type for a symbol at a point.
+// Immutable value bindings such as named-function signatures are intentionally
+// excluded; callers that need them should use BindingValueAt or EffectiveTypeAt.
 func (f *TypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 	if sym == 0 {
 		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
@@ -56,11 +59,6 @@ func (f *TypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 	if f != nil && f.annotatedVars != nil && f.annotatedVars[sym] {
 		if tv, ok := f.declaredTypedValue(sym); ok {
 			return tv
-		}
-	}
-	if f != nil && f.functionType != nil {
-		if t := f.functionType(sym); t != nil {
-			return typedValue(t)
 		}
 	}
 	if f != nil {
@@ -78,6 +76,19 @@ func (f *TypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 	return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 }
 
+// BindingValueAt returns the immutable value-binding type for sym, if one exists.
+// It is separate from DeclaredAt so named-function precision does not become a
+// source annotation proof.
+func (f *TypeFacts) BindingValueAt(_ cfg.Point, sym cfg.SymbolID) flow.TypedValue {
+	if f == nil || sym == 0 || f.functionType == nil {
+		return flow.TypedValue{Type: nil, State: flow.StateUnknown}
+	}
+	if t := f.functionType(sym); t != nil {
+		return typedValue(t)
+	}
+	return flow.TypedValue{Type: nil, State: flow.StateUnknown}
+}
+
 // RefinedAt returns the flow-refined product-state type for a symbol.
 func (f *TypeFacts) RefinedAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 	if f == nil || sym == 0 || f.solution == nil {
@@ -91,7 +102,13 @@ func (f *TypeFacts) RefinedAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 // do not erase a known declaration/body-evidence type.
 func (f *TypeFacts) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 	declared := f.DeclaredAt(p, sym)
-	return SelectEffective(declared, f.RefinedAt(p, sym), f.IsAnnotated(sym))
+	static := declared
+	if !f.IsAnnotated(sym) {
+		if binding := f.BindingValueAt(p, sym); binding.Type != nil {
+			static = binding
+		}
+	}
+	return SelectEffective(static, f.RefinedAt(p, sym), f.IsAnnotated(sym))
 }
 
 // IsAnnotated reports whether a symbol has an explicit source annotation.

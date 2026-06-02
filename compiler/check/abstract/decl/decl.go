@@ -96,11 +96,11 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 	if fc.CheckCtx != nil && fc.CheckCtx.Bindings() != nil {
 		bindings = fc.CheckCtx.Bindings()
 	}
-	for _, name := range cfg.SortedFieldNames(fc.Globals) {
-		t := fc.Globals[name]
-		if t == nil {
+	for _, binding := range fc.Globals {
+		if binding.Name == "" || binding.Type == nil {
 			continue
 		}
+		name := binding.Name.String()
 		sym, ok := fc.Graph.SymbolAt(entry, name)
 		if !ok {
 			continue
@@ -111,7 +111,7 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 				continue
 			}
 		}
-		inputs.DeclaredTypes[sym] = resolve.Ref(t, fc.Base)
+		inputs.DeclaredTypes[sym] = resolve.Ref(binding.Type, fc.Base)
 	}
 
 	if fc.Services != nil {

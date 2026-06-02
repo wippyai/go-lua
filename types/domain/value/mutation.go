@@ -196,6 +196,90 @@ func AdmitMapArrayElementMutation(mapType typ.Type, keyType, elementType typ.Typ
 	})
 }
 
+// AdmitContainerElementUnion returns the value-domain result of observing a
+// mutator whose contract says that a runtime container now contains elementType.
+//
+// This is the structural law behind ContainerElementUnion effects such as
+// channel.send-like APIs. It is intentionally not tied to a call-site driver: the
+// caller supplies the current container value and the element value, and this law
+// widens the container's element slot for every supported container shape.
+func AdmitContainerElementUnion(containerType, elementType typ.Type) typ.Type {
+	if elementType == nil {
+		return containerType
+	}
+	elementType = AdmitObservation(subtype.WidenForInference(elementType))
+	if containerType == nil {
+		return nil
+	}
+
+	return typ.Visit(containerType, typ.Visitor[typ.Type]{
+		Alias: func(a *typ.Alias) typ.Type {
+			widened := AdmitContainerElementUnion(a.Target, elementType)
+			if widened == nil || typ.TypeEquals(widened, a.Target) {
+				return containerType
+			}
+			return typ.NewAlias(a.Name, widened)
+		},
+		Instantiated: func(inst *typ.Instantiated) typ.Type {
+			if inst.Generic == nil || len(inst.TypeArgs) == 0 {
+				return containerType
+			}
+			newElem := widenContainerElementSlot(inst.TypeArgs[0], elementType)
+			if newElem == nil || typ.TypeEquals(inst.TypeArgs[0], newElem) {
+				return containerType
+			}
+			args := make([]typ.Type, len(inst.TypeArgs))
+			copy(args, inst.TypeArgs)
+			args[0] = newElem
+			return typ.Instantiate(inst.Generic, args...)
+		},
+		Array: func(arr *typ.Array) typ.Type {
+			newElem := widenContainerElementSlot(arr.Element, elementType)
+			if newElem == nil || typ.TypeEquals(arr.Element, newElem) {
+				return containerType
+			}
+			return typ.NewArray(newElem)
+		},
+		Map: func(m *typ.Map) typ.Type {
+			newVal := widenContainerElementSlot(m.Value, elementType)
+			if newVal == nil || typ.TypeEquals(m.Value, newVal) {
+				return containerType
+			}
+			return typ.NewMap(m.Key, newVal)
+		},
+		Union: func(u *typ.Union) typ.Type {
+			out := make([]typ.Type, 0, len(u.Members))
+			changed := false
+			for _, member := range u.Members {
+				widened := AdmitContainerElementUnion(member, elementType)
+				if widened != nil && !typ.TypeEquals(member, widened) {
+					out = append(out, widened)
+					changed = true
+					continue
+				}
+				out = append(out, member)
+			}
+			if changed {
+				return typ.NewUnion(out...)
+			}
+			return containerType
+		},
+		Default: func(t typ.Type) typ.Type {
+			return containerType
+		},
+	})
+}
+
+func widenContainerElementSlot(existing, incoming typ.Type) typ.Type {
+	if incoming == nil {
+		return existing
+	}
+	if existing == nil || typ.IsAbsentOrUnknown(existing) || existing.Kind().IsPlaceholder() {
+		return incoming
+	}
+	return joinContainerValueTypes(existing, incoming)
+}
+
 func mergeMapKeyDomain(existing, incoming typ.Type) typ.Type {
 	if existing == nil {
 		return incoming
@@ -228,13 +312,24 @@ func AdmitIndexedWrite(t typ.Type, keyType, valType typ.Type) typ.Type {
 	if valType != nil && valType.Kind() == kind.Nil {
 		return t
 	}
+	if key, ok := singletonStaticIndexKey(keyType); ok && t == nil {
+		return addStaticIndexedMemberToType(nil, key, valType)
+	}
+	out := admitIndexedWriteBase(t, keyType, valType)
+	if key, ok := singletonStaticIndexKey(keyType); ok {
+		return addStaticIndexedMemberToType(out, key, valType)
+	}
+	return out
+}
+
+func admitIndexedWriteBase(t typ.Type, keyType, valType typ.Type) typ.Type {
 	if t == nil {
 		return typ.NewMap(keyType, valType)
 	}
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
 		Alias: func(a *typ.Alias) typ.Type {
-			widened := AdmitIndexedWrite(a.Target, keyType, valType)
+			widened := admitIndexedWriteBase(a.Target, keyType, valType)
 			if widened == nil || typ.TypeEquals(widened, a.Target) {
 				return t
 			}
@@ -281,6 +376,108 @@ func AdmitIndexedWrite(t typ.Type, keyType, valType typ.Type) typ.Type {
 	})
 }
 
+func singletonStaticIndexKey(keyType typ.Type) (MemberKey, bool) {
+	keyType = unwrap.Alias(keyType)
+	switch k := keyType.(type) {
+	case *typ.Annotated:
+		return singletonStaticIndexKey(k.Inner)
+	case *typ.Literal:
+		switch k.Base {
+		case kind.String:
+			if s, ok := k.Value.(string); ok {
+				return MemberStringIndex(s), true
+			}
+		case kind.Integer:
+			if i, ok := k.Value.(int64); ok {
+				return MemberIntIndex(int(i)), true
+			}
+		}
+	}
+	return MemberKey{}, false
+}
+
+func addStaticIndexedMemberToType(t typ.Type, key MemberKey, val typ.Type) typ.Type {
+	if !key.IsValid() {
+		return t
+	}
+	if val == nil {
+		val = typ.Unknown
+	}
+	switch v := t.(type) {
+	case nil:
+		builder := typ.NewRecord()
+		addStaticIndexedMemberToBuilder(builder, key, val)
+		return builder.Build()
+	case *typ.Alias:
+		updated := addStaticIndexedMemberToType(v.Target, key, val)
+		if updated == nil || typ.TypeEquals(updated, v.Target) {
+			return t
+		}
+		return typ.NewAlias(v.Name, updated)
+	case *typ.Record:
+		return addStaticIndexedMemberToRecord(v, key, val)
+	case *typ.Map:
+		builder := typ.NewRecord().MapComponent(v.Key, v.Value)
+		addStaticIndexedMemberToBuilder(builder, key, val)
+		return builder.Build()
+	default:
+		return t
+	}
+}
+
+func addStaticIndexedMemberToRecord(rec *typ.Record, key MemberKey, val typ.Type) typ.Type {
+	builder := typ.NewRecord()
+	if rec.Open {
+		builder.SetOpen(true)
+	}
+	for _, field := range rec.Fields {
+		switch {
+		case field.Optional && field.Readonly:
+			builder.OptReadonlyField(field.Name, field.Type)
+		case field.Optional:
+			builder.OptField(field.Name, field.Type)
+		case field.Readonly:
+			builder.ReadonlyField(field.Name, field.Type)
+		default:
+			builder.Field(field.Name, field.Type)
+		}
+	}
+	for _, member := range rec.StaticMembers {
+		if staticIndexedMemberMatchesKey(member, key) {
+			continue
+		}
+		builder.AddStaticMember(member)
+	}
+	addStaticIndexedMemberToBuilder(builder, key, val)
+	if rec.Metatable != nil {
+		builder.Metatable(rec.Metatable)
+	}
+	if rec.HasMapComponent() {
+		builder.MapComponent(rec.MapKey, rec.MapValue)
+	}
+	return builder.Build()
+}
+
+func staticIndexedMemberMatchesKey(member typ.StaticMember, key MemberKey) bool {
+	switch key.Kind() {
+	case MemberKindStringIndex:
+		return member.Kind == typ.StaticMemberStringIndex && member.Name == key.Name()
+	case MemberKindIntIndex:
+		return member.Kind == typ.StaticMemberIntIndex && member.Index == int64(key.Index())
+	default:
+		return false
+	}
+}
+
+func addStaticIndexedMemberToBuilder(builder *typ.RecordBuilder, key MemberKey, val typ.Type) {
+	switch key.Kind() {
+	case MemberKindStringIndex:
+		builder.StaticStringIndex(key.Name(), val)
+	case MemberKindIntIndex:
+		builder.StaticIntIndex(int64(key.Index()), val)
+	}
+}
+
 // AdmitForeignIndexedWrite returns the value-domain result of observing t[k] = v
 // when v is a FOREIGN value — one not provably drawn from t at the key being
 // written. For a closed record with declared fields it differs from
@@ -305,6 +502,9 @@ func AdmitForeignIndexedWrite(t typ.Type, keyType, valType typ.Type) typ.Type {
 		return AdmitIndexedWrite(t, keyType, valType)
 	}
 	rec, ok := unwrap.Alias(t).(*typ.Record)
+	if ok && rec.Fresh && len(rec.Fields) == 0 && len(rec.StaticMembers) == 0 && !rec.HasMapComponent() {
+		return admitForeignIndexedWriteToFreshEmptyRecord(t, keyType, valType)
+	}
 	if !ok || len(rec.Fields) == 0 {
 		return AdmitIndexedWrite(t, keyType, valType)
 	}
@@ -313,6 +513,14 @@ func AdmitForeignIndexedWrite(t typ.Type, keyType, valType typ.Type) typ.Type {
 	// later dynamic-key read sees v. Reuse the AdmitIndexedWrite record path over the
 	// field-weakened record so the map component merge stays identical.
 	return AdmitIndexedWrite(weakened, keyType, valType)
+}
+
+func admitForeignIndexedWriteToFreshEmptyRecord(t typ.Type, keyType, valType typ.Type) typ.Type {
+	if key, ok := singletonStaticIndexKey(keyType); ok {
+		written := AdmitIndexedWrite(t, keyType, typ.Any)
+		return addStaticIndexedMemberToType(written, key, valType)
+	}
+	return AdmitIndexedWrite(t, keyType, valType)
 }
 
 // weakenRecordFieldsForForeignWrite rebuilds rec with every declared field the
@@ -341,6 +549,9 @@ func weakenRecordFieldsForForeignWrite(rec *typ.Record, keyType, valType typ.Typ
 			builder.Field(f.Name, ft)
 		}
 	}
+	for _, m := range rec.StaticMembers {
+		builder.AddStaticMember(m)
+	}
 	if rec.Metatable != nil {
 		builder.Metatable(rec.Metatable)
 	}
@@ -363,9 +574,10 @@ func keyCanMatchFieldName(keyType typ.Type, name string) bool {
 }
 
 // IndexedWriteAdmits reports whether the value domain can soundly admit an
-// indexed write on t. It is the predicate counterpart to AdmitIndexedWrite:
-// transfer uses AdmitIndexedWrite to compute the next value, while proof
-// consumers use this predicate to avoid reimplementing write-side table laws.
+// indexed replacement write on t. It is the predicate counterpart to
+// AdmitForeignIndexedWrite: transfer uses the same admission law to compute the
+// next value, while proof consumers use this predicate to avoid reimplementing
+// write-side table laws.
 func IndexedWriteAdmits(t typ.Type, keyType, valType typ.Type) bool {
 	if valType == nil {
 		return false
@@ -373,24 +585,57 @@ func IndexedWriteAdmits(t typ.Type, keyType, valType typ.Type) bool {
 	if valType.Kind() == kind.Nil {
 		return true
 	}
-	if t == nil {
+	admitted := AdmitForeignIndexedWrite(t, keyType, valType)
+	if admitted == nil {
+		return false
+	}
+	if t == nil || typ.IsAbsentOrUnknown(t) || t.Kind().IsPlaceholder() {
 		return true
 	}
-	if t.Kind().IsPlaceholder() {
+	if !typ.TypeEquals(admitted, t) {
 		return true
 	}
-	// A map's value slot is covariant: an indexed write widens it (and the key
-	// domain) to the union of all writes, matching AdmitIndexedWrite, so an
-	// inferred map admits any value. The invariant obligation below applies to a
-	// record reached through a dynamic key, where a write that does not satisfy
-	// every field obligation would corrupt a typed field.
-	if _, ok := unwrap.Alias(t).(*typ.Map); ok {
-		return true
+	if slot, ok := querycore.IndexWrite(t, keyType); ok {
+		return subtype.IsSubtype(valType, slot)
 	}
 	if obligation, ok := querycore.IndexWriteObligation(t, keyType); ok {
 		return subtype.IsSubtype(valType, obligation)
 	}
 	return TableTopCovers(t)
+}
+
+// SealedIndexedWriteAdmits reports whether a write t[key] = value is valid for a
+// table shape whose declared annotation is sealed. Unlike IndexedWriteAdmits,
+// this predicate does not widen records or add map components: the value must
+// satisfy the write-side slot/obligation already present in t. Dynamic keys over
+// heterogeneous fields therefore use querycore.IndexWriteObligation's universal
+// meet, matching the sealed-record invariant.
+func SealedIndexedWriteAdmits(t typ.Type, keyType, valType typ.Type) bool {
+	if valType == nil {
+		return false
+	}
+	if valType.Kind() == kind.Nil {
+		return querycore.IndexDelete(t, keyType)
+	}
+	obligation := SealedIndexedWriteObligation(t, keyType)
+	return obligation != nil && subtype.IsSubtype(valType, obligation)
+}
+
+// SealedIndexedWriteObligation returns the value type required by t[key] = value
+// for a sealed table shape. A missing sealed slot is not "no information": it is
+// an impossible write, represented by Never, so diagnostic consumers do not skip
+// the check.
+func SealedIndexedWriteObligation(t typ.Type, keyType typ.Type) typ.Type {
+	if t == nil || typ.IsAbsentOrUnknown(t) {
+		return nil
+	}
+	if slot, ok := querycore.IndexWrite(t, keyType); ok {
+		return slot
+	}
+	if obligation, ok := querycore.IndexWriteObligation(t, keyType); ok {
+		return obligation
+	}
+	return typ.Never
 }
 
 // IndexedValueMutationAdmits reports whether the value domain can soundly
@@ -487,6 +732,9 @@ func rebuildRecordWithMapComponent(rec *typ.Record, mapKey, mapVal typ.Type) typ
 		default:
 			builder.Field(f.Name, f.Type)
 		}
+	}
+	for _, m := range rec.StaticMembers {
+		builder.AddStaticMember(m)
 	}
 	if rec.Metatable != nil {
 		builder.Metatable(rec.Metatable)

@@ -82,8 +82,8 @@ func FromExprWithSymType(expr ast.Expr, constResolver func(string) *flow.ConstVa
 	return nil, false
 }
 
-// KeyTypeFromExpr derives a typ.Type for a map key from a literal expression.
-// Returns nil if the expression is not a recognized literal kind.
+// KeyTypeFromExpr derives the most precise singleton key type from a literal
+// expression. Returns nil if the expression is not a recognized literal kind.
 func KeyTypeFromExpr(expr ast.Expr, constResolver func(string) *flow.ConstValue) typ.Type {
 	if expr == nil {
 		return nil
@@ -94,14 +94,21 @@ func KeyTypeFromExpr(expr ast.Expr, constResolver func(string) *flow.ConstValue)
 	}
 	switch lit.Base {
 	case kind.String:
-		return typ.String
+		if v, ok := lit.Value.(string); ok {
+			return typ.LiteralString(v)
+		}
 	case kind.Integer:
-		return typ.Integer
+		if v, ok := lit.Value.(int64); ok {
+			return typ.LiteralInt(v)
+		}
 	case kind.Number:
-		return typ.Number
+		if v, ok := lit.Value.(float64); ok {
+			return typ.LiteralNumber(v)
+		}
 	case kind.Boolean:
-		return typ.Boolean
-	default:
-		return nil
+		if v, ok := lit.Value.(bool); ok {
+			return typ.LiteralBool(v)
+		}
 	}
+	return nil
 }

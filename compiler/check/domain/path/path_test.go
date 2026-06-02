@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/check/domain/path"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -45,6 +46,46 @@ func TestPathFromExpr_AttrGetExpr_StringKey(t *testing.T) {
 	}
 	if p.Segments[0].Name != "field" {
 		t.Errorf("expected name 'field', got %q", p.Segments[0].Name)
+	}
+}
+
+func TestPathFromParsedAttrGet_DotAndBracketStayDistinct(t *testing.T) {
+	stmts, err := parse.ParseString(`local a, b, c = obj.foo, obj["foo"], obj[1]`, "test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	local, ok := stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt = %T, want *ast.LocalAssignStmt", stmts[0])
+	}
+	tests := []struct {
+		name string
+		expr ast.Expr
+		want constraint.Segment
+	}{
+		{
+			name: "dot",
+			expr: local.Exprs[0],
+			want: constraint.Segment{Kind: constraint.SegmentField, Name: "foo"},
+		},
+		{
+			name: "bracket string",
+			expr: local.Exprs[1],
+			want: constraint.Segment{Kind: constraint.SegmentIndexString, Name: "foo"},
+		},
+		{
+			name: "bracket int",
+			expr: local.Exprs[2],
+			want: constraint.Segment{Kind: constraint.SegmentIndexInt, Index: 1},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := path.FromExprWithBindings(tt.expr, nil, nil)
+			if got.Root != "obj" || len(got.Segments) != 1 || got.Segments[0] != tt.want {
+				t.Fatalf("path = %#v, want root obj segment %#v", got, tt.want)
+			}
+		})
 	}
 }
 

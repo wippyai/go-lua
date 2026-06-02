@@ -793,3 +793,23 @@ func TestBindingTable_AllSymbols_IncludesGenericFor(t *testing.T) {
 		}
 	}
 }
+
+func TestBindingTable_ReferencedGlobals_ExcludesUnusedPredeclared(t *testing.T) {
+	table := NewBindingTable()
+	usedIdent := &ast.IdentExpr{Value: "print"}
+	used := cfg.NextSymbolID()
+	unused := cfg.NextSymbolID()
+	localIdent := &ast.IdentExpr{Value: "x"}
+	local := cfg.NextSymbolID()
+
+	table.Bind(usedIdent, used)
+	table.SetKind(used, cfg.SymbolGlobal)
+	table.SetKind(unused, cfg.SymbolGlobal)
+	table.Bind(localIdent, local)
+	table.SetKind(local, cfg.SymbolLocal)
+
+	got := table.ReferencedGlobals()
+	if len(got) != 1 || got[0] != used {
+		t.Fatalf("ReferencedGlobals() = %v, want [%d]", got, used)
+	}
+}

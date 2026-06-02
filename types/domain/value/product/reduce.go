@@ -2,9 +2,15 @@ package product
 
 import (
 	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/axis/effectrows"
+	"github.com/wippyai/go-lua/types/domain/value/axis/escape"
+	"github.com/wippyai/go-lua/types/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/types/domain/value/axis/identityrecursion"
 	"github.com/wippyai/go-lua/types/domain/value/axis/numeric"
+	"github.com/wippyai/go-lua/types/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/types/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/types/domain/value/axis/shapevalue"
+	"github.com/wippyai/go-lua/types/domain/value/axis/variantorigin"
 )
 
 // reducer is one cross-axis reduction of the reduced product.
@@ -28,6 +34,7 @@ type reducer func(*node) *node
 var reducers = []reducer{
 	// Live reducers over the foundational axes.
 	reducePresenceShape,
+	reduceVariantOriginReachability,
 	reduceNumericPresence,
 
 	// Placeholder reducers. Each is the identity until its axis carries real
@@ -66,6 +73,23 @@ func reduce(n *node) *node {
 		}
 		n = next
 	}
+}
+
+func reduceVariantOriginReachability(n *node) *node {
+	if !n.origin.IsBottom() {
+		return n
+	}
+	out := *n
+	out.shape = shapevalue.Bottom()
+	out.presence = presence.Bottom()
+	out.numeric = numeric.Bottom()
+	out.effects = effectrows.Bottom()
+	out.owner = ownership.Bottom()
+	out.escape = escape.Bottom()
+	out.identity = identityrecursion.Bottom()
+	out.evidence = evidence.Bottom()
+	out.origin = variantorigin.Bottom()
+	return &out
 }
 
 // reducePresenceShape reconciles the Presence/Nilability axis with the
@@ -123,12 +147,17 @@ func reducePresenceShape(n *node) *node {
 		shape = shapevalue.Bottom()
 	}
 
-	if presence.Equal(pres, n.presence) && shapevalue.Equal(shape, n.shape) {
+	origin := n.origin
+	if pres.IsBottom() {
+		origin = variantorigin.Bottom()
+	}
+	if presence.Equal(pres, n.presence) && shapevalue.Equal(shape, n.shape) && variantorigin.Equal(origin, n.origin) {
 		return n
 	}
 	out := *n
 	out.presence = pres
 	out.shape = shape
+	out.origin = origin
 	return &out
 }
 
@@ -244,12 +273,12 @@ func reduceEscapeAllocation(n *node) *node {
 	return n
 }
 
-// reduceEvidenceOccurrence is the placeholder for the SemanticEvidence reduction.
-//
-// It is the identity over the one-point evidence axis. The real reducers
-// (occurrence/index/error-return/discriminant/gradual evidence refining shape and
-// presence) are implemented in P7 with the evidence axis when carrier semantics
-// are concrete.
+// reduceEvidenceOccurrence is the placeholder for cross-axis SemanticEvidence
+// reduction. Gradual-top evidence is already part of the product carrier and
+// needs no shape/presence refinement: it distinguishes strict declared `any`
+// from unannotated gradual `any` while both keep the same structural top shape.
+// Future occurrence/index/error-return/discriminant proofs plug in here without
+// changing the product driver.
 func reduceEvidenceOccurrence(n *node) *node {
 	return n
 }

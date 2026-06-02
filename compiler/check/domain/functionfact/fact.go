@@ -1,9 +1,9 @@
 package functionfact
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/internal"
@@ -45,7 +45,7 @@ func normalizeFunctionFactSignature(fn *typ.Function) *typ.Function {
 	changed := false
 	builder := typ.Func().ReserveParams(len(fn.Params))
 	for _, tp := range fn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for _, param := range fn.Params {
 		paramType := normalizeFunctionParamDomainType(param.Type)
@@ -103,7 +103,7 @@ func CanonicalSourceSignature(fn *typ.Function, hasDeclaredReturns bool) *typ.Fu
 	}
 	builder := typ.Func().ReserveParams(len(fn.Params))
 	for _, tp := range fn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for _, param := range fn.Params {
 		paramType := normalizeFunctionParamDomainType(param.Type)
@@ -164,7 +164,7 @@ func withPublicSeedParams(fn *typ.Function, publicSeed *typ.Function) *typ.Funct
 	}
 	builder := typ.Func().ReserveParams(len(publicSeed.Params))
 	for _, tp := range publicSeed.TypeParams {
-		builder.TypeParam(tp.Name, tp.Constraint)
+		builder.TypeParamRef(tp)
 	}
 	for _, param := range publicSeed.Params {
 		if param.Optional {
@@ -199,7 +199,7 @@ func withoutSyntheticVariadic(fn *typ.Function) *typ.Function {
 	}
 	builder := typ.Func().ReserveParams(len(fn.Params))
 	for _, tp := range fn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for _, p := range fn.Params {
 		if p.Optional {
@@ -244,7 +244,7 @@ func ApplyPublicSignatureEvidence(fn *typ.Function, evidence []typ.Type) *typ.Fu
 	changed := false
 	builder := typ.Func().ReserveParams(len(fn.Params))
 	for _, tp := range fn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for i, param := range fn.Params {
 		paramType := param.Type
@@ -303,7 +303,7 @@ func ApplyBodySignatureEvidence(fn *typ.Function, evidence []typ.Type) *typ.Func
 	changed := false
 	builder := typ.Func().ReserveParams(len(fn.Params))
 	for _, tp := range fn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for i, param := range fn.Params {
 		paramType := param.Type
@@ -363,7 +363,7 @@ func ClearOptionalForNonNilableObligation(fn *typ.Function, obligations []typ.Ty
 	changed := false
 	builder := typ.Func().ReserveParams(len(fn.Params))
 	for _, tp := range fn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for i, param := range fn.Params {
 		optional := param.Optional
@@ -564,7 +564,7 @@ func MergeExpectedSignature(seed, expected *typ.Function) *typ.Function {
 	builder := typ.Func().ReserveParams(maxInt(len(seed.Params), len(expected.Params)))
 	if sameFunctionTypeParams(seed, expected) {
 		for _, tp := range seed.TypeParams {
-			builder = builder.TypeParam(tp.Name, tp.Constraint)
+			builder = builder.TypeParamRef(tp)
 		}
 	}
 
@@ -840,7 +840,7 @@ func mergeCallbackSpec(existing, candidate *contract.CallbackSpec) *contract.Cal
 	out.ReturnsBoolean = out.ReturnsBoolean || candidate.ReturnsBoolean
 	out.Cardinality = mergeCallbackCardinality(out.Cardinality, candidate.Cardinality)
 	out.Pure = out.Pure && candidate.Pure
-	out.EnvOverlay = mergeCallbackEnvOverlay(out.EnvOverlay, candidate.EnvOverlay)
+	out.EnvOverlay = callbackenv.MergeContractOverlay(out.EnvOverlay, candidate.EnvOverlay)
 	return out
 }
 
@@ -1644,23 +1644,19 @@ func ClassFamilyJoin(existing, candidate typ.Type) typ.Type {
 	}
 
 	builder := typ.NewRecord()
-	seen := make(map[string]bool, len(exRec.Fields)+len(caRec.Fields))
-	names := make([]string, 0, len(exRec.Fields)+len(caRec.Fields))
+	keys := make(map[fieldkey.Key]struct{}, len(exRec.Fields)+len(caRec.Fields))
 	for _, f := range exRec.Fields {
-		if !seen[f.Name] {
-			seen[f.Name] = true
-			names = append(names, f.Name)
-		}
+		addClassFamilyFieldKey(keys, f.Name)
 	}
 	for _, f := range caRec.Fields {
-		if !seen[f.Name] {
-			seen[f.Name] = true
-			names = append(names, f.Name)
-		}
+		addClassFamilyFieldKey(keys, f.Name)
 	}
-	sort.Strings(names)
 
-	for _, name := range names {
+	for _, key := range fieldkey.Sorted(keys) {
+		if key.Kind != constraint.SegmentField || key.Name == "" {
+			continue
+		}
+		name := key.Name
 		merged, opt, ro := mergeClassFamilyField(name, exRec.GetField(name), caRec.GetField(name))
 		switch {
 		case opt && ro:
@@ -1683,6 +1679,14 @@ func ClassFamilyJoin(existing, candidate typ.Type) typ.Type {
 		builder.MapComponent(caRec.MapKey, caRec.MapValue)
 	}
 	return builder.SetOpen(exRec.Open || caRec.Open).Build()
+}
+
+func addClassFamilyFieldKey(keys map[fieldkey.Key]struct{}, name string) {
+	key, ok := fieldkey.FromName(name)
+	if !ok {
+		return
+	}
+	keys[key] = struct{}{}
 }
 
 // mergeClassFamilyField merges one class-family field from the two record bodies.
@@ -1903,7 +1907,7 @@ func mergeByShape(existing, candidate *typ.Function) typ.Type {
 
 	builder := typ.Func()
 	for _, tp := range existing.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 
 	for i, p := range existing.Params {
@@ -1959,7 +1963,7 @@ func widenByShapeForConvergence(existing, candidate *typ.Function) typ.Type {
 
 	builder := typ.Func()
 	for _, tp := range existing.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for i, p := range existing.Params {
 		paramType := widenParamTypeForConvergence(p.Type, candidate.Params[i].Type)
@@ -2311,7 +2315,7 @@ func MergeReturnsForSameSignature(prevFn, nextFn *typ.Function) (typ.Type, bool)
 		Spec(spec).
 		WithRefinement(refinement)
 	for _, tp := range prevFn.TypeParams {
-		builder = builder.TypeParam(tp.Name, tp.Constraint)
+		builder = builder.TypeParamRef(tp)
 	}
 	for _, p := range prevFn.Params {
 		if p.Optional {

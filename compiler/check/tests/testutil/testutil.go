@@ -5,15 +5,11 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check"
-	"github.com/wippyai/go-lua/compiler/check/hooks"
-	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/stdlib"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -79,15 +75,19 @@ func NewChecker(opts ...Option) *check.Checker {
 }
 
 // envFlowOptions returns a flow override read from the WIPPY_FLOW environment
-// variable so the whole behavioral suite can be exercised under the canonical
-// engine on demand (WIPPY_FLOW=canonical) without editing each test. Unset or any
-// other value leaves the default legacy flow. Differential bypasses this entirely:
-// it drives each arm's flow directly through buildChecker.
+// variable. Canonical is the checker default; WIPPY_FLOW=legacy explicitly opts
+// into the historical pipeline for compatibility gates. WIPPY_FLOW=canonical is
+// accepted as an explicit no-op for older scripts. Differential bypasses this
+// entirely: it drives each arm's flow directly through buildChecker.
 func envFlowOptions() []check.Option {
-	if os.Getenv("WIPPY_FLOW") == "canonical" {
+	switch os.Getenv("WIPPY_FLOW") {
+	case "canonical":
 		return []check.Option{check.WithCanonicalFlow()}
+	case "legacy":
+		return []check.Option{check.WithLegacyFlow()}
+	default:
+		return nil
 	}
-	return nil
 }
 
 // Result holds the result of a check operation.
@@ -183,54 +183,9 @@ func CheckAndExport(source, name string, opts ...Option) *ModuleResult {
 	for _, opt := range opts {
 		opt(cfg)
 	}
+	cfg.CheckOptions = append(cfg.CheckOptions, envFlowOptions()...)
 
-	for path, manifest := range cfg.Manifests {
-		cfg.Database.Connect(path, manifest)
-	}
-
-	var stdlibScope *scope.State
-	globalTypes := make(map[string]typ.Type)
-
-	if cfg.Stdlib {
-		stdlibScope = scope.NewWithBuiltins()
-		for sname, t := range stdlib.Library() {
-			globalTypes[sname] = t
-		}
-	}
-
-	for _, manifest := range cfg.Manifests {
-		if stdlibScope == nil {
-			stdlibScope = scope.New()
-		}
-		if manifest.Export != nil {
-			globalTypes[manifest.Path] = manifest.Export
-		}
-		for tname, t := range manifest.Types {
-			stdlibScope = stdlibScope.WithType(tname, t)
-		}
-		for name, t := range manifest.AllGlobals() {
-			globalTypes[name] = t
-		}
-	}
-
-	var engine *core.Engine
-	if cfg.Stdlib {
-		engine = core.NewEngineWithStdlib(stdlib.EngineConfig())
-	} else {
-		engine = core.NewEngine()
-	}
-
-	checkOpts := append(hooks.All(), cfg.CheckOptions...)
-	checker := check.NewChecker(cfg.Database, check.Deps{
-		Types:       engine,
-		Stdlib:      stdlibScope,
-		GlobalTypes: globalTypes,
-		Resolver: &core.FuncResolver{
-			FieldFunc: core.Field,
-			IndexFunc: core.Index,
-		},
-	}, checkOpts...)
-
+	checker := buildChecker(cfg)
 	sess := checker.Check(source, name+".lua")
 	manifest := sess.ExportManifest(name)
 

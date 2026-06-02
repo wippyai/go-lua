@@ -48,7 +48,7 @@ func StoreFactsFromResult(
 		return
 	}
 	writer := newInterprocFactWriter(store)
-	writer.writeLiteralSignatures(result.Graph, parent, result.LiteralSignatures)
+	writer.writeLiteralSignatures(result.Graph, parent, result.LiteralSignatureLookup())
 
 	fnSym := cfg.SymbolID(0)
 	if fn != nil {
@@ -104,7 +104,11 @@ func StoreFactsFromResult(
 // requires. The postcondition is instantiated at call sites onto the assigned
 // target's numeric length lower bound so a literal index read narrows.
 func attachReturnLengthEnsures(signature *typ.Function, result *api.FuncResult) *typ.Function {
-	if signature == nil || result == nil || result.FlowSolution == nil || result.Graph == nil {
+	if signature == nil || result == nil {
+		return signature
+	}
+	flowOps := result.SolvedFlow()
+	if flowOps == nil || result.Graph == nil {
 		return signature
 	}
 	rets := result.Evidence.Returns
@@ -121,7 +125,7 @@ func attachReturnLengthEnsures(signature *typ.Function, result *api.FuncResult) 
 	for _, ret := range rets {
 		p := ret.Point
 		info := ret.Info
-		if info == nil || result.FlowSolution.IsPointDead(p) {
+		if info == nil || flowOps.IsPointDead(p) {
 			continue
 		}
 		liveReturns++
@@ -140,7 +144,7 @@ func attachReturnLengthEnsures(signature *typ.Function, result *api.FuncResult) 
 				name = info.Names[i]
 			}
 			path := constraint.Path{Root: name, Symbol: sym}
-			lower, _, ok := result.FlowSolution.LengthBoundsAt(p, path)
+			lower, _, ok := flowOps.LengthBoundsAt(p, path)
 			if !ok || lower < 0 {
 				lower = 0
 			}
@@ -162,8 +166,28 @@ func attachReturnLengthEnsures(signature *typ.Function, result *api.FuncResult) 
 		}
 		ensures = append(ensures, constraint.GeExpr(constraint.RL(i), constraint.C(lower)))
 	}
+	ensures = append(ensures, returnLengthRelationEnsures(result.ReturnRelations)...)
 	ensures = append(ensures, returnLengthParamEnsures(result)...)
 	return functionfact.AttachReturnLengthEnsures(signature, ensures)
+}
+
+// returnLengthRelationEnsures lowers canonical summary relations to public
+// contract postconditions. This is the normalized path for facts such as
+// len(ret_i) >= len(param_j): the relation is stored by return/parameter slot,
+// not by source names or legacy flow-input paths.
+func returnLengthRelationEnsures(rels flow.ReturnRelations) []constraint.ExprCompare {
+	lengthParams := rels.LengthParams()
+	if len(lengthParams) == 0 {
+		return nil
+	}
+	ensures := make([]constraint.ExprCompare, 0, len(lengthParams))
+	for _, rel := range lengthParams {
+		if rel.ReturnIndex < 0 || rel.ParamIndex < 0 {
+			continue
+		}
+		ensures = append(ensures, constraint.GeExpr(constraint.RL(rel.ReturnIndex), constraint.PL(rel.ParamIndex)))
+	}
+	return ensures
 }
 
 // returnLengthParamEnsures proves the relational arm of return-length
@@ -188,6 +212,7 @@ func returnLengthParamEnsures(result *api.FuncResult) []constraint.ExprCompare {
 		return nil
 	}
 	rets := result.Evidence.Returns
+	flowOps := result.SolvedFlow()
 	var ensures []constraint.ExprCompare
 	seen := make(map[[2]int]struct{})
 	for _, lil := range lils {
@@ -198,7 +223,7 @@ func returnLengthParamEnsures(result *api.FuncResult) []constraint.ExprCompare {
 		if !ok {
 			continue
 		}
-		for _, retSlot := range returnSlotsForSymbol(rets, result.FlowSolution, lil.Target.Symbol) {
+		for _, retSlot := range returnSlotsForSymbol(rets, flowOps, lil.Target.Symbol) {
 			key := [2]int{retSlot, j}
 			if _, dup := seen[key]; dup {
 				continue
@@ -228,11 +253,11 @@ func paramIndexBySymbol(graph *cfg.Graph) map[cfg.SymbolID]int {
 // returnSlotsForSymbol returns the return slot indices that return the given
 // symbol on a live normal-return path. A slot returning a different value, or a
 // slot on a dead path, is not included.
-func returnSlotsForSymbol(rets []api.ReturnEvidence, solution *flow.Solution, sym cfg.SymbolID) []int {
+func returnSlotsForSymbol(rets []api.ReturnEvidence, flowOps api.FlowOps, sym cfg.SymbolID) []int {
 	var slots []int
 	seen := make(map[int]struct{})
 	for _, ret := range rets {
-		if ret.Info == nil || (solution != nil && solution.IsPointDead(ret.Point)) {
+		if ret.Info == nil || (flowOps != nil && flowOps.IsPointDead(ret.Point)) {
 			continue
 		}
 		for i := range ret.Info.Symbols {
@@ -454,32 +479,15 @@ func storeCapturedFactsFromResult(
 		return
 	}
 
+	transferValues := result.TransferValueFacts()
 	fields := captured.FieldFactsFromEvidence(result.Evidence.CapturedFields, func(point cfg.Point, target constraint.Path, static typ.Type, source flow.AssignmentSource) typ.Type {
-		if result.FlowSolution == nil {
+		if transferValues == nil {
 			return static
 		}
-		return result.FlowSolution.AssignedValueTypeAt(point, target, static, source)
+		return transferValues.AssignedValueTypeAt(point, target, static, source)
 	})
 	if len(fields) > 0 {
 		writer.mergeParentFactsForSymbol(fnSym, interprocdomain.CapturedFieldAssignsDelta(fnSym, fields))
-	}
-
-	mutations := captured.ContainerMutationsFromEvidence(result.Evidence.CapturedContainers, captured.MutatorTypeObservers{
-		Value: func(point cfg.Point, valuePath constraint.Path, static typ.Type, template flow.ValueTemplate) typ.Type {
-			if result.FlowSolution == nil {
-				return static
-			}
-			return result.FlowSolution.MutatorValueTypeAt(point, valuePath, static, template)
-		},
-		Key: func(point cfg.Point, keyPath constraint.Path, static typ.Type) typ.Type {
-			if result.FlowSolution == nil {
-				return static
-			}
-			return result.FlowSolution.MutatorKeyTypeAt(point, keyPath, static)
-		},
-	})
-	if len(mutations) > 0 {
-		writer.mergeParentFactsForSymbol(fnSym, interprocdomain.CapturedContainerMutationsDelta(fnSym, mutations))
 	}
 }
 

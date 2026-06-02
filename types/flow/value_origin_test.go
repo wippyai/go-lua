@@ -1,0 +1,158 @@
+package flow
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/lattice"
+)
+
+func TestValueOriginFactsDomainLaws(t *testing.T) {
+	entry := constraint.NewPath(cfg.SymbolID(1), "entry")
+	entryMeta := entry.Field("meta")
+	tests := constraint.NewPath(cfg.SymbolID(2), "tests")
+	items := constraint.NewPath(cfg.SymbolID(3), "items")
+	name := constraint.NewPath(cfg.SymbolID(4), "name")
+	value := constraint.NewPath(cfg.SymbolID(5), "value")
+
+	indexedEntry := ValueOriginFacts{}.WithPaths(entry, tests, ValueOriginIndexedIterator, 1)
+	indexedMeta := indexedEntry.WithPaths(entryMeta, items, ValueOriginIndexedIterator, 1)
+	keyedKey := ValueOriginFacts{}.WithPaths(name, items, ValueOriginKeyedIterator, 0)
+	keyedValue := keyedKey.WithPaths(value, items, ValueOriginKeyedIterator, 1)
+
+	lattice.LawSuite[ValueOriginFacts]{
+		Name:   "ValueOriginFacts",
+		Domain: ValueOriginFactsDomain,
+		Sample: []ValueOriginFacts{
+			ValueOriginFactsDomain.Bottom(),
+			ValueOriginFactsDomain.Top(),
+			indexedEntry,
+			indexedMeta,
+			keyedKey,
+			keyedValue,
+			ValueOriginFactsDomain.Join(indexedMeta, keyedValue),
+		},
+		Format: func(f ValueOriginFacts) string { return f.Format() },
+	}.Run(t)
+}
+
+func TestValueOriginFactsOriginsCoveringPath(t *testing.T) {
+	entry := constraint.NewPath(cfg.SymbolID(11), "entry")
+	tests := constraint.NewPath(cfg.SymbolID(12), "tests")
+	facts := ValueOriginFacts{}.WithPaths(entry, tests, ValueOriginIndexedIterator, 1)
+
+	uses := facts.OriginsCoveringPath(entry.Field("id"))
+	if len(uses) != 1 {
+		t.Fatalf("OriginsCoveringPath(entry.id) got %d uses, want 1: %s", len(uses), facts.Format())
+	}
+	if uses[0].Origin.Kind != ValueOriginIndexedIterator || uses[0].Origin.VarIndex != 1 {
+		t.Fatalf("origin = %#v, want indexed value origin", uses[0].Origin)
+	}
+	if len(uses[0].Remainder) != 1 || uses[0].Remainder[0].Name != "id" {
+		t.Fatalf("remainder = %#v, want [.id]", uses[0].Remainder)
+	}
+}
+
+func TestValueOriginFactsOriginsCoveringPathKeepsAllPrefixOrigins(t *testing.T) {
+	entry := constraint.NewPath(cfg.SymbolID(14), "entry")
+	entryMeta := entry.Field("meta")
+	tests := constraint.NewPath(cfg.SymbolID(15), "tests")
+	metadata := constraint.NewPath(cfg.SymbolID(16), "metadata")
+	facts := ValueOriginFacts{}.
+		WithPaths(entry, tests, ValueOriginIndexedIterator, 1).
+		WithPaths(entryMeta, metadata, ValueOriginIndexedIterator, 1)
+
+	uses := facts.OriginsCoveringPath(entryMeta.Field("id"))
+	if len(uses) != 2 {
+		t.Fatalf("OriginsCoveringPath(entry.meta.id) got %d uses, want both covering origins: %s", len(uses), facts.Format())
+	}
+	if len(uses[0].Remainder) != 1 || uses[0].Remainder[0].Name != "id" {
+		t.Fatalf("first origin should be most-specific entry.meta remainder [.id], got %#v", uses[0].Remainder)
+	}
+	if len(uses[1].Remainder) != 2 || uses[1].Remainder[0].Name != "meta" || uses[1].Remainder[1].Name != "id" {
+		t.Fatalf("second origin should be entry remainder [.meta, .id], got %#v", uses[1].Remainder)
+	}
+}
+
+func TestValueOriginFactsJoinKeepsMustFacts(t *testing.T) {
+	entry := constraint.NewPath(cfg.SymbolID(21), "entry")
+	tests := constraint.NewPath(cfg.SymbolID(22), "tests")
+	other := constraint.NewPath(cfg.SymbolID(23), "other")
+	common := ValueOriginFact{
+		Value:    KeyPresencePathKey(entry),
+		Source:   KeyPresencePathKey(tests),
+		Kind:     ValueOriginIndexedIterator,
+		VarIndex: 1,
+	}
+	extra := ValueOriginFact{
+		Value:    KeyPresencePathKey(other),
+		Source:   KeyPresencePathKey(tests),
+		Kind:     ValueOriginIndexedIterator,
+		VarIndex: 1,
+	}
+	left := ValueOriginFacts{}.With(common).With(extra)
+	right := ValueOriginFacts{}.With(common)
+
+	got := ValueOriginFactsDomain.Join(left, right)
+	if !ValueOriginFactsDomain.Equal(got, right) {
+		t.Fatalf("Join kept non-must origin: got %s want %s", got.Format(), right.Format())
+	}
+}
+
+func TestValueOriginFactsCanonicalizationIsDeterministic(t *testing.T) {
+	entry := constraint.NewPath(cfg.SymbolID(24), "entry")
+	tests := constraint.NewPath(cfg.SymbolID(25), "tests")
+	name := constraint.NewPath(cfg.SymbolID(26), "name")
+	items := constraint.NewPath(cfg.SymbolID(27), "items")
+	a := ValueOriginFact{
+		Value:    KeyPresencePathKey(entry),
+		Source:   KeyPresencePathKey(tests),
+		Kind:     ValueOriginIndexedIterator,
+		VarIndex: 1,
+	}
+	b := ValueOriginFact{
+		Value:    KeyPresencePathKey(name),
+		Source:   KeyPresencePathKey(items),
+		Kind:     ValueOriginKeyedIterator,
+		VarIndex: 0,
+	}
+
+	left := ValueOriginFacts{}.With(a).With(b).With(a)
+	right := ValueOriginFacts{}.With(b).With(a)
+	if !ValueOriginFactsDomain.Equal(left, right) {
+		t.Fatalf("canonicalization depends on insertion order: left=%s right=%s", left.Format(), right.Format())
+	}
+	if left.Format() != right.Format() {
+		t.Fatalf("format should be deterministic: left=%s right=%s", left.Format(), right.Format())
+	}
+}
+
+func TestValueOriginFactsKillAffectedByWrite(t *testing.T) {
+	entry := constraint.NewPath(cfg.SymbolID(31), "entry")
+	tests := constraint.NewPath(cfg.SymbolID(32), "tests")
+	facts := ValueOriginFacts{}.WithPaths(entry, tests, ValueOriginIndexedIterator, 1)
+
+	got := facts.KillAffectedByWrite(KeyPresencePathKey(tests.Field("items")))
+	if len(got.Entries()) != 0 {
+		t.Fatalf("source subtree write kept origin: %s", got.Format())
+	}
+
+	facts = ValueOriginFacts{}.WithPaths(entry, tests, ValueOriginIndexedIterator, 1)
+	got = facts.KillAffectedByWrite(KeyPresencePathKey(entry.Field("id")))
+	if len(got.Entries()) != 0 {
+		t.Fatalf("derived-value subtree write kept origin: %s", got.Format())
+	}
+}
+
+func TestValueOriginFactsKillAffectedByWritePreservesSiblings(t *testing.T) {
+	entryID := constraint.NewPath(cfg.SymbolID(33), "entry").Field("id")
+	entryName := constraint.NewPath(cfg.SymbolID(33), "entry").Field("name")
+	tests := constraint.NewPath(cfg.SymbolID(34), "tests")
+	facts := ValueOriginFacts{}.WithPaths(entryID, tests, ValueOriginIndexedIterator, 1)
+
+	got := facts.KillAffectedByWrite(KeyPresencePathKey(entryName))
+	if !ValueOriginFactsDomain.Equal(got, facts) {
+		t.Fatalf("sibling write killed unrelated origin: got=%s want=%s", got.Format(), facts.Format())
+	}
+}

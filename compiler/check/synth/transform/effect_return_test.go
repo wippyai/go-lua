@@ -3,6 +3,7 @@ package transform
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
@@ -50,7 +51,6 @@ func TestBuildSelectResultUnion_ResolvesNegativeCasesIndex(t *testing.T) {
 	})
 
 	want := typ.NewRecord().
-		Field("__select_case_id", typ.LiteralInt(0)).
 		Field("channel", typ.Integer).
 		Field("ok", typ.Boolean).
 		Field("value", typ.Boolean).
@@ -194,9 +194,9 @@ func TestApplyEffectTransform_FlowIntoParameterField(t *testing.T) {
 		Effects(effect.Row{Labels: []effect.Label{
 			effect.FlowInto{
 				ParamIndex:  0,
-				SourcePath:  "message",
+				SourcePath:  effect.FieldPath("message"),
 				ReturnIndex: 0,
-				TargetPath:  "error_message",
+				TargetPath:  effect.FieldPath("error_message"),
 				Remainder:   typ.String,
 			},
 		}}).
@@ -226,7 +226,7 @@ func TestApplyEffectTransform_FlowIntoOnlyRefinesMatchingUnionMember(t *testing.
 		Param("info", typ.Any).
 		Returns(base).
 		Effects(effect.Row{Labels: []effect.Label{
-			effect.FlowInto{ParamIndex: 0, SourcePath: "message", ReturnIndex: 0, TargetPath: "error_message"},
+			effect.FlowInto{ParamIndex: 0, SourcePath: effect.FieldPath("message"), ReturnIndex: 0, TargetPath: effect.FieldPath("error_message")},
 		}}).
 		Build()
 	args := []typ.Type{
@@ -260,6 +260,49 @@ func TestApplyEffectTransform_FlowIntoOnlyRefinesMatchingUnionMember(t *testing.
 	}
 	if !foundError || !foundSuccess {
 		t.Fatalf("expected both variants after transform, got %v", got)
+	}
+}
+
+func TestApplyEffectTransform_FlowIntoPreservesStaticIndexes(t *testing.T) {
+	fn := typ.Func().
+		Param("info", typ.Any).
+		Returns(typ.NewRecord().Build()).
+		Effects(effect.Row{Labels: []effect.Label{
+			effect.FlowInto{
+				ParamIndex: 0,
+				SourcePath: effect.PathSuffix{
+					{Kind: constraint.SegmentIndexString, Name: "source.value"},
+				},
+				ReturnIndex: 0,
+				TargetPath: effect.PathSuffix{
+					{Kind: constraint.SegmentIndexString, Name: "error.message"},
+					{Kind: constraint.SegmentIndexInt, Index: 1},
+				},
+			},
+		}}).
+		Build()
+	args := []typ.Type{
+		typ.NewRecord().
+			StaticStringIndex("source.value", typ.String).
+			Build(),
+	}
+
+	got := ApplyEffectTransform(fn, args, 0, fn.Returns[0])
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("got %T, want record: %v", got, got)
+	}
+	member := rec.GetStaticStringIndex("error.message")
+	if member == nil {
+		t.Fatalf("missing static string target member in %v", rec)
+	}
+	nested, ok := member.Type.(*typ.Record)
+	if !ok {
+		t.Fatalf("nested member type = %T, want record", member.Type)
+	}
+	intMember := nested.GetStaticIntIndex(1)
+	if intMember == nil || !typ.TypeEquals(intMember.Type, typ.String) {
+		t.Fatalf("nested static int member = %v, want string", intMember)
 	}
 }
 

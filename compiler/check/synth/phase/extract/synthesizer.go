@@ -340,7 +340,7 @@ func (s *Synthesizer) synthNonRecursiveExpr(expr ast.Expr, sc *scope.State, p cf
 	case *ast.IdentExpr:
 		return s.synthIdentCore(ex, p, sc, narrower), true
 	case *ast.FunctionExpr:
-		return s.FunctionType(ex, sc), true
+		return s.synthFunctionTypeWithCapturePoint(ex, sc, nil, p, nil), true
 	case *ast.StringConcatOpExpr:
 		return typ.String, true
 	case *ast.UnaryNotOpExpr:
@@ -489,10 +489,8 @@ func (s *Synthesizer) identifierSymbols(ctx api.BaseEnv, ex *ast.IdentExpr, p cf
 }
 
 func unresolvedIdentifierType(ctx api.BaseEnv, sc *scope.State, name string) typ.Type {
-	if globalTypes := ctx.GlobalTypes(); globalTypes != nil {
-		if t, ok := globalTypes[name]; ok && t != nil {
-			return t
-		}
+	if t, ok := ctx.GlobalTypeOverlay().Type(name); ok && t != nil {
+		return t
 	}
 	if sc != nil {
 		if t, ok := sc.LookupType(name); ok && t != nil {
@@ -528,7 +526,18 @@ func (s *Synthesizer) narrowedIdentifierType(
 	effective := flow.TypedValue{Type: narrowed, State: flow.StateResolved}
 	if types := ctx.Types(); types != nil {
 		declared := types.DeclaredAt(p, sym)
-		effective = typefacts.SelectEffective(declared, effective, types.IsAnnotated(sym) || unwrap.Function(declared.Type) != nil)
+		static := declared
+		authoritative := types.IsAnnotated(sym)
+		if bindingFacts, ok := types.(flow.BindingValueFacts); ok {
+			binding := bindingFacts.BindingValueAt(p, sym)
+			if !authoritative && binding.Type != nil {
+				static = binding
+			}
+			authoritative = authoritative || unwrap.Function(binding.Type) != nil
+		} else {
+			authoritative = authoritative || unwrap.Function(declared.Type) != nil
+		}
+		effective = typefacts.SelectEffective(static, effective, authoritative)
 	}
 	if effective.State != flow.StateResolved || effective.Type == nil || effective.Type.Kind().IsPlaceholder() {
 		return nil, false

@@ -5,7 +5,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/types/domain/value"
+	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -15,16 +16,16 @@ type MapMutatorInfo struct {
 	ValueType typ.Type
 }
 
-// CollectFieldAssignments reduces transfer assignment evidence into field assignments grouped by base symbol.
-// Returns a map: symbolID -> map[fieldName]typ.Type representing fields assigned to each symbol.
+// CollectFieldAssignments reduces transfer assignment evidence into typed field
+// assignments grouped by base symbol.
 // The synth function is used to synthesize field value types.
 // If filterSyms is non-nil, only symbols in the filter are collected.
 func CollectFieldAssignments(
 	assignments []api.AssignmentEvidence,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	filterSyms map[cfg.SymbolID]bool,
-) map[cfg.SymbolID]map[string]typ.Type {
-	result := make(map[cfg.SymbolID]map[string]typ.Type)
+) FieldAssignments {
+	result := make(FieldAssignments)
 	if len(assignments) == 0 {
 		return result
 	}
@@ -65,6 +66,10 @@ func CollectFieldAssignments(
 			if filterSyms != nil && !filterSyms[sym] {
 				continue
 			}
+			fieldKey, ok := interprocdomain.FieldKeyFromName(fieldName)
+			if !ok {
+				continue
+			}
 
 			var fieldType typ.Type
 			if source != nil && synth != nil {
@@ -75,12 +80,13 @@ func CollectFieldAssignments(
 			}
 
 			if result[sym] == nil {
-				result[sym] = make(map[string]typ.Type)
+				result[sym] = make(interprocdomain.FieldValues)
 			}
-			if existing := result[sym][fieldName]; existing != nil {
-				result[sym][fieldName] = value.JoinPrecise(existing, fieldType)
+			fieldValue := product.FromType(fieldType)
+			if existing := result[sym][fieldKey]; !existing.IsZero() {
+				result[sym][fieldKey] = joinFieldValue(existing, fieldValue)
 			} else {
-				result[sym][fieldName] = fieldType
+				result[sym][fieldKey] = fieldValue
 			}
 		}
 	}
@@ -100,8 +106,8 @@ func CollectFunctionFieldAssignments(
 	functions []api.FunctionDefinitionEvidence,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	filterSyms map[cfg.SymbolID]bool,
-) map[cfg.SymbolID]map[string]typ.Type {
-	result := make(map[cfg.SymbolID]map[string]typ.Type)
+) FieldAssignments {
+	result := make(FieldAssignments)
 	if len(functions) == 0 {
 		return result
 	}
@@ -124,6 +130,10 @@ func CollectFunctionFieldAssignments(
 		if filterSyms != nil && !filterSyms[target.Symbol] {
 			continue
 		}
+		fieldKey, ok := interprocdomain.FieldKeyFromName(seg.Name)
+		if !ok {
+			continue
+		}
 		fieldType := typ.Type(nil)
 		if synth != nil {
 			fieldType = synth(info.FuncExpr, def.Nested.Point)
@@ -132,12 +142,13 @@ func CollectFunctionFieldAssignments(
 			fieldType = typ.Unknown
 		}
 		if result[target.Symbol] == nil {
-			result[target.Symbol] = make(map[string]typ.Type)
+			result[target.Symbol] = make(interprocdomain.FieldValues)
 		}
-		if existing := result[target.Symbol][seg.Name]; existing != nil {
-			result[target.Symbol][seg.Name] = value.JoinPrecise(existing, fieldType)
+		fieldValue := product.FromType(fieldType)
+		if existing := result[target.Symbol][fieldKey]; !existing.IsZero() {
+			result[target.Symbol][fieldKey] = joinFieldValue(existing, fieldValue)
 		} else {
-			result[target.Symbol][seg.Name] = fieldType
+			result[target.Symbol][fieldKey] = fieldValue
 		}
 	}
 	return result

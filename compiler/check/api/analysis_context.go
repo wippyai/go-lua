@@ -1,8 +1,7 @@
 package api
 
 import (
-	"sort"
-
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -15,13 +14,40 @@ import (
 // checker context that also changes the meaning of a function body, such as
 // contract-provided callback globals and callsite-provided callback signatures.
 type AnalysisContext struct {
-	GlobalOverlay    map[string]product.AbstractValue
+	GlobalOverlay    GlobalOverlay
 	ExpectedFunction *typ.Function
+}
+
+// GlobalName identifies an external global name carried in an analysis context.
+// It is not a solver symbol; graph-local symbol lowering happens in the flow
+// input/entry-value boundary.
+type GlobalName = globalenv.Name
+
+// GlobalOverlay is the typed analysis-context carrier for callback/global
+// overlays. Source-name maps are lifted into this carrier at API boundaries.
+type GlobalOverlay = globalenv.ValueOverlay
+
+// GlobalOverlayFromValues admits an abstract-value map into the typed
+// analysis-context carrier.
+func GlobalOverlayFromValues(overlay map[GlobalName]product.AbstractValue) GlobalOverlay {
+	return globalenv.ValueOverlayFromValueMap(overlay)
+}
+
+// LiftGlobalOverlay admits an external source-name type map into the typed
+// analysis-context carrier.
+func LiftGlobalOverlay(overlay map[string]typ.Type) GlobalOverlay {
+	return globalenv.ValueOverlayFromTypeMap(overlay)
+}
+
+// ProjectGlobalOverlay projects analysis-context global overlays back to the
+// source-name map consumed by legacy environment construction.
+func ProjectGlobalOverlay(overlay GlobalOverlay) map[string]typ.Type {
+	return overlay.ToTypeMap()
 }
 
 // Empty reports whether this context carries no analysis-sensitive state.
 func (c AnalysisContext) Empty() bool {
-	return len(c.GlobalOverlay) == 0 && c.ExpectedFunction == nil
+	return c.GlobalOverlay.Empty() && c.ExpectedFunction == nil
 }
 
 // ParentHash returns the function-analysis parent key including this context.
@@ -30,12 +56,12 @@ func (c AnalysisContext) ParentHash(parentHash uint64) uint64 {
 		return parentHash
 	}
 	h := internal.HashCombine(parentHash, internal.FnvString("$analysis-context"))
-	if len(c.GlobalOverlay) > 0 {
+	if !c.GlobalOverlay.Empty() {
 		h = internal.HashCombine(h, internal.FnvString("globals"))
-		for _, name := range sortedContextNames(c.GlobalOverlay) {
-			h = internal.HashCombine(h, internal.FnvString(name))
-			if t := c.GlobalOverlay[name]; !t.IsZero() {
-				h = internal.HashCombine(h, t.Hash())
+		for _, binding := range c.GlobalOverlay.Clone() {
+			h = internal.HashCombine(h, internal.FnvString(binding.Name.String()))
+			if !binding.Value.IsZero() {
+				h = internal.HashCombine(h, binding.Value.Hash())
 			}
 		}
 	}
@@ -55,22 +81,7 @@ func MergeAnalysisContext(a, b AnalysisContext) AnalysisContext {
 		return cloneAnalysisContext(b)
 	}
 	out := cloneAnalysisContext(a)
-	if len(b.GlobalOverlay) > 0 {
-		if out.GlobalOverlay == nil {
-			out.GlobalOverlay = make(map[string]product.AbstractValue, len(b.GlobalOverlay))
-		}
-		for _, name := range sortedContextNames(b.GlobalOverlay) {
-			candidate := b.GlobalOverlay[name]
-			if candidate.IsZero() {
-				continue
-			}
-			if existing := out.GlobalOverlay[name]; !existing.IsZero() {
-				out.GlobalOverlay[name] = product.CarryForward(existing, candidate)
-			} else {
-				out.GlobalOverlay[name] = candidate
-			}
-		}
-	}
+	out.GlobalOverlay = globalenv.MergeValueOverlay(out.GlobalOverlay, b.GlobalOverlay)
 	out.ExpectedFunction = mergeContextExpectedFunction(out.ExpectedFunction, b.ExpectedFunction)
 	return out
 }
@@ -80,12 +91,7 @@ func cloneAnalysisContext(ctx AnalysisContext) AnalysisContext {
 		return AnalysisContext{}
 	}
 	out := AnalysisContext{}
-	if len(ctx.GlobalOverlay) > 0 {
-		out.GlobalOverlay = make(map[string]product.AbstractValue, len(ctx.GlobalOverlay))
-		for name, t := range ctx.GlobalOverlay {
-			out.GlobalOverlay[name] = t
-		}
-	}
+	out.GlobalOverlay = ctx.GlobalOverlay.Clone()
 	out.ExpectedFunction = normalizeExpectedFunctionContext(ctx.ExpectedFunction)
 	return out
 }
@@ -104,7 +110,7 @@ func mergeContextExpectedFunction(a, b *typ.Function) *typ.Function {
 	builder := typ.Func().ReserveParams(maxInt(len(a.Params), len(b.Params)))
 	if sameTypeParams(a.TypeParams, b.TypeParams) {
 		for _, tp := range a.TypeParams {
-			builder = builder.TypeParam(tp.Name, tp.Constraint)
+			builder = builder.TypeParamRef(tp)
 		}
 	}
 
@@ -239,16 +245,4 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func sortedContextNames(m map[string]product.AbstractValue) []string {
-	if len(m) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(m))
-	for name := range m {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }

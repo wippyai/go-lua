@@ -290,6 +290,35 @@ func TestResolveType_Function(t *testing.T) {
 	}
 }
 
+func TestResolveType_FunctionTypeParamsBindParamsAndReturns(t *testing.T) {
+	r := newTestResolver()
+	sc := scope.New()
+
+	expr := &ast.FunctionTypeExpr{
+		TypeParams: []ast.TypeParamExpr{{Name: "T"}},
+		Params: []ast.FunctionParamExpr{
+			{Name: "x", Type: &ast.PrimitiveTypeExpr{Name: "T"}},
+		},
+		Returns: []ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "T"}},
+	}
+	result := r.ResolveType(expr, sc)
+
+	fn, ok := result.(*typ.Function)
+	if !ok {
+		t.Fatalf("got %T, want function", result)
+	}
+	if len(fn.TypeParams) != 1 {
+		t.Fatalf("got %d type params, want 1", len(fn.TypeParams))
+	}
+	binder := fn.TypeParams[0]
+	if fn.Params[0].Type != binder {
+		t.Fatalf("param type = %v, want function binder %v", fn.Params[0].Type, binder)
+	}
+	if fn.Returns[0] != binder {
+		t.Fatalf("return type = %v, want function binder %v", fn.Returns[0], binder)
+	}
+}
+
 func TestResolveType_FunctionOptionalParam(t *testing.T) {
 	r := newTestResolver()
 	sc := scope.New()
@@ -782,6 +811,87 @@ func TestResolveTypeDef_Generic(t *testing.T) {
 	}
 	if len(generic.TypeParams) != 1 {
 		t.Fatalf("got %d type params, want 1", len(generic.TypeParams))
+	}
+}
+
+func TestResolveTypeDef_GenericFunctionAliasBodyBindsTypeParams(t *testing.T) {
+	r := newTestResolver()
+	sc := scope.New()
+
+	typeParams := []ast.TypeParamExpr{{Name: "T"}, {Name: "U"}}
+	typeExpr := &ast.FunctionTypeExpr{
+		Params: []ast.FunctionParamExpr{
+			{Name: "x", Type: &ast.TypeRefExpr{Path: []string{"T"}}},
+		},
+		Returns: []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"U"}}},
+	}
+	result := r.ResolveTypeDef("Mapper", typeExpr, typeParams, sc)
+
+	generic, ok := result.(*typ.Generic)
+	if !ok {
+		t.Fatalf("got %T, want generic", result)
+	}
+	fn, ok := generic.Body.(*typ.Function)
+	if !ok {
+		t.Fatalf("generic body = %T, want function", generic.Body)
+	}
+	if fn.Params[0].Type != generic.TypeParams[0] {
+		t.Fatalf("param type = %T %v, want first generic binder", fn.Params[0].Type, fn.Params[0].Type)
+	}
+	if fn.Returns[0] != generic.TypeParams[1] {
+		t.Fatalf("return type = %T %v, want second generic binder", fn.Returns[0], fn.Returns[0])
+	}
+}
+
+func TestResolveFunctionSignature_GenericAliasArgsBindFunctionTypeParams(t *testing.T) {
+	r := newTestResolver()
+	sc := scope.New()
+
+	mapper := r.ResolveTypeDef("Mapper", &ast.FunctionTypeExpr{
+		Params: []ast.FunctionParamExpr{
+			{Name: "x", Type: &ast.TypeRefExpr{Path: []string{"T"}}},
+		},
+		Returns: []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"U"}}},
+	}, []ast.TypeParamExpr{{Name: "T"}, {Name: "U"}}, sc)
+	sc = sc.WithType("Mapper", mapper)
+
+	fnExpr := &ast.FunctionExpr{
+		TypeParams: []ast.TypeParamExpr{{Name: "T"}, {Name: "U"}},
+		ParList: &ast.ParList{
+			Names: []string{"f", "v"},
+			Types: []ast.TypeExpr{
+				&ast.GenericTypeExpr{
+					Base: &ast.TypeRefExpr{Path: []string{"Mapper"}},
+					Args: []ast.TypeExpr{
+						&ast.TypeRefExpr{Path: []string{"T"}},
+						&ast.TypeRefExpr{Path: []string{"U"}},
+					},
+				},
+				&ast.TypeRefExpr{Path: []string{"T"}},
+			},
+		},
+		ReturnTypes: []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"U"}}},
+	}
+	sig := r.ResolveFunctionSignature(fnExpr, sc)
+
+	if sig == nil {
+		t.Fatal("expected function signature")
+	}
+	if len(sig.TypeParams) != 2 {
+		t.Fatalf("got %d type params, want 2", len(sig.TypeParams))
+	}
+	inst, ok := sig.Params[0].Type.(*typ.Instantiated)
+	if !ok {
+		t.Fatalf("f param type = %T %v, want instantiated Mapper", sig.Params[0].Type, sig.Params[0].Type)
+	}
+	if len(inst.TypeArgs) != 2 || inst.TypeArgs[0] != sig.TypeParams[0] || inst.TypeArgs[1] != sig.TypeParams[1] {
+		t.Fatalf("Mapper args = %#v, want function binders %#v", inst.TypeArgs, sig.TypeParams)
+	}
+	if sig.Params[1].Type != sig.TypeParams[0] {
+		t.Fatalf("v param type = %T %v, want first function binder", sig.Params[1].Type, sig.Params[1].Type)
+	}
+	if sig.Returns[0] != sig.TypeParams[1] {
+		t.Fatalf("return type = %T %v, want second function binder", sig.Returns[0], sig.Returns[0])
 	}
 }
 

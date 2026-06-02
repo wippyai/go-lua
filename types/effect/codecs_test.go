@@ -2257,10 +2257,25 @@ func TestFlowIntoCodec_RoundTrip(t *testing.T) {
 		name string
 		fi   FlowInto
 	}{
-		{"simple path", FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: "inner"}},
-		{"nested path", FlowInto{ParamIndex: 1, SourcePath: "payload", ReturnIndex: 0, TargetPath: "data.value"}},
+		{"simple path", FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: FieldPath("inner")}},
+		{"nested path", FlowInto{ParamIndex: 1, SourcePath: FieldPath("payload"), ReturnIndex: 0, TargetPath: FieldPath("data", "value")}},
 		{"empty path", FlowInto{ParamIndex: 0, ReturnIndex: 1}},
-		{"remainder", FlowInto{ParamIndex: 0, SourcePath: "message", ReturnIndex: 0, TargetPath: "message", Remainder: typ.String}},
+		{
+			"structural path",
+			FlowInto{
+				ParamIndex: 0,
+				SourcePath: PathSuffix{
+					{Kind: constraint.SegmentIndexString, Name: "payload.info"},
+					{Kind: constraint.SegmentIndexInt, Index: 1},
+				},
+				ReturnIndex: 0,
+				TargetPath: PathSuffix{
+					{Kind: constraint.SegmentIndexString, Name: ""},
+					{Kind: constraint.SegmentField, Name: "message"},
+				},
+			},
+		},
+		{"remainder", FlowInto{ParamIndex: 0, SourcePath: FieldPath("message"), ReturnIndex: 0, TargetPath: FieldPath("message"), Remainder: typ.String}},
 	}
 
 	codec := flowIntoCodec{}
@@ -2292,11 +2307,11 @@ func TestFlowIntoCodec_RoundTrip(t *testing.T) {
 				t.Errorf("ReturnIndex = %d, want %d", fi.ReturnIndex, tt.fi.ReturnIndex)
 			}
 
-			if fi.TargetPath != tt.fi.TargetPath {
+			if !fi.TargetPath.Equal(tt.fi.TargetPath) {
 				t.Errorf("TargetPath = %q, want %q", fi.TargetPath, tt.fi.TargetPath)
 			}
 
-			if fi.SourcePath != tt.fi.SourcePath {
+			if !fi.SourcePath.Equal(tt.fi.SourcePath) {
 				t.Errorf("SourcePath = %q, want %q", fi.SourcePath, tt.fi.SourcePath)
 			}
 

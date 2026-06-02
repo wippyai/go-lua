@@ -89,7 +89,7 @@ func (w *typeWriter) writeType(t typ.Type) {
 		kind.Any, kind.Unknown, kind.Never, kind.Self:
 		// Singletons - kind is enough
 	case kind.Optional, kind.Union, kind.Intersection, kind.Tuple, kind.Function,
-		kind.Array, kind.Map, kind.Record, kind.Alias, kind.Generic, kind.Instantiated,
+		kind.Array, kind.Map, kind.ReadonlyMap, kind.Record, kind.Alias, kind.Generic, kind.Instantiated,
 		kind.Platform, kind.Literal, kind.Ref, kind.Meta, kind.TypeParam, kind.TypeVar,
 		kind.Sum, kind.Interface, kind.FieldAccess, kind.IndexAccess, kind.Recursive:
 		w.writeTypeData(t)
@@ -196,6 +196,15 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 			w.writeType(v.Value)
 			return struct{}{}
 		},
+		ReadonlyMap: func(v *typ.ReadonlyMap) struct{} {
+			if v.Key == nil || v.Value == nil {
+				w.err = ErrInvalidType
+				return struct{}{}
+			}
+			w.writeType(v.Key)
+			w.writeType(v.Value)
+			return struct{}{}
+		},
 		Record: func(v *typ.Record) struct{} {
 			w.writeUint32(uint32(len(v.Fields)))
 			for _, f := range v.Fields {
@@ -207,6 +216,19 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 				w.writeType(f.Type)
 				w.writeBool(f.Optional)
 				w.writeBool(f.Readonly)
+			}
+			w.writeUint32(uint32(len(v.StaticMembers)))
+			for _, m := range v.StaticMembers {
+				w.writeByte(byte(m.Kind))
+				w.writeString(m.Name)
+				w.writeUint64(uint64(m.Index))
+				if m.Type == nil {
+					w.err = ErrInvalidType
+					return struct{}{}
+				}
+				w.writeType(m.Type)
+				w.writeBool(m.Optional)
+				w.writeBool(m.Readonly)
 			}
 
 			w.writeBool(v.Metatable != nil)
@@ -448,7 +470,7 @@ func (w *typeWriter) writeLiteral(lit *typ.Literal) {
 			w.writeString(v)
 		}
 	case kind.Nil, kind.Any, kind.Unknown, kind.Never, kind.Optional, kind.Union,
-		kind.Intersection, kind.Tuple, kind.Function, kind.Array, kind.Map, kind.Record,
+		kind.Intersection, kind.Tuple, kind.Function, kind.Array, kind.Map, kind.ReadonlyMap, kind.Record,
 		kind.Sum, kind.Interface, kind.Alias, kind.Generic, kind.Instantiated, kind.Platform,
 		kind.Literal, kind.Self, kind.Ref, kind.Meta, kind.TypeParam, kind.TypeVar,
 		kind.Refined, kind.FieldAccess, kind.IndexAccess, kind.Recursive:

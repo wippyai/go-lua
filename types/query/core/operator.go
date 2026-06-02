@@ -513,7 +513,7 @@ func unaryLength(operand typ.Type) typ.Type {
 		return typ.Integer
 	case kind.Record:
 		return typ.Integer
-	case kind.Map:
+	case kind.Map, kind.ReadonlyMap:
 		return typ.Integer
 	case kind.Optional:
 		return unaryLength(operand.(*typ.Optional).Inner)

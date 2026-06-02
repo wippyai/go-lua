@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -34,12 +33,12 @@ func InputsEqual(a, b *Inputs) bool {
 		variantFieldOriginsEqual(a.VariantFieldOrigins, b.VariantFieldOrigins) &&
 		mapMutatorAssignmentsEqual(a.MapMutatorAssignments, b.MapMutatorAssignments) &&
 		tableMutatorAssignmentsEqual(a.TableMutatorAssignments, b.TableMutatorAssignments) &&
-		containerMutatorAssignmentsEqual(a.ContainerMutatorAssignments, b.ContainerMutatorAssignments) &&
 		pointBoolMapEqual(a.DeadPoints, b.DeadPoints) &&
 		symbolStringMapEqual(a.ModuleAliases, b.ModuleAliases) &&
 		symbolSymbolMapEqual(a.FunctionAliases, b.FunctionAliases) &&
 		symbolTypeMapEqual(a.SiblingTypes, b.SiblingTypes) &&
 		symbolTypeMapEqual(a.LiteralTypes, b.LiteralTypes) &&
+		symbolTypeMapEqual(a.BindingTypes, b.BindingTypes) &&
 		symbolSymbolMapEqual(a.KeysProvenance, b.KeysProvenance)
 }
 
@@ -53,16 +52,15 @@ func SolutionEqual(a, b *Solution) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return stringValueMapEqual(a.values, b.values) &&
-		nestedStringTypeMapEqual(a.fieldOverlayIndex, b.fieldOverlayIndex) &&
-		pointStringValueMapEqual(a.mutableOut, b.mutableOut) &&
+	return pathValueMapEqual(a.values, b.values) &&
+		pointPathValueMapEqual(a.mutableOut, b.mutableOut) &&
 		edgeConditionMapEqual(a.edgeConditions, b.edgeConditions) &&
 		symbolSliceEqual(a.declaredSyms, b.declaredSyms) &&
 		edgeNumericConstraintMapEqual(a.edgeNumericConstraints, b.edgeNumericConstraints) &&
 		edgeBoolMapEqual(a.unsatEdges, b.unsatEdges) &&
 		pointConditionMapEqual(a.pointConditions, b.pointConditions) &&
 		numericStateMapEqual(a.numericAt, b.numericAt) &&
-		stringStringMapEqual(a.pathAliases, b.pathAliases)
+		pathKeyMapEqual(a.pathAliases, b.pathAliases)
 }
 
 func typeEqual(a, b typ.Type) bool {
@@ -84,31 +82,7 @@ func symbolTypeMapEqual(a, b map[cfg.SymbolID]typ.Type) bool {
 	return true
 }
 
-func stringTypeMapEqual(a, b map[string]typ.Type) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		if !typeEqual(av, b[k]) {
-			return false
-		}
-	}
-	return true
-}
-
-func nestedStringTypeMapEqual(a, b map[string]map[string]typ.Type) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		if !stringTypeMapEqual(av, b[k]) {
-			return false
-		}
-	}
-	return true
-}
-
-func stringValueMapEqual(a, b map[string]product.AbstractValue) bool {
+func pathValueMapEqual(a, b pathValueMap) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -121,12 +95,12 @@ func stringValueMapEqual(a, b map[string]product.AbstractValue) bool {
 	return true
 }
 
-func pointStringValueMapEqual(a, b map[cfg.Point]map[string]product.AbstractValue) bool {
+func pointPathValueMapEqual(a, b map[cfg.Point]pathValueMap) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for k, av := range a {
-		if !stringValueMapEqual(av, b[k]) {
+		if !pathValueMapEqual(av, b[k]) {
 			return false
 		}
 	}
@@ -193,7 +167,7 @@ func symbolSymbolMapEqual(a, b map[cfg.SymbolID]cfg.SymbolID) bool {
 	return true
 }
 
-func stringStringMapEqual(a, b map[string]string) bool {
+func pathKeyMapEqual(a, b map[constraint.PathKey]constraint.PathKey) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -428,7 +402,7 @@ func returnConstraintsEqual(a, b map[cfg.Point]ReturnExprConstraints) bool {
 	return true
 }
 
-func predicateLinksEqual(a, b map[string]PredicateLink) bool {
+func predicateLinksEqual(a, b map[PredicateLinkKey]PredicateLink) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -516,8 +490,8 @@ func variantFieldOriginsEqual(a, b []VariantFieldOrigin) bool {
 		if !pathEqual(a[i].Target, b[i].Target) ||
 			a[i].Field != b[i].Field ||
 			!pathEqual(a[i].Source, b[i].Source) ||
-			a[i].DiscriminatorField != b[i].DiscriminatorField ||
-			!typeEqual(a[i].DiscriminatorValue, b[i].DiscriminatorValue) {
+			a[i].OriginFamily != b[i].OriginFamily ||
+			a[i].CaseIndex != b[i].CaseIndex {
 			return false
 		}
 	}
@@ -554,22 +528,6 @@ func tableMutatorAssignmentsEqual(a, b []TableMutatorAssignment) bool {
 			a[i].KeyVar != b[i].KeyVar ||
 			a[i].KeySymbol != b[i].KeySymbol ||
 			!typeEqual(a[i].KeyType, b[i].KeyType) ||
-			!pathEqual(a[i].ValuePath, b[i].ValuePath) ||
-			!typeEqual(a[i].ValueType, b[i].ValueType) ||
-			!valueTemplateEqual(a[i].Value, b[i].Value) {
-			return false
-		}
-	}
-	return true
-}
-
-func containerMutatorAssignmentsEqual(a, b []ContainerMutatorAssignment) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Point != b[i].Point ||
-			!pathEqual(a[i].Target, b[i].Target) ||
 			!pathEqual(a[i].ValuePath, b[i].ValuePath) ||
 			!typeEqual(a[i].ValueType, b[i].ValueType) ||
 			!valueTemplateEqual(a[i].Value, b[i].Value) {

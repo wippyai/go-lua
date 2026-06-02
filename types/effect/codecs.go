@@ -841,10 +841,10 @@ func (flowIntoCodec) Encode(l Label, w Writer) error {
 		return err
 	}
 
-	if err := w.WriteString(f.TargetPath); err != nil {
+	if err := writePathSuffix(w, f.TargetPath); err != nil {
 		return err
 	}
-	if err := w.WriteString(f.SourcePath); err != nil {
+	if err := writePathSuffix(w, f.SourcePath); err != nil {
 		return err
 	}
 	if f.Remainder == nil {
@@ -867,12 +867,12 @@ func (flowIntoCodec) Decode(r Reader) (Label, error) {
 		return nil, err
 	}
 
-	path, err := r.ReadString()
+	path, err := readPathSuffix(r)
 	if err != nil {
 		return nil, err
 	}
 
-	sourcePath, err := r.ReadString()
+	sourcePath, err := readPathSuffix(r)
 	if err != nil {
 		return nil, err
 	}
@@ -894,6 +894,68 @@ func (flowIntoCodec) Decode(r Reader) (Label, error) {
 	}
 
 	return FlowInto{ParamIndex: int(param), ReturnIndex: int(ret), TargetPath: path, SourcePath: sourcePath, Remainder: remainder}, nil
+}
+
+func writePathSuffix(w Writer, path PathSuffix) error {
+	if err := w.WriteInt32(int32(len(path))); err != nil {
+		return err
+	}
+	for _, seg := range path {
+		if err := w.WriteInt32(int32(seg.Kind)); err != nil {
+			return err
+		}
+		switch seg.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			if err := w.WriteString(seg.Name); err != nil {
+				return err
+			}
+		case constraint.SegmentIndexInt:
+			if err := w.WriteInt32(int32(seg.Index)); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown path segment kind %d", seg.Kind)
+		}
+	}
+	return nil
+}
+
+func readPathSuffix(r Reader) (PathSuffix, error) {
+	count, err := r.ReadInt32()
+	if err != nil {
+		return nil, err
+	}
+	if count < 0 {
+		return nil, fmt.Errorf("negative path segment count %d", count)
+	}
+	if count == 0 {
+		return nil, nil
+	}
+	out := make(PathSuffix, 0, count)
+	for i := int32(0); i < count; i++ {
+		rawKind, err := r.ReadInt32()
+		if err != nil {
+			return nil, err
+		}
+		seg := constraint.Segment{Kind: constraint.SegmentKind(rawKind)}
+		switch seg.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			seg.Name, err = r.ReadString()
+			if err != nil {
+				return nil, err
+			}
+		case constraint.SegmentIndexInt:
+			rawIndex, err := r.ReadInt32()
+			if err != nil {
+				return nil, err
+			}
+			seg.Index = int(rawIndex)
+		default:
+			return nil, fmt.Errorf("unknown path segment kind %d", seg.Kind)
+		}
+		out = append(out, seg)
+	}
+	return out, nil
 }
 
 // sendCodec handles Send effect serialization.

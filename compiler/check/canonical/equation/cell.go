@@ -17,9 +17,11 @@
 //
 // Because both halves live in one solver, the widening site is the
 // feedback-vertex set of the COMBINED graph: the CFG loop-header FVS (from
-// propagate.FeedbackVertexSet) for point cells, plus any contract cell that
-// sits on an entry->body->contract->entry cycle. Acyclic contract cells use
-// exact Join (no widening), preserving precision.
+// propagate.FeedbackVertexSet) for point cells, plus parameter contract cells
+// that can close the entry->body->contract->entry demand cycle. The generic
+// solver exact-joins a widening cell's initial fan-in before the cell's first
+// transfer visit, then applies delayed widening only to continuing post-visit
+// growth, preserving one-shot demand precision without a fake discovery pass.
 //
 // This package is a clean isolated leaf. It does not touch the legacy flow; the
 // real per-node transfer is supplied as an injected NodeTransfer so the sound

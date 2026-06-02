@@ -83,8 +83,7 @@ type InterprocFactProduct interface {
 	LiteralSig(fn *ast.FunctionExpr) (*typ.Function, bool)
 	CapturedType(sym cfg.SymbolID) (typ.Type, bool)
 	CapturedFieldAssigns() CapturedFieldAssigns
-	CapturedContainerMutations() CapturedContainerMutations
-	ConstructorFields(classSym cfg.SymbolID) (map[string]typ.Type, bool)
+	ConstructorFields(classSym cfg.SymbolID) (FieldValues, bool)
 }
 
 // InterprocFactReader exposes visible interproc fact products.

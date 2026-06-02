@@ -6,9 +6,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	abstractreturns "github.com/wippyai/go-lua/compiler/check/abstract/returns"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
-	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
@@ -16,10 +17,11 @@ import (
 type solvedSignatureInput struct {
 	graph          *cfg.Graph
 	evidence       api.FlowEvidence
-	flowSolution   *flow.Solution
+	flowOps        api.FlowOps
 	source         *typ.Function
 	moduleBindings *bind.BindingTable
 	observer       observation.Projector
+	returnSynth    abstractreturns.ExprSynth
 }
 
 // SolvedSignatureFromResult projects the solved function signature from a full
@@ -31,10 +33,11 @@ func SolvedSignatureFromResult(result *api.FuncResult, fn *ast.FunctionExpr) *ty
 	return solvedSignatureFromInput(solvedSignatureInput{
 		graph:          result.Graph,
 		evidence:       result.Evidence,
-		flowSolution:   result.FlowSolution,
+		flowOps:        result.SolvedFlow(),
 		source:         result.SourceSignature,
 		moduleBindings: result.ModuleBindings,
 		observer:       observation.FromFuncResult(result, nil),
+		returnSynth:    result.NarrowSynth,
 	}, fn)
 }
 
@@ -45,11 +48,12 @@ func SolvedSignatureFromView(result *api.FuncAnalysisView, fn *ast.FunctionExpr)
 		return nil
 	}
 	return solvedSignatureFromInput(solvedSignatureInput{
-		graph:        result.Graph,
-		evidence:     result.Evidence,
-		flowSolution: result.FlowSolution,
-		source:       result.SourceSignature,
-		observer:     observation.FromAnalysisView(result, nil),
+		graph:       result.Graph,
+		evidence:    result.Evidence,
+		flowOps:     result.SolvedFlow(),
+		source:      result.SourceSignature,
+		observer:    observation.FromAnalysisView(result, nil),
+		returnSynth: result.NarrowSynth,
 	}, fn)
 }
 
@@ -62,21 +66,25 @@ func solvedSignatureFromInput(input solvedSignatureInput, fn *ast.FunctionExpr) 
 		fnType = typ.Func().Build()
 	}
 	if len(fn.ReturnTypes) == 0 {
-		if observed := abstractreturns.ObservedSummary(input.graph, input.evidence.Returns, input.flowSolution, input.observer); len(observed) > 0 {
+		returnSynth := input.returnSynth
+		if returnSynth == nil {
+			returnSynth = input.observer
+		}
+		if observed := abstractreturns.ObservedSummary(input.graph, input.evidence.Returns, input.flowOps, returnSynth); len(observed) > 0 {
 			if aligned := typjoin.WithReturns(fnType, observed); aligned != nil {
 				fnType = aligned
 			}
 		}
 	}
 	fnType = attachSolvedCallbackOverlaySpec(fnType, input)
-	return erreffect.AttachInferredErrorReturnSpec(fnType, input.evidence, input.flowSolution, input.observer)
+	return erreffect.AttachInferredErrorReturnSpec(fnType, input.evidence, input.flowOps, input.observer)
 }
 
 func attachSolvedCallbackOverlaySpec(fnType *typ.Function, input solvedSignatureInput) *typ.Function {
 	if fnType == nil || input.graph == nil {
 		return fnType
 	}
-	overlays := InferCallbackEnvOverlays(
+	overlays := callbackenv.Infer(
 		input.graph,
 		input.evidence,
 		input.graph.ParamSlotsReadOnly(),
@@ -86,5 +94,24 @@ func attachSolvedCallbackOverlaySpec(fnType *typ.Function, input solvedSignature
 	if len(overlays) == 0 {
 		return fnType
 	}
-	return AttachCallbackEnvOverlays(fnType, overlays)
+	return attachCallbackEnvOverlays(fnType, overlays)
+}
+
+func attachCallbackEnvOverlays(fnType *typ.Function, overlays callbackenv.Overlays) *typ.Function {
+	if fnType == nil || len(overlays) == 0 {
+		return fnType
+	}
+	spec := cloneContractSpec(fnType)
+	for _, param := range overlays {
+		if len(param.Overlay) == 0 {
+			continue
+		}
+		cb := spec.GetCallback(param.ParamIndex).Clone()
+		if cb == nil {
+			cb = &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce}
+		}
+		cb.EnvOverlay = callbackenv.MergeIntoContractOverlay(cb.EnvOverlay, param.Overlay)
+		spec.WithCallback(param.ParamIndex, cb)
+	}
+	return rebuildFunctionWithSpec(fnType, spec)
 }

@@ -80,6 +80,17 @@ func (b *FunctionBuilder) TypeParam(name string, constraint Type) *FunctionBuild
 	return b
 }
 
+// TypeParamRef adds an already-created type parameter binder. Use this when the
+// function's binder and the scope entries used to resolve its annotations must
+// be the same node.
+func (b *FunctionBuilder) TypeParamRef(param *TypeParam) *FunctionBuilder {
+	if param == nil {
+		return b
+	}
+	b.typeParams = append(b.typeParams, param)
+	return b
+}
+
 // Param adds a required parameter.
 func (b *FunctionBuilder) Param(name string, t Type) *FunctionBuilder {
 	b.params = append(b.params, Param{Name: name, Type: t})

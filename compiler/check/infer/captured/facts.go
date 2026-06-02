@@ -3,11 +3,11 @@ package captured
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -25,27 +25,19 @@ func liftCarrierType(t typ.Type) product.AbstractValue {
 	return product.FromType(t)
 }
 
-// MutatorValueType observes a lowered mutator value after flow solving.
-type MutatorValueType func(cfg.Point, constraint.Path, typ.Type, flow.ValueTemplate) typ.Type
+// PromotedFieldSet identifies field slots proven present at a capture boundary.
+type PromotedFieldSet map[interprocdomain.FieldKey]bool
 
-// MutatorKeyType observes a lowered mutator key after flow solving.
-type MutatorKeyType func(cfg.Point, constraint.Path, typ.Type) typ.Type
-
-// MutatorTypeObservers holds solved abstract-state readers for captured
-// mutator evidence. Evidence reducers consume these readers instead of
-// re-synthesizing AST expressions after flow lowering.
-type MutatorTypeObservers struct {
-	Value MutatorValueType
-	Key   MutatorKeyType
-}
+// PromotedFields maps captured symbols to their proven-present field slots.
+type PromotedFields map[cfg.SymbolID]PromotedFieldSet
 
 // FieldFactsFromEvidence reduces captured field assignment evidence into
 // canonical captured-field facts.
-func FieldFactsFromEvidence(evidence []api.CapturedFieldEvidence, observe AssignedValueType) map[cfg.SymbolID]map[string]typ.Type {
+func FieldFactsFromEvidence(evidence []api.CapturedFieldEvidence, observe AssignedValueType) map[cfg.SymbolID]interprocdomain.FieldValues {
 	if len(evidence) == 0 {
 		return nil
 	}
-	fields := make(map[cfg.SymbolID]map[string]typ.Type)
+	fields := make(map[cfg.SymbolID]interprocdomain.FieldValues)
 	for _, ev := range evidence {
 		if ev.Target == 0 || ev.Field == "" {
 			continue
@@ -64,13 +56,9 @@ func FieldFactsFromEvidence(evidence []api.CapturedFieldEvidence, observe Assign
 			continue
 		}
 		if fields[ev.Target] == nil {
-			fields[ev.Target] = make(map[string]typ.Type)
+			fields[ev.Target] = make(interprocdomain.FieldValues)
 		}
-		if existing := fields[ev.Target][field]; existing != nil {
-			fields[ev.Target][field] = value.JoinPrecise(existing, fieldType)
-		} else {
-			fields[ev.Target][field] = fieldType
-		}
+		fields[ev.Target][field] = mergeCapturedFieldValue(fields[ev.Target][field], fieldType)
 	}
 	if len(fields) == 0 {
 		return nil
@@ -82,11 +70,11 @@ func FieldFactsFromEvidence(evidence []api.CapturedFieldEvidence, observe Assign
 // visible at observedPoint into captured field facts. Root rebindings are
 // excluded; only paths below a captured root are admitted as mutable
 // capture-surface evidence.
-func FieldFactsFromAssignmentsAtPoint(inputs *flow.Inputs, capturedSyms map[cfg.SymbolID]bool, observedPoint cfg.Point) map[cfg.SymbolID]map[string]typ.Type {
+func FieldFactsFromAssignmentsAtPoint(inputs *flow.Inputs, capturedSyms map[cfg.SymbolID]bool, observedPoint cfg.Point) map[cfg.SymbolID]interprocdomain.FieldValues {
 	if inputs == nil || len(inputs.Assignments) == 0 || len(capturedSyms) == 0 {
 		return nil
 	}
-	facts := make(map[cfg.SymbolID]map[string]typ.Type)
+	facts := make(map[cfg.SymbolID]interprocdomain.FieldValues)
 	for _, assignment := range inputs.Assignments {
 		if observedPoint != 0 && assignment.Point > observedPoint {
 			continue
@@ -106,13 +94,9 @@ func FieldFactsFromAssignmentsAtPoint(inputs *flow.Inputs, capturedSyms map[cfg.
 			continue
 		}
 		if facts[ev.Target] == nil {
-			facts[ev.Target] = make(map[string]typ.Type)
+			facts[ev.Target] = make(interprocdomain.FieldValues)
 		}
-		if existing := facts[ev.Target][field]; existing != nil {
-			facts[ev.Target][field] = value.JoinPrecise(existing, fieldType)
-		} else {
-			facts[ev.Target][field] = fieldType
-		}
+		facts[ev.Target][field] = mergeCapturedFieldValue(facts[ev.Target][field], fieldType)
 	}
 	if len(facts) == 0 {
 		return nil
@@ -120,28 +104,28 @@ func FieldFactsFromAssignmentsAtPoint(inputs *flow.Inputs, capturedSyms map[cfg.
 	return facts
 }
 
-// PromotedFieldNamesAtPoint reports, per captured symbol, the top-level field
-// names whose assignment definitely reaches observedPoint with a concrete,
-// non-nilable value. Promotion is restricted to single-segment field writes
-// whose assignment point dominates observedPoint: only those prove the field is
-// present (no longer optional) at the capture boundary. Multi-segment writes
-// (s.f.g = v) do not establish that s.f itself is present and are excluded.
-func PromotedFieldNamesAtPoint(
+// PromotedFieldsAtPoint reports, per captured symbol, the top-level field slots
+// whose assignment definitely reaches observedPoint with a concrete, non-nilable
+// value. Promotion is restricted to single-segment field writes whose assignment
+// point dominates observedPoint: only those prove the field is present (no
+// longer optional) at the capture boundary. Multi-segment writes (s.f.g = v) do
+// not establish that s.f itself is present and are excluded.
+func PromotedFieldsAtPoint(
 	inputs *flow.Inputs,
 	capturedSyms map[cfg.SymbolID]bool,
 	observedPoint cfg.Point,
 	dominates func(assignPoint, observedPoint cfg.Point) bool,
-) map[cfg.SymbolID]map[string]bool {
+) PromotedFields {
 	if inputs == nil || len(inputs.Assignments) == 0 || len(capturedSyms) == 0 || dominates == nil {
 		return nil
 	}
-	promoted := make(map[cfg.SymbolID]map[string]bool)
+	promoted := make(PromotedFields)
 	for _, assignment := range inputs.Assignments {
 		path := assignment.TargetPath
 		if path.Symbol == 0 || len(path.Segments) != 1 || !capturedSyms[path.Symbol] {
 			continue
 		}
-		name, ok := capturedFieldSegmentName(path.Segments[0])
+		fieldKey, ok := capturedFieldSegmentKey(path.Segments[0])
 		if !ok {
 			continue
 		}
@@ -152,9 +136,9 @@ func PromotedFieldNamesAtPoint(
 			continue
 		}
 		if promoted[path.Symbol] == nil {
-			promoted[path.Symbol] = make(map[string]bool)
+			promoted[path.Symbol] = make(PromotedFieldSet)
 		}
-		promoted[path.Symbol][name] = true
+		promoted[path.Symbol][fieldKey] = true
 	}
 	if len(promoted) == 0 {
 		return nil
@@ -162,19 +146,26 @@ func PromotedFieldNamesAtPoint(
 	return promoted
 }
 
-func capturedFieldFactValue(ev api.CapturedFieldEvidence, leaf typ.Type) (string, typ.Type, bool) {
-	field := ev.Field
+func capturedFieldFactValue(ev api.CapturedFieldEvidence, leaf typ.Type) (interprocdomain.FieldKey, typ.Type, bool) {
+	var field interprocdomain.FieldKey
+	if ev.Field != "" {
+		var ok bool
+		field, ok = interprocdomain.FieldKeyFromName(ev.Field)
+		if !ok {
+			return interprocdomain.FieldKey{}, nil, false
+		}
+	}
 	segments := ev.TargetPath.Segments
 	if len(segments) > 0 {
-		first, ok := capturedFieldSegmentName(segments[0])
+		first, ok := capturedFieldSegmentKey(segments[0])
 		if !ok {
-			return "", nil, false
+			return interprocdomain.FieldKey{}, nil, false
 		}
 		field = first
 		segments = segments[1:]
 	}
-	if field == "" {
-		return "", nil, false
+	if _, ok := interprocdomain.FieldKeyStringKey(field); !ok {
+		return interprocdomain.FieldKey{}, nil, false
 	}
 	return field, nestCapturedFieldValue(segments, leaf), true
 }
@@ -203,54 +194,31 @@ func capturedFieldSegmentName(seg constraint.Segment) (string, bool) {
 	}
 }
 
-// ContainerMutationsFromEvidence reduces captured container mutation evidence
-// into canonical captured-container mutation facts.
-func ContainerMutationsFromEvidence(evidence []api.CapturedContainerEvidence, observe MutatorTypeObservers) map[cfg.SymbolID][]api.ContainerMutation {
-	if len(evidence) == 0 {
-		return nil
+func capturedFieldSegmentKey(seg constraint.Segment) (interprocdomain.FieldKey, bool) {
+	switch seg.Kind {
+	case constraint.SegmentField, constraint.SegmentIndexString:
+		if seg.Name == "" {
+			return interprocdomain.FieldKey{}, false
+		}
+		return seg, true
+	default:
+		return interprocdomain.FieldKey{}, false
 	}
-	mutations := make(map[cfg.SymbolID][]api.ContainerMutation)
-	for _, ev := range evidence {
-		if ev.Target == 0 {
-			continue
-		}
-		valueType := ev.ValueType
-		if observe.Value != nil {
-			if t := observe.Value(ev.Point, ev.ValuePath, ev.ValueType, ev.ValueTemplate); t != nil {
-				valueType = t
-			}
-		}
-		if valueType == nil {
-			valueType = typ.Unknown
-		}
-		keyType := ev.KeyType
-		if observe.Key != nil {
-			if t := observe.Key(ev.Point, ev.KeyPath, ev.KeyType); t != nil {
-				keyType = t
-			}
-		}
-		if ev.Kind == api.ContainerMutationMapElement && keyType == nil {
-			keyType = typ.Unknown
-		}
-		mutations[ev.Target] = append(mutations[ev.Target], api.ContainerMutation{
-			Kind:      ev.Kind,
-			Segments:  cloneSegments(ev.Segments),
-			KeyType:   liftCarrierType(subtype.WidenForInference(keyType)),
-			ValueMode: ev.ValueMode,
-			ValueType: liftCarrierType(subtype.WidenForInference(valueType)),
-		})
-	}
-	if len(mutations) == 0 {
-		return nil
-	}
-	return mutations
 }
 
-func cloneSegments(segments []constraint.Segment) []constraint.Segment {
-	if len(segments) == 0 {
-		return nil
+func mergeCapturedFieldValue(existing product.AbstractValue, next typ.Type) product.AbstractValue {
+	if existing.IsZero() {
+		return liftCarrierType(next)
 	}
-	out := make([]constraint.Segment, len(segments))
-	copy(out, segments)
-	return out
+	return liftCarrierType(valueJoinPrecise(existing.ProjectValue(), next))
+}
+
+func valueJoinPrecise(existing, next typ.Type) typ.Type {
+	if existing == nil {
+		return next
+	}
+	if next == nil {
+		return existing
+	}
+	return value.JoinPrecise(existing, next)
 }

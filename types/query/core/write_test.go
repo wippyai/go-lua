@@ -103,6 +103,20 @@ func TestIndexWrite_MapAndUnionUseWriteSideMeet(t *testing.T) {
 	}
 }
 
+func TestIndexWrite_ReadonlyMapRejectsWritesAndDeletes(t *testing.T) {
+	view := typ.NewReadonlyMap(typ.String, typ.Integer)
+
+	if slot, ok := IndexWrite(view, typ.String); ok {
+		t.Fatalf("readonly map must not expose writable slot, got %v", slot)
+	}
+	if slot, ok := IndexWriteObligation(view, typ.String); ok {
+		t.Fatalf("readonly map must not expose write obligation, got %v", slot)
+	}
+	if IndexDelete(view, typ.String) {
+		t.Fatal("readonly map must not allow delete")
+	}
+}
+
 func TestIndexWrite_ExactKeyUnionUsesWriteSideMeet(t *testing.T) {
 	rec := typ.NewRecord().
 		Field("name", typ.String).

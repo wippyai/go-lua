@@ -111,10 +111,10 @@ func TestBuildConstResolver_NilGraph(t *testing.T) {
 }
 
 func TestLinkKey(t *testing.T) {
-	key := predicate.LinkKey("isValid", 42)
-	expected := "isValid@42"
+	key := predicate.LinkKey(cfg.SymbolID(12), 42)
+	expected := flow.PredicateLinkKey{Symbol: cfg.SymbolID(12), DefPoint: 42}
 	if key != expected {
-		t.Errorf("expected '%s', got '%s'", expected, key)
+		t.Errorf("expected %#v, got %#v", expected, key)
 	}
 }
 
@@ -230,7 +230,7 @@ func TestExtractAssignments_EmptyGraph(t *testing.T) {
 		TypeKeys:           make(map[uint64]typ.Type),
 		ReturnKinds:        make(map[cfg.Point]flow.ReturnKind),
 		ReturnConstraints:  make(map[cfg.Point]flow.ReturnExprConstraints),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
+		PredicateLinks:     make(map[flow.PredicateLinkKey]flow.PredicateLink),
 		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
 		ModuleAliases:      make(map[cfg.SymbolID]string),
 		Assignments:        []flow.UnifiedAssignment{},

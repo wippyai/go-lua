@@ -100,10 +100,15 @@ func (b *Builder) symbolFromIdent(ident *ast.IdentExpr) (basecfg.SymbolID, bool)
 	return b.Bindings.SymbolOf(ident)
 }
 
-// symbolFromExpr looks up the symbol for an expression if it's an identifier.
+// symbolFromExpr looks up the symbol for an expression when the CFG has a stable
+// identity for it.
 func (b *Builder) symbolFromExpr(expr ast.Expr) (basecfg.SymbolID, bool) {
 	if ident, ok := expr.(*ast.IdentExpr); ok {
 		return b.symbolFromIdent(ident)
+	}
+	if fn, ok := expr.(*ast.FunctionExpr); ok && fn != nil && b.Bindings != nil {
+		sym := b.Bindings.GetOrCreateFuncLitSymbol(fn)
+		return sym, sym != 0
 	}
 
 	return 0, false

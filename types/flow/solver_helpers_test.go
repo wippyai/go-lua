@@ -17,26 +17,28 @@ func TestDependencyMap_Register(t *testing.T) {
 	dm.register("key2", 3)
 	dm.register("", 4) // empty key should be ignored
 
-	if len(dm["key1"]) != 2 {
-		t.Errorf("key1 should have 2 points, got %d", len(dm["key1"]))
+	key1 := dependencyPathKey("key1")
+	key2 := dependencyPathKey("key2")
+	if len(dm[key1]) != 2 {
+		t.Errorf("key1 should have 2 points, got %d", len(dm[key1]))
 	}
-	if len(dm["key2"]) != 1 {
-		t.Errorf("key2 should have 1 point, got %d", len(dm["key2"]))
+	if len(dm[key2]) != 1 {
+		t.Errorf("key2 should have 1 point, got %d", len(dm[key2]))
 	}
-	if _, exists := dm[""]; exists {
+	if _, exists := dm[dependencyKey{}]; exists {
 		t.Error("empty key should not be registered")
 	}
 }
 
 func TestAddDependentPoints(t *testing.T) {
 	deps := make(dependencyMap)
-	deps["key1"] = []cfg.Point{1, 2}
-	deps["key2"] = []cfg.Point{3}
+	deps[dependencyPathKey("key1")] = []cfg.Point{1, 2}
+	deps[dependencyPathKey("key2")] = []cfg.Point{3}
 
 	worklist := []cfg.Point{10}
 	inQueue := map[cfg.Point]bool{10: true}
 
-	changedKeys := []string{"key1", "key2"}
+	changedKeys := []constraint.PathKey{"key1", "key2"}
 	worklist = addDependentPoints(deps, changedKeys, worklist, inQueue)
 
 	if len(worklist) != 4 {
@@ -53,12 +55,12 @@ func TestAddDependentPoints(t *testing.T) {
 
 func TestAddDependentPoints_NoDuplicates(t *testing.T) {
 	deps := make(dependencyMap)
-	deps["key1"] = []cfg.Point{1, 2}
+	deps[dependencyPathKey("key1")] = []cfg.Point{1, 2}
 
 	worklist := []cfg.Point{1} // 1 is already in worklist
 	inQueue := map[cfg.Point]bool{1: true}
 
-	changedKeys := []string{"key1"}
+	changedKeys := []constraint.PathKey{"key1"}
 	worklist = addDependentPoints(deps, changedKeys, worklist, inQueue)
 
 	// Should only add point 2, not duplicate 1
@@ -69,12 +71,12 @@ func TestAddDependentPoints_NoDuplicates(t *testing.T) {
 
 func TestAddDependentPoints_UnknownKey(t *testing.T) {
 	deps := make(dependencyMap)
-	deps["key1"] = []cfg.Point{1}
+	deps[dependencyPathKey("key1")] = []cfg.Point{1}
 
 	var worklist []cfg.Point
 	inQueue := map[cfg.Point]bool{}
 
-	changedKeys := []string{"unknown_key"}
+	changedKeys := []constraint.PathKey{"unknown_key"}
 	worklist = addDependentPoints(deps, changedKeys, worklist, inQueue)
 
 	if len(worklist) != 0 {
@@ -84,13 +86,13 @@ func TestAddDependentPoints_UnknownKey(t *testing.T) {
 
 func TestAddDependentPoints_DeterministicOrder(t *testing.T) {
 	deps := make(dependencyMap)
-	deps["key2"] = []cfg.Point{4, 1}
-	deps["key1"] = []cfg.Point{3, 2}
+	deps[dependencyPathKey("key2")] = []cfg.Point{4, 1}
+	deps[dependencyPathKey("key1")] = []cfg.Point{3, 2}
 
 	var worklist []cfg.Point
 	inQueue := map[cfg.Point]bool{}
 
-	changedKeys := []string{"key2", "key1"}
+	changedKeys := []constraint.PathKey{"key2", "key1"}
 	worklist = addDependentPoints(deps, changedKeys, worklist, inQueue)
 
 	expected := []cfg.Point{1, 2, 3, 4}
@@ -101,6 +103,23 @@ func TestAddDependentPoints_DeterministicOrder(t *testing.T) {
 		if got != expected[i] {
 			t.Fatalf("worklist[%d] = %d, want %d", i, got, expected[i])
 		}
+	}
+}
+
+func TestAddDependentPoints_SymbolDependencyUsesTypedKey(t *testing.T) {
+	deps := make(dependencyMap)
+	deps[dependencySym(cfg.SymbolID(42))] = []cfg.Point{7}
+
+	var worklist []cfg.Point
+	inQueue := map[cfg.Point]bool{}
+
+	worklist = addDependentPoints(deps, []constraint.PathKey{"sym42@1"}, worklist, inQueue)
+
+	if len(worklist) != 1 || worklist[0] != 7 {
+		t.Fatalf("symbol dependency worklist = %v, want [7]", worklist)
+	}
+	if !inQueue[7] {
+		t.Fatal("point 7 should be marked in queue")
 	}
 }
 
@@ -156,7 +175,7 @@ func TestBuildPointValueMapUsesCurrentStateIndependentOfQueryCache(t *testing.T)
 		inputs:     inputs,
 		resolver:   testResolver(),
 		pkResolver: pathkey.NewResolver(g),
-		values: liftFlowValues(nil),
+		values:     liftFlowValues(nil),
 	}
 	pathX := constraint.Path{Root: "x", Symbol: symX}
 	pathY := constraint.Path{Root: "y", Symbol: symY}

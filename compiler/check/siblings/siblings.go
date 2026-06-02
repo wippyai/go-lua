@@ -39,9 +39,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -217,12 +219,12 @@ func ReceiverSelfType(base, surface typ.Type) typ.Type {
 	return value.JoinPrecise(base, surface)
 }
 
-func receiverSurfaceFields(surface typ.Type) map[string]typ.Type {
+func receiverSurfaceFields(surface typ.Type) interprocdomain.FieldValues {
 	rec := unwrap.Record(surface)
 	if rec == nil || len(rec.Fields) == 0 {
 		return nil
 	}
-	fields := make(map[string]typ.Type, len(rec.Fields))
+	fields := make(interprocdomain.FieldValues, len(rec.Fields))
 	for _, field := range rec.Fields {
 		if field.Name == "" || field.Type == nil {
 			continue
@@ -236,7 +238,11 @@ func receiverSurfaceFields(surface typ.Type) map[string]typ.Type {
 		if unwrap.Function(field.Type) == nil {
 			continue
 		}
-		fields[field.Name] = field.Type
+		fieldKey, ok := interprocdomain.FieldKeyFromName(field.Name)
+		if !ok {
+			continue
+		}
+		fields[fieldKey] = product.FromType(field.Type)
 	}
 	if len(fields) == 0 {
 		return nil
@@ -261,7 +267,7 @@ func applyFieldFunctionSurface(result map[cfg.SymbolID]typ.Type, c BuildConfig) 
 	if len(c.Funcs) == 0 {
 		return
 	}
-	fields := make(map[cfg.SymbolID]map[string]typ.Type)
+	fields := make(overlaymut.FieldAssignments)
 	points := make(map[cfg.SymbolID]cfg.Point)
 	for _, entry := range c.Funcs {
 		baseSym, fieldName := directFieldTarget(entry.TargetPath)
@@ -272,13 +278,17 @@ func applyFieldFunctionSurface(result map[cfg.SymbolID]typ.Type, c BuildConfig) 
 		if fnType == nil {
 			continue
 		}
-		if fields[baseSym] == nil {
-			fields[baseSym] = make(map[string]typ.Type)
+		fieldKey, ok := interprocdomain.FieldKeyFromName(fieldName)
+		if !ok {
+			continue
 		}
-		if existing := fields[baseSym][fieldName]; existing != nil {
-			fields[baseSym][fieldName] = functionfact.MergeType(existing, fnType)
+		if fields[baseSym] == nil {
+			fields[baseSym] = make(interprocdomain.FieldValues)
+		}
+		if existing := fields[baseSym][fieldKey]; !existing.IsZero() {
+			fields[baseSym][fieldKey] = product.FromType(functionfact.MergeType(existing.ProjectValue(), fnType))
 		} else {
-			fields[baseSym][fieldName] = fnType
+			fields[baseSym][fieldKey] = product.FromType(fnType)
 		}
 		if points[baseSym] == 0 || entry.Point < points[baseSym] {
 			points[baseSym] = entry.Point

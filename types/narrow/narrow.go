@@ -547,7 +547,7 @@ func KindMatches(t typ.Type, target kind.Kind) bool {
 	// "table" in Lua includes Record, Map, Array, Tuple, Interface, Intersection.
 	if target == kind.Record {
 		switch k {
-		case kind.Record, kind.Map, kind.Array, kind.Tuple, kind.Interface, kind.Intersection:
+		case kind.Record, kind.Map, kind.ReadonlyMap, kind.Array, kind.Tuple, kind.Interface, kind.Intersection:
 			return true
 		}
 	}

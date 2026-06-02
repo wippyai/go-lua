@@ -8,19 +8,85 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
+// StaticPathKey is an opaque, comparable key for a statically-known suffix path.
+// It keeps guard-domain maps keyed by structural path identity instead of
+// legacy dotted strings.
+type StaticPathKey struct {
+	suffix constraint.PathKey
+	valid  bool
+}
+
+// StaticPathKeyFromSegments canonicalizes a static suffix path into a comparable
+// key. Empty segments are valid and identify the root symbol itself.
+func StaticPathKeyFromSegments(segs []constraint.Segment) (StaticPathKey, bool) {
+	for _, seg := range segs {
+		switch seg.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			if seg.Name == "" {
+				return StaticPathKey{}, false
+			}
+		case constraint.SegmentIndexInt:
+		default:
+			return StaticPathKey{}, false
+		}
+	}
+	return StaticPathKey{
+		suffix: constraint.PathKey(constraint.FormatSegments(segs)),
+		valid:  true,
+	}, true
+}
+
+// IsValid reports whether this key was produced by StaticPathKeyFromSegments.
+func (k StaticPathKey) IsValid() bool { return k.valid }
+
+// HasSegments reports whether this key identifies a non-root field/index path.
+func (k StaticPathKey) HasSegments() bool { return k.valid && k.suffix != "" }
+
+// Suffix returns the canonical segment suffix for diagnostics and tests.
+func (k StaticPathKey) Suffix() string {
+	if !k.valid {
+		return ""
+	}
+	return string(k.suffix)
+}
+
+// Display returns the legacy human spelling while keeping the stored key opaque.
+func (k StaticPathKey) Display() string {
+	if !k.valid {
+		return ""
+	}
+	return strings.TrimPrefix(string(k.suffix), ".")
+}
+
 // TruthyPathKey uniquely identifies a field path for truthy guard tracking.
 type TruthyPathKey struct {
 	Symbol cfg.SymbolID
-	Field  string
+	Path   StaticPathKey
 }
+
+// TruthyPathKeyFromSegments builds a guard key rooted at sym.
+func TruthyPathKeyFromSegments(sym cfg.SymbolID, segs []constraint.Segment) (TruthyPathKey, bool) {
+	if sym == 0 {
+		return TruthyPathKey{}, false
+	}
+	path, ok := StaticPathKeyFromSegments(segs)
+	if !ok {
+		return TruthyPathKey{}, false
+	}
+	return TruthyPathKey{Symbol: sym, Path: path}, true
+}
+
+// HasFieldPath reports whether this guard key denotes a field/index below the root.
+func (k TruthyPathKey) HasFieldPath() bool { return k.Path.HasSegments() }
 
 // TypeProbe describes a builtin type(expr) equality check.
 type TypeProbe struct {
@@ -197,7 +263,7 @@ func CollectTypeGuards(graph *cfg.Graph, branches []api.BranchEvidence, bindings
 			continue
 		}
 		key, typeKey, hasTypeOnTrue, ok := extractTypeGuard(info.Condition, bindings)
-		if !ok || key.Field == "" || typeKey.IsZero() {
+		if !ok || !key.HasFieldPath() || typeKey.IsZero() {
 			continue
 		}
 
@@ -238,7 +304,7 @@ func ExtractTruthyPathKeys(expr ast.Expr, bindings *bind.BindingTable) []TruthyP
 			return []TruthyPathKey{key}
 		}
 	case *ast.AttrGetExpr:
-		if key, ok := TruthyKeyFromExpr(e, bindings); ok && key.Field != "" {
+		if key, ok := TruthyKeyFromExpr(e, bindings); ok && key.HasFieldPath() {
 			return []TruthyPathKey{key}
 		}
 	case *ast.LogicalOpExpr:
@@ -258,18 +324,7 @@ func TruthyKeyFromExpr(expr ast.Expr, bindings *bind.BindingTable) (TruthyPathKe
 	if !ok || sym == 0 {
 		return TruthyPathKey{}, false
 	}
-	return TruthyPathKey{
-		Symbol: sym,
-		Field:  truthyPathSuffix(segs),
-	}, true
-}
-
-func truthyPathSuffix(segs []constraint.Segment) string {
-	if len(segs) == 0 {
-		return ""
-	}
-	suffix := pathkey.SegmentsSuffix(segs)
-	return strings.TrimPrefix(suffix, ".")
+	return TruthyPathKeyFromSegments(sym, segs)
 }
 
 // propagateTruthyGuards propagates truthy guards from a starting point to all reachable points
@@ -378,20 +433,20 @@ func NarrowTableFieldsByGuard(
 		return recType
 	}
 
-	fieldSources := make(map[string]ast.Expr)
-	for _, field := range tbl.Fields {
-		if field == nil || field.Key == nil {
-			continue
-		}
-		var name string
-		switch k := field.Key.(type) {
-		case *ast.StringExpr:
-			name = k.Value
-		case *ast.IdentExpr:
-			name = k.Value
-		}
-		if name != "" {
-			fieldSources[name] = field.Value
+	fieldSources := make(map[fieldkey.Key]ast.Expr)
+	if tbl != nil {
+		for _, field := range tbl.Fields {
+			if field == nil || field.Key == nil {
+				continue
+			}
+			seg, ok := pathseg.StaticTableFieldSegment(field)
+			if !ok {
+				continue
+			}
+			key, ok := fieldkey.FromSegment(seg)
+			if ok {
+				fieldSources[key] = field.Value
+			}
 		}
 	}
 
@@ -402,7 +457,11 @@ func NarrowTableFieldsByGuard(
 	for i, f := range newFields {
 		originalOptional := f.Optional
 		fieldType := f.Type
-		srcExpr := fieldSources[f.Name]
+		fieldKey, ok := fieldkey.FromName(f.Name)
+		if !ok {
+			continue
+		}
+		srcExpr := fieldSources[fieldKey]
 		if srcExpr == nil {
 			continue
 		}
@@ -411,7 +470,7 @@ func NarrowTableFieldsByGuard(
 			continue
 		}
 		key, ok := TruthyKeyFromExpr(attr, bindings)
-		if !ok || key.Field == "" {
+		if !ok || !key.HasFieldPath() {
 			continue
 		}
 		if guards != nil && guards[key] {
@@ -501,7 +560,7 @@ func typeGuardPathAndKey(typeExpr, keyExpr ast.Expr, bindings *bind.BindingTable
 	}
 
 	key, ok := TruthyKeyFromExpr(probe.Expr, bindings)
-	if !ok || key.Field == "" {
+	if !ok || !key.HasFieldPath() {
 		return TruthyPathKey{}, narrow.TypeKey{}, false
 	}
 	return key, probe.Key, true

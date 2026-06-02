@@ -191,7 +191,7 @@ func Propagate(inputs *Inputs) *Result {
 
 	// SSA-version liveness depends only on CFG/SSA/use-demand, not on the
 	// changing condition facts; compute it once before the fixpoint.
-	live := computeLiveSets(inputs)
+	projector := NewConditionProjector(inputs)
 
 	for len(worklist) > 0 {
 		p := worklist[0]
@@ -210,17 +210,16 @@ func Propagate(inputs *Inputs) *Result {
 			candidate = constraint.Domain.Widen(oldCond, candidate)
 		}
 
-		// Projection (acyclic bound) forgets dead field-presence guards at JOIN
-		// points, where independent guard regions merge and the DNF would
-		// cross-multiply. Straight-line points keep the exact condition, so a
-		// guard stays active throughout the region it guards (where its field is
-		// still read) and is only forgotten once the region closes at the merge.
+		// Projection (acyclic bound) is the point-state abstraction: after the
+		// exact transfer/join/widen candidate is computed, forget every condition
+		// literal whose semantic access paths are no longer demanded at this
+		// program point. This is intentionally not restricted to join points; a
+		// straight-line chain of independent guards can otherwise retain stale
+		// single-predecessor vocabulary until it later cross-multiplies.
 		// Disabled (no-op) when the caller supplied no liveness demand.
 		next := candidate
-		if live.enabled() && len(graphPredecessors(g, p)) > 1 {
-			next = candidate.Project(func(lit constraint.Constraint) bool {
-				return literalLive(live, p, lit)
-			})
+		if projector.Enabled() {
+			next = projector.Project(p, candidate)
 		}
 
 		if !constraint.Domain.Equal(next, oldCond) {

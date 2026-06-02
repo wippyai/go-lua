@@ -222,6 +222,10 @@ func canContainWithVisited(container, target typ.Type, visited map[typ.Type]bool
 			return canContainWithVisited(m.Key, target, visited) ||
 				canContainWithVisited(m.Value, target, visited)
 		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) bool {
+			return canContainWithVisited(m.Key, target, visited) ||
+				canContainWithVisited(m.Value, target, visited)
+		},
 		Optional: func(o *typ.Optional) bool {
 			return canContainWithVisited(o.Inner, target, visited)
 		},

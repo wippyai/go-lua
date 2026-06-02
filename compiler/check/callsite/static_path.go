@@ -31,7 +31,7 @@ func StaticPathWithBaseSymbol(bindings *bind.BindingTable, expr ast.Expr) (cfg.S
 		if !ok || baseSym == 0 {
 			return 0, nil, false
 		}
-		seg, ok := pathseg.StaticAttrKeySegment(e.Key)
+		seg, ok := pathseg.StaticAttrSegment(e)
 		if !ok {
 			return 0, nil, false
 		}

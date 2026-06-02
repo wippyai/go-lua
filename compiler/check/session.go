@@ -381,7 +381,11 @@ func (s *Session) exportFunctionResults() []modules.ExportFunctionResult {
 		if result == nil {
 			continue
 		}
-		out = append(out, modules.ExportFunctionResult{Name: def.Name, Result: result})
+		targetPath := constraint.Path{}
+		if def.FuncDef != nil {
+			targetPath = def.FuncDef.TargetPath
+		}
+		out = append(out, modules.ExportFunctionResult{TargetPath: targetPath, Name: def.Name, Result: result})
 	}
 	return out
 }
